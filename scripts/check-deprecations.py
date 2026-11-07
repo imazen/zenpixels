@@ -25,6 +25,11 @@ PROBES = {
         "to_descriptor",
         False,
     ),
+    "forbid_lossy": (
+        "fn main() { let _ = zenpixels::ConvertOptions::forbid_lossy(); }",
+        "forbid_lossy",
+        False,
+    ),
     "predicate": (
         "fn main() { let d = zenpixels_convert::PixelDescriptor::RGB8_SRGB; "
         "let _ = zenpixels_convert::requires_cms(&d, &d); }",
@@ -73,7 +78,7 @@ fn main() { let _ = legacy_provider().as_pixel_slice(); }
         """
 fn main() {
     let d = zenpixels_convert::PixelDescriptor::RGB8_SRGB;
-    let result = zenpixels_convert::adapt::adapt_for_encode_cow(&[0, 0, 0], d, 1, 1, 3, &[d]).unwrap();
+    let result = zenpixels_convert::adapt::adapt_raw_rows_for_encode(&[0, 0, 0], d, 1, 1, 3, &[d], &zenpixels_convert::ConvertOptions::permissive()).unwrap();
     let _ = result.as_slice();
 }
 """,
@@ -158,6 +163,17 @@ fn main() {
 """, "estimate", True,
 )
 
+def workspace_patches() -> str:
+    """The workspace's own crates.io patches, which an outside probe doesn't inherit."""
+    text = (ROOT / "Cargo.toml").read_text()
+    if "[patch.crates-io]" not in text:
+        return ""
+    block = text.split("[patch.crates-io]", 1)[1].split("\n[", 1)[0]
+    return "\n".join(
+        line for line in block.splitlines() if line.strip() and not line.startswith("#")
+    )
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="zenpixels-deprecations-") as directory:
         project = Path(directory)
@@ -176,6 +192,7 @@ zenpixels = {{ path = {json.dumps(str(ROOT / "zenpixels"))}, default-features = 
 zenpixels-convert = {{ path = {json.dumps(str(ROOT / 'zenpixels-convert'))}, default-features = false }}
 [patch.crates-io]
 zenpixels = {{ path = {json.dumps(str(ROOT / 'zenpixels'))} }}
+{workspace_patches()}
 """)
         for name, (source, _, _) in PROBES.items():
             (project / f"src/bin/{name}.rs").write_text("#![deny(deprecated)]\n" + source)

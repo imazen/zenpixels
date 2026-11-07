@@ -1,0 +1,5 @@
+gamut,method,n,raw_outside_1e-7,max_excursion
+P3,ottosson-adaptive-f64,4913,710,0.000740843202
+P3,softcompress-f32-k096,4913,32,0.001085042953
+BT2020,ottosson-adaptive-f64,4913,1063,0.000100472011
+BT2020,softcompress-f32-k096,4913,50,0.002513170242

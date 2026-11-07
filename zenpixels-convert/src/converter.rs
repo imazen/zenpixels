@@ -158,6 +158,16 @@ fn owned_external(t: Box<dyn crate::cms::RowTransformMut>) -> ExternalTransform 
     }
 }
 
+impl core::fmt::Debug for RowConverter {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RowConverter")
+            .field("plan", &self.plan)
+            .field("prepared_width", &self.prepared_width)
+            .field("external", &self.external.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
 impl RowConverter {
     /// Create a converter from `from` to `to`.
     ///
@@ -229,9 +239,18 @@ impl RowConverter {
 
         if from.has_alpha()
             && !to.has_alpha()
-            && options.alpha_policy == AlphaPolicy::DiscardIfOpaque
+            && options.alpha_policy() == AlphaPolicy::DiscardIfOpaque
         {
             return Err(whereat::at!(ConvertError::AlphaCheckRequired));
+        }
+
+        // Gamut mapping runs on the built-in plan. A plugin's transform would clip.
+        if options.gamut_mapping() == crate::policy::GamutMapping::SoftCompress
+            && crate::convert::soft_compress_applies(&from, &to)
+        {
+            return Ok(Self::from_plan(ConvertPlan::new_explicit(
+                from, to, options,
+            )?));
         }
 
         // CMS dispatch chain. Fires when:
@@ -258,7 +277,11 @@ impl RowConverter {
         //     different output — surface the failure instead.
         let primaries_differ = from.primaries != to.primaries;
         let needs_cms_dispatch = crate::convert::needs_cms_for_color_model(&from, &to);
+        // A plugin can only drop alpha. The built-in plan composites and applies the other policies.
+        let plugin_may_drop_alpha = !(from.has_alpha() && !to.has_alpha())
+            || options.alpha_policy() == AlphaPolicy::DiscardUnchecked;
         if (primaries_differ || needs_cms_dispatch)
+            && plugin_may_drop_alpha
             && from.alpha() != Some(crate::AlphaMode::Premultiplied)
             && to.alpha() != Some(crate::AlphaMode::Premultiplied)
             && from.alpha() != Some(crate::AlphaMode::Undefined)
@@ -329,15 +352,10 @@ impl RowConverter {
             }
 
             if let Some(external) = external {
-                // Policy checks still apply.
-                let drops_alpha = from.has_alpha() && !to.has_alpha();
-                if drops_alpha && options.alpha_policy == AlphaPolicy::Forbid {
-                    return Err(whereat::at!(ConvertError::AlphaRemovalForbidden));
-                }
                 // Precision bits, not byte size — see convert.rs for rationale.
                 let reduces_depth = crate::negotiate::channel_bits(from.channel_type())
                     > crate::negotiate::channel_bits(to.channel_type());
-                if reduces_depth && options.depth_policy == DepthPolicy::Forbid {
+                if reduces_depth && options.depth_policy() == DepthPolicy::Forbid {
                     return Err(whereat::at!(ConvertError::DepthReductionForbidden));
                 }
                 let src_is_rgb = matches!(
@@ -346,7 +364,7 @@ impl RowConverter {
                 );
                 let dst_is_gray =
                     matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha);
-                if src_is_rgb && dst_is_gray && options.luma.is_none() {
+                if src_is_rgb && dst_is_gray && options.luma().is_none() {
                     return Err(whereat::at!(ConvertError::RgbToGray));
                 }
 
@@ -393,6 +411,10 @@ impl RowConverter {
                 to
             }));
         }
+        // No ICC transform here can honor a mapping, and clipping silently would be wrong.
+        if options.gamut_mapping() != crate::policy::GamutMapping::Clip {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
         // Plugins accept PixelFormat, which cannot express association or range.
         if (from.alpha() == Some(crate::AlphaMode::Undefined) && to.has_alpha())
             || (to.alpha() == Some(crate::AlphaMode::Undefined) && from.has_alpha())
@@ -401,8 +423,14 @@ impl RowConverter {
         {
             return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
-        if from.has_alpha() && !to.has_alpha() {
-            match options.alpha_policy {
+        let composites = from.has_alpha()
+            && !to.has_alpha()
+            && matches!(
+                options.alpha_policy(),
+                crate::AlphaPolicy::CompositeOnto { .. }
+            );
+        if from.has_alpha() && !to.has_alpha() && !composites {
+            match options.alpha_policy() {
                 crate::AlphaPolicy::DiscardUnchecked => {}
                 crate::AlphaPolicy::DiscardIfOpaque => {
                     return Err(whereat::at!(ConvertError::AlphaCheckRequired));
@@ -410,25 +438,43 @@ impl RowConverter {
                 _ => return Err(whereat::at!(ConvertError::AlphaRemovalForbidden)),
             }
         }
+        // A plugin takes one depth, straight alpha and no layout change that loses channels, so the
+        // color change runs in straight F32 and the plan handles the rest on either side of it.
+        let to_gray = matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha)
+            && !matches!(
+                from.layout(),
+                ChannelLayout::Gray | ChannelLayout::GrayAlpha
+            );
         if from.alpha() == Some(crate::AlphaMode::Premultiplied)
             || to.alpha() == Some(crate::AlphaMode::Premultiplied)
+            || from.channel_type() != to.channel_type()
+            || composites
+            || to_gray
         {
-            let straight_float =
-                |desc: PixelDescriptor| -> Result<PixelDescriptor, At<ConvertError>> {
-                    let format = match desc.layout() {
-                        ChannelLayout::Rgb => crate::PixelFormat::RgbF32,
-                        ChannelLayout::Rgba | ChannelLayout::Bgra => crate::PixelFormat::RgbaF32,
-                        ChannelLayout::Gray => crate::PixelFormat::GrayF32,
-                        ChannelLayout::GrayAlpha => crate::PixelFormat::GrayAF32,
-                        _ => return Err(whereat::at!(ConvertError::NoPath { from, to })),
-                    };
-                    Ok(format
-                        .descriptor()
-                        .with_primaries(desc.primaries)
-                        .with_transfer(desc.transfer()))
+            let straight_float = |layout: ChannelLayout, color: PixelDescriptor| {
+                let format = match layout {
+                    ChannelLayout::Rgb => crate::PixelFormat::RgbF32,
+                    ChannelLayout::Rgba | ChannelLayout::Bgra => crate::PixelFormat::RgbaF32,
+                    ChannelLayout::Gray => crate::PixelFormat::GrayF32,
+                    ChannelLayout::GrayAlpha => crate::PixelFormat::GrayAF32,
+                    _ => return Err(whereat::at!(ConvertError::NoPath { from, to })),
                 };
-            let straight_from = straight_float(from)?;
-            let straight_to = straight_float(to)?;
+                Ok(format
+                    .descriptor()
+                    .with_primaries(color.primaries)
+                    .with_transfer(color.transfer()))
+            };
+            let straight_from = straight_float(from.layout(), from)?;
+            // Keep the channels until the color change is done.
+            let middle_layout = if composites || to_gray {
+                from.layout()
+            } else {
+                to.layout()
+            };
+            let straight_to = straight_float(middle_layout, to)?;
+            if straight_from == from && straight_to == to {
+                return Err(whereat::at!(ConvertError::NoPath { from, to }));
+            }
             let pipeline = AlphaPipeline {
                 before: Self::new_explicit(from, straight_from, options)?,
                 color: Self::new_with_sources(
@@ -1332,8 +1378,7 @@ mod tests {
                 PixelDescriptor::RGB16_BT2100_HLG,
                 PixelDescriptor::RGB8_SRGB,
             )
-            .err()
-            .expect("HLG → sRGB without peak must refuse");
+            .expect_err("HLG → sRGB without peak must refuse");
             assert!(
                 matches!(*err.error(), ConvertError::HdrSourceRequiresPeak { .. })
                     || matches!(
@@ -1354,7 +1399,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "hdr-experimental")]
+    #[cfg(feature = "bt2446a")]
     fn hdr_u16_to_sdr_u8_pq_requires_peak() {
         // Pre-0.2.16: PQ U16 → sRGB U8 silently routed through linear with no
         // tone-mapping (every HDR sample > SDR diffuse-white saturated to
@@ -1367,8 +1412,7 @@ mod tests {
             TransferFunction::Pq,
         );
         let err = RowConverter::new(pq_u16, PixelDescriptor::RGB8_SRGB)
-            .err()
-            .expect("plain HDR→SDR must refuse")
+            .expect_err("plain HDR→SDR must refuse")
             .error()
             .clone();
         assert!(matches!(err, ConvertError::HdrSourceRequiresPeak { .. }));
@@ -1396,8 +1440,7 @@ mod tests {
             TransferFunction::Hlg,
         );
         let err = RowConverter::new(hlg_u16, PixelDescriptor::RGB8_SRGB)
-            .err()
-            .expect("plain HDR→SDR must refuse")
+            .expect_err("plain HDR→SDR must refuse")
             .error()
             .clone();
         assert!(matches!(err, ConvertError::HdrSourceRequiresPeak { .. }));
@@ -1731,7 +1774,7 @@ mod tests {
         );
 
         let opts = ConvertOptions::permissive();
-        assert!(opts.clip_out_of_gamut);
+        assert!(opts.clip_out_of_gamut());
         let mut conv = crate::RowConverter::new_explicit(p3, srgb, &opts).unwrap();
 
         let src: [f32; 3] = [0.0, 1.0, 0.0];

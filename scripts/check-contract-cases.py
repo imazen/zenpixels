@@ -28,6 +28,8 @@ imgref = "1.12"
 whereat = "0.1.5"
 [patch.crates-io]
 zenpixels = {{ path = {json.dumps(str(root / 'zenpixels'))} }}
+garb = {{ git = "https://github.com/imazen/garb", rev = "605276d717ea0b31a1cd2a36ae05301383c7b8b5" }}
+linear-srgb = {{ git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24664315586bd60e5f048253b1f69052" }}
 """
     (project / "Cargo.toml").write_text(manifest)
     modules = []
@@ -37,5 +39,5 @@ zenpixels = {{ path = {json.dumps(str(root / 'zenpixels'))} }}
     (project / "src/lib.rs").write_text("#![cfg(test)]\n" + "\n".join(modules))
     env = dict(os.environ, CARGO_TARGET_DIR=str(Path(os.environ.get("CARGO_TARGET_DIR", root / "target")) / "contract-cases"))
     for features in ([], ["--no-default-features"]):
-        subprocess.run(["cargo", "test", "--offline", "--quiet", *features],
+        subprocess.run(["cargo", "test", "--quiet", *features],
                        cwd=project, env=env, check=True)

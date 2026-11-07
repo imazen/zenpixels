@@ -6,18 +6,13 @@
 //!
 //! # Which function to use
 //!
-//! | Function | Negotiation | Policy | Use case |
-//! |----------|-------------|--------|----------|
-//! | [`adapt_for_encode_cow`] | `Fastest` intent | Permissive | Simple encode path |
-//! | [`adapt_for_encode_with_intent_cow`] | Caller-specified | Permissive | Encode after processing |
-//! | [`adapt_for_encode_explicit_cow`] | `Fastest` intent | [`ConvertOptions`] | Policy-sensitive encode |
-//!
-//! The old packed compatibility wrappers were removed in 0.3.1; use the
-//! stride-aware [`PixelCow`] forms above.
+//! [`PixelSliceConvertExt::adapt_for_encode`](crate::ext::PixelSliceConvertExt::adapt_for_encode)
+//! covers pixels a [`PixelSlice`] can describe. [`adapt_raw_rows_for_encode`] covers
+//! raw rows with padding that isn't a whole number of pixels.
 //!
 //! # Zero-copy fast path
 //!
-//! All `adapt_for_encode*_cow` functions check for an exact match first. If the
+//! Both check for an exact match first. If the
 //! source descriptor matches one of the supported formats, the function
 //! returns `PixelCow::Borrowed` — no allocation, no copy, no conversion. This
 //! means the common case (JPEG u8 sRGB → JPEG u8 sRGB) has zero overhead.
@@ -92,26 +87,35 @@ fn reject_cmyk(from: PixelDescriptor, to: PixelDescriptor) -> Result<(), At<Conv
     Ok(())
 }
 
-/// Validate that a raw input buffer is long enough to hold the declared
-/// geometry: `rows × stride` bytes minimum (the contract documented on
-/// every raw-bytes entry point on this module).
+/// Validate that a raw input buffer holds the declared geometry: a stride no shorter than a row, and
+/// `(rows - 1) × stride + row` bytes. The last row needs no trailing padding, as in
+/// [`PixelSlice`](zenpixels::PixelSlice).
 ///
-/// The multiplication is `checked_mul` so a 32-bit `usize` wrap on i686 /
-/// wasm32 surfaces as [`ConvertError::AllocationFailed`] (the same class
-/// `PixelBuffer::from_pixels` uses) instead of silently passing through
-/// with a small number that then OOBs in the slice loop. Pre-#44 the raw
-/// entry points slice into `data` with no length check at all and panic
-/// with index-OOB on a truncated buffer.
+/// A 32-bit `usize` wrap on i686 or wasm32 surfaces as [`ConvertError::AllocationFailed`], the same
+/// class `PixelBuffer::from_pixels` uses, rather than passing with a small number that then goes out of
+/// bounds in the row loop.
 fn ensure_src_buffer_fits(
     data_len: usize,
+    descriptor: PixelDescriptor,
+    width: u32,
     rows: u32,
     stride: usize,
 ) -> Result<(), At<ConvertError>> {
-    if rows == 0 {
+    let row = (width as usize)
+        .checked_mul(descriptor.bytes_per_pixel())
+        .ok_or_else(|| whereat::at!(ConvertError::AllocationFailed))?;
+    if rows == 0 || row == 0 {
         return Ok(());
     }
-    let needed = (rows as usize)
+    if stride < row {
+        return Err(whereat::at!(ConvertError::BufferSize {
+            expected: row,
+            actual: stride,
+        }));
+    }
+    let needed = ((rows - 1) as usize)
         .checked_mul(stride)
+        .and_then(|n| n.checked_add(row))
         .ok_or_else(|| whereat::at!(ConvertError::AllocationFailed))?;
     if data_len < needed {
         return Err(whereat::at!(ConvertError::BufferSize {
@@ -168,9 +172,10 @@ fn borrow_or_copy<'a>(
     Ok(PixelCow::Owned(output))
 }
 
-/// Negotiate format and return borrowed-or-owned, stride-aware pixels.
+/// [`adapt_raw_rows_for_encode`] with no alpha or depth checks and any channels dropped.
+#[cfg(test)]
 #[track_caller]
-pub fn adapt_for_encode_cow<'a>(
+pub(crate) fn adapt_for_encode_cow<'a>(
     data: &'a [u8],
     descriptor: PixelDescriptor,
     width: u32,
@@ -178,75 +183,15 @@ pub fn adapt_for_encode_cow<'a>(
     stride: usize,
     supported: &[PixelDescriptor],
 ) -> Result<PixelCow<'a>, At<ConvertError>> {
-    adapt_for_encode_with_intent_cow(
+    adapt_raw_rows_for_encode(
         data,
         descriptor,
         width,
         rows,
         stride,
         supported,
-        ConvertIntent::Fastest,
+        &ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::DiscardUnchecked),
     )
-}
-
-/// Negotiate format with caller-specified intent and return [`PixelCow`].
-#[track_caller]
-pub fn adapt_for_encode_with_intent_cow<'a>(
-    data: &'a [u8],
-    descriptor: PixelDescriptor,
-    width: u32,
-    rows: u32,
-    stride: usize,
-    supported: &[PixelDescriptor],
-    intent: ConvertIntent,
-) -> Result<PixelCow<'a>, At<ConvertError>> {
-    ensure_src_buffer_fits(data.len(), rows, stride)?;
-    if supported.is_empty() {
-        return Err(whereat::at!(ConvertError::EmptyFormatList));
-    }
-    // CMYK check after EmptyFormatList so we always have a concrete target
-    // descriptor to pair into `NoPath { from, to }`.
-    reject_cmyk(descriptor, supported[0])?;
-
-    // Check for exact match (zero-copy path).
-    if supported.contains(&descriptor) {
-        return borrow_or_copy(data, width, rows, stride, descriptor);
-    }
-
-    // Check for transfer-agnostic match: if source has Unknown transfer
-    // and a supported format matches on everything except transfer, it's
-    // still a zero-copy path. Primaries and signal range must also match
-    // — relabeling BT.2020 as BT.709 without gamut conversion is wrong.
-    for &target in supported {
-        if descriptor.transfer == crate::TransferFunction::Unknown
-            && descriptor.channel_type() == target.channel_type()
-            && descriptor.layout() == target.layout()
-            && descriptor.alpha() == target.alpha()
-            && descriptor.primaries == target.primaries
-            && descriptor.signal_range == target.signal_range
-        {
-            return borrow_or_copy(data, width, rows, stride, target);
-        }
-    }
-
-    // Need conversion — pick best target.
-    let target = best_match(descriptor, supported, intent)
-        .ok_or_else(|| whereat::at!(ConvertError::EmptyFormatList))?;
-
-    let mut converter = RowConverter::new(descriptor, target).at()?;
-
-    let src_bpp = descriptor.bytes_per_pixel();
-    let mut output = PixelBuffer::try_new(width, rows, target)
-        .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
-    {
-        let mut destination = output.as_slice_mut();
-        for y in 0..rows {
-            let src_start = y as usize * stride;
-            let src_end = src_start + (width as usize * src_bpp);
-            converter.convert_row(&data[src_start..src_end], destination.row_mut(y), width);
-        }
-    }
-    Ok(PixelCow::Owned(output))
 }
 
 /// Convert a raw byte buffer from one format to another.
@@ -265,7 +210,7 @@ pub(crate) fn convert_buffer(
     reject_cmyk(from, to)?;
     let src_bpp = from.bytes_per_pixel();
     let src_stride = (width as usize) * src_bpp;
-    ensure_src_buffer_fits(src.len(), rows, src_stride)?;
+    ensure_src_buffer_fits(src.len(), from, width, rows, src_stride)?;
     if from == to {
         return Ok(src.to_vec());
     }
@@ -320,7 +265,7 @@ pub(crate) fn convert_buffer_with_anchor(
     // failing fast saves the alloc on a broken request, and points the
     // error at the outer entry point instead of the inner helper.
     reject_cmyk(from, to)?;
-    ensure_src_buffer_fits(src.len(), rows, src_stride)?;
+    ensure_src_buffer_fits(src.len(), from, width, rows, src_stride)?;
     // Allocate through the existing PixelBuffer machinery (start-aligned,
     // fallible) rather than a hand-rolled `vec![0u8; …]`, and convert into its
     // backing at the buffer's own row stride.
@@ -364,7 +309,7 @@ pub(crate) fn convert_into_with_anchor(
     dst_stride: usize,
 ) -> Result<(), At<ConvertError>> {
     reject_cmyk(from, to)?;
-    ensure_src_buffer_fits(src.len(), rows, src_stride)?;
+    ensure_src_buffer_fits(src.len(), from, width, rows, src_stride)?;
 
     let dst_row = (width as usize) * to.bytes_per_pixel();
     if rows > 0 {
@@ -423,7 +368,7 @@ pub(crate) fn convert_into_with_anchor(
 ///   stride already divides evenly rows compact **at their own bases**
 ///   with zero cross-row movement and the freed bytes become row padding.
 ///   Straight or premultiplied alpha returns `Err`: a blind discard would
-///   silently diverge from [`adapt_for_encode_cow`]'s alpha policy (which
+///   silently diverge from `adapt_for_encode`'s alpha policy (which
 ///   mattes); for *measured*-opaque alpha use
 ///   [`reduce_to_load_bearing_format_in_place`](crate::PixelBufferLoadBearingExt::reduce_to_load_bearing_format_in_place),
 ///   which scans and proves it first.
@@ -431,14 +376,14 @@ pub(crate) fn convert_into_with_anchor(
 /// `Err(ConvertError::NoPath)` means the transition needs a real
 /// conversion (bit-depth change, chroma removal, lane addition, live
 /// alpha) — the buffer is **untouched**; fall through to the allocating
-/// [`adapt_for_encode_cow`] or the `PixelBuffer` conversion methods:
+/// `PixelSliceConvertExt::adapt_for_encode` or the `PixelBuffer` conversion methods:
 ///
 /// ```rust,ignore
 /// if try_adapt_in_place(&mut buf, target).is_err() {
-///     // needs a real conversion — allocate via adapt_for_encode_cow
+///     // needs a real conversion — allocate via adapt_for_encode
 /// }
 /// ```
-pub fn try_adapt_in_place(
+pub(crate) fn try_adapt_in_place(
     buf: &mut PixelBuffer,
     target: PixelDescriptor,
 ) -> Result<(), At<ConvertError>> {
@@ -495,7 +440,7 @@ pub fn try_adapt_in_place(
     // Shrinking alpha-lane removal. Allowed only when the source's alpha
     // mode makes the drop value-exact BY CONTRACT (Undefined padding /
     // declared Opaque) — discarding live Straight/Premultiplied alpha
-    // here would silently diverge from adapt_for_encode_cow's matting policy.
+    // here would silently diverge from adapt_for_encode's matting policy.
     if !matches!(
         src.alpha,
         Some(AlphaMode::Undefined) | Some(AlphaMode::Opaque)
@@ -580,9 +525,13 @@ fn rewrap<'a>(
     }
 }
 
-/// Negotiate with explicit conversion policies and return [`PixelCow`].
+/// [`PixelSliceConvertExt::adapt_for_encode`] for raw rows that a [`PixelSlice`]
+/// can't describe: padding that isn't a whole number of pixels, as in rows aligned
+/// to 4 bytes. Such rows are copied to tight ones when they match a supported format.
+///
+/// [`PixelSliceConvertExt::adapt_for_encode`]: crate::ext::PixelSliceConvertExt::adapt_for_encode
 #[track_caller]
-pub fn adapt_for_encode_explicit_cow<'a>(
+pub fn adapt_raw_rows_for_encode<'a>(
     data: &'a [u8],
     descriptor: PixelDescriptor,
     width: u32,
@@ -591,7 +540,7 @@ pub fn adapt_for_encode_explicit_cow<'a>(
     supported: &[PixelDescriptor],
     options: &ConvertOptions,
 ) -> Result<PixelCow<'a>, At<ConvertError>> {
-    ensure_src_buffer_fits(data.len(), rows, stride)?;
+    ensure_src_buffer_fits(data.len(), descriptor, width, rows, stride)?;
     if supported.is_empty() {
         return Err(whereat::at!(ConvertError::EmptyFormatList));
     }
@@ -619,19 +568,14 @@ pub fn adapt_for_encode_explicit_cow<'a>(
     let target = best_match(descriptor, supported, ConvertIntent::Fastest)
         .ok_or_else(|| whereat::at!(ConvertError::EmptyFormatList))?;
 
-    // This whole-image adapter explicitly preflights conditional alpha before
-    // allocation or output writes. Row planners themselves never hide this scan.
-    let mut checked_options = *options;
-    let drops_alpha = descriptor.has_alpha() && !target.has_alpha();
-    if drops_alpha && options.alpha_policy == AlphaPolicy::DiscardIfOpaque {
+    let checked_options = if descriptor.has_alpha() && !target.has_alpha() {
         let view = PixelSlice::new(data, width, rows, stride, descriptor)
             .map_err_at(ConvertError::from)?;
-        check_opaque(view)?;
-        checked_options.alpha_policy = AlphaPolicy::DiscardUnchecked;
-    }
-    let plan = ConvertPlan::new_explicit(descriptor, target, &checked_options).at()?;
-
-    let mut converter = RowConverter::from_plan(plan);
+        options_after_opacity_check(&view, target, options)?
+    } else {
+        *options
+    };
+    let mut converter = RowConverter::new_explicit(descriptor, target, &checked_options).at()?;
     let src_bpp = descriptor.bytes_per_pixel();
     let mut output = PixelBuffer::try_new(width, rows, target)
         .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
@@ -640,10 +584,47 @@ pub fn adapt_for_encode_explicit_cow<'a>(
         for y in 0..rows {
             let src_start = y as usize * stride;
             let src_end = src_start + (width as usize * src_bpp);
-            converter.convert_row(&data[src_start..src_end], destination.row_mut(y), width);
+            converter.try_convert_row(&data[src_start..src_end], destination.row_mut(y), width)?;
         }
     }
     Ok(PixelCow::Owned(output))
+}
+
+/// The format [`adapt_raw_rows_for_encode`] would convert to, or `None` if it needs no conversion.
+pub(crate) fn encode_conversion_target(
+    descriptor: PixelDescriptor,
+    supported: &[PixelDescriptor],
+) -> Option<PixelDescriptor> {
+    if supported.is_empty() || supported.contains(&descriptor) {
+        return None;
+    }
+    let relabels = supported.iter().any(|target| {
+        descriptor.transfer == crate::TransferFunction::Unknown
+            && descriptor.channel_type() == target.channel_type()
+            && descriptor.layout() == target.layout()
+            && descriptor.alpha() == target.alpha()
+            && descriptor.primaries == target.primaries
+            && descriptor.signal_range == target.signal_range
+    });
+    if relabels {
+        return None;
+    }
+    best_match(descriptor, supported, ConvertIntent::Fastest)
+}
+
+/// Whole-image adapters preflight conditional alpha before allocation or output writes. Row planners
+/// themselves never hide this scan.
+pub(crate) fn options_after_opacity_check(
+    pixels: &PixelSlice<'_>,
+    target: PixelDescriptor,
+    options: &ConvertOptions,
+) -> Result<ConvertOptions, At<ConvertError>> {
+    let drops_alpha = pixels.descriptor().has_alpha() && !target.has_alpha();
+    if drops_alpha && options.alpha_policy() == AlphaPolicy::DiscardIfOpaque {
+        check_opaque(pixels)?;
+        return Ok(options.with_alpha_policy(AlphaPolicy::DiscardUnchecked));
+    }
+    Ok(*options)
 }
 
 /// Explicit opacity preflight: scans visible alpha samples, stopping at the
@@ -652,7 +633,7 @@ pub fn adapt_for_encode_explicit_cow<'a>(
 /// Use this before planning with `AlphaPolicy::DiscardUnchecked` when the
 /// destination must remain unchanged on opacity failure. Floating alpha must
 /// equal 1.0 exactly; NaN, infinity and values above 1 are not opaque.
-pub fn check_opaque(pixels: PixelSlice<'_>) -> Result<(), At<ConvertError>> {
+pub(crate) fn check_opaque(pixels: &PixelSlice<'_>) -> Result<(), At<ConvertError>> {
     let desc = pixels.descriptor();
     if !desc.has_alpha() {
         return Ok(());
@@ -968,197 +949,6 @@ mod tests {
         vec![255, 0, 0, 0, 255, 0]
     }
 
-    // ── try_adapt_in_place ─────────────────────────────────────────
-
-    fn buf_from(bytes: &[u8], w: u32, h: u32, desc: PixelDescriptor) -> zenpixels::PixelBuffer {
-        zenpixels::PixelBuffer::from_vec(bytes.to_vec(), w, h, desc).unwrap()
-    }
-
-    #[test]
-    fn in_place_bgra_to_rgba_swaps_bytes_and_updates_buffer() {
-        // Bgra8 stores B,G,R,A. Two pixels.
-        let mut buf = buf_from(
-            &[10u8, 20, 30, 255, 40, 50, 60, 128],
-            2,
-            1,
-            PixelDescriptor::BGRA8_SRGB,
-        );
-        try_adapt_in_place(&mut buf, PixelDescriptor::RGBA8_SRGB)
-            .expect("4bpp B<->R swap is in-place");
-        assert_eq!(buf.descriptor(), PixelDescriptor::RGBA8_SRGB);
-        assert_eq!(buf.as_slice().row(0), &[30u8, 20, 10, 255, 60, 50, 40, 128]);
-    }
-
-    #[test]
-    fn in_place_rgba_to_bgra_roundtrips() {
-        let original = [1u8, 2, 3, 4, 5, 6, 7, 8];
-        let mut buf = buf_from(&original, 2, 1, PixelDescriptor::RGBA8_SRGB);
-        try_adapt_in_place(&mut buf, PixelDescriptor::BGRA8_SRGB).expect("to bgra");
-        assert_eq!(buf.as_slice().row(0), &[3u8, 2, 1, 4, 7, 6, 5, 8]);
-        try_adapt_in_place(&mut buf, PixelDescriptor::RGBA8_SRGB).expect("back to rgba");
-        assert_eq!(buf.as_slice().row(0), &original[..]);
-    }
-
-    #[test]
-    fn in_place_swap_respects_stride_padding() {
-        // SIMD-aligned buffer: 1 px/row at simd_align 16 → stride 16,
-        // 12 padding bytes per row that must be untouched.
-        let mut buf =
-            zenpixels::PixelBuffer::new_simd_aligned(1, 2, PixelDescriptor::BGRA8_SRGB, 16);
-        assert_eq!(buf.stride(), 16, "fixture must be strided");
-        {
-            let mut view = buf.as_slice_mut();
-            view.row_mut(0).copy_from_slice(&[10, 20, 30, 255]);
-            view.row_mut(1).copy_from_slice(&[40, 50, 60, 128]);
-            let backing = view.as_strided_bytes_mut();
-            backing[4..16].fill(0xAA);
-            backing[20..32].fill(0xBB);
-        }
-        try_adapt_in_place(&mut buf, PixelDescriptor::RGBA8_SRGB).expect("strided swap");
-        assert_eq!(buf.as_slice().row(0), &[30u8, 20, 10, 255]);
-        assert_eq!(buf.as_slice().row(1), &[60u8, 50, 40, 128]);
-        let view = buf.as_slice();
-        let backing = view.as_strided_bytes();
-        assert!(
-            backing[4..16].iter().all(|&b| b == 0xAA),
-            "row-0 padding must be untouched"
-        );
-        assert!(
-            backing[20..28].iter().all(|&b| b == 0xBB),
-            "row-1 padding must be untouched"
-        );
-    }
-
-    #[test]
-    fn in_place_rejects_semantic_retag_and_preserves_identity() {
-        let original = [1u8, 2, 3, 4, 5, 6];
-        let mut buf = buf_from(&original, 2, 1, PixelDescriptor::RGB8);
-        let target = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
-        try_adapt_in_place(&mut buf, target).expect_err("color changes require conversion");
-        assert_eq!(buf.descriptor(), PixelDescriptor::RGB8);
-        try_adapt_in_place(&mut buf, PixelDescriptor::RGB8).expect("identity");
-        assert_eq!(buf.as_slice().row(0), &original[..]);
-    }
-
-    #[test]
-    fn in_place_rejects_live_alpha_drop_and_depth_changes_unchanged() {
-        // RGBA(Straight) -> RGB would discard live alpha; must leave the
-        // buffer untouched (adapt_for_encode_cow mattes instead).
-        let original = [1u8, 2, 3, 4, 5, 6, 7, 8];
-        let mut buf = buf_from(&original, 2, 1, PixelDescriptor::RGBA8_SRGB);
-        try_adapt_in_place(&mut buf, PixelDescriptor::RGB8_SRGB)
-            .expect_err("straight-alpha drop is not contract-exact");
-        assert_eq!(buf.descriptor(), PixelDescriptor::RGBA8_SRGB);
-        assert_eq!(buf.as_slice().row(0), &original[..]);
-
-        // Bit-depth change likewise.
-        try_adapt_in_place(&mut buf, PixelDescriptor::RGBA16_SRGB)
-            .expect_err("depth change cannot be in-place");
-        assert_eq!(buf.as_slice().row(0), &original[..]);
-    }
-
-    #[test]
-    fn in_place_rgbx_to_rgb_compacts_and_buffer_adopts_geometry() {
-        // RGBX (Undefined padding): the X byte is contract-droppable.
-        // 2 px/row, 2 rows, tight 4bpp stride 8 → out stride rounds down
-        // to 6 (tight for 3bpp) and the buffer's own stride/descriptor
-        // update atomically.
-        let mut buf = buf_from(
-            &[
-                1u8, 2, 3, 0xEE, 4, 5, 6, 0xEE, // row 0
-                7, 8, 9, 0xEE, 10, 11, 12, 0xEE, // row 1
-            ],
-            2,
-            2,
-            PixelDescriptor::RGBX8_SRGB,
-        );
-        try_adapt_in_place(&mut buf, PixelDescriptor::RGB8_SRGB)
-            .expect("padding drop is contract-exact");
-        assert_eq!(buf.descriptor(), PixelDescriptor::RGB8_SRGB);
-        assert_eq!(buf.stride(), 6);
-        assert_eq!(buf.as_slice().row(0), &[1u8, 2, 3, 4, 5, 6]);
-        assert_eq!(buf.as_slice().row(1), &[7u8, 8, 9, 10, 11, 12]);
-    }
-
-    #[test]
-    fn drop_lane_impl_keeps_divisible_stride_rows_in_place() {
-        // Stride 12 (divisible by 3): rows stay at their own bases —
-        // zero cross-row movement, freed bytes become padding. Exercised
-        // at the transform level because the public constructors only
-        // produce pixel-tight or simd-aligned strides.
-        let mut bytes = [
-            1u8, 2, 3, 0xEE, 4, 5, 6, 0xEE, 0xAA, 0xAA, 0xAA, 0xAA, // row 0 + pad
-            7, 8, 9, 0xEE, 10, 11, 12, 0xEE, 0xBB, 0xBB, 0xBB, 0xBB, // row 1 + pad
-        ];
-        let px =
-            zenpixels::InPlacePixels::new(&mut bytes, 2, 2, 12, PixelDescriptor::RGBX8_SRGB, None);
-        let out = drop_lane_impl(px, PixelDescriptor::RGB8_SRGB, &[0, 1, 2], 4, 3, 1);
-        assert_eq!(out.stride(), 12, "divisible stride preserved verbatim");
-        assert_eq!(out.row(0), &[1u8, 2, 3, 4, 5, 6]);
-        assert_eq!(out.row(1), &[7u8, 8, 9, 10, 11, 12]);
-        drop(out);
-        assert_eq!(&bytes[8..12], &[0xAA; 4], "row-0 tail padding untouched");
-        assert_eq!(&bytes[20..24], &[0xBB; 4], "row-1 tail padding untouched");
-    }
-
-    #[test]
-    fn in_place_opaque_bgra_to_rgb_reorders_while_dropping() {
-        // Declared-Opaque BGRA -> RGB: lane drop + B<->R reorder.
-        let mut buf = buf_from(
-            &[10u8, 20, 30, 255, 40, 50, 60, 255],
-            2,
-            1,
-            PixelDescriptor::BGRA8_SRGB.with_alpha_mode(Some(AlphaMode::Opaque)),
-        );
-        try_adapt_in_place(&mut buf, PixelDescriptor::RGB8_SRGB).expect("opaque drop allowed");
-        assert_eq!(buf.as_slice().row(0), &[30u8, 20, 10, 60, 50, 40]);
-    }
-
-    #[test]
-    fn in_place_opaque_rgba16_to_rgb16_drops_lane() {
-        // U16 lane drop: element-wise (2-byte) selection.
-        let px16 = |r: u16, g: u16, b: u16| {
-            [r, g, b, 0xFFFF]
-                .iter()
-                .flat_map(|v| v.to_ne_bytes())
-                .collect::<Vec<u8>>()
-        };
-        let bytes: Vec<u8> = [px16(0x1234, 0x5678, 0x9ABC), px16(0x1111, 0x2222, 0x3333)].concat();
-        let mut buf = buf_from(
-            &bytes,
-            2,
-            1,
-            PixelDescriptor::RGBA16_SRGB.with_alpha_mode(Some(AlphaMode::Opaque)),
-        );
-        try_adapt_in_place(&mut buf, PixelDescriptor::RGB16_SRGB).expect("u16 lane drop");
-        let expected: Vec<u8> = [0x1234u16, 0x5678, 0x9ABC, 0x1111, 0x2222, 0x3333]
-            .iter()
-            .flat_map(|v| v.to_ne_bytes())
-            .collect();
-        assert_eq!(buf.as_slice().row(0), &expected[..]);
-        assert_eq!(buf.stride(), 12, "16-px input stride rounds to 12");
-    }
-
-    #[test]
-    fn in_place_opaque_graya_to_gray_matches_allocating_path() {
-        // Differential vs convert_buffer on the same transition.
-        let original = [10u8, 255, 20, 255, 30, 255, 40, 255];
-        let src = PixelDescriptor::new(
-            ChannelType::U8,
-            ChannelLayout::GrayAlpha,
-            Some(AlphaMode::Opaque),
-            zenpixels::TransferFunction::Srgb,
-        );
-        let target = PixelDescriptor::GRAY8_SRGB;
-
-        let mut buf = buf_from(&original, 4, 1, src);
-        try_adapt_in_place(&mut buf, target).expect("graya drop");
-        let in_place_row = buf.as_slice().row(0).to_vec();
-
-        let allocated = convert_buffer(&original, 4, 1, src, target).expect("allocating path");
-        assert_eq!(in_place_row, allocated, "in-place must match allocating");
-    }
-
     #[test]
     fn transfer_agnostic_match_requires_same_primaries() {
         let data = test_rgb8_data();
@@ -1316,7 +1106,7 @@ mod tests {
             .with_depth_policy(DepthPolicy::Round);
 
         let result =
-            adapt_for_encode_explicit_cow(&data, source, 2, 1, 6, &[target], &options).unwrap();
+            adapt_raw_rows_for_encode(&data, source, 2, 1, 6, &[target], &options).unwrap();
 
         assert!(
             matches!(result, PixelCow::Owned(_)),
@@ -1470,5 +1260,197 @@ mod tests {
             "got: {:?}",
             err.error()
         );
+    }
+
+    // ── try_adapt_in_place ─────────────────────────────────────────
+
+    fn buf_from(bytes: &[u8], w: u32, h: u32, desc: PixelDescriptor) -> zenpixels::PixelBuffer {
+        zenpixels::PixelBuffer::from_vec(bytes.to_vec(), w, h, desc).unwrap()
+    }
+
+    #[test]
+    fn in_place_bgra_to_rgba_swaps_bytes_and_updates_buffer() {
+        // Bgra8 stores B,G,R,A. Two pixels.
+        let mut buf = buf_from(
+            &[10u8, 20, 30, 255, 40, 50, 60, 128],
+            2,
+            1,
+            PixelDescriptor::BGRA8_SRGB,
+        );
+        try_adapt_in_place(&mut buf, PixelDescriptor::RGBA8_SRGB)
+            .expect("4bpp B<->R swap is in-place");
+        assert_eq!(buf.descriptor(), PixelDescriptor::RGBA8_SRGB);
+        assert_eq!(buf.as_slice().row(0), &[30u8, 20, 10, 255, 60, 50, 40, 128]);
+    }
+
+    #[test]
+    fn in_place_rgba_to_bgra_roundtrips() {
+        let original = [1u8, 2, 3, 4, 5, 6, 7, 8];
+        let mut buf = buf_from(&original, 2, 1, PixelDescriptor::RGBA8_SRGB);
+        try_adapt_in_place(&mut buf, PixelDescriptor::BGRA8_SRGB).expect("to bgra");
+        assert_eq!(buf.as_slice().row(0), &[3u8, 2, 1, 4, 7, 6, 5, 8]);
+        try_adapt_in_place(&mut buf, PixelDescriptor::RGBA8_SRGB).expect("back to rgba");
+        assert_eq!(buf.as_slice().row(0), &original[..]);
+    }
+
+    #[test]
+    fn in_place_swap_respects_stride_padding() {
+        // SIMD-aligned buffer: 1 px/row at simd_align 16 → stride 16,
+        // 12 padding bytes per row that must be untouched.
+        let mut parts = PixelBuffer::new(4, 2, PixelDescriptor::BGRA8_SRGB).into_parts();
+        parts.width = 1;
+        let mut buf = PixelBuffer::try_from_parts(parts).unwrap();
+        assert_eq!(buf.stride(), 16, "fixture must be strided");
+        {
+            let mut view = buf.as_slice_mut();
+            view.row_mut(0).copy_from_slice(&[10, 20, 30, 255]);
+            view.row_mut(1).copy_from_slice(&[40, 50, 60, 128]);
+            let backing = view.as_strided_bytes_mut();
+            backing[4..16].fill(0xAA);
+            backing[20..32].fill(0xBB);
+        }
+        try_adapt_in_place(&mut buf, PixelDescriptor::RGBA8_SRGB).expect("strided swap");
+        assert_eq!(buf.as_slice().row(0), &[30u8, 20, 10, 255]);
+        assert_eq!(buf.as_slice().row(1), &[60u8, 50, 40, 128]);
+        let view = buf.as_slice();
+        let backing = view.as_strided_bytes();
+        assert!(
+            backing[4..16].iter().all(|&b| b == 0xAA),
+            "row-0 padding must be untouched"
+        );
+        assert!(
+            backing[20..28].iter().all(|&b| b == 0xBB),
+            "row-1 padding must be untouched"
+        );
+    }
+
+    #[test]
+    fn in_place_rejects_semantic_retag_and_preserves_identity() {
+        let original = [1u8, 2, 3, 4, 5, 6];
+        let mut buf = buf_from(&original, 2, 1, PixelDescriptor::RGB8);
+        let target = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
+        try_adapt_in_place(&mut buf, target).expect_err("color changes require conversion");
+        assert_eq!(buf.descriptor(), PixelDescriptor::RGB8);
+        try_adapt_in_place(&mut buf, PixelDescriptor::RGB8).expect("identity");
+        assert_eq!(buf.as_slice().row(0), &original[..]);
+    }
+
+    #[test]
+    fn in_place_rejects_live_alpha_drop_and_depth_changes_unchanged() {
+        // RGBA(Straight) -> RGB would discard live alpha; must leave the
+        // buffer untouched (adapt_for_encode mattes instead).
+        let original = [1u8, 2, 3, 4, 5, 6, 7, 8];
+        let mut buf = buf_from(&original, 2, 1, PixelDescriptor::RGBA8_SRGB);
+        try_adapt_in_place(&mut buf, PixelDescriptor::RGB8_SRGB)
+            .expect_err("straight-alpha drop is not contract-exact");
+        assert_eq!(buf.descriptor(), PixelDescriptor::RGBA8_SRGB);
+        assert_eq!(buf.as_slice().row(0), &original[..]);
+
+        // Bit-depth change likewise.
+        try_adapt_in_place(&mut buf, PixelDescriptor::RGBA16_SRGB)
+            .expect_err("depth change cannot be in-place");
+        assert_eq!(buf.as_slice().row(0), &original[..]);
+    }
+
+    #[test]
+    fn in_place_rgbx_to_rgb_compacts_and_buffer_adopts_geometry() {
+        // RGBX (Undefined padding): the X byte is contract-droppable.
+        // 2 px/row, 2 rows, tight 4bpp stride 8 → out stride rounds down
+        // to 6 (tight for 3bpp) and the buffer's own stride/descriptor
+        // update atomically.
+        let mut buf = buf_from(
+            &[
+                1u8, 2, 3, 0xEE, 4, 5, 6, 0xEE, // row 0
+                7, 8, 9, 0xEE, 10, 11, 12, 0xEE, // row 1
+            ],
+            2,
+            2,
+            PixelDescriptor::RGBX8_SRGB,
+        );
+        try_adapt_in_place(&mut buf, PixelDescriptor::RGB8_SRGB)
+            .expect("padding drop is contract-exact");
+        assert_eq!(buf.descriptor(), PixelDescriptor::RGB8_SRGB);
+        assert_eq!(buf.stride(), 6);
+        assert_eq!(buf.as_slice().row(0), &[1u8, 2, 3, 4, 5, 6]);
+        assert_eq!(buf.as_slice().row(1), &[7u8, 8, 9, 10, 11, 12]);
+    }
+
+    #[test]
+    fn drop_lane_impl_keeps_divisible_stride_rows_in_place() {
+        // Stride 12 (divisible by 3): rows stay at their own bases —
+        // zero cross-row movement, freed bytes become padding. Exercised
+        // at the transform level because the public constructors only
+        // produce pixel-tight or simd-aligned strides.
+        let mut bytes = [
+            1u8, 2, 3, 0xEE, 4, 5, 6, 0xEE, 0xAA, 0xAA, 0xAA, 0xAA, // row 0 + pad
+            7, 8, 9, 0xEE, 10, 11, 12, 0xEE, 0xBB, 0xBB, 0xBB, 0xBB, // row 1 + pad
+        ];
+        let px =
+            zenpixels::InPlacePixels::new(&mut bytes, 2, 2, 12, PixelDescriptor::RGBX8_SRGB, None);
+        let out = drop_lane_impl(px, PixelDescriptor::RGB8_SRGB, &[0, 1, 2], 4, 3, 1);
+        assert_eq!(out.stride(), 12, "divisible stride preserved verbatim");
+        assert_eq!(out.row(0), &[1u8, 2, 3, 4, 5, 6]);
+        assert_eq!(out.row(1), &[7u8, 8, 9, 10, 11, 12]);
+        drop(out);
+        assert_eq!(&bytes[8..12], &[0xAA; 4], "row-0 tail padding untouched");
+        assert_eq!(&bytes[20..24], &[0xBB; 4], "row-1 tail padding untouched");
+    }
+
+    #[test]
+    fn in_place_opaque_bgra_to_rgb_reorders_while_dropping() {
+        // Declared-Opaque BGRA -> RGB: lane drop + B<->R reorder.
+        let mut buf = buf_from(
+            &[10u8, 20, 30, 255, 40, 50, 60, 255],
+            2,
+            1,
+            PixelDescriptor::BGRA8_SRGB.with_alpha_mode(Some(AlphaMode::Opaque)),
+        );
+        try_adapt_in_place(&mut buf, PixelDescriptor::RGB8_SRGB).expect("opaque drop allowed");
+        assert_eq!(buf.as_slice().row(0), &[30u8, 20, 10, 60, 50, 40]);
+    }
+
+    #[test]
+    fn in_place_opaque_rgba16_to_rgb16_drops_lane() {
+        // U16 lane drop: element-wise (2-byte) selection.
+        let px16 = |r: u16, g: u16, b: u16| {
+            [r, g, b, 0xFFFF]
+                .iter()
+                .flat_map(|v| v.to_ne_bytes())
+                .collect::<Vec<u8>>()
+        };
+        let bytes: Vec<u8> = [px16(0x1234, 0x5678, 0x9ABC), px16(0x1111, 0x2222, 0x3333)].concat();
+        let mut buf = buf_from(
+            &bytes,
+            2,
+            1,
+            PixelDescriptor::RGBA16_SRGB.with_alpha_mode(Some(AlphaMode::Opaque)),
+        );
+        try_adapt_in_place(&mut buf, PixelDescriptor::RGB16_SRGB).expect("u16 lane drop");
+        let expected: Vec<u8> = [0x1234u16, 0x5678, 0x9ABC, 0x1111, 0x2222, 0x3333]
+            .iter()
+            .flat_map(|v| v.to_ne_bytes())
+            .collect();
+        assert_eq!(buf.as_slice().row(0), &expected[..]);
+        assert_eq!(buf.stride(), 12, "16-px input stride rounds to 12");
+    }
+
+    #[test]
+    fn in_place_opaque_graya_to_gray_matches_allocating_path() {
+        // Differential vs convert_buffer on the same transition.
+        let original = [10u8, 255, 20, 255, 30, 255, 40, 255];
+        let src = PixelDescriptor::new(
+            ChannelType::U8,
+            ChannelLayout::GrayAlpha,
+            Some(AlphaMode::Opaque),
+            zenpixels::TransferFunction::Srgb,
+        );
+        let target = PixelDescriptor::GRAY8_SRGB;
+
+        let mut buf = buf_from(&original, 4, 1, src);
+        try_adapt_in_place(&mut buf, target).expect("graya drop");
+        let in_place_row = buf.as_slice().row(0).to_vec();
+
+        let allocated = convert_buffer(&original, 4, 1, src, target).expect("allocating path");
+        assert_eq!(in_place_row, allocated, "in-place must match allocating");
     }
 }

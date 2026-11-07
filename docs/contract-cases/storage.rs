@@ -60,11 +60,11 @@ mod tests {
 fn orientation_preserves_color_context() {
     use std::sync::Arc;
     use zenpixels::{Cicp, ColorContext, Orientation, PixelBuffer, PixelDescriptor};
-    use zenpixels_convert::orient::{apply_orientation, apply_orientation_in_place};
+    use zenpixels_convert::{PixelBufferConvertExt, PixelSliceConvertExt};
     let ctx = Arc::new(ColorContext::from_cicp(Cicp::DISPLAY_P3));
-    let mut src = PixelBuffer::new(2, 3, PixelDescriptor::RGB8).with_color_context(ctx);
-    let out = apply_orientation(src.as_slice(), Orientation::Rotate90);
+    let src = PixelBuffer::new(2, 3, PixelDescriptor::RGB8).with_color_context(ctx);
+    let out = src.as_slice().oriented(Orientation::Rotate90).unwrap();
     assert!(Arc::ptr_eq(out.color_context().unwrap(), src.color_context().unwrap()));
-    apply_orientation_in_place(&mut src, Orientation::Rotate90).unwrap();
+    let src = src.into_oriented(Orientation::Rotate90).unwrap();
     assert!(src.color_context().is_some());
 }

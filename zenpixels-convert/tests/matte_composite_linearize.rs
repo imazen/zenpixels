@@ -41,7 +41,10 @@ fn rgb_f16(tf: TransferFunction) -> PixelDescriptor {
 }
 
 fn opts_with_bg(r: u8, g: u8, b: u8) -> ConvertOptions {
-    ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto { r, g, b })
+    ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
+        background: zenpixels::Color::srgb8(r, g, b),
+        reference_white: None,
+    })
 }
 
 /// Reference sRGB EOTF for a single channel (piecewise polynomial per IEC 61966-2-1).

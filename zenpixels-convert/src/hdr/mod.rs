@@ -44,12 +44,21 @@ pub mod measure;
 /// Linear-light HDR → linear-light SDR curve. Gated behind
 /// `hdr-experimental` while the cross-crate API surface settles.
 #[cfg(feature = "hdr-experimental")]
+#[cfg(feature = "bt2446a")]
 mod bt2446a;
 
 /// Soft chroma compression in OKLch with a precomputed gamut boundary LUT.
 /// Gated behind `hdr-experimental`.
-#[cfg(feature = "hdr-experimental")]
+#[cfg_attr(not(feature = "hdr-experimental"), allow(dead_code))]
 mod gamut_compress;
+
+/// Pluggable two-phase HDR→SDR tone-mapper trait — the permanent DI
+/// surface for injecting custom curves into [`crate::ConvertPlan`].
+///
+/// Gated behind `hdr-experimental` together with the rest of the HDR
+/// surface.
+#[cfg(feature = "hdr-experimental")]
+mod tone_mapper;
 
 /// Re-exports of the experimental [`measure`] surface at the [`hdr`](self)
 /// boundary, so callers can write
@@ -65,9 +74,16 @@ pub use measure::{CllMeasure, LightLevelHistogram, LightLevelMethod};
 // underlying `Bt2446A` and `SoftCompress` primitives stay public for advanced
 // callers that want to drive the math directly.
 #[cfg(feature = "hdr-experimental")]
+#[cfg(feature = "bt2446a")]
 pub use bt2446a::Bt2446A;
 #[cfg(feature = "hdr-experimental")]
-pub use gamut_compress::{GamutBoundaryLut, SoftCompress};
+pub use gamut_compress::SoftCompress;
+#[cfg(not(feature = "hdr-experimental"))]
+pub(crate) use gamut_compress::SoftCompress;
+// Two-phase tone-mapping surface: the pluggable curve trait and the strip executor
+// that `ToneMapper::prepare` produces.
+#[cfg(feature = "hdr-experimental")]
+pub use tone_mapper::{PreparedMapper, Requirements, StripMapper, ToneMapContext, ToneMapper};
 
 use crate::adapt::{convert_buffer_with_anchor, convert_into_with_anchor};
 use crate::error::ConvertError;
@@ -166,7 +182,7 @@ fn quantize_setup(
 ///   scene-referred anchor differs and is not handled here).
 /// - [`ConvertError::InvalidWidth`] for zero-area input, or any error the
 ///   inner anchored conversion raises.
-pub fn quantize_to(
+pub(crate) fn quantize_to(
     px: PixelSlice<'_>,
     target: PixelDescriptor,
 ) -> Result<PixelBuffer, At<ConvertError>> {

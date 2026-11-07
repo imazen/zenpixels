@@ -10,6 +10,8 @@ categories.workspace = true
 description = "Transfer-function-aware pixel conversion, gamut mapping, and codec format negotiation for zenpixels"
 keywords = ["image", "pixel", "conversion", "srgb", "codec"]
 include = [
+    "/LICENSE-MIT",
+    "/LICENSE-APACHE",
     "/src/**",
     "/benches/*.rs",
     "/README.crates.md",
@@ -22,7 +24,7 @@ include = [
 [package.metadata.docs.rs]
 features = [
     "hdr-experimental",
-    "pipeline",
+    "bt2446a",
     "cms-moxcms",
     "rgb",
     "imgref",
@@ -49,7 +51,9 @@ std = ["zenpixels/std", "linear-srgb/std", "garb/std"]
 # memory-bound by 12MP). Output is bit-identical. Default-on is queued for 0.3.0;
 # see benchmarks/orient_fast_transpose_2026-06-18.md + orient/{pxn_x86,pxn_neon,rgb3_x86}.rs.
 fast-transpose = []
-# Unlocks the f16 16-wide AVX-512F summon-up inside the V3 `F16Convert` slice
+# Adds a v4x tier to the row kernels that measured at least 1.2x faster than v3 on Zen 4
+# (benchmarks/row_kernel_tiers_2026-11-04.md), which default builds leave out for size. Also
+# unlocks the f16 16-wide AVX-512F summon-up inside the V3 `F16Convert` slice
 # entry (magetypes' `avx512` kernels are cfg-gated on this; it transitively
 # brings `archmage/avx512` for the V4 token tier). The f16 forwarders in
 # f16_scalar.rs carry `v4(cfg(avx512))` to pick up the wider path; every other
@@ -57,11 +61,13 @@ fast-transpose = []
 # kernels are hardwired 8-wide AVX2 — no clean 16-wide variant, so no `_v4` is
 # defined for them). x86 without this feature still gets 8-wide F16C; aarch64
 # gets NEON-fp16 regardless.
-avx512 = ["magetypes/avx512", "archmage/avx512"]
+avx512 = ["magetypes/avx512", "archmage/avx512", "linear-srgb/avx512"]
+# The same bits as native tiers on strict WASM and engines that round relaxed madd twice, using
+# software FMA: up to about 18x slower there. No effect on native targets, which always match.
+precise-portable = ["linear-srgb/precise-portable"]
 rgb = ["zenpixels/rgb", "dep:rgb"]
 imgref = ["zenpixels/imgref", "rgb"]
 planar = ["zenpixels/planar"]
-pipeline = []
 # Compatibility feature name only. Estimation is removed.
 estimation-experimental = []
 # Experimental HDR analysis surface (gates `hdr::measure` — the `CllMeasure`
@@ -74,6 +80,9 @@ estimation-experimental = []
 # `features = ["hdr-experimental"]` to access measurement until the API
 # locks at 0.3.0.
 hdr-experimental = []
+# The BT.2446 Method A curve, 63,696 B of the HDR surface's 88,616 B at opt-level 3. Without it, tone mapping
+# takes an injected `ToneMapper`, and planning without one returns `NoPath`.
+bt2446a = ["hdr-experimental"]
 cms-moxcms = ["std", "dep:moxcms"]
 # Soft-removed in 0.2.15. The `serde` feature previously forwarded to
 # `zenpixels/serde` and added a `Serialize`/`Deserialize` derive on
@@ -111,12 +120,11 @@ linear-srgb = { version = "0.6.12", default-features = false, features = ["trans
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
 garb = { version = "0.2.8", default-features = false, features = ["experimental"] }
-# Plain caret requirements for archmage/magetypes: `0.9.30` means
-# >=0.9.30, <0.10.0, and matches no prerelease. Cargo resolves one 0.9.x per
-# graph, so an extra cap inside 0.9 (such as `<=0.9.31-beta.1`) would refuse
-# every crate that needs a later 0.9 release. Neither crate appears in this
-# crate's public API.
-archmage = { version = "0.9.30", default-features = false }
+# `#[attune]` needs this beta. The floor admits the stable 0.9.31 once it exists; cargo
+# resolves one 0.9.x per graph, so a graph needs garb and linear-srgb versions that admit
+# the beta too (patched at the workspace root until they are released). Neither crate
+# appears in this crate's public API.
+archmage = { version = ">=0.9.31-beta.2, <0.10.0", default-features = false }
 # Direct libm dep for the hdr-experimental Bt2446A / HdrToSdr scalar paths
 # (powf, logf, log2f, cosf, sinf). The crate is no_std and already pulled in
 # transitively by magetypes; we depend on it directly so the math calls don't
@@ -129,8 +137,8 @@ libm = { version = "0.2", default-features = false }
 # Deliberately no `w512`: the `scan` predicates use 256-bit types (native
 # on AVX2, 2×128 polyfill below), and the 512-bit type set isn't worth its
 # compile-time cost without a stronger AVX-512 use case in this crate.
-magetypes = { version = "0.9.30", default-features = false }
-paste = "1.0.15"
+magetypes = { version = ">=0.9.31-beta.2, <0.10.0", default-features = false }
+paste = { package = "pastey", version = "0.2.3" }
 once_cell = { version = "1.21.4", default-features = false, features = ["race", "alloc"] }
 # Pure-Rust LZ4 safe-decode for the bundled CICP->ICC profile blob. no_std
 # (block format only); decodes the standard LZ4 blocks emitted by the icc-gen
@@ -155,12 +163,12 @@ zenpixels = { workspace = true, features = ["planar", "imgref"] }
 # (verified: it appears in `cargo test --lib -- --list` under default
 # features, imazen/zenpixels#40). Dropping `cms-moxcms` here would silently
 # remove those gates from CI.
-zenpixels-convert = { path = ".", features = ["pipeline", "imgref", "cms-moxcms"] }
+zenpixels-convert = { path = ".", features = ["imgref", "cms-moxcms"] }
 zenbench = { version = "0.1.11" }
 # DEV-only: lets benches/kernel_tiers.rs disable the baseline SIMD token (NEON
 # on aarch64) so the "scalar" arm is real. Feature unification applies this to
 # test/bench builds only, so consumers are unaffected.
-archmage = { version = "0.9.30", features = ["testable_dispatch"] }
+archmage = { version = ">=0.9.31-beta.2, <0.10.0", features = ["testable_dispatch"] }
 # Dev-only: cross-validate our local f16 impl (src/f16_scalar.rs) and drive
 # the perceptual-loss test suite, which uses half's f64 conversion paths.
 half = "2.7.1"
@@ -179,11 +187,17 @@ allocation-counter = "0.8.1"
 [[test]]
 name = "hdr_sdr_alloc"
 path = "tests/hdr_sdr_alloc.rs"
-required-features = ["hdr-experimental"]
+required-features = ["bt2446a"]
 
 [[bench]]
 name = "bench_cms"
 path = "benches/bench_cms.rs"
+harness = false
+required-features = ["cms-moxcms"]
+
+[[bench]]
+name = "bench_cmyk8"
+path = "benches/bench_cmyk8.rs"
 harness = false
 required-features = ["cms-moxcms"]
 
@@ -302,7 +316,11 @@ required-features = ["__bench_orient"]
 [[example]]
 name = "measure_histogram_throughput"
 path = "examples/measure_histogram_throughput.rs"
-required-features = ["hdr-experimental"]
+required-features = ["bt2446a"]
+
+[[bench]]
+name = "row_kernel_tiers"
+harness = false
 
 [[bench]]
 name = "kernel_tiers"

@@ -22,9 +22,9 @@
 //!
 //! # Allocation policy
 //!
-//! All default [`PixelBuffer`] constructors (`new`, `new_simd_aligned`,
+//! All default [`PixelBuffer`] constructors (`new`,
 //! `new_typed`, `from_imgvec`) **panic on allocation failure**. This is a
-//! deliberate default: the infallible path lowers to a single `calloc` and
+//! deliberate default: the infallible path has no error to handle, and
 //! keeps hot construction sites branch-free, which matters for codecs that
 //! allocate one buffer per frame or strip.
 //!
@@ -34,7 +34,6 @@
 //! | Panicking                         | Fallible sibling                       |
 //! |-----------------------------------|----------------------------------------|
 //! | [`PixelBuffer::new`]              | [`PixelBuffer::try_new`]               |
-//! | [`PixelBuffer::new_simd_aligned`] | [`PixelBuffer::try_new_simd_aligned`]  |
 //! | `PixelBuffer::<P>::new_typed`     | `PixelBuffer::<P>::try_new_typed`      |
 //!
 //! The fallible siblings return
@@ -67,6 +66,8 @@ extern crate alloc;
 whereat::define_at_crate_info!(path = "zenpixels/");
 
 pub mod descriptor;
+#[cfg(feature = "image")]
+mod image_interop;
 pub mod orientation;
 pub mod plane;
 pub mod policy;
@@ -95,21 +96,25 @@ pub use descriptor::{
 // Re-export buffer types at crate root.
 #[doc(inline)]
 pub use buffer::{
-    Bgrx, BufferError, FromPartsError, InPlacePixels, Pixel, PixelBuffer, PixelBufferParts,
-    PixelCow, PixelSlice, PixelSliceMut, Rgbx,
+    Bgrx, BufferError, ByteStorage, ByteStorageMut, FromPartsError, InPlacePixels, Pixel,
+    PixelBuffer, PixelBufferParts, PixelCow, PixelSlice, PixelSliceMut, PixelStorage, Rgbx,
+    StorageSample,
 };
 
 // Re-export color types at crate root.
 pub use cicp::Cicp;
 #[doc(inline)]
 pub use color::{
-    ColorAuthority, ColorContext, ColorOrigin, ColorProfileSource, ColorProvenance, NamedProfile,
+    AnyColor, Color, ColorAuthority, ColorContext, ColorOrigin, ColorProfileSource,
+    ColorProvenance, NamedProfile,
 };
 
 // Re-export GrayAlpha pixel types at crate root.
 pub use pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};
 
-pub use policy::{AlphaPolicy, ConvertOptions, DepthPolicy, GrayExpand, LumaCoefficients};
+pub use policy::{
+    AlphaPolicy, ConvertOptions, DepthPolicy, GamutMapping, GrayExpand, LumaCoefficients,
+};
 
 // Re-export whereat types for error tracing.
 pub use whereat::{At, ResultAtExt, at};

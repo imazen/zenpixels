@@ -2127,10 +2127,11 @@ pub(crate) fn fused_u16(
     channels: usize,
     scan_alpha: bool,
     scan_chroma: bool,
+    padding: bool,
     known: [bool; 3],
 ) -> [bool; 3] {
     incant!(
-        fused_u16_impl(samples, channels, scan_alpha, scan_chroma, known),
+        fused_u16_impl(samples, channels, scan_alpha, scan_chroma, padding, known),
         [v3, neon, wasm128, scalar]
     )
 }
@@ -2142,10 +2143,24 @@ fn fused_u16_impl(
     channels: usize,
     scan_alpha: bool,
     scan_chroma: bool,
+    padding: bool,
     known: [bool; 3],
 ) -> [bool; 3] {
     let mut known = known;
     let phases = [0usize, 16 % channels, 32 % channels];
+    // Padding holds no image data, so its bits say nothing about the image's precision.
+    let precision_masks = phases.map(|phase| {
+        u16x16::from_array_t(
+            token,
+            core::array::from_fn(|i| {
+                if padding && (i + phase) % channels == channels - 1 {
+                    0
+                } else {
+                    u16::MAX
+                }
+            }),
+        )
+    });
     let alpha_masks = phases.map(|phase| {
         u16x16::from_array_t(
             token,
@@ -2191,7 +2206,7 @@ fn fused_u16_impl(
                 chroma_bad |= v.simd_ne(shifted) & chroma_masks[n];
             }
             if !known[2] {
-                precision_bad |= v.shr_logical_const::<8>().simd_ne(v & low);
+                precision_bad |= v.shr_logical_const::<8>().simd_ne(v & low) & precision_masks[n];
             }
         }
         known[0] |= alpha_bad.any_true();
@@ -2209,7 +2224,8 @@ fn fused_u16_impl(
         if scan_chroma {
             known[1] |= pixel[0] != pixel[1] || pixel[1] != pixel[2];
         }
-        known[2] |= pixel.iter().any(|&v| v >> 8 != v & 255);
+        let data = if padding { channels - 1 } else { channels };
+        known[2] |= pixel[..data].iter().any(|&v| v >> 8 != v & 255);
     }
     known
 }
@@ -2244,7 +2260,7 @@ mod fused_u16_contracts {
                         values.iter().any(|&v| v >> 8 != v & 255),
                     ];
                     assert_eq!(
-                        super::fused_u16(&values, channels, alpha, chroma, [false; 3]),
+                        super::fused_u16(&values, channels, alpha, chroma, false, [false; 3]),
                         expected,
                         "channels={channels}, pixels={pixels}, defect={defect}"
                     );
@@ -2270,6 +2286,7 @@ mod fused_u16_contracts {
                     4,
                     true,
                     true,
+                    false,
                     [false; 3],
                 ));
             }

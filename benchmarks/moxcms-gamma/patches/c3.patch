@@ -1,0 +1,41 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,8 +1,7 @@
+-workspace = { members = ["app", "fuzz"] }
+ 
+ [package]
+ name = "moxcms"
+-version = "0.9.1"
++version = "0.9.1-c3"
+ edition = "2024"
+ description = "Simple Color Management in Rust"
+ readme = "./README.md"
+--- a/src/trc.rs
++++ b/src/trc.rs
+@@ -1484,17 +1484,22 @@
+     }
+ }
+ 
++#[inline(always)]
++fn pure_gamma(x: f32, gamma: f32) -> f32 {
++    f32::from_bits(dirty_powf(x.abs(), gamma).to_bits() | (x.to_bits() & 0x8000_0000))
++}
++
+ impl ToneCurveEvaluator for ToneCurveEvaluatorPureGamma {
+     fn evaluate_tristimulus(&self, rgb: Rgb<f32>) -> Rgb<f32> {
+         Rgb::new(
+-            dirty_powf(rgb.r, self.gamma),
+-            dirty_powf(rgb.g, self.gamma),
+-            dirty_powf(rgb.b, self.gamma),
++            pure_gamma(rgb.r, self.gamma),
++            pure_gamma(rgb.g, self.gamma),
++            pure_gamma(rgb.b, self.gamma),
+         )
+     }
+ 
+     fn evaluate_value(&self, value: f32) -> f32 {
+-        dirty_powf(value, self.gamma)
++        pure_gamma(value, self.gamma)
+     }
+ }
+ 

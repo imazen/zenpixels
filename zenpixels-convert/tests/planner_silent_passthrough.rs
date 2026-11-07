@@ -242,10 +242,10 @@ fn u8_same_depth_pq_to_srgb_diverges_wildly() {
     // Without the feature, HDR→SDR still refuses; it cannot silently skip mapping.
     let src_d = rgb(ChannelType::U8, TransferFunction::Pq);
     let dst_d = rgb(ChannelType::U8, TransferFunction::Srgb);
-    #[cfg(feature = "hdr-experimental")]
+    #[cfg(feature = "bt2446a")]
     {
         use zenpixels_convert::{ConvertError, ConvertPlan};
-        let err = RowConverter::new(src_d, dst_d).err().expect("must refuse");
+        let err = RowConverter::new(src_d, dst_d).expect_err("must refuse");
         assert!(matches!(
             *err.error(),
             ConvertError::HdrSourceRequiresPeak { .. }
@@ -269,11 +269,10 @@ fn u8_same_depth_pq_to_srgb_diverges_wildly() {
                 .all(|p| p[0] <= p[1])
         );
     }
-    #[cfg(not(feature = "hdr-experimental"))]
+    #[cfg(not(feature = "bt2446a"))]
     assert!(matches!(
         *RowConverter::new(src_d, dst_d)
-            .err()
-            .expect("HDR mapping requires a supplied peak even without the feature")
+            .expect_err("HDR mapping requires a supplied peak even without the feature")
             .error(),
         zenpixels_convert::ConvertError::HdrSourceRequiresPeak { .. }
     ));
@@ -542,10 +541,10 @@ fn u16_pq_to_u8_srgb_fused_path() {
     // pinned the fused-kernel output of that chain.
     let src_d = rgb(ChannelType::U16, TransferFunction::Pq);
     let dst_d = rgb(ChannelType::U8, TransferFunction::Srgb);
-    #[cfg(feature = "hdr-experimental")]
+    #[cfg(feature = "bt2446a")]
     {
         use zenpixels_convert::{ConvertError, ConvertPlan};
-        let err = RowConverter::new(src_d, dst_d).err().expect("must refuse");
+        let err = RowConverter::new(src_d, dst_d).expect_err("must refuse");
         assert!(matches!(
             *err.error(),
             ConvertError::HdrSourceRequiresPeak { .. }
@@ -561,11 +560,10 @@ fn u16_pq_to_u8_srgb_fused_path() {
             dst[0]
         );
     }
-    #[cfg(not(feature = "hdr-experimental"))]
+    #[cfg(not(feature = "bt2446a"))]
     assert!(matches!(
         *RowConverter::new(src_d, dst_d)
-            .err()
-            .expect("HDR mapping requires a supplied peak even without the feature")
+            .expect_err("HDR mapping requires a supplied peak even without the feature")
             .error(),
         zenpixels_convert::ConvertError::HdrSourceRequiresPeak { .. }
     ));

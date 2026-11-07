@@ -1,15 +1,26 @@
-#![allow(deprecated)]
-//! Tests for `finalize_for_output` — the atomic output preparation path.
+//! Tests for `EncodeReady::finalize` — the atomic output preparation path.
 //!
 //! This is a critical function with zero prior test coverage.
 
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use zenpixels_convert::cms::{ColorManagement, RowTransform};
+use zenpixels_convert::ColorProfileSource;
+use zenpixels_convert::cms::{CmsPluginError, PluggableCms, RowTransformMut};
+use zenpixels_convert::output::EncodeReady;
+use zenpixels_convert::policy::ConvertOptions;
+
+whereat::define_at_crate_info!();
+
+type Built = Option<Result<Box<dyn RowTransformMut>, whereat::At<CmsPluginError>>>;
+
+/// Only ICC reaches these mocks: anything else is the built-in path's.
+fn involves_icc(src: &ColorProfileSource<'_>, dst: &ColorProfileSource<'_>) -> bool {
+    matches!(src, ColorProfileSource::Icc(_)) || matches!(dst, ColorProfileSource::Icc(_))
+}
 use zenpixels_convert::{
     Cicp, ColorAuthority, ColorOrigin, PixelBuffer, PixelDescriptor, PixelFormat,
-    finalize_for_output, output::OutputProfile,
+    output::OutputProfile,
 };
 
 extern crate alloc;
@@ -21,19 +32,20 @@ extern crate alloc;
 /// A no-op CMS that always fails `build_transform`.
 struct NoopCms;
 
-impl ColorManagement for NoopCms {
-    type Error = &'static str;
-
-    fn build_transform(
+impl PluggableCms for NoopCms {
+    fn build_source_transform(
         &self,
-        _src_icc: &[u8],
-        _dst_icc: &[u8],
-    ) -> Result<Box<dyn RowTransform>, Self::Error> {
-        Err("no-op CMS: ICC transforms not supported")
-    }
-
-    fn identify_profile(&self, _icc: &[u8]) -> Option<Cicp> {
-        None
+        src: ColorProfileSource<'_>,
+        dst: ColorProfileSource<'_>,
+        _src_format: PixelFormat,
+        _dst_format: PixelFormat,
+        _options: &ConvertOptions,
+    ) -> Built {
+        involves_icc(&src, &dst).then(|| {
+            Err(whereat::at!(CmsPluginError::msg(
+                "no-op CMS: ICC transforms not supported"
+            )))
+        })
     }
 }
 
@@ -42,26 +54,24 @@ struct IdentityCms;
 
 struct IdentityTransform;
 
-impl RowTransform for IdentityTransform {
-    fn transform_row(&self, src: &[u8], dst: &mut [u8], _width: u32) {
+impl RowTransformMut for IdentityTransform {
+    fn transform_row(&mut self, src: &[u8], dst: &mut [u8], _width: u32) {
         let len = src.len().min(dst.len());
         dst[..len].copy_from_slice(&src[..len]);
     }
 }
 
-impl ColorManagement for IdentityCms {
-    type Error = &'static str;
-
-    fn build_transform(
+impl PluggableCms for IdentityCms {
+    fn build_source_transform(
         &self,
-        _src_icc: &[u8],
-        _dst_icc: &[u8],
-    ) -> Result<Box<dyn RowTransform>, Self::Error> {
-        Ok(Box::new(IdentityTransform))
-    }
-
-    fn identify_profile(&self, _icc: &[u8]) -> Option<Cicp> {
-        None
+        src: ColorProfileSource<'_>,
+        dst: ColorProfileSource<'_>,
+        _src_format: PixelFormat,
+        _dst_format: PixelFormat,
+        _options: &ConvertOptions,
+    ) -> Built {
+        involves_icc(&src, &dst)
+            .then(|| Ok(Box::new(IdentityTransform) as Box<dyn RowTransformMut>))
     }
 }
 
@@ -89,31 +99,20 @@ impl TrackingCms {
     }
 }
 
-impl ColorManagement for TrackingCms {
-    type Error = &'static str;
-
-    fn build_transform(
+impl PluggableCms for TrackingCms {
+    fn build_source_transform(
         &self,
-        _src_icc: &[u8],
-        _dst_icc: &[u8],
-    ) -> Result<Box<dyn RowTransform>, Self::Error> {
-        self.icc_calls.fetch_add(1, Ordering::Relaxed);
-        Ok(Box::new(IdentityTransform))
-    }
-
-    fn build_transform_for_format(
-        &self,
-        _src_icc: &[u8],
-        _dst_icc: &[u8],
+        src: ColorProfileSource<'_>,
+        dst: ColorProfileSource<'_>,
         _src_format: PixelFormat,
         _dst_format: PixelFormat,
-    ) -> Result<Box<dyn RowTransform>, Self::Error> {
+        _options: &ConvertOptions,
+    ) -> Built {
+        if !involves_icc(&src, &dst) {
+            return None;
+        }
         self.icc_calls.fetch_add(1, Ordering::Relaxed);
-        Ok(Box::new(IdentityTransform))
-    }
-
-    fn identify_profile(&self, _icc: &[u8]) -> Option<Cicp> {
-        None
+        Some(Ok(Box::new(IdentityTransform)))
     }
 }
 
@@ -146,12 +145,12 @@ fn same_as_origin_identity_preserves_pixels() {
     let buf = make_rgb8_buffer(2, 2, [100, 150, 200]);
     let origin = ColorOrigin::assumed();
 
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::SameAsOrigin,
         PixelFormat::Rgb8,
-        &NoopCms,
+        Some(&NoopCms),
     )
     .unwrap();
 
@@ -166,12 +165,12 @@ fn same_as_origin_metadata_has_no_icc_no_cicp_for_assumed() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::assumed();
 
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::SameAsOrigin,
         PixelFormat::Rgb8,
-        &NoopCms,
+        Some(&NoopCms),
     )
     .unwrap();
 
@@ -185,12 +184,12 @@ fn same_as_origin_preserves_cicp_from_origin() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::from_cicp(Cicp::SRGB);
 
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::SameAsOrigin,
         PixelFormat::Rgb8,
-        &NoopCms,
+        Some(&NoopCms),
     )
     .unwrap();
 
@@ -204,12 +203,12 @@ fn same_as_origin_with_format_change_converts() {
     let buf = make_rgb8_buffer(2, 1, [100, 150, 200]);
     let origin = ColorOrigin::assumed();
 
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::SameAsOrigin,
         PixelFormat::Rgba8,
-        &NoopCms,
+        Some(&NoopCms),
     )
     .unwrap();
 
@@ -231,12 +230,12 @@ fn named_srgb_produces_cicp_metadata() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::assumed();
 
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Named(Cicp::SRGB),
         PixelFormat::Rgb8,
-        &NoopCms,
+        Some(&NoopCms),
     )
     .unwrap();
 
@@ -251,12 +250,12 @@ fn named_profile_converts_format() {
     let buf = make_rgba8_buffer(2, 1, [100, 150, 200, 255]);
     let origin = ColorOrigin::assumed();
 
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Named(Cicp::SRGB),
         PixelFormat::Rgb8,
-        &NoopCms,
+        Some(&NoopCms),
     )
     .unwrap();
 
@@ -276,12 +275,12 @@ fn icc_profile_output_embeds_icc_bytes() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::assumed();
 
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Icc(fake_icc.clone()),
         PixelFormat::Rgb8,
-        &NoopCms,
+        Some(&IdentityCms),
     )
     .unwrap();
 
@@ -303,12 +302,12 @@ fn icc_with_source_icc_uses_cms() {
     let origin = ColorOrigin::from_icc(src_icc.to_vec());
 
     // IdentityCms copies src→dst, so pixels should be preserved.
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Icc(dst_icc),
         PixelFormat::Rgb8,
-        &IdentityCms,
+        Some(&IdentityCms),
     )
     .unwrap();
 
@@ -318,18 +317,17 @@ fn icc_with_source_icc_uses_cms() {
 }
 
 #[test]
-fn icc_without_source_icc_falls_through_to_row_converter() {
-    // Source has no ICC profile, so CMS is not invoked. Falls through to RowConverter path.
+fn icc_target_without_source_icc_asks_the_cms() {
     let dst_icc: Arc<[u8]> = Arc::from(vec![2u8; 32].into_boxed_slice());
     let buf = make_rgb8_buffer(2, 1, [100, 150, 200]);
     let origin = ColorOrigin::assumed();
 
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Icc(dst_icc),
         PixelFormat::Rgb8,
-        &NoopCms,
+        Some(&IdentityCms),
     )
     .unwrap();
 
@@ -347,12 +345,12 @@ fn encode_ready_into_parts_works() {
     let buf = make_rgb8_buffer(2, 2, [50, 100, 150]);
     let origin = ColorOrigin::assumed();
 
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::SameAsOrigin,
         PixelFormat::Rgb8,
-        &NoopCms,
+        Some(&NoopCms),
     )
     .unwrap();
 
@@ -372,12 +370,12 @@ fn multi_row_conversion_is_correct() {
     let buf = make_rgb8_buffer(3, 2, [10, 20, 30]);
     let origin = ColorOrigin::assumed();
 
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::SameAsOrigin,
         PixelFormat::Rgba8,
-        &NoopCms,
+        Some(&NoopCms),
     )
     .unwrap();
 
@@ -398,6 +396,19 @@ fn multi_row_conversion_is_correct() {
 // ColorAuthority decision table tests (12 rows)
 // ---------------------------------------------------------------------------
 
+/// A buffer decoded under the origin's ICC, as `SameAsOrigin` expects: only the profile says what its
+/// samples mean, so converting to that profile is an identity.
+fn in_origin_color() -> PixelBuffer {
+    let unknown = PixelDescriptor::RGB8
+        .with_transfer(zenpixels_convert::TransferFunction::Unknown)
+        .with_primaries(zenpixels_convert::ColorPrimaries::Unknown);
+    PixelBuffer::from_vec(vec![128, 128, 128], 1, 1, unknown)
+        .unwrap()
+        .with_color_context(Arc::new(zenpixels_convert::ColorContext::from_icc(
+            fake_icc().to_vec(),
+        )))
+}
+
 fn fake_icc() -> Arc<[u8]> {
     Arc::from(vec![0xFFu8; 32].into_boxed_slice())
 }
@@ -416,12 +427,12 @@ fn authority_row01_icc_none_none_same() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::assumed();
     let cms = TrackingCms::new();
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::SameAsOrigin,
         PixelFormat::Rgb8,
-        &cms,
+        Some(&cms),
     )
     .unwrap();
     assert_eq!(cms.total_calls(), 0);
@@ -432,15 +443,15 @@ fn authority_row01_icc_none_none_same() {
 /// Row 2: Icc authority, no cicp, sRGB icc, SameAsOrigin → no transform
 #[test]
 fn authority_row02_icc_none_srgb_same() {
-    let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
+    let buf = in_origin_color();
     let origin = ColorOrigin::from_icc(fake_icc().to_vec());
     let cms = TrackingCms::new();
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::SameAsOrigin,
         PixelFormat::Rgb8,
-        &cms,
+        Some(&cms),
     )
     .unwrap();
     assert_eq!(cms.total_calls(), 0, "SameAsOrigin should not invoke CMS");
@@ -453,56 +464,58 @@ fn authority_row03_icc_none_p3icc_to_srgb() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::from_icc(fake_icc().to_vec());
     let cms = TrackingCms::new();
-    let _ready = finalize_for_output(
+    let _ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Icc(fake_icc()),
         PixelFormat::Rgb8,
-        &cms,
+        Some(&cms),
     )
     .unwrap();
     assert_eq!(cms.icc_calls(), 1, "should use ICC transform");
     assert_eq!(cms.cicp_calls(), 0, "should not use CICP");
 }
 
-/// Row 4: Icc authority, P3 cicp, no icc, Icc(srgb) → no ICC bytes, no CMS call
+/// Row 4: Icc authority, P3 cicp, no icc, Icc(srgb): the CMS is asked.
 #[test]
 fn authority_row04_icc_p3cicp_noicc_fallback() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
-    // Icc authority but no ICC, only CICP — no ICC bytes available for CMS.
-    // build_cms_transform requires ICC bytes on both sides; CICP-only sources
-    // fall through to the RowConverter path (no CMS call).
     let origin = ColorOrigin::from_cicp(p3_cicp()).with_color_authority(ColorAuthority::Icc);
     let cms = TrackingCms::new();
-    let _ready = finalize_for_output(
+    let _ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Icc(fake_icc()),
         PixelFormat::Rgb8,
-        &cms,
+        Some(&cms),
     )
     .unwrap();
-    assert_eq!(cms.total_calls(), 0, "no ICC bytes on source → no CMS call");
+    assert_eq!(
+        cms.icc_calls(),
+        1,
+        "a target ICC needs a transform, so the CMS is asked"
+    );
 }
 
 /// Row 5: Icc authority, sRGB cicp, sRGB icc, SameAsOrigin → no transform
 #[test]
 fn authority_row05_icc_srgb_srgb_same() {
-    let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
+    let buf = in_origin_color();
     let origin = ColorOrigin::from_icc_and_cicp(fake_icc().to_vec(), srgb_cicp())
         .with_color_authority(ColorAuthority::Icc);
     let cms = TrackingCms::new();
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::SameAsOrigin,
         PixelFormat::Rgb8,
-        &cms,
+        Some(&cms),
     )
     .unwrap();
     assert_eq!(cms.total_calls(), 0, "SameAsOrigin should not invoke CMS");
     assert!(ready.metadata().icc.is_some());
-    assert_eq!(ready.metadata().cicp, Some(srgb_cicp()));
+    // Only the authority is signaled: a second signal could contradict it.
+    assert_eq!(ready.metadata().cicp, None);
 }
 
 /// Row 6: Icc authority, P3 cicp, P3 icc, Icc(srgb) → CMS from ICC (ignore CICP)
@@ -512,12 +525,12 @@ fn authority_row06_icc_p3cicp_p3icc_to_srgb() {
     let origin = ColorOrigin::from_icc_and_cicp(fake_icc().to_vec(), p3_cicp())
         .with_color_authority(ColorAuthority::Icc);
     let cms = TrackingCms::new();
-    let _ready = finalize_for_output(
+    let _ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Icc(fake_icc()),
         PixelFormat::Rgb8,
-        &cms,
+        Some(&cms),
     )
     .unwrap();
     assert_eq!(cms.icc_calls(), 1, "should use ICC (authoritative)");
@@ -530,12 +543,12 @@ fn authority_row07_cicp_none_none_same() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::assumed().with_color_authority(ColorAuthority::Cicp);
     let cms = TrackingCms::new();
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::SameAsOrigin,
         PixelFormat::Rgb8,
-        &cms,
+        Some(&cms),
     )
     .unwrap();
     assert_eq!(cms.total_calls(), 0);
@@ -549,34 +562,37 @@ fn authority_row08_cicp_srgb_anyicc_same() {
     let origin = ColorOrigin::from_icc_and_cicp(fake_icc().to_vec(), srgb_cicp())
         .with_color_authority(ColorAuthority::Cicp);
     let cms = TrackingCms::new();
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::SameAsOrigin,
         PixelFormat::Rgb8,
-        &cms,
+        Some(&cms),
     )
     .unwrap();
     assert_eq!(cms.total_calls(), 0, "SameAsOrigin should not invoke CMS");
     assert_eq!(ready.metadata().cicp, Some(srgb_cicp()));
 }
 
-/// Row 9: Cicp authority, P3 cicp, no icc, Icc(srgb) → no ICC bytes, no CMS call
+/// Row 9: Cicp authority, P3 cicp, no icc, Icc(srgb): the CMS is asked.
 #[test]
 fn authority_row09_cicp_p3_noicc_to_srgb() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
-    // CICP authority but no ICC bytes — CMS requires ICC bytes, so no transform.
     let origin = ColorOrigin::from_cicp(p3_cicp());
     let cms = TrackingCms::new();
-    let _ready = finalize_for_output(
+    let _ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Icc(fake_icc()),
         PixelFormat::Rgb8,
-        &cms,
+        Some(&cms),
     )
     .unwrap();
-    assert_eq!(cms.total_calls(), 0, "no ICC bytes on source → no CMS call");
+    assert_eq!(
+        cms.icc_calls(),
+        1,
+        "a target ICC needs a transform, so the CMS is asked"
+    );
 }
 
 /// Row 10: Cicp authority, P3 cicp, P3 icc, Icc(srgb) → CMS uses ICC bytes
@@ -586,12 +602,12 @@ fn authority_row10_cicp_p3_p3icc_to_srgb() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::from_icc_and_cicp(fake_icc().to_vec(), p3_cicp());
     let cms = TrackingCms::new();
-    let _ready = finalize_for_output(
+    let _ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Icc(fake_icc()),
         PixelFormat::Rgb8,
-        &cms,
+        Some(&cms),
     )
     .unwrap();
     assert_eq!(
@@ -608,12 +624,12 @@ fn authority_row11_cicp_nocicp_p3icc_fallback() {
     let origin =
         ColorOrigin::from_icc(fake_icc().to_vec()).with_color_authority(ColorAuthority::Cicp);
     let cms = TrackingCms::new();
-    let _ready = finalize_for_output(
+    let _ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Icc(fake_icc()),
         PixelFormat::Rgb8,
-        &cms,
+        Some(&cms),
     )
     .unwrap();
     assert_eq!(cms.icc_calls(), 1, "should fall back to ICC transform");
@@ -623,21 +639,22 @@ fn authority_row11_cicp_nocicp_p3icc_fallback() {
 /// Row 12: Icc authority, P3 cicp, P3 icc, SameAsOrigin → no transform
 #[test]
 fn authority_row12_icc_p3_p3icc_same() {
-    let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
+    let buf = in_origin_color();
     let origin = ColorOrigin::from_icc_and_cicp(fake_icc().to_vec(), p3_cicp())
         .with_color_authority(ColorAuthority::Icc);
     let cms = TrackingCms::new();
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::SameAsOrigin,
         PixelFormat::Rgb8,
-        &cms,
+        Some(&cms),
     )
     .unwrap();
     assert_eq!(cms.total_calls(), 0, "SameAsOrigin should not invoke CMS");
     assert!(ready.metadata().icc.is_some());
-    assert_eq!(ready.metadata().cicp, Some(p3_cicp()));
+    // Only the authority is signaled: a second signal could contradict it.
+    assert_eq!(ready.metadata().cicp, None);
 }
 
 // ---------------------------------------------------------------------------
@@ -647,68 +664,64 @@ fn authority_row12_icc_p3_p3icc_same() {
 /// A CMS that always fails — exercises error mapping paths.
 struct FailingCms;
 
-impl ColorManagement for FailingCms {
-    type Error = &'static str;
-
-    fn build_transform(
+impl PluggableCms for FailingCms {
+    fn build_source_transform(
         &self,
-        _src_icc: &[u8],
-        _dst_icc: &[u8],
-    ) -> Result<Box<dyn RowTransform>, Self::Error> {
-        Err("deliberate ICC failure")
-    }
-
-    fn build_transform_for_format(
-        &self,
-        _src_icc: &[u8],
-        _dst_icc: &[u8],
+        src: ColorProfileSource<'_>,
+        dst: ColorProfileSource<'_>,
         _src_format: PixelFormat,
         _dst_format: PixelFormat,
-    ) -> Result<Box<dyn RowTransform>, Self::Error> {
-        Err("deliberate ICC failure")
-    }
-
-    fn identify_profile(&self, _icc: &[u8]) -> Option<Cicp> {
-        None
+        _options: &ConvertOptions,
+    ) -> Built {
+        involves_icc(&src, &dst)
+            .then(|| Err(whereat::at!(CmsPluginError::msg("deliberate ICC failure"))))
     }
 }
 
-/// Icc authority, no icc, no cicp, Icc(target) → no source, falls through
+/// Icc authority, no icc, no cicp, Icc(target): the CMS is asked.
 #[test]
 fn authority_icc_neither_field_to_icc_target() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::assumed(); // Icc, no icc, no cicp
     let cms = TrackingCms::new();
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Icc(fake_icc()),
         PixelFormat::Rgb8,
-        &cms,
+        Some(&cms),
     )
     .unwrap();
-    assert_eq!(cms.total_calls(), 0, "no source profile → no CMS call");
-    // Falls through to RowConverter, pixels preserved
+    assert_eq!(
+        cms.icc_calls(),
+        1,
+        "a target ICC needs a transform, so the CMS is asked"
+    );
+    // The mock is an identity, so pixels are preserved.
     let slice = ready.pixels();
     let row = slice.row(0);
     assert_eq!(&row[..3], &[128, 128, 128]);
 }
 
-/// Cicp authority, no icc, no cicp, Icc(target) → no source, falls through
+/// Cicp authority, no icc, no cicp, Icc(target): the CMS is asked.
 #[test]
 fn authority_cicp_neither_field_to_icc_target() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::assumed().with_color_authority(ColorAuthority::Cicp);
     let cms = TrackingCms::new();
-    let _ready = finalize_for_output(
+    let _ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Icc(fake_icc()),
         PixelFormat::Rgb8,
-        &cms,
+        Some(&cms),
     )
     .unwrap();
-    assert_eq!(cms.total_calls(), 0, "no source profile → no CMS call");
+    assert_eq!(
+        cms.icc_calls(),
+        1,
+        "a target ICC needs a transform, so the CMS is asked"
+    );
 }
 
 /// CMS ICC transform error is propagated
@@ -716,46 +729,50 @@ fn authority_cicp_neither_field_to_icc_target() {
 fn authority_icc_transform_error_propagated() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::from_icc(fake_icc().to_vec());
-    let result = finalize_for_output(
+    let result = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Icc(fake_icc()),
         PixelFormat::Rgb8,
-        &FailingCms,
+        Some(&FailingCms),
     );
     assert!(result.is_err(), "ICC transform failure should propagate");
 }
 
-/// CICP-only source with no ICC bytes → falls through (no CMS call, no error)
+/// CICP-only source to an ICC target: the transform is the CMS's, and its failure surfaces.
 #[test]
-fn authority_cicp_no_icc_bytes_falls_through() {
+fn cicp_source_to_icc_target_surfaces_cms_failure() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::from_cicp(p3_cicp());
-    let result = finalize_for_output(
+    let result = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Icc(fake_icc()),
         PixelFormat::Rgb8,
-        &FailingCms,
+        Some(&FailingCms),
     );
-    // No ICC bytes on source → CMS is never called → no error.
-    assert!(result.is_ok(), "no ICC bytes → no CMS call → no error");
+    assert!(
+        result.is_err(),
+        "a failed transform surfaces, rather than labeling unconverted pixels"
+    );
 }
 
-/// Icc authority, no ICC bytes, CICP present → falls through (no CMS call)
+/// Icc authority, no ICC bytes, CICP present, to an ICC target: same.
 #[test]
-fn authority_icc_no_icc_bytes_cicp_present_falls_through() {
+fn icc_authority_without_icc_to_icc_target_surfaces_cms_failure() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::from_cicp(p3_cicp()).with_color_authority(ColorAuthority::Icc);
-    let result = finalize_for_output(
+    let result = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Icc(fake_icc()),
         PixelFormat::Rgb8,
-        &FailingCms,
+        Some(&FailingCms),
     );
-    // No ICC bytes on source → CMS is never called → no error.
-    assert!(result.is_ok(), "no ICC bytes → no CMS call → no error");
+    assert!(
+        result.is_err(),
+        "a failed transform surfaces, rather than labeling unconverted pixels"
+    );
 }
 
 /// CMS ICC fallback error is propagated (Cicp authority, no cicp, icc present)
@@ -764,12 +781,12 @@ fn authority_cicp_icc_fallback_error_propagated() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin =
         ColorOrigin::from_icc(fake_icc().to_vec()).with_color_authority(ColorAuthority::Cicp);
-    let result = finalize_for_output(
+    let result = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Icc(fake_icc()),
         PixelFormat::Rgb8,
-        &FailingCms,
+        Some(&FailingCms),
     );
     assert!(result.is_err(), "ICC fallback failure should propagate");
 }
@@ -781,12 +798,12 @@ fn named_target_never_uses_cms_with_icc_authority() {
     let origin = ColorOrigin::from_icc_and_cicp(fake_icc().to_vec(), p3_cicp())
         .with_color_authority(ColorAuthority::Icc);
     let cms = TrackingCms::new();
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Named(srgb_cicp()),
         PixelFormat::Rgb8,
-        &cms,
+        Some(&cms),
     )
     .unwrap();
     assert_eq!(cms.total_calls(), 0, "Named target uses matrices, not CMS");
@@ -800,12 +817,12 @@ fn named_target_never_uses_cms_with_cicp_authority() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::from_cicp(p3_cicp());
     let cms = TrackingCms::new();
-    let _ready = finalize_for_output(
+    let _ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Named(srgb_cicp()),
         PixelFormat::Rgb8,
-        &cms,
+        Some(&cms),
     )
     .unwrap();
     assert_eq!(cms.total_calls(), 0, "Named target uses matrices, not CMS");
@@ -813,8 +830,6 @@ fn named_target_never_uses_cms_with_cicp_authority() {
 
 // ---------------------------------------------------------------------------
 // HDR passthrough tests
-// TODO(0.3.0): Add HDR→SDR rejection tests once ConvertError has
-// HdrTransferRequiresToneMapping. See imazen/zenpixels#10.
 // ---------------------------------------------------------------------------
 
 fn pq_cicp() -> Cicp {
@@ -825,20 +840,25 @@ fn hlg_cicp() -> Cicp {
     Cicp::BT2100_HLG
 }
 
+/// The RGB form: these pixels aren't YCbCr, so a target claims no matrix for them.
+fn rgb(cicp: Cicp) -> Cicp {
+    Cicp::new(cicp.color_primaries, cicp.transfer_characteristics, 0, true)
+}
+
 /// HDR origin → SameAsOrigin → allowed (passthrough)
 #[test]
 fn hdr_pq_same_as_origin_allowed() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::from_cicp(pq_cicp());
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::SameAsOrigin,
         PixelFormat::Rgb8,
-        &NoopCms,
+        Some(&NoopCms),
     )
     .unwrap();
-    assert_eq!(ready.metadata().cicp, Some(pq_cicp()));
+    assert_eq!(ready.metadata().cicp, Some(rgb(pq_cicp())));
 }
 
 /// HDR origin → HDR Named(PQ) target → allowed
@@ -846,15 +866,15 @@ fn hdr_pq_same_as_origin_allowed() {
 fn hdr_pq_to_hdr_named_allowed() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::from_cicp(pq_cicp());
-    let ready = finalize_for_output(
+    let ready = EncodeReady::finalize(
         &buf,
         &origin,
-        OutputProfile::Named(pq_cicp()),
+        OutputProfile::Named(rgb(pq_cicp())),
         PixelFormat::Rgb8,
-        &NoopCms,
+        Some(&NoopCms),
     )
     .unwrap();
-    assert_eq!(ready.metadata().cicp, Some(pq_cicp()));
+    assert_eq!(ready.metadata().cicp, Some(rgb(pq_cicp())));
 }
 
 /// HDR (HLG) origin → HDR Named(HLG) target → allowed
@@ -862,12 +882,12 @@ fn hdr_pq_to_hdr_named_allowed() {
 fn hdr_hlg_to_hdr_named_allowed() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::from_cicp(hlg_cicp());
-    let _ready = finalize_for_output(
+    let _ready = EncodeReady::finalize(
         &buf,
         &origin,
-        OutputProfile::Named(hlg_cicp()),
+        OutputProfile::Named(rgb(hlg_cicp())),
         PixelFormat::Rgb8,
-        &NoopCms,
+        Some(&NoopCms),
     )
     .unwrap();
 }
@@ -877,12 +897,12 @@ fn hdr_hlg_to_hdr_named_allowed() {
 fn sdr_to_sdr_no_hdr_guard() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::from_cicp(p3_cicp()); // P3 is SDR
-    let _ready = finalize_for_output(
+    let _ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Named(srgb_cicp()),
         PixelFormat::Rgb8,
-        &NoopCms,
+        Some(&NoopCms),
     )
     .unwrap();
 }
@@ -892,12 +912,12 @@ fn sdr_to_sdr_no_hdr_guard() {
 fn sdr_to_icc_no_hdr_guard() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::from_icc(fake_icc().to_vec());
-    let _ready = finalize_for_output(
+    let _ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Icc(fake_icc()),
         PixelFormat::Rgb8,
-        &IdentityCms,
+        Some(&IdentityCms),
     )
     .unwrap();
 }
@@ -907,12 +927,12 @@ fn sdr_to_icc_no_hdr_guard() {
 fn no_metadata_no_hdr_guard() {
     let buf = make_rgb8_buffer(1, 1, [128, 128, 128]);
     let origin = ColorOrigin::assumed();
-    let _ready = finalize_for_output(
+    let _ready = EncodeReady::finalize(
         &buf,
         &origin,
         OutputProfile::Icc(fake_icc()),
         PixelFormat::Rgb8,
-        &NoopCms,
+        Some(&IdentityCms),
     )
     .unwrap();
 }
@@ -922,18 +942,15 @@ fn no_metadata_no_hdr_guard() {
 // ---------------------------------------------------------------------------
 
 /// A PQ (BT.2100) source finalized `SameAsOrigin` passes the origin CICP
-/// through for container signaling, and `OutputMetadata::hdr` stays `None` —
-/// the documented not-yet-wired contract (`output.rs` `TODO(0.3.0)`;
-/// zenpixels#39 Rung 4 is consumer-gated). Wiring `hdr` must consciously
-/// update this pin.
+/// through for container signaling.
 #[test]
-fn pq_source_same_as_origin_pins_cicp_passthrough_and_unwired_hdr() {
+fn pq_source_same_as_origin_pins_cicp_passthrough() {
     let desc = PixelDescriptor::RGB16_BT2100_PQ;
     let px = vec![0u8; 2 * 2 * desc.bytes_per_pixel()];
     let buffer = PixelBuffer::from_vec(px, 2, 2, desc).unwrap();
     let origin = ColorOrigin::from_cicp(Cicp::new(9, 16, 0, true));
 
-    let ready = zenpixels_convert::finalize_for_output_with(
+    let ready = zenpixels_convert::EncodeReady::finalize(
         &buffer,
         &origin,
         OutputProfile::SameAsOrigin,

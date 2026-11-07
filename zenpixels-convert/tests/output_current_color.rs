@@ -4,7 +4,6 @@ use zenpixels_convert::{
     Cicp, ColorContext, ColorOrigin, ColorProfileSource, PixelBuffer, PixelDescriptor, PixelFormat,
     TransferFunction,
     cms::{PluggableCms, RowTransform},
-    finalize_for_output_with,
     output::OutputProfile,
     policy::ConvertOptions,
 };
@@ -24,7 +23,7 @@ fn invalid_current_or_target_cicp_retains_the_declaration_error() {
                 input = input.with_color_context(Arc::new(ColorContext::from_cicp(bad)));
             }
             let target = OutputProfile::Named(if bad_is_current { Cicp::SRGB } else { bad });
-            let error = finalize_for_output_with(
+            let error = zenpixels_convert::EncodeReady::finalize(
                 &input,
                 &ColorOrigin::assumed(),
                 target,
@@ -104,7 +103,7 @@ fn current_icc_and_target_icc_reach_the_plugin_even_when_descriptors_match() {
     // Original file metadata is intentionally stale; current pixels win.
     let origin = ColorOrigin::from_icc(Arc::<[u8]>::from(&b"original-profile"[..]));
     let cms = RecordingCms::default();
-    let output = finalize_for_output_with(
+    let output = zenpixels_convert::EncodeReady::finalize(
         &buffer,
         &origin,
         OutputProfile::Icc(target.clone()),
@@ -135,7 +134,7 @@ fn unsupported_icc_conversion_is_an_error_instead_of_a_relabel() {
             &b"source"[..],
         ))));
     assert!(
-        finalize_for_output_with(
+        zenpixels_convert::EncodeReady::finalize(
             &buffer,
             &ColorOrigin::assumed(),
             OutputProfile::Icc(Arc::from(&b"target"[..])),
@@ -156,7 +155,7 @@ fn same_as_origin_converts_current_linear_pixels_back_to_original_srgb() {
     )
     .unwrap()
     .with_cicp(Cicp::new(1, 8, 0, true));
-    let output = finalize_for_output_with(
+    let output = zenpixels_convert::EncodeReady::finalize(
         &input,
         &ColorOrigin::from_cicp(Cicp::SRGB),
         OutputProfile::SameAsOrigin,
@@ -178,7 +177,7 @@ fn conflicting_current_cicp_is_not_silently_overruled_by_the_descriptor() {
         .unwrap()
         .with_cicp(Cicp::new(1, 8, 0, true));
     assert!(
-        finalize_for_output_with(
+        zenpixels_convert::EncodeReady::finalize(
             &input,
             &ColorOrigin::assumed(),
             OutputProfile::Named(Cicp::SRGB),
@@ -214,7 +213,7 @@ fn real_icc_input_matches_direct_moxcms_and_keeps_straight_alpha() {
         .unwrap();
     let mut expected = [0u8; 12];
     direct.transform_row(&input, &mut expected, 3);
-    let ready = finalize_for_output_with(
+    let ready = zenpixels_convert::EncodeReady::finalize(
         &buffer,
         &ColorOrigin::assumed(),
         OutputProfile::Named(Cicp::SRGB),
@@ -239,8 +238,7 @@ fn premultiplied_icc_finalization_uses_current_profile() {
     use zenpixels_convert::AlphaMode;
     use zenpixels_convert::{
         Cicp, ColorContext, ColorOrigin, ColorProfileSource, PixelBuffer, PixelFormat,
-        cms::PluggableCms, cms_moxcms::MoxCms, finalize_for_output_with, icc_profiles::ADOBE_RGB,
-        output::OutputProfile,
+        cms::PluggableCms, cms_moxcms::MoxCms, icc_profiles::ADOBE_RGB, output::OutputProfile,
     };
     let source = PixelBuffer::from_vec(
         vec![64, 32, 16, 128],
@@ -252,7 +250,7 @@ fn premultiplied_icc_finalization_uses_current_profile() {
     .with_color_context(Arc::new(ColorContext::from_icc(Arc::<[u8]>::from(
         ADOBE_RGB,
     ))));
-    let actual = finalize_for_output_with(
+    let actual = zenpixels_convert::EncodeReady::finalize(
         &source,
         &ColorOrigin::assumed(),
         OutputProfile::Named(Cicp::SRGB),
@@ -286,7 +284,7 @@ fn identity_retains_matching_context_and_luminance_anchor() {
         .with_color_context(Arc::new(
             ColorContext::from_cicp(Cicp::SRGB).with_diffuse_white(DiffuseWhite::new(100.0)),
         ));
-    let ready = finalize_for_output_with(
+    let ready = zenpixels_convert::EncodeReady::finalize(
         &input,
         &ColorOrigin::assumed(),
         OutputProfile::Named(Cicp::SRGB),
@@ -305,7 +303,7 @@ fn identity_retains_matching_context_and_luminance_anchor() {
 #[test]
 fn original_video_matrix_and_range_do_not_retag_decoded_rgb() {
     let input = PixelBuffer::from_vec(vec![10, 20, 30], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
-    let ready = finalize_for_output_with(
+    let ready = zenpixels_convert::EncodeReady::finalize(
         &input,
         &ColorOrigin::from_cicp(Cicp::new(1, 13, 1, false)),
         OutputProfile::SameAsOrigin,
@@ -316,7 +314,7 @@ fn original_video_matrix_and_range_do_not_retag_decoded_rgb() {
     assert_eq!(ready.metadata().cicp, Some(Cicp::SRGB));
     assert_eq!(ready.pixels().row(0), &[10, 20, 30]);
     assert!(
-        finalize_for_output_with(
+        zenpixels_convert::EncodeReady::finalize(
             &input,
             &ColorOrigin::assumed(),
             OutputProfile::Named(Cicp::new(1, 13, 1, false)),

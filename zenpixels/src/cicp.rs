@@ -495,8 +495,7 @@ impl fmt::Display for UnspecifiedMatrixError {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for UnspecifiedMatrixError {}
+impl core::error::Error for UnspecifiedMatrixError {}
 
 // ── Cicp impl ─────────────────────────────────────────────────────────────
 

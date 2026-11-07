@@ -303,7 +303,7 @@ mod tests {
         for p in &BUNDLE_PROFILES {
             let icc = bundled_profile_for_cicp(p.primaries, p.transfer)
                 .expect("indexed profile must resolve");
-            let got = zenpixels::icc::extract_cicp(&icc).unwrap_or_else(|| {
+            let got = zenpixels::Cicp::from_icc(&icc).unwrap_or_else(|| {
                 panic!(
                     "RGB profile ({}, {}) has no recoverable cicp tag",
                     p.primaries, p.transfer
@@ -336,13 +336,13 @@ mod tests {
             let icc = bundled_gray_profile_for_cicp(p.primaries, p.transfer)
                 .expect("indexed gray profile must resolve");
             assert!(
-                zenpixels::icc::extract_cicp(&icc).is_none(),
+                zenpixels::Cicp::from_icc(&icc).is_none(),
                 "GRAY profiles must not carry a cicp tag (ICC.1 forbids it \
                  outside RGB/YCbCr/XYZ); ({}, {}) has one",
                 p.primaries,
                 p.transfer
             );
-            let identified = zenpixels::icc::identify_common(&icc);
+            let identified = zenpixels::icc::IccIdentification::from_icc(&icc);
             if GRAY_HASH_RECOGNIZED_TC.contains(&p.transfer) {
                 assert!(
                     identified.is_some(),
@@ -381,7 +381,7 @@ mod tests {
             (crate::icc_profiles::REC2020_V4, "Rec2020Compat v4"),
         ] {
             assert!(
-                zenpixels::icc::identify_common(bytes).is_some(),
+                zenpixels::icc::IccIdentification::from_icc(bytes).is_some(),
                 "{name} fell out of the zenpixels identification table"
             );
         }
@@ -394,7 +394,7 @@ mod tests {
     #[test]
     fn golden_blob_sha256_is_pinned() {
         use sha2::{Digest, Sha256};
-        const EXPECTED: &str = "81abdec5779e3cc4a17e9ae19936ef6f32ce99cc53c2c6980f30bc509d820c23";
+        const EXPECTED: &str = "10aaba9c228d86b47718d5e2f4bea739b336fea808c3fd68d7d40ff7a0f80a2f";
         let digest = Sha256::digest(CICP_BUNDLE_LZ4);
         let hex: alloc::string::String = digest.iter().map(|b| alloc::format!("{b:02x}")).collect();
         assert_eq!(

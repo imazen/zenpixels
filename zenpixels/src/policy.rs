@@ -13,6 +13,9 @@ pub enum GrayExpand {
     Broadcast,
 }
 
+use crate::color::Color;
+use crate::hdr::DiffuseWhite;
+
 /// Policy for alpha channel removal. Required when converting
 /// from a layout with alpha to one without.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -22,14 +25,22 @@ pub enum AlphaPolicy {
     DiscardIfOpaque,
     /// Discard unconditionally. Caller acknowledges data loss.
     DiscardUnchecked,
-    /// Composite onto solid background (values in source range, 0–255 for U8).
+    /// Composite onto a solid background. Blending happens in linear light.
+    ///
+    /// The background converts to the source's primaries first, so a background keeps its color
+    /// on a wide-gamut source. A source whose primaries are unknown gets the background unconverted.
+    /// Planning refuses a background with alpha, and one that can't convert to the source.
     CompositeOnto {
-        /// Red background value.
-        r: u8,
-        /// Green background value.
-        g: u8,
-        /// Blue background value.
-        b: u8,
+        /// The color to composite onto.
+        background: Color,
+        /// The luminance an SDR background's white sits at on a PQ or HLG source, so that it
+        /// doesn't become the format's peak. Only this background uses it, and it has no effect
+        /// on an SDR source or an HDR background, whose luminance is already known.
+        ///
+        /// **Set this for HDR sources, to the reference white the content was graded to.**
+        /// `None` assumes [`DiffuseWhite::BT2408`]'s 203 cd/m², which may not match. On HLG, a
+        /// value also assumes BT.2100's nominal 1000 cd/m² display.
+        reference_white: Option<DiffuseWhite>,
     },
     /// Return error rather than dropping alpha.
     Forbid,
@@ -97,6 +108,25 @@ impl LumaCoefficients {
     }
 }
 
+/// What happens to colors outside the target's gamut when primaries narrow.
+///
+/// Applies to built-in conversions between named SDR primaries, such as Display P3
+/// or BT.2020 to sRGB. Requesting mapping where it isn't available returns an error
+/// rather than clipping. See `docs/gamut-mapping-survey.md`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum GamutMapping {
+    /// Clamp each channel. In-gamut colors are untouched and it's the fastest, but
+    /// saturated colors can change hue, up to 19° for BT.2020 blue in OKLab.
+    #[default]
+    Clip,
+    /// Reduce OKLab chroma near and past the boundary, keeping hue and lightness.
+    ///
+    /// Smooth across gradients, and slower. It also changes in-gamut colors close to
+    /// the boundary: 7 % of a Display P3 grid, by at most 0.0063 in OKLab.
+    SoftCompress,
+}
+
 /// Explicit permissions for pixel format conversion. Presets select channel,
 /// depth and clipping behavior; they do not prove reversible color arithmetic.
 ///
@@ -104,7 +134,7 @@ impl LumaCoefficients {
 /// constructors and `with_*` builders for common patterns:
 ///
 /// ```
-/// use zenpixels::{ConvertOptions, AlphaPolicy, DepthPolicy};
+/// use zenpixels::{AlphaPolicy, Color, ConvertOptions, DepthPolicy};
 ///
 /// // Retain channels and depth; requested color conversion may change samples.
 /// let retained = ConvertOptions::retain_channels();
@@ -114,21 +144,24 @@ impl LumaCoefficients {
 ///
 /// // Customize from a preset
 /// let custom = ConvertOptions::permissive()
-///     .with_alpha_policy(AlphaPolicy::CompositeOnto { r: 255, g: 255, b: 255 })
+///     .with_alpha_policy(AlphaPolicy::CompositeOnto {
+///         background: Color::srgb8(255, 255, 255),
+///         reference_white: None,
+///     })
 ///     .with_depth_policy(DepthPolicy::Truncate);
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct ConvertOptions {
     /// How to expand grayscale to RGB.
-    pub gray_expand: GrayExpand,
+    gray_expand: GrayExpand,
     /// How to handle alpha removal.
-    pub alpha_policy: AlphaPolicy,
+    alpha_policy: AlphaPolicy,
     /// How to handle depth reduction.
-    pub depth_policy: DepthPolicy,
+    depth_policy: DepthPolicy,
     /// Luma coefficients for RGB→Gray conversion. `None` means
     /// RGB→Gray is forbidden (returns `ConvertError::RgbToGray`).
-    pub luma: Option<LumaCoefficients>,
+    luma: Option<LumaCoefficients>,
     /// Whether to clamp out-of-gamut values to [0, 1] during f32 transfer
     /// function conversions.
     ///
@@ -141,7 +174,9 @@ pub struct ConvertOptions {
     ///
     /// Only affects f32 intermediate conversions. u8/u16 outputs always
     /// clip since those formats can't represent out-of-gamut values.
-    pub clip_out_of_gamut: bool,
+    clip_out_of_gamut: bool,
+    /// What happens to colors outside the target's gamut.
+    gamut_mapping: GamutMapping,
 }
 
 impl ConvertOptions {
@@ -164,19 +199,8 @@ impl ConvertOptions {
             depth_policy: DepthPolicy::Forbid,
             luma: None,
             clip_out_of_gamut: true,
+            gamut_mapping: GamutMapping::Clip,
         }
-    }
-
-    /// Historical channel/depth restrictions, including enabled float clipping.
-    ///
-    /// The name does not describe its behavior: color conversion, reassociation
-    /// and clipping can change or discard information. This is a compatibility
-    /// alias of [`Self::retain_channels`]; its behavior has not changed.
-    #[deprecated(
-        note = "use retain_channels() for channel/depth restrictions; use zenpixels_convert::OutputPlan::new_preserving_samples for exact samples. This preset permits clipping and color arithmetic"
-    )]
-    pub const fn forbid_lossy() -> Self {
-        Self::retain_channels()
     }
 
     /// Allow common lossy operations with sensible defaults.
@@ -192,7 +216,38 @@ impl ConvertOptions {
             depth_policy: DepthPolicy::Round,
             luma: Some(LumaCoefficients::Bt709),
             clip_out_of_gamut: true,
+            gamut_mapping: GamutMapping::Clip,
         }
+    }
+
+    /// How grayscale expands to RGB.
+    pub const fn gray_expand(&self) -> GrayExpand {
+        self.gray_expand
+    }
+
+    /// How alpha removal is handled.
+    pub const fn alpha_policy(&self) -> AlphaPolicy {
+        self.alpha_policy
+    }
+
+    /// How depth reduction is handled.
+    pub const fn depth_policy(&self) -> DepthPolicy {
+        self.depth_policy
+    }
+
+    /// Luma coefficients for RGB to gray, or `None` when that's forbidden.
+    pub const fn luma(&self) -> Option<LumaCoefficients> {
+        self.luma
+    }
+
+    /// Whether `f32` transfer conversions clamp to `0..=1`. `u8` and `u16` outputs always clip.
+    pub const fn clip_out_of_gamut(&self) -> bool {
+        self.clip_out_of_gamut
+    }
+
+    /// What happens to colors outside the target's gamut.
+    pub const fn gamut_mapping(&self) -> GamutMapping {
+        self.gamut_mapping
     }
 
     /// Set the alpha removal policy.
@@ -221,6 +276,12 @@ impl ConvertOptions {
         self
     }
 
+    /// Set what happens to colors outside the target's gamut.
+    pub const fn with_gamut_mapping(mut self, mapping: GamutMapping) -> Self {
+        self.gamut_mapping = mapping;
+        self
+    }
+
     /// Set the luma coefficients for RGB→Gray conversion.
     ///
     /// Pass `None` to forbid RGB→Gray conversion.
@@ -236,16 +297,13 @@ mod tests {
     use alloc::format;
 
     #[test]
-    #[allow(deprecated)] // The compatibility alias must retain every policy value.
-    fn old_preset_preserves_behavior_and_does_not_promise_exact_samples() {
-        let old = ConvertOptions::forbid_lossy();
-        let replacement = ConvertOptions::retain_channels();
-        assert_eq!(old, replacement);
-        assert_eq!(old.alpha_policy, AlphaPolicy::Forbid);
-        assert_eq!(old.depth_policy, DepthPolicy::Forbid);
-        assert_eq!(old.luma, None);
-        assert_eq!(old.gray_expand, GrayExpand::Broadcast);
-        assert!(old.clip_out_of_gamut);
+    fn retain_channels_does_not_promise_exact_samples() {
+        let options = ConvertOptions::retain_channels();
+        assert_eq!(options.alpha_policy, AlphaPolicy::Forbid);
+        assert_eq!(options.depth_policy, DepthPolicy::Forbid);
+        assert_eq!(options.luma, None);
+        assert_eq!(options.gray_expand, GrayExpand::Broadcast);
+        assert!(options.clip_out_of_gamut);
     }
 
     #[test]
@@ -264,9 +322,8 @@ mod tests {
         let discard = AlphaPolicy::DiscardIfOpaque;
         let unchecked = AlphaPolicy::DiscardUnchecked;
         let composite = AlphaPolicy::CompositeOnto {
-            r: 255,
-            g: 255,
-            b: 255,
+            background: crate::Color::srgb8(255, 255, 255),
+            reference_white: None,
         };
         let forbid = AlphaPolicy::Forbid;
 
@@ -274,13 +331,15 @@ mod tests {
         assert_ne!(composite, forbid);
 
         let composite2 = AlphaPolicy::CompositeOnto {
-            r: 255,
-            g: 255,
-            b: 255,
+            background: crate::Color::srgb8(255, 255, 255),
+            reference_white: None,
         };
         assert_eq!(composite, composite2);
 
-        let composite_diff = AlphaPolicy::CompositeOnto { r: 0, g: 0, b: 0 };
+        let composite_diff = AlphaPolicy::CompositeOnto {
+            background: crate::Color::srgb8(0, 0, 0),
+            reference_white: None,
+        };
         assert_ne!(composite, composite_diff);
     }
 
@@ -358,6 +417,7 @@ mod tests {
             depth_policy: DepthPolicy::Round,
             luma: Some(LumaCoefficients::Bt709),
             clip_out_of_gamut: true,
+            gamut_mapping: GamutMapping::Clip,
         };
         #[allow(clippy::clone_on_copy)]
         let opts2 = opts.clone();
@@ -386,6 +446,7 @@ mod tests {
             depth_policy: DepthPolicy::Forbid,
             luma: None,
             clip_out_of_gamut: true,
+            gamut_mapping: GamutMapping::Clip,
         };
         let mut h = std::hash::DefaultHasher::new();
         opts.hash(&mut h);

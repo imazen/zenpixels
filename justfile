@@ -27,6 +27,10 @@ fmt:
     ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
 
 # Regenerate the public-API surface snapshots only
+# One behavioral contract for every CMS backend. A directory of ICC profiles adds a comparison on each.
+cms-contract PROFILES='':
+    CMS_CONTRACT_PROFILES={{PROFILES}} cargo test --manifest-path cms-contract/Cargo.toml {{ if PROFILES == "" { "" } else { "-- --include-ignored --nocapture" } }}
+
 api-doc:
     ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
 
@@ -57,12 +61,12 @@ layout-probe BASE='86d0e2d30406a006bf8332f142029b7f58353086':
 # Native TIFF/IMIJ sample carriage and explicit conversion refusal.
 native-samples-check:
     cargo test -p zenpixels --test parts
-    cargo test -p zenpixels -p zenpixels-convert --test native_samples --features zenpixels-convert/hdr-experimental,zenpixels-convert/cms-moxcms
-    cargo clippy -p zenpixels -p zenpixels-convert --lib --test native_samples --features zenpixels-convert/hdr-experimental,zenpixels-convert/cms-moxcms -- -D warnings
+    cargo test -p zenpixels -p zenpixels-convert --test native_samples --features zenpixels-convert/bt2446a,zenpixels-convert/cms-moxcms
+    cargo clippy -p zenpixels -p zenpixels-convert --lib --test native_samples --features zenpixels-convert/bt2446a,zenpixels-convert/cms-moxcms -- -D warnings
 
 # Full source coverage after extending the physical format enum.
 native-samples-suite:
-    cargo test -p zenpixels -p zenpixels-convert --lib --tests --features zenpixels-convert/hdr-experimental,zenpixels-convert/cms-moxcms
+    cargo test -p zenpixels -p zenpixels-convert --lib --tests --features zenpixels-convert/bt2446a,zenpixels-convert/cms-moxcms
     cargo check -p zenpixels --no-default-features --target wasm32-unknown-unknown
     just api-doc
 
@@ -305,23 +309,149 @@ release-reconcile-check:
 
 # Still-image IQA contract: no codec or metric implementation dependencies.
 iqa-check:
-    cargo fmt --manifest-path zenpsychovisual-api/Cargo.toml --check
-    cargo test --locked --manifest-path zenpsychovisual-api/Cargo.toml --no-default-features
-    cargo test --locked --manifest-path zenpsychovisual-api/Cargo.toml --features std
-    cargo clippy --locked --manifest-path zenpsychovisual-api/Cargo.toml --all-targets --all-features -- -D warnings
-    RUSTDOCFLAGS="-D warnings" cargo doc --locked --manifest-path zenpsychovisual-api/Cargo.toml --no-deps
+    cargo fmt --manifest-path zenpsy-api/Cargo.toml --check
+    cargo test --locked --manifest-path zenpsy-api/Cargo.toml --no-default-features
+    cargo test --locked --manifest-path zenpsy-api/Cargo.toml --features std
+    cargo clippy --locked --manifest-path zenpsy-api/Cargo.toml --all-targets --all-features -- -D warnings
+    RUSTDOCFLAGS="-D warnings" cargo doc --locked --manifest-path zenpsy-api/Cargo.toml --no-deps
 
 iqa-portability-check:
-    cargo +1.88.0 check --locked --manifest-path zenpsychovisual-api/Cargo.toml --no-default-features
-    cargo check --locked --manifest-path zenpsychovisual-api/Cargo.toml --no-default-features --target wasm32-unknown-unknown
-    cargo check --locked --manifest-path zenpsychovisual-api/Cargo.toml --no-default-features --target thumbv7em-none-eabihf
+    cargo +1.88.0 check --locked --manifest-path zenpsy-api/Cargo.toml --no-default-features
+    cargo check --locked --manifest-path zenpsy-api/Cargo.toml --no-default-features --target wasm32-unknown-unknown
+    cargo check --locked --manifest-path zenpsy-api/Cargo.toml --no-default-features --target thumbv7em-none-eabihf
 
 # Run at the repository root to retain pixel workspace inheritance in cross.
 iqa-cross-check toolchain='':
-    cross {{toolchain}} test --locked --manifest-path zenpsychovisual-api/Cargo.toml --target i686-unknown-linux-gnu
+    cross {{toolchain}} test --locked --manifest-path zenpsy-api/Cargo.toml --target i686-unknown-linux-gnu
 
 # Zeroed storage plus the existing row/alignment constructor contracts.
 zeroed-alloc-check:
     cargo test --locked -p zenpixels --lib
     cargo check --locked -p zenpixels --no-default-features
     cargo clippy --locked -p zenpixels --lib -- -D warnings
+
+# Build the optional browser converter and assemble the GitHub Pages artifact.
+site-build:
+    ./site/build.sh
+
+# Browser integration checks; PLAYWRIGHT_MODULE points at an installed Playwright.
+site-check URL='http://127.0.0.1:3116':
+    node site/smoke.cjs {{URL}}
+
+# Frozen, unpublished gamma diagnostics; prepare.py reconstructs dependencies.
+moxcms-gamma-check:
+    cargo fmt --manifest-path benchmarks/moxcms-gamma/Cargo.toml -p moxcms-gamma-harness --check
+    cargo check --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --all-targets
+    cargo run --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --bin probe
+    cargo run --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --bin black
+
+# Add fresh bundle hashes without dropping recognition of older profile bytes.
+icc-bundle-identification output:
+    cargo run --locked -p icc-gen --release --bin icc-gen -- zenpixels-convert/src/profiles {{output}}
+    python3 scripts/icc-gen/merge_bundle_tables.py {{output}} zenpixels/src/icc
+
+# Requires pkg-config, libpng development headers and Little CMS 2.
+icc-bundle-reader-check output:
+    mkdir -p "{{output}}"
+    cargo run --locked -p zenpixels-convert --example icc_bundle_export -- "{{output}}"
+    cc -Wall -Wextra -Werror scripts/icc-gen/validation/png_icc_reader.c -o "{{output}}/reader" $(pkg-config --cflags --libs libpng lcms2)
+    python3 scripts/icc-gen/validation/check_bundle.py "{{output}}/reader" "{{output}}"
+
+# Exact upstream review sources; caller supplies the host resource wrapper.
+moxcms-review-build:
+    cargo check --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features review-revisions --all-targets
+    cargo build --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --release --features review-revisions --bin icount
+
+moxcms-review-instructions output:
+    python3 benchmarks/moxcms-gamma/review-evidence.py "{{output}}"
+
+moxcms-review-bench data:
+    ZENBENCH_DATA_DIR="{{data}}" cargo bench --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features review-revisions --bench underflow -- --mode=confirm --processes=5 --timeout=1200 --workload-id=moxcms-review-84104443-45b011cd-4ab190f0-v1 --format=llm
+
+# Predeclared cell matrix: unchanged admission; confidence adjusted across 36 cells.
+moxcms-review-cells binary output:
+    python3 benchmarks/moxcms-gamma/review-cells.py "{{binary}}" "{{output}}"
+
+# Validate all retained process gates and export review timing comparisons.
+moxcms-review-summary study output:
+    python3 benchmarks/moxcms-gamma/summarize-review-cells.py "{{study}}" "{{output}}"
+
+# Read-only source checkouts; output must be a new directory.
+codec-cohort-prepare codec output core pixels:
+    python3 benchmarks/codec-cohort/prepare.py "{{codec}}" "{{output}}" "{{core}}" "{{pixels}}"
+
+codec-cohort-resolve manifest:
+    cargo metadata --format-version 1 --manifest-path "{{manifest}}"
+
+# Caller supplies the frozen experimental dependencies; never edits them.
+jxl-cms-prepare pixels decoder output:
+    python3 benchmarks/jxl-cms-parity/prepare.py "{{pixels}}" "{{decoder}}" "{{output}}"
+
+jxl-cms-adapter-check manifest:
+    cargo test --locked --manifest-path "{{manifest}}" --bin jxl-cms-parity-review
+    cargo clippy --locked --manifest-path "{{manifest}}" --bin jxl-cms-parity-review --no-deps -- -D warnings
+
+# Explicit fixture admission; this fails if either input directory is absent.
+jxl-cms-reference-check manifest fixtures references:
+    JXL_CMS_FIXTURES="{{fixtures}}" JXL_CMS_REFERENCES="{{references}}" cargo test --locked --manifest-path "{{manifest}}" --bin jxl-cms-parity-review pq_matches_djxl_references_and_hlg_returns_refusal -- --ignored --nocapture
+
+jxl-cms-render-references djxl fixtures output:
+    mkdir "{{output}}"
+    "{{djxl}}" --version
+    "{{djxl}}" "{{fixtures}}/hdr_pq_test.jxl" "{{output}}/hdr_pq_test_SRG.pfm" --num_threads=4 --color_space=RGB_D65_SRG_Rel_SRG
+    "{{djxl}}" "{{fixtures}}/hdr_pq_test.jxl" "{{output}}/hdr_pq_test_P3.pfm" --num_threads=4 --color_space=RGB_D65_DCI_Rel_SRG
+
+# Exact public-transform zero-channel comparison, separate from timing.
+moxcms-real-pixel-check:
+    cargo run --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features review-revisions --bin black
+
+pow-comparison-check:
+    cargo fmt --manifest-path benchmarks/pow-comparison/Cargo.toml -p gamma-pow-comparison --check
+    cargo clippy --locked --manifest-path benchmarks/pow-comparison/Cargo.toml --all-targets -- -D warnings
+
+pow-comparison output:
+    cargo run --locked --release --manifest-path benchmarks/pow-comparison/Cargo.toml > "{{output}}"
+
+moxcms-optimized-check:
+    cargo run --locked --release --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features optimized --bin optimized_check
+
+moxcms-optimized-instructions output:
+    python3 benchmarks/moxcms-gamma/optimized-evidence.py "{{output}}"
+
+moxcms-optimized-cells binary output:
+    python3 benchmarks/moxcms-gamma/optimized-cells.py "{{binary}}" "{{output}}"
+
+moxcms-optimized-summary study output:
+    python3 benchmarks/moxcms-gamma/summarize-optimized-cells.py "{{study}}" "{{output}}"
+
+moxcms-outlined-build:
+    cargo fmt --manifest-path benchmarks/moxcms-gamma/Cargo.toml -p moxcms-gamma-harness --check
+    cargo clippy --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features outlined --bench underflow --bin optimized_check --bin icount --no-deps -- -D warnings
+    cargo run --locked --release --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features outlined --bin optimized_check
+    cargo build --locked --release --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features outlined --bin icount --bench underflow
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc cargo build --locked --release --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features outlined --bench underflow --target aarch64-unknown-linux-gnu
+
+moxcms-outlined-cells binary output:
+    python3 benchmarks/moxcms-gamma/outlined-cells.py "{{binary}}" "{{output}}"
+
+moxcms-outlined-instructions output:
+    python3 benchmarks/moxcms-gamma/outlined-evidence.py "{{output}}"
+
+moxcms-final-build:
+    cargo fmt --manifest-path benchmarks/moxcms-gamma/Cargo.toml -p moxcms-gamma-harness --check
+    cargo clippy --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features final-review --bench underflow --bin optimized_check --bin icount --no-deps -- -D warnings
+    cargo run --locked --release --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features final-review --bin optimized_check
+    cargo build --locked --release --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features final-review --bin icount --bench underflow
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc cargo build --locked --release --manifest-path benchmarks/moxcms-gamma/Cargo.toml --features final-review --bench underflow --target aarch64-unknown-linux-gnu
+
+moxcms-final-instructions output:
+    python3 benchmarks/moxcms-gamma/final-evidence.py "{{output}}"
+
+moxcms-final-cells binary output:
+    python3 benchmarks/moxcms-gamma/final-cells.py "{{binary}}" "{{output}}"
+
+moxcms-final-summary study output:
+    python3 benchmarks/moxcms-gamma/summarize-optimized-cells.py "{{study}}" "{{output}}" --allow-partial
+
+moxcms-final-report study comparisons output:
+    python3 benchmarks/moxcms-gamma/report-final.py "{{study}}" "{{comparisons}}" "{{output}}"

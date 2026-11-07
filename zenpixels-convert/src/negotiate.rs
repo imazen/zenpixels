@@ -232,6 +232,89 @@ pub enum ConvertIntent {
     Perceptual,
 }
 
+impl ConvertIntent {
+    /// The cheapest of `supported` for `source` under this intent, or `None` when
+    /// `supported` is empty.
+    #[must_use]
+    pub fn best_match(
+        self,
+        source: PixelDescriptor,
+        supported: &[PixelDescriptor],
+    ) -> Option<PixelDescriptor> {
+        best_match(source, supported, self)
+    }
+
+    /// [`best_match`](Self::best_match) among formats no lossier than `ceiling`, or
+    /// `None` when none qualifies. A ranking from the calibrated cost model, not a
+    /// proof: see [`LossBucket`].
+    #[must_use]
+    pub fn best_match_within(
+        self,
+        source: PixelDescriptor,
+        supported: &[PixelDescriptor],
+        ceiling: LossBucket,
+    ) -> Option<PixelDescriptor> {
+        let provenance = Provenance::from_source(source);
+        negotiate(
+            source,
+            provenance,
+            supported
+                .iter()
+                .filter(|&&d| {
+                    conversion_cost_with_provenance(source, d, provenance).loss_bucket() <= ceiling
+                })
+                .map(|&d| FormatOption::from(d)),
+            self,
+        )
+    }
+
+    /// Like [`best_match`](Self::best_match), with the data's origin and each
+    /// candidate's cost to the consumer: `our conversion + consumer cost`.
+    ///
+    /// Use [`Provenance`] when data was widened from a lower precision, and
+    /// [`FormatOption`] costs when a consumer has fused paths, such as a JPEG
+    /// encoder that goes from `f32` to DCT directly.
+    ///
+    /// ```rust,ignore
+    /// let target = ConvertIntent::Fastest.negotiate(
+    ///     current_f32_desc,
+    ///     Provenance::with_origin_depth(ChannelType::U8),
+    ///     encoder_options.iter().copied(),
+    /// );
+    /// ```
+    #[must_use]
+    pub fn negotiate(
+        self,
+        source: PixelDescriptor,
+        provenance: Provenance,
+        options: impl Iterator<Item = FormatOption>,
+    ) -> Option<PixelDescriptor> {
+        negotiate(source, provenance, options, self)
+    }
+}
+
+/// How visible a conversion's modeled loss is, calibrated against CIEDE2000
+/// measurements in `tests/perceptual_loss.rs`. Ordered from least to most visible.
+///
+/// This ranks formats. It isn't a guarantee about particular pixels: even
+/// [`Imperceptible`](Self::Imperceptible) can change samples. For hard guarantees use
+/// `ConvertPlan::new_preserving_samples`, which refuses anything that isn't a proven
+/// reversible change, or the refusals in `ConvertOptions`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum LossBucket {
+    /// Below a just-noticeable difference: ΔE under 0.5, model loss up to 10.
+    Imperceptible,
+    /// Visible only side by side: ΔE 0.5 to 2, model loss 11 to 50.
+    SideBySide,
+    /// Minor visible differences: ΔE 2 to 5, model loss 51 to 150.
+    Minor,
+    /// Clearly visible: ΔE 5 to 15, model loss 151 to 400.
+    Clear,
+    /// Severe: ΔE over 15, model loss over 400.
+    Severe,
+}
+
 /// Two-axis conversion cost: computational effort vs. information loss.
 ///
 /// These are independent concerns:
@@ -243,13 +326,57 @@ pub enum ConvertIntent {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ConversionCost {
-    /// Computational work (cycles, not quality). Lower is faster.
-    pub effort: u16,
-    /// Information destroyed (precision, gamut, channels). Lower is more faithful.
-    pub loss: u16,
+    effort: u16,
+    loss: u16,
 }
 
 impl ConversionCost {
+    /// Computational work (cycles, not quality). Lower is faster.
+    #[must_use]
+    pub const fn effort(&self) -> u16 {
+        self.effort
+    }
+
+    /// Information destroyed (precision, gamut, channels). Lower is more faithful.
+    #[must_use]
+    pub const fn loss(&self) -> u16 {
+        self.loss
+    }
+
+    /// How visible this cost's [`loss`](Self::loss) is expected to be.
+    #[must_use]
+    pub const fn loss_bucket(&self) -> LossBucket {
+        match self.loss {
+            0..=10 => LossBucket::Imperceptible,
+            11..=50 => LossBucket::SideBySide,
+            51..=150 => LossBucket::Minor,
+            151..=400 => LossBucket::Clear,
+            _ => LossBucket::Severe,
+        }
+    }
+
+    /// The cost of our kernels for `from` to `to`, independent of intent.
+    ///
+    /// Assumes `from`'s depth and primaries are the data's origin. Use
+    /// [`between_with_provenance`](Self::between_with_provenance) for data that
+    /// was widened from a lower precision.
+    #[must_use]
+    pub fn between(from: PixelDescriptor, to: PixelDescriptor) -> Self {
+        conversion_cost(from, to)
+    }
+
+    /// The cost of `from` to `to`, given where the data came from. Narrowing back
+    /// to the origin depth reports no loss: `f32` to `u8` is free for `u8` origin.
+    /// That models an unchanged round trip and doesn't check the samples.
+    #[must_use]
+    pub fn between_with_provenance(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        provenance: Provenance,
+    ) -> Self {
+        conversion_cost_with_provenance(from, to, provenance)
+    }
+
     /// Zero cost — identity conversion.
     pub const ZERO: Self = Self { effort: 0, loss: 0 };
 
@@ -271,7 +398,7 @@ impl Add for ConversionCost {
 
 /// A supported format with optional consumer-provided cost override.
 ///
-/// Use this with [`best_match_with`] when the consumer can handle some
+/// Use this with [`ConvertIntent::negotiate`] when the consumer can handle some
 /// formats more efficiently than the default conversion path.
 ///
 /// # Example
@@ -329,9 +456,9 @@ impl From<PixelDescriptor> for FormatOption {
 ///
 /// This is the simple API — all consumer costs are assumed zero,
 /// and provenance is inferred from the source descriptor (conservative).
-/// Use [`best_match_with`] for consumer cost overrides, or
+/// Use [`ConvertIntent::negotiate`] for consumer cost overrides, or
 /// [`negotiate`] for full control over provenance and consumer costs.
-pub fn best_match(
+pub(crate) fn best_match(
     source: PixelDescriptor,
     supported: &[PixelDescriptor],
     intent: ConvertIntent,
@@ -340,30 +467,6 @@ pub fn best_match(
         source,
         Provenance::from_source(source),
         supported.iter().map(|&d| FormatOption::from(d)),
-        intent,
-    )
-}
-
-/// Pick the best conversion target from `options`, accounting for
-/// consumer-provided cost overrides.
-///
-/// Returns `None` only if `options` is empty.
-///
-/// Each [`FormatOption`] specifies a format the consumer can accept
-/// and what it costs the consumer to handle that format internally.
-/// The total cost is `our_conversion + consumer_cost`, weighted by intent.
-///
-/// Provenance is inferred from the source descriptor. Use [`negotiate`]
-/// when the data has been widened from a lower-precision origin.
-pub fn best_match_with(
-    source: PixelDescriptor,
-    options: &[FormatOption],
-    intent: ConvertIntent,
-) -> Option<PixelDescriptor> {
-    negotiate(
-        source,
-        Provenance::from_source(source),
-        options.iter().copied(),
         intent,
     )
 }
@@ -392,7 +495,7 @@ pub fn best_match_with(
 ///     ConvertIntent::Fastest,
 /// );
 /// ```
-pub fn negotiate(
+pub(crate) fn negotiate(
     source: PixelDescriptor,
     provenance: Provenance,
     options: impl Iterator<Item = FormatOption>,
@@ -406,92 +509,16 @@ pub fn negotiate(
     )
 }
 
-/// Recommend the ideal working format for a given intent, based on the source format.
-///
-/// Unlike [`best_match`], this isn't constrained to a list — it returns what
-/// the consumer *should* be working in for optimal results.
-///
-/// Key principles:
-/// - **Fastest** preserves the source format (identity).
-/// - **LinearLight** upgrades to f32 Linear for gamma-correct operations.
-/// - **Blend** upgrades to f32 Linear with premultiplied alpha.
-/// - **Perceptual** keeps u8 sRGB for SDR-8 sources (LUT-fast), upgrades others to f32 sRGB.
-/// - Never downgrades precision — a u16 source won't be recommended as u8.
-pub fn ideal_format(source: PixelDescriptor, intent: ConvertIntent) -> PixelDescriptor {
-    match intent {
-        ConvertIntent::Fastest => source,
-
-        ConvertIntent::LinearLight => {
-            if source.channel_type() == ChannelType::F32
-                && source.transfer() == TransferFunction::Linear
-            {
-                return source;
-            }
-            PixelDescriptor::new(
-                ChannelType::F32,
-                source.layout(),
-                source.alpha(),
-                TransferFunction::Linear,
-            )
-        }
-
-        ConvertIntent::Blend => {
-            let alpha = if source.layout().has_alpha() {
-                Some(AlphaMode::Premultiplied)
-            } else {
-                source.alpha()
-            };
-            if source.channel_type() == ChannelType::F32
-                && source.transfer() == TransferFunction::Linear
-                && source.alpha() == alpha
-            {
-                return source;
-            }
-            PixelDescriptor::new(
-                ChannelType::F32,
-                source.layout(),
-                alpha,
-                TransferFunction::Linear,
-            )
-        }
-
-        ConvertIntent::Perceptual => {
-            let tier = precision_tier(source);
-            match tier {
-                PrecisionTier::Sdr8 => {
-                    if source.transfer() == TransferFunction::Srgb
-                        || source.transfer() == TransferFunction::Unknown
-                    {
-                        return source;
-                    }
-                    PixelDescriptor::new(
-                        ChannelType::U8,
-                        source.layout(),
-                        source.alpha(),
-                        TransferFunction::Srgb,
-                    )
-                }
-                _ => PixelDescriptor::new(
-                    ChannelType::F32,
-                    source.layout(),
-                    source.alpha(),
-                    TransferFunction::Srgb,
-                ),
-            }
-        }
-    }
-}
-
 /// Compute the two-axis conversion cost for `from` → `to`.
 ///
 /// This is the cost of *our* conversion kernels — it doesn't include
 /// any consumer-side cost. Intent-independent.
 ///
 /// Provenance is inferred from `from` (conservative: assumes current
-/// depth is the true origin). Use [`conversion_cost_with_provenance`]
+/// depth is the true origin). Use [`ConversionCost::between_with_provenance`]
 /// when the data has been widened from a lower-precision source.
 #[must_use]
-pub fn conversion_cost(from: PixelDescriptor, to: PixelDescriptor) -> ConversionCost {
+pub(crate) fn conversion_cost(from: PixelDescriptor, to: PixelDescriptor) -> ConversionCost {
     conversion_cost_with_provenance(from, to, Provenance::from_source(from))
 }
 
@@ -503,7 +530,7 @@ pub fn conversion_cost(from: PixelDescriptor, to: PixelDescriptor) -> Conversion
 /// models an unchanged round trip; it does not check that the samples are
 /// still u8 levels.
 #[must_use]
-pub fn conversion_cost_with_provenance(
+pub(crate) fn conversion_cost_with_provenance(
     from: PixelDescriptor,
     to: PixelDescriptor,
     provenance: Provenance,
@@ -545,18 +572,22 @@ fn best_of(
     options: impl Iterator<Item = (PixelDescriptor, ConversionCost)>,
     intent: ConvertIntent,
 ) -> Option<PixelDescriptor> {
-    let mut best: Option<(PixelDescriptor, u32)> = None;
-
-    for (target, consumer_cost) in options {
-        let score = score_target(source, provenance, target, consumer_cost, intent);
-        match best {
-            Some((_, best_score)) if score < best_score => best = Some((target, score)),
-            None => best = Some((target, score)),
-            _ => {}
-        }
-    }
-
-    best.map(|(desc, _)| desc)
+    // Ties keep the earlier candidate, so the sort must be stable.
+    let mut ranked: alloc::vec::Vec<(u32, PixelDescriptor)> = options
+        .map(|(target, consumer_cost)| {
+            let score = score_target(source, provenance, target, consumer_cost, intent);
+            (score, target)
+        })
+        .collect();
+    ranked.sort_by_key(|&(score, _)| score);
+    // The cost model doesn't know which pairs can be planned. Skip a cheap format that
+    // can't be reached when a dearer one can. If none can, return the cheapest, so that
+    // converting to it reports why.
+    ranked
+        .iter()
+        .find(|&&(_, target)| crate::ConvertPlan::new(source, target).is_ok())
+        .or(ranked.first())
+        .map(|&(_, target)| target)
 }
 
 /// Blend effort and loss into a single ranking score based on intent.
@@ -894,34 +925,6 @@ fn alpha_cost(
 }
 
 // ---------------------------------------------------------------------------
-// Precision tier (used by ideal_format only)
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum PrecisionTier {
-    Sdr8 = 0,
-    Sdr16 = 1,
-    LinearF32 = 2,
-    Hdr = 3,
-}
-
-#[allow(unreachable_patterns)] // non_exhaustive: future variants
-fn precision_tier(desc: PixelDescriptor) -> PrecisionTier {
-    if matches!(
-        desc.transfer(),
-        TransferFunction::Pq | TransferFunction::Hlg
-    ) {
-        return PrecisionTier::Hdr;
-    }
-    match desc.channel_type() {
-        ChannelType::U8 => PrecisionTier::Sdr8,
-        ChannelType::U16 | ChannelType::F16 => PrecisionTier::Sdr16,
-        ChannelType::F32 => PrecisionTier::LinearF32,
-        _ => PrecisionTier::Sdr8,
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1024,7 +1027,12 @@ mod tests {
         ];
         // Even Fastest should prefer the zero-conversion path with low consumer cost.
         assert_eq!(
-            best_match_with(src, options, ConvertIntent::Fastest),
+            negotiate(
+                src,
+                Provenance::from_source(src),
+                options.iter().copied(),
+                ConvertIntent::Fastest
+            ),
             Some(PixelDescriptor::RGBF32_LINEAR)
         );
     }

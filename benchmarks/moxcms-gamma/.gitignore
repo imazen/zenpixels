@@ -1,0 +1,7 @@
+/target/
+/variants/
+/.zenbench/
+/*.log
+/*.out
+/variants.*.bak/
+__pycache__/

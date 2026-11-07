@@ -8,7 +8,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::policy::{AlphaPolicy, ConvertOptions, DepthPolicy, LumaCoefficients};
+use crate::policy::{AlphaPolicy, ConvertOptions, DepthPolicy, GamutMapping, LumaCoefficients};
 use crate::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, ConvertError, PixelDescriptor,
     TransferFunction,
@@ -23,6 +23,28 @@ fn has_numeric_kernels(channel: ChannelType) -> bool {
         channel,
         ChannelType::U8 | ChannelType::U16 | ChannelType::F16 | ChannelType::F32
     )
+}
+
+/// The linear RGB form an Oklab conversion must pass through, when `from` and `to` aren't already next to
+/// each other. The Oklab kernels take and give linear RGB, so every transfer, depth and gamut change
+/// happens on the RGB side.
+fn oklab_pivot(from: PixelDescriptor, to: PixelDescriptor) -> Option<PixelDescriptor> {
+    let is_oklab =
+        |d: PixelDescriptor| matches!(d.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA);
+    let linear_rgb = |oklab: PixelDescriptor| {
+        let base = if oklab.layout() == ChannelLayout::OklabA {
+            PixelDescriptor::RGBAF32_LINEAR.with_alpha(oklab.alpha())
+        } else {
+            PixelDescriptor::RGBF32_LINEAR
+        };
+        base.with_primaries(oklab.primaries)
+    };
+    match (is_oklab(from), is_oklab(to)) {
+        (false, true) => Some(linear_rgb(to)).filter(|p| *p != from),
+        (true, false) => Some(linear_rgb(from)).filter(|p| *p != to),
+        (true, true) if from.primaries != to.primaries => Some(linear_rgb(from)),
+        _ => None,
+    }
 }
 
 /// Reject range operations for which the planner has no correct kernels.
@@ -190,6 +212,69 @@ pub struct ConvertPlan {
     execution: Option<Vec<(PixelDescriptor, PixelDescriptor, f32)>>,
 }
 
+/// The linear value of SDR white in `transfer`, for a background composited into it.
+///
+/// PQ's linear is absolute, with 1.0 at 10000 cd/m². HLG's is scene-referred, so the
+/// luminance goes through BT.2100's display OOTF inverted, at the nominal 1000 cd/m² peak
+/// and its system gamma of 1.2. 203 cd/m² lands at signal 0.75, as BT.2408 specifies.
+fn matte_white(transfer: TransferFunction, white: zenpixels::hdr::DiffuseWhite) -> f32 {
+    match transfer {
+        TransferFunction::Pq => white.nits() / 10_000.0,
+        TransferFunction::Hlg => libm::powf(white.nits() / 1_000.0, 1.0 / 1.2),
+        _ => 1.0,
+    }
+}
+
+/// A background in `source`'s primaries and linear light.
+fn matte_background(
+    background: zenpixels::Color,
+    reference_white: Option<zenpixels::hdr::DiffuseWhite>,
+    source: PixelDescriptor,
+) -> Result<[f32; 3], At<ConvertError>> {
+    let from = background.descriptor();
+    let hdr = matches!(
+        from.transfer(),
+        TransferFunction::Pq | TransferFunction::Hlg
+    );
+    // An HDR background's linear is only comparable to a source with the same transfer.
+    if (from.has_alpha() && from.alpha() != Some(AlphaMode::Opaque))
+        || (hdr && from.transfer() != source.transfer())
+    {
+        return Err(whereat::at!(ConvertError::NoPath { from, to: source }));
+    }
+    let primaries = if source.primaries == ColorPrimaries::Unknown {
+        from.primaries
+    } else {
+        source.primaries
+    };
+    let to = PixelDescriptor::new(
+        ChannelType::F32,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Linear,
+    )
+    .with_primaries(primaries);
+    let options = ConvertOptions::permissive()
+        .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
+        .with_clip_out_of_gamut(false);
+    let mut linear = [0f32; 3];
+    convert_row_buffered(
+        &ConvertPlan::new_explicit(from, to, &options)?,
+        background.as_bytes(),
+        bytemuck::cast_slice_mut(&mut linear),
+        1,
+        &mut ConvertScratch::new(),
+    );
+    if hdr {
+        return Ok(linear);
+    }
+    let white = matte_white(
+        source.transfer(),
+        reference_white.unwrap_or(zenpixels::hdr::DiffuseWhite::BT2408),
+    );
+    Ok(linear.map(|c| c * white))
+}
+
 /// Selects which fused TF + matrix + TF kernel a [`ConvertStep::Fused`]
 /// dispatches to. Each variant is one (source-TF, source-depth, dest-depth,
 /// dest-TF, channel-shape) shape that the planner can peephole.
@@ -226,6 +311,85 @@ impl FusedKind {
     }
 }
 
+/// State for the [`ConvertStep::ToneMap`] variant.
+///
+/// Bundles the pluggable [`ToneMapper`](crate::hdr::ToneMapper), its
+/// declared [`Requirements`](crate::hdr::Requirements), the resolved
+/// peaks / working primaries from the plan builder, and a shared
+/// lazily-populated `OnceCell` for the compiled
+/// [`StripMapper`](crate::hdr::StripMapper).
+///
+/// The `Arc<OnceCell<…>>` shape lets plan clones share the lazy cache:
+/// once one strip dispatches and runs
+/// [`ToneMapper::prepare`](crate::hdr::ToneMapper::prepare), every
+/// future strip — across rows, threads, and plan clones — reuses the
+/// cached [`StripMapper`](crate::hdr::StripMapper).
+#[cfg(feature = "hdr-experimental")]
+#[derive(Clone)]
+pub(crate) struct ToneMapStep {
+    /// The user-supplied mapper. Consulted via `mapper.requirements()`
+    /// once at plan-build time; the result is cached in
+    /// [`requirements`](Self::requirements) for hot-path branchless
+    /// dispatch.
+    pub(crate) mapper: alloc::sync::Arc<dyn crate::hdr::ToneMapper>,
+    /// Analysis requirements captured at plan-build time. Kept here
+    /// so neither the kernel dispatcher nor the estimate walker has to
+    /// re-virtualize a method call per row.
+    pub(crate) requirements: crate::hdr::Requirements,
+    /// Source peak luminance in cd/m². Threaded from the builder's
+    /// [`HdrConfig::source_peak_nits`](crate::HdrConfig::source_peak_nits).
+    /// When pipeline-managed mappers run through the buffer-level
+    /// orchestration ([`PixelBufferHdrConvertExt::convert_to_sdr`](crate::PixelBufferHdrConvertExt::convert_to_sdr))
+    /// this value is already resolved via
+    /// [`CllMeasure::measure_max`](crate::hdr::CllMeasure::measure_max)
+    /// before the plan is built.
+    pub(crate) source_peak_nits: f32,
+    /// Target peak luminance in cd/m². Threaded from
+    /// [`HdrConfig::target_peak_nits`](crate::HdrConfig::target_peak_nits).
+    pub(crate) target_peak_nits: f32,
+    /// Working primaries the strip is in when dispatched. Read from
+    /// [`ToneMapper::working_primaries_for`](crate::hdr::ToneMapper::working_primaries_for)
+    /// at plan-build time; the planner brackets the step with gamut
+    /// matrices to reach these primaries.
+    pub(crate) working_primaries: ColorPrimaries,
+    /// Lazily-cached compiled strip executor.
+    ///
+    /// On the first row dispatch through this step, the kernel calls
+    /// `get_or_init` with a closure that builds a
+    /// [`ToneMapContext`](crate::hdr::ToneMapContext) from the fields
+    /// above and runs
+    /// [`ToneMapper::prepare`](crate::hdr::ToneMapper::prepare). The
+    /// resulting [`Arc<dyn StripMapper>`](crate::hdr::StripMapper) is
+    /// then shared across every subsequent strip via this
+    /// `Arc<OnceBox>`.
+    ///
+    /// Uses [`once_cell::race::OnceBox`] so the cell is `no_std`-safe
+    /// (the crate's `once_cell` dep does not pull in `std`) and atomic
+    /// across threads. Wraps `Arc<dyn StripMapper>` (vs `dyn StripMapper`
+    /// directly) because `OnceBox`'s internal `AtomicPtr` requires a
+    /// `Sized` inner type.
+    pub(crate) prepared:
+        alloc::sync::Arc<once_cell::race::OnceBox<alloc::sync::Arc<dyn crate::hdr::StripMapper>>>,
+}
+
+#[cfg(feature = "hdr-experimental")]
+impl core::fmt::Debug for ToneMapStep {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // `Arc<dyn ToneMapper>` `Debug` would dump the mapper's full
+        // struct shape, which is verbose and not useful for plan
+        // debugging. The `name()` + the `OnceCell` populated-state
+        // are the load-bearing facts.
+        f.debug_struct("ToneMapStep")
+            .field("mapper", &self.mapper.name())
+            .field("requirements", &self.requirements)
+            .field("source_peak_nits", &self.source_peak_nits)
+            .field("target_peak_nits", &self.target_peak_nits)
+            .field("working_primaries", &self.working_primaries)
+            .field("prepared_cached", &self.prepared.get().is_some())
+            .finish()
+    }
+}
+
 /// A single conversion step.
 ///
 /// Not `Copy` — some variants (e.g., `ExternalTransform`) carry an
@@ -237,6 +401,8 @@ pub(crate) enum ConvertStep {
     Identity,
     /// BGRA → RGBA byte swizzle (or vice versa).
     SwizzleBgraRgba,
+    /// BGR → RGB byte swizzle (or vice versa), at 8 bits.
+    SwizzleBgrRgb,
     /// Fused RGB → BGRA: byte swap + add opaque alpha in a single SIMD pass.
     /// Equivalent to `[AddAlpha, SwizzleBgraRgba]` but writes the destination
     /// once instead of twice.
@@ -251,11 +417,9 @@ pub(crate) enum ConvertStep {
     /// function: pixel RGB is EOTF'd per source TF, alpha-blended against
     /// the pre-linearized matte, then OETF'd back to source TF. Alpha is
     /// treated as linear regardless of color-channel TF. The matte
-    /// `(r, g, b)` is always interpreted as sRGB u8 (CSS-style background).
-    ///
-    /// Implemented uniformly across U8/U16/F32/F16 via per-TF
-    /// monomorphization; sRGB integer paths use LUT-based EOTF/OETF.
-    MatteComposite { r: u8, g: u8, b: u8 },
+    /// `linear` is the background in the source's primaries and linear light, resolved once at
+    /// planning so that rows only blend.
+    MatteComposite { linear: [f32; 3] },
     /// Gray → RGB (replicate gray to all 3 channels).
     GrayToRgb,
     /// Gray → RGBA (replicate + opaque alpha).
@@ -371,29 +535,42 @@ pub(crate) enum ConvertStep {
     /// sequence `[<lin>, GamutMatrix*F32, <enc>]` whenever the planner can
     /// peephole it. See [`FusedKind`] for the supported shapes.
     Fused { kind: FusedKind, matrix: [f32; 9] },
-    /// BT.2446 Method A HDR→SDR tone-map on linear-light f32 RGB in BT.2020
-    /// primaries. The plan builder ensures this step sees BT.2020 linear-light
-    /// input via preceding gamut-matrix steps; a following gamut-matrix step
-    /// (BT.2020 → target.primaries) handles the destination primaries.
-    /// Input is source-normalized (`1.0 = source_peak_nits`); output is
-    /// target-normalized (`1.0 = target_peak_nits`). RGB-only — alpha is
-    /// handled at descriptor-layout level (the planner pairs this with the
+    /// Pluggable HDR→SDR tone-map step on linear-light f32 RGB in the
+    /// working primaries declared by
+    /// [`ToneMapper::working_primaries_for`](crate::hdr::ToneMapper::working_primaries_for)
+    /// (default [`ColorPrimaries::Bt2020`] — the canonical HDR working
+    /// space). The plan builder brackets this step with gamut matrices
+    /// so the strip sees the mapper's chosen working primaries.
+    ///
+    /// Carries an [`Arc<dyn ToneMapper>`](crate::hdr::ToneMapper) and a
+    /// lazily-populated [`Arc<OnceCell<Arc<dyn StripMapper>>>`](crate::hdr::StripMapper)
+    /// — the in-crate two-phase design:
+    ///
+    ///   - On the **first strip dispatch** through this step, the
+    ///     pipeline assembles a [`ToneMapContext`](crate::hdr::ToneMapContext)
+    ///     from the resolved peaks / working primaries stored alongside
+    ///     the mapper, calls
+    ///     [`ToneMapper::prepare`](crate::hdr::ToneMapper::prepare), and
+    ///     caches the resulting [`StripMapper`](crate::hdr::StripMapper)
+    ///     in the `OnceCell`.
+    ///   - On **every subsequent strip** (across all rows, plus across
+    ///     plan clones — the `Arc<OnceCell>` is shared), the cached
+    ///     [`StripMapper`](crate::hdr::StripMapper) is reused.
+    ///
+    /// Input is source-normalized (`1.0 = source_peak_nits` on the
+    /// step); output is target-normalized
+    /// (`1.0 = target_peak_nits`). RGB-only — alpha is handled at
+    /// descriptor-layout level (the planner pairs this with the
     /// appropriate RGB/RGBA carrier).
     ///
     /// Gated behind `hdr-experimental` at the kernel side.
     #[cfg(feature = "hdr-experimental")]
-    ToneMapBt2446A {
-        source_peak_nits: f32,
-        target_peak_nits: f32,
-    },
+    ToneMap(ToneMapStep),
     /// OKLch soft chroma compression on linear-light f32 RGB in
     /// `primaries`. Pulls residual out-of-gamut excursions back into the
     /// target unit cube using a hue-preserving rational knee curve.
     /// Skipped (no step emitted) when the target is BT.2020 — the
     /// wide-gamut output mode.
-    ///
-    /// Gated behind `hdr-experimental` at the kernel side.
-    #[cfg(feature = "hdr-experimental")]
     SoftCompressOklch {
         primaries: ColorPrimaries,
         knee: f32,
@@ -411,6 +588,7 @@ impl ConvertStep {
         match self {
             Self::Identity => "Identity",
             Self::SwizzleBgraRgba => "SwizzleBgraRgba",
+            Self::SwizzleBgrRgb => "SwizzleBgrRgb",
             Self::RgbToBgra => "RgbToBgra",
             Self::AddAlpha => "AddAlpha",
             Self::DropAlpha => "DropAlpha",
@@ -463,8 +641,14 @@ impl ConvertStep {
             Self::GamutMatrixRgbaF32(_) => "GamutMatrixRgbaF32",
             Self::Fused { kind, .. } => kind.variant_name(),
             #[cfg(feature = "hdr-experimental")]
-            Self::ToneMapBt2446A { .. } => "ToneMapBt2446A",
+            // The variant name is the generic tag; the concrete mapper's
+            // kebab-case `name()` is shown alongside by the
+            // `__trace_ops` recorder via a separate dispatcher when it
+            // wants to differentiate Bt2446-A vs FilmicSpline vs custom.
+            // Tests that pinned the historical `"ToneMapBt2446A"` were
+            // updated to `"ToneMap"` in the same commit.
             #[cfg(feature = "hdr-experimental")]
+            Self::ToneMap(_) => "ToneMap",
             Self::SoftCompressOklch { .. } => "SoftCompressOklch",
         }
     }
@@ -581,7 +765,7 @@ impl ConvertPlan {
             let index = self
                 .steps
                 .iter()
-                .position(|step| matches!(step, ConvertStep::ToneMapBt2446A { .. }))
+                .position(|step| matches!(step, ConvertStep::ToneMap(_)))
                 .expect("HDR linear plan contains tone mapping");
             self.steps.insert(
                 index,
@@ -614,6 +798,11 @@ impl ConvertPlan {
     #[track_caller]
     pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
         validate_descriptors(from, to)?;
+        if let Some(pivot) = oklab_pivot(from, to) {
+            return Self::new(from, pivot)?
+                .compose(&Self::new(pivot, to)?)
+                .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
+        }
         if needs_cms_for_color_model(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
         }
@@ -666,6 +855,26 @@ impl ConvertPlan {
                 from,
                 to,
             }));
+        }
+
+        // BGR kernels only swap bytes, at U8. Everything else happens as RGB in between.
+        if from.layout() == ChannelLayout::Bgr || to.layout() == ChannelLayout::Bgr {
+            let eight_bit = |d: PixelDescriptor| {
+                d.layout() != ChannelLayout::Bgr || d.channel_type() == ChannelType::U8
+            };
+            if !eight_bit(from) || !eight_bit(to) {
+                return Err(whereat::at!(ConvertError::NoPath { from, to }));
+            }
+            let canonical = |d: PixelDescriptor| {
+                if d.layout() == ChannelLayout::Bgr {
+                    PixelDescriptor::new(d.channel_type(), ChannelLayout::Rgb, None, d.transfer())
+                        .with_primaries(d.primaries)
+                        .with_signal_range(d.signal_range)
+                } else {
+                    d
+                }
+            };
+            return Self::around_swizzle(from, to, canonical, ConvertStep::SwizzleBgrRgb);
         }
 
         // BGRA storage exists only at U8. Keep it at the endpoint instead
@@ -901,15 +1110,15 @@ impl ConvertPlan {
         {
             // Flatten the 3×3 matrix for storage in the step enum.
             let flat = [
-                matrix[0][0],
-                matrix[0][1],
-                matrix[0][2],
-                matrix[1][0],
-                matrix[1][1],
-                matrix[1][2],
-                matrix[2][0],
-                matrix[2][1],
-                matrix[2][2],
+                matrix.0[0][0],
+                matrix.0[0][1],
+                matrix.0[0][2],
+                matrix.0[1][0],
+                matrix.0[1][1],
+                matrix.0[1][2],
+                matrix.0[2][0],
+                matrix.0[2][1],
+                matrix.0[2][2],
             ];
 
             // The gamut matrix must be applied in linear f32 space.
@@ -1055,7 +1264,18 @@ impl ConvertPlan {
                         gamut_steps.push(ConvertStep::SrgbU8ToLinearF32);
                         // Already linear, skip separate linearize.
                         gamut_steps.push(gamut_step);
-                        gamut_steps.push(ConvertStep::LinearF32ToSrgbU8);
+                        // Unknown input decodes as sRGB, but the output is still what `to` says.
+                        if matches!(
+                            to.transfer(),
+                            TransferFunction::Srgb | TransferFunction::Unknown
+                        ) {
+                            gamut_steps.push(ConvertStep::LinearF32ToSrgbU8);
+                        } else {
+                            if !matches!(to_target_tf, ConvertStep::Identity) {
+                                gamut_steps.push(to_target_tf);
+                            }
+                            gamut_steps.push(ConvertStep::NaiveF32ToU8);
+                        }
                     } else if desc.channel_type() == ChannelType::U16
                         && desc.transfer() == TransferFunction::Pq
                     {
@@ -1070,10 +1290,10 @@ impl ConvertPlan {
                         gamut_steps.push(ConvertStep::LinearF32ToHlgU16);
                     } else {
                         // Generic: to f32, linearize, gamut, delinearize, back to the depth.
-                        let (widen, narrow) = if desc.channel_type() == ChannelType::U16 {
-                            (ConvertStep::U16ToF32, ConvertStep::F32ToU16)
-                        } else {
-                            (ConvertStep::NaiveU8ToF32, ConvertStep::NaiveF32ToU8)
+                        let (widen, narrow) = match desc.channel_type() {
+                            ChannelType::U16 => (ConvertStep::U16ToF32, ConvertStep::F32ToU16),
+                            ChannelType::F16 => (ConvertStep::F16ToF32, ConvertStep::F32ToF16),
+                            _ => (ConvertStep::NaiveU8ToF32, ConvertStep::NaiveF32ToU8),
                         };
                         gamut_steps.push(widen);
                         if !matches!(linearize, ConvertStep::Identity) {
@@ -1129,6 +1349,7 @@ impl ConvertPlan {
                     step,
                     ConvertStep::Identity
                         | ConvertStep::SwizzleBgraRgba
+                        | ConvertStep::SwizzleBgrRgb
                         | ConvertStep::AddAlpha
                         | ConvertStep::RgbToBgra
                         | ConvertStep::GrayToRgb
@@ -1188,8 +1409,10 @@ impl ConvertPlan {
     ///    [`ConvertPlan::new`]. Skipped when the source is already
     ///    `Linear`.
     /// 2. Source primaries → BT.2020 matrix (skipped when source is BT.2020).
-    /// 3. `ToneMapBt2446A` step (the BT.2446 Method A curve operating in
-    ///    BT.2020 RGB).
+    /// 3. `ToneMap` step — the in-crate BT.2446 Method A
+    ///    [`Bt2446A`](crate::hdr::Bt2446A) reference curve when called
+    ///    through this entry; swappable via
+    ///    [`ConvertPlan::new_with_tone_mapper`](Self::new_with_tone_mapper).
     /// 4. BT.2020 → target primaries matrix (skipped when target is BT.2020).
     /// 5. `SoftCompressOklch` step (skipped when target is BT.2020 —
     ///    wide-gamut output mode preserves chroma).
@@ -1201,7 +1424,7 @@ impl ConvertPlan {
     /// [`ConvertPlan::new`] would build — no tone-map gets injected into
     /// a path that doesn't need one.
     ///
-    // ToneMapBt2446A / SoftCompressOklch are crate-internal `ConvertStep` variants
+    // ToneMap / SoftCompressOklch are crate-internal `ConvertStep` variants
     // — referenced by name in the prose above; explicit links would point at
     // private items.
     ///
@@ -1232,6 +1455,51 @@ impl ConvertPlan {
         from: PixelDescriptor,
         to: PixelDescriptor,
         hdr: HdrConfig,
+    ) -> Result<Self, At<ConvertError>> {
+        // Default mapper: the ITU-R BT.2446-1 §4 reference curve, with
+        // peaks baked from the supplied `HdrConfig`.
+        Self::plan_hdr(from, to, hdr, None)
+    }
+
+    /// [`Self::new_with_hdr_config`] with another algorithm in place of
+    /// [`Bt2446A`](crate::hdr::Bt2446A). `hdr` supplies the peaks.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Self::new_with_hdr_config`], and
+    /// [`ConvertError::FullImageMapperNotSupported`] when the mapper needs the whole image.
+    #[cfg(feature = "hdr-experimental")]
+    #[track_caller]
+    pub fn new_with_tone_mapper(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        hdr: HdrConfig,
+        mapper: alloc::sync::Arc<dyn crate::hdr::ToneMapper>,
+    ) -> Result<Self, At<ConvertError>> {
+        if mapper.requirements().full_image {
+            return Err(whereat::at!(ConvertError::FullImageMapperNotSupported {
+                mapper_name: mapper.name(),
+            }));
+        }
+        Self::plan_hdr(from, to, hdr, Some(mapper))
+    }
+
+    /// Internal HDR planner behind [`Self::new_with_hdr_config`] and
+    /// [`Self::new_with_tone_mapper`].
+    ///
+    /// When `mapper_override` is `None` the planner constructs the
+    /// in-crate [`Bt2446A`](crate::hdr::Bt2446A) from `hdr`. When
+    /// `Some`, the supplied mapper rides into the
+    /// [`ConvertStep::ToneMap`] step verbatim (any peaks come from
+    /// `hdr`; the mapper's own `requirements()` is consulted to
+    /// determine the working primaries and analysis scope).
+    #[cfg(feature = "hdr-experimental")]
+    #[track_caller]
+    pub(crate) fn plan_hdr(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        hdr: HdrConfig,
+        mapper_override: Option<alloc::sync::Arc<dyn crate::hdr::ToneMapper>>,
     ) -> Result<Self, At<ConvertError>> {
         if needs_cms_for_color_model(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
@@ -1309,7 +1577,7 @@ impl ConvertPlan {
             } else {
                 to
             };
-            let mut plan = Self::new_with_hdr_config(straight_from, straight_to, hdr)?;
+            let mut plan = Self::plan_hdr(straight_from, straight_to, hdr, mapper_override)?;
             plan.steps.insert(0, ConvertStep::PremulToStraight);
             if to.alpha() == Some(AlphaMode::Premultiplied) {
                 plan.steps.push(ConvertStep::StraightToPremul);
@@ -1348,59 +1616,71 @@ impl ConvertPlan {
             .map_err(|e| whereat::at!(e))?,
         );
 
-        // ---- (b) Source primaries → BT.2020 (skip when source IS BT.2020).
-        if from.primaries != ColorPrimaries::Bt2020
-            && let Some(matrix) =
-                crate::gamut::conversion_matrix(from.primaries, ColorPrimaries::Bt2020)
-        {
+        // ---- The mapper is either the caller-supplied one (via `new_with_tone_mapper`) or the in-crate
+        // BT.2446-A reference curve, constructed from the supplied `HdrConfig`. Its working primaries
+        // decide the matrices on both sides of it. An unknown target keeps the source's.
+        #[cfg(feature = "bt2446a")]
+        let mapper: alloc::sync::Arc<dyn crate::hdr::ToneMapper> =
+            mapper_override.unwrap_or_else(|| {
+                alloc::sync::Arc::new(crate::hdr::Bt2446A::new(
+                    hdr.source_peak_nits,
+                    hdr.target_peak_nits,
+                ))
+            });
+        #[cfg(not(feature = "bt2446a"))]
+        let mapper: alloc::sync::Arc<dyn crate::hdr::ToneMapper> = match mapper_override {
+            Some(mapper) => mapper,
+            None => return Err(whereat::at!(ConvertError::NoPath { from, to })),
+        };
+        let requirements = mapper.requirements();
+        if requirements.full_image {
+            return Err(whereat::at!(ConvertError::FullImageMapperNotSupported {
+                mapper_name: mapper.name(),
+            }));
+        }
+        let working_primaries = mapper.working_primaries_for(to.primaries);
+        let gamut_step = |a: ColorPrimaries, b: ColorPrimaries| {
+            if a == b {
+                return Ok(None);
+            }
+            let Some(matrix) = crate::gamut::conversion_matrix(a, b) else {
+                return Err(whereat::at!(ConvertError::NoPath { from, to }));
+            };
             let flat = [
-                matrix[0][0],
-                matrix[0][1],
-                matrix[0][2],
-                matrix[1][0],
-                matrix[1][1],
-                matrix[1][2],
-                matrix[2][0],
-                matrix[2][1],
-                matrix[2][2],
+                matrix.0[0][0],
+                matrix.0[0][1],
+                matrix.0[0][2],
+                matrix.0[1][0],
+                matrix.0[1][1],
+                matrix.0[1][2],
+                matrix.0[2][0],
+                matrix.0[2][1],
+                matrix.0[2][2],
             ];
-            let step = if after_decode.layout().has_alpha() {
+            Ok(Some(if after_decode.layout().has_alpha() {
                 ConvertStep::GamutMatrixRgbaF32(flat)
             } else {
                 ConvertStep::GamutMatrixRgbF32(flat)
-            };
-            steps.push(step);
-        }
+            }))
+        };
 
-        // ---- (c) BT.2446 Method A tone map (BT.2020 HDR → BT.2020 SDR).
-        steps.push(ConvertStep::ToneMapBt2446A {
+        // ---- (b) Source primaries → the mapper's working primaries.
+        steps.extend(gamut_step(from.primaries, working_primaries)?);
+
+        // ---- (c) Tone-map step. The shared `OnceBox` is freshly allocated so plan clones
+        // reuse the same lazy cache.
+        steps.push(ConvertStep::ToneMap(ToneMapStep {
+            mapper,
+            requirements,
             source_peak_nits: hdr.source_peak_nits,
             target_peak_nits: hdr.target_peak_nits,
-        });
+            working_primaries,
+            prepared: alloc::sync::Arc::new(once_cell::race::OnceBox::new()),
+        }));
 
-        // ---- (d) BT.2020 → target primaries (skip when target IS BT.2020).
-        if to.primaries != ColorPrimaries::Bt2020
-            && to.primaries != ColorPrimaries::Unknown
-            && let Some(matrix) =
-                crate::gamut::conversion_matrix(ColorPrimaries::Bt2020, to.primaries)
-        {
-            let flat = [
-                matrix[0][0],
-                matrix[0][1],
-                matrix[0][2],
-                matrix[1][0],
-                matrix[1][1],
-                matrix[1][2],
-                matrix[2][0],
-                matrix[2][1],
-                matrix[2][2],
-            ];
-            let step = if after_decode.layout().has_alpha() {
-                ConvertStep::GamutMatrixRgbaF32(flat)
-            } else {
-                ConvertStep::GamutMatrixRgbF32(flat)
-            };
-            steps.push(step);
+        // ---- (d) Working primaries → target primaries.
+        if to.primaries != ColorPrimaries::Unknown {
+            steps.extend(gamut_step(working_primaries, to.primaries)?);
         }
 
         // ---- (e) OKLch soft chroma compression (skip when target IS BT.2020;
@@ -1486,12 +1766,17 @@ impl ConvertPlan {
         if needs_cms_for_color_model(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
         }
+        if let Some(pivot) = oklab_pivot(from, to) {
+            return Self::new_explicit(from, pivot, options)?
+                .compose(&Self::new_explicit(pivot, to, options)?)
+                .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
+        }
         // Check alpha removal policy.
         let drops_alpha = from.has_alpha() && !to.has_alpha();
-        if drops_alpha && options.alpha_policy == AlphaPolicy::DiscardIfOpaque {
+        if drops_alpha && options.alpha_policy() == AlphaPolicy::DiscardIfOpaque {
             return Err(whereat::at!(ConvertError::AlphaCheckRequired));
         }
-        if drops_alpha && options.alpha_policy == AlphaPolicy::Forbid {
+        if drops_alpha && options.alpha_policy() == AlphaPolicy::Forbid {
             return Err(whereat::at!(ConvertError::AlphaRemovalForbidden));
         }
 
@@ -1501,7 +1786,7 @@ impl ConvertPlan {
         // must be policy-gated.
         let reduces_depth = crate::negotiate::channel_bits(from.channel_type())
             > crate::negotiate::channel_bits(to.channel_type());
-        if reduces_depth && options.depth_policy == DepthPolicy::Forbid {
+        if reduces_depth && options.depth_policy() == DepthPolicy::Forbid {
             return Err(whereat::at!(ConvertError::DepthReductionForbidden));
         }
 
@@ -1511,13 +1796,13 @@ impl ConvertPlan {
             ChannelLayout::Rgb | ChannelLayout::Rgba | ChannelLayout::Bgra
         );
         let dst_is_gray = matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha);
-        if src_is_rgb && dst_is_gray && options.luma.is_none() {
+        if src_is_rgb && dst_is_gray && options.luma().is_none() {
             return Err(whereat::at!(ConvertError::RgbToGray));
         }
 
         if drops_alpha
             && to.alpha() == Some(AlphaMode::Undefined)
-            && matches!(options.alpha_policy, AlphaPolicy::CompositeOnto { .. })
+            && matches!(options.alpha_policy(), AlphaPolicy::CompositeOnto { .. })
         {
             let rgb =
                 PixelDescriptor::new(to.channel_type(), ChannelLayout::Rgb, None, to.transfer())
@@ -1527,6 +1812,12 @@ impl ConvertPlan {
             return Ok(matte
                 .compose_preserving(&Self::new(rgb, to)?)
                 .expect("matching built-in endpoints"));
+        }
+
+        if options.gamut_mapping() == GamutMapping::SoftCompress
+            && soft_compress_applies(&from, &to)
+        {
+            return Self::new_soft_compressed(from, to, options);
         }
 
         let mut plan = Self::new(from, to).at()?;
@@ -1562,7 +1853,13 @@ impl ConvertPlan {
         //    pass; wrapping turns that into three full row passes.
         //  * `MatteComposite` also drops the alpha channel (RGBA → RGB) in
         //    the same pass, which a pair of same-layout TF steps cannot do.
-        if drops_alpha && let AlphaPolicy::CompositeOnto { r, g, b } = options.alpha_policy {
+        if drops_alpha
+            && let AlphaPolicy::CompositeOnto {
+                background,
+                reference_white,
+            } = options.alpha_policy()
+        {
+            let matte = matte_background(background, reference_white, from)?;
             let mut expanded = Vec::new();
             for step in plan.steps.drain(..) {
                 match step {
@@ -1577,7 +1874,7 @@ impl ConvertPlan {
                         ConvertStep::GrayAlphaToRgba,
                         ConvertStep::DropAlpha,
                         ConvertStep::RgbToGray {
-                            coefficients: options.luma.unwrap_or(LumaCoefficients::Bt709),
+                            coefficients: options.luma().unwrap_or(LumaCoefficients::Bt709),
                         },
                     ]),
                     other => expanded.push(other),
@@ -1593,7 +1890,7 @@ impl ConvertPlan {
             let mut idx = 0;
             while idx < plan.steps.len() {
                 if matches!(plan.steps[idx], ConvertStep::DropAlpha) {
-                    plan.steps[idx] = ConvertStep::MatteComposite { r, g, b };
+                    plan.steps[idx] = ConvertStep::MatteComposite { linear: matte };
                     if src_is_premul {
                         plan.steps.insert(idx, ConvertStep::PremulToStraight);
                         idx += 1;
@@ -1607,7 +1904,7 @@ impl ConvertPlan {
         // steps for their sign-preserving extended-range counterparts.
         // Fused u8/u16 matlut steps are unaffected (integer I/O can't
         // represent extended range anyway).
-        if !options.clip_out_of_gamut {
+        if !options.clip_out_of_gamut() {
             for step in &mut plan.steps {
                 match step {
                     ConvertStep::SrgbF32ToLinearF32 => {
@@ -1632,7 +1929,7 @@ impl ConvertPlan {
         // `layout_steps` constructs these variants with a Bt709 placeholder
         // because it has no access to options; we replace with the user's
         // explicit choice (or the permissive default of Bt709) here.
-        let user_luma = options.luma.unwrap_or(LumaCoefficients::Bt709);
+        let user_luma = options.luma().unwrap_or(LumaCoefficients::Bt709);
         for step in &mut plan.steps {
             match step {
                 ConvertStep::RgbToGray { coefficients }
@@ -1645,6 +1942,51 @@ impl ConvertPlan {
         }
 
         Ok(plan)
+    }
+
+    /// Source to linear `f32` in the target's primaries with out-of-gamut values
+    /// kept, then compression, then linear to target.
+    fn new_soft_compressed(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        options: &ConvertOptions,
+    ) -> Result<Self, At<ConvertError>> {
+        let sdr = |t: TransferFunction| !matches!(t, TransferFunction::Pq | TransferFunction::Hlg);
+        if !sdr(from.transfer()) || !sdr(to.transfer()) {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
+        if crate::oklab::OklabSpace::for_primaries(to.primaries).is_none() {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
+        let keeps_alpha = from.has_alpha() && from.alpha() != Some(AlphaMode::Undefined);
+        let middle = PixelDescriptor::new(
+            ChannelType::F32,
+            if keeps_alpha {
+                ChannelLayout::Rgba
+            } else {
+                ChannelLayout::Rgb
+            },
+            keeps_alpha.then_some(AlphaMode::Straight),
+            TransferFunction::Linear,
+        )
+        .with_primaries(to.primaries);
+        let plain = options.with_gamut_mapping(GamutMapping::Clip);
+        // Padding isn't alpha, and real alpha stays in `middle`, so nothing is dropped here.
+        let into = Self::new_explicit(
+            from,
+            middle,
+            &plain
+                .with_clip_out_of_gamut(false)
+                .with_alpha_policy(AlphaPolicy::DiscardUnchecked),
+        )?;
+        let out = Self::new_explicit(middle, to, &plain.with_clip_out_of_gamut(true))?;
+        let mut steps = into.steps;
+        steps.push(ConvertStep::SoftCompressOklch {
+            primaries: to.primaries,
+            knee: crate::hdr::SoftCompress::DEFAULT_KNEE,
+        });
+        steps.extend(out.steps);
+        Ok(Self::build(from, to, steps))
     }
 
     /// Create a shell plan that records from/to but has no conversion steps.
@@ -2270,9 +2612,7 @@ pub(crate) struct ConvertScratch {
     /// Stored as `Vec<u32>` to guarantee 4-byte alignment, which lets
     /// garb and bytemuck use fast aligned paths instead of unaligned fallbacks.
     buf: Vec<u32>,
-    /// Row-persistent scratch for the HDR tone-map kernels (RGB strip +
-    /// cached `SoftCompress` gamut LUT). Empty placeholder without the
-    /// `hdr-experimental` feature.
+    /// Row-persistent RGB strip for the kernels that peel alpha off.
     hdr: convert_kernels::HdrKernelScratch,
 }
 
@@ -2339,18 +2679,23 @@ impl core::fmt::Debug for ConvertScratch {
     }
 }
 
-/// Convert one row of `width` pixels using a pre-computed plan.
-///
-/// `src` and `dst` must be sized for `width` pixels in their respective formats.
-/// For multi-step plans, an internal scratch buffer is allocated per call.
-/// Prefer [`RowConverter`](crate::RowConverter) in hot loops (reuses scratch buffers).
-pub fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
-    // Allocating fallback for one-off calls: the scratch starts empty and
-    // only grows if the plan actually needs it (multi-step ping-pong or an
-    // HDR tone-map kernel); identity and other single-step plans stay
-    // allocation-free.
-    let mut scratch = ConvertScratch::new();
-    convert_row_buffered(plan, src, dst, width, &mut scratch);
+/// Whether primaries narrow between RGB-family layouts, so that colors can leave
+/// the target's gamut. Equal or containing primaries clip nothing.
+pub(crate) fn soft_compress_applies(from: &PixelDescriptor, to: &PixelDescriptor) -> bool {
+    from.primaries != to.primaries
+        && from.primaries != ColorPrimaries::Unknown
+        && to.primaries != ColorPrimaries::Unknown
+        && !to.primaries.contains(from.primaries)
+        && matches!(
+            from.layout(),
+            ChannelLayout::Rgb | ChannelLayout::Rgba | ChannelLayout::Bgra
+        )
+}
+
+/// One row with fresh scratch, for tests that run a plan directly.
+#[cfg(test)]
+fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
+    convert_row_buffered(plan, src, dst, width, &mut ConvertScratch::new());
 }
 
 /// Convert one row of `width` pixels, reusing pre-allocated scratch buffers.
@@ -2518,6 +2863,7 @@ fn are_inverse(a: &ConvertStep, b: &ConvertStep) -> bool {
         (a, b),
         // Self-inverse
         (ConvertStep::SwizzleBgraRgba, ConvertStep::SwizzleBgraRgba)
+        | (ConvertStep::SwizzleBgrRgb, ConvertStep::SwizzleBgrRgb)
         // Layout inverses (lossless for opaque data)
         | (ConvertStep::AddAlpha, ConvertStep::DropAlpha)
         // Transfer function f32↔f32 (exact inverses in float)
@@ -2565,6 +2911,16 @@ fn are_inverse(a: &ConvertStep, b: &ConvertStep) -> bool {
 fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescriptor {
     let mut next = match step {
         ConvertStep::Identity => current,
+        ConvertStep::SwizzleBgrRgb => PixelDescriptor::new(
+            current.channel_type(),
+            if current.layout() == ChannelLayout::Bgr {
+                ChannelLayout::Rgb
+            } else {
+                ChannelLayout::Bgr
+            },
+            None,
+            current.transfer(),
+        ),
         ConvertStep::SwizzleBgraRgba => {
             let new_layout = match current.layout() {
                 ChannelLayout::Bgra => ChannelLayout::Rgba,
@@ -2815,13 +3171,13 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             current.transfer(),
         ),
         // HDR steps. Both operate on linear-light F32 RGB and preserve the
-        // layout/alpha/transfer/depth of the carrier. ToneMapBt2446A operates
-        // in BT.2020 (planner-enforced); SoftCompressOklch operates in the
+        // layout/alpha/transfer/depth of the carrier. `ToneMap` operates
+        // in the mapper's working primaries (planner-enforced via
+        // bracketing gamut matrices); SoftCompressOklch operates in the
         // step's stored `primaries`. Neither step changes the descriptor
         // shape — they only update pixel values.
         #[cfg(feature = "hdr-experimental")]
-        ConvertStep::ToneMapBt2446A { .. } => current,
-        #[cfg(feature = "hdr-experimental")]
+        ConvertStep::ToneMap(_) => current,
         ConvertStep::SoftCompressOklch { .. } => current,
     };
     next.primaries = current.primaries;
@@ -2834,13 +3190,13 @@ mod convert_kernels;
 use convert_kernels::apply_step_u8;
 pub(crate) use convert_kernels::{hlg_eotf, hlg_oetf, pq_eotf, pq_oetf};
 
-#[cfg(all(test, feature = "hdr-experimental"))]
+#[cfg(all(test, feature = "bt2446a"))]
 mod hdr_plan_tests {
     //! Unit tests pinning the HDR-aware `ConvertPlan` against the same math
     //! the deleted `HdrToSdr::apply_strip` ran. Keeps the e2e ΔE2000 budget
     //! grounded in per-pixel parity rather than only the imazen-26 sample.
     use super::*;
-    use crate::gamut::{apply_matrix_f32, conversion_matrix};
+    use crate::gamut::conversion_matrix;
     use crate::hdr::{Bt2446A, SoftCompress};
     use crate::oklab;
 
@@ -2857,19 +3213,18 @@ mod hdr_plan_tests {
         // Source primaries → BT.2020.
         let m_src = conversion_matrix(ColorPrimaries::Bt709, ColorPrimaries::Bt2020).unwrap();
         for p in px.iter_mut() {
-            apply_matrix_f32(p, &m_src);
+            *p = m_src.apply(*p);
         }
         // BT.2446-A curve in BT.2020.
         Bt2446A::new(1000.0, 100.0).map_strip_simd(&mut px);
         // BT.2020 → target primaries.
         let m_dst = conversion_matrix(ColorPrimaries::Bt2020, ColorPrimaries::Bt709).unwrap();
         for p in px.iter_mut() {
-            apply_matrix_f32(p, &m_dst);
+            *p = m_dst.apply(*p);
         }
         // OKLch soft compress in target primaries.
-        let m1 = oklab::rgb_to_lms_matrix(ColorPrimaries::Bt709).unwrap();
-        let m1_inv = oklab::lms_to_rgb_matrix(ColorPrimaries::Bt709).unwrap();
-        let compressor = SoftCompress::from_matrices(&m1, &m1_inv, 0.96);
+        let space = oklab::OklabSpace::for_primaries(ColorPrimaries::Bt709).unwrap();
+        let compressor = SoftCompress::new(&space, 0.96);
         compressor.apply_strip(&mut px);
         // Final clamp.
         for c in px[0].iter_mut() {

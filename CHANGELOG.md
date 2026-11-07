@@ -1,4 +1,4 @@
-# zenpsychovisual-api
+# zenpsy-api
 
 ## [Unreleased]
 
@@ -14,8 +14,8 @@ None. This new companion is an unpublished review API.
 
 ### Changed
 
-- Name the unpublished shared contract `zenpsychovisual-api`, with the Rust
-  namespace `zenpsychovisual_api`; retain `iqa` as a consumer-local alias.
+- Name the unpublished shared contract `zenpsy-api`, with the Rust
+  namespace `zenpsy_api`; retain `iqa` as a consumer-local alias.
 
 ## 0.3.1 cleanup — release reconciliation (2026-09-28)
 
@@ -50,9 +50,78 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 # Changelog
 
+## [Unreleased]
+
+- Regenerate the CICP ICC bundle with a D50 PCS header and four-byte-aligned tags. Preserve every tag payload and retain identification of older profile bytes while adding the new hashes. All 334 generated profiles pass independent libpng/Little CMS container checks.
+
+- Preserve the standalone, unpublished moxcms gamma diagnostics and paired benches in `benchmarks/moxcms-gamma`, with pinned source reconstruction and hashes for all six original experiment arms.
+
+### QUEUED BREAKING CHANGES
+
+See the 0.3.1 candidate entries below for the approved breaking release queue.
+
+### Added
+
+- Pixel Format Explorer on GitHub Pages, with a CI-built WASM converter, conversion plans and byte comparisons (`5a97b0dd`).
+
 ## [0.3.1] — unreleased candidate
 
-- Fallible pixel-buffer constructors request allocator-zeroed bytes directly, retaining allocation errors, row strides and explicit alignment padding.
+- `MoxCms` at F32 no longer returns unrelated values from pure-gamma curves: ProPhoto (0.5, 0.5, 0) into sRGB was (1, 1, 0) with clipping on, and black was about -2.1e9 without it. The adapter now applies a single-value `curv` itself on RGB and gray sources and on gray routes, and keeps a negative sample's sign from a table source. Values the backend's fast power can represent keep their bits. See `benchmarks/pure_gamma_f32_2026-11-05.md`.
+- `MoxCms` 8-bit routes that go through F32 get the same fix: gray 1.8 of 0 into gray 2.2 was 255, and ProPhoto (128, 128, 0) into Adobe RGB was (255, 255, 0). Routes into sRGB's curve take the matrix kernels and don't change.
+
+- New test: premultiplied ICC samples keep every bit through `OutputPlan::new_preserving_samples`, with no CMS.
+
+- `Cmyk8` through `MoxCms` now gives `CmykF32`'s color, rounded, including its black-point compensation: on 49 real profiles to sRGB they differed by a mean of 17.8 codes. RGBA targets get the same transform as RGB. `Cmyk8` is 44% slower and `CmykF32` 6 times faster (`benchmarks/cmyk8_bpc_2026-11-05.md`).
+
+- Docs: JPEG XL color authority cites ISO/IEC 18181-1, and AVIF lists its ICC encode.
+
+- `gamut_clamping_scenarios` runs again, with a resampling filter in the test file that matches zenresize to 2.3e-4 on its image. It also checks that unclipped F32 keeps what a kernel's lobes produce through an sRGB round trip, and that `RowConverter`'s U8 output clamps them.
+
+- README review callouts match the code: the authority rule, constructor geometry and in-place retag refusal exist, and output metadata no longer disagrees with pixels on the paths the review reproduced. The limits that remain true stay listed.
+
+- Fallible pixel-buffer constructors request allocator-zeroed bytes directly, retaining allocation errors.
+
+- **Breaking:** removed `cms::ColorManagement`, `finalize_for_output` and the colorant-based `identify_profile` with them. Use `PluggableCms` and `EncodeReady::finalize`; `zenpixels::icc::IccIdentification` identifies profiles. zenpipe's `IccTransformSource` and `job` need migrating at the pin bump. `builtin_profiles` stays: it's `pub(crate)`, and zenjpeg's XYB plan names it.
+
+- `SynthesizedIcc::for_gray_cicp` gives the GRAY-class profile for a gray image.
+- **Breaking:** `ColorPrimaries::white_point` returns `Option`, `None` for unknown primaries. `ColorAuthority` is `#[non_exhaustive]`. `PixelDescriptor::try_new` refuses a layout with alpha and no mode, or the reverse. Typed views of padding formats no longer read padding as alpha. `hdr::SoftCompress` needs `hdr-experimental`.
+- **Breaking:** removed `PixelSliceMut::{upgrade_to_rgba, upgrade_to_bgra, matte_to_rgbx, matte_to_bgrx, strip_alpha_to_rgbx, strip_alpha_to_bgrx}`, which relabeled pixels as sRGB and double-multiplied premultiplied alpha. Nothing used them. `zenpixels_convert`'s `AlphaPolicy::CompositeOnto` composites.
+- **Breaking:** removed the deprecated `ConvertOptions::forbid_lossy`. `retain_channels` has the same policy values; `new_preserving_samples` is the path that keeps samples exact.
+- Moved the garb patch to a rev that accepts archmage 0.9.31 and brings garb 0.2.9's rounding fixes. F32 and F16 to U16 now round to nearest, so 336 of the 2,172 digest conversions change by at most one U16 code; `row_partition::EXPECTED_DIGEST` is updated.
+- `RowConverter` implements `Debug`. `image_interop` maps `YCgCoRo`. `UnspecifiedMatrixError` implements `Error` without `std`. `GrayAlpha` pixel impls no longer need the `rgb` feature. `__trace_ops` is public only with its feature. Both crates package their license files.
+
+- New feature `bt2446a`, which implies `hdr-experimental`, holds the BT.2446 Method A curve. **Breaking for `hdr-experimental` users:** `hdr::Bt2446A` needs it, and `new_with_hdr_config`, `convert_to_sdr` and friends return `NoPath` without it unless a `ToneMapper` is injected. At opt-level 3 it adds 63,696 B; the machinery alone adds 24,920 B.
+
+- Fast U8 gamut kernels give each pixel the same result wherever it sits in a row. The tail used different arithmetic.
+- `ConvertPlan`: cross-gamut U8 from an unknown transfer encodes as the target says, instead of always as sRGB.
+- `PixelDescriptor::layout_compatible` separates `CmykF32` from `CmykF32Inverted`. `same_color` sees out-of-range channels. `try_as_imgref` no longer panics on empty buffers.
+
+- `ConvertPlan`: conversions to and from Oklab pass through linear RGB. A non-linear source skipped its transfer function, float sRGB ran it after Oklab and clamped a and b, and cross-gamut sources multiplied Oklab by an RGB matrix.
+- `ConvertPlan`: F16 cross-gamut conversion read samples as U8 and wrote half the row.
+- `ConvertPlan::new_with_tone_mapper`: a premultiplied source keeps the injected mapper, and a mapper receives the working primaries it asks for.
+- `hdr`: removed `LuminanceHistogram`, `ToneMapper::cost_ns_per_mp`, and the `log_avg_luminance` and `luminance_histogram` requests and context fields. Nothing used them, and the plan never supplied them. `ToneMapContext` no longer has a lifetime.
+- `PixelSliceConvertExt::adapt_for_encode` honors a current ICC profile, as `convert_to` does, instead of converting by descriptor and relabeling the result.
+- `PixelSliceConvertExt::convert_into` replaces the destination's color context. `oriented_into` refuses a destination of a different format with the same pixel size.
+- `RowConverter`: with a CMS, a conversion across depths, into gray, or compositing onto a background now gives a result where it refused or dropped alpha. `MoxCms` declines depth pairs the plan can convert.
+- `Color::try_new` refuses samples needing alignment above 4 bytes; `AnyColor` holds them. `adapt_raw_rows_for_encode` accepts a last row without padding, and returns an error for a short stride instead of panicking.
+
+- `MoxCms` rounds 8-bit samples to nearest. The backend's 8-bit path comes out low: on Display P3 to sRGB, 40% of its samples miss nearest, for a mean of -0.40 of a code. moxcms 0.9.1's `make_gamma_table_impl` truncates integer gamma table entries for sRGB and BT.709 target curves; its master has the fix, unreleased. Matrix-and-curve profiles now take this crate's kernels with the profiles' own curve and colorants, and the rest take the backend's F32 path. This changes 8-bit output and costs speed: on Zen 4, 1.05 G px/s becomes 416 M on a matrix profile, 396 M becomes 116 M on an RGB table and 216 M becomes 88.5 M on CMYK.
+- Fused U8 sRGB kernels round to nearest. A floor-indexed table with one threshold comparison replaces a 4096-entry table that was off by one on about 1.3% of inputs.
+- `MoxCms` keeps white between ICC profiles and generated ones: 8-bit white into generated sRGB was (255, 255, 254). Generated colorants now sum to the ICC PCS white.
+- `MoxCms` uses low barycentric weights at 16 bits. High weights turned every 16-bit pixel of a table profile into a constant.
+- `MoxCms` keeps the sign of out-of-gamut samples on pure-gamma matrix targets. The backend's evaluator lost it: Display P3 into Adobe RGB came out a mean of +2.35 of an 8-bit code high across every 8-bit input, and up to 66 on samples that clip to 0.
+- `MoxCms` ignores a CICP tag inside an explicitly requested ICC profile at 8 and 16 bits as it does at F32. The F32 route for 8-bit samples otherwise evaluated the tag's curves in place of the profile's.
+- `MoxCms` row transforms honor `width`, and return an error for a row shorter than it. They used to convert the whole slice.
+- `cms-contract/` runs each CMS backend through one behavioral contract and against the others: `just cms-contract`. It isn't a workspace member.
+
+- `MoxCms` converts `CmykF32` and `CmykF32Inverted` sources with `build_source_transform`, by the route JPEG XL decoders take through lcms2. To sRGB that is relative colorimetric with black-point compensation. Conversion into F32 CMYK still refuses.
+- `MoxCms` falls back to `A2B0` when a table-only profile has no `A2B1`, as ICC specifies. JPEG XL's PQ and HLG profiles need this, and they refused before. Such profiles also keep extended range. `benchmarks/jxl-cms-parity` measures all of this against lcms2 and `zenjxl-decoder`'s own wrapper.
+
+- `hdr::ToneMapper`, a two-phase tone-mapping trait with `Requirements`, `ToneMapContext`, `PreparedMapper` and `StripMapper`, and `ConvertPlan::new_with_tone_mapper` to inject one. `Bt2446A` implements it and stays the one built-in algorithm.
+- `Bt2446A` output no longer depends on where a row ends or splits: the tail ran exact `powf` while the lanes ran a polynomial. The lanes now use `pow_midp_unchecked`, so black is 0, not 5.88e-5, and the worst error falls from 49.8 16-bit codes to under 0.1. On 16,384-pixel rows, 70.5 µs becomes 75.1 µs on Zen 4.
+
+- `Color::same_color` (on `ColorConvertExt`) asks whether two colors match whatever their formats, as `==` stays exact.
+- BGR8 converts through RGB8, which every route to and from BGR8 used to refuse.
 
 ### Fixed: conversions that change primaries
 
@@ -60,8 +129,40 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 - RGBA into RGB ran the RGBA matrix on RGB rows.
 - Across primaries, U16 rows other than PQ and HLG ran 8-bit steps, so RGBA16 P3 to sRGB gave garbage. U8 BT.709 used the sRGB curve, up to 3% off in the darks.
 - Narrowing no longer precedes the matrix, so only the last step rounds.
-- `ConvertScratch` could put its second half 2 bytes off a `u32` boundary, which panicked on F32 rows at odd widths. `tests/gamut_across_layouts.rs` covers these.
+- `ConvertScratch` could put its second half 2 bytes off a `u32` boundary, which panicked on F32 rows at odd widths.
+- The matrix kernel's tail rounded unlike its lanes, so `f32` output depended on how a row was split, by up to 28 ULP. `tests/row_partition_parity.rs` and `tests/gamut_across_layouts.rs` cover these.
 
+- API: free functions move onto the types that own them. See the table in
+  `docs/public-api/ABLATION-zenpixels-convert.md` for each old and new path.
+  - `PixelSliceConvertExt` (new): `convert_to`, `convert_into`, `adapt_for_encode`,
+    `check_opaque`, `quantize_to`, `oriented`, `oriented_into`.
+    `PixelBufferConvertExt::{into_oriented, try_adapt_in_place}`.
+  - `ConvertIntent::{best_match, negotiate}`, `ConversionCost::{between,
+    between_with_provenance}`, `EncodeReady::finalize`, `SynthesizedIcc::for_cicp`,
+    `Cicp::from_icc`, `IccIdentification::{from_icc, is_common_srgb}`, `ColorModel::from_icc`.
+  - `GamutMatrix` is a newtype with a private array, read through `rows()`, with `between`,
+    `then`, `inverse`, `apply`, and in-place `apply_row_rgb` and `apply_row_rgba`. `OklabSpace` (new) replaces the free Oklab
+    functions and holds both directions. `SoftCompress::new` takes it and can't panic.
+- API: removed most of `pipeline` and its feature, `ideal_format`, `best_match_with`,
+  `RenderingIntent`, `ColorPriority`, `GamutBoundaryLut`, `measure_exact_depth`,
+  `icc_profile_for_primaries`, `display_p3_icc`, `adapt_for_encode_cow`,
+  `adapt_for_encode_with_intent_cow`, and `CodesError::Unmeasurable`. `LossBucket` moves to
+  the crate root with renamed variants, and `QualityThreshold` becomes
+  `ConvertIntent::best_match_within`.
+- API: `ConvertOptions::gamut_mapping` with `GamutMapping::{Clip, SoftCompress}`.
+  `SoftCompress::compress_oklab_planes`. `AnyColor` for pixels wider than `Color` holds.
+  `ColorConvertExt::map_to_gamut`, the CSS Color 4 algorithm, and
+  `ColorConvertExt::parse_css`, checked against Color.js.
+- Fix: `SoftCompress` solves the boundary directly, without its table. In-gamut colors
+  below the knee stay bit-identical, and every SIMD tier gives identical bits.
+  `adapt_for_encode_explicit_cow` is now `adapt_raw_rows_for_encode`.
+- API: `crop_copy` and `compress_planes` return `Result`. Panicking accessors gain
+  `try_` forms: `try_row`, `try_row_mut`, `try_row_with_stride`, `try_sub_rows`,
+  `try_sub_rows_mut`, `try_rows`, `try_rows_mut`, `try_crop_view`, `try_with_descriptor`,
+  `try_with_alpha_mode`, `try_contiguous_bytes`, `try_copy_to_contiguous_bytes`,
+  `PixelDescriptor::{try_new, try_new_full}` and `DiffuseWhite::try_new`.
+- Fix: the two encode adapters shared no conversion route. `adapt_raw_rows_for_encode`
+  now always goes through `RowConverter::new_explicit`.
 - Fix `GamutBoundaryLut::max_chroma` just below hue zero, where a rounded-up hue
   read the table with a blend weight of 256 and returned about a quarter of the
   true bound. `SoftCompress` and zenfilters' soft gamut mapping desaturated those
@@ -87,11 +188,46 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   `Hash`, and `ChromaSiting` defaults to `Unknown`. This is the single
   subsampling/siting vocabulary: `zencodec::frame` re-exports it instead of
   defining its own. `YcbcrToRgbF32` refuses `Mono` as unsupported chroma.
+- Add `plane::AlignedSamples<T>` (a `Vec` of 64-byte aligned chunks: index 0 is always
+  on 64 bytes, with no `unsafe` and no custom allocator), `plane::AlignedPlane<T>`,
+  and `PixelBuffer::try_new_aligned`. `PlaneBuf::alloc` moves to `AlignedPlane::alloc`.
+- Rename `PlaneBuf::into_vec` to `try_into_vec`.
+- Add `ByteStorage` and `ByteStorageMut`, with `as_bytes` and `as_bytes_mut`, for any `SampleStorage` and `PixelStorage`.
+- Rename `plane::PlaneStorage` and `PlaneStorageMut` to `SampleStorage` and
+  `SampleStorageMut`.
+- Add feature `allocator_api`: `Vec<T, A>` and `Box<S, A>` are sample storage on Rust
+  1.100 or newer, gated with `rustversion`; no effect on older compilers.
+- Add feature `image` (needs Rust 1.88): `TryFrom` conversions with `image` 0.25 for gray,
+  gray-alpha, RGB and RGBA in `u8`, `u16`, `f32`, and every `DynamicImage` variant, without
+  copying, plus `PixelFormat` with `ColorType` (10 of 10) and `ExtendedColorType` (14 of 29; `A8` fits as an alpha plane). Color travels with
+  packed buffers, and a conversion that would relabel pixels refuses.
+- `PixelBuffer<P, S = PixelStorage>`, `PixelBufferParts<S = PixelStorage>` and
+  `FromPartsError<S = PixelStorage>`. `PixelStorage` holds a `Vec` of the format's sample
+  type, so a decoder's `Vec<u16>` or `Vec<f32>` moves through type-erased carriers. Any
+  `ByteStorage` also adopts through `try_from_parts`. `PixelBuffer` stays 72 bytes.
+- **Breaking from 0.2:** `PixelBufferParts::data` is `PixelStorage`, not `Vec<u8>`. Use
+  `try_into_vec::<u8>()`, or `PixelBuffer::try_into_tight_u8_vec`, which also checks the
+  offset and stride. Neither copies.
+- `from_vec` treats byte 0 as the first pixel. Before, a misaligned `Vec<u8>` holding wide
+  samples failed with `InsufficientData` when exact-length and silently read every sample
+  one byte late when longer. It now copies into typed storage in that case.
+- `from_pixels` and `from_imgvec` move `u16` and `f32` pixels instead of copying. Add
+  `TryFrom<PixelBuffer<P>> for ImgVec<P>`.
+- Add `PixelFormat::Bgr8` and `Cmyk16`, `ChannelLayout::Bgr`, and `PixelDescriptor::BGR8` and
+  `CMYK16`. They carry samples exactly; numeric conversion refuses with `NoPath`.
+- A single `Alpha` plane is a valid `PlanarLayout`.
+- Zeroed `PixelStorage` and `AlignedSamples` allocate through `alloc_zeroed`: at 64 MiB and up,
+  allocation alone goes from 21 ms to near zero, and allocating then writing is about 10% faster.
+- Add `PixelSlice::try_to_tight_buffer`, which copies rows into typed storage without zeroing first.
+- Remove `new_simd_aligned` and `try_new_simd_aligned`; `try_new_aligned` allocates aligned
+  storage. `offset` and `simd_aligned_stride` remain.
+- `ColorAuthority` is no longer `#[non_exhaustive]`, and gains `select`, so readers can't
+  disagree about which source wins.
 - Add `plane`: `Plane<C>` (strided samples over any owner, with `PlaneRef`,
-  `PlaneMut` and `PlaneBuf` aliases and `PlaneStorage` for other owners),
+  `PlaneMut` and `PlaneBuf` aliases and `SampleStorage` for other owners),
   `AnyPlane`, `PlaneRole` (one role per plane; `CbCr`/`CrCb` for semi-planar
   chroma), per-plane `PlaneEncoding` (integer codes or scaled floats) and a
-  validated `PlanarLayout`. `PlaneBuf::alloc` starts rows on 64 bytes and
+  validated `PlanarLayout`. `AlignedPlane::alloc` starts rows on 64 bytes and
   avoids strides on 4096 multiples. Design: `docs/planar-types.md`.
 - `plane` zero-copy interop: `into_strided_samples` / `into_strided_samples_mut` keep the
   borrowed lifetime for adapters; with the `imgref` feature, `TryFrom` converts
@@ -99,7 +235,7 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   as a `PlaneBuf`, all without copying.
 - `PlaneBuf::into_vec` and `TryFrom<PlaneBuf<T>> for ImgVec<T>` hand the `Vec` over when
   row 0 is at index 0, and return the plane unchanged otherwise.
-- `PlaneStorage`/`PlaneStorageMut` are implemented for `[T]`, `Vec<T>`, and for `&S`,
+- `SampleStorage`/`SampleStorageMut` are implemented for `[T]`, `Vec<T>`, and for `&S`,
   `&mut S` and `Box<S>` over any `S: ?Sized`, and stay dyn-compatible.
 - `sample::CodePlane` reads codes from a `plane::AnyPlane`: `CodePlane::new` for one
   component per position, `CodePlane::component` for one of several interleaved
@@ -138,9 +274,46 @@ Built on the 0.2.17 bridge, with identical migrated signatures and feature names
   conversion methods), `icc_profiles::{ADOBE_RGB_V4, PROPHOTO_V4}`, and every
   public moxcms type: `cms_moxcms::{transform_opts, lut_transform_opts,
   cicp_transform_opts}`. `MoxCmsError`'s field is private. (6e4c7ede)
-- archmage/magetypes requirements are plain caret `0.9.30` (>=0.9.30,
-  <0.10.0, no prereleases); the previous `<=0.9.31-beta.1` cap excluded later
-  0.9 releases. (e5112d5f)
+- archmage/magetypes requirements are `>=0.9.31-beta.2, <0.10.0`, for `#[attune]`. The
+  workspace patches garb and linear-srgb to their `main`. Don't publish until archmage 0.9.31
+  and those crates are released. Consumers capped at
+  `<=0.9.31-beta.1` must raise the cap.
+- Row kernels compile only for the tiers that pay for them. Stripped size added by
+  `RowConverter` on x86-64, fat LTO: 522,784 to 350,096 bytes at opt-level 3, and 401 KB to
+  198,920 at opt-level s. Default builds no longer have a v4 tier, so AVX-512 CPUs run some
+  kernels up to 2.1x slower (`premul rgba u16`). The `avx512` feature restores that through
+  `+v4x` on 12 kernels and linear-srgb's slices. Non-AVX2 x86-64 is up to 5.1x slower on the
+  slices' scalar tiers, which run fused math (near-black PQ; other kernels at most 3x). `benchmarks/row_kernel_tiers_2026-11-04.md`.
+- HLG, BT.709 and PQ rows use linear-srgb's slices, and PQ drops its vendored kernels. Output
+  changes: HLG and BT.709 by rounding, PQ toward ST 2084 (wrong `u16` decode values from 10.7%
+  to 1.1%, worst error from 4 codes to 1). PQ decode now has rare 1-code reversals, 5,185 of
+  every f32 in `[0, 1]`, where it had none; encode's fell from 886,928 to 17,934.
+- One matte kernel replaces the per-transfer copies, up to 32x faster at v3, though `matte f32
+  linear` is 1.3x slower. sRGB U8 output is unchanged for every gray, alpha and matte value;
+  other integer output stays within 1 code of the formula.
+- **BREAKING:** `AlphaPolicy::CompositeOnto` gains `reference_white: Option<DiffuseWhite>`. On
+  PQ and HLG sources the background sits there, not at the format's peak: white over PQ was
+  10,000 cd/m² and is now 203 cd/m² by default. Set it to the content's reference white.
+  `DiffuseWhite` gains `Hash`.
+- **BREAKING:** `AlphaPolicy::CompositeOnto`'s `r`, `g`, `b` become `background: Color`, so a matte can be any color
+  in any format. It is converted to the source's primaries before blending: sRGB red over a P3 source was read as P3's
+  red. Unknown source primaries take the background unconverted. A background with alpha, or an HDR background on
+  another transfer than the source, is refused at planning, as `ConvertError::NoPath`. Migrate with
+  `background: Color::srgb8(r, g, b)`.
+- New `zenpixels::Color`: one color with its `PixelDescriptor`, `Copy`, 24 bytes, holding up to 16 bytes of samples aligned for every sample type, so
+  casting its bytes can't fail. Comparison is bitwise. `ColorConvertExt::try_convert_to` converts one without a
+  one-pixel buffer, and keeps out-of-gamut values unless asked to clip. It refuses SDR to PQ or HLG, which would put white at the peak.
+- **BREAKING:** Oklab uses CSS Color 4's matrices, so `LMS_FROM_XYZ`, `XYZ_FROM_LMS`, `OKLAB_FROM_LMS_CBRT` and `LMS_CBRT_FROM_OKLAB` change value. Neutrals lose
+  their chroma, 1.25e-4 at white before. The largest move on a 52³ sRGB grid is 1.25e-4 ΔEOK, so expected values downstream may need refreshing.
+- A pixel's output no longer depends on where it sits in a row. `tests/row_partition.rs` checks
+  1792 conversions at every tier.
+- Output no longer depends on the CPU: every native tier gives the same bytes, so bit-exact tests hold across machines. A digest
+  test pins them. New feature `precise-portable` extends this to strict WASM, at up to about 18x cost there.
+- Gray from F16 goes through the F16C slice converters and the f32 kernel: 4x faster on x86-64
+  and 7x on aarch64. NaN stays NaN, but which input's payload survives can change.
+- `rgb_to_oklab`, `oklab_to_rgb` and `fast_cbrt` are `#[inline]`: without LTO, Oklab encode ran
+  6x slower and had no gain from any tier.
+- The `zenpixels` requirement is now `0.3.1`: this source uses its new storage API.
 
 ## [0.2.17] — unreleased bridge
 

@@ -254,7 +254,7 @@ prefer PNG or use JXL via the f32 Linear path.
 | JPEG | ✅ | ✅ | ❌ | APP2 ICC marker |
 | WebP | ✅ | ✅ | ❌ | RIFF ICCP chunk |
 | PNG | ✅ | ✅ | ✅ | iCCP chunk + cICP chunk |
-| AVIF | ✅ | ❌ | ✅ | ICC decode only; CICP in ISOBMFF/AV1 |
+| AVIF | ✅ | ✅ | ✅ | ICC in a `colr` box; CICP in ISOBMFF/AV1 |
 | JXL | ✅ | ✅ | ✅ | ICC in codestream; CICP via metadata |
 | GIF | ❌ | ❌ | ❌ | No color management |
 | BMP | ❌ | ❌ | ❌ | No color management |

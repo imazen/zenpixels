@@ -1,14 +1,14 @@
 //! Physical orientation baking — rotate / flip a whole pixel buffer.
 //!
-//! [`apply_orientation`] takes a (possibly strided) [`PixelSlice`] and an
+//! [`PixelSliceConvertExt::oriented`](crate::ext::PixelSliceConvertExt::oriented) takes a (possibly strided) [`PixelSlice`] and an
 //! [`Orientation`] and returns a fresh, tightly-allocated [`PixelBuffer`] with
 //! the pixels physically rearranged. It is the "bake" half of the zen
 //! orientation model: codecs that decode to a raster buffer and are asked to
 //! resolve orientation (`OrientationHint::bakes()` is true) call this; the
 //! cheap coordinate math (`Orientation::forward_map` / `output_dimensions`)
 //! lives in `zenpixels`, and this is the buffer operation that consumes it.
-//! [`apply_orientation_into`] writes a caller-owned buffer (no allocation), and
-//! [`apply_orientation_in_place`] permutes the backing allocation itself.
+//! [`PixelSliceConvertExt::oriented_into`](crate::ext::PixelSliceConvertExt::oriented_into) writes a caller-owned buffer (no allocation), and
+//! [`PixelBufferConvertExt::into_oriented`](crate::ext::PixelBufferConvertExt::into_oriented) permutes the backing allocation itself.
 //!
 //! # Algorithm
 //!
@@ -108,14 +108,16 @@ const TILE: u32 = 32;
 ///
 /// This allocates the output every call. Callers that reuse or pool a target
 /// buffer (e.g. a codec `decode_into`, or an image proxy processing same-size
-/// images) should use [`apply_orientation_into`] to avoid the allocation.
+/// images) should use [`PixelSliceConvertExt::oriented_into`](crate::ext::PixelSliceConvertExt::oriented_into) to avoid the allocation.
 /// `Orientation::Identity` still allocates and copies (callers that want to skip
 /// the copy entirely should check `orientation.is_identity()` themselves).
-#[must_use]
-pub fn apply_orientation(src: PixelSlice<'_>, orientation: Orientation) -> PixelBuffer {
+pub(crate) fn apply_orientation(
+    src: PixelSlice<'_>,
+    orientation: Orientation,
+) -> Result<PixelBuffer, ConvertError> {
     let (ow, oh) = orientation.output_dimensions(src.width(), src.rows());
     let desc = src.descriptor();
-    let mut out = PixelBuffer::new(ow, oh, desc);
+    let mut out = PixelBuffer::try_new(ow, oh, desc).map_err(|_| ConvertError::AllocationFailed)?;
     if let Some(context) = src.color_context() {
         out = out.with_color_context(context.clone());
     }
@@ -127,7 +129,7 @@ pub fn apply_orientation(src: PixelSlice<'_>, orientation: Orientation) -> Pixel
         .expect("apply_orientation: freshly allocated buffer matches output geometry");
     out.set_exact_depth(exact)
         .expect("apply_orientation: output keeps the source descriptor");
-    out
+    Ok(out)
 }
 
 /// Apply `orientation` to `src`, writing into a caller-provided `dst` — **no
@@ -136,9 +138,9 @@ pub fn apply_orientation(src: PixelSlice<'_>, orientation: Orientation) -> Pixel
 /// `dst` must already have the oriented geometry
 /// ([`orientation.output_dimensions(src.width(), src.rows())`](Orientation::output_dimensions))
 /// and the same bytes-per-pixel as `src`; otherwise [`ConvertError::BufferSize`]
-/// is returned and `dst` is left untouched. The allocating [`apply_orientation`]
+/// is returned and `dst` is left untouched. The allocating [`PixelSliceConvertExt::oriented`](crate::ext::PixelSliceConvertExt::oriented)
 /// is a thin wrapper over this.
-pub fn apply_orientation_into(
+pub(crate) fn apply_orientation_into(
     src: PixelSlice<'_>,
     orientation: Orientation,
     mut dst: PixelSliceMut<'_>,
@@ -153,6 +155,13 @@ pub fn apply_orientation_into(
         return Err(ConvertError::BufferSize {
             expected: ow as usize * oh as usize * bpp,
             actual: dst.width() as usize * dst.rows() as usize * dst_bpp,
+        });
+    }
+    // Orientation moves pixels; it can't change what their bytes mean.
+    if dst.descriptor().pixel_format() != src.descriptor().pixel_format() {
+        return Err(ConvertError::NoPath {
+            from: src.descriptor(),
+            to: dst.descriptor(),
         });
     }
     if w == 0 || h == 0 || bpp == 0 {
@@ -205,17 +214,14 @@ const MAX_INPLACE_BPP: usize = 16;
 /// Bake `orientation` into `dst` **in place**, reusing its allocation — no second
 /// pixel buffer (the transposing orientations would otherwise need a 2× transient).
 ///
-/// Consumes the mutable view, permutes the bytes within the backing allocation,
-/// and returns a re-described **tight-stride** `PixelSliceMut` over the same
-/// memory — dimensions swapped for the four transposing orientations. Like the
-/// no-alloc reduction APIs, the returned view carries the new geometry; the
-/// source `PixelBuffer`'s own `width()`/`height()` go stale, so use the returned
-/// view. Square images transpose via an in-place diagonal swap; non-square via
+/// Permutes the bytes within the backing allocation and updates `dst`'s geometry:
+/// tight stride, with dimensions swapped for the four transposing orientations.
+/// Square images transpose via an in-place diagonal swap; non-square via
 /// cycle-following (an `n`-element visited scratch — not a 2× pixel buffer).
 ///
 /// Returns [`ConvertError::BufferSize`] if `bpp` exceeds 16 (the per-element temp
 /// limit) or if re-describing the output fails.
-pub fn apply_orientation_in_place(
+pub(crate) fn apply_orientation_in_place(
     dst: &mut PixelBuffer,
     orientation: Orientation,
 ) -> Result<(), ConvertError> {
@@ -254,7 +260,7 @@ pub fn apply_orientation_in_place(
     Ok(())
 }
 
-/// The transform body behind [`apply_orientation_in_place`]: permute the
+/// The transform body behind [`PixelBufferConvertExt::into_oriented`](crate::ext::PixelBufferConvertExt::into_oriented): permute the
 /// bytes and return the re-described tight-stride view for
 /// [`PixelBuffer::transform_in_place`] to adopt.
 fn orient_in_place_impl(px: InPlacePixels<'_>, orientation: Orientation) -> PixelSliceMut<'_> {
@@ -422,7 +428,8 @@ fn inplace_transpose(a: &mut [u8], w: u32, h: u32, bpp: usize) {
         let mut cur = start;
         loop {
             moved[cur] = true;
-            let prev = (cur * w) % mn1; // element that belongs at `cur`
+            // The element that belongs at `cur`. The product overflows a 32-bit usize.
+            let prev = ((cur as u64 * w as u64) % mn1 as u64) as usize;
             if prev == start {
                 break;
             }

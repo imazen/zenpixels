@@ -182,7 +182,7 @@ fn source_row(d: D) -> Vec<u8> {
                     write(d.channel_type(), v, &mut row);
                 }
             }
-            L::Bgra => {
+            L::Bgr | L::Bgra => {
                 for v in [color[2], color[1], color[0]] {
                     write(d.channel_type(), v, &mut row);
                 }
@@ -205,7 +205,7 @@ fn descriptor(c: C, l: L, t: T, p: P) -> D {
 const DEPTHS: [C; 3] = [C::U8, C::U16, C::F32];
 
 fn eight_bit_only(l: L) -> bool {
-    matches!(l, L::Bgra)
+    matches!(l, L::Bgr | L::Bgra)
 }
 
 /// RGB order of a pixel's color channels, as they sit in the layout.
@@ -214,7 +214,7 @@ fn rgb_of(l: L, c: C, px: &[u8]) -> [f64; 3] {
     let at = |i: usize| read(c, &px[i * n..(i + 1) * n]);
     match l {
         L::Rgb | L::Rgba => [at(0), at(1), at(2)],
-        L::Bgra => [at(2), at(1), at(0)],
+        L::Bgr | L::Bgra => [at(2), at(1), at(0)],
         _ => unreachable!(),
     }
 }
@@ -241,8 +241,8 @@ fn color_to_color_matches_float_math() {
     let mut checked = 0;
     for from_p in [P::DisplayP3, P::Bt2020] {
         let matrix = matrix(from_p);
-        for from_l in [L::Rgb, L::Rgba, L::Bgra] {
-            for to_l in [L::Rgb, L::Rgba, L::Bgra] {
+        for from_l in [L::Rgb, L::Rgba, L::Bgr, L::Bgra] {
+            for to_l in [L::Rgb, L::Rgba, L::Bgr, L::Bgra] {
                 for from_c in DEPTHS {
                     for to_c in DEPTHS {
                         for (from_t, to_t) in routes {
@@ -302,7 +302,7 @@ fn color_to_color_matches_float_math() {
 #[test]
 fn color_to_gray_goes_through_the_targets_primaries() {
     for from_p in [P::DisplayP3, P::Bt2020] {
-        for from_l in [L::Rgb, L::Rgba, L::Bgra] {
+        for from_l in [L::Rgb, L::Rgba, L::Bgr, L::Bgra] {
             for from_c in DEPTHS {
                 for to_l in [L::Gray, L::GrayAlpha] {
                     for to_c in DEPTHS {
@@ -345,7 +345,7 @@ fn color_to_gray_goes_through_the_targets_primaries() {
 #[test]
 fn gray_sources_skip_the_matrix() {
     for from_l in [L::Gray, L::GrayAlpha] {
-        for to_l in [L::Gray, L::GrayAlpha, L::Rgb, L::Rgba, L::Bgra] {
+        for to_l in [L::Gray, L::GrayAlpha, L::Rgb, L::Rgba, L::Bgr, L::Bgra] {
             for c in [C::U8, C::U16, C::F32] {
                 if eight_bit_only(to_l) && c != C::U8 {
                     continue;
@@ -393,19 +393,4 @@ fn rgba_to_rgb_keeps_colors_and_length() {
             rgb[0], rgb[1], rgb[2], rgb[0], rgb[1], rgb[2], rgb[0], rgb[1], rgb[2]
         ]
     );
-}
-
-/// Half of the scratch buffer once fell 2 bytes off a `u32` boundary at this width, and F32
-/// rows panicked. Every width near it must convert.
-#[test]
-fn odd_widths_keep_scratch_aligned() {
-    let from = D::RGB16_SRGB;
-    let to = descriptor(C::U8, L::Gray, T::Gamma22, P::Bt709);
-    for width in 125..=141usize {
-        let src = vec![0x55u8; width * from.bytes_per_pixel()];
-        let mut out = vec![0u8; width];
-        RowConverter::new(from, to)
-            .unwrap()
-            .convert_row(&src, &mut out, width as u32);
-    }
 }

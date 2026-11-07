@@ -17,7 +17,7 @@
 
 use std::borrow::Cow;
 use zenpixels_convert::Cicp;
-use zenpixels_convert::icc_profiles::{SynthesizedIcc, synthesize_icc_for_cicp};
+use zenpixels_convert::icc_profiles::SynthesizedIcc;
 
 /// H.273 Table 2 — assigned colour primaries code points.
 const PRIMARIES: &[(u8, &str)] = &[
@@ -68,43 +68,44 @@ fn main() {
     for &(p, pn) in PRIMARIES {
         for &(t, tn) in TRANSFERS {
             let cicp = Cicp::new(p, t, 0, false);
-            let (bytes_col, outcome) = match synthesize_icc_for_cicp(cicp) {
-                SynthesizedIcc::Profile(b) => {
-                    let n = b.len();
-                    let kind = match b {
-                        Cow::Borrowed(_) => {
-                            bundled += 1;
-                            "bundled &'static"
-                        }
-                        Cow::Owned(_) => {
-                            generated += 1;
-                            "moxcms-generated"
-                        }
-                    };
-                    sizes.push((p, t, n, kind));
-                    (n.to_string(), format!("Profile ({kind})"))
-                }
-                SynthesizedIcc::NotNeeded => {
-                    not_needed += 1;
-                    (
-                        "-".to_string(),
-                        "NotNeeded (sRGB/BT.709 default)".to_string(),
-                    )
-                }
-                SynthesizedIcc::NeedsCms => {
-                    needs_cms += 1;
-                    (
-                        "-".to_string(),
-                        "NeedsCms (build without cms-moxcms)".to_string(),
-                    )
-                }
-                SynthesizedIcc::CmsUnsupported => {
-                    unsupported += 1;
-                    ("-".to_string(), "CmsUnsupported".to_string())
-                }
-                // SynthesizedIcc is #[non_exhaustive]; a future outcome embeds nothing.
-                _ => ("-".to_string(), "unknown outcome".to_string()),
-            };
+            let (bytes_col, outcome) =
+                match zenpixels_convert::icc_profiles::SynthesizedIcc::for_cicp(cicp) {
+                    SynthesizedIcc::Profile(b) => {
+                        let n = b.len();
+                        let kind = match b {
+                            Cow::Borrowed(_) => {
+                                bundled += 1;
+                                "bundled &'static"
+                            }
+                            Cow::Owned(_) => {
+                                generated += 1;
+                                "moxcms-generated"
+                            }
+                        };
+                        sizes.push((p, t, n, kind));
+                        (n.to_string(), format!("Profile ({kind})"))
+                    }
+                    SynthesizedIcc::NotNeeded => {
+                        not_needed += 1;
+                        (
+                            "-".to_string(),
+                            "NotNeeded (sRGB/BT.709 default)".to_string(),
+                        )
+                    }
+                    SynthesizedIcc::NeedsCms => {
+                        needs_cms += 1;
+                        (
+                            "-".to_string(),
+                            "NeedsCms (build without cms-moxcms)".to_string(),
+                        )
+                    }
+                    SynthesizedIcc::CmsUnsupported => {
+                        unsupported += 1;
+                        ("-".to_string(), "CmsUnsupported".to_string())
+                    }
+                    // SynthesizedIcc is #[non_exhaustive]; a future outcome embeds nothing.
+                    _ => ("-".to_string(), "unknown outcome".to_string()),
+                };
             println!("{pn:>20} | {tn:>14} | {bytes_col:>7} | {outcome}");
         }
     }

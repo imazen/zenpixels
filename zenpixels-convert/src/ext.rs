@@ -98,7 +98,7 @@ impl ColorPrimariesExt for ColorPrimaries {
 
 /// Retain an ICC only while its samples' color meaning is unchanged.
 fn context_after_conversion(
-    source: &PixelBuffer,
+    source: &PixelSlice<'_>,
     target: PixelDescriptor,
 ) -> Option<Arc<zenpixels::ColorContext>> {
     let from = source.descriptor();
@@ -140,11 +140,11 @@ fn context_after_conversion(
 use alloc::sync::Arc;
 use whereat::{At, ResultAtExt};
 use zenpixels::PixelDescriptor;
-use zenpixels::buffer::PixelBuffer;
+use zenpixels::buffer::{PixelBuffer, PixelCow, PixelSlice, PixelSliceMut};
 use zenpixels::descriptor::{AlphaMode, ChannelLayout, ChannelType};
 
 /// Adds format conversion methods to type-erased [`PixelBuffer`].
-pub trait PixelBufferConvertExt: crate::sealed::Sealed {
+pub trait PixelBufferConvertExt: crate::sealed::Sealed + Sized {
     /// Convert pixel data to a different layout and depth.
     ///
     /// Uses [`RowConverter`](crate::RowConverter) for transfer-function-aware
@@ -155,6 +155,29 @@ pub trait PixelBufferConvertExt: crate::sealed::Sealed {
     ///
     /// **Allocates** a new [`PixelBuffer`].
     fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>>;
+
+    /// Change format in place when no conversion math is needed, with no allocation.
+    ///
+    /// Handles metadata-only changes, the `Rgba8` and `Bgra8` byte swap, and removing a
+    /// padding or declared-opaque alpha lane. Anything else returns
+    /// [`ConvertError::NoPath`](crate::ConvertError::NoPath) with the buffer untouched:
+    /// fall back to [`convert_to`](Self::convert_to). Live alpha is refused, so use
+    /// [`reduce_to_load_bearing_format_in_place`](crate::PixelBufferLoadBearingExt::reduce_to_load_bearing_format_in_place)
+    /// to scan for it and drop it when it's opaque.
+    fn try_adapt_in_place(
+        &mut self,
+        target: PixelDescriptor,
+    ) -> Result<(), At<crate::ConvertError>>;
+
+    /// Physically apply `orientation`, reusing this allocation where possible.
+    ///
+    /// Identity returns the buffer untouched. Orientations permute in place, with
+    /// a visited scratch for non-square transposes; pixels wider than 16 bytes
+    /// fall back to a copy.
+    fn into_oriented(
+        self,
+        orientation: zenpixels::Orientation,
+    ) -> Result<PixelBuffer, At<crate::ConvertError>>;
 
     /// Add an alpha channel. **Allocates** a new `PixelBuffer`.
     ///
@@ -277,19 +300,128 @@ fn exact_after_preserving(
     zenpixels::sample::ExactDepth::new(to.channel_type(), to.signal_range, color, alpha).ok()
 }
 
-impl PixelBufferConvertExt for PixelBuffer {
+/// A converter for `source`, using its current color when it has an ICC profile.
+fn converter_for(
+    source: &PixelSlice<'_>,
+    target: PixelDescriptor,
+) -> Result<crate::RowConverter, At<crate::ConvertError>> {
+    let src_desc = source.descriptor();
+    check_needs_cms(&src_desc, &target)?;
+    let source_profile =
+        crate::output::current_profile_for(src_desc, source.color_context().map(Arc::as_ref))?;
+    let changes_color =
+        src_desc.transfer() != target.transfer() || src_desc.primaries != target.primaries;
+    if changes_color && matches!(source_profile, zenpixels::ColorProfileSource::Icc(_)) {
+        crate::RowConverter::new_with_sources(
+            src_desc,
+            target,
+            source_profile,
+            target.color_profile_source(),
+            &zenpixels::ConvertOptions::permissive()
+                .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked),
+            None,
+        )
+    } else if src_desc.transfer() == TransferFunction::Linear
+        && target.transfer() == TransferFunction::Pq
+    {
+        let anchor = source
+            .color_context()
+            .and_then(|c| c.diffuse_white)
+            .unwrap_or(zenpixels::hdr::DiffuseWhite::new(10_000.0));
+        Ok(crate::RowConverter::from_plan(
+            crate::ConvertPlan::new(src_desc, target)?.with_pq_anchor(anchor),
+        ))
+    } else {
+        crate::RowConverter::new(src_desc, target).at()
+    }
+}
+
+/// Adds whole-image conversion methods to type-erased [`PixelSlice`].
+///
+/// Every method handles strided rows. Row-at-a-time work goes through
+/// [`RowConverter`](crate::RowConverter).
+pub trait PixelSliceConvertExt<'a>: crate::sealed::Sealed {
+    /// Convert to `target`. **Allocates** a new `PixelBuffer`.
+    ///
+    /// Uses the slice's current ICC profile when it has one. Conversions that need
+    /// a CMS return [`ConvertError::NeedsCms`](crate::ConvertError::NeedsCms).
+    fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>>;
+
+    /// Convert into `dst`, whose descriptor is the target. No output allocation.
+    ///
+    /// # Errors
+    ///
+    /// [`ConvertError::BufferSize`](crate::ConvertError::BufferSize) when `dst` has
+    /// different dimensions, leaving it untouched, and as for
+    /// [`convert_to`](Self::convert_to).
+    fn convert_into<'d>(
+        &self,
+        dst: PixelSliceMut<'d>,
+    ) -> Result<PixelSliceMut<'d>, At<crate::ConvertError>>;
+
+    /// Pick the cheapest of `supported` and return these pixels in it, borrowed
+    /// when they already match.
+    ///
+    /// Use [`ConvertOptions::permissive`](zenpixels::ConvertOptions::permissive)
+    /// with `AlphaPolicy::DiscardUnchecked` to let any conversion through.
+    ///
+    /// # Errors
+    ///
+    /// [`ConvertError::EmptyFormatList`](crate::ConvertError::EmptyFormatList), any
+    /// refusal from `options`, and allocation failure.
+    fn adapt_for_encode(
+        &self,
+        supported: &[PixelDescriptor],
+        options: &zenpixels::ConvertOptions,
+    ) -> Result<PixelCow<'a>, At<crate::ConvertError>>;
+
+    /// Scan visible alpha, stopping at the first non-opaque pixel. Padding is
+    /// ignored, and nothing allocates. Floating alpha must equal 1.0 exactly.
+    ///
+    /// Run this before planning with `AlphaPolicy::DiscardUnchecked` when a
+    /// destination must stay unchanged on failure.
+    ///
+    /// # Errors
+    ///
+    /// [`ConvertError::AlphaNotOpaque`](crate::ConvertError::AlphaNotOpaque).
+    fn check_opaque(&self) -> Result<(), At<crate::ConvertError>>;
+
+    /// Quantize PQ-anchored linear pixels to `target`. **Allocates**.
+    ///
+    /// The anchor comes from the slice's `ColorContext`. See `docs/hdr-anchor-api-design.md`.
+    fn quantize_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>>;
+
+    /// Physically apply `orientation`. **Allocates**, also for identity.
+    ///
+    /// Width and height swap for the four transposing orientations. Whole pixels
+    /// move, so any format works. To skip the copy for identity, check
+    /// `orientation.is_identity()`.
+    fn oriented(
+        &self,
+        orientation: zenpixels::Orientation,
+    ) -> Result<PixelBuffer, At<crate::ConvertError>>;
+
+    /// [`oriented`](Self::oriented) into a caller's buffer of the output dimensions.
+    fn oriented_into(
+        &self,
+        orientation: zenpixels::Orientation,
+        dst: PixelSliceMut<'_>,
+    ) -> Result<(), At<crate::ConvertError>>;
+}
+
+impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
     #[track_caller]
     fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>> {
         let src_desc = self.descriptor();
-        check_needs_cms(&src_desc, &target)?;
-        let source_profile = crate::output::current_profile(self)?;
+        let width = self.width();
         if src_desc == target {
-            let mut buf = PixelBuffer::try_new(self.width(), self.height(), target)
+            check_needs_cms(&src_desc, &target)?;
+            crate::output::current_profile_for(src_desc, self.color_context().map(Arc::as_ref))?;
+            let mut buf = PixelBuffer::try_new(width, self.rows(), target)
                 .map_err_at(crate::ConvertError::from)?;
-            let source = self.as_slice();
             let mut destination = buf.as_slice_mut();
-            for y in 0..self.height() {
-                destination.row_mut(y).copy_from_slice(source.row(y));
+            for y in 0..self.rows() {
+                destination.row_mut(y).copy_from_slice(self.row(y));
             }
             if let Some(ctx) = self.color_context() {
                 buf = buf.with_color_context(Arc::clone(ctx));
@@ -299,40 +431,12 @@ impl PixelBufferConvertExt for PixelBuffer {
                 .expect("identical descriptors accept the same evidence");
             return Ok(buf);
         }
-
-        let changes_color =
-            src_desc.transfer() != target.transfer() || src_desc.primaries != target.primaries;
-        let mut converter =
-            if changes_color && matches!(source_profile, zenpixels::ColorProfileSource::Icc(_)) {
-                crate::RowConverter::new_with_sources(
-                    src_desc,
-                    target,
-                    source_profile,
-                    target.color_profile_source(),
-                    &zenpixels::ConvertOptions::permissive()
-                        .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked),
-                    None,
-                )?
-            } else if src_desc.transfer() == TransferFunction::Linear
-                && target.transfer() == TransferFunction::Pq
-            {
-                let anchor = self
-                    .color_context()
-                    .and_then(|c| c.diffuse_white)
-                    .unwrap_or(zenpixels::hdr::DiffuseWhite::new(10_000.0));
-                crate::RowConverter::from_plan(
-                    crate::ConvertPlan::new(src_desc, target)?.with_pq_anchor(anchor),
-                )
-            } else {
-                crate::RowConverter::new(src_desc, target).at()?
-            };
-
-        let mut buf = PixelBuffer::try_new(self.width(), self.height(), target)
+        let mut converter = converter_for(self, target)?;
+        let mut buf = PixelBuffer::try_new(width, self.rows(), target)
             .map_err_at(crate::ConvertError::from)?;
-        let source = self.as_slice();
         let mut destination = buf.as_slice_mut();
-        for y in 0..self.height() {
-            converter.try_convert_row(source.row(y), destination.row_mut(y), self.width())?;
+        for y in 0..self.rows() {
+            converter.try_convert_row(self.row(y), destination.row_mut(y), width)?;
         }
         if let Some(ctx) = context_after_conversion(self, target) {
             buf = buf.with_color_context(ctx);
@@ -345,6 +449,160 @@ impl PixelBufferConvertExt for PixelBuffer {
                 .expect("transferred evidence names the target storage and range");
         }
         Ok(buf)
+    }
+
+    #[track_caller]
+    fn convert_into<'d>(
+        &self,
+        mut dst: PixelSliceMut<'d>,
+    ) -> Result<PixelSliceMut<'d>, At<crate::ConvertError>> {
+        if dst.width() != self.width() || dst.rows() != self.rows() {
+            let bytes = |width: u32, rows: u32, descriptor: PixelDescriptor| {
+                (width as usize)
+                    .saturating_mul(rows as usize)
+                    .saturating_mul(descriptor.bytes_per_pixel())
+            };
+            return Err(whereat::at!(crate::ConvertError::BufferSize {
+                expected: bytes(self.width(), self.rows(), dst.descriptor()),
+                actual: bytes(dst.width(), dst.rows(), dst.descriptor()),
+            }));
+        }
+        let target = dst.descriptor();
+        let mut converter = converter_for(self, target)?;
+        for y in 0..self.rows() {
+            converter.try_convert_row(self.row(y), dst.row_mut(y), self.width())?;
+        }
+        // The pixels are new, so nothing the destination said about its old ones still holds.
+        Ok(match context_after_conversion(self, target) {
+            Some(ctx) => dst.with_color_context(ctx),
+            None if dst.color_context().is_some() => {
+                dst.with_color_context(Arc::new(zenpixels::ColorContext::default()))
+            }
+            None => dst,
+        })
+    }
+
+    #[track_caller]
+    fn adapt_for_encode(
+        &self,
+        supported: &[PixelDescriptor],
+        options: &zenpixels::ConvertOptions,
+    ) -> Result<PixelCow<'a>, At<crate::ConvertError>> {
+        // A current ICC profile outranks the descriptor, as it does in `convert_to`.
+        if let Some(target) = crate::adapt::encode_conversion_target(self.descriptor(), supported) {
+            let source = self.descriptor();
+            let profile =
+                crate::output::current_profile_for(source, self.color_context().map(Arc::as_ref))?;
+            let changes_color =
+                source.transfer() != target.transfer() || source.primaries != target.primaries;
+            if changes_color && matches!(profile, zenpixels::ColorProfileSource::Icc(_)) {
+                let checked = crate::adapt::options_after_opacity_check(self, target, options)?;
+                let mut converter = crate::RowConverter::new_with_sources(
+                    source,
+                    target,
+                    profile,
+                    target.color_profile_source(),
+                    &checked,
+                    None,
+                )?;
+                let mut output = PixelBuffer::try_new(self.width(), self.rows(), target)
+                    .map_err(|_| whereat::at!(crate::ConvertError::AllocationFailed))?;
+                {
+                    let mut destination = output.as_slice_mut();
+                    for y in 0..self.rows() {
+                        converter.try_convert_row(
+                            self.row(y),
+                            destination.row_mut(y),
+                            self.width(),
+                        )?;
+                    }
+                }
+                return Ok(PixelCow::Owned(
+                    match context_after_conversion(self, target) {
+                        Some(ctx) => output.with_color_context(ctx),
+                        None => output,
+                    },
+                ));
+            }
+        }
+        let adapted = crate::adapt::adapt_raw_rows_for_encode(
+            self.as_strided_bytes(),
+            self.descriptor(),
+            self.width(),
+            self.rows(),
+            self.stride(),
+            supported,
+            options,
+        )?;
+        Ok(match adapted {
+            PixelCow::Borrowed(borrowed) => PixelCow::Borrowed(match self.color_context() {
+                Some(ctx) => borrowed.with_color_context(Arc::clone(ctx)),
+                None => borrowed,
+            }),
+            PixelCow::Owned(owned) => {
+                PixelCow::Owned(match context_after_conversion(self, owned.descriptor()) {
+                    Some(ctx) => owned.with_color_context(ctx),
+                    None => owned,
+                })
+            }
+        })
+    }
+
+    #[track_caller]
+    fn check_opaque(&self) -> Result<(), At<crate::ConvertError>> {
+        crate::adapt::check_opaque(self)
+    }
+
+    #[track_caller]
+    fn quantize_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>> {
+        crate::hdr::quantize_to(self.clone(), target)
+    }
+
+    #[track_caller]
+    fn oriented(
+        &self,
+        orientation: zenpixels::Orientation,
+    ) -> Result<PixelBuffer, At<crate::ConvertError>> {
+        crate::orient::apply_orientation(self.clone(), orientation).map_err(|e| whereat::at!(e))
+    }
+
+    #[track_caller]
+    fn oriented_into(
+        &self,
+        orientation: zenpixels::Orientation,
+        dst: PixelSliceMut<'_>,
+    ) -> Result<(), At<crate::ConvertError>> {
+        crate::orient::apply_orientation_into(self.clone(), orientation, dst)
+            .map_err(|e| whereat::at!(e))
+    }
+}
+
+impl PixelBufferConvertExt for PixelBuffer {
+    #[track_caller]
+    fn convert_to(&self, target: PixelDescriptor) -> Result<PixelBuffer, At<crate::ConvertError>> {
+        self.as_slice().convert_to(target)
+    }
+
+    #[track_caller]
+    fn try_adapt_in_place(
+        &mut self,
+        target: PixelDescriptor,
+    ) -> Result<(), At<crate::ConvertError>> {
+        crate::adapt::try_adapt_in_place(self, target)
+    }
+
+    #[track_caller]
+    fn into_oriented(
+        mut self,
+        orientation: zenpixels::Orientation,
+    ) -> Result<PixelBuffer, At<crate::ConvertError>> {
+        if orientation.is_identity() {
+            return Ok(self);
+        }
+        if crate::orient::apply_orientation_in_place(&mut self, orientation).is_ok() {
+            return Ok(self);
+        }
+        self.as_slice().oriented(orientation)
     }
 
     #[track_caller]
@@ -565,12 +823,12 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
             src_desc.transfer(),
             TransferFunction::Linear | TransferFunction::Pq
         ) {
-            let mut context = context_after_conversion(self, target)
+            let mut context = context_after_conversion(&self.as_slice(), target)
                 .map(|c| (*c).clone())
                 .unwrap_or_default();
             context.diffuse_white = Some(zenpixels::hdr::DiffuseWhite::new(hdr.target_peak_nits));
             buf = buf.with_color_context(Arc::new(context));
-        } else if let Some(ctx) = context_after_conversion(self, target) {
+        } else if let Some(ctx) = context_after_conversion(&self.as_slice(), target) {
             buf = buf.with_color_context(ctx);
         }
         Ok(buf)
@@ -651,6 +909,273 @@ fn convert_to_typed<Q: Pixel>(buf: &PixelBuffer, target: PixelDescriptor) -> Pix
         .expect("convert_to_typed: conversion failed; use convert_to for fallible conversion")
         .try_typed::<Q>()
         .expect("convert_to_typed: type mismatch after conversion")
+}
+
+/// Conversion of one [`Color`](zenpixels::Color).
+pub trait ColorConvertExt: crate::sealed::Sealed + Sized {
+    /// This color in `target`'s format, transfer and primaries, without a one-pixel buffer.
+    ///
+    /// Linear converted to PQ or HLG takes 1.0 as the format's peak, which is what those
+    /// transfers decode to.
+    ///
+    /// # Errors
+    ///
+    /// [`ConvertError::NoPath`](crate::ConvertError::NoPath) from an SDR transfer to PQ or HLG:
+    /// neither says where SDR white belongs, and passing the signal through would put it at the
+    /// peak, 10,000 cd/m² for PQ. For a matte, `CompositeOnto::reference_white` places it.
+    ///
+    /// Otherwise whatever [`RowConverter::new_explicit`](crate::RowConverter::new_explicit)
+    /// refuses for this color's descriptor and `target`, or
+    /// [`ConvertError::Buffer`](crate::ConvertError::Buffer) when `target`'s pixels are too wide
+    /// for a color.
+    fn try_convert_to(
+        &self,
+        target: PixelDescriptor,
+        options: &zenpixels::ConvertOptions,
+    ) -> Result<Self, whereat::At<crate::ConvertError>>;
+
+    /// Parse a CSS color: hex, a name, `rgb()`, `hsl()`, `hwb()`, `color()`, `lab()`,
+    /// `lch()`, `oklab()` or `oklch()`. Case doesn't matter.
+    ///
+    /// Spaces with no descriptor, such as `lab()`, resolve to linear BT.2020 `f32`, which
+    /// keeps out-of-gamut values. See [`map_to_gamut`](Self::map_to_gamut) for output.
+    ///
+    /// ```
+    /// use zenpixels::Color;
+    /// use zenpixels_convert::ColorConvertExt;
+    ///
+    /// assert_eq!(Color::parse_css("#ff0000").unwrap(), Color::srgb8(255, 0, 0));
+    /// assert_eq!(Color::parse_css("rebeccapurple").unwrap(), Color::srgb8(102, 51, 153));
+    /// let wide = Color::parse_css("color(display-p3 1 0 0 / 50%)").unwrap();
+    /// assert!(wide.descriptor().has_alpha());
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`CssColorError::Unsupported`](crate::css::CssColorError::Unsupported) for forms that
+    /// need context, such as `currentcolor`, and
+    /// [`CssColorError::Invalid`](crate::css::CssColorError::Invalid) otherwise.
+    fn parse_css(css: &str) -> Result<Self, crate::css::CssColorError>;
+
+    /// This color in `target`, moved into its gamut if needed, keeping hue and lightness.
+    ///
+    /// Follows the CSS Color 4 gamut mapping algorithm: OKLCh chroma reduction with a
+    /// 0.02 tolerance in OKLab, then a clip. For one color at a time; it's far slower
+    /// per pixel than [`SoftCompress`](crate::hdr::SoftCompress) and not meant for images.
+    /// Alpha is kept.
+    ///
+    /// # Errors
+    ///
+    /// [`ConvertError::NoPath`](crate::ConvertError::NoPath) for HDR transfers, unknown
+    /// primaries, non-RGB targets, or primaries with no OKLab matrices here.
+    fn map_to_gamut(
+        &self,
+        target: PixelDescriptor,
+    ) -> Result<Self, whereat::At<crate::ConvertError>>;
+
+    /// Whether both are the same color, whatever their formats.
+    ///
+    /// `==` asks whether format and samples match, so opaque red as `RGB8` and as `RGBA8`
+    /// differ under it and are the same here. This compares linear light with 1e-6 of
+    /// tolerance, which is below one 16-bit step, and above the rounding of a conversion.
+    ///
+    /// Fully transparent colors are all the same, since no composite can tell them apart.
+    /// A color with no way to linear light, such as CMYK or an unknown transfer or primaries,
+    /// is the same only as an identical one. SDR and HDR never match, nor do PQ and HLG, since
+    /// their linear scales differ.
+    ///
+    /// ```
+    /// use zenpixels::{Color, PixelDescriptor};
+    /// use zenpixels_convert::ColorConvertExt;
+    ///
+    /// let red = Color::srgb8(255, 0, 0);
+    /// assert!(red.same_color(&Color::srgba8(255, 0, 0, 255)));
+    /// assert_ne!(red, Color::srgba8(255, 0, 0, 255));
+    /// assert!(!red.same_color(&Color::srgb8(254, 0, 0)));
+    /// ```
+    fn same_color(&self, other: &Self) -> bool;
+}
+
+/// CSS Color 4 gamut mapping of linear RGB, in the RGB of `space`.
+///
+/// Clipping encoded or linear channels to `0..=1` gives the same color, since transfer
+/// functions are monotonic and fix both ends, so this stays in linear light.
+fn css_gamut_map(space: &crate::oklab::OklabSpace, rgb: [f32; 3]) -> [f32; 3] {
+    const JND: f32 = 0.02;
+    const EPSILON: f32 = 0.0001;
+    const ROUNDOFF: f32 = 1e-6;
+    let delta = |x: [f32; 3], y: [f32; 3]| {
+        let d: [f32; 3] = core::array::from_fn(|i| x[i] - y[i]);
+        libm::sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2])
+    };
+    let clip = |c: [f32; 3]| c.map(|v| v.clamp(0.0, 1.0));
+    let in_gamut = |c: [f32; 3]| c.iter().all(|v| (-ROUNDOFF..=1.0 + ROUNDOFF).contains(v));
+
+    let origin @ [l, a, b] = space.from_rgb(rgb);
+    if l >= 1.0 {
+        return [1.0; 3];
+    }
+    if l <= 0.0 {
+        return [0.0; 3];
+    }
+    if in_gamut(rgb) {
+        return clip(rgb);
+    }
+    let mut clipped = clip(rgb);
+    if delta(space.from_rgb(clipped), origin) < JND {
+        return clipped;
+    }
+    let chroma = libm::sqrtf(a * a + b * b);
+    let (ca, sa) = (a / chroma, b / chroma);
+    let (mut min, mut max, mut min_in_gamut) = (0.0f32, chroma, true);
+    while max - min > EPSILON {
+        let c = (min + max) / 2.0;
+        let current = space.to_rgb([l, c * ca, c * sa]);
+        if min_in_gamut && in_gamut(current) {
+            min = c;
+            continue;
+        }
+        clipped = clip(current);
+        let e = delta(space.from_rgb(clipped), space.from_rgb(current));
+        if e < JND {
+            if JND - e < EPSILON {
+                return clipped;
+            }
+            min_in_gamut = false;
+            min = c;
+        } else {
+            max = c;
+        }
+    }
+    clipped
+}
+
+impl ColorConvertExt for zenpixels::Color {
+    fn parse_css(css: &str) -> Result<Self, crate::css::CssColorError> {
+        crate::css::parse(css)
+    }
+
+    fn same_color(&self, other: &Self) -> bool {
+        use zenpixels::TransferFunction as Tf;
+        if self == other {
+            return true;
+        }
+        let scale = |d: PixelDescriptor| match d.transfer() {
+            Tf::Pq => 1,
+            Tf::Hlg => 2,
+            _ => 0,
+        };
+        let known = |d: PixelDescriptor| {
+            d.transfer() != Tf::Unknown && d.primaries != ColorPrimaries::Unknown
+        };
+        let (a, b) = (self.descriptor(), other.descriptor());
+        if !known(a) || !known(b) || scale(a) != scale(b) {
+            return false;
+        }
+        let linear = |color: &Self| {
+            let target = PixelDescriptor::RGBAF32_LINEAR.with_primaries(ColorPrimaries::Bt2020);
+            // Out-of-range channels are part of the color, so they must reach the comparison.
+            let options = zenpixels::ConvertOptions::permissive()
+                .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked)
+                .with_clip_out_of_gamut(false);
+            let converted = color.try_convert_to(target, &options).ok()?;
+            let bytes: [u8; 16] = converted.as_bytes().try_into().ok()?;
+            Some(core::array::from_fn::<f32, 4, _>(|i| {
+                f32::from_ne_bytes([
+                    bytes[i * 4],
+                    bytes[i * 4 + 1],
+                    bytes[i * 4 + 2],
+                    bytes[i * 4 + 3],
+                ])
+            }))
+        };
+        let (Some(a), Some(b)) = (linear(self), linear(other)) else {
+            return false;
+        };
+        const TOLERANCE: f32 = 1e-6;
+        if a[3] == 0.0 && b[3] == 0.0 {
+            return true;
+        }
+        a.iter().zip(&b).all(|(x, y)| (x - y).abs() <= TOLERANCE)
+    }
+
+    fn map_to_gamut(
+        &self,
+        target: PixelDescriptor,
+    ) -> Result<Self, whereat::At<crate::ConvertError>> {
+        use zenpixels::{AlphaMode, ChannelLayout, ChannelType, TransferFunction as Tf};
+        let from = self.descriptor();
+        let no_path = || whereat::at!(crate::ConvertError::NoPath { from, to: target });
+        let hdr = |t: Tf| matches!(t, Tf::Pq | Tf::Hlg);
+        if hdr(from.transfer())
+            || hdr(target.transfer())
+            || !matches!(
+                target.layout(),
+                ChannelLayout::Rgb | ChannelLayout::Rgba | ChannelLayout::Bgra
+            )
+        {
+            return Err(no_path());
+        }
+        let space =
+            crate::oklab::OklabSpace::for_primaries(target.primaries).ok_or_else(no_path)?;
+        let options = zenpixels::ConvertOptions::permissive()
+            .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked);
+
+        // Linear RGBA in the target's primaries, with out-of-gamut values kept.
+        let linear = PixelDescriptor::new(
+            ChannelType::F32,
+            ChannelLayout::Rgba,
+            Some(AlphaMode::Straight),
+            Tf::Linear,
+        )
+        .with_primaries(target.primaries);
+        let mut pixel = [0f32; 4];
+        crate::RowConverter::new_explicit(from, linear, &options.with_clip_out_of_gamut(false))?
+            .try_convert_row(self.as_bytes(), bytemuck::cast_slice_mut(&mut pixel), 1)?;
+        let [r, g, b, alpha] = pixel;
+        let [r, g, b] = css_gamut_map(&space, [r, g, b]);
+
+        let mapped = [r, g, b, alpha];
+        let mut out = [[0f32; 4]; 1];
+        let bytes = bytemuck::cast_slice_mut::<[f32; 4], u8>(&mut out);
+        if target.bytes_per_pixel() > bytes.len() {
+            return Err(no_path());
+        }
+        let bytes = &mut bytes[..target.bytes_per_pixel()];
+        crate::RowConverter::new_explicit(linear, target, &options)?.try_convert_row(
+            bytemuck::cast_slice(&mapped),
+            bytes,
+            1,
+        )?;
+        Self::try_new(target, bytes).map_err(|e| whereat::at!(crate::ConvertError::Buffer(e)))
+    }
+
+    fn try_convert_to(
+        &self,
+        target: PixelDescriptor,
+        options: &zenpixels::ConvertOptions,
+    ) -> Result<Self, whereat::At<crate::ConvertError>> {
+        use zenpixels::TransferFunction as Tf;
+        if matches!(target.transfer(), Tf::Pq | Tf::Hlg)
+            && !matches!(self.descriptor().transfer(), Tf::Pq | Tf::Hlg | Tf::Linear)
+        {
+            return Err(whereat::at!(crate::ConvertError::NoPath {
+                from: self.descriptor(),
+                to: target,
+            }));
+        }
+        let mut converter = crate::RowConverter::new_explicit(self.descriptor(), target, options)?;
+        let mut pixel = [[0f32; 4]; 1];
+        let pixel = bytemuck::cast_slice_mut::<[f32; 4], u8>(&mut pixel);
+        if target.bytes_per_pixel() > pixel.len() {
+            return Err(whereat::at!(crate::ConvertError::Buffer(
+                zenpixels::buffer::BufferError::InvalidDimensions
+            )));
+        }
+        let pixel = &mut pixel[..target.bytes_per_pixel()];
+        converter.try_convert_row(self.as_bytes(), pixel, 1)?;
+        Self::try_new(target, pixel).map_err(|e| whereat::at!(crate::ConvertError::Buffer(e)))
+    }
 }
 
 #[cfg(test)]
@@ -764,9 +1289,7 @@ mod tests {
         let to = ColorPrimaries::Bt709.to_xyz_matrix().unwrap();
         let from = ColorPrimaries::Bt709.from_xyz_matrix().unwrap();
         let rgb = [0.5f32, 0.3, 0.8];
-        let mut v = rgb;
-        crate::gamut::apply_matrix_f32(&mut v, to);
-        crate::gamut::apply_matrix_f32(&mut v, from);
+        let v = from.apply(to.apply(rgb));
         for c in 0..3 {
             assert!(
                 (v[c] - rgb[c]).abs() < 1e-4,

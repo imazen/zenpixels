@@ -32,34 +32,27 @@ pub(super) struct HdrKernelScratch {
     /// RGB-triple strip for the RGBA carrier paths — the SIMD curves want a
     /// contiguous `[[f32; 3]]` view, so alpha is peeled into this scratch.
     /// Grow-only; sliced to the row width on each use.
-    #[cfg(feature = "hdr-experimental")]
     rgb_strip: alloc::vec::Vec<[f32; 3]>,
-    /// Cached [`SoftCompress`](crate::hdr::SoftCompress) — it owns a
-    /// gamut-boundary LUT whose construction runs 16 k bisection searches,
-    /// so it must not be rebuilt per row. Keyed by the step params.
-    #[cfg(feature = "hdr-experimental")]
-    soft_compress: alloc::vec::Vec<CachedSoftCompress>,
+    /// Output of a pluggable tone mapper, which doesn't work in place.
+    rgb_out: alloc::vec::Vec<[f32; 3]>,
 }
 
 impl HdrKernelScratch {
     pub(super) fn prepare(&mut self, _width: u32) -> Result<(), whereat::At<crate::ConvertError>> {
-        #[cfg(feature = "hdr-experimental")]
         if self.rgb_strip.len() < _width as usize {
             self.rgb_strip
                 .try_reserve(_width as usize - self.rgb_strip.len())
                 .map_err(|_| whereat::at!(crate::ConvertError::AllocationFailed))?;
             self.rgb_strip.resize(_width as usize, [0.; 3]);
         }
+        if self.rgb_out.len() < _width as usize {
+            self.rgb_out
+                .try_reserve(_width as usize - self.rgb_out.len())
+                .map_err(|_| whereat::at!(crate::ConvertError::AllocationFailed))?;
+            self.rgb_out.resize(_width as usize, [0.; 3]);
+        }
         Ok(())
     }
-}
-
-#[cfg(feature = "hdr-experimental")]
-struct CachedSoftCompress {
-    primaries: ColorPrimaries,
-    /// Bit pattern of the knee so the key comparison is exact (no float `==`).
-    knee_bits: u32,
-    compressor: crate::hdr::SoftCompress,
 }
 
 /// Apply a single conversion step on raw byte slices.
@@ -93,6 +86,17 @@ pub(super) fn apply_step_u8(
             swizzle_bgra_rgba(src, dst, w, from.channel_type());
         }
 
+        ConvertStep::SwizzleBgrRgb => {
+            for (out, px) in dst[..w * 3]
+                .as_chunks_mut::<3>()
+                .0
+                .iter_mut()
+                .zip(src[..w * 3].as_chunks::<3>().0)
+            {
+                *out = [px[2], px[1], px[0]];
+            }
+        }
+
         ConvertStep::AddAlpha => {
             add_alpha(src, dst, w, from.channel_type());
         }
@@ -105,8 +109,8 @@ pub(super) fn apply_step_u8(
             drop_alpha(src, dst, w, from.channel_type());
         }
 
-        ConvertStep::MatteComposite { r, g, b } => {
-            matte_composite(src, dst, w, from, *r, *g, *b);
+        ConvertStep::MatteComposite { linear } => {
+            matte_composite(src, dst, w, from, *linear);
         }
 
         ConvertStep::GrayToRgb => {
@@ -305,7 +309,7 @@ pub(super) fn apply_step_u8(
                         src,
                         dst,
                         crate::fast_gamut::srgb_lin_lut_u8(),
-                        |v: f32| linear_srgb::default::linear_to_srgb_u8(v),
+                        crate::fast_gamut::srgb_encode_u8,
                     );
                 }
                 crate::convert::FusedKind::SrgbU8GamutRgba => {
@@ -314,7 +318,7 @@ pub(super) fn apply_step_u8(
                         src,
                         dst,
                         crate::fast_gamut::srgb_lin_lut_u8(),
-                        linear_srgb::default::linear_to_srgb_u8,
+                        crate::fast_gamut::srgb_encode_u8,
                     );
                 }
                 crate::convert::FusedKind::SrgbU16GamutRgb => {
@@ -341,134 +345,104 @@ pub(super) fn apply_step_u8(
                         &m,
                         src_f32,
                         dst,
-                        crate::fast_gamut::srgb_enc_lut_u8(),
+                        crate::fast_gamut::srgb_u8_encoder(),
                     );
                 }
             }
         }
 
         #[cfg(feature = "hdr-experimental")]
-        ConvertStep::ToneMapBt2446A {
-            source_peak_nits,
-            target_peak_nits,
-        } => {
-            tone_map_bt2446a_kernel(
-                src,
-                dst,
-                w,
-                from,
-                *source_peak_nits,
-                *target_peak_nits,
-                hdr_scratch,
-            );
+        ConvertStep::ToneMap(step) => {
+            tone_map_kernel(src, dst, w, from, step, hdr_scratch);
         }
 
-        #[cfg(feature = "hdr-experimental")]
         ConvertStep::SoftCompressOklch { primaries, knee } => {
             soft_compress_oklch_kernel(src, dst, w, from, *primaries, *knee, hdr_scratch);
         }
     }
 }
 
-/// Apply the BT.2446 Method A tone curve to a row of linear-light F32 RGB(A)
-/// pixels in BT.2020 primaries.
+/// Apply a pluggable HDR tone-map step to one row of linear-light F32
+/// RGB(A) pixels in the mapper's working primaries.
 ///
-/// The carrier layout (RGB vs RGBA) is read from `from.layout()`. For RGBA,
-/// the alpha channel is copied through verbatim. Input is scrubbed for
-/// non-finite values and negatives; output is clamped to `[0, 1]` to absorb
-/// f32 epsilon-level overshoot at the saturated end.
+/// The carrier layout (RGB vs RGBA) is read from `from.layout()`. For
+/// RGBA, the alpha channel is copied through verbatim. Input is scrubbed
+/// for non-finite values and negatives before reaching the mapper;
+/// output is clamped to `[0, 1]` to absorb f32 epsilon-level overshoot at
+/// the saturated end.
+///
+/// **Lazy compilation.** On the first row that flows through a given
+/// step, this kernel resolves the [`ToneMapContext`](crate::hdr::ToneMapContext)
+/// from the step's stored peaks / working primaries, calls
+/// [`ToneMapper::prepare`](crate::hdr::ToneMapper::prepare), and stashes
+/// the resulting [`StripMapper`](crate::hdr::StripMapper) in the step's
+/// shared `OnceCell`. Every subsequent row reuses the cached executor
+/// without rebuilding context or re-virtualizing `prepare`.
 //
-// `needless_range_loop` would flatten the loops to iter_mut() + enumerate
-// over the strip — but each iter writes BOTH `rgb_strip[p]` and the parallel
-// `dst_f32[p * channels + 3]` (alpha passthrough), so the index-based form
-// is the readable shape. Same logic applies in the SoftCompress kernel
-// below; suppress for the whole function rather than per-loop.
 #[cfg(feature = "hdr-experimental")]
-#[allow(clippy::needless_range_loop)]
-fn tone_map_bt2446a_kernel(
+fn tone_map_kernel(
     src: &[u8],
     dst: &mut [u8],
     width: usize,
     from: PixelDescriptor,
-    source_peak_nits: f32,
-    target_peak_nits: f32,
+    step: &super::ToneMapStep,
     scratch: &mut HdrKernelScratch,
 ) {
-    let curve = crate::hdr::Bt2446A::new(source_peak_nits, target_peak_nits);
-    let has_alpha = from.layout().has_alpha();
-    let channels = if has_alpha { 4 } else { 3 };
+    // Compile the strip executor on the first row through this step. The `Arc<OnceBox>` is
+    // shared across plan clones, so `prepare` runs at most once.
+    let strip_mapper: &alloc::sync::Arc<dyn crate::hdr::StripMapper> =
+        step.prepared.get_or_init(|| {
+            let ctx = crate::hdr::ToneMapContext {
+                source_peak_nits: step.source_peak_nits,
+                target_peak_nits: step.target_peak_nits,
+                working_primaries: step.working_primaries,
+            };
+            match step.mapper.prepare(&ctx) {
+                crate::hdr::PreparedMapper::Streaming(boxed) => {
+                    alloc::boxed::Box::new(alloc::sync::Arc::from(boxed))
+                }
+            }
+        });
+
+    let channels = if from.layout().has_alpha() { 4 } else { 3 };
     let src_f32: &[f32] = bytemuck::cast_slice(src);
     let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(dst);
 
-    if has_alpha {
-        // RGBA: extract RGB triples into the row-persistent scratch strip,
-        // run the SIMD curve, write back while passing alpha through
-        // verbatim. The scratch keeps the SIMD kernel's contiguous
-        // `[[f32; 3]]` shape and is allocated once per plan/strip run
-        // (grow-only), not per row — the module's no-per-row-allocation
-        // contract. Every `[..width]` element is written before being read.
-        if scratch.rgb_strip.len() < width {
-            scratch.rgb_strip.resize(width, [0.0; 3]);
+    // Grow-only scratch, sliced to the row, so no row allocates.
+    if scratch.rgb_strip.len() < width {
+        scratch.rgb_strip.resize(width, [0.0; 3]);
+    }
+    if scratch.rgb_out.len() < width {
+        scratch.rgb_out.resize(width, [0.0; 3]);
+    }
+    let rgb_in = &mut scratch.rgb_strip[..width];
+    let rgb_out = &mut scratch.rgb_out[..width];
+
+    // Mappers see finite, non-negative linear light.
+    let scrub = |v: f32| if v.is_finite() && v >= 0.0 { v } else { 0.0 };
+    for (p, px) in rgb_in.iter_mut().enumerate() {
+        let base = p * channels;
+        *px = [
+            scrub(src_f32[base]),
+            scrub(src_f32[base + 1]),
+            scrub(src_f32[base + 2]),
+        ];
+    }
+    strip_mapper.map_strip(rgb_in.as_flattened(), rgb_out.as_flattened_mut());
+    let settle = |v: f32| {
+        if v.is_finite() {
+            v.clamp(0.0, 1.0)
+        } else {
+            0.0
         }
-        let rgb_strip = &mut scratch.rgb_strip[..width];
-        for p in 0..width {
-            let base = p * channels;
-            let r = src_f32[base];
-            let g = src_f32[base + 1];
-            let b = src_f32[base + 2];
-            // Scrub non-finite / negatives — matches the prior HdrToSdr
-            // contract so consumers see clean linear-light values.
-            let r = if r.is_finite() && r >= 0.0 { r } else { 0.0 };
-            let g = if g.is_finite() && g >= 0.0 { g } else { 0.0 };
-            let b = if b.is_finite() && b >= 0.0 { b } else { 0.0 };
-            rgb_strip[p] = [r, g, b];
-        }
-        curve.map_strip_simd(&mut *rgb_strip);
-        for p in 0..width {
-            let base = p * channels;
-            let [r, g, b] = rgb_strip[p];
-            // Final clamp absorbs BT.2446-A's near-peak ~1e-4 overshoot
-            // (matches the prior HdrToSdr final-clamp postcondition).
-            dst_f32[base] = if r.is_finite() {
-                r.clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            dst_f32[base + 1] = if g.is_finite() {
-                g.clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            dst_f32[base + 2] = if b.is_finite() {
-                b.clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            // Alpha passthrough.
+    };
+    for (p, px) in rgb_out.iter().enumerate() {
+        let base = p * channels;
+        dst_f32[base] = settle(px[0]);
+        dst_f32[base + 1] = settle(px[1]);
+        dst_f32[base + 2] = settle(px[2]);
+        if channels == 4 {
             dst_f32[base + 3] = src_f32[base + 3];
-        }
-    } else {
-        // RGB: cast straight to `[[f32; 3]]` and apply in-place after
-        // copying src → dst. The SIMD curve is in-place.
-        let n_floats = width * 3;
-        dst_f32[..n_floats].copy_from_slice(&src_f32[..n_floats]);
-        let strip: &mut [[f32; 3]] = bytemuck::cast_slice_mut(&mut dst_f32[..n_floats]);
-        for px in strip.iter_mut() {
-            for c in px.iter_mut() {
-                if !c.is_finite() || *c < 0.0 {
-                    *c = 0.0;
-                }
-            }
-        }
-        curve.map_strip_simd(strip);
-        for px in strip.iter_mut() {
-            for c in px.iter_mut() {
-                if !c.is_finite() {
-                    *c = 0.0;
-                } else {
-                    *c = c.clamp(0.0, 1.0);
-                }
-            }
         }
     }
 }
@@ -478,7 +452,6 @@ fn tone_map_bt2446a_kernel(
 //
 // Same justification for `needless_range_loop` as in
 // `tone_map_bt2446a_kernel`.
-#[cfg(feature = "hdr-experimental")]
 #[allow(clippy::needless_range_loop)]
 fn soft_compress_oklch_kernel(
     src: &[u8],
@@ -489,28 +462,9 @@ fn soft_compress_oklch_kernel(
     knee: f32,
     scratch: &mut HdrKernelScratch,
 ) {
-    // Resolve the compressor once per plan/strip run and cache it in the
-    // row-persistent scratch: `SoftCompress` owns a gamut-boundary LUT whose
-    // construction runs 16 k bisection searches, so rebuilding it per row
-    // dominated this kernel (and heap-allocated per row, violating the
-    // module contract). The cache key is the step params that shape it.
-    let index = scratch
-        .soft_compress
-        .iter()
-        .position(|c| c.primaries == primaries && c.knee_bits == knee.to_bits())
-        .unwrap_or_else(|| {
-            let m1 = crate::oklab::rgb_to_lms_matrix(primaries)
-                .expect("target primaries have a defined LMS matrix");
-            let m1_inv = crate::oklab::lms_to_rgb_matrix(primaries)
-                .expect("target primaries have a defined inverse LMS matrix");
-            scratch.soft_compress.push(CachedSoftCompress {
-                primaries,
-                knee_bits: knee.to_bits(),
-                compressor: crate::hdr::SoftCompress::from_matrices(&m1, &m1_inv, knee),
-            });
-            scratch.soft_compress.len() - 1
-        });
-    let compressor = &scratch.soft_compress[index].compressor;
+    let space = crate::oklab::OklabSpace::for_primaries(primaries)
+        .expect("target primaries have defined LMS matrices");
+    let compressor = crate::hdr::SoftCompress::new(&space, knee);
 
     let has_alpha = from.layout().has_alpha();
     let channels = if has_alpha { 4 } else { 3 };
@@ -549,147 +503,46 @@ fn soft_compress_oklch_kernel(
 // ---------------------------------------------------------------------------
 
 // ----------------------------------------------------------------------------
-// Shuffle / replicate kernels — split-per-type #[autoversion] pattern.
+// Tiers per kernel follow benchmarks/row_kernel_tiers_2026-11-04.md: a v3 copy needs a 1.25x
+// gain over a plain function, `+v4x` a 1.2x gain over v3. Neon and wasm128 are their targets'
+// baseline, so a plain function already gets them.
 //
-// Kernels that don't insert a constant (opaque alpha) share one function
-// across U16 and F16 because the byte-level op is identical — we just move
-// 2-byte samples around. Kernels that DO insert a constant get one function
-// per type because the constant value differs (65535 for U16, F16_ONE_BITS
-// for F16, 1.0 for F32).
+// Shuffle / replicate kernels — split-per-type #[attune] pattern.
+//
+// U16 and F16 share one function per shape, because the operation only moves
+// 2-byte samples around. Kernels that insert opaque alpha take its bits as an
+// argument (65535 for U16, F16_ONE_BITS for F16); F32 has its own copy.
 // ----------------------------------------------------------------------------
 
-#[autoversion]
-fn swizzle_bgra_rgba_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
-    for i in 0..width {
-        let base = i * 4;
-        let s: &[u16; 4] = (&src[base..base + 4]).try_into().unwrap();
-        let d: &mut [u16; 4] = (&mut dst[base..base + 4]).try_into().unwrap();
-        d[0] = s[2];
-        d[1] = s[1];
-        d[2] = s[0];
-        d[3] = s[3];
-    }
-}
-
-#[autoversion]
-fn swizzle_bgra_rgba_f32(src: &[f32], dst: &mut [f32], width: usize) {
-    for i in 0..width {
-        let base = i * 4;
-        let s: &[f32; 4] = (&src[base..base + 4]).try_into().unwrap();
-        let d: &mut [f32; 4] = (&mut dst[base..base + 4]).try_into().unwrap();
-        d[0] = s[2];
-        d[1] = s[1];
-        d[2] = s[0];
-        d[3] = s[3];
-    }
-}
-
-/// BGRA ↔ RGBA swizzle.
+/// BGRA ↔ RGBA swizzle. BGRA exists only as 8-bit formats.
 fn swizzle_bgra_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
-    match ch_type {
-        ChannelType::U8 => {
-            let n = width * 4;
-            garb::bytes::rgba_to_bgra(&src[..n], &mut dst[..n]).expect("pre-validated row size");
-        }
-        ChannelType::U16 | ChannelType::F16 => {
-            let n = width * 8;
-            swizzle_bgra_rgba_2bytes(
-                bytemuck::cast_slice(&src[..n]),
-                bytemuck::cast_slice_mut(&mut dst[..n]),
-                width,
-            );
-        }
-        ChannelType::F32 => {
-            let n = width * 16;
-            swizzle_bgra_rgba_f32(
-                bytemuck::cast_slice(&src[..n]),
-                bytemuck::cast_slice_mut(&mut dst[..n]),
-                width,
-            );
-        }
-        _ => {}
-    }
-}
-
-// -- rgb_to_bgra (inserts opaque alpha: differs per type) --------------------
-
-#[autoversion]
-fn rgb_to_bgra_u16(src: &[u16], dst: &mut [u16], width: usize) {
-    for i in 0..width {
-        let s: &[u16; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
-        let d: &mut [u16; 4] = (&mut dst[i * 4..i * 4 + 4]).try_into().unwrap();
-        d[0] = s[2];
-        d[1] = s[1];
-        d[2] = s[0];
-        d[3] = 65535;
-    }
-}
-
-#[autoversion]
-fn rgb_to_bgra_f32(src: &[f32], dst: &mut [f32], width: usize) {
-    for i in 0..width {
-        let s: &[f32; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
-        let d: &mut [f32; 4] = (&mut dst[i * 4..i * 4 + 4]).try_into().unwrap();
-        d[0] = s[2];
-        d[1] = s[1];
-        d[2] = s[0];
-        d[3] = 1.0;
-    }
-}
-
-#[autoversion]
-fn rgb_to_bgra_f16(src: &[u16], dst: &mut [u16], width: usize) {
-    for i in 0..width {
-        let s: &[u16; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
-        let d: &mut [u16; 4] = (&mut dst[i * 4..i * 4 + 4]).try_into().unwrap();
-        d[0] = s[2];
-        d[1] = s[1];
-        d[2] = s[0];
-        d[3] = F16_ONE_BITS;
-    }
+    assert_eq!(ch_type, ChannelType::U8, "BGRA is an 8-bit format");
+    let n = width * 4;
+    garb::bytes::rgba_to_bgra(&src[..n], &mut dst[..n]).expect("pre-validated row size");
 }
 
 /// Fused RGB → BGRA: byte-swap R↔B and add opaque alpha in one SIMD pass.
 fn rgb_to_bgra(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
-    match ch_type {
-        ChannelType::U8 => {
-            garb::bytes::rgb_to_bgra(&src[..width * 3], &mut dst[..width * 4])
-                .expect("pre-validated row size");
-        }
-        ChannelType::U16 => rgb_to_bgra_u16(
-            bytemuck::cast_slice(&src[..width * 6]),
-            bytemuck::cast_slice_mut(&mut dst[..width * 8]),
-            width,
-        ),
-        ChannelType::F32 => rgb_to_bgra_f32(
-            bytemuck::cast_slice(&src[..width * 12]),
-            bytemuck::cast_slice_mut(&mut dst[..width * 16]),
-            width,
-        ),
-        ChannelType::F16 => rgb_to_bgra_f16(
-            bytemuck::cast_slice(&src[..width * 6]),
-            bytemuck::cast_slice_mut(&mut dst[..width * 8]),
-            width,
-        ),
-        _ => {}
-    }
+    assert_eq!(ch_type, ChannelType::U8, "BGRA is an 8-bit format");
+    garb::bytes::rgb_to_bgra(&src[..width * 3], &mut dst[..width * 4])
+        .expect("pre-validated row size");
 }
 
 // -- add_alpha (inserts opaque alpha: differs per type) ----------------------
 
-#[autoversion]
-fn add_alpha_u16(src: &[u16], dst: &mut [u16], width: usize) {
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
+fn add_alpha_2bytes(src: &[u16], dst: &mut [u16], width: usize, opaque: u16) {
     for i in 0..width {
         let s: &[u16; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
         let d: &mut [u16; 4] = (&mut dst[i * 4..i * 4 + 4]).try_into().unwrap();
         d[0] = s[0];
         d[1] = s[1];
         d[2] = s[2];
-        d[3] = 65535;
+        d[3] = opaque;
     }
 }
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn add_alpha_f32(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         let s: &[f32; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
@@ -701,25 +554,6 @@ fn add_alpha_f32(src: &[f32], dst: &mut [f32], width: usize) {
     }
 }
 
-#[autoversion]
-fn add_alpha_f16(src: &[u16], dst: &mut [u16], width: usize) {
-    // Hoist the const into a local so LLVM treats it as loop-invariant
-    // (and ideally lifts a SIMD broadcast out of the inner loop). Without
-    // this the codegen devolves to per-pixel `mov ebx, 15360` +
-    // `vpinsrw` (2-3 cycles) whereas the U16 equivalent uses
-    // `vpcmpeqd` + `vpblendw` (1 cycle). See the T1 add_alpha F16 2×
-    // anomaly noted in benchmarks/t1_layout_2026-04-23_baseline.meta.
-    let opaque: u16 = 0x3C00;
-    for i in 0..width {
-        let s: &[u16; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
-        let d: &mut [u16; 4] = (&mut dst[i * 4..i * 4 + 4]).try_into().unwrap();
-        d[0] = s[0];
-        d[1] = s[1];
-        d[2] = s[2];
-        d[3] = opaque;
-    }
-}
-
 /// Add opaque alpha channel (3ch → 4ch).
 fn add_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
     match ch_type {
@@ -727,20 +561,22 @@ fn add_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
             garb::bytes::rgb_to_rgba(&src[..width * 3], &mut dst[..width * 4])
                 .expect("pre-validated row size");
         }
-        ChannelType::U16 => add_alpha_u16(
+        ChannelType::U16 => add_alpha_2bytes(
             bytemuck::cast_slice(&src[..width * 6]),
             bytemuck::cast_slice_mut(&mut dst[..width * 8]),
             width,
+            65535,
         ),
         ChannelType::F32 => add_alpha_f32(
             bytemuck::cast_slice(&src[..width * 12]),
             bytemuck::cast_slice_mut(&mut dst[..width * 16]),
             width,
         ),
-        ChannelType::F16 => add_alpha_f16(
+        ChannelType::F16 => add_alpha_2bytes(
             bytemuck::cast_slice(&src[..width * 6]),
             bytemuck::cast_slice_mut(&mut dst[..width * 8]),
             width,
+            F16_ONE_BITS,
         ),
         _ => {}
     }
@@ -748,7 +584,7 @@ fn add_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
 
 // -- drop_alpha (pure shuffle — U16 and F16 share one kernel) ----------------
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn drop_alpha_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         let s: &[u16; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
@@ -759,7 +595,7 @@ fn drop_alpha_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     }
 }
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn drop_alpha_f32(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         let s: &[f32; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
@@ -791,466 +627,148 @@ fn drop_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
     }
 }
 
-// ----------------------------------------------------------------------------
-// Transfer-function trait for const-generic matte_composite dispatch.
-//
-// Each impl is a unit struct whose static methods inline into the caller
-// at monomorphization. Calling `T::eotf(v)` is indistinguishable from
-// calling the underlying TF function directly once LLVM inlines — so the
-// generic `matte_composite_*_rgba<T>` body, once monomorphized per TF,
-// becomes a pure f32 arithmetic loop that autovectorizes cleanly.
-// ----------------------------------------------------------------------------
-
-trait MatteTf {
-    fn eotf(v: f32) -> f32;
-    fn oetf(v: f32) -> f32;
-
-    /// Decode an u8 sample to linear f32. Default routes through f32 EOTF;
-    /// `SrgbTf` overrides with a 256-entry LUT.
-    #[inline(always)]
-    fn eotf_u8(b: u8) -> f32 {
-        Self::eotf(b as f32 * (1.0 / 255.0))
-    }
-
-    /// Encode a linear f32 to u8. Default routes through f32 OETF + clamp +
-    /// quantize; `SrgbTf` overrides with a LUT-based encode.
-    #[inline(always)]
-    fn oetf_u8(lin: f32) -> u8 {
-        let v = Self::oetf(lin).clamp(0.0, 1.0);
-        (v * 255.0 + 0.5) as u8
-    }
-
-    /// Decode a u16 sample to linear f32. Default routes through f32 EOTF;
-    /// `SrgbTf` overrides with the 65536-entry LUT.
-    #[inline(always)]
-    fn eotf_u16(b: u16) -> f32 {
-        Self::eotf(b as f32 * (1.0 / 65535.0))
-    }
-
-    /// Encode a linear f32 to u16. Default routes through f32 OETF + clamp +
-    /// quantize; `SrgbTf` overrides with a LUT-based encode.
-    #[inline(always)]
-    fn oetf_u16(lin: f32) -> u16 {
-        let v = Self::oetf(lin).clamp(0.0, 1.0);
-        (v * 65535.0 + 0.5) as u16
-    }
-}
-
-struct LinearTf;
-impl MatteTf for LinearTf {
-    #[inline(always)]
-    fn eotf(v: f32) -> f32 {
-        v
-    }
-    #[inline(always)]
-    fn oetf(v: f32) -> f32 {
-        v
-    }
-}
-
-struct SrgbTf;
-impl MatteTf for SrgbTf {
-    #[inline(always)]
-    fn eotf(v: f32) -> f32 {
-        linear_srgb::tf::srgb_to_linear(v)
-    }
-    #[inline(always)]
-    fn oetf(v: f32) -> f32 {
-        linear_srgb::tf::linear_to_srgb(v)
-    }
-    #[inline(always)]
-    fn eotf_u8(b: u8) -> f32 {
-        linear_srgb::default::srgb_u8_to_linear(b)
-    }
-    #[inline(always)]
-    fn oetf_u8(lin: f32) -> u8 {
-        linear_srgb::default::linear_to_srgb_u8(lin)
-    }
-    #[inline(always)]
-    fn eotf_u16(b: u16) -> f32 {
-        linear_srgb::default::srgb_u16_to_linear(b)
-    }
-    #[inline(always)]
-    fn oetf_u16(lin: f32) -> u16 {
-        linear_srgb::default::linear_to_srgb_u16(lin)
-    }
-}
-
-struct Bt709Tf;
-impl MatteTf for Bt709Tf {
-    #[inline(always)]
-    fn eotf(v: f32) -> f32 {
-        linear_srgb::tf::bt709_to_linear(v)
-    }
-    #[inline(always)]
-    fn oetf(v: f32) -> f32 {
-        linear_srgb::tf::linear_to_bt709(v)
-    }
-}
-
-struct PqTf;
-impl MatteTf for PqTf {
-    #[inline(always)]
-    fn eotf(v: f32) -> f32 {
-        linear_srgb::tf::pq_to_linear(v)
-    }
-    #[inline(always)]
-    fn oetf(v: f32) -> f32 {
-        linear_srgb::tf::linear_to_pq(v)
-    }
-}
-
-struct HlgTf;
-impl MatteTf for HlgTf {
-    #[inline(always)]
-    fn eotf(v: f32) -> f32 {
-        linear_srgb::tf::hlg_to_linear(v)
-    }
-    #[inline(always)]
-    fn oetf(v: f32) -> f32 {
-        linear_srgb::tf::linear_to_hlg(v)
-    }
-}
-
-struct Gamma22Tf;
-impl MatteTf for Gamma22Tf {
-    #[inline(always)]
-    fn eotf(v: f32) -> f32 {
-        linear_srgb::default::gamma_to_linear(v, ADOBE_GAMMA)
-    }
-    #[inline(always)]
-    fn oetf(v: f32) -> f32 {
-        linear_srgb::default::linear_to_gamma(v, ADOBE_GAMMA)
-    }
-}
-
-/// F32 RGBA → RGB matte composite, monomorphized per TF. Alpha stays
-/// linear; RGB is EOTF'd to linear, blended with the pre-linearized matte,
-/// then OETF'd back to the source TF.
-#[inline]
-fn matte_composite_f32_rgba<T: MatteTf>(
-    src: &[f32],
-    dst: &mut [f32],
-    width: usize,
-    mr_lin: f32,
-    mg_lin: f32,
-    mb_lin: f32,
-) {
-    for i in 0..width {
-        let s: &[f32; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
-        let d: &mut [f32; 3] = (&mut dst[i * 3..i * 3 + 3]).try_into().unwrap();
-        let a = s[3].clamp(0.0, 1.0);
-        let inv_a = 1.0 - a;
-        let r_lin = T::eotf(s[0]);
-        let g_lin = T::eotf(s[1]);
-        let b_lin = T::eotf(s[2]);
-        d[0] = T::oetf(r_lin * a + mr_lin * inv_a);
-        d[1] = T::oetf(g_lin * a + mg_lin * inv_a);
-        d[2] = T::oetf(b_lin * a + mb_lin * inv_a);
-    }
-}
-
-/// F16 RGBA → RGB matte composite, monomorphized per TF. Chunked 3-pass:
-/// batch F16C unpack → generic blend → batch F16C pack.
-#[inline]
-fn matte_composite_f16_rgba<T: MatteTf>(
-    src: &[u16],
-    dst: &mut [u16],
-    width: usize,
-    mr_lin: f32,
-    mg_lin: f32,
-    mb_lin: f32,
-) {
-    const CHUNK_PIXELS: usize = 8;
-    const SRC_LANES: usize = CHUNK_PIXELS * 4;
-    const DST_LANES: usize = CHUNK_PIXELS * 3;
-
-    let mut scratch_src = [0.0f32; SRC_LANES];
-    let mut scratch_dst = [0.0f32; DST_LANES];
-
-    let whole = width / CHUNK_PIXELS;
-    for c in 0..whole {
-        let src_start = c * SRC_LANES;
-        let dst_start = c * DST_LANES;
-        f16_bits_to_f32_slice(&src[src_start..src_start + SRC_LANES], &mut scratch_src);
-        matte_composite_f32_rgba::<T>(
-            &scratch_src,
-            &mut scratch_dst,
-            CHUNK_PIXELS,
-            mr_lin,
-            mg_lin,
-            mb_lin,
-        );
-        f32_to_f16_bits_slice(&scratch_dst, &mut dst[dst_start..dst_start + DST_LANES]);
-    }
-
-    // Tail: per-pixel scalar for any remainder.
-    let tail_start = whole * CHUNK_PIXELS;
-    for i in tail_start..width {
-        let r = f16_bits_to_f32(src[i * 4]);
-        let g = f16_bits_to_f32(src[i * 4 + 1]);
-        let b = f16_bits_to_f32(src[i * 4 + 2]);
-        let a = f16_bits_to_f32(src[i * 4 + 3]).clamp(0.0, 1.0);
-        let inv_a = 1.0 - a;
-        let r_lin = T::eotf(r);
-        let g_lin = T::eotf(g);
-        let b_lin = T::eotf(b);
-        dst[i * 3] = f32_to_f16_bits(T::oetf(r_lin * a + mr_lin * inv_a));
-        dst[i * 3 + 1] = f32_to_f16_bits(T::oetf(g_lin * a + mg_lin * inv_a));
-        dst[i * 3 + 2] = f32_to_f16_bits(T::oetf(b_lin * a + mb_lin * inv_a));
-    }
-}
-
-/// Dispatch table: pick the TF monomorphization at row entry.
-fn dispatch_matte_f32_rgba(
-    src: &[f32],
-    dst: &mut [f32],
-    width: usize,
-    tf: TransferFunction,
-    mr_lin: f32,
-    mg_lin: f32,
-    mb_lin: f32,
-) {
-    match tf {
-        TransferFunction::Linear | TransferFunction::Unknown => {
-            matte_composite_f32_rgba::<LinearTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        TransferFunction::Srgb => {
-            matte_composite_f32_rgba::<SrgbTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        TransferFunction::Bt709 => {
-            matte_composite_f32_rgba::<Bt709Tf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        TransferFunction::Pq => {
-            matte_composite_f32_rgba::<PqTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        TransferFunction::Hlg => {
-            matte_composite_f32_rgba::<HlgTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        TransferFunction::Gamma22 => {
-            matte_composite_f32_rgba::<Gamma22Tf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        // Any future non-exhaustive TF falls back to Linear treatment
-        // (preserves bytes in linear-space math; same convention as
-        // elsewhere in the pipeline for Unknown-ish cases).
-        _ => matte_composite_f32_rgba::<LinearTf>(src, dst, width, mr_lin, mg_lin, mb_lin),
-    }
-}
-
-fn dispatch_matte_f16_rgba(
-    src: &[u16],
-    dst: &mut [u16],
-    width: usize,
-    tf: TransferFunction,
-    mr_lin: f32,
-    mg_lin: f32,
-    mb_lin: f32,
-) {
-    match tf {
-        TransferFunction::Linear | TransferFunction::Unknown => {
-            matte_composite_f16_rgba::<LinearTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        TransferFunction::Srgb => {
-            matte_composite_f16_rgba::<SrgbTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        TransferFunction::Bt709 => {
-            matte_composite_f16_rgba::<Bt709Tf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        TransferFunction::Pq => {
-            matte_composite_f16_rgba::<PqTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        TransferFunction::Hlg => {
-            matte_composite_f16_rgba::<HlgTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        TransferFunction::Gamma22 => {
-            matte_composite_f16_rgba::<Gamma22Tf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        _ => matte_composite_f16_rgba::<LinearTf>(src, dst, width, mr_lin, mg_lin, mb_lin),
-    }
-}
-
-/// U8 RGBA → RGB matte composite, monomorphized per TF. Uses the trait's
-/// u8 methods so `SrgbTf` picks up the LUT fast path without the rest of
-/// the loop changing.
-#[inline]
-fn matte_composite_u8_rgba<T: MatteTf>(
-    src: &[u8],
-    dst: &mut [u8],
-    width: usize,
-    mr_lin: f32,
-    mg_lin: f32,
-    mb_lin: f32,
-) {
-    let alpha_scale = 1.0 / 255.0;
-    for i in 0..width {
-        let s: &[u8; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
-        let d: &mut [u8; 3] = (&mut dst[i * 3..i * 3 + 3]).try_into().unwrap();
-        let a = s[3] as f32 * alpha_scale;
-        let inv_a = 1.0 - a;
-        let r_lin = T::eotf_u8(s[0]);
-        let g_lin = T::eotf_u8(s[1]);
-        let b_lin = T::eotf_u8(s[2]);
-        d[0] = T::oetf_u8(r_lin * a + mr_lin * inv_a);
-        d[1] = T::oetf_u8(g_lin * a + mg_lin * inv_a);
-        d[2] = T::oetf_u8(b_lin * a + mb_lin * inv_a);
-    }
-}
-
-/// U16 RGBA → RGB matte composite, monomorphized per TF.
-#[inline]
-fn matte_composite_u16_rgba<T: MatteTf>(
-    src: &[u16],
-    dst: &mut [u16],
-    width: usize,
-    mr_lin: f32,
-    mg_lin: f32,
-    mb_lin: f32,
-) {
-    let alpha_scale = 1.0 / 65535.0;
-    for i in 0..width {
-        let s: &[u16; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
-        let d: &mut [u16; 3] = (&mut dst[i * 3..i * 3 + 3]).try_into().unwrap();
-        let a = s[3] as f32 * alpha_scale;
-        let inv_a = 1.0 - a;
-        let r_lin = T::eotf_u16(s[0]);
-        let g_lin = T::eotf_u16(s[1]);
-        let b_lin = T::eotf_u16(s[2]);
-        d[0] = T::oetf_u16(r_lin * a + mr_lin * inv_a);
-        d[1] = T::oetf_u16(g_lin * a + mg_lin * inv_a);
-        d[2] = T::oetf_u16(b_lin * a + mb_lin * inv_a);
-    }
-}
-
-fn dispatch_matte_u8_rgba(
-    src: &[u8],
-    dst: &mut [u8],
-    width: usize,
-    tf: TransferFunction,
-    mr_lin: f32,
-    mg_lin: f32,
-    mb_lin: f32,
-) {
-    match tf {
-        TransferFunction::Linear | TransferFunction::Unknown => {
-            matte_composite_u8_rgba::<LinearTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        TransferFunction::Srgb => {
-            matte_composite_u8_rgba::<SrgbTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        TransferFunction::Bt709 => {
-            matte_composite_u8_rgba::<Bt709Tf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        TransferFunction::Pq => {
-            matte_composite_u8_rgba::<PqTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        TransferFunction::Hlg => {
-            matte_composite_u8_rgba::<HlgTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        TransferFunction::Gamma22 => {
-            matte_composite_u8_rgba::<Gamma22Tf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        _ => matte_composite_u8_rgba::<LinearTf>(src, dst, width, mr_lin, mg_lin, mb_lin),
-    }
-}
-
-fn dispatch_matte_u16_rgba(
-    src: &[u16],
-    dst: &mut [u16],
-    width: usize,
-    tf: TransferFunction,
-    mr_lin: f32,
-    mg_lin: f32,
-    mb_lin: f32,
-) {
-    match tf {
-        TransferFunction::Linear | TransferFunction::Unknown => {
-            matte_composite_u16_rgba::<LinearTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        TransferFunction::Srgb => {
-            matte_composite_u16_rgba::<SrgbTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        TransferFunction::Bt709 => {
-            matte_composite_u16_rgba::<Bt709Tf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        TransferFunction::Pq => {
-            matte_composite_u16_rgba::<PqTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        TransferFunction::Hlg => {
-            matte_composite_u16_rgba::<HlgTf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        TransferFunction::Gamma22 => {
-            matte_composite_u16_rgba::<Gamma22Tf>(src, dst, width, mr_lin, mg_lin, mb_lin)
-        }
-        _ => matte_composite_u16_rgba::<LinearTf>(src, dst, width, mr_lin, mg_lin, mb_lin),
-    }
-}
-
 /// Composite RGBA onto a solid matte color, producing RGB (4ch → 3ch).
 ///
 /// Blends in linear light: pixel RGB channels are linearized per the
 /// source TF, alpha-blended against a pre-linearized matte, then re-encoded
-/// to the source TF. Alpha stays linear and is used as-is. All four channel
-/// types (U8/U16/F32/F16) dispatch through the same per-TF monomorphized
-/// kernel; `SrgbTf` keeps a LUT-based fast path for U8 and U16.
+/// to the source TF. Alpha stays linear and is used as-is. One blend serves every
+/// channel type and transfer, through the same transfer slices as the other kernels.
+/// sRGB U8 keeps its table-based decode and encode.
 ///
-/// **Matte interpretation.** The matte (r, g, b) is specified as sRGB u8
-/// regardless of source TF — this matches the common usage (CSS-style
-/// background colors). For HDR sources (PQ/HLG), the matte is implicitly
-/// SDR-range since u8 caps at 255 = 1.0 normalized.
+/// `matte` is the background, already in the source's primaries and linear light.
 fn matte_composite(
     src: &[u8],
     dst: &mut [u8],
     width: usize,
     from: PixelDescriptor,
-    mr: u8,
-    mg: u8,
-    mb: u8,
+    matte: [f32; 3],
 ) {
     let ch_type = from.channel_type();
+    if !matches!(
+        ch_type,
+        ChannelType::U8 | ChannelType::U16 | ChannelType::F16 | ChannelType::F32
+    ) {
+        drop_alpha(src, dst, width, ch_type);
+        return;
+    }
     let tf = from.transfer();
+    let srgb_u8 = ch_type == ChannelType::U8 && tf == TransferFunction::Srgb;
 
-    // Matte is specified in sRGB regardless of source TF (see doc above).
-    let mr_lin = linear_srgb::default::srgb_u8_to_linear(mr);
-    let mg_lin = linear_srgb::default::srgb_u8_to_linear(mg);
-    let mb_lin = linear_srgb::default::srgb_u8_to_linear(mb);
+    const PIXELS: usize = 128;
+    let mut rgba = [0f32; PIXELS * 4];
+    let mut rgb = [0f32; PIXELS * 3];
+    let mut alpha = [0f32; PIXELS];
+    let sample = ch_type.byte_size();
+    for (s, d) in src[..width * 4 * sample]
+        .chunks(PIXELS * 4 * sample)
+        .zip(dst[..width * 3 * sample].chunks_mut(PIXELS * 3 * sample))
+    {
+        let n = s.len() / (4 * sample);
+        let (rgba, rgb, alpha) = (&mut rgba[..n * 4], &mut rgb[..n * 3], &mut alpha[..n]);
+        match ch_type {
+            ChannelType::U8 => {
+                garb::bytes::convert_u8_to_f32(s, bytemuck::cast_slice_mut(&mut *rgba))
+                    .expect("pre-validated row size");
+            }
+            ChannelType::U16 => {
+                garb::bytes::convert_u16_to_f32(s, bytemuck::cast_slice_mut(&mut *rgba))
+                    .expect("pre-validated row size");
+            }
+            ChannelType::F16 => f16_bits_to_f32_slice(bytemuck::cast_slice(s), rgba),
+            _ => rgba.copy_from_slice(bytemuck::cast_slice(s)),
+        }
+        matte_split(rgba, rgb, alpha);
+        if srgb_u8 {
+            // The tables and this alpha scale define sRGB U8 matte output.
+            for ((lane, byte), a) in rgb
+                .as_chunks_mut::<3>()
+                .0
+                .iter_mut()
+                .zip(s.as_chunks::<4>().0)
+                .zip(alpha.iter_mut())
+            {
+                for c in 0..3 {
+                    lane[c] = linear_srgb::default::srgb_u8_to_linear(byte[c]);
+                }
+                *a = f32::from(byte[3]) * (1.0 / 255.0);
+            }
+        } else {
+            matte_to_linear(rgb, tf);
+        }
+        matte_blend(rgb, alpha, matte);
+        if srgb_u8 {
+            linear_srgb::default::linear_to_srgb_u8_slice(rgb, d);
+            continue;
+        }
+        matte_from_linear(rgb, tf);
+        match ch_type {
+            ChannelType::U8 => garb::bytes::convert_f32_to_u8(bytemuck::cast_slice(&*rgb), d)
+                .expect("pre-validated row size"),
+            ChannelType::U16 => garb::bytes::convert_f32_to_u16(bytemuck::cast_slice(&*rgb), d)
+                .expect("pre-validated row size"),
+            ChannelType::F16 => f32_to_f16_bits_slice(rgb, bytemuck::cast_slice_mut(d)),
+            _ => bytemuck::cast_slice_mut(d).copy_from_slice(rgb),
+        }
+    }
+}
 
-    match ch_type {
-        ChannelType::U8 => {
-            dispatch_matte_u8_rgba(
-                &src[..width * 4],
-                &mut dst[..width * 3],
-                width,
-                tf,
-                mr_lin,
-                mg_lin,
-                mb_lin,
-            );
+/// RGBA samples to separate RGB and clamped alpha.
+#[attune(dispatch, -_neon, -_wasm128)]
+fn matte_split(rgba: &[f32], rgb: &mut [f32], alpha: &mut [f32]) {
+    for ((s, d), a) in rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(rgb.as_chunks_mut::<3>().0)
+        .zip(alpha)
+    {
+        *d = [s[0], s[1], s[2]];
+        *a = s[3].clamp(0.0, 1.0);
+    }
+}
+
+/// `rgb * alpha + matte * (1 - alpha)`, in linear light.
+#[attune(dispatch, -_neon, -_wasm128)]
+fn matte_blend(rgb: &mut [f32], alpha: &[f32], matte: [f32; 3]) {
+    for (p, a) in rgb.as_chunks_mut::<3>().0.iter_mut().zip(alpha) {
+        let inv = 1.0 - a;
+        p[0] = p[0] * a + matte[0] * inv;
+        p[1] = p[1] * a + matte[1] * inv;
+        p[2] = p[2] * a + matte[2] * inv;
+    }
+}
+
+/// Decodes samples to linear in place. Anything without a curve here passes through.
+fn matte_to_linear(rgb: &mut [f32], tf: TransferFunction) {
+    match tf {
+        TransferFunction::Srgb => linear_srgb::default::srgb_to_linear_slice(rgb),
+        TransferFunction::Bt709 => linear_srgb::default::bt709_to_linear_slice(rgb),
+        TransferFunction::Pq => pq_eotf_slice(rgb),
+        TransferFunction::Hlg => linear_srgb::default::hlg_to_linear_slice(rgb),
+        TransferFunction::Gamma22 => {
+            linear_srgb::default::gamma_to_linear_slice(rgb, ADOBE_GAMMA);
         }
-        ChannelType::U16 => {
-            let src16: &[u16] = bytemuck::cast_slice(&src[..width * 8]);
-            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * 6]);
-            dispatch_matte_u16_rgba(src16, dst16, width, tf, mr_lin, mg_lin, mb_lin);
+        _ => {}
+    }
+}
+
+/// Encodes linear samples in place. The inverse of [`matte_to_linear`].
+fn matte_from_linear(rgb: &mut [f32], tf: TransferFunction) {
+    match tf {
+        TransferFunction::Srgb => linear_srgb::default::linear_to_srgb_slice(rgb),
+        TransferFunction::Bt709 => linear_srgb::default::linear_to_bt709_slice(rgb),
+        TransferFunction::Pq => pq_oetf_slice(rgb),
+        TransferFunction::Hlg => linear_srgb::default::linear_to_hlg_slice(rgb),
+        TransferFunction::Gamma22 => {
+            linear_srgb::default::linear_to_gamma_slice(rgb, ADOBE_GAMMA);
         }
-        ChannelType::F32 => {
-            let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
-            let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
-            dispatch_matte_f32_rgba(srcf, dstf, width, tf, mr_lin, mg_lin, mb_lin);
-        }
-        ChannelType::F16 => {
-            let src16: &[u16] = bytemuck::cast_slice(&src[..width * 8]);
-            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * 6]);
-            dispatch_matte_f16_rgba(src16, dst16, width, tf, mr_lin, mg_lin, mb_lin);
-        }
-        _ => {
-            // Fallback: just drop alpha
-            drop_alpha(src, dst, width, ch_type);
-        }
+        _ => {}
     }
 }
 
 // -- gray_to_rgb (pure replicate — U16 and F16 share) ------------------------
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_rgb_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         let g = src[i];
@@ -1261,7 +779,7 @@ fn gray_to_rgb_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     }
 }
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_rgb_f32(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         let g = src[i];
@@ -1295,19 +813,19 @@ fn gray_to_rgb(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
 
 // -- gray_to_rgba (replicate + opaque alpha) ---------------------------------
 
-#[autoversion]
-fn gray_to_rgba_u16(src: &[u16], dst: &mut [u16], width: usize) {
+#[attune(dispatch, -_neon, -_wasm128)]
+fn gray_to_rgba_2bytes(src: &[u16], dst: &mut [u16], width: usize, opaque: u16) {
     for i in 0..width {
         let g = src[i];
         let d: &mut [u16; 4] = (&mut dst[i * 4..i * 4 + 4]).try_into().unwrap();
         d[0] = g;
         d[1] = g;
         d[2] = g;
-        d[3] = 65535;
+        d[3] = opaque;
     }
 }
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_rgba_f32(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         let g = src[i];
@@ -1319,18 +837,6 @@ fn gray_to_rgba_f32(src: &[f32], dst: &mut [f32], width: usize) {
     }
 }
 
-#[autoversion]
-fn gray_to_rgba_f16(src: &[u16], dst: &mut [u16], width: usize) {
-    for i in 0..width {
-        let g = src[i];
-        let d: &mut [u16; 4] = (&mut dst[i * 4..i * 4 + 4]).try_into().unwrap();
-        d[0] = g;
-        d[1] = g;
-        d[2] = g;
-        d[3] = F16_ONE_BITS;
-    }
-}
-
 /// Gray → RGBA (replicate + opaque alpha).
 fn gray_to_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
     match ch_type {
@@ -1338,20 +844,22 @@ fn gray_to_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) 
             garb::bytes::gray_to_rgba(&src[..width], &mut dst[..width * 4])
                 .expect("pre-validated row size");
         }
-        ChannelType::U16 => gray_to_rgba_u16(
+        ChannelType::U16 => gray_to_rgba_2bytes(
             bytemuck::cast_slice(&src[..width * 2]),
             bytemuck::cast_slice_mut(&mut dst[..width * 8]),
             width,
+            65535,
         ),
         ChannelType::F32 => gray_to_rgba_f32(
             bytemuck::cast_slice(&src[..width * 4]),
             bytemuck::cast_slice_mut(&mut dst[..width * 16]),
             width,
         ),
-        ChannelType::F16 => gray_to_rgba_f16(
+        ChannelType::F16 => gray_to_rgba_2bytes(
             bytemuck::cast_slice(&src[..width * 2]),
             bytemuck::cast_slice_mut(&mut dst[..width * 8]),
             width,
+            F16_ONE_BITS,
         ),
         _ => {}
     }
@@ -1371,7 +879,7 @@ fn gray_to_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) 
 // path; other coefficient choices on u8 + all U16/F32/F16 paths use the
 // generic f32 path.
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn rgb_to_gray_u8_generic(src: &[u8], dst: &mut [u8], width: usize, w: [f32; 3]) {
     for i in 0..width {
         let s: &[u8; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
@@ -1380,7 +888,7 @@ fn rgb_to_gray_u8_generic(src: &[u8], dst: &mut [u8], width: usize, w: [f32; 3])
     }
 }
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn rgba_to_gray_u8_generic(src: &[u8], dst: &mut [u8], width: usize, w: [f32; 3]) {
     for i in 0..width {
         let s: &[u8; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
@@ -1389,7 +897,7 @@ fn rgba_to_gray_u8_generic(src: &[u8], dst: &mut [u8], width: usize, w: [f32; 3]
     }
 }
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn rgb_to_gray_u16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
     for i in 0..width {
         let s: &[u16; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
@@ -1398,7 +906,7 @@ fn rgb_to_gray_u16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
     }
 }
 
-#[autoversion]
+#[attune(dispatch, -_v3, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn rgba_to_gray_u16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
     for i in 0..width {
         let s: &[u16; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
@@ -1407,7 +915,7 @@ fn rgba_to_gray_u16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
     }
 }
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn rgb_to_gray_f32(src: &[f32], dst: &mut [f32], width: usize, w: [f32; 3]) {
     for i in 0..width {
         let s: &[f32; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
@@ -1415,7 +923,7 @@ fn rgb_to_gray_f32(src: &[f32], dst: &mut [f32], width: usize, w: [f32; 3]) {
     }
 }
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn rgba_to_gray_f32(src: &[f32], dst: &mut [f32], width: usize, w: [f32; 3]) {
     for i in 0..width {
         let s: &[f32; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
@@ -1423,26 +931,34 @@ fn rgba_to_gray_f32(src: &[f32], dst: &mut [f32], width: usize, w: [f32; 3]) {
     }
 }
 
-#[autoversion]
-fn rgb_to_gray_f16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
-    for i in 0..width {
-        let r = f16_bits_to_f32(src[i * 3]);
-        let g = f16_bits_to_f32(src[i * 3 + 1]);
-        let b = f16_bits_to_f32(src[i * 3 + 2]);
-        let y = r * w[0] + g * w[1] + b * w[2];
-        dst[i] = f32_to_f16_bits(y);
+/// Half-float luma through the `f32` kernel, converting in stack-sized chunks with the
+/// hardware-backed slice converters, so only one luma kernel exists per tier.
+fn gray_f16_via_f32<const N: usize>(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
+    const PIXELS: usize = 128;
+    let mut wide = [[0f32; 4]; PIXELS];
+    let mut luma = [0f32; PIXELS];
+    for (s, d) in src[..width * N]
+        .chunks(PIXELS * N)
+        .zip(dst[..width].chunks_mut(PIXELS))
+    {
+        let n = d.len();
+        let flat = &mut bytemuck::cast_slice_mut::<[f32; 4], f32>(&mut wide)[..n * N];
+        f16_bits_to_f32_slice(s, flat);
+        if N == 3 {
+            rgb_to_gray_f32(flat, &mut luma[..n], n, w);
+        } else {
+            rgba_to_gray_f32(flat, &mut luma[..n], n, w);
+        }
+        f32_to_f16_bits_slice(&luma[..n], d);
     }
 }
 
-#[autoversion]
+fn rgb_to_gray_f16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
+    gray_f16_via_f32::<3>(src, dst, width, w);
+}
+
 fn rgba_to_gray_f16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
-    for i in 0..width {
-        let r = f16_bits_to_f32(src[i * 4]);
-        let g = f16_bits_to_f32(src[i * 4 + 1]);
-        let b = f16_bits_to_f32(src[i * 4 + 2]);
-        let y = r * w[0] + g * w[1] + b * w[2];
-        dst[i] = f32_to_f16_bits(y);
-    }
+    gray_f16_via_f32::<4>(src, dst, width, w);
 }
 
 /// One row pass: encoded luma plus a byte-exact alpha copy.
@@ -1565,7 +1081,7 @@ fn rgba_to_gray(
 
 // -- gray_alpha_to_rgba (pure replicate + alpha-preserve — U16 and F16 share)
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_rgba_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         let s: &[u16; 2] = (&src[i * 2..i * 2 + 2]).try_into().unwrap();
@@ -1577,7 +1093,7 @@ fn gray_alpha_to_rgba_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     }
 }
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_rgba_f32(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         let s: &[f32; 2] = (&src[i * 2..i * 2 + 2]).try_into().unwrap();
@@ -1612,7 +1128,7 @@ fn gray_alpha_to_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: Channel
 
 // -- gray_alpha_to_rgb (replicate + drop alpha — U16 and F16 share) ---------
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_rgb_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         let g = src[i * 2];
@@ -1623,7 +1139,7 @@ fn gray_alpha_to_rgb_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     }
 }
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_rgb_f32(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         let g = src[i * 2];
@@ -1657,30 +1173,21 @@ fn gray_alpha_to_rgb(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelT
 
 // -- gray_to_gray_alpha (inserts opaque alpha: differs per type) -------------
 
-#[autoversion]
-fn gray_to_gray_alpha_u16(src: &[u16], dst: &mut [u16], width: usize) {
+#[attune(dispatch, -_neon, -_wasm128)]
+fn gray_to_gray_alpha_2bytes(src: &[u16], dst: &mut [u16], width: usize, opaque: u16) {
     for i in 0..width {
         let d: &mut [u16; 2] = (&mut dst[i * 2..i * 2 + 2]).try_into().unwrap();
         d[0] = src[i];
-        d[1] = 65535;
+        d[1] = opaque;
     }
 }
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_gray_alpha_f32(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         let d: &mut [f32; 2] = (&mut dst[i * 2..i * 2 + 2]).try_into().unwrap();
         d[0] = src[i];
         d[1] = 1.0;
-    }
-}
-
-#[autoversion]
-fn gray_to_gray_alpha_f16(src: &[u16], dst: &mut [u16], width: usize) {
-    for i in 0..width {
-        let d: &mut [u16; 2] = (&mut dst[i * 2..i * 2 + 2]).try_into().unwrap();
-        d[0] = src[i];
-        d[1] = F16_ONE_BITS;
     }
 }
 
@@ -1691,20 +1198,22 @@ fn gray_to_gray_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: Channel
             garb::bytes::gray_to_gray_alpha(&src[..width], &mut dst[..width * 2])
                 .expect("pre-validated row size");
         }
-        ChannelType::U16 => gray_to_gray_alpha_u16(
+        ChannelType::U16 => gray_to_gray_alpha_2bytes(
             bytemuck::cast_slice(&src[..width * 2]),
             bytemuck::cast_slice_mut(&mut dst[..width * 4]),
             width,
+            65535,
         ),
         ChannelType::F32 => gray_to_gray_alpha_f32(
             bytemuck::cast_slice(&src[..width * 4]),
             bytemuck::cast_slice_mut(&mut dst[..width * 8]),
             width,
         ),
-        ChannelType::F16 => gray_to_gray_alpha_f16(
+        ChannelType::F16 => gray_to_gray_alpha_2bytes(
             bytemuck::cast_slice(&src[..width * 2]),
             bytemuck::cast_slice_mut(&mut dst[..width * 4]),
             width,
+            F16_ONE_BITS,
         ),
         _ => {}
     }
@@ -1712,14 +1221,14 @@ fn gray_to_gray_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: Channel
 
 // -- gray_alpha_to_gray (drop alpha — U16 and F16 share) --------------------
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_gray_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         dst[i] = src[i * 2];
     }
 }
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_gray_f32(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         dst[i] = src[i * 2];
@@ -2136,82 +1645,22 @@ pub(crate) fn multiply_color_channels(buf: &mut [f32], channels: usize, factor: 
 }
 
 // ---------------------------------------------------------------------------
-// Vendored **precise** SIMD PQ (exact SMPTE ST 2084)
+// PQ (SMPTE ST 2084)
 // ---------------------------------------------------------------------------
-//
-// `linear_srgb::default`'s PQ slice uses a rational-polynomial fit whose valid
-// range starts at v≈0.02 (its *scalar* path switches to an exact `powf` below
-// that); applied as a slice it extrapolates the poly all the way to 0, so the
-// tight U16 → f32 → U16 round-trip drifts up to ~256 codes near black. We vendor
-// the **exact** ST 2084 formula and evaluate it in SIMD with magetypes' precise
-// `pow`, giving full-range precision (round-trip ≤1) while staying SIMD. The
-// scalar remainder defers to `linear_srgb::tf` (exact-below-threshold). Operates
-// on every lane; the kernels restore any alpha lane afterward (alpha is linear).
-// Canonical SMPTE ST 2084 constants (m1 = 2610/16384, m2 = 2523·128/4096, etc.),
-// written in their exact rational decimal form — all are exactly f32-representable
-// even though the literals run longer than the shortest round-trip.
-#[allow(clippy::excessive_precision)]
-const PQ_M1: f32 = 0.1593017578125;
-const PQ_M2: f32 = 78.84375;
-const PQ_C1: f32 = 0.8359375;
-#[allow(clippy::excessive_precision)]
-const PQ_C2: f32 = 18.8515625;
-const PQ_C3: f32 = 18.6875;
 
-/// PQ EOTF (signal → linear), exact, precise SIMD.
-#[archmage::magetypes(define(f32x16), v4(cfg(avx512)), v3, neon, wasm128, scalar)]
-fn pq_eotf_slice_tier(token: Token, buf: &mut [f32]) {
-    let zero = f32x16::splat_t(token, 0.0);
-    let c1 = f32x16::splat_t(token, PQ_C1);
-    let c2 = f32x16::splat_t(token, PQ_C2);
-    let c3 = f32x16::splat_t(token, PQ_C3);
-    let (chunks, rem) = buf.as_chunks_mut::<16>();
-    for chunk in chunks {
-        let v = f32x16::from_array_t(token, *chunk).max(zero);
-        let vp = v.pow_midp_precise(1.0 / PQ_M2);
-        let num = (vp - c1).max(zero);
-        let den = c2 - c3 * vp;
-        let lin = (num / den).pow_midp_precise(1.0 / PQ_M1);
-        *chunk = f32x16::blend(v.simd_le(zero), zero, lin).to_array();
-    }
-    for v in rem {
-        *v = linear_srgb::tf::pq_to_linear(*v);
-    }
-}
-
-/// PQ inverse-EOTF / OETF (linear → signal), exact, precise SIMD.
-#[archmage::magetypes(define(f32x16), v4(cfg(avx512)), v3, neon, wasm128, scalar)]
-fn pq_oetf_slice_tier(token: Token, buf: &mut [f32]) {
-    let zero = f32x16::splat_t(token, 0.0);
-    let one = f32x16::splat_t(token, 1.0);
-    let c1 = f32x16::splat_t(token, PQ_C1);
-    let c2 = f32x16::splat_t(token, PQ_C2);
-    let c3 = f32x16::splat_t(token, PQ_C3);
-    let (chunks, rem) = buf.as_chunks_mut::<16>();
-    for chunk in chunks {
-        let v = f32x16::from_array_t(token, *chunk).max(zero);
-        let vp = v.pow_midp_precise(PQ_M1);
-        let sig = ((c1 + c2 * vp) / (one + c3 * vp)).pow_midp_precise(PQ_M2);
-        *chunk = f32x16::blend(v.simd_le(zero), zero, sig).to_array();
-    }
-    for v in rem {
-        *v = linear_srgb::tf::linear_to_pq(*v);
-    }
-}
-
-/// PQ EOTF over an interleaved f32 slice, every lane (precise SIMD).
+/// PQ EOTF over an interleaved f32 slice, every lane.
 pub(crate) fn pq_eotf_slice(buf: &mut [f32]) {
-    incant!(pq_eotf_slice_tier(buf), [v4, v3, neon, wasm128, scalar]);
+    linear_srgb::default::pq_to_linear_slice(buf);
 }
 
-/// PQ OETF over an interleaved f32 slice, every lane (precise SIMD).
+/// PQ OETF over an interleaved f32 slice, every lane.
 pub(crate) fn pq_oetf_slice(buf: &mut [f32]) {
-    incant!(pq_oetf_slice_tier(buf), [v4, v3, neon, wasm128, scalar]);
+    linear_srgb::default::linear_to_pq_slice(buf);
 }
 
 /// PQ U16 → Linear F32 (EOTF during depth conversion), alpha-preserving.
 ///
-/// Widens the U16 codes (`garb` SIMD) and applies the precise SIMD PQ EOTF
+/// Widens the U16 codes (`garb` SIMD) and applies the PQ EOTF
 /// ([`pq_eotf_slice`]) to land relative-linear, dividing the RGB lanes by `scale`
 /// (`diffuse_white / 10000`). The EOTF runs over every lane; for alpha-bearing
 /// layouts the alpha lane is then overwritten with its (un-transformed,
@@ -2236,7 +1685,7 @@ fn pq_u16_to_linear_f32(
 
 /// Linear F32 → PQ U16 (OETF during depth conversion), alpha-preserving.
 ///
-/// Anchors the RGB lanes (`× scale`, negatives → 0), applies the precise SIMD PQ
+/// Anchors the RGB lanes (`× scale`, negatives → 0), applies the PQ
 /// OETF ([`pq_oetf_slice`]) in fixed stack-sized chunks (the U16 output is
 /// half-width, so it cannot host the in-place f32 transform), then narrows to U16
 /// (`garb` SIMD). For alpha-bearing layouts the alpha lane is overwritten with its
@@ -2274,7 +1723,7 @@ fn linear_f32_to_pq_u16(
     }
 }
 
-/// PQ F32 → Linear F32 (EOTF, same depth), alpha-preserving. Precise SIMD.
+/// PQ F32 → Linear F32 (EOTF, same depth), alpha-preserving. SIMD.
 ///
 /// `scale` is the `diffuse_white / 10000` anchor (see [`pq_u16_to_linear_f32`]);
 /// the RGB lanes are divided by it after the EOTF and, for alpha-bearing layouts,
@@ -2297,7 +1746,7 @@ fn pq_f32_to_linear_f32(
     restore_alpha_f32_f32(&srcf[..count], &mut dstf[..count], layout);
 }
 
-/// Linear F32 → PQ F32 (OETF, same depth), alpha-preserving. Precise SIMD.
+/// Linear F32 → PQ F32 (OETF, same depth), alpha-preserving. SIMD.
 ///
 /// `scale` is the `diffuse_white / 10000` anchor (see [`linear_f32_to_pq_u16`]);
 /// the RGB lanes are multiplied by it before the OETF and, for alpha-bearing
@@ -2354,64 +1803,33 @@ pub(crate) fn hlg_eotf(v: f32) -> f32 {
 /// alpha-preserving (the alpha lane is carried linearly, `v / 65535`).
 fn hlg_u16_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, layout: ChannelLayout) {
     let count = width * layout.channels();
+    garb::bytes::convert_u16_to_f32(&src[..count * 2], &mut dst[..count * 4])
+        .expect("pre-validated row size");
     let src16: &[u16] = bytemuck::cast_slice(&src[..count * 2]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    hlg_u16_to_linear_f32_inner(src16, dstf);
+    linear_srgb::default::hlg_to_linear_slice(dstf);
     restore_alpha_u16_f32(src16, dstf, layout);
-}
-
-#[autoversion]
-fn hlg_u16_to_linear_f32_inner(src: &[u16], dst: &mut [f32]) {
-    for (s, d) in src
-        .as_chunks::<16>()
-        .0
-        .iter()
-        .zip(dst.as_chunks_mut::<16>().0)
-    {
-        for i in 0..16 {
-            d[i] = linear_srgb::tf::hlg_to_linear(s[i] as f32 / 65535.0);
-        }
-    }
-    let rem = src.len() % 16;
-    if rem > 0 {
-        let off = src.len() - rem;
-        for i in 0..rem {
-            dst[off + i] = linear_srgb::tf::hlg_to_linear(src[off + i] as f32 / 65535.0);
-        }
-    }
 }
 
 /// Linear F32 → HLG U16 (OETF applied during depth conversion),
 /// alpha-preserving (the alpha lane is scaled linearly, never HLG-encoded).
 fn linear_f32_to_hlg_u16(src: &[u8], dst: &mut [u8], width: usize, layout: ChannelLayout) {
+    const LANES: usize = 256;
     let count = width * layout.channels();
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
-    let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..count * 2]);
-    linear_f32_to_hlg_u16_inner(srcf, dst16);
-    restore_alpha_f32_u16(srcf, dst16, layout);
-}
-
-#[autoversion]
-fn linear_f32_to_hlg_u16_inner(src: &[f32], dst: &mut [u16]) {
-    for (s, d) in src
-        .as_chunks::<16>()
-        .0
-        .iter()
-        .zip(dst.as_chunks_mut::<16>().0)
+    let mut lanes = [0f32; LANES];
+    for (s, d) in srcf
+        .chunks(LANES)
+        .zip(dst[..count * 2].chunks_mut(LANES * 2))
     {
-        for i in 0..16 {
-            let encoded = linear_srgb::tf::linear_to_hlg(s[i]);
-            d[i] = (encoded.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
-        }
+        let encoded = &mut lanes[..s.len()];
+        encoded.copy_from_slice(s);
+        linear_srgb::default::linear_to_hlg_slice(encoded);
+        garb::bytes::convert_f32_to_u16(bytemuck::cast_slice(&*encoded), d)
+            .expect("pre-validated row size");
     }
-    let rem = src.len() % 16;
-    if rem > 0 {
-        let off = src.len() - rem;
-        for i in 0..rem {
-            let encoded = linear_srgb::tf::linear_to_hlg(src[off + i]);
-            dst[off + i] = (encoded.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
-        }
-    }
+    let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..count * 2]);
+    restore_alpha_f32_u16(srcf, dst16, layout);
 }
 
 /// HLG F32 → Linear F32 (EOTF, same depth). SIMD-dispatched,
@@ -2499,29 +1917,9 @@ fn bt709_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, layout: Cha
     let count = width * layout.channels();
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    bt709_f32_to_linear_f32_inner(&srcf[..count], &mut dstf[..count]);
+    dstf[..count].copy_from_slice(&srcf[..count]);
+    linear_srgb::default::bt709_to_linear_slice(&mut dstf[..count]);
     restore_alpha_f32_f32(&srcf[..count], &mut dstf[..count], layout);
-}
-
-#[autoversion]
-fn bt709_f32_to_linear_f32_inner(src: &[f32], dst: &mut [f32]) {
-    for (s, d) in src
-        .as_chunks::<16>()
-        .0
-        .iter()
-        .zip(dst.as_chunks_mut::<16>().0)
-    {
-        for i in 0..16 {
-            d[i] = linear_srgb::tf::bt709_to_linear(s[i]);
-        }
-    }
-    let rem = src.len() % 16;
-    if rem > 0 {
-        let off = src.len() - rem;
-        for i in 0..rem {
-            dst[off + i] = linear_srgb::tf::bt709_to_linear(src[off + i]);
-        }
-    }
 }
 
 /// Linear F32 → BT.709 F32 (OETF, same depth). Alpha-preserving.
@@ -2529,29 +1927,9 @@ fn linear_f32_to_bt709_f32(src: &[u8], dst: &mut [u8], width: usize, layout: Cha
     let count = width * layout.channels();
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    linear_f32_to_bt709_f32_inner(&srcf[..count], &mut dstf[..count]);
+    dstf[..count].copy_from_slice(&srcf[..count]);
+    linear_srgb::default::linear_to_bt709_slice(&mut dstf[..count]);
     restore_alpha_f32_f32(&srcf[..count], &mut dstf[..count], layout);
-}
-
-#[autoversion]
-fn linear_f32_to_bt709_f32_inner(src: &[f32], dst: &mut [f32]) {
-    for (s, d) in src
-        .as_chunks::<16>()
-        .0
-        .iter()
-        .zip(dst.as_chunks_mut::<16>().0)
-    {
-        for i in 0..16 {
-            d[i] = linear_srgb::tf::linear_to_bt709(s[i]);
-        }
-    }
-    let rem = src.len() % 16;
-    if rem > 0 {
-        let off = src.len() - rem;
-        for i in 0..rem {
-            dst[off + i] = linear_srgb::tf::linear_to_bt709(src[off + i]);
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2629,7 +2007,7 @@ fn gamma22_f32_extended(
 // Alpha premultiplication
 // ---------------------------------------------------------------------------
 //
-// Pattern: dispatch on (ChannelType, channels) to concrete #[autoversion]
+// Pattern: dispatch on (ChannelType, channels) to concrete #[attune(dispatch, -_neon, -_wasm128)]
 // kernels. Each kernel has a flat per-pixel loop with fixed-size array
 // slicing at the pixel boundary so LLVM can drop bounds checks and
 // vectorize. Empirically ~10× faster than the previous big-match-in-fn
@@ -2638,7 +2016,7 @@ fn gamma22_f32_extended(
 
 // -- Straight → Premultiplied: per-(type, channels) kernels ------------------
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn premul_u8_ga(src: &[u8], dst: &mut [u8], width: usize) {
     for i in 0..width {
         let base = i * 2;
@@ -2650,7 +2028,7 @@ fn premul_u8_ga(src: &[u8], dst: &mut [u8], width: usize) {
     }
 }
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn premul_u16_ga(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         let base = i * 2;
@@ -2662,7 +2040,7 @@ fn premul_u16_ga(src: &[u16], dst: &mut [u16], width: usize) {
     }
 }
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn premul_u16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         let base = i * 4;
@@ -2676,7 +2054,7 @@ fn premul_u16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
     }
 }
 
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128)]
 fn premul_f32_ga(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         let base = i * 2;
@@ -2778,7 +2156,7 @@ fn straight_to_premul(
             garb::bytes::premultiply_alpha_f32_copy(&src[..n], &mut dst[..n])
                 .expect("pre-validated row size");
         }
-        // Per-type autoversion kernels for the remaining shapes.
+        // Per-type kernels for the remaining shapes.
         (ChannelType::U8, 2) => premul_u8_ga(&src[..width * 2], &mut dst[..width * 2], width),
         (ChannelType::U16, 2) => {
             let n = width * 4;
@@ -2834,7 +2212,6 @@ fn straight_to_premul(
 // useful answer for a premultiplied pixel with zero alpha — the color
 // channels are already zero, but we defensively zero anyway).
 
-#[autoversion]
 fn unpremul_u8_ga(src: &[u8], dst: &mut [u8], width: usize) {
     for i in 0..width {
         let base = i * 2;
@@ -2852,7 +2229,6 @@ fn unpremul_u8_ga(src: &[u8], dst: &mut [u8], width: usize) {
     }
 }
 
-#[autoversion]
 fn unpremul_u8_rgba(src: &[u8], dst: &mut [u8], width: usize) {
     for i in 0..width {
         let base = i * 4;
@@ -2874,7 +2250,6 @@ fn unpremul_u8_rgba(src: &[u8], dst: &mut [u8], width: usize) {
     }
 }
 
-#[autoversion]
 fn unpremul_u16_ga(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         let base = i * 2;
@@ -2892,7 +2267,6 @@ fn unpremul_u16_ga(src: &[u16], dst: &mut [u16], width: usize) {
     }
 }
 
-#[autoversion]
 fn unpremul_u16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         let base = i * 4;
@@ -2914,7 +2288,7 @@ fn unpremul_u16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
     }
 }
 
-#[autoversion]
+#[attune(dispatch, -_v3, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn unpremul_f32_ga(src: &[f32], dst: &mut [f32], width: usize) {
     for i in 0..width {
         let base = i * 2;
@@ -3043,7 +2417,7 @@ fn premul_to_straight(
             garb::bytes::unpremultiply_alpha_f32_copy(&src[..n], &mut dst[..n])
                 .expect("pre-validated row size");
         }
-        // Per-type autoversion kernels.
+        // Per-type kernels.
         (ChannelType::U8, 2) => unpremul_u8_ga(&src[..width * 2], &mut dst[..width * 2], width),
         (ChannelType::U8, 4) => unpremul_u8_rgba(&src[..width * 4], &mut dst[..width * 4], width),
         (ChannelType::U16, 2) => {
@@ -3110,11 +2484,11 @@ fn linear_rgb_to_oklab_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: 
 
     let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 12]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
-    rgb_to_oklab_3ch_inner(srcf, dstf, &m1);
+    rgb_to_oklab_3ch_inner(srcf, dstf, m1.rows());
 }
 
 /// 3-channel RGB→Oklab inner loop (16 pixels = 48 f32s per chunk).
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn rgb_to_oklab_3ch_inner(src: &[f32], dst: &mut [f32], m1: &[[f32; 3]; 3]) {
     // 16 pixels × 3 channels = 48 f32s = 192 bytes
     for (s, d) in src
@@ -3151,11 +2525,11 @@ fn oklab_to_linear_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: 
 
     let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 12]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
-    oklab_to_rgb_3ch_inner(srcf, dstf, &m1_inv);
+    oklab_to_rgb_3ch_inner(srcf, dstf, m1_inv.rows());
 }
 
 /// 3-channel Oklab→RGB inner loop (16 pixels = 48 f32s per chunk).
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn oklab_to_rgb_3ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) {
     for (s, d) in src
         .as_chunks::<48>()
@@ -3191,11 +2565,11 @@ fn linear_rgba_to_oklaba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries
 
     let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 16]);
-    rgb_to_oklab_4ch_inner(srcf, dstf, &m1);
+    rgb_to_oklab_4ch_inner(srcf, dstf, m1.rows());
 }
 
 /// 4-channel RGBA→Oklaba inner loop (16 pixels = 64 f32s per chunk).
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn rgb_to_oklab_4ch_inner(src: &[f32], dst: &mut [f32], m1: &[[f32; 3]; 3]) {
     for (s, d) in src
         .as_chunks::<64>()
@@ -3233,11 +2607,11 @@ fn oklaba_to_linear_rgba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries
 
     let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 16]);
-    oklab_to_rgb_4ch_inner(srcf, dstf, &m1_inv);
+    oklab_to_rgb_4ch_inner(srcf, dstf, m1_inv.rows());
 }
 
 /// 4-channel Oklaba→RGBA inner loop (16 pixels = 64 f32s per chunk).
-#[autoversion]
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn oklab_to_rgb_4ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) {
     for (s, d) in src
         .as_chunks::<64>()
@@ -3292,6 +2666,25 @@ fn oklab_to_rgb_4ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) 
 /// Per-tier SIMD body for [`gamut_matrix_rgb_f32`] / [`gamut_matrix_rgba_f32`]
 /// — `CHANNELS == 3` is interleaved RGB (no alpha), `CHANNELS == 4` carries an
 /// alpha lane that's copied through unmodified.
+/// Multiply-add for kernels: one rounding on every native tier, so output doesn't depend on the CPU.
+/// WASM stays relaxed unless `precise-portable` asks for the same bits, because fused is software
+/// there unless the engine fuses.
+#[inline(always)]
+fn fused_mul_add<T: magetypes::simd::backends::F32x8Backend>(
+    a: magetypes::simd::generic::f32x8<T>,
+    b: magetypes::simd::generic::f32x8<T>,
+    c: magetypes::simd::generic::f32x8<T>,
+) -> magetypes::simd::generic::f32x8<T> {
+    #[cfg(all(target_arch = "wasm32", not(feature = "precise-portable")))]
+    {
+        a.mul_add_relaxed(b, c)
+    }
+    #[cfg(not(all(target_arch = "wasm32", not(feature = "precise-portable"))))]
+    {
+        a.mul_add_fused(b, c)
+    }
+}
+
 #[archmage::magetypes(define(f32x8), v4(cfg(avx512)), v3, neon, wasm128, scalar)]
 fn gamut_matrix_f32_tier<const CHANNELS: usize>(
     token: Token,
@@ -3333,9 +2726,9 @@ fn gamut_matrix_f32_tier<const CHANNELS: usize>(
         // 3×3 matmul as fused-multiply-adds — same shape as
         // fast_gamut::mat3x3_x8 but typed against the generic
         // magetypes `f32x8`.
-        let or = m00.mul_add(rl, m01.mul_add(gl, m02 * bl));
-        let og = m10.mul_add(rl, m11.mul_add(gl, m12 * bl));
-        let ob = m20.mul_add(rl, m21.mul_add(gl, m22 * bl));
+        let or = fused_mul_add(m00, rl, fused_mul_add(m01, gl, m02 * bl));
+        let og = fused_mul_add(m10, rl, fused_mul_add(m11, gl, m12 * bl));
+        let ob = fused_mul_add(m20, rl, fused_mul_add(m21, gl, m22 * bl));
 
         let ro = or.to_array();
         let go = og.to_array();
@@ -3359,9 +2752,11 @@ fn gamut_matrix_f32_tier<const CHANNELS: usize>(
         let rv = src[base];
         let gv = src[base + 1];
         let bv = src[base + 2];
-        dst[base] = m[0] * rv + m[1] * gv + m[2] * bv;
-        dst[base + 1] = m[3] * rv + m[4] * gv + m[5] * bv;
-        dst[base + 2] = m[6] * rv + m[7] * gv + m[8] * bv;
+        // The same operations as the lanes above, or a row's split would show in its output.
+        let row = |i: usize| crate::fast_gamut::fused_row(m[i], m[i + 1], m[i + 2], rv, gv, bv);
+        dst[base] = row(0);
+        dst[base + 1] = row(3);
+        dst[base + 2] = row(6);
         if CHANNELS == 4 {
             dst[base + 3] = src[base + 3];
         }
@@ -3389,4 +2784,109 @@ fn gamut_matrix_rgba_f32(src: &[u8], dst: &mut [u8], width: usize, matrix: &[f32
         gamut_matrix_f32_tier::<4>(s, d, width, matrix),
         [v4, v3, neon, wasm128, scalar]
     );
+}
+
+#[cfg(test)]
+mod gray_f16_exact {
+    use super::*;
+    use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+    const WEIGHTS: [[f32; 3]; 3] = [
+        [0.2126, 0.7152, 0.0722],
+        [0.299, 0.587, 0.114],
+        [1.0, 0.0, 0.0],
+    ];
+
+    /// One sample at a time through the software conversions.
+    fn reference<const N: usize>(src: &[u16], dst: &mut [u16], w: [f32; 3]) {
+        for (s, d) in src.as_chunks::<N>().0.iter().zip(dst) {
+            let y = f16_bits_to_f32(s[0]) * w[0]
+                + f16_bits_to_f32(s[1]) * w[1]
+                + f16_bits_to_f32(s[2]) * w[2];
+            *d = f32_to_f16_bits(y);
+        }
+    }
+
+    /// `N`-channel rows putting `v` in `slot`; the other samples come from xorshift.
+    fn row<const N: usize>(v: u16, slot: usize, pixels: usize, x: &mut u32) -> Vec<u16> {
+        let mut out = vec![0u16; pixels * N];
+        for p in out.as_chunks_mut::<N>().0 {
+            for c in p.iter_mut() {
+                *x ^= *x << 13;
+                *x ^= *x >> 17;
+                *x ^= *x << 5;
+                *c = *x as u16;
+            }
+            p[slot] = v;
+        }
+        out
+    }
+
+    fn check<const N: usize>(
+        kernel: fn(&[u16], &mut [u16], usize, [f32; 3]),
+        slot: usize,
+        v_step: usize,
+    ) {
+        let mut x = 0x1234_5678u32;
+        let mut got = vec![0u16; 300];
+        let mut want = vec![0u16; 300];
+        for w in WEIGHTS {
+            for v in (0..=u16::MAX).step_by(v_step) {
+                let src = row::<N>(v, slot, 96, &mut x);
+                kernel(&src, &mut got, 96, w);
+                reference::<N>(&src, &mut want, w);
+                for i in 0..96 {
+                    let nan = |h: u16| h & 0x7C00 == 0x7C00 && h & 0x03FF != 0;
+                    assert!(
+                        got[i] == want[i] || (nan(got[i]) && nan(want[i])),
+                        "input {:04x?}, weights {w:?}: got {:04x}, want {:04x}",
+                        &src[i * N..i * N + 3],
+                        got[i],
+                        want[i],
+                    );
+                }
+            }
+            // Widths on both sides of the chunk boundary. Samples past `width` stay untouched.
+            for width in [0, 1, 7, 8, 15, 16, 17, 127, 128, 129, 255, 256, 257, 300] {
+                let src = row::<N>(0x3c00, slot, width.max(1), &mut x);
+                got.fill(0xAAAA);
+                kernel(&src, &mut got, width, w);
+                reference::<N>(&src[..width * N], &mut want, w);
+                let same = |(a, b): (&u16, &u16)| {
+                    a == b
+                        || (a & 0x7C00 == 0x7C00
+                            && b & 0x7C00 == 0x7C00
+                            && a & 0x3FF != 0
+                            && b & 0x3FF != 0)
+                };
+                assert!(
+                    got[..width].iter().zip(&want[..width]).all(same),
+                    "width {width}"
+                );
+                assert!(got[width..].iter().all(|&s| s == 0xAAAA), "width {width}");
+            }
+        }
+    }
+
+    /// Every eighth half-float value in each channel, at every dispatch tier: the luma kernel
+    /// must match per-sample software conversion bit for bit. NaN stays NaN; which input's
+    /// payload survives depends on vector operand order, as in the `f32` kernel.
+    #[test]
+    fn matches_software_conversion_at_every_tier() {
+        let _ = for_each_token_permutation(CompileTimePolicy::Warn, |_| {
+            for slot in 0..3 {
+                check::<3>(rgb_to_gray_f16, slot, 1 << 3);
+                check::<4>(rgba_to_gray_f16, slot, 1 << 3);
+            }
+        });
+    }
+
+    /// Every half-float value at the host's best tier.
+    #[test]
+    fn matches_software_conversion_exhaustively() {
+        for slot in 0..3 {
+            check::<3>(rgb_to_gray_f16, slot, 1);
+            check::<4>(rgba_to_gray_f16, slot, 1);
+        }
+    }
 }

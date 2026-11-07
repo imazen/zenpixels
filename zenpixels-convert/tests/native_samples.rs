@@ -74,7 +74,7 @@ fn native_identity_is_bit_exact_but_unimplemented_transforms_refuse() {
     }
 }
 
-#[cfg(feature = "hdr-experimental")]
+#[cfg(feature = "bt2446a")]
 #[test]
 fn hdr_constructor_cannot_treat_native_identity_as_supported_math() {
     for format in [ChannelType::I16, ChannelType::U32, ChannelType::F64].map(native_rgb) {
@@ -94,7 +94,7 @@ fn hdr_constructor_cannot_treat_native_identity_as_supported_math() {
 fn opaque_profiles_do_not_turn_native_samples_into_a_relabel() {
     use std::sync::Arc;
     use zenpixels::{ColorContext, ColorOrigin, PixelBuffer};
-    use zenpixels_convert::{finalize_for_output_with, output::OutputProfile};
+    use zenpixels_convert::output::OutputProfile;
 
     for format in [ChannelType::I16, ChannelType::U32, ChannelType::F64].map(native_rgb) {
         let desc = format.descriptor();
@@ -105,7 +105,7 @@ fn opaque_profiles_do_not_turn_native_samples_into_a_relabel() {
                 &b"unresolved-source-profile"[..],
             ))));
         assert!(
-            finalize_for_output_with(
+            zenpixels_convert::EncodeReady::finalize(
                 &buffer,
                 &ColorOrigin::assumed(),
                 OutputProfile::Icc(Arc::from(&b"different-target-profile"[..])),
@@ -156,12 +156,8 @@ fn cmyk_f32_does_not_gain_unqualified_conversion_routes() {
 
 #[cfg(feature = "cms-moxcms")]
 #[test]
-#[allow(deprecated)]
 fn cmyk_f32_is_not_dispatched_to_a_three_component_cms_transform() {
-    use zenpixels_convert::{
-        cms::{ColorManagement, PluggableCms},
-        cms_moxcms::MoxCms,
-    };
+    use zenpixels_convert::{cms::PluggableCms, cms_moxcms::MoxCms};
     for format in [PixelFormat::CmykF32, PixelFormat::CmykF32Inverted] {
         let from = format.descriptor().color_profile_source();
         let to = PixelDescriptor::RGBF32.color_profile_source();
@@ -176,16 +172,5 @@ fn cmyk_f32_is_not_dispatched_to_a_three_component_cms_transform() {
                 )
                 .is_none()
         );
-        // Valid RGB ICCs demonstrate that the legacy constructor refuses the
-        // unqualified CMYK format instead of treating its four samples as RGB.
-        let profile = moxcms::ColorProfile::new_srgb().encode().unwrap();
-        for (source, destination) in [(format, PixelFormat::RgbF32), (PixelFormat::RgbF32, format)]
-        {
-            assert!(
-                MoxCms
-                    .build_transform_for_format(&profile, &profile, source, destination)
-                    .is_err()
-            );
-        }
     }
 }

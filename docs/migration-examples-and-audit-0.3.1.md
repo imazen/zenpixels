@@ -308,7 +308,7 @@ error-propagating interface, with its own source-compatibility treatment.
 
 ```rust,ignore
 // OLD: SameAsOrigin can emit origin tags while conversion uses descriptors.
-let ready = finalize_for_output_with(
+let ready = EncodeReady::finalize(
     &working, &origin, OutputProfile::SameAsOrigin, format, cms,
 )?;
 
@@ -350,8 +350,9 @@ let opts = ConvertOptions::forbid_lossy();
 let plan = request.require_sample_preservation().plan()?;
 ```
 
-Deprecate the misleading preset only after its replacement has a precise
-contract. A reversible channel reorder/widening may qualify. Arbitrary transfer,
+0.3.1 removes the misleading preset; `retain_channels()` keeps its exact policy
+values, and `OutputPlan::new_preserving_samples` is the exact-carriage path.
+A replacement needs a precise contract. A reversible channel reorder/widening may qualify. Arbitrary transfer,
 gamut, rounding or clipping does not qualify merely because a loss estimator
 returns zero. Alpha removal can require an explicit scan for opacity.
 Source provenance “originally U8” does not prove samples remain on the U8 grid
@@ -724,3 +725,17 @@ no allocations or locks inside prepared execution; independently prepared CMS
 workers; source/color resolution outside row loops; minimal/default clean build
 timings on a fixed toolchain. These are measurements to run on implementation,
 not performance claims established by this documentation-only change.
+
+## Added by the final review, 2026-11-05
+
+| Removed or changed | Use |
+|---|---|
+| `cms::ColorManagement`, `finalize_for_output` | `PluggableCms`, `EncodeReady::finalize` |
+| `MoxCms`'s `identify_profile` | `zenpixels::icc::IccIdentification::from_icc`, `Cicp::from_icc` |
+| `icc_profiles::synthesize_gray_icc_for_cicp` | `SynthesizedIcc::for_gray_cicp` |
+| `PixelSliceMut::{upgrade_to_rgba, upgrade_to_bgra, matte_to_rgbx, matte_to_bgrx, strip_alpha_to_rgbx, strip_alpha_to_bgrx}` | `RowConverter` with an `AlphaPolicy` |
+| `hdr::LuminanceHistogram`, `ToneMapper::cost_ns_per_mp`, `Requirements::{log_avg_luminance, luminance_histogram}` | Nothing: the plan never supplied them |
+| `ToneMapContext<'a>` | `ToneMapContext` |
+| `ColorPrimaries::white_point() -> (f32, f32)` | `-> Option<(f32, f32)>` |
+| `Bt2446A`, `new_with_hdr_config` under `hdr-experimental` | The `bt2446a` feature. Without it, planning with no injected mapper returns `NoPath` |
+| Target ICC with no source ICC skipped the CMS and labeled unconverted pixels | Pass a CMS. Its failure now surfaces |

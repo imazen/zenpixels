@@ -1,0 +1,22 @@
+{
+  "artifact_root": "/mnt/v/output/zenpixels/moxcms-optimized-20261106",
+  "manifest": "SHA256SUMS",
+  "manifest_sha256": "d0b9061f0114e1cea8abf913cbdbd9b32fef5ce2d5c37a666ae836a05d478f07",
+  "files": 3810,
+  "final_source": "3e09854375e9d9fe54e0d4fc88e31013f5528a9e",
+  "final_harness": "f6108609faef4fdeaaeb143034737ee3e48d6968",
+  "studies": {
+    "first": {
+      "qualified": 41,
+      "required": 45
+    },
+    "outlined": {
+      "qualified": 37,
+      "required": 45
+    },
+    "final": {
+      "qualified": 45,
+      "required": 45
+    }
+  }
+}

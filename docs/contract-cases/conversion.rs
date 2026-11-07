@@ -7,7 +7,7 @@ mod tests {
     fn known_transfer_is_converted() {
         let src = PixelDescriptor::RGB8_SRGB.with_transfer(TransferFunction::Linear);
         let pixels = [128u8; 3];
-        let out = adapt::adapt_for_encode_cow(&pixels, src, 1, 1, 3, &[PixelDescriptor::RGB8_SRGB])
+        let out = adapt::adapt_raw_rows_for_encode(&pixels, src, 1, 1, 3, &[PixelDescriptor::RGB8_SRGB], &ConvertOptions::permissive())
             .unwrap();
         assert_eq!(
             out.as_slice().descriptor().transfer(),
@@ -94,11 +94,7 @@ mod tests {
     #[test]
     fn composite_to_gray_includes_background() {
         let options = policy::ConvertOptions::permissive().with_alpha_policy(
-            policy::AlphaPolicy::CompositeOnto {
-                r: 255,
-                g: 255,
-                b: 255,
-            },
+            policy::AlphaPolicy::CompositeOnto { background: zenpixels::Color::srgb8(255, 255, 255), reference_white: None  },
         );
         let dst = PixelDescriptor::new(
             ChannelType::U8,

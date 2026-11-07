@@ -1,0 +1,7 @@
+run-heavy: mem-cap=4G (cgroup, hard) jobs=1/24 avail=19442MiB :: ./target/release/gamut-compress gate
+eps=0.002 tau=0.945332
+eps=0.005 tau=0.870215
+eps=0.01 tau=0.750322
+eps=0.02 tau=0.528615
+eps=0.05 tau=0.087344
+run-heavy: done rc=0 0s | peak-RSS 0.00GiB | min-avail 19441MiB | peak-load 0.77

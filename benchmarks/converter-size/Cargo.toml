@@ -1,0 +1,19 @@
+[package]
+name = "cs"
+version = "0.0.0"
+edition = "2024"
+publish = false
+[workspace]
+[dependencies]
+zenpixels = { path = "../../zenpixels", default-features = false }
+zenpixels-convert = { path = "../../zenpixels-convert", default-features = false, features = ["rgb"] }
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+opt-level = 3
+debug = 2
+
+[patch.crates-io]
+garb = { git = "https://github.com/imazen/garb", rev = "605276d717ea0b31a1cd2a36ae05301383c7b8b5" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24664315586bd60e5f048253b1f69052" }

@@ -402,7 +402,7 @@ fn hlg_f32_linear_f32_roundtrip() {
 /// constructor `ConvertPlan::new_with_hdr_peak` accepts a source peak
 /// and inserts the BT.2446-A tone curve; that path is tested here.
 #[test]
-#[cfg(feature = "hdr-experimental")]
+#[cfg(feature = "bt2446a")]
 fn pq_u16_to_srgb_u8() {
     use zenpixels_convert::ConvertPlan;
     let width = 4u32;

@@ -1,0 +1,12 @@
+[package]
+name = "zero-alloc-bench"
+version = "0.0.0"
+edition = "2024"
+publish = false
+[workspace]
+[dependencies]
+bytemuck = { version = "1.25", features = ["extern_crate_alloc"] }
+zenbench = "0.1.11"
+[[bench]]
+name = "z"
+harness = false

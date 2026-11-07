@@ -4,13 +4,13 @@ mod tests {
     use std::sync::Mutex;
     use zenpixels::*;
     use zenpixels_convert::cms::{CmsPluginError, PluggableCms, RowTransformMut};
-    use zenpixels_convert::{RowConverter, finalize_for_output_with, output::OutputProfile};
+    use zenpixels_convert::{RowConverter, output::OutputProfile};
 
     #[test]
     fn same_as_origin_converts_current_pixels() {
         let b = PixelBuffer::from_vec(vec![200, 50, 10], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
         let origin = ColorOrigin::from_cicp(Cicp::DISPLAY_P3);
-        let r = finalize_for_output_with(
+        let r = zenpixels_convert::EncodeReady::finalize(
             &b,
             &origin,
             OutputProfile::SameAsOrigin,
@@ -27,7 +27,7 @@ mod tests {
     fn output_unassociates_premultiplied_alpha() {
         let d = PixelDescriptor::RGBA8_SRGB.with_alpha(Some(AlphaMode::Premultiplied));
         let b = PixelBuffer::from_vec(vec![64, 32, 16, 128], 1, 1, d).unwrap();
-        let r = finalize_for_output_with(
+        let r = zenpixels_convert::EncodeReady::finalize(
             &b,
             &ColorOrigin::assumed(),
             OutputProfile::Named(Cicp::SRGB),
@@ -44,7 +44,7 @@ mod tests {
             PixelBuffer::from_vec(vec![255, 255, 255], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
         let narrow = Cicp::new(1, 13, 0, false);
         assert!(
-            finalize_for_output_with(
+            zenpixels_convert::EncodeReady::finalize(
                 &b,
                 &ColorOrigin::assumed(),
                 OutputProfile::Named(narrow),
@@ -85,7 +85,7 @@ mod tests {
         let b = PixelBuffer::from_vec(vec![200, 50, 10], 1, 1, PixelDescriptor::RGB8_SRGB)
             .unwrap()
             .with_icc(icc.clone());
-        let r = finalize_for_output_with(
+        let r = zenpixels_convert::EncodeReady::finalize(
             &b,
             &ColorOrigin::from_icc(icc.clone()),
             OutputProfile::Icc(zenpixels_convert::icc_profiles::DISPLAY_P3_V2.into()),
@@ -159,11 +159,11 @@ mod tests {
 #[test]
 fn output_emits_only_the_selected_origin_authority() {
     use zenpixels::*;
-    use zenpixels_convert::{OutputProfile, finalize_for_output_with};
+    use zenpixels_convert::OutputProfile;
     let b = PixelBuffer::from_vec(vec![100, 50, 20], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
     let origin = ColorOrigin::from_icc_and_cicp(vec![1, 2, 3], Cicp::DISPLAY_P3)
         .with_color_authority(ColorAuthority::Cicp);
-    let ready = finalize_for_output_with(
+    let ready = zenpixels_convert::EncodeReady::finalize(
         &b,
         &origin,
         OutputProfile::SameAsOrigin,
@@ -178,7 +178,7 @@ fn output_emits_only_the_selected_origin_authority() {
 #[test]
 fn missing_origin_does_not_emit_untagged_p3() {
     use zenpixels::*;
-    use zenpixels_convert::{OutputProfile, finalize_for_output_with};
+    use zenpixels_convert::OutputProfile;
     let b = PixelBuffer::from_vec(
         vec![100, 50, 20],
         1,
@@ -186,7 +186,7 @@ fn missing_origin_does_not_emit_untagged_p3() {
         PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3),
     )
     .unwrap();
-    let ready = finalize_for_output_with(
+    let ready = zenpixels_convert::EncodeReady::finalize(
         &b,
         &ColorOrigin::assumed(),
         OutputProfile::SameAsOrigin,

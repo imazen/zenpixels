@@ -220,6 +220,8 @@ pub enum ChannelLayout {
     OklabA,
     /// C, M, Y, K channel order.
     Cmyk,
+    /// B, G, R channel order.
+    Bgr,
     #[doc(hidden)]
     __Reserved(reserved::Reserved),
 }
@@ -232,7 +234,7 @@ impl ChannelLayout {
         match self {
             Self::Gray => 1,
             Self::GrayAlpha => 2,
-            Self::Rgb | Self::Oklab => 3,
+            Self::Rgb | Self::Bgr | Self::Oklab => 3,
             Self::Rgba | Self::Bgra | Self::OklabA | Self::Cmyk => 4,
             _ => 0,
         }
@@ -261,6 +263,7 @@ impl ChannelLayout {
                 | (Self::Oklab, Self::Oklab)
                 | (Self::OklabA, Self::OklabA)
                 | (Self::Cmyk, Self::Cmyk)
+                | (Self::Bgr, Self::Bgr)
         )
     }
 }
@@ -277,6 +280,7 @@ impl fmt::Display for ChannelLayout {
             Self::Oklab => f.write_str("Oklab"),
             Self::OklabA => f.write_str("OklabA"),
             Self::Cmyk => f.write_str("CMYK"),
+            Self::Bgr => f.write_str("BGR"),
             Self::__Reserved(never) => match *never {},
         }
     }
@@ -638,14 +642,14 @@ impl ColorPrimaries {
         }
     }
 
-    /// CIE 1931 xy chromaticity of this color space's white point.
+    /// CIE 1931 xy chromaticity of this color space's white point, or `None` when the primaries are
+    /// unknown.
     #[allow(unreachable_patterns)]
     #[inline]
-    pub const fn white_point(self) -> (f32, f32) {
+    pub const fn white_point(self) -> Option<(f32, f32)> {
         match self {
-            Self::Bt709 | Self::Bt2020 | Self::DisplayP3 | Self::AdobeRgb => Self::WHITE_D65,
-            Self::Unknown => Self::WHITE_D65,
-            _ => Self::WHITE_D65,
+            Self::Unknown => None,
+            _ => Some(Self::WHITE_D65),
         }
     }
 
@@ -653,8 +657,10 @@ impl ColorPrimaries {
     /// adaptation (different white points).
     #[inline]
     pub(crate) const fn needs_chromatic_adaptation(self, other: Self) -> bool {
-        let (sx, sy) = self.white_point();
-        let (ox, oy) = other.white_point();
+        // Unknown primaries have no white point to adapt from or to.
+        let (Some((sx, sy)), Some((ox, oy))) = (self.white_point(), other.white_point()) else {
+            return false;
+        };
         sx.to_bits() != ox.to_bits() || sy.to_bits() != oy.to_bits()
     }
 
@@ -849,6 +855,50 @@ impl PixelDescriptor {
     }
 
     // -- Constructors ---------------------------------------------------------
+
+    /// [`new`](Self::new), or `None` for a combination with no [`PixelFormat`].
+    #[inline]
+    #[must_use]
+    pub const fn try_new(
+        channel_type: ChannelType,
+        layout: ChannelLayout,
+        alpha: Option<AlphaMode>,
+        transfer: TransferFunction,
+    ) -> Option<Self> {
+        match PixelFormat::from_parts(channel_type, layout, alpha) {
+            // A layout with alpha needs a mode, and one without can't have one.
+            Some(format) if layout.has_alpha() == alpha.is_some() => Some(Self {
+                format,
+                transfer,
+                alpha,
+                primaries: ColorPrimaries::Bt709,
+                signal_range: SignalRange::Full,
+            }),
+            _ => None,
+        }
+    }
+
+    /// [`new_full`](Self::new_full), or `None` for a combination with no [`PixelFormat`].
+    #[inline]
+    #[must_use]
+    pub const fn try_new_full(
+        channel_type: ChannelType,
+        layout: ChannelLayout,
+        alpha: Option<AlphaMode>,
+        transfer: TransferFunction,
+        primaries: ColorPrimaries,
+    ) -> Option<Self> {
+        match PixelFormat::from_parts(channel_type, layout, alpha) {
+            Some(format) => Some(Self {
+                format,
+                transfer,
+                alpha,
+                primaries,
+                signal_range: SignalRange::Full,
+            }),
+            None => None,
+        }
+    }
 
     /// Create a descriptor with default primaries (BT.709) and full range.
     ///
@@ -1230,6 +1280,10 @@ impl PixelDescriptor {
 
     /// 8-bit CMYK, no transfer function or primaries.
     pub const CMYK8: Self = Self::from_pixel_format(PixelFormat::Cmyk8);
+    /// 16-bit CMYK, no transfer function or primaries.
+    pub const CMYK16: Self = Self::from_pixel_format(PixelFormat::Cmyk16);
+    /// 8-bit BGR with no alpha and unknown transfer.
+    pub const BGR8: Self = Self::from_pixel_format(PixelFormat::Bgr8);
 
     // -- Methods --------------------------------------------------------------
 
@@ -1277,7 +1331,10 @@ impl PixelDescriptor {
     /// always host-endian.
     #[inline]
     pub const fn is_bgr(self) -> bool {
-        matches!(self.format.layout(), ChannelLayout::Bgra)
+        matches!(
+            self.format.layout(),
+            ChannelLayout::Bgra | ChannelLayout::Bgr
+        )
     }
 
     /// Return a copy of this descriptor **relabeled** with a different
@@ -1465,6 +1522,19 @@ impl PixelDescriptor {
     pub const fn layout_compatible(self, other: Self) -> bool {
         self.format.channel_type().same(other.format.channel_type())
             && self.layout().same(other.layout())
+            // Same bytes, opposite meaning: 1.0 is full ink in one and no ink in the other.
+            && matches!(self.format, PixelFormat::CmykF32Inverted)
+                == matches!(other.format, PixelFormat::CmykF32Inverted)
+    }
+}
+
+impl PixelDescriptor {
+    /// Whether `other`'s typed pixels can view these bytes: layout-compatible, and padding is never read
+    /// as alpha.
+    pub(crate) const fn typed_view_compatible(self, other: Self) -> bool {
+        self.layout_compatible(other)
+            && matches!(self.alpha, Some(AlphaMode::Undefined))
+                == matches!(other.alpha, Some(AlphaMode::Undefined))
     }
 }
 
@@ -1620,6 +1690,11 @@ pub enum PixelFormat {
     OklabaF32,
     /// 8-bit CMYK (4 bytes per pixel, no transfer function).
     Cmyk8,
+    /// 16-bit CMYK (8 bytes per pixel, no transfer function), conventional polarity
+    /// like [`Self::Cmyk8`].
+    Cmyk16,
+    /// 8-bit BGR, stored blue first, without alpha.
+    Bgr8,
     /// f16 (IEEE 754 half-precision) RGB.
     RgbF16,
     /// f16 (IEEE 754 half-precision) RGBA.
@@ -1732,8 +1807,11 @@ impl PixelFormat {
             | Self::Bgra8
             | Self::Rgbx8
             | Self::Bgrx8
+            | Self::Bgr8
             | Self::Cmyk8 => ChannelType::U8,
-            Self::Rgb16 | Self::Rgba16 | Self::Gray16 | Self::GrayA16 => ChannelType::U16,
+            Self::Rgb16 | Self::Rgba16 | Self::Gray16 | Self::GrayA16 | Self::Cmyk16 => {
+                ChannelType::U16
+            }
             Self::RgbF32
             | Self::RgbaF32
             | Self::GrayF32
@@ -1762,9 +1840,12 @@ impl PixelFormat {
                 ChannelLayout::GrayAlpha
             }
             Self::Bgra8 | Self::Bgrx8 => ChannelLayout::Bgra,
+            Self::Bgr8 => ChannelLayout::Bgr,
             Self::OklabF32 => ChannelLayout::Oklab,
             Self::OklabaF32 => ChannelLayout::OklabA,
-            Self::Cmyk8 | Self::CmykF32 | Self::CmykF32Inverted => ChannelLayout::Cmyk,
+            Self::Cmyk8 | Self::Cmyk16 | Self::CmykF32 | Self::CmykF32Inverted => {
+                ChannelLayout::Cmyk
+            }
             Self::Generic(generic) => generic.layout,
             _ => ChannelLayout::Rgb,
         }
@@ -1792,7 +1873,7 @@ impl PixelFormat {
                 ColorModel::Gray
             }
             Self::OklabF32 | Self::OklabaF32 => ColorModel::Oklab,
-            Self::Cmyk8 | Self::CmykF32 | Self::CmykF32Inverted => ColorModel::Cmyk,
+            Self::Cmyk8 | Self::Cmyk16 | Self::CmykF32 | Self::CmykF32Inverted => ColorModel::Cmyk,
             _ => ColorModel::Rgb,
         }
     }
@@ -1840,6 +1921,8 @@ impl PixelFormat {
             | Self::GrayF16
             | Self::OklabF32
             | Self::Cmyk8
+            | Self::Cmyk16
+            | Self::Bgr8
             | Self::CmykF32
             | Self::CmykF32Inverted => None,
             Self::Generic(generic) if !generic.layout.has_alpha() => None,
@@ -1871,6 +1954,8 @@ impl PixelFormat {
             Self::OklabF32 => "OklabF32",
             Self::OklabaF32 => "OklabaF32",
             Self::Cmyk8 => "CMYK8",
+            Self::Cmyk16 => "CMYK16",
+            Self::Bgr8 => "BGR8",
             Self::CmykF32 => "CmykF32",
             Self::CmykF32Inverted => "CmykF32Inverted",
             Self::RgbF16 => "RgbF16",
@@ -1936,6 +2021,8 @@ impl PixelFormat {
             (ChannelType::F32, ChannelLayout::OklabA, _) => Some(Self::OklabaF32),
 
             (ChannelType::U8, ChannelLayout::Cmyk, _) => Some(Self::Cmyk8),
+            (ChannelType::U16, ChannelLayout::Cmyk, _) => Some(Self::Cmyk16),
+            (ChannelType::U8, ChannelLayout::Bgr, _) => Some(Self::Bgr8),
             (ChannelType::F32, ChannelLayout::Cmyk, _) => Some(Self::CmykF32),
 
             _ => match GenericFormat::create_if_unnamed(channel_type, layout) {
@@ -1968,6 +2055,8 @@ impl PixelFormat {
             Self::OklabF32 => PixelDescriptor::OKLABF32,
             Self::OklabaF32 => PixelDescriptor::OKLABAF32,
             Self::Cmyk8 => PixelDescriptor::CMYK8,
+            Self::Cmyk16 => PixelDescriptor::CMYK16,
+            Self::Bgr8 => PixelDescriptor::BGR8,
             Self::CmykF32 | Self::CmykF32Inverted => PixelDescriptor::from_pixel_format(self),
             Self::RgbF16 => PixelDescriptor::RGBF16,
             Self::RgbaF16 => PixelDescriptor::RGBAF16,

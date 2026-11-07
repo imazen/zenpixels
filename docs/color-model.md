@@ -71,7 +71,7 @@ pub enum ColorProfileSource<'a> {
 | WebP | ICC (ICCP); no CICP in spec | ICC |
 | AVIF / MIAF | ICC (`colr`-Restricted) > CICP (nclx) | ICC if colr, else CICP |
 | HEIF | nclx primary (ISO 23008-12) | CICP |
-| JXL | CICP > ICC (ISO 21496-1) | CICP if CICP present, else ICC |
+| JXL | One or the other: enum encoding, or embedded ICC when `want_icc` is set (ISO/IEC 18181-1) | CICP if CICP present, else ICC |
 | TIFF | ICC (tag 34675); no CICP | ICC |
 | GIF / BMP / PNM | no metadata, assumed sRGB | n/a |
 
@@ -158,8 +158,8 @@ pub trait PluggableCms: Send + Sync {
 - `src/convert.rs` — `ConvertPlan`, `ConvertStep`, peephole fusion, HDR tone-map plan.
 - `src/estimate.rs` — `ResourceEstimate` / `ComputeEnvironment` / `ImageCharacteristics` / `SimdTier` (see `docs/ESTIMATE.md`).
 - `src/fast_gamut.rs` — fused matlut SIMD kernels for u8/u16/f32 RGB(A).
-- `src/hdr/` — `Bt2446A`, `SoftCompress`, `GamutBoundaryLut`, `measure::CllMeasure` (behind `hdr-experimental`).
-- `src/output.rs` — `finalize_for_output_with`, `OutputProfile`, `EncodeReady`.
+- `src/hdr/` — `Bt2446A`, `SoftCompress`, `measure::CllMeasure` (behind `hdr-experimental`).
+- `src/output.rs` — `EncodeReady::finalize`, `OutputProfile`, `EncodeReady`.
 
 ### zencodec (sibling crate)
 - `src/info.rs` — `ImageInfo`, `SourceColor`, `GainMapPresence`, `ContentLightLevel`, `MasteringDisplay`.

@@ -38,7 +38,7 @@ zenpixels-convert = { version = "0.3.1", default-features = false, features = ["
 
 ### Negotiate a format, then convert row by row
 
-[`best_match`] picks the cheapest target format an encoder supports for a given source descriptor; [`RowConverter`] plans conversion once. On the unreleased bridge, `prepare` reserves scratch and initializes selected tables before fallible execution.
+[`ConvertIntent::best_match`] picks the cheapest target format an encoder supports for a given source descriptor; [`RowConverter`] plans conversion once. On the unreleased bridge, `prepare` reserves scratch and initializes selected tables before fallible execution.
 
 For current ICC/CICP context and matching output signaling, the review branch
 adds `OutputPlan`: prepare from final color facts before pixels arrive, then
@@ -46,10 +46,10 @@ convert into supplied row views. See the
 [output preparation contract](https://github.com/imazen/zenpixels/blob/main/docs/implemented-bridge-contracts.md#output-preparation-added-on-the-review-branch-2026-10-25).
 
 ```rust
-use zenpixels_convert::{RowConverter, best_match, ConvertIntent};
+use zenpixels_convert::{RowConverter, ConvertIntent};
 
 // Pick the cheapest target format the encoder supports.
-let target = best_match(source_desc, &encoder_formats, ConvertIntent::Fastest)
+let target = ConvertIntent::Fastest.best_match(source_desc, &encoder_formats)
     .ok_or("no compatible format")?;
 
 // Unreleased bridge: setup costs occur before the row loop.
@@ -67,7 +67,7 @@ precede writes. A backend error can leave partial destination data.
 
 `compose` optimizes the final output and may remove incidental quantization.
 Use `compose_preserving` for intentional integer boundaries. Use
-`adapt::check_opaque` explicitly before requesting `DiscardUnchecked` if opacity
+`PixelSlice::check_opaque` explicitly before requesting `DiscardUnchecked` if opacity
 is required; ordinary row planning refuses `DiscardIfOpaque` without inspecting
 pixels. `ConvertPlan::new_preserving_samples` proves supported exact changes or
 refuses without scanning.
@@ -110,11 +110,11 @@ For HDR and wide-gamut pipelines that defer tone/gamut mapping, build `ConvertOp
 
 Every operation that destroys information requires an explicit policy via [`ConvertOptions`] (from `zenpixels`, re-exported here):
 
-- **Alpha removal**: `DiscardIfOpaque`, `CompositeOnto { r, g, b }`, `DiscardUnchecked`, or `Forbid`.
+- **Alpha removal**: `DiscardIfOpaque`, `CompositeOnto { background, reference_white }`, `DiscardUnchecked`, or `Forbid`.
 - **Depth reduction**: `Round`, `Truncate`, or `Forbid`.
 - **RGB → gray**: requires explicit luma coefficients (`Bt709`, `Bt601`, `Bt2020`, or `DisplayP3`), or `None` to forbid. Uses Y' (encoded luma) semantics — round-trips bit-exactly when `R == G == B`.
 
-Convenience constructors: `ConvertOptions::forbid_lossy()` (safe default) and `ConvertOptions::permissive()` (sensible lossy defaults), plus `with_alpha_policy()` / `with_depth_policy()` for customization.
+Convenience constructors: `ConvertOptions::retain_channels()` (forbids alpha and depth loss, still clips out-of-gamut floats) and `ConvertOptions::permissive()` (sensible lossy defaults), plus `with_alpha_policy()` / `with_depth_policy()` for customization.
 
 ## Format negotiation
 
@@ -127,7 +127,20 @@ The cost model separates **effort** (CPU work) from **loss** (information destro
 | `Blend` | 1× | 4× | Compositing — premultiplied alpha |
 | `Perceptual` | 1× | 3× | Color grading, sharpening |
 
-[`Provenance`] guides cost-model ranking, not exactness after edits. Use `ConvertPlan::new_preserving_samples` for proven representation changes or explicitly request value analysis. Three entry points: [`best_match`] (simple), [`best_match_with`] (with consumer costs), [`negotiate`] (full control with provenance).
+[`Provenance`] guides cost-model ranking, not exactness after edits. Use `ConvertPlan::new_preserving_samples` for proven representation changes or explicitly request value analysis. Three entry points: [`best_match`] (simple), [`best_match_within`] (with a loss ceiling), [`negotiate`] (full control with provenance).
+
+## What `MoxCms` does at each depth
+
+Matrix-and-curve profiles take this crate's U8 kernels at 8 bits, using each profile's own curve and colorants, when the source's channels
+share a curve and the target has sRGB's. Everything else at 8 bits, including table profiles and CMYK, takes the F32 path and rounds to nearest,
+so it matches that path's result. Over all 2^24 8-bit inputs, against exact math on each profile's curve and colorants, Display P3 and Adobe RGB into sRGB, sRGB into P3, and P3 into BT.2020 each miss nearest on at most 0.16% of samples, worst 0.502 of a code; P3 into Adobe RGB misses on 0.14%, worst 1.0.
+16-bit takes moxcms's own path, whose sRGB table truncates: 57% of samples miss nearest, for a mean of -0.64 of a 16-bit code.
+
+moxcms is a different implementation from lcms2 and is expected to differ from it. On table profiles the two differ more: lcms2's float path matches an exact evaluation of the tables to 0.35 of a code on mozjpeg's `test1.icc` and `test3.icc`. moxcms 0.9.1 interpolates Lab and XYZ tables trilinearly where lcms2 uses tetrahedra, scales a pre-v4 `lut8Type` table's Lab as if it were `lut16Type` (a mean of +0.68 of a code on `test3.icc`; fixed on its master, unreleased), and maps a v4 RGB table profile's black to zero (a mean of about -1 of a code on JPEG XL's PQ and HLG profiles). `benchmarks/jxl-cms-parity/README.md` has the HDR measurements.
+`CmykF32` and `CmykF32Inverted` sources convert to any RGB target; converting into F32 CMYK is refused. `Cmyk8` runs the
+same transform and rounds, so both have F32 CMYK's black-point compensation to sRGB.
+
+Every backend passes the same contract in `cms-contract/`: `just cms-contract`.
 
 ## Row conversion tiers
 
@@ -139,26 +152,26 @@ The cost model separates **effort** (CPU work) from **loss** (information destro
 
 ## Gamut, HDR, Oklab
 
-- **Gamut matrices** — 3×3 row-major f32 between BT.709, Display P3, BT.2020 via [`conversion_matrix`] / [`GamutMatrix`] and `apply_matrix_*` row kernels. No CMS needed for named-profile conversions.
-- **HDR (`hdr-experimental`)** — explicit `ConvertPlan::new_with_hdr_config` runs BT.2446 Method A tone mapping plus gamut compression with supplied peak/white policy. `convert_to_sdr_measuring_peak` explicitly requests an additional rowwise scan; `hdr::measure::CllMeasure` provides measurements. Plain HDR→SDR conversion refuses missing peak policy. `hdr::quantize_to` converts anchored linear samples to PQ16. Shared metadata types live in `zenpixels::hdr`; core measurement, the old bundle and naive global curves are removed in 0.3.1.
-- **Oklab** — primaries-aware `rgb_to_lms_matrix()` / `lms_to_rgb_matrix()`, scalar `rgb_to_oklab()` / `oklab_to_rgb()`. Non-sRGB sources get correct LMS matrices without an intermediate sRGB step.
+- **Gamut matrices** — 3×3 row-major f32 between BT.709, Display P3, BT.2020 via [`GamutMatrix`], with `between`, `then`, `apply` and in-place `apply_row_rgb` / `apply_row_rgba`. No CMS needed for named-profile conversions.
+- **HDR (`hdr-experimental`)** — `ConvertPlan::new_with_tone_mapper` takes any `ToneMapper`. With `bt2446a`, explicit `ConvertPlan::new_with_hdr_config` runs BT.2446 Method A tone mapping plus gamut compression with supplied peak/white policy. `convert_to_sdr_measuring_peak` explicitly requests an additional rowwise scan; `hdr::measure::CllMeasure` provides measurements. Plain HDR→SDR conversion refuses missing peak policy. `hdr::quantize_to` converts anchored linear samples to PQ16. Shared metadata types live in `zenpixels::hdr`; core measurement, the old bundle and naive global curves are removed in 0.3.1.
+- **Oklab** — `OklabSpace` holds both LMS matrices for a set of primaries and does scalar conversions. Non-sRGB sources get correct LMS matrices without an intermediate sRGB step.
 
 ## CICP / ICC
 
-- **ICC identification** — `zenpixels::icc::identify_common(icc_bytes)` recognizes hundreds of well-known RGB + grayscale profiles via a normalized hash lookup (~100ns), returning primaries, transfer function, and whether matrix+TRC substitution is safe vs CMS-only. `extract_cicp` reads embedded `cICP` tags directly.
-- **CICP → ICC synthesis** — `icc_profiles::synthesize_icc_for_cicp(Cicp)` resolves an embeddable ICC profile for any assigned H.273 combination from the bundled compressed database (`icc-db` feature, on by default; ~36 KB asset, lazily decoded, no CMS required, PQ/HLG HDR included). `synthesize_gray_icc_for_cicp` is the GRAY-class sibling for single-channel output. The sRGB default answers `NotNeeded`. With `icc-db` off, these answer `NeedsCms` outside the sRGB default and the bundled consts.
+- **ICC identification** — `zenpixels::icc::IccIdentification::from_icc(icc_bytes)` recognizes hundreds of well-known RGB + grayscale profiles via a normalized hash lookup (~100ns), returning primaries, transfer function, and whether matrix+TRC substitution is safe vs CMS-only. `extract_cicp` reads embedded `cICP` tags directly.
+- **CICP → ICC synthesis** — `icc_profiles::SynthesizedIcc::for_cicp(Cicp)` resolves an embeddable ICC profile for any assigned H.273 combination from the bundled compressed database (`icc-db` feature, on by default; ~36 KB asset, lazily decoded, no CMS required, PQ/HLG HDR included). `synthesize_gray_icc_for_cicp` is the GRAY-class sibling for single-channel output. The sRGB default answers `NotNeeded`. With `icc-db` off, these answer `NeedsCms` outside the sRGB default and the bundled consts.
 
 ## Orientation
 
 The buffer-baking half of the zen orientation story lives here (the `Orientation` enum and its composition algebra are in `zenpixels`):
 
-- [`orient::apply_orientation`] — fresh buffer; SIMD-tiled transpose for 4-byte pixels (behind the `fast-transpose` feature; portable scalar otherwise).
-- [`orient::apply_orientation_into`] — caller-provided target, no allocation.
-- [`orient::apply_orientation_in_place`] — reuses the buffer's own allocation.
+- `PixelSlice::oriented` — fresh buffer; SIMD-tiled transpose for 4-byte pixels (behind the `fast-transpose` feature; portable scalar otherwise).
+- `PixelSlice::oriented_into` — caller-provided target, no allocation.
+- `PixelBuffer::into_oriented` — reuses the buffer's own allocation.
 
 ## Atomic output assembly
 
-[`finalize_for_output_with`] couples converted pixels with matching encoder metadata in one step, preventing the bug where pixel values don't match the embedded ICC/CICP profile. Returns an [`EncodeReady`] bundle.
+[`EncodeReady::finalize`] couples converted pixels with matching encoder metadata in one step, preventing the bug where pixel values don't match the embedded ICC/CICP profile. Returns an [`EncodeReady`] bundle.
 
 ## Resource estimation
 
@@ -166,10 +179,6 @@ Retired: all estimation APIs warn in 0.2.17 and are removed in 0.3.1.
 `estimation-experimental` is a compatibility feature only; it does not suppress
 warnings or restore removed APIs. No replacement cost predictor is promised.
 Use measured workload costs and explicit buffer/stride arithmetic.
-
-## Pipeline planner (`pipeline` feature)
-
-[`CodecFormats`] declares each codec's decode outputs and encode inputs, ICC/CICP support, effective bits, and overshoot behavior. The `pipeline` feature enables the format registry, operation requirements, and a path solver ([`optimal_path`], [`generate_path_matrix`]) for multi-step conversion planning.
 
 ## Load-bearing analysis
 
@@ -180,19 +189,19 @@ Use measured workload costs and explicit buffer/stride arithmetic.
 | Item | What it does |
 |---|---|
 | [`RowConverter`] | Pre-computed per-row conversion plan (`new`, `new_explicit`, `new_explicit_with_cms`, `convert_row`, `convert_rows`) |
-| [`best_match`] / [`best_match_with`] / [`negotiate`] | Format negotiation entry points |
+| [`ConvertIntent::best_match`] / [`ConvertIntent::best_match_within`] / [`ConvertIntent::negotiate`] | Format negotiation entry points |
 | [`ConvertIntent`] | Effort-vs-loss weighting for negotiation |
 | [`Provenance`] / [`ConversionCost`] / [`FormatOption`] | Cost-model inputs and results |
 | `ConvertOptions` (re-export) | Explicit lossy-operation policy |
-| [`ConvertPlan`] / [`convert_row`] | Lower-level plan + stateless row convert |
-| [`adapt::adapt_for_encode`] / [`adapt_for_encode_explicit`] / [`try_adapt_in_place`] | One-call negotiate-and-convert helpers |
+| [`ConvertPlan`] | Lower-level plan, run through `RowConverter::from_plan` |
+| `PixelSlice::adapt_for_encode` / [`adapt::adapt_raw_rows_for_encode`] / `PixelBuffer::try_adapt_in_place` | One-call negotiate-and-convert helpers |
 | [`PluggableCms`] / [`RowTransformMut`] / [`MoxCms`] | Pluggable CMS backend interface + moxcms impl |
-| [`GamutMatrix`] / [`conversion_matrix`] / `apply_matrix_*` | Gamut matrix construction and application |
-| [`ConvertPlan::new_with_hdr_peak`] / [`ConvertPlan::new_with_hdr_config`] | HDR→SDR conversion plan constructors (`hdr-experimental` feature) |
+| [`GamutMatrix`] | Gamut matrix construction and application, in place on rows |
+| [`ConvertPlan::new_with_hdr_peak`] / [`ConvertPlan::new_with_hdr_config`] | HDR→SDR conversion plan constructors (`bt2446a` feature) |
 | [`Bt2446A`] / [`SoftCompress`] / [`CllMeasure`] | ITU-R BT.2446 Method A curve + OKLch knee + CTA-861.3 CLL measurement (`hdr-experimental` feature) |
-| [`quantize_to`] | Anchor-aware linear→PQ16 quantizer |
-| [`finalize_for_output_with`] / [`EncodeReady`] / [`OutputMetadata`] | Atomic pixels-plus-metadata output assembly |
-| [`TransferFunctionExt`] / [`ColorPrimariesExt`] / [`PixelBufferConvertExt`] | Conversion methods bolted onto interchange types |
+| `PixelSlice::quantize_to` | Anchor-aware linear→PQ16 quantizer |
+| [`EncodeReady::finalize`] / [`EncodeReady`] / [`OutputMetadata`] | Atomic pixels-plus-metadata output assembly |
+| [`TransferFunctionExt`] / [`ColorPrimariesExt`] / [`PixelBufferConvertExt`] / [`PixelSliceConvertExt`] | Conversion methods bolted onto interchange types |
 | [`LoadBearingReport`] / [`PixelSliceLoadBearingExt`] | Channel-information analysis |
 | [`ConvertError`] | Conversion error type |
 
@@ -201,14 +210,14 @@ Use measured workload costs and explicit buffer/stride arithmetic.
 | Feature | Default | What it enables |
 |---|---|---|
 | `std` | yes | Standard library |
-| `icc-db` | yes | Bundled CICP→ICC profile database (~36 KB asset) behind `synthesize_icc_for_cicp` / `synthesize_gray_icc_for_cicp`; disable for size-sensitive builds (they answer `NeedsCms` instead) |
-| `fast-transpose` | | SIMD transpose kernels (x86-64 AVX2 + aarch64 NEON) for `apply_orientation*`; portable scalar otherwise |
+| `icc-db` | yes | Bundled CICP→ICC profile database (~36 KB asset) behind `SynthesizedIcc::for_cicp`; disable for size-sensitive builds (they answer `NeedsCms` instead) |
+| `fast-transpose` | | SIMD transpose kernels (x86-64 AVX2 + aarch64 NEON) for orientation; portable scalar otherwise |
 | `avx512` | | 16-wide AVX-512F f16 conversion kernels (runtime-dispatched) |
 | `rgb` | | `Pixel` impls for the [`rgb`](https://crates.io/crates/rgb) crate's types + typed convenience methods (`to_rgb8()`, `to_rgba8()`, …) |
 | `imgref` | | `ImgRef` / `ImgVec` conversions (implies `rgb`) |
 | `planar` | | Retained no-op feature; legacy planar API removed |
-| `pipeline` | | Pipeline planner: format registry, operation requirements, path solver |
 | `hdr-experimental` | | HDR→SDR display mapping (ITU-R BT.2446 Method A curve + OKLch soft compress + CTA-861.3 CLL measurement). API shape may move ahead of 0.3.0 (in particular `measure_robust` → `measure` rename); scan kernels and accuracy contracts are stable. See [HDR section](#gamut-hdr-oklab) above. |
+| `bt2446a` | | The BT.2446 Method A tone-mapping curve (implies `hdr-experimental`) |
 | `cms-moxcms` | | ICC profile transforms via [moxcms](https://crates.io/crates/moxcms) (implies `std`) |
 | `serde` | | No-op stub (soft-removed in 0.2.15, queued for removal in the next breaking release); previously forwarded to `zenpixels/serde`. Kept so `features = ["serde"]` from 0.2.14 still builds |
 

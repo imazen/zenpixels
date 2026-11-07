@@ -36,7 +36,7 @@ Oklab has its own variants because it's a different color model — the three
 channels are L, a, b (not R, G, B). Conversion math is fundamentally different.
 
 Methods derive everything from the variant: `channels()`, `bytes_per_pixel()`,
-`has_alpha()`, `is_grayscale()`, `component_type()`, `color_model()`.
+`has_alpha()`, `is_grayscale()`, `channel_type()`, `color_model()`.
 RGB/BGR channel order is part of the layout (`ChannelLayout::Bgra`); samples
 are always host-endian.
 
@@ -157,8 +157,6 @@ Borrowed immutable 2D view. Carries `PixelDescriptor` + optional
 - `erase() -> PixelSlice<'a>` — drop type tag
 - `try_typed::<Q>() -> Option<PixelSlice<'a, Q>>` — recover type
 
-When `P: Pixel`: `row_pixels(y) -> &[P]` via bytemuck.
-
 ### PixelSliceMut<'a, P = ()>
 
 Mutable borrowed 2D view. Same interface plus `row_mut()`,
@@ -170,12 +168,11 @@ alpha upgrade/strip/matte).
 Owned 2D buffer with SIMD alignment and optional margins.
 
 - `try_new(w, h, descriptor)` — tight stride
-- `try_new_simd_aligned(w, h, descriptor)` — aligned rows
 - `from_vec(data, w, h, descriptor)` — wrap existing allocation
 - `from_pixels(pixels, w, h)` — from typed vec (P: Pixel)
 - `as_slice() -> PixelSlice<P>` — borrow immutable
 - `as_slice_mut() -> PixelSliceMut<P>` — borrow mutable
-- `into_vec() -> Vec<u8>` — recover allocation for pool reuse
+- `try_into_tight_u8_vec() -> Result<Vec<u8>, Self>` — recover a tightly packed allocation for pool reuse
 - `erase()` / `try_typed::<Q>()` — type erasure/recovery
 
 ### BufferError
@@ -209,7 +206,7 @@ data so the CMS can build transforms and the encoder can re-embed them.
 ### ColorOrigin
 
 Tracks what the source file said, preserved for re-encoding and round-trip
-conversion. Not yet implemented — see finalize_for_output below.
+conversion. See `EncodeReady::finalize` below.
 
 ```rust
 pub struct ColorOrigin {
@@ -365,12 +362,9 @@ return rounds new values. Provenance is ancestry, not current precision.
 
 ### Negotiation functions
 
-- `best_match(source, supported, intent)` — simple: pick best from list
-- `negotiate(source, provenance, options, intent)` — full: explicit
-  provenance + consumer costs
-- `ideal_format(source, intent)` — recommend optimal working format
-  (unconstrained by codec capabilities)
-- `conversion_cost(from, to)` — two-axis cost between any pair
+- `ConvertIntent::best_match(source, supported)` — simple: pick best from list
+- `ConvertIntent::best_match_within(source, supported, ceiling)` — with a ceiling on modeled loss
+- `ConvertIntent::negotiate(...)` — full: explicit provenance and consumer costs
 
 ## Gamut conversion
 
@@ -378,8 +372,6 @@ Pre-computed matrices for BT.709, BT.2020, Display P3. All derived from
 CIE 1931 xy chromaticities at D65. Stored as `[[f64; 3]; 3]`.
 
 - `conversion_matrix(from, to)` — lookup direct matrix between named primaries
-- `apply_matrix_row_f32()` — apply to row of RGB pixels
-- `apply_matrix_row_rgba_f32()` — apply to row of RGBA pixels (alpha unchanged)
 
 ## Oklab
 
@@ -396,32 +388,13 @@ intermediate sRGB conversion needed.
 
 - `ContentLightLevel` — MaxCLL, MaxFALL in nits
 - `MasteringDisplay` — primaries, white point, luminance range
-- `HdrMetadata` — bundles transfer + CLL + mastering display
 
 ### Tone mapping
 
-- `reinhard_tonemap(v)` — v / (1 + v)
-- `reinhard_inverse(v)` — v / (1 - v)
-- `exposure_tonemap(v, exposure)` — exposure-adjusted Reinhard
-
-## Codec format registry (feature-gated)
-
-Static tables mapping codecs to their supported formats:
-
-```rust
-pub struct CodecFormats {
-    pub name: &'static str,
-    pub decode_outputs: &'static [FormatEntry],
-    pub encode_inputs: &'static [FormatEntry],
-    pub icc_decode: bool,
-    pub icc_encode: bool,
-    pub cicp: bool,
-}
-```
-
-`FormatEntry` includes `effective_bits` (10-bit AVIF codes widened into a u16
-container = 10, not 16; for RGB rebuilt from YCbCr this is a cost estimate) and
-`can_overshoot` (JPEG f32 IDCT ringing exceeds [0,1]).
+One algorithm, BT.2446 Method A, behind `hdr-experimental` in `zenpixels-convert`. `ConvertPlan::new_with_hdr_config`
+takes a peak, and `new_with_tone_mapper` injects any `ToneMapper`. PQ's peak has to be measured from the whole image:
+`convert_to_sdr_measuring_peak` does that, and `zencodecs` holds PQ rows until it can. HLG has a fixed reference peak.
+See `docs/precision-policy-design.md`.
 
 ## CMS integration (compile-time feature)
 
@@ -430,27 +403,12 @@ it brings in a specific CMS implementation (moxcms, lcms2, etc.) and provides
 ICC profile transforms.
 
 ```rust
-// feature = "cms-moxcms" or "cms-lcms2"
+// feature = "cms-moxcms"
 ```
 
-The convert crate defines the CMS trait:
-
-```rust
-pub trait ColorManagement {
-    type Error;
-    fn build_transform(
-        &self,
-        src_icc: &[u8],
-        dst_icc: &[u8],
-    ) -> Result<Box<dyn RowTransform>, Self::Error>;
-
-    fn identify_profile(&self, icc: &[u8]) -> Option<Cicp>;
-}
-
-pub trait RowTransform {
-    fn transform_row(&self, src: &[u8], dst: &mut [u8], width: u32);
-}
-```
+Backends implement `PluggableCms`: `build_source_transform` takes `ColorProfileSource` values, formats and options, and
+returns `None` to decline, `Some(Err)` when it took the conversion and failed, or `Some(Ok)` with a row transform.
+`cms-contract/` runs every backend through the same behavioral tests.
 
 When the CMS feature is off, ICC profile transforms are unavailable. Named
 profile conversions (sRGB, P3, BT.2020) use hardcoded matrices and don't
@@ -458,28 +416,30 @@ need a CMS.
 
 ### ICC-to-CICP equivalence
 
-`identify_profile()` checks whether an ICC profile matches a known CICP
-combination. Two-tier: hash table of known ICC byte sequences for instant
-lookup, then semantic comparison (parse matrix + TRC, compare against known
+`zenpixels::icc::IccIdentification::from_icc` checks whether an ICC profile matches a known CICP
+combination, by a hash table of known ICC byte sequences. It doesn't fall back to
+semantic comparison (parse matrix + TRC, compare against known
 values within tolerance).
 
-## Atomic finalize_for_output
+## Atomic `EncodeReady::finalize`
 
 The conversion to an output format and the metadata generation for the encoder
 must be a single atomic operation. This prevents the most common color
 management bug: pixel values that don't match the embedded color metadata.
 
 ```rust
-pub fn finalize_for_output<C: ColorManagement>(
-    buffer: &PixelBuffer,
-    origin: &ColorOrigin,
-    target: OutputProfile,
-    pixel_format: PixelFormat,
-    cms: &C,
-) -> Result<EncodeReady, ConvertError>
+impl EncodeReady {
+    pub fn finalize(
+        buffer: &PixelBuffer,
+        origin: &ColorOrigin,
+        target: OutputProfile,
+        pixel_format: PixelFormat,
+        cms: Option<&dyn PluggableCms>,
+    ) -> Result<EncodeReady, At<ConvertError>>
+}
 ```
 
-`finalize_for_output` does three things atomically:
+`EncodeReady::finalize` does three things atomically:
 
 1. Determines the current pixel color state from `PixelDescriptor` + optional
    ICC profile on `ColorContext`.
@@ -510,7 +470,7 @@ pub struct EncodeReady {
 }
 ```
 
-The only way to get an `EncodeReady` is through `finalize_for_output`, which
+The only way to get an `EncodeReady` is through `EncodeReady::finalize`, which
 guarantees the pixels and metadata match. `into_parts()` exists for power
 users who need to destructure, but the default path keeps them coupled.
 
@@ -688,11 +648,9 @@ minimum define the pattern so new constants are consistent.
 ### 2. In-place typed conversions on PixelSliceMut
 
 The code has specialized in-place operations for 4bpp types:
-`Rgbx::swap_to_bgrx()`, `Rgba::matte_to_rgbx()`, `Bgrx::upgrade_to_bgra()`,
-etc. These are zero-allocation, type-state-changing operations — the return
-type changes to reflect the new pixel layout. The spec should document which
-conversions are available and their safety guarantees (e.g., `upgrade_to_rgba`
-sets padding to 255, which is only correct for opaque images).
+`Rgbx::swap_to_bgrx()` and its Bgrx counterpart. These are zero-allocation, type-state-changing
+operations: the return type changes to reflect the new pixel layout. Removing alpha or compositing is
+`zenpixels_convert`'s work, through `AlphaPolicy`, in linear light.
 
 ### 3. crop_view semantics
 
@@ -704,16 +662,14 @@ data pointer and dimensions. The spec should document:
 
 ### 4. SIMD alignment guarantees
 
-`try_new_simd_aligned()` and `simd_aligned_stride()` provide alignment for
-vectorized processing. The spec should document:
+`simd_aligned_stride()` provides alignment for vectorized processing. The spec should document:
 - The alignment target (32 bytes for AVX2, or configurable)
 - When alignment is preserved through operations (sub_rows yes, crop_view no)
-- How `fill_margins()` interacts with aligned buffers for convolution
 
 ### 5. Pool-friendly buffer lifecycle
 
-`into_vec()` recovers the backing allocation for reuse. The spec should
-document the intended lifecycle: allocate once, use `into_vec()` to return
+`try_into_tight_u8_vec()` recovers the backing allocation for reuse. The spec should
+document the intended lifecycle: allocate once, use it to return
 to pool, `from_vec()` to reuse. This matters for real-time pipelines where
 allocation is the bottleneck.
 
@@ -723,13 +679,6 @@ allocation is the bottleneck.
 and a list of supported formats, it picks the best match and converts if
 needed. Returns `Cow` (borrowed if already compatible, owned if converted).
 The spec should document this as the primary codec handoff function.
-
-### 7. Path analysis
-
-`generate_path_matrix()`, `optimal_path()`, `matrix_stats()` analyze
-conversion costs between all format pairs. Primarily a debugging and
-optimization tool. The spec should mention its existence for tooling support
-without over-specifying the implementation.
 
 ### 8. Oklab primaries-aware conversion
 

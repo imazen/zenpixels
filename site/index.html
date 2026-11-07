@@ -1,0 +1,1162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pixel Format Explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Martian+Mono:wght@400;600&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+/* Direction: a light table at night. One pixel, enlarged like a specimen under a loupe,
+   split into glowing channel inks. Wide display type for headlines, a wide mono for bytes.
+   Single committed dark world; the specimen is the only loud thing on the page. */
+:root {
+  --night: #0d1020;
+  --night-2: #131733;
+  --panel: #181d3a;
+  --line: #2b3260;
+  --text: #eef0f8;
+  --muted: #a2a9c8;
+  --gold: #f6c85f;
+  --gold-ink: #1a1405;
+  --warn: #ffb347;
+  --font-display: "Unbounded", "Arial Black", system-ui, sans-serif;
+  --font-body: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Martian Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --ch-R: #ff5a64; --ch-G: #35d893; --ch-B: #5b8dff; --ch-A: #cbc2f0; --ch-X: #6c7196;
+  --ch-Y: #d6d9e8; --ch-L: #c27bff; --ch-OA: #ff6ec4; --ch-OB: #ffb648;
+  --ch-C: #22cfe6; --ch-M: #ff4fae; --ch-CY: #ffe14a; --ch-K: #8a8ea6;
+  --pad: #343b66;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body {
+  background:
+    radial-gradient(1200px 600px at 85% -10%, color-mix(in srgb, var(--hero, #ff7a1a) 16%, transparent), transparent 70%),
+    radial-gradient(900px 500px at -10% 30%, #1d2350 0%, transparent 70%),
+    var(--night);
+  color: var(--text); font: 16px/1.6 var(--font-body);
+  min-height: 100%;
+}
+body::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; opacity: .07; z-index: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+.wrap { position: relative; z-index: 1; max-width: 1240px; margin: 0 auto; padding: 0 28px; }
+@media (max-width: 700px) { .wrap { padding: 0 16px; } }
+h1, h2, h3 { font-family: var(--font-display); margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+h2 { font-size: clamp(1.35rem, 2.4vw, 1.9rem); font-weight: 700; }
+h3 { font-size: 1rem; font-weight: 600; }
+p { margin: 0; max-width: 66ch; }
+code, .mono { font-family: var(--font-mono); font-size: .84em; }
+a { color: var(--gold); }
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; border-radius: 4px; }
+
+/* ---------- hero ---------- */
+.hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr); gap: 44px; padding: 44px 0 30px; align-items: start; }
+@media (max-width: 980px) { .hero { grid-template-columns: 1fr; gap: 28px; padding-top: 28px; } }
+.eyebrow { font-family: var(--font-mono); font-size: .76rem; letter-spacing: .14em; text-transform: uppercase; color: var(--gold); }
+.hero h1 { font-size: clamp(2.4rem, 5.6vw, 4.6rem); font-weight: 800; line-height: .98; margin: 14px 0 18px; }
+.hero h1 .px { display: inline-block; width: .62em; height: .62em; margin-left: .12em; border-radius: .08em; background: var(--hero, #ff7a1a);
+  box-shadow: 0 0 .5em color-mix(in srgb, var(--hero, #ff7a1a) 70%, transparent); vertical-align: .02em; }
+.lede { color: var(--muted); font-size: 1.06rem; }
+.stack { display: grid; gap: 18px; }
+.lbl { font-family: var(--font-mono); font-size: .7rem; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chipbtn { font: 500 .9rem var(--font-body); color: var(--text); background: var(--night-2); border: 1px solid var(--line);
+  padding: 8px 14px; border-radius: 999px; cursor: pointer; display: inline-flex; gap: 8px; align-items: center; }
+.chipbtn:hover { border-color: var(--gold); }
+.chipbtn[aria-pressed="true"] { background: var(--gold); color: var(--gold-ink); border-color: var(--gold); }
+.chipbtn small { font-family: var(--font-mono); font-size: .66rem; opacity: .7; }
+.colorbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; background: var(--night-2); border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; }
+.colorbar input[type="color"] { width: 44px; height: 44px; border: 0; padding: 0; background: none; cursor: pointer; border-radius: 10px; }
+.colorbar input[type="text"] { width: 120px; }
+.colorbar .op { flex: 1; min-width: 180px; display: grid; gap: 2px; }
+input[type="text"], input[type="number"], select {
+  background: var(--night); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; width: 100%;
+}
+input[type="text"] { font-family: var(--font-mono); font-size: .9rem; }
+select:disabled { opacity: .5; }
+input[type="range"] { width: 100%; accent-color: var(--gold); }
+details.tune { border: 1px solid var(--line); border-radius: 14px; background: color-mix(in srgb, var(--panel) 70%, transparent); }
+details.tune summary { cursor: pointer; padding: 12px 16px; font-weight: 600; list-style: none; display: flex; justify-content: space-between; gap: 10px; }
+details.tune summary::-webkit-details-marker { display: none; }
+details.tune summary::after { content: "+"; font-family: var(--font-mono); color: var(--gold); }
+details.tune[open] summary::after { content: "−"; }
+.tunegrid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 4px 16px 16px; }
+@media (max-width: 520px) { .tunegrid { grid-template-columns: 1fr; } }
+.field { display: grid; gap: 5px; align-content: start; }
+.field label { font-family: var(--font-mono); font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.field small { color: var(--muted); font-size: .8rem; line-height: 1.4; }
+.field.wide { grid-column: 1 / -1; }
+
+/* ---------- specimen ---------- */
+.specimen { background: linear-gradient(160deg, color-mix(in srgb, var(--panel) 92%, white 3%), var(--night-2)); border: 1px solid var(--line);
+  border-radius: 22px; padding: 22px; display: grid; gap: 18px; box-shadow: 0 30px 80px -40px #000; min-width: 0; }
+.spec-top { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 20px; align-items: stretch; }
+@media (max-width: 560px) { .spec-top { grid-template-columns: 1fr; } }
+.checker { background-image: linear-gradient(45deg, #9a9cab 25%, transparent 25%), linear-gradient(-45deg, #9a9cab 25%, transparent 25%),
+  linear-gradient(45deg, transparent 75%, #9a9cab 75%), linear-gradient(-45deg, transparent 75%, #9a9cab 75%);
+  background-size: 18px 18px; background-position: 0 0, 0 9px, 9px -9px, -9px 0; background-color: #d9dae2; position: relative; overflow: hidden; }
+.checker > div { position: absolute; inset: 0; }
+.bigpx { width: 220px; aspect-ratio: 1; border-radius: 18px; box-shadow: 0 0 60px -10px var(--hero, #ff7a1a), inset 0 0 0 1px rgba(255,255,255,.08); }
+@media (max-width: 560px) { .bigpx { width: 100%; max-width: 280px; } }
+.spec-meta { display: grid; gap: 10px; align-content: space-between; min-width: 0; }
+.descpill { font-family: var(--font-mono); font-size: .78rem; color: var(--muted); }
+.formatname { font-family: var(--font-display); font-weight: 800; font-size: clamp(1.6rem, 3vw, 2.3rem); line-height: 1; overflow-wrap: anywhere; }
+.hexeq { font-family: var(--font-mono); font-size: .86rem; }
+.naive { display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 12px; align-items: center; padding: 10px; border-radius: 12px; background: var(--night); border: 1px solid var(--line); }
+.naive .mini { width: 54px; height: 54px; border-radius: 10px; }
+.naive p { font-size: .84rem; color: var(--muted); }
+.naive b { color: var(--text); font-weight: 600; display: block; }
+.cards { display: flex; gap: 8px; align-items: stretch; }
+@media (max-width: 560px) { .cards { flex-wrap: wrap; } .card-ch { flex-basis: calc(50% - 4px) !important; } }
+.card-ch { --c: var(--ch-Y); flex: 1 1 0; min-width: 0; border-radius: 14px; padding: 10px 10px 8px; display: grid; gap: 4px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--c) 22%, transparent), color-mix(in srgb, var(--c) 6%, transparent));
+  border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); }
+.card-ch .nm { font-family: var(--font-mono); font-size: .66rem; letter-spacing: .1em; text-transform: uppercase; color: var(--c); }
+.card-ch input { font-family: var(--font-mono); font-weight: 600; font-size: 1.05rem; background: transparent; border: 1px dashed transparent; padding: 2px 4px; margin-left: -4px; color: var(--text); width: 100%; }
+.card-ch input:hover { border-color: color-mix(in srgb, var(--c) 50%, transparent); }
+.card-ch input:focus { border-color: var(--c); background: var(--night); outline: none; }
+.card-ch input[aria-invalid="true"] { border-color: var(--warn); }
+.card-ch .mean { font-size: .74rem; color: var(--muted); font-family: var(--font-mono); }
+.card-ch .bys { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 4px; }
+.card-ch .bys span { font-family: var(--font-mono); font-size: .7rem; padding: 2px 5px; border-radius: 5px; background: color-mix(in srgb, var(--c) 30%, var(--night)); }
+.card-ch.x { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--ch-X) 22%, transparent) 0 6px, transparent 6px 12px); }
+.hint { font-size: .8rem; color: var(--muted); }
+.notes { display: grid; gap: 8px; }
+.note { font-size: .86rem; padding: 9px 12px; border-radius: 10px; border-left: 3px solid var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--night)); }
+.note.info { border-left-color: var(--ch-B); background: color-mix(in srgb, var(--ch-B) 10%, var(--night)); }
+@media (prefers-reduced-motion: no-preference) {
+  .cards.anim .card-ch { animation: rise .5s cubic-bezier(.2,.8,.2,1) both; }
+  .cards.anim .card-ch:nth-child(2) { animation-delay: .06s; } .cards.anim .card-ch:nth-child(3) { animation-delay: .12s; } .cards.anim .card-ch:nth-child(4) { animation-delay: .18s; }
+  @keyframes rise { from { transform: translateY(10px) scale(.98); opacity: .2; } to { transform: none; opacity: 1; } }
+  .bigpx > div { transition: background .35s ease; }
+}
+
+/* ---------- story sections ---------- */
+.story { display: grid; gap: 22px; padding-bottom: 40px; }
+.sec { background: color-mix(in srgb, var(--panel) 80%, transparent); border: 1px solid var(--line); border-radius: 20px; padding: 26px; display: grid; gap: 16px; min-width: 0; }
+@media (max-width: 700px) { .sec { padding: 18px; } }
+.sec-head { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: baseline; }
+.num { font-family: var(--font-mono); font-size: .8rem; color: var(--gold); }
+.sub { color: var(--muted); }
+.memctl { display: flex; flex-wrap: wrap; gap: 14px; align-items: end; }
+.memctl .field { min-width: 110px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.seg button { font: 500 .82rem var(--font-body); background: transparent; color: var(--text); border: 0; padding: 8px 12px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--gold); color: var(--gold-ink); }
+.facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.fact { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; display: grid; gap: 2px; background: var(--night); }
+.fact span { font-size: .7rem; color: var(--muted); font-family: var(--font-mono); }
+.fact b { font-family: var(--font-mono); font-weight: 600; font-size: .86rem; overflow-wrap: anywhere; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: .82rem; color: var(--muted); }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.mem { display: grid; gap: 16px; }
+.memrow { display: grid; gap: 8px; }
+.memrow-h { font-size: .74rem; color: var(--muted); font-family: var(--font-mono); }
+.bytes { display: flex; flex-wrap: wrap; gap: 14px 6px; align-items: flex-end; }
+.pxg { display: flex; gap: 2px; padding: 4px; border: 1px dashed var(--line); border-radius: 8px; position: relative; }
+.pxg-label { position: absolute; top: -10px; left: 8px; font-size: .6rem; background: var(--panel); padding: 0 4px; color: var(--muted); font-family: var(--font-mono); }
+.smp { display: flex; gap: 1px; border-radius: 5px; padding: 1px; cursor: pointer; }
+.smp.sel { outline: 2px solid var(--gold); outline-offset: 1px; }
+.smp.hov { outline: 2px dashed var(--text); outline-offset: 1px; }
+.b { width: 32px; display: grid; justify-items: center; padding: 4px 0 3px; border-radius: 4px;
+  background: color-mix(in srgb, var(--c) 26%, var(--night)); border-bottom: 3px solid var(--c); }
+.b i { font-style: normal; font-family: var(--font-mono); font-size: .74rem; font-weight: 600; }
+.b em { font-style: normal; font-size: .54rem; color: var(--muted); font-family: var(--font-mono); }
+.b.pad { --c: var(--pad); background: repeating-linear-gradient(135deg, var(--pad) 0 4px, var(--night) 4px 8px); }
+.b.pad.tail { opacity: .5; }
+.b.xpad { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--ch-X) 50%, var(--night)) 0 4px, var(--night) 4px 8px); }
+.padgroup { display: flex; gap: 1px; padding: 4px; }
+.inspect { display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 14px; padding: 14px; background: var(--night); }
+.inspect p { font-size: .9rem; }
+.bits { display: flex; flex-wrap: wrap; gap: 2px; }
+.bit { width: 18px; height: 24px; display: grid; place-items: center; font-family: var(--font-mono); font-size: .72rem; border-radius: 3px;
+  background: color-mix(in srgb, var(--c) 28%, var(--night)); border-bottom: 2px solid var(--c); }
+.bit.gap { margin-left: 6px; }
+.bitkey { display: flex; gap: 14px; flex-wrap: wrap; font-size: .8rem; color: var(--muted); }
+ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; counter-reset: s; }
+ol.steps > li { counter-increment: s; display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 14px; position: relative; padding-bottom: 18px; }
+ol.steps > li::before { content: counter(s, decimal-leading-zero); font-family: var(--font-mono); font-size: .78rem; color: var(--gold);
+  width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--gold); display: grid; place-items: center; background: var(--night); z-index: 1; }
+ol.steps > li:not(:last-child)::after { content: ""; position: absolute; left: 18px; top: 38px; bottom: 0; width: 1px; background: var(--line); }
+.step p { color: var(--muted); font-size: .92rem; margin-top: 2px; }
+.vals { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.val { font-family: var(--font-mono); font-size: .76rem; padding: 3px 9px; border-radius: 6px; background: color-mix(in srgb, var(--c, var(--ch-Y)) 20%, var(--night)); border-left: 3px solid var(--c, var(--ch-Y)); }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: .88rem; }
+th, td { text-align: left; padding: 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-family: var(--font-mono); font-size: .66rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 400; }
+td.mono { font-family: var(--font-mono); font-size: .78rem; }
+tr.cmprow { cursor: pointer; }
+tr.cmprow:hover td, tr.cmprow:focus-visible td { background: color-mix(in srgb, var(--gold) 8%, transparent); }
+tr.cmprow.cur td:first-child { box-shadow: inset 3px 0 0 var(--gold); }
+.swatch-s { display: inline-block; width: 16px; height: 16px; border-radius: 4px; vertical-align: -3px; margin-right: 8px; border: 1px solid var(--line); }
+ol.primer { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; counter-reset: p; }
+ol.primer li { counter-increment: p; border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: grid; gap: 10px; align-content: space-between; background: var(--night); }
+ol.primer li h3::before { content: counter(p, decimal-leading-zero) "  "; font-family: var(--font-mono); color: var(--gold); font-size: .78rem; }
+ol.primer p { color: var(--muted); font-size: .9rem; }
+.btn { font: 600 .82rem var(--font-body); border: 1px solid var(--gold); color: var(--gold); background: transparent; padding: 7px 14px; border-radius: 999px; cursor: pointer; justify-self: start; }
+.btn:hover { background: var(--gold); color: var(--gold-ink); }
+dl.gloss { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin: 0; }
+dl.gloss div { border-top: 1px solid var(--line); padding: 10px 2px 0; }
+dl.gloss dt { font-family: var(--font-display); font-weight: 600; font-size: .92rem; }
+dl.gloss dd { margin: 4px 0 0; color: var(--muted); font-size: .9rem; }
+pre { margin: 0; padding: 16px; background: var(--night); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; font: .8rem/1.6 var(--font-mono); }
+.copyrow { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+footer { color: var(--muted); font-size: .82rem; padding: 10px 0 40px; display: grid; gap: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="hero">
+  <div class="stack">
+    <p class="eyebrow">zenpixels · pixel format explorer</p>
+    <h1>One pixel,<br><span style="white-space:nowrap">every byte<span class="px" aria-hidden="true"></span></span></h1>
+    <p class="lede">A color on screen is just a few numbers in memory. Which numbers depends on the pixel format. Pick one and watch the same color change shape. All you need to start is knowing what a web hex code is.</p>
+    <div class="stack" style="gap:8px">
+      <span class="lbl" id="chipslbl">Pick a format</span>
+      <div class="chips" id="chips" role="group" aria-labelledby="chipslbl"></div>
+    </div>
+    <div class="colorbar">
+      <input type="color" id="picker" value="#ff7a1a" aria-label="Pick a color">
+      <input type="text" id="hex" value="#ff7a1a" spellcheck="false" autocomplete="off" aria-label="Hex code">
+      <div class="op"><label class="lbl" for="alpha">Opacity <span id="alphaout"></span></label><input type="range" id="alpha" min="0" max="255" value="204"></div>
+    </div>
+    <small class="hint" id="hexmsg">Web hex codes are sRGB, so they can't name colors outside sRGB. Typing stored numbers into the channel cards can.</small>
+    <details class="tune" id="tune">
+      <summary>Fine-tune the format</summary>
+      <div class="tunegrid">
+        <div class="field wide">
+          <label for="format">Pixel format (all 54)</label>
+          <select id="format"></select>
+          <small id="formatnote"></small>
+        </div>
+        <div class="field">
+          <label for="transfer">Transfer curve</label>
+          <select id="transfer">
+            <option value="Srgb">sRGB</option>
+            <option value="Linear">Linear</option>
+            <option value="Bt709">BT.709</option>
+            <option value="Gamma22">Gamma 2.2 (563/256)</option>
+            <option value="Pq">PQ (SMPTE ST 2084)</option>
+            <option value="Hlg">HLG (ARIB STD-B67)</option>
+            <option value="Unknown">Unknown</option>
+          </select>
+          <small id="tfnote"></small>
+        </div>
+        <div class="field">
+          <label for="primaries">Primaries</label>
+          <select id="primaries">
+            <option value="Bt709">BT.709 / sRGB</option>
+            <option value="DisplayP3">Display P3</option>
+            <option value="Bt2020">BT.2020</option>
+            <option value="AdobeRgb">Adobe RGB (1998)</option>
+            <option value="Unknown">Unknown</option>
+          </select>
+          <small id="primnote"></small>
+        </div>
+        <div class="field">
+          <label for="alphamode">Alpha mode</label>
+          <select id="alphamode"></select>
+          <small id="alphanote"></small>
+        </div>
+        <div class="field">
+          <label for="range">Signal range</label>
+          <select id="range">
+            <option value="Full">Full</option>
+            <option value="Narrow">Narrow</option>
+          </select>
+          <small id="rangenote"></small>
+        </div>
+        <div class="field" id="pqfield">
+          <label for="pqanchor">PQ: linear 1.0 means</label>
+          <select id="pqanchor">
+            <option value="203">203 nits (BT.2408 white, HDR output path)</option>
+            <option value="10000">10,000 nits (a plain ConvertPlan)</option>
+          </select>
+        </div>
+        <div class="field" id="lumafield">
+          <label for="luma">Luma weights (RGB to gray)</label>
+          <select id="luma">
+            <option value="Bt709">BT.709 (default)</option>
+            <option value="Bt601">BT.601</option>
+            <option value="Bt2020">BT.2020</option>
+            <option value="DisplayP3">Display P3</option>
+          </select>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <section class="specimen" aria-label="The pixel">
+    <div class="spec-top">
+      <div class="bigpx checker"><div id="sw-true"></div></div>
+      <div class="spec-meta">
+        <div>
+          <div class="formatname" id="formatname"></div>
+          <div class="descpill" id="descpill"></div>
+        </div>
+        <div class="hexeq" id="hexeq"></div>
+        <div class="naive">
+          <div class="mini checker"><div id="sw-mis"></div></div>
+          <p><b>A program that ignores the format</b><span id="misread"></span></p>
+        </div>
+      </div>
+    </div>
+    <div class="cards" id="cards"></div>
+    <small class="hint">Each card is one channel: its stored number, what it means, and its bytes. Type a new number to change the color from the inside.</small>
+    <div class="notes" id="notes"></div>
+  </section>
+</header>
+
+<main class="story">
+  <section class="sec" aria-labelledby="h-mem">
+    <div class="sec-head"><span class="num">01</span><h2 id="h-mem">Where the bytes go</h2></div>
+    <p class="sub" id="memsub"></p>
+    <div class="memctl">
+      <div class="field"><label for="w">Width</label><input type="number" id="w" min="1" max="8" value="3"></div>
+      <div class="field"><label for="h">Rows</label><input type="number" id="h" min="1" max="4" value="2"></div>
+      <div class="field" style="min-width:230px"><label for="align">Row alignment</label>
+        <select id="align">
+          <option value="0">Packed (PixelBuffer::try_new)</option>
+          <option value="64" selected>64 bytes (try_new_aligned)</option>
+        </select></div>
+      <div class="field"><span class="lbl" id="endlbl">Byte order shown</span>
+        <div class="seg" role="group" aria-labelledby="endlbl">
+          <button type="button" id="endLE" aria-pressed="true">Little-endian</button>
+          <button type="button" id="endBE" aria-pressed="false">Big-endian</button>
+        </div></div>
+    </div>
+    <div class="facts" id="facts"></div>
+    <div class="legend" id="legend"></div>
+    <div class="mem" id="mem"></div>
+    <div class="inspect" id="inspect" aria-live="polite"></div>
+  </section>
+
+  <section class="sec" aria-labelledby="h-steps">
+    <div class="sec-head"><span class="num">02</span><h2 id="h-steps">Why these numbers</h2></div>
+    <p class="sub">The math zenpixels-convert does, one step at a time. Anything the crate leaves to you is marked as an illustration.</p>
+    <ol class="steps" id="steps"></ol>
+  </section>
+
+  <section class="sec" aria-labelledby="h-cmp">
+    <div class="sec-head"><span class="num">03</span><h2 id="h-cmp">Same color, other formats</h2></div>
+    <p class="sub">One color, many byte patterns. Select a row to switch.</p>
+    <div class="tablewrap"><table id="cmp"></table></div>
+  </section>
+
+  <section class="sec" aria-labelledby="h-primer">
+    <div class="sec-head"><span class="num">04</span><h2 id="h-primer">From a hex code to everything else</h2></div>
+    <p class="sub">A hex code like #FF7A1A is already a pixel format with every choice fixed. Each idea below loosens one choice. "Show me" sets up the explorer to demonstrate it.</p>
+    <ol class="primer" id="primer"></ol>
+  </section>
+
+  <section class="sec" aria-labelledby="h-gloss">
+    <div class="sec-head"><span class="num">05</span><h2 id="h-gloss">Words you will meet</h2></div>
+    <dl class="gloss">
+      <div><dt>Channel and sample</dt><dd>A channel is one ingredient of a pixel (red, alpha, cyan, lightness). A sample is one channel's number in one pixel.</dd></div>
+      <div><dt>Channel type</dt><dd>How each sample is stored: <code>U8</code> (0–255), <code>U16</code> (0–65535), <code>F16</code>/<code>F32</code> (floats where 1.0 is full), or a native type like <code>I16</code>.</dd></div>
+      <div><dt>Transfer function</dt><dd>The curve between stored number and amount of light. sRGB spends more codes on darks, the way eyes do. Linear stores light itself.</dd></div>
+      <div><dt>Primaries</dt><dd>Which exact red, green and blue the numbers mix. Wider primaries reach more saturated colors, so the same color needs smaller numbers.</dd></div>
+      <div><dt>White point</dt><dd>The color equal R, G and B make. All primaries here use D65 (x 0.3127, y 0.3290), so white stays (1, 1, 1).</dd></div>
+      <div><dt>Gamut</dt><dd>Every color a set of primaries reaches with values 0 to 1. Outside it you need values below 0 or above 1, which only floats can hold.</dd></div>
+      <div><dt>Signal range</dt><dd>Full uses every code. Narrow (TV) puts black at 16 and white at 235 in 8 bits; 4096 and 60160 in 16 bits.</dd></div>
+      <div><dt>Alpha</dt><dd>Straight: color and opacity apart. Premultiplied: color already times opacity. Opaque: always full. Undefined: a padding byte that means nothing.</dd></div>
+      <div><dt>Channel order</dt><dd>BGRA stores blue first. Still RGB color, just a different order in memory; zenpixels records it in the layout.</dd></div>
+      <div><dt>Stride</dt><dd>Bytes from the start of one row to the next. Can exceed the pixels, leaving padding. zenpixels requires a whole number of pixels.</dd></div>
+      <div><dt>Endianness</dt><dd>Which byte of a multi-byte number comes first. zenpixels uses the CPU's own order; 16-bit PNG files are big-endian, so decoders swap.</dd></div>
+      <div><dt>Descriptor</dt><dd><code>PixelDescriptor</code> = <code>PixelFormat</code> (type and layout) plus curve, primaries, alpha and range. Same bytes, different descriptor: a different color.</dd></div>
+      <div><dt>Native samples</dt><dd><code>I16</code>, <code>F64</code> and friends use <code>PixelFormat::Generic</code>. Carried bit for bit, with no defined meaning, so never converted.</dd></div>
+      <div><dt>CMYK and ICC</dt><dd>Printer ink amounts. Turning them into screen color needs that printer's ICC profile and a color management system.</dd></div>
+      <div><dt>Oklab</dt><dd>Perceptual color: L is lightness, a runs green to red, b runs blue to yellow. Edits in Oklab look even.</dd></div>
+      <div><dt>PQ and HLG</dt><dd>HDR curves. PQ codes absolute brightness up to 10,000 nits, so white needs an anchor. HLG is relative to the display.</dd></div>
+    </dl>
+  </section>
+
+  <section class="sec" aria-labelledby="h-code">
+    <div class="copyrow"><div class="sec-head"><span class="num">06</span><h2 id="h-code">In Rust</h2></div><button type="button" class="btn" id="copy">Copy code</button></div>
+    <pre id="code"></pre>
+  </section>
+
+  <section class="sec" aria-labelledby="h-converter">
+    <div class="sec-head"><span class="num">07</span><h2 id="h-converter">Converter simulator</h2></div>
+    <p class="sub">Convert the current stored pixels with the real zenpixels-convert WASM build. Source controls are above; destination controls are below. Alpha discard and depth reduction are allowed; the selected luma weights apply. Unsupported routes return the crate's error.</p>
+    <div class="memctl">
+      <div class="field"><label for="to-format">Destination format</label><select id="to-format"></select></div>
+      <div class="field"><label for="to-transfer">Destination transfer</label><select id="to-transfer"></select></div>
+      <div class="field"><label for="to-primaries">Destination primaries</label><select id="to-primaries"></select></div>
+      <div class="field"><label for="to-alphamode">Destination alpha</label><select id="to-alphamode"></select></div>
+      <div class="field"><label for="to-range">Destination range</label><select id="to-range"></select></div>
+    </div>
+    <p>WASM uses native little-endian samples. The source's displayed byte order is a viewing choice. The plain RowConverter uses PQ 1.0 = 10,000 nits; the model uses the PQ anchor selected above. CMYK needs an ICC profile, which this simulator does not supply. Native sample conversions are refused.</p>
+    <div id="wasm-status" class="note" role="status">Loading optional WASM converter…</div>
+    <h3>WASM output: all active rows, packed</h3><pre id="wasm-bytes" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
+    <h3>JavaScript model: first output pixel</h3><pre id="model-bytes"></pre>
+    <details><summary>Conversion plan and steps</summary><pre id="wasm-plan" style="white-space:pre-wrap"></pre></details>
+  </section>
+</main>
+
+<footer>
+  <p><a href="color-explorer/">Color and sample decisions</a> · <a href="format_browser.html">Format recommendations</a> · <a href="https://github.com/imazen/zenpixels">Source and documentation</a></p>
+  <p>Formats and rules follow zenpixels 0.3.1 on the main branch. Values are computed in double precision from the formulas zenpixels-convert uses: IEC 61966-2-1 sRGB, BT.709 with linear-srgb's constants, Adobe's 563/256 gamma, SMPTE ST 2084 PQ, ARIB STD-B67 HLG, Oklab through XYZ with Ottosson's matrices, and primaries from the crate's chromaticity table. The crate's fast kernels approximate, so its F32 and U16 results can differ in the last digits; the converter panel compares the current stored pixels against a live WASM build, byte by byte.</p>
+  <p>The big swatch is drawn with CSS <code>color(srgb-linear …)</code>, so a wide-gamut screen shows colors outside sRGB. Brightness above white is not shown.</p>
+</footer>
+</div>
+<script>
+"use strict";
+"use strict";
+// ---------------------------------------------------------------- data
+const CT = {
+  U8:  { bytes: 1, kind: "uint", bits: 8 },  U16: { bytes: 2, kind: "uint", bits: 16 },
+  F16: { bytes: 2, kind: "half" },           F32: { bytes: 4, kind: "f32" },
+  I8:  { bytes: 1, kind: "int", bits: 8 },   I16: { bytes: 2, kind: "int", bits: 16 },
+  U32: { bytes: 4, kind: "uint", bits: 32 }, I32: { bytes: 4, kind: "int", bits: 32 },
+  U64: { bytes: 8, kind: "uint", bits: 64 }, I64: { bytes: 8, kind: "int", bits: 64 },
+  F64: { bytes: 8, kind: "f64" },
+};
+const LAYOUT = {
+  Rgb: ["R","G","B"], Bgr: ["B","G","R"], Rgba: ["R","G","B","A"], Bgra: ["B","G","R","A"], Gray: ["Y"], GrayAlpha: ["Y","A"],
+  Oklab: ["L","OA","OB"], OklabA: ["L","OA","OB","A"], Cmyk: ["C","M","CY","K"],
+};
+const CHNAME = { R:"Red", G:"Green", B:"Blue", A:"Alpha", X:"Padding (X)", Y:"Gray (luma)", L:"Oklab L", OA:"Oklab a", OB:"Oklab b",
+  C:"Cyan", M:"Magenta", CY:"Yellow", K:"Black (K)" };
+const CHSHORT = { R:"R", G:"G", B:"B", A:"A", X:"X", Y:"Y", L:"L", OA:"a", OB:"b", C:"C", M:"M", CY:"Y", K:"K" };
+
+const FORMATS = [];
+function F(id, name, ct, layout, alphaKind, group, chans) {
+  FORMATS.push({ id, name, ct, layout, alphaKind, group, chans: chans || LAYOUT[layout], generic: false });
+}
+F("Rgb8","RGB8","U8","Rgb","none","Everyday 8-bit");
+F("Rgba8","RGBA8","U8","Rgba","alpha","Everyday 8-bit");
+F("Gray8","Gray8","U8","Gray","none","Everyday 8-bit");
+F("GrayA8","GrayA8","U8","GrayAlpha","alpha","Everyday 8-bit");
+F("Bgr8","BGR8","U8","Bgr","none","Blue-first and padded (Windows, GPUs)");
+F("Bgra8","BGRA8","U8","Bgra","alpha","Blue-first and padded (Windows, GPUs)");
+F("Rgbx8","RGBX8","U8","Rgba","pad","Blue-first and padded (Windows, GPUs)",["R","G","B","X"]);
+F("Bgrx8","BGRX8","U8","Bgra","pad","Blue-first and padded (Windows, GPUs)",["B","G","R","X"]);
+F("Rgb16","RGB16","U16","Rgb","none","16-bit");
+F("Rgba16","RGBA16","U16","Rgba","alpha","16-bit");
+F("Gray16","Gray16","U16","Gray","none","16-bit");
+F("GrayA16","GrayA16","U16","GrayAlpha","alpha","16-bit");
+F("RgbF16","RgbF16","F16","Rgb","none","Half float (16-bit float)");
+F("RgbaF16","RgbaF16","F16","Rgba","alpha","Half float (16-bit float)");
+F("GrayF16","GrayF16","F16","Gray","none","Half float (16-bit float)");
+F("GrayAF16","GrayAF16","F16","GrayAlpha","alpha","Half float (16-bit float)");
+F("RgbF32","RgbF32","F32","Rgb","none","Float (32-bit)");
+F("RgbaF32","RgbaF32","F32","Rgba","alpha","Float (32-bit)");
+F("GrayF32","GrayF32","F32","Gray","none","Float (32-bit)");
+F("GrayAF32","GrayAF32","F32","GrayAlpha","alpha","Float (32-bit)");
+F("OklabF32","OklabF32","F32","Oklab","none","Perceptual (Oklab)");
+F("OklabaF32","OklabaF32","F32","OklabA","alpha","Perceptual (Oklab)");
+F("Cmyk8","CMYK8","U8","Cmyk","none","Print (CMYK)");
+F("Cmyk16","CMYK16","U16","Cmyk","none","Print (CMYK)");
+F("CmykF32","CmykF32","F32","Cmyk","none","Print (CMYK)");
+F("CmykF32Inverted","CmykF32Inverted","F32","Cmyk","none","Print (CMYK)");
+for (const ct of ["I8","I16","U32","I32","U64","I64","F64"]) {
+  for (const [layout, prefix, ak] of [["Gray","Gray","none"],["GrayAlpha","GrayA","alpha"],["Rgb","Rgb","none"],["Rgba","Rgba","alpha"]]) {
+    FORMATS.push({ id: prefix + ct, name: prefix + ct, ct, layout, alphaKind: ak, group: "Native samples (PixelFormat::Generic)",
+      chans: LAYOUT[layout], generic: true });
+  }
+}
+const FMAP = Object.fromEntries(FORMATS.map(f => [f.id, f]));
+
+const PRIM = {
+  Bt709:     { name: "BT.709 / sRGB", xy: [[0.64,0.33],[0.30,0.60],[0.15,0.06]] },
+  DisplayP3: { name: "Display P3",    xy: [[0.680,0.320],[0.265,0.690],[0.150,0.060]] },
+  Bt2020:    { name: "BT.2020",       xy: [[0.708,0.292],[0.170,0.797],[0.131,0.046]] },
+  AdobeRgb:  { name: "Adobe RGB",     xy: [[0.64,0.33],[0.21,0.71],[0.15,0.06]] },
+};
+const D65 = [0.3127, 0.3290];
+const LUMA = { Bt709: [0.2126,0.7152,0.0722], Bt601: [0.299,0.587,0.114], Bt2020: [0.2627,0.6780,0.0593], DisplayP3: [0.2289746,0.6917385,0.0792869] };
+const TFNAME = { Srgb: "sRGB", Linear: "linear", Bt709: "BT.709", Gamma22: "gamma 2.2", Pq: "PQ", Hlg: "HLG", Unknown: "unknown" };
+
+// ---------------------------------------------------------------- math
+function inv3(m) {
+  const [a,b,c] = m[0], [d,e,f] = m[1], [g,h,i] = m[2];
+  const A = e*i - f*h, B = -(d*i - f*g), C = d*h - e*g;
+  const det = a*A + b*B + c*C;
+  return [[A/det, -(b*i - c*h)/det, (b*f - c*e)/det],
+          [B/det, (a*i - c*g)/det, -(a*f - c*d)/det],
+          [C/det, -(a*h - b*g)/det, (a*e - b*d)/det]];
+}
+function mul3(m, v) { return [0,1,2].map(r => m[r][0]*v[0] + m[r][1]*v[1] + m[r][2]*v[2]); }
+function mulM(a, b) { return [0,1,2].map(r => [0,1,2].map(c => a[r][0]*b[0][c] + a[r][1]*b[1][c] + a[r][2]*b[2][c])); }
+function rgbToXyz(p) {
+  const cols = PRIM[p].xy.map(([x,y]) => [x/y, 1, (1-x-y)/y]);
+  const P = [[cols[0][0],cols[1][0],cols[2][0]],[cols[0][1],cols[1][1],cols[2][1]],[cols[0][2],cols[1][2],cols[2][2]]];
+  const W = [D65[0]/D65[1], 1, (1-D65[0]-D65[1])/D65[1]];
+  const S = mul3(inv3(P), W);
+  return P.map(row => row.map((v, j) => v * S[j]));
+}
+const srgbEotf = c => c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+const srgbOetf = v => v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1/2.4) - 0.055;
+const BT_A = 0.09929682680944, BT_B = 0.018053968510807;
+const bt709Oetf = v => v < BT_B ? 4.5 * v : (1 + BT_A) * Math.pow(v, 0.45) - BT_A;
+const ADOBE = 563 / 256;
+function pqOetf(y) { // y: fraction of 10,000 nits
+  if (y <= 0) return 0;
+  const m1 = 2610/16384, m2 = 2523/4096*128, c1 = 3424/4096, c2 = 2413/4096*32, c3 = 2392/4096*32;
+  const p = Math.pow(y, m1);
+  return Math.pow((c1 + c2*p) / (1 + c3*p), m2);
+}
+const HLG_A = 0.17883277, HLG_B = 0.28466892, HLG_C = 0.55991073;
+const hlgOetf = v => v <= 0 ? 0 : v <= 1/12 ? Math.sqrt(3*v) : HLG_A * Math.log(12*v - HLG_B) + HLG_C;
+function encodeTf(tf, v, anchor) {
+  const s = Math.sign(v), a = Math.abs(v);
+  switch (tf) {
+    case "Srgb": return s * srgbOetf(a);
+    case "Linear": return v;
+    case "Bt709": return s * bt709Oetf(a);
+    case "Gamma22": return s * Math.pow(a, 1/ADOBE);
+    case "Pq": return pqOetf(v * anchor / 10000);
+    case "Hlg": return hlgOetf(v);
+    default: return v;
+  }
+}
+const OK_LMS_FROM_XYZ = [[0.8189330101,0.3618667424,-0.1288597137],[0.0329845436,0.9293118715,0.0361456387],[0.0482003018,0.2643662691,0.6338517070]];
+const OK_FROM_LMS = [[0.2104542553,0.7936177850,-0.0040720468],[1.9779984951,-2.4285922050,0.4505937099],[0.0259040371,0.7827717662,-0.8086757660]];
+
+function toHalfBits(v) {
+  const f = new Float32Array(1), u = new Uint32Array(f.buffer);
+  f[0] = v; const x = u[0];
+  const sign = (x >>> 16) & 0x8000, exp = (x >>> 23) & 0xff; let mant = x & 0x7fffff;
+  if (exp === 0xff) return sign | 0x7c00 | (mant ? 0x200 : 0);
+  const e = exp - 127 + 15;
+  if (e >= 0x1f) return sign | 0x7c00;
+  if (e <= 0) {
+    if (e < -10) return sign;
+    mant |= 0x800000;
+    const shift = 14 - e; let half = mant >>> shift;
+    const rem = mant & ((1 << shift) - 1), mid = 1 << (shift - 1);
+    if (rem > mid || (rem === mid && (half & 1))) half++;
+    return sign | half;
+  }
+  let half = sign | (e << 10) | (mant >>> 13);
+  const rem = mant & 0x1fff;
+  if (rem > 0x1000 || (rem === 0x1000 && (half & 1))) half++;
+  return half;
+}
+function halfToFloat(h) {
+  const s = h & 0x8000 ? -1 : 1, e = (h >> 10) & 0x1f, m = h & 0x3ff;
+  if (e === 0) return s * m * Math.pow(2, -24);
+  if (e === 31) return m ? NaN : s * Infinity;
+  return s * (1 + m / 1024) * Math.pow(2, e - 15);
+}
+const clamp01 = v => Math.min(1, Math.max(0, v));
+const lcm = (a, b) => { const g = (x, y) => y ? g(y, x % y) : x; return a / g(a, b) * b; };
+
+// inverse curves (stored → linear)
+const bt709Eotf = v => v < 4.5 * BT_B ? v / 4.5 : Math.pow((v + BT_A) / (1 + BT_A), 1 / 0.45);
+function pqEotf(n) { // returns fraction of 10,000 nits
+  if (n <= 0) return 0;
+  const m1 = 2610/16384, m2 = 2523/4096*128, c1 = 3424/4096, c2 = 2413/4096*32, c3 = 2392/4096*32;
+  const p = Math.pow(n, 1 / m2);
+  return Math.pow(Math.max(p - c1, 0) / (c2 - c3 * p), 1 / m1);
+}
+const hlgEotf = v => v <= 0 ? 0 : v <= 0.5 ? v * v / 3 : (Math.exp((v - HLG_C) / HLG_A) + HLG_B) / 12;
+function decodeTf(tf, v, anchor) {
+  const s = Math.sign(v), a = Math.abs(v);
+  switch (tf) {
+    case "Linear": return v;
+    case "Bt709": return s * bt709Eotf(a);
+    case "Gamma22": return s * Math.pow(a, ADOBE);
+    case "Pq": return pqEotf(v) * 10000 / anchor;
+    case "Hlg": return hlgEotf(v);
+    default: return s * srgbEotf(a); // sRGB, and Unknown shown as sRGB
+  }
+}
+const OK_LMS_CBRT_FROM_OKLAB = [[1.0,0.3963377774,0.2158037573],[1.0,-0.1055613458,-0.0638541728],[1.0,-0.0894841775,-1.2914855480]];
+const OK_XYZ_FROM_LMS = [[1.2270138511,-0.5577999807,0.2812561490],[-0.0405801784,1.1122568696,-0.0716766787],[-0.0763812845,-0.4214819784,1.5861632204]];
+const encSrgbExt = v => Math.sign(v) * srgbOetf(Math.abs(v));
+
+// ---------------------------------------------------------------- state
+const $ = id => document.getElementById(id);
+function parseHex(t) {
+  t = t.trim().replace(/^#/, "");
+  if (/^[0-9a-f]{3}$/i.test(t)) t = t.split("").map(c => c + c).join("");
+  if (!/^([0-9a-f]{6}|[0-9a-f]{8})$/i.test(t)) return null;
+  const n = [0,2,4,6].filter(i => i < t.length).map(i => parseInt(t.slice(i, i+2), 16));
+  return { rgb: n.slice(0,3), a: n.length === 4 ? n[3] : null };
+}
+const hex2 = n => n.toString(16).padStart(2, "0");
+const S = { lin: [255,122,26].map(c => srgbEotf(c/255)), a: 204/255, format: "Rgba8", transfer: "Srgb", primaries: "Bt709",
+  alphaMode: "Straight", range: "Full", luma: "Bt709", pq: 203, w: 3, h: 2, align: 64, be: false, sel: { y: 0, x: 0, c: 0 } };
+
+const isColorish = f => ["Rgb","Bgr","Rgba","Bgra","Gray","GrayAlpha"].includes(f.layout);
+function hexOf(lin) {
+  const e = lin.map(encSrgbExt);
+  const clipped = e.some(v => v < -0.5/255 || v > 1 + 0.5/255);
+  return { hex: "#" + e.map(v => hex2(Math.round(clamp01(v) * 255))).join("").toUpperCase(), clipped, bytes: e.map(v => Math.round(clamp01(v) * 255)) };
+}
+function stride(cfg, f) {
+  const bpp = CT[f.ct].bytes * f.chans.length, row = cfg.w * bpp;
+  return cfg.align ? Math.ceil(row / lcm(bpp, cfg.align)) * lcm(bpp, cfg.align) : row;
+}
+
+// ---------------------------------------------------------------- encode: color → stored
+function compute(cfg) {
+  const f = FMAP[cfg.format], ct = CT[f.ct];
+  const notes = [], steps = [];
+  const isRgb = ["Rgb","Bgr","Rgba","Bgra"].includes(f.layout), isGray = f.layout === "Gray" || f.layout === "GrayAlpha";
+  const isOk = f.layout.startsWith("Oklab"), isCmyk = f.layout === "Cmyk";
+  const colorish = isRgb || isGray;
+  const tf = colorish ? cfg.transfer : "Unknown";
+  const prim = colorish ? cfg.primaries : (isOk ? "Bt709" : "Unknown");
+  const narrow = cfg.range === "Narrow" && (f.ct === "U8" || f.ct === "U16") && colorish;
+  const v3 = (arr, keys) => arr.map((v, i) => ({ k: keys[i], v }));
+  const lin = cfg.lin, H = hexOf(lin);
+
+  steps.push({ t: "Start from the color as light", p: `Linear amounts of red, green and blue light, in sRGB primaries, where 1.0 is diffuse white. On the web this color is ${H.hex}${H.clipped ? " (clipped: the color is outside sRGB, which a hex code cannot express)" : ""}: those three bytes divided by 255, with the sRGB curve undone, give these numbers.`, vals: v3(lin, ["R","G","B"]) });
+
+  let comps = [];
+  if (colorish) {
+    let linT = lin;
+    if (prim !== "Bt709" && prim !== "Unknown") {
+      const M = mulM(inv3(rgbToXyz(prim)), rgbToXyz("Bt709"));
+      linT = mul3(M, lin);
+      steps.push({ t: `Re-express in ${PRIM[prim].name} primaries`, p: `A 3×3 matrix built from the crate's chromaticity table converts between the two sets of red, green and blue. Wider primaries need smaller numbers for the same color. First row: [${M[0].map(x => x.toFixed(4)).join(", ")}].`, vals: v3(linT, ["R","G","B"]) });
+    } else if (prim === "Unknown") {
+      notes.push(["warn", "Primaries: Unknown. zenpixels cannot convert into unknown primaries; the numbers keep the sRGB primaries under an Unknown label, so their real color is undefined."]);
+    }
+    if (linT.some(x => x < -1e-6 || x > 1 + 1e-6)) notes.push(["warn", `This color needs values outside 0–1 in ${prim === "Unknown" ? "these" : PRIM[prim].name} primaries${linT.some(x => x > 1 + 1e-6) && lin.every(x => x <= 1 + 1e-6) ? "" : ""}. Float formats keep them; integer formats clip, which changes the color.`]);
+    let enc;
+    if (tf === "Unknown") {
+      enc = linT.map(encSrgbExt);
+      notes.push(["warn", "Transfer: Unknown. zenpixels cannot encode to an unknown curve; the numbers keep the sRGB curve under an Unknown label."]);
+      steps.push({ t: "No curve is defined", p: "With an Unknown transfer function the numbers carry no defined brightness. Shown with the sRGB curve.", vals: v3(enc, ["R","G","B"]) });
+    } else {
+      enc = linT.map(v => encodeTf(tf, v, cfg.pq));
+      const why = {
+        Srgb: "The sRGB curve: 12.92·L for very dark values, else 1.055·L^(1/2.4) − 0.055.",
+        Linear: "No curve: the stored value is the amount of light.",
+        Bt709: "The BT.709 camera curve: 4.5·L below 0.018, else 1.0993·L^0.45 − 0.0993.",
+        Gamma22: "A pure power curve, L^(1/2.199), with Adobe's 563/256 exponent.",
+        Pq: `PQ codes absolute brightness. Linear 1.0 is taken as ${cfg.pq} nits, so diffuse white lands at ${pqOetf(cfg.pq/10000).toFixed(4)} of the code range, leaving room for highlights up to 10,000 nits.`,
+        Hlg: "zenpixels applies the bare HLG curve: linear 1.0 becomes code 1.0, HLG's peak. BT.2408 would place SDR white near 0.75; zenpixels-convert does not apply that scaling.",
+      }[tf];
+      steps.push({ t: `Apply the ${TFNAME[tf]} curve`, p: why, vals: v3(enc, ["R","G","B"]) });
+    }
+    if (isGray) {
+      const w = LUMA[cfg.luma];
+      const y = w[0]*enc[0] + w[1]*enc[1] + w[2]*enc[2];
+      steps.push({ t: "Mix into one gray value", p: `Gray formats store luma, ${w[0]}·R + ${w[1]}·G + ${w[2]}·B, applied to the curve-encoded values (Y′), as zenpixels-convert does. Converting RGB to gray requires ConvertOptions::luma; the color is lost, only lightness remains.`, vals: [{ k: "Y", v: y }] });
+      comps = [y];
+    } else comps = enc;
+  } else if (isOk) {
+    const lab = mul3(OK_FROM_LMS, mul3(OK_LMS_FROM_XYZ, mul3(rgbToXyz("Bt709"), lin)).map(Math.cbrt));
+    steps.push({ t: "Convert to Oklab", p: "Linear RGB → CIE XYZ (through the descriptor's primaries) → LMS cone response → cube root → L, a, b. L is lightness from 0 to 1; a (green to red) and b (blue to yellow) are signed. No transfer curve applies.", vals: [{ k: "L", v: lab[0] }, { k: "OA", v: lab[1] }, { k: "OB", v: lab[2] }] });
+    comps = lab;
+  } else if (isCmyk) {
+    const e = lin.map(v => clamp01(encSrgbExt(v)));
+    const k = 1 - Math.max(...e);
+    const cmy = k >= 1 ? [0,0,0] : e.map(c => (1 - c - k) / (1 - k));
+    comps = [...cmy, k];
+    notes.push(["warn", "CMYK holds ink amounts for one specific printer and paper. Turning a color into CMYK needs that printer's ICC profile and a color management system; zenpixels has no formula for it. The numbers here come from the uncalibrated textbook formula, only so the layout has something to show."]);
+    steps.push({ t: "Illustration: textbook CMYK (not what the crate does)", p: "K = 1 − max(R, G, B) on sRGB-encoded values, then C, M, Y from what remains. 0 = no ink, 1 = full ink.", vals: v3(comps, ["C","M","CY","K"]) });
+    if (f.id === "CmykF32Inverted") {
+      comps = comps.map(v => 1 - v);
+      steps.push({ t: "Invert polarity", p: "CmykF32Inverted, as JPEG XL emits it, stores 1 − ink: 1 means no ink. Relabeling it as CmykF32 without inverting mislabels every sample.", vals: v3(comps, ["C","M","CY","K"]) });
+    }
+    if (f.id === "Cmyk8") notes.push(["info", "CMYK8 does not fix ink polarity. Many CMYK JPEGs store it inverted (the Adobe convention); the source's markers and ICC profile decide."]);
+  }
+
+  let alphaNorm = null;
+  if (f.alphaKind === "alpha") {
+    alphaNorm = cfg.a;
+    if (cfg.alphaMode === "Opaque") {
+      if (cfg.a < 1) notes.push(["warn", `Alpha mode Opaque promises every alpha is full, but the opacity is ${Math.round(cfg.a * 255)}/255. Stored as full; choose Straight or Premultiplied to keep transparency.`]);
+      alphaNorm = 1;
+    }
+    if (cfg.alphaMode === "Premultiplied") {
+      comps = comps.map(v => v * alphaNorm);
+      const keys = isGray ? ["Y"] : isOk ? ["L","OA","OB"] : isCmyk ? ["C","M","CY","K"] : ["R","G","B"];
+      steps.push({ t: "Premultiply by alpha", p: `Every color value is multiplied by alpha (${alphaNorm.toFixed(4)}); fully transparent pixels become 0. Before applying a transfer curve, zenpixels-convert divides alpha back out, so the curve always sees straight values.`, vals: v3(comps, keys) });
+    }
+  } else if (cfg.a < 1) {
+    notes.push(["info", `${f.name} has no alpha channel, so the opacity (${Math.round(cfg.a * 255)}/255) is not stored.`]);
+  }
+
+  const semantic = {};
+  if (isGray) semantic.Y = comps[0];
+  else if (isOk) [semantic.L, semantic.OA, semantic.OB] = comps;
+  else if (isCmyk) [semantic.C, semantic.M, semantic.CY, semantic.K] = comps;
+  else [semantic.R, semantic.G, semantic.B] = comps;
+  if (alphaNorm !== null) semantic.A = alphaNorm;
+
+  const chans = f.chans.map(key => key === "X"
+    ? { key, norm: null, stored: null, text: "??", bytes: null }
+    : Object.assign({ key, norm: semantic[key] }, store(f.ct, semantic[key], narrow && key !== "A", !cfg.be)));
+  const qp = quantStep(f, narrow);
+  steps.push({ t: qp.t, p: qp.p, vals: chans.filter(c => c.key !== "X").map(c => ({ k: c.key, v: c.text, raw: true })) });
+  steps.push({ t: "Lay out the bytes", p: `${f.chans.map(k => CHSHORT[k]).join(", ")} in that order, ${ct.bytes} byte${ct.bytes > 1 ? "s" : ""} per sample${ct.bytes > 1 ? `, ${cfg.be ? "most" : "least"} significant byte first (${cfg.be ? "big" : "little"}-endian)` : ""}, pixel after pixel, row after row. The memory map above shows each one.`, vals: [] });
+
+  if (f.generic) notes.unshift(["warn", `${f.name} is a native-sample format (PixelFormat::Generic). zenpixels carries its bytes exactly but gives the numbers no meaning, and zenpixels-convert refuses to convert it. This page uses one possible convention (0–1 scaled to the type's full positive range) so the layout has values.`]);
+  if (f.alphaKind === "pad") notes.push(["info", "The X byte is padding (alpha mode Undefined). Its contents mean nothing, so it shows ??. Never read it as opacity."]);
+  if (narrow) notes.push(["info", "zenpixels carries Narrow range as a label. zenpixels-convert refuses Narrow↔Full conversion and depth changes on Narrow data instead of silently shifting blacks; the codes shown are what Narrow means."]);
+  return { f, ct, chans, notes, steps, tf, prim, narrow, H, isRgb, isGray, isOk, isCmyk, cfg };
+}
+
+function quantStep(f, narrow) {
+  const ct = CT[f.ct];
+  if (f.generic) {
+    if (ct.kind === "f64") return { t: "Store as F64 (illustration)", p: "Double precision with 1.0 as full. zenpixels defines no meaning for F64 samples; this is one convention." };
+    const max = ct.kind === "uint" ? `2^${ct.bits} − 1` : `2^${ct.bits - 1} − 1`;
+    return { t: `Store as ${f.ct} (illustration)`, p: `0–1 scaled to 0 … ${max}, the type's full positive range, as TIFF integer samples usually are. zenpixels assigns these numbers no meaning.` };
+  }
+  if (ct.kind === "f32") return { t: "Store as F32", p: "32-bit float, 1.0 = full. Values above 1 or below 0 survive. Rounded to the nearest float." };
+  if (ct.kind === "half") return { t: "Store as F16 (half float)", p: "1 sign bit, 5 exponent bits, 10 fraction bits: about 3 decimal digits, rounded to nearest even. Largest value 65504." };
+  const max = 2 ** ct.bits - 1;
+  if (narrow) {
+    const sh = 2 ** (ct.bits - 8);
+    return { t: `Store as ${f.ct}, narrow range`, p: `Black = 16 × ${sh} = ${16*sh}, white = 235 × ${sh} = ${235*sh}; code = round(${16*sh} + value × ${219*sh}). Alpha stays full range.` };
+  }
+  return { t: `Store as ${f.ct}`, p: `code = round(value × ${max}) after clipping to 0–1.${ct.bits === 16 ? " Widening an 8-bit code gives the same result as code × 257." : ""}` };
+}
+
+function store(ctName, v, narrow, le) {
+  const ct = CT[ctName];
+  const dv = new DataView(new ArrayBuffer(8));
+  let value, text, half = null;
+  if (ct.kind === "uint" || ct.kind === "int") {
+    if (ct.bits <= 32) {
+      let code;
+      if (narrow) { const sh = 2 ** (ct.bits - 8); code = Math.floor(16*sh + clamp01(v) * 219*sh + 0.5); }
+      else code = Math.floor(clamp01(v) * (ct.kind === "uint" ? 2 ** ct.bits - 1 : 2 ** (ct.bits - 1) - 1) + 0.5);
+      value = code; text = String(code);
+      writeInt(dv, ct, code, le);
+    } else {
+      const max = ct.kind === "uint" ? (1n << 64n) - 1n : (1n << 63n) - 1n;
+      value = BigInt(Math.floor(clamp01(v) * 2 ** 53 + 0.5)) * max / (1n << 53n); text = value.toString();
+      ct.kind === "uint" ? dv.setBigUint64(0, value, le) : dv.setBigInt64(0, value, le);
+    }
+  } else if (ct.kind === "half") { half = toHalfBits(v); dv.setUint16(0, half, le); value = halfToFloat(half); text = fmtNum(value); }
+  else if (ct.kind === "f32") { dv.setFloat32(0, v, le); value = Math.fround(v); text = fmtNum(value); }
+  else { dv.setFloat64(0, v, le); value = v; text = fmtNum(v, 12); }
+  return { stored: value, text, bytes: Array.from(new Uint8Array(dv.buffer, 0, ct.bytes)) };
+}
+function writeInt(dv, ct, code, le) {
+  if (ct.bits === 8) ct.kind === "uint" ? dv.setUint8(0, code) : dv.setInt8(0, code);
+  else if (ct.bits === 16) ct.kind === "uint" ? dv.setUint16(0, code, le) : dv.setInt16(0, code, le);
+  else ct.kind === "uint" ? dv.setUint32(0, code, le) : dv.setInt32(0, code, le);
+}
+function fmtNum(x, sig = 7) {
+  if (!isFinite(x)) return String(x);
+  if (x === 0) return Object.is(x, -0) ? "-0" : "0";
+  return Number(x.toPrecision(sig)).toString();
+}
+const fmt6 = v => typeof v === "number" ? (Math.abs(v) < 5e-7 ? "0" : v.toFixed(6).replace(/0+$/, "").replace(/\.$/, ".0")) : String(v);
+
+// ---------------------------------------------------------------- decode: stored → color
+function unstore(ctName, text, narrow) {
+  const ct = CT[ctName];
+  if (ct.kind === "uint" || ct.kind === "int") {
+    let code;
+    try { code = BigInt(String(text).trim()); } catch { return null; }
+    const lo = ct.kind === "uint" ? 0n : -(1n << BigInt(ct.bits - 1));
+    const hi = ct.kind === "uint" ? (1n << BigInt(ct.bits)) - 1n : (1n << BigInt(ct.bits - 1)) - 1n;
+    if (code < lo) code = lo; if (code > hi) code = hi;
+    if (narrow) { const sh = 2 ** (ct.bits - 8); return (Number(code) - 16*sh) / (219*sh); }
+    const maxPos = ct.kind === "uint" ? hi : hi;
+    return Number(code) / Number(maxPos);
+  }
+  const x = Number(String(text).trim());
+  if (!isFinite(x)) return null;
+  if (ct.kind === "half") return halfToFloat(toHalfBits(x));
+  if (ct.kind === "f32") return Math.fround(x);
+  return x;
+}
+function decodePixel(cfg, norms) {
+  // norms: { key: value on the 0–1 semantic scale }
+  const f = FMAP[cfg.format];
+  const colorish = isColorish(f);
+  let a = cfg.a;
+  if (f.alphaKind === "alpha" && "A" in norms && cfg.alphaMode !== "Opaque") a = clamp01(norms.A);
+  const keys = Object.keys(norms).filter(k => k !== "A");
+  const n = Object.assign({}, norms);
+  if (f.alphaKind === "alpha" && cfg.alphaMode === "Premultiplied") {
+    if (a <= 0) return { lin: cfg.lin, a: 0, note: "Alpha is 0, so premultiplied color is 0 and the color cannot be recovered; keeping the previous color." };
+    for (const k of keys) n[k] = n[k] / a;
+  }
+  let lin;
+  if (colorish) {
+    const tf = cfg.transfer, prim = cfg.primaries;
+    if (f.layout === "Gray" || f.layout === "GrayAlpha") {
+      const l = decodeTf(tf, n.Y, cfg.pq); lin = [l, l, l];
+    } else {
+      let linT = [n.R, n.G, n.B].map(v => decodeTf(tf, v, cfg.pq));
+      if (prim !== "Bt709" && prim !== "Unknown") linT = mul3(mulM(inv3(rgbToXyz("Bt709")), rgbToXyz(prim)), linT);
+      lin = linT;
+    }
+  } else if (f.layout.startsWith("Oklab")) {
+    const lms = mul3(OK_LMS_CBRT_FROM_OKLAB, [n.L, n.OA, n.OB]).map(v => v * v * v);
+    lin = mul3(inv3(rgbToXyz("Bt709")), mul3(OK_XYZ_FROM_LMS, lms));
+  } else {
+    let [c, m, y, k] = [n.C, n.M, n.CY, n.K];
+    if (f.id === "CmykF32Inverted") [c, m, y, k] = [c, m, y, k].map(v => 1 - v);
+    lin = [c, m, y].map(v => srgbEotf(clamp01((1 - v) * (1 - k))));
+  }
+  return { lin, a };
+}
+
+// ---------------------------------------------------------------- render
+const cvar = k => `var(--ch-${k})`;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let R = null, lastFormat = "Rgba8";
+
+function descText(R) {
+  const { f, cfg } = R, parts = [f.name];
+  if (isColorish(f)) { parts.push(TFNAME[cfg.transfer]); parts.push(cfg.primaries === "Unknown" ? "unknown primaries" : PRIM[cfg.primaries].name); }
+  if (f.alphaKind === "alpha") parts.push(cfg.alphaMode.toLowerCase() + " alpha");
+  if (R.narrow) parts.push("narrow");
+  return parts.join(" · ");
+}
+
+function render() {
+  R = compute(S);
+  const { f, ct, chans } = R;
+  $("descpill").textContent = descText(R).split(" · ").slice(1).join(" · ") || "no color metadata";
+  $("formatname").textContent = f.name;
+  document.documentElement.style.setProperty("--hero", `rgb(${R.H.bytes.join(",")})`);
+  const shownA = f.alphaKind === "alpha" && S.alphaMode !== "Opaque" ? S.a : 1;
+  const sw = $("sw-true");
+  sw.style.background = `rgba(${R.H.bytes.join(",")},${shownA})`;
+  sw.style.background = `color(srgb-linear ${S.lin.map(v => Math.max(0, v).toFixed(5)).join(" ")} / ${shownA})`;
+  $("hexeq").textContent = R.isCmyk ? "Screen color needs an ICC profile (shown: textbook guess)" : `Web hex ${R.H.hex}${R.H.clipped ? ", clipped: this color is outside sRGB" : ""}`;
+  $("sw-mis").style.background = misreadCss(R);
+  $("misread").textContent = misreadWhy(R).join(" ");
+
+  const bpp = ct.bytes * f.chans.length, rowBytes = S.w * bpp, st = stride(S, f), total = st * S.h;
+  const model = R.isGray ? "Gray" : R.isOk ? "Oklab" : R.isCmyk ? "Cmyk" : "Rgb";
+  $("facts").innerHTML = [
+    ["format.name()", `"${f.name}"`], ["channel_type()", f.ct], ["layout()", f.layout], ["color_model()", model],
+    ["channels()", f.chans.length], ["bytes_per_pixel()", bpp], ["min_alignment()", ct.bytes], ["is_bgr()", String(f.layout === "Bgra" || f.layout === "Bgr")],
+    ["row bytes", rowBytes], ["stride", st], ["buffer bytes", total],
+  ].map(([k, v]) => `<div class="fact"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("");
+  $("notes").innerHTML = R.notes.map(([kind, t]) => `<div class="note ${kind === "info" ? "info" : ""}">${esc(t)}</div>`).join("");
+
+  const cardsEl = $("cards");
+  cardsEl.innerHTML = chans.map((c, i) => {
+    const by = (c.bytes ? c.bytes.map(b => hex2(b).toUpperCase()) : Array(ct.bytes).fill("??")).map(b => `<span>${b}</span>`).join("");
+    const input = c.key === "X" ? `<input type="text" value="??" disabled aria-label="Padding byte">` :
+      `<input type="text" inputmode="decimal" data-i="${i}" value="${esc(c.text)}" aria-label="${esc(CHNAME[c.key])} stored value" spellcheck="false">`;
+    const mean = c.key === "X" ? "padding" : c.norm === null ? "" : `= ${fmt6(c.norm)}`;
+    return `<div class="card-ch${c.key === "X" ? " x" : ""}" style="--c:${cvar(c.key)}"><span class="nm">${esc(CHNAME[c.key])}</span>${input}<span class="mean">${mean}</span><div class="bys">${by}</div></div>`;
+  }).join("");
+  if (lastFormat !== S.format) { cardsEl.classList.remove("anim"); void cardsEl.offsetWidth; cardsEl.classList.add("anim"); lastFormat = S.format; }
+  renderChips();
+  $("steps").innerHTML = R.steps.map(s => `<li class="step"><div><h3>${esc(s.t)}</h3><p>${esc(s.p)}</p>` +
+    (s.vals.length ? `<div class="vals">${s.vals.map(v => `<span class="val" style="--c:${cvar(v.k)}">${esc(CHSHORT[v.k])} ${esc(v.raw ? v.v : fmt6(v.v))}</span>`).join("")}</div>` : "") + `</div></li>`).join("");
+
+  $("memsub").textContent = `${S.w} × ${S.h} pixels of ${f.name}, every pixel this color. ${bpp} bytes per pixel, ${rowBytes} bytes of pixels per row, stride ${st}` +
+    (st > rowBytes ? ` (${st - rowBytes} padding bytes per row${S.align ? `: the stride rounds up to a multiple of lcm(${bpp}, ${S.align}) = ${lcm(bpp, S.align)}, so every row starts aligned and holds whole pixels` : ""})` : " (no padding)") +
+    `. Buffer: ${total} bytes. Hover or click a sample.`;
+  $("legend").innerHTML = [...new Set(f.chans)].map(k => `<span><span class="dot" style="background:${cvar(k)}"></span>${esc(CHNAME[k])}</span>`).join("") +
+    (st > rowBytes ? `<span><span class="dot" style="background:var(--pad)"></span>Row padding (unused)</span>` : "");
+  let html = "";
+  for (let y = 0; y < S.h; y++) {
+    const start = y * st;
+    html += `<div class="memrow"><div class="memrow-h">row ${y} · bytes ${start}–${start + st - 1}</div><div class="bytes">`;
+    for (let x = 0; x < S.w; x++) {
+      const p0 = start + x * bpp;
+      html += `<div class="pxg"><span class="pxg-label">(${x},${y}) @${p0}</span>`;
+      chans.forEach((c, ci) => {
+        const sel = S.sel.y === y && S.sel.x === x && S.sel.c === ci ? " sel" : "";
+        html += `<div class="smp${sel}" data-y="${y}" data-x="${x}" data-c="${ci}" tabindex="0" role="button" aria-label="Pixel ${x},${y} ${esc(CHNAME[c.key])}">`;
+        for (let i = 0; i < ct.bytes; i++) {
+          html += `<div class="b${c.key === "X" ? " xpad" : ""}" style="--c:${cvar(c.key)}"><i>${c.bytes ? hex2(c.bytes[i]).toUpperCase() : "??"}</i><em>${p0 + ci * ct.bytes + i}</em></div>`;
+        }
+        html += `</div>`;
+      });
+      html += `</div>`;
+    }
+    if (st > rowBytes) {
+      const tail = y === S.h - 1;
+      html += `<div class="padgroup" title="${tail ? "Allocated by try_new_aligned; a borrowed view may end before this padding" : "Row padding"}">`;
+      for (let i = rowBytes; i < st; i++) html += `<div class="b pad${tail ? " tail" : ""}"><i>··</i><em>${start + i}</em></div>`;
+      html += `</div>`;
+    }
+    html += `</div></div>`;
+  }
+  $("mem").innerHTML = html;
+  renderInspect(S.sel, false);
+  renderCompare();
+  if (window.renderConverter) window.renderConverter();
+  $("code").textContent = rustCode(R, st);
+}
+
+function normOfStored(f, c) {
+  if (!c || c.stored === null) return 1;
+  const ct = CT[f.ct];
+  if (ct.kind === "uint" || ct.kind === "int") return clamp01(Number(c.stored) / (ct.kind === "uint" ? 2 ** ct.bits - 1 : 2 ** (ct.bits - 1) - 1));
+  return clamp01(Number(c.stored));
+}
+function misreadCss(R) {
+  const { f, chans } = R;
+  let rgb, a = 1;
+  if (R.isGray) { const y = normOfStored(f, chans[0]); rgb = [y, y, y]; if (chans[1]) a = normOfStored(f, chans[1]); }
+  else { rgb = [0, 1, 2].map(i => normOfStored(f, chans[i])); if (chans[3] && chans[3].key === "A") a = normOfStored(f, chans[3]); }
+  return `rgba(${rgb.map(v => Math.round(v * 255)).join(",")},${a})`;
+}
+function misreadWhy(R) {
+  const { f, cfg } = R, out = [];
+  if (R.isOk) return ["Oklab stores lightness and two signed axes, not red, green and blue, so reading them as RGB gives an unrelated color."];
+  if (R.isCmyk) return ["CMYK stores ink amounts. Reading the first three as RGB gives an unrelated color."];
+  if (f.generic) out.push("Native samples have no defined meaning, so any reading is a guess.");
+  if (f.layout === "Bgra") out.push("Blue and red trade places: BGRA stores blue first.");
+  if (f.layout === "Bgr") out.push("Blue and red trade places: BGR stores blue first.");
+  if (R.tf === "Linear") out.push("Linear values look too dark when treated as sRGB.");
+  if (R.tf === "Pq") out.push("PQ puts ordinary white low in the code range, so it looks dim and gray.");
+  if (R.tf === "Hlg") out.push("HLG's curve differs from sRGB, so tones shift.");
+  if (R.tf === "Bt709" || R.tf === "Gamma22") out.push(`The ${TFNAME[R.tf]} curve is close to sRGB, so the error is small but real.`);
+  if (R.prim !== "Bt709" && R.prim !== "Unknown") out.push(`${PRIM[R.prim].name} numbers are smaller for the same color, so read as sRGB they look duller.`);
+  if (f.alphaKind === "alpha" && cfg.alphaMode === "Premultiplied" && cfg.a < 1) out.push("Premultiplied color read as straight looks darker and leaves dark fringes when composited.");
+  if (R.narrow) out.push("Narrow range read as full looks washed out: black turns dark gray, white turns light gray.");
+  if (f.ct === "U16" && !out.length) out.push("Correct when the reader scales 16-bit codes; reading each byte as an 8-bit value would be garbage.");
+  if (!out.length) out.push("No difference: this is exactly the format a web hex code describes.");
+  return out;
+}
+
+function renderInspect(sel, hover) {
+  const { f, ct, chans } = R;
+  const c = chans[sel.c] || chans[0];
+  const bpp = ct.bytes * f.chans.length, st = stride(S, f);
+  const offset = sel.y * st + sel.x * bpp + sel.c * ct.bytes;
+  let bitsHtml = "", key = "";
+  if (c.bytes) {
+    const msb = S.be ? c.bytes.slice() : c.bytes.slice().reverse();
+    const bits = msb.map(b => b.toString(2).padStart(8, "0")).join("").split("");
+    const k = ct.kind, expEnd = k === "half" ? 6 : k === "f32" ? 9 : 12;
+    const field = i => (k === "half" || k === "f32" || k === "f64") ? (i === 0 ? "s" : i < expEnd ? "e" : "m") : (k === "int" && i === 0 ? "s" : "v");
+    const fc = { s: "var(--ch-R)", e: "var(--ch-B)", m: "var(--ch-G)", v: cvar(c.key) };
+    bitsHtml = `<div class="bits">${bits.map((b, i) => `<span class="bit${i && i % 8 === 0 ? " gap" : ""}" style="--c:${fc[field(i)]}">${b}</span>`).join("")}</div>`;
+    if (k === "half" || k === "f32" || k === "f64") key = `<div class="bitkey"><span><span class="dot" style="background:var(--ch-R)"></span>sign</span><span><span class="dot" style="background:var(--ch-B)"></span>exponent</span><span><span class="dot" style="background:var(--ch-G)"></span>fraction</span></div>`;
+    else if (k === "int") key = `<div class="bitkey"><span><span class="dot" style="background:var(--ch-R)"></span>sign bit (two's complement)</span></div>`;
+  }
+  const order = c.bytes && ct.bytes > 1
+    ? `In memory (${S.be ? "big" : "little"}-endian): ${c.bytes.map(hex2).join(" ").toUpperCase()}. As one number, most significant byte first: 0x${(S.be ? c.bytes : c.bytes.slice().reverse()).map(hex2).join("").toUpperCase()}.`
+    : c.bytes ? `One byte: 0x${hex2(c.bytes[0]).toUpperCase()}.` : "Padding: no defined value.";
+  $("inspect").innerHTML = `<h3>${hover ? "Hovering" : "Selected"}: pixel (${sel.x}, ${sel.y}), ${esc(CHNAME[c.key])}, ${ct.bytes} byte${ct.bytes > 1 ? "s" : ""} at offset ${offset}</h3>` +
+    `<p class="mono">offset = y × stride + x × bytes_per_pixel + channel × ${ct.bytes} = ${sel.y} × ${st} + ${sel.x} × ${bpp} + ${sel.c} × ${ct.bytes} = ${offset}</p>` +
+    `<p>${esc(order)} Stored number: <span class="mono">${esc(c.text)}</span>${c.norm !== null ? `, meaning ${fmt6(c.norm)} on the 0–1 scale` : ""}.</p>` + bitsHtml + key;
+}
+
+const COMPARE = [
+  ["Web image", { format: "Rgba8", transfer: "Srgb", primaries: "Bt709", alphaMode: "Straight", range: "Full" }],
+  ["Windows / GPU surface", { format: "Bgra8", transfer: "Srgb", primaries: "Bt709", alphaMode: "Premultiplied", range: "Full" }],
+  ["Phone photo, 16-bit", { format: "Rgb16", transfer: "Srgb", primaries: "DisplayP3", range: "Full" }],
+  ["HDR10 frame", { format: "Rgb16", transfer: "Pq", primaries: "Bt2020", range: "Full", pq: 203 }],
+  ["HD TV frame", { format: "Rgb8", transfer: "Bt709", primaries: "Bt709", range: "Narrow" }],
+  ["Linear float for blending", { format: "RgbaF32", transfer: "Linear", primaries: "Bt709", alphaMode: "Premultiplied", range: "Full" }],
+  ["Half float, linear", { format: "RgbaF16", transfer: "Linear", primaries: "Bt709", alphaMode: "Straight", range: "Full" }],
+  ["Grayscale", { format: "Gray8", transfer: "Srgb", primaries: "Bt709", range: "Full", luma: "Bt709" }],
+  ["Oklab", { format: "OklabF32" }],
+  ["Print", { format: "Cmyk8" }],
+  ["Scientific TIFF", { format: "GrayI16", transfer: "Linear", primaries: "Bt709", range: "Full" }],
+];
+function matches(over) {
+  const f = FMAP[over.format];
+  if (S.format !== over.format) return false;
+  if (!isColorish(f)) return true;
+  return ["transfer", "primaries", "range"].every(k => !(k in over) || S[k] === over[k]) &&
+    (f.alphaKind !== "alpha" || S.alphaMode === (over.alphaMode || "Straight"));
+}
+function renderChips() {
+  $("chips").innerHTML = COMPARE.map(([label, over], i) =>
+    `<button type="button" class="chipbtn" data-i="${i}" aria-pressed="${matches(over)}">${esc(label)} <small>${esc(FMAP[over.format].name)}</small></button>`).join("");
+}
+function renderCompare() {
+  $("cmp").innerHTML = `<thead><tr><th>Use</th><th>Descriptor</th><th>Stored numbers</th><th>Bytes of one pixel</th></tr></thead><tbody>` +
+    COMPARE.map(([label, over], i) => {
+      const cfg = Object.assign({}, S, { alphaMode: "Straight", range: "Full", luma: "Bt709" }, over);
+      const r = compute(cfg);
+      const nums = r.chans.map(c => `${CHSHORT[c.key]} ${c.text}`).join("  ");
+      const bytes = r.chans.map(c => `<span style="color:${cvar(c.key)}">${(c.bytes ? c.bytes.map(hex2).join("") : "??".repeat(r.ct.bytes)).toUpperCase()}</span>`).join(" ");
+      return `<tr class="cmprow${matches(over) ? " cur" : ""}" data-i="${i}" tabindex="0"><td>${esc(label)}</td><td>${esc(descText(r))}</td><td class="num">${esc(nums)}</td><td class="num">${bytes}</td></tr>`;
+    }).join("") + `</tbody>`;
+}
+
+function rustCode(R, st) {
+  const { f, cfg } = R, lines = [], uses = new Set(["PixelBuffer", "PixelDescriptor", "PixelFormat"]);
+  let fmtExpr = `PixelFormat::${f.id}`;
+  if (f.generic) {
+    uses.add("ChannelLayout"); uses.add("ChannelType");
+    const alpha = f.alphaKind === "alpha" ? `Some(AlphaMode::${cfg.alphaMode})` : "None";
+    if (f.alphaKind === "alpha") uses.add("AlphaMode");
+    lines.push(`// ${f.name} has no named variant: from_parts returns PixelFormat::Generic.`);
+    lines.push(`let format = PixelFormat::from_parts(ChannelType::${f.ct}, ChannelLayout::${f.layout}, ${alpha})`);
+    lines.push(`    .expect("every native type has gray, gray+alpha, RGB and RGBA");`);
+    lines.push(`assert_eq!(format.name(), "${f.name}");`);
+    fmtExpr = "format";
+  }
+  const chain = [];
+  if (isColorish(f) && cfg.transfer !== "Unknown") { chain.push(`.with_transfer(TransferFunction::${cfg.transfer})`); uses.add("TransferFunction"); }
+  if (isColorish(f) && cfg.primaries !== "Bt709") { chain.push(`.with_primaries(ColorPrimaries::${cfg.primaries})`); uses.add("ColorPrimaries"); }
+  if (f.alphaKind === "alpha" && cfg.alphaMode !== "Straight" && !f.generic) { chain.push(`.with_alpha(Some(AlphaMode::${cfg.alphaMode}))`); uses.add("AlphaMode"); }
+  if (R.narrow) { chain.push(`.with_signal_range(SignalRange::Narrow)`); uses.add("SignalRange"); }
+  lines.push(`let descriptor = PixelDescriptor::from_pixel_format(${fmtExpr})` + chain.map(c => `\n    ${c}`).join("") + ";");
+  lines.push(`assert_eq!(descriptor.bytes_per_pixel(), ${CT[f.ct].bytes * f.chans.length});`, "");
+  if (S.align) {
+    uses.add("plane::AlignedSamples");
+    lines.push(`// Each row is padded to a multiple of lcm(bytes_per_pixel, 64): stride ${st}.`);
+    lines.push(`let buffer = PixelBuffer::<(), AlignedSamples<u8>>::try_new_aligned(${S.w}, ${S.h}, descriptor)?;`);
+  } else {
+    lines.push(`// Packed rows: stride = width × bytes_per_pixel = ${st}.`);
+    lines.push(`let buffer = PixelBuffer::try_new(${S.w}, ${S.h}, descriptor)?;`);
+  }
+  lines.push(`let slice = buffer.as_slice();`);
+  lines.push(`let first_row: &[u8] = slice.row(0); // ${S.w * CT[f.ct].bytes * f.chans.length} bytes; padding excluded`);
+  return [`use zenpixels::{${[...uses].sort().join(", ")}};`, "", ...lines].join("\n");
+}
+
+// ---------------------------------------------------------------- primer
+const PRIMER = [
+  ["A hex code is a pixel format", "#FF7A1A is three 8-bit numbers (U8) for red, green and blue, using the sRGB curve and BT.709 primaries, full range, no alpha. In zenpixels that is RGB8 with an sRGB descriptor.", { format: "Rgb8", transfer: "Srgb", primaries: "Bt709", range: "Full" }],
+  ["Opacity is a fourth channel", "#RRGGBBAA adds alpha. Straight alpha keeps color and opacity apart; premultiplied alpha bakes the opacity into the color, which makes compositing faster.", { format: "Rgba8", transfer: "Srgb", primaries: "Bt709", alphaMode: "Premultiplied", range: "Full" }],
+  ["More bits, finer steps", "8 bits give 256 levels per channel, which can band in smooth skies. 16 bits give 65,536. The color is the same; only the precision changes.", { format: "Rgb16", transfer: "Srgb", primaries: "Bt709", range: "Full" }],
+  ["The curve is a choice", "Hex codes are curve-encoded: #808080 is not half the light of white. Linear storage holds the light itself, which math needs. Same color, smaller numbers in the darks.", { format: "RgbF32", transfer: "Linear", primaries: "Bt709", range: "Full" }],
+  ["Which red? Primaries", "sRGB's red is not the reddest red a phone can show. Display P3 and BT.2020 use more saturated primaries, so the same color takes smaller numbers, and new colors become reachable.", { format: "Rgb16", transfer: "Srgb", primaries: "DisplayP3", range: "Full" }],
+  ["Brighter than white: HDR", "PQ codes absolute brightness up to 10,000 nits, so ordinary white sits around 58% of the range, with headroom for highlights. BT.2020 primaries usually come with it.", { format: "Rgb16", transfer: "Pq", primaries: "Bt2020", range: "Full", pq: 203 }],
+  ["TV uses fewer codes", "Video often uses narrow range: black is 16 and white is 235 in 8 bits. Read as full range, it looks washed out.", { format: "Rgb8", transfer: "Bt709", primaries: "Bt709", range: "Narrow" }],
+  ["Order and padding", "Windows and GPUs often store blue first (BGRA), and sometimes an unused fourth byte (X) so each pixel is 4 bytes. Still the same RGB color.", { format: "Bgrx8", transfer: "Srgb", primaries: "Bt709", range: "Full" }],
+  ["Not every pixel is RGB", "Gray stores one lightness value. Oklab stores perceptual lightness and two color axes. CMYK stores printer ink amounts and needs an ICC profile to mean a color.", { format: "OklabF32" }],
+  ["Rows, padding and byte order", "Images are rows of pixels. Rows may be padded so each starts on an aligned address (stride). Multi-byte numbers have a byte order (endianness).", { format: "Rgb16", transfer: "Srgb", primaries: "Bt709", range: "Full", align: 64 }],
+];
+$("primer").innerHTML = PRIMER.map(([t, p], i) => `<li><div><h3>${esc(t)}</h3><p>${esc(p)}</p></div><button type="button" class="btn" data-i="${i}">Show me</button></li>`).join("");
+$("primer").addEventListener("click", e => {
+  const b = e.target.closest("button[data-i]"); if (!b) return;
+  Object.assign(S, { alphaMode: "Straight" }, PRIMER[+b.dataset.i][2]); S.sel = { y: 0, x: 0, c: 0 }; update();
+  document.querySelector(".specimen").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+});
+
+// ---------------------------------------------------------------- controls
+const NOTE_TF = { Srgb: "The curve of web colors and most images. Spends more codes on dark tones.", Linear: "Numbers proportional to light. Blending and resizing need this; it looks dark if shown as sRGB.",
+  Bt709: "The HD video camera curve, close to sRGB.", Gamma22: "A pure power curve, as in Adobe RGB files.", Pq: "HDR10 and Dolby Vision: absolute brightness up to 10,000 nits.",
+  Hlg: "Broadcast HDR, relative to the display's peak.", Unknown: "The source didn't say. zenpixels won't guess or convert." };
+const NOTE_PRIM = { Bt709: "The red, green and blue of sRGB and HD video.", DisplayP3: "Most phones and Apple screens: noticeably more saturated reds and greens than sRGB.",
+  Bt2020: "UHD and HDR video. Wider than most screens can show.", AdobeRgb: "Photography and print, with wider greens and cyans.", Unknown: "Not signaled." };
+const NOTE_ALPHA = { Straight: "Color as-is, plus opacity.", Premultiplied: "Color already multiplied by opacity.", Opaque: "Alpha present but always full.", Undefined: "A padding byte, not opacity.", None: "No alpha channel." };
+const NOTE_RANGE = { Full: "Every code is used: 0 is black, max is white.", Narrow: "TV range: black 16, white 235 in 8 bits (×256 in 16 bits)." };
+
+function fillFormats() {
+  const groups = [...new Set(FORMATS.map(f => f.group))];
+  $("format").innerHTML = groups.map(g => `<optgroup label="${esc(g)}">` +
+    FORMATS.filter(f => f.group === g).map(f => `<option value="${f.id}">${esc(f.name)}</option>`).join("") + `</optgroup>`).join("");
+}
+function syncControls() {
+  const f = FMAP[S.format], colorish = isColorish(f);
+  $("format").value = S.format;
+  $("transfer").disabled = !colorish; $("primaries").disabled = !colorish;
+  $("transfer").value = colorish ? S.transfer : "Unknown";
+  $("primaries").value = colorish ? S.primaries : (f.layout.startsWith("Oklab") ? "Bt709" : "Unknown");
+  $("tfnote").textContent = colorish ? NOTE_TF[S.transfer] : "Does not apply to this format.";
+  $("primnote").textContent = colorish ? NOTE_PRIM[S.primaries] : f.layout.startsWith("Oklab") ? "Oklab is defined from XYZ; the descriptor keeps BT.709 for the RGB it converts to and from." : "CMYK color comes from an ICC profile.";
+  $("pqfield").hidden = !(colorish && S.transfer === "Pq");
+  $("lumafield").hidden = !(f.layout === "Gray" || f.layout === "GrayAlpha");
+  const modes = f.alphaKind === "alpha" ? ["Straight", "Premultiplied", "Opaque"] : f.alphaKind === "pad" ? ["Undefined"] : ["None"];
+  if (!modes.includes(S.alphaMode)) S.alphaMode = modes[0];
+  $("alphamode").innerHTML = modes.map(m => `<option value="${m}">${m === "None" ? "None (no alpha)" : m === "Undefined" ? "Undefined (padding)" : m}</option>`).join("");
+  $("alphamode").value = S.alphaMode; $("alphamode").disabled = modes.length === 1;
+  $("alphanote").textContent = NOTE_ALPHA[S.alphaMode];
+  const rangeOk = (f.ct === "U8" || f.ct === "U16") && colorish;
+  $("range").disabled = !rangeOk; $("range").value = rangeOk ? S.range : "Full";
+  $("rangenote").textContent = rangeOk ? NOTE_RANGE[S.range] : "Only integer RGB and gray samples use narrow range.";
+  $("alpha").disabled = f.alphaKind !== "alpha";
+  $("alpha").value = Math.round(S.a * 255);
+  $("alphaout").textContent = `${Math.round(S.a * 255)} / 255${f.alphaKind !== "alpha" ? " (this format has no alpha)" : ""}`;
+  const FN = { Bgra8: "Blue first, as on Windows and many GPUs.", Rgbx8: "Fourth byte is padding, keeping pixels 4 bytes.", Bgrx8: "Blue first; fourth byte is padding.",
+    OklabF32: "Perceptual lightness plus two color axes.", OklabaF32: "Oklab plus straight alpha.", Cmyk8: "Printer ink amounts; needs an ICC profile.",
+    CmykF32: "Float ink amounts, 0 = no ink.", CmykF32Inverted: "Float ink amounts, 1 = no ink (as JPEG XL emits)." };
+  $("formatnote").textContent = f.generic ? "Native samples: carried bit for bit, never converted." : (FN[f.id] || `${f.chans.length} channels × ${CT[f.ct].bytes} byte${CT[f.ct].bytes > 1 ? "s" : ""} = ${CT[f.ct].bytes * f.chans.length} bytes per pixel.`);
+  $("endLE").setAttribute("aria-pressed", String(!S.be)); $("endBE").setAttribute("aria-pressed", String(S.be));
+  const H = hexOf(S.lin);
+  if (document.activeElement !== $("hex")) $("hex").value = H.hex.toLowerCase();
+  $("picker").value = H.hex.toLowerCase();
+  $("pqanchor").value = String(S.pq); $("luma").value = S.luma;
+  $("w").value = S.w; $("h").value = S.h; $("align").value = String(S.align);
+}
+function update() { syncControls(); render(); }
+
+function setHex(t) {
+  const p = parseHex(t);
+  if (!p) { $("hexmsg").textContent = "That isn't a hex code. Use #RGB, #RRGGBB or #RRGGBBAA."; return; }
+  $("hexmsg").textContent = "Or type stored numbers into the channel table. Web hex codes are sRGB, so they can't name colors outside sRGB; typed numbers can.";
+  S.lin = p.rgb.map(c => srgbEotf(c / 255));
+  if (p.a !== null) S.a = p.a / 255;
+  update();
+}
+$("hex").addEventListener("change", e => setHex(e.target.value));
+$("hex").addEventListener("keydown", e => { if (e.key === "Enter") setHex(e.target.value); });
+$("picker").addEventListener("input", e => setHex(e.target.value));
+$("alpha").addEventListener("input", e => { S.a = +e.target.value / 255; update(); });
+$("format").addEventListener("change", e => { S.format = e.target.value; S.sel = { y: 0, x: 0, c: 0 }; update(); });
+$("transfer").addEventListener("change", e => { S.transfer = e.target.value; update(); });
+$("primaries").addEventListener("change", e => { S.primaries = e.target.value; update(); });
+$("alphamode").addEventListener("change", e => { S.alphaMode = e.target.value; update(); });
+$("range").addEventListener("change", e => { S.range = e.target.value; update(); });
+$("luma").addEventListener("change", e => { S.luma = e.target.value; update(); });
+$("pqanchor").addEventListener("change", e => { S.pq = +e.target.value; update(); });
+$("w").addEventListener("change", e => { S.w = Math.min(8, Math.max(1, Math.round(+e.target.value) || 1)); S.sel = { y: 0, x: 0, c: 0 }; update(); });
+$("h").addEventListener("change", e => { S.h = Math.min(4, Math.max(1, Math.round(+e.target.value) || 1)); S.sel = { y: 0, x: 0, c: 0 }; update(); });
+$("align").addEventListener("change", e => { S.align = +e.target.value; update(); });
+$("endLE").addEventListener("click", () => { S.be = false; update(); });
+$("endBE").addEventListener("click", () => { S.be = true; update(); });
+
+$("chips").addEventListener("click", e => {
+  const b = e.target.closest("button[data-i]"); if (!b) return;
+  Object.assign(S, { alphaMode: "Straight", range: "Full" }, COMPARE[+b.dataset.i][1]); S.sel = { y: 0, x: 0, c: 0 }; update();
+});
+$("cards").addEventListener("change", e => {
+  const inp = e.target.closest("input[data-i]"); if (!inp) return;
+  const f = FMAP[S.format];
+  const norms = {};
+  for (const [i, c] of R.chans.entries()) {
+    if (c.key === "X") continue;
+    const text = i === +inp.dataset.i ? inp.value : c.text;
+    const v = unstore(f.ct, text, R.narrow && c.key !== "A");
+    if (v === null) { inp.setAttribute("aria-invalid", "true"); $("notes").insertAdjacentHTML("afterbegin", `<div class="note">"${esc(inp.value)}" is not a number this channel can hold.</div>`); return; }
+    norms[c.key] = v;
+  }
+  const d = decodePixel(S, norms);
+  S.lin = d.lin; S.a = d.a;
+  update();
+  if (d.note) $("notes").insertAdjacentHTML("afterbegin", `<div class="note">${esc(d.note)}</div>`);
+  if (R.isCmyk) $("notes").insertAdjacentHTML("afterbegin", `<div class="note">The color shown for typed CMYK values uses the same textbook formula in reverse; a real CMYK color needs the ICC profile.</div>`);
+});
+$("cmp").addEventListener("click", e => {
+  const row = e.target.closest("tr[data-i]"); if (!row) return;
+  Object.assign(S, { alphaMode: "Straight", range: "Full" }, COMPARE[+row.dataset.i][1]); S.sel = { y: 0, x: 0, c: 0 }; update();
+  document.querySelector(".specimen").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+});
+$("cmp").addEventListener("keydown", e => { if ((e.key === "Enter" || e.key === " ") && e.target.matches("tr[data-i]")) { e.preventDefault(); e.target.click(); } });
+
+const pick = el => ({ y: +el.dataset.y, x: +el.dataset.x, c: +el.dataset.c });
+$("mem").addEventListener("mouseover", e => {
+  const el = e.target.closest(".smp"); if (!el) return;
+  document.querySelectorAll(".smp.hov").forEach(n => n.classList.remove("hov"));
+  el.classList.add("hov"); renderInspect(pick(el), true);
+});
+$("mem").addEventListener("mouseleave", () => { document.querySelectorAll(".smp.hov").forEach(n => n.classList.remove("hov")); renderInspect(S.sel, false); });
+function choose(el) {
+  S.sel = pick(el);
+  document.querySelectorAll(".smp.sel").forEach(n => n.classList.remove("sel"));
+  el.classList.add("sel"); renderInspect(S.sel, false);
+}
+$("mem").addEventListener("click", e => { const el = e.target.closest(".smp"); if (el) choose(el); });
+$("mem").addEventListener("keydown", e => { if ((e.key === "Enter" || e.key === " ") && e.target.classList.contains("smp")) { e.preventDefault(); choose(e.target); } });
+$("copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("code").textContent); $("copy").textContent = "Copied"; }
+  catch { $("copy").textContent = "Select the code and copy it"; }
+  setTimeout(() => { $("copy").textContent = "Copy code"; }, 1800);
+});
+
+fillFormats();
+update();
+</script>
+<script src="converter.js"></script>
+</body>
+</html>

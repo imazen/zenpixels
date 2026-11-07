@@ -8,6 +8,7 @@
 //! Current color state (transfer, primaries, alpha) is tracked on the
 //! pixel descriptor itself, not as a separate enum.
 
+use crate::PixelDescriptor;
 use crate::cicp::Cicp;
 use crate::hdr::DiffuseWhite;
 use crate::{ColorPrimaries, TransferFunction};
@@ -261,8 +262,11 @@ impl<'a> ColorProfileSource<'a> {
 /// - **JPEG, WebP, TIFF**: `Icc` (ICC is the only color signal)
 /// - **PNG 3rd Ed**: `Cicp` when cICP chunk present, `Icc` when only iCCP
 /// - **AVIF/MIAF**: `Icc` when ICC colr box present, `Cicp` otherwise
-/// - **HEIC/HEIF**: `Cicp` when nclx colr box present, `Icc` otherwise
+/// - **HEIC/HEIF**: `Icc` when ICC colr box present, `Cicp` otherwise
 /// - **JPEG XL**: `Cicp` when enum encoding (`want_icc=false`), `Icc` when embedded ICC
+///
+/// Readers' measured behavior for conflicting signals is in
+/// `docs/color-signal-precedence.md`.
 ///
 /// Both `icc_profile` and `cicp` may be populated regardless of this flag —
 /// the non-authoritative field is preserved for metadata roundtripping.
@@ -292,6 +296,19 @@ pub enum ColorAuthority {
     /// Codecs should only set this when `cicp` is populated.
     /// Lenient consumers may fall back to `icc_profile` if CICP is absent.
     Cicp,
+}
+
+impl ColorAuthority {
+    /// Choose between the ICC and CICP form of a color source: the authoritative one
+    /// when it is present, otherwise the other. Every reader of the authority should
+    /// choose through this, so that they cannot disagree.
+    #[inline]
+    pub fn select<T>(self, icc: Option<T>, cicp: Option<T>) -> Option<T> {
+        match self {
+            Self::Icc => icc.or(cicp),
+            Self::Cicp => cicp.or(icc),
+        }
+    }
 }
 
 /// Color space metadata for pixel data.
@@ -426,7 +443,7 @@ pub enum ColorProvenance {
 ///
 /// `ColorOrigin` is immutable once set. It records how color was
 /// described, not what the pixels currently are. The encoder uses
-/// [`PixelDescriptor`](crate::PixelDescriptor) for the current state
+/// [`PixelDescriptor`] for the current state
 /// and can consult `ColorOrigin` for provenance decisions.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -462,7 +479,8 @@ impl ColorOrigin {
         }
     }
 
-    /// Create from both ICC and CICP (e.g., AVIF with both).
+    /// Create from both ICC and CICP, with CICP authoritative. Formats where ICC wins, such as AVIF with
+    /// an ICC `colr` box, set that with [`with_color_authority`](Self::with_color_authority).
     pub fn from_icc_and_cicp(icc: impl Into<Arc<[u8]>>, cicp: Cicp) -> Self {
         Self {
             icc: Some(icc.into()),
@@ -813,5 +831,218 @@ mod tests {
         let _ = alloc::format!("{a:?}");
         let c = ColorOrigin::assumed();
         assert_ne!(a, c);
+    }
+}
+
+/// Bytes aligned for every sample type a [`Color`] can hold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(C, align(4))]
+struct ColorSamples([u8; Color::MAX_BYTES]);
+
+const _: () = assert!(core::mem::size_of::<Color>() == 24);
+
+/// One color, and what its samples mean.
+///
+/// Holds one pixel of the descriptor's format, so `0.5` in linear Display P3 and `128` in sRGB
+/// are different colors that both stay exact until converted. `zenpixels_convert::ColorConvertExt`
+/// converts one to any other descriptor.
+///
+/// The bytes are aligned for every sample type, so casting [`as_bytes`](Self::as_bytes) to `f32`
+/// or `u16` samples can't fail and doesn't copy. Comparison is bitwise: `0.0` and `-0.0` differ.
+///
+/// Colors with an ICC profile aren't representable, because a profile can't be `Copy`.
+///
+/// # Examples
+///
+/// ```
+/// use zenpixels::{Color, ColorPrimaries, PixelDescriptor};
+///
+/// let red = Color::srgb8(255, 0, 0);
+/// assert_eq!(red.as_bytes(), [255, 0, 0]);
+///
+/// // Display P3's red, in linear light.
+/// let descriptor = PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::DisplayP3);
+/// let p3_red = Color::try_new(descriptor, bytemuck::bytes_of(&[1.0f32, 0.0, 0.0])).unwrap();
+/// let samples: &[f32] = bytemuck::cast_slice(p3_red.as_bytes());
+/// assert_eq!(samples, [1.0, 0.0, 0.0]);
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Color {
+    samples: ColorSamples,
+    descriptor: PixelDescriptor,
+}
+
+impl Color {
+    /// The largest pixel a color holds: four `f32` samples.
+    const MAX_BYTES: usize = 16;
+
+    /// Whether one pixel fits, in bytes and in the storage's alignment.
+    const fn fits(descriptor: PixelDescriptor) -> bool {
+        descriptor.bytes_per_pixel() <= Self::MAX_BYTES && descriptor.min_alignment() <= 4
+    }
+
+    /// An opaque 8-bit sRGB color, like a CSS hex color.
+    pub const fn srgb8(r: u8, g: u8, b: u8) -> Self {
+        let mut samples = [0; Self::MAX_BYTES];
+        samples[0] = r;
+        samples[1] = g;
+        samples[2] = b;
+        Self {
+            samples: ColorSamples(samples),
+            descriptor: PixelDescriptor::RGB8_SRGB,
+        }
+    }
+
+    /// Fully transparent 8-bit sRGB black, CSS's `transparent`.
+    pub const TRANSPARENT: Self = Self::srgba8(0, 0, 0, 0);
+
+    /// An 8-bit sRGB color with straight alpha, like a CSS `#rrggbbaa` color.
+    pub const fn srgba8(r: u8, g: u8, b: u8, a: u8) -> Self {
+        let mut samples = [0; Self::MAX_BYTES];
+        samples[0] = r;
+        samples[1] = g;
+        samples[2] = b;
+        samples[3] = a;
+        Self {
+            samples: ColorSamples(samples),
+            descriptor: PixelDescriptor::RGBA8_SRGB,
+        }
+    }
+
+    /// One pixel of `descriptor`'s format, as bytes in native sample order.
+    ///
+    /// # Errors
+    ///
+    /// [`BufferError::InvalidDimensions`](crate::buffer::BufferError::InvalidDimensions) when
+    /// `pixel` isn't exactly one pixel, the format's pixels are wider than 16 bytes, or its samples
+    /// need alignment above 4 bytes. [`AnyColor`] holds those.
+    pub fn try_new(
+        descriptor: PixelDescriptor,
+        pixel: &[u8],
+    ) -> Result<Self, crate::buffer::BufferError> {
+        let bytes = descriptor.bytes_per_pixel();
+        if pixel.len() != bytes || !Self::fits(descriptor) {
+            return Err(crate::buffer::BufferError::InvalidDimensions);
+        }
+        let mut samples = [0; Self::MAX_BYTES];
+        samples[..bytes].copy_from_slice(pixel);
+        Ok(Self {
+            samples: ColorSamples(samples),
+            descriptor,
+        })
+    }
+
+    /// What the samples mean.
+    pub const fn descriptor(&self) -> PixelDescriptor {
+        self.descriptor
+    }
+
+    /// The pixel, aligned to 4 bytes. Sample types wider than that need [`AnyColor`].
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.samples.0[..self.descriptor.bytes_per_pixel()]
+    }
+}
+
+/// A color in any format, including pixels wider than [`Color`] holds.
+///
+/// [`Color`] is `Copy` and holds up to 16 bytes, which covers every format at 8 and 16
+/// bits and everything with four `f32` samples. It has to be `Copy` to live in
+/// `ConvertOptions`. This type also holds wider pixels, such as RGBA in `f64`, on the
+/// heap, and costs no more space. Comparison is bitwise.
+///
+/// ```
+/// use zenpixels::{AnyColor, ChannelLayout, ChannelType, Color, PixelDescriptor, PixelFormat};
+///
+/// let small = AnyColor::from(Color::srgb8(255, 0, 0));
+/// assert_eq!(small.as_bytes(), [255, 0, 0]);
+/// assert!(small.as_color().is_some());
+///
+/// let format = PixelFormat::create_from(ChannelType::F64, ChannelLayout::Gray).unwrap();
+/// let descriptor = PixelDescriptor::from_pixel_format(format);
+/// let wide = AnyColor::try_new(descriptor, &0.5f64.to_ne_bytes()).unwrap();
+/// let samples: &[f64] = bytemuck::cast_slice(wide.as_bytes());
+/// assert_eq!(samples, [0.5]);
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AnyColor(AnyColorRepr);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum AnyColorRepr {
+    Compact(Color),
+    Wide(alloc::boxed::Box<WideColor>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct WideColor {
+    descriptor: PixelDescriptor,
+    /// Eight-byte words, so the bytes are aligned for every sample type.
+    words: alloc::boxed::Box<[u64]>,
+}
+
+const _: () = assert!(core::mem::size_of::<AnyColor>() == core::mem::size_of::<Color>());
+
+impl AnyColor {
+    /// One pixel of `descriptor`'s format, as bytes in native sample order.
+    ///
+    /// # Errors
+    ///
+    /// [`BufferError::InvalidDimensions`](crate::buffer::BufferError::InvalidDimensions) when
+    /// `pixel` isn't exactly one pixel, and
+    /// [`BufferError::AllocationFailed`](crate::buffer::BufferError::AllocationFailed).
+    pub fn try_new(
+        descriptor: PixelDescriptor,
+        pixel: &[u8],
+    ) -> Result<Self, crate::buffer::BufferError> {
+        use crate::buffer::BufferError;
+        let bytes = descriptor.bytes_per_pixel();
+        if pixel.len() != bytes {
+            return Err(BufferError::InvalidDimensions);
+        }
+        if Color::fits(descriptor) {
+            return Color::try_new(descriptor, pixel).map(Self::from);
+        }
+        let mut words = alloc::vec::Vec::new();
+        words
+            .try_reserve_exact(bytes.div_ceil(8))
+            .map_err(|_| BufferError::AllocationFailed)?;
+        words.resize(bytes.div_ceil(8), 0u64);
+        bytemuck::cast_slice_mut::<u64, u8>(&mut words)[..bytes].copy_from_slice(pixel);
+        let wide = WideColor {
+            descriptor,
+            words: words.into_boxed_slice(),
+        };
+        Ok(Self(AnyColorRepr::Wide(alloc::boxed::Box::new(wide))))
+    }
+
+    /// What the samples mean.
+    pub fn descriptor(&self) -> PixelDescriptor {
+        match &self.0 {
+            AnyColorRepr::Compact(color) => color.descriptor(),
+            AnyColorRepr::Wide(wide) => wide.descriptor,
+        }
+    }
+
+    /// The pixel, aligned for its sample type.
+    pub fn as_bytes(&self) -> &[u8] {
+        match &self.0 {
+            AnyColorRepr::Compact(color) => color.as_bytes(),
+            AnyColorRepr::Wide(wide) => {
+                &bytemuck::cast_slice(&wide.words)[..wide.descriptor.bytes_per_pixel()]
+            }
+        }
+    }
+
+    /// The compact form, or `None` when the pixel is wider than [`Color`] holds.
+    pub fn as_color(&self) -> Option<Color> {
+        match &self.0 {
+            AnyColorRepr::Compact(color) => Some(*color),
+            AnyColorRepr::Wide(_) => None,
+        }
+    }
+}
+
+impl From<Color> for AnyColor {
+    fn from(color: Color) -> Self {
+        Self(AnyColorRepr::Compact(color))
     }
 }

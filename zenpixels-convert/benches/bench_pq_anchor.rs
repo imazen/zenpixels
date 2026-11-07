@@ -11,7 +11,7 @@
 
 use zenbench::prelude::*;
 use zenpixels::{PixelBuffer, PixelDescriptor, TransferFunction};
-use zenpixels_convert::quantize_to;
+use zenpixels_convert::PixelSliceConvertExt;
 
 const SIZES: &[(&str, u32, u32)] = &[
     ("  256px", 256, 1),
@@ -47,7 +47,7 @@ fn bench_quantize(
             g.throughput(Throughput::Bytes(input_bytes));
             g.bench("quantize_to", move |b| {
                 b.iter(|| {
-                    let out = quantize_to(buf.as_slice(), target).unwrap();
+                    let out = buf.as_slice().quantize_to(target).unwrap();
                     black_box(out);
                 })
             });

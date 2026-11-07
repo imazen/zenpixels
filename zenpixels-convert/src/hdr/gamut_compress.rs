@@ -1,376 +1,144 @@
-//! Soft gamut compression in OKLch — precomputed gamut boundary LUT
-//! plus a rational knee function that preserves hue and lightness.
+//! Soft gamut compression in OKLch: reduces chroma near and past the boundary of
+//! a set of primaries, keeping hue and lightness.
 //!
-//! For a given color primaries set, [`GamutBoundaryLut`] tabulates the
-//! maximum in-gamut OKLch chroma at each `(L, hue)` pair. [`SoftCompress`]
-//! wraps a LUT with a configurable knee threshold and smoothly reduces
-//! out-of-gamut chroma using a rational compression curve.
+//! Scaling OKLab chroma by `s` at constant L and hue is a straight blend in
+//! cube-root LMS, `x'(s) = L + s (x' - L)`, because the a and b rows of that
+//! matrix sum to zero and the L row sums to one. Each RGB channel is therefore a
+//! cubic in `s`, and the gamut boundary is its first crossing of 0 or 1. That needs
+//! no hue, `atan2`, square root or lookup table, so it vectorizes directly:
 //!
-//! # Provenance
+//! 1. A gate in linear RGB passes interior pixels through bit-identical. Only those
+//!    it rejects reach the solve, packed into full SIMD batches.
+//! 2. A chord from gray to the input starts each lane before its first crossing.
+//! 3. Three Newton steps find the crossing, and a rational knee sets the new chroma.
 //!
-//! Extracted from `zenfilters::gamut_lut` (the previous home of these
-//! types — the implementation is byte-identical to that crate's
-//! `GamutBoundaryLut`, plus a thin [`SoftCompress`] wrapper that exposes
-//! the same compression behavior under an explicit type. Tests carried
-//! over verbatim from `zenfilters/src/gamut_lut.rs`).
+//! Measurements and comparisons are in `docs/gamut-mapping-survey.md`, and the
+//! harness is `benchmarks/gamut-compress`.
 
-extern crate alloc;
+use archmage::prelude::*;
+use zenpixels::ColorPrimaries;
 
-use crate::gamut::GamutMatrix;
-use crate::oklab;
+use crate::oklab::{LMS_CBRT_FROM_OKLAB, OKLAB_FROM_LMS_CBRT, OklabSpace};
 
-/// Precomputed sRGB (or P3 / BT.2020) gamut boundary in OKLch space.
-///
-/// Stores the maximum in-gamut chroma for a grid of `(L, hue)` values.
-/// Constructed once per primaries set and reused across frames.
-///
-/// The grid is `64` lightness steps × `256` hue steps (16 384 floats =
-/// 64 KiB). Construction takes ~30 ms on a single core for sRGB — amortize
-/// by sharing one LUT across the lifetime of a converter.
-#[derive(Debug, Clone)]
-pub struct GamutBoundaryLut {
-    /// Flattened `[L_STEPS][H_STEPS]` array of max chroma values.
-    data: alloc::vec::Vec<f32>,
-}
+/// Newton steps on the boundary. At 3, the largest difference from bisection on a
+/// BT.2020 grid was 0.000002 in OKLab, and 2 left 0.00098.
+const SOLVE_STEPS: u32 = 3;
 
-/// Number of lightness steps in the LUT (0..=1).
-const L_STEPS: usize = 64;
-/// Number of hue angle steps in the LUT (0..2π).
-const H_STEPS: usize = 256;
-/// Maximum chroma to search during LUT construction.
-/// OKLch chroma rarely exceeds 0.4 for sRGB, but P3/BT.2020 can go higher.
-const MAX_SEARCH_CHROMA: f32 = 0.5;
-/// Binary search iterations for gamut boundary (2^-20 ≈ 1e-6 precision).
-const BISECT_ITERS: u32 = 20;
+/// The gate's upper limit: a pixel with its largest channel at or above this is
+/// close enough to the top of the cube that it always gets solved.
+const GATE_TOP: f32 = 0.95;
 
-impl GamutBoundaryLut {
-    /// Build the gamut boundary LUT for a given primaries set.
-    ///
-    /// `m1_inv` is the combined LMS → linear RGB matrix for the target
-    /// primaries, from [`crate::oklab::lms_to_rgb_matrix`].
-    pub fn new(m1_inv: &GamutMatrix) -> Self {
-        let mut data = alloc::vec![0.0f32; L_STEPS * H_STEPS];
-
-        for li in 0..L_STEPS {
-            let l = li as f32 / (L_STEPS - 1) as f32;
-            for hi in 0..H_STEPS {
-                let h = hi as f32 / H_STEPS as f32 * core::f32::consts::TAU;
-                data[li * H_STEPS + hi] = find_max_chroma(l, h, m1_inv);
-            }
-        }
-
-        Self { data }
-    }
-
-    /// Look up the maximum in-gamut chroma for a given `(L, hue)` with
-    /// bilinear interpolation. `h` is in radians; out-of-range `L` is
-    /// clamped to `[0, 1]` and `h` is wrapped modulo `2π`.
-    #[inline]
-    pub fn max_chroma(&self, l: f32, h: f32) -> f32 {
-        let l_clamped = l.clamp(0.0, 1.0);
-        let h_norm = h.rem_euclid(core::f32::consts::TAU);
-
-        let l_f = l_clamped * (L_STEPS - 1) as f32;
-        let h_f = h_norm / core::f32::consts::TAU * H_STEPS as f32;
-
-        let l0 = (l_f as usize).min(L_STEPS - 2);
-        let l1 = l0 + 1;
-        // `rem_euclid` of a tiny negative hue rounds up to exactly 2π, so `h_f`
-        // can equal `H_STEPS`. Take the fraction before wrapping the index.
-        let h_floor = h_f as usize;
-        let h0 = h_floor % H_STEPS;
-        let h1 = (h0 + 1) % H_STEPS;
-
-        let lt = l_f - l0 as f32;
-        let ht = h_f - h_floor as f32;
-
-        let v00 = self.data[l0 * H_STEPS + h0];
-        let v01 = self.data[l0 * H_STEPS + h1];
-        let v10 = self.data[l1 * H_STEPS + h0];
-        let v11 = self.data[l1 * H_STEPS + h1];
-
-        let top = v00 + (v01 - v00) * ht;
-        let bot = v10 + (v11 - v10) * ht;
-        top + (bot - top) * lt
-    }
-
-    /// Apply soft chroma compression to OKLab planes in-place.
-    ///
-    /// For each pixel, if chroma exceeds `knee * max_chroma`, smoothly
-    /// compresses it toward the gamut boundary using a rational function
-    /// that preserves hue and lightness.
-    ///
-    /// `knee` is the fraction of max chroma where compression starts
-    /// (`0.0`–`1.0`). Production default: `0.96` (start compressing at
-    /// 96 % of gamut boundary), empirically calibrated against the
-    /// imazen-26 gain-mapped HDR corpus on 2026-06-23 — the largest knee
-    /// where the corpus-p90 fraction of pre-clamp out-of-gamut pixels
-    /// stays under 0.1 %. Smaller values bring the rolloff in earlier
-    /// (more desaturation, lower clipping); larger values let more
-    /// clipping leak through.
-    ///
-    /// Chroma-compresses `NaN`/`inf` OKLab inputs to `NaN`/`inf` outputs
-    /// (no scrubbing — the caller owns input sanitisation; the pipeline
-    /// path feeds this finite values).
-    ///
-    /// # Panics
-    ///
-    /// Panics if `a.len()` or `b.len()` differs from `l.len()`. The three
-    /// planes describe one image and must be the same length; a mismatch
-    /// is a caller bug. (Promoted from a `debug_assert` so release builds
-    /// get this message instead of a raw index-out-of-bounds panic.)
-    pub fn compress_planes(&self, l: &[f32], a: &mut [f32], b: &mut [f32], knee: f32) {
-        let n = l.len();
-        assert!(
-            a.len() == n && b.len() == n,
-            "compress_planes: L/a/b plane lengths must match (l={n}, a={}, b={})",
-            a.len(),
-            b.len(),
-        );
-
-        for i in 0..n {
-            let av = a[i];
-            let bv = b[i];
-
-            // libm, not the std `f32::sqrt`/`atan2` inherents: this crate is
-            // `#![cfg_attr(not(feature = "std"), no_std)]` and `hdr-experimental`
-            // does not pull `std`, so a no_std consumer enabling it must not hit
-            // std-only float methods.
-            let c = libm::sqrtf(av * av + bv * bv);
-            if c < 1e-10 {
-                continue; // achromatic, nothing to compress
-            }
-
-            let h = libm::atan2f(bv, av);
-
-            let max_c = self.max_chroma(l[i], h);
-            if max_c < 1e-10 {
-                // At L=0 or L=1, max chroma is 0 — force achromatic
-                a[i] = 0.0;
-                b[i] = 0.0;
-                continue;
-            }
-
-            let knee_c = knee * max_c;
-            if c <= knee_c {
-                continue; // within knee threshold, pass through
-            }
-
-            // Rational compression: maps [knee_c, ∞) → [knee_c, max_c)
-            //
-            // f(C) = knee_c + range * excess / (excess + range)
-            //
-            // Properties:
-            //   f(knee_c) = knee_c          (C0 continuous)
-            //   f'(knee_c) = 1              (C1 continuous — slope matches passthrough)
-            //   f(∞) → max_c               (asymptotic limit)
-            let range = max_c - knee_c;
-            let excess = c - knee_c;
-            let compressed_c = knee_c + range * excess / (excess + range);
-
-            let scale = compressed_c / c;
-            a[i] = av * scale;
-            b[i] = bv * scale;
-        }
+/// Smallest `min / max` among colors past the knee, rounded up, from 399 lightness
+/// by 1,440 hue boundary points per target (`gamut-compress gate-all`). A pixel with
+/// a larger ratio and `max < GATE_TOP` can't be past the knee. Infinity disables it.
+fn gate_ratio(primaries: ColorPrimaries, knee: f32) -> f32 {
+    #[allow(unreachable_patterns)]
+    match (primaries, knee) {
+        (ColorPrimaries::Bt709, k) if k >= 0.96 => 0.0875,
+        (ColorPrimaries::DisplayP3, k) if k >= 0.96 => 0.0865,
+        (ColorPrimaries::Bt2020, k) if k >= 0.96 => 0.1115,
+        (ColorPrimaries::Bt709, k) if k >= 0.90 => 0.5435,
+        (ColorPrimaries::DisplayP3, k) if k >= 0.90 => 0.539,
+        (ColorPrimaries::Bt2020, k) if k >= 0.90 => 0.55,
+        _ => f32::INFINITY,
     }
 }
 
-/// Binary search for the maximum in-gamut chroma at a given `(L, hue)`.
-fn find_max_chroma(l: f32, h: f32, m1_inv: &GamutMatrix) -> f32 {
-    let cos_h = libm::cosf(h);
-    let sin_h = libm::sinf(h);
-
-    let mut lo = 0.0f32;
-    let mut hi = MAX_SEARCH_CHROMA;
-
-    for _ in 0..BISECT_ITERS {
-        let mid = (lo + hi) * 0.5;
-        let a = mid * cos_h;
-        let b = mid * sin_h;
-
-        if is_in_gamut(l, a, b, m1_inv) {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-
-    lo
-}
-
-/// Check if an OKLab color is within the RGB gamut for the given primaries.
-#[inline]
-fn is_in_gamut(l: f32, a: f32, b: f32, m1_inv: &GamutMatrix) -> bool {
-    let rgb = oklab::oklab_to_rgb(l, a, b, m1_inv);
-    rgb[0] >= 0.0
-        && rgb[0] <= 1.0
-        && rgb[1] >= 0.0
-        && rgb[1] <= 1.0
-        && rgb[2] >= 0.0
-        && rgb[2] <= 1.0
-}
-
-/// Soft chroma compression on linear-light RGB strips.
+/// Soft chroma compression for one set of primaries.
 ///
-/// Wraps a [`GamutBoundaryLut`] with a `knee` threshold and exposes the
-/// compression as an explicit per-strip API. Construction performs the
-/// LUT build once; subsequent [`apply_strip`](Self::apply_strip) calls
-/// reuse it.
+/// Below `knee` times the largest in-gamut chroma at a pixel's lightness and hue,
+/// colors pass through unchanged. Above it, chroma rolls off along a rational curve
+/// that's continuous in value and slope at the knee and approaches the boundary.
+/// Hue and lightness are kept. Results stay within about 0.001 of the cube, so a
+/// final clamp is still needed.
 ///
-/// # Pipeline
-///
-/// For each pixel:
-/// 1. Convert linear RGB → OKLab (via [`crate::oklab::rgb_to_oklab`]).
-/// 2. Compute chroma `c = √(a² + b²)` and hue `h = atan2(b, a)`.
-/// 3. Look up max in-gamut chroma `c_max` at `(L, h)`.
-/// 4. If `c > knee · c_max`, compress: `c' = knee·c_max + range · excess / (excess + range)`.
-/// 5. Convert OKLab → linear RGB.
-///
-/// Hue and lightness are preserved within float precision; only chroma is
-/// modified. The rational compression curve is C¹-continuous at the knee
-/// (slope `1.0` on the inside, asymptote at the gamut boundary).
+/// Cheap to construct, with no table and no allocation.
 ///
 /// # Examples
 ///
 /// ```
-/// # #[cfg(feature = "hdr-experimental")]
-/// # {
+/// # #[cfg(feature = "hdr-experimental")] {
 /// use zenpixels_convert::hdr::SoftCompress;
-/// use zenpixels_convert::oklab;
+/// use zenpixels_convert::oklab::OklabSpace;
 /// use zenpixels::ColorPrimaries;
 ///
-/// let m1_inv = oklab::lms_to_rgb_matrix(ColorPrimaries::Bt709).unwrap();
-/// let compress = SoftCompress::new(&m1_inv, 0.96);
+/// let space = OklabSpace::for_primaries(ColorPrimaries::Bt709).unwrap();
+/// let compress = SoftCompress::new(&space, SoftCompress::DEFAULT_KNEE);
 ///
-/// let mut pixels = vec![[1.2_f32, 0.05, 0.05]]; // out-of-gamut red
+/// let mut pixels = [[1.2_f32, 0.05, 0.05]]; // out-of-gamut red
 /// compress.apply_strip(&mut pixels);
-/// for px in &pixels {
-///     for &c in px {
-///         assert!(c <= 1.0 + 1e-2, "expected in-gamut output");
-///     }
-/// }
+/// assert!(pixels[0].iter().all(|&c| (-1e-3..=1.0 + 1e-3).contains(&c)));
 /// # }
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SoftCompress {
-    lut: GamutBoundaryLut,
+    space: OklabSpace,
     knee: f32,
-    m1: GamutMatrix,
-    m1_inv: GamutMatrix,
+    gate_ratio: f32,
+    /// Past `1 / knee` nothing changes, so the solve needn't look further.
+    scale_cap: f32,
 }
 
 impl SoftCompress {
-    /// Production default knee — the fraction of max chroma where the soft
-    /// rolloff begins. Empirically calibrated against the 76-sample
-    /// imazen-26 gain-mapped HDR corpus on 2026-06-23: `0.96` is the
-    /// largest knee value (i.e. the LEAST chroma compression / desaturation)
-    /// where the corpus-p90 fraction of pre-clamp out-of-gamut pixels stays
-    /// under 0.1 %. Surfaced as a `pub const` so test fixtures and external
-    /// callers can refer to the same anchor as
-    /// [`crate::HdrConfig::default`]'s `gamut_knee` field. Matches
-    /// `HdrConfig::default().gamut_knee` byte-for-byte.
+    /// Production default knee: the fraction of the largest in-gamut chroma where
+    /// the rolloff begins. From a sweep of 76 imazen-26 gain-mapped HDR images on
+    /// 2026-06-23, the largest value whose corpus-p90 share of pre-clamp
+    /// out-of-gamut pixels stayed under 0.1 %. Matches
+    /// [`crate::HdrConfig::default`]'s `gamut_knee`.
     pub const DEFAULT_KNEE: f32 = 0.96;
 
-    /// Construct a [`SoftCompress`] for the given primaries (via `m1_inv`,
-    /// the LMS → RGB matrix from
-    /// [`crate::oklab::lms_to_rgb_matrix`]) and
-    /// `knee` threshold (`0.0`–`1.0`; production default `0.96`,
-    /// corpus-validated 2026-06-23).
+    /// A compressor for `space`. `knee` is in `0.0..=1.0`, and 1.0 maps to the
+    /// boundary with no rolloff.
     ///
-    /// The matching forward matrix is derived by inverting `m1_inv`. If you
-    /// already have the forward matrix on hand (the `rgb_to_lms_matrix`
-    /// output), prefer [`SoftCompress::from_matrices`] (which takes both
-    /// and cannot panic).
-    ///
-    /// # Panics
-    ///
-    /// Panics if `m1_inv` is singular (non-invertible). Every matrix from
-    /// [`crate::oklab::lms_to_rgb_matrix`] — the intended input — is
-    /// invertible, so the pipeline path never triggers this; it only
-    /// fires for a hand-constructed degenerate matrix. Pass matrices from
-    /// `oklab::lms_to_rgb_matrix` / `rgb_to_lms_matrix`, or use
-    /// [`from_matrices`](Self::from_matrices) to supply the inverse
-    /// directly.
+    /// Knees under about 0.5 reach far beyond the boundary, where the solve hasn't
+    /// been qualified.
     #[must_use]
-    pub fn new(m1_inv: &GamutMatrix, knee: f32) -> Self {
-        let m1 = invert_3x3(m1_inv).expect("LMS→RGB matrix must be invertible");
+    pub fn new(space: &OklabSpace, knee: f32) -> Self {
         Self {
-            lut: GamutBoundaryLut::new(m1_inv),
+            space: *space,
             knee,
-            m1,
-            m1_inv: *m1_inv,
+            gate_ratio: gate_ratio(space.primaries(), knee),
+            scale_cap: (1.0 / knee).clamp(1.25, 16.0),
         }
     }
 
-    /// Construct a [`SoftCompress`] from both forward and inverse matrices.
-    /// `m1` is the linear-RGB → LMS matrix (from `oklab::rgb_to_lms_matrix`);
-    /// `m1_inv` is the LMS → linear-RGB matrix.
+    /// Compress a row of linear RGB pixels in place.
     ///
-    /// The two matrices must be a matched inverse pair for the same
-    /// primaries — this constructor does not verify that (it's the cheap,
-    /// no-panic path). A mismatched pair yields a wrong (but non-panicking)
-    /// color transform. Prefer [`new`](Self::new) when you only have the
-    /// inverse and want the forward derived consistently.
-    #[must_use]
-    pub fn from_matrices(m1: &GamutMatrix, m1_inv: &GamutMatrix, knee: f32) -> Self {
-        Self {
-            lut: GamutBoundaryLut::new(m1_inv),
-            knee,
-            m1: *m1,
-            m1_inv: *m1_inv,
-        }
-    }
-
-    /// Apply soft gamut compression to a strip of linear RGB pixels in place.
-    ///
-    /// Expects finite linear-RGB input; `NaN`/`inf` channels pass through
-    /// to `NaN`/`inf` output (this is an inner strip primitive — the
-    /// pipeline scrubs non-finite values before the tone-map chain, so
-    /// direct callers own that themselves).
+    /// Interior pixels stay bit-identical. Non-finite channels, and magnitudes above
+    /// about 1e38, pass through unchanged.
     pub fn apply_strip(&self, rgb: &mut [[f32; 3]]) {
-        // Convert to OKLab in planar form for the LUT — small temporaries
-        // per pixel keep the API allocation-free even for short strips.
-        for px in rgb.iter_mut() {
-            let lab = oklab::rgb_to_oklab(px[0], px[1], px[2], &self.m1);
-            let l = lab[0];
-            let mut a = lab[1];
-            let mut b = lab[2];
+        incant!(apply_strip_impl(self, rgb), [v3, neon, wasm128, scalar])
+    }
 
-            // libm float math — no_std discipline (see `compress_planes`).
-            let c = libm::sqrtf(a * a + b * b);
-            if c < 1e-10 {
-                continue;
-            }
-            let h = libm::atan2f(b, a);
-            let max_c = self.lut.max_chroma(l, h);
-            if max_c < 1e-10 {
-                a = 0.0;
-                b = 0.0;
-            } else {
-                let knee_c = self.knee * max_c;
-                if c > knee_c {
-                    let range = max_c - knee_c;
-                    let excess = c - knee_c;
-                    let compressed_c = knee_c + range * excess / (excess + range);
-                    let scale = compressed_c / c;
-                    a *= scale;
-                    b *= scale;
-                }
-            }
-            let out = oklab::oklab_to_rgb(l, a, b, &self.m1_inv);
-            *px = out;
+    /// Compress OKLab planes in place, leaving `l` as is. For pipelines that already
+    /// hold planar OKLab. Equivalent to converting to RGB and using
+    /// [`apply_strip`](Self::apply_strip), up to rounding.
+    ///
+    /// # Errors
+    ///
+    /// [`BufferSize`](crate::ConvertError::BufferSize) when `a` or `b` differs in
+    /// length from `l`, leaving both untouched.
+    pub fn compress_oklab_planes(
+        &self,
+        l: &[f32],
+        a: &mut [f32],
+        b: &mut [f32],
+    ) -> Result<(), whereat::At<crate::ConvertError>> {
+        let n = l.len();
+        if a.len() != n || b.len() != n {
+            return Err(whereat::at!(crate::ConvertError::BufferSize {
+                expected: n,
+                actual: if a.len() != n { a.len() } else { b.len() },
+            }));
         }
+        incant!(
+            compress_planes_impl(self, l, a, b),
+            [v3, neon, wasm128, scalar]
+        );
+        Ok(())
     }
 
-    /// Borrow the inner [`GamutBoundaryLut`] for direct planar use (used by
-    /// `zenfilters::Pipeline`, which keeps its own planar OKLab buffer).
-    #[inline]
-    #[must_use]
-    pub fn lut(&self) -> &GamutBoundaryLut {
-        &self.lut
-    }
-
-    /// Knee threshold (fraction of max chroma where compression starts).
+    /// Knee: the fraction of the largest in-gamut chroma where compression starts.
     #[inline]
     #[must_use]
     pub fn knee(&self) -> f32 {
@@ -378,396 +146,431 @@ impl SoftCompress {
     }
 }
 
-/// Invert a 3×3 matrix via cofactor expansion. Returns `None` if singular.
-fn invert_3x3(m: &GamutMatrix) -> Option<GamutMatrix> {
-    let a = m[0][0];
-    let b = m[0][1];
-    let c = m[0][2];
-    let d = m[1][0];
-    let e = m[1][1];
-    let f = m[1][2];
-    let g = m[2][0];
-    let h = m[2][1];
-    let i = m[2][2];
+/// The chroma scale for each lane, and which lanes it applies to, from lightness,
+/// the offset of each cube-root LMS channel from it, and the input's RGB.
+///
+/// Uses plain multiply and add, with no fused operations, so that every SIMD tier
+/// gives identical bits.
+macro_rules! chroma_scale {
+    ($splat:ident, $dot:ident, $sc:expr, $ll:ident, $dl:ident, $dm:ident, $ds:ident, $r0:ident, $g0:ident, $b0:ident) => {{
+        let inv = $sc.space.lms_to_rgb().rows();
+        let (zero, one, three) = ($splat(0.0), $splat(1.0), $splat(3.0));
+        let cap = $splat($sc.scale_cap);
+        let tiny = $splat(1e-12);
 
-    let det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
-    if det.abs() < 1e-30 {
-        return None;
+        // Start on the chord from gray (s = 0, every channel L^3) to the input
+        // (s = 1). Starting at s = 1 on a far-out color lands on a later crossing.
+        let gray = $ll * $ll * $ll;
+        let chord = |v: f32x8| -> f32x8 {
+            let over = (one - gray) / (v - gray);
+            let under = gray / (gray - v);
+            f32x8::blend(
+                v.simd_lt(zero),
+                under,
+                f32x8::blend(v.simd_gt(one), over, cap),
+            )
+        };
+        let mut s = chord($r0)
+            .min(chord($g0))
+            .min(chord($b0))
+            .max(zero)
+            .min(one);
+
+        for _ in 0..SOLVE_STEPS {
+            let (xl, xm, xs) = ($ll + s * $dl, $ll + s * $dm, $ll + s * $ds);
+            let (l2, m2, s2) = (xl * xl, xm * xm, xs * xs);
+            let (l3, m3, s3) = (l2 * xl, m2 * xm, s2 * xs);
+            let (gl, gm, gs) = (l2 * $dl, m2 * $dm, s2 * $ds);
+            // Each channel's next estimate of its crossing; the nearest one binds.
+            let toward = |row: &[f32; 3]| -> f32x8 {
+                let v = $dot(row, l3, m3, s3);
+                let grad = three * $dot(row, gl, gm, gs);
+                let face = f32x8::blend(grad.simd_gt(zero), one, zero);
+                f32x8::blend(grad.abs().simd_lt(tiny), cap, s + (face - v) / grad)
+            };
+            s = toward(&inv[0])
+                .min(toward(&inv[1]))
+                .min(toward(&inv[2]))
+                .max(zero)
+                .min(cap);
+        }
+
+        // Rational knee in units of the input's chroma, which sits at s = 1:
+        // continuous in value and slope at the knee, approaching the boundary.
+        let knee_s = $splat($sc.knee) * s;
+        let excess = one - knee_s;
+        let range = s - knee_s;
+        let scaled = knee_s + range * excess / (excess + range);
+        // No representable chroma at L <= 0 or L >= 1.
+        let dead = $ll.simd_le(zero) | $ll.simd_ge(one);
+        // Multiplying by zero gives NaN for exactly the non-finite values.
+        let finite =
+            ($r0 * zero).simd_eq(zero) & ($g0 * zero).simd_eq(zero) & ($b0 * zero).simd_eq(zero);
+        (
+            f32x8::blend(dead, zero, scaled),
+            (excess.simd_gt(zero) | dead) & finite,
+        )
+    }};
+}
+
+#[magetypes(define(f32x8), v3, neon, wasm128, scalar)]
+fn apply_strip_impl(token: Token, sc: &SoftCompress, rgb: &mut [[f32; 3]]) {
+    let splat = |v: f32| f32x8::splat_t(token, v);
+    let dot = |row: &[f32; 3], a: f32x8, b: f32x8, c: f32x8| -> f32x8 {
+        splat(row[0]) * a + splat(row[1]) * b + splat(row[2]) * c
+    };
+    let (m1, inv) = (sc.space.rgb_to_lms().rows(), sc.space.lms_to_rgb().rows());
+    let ok = OKLAB_FROM_LMS_CBRT.rows()[0];
+    let (ratio, top) = (splat(sc.gate_ratio), splat(GATE_TOP));
+
+    let solve = |px: &mut [[f32; 3]; 8]| {
+        let r0 = f32x8::from_array_t(token, core::array::from_fn(|i| px[i][0]));
+        let g0 = f32x8::from_array_t(token, core::array::from_fn(|i| px[i][1]));
+        let b0 = f32x8::from_array_t(token, core::array::from_fn(|i| px[i][2]));
+        let lc = dot(&m1[0], r0, g0, b0).cbrt_midp();
+        let mc = dot(&m1[1], r0, g0, b0).cbrt_midp();
+        let sc2 = dot(&m1[2], r0, g0, b0).cbrt_midp();
+        let ll = dot(&ok, lc, mc, sc2);
+        let (dl, dm, ds) = (lc - ll, mc - ll, sc2 - ll);
+        let (scaled, active) = chroma_scale!(splat, dot, sc, ll, dl, dm, ds, r0, g0, b0);
+        let (xl, xm, xs) = (ll + scaled * dl, ll + scaled * dm, ll + scaled * ds);
+        let (l3, m3, s3) = (xl * xl * xl, xm * xm * xm, xs * xs * xs);
+        let rr = f32x8::blend(active, dot(&inv[0], l3, m3, s3), r0).to_array();
+        let gg = f32x8::blend(active, dot(&inv[1], l3, m3, s3), g0).to_array();
+        let bb = f32x8::blend(active, dot(&inv[2], l3, m3, s3), b0).to_array();
+        for (i, out) in px.iter_mut().enumerate() {
+            *out = [rr[i], gg[i], bb[i]];
+        }
+    };
+
+    // Rejected pixels wait here with their position, then go through as a batch,
+    // so one edge pixel doesn't cost a whole mixed group of 8.
+    let mut batch = [[0.5f32; 3]; 8];
+    let mut slots = [0usize; 8];
+    let mut used = 0;
+    let n = rgb.len();
+    let mut start = 0;
+    while start < n {
+        let end = (start + 8).min(n);
+        // Padding lanes of a short tail are 1.0, which the gate rejects, so they
+        // can't produce a false all-interior result; they're never read back.
+        let mut lanes = [[1.0f32; 8]; 3];
+        for (i, px) in rgb[start..end].iter().enumerate() {
+            lanes[0][i] = px[0];
+            lanes[1][i] = px[1];
+            lanes[2][i] = px[2];
+        }
+        let r = f32x8::from_array_t(token, lanes[0]);
+        let g = f32x8::from_array_t(token, lanes[1]);
+        let b = f32x8::from_array_t(token, lanes[2]);
+        let mx = r.max(g).max(b);
+        let mn = r.min(g).min(b);
+        let interior = mn.simd_gt(mx * ratio) & mx.simd_lt(top);
+        if end - start == 8 && interior.bitcast_to_i32().all_true() {
+            start = end;
+            continue;
+        }
+        let keep = interior.to_array();
+        for i in 0..end - start {
+            if keep[i].to_bits() == 0 {
+                batch[used] = rgb[start + i];
+                slots[used] = start + i;
+                used += 1;
+                if used == 8 {
+                    solve(&mut batch);
+                    for k in 0..8 {
+                        rgb[slots[k]] = batch[k];
+                    }
+                    used = 0;
+                }
+            }
+        }
+        start = end;
     }
-    let inv_det = 1.0 / det;
-    Some([
-        [
-            (e * i - f * h) * inv_det,
-            -(b * i - c * h) * inv_det,
-            (b * f - c * e) * inv_det,
-        ],
-        [
-            -(d * i - f * g) * inv_det,
-            (a * i - c * g) * inv_det,
-            -(a * f - c * d) * inv_det,
-        ],
-        [
-            (d * h - e * g) * inv_det,
-            -(a * h - b * g) * inv_det,
-            (a * e - b * d) * inv_det,
-        ],
-    ])
+    if used > 0 {
+        batch[used..].fill([0.5; 3]);
+        solve(&mut batch);
+        for k in 0..used {
+            rgb[slots[k]] = batch[k];
+        }
+    }
+}
+
+#[magetypes(define(f32x8), v3, neon, wasm128, scalar)]
+fn compress_planes_impl(token: Token, sc: &SoftCompress, l: &[f32], a: &mut [f32], b: &mut [f32]) {
+    let splat = |v: f32| f32x8::splat_t(token, v);
+    let dot = |row: &[f32; 3], x: f32x8, y: f32x8, z: f32x8| -> f32x8 {
+        splat(row[0]) * x + splat(row[1]) * y + splat(row[2]) * z
+    };
+    let inv = sc.space.lms_to_rgb().rows();
+    let [row_l, row_m, row_s] = *LMS_CBRT_FROM_OKLAB.rows();
+    let n = l.len();
+    let mut start = 0;
+    while start < n {
+        let end = (start + 8).min(n);
+        let count = end - start;
+        // Padding has L = 0, which is dead, and is never written back.
+        let (mut ll_a, mut a_a, mut b_a) = ([0f32; 8], [0f32; 8], [0f32; 8]);
+        ll_a[..count].copy_from_slice(&l[start..end]);
+        a_a[..count].copy_from_slice(&a[start..end]);
+        b_a[..count].copy_from_slice(&b[start..end]);
+        let ll = f32x8::from_array_t(token, ll_a);
+        let av = f32x8::from_array_t(token, a_a);
+        let bv = f32x8::from_array_t(token, b_a);
+        let zero = splat(0.0);
+        let dl = dot(&row_l, zero, av, bv);
+        let dm = dot(&row_m, zero, av, bv);
+        let ds = dot(&row_s, zero, av, bv);
+        let (xl, xm, xs) = (ll + dl, ll + dm, ll + ds);
+        let (l3, m3, s3) = (xl * xl * xl, xm * xm * xm, xs * xs * xs);
+        let r0 = dot(&inv[0], l3, m3, s3);
+        let g0 = dot(&inv[1], l3, m3, s3);
+        let b0 = dot(&inv[2], l3, m3, s3);
+        // The same gate as for RGB: most colors in most images end here.
+        let mx = r0.max(g0).max(b0);
+        let mn = r0.min(g0).min(b0);
+        let interior = mn.simd_gt(mx * splat(sc.gate_ratio)) & mx.simd_lt(splat(GATE_TOP));
+        if count == 8 && interior.bitcast_to_i32().all_true() {
+            start = end;
+            continue;
+        }
+        let (scaled, active) = chroma_scale!(splat, dot, sc, ll, dl, dm, ds, r0, g0, b0);
+        let out_a = f32x8::blend(active, av * scaled, av).to_array();
+        let out_b = f32x8::blend(active, bv * scaled, bv).to_array();
+        a[start..end].copy_from_slice(&out_a[..count]);
+        b[start..end].copy_from_slice(&out_b[..count]);
+        start = end;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::oklab;
-    use zenpixels::ColorPrimaries;
+    use crate::oklab::rgb_to_lms_matrix;
 
-    fn bt709_lut() -> GamutBoundaryLut {
-        let m1_inv = oklab::lms_to_rgb_matrix(ColorPrimaries::Bt709).unwrap();
-        GamutBoundaryLut::new(&m1_inv)
+    const ALL: [ColorPrimaries; 3] = [
+        ColorPrimaries::Bt709,
+        ColorPrimaries::DisplayP3,
+        ColorPrimaries::Bt2020,
+    ];
+
+    fn space(p: ColorPrimaries) -> OklabSpace {
+        OklabSpace::for_primaries(p).unwrap()
     }
 
-    fn bt709_soft_compress(knee: f32) -> SoftCompress {
-        let m1 = oklab::rgb_to_lms_matrix(ColorPrimaries::Bt709).unwrap();
-        let m1_inv = oklab::lms_to_rgb_matrix(ColorPrimaries::Bt709).unwrap();
-        SoftCompress::from_matrices(&m1, &m1_inv, knee)
-    }
-
-    // ---- Tests carried from zenfilters/src/gamut_lut.rs ----
-
-    #[test]
-    fn lut_boundary_at_extremes() {
-        let lut = bt709_lut();
-
-        // At L=0 (black) and L=1 (white), max chroma should be ~0
-        for hi in 0..H_STEPS {
-            let h = hi as f32 / H_STEPS as f32 * core::f32::consts::TAU;
-            assert!(
-                lut.max_chroma(0.0, h) < 0.01,
-                "L=0 max chroma should be ~0, got {}",
-                lut.max_chroma(0.0, h)
-            );
-            assert!(
-                lut.max_chroma(1.0, h) < 0.01,
-                "L=1 max chroma should be ~0, got {}",
-                lut.max_chroma(1.0, h)
-            );
+    /// Largest in-gamut chroma at (L, hue), by bisection.
+    fn exact_boundary(space: &OklabSpace, l: f32, ca: f32, sa: f32) -> f32 {
+        let (mut lo, mut hi) = (0.0f32, 2.0f32);
+        for _ in 0..40 {
+            let mid = (lo + hi) / 2.0;
+            let in_gamut = space
+                .to_rgb([l, mid * ca, mid * sa])
+                .iter()
+                .all(|&v| (0.0..=1.0).contains(&v));
+            if in_gamut { lo = mid } else { hi = mid }
         }
+        lo
     }
 
-    #[test]
-    fn lut_boundary_has_positive_chroma_at_mid_l() {
-        let lut = bt709_lut();
-
-        let mut max_found = 0.0f32;
-        for hi in 0..H_STEPS {
-            let h = hi as f32 / H_STEPS as f32 * core::f32::consts::TAU;
-            let mc = lut.max_chroma(0.5, h);
-            max_found = max_found.max(mc);
-        }
-        assert!(
-            max_found > 0.1,
-            "mid-L should have substantial gamut, max chroma = {max_found}"
-        );
-    }
-
-    #[test]
-    fn lut_boundary_is_monotonic_toward_extremes() {
-        let lut = bt709_lut();
-
-        // For a fixed hue, chroma boundary should increase from L=0 to
-        // some peak, then decrease to L=1 (spindle shape).
-        let h = 0.5;
-        let mut found_peak = false;
-        let mut prev = 0.0f32;
-        for li in 0..L_STEPS {
-            let l = li as f32 / (L_STEPS - 1) as f32;
-            let mc = lut.max_chroma(l, h);
-            if mc < prev {
-                found_peak = true;
-            }
-            if found_peak {
-                assert!(
-                    mc <= prev + 0.01,
-                    "chroma should decrease after peak at L={l}"
-                );
-            }
-            prev = mc;
-        }
-    }
-
-    #[test]
-    fn compress_preserves_in_gamut_colors() {
-        let lut = bt709_lut();
-        let m1_inv = oklab::lms_to_rgb_matrix(ColorPrimaries::Bt709).unwrap();
-
-        let l = alloc::vec![0.5, 0.3, 0.7, 0.9];
-        let mut a = alloc::vec![0.01, -0.02, 0.005, 0.0];
-        let mut b = alloc::vec![0.01, 0.01, -0.01, 0.0];
-        let a_orig = a.clone();
-        let b_orig = b.clone();
-
-        for i in 0..l.len() {
-            assert!(
-                is_in_gamut(l[i], a[i], b[i], &m1_inv),
-                "test color {i} should be in gamut"
-            );
-        }
-
-        lut.compress_planes(&l, &mut a, &mut b, 0.9);
-
-        for i in 0..l.len() {
-            assert!(
-                (a[i] - a_orig[i]).abs() < 1e-6,
-                "in-gamut color {i} a should be unchanged"
-            );
-            assert!(
-                (b[i] - b_orig[i]).abs() < 1e-6,
-                "in-gamut color {i} b should be unchanged"
-            );
-        }
-    }
-
-    #[test]
-    fn compress_reduces_out_of_gamut_chroma() {
-        let lut = bt709_lut();
-
-        let l = alloc::vec![0.5, 0.5, 0.5];
-        let mut a = alloc::vec![0.3, -0.3, 0.0];
-        let mut b = alloc::vec![0.0, 0.0, 0.3];
-
-        let orig_chroma: alloc::vec::Vec<f32> = a
-            .iter()
-            .zip(b.iter())
-            .map(|(&av, &bv): (&f32, &f32)| (av * av + bv * bv).sqrt())
-            .collect();
-
-        lut.compress_planes(&l, &mut a, &mut b, 0.9);
-
-        for i in 0..l.len() {
-            let new_chroma = (a[i] * a[i] + b[i] * b[i]).sqrt();
-            assert!(
-                new_chroma < orig_chroma[i],
-                "color {i} chroma should decrease: {:.4} -> {:.4}",
-                orig_chroma[i],
-                new_chroma
-            );
-        }
-    }
-
-    #[test]
-    fn compress_preserves_hue() {
-        let lut = bt709_lut();
-
-        let l = alloc::vec![0.5, 0.5];
-        let mut a = alloc::vec![0.3, -0.2];
-        let mut b = alloc::vec![0.1, 0.25];
-
-        let orig_hue: alloc::vec::Vec<f32> = a
-            .iter()
-            .zip(b.iter())
-            .map(|(&av, &bv): (&f32, &f32)| bv.atan2(av))
-            .collect();
-
-        lut.compress_planes(&l, &mut a, &mut b, 0.9);
-
-        for i in 0..l.len() {
-            let new_hue = b[i].atan2(a[i]);
-            let hue_diff = (new_hue - orig_hue[i]).abs();
-            assert!(
-                hue_diff < 1e-4,
-                "hue should be preserved: {:.6} -> {:.6}",
-                orig_hue[i],
-                new_hue
-            );
-        }
-    }
-
-    #[test]
-    fn compress_output_is_in_gamut() {
-        let m1_inv = oklab::lms_to_rgb_matrix(ColorPrimaries::Bt709).unwrap();
-        let lut = bt709_lut();
-
-        let l = alloc::vec![0.5, 0.3, 0.8, 0.5, 0.1, 0.95];
-        let mut a = alloc::vec![0.4, -0.3, 0.2, -0.4, 0.15, 0.05];
-        let mut b = alloc::vec![0.3, 0.4, -0.3, -0.2, 0.2, -0.03];
-
-        lut.compress_planes(&l, &mut a, &mut b, 0.9);
-
-        for i in 0..l.len() {
-            let rgb = oklab::oklab_to_rgb(l[i], a[i], b[i], &m1_inv);
-            assert!(
-                rgb[0] >= -0.01 && rgb[0] <= 1.01,
-                "R out of gamut after compress: color {i} R={:.4}",
-                rgb[0]
-            );
-            assert!(
-                rgb[1] >= -0.01 && rgb[1] <= 1.01,
-                "G out of gamut after compress: color {i} G={:.4}",
-                rgb[1]
-            );
-            assert!(
-                rgb[2] >= -0.01 && rgb[2] <= 1.01,
-                "B out of gamut after compress: color {i} B={:.4}",
-                rgb[2]
-            );
-        }
-    }
-
-    /// A hue a hair below zero rounds to exactly 2π. It used to read the table
-    /// with a blend weight of 256, returning about a quarter of the true bound.
-    #[test]
-    fn max_chroma_is_continuous_across_hue_zero() {
-        let lut = bt709_lut();
-        for l in [0.2, 0.4, 0.5, 0.6, 0.8] {
-            let at_zero = lut.max_chroma(l, 0.0);
-            for h in [-1e-5_f32, -1e-6, -1e-7, -1e-9, -1e-20, 1e-9, 1e-7] {
-                let got = lut.max_chroma(l, h);
-                assert!(
-                    (got - at_zero).abs() < 1e-3,
-                    "max_chroma({l}, {h:e}) = {got}, but {at_zero} at hue 0"
-                );
+    fn cube(n: u32) -> alloc::vec::Vec<[f32; 3]> {
+        let d = (n - 1) as f32;
+        let mut v = alloc::vec::Vec::new();
+        for r in 0..n {
+            for g in 0..n {
+                for b in 0..n {
+                    v.push([r as f32 / d, g as f32 / d, b as f32 / d]);
+                }
             }
         }
+        v
     }
 
-    // ---- New tests for SoftCompress wrapper ----
-
+    /// The gate must never pass a color the map would change, at each table entry.
     #[test]
-    fn interior_pixels_pass_through_unchanged() {
-        let compress = bt709_soft_compress(0.9);
-        // Pixels well inside the gamut should be bit-identical (within
-        // RGB→OKLab→RGB float roundtrip noise) after compress.
-        let mut pixels = alloc::vec![
-            [0.5_f32, 0.5, 0.5],
-            [0.3, 0.2, 0.1],
-            [0.6, 0.3, 0.2],
-            [0.2, 0.4, 0.5],
-        ];
-        let originals = pixels.clone();
-        compress.apply_strip(&mut pixels);
-        for (i, (p, o)) in pixels.iter().zip(originals.iter()).enumerate() {
-            for k in 0..3 {
-                let diff = (p[k] - o[k]).abs();
-                // 5e-4 tolerates the OKLab roundtrip f32 noise (cbrt + 3×3 matrices).
-                assert!(
-                    diff < 5e-4,
-                    "interior pixel {i} ch{k}: input {} output {} diff {}",
-                    o[k],
-                    p[k],
-                    diff
-                );
+    fn gated_pixels_are_past_no_knee() {
+        for p in ALL {
+            for knee in [0.90, 0.96] {
+                let sc = SoftCompress::new(&space(p), knee);
+                let mut solved_only = sc.clone();
+                solved_only.gate_ratio = f32::INFINITY;
+                let input = cube(65);
+                let (mut gated, mut full) = (input.clone(), input.clone());
+                sc.apply_strip(&mut gated);
+                solved_only.apply_strip(&mut full);
+                assert_eq!(gated, full, "{p:?} knee {knee}");
             }
         }
     }
 
     #[test]
-    fn out_of_gamut_pixels_land_in_gamut() {
-        // Out-of-gamut **chroma** at sub-peak luminance — the realistic case
-        // post-tone-mapping. Inputs were chosen so OKLab L stays in [0, 1]
-        // (the LUT's defined domain); at L > 1, max_chroma collapses to 0
-        // and the compressor correctly snaps to achromatic, but the OKLab →
-        // RGB roundtrip on the L > 1 column emits RGB > 1 by construction.
-        let compress = bt709_soft_compress(0.9);
-        let mut pixels = alloc::vec![
-            [0.85_f32, -0.05, -0.05], // out-of-gamut red (negative G/B from BT.2020 mapping)
-            [-0.05, 0.85, -0.05],     // out-of-gamut green
-            [-0.05, -0.05, 0.85],     // out-of-gamut blue
-            [0.9, 0.9, -0.05],        // out-of-gamut yellow
-        ];
-        compress.apply_strip(&mut pixels);
-        for (i, px) in pixels.iter().enumerate() {
-            for (k, &v) in px.iter().enumerate() {
-                assert!(
-                    v.is_finite() && (-0.02..=1.02).contains(&v),
-                    "out-of-gamut pixel {i} ch{k} = {v} did not land in `[0,1]`"
-                );
+    fn interior_colors_stay_bit_identical() {
+        let sc = SoftCompress::new(&space(ColorPrimaries::Bt709), 0.96);
+        let input = [[0.5f32, 0.4, 0.3], [0.2, 0.2, 0.2], [0.8, 0.7, 0.75]];
+        let mut out = input;
+        sc.apply_strip(&mut out);
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn out_of_gamut_lands_in_the_cube() {
+        let m = crate::gamut::GamutMatrix::between(ColorPrimaries::Bt2020, ColorPrimaries::Bt709)
+            .unwrap();
+        let sc = SoftCompress::new(&space(ColorPrimaries::Bt709), 0.96);
+        let mut v: alloc::vec::Vec<[f32; 3]> = cube(33).into_iter().map(|c| m.apply(c)).collect();
+        sc.apply_strip(&mut v);
+        for px in v {
+            for c in px {
+                assert!((-1e-3..=1.0 + 1e-3).contains(&c), "{px:?}");
             }
         }
     }
 
     #[test]
-    fn hue_preservation_under_compression() {
-        // Use sub-peak primaries so OKLab L stays well inside [0, 1]; at
-        // L → 1 (or L → 0) the LUT's max_chroma collapses to 0 and the
-        // compressor *correctly* forces a → b → 0, which by definition
-        // throws hue away. The contract is "hue preserved when the LUT has
-        // headroom"; we test that, not the degenerate L = boundary case.
-        let m1 = oklab::rgb_to_lms_matrix(ColorPrimaries::Bt709).unwrap();
-        let compress = bt709_soft_compress(0.9);
-        let inputs = [
-            [0.85_f32, 0.05, 0.05], // saturated red
-            [0.05, 0.85, 0.05],     // saturated green
-            [0.05, 0.05, 0.85],     // saturated blue
-            [0.7, 0.7, 0.05],       // saturated yellow
-            [0.85, 0.05, 0.85],     // saturated magenta
-        ];
-        for rgb in inputs {
-            let lab_before = oklab::rgb_to_oklab(rgb[0], rgb[1], rgb[2], &m1);
-            let h_before = lab_before[2].atan2(lab_before[1]);
-
-            let mut strip = alloc::vec![rgb];
-            compress.apply_strip(&mut strip);
-
-            let out = strip[0];
-            let lab_after = oklab::rgb_to_oklab(out[0], out[1], out[2], &m1);
-            let h_after = lab_after[2].atan2(lab_after[1]);
-
-            let hue_diff = (h_after - h_before).abs();
-            assert!(
-                hue_diff < 0.001,
-                "hue drift for {rgb:?}: before {h_before:.6} after {h_after:.6} diff {hue_diff}"
-            );
+    fn hue_and_lightness_are_kept() {
+        let sp = space(ColorPrimaries::Bt709);
+        let m = crate::gamut::GamutMatrix::between(ColorPrimaries::Bt2020, ColorPrimaries::Bt709)
+            .unwrap();
+        let sc = SoftCompress::new(&sp, 0.96);
+        for c in cube(17) {
+            let x = m.apply(c);
+            let [l0, a0, b0] = sp.from_rgb(x);
+            if !(0.02..0.98).contains(&l0) || a0.hypot(b0) < 0.01 {
+                continue;
+            }
+            let mut out = [x];
+            sc.apply_strip(&mut out);
+            let [l1, a1, b1] = sp.from_rgb(out[0]);
+            assert!((l1 - l0).abs() < 1e-3, "{c:?}: L {l0} to {l1}");
+            if a1.hypot(b1) > 1e-3 {
+                let cross = (a0 * b1 - b0 * a1) / (a0.hypot(b0) * a1.hypot(b1));
+                assert!(cross.abs() < 2e-3, "{c:?}: hue moved, sin {cross}");
+            }
         }
     }
 
+    /// Solve and bisection agree where the boundary is crossed once.
     #[test]
-    fn lightness_preservation_under_compression() {
-        // Same input shape as hue test — sub-peak primaries with OKLab L in
-        // [0, 1] so the compressor never has to snap chroma to zero.
-        let m1 = oklab::rgb_to_lms_matrix(ColorPrimaries::Bt709).unwrap();
-        let compress = bt709_soft_compress(0.9);
-        let inputs = [
-            [0.85_f32, 0.05, 0.05],
-            [0.05, 0.85, 0.05],
-            [0.05, 0.05, 0.85],
-            [0.7, 0.7, 0.05],
-            [0.85, 0.05, 0.85],
-        ];
-        for rgb in inputs {
-            let l_before = oklab::rgb_to_oklab(rgb[0], rgb[1], rgb[2], &m1)[0];
-            let mut strip = alloc::vec![rgb];
-            compress.apply_strip(&mut strip);
-            let out = strip[0];
-            let l_after = oklab::rgb_to_oklab(out[0], out[1], out[2], &m1)[0];
-            let l_diff = (l_after - l_before).abs();
-            assert!(
-                l_diff < 0.005,
-                "lightness drift for {rgb:?}: before {l_before} after {l_after} diff {l_diff}"
-            );
-        }
-    }
-
-    #[test]
-    fn matrix_invert_round_trip() {
-        let m_in = oklab::lms_to_rgb_matrix(ColorPrimaries::Bt709).unwrap();
-        let m_out = invert_3x3(&m_in).unwrap();
-        let m_back = invert_3x3(&m_out).unwrap();
-        for i in 0..3 {
-            for j in 0..3 {
-                assert!(
-                    (m_in[i][j] - m_back[i][j]).abs() < 1e-4,
-                    "matrix invert roundtrip drift at [{i}][{j}]: in {} back {}",
-                    m_in[i][j],
-                    m_back[i][j]
-                );
+    fn scale_matches_bisection() {
+        let sp = space(ColorPrimaries::Bt709);
+        for knee in [0.5f32, 0.75, 0.96, 1.0] {
+            let sc = SoftCompress::new(&sp, knee);
+            for li in 2..=8 {
+                let l = li as f32 / 10.0;
+                for h in (0..360).step_by(15) {
+                    // Dark blues re-enter the gamut, so bisection isn't a reference there.
+                    if (240..=285).contains(&h) {
+                        continue;
+                    }
+                    let (sa, ca) = (h as f32).to_radians().sin_cos();
+                    let cmax = exact_boundary(&sp, l, ca, sa);
+                    let c = cmax * 1.1;
+                    let (mut a, mut b) = ([c * ca], [c * sa]);
+                    sc.compress_oklab_planes(&[l], &mut a, &mut b).unwrap();
+                    let k = knee * cmax;
+                    let (range, excess) = (cmax - k, c - k);
+                    let want = if range <= 0.0 {
+                        cmax
+                    } else {
+                        k + range * excess / (excess + range)
+                    };
+                    let got = a[0].hypot(b[0]);
+                    assert!(
+                        (got - want).abs() < 2e-3,
+                        "knee {knee} L {l} hue {h}: {got} vs {want}"
+                    );
+                }
             }
         }
     }
 
     #[test]
-    fn empty_strip_is_noop() {
-        let compress = bt709_soft_compress(0.9);
-        let mut empty: alloc::vec::Vec<[f32; 3]> = alloc::vec::Vec::new();
-        compress.apply_strip(&mut empty);
-        assert!(empty.is_empty());
+    fn hue_zero_has_no_seam() {
+        let sp = space(ColorPrimaries::Bt709);
+        let sc = SoftCompress::new(&sp, 0.96);
+        for h in [-1e-5f32, -1e-7, -1e-9, 0.0, 1e-9, 1e-7] {
+            let (mut a, mut b) = ([0.4 * h.cos()], [0.4 * h.sin()]);
+            sc.compress_oklab_planes(&[0.5], &mut a, &mut b).unwrap();
+            assert!((a[0] - 0.2027).abs() < 3e-3, "hue {h:e}: a {}", a[0]);
+        }
+    }
+
+    #[test]
+    fn planes_match_the_rgb_path() {
+        let sp = space(ColorPrimaries::Bt709);
+        let m =
+            crate::gamut::GamutMatrix::between(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709)
+                .unwrap();
+        let sc = SoftCompress::new(&sp, 0.96);
+        let input: alloc::vec::Vec<[f32; 3]> = cube(17).into_iter().map(|c| m.apply(c)).collect();
+        let mut rgb = input.clone();
+        sc.apply_strip(&mut rgb);
+        let lab: alloc::vec::Vec<[f32; 3]> = input.iter().map(|&c| sp.from_rgb(c)).collect();
+        let l: alloc::vec::Vec<f32> = lab.iter().map(|v| v[0]).collect();
+        let mut a: alloc::vec::Vec<f32> = lab.iter().map(|v| v[1]).collect();
+        let mut b: alloc::vec::Vec<f32> = lab.iter().map(|v| v[2]).collect();
+        sc.compress_oklab_planes(&l, &mut a, &mut b).unwrap();
+        for i in 0..input.len() {
+            let want = sp.from_rgb(rgb[i]);
+            assert!(
+                (a[i] - want[1]).abs() < 1e-3 && (b[i] - want[2]).abs() < 1e-3,
+                "{:?}: {} {} vs {want:?}",
+                input[i],
+                a[i],
+                b[i]
+            );
+        }
+    }
+
+    /// Any row split gives the same bits as one call.
+    #[test]
+    fn row_length_does_not_change_results() {
+        let sc = SoftCompress::new(&space(ColorPrimaries::Bt709), 0.96);
+        let m = crate::gamut::GamutMatrix::between(ColorPrimaries::Bt2020, ColorPrimaries::Bt709)
+            .unwrap();
+        let input: alloc::vec::Vec<[f32; 3]> = cube(9).into_iter().map(|c| m.apply(c)).collect();
+        let mut whole = input.clone();
+        sc.apply_strip(&mut whole);
+        for width in [1usize, 2, 3, 7, 8, 9, 15, 16, 17] {
+            let mut parts = input.clone();
+            for chunk in parts.chunks_mut(width) {
+                sc.apply_strip(chunk);
+            }
+            assert_eq!(parts, whole, "width {width}");
+        }
+    }
+
+    #[test]
+    fn non_finite_and_empty_inputs() {
+        let sc = SoftCompress::new(&space(ColorPrimaries::Bt709), 0.96);
+        sc.apply_strip(&mut []);
+        let mut px = [[f32::NAN, 0.5, 0.5], [f32::INFINITY, 0.5, 0.5]];
+        sc.apply_strip(&mut px);
+        assert!(px[0][0].is_nan());
+        assert!(px[1][0].is_infinite());
+    }
+
+    #[test]
+    fn plane_length_mismatch_is_an_error() {
+        let sc = SoftCompress::new(&space(ColorPrimaries::Bt709), 0.96);
+        let (mut a, mut b) = ([0.0f32; 2], [0.0f32; 3]);
+        assert!(sc.compress_oklab_planes(&[0.5; 3], &mut a, &mut b).is_err());
+    }
+
+    #[test]
+    fn extremes_become_achromatic() {
+        let sc = SoftCompress::new(&space(ColorPrimaries::Bt709), 0.96);
+        let (mut a, mut b) = ([0.1f32, 0.1], [0.1f32, 0.1]);
+        sc.compress_oklab_planes(&[0.0, 1.0], &mut a, &mut b)
+            .unwrap();
+        assert_eq!((a, b), ([0.0, 0.0], [0.0, 0.0]));
+    }
+
+    #[test]
+    fn gate_table_covers_every_primaries_with_an_lms_matrix() {
+        for p in ALL {
+            assert!(rgb_to_lms_matrix(p).is_some());
+            assert!(gate_ratio(p, 0.96).is_finite());
+            assert!(gate_ratio(p, 0.5).is_infinite());
+        }
     }
 }

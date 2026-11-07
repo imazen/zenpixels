@@ -5,6 +5,10 @@
 //! crate. Measurement / SIMD machinery lives ONLY in `zenpixels-convert`
 //! (`CllMeasure`); anything heavier belongs in a downstream crate.
 //!
+//! The owner added two exceptions on 2026-11-03, `image` and `rustversion`. They
+//! may only ever be optional and outside the default features, which this checks,
+//! so a default build's dependency set is unchanged.
+//!
 //! Parses `Cargo.toml` with plain string handling (std-only, no crate deps)
 //! and fails if any **runtime or build** dependency table names anything
 //! outside the frozen allowlist. Covers `[dependencies]`,
@@ -16,6 +20,9 @@
 /// The 0.2.14 dependency set minus `serde` (optional dep soft-removed in
 /// 0.2.16 — the feature is now an inert stub). Frozen.
 const ALLOWED: &[&str] = &["bytemuck", "rgb", "imgref", "whereat"];
+
+/// Allowed only as `optional = true` dependencies that no default feature enables.
+const OPTIONAL_ONLY: &[&str] = &["image", "rustversion"];
 
 /// Collect dependency names from every guarded table (runtime + build,
 /// including `[target.'cfg(..)'.…]` forms); `[dev-dependencies]` is exempt.
@@ -74,7 +81,7 @@ fn dependencies_stay_lean() {
     let violations: Vec<&str> = deps
         .iter()
         .map(String::as_str)
-        .filter(|d| !ALLOWED.contains(d))
+        .filter(|d| !ALLOWED.contains(d) && !OPTIONAL_ONLY.contains(d))
         .collect();
     assert!(
         violations.is_empty(),
@@ -84,6 +91,51 @@ fn dependencies_stay_lean() {
          Measurement/SIMD machinery lives ONLY in zenpixels-convert (CllMeasure); \
          put new functionality in a downstream crate instead."
     );
+}
+
+/// Text of the `default = [...]` feature list.
+fn default_features(manifest: &str) -> String {
+    manifest
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("default"))
+        .unwrap_or("")
+        .to_string()
+}
+
+#[test]
+fn exceptions_stay_optional_and_out_of_the_default_build() {
+    let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
+        .expect("failed to read zenpixels/Cargo.toml");
+    let default = default_features(&manifest);
+    assert!(!default.is_empty(), "no default feature list found");
+    let mut in_runtime_table = false;
+    for line in manifest.lines().map(str::trim) {
+        if line.starts_with('[') {
+            in_runtime_table = line == "[dependencies]";
+            continue;
+        }
+        if !in_runtime_table {
+            continue;
+        }
+        let Some((name, spec)) = line.split_once('=') else {
+            continue;
+        };
+        if OPTIONAL_ONLY.contains(&name.trim()) {
+            assert!(spec.contains("optional = true"), "{line}: must be optional");
+        }
+    }
+    for name in OPTIONAL_ONLY {
+        assert!(!default.contains(name), "{name} is in the default features");
+    }
+    // Neither default feature may turn them on indirectly.
+    for line in manifest.lines().map(str::trim) {
+        if line.starts_with("std =") || line.starts_with("icc =") {
+            for name in OPTIONAL_ONLY {
+                assert!(!line.contains(name), "{line} enables {name}");
+            }
+        }
+    }
 }
 
 #[test]

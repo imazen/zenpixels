@@ -96,9 +96,9 @@ dependencies = [
 
 [[package]]
 name = "archmage"
-version = "0.9.30"
+version = "0.9.31-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15785ee3576fbd41276a25f063b1e6b5bf323af9b4924632e25a8de6a3065f06"
+checksum = "b88a77003bd21035bb9ded3659d9ea666fc58499c2cf41949402a9bb388b9a2b"
 dependencies = [
  "archmage-macros",
  "safe_unaligned_simd",
@@ -107,9 +107,9 @@ dependencies = [
 
 [[package]]
 name = "archmage-macros"
-version = "0.9.30"
+version = "0.9.31-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce7707714970d5cf476caccbae2d282000c6c14ca5aada878e722a10d8e1c153"
+checksum = "3a1148cd0448e74ae017248ce560c1f6577da191855f083986e74a2587def019"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -162,6 +162,12 @@ dependencies = [
  "quote",
  "syn 3.0.9",
 ]
+
+[[package]]
+name = "byteorder-lite"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
 
 [[package]]
 name = "cc"
@@ -360,9 +366,8 @@ dependencies = [
 
 [[package]]
 name = "garb"
-version = "0.2.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b968bb36272be4662f264fd123e96915e7dd51c8ca529c2d35f621817ff4207"
+version = "0.2.9"
+source = "git+https://github.com/imazen/garb?rev=58ce9cad7b337418a7abe9b1f6e3e4bd1928b385#58ce9cad7b337418a7abe9b1f6e3e4bd1928b385"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -425,7 +430,20 @@ dependencies = [
  "bytemuck",
  "lcms2",
  "lz4_flex",
- "moxcms",
+ "moxcms 0.9.1",
+ "zenpixels-convert",
+]
+
+[[package]]
+name = "image"
+version = "0.25.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
+dependencies = [
+ "bytemuck",
+ "byteorder-lite",
+ "moxcms 0.8.1",
+ "num-traits",
 ]
 
 [[package]]
@@ -504,8 +522,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 [[package]]
 name = "linear-srgb"
 version = "0.6.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe0e61c33d85bc56dcaf27cdf48ca32b8e34af7236584eb1d8a47316c49e0be1"
+source = "git+https://github.com/imazen/linear-srgb?rev=52896f4b24664315586bd60e5f048253b1f69052#52896f4b24664315586bd60e5f048253b1f69052"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -527,12 +544,11 @@ checksum = "ecbdfe44b1bd960b68170b417450a628c43f7cf56bb3c5317e61cb230ee7f226"
 
 [[package]]
 name = "magetypes"
-version = "0.9.30"
+version = "0.9.31-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5726fd3335b1d2814036c420a5c8d105abcc0e0b43eebb477e48f8c725fc8fb2"
+checksum = "4a3848d5e0967e86afbc9ada733366a5acf852e73f9ed1c957e2031a96b1debc"
 dependencies = [
  "archmage",
- "libm",
  "rustversion",
 ]
 
@@ -554,9 +570,19 @@ dependencies = [
 
 [[package]]
 name = "moxcms"
-version = "0.9.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aee701c0ffba6cc991c0fefda5ff5fca1bd2f2f4a928ffba9f825b9afceedbc3"
+checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
+dependencies = [
+ "num-traits",
+ "pxfm",
+]
+
+[[package]]
+name = "moxcms"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "396077b717181ce3f9a6b66739b269b82d756be5ec0f76be0bc40a7c51775830"
 dependencies = [
  "num-traits",
  "pxfm",
@@ -668,6 +694,12 @@ name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
+name = "pastey"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
 name = "pin-project-lite"
@@ -1190,9 +1222,12 @@ name = "zenpixels"
 version = "0.3.1"
 dependencies = [
  "bytemuck",
+ "image",
  "imgref",
  "rgb",
+ "rustversion",
  "whereat",
+ "zenpixels",
 ]
 
 [[package]]
@@ -1208,10 +1243,10 @@ dependencies = [
  "linear-srgb",
  "lz4_flex",
  "magetypes",
- "moxcms",
+ "moxcms 0.9.1",
  "once_cell",
  "palette",
- "paste",
+ "pastey",
  "rgb",
  "sha2",
  "whereat",

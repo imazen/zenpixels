@@ -1,0 +1,9 @@
+# 1024x1024 djxl PFM comparison; historical pixels04cc06f5, moxcms0.9.1.
+# References regenerated with djxl v0.12.0 4128790 and byte-identical to the frozen PFMs.
+# Command: just jxl-cms-reference-check MANIFEST FIXTURES REFERENCES
+# Metric: worst absolute difference after independently clamping each float to [0,1], multiplied by255.
+# Original adapter source: zenpixels1a736f24. Candidate: jxl-cms-parity/src/main.rs in this change.
+variant	target	width	height	worst_clamped_8bit_codes	result
+original	sRGB	1024	1024	210.454285	fails_0.1_code_bound
+PQ_CICP	sRGB	1024	1024	0.022236	passes_0.1_code_bound
+PQ_CICP	P3	1024	1024	0.052848	passes_0.1_code_bound

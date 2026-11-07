@@ -10,6 +10,8 @@ categories.workspace = true
 description = "Pixel format interchange types for zen* codecs"
 keywords = ["image", "pixel", "format", "descriptor", "codec"]
 include = [
+    "/LICENSE-MIT",
+    "/LICENSE-APACHE",
     "/src/**",
 ]
 
@@ -21,6 +23,11 @@ planar = []
 icc = []
 rgb = ["dep:rgb"]
 imgref = ["dep:imgref", "rgb"]
+# `Vec<T, A>` and `Box<T, A>` as sample storage on Rust 1.100 or newer. On older
+# compilers it has no effect, so `--all-features` keeps working.
+allocator_api = ["dep:rustversion"]
+# Conversions to and from `image` 0.25, which needs Rust 1.88.
+image = ["dep:image", "std"]
 # Soft-removed in 0.2.16 (unreleased at the time; crates.io latest was
 # 0.2.14, whose builds are unaffected). The `serde` feature previously pulled an optional
 # `serde` dependency and added `Serialize`/`Deserialize` derives on the
@@ -38,8 +45,14 @@ serde = []
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
 imgref = { version = "1.12", optional = true }
+rustversion = { version = "1.0.23", optional = true }
+image = { version = "0.25.10", default-features = false, optional = true }
 whereat = { version = "0.1.5", default-features = false }
 
 [dev-dependencies]
+# Always test the `image` and `allocator_api` code, on plain `cargo test` too.
+zenpixels = { path = ".", features = ["image", "allocator_api"] }
+image = { version = "0.25.10", default-features = false }
+rustversion = "1.0.23"
 imgref = "1.12"
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"] }

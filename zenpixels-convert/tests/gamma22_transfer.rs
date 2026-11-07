@@ -7,7 +7,7 @@
 use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
 };
-use zenpixels_convert::{ConvertOptions, ConvertPlan, RowConverter, convert_row};
+use zenpixels_convert::{ConvertOptions, ConvertPlan, RowConverter};
 
 #[allow(clippy::excessive_precision)]
 const ADOBE_GAMMA: f32 = 2.19921875; // 563/256, Adobe RGB 1998 spec (exact in f32).
@@ -279,8 +279,7 @@ fn adobe_rgb_u8_to_linear_bt709_matches_textbook_with_gamut_kept() {
     let px = grid();
     let src: Vec<u8> = px.iter().flatten().copied().collect();
     let mut dst = vec![0f32; src.len()];
-    convert_row(
-        &plan,
+    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(
         &src,
         bytemuck::cast_slice_mut(&mut dst),
         px.len() as u32,
@@ -298,7 +297,11 @@ fn adobe_rgb_u8_to_linear_bt709_matches_textbook_with_gamut_kept() {
     }
     // (59, 106, 90): red falls outside sRGB and stays negative with clipping off.
     let mut one = [0f32; 3];
-    convert_row(&plan, &[59, 106, 90], bytemuck::cast_slice_mut(&mut one), 1);
+    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(
+        &[59, 106, 90],
+        bytemuck::cast_slice_mut(&mut one),
+        1,
+    );
     assert!(
         one[0] < 0.0,
         "out-of-gamut red should stay negative: {one:?}"
@@ -354,8 +357,7 @@ fn adobe_rgb_u16_to_linear_bt709_matches_textbook() {
     let px = grid();
     let src: Vec<u16> = px.iter().flatten().map(|&v| u16::from(v) * 257).collect();
     let mut dst = vec![0f32; src.len()];
-    convert_row(
-        &plan,
+    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(
         bytemuck::cast_slice(&src),
         bytemuck::cast_slice_mut(&mut dst),
         px.len() as u32,
@@ -400,8 +402,7 @@ fn bt709_transfer_p3_u8_to_linear_bt709_matches_textbook() {
     let px = grid();
     let src: Vec<u8> = px.iter().flatten().copied().collect();
     let mut dst = vec![0f32; src.len()];
-    convert_row(
-        &plan,
+    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(
         &src,
         bytemuck::cast_slice_mut(&mut dst),
         px.len() as u32,

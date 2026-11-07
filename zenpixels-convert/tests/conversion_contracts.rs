@@ -1,13 +1,23 @@
 // Regression cases from the API contract review.
 #[cfg(test)]
 mod tests {
+    use zenpixels_convert::adapt::adapt_raw_rows_for_encode;
     use zenpixels_convert::*;
     #[test]
     fn known_transfer_is_converted() {
         let src = PixelDescriptor::RGB8_SRGB.with_transfer(TransferFunction::Linear);
         let pixels = [128u8; 3];
-        let out = adapt::adapt_for_encode_cow(&pixels, src, 1, 1, 3, &[PixelDescriptor::RGB8_SRGB])
-            .unwrap();
+        let out = adapt_raw_rows_for_encode(
+            &pixels,
+            src,
+            1,
+            1,
+            3,
+            &[PixelDescriptor::RGB8_SRGB],
+            &zenpixels_convert::ConvertOptions::permissive()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
+        )
+        .unwrap();
         assert_eq!(
             out.as_slice().descriptor().transfer(),
             TransferFunction::Srgb
@@ -100,9 +110,8 @@ mod tests {
     fn composite_to_gray_includes_background() {
         let options = policy::ConvertOptions::permissive().with_alpha_policy(
             policy::AlphaPolicy::CompositeOnto {
-                r: 255,
-                g: 255,
-                b: 255,
+                background: zenpixels::Color::srgb8(255, 255, 255),
+                reference_white: None,
             },
         );
         let dst = PixelDescriptor::new(
@@ -152,16 +161,25 @@ mod tests {
     }
     #[cfg(feature = "cms-moxcms")]
     #[test]
-    fn moxcms_crossdepth_refused_at_planning() {
+    fn moxcms_crossdepth_gives_the_plans_result() {
+        // A backend with U8 and F32 paths has no U8-to-F32 path, so it declines, and the bytes must
+        // never land in float storage unconverted.
         let from = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
-        assert!(
+        let to = PixelDescriptor::RGBF32_LINEAR;
+        let src = [255u8, 128, 0];
+        let convert = |cms: Option<&dyn zenpixels_convert::cms::PluggableCms>| {
+            let mut out = [0f32; 3];
             RowConverter::new_explicit_with_cms(
                 from,
-                PixelDescriptor::RGBF32_LINEAR,
+                to,
                 &policy::ConvertOptions::permissive(),
-                Some(&MoxCms)
+                cms,
             )
-            .is_err()
-        );
+            .unwrap()
+            .try_convert_row(&src, bytemuck::cast_slice_mut(&mut out), 1)
+            .unwrap();
+            out
+        };
+        assert_eq!(convert(Some(&MoxCms)), convert(None));
     }
 }

@@ -1,5 +1,6 @@
 whereat::define_at_crate_info!();
 
+use zenpixels_convert::PixelSliceConvertExt;
 use zenpixels_convert::{AlphaMode, ConvertPlan, PixelDescriptor, RowConverter, TransferFunction};
 
 #[test]
@@ -127,7 +128,7 @@ fn explicit_opacity_scan_rejects_nonfinite_and_out_of_range_alpha() {
             PixelDescriptor::RGBAF32_LINEAR,
         )
         .unwrap();
-        assert!(zenpixels_convert::adapt::check_opaque(view).is_err());
+        assert!(view.check_opaque().is_err());
     }
 }
 
@@ -243,7 +244,7 @@ fn backend_row_failure_preserves_concrete_error_and_never_returns_encode_ready()
     );
     let buffer = zenpixels::PixelBuffer::from_vec(vec![1, 2, 3], 1, 1, from).unwrap();
     assert!(
-        zenpixels_convert::finalize_for_output_with(
+        zenpixels_convert::EncodeReady::finalize(
             &buffer,
             &zenpixels::ColorOrigin::assumed(),
             zenpixels_convert::OutputProfile::Named(zenpixels::Cicp::DISPLAY_P3),
@@ -254,7 +255,7 @@ fn backend_row_failure_preserves_concrete_error_and_never_returns_encode_ready()
     );
 }
 
-#[cfg(feature = "hdr-experimental")]
+#[cfg(feature = "bt2446a")]
 #[test]
 fn composed_hdr_preparation_retains_every_gamut_table() {
     use zenpixels_convert::{ColorPrimaries, HdrConfig};
@@ -281,7 +282,7 @@ fn composed_hdr_preparation_retains_every_gamut_table() {
     assert!(dst.iter().all(|v| v.is_finite()));
 }
 
-#[cfg(feature = "hdr-experimental")]
+#[cfg(feature = "bt2446a")]
 #[test]
 fn hdr_unassociates_before_nonlinear_mapping() {
     use zenpixels_convert::HdrConfig;
@@ -349,7 +350,7 @@ fn conversion_replaces_current_color_signaling_and_refuses_ambiguous_context() {
     );
 }
 
-#[cfg(feature = "hdr-experimental")]
+#[cfg(feature = "bt2446a")]
 #[test]
 fn pq_and_explicit_linear_anchor_describe_the_same_luminance() {
     use std::sync::Arc;
@@ -414,9 +415,8 @@ fn padding_is_not_alpha_and_opaque_requires_a_proof() {
     assert!(RowConverter::new(rgba, rgba.with_alpha(Some(AlphaMode::Opaque))).is_err());
     assert!(RowConverter::new_explicit(rgba, padding, &ConvertOptions::retain_channels()).is_err());
     let options = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-        r: 255,
-        g: 255,
-        b: 255,
+        background: zenpixels::Color::srgb8(255, 255, 255),
+        reference_white: None,
     });
     let mut worker = RowConverter::new_explicit(rgba, padding, &options).unwrap();
     let mut dst = [0; 4];

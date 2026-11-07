@@ -38,12 +38,27 @@ impl PartialEq for DiffuseWhite {
     }
 }
 impl Eq for DiffuseWhite {}
+impl core::hash::Hash for DiffuseWhite {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.0.to_bits().hash(state);
+    }
+}
 
 impl DiffuseWhite {
     /// ITU-R BT.2408 HDR reference white: **203 cd/m²**. The cross-industry
     /// default anchor for relative-linear HDR (matches Chrome `SDRWhiteLevel`,
     /// Skia skcms, CSS `rec2100-linear`, and libplacebo).
     pub const BT2408: Self = Self(203.0);
+
+    /// [`new`](Self::new), or `None` unless `nits` is finite and strictly positive.
+    #[must_use]
+    pub const fn try_new(nits: f32) -> Option<Self> {
+        if nits.is_finite() && nits > 0.0 {
+            Some(Self(nits))
+        } else {
+            None
+        }
+    }
 
     /// An anchor of `nits` cd/m² (the luminance that relative-linear `1.0`
     /// represents).

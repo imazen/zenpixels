@@ -261,6 +261,7 @@ impl<P> PixelSliceLoadBearingExt for PixelSlice<'_, P> {
                     layout.channels(),
                     has_alpha && scan_alpha,
                     has_chroma,
+                    self.descriptor().alpha() == Some(zenpixels::AlphaMode::Undefined),
                     [alpha, chroma, low_bits],
                 );
                 if (!has_alpha || !scan_alpha || alpha) && (!has_chroma || chroma) && low_bits {
@@ -464,8 +465,8 @@ fn plan_chroma_collapse_signaling(ctx: Option<&Arc<ColorContext>>) -> GraySignal
 
     let cicp = ctx
         .cicp
-        .or_else(|| zenpixels::icc::extract_cicp(icc))
-        .or_else(|| zenpixels::icc::identify_common(icc).and_then(|id| id.to_cicp()));
+        .or_else(|| zenpixels::Cicp::from_icc(icc))
+        .or_else(|| zenpixels::icc::IccIdentification::from_icc(icc).and_then(|id| id.to_cicp()));
     let Some(cicp) = cicp else {
         return GraySignalPlan::Suppress;
     };
