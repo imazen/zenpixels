@@ -64,8 +64,8 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
 name = "garb"
-version = "0.2.8"
-source = "git+https://github.com/imazen/garb?rev=8f9aa10d09f84bb0a1e3fdbd1773f610eec1b784#8f9aa10d09f84bb0a1e3fdbd1773f610eec1b784"
+version = "0.2.9"
+source = "git+https://github.com/imazen/garb?rev=58ce9cad7b337418a7abe9b1f6e3e4bd1928b385#58ce9cad7b337418a7abe9b1f6e3e4bd1928b385"
 dependencies = [
  "archmage",
  "bytemuck",
