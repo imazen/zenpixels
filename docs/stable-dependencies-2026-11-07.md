@@ -115,6 +115,11 @@ tests. Existing ignored tests remain unchanged.
   Clippy pass. No pixel, fixture or assertion changes.
 - The core PR #200 descendant passes 1,313 library/integration tests and
   strict Clippy. It remains local for the core owner's integration.
+- Active standalone tools now select stable SIMD: JzAzBz all-target checks,
+  the browser converter's WASM check and the CMS contract pass. The CMS
+  contract has 12 enabled tests and two existing ignored profile-corpus
+  comparisons; no ignored comparison is claimed as qualified. Historical
+  experiment sources and measurements retain their original dependency pins.
 
 ## Source references
 

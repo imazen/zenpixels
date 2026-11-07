@@ -469,3 +469,8 @@ resolve-stable-cohorts inventory output:
 
 check-stable-cohorts plan output owner:
     python3 scripts/check-stable-cohorts.py "{{plan}}" "{{output}}" "{{owner}}"
+
+stable-standalone-check:
+    cargo check --locked --manifest-path tools/jzazbz-bench/Cargo.toml --all-targets
+    cargo test --locked --manifest-path cms-contract/Cargo.toml
+    cargo check --locked --manifest-path site/converter-wasm/Cargo.toml --target wasm32-unknown-unknown

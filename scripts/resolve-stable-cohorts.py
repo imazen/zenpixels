@@ -30,7 +30,9 @@ def main():
                           + " codex-116 isolated stable dependency resolution\n")
         env = dict(os.environ, CARGO_TARGET_DIR=str(output / "targets" / name))
         log_path = output / f"{name}-resolution.log"
-        result = dict(repo=name, candidate=row["candidate"], stages=[])
+        candidate = subprocess.check_output(
+            ["jj", "log", "-r", "@-", "--no-graph", "-T", "commit_id"], cwd=repo, text=True)
+        result = dict(repo=name, prepared_candidate=row["candidate"], candidate=candidate, stages=[])
         with log_path.open("w") as log:
             def run(args, suffix):
                 dest = output / f"{name}-{suffix}.json"
