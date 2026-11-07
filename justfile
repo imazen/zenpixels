@@ -462,3 +462,7 @@ inspect-cohort metadata output:
 # Caller must already hold the isolated repository lock; prepares without pushing.
 prepare-stable-cap repo base owner *manifests:
     python3 scripts/prepare-stable-cap.py "{{repo}}" "{{base}}" "{{owner}}" {{manifests}}
+
+# Isolated roots and resource wrapper must already be owned by the caller.
+resolve-stable-cohorts inventory output:
+    python3 scripts/resolve-stable-cohorts.py "{{inventory}}" "{{output}}"
