@@ -41,6 +41,9 @@ int main(int argc, char **argv) {
     }
     for (unsigned pass = 0; pass < 2; ++pass) {
         unsigned intent = pass ? INTENT_ABSOLUTE_COLORIMETRIC : INTENT_RELATIVE_COLORIMETRIC;
+        /* LCMS defaults to complete adaptation; use zero for native-white
+           absolute colorimetry. https://www.littlecms.com/LittleCMS2.18%20API.pdf */
+        cmsSetAdaptationState(pass ? 0.0 : 1.0);
         unsigned flags = cmsFLAGS_NOOPTIMIZE | cmsFLAGS_NOCACHE;
         cmsHTRANSFORM before = cmsCreateTransform(old, TYPE_RGB_FLT, xyz, TYPE_XYZ_DBL, intent, flags);
         cmsHTRANSFORM after = cmsCreateTransform(newer, TYPE_RGB_FLT, xyz, TYPE_XYZ_DBL, intent, flags);

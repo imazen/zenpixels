@@ -458,3 +458,7 @@ icc-bundle-color-compare old proposed output:
 # Print selected versions and beta ceilings without copying local paths.
 inspect-cohort metadata output:
     python3 scripts/inspect-cohort.py "{{metadata}}" "{{output}}"
+
+# Caller must already hold the isolated repository lock; prepares without pushing.
+prepare-stable-cap repo base owner *manifests:
+    python3 scripts/prepare-stable-cap.py "{{repo}}" "{{base}}" "{{owner}}" {{manifests}}

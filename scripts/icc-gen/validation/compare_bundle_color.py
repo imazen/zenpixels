@@ -42,6 +42,7 @@ def main():
                 before, after = list(map(float, fields[5:8])), list(map(float, fields[8:11]))
                 assert all(math.isfinite(value) for value in before + after)
                 bucket = summary.setdefault(str(intent), {
+                    "adaptation_state": 0.0 if intent == 3 else 1.0,
                     "cells": 0, "changed_cells": 0, "changed_channels": 0,
                     "max_abs_xyz_difference": 0.0, "neutral_max_difference": 0.0,
                     "extended_max_difference": 0.0, "pq_max_difference": 0.0,
