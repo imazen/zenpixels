@@ -33,6 +33,12 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [Unreleased]
 
+- Separate review proposal: regenerate the CICP RGB ICC bundle with moxcms 0.9.2
+  D50-adapted colorants, source-white adaptation and media-white tags. Preserve
+  all 175 gray mappings and historical profile recognition. Independent old/new
+  decoded-color differences are recorded in `docs/stable-dependencies-2026-11-07.md`;
+  the profiles are not color-equivalent. No pixel threshold is changed.
+
 - Require released archmage/magetypes 0.9.31 and moxcms 0.9.2 in active
   conversion tools. Retain the pure-gamma range/sign guards and existing
   numerical source patches. The separately reviewed RGB ICC bundle proposal
