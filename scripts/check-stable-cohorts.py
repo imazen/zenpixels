@@ -26,7 +26,8 @@ def main():
         marker = repo / ".workongoing"
         if not marker.exists() or owner not in marker.read_text():
             raise RuntimeError(f"repository ownership missing: {repo}")
-        env = dict(os.environ, CARGO_TARGET_DIR=str(output.parent / "targets" / row["label"]))
+        env = dict(os.environ, CARGO_TARGET_DIR=str(output.parent / "targets" / row["label"]),
+                   RUST_TEST_THREADS=os.environ.get("CARGO_BUILD_JOBS", "1"))
         receipt = dict(label=row["label"], stages=[])
         receipt["source"] = subprocess.check_output(
             ["jj", "log", "-r", "@-", "--no-graph", "-T", "commit_id"], cwd=repo, text=True)
