@@ -8,6 +8,10 @@
 
 Pixel format types and transfer-function-aware conversion for Rust image codecs.
 
+The unpublished [zenpsy-api](zenpsy-api/README.md) companion defines
+still-image quality contracts without adding metric or codec dependencies to
+the pixel package.
+
 > **Unreleased bridge work (2026-09-27):** checked storage/ownership,
 > prepared and fallible conversion, alpha/output fixes, explicit preserved-stage
 > composition and fused U16 analysis are implemented. See the

@@ -307,6 +307,23 @@ release-reconcile-check:
     cargo test --workspace --all-features --locked
     cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
+# Still-image IQA contract: no codec or metric implementation dependencies.
+iqa-check:
+    cargo fmt --manifest-path zenpsy-api/Cargo.toml --check
+    cargo test --locked --manifest-path zenpsy-api/Cargo.toml --no-default-features
+    cargo test --locked --manifest-path zenpsy-api/Cargo.toml --features std
+    cargo clippy --locked --manifest-path zenpsy-api/Cargo.toml --all-targets --all-features -- -D warnings
+    RUSTDOCFLAGS="-D warnings" cargo doc --locked --manifest-path zenpsy-api/Cargo.toml --no-deps
+
+iqa-portability-check:
+    cargo +1.88.0 check --locked --manifest-path zenpsy-api/Cargo.toml --no-default-features
+    cargo check --locked --manifest-path zenpsy-api/Cargo.toml --no-default-features --target wasm32-unknown-unknown
+    cargo check --locked --manifest-path zenpsy-api/Cargo.toml --no-default-features --target thumbv7em-none-eabihf
+
+# Run at the repository root to retain pixel workspace inheritance in cross.
+iqa-cross-check toolchain='':
+    cross {{toolchain}} test --locked --manifest-path zenpsy-api/Cargo.toml --target i686-unknown-linux-gnu
+
 # Zeroed storage plus the existing row/alignment constructor contracts.
 zeroed-alloc-check:
     cargo test --locked -p zenpixels --lib
@@ -438,3 +455,8 @@ moxcms-final-summary study output:
 
 moxcms-final-report study comparisons output:
     python3 benchmarks/moxcms-gamma/report-final.py "{{study}}" "{{comparisons}}" "{{output}}"
+
+# Keep the browser converter on its committed standalone dependency graph.
+explorer-boundary-check:
+    cargo fmt --manifest-path site/converter-wasm/Cargo.toml --check
+    cargo clippy --manifest-path site/converter-wasm/Cargo.toml --locked --target wasm32-unknown-unknown -- -D warnings
