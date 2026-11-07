@@ -1,6 +1,6 @@
 # Dumps imazen/butteraugli's opsin_dynamics_image inputs (rgb + the crate's own
 # σ=1.2 blur) and outputs for tools/jzazbz-bench/oracle (libjxl bit-exactness
-# check). Standalone: butteraugli pins stable archmage, jzazbz-bench the beta.
+# check). Standalone diagnostic; historical measurements retain their original pins.
 # Run: cargo run --release --manifest-path tools/butteraugli-opsin-dump/Cargo.toml -- DIR
 [package]
 name = "butteraugli-opsin-dump"

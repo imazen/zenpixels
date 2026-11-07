@@ -14,8 +14,8 @@ zenpixels-convert = { path = "../zenpixels-convert", features = ["cms-moxcms"] }
 lcms = { git = "https://github.com/imazen/lcms", rev = "39068cc62f470d183e078637e19504ac9ecf7392" }
 whereat = "0.1"
 bytemuck = "1.21"
-archmage = ">=0.9.31-beta.2, <0.10.0"
+archmage = "0.9.31"
 
 [patch.crates-io]
-garb = { git = "https://github.com/imazen/garb", rev = "605276d717ea0b31a1cd2a36ae05301383c7b8b5" }
+garb = { git = "https://github.com/imazen/garb", rev = "8f9aa10d09f84bb0a1e3fdbd1773f610eec1b784" }
 linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24664315586bd60e5f048253b1f69052" }
