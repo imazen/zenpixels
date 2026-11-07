@@ -466,3 +466,6 @@ prepare-stable-cap repo base owner *manifests:
 # Isolated roots and resource wrapper must already be owned by the caller.
 resolve-stable-cohorts inventory output:
     python3 scripts/resolve-stable-cohorts.py "{{inventory}}" "{{output}}"
+
+check-stable-cohorts plan output owner:
+    python3 scripts/check-stable-cohorts.py "{{plan}}" "{{output}}" "{{owner}}"
