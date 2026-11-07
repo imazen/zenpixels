@@ -175,7 +175,12 @@ and preserved, not counted as a successful gate.
 
 The separate bundle proposal is draft PR #123, based on dependency PR #122.
 Its 728 library tests, 38 CMS controls and all 334 independent reader
-controls pass locally; it preserves every historical recognition row.
+controls pass locally; it preserves every historical recognition row. Full
+CI is green on head `2dba714d`, including Linux/Windows ARM, macOS ARM,
+i686, WASI, MSRV and the API/CMS contracts. The dependency-only PR still
+fails the original bundle equality gate: CI also runs the generator, where
+two unchanged regeneration checks fail (37,260 fresh bytes versus 35,379
+committed). That failure is preserved; PR #123 is the separate proposal.
 Changed colorants and white adaptation remain an explicit numerical review.
 There is no merge, release, main overwrite or automatic golden acceptance.
 
