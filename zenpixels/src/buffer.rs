@@ -2013,7 +2013,7 @@ impl<'a> PixelSliceMut<'a, BGRA<u8>> {
 /// The type parameter `P` tracks pixel format at compile time, same as
 /// [`PixelSlice`].
 ///
-/// `S` defaults to `Vec<u8>`, which is what most allocating constructors make;
+/// `S` defaults to [`PixelStorage`], which owns U8, U16 or F32 samples;
 /// [`PixelBuffer::try_new_aligned`] makes [`AlignedSamples`].
 /// [`PixelBuffer::try_from_parts`] adopts any
 /// [`SampleStorage`] without copying: a `Vec<u16>` or
@@ -2510,6 +2510,17 @@ impl<P: Pixel> PixelBuffer<P> {
 #[cfg(feature = "rgb")]
 impl<P: Pixel> PixelBuffer<P> {
     /// Construct from a typed pixel `Vec`.
+    ///
+    /// This selects sample storage from `P` and needs no integer inference on
+    /// a `PixelStorage::from(vec![...])` call:
+    ///
+    /// ```
+    /// use zenpixels::PixelBuffer;
+    /// let pixels = vec![rgb::Rgb::new(0xa5_u8, 0, 0); 4];
+    /// let buffer = PixelBuffer::from_pixels(pixels, 2, 2)?;
+    /// assert_eq!(buffer.width(), 2);
+    /// # Ok::<(), whereat::At<zenpixels::BufferError>>(())
+    /// ```
     ///
     /// Zero-copy when `P` has alignment 1 (u8-component types like `Rgb<u8>`).
     /// Copies the data for types with higher alignment (`Rgb<u16>`, `Rgb<f32>`, etc.)
