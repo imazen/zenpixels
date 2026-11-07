@@ -449,3 +449,12 @@ moxcms-release-probe:
 # Compare a proposed bundle without replacing committed data or expectations.
 icc-bundle-compare proposed output:
     python3 scripts/icc-gen/validation/compare_bundles.py zenpixels-convert {{proposed}} {{output}}
+
+# Independent old/new decoded-color characterization; no fixture updates.
+icc-bundle-color-compare old proposed output:
+    cc -Wall -Wextra -Werror scripts/icc-gen/validation/compare_color.c -o "{{output}}-comparator" $(pkg-config --cflags --libs lcms2)
+    python3 scripts/icc-gen/validation/compare_bundle_color.py "{{output}}-comparator" "{{old}}" "{{proposed}}" "{{output}}"
+
+# Print selected versions and beta ceilings without copying local paths.
+inspect-cohort metadata output:
+    python3 scripts/inspect-cohort.py "{{metadata}}" "{{output}}"

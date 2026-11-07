@@ -17,8 +17,10 @@ accuracy tests pass without changed expectations.
 - Remove temporary upper caps that end at a beta.2 release. Keep the frozen
   consumer source revisions: current main kernels in zenblend, zentone,
   zenflate and zenresize differ from those previously qualified.
-- Keep the garb source patch: its unpublished 0.2.9 experimental APIs are
-  used here. Registry garb 0.2.8 is not an equivalent replacement.
+- Keep the garb source patch: registry 0.2.8 has the experimental feature,
+  but lacks the pinned source's corrected integer narrowing, FMA-corrected
+  byte-to-float quotients and widened nearest quantization. Dropping the
+  patch would change numerical kernels, not merely dependency resolution.
 - Keep the linear-srgb source patch: the precise-portable transfer feature
   is not supplied by the registry 0.6.12 source. Stable SIMD alone does not
   publish those changes.
