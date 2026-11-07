@@ -17,6 +17,11 @@ None. This new companion is an unpublished review API.
 - Name the unpublished shared contract `zenpsy-api`, with the Rust
   namespace `zenpsy_api`; retain `iqa` as a consumer-local alias.
 
+### Fixed
+
+- Refresh the explorer standalone lock after the converter's pastey migration;
+  retain its locked WASM lint gate and expose `just explorer-boundary-check`.
+
 ## 0.3.1 cleanup — release reconciliation (2026-09-28)
 
 Includes all 0.2.17 behavior fixes and `SampleEncoding`, then removes:

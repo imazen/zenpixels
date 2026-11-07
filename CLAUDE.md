@@ -118,6 +118,12 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed explorer lock drift (2026-11-07): the converter adopted pastey while
+  the browser standalone lock retained its paste dependency edge. Locked WASM
+  Clippy refused before compilation. Refresh the standalone graph and run
+  `just explorer-boundary-check`; strict WASM Clippy and fmt pass without
+  changing source algorithms or assertions.
+
 - Fixed IQA conformance portability (2026-11-05): the new native trace test
   assumed forward-slash source paths and failed on Windows x64/ARM64. It now
   compares the recorded source path with `file!()` while retaining the exact

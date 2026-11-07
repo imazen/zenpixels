@@ -455,3 +455,8 @@ moxcms-final-summary study output:
 
 moxcms-final-report study comparisons output:
     python3 benchmarks/moxcms-gamma/report-final.py "{{study}}" "{{comparisons}}" "{{output}}"
+
+# Keep the browser converter on its committed standalone dependency graph.
+explorer-boundary-check:
+    cargo fmt --manifest-path site/converter-wasm/Cargo.toml --check
+    cargo clippy --manifest-path site/converter-wasm/Cargo.toml --locked --target wasm32-unknown-unknown -- -D warnings
