@@ -118,12 +118,21 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
-- ICC qualification in progress (2026-11-08): the corrected recipe is staged;
-  the historical export blob remains unchanged pending PQ representation choice.
-  HLG export now refuses without a rendering target; native CICP must be kept
-  where permitted. Bundle hashes remain recognized but require a CMS until
-  complete transform substitution is qualified. `docs/corrected-icc-export.md`
-  records the original failing gates, independent recipe checks and remaining work.
+- Corrected ICC exports are staged in separate unmerged PR128 (2026-11-08),
+  not published. The actual replacement bundle is 93,377 bytes with 313
+  RGB/gray mappings; the 21 removed mappings are targetless HLG exports.
+  Historical hashes remain recognized, with new exports MetadataOnly.
+  All 168 PQ intent/direction cells, 292 SDR cells and 313 independent
+  libpng/C LCMS 2.20 containers pass. Native U8/U16 RGB/RGBA/GRAY/GRAY_ALPHA
+  LCMS tests preserve alpha; U8 is exact and U16 differs from correctly rounded
+  analytic codes by at most 2 on decode / 1 on encode. MoxCMS explicitly
+  declines unsupported float pipelines. The six-platform CMS matrix passes.
+  HLG retains native CICP until an explicit rendering target exists.
+  Browser witnesses establish selected paths, not physical HDR display accuracy;
+  WebKit GRAY remains unqualified. See `docs/corrected-icc-export.md` and
+  `benchmarks/icc-export/native_integer_2026-11-08.meta`. The separate
+  grayscale-collapse authority guard retains an existing malformed-ICC test
+  failure pending owner decision; it is absent from PR128.
 - PQ PNG compatibility qualification (2026-11-08): keep native CICP plus a
   qualified ICC companion where permitted. The float-table pilot alone is not
   sufficient: Chromium 153 and explicitly color-managed Firefox 155 use its
@@ -144,17 +153,18 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
   reproduces without the row adapter; bounded mAB rules versus LCMS extended
   float evaluation must be distinguished from a specification violation.
 
-- Open in the bundle-history audit (2026-11-08): all 175 committed GRAY
+- Historical bundle audit (2026-11-08): all 175 old GRAY
   mappings are Display-class but store native white in `wtpt`, contrary to
   ICC.1:2022 9.2.36's PCS-D50 requirement. This dates to `75eb953`; the
   October `27c17a6` gray test explicitly preserves the wrong expectation.
-  The 0.9.2 proposal and constructor controls copy these bytes unchanged.
+  The first 0.9.2 proposal and constructor controls copied these bytes unchanged.
+  PR128 instead corrects the Display-class wtpt and preserves old recognition.
   Independent reader acceptance does not establish the tag's correctness.
   `just icc-bundle-definition-audit REVISION` inspects actual historical
   assets; see `docs/icc-bundle-history-and-correctness.md`. No binary,
   existing assertion or pixel tolerance is changed by this finding.
 
-- Open in profile triage (2026-11-08): the inherited curves in all three RGB
+- Historical profile triage (2026-11-08): the inherited curves in all three RGB
   candidates have limits missed by the sparse read-back samples. On every
   normalized U16 input, TC9/TC10 have maximum absolute linear errors
   0.004917139850733618 / 0.0015508450894103343 near encoded zero; TC17 reaches
