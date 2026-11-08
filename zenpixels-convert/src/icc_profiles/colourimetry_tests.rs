@@ -320,3 +320,71 @@ fn rgb_media_white_and_full_adaptation_match_pcs() {
         assert_eq!(&icc[8..12], &[4, 0x40, 0, 0]);
     }
 }
+
+// Qualify the build-time recipe before replacing the stored export bytes.
+// PQ's representation is evaluated separately by the backend precision harness.
+#[cfg(feature = "cms-moxcms")]
+#[test]
+fn corrected_recipe_matches_independent_colorimetry_and_dense_sdr_curves() {
+    for &p in PRIMARIES {
+        for &t in TRANSFERS.iter().filter(|&&t| !matches!(t, 16 | 18)) {
+            for (kind, synth) in [super::synthesis::rgb, super::synthesis::gray]
+                .into_iter()
+                .enumerate()
+            {
+                if kind == 0 && p == 10 {
+                    continue;
+                }
+                let icc = synth(p, t).expect("supported explicit recipe");
+                for (actual, expected) in xyz(&icc, b"wtpt").into_iter().zip([0.9642, 1.0, 0.8249])
+                {
+                    assert!(
+                        (actual - expected).abs() < 0.000008,
+                        "({p},{t}) kind {kind} wtpt"
+                    );
+                }
+                if kind == 0 {
+                    let actual = [b"rXYZ", b"gXYZ", b"bXYZ"].map(|sig| xyz(&icc, sig));
+                    for (a, b) in actual
+                        .into_iter()
+                        .flatten()
+                        .zip(expected_colorants(p).into_iter().flatten())
+                    {
+                        assert!((a - b).abs() < 0.00002, "({p},{t}) colorants");
+                    }
+                }
+                let chad = tag(&icc, b"chad");
+                for i in 0..3 {
+                    let row = core::array::from_fn(|j| fixed(&chad[8 + 4 * (3 * i + j)..]));
+                    assert!(
+                        (dot(row, xy_xyz(white(p))) - [0.9642, 1.0, 0.8249][i]).abs() < 0.00002
+                    );
+                }
+                // Four white groups share curves. One representative gamut per
+                // transfer suffices for the dense scalar serialization check.
+                if p != 1 {
+                    continue;
+                }
+                let trc = tag(&icc, if kind == 0 { b"rTRC" } else { b"kTRC" });
+                for code in 0..=65535 {
+                    let x = f64::from(code) / 65535.0;
+                    let actual = curve(trc, x);
+                    if code == 0 && matches!(t, 9 | 10) {
+                        let cutoff = if t == 9 { 0.01 } else { 10_f64.sqrt() / 1000.0 };
+                        assert!((0.0..=cutoff).contains(&actual));
+                        continue;
+                    }
+                    let expected = if t == 17 {
+                        analytic(t, x) * 48.0 / xyz(&icc, b"lumi")[1]
+                    } else {
+                        analytic(t, x)
+                    };
+                    assert!(
+                        (actual - expected).abs() <= 0.0005,
+                        "TC{t} kind {kind} code {code}: {actual} versus {expected}"
+                    );
+                }
+            }
+        }
+    }
+}

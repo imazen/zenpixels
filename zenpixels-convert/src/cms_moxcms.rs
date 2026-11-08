@@ -1387,26 +1387,17 @@ fn with_pcs_white(mut profile: ColorProfile) -> ColorProfile {
 /// Generate ICC profile bytes for a CICP via moxcms, or `None` if moxcms doesn't
 /// recognize the **color-defining** code points (primaries / transfer).
 ///
-/// Strict on purpose: unlike [`cicp_to_moxcms_profile`] (the transform path, which
-/// falls back to Bt709/sRGB defaults), synthesis must never emit a profile whose
-/// TRC/gamut contradicts the source — a `None` here surfaces as
-/// [`SynthesizedIcc::CmsUnsupported`](crate::icc_profiles::SynthesizedIcc::CmsUnsupported)
-/// so the caller carries the color via CICP instead of embedding a wrong profile.
-/// Matrix coefficients are irrelevant to an RGB ICC, so they're defaulted rather
-/// than required.
-///
-/// Test-only: the bundled blob (generated from this exact logic at build time) is
-/// the runtime coverage source, so `synthesize_icc_for_cicp` no longer calls this.
-/// It's retained as the oracle the `blob_decodes_byte_identical_to_moxcms` guard
-/// compares the committed blob against — catching a moxcms version bump that would
-/// shift the canonical bytes.
+/// Rebuild an RGB export profile from the shared, explicit H.273 recipe.
+/// Test-only: runtime synthesis reads the committed bundle without a CMS.
+/// Freshness tests compare canonical bytes; independent colorimetry tests
+/// separately check those bytes against the standard.
 #[cfg(test)]
 pub(crate) fn icc_bytes_for_cicp(cicp: &Cicp) -> Option<alloc::vec::Vec<u8>> {
     crate::icc_profiles::synthesis::rgb(cicp.color_primaries, cicp.transfer_characteristics)
 }
 
-/// moxcms's D50 white point (`white_point_from_temperature(5003)`), reconstructed so
-/// the gray oracle below builds against the whole `>=0.8.1, <0.10` moxcms range.
+/// Historical moxcms D50 approximation, retained for the upstream-value regression.
+/// The corrected export recipe uses ICC PCS D50 instead.
 ///
 /// moxcms exposed this value as the const `WHITE_POINT_D50` (moxcms ≤ 0.8) and then
 /// renamed it to the fn `white_point_d50()` (moxcms ≥ 0.9) — identical value,
@@ -1424,43 +1415,12 @@ fn moxcms_d50_xyz() -> moxcms::Xyz {
     moxcms::XyY::new(X, Y, 1.0).to_xyz()
 }
 
-/// Synthesize a **GRAY-class** ICC for a CICP, exactly as `icc-gen`'s
-/// `cicp_bundle_gen` generator does for the committed gray bundle: `kTRC` =
-/// the transfer's tone curve (taken from a throwaway RGB synthesis so the
-/// gray and RGB recipes can never disagree about a curve), media white point
-/// = the primaries' H.273 white, and a per-white Bradford white→D50 `chad`.
-/// The generator zeroes the creation timestamp for reproducibility; this
-/// fresh path leaves it — the roundtrip test masks bytes 24..36 on both
-/// sides.
-///
-/// Test-only, mirroring [`icc_bytes_for_cicp`]: the bundled gray blob is
-/// the runtime coverage source; this is the oracle the gray
-/// `blob_decodes_byte_identical_to_moxcms` guard compares the committed
-/// blob against.
+/// Rebuild a GRAY export profile from the same build-time recipe.
+/// Display-class media white is PCS D50; chad records full adaptation from
+/// the explicitly selected H.273 source white. Timestamp and ID are canonical.
 #[cfg(test)]
 pub(crate) fn gray_icc_bytes_for_cicp(cicp: &Cicp) -> Option<alloc::vec::Vec<u8>> {
     crate::icc_profiles::synthesis::gray(cicp.color_primaries, cicp.transfer_characteristics)
-}
-
-/// The white point of an H.273 colour-primaries code, as CIE xy
-/// (Rec. ITU-T H.273 Table 2). Mirror of the table in `icc-gen`'s
-/// `cicp_bundle_gen` — the gray-bundle roundtrip test pins the two copies
-/// together. The name keys the gray profile's description so primaries
-/// sharing a white dedup to identical bytes.
-#[cfg(test)]
-fn h273_white_xy(primaries: u8) -> Option<(&'static str, f64, f64)> {
-    Some(match primaries {
-        // D65: BT.709, BT.470BG, SMPTE 170M, SMPTE 240M, BT.2020,
-        // P3-D65 (SMPTE EG 432-1), EBU Tech 3213-E.
-        1 | 5 | 6 | 7 | 9 | 12 | 22 => ("D65", 0.3127, 0.3290),
-        // Illuminant C: BT.470M, generic film.
-        4 | 8 => ("C", 0.310, 0.316),
-        // Illuminant E: SMPTE ST 428-1 (CIE XYZ).
-        10 => ("E", 1.0 / 3.0, 1.0 / 3.0),
-        // DCI white: SMPTE RP 431-2 (P3-DCI theater white).
-        11 => ("DCI", 0.314, 0.351),
-        _ => return None,
-    })
 }
 
 /// Convert CICP to a moxcms ColorProfile.

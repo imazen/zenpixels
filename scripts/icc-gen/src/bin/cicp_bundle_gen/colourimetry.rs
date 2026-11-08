@@ -138,7 +138,7 @@ fn validate_rgb_colorimetry(icc: &[u8], primaries: u8) -> Result<(), String> {
         .flatten()
         .zip(expected.into_iter().flatten())
     {
-        if (a - b).abs() > 0.001 {
+        if (a - b).abs() > 0.00002 {
             return Err(format!(
                 "H.273/D50 colorant mismatch: got {got:?}, expected {expected:?}"
             ));

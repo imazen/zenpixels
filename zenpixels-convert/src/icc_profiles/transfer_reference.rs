@@ -97,8 +97,8 @@ pub(super) fn analytic(t: u8, x: f64) -> f64 {
             } else {
                 (((x - 0.55991073) / 0.17883277).exp() + 0.28466892) / 12.0
             };
-            // The shipped HLG ICC encodes BT.2100 reference-display neutral
-            // EOTF (1000 cd/m², system gamma 1.2), including its OOTF.
+            // Historical HLG table reference only: 1000-nit neutral EOTF.
+            // Corrected export refuses HLG without a rendering target.
             scene.powf(1.2)
         }
         _ => panic!("unassigned transfer {t}"),
