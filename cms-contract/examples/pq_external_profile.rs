@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let mut raw_output = vec![0.0f32; input.len()];
     raw.transform(&input, &mut raw_output)?;
-    for (code, rgb) in codes.into_iter().zip(raw_output.chunks_exact(3)) {
+    for (code, rgb) in codes.into_iter().zip(raw_output.as_chunks::<3>().0) {
         println!("raw-mox\tcode={code:.9}\tlinear_rgb={rgb:?}");
     }
     for (name, cms) in [
@@ -75,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 codes.len() as u32,
             )
             .map_err(|e| format!("{e:?}"))?;
-        for (code, rgb) in codes.into_iter().zip(output.chunks_exact(3)) {
+        for (code, rgb) in codes.into_iter().zip(output.as_chunks::<3>().0) {
             let e = f64::from(code).powf(32.0 / 2523.0);
             let pq = ((e - 107.0 / 128.0).max(0.0) / (2413.0 / 128.0 - 2392.0 / 128.0 * e))
                 .powf(8192.0 / 1305.0);

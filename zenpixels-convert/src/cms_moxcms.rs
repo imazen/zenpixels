@@ -169,7 +169,9 @@ fn has_float_pipeline(source: &crate::ColorProfileSource<'_>, signature: &[u8; 4
     let count = u32::from_be_bytes(header[128..132].try_into().unwrap()) as usize;
     let available = (bytes.len() - 132) / 12;
     bytes[132..]
-        .chunks_exact(12)
+        .as_chunks::<12>()
+        .0
+        .iter()
         .take(count.min(available))
         .any(|entry| &entry[..4] == signature)
 }
