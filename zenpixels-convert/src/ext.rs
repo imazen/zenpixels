@@ -961,7 +961,14 @@ pub trait ColorConvertExt: crate::sealed::Sealed + Sized {
     ///
     /// Follows the CSS Color 4 gamut mapping algorithm: OKLCh chroma reduction with a
     /// 0.02 tolerance in OKLab, then a clip. For one color at a time; it's far slower
-    /// per pixel than [`SoftCompress`](crate::hdr::SoftCompress) and not meant for images.
+    #[cfg_attr(
+        feature = "hdr-experimental",
+        doc = "per pixel than [`SoftCompress`](crate::hdr::SoftCompress) and not meant for images."
+    )]
+    #[cfg_attr(
+        not(feature = "hdr-experimental"),
+        doc = "per pixel than `SoftCompress` and not meant for images."
+    )]
     /// Alpha is kept.
     ///
     /// # Errors

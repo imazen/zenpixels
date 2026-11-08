@@ -91,26 +91,69 @@ pub enum ConvertError {
         from: PixelDescriptor,
         to: PixelDescriptor,
     },
-    /// The injected [`ToneMapper`](crate::hdr::ToneMapper) declared
-    /// [`Requirements::full_image == true`](crate::hdr::Requirements::full_image)
+    #[cfg_attr(
+        feature = "hdr-experimental",
+        doc = "The injected [`ToneMapper`](crate::hdr::ToneMapper) declared"
+    )]
+    #[cfg_attr(
+        not(feature = "hdr-experimental"),
+        doc = "The injected `ToneMapper` declared"
+    )]
+    #[cfg_attr(
+        feature = "hdr-experimental",
+        doc = "[`Requirements::full_image == true`](crate::hdr::Requirements::full_image)"
+    )]
+    #[cfg_attr(
+        not(feature = "hdr-experimental"),
+        doc = "`Requirements::full_image == true`"
+    )]
     /// from
-    /// [`ConvertPlan::new_with_tone_mapper`](crate::ConvertPlan::new_with_tone_mapper),
+    #[cfg_attr(
+        feature = "hdr-experimental",
+        doc = "[`ConvertPlan::new_with_tone_mapper`](crate::ConvertPlan::new_with_tone_mapper),"
+    )]
+    #[cfg_attr(
+        not(feature = "hdr-experimental"),
+        doc = "`ConvertPlan::new_with_tone_mapper`,"
+    )]
     /// but this pipeline does not yet support full-image local
     /// operators (Mantiuk gradient processing, Fattal, bilateral, …).
     ///
     /// The capacity is reserved in the public types
-    /// ([`Requirements::full_image`](crate::hdr::Requirements::full_image)
-    /// and [`PreparedMapper::Buffered`](crate::hdr::PreparedMapper))
+    #[cfg_attr(
+        feature = "hdr-experimental",
+        doc = "([`Requirements::full_image`](crate::hdr::Requirements::full_image)"
+    )]
+    #[cfg_attr(not(feature = "hdr-experimental"), doc = "(`Requirements::full_image`")]
+    #[cfg_attr(
+        feature = "hdr-experimental",
+        doc = "and [`PreparedMapper::Buffered`](crate::hdr::PreparedMapper))"
+    )]
+    #[cfg_attr(
+        not(feature = "hdr-experimental"),
+        doc = "and `PreparedMapper::Buffered`)"
+    )]
     /// under `#[non_exhaustive]` so the variant can be activated in a
     /// patch release without semver impact. Pick a streaming mapper
     /// (any pointwise curve — BT.2446-A, ACES, FilmicSpline, the
     /// adaptive family in zentone, …) until that lands.
     ///
-    /// `mapper_name` is the [`ToneMapper::name`](crate::hdr::ToneMapper::name)
+    #[cfg_attr(
+        feature = "hdr-experimental",
+        doc = "`mapper_name` is the [`ToneMapper::name`](crate::hdr::ToneMapper::name)"
+    )]
+    #[cfg_attr(
+        not(feature = "hdr-experimental"),
+        doc = "`mapper_name` is the `ToneMapper::name`"
+    )]
     /// of the offending mapper, captured for diagnostics.
     FullImageMapperNotSupported {
         /// The kebab-case identifier returned by
-        /// [`ToneMapper::name`](crate::hdr::ToneMapper::name).
+        #[cfg_attr(
+            feature = "hdr-experimental",
+            doc = "[`ToneMapper::name`](crate::hdr::ToneMapper::name)."
+        )]
+        #[cfg_attr(not(feature = "hdr-experimental"), doc = "`ToneMapper::name`.")]
         mapper_name: &'static str,
     },
     /// The conversion requires a color management plugin but none was provided.
