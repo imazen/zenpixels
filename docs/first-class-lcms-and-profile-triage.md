@@ -39,6 +39,8 @@ Linux aarch64 qualification:
 - LCMS alone without default features and unchanged no-default core both check.
 - Nine doctests and public API regeneration pass; strict backend and shared
   contract/example Clippy and format checks pass.
+- The full converter library passes 450 tests, retaining one existing ignore
+  and the known stable-upgrade bundle equality failure; no binary is replaced.
 - The actual production backend reproduces all 12 C LCMS 2.20 float components
   for four existing JXL CMYK regression samples, including negative red.
 

@@ -26,7 +26,11 @@
     "production_cmyk_float_components": 12,
     "production_cmyk_c_rust_bit_mismatches": 0,
     "strict_rustdoc_cms_features": true,
-    "public_api_check_pass": true
+    "public_api_check_pass": true,
+    "library_pass": 450,
+    "library_existing_failure": "icc_profiles::cicp_bundle::tests::blob_decodes_byte_identical_to_moxcms",
+    "library_existing_ignores": 1,
+    "standalone_site_locked_resolution": true
   },
   "candidate_gates": {
     "rgb_profiles": 159,
@@ -83,6 +87,15 @@
       "peak_rss_gib": 0.11,
       "min_available_mib": 27122,
       "peak_load": 7.24
+    },
+    {
+      "log": "first-class-final-v2.log",
+      "rc": 101,
+      "elapsed_s": 107,
+      "peak_rss_gib": 2.65,
+      "min_available_mib": 25203,
+      "peak_load": 12.09,
+      "result": "Eight backend tests, strict Clippy/rustdoc, API check pass; full library450pass/1existing bundle equality fail/1existingignore"
     }
   ],
   "recommendation": "LCMS colorimetry with explicit H273 xy; preserve existing bundle pending review; inherited curves need separate precision and HDR policy decisions",

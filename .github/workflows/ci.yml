@@ -137,6 +137,9 @@ jobs:
         with:
           key: cross-i686
 
+      - name: Test production Rust LCMS backend (i686/QEMU)
+        run: cross test --locked -p zenpixels-convert --features cms-lcms --test cms_lcms_contracts --target i686-unknown-linux-gnu
+
       - name: Test (i686/QEMU)
         run: cross test --workspace --target i686-unknown-linux-gnu
 
