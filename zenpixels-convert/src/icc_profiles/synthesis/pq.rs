@@ -19,47 +19,80 @@ fn encode_sample(x: f64) -> f64 {
     ((107.0 / 128.0 + 2413.0 / 128.0 * p) / (1.0 + 2392.0 / 128.0 * p)).powf(2523.0 / 32.0)
 }
 
-// Geometric breakpoints retain the low PQ codes without a huge uniform LUT.
-// Every segment is read back and checked independently by the qualification tools.
-fn float_curve(inverse: bool) -> Option<gamma::ToneCurve> {
-    let evaluate: fn(f64) -> f64 = if inverse { encode_sample } else { decode };
-    let lower = if inverse { -48 } else { -16 };
-    let mut segments = vec![gamma::CurveSegment {
-        x0: -1e22,
-        x1: 0.0,
-        r#type: 6,
-        params: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        ..Default::default()
-    }];
-    let mut start = 0.0;
-    for exponent in lower..=0 {
-        let end = 2_f64.powi(exponent);
-        let intervals = if inverse {
-            256
-        } else {
-            ((end - start) * 65536.0).round().clamp(1.0, 512.0) as usize
-        };
-        let points = (0..=intervals)
-            .map(|i| evaluate(start + (end - start) * i as f64 / intervals as f64) as f32)
-            .collect();
+// Separate the exact-binary affine term from the reciprocal. Combining them
+// into two independently rounded large coefficients loses precision at white.
+fn formula(parameters: [f64; 4], bounds: Option<(f32, f32)>) -> Option<gamma::ToneCurve> {
+    let mut params = [0.0; 10];
+    params[..4].copy_from_slice(&parameters);
+    let (lower, upper) = bounds.unwrap_or((-1e22, 1e22));
+    let mut segments = Vec::new();
+    if bounds.is_some() {
         segments.push(gamma::CurveSegment {
-            x0: start as f32,
-            x1: end as f32,
-            r#type: 0,
-            n_grid_points: (intervals + 1) as u32,
-            sampled_points: Some(points),
+            x0: -1e22,
+            x1: lower,
+            r#type: 6,
+            params: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             ..Default::default()
         });
-        start = end;
     }
     segments.push(gamma::CurveSegment {
-        x0: 1.0,
-        x1: 1e22,
+        x0: lower,
+        x1: upper,
         r#type: 6,
-        params: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        params,
         ..Default::default()
     });
+    if bounds.is_some() {
+        segments.push(gamma::CurveSegment {
+            x0: upper,
+            x1: 1e22,
+            r#type: 6,
+            params: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            ..Default::default()
+        });
+    }
     gamma::build_segmented_tone_curve(None, &segments)
+}
+
+fn white_scale(white: f32) -> f64 {
+    let mut scale = (1.0 / f64::from(white)) as f32;
+    if f64::from(scale) * f64::from(white) > 1.0 {
+        scale = f32::from_bits(scale.to_bits() - 1);
+    }
+    f64::from(scale)
+}
+
+fn float_curves(inverse: bool) -> Option<Vec<gamma::ToneCurve>> {
+    let (c1, c2, c3) = (107.0 / 128.0, 2413.0 / 128.0, 2392.0 / 128.0);
+    if inverse {
+        let a = (c2 / c3) as f32;
+        let e = (c2 / c3 - c1) as f32;
+        let black = a - e;
+        let reciprocal_white = (1.0 / (1.0 + c3)) as f32;
+        let white = (f64::from(a) - f64::from(e) * f64::from(reciprocal_white)) as f32;
+        Some(vec![
+            formula([1305.0 / 8192.0, 1.0, 0.0, 0.0], Some((0.0, 1.0)))?,
+            formula([-1.0, c3, 1.0, 0.0], None)?,
+            formula([1.0, -f64::from(e), f64::from(a), 0.0], None)?,
+            formula(
+                [2523.0 / 32.0, white_scale(white), 0.0, 0.0],
+                Some((black, white)),
+            )?,
+        ])
+    } else {
+        let multiplier = (c3 / (c2 - c1 * c3)) as f32;
+        let offset = (-1.0 / c3) as f32;
+        let white = (1.0 / (f64::from(multiplier) * (c2 - c3)) + f64::from(offset)) as f32;
+        Some(vec![
+            formula([32.0 / 2523.0, 1.0, 0.0, 0.0], Some((0.0, 1.0)))?,
+            formula([1.0, -c3, c2, 0.0], None)?,
+            formula([-1.0, f64::from(multiplier), 0.0, f64::from(offset)], None)?,
+            formula(
+                [8192.0 / 1305.0, white_scale(white), 0.0, 0.0],
+                Some((0.0, white)),
+            )?,
+        ])
+    }
 }
 
 fn identity_clut(inputs: usize, outputs: usize) -> (Vec<u16>, [u8; 16]) {
@@ -169,14 +202,16 @@ pub(super) fn encode(mut source: ColorProfile, gray: bool) -> Option<Vec<u8>> {
     source.lut_b_to_a_saturation = Some(backward);
     let encoded = source.encode().ok()?;
     let mut output = profile::open_profile_from_mem(None, &encoded)?;
-    let decoding = float_curve(false)?;
-    let encoding = float_curve(true)?;
+    let decoding = float_curves(false)?;
+    let encoding = float_curves(true)?;
     let mut forward = lut::pipeline_alloc(None, channels as u32, 3)?;
-    if !forward.insert_stage(
-        lut::StageLoc::AtEnd,
-        lut::stage_alloc_tone_curves(None, channels as u32, Some(&vec![&decoding; channels]))?,
-    ) {
-        return None;
+    for curve in &decoding {
+        if !forward.insert_stage(
+            lut::StageLoc::AtEnd,
+            lut::stage_alloc_tone_curves(None, channels as u32, Some(&vec![curve; channels]))?,
+        ) {
+            return None;
+        }
     }
     let coefficients: Vec<_> = if gray {
         vec![0.9642, 1.0, 0.8249]
@@ -201,11 +236,13 @@ pub(super) fn encode(mut source: ColorProfile, gray: bool) -> Option<Vec<u8>> {
     ) {
         return None;
     }
-    if !backward.insert_stage(
-        lut::StageLoc::AtEnd,
-        lut::stage_alloc_tone_curves(None, channels as u32, Some(&vec![&encoding; channels]))?,
-    ) {
-        return None;
+    for curve in &encoding {
+        if !backward.insert_stage(
+            lut::StageLoc::AtEnd,
+            lut::stage_alloc_tone_curves(None, channels as u32, Some(&vec![curve; channels]))?,
+        ) {
+            return None;
+        }
     }
     // Absolute uses the conventional colorimetric transform and the profile's
     // chromatic adaptation; no independently defined absolute MPE is invented.
