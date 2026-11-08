@@ -20,3 +20,11 @@ archmage = "0.9.31"
 [patch.crates-io]
 garb = { git = "https://github.com/imazen/garb", rev = "8f9aa10d09f84bb0a1e3fdbd1773f610eec1b784" }
 linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24664315586bd60e5f048253b1f69052" }
+
+[dev-dependencies]
+zenbench = "0.1.11"
+lz4_flex = { version = "0.14.0", default-features = false, features = ["safe-decode"] }
+
+[[bench]]
+name = "icc_synthesis"
+harness = false

@@ -563,3 +563,21 @@ cmyk-c-oracle-build reference binary:
 
 cmyk-native-compare evaluator source input reference rgb output:
     PYTHONDONTWRITEBYTECODE=1 python3 cms-contract/examples/native_cmyk_compare.py --evaluator "{{evaluator}}" --source "{{source}}" --input "{{input}}" --reference "{{reference}}" --rgb-profile "{{rgb}}" --output "{{output}}"
+
+# Qualified recipe generation versus fresh group allocation/decode and cached lookup.
+icc-synthesis-build:
+    cargo bench --locked --manifest-path cms-contract/Cargo.toml --bench icc_synthesis --no-run
+
+icc-synthesis-plan binary cpu:
+    taskset -c {{cpu}} "{{binary}}" --cpu-policy=auto --cpu-set={{cpu}} --mode=confirm --processes=3 --rounds=12 --workload-id=icc-qualified-af19-synthesis-v1 --dry-run
+
+icc-synthesis-measure binary cpu data:
+    ZENBENCH_DATA_DIR="{{data}}" taskset -c {{cpu}} "{{binary}}" --cpu-policy=auto --cpu-set={{cpu}} --mode=confirm --processes=3 --rounds=12 --workload-id=icc-qualified-af19-synthesis-v1 --timeout=600 --format=llm
+
+# Container cpuset supplies the enforced process boundary required by zenbench.
+# Host libraries match the compiler host; the reference image is supplied by immutable ID.
+icc-synthesis-container binary image cpu data *options:
+    docker run --rm --network none --memory 2g --memory-swap 2g --cpuset-cpus {{cpu}} --user "$(id -u):$(id -g)" --mount type=bind,src={{binary}},dst=/bench,readonly --mount type=bind,src={{data}},dst=/results --mount type=bind,src=/lib/x86_64-linux-gnu,dst=/lib/x86_64-linux-gnu,readonly --env TMPDIR=/results --env ZENBENCH_DATA_DIR=/results/evidence --entrypoint /usr/bin/nice {{image}} -n19 /bench --cpu-policy=auto --cpu-set={{cpu}} --mode=confirm --processes=3 --rounds=12 --workload-id=icc-qualified-af19-synthesis-v1 --timeout=600 --format=llm {{options}}
+
+icc-u16-rounding-probe:
+    cargo run --locked --release --manifest-path cms-contract/Cargo.toml --example u16_rounding_probe
