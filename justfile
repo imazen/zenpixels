@@ -463,6 +463,9 @@ icc-bundle-rust-color-compare old proposed output:
 cms-rust-cmyk-floats icc:
     cargo run --locked --manifest-path cms-contract/Cargo.toml --example cmyk_floats -- "{{icc}}"
 
+cms-rust-cmyk-oracle-check icc oracle:
+    cargo run --locked --manifest-path cms-contract/Cargo.toml --example cmyk_floats -- "{{icc}}" "{{oracle}}"
+
 # Print selected versions and beta ceilings without copying local paths.
 inspect-cohort metadata output:
     python3 scripts/inspect-cohort.py "{{metadata}}" "{{output}}"
