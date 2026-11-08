@@ -85,6 +85,8 @@ use crate::TransferFunction;
 pub(crate) mod canonical;
 #[cfg(feature = "icc-db")]
 mod cicp_bundle;
+#[cfg(all(test, feature = "cms-moxcms"))]
+pub(crate) mod synthesis;
 #[cfg(feature = "icc-db")]
 #[rustfmt::skip]
 mod cicp_bundle_index;
@@ -290,6 +292,11 @@ impl SynthesizedIcc {
 /// assert_eq!(SynthesizedIcc::for_cicp(Cicp::SRGB), SynthesizedIcc::NotNeeded);
 /// ```
 pub(crate) fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
+    // CICP alone does not supply the target display/OOTF. A fixed neutral
+    // gamma is not a faithful substitute for a complete HLG RGB transform.
+    if cicp.transfer_characteristics == 18 {
+        return SynthesizedIcc::CmsUnsupported;
+    }
     // sRGB / unspecified defaults need no embedded ICC. BT.709 transfer
     // with specified BT.709 primaries (1,1) is a different curve from sRGB.
     //
@@ -382,6 +389,9 @@ pub(crate) fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
 /// LUT encodings are faithful above ~10 nits but soften in the deep toe —
 /// prefer CICP-native PQ/HLG signalling where the container carries it.
 pub(crate) fn synthesize_gray_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
+    if cicp.transfer_characteristics == 18 {
+        return SynthesizedIcc::CmsUnsupported;
+    }
     // Same raw-code-point default gate as the RGB variant (see its comment
     // for why the enum mapping must not be used here).
     if (matches!(cicp.color_primaries, 1 | 2) && matches!(cicp.transfer_characteristics, 2 | 13))
