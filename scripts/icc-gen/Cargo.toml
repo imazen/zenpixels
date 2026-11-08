@@ -20,6 +20,7 @@ default = ["lcms2-crosscheck"]
 lcms2-crosscheck = ["dep:lcms2", "dep:bytemuck"]
 
 [dependencies]
+lcms = { version = "0.0.0", git = "https://github.com/imazen/lcms", rev = "55b59476cf64920345e9ca32eb3a4678bf0bbece" }
 moxcms = { version = "0.9.2", features = ["options"] }
 lcms2 = { version = "6.1.1", optional = true }
 bytemuck = { version = "1.18.0", optional = true }

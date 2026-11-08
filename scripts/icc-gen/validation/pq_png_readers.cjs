@@ -41,8 +41,9 @@ function rewriteProfile(source, { removeFloat = false, linearize = false, remove
   for (const { tag, data: originalData } of profileEntries(source)) {
     if (removeFloat && /^[DB]2[BD][0-3]$/.test(tag)) continue;
     if (removeCicp && tag === 'cicp') continue;
+    if (linearize && /^(A2B|B2A)[0-2]$/.test(tag)) continue;
     let data = originalData;
-    if (linearize && ['rTRC', 'gTRC', 'bTRC'].includes(tag)) {
+    if (linearize && ['rTRC', 'gTRC', 'bTRC', 'kTRC'].includes(tag)) {
       data = Buffer.alloc(16); data.write('para'); data.writeInt32BE(65536, 12);
     }
     entries.push({ tag, data });
@@ -75,11 +76,12 @@ function rewriteProfile(source, { removeFloat = false, linearize = false, remove
   return Buffer.concat([header, table, ...payloads]);
 }
 
-function png(samples, icc, cicp) {
+function png(samples, icc, cicp, gray) {
   const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(samples.length);
-  ihdr.writeUInt32BE(1, 4); ihdr[8] = 16; ihdr[9] = 2;
-  const row = Buffer.alloc(1 + samples.length * 6);
-  samples.forEach((rgb, x) => rgb.forEach((v, c) => row.writeUInt16BE(v, 1 + x * 6 + c * 2)));
+  ihdr.writeUInt32BE(1, 4); ihdr[8] = 16; ihdr[9] = gray ? 0 : 2;
+  const channels = gray ? 1 : 3;
+  const row = Buffer.alloc(1 + samples.length * channels * 2);
+  samples.forEach((rgb, x) => rgb.forEach((v, c) => row.writeUInt16BE(v, 1 + x * channels * 2 + c * 2)));
   const parts = [Buffer.from('89504e470d0a1a0a', 'hex'), chunk('IHDR', ihdr)];
   if (cicp) parts.push(chunk('cICP', Buffer.from([9, 16, 0, 1])));
   if (icc) parts.push(chunk('iCCP', Buffer.concat([Buffer.from('PQ capability witness\0\0'), zlib.deflateSync(icc)])));
@@ -102,22 +104,26 @@ async function main() {
   if (!outputPath) throw Error('expected ORIGINAL.icc FLOAT.icc EXTERNAL.icc FRESH_OUTPUT_DIR [chromium firefox firefox-cms webkit]');
   const output = path.resolve(outputPath); fs.mkdirSync(output); // Never replace prior evidence.
   const float16 = process.env.PQ_READER_FLOAT16 === '1';
+  const gray = process.env.PQ_READER_GRAY === '1';
   const original = fs.readFileSync(originalPath), floating = fs.readFileSync(floatPath);
-  const external = fs.readFileSync(externalPath);
+  const external = gray ? null : fs.readFileSync(externalPath);
+  for (const bytes of [original, floating]) {
+    if (bytes.toString('ascii', 16, 20) !== (gray ? 'GRAY' : 'RGB ')) throw Error('profile color model does not match requested PNG');
+  }
   const fallback = rewriteProfile(floating, { linearize: true });
   const linear = rewriteProfile(floating, { linearize: true, removeFloat: true });
   const originalWithoutCicp = rewriteProfile(original), floatWithoutCicp = rewriteProfile(floating);
   const samples = [];
-  for (let i = 0; i <= 32; i++) samples.push(Array(3).fill(Math.round(i * 65535 / 32)));
-  for (const r of [0, 32768, 65535]) for (const g of [0, 32768, 65535]) for (const b of [0, 32768, 65535]) samples.push([r, g, b]);
-  if (float16) for (const code of [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 3588, 4096, 8192]) samples.push([code, code, code]);
+  for (let i = 0; i <= 32; i++) samples.push(Array(gray ? 1 : 3).fill(Math.round(i * 65535 / 32)));
+  if (!gray) for (const r of [0, 32768, 65535]) for (const g of [0, 32768, 65535]) for (const b of [0, 32768, 65535]) samples.push([r, g, b]);
+  if (float16) for (const code of [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 3588, 4096, 8192]) samples.push(Array(gray ? 1 : 3).fill(code));
   const variants = {
     original: [originalWithoutCicp, false], float: [floatWithoutCicp, false],
     'original-embedded-cicp': [original, false],
     'float-linear-fallback': [fallback, false], 'linear-only': [linear, false],
     'float-cicp': [floatWithoutCicp, true], 'linear-cicp': [linear, true],
     'cicp-only': [null, true],
-    external: [external, false], untagged: [null, false],
+    ...(external ? { external: [external, false] } : {}), untagged: [null, false],
   };
   // Explicit opt-in: missing requested files fail, never silently lose coverage.
   const extraProfiles = JSON.parse(process.env.PQ_READER_EXTRA_PROFILES || '{}');
@@ -134,15 +140,15 @@ async function main() {
   }
   const fixtures = {};
   for (const [name, [icc, cicp]] of Object.entries(variants)) {
-    const data = png(samples, icc, cicp); fs.writeFileSync(path.join(output, `${name}.png`), data);
+    const data = png(samples, icc, cicp, gray); fs.writeFileSync(path.join(output, `${name}.png`), data);
     fixtures[name] = { pngSha256: hash(data), iccSha256: icc ? hash(icc) : null, cicp };
     if (icc) fs.writeFileSync(path.join(output, `${name}.icc`), icc);
   }
   const report = {
-    scope: `PNG16 to canvas sRGB ${float16 ? 'F16' : 'U8'}; capability witnesses, no HDR display accuracy claim`,
+    scope: `${gray ? 'GRAY' : 'RGB'} PNG16 to canvas sRGB ${float16 ? 'F16' : 'U8'}; capability witnesses, no HDR display accuracy claim`,
     pixelFormat: float16 ? 'rgba-float16' : 'rgba-unorm8',
     playwright: require(path.join(path.dirname(require.resolve(process.env.PLAYWRIGHT_MODULE || 'playwright')), 'package.json')).version,
-    sources: { original: hash(original), floating: hash(floating), external: hash(external) },
+    sources: { original: hash(original), floating: hash(floating), external: external ? hash(external) : null },
     width: samples.length, height: 1, samples, fixtures, readers: {},
   };
   let failures = 0;

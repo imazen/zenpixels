@@ -338,10 +338,9 @@ icc-bundle-identification output:
 
 # Requires pkg-config, libpng development headers and Little CMS 2.
 icc-bundle-reader-check output:
-    mkdir -p "{{output}}"
     cargo run --locked -p zenpixels-convert --example icc_bundle_export -- "{{output}}"
     cc -Wall -Wextra -Werror scripts/icc-gen/validation/png_icc_reader.c -o "{{output}}/reader" $(pkg-config --cflags --libs libpng lcms2)
-    python3 scripts/icc-gen/validation/check_bundle.py "{{output}}/reader" "{{output}}"
+    python3 scripts/icc-gen/validation/check_bundle.py "{{output}}/reader" "{{output}}" 313
 
 # Exact upstream review sources; caller supplies the host resource wrapper.
 moxcms-review-build:
@@ -522,3 +521,14 @@ icc-pq-external profile:
 # ICC-only and native-cICP capability witnesses; requires Playwright browsers.
 icc-pq-png-readers original floating external output *readers:
     node scripts/icc-gen/validation/pq_png_readers.cjs "{{original}}" "{{floating}}" "{{external}}" "{{output}}" {{readers}}
+
+# Export recipe bytes for independent numeric/container qualification.
+icc-export-candidates output:
+    cargo run --locked -p icc-gen --bin export_candidates -- "{{output}}"
+
+icc-profile-eval source dest input output intent="production":
+    cargo run --locked --manifest-path cms-contract/Cargo.toml --example profile_eval -- "{{source}}" "{{dest}}" "{{input}}" "{{output}}" "{{intent}}"
+
+# Scalar only: source candidates, hashes and bounded worst-case witnesses survive.
+icc-export-qualify profiles c_reader rust_reader output phase *extra:
+    python3 scripts/icc-gen/validation/qualify_exports.py "{{profiles}}" "{{c_reader}}" "{{rust_reader}}" "{{output}}" --phase "{{phase}}" {{extra}}

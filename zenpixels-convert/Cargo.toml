@@ -149,9 +149,12 @@ whereat = { version = "0.1.5", default-features = false }
 # Require the released integer-rounding, ICC writing and LUT fixes.
 # Extended pure-gamma evaluation still needs the adapter range/sign guards.
 moxcms = { version = "0.9.2", optional = true, features = ["options", "extended_range"] }
-lcms = { version = "0.0.0", git = "https://github.com/imazen/lcms", rev = "39068cc62f470d183e078637e19504ac9ecf7392", optional = true }
+lcms = { version = "0.0.0", git = "https://github.com/imazen/lcms", rev = "55b59476cf64920345e9ca32eb3a4678bf0bbece", optional = true }
 
 [dev-dependencies]
+# Build-time ICC recipe writer, shared with the standalone generator. This
+# does not enable the optional production backend for consumers.
+lcms = { version = "0.0.0", git = "https://github.com/imazen/lcms", rev = "55b59476cf64920345e9ca32eb3a4678bf0bbece" }
 zenpixels = { workspace = true, features = ["planar", "imgref"] }
 # Self dev-dependency: these features unify into every test/bench build of
 # this crate, so plain `cargo test -p zenpixels-convert` (default features)

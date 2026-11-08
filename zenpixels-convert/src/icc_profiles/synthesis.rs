@@ -1,6 +1,8 @@
 //! Build-time profile definitions, shared by generation and reproducibility tests.
 //! Runtime export uses the committed bundle; independent math lives in the tests.
 extern crate alloc;
+#[path = "synthesis/pq.rs"]
+mod pq;
 use alloc::{format, vec, vec::Vec};
 use moxcms::{
     Chromaticity, CicpColorPrimaries, CicpProfile, ColorPrimaries, ColorProfile, LocalizableString,
@@ -85,12 +87,15 @@ pub(crate) fn rgb(p: u8, t: u8) -> Option<Vec<u8>> {
     profile.red_trc = Some(trc.clone());
     profile.green_trc = Some(trc.clone());
     profile.blue_trc = Some(trc);
-    if t == 17 {
+    if matches!(t, 16 | 17) {
         profile.luminance = Some(Xyzd {
             x: 0.0,
-            y: 52.37,
+            y: if t == 16 { 10000.0 } else { 52.37 },
             z: 0.0,
         });
+    }
+    if t == 16 {
+        return pq::encode(profile, false).and_then(super::canonical::canonicalize);
     }
     encode(profile)
 }
@@ -103,10 +108,10 @@ pub(crate) fn gray(p: u8, t: u8) -> Option<Vec<u8>> {
     gray.white_point = PCS_D50;
     gray.media_white_point = Some(PCS_D50);
     gray.chromatic_adaptation = Some(adapt_to_d50_d(Matrix3d::IDENTITY, white));
-    if t == 17 {
+    if matches!(t, 16 | 17) {
         gray.luminance = Some(Xyzd {
             x: 0.0,
-            y: 52.37,
+            y: if t == 16 { 10000.0 } else { 52.37 },
             z: 0.0,
         });
     }
@@ -115,6 +120,9 @@ pub(crate) fn gray(p: u8, t: u8) -> Option<Vec<u8>> {
         "US".into(),
         format!("Gray H.273 TC{t} {name} white"),
     )]));
+    if t == 16 {
+        return pq::encode(gray, true).and_then(super::canonical::canonicalize);
+    }
     encode(gray)
 }
 

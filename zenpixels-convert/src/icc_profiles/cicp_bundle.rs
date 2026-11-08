@@ -247,21 +247,13 @@ mod tests {
 
     /// ZERO-TOLERANCE roundtrip for the gray side: every GRAY profile
     /// decoded from the blob must be byte-identical to a fresh
-    /// moxcms-based synthesis for the same CICP, modulo the masked
+    /// shared synthesis for the same CICP, including the deterministic
     /// creation-timestamp field. Pins the generator and runtime gray
     /// recipes together.
     #[cfg(feature = "cms-moxcms")]
     #[test]
     fn gray_blob_decodes_byte_identical_to_moxcms() {
         use crate::Cicp;
-        fn mask_timestamp(bytes: &[u8]) -> alloc::vec::Vec<u8> {
-            let mut v = bytes.to_vec();
-            if v.len() >= 36 {
-                v[24..36].fill(0);
-            }
-            v
-        }
-
         let mut checked = 0usize;
         for p in &GRAY_BUNDLE_PROFILES {
             let from_blob = bundled_gray_profile_for_cicp(p.primaries, p.transfer)
@@ -280,7 +272,7 @@ mod tests {
             });
             assert_eq!(
                 from_blob.as_ref(),
-                mask_timestamp(&from_moxcms).as_slice(),
+                from_moxcms.as_slice(),
                 "gray blob bytes for ({}, {}) diverge from a fresh moxcms generation",
                 p.primaries,
                 p.transfer

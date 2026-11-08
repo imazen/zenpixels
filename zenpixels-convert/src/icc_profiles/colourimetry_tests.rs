@@ -388,3 +388,144 @@ fn corrected_recipe_matches_independent_colorimetry_and_dense_sdr_curves() {
         }
     }
 }
+
+#[test]
+fn exported_pq_declares_absolute_scale_and_both_pipeline_directions() {
+    for &p in PRIMARIES {
+        for (gray, profile) in [
+            (false, synthesize_icc_for_cicp(Cicp::new(p, 16, 0, true))),
+            (
+                true,
+                synthesize_gray_icc_for_cicp(Cicp::new(p, 16, 0, true)),
+            ),
+        ] {
+            if !gray && p == 10 {
+                continue;
+            }
+            let SynthesizedIcc::Profile(icc) = profile else {
+                panic!("PQ profile ({p},{gray})");
+            };
+            assert_eq!(xyz(&icc, b"lumi"), [0.0, 10000.0, 0.0]);
+            for sig in [b"D2B0", b"D2B1", b"D2B2", b"B2D0", b"B2D1", b"B2D2"] {
+                assert_eq!(&tag(&icc, sig)[..4], b"mpet");
+            }
+            for sig in [b"A2B0", b"A2B1", b"A2B2"] {
+                assert_eq!(&tag(&icc, sig)[..4], b"mAB ");
+            }
+            for sig in [b"B2A0", b"B2A1", b"B2A2"] {
+                assert_eq!(&tag(&icc, sig)[..4], b"mBA ");
+            }
+            let date: [u16; 6] = core::array::from_fn(|i| {
+                u16::from_be_bytes(icc[24 + 2 * i..26 + 2 * i].try_into().unwrap())
+            });
+            assert!(date[0] >= 2000 && (1..=12).contains(&date[1]) && (1..=31).contains(&date[2]));
+            if !gray {
+                let pipe = tag(&icc, b"D2B1");
+                let mut found = false;
+                for i in 0..u32be(&pipe[12..]) {
+                    let at = u32be(&pipe[16 + i * 8..]);
+                    if &pipe[at..at + 4] != b"matf" {
+                        continue;
+                    }
+                    let want = [b"rXYZ", b"gXYZ", b"bXYZ"].map(|sig| xyz(&icc, sig));
+                    for row in 0..3 {
+                        for column in 0..3 {
+                            let at = at + 12 + (row * 3 + column) * 4;
+                            let actual = f32::from_be_bytes(pipe[at..at + 4].try_into().unwrap());
+                            assert_eq!(
+                                actual, want[column][row] as f32,
+                                "PQ matrix and declared primaries disagree"
+                            );
+                        }
+                    }
+                    found = true;
+                }
+                assert!(found, "missing float RGB-to-PCS matrix");
+            }
+        }
+    }
+}
+
+#[cfg(feature = "cms-lcms")]
+#[test]
+fn exported_pq_dense_neutral_roundtrip_has_no_black_plateau() {
+    use crate::{ColorProfileSource, ConvertOptions, PixelFormat, PluggableCms, cms_lcms::Lcms};
+    for gray in [false, true] {
+        let synth = if gray {
+            synthesize_gray_icc_for_cicp
+        } else {
+            synthesize_icc_for_cicp
+        };
+        let SynthesizedIcc::Profile(pq) = synth(Cicp::new(9, 16, 0, true)) else {
+            panic!("PQ ICC");
+        };
+        let SynthesizedIcc::Profile(linear) = synth(Cicp::new(9, 8, 0, true)) else {
+            panic!("linear ICC");
+        };
+        let channels = if gray { 1 } else { 3 };
+        let format = if gray {
+            PixelFormat::GrayF32
+        } else {
+            PixelFormat::RgbF32
+        };
+        for reverse in [false, true] {
+            let input: alloc::vec::Vec<f32> = (0..=65535)
+                .flat_map(|code| {
+                    let value = code as f32 / 65535.0;
+                    let value = if reverse {
+                        analytic(16, f64::from(value)) as f32
+                    } else {
+                        value
+                    };
+                    core::iter::repeat_n(value, channels)
+                })
+                .collect();
+            let mut output = alloc::vec![0.0_f32; input.len()];
+            let (src, dst) = if reverse {
+                (&linear, &pq)
+            } else {
+                (&pq, &linear)
+            };
+            let mut transform = Lcms
+                .build_source_transform(
+                    ColorProfileSource::Icc(src),
+                    ColorProfileSource::Icc(dst),
+                    format,
+                    format,
+                    &ConvertOptions::permissive().with_clip_out_of_gamut(false),
+                )
+                .expect("qualified LCMS path")
+                .expect("build transform");
+            transform
+                .try_transform_row(
+                    bytemuck::cast_slice(&input),
+                    bytemuck::cast_slice_mut(&mut output),
+                    65536,
+                )
+                .expect("complete row");
+            for (code, pixel) in output.chunks_exact(channels).enumerate() {
+                let encoded = code as f32 / 65535.0;
+                let expected = if reverse {
+                    f64::from(encoded)
+                } else {
+                    analytic(16, f64::from(encoded))
+                };
+                for (c, &actual) in pixel.iter().enumerate() {
+                    assert!(
+                        actual.is_finite() && (f64::from(actual) - expected).abs() <= 0.0005,
+                        "PQ {gray} reverse {reverse} code {code} actual {actual} expected {expected}"
+                    );
+                    if code == 0 {
+                        assert_eq!(actual, 0.0);
+                    } else {
+                        assert!(actual > 0.0, "PQ positive tone became black at code {code}");
+                        assert!(
+                            actual >= output[(code - 1) * channels + c],
+                            "nonmonotonic PQ tone"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
