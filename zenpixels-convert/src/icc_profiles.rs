@@ -53,8 +53,8 @@
 //! value can be correct. Older ICC wording and reader behavior motivated the
 //! separate compatibility variants. See the linked correctness overview below.
 //! Some readers identify a gamut by colorant tags within a tolerance:
-//! libultrahdr (`IccHelper::readIccColorGamut`, 0.001) does not recognise
-//! `DISPLAY_P3_V4` as Display P3 and treats the image as BT.709. With the
+//! our libultrahdr colorant-matching regression (0.001 tolerance) rejects
+//! `DISPLAY_P3_V4` as an exact P3 match. With the
 //! `icc-db` feature, [`SynthesizedIcc::for_cicp`] therefore serves the
 //! generated, `cicp`-tagged profile for every pair and uses these constants
 //! only as the fallback of a build without `icc-db`. They remain exported for

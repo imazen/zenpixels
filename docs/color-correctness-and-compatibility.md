@@ -1,8 +1,8 @@
 # Color correctness and software compatibility
 
-The recent generated-bundle proposal repairs adaptation metadata and pins exact
-H.273 inputs. It preserves negative adapted Z values. It does not replace all
-Compact ICC profiles or adopt a policy of eliminating negative colorants.
+Recent work separates a generated-bundle adaptation repair proposal from an
+exact-H.273-input candidate. Both preserve negative adapted Z values. The Compact
+ICC constants remain separate; eliminating negative colorants is not the goal.
 
 ## The negative-Z warning has a specification history
 
