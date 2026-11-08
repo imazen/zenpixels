@@ -137,6 +137,14 @@
       "peak_rss_gib": 0.17,
       "min_available_mib": 27744,
       "peak_load": 7.31
+    },
+    {
+      "log": "mox-exact-final.log",
+      "rc": 0,
+      "elapsed_s": 9,
+      "peak_rss_gib": 0.24,
+      "min_available_mib": 27723,
+      "peak_load": 6.56
     }
   ],
   "recommendation": "Adopt the shared exact-H273 colorimetric payload for a separate reviewed proposal; MoxCMS explicit inputs and LCMS give identical tags. Retain both controls; fix or specify inherited curve limits separately.",
@@ -195,6 +203,7 @@
     "decoded_cells": 43248,
     "decoded_xyz_differences": 0,
     "trc_cicp_changes": 0,
-    "constructor_inputs": "Explicit H273 white and primaries for both MoxCMS0.9.2 and LCMS39068cc6"
+    "constructor_inputs": "Explicit H273 white and primaries for both MoxCMS0.9.2 and LCMS39068cc6",
+    "independent_reader_pass": 334
   }
 }
