@@ -62,6 +62,10 @@ a separate gate; passing local contracts is not universal ICC qualification.
 
 ## Candidate comparison
 
+For the separate Compact compatibility profiles, negative PCSXYZ specification
+history, and the distinction between correct colorimetry and agreement with
+software, see [the correctness overview](color-correctness-and-compatibility.md).
+
 The committed bundle is compared with the separate MoxCMS 0.9.2 proposal, a
 controlled LCMS candidate and an equal-input MoxCMS candidate. The LCMS candidate constructs RGB colorimetry from the exact
 H.273 Table 2 xy coordinates through the pinned Rust port, then copies all three

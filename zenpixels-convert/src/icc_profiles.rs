@@ -1,15 +1,17 @@
 //! Embedded CC0-licensed ICC profiles for common wide-gamut color spaces.
 //!
-//! All profiles are from [Compact-ICC-Profiles](https://github.com/saucecontrol/Compact-ICC-Profiles)
+//! The four compact constants are from [Compact-ICC-Profiles](https://github.com/saucecontrol/Compact-ICC-Profiles)
 //! by Clinton Ingram, released under the [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/)
 //! public domain dedication. They are embedded at compile time via `include_bytes!()`.
+//! The full `icc-db` CICP database is generated separately; it is not this
+//! collection of compact constants.
 //!
 //! # Available profiles
 //!
 //! | Constant | Color space | Format | Size | TRC form |
 //! |----------|-------------|--------|------|----------|
 //! | [`DISPLAY_P3_V4`] | Display P3 | ICC v4 | 480 bytes | paraType-3 sRGB |
-//! | [`DISPLAY_P3_V2`] | Display P3 | ICC v2 | 736 bytes | paraType-3 sRGB |
+//! | [`DISPLAY_P3_V2`] | Display P3 | ICC v2 | 736 bytes | 182-point sampled sRGB |
 //! | [`ADOBE_RGB`] | Adobe RGB (1998) | ICC v2 | 374 bytes | **curv count=1** (pure gamma) |
 //! | `REC2020_V4` | Rec. 2020 | ICC v4 | 480 bytes | paraType-3 BT.709 |
 //!
@@ -44,9 +46,12 @@
 //! ## Display P3 / Rec. 2020 — compact constants, not what synthesis emits
 //!
 //! The DisplayP3Compat and Rec2020Compat profiles use saucecontrol's
-//! D50-sum-exact matrix rebalancing (truncating negative `rXYZ.Z` / `bXYZ.Z`
-//! to clean s15.16 values, compensating via `chad` row 3). They diverge
-//! ~500-900 u16 from canonical matrix math, and they carry no `cicp` tag.
+//! compatibility rebalancing: the adapted red primary's negative Z is set to
+//! zero, with other colorants and `chad` adjusted to compensate. This changes
+//! the represented colorimetry, and these constants carry no `cicp` tag.
+//! ICC.1:2022 permits negative PCSXYZ in signed encodings; retaining such a
+//! value can be correct. Older ICC wording and reader behavior motivated the
+//! separate compatibility variants. See the linked correctness overview below.
 //! Some readers identify a gamut by colorant tags within a tolerance:
 //! libultrahdr (`IccHelper::readIccColorGamut`, 0.001) does not recognise
 //! `DISPLAY_P3_V4` as Display P3 and treats the image as BT.709. With the
@@ -54,6 +59,9 @@
 //! generated, `cicp`-tagged profile for every pair and uses these constants
 //! only as the fallback of a build without `icc-db`. They remain exported for
 //! callers that embed them directly.
+//!
+//! Profile format, colorimetry, precision and reader compatibility are separate
+//! checks: <https://github.com/imazen/zenpixels/blob/review/first-class-lcms-20261108/docs/color-correctness-and-compatibility.md>.
 //!
 //! # Precision warnings
 //!
@@ -88,8 +96,9 @@ mod cicp_bundle_index;
 
 /// Display P3 Compatible ICC profile, v4 format (480 bytes).
 ///
-/// Recommended for modern software. ICC v4 profiles are more compact
-/// and have better-defined semantics than v2.
+/// This compatibility variant adjusts the colorants to avoid negative red Z.
+/// For CICP synthesis, prefer [`SynthesizedIcc::for_cicp`], which uses the
+/// generated database when `icc-db` is enabled.
 ///
 /// Source: <https://github.com/saucecontrol/Compact-ICC-Profiles> (CC0)
 pub const DISPLAY_P3_V4: &[u8] = include_bytes!("profiles/DisplayP3Compat-v4.icc");
@@ -97,7 +106,7 @@ pub const DISPLAY_P3_V4: &[u8] = include_bytes!("profiles/DisplayP3Compat-v4.icc
 /// Display P3 Compatible ICC profile, v2 format (736 bytes).
 ///
 /// Use this for compatibility with older software that doesn't support ICC v4.
-/// The "magic" variant includes workarounds for buggy v2 parsers.
+/// The "magic" variant stores an optimized 182-point sampled curve.
 ///
 /// Source: <https://github.com/saucecontrol/Compact-ICC-Profiles> (CC0)
 pub const DISPLAY_P3_V2: &[u8] = include_bytes!("profiles/DisplayP3Compat-v2-magic.icc");
