@@ -231,6 +231,7 @@ dependencies = [
  "archmage",
  "bytemuck",
  "garb",
+ "lcms",
  "libm",
  "linear-srgb",
  "lz4_flex",

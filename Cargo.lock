@@ -485,6 +485,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "lcms"
+version = "0.0.0"
+source = "git+https://github.com/imazen/lcms?rev=39068cc62f470d183e078637e19504ac9ecf7392#39068cc62f470d183e078637e19504ac9ecf7392"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
 name = "lcms2"
 version = "6.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1239,6 +1247,7 @@ dependencies = [
  "bytemuck",
  "garb",
  "half",
+ "lcms",
  "libm",
  "linear-srgb",
  "lz4_flex",
