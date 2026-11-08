@@ -184,3 +184,137 @@ fn unaligned_float_rows_preserve_every_alpha_bit_including_nan() {
         assert_eq!(&output[output.len() - 2..], &[0xa5; 2]);
     }
 }
+
+/// Actual integer entry/exit formats, rather than float-normalized fixtures.
+#[cfg(feature = "icc-db")]
+#[test]
+fn native_integer_pq_layouts_match_analytic_quantization_and_keep_alpha() {
+    use zenpixels_convert::icc_profiles::SynthesizedIcc;
+    for (format, gray, colors, alpha, depth) in [
+        (F::Rgb8, false, 3, false, 1),
+        (F::Rgba8, false, 3, true, 1),
+        (F::Gray8, true, 1, false, 1),
+        (F::GrayA8, true, 1, true, 1),
+        (F::Rgb16, false, 3, false, 2),
+        (F::Rgba16, false, 3, true, 2),
+        (F::Gray16, true, 1, false, 2),
+        (F::GrayA16, true, 1, true, 2),
+    ] {
+        let synth: fn(Cicp) -> SynthesizedIcc = if gray {
+            SynthesizedIcc::for_gray_cicp
+        } else {
+            SynthesizedIcc::for_cicp
+        };
+        let SynthesizedIcc::Profile(pq) = synth(Cicp::new(9, 16, 0, true)) else {
+            panic!("PQ profile unavailable");
+        };
+        let SynthesizedIcc::Profile(linear) = synth(Cicp::new(9, 8, 0, true)) else {
+            panic!("matching linear profile unavailable");
+        };
+        let maximum = if depth == 1 { 255u32 } else { 65535 };
+        let mut input = Vec::new();
+        for code in 0..=maximum {
+            for channel in 0..colors + usize::from(alpha) {
+                let sample = if channel == colors {
+                    code ^ (maximum / 3)
+                } else {
+                    code
+                };
+                if depth == 1 {
+                    input.push(sample as u8);
+                } else {
+                    input.extend_from_slice(&(sample as u16).to_ne_bytes());
+                }
+            }
+        }
+        let decode = |encoded: f64| {
+            let p = encoded.powf(32.0 / 2523.0);
+            ((p - 107.0 / 128.0).max(0.0) / (2413.0 / 128.0 - 2392.0 / 128.0 * p))
+                .powf(8192.0 / 1305.0)
+        };
+        let encode = |linear: f64| {
+            if linear == 0.0 {
+                return 0.0;
+            }
+            let p = linear.powf(1305.0 / 8192.0);
+            ((107.0 / 128.0 + 2413.0 / 128.0 * p) / (1.0 + 2392.0 / 128.0 * p)).powf(2523.0 / 32.0)
+        };
+        for inverse in [false, true] {
+            let mut output = vec![0xa5; input.len()];
+            let (source, target) = if inverse {
+                (&linear, &pq)
+            } else {
+                (&pq, &linear)
+            };
+            #[cfg(feature = "cms-moxcms")]
+            assert!(
+                zenpixels_convert::MoxCms
+                    .build_source_transform(
+                        Source::Icc(source),
+                        Source::Icc(target),
+                        format,
+                        format,
+                        &ConvertOptions::permissive(),
+                    )
+                    .is_none(),
+                "MoxCMS must decline the unsupported PQ float pipeline"
+            );
+            let mut transform = build(Source::Icc(source), Source::Icc(target), format, format);
+            transform
+                .try_transform_row(&input, &mut output, maximum + 1)
+                .unwrap();
+            let pixel_bytes = (colors + usize::from(alpha)) * depth;
+            let mut largest = 0u32;
+            for (code, (before, after)) in (0..=maximum).zip(
+                input
+                    .chunks_exact(pixel_bytes)
+                    .zip(output.chunks_exact(pixel_bytes)),
+            ) {
+                let value = f64::from(code) / f64::from(maximum);
+                let reference = if inverse {
+                    encode(value)
+                } else {
+                    decode(value)
+                };
+                let expected = (reference * f64::from(maximum)).round() as u32;
+                for channel in 0..colors {
+                    let actual = if depth == 1 {
+                        u32::from(after[channel])
+                    } else {
+                        u32::from(u16::from_ne_bytes(
+                            after[channel * 2..channel * 2 + 2].try_into().unwrap(),
+                        ))
+                    };
+                    largest = largest.max(actual.abs_diff(expected));
+                    let a = f64::from(actual) / f64::from(maximum);
+                    let e = f64::from(expected) / f64::from(maximum);
+                    let error = if inverse {
+                        (decode(a) - decode(e)).abs()
+                    } else {
+                        (a - e).abs()
+                    };
+                    // Compare with correctly rounded native integer reference
+                    // values under the unchanged 0.0005 linear-light budget.
+                    assert!(
+                        error <= 0.0005,
+                        "{format:?} inverse={inverse} code {code}: {actual} versus {expected} (linear error {error})"
+                    );
+                    if depth == 1 {
+                        assert_eq!(actual, expected, "{format:?} inverse={inverse} code {code}");
+                    }
+                }
+                if alpha {
+                    assert_eq!(
+                        &after[colors * depth..],
+                        &before[colors * depth..],
+                        "{format:?} alpha code {code}"
+                    );
+                }
+            }
+            println!(
+                "{format:?} inverse={inverse}: {} native inputs; max integer code error {largest}; alpha exact",
+                maximum + 1
+            );
+        }
+    }
+}

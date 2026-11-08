@@ -343,3 +343,19 @@ reader. All 460 C/Rust/production output-hash cells are unchanged; both sweeps
 pass. Binary hashes and both sets of receipts are retained in the committed
 qualification record. Native PNG qualification freezes pixel source 3ceb0500;
 subsequent commits on this review contain documentation and receipt updates.
+
+## Native integer entry and exit formats
+
+The dense C/Rust sweep uses normalized F32 values at every U16 code point.
+A separate production-backend test exercises actual RGB/RGBA/gray/gray-alpha
+U8 and U16 formats at BT.2020, both PQ decoding and encoding. All 16 layout/
+direction cases pass. All 256 U8 codes match the correctly rounded analytic
+reference exactly. Across all 65,536 U16 inputs, the largest difference is
+two output codes for decoding and one for encoding, within the unchanged
+0.0005 linear-light budget. Alpha is byte-exact. MoxCMS declines the unsupported
+float pipeline in every case; the LCMS backend evaluates it directly.
+
+The production LCMS target now has 9 passing controls. The focused
+`CMS backend qualification` workflow replays that target and the shared
+MoxCMS/LCMS contract on five native platforms and i686 through cross, without
+repeating unrelated image-processing sweeps. It does not replace full CI.

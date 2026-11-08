@@ -1,0 +1,61 @@
+name: CMS backend qualification
+
+# Focused replay for reviewed backend/profile changes. The full CI remains
+# unchanged; this runs actual native integer layouts and both CMS contracts.
+on:
+  workflow_dispatch:
+  push:
+    branches: ["review/**"]
+    paths:
+      - .github/workflows/cms-backends.yml
+      - zenpixels-convert/tests/cms_lcms_contracts.rs
+      - zenpixels-convert/src/cms_lcms.rs
+      - zenpixels-convert/src/cms_moxcms.rs
+      - zenpixels-convert/src/profiles/cicp_bundle.lz4
+      - cms-contract/**
+
+concurrency:
+  group: cms-backends-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  native:
+    name: CMS (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest, windows-11-arm]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Production LCMS layouts and PQ precision
+        run: cargo test --locked -p zenpixels-convert --features cms-lcms --test cms_lcms_contracts -- --nocapture
+      - name: Shared MoxCMS and LCMS contract
+        run: cargo test --locked --manifest-path cms-contract/Cargo.toml
+
+  i686:
+    name: CMS (i686)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-unknown-linux-gnu
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cms-cross-i686
+      - name: Production LCMS layouts and PQ precision
+        run: cross test --locked -p zenpixels-convert --features cms-lcms --test cms_lcms_contracts --target i686-unknown-linux-gnu -- --nocapture
+      - name: Shared MoxCMS and LCMS contract
+        run: cross test --locked --manifest-path cms-contract/Cargo.toml --target i686-unknown-linux-gnu
