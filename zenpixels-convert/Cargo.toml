@@ -164,10 +164,9 @@ zenpixels = { workspace = true, features = ["planar", "imgref"] }
 # (verified: it appears in `cargo test --lib -- --list` under default
 # features, imazen/zenpixels#40). Dropping `cms-moxcms` here would silently
 # remove those gates from CI.
-# Keep default features disabled so --no-default-features really omits icc-db.
-# cms-moxcms still enables std for unit tests; tools/icc-collapse-no-db also
-# verifies a normal dependency with neither std nor a backend enabled.
-zenpixels-convert = { path = ".", default-features = false, features = ["imgref", "cms-moxcms"] }
+# Unit tests intentionally include the dev defaults. Genuine normal-dependency
+# feature isolation is checked by tools/icc-collapse-no-db instead.
+zenpixels-convert = { path = ".", features = ["imgref", "cms-moxcms"] }
 zenbench = { version = "0.1.11" }
 # DEV-only: lets benches/kernel_tiers.rs disable the baseline SIMD token (NEON
 # on aarch64) so the "scalar" arm is real. Feature unification applies this to

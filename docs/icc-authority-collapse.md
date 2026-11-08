@@ -30,9 +30,14 @@ retained in the qualification evidence. No pixel tolerance is relaxed.
 `icc-db` or CMS backend. Its positive control requires `NeedsCms` from gray
 synthesis; the four consumer controls pass. This isolation matters: the main
 crate's self dev-dependency previously re-enabled defaults during unit tests.
-Its defaults are now disabled and the no-database unit configuration passes
-60 controls. CMS unit tests still enable std; the standalone normal dependency
-additionally excludes std and CMS backends.
+The established self dev-dependency configuration is retained. An isolated
+experiment disables its defaults: 60 focused controls and strict Clippy pass,
+but the full library run is 429 passed / 10 failed / 1 existing ignore. Each
+failure requests a bundled profile while the database is absent; the result
+is `NeedsCms`. These assertions are preserved, not relaxed or skipped. The
+alternative source and failing receipts remain available separately. The
+standalone consumer instead tests the supported normal dependency with no
+std, database or CMS backend enabled.
 The focused CMS workflow runs the authority and isolated consumer controls on
 Linux x64/ARM, Windows x64/ARM, macOS ARM and i686.
 
@@ -41,7 +46,7 @@ strict all-target converter Clippy and strict consumer Clippy pass. The final
 restored-source controls record 14 seconds / 0.48 GiB and 5 seconds / 0.31 GiB
 peak RSS; these are correctness checks, not performance comparisons.
 
-Disabling self dev-dependency defaults exposed three test helpers whose callers
+The isolated unit experiment also exposed three test helpers whose callers
 already require icc-db. Their definitions now use that same feature gate;
-no test is skipped and no assertion changes. Strict all-target Clippy also
-passes the genuine no-database unit configuration (13 seconds / 0.35 GiB).
+no test is skipped and no assertion changes. Its strict all-target Clippy
+passes (13 seconds / 0.35 GiB); the 10 full-run failures remain explicit.

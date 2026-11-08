@@ -16,3 +16,8 @@ Its original three unused-helper errors are preserved; only helper definitions
 are feature-gated with their existing callers, with no test skips or assertion changes.
 CMS six-platform workflow42509394450 passed production source daf405a2;
 final dev-feature isolation maintenance is qualified separately on the same code.
+Broader isolated-unit experiment:429 pass/10 fail/1 existing ignore,44s,peak RSS2.64GiB.
+Failures request database profiles when the feature is absent. Original assertions retained.
+Self dev-dependency defaults restored to the established configuration; that optional
+maintenance remains at preserved cf657725, not part of the compatible runtime guard.
+The genuine standalone normal-dependency gate remains active on six platforms.
