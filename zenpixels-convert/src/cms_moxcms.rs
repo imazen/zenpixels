@@ -153,6 +153,24 @@ fn validate_channel_curves(profile: &ColorProfile) -> Result<(), MoxCmsError> {
     Ok(())
 }
 
+/// moxcms 0.9.2 does not parse float DToB/BToD pipelines. Those tags
+/// override integer matrix/TRC or AToB/BToA data, so using the fallback would
+/// silently evaluate a different transform. Decline before parsing loses them.
+fn has_float_pipeline(source: &crate::ColorProfileSource<'_>, prefix: &[u8; 3]) -> bool {
+    let crate::ColorProfileSource::Icc(bytes) = source else {
+        return false;
+    };
+    let Some(header) = bytes.get(..132) else {
+        return false;
+    };
+    let count = u32::from_be_bytes(header[128..132].try_into().unwrap()) as usize;
+    let available = (bytes.len() - 132) / 12;
+    bytes[132..]
+        .chunks_exact(12)
+        .take(count.min(available))
+        .any(|entry| &entry[..3] == prefix && matches!(entry[3], b'0'..=b'3'))
+}
+
 // ---------------------------------------------------------------------------
 // RowTransform wrapper
 // ---------------------------------------------------------------------------
@@ -1103,6 +1121,9 @@ impl crate::cms::PluggableCms for MoxCms {
     ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, whereat::At<crate::cms::CmsPluginError>>>
     {
         use crate::cms::CmsPluginError;
+        if has_float_pipeline(&src, b"D2B") || has_float_pipeline(&dst, b"B2D") {
+            return None;
+        }
         // Depths the plan can convert aren't this backend's problem, so it declines them. Sample types
         // nothing here can convert are diagnosed.
         let plannable = |t: ChannelType| {
