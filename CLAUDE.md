@@ -131,8 +131,13 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
   Browser witnesses establish selected paths, not physical HDR display accuracy;
   WebKit GRAY remains unqualified. See `docs/corrected-icc-export.md` and
   `benchmarks/icc-export/native_integer_2026-11-08.meta`. The separate
-  grayscale-collapse authority guard retains an existing malformed-ICC test
-  failure pending owner decision; it is absent from PR128.
+  grayscale-collapse authority guard is separate from PR128. Its compatible
+  variant preserves the existing truncated-input fallback and all established
+  assertions; only complete ICCs require qualified matrix/TRC replacement.
+  The stricter malformed-input proposal remains preserved, not adopted.
+  A self dev-dependency re-enables defaults in unit tests even with
+  --no-default-features. tools/icc-collapse-no-db proves genuine absence of
+  gray synthesis and exercises the consumer behavior; just icc-collapse-check.
 - PQ PNG compatibility qualification (2026-11-08): keep native CICP plus a
   qualified ICC companion where permitted. The float-table pilot alone is not
   sufficient: Chromium 153 and explicitly color-managed Firefox 155 use its

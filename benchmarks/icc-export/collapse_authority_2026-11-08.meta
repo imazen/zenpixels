@@ -1,0 +1,11 @@
+Production source: daf405a2 (separate descendant of PR128 af19bcda).
+Before: original function + new regressions: 61 pass, 2 fail, 0 ignores.
+After: 63 pass, 0 fail, 0 ignores; all pre-existing assertions/fixtures unchanged.
+Restored after original-function replay: 63 pass, 14s, peak RSS0.48GiB.
+Standalone actual no-icc-db consumer: 4 pass, 5s, peak RSS0.31GiB.
+Main converter all-target strict Clippy: pass, 44s, peak RSS0.41GiB.
+Standalone strict Clippy: pass, 7s, peak RSS0.35GiB.
+Nominal --no-default-features unit test re-enabled defaults via self dev-dependency;
+that receipt is preserved but is not counted as genuine no-database coverage.
+Original-function failures, stricter malformed-input candidate, and C LCMS witness preserved.
+Commands: just icc-collapse-check; cargo clippy --locked -p zenpixels-convert --all-targets -- -D warnings

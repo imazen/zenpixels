@@ -546,3 +546,9 @@ icc-export-source-check:
 
 icc-export-workspace-check:
     cargo test --workspace --features cms-moxcms,cms-lcms,icc-db --locked
+
+# Qualified ICC substitution and a genuine consumer without icc-db.
+icc-collapse-check:
+    cargo test --locked -p zenpixels-convert --lib load_bearing::
+    cargo test --locked --manifest-path tools/icc-collapse-no-db/Cargo.toml
+    cargo clippy --locked --manifest-path tools/icc-collapse-no-db/Cargo.toml --all-targets -- -D warnings

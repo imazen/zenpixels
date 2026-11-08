@@ -67,3 +67,6 @@ fuzz-*.log
 
 # Python validation bytecode
 __pycache__/
+
+# Standalone feature-isolation consumer locks its reviewed dependency graph.
+!tools/icc-collapse-no-db/Cargo.lock
