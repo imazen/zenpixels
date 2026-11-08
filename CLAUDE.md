@@ -118,6 +118,14 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed in the standalone Rust-LCMS contract adapter (2026-11-08): it selected
+  `lcms::virt::INTENT_RELATIVE_COLORIMETRIC`, whose value is 3 in the pinned
+  port, requesting absolute intent. Use `lcms::types::INTENT_RELATIVE_COLORIMETRIC`
+  (1). A measured-media-white regression fails before the correction and
+  passes after it; all four JXL CMYK fixture samples then match C LCMS 2.20
+  float bits. This changes test equipment, not the product CMS default.
+  `docs/rgb-icc-and-lcms-2026-11-08.md` records the source pins and limits.
+
 - Open in the stable-dependency review (2026-11-07): requiring moxcms 0.9.2
   changes fresh RGB ICC serialization/colorimetry and fails the existing bundle
   equality gate. The bundled binary and goldens are unchanged. Keep the

@@ -33,6 +33,11 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [Unreleased]
 
+- Correct the standalone Rust-LCMS contract adapter to request relative
+  colorimetric intent. Add a paper-white regression and exact Rust/C bundle
+  and CMYK controls; product conversion defaults and bundled ICC bytes are
+  unchanged (`9219c5de`).
+
 - Require released archmage/magetypes 0.9.31 and moxcms 0.9.2 in active
   conversion tools. Retain the pure-gamma range/sign guards and existing
   numerical source patches. The separately reviewed RGB ICC bundle proposal
