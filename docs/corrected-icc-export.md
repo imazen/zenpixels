@@ -118,3 +118,23 @@ No benchmark speed claim is made. ARM resource receipts: common recipe 7s /
 PQ export representation is awaiting the owner's capability-policy decision.
 No PQ refusal, corrected PQ blob, fresh-bundle golden replacement, merge or
 publication is claimed here.
+
+## Intent-scoped capability guard qualification
+
+The final guard checks source DToB1 and destination BToD1 for the requested
+relative-colorimetric intent. A float transform for perceptual, saturation or
+absolute intent alone does not disable a valid relative transform. New controls
+compare that behavior bit-for-bit with the unchanged profile in both engines;
+the initial broad refusal failed this regression. The final shared contract
+passes15 with two existing ignores, strict standalone all-target Clippy passes,
+and the unchanged Mox17 integration/Mox21 accuracy/LCMS8 production controls
+pass. The dense recipe, HLG refusal and historical recognition checks also pass.
+Source `ed984816`,27s,run-heavy peak RSS0.38GiB. See the committed
+`benchmarks/relative_float_intent_2026-11-08.json` receipt for exact commands.
+
+HLG native-carrier policy is also prepared separately for the core owner's
+integration: the frozen core199 descendant passes1,466 workspace tests/doctests,
+with39 existing ignores, five metadata configurations and strict Clippy. Source
+ICCs are retained under keeping policies; ICC-only output keeps an explicit
+synthesis/refusal obligation. Native codec roundtrips and cohort pin integration
+are still outstanding; the pure policy tests do not establish those.
