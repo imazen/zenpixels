@@ -17,8 +17,9 @@
 //!
 //! The sRGB pair (1,13) needs no profile. Primaries 10 (XYZ) is
 //! explicitly excluded from RGB: moxcms emits a rank-1 matrix for it.
-//! This leaves 159 RGB pairs; gray keeps XYZ's valid equal-energy white
-//! and transfer curve, giving 175 gray mappings.
+//! HLG is refused without a rendering target. The staged recipe therefore
+//! produces 149 RGB pairs and 164 gray mappings; gray keeps XYZ's valid white.
+//! PQ representation remains under separate precision qualification.
 //!
 //! Usage (run from the repo root so the relative output paths resolve):
 //!   `cargo run -p icc-gen --release --bin cicp_bundle_gen [--no-write] [--out-dir <dir>]`
@@ -706,8 +707,8 @@ mod tests {
         assert!(validate_rgb_colorimetry(&good[..100], 12).is_err());
     }
 
-    /// 176 assigned pairs: 159 RGB (XYZ excluded, sRGB implicit), 175 gray.
-    /// Gray retains four whites × 16 transfers = 64 unique profiles.
+    /// Assigned input grid: 176 pairs. HLG/XYZ refusal and implicit sRGB leave
+    /// 149 RGB and 164 gray mappings; four whites × 15 transfers = 60 gray bytesets.
     #[test]
     fn grid_shape_is_stable() {
         let b = build_bundle();

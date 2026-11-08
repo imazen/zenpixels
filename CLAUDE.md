@@ -118,6 +118,22 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- ICC qualification in progress (2026-11-08): the corrected recipe is staged;
+  the historical export blob remains unchanged pending PQ representation choice.
+  HLG export now refuses without a rendering target; native CICP must be kept
+  where permitted. Bundle hashes remain recognized but require a CMS until
+  complete transform substitution is qualified. `docs/corrected-icc-export.md`
+  records the original failing gates, independent recipe checks and remaining work.
+- Fixed in the staged adapter (2026-11-08): MoxCMS does not implement float
+  DToB/BToD pipelines. ICC permits fallback, but it can lose requested precision.
+  The adapter now declines these profiles so a capable configured backend can
+  handle them. A regression failed before the guard; shared CMS14/2oldignores
+  and unchanged Mox17+21 accuracy / LCMS8 production controls pass. The external
+  W3C PQ file is an explicitly approximate legacy fallback, not proof that all
+  HDR profile representations work equivalently. Its Mox highlight limit also
+  reproduces without the row adapter; bounded mAB rules versus LCMS extended
+  float evaluation must be distinguished from a specification violation.
+
 - Open in the bundle-history audit (2026-11-08): all 175 committed GRAY
   mappings are Display-class but store native white in `wtpt`, contrary to
   ICC.1:2022 9.2.36's PCS-D50 requirement. This dates to `75eb953`; the

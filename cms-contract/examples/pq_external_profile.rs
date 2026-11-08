@@ -41,6 +41,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             rendering_intent: moxcms::RenderingIntent::Perceptual,
             allow_use_cicp_transfer: false,
             prefer_fixed_point: false,
+            barycentric_weight_scale: moxcms::BarycentricWeightScale::High,
+            interpolation_method: moxcms::InterpolationMethod::Tetrahedral,
             allow_extended_range_rgb_xyz: true,
             ..Default::default()
         },
