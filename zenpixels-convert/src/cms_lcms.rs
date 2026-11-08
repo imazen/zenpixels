@@ -310,9 +310,9 @@ impl RowTransformMut for Row {
         } else {
             for (out, bytes) in self.scratch[..pixels * 4]
                 .iter_mut()
-                .zip(src.chunks_exact(4))
+                .zip(src.as_chunks::<4>().0)
             {
-                let value = f32::from_ne_bytes(bytes.try_into().unwrap());
+                let value = f32::from_ne_bytes(*bytes);
                 *out = 100.0
                     * if self.from.ink == Ink::Inverted {
                         1.0 - value
@@ -340,8 +340,8 @@ impl RowTransformMut for Row {
         }
         if self.clip {
             for pixel in dst.chunks_exact_mut(self.to.bytes) {
-                for sample in pixel[..self.to.colors * 4].chunks_exact_mut(4) {
-                    let value = f32::from_ne_bytes((&*sample).try_into().unwrap());
+                for sample in pixel[..self.to.colors * 4].as_chunks_mut::<4>().0 {
+                    let value = f32::from_ne_bytes(*sample);
                     sample.copy_from_slice(&value.clamp(0.0, 1.0).to_ne_bytes());
                 }
             }
