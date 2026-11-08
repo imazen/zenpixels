@@ -77,12 +77,16 @@ fn codes(format: F, bytes: &[u8]) -> Vec<f64> {
     match format {
         F::Rgb8 | F::Rgba8 => bytes.iter().map(|&v| f64::from(v)).collect(),
         F::Rgb16 | F::Rgba16 => bytes
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|b| f64::from(u16::from_ne_bytes([b[0], b[1]])) / 257.0)
             .collect(),
         _ => bytes
-            .chunks_exact(4)
-            .map(|b| f64::from(f32::from_ne_bytes(b.try_into().unwrap())) * 255.0)
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f64::from(f32::from_ne_bytes(*b)) * 255.0)
             .collect(),
     }
 }
@@ -375,14 +379,17 @@ fn gray_round_trips_and_carries_alpha() {
     let d = worst(F::Rgb8, &a, &b);
     eprintln!("gray 2.2>srgb Gray8>Rgb8: worst {d:.3}");
     assert!(d <= 1.0, "{d}");
-    assert_eq!(a.chunks_exact(3).map(|p| p[0]).next_back(), Some(255));
-    assert_eq!(a.chunks_exact(3).map(|p| p[0]).next(), Some(0));
+    assert_eq!(
+        a.as_chunks::<3>().0.iter().map(|p| p[0]).next_back(),
+        Some(255)
+    );
+    assert_eq!(a.as_chunks::<3>().0.iter().map(|p| p[0]).next(), Some(0));
 
     let with_alpha: Vec<u8> = (0..=255u8).flat_map(|v| [v, 255 - v]).collect();
     for (name, cms) in backends() {
         let mut t = build(cms, Source::Icc(&icc), SRGB, F::GrayA8, F::Rgba8);
         let out = run(&mut t, &with_alpha, 256, F::Rgba8);
-        for (i, p) in out.chunks_exact(4).enumerate() {
+        for (i, p) in out.as_chunks::<4>().0.iter().enumerate() {
             assert_eq!(p[3], 255 - i as u8, "{name} alpha at {i}");
         }
     }
