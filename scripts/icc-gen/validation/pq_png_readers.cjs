@@ -119,6 +119,18 @@ async function main() {
       const options = name === 'firefox-cms' ? {
         firefoxUserPrefs: { 'gfx.color_management.mode': 1, 'gfx.color_management.enablev4': true, 'gfx.color_management.force_srgb': true },
       } : {};
+      // The bundled WPE launcher replaces LD_LIBRARY_PATH. A direct launch
+      // permits isolated runtime libraries without changing the host install.
+      const webkitBundle = engine === 'webkit' && process.env.WEBKIT_PROBE_BUNDLE;
+      if (webkitBundle) {
+        options.executablePath = path.join(webkitBundle, 'bin/MiniBrowser');
+        options.env = { ...process.env,
+          WEBKIT_EXEC_PATH: path.join(webkitBundle, 'bin'),
+          WEBKIT_INJECTED_BUNDLE_PATH: path.join(webkitBundle, 'lib'),
+          WEBKIT_INSPECTOR_RESOURCES_PATH: path.join(webkitBundle, 'share'),
+          LD_LIBRARY_PATH: [path.join(webkitBundle, 'lib'), path.join(webkitBundle, 'sys/lib'), process.env.LD_LIBRARY_PATH || ''].join(':'),
+        };
+      }
       browser = await playwright[engine].launch(options);
       const page = await browser.newPage();
       const values = {};
@@ -133,7 +145,8 @@ async function main() {
         }, { url, width: samples.length });
       }
       report.readers[name] = {
-        version: browser.version(), executableSha256: hash(fs.readFileSync(playwright[engine].executablePath())), options, values,
+        version: browser.version(), executableSha256: hash(fs.readFileSync(options.executablePath || playwright[engine].executablePath())),
+        options: { ...(options.firefoxUserPrefs ? { firefoxUserPrefs: options.firefoxUserPrefs } : {}), isolatedWebkitRuntime: Boolean(webkitBundle) }, values,
         comparisons: Object.fromEntries([
           ['float-vs-original', 'float', 'original'],
           ['float-vs-diagnostic-fallback', 'float', 'float-linear-fallback'],

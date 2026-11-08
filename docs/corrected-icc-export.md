@@ -162,11 +162,20 @@ The unmodified headless Firefox configuration produces the same samples as
 untagged PNG for every case, so it supplies no positive color-management
 coverage. The explicitly enabled control sets `gfx.color_management.mode=1`,
 `enablev4=true` and `force_srgb=true`; it is not described as Firefox's stock
-configuration. WebKit did not launch because its runtime lacks
-`libevent-2.1.so.7`; that failure is preserved and is not a passing reader.
-Thus coverage is two of three requested engines, with these configuration
-limits. See `benchmarks/pq_png_readers_2026-11-08.json` for identities and
-comparisons. The final browser run took 5 s, peak RSS 0.42 GiB under run-heavy.
+configuration. WebKit initially did not launch because runtime libraries were
+missing. Those failures are preserved. A subsequent isolated WPE WebKit 26.6
+run supplied four extracted Ubuntu runtime packages without changing the host
+install. It honors the float pipeline: changing the fallback changes zero
+output channels, while removing the float tags changes 120 channels, maximum
+226 U8 codes. In this Linux WPE configuration, PNG CICP does not override ICC;
+adding CICP changes zero channels of the linear-only ICC control. This is not
+a Safari/macOS qualification.
+
+All three requested engines now have evaluated configurations, with these
+headless/runtime limits. The original receipt retains the initial two-engine
+coverage; `benchmarks/pq_png_readers_webkit_2026-11-08.json` adds the WPE run and
+runtime identities. The Chromium/Firefox run took 5 s, peak RSS 0.42 GiB; the
+WPE run took 1 s, peak RSS 0.15 GiB, both under run-heavy.
 
 ## Intent-scoped capability guard qualification
 

@@ -129,9 +129,11 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
   sufficient: Chromium 153 and explicitly color-managed Firefox 155 use its
   conventional fallback in a contradictory-TRC witness, while C LCMS 2.20
   uses DToB1. ICC-embedded CICP must be isolated in such controls. Headless
-  defaults and SDR canvas output do not establish real HDR display accuracy;
-  WebKit could not launch with the available libraries. Exact source identities,
-  output differences and limits are in `docs/corrected-icc-export.md`.
+  defaults and SDR canvas output do not establish real HDR display accuracy.
+  After preserving the initial library failures, isolated Linux WPE WebKit
+  26.6 honors float DToB but does not give PNG CICP precedence in these controls.
+  Exact source identities, differences and configuration limits are in
+  `docs/corrected-icc-export.md`; no Safari coverage is claimed.
 - Fixed in the staged adapter (2026-11-08): MoxCMS does not implement float
   DToB/BToD pipelines. ICC permits fallback, but it can lose requested precision.
   The adapter now declines these profiles so a capable configured backend can

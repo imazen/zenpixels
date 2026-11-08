@@ -1,0 +1,139 @@
+{
+  "scope": "PNG16 to canvas sRGB U8; capability witnesses, no HDR display accuracy claim",
+  "playwright": "1.63.0",
+  "sources": {
+    "original": "3cc45b2abff548624924b813f67819a3c81c34f7ad4ea20f8cf21279fae88c28",
+    "floating": "1c4375db659d42b11fa1c2fc00f4b1d2e262834891277312605e50d392c3c52d",
+    "external": "8a66e7e397f1a833f34b584681857589144a1da01918e2b52447c56bdebd5e4f"
+  },
+  "width": 60,
+  "height": 1,
+  "reader": {
+    "version": "26.6",
+    "executableSha256": "e22e33a2a8dad1fb2d8e0716f37b6cf548bd8e73fdf5e11389a4042359b8b8a9",
+    "options": {
+      "isolatedWebkitRuntime": true
+    },
+    "comparisons": {
+      "float-vs-original": {
+        "differentRgbChannels": 1,
+        "maxCodeDifference": 1
+      },
+      "float-vs-diagnostic-fallback": {
+        "differentRgbChannels": 0,
+        "maxCodeDifference": 0
+      },
+      "diagnostic-vs-linear-only": {
+        "differentRgbChannels": 120,
+        "maxCodeDifference": 226
+      },
+      "cicp-overrides-icc-witness": {
+        "differentRgbChannels": 120,
+        "maxCodeDifference": 226
+      },
+      "dual-vs-cicp-only": {
+        "differentRgbChannels": 120,
+        "maxCodeDifference": 128
+      },
+      "cicp-changes-linear-icc": {
+        "differentRgbChannels": 0,
+        "maxCodeDifference": 0
+      },
+      "linear-icc-vs-untagged": {
+        "differentRgbChannels": 120,
+        "maxCodeDifference": 107
+      },
+      "embedded-cicp-vs-icc-curves": {
+        "differentRgbChannels": 0,
+        "maxCodeDifference": 0
+      }
+    },
+    "neutral_32768_over_65535": {
+      "original": [
+        24,
+        24,
+        24
+      ],
+      "float": [
+        24,
+        24,
+        24
+      ],
+      "original-embedded-cicp": [
+        24,
+        24,
+        24
+      ],
+      "float-linear-fallback": [
+        24,
+        24,
+        24
+      ],
+      "linear-only": [
+        188,
+        188,
+        188
+      ],
+      "float-cicp": [
+        24,
+        24,
+        24
+      ],
+      "linear-cicp": [
+        188,
+        188,
+        188
+      ],
+      "cicp-only": [
+        128,
+        128,
+        128
+      ],
+      "external": [
+        247,
+        247,
+        247
+      ],
+      "untagged": [
+        128,
+        128,
+        128
+      ]
+    }
+  },
+  "script_sha256": "1ed45f6ee645a367156006a077d24f46e9f0d11c4d96ef7cfe45a5f6fcf9bcd2",
+  "full_report_sha256": "596d1a8c971153607e06278d17b4c0203a5f4323b48ae2d260036d2d46c0faff",
+  "command": "WEBKIT_PROBE_BUNDLE=<installed-webkit>/minibrowser-wpe LD_LIBRARY_PATH=<extracted-packages>/usr/lib/x86_64-linux-gnu PLAYWRIGHT_MODULE=<installed-playwright> run-heavy --mem 4G --jobs 2 -- just icc-pq-png-readers ORIGINAL.icc FLOAT16385.icc W3C.icc FRESH_OUTPUT webkit",
+  "runtime_packages": [
+    {
+      "file": "libbacktrace0_0.1-4build1_amd64.deb",
+      "sha256": "fe04c25897f19bec49de866a794a7686cd942a859bb6fc085356d0f769294015"
+    },
+    {
+      "file": "libevent-2.1-7t64_2.1.12-stable-10ubuntu0.2_amd64.deb",
+      "sha256": "427917ba97310d8c6caa8c012e9a9b7e3bbdf643ce0c4150e53891ffd83b8822"
+    },
+    {
+      "file": "libhidapi-hidraw0_0.15.0-2_amd64.deb",
+      "sha256": "839f3b4156a1c86d0353dac4f92deb4c910833dec49608635fc6a6f5eaba5e3b"
+    },
+    {
+      "file": "libmanette-0.2-0_0.2.13-1_amd64.deb",
+      "sha256": "2e68b011e47dd553c3142794f0f1ad86bff4924b1f4072ef2be2a447c5d69631"
+    }
+  ],
+  "resource": {
+    "seconds": 1,
+    "peak_rss_gib": 0.15,
+    "min_available_mib": 17671,
+    "peak_load": 0.13,
+    "mem_cap_gib": 4,
+    "jobs": 2
+  },
+  "limits": [
+    "Linux WPE WebKit 26.6 with isolated extracted runtime libraries; not Safari/macOS.",
+    "60 RGB triplets, sRGB U8 canvas; no HDR display or dense precision qualification.",
+    "Initial missing-library failures retained; host packages unchanged.",
+    "Conventional fallback in this witness remains a pilot, not an adopted export."
+  ]
+}
