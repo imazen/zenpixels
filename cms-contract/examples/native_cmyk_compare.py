@@ -14,6 +14,8 @@ p = argparse.ArgumentParser(description=__doc__)
 for name in ['evaluator', 'source', 'input', 'reference', 'rgb-profile', 'output']:
     p.add_argument('--'+name, type=Path, required=True)
 a = p.parse_args()
+with a.output.open('x') as fresh:
+    fresh.write('{}\n')
 inputs = a.input.read_bytes()
 reference_bytes = a.reference.read_bytes()
 reference = array.array('f', reference_bytes)
@@ -41,3 +43,6 @@ for name, mode in [('moxcms', 'mox:named-srgb:inverted'), ('rust-lcms', 'product
                   'actual': values[i], 'reference': reference[i]}}
     a.output.write_text(json.dumps(report, indent=2)+'\n')
 print(json.dumps(report, indent=2))
+
+if report['backends']['rust-lcms']['output_sha256'] != report['reference_sha256']:
+    raise SystemExit('Rust LCMS/reference byte mismatch; see report')

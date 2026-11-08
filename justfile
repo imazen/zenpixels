@@ -546,3 +546,20 @@ icc-export-source-check:
 
 icc-export-workspace-check:
     cargo test --workspace --features cms-moxcms,cms-lcms,icc-db --locked
+
+# Test-only CMYK probes. Use a host resource wrapper and isolated CARGO_TARGET_DIR.
+cmyk-probes-build:
+    cargo build --locked --manifest-path cms-contract/Cargo.toml --example profile_eval --example cmyk_layout_contract
+
+cmyk-probes-check:
+    cargo fmt --manifest-path cms-contract/Cargo.toml --check
+    cargo clippy --locked --manifest-path cms-contract/Cargo.toml --all-targets -- -D warnings
+    cargo test --locked --manifest-path cms-contract/Cargo.toml
+
+# Frozen C LCMS reference source directory with include/ and src/ children.
+cmyk-c-oracle-build reference binary:
+    test ! -e "{{binary}}"
+    cc -O2 -I "{{reference}}/include" scripts/icc-gen/validation/profile_eval.c "{{reference}}"/src/*.c -lm -lpthread -o "{{binary}}"
+
+cmyk-native-compare evaluator source input reference rgb output:
+    PYTHONDONTWRITEBYTECODE=1 python3 cms-contract/examples/native_cmyk_compare.py --evaluator "{{evaluator}}" --source "{{source}}" --input "{{input}}" --reference "{{reference}}" --rgb-profile "{{rgb}}" --output "{{output}}"

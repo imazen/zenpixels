@@ -380,3 +380,11 @@ contract. In the current revision, pow_midp(NaN,1.8)=0 and
 pow_midp(-0.5,1.8)=MIN_POSITIVE on both measured backends. These limits need
 caller handling; no sibling source was changed. Details, raw counts, source
 links and reproduction are in `benchmarks/pow-comparison/README.md`.
+
+### CMYK precision and capability controls (2026-11-08)
+
+The qualified native JXL input matches C LCMS 2.20 byte-for-byte through Rust
+LCMS. MoxCMS 0.9.2 retains 937/786432 components over the existing 0.0013 bound,
+maximum 0.006689250469207764; no threshold relaxed. The typed matrix accepts
+256 LCMS cases and 192 MoxCMS cases, with 64 explicit MoxCMS CMYK16 declines.
+See docs/cmyk-cms-qualification.md for intent/BPC controls and Argyll scope.

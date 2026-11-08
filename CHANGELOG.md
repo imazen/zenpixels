@@ -67,6 +67,10 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 - Preserve the standalone, unpublished moxcms gamma diagnostics and paired benches in `benchmarks/moxcms-gamma`, with pinned source reconstruction and hashes for all six original experiment arms.
 
+### Added
+
+- CMYK native-layout and multi-CMS qualification tools; see [coverage and limitations](docs/cmyk-cms-qualification.md). No backend default or pixel expectation changes.
+
 ### QUEUED BREAKING CHANGES
 
 See the 0.3.1 candidate entries below for the approved breaking release queue.

@@ -186,3 +186,6 @@ The first candidate tool failed on absent description tags; the corrected tool
 copies only required TRC/CICP tags. An initial native-reader build lacked a
 system LCMS development package; the passing run builds the pinned C 2.20
 reference. Both failing logs remain preserved.
+
+For the later native CMYK and Argyll comparison, including the CMYK16 capability
+limits and unchanged reference-accuracy failure, see [CMYK qualification](cmyk-cms-qualification.md).
