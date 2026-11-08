@@ -34,7 +34,7 @@ fn tag(bytes: &[u8], signature: &[u8; 4]) -> Option<Vec<u8>> {
     None
 }
 
-fn candidate(source: &[u8], primaries: u8) -> Vec<u8> {
+fn candidate(source: &[u8], primaries: u8, mox_exact: bool) -> Vec<u8> {
     let (xy, white) = reference::chromaticities(primaries);
     let xy_y = |[x, y]: [f64; 2]| types::CiexyY { x, y, Y: 1.0 };
     let primaries = types::CiexyYTriple {
@@ -45,13 +45,35 @@ fn candidate(source: &[u8], primaries: u8) -> Vec<u8> {
     // Only colorimetry comes from this constructor. Original serialized curves
     // replace the placeholders verbatim, so this comparison cannot hide a TRC edit.
     let placeholder = gamma::build_gamma(None, 1.0).expect("identity curve");
-    let mut built = virt::create_rgb_profile(
-        None,
-        Some(&xy_y(white)),
-        Some(&primaries),
-        Some([&placeholder, &placeholder, &placeholder]),
-    )
-    .expect("LCMS RGB constructor");
+    let mut built = if mox_exact {
+        let chromaticity = |[x, y]: [f64; 2]| moxcms::Chromaticity {
+            x: x as f32,
+            y: y as f32,
+        };
+        let mut built = moxcms::ColorProfile::new_from_slice(source).expect("source profile");
+        built.update_rgb_colorimetry(
+            moxcms::XyY {
+                x: white[0],
+                y: white[1],
+                yb: 1.0,
+            },
+            moxcms::ColorPrimaries {
+                red: chromaticity(xy[0]),
+                green: chromaticity(xy[1]),
+                blue: chromaticity(xy[2]),
+            },
+        );
+        profile::open_profile_from_mem(None, &built.encode().expect("MoxCMS writer"))
+            .expect("controlled MoxCMS colorimetry")
+    } else {
+        virt::create_rgb_profile(
+            None,
+            Some(&xy_y(white)),
+            Some(&primaries),
+            Some([&placeholder, &placeholder, &placeholder]),
+        )
+        .expect("LCMS RGB constructor")
+    };
     for signature in [*b"rTRC", *b"gTRC", *b"bTRC", *b"cicp"] {
         let data = tag(source, &signature).expect("controlled source tag");
         assert!(profile::cms_write_raw_tag(
@@ -76,9 +98,14 @@ fn candidate(source: &[u8], primaries: u8) -> Vec<u8> {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    if args.len() != 2 {
-        return Err("expected source profiles and fresh output directory".into());
+    if !(2..=3).contains(&args.len()) {
+        return Err("expected source profiles, fresh output directory, optional mox-exact".into());
     }
+    let mox_exact = match args.get(2).and_then(|v| v.to_str()) {
+        None => false,
+        Some("mox-exact") => true,
+        _ => return Err("unknown candidate constructor".into()),
+    };
     let input = Path::new(&args[0]);
     let output = Path::new(&args[1]);
     std::fs::create_dir(output)?;
@@ -109,7 +136,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if name.starts_with("rgb-") && name.ends_with(".icc") {
             let p: u8 = name.split('-').nth(1).unwrap().parse()?;
             let source = std::fs::read(&path)?;
-            let data = candidate(&source, p);
+            let data = candidate(&source, p, mox_exact);
             std::fs::write(output.join(name), &data)?;
             rgb += 1;
         } else if name.starts_with("gray-") && name.ends_with(".icc") {
@@ -119,7 +146,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     assert_eq!((rgb, gray), (159, 175));
     println!(
-        "LCMS colorimetry: {rgb} RGB profiles; {gray} gray controls unchanged; transfer/CICP tags exact"
+        "{} colorimetry: {rgb} RGB profiles; {gray} gray controls unchanged; transfer/CICP tags exact",
+        if mox_exact {
+            "MoxCMS exact-H273"
+        } else {
+            "LCMS exact-H273"
+        }
     );
     Ok(())
 }
