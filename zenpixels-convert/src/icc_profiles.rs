@@ -642,7 +642,7 @@ mod tests {
                 checked += 1;
             }
         }
-        assert_eq!(checked, 159);
+        assert_eq!(checked, 149);
     }
 
     #[test]
@@ -782,13 +782,13 @@ mod tests {
                         assert!(p == 1 && t == 13, "({p}, {t}) unexpectedly NotNeeded");
                         not_needed += 1;
                     }
-                    SynthesizedIcc::CmsUnsupported if p == 10 => unsupported += 1,
+                    SynthesizedIcc::CmsUnsupported if p == 10 || t == 18 => unsupported += 1,
                     other => panic!("({p}, {t}) gave {other:?} — expected full blob coverage"),
                 }
             }
         }
-        assert_eq!(profiles, 159, "expected 159 profile-yielding combos");
-        assert_eq!(unsupported, 16, "all primaries-10 RGB pairs refused");
+        assert_eq!(profiles, 149, "expected 149 profile-yielding combos");
+        assert_eq!(unsupported, 26, "XYZ and HLG pairs refused");
         assert_eq!(
             not_needed, 1,
             "expected exactly 1 sRGB-default NotNeeded combo"

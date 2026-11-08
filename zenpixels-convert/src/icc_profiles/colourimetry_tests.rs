@@ -115,6 +115,9 @@ fn every_rgb_matrix_has_rank_and_h273_d50_colorants() {
     let mut checked = 0;
     for &p in PRIMARIES.iter().rev() {
         for &t in TRANSFERS {
+            if t == 18 {
+                continue;
+            }
             let result = synthesize_icc_for_cicp(Cicp::new(p, t, 0, true));
             let SynthesizedIcc::Profile(icc) = result else {
                 assert!(
@@ -131,7 +134,7 @@ fn every_rgb_matrix_has_rank_and_h273_d50_colorants() {
             for (col, want) in actual.into_iter().zip(expected_colorants(p)) {
                 for (a, b) in col.into_iter().zip(want) {
                     assert!(
-                        (a - b).abs() < 0.001,
+                        (a - b).abs() < 0.00002,
                         "({p},{t}) colorants {actual:?}, expected {:?}",
                         expected_colorants(p)
                     );
@@ -140,7 +143,7 @@ fn every_rgb_matrix_has_rank_and_h273_d50_colorants() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 159);
+    assert_eq!(checked, 149);
 }
 
 #[path = "transfer_reference.rs"]
@@ -152,6 +155,9 @@ fn every_rgb_and_gray_transfer_matches_analytic_h273() {
     let mut checked = [0, 0];
     for &p in PRIMARIES {
         for &t in TRANSFERS {
+            if t == 18 {
+                continue;
+            }
             for (kind, synth) in [synthesize_icc_for_cicp, synthesize_gray_icc_for_cicp]
                 .into_iter()
                 .enumerate()
@@ -193,7 +199,13 @@ fn every_rgb_and_gray_transfer_matches_analytic_h273() {
                                 "({p},{t}) kind {kind} {sig:?} zero inverse {actual} outside [0,{cutoff}]"
                             );
                         } else {
-                            let want = analytic(t, x);
+                            let want = if t == 17 {
+                                let peak = xyz(&icc, b"lumi")[1];
+                                assert!((peak - 52.37).abs() < 0.00001);
+                                analytic(t, x) * 48.0 / peak
+                            } else {
+                                analytic(t, x)
+                            };
                             assert!(
                                 (actual - want).abs() <= tolerance,
                                 "({p},{t}) kind {kind} {sig:?} x={x}: {actual} vs {want} (tolerance {tolerance})"
@@ -205,7 +217,7 @@ fn every_rgb_and_gray_transfer_matches_analytic_h273() {
             }
         }
     }
-    assert_eq!(checked, [159, 175]);
+    assert_eq!(checked, [149, 164]);
 }
 
 #[test]
@@ -243,6 +255,9 @@ fn gray_white_and_bradford_adaptation_are_independent_of_rgb_gamut() {
     let mut checked = 0;
     for &p in PRIMARIES {
         for &t in TRANSFERS {
+            if t == 18 {
+                continue;
+            }
             if p == 1 && t == 13 {
                 continue;
             }
@@ -252,7 +267,7 @@ fn gray_white_and_bradford_adaptation_are_independent_of_rgb_gamut() {
                 panic!("missing gray ({p},{t})");
             };
             let want = xy_xyz(white(p));
-            for (got, w) in xyz(&icc, b"wtpt").into_iter().zip(want) {
+            for (got, w) in xyz(&icc, b"wtpt").into_iter().zip([0.9642, 1.0, 0.8249]) {
                 assert!(
                     (got - w).abs() < 0.00002,
                     "gray ({p},{t}) white {got} != {w}"
@@ -262,15 +277,46 @@ fn gray_white_and_bradford_adaptation_are_independent_of_rgb_gamut() {
             for i in 0..3 {
                 let row = core::array::from_fn(|j| fixed(&chad[8 + 4 * (3 * i + j)..]));
                 assert!(
-                    // The gray recipe targets a 5003 K D50 approximation;
-                    // compare to ICC D50 with the colorant tolerance, while
-                    // preserving the tight source-white check above.
-                    (dot(row, want) - [0.9642, 1.0, 0.8249][i]).abs() < 0.001,
+                    (dot(row, want) - [0.9642, 1.0, 0.8249][i]).abs() < 0.00002,
                     "gray ({p},{t}) chad"
                 );
             }
             checked += 1;
         }
     }
-    assert_eq!(checked, 175);
+    assert_eq!(checked, 164);
+}
+
+#[test]
+fn hlg_synthesis_refuses_without_a_rendering_target_in_every_build() {
+    for primaries in 0..=255 {
+        let cicp = Cicp::new(primaries, 18, 0, true);
+        assert_eq!(
+            synthesize_icc_for_cicp(cicp),
+            SynthesizedIcc::CmsUnsupported
+        );
+        assert_eq!(
+            synthesize_gray_icc_for_cicp(cicp),
+            SynthesizedIcc::CmsUnsupported
+        );
+    }
+}
+
+#[test]
+fn rgb_media_white_and_full_adaptation_match_pcs() {
+    for &p in PRIMARIES.iter().filter(|&&p| p != 10) {
+        let SynthesizedIcc::Profile(icc) = synthesize_icc_for_cicp(Cicp::new(p, 8, 0, true)) else {
+            panic!("linear RGB profile {p}");
+        };
+        for (actual, expected) in xyz(&icc, b"wtpt").into_iter().zip([0.9642, 1.0, 0.8249]) {
+            assert!((actual - expected).abs() < 0.000008);
+        }
+        let chad = tag(&icc, b"chad");
+        let native = xy_xyz(white(p));
+        for i in 0..3 {
+            let row = core::array::from_fn(|j| fixed(&chad[8 + 4 * (3 * i + j)..]));
+            assert!((dot(row, native) - [0.9642, 1.0, 0.8249][i]).abs() < 0.00002);
+        }
+        assert_eq!(&icc[8..12], &[4, 0x40, 0, 0]);
+    }
 }

@@ -89,8 +89,8 @@ pub(super) fn analytic(t: u8, x: f64) -> f64 {
             ((e - 107.0 / 128.0).max(0.0) / (2413.0 / 128.0 - 2392.0 / 128.0 * e))
                 .powf(8192.0 / 1305.0)
         }
-        // A u16 curv LUT saturates at 1; ST428's nominal endpoint is 52.37/48.
-        17 => (x.powf(2.6) * 52.37 / 48.0).min(1.0),
+        // H.273 ST428 is normalized to 48 nits; its endpoint is above one.
+        17 => x.powf(2.6) * 52.37 / 48.0,
         18 => {
             let scene = if x <= 0.5 {
                 x * x / 3.0

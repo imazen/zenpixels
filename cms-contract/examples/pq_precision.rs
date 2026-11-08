@@ -64,9 +64,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for power in [3.0f64, 8.0] {
             let mut shaped = base.clone();
             let root = ToneReprCurve::Lut(
-                (0..=65535)
+                (0..32767)
                     .map(|code| {
-                        (pq(f64::from(code) / 65535.0).powf(1.0 / power) * 65535.0).round() as u16
+                        (pq(f64::from(code) / 32766.0).powf(1.0 / power) * 65535.0).round() as u16
                     })
                     .collect(),
             );

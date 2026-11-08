@@ -178,7 +178,7 @@ mod tests {
         // The sRGB-default pair is handled upstream as NotNeeded and excluded.
         assert!(bundled_profile_for_cicp(1, 13).is_none());
         assert!(bundled_profile_for_cicp(1, 1).is_some());
-        for t in [1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18] {
+        for t in [1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17] {
             assert!(bundled_profile_for_cicp(10, t).is_none());
         }
     }
@@ -287,7 +287,7 @@ mod tests {
             );
             checked += 1;
         }
-        assert_eq!(checked, 175, "expected to roundtrip all 175 gray combos");
+        assert_eq!(checked, 164, "expected to roundtrip all 164 gray combos");
     }
 
     /// Round-trip recognition guard for **every** profile this crate
@@ -431,7 +431,7 @@ mod tests {
 
         let mut checked = 0usize;
         for primaries in [1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 22] {
-            for transfer in [1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18] {
+            for transfer in [1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17] {
                 if primaries == 10 || (primaries == 1 && transfer == 13) {
                     // XYZ's singular RGB matrix is deliberately excluded;
                     // sRGB is the sole assigned default without a profile.
@@ -468,8 +468,8 @@ mod tests {
             }
         }
         assert_eq!(
-            checked, 159,
-            "expected to roundtrip all 159 bundled profiles"
+            checked, 149,
+            "expected to roundtrip all 149 bundled profiles"
         );
     }
 }

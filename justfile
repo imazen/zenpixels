@@ -503,6 +503,10 @@ icc-profile-triage reference output *candidates:
 icc-profile-curves profiles:
     cargo run --locked --manifest-path cms-contract/Cargo.toml --example profile_curves -- "{{profiles}}"
 
+# Characterize alternate PQ encodings before selecting export definitions.
+icc-pq-precision rgb gray output:
+    cargo run --locked --manifest-path cms-contract/Cargo.toml --example pq_precision -- "{{rgb}}" "{{gray}}" "{{output}}"
+
 # Read-only source/bundle inspection; requires the system liblz4 decoder.
 icc-bundle-definition-audit revision="":
     python3 scripts/icc-gen/validation/inspect_bundle_definition.py {{revision}}

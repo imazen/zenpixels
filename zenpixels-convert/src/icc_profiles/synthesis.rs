@@ -58,6 +58,9 @@ fn curve(t: u8, inherited: &ToneReprCurve) -> ToneReprCurve {
         // ICC paraType-0 stores its exponent as s15Fixed16 instead of u8Fixed8.
         4 => ToneReprCurve::Parametric(vec![2.2]),
         5 => ToneReprCurve::Parametric(vec![2.8]),
+        // Normalize ICC device white to peak white; lumi records 52.37 cd/m².
+        // Multiplication by 52.37/48 recovers H.273's 48-nit normalization.
+        17 => ToneReprCurve::Parametric(vec![2.6]),
         9 | 10 => {
             let ToneReprCurve::Lut(samples) = inherited else {
                 unreachable!("log table")
@@ -82,6 +85,13 @@ pub(crate) fn rgb(p: u8, t: u8) -> Option<Vec<u8>> {
     profile.red_trc = Some(trc.clone());
     profile.green_trc = Some(trc.clone());
     profile.blue_trc = Some(trc);
+    if t == 17 {
+        profile.luminance = Some(Xyzd {
+            x: 0.0,
+            y: 52.37,
+            z: 0.0,
+        });
+    }
     encode(profile)
 }
 
@@ -93,6 +103,13 @@ pub(crate) fn gray(p: u8, t: u8) -> Option<Vec<u8>> {
     gray.white_point = PCS_D50;
     gray.media_white_point = Some(PCS_D50);
     gray.chromatic_adaptation = Some(adapt_to_d50_d(Matrix3d::IDENTITY, white));
+    if t == 17 {
+        gray.luminance = Some(Xyzd {
+            x: 0.0,
+            y: 52.37,
+            z: 0.0,
+        });
+    }
     gray.description = Some(ProfileText::Localizable(vec![LocalizableString::new(
         "en".into(),
         "US".into(),
