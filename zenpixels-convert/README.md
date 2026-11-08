@@ -143,7 +143,7 @@ same transform and rounds, so both have F32 CMYK's black-point compensation to s
 
 Every backend runs through the same contract in `cms-contract/`: `just cms-contract`.
 
-`Lcms` supports native U8/U16/F32 RGB, gray and ICC-described CMYK inputs, including byte BGR/BGRA and alpha. It uses relative colorimetric intent with black-point compensation for CMYK sources. F32 CMYK destinations are refused; mixed depths and unqualified layouts decline to the planner. Prepared float CMYK rows reuse scratch. The Rust port is pinned to an unreleased Git revision, so publishing this feature requires a released port dependency. See [qualification and profile triage](../docs/first-class-lcms-and-profile-triage.md).
+`Lcms` supports native U8/U16/F32 RGB, gray and ICC-described CMYK inputs, including byte BGR/BGRA and alpha. It uses relative colorimetric intent with black-point compensation for CMYK sources. F32 CMYK destinations are refused; mixed depths and unqualified layouts decline to the planner. Prepared float CMYK rows reuse scratch. The Rust port is pinned to an unreleased Git revision, so publishing this feature requires a released port dependency. See [qualification and profile triage](https://github.com/imazen/zenpixels/blob/review/first-class-lcms-20261108/docs/first-class-lcms-and-profile-triage.md).
 
 ## Row conversion tiers
 
@@ -198,7 +198,7 @@ Use measured workload costs and explicit buffer/stride arithmetic.
 | `ConvertOptions` (re-export) | Explicit lossy-operation policy |
 | [`ConvertPlan`] | Lower-level plan, run through `RowConverter::from_plan` |
 | `PixelSlice::adapt_for_encode` / [`adapt::adapt_raw_rows_for_encode`] / `PixelBuffer::try_adapt_in_place` | One-call negotiate-and-convert helpers |
-| [`PluggableCms`] / [`RowTransformMut`] / [`MoxCms`] | Pluggable CMS backend interface + moxcms impl |
+| [`PluggableCms`] / [`RowTransformMut`] / [`MoxCms`] / [`Lcms`] | Pluggable CMS interface with explicit backend selection |
 | [`GamutMatrix`] | Gamut matrix construction and application, in place on rows |
 | [`ConvertPlan::new_with_hdr_peak`] / [`ConvertPlan::new_with_hdr_config`] | HDR→SDR conversion plan constructors (`bt2446a` feature) |
 | [`Bt2446A`] / [`SoftCompress`] / [`CllMeasure`] | ITU-R BT.2446 Method A curve + OKLch knee + CTA-861.3 CLL measurement (`hdr-experimental` feature) |
