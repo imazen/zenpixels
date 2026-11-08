@@ -94,12 +94,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         )?;
         let floats: Vec<f32> = input
-            .chunks_exact(4)
-            .map(|c| f32::from_ne_bytes(c.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| f32::from_ne_bytes(*c))
             .collect();
         let mut result = vec![0.0f32; count * dst_channels];
         transform.transform(&floats, &mut result)?;
-        for (out, value) in output.chunks_exact_mut(4).zip(result) {
+        for (out, value) in output.as_chunks_mut::<4>().0.iter_mut().zip(result) {
             out.copy_from_slice(&value.to_ne_bytes());
         }
     } else {
@@ -114,8 +116,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Little CMS represents floating ink in percent; the probe interface
         // uses normalized ICC ink, matching the production pixel API.
         if src_format == PixelFormat::CmykF32 {
-            for value in input.chunks_exact_mut(4) {
-                let scaled = f32::from_ne_bytes(value.try_into().unwrap()) * 100.0;
+            for value in input.as_chunks_mut::<4>().0.iter_mut() {
+                let scaled = f32::from_ne_bytes(*value) * 100.0;
                 value.copy_from_slice(&scaled.to_ne_bytes());
             }
         }
@@ -145,8 +147,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("literal-intent transform")?;
         transform.do_transform(&input, &mut output, u32::try_from(count)?);
         if dst_format == PixelFormat::CmykF32 {
-            for value in output.chunks_exact_mut(4) {
-                let normalized = f32::from_ne_bytes(value.try_into().unwrap()) / 100.0;
+            for value in output.as_chunks_mut::<4>().0.iter_mut() {
+                let normalized = f32::from_ne_bytes(*value) / 100.0;
                 value.copy_from_slice(&normalized.to_ne_bytes());
             }
         }
