@@ -44,6 +44,15 @@ Linux aarch64 qualification:
 - The actual production backend reproduces all 12 C LCMS 2.20 float components
   for four existing JXL CMYK regression samples, including negative red.
 
+[CI run 42442148542](https://github.com/imazen/zenpixels/actions/runs/42442148542)
+on code revision `a2bcf8ea` passes all eight LCMS contracts on Linux x64/ARM64,
+Windows x64/ARM64, macOS ARM64 and i686 via cross. Shared contracts, strict
+Clippy, public API snapshots, MSRV, WASM and formatting jobs pass. The whole
+workspace and coverage retain the stable-upgrade fresh-bundle failures. The
+first CI run additionally found two Rust 1.99.1 Clippy chunk-iterator lints
+missed by local 1.97.1; fixed-array chunks correct those without changing row
+arithmetic or output expectations. Original CI logs remain preserved.
+
 Commands: `just cms-lcms-check`, `just api-doc-check`, and
 `just cms-rust-cmyk-oracle-check PROFILE C_ORACLE_TSV`. Full platform CI remains
 a separate gate; passing local contracts is not universal ICC qualification.

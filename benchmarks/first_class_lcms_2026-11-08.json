@@ -96,6 +96,30 @@
       "min_available_mib": 25203,
       "peak_load": 12.09,
       "result": "Eight backend tests, strict Clippy/rustdoc, API check pass; full library450pass/1existing bundle equality fail/1existingignore"
+    },
+    {
+      "log": "first-class-browser-final.log",
+      "rc": 0,
+      "elapsed_s": 27,
+      "peak_rss_gib": 0.42,
+      "min_available_mib": 27216,
+      "peak_load": 8.59
+    },
+    {
+      "log": "lcms-array-chunks.log",
+      "rc": 0,
+      "elapsed_s": 13,
+      "peak_rss_gib": 0.28,
+      "min_available_mib": 27300,
+      "peak_load": 8.52
+    },
+    {
+      "log": "lcms-final-binaries.log",
+      "rc": 0,
+      "elapsed_s": 2,
+      "peak_rss_gib": 0.07,
+      "min_available_mib": 27853,
+      "peak_load": 7.17
     }
   ],
   "recommendation": "LCMS colorimetry with explicit H273 xy; preserve existing bundle pending review; inherited curves need separate precision and HDR policy decisions",
@@ -112,6 +136,39 @@
     "Offline build: uncached dependency revision",
     "Candidate tool assumed absent description tags",
     "System lcms2 headers unavailable; pinned C reference build subsequently passes",
-    "Strict rustdoc exposed existing conditional HDR links; links corrected without behavior changes"
-  ]
+    "Strict rustdoc exposed existing conditional HDR links; links corrected without behavior changes",
+    "CI1.99.1 Clippy required fixed-size chunks; corrected without relaxing lints or numeric expectations"
+  ],
+  "ci": {
+    "qualified_code": "a2bcf8ea09b428e09a34f61183ce7080eb134acf",
+    "run": "https://github.com/imazen/zenpixels/actions/runs/42442148542",
+    "native_lcms_contracts_passed": [
+      "Linux x64",
+      "Linux aarch64",
+      "Windows x64",
+      "Windows arm64",
+      "macOS arm64",
+      "i686 via cross"
+    ],
+    "contracts_per_platform": 8,
+    "green_jobs": [
+      "Clippy",
+      "MSRV",
+      "Public API snapshots",
+      "WASM (wasm32-wasip1)",
+      "allocator_api on beta",
+      "Format",
+      "cms-contract"
+    ],
+    "workspace_blockers": [
+      "committed_bundle_content_matches_fresh_synthesis",
+      "regenerated_blob_matches_committed"
+    ],
+    "original_failure_receipts_preserved": true
+  },
+  "toolchains": {
+    "local_rustc": "1.97.1 (8bab26f4f 2026-07-14)",
+    "ci_rustc": "1.99.1 (58cf8f9c3 2026-10-13)",
+    "rustdoc_json": "nightly-2026-07-13"
+  }
 }
