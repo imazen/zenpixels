@@ -514,3 +514,7 @@ icc-bundle-definition-audit revision="":
 # Equal-input control: MoxCMS constructor with the same exact H.273 coordinates.
 icc-mox-exact-candidates source output:
     cargo run --locked --manifest-path cms-contract/Cargo.toml --example profile_candidates -- "{{source}}" "{{output}}" mox-exact
+
+# External reference profile characterization; no fixture or threshold changes.
+icc-pq-external profile:
+    cargo run --locked --manifest-path cms-contract/Cargo.toml --example pq_external_profile -- "{{profile}}"
