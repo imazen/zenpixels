@@ -52,7 +52,7 @@ fn candidate(source: &[u8], primaries: u8) -> Vec<u8> {
         Some([&placeholder, &placeholder, &placeholder]),
     )
     .expect("LCMS RGB constructor");
-    for signature in [*b"rTRC", *b"gTRC", *b"bTRC", *b"cicp", *b"desc", *b"cprt"] {
+    for signature in [*b"rTRC", *b"gTRC", *b"bTRC", *b"cicp"] {
         let data = tag(source, &signature).expect("controlled source tag");
         assert!(profile::cms_write_raw_tag(
             &mut built,
