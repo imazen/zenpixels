@@ -619,35 +619,38 @@ fn cmyk8_against_f32_and_lcms() {
     }
 }
 
-/// A float pipeline takes precedence over otherwise usable matrix/TRC tags.
-/// A backend that cannot evaluate it must let another configured CMS take it.
+fn float_pipeline_profile(signatures: &[[u8; 4]]) -> Vec<u8> {
+    use lcms::{lut, profile, tagtypes::TagObject};
+    let mut altered = profile::open_profile_from_mem(None, P3).unwrap();
+    let mut pipeline = lut::pipeline_alloc(None, 3, 3).unwrap();
+    assert!(
+        pipeline.insert_stage(
+            lut::StageLoc::AtEnd,
+            lut::stage_alloc_matrix(
+                None,
+                3,
+                3,
+                &[0.25, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.25],
+                None
+            )
+            .unwrap()
+        )
+    );
+    for &signature in signatures {
+        assert!(profile::cms_write_tag(
+            &mut altered,
+            u32::from_be_bytes(signature),
+            Some(TagObject::Mpe(pipeline.clone()))
+        ));
+    }
+    profile::save_profile_to_mem(&mut altered).unwrap()
+}
+
+/// A float pipeline for the requested intent takes precedence over matrix/TRC.
 #[test]
 fn float_pipeline_is_honored_or_explicitly_declined() {
-    use lcms::{lut, profile, tagtypes::TagObject};
     for signatures in [[*b"D2B0", *b"D2B1"], [*b"B2D0", *b"B2D1"]] {
-        let mut altered = profile::open_profile_from_mem(None, P3).unwrap();
-        let mut pipeline = lut::pipeline_alloc(None, 3, 3).unwrap();
-        assert!(
-            pipeline.insert_stage(
-                lut::StageLoc::AtEnd,
-                lut::stage_alloc_matrix(
-                    None,
-                    3,
-                    3,
-                    &[0.25, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.25],
-                    None
-                )
-                .unwrap(),
-            )
-        );
-        for signature in signatures {
-            assert!(profile::cms_write_tag(
-                &mut altered,
-                u32::from_be_bytes(signature),
-                Some(TagObject::Mpe(pipeline.clone()))
-            ));
-        }
-        let altered = profile::save_profile_to_mem(&mut altered).unwrap();
+        let altered = float_pipeline_profile(&signatures);
         let (source, target) = if signatures[0] == *b"D2B0" {
             (Source::Icc(&altered), SRGB)
         } else {
@@ -679,5 +682,52 @@ fn float_pipeline_is_honored_or_explicitly_declined() {
                 .is_none(),
             "MoxCMS must decline unsupported float pipelines"
         );
+    }
+}
+
+/// A float transform for another intent cannot disable relative colorimetry.
+#[test]
+fn relative_intent_ignores_float_tags_for_other_intents() {
+    for prefix in [*b"D2B", *b"B2D"] {
+        for intent in [b'0', b'2', b'3'] {
+            let altered = float_pipeline_profile(&[[prefix[0], prefix[1], prefix[2], intent]]);
+            let (source, target, plain_source, plain_target) = if prefix == *b"D2B" {
+                (Source::Icc(&altered), SRGB, Source::Icc(P3), SRGB)
+            } else {
+                (SRGB, Source::Icc(&altered), SRGB, Source::Icc(P3))
+            };
+            let input = [0.18f32, 0.5, 0.75];
+            for (name, cms) in backends() {
+                let mut with_tag = build(cms, source.clone(), target.clone(), F::RgbF32, F::RgbF32);
+                let mut plain = build(
+                    cms,
+                    plain_source.clone(),
+                    plain_target.clone(),
+                    F::RgbF32,
+                    F::RgbF32,
+                );
+                let mut actual = [0.0f32; 3];
+                let mut expected = [0.0f32; 3];
+                with_tag
+                    .try_transform_row(
+                        bytemuck::cast_slice(&input),
+                        bytemuck::cast_slice_mut(&mut actual),
+                        1,
+                    )
+                    .unwrap();
+                plain
+                    .try_transform_row(
+                        bytemuck::cast_slice(&input),
+                        bytemuck::cast_slice_mut(&mut expected),
+                        1,
+                    )
+                    .unwrap();
+                assert_eq!(
+                    actual.map(f32::to_bits),
+                    expected.map(f32::to_bits),
+                    "{name} unrelated intent{intent}"
+                );
+            }
+        }
     }
 }
