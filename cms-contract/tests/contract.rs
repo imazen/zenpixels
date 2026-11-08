@@ -618,3 +618,66 @@ fn cmyk8_against_f32_and_lcms() {
         }
     }
 }
+
+/// A float pipeline takes precedence over otherwise usable matrix/TRC tags.
+/// A backend that cannot evaluate it must let another configured CMS take it.
+#[test]
+fn float_pipeline_is_honored_or_explicitly_declined() {
+    use lcms::{lut, profile, tagtypes::TagObject};
+    for signatures in [[*b"D2B0", *b"D2B1"], [*b"B2D0", *b"B2D1"]] {
+        let mut altered = profile::open_profile_from_mem(None, P3).unwrap();
+        let mut pipeline = lut::pipeline_alloc(None, 3, 3).unwrap();
+        assert!(
+            pipeline.insert_stage(
+                lut::StageLoc::AtEnd,
+                lut::stage_alloc_matrix(
+                    None,
+                    3,
+                    3,
+                    &[0.25, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.25],
+                    None
+                )
+                .unwrap(),
+            )
+        );
+        for signature in signatures {
+            assert!(profile::cms_write_tag(
+                &mut altered,
+                u32::from_be_bytes(signature),
+                Some(TagObject::Mpe(pipeline.clone()))
+            ));
+        }
+        let altered = profile::save_profile_to_mem(&mut altered).unwrap();
+        let (source, target) = if signatures[0] == *b"D2B0" {
+            (Source::Icc(&altered), SRGB)
+        } else {
+            (SRGB, Source::Icc(&altered))
+        };
+        let mut transform = build(
+            &LcmsPort,
+            source.clone(),
+            target.clone(),
+            F::RgbF32,
+            F::RgbF32,
+        );
+        let input = [0.5f32; 3];
+        let mut output = [0.0f32; 3];
+        transform
+            .try_transform_row(
+                bytemuck::cast_slice(&input),
+                bytemuck::cast_slice_mut(&mut output),
+                1,
+            )
+            .unwrap();
+        assert!(
+            output.iter().any(|&value| (value - 0.5).abs() > 0.05),
+            "float pipeline was ignored: {output:?}"
+        );
+        assert!(
+            MoxCms
+                .build_source_transform(source, target, F::RgbF32, F::RgbF32, &opts())
+                .is_none(),
+            "MoxCMS must decline unsupported float pipelines"
+        );
+    }
+}
