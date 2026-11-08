@@ -363,7 +363,9 @@ impl IccIdentification {
     #[inline]
     #[must_use]
     pub fn is_common_srgb(icc_bytes: &[u8]) -> bool {
-        identify_common(icc_bytes).is_some_and(|id| id.is_srgb())
+        identify_common(icc_bytes).is_some_and(|id| {
+            id.is_srgb() && id.valid_use == IdentificationUse::MatrixTrcSubstitution
+        })
     }
 
     /// Create a new identification result.
@@ -912,6 +914,39 @@ mod tests {
     fn is_common_srgb_rejects_empty() {
         assert!(!identify_common(&[]).is_some_and(|id| id.is_srgb()));
         assert!(!identify_common(&[0; 100]).is_some_and(|id| id.is_srgb()));
+    }
+
+    #[test]
+    fn historical_gray_white_is_recognized_without_srgb_cms_bypass() {
+        // Previously bundled C-white GRAY/sRGB profile. Its unchanged bytes
+        // identify the approximate curve; they cannot stand in for D65 sRGB.
+        let hex = [
+            "000001a400000000044000006d6e74724752415958595a200000000000000000",
+            "0000000061637370000000000000000000000000000000000000000000000000",
+            "000000000000f6d6000100000000d32d00000000000000000000000000000000",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "0000000563686164000000c00000002c6b545243000000ec0000002077747074",
+            "0000010c0000001464657363000001200000004a637072740000016c00000036",
+            "736633320000000000010999000003e7fffff10c0000044e00010183fffffb27",
+            "fffffce9000005420000b083706172610000000000030000000266660000f2a7",
+            "00000d59000013d000000a5b58595a20000000000000fb240001000000012efd",
+            "6d6c756300000000000000010000000c656e55530000002e0000001c00470072",
+            "0061007900200048002e00320037003300200054004300310033002000430020",
+            "0077006800690074006500006d6c756300000000000000010000000c656e5553",
+            "0000001a0000001c005000750062006c0069006300200044006f006d00610069",
+            "006e0000",
+        ]
+        .concat();
+        let bytes: alloc::vec::Vec<u8> = hex
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| u8::from_str_radix(core::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect();
+        let id = IccIdentification::from_icc(&bytes).expect("historical hash retained");
+        assert!(id.is_srgb());
+        assert_eq!(id.valid_use, IdentificationUse::MetadataOnly);
+        assert!(!IccIdentification::is_common_srgb(&bytes));
+        assert!(crate::ColorProfileSource::Icc(&bytes).resolve().is_none());
     }
 
     // ── extract_cicp tests ───────────────────────────────────────────
