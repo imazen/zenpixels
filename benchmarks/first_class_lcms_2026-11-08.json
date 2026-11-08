@@ -145,6 +145,23 @@
       "peak_rss_gib": 0.24,
       "min_available_mib": 27723,
       "peak_load": 6.56
+    },
+    {
+      "log": "lcms-final-clippy-199.log",
+      "rc": 101,
+      "elapsed_s": 17,
+      "peak_rss_gib": 0.36,
+      "min_available_mib": 27777,
+      "peak_load": 6.75,
+      "failure": "five existing shared-test constant-chunk lints; all assertions retained in the correction"
+    },
+    {
+      "log": "lcms-final-clippy-199-fixed.log",
+      "rc": 0,
+      "elapsed_s": 16,
+      "peak_rss_gib": 0.41,
+      "min_available_mib": 28632,
+      "peak_load": 4.64
     }
   ],
   "recommendation": "Adopt the shared exact-H273 colorimetric payload for a separate reviewed proposal; MoxCMS explicit inputs and LCMS give identical tags. Retain both controls; fix or specify inherited curve limits separately.",
@@ -181,6 +198,7 @@
       "MSRV",
       "Public API snapshots",
       "WASM (wasm32-wasip1)",
+      "Feature powerset",
       "allocator_api on beta",
       "Format",
       "cms-contract"
@@ -189,7 +207,10 @@
       "committed_bundle_content_matches_fresh_synthesis",
       "regenerated_blob_matches_committed"
     ],
-    "original_failure_receipts_preserved": true
+    "original_failure_receipts_preserved": true,
+    "status": "completed",
+    "overall_conclusion": "failure",
+    "feature_powerset": "success"
   },
   "toolchains": {
     "local_rustc": "1.97.1 (8bab26f4f 2026-07-14)",
@@ -205,5 +226,12 @@
     "trc_cicp_changes": 0,
     "constructor_inputs": "Explicit H273 white and primaries for both MoxCMS0.9.2 and LCMS39068cc6",
     "independent_reader_pass": 334
+  },
+  "current_compiler_contract": {
+    "rust": "1.99.0",
+    "strict_all_targets_clippy": "pass",
+    "shared_contracts_pass": 13,
+    "existing_ignores": 2,
+    "assertions": "unchanged; fixed-array chunk iterators replace slice chunk iterators"
   }
 }
