@@ -14,7 +14,7 @@
   "backend_gates": {
     "shared_pass": 13,
     "shared_existing_ignores": 2,
-    "lcms_pass": 7,
+    "lcms_pass": 8,
     "mox_integration_pass": 17,
     "mox_accuracy_pass": 21,
     "independent_existing_profile_tests": 5,
@@ -24,7 +24,9 @@
     "strict_backend_and_contract_clippy": true,
     "no_default_lcms_and_no_default_core_check": true,
     "production_cmyk_float_components": 12,
-    "production_cmyk_c_rust_bit_mismatches": 0
+    "production_cmyk_c_rust_bit_mismatches": 0,
+    "strict_rustdoc_cms_features": true,
+    "public_api_check_pass": true
   },
   "candidate_gates": {
     "rgb_profiles": 159,
@@ -92,5 +94,11 @@
     "Original stable-upgrade bundle equality failure unchanged",
     "No binary/golden replacement or threshold relaxation"
   ],
-  "raw_artifacts": "output/zenpixels/first-class-lcms-20261108/"
+  "raw_artifacts": "output/zenpixels/first-class-lcms-20261108/",
+  "original_failures": [
+    "Offline build: uncached dependency revision",
+    "Candidate tool assumed absent description tags",
+    "System lcms2 headers unavailable; pinned C reference build subsequently passes",
+    "Strict rustdoc exposed existing conditional HDR links; links corrected without behavior changes"
+  ]
 }

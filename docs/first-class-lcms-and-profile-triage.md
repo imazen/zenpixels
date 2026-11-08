@@ -32,8 +32,8 @@ codecs that currently refuse HLG.
 Linux aarch64 qualification:
 
 - 13 shared contracts pass, retaining two existing opt-in ignores.
-- Seven LCMS-specific contracts pass: bounds, preparation, zero allocations in
-  prepared float CMYK rows, padding, BGR order, alpha and native CMYK16.
+- Eight LCMS-specific contracts pass: bounds, preparation, zero allocations in
+  prepared float CMYK rows, padding, BGR order, unaligned float alpha payloads and native CMYK16.
 - Existing MoxCMS tests pass: 17 integration and 21 accuracy tests, including
   the extended-F32 ProPhoto sign/range regressions.
 - LCMS alone without default features and unchanged no-default core both check.
