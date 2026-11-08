@@ -115,9 +115,58 @@ No benchmark speed claim is made. ARM resource receipts: common recipe 7s /
 0.42 GiB peak RSS; shared CMS contract 5s / 0.29 GiB; PQ table-size pilot 8s /
 0.23 GiB; W3C production probe 3s / 0.27 GiB. Every run used run-heavy.
 
-PQ export representation is awaiting the owner's capability-policy decision.
-No PQ refusal, corrected PQ blob, fresh-bundle golden replacement, merge or
-publication is claimed here.
+PQ export should carry native CICP and a qualified ICC companion where the
+container permits both. CICP-only does not meet the compatibility goal. The
+remaining representation work must qualify the conventional ICC fallback as
+well as a float-capable path. No corrected PQ blob, fresh-bundle golden
+replacement, merge or publication is claimed here.
+
+## PNG reader capability witnesses
+
+`just icc-pq-png-readers ORIGINAL FLOAT EXTERNAL OUTPUT` writes bounded PNG16
+witnesses and reads them through Playwright into an sRGB U8 canvas. It keeps
+the input PNGs, ICCs, exact output channels and hashes outside the source tree.
+These checks measure decoder/CMM choices, not HDR display accuracy or a
+population-wide support rate. The [PNG specification](https://www.w3.org/TR/png-3/)
+allows CICP beside ICC and gives the highest-precedence understood color chunk
+authority.
+
+The float profile has the pilot's 16,385-entry PQ DToB0/DToB1 tables. A
+deliberately contradictory diagnostic changes only its conventional RGB TRCs
+to linear; another removes the float tags. Embedded ICC `cicp` is removed from
+these controls so it cannot conceal which transform is evaluated. The
+diagnostic profiles are not export candidates. C LCMS 2.20 confirms identical
+relative XYZ for the original float pipeline and its changed fallback on all
+136 inputs (408 output channels, including colored and extended samples).
+The absolute-intent control differs as expected: no DToB3 was supplied.
+
+On 60 input RGB triplets, Chromium 153.0.8010.12 and Firefox 155.0 with explicit
+color-management preferences both use the conventional ICC fallback: the
+diagnostic changes 120 of 180 RGB output channels, with a maximum difference
+of 226 U8 codes. Its output is identical with and without the float tags.
+This establishes that accurate LCMS float-pipeline measurements alone do not
+qualify these readers. The ordinary PQ fallback and float-table candidate
+produce identical U8 canvas outputs here; that is not a dense precision test.
+
+With a PNG `cICP` chunk, both readers' dual-tagged witnesses equal their
+CICP-only controls despite the different ICC fallback. Their rendering
+normalizations differ: for the neutral sample 32768/65535, Chromium produces
+131 and Firefox with color management produces 24; the ICC-only peak-normalized
+candidate produces 24 in both. The W3C 100-nit-relative legacy ICC produces
+246 and 247 respectively. These are observations of distinct rendering paths,
+not an adopted numerical error budget or proof that one display rendering is
+correct. Chromium also changes its output when `cicp` is embedded inside the
+ICC; Firefox's enabled control does not in this witness.
+
+The unmodified headless Firefox configuration produces the same samples as
+untagged PNG for every case, so it supplies no positive color-management
+coverage. The explicitly enabled control sets `gfx.color_management.mode=1`,
+`enablev4=true` and `force_srgb=true`; it is not described as Firefox's stock
+configuration. WebKit did not launch because its runtime lacks
+`libevent-2.1.so.7`; that failure is preserved and is not a passing reader.
+Thus coverage is two of three requested engines, with these configuration
+limits. See `benchmarks/pq_png_readers_2026-11-08.json` for identities and
+comparisons. The final browser run took 5 s, peak RSS 0.42 GiB under run-heavy.
 
 ## Intent-scoped capability guard qualification
 

@@ -518,3 +518,7 @@ icc-mox-exact-candidates source output:
 # External reference profile characterization; no fixture or threshold changes.
 icc-pq-external profile:
     cargo run --locked --manifest-path cms-contract/Cargo.toml --example pq_external_profile -- "{{profile}}"
+
+# ICC-only and native-cICP capability witnesses; requires Playwright browsers.
+icc-pq-png-readers original floating external output *readers:
+    node scripts/icc-gen/validation/pq_png_readers.cjs "{{original}}" "{{floating}}" "{{external}}" "{{output}}" {{readers}}

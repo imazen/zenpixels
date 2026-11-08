@@ -124,6 +124,14 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
   where permitted. Bundle hashes remain recognized but require a CMS until
   complete transform substitution is qualified. `docs/corrected-icc-export.md`
   records the original failing gates, independent recipe checks and remaining work.
+- PQ PNG compatibility qualification (2026-11-08): keep native CICP plus a
+  qualified ICC companion where permitted. The float-table pilot alone is not
+  sufficient: Chromium 153 and explicitly color-managed Firefox 155 use its
+  conventional fallback in a contradictory-TRC witness, while C LCMS 2.20
+  uses DToB1. ICC-embedded CICP must be isolated in such controls. Headless
+  defaults and SDR canvas output do not establish real HDR display accuracy;
+  WebKit could not launch with the available libraries. Exact source identities,
+  output differences and limits are in `docs/corrected-icc-export.md`.
 - Fixed in the staged adapter (2026-11-08): MoxCMS does not implement float
   DToB/BToD pipelines. ICC permits fallback, but it can lose requested precision.
   The adapter now declines these profiles so a capable configured backend can
