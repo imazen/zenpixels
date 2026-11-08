@@ -36,8 +36,8 @@ features = [
 [features]
 default = ["std", "icc-db"]
 # The committed CICP->ICC profile database: the LZ4-compressed bundle
-# (~36 KB asset) + its lazy decode machinery, giving synthesize_icc_for_cicp /
-# synthesize_gray_icc_for_cicp full assigned-H.273-grid coverage with no CMS.
+# (93,377-byte asset) + lazy decode machinery: 149 RGB / 164 gray mappings
+# without a runtime CMS. HLG requires a rendering target and is refused.
 # Disable (default-features = false) for size-sensitive / wasm builds: the
 # synthesize fns then answer NeedsCms outside the sRGB default and the four
 # bundled consts, and the load-bearing gray-ICC swap degrades to suppressing

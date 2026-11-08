@@ -162,7 +162,7 @@ Every backend runs through the same contract in `cms-contract/`: `just cms-contr
 ## CICP / ICC
 
 - **ICC identification** — `zenpixels::icc::IccIdentification::from_icc(icc_bytes)` recognizes hundreds of well-known RGB + grayscale profiles via a normalized hash lookup (~100ns), returning primaries, transfer function, and whether matrix+TRC substitution is safe vs CMS-only. `extract_cicp` reads embedded `cICP` tags directly.
-- **CICP → ICC synthesis** — `icc_profiles::SynthesizedIcc::for_cicp(Cicp)` resolves an embeddable ICC profile for any assigned H.273 combination from the bundled compressed database (`icc-db` feature, on by default; ~36 KB asset, lazily decoded, no CMS required, PQ/HLG HDR included). `synthesize_gray_icc_for_cicp` is the GRAY-class sibling for single-channel output. The sRGB default answers `NotNeeded`. With `icc-db` off, these answer `NeedsCms` outside the sRGB default and the bundled consts.
+- **CICP → ICC synthesis** — `icc_profiles::SynthesizedIcc::for_cicp(Cicp)` serves 149 RGB mappings; `SynthesizedIcc::for_gray_cicp(Cicp)` serves 164 GRAY mappings. The default `icc-db` feature embeds a 93,377-byte database, decoded lazily without a runtime CMS. PQ includes float and conventional pipelines; targetless HLG refuses synthesis, retaining native CICP instead. The sRGB default answers `NotNeeded`. See [qualification and reader limits](../docs/corrected-icc-export.md).
 
 ## Orientation
 
@@ -213,7 +213,7 @@ Use measured workload costs and explicit buffer/stride arithmetic.
 | Feature | Default | What it enables |
 |---|---|---|
 | `std` | yes | Standard library |
-| `icc-db` | yes | Bundled CICP→ICC profile database (~36 KB asset) behind `SynthesizedIcc::for_cicp`; disable for size-sensitive builds (they answer `NeedsCms` instead) |
+| `icc-db` | yes | Bundled CICP→ICC profile database (93 KB asset) behind `SynthesizedIcc::for_cicp`; disable for size-sensitive builds (they answer `NeedsCms` instead) |
 | `fast-transpose` | | SIMD transpose kernels (x86-64 AVX2 + aarch64 NEON) for orientation; portable scalar otherwise |
 | `avx512` | | 16-wide AVX-512F f16 conversion kernels (runtime-dispatched) |
 | `rgb` | | `Pixel` impls for the [`rgb`](https://crates.io/crates/rgb) crate's types + typed convenience methods (`to_rgb8()`, `to_rgba8()`, …) |

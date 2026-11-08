@@ -318,7 +318,7 @@ Every buffer carries one. Every codec declares which ones it produces and consum
 
 `ColorOrigin` is the immutable provenance record: *how the source file described its color*, not what the pixels currently are. Used at encode time to decide whether to re-embed the original profile.
 
-**CICP → ICC synthesis** (zenpixels-convert): `SynthesizedIcc::for_cicp(Cicp)` resolves an embeddable ICC profile for any assigned H.273 combination — bundled compressed database (`icc-db` feature, on by default; ~36 KB asset, lazily decoded per transfer group, no CMS required), with PQ/HLG HDR included. `synthesize_gray_icc_for_cicp` is the GRAY-class sibling for single-channel output (libpng rejects gray images paired with RGB-class profiles). The sRGB default answers `NotNeeded`; everything the database serves round-trips back through `extract_cicp` / `identify_common`.
+**CICP → ICC synthesis** (zenpixels-convert): `SynthesizedIcc::for_cicp(Cicp)` serves 149 RGB mappings, and `SynthesizedIcc::for_gray_cicp(Cicp)` serves 164 GRAY mappings from the compressed database (`icc-db`, enabled by default; 93,377 bytes, lazily decoded per transfer group, no runtime CMS dependency). PQ has qualified float and conventional ICC pipelines. HLG refuses synthesis without a rendering target; retain native CICP. The sRGB default answers `NotNeeded`. Export bytes and input-recognition fingerprints have separate purposes; bundle-derived identification is metadata-only. See [qualification and reader limits](docs/corrected-icc-export.md).
 
 ### Orientation
 
@@ -562,7 +562,7 @@ branch. See the [code review](https://github.com/imazen/zenpixels/blob/main/docs
 | Feature | Default | What it enables |
 |---|---|---|
 | `std` | yes | Standard library |
-| `icc-db` | yes | Bundled CICP→ICC profile database (~36 KB asset) behind `SynthesizedIcc::for_cicp`; disable for size-sensitive builds (they answer `NeedsCms` instead) |
+| `icc-db` | yes | Bundled CICP→ICC profile database (93 KB asset) behind `SynthesizedIcc::for_cicp`; disable for size-sensitive builds (they answer `NeedsCms` instead) |
 | `fast-transpose` | | SIMD transpose kernels (x86-64 AVX2 + aarch64 NEON) for orientation; portable scalar otherwise (output is bit-identical) |
 | `avx512` | | 16-wide AVX-512F f16 conversion kernels (runtime-dispatched) |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed convenience methods (`to_rgb8()`, `to_rgba8()`, etc.) |
