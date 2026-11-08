@@ -1,0 +1,96 @@
+{
+  "date_utc": "2026-11-08",
+  "platform": "Linux aarch64, Neoverse-N1",
+  "implementation_commits": [
+    "4b96fd7d",
+    "83e676be",
+    "1f4f25ab",
+    "7559f3b2",
+    "023cb41a",
+    "143016dd"
+  ],
+  "port": "39068cc62f470d183e078637e19504ac9ecf7392",
+  "c_reference": "7717fce0d85447ef3b2df0cca2e99207c15eeecd",
+  "backend_gates": {
+    "shared_pass": 13,
+    "shared_existing_ignores": 2,
+    "lcms_pass": 7,
+    "mox_integration_pass": 17,
+    "mox_accuracy_pass": 21,
+    "independent_existing_profile_tests": 5,
+    "doctest_pass": 9,
+    "doctest_existing_ignores": 18,
+    "public_api_regeneration_pass": true,
+    "strict_backend_and_contract_clippy": true,
+    "no_default_lcms_and_no_default_core_check": true,
+    "production_cmyk_float_components": 12,
+    "production_cmyk_c_rust_bit_mismatches": 0
+  },
+  "candidate_gates": {
+    "rgb_profiles": 159,
+    "unchanged_gray_profiles": 175,
+    "trc_cicp_byte_changes": 0,
+    "independent_reader_pass": 334,
+    "negative_reader_control_refused": true,
+    "decoded_cells": 43248,
+    "decoded_xyz_components": 259488,
+    "c_rust_bit_mismatches": 0,
+    "curve_codes_per_profile": 65536,
+    "curve_profiles": 334,
+    "relative_max_proposal_lcms_xyz_delta": 4.768298822455108e-05,
+    "absolute_max_proposal_lcms_xyz_delta": 0.0008277766755782068
+  },
+  "resource_receipts": [
+    {
+      "log": "first-class-contracts.log",
+      "rc": 0,
+      "elapsed_s": 92,
+      "peak_rss_gib": 0.48,
+      "min_available_mib": 26771,
+      "peak_load": 9.02
+    },
+    {
+      "log": "profile-triage-v2.log",
+      "rc": 0,
+      "elapsed_s": 3,
+      "peak_rss_gib": 0.15,
+      "min_available_mib": 27288,
+      "peak_load": 6.21
+    },
+    {
+      "log": "first-class-qualification.log",
+      "rc": 0,
+      "elapsed_s": 103,
+      "peak_rss_gib": 0.44,
+      "min_available_mib": 26613,
+      "peak_load": 7.55
+    },
+    {
+      "log": "candidate-qualification.log",
+      "rc": 1,
+      "elapsed_s": 31,
+      "peak_rss_gib": 0.48,
+      "min_available_mib": 26723,
+      "peak_load": 8.33,
+      "failure": "system lcms2 development package absent after all preceding Rust gates passed"
+    },
+    {
+      "log": "candidate-oracles.log",
+      "rc": 0,
+      "elapsed_s": 18,
+      "peak_rss_gib": 0.11,
+      "min_available_mib": 27122,
+      "peak_load": 7.24
+    }
+  ],
+  "recommendation": "LCMS colorimetry with explicit H273 xy; preserve existing bundle pending review; inherited curves need separate precision and HDR policy decisions",
+  "limitations": [
+    "No backend performance comparison",
+    "No all-platform numerical equivalence claim",
+    "No universal real-ICC corpus qualification",
+    "No universal HDR or extended-range TRC accuracy claim",
+    "Original stable-upgrade bundle equality failure unchanged",
+    "No binary/golden replacement or threshold relaxation"
+  ],
+  "raw_artifacts": "output/zenpixels/first-class-lcms-20261108/"
+}
