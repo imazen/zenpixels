@@ -208,6 +208,45 @@ fn white_and_black_hold() {
 }
 
 #[test]
+fn relative_intent_maps_paper_white_to_destination_white() {
+    let bytes = synthetic_icc::synthetic_cmyk_icc();
+    let mut profile = lcms::profile::open_profile_from_mem(None, &bytes).unwrap();
+    // A printing medium whose measured white is darker than PCS white.
+    // Relative intent maps its relative A2B white to destination white;
+    // absolute intent retains the darker medium white.
+    assert!(lcms::profile::cms_write_tag(
+        &mut profile,
+        lcms::signatures::tag::SigMediaWhitePointTag,
+        Some(lcms::tagtypes::TagObject::Xyz(lcms::types::CieXyz {
+            X: 0.9642 * 0.8,
+            Y: 0.8,
+            Z: 0.8249 * 0.8,
+        })),
+    ));
+    let bytes = lcms::profile::save_profile_to_mem(&mut profile).unwrap();
+    let options = ConvertOptions::permissive().with_clip_out_of_gamut(false);
+    let mut transform = LcmsPort
+        .build_source_transform(Source::Icc(&bytes), SRGB, F::CmykF32, F::RgbF32, &options)
+        .unwrap()
+        .unwrap();
+    let input = [0.0f32; 4];
+    let mut output = [0.0f32; 3];
+    transform
+        .try_transform_row(
+            bytemuck::cast_slice(&input),
+            bytemuck::cast_slice_mut(&mut output),
+            1,
+        )
+        .unwrap();
+    for value in output {
+        assert!(
+            (value - 1.0).abs() < 0.001,
+            "relative paper white: {output:?}"
+        );
+    }
+}
+
+#[test]
 fn f32_cmyk_ink_polarity_and_limits() {
     let icc = synthetic_icc::synthetic_cmyk_icc();
     for (name, cms) in backends() {
