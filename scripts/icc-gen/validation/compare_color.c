@@ -2,6 +2,7 @@
 #include <lcms2.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static int failed;
 
@@ -12,7 +13,7 @@ static void error_handler(cmsContext context, cmsUInt32Number code, const char *
 }
 
 int main(int argc, char **argv) {
-    if (argc != 3) return 2;
+    if (argc != 3 && !(argc == 4 && strcmp(argv[3], "--bpc") == 0)) return 2;
     cmsSetLogErrorHandler(error_handler);
     cmsHPROFILE old = cmsOpenProfileFromFile(argv[1], "r");
     cmsHPROFILE newer = cmsOpenProfileFromFile(argv[2], "r");
@@ -45,6 +46,7 @@ int main(int argc, char **argv) {
            absolute colorimetry. https://www.littlecms.com/LittleCMS2.18%20API.pdf */
         cmsSetAdaptationState(pass ? 0.0 : 1.0);
         unsigned flags = cmsFLAGS_NOOPTIMIZE | cmsFLAGS_NOCACHE;
+        if (argc == 4) flags |= cmsFLAGS_BLACKPOINTCOMPENSATION;
         cmsHTRANSFORM before = cmsCreateTransform(old, TYPE_RGB_FLT, xyz, TYPE_XYZ_DBL, intent, flags);
         cmsHTRANSFORM after = cmsCreateTransform(newer, TYPE_RGB_FLT, xyz, TYPE_XYZ_DBL, intent, flags);
         if (!before || !after) return 4;

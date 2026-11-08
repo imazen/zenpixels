@@ -154,8 +154,9 @@ fn validate_channel_curves(profile: &ColorProfile) -> Result<(), MoxCmsError> {
 }
 
 /// moxcms 0.9.2 does not parse float DToB/BToD pipelines. Those tags
-/// override integer matrix/TRC or AToB/BToA data, so using the fallback would
-/// silently evaluate a different transform. Decline before parsing loses them.
+/// take precedence when supported. ICC.1 8.10 permits unsupported CMMs to use
+/// fallback tags, but that can lose the requested precision. Our adapter instead
+/// declines so a capable configured backend can evaluate the float pipeline.
 fn has_float_pipeline(source: &crate::ColorProfileSource<'_>, prefix: &[u8; 3]) -> bool {
     let crate::ColorProfileSource::Icc(bytes) = source else {
         return false;
