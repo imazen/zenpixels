@@ -28,6 +28,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let linear = linear.encode()?;
     let codes = [0.0f32, 0.0001, 0.001, 0.01, 0.1, 0.18, 0.5, 0.75, 0.9, 1.0];
     let input: Vec<_> = codes.into_iter().flat_map(|v| [v; 3]).collect();
+    // Separate the backend's own result from the zenpixels row adapter.
+    let mut raw_source = moxcms::ColorProfile::new_from_slice(&icc)?;
+    let mut raw_target = moxcms::ColorProfile::new_from_slice(&linear)?;
+    raw_source.cicp = None;
+    raw_target.cicp = None;
+    let raw = raw_source.create_transform_f32(
+        moxcms::Layout::Rgb,
+        &raw_target,
+        moxcms::Layout::Rgb,
+        moxcms::TransformOptions {
+            rendering_intent: moxcms::RenderingIntent::Perceptual,
+            allow_use_cicp_transfer: false,
+            prefer_fixed_point: false,
+            allow_extended_range_rgb_xyz: true,
+            ..Default::default()
+        },
+    )?;
+    let mut raw_output = vec![0.0f32; input.len()];
+    raw.transform(&input, &mut raw_output)?;
+    for (code, rgb) in codes.into_iter().zip(raw_output.chunks_exact(3)) {
+        println!("raw-mox\tcode={code:.9}\tlinear_rgb={rgb:?}");
+    }
     for (name, cms) in [
         ("mox", &MoxCms as &dyn PluggableCms),
         ("lcms", &Lcms as &dyn PluggableCms),

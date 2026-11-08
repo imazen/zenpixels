@@ -98,7 +98,12 @@ analytic extended option is specifically for matrix-shaper profiles, not
 arbitrary mAB pipelines. Attribution of the black offset and highlight limit
 must separate profile fallback semantics, internal resampling, black-point
 compensation and engine capabilities; CMM disagreement alone is not proof that
-one violates the ICC standard.
+one violates the ICC standard. ICC.1:2022 10.12.5 explicitly bounds/clips the
+mAB matrix result before its B curves. LCMS's unbounded float execution of this
+legacy profile is therefore an extended evaluation behavior, not by itself a
+normative oracle for all HDR-range clipping decisions. The legacy profile uses
+values beyond the standard mAB intermediate range. A float DToB pipeline avoids
+that particular bounded-stage ambiguity.
 
 ## Source identity and limits
 
