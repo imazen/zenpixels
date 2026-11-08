@@ -150,3 +150,37 @@ fn unsupported_rgb_matrix_or_range_is_an_explicit_failure() {
         ));
     }
 }
+
+#[test]
+fn unaligned_float_rows_preserve_every_alpha_bit_including_nan() {
+    for format in [F::RgbaF32, F::GrayAF32] {
+        let colors = format.channels() - 1;
+        let mut input = vec![0x35];
+        let alpha_bits = [
+            0x8000_0000u32,
+            0x7fc0_1234,
+            1.5f32.to_bits(),
+            (-0.5f32).to_bits(),
+        ];
+        for alpha in alpha_bits {
+            for _ in 0..colors {
+                input.extend_from_slice(&0.25f32.to_ne_bytes());
+            }
+            input.extend_from_slice(&alpha.to_ne_bytes());
+        }
+        let mut output = vec![0xa5; input.len() + 2];
+        let mut transform = build(SRGB, SRGB, format, format);
+        transform.prepare(4).unwrap();
+        transform
+            .try_transform_row(&input[1..], &mut output[1..], 4)
+            .unwrap();
+        for (pixel, alpha) in output[1..1 + 4 * format.bytes_per_pixel()]
+            .chunks_exact(format.bytes_per_pixel())
+            .zip(alpha_bits)
+        {
+            assert_eq!(&pixel[colors * 4..], &alpha.to_ne_bytes(), "{format:?}");
+        }
+        assert_eq!(output[0], 0xa5);
+        assert_eq!(&output[output.len() - 2..], &[0xa5; 2]);
+    }
+}
