@@ -157,7 +157,9 @@ fn validate_channel_curves(profile: &ColorProfile) -> Result<(), MoxCmsError> {
 /// take precedence when supported. ICC.1 8.10 permits unsupported CMMs to use
 /// fallback tags, but that can lose the requested precision. Our adapter instead
 /// declines so a capable configured backend can evaluate the float pipeline.
-fn has_float_pipeline(source: &crate::ColorProfileSource<'_>, prefix: &[u8; 3]) -> bool {
+/// Only tags for the requested relative intent matter; other intents retain
+/// their own precedence and cannot disable this relative-colorimetric route.
+fn has_float_pipeline(source: &crate::ColorProfileSource<'_>, signature: &[u8; 4]) -> bool {
     let crate::ColorProfileSource::Icc(bytes) = source else {
         return false;
     };
@@ -169,7 +171,7 @@ fn has_float_pipeline(source: &crate::ColorProfileSource<'_>, prefix: &[u8; 3]) 
     bytes[132..]
         .chunks_exact(12)
         .take(count.min(available))
-        .any(|entry| &entry[..3] == prefix && matches!(entry[3], b'0'..=b'3'))
+        .any(|entry| &entry[..4] == signature)
 }
 
 // ---------------------------------------------------------------------------
@@ -1122,7 +1124,7 @@ impl crate::cms::PluggableCms for MoxCms {
     ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, whereat::At<crate::cms::CmsPluginError>>>
     {
         use crate::cms::CmsPluginError;
-        if has_float_pipeline(&src, b"D2B") || has_float_pipeline(&dst, b"B2D") {
+        if has_float_pipeline(&src, b"D2B1") || has_float_pipeline(&dst, b"B2D1") {
             return None;
         }
         // Depths the plan can convert aren't this backend's problem, so it declines them. Sample types
