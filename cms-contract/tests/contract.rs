@@ -336,7 +336,7 @@ fn gray_round_trips_and_carries_alpha() {
     let d = worst(F::Rgb8, &a, &b);
     eprintln!("gray 2.2>srgb Gray8>Rgb8: worst {d:.3}");
     assert!(d <= 1.0, "{d}");
-    assert_eq!(a.chunks_exact(3).map(|p| p[0]).last(), Some(255));
+    assert_eq!(a.chunks_exact(3).map(|p| p[0]).next_back(), Some(255));
     assert_eq!(a.chunks_exact(3).map(|p| p[0]).next(), Some(0));
 
     let with_alpha: Vec<u8> = (0..=255u8).flat_map(|v| [v, 255 - v]).collect();

@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ColorProfileSource::Cicp(Cicp::new(1, 13, 0, true)),
             PixelFormat::CmykF32Inverted,
             PixelFormat::RgbF32,
-            &ConvertOptions::permissive(),
+            &ConvertOptions::permissive().with_clip_out_of_gamut(false),
         )
         .ok_or("backend declined")?
         .map_err(|e| format!("{e:?}"))?;

@@ -1,7 +1,7 @@
 //! A [`PluggableCms`] over the pure-Rust lcms port, the second real backend behind the trait.
 //!
-//! Test equipment, not a product backend: the port is unreleased and its own README calls it early.
-//! It tracks lcms2 2.20 bit for bit, so it also stands in for lcms2 as a reference here.
+//! Test equipment using an exact, unreleased port revision. Its own differential
+//! gates target lcms2 2.20; this contract records the surface exercised here.
 
 use lcms::types::{FLAGS_BLACKPOINTCOMPENSATION, FLAGS_COPY_ALPHA, FLAGS_NOOPTIMIZE};
 use zenpixels::{ChannelType, Cicp, ColorProfileSource, PixelFormat};
