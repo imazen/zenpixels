@@ -1,7 +1,7 @@
 //! ICC transforms through the pure-Rust Little CMS port (`cms-lcms`).
 //!
 //! [`Lcms`] implements the same [`PluggableCms`] interface as
-//! [`crate::cms_moxcms::MoxCms`]. Select a backend explicitly; enabling both
+//! `MoxCms`. Select a backend explicitly; enabling both
 //! features does not change the selected backend or the built-in matrix paths.
 //! No C library is linked by this backend.
 //!
@@ -47,7 +47,6 @@ enum Ink {
 struct Format {
     code: u32,
     bytes: usize,
-    channels: usize,
     colors: usize,
     alpha: bool,
     ink: Ink,
@@ -80,7 +79,6 @@ fn describe(format: PixelFormat) -> Option<Format> {
     Some(Format {
         code,
         bytes: format.bytes_per_pixel(),
-        channels: format.channels(),
         colors: colors as usize,
         alpha,
         ink,

@@ -10,7 +10,7 @@ description = "Runs every PluggableCms backend through one behavioral contract a
 
 [dependencies]
 zenpixels = { path = "../zenpixels" }
-zenpixels-convert = { path = "../zenpixels-convert", features = ["cms-moxcms"] }
+zenpixels-convert = { path = "../zenpixels-convert", features = ["cms-moxcms", "cms-lcms"] }
 lcms = { git = "https://github.com/imazen/lcms", rev = "39068cc62f470d183e078637e19504ac9ecf7392" }
 whereat = "0.1"
 bytemuck = "1.21"
