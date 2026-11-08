@@ -1,5 +1,5 @@
 # zenpixels-convert public API — additions from non-default features
-# features: avx512,bt2446a,cms-moxcms,estimation-experimental,fast-transpose,hdr-experimental,icc-db,imgref,planar,precise-portable,rgb,serde,std
+# features: avx512,bt2446a,cms-lcms,cms-moxcms,estimation-experimental,fast-transpose,hdr-experimental,icc-db,imgref,planar,precise-portable,rgb,serde,std
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -9,23 +9,25 @@
 
 ## summary
 #
-#   pub modules                                 2
-#   pub types (struct/enum/trait/alias)        19
+#   pub modules                                 3
+#   pub types (struct/enum/trait/alias)        21
 #   pub consts/statics                          3
 #   inherent methods                           36
 #   struct fields                               8
 #   enum variants                               5
-#   trait roster entries (type × trait)        39
-#   auto-trait-complete types                   9
+#   trait roster entries (type × trait)        44
+#   auto-trait-complete types                  10
 #
 # per-module pub lines:
-#   (root)                           20
+#   (root)                           22
+#   cms_lcms                          1
 #   cms_moxcms                        2
 #   ext                               8
 #   hdr                              43
 
-## items (68 lines)
+## items (70 lines)
 
+pub mod cms_lcms
 pub mod cms_moxcms
 pub struct cms_moxcms::MoxCmsError(_)
 pub fn ext::PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::bgra::Bgra<u8>>
@@ -85,6 +87,7 @@ pub HdrConfig::target_peak_nits: f32
 pub fn HdrConfig::for_source_peak(f32) -> Self
 pub fn HdrConfig::with_gamut_knee(self, f32) -> Self
 pub fn HdrConfig::with_target_peak_nits(self, f32) -> Self
+pub struct Lcms [also: cms_lcms]
 pub struct MoxCms [also: cms_moxcms]
 pub trait PixelBufferConvertTypedExt: ext::PixelBufferConvertExt [also: ext]
 pub fn PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::bgra::Bgra<u8>>
@@ -95,9 +98,10 @@ pub trait PixelBufferHdrConvertExt: sealed::Sealed [also: ext]
 pub fn PixelBufferHdrConvertExt::convert_to_sdr_measuring_peak(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferHdrConvertExt::convert_to_with_hdr_config(&self, zenpixels::descriptor::PixelDescriptor, HdrConfig) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 
-## trait impls (11 types)
+## trait impls (12 types)
 
 HdrConfig: Clone, Copy, Debug, Default, PartialEq
+cms_lcms::Lcms: Clone, Copy, Debug, Default, cms::PluggableCms
 cms_moxcms::MoxCms: Clone, Copy, Debug, Default, cms::PluggableCms
 cms_moxcms::MoxCmsError: Clone, Debug, Display, Error
 hdr::Bt2446A: Clone, Copy, Debug, hdr::ToneMapper

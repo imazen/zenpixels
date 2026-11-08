@@ -499,3 +499,6 @@ icc-lcms-candidates source output:
 
 icc-profile-triage reference output *candidates:
     python3 scripts/icc-gen/validation/triage_profiles.py "{{reference}}" "{{output}}" {{candidates}}
+
+icc-profile-curves profiles:
+    cargo run --locked --manifest-path cms-contract/Cargo.toml --example profile_curves -- "{{profiles}}"

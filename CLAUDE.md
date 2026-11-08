@@ -118,6 +118,15 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Open in profile triage (2026-11-08): the inherited curves in all three RGB
+  candidates have limits missed by the sparse read-back samples. On every
+  normalized U16 input, TC9/TC10 have maximum absolute linear errors
+  0.004917139850733618 / 0.0015508450894103343 near encoded zero; TC17 reaches
+  0.0005306961467401727 near its saturation knee. PQ has 3,587 nonzero-reference
+  input codes rounded to zero per profile. These are measurements, not new
+  accepted tolerances. HLG is a neutral reference-display curve, not a general
+  luminance-dependent RGB OOTF. See `docs/first-class-lcms-and-profile-triage.md`.
+
 - Fixed in the standalone Rust-LCMS contract adapter (2026-11-08): it selected
   `lcms::virt::INTENT_RELATIVE_COLORIMETRIC`, whose value is 3 in the pinned
   port, requesting absolute intent. Use `lcms::types::INTENT_RELATIVE_COLORIMETRIC`

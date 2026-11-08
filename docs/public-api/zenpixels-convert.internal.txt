@@ -15,7 +15,7 @@
 #   free functions                             11
 #   inherent methods                           43
 #   struct fields                               4
-#   trait roster entries (type × trait)        35
+#   trait roster entries (type × trait)        36
 #   auto-trait-complete types                   2
 #
 # per-module pub lines:
@@ -102,7 +102,7 @@ pub __bench_scan::FusedRequest::check_opaque: bool
 pub __bench_scan::FusedResult::is_grayscale: bool
 pub __bench_scan::FusedResult::is_opaque: bool
 
-## trait impls (22 types)
+## trait impls (23 types)
 
 ConversionCost: TrivialClone
 ConvertIntent: TrivialClone
@@ -112,6 +112,7 @@ LossBucket: TrivialClone
 Provenance: TrivialClone
 __bench_scan::FusedRequest: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
 __bench_scan::FusedResult: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
+cms_lcms::Lcms: TrivialClone
 cms_moxcms::MoxCms: TrivialClone
 codes::CodeMap: TrivialClone
 codes::CodeMapError: TrivialClone
