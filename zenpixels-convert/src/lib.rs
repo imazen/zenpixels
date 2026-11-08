@@ -396,6 +396,8 @@ pub(crate) mod __trace_ops;
 #[allow(dead_code)]
 pub(crate) mod builtin_profiles;
 pub mod cms;
+#[cfg(feature = "cms-lcms")]
+pub mod cms_lcms;
 #[allow(
     dead_code,
     unused_variables,
@@ -501,6 +503,8 @@ pub use load_bearing::{LoadBearingReport, PixelBufferLoadBearingExt, PixelSliceL
 #[allow(deprecated)]
 pub use cms::{CmsPluginError, PluggableCms, RowTransform, RowTransformMut};
 // TODO: pub use cms_lite::ZenCmsLite once benchmarked on aarch64.
+#[cfg(feature = "cms-lcms")]
+pub use cms_lcms::Lcms;
 #[cfg(feature = "cms-moxcms")]
 pub use cms_moxcms::MoxCms;
 
