@@ -67,32 +67,19 @@ are defined in `zenpixels::icc` (`INTENT_COLORIMETRIC_SAFE`,
 
 Generates the bundled ICC profile blob used by
 `zenpixels_convert::icc_profiles::{synthesize_icc_for_cicp, synthesize_gray_icc_for_cicp}`.
-The assigned H.273 grid has 176 pairs: 159 yield RGB profiles, 16 XYZ-primary
-pairs are refused for RGB, and sRGB (1,13) needs no profile. BT.709 (1,1)
-has its own BT.709 curve. Gray has 175 mappings to 64 unique profiles,
-including primaries 10: its equal-energy white and transfer are valid without
-an RGB gamut matrix. Runtime lookup needs no CMS.
+The assigned H.273 grid has 176 pairs. After rejecting targetless HLG and
+XYZ-primary RGB, and omitting default sRGB, exports contain 149 RGB and 164
+gray mappings (209 unique profiles). Gray retains the four meaningful source
+whites without pretending XYZ primaries form an RGB gamut. Runtime lookup
+needs no CMS.
 
-Before packing an RGB profile, the generator parses its rXYZ/gXYZ/bXYZ tags
-and requires |determinant| > 0.01 and every colorant value within 0.001 of
-an independent [H.273](https://www.itu.int/rec/T-REC-H.273) Table 2 computation,
-Bradford-adapted to ICC D50. This computation does not call moxcms primaries
-or adaptation helpers. Any failure aborts generation, except the explicitly
-commented primaries-10 exclusion: its rank-1 matrix is reported and omitted.
-Unexpected synthesis failures also abort rather than silently reducing coverage.
-
-The separate `zenpixels-convert/tests/icc_colourimetry.rs` oracle parses the
-shipped ICC bytes, independently solves the primaries/white equations, and
-checks every RGB colorant and RGB/gray TRC. Transfer tolerances are absolute
-linear-light errors: 0.0005 for SDR, 0.001 for PQ/HLG. At encoded zero,
-logarithmic TC9/TC10 curves are checked against their valid inverse interval;
-the pointwise tolerance still applies at every other sampled value. Gray
-source whites are checked within 0.00002; their adaptation to the generator's
-5003 K D50 approximation is checked within 0.001 of ICC D50.
-These transfer tolerances do not promise relative precision in PQ's deep toe. HLG uses the encoded BT.2100 neutral
-reference-display EOTF, with system gamma 1.2 (1000 cd/m²); it is not merely
-the inverse scene OETF. ST 428's nominal 52.37/48 endpoint saturates at 1 in
-the u16 `curv` LUT; CICP-native signaling avoids this ICC limitation.
+The shared build-time recipe uses explicit H.273 chromaticities, PCS D50
+media white, full source-white adaptation and exact parametric gamma where
+possible. PQ carries 10,000-nit luminance, bidirectional compact float
+pipelines and conventional root/power LUT fallbacks. HLG synthesis refuses
+until rendering conditions are supplied. ST428 is peak-normalized gamma2.6
+with luminance52.37. See [qualification](../../docs/corrected-icc-export.md)
+for independent numerical gates, reader limits and retained failures.
 
 ## Usage
 
@@ -101,7 +88,7 @@ From the repo root:
 ```
 just cicp-bundle-gen          # regenerate the blob + index
 just cicp-bundle-dry-run      # print counts/sizes without writing
-just cicp-bundle-update       # regenerate, then verify (golden sha256 + moxcms byte-equality)
+just cicp-bundle-update       # regenerate, then verify (golden sha256 + shared-recipe byte-equality)
 ```
 
 Or directly:
@@ -122,9 +109,9 @@ sha256sum zenpixels-convert/src/profiles/cicp_bundle.lz4
 
 ## What it writes
 
-- **`zenpixels-convert/src/profiles/cicp_bundle.lz4`** — 16 LZ4 blocks (pure-Rust
+- **`zenpixels-convert/src/profiles/cicp_bundle.lz4`** — 15 LZ4 blocks (pure-Rust
   `lz4_flex`, one per transfer that yields profiles) concatenated into one asset
-  (35,298 bytes with the pinned generator dependencies). Grouping by transfer is load-bearing: LZ4's match window is 64 KiB, so
+  (93,377 bytes with the qualified generator dependencies). Grouping by transfer is load-bearing: LZ4's match window is 64 KiB, so
   clustering the identical TRC/LUT payload (same transfer, varying primaries)
   is what lets the compressor collapse it.
 - **`src/icc_profiles/cicp_bundle_index.rs`** — a generated module with the
@@ -137,8 +124,8 @@ sha256sum zenpixels-convert/src/profiles/cicp_bundle.lz4
 ## Determinism
 
 moxcms's `encode()` stamps the current wall-clock time into the ICC header's
-creation-date field (bytes 24..36). The generator zeroes that field so the blob
-is **reproducible** — regenerating without changing moxcms produces a
+creation-date field (bytes 24..36). The generator fixes that field to the valid recipe epoch
+2026-11-08 00:00:00 so the blob is **reproducible** — regenerating without changing moxcms produces a
 byte-identical asset (and a stable golden sha256). The field is purely
 informational and carries no colorimetry.
 

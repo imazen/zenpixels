@@ -21,9 +21,10 @@ def source_white(primaries):
 
 
 def main():
-    comparator, old, new, output = map(Path, sys.argv[1:])
+    comparator, old, new, output = map(Path, sys.argv[1:5])
+    expected = int(sys.argv[5]) if len(sys.argv) > 5 else 159
     profiles = sorted(new.glob("rgb-*.icc"))
-    assert len(profiles) == 159
+    assert len(profiles) == expected
     output.mkdir(parents=True, exist_ok=False)
     summary = {}
     with (output / "lcms-color.tsv").open("w") as stream:

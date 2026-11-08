@@ -33,6 +33,15 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [Unreleased]
 
+- Regenerate corrected H.273 exports after independent color qualification:
+  149 RGB and 164 gray mappings, explicit white/adaptation, accurate gamma,
+  logarithmic inverse endpoint and ST428 luminance. PQ has bidirectional
+  float and conventional pipelines with 10,000-nit luminance; targetless HLG
+  refuses synthesis. Preserve all historical recognition keys and ICC input
+  authority. Qualify the four-entry-only LCMS absolute-intent correction
+  on a frozen-source descendant; no main merge or publication.
+
+
 - Refuse HLG ICC export without a rendering target; keep native CICP where
   permitted. Stage explicit H.273/PCS-D50 export definitions and dense analytic
   controls. The stored bundle awaits separate PQ representation qualification

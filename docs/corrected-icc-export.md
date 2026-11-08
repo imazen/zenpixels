@@ -1,8 +1,10 @@
 # Corrected ICC export qualification
 
-The corrected recipe is staged for review. The committed export blob has not
-been replaced. Regeneration must not make a freshness test pass before the
-serialized definitions and decoded color are qualified.
+The corrected export bundle contains 149 RGB mappings and 164 gray mappings
+(209 unique profiles). HLG is deliberately excluded without an explicit
+rendering target. The regenerated asset is 93,377 bytes, SHA256
+`67c3122da4cb5cd969a38c7fa0eb0f3ed0c5d4a99f2dac4cacd49500e8e1e509`.
+This proposal remains unmerged. Existing input ICC bytes are not replaced.
 
 The build-time recipe supplies exact H.273 primary/white chromaticities,
 PCS D50 display `wtpt`, full source-white adaptation, s15Fixed16 gamma 2.2/2.8,
@@ -118,8 +120,9 @@ No benchmark speed claim is made. ARM resource receipts: common recipe 7s /
 PQ export should carry native CICP and a qualified ICC companion where the
 container permits both. CICP-only does not meet the compatibility goal. The
 remaining representation work must qualify the conventional ICC fallback as
-well as a float-capable path. No corrected PQ blob, fresh-bundle golden
-replacement, merge or publication is claimed here.
+well as a float-capable path. The final candidate described below replaces the export blob only after
+independent definition and numerical qualification. No merge or publication
+is implied.
 
 ## PNG reader capability witnesses
 
@@ -231,3 +234,64 @@ with 39 existing ignores, five metadata configurations and strict Clippy. Source
 ICCs are retained under keeping policies; ICC-only output keeps an explicit
 synthesis/refusal obligation. Native codec roundtrips and cohort pin integration
 are still outstanding; the pure policy tests do not establish those.
+
+## Final compact export recipe
+
+PQ declares a 10,000 cd/m² `lumi` and peak-normalized linear coordinates.
+Forward and inverse float pipelines cover perceptual, relative-colorimetric
+and saturation intents. Four small formula stages separate exact binary
+coefficients from reciprocal terms to limit cancellation. Their float matrix
+uses the actual serialized s15Fixed16 colorants. Constant end segments clamp
+encoded excursions outside [0,1]; these profiles do not promise a
+sign-preserving extended native-CICP transform.
+
+Conventional AToB/BToA pipelines are also present in both directions. They use
+4,097-entry U16 root-eighth curves with separate power stages, retaining
+positive neutral and active-channel U16 tones. Absolute intent uses those
+colorimetric conventional pipelines and the profile's chromatic adaptation.
+Matrix/TRC tags remain a tertiary fallback. Readers supporting only that last
+fallback can still lose the deep PQ toe; parser acceptance is not a guarantee
+of transform precision. MoxCMS explicitly declines the relative float-pipeline
+profile, allowing a configured LCMS backend to process it.
+
+Independent C LCMS 2.20 and the Rust port passed 168/168 PQ cells: all 21
+RGB/gray mappings, both directions and four intents. Each cell uses all
+65,536 neutral codes; RGB adds individual-channel ramps and a bounded mixed
+and extended input grid. Relative-intent analytic linear error was at most
+0.000038689759232712895, below the unchanged 0.0005 gate. The largest C/Rust
+sample difference was 9.094947017729282e-13. The production Rust adapter
+matched direct relative-intent evaluation exactly. Every positive neutral
+and active-channel ramp sample remained positive, and those ramps were
+monotonic. Very small channels beside bright channels can still round to
+zero through float32 XYZ PCS matrix cancellation; scalar counts and worst
+witnesses remain in the receipts. These are not a claim of bit-exact arbitrary
+RGB roundtrips.
+
+The other 292 profiles passed C/Rust relative-intent comparisons. All 313
+exports passed warning-sensitive independent libpng carriage/roundtrip and
+C LCMS parsing, with a deliberately non-D50 negative control refused. Valid
+creation date, four-byte alignment and deduplicated identical payloads are
+part of deterministic serialization.
+
+The absolute-intent differential initially failed four of sixteen BT.2020
+pilot cells with frozen Rust LCMS 39068cc6. A four-entry-only descendant,
+`55b59476cf64920345e9ca32eb3a4678bf0bbece`, corrects fallback tag selection:
+AToB1, DToB3, BToA1 and BToD3 for intent 3. All original inputs pass on this
+pin, retaining original failure receipts. No newer numerical kernels were
+included. The production CMS contract passed 15 tests with its two existing
+measurement/corpus ignores; an initial doctest invocation failed because its
+relative TMPDIR resolved under the standalone crate. Repeating with an
+absolute scratch path passed.
+
+Final RGB and gray PNG16 witnesses were read by Chromium 153 and Firefox 155
+with color management enabled. Both use the conventional fallback; float-only
+qualification would not cover them. Both readers' dual-tagged witnesses match
+their native-cICP-only controls exactly. RGB Firefox differs from the old ICC
+fallback in 10 of 180 output channels, by one U8 code; Chromium RGB and both
+gray controls match their old fallback in this bounded witness. These checks
+establish decoder behavior, not HDR display or tone-mapping accuracy.
+
+The final numeric PQ sweep used 0.12 GiB peak RSS over 163 seconds; SDR used
+0.06 GiB over five seconds, and the 313-profile container gate used 0.03 GiB
+over one second. RGB and gray browser probes each used 0.41 GiB over twelve
+seconds. These are resource receipts, not performance comparisons.

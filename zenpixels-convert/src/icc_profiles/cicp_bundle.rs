@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn golden_blob_sha256_is_pinned() {
         use sha2::{Digest, Sha256};
-        const EXPECTED: &str = "10aaba9c228d86b47718d5e2f4bea739b336fea808c3fd68d7d40ff7a0f80a2f";
+        const EXPECTED: &str = "67c3122da4cb5cd969a38c7fa0eb0f3ed0c5d4a99f2dac4cacd49500e8e1e509";
         let digest = Sha256::digest(CICP_BUNDLE_LZ4);
         let hex: alloc::string::String = digest.iter().map(|b| alloc::format!("{b:02x}")).collect();
         assert_eq!(
@@ -398,29 +398,12 @@ mod tests {
         );
     }
 
-    /// ZERO-TOLERANCE roundtrip: every profile decoded from the blob must be
-    /// **byte-identical** to what moxcms generates for the same CICP, modulo the
-    /// non-colorimetric creation-timestamp field (bytes 24..36) that moxcms
-    /// stamps with the current wall-clock time. The generator zeroes that field
-    /// for a reproducible blob; here we zero it on the fresh moxcms bytes too so
-    /// the comparison measures only colour-defining content. Everything else —
-    /// colorants, TRC/LUT, chad, CICP tag — must match exactly: no silent drift,
-    /// no precision loss. Also catches a moxcms version bump that would shift the
-    /// canonical bytes (the committed blob would then no longer match).
+    /// Every RGB export is byte-identical to the shared build-time recipe,
+    /// including its valid deterministic creation date and all color tags.
     #[cfg(feature = "cms-moxcms")]
     #[test]
     fn blob_decodes_byte_identical_to_moxcms() {
         use crate::Cicp;
-        // The header creation date/time (bytes 24..36) is wall-clock and not
-        // part of the colour description — masked on both sides.
-        fn mask_timestamp(bytes: &[u8]) -> alloc::vec::Vec<u8> {
-            let mut v = bytes.to_vec();
-            if v.len() >= 36 {
-                v[24..36].fill(0);
-            }
-            v
-        }
-
         let mut checked = 0usize;
         for primaries in [1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 22] {
             for transfer in [1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17] {
@@ -450,7 +433,7 @@ mod tests {
                 });
                 assert_eq!(
                     from_blob.as_ref(),
-                    mask_timestamp(&from_moxcms).as_slice(),
+                    from_moxcms.as_slice(),
                     "blob bytes for ({}, {}) diverge from a fresh moxcms generation \
                  (moxcms version bump or generator drift)",
                     p.primaries,
