@@ -33,6 +33,15 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [Unreleased]
 
+- Refuse HLG ICC export without a rendering target; keep native CICP where
+  permitted. Stage explicit H.273/PCS-D50 export definitions and dense analytic
+  controls. The stored bundle awaits separate PQ representation qualification
+  (`7dcc7166`, `2024ced4`).
+- Keep historical bundle hashes as identification metadata, requiring a CMS
+  until complete substitution is qualified; honor that permission in the sRGB
+  shortcut. Decline unsupported float DToB/BToD ICC pipelines in MoxCMS so a
+  configured capable backend can handle them (`48eb12ea`, `a9da5a59`).
+
 - Add opt-in `cms-lcms` / `Lcms` alongside `MoxCms`, using the pinned pure-Rust LCMS port. Select either through `PluggableCms`; defaults and bundled profiles are unchanged (`4b96fd7d`).
 
 - Correct the standalone Rust-LCMS contract adapter to request relative
