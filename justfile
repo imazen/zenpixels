@@ -503,6 +503,10 @@ icc-profile-triage reference output *candidates:
 icc-profile-curves profiles:
     cargo run --locked --manifest-path cms-contract/Cargo.toml --example profile_curves -- "{{profiles}}"
 
+# Read-only source/bundle inspection; requires the system liblz4 decoder.
+icc-bundle-definition-audit revision="":
+    python3 scripts/icc-gen/validation/inspect_bundle_definition.py {{revision}}
+
 # Equal-input control: MoxCMS constructor with the same exact H.273 coordinates.
 icc-mox-exact-candidates source output:
     cargo run --locked --manifest-path cms-contract/Cargo.toml --example profile_candidates -- "{{source}}" "{{output}}" mox-exact
