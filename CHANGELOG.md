@@ -37,8 +37,8 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
   149 RGB and 164 gray mappings, explicit white/adaptation, accurate gamma,
   logarithmic inverse endpoint and ST428 luminance. PQ has bidirectional
   float and conventional pipelines with 10,000-nit luminance; targetless HLG
-  refuses synthesis. Preserve all historical recognition keys and ICC input
-  authority. Qualify the four-entry-only LCMS absolute-intent correction
+  refuses synthesis. Preserve all historical recognition keys; fresh bundle
+  fingerprints remain metadata-only. Qualify the four-entry-only LCMS absolute-intent correction
   on a frozen-source descendant; no main merge or publication.
 
 

@@ -532,3 +532,17 @@ icc-profile-eval source dest input output intent="production":
 # Scalar only: source candidates, hashes and bounded worst-case witnesses survive.
 icc-export-qualify profiles c_reader rust_reader output phase *extra:
     python3 scripts/icc-gen/validation/qualify_exports.py "{{profiles}}" "{{c_reader}}" "{{rust_reader}}" "{{output}}" --phase "{{phase}}" {{extra}}
+
+# Qualify runtime exports and recipe source without changing expectations.
+icc-export-runtime-check:
+    cargo test --locked -p zenpixels-convert --lib --features cms-moxcms,cms-lcms,icc-db exported_pq
+
+icc-authority-check:
+    cargo test --locked -p zenpixels-convert --lib --features cms-moxcms,cms-lcms,icc-db load_bearing
+
+icc-export-source-check:
+    cargo fmt -p zenpixels -p zenpixels-convert -p icc-gen --check
+    cargo clippy --workspace --all-targets --features cms-moxcms,cms-lcms,icc-db --locked -- -D warnings
+
+icc-export-workspace-check:
+    cargo test --workspace --features cms-moxcms,cms-lcms,icc-db --locked

@@ -295,3 +295,44 @@ The final numeric PQ sweep used 0.12 GiB peak RSS over 163 seconds; SDR used
 0.06 GiB over five seconds, and the 313-profile container gate used 0.03 GiB
 over one second. RGB and gray browser probes each used 0.41 GiB over twelve
 seconds. These are resource receipts, not performance comparisons.
+
+The Linux WPE WebKit 26.6 RGB witness uses the float ICC pipeline: changing its
+conventional fallback changes no output channels, while removing the float
+pipeline changes 120/180 channels. This build does not use native PNG cICP in
+the RGB control. Its gray controls show no color-management difference even
+for a deliberately linear fallback, so grayscale color handling in this
+reader remains unqualified. Successful gray decoding alone is not a color
+accuracy result. WebKit RGB/gray probes used 0.14/0.13 GiB peak RSS.
+
+An existing separate grayscale-collapse path can trust a contradictory
+context CICP when replacing an attached ICC. A new regression reproduces
+RGB-to-gray replacement under a wrong gamma hint. A conservative guard is
+preserved separately: changing the pre-existing malformed-ICC contract needs
+an explicit decision. That guard is not part of this bundle proposal.
+
+## Measured change from the actual historical exports
+
+Independent C LCMS 2.20 compared all 149 retained RGB mappings against the
+actual old 35,379-byte bundle, not fresh constructors. Across 136 witnesses per
+profile and two intents (40,528 cells), 20,135/20,264 cells change under each
+intent. All 313 retained RGB/gray profiles change serialized bytes; the only
+removed mappings are the 21 targetless HLG exports. Every actual new bundle
+profile is byte-identical to its independently qualified recipe candidate.
+
+For inputs confined to [0,1], the largest relative XYZ coordinate change is
+0.04309493109758478 for ST428 at neutral 0.75: old Y=0.51641892163388547,
+new Y=0.4733239905363007. That profile now uses peak-normalized gamma 2.6 plus
+`lumi` 52.37, rather than 48-nit-relative samples clipped at 1. These raw relative
+XYZ numbers use different white normalization; they are not a claim of that
+much physical luminance error. Log100's upper inverse endpoint at encoded zero
+changes relative XYZ by at most0.004989853356960339 on this grid. The other
+transfers change by at most0.001571727449469762 (Log316); the remaining groups
+are each below0.000309. All retain their independent analytic bounds.
+
+Absolute XYZ changes are larger because old native-white/adaptation tags were
+inconsistent. On the bounded grid, the largest coordinate difference is
+0.3720576615205573 for Illuminant-C RGB with Log100 at blue[0,0,1]. Across the
+full witness set, endpoint white error drops from 0.35254968215519233 to
+0.00004124555198359303 in the absolute control. These are intended definition
+corrections, not bitwise equivalence to historical exports. No established
+pixel expectation or numerical tolerance was changed to accept them.

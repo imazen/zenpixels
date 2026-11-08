@@ -428,12 +428,12 @@ fn exported_pq_declares_absolute_scale_and_both_pipeline_directions() {
                         continue;
                     }
                     let want = [b"rXYZ", b"gXYZ", b"bXYZ"].map(|sig| xyz(&icc, sig));
-                    for row in 0..3 {
-                        for column in 0..3 {
+                    for (column, values) in want.iter().enumerate() {
+                        for (row, &expected) in values.iter().enumerate() {
                             let at = at + 12 + (row * 3 + column) * 4;
                             let actual = f32::from_be_bytes(pipe[at..at + 4].try_into().unwrap());
                             assert_eq!(
-                                actual, want[column][row] as f32,
+                                actual, expected as f32,
                                 "PQ matrix and declared primaries disagree"
                             );
                         }

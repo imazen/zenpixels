@@ -1,0 +1,136 @@
+{
+  "recipe_commit": "0ea5b66c",
+  "bundle_commit": "210fd9c3",
+  "lcms": "55b59476cf64920345e9ca32eb3a4678bf0bbece",
+  "c_oracle": "LCMS 2.20, 7717fce0d85447ef3b2df0cca2e99207c15eeecd",
+  "moxcms": "0.9.2",
+  "mappings": {
+    "rgb": 149,
+    "gray": 164,
+    "unique": 209,
+    "hlg_refused": 21
+  },
+  "blob": {
+    "bytes": 93377,
+    "sha256": "67c3122da4cb5cd969a38c7fa0eb0f3ed0c5d4a99f2dac4cacd49500e8e1e509"
+  },
+  "qualification": {
+    "pq_cells": 168,
+    "sdr_cells": 292,
+    "containers": 313,
+    "workspace_passed": 1586,
+    "workspace_existing_ignored": 46,
+    "runtime_profile_tests": 39,
+    "x86_generator_tests": 7,
+    "strict_clippy": "pass",
+    "no_std": "pass"
+  },
+  "old_new": {
+    "1": {
+      "cells": 19221,
+      "changed_cells": 19092,
+      "max_abs_xyz_difference": 0.04309493109758478,
+      "by_transfer": {
+        "1": 0.0003052307283724076,
+        "10": 0.001571727449469762,
+        "11": 0.0003052307283724076,
+        "12": 0.0003052307283724076,
+        "14": 0.0003052307283724076,
+        "15": 0.0003052307283724076,
+        "16": 0.0003054095395782497,
+        "17": 0.04309493109758478,
+        "4": 0.00030868774501868756,
+        "5": 0.0003052307283724076,
+        "6": 0.0003052307283724076,
+        "7": 0.0003052307283724076,
+        "8": 0.0003052307283724076,
+        "9": 0.004989853356960339,
+        "13": 0.0003052307283724076
+      },
+      "worst": {
+        "profile": "rgb-5-17.icc",
+        "intent": "1",
+        "sample": "128",
+        "r": "0.75",
+        "g": "0.75",
+        "b": "0.75",
+        "old_x": "0.49793291254218275",
+        "old_y": "0.51641892163388547",
+        "old_z": "0.42613210728859485",
+        "new_x": "0.456380377104324",
+        "new_y": "0.4733239905363007",
+        "new_z": "0.39044028793341568"
+      }
+    },
+    "3": {
+      "cells": 19221,
+      "changed_cells": 19092,
+      "max_abs_xyz_difference": 0.3720576615205573,
+      "by_transfer": {
+        "1": 0.37183623364398954,
+        "10": 0.3719057912030621,
+        "11": 0.37183623364398954,
+        "12": 0.37183623364398954,
+        "14": 0.37183623364398954,
+        "15": 0.37183623364398954,
+        "16": 0.37181894856075814,
+        "17": 0.37183659126640123,
+        "4": 0.37183623364398954,
+        "5": 0.3718362932477248,
+        "6": 0.37183623364398954,
+        "7": 0.37183623364398954,
+        "8": 0.37183623364398954,
+        "9": 0.3720576615205573,
+        "13": 0.37183623364398954
+      },
+      "worst": {
+        "profile": "rgb-8-9.icc",
+        "intent": "3",
+        "sample": "4",
+        "r": "0",
+        "g": "0",
+        "b": "1",
+        "old_x": "0.26218979825898714",
+        "old_y": "0.13111783166664281",
+        "old_z": "0.74841233512870531",
+        "new_x": "0.20924859830984133",
+        "new_y": "0.077394749918084926",
+        "new_z": "1.1204699966492626"
+      }
+    }
+  },
+  "receipts": {
+    "qualification-pq-compact-all1.log": {
+      "sha256": "29e9a6c7b7ed68f1e3a458ead2802beedc2cb7dab31e3610f828e80393b05f81",
+      "resource_summary": "run-heavy: done rc=0 163s | peak-RSS 0.12GiB | min-avail 28492MiB | peak-load 2.07"
+    },
+    "qualification-sdr-compact1.log": {
+      "sha256": "f35d4f5f1e85962db6bd4cdbed1687ddcb5cc2124352efdaa6b70bd217fd90ce",
+      "resource_summary": "run-heavy: done rc=0 5s | peak-RSS 0.06GiB | min-avail 29777MiB | peak-load 1.81"
+    },
+    "independent-readers-compact1.log": {
+      "sha256": "cad102bc17e804ad124c5618e1c20fd1c4f301fcf6a0d7ba5f71332bddf5b0fe",
+      "resource_summary": "run-heavy: done rc=0 1s | peak-RSS 0.03GiB | min-avail 29302MiB | peak-load 1.78"
+    },
+    "x86-generator-qualified3.log": {
+      "sha256": "69d6c09bec3d740d899ae2eaf30ffe296c771564fdee8b5d01e24aa3c69d20b1",
+      "resource_summary": "run-heavy: done rc=0 8s | peak-RSS 0.45GiB | min-avail 24904MiB | peak-load 12.35"
+    },
+    "pixel-qualified-bundle-workspace2.log": {
+      "sha256": "78825c912a2ff62d7c753465e12a5f531285225c13ba2c9924969d6e84f79d37",
+      "resource_summary": "run-heavy: done rc=0 621s | peak-RSS 2.65GiB | min-avail 24247MiB | peak-load 12.95"
+    },
+    "pixel-export-runtime-tests2.log": {
+      "sha256": "7a2e449e7268c9297d0f2f164b755bc31453cfdc49b6441b7677ce69ed03ce8b",
+      "resource_summary": "run-heavy: done rc=0 9s | peak-RSS 0.41GiB | min-avail 27211MiB | peak-load 7.47"
+    },
+    "pixel-qualified-clippy3.log": {
+      "sha256": "5070f20c1fd292499f4614cabccb41fd45532c79de301b7d324f532b5c2b5b3d",
+      "resource_summary": "run-heavy: done rc=0 13s | peak-RSS 0.37GiB | min-avail 27430MiB | peak-load 7.85"
+    },
+    "pixel-qualified-no-std.log": {
+      "sha256": "7ebd246bc9e1def47c173294575f8eb6b85df956d577ba3aa7151b4f94bab275",
+      "resource_summary": "run-heavy: done rc=0 7s | peak-RSS 0.35GiB | min-avail 27395MiB | peak-load 7.75"
+    }
+  }
+}

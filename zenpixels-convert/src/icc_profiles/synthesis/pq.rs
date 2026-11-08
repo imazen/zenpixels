@@ -246,7 +246,7 @@ pub(super) fn encode(mut source: ColorProfile, gray: bool) -> Option<Vec<u8>> {
     }
     // Absolute uses the conventional colorimetric transform and the profile's
     // chromatic adaptation; no independently defined absolute MPE is invented.
-    for intent in [b'0', b'1', b'2'] {
+    for intent in *b"012" {
         for (prefix, pipeline) in [(b'D', &forward), (b'B', &backward)] {
             let signature = if prefix == b'D' {
                 [b'D', b'2', b'B', intent]

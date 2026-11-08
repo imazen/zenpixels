@@ -15,7 +15,7 @@ import re
 import sys
 
 
-def unpack(crate):
+def unpack(crate, expected=334):
     source = (crate / "src/icc_profiles/cicp_bundle_index.rs").read_text()
     blob = (crate / "src/profiles/cicp_bundle.lz4").read_bytes()
     library = ctypes.CDLL(ctypes.util.find_library("lz4"))
@@ -41,7 +41,7 @@ def unpack(crate):
             data = groups[values["group_index"]][start:start + values["len"]]
             assert len(data) == values["len"]
             profiles[f'{label}-{values["primaries"]}-{values["transfer"]}'] = data
-    assert len(profiles) == 334, len(profiles)
+    assert len(profiles) == expected, len(profiles)
     return blob, profiles
 
 
@@ -58,11 +58,17 @@ def tags(data):
 
 
 def main():
-    old_root, new_root, output = map(Path, sys.argv[1:])
+    old_root, new_root, output = map(Path, sys.argv[1:4])
+    expected = int(sys.argv[4]) if len(sys.argv) > 4 else 334
     old_blob, old = unpack(old_root)
-    new_blob, new = unpack(new_root)
+    new_blob, new = unpack(new_root, expected)
     output.mkdir(parents=True, exist_ok=False)
-    assert old.keys() == new.keys()
+    removed = sorted(old.keys() - new.keys())
+    assert not new.keys() - old.keys(), "unexpected new assigned combination"
+    if expected == 313:
+        assert len(removed) == 21 and all(name.endswith("-18") for name in removed), removed
+    else:
+        assert not removed, removed
     changed = []
     counts = collections.Counter()
     for name, data in new.items():
@@ -77,7 +83,7 @@ def main():
     result = {"old_blob_bytes": len(old_blob), "new_blob_bytes": len(new_blob),
               "old_sha256": hashlib.sha256(old_blob).hexdigest(),
               "new_sha256": hashlib.sha256(new_blob).hexdigest(),
-              "profiles": len(new), "changed_profiles": len(changed),
+              "profiles": len(new), "removed_targetless_hlg": removed, "changed_profiles": len(changed),
               "changed_rgb": sum(row["profile"].startswith("rgb-") for row in changed),
               "changed_gray": sum(row["profile"].startswith("gray-") for row in changed),
               "changed_tag_counts": dict(counts), "changes": changed}
