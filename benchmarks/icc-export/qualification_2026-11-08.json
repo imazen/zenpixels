@@ -131,6 +131,22 @@
     "pixel-qualified-no-std.log": {
       "sha256": "7ebd246bc9e1def47c173294575f8eb6b85df956d577ba3aa7151b4f94bab275",
       "resource_summary": "run-heavy: done rc=0 7s | peak-RSS 0.35GiB | min-avail 27395MiB | peak-load 7.75"
+    },
+    "qualification-pq-git55-final.log": {
+      "sha256": "4838eaa73a81b69d5c965d10e86a9c49170f041d571c11c25d986a5ba7e3a7da",
+      "resource_summary": "run-heavy: done rc=0 164s | peak-RSS 0.11GiB | min-avail 27394MiB | peak-load 9.39"
+    },
+    "qualification-sdr-git55-final.log": {
+      "sha256": "7f2c9f90b331f9b8dea0c8bc62d34313f33e87f75d6360e1e827118c4b26c273",
+      "resource_summary": "run-heavy: done rc=0 5s | peak-RSS 0.06GiB | min-avail 27555MiB | peak-load 9.14"
     }
+  },
+  "exact_git_reader_replay": {
+    "reader_sha256": "3d470bae01e51bd749133c714e7224a1e5ac47e5245c350f96548dac3e5a7a5a",
+    "original_path_patch_reader_sha256": "60749fb0c7a9f5ccade0242937c267efd20a2de6f35f2746e027756b4d7f1479",
+    "pq_cells": 168,
+    "sdr_cells": 292,
+    "failures": 0,
+    "changed_output_hash_cells": 0
   }
 }

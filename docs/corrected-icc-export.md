@@ -336,3 +336,10 @@ full witness set, endpoint white error drops from 0.35254968215519233 to
 0.00004124555198359303 in the absolute control. These are intended definition
 corrections, not bitwise equivalence to historical exports. No established
 pixel expectation or numerical tolerance was changed to accept them.
+
+The full 168-cell PQ and 292-cell SDR sweeps were replayed using the exact
+Git-pinned LCMS 55 consumer binary, after preserving the original path-patched
+reader. All 460 C/Rust/production output-hash cells are unchanged; both sweeps
+pass. Binary hashes and both sets of receipts are retained in the committed
+qualification record. Native PNG qualification freezes pixel source 3ceb0500;
+subsequent commits on this review contain documentation and receipt updates.
