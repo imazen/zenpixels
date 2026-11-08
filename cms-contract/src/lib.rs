@@ -99,7 +99,7 @@ fn build_transform(
         .zip(target.open())
         .ok_or("lcms could not open a profile")?;
     let mut profiles = vec![source, target];
-    let intents = [lcms::virt::INTENT_RELATIVE_COLORIMETRIC; 2];
+    let intents = [lcms::types::INTENT_RELATIVE_COLORIMETRIC; 2];
     lcms::xform::create_extended_transform(
         None,
         &mut profiles,
