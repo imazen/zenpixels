@@ -44,7 +44,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             barycentric_weight_scale: moxcms::BarycentricWeightScale::High,
             interpolation_method: moxcms::InterpolationMethod::Tetrahedral,
             allow_extended_range_rgb_xyz: true,
-            ..Default::default()
         },
     )?;
     let mut raw_output = vec![0.0f32; input.len()];

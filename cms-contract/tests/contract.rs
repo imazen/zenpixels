@@ -689,7 +689,7 @@ fn float_pipeline_is_honored_or_explicitly_declined() {
 #[test]
 fn relative_intent_ignores_float_tags_for_other_intents() {
     for prefix in [*b"D2B", *b"B2D"] {
-        for intent in [b'0', b'2', b'3'] {
+        for intent in *b"023" {
             let altered = float_pipeline_profile(&[[prefix[0], prefix[1], prefix[2], intent]]);
             let (source, target, plain_source, plain_target) = if prefix == *b"D2B" {
                 (Source::Icc(&altered), SRGB, Source::Icc(P3), SRGB)
