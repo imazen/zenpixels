@@ -118,6 +118,16 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Open in the bundle-history audit (2026-11-08): all 175 committed GRAY
+  mappings are Display-class but store native white in `wtpt`, contrary to
+  ICC.1:2022 9.2.36's PCS-D50 requirement. This dates to `75eb953`; the
+  October `27c17a6` gray test explicitly preserves the wrong expectation.
+  The 0.9.2 proposal and constructor controls copy these bytes unchanged.
+  Independent reader acceptance does not establish the tag's correctness.
+  `just icc-bundle-definition-audit REVISION` inspects actual historical
+  assets; see `docs/icc-bundle-history-and-correctness.md`. No binary,
+  existing assertion or pixel tolerance is changed by this finding.
+
 - Open in profile triage (2026-11-08): the inherited curves in all three RGB
   candidates have limits missed by the sparse read-back samples. On every
   normalized U16 input, TC9/TC10 have maximum absolute linear errors
@@ -291,6 +301,9 @@ retained. The regenerated blob is 35,379 bytes, SHA-256
 All 159 RGB and 175 gray mappings pass fresh-synthesis equality. All 334
 profiles pass structural checks, Little CMS parsing and exact libpng ICC
 roundtrips without warnings; a non-D50 negative control fails.
+Those historical checks covered the PCS header, alignment and reader
+acceptance, not every tag requirement. The 2026-11-08 history audit above
+identifies the preserved gray Display-class `wtpt` inconsistency.
 
 `just icc-bundle-identification OUTPUT_DIR` generates and adds bundle hashes
 without dropping recognition of older profile bytes. Full corpus regeneration

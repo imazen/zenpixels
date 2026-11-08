@@ -4,6 +4,11 @@ Recent work separates a generated-bundle adaptation repair proposal from an
 exact-H.273-input candidate. Both preserve negative adapted Z values. The Compact
 ICC constants remain separate; eliminating negative colorants is not the goal.
 
+The [bundle history and expectation audit](icc-bundle-history-and-correctness.md)
+also identifies an inherited gray Display-class `wtpt` defect preserved by
+all recent candidates. It separates reproducibility, curve approximation,
+normative definitions and the provenance of the test tolerances.
+
 ## The negative-Z warning has a specification history
 
 [Compact ICC Profiles](https://github.com/saucecontrol/Compact-ICC-Profiles#display-p3)

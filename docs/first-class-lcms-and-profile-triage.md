@@ -125,6 +125,12 @@ parseability, separately from color accuracy.
 
 ## Trust and adoption recommendation
 
+The later [bundle-history audit](icc-bundle-history-and-correctness.md)
+identifies a separate inherited defect: all 175 unchanged gray mappings
+store native white in Display-class `wtpt`, rather than PCS D50. Their
+byte preservation and reader acceptance are not correctness endorsements.
+That audit also traces the curve choices and older test expectations.
+
 Prefer the shared exact-H.273 colorimetric payload for the next bundle
 proposal. LCMS generation and MoxCMS with explicit H.273 coordinates produce
 identical colorimetry; either can supply it. Keep both as independent generator
