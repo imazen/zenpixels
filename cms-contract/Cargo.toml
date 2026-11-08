@@ -5,7 +5,7 @@ edition = "2024"
 publish = false
 description = "Runs every PluggableCms backend through one behavioral contract and compares them"
 
-# Standalone, outside the workspace: CI and plain `cargo test` never compile the lcms port.
+# Standalone comparison runner; the production LCMS backend is separately opt-in.
 [workspace]
 
 [dependencies]

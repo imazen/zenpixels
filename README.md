@@ -519,7 +519,7 @@ Convenience constructors: `ConvertOptions::retain_channels()` (forbids alpha and
 
 **Oklab** — `OklabSpace` holds both LMS matrices for a set of primaries and does scalar conversions, with public LMS/XYZ/Oklab matrices. Non-sRGB sources get correct LMS matrices without an intermediate sRGB step.
 
-**CMS** — `PluggableCms` trait (dyn-compatible, accepts `ColorProfileSource` directly — CICP, named profiles, or raw ICC bytes) plugs an external backend into `RowConverter`. `RowTransformMut` is the `&mut self` row-level transform returned by plugins. `cms-contract/` holds every backend to the same behavior. The `cms-moxcms` feature provides a concrete backend using [moxcms](https://crates.io/crates/moxcms), supporting u8/u16/f32 transforms with automatic profile identification..
+**CMS** — `PluggableCms` trait (dyn-compatible, accepts `ColorProfileSource` directly — CICP, named profiles, or raw ICC bytes) plugs an external backend into `RowConverter`. `RowTransformMut` is the `&mut self` row-level transform returned by plugins. `cms-contract/` holds every backend to the same behavior. The `cms-moxcms` and `cms-lcms` features provide `MoxCms` and `Lcms` backends. Callers select one explicitly; enabling both does not change conversion defaults. Both support native u8/u16/f32 rows. See [backend contracts and profile triage](docs/first-class-lcms-and-profile-triage.md).
 
 **ICC identification** — `zenpixels::icc::IccIdentification::from_icc(icc_bytes)` recognizes 298 well-known RGB + 69 grayscale profiles via normalized FNV-1a hash lookup (~100ns), including every profile the CICP database itself embeds in encoded output. Returns primaries, transfer function, and `IdentificationUse` (whether matrix+TRC substitution is safe vs CMS-only). Covers sRGB, Display P3, BT.2020, Adobe RGB variants across ICC v2–v5; `extract_cicp` reads embedded `cICP` tags directly.
 
@@ -572,6 +572,7 @@ branch. See the [code review](https://github.com/imazen/zenpixels/blob/main/docs
 | `bt2446a` | | The BT.2446 Method A tone-mapping curve (implies `hdr-experimental`) |
 | `hdr-experimental` | | Native HDR→SDR display mapping inside `ConvertPlan` (with `bt2446a`: BT.2446 Method A + OKLch soft compress + CTA-861.3 CLL measurement); API shape may move ahead of 0.3.0 |
 | `cms-moxcms` | | ICC profile transforms via [moxcms](https://crates.io/crates/moxcms) (implies `std`) |
+| `cms-lcms` | | ICC profile transforms via the pure-Rust LCMS port (implies `std`; pinned unreleased dependency) |
 | `serde` | | No-op stub (soft-removed in 0.2.15, queued for removal); previously forwarded to `zenpixels/serde` |
 
 ## Build time

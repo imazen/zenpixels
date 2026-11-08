@@ -485,3 +485,17 @@ stable-standalone-check:
     cargo check --locked --manifest-path tools/jzazbz-bench/Cargo.toml --all-targets
     cargo test --locked --manifest-path cms-contract/Cargo.toml
     cargo check --locked --manifest-path site/converter-wasm/Cargo.toml --target wasm32-unknown-unknown
+
+# Production LCMS contract, with MoxCMS independently exercised by cms-contract.
+cms-lcms-check:
+    cargo check --locked -p zenpixels-convert --lib --no-default-features --features cms-lcms
+    cargo test --locked -p zenpixels-convert --features cms-lcms --test cms_lcms_contracts
+    cargo test --locked --manifest-path cms-contract/Cargo.toml
+    cargo clippy --locked -p zenpixels-convert --features cms-lcms --lib --test cms_lcms_contracts -- -D warnings
+
+# Construct independent colorimetry while preserving every curve/CICP payload.
+icc-lcms-candidates source output:
+    cargo run --locked --manifest-path cms-contract/Cargo.toml --example profile_candidates -- "{{source}}" "{{output}}"
+
+icc-profile-triage reference output *candidates:
+    python3 scripts/icc-gen/validation/triage_profiles.py "{{reference}}" "{{output}}" {{candidates}}

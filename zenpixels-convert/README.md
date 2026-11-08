@@ -91,12 +91,13 @@ let mut conv = RowConverter::new_explicit(
 conv.convert_row(p3_row, srgb_row, width);
 ```
 
-Custom ICC profiles (vendor-specific, LUT-based, perceptual intent) need a CMS backend. Pass one via [`PluggableCms`] — the plan delegates to the plugin when the profiles differ, and uses the built-in matlut fast path when both sides are well-known. The `cms-moxcms` feature provides a concrete backend ([`MoxCms`]) built on [moxcms](https://crates.io/crates/moxcms).
+Custom ICC profiles (vendor-specific, LUT-based, perceptual intent) need a CMS backend. Pass one via [`PluggableCms`] — the plan delegates to the plugin when the profiles differ, and uses the built-in matlut fast path when both sides are well-known. Enable `cms-moxcms` for [`MoxCms`] or `cms-lcms` for [`Lcms`], using the pure-Rust Little CMS port. Both implement the same interface. Choose the backend explicitly; enabling both changes neither selection nor the built-in paths.
 
 ```rust
 use zenpixels_convert::{RowConverter, ConvertOptions, MoxCms, cms::PluggableCms};
 
 let cms: &dyn PluggableCms = &MoxCms;
+// With `cms-lcms`, use `&zenpixels_convert::Lcms` instead.
 let mut conv = RowConverter::new_explicit_with_cms(
     source_desc, target_desc,
     &ConvertOptions::permissive(),
@@ -140,7 +141,9 @@ moxcms is a different implementation from lcms2 and is expected to differ from i
 `CmykF32` and `CmykF32Inverted` sources convert to any RGB target; converting into F32 CMYK is refused. `Cmyk8` runs the
 same transform and rounds, so both have F32 CMYK's black-point compensation to sRGB.
 
-Every backend passes the same contract in `cms-contract/`: `just cms-contract`.
+Every backend runs through the same contract in `cms-contract/`: `just cms-contract`.
+
+`Lcms` supports native U8/U16/F32 RGB, gray and ICC-described CMYK inputs, including byte BGR/BGRA and alpha. It uses relative colorimetric intent with black-point compensation for CMYK sources. F32 CMYK destinations are refused; mixed depths and unqualified layouts decline to the planner. Prepared float CMYK rows reuse scratch. The Rust port is pinned to an unreleased Git revision, so publishing this feature requires a released port dependency. See [qualification and profile triage](../docs/first-class-lcms-and-profile-triage.md).
 
 ## Row conversion tiers
 
@@ -219,11 +222,12 @@ Use measured workload costs and explicit buffer/stride arithmetic.
 | `hdr-experimental` | | HDR→SDR display mapping (ITU-R BT.2446 Method A curve + OKLch soft compress + CTA-861.3 CLL measurement). API shape may move ahead of 0.3.0 (in particular `measure_robust` → `measure` rename); scan kernels and accuracy contracts are stable. See [HDR section](#gamut-hdr-oklab) above. |
 | `bt2446a` | | The BT.2446 Method A tone-mapping curve (implies `hdr-experimental`) |
 | `cms-moxcms` | | ICC profile transforms via [moxcms](https://crates.io/crates/moxcms) (implies `std`) |
+| `cms-lcms` | | ICC profile transforms via pure-Rust LCMS (implies `std`) |
 | `serde` | | No-op stub (soft-removed in 0.2.15, queued for removal in the next breaking release); previously forwarded to `zenpixels/serde`. Kept so `features = ["serde"]` from 0.2.14 still builds |
 
 ### `no_std`
 
-`zenpixels-convert` is `no_std + alloc` by default-construction (`std` is on by default but everything works without it). For `no_std`, set `default-features = false` and re-enable only what you need (note that `cms-moxcms` requires `std`):
+`zenpixels-convert` is `no_std + alloc` by default-construction (`std` is on by default but everything works without it). For `no_std`, set `default-features = false` and re-enable only what you need (both CMS features require `std`):
 
 ```toml
 zenpixels-convert = { version = "0.3.1", default-features = false }

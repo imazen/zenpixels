@@ -33,6 +33,8 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [Unreleased]
 
+- Add opt-in `cms-lcms` / `Lcms` alongside `MoxCms`, using the pinned pure-Rust LCMS port. Select either through `PluggableCms`; defaults and bundled profiles are unchanged (`4b96fd7d`).
+
 - Correct the standalone Rust-LCMS contract adapter to request relative
   colorimetric intent. Add a paper-white regression and exact Rust/C bundle
   and CMYK controls; product conversion defaults and bundled ICC bytes are

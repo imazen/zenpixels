@@ -49,6 +49,9 @@ jobs:
       - name: Test (workspace)
         run: cargo test --workspace
 
+      - name: Test production Rust LCMS backend
+        run: cargo test --locked -p zenpixels-convert --features cms-lcms --test cms_lcms_contracts
+
       - name: Check downstream warnings with compatibility features
         if: matrix.os == 'ubuntu-latest'
         run: python3 scripts/check-deprecations.py
@@ -279,6 +282,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --locked --manifest-path cms-contract/Cargo.toml
+      - run: cargo check --locked -p zenpixels-convert --lib --no-default-features --features cms-lcms
+      - run: cargo clippy --locked -p zenpixels-convert --features cms-lcms --lib --test cms_lcms_contracts -- -D warnings
 
   fmt:
     name: Format
