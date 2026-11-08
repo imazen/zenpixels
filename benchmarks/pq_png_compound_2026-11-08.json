@@ -1,0 +1,420 @@
+{
+  "script_sha256": "132edae125cf550c84aa0160d1fba25769b2e9ea8a6e58c05dcab693d047b7ae",
+  "runs": {
+    "u8": {
+      "scope": "PNG16 to canvas sRGB U8; capability witnesses, no HDR display accuracy claim",
+      "width": 60,
+      "height": 1,
+      "readers": {
+        "chromium": {
+          "version": "153.0.8010.12",
+          "executableSha256": "8c599d43aec53f2460a31ae2f4af6bd863f8258b34ff519564bc5d4726bfaa1e",
+          "options": {
+            "isolatedWebkitRuntime": false
+          },
+          "comparisons": {
+            "float-vs-original": {
+              "differentRgbChannels": 0,
+              "maxCodeDifference": 0
+            },
+            "float-vs-diagnostic-fallback": {
+              "differentRgbChannels": 120,
+              "maxCodeDifference": 226
+            },
+            "diagnostic-vs-linear-only": {
+              "differentRgbChannels": 0,
+              "maxCodeDifference": 0
+            },
+            "cicp-overrides-icc-witness": {
+              "differentRgbChannels": 0,
+              "maxCodeDifference": 0
+            },
+            "dual-vs-cicp-only": {
+              "differentRgbChannels": 0,
+              "maxCodeDifference": 0
+            },
+            "cicp-changes-linear-icc": {
+              "differentRgbChannels": 120,
+              "maxCodeDifference": 226
+            },
+            "linear-icc-vs-untagged": {
+              "differentRgbChannels": 120,
+              "maxCodeDifference": 107
+            },
+            "embedded-cicp-vs-icc-curves": {
+              "differentRgbChannels": 102,
+              "maxCodeDifference": 169
+            }
+          },
+          "candidate_comparisons": {
+            "mab3": {
+              "different_rgb_channels": 0,
+              "max_channel_difference": 0
+            },
+            "mab8": {
+              "different_rgb_channels": 0,
+              "max_channel_difference": 0
+            }
+          }
+        },
+        "firefox-cms": {
+          "version": "155.0",
+          "executableSha256": "062272ac4d851eade5b75db2dc7c14569d96cb3ca38f949337cdc1b74367e35b",
+          "options": {
+            "firefoxUserPrefs": {
+              "gfx.color_management.mode": 1,
+              "gfx.color_management.enablev4": true,
+              "gfx.color_management.force_srgb": true
+            },
+            "isolatedWebkitRuntime": false
+          },
+          "comparisons": {
+            "float-vs-original": {
+              "differentRgbChannels": 0,
+              "maxCodeDifference": 0
+            },
+            "float-vs-diagnostic-fallback": {
+              "differentRgbChannels": 120,
+              "maxCodeDifference": 226
+            },
+            "diagnostic-vs-linear-only": {
+              "differentRgbChannels": 0,
+              "maxCodeDifference": 0
+            },
+            "cicp-overrides-icc-witness": {
+              "differentRgbChannels": 0,
+              "maxCodeDifference": 0
+            },
+            "dual-vs-cicp-only": {
+              "differentRgbChannels": 0,
+              "maxCodeDifference": 0
+            },
+            "cicp-changes-linear-icc": {
+              "differentRgbChannels": 120,
+              "maxCodeDifference": 226
+            },
+            "linear-icc-vs-untagged": {
+              "differentRgbChannels": 120,
+              "maxCodeDifference": 107
+            },
+            "embedded-cicp-vs-icc-curves": {
+              "differentRgbChannels": 0,
+              "maxCodeDifference": 0
+            }
+          },
+          "candidate_comparisons": {
+            "mab3": {
+              "different_rgb_channels": 7,
+              "max_channel_difference": 1
+            },
+            "mab8": {
+              "different_rgb_channels": 7,
+              "max_channel_difference": 1
+            }
+          }
+        },
+        "webkit": {
+          "version": "26.6",
+          "executableSha256": "e22e33a2a8dad1fb2d8e0716f37b6cf548bd8e73fdf5e11389a4042359b8b8a9",
+          "options": {
+            "isolatedWebkitRuntime": true
+          },
+          "comparisons": {
+            "float-vs-original": {
+              "differentRgbChannels": 1,
+              "maxCodeDifference": 1
+            },
+            "float-vs-diagnostic-fallback": {
+              "differentRgbChannels": 0,
+              "maxCodeDifference": 0
+            },
+            "diagnostic-vs-linear-only": {
+              "differentRgbChannels": 120,
+              "maxCodeDifference": 226
+            },
+            "cicp-overrides-icc-witness": {
+              "differentRgbChannels": 120,
+              "maxCodeDifference": 226
+            },
+            "dual-vs-cicp-only": {
+              "differentRgbChannels": 120,
+              "maxCodeDifference": 128
+            },
+            "cicp-changes-linear-icc": {
+              "differentRgbChannels": 0,
+              "maxCodeDifference": 0
+            },
+            "linear-icc-vs-untagged": {
+              "differentRgbChannels": 120,
+              "maxCodeDifference": 107
+            },
+            "embedded-cicp-vs-icc-curves": {
+              "differentRgbChannels": 0,
+              "maxCodeDifference": 0
+            }
+          },
+          "candidate_comparisons": {
+            "mab3": {
+              "different_rgb_channels": 0,
+              "max_channel_difference": 0
+            },
+            "mab8": {
+              "different_rgb_channels": 0,
+              "max_channel_difference": 0
+            }
+          }
+        }
+      },
+      "fixtures": {
+        "original": {
+          "pngSha256": "40cf12b3a92e5b4aa87560eff467d1c86c07d7ef0445ccbafefb8b86110f25c3",
+          "iccSha256": "4ffeab5e56ef3305c11868dfe78d057183cd884ec90aeca2841b7c30e82f7945",
+          "cicp": false
+        },
+        "float": {
+          "pngSha256": "907cdaef46bb0a3cf602fc7728c96c726317507509d968611eee755c94e0539a",
+          "iccSha256": "6d24486d7affd0f82495e79f0446e6903ecbc31ca4e0ab9fdbcd9fb544cf71e5",
+          "cicp": false
+        },
+        "mab3": {
+          "pngSha256": "3870858d07efd6e1b4280c28efc26c2d7028aea24b0f0375207d05026713559f",
+          "iccSha256": "8ce3627be302fc7fb4d3d13613eef39539227373c237659bd219f17bacedb172",
+          "cicp": false
+        },
+        "mab8": {
+          "pngSha256": "7638cb0b99de8acbf6cd68e2789498ac3a3ce738203bbec68bd58639adbb834b",
+          "iccSha256": "ac0eeb8d3b01f47d51952a8cacfd4b2a16f76e3013dfdabe3e67ea1f718ed7ce",
+          "cicp": false
+        }
+      },
+      "full_report_sha256": "7dd3f9b0fda805372c24f1ac22bb92d983dfaa3a427959421dc4120afdf7eaba"
+    },
+    "f16": {
+      "scope": "PNG16 to canvas sRGB F16; capability witnesses, no HDR display accuracy claim",
+      "width": 75,
+      "height": 1,
+      "readers": {
+        "chromium": {
+          "version": "153.0.8010.12",
+          "executableSha256": "8c599d43aec53f2460a31ae2f4af6bd863f8258b34ff519564bc5d4726bfaa1e",
+          "options": {
+            "isolatedWebkitRuntime": false
+          },
+          "comparisons": {
+            "float-vs-original": {
+              "differentRgbChannels": 0,
+              "maxChannelDifference": 0
+            },
+            "float-vs-diagnostic-fallback": {
+              "differentRgbChannels": 195,
+              "maxChannelDifference": 1.31103515625
+            },
+            "diagnostic-vs-linear-only": {
+              "differentRgbChannels": 0,
+              "maxChannelDifference": 0
+            },
+            "cicp-overrides-icc-witness": {
+              "differentRgbChannels": 0,
+              "maxChannelDifference": 0
+            },
+            "dual-vs-cicp-only": {
+              "differentRgbChannels": 0,
+              "maxChannelDifference": 0
+            },
+            "cicp-changes-linear-icc": {
+              "differentRgbChannels": 201,
+              "maxChannelDifference": 1.31103515625
+            },
+            "linear-icc-vs-untagged": {
+              "differentRgbChannels": 213,
+              "maxChannelDifference": 0.83251953125
+            },
+            "embedded-cicp-vs-icc-curves": {
+              "differentRgbChannels": 167,
+              "maxChannelDifference": 0.66357421875
+            },
+            "mab3-vs-float": {
+              "differentRgbChannels": 110,
+              "maxChannelDifference": 0.00048828125
+            },
+            "mab8-vs-float": {
+              "differentRgbChannels": 117,
+              "maxChannelDifference": 0.00048828125
+            }
+          },
+          "candidate_comparisons": {
+            "mab3": {
+              "different_rgb_channels": 110,
+              "max_channel_difference": 0.00048828125
+            },
+            "mab8": {
+              "different_rgb_channels": 117,
+              "max_channel_difference": 0.00048828125
+            }
+          },
+          "low_neutral_red_samples": [
+            {
+              "code": 1,
+              "original": 0,
+              "float": 0,
+              "mab3": 0,
+              "mab8": 0
+            },
+            {
+              "code": 2,
+              "original": 0,
+              "float": 0,
+              "mab3": 0,
+              "mab8": 0
+            },
+            {
+              "code": 4,
+              "original": 0,
+              "float": 0,
+              "mab3": 0,
+              "mab8": 0
+            },
+            {
+              "code": 8,
+              "original": 0,
+              "float": 0,
+              "mab3": 0,
+              "mab8": 0
+            },
+            {
+              "code": 16,
+              "original": 0,
+              "float": 0,
+              "mab3": 0,
+              "mab8": 0
+            },
+            {
+              "code": 32,
+              "original": 0,
+              "float": 0,
+              "mab3": 0,
+              "mab8": 0
+            },
+            {
+              "code": 64,
+              "original": 0,
+              "float": 0,
+              "mab3": 5.960464477539063e-08,
+              "mab8": 5.960464477539063e-08
+            },
+            {
+              "code": 128,
+              "original": 0,
+              "float": 0,
+              "mab3": 1.7881393432617188e-07,
+              "mab8": 1.7881393432617188e-07
+            },
+            {
+              "code": 256,
+              "original": 0,
+              "float": 0,
+              "mab3": 5.364418029785156e-07,
+              "mab8": 5.364418029785156e-07
+            },
+            {
+              "code": 512,
+              "original": 0,
+              "float": 0,
+              "mab3": 1.9073486328125e-06,
+              "mab8": 1.9073486328125e-06
+            },
+            {
+              "code": 1024,
+              "original": 0,
+              "float": 0,
+              "mab3": 6.9141387939453125e-06,
+              "mab8": 6.9141387939453125e-06
+            },
+            {
+              "code": 2048,
+              "original": 0,
+              "float": 0,
+              "mab3": 2.777576446533203e-05,
+              "mab8": 2.7835369110107422e-05
+            },
+            {
+              "code": 3588,
+              "original": 1.6689300537109375e-06,
+              "float": 1.6689300537109375e-06,
+              "mab3": 9.5367431640625e-05,
+              "mab8": 9.530782699584961e-05
+            },
+            {
+              "code": 4096,
+              "original": 0.0001971721649169922,
+              "float": 0.0001971721649169922,
+              "mab3": 0.00013005733489990234,
+              "mab8": 0.00012993812561035156
+            },
+            {
+              "code": 8192,
+              "original": 0.0007886886596679688,
+              "float": 0.0007886886596679688,
+              "mab3": 0.0007672309875488281,
+              "mab8": 0.000766754150390625
+            }
+          ]
+        },
+        "firefox-cms": {
+          "error": "Error: page.evaluate: float16 canvas unavailable\n@debugger eval code line 311 > eval:6:84\nasync*evaluate@debugger eval code:313:16\n@debugger eval code:1:44\n@debugger eval code:1:62\n"
+        },
+        "webkit": {
+          "error": "Error: page.evaluate: Error: float16 canvas unavailable"
+        }
+      },
+      "fixtures": {
+        "original": {
+          "pngSha256": "a7c29c450e7a91fa809d62f87f000899d5a5cb35db502fc1c5579d62a6422a3b",
+          "iccSha256": "4ffeab5e56ef3305c11868dfe78d057183cd884ec90aeca2841b7c30e82f7945",
+          "cicp": false
+        },
+        "float": {
+          "pngSha256": "60c1b794923c8d6de8eb8e935214e0cbdc297672a5a44d187971ce9982b6f117",
+          "iccSha256": "6d24486d7affd0f82495e79f0446e6903ecbc31ca4e0ab9fdbcd9fb544cf71e5",
+          "cicp": false
+        },
+        "mab3": {
+          "pngSha256": "49fb9ce64b19485199376726e634588b8417195a8e4eb5aaed049e55f80b6bc5",
+          "iccSha256": "8ce3627be302fc7fb4d3d13613eef39539227373c237659bd219f17bacedb172",
+          "cicp": false
+        },
+        "mab8": {
+          "pngSha256": "e30fdaab41ce99966bc80d6a92aa24637b214474d41e1343dcf5d08b43d15057",
+          "iccSha256": "ac0eeb8d3b01f47d51952a8cacfd4b2a16f76e3013dfdabe3e67ea1f718ed7ce",
+          "cicp": false
+        }
+      },
+      "full_report_sha256": "68d68fd07d81965b39540cb8287f3be001180f6cf69d27064c63f79ac1372116"
+    }
+  },
+  "commands": [
+    "PQ_READER_EXTRA_PROFILES=<explicit JSON name-to-file mapping> just icc-pq-png-readers ORIGINAL FLOAT16385 W3C FRESH_OUTPUT chromium firefox-cms webkit",
+    "PQ_READER_FLOAT16=1 PQ_READER_EXTRA_PROFILES=<same mapping> just icc-pq-png-readers ORIGINAL FLOAT16385 W3C FRESH_OUTPUT chromium firefox-cms webkit"
+  ],
+  "resource": {
+    "u8": {
+      "seconds": 5,
+      "peak_rss_gib": 0.43,
+      "min_available_mib": 17040,
+      "peak_load": 0.34
+    },
+    "f16": {
+      "seconds": 6,
+      "peak_rss_gib": 0.42,
+      "min_available_mib": 16409,
+      "peak_load": 0.87
+    }
+  },
+  "limits": [
+    "F16 requested explicitly; Firefox and WPE reject float16 canvas, producing a failing run, not passing precision coverage.",
+    "U8: 60 RGB triplets. F16: 75 RGB triplets; not an exhaustive code sweep.",
+    "Both compound pilots use 32767-entry root tables with powers 3 or 8, inherited from pq_precision.",
+    "No new accepted error budget, export bytes, golden or threshold changes.",
+    "Color output includes destination conversion and canvas quantization; not isolated TRC error."
+  ]
+}

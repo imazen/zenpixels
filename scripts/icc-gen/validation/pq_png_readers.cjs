@@ -68,20 +68,21 @@ function png(samples, icc, cicp) {
   return Buffer.concat(parts);
 }
 
-function compare(a, b) {
+function compare(a, b, floating = false) {
   if (a.length !== b.length) throw Error('output shape mismatch');
   let different = 0, maxCodeDifference = 0;
   a.forEach((v, i) => {
     if (i % 4 === 3) return;
     different += Number(v !== b[i]); maxCodeDifference = Math.max(maxCodeDifference, Math.abs(v - b[i]));
   });
-  return { differentRgbChannels: different, maxCodeDifference };
+  return { differentRgbChannels: different, [floating ? 'maxChannelDifference' : 'maxCodeDifference']: maxCodeDifference };
 }
 
 async function main() {
   const [originalPath, floatPath, externalPath, outputPath, ...requested] = process.argv.slice(2);
   if (!outputPath) throw Error('expected ORIGINAL.icc FLOAT.icc EXTERNAL.icc FRESH_OUTPUT_DIR [chromium firefox firefox-cms webkit]');
   const output = path.resolve(outputPath); fs.mkdirSync(output); // Never replace prior evidence.
+  const float16 = process.env.PQ_READER_FLOAT16 === '1';
   const original = fs.readFileSync(originalPath), floating = fs.readFileSync(floatPath);
   const external = fs.readFileSync(externalPath);
   const fallback = rewriteProfile(floating, { linearize: true });
@@ -90,6 +91,7 @@ async function main() {
   const samples = [];
   for (let i = 0; i <= 32; i++) samples.push(Array(3).fill(Math.round(i * 65535 / 32)));
   for (const r of [0, 32768, 65535]) for (const g of [0, 32768, 65535]) for (const b of [0, 32768, 65535]) samples.push([r, g, b]);
+  if (float16) for (const code of [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 3588, 4096, 8192]) samples.push([code, code, code]);
   const variants = {
     original: [originalWithoutCicp, false], float: [floatWithoutCicp, false],
     'original-embedded-cicp': [original, false],
@@ -98,6 +100,12 @@ async function main() {
     'cicp-only': [null, true],
     external: [external, false], untagged: [null, false],
   };
+  // Explicit opt-in: missing requested files fail, never silently lose coverage.
+  const extraProfiles = JSON.parse(process.env.PQ_READER_EXTRA_PROFILES || '{}');
+  for (const [name, filename] of Object.entries(extraProfiles)) {
+    if (!/^[a-z0-9-]+$/.test(name) || name in variants) throw Error(`invalid extra variant ${name}`);
+    variants[name] = [rewriteProfile(fs.readFileSync(filename)), false];
+  }
   const fixtures = {};
   for (const [name, [icc, cicp]] of Object.entries(variants)) {
     const data = png(samples, icc, cicp); fs.writeFileSync(path.join(output, `${name}.png`), data);
@@ -105,7 +113,8 @@ async function main() {
     if (icc) fs.writeFileSync(path.join(output, `${name}.icc`), icc);
   }
   const report = {
-    scope: 'PNG16 to canvas sRGB U8; capability witnesses, no HDR display accuracy claim',
+    scope: `PNG16 to canvas sRGB ${float16 ? 'F16' : 'U8'}; capability witnesses, no HDR display accuracy claim`,
+    pixelFormat: float16 ? 'rgba-float16' : 'rgba-unorm8',
     playwright: require(path.join(path.dirname(require.resolve(process.env.PLAYWRIGHT_MODULE || 'playwright')), 'package.json')).version,
     sources: { original: hash(original), floating: hash(floating), external: hash(external) },
     width: samples.length, height: 1, samples, fixtures, readers: {},
@@ -136,13 +145,17 @@ async function main() {
       const values = {};
       for (const variant of Object.keys(variants)) {
         const url = `data:image/png;base64,${fs.readFileSync(path.join(output, `${variant}.png`)).toString('base64')}`;
-        values[variant] = await page.evaluate(async ({ url, width }) => {
+        values[variant] = await page.evaluate(async ({ url, width, float16 }) => {
           const img = new Image(); img.src = url; await img.decode();
           if (img.naturalWidth !== width || img.naturalHeight !== 1) throw Error('decoded shape mismatch');
           const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = 1;
-          const ctx = canvas.getContext('2d', { colorSpace: 'srgb' }); ctx.drawImage(img, 0, 0);
-          return Array.from(ctx.getImageData(0, 0, width, 1, { colorSpace: 'srgb' }).data);
-        }, { url, width: samples.length });
+          const ctx = canvas.getContext('2d', { colorSpace: 'srgb', colorType: float16 ? 'float16' : 'unorm8' });
+          if (float16 && ctx.getContextAttributes().colorType !== 'float16') throw Error('float16 canvas unavailable');
+          ctx.drawImage(img, 0, 0);
+          const result = ctx.getImageData(0, 0, width, 1, { colorSpace: 'srgb', pixelFormat: float16 ? 'rgba-float16' : 'rgba-unorm8' });
+          if (float16 && result.data.constructor.name !== 'Float16Array') throw Error('float16 readback unavailable');
+          return Array.from(result.data);
+        }, { url, width: samples.length, float16 });
       }
       report.readers[name] = {
         version: browser.version(), executableSha256: hash(fs.readFileSync(options.executablePath || playwright[engine].executablePath())),
@@ -156,7 +169,8 @@ async function main() {
           ['cicp-changes-linear-icc', 'linear-cicp', 'linear-only'],
           ['linear-icc-vs-untagged', 'linear-only', 'untagged'],
           ['embedded-cicp-vs-icc-curves', 'original-embedded-cicp', 'original'],
-        ].map(([label, a, b]) => [label, compare(values[a], values[b])])),
+          ...Object.keys(extraProfiles).map(extra => [`${extra}-vs-float`, extra, 'float']),
+        ].map(([label, a, b]) => [label, compare(values[a], values[b], float16)])),
       };
       console.log(name, browser.version(), JSON.stringify(report.readers[name].comparisons));
     } catch (error) {
