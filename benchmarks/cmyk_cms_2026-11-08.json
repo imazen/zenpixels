@@ -586,5 +586,23 @@
     "MoxCMS native reference bound remains failing",
     "Float CMYK destinations not qualified",
     "No performance claim; no changed threshold; no merge or publication"
-  ]
+  ],
+  "remote_verification": {
+    "zenpixels_cms_run": 42528952320,
+    "tested_revision": "6df6ec8c07886a3bd5947cae6c463a235c8b6583",
+    "jobs_passed": 6,
+    "jobs_total": 6,
+    "platforms": [
+      "Linux x64",
+      "Linux ARM64",
+      "Windows x64",
+      "Windows ARM64",
+      "macOS ARM64",
+      "i686 via cross"
+    ],
+    "oxcms_run": 42528956731,
+    "oxcms_build_failures": 7,
+    "oxcms_failure": "existing workflow does not fetch required Argyll source",
+    "no_expectation_changes": true
+  }
 }
