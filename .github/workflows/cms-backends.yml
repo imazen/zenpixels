@@ -1,13 +1,16 @@
 name: CMS backend qualification
 
-# Focused replay for reviewed backend/profile changes. The full CI remains
-# unchanged; this runs actual native integer layouts and both CMS contracts.
+# Focused replay for backend/profile and ICC-authority changes, including
+# actual native integer layouts and genuinely isolated consumer features.
 on:
   workflow_dispatch:
   push:
     branches: ["review/**"]
     paths:
       - .github/workflows/cms-backends.yml
+      - Cargo.toml
+      - Cargo.lock
+      - zenpixels-convert/Cargo.toml
       - zenpixels-convert/tests/cms_lcms_contracts.rs
       - zenpixels-convert/src/cms_lcms.rs
       - zenpixels-convert/src/cms_moxcms.rs
@@ -43,6 +46,8 @@ jobs:
         run: cargo test --locked --manifest-path cms-contract/Cargo.toml
       - name: ICC authority during grayscale collapse
         run: "cargo test --locked -p zenpixels-convert --lib load_bearing::"
+      - name: Unit grayscale collapse without an ICC database
+        run: "cargo test --locked -p zenpixels-convert --lib --no-default-features --features rgb load_bearing::"
       - name: Grayscale collapse without an ICC database
         run: cargo test --locked --manifest-path tools/icc-collapse-no-db/Cargo.toml
       - name: Strict converter Clippy
@@ -70,5 +75,7 @@ jobs:
         run: cross test --locked --manifest-path cms-contract/Cargo.toml --target i686-unknown-linux-gnu
       - name: ICC authority during grayscale collapse
         run: "cross test --locked -p zenpixels-convert --lib --target i686-unknown-linux-gnu load_bearing::"
+      - name: Unit grayscale collapse without an ICC database
+        run: "cross test --locked -p zenpixels-convert --lib --no-default-features --features rgb --target i686-unknown-linux-gnu load_bearing::"
       - name: Grayscale collapse without an ICC database
         run: cross test --locked --manifest-path tools/icc-collapse-no-db/Cargo.toml --target i686-unknown-linux-gnu

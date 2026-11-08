@@ -2272,6 +2272,7 @@ mod tests {
     // ── Gray-class ICC swap on collapse ────────────────────────────
 
     /// Assert the context carries a GRAY-class ICC (header bytes 16..20).
+    #[cfg(feature = "icc-db")]
     fn assert_gray_class_icc(ctx: Option<&Arc<ColorContext>>) -> Arc<[u8]> {
         let icc = ctx
             .expect("reduced buffer must carry a context")

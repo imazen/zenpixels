@@ -9,3 +9,10 @@ Nominal --no-default-features unit test re-enabled defaults via self dev-depende
 that receipt is preserved but is not counted as genuine no-database coverage.
 Original-function failures, stricter malformed-input candidate, and C LCMS witness preserved.
 Commands: just icc-collapse-check; cargo clippy --locked -p zenpixels-convert --all-targets -- -D warnings
+After disabling defaults on the self dev-dependency: 60 genuine no-icc-db unit
+controls pass, 15s, peak RSS0.47GiB. Default configuration still passes63.
+Genuine no-icc-db all-target strict Clippy: pass,13s,peak RSS0.35GiB.
+Its original three unused-helper errors are preserved; only helper definitions
+are feature-gated with their existing callers, with no test skips or assertion changes.
+CMS six-platform workflow42509394450 passed production source daf405a2;
+final dev-feature isolation maintenance is qualified separately on the same code.

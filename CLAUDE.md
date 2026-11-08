@@ -135,9 +135,10 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
   variant preserves the existing truncated-input fallback and all established
   assertions; only complete ICCs require qualified matrix/TRC replacement.
   The stricter malformed-input proposal remains preserved, not adopted.
-  A self dev-dependency re-enables defaults in unit tests even with
-  --no-default-features. tools/icc-collapse-no-db proves genuine absence of
-  gray synthesis and exercises the consumer behavior; just icc-collapse-check.
+  The self dev-dependency previously re-enabled defaults in unit tests even
+  with --no-default-features; its defaults are now disabled, and 60 no-database
+  unit controls pass. tools/icc-collapse-no-db additionally proves absence of
+  gray synthesis for a normal dependency without std/CMS; just icc-collapse-check.
 - PQ PNG compatibility qualification (2026-11-08): keep native CICP plus a
   qualified ICC companion where permitted. The float-table pilot alone is not
   sufficient: Chromium 153 and explicitly color-managed Firefox 155 use its

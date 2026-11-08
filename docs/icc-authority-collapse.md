@@ -29,8 +29,10 @@ retained in the qualification evidence. No pixel tolerance is relaxed.
 `just icc-collapse-check` also tests an isolated normal dependency with no
 `icc-db` or CMS backend. Its positive control requires `NeedsCms` from gray
 synthesis; the four consumer controls pass. This isolation matters: the main
-crate's self dev-dependency re-enables defaults during unit tests, so its
---no-default-features invocation is not genuine no-database coverage.
+crate's self dev-dependency previously re-enabled defaults during unit tests.
+Its defaults are now disabled and the no-database unit configuration passes
+60 controls. CMS unit tests still enable std; the standalone normal dependency
+additionally excludes std and CMS backends.
 The focused CMS workflow runs the authority and isolated consumer controls on
 Linux x64/ARM, Windows x64/ARM, macOS ARM and i686.
 
@@ -38,3 +40,8 @@ Local gates: 63 focused controls, 4 genuinely isolated consumer controls,
 strict all-target converter Clippy and strict consumer Clippy pass. The final
 restored-source controls record 14 seconds / 0.48 GiB and 5 seconds / 0.31 GiB
 peak RSS; these are correctness checks, not performance comparisons.
+
+Disabling self dev-dependency defaults exposed three test helpers whose callers
+already require icc-db. Their definitions now use that same feature gate;
+no test is skipped and no assertion changes. Strict all-target Clippy also
+passes the genuine no-database unit configuration (13 seconds / 0.35 GiB).
