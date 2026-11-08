@@ -8,6 +8,9 @@ mod reference {
     pub fn chromaticities(p: u8) -> ([[f64; 2]; 3], [f64; 2]) {
         h273_chromaticities(p)
     }
+    pub fn colorants(p: u8) -> [[f64; 3]; 3] {
+        expected_h273_colorants(p)
+    }
 }
 #[path = "../../zenpixels-convert/src/icc_profiles/canonical.rs"]
 #[allow(dead_code)]
@@ -79,6 +82,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input = Path::new(&args[0]);
     let output = Path::new(&args[1]);
     std::fs::create_dir(output)?;
+    use std::io::Write;
+    let mut reference = std::fs::File::create(output.join("reference.tsv"))?;
+    writeln!(
+        reference,
+        "primaries\twhite_x\twhite_y\twhite_z\tr_x\tr_y\tr_z\tg_x\tg_y\tg_z\tb_x\tb_y\tb_z"
+    )?;
+    for p in [1, 4, 5, 6, 7, 8, 9, 11, 12, 22] {
+        let (_, [x, y]) = reference::chromaticities(p);
+        write!(reference, "{p}")?;
+        for value in [x / y, 1.0, (1.0 - x - y) / y]
+            .into_iter()
+            .chain(reference::colorants(p).into_iter().flatten())
+        {
+            write!(reference, "\t{value:.17e}")?;
+        }
+        writeln!(reference)?;
+    }
     let mut files: Vec<_> = std::fs::read_dir(input)?
         .map(|e| e.unwrap().path())
         .collect();
