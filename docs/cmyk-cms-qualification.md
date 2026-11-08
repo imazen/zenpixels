@@ -62,7 +62,7 @@ compiles the independent C evaluator, including native U8/U16 modes.
 rechecks the exact existing native inputs. Run builds through the host's resource
 wrapper with a separate Cargo output directory.
 
-The [oxcms CMYK equipment](https://github.com/imazen/oxcms/blob/main/tools/CMYK_ORACLE.md)
+The [oxcms CMYK equipment](https://github.com/imazen/oxcms/blob/1bf631b8d494/tools/CMYK_ORACLE.md)
 provides Argyll source/hash verification, the profile matrix, strided layout
 runner and common-ICC native control. Source CMYK fixtures are existing oxcms
 inputs; Argyll reference source/target profiles are explicitly fetched test data.
