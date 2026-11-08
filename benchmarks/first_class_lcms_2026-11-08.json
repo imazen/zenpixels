@@ -30,7 +30,8 @@
     "library_pass": 450,
     "library_existing_failure": "icc_profiles::cicp_bundle::tests::blob_decodes_byte_identical_to_moxcms",
     "library_existing_ignores": 1,
-    "standalone_site_locked_resolution": true
+    "standalone_site_locked_resolution": true,
+    "lcms_msrv_189_check": true
   },
   "candidate_gates": {
     "rgb_profiles": 159,
@@ -120,9 +121,25 @@
       "peak_rss_gib": 0.07,
       "min_available_mib": 27853,
       "peak_load": 7.17
+    },
+    {
+      "log": "lcms-msrv-189.log",
+      "rc": 0,
+      "elapsed_s": 18,
+      "peak_rss_gib": 0.34,
+      "min_available_mib": 27498,
+      "peak_load": 8.49
+    },
+    {
+      "log": "mox-exact-control.log",
+      "rc": 0,
+      "elapsed_s": 5,
+      "peak_rss_gib": 0.17,
+      "min_available_mib": 27744,
+      "peak_load": 7.31
     }
   ],
-  "recommendation": "LCMS colorimetry with explicit H273 xy; preserve existing bundle pending review; inherited curves need separate precision and HDR policy decisions",
+  "recommendation": "Adopt the shared exact-H273 colorimetric payload for a separate reviewed proposal; MoxCMS explicit inputs and LCMS give identical tags. Retain both controls; fix or specify inherited curve limits separately.",
   "limitations": [
     "No backend performance comparison",
     "No all-platform numerical equivalence claim",
@@ -170,5 +187,14 @@
     "local_rustc": "1.97.1 (8bab26f4f 2026-07-14)",
     "ci_rustc": "1.99.1 (58cf8f9c3 2026-10-13)",
     "rustdoc_json": "nightly-2026-07-13"
+  },
+  "equal_input_control": {
+    "rgb_profiles": 159,
+    "serialized_colorimetry_tags_compared": 795,
+    "colorimetry_tag_byte_mismatches": 0,
+    "decoded_cells": 43248,
+    "decoded_xyz_differences": 0,
+    "trc_cicp_changes": 0,
+    "constructor_inputs": "Explicit H273 white and primaries for both MoxCMS0.9.2 and LCMS39068cc6"
   }
 }

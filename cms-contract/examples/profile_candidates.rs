@@ -1,4 +1,4 @@
-//! Independent LCMS colorimetry with byte-preserved transfer/CICP payloads.
+//! Compare explicit H.273 colorimetry from both CMS constructors with unchanged TRCs.
 use lcms::{gamma, profile, types, virt};
 use std::path::Path;
 

@@ -36,7 +36,8 @@ Linux aarch64 qualification:
   prepared float CMYK rows, padding, BGR order, unaligned float alpha payloads and native CMYK16.
 - Existing MoxCMS tests pass: 17 integration and 21 accuracy tests, including
   the extended-F32 ProPhoto sign/range regressions.
-- LCMS alone without default features and unchanged no-default core both check.
+- LCMS alone without default features and unchanged no-default core both check;
+  LCMS also checks on the declared Rust 1.89 minimum.
 - Nine doctests and public API regeneration pass; strict backend and shared
   contract/example Clippy and format checks pass.
 - The full converter library passes 450 tests, retaining one existing ignore
@@ -57,10 +58,10 @@ Commands: `just cms-lcms-check`, `just api-doc-check`, and
 `just cms-rust-cmyk-oracle-check PROFILE C_ORACLE_TSV`. Full platform CI remains
 a separate gate; passing local contracts is not universal ICC qualification.
 
-## Three candidates
+## Candidate comparison
 
-The committed bundle is compared with the separate MoxCMS 0.9.2 proposal and a
-controlled LCMS candidate. The latter constructs RGB colorimetry from the exact
+The committed bundle is compared with the separate MoxCMS 0.9.2 proposal, a
+controlled LCMS candidate and an equal-input MoxCMS candidate. The latter constructs RGB colorimetry from the exact
 H.273 Table 2 xy coordinates through the pinned Rust port, then copies all three
 serialized TRCs and `cicp` verbatim from the proposal. All 175 gray profiles are
 copied unchanged. No candidate is written into the product bundle by these tools.
@@ -78,18 +79,24 @@ Maximum absolute component errors across all 159 RGB profiles:
 | Committed | 0.0002837666004208428 | 0.363339085523388 | 159 |
 | MoxCMS 0.9.2 proposal | 0.00002553651116043998 | 0.0001923968375997509 | 0 |
 | Controlled LCMS | 0.000007570372702658812 | 0.000008243196713553225 | 0 |
+| MoxCMS with the same exact H.273 inputs | 0.000007570372702658812 | 0.000008243196713553225 | 0 |
 
 LCMS colorants fit within half an s15Fixed16 storage step of the reference.
 Both new candidates' colorant sums miss PCS D50 by at most 0.0000152587890625;
 `wtpt` storage differs from exact PCS D50 by at most 0.0000053955078125333955.
-Every TRC/CICP payload remains identical in all three candidates.
+Every TRC/CICP payload remains identical in all four candidates.
 
 The committed `chad` contains Bradford cone-response coefficients instead of
 the full adaptation transform. MoxCMS 0.9.2 corrects that structure and adds
 D50 media white, but its CICP D65 coordinate is (0.31272, 0.32903), while H.273
 specifies (0.3127, 0.3290). The controlled LCMS constructor uses the latter.
-This explains a remaining input-white difference; it is not a reason to rank
-every MoxCMS conversion below LCMS.
+The equal-input control supplies the same H.273 coordinates to MoxCMS through
+`update_rgb_colorimetry`. All 795 serialized `rXYZ/gXYZ/bXYZ/chad/wtpt` tags
+across 159 RGB profiles then match LCMS byte-for-byte. Independent C LCMS finds
+zero changed XYZ components in all 43,248 decoded comparison cells between
+those two exact-input candidates, including neutrals, endpoints, PQ/HLG and
+extended inputs. The improvement is the input definition, not an inherent
+constructor-accuracy advantage for one CMS.
 
 ## Decoded color controls
 
@@ -112,8 +119,12 @@ parseability, separately from color accuracy.
 
 ## Trust and adoption recommendation
 
-Prefer LCMS-generated RGB colorimetry from explicit H.273 xy coordinates for the
-next bundle proposal. Keep historical recognition hashes and treat any changed
+Prefer the shared exact-H.273 colorimetric payload for the next bundle
+proposal. LCMS generation and MoxCMS with explicit H.273 coordinates produce
+identical colorimetry; either can supply it. Keep both as independent generator
+controls and gate the bytes against the standards-derived reference. A narrow
+MoxCMS generator input correction can preserve the existing generator route
+while producing the same colorimetric payload as LCMS. Keep historical recognition hashes and treat any changed
 established pixel expectation as an owner decision. Preserve the committed
 bundle and the existing MoxCMS proposal as separate reviewable candidates.
 
@@ -142,13 +153,14 @@ covered only by the decoded-color comparison, without an analytic guarantee.
 
 The immediate decision is therefore the RGB colorimetry source. A universal
 profile-trust claim additionally needs separate curve work, explicit HDR
-normalization/OOTF policy, and the relevant corpus/output comparisons. Neither
-new candidate changes those inherited limits. Keep MoxCMS's sign/range guards.
+normalization/OOTF policy, and the relevant corpus/output comparisons. None of the
+constructor candidates changes those inherited limits. Keep MoxCMS's sign/range guards.
 
 ## Reproduction and receipts
 
 - `just icc-lcms-candidates SOURCE_PROFILES FRESH_LCMS_PROFILES`
 - `just icc-profile-triage REFERENCE_TSV FRESH_RESULTS old=OLD mox092=PROPOSED lcms=LCMS`
+- `just icc-mox-exact-candidates SOURCE_PROFILES FRESH_MOX_EXACT_PROFILES`
 - `just icc-profile-curves LCMS_PROFILES`
 - `just icc-bundle-color-compare OLD NEW FRESH_RESULTS` for independent C LCMS.
 - `just icc-bundle-rust-color-compare OLD NEW FRESH_RESULTS` for the Rust port.

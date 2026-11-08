@@ -7,6 +7,7 @@ Transfer/CICP payload equality is checked separately to isolate colorimetry.
 """
 import csv
 import hashlib
+import itertools
 import json
 from pathlib import Path
 import struct
@@ -36,7 +37,7 @@ def main():
     with reference.open() as stream:
         refs = {int(r["primaries"]): r for r in csv.DictReader(stream, delimiter="\t")}
     output.mkdir(parents=True, exist_ok=False)
-    summary, records, curves = {}, [], {}
+    summary, records, curves, colorimetry = {}, [], {}, {}
     for candidate in sys.argv[3:]:
         label, folder = candidate.split("=", 1)
         paths = sorted(Path(folder).glob("rgb-*.icc"))
@@ -44,10 +45,13 @@ def main():
         maxima = {"colorant_error": 0.0, "pcs_white_sum_error": 0.0,
                   "chad_white_error": 0.0, "wtpt_error": 0.0}
         missing_white, mismatched_tags = [], []
+        colorimetry[label] = {}
         for path in paths:
             p, tc = map(int, path.stem.split("-")[1:])
             ref, data = refs[p], path.read_bytes()
             actual = tags(data)
+            colorimetry[label][path.name] = {key: actual.get(key) for key in
+                                             ["rXYZ", "gXYZ", "bXYZ", "chad", "wtpt"]}
             # The first candidate supplies transfer/tag controls; equivalence is byte-exact.
             control = curves.setdefault(path.name, {k: actual[k] for k in ["rTRC", "gTRC", "bTRC", "cicp"]})
             for name, payload in control.items():
@@ -72,6 +76,15 @@ def main():
                               missing_wtpt=len(missing_white), changed_transfer_or_cicp_tags=mismatched_tags)
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     (output / "profiles.json").write_text(json.dumps(records, indent=2) + "\n")
+    pairs = []
+    for left, right in itertools.combinations(colorimetry, 2):
+        a, b = colorimetry[left], colorimetry[right]
+        assert a.keys() == b.keys()
+        mismatches = [[name, key] for name, fields in a.items() for key, value in fields.items()
+                      if value != b[name][key]]
+        pairs.append(dict(left=left, right=right, profiles=len(a), tags_compared=len(a) * 5,
+                          mismatched_tags=len(mismatches), first_mismatches=mismatches[:8]))
+    (output / "colorimetry-equality.json").write_text(json.dumps(pairs, indent=2) + "\n")
     print(json.dumps(summary, indent=2))
 
 

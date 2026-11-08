@@ -325,6 +325,9 @@ jobs:
       - name: Check MSRV (zenpixels-convert @ 1.89)
         run: cargo +1.89.0 check -p zenpixels-convert
 
+      - name: Check MSRV (Rust LCMS backend @ 1.89)
+        run: cargo +1.89.0 check --locked -p zenpixels-convert --lib --no-default-features --features cms-lcms
+
   # ==========================================================================
   # Feature powerset (all feature combinations compile)
   # ==========================================================================
