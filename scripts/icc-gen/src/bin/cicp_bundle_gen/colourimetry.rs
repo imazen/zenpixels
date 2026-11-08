@@ -17,8 +17,8 @@ fn cramer(m: [[f64; 3]; 3], v: [f64; 3]) -> [f64; 3] {
         det(replaced) / d
     })
 }
-fn expected_h273_colorants(p: u8) -> [[f64; 3]; 3] {
-    let (xy, white): ([[f64; 2]; 3], [f64; 2]) = match p {
+fn h273_chromaticities(p: u8) -> ([[f64; 2]; 3], [f64; 2]) {
+    match p {
         1 => (
             [[0.640, 0.330], [0.300, 0.600], [0.150, 0.060]],
             [0.3127, 0.3290],
@@ -57,7 +57,10 @@ fn expected_h273_colorants(p: u8) -> [[f64; 3]; 3] {
             [0.3127, 0.3290],
         ),
         _ => panic!("no H.273 table row for primaries {p}"),
-    };
+    }
+}
+fn expected_h273_colorants(p: u8) -> [[f64; 3]; 3] {
+    let (xy, white) = h273_chromaticities(p);
     let xyz = |[x, y]: [f64; 2]| [x / y, 1.0, (1.0 - x - y) / y];
     let source_white = xyz(white);
     let columns = if p == 10 {

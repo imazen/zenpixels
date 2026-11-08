@@ -1,0 +1,152 @@
+#![cfg(feature = "cms-lcms")]
+use zenpixels_convert::{
+    Cicp, ColorProfileSource as Source, ConvertOptions, Lcms, PixelFormat as F, PluggableCms,
+};
+
+#[path = "common/synthetic_icc.rs"]
+#[allow(dead_code)]
+mod synthetic_icc;
+
+fn build(
+    src: Source<'_>,
+    dst: Source<'_>,
+    from: F,
+    to: F,
+) -> Box<dyn zenpixels_convert::RowTransformMut> {
+    Lcms.build_source_transform(src, dst, from, to, &ConvertOptions::permissive())
+        .expect("accepted format")
+        .expect("valid profile")
+}
+const SRGB: Source<'static> = Source::Cicp(Cicp::new(1, 13, 0, true));
+
+#[test]
+fn preparation_bounds_and_short_rows_fail_before_writes() {
+    let mut transform = build(SRGB, SRGB, F::Rgb8, F::Rgb8);
+    transform.prepare(2).unwrap();
+    for (input, width) in [(&[0u8; 2][..], 1), (&[0; 9][..], 3)] {
+        let mut output = [0xa5; 12];
+        assert!(
+            transform
+                .try_transform_row(input, &mut output, width)
+                .is_err()
+        );
+        assert_eq!(output, [0xa5; 12]);
+    }
+    let mut output = [0xa5; 2];
+    assert!(
+        transform
+            .try_transform_row(&[0; 3], &mut output, 1)
+            .is_err()
+    );
+    assert_eq!(output, [0xa5; 2]);
+}
+
+#[test]
+fn prepared_float_ink_rows_allocate_nothing_and_preserve_padding() {
+    let icc = synthetic_icc::synthetic_cmyk_icc();
+    let mut transform = build(Source::Icc(&icc), SRGB, F::CmykF32Inverted, F::RgbF32);
+    transform.prepare(17).unwrap();
+    let input = [1.0f32; 17 * 4];
+    let mut output = [f32::from_bits(0x7fc01234); 17 * 3 + 3];
+    let measured = allocation_counter::measure(|| {
+        transform
+            .try_transform_row(
+                bytemuck::cast_slice(&input),
+                bytemuck::cast_slice_mut(&mut output),
+                17,
+            )
+            .unwrap();
+    });
+    assert_eq!(measured.count_total, 0);
+    assert!(output[..51].iter().all(|v| (*v - 1.0).abs() < 0.001));
+    assert!(output[51..].iter().all(|v| v.to_bits() == 0x7fc01234));
+}
+
+#[test]
+fn bgr_and_bgra_match_rgb_channel_order_and_keep_alpha() {
+    for (from, to, input, expected) in [
+        (F::Bgr8, F::Rgb8, vec![17, 83, 201], vec![201, 83, 17]),
+        (
+            F::Bgra8,
+            F::Rgba8,
+            vec![17, 83, 201, 73],
+            vec![201, 83, 17, 73],
+        ),
+        (F::Rgb8, F::Bgr8, vec![201, 83, 17], vec![17, 83, 201]),
+        (
+            F::Rgba8,
+            F::Bgra8,
+            vec![201, 83, 17, 73],
+            vec![17, 83, 201, 73],
+        ),
+    ] {
+        let mut transform = build(SRGB, SRGB, from, to);
+        let mut output = vec![0; expected.len()];
+        transform.try_transform_row(&input, &mut output, 1).unwrap();
+        assert_eq!(output, expected, "{from:?}>{to:?}");
+    }
+}
+
+#[test]
+fn adding_alpha_makes_it_opaque_without_touching_later_pixels() {
+    for (from, to, input, expected) in [
+        (F::Rgb8, F::Rgba8, vec![255; 3], vec![255; 4]),
+        (F::Gray8, F::GrayA8, vec![255], vec![255; 2]),
+    ] {
+        let mut transform = build(SRGB, SRGB, from, to);
+        let mut output = vec![0xa5; expected.len() + 2];
+        transform.try_transform_row(&input, &mut output, 1).unwrap();
+        assert_eq!(&output[..expected.len()], expected);
+        assert_eq!(&output[expected.len()..], &[0xa5; 2]);
+    }
+}
+
+#[test]
+fn cmyk_u16_is_native_and_paper_white_keeps_alpha_opaque() {
+    let icc = synthetic_icc::synthetic_cmyk_icc();
+    let mut transform = build(Source::Icc(&icc), SRGB, F::Cmyk16, F::Rgba16);
+    let mut output = [0u16; 4];
+    transform
+        .try_transform_row(
+            bytemuck::cast_slice(&[0u16; 4]),
+            bytemuck::cast_slice_mut(&mut output),
+            1,
+        )
+        .unwrap();
+    assert!(output[..3].iter().all(|v| *v >= 65534), "{output:?}");
+    assert_eq!(output[3], 65535);
+}
+
+#[test]
+fn unsupported_and_device_dependent_descriptions_decline() {
+    for format in [F::RgbF16, F::Rgbx8, F::OklabF32] {
+        assert!(
+            Lcms.build_source_transform(SRGB, SRGB, format, F::Rgb8, &ConvertOptions::permissive())
+                .is_none()
+        );
+    }
+    assert!(
+        Lcms.build_source_transform(SRGB, SRGB, F::Cmyk8, F::Rgb8, &ConvertOptions::permissive())
+            .is_none()
+    );
+    assert!(
+        Lcms.build_source_transform(SRGB, SRGB, F::Rgb8, F::Rgb16, &ConvertOptions::permissive())
+            .is_none()
+    );
+}
+
+#[test]
+fn unsupported_rgb_matrix_or_range_is_an_explicit_failure() {
+    for cicp in [Cicp::new(1, 13, 9, true), Cicp::new(1, 13, 0, false)] {
+        assert!(matches!(
+            Lcms.build_source_transform(
+                Source::Cicp(cicp),
+                SRGB,
+                F::Rgb8,
+                F::Rgb8,
+                &ConvertOptions::permissive()
+            ),
+            Some(Err(_))
+        ));
+    }
+}
