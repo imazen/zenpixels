@@ -24,7 +24,7 @@ function chunk(type, data) {
 
 // Deliberately contradictory fallback: a large visual witness for whether the
 // CMM uses DToB or matrix/TRC. These profiles are diagnostics, never exports.
-function rewriteProfile(source, { removeFloat = false, linearize = false, removeCicp = true } = {}) {
+function profileEntries(source) {
   const count = source.readUInt32BE(128);
   const entries = [];
   for (let i = 0; i < count; i++) {
@@ -32,13 +32,32 @@ function rewriteProfile(source, { removeFloat = false, linearize = false, remove
     const tag = source.toString('ascii', pos, pos + 4);
     const offset = source.readUInt32BE(pos + 4), size = source.readUInt32BE(pos + 8);
     if (offset + size > source.length) throw Error('ICC tag outside file');
+    entries.push({ tag, data: source.subarray(offset, offset + size) });
+  }
+  return entries;
+}
+function rewriteProfile(source, { removeFloat = false, linearize = false, removeCicp = true, floatFrom = null } = {}) {
+  const entries = [];
+  for (const { tag, data: originalData } of profileEntries(source)) {
     if (removeFloat && /^[DB]2[BD][0-3]$/.test(tag)) continue;
     if (removeCicp && tag === 'cicp') continue;
-    let data = source.subarray(offset, offset + size);
+    let data = originalData;
     if (linearize && ['rTRC', 'gTRC', 'bTRC'].includes(tag)) {
       data = Buffer.alloc(16); data.write('para'); data.writeInt32BE(65536, 12);
     }
     entries.push({ tag, data });
+  }
+  if (floatFrom) {
+    const floatEntries = profileEntries(floatFrom);
+    for (const tag of ['rXYZ', 'gXYZ', 'bXYZ']) {
+      const a = entries.find(e => e.tag === tag), b = floatEntries.find(e => e.tag === tag);
+      if (!a || !b || !a.data.equals(b.data)) throw Error('hybrid colorants differ');
+    }
+    for (const tag of ['D2B0', 'D2B1']) {
+      const entry = floatEntries.find(e => e.tag === tag);
+      if (!entry || entries.some(e => e.tag === tag)) throw Error('missing or duplicate hybrid float pipeline');
+      entries.push(entry);
+    }
   }
   const header = Buffer.from(source.subarray(0, 128));
   header.fill(0, 84, 100); // Invalidated profile ID, not a claimed original ID.
@@ -106,6 +125,13 @@ async function main() {
     if (!/^[a-z0-9-]+$/.test(name) || name in variants) throw Error(`invalid extra variant ${name}`);
     variants[name] = [rewriteProfile(fs.readFileSync(filename)), false];
   }
+  const hybrids = JSON.parse(process.env.PQ_READER_HYBRIDS || '{}');
+  for (const [name, filename] of Object.entries(hybrids)) {
+    if (!/^[a-z0-9-]+$/.test(name) || name in variants || `${name}-conventional` in variants) throw Error(`invalid hybrid ${name}`);
+    const conventional = fs.readFileSync(filename);
+    variants[name] = [rewriteProfile(conventional, { floatFrom: floating }), false];
+    variants[`${name}-conventional`] = [rewriteProfile(conventional), false];
+  }
   const fixtures = {};
   for (const [name, [icc, cicp]] of Object.entries(variants)) {
     const data = png(samples, icc, cicp); fs.writeFileSync(path.join(output, `${name}.png`), data);
@@ -170,6 +196,10 @@ async function main() {
           ['linear-icc-vs-untagged', 'linear-only', 'untagged'],
           ['embedded-cicp-vs-icc-curves', 'original-embedded-cicp', 'original'],
           ...Object.keys(extraProfiles).map(extra => [`${extra}-vs-float`, extra, 'float']),
+          ...Object.keys(hybrids).flatMap(hybrid => [
+            [`${hybrid}-vs-float`, hybrid, 'float'],
+            [`${hybrid}-vs-conventional`, hybrid, `${hybrid}-conventional`],
+          ]),
         ].map(([label, a, b]) => [label, compare(values[a], values[b], float16)])),
       };
       console.log(name, browser.version(), JSON.stringify(report.readers[name].comparisons));

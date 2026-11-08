@@ -61,12 +61,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let dest = dest.encode()?;
         let initial = base.encode()?;
         let mut variants = vec![("original".to_owned(), initial.clone())];
-        for power in [3.0f64, 8.0] {
+        for (power, entries) in [(3.0f64, 32767), (8.0, 32767), (3.0, 4097), (8.0, 4097)] {
             let mut shaped = base.clone();
             let root = ToneReprCurve::Lut(
-                (0..32767)
+                (0..entries)
                     .map(|code| {
-                        (pq(f64::from(code) / 32766.0).powf(1.0 / power) * 65535.0).round() as u16
+                        (pq(f64::from(code) / f64::from(entries - 1)).powf(1.0 / power) * 65535.0)
+                            .round() as u16
                     })
                     .collect(),
             );
@@ -115,7 +116,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             shaped.lut_a_to_b_perceptual = Some(table);
             shaped.cicp = None;
             variants.push((
-                (if power == 3.0 { "mab3" } else { "mab8" }).to_owned(),
+                if entries == 32767 {
+                    (if power == 3.0 { "mab3" } else { "mab8" }).to_owned()
+                } else {
+                    format!("mab{}-{entries}", power as u32)
+                },
                 shaped.encode()?,
             ));
         }

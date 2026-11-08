@@ -177,6 +177,41 @@ coverage; `benchmarks/pq_png_readers_webkit_2026-11-08.json` adds the WPE run an
 runtime identities. The Chromium/Firefox run took 5 s, peak RSS 0.42 GiB; the
 WPE run took 1 s, peak RSS 0.15 GiB, both under run-heavy.
 
+The compound integer pilots also read in all three enabled engines. Chromium's
+verified float16 canvas exposes shadow differences hidden by U8 readback: at
+input 1024/65535 the old TRC yields zero, while the root-cube and root-eighth
+compound profiles both yield sRGB 0.0000069141387939453125. Float16 output is
+quantized and this is a bounded witness, not an exhaustive precision claim.
+Firefox and WPE did not supply the verified float16 context required by this
+probe; those requests failed explicitly. The U8 controls and original failures
+remain recorded in `benchmarks/pq_png_compound_2026-11-08.json`.
+
+Combining 4,097-entry float tables with 4,097-entry compound conventional
+tables preserves the reader choices in the hybrid pilot: Chromium and enabled
+Firefox match the conventional control; Linux WPE matches the float control.
+C LCMS 2.20's relative XYZ also matches the float-only control exactly on 136
+inputs. Absolute intent differs (405 of 408 channels, maximum
+0.00003671590093290433), as no absolute float pipeline is supplied. This
+relative result does not qualify inverse transforms or all rendering intents.
+
+The smaller root-eighth conventional table has maximum red-channel neutral
+error 0.0001472459918 through Rust LCMS over all U16 inputs, relative error
+0.0008368297694 above 0.001 nit, and zero positive inputs rounded to zero.
+The root-cube alternative has lower maximum absolute error 0.00007860331726
+but larger maximum relative error 0.008997117382. MoxCMS still has substantial
+compound-pipeline error; the float capability refusal remains necessary.
+Strict standalone all-target Clippy passes. These are measurements, not newly
+accepted thresholds.
+
+For this one BT.2020 profile, the raw hybrid ICC is 155,404 bytes and its
+PNG-compressed ICC payload is 27,094 bytes (root-eighth), versus 6,532/1,803
+bytes for the old curve. Full-bundle size has not been measured, and these
+figures must not be extrapolated across all profiles. The hybrid remains a
+representation candidate: physical luminance conventions, reverse transforms,
+gray/native codec controls and complete serialized definitions still need
+qualification before export adoption. See
+`benchmarks/pq_png_hybrid_2026-11-08.json` for exact identities and limits.
+
 ## Intent-scoped capability guard qualification
 
 The final guard checks source DToB1 and destination BToD1 for the requested
