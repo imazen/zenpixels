@@ -57,6 +57,7 @@ dependencies = [
  "archmage",
  "bytemuck",
  "lcms",
+ "moxcms",
  "whereat",
  "zenpixels",
  "zenpixels-convert",
