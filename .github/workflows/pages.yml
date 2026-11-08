@@ -23,7 +23,7 @@ jobs:
           components: rustfmt, clippy
       - name: Install pinned binding generator
         run: |
-          curl -fLsS https://github.com/wasm-bindgen/wasm-bindgen/releases/download/0.2.130/wasm-bindgen-0.2.130-x86_64-unknown-linux-musl.tar.gz -o "$RUNNER_TEMP/wasm-bindgen.tar.gz"
+          curl -fLsS --retry 5 --retry-delay 2 --retry-max-time 120 https://github.com/wasm-bindgen/wasm-bindgen/releases/download/0.2.130/wasm-bindgen-0.2.130-x86_64-unknown-linux-musl.tar.gz -o "$RUNNER_TEMP/wasm-bindgen.tar.gz"
           echo '9687f3bb551b9f66f37ed32a40d7913a00f7962db653054e56857bc306c3227f  '"$RUNNER_TEMP/wasm-bindgen.tar.gz" | sha256sum -c -
           tar -xf "$RUNNER_TEMP/wasm-bindgen.tar.gz" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/wasm-bindgen-0.2.130-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
