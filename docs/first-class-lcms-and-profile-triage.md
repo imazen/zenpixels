@@ -61,7 +61,7 @@ a separate gate; passing local contracts is not universal ICC qualification.
 ## Candidate comparison
 
 The committed bundle is compared with the separate MoxCMS 0.9.2 proposal, a
-controlled LCMS candidate and an equal-input MoxCMS candidate. The latter constructs RGB colorimetry from the exact
+controlled LCMS candidate and an equal-input MoxCMS candidate. The LCMS candidate constructs RGB colorimetry from the exact
 H.273 Table 2 xy coordinates through the pinned Rust port, then copies all three
 serialized TRCs and `cicp` verbatim from the proposal. All 175 gray profiles are
 copied unchanged. No candidate is written into the product bundle by these tools.
@@ -82,7 +82,7 @@ Maximum absolute component errors across all 159 RGB profiles:
 | MoxCMS with the same exact H.273 inputs | 0.000007570372702658812 | 0.000008243196713553225 | 0 |
 
 LCMS colorants fit within half an s15Fixed16 storage step of the reference.
-Both new candidates' colorant sums miss PCS D50 by at most 0.0000152587890625;
+All three regenerated candidates' colorant sums miss PCS D50 by at most 0.0000152587890625;
 `wtpt` storage differs from exact PCS D50 by at most 0.0000053955078125333955.
 Every TRC/CICP payload remains identical in all four candidates.
 
