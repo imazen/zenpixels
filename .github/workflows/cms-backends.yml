@@ -42,7 +42,7 @@ jobs:
       - name: Shared MoxCMS and LCMS contract
         run: cargo test --locked --manifest-path cms-contract/Cargo.toml
       - name: ICC authority during grayscale collapse
-        run: cargo test --locked -p zenpixels-convert --lib load_bearing::
+        run: "cargo test --locked -p zenpixels-convert --lib load_bearing::"
       - name: Grayscale collapse without an ICC database
         run: cargo test --locked --manifest-path tools/icc-collapse-no-db/Cargo.toml
       - name: Strict converter Clippy
@@ -69,6 +69,6 @@ jobs:
       - name: Shared MoxCMS and LCMS contract
         run: cross test --locked --manifest-path cms-contract/Cargo.toml --target i686-unknown-linux-gnu
       - name: ICC authority during grayscale collapse
-        run: cross test --locked -p zenpixels-convert --lib --target i686-unknown-linux-gnu load_bearing::
+        run: "cross test --locked -p zenpixels-convert --lib --target i686-unknown-linux-gnu load_bearing::"
       - name: Grayscale collapse without an ICC database
         run: cross test --locked --manifest-path tools/icc-collapse-no-db/Cargo.toml --target i686-unknown-linux-gnu
