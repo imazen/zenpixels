@@ -64,3 +64,6 @@ fuzz-*.log
 
 # colocated jj state dir
 .jj/
+
+# Python validation bytecode
+__pycache__/
