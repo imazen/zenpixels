@@ -60,7 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         dest.cicp = None;
         let dest = dest.encode()?;
         let initial = base.encode()?;
-        let mut variants = vec![("original", initial.clone())];
+        let mut variants = vec![("original".to_owned(), initial.clone())];
         for power in [3.0f64, 8.0] {
             let mut shaped = base.clone();
             let root = ToneReprCurve::Lut(
@@ -114,41 +114,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             shaped.lut_a_to_b_colorimetric = Some(table.clone());
             shaped.lut_a_to_b_perceptual = Some(table);
             shaped.cicp = None;
-            variants.push((if power == 3.0 { "mab3" } else { "mab8" }, shaped.encode()?));
-        }
-        let mut mpe = profile::open_profile_from_mem(None, &initial).ok_or("open MPE source")?;
-        let samples: Vec<_> = (0..=65535)
-            .map(|c| pq(f64::from(c) / 65535.0) as f32)
-            .collect();
-        let curve = gamma::build_tabulated_tone_curve_float(None, &samples).ok_or("float curve")?;
-        let mut pipe = lut::pipeline_alloc(None, inputs as u32, 3).ok_or("pipeline")?;
-        assert!(
-            pipe.insert_stage(
-                lut::StageLoc::AtEnd,
-                lut::stage_alloc_tone_curves(None, inputs as u32, Some(&vec![&curve; inputs]))
-                    .ok_or("curves stage")?
-            )
-        );
-        let matrix = if gray {
-            vec![d50.x, d50.y, d50.z]
-        } else {
-            colorants.to_vec()
-        };
-        assert!(pipe.insert_stage(
-            lut::StageLoc::AtEnd,
-            lut::stage_alloc_matrix(None, 3, inputs as u32, &matrix, None).ok_or("matrix stage")?
-        ));
-        for signature in [*b"D2B0", *b"D2B1"] {
-            assert!(profile::cms_write_tag(
-                &mut mpe,
-                u32::from_be_bytes(signature),
-                Some(TagObject::Mpe(pipe.clone()))
+            variants.push((
+                (if power == 3.0 { "mab3" } else { "mab8" }).to_owned(),
+                shaped.encode()?,
             ));
         }
-        variants.push((
-            "mpe",
-            profile::save_profile_to_mem(&mut mpe).ok_or("save MPE")?,
-        ));
+        for entries in [257, 1025, 4097, 16385, 65536] {
+            let mut mpe =
+                profile::open_profile_from_mem(None, &initial).ok_or("open MPE source")?;
+            let samples: Vec<_> = (0..entries)
+                .map(|c| pq(f64::from(c) / f64::from(entries - 1)) as f32)
+                .collect();
+            let curve =
+                gamma::build_tabulated_tone_curve_float(None, &samples).ok_or("float curve")?;
+            let mut pipe = lut::pipeline_alloc(None, inputs as u32, 3).ok_or("pipeline")?;
+            assert!(
+                pipe.insert_stage(
+                    lut::StageLoc::AtEnd,
+                    lut::stage_alloc_tone_curves(None, inputs as u32, Some(&vec![&curve; inputs]))
+                        .ok_or("curves stage")?
+                )
+            );
+            let matrix = if gray {
+                vec![d50.x, d50.y, d50.z]
+            } else {
+                colorants.to_vec()
+            };
+            assert!(
+                pipe.insert_stage(
+                    lut::StageLoc::AtEnd,
+                    lut::stage_alloc_matrix(None, 3, inputs as u32, &matrix, None)
+                        .ok_or("matrix stage")?
+                )
+            );
+            for signature in [*b"D2B0", *b"D2B1"] {
+                assert!(profile::cms_write_tag(
+                    &mut mpe,
+                    u32::from_be_bytes(signature),
+                    Some(TagObject::Mpe(pipe.clone()))
+                ));
+            }
+            variants.push((
+                format!("mpe-{entries}"),
+                profile::save_profile_to_mem(&mut mpe).ok_or("save MPE")?,
+            ));
+        }
         let mut formula =
             profile::open_profile_from_mem(None, &initial).ok_or("open formula profile")?;
         let mut pipe = lut::pipeline_alloc(None, inputs as u32, 3).ok_or("formula pipeline")?;
@@ -202,11 +212,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ));
         }
         variants.push((
-            "mpe-formula",
+            "mpe-formula".to_owned(),
             profile::save_profile_to_mem(&mut formula).ok_or("save formula MPE")?,
         ));
         for (variant, bytes) in variants {
             std::fs::write(output.join(format!("{kind}-{variant}.icc")), &bytes)?;
+            println!("{kind}\t{variant}\tbytes={}", bytes.len());
             let fmt = if gray {
                 PixelFormat::GrayF32
             } else {
