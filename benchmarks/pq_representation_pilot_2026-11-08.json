@@ -3,7 +3,7 @@
   "source": "27882b3966fbd64804dc7c49035ac31fc25bccc5",
   "command": "just icc-pq-precision RGB_PQ_ICC GRAY_PQ_ICC FRESH_OUTPUT_DIR",
   "inputs": "Prior exact-H273 candidate RGB9/TC16 and GRAY1/TC16; old integer curves retained as pilot baseline",
-  "scope": "Neutral normalized-U16 grid through production adapters; no adopted tolerance and no full color/profile qualification",
+  "scope": "Red-channel error on neutral normalized-U16 grid through production adapters; no adopted tolerance and no full color/profile qualification",
   "moxcms": "0.9.2",
   "rust_lcms": "39068cc62f470d183e078637e19504ac9ecf7392",
   "run_heavy": "rc0 8s peak-RSS0.23GiB min-avail27263MiB peak-load6.15",

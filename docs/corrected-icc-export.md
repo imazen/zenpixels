@@ -32,7 +32,8 @@ Other corpus entries and their existing numerical bounds are unchanged.
 The standalone `just icc-pq-precision RGB GRAY OUTPUT` pilot compares production
 backends on all 65,536 normalized U16 inputs. Maximum errors below refer to a
 neutral BT.2020 RGB ramp into a matching linear profile, with clipping disabled.
-Relative error is measured only above 0.001 nit (normalized PQ >= 1e-7).
+The pilot reports red-channel error for that neutral ramp; it does not claim
+a maximum across colored RGB inputs. Relative error is measured only above 0.001 nit (normalized PQ >= 1e-7).
 
 | Representation | Backend | Maximum absolute error | Maximum relative error above 0.001 nit | Positive inputs decoded to zero |
 |---|---|---:|---:|---:|
@@ -54,10 +55,10 @@ retained as a failed experiment, not counted as a passing representation.
 
 MoxCMS 0.9.2 does not implement the float DToB/BToD pipeline tags. ICC.1:2022
 8.10 explicitly permits fallback when those tags are unsupported: this alone
-is not a specification violation. The zenpixels adapter now declines such
-profiles, allowing a configured capable backend to handle them rather than
+is not a specification violation. The zenpixels adapter declines profiles containing a float pipeline for its
+requested relative-colorimetric intent, allowing a configured capable backend to handle them rather than
 silently accepting the lower-precision fallback. The shared CMS contract
-passes 14 tests with two pre-existing ignores; the new regression failed
+passes 14 tests with two pre-existing ignores in the initial guard control; the new regression failed
 before this capability guard. Both backends remain first-class; no default
 backend or frozen LCMS pin is changed.
 
