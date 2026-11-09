@@ -39,7 +39,6 @@
 //! ```
 
 use alloc::boxed::Box;
-use whereat::ResultAtExt as _;
 
 use crate::PixelFormat;
 #[cfg(test)]
@@ -109,18 +108,12 @@ impl crate::cms::RowTransformMut for LiteTransformMut {
     ) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
         self.inner
             .try_convert_row(src, dst, width)
-            .map_err(crate::cms::CmsPluginError::new)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()
+            .map_err(|e| whereat::at!(crate::cms::CmsPluginError::new(e)))
     }
     fn prepare(&mut self, max_width: u32) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
         self.inner
             .prepare(max_width)
-            .map_err(crate::cms::CmsPluginError::new)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()
+            .map_err(|e| whereat::at!(crate::cms::CmsPluginError::new(e)))
     }
 }
 

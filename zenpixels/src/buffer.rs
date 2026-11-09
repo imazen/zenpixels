@@ -22,6 +22,7 @@ use core::fmt;
 use core::marker::PhantomData;
 
 use whereat::At;
+#[cfg(feature = "rgb")]
 use whereat::ResultAtExt;
 
 #[cfg(feature = "imgref")]
@@ -746,9 +747,7 @@ impl<'a> PixelSlice<'a> {
             stride_bytes,
             &descriptor,
         )
-        .map_err(whereat::At::wrap)
-        .at_crate(crate::at_crate_info())
-        .at()?;
+        .map_err(|e| whereat::at!(e))?;
         Ok(Self {
             data,
             width,
@@ -868,9 +867,7 @@ impl<'a, P> PixelSlice<'a, P> {
             self.stride,
             &descriptor,
         )
-        .map_err(whereat::At::wrap)
-        .at_crate(crate::at_crate_info())
-        .at()?;
+        .map_err(|e| whereat::at!(e))?;
         if !exact_survives(self.descriptor, descriptor) {
             self.exact = None;
         }
@@ -1053,16 +1050,10 @@ impl<'a, P> PixelSlice<'a, P> {
     pub fn try_to_tight_buffer(&self) -> Result<PixelBuffer, At<BufferError>> {
         let row_bytes = (self.width as usize)
             .checked_mul(self.descriptor.bytes_per_pixel())
-            .ok_or(BufferError::InvalidDimensions)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let total = row_bytes
             .checked_mul(self.rows as usize)
-            .ok_or(BufferError::InvalidDimensions)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         // A valid empty view may have no bytes at any row start, and an empty slice's
         // pointer need not be aligned for the sample type.
         let row_count = if total == 0 { 0 } else { self.rows as usize };
@@ -1071,9 +1062,7 @@ impl<'a, P> PixelSlice<'a, P> {
             &self.data[start..start + row_bytes]
         });
         let data = PixelStorage::try_from_rows(self.descriptor.channel_type(), total, rows)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .map_err(|e| whereat::at!(e))?;
         Ok(PixelBuffer {
             data,
             offset: 0,
@@ -1279,10 +1268,7 @@ impl<'a, P: Pixel> PixelSlice<'a, P> {
         }
         let stride_bytes = (stride_pixels as usize)
             .checked_mul(core::mem::size_of::<P>())
-            .ok_or(BufferError::InvalidDimensions)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         validate_slice(
             data.len(),
             data.as_ptr(),
@@ -1291,9 +1277,7 @@ impl<'a, P: Pixel> PixelSlice<'a, P> {
             stride_bytes,
             &P::DESCRIPTOR,
         )
-        .map_err(whereat::At::wrap)
-        .at_crate(crate::at_crate_info())
-        .at()?;
+        .map_err(|e| whereat::at!(e))?;
         Ok(Self {
             data,
             width,
@@ -1391,16 +1375,10 @@ impl<'a, P> PixelSlice<'a, P> {
         let row_bytes = self.width as usize * self.descriptor.bytes_per_pixel();
         let total = row_bytes
             .checked_mul(self.rows as usize)
-            .ok_or(BufferError::InvalidDimensions)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let mut buf = Vec::new();
         buf.try_reserve_exact(total)
-            .map_err(|_| BufferError::AllocationFailed)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .map_err(|_| whereat::at!(BufferError::AllocationFailed))?;
         for y in 0..self.rows {
             buf.extend_from_slice(self.row(y));
         }
@@ -1472,9 +1450,7 @@ impl<'a> PixelSliceMut<'a> {
             stride_bytes,
             &descriptor,
         )
-        .map_err(whereat::At::wrap)
-        .at_crate(crate::at_crate_info())
-        .at()?;
+        .map_err(|e| whereat::at!(e))?;
         Ok(Self {
             data,
             width,
@@ -1562,9 +1538,7 @@ impl<'a, P> PixelSliceMut<'a, P> {
             self.stride,
             &descriptor,
         )
-        .map_err(whereat::At::wrap)
-        .at_crate(crate::at_crate_info())
-        .at()?;
+        .map_err(|e| whereat::at!(e))?;
         self.descriptor = descriptor;
         Ok(self)
     }
@@ -1814,10 +1788,7 @@ impl<'a, P: Pixel> PixelSliceMut<'a, P> {
         }
         let stride_bytes = (stride_pixels as usize)
             .checked_mul(core::mem::size_of::<P>())
-            .ok_or(BufferError::InvalidDimensions)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         validate_slice(
             data.len(),
             data.as_ptr(),
@@ -1826,9 +1797,7 @@ impl<'a, P: Pixel> PixelSliceMut<'a, P> {
             stride_bytes,
             &P::DESCRIPTOR,
         )
-        .map_err(whereat::At::wrap)
-        .at_crate(crate::at_crate_info())
-        .at()?;
+        .map_err(|e| whereat::at!(e))?;
         Ok(Self {
             data,
             width,
@@ -2301,36 +2270,24 @@ impl<T: PlaneSample> PixelBuffer<(), AlignedSamples<T>> {
         height: u32,
         descriptor: PixelDescriptor,
     ) -> Result<Self, At<BufferError>> {
-        descriptor
-            .validate()
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+        descriptor.validate().map_err(|e| whereat::at!(e))?;
         let sample = core::mem::size_of::<T>();
         if sample != 1 && T::CHANNEL_TYPE != descriptor.channel_type() {
             return Err(whereat::at!(BufferError::IncompatibleDescriptor));
         }
         (width as usize)
             .checked_mul(descriptor.bytes_per_pixel())
-            .ok_or(BufferError::InvalidDimensions)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let stride = descriptor.simd_aligned_stride(width, 64);
         let total = stride
             .checked_mul(height as usize)
-            .ok_or(BufferError::InvalidDimensions)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
-        let data = AlignedSamples::try_zeroed(total / sample)
-            .map_err(|e| match e {
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        let data = AlignedSamples::try_zeroed(total / sample).map_err(|e| {
+            whereat::at!(match e {
                 PlaneError::AllocationFailed => BufferError::AllocationFailed,
                 _ => BufferError::InvalidDimensions,
             })
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+        })?;
         Ok(Self {
             data,
             offset: 0,
@@ -2444,27 +2401,15 @@ impl PixelBuffer {
         height: u32,
         descriptor: PixelDescriptor,
     ) -> Result<Self, At<BufferError>> {
-        descriptor
-            .validate()
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+        descriptor.validate().map_err(|e| whereat::at!(e))?;
         let stride = (width as usize)
             .checked_mul(descriptor.bytes_per_pixel())
-            .ok_or(BufferError::InvalidDimensions)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let total = stride
             .checked_mul(height as usize)
-            .ok_or(BufferError::InvalidDimensions)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let (data, offset) = alloc_storage(&descriptor, total, descriptor.min_alignment())
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .map_err(|e| whereat::at!(e))?;
         Ok(Self {
             data,
             offset,
@@ -2498,23 +2443,13 @@ impl PixelBuffer {
         height: u32,
         descriptor: PixelDescriptor,
     ) -> Result<Self, At<BufferError>> {
-        descriptor
-            .validate()
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+        descriptor.validate().map_err(|e| whereat::at!(e))?;
         let stride = (width as usize)
             .checked_mul(descriptor.bytes_per_pixel())
-            .ok_or(BufferError::InvalidDimensions)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let total = stride
             .checked_mul(height as usize)
-            .ok_or(BufferError::InvalidDimensions)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         if data.len() < total {
             return Err(whereat::at!(BufferError::InsufficientData));
         }
@@ -2522,9 +2457,7 @@ impl PixelBuffer {
             data.into()
         } else {
             let mut typed = PixelStorage::try_zeroed(descriptor.channel_type(), total)
-                .map_err(whereat::At::wrap)
-                .at_crate(crate::at_crate_info())
-                .at()?;
+                .map_err(|e| whereat::at!(e))?;
             typed.as_bytes_mut()[..total].copy_from_slice(&data[..total]);
             typed
         };
@@ -2570,28 +2503,16 @@ impl<P: Pixel> PixelBuffer<P> {
     pub fn try_new_typed(width: u32, height: u32) -> Result<Self, At<BufferError>> {
         const { assert!(core::mem::size_of::<P>() == P::DESCRIPTOR.bytes_per_pixel()) }
         let descriptor = P::DESCRIPTOR;
-        descriptor
-            .validate()
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+        descriptor.validate().map_err(|e| whereat::at!(e))?;
         let stride = (width as usize)
             .checked_mul(descriptor.bytes_per_pixel())
-            .ok_or(BufferError::InvalidDimensions)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let total = stride
             .checked_mul(height as usize)
-            .ok_or(BufferError::InvalidDimensions)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let align = descriptor.min_alignment().max(core::mem::align_of::<P>());
-        let (data, offset) = alloc_storage(&descriptor, total, align)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+        let (data, offset) =
+            alloc_storage(&descriptor, total, align).map_err(|e| whereat::at!(e))?;
         Ok(Self {
             data,
             offset,
@@ -2639,25 +2560,15 @@ impl<P: Pixel> PixelBuffer<P> {
         // instead of producing a misshapen `PixelBuffer`.
         let expected = (width as usize)
             .checked_mul(height as usize)
-            .ok_or(BufferError::InvalidDimensions)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         if pixels.len() != expected {
             return Err(whereat::at!(BufferError::InvalidDimensions));
         }
         let descriptor = P::DESCRIPTOR;
-        descriptor
-            .validate()
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+        descriptor.validate().map_err(|e| whereat::at!(e))?;
         let stride = (width as usize)
             .checked_mul(descriptor.bytes_per_pixel())
-            .ok_or(BufferError::InvalidDimensions)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let (data, offset) = pixels_into_storage(pixels, descriptor.channel_type());
         Ok(Self {
             data,
@@ -3108,9 +3019,7 @@ impl<'a> InPlacePixels<'a> {
             stride,
             &descriptor,
         )
-        .map_err(whereat::At::wrap)
-        .at_crate(crate::at_crate_info())
-        .at()?;
+        .map_err(|e| whereat::at!(e))?;
         Ok(Self::new_unchecked(
             bytes, width, rows, stride, descriptor, color,
         ))
@@ -3294,9 +3203,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
             self.stride,
             &descriptor,
         )
-        .map_err(whereat::At::wrap)
-        .at_crate(crate::at_crate_info())
-        .at()?;
+        .map_err(|e| whereat::at!(e))?;
         if !exact_survives(self.descriptor, descriptor) {
             self.exact = None;
         }
@@ -3740,16 +3647,10 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
         let row_bytes = self.width as usize * self.descriptor.bytes_per_pixel();
         let total = row_bytes
             .checked_mul(self.height as usize)
-            .ok_or(BufferError::InvalidDimensions)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let mut out = Vec::new();
         out.try_reserve_exact(total)
-            .map_err(|_| BufferError::AllocationFailed)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .map_err(|_| whereat::at!(BufferError::AllocationFailed))?;
         let slice = self.as_slice();
         for y in 0..self.height {
             out.extend_from_slice(slice.row(y));
@@ -3915,22 +3816,14 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
     ) -> Result<PixelBuffer<P>, At<BufferError>> {
         let src = self
             .try_crop_view(x, y, w, h)
-            .ok_or(BufferError::InvalidDimensions)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let stride = self.descriptor.aligned_stride(w);
         let align = self.descriptor.min_alignment();
         let total = stride
             .checked_mul(h as usize)
-            .ok_or(BufferError::InvalidDimensions)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
-        let (data, offset) = alloc_storage(&self.descriptor, total, align)
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        let (data, offset) =
+            alloc_storage(&self.descriptor, total, align).map_err(|e| whereat::at!(e))?;
         let mut dst = PixelBuffer {
             data,
             offset,

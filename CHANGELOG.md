@@ -49,8 +49,8 @@ None. This new companion is an unpublished review API.
 
 ### Fixed
 
-- Capture error trace locations outside closures and preserve the public
-  `track_caller` chain (`f0fdc3f9`).
+- Preserve distinct error origins instead of routing them through shared
+  trace-producing closures. Inline error-mapping closures remain supported.
 - Keep each conversion operation with its descriptors and scale; preserve
   policy across channel swizzles and compositing rewrites (`0e309692`).
 - Resolve output white/context consistently across allocating, into, adaptation

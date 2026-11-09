@@ -51,7 +51,6 @@
 
 use core::fmt;
 use whereat::At;
-use whereat::ResultAtExt as _;
 use zenpixels::{
     ChannelLayout, ChannelType, PixelDescriptor, PixelSliceMut, SignalRange,
     sample::{CodePlane, CodePlaneError, ExactDepth, SampleEncoding},
@@ -417,10 +416,7 @@ pub fn to_canonical<'b>(
         };
         maps[component] = Some(
             CodeMap::new(plane.encoding(), canonical, role, range)
-                .map_err(|error| CodesError::Map { component, error })
-                .map_err(whereat::At::wrap)
-                .at_crate(crate::at_crate_info())
-                .at()?,
+                .map_err(|error| whereat::at!(CodesError::Map { component, error }))?,
         );
         if x.checked_add(width).is_none_or(|end| end > plane.width())
             || y.checked_add(height).is_none_or(|end| end > plane.height())
@@ -441,10 +437,7 @@ pub fn to_canonical<'b>(
         descriptor.channel_type(),
         storage_bits,
     )
-    .ok_or(CodesError::Destination { actual: descriptor })
-    .map_err(whereat::At::wrap)
-    .at_crate(crate::at_crate_info())
-    .at()?;
+    .ok_or_else(|| whereat::at!(CodesError::Destination { actual: descriptor }))?;
 
     let mut codes = [0u16; BATCH];
     for row in 0..height {
@@ -457,10 +450,7 @@ pub fn to_canonical<'b>(
                 let batch = &mut codes[..count];
                 plane
                     .read_codes(x + start, y + row, batch)
-                    .map_err(CodesError::Read)
-                    .map_err(whereat::At::wrap)
-                    .at_crate(crate::at_crate_info())
-                    .at()?;
+                    .map_err(|e| whereat::at!(CodesError::Read(e)))?;
                 let first = start * channels + component;
                 if storage_bits == 8 {
                     for (i, code) in batch.iter().enumerate() {

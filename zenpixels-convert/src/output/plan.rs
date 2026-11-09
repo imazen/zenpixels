@@ -6,7 +6,6 @@ use crate::{
 };
 use alloc::sync::Arc;
 use whereat::At;
-use whereat::ResultAtExt as _;
 
 /// Validate current color, target signaling and conversion before pixels arrive.
 ///
@@ -185,10 +184,7 @@ impl OutputPlan {
             TargetLayout::Required(requested) => {
                 requested
                     .validate()
-                    .map_err(ConvertError::Buffer)
-                    .map_err(whereat::At::wrap)
-                    .at_crate(crate::at_crate_info())
-                    .at()?;
+                    .map_err(|e| whereat::at!(ConvertError::Buffer(e)))?;
                 let profile = inferred.with_alpha(requested.alpha());
                 if requested != profile {
                     return Err(whereat::at!(ConvertError::OutputInterpretationMismatch {
@@ -240,15 +236,12 @@ impl OutputPlan {
                 cicp: Some(*cicp),
             },
             _ => {
-                let (p, t) = target_profile
-                    .resolve()
-                    .ok_or_else(|| ConvertError::NeedsCms {
+                let (p, t) = target_profile.resolve().ok_or_else(|| {
+                    whereat::at!(ConvertError::NeedsCms {
                         from: source_desc,
-                        to: target_desc_full,
+                        to: target_desc_full
                     })
-                    .map_err(whereat::At::wrap)
-                    .at_crate(crate::at_crate_info())
-                    .at()?;
+                })?;
                 if p == ColorPrimaries::Bt709 && t == TransferFunction::Srgb {
                     OutputMetadata {
                         icc: None,

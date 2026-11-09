@@ -32,10 +32,10 @@ Status below distinguishes the intended design from completed implementation.
 - Constructors enforce the same descriptor validity rules. Fallible constructors
   return `DescriptorError`, displaying the supplied sample type, layout, alpha
   interpretation and violated rule. Buffer validation preserves that diagnostic.
-- Error closures construct raw errors. Wrap them with `At::wrap`, attach crate
-  metadata with `at_crate`, and call `.at()` outside the closure so tracing
-  preserves the calling function’s `track_caller` chain. `at_crate` alone does
-  not add the first location frame.
+- Capture an error at the failing operation. Inline `map_err`/`ok_or_else`
+  closures using `whereat::at!` are appropriate. Do not funnel separate failure
+  sites through a shared trace-producing closure: that erases which operation
+  failed. Small error-construction functions should propagate their caller.
 - Generic layout operations do not assume a maximum sixteen-byte pixel.
 - ICC identification does not grant permission to replace a profile. Empirical
   rejection cannot be overridden by a structural matrix-shaper classification.
@@ -146,5 +146,5 @@ small adapter over shared `Plane` geometry for the current native conversion API
 do not grow it into a second plane framework.
 
 Descriptor/trace follow-up validation: `just approved-contracts-check`,
-`just design-feature-check` and `just api-doc` passed. The overflow regression
-checks the exact public callsite, not only the error text.
+`just design-feature-check` and `just api-doc` passed. Trace capture stays at the failing operation; inline error-mapping closures
+remain supported.

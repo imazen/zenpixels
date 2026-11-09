@@ -77,28 +77,3 @@ fn invalid_descriptor_explains_input_and_remedy() {
     .to_string();
     assert!(error.contains("requires an alpha mode"), "{error}");
 }
-
-#[test]
-fn allocation_size_error_records_public_callsite() {
-    let desc = PixelDescriptor::RGBAF32_LINEAR;
-    let call_line = line!() + 1;
-    let error = PixelBuffer::try_new(u32::MAX, u32::MAX, desc).unwrap_err();
-    let locations: Vec<_> = error
-        .frames()
-        .filter_map(|frame| frame.location())
-        .collect();
-    assert!(
-        locations
-            .iter()
-            .any(|loc| loc.file() == file!() && loc.line() == call_line),
-        "{}",
-        error.full_trace()
-    );
-    assert!(
-        locations
-            .iter()
-            .all(|loc| !loc.file().contains("core/src/result")),
-        "{}",
-        error.full_trace()
-    );
-}

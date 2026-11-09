@@ -106,10 +106,7 @@ fn ensure_src_buffer_fits(
 ) -> Result<(), At<ConvertError>> {
     let row = (width as usize)
         .checked_mul(descriptor.bytes_per_pixel())
-        .ok_or(ConvertError::AllocationFailed)
-        .map_err(whereat::At::wrap)
-        .at_crate(crate::at_crate_info())
-        .at()?;
+        .ok_or_else(|| whereat::at!(ConvertError::AllocationFailed))?;
     if rows == 0 || row == 0 {
         return Ok(());
     }
@@ -122,10 +119,7 @@ fn ensure_src_buffer_fits(
     let needed = ((rows - 1) as usize)
         .checked_mul(stride)
         .and_then(|n| n.checked_add(row))
-        .ok_or(ConvertError::AllocationFailed)
-        .map_err(whereat::At::wrap)
-        .at_crate(crate::at_crate_info())
-        .at()?;
+        .ok_or_else(|| whereat::at!(ConvertError::AllocationFailed))?;
     if data_len < needed {
         return Err(whereat::at!(ConvertError::BufferSize {
             expected: needed,
@@ -142,10 +136,7 @@ fn ensure_src_buffer_fits(
 fn checked_byte_alloc(rows: u32, stride: usize) -> Result<usize, At<ConvertError>> {
     (rows as usize)
         .checked_mul(stride)
-        .ok_or(ConvertError::AllocationFailed)
-        .map_err(whereat::At::wrap)
-        .at_crate(crate::at_crate_info())
-        .at()
+        .ok_or_else(|| whereat::at!(ConvertError::AllocationFailed))
 }
 
 fn borrow_or_copy<'a>(
@@ -164,20 +155,14 @@ fn borrow_or_copy<'a>(
     // those, so copy them into an aligned owned buffer.
     let row_bytes = (width as usize)
         .checked_mul(descriptor.bytes_per_pixel())
-        .ok_or(ConvertError::AllocationFailed)
-        .map_err(whereat::At::wrap)
-        .at_crate(crate::at_crate_info())
-        .at()?;
+        .ok_or_else(|| whereat::at!(ConvertError::AllocationFailed))?;
     if stride < row_bytes {
         return Err(whereat::at!(ConvertError::Buffer(
             zenpixels::BufferError::StrideTooSmall,
         )));
     }
     let mut output = PixelBuffer::try_new(width, rows, descriptor)
-        .map_err(|_| ConvertError::AllocationFailed)
-        .map_err(whereat::At::wrap)
-        .at_crate(crate::at_crate_info())
-        .at()?;
+        .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
     {
         let mut destination = output.as_slice_mut();
         for y in 0..rows {
@@ -288,10 +273,7 @@ pub(crate) fn convert_buffer_with_anchor(
     // fallible) rather than a hand-rolled `vec![0u8; …]`, and convert into its
     // backing at the buffer's own row stride.
     let mut buf = PixelBuffer::try_new(width, rows, to)
-        .map_err(|_| ConvertError::AllocationFailed)
-        .map_err(whereat::At::wrap)
-        .at_crate(crate::at_crate_info())
-        .at()?;
+        .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
     let dst_stride = buf.stride();
     {
         let mut slice = buf.as_slice_mut();
@@ -600,10 +582,7 @@ pub fn adapt_raw_rows_for_encode<'a>(
 
     // Need conversion — pick best target, then validate policies.
     let target = encode_target(descriptor, supported)
-        .ok_or(ConvertError::EmptyFormatList)
-        .map_err(whereat::At::wrap)
-        .at_crate(crate::at_crate_info())
-        .at()?;
+        .ok_or_else(|| whereat::at!(ConvertError::EmptyFormatList))?;
 
     let checked_options = if descriptor.has_alpha() && !target.has_alpha() {
         let view = PixelSlice::new(data, width, rows, stride, descriptor)
@@ -615,10 +594,7 @@ pub fn adapt_raw_rows_for_encode<'a>(
     let mut converter = RowConverter::new_explicit(descriptor, target, &checked_options).at()?;
     let src_bpp = descriptor.bytes_per_pixel();
     let mut output = PixelBuffer::try_new(width, rows, target)
-        .map_err(|_| ConvertError::AllocationFailed)
-        .map_err(whereat::At::wrap)
-        .at_crate(crate::at_crate_info())
-        .at()?;
+        .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
     {
         let mut destination = output.as_slice_mut();
         for y in 0..rows {
@@ -710,10 +686,7 @@ pub(crate) fn scan_source_precision(
         }
     };
     for y in 0..pixels.rows() {
-        stop.check()
-            .map_err(whereat::At::wrap)
-            .at_crate(crate::at_crate_info())
-            .at()?;
+        stop.check().map_err(|reason| whereat::at!(reason))?;
         let row = pixels.sub_rows(y, 1);
         let Ok(exact) = ExactDepth::measure(&row) else {
             return Ok(storage);

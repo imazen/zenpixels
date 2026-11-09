@@ -4,7 +4,6 @@
 //! Called from the step dispatcher in the parent `convert` module.
 
 use core::cmp::min;
-use whereat::ResultAtExt as _;
 
 use archmage::prelude::*;
 
@@ -43,19 +42,13 @@ impl HdrKernelScratch {
         if self.rgb_strip.len() < _width as usize {
             self.rgb_strip
                 .try_reserve(_width as usize - self.rgb_strip.len())
-                .map_err(|_| crate::ConvertError::AllocationFailed)
-                .map_err(whereat::At::wrap)
-                .at_crate(crate::at_crate_info())
-                .at()?;
+                .map_err(|_| whereat::at!(crate::ConvertError::AllocationFailed))?;
             self.rgb_strip.resize(_width as usize, [0.; 3]);
         }
         if self.rgb_out.len() < _width as usize {
             self.rgb_out
                 .try_reserve(_width as usize - self.rgb_out.len())
-                .map_err(|_| crate::ConvertError::AllocationFailed)
-                .map_err(whereat::At::wrap)
-                .at_crate(crate::at_crate_info())
-                .at()?;
+                .map_err(|_| whereat::at!(crate::ConvertError::AllocationFailed))?;
             self.rgb_out.resize(_width as usize, [0.; 3]);
         }
         Ok(())
