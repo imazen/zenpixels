@@ -105,13 +105,13 @@ fn rows_need_a_peak_and_hlg_names_the_missing_ootf() {
         ConvertPlan::new_explicit(PixelDescriptor::RGB16_BT2100_HLG, to, &options)
             .unwrap_err()
             .error(),
-        ConvertError::HlgOotfNotImplemented
+        ConvertError::HlgRenderingRequired
     ));
     assert!(matches!(
         ConvertPlan::new(linear(), PixelDescriptor::RGB16_BT2100_HLG)
             .unwrap_err()
             .error(),
-        ConvertError::HlgOotfNotImplemented
+        ConvertError::HlgRenderingRequired
     ));
 }
 #[cfg(feature = "bt2446a")]
@@ -239,6 +239,6 @@ fn legacy_hdr_constructor_does_not_bypass_sdr_white_or_hlg_refusal() {
         )
         .unwrap_err()
         .error(),
-        ConvertError::HlgOotfNotImplemented
+        ConvertError::HlgRenderingRequired
     ));
 }

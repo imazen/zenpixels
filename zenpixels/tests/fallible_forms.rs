@@ -111,7 +111,7 @@ fn constructors() {
             None,
             TransferFunction::Srgb
         ),
-        Some(PixelDescriptor::new(
+        Ok(PixelDescriptor::new(
             ChannelType::U8,
             ChannelLayout::Rgb,
             None,
@@ -125,7 +125,7 @@ fn constructors() {
             Some(AlphaMode::Straight),
             TransferFunction::Srgb
         )
-        .is_none()
+        .is_err()
     );
     assert_eq!(DiffuseWhite::try_new(203.0), Some(DiffuseWhite::new(203.0)));
     for bad in [0.0, -1.0, f32::NAN, f32::INFINITY] {

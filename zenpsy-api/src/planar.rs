@@ -1,5 +1,5 @@
 //! Optional planar ingress and owned preparation with lending comparisons.
-use crate::metric::{operation, validate_map_views, validate_scores};
+use crate::metric::{admit_geometry, operation, validate_map_views, validate_scores};
 use crate::{
     ErrorKind, EvalOpts, Evaluation, EvaluationRef, Metric, MetricError, MetricResult, fail,
 };
@@ -146,20 +146,7 @@ impl<P: PlanarWarmReference> PreparedPlanarReference<P> {
     }
 }
 fn admit(image: &PlanarSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<()> {
-    opts.checkpoint()?;
-    if image.width() == 0
-        || image.height() == 0
-        || matches!(opts.map_request(), crate::MapRequest::Named(""))
-    {
-        return fail(MetricError::new(ErrorKind::InvalidInput));
-    }
-    if opts
-        .max_pixels()
-        .is_some_and(|n| u64::from(image.width()) * u64::from(image.height()) > n)
-    {
-        return fail(MetricError::new(ErrorKind::Resource));
-    }
-    Ok(())
+    admit_geometry(image.width(), image.height(), opts)
 }
 /// Checked native planar pair scoring. Color/encoding support is decided by
 /// the metric, which must refuse unsupported interpretation explicitly.

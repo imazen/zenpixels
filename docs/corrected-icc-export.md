@@ -4,7 +4,7 @@ The corrected export bundle contains 149 RGB mappings and 164 gray mappings
 (209 unique profiles). HLG is deliberately excluded without an explicit
 rendering target. The regenerated asset is 93,377 bytes, SHA256
 `67c3122da4cb5cd969a38c7fa0eb0f3ed0c5d4a99f2dac4cacd49500e8e1e509`.
-This proposal remains unmerged. Existing input ICC bytes are not replaced.
+The 0.3 review candidate contains the corrected bundle and qualified compact P3 exports. Existing input ICC bytes are not replaced. Release-ref exposure is recorded in [repository issue completion](repository-issue-completion.md). Historical measurements below describe their stated revisions.
 
 The build-time recipe supplies exact H.273 primary/white chromaticities,
 PCS D50 display `wtpt`, full source-white adaptation, s15Fixed16 gamma 2.2/2.8,

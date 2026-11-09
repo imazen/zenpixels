@@ -32,11 +32,8 @@ use moxcms::{
 /// `prefer_fixed_point` to `false` so the comparison measures true profile
 /// divergence rather than Q2.13 quantization noise.
 ///
-/// Runtime drift from this baseline is strictly additive — Q2.13 fixed-point
-/// adds ~1-4 u16 noise on top of the float result without ever closing a
-/// genuine divergence gap. A profile that passes the empirical comparison
-/// here will also pass at runtime; one that fails here may still fail at
-/// runtime by an even larger margin.
+/// This is a sampled profile comparison. It does not establish a global
+/// error bound or byte-exact equivalence to every runtime backend.
 ///
 /// Critical: the generator does not request extended-range evaluation. That
 /// feature's `try_extended_gamma_evaluator` (moxcms src/trc.rs:1293-1523)
@@ -226,6 +223,14 @@ fn eval_para(p: &[f64], x: f64) -> f64 {
                 0.0
             }
         }
+        4 => {
+            let (g, a, b, c) = (p[0], p[1], p[2], p[3]);
+            if x >= -b / a {
+                (a * x + b).powf(g) + c
+            } else {
+                c
+            }
+        }
         5 => {
             let (g, a, b, c, d) = (p[0], p[1], p[2], p[3], p[4]);
             if x >= d { (a * x + b).powf(g) } else { c * x }
@@ -238,7 +243,7 @@ fn eval_para(p: &[f64], x: f64) -> f64 {
                 c * x + f
             }
         }
-        _ => x,
+        _ => unreachable!("parser admits only ICC parametric function types 0 through 4"),
     }
 }
 
@@ -262,7 +267,9 @@ fn eval_trc(t: &Trc, x: f64) -> f64 {
 }
 
 fn parse_trc(d: &[u8], o: usize) -> Option<Trc> {
-    if o + 12 > d.len() {
+    let d = d.get(o..)?;
+    let o = 0;
+    if d.len() < 12 {
         return None;
     }
     match &d[o..o + 4] {
@@ -288,6 +295,7 @@ fn parse_trc(d: &[u8], o: usize) -> Option<Trc> {
         }
         b"curv" => {
             let c = u32::from_be_bytes([d[o + 8], d[o + 9], d[o + 10], d[o + 11]]) as usize;
+            d.get(12..12usize.checked_add(c.checked_mul(2)?)?)?;
             if c == 0 {
                 Some(Trc::Gamma(1.0))
             } else if c == 1 {
@@ -298,9 +306,6 @@ fn parse_trc(d: &[u8], o: usize) -> Option<Trc> {
                 let mut l = Vec::with_capacity(c);
                 for i in 0..c {
                     let q = o + 12 + i * 2;
-                    if q + 2 > d.len() {
-                        break;
-                    }
                     l.push(u16::from_be_bytes([d[q], d[q + 1]]));
                 }
                 Some(Trc::Lut(l))
@@ -621,6 +626,14 @@ fn identify_trc(data: &[u8], trc_tag: &[u8; 4]) -> Option<(&'static str, u32)> {
     best
 }
 
+/// Require all three channel curves to identify the same transfer function.
+fn identify_rgb_trc(data: &[u8]) -> Option<(&'static str, u32)> {
+    let (r, re) = identify_trc(data, b"rTRC")?;
+    let (g, ge) = identify_trc(data, b"gTRC")?;
+    let (b, be) = identify_trc(data, b"bTRC")?;
+    (r == g && r == b).then_some((r, re.max(ge).max(be)))
+}
+
 // ── Empirical intent-safety ──────────────────────────────────────────────
 //
 // The intent_mask tells runtime callers whether matrix+TRC substitution
@@ -629,8 +642,7 @@ fn identify_trc(data: &[u8], trc_tag: &[u8; 4]) -> Option<(&'static str, u32)> {
 //
 // Maximally-conservative policy: when moxcms can build a baseline transform
 // for the identified (primaries, transfer), we trust the EMPIRICAL result
-// alone. Structural inspection (LUT-tag presence, matrix-shaper layout)
-// only acts as a fallback when no synth reference exists, because even a
+// alone. Missing empirical evidence grants no substitution permission. Even a
 // "clean" matrix-shaper profile can carry a non-Bradford `chad`, custom
 // per-device chromaticities, or other state that makes runtime substitution
 // disagree with what lcms2/moxcms would produce.
@@ -656,34 +668,17 @@ const INTENT_VS_INTENT_EPSILON_U16: u32 = 64;
 /// `moxcms(synth_ref, intent=RelColor)` for the COLORIMETRIC bit.
 ///
 /// 256/65535 ≈ 0.39% — exactly one 8-bit code step. Profiles whose CMS
-/// output rounds to the same u8 value as our canonical matrix+TRC
-/// substitution pass; profiles whose output would round to a different u8
-/// (≈ visibly distinguishable in 8-bit pipelines) are rejected. This
+/// output lies within this sampled tolerance pass. This does not guarantee
+/// identical quantized output: even a small error can cross a midpoint. This
 /// catches non-Bradford `chad` adaptations, custom encoded primaries,
 /// LUT-driven gamut remapping, and per-device calibration drift.
 ///
-/// Note: for pure matrix-shaper profiles (no LUT tags), the s15.16
-/// quantization floor can exceed this threshold for wider gamuts (~275
-/// for BT.709, ~590 for BT.2020, ~930 for Display P3). That's handled
-/// separately by OR-merging with the structural mask in
-/// `compute_rgb_intent_mask` — the structural rule correctly grants all
-/// bits when no LUTs are present, since the only CMS path is matrix+TRC.
+/// These historical thresholds are sampled qualification tolerances, not a
+/// proof of bit-exact substitution. Structural classification never widens them.
 const COLORIMETRIC_VS_SYNTH_EPSILON_U16: u32 = 256;
 
-/// Looser epsilon for the lcms2 AND-gate comparison (when the
-/// `lcms2-crosscheck` feature is enabled).
-///
-/// 512/65535 ≈ 0.78% — two 8-bit code steps. Rationale: even for
-/// canonical sRGB profiles, the `paraType funcType=3` representation
-/// used by lcms2's `Profile::new_srgb()` differs slightly from how the
-/// same sRGB curve is encoded in third-party profiles (RawTherapee,
-/// skcms, colord, etc.) — different parameter quantizations and
-/// occasionally `curv count=N` LUT forms in place of paraType. Those
-/// representation differences show up as 260-500 u16 deltas through
-/// lcms2's transform, even though the profiles all describe the same
-/// canonical curve. We use 2× the moxcms epsilon here so the AND-gate
-/// rejects only *real* profile divergence (chad drift, non-canonical
-/// primaries, LUT-driven gamut) and not parametric-representation noise.
+/// Historical independent-reader tolerance. This is a sampled numerical gate,
+/// not proof that serialization differences are harmless at every input.
 const LCMS2_ANDGATE_EPSILON_U16: u32 = 2 * COLORIMETRIC_VS_SYNTH_EPSILON_U16;
 
 /// Number of pixel samples per ramp.
@@ -692,11 +687,19 @@ const RAMP_STEPS: usize = 64;
 fn build_synth_ref(primaries: &str, transfer: &str) -> Option<ColorProfile> {
     // moxcms ships built-in canonical references for exactly these combos.
     // For others (Smpte170m, AppleRgb, WideGamut, ColorMatch, EciRgbV2,
-    // Bt470Bg, DciP3 etc.) we fall back to the structural rule.
+    // Bt470Bg, DciP3 etc.) no empirical substitution permission is granted.
     match (primaries, transfer) {
         ("Bt709", "Srgb") => Some(ColorProfile::new_srgb()),
         ("DisplayP3", "Srgb") => Some(ColorProfile::new_display_p3()),
-        ("Bt2020", "Bt709") | ("Bt2020", "Srgb") => Some(ColorProfile::new_bt2020()),
+        ("Bt2020", "Bt709") => Some(ColorProfile::new_bt2020()),
+        ("Bt2020", "Srgb") => {
+            let mut profile = ColorProfile::new_bt2020();
+            let trc = ColorProfile::new_srgb().red_trc;
+            profile.red_trc = trc.clone();
+            profile.green_trc = trc.clone();
+            profile.blue_trc = trc;
+            Some(profile)
+        }
         ("Bt2020", "Pq") => Some(ColorProfile::new_bt2020_pq()),
         ("Bt2020", "Hlg") => Some(ColorProfile::new_bt2020_hlg()),
         ("DisplayP3", "Pq") => Some(ColorProfile::new_display_p3_pq()),
@@ -772,7 +775,7 @@ enum EmpiricalMask {
     /// Authoritative mask derived from moxcms pixel comparison.
     Measured(u8),
     /// moxcms couldn't parse the profile or couldn't build the baseline
-    /// transform. Fall back to structural check.
+    /// transform. Identification receives no substitution permission.
     NotAvailable,
 }
 
@@ -1026,69 +1029,32 @@ fn has_any_lut(t: LutTags) -> bool {
     t.a2b0 || t.a2b1 || t.a2b2 || t.b2a0 || t.b2a1 || t.b2a2
 }
 
-/// Structural intent-safety mask for grayscale (moxcms has no built-in
-/// gray reference, so we can't do empirical comparison).
-///
-/// A bit is set iff the corresponding pair of A2B/B2A LUTs is absent.
-/// Matches the convention used by the previous static-feature generator:
-/// - bit 0 (colorimetric): no A2B0/B2A0
-/// - bit 1 (perceptual):   no A2B1/B2A1
-/// - bit 2 (saturation):   no A2B2/B2A2
-fn gray_intent_mask(data: &[u8]) -> u8 {
-    let t = scan_lut_tags(data);
-    let mut mask = 0u8;
-    if !t.a2b0 && !t.b2a0 {
-        mask |= INTENT_COLORIMETRIC_SAFE;
-    }
-    if !t.a2b1 && !t.b2a1 {
-        mask |= INTENT_PERCEPTUAL_SAFE;
-    }
-    if !t.a2b2 && !t.b2a2 {
-        mask |= INTENT_SATURATION_SAFE;
-    }
-    mask
+/// Gray identification has no qualified complete-transform oracle here.
+/// Structural absence of LUTs is not permission to substitute a profile.
+fn gray_intent_mask(_data: &[u8]) -> u8 {
+    0
 }
 
-/// Compute the intent-safety mask for an RGB profile.
-///
-/// Maximally-conservative policy: when the empirical moxcms comparison is
-/// available (synth reference exists for the identified primaries+transfer),
-/// it is the SOLE signal — we trust it over structural inspection. A profile
-/// that "looks like" a clean matrix-shaper can still carry a non-Bradford
-/// `chad`, custom per-device chromaticities, or LUTs that diverge from the
-/// canonical matrix+TRC math used by runtime substitution.
-///
-/// Compute the intent-safety mask for an identified RGB profile.
-///
-/// The empirical check (`moxcms(icc) vs moxcms(synth)`) catches LUT-driven
-/// intent divergence but is penalized by s15.16 quantization noise that
-/// scales with gamut width (~275 u16 for BT.709, ~930 for Display P3).
-/// The structural check (LUT tag presence) is immune to quantization but
-/// can't detect behavioral differences inside LUTs.
-///
-/// We OR-merge both: the structural mask ensures that pure matrix-shaper
-/// profiles (no LUT tags) get all bits — the only CMS path IS matrix+TRC,
-/// so any delta is quantization noise, not a safety issue. The empirical
-/// mask adds bits for profiles whose LUTs happen to produce the same
-/// output as matrix math.
-fn compute_rgb_intent_mask(data: &[u8], primaries: &str, transfer: &str) -> (u8, MaskProvenance) {
-    let structural = structural_rgb_mask(data);
-    match measure_empirical_intent_bits(data, primaries, transfer) {
-        Some(empirical) => (empirical | structural, MaskProvenance::Empirical),
-        None => (structural, MaskProvenance::Structural),
+/// Empirical rejection is authoritative. Missing evidence grants no permission.
+fn qualification_mask(empirical: Option<u8>) -> (u8, MaskProvenance) {
+    match empirical {
+        Some(mask) => (mask, MaskProvenance::Empirical),
+        None => (0, MaskProvenance::Unavailable),
     }
+}
+
+fn compute_rgb_intent_mask(data: &[u8], primaries: &str, transfer: &str) -> (u8, MaskProvenance) {
+    qualification_mask(measure_empirical_intent_bits(data, primaries, transfer))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MaskProvenance {
     Empirical,
-    Structural,
+    Unavailable,
 }
 
-/// Structural fallback: derive intent safety from LUT tag presence alone.
-///
-/// Used when no synth reference is available for empirical measurement
-/// (Smpte170m, AppleRgb, WideGamut, ColorMatch, EciRgbV2, Bt470Bg, etc.).
+/// Structural classification for disagreement diagnostics only.
+/// Never used to grant substitution permission.
 fn structural_rgb_mask(data: &[u8]) -> u8 {
     let luts = scan_lut_tags(data);
     if !has_any_lut(luts) {
@@ -1272,12 +1238,12 @@ fn print_report(rows: &[ReportRow]) {
     eprintln!("Total disagreements shown: {shown}");
     let structural_only = rows
         .iter()
-        .filter(|r| r.provenance == MaskProvenance::Structural)
+        .filter(|r| r.provenance == MaskProvenance::Unavailable)
         .count();
     if structural_only > 0 {
         eprintln!(
             "(Plus {structural_only} profiles with no synth reference — \
-             structural-only verdict, see RGB-by-(cp,tf) summary for which combos.)"
+             unqualified identification-only verdict, see RGB-by-(cp,tf) summary for which combos.)"
         );
     }
 }
@@ -1495,8 +1461,8 @@ fn defer_reason(cp: &str, tf: &str) -> Option<&'static str> {
 
 const RGB_HEADER: &str = "\
 // Columns: (normalized_hash, primaries, transfer, max_u16_err, intent_mask)
-//   max_u16_err — empirical max channel error (u16 units) vs a reference CMS;
-//                 compared against Tolerance at query time.
+//   max_u16_err — curve-fit error in u16 units against analytic transfer references;
+//                 not a bound on a complete CMS transform.
 //   intent_mask — Safe::* alias marking which rendering intents are
 //                 matrix+TRC-equivalent; see icc/mod.rs for definitions.
 //   Commented-out entries have deferred primaries or transfers — see
@@ -1591,7 +1557,7 @@ fn ingest_profile(
             skipped_bump(skipped);
             return;
         };
-        let Some((tf_name, err)) = identify_trc(data, b"rTRC") else {
+        let Some((tf_name, err)) = identify_rgb_trc(data) else {
             skipped_bump(skipped);
             return;
         };
@@ -1822,5 +1788,46 @@ fn main() {
 
     if report_mode {
         print_report(&report_rows);
+    }
+}
+
+#[cfg(test)]
+mod qualification_tests {
+    use super::*;
+    #[test]
+    fn empirical_rejection_and_missing_evidence_never_grant_permission() {
+        assert_eq!(qualification_mask(Some(0)).0, 0);
+        assert_eq!(qualification_mask(Some(1)).0, 1);
+        assert_eq!(qualification_mask(None).0, 0);
+        assert_eq!(gray_intent_mask(&[]), 0);
+    }
+    #[test]
+    fn a_clean_matrix_shaper_cannot_override_a_different_gamut() {
+        let bytes = ColorProfile::new_display_p3().encode().unwrap();
+        assert_eq!(structural_rgb_mask(&bytes), 7);
+        assert_eq!(compute_rgb_intent_mask(&bytes, "Bt709", "Srgb").0, 0);
+    }
+    #[test]
+    fn type_two_curve_retains_offset_and_lower_branch() {
+        let p = [2.0, 1.0, -0.25, 0.125];
+        assert_eq!(eval_para(&p, 0.0), 0.125);
+        assert_eq!(eval_para(&p, 0.75), 0.375);
+    }
+    #[test]
+    fn unequal_rgb_curves_cannot_be_identified_from_red_alone() {
+        let mut profile = ColorProfile::new_srgb();
+        profile.green_trc = Some(moxcms::ToneReprCurve::Parametric(vec![1.0]));
+        let bytes = profile.encode().unwrap();
+        assert!(identify_rgb_trc(&bytes).is_none());
+    }
+    #[test]
+    fn truncated_curves_refuse_before_allocation_or_indexing() {
+        let mut bytes = vec![0u8; 12];
+        bytes[..4].copy_from_slice(b"curv");
+        for count in [1u32, 2, u32::MAX] {
+            bytes[8..12].copy_from_slice(&count.to_be_bytes());
+            assert!(parse_trc(&bytes, 0).is_none());
+        }
+        assert!(parse_trc(&bytes, usize::MAX).is_none());
     }
 }

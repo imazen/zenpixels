@@ -181,16 +181,22 @@ impl<P: WarmReference> PreparedReference<P> {
 }
 #[track_caller]
 fn admit(image: &PixelSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<()> {
+    admit_geometry(image.width(), image.rows(), opts)
+}
+/// Shared operation admission for packed and native planar views. Storage and
+/// interpretation have already been bound by the respective zenpixels view.
+#[track_caller]
+pub(crate) fn admit_geometry(width: u32, height: u32, opts: EvalOpts<'_>) -> MetricResult<()> {
     opts.checkpoint()?;
     if matches!(opts.maps, MapRequest::Named("")) {
         return fail(MetricError::new(ErrorKind::InvalidConfig).with_message("empty map request"));
     }
-    if image.width() == 0 || image.rows() == 0 {
+    if width == 0 || height == 0 {
         return fail(MetricError::new(ErrorKind::InvalidInput));
     }
     if opts
         .max_pixels
-        .is_some_and(|limit| u64::from(image.width()) * u64::from(image.rows()) > limit)
+        .is_some_and(|limit| u64::from(width) * u64::from(height) > limit)
     {
         return fail(MetricError::new(ErrorKind::Resource));
     }

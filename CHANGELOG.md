@@ -26,6 +26,11 @@ This companion remains an unpublished review API; no release is authorized.
 
 ### Added
 
+- Rework the planar IQA review on the unified main pixel interpretation contract
+  (`591d87a6`): use existing native code/layout readers and unchanged authoritative
+  color metadata; no normalization or inferred HLG rendering. Packed and planar
+  operation admission now share request and resource checks.
+
 - Optional standard planar ingress, owned reference preparation and checked
   lending of structured assessments, including stacked erasure and heterogeneous
   prepared collections (`e53e3ea1`, `20cbfe10`). Named map requests refuse missing
@@ -46,6 +51,42 @@ This companion remains an unpublished review API; no release is authorized.
   retain its locked WASM lint gate and expose `just explorer-boundary-check`.
 
 ## 0.3.1 cleanup — release reconciliation (2026-09-28)
+
+### QUEUED BREAKING CHANGES
+
+- Remove the unshipped speculative `NativeCodeSlice` / `NativeCodeError` and
+  `codes::{native_to_u16, u16_to_native, NativeConversionError, NativePadding}`.
+  Interleaved U8/U16 callers use `CodePlane::component` and `codes::to_canonical`;
+  shared encoding descriptions and exact ST2086 carriage remain (`92ef77ae`).
+
+- Unify native integer encoding in `SampleEncoding`; remove the unshipped
+  duplicate `NativeEncoding` (`c4c3352d`).
+- Remove infallible `RowConverter::clone`; use `try_clone` for workers that may
+  refuse cloning (`6be5db6f`).
+- Enforce alpha/layout consistency in every descriptor constructor (`9297c114`).
+- Return descriptive `DescriptorError` results from `PixelDescriptor::try_new`
+  and `try_new_full` instead of `Option` (`0cc49ab6`).
+
+### Fixed
+
+- Direct MoxCms HLG crossings decline instead of bypassing explicit display
+  rendering; qualify authority and allocation/extraction contracts
+  (`2cf54240`, `3b442ffd`).
+- Compile public adapter examples and correct sample-stride, P3 export and
+  typed-allocation guidance (`b64772c0`).
+- Preserve distinct error origins instead of routing them through shared
+  trace-producing closures. Inline error-mapping closures remain supported.
+- Keep each conversion operation with its descriptors and scale; preserve
+  policy across channel swizzles and compositing rewrites (`0e309692`).
+- Resolve output white/context consistently across allocating, into, adaptation
+  and finalization paths (`efe55343`).
+- Handle cropped final-row splits, empty channel swaps and wide integer channel
+  removal without assuming full padding or sixteen-byte pixels (`9297c114`).
+- Preserve F16 alpha payloads and share histogram binning between bodies/tails;
+  positive percentile ranks cannot select an empty bin (`e29bca51`).
+- ICC generation refuses missing qualification and truncated curves, evaluates
+  type-2 parametric curves and checks all RGB channel curves (`8309b21b`).
+
 
 Includes all 0.2.17 behavior fixes and `SampleEncoding`, then removes:
 
@@ -79,6 +120,15 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 # Changelog
 
 ## [Unreleased]
+
+- Add explicit HLG display rendering with validated peak, black and system gamma,
+  an opt-in reference preset, coupled OOTF/inverse and shared row/buffer planning.
+  HLG compositing now requires rendering conditions and a white anchor.
+- Add strided native integer code views, explicit U16 canonicalization and
+  encoding with padding policy, and exact raw ST2086 carriage. RGB565 requires
+  unpacking; signed/wide numerical conversion remains unsupported.
+- Use qualified compact P3/sRGB and P3/BT.709 exports without `icc-db`, preserving
+  historical compatibility constants. Add native libultrahdr and C LCMS gates.
 
 - Add checked plane byte-stride access and per-plane layout validation while
   preserving `PlanarLayout::new(Vec<PlaneSpec>)` and growable ownership.
@@ -131,6 +181,9 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 - CMYK native-layout and multi-CMS qualification tools; see [coverage and limitations](docs/cmyk-cms-qualification.md). No backend default or pixel expectation changes.
 
 ### QUEUED BREAKING CHANGES
+
+- Rename `ConvertError::HlgOotfNotImplemented` to `HlgRenderingRequired`; the
+  implementation exists and callers must supply rendering conditions.
 
 - HDR transfer conversion now requires explicit or context-supplied SDR white; buffers measure source peak by default for tone mapping, while row plans require an explicit peak. HLG light-domain conversion refuses until its display OOTF is implemented. Quantization retains actual source primaries.
 

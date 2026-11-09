@@ -1020,32 +1020,46 @@ fn try_mox_row(
     dst: &mut [u8],
     width: u32,
 ) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
-    let cast_error = |_| {
-        whereat::at!(crate::cms::CmsPluginError::msg(
-            "CMS sample alignment or extent mismatch"
-        ))
-    };
     let pixels = width as usize;
-    let extent_error = || {
-        whereat::at!(crate::cms::CmsPluginError::msg(
-            "CMS row is shorter than its width"
-        ))
-    };
     let src = src
         .get(..pixels.saturating_mul(extent.source_bytes))
-        .ok_or_else(extent_error)?;
+        .ok_or_else(|| {
+            whereat::at!(crate::cms::CmsPluginError::msg(
+                "CMS row is shorter than its width"
+            ))
+        })?;
     let dst = dst
         .get_mut(..pixels.saturating_mul(extent.target_bytes))
-        .ok_or_else(extent_error)?;
+        .ok_or_else(|| {
+            whereat::at!(crate::cms::CmsPluginError::msg(
+                "CMS row is shorter than its width"
+            ))
+        })?;
     let result = match inner {
         MoxTransformInner::U8(t) => t.transform(src, dst),
         MoxTransformInner::U16(t) => t.transform(
-            bytemuck::try_cast_slice(src).map_err(cast_error)?,
-            bytemuck::try_cast_slice_mut(dst).map_err(cast_error)?,
+            bytemuck::try_cast_slice(src).map_err(|_| {
+                whereat::at!(crate::cms::CmsPluginError::msg(
+                    "CMS sample alignment or extent mismatch"
+                ))
+            })?,
+            bytemuck::try_cast_slice_mut(dst).map_err(|_| {
+                whereat::at!(crate::cms::CmsPluginError::msg(
+                    "CMS sample alignment or extent mismatch"
+                ))
+            })?,
         ),
         MoxTransformInner::F32(t) => t.transform(
-            bytemuck::try_cast_slice(src).map_err(cast_error)?,
-            bytemuck::try_cast_slice_mut(dst).map_err(cast_error)?,
+            bytemuck::try_cast_slice(src).map_err(|_| {
+                whereat::at!(crate::cms::CmsPluginError::msg(
+                    "CMS sample alignment or extent mismatch"
+                ))
+            })?,
+            bytemuck::try_cast_slice_mut(dst).map_err(|_| {
+                whereat::at!(crate::cms::CmsPluginError::msg(
+                    "CMS sample alignment or extent mismatch"
+                ))
+            })?,
         ),
     };
     result.map_err(|e| {
@@ -1126,6 +1140,16 @@ impl crate::cms::PluggableCms for MoxCms {
     ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, whereat::At<crate::cms::CmsPluginError>>>
     {
         use crate::cms::CmsPluginError;
+        // A profile TRC cannot apply the coupled HLG display OOTF. Decline
+        // crossings even with options: the caller's renderer owns that policy.
+        let source_transfer = src.resolve().map(|(_, transfer)| transfer);
+        let target_transfer = dst.resolve().map(|(_, transfer)| transfer);
+        let hlg_crossing = source_transfer != target_transfer
+            && (source_transfer == Some(crate::TransferFunction::Hlg)
+                || target_transfer == Some(crate::TransferFunction::Hlg));
+        if hlg_crossing {
+            return None;
+        }
         if has_float_pipeline(&src, b"D2B1") || has_float_pipeline(&dst, b"B2D1") {
             return None;
         }

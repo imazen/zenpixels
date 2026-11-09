@@ -408,20 +408,9 @@ impl IccIdentification {
 /// space (0–65535), verified against the reference EOTF for all 65536
 /// input values. This tolerance controls which entries are accepted.
 ///
-/// **All levels produce identical results at 8-bit depth.** The worst case
-/// (Intent, ±56/65535) shifts a u8 value by at most 0.22 of a step —
-/// always rounds to the same u8. Even at 10-bit (0–1023), Intent is
-/// ±0.87 of a code value. Visible differences require 14-bit or higher.
-///
-/// Use [`Intent`](Self::Intent) unless you are computing perceptual metrics
-/// at 16-bit precision.
-///
-/// | Level | Max u16 error | 8-bit impact | What it covers |
-/// |-------|--------------|--------------|----------------|
-/// | `Exact` | ±1 | none | Parametric v4 profiles |
-/// | `Precise` | ±3 | none | + v2-magic approximations |
-/// | `Approximate` | ±13 | none | + LUT profiles, iPhone P3 |
-/// | `Intent` | ±56 | none | + Facebook sRGB, Chrome nano |
+/// A small curve error does not guarantee equal quantized output: values
+/// near a rounding midpoint can differ. This is identification tolerance,
+/// not proof of bit-exact CMS substitution.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[must_use]
 #[allow(dead_code)] // all levels kept for future fine-grained identification
@@ -432,7 +421,7 @@ pub(crate) enum Tolerance {
     Precise = 3,
     /// ±13 in u16 — includes LUT profiles and iPhone P3.
     Approximate = 13,
-    /// ±56 in u16 — honors encoder intent. Identical output at 8-bit and 10-bit.
+    /// ±56 in u16 — historical identification tolerance.
     Intent = 56,
 }
 
@@ -724,9 +713,9 @@ impl Safe {
 
 /// Well-known RGB ICC profiles: `(normalized_hash, primaries, transfer, max_u16_err, intent_mask)`.
 ///
-/// `max_u16_err` is the empirically measured maximum channel error (in u16
-/// units) between matrix+TRC math and a reference CMS; compared directly
-/// against [`Tolerance`] at query time. `intent_mask` is a [`Safe`] alias
+/// `max_u16_err` is historical red/gray curve-fit error in u16 units,
+/// compared against [`Tolerance`] at query time. It is not a complete
+/// transform error bound; new generator runs check all RGB curves. `intent_mask` is a [`Safe`] alias
 /// (e.g. `Safe::AnyIntent`, `Safe::IdOnly`) precomputed from the profile's
 /// structural features (PCS type, `chad` matrix, A2B/B2A LUT presence,
 /// matrix-shaper completeness).

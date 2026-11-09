@@ -57,7 +57,29 @@ if (!url) throw new Error('Pass the served site URL');
     await page.locator('#sdr-white').fill('10000');
     assert.equal(await page.locator('#wasm-status').getAttribute('data-state'), 'different');
     await select('to-transfer', 'Hlg');
-    assert.match(await page.locator('#wasm-status').innerText(), /HlgOotfNotImplemented/);
+    assert.match(await page.locator('#wasm-status').innerText(), /HlgRenderingRequired/);
+    await select('primaries', 'Bt2020'); await select('to-primaries', 'Bt2020');
+    await page.locator('#hlg-enabled').check();
+    assert.equal(await page.locator('#wasm-status').getAttribute('data-state'), 'rendered');
+    const hlg = await page.evaluate(() => window.lastWasmConversion);
+    assert(hlg.result.bytes.length > 0 && !hlg.result.error);
+    await page.locator('#hlg-gamma').fill('4');
+    assert.match(await page.locator('#wasm-status').innerText(), /gamma must be/);
+    await page.locator('#hlg-gamma').fill('1.2');
+    await page.locator('#hlg-enabled').uncheck();
+    // Existing component readers handle interleaved RGB10/alpha1 without another view.
+    await select('storage-case', 'rgba10a1');
+    const padded = await page.evaluate(() => window.lastStorageInspection);
+    assert.deepEqual(padded.planeCodes[0], ['1023','1023','1023','1']);
+    await page.locator('#storage-padding').uncheck();
+    const unpadded = await page.evaluate(() => window.lastStorageInspection);
+    assert.deepEqual(unpadded.planeCodes, padded.planeCodes);
+    assert.notDeepEqual(unpadded.bytes, padded.bytes);
+    for (const role of ['p010','crcb']) {
+      await select('storage-case', role);
+      const result = await page.evaluate(() => window.lastStorageInspection);
+      assert.deepEqual(result.planeCodes[0], ['1023','1023']);
+    }
     await select('to-transfer', 'Srgb');
     await select('format', 'Cmyk8');
     assert.equal(await page.locator('#wasm-status').getAttribute('data-state'), 'refused');
@@ -66,6 +88,11 @@ if (!url) throw new Error('Pass the served site URL');
     assert(await page.locator('#to-format').isVisible());
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ combinations, formats: formats.length, matrix, pageErrors: errors.length }));
+    const review = await page.request.get(new URL('review.html', url.endsWith('/') ? url : url + '/').href);
+    assert(review.ok());
+    assert.match(await review.text(), /CodePlane::component/);
+    const build = await page.request.get(new URL('build-info.json', url.endsWith('/') ? url : url + '/').href);
+    assert.match((await build.json()).revision, /^[a-f0-9]{40}$/);
     // Offline/asset-free operation remains functional.
     await page.route('**/wasm/**', route => route.fulfill({ status: 404, body: '' }));
     await page.reload();

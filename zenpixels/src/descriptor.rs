@@ -806,6 +806,26 @@ pub struct PixelDescriptor {
     pub signal_range: SignalRange,
 }
 
+/// Invalid sample type, layout or alpha interpretation in a pixel descriptor.
+/// Display includes the supplied parts and the violated representation rule.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DescriptorError {
+    channel_type: ChannelType,
+    layout: ChannelLayout,
+    alpha: Option<AlphaMode>,
+    reason: &'static str,
+}
+impl fmt::Display for DescriptorError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "invalid pixel descriptor (sample={:?}, layout={:?}, alpha={:?}): {}",
+            self.channel_type, self.layout, self.alpha, self.reason
+        )
+    }
+}
+impl core::error::Error for DescriptorError {}
+
 impl PixelDescriptor {
     // -- Forwarding accessors -------------------------------------------------
 
@@ -856,47 +876,61 @@ impl PixelDescriptor {
 
     // -- Constructors ---------------------------------------------------------
 
-    /// [`new`](Self::new), or `None` for a combination with no [`PixelFormat`].
+    /// [`new`](Self::new), returning the invalid parts and violated rule on failure.
     #[inline]
-    #[must_use]
     pub const fn try_new(
         channel_type: ChannelType,
         layout: ChannelLayout,
         alpha: Option<AlphaMode>,
         transfer: TransferFunction,
-    ) -> Option<Self> {
-        match PixelFormat::from_parts(channel_type, layout, alpha) {
-            // A layout with alpha needs a mode, and one without can't have one.
-            Some(format) if layout.has_alpha() == alpha.is_some() => Some(Self {
-                format,
-                transfer,
-                alpha,
-                primaries: ColorPrimaries::Bt709,
-                signal_range: SignalRange::Full,
-            }),
-            _ => None,
-        }
+    ) -> Result<Self, DescriptorError> {
+        Self::try_new_full(channel_type, layout, alpha, transfer, ColorPrimaries::Bt709)
     }
 
-    /// [`new_full`](Self::new_full), or `None` for a combination with no [`PixelFormat`].
+    /// [`new_full`](Self::new_full), returning the invalid parts and violated rule on failure.
     #[inline]
-    #[must_use]
     pub const fn try_new_full(
         channel_type: ChannelType,
         layout: ChannelLayout,
         alpha: Option<AlphaMode>,
         transfer: TransferFunction,
         primaries: ColorPrimaries,
-    ) -> Option<Self> {
+    ) -> Result<Self, DescriptorError> {
+        if layout.has_alpha() != alpha.is_some() {
+            return Err(DescriptorError {
+                channel_type,
+                layout,
+                alpha,
+                reason: if layout.has_alpha() {
+                    "this layout requires an alpha mode; supply Straight, Premultiplied, Opaque or Undefined"
+                } else {
+                    "this layout has no alpha channel; supply None"
+                },
+            });
+        }
         match PixelFormat::from_parts(channel_type, layout, alpha) {
-            Some(format) => Some(Self {
+            Some(format) => Ok(Self {
                 format,
                 transfer,
                 alpha,
                 primaries,
                 signal_range: SignalRange::Full,
             }),
-            None => None,
+            None => Err(DescriptorError {
+                channel_type,
+                layout,
+                alpha,
+                reason: match layout {
+                    ChannelLayout::Bgr | ChannelLayout::Bgra => {
+                        "BGR/BGRA storage requires U8 samples"
+                    }
+                    ChannelLayout::Oklab | ChannelLayout::OklabA => {
+                        "Oklab storage requires F32 samples"
+                    }
+                    ChannelLayout::Cmyk => "CMYK storage requires U8, U16 or F32 samples",
+                    _ => "this sample type and layout have no representable pixel format",
+                },
+            }),
         }
     }
 
@@ -916,22 +950,16 @@ impl PixelDescriptor {
     /// Panics if the `(channel_type, layout, alpha)` combination has no
     /// corresponding [`PixelFormat`] variant (e.g. `(U16, Bgra, _)`).
     #[inline]
+    #[track_caller]
     pub const fn new(
         channel_type: ChannelType,
         layout: ChannelLayout,
         alpha: Option<AlphaMode>,
         transfer: TransferFunction,
     ) -> Self {
-        let format = match PixelFormat::from_parts(channel_type, layout, alpha) {
-            Some(f) => f,
-            None => panic!("unsupported PixelFormat combination"),
-        };
-        Self {
-            format,
-            transfer,
-            alpha,
-            primaries: ColorPrimaries::Bt709,
-            signal_range: SignalRange::Full,
+        match Self::try_new(channel_type, layout, alpha, transfer) {
+            Ok(descriptor) => descriptor,
+            Err(error) => panic!("{}", error.reason),
         }
     }
 
@@ -950,6 +978,7 @@ impl PixelDescriptor {
     /// Panics if the `(channel_type, layout, alpha)` combination has no
     /// corresponding [`PixelFormat`] variant.
     #[inline]
+    #[track_caller]
     pub const fn new_full(
         channel_type: ChannelType,
         layout: ChannelLayout,
@@ -957,16 +986,9 @@ impl PixelDescriptor {
         transfer: TransferFunction,
         primaries: ColorPrimaries,
     ) -> Self {
-        let format = match PixelFormat::from_parts(channel_type, layout, alpha) {
-            Some(f) => f,
-            None => panic!("unsupported PixelFormat combination"),
-        };
-        Self {
-            format,
-            transfer,
-            alpha,
-            primaries,
-            signal_range: SignalRange::Full,
+        match Self::try_new_full(channel_type, layout, alpha, transfer, primaries) {
+            Ok(descriptor) => descriptor,
+            Err(error) => panic!("{}", error.reason),
         }
     }
 
@@ -1510,7 +1532,20 @@ impl PixelDescriptor {
         if valid {
             Ok(())
         } else {
-            Err(crate::BufferError::IncompatibleDescriptor)
+            Err(crate::BufferError::InvalidDescriptor(DescriptorError {
+                channel_type: self.channel_type(),
+                layout: self.layout(),
+                alpha: self.alpha,
+                reason: match self.format.default_alpha() {
+                    None => "this layout has no alpha channel; supply None",
+                    Some(AlphaMode::Undefined) => {
+                        "RGBX/BGRX padding is not alpha; its mode must remain Undefined"
+                    }
+                    Some(_) => {
+                        "this layout requires an alpha mode; supply Straight, Premultiplied, Opaque or Undefined"
+                    }
+                },
+            }))
         }
     }
 

@@ -1,6 +1,6 @@
 // Columns: (normalized_hash, primaries, transfer, max_u16_err, intent_mask)
-//   max_u16_err — empirical max channel error (u16 units) vs a reference CMS;
-//                 compared against Tolerance at query time.
+//   max_u16_err — historical red/gray curve-fit error in u16 units;
+//                 not a bound on a complete CMS transform.
 //   intent_mask — Safe::* alias marking which rendering intents are
 //                 matrix+TRC-equivalent; see icc/mod.rs for definitions.
 //   Commented-out entries have deferred primaries or transfers — see

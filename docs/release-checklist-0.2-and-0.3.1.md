@@ -1,3 +1,9 @@
+> **Current candidate gate — 2026-11-09:** the historical release refs below
+> retain unqualified P3 fallback exposure. Do not publish from their branch names.
+> Reconcile reviewed fixes and rerun the isolated no-db/native oracle first.
+> See [repository issue improvements](repository-issue-completion.md) and the
+> [current semver audit](public-api/semver-0.2.17-to-candidate.md).
+
 > **2026-10-30: 0.3.1 is on main.** PR #77 was rebased onto main and merged
 > as `f23ac753`, so `main` is the 0.3.1 candidate. The 0.2.17 bridge is the
 > merge's first parent, `7d28c4b7`, and is kept as branch `release/0.2`.

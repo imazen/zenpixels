@@ -69,7 +69,9 @@ Audit `src/lib.rs` for items added since the last version. For each new `pub`, v
 - Find a real caller and migrate them (simultaneously), OR
 - Demote to `pub(crate)` before publishing.
 
-The `builtin_profiles` module (currently in `[Unreleased]`) is a live example: it exposes 8 public items (enum + const + 6 functions) via `pub mod builtin_profiles` and has zero consumers outside its own tests. Before the next publish, demote to `pub(crate)` or find a real caller. Catching this *before* it ships is the whole point.
+The unused `builtin_profiles` implementation was removed during the 0.3
+consolidation. See `docs/design-reference.md` for the current sample, operation,
+metadata and fallible-worker contracts; keep that document as the shared reference.
 
 ---
 
@@ -117,6 +119,33 @@ When preparing to publish:
 See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated breaks for batched release.
 
 ## Known Bugs
+
+- Fixed (2026-11-09): direct MoxCms construction admitted HLG transfer crossings
+  without the coupled display renderer. It now declines identified HLG crossings;
+  the public backend regression preserves explicit rendering ownership.
+
+- Fixed (2026-11-09): shared trace-producing `no_path`, cast and extent
+  closures collapsed distinct failure sites to one location. Capture inline
+  at each operation instead. Inline `at!` in a lambda is appropriate.
+
+- Fixed in the 0.3 design consolidation: composed matte plans could retain stale
+  execution descriptors, causing BGRA/P3 RGBA to gray conversions to panic.
+  Each operation now owns its descriptors and scale (`0e309692`).
+- Fixed: allocating and caller-buffer PQ-to-linear conversion attached different
+  white anchors to identical samples; shared resolution also covers adaptation
+  and output finalization (`efe55343`).
+- Fixed: invalid alpha descriptors, cropped final-row split overflow, empty
+  swaps and U64 lane removal assumptions (`9297c114`); F16 alpha payload and
+  histogram shape/rank discrepancies (`e29bca51`). See design regression gates.
+- Qualification limit: historical ICC table flags have not been regenerated
+  against the corrected generator. Their curve-fit errors are not global CMS
+  error bounds. New generation cannot override failed empirical evidence with
+  structural classification (`8309b21b`).
+
+- Fixed in the explicit HLG rendering work (2026-11-09): HLG matte compositing
+  previously used implicit rendering assumptions. It now requires explicit
+  rendering conditions and white, and uses the luminance-coupled OOTF. Existing matte error
+  tolerances are retained.
 
 - Corrected ICC exports landed on main in 49f00314 (2026-11-09),
   after separate PR128 qualification; no crate has been published. The actual replacement bundle is 93,377 bytes with 313
@@ -257,7 +286,8 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
   consistently; an anchor-only context avoids falsely tagging linear samples as PQ.
   Buffer HDR-to-SDR conversion measures MaxRGB peak by default; row/output plans require
   an explicit or context-declared peak. SDR target peak is explicit. HLG transfer
-  conversion returns `HlgOotfNotImplemented` until a display OOTF exists. Old HDR-config
+  conversion requires explicit `HlgRendering` conditions; omission returns
+  `HlgRenderingRequired`. Old HDR-config
   constructors remain available for compatibility; the preferred interface is
   `convert_to_with_options` / `new_explicit`. Design: `docs/hdr-anchor-api-design.md` §6.
   Kernel tests moved to `src/kernel_tests`: the same numerical assertions and frozen

@@ -8,7 +8,8 @@
 //!
 //! [`PixelSliceConvertExt::adapt_for_encode`](crate::ext::PixelSliceConvertExt::adapt_for_encode)
 //! covers pixels a [`PixelSlice`] can describe. [`adapt_raw_rows_for_encode`] covers
-//! raw rows with padding that isn't a whole number of pixels.
+//! raw rows whose sample alignment cannot be represented by PixelSlice.
+//! PixelSlice accepts sample-aligned byte strides, including partial-pixel padding.
 //!
 //! # Zero-copy fast path
 //!
@@ -31,21 +32,15 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
-//! use zenpixels_convert::adapt::adapt_for_encode_cow;
-//!
-//! let supported = &[
-//!     PixelDescriptor::RGB8_SRGB,
-//!     PixelDescriptor::GRAY8_SRGB,
-//! ];
-//!
-//! let adapted = adapt_for_encode_cow(
-//!     raw_bytes, source_desc, width, rows, stride, supported,
-//! )?;
-//!
-//! let view = adapted.as_slice();
-//! encoder.write_rows(view)?; // carries stride and descriptor
-
+//! ```
+//! use zenpixels::{PixelDescriptor, ConvertOptions};
+//! use zenpixels_convert::adapt::adapt_raw_rows_for_encode;
+//! let bytes = [10u8, 20, 30, 0, 40, 50, 60];
+//! let supported = [PixelDescriptor::RGB8_SRGB];
+//! let adapted = adapt_raw_rows_for_encode(&bytes, supported[0], 1, 2, 4,
+//!     &supported, &ConvertOptions::retain_channels())?;
+//! assert_eq!(adapted.as_slice().row(1), &[40, 50, 60]);
+//! # Ok::<(), whereat::At<zenpixels_convert::ConvertError>>(())
 //! ```
 
 use alloc::vec;
@@ -388,10 +383,12 @@ pub(crate) fn convert_into_with_anchor(
 /// alpha) — the buffer is **untouched**; fall through to the allocating
 /// `PixelSliceConvertExt::adapt_for_encode` or the `PixelBuffer` conversion methods:
 ///
-/// ```rust,ignore
-/// if try_adapt_in_place(&mut buf, target).is_err() {
-///     // needs a real conversion — allocate via adapt_for_encode
-/// }
+/// ```
+/// use zenpixels::{PixelBuffer, PixelDescriptor};
+/// use zenpixels_convert::PixelBufferConvertExt;
+/// let mut buf = PixelBuffer::try_new(1, 1, PixelDescriptor::RGB8_SRGB)?;
+/// buf.try_adapt_in_place(PixelDescriptor::RGB8_SRGB)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub(crate) fn try_adapt_in_place(
     buf: &mut PixelBuffer,
@@ -496,7 +493,7 @@ fn drop_lane_impl<'a>(
     // pixel, rows stay at their own bases (zero cross-row movement, freed
     // bytes become row padding); otherwise rows shift up slightly.
     // Either way dst(y, x) <= src(y, x) for every pixel, so a
-    // forward pass staged through a fixed temp never clobbers unread
+    // forward pass never clobbers unread
     // source.
     let out_stride = px.stride - (px.stride % out_bpp);
     for y in 0..px.rows as usize {
@@ -504,12 +501,19 @@ fn drop_lane_impl<'a>(
         let dbase = y * out_stride;
         for x in 0..width {
             let s = sbase + x * in_bpp;
-            let mut tmp = [0u8; 16];
-            tmp[..in_bpp].copy_from_slice(&px.bytes[s..s + in_bpp]);
+            // Only the U8 BGR mapping reorders components. Preserve its
+            // original pixel before overwriting; monotonic maps copy directly.
+            if map == [2, 1, 0] {
+                debug_assert_eq!(elem, 1);
+                let rgb = [px.bytes[s + 2], px.bytes[s + 1], px.bytes[s]];
+                let d = dbase + x * out_bpp;
+                px.bytes[d..d + 3].copy_from_slice(&rgb);
+                continue;
+            }
             let d = dbase + x * out_bpp;
             for (k, &c) in map.iter().enumerate() {
-                px.bytes[d + k * elem..d + (k + 1) * elem]
-                    .copy_from_slice(&tmp[c * elem..(c + 1) * elem]);
+                px.bytes
+                    .copy_within(s + c * elem..s + (c + 1) * elem, d + k * elem);
             }
         }
     }

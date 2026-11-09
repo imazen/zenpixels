@@ -1,3 +1,9 @@
+> **Current candidate gate — 2026-11-09:** the historical release refs below
+> retain unqualified P3 fallback exposure. Do not publish from their branch names.
+> Reconcile reviewed fixes and rerun the isolated no-db/native oracle first.
+> See [repository issue improvements](repository-issue-completion.md) and the
+> [current semver audit](public-api/semver-0.2.17-to-candidate.md).
+
 # Release plan: 0.2.17 (paving) → 0.3.1 (breaking)
 
 **Superseded draft:** the 2026-09-27

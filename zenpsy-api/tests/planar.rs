@@ -276,3 +276,134 @@ fn heterogeneous_planar_objects_retain_checked_lending() {
         );
     }
 }
+
+#[test]
+fn prepared_interpretation_retains_authority_and_missing_hdr_conditions() {
+    let l = layout();
+    let icc: Arc<[u8]> = Arc::from([1, 2, 3, 4]);
+    let c = ColorContext::from_cicp(Cicp::new(200, 18, 202, false)).with_icc(icc.clone());
+    let data = [1.0, 2.0, f32::NAN, 3.0, 4.0];
+    let p = planes(&data);
+    let image = PlanarSlice::new(&p, &l, 2, 2, &c, None).unwrap();
+    let mut metric = Erased::new(Erased::new(MetricFactory {
+        preparations: Arc::default(),
+        behavior: 0,
+    }));
+    // The synthetic scorer tests carriage only, not HLG/color conversion.
+    // No wrapper may infer a white or display rendering from a raw tag.
+    let mut prepared = prepare_planar_reference(&mut metric, &image, EvalOpts::new()).unwrap();
+    assert!(image.color_context().diffuse_white.is_none());
+    assert!(image.color_context().hdr_peak.is_none());
+    assert!(Arc::ptr_eq(
+        image.color_context().icc.as_ref().unwrap(),
+        &icc
+    ));
+    let independently_padded = [1.0, 2.0, f32::NAN, f32::NAN, 3.0, 4.0];
+    let q = [AnyPlane::F32(PlaneRef::new(&independently_padded[..], 2, 2, 4).unwrap()); 3];
+    let equal_context = c.clone();
+    let candidate = PlanarSlice::new(&q, &l, 2, 2, &equal_context, None).unwrap();
+    let result = prepared.score(&candidate, EvalOpts::new()).unwrap();
+    assert_eq!(
+        result.scores().next().unwrap().value.to_bits(),
+        0.0f64.to_bits()
+    );
+    for changed in [
+        c.clone().with_icc([4, 3, 2, 1]),
+        c.clone().with_cicp(Cicp::new(200, 18, 203, false)),
+        c.clone().with_diffuse_white(hdr::DiffuseWhite::BT2408),
+        c.clone().with_hdr_peak(hdr::Nits::new(1000.0)),
+    ] {
+        let candidate = PlanarSlice::new(&q, &l, 2, 2, &changed, None).unwrap();
+        assert_eq!(
+            prepared
+                .score(&candidate, EvalOpts::new())
+                .err()
+                .unwrap()
+                .error()
+                .kind(),
+            ErrorKind::UnsupportedInput
+        );
+        assert_eq!(
+            prepared
+                .with_evaluation::<()>(&candidate, EvalOpts::new(), |_| panic!(
+                    "changed interpretation reached consumer"
+                ))
+                .unwrap_err()
+                .error()
+                .kind(),
+            ErrorKind::UnsupportedInput
+        );
+    }
+    // A changed representation is not silently normalized to prepared scale.
+    let changed_layout = PlanarLayout::new(
+        [PlaneRole::Red, PlaneRole::Green, PlaneRole::Blue]
+            .map(|r| {
+                PlaneSpec::new(
+                    r,
+                    PlaneEncoding::Float(FloatEncoding::new(2.0, 0.0).unwrap()),
+                )
+            })
+            .to_vec(),
+        sample::ChromaSubsampling::Yuv444,
+        sample::ChromaSiting::Unknown,
+    )
+    .unwrap();
+    let candidate = PlanarSlice::new(&q, &changed_layout, 2, 2, &c, None).unwrap();
+    assert_eq!(
+        prepared
+            .score(&candidate, EvalOpts::new())
+            .err()
+            .unwrap()
+            .error()
+            .kind(),
+        ErrorKind::UnsupportedInput
+    );
+    prepared
+        .with_evaluation(&image, EvalOpts::new(), |_| Ok(()))
+        .unwrap();
+}
+
+#[test]
+fn packed_and_planar_operation_admission_share_request_classification() {
+    let l = layout();
+    let c = color();
+    let data = [0.0; 5];
+    let p = planes(&data);
+    let planar = PlanarSlice::new(&p, &l, 2, 2, &c, None).unwrap();
+    let bytes = [0; 12];
+    let packed = PixelSlice::new(&bytes, 2, 2, 6, PixelDescriptor::RGB8_SRGB).unwrap();
+    let mut metric = MetricFactory {
+        preparations: Arc::default(),
+        behavior: 0,
+    };
+    for (opts, expected) in [
+        (EvalOpts::new().with_map(""), ErrorKind::InvalidConfig),
+        (EvalOpts::new().with_max_pixels(3), ErrorKind::Resource),
+    ] {
+        assert_eq!(
+            score(&mut metric, &packed, &packed, opts)
+                .err()
+                .unwrap()
+                .error()
+                .kind(),
+            expected
+        );
+        assert_eq!(
+            score_planar(&mut metric, &planar, &planar, opts)
+                .err()
+                .unwrap()
+                .error()
+                .kind(),
+            expected
+        );
+        assert_eq!(
+            prepare_planar_reference(&mut metric, &planar, opts)
+                .err()
+                .unwrap()
+                .error()
+                .kind(),
+            expected
+        );
+    }
+    assert_eq!(metric.preparations.load(Ordering::SeqCst), 0);
+}

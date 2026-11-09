@@ -570,10 +570,12 @@ impl<T: PlaneSample> Plane<&mut [T]> {
         } = self;
         let at = if y == 0 || width == 0 {
             start
+        } else if y == height {
+            // The final row need not include its trailing stride padding.
+            buf.len()
         } else {
             start + y * stride
         };
-        let at = at.min(buf.len());
         let (top, bottom) = buf.split_at_mut(at);
         Ok((
             Plane {
@@ -1296,6 +1298,14 @@ impl PlanarLayout {
 /// encodings, strides and subsampling. Construction checks storage and layout;
 /// it does not convert, normalize or infer color. Empty pictures are allowed
 /// here; consumers decide their minimum geometry.
+///
+/// Integer payload depth and placement use [`SampleEncoding`]; read supported
+/// native components through [`crate::sample::CodePlane`]. A representable
+/// encoding does not establish support for reading or processing that storage.
+/// Color signaling is carried verbatim: unknown CICP, authoritative ICC and
+/// missing luminance anchors are not normalized or replaced. In particular,
+/// an HLG tag does not select [`crate::hdr::HlgRendering`]; a metric or converter
+/// supplies any required display conditions in its own configuration.
 #[derive(Clone, Copy, Debug)]
 pub struct PlanarSlice<'a> {
     planes: &'a [AnyPlane<'a>],

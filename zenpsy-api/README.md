@@ -17,6 +17,21 @@ borrowed standard planes/layout, explicit color/luminance and alpha, without
 packing or copying samples. Checked prepared calls bind that interpretation;
 independent candidate strides are preserved.
 
+Planar ingress uses the same `SampleEncoding`, `CodePlane` component readers,
+`PlanarLayout` and `ColorContext` as the current pixel contracts. Storage facts
+are not conversion support: a signed/wide integer encoding is representable
+without promising a matching native plane reader or metric implementation.
+Code depth/placement, native matrix/range, chroma siting, unknown codes and ICC
+bytes remain intact. The wrapper does not normalize words or substitute CICP
+for an authoritative ICC. Native views describe current samples; original
+bitstream signaling belongs in codec provenance after a real conversion.
+
+No white anchor, peak or HLG display rendering is inferred from a transfer tag.
+A metric needing those conditions configures them explicitly (using existing
+zenpixels types such as `hdr::HlgRendering`) and records its effective
+configuration in identity. The scoring core adds no conversion dependency,
+universal display preset or replacement native-code carrier.
+
 `PrepareReference` is optional and returns actual reusable work through a native
 associated type. Checked prepared calls preserve geometry and use fresh controls.
 Scorers and results need not be Send/Sync; consumers add worker-specific bounds.

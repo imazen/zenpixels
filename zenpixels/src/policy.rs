@@ -38,8 +38,9 @@ pub enum AlphaPolicy {
         /// on an SDR source or an HDR background, whose luminance is already known.
         ///
         /// **Set this for HDR sources, to the reference white the content was graded to.**
-        /// `None` assumes [`DiffuseWhite::BT2408`]'s 203 cd/m², which may not match. On HLG, a
-        /// value also assumes BT.2100's nominal 1000 cd/m² display.
+        /// `None` assumes [`DiffuseWhite::BT2408`]'s 203 cd/m², which may not match.
+        /// HLG additionally requires explicit [`ConvertOptions::with_hlg_rendering`]
+        /// conditions and an SDR-white anchor for the display-linear intermediate.
         reference_white: Option<DiffuseWhite>,
     },
     /// Return error rather than dropping alpha.
@@ -180,6 +181,7 @@ pub struct ConvertOptions {
     sdr_white: Option<crate::hdr::DiffuseWhite>,
     hdr_peak: crate::hdr::HdrPeak,
     sdr_peak: Option<crate::hdr::Nits>,
+    hlg_rendering: Option<crate::hdr::HlgRendering>,
 }
 
 impl ConvertOptions {
@@ -206,6 +208,7 @@ impl ConvertOptions {
             sdr_white: None,
             hdr_peak: crate::hdr::HdrPeak::Measured,
             sdr_peak: None,
+            hlg_rendering: None,
         }
     }
 
@@ -226,7 +229,18 @@ impl ConvertOptions {
             sdr_white: None,
             hdr_peak: crate::hdr::HdrPeak::Measured,
             sdr_peak: None,
+            hlg_rendering: None,
         }
+    }
+
+    /// Explicit scene-to-display rendering conditions for HLG boundaries.
+    pub const fn hlg_rendering(&self) -> Option<crate::hdr::HlgRendering> {
+        self.hlg_rendering
+    }
+    /// Opt into HLG rendering. Native identity transport remains independent of this policy.
+    pub const fn with_hlg_rendering(mut self, rendering: crate::hdr::HlgRendering) -> Self {
+        self.hlg_rendering = Some(rendering);
+        self
     }
 
     /// Explicit luminance represented by relative-linear 1.0 / SDR white.
@@ -458,6 +472,7 @@ mod tests {
             sdr_white: None,
             hdr_peak: crate::hdr::HdrPeak::Measured,
             sdr_peak: None,
+            hlg_rendering: None,
         };
         #[allow(clippy::clone_on_copy)]
         let opts2 = opts.clone();
@@ -490,6 +505,7 @@ mod tests {
             sdr_white: None,
             hdr_peak: crate::hdr::HdrPeak::Measured,
             sdr_peak: None,
+            hlg_rendering: None,
         };
         let mut h = std::hash::DefaultHasher::new();
         opts.hash(&mut h);

@@ -164,17 +164,7 @@ impl OutputPlan {
             PlanPolicy::Convert(options, cms) => (options, cms),
             PlanPolicy::PreserveSamples => (&conservative, None),
         };
-        let mut resolved_options = *options;
-        if resolved_options.sdr_white().is_none()
-            && let Some(white) = current.as_ref().and_then(|c| c.diffuse_white)
-        {
-            resolved_options = resolved_options.with_sdr_white(white);
-        }
-        if resolved_options.hdr_peak() == zenpixels::hdr::HdrPeak::Declared
-            && let Some(peak) = current.as_ref().and_then(|c| c.hdr_peak)
-        {
-            resolved_options = resolved_options.with_hdr_peak(zenpixels::hdr::HdrPeak::Nits(peak));
-        }
+        let resolved_options = crate::interpretation::resolve_options(current.as_deref(), options);
         let options = &resolved_options;
         let source_profile = super::current_profile_for(source_desc, current.as_deref())?;
         let target_profile = match &target {
@@ -277,12 +267,18 @@ impl OutputPlan {
         };
 
         // The current context must describe the returned samples, including identity.
-        let mut context = crate::ColorContext::default();
+        let mut context = crate::interpretation::output_context(
+            source_desc,
+            target_desc_full,
+            current.as_ref(),
+            options,
+            false,
+        )
+        .as_deref()
+        .cloned()
+        .unwrap_or_default();
         context.icc = metadata.icc.clone();
         context.cicp = metadata.cicp;
-        context.diffuse_white = resolved_options
-            .sdr_white()
-            .or_else(|| current.as_ref().and_then(|c| c.diffuse_white));
         let context = Arc::new(context);
 
         // A decoder may carry an authoritative ICC while leaving the compact

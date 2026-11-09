@@ -9,24 +9,24 @@
 ## summary
 #
 #   pub modules                                13
-#   pub types (struct/enum/trait/alias)       130
-#   pub consts/statics                        357
+#   pub types (struct/enum/trait/alias)       133
+#   pub consts/statics                        368
 #   free functions                              2
-#   inherent methods                          376
+#   inherent methods                          377
 #   struct fields                             120
-#   enum variants                             320
+#   enum variants                             322
 #   re-exports                                  1
-#   trait roster entries (type × trait)       462
-#   auto-trait-complete types                  65
+#   trait roster entries (type × trait)       481
+#   auto-trait-complete types                  68
 #   auto-trait exceptions                       9
 #
 # per-module pub lines:
-#   (root)                          501
-#   buffer                          310
+#   (root)                          512
+#   buffer                          311
 #   cicp                             38
 #   color                            83
-#   descriptor                      167
-#   hdr                              17
+#   descriptor                      168
+#   hdr                              21
 #   icc                              11
 #   orientation                      11
 #   pixel_types                       9
@@ -35,7 +35,7 @@
 #   precision                        20
 #   sample                           33
 
-## items (1168 lines)
+## items (1183 lines)
 
 pub mod zenpixels
 pub use At
@@ -44,6 +44,7 @@ pub buffer::BufferError::AlignmentViolation
 pub buffer::BufferError::AllocationFailed
 pub buffer::BufferError::IncompatibleDescriptor
 pub buffer::BufferError::InsufficientData
+pub buffer::BufferError::InvalidDescriptor(descriptor::DescriptorError)
 pub buffer::BufferError::InvalidDimensions
 pub buffer::BufferError::StrideNotPixelAligned
 pub buffer::BufferError::StrideTooSmall
@@ -404,6 +405,7 @@ pub descriptor::TransferFunction::Unknown
 pub const fn descriptor::TransferFunction::from_cicp(u8) -> core::option::Option<Self> [also: (root)]
 pub fn descriptor::TransferFunction::reference_white_nits(&self) -> f32
 pub const fn descriptor::TransferFunction::to_cicp(self) -> core::option::Option<u8> [also: (root)]
+pub struct descriptor::DescriptorError
 pub struct descriptor::GenericFormat
 pub descriptor::PixelDescriptor::alpha: core::option::Option<descriptor::AlphaMode>
 pub descriptor::PixelDescriptor::format: descriptor::PixelFormat
@@ -471,8 +473,8 @@ pub const fn descriptor::PixelDescriptor::new_full(descriptor::ChannelType, desc
 pub const fn descriptor::PixelDescriptor::pixel_format(&self) -> descriptor::PixelFormat [also: (root)]
 pub const fn descriptor::PixelDescriptor::simd_aligned_stride(self, u32, usize) -> usize [also: (root)]
 pub const fn descriptor::PixelDescriptor::transfer(&self) -> descriptor::TransferFunction [also: (root)]
-pub const fn descriptor::PixelDescriptor::try_new(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>, descriptor::TransferFunction) -> core::option::Option<Self> [also: (root)]
-pub const fn descriptor::PixelDescriptor::try_new_full(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>, descriptor::TransferFunction, descriptor::ColorPrimaries) -> core::option::Option<Self> [also: (root)]
+pub const fn descriptor::PixelDescriptor::try_new(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>, descriptor::TransferFunction) -> core::result::Result<Self, descriptor::DescriptorError> [also: (root)]
+pub const fn descriptor::PixelDescriptor::try_new_full(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>, descriptor::TransferFunction, descriptor::ColorPrimaries) -> core::result::Result<Self, descriptor::DescriptorError> [also: (root)]
 pub fn descriptor::PixelDescriptor::validate(self) -> core::result::Result<(), buffer::BufferError>
 pub const fn descriptor::PixelDescriptor::with_alpha(self, core::option::Option<descriptor::AlphaMode>) -> Self [also: (root)]
 pub const fn descriptor::PixelDescriptor::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self [also: (root)]
@@ -493,6 +495,12 @@ pub const hdr::DiffuseWhite::BT2408: Self
 pub const fn hdr::DiffuseWhite::new(f32) -> Self
 pub const fn hdr::DiffuseWhite::nits(self) -> f32
 pub const fn hdr::DiffuseWhite::try_new(f32) -> core::option::Option<Self>
+pub struct hdr::HlgRendering
+pub const hdr::HlgRendering::REFERENCE_1000_NIT: Self
+pub const fn hdr::HlgRendering::black_nits(self) -> f32
+pub const fn hdr::HlgRendering::new(hdr::Nits, f32, f32) -> core::option::Option<Self>
+pub const fn hdr::HlgRendering::peak(self) -> hdr::Nits
+pub const fn hdr::HlgRendering::system_gamma(self) -> f32
 #[non_exhaustive] pub struct hdr::MasteringDisplay
 pub hdr::MasteringDisplay::max_luminance: f32
 pub hdr::MasteringDisplay::min_luminance: f32
@@ -505,6 +513,10 @@ pub struct hdr::Nits(_)
 pub const fn hdr::Nits::new(f32) -> Self
 pub const fn hdr::Nits::nits(self) -> f32
 pub const fn hdr::Nits::try_new(f32) -> core::option::Option<Self>
+pub struct hdr::St2086Codes(_)
+pub const fn hdr::St2086Codes::from_be_bytes([u8; 24]) -> Self
+pub fn hdr::St2086Codes::semantic(self) -> hdr::MasteringDisplay
+pub const fn hdr::St2086Codes::to_be_bytes(self) -> [u8; 24]
 pub mod icc
 #[non_exhaustive] pub enum icc::IdentificationUse
 pub icc::IdentificationUse::MatrixTrcSubstitution
@@ -686,6 +698,7 @@ pub const fn policy::ConvertOptions::depth_policy(&self) -> policy::DepthPolicy 
 pub const fn policy::ConvertOptions::gamut_mapping(&self) -> policy::GamutMapping [also: (root)]
 pub const fn policy::ConvertOptions::gray_expand(&self) -> policy::GrayExpand [also: (root)]
 pub const fn policy::ConvertOptions::hdr_peak(&self) -> hdr::HdrPeak [also: (root)]
+pub const fn policy::ConvertOptions::hlg_rendering(&self) -> core::option::Option<hdr::HlgRendering> [also: (root)]
 pub const fn policy::ConvertOptions::luma(&self) -> core::option::Option<policy::LumaCoefficients> [also: (root)]
 pub const fn policy::ConvertOptions::permissive() -> Self [also: (root)]
 pub const fn policy::ConvertOptions::retain_channels() -> Self [also: (root)]
@@ -697,6 +710,7 @@ pub const fn policy::ConvertOptions::with_depth_policy(self, policy::DepthPolicy
 pub const fn policy::ConvertOptions::with_gamut_mapping(self, policy::GamutMapping) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_gray_expand(self, policy::GrayExpand) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_hdr_peak(self, hdr::HdrPeak) -> Self [also: (root)]
+pub const fn policy::ConvertOptions::with_hlg_rendering(self, hdr::HlgRendering) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_luma(self, core::option::Option<policy::LumaCoefficients>) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_sdr_peak(self, hdr::Nits) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_sdr_white(self, hdr::DiffuseWhite) -> Self [also: (root)]
@@ -796,6 +810,7 @@ pub BufferError::AlignmentViolation
 pub BufferError::AllocationFailed
 pub BufferError::IncompatibleDescriptor
 pub BufferError::InsufficientData
+pub BufferError::InvalidDescriptor(descriptor::DescriptorError)
 pub BufferError::InvalidDimensions
 pub BufferError::StrideNotPixelAligned
 pub BufferError::StrideTooSmall
@@ -1206,7 +1221,7 @@ pub trait Pixel: bytemuck::pod::Pod [also: buffer]
 pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 pub trait StorageSample: buffer::storage_sample::Sealed + bytemuck::pod::Pod + core::marker::Sized [also: buffer]
 
-## trait impls (94 types)
+## trait impls (97 types)
 
 &S: plane::SampleStorage
 &mut S: plane::SampleStorage, plane::SampleStorageMut
@@ -1245,6 +1260,7 @@ descriptor::ChannelLayout: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::ChannelType: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::ColorModel: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::ColorPrimaries: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq
+descriptor::DescriptorError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 descriptor::GenericFormat: Clone, Copy, Debug, Eq, Hash, PartialEq
 descriptor::PixelDescriptor: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::PixelFormat: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
@@ -1255,8 +1271,10 @@ f64: buffer::StorageSample
 hdr::ContentLightLevel: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 hdr::DiffuseWhite: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 hdr::HdrPeak: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+hdr::HlgRendering: Clone, Copy, Debug, Eq, Hash, PartialEq
 hdr::MasteringDisplay: Clone, Copy, Debug, Default, PartialEq
 hdr::Nits: Clone, Copy, Debug, Eq, Hash, PartialEq
+hdr::St2086Codes: Clone, Copy, Debug, Eq, Hash, PartialEq
 i16: buffer::StorageSample
 i32: buffer::StorageSample
 i64: buffer::StorageSample
