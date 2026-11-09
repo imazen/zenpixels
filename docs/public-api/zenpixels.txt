@@ -9,33 +9,33 @@
 ## summary
 #
 #   pub modules                                13
-#   pub types (struct/enum/trait/alias)       129
-#   pub consts/statics                        351
+#   pub types (struct/enum/trait/alias)       134
+#   pub consts/statics                        370
 #   free functions                              2
-#   inherent methods                          375
+#   inherent methods                          379
 #   struct fields                             120
-#   enum variants                             319
+#   enum variants                             322
 #   re-exports                                  1
-#   trait roster entries (type × trait)       459
-#   auto-trait-complete types                  64
+#   trait roster entries (type × trait)       487
+#   auto-trait-complete types                  69
 #   auto-trait exceptions                       9
 #
 # per-module pub lines:
-#   (root)                          495
+#   (root)                          513
 #   buffer                          310
 #   cicp                             38
 #   color                            83
 #   descriptor                      167
-#   hdr                              17
+#   hdr                              21
 #   icc                              11
 #   orientation                      11
 #   pixel_types                       9
 #   plane                            94
 #   policy                           22
 #   precision                        20
-#   sample                           33
+#   sample                           42
 
-## items (1159 lines)
+## items (1188 lines)
 
 pub mod zenpixels
 pub use At
@@ -493,6 +493,12 @@ pub const hdr::DiffuseWhite::BT2408: Self
 pub const fn hdr::DiffuseWhite::new(f32) -> Self
 pub const fn hdr::DiffuseWhite::nits(self) -> f32
 pub const fn hdr::DiffuseWhite::try_new(f32) -> core::option::Option<Self>
+pub struct hdr::HlgRendering
+pub const hdr::HlgRendering::REFERENCE_1000_NIT: Self
+pub const fn hdr::HlgRendering::black_nits(self) -> f32
+pub const fn hdr::HlgRendering::new(hdr::Nits, f32, f32) -> core::option::Option<Self>
+pub const fn hdr::HlgRendering::peak(self) -> hdr::Nits
+pub const fn hdr::HlgRendering::system_gamma(self) -> f32
 #[non_exhaustive] pub struct hdr::MasteringDisplay
 pub hdr::MasteringDisplay::max_luminance: f32
 pub hdr::MasteringDisplay::min_luminance: f32
@@ -505,6 +511,10 @@ pub struct hdr::Nits(_)
 pub const fn hdr::Nits::new(f32) -> Self
 pub const fn hdr::Nits::nits(self) -> f32
 pub const fn hdr::Nits::try_new(f32) -> core::option::Option<Self>
+pub struct hdr::St2086Codes(_)
+pub const fn hdr::St2086Codes::from_be_bytes([u8; 24]) -> Self
+pub fn hdr::St2086Codes::semantic(self) -> hdr::MasteringDisplay
+pub const fn hdr::St2086Codes::to_be_bytes(self) -> [u8; 24]
 pub mod icc
 #[non_exhaustive] pub enum icc::IdentificationUse
 pub icc::IdentificationUse::MatrixTrcSubstitution
@@ -677,6 +687,7 @@ pub const fn policy::ConvertOptions::depth_policy(&self) -> policy::DepthPolicy 
 pub const fn policy::ConvertOptions::gamut_mapping(&self) -> policy::GamutMapping [also: (root)]
 pub const fn policy::ConvertOptions::gray_expand(&self) -> policy::GrayExpand [also: (root)]
 pub const fn policy::ConvertOptions::hdr_peak(&self) -> hdr::HdrPeak [also: (root)]
+pub const fn policy::ConvertOptions::hlg_rendering(&self) -> core::option::Option<hdr::HlgRendering> [also: (root)]
 pub const fn policy::ConvertOptions::luma(&self) -> core::option::Option<policy::LumaCoefficients> [also: (root)]
 pub const fn policy::ConvertOptions::permissive() -> Self [also: (root)]
 pub const fn policy::ConvertOptions::retain_channels() -> Self [also: (root)]
@@ -688,6 +699,7 @@ pub const fn policy::ConvertOptions::with_depth_policy(self, policy::DepthPolicy
 pub const fn policy::ConvertOptions::with_gamut_mapping(self, policy::GamutMapping) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_gray_expand(self, policy::GrayExpand) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_hdr_peak(self, hdr::HdrPeak) -> Self [also: (root)]
+pub const fn policy::ConvertOptions::with_hlg_rendering(self, hdr::HlgRendering) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_luma(self, core::option::Option<policy::LumaCoefficients>) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_sdr_peak(self, hdr::Nits) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_sdr_white(self, hdr::DiffuseWhite) -> Self [also: (root)]
@@ -742,6 +754,10 @@ pub sample::ExactDepthError::InvalidBits
 pub sample::ExactDepthError::NarrowBelowEightBits
 pub sample::ExactDepthError::UnsupportedLayout
 pub sample::ExactDepthError::UnsupportedStorage
+#[non_exhaustive] pub enum sample::NativeCodeError
+pub sample::NativeCodeError::Channels
+pub sample::NativeCodeError::Encoding
+pub sample::NativeCodeError::Geometry
 #[non_exhaustive] pub enum sample::SampleEncodingError
 pub sample::SampleEncodingError::InvalidBitDepth
 pub sample::SampleEncodingError::InvalidBitShift
@@ -765,6 +781,19 @@ pub fn sample::ExactDepth::measure<P>(&buffer::PixelSlice<'_, P>) -> core::resul
 pub const fn sample::ExactDepth::new(descriptor::ChannelType, descriptor::SignalRange, u8, u8) -> core::result::Result<Self, sample::ExactDepthError>
 pub const fn sample::ExactDepth::range(self) -> descriptor::SignalRange
 pub const fn sample::ExactDepth::storage(self) -> descriptor::ChannelType
+pub struct sample::NativeCodeSlice<'a>
+pub fn sample::NativeCodeSlice<'a>::code(self, u32, u32, usize) -> core::option::Option<i128>
+pub const fn sample::NativeCodeSlice<'a>::encodings(self) -> &'a [sample::NativeEncoding]
+pub const fn sample::NativeCodeSlice<'a>::height(self) -> u32
+pub const fn sample::NativeCodeSlice<'a>::layout(self) -> descriptor::ChannelLayout
+pub fn sample::NativeCodeSlice<'a>::new(&'a [u8], u32, u32, usize, descriptor::ChannelLayout, &'a [sample::NativeEncoding]) -> core::result::Result<Self, sample::NativeCodeError>
+pub fn sample::NativeCodeSlice<'a>::row(self, u32) -> core::option::Option<&'a [u8]>
+pub const fn sample::NativeCodeSlice<'a>::width(self) -> u32
+pub struct sample::NativeEncoding
+pub const fn sample::NativeEncoding::bit_shift(self) -> u8
+pub const fn sample::NativeEncoding::code_bits(self) -> u8
+pub const fn sample::NativeEncoding::new(descriptor::ChannelType, u8, u8) -> core::result::Result<Self, sample::NativeCodeError>
+pub const fn sample::NativeEncoding::storage(self) -> descriptor::ChannelType
 pub struct sample::SampleEncoding
 pub const fn sample::SampleEncoding::bit_shift(self) -> u8
 pub const fn sample::SampleEncoding::code_bits(self) -> u8
@@ -1197,7 +1226,7 @@ pub trait Pixel: bytemuck::pod::Pod [also: buffer]
 pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 pub trait StorageSample: buffer::storage_sample::Sealed + bytemuck::pod::Pod + core::marker::Sized [also: buffer]
 
-## trait impls (93 types)
+## trait impls (98 types)
 
 &S: plane::SampleStorage
 &mut S: plane::SampleStorage, plane::SampleStorageMut
@@ -1246,8 +1275,10 @@ f64: buffer::StorageSample
 hdr::ContentLightLevel: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 hdr::DiffuseWhite: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 hdr::HdrPeak: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+hdr::HlgRendering: Clone, Copy, Debug, Eq, Hash, PartialEq
 hdr::MasteringDisplay: Clone, Copy, Debug, Default, PartialEq
 hdr::Nits: Clone, Copy, Debug, Eq, Hash, PartialEq
+hdr::St2086Codes: Clone, Copy, Debug, Eq, Hash, PartialEq
 i16: buffer::StorageSample
 i32: buffer::StorageSample
 i64: buffer::StorageSample
@@ -1286,6 +1317,9 @@ sample::CodePlane<'a>: Clone, Copy, Debug
 sample::CodePlaneError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 sample::ExactDepth: Clone, Copy, Debug, Eq, Hash, PartialEq
 sample::ExactDepthError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
+sample::NativeCodeError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
+sample::NativeCodeSlice<'a>: Clone, Copy, Debug
+sample::NativeEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
 sample::SampleEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
 sample::SampleEncodingError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 u16: buffer::StorageSample, plane::PlaneSample

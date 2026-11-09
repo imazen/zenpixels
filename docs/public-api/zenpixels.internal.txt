@@ -9,9 +9,9 @@
 
 ## summary
 #
-#   inherent methods                           55
+#   inherent methods                           59
 #   enum variants                              14
-#   trait roster entries (type × trait)        57
+#   trait roster entries (type × trait)        62
 #
 # per-module pub lines:
 #   (root)                            7
@@ -19,16 +19,16 @@
 #   cicp                              2
 #   color                             8
 #   descriptor                       17
-#   hdr                               2
+#   hdr                               4
 #   icc                               2
 #   orientation                       1
 #   pixel_types                       2
 #   plane                             7
 #   policy                            6
 #   precision                         5
-#   sample                            7
+#   sample                            9
 
-## items (69 lines)
+## items (73 lines)
 
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
 pub fn buffer::BufferError::assert_fields_are_eq(&self)
@@ -55,6 +55,8 @@ pub fn descriptor::SignalRange::assert_fields_are_eq(&self)
 pub fn descriptor::TransferFunction::assert_fields_are_eq(&self)
 pub fn hdr::ContentLightLevel::assert_fields_are_eq(&self)
 pub fn hdr::HdrPeak::assert_fields_are_eq(&self)
+pub fn hdr::HlgRendering::assert_fields_are_eq(&self)
+pub fn hdr::St2086Codes::assert_fields_are_eq(&self)
 pub fn icc::IccIdentification::assert_fields_are_eq(&self)
 pub fn icc::IdentificationUse::assert_fields_are_eq(&self)
 pub fn orientation::Orientation::assert_fields_are_eq(&self)
@@ -83,6 +85,8 @@ pub fn sample::ChromaSubsampling::assert_fields_are_eq(&self)
 pub fn sample::CodePlaneError::assert_fields_are_eq(&self)
 pub fn sample::ExactDepth::assert_fields_are_eq(&self)
 pub fn sample::ExactDepthError::assert_fields_are_eq(&self)
+pub fn sample::NativeCodeError::assert_fields_are_eq(&self)
+pub fn sample::NativeEncoding::assert_fields_are_eq(&self)
 pub fn sample::SampleEncoding::assert_fields_are_eq(&self)
 pub fn sample::SampleEncodingError::assert_fields_are_eq(&self)
 pub AlphaMode::__Reserved(descriptor::reserved::Reserved)
@@ -100,7 +104,7 @@ pub descriptor::ColorPrimaries::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::SignalRange::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::TransferFunction::__Reserved(descriptor::reserved::Reserved)
 
-## trait impls (57 types)
+## trait impls (62 types)
 
 buffer::Bgrx: TrivialClone
 buffer::BufferError: TrivialClone
@@ -124,8 +128,10 @@ descriptor::TransferFunction: TrivialClone
 hdr::ContentLightLevel: TrivialClone
 hdr::DiffuseWhite: TrivialClone
 hdr::HdrPeak: TrivialClone
+hdr::HlgRendering: TrivialClone
 hdr::MasteringDisplay: TrivialClone
 hdr::Nits: TrivialClone
+hdr::St2086Codes: TrivialClone
 icc::IccIdentification: TrivialClone
 icc::IdentificationUse: TrivialClone
 orientation::Orientation: TrivialClone
@@ -157,5 +163,8 @@ sample::CodePlane<'a>: TrivialClone
 sample::CodePlaneError: TrivialClone
 sample::ExactDepth: TrivialClone
 sample::ExactDepthError: TrivialClone
+sample::NativeCodeError: TrivialClone
+sample::NativeCodeSlice<'a>: TrivialClone
+sample::NativeEncoding: TrivialClone
 sample::SampleEncoding: TrivialClone
 sample::SampleEncodingError: TrivialClone

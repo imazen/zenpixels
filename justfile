@@ -655,3 +655,25 @@ main-api-cleanup-check:
     cargo test --locked --workspace --all-features
     cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
     just api-doc
+
+# Native word interpretation and exact metadata contracts.
+native-code-check:
+    cargo test -p zenpixels -p zenpixels-convert --test native_codes --test native_canonical
+
+# Explicit display rendering and existing refusal gates.
+hlg-rendering-check:
+    cargo test -p zenpixels-convert --test hlg_rendering --test hdr_intent
+    cargo test -p zenpixels-convert --features bt2446a --test hlg_rendering --test hdr_intent
+
+# Native libultrahdr recognition and independent C LCMS color qualification.
+# Invoke just through run-heavy; OUT must not exist.
+p3-export-check SOURCE OUT:
+    tools/p3-export-oracle/check.sh {{SOURCE}} {{OUT}}
+
+# Complete approved contract gate; release avoids debug exhaustive-grid overhead.
+approved-contracts-check:
+    cargo test --workspace --release --lib --tests
+    cargo test --workspace --release --doc
+    cargo test -p zenpixels-convert --release --all-features --test hlg_rendering --test hdr_intent --test matte_row_kernels --test native_canonical
+    cargo test -p zenpixels --no-default-features --test native_codes
+    cargo clippy -p zenpixels -p zenpixels-convert --all-targets -- -D warnings

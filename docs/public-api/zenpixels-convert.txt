@@ -9,23 +9,23 @@
 ## summary
 #
 #   pub modules                                16
-#   pub types (struct/enum/trait/alias)        66
+#   pub types (struct/enum/trait/alias)        68
 #   pub consts/statics                         40
-#   free functions                              2
+#   free functions                              4
 #   inherent methods                          178
 #   struct fields                              95
-#   enum variants                             111
+#   enum variants                             117
 #   re-exports                                  8
-#   trait roster entries (type × trait)       166
+#   trait roster entries (type × trait)       178
 #   conditional trait impls (verbatim)          1
-#   auto-trait-complete types                  29
+#   auto-trait-complete types                  31
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
 #   (root)                          207
 #   adapt                             1
 #   cms                              18
-#   codes                            39
+#   codes                            49
 #   converter                        31
 #   css                               3
 #   error                            41
@@ -39,7 +39,7 @@
 #   precision                        62
 #   ycbcr                            22
 
-## items (493 lines)
+## items (503 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -94,6 +94,14 @@ pub codes::CodesError::RangeMismatch
 pub codes::CodesError::RangeMismatch::destination: zenpixels::descriptor::SignalRange
 pub codes::CodesError::RangeMismatch::source: zenpixels::descriptor::SignalRange
 pub codes::CodesError::Read(zenpixels::sample::plane::CodePlaneError)
+#[non_exhaustive] pub enum codes::NativeConversionError
+pub codes::NativeConversionError::DepthReduction
+pub codes::NativeConversionError::Destination
+pub codes::NativeConversionError::Map(codes::CodeMapError)
+pub codes::NativeConversionError::UnsupportedEncoding
+#[non_exhaustive] pub enum codes::NativePadding
+pub codes::NativePadding::Preserve
+pub codes::NativePadding::Zero
 pub struct codes::CodeMap
 pub const fn codes::CodeMap::code(&self, u16) -> u16
 pub const fn codes::CodeMap::input(&self) -> zenpixels::sample::SampleEncoding
@@ -101,7 +109,9 @@ pub fn codes::CodeMap::map_words(&self, &[u16], &mut [u16]) -> core::result::Res
 pub const fn codes::CodeMap::new(zenpixels::sample::SampleEncoding, zenpixels::sample::SampleEncoding, codes::CodeRole, zenpixels::descriptor::SignalRange) -> core::result::Result<Self, codes::CodeMapError>
 pub const fn codes::CodeMap::output(&self) -> zenpixels::sample::SampleEncoding
 pub const fn codes::CodeMap::word(&self, u16) -> u16
+pub fn codes::native_to_u16(zenpixels::sample::native::NativeCodeSlice<'_>, &mut zenpixels::buffer::PixelSliceMut<'_>, zenpixels::descriptor::SignalRange) -> core::result::Result<(), codes::NativeConversionError>
 pub fn codes::to_canonical<'b>(&[zenpixels::sample::plane::CodePlane<'_>], zenpixels::descriptor::SignalRange, usize, usize, zenpixels::buffer::PixelSliceMut<'b>) -> core::result::Result<(zenpixels::buffer::PixelSliceMut<'b>, zenpixels::sample::exact::ExactDepth), whereat::at::At<codes::CodesError>>
+pub fn codes::u16_to_native(zenpixels::buffer::PixelSlice<'_>, &mut [u8], usize, &[zenpixels::sample::native::NativeEncoding], codes::NativePadding, zenpixels::policy::DepthPolicy) -> core::result::Result<(), codes::NativeConversionError>
 pub mod converter
 pub fn converter::RowConverter::compose(&self, &Self) -> core::option::Option<Self>
 pub fn converter::RowConverter::compose_preserving(&self, &Self) -> core::option::Option<Self>
@@ -535,7 +545,7 @@ pub trait TransferFunctionExt: sealed::Sealed [also: ext]
 pub fn TransferFunctionExt::delinearize(&self, f32) -> f32
 pub fn TransferFunctionExt::linearize(&self, f32) -> f32
 
-## trait impls (39 types)
+## trait impls (41 types)
 
 ConversionCost: Add, Clone, Copy, Debug, Default, Eq, PartialEq
 ConvertIntent: Clone, Copy, Debug, Default, Eq, PartialEq
@@ -549,6 +559,8 @@ codes::CodeMap: Clone, Copy, Debug, Eq, PartialEq
 codes::CodeMapError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 codes::CodeRole: Clone, Copy, Debug, Eq, Hash, PartialEq
 codes::CodesError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
+codes::NativeConversionError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
+codes::NativePadding: Clone, Copy, Debug, Eq, PartialEq
 converter::RowConverter: Clone, Debug
 css::CssColorError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 error::ConvertError: Clone, Debug, Display, Error, From<zenpixels::buffer::BufferError>, PartialEq
