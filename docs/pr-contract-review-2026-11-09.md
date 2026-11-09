@@ -173,3 +173,36 @@ re-exported by that converter module. `preserves_modeled_capacity` names the
 bounded claim; it does not certify gamut preservation or pixel equality.
 The core policy-nesting prototype must import converter policy types explicitly;
 its data-only offers can continue using core facts. No core main was changed.
+
+## Compact P3 fallback qualification — 2026-11-09
+
+The no-database fallback now embeds the same 408-byte generated exports as the
+current database for P3/sRGB (CP12/TC13) and P3/BT.709 (CP12/TC1). Compatibility
+constants remain byte-identical and explicitly selectable. Transfer 1 does not
+alias transfer 13. HLG still refuses ICC synthesis.
+
+Native libultrahdr at `5f117294` recognizes both generated exports as Display P3.
+Its native writer is a positive control; the historical compatibility constant
+is a negative control (unrecognized). Independent C Little CMS 2.17 evaluation
+on a 17³ RGB grid, against independently constructed linear P3 and analytic
+transfer curves, measures maximum absolute XYZ component error 0.0000171659 for
+sRGB and 0.000135807 for BT.709; the unchanged gate is 0.0005. Default and isolated
+no-database builds emit identical bytes. This is bounded P3 export qualification,
+not universal ICC accuracy. Reproduce with
+`just p3-export-check /path/to/libultrahdr /fresh/output/directory` under the
+resource wrapper; prerequisites are CMake, a C++ compiler, libjpeg and Little CMS.
+The checker builds the native oracle, exercises both feature configurations and
+prints SHA-256 identities.
+
+| Export | SHA-256 |
+|---|---|
+| P3/sRGB | `dc5b04c0d4bff5d4eb145431266fcdf5d6a434f2b30b32fabac88543f9df4cd4` |
+| P3/BT.709 | `c088d56c2b3c462ee00a1e9d4be1d7832394f432c64341715c91af9a7c04425e` |
+| Historical compatibility | `231752984cd4a5278e1b8d2390fe496767d4511fc81f54e1a5c69ae9ab4c42b5` |
+
+Historical release refs were assessed separately: `release/0.2` at `e96e4e9c`
+still selects the legacy no-database fallback; `release/0.3.1` at `4d41ed8a`
+also aliases P3/BT.709 to the sRGB compatibility profile. Neither ref inherits
+this qualification until the fix is explicitly integrated and checked there.
+This PR targets main and authorizes no publication. See
+[issue #135](https://github.com/imazen/zenpixels/issues/135).

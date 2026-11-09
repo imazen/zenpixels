@@ -105,6 +105,13 @@ mod cicp_bundle_index;
 /// Source: <https://github.com/saucecontrol/Compact-ICC-Profiles> (CC0)
 pub const DISPLAY_P3_V4: &[u8] = include_bytes!("profiles/DisplayP3Compat-v4.icc");
 
+// Small qualified exports: exact bytes of the current generated bundle.
+// Historical constants remain unchanged for explicit compatibility/recognition.
+#[cfg(any(not(feature = "icc-db"), test))]
+const P3_EXPORT_SRGB: &[u8] = include!("icc_profiles/p3_export_13.inc");
+#[cfg(any(not(feature = "icc-db"), test))]
+const P3_EXPORT_BT709: &[u8] = include!("icc_profiles/p3_export_1.inc");
+
 /// Display P3 Compatible ICC profile, v2 format (736 bytes).
 ///
 /// Use this for compatibility with older software that doesn't support ICC v4.
@@ -148,7 +155,7 @@ pub(crate) const REC2020_V4: &[u8] = include_bytes!("profiles/Rec2020Compat-v4.i
 /// | Primaries | Transfer | Returned profile |
 /// |-----------|----------|------------------|
 /// | [`Bt709`](ColorPrimaries::Bt709) | [`Srgb`](crate::TransferFunction::Srgb) | `None` — sRGB is the assumed default |
-/// | [`DisplayP3`](ColorPrimaries::DisplayP3) | [`Srgb`](crate::TransferFunction::Srgb) | [`DISPLAY_P3_V4`] |
+/// | [`DisplayP3`](ColorPrimaries::DisplayP3) | [`Srgb`](crate::TransferFunction::Srgb) or [`Bt709`](crate::TransferFunction::Bt709) | compact generated export |
 /// | [`Bt2020`](ColorPrimaries::Bt2020) | [`Bt709`](crate::TransferFunction::Bt709) | `REC2020_V4` |
 /// | [`AdobeRgb`](ColorPrimaries::AdobeRgb) | [`Gamma22`](crate::TransferFunction::Gamma22) | [`ADOBE_RGB`] |
 ///
@@ -163,7 +170,7 @@ pub(crate) const REC2020_V4: &[u8] = include_bytes!("profiles/Rec2020Compat-v4.i
 ///   working spaces are typically expressed with CICP transfer code 8
 ///   rather than an ICC profile.
 /// - Adobe RGB with any transfer other than `Gamma22`.
-/// - Display P3 with any transfer other than `Srgb`, and BT.2020 with any
+/// - Display P3 with any transfer other than `Srgb` or `Bt709`, and BT.2020 with any
 ///   transfer other than `Bt709`.
 ///
 /// [`SynthesizedIcc::for_cicp`] serves every assigned pair (these included)
@@ -176,9 +183,9 @@ pub(crate) const fn bundled_icc_profile(
     transfer: TransferFunction,
 ) -> Option<&'static [u8]> {
     match (primaries, transfer) {
-        // Display P3 + sRGB: saucecontrol's DisplayP3Compat carries the
-        // paraType-3 sRGB TRC.
-        (ColorPrimaries::DisplayP3, TransferFunction::Srgb) => Some(DISPLAY_P3_V4),
+        // Qualified generated P3 exports; compatibility constants remain explicit.
+        (ColorPrimaries::DisplayP3, TransferFunction::Srgb) => Some(P3_EXPORT_SRGB),
+        (ColorPrimaries::DisplayP3, TransferFunction::Bt709) => Some(P3_EXPORT_BT709),
         // BT.2020 + BT.709: saucecontrol's Rec2020Compat carries the
         // paraType-3 BT.709 TRC.
         (ColorPrimaries::Bt2020, TransferFunction::Bt709) => Some(REC2020_V4),
@@ -257,7 +264,8 @@ impl SynthesizedIcc {
 /// asset retains historical quantized curves; staged corrected definitions and
 /// qualification limits are documented in `docs/corrected-icc-export.md`.
 ///
-/// Without `icc-db`, the curated P3/sRGB, BT.2020/BT.709 and Adobe RGB constants
+/// Without `icc-db`, compact generated P3/sRGB and P3/BT.709 exports plus the
+/// curated BT.2020/BT.709 and Adobe RGB constants
 /// serve their respective combinations; other eligible pairs return
 /// [`NeedsCms`](SynthesizedIcc::NeedsCms). The constants have compatibility-adjusted
 /// colorimetry and are distinct from the generated definitions.
@@ -500,12 +508,25 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "icc-db")]
+    #[test]
+    fn compact_p3_exports_match_current_bundle() {
+        for (transfer, expected) in [(13, P3_EXPORT_SRGB), (1, P3_EXPORT_BT709)] {
+            let mut cicp = Cicp::DISPLAY_P3;
+            cicp.transfer_characteristics = transfer;
+            let SynthesizedIcc::Profile(bytes) = SynthesizedIcc::for_cicp(cicp) else {
+                panic!("missing P3 export")
+            };
+            assert_eq!(&*bytes, expected);
+        }
+    }
+
     #[test]
     fn bundled_icc_profile_hits_combinations() {
         // Each const serves only the pair whose curve it carries.
         assert_eq!(
             bundled_icc_profile(ColorPrimaries::DisplayP3, TransferFunction::Srgb),
-            Some(DISPLAY_P3_V4)
+            Some(P3_EXPORT_SRGB)
         );
         assert_eq!(
             bundled_icc_profile(ColorPrimaries::Bt2020, TransferFunction::Bt709),
@@ -550,7 +571,7 @@ mod tests {
                 #[cfg(feature = "icc-db")]
                 assert_ne!(bytes, DISPLAY_P3_V4);
                 #[cfg(not(feature = "icc-db"))]
-                assert_eq!(bytes, DISPLAY_P3_V4);
+                assert_eq!(bytes, P3_EXPORT_SRGB);
             }
             other => panic!("expected bundled borrowed Display P3 profile, got {other:?}"),
         }
