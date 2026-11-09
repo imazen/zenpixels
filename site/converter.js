@@ -1,5 +1,6 @@
 // The teaching model remains usable when the optional WASM build is unavailable.
 let wasmConvert = null;
+let wasmInspectStorage = null;
 const targetFields = ['format', 'transfer', 'primaries', 'alphamode', 'range'];
 for (const field of targetFields) {
   const select = document.getElementById('to-' + field);
@@ -11,7 +12,7 @@ document.getElementById('to-transfer').value = 'Srgb';
 document.getElementById('to-primaries').value = 'Bt709';
 document.getElementById('to-alphamode').innerHTML = ['Straight', 'Premultiplied', 'Opaque'].map(v => `<option>${v}</option>`).join('');
 document.getElementById('to-range').value = 'Full';
-for (const id of ['sdr-white', 'hdr-peak', 'sdr-peak']) document.getElementById(id).addEventListener('input', renderConverter);
+for (const id of ['sdr-white', 'hdr-peak', 'sdr-peak', 'hlg-enabled', 'hlg-peak', 'hlg-black', 'hlg-gamma']) document.getElementById(id).addEventListener('input', renderConverter);
 
 function converterDescriptor(cfg) {
   const f = FMAP[cfg.format];
@@ -38,6 +39,7 @@ function currentConversion() {
   }
   return { source, model, request: { from: converterDescriptor(source.cfg), to: converterDescriptor(target),
     bytes, stride: st, width: S.w, rows: S.h, luma: S.luma,
+    hlgRendering: $('hlg-enabled').checked ? { peak: Number($('hlg-peak').value), black: Number($('hlg-black').value), gamma: Number($('hlg-gamma').value) } : null,
     sdrWhite: $('sdr-white').value === '' ? null : Number($('sdr-white').value),
     hdrPeak: $('hdr-peak').value === '' ? null : Number($('hdr-peak').value),
     sdrPeak: $('sdr-peak').value === '' ? null : Number($('sdr-peak').value) } };
@@ -56,6 +58,11 @@ function renderConverter() {
     if (result.error) {
       status.textContent = 'Converter refused: ' + result.error;
       status.className = 'note'; status.dataset.state = 'refused';
+      return;
+    }
+    if (request.from.transfer === 'Hlg' || request.to.transfer === 'Hlg') {
+      status.dataset.state = 'rendered';
+      status.textContent = 'WASM succeeded. The JavaScript model shows only the HLG OETF, so no byte-agreement verdict is made for display rendering.';
       return;
     }
     const expected = pixelBytes(model);
@@ -84,6 +91,8 @@ window.renderConverter = renderConverter;
     const module = await import(path);
     await module.default();
     wasmConvert = module.convert;
+    wasmInspectStorage = module.inspect_storage;
+    renderStorage();
     $('wasm-status').dataset.loaded = 'true';
     renderConverter();
   } catch (e) {
@@ -91,3 +100,21 @@ window.renderConverter = renderConverter;
     $('wasm-status').dataset.state = 'unavailable';
   }
 })();
+
+function renderStorage() {
+  if (!wasmInspectStorage) return;
+  const result = JSON.parse(wasmInspectStorage(JSON.stringify({ case: $('storage-case').value, padding: $('storage-padding').checked })));
+  window.lastStorageInspection = result;
+  $('storage-status').textContent = result.error || 'Executed by this build of zenpixels. No color conversion is implied.';
+  if (result.error) return;
+  $('storage-geometry').textContent = `${result.role}: ${result.width} positions × ${result.rows} rows; byte stride ${result.stride}`;
+  $('storage-bytes').textContent = hexBytes(result.bytes);
+  $('plane-status').textContent = result.planeStatus;
+  const codeRows = codes => codes.map((values, i) => `row ${Math.floor(i / result.width)}, position ${i % result.width}: ${values.join(', ')}`).join('\n');
+  $('plane-codes').textContent = result.planeCodes ? codeRows(result.planeCodes) : 'Not representable by CodePlane';
+}
+for (const id of ['storage-case', 'storage-padding']) $(id).addEventListener('change', renderStorage);
+
+fetch('./build-info.json').then(r => { if (!r.ok) throw new Error('No build stamp'); return r.json(); }).then(info => {
+  $('build-identity').textContent = `Build: ${info.revision.slice(0, 12)}${info.dirty ? ' + local changes' : ''}; ${info.builtAt}.`;
+}).catch(() => { $('build-identity').textContent = 'No build stamp: source-only teaching page.'; });

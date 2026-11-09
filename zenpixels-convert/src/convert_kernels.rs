@@ -77,6 +77,10 @@ pub(super) fn apply_step_u8(
     let w = width as usize;
 
     match step {
+        ConvertStep::HlgRender(prepared) => {
+            super::hlg_render::row(src, dst, w, from.layout(), prepared);
+        }
+
         ConvertStep::Identity => {
             let len = min(src.len(), dst.len());
             dst[..len].copy_from_slice(&src[..len]);
@@ -286,17 +290,19 @@ pub(super) fn apply_step_u8(
             oklaba_to_linear_rgba_f32(src, dst, w, from.primaries);
         }
 
-        ConvertStep::GamutMatrixRgbF32(flat) => {
+        ConvertStep::GamutMatrixRgbF32(flat, _) => {
             gamut_matrix_rgb_f32(src, dst, w, flat);
         }
 
-        ConvertStep::GamutMatrixRgbaF32(flat) => {
+        ConvertStep::GamutMatrixRgbaF32(flat, _) => {
             gamut_matrix_rgba_f32(src, dst, w, flat);
         }
 
         // All fused TF + matrix + TF kernels share the same row-major
         // 3×3 unflatten then dispatch on `kind`.
-        ConvertStep::Fused { kind, matrix: flat } => {
+        ConvertStep::Fused {
+            kind, matrix: flat, ..
+        } => {
             let m = [
                 [flat[0], flat[1], flat[2]],
                 [flat[3], flat[4], flat[5]],
@@ -2089,6 +2095,10 @@ fn premul_f16_ga(src: &[u16], dst: &mut [u16], width: usize) {
         }
 
         f32_to_f16_bits_slice(&scratch_dst, &mut dst[start..start + CHUNK_LANES]);
+        // Alpha is a payload, not an arithmetic output. Preserve NaN bits and signed zero.
+        for lane in (1..CHUNK_LANES).step_by(2) {
+            dst[start + lane] = src[start + lane];
+        }
     }
 
     let tail_start = whole * CHUNK_PIXELS;
@@ -2122,6 +2132,10 @@ fn premul_f16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
         }
 
         f32_to_f16_bits_slice(&scratch_dst, &mut dst[start..start + CHUNK_LANES]);
+        // Alpha is a payload, not an arithmetic output. Preserve NaN bits and signed zero.
+        for lane in (3..CHUNK_LANES).step_by(4) {
+            dst[start + lane] = src[start + lane];
+        }
     }
 
     let tail_start = whole * CHUNK_PIXELS;
@@ -2333,6 +2347,10 @@ fn unpremul_f16_ga(src: &[u16], dst: &mut [u16], width: usize) {
         }
 
         f32_to_f16_bits_slice(&scratch_dst, &mut dst[start..start + CHUNK_LANES]);
+        // Alpha is a payload, not an arithmetic output. Preserve NaN bits and signed zero.
+        for lane in (1..CHUNK_LANES).step_by(2) {
+            dst[start + lane] = src[start + lane];
+        }
     }
 
     let tail_start = whole * CHUNK_PIXELS;
@@ -2341,7 +2359,7 @@ fn unpremul_f16_ga(src: &[u16], dst: &mut [u16], width: usize) {
         let a = f16_bits_to_f32(src[base + 1]);
         if a == 0.0 {
             dst[base] = 0;
-            dst[base + 1] = 0;
+            dst[base + 1] = src[base + 1];
         } else {
             let inv_a = 1.0 / a;
             dst[base] = f32_to_f16_bits(f16_bits_to_f32(src[base]) * inv_a);
@@ -2380,6 +2398,10 @@ fn unpremul_f16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
         }
 
         f32_to_f16_bits_slice(&scratch_dst, &mut dst[start..start + CHUNK_LANES]);
+        // Alpha is a payload, not an arithmetic output. Preserve NaN bits and signed zero.
+        for lane in (3..CHUNK_LANES).step_by(4) {
+            dst[start + lane] = src[start + lane];
+        }
     }
 
     let tail_start = whole * CHUNK_PIXELS;
@@ -2390,7 +2412,7 @@ fn unpremul_f16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
             dst[base] = 0;
             dst[base + 1] = 0;
             dst[base + 2] = 0;
-            dst[base + 3] = 0;
+            dst[base + 3] = src[base + 3];
         } else {
             let inv_a = 1.0 / a;
             dst[base] = f32_to_f16_bits(f16_bits_to_f32(src[base]) * inv_a);

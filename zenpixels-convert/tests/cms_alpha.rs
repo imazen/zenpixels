@@ -94,7 +94,7 @@ fn cross_gamut_preserves_partial_alpha_and_cloned_transforms() {
                 &options,
             )
             .unwrap();
-            for mut converter in [converter.clone(), converter] {
+            for mut converter in [converter.try_clone().unwrap(), converter] {
                 let mut output = [[0.0_f32; 4]; 4];
                 // Repeated and changing-width rows exercise scratch reuse.
                 for width in [4, 1, 4] {

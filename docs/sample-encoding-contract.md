@@ -1,8 +1,36 @@
 # Explicit integer sample encoding
 
-`sample::SampleEncoding` is the small additive bridge for the last 0.2.x release.
-It describes one unsigned code per U8/U16 storage word using private fields and
-a checked constant constructor. It introduces no default or sample-value scan.
+## Current boundary — 2026-11-09
+
+The owner directed removal of the speculative `NativeCodeSlice` adapter after
+its call-site audit found no production consumer. Its associated
+`native_to_u16`, `u16_to_native`, `NativeConversionError`, `NativePadding` and
+`NativeCodeError` APIs are also removed from the unshipped candidate. They are
+not replaced by aliases or another public view.
+
+Existing `CodePlane::component` handles interleaved U8/U16 components with
+independent `SampleEncoding` values, including RGB10 + alpha1 and CbCr/CrCb.
+`codes::to_canonical` widens those components into canonical pixel storage.
+The RGB10/alpha1 regression uses this existing route and preserves output row
+padding. `CodeMap` retains its established numerical and padding contracts.
+
+The 0.3 candidate retains the extension of `SampleEncoding` to signed/wide
+integer descriptions. This does not provide a signed/wide component reader or
+numerical conversion. `PixelFormat::Generic` retains exact native pixel identity
+carriage; these are separate capabilities. No public byte-unaligned reader is
+introduced without a concrete consumer.
+
+`hdr::St2086Codes` retains exact 24-byte RGB-order metadata carriage alongside
+the semantic floating-point view. Wire formats with another primary order
+must adapt explicitly. Source precision and `ExactDepth` remain separate facts.
+
+Not every external encoding must be directly representable. RGB565 and other
+multi-component words require an explicit unpacking adapter; preserving original
+wire bytes remains the container/adapter's responsibility.
+
+See [issue #83](https://github.com/imazen/zenpixels/issues/83) and the
+[design reference](design-reference.md). A representation requirement is not
+by itself justification for another public view.
 
 The concrete consumer is `zencodec_media::plane::Plane` and its native AV1 adapter
 (`zencodec/media/src/av1.rs`). The adapter retains rav1d-safe's frame allocation and

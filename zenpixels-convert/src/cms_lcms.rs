@@ -87,6 +87,7 @@ fn describe(format: PixelFormat) -> Option<Format> {
 }
 
 type Error = whereat::At<CmsPluginError>;
+#[track_caller]
 fn error(message: impl Into<alloc::string::String>) -> Error {
     whereat::at!(CmsPluginError::msg(message))
 }

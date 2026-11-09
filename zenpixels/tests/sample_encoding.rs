@@ -2,8 +2,17 @@ use zenpixels::ChannelType;
 use zenpixels::sample::{SampleEncoding, SampleEncodingError};
 
 #[test]
-fn accepts_exactly_the_unsigned_word_placements_that_fit() {
-    for (storage, storage_bits) in [(ChannelType::U8, 8_u16), (ChannelType::U16, 16)] {
+fn accepts_exactly_the_integer_word_placements_that_fit() {
+    for (storage, storage_bits) in [
+        (ChannelType::U8, 8_u16),
+        (ChannelType::I8, 8),
+        (ChannelType::U16, 16),
+        (ChannelType::I16, 16),
+        (ChannelType::U32, 32),
+        (ChannelType::I32, 32),
+        (ChannelType::U64, 64),
+        (ChannelType::I64, 64),
+    ] {
         for bits in 0..=u8::MAX {
             for shift in 0..=u8::MAX {
                 let result = SampleEncoding::new(storage, bits, shift);

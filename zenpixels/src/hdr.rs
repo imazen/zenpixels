@@ -312,3 +312,85 @@ mod tests {
         assert_eq!(MasteringDisplay::DISPLAY_P3_1000.max_luminance, 1000.0);
     }
 }
+
+/// Exact mastering-display codes, separate from the lossy floating-point view.
+/// Chromaticities are in units of 0.00002; luminances in units of 0.0001 cd/m².
+/// Byte serialization uses RGB primary order, then white, maximum and minimum
+/// luminance, all big-endian. Adapters for formats with another primary order
+/// must reorder explicitly. No validation discards unknown or out-of-range codes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct St2086Codes([u8; 24]);
+impl St2086Codes {
+    /// Preserve all 24 bytes in the documented RGB-order representation.
+    pub const fn from_be_bytes(bytes: [u8; 24]) -> Self {
+        Self(bytes)
+    }
+    /// Return the exact original code bytes, without a float round trip.
+    pub const fn to_be_bytes(self) -> [u8; 24] {
+        self.0
+    }
+    /// Interpret codes for display decisions. This view can lose precision;
+    /// retain this carrier when exact metadata must survive a transcode.
+    pub fn semantic(self) -> MasteringDisplay {
+        let xy = |i| f32::from(u16::from_be_bytes([self.0[i], self.0[i + 1]])) / 50_000.0;
+        let lum = |i| u32::from_be_bytes(self.0[i..i + 4].try_into().unwrap()) as f32 / 10_000.0;
+        MasteringDisplay::new(
+            [[xy(0), xy(2)], [xy(4), xy(6)], [xy(8), xy(10)]],
+            [xy(12), xy(14)],
+            lum(16),
+            lum(20),
+        )
+    }
+}
+
+/// Explicit HLG display rendering conditions. No implicit default exists.
+///
+/// `system_gamma` includes the caller's surround adjustment. The reference
+/// preset assumes a 5 cd/m² surround and an ideal zero-black 1000-nit display.
+/// CICP, mastering metadata and MaxCLL do not select these conditions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct HlgRendering {
+    peak: Nits,
+    black_bits: u32,
+    gamma_bits: u32,
+}
+impl HlgRendering {
+    /// Explicit ideal-black reference rendering: 1000 nits, gamma 1.2,
+    /// reference surround (5 cd/m²). Opt in; never inferred from an HLG tag.
+    pub const REFERENCE_1000_NIT: Self = Self {
+        peak: Nits::new(1000.0),
+        black_bits: 0,
+        gamma_bits: 1.2f32.to_bits(),
+    };
+    /// Supply resolved display peak, black luminance and surround-adjusted gamma.
+    /// Supports finite gamma 0.5..=3 and black 0..=1% of peak. Other conditions
+    /// refuse rather than applying an unqualified extrapolation.
+    pub const fn new(peak: Nits, black_nits: f32, system_gamma: f32) -> Option<Self> {
+        if !black_nits.is_finite()
+            || black_nits < 0.0
+            || black_nits > peak.nits() * 0.01
+            || !system_gamma.is_finite()
+            || system_gamma < 0.5
+            || system_gamma > 3.0
+        {
+            return None;
+        }
+        Some(Self {
+            peak,
+            black_bits: black_nits.to_bits(),
+            gamma_bits: system_gamma.to_bits(),
+        })
+    }
+    /// Target/reference display peak, not a measurement of source content.
+    pub const fn peak(self) -> Nits {
+        self.peak
+    }
+    /// Display black luminance in cd/m².
+    pub const fn black_nits(self) -> f32 {
+        f32::from_bits(self.black_bits)
+    }
+    /// Effective gamma including the explicitly selected surround assumption.
+    pub const fn system_gamma(self) -> f32 {
+        f32::from_bits(self.gamma_bits)
+    }
+}

@@ -958,7 +958,7 @@ fn buffer_linearize_hlg_f32() {
     let buf = make_test_rgbf32_buffer(TransferFunction::Hlg, ColorPrimaries::Bt2020);
     assert!(matches!(
         buf.linearize().unwrap_err().error(),
-        crate::ConvertError::HlgOotfNotImplemented
+        crate::ConvertError::HlgRenderingRequired
     ));
 }
 
@@ -998,7 +998,7 @@ fn buffer_delinearize_hlg() {
     let buf = make_test_rgbf32_buffer(TransferFunction::Linear, ColorPrimaries::Bt2020);
     assert!(matches!(
         buf.delinearize(TransferFunction::Hlg).unwrap_err().error(),
-        crate::ConvertError::HlgOotfNotImplemented
+        crate::ConvertError::HlgRenderingRequired
     ));
 }
 
@@ -1017,7 +1017,7 @@ fn buffer_linearize_delinearize_roundtrip_all_tfs() {
         if tf == TransferFunction::Hlg {
             assert!(matches!(
                 buf.linearize().unwrap_err().error(),
-                crate::ConvertError::HlgOotfNotImplemented
+                crate::ConvertError::HlgRenderingRequired
             ));
             continue;
         }

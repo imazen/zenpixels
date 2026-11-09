@@ -72,6 +72,8 @@ pub enum CodeRole {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CodeMapError {
+    /// Numerical mapping requires unsigned U8/U16 words.
+    UnsupportedStorage,
     /// The signal range has no defined code rule here.
     UnsupportedRange(SignalRange),
     /// Narrow-range anchors are not integers below eight bits.
@@ -98,6 +100,7 @@ pub enum CodeMapError {
 impl fmt::Display for CodeMapError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::UnsupportedStorage => f.write_str("code mapping requires unsigned U8/U16 words"),
             Self::UnsupportedRange(range) => write!(f, "no code rule for signal range {range}"),
             Self::NarrowBelowEightBits { bits } => {
                 write!(f, "narrow-range codes need at least 8 bits, got {bits}")
@@ -147,6 +150,11 @@ impl CodeMap {
         role: CodeRole,
         range: SignalRange,
     ) -> Result<Self, CodeMapError> {
+        if !matches!(from.storage(), ChannelType::U8 | ChannelType::U16)
+            || !matches!(to.storage(), ChannelType::U8 | ChannelType::U16)
+        {
+            return Err(CodeMapError::UnsupportedStorage);
+        }
         let (n, m) = (from.code_bits(), to.code_bits());
         let full_scale = match (role, range) {
             (CodeRole::Alpha, _) => true,

@@ -832,15 +832,6 @@ impl RowConverter {
     }
 }
 
-impl Clone for RowConverter {
-    /// Panics if a stateful worker cannot be cloned. Prefer `try_clone`.
-    /// Never silently discards a transform, including in no_std builds.
-    fn clone(&self) -> Self {
-        self.try_clone()
-            .expect("RowConverter clone requires a cloneable worker")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use alloc::vec;
@@ -1376,7 +1367,7 @@ mod tests {
             TransferFunction::Pq,
         );
         match RowConverter::new(hlg_f32, pq_f32) {
-            Err(e) => assert!(matches!(*e.error(), ConvertError::HlgOotfNotImplemented)),
+            Err(e) => assert!(matches!(*e.error(), ConvertError::HlgRenderingRequired)),
             Ok(_) => panic!("HLG→PQ must refuse, not emit wrong pixels"),
         }
         // Both directions and the u16 form refuse.
@@ -1390,7 +1381,7 @@ mod tests {
         );
         for to in [PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBF32_LINEAR] {
             let error = RowConverter::new(hlg_f32, to).expect_err("HLG requires a display OOTF");
-            assert!(matches!(error.error(), ConvertError::HlgOotfNotImplemented));
+            assert!(matches!(error.error(), ConvertError::HlgRenderingRequired));
         }
     }
 
@@ -1439,7 +1430,7 @@ mod tests {
             .expect_err("plain HDR→SDR must refuse")
             .error()
             .clone();
-        assert!(matches!(err, ConvertError::HlgOotfNotImplemented));
+        assert!(matches!(err, ConvertError::HlgRenderingRequired));
 
         assert!(
             ConvertPlan::new_with_hdr_peak(hlg_u16, PixelDescriptor::RGB8_SRGB, 1000.0).is_err(),
@@ -1953,7 +1944,7 @@ mod tests {
                 .unwrap();
 
         // Clone must carry the shared transform (via Arc).
-        let mut conv2 = conv.clone();
+        let mut conv2 = conv.try_clone().unwrap();
         let mut dst = [0u8; 3];
         conv2.convert_row(&[1, 2, 3], &mut dst, 1);
         assert_eq!(
@@ -1992,7 +1983,7 @@ mod tests {
         // Arc<Mutex<_>>. Pre-fix this silently dropped, fell back to
         // the built-in P3→sRGB plan, and produced non-red output —
         // which is exactly the regression we're gating against.
-        let mut conv_cloned = conv.clone();
+        let mut conv_cloned = conv.try_clone().unwrap();
         let mut dst2 = [0u8; 6];
         conv_cloned.convert_row(&[10, 20, 30, 40, 50, 60], &mut dst2, 2);
         assert_eq!(

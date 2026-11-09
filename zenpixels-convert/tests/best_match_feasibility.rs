@@ -63,7 +63,7 @@ fn sources() -> Vec<D> {
             Tf::Unknown,
         ] {
             for p in [P::Bt709, P::DisplayP3, P::Bt2020, P::AdobeRgb, P::Unknown] {
-                if let Some(d) = D::try_new(ct, layout, alpha, tf) {
+                if let Ok(d) = D::try_new(ct, layout, alpha, tf) {
                     out.push(d.with_primaries(p));
                 }
             }

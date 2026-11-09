@@ -655,3 +655,64 @@ main-api-cleanup-check:
     cargo test --locked --workspace --all-features
     cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
     just api-doc
+
+# Native word interpretation and exact metadata contracts.
+native-code-check:
+    cargo test -p zenpixels -p zenpixels-convert --test native_codes --test native_canonical
+
+# Explicit display rendering and existing refusal gates.
+hlg-rendering-check:
+    cargo test -p zenpixels-convert --test hlg_rendering --test hdr_intent
+    cargo test -p zenpixels-convert --features bt2446a --test hlg_rendering --test hdr_intent
+
+# Native libultrahdr recognition and independent C LCMS color qualification.
+# Invoke just through run-heavy; OUT must not exist.
+p3-export-check SOURCE OUT:
+    tools/p3-export-oracle/check.sh {{SOURCE}} {{OUT}}
+
+# Complete approved contract gate; release avoids debug exhaustive-grid overhead.
+approved-contracts-check:
+    cargo test -p zenpixels-convert --release --features __trace_ops --test plan_validation
+    cargo test --workspace --release --lib --tests
+    cargo test --workspace --release --doc
+    cargo test -p zenpixels-convert --release --all-features --test hlg_rendering --test hdr_intent --test matte_row_kernels --test native_canonical
+    cargo test -p zenpixels --no-default-features --test native_codes
+    cargo clippy -p zenpixels -p zenpixels-convert --all-targets -- -D warnings
+
+# Shared sample interpretation and native carriage capability boundaries.
+sample-design-check:
+    cargo test -p zenpixels -p zenpixels-convert --test sample_encoding --test code_planes --test native_codes --test native_canonical --test codes_exhaustive
+
+# Regressions for the single-contract conversion design.
+design-check:
+    cargo test -p zenpixels -p zenpixels-convert --test design_invariants
+
+# Planner rewrites, complete operation contracts, and explicit HDR policy.
+plan-design-check:
+    cargo test -p zenpixels-convert --release --features __trace_ops,bt2446a --test plan_validation --test design_invariants --test matte_row_kernels --test hlg_rendering
+
+# Pixel/context parity across allocation strategies and profile finalization.
+context-design-check:
+    cargo test -p zenpixels-convert --release --test design_invariants --test output_descriptor --test output_native --test hdr_intent
+
+# Local algorithm/payload consistency; magetypes primitive convergence is separate.
+local-numerics-check:
+    cargo test -p zenpixels-convert --release --features hdr-experimental --test design_invariants --test cll_measure
+
+# Additional feature and generator checks for the breaking-release consolidation.
+design-feature-check:
+    cargo test -p zenpixels-convert --release --all-features --lib --test design_invariants --test cll_measure
+    cargo test -p icc-gen --release --bin icc-gen
+    cargo clippy -p zenpixels -p zenpixels-convert -p icc-gen --all-targets --all-features -- -D warnings
+
+# Local completion gates for the repository portions of 69/83/132/133/134/135.
+repository-issues-check:
+    cargo test -p zenpixels --features rgb --test native_codes --test typed_extraction_contract
+    cargo test -p zenpixels-convert --test authority_boundaries --test output_allocation_contract --test native_canonical --test native_samples --test output_current_color --test output_contracts
+    cargo test -p zenpixels-convert --features bt2446a --test hlg_rendering --test hdr_intent
+    cargo test -p zenpixels-convert --doc
+
+# Force patch-level reporting against the explicit 0.2.17 bridge source baseline.
+repository-issues-semver:
+    cargo semver-checks check-release -p zenpixels -p zenpixels-convert --baseline-rev e96e4e9c65020a0c7fac4937819fc044886ae4df --release-type patch --default-features
+

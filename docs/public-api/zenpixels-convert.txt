@@ -14,9 +14,9 @@
 #   free functions                              2
 #   inherent methods                          178
 #   struct fields                              95
-#   enum variants                             111
+#   enum variants                             112
 #   re-exports                                  8
-#   trait roster entries (type × trait)       166
+#   trait roster entries (type × trait)       165
 #   conditional trait impls (verbatim)          1
 #   auto-trait-complete types                  29
 #   auto-trait exceptions                       6
@@ -25,7 +25,7 @@
 #   (root)                          207
 #   adapt                             1
 #   cms                              18
-#   codes                            39
+#   codes                            40
 #   converter                        31
 #   css                               3
 #   error                            41
@@ -39,7 +39,7 @@
 #   precision                        62
 #   ycbcr                            22
 
-## items (493 lines)
+## items (494 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -68,6 +68,7 @@ pub codes::CodeMapError::LengthMismatch::source: usize
 pub codes::CodeMapError::NarrowBelowEightBits
 pub codes::CodeMapError::NarrowBelowEightBits::bits: u8
 pub codes::CodeMapError::UnsupportedRange(zenpixels::descriptor::SignalRange)
+pub codes::CodeMapError::UnsupportedStorage
 #[non_exhaustive] pub enum codes::CodeRole
 pub codes::CodeRole::Alpha
 pub codes::CodeRole::Chroma
@@ -143,7 +144,7 @@ pub error::ConvertError::HdrPeakRequired
 pub error::ConvertError::HdrSourceRequiresPeak
 pub error::ConvertError::HdrSourceRequiresPeak::from: zenpixels::descriptor::PixelDescriptor
 pub error::ConvertError::HdrSourceRequiresPeak::to: zenpixels::descriptor::PixelDescriptor
-pub error::ConvertError::HlgOotfNotImplemented
+pub error::ConvertError::HlgRenderingRequired
 pub error::ConvertError::InvalidWidth(u32)
 pub error::ConvertError::NeedsCms
 pub error::ConvertError::NeedsCms::from: zenpixels::descriptor::PixelDescriptor
@@ -370,7 +371,7 @@ pub ConvertError::HdrPeakRequired
 pub ConvertError::HdrSourceRequiresPeak
 pub ConvertError::HdrSourceRequiresPeak::from: zenpixels::descriptor::PixelDescriptor
 pub ConvertError::HdrSourceRequiresPeak::to: zenpixels::descriptor::PixelDescriptor
-pub ConvertError::HlgOotfNotImplemented
+pub ConvertError::HlgRenderingRequired
 pub ConvertError::InvalidWidth(u32)
 pub ConvertError::NeedsCms
 pub ConvertError::NeedsCms::from: zenpixels::descriptor::PixelDescriptor
@@ -549,7 +550,7 @@ codes::CodeMap: Clone, Copy, Debug, Eq, PartialEq
 codes::CodeMapError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 codes::CodeRole: Clone, Copy, Debug, Eq, Hash, PartialEq
 codes::CodesError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
-converter::RowConverter: Clone, Debug
+converter::RowConverter: Debug
 css::CssColorError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 error::ConvertError: Clone, Debug, Display, Error, From<zenpixels::buffer::BufferError>, PartialEq
 gamut::GamutMatrix: Clone, Copy, Debug, PartialEq

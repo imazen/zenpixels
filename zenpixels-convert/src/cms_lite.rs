@@ -1082,3 +1082,19 @@ mod gamut_reduction_compare_tests {
         assert!(max_delta < 0.01, "BT.2020->sRGB f32: max delta {max_delta}");
     }
 }
+
+#[cfg(test)]
+#[test]
+fn missing_hlg_rendering_cannot_be_bypassed_through_lite_cms() {
+    use crate::cms::PluggableCms;
+    let source = crate::ColorProfileSource::Cicp(crate::Cicp::new(9, 18, 0, true));
+    let target = crate::ColorProfileSource::Cicp(crate::Cicp::new(9, 8, 0, true));
+    let result = ZenCmsLite.build_source_transform(
+        source,
+        target,
+        PixelFormat::RgbF32,
+        PixelFormat::RgbF32,
+        &crate::ConvertOptions::permissive(),
+    );
+    assert!(!matches!(result, Some(Ok(_))));
+}

@@ -570,10 +570,12 @@ impl<T: PlaneSample> Plane<&mut [T]> {
         } = self;
         let at = if y == 0 || width == 0 {
             start
+        } else if y == height {
+            // The final row need not include its trailing stride padding.
+            buf.len()
         } else {
             start + y * stride
         };
-        let at = at.min(buf.len());
         let (top, bottom) = buf.split_at_mut(at);
         Ok((
             Plane {

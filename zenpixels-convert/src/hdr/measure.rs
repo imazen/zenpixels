@@ -183,7 +183,9 @@ impl LightLevelHistogram {
             // who reasonably expect `p=0` → `0.0`. Pin to 0.
             return 0.0;
         }
-        let threshold = (p as f64 * self.total as f64) as u64;
+        // Preserve the established floor-rank outlier policy, but a positive
+        // percentile must select an occupied bin rather than rank zero.
+        let threshold = ((p as f64 * self.total as f64) as u64).max(1);
         let mut cum: u64 = 0;
         let inv_step = Self::inv_log2_step();
         for (i, &count) in self.bins.iter().enumerate() {
@@ -234,30 +236,6 @@ impl LightLevelHistogram {
     }
 }
 
-/// `no_std` `log2` for a positive `f32` — degree-2 minimax polynomial
-/// on the mantissa. Max error ~0.01 stops over the input domain, well
-/// below the 0.02-stop bin width of [`LightLevelHistogram`]. Inputs ≤ 0
-/// return `f32::NEG_INFINITY` so the caller clamps into bin 0.
-#[inline]
-fn fast_log2(x: f32) -> f32 {
-    use core::f32::consts::LOG2_E;
-    // !(x > 0.0) catches NaN and ≤ 0 in one branch; the partial_cmp
-    // rewrite clippy suggests doesn't read more clearly here.
-    if let Some(core::cmp::Ordering::Greater) = x.partial_cmp(&0.0) {
-        let bits = x.to_bits();
-        let exponent = ((bits >> 23) & 0xFF) as i32 - 127;
-        // Mantissa reconstructed as a float in `[1.0, 2.0)`.
-        let mantissa = f32::from_bits((bits & 0x7F_FFFF) | (127 << 23));
-        let f = mantissa - 1.0;
-        // log2(1+f) ≈ f · (log2(e) − (log2(e) − 1)·f), Horner-form
-        // minimax (log2(e) ≈ 1.4426950, the leading constant).
-        let log2_mantissa = f * (LOG2_E - (LOG2_E - 1.0) * f);
-        (exponent as f32) + log2_mantissa
-    } else {
-        f32::NEG_INFINITY
-    }
-}
-
 /// `no_std` `exp2` — degree-3 minimax polynomial on the fractional part
 /// plus a bit-fiddle for the integer power-of-2 component. Accuracy
 /// ample for the bin-edge → cd/m² conversion in
@@ -290,27 +268,6 @@ fn fast_exp2(x: f32) -> f32 {
     }
     let two_i = f32::from_bits((biased as u32) << 23);
     two_i * pf
-}
-
-/// Compute the bin index for a cd/m² value via the log2 mapping
-/// pinned in [`LightLevelHistogram`]. Values ≤ `BIN_MIN_NITS` go to
-/// bin 0; values ≥ `BIN_MAX_NITS` saturate to the last bin.
-#[inline(always)]
-fn bin_for_nits(value_nits: f32) -> usize {
-    if value_nits <= LightLevelHistogram::BIN_MIN_NITS {
-        return 0;
-    }
-    if value_nits >= LightLevelHistogram::BIN_MAX_NITS {
-        return LightLevelHistogram::NUM_BINS - 1;
-    }
-    let log2 = fast_log2(value_nits);
-    let bin =
-        ((log2 - LightLevelHistogram::LOG2_MIN) * LightLevelHistogram::inv_log2_step()) as usize;
-    if bin >= LightLevelHistogram::NUM_BINS {
-        LightLevelHistogram::NUM_BINS - 1
-    } else {
-        bin
-    }
 }
 
 /// Single-pass 3×1 horizontal-box-filtered row scan for
@@ -742,7 +699,7 @@ fn measure_max_via_histogram_for_test(
 // ============================================================================
 
 mod simd_kernel {
-    use super::{LightLevelHistogram, LightLevelMethod, bin_for_nits};
+    use super::{LightLevelHistogram, LightLevelMethod};
 
     /// One SIMD-lane-worth of sub-histogram. We allocate `LANES` of these
     /// so each lane writes to its own histogram and no cross-lane scatter
@@ -979,10 +936,7 @@ mod simd_kernel {
         }
         *sum_nits += f64::from(local_sum.reduce_add());
 
-        // Scalar tail: pixels left over from the strip not divisible by
-        // `LANES * N`. Reuses the `bin_for_nits` helper from the scalar
-        // path to stay in lock-step with the scalar histogram's bin
-        // boundaries.
+        // Remaining pixels use the same binning primitive as full blocks.
         let remainder = iter.remainder();
         for chunk in remainder.chunks_exact(N) {
             let r = chunk[0].max(0.0);
@@ -997,7 +951,14 @@ mod simd_kernel {
             // Tail pixels land in sub_hists[0]; merging at the end sums
             // all lanes so this is correct regardless of which lane the
             // tail "lives" in.
-            sub_hists[bin_for_nits(m_nits)] += 1;
+            // Use the same vector primitive and arithmetic as a complete block.
+            // A separate scalar log approximation changes histogram boundaries.
+            let safe = f32x8::splat_t(token, m_nits).max(bin_min_nits);
+            let bin_f = ((safe.log2_midp() - log2_min) * inv_step)
+                .max(zero)
+                .min(num_bins_minus_1)
+                .to_array()[0];
+            sub_hists[saturating_bin_scalar(m_nits, bin_f)] += 1;
         }
     }
 
@@ -1093,13 +1054,18 @@ mod simd_kernel {
                 *literal_max_nits = y_nits;
             }
             *sum_nits += f64::from(y_nits);
-            sub_hists[bin_for_nits(y_nits)] += 1;
+            // Use the same vector primitive and arithmetic as a complete block.
+            // A separate scalar log approximation changes histogram boundaries.
+            let safe = f32x8::splat_t(token, y_nits).max(bin_min_nits);
+            let bin_f = ((safe.log2_midp() - log2_min) * inv_step)
+                .max(zero)
+                .min(num_bins_minus_1)
+                .to_array()[0];
+            sub_hists[saturating_bin_scalar(y_nits, bin_f)] += 1;
         }
     }
 
-    /// Saturating scalar bin index — same semantics as `bin_for_nits` in
-    /// the parent module, but inlined here so the SIMD hot loop doesn't
-    /// pay a function-call overhead.
+    /// Clamp a bin index, shared by full blocks and tails.
     #[inline(always)]
     fn saturating_bin_scalar(nits: f32, bin_f: f32) -> usize {
         if nits <= LightLevelHistogram::BIN_MIN_NITS {

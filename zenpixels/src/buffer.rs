@@ -177,6 +177,8 @@ impl Pixel for GrayAlphaF32 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum BufferError {
+    /// The descriptor violates its sample/layout/alpha contract.
+    InvalidDescriptor(crate::descriptor::DescriptorError),
     /// Data pointer or stride is not aligned for the channel type.
     ///
     /// A stride must be a multiple of the sample size, so that every row starts
@@ -207,6 +209,7 @@ pub enum BufferError {
 impl fmt::Display for BufferError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidDescriptor(error) => error.fmt(f),
             Self::AlignmentViolation => write!(f, "data is not aligned for the channel type"),
             Self::InsufficientData => {
                 write!(f, "data slice is too small for the given dimensions")
@@ -1883,6 +1886,9 @@ fn for_each_pixel_4bpp(
     mut f: impl FnMut(&mut [u8; 4]),
 ) {
     let row_bytes = width as usize * 4;
+    if row_bytes == 0 {
+        return;
+    }
     for y in 0..rows as usize {
         let row_start = y * stride;
         let row = &mut data[row_start..row_start + row_bytes];
@@ -2807,9 +2813,10 @@ impl PixelBuffer {
     /// Consume the buffer and return the pixels as a typed `Vec<P>`.
     ///
     /// Returns `None` if the descriptor is not layout-compatible with `P`.
-    /// Compacts stride padding in place. Reuses the allocation when `P` has
-    /// alignment 1 and the allocation capacity is a multiple of its size.
-    /// Other allocator layouts require one copy into a typed allocation.
+    /// Compacts stride padding in place. Reuses the allocation when its backing
+    /// sample type has the same alignment as `P` and capacity is a multiple of
+    /// its size. This includes U16/F32 typed storage, not only byte storage.
+    /// Incompatible allocator layouts require one copy into a typed allocation.
     pub fn into_contiguous_pixels<P: Pixel>(self) -> Option<Vec<P>> {
         if !self.descriptor.typed_view_compatible(P::DESCRIPTOR)
             || core::mem::size_of::<P>() != self.descriptor.bytes_per_pixel()
