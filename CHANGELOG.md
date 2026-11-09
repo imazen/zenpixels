@@ -16,14 +16,20 @@
 ### QUEUED BREAKING CHANGES
 
 - Unpublished zenpsy-api metadata fields become private; use accessors/builders.
-  MapGrid construction is checked. The GPU variant uses `Backend::gpu`.
+  MapGrid construction is checked. The GPU variant uses `Backend::gpu`
+  (`e53e3ea1`).
 
 
 - Remove the duplicate `PixelFormat::create_from` constructor; use `from_parts(sample, layout, None)`. Remove root `at` and `ResultAtExt` reexports; import those from `whereat`. Retain the public encoder adaptation module and its raw-row/Cow entry points for existing codec consumers.
 
-None. This new companion is an unpublished review API.
+This companion remains an unpublished review API; no release is authorized.
 
 ### Added
+
+- Optional standard planar ingress, owned reference preparation and checked
+  lending of structured assessments, including stacked erasure and heterogeneous
+  prepared collections (`e53e3ea1`, `20cbfe10`). Named map requests refuse missing
+  outputs; erased validation visits outputs without boxed iterators.
 
 - Still-image metric contracts with rich results, native plane validation,
   persistent identity, map geometry/folds, real reference reuse and conformance

@@ -91,6 +91,6 @@ Identity and error bridging originate in
 Existing zenmetrics persistence identities are unchanged in that original crate;
 this smaller contract does not derive or rename observation columns.
 
-The [native consumer validation](https://github.com/imazen/zenmetrics/blob/master/docs/IQA_STILL_CONTRACT_VALIDATION.md)
+The [native consumer validation](https://github.com/imazen/zenmetrics/pull/114)
 records source pins and the exact scope of native validation. Contract tests do
 not qualify algorithm/reference parity or every model, input and backend.
