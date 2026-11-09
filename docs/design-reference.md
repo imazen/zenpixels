@@ -54,7 +54,7 @@ Tests must distinguish those defects from primitive rounding differences.
 
 | Work | Status | Regression gate |
 |---|---|---|
-| Unified integer encoding and shared native geometry | Implemented | Native signed/wide carriage, code mapping, empty/strided planes |
+| Unified integer encoding and shared native geometry | Encoding implemented; public component-view overlap remains open | Native signed/wide carriage, code mapping, empty/strided planes |
 | Finalized operation chain and policy preservation | Implemented | Compositing/swizzle combinations, prepared and partitioned execution |
 | Unified output context | Implemented | Allocating/into/adaptation pixels and white-anchor parity |
 | Descriptor and generic-layout invariants | Implemented | Invalid alpha descriptors, U64 channel removal, empty row swaps |
@@ -97,14 +97,17 @@ Run `just sample-design-check`, `just plan-design-check`,
 `just api-doc` refreshes the public surface snapshots. Resource wrappers and
 platform admission are the caller's responsibility.
 
-## Why two views remain
+## Native component views: unresolved overlap
 
-`CodePlane` reads one component from an existing typed U8/U16 plane, including
-interleaved chroma. `NativeCodeSlice` adapts packed RGB/gray byte rows whose
-components can have different payload widths, including signed/wide words.
-They share `SampleEncoding`; the packed adapter stores a borrowed byte `Plane`
-for geometry. Neither promises that every represented encoding has a numerical
-conversion kernel. There is no duplicate encoding type or compatibility alias.
+`CodePlane::component` already reads interleaved components, including CbCr/CrCb,
+and can use a different encoding for each U16 RGB/alpha component. The earlier
+claim that this required NativeCodeSlice was incorrect. NativeCodeSlice adds
+byte-unaligned and signed/wide reads, but limits layouts to RGB/gray. Sharing
+Plane geometry does not eliminate this public API split.
+
+See the [explorer-driven review](explorer-design-review.md) for executable overlap
+witnesses, the proposed consolidation and the outstanding issue-by-issue scope.
+The view design remains open before 0.3 is frozen.
 
 ## Validation receipt — 2026-11-09
 
@@ -136,14 +139,6 @@ Before requalifying historical rows, inventory table-to-asset coverage and repor
 missing originals explicitly. Do not substitute a similarly named profile or
 publish restricted bytes. This retention inventory and historical revalidation
 have not been completed by the current code changes.
-
-`NativeCodeSlice` is an interleaved-byte adapter, not another storage owner or
-encoding model. It supplies the component boundaries needed by `native_to_u16`
-and `u16_to_native`; `CodePlane` supplies one component from typed U8/U16 storage.
-A separate public type is not mathematically necessary, but replacing it with a
-single universal view would need to carry both sets of layout rules. Retain the
-small adapter over shared `Plane` geometry for the current native conversion API;
-do not grow it into a second plane framework.
 
 Descriptor/trace follow-up validation: `just approved-contracts-check`,
 `just design-feature-check` and `just api-doc` passed. Trace capture stays at the failing operation; inline error-mapping closures
