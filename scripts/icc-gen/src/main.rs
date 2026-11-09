@@ -1802,6 +1802,12 @@ mod qualification_tests {
         assert_eq!(gray_intent_mask(&[]), 0);
     }
     #[test]
+    fn a_clean_matrix_shaper_cannot_override_a_different_gamut() {
+        let bytes = ColorProfile::new_display_p3().encode().unwrap();
+        assert_eq!(structural_rgb_mask(&bytes), 7);
+        assert_eq!(compute_rgb_intent_mask(&bytes, "Bt709", "Srgb").0, 0);
+    }
+    #[test]
     fn type_two_curve_retains_offset_and_lower_branch() {
         let p = [2.0, 1.0, -0.25, 0.125];
         assert_eq!(eval_para(&p, 0.0), 0.125);

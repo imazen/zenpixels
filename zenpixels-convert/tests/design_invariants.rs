@@ -183,3 +183,31 @@ fn histogram_shape_and_small_positive_ranks_are_consistent() {
         }
     }
 }
+
+#[test]
+fn matte_uses_the_primaries_of_its_actual_operation() {
+    let background = Color::srgb8(31, 127, 223);
+    let options = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
+        background,
+        reference_white: None,
+    });
+    let from = PixelDescriptor::RGBA8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
+    let to = PixelDescriptor::RGBF32_LINEAR;
+    let mut converter = zenpixels_convert::RowConverter::new_explicit(from, to, &options).unwrap();
+    let mut actual = [0f32; 3];
+    converter
+        .try_convert_row(&[0, 0, 0, 0], bytemuck::cast_slice_mut(&mut actual), 1)
+        .unwrap();
+    let mut reference = zenpixels_convert::RowConverter::new(background.descriptor(), to).unwrap();
+    let mut expected = [0f32; 3];
+    reference
+        .try_convert_row(
+            background.as_bytes(),
+            bytemuck::cast_slice_mut(&mut expected),
+            1,
+        )
+        .unwrap();
+    for (a, e) in actual.into_iter().zip(expected) {
+        assert!((a - e).abs() < 0.0001, "{a} != {e}");
+    }
+}
