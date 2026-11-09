@@ -19,8 +19,8 @@ fn constructors_share_alpha_validation() {
                 ColorPrimaries::Bt709,
             );
             assert_eq!(short, full);
-            assert_eq!(full.is_some(), layout.has_alpha() == alpha.is_some());
-            if let Some(d) = full {
+            assert_eq!(full.is_ok(), layout.has_alpha() == alpha.is_some());
+            if let Ok(d) = full {
                 d.validate().unwrap();
             }
         }
@@ -43,4 +43,37 @@ fn empty_channel_reorders_do_not_address_rows() {
     let px = PixelSliceMut::new(&mut bytes, 0, 2, 4, PixelDescriptor::RGBX8_SRGB).unwrap();
     let out = px.try_typed::<Rgbx>().unwrap().swap_to_bgrx();
     assert!(out.row(1).is_empty());
+}
+
+#[test]
+fn invalid_descriptor_explains_input_and_remedy() {
+    let error = PixelDescriptor::try_new(
+        ChannelType::U16,
+        ChannelLayout::Bgra,
+        Some(AlphaMode::Straight),
+        TransferFunction::Srgb,
+    )
+    .unwrap_err()
+    .to_string();
+    for expected in ["U16", "Bgra", "Straight", "requires U8"] {
+        assert!(error.contains(expected), "{error}");
+    }
+    let error = PixelDescriptor::try_new(
+        ChannelType::U8,
+        ChannelLayout::Rgb,
+        Some(AlphaMode::Straight),
+        TransferFunction::Srgb,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("supply None"), "{error}");
+    let error = PixelDescriptor::try_new(
+        ChannelType::U8,
+        ChannelLayout::Rgba,
+        None,
+        TransferFunction::Srgb,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("requires an alpha mode"), "{error}");
 }

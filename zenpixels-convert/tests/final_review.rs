@@ -330,7 +330,7 @@ fn same_color_sees_out_of_range_channels() {
 #[test]
 fn a_layout_and_its_alpha_mode_must_agree() {
     use zenpixels::{AlphaMode, ChannelLayout, ChannelType};
-    assert!(D::try_new(ChannelType::U8, ChannelLayout::Rgba, None, T::Srgb).is_none());
+    assert!(D::try_new(ChannelType::U8, ChannelLayout::Rgba, None, T::Srgb).is_err());
     assert!(
         D::try_new(
             ChannelType::U8,
@@ -338,7 +338,7 @@ fn a_layout_and_its_alpha_mode_must_agree() {
             Some(AlphaMode::Straight),
             T::Srgb
         )
-        .is_none()
+        .is_err()
     );
 }
 

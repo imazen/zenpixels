@@ -177,6 +177,8 @@ impl Pixel for GrayAlphaF32 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum BufferError {
+    /// The descriptor violates its sample/layout/alpha contract.
+    InvalidDescriptor(crate::descriptor::DescriptorError),
     /// Data pointer or stride is not aligned for the channel type.
     ///
     /// A stride must be a multiple of the sample size, so that every row starts
@@ -207,6 +209,7 @@ pub enum BufferError {
 impl fmt::Display for BufferError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidDescriptor(error) => error.fmt(f),
             Self::AlignmentViolation => write!(f, "data is not aligned for the channel type"),
             Self::InsufficientData => {
                 write!(f, "data slice is too small for the given dimensions")
