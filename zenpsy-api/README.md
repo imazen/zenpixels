@@ -33,7 +33,24 @@ when a caller needs the retained native fields.
 
 Diagnostics are off by default. `EvalOpts::with_native_map` explicitly requests
 native diagnostic data in the concrete result; callers must bound witnesses and
-storage. Map geometry, component arrays and processing remain native APIs.
+storage. `Evaluation::maps()` exposes borrowed `MapView`s: existing zenpixels `AnyPlane`
+views, native `ScoreSpec` semantics and a regular `MapGrid` in input coordinates.
+Typed and erased results keep the original sample allocations, precision and
+strides. Undefined map samples remain unchanged. Grid placement describes where
+to display cells, not which pixels causally influenced them. Native result fields
+retain richer component/support metadata. Resampling and display processing stay
+with consumers. Existing result implementations can keep native diagnostics and
+use the default empty common-map iterator; unsupported diagnostic requests must
+still be refused by the metric.
+
+`NoReferenceMetric` and checked `score_image` take one image and use the same
+structured results, maps, errors and Pulse controls. Heterogeneous one-image
+collections use `Box<DynNoReferenceMetric<'_>>` with `Erased::new(metric)`.
+`PairedNoReference::new(metric)` explicitly scores both inputs: candidate keys
+stay unchanged and reference keys append `_ref`. Only candidate diagnostics are
+requested. Actual preparation caches the reference assessment once, sharing its
+native storage across candidate results without cloning diagnostic arrays.
+Both originals remain available through `PairedEvaluation` accessors.
 
 `MetricId` records the effective configuration and actual implementation.
 Persistence columns, fingerprint algorithms, registries, resource estimation,

@@ -2,7 +2,9 @@
 //!
 //! [`Metric::Output`] preserves native structured assessments. [`Evaluation`]
 //! exposes named scalars; [`PrepareReference`] optionally reuses reference work.
-//! Diagnostic arrays remain native data, explicitly requested in [`EvalOpts`].
+//! Diagnostic arrays remain native data, explicitly requested in [`EvalOpts`];
+//! borrowed [`MapView`]s expose common native placement and semantics.
+//! [`NoReferenceMetric`] provides the corresponding one-image contract.
 //! [`Erased`] composes with typed wrappers and supports heterogeneous metric
 //! collections. Persistence, map processing, scheduling and video composition
 //! belong to consumers. Worker adapters supply any required
