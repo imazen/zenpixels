@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+mod storage;
+
 use serde_json::{Value, json};
 use wasm_bindgen::prelude::*;
 use zenpixels::policy::{AlphaPolicy, ConvertOptions, LumaCoefficients};
@@ -115,7 +117,7 @@ fn descriptor(v: &Value) -> Result<PixelDescriptor, String> {
         "Narrow" => SignalRange::Narrow,
         _ => return Err("Unknown signal range".into()),
     });
-    d.validate().map_err(|e| format!("{e:?}"))?;
+    d.validate().map_err(|e| e.to_string())?;
     Ok(d)
 }
 
@@ -179,6 +181,21 @@ fn run(v: &Value) -> Result<Value, String> {
             }
         }
     }
+    if let Some(h) = v.get("hlgRendering").filter(|h| !h.is_null()) {
+        let number = |name: &str| {
+            h[name]
+                .as_f64()
+                .map(|n| n as f32)
+                .ok_or_else(|| format!("Missing HLG {name}"))
+        };
+        let peak = zenpixels::hdr::Nits::try_new(number("peak")?)
+            .ok_or("HLG peak must be finite and positive")?;
+        let rendering = zenpixels::hdr::HlgRendering::new(peak, number("black")?, number("gamma")?)
+            .ok_or(
+                "HLG black must be 0..=1% of peak; gamma must be 0.5..=3; values must be finite",
+            )?;
+        options = options.with_hlg_rendering(rendering);
+    }
     let mut converter =
         RowConverter::new_explicit(from, to, &options).map_err(|e| format!("{:?}", e.error()))?;
     // Debug is the existing inspection surface; no new core API is needed.
@@ -211,5 +228,17 @@ pub fn convert(request: &str) -> String {
     match result {
         Ok(value) => value.to_string(),
         Err(error) => json!({"error": error}).to_string(),
+    }
+}
+
+/// Browser-only live storage witnesses for the current crate APIs.
+#[wasm_bindgen]
+pub fn inspect_storage(request: &str) -> String {
+    match serde_json::from_str(request)
+        .map_err(|e| e.to_string())
+        .and_then(|v| storage::inspect(&v))
+    {
+        Ok(value) => value.to_string(),
+        Err(error) => json!({"error":error}).to_string(),
     }
 }
