@@ -1,5 +1,34 @@
 # HDR anchor & convert API — user stories + what auto-converts
 
+## Approved HLG rendering boundary — 2026-11-09
+
+The owner approved explicit rendering conditions plus an opt-in named reference
+rendering preset. This supersedes the older automatic-HLG recommendation below:
+a signaled peak alone does not select all rendering conditions.
+
+- Transfer-only HLG decoding has an explicit scene-linear meaning. Crossing into
+  display light requires a rendering policy specifying display peak and the
+  black-level/surround assumptions. A named preset documents its constants and
+  is never selected merely because the input is tagged HLG.
+- Source metadata and rendering choices remain distinct. Content-light or
+  mastering-display metadata must not silently select the target display.
+- Resolve the policy once in the conversion plan; row kernels receive resolved
+  numerical parameters. Identity carriage needs no rendering policy. Actual
+  rendering refuses when required information is missing.
+- Unsupported authoritative HDR signaling must not fall back to a conflicting
+  SDR ICC profile. ICC synthesis remains a separate representation and
+  interoperability qualification, not an automatic consequence of OOTF support.
+
+This approves the architecture, not numerical preset constants or public
+signatures. The contract must still specify luminance coefficients, zero,
+negative and extended RGB behavior, and the scene/display meaning of each
+endpoint against the normative equations and the existing zentone implementation.
+Acceptance requires independent numerical vectors, identity preservation,
+consistent entry-point refusals and row-partition parity. Existing refusal
+behavior stays until the replacement qualifies. Track the contract in
+[issue #132](https://github.com/imazen/zenpixels/issues/132) and downstream authority
+routing in [issue #139](https://github.com/imazen/zenpixels/issues/139).
+
 Status: design / proposal. Decides which of the HDR-convert items are worth a
 **public** commitment (each `pub` in zenpixels is a decade-long contract — see
 `CLAUDE.md` "Public API surface"), what shape they take, and — the load-bearing

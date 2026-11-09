@@ -1,5 +1,33 @@
 # Explicit integer sample encoding
 
+## Approved follow-up boundary — 2026-11-09
+
+The owner approved a distinct native-code view using existing storage machinery,
+with per-channel code width, placement and signed interpretation. Ordinary
+processing views retain their canonical numerical meaning. This is an approved
+design direction, not a claim that the view or wider conversions exist today.
+
+Identity transport of a supported native-code view preserves all storage bits,
+including padding. Explicit canonicalization interprets the codes; encoding back
+has an explicit padding policy. This does not change the existing code writer's
+zero-padding behavior. Source precision and `ExactDepth` remain separate facts.
+Unsupported numerical conversion refuses rather than widening exact integers
+through F32. Exact ST2086 carriage gets a separate raw/integer representation
+alongside the semantic floating-point view.
+
+Not every external encoding must be representable. The owner explicitly permits
+conversion before representation, including RGB565. Multiple components packed
+into one word do not require a universal bitfield format or a new named
+`PixelFormat`. An adapter unpacks such input into a supported representation;
+retaining the original wire bytes, if required, is the adapter/container's job.
+Native-view identity preservation applies after admission to that representation,
+not to reconstructing arbitrary original wire packing from canonical pixels.
+
+Implementation gates: consumer-shaped RGB10/alpha1 fixtures with nonzero padding,
+signed and wide integer identity/refusal cases, explicit canonicalization checks,
+and exact 24-byte ST2086 round trips. Public signatures still require concrete
+consumer review. Track implementation in [issue #83](https://github.com/imazen/zenpixels/issues/83).
+
 `sample::SampleEncoding` is the small additive bridge for the last 0.2.x release.
 It describes one unsigned code per U8/U16 storage word using private fields and
 a checked constant constructor. It introduces no default or sample-value scan.

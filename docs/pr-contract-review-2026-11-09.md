@@ -3,6 +3,21 @@
 Source-pinned review, 2026-11-09. This proposes follow-ups; it changes no
 production API, default feature, bundled bytes or established pixel expectation.
 
+## Approved P3 export direction — 2026-11-09
+
+The owner approved qualifying a compact generated P3 export profile for builds
+without the profile database. Until that profile passes native libultrahdr gamut
+recognition and independent color qualification, refuse synthesis on the affected
+fallback path. Historical profiles remain available for recognition and explicit
+compatibility use; recognition alone does not establish color equivalence.
+
+This records the design decision, not a completed qualification or a changed
+pixel expectation. Exercise an isolated dependency with default features disabled
+so workspace feature unification cannot hide the fallback. Supported release
+lines must receive the qualified fix before publication; release preparation is
+not publication authorization. Track controls and release exposure in
+[issue #135](https://github.com/imazen/zenpixels/issues/135).
+
 ## Precision placement (PR120, 79a3040f)
 
 `zenpixels::precision` is public. The converter already re-exports that module
