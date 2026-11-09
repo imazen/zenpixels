@@ -2813,9 +2813,10 @@ impl PixelBuffer {
     /// Consume the buffer and return the pixels as a typed `Vec<P>`.
     ///
     /// Returns `None` if the descriptor is not layout-compatible with `P`.
-    /// Compacts stride padding in place. Reuses the allocation when `P` has
-    /// alignment 1 and the allocation capacity is a multiple of its size.
-    /// Other allocator layouts require one copy into a typed allocation.
+    /// Compacts stride padding in place. Reuses the allocation when its backing
+    /// sample type has the same alignment as `P` and capacity is a multiple of
+    /// its size. This includes U16/F32 typed storage, not only byte storage.
+    /// Incompatible allocator layouts require one copy into a typed allocation.
     pub fn into_contiguous_pixels<P: Pixel>(self) -> Option<Vec<P>> {
         if !self.descriptor.typed_view_compatible(P::DESCRIPTOR)
             || core::mem::size_of::<P>() != self.descriptor.bytes_per_pixel()

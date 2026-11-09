@@ -56,3 +56,7 @@ image = { version = "0.25.10", default-features = false }
 rustversion = "1.0.23"
 imgref = "1.12"
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"] }
+
+[[test]]
+name = "typed_extraction_contract"
+required-features = ["rgb"]
