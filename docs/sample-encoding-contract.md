@@ -29,8 +29,13 @@ not to reconstructing arbitrary original wire packing from canonical pixels.
 
 Implementation gates: consumer-shaped RGB10/alpha1 fixtures with nonzero padding,
 signed and wide integer identity/refusal cases, explicit canonicalization checks,
-and exact 24-byte ST2086 round trips. Public signatures still require concrete
-consumer review. Track implementation in [issue #83](https://github.com/imazen/zenpixels/issues/83).
+and exact 24-byte ST2086 round trips. `codes::u16_to_native` is the inverse
+boundary: callers explicitly choose `NativePadding::Zero` or `Preserve`, and
+narrowing needs `DepthPolicy::Round`. It validates before writes and preserves
+row padding. Exhaustive ten-bit round trips cover both sample-padding policies.
+Signed and wider numerical conversion remains unsupported; exact borrowed
+carriage is supported through 64 bits. RGB565 is tested as an unpack-first case.
+These public boundaries are submitted for consumer/API review. Track implementation in [issue #83](https://github.com/imazen/zenpixels/issues/83).
 
 `sample::SampleEncoding` is the small additive bridge for the last 0.2.x release.
 It describes one unsigned code per U8/U16 storage word using private fields and

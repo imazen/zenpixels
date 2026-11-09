@@ -565,6 +565,8 @@ pub fn native_to_u16(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum NativeConversionError {
+    /// Native payload is narrower than U16 and policy forbids reducing depth.
+    DepthReduction,
     /// Destination must be matching U16 geometry and layout.
     Destination,
     /// Signed or wider-than-U16 payload needs a separately qualified conversion.
@@ -578,3 +580,107 @@ impl core::fmt::Display for NativeConversionError {
     }
 }
 impl core::error::Error for NativeConversionError {}
+
+/// Treatment of bits outside native payloads when encoding canonical samples.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NativePadding {
+    /// Clear all padding bits in each written sample word.
+    Zero,
+    /// Keep the destination's existing padding bits. Row padding is always kept.
+    Preserve,
+}
+
+/// Encode canonical U16 samples into separate native integer component words.
+///
+/// The source supplies geometry, layout and signal range. Signed and >16-bit
+/// payloads refuse. Narrowing requires the explicit round depth policy;
+/// all validation precedes writes. The destination's byte stride can include
+/// arbitrary row padding. This does not pack RGB565 or other shared-word formats.
+pub fn u16_to_native(
+    source: zenpixels::PixelSlice<'_>,
+    destination: &mut [u8],
+    stride: usize,
+    encodings: &[zenpixels::sample::NativeEncoding],
+    padding: NativePadding,
+    depth: zenpixels::DepthPolicy,
+) -> Result<(), NativeConversionError> {
+    let d = source.descriptor();
+    if d.channel_type() != ChannelType::U16 {
+        return Err(NativeConversionError::Destination);
+    }
+    zenpixels::sample::NativeCodeSlice::new(
+        destination,
+        source.width(),
+        source.rows(),
+        stride,
+        d.layout(),
+        encodings,
+    )
+    .map_err(|_| NativeConversionError::Destination)?;
+    let mut maps = [None; 4];
+    let input = SampleEncoding::new(ChannelType::U16, 16, 0).unwrap();
+    for (i, e) in encodings.iter().enumerate() {
+        if !matches!(
+            e.storage(),
+            ChannelType::U8 | ChannelType::U16 | ChannelType::U32 | ChannelType::U64
+        ) || e.code_bits() > 16
+        {
+            return Err(NativeConversionError::UnsupportedEncoding);
+        }
+        if e.code_bits() < 16 && depth == zenpixels::DepthPolicy::Forbid {
+            return Err(NativeConversionError::DepthReduction);
+        }
+        // Only the established round mapping is qualified for arbitrary native
+        // payloads; truncate is a different contract and refuses for now.
+        if e.code_bits() < 16 && depth != zenpixels::DepthPolicy::Round {
+            return Err(NativeConversionError::UnsupportedEncoding);
+        }
+        let target = SampleEncoding::new(ChannelType::U16, e.code_bits(), 0).unwrap();
+        let role = if d.has_alpha() && i == encodings.len() - 1 {
+            CodeRole::Alpha
+        } else {
+            CodeRole::Intensity
+        };
+        maps[i] = Some(
+            CodeMap::new(input, target, role, d.signal_range)
+                .map_err(NativeConversionError::Map)?,
+        );
+    }
+    if source.width() == 0 {
+        return Ok(());
+    }
+    let size = encodings[0].storage().byte_size();
+    for y in 0..source.rows() {
+        let src = source.row(y);
+        for x in 0..source.width() as usize {
+            for (c, e) in encodings.iter().enumerate() {
+                let i = x * encodings.len() + c;
+                let code = u16::from_ne_bytes(src[i * 2..i * 2 + 2].try_into().unwrap());
+                let value = u64::from(maps[c].unwrap().code(code)) << e.bit_shift();
+                let mask = ((1u64 << e.code_bits()) - 1) << e.bit_shift();
+                let start = y as usize * stride + i * size;
+                let bytes = &mut destination[start..start + size];
+                let old = match size {
+                    1 => u64::from(bytes[0]),
+                    2 => u64::from(u16::from_ne_bytes(bytes.try_into().unwrap())),
+                    4 => u64::from(u32::from_ne_bytes(bytes.try_into().unwrap())),
+                    8 => u64::from_ne_bytes(bytes.try_into().unwrap()),
+                    _ => unreachable!(),
+                };
+                let word = match padding {
+                    NativePadding::Zero => value,
+                    NativePadding::Preserve => (old & !mask) | value,
+                };
+                match size {
+                    1 => bytes[0] = word as u8,
+                    2 => bytes.copy_from_slice(&(word as u16).to_ne_bytes()),
+                    4 => bytes.copy_from_slice(&(word as u32).to_ne_bytes()),
+                    8 => bytes.copy_from_slice(&word.to_ne_bytes()),
+                    _ => unreachable!(),
+                }
+            }
+        }
+    }
+    Ok(())
+}

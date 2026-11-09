@@ -64,3 +64,13 @@ fn metadata_preserves_each_byte_and_float_loss_is_visible() {
     );
     assert_eq!(codes.to_be_bytes(), bytes);
 }
+
+#[test]
+fn rgb565_wire_words_require_unpacking() {
+    let enc = [
+        NativeEncoding::new(T::U16, 5, 11).unwrap(),
+        NativeEncoding::new(T::U16, 6, 5).unwrap(),
+        NativeEncoding::new(T::U16, 5, 0).unwrap(),
+    ];
+    assert!(NativeCodeSlice::new(&[0xff, 0xff], 1, 1, 2, L::Rgb, &enc).is_err());
+}

@@ -36,3 +36,64 @@ fn per_channel_canonicalization_preserves_padding_and_refuses_signed() {
     }
     assert_eq!(out, before);
 }
+
+#[test]
+fn encoding_back_obeys_padding_policy_and_recovers_every_ten_bit_code() {
+    use zenpixels_convert::codes::{NativePadding, u16_to_native};
+    let enc = [NativeEncoding::new(T::U16, 10, 0).unwrap()];
+    let words: Vec<u16> = (0..1024).map(|v| v | 0xfc00).collect();
+    let src =
+        NativeCodeSlice::new(bytemuck::cast_slice(&words), 1024, 1, 2048, L::Gray, &enc).unwrap();
+    let mut canonical = vec![0u16; 1024];
+    {
+        let mut dst = PixelSliceMut::new(
+            bytemuck::cast_slice_mut(&mut canonical),
+            1024,
+            1,
+            2048,
+            D::GRAY16,
+        )
+        .unwrap();
+        native_to_u16(src, &mut dst, zenpixels::SignalRange::Full).unwrap();
+    }
+    let src =
+        zenpixels::PixelSlice::new(bytemuck::cast_slice(&canonical), 1024, 1, 2048, D::GRAY16)
+            .unwrap();
+    let mut dest = vec![0xa800u16; 1024];
+    assert_eq!(
+        u16_to_native(
+            src.clone(),
+            bytemuck::cast_slice_mut(&mut dest),
+            2048,
+            &enc,
+            NativePadding::Zero,
+            zenpixels::DepthPolicy::Forbid
+        ),
+        Err(NativeConversionError::DepthReduction)
+    );
+    assert!(dest.iter().all(|&v| v == 0xa800));
+    u16_to_native(
+        src.clone(),
+        bytemuck::cast_slice_mut(&mut dest),
+        2048,
+        &enc,
+        NativePadding::Preserve,
+        zenpixels::DepthPolicy::Round,
+    )
+    .unwrap();
+    for (i, &v) in dest.iter().enumerate() {
+        assert_eq!(v, 0xa800 | i as u16);
+    }
+    u16_to_native(
+        src,
+        bytemuck::cast_slice_mut(&mut dest),
+        2048,
+        &enc,
+        NativePadding::Zero,
+        zenpixels::DepthPolicy::Round,
+    )
+    .unwrap();
+    for (i, &v) in dest.iter().enumerate() {
+        assert_eq!(v, i as u16);
+    }
+}
