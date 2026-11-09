@@ -77,12 +77,16 @@ fn codes(format: F, bytes: &[u8]) -> Vec<f64> {
     match format {
         F::Rgb8 | F::Rgba8 => bytes.iter().map(|&v| f64::from(v)).collect(),
         F::Rgb16 | F::Rgba16 => bytes
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|b| f64::from(u16::from_ne_bytes([b[0], b[1]])) / 257.0)
             .collect(),
         _ => bytes
-            .chunks_exact(4)
-            .map(|b| f64::from(f32::from_ne_bytes(b.try_into().unwrap())) * 255.0)
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f64::from(f32::from_ne_bytes(*b)) * 255.0)
             .collect(),
     }
 }
@@ -204,6 +208,45 @@ fn white_and_black_hold() {
                 }
             }
         }
+    }
+}
+
+#[test]
+fn relative_intent_maps_paper_white_to_destination_white() {
+    let bytes = synthetic_icc::synthetic_cmyk_icc();
+    let mut profile = lcms::profile::open_profile_from_mem(None, &bytes).unwrap();
+    // A printing medium whose measured white is darker than PCS white.
+    // Relative intent maps its relative A2B white to destination white;
+    // absolute intent retains the darker medium white.
+    assert!(lcms::profile::cms_write_tag(
+        &mut profile,
+        lcms::signatures::tag::SigMediaWhitePointTag,
+        Some(lcms::tagtypes::TagObject::Xyz(lcms::types::CieXyz {
+            X: 0.9642 * 0.8,
+            Y: 0.8,
+            Z: 0.8249 * 0.8,
+        })),
+    ));
+    let bytes = lcms::profile::save_profile_to_mem(&mut profile).unwrap();
+    let options = ConvertOptions::permissive().with_clip_out_of_gamut(false);
+    let mut transform = LcmsPort
+        .build_source_transform(Source::Icc(&bytes), SRGB, F::CmykF32, F::RgbF32, &options)
+        .unwrap()
+        .unwrap();
+    let input = [0.0f32; 4];
+    let mut output = [0.0f32; 3];
+    transform
+        .try_transform_row(
+            bytemuck::cast_slice(&input),
+            bytemuck::cast_slice_mut(&mut output),
+            1,
+        )
+        .unwrap();
+    for value in output {
+        assert!(
+            (value - 1.0).abs() < 0.001,
+            "relative paper white: {output:?}"
+        );
     }
 }
 
@@ -336,14 +379,17 @@ fn gray_round_trips_and_carries_alpha() {
     let d = worst(F::Rgb8, &a, &b);
     eprintln!("gray 2.2>srgb Gray8>Rgb8: worst {d:.3}");
     assert!(d <= 1.0, "{d}");
-    assert_eq!(a.chunks_exact(3).map(|p| p[0]).last(), Some(255));
-    assert_eq!(a.chunks_exact(3).map(|p| p[0]).next(), Some(0));
+    assert_eq!(
+        a.as_chunks::<3>().0.iter().map(|p| p[0]).next_back(),
+        Some(255)
+    );
+    assert_eq!(a.as_chunks::<3>().0.iter().map(|p| p[0]).next(), Some(0));
 
     let with_alpha: Vec<u8> = (0..=255u8).flat_map(|v| [v, 255 - v]).collect();
     for (name, cms) in backends() {
         let mut t = build(cms, Source::Icc(&icc), SRGB, F::GrayA8, F::Rgba8);
         let out = run(&mut t, &with_alpha, 256, F::Rgba8);
-        for (i, p) in out.chunks_exact(4).enumerate() {
+        for (i, p) in out.as_chunks::<4>().0.iter().enumerate() {
             assert_eq!(p[3], 255 - i as u8, "{name} alpha at {i}");
         }
     }
@@ -567,6 +613,119 @@ fn cmyk8_against_f32_and_lcms() {
                 let (g, h, _) = stats(&mf, &lf);
                 println!(
                     "{name}|{tname}|{lname}|{a:.3}/{b:.1}/{c:.2}|{d:.3}/{e:.1}/{f:.2}|{g:.3}/{h:.2}"
+                );
+            }
+        }
+    }
+}
+
+fn float_pipeline_profile(signatures: &[[u8; 4]]) -> Vec<u8> {
+    use lcms::{lut, profile, tagtypes::TagObject};
+    let mut altered = profile::open_profile_from_mem(None, P3).unwrap();
+    let mut pipeline = lut::pipeline_alloc(None, 3, 3).unwrap();
+    assert!(
+        pipeline.insert_stage(
+            lut::StageLoc::AtEnd,
+            lut::stage_alloc_matrix(
+                None,
+                3,
+                3,
+                &[0.25, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.25],
+                None
+            )
+            .unwrap()
+        )
+    );
+    for &signature in signatures {
+        assert!(profile::cms_write_tag(
+            &mut altered,
+            u32::from_be_bytes(signature),
+            Some(TagObject::Mpe(pipeline.clone()))
+        ));
+    }
+    profile::save_profile_to_mem(&mut altered).unwrap()
+}
+
+/// A float pipeline for the requested intent takes precedence over matrix/TRC.
+#[test]
+fn float_pipeline_is_honored_or_explicitly_declined() {
+    for signatures in [[*b"D2B0", *b"D2B1"], [*b"B2D0", *b"B2D1"]] {
+        let altered = float_pipeline_profile(&signatures);
+        let (source, target) = if signatures[0] == *b"D2B0" {
+            (Source::Icc(&altered), SRGB)
+        } else {
+            (SRGB, Source::Icc(&altered))
+        };
+        let mut transform = build(
+            &LcmsPort,
+            source.clone(),
+            target.clone(),
+            F::RgbF32,
+            F::RgbF32,
+        );
+        let input = [0.5f32; 3];
+        let mut output = [0.0f32; 3];
+        transform
+            .try_transform_row(
+                bytemuck::cast_slice(&input),
+                bytemuck::cast_slice_mut(&mut output),
+                1,
+            )
+            .unwrap();
+        assert!(
+            output.iter().any(|&value| (value - 0.5).abs() > 0.05),
+            "float pipeline was ignored: {output:?}"
+        );
+        assert!(
+            MoxCms
+                .build_source_transform(source, target, F::RgbF32, F::RgbF32, &opts())
+                .is_none(),
+            "MoxCMS must decline unsupported float pipelines"
+        );
+    }
+}
+
+/// A float transform for another intent cannot disable relative colorimetry.
+#[test]
+fn relative_intent_ignores_float_tags_for_other_intents() {
+    for prefix in [*b"D2B", *b"B2D"] {
+        for intent in *b"023" {
+            let altered = float_pipeline_profile(&[[prefix[0], prefix[1], prefix[2], intent]]);
+            let (source, target, plain_source, plain_target) = if prefix == *b"D2B" {
+                (Source::Icc(&altered), SRGB, Source::Icc(P3), SRGB)
+            } else {
+                (SRGB, Source::Icc(&altered), SRGB, Source::Icc(P3))
+            };
+            let input = [0.18f32, 0.5, 0.75];
+            for (name, cms) in backends() {
+                let mut with_tag = build(cms, source.clone(), target.clone(), F::RgbF32, F::RgbF32);
+                let mut plain = build(
+                    cms,
+                    plain_source.clone(),
+                    plain_target.clone(),
+                    F::RgbF32,
+                    F::RgbF32,
+                );
+                let mut actual = [0.0f32; 3];
+                let mut expected = [0.0f32; 3];
+                with_tag
+                    .try_transform_row(
+                        bytemuck::cast_slice(&input),
+                        bytemuck::cast_slice_mut(&mut actual),
+                        1,
+                    )
+                    .unwrap();
+                plain
+                    .try_transform_row(
+                        bytemuck::cast_slice(&input),
+                        bytemuck::cast_slice_mut(&mut expected),
+                        1,
+                    )
+                    .unwrap();
+                assert_eq!(
+                    actual.map(f32::to_bits),
+                    expected.map(f32::to_bits),
+                    "{name} unrelated intent{intent}"
                 );
             }
         }

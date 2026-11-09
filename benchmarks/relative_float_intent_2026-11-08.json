@@ -1,0 +1,25 @@
+{
+  "source": "ed9848160795c310360103d3e853b21fccd2fb88",
+  "commands": [
+    "cargo test --locked --manifest-path cms-contract/Cargo.toml --test contract",
+    "cargo clippy --locked --manifest-path cms-contract/Cargo.toml --all-targets -- -D warnings",
+    "cargo test --locked -p zenpixels-convert --features cms-moxcms,cms-lcms --test cms_moxcms --test cms_moxcms_accuracy --test cms_lcms_contracts",
+    "cargo test --locked -p zenpixels-convert --lib --features cms-moxcms corrected_recipe",
+    "cargo test --locked -p zenpixels-convert --lib --features cms-moxcms hlg_synthesis_refuses",
+    "cargo test --locked -p zenpixels --lib historical_gray_white_is_recognized_without_srgb_cms_bypass"
+  ],
+  "results": {
+    "shared_contract_pass": 15,
+    "shared_contract_old_ignored": 2,
+    "lcms_production_pass": 8,
+    "mox_integration_pass": 17,
+    "mox_accuracy_pass": 21,
+    "recipe_dense_pass": 1,
+    "hlg_refusal_pass": 1,
+    "historical_recognition_pass": 1,
+    "strict_standalone_alltarget_clippy": "pass"
+  },
+  "run_heavy": "rc0 27s peak-RSS0.38GiB min-avail27606MiB peak-load6.43",
+  "log_sha256": "7f7884c1b09887cfe30d4d772db67d140f7db4824776769cdb87495f76699a47",
+  "limits": "ARM host. No fresh bundle or native container qualification; old export bytes remain unchanged. Original broad-guard failing regression and initial strict-lint failures retained."
+}

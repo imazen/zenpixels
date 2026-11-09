@@ -32,3 +32,7 @@ JavaScript model remains usable without the converter assets.
 `.github/workflows/pages.yml` checks the boundary, builds the release WASM,
 runs the browser checks, and deploys `site/dist` through GitHub Pages. Pull
 requests build and check the site without deploying it.
+
+On the HDR intent candidate, the row simulator exposes optional SDR white, HDR
+source peak and SDR target peak in nits. Blank inputs preserve the converter's
+typed missing-input errors. HLG light-domain conversion is explicitly unavailable.

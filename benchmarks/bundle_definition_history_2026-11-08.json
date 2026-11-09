@@ -1,0 +1,229 @@
+{
+  "date": "2026-11-08",
+  "inspected_head": "d0127f850e400abf977d68ede712a44c551129ad",
+  "command": "just icc-bundle-definition-audit REVISION",
+  "decoder": "system liblz4, LZ4_decompress_safe; raw ICC headers/tags parsed directly",
+  "history": [
+    {
+      "source": "0d3d7d5",
+      "blob_sha256": "0e5a3408ab5ec68a203f024ea4e633bff2da21259c1564e252c7c8009fee000a",
+      "blob_bytes": 28209,
+      "mappings": {
+        "RGB": 174
+      },
+      "missing_rgb_wtpt": 174,
+      "gray_display_wtpt_mismatches": 0
+    },
+    {
+      "source": "d6ac448",
+      "blob_sha256": "c3d6d080d40137a3fb9128dd3d0e765b6e013d53b4980ce7bac591fad5096325",
+      "blob_bytes": 28001,
+      "mappings": {
+        "RGB": 174
+      },
+      "missing_rgb_wtpt": 174,
+      "gray_display_wtpt_mismatches": 0
+    },
+    {
+      "source": "b12cbaf",
+      "blob_sha256": "ab822fbd9f2804276fb54f73a71d54741569b040118ef438d805579042dd8091",
+      "blob_bytes": 28399,
+      "mappings": {
+        "RGB": 174
+      },
+      "missing_rgb_wtpt": 174,
+      "gray_display_wtpt_mismatches": 0
+    },
+    {
+      "source": "75eb953",
+      "blob_sha256": "b4a8f12c039f8b904844136e09cc37147f3b869f5b52bce56630872d4a9d3264",
+      "blob_bytes": 35967,
+      "mappings": {
+        "RGB": 174,
+        "GRAY": 174
+      },
+      "missing_rgb_wtpt": 174,
+      "gray_display_wtpt_mismatches": 174
+    },
+    {
+      "source": "b8374b9",
+      "blob_sha256": "81abdec5779e3cc4a17e9ae19936ef6f32ce99cc53c2c6980f30bc509d820c23",
+      "blob_bytes": 35298,
+      "mappings": {
+        "RGB": 159,
+        "GRAY": 175
+      },
+      "missing_rgb_wtpt": 159,
+      "gray_display_wtpt_mismatches": 175
+    },
+    {
+      "source": "b6b12bb",
+      "blob_sha256": "10aaba9c228d86b47718d5e2f4bea739b336fea808c3fd68d7d40ff7a0f80a2f",
+      "blob_bytes": 35379,
+      "mappings": {
+        "RGB": 159,
+        "GRAY": 175
+      },
+      "missing_rgb_wtpt": 159,
+      "gray_display_wtpt_mismatches": 175
+    },
+    {
+      "source": "2dba714",
+      "blob_sha256": "ef6f028fabb3075d4e56e352793c2de65b0e8048ebd6986fed4330c6ae9c2d6f",
+      "blob_bytes": 37260,
+      "mappings": {
+        "RGB": 159,
+        "GRAY": 175
+      },
+      "missing_rgb_wtpt": 0,
+      "gray_display_wtpt_mismatches": 175
+    }
+  ],
+  "committed_gray_whites": [
+    {
+      "xyz": [
+        0.89459228515625,
+        1.0,
+        0.9544219970703125
+      ],
+      "mappings": 16
+    },
+    {
+      "xyz": [
+        0.9504547119140625,
+        1.0,
+        1.08905029296875
+      ],
+      "mappings": 111
+    },
+    {
+      "xyz": [
+        0.98101806640625,
+        1.0,
+        1.1835479736328125
+      ],
+      "mappings": 32
+    },
+    {
+      "xyz": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "mappings": 16
+    }
+  ],
+  "committed_gray_example": {
+    "gray-1-8": {
+      "sha256": "bb0133c56ae3de4c68971b82e3fb8d140113a621e6bd25844aa9567069d70cd1",
+      "profile_class": "mntr",
+      "version": "04400000",
+      "wtpt": [
+        0.9504547119140625,
+        1.0,
+        1.08905029296875
+      ]
+    }
+  },
+  "transfer_encodings": {
+    "1": [
+      [
+        "para",
+        3
+      ]
+    ],
+    "4": [
+      [
+        "curv",
+        1,
+        2.19921875
+      ]
+    ],
+    "5": [
+      [
+        "curv",
+        1,
+        2.80078125
+      ]
+    ],
+    "6": [
+      [
+        "para",
+        3
+      ]
+    ],
+    "7": [
+      [
+        "curv",
+        1024
+      ]
+    ],
+    "8": [
+      [
+        "curv",
+        1,
+        1.0
+      ]
+    ],
+    "9": [
+      [
+        "curv",
+        1024
+      ]
+    ],
+    "10": [
+      [
+        "curv",
+        1024
+      ]
+    ],
+    "11": [
+      [
+        "curv",
+        1024
+      ]
+    ],
+    "12": [
+      [
+        "curv",
+        1024
+      ]
+    ],
+    "13": [
+      [
+        "para",
+        3
+      ]
+    ],
+    "14": [
+      [
+        "para",
+        3
+      ]
+    ],
+    "15": [
+      [
+        "para",
+        3
+      ]
+    ],
+    "16": [
+      [
+        "curv",
+        1024
+      ]
+    ],
+    "17": [
+      [
+        "curv",
+        1024
+      ]
+    ],
+    "18": [
+      [
+        "curv",
+        1024
+      ]
+    ]
+  }
+}

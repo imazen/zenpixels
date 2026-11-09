@@ -24,9 +24,9 @@
 //!   whether or not alpha is transferred. The pre-existing
 //!   `*_opaque_alpha_preserved` tests are exactly that blind spot.
 
-use zenpixels_convert::RowConverter;
-use zenpixels_convert::policy::ConvertOptions;
-use zenpixels_convert::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
+use super::KernelConverter as RowConverter;
+use crate::policy::ConvertOptions;
+use crate::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
 
 /// Partially-transparent u8 alphas, 7 pixels. Deliberately excludes 0 and
 /// 255 — both are fixed points of every TF and witness nothing.
@@ -90,13 +90,13 @@ fn run_row(
     let mut dst = vec![0u8; dst_bytes];
 
     #[cfg(feature = "__trace_ops")]
-    zenpixels_convert::__trace_ops::start_recording();
+    crate::__trace_ops::start_recording();
 
     conv.convert_row(src, &mut dst, WIDTH as u32);
 
     #[cfg(feature = "__trace_ops")]
     {
-        let steps = zenpixels_convert::__trace_ops::stop_recording();
+        let steps = crate::__trace_ops::stop_recording();
         assert!(
             steps.contains(&expect_step),
             "expected kernel {expect_step} to run for {from:?} -> {to:?}; got {steps:?}"
@@ -561,7 +561,7 @@ fn alpha_survives_the_u16_hdr_round_trips() {
 
 #[test]
 fn linearize_rgba8_buffer_carries_alpha() {
-    use zenpixels_convert::{PixelBuffer, PixelBufferConvertExt};
+    use crate::{PixelBuffer, PixelBufferConvertExt};
 
     let src = src_rgba8();
     let buf = PixelBuffer::from_vec(src, WIDTH as u32, 1, PixelDescriptor::RGBA8_SRGB).unwrap();

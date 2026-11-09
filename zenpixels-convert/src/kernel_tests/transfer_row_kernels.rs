@@ -1,9 +1,10 @@
 //! HLG and BT.709 rows run the SIMD slices. They stay within rounding of per-sample math.
+use super::KernelConverter as RowConverter;
+use crate::ConvertOptions;
 use linear_srgb::tf;
 use zenpixels::{
     ChannelLayout as L, ChannelType as T, PixelDescriptor as D, TransferFunction as Tf,
 };
-use zenpixels_convert::{ConvertOptions, RowConverter};
 
 fn f32_row(from: Tf, to: Tf, input: &[f32]) -> Vec<f32> {
     let d = |tf| D::new(T::F32, L::Gray, None, tf);

@@ -1,0 +1,12 @@
+Source production code: 5fc61e2a950cfc255625f2bbd2a684d9909cb996
+Backend: LCMS 55b59476 (MoxCMS 0.9.2 declines the unsupported float pipeline).
+Profiles: committed BT.2020 PQ and matching linear RGB/GRAY exports.
+Command: cargo test --locked -p zenpixels-convert --features cms-lcms --test cms_lcms_contracts -- --nocapture
+16 native layout/direction cases: RGB,RGBA,GRAY,GRAY_ALPHA x U8/U16 x forward/reverse.
+U8: all 256 codes, exact analytic-quantized output in both directions for every layout.
+U16: all 65536 codes; maximum code difference 2 forward, 1 reverse for every layout.
+Linear-light error bound: unchanged 0.0005, compared with correctly rounded native integer references.
+Alpha: byte-exact in every alpha-bearing case.
+Production LCMS target: 9 passed, 0 failed, 0 ignored.
+run-heavy: done rc=0 4s | peak-RSS 0.22GiB | min-avail 27451MiB | peak-load 6.17
+This is correctness qualification, not a performance comparison.

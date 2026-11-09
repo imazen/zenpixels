@@ -1,15 +1,17 @@
 //! Embedded CC0-licensed ICC profiles for common wide-gamut color spaces.
 //!
-//! All profiles are from [Compact-ICC-Profiles](https://github.com/saucecontrol/Compact-ICC-Profiles)
+//! The four compact constants are from [Compact-ICC-Profiles](https://github.com/saucecontrol/Compact-ICC-Profiles)
 //! by Clinton Ingram, released under the [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/)
 //! public domain dedication. They are embedded at compile time via `include_bytes!()`.
+//! The full `icc-db` CICP database is generated separately; it is not this
+//! collection of compact constants.
 //!
 //! # Available profiles
 //!
 //! | Constant | Color space | Format | Size | TRC form |
 //! |----------|-------------|--------|------|----------|
 //! | [`DISPLAY_P3_V4`] | Display P3 | ICC v4 | 480 bytes | paraType-3 sRGB |
-//! | [`DISPLAY_P3_V2`] | Display P3 | ICC v2 | 736 bytes | paraType-3 sRGB |
+//! | [`DISPLAY_P3_V2`] | Display P3 | ICC v2 | 736 bytes | 182-point sampled sRGB |
 //! | [`ADOBE_RGB`] | Adobe RGB (1998) | ICC v2 | 374 bytes | **curv count=1** (pure gamma) |
 //! | `REC2020_V4` | Rec. 2020 | ICC v4 | 480 bytes | paraType-3 BT.709 |
 //!
@@ -44,16 +46,22 @@
 //! ## Display P3 / Rec. 2020 — compact constants, not what synthesis emits
 //!
 //! The DisplayP3Compat and Rec2020Compat profiles use saucecontrol's
-//! D50-sum-exact matrix rebalancing (truncating negative `rXYZ.Z` / `bXYZ.Z`
-//! to clean s15.16 values, compensating via `chad` row 3). They diverge
-//! ~500-900 u16 from canonical matrix math, and they carry no `cicp` tag.
+//! compatibility rebalancing: the adapted red primary's negative Z is set to
+//! zero, with other colorants and `chad` adjusted to compensate. This changes
+//! the represented colorimetry, and these constants carry no `cicp` tag.
+//! ICC.1:2022 permits negative PCSXYZ in signed encodings; retaining such a
+//! value can be correct. Older ICC wording and reader behavior motivated the
+//! separate compatibility variants. See the linked correctness overview below.
 //! Some readers identify a gamut by colorant tags within a tolerance:
-//! libultrahdr (`IccHelper::readIccColorGamut`, 0.001) does not recognise
-//! `DISPLAY_P3_V4` as Display P3 and treats the image as BT.709. With the
+//! our libultrahdr colorant-matching regression (0.001 tolerance) rejects
+//! `DISPLAY_P3_V4` as an exact P3 match. With the
 //! `icc-db` feature, [`SynthesizedIcc::for_cicp`] therefore serves the
 //! generated, `cicp`-tagged profile for every pair and uses these constants
 //! only as the fallback of a build without `icc-db`. They remain exported for
 //! callers that embed them directly.
+//!
+//! Profile format, colorimetry, precision and reader compatibility are separate
+//! checks: <https://github.com/imazen/zenpixels/blob/review/first-class-lcms-20261108/docs/color-correctness-and-compatibility.md>.
 //!
 //! # Precision warnings
 //!
@@ -71,12 +79,14 @@ use crate::TransferFunction;
 // Bundled, transfer-grouped CICP→ICC blob: a build-time-generated index
 // (`cicp_bundle_index`) over an LZ4-compressed asset, decoded lazily per
 // transfer group at runtime (`cicp_bundle`). This gives `synthesize_icc_for_cicp`
-// full H.273-grid coverage with no CMS dependency — moxcms becomes a build-time
-// generator only. Both submodules are internal implementation detail.
+// supported H.273 coverage with no runtime CMS dependency. The build-time
+// recipe and independently checked definitions govern future regeneration. Both submodules are internal implementation detail.
 #[cfg(all(test, feature = "cms-moxcms"))]
 pub(crate) mod canonical;
 #[cfg(feature = "icc-db")]
 mod cicp_bundle;
+#[cfg(all(test, feature = "cms-moxcms"))]
+pub(crate) mod synthesis;
 #[cfg(feature = "icc-db")]
 #[rustfmt::skip]
 mod cicp_bundle_index;
@@ -88,8 +98,9 @@ mod cicp_bundle_index;
 
 /// Display P3 Compatible ICC profile, v4 format (480 bytes).
 ///
-/// Recommended for modern software. ICC v4 profiles are more compact
-/// and have better-defined semantics than v2.
+/// This compatibility variant adjusts the colorants to avoid negative red Z.
+/// For CICP synthesis, prefer [`SynthesizedIcc::for_cicp`], which uses the
+/// generated database when `icc-db` is enabled.
 ///
 /// Source: <https://github.com/saucecontrol/Compact-ICC-Profiles> (CC0)
 pub const DISPLAY_P3_V4: &[u8] = include_bytes!("profiles/DisplayP3Compat-v4.icc");
@@ -97,7 +108,7 @@ pub const DISPLAY_P3_V4: &[u8] = include_bytes!("profiles/DisplayP3Compat-v4.icc
 /// Display P3 Compatible ICC profile, v2 format (736 bytes).
 ///
 /// Use this for compatibility with older software that doesn't support ICC v4.
-/// The "magic" variant includes workarounds for buggy v2 parsers.
+/// The "magic" variant stores an optimized 182-point sampled curve.
 ///
 /// Source: <https://github.com/saucecontrol/Compact-ICC-Profiles> (CC0)
 pub const DISPLAY_P3_V2: &[u8] = include_bytes!("profiles/DisplayP3Compat-v2-magic.icc");
@@ -208,17 +219,18 @@ pub enum SynthesizedIcc {
     /// CMS, so a no-CMS build reports [`CmsUnsupported`](Self::CmsUnsupported) for an
     /// unassigned / reserved code rather than `NeedsCms`.
     NeedsCms,
-    /// The `cms-moxcms` CMS is enabled but could not generate a profile for this
-    /// CICP — e.g. unrecognized primaries/transfer code points. Genuinely
-    /// unavailable; carry the color via the CICP carrier instead.
+    /// This export path cannot supply a qualified profile for the CICP.
+    /// This includes unsupported code points and HLG without a rendering target.
+    /// Preserve native CICP where the container permits it; an ICC-only caller
+    /// must report the limitation or explicitly convert to a supported output.
     CmsUnsupported,
 }
 
 impl SynthesizedIcc {
     /// The profile to embed for `cicp`, by transfer and primaries together.
     ///
-    /// See the variants for what each outcome means. HDR PQ and HLG are included,
-    /// and a curve that contradicts `cicp` is never substituted.
+    /// See the variants and precision caveats for supported combinations.
+    /// HLG returns [`CmsUnsupported`](Self::CmsUnsupported) without a rendering target.
     #[must_use]
     pub fn for_cicp(cicp: Cicp) -> Self {
         synthesize_icc_for_cicp(cicp)
@@ -235,40 +247,31 @@ impl SynthesizedIcc {
 /// Resolve an ICC profile for a full [`Cicp`] color description (primaries **and**
 /// transfer), returning a [`SynthesizedIcc`] that says exactly what happened.
 ///
-/// This is the transfer-aware lowering for `IccDisposition::SynthesizeFrom`. Unlike
-/// [`icc_profile_for_primaries`] (primaries-only — which would hand a BT.2020-**PQ**
-/// source the SDR-TRC Rec.2020 profile), this never mis-tags: a CICP outside the
-/// assigned H.273 grid (e.g. a reserved code point) returns
-/// [`CmsUnsupported`](SynthesizedIcc::CmsUnsupported), so you carry the colour via the
-/// CICP carrier or embed nothing — never a profile whose TRC contradicts the pixels.
+/// Resolve primaries and transfer together. Reserved/unsupported code points
+/// return [`CmsUnsupported`](SynthesizedIcc::CmsUnsupported). HLG also refuses:
+/// CICP alone provides no rendering target for its full RGB OOTF. Preserve native
+/// CICP where permitted; ICC-only output requires an explicit supported choice.
 ///
-/// Coverage, with **no CMS required** (a default `no_std` build serves all of it):
-/// - **The supported assigned H.273 grid** (159 RGB primaries×transfer combos, **including HDR
-///   PQ and HLG**), from a bundled LZ4-compressed blob (`icc-db`, on by default)
-///   decoded once per transfer group on first use. These bytes are byte-for-byte what
-///   the `cms-moxcms` CMS generates; every profile carries a `cicp` tag naming its
-///   pair and the exact tone curve of its transfer.
-/// - **Without `icc-db`**: the curated consts for the pairs whose curve they carry
-///   exactly ([`DISPLAY_P3_V4`] for P3 + sRGB, `REC2020_V4` for BT.2020 + BT.709,
-///   [`ADOBE_RGB`] for Adobe RGB + gamma 2.2); [`NeedsCms`](SynthesizedIcc::NeedsCms)
-///   for the rest. These carry no `cicp` tag and are not recognised by colorant-matching
-///   readers such as libultrahdr.
-/// - **sRGB / unspecified defaults** → [`NotNeeded`](SynthesizedIcc::NotNeeded).
+/// With `icc-db`, 149 non-default RGB pairs are eligible after excluding CIE XYZ
+/// primaries and HLG. Runtime reads the stored bundle without a CMS. The current
+/// asset retains historical quantized curves; staged corrected definitions and
+/// qualification limits are documented in `docs/corrected-icc-export.md`.
 ///
-/// Primaries 10 (CIE XYZ) is refused as RGB in every build: its generated
-/// RGB colorants are singular.
+/// Without `icc-db`, the curated P3/sRGB, BT.2020/BT.709 and Adobe RGB constants
+/// serve their respective combinations; other eligible pairs return
+/// [`NeedsCms`](SynthesizedIcc::NeedsCms). The constants have compatibility-adjusted
+/// colorimetry and are distinct from the generated definitions.
 ///
-/// No CMS is involved — a default `no_std` build serves the full set above. (The
-/// optional `cms-moxcms` feature is the separate `MoxCms` *transform* engine for
-/// applying profiles to pixels — a different concern from synthesis.)
+/// sRGB and unspecified defaults return [`NotNeeded`](SynthesizedIcc::NotNeeded).
+/// Primaries 10 denotes XYZ, not a valid RGB gamut for this constructor.
 ///
-/// # HDR caveat (PQ)
-/// HLG round-trips cleanly through a CMS. The **PQ** / P3-PQ profiles are faithful
-/// above ~10 nits but, as ICC `curv`-LUT encodings, soften in the deep toe (≈8 %
-/// relative at ~1 nit) — inherent to representing PQ's range as a finite ICC tone
-/// curve, not specific to these bytes. Where the container signals PQ/HLG natively
-/// (AVIF, JXL, HEIC, PNG `cICP`), prefer CICP-native signalling and treat an embedded
-/// PQ ICC as a fallback for ICC-only containers (JPEG, WebP, PNG without `cICP`).
+/// # PQ precision
+///
+/// The current integer PQ curve loses positive shadow values through both tested
+/// CMS engines. This is a property of its serialized representation and evaluator,
+/// not an unavoidable limit of every ICC profile. Prefer native CICP when possible.
+/// A float-pipeline representation is being qualified separately; enabling a CMS
+/// feature does not regenerate the stored bytes or supply missing HLG conditions.
 ///
 /// # Examples
 /// ```
@@ -281,6 +284,11 @@ impl SynthesizedIcc {
 /// assert_eq!(SynthesizedIcc::for_cicp(Cicp::SRGB), SynthesizedIcc::NotNeeded);
 /// ```
 pub(crate) fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
+    // CICP alone does not supply the target display/OOTF. A fixed neutral
+    // gamma is not a faithful substitute for a complete HLG RGB transform.
+    if cicp.transfer_characteristics == 18 {
+        return SynthesizedIcc::CmsUnsupported;
+    }
     // sRGB / unspecified defaults need no embedded ICC. BT.709 transfer
     // with specified BT.709 primaries (1,1) is a different curve from sRGB.
     //
@@ -305,13 +313,8 @@ pub(crate) fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
         return SynthesizedIcc::CmsUnsupported;
     }
 
-    // 1. The bundled, LZ4-compressed blob covering the supported H.273 grid
-    //    (159 RGB combos) — `icc-db` feature. Keyed on the raw code points —
-    //    moxcms-equivalent bytes, decoded once per transfer group and cached.
-    //    Each profile carries the pair's exact tone curve and a `cicp` tag,
-    //    so readers that identify a gamut by `cicp` tag or by colorants
-    //    (libultrahdr) recognise it. It is consulted before the curated
-    //    consts, which carry no `cicp` tag and truncated colorants.
+    // Stored export bytes are keyed on raw code points, independent of the
+    // smaller enum set. A CICP tag is metadata, not proof of transform accuracy.
     #[cfg(feature = "icc-db")]
     {
         if let Some(bytes) = cicp_bundle::bundled_profile_for_cicp(
@@ -321,13 +324,8 @@ pub(crate) fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
             return SynthesizedIcc::Profile(bytes);
         }
 
-        // 2. Not in the blob. The blob is generated from moxcms over the full
-        //    assigned H.273 grid, so it already holds every profile moxcms
-        //    could synthesize — reaching here means the CICP is outside that
-        //    grid (e.g. a reserved / unspecified code point), genuinely
-        //    unrepresentable as an ICC. A CMS cannot add what the blob lacks,
-        //    so there is no moxcms fallback (the `cms-moxcms` feature drives
-        //    the `MoxCms` transform engine, not synthesis).
+        // The supported table has no entry. Transform backends are separate
+        // from export synthesis and cannot silently invent a replacement here.
         SynthesizedIcc::CmsUnsupported
     }
     // Without the database: a curated const whose curve is exactly the
@@ -350,29 +348,20 @@ pub(crate) fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
 /// `'GRAY'`, …), and consumers enforce it: libpng rejects a gray PNG paired
 /// with an RGB-class profile. So a gray image can't reuse
 /// [`SynthesizedIcc::for_cicp`]'s output — it needs this single-channel
-/// variant: `kTRC` = the CICP transfer's tone curve (byte-identical to the
-/// curve the RGB synthesis uses for the same transfer, including the PQ/HLG
-/// `curv`-LUT encodings), media white point = the primaries' H.273 white
-/// (D65 / C / E / DCI — the only thing primaries contribute to single-channel
-/// data), and a per-white Bradford white→D50 `chad`. CICP matrix
-/// coefficients are ignored (no chroma to de-correlate).
+/// variant. Matrix coefficients are ignored for gray; H.273 primaries select
+/// its native white rather than an RGB gamut.
 ///
-/// Gray keeps all 11 assigned primaries, including primaries 10: only its
-/// equal-energy white and transfer are needed, not an RGB gamut matrix.
-/// The 175 non-default pairs are served
-/// from the same bundled, LZ4-compressed asset as the RGB profiles (64
-/// unique gray profiles after white-point dedup, packed gray-first into the
-/// shared per-transfer groups so the duplicated TRC payload compresses away
-/// — the gray side adds ~7.6 KB to the committed blob; no CMS required,
-/// `no_std`-safe); the sRGB / unspecified defaults return
-/// [`NotNeeded`](SynthesizedIcc::NotNeeded) (viewers assume sRGB-gamma gray —
-/// PNG can carry `gAMA`/`sRGB` instead); off-grid code points return
-/// [`CmsUnsupported`](SynthesizedIcc::CmsUnsupported) in every build.
-///
-/// The RGB variant's HDR caveat applies equally here: the PQ / P3-PQ `curv`
-/// LUT encodings are faithful above ~10 nits but soften in the deep toe —
-/// prefer CICP-native PQ/HLG signalling where the container carries it.
+/// After HLG refusal, 164 non-default gray pairs remain eligible with `icc-db`.
+/// Primaries 10 is valid here because only its equal-energy white is needed.
+/// The current stored asset's native-white `wtpt` and quantized curves are known
+/// limitations; the staged correction uses PCS D50 display media white and full
+/// native-white adaptation. See `docs/corrected-icc-export.md` for status.
+/// No database means no GRAY synthesis; off-grid/HLG returns
+/// [`CmsUnsupported`](SynthesizedIcc::CmsUnsupported).
 pub(crate) fn synthesize_gray_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
+    if cicp.transfer_characteristics == 18 {
+        return SynthesizedIcc::CmsUnsupported;
+    }
     // Same raw-code-point default gate as the RGB variant (see its comment
     // for why the enum mapping must not be used here).
     if (matches!(cicp.color_primaries, 1 | 2) && matches!(cicp.transfer_characteristics, 2 | 13))
@@ -623,7 +612,7 @@ mod tests {
                 checked += 1;
             }
         }
-        assert_eq!(checked, 159);
+        assert_eq!(checked, 149);
     }
 
     #[test]
@@ -763,13 +752,13 @@ mod tests {
                         assert!(p == 1 && t == 13, "({p}, {t}) unexpectedly NotNeeded");
                         not_needed += 1;
                     }
-                    SynthesizedIcc::CmsUnsupported if p == 10 => unsupported += 1,
+                    SynthesizedIcc::CmsUnsupported if p == 10 || t == 18 => unsupported += 1,
                     other => panic!("({p}, {t}) gave {other:?} — expected full blob coverage"),
                 }
             }
         }
-        assert_eq!(profiles, 159, "expected 159 profile-yielding combos");
-        assert_eq!(unsupported, 16, "all primaries-10 RGB pairs refused");
+        assert_eq!(profiles, 149, "expected 149 profile-yielding combos");
+        assert_eq!(unsupported, 26, "XYZ and HLG pairs refused");
         assert_eq!(
             not_needed, 1,
             "expected exactly 1 sRGB-default NotNeeded combo"

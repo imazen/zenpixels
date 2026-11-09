@@ -53,13 +53,16 @@ use alloc::vec::Vec;
 
 use crate::convert::ConvertPlan;
 use crate::converter::RowConverter;
-use crate::negotiate::{ConvertIntent, best_match};
+use crate::negotiate::{ConvertIntent, FormatOption, Provenance, best_match, negotiate};
 use crate::policy::{AlphaPolicy, ConvertOptions};
 use crate::{
     AlphaMode, ChannelLayout, ChannelType, ColorModel, ConvertError, PixelBuffer, PixelCow,
     PixelDescriptor, PixelSlice, PixelSliceMut,
 };
+use enough::{Stop, StopReason};
 use whereat::{At, ResultAtExt};
+use zenpixels::precision::{AlphaContent, ConversionEffect, ConversionOffer, SourcePrecision};
+use zenpixels::sample::ExactDepth;
 
 /// Reject CMYK on either side of a `from`/`to` pair at the public-API
 /// boundary, surfacing it as a [`ConvertError::NoPath`] (which carries
@@ -147,9 +150,9 @@ fn borrow_or_copy<'a>(
         return Ok(PixelCow::Borrowed(slice));
     }
 
-    // Raw codec rows are allowed to have byte padding that is not a whole
-    // pixel. PixelSlice deliberately rejects that geometry, so normalize it
-    // into an aligned owned buffer instead of weakening PixelSlice's invariant.
+    // Raw codec rows may start off a sample boundary: a misaligned pointer, or a
+    // stride that isn't a whole number of samples. No PixelSlice can describe
+    // those, so copy them into an aligned owned buffer.
     let row_bytes = (width as usize)
         .checked_mul(descriptor.bytes_per_pixel())
         .ok_or_else(|| whereat::at!(ConvertError::AllocationFailed))?;
@@ -327,7 +330,14 @@ pub(crate) fn convert_into_with_anchor(
 
     // `from == to` yields an Identity plan, whose row step copies src → dst — so
     // the strided loop handles it too (no packed-only special case needed).
-    let plan = ConvertPlan::new(from, to).at()?.with_pq_anchor(anchor);
+    let plan = ConvertPlan::new_explicit(
+        from,
+        to,
+        &zenpixels::ConvertOptions::permissive()
+            .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked)
+            .with_sdr_white(anchor),
+    )
+    .at()?;
     let mut converter = RowConverter::from_plan(plan);
     let src_row = (width as usize) * from.bytes_per_pixel();
 
@@ -363,10 +373,10 @@ pub(crate) fn convert_into_with_anchor(
 ///   the formats exist — **only** when the source's alpha mode is
 ///   [`AlphaMode::Undefined`] (X padding) or [`AlphaMode::Opaque`]
 ///   (declared all-max): in those modes dropping the lane is value-exact
-///   by contract. The stride is kept as close as the slice rules allow —
-///   rounded down to a whole number of target pixels — so when the input
-///   stride already divides evenly rows compact **at their own bases**
-///   with zero cross-row movement and the freed bytes become row padding.
+///   by contract. The stride is rounded down to a whole number of target
+///   pixels, so a buffer that could be viewed through `imgref` still can. When
+///   the input stride already divides evenly rows compact **at their own
+///   bases** with zero cross-row movement and the freed bytes become row padding.
 ///   Straight or premultiplied alpha returns `Err`: a blind discard would
 ///   silently diverge from `adapt_for_encode`'s alpha policy (which
 ///   mattes); for *measured*-opaque alpha use
@@ -470,8 +480,7 @@ pub(crate) fn try_adapt_in_place(
 }
 
 /// The lane-drop transform behind [`try_adapt_in_place`], split out so
-/// arbitrary-stride geometries (not constructible through the public
-/// buffer constructors) stay unit-testable.
+/// its stride handling stays unit-testable.
 fn drop_lane_impl<'a>(
     px: zenpixels::InPlacePixels<'a>,
     target: PixelDescriptor,
@@ -482,9 +491,9 @@ fn drop_lane_impl<'a>(
 ) -> PixelSliceMut<'a> {
     let width = px.width as usize;
     // Output stride: the input stride rounded down to a whole number
-    // of target pixels (PixelSlice requires stride % bpp == 0). When
-    // the input stride is already a multiple of the narrower pixel,
-    // rows stay at their own bases (zero cross-row movement, freed
+    // of target pixels, which a tight input needs to stay viewable through
+    // `imgref`. When the input stride is already a multiple of the narrower
+    // pixel, rows stay at their own bases (zero cross-row movement, freed
     // bytes become row padding); otherwise rows shift up slightly.
     // Either way dst(y, x) <= src(y, x) for every pixel, so a
     // forward pass staged through a fixed temp never clobbers unread
@@ -565,7 +574,7 @@ pub fn adapt_raw_rows_for_encode<'a>(
     }
 
     // Need conversion — pick best target, then validate policies.
-    let target = best_match(descriptor, supported, ConvertIntent::Fastest)
+    let target = encode_target(descriptor, supported)
         .ok_or_else(|| whereat::at!(ConvertError::EmptyFormatList))?;
 
     let checked_options = if descriptor.has_alpha() && !target.has_alpha() {
@@ -609,7 +618,30 @@ pub(crate) fn encode_conversion_target(
     if relabels {
         return None;
     }
-    best_match(descriptor, supported, ConvertIntent::Fastest)
+    encode_target(descriptor, supported)
+}
+
+/// The cheapest format that holds everything `descriptor` can carry, or, if none does, the cheapest.
+///
+/// The cost model alone ranks RGB8 under RGBF32 for RGB16 input, because narrowing is less work.
+/// This is the format an encoder adapter chooses for its caller, so the precision rule goes first.
+/// Whether a narrowing is then allowed stays with the caller's [`ConvertOptions`].
+fn encode_target(
+    descriptor: PixelDescriptor,
+    supported: &[PixelDescriptor],
+) -> Option<PixelDescriptor> {
+    let source = SourcePrecision::from_storage(descriptor);
+    let holding = supported.iter().filter(|&&target| {
+        let effect = ConversionEffect::of(&source, &ConversionOffer::new(target));
+        effect.bits_dropped == 0 && !effect.range_dropped
+    });
+    negotiate(
+        descriptor,
+        Provenance::from_source(descriptor),
+        holding.map(|&target| FormatOption::from(target)),
+        ConvertIntent::Fastest,
+    )
+    .or_else(|| best_match(descriptor, supported, ConvertIntent::Fastest))
 }
 
 /// Whole-image adapters preflight conditional alpha before allocation or output writes. Row planners
@@ -625,6 +657,60 @@ pub(crate) fn options_after_opacity_check(
         return Ok(options.with_alpha_policy(AlphaPolicy::DiscardUnchecked));
     }
     Ok(*options)
+}
+
+/// One pass over the samples: the depths whose grids hold every row, and whether alpha is used.
+pub(crate) fn scan_source_precision(
+    pixels: &PixelSlice<'_>,
+    stop: &dyn Stop,
+) -> Result<SourcePrecision, At<StopReason>> {
+    let descriptor = pixels.descriptor();
+    let storage = SourcePrecision::from_storage(descriptor);
+    // Bit `d - 1` stays set while every row so far lies on the d-bit grid.
+    let mut color = u32::MAX >> (32 - descriptor.channel_type().byte_size().min(2) * 8);
+    let mut alpha = color;
+    let has_alpha = descriptor.has_alpha();
+    let mut translucent = false;
+    let holds = |exact_at: &dyn Fn(u8) -> bool, mask: &mut u32| {
+        for depth in 1..=16u8 {
+            if !exact_at(depth) {
+                *mask &= !(1u32 << (depth - 1));
+            }
+        }
+    };
+    for y in 0..pixels.rows() {
+        stop.check().map_err(|reason| whereat::at!(reason))?;
+        let row = pixels.sub_rows(y, 1);
+        let Ok(exact) = ExactDepth::measure(&row) else {
+            return Ok(storage);
+        };
+        holds(&|depth| exact.color_exact_at(depth), &mut color);
+        if has_alpha {
+            holds(&|depth| exact.alpha_exact_at(depth), &mut alpha);
+            translucent |= check_opaque(&row).is_err();
+        }
+        let storage_bit = 1u32 << (exact.storage().byte_size() * 8 - 1);
+        let settled = |mask: u32| mask & (storage_bit - 1) == 0;
+        if settled(color) && (!has_alpha || (settled(alpha) && translucent)) {
+            break;
+        }
+    }
+    let bits = |mask: u32| mask.trailing_zeros() as u8 + 1;
+    let deepest = bits(color).max(if has_alpha { bits(alpha) } else { 0 });
+    let Some(source) =
+        SourcePrecision::declared(deepest, descriptor.transfer(), descriptor.signal_range)
+    else {
+        return Ok(storage);
+    };
+    Ok(if descriptor.may_have_transparency() {
+        source.with_alpha(if translucent {
+            AlphaContent::Translucent
+        } else {
+            AlphaContent::Opaque
+        })
+    } else {
+        source
+    })
 }
 
 /// Explicit opacity preflight: scans visible alpha samples, stopping at the
@@ -1378,9 +1464,7 @@ mod tests {
     #[test]
     fn drop_lane_impl_keeps_divisible_stride_rows_in_place() {
         // Stride 12 (divisible by 3): rows stay at their own bases —
-        // zero cross-row movement, freed bytes become padding. Exercised
-        // at the transform level because the public constructors only
-        // produce pixel-tight or simd-aligned strides.
+        // zero cross-row movement, freed bytes become padding.
         let mut bytes = [
             1u8, 2, 3, 0xEE, 4, 5, 6, 0xEE, 0xAA, 0xAA, 0xAA, 0xAA, // row 0 + pad
             7, 8, 9, 0xEE, 10, 11, 12, 0xEE, 0xBB, 0xBB, 0xBB, 0xBB, // row 1 + pad

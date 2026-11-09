@@ -124,6 +124,8 @@
 //!   into negotiation, as a cost estimate: RGB rebuilt from 10-bit YCbCr is not on a
 //!   10-bit grid. [`ExactDepth`](zenpixels::sample::ExactDepth) is measured evidence
 //!   that samples are exact lower-depth codes.
+//!   [`SourcePrecision`](zenpixels::precision::SourcePrecision) is what decides whether
+//!   a format chosen for the caller may drop any of it.
 //!
 //! ### Step 2: Negotiate
 //!
@@ -396,6 +398,8 @@ pub(crate) mod __trace_ops;
 #[allow(dead_code)]
 pub(crate) mod builtin_profiles;
 pub mod cms;
+#[cfg(feature = "cms-lcms")]
+pub mod cms_lcms;
 #[allow(
     dead_code,
     unused_variables,
@@ -501,6 +505,8 @@ pub use load_bearing::{LoadBearingReport, PixelBufferLoadBearingExt, PixelSliceL
 #[allow(deprecated)]
 pub use cms::{CmsPluginError, PluggableCms, RowTransform, RowTransformMut};
 // TODO: pub use cms_lite::ZenCmsLite once benchmarked on aarch64.
+#[cfg(feature = "cms-lcms")]
+pub use cms_lcms::Lcms;
 #[cfg(feature = "cms-moxcms")]
 pub use cms_moxcms::MoxCms;
 
@@ -508,3 +514,9 @@ pub use cms_moxcms::MoxCms;
 pub use output::OutputPlan;
 #[allow(deprecated)]
 pub use output::{EncodeReady, OutputMetadata, OutputProfile};
+
+#[cfg(test)]
+mod kernel_tests;
+
+/// Precision-aware format selection and conversion policy.
+pub mod precision;

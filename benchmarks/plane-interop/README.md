@@ -77,17 +77,17 @@ TryFrom &ImageBuffer<Rgb<u16>> -> PixelSlice                   same-ptr  allocs=
     size_of PixelBuffer: Vec<u8>=72 Vec<u16>=64 Box<[u8]>=56 &[u8]=56
 ### stride_rule
 RGB8   tight         stride=111  PixelSlice: ok
-RGB8   4-byte rows   stride=112  PixelSlice: REFUSED StrideNotPixelAligned
-RGB8   16-byte rows  stride=112  PixelSlice: REFUSED StrideNotPixelAligned
-RGB8   64-byte rows  stride=128  PixelSlice: REFUSED StrideNotPixelAligned
+RGB8   4-byte rows   stride=112  PixelSlice: ok
+RGB8   16-byte rows  stride=112  PixelSlice: ok
+RGB8   64-byte rows  stride=128  PixelSlice: ok
 RGBA8  tight         stride=148  PixelSlice: ok
 RGBA8  4-byte rows   stride=148  PixelSlice: ok
 RGBA8  16-byte rows  stride=160  PixelSlice: ok
 RGBA8  64-byte rows  stride=192  PixelSlice: ok
 RGB16  tight         stride=222  PixelSlice: ok
-RGB16  4-byte rows   stride=224  PixelSlice: REFUSED StrideNotPixelAligned
-RGB16  16-byte rows  stride=224  PixelSlice: REFUSED StrideNotPixelAligned
-RGB16  64-byte rows  stride=256  PixelSlice: REFUSED StrideNotPixelAligned
+RGB16  4-byte rows   stride=224  PixelSlice: ok
+RGB16  16-byte rows  stride=224  PixelSlice: ok
+RGB16  64-byte rows  stride=256  PixelSlice: ok
 PlaneRef<u8> width 37 stride 64: ok=true
 ### allocator_beta
 Vec<u8, Align64> adopted: offset=0 addr%64=0

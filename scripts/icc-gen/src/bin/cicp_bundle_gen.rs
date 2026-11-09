@@ -17,8 +17,9 @@
 //!
 //! The sRGB pair (1,13) needs no profile. Primaries 10 (XYZ) is
 //! explicitly excluded from RGB: moxcms emits a rank-1 matrix for it.
-//! This leaves 159 RGB pairs; gray keeps XYZ's valid equal-energy white
-//! and transfer curve, giving 175 gray mappings.
+//! HLG is refused without a rendering target. The staged recipe therefore
+//! produces 149 RGB pairs and 164 gray mappings; gray keeps XYZ's valid white.
+//! PQ representation remains under separate precision qualification.
 //!
 //! Usage (run from the repo root so the relative output paths resolve):
 //!   `cargo run -p icc-gen --release --bin cicp_bundle_gen [--no-write] [--out-dir <dir>]`
@@ -29,14 +30,11 @@
 
 #[path = "../../../../zenpixels-convert/src/icc_profiles/canonical.rs"]
 mod canonical;
+#[path = "../../../../zenpixels-convert/src/icc_profiles/synthesis.rs"]
+mod synthesis;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-
-use moxcms::{
-    CicpColorPrimaries, CicpProfile, ColorProfile, LocalizableString, MatrixCoefficients,
-    ProfileText, TransferCharacteristics, Xyzd, adaption_matrix_d, white_point_d50,
-};
 
 include!("cicp_bundle_gen/colourimetry.rs");
 
@@ -60,27 +58,7 @@ const ASSIGNED_TRANSFERS: &[u8] = &[1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
 /// Returns `None` when moxcms cannot represent the combination (no populated
 /// `red_trc`), mirroring the runtime `CmsUnsupported` outcome.
 fn synth_icc(primaries: u8, transfer: u8) -> Option<Vec<u8>> {
-    let color_primaries = CicpColorPrimaries::try_from(primaries).ok()?;
-    let transfer_characteristics = TransferCharacteristics::try_from(transfer).ok()?;
-    // Matrix coefficients don't affect an RGB ICC's colorimetry; default to
-    // Identity exactly as the runtime path does.
-    let matrix_coefficients =
-        MatrixCoefficients::try_from(0u8).unwrap_or(MatrixCoefficients::Identity);
-
-    let profile = ColorProfile::new_from_cicp(CicpProfile {
-        color_primaries,
-        transfer_characteristics,
-        matrix_coefficients,
-        // Range never changes an RGB ICC's bytes; fix it to full range so the
-        // generated profile is deterministic and matches the runtime default
-        // for CICP synthesis.
-        full_range: true,
-    });
-
-    // Require a transfer curve before encoding. The independent colorant
-    // gate in enumerate_grid checks the encoded RGB matrix as well.
-    profile.red_trc.as_ref()?;
-    canonical::canonicalize(profile.encode().ok()?)
+    synthesis::rgb(primaries, transfer)
 }
 
 /// The sRGB / BT.709 default combinations that `synthesize_icc_for_cicp` short
@@ -90,77 +68,10 @@ fn is_srgb_default(primaries: u8, transfer: u8) -> bool {
     (matches!(primaries, 1 | 2) && matches!(transfer, 2 | 13)) || (primaries == 2 && transfer == 1)
 }
 
-/// The white point of an H.273 colour-primaries code, as CIE xy
-/// (Rec. ITU-T H.273 Table 2 — each primaries row carries its own white).
-///
-/// This is the only thing primaries contribute to a *gray* profile: a
-/// single-channel image has no gamut, but its neutral axis still lands at
-/// the source space's white chromaticity, so the GRAY profile's `wtpt`
-/// (and chad) must carry it.
-fn h273_white_xy(primaries: u8) -> Option<(&'static str, f64, f64)> {
-    Some(match primaries {
-        // D65: BT.709, BT.470BG, SMPTE 170M, SMPTE 240M, BT.2020,
-        // P3-D65 (SMPTE EG 432-1), EBU Tech 3213-E.
-        1 | 5 | 6 | 7 | 9 | 12 | 22 => ("D65", 0.3127, 0.3290),
-        // Illuminant C: BT.470M, generic film.
-        4 | 8 => ("C", 0.310, 0.316),
-        // Illuminant E: SMPTE ST 428-1 (CIE XYZ).
-        10 => ("E", 1.0 / 3.0, 1.0 / 3.0),
-        // DCI white: SMPTE RP 431-2 (P3-DCI theater white).
-        11 => ("DCI", 0.314, 0.351),
-        _ => return None,
-    })
-}
-
-/// Synthesize a **GRAY-class** ICC profile for a CICP `(primaries, transfer)`:
-/// `kTRC` = the transfer's tone curve (identical to the curve the RGB
-/// synthesis uses, including the PQ/HLG `curv`-LUT encodings), media white
-/// point = the primaries' H.273 white, and a correct Bradford
-/// white→D50 `chad` (computed per white — NOT moxcms's scaffold default,
-/// which stores the raw Bradford cone matrix).
-///
-/// The TRC is taken from a throwaway RGB synthesis of the same CICP so the
-/// gray and RGB bundles can never disagree about a transfer's curve, and so
-/// the same `red_trc` gate rejects combos moxcms can't represent.
+/// GRAY profile with the same transfer recipe, PCS D50 media white and
+/// explicit native-white adaptation. The source white is not stored in wtpt.
 fn synth_gray_icc(primaries: u8, transfer: u8) -> Option<Vec<u8>> {
-    let color_primaries = CicpColorPrimaries::try_from(primaries).ok()?;
-    let transfer_characteristics = TransferCharacteristics::try_from(transfer).ok()?;
-    let matrix_coefficients =
-        MatrixCoefficients::try_from(0u8).unwrap_or(MatrixCoefficients::Identity);
-
-    let rgb = ColorProfile::new_from_cicp(CicpProfile {
-        color_primaries,
-        transfer_characteristics,
-        matrix_coefficients,
-        full_range: true,
-    });
-    // Require the same transfer curve as the RGB path.
-    let trc = rgb.red_trc.as_ref()?.clone();
-
-    let (white_name, wx, wy) = h273_white_xy(primaries)?;
-    let white = Xyzd {
-        x: wx / wy,
-        y: 1.0,
-        z: (1.0 - wx - wy) / wy,
-    };
-
-    // Scaffold carries the GRAY essentials (DisplayDevice class, Gray data
-    // colour space, D50 PCS illuminant, public-domain copyright); the gamma
-    // argument is immediately replaced by the real transfer curve.
-    let mut gray = ColorProfile::new_gray_with_gamma(2.2);
-    gray.gray_trc = Some(trc);
-    gray.media_white_point = Some(white);
-    gray.chromatic_adaptation = Some(adaption_matrix_d(
-        white.to_xyz(),
-        white_point_d50().to_xyz(),
-    ));
-    gray.description = Some(ProfileText::Localizable(vec![LocalizableString::new(
-        "en".to_string(),
-        "US".to_string(),
-        format!("Gray H.273 TC{transfer} {white_name} white"),
-    )]));
-
-    canonical::canonicalize(gray.encode().ok()?)
+    synthesis::gray(primaries, transfer)
 }
 
 /// One profile occurrence in the grid, before dedup.
@@ -218,17 +129,16 @@ fn enumerate_grid(synth: fn(u8, u8) -> Option<Vec<u8>>, kind: &str) -> (usize, V
     for &primaries in ASSIGNED_PRIMARIES {
         for &transfer in ASSIGNED_TRANSFERS {
             total_combos += 1;
-            if is_srgb_default(primaries, transfer) {
+            if is_srgb_default(primaries, transfer)
+                || transfer == 18
+                || (kind == "RGB" && EXCLUDED_RGB_PRIMARIES.contains(&primaries))
+            {
                 continue;
             }
             match synth(primaries, transfer) {
                 Some(bytes) => {
                     if kind == "RGB" {
                         let validation = validate_rgb_colorimetry(&bytes, primaries);
-                        if EXCLUDED_RGB_PRIMARIES.contains(&primaries) {
-                            eprintln!("  excluded RGB ({primaries}, {transfer}): {validation:?}");
-                            continue;
-                        }
                         validation.unwrap_or_else(|e| panic!("RGB ({primaries}, {transfer}): {e}"));
                     }
                     grid.push(GridEntry {
@@ -769,7 +679,17 @@ mod tests {
 
     #[test]
     fn gate_rejects_singular_and_wrong_full_rank_colorants() {
-        let xyz = synth_icc(10, 8).expect("moxcms emits the excluded XYZ profile");
+        let xyz = canonical::canonicalize(
+            moxcms::ColorProfile::new_from_cicp(moxcms::CicpProfile {
+                color_primaries: moxcms::CicpColorPrimaries::Xyz,
+                transfer_characteristics: moxcms::TransferCharacteristics::Linear,
+                matrix_coefficients: moxcms::MatrixCoefficients::Identity,
+                full_range: true,
+            })
+            .encode()
+            .expect("negative XYZ fixture"),
+        )
+        .expect("canonical negative fixture");
         assert!(
             validate_rgb_colorimetry(&xyz, 10)
                 .unwrap_err()
@@ -787,18 +707,18 @@ mod tests {
         assert!(validate_rgb_colorimetry(&good[..100], 12).is_err());
     }
 
-    /// 176 assigned pairs: 159 RGB (XYZ excluded, sRGB implicit), 175 gray.
-    /// Gray retains four whites × 16 transfers = 64 unique profiles.
+    /// Assigned input grid: 176 pairs. HLG/XYZ refusal and implicit sRGB leave
+    /// 149 RGB and 164 gray mappings; four whites × 15 transfers = 60 gray bytesets.
     #[test]
     fn grid_shape_is_stable() {
         let b = build_bundle();
         assert_eq!(b.total_combos, 176, "expected 11×16 assigned grid");
-        assert_eq!(b.profile_combos, 159, "expected 159 RGB combos");
-        assert_eq!(b.gray_profile_combos, 175, "expected 175 GRAY combos");
+        assert_eq!(b.profile_combos, 149, "149 RGB combos; XYZ and HLG refused");
+        assert_eq!(b.gray_profile_combos, 164, "164 GRAY combos; HLG refused");
         assert_eq!(
-            b.unique_profiles, 223,
-            "expected 159 RGB + 64 deduped gray uniques"
+            b.unique_profiles, 209,
+            "expected 149 RGB + 60 deduped gray uniques"
         );
-        assert_eq!(b.groups.len(), 16, "expected 16 transfer groups");
+        assert_eq!(b.groups.len(), 15, "15 supported transfer groups");
     }
 }

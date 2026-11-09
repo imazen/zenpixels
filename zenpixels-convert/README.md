@@ -91,12 +91,13 @@ let mut conv = RowConverter::new_explicit(
 conv.convert_row(p3_row, srgb_row, width);
 ```
 
-Custom ICC profiles (vendor-specific, LUT-based, perceptual intent) need a CMS backend. Pass one via [`PluggableCms`] — the plan delegates to the plugin when the profiles differ, and uses the built-in matlut fast path when both sides are well-known. The `cms-moxcms` feature provides a concrete backend ([`MoxCms`]) built on [moxcms](https://crates.io/crates/moxcms).
+Custom ICC profiles (vendor-specific, LUT-based, perceptual intent) need a CMS backend. Pass one via [`PluggableCms`] — the plan delegates to the plugin when the profiles differ, and uses the built-in matlut fast path when both sides are well-known. Enable `cms-moxcms` for [`MoxCms`] or `cms-lcms` for [`Lcms`], using the pure-Rust Little CMS port. Both implement the same interface. Choose the backend explicitly; enabling both changes neither selection nor the built-in paths.
 
 ```rust
 use zenpixels_convert::{RowConverter, ConvertOptions, MoxCms, cms::PluggableCms};
 
 let cms: &dyn PluggableCms = &MoxCms;
+// With `cms-lcms`, use `&zenpixels_convert::Lcms` instead.
 let mut conv = RowConverter::new_explicit_with_cms(
     source_desc, target_desc,
     &ConvertOptions::permissive(),
@@ -140,7 +141,9 @@ moxcms is a different implementation from lcms2 and is expected to differ from i
 `CmykF32` and `CmykF32Inverted` sources convert to any RGB target; converting into F32 CMYK is refused. `Cmyk8` runs the
 same transform and rounds, so both have F32 CMYK's black-point compensation to sRGB.
 
-Every backend passes the same contract in `cms-contract/`: `just cms-contract`.
+Every backend runs through the same contract in `cms-contract/`: `just cms-contract`.
+
+`Lcms` supports native U8/U16/F32 RGB, gray and ICC-described CMYK inputs, including byte BGR/BGRA and alpha. It uses relative colorimetric intent with black-point compensation for CMYK sources. F32 CMYK destinations are refused; mixed depths and unqualified layouts decline to the planner. Prepared float CMYK rows reuse scratch. The Rust port is pinned to an unreleased Git revision, so publishing this feature requires a released port dependency. See [qualification and profile triage](https://github.com/imazen/zenpixels/blob/review/first-class-lcms-20261108/docs/first-class-lcms-and-profile-triage.md).
 
 ## Row conversion tiers
 
@@ -159,7 +162,7 @@ Every backend passes the same contract in `cms-contract/`: `just cms-contract`.
 ## CICP / ICC
 
 - **ICC identification** — `zenpixels::icc::IccIdentification::from_icc(icc_bytes)` recognizes hundreds of well-known RGB + grayscale profiles via a normalized hash lookup (~100ns), returning primaries, transfer function, and whether matrix+TRC substitution is safe vs CMS-only. `extract_cicp` reads embedded `cICP` tags directly.
-- **CICP → ICC synthesis** — `icc_profiles::SynthesizedIcc::for_cicp(Cicp)` resolves an embeddable ICC profile for any assigned H.273 combination from the bundled compressed database (`icc-db` feature, on by default; ~36 KB asset, lazily decoded, no CMS required, PQ/HLG HDR included). `synthesize_gray_icc_for_cicp` is the GRAY-class sibling for single-channel output. The sRGB default answers `NotNeeded`. With `icc-db` off, these answer `NeedsCms` outside the sRGB default and the bundled consts.
+- **CICP → ICC synthesis** — `icc_profiles::SynthesizedIcc::for_cicp(Cicp)` serves 149 RGB mappings; `SynthesizedIcc::for_gray_cicp(Cicp)` serves 164 GRAY mappings. The default `icc-db` feature embeds a 93,377-byte database, decoded lazily without a runtime CMS. PQ includes float and conventional pipelines; targetless HLG refuses synthesis, retaining native CICP instead. The sRGB default answers `NotNeeded`. See [qualification and reader limits](../docs/corrected-icc-export.md).
 
 ## Orientation
 
@@ -195,7 +198,7 @@ Use measured workload costs and explicit buffer/stride arithmetic.
 | `ConvertOptions` (re-export) | Explicit lossy-operation policy |
 | [`ConvertPlan`] | Lower-level plan, run through `RowConverter::from_plan` |
 | `PixelSlice::adapt_for_encode` / [`adapt::adapt_raw_rows_for_encode`] / `PixelBuffer::try_adapt_in_place` | One-call negotiate-and-convert helpers |
-| [`PluggableCms`] / [`RowTransformMut`] / [`MoxCms`] | Pluggable CMS backend interface + moxcms impl |
+| [`PluggableCms`] / [`RowTransformMut`] / [`MoxCms`] / [`Lcms`] | Pluggable CMS interface with explicit backend selection |
 | [`GamutMatrix`] | Gamut matrix construction and application, in place on rows |
 | [`ConvertPlan::new_with_hdr_peak`] / [`ConvertPlan::new_with_hdr_config`] | HDR→SDR conversion plan constructors (`bt2446a` feature) |
 | [`Bt2446A`] / [`SoftCompress`] / [`CllMeasure`] | ITU-R BT.2446 Method A curve + OKLch knee + CTA-861.3 CLL measurement (`hdr-experimental` feature) |
@@ -210,7 +213,7 @@ Use measured workload costs and explicit buffer/stride arithmetic.
 | Feature | Default | What it enables |
 |---|---|---|
 | `std` | yes | Standard library |
-| `icc-db` | yes | Bundled CICP→ICC profile database (~36 KB asset) behind `SynthesizedIcc::for_cicp`; disable for size-sensitive builds (they answer `NeedsCms` instead) |
+| `icc-db` | yes | Bundled CICP→ICC profile database (93 KB asset) behind `SynthesizedIcc::for_cicp`; disable for size-sensitive builds (they answer `NeedsCms` instead) |
 | `fast-transpose` | | SIMD transpose kernels (x86-64 AVX2 + aarch64 NEON) for orientation; portable scalar otherwise |
 | `avx512` | | 16-wide AVX-512F f16 conversion kernels (runtime-dispatched) |
 | `rgb` | | `Pixel` impls for the [`rgb`](https://crates.io/crates/rgb) crate's types + typed convenience methods (`to_rgb8()`, `to_rgba8()`, …) |
@@ -219,11 +222,12 @@ Use measured workload costs and explicit buffer/stride arithmetic.
 | `hdr-experimental` | | HDR→SDR display mapping (ITU-R BT.2446 Method A curve + OKLch soft compress + CTA-861.3 CLL measurement). API shape may move ahead of 0.3.0 (in particular `measure_robust` → `measure` rename); scan kernels and accuracy contracts are stable. See [HDR section](#gamut-hdr-oklab) above. |
 | `bt2446a` | | The BT.2446 Method A tone-mapping curve (implies `hdr-experimental`) |
 | `cms-moxcms` | | ICC profile transforms via [moxcms](https://crates.io/crates/moxcms) (implies `std`) |
+| `cms-lcms` | | ICC profile transforms via pure-Rust LCMS (implies `std`) |
 | `serde` | | No-op stub (soft-removed in 0.2.15, queued for removal in the next breaking release); previously forwarded to `zenpixels/serde`. Kept so `features = ["serde"]` from 0.2.14 still builds |
 
 ### `no_std`
 
-`zenpixels-convert` is `no_std + alloc` by default-construction (`std` is on by default but everything works without it). For `no_std`, set `default-features = false` and re-enable only what you need (note that `cms-moxcms` requires `std`):
+`zenpixels-convert` is `no_std + alloc` by default-construction (`std` is on by default but everything works without it). For `no_std`, set `default-features = false` and re-enable only what you need (both CMS features require `std`):
 
 ```toml
 zenpixels-convert = { version = "0.3.1", default-features = false }

@@ -4,7 +4,7 @@ use zenpixels_convert::{Cicp, icc_profiles::SynthesizedIcc};
 
 fn main() {
     let output = std::path::PathBuf::from(std::env::args_os().nth(1).expect("output directory"));
-    std::fs::create_dir_all(&output).unwrap();
+    std::fs::create_dir(&output).expect("fresh output directory");
     let mut count = 0;
     for primaries in [1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 22] {
         for transfer in [1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18] {
@@ -28,5 +28,6 @@ fn main() {
             }
         }
     }
+    assert_eq!(count, 313, "all supported export mappings must be present");
     println!("exported {count} profiles");
 }

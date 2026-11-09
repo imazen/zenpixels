@@ -68,19 +68,72 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [Unreleased]
 
+- Add checked plane byte-stride access and per-plane layout validation while
+  preserving `PlanarLayout::new(Vec<PlaneSpec>)` and growable ownership.
+
+- Integrate HDR luminance intent with one explicit-option/context/refusal rule.
+  Keep shared precision facts in core and move selection policy and chain
+  planning to `zenpixels-convert::precision`; the capacity predicate does not
+  promise lossless pixels.
+
+- Integrate the qualified CMS/export stack and ICC-authority guard. Run the
+  six-platform CMS workflow on main, retain all historical failure receipts,
+  and stop tracking Python bytecode (local caches remain intact).
+
+- Regenerate corrected H.273 exports after independent color qualification:
+  149 RGB and 164 gray mappings, explicit white/adaptation, accurate gamma,
+  logarithmic inverse endpoint and ST428 luminance. PQ has bidirectional
+  float and conventional pipelines with 10,000-nit luminance; targetless HLG
+  refuses synthesis. Preserve all historical recognition keys; fresh bundle
+  fingerprints remain metadata-only. Qualify the four-entry-only LCMS absolute-intent correction
+  on a frozen-source descendant.
+
+
+- Refuse HLG ICC export without a rendering target; keep native CICP where
+  permitted. Stage explicit H.273/PCS-D50 export definitions and dense analytic
+  controls. The final qualified bundle includes the subsequent PQ representation work;
+  `7dcc7166` and `2024ced4` preserve the intermediate investigation.
+- Keep historical bundle hashes as identification metadata, requiring a CMS
+  until complete substitution is qualified; honor that permission in the sRGB
+  shortcut. Decline unsupported float DToB/BToD ICC pipelines in MoxCMS so a
+  configured capable backend can handle them (`48eb12ea`, `a9da5a59`).
+
+- Add opt-in `cms-lcms` / `Lcms` alongside `MoxCms`, using the pinned pure-Rust LCMS port. Select either through `PluggableCms`; backend defaults are unchanged (`4b96fd7d`).
+
+- Correct the standalone Rust-LCMS contract adapter to request relative
+  colorimetric intent. Add a paper-white regression and exact Rust/C bundle
+  and CMYK controls; product conversion defaults and bundled ICC bytes are
+  unchanged (`9219c5de`).
+
+- Require released archmage/magetypes 0.9.31 and moxcms 0.9.2 in active
+  conversion tools. Retain the pure-gamma range/sign guards and existing
+  numerical source patches. The separately reviewed RGB ICC bundle proposal
+  records changed decoded color; no pixel threshold is relaxed.
+
 - Regenerate the CICP ICC bundle with a D50 PCS header and four-byte-aligned tags. Preserve every tag payload and retain identification of older profile bytes while adding the new hashes. All 334 generated profiles pass independent libpng/Little CMS container checks.
 
 - Preserve the standalone, unpublished moxcms gamma diagnostics and paired benches in `benchmarks/moxcms-gamma`, with pinned source reconstruction and hashes for all six original experiment arms.
 
+### Added
+
+- CMYK native-layout and multi-CMS qualification tools; see [coverage and limitations](docs/cmyk-cms-qualification.md). No backend default or pixel expectation changes.
+
 ### QUEUED BREAKING CHANGES
+
+- HDR transfer conversion now requires explicit or context-supplied SDR white; buffers measure source peak by default for tone mapping, while row plans require an explicit peak. HLG light-domain conversion refuses until its display OOTF is implemented. Quantization retains actual source primaries.
 
 See the 0.3.1 candidate entries below for the approved breaking release queue.
 
 ### Added
 
+- `hdr::Nits`, `hdr::HdrPeak`, HDR intent on `ConvertOptions`, declared source peak on `ColorContext`, and `convert_to_with_options` on buffer/slice extension traits.
+
 - Pixel Format Explorer on GitHub Pages, with a CI-built WASM converter, conversion plans and byte comparisons (`5a97b0dd`).
 
 ## [0.3.1] — unreleased candidate
+
+- `zenpixels::precision`: the rule for what a chosen format may drop, in `docs/precision-policy-design.md`. `SourcePrecision` says what a source really carried, `ConversionPolicy` and `ConversionResolver` decide among `ConversionOffer`s, and `plan_chain` does so across a job's nodes. `PixelSliceConvertExt::scan_source_precision` measures what a decoder couldn't state, so `zenpixels-convert` now depends on `enough`.
+- `adapt_for_encode` and `adapt_raw_rows_for_encode` pick a supported format that holds the source when one exists. RGB16 with `[RGB8, RGBF32]` on offer used to narrow to RGB8, because that's less work.
 
 - `MoxCms` at F32 no longer returns unrelated values from pure-gamma curves: ProPhoto (0.5, 0.5, 0) into sRGB was (1, 1, 0) with clipping on, and black was about -2.1e9 without it. The adapter now applies a single-value `curv` itself on RGB and gray sources and on gray routes, and keeps a negative sample's sign from a table source. Values the backend's fast power can represent keep their bits. See `benchmarks/pure_gamma_f32_2026-11-05.md`.
 - `MoxCms` 8-bit routes that go through F32 get the same fix: gray 1.8 of 0 into gray 2.2 was 255, and ProPhoto (128, 128, 0) into Adobe RGB was (255, 255, 0). Routes into sRGB's curve take the matrix kernels and don't change.
@@ -88,6 +141,10 @@ See the 0.3.1 candidate entries below for the approved breaking release queue.
 - New test: premultiplied ICC samples keep every bit through `OutputPlan::new_preserving_samples`, with no CMS.
 
 - `Cmyk8` through `MoxCms` now gives `CmykF32`'s color, rounded, including its black-point compensation: on 49 real profiles to sRGB they differed by a mean of 17.8 codes. RGBA targets get the same transform as RGB. `Cmyk8` is 44% slower and `CmykF32` 6 times faster (`benchmarks/cmyk8_bpc_2026-11-05.md`).
+
+- **Breaking:** views and buffers accept any stride that is at least `width * bytes_per_pixel` and a multiple of the sample size, so RGB8 rows 8 bytes apart and f32 RGB with 16 bytes of padding are borrowed as they are. A stride off a sample boundary now returns `AlignmentViolation`; constructors no longer return `StrideNotPixelAligned`. Code that divides `stride()` by the pixel size must stop: it misreads these rows silently. Issue #91.
+- `PixelBuffer::try_as_imgref` and `try_as_imgref_mut` retain their `Option` signatures and return `None` for a stride that `imgref` cannot express or an incompatible descriptor. Failed mutable borrowing preserves exact-depth evidence. Typed `as_imgref` and `as_imgref_mut` reject an unrepresentable stride before reading anything.
+- `try_typed` also requires the stride to suit the pixel type's alignment, which only a custom over-aligned `Pixel` notices.
 
 - Docs: JPEG XL color authority cites ISO/IEC 18181-1, and AVIF lists its ICC encode.
 

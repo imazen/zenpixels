@@ -65,5 +65,11 @@ fuzz-*.log
 # colocated jj state dir
 .jj/
 
+# Python validation bytecode
+__pycache__/
+
+# Standalone feature-isolation consumer locks its reviewed dependency graph.
+!tools/icc-collapse-no-db/Cargo.lock
+
 # Retain the standalone IQA review dependency graph.
 !zenpsy-api/Cargo.lock

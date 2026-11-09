@@ -432,17 +432,13 @@ enum GraySignalPlan {
 /// (`'RGB '`, `'GRAY'`, ...); pairing a Gray-layout image with an
 /// RGB-class profile is invalid signaling (libpng, among others,
 /// rejects it). So when ICC bytes are attached, the collapse is allowed
-/// only if a **GRAY-class variant** can stand in: derive the CICP
-/// description of the attached profile -- the context's explicit `cicp`
-/// field, then an embedded `cICP` tag
-/// ([`zenpixels::icc::extract_cicp`]), then the normalized-hash
-/// identification of well-known profiles
-/// ([`zenpixels::icc::identify_common`]; worst accepted TRC deviation
-/// ±56/65535, sub-step at 8-bit) -- and feed it to
-/// [`crate::icc_profiles::synthesize_gray_icc_for_cicp`]. The swapped
-/// context keeps the source's `cicp` field alongside the new gray ICC.
-/// Unidentifiable profiles (and profiles whose color has no CICP code
-/// points, e.g. Adobe RGB) suppress the collapse.
+/// only if a **GRAY-class variant** can stand in for a qualified matrix/TRC
+/// identification. Metadata-only identification, embedded tags and context
+/// hints alone do not prove transform equivalence. A contradictory hint
+/// suppresses collapse; arbitrary ICC transforms remain
+/// authoritative. The swapped context retains the source's CICP field.
+/// Truncated buffers shorter than the 128-byte ICC header retain the existing
+/// explicit-CICP fallback; they cannot contain a valid ICC transform.
 ///
 /// CICP-only contexts have no class to violate: H.273 primaries (the
 /// white point) and transfer characteristics remain meaningful for
@@ -463,13 +459,23 @@ fn plan_chroma_collapse_signaling(ctx: Option<&Arc<ColorContext>>) -> GraySignal
         return GraySignalPlan::Carry;
     };
 
-    let cicp = ctx
-        .cicp
-        .or_else(|| zenpixels::Cicp::from_icc(icc))
-        .or_else(|| zenpixels::icc::IccIdentification::from_icc(icc).and_then(|id| id.to_cicp()));
+    // Buffers shorter than the 128-byte ICC header cannot contain an ICC.
+    // Preserve the existing truncated-metadata fallback to explicit CICP.
+    // A potentially complete profile needs qualified transform equivalence:
+    // embedded code points and metadata-only hashes are not permission.
+    let cicp = if icc.len() < 128 {
+        ctx.cicp
+    } else {
+        zenpixels::icc::IccIdentification::from_icc(icc)
+            .filter(|id| id.valid_use == zenpixels::icc::IdentificationUse::MatrixTrcSubstitution)
+            .and_then(|id| id.to_cicp())
+    };
     let Some(cicp) = cicp else {
         return GraySignalPlan::Suppress;
     };
+    if ctx.cicp.is_some_and(|hint| hint != cicp) {
+        return GraySignalPlan::Suppress;
+    }
 
     match synthesize_gray_icc_for_cicp(cicp) {
         SynthesizedIcc::Profile(bytes) => {
@@ -539,10 +545,11 @@ pub trait PixelBufferLoadBearingExt: sealed::Sealed {
     /// allocating variant: it stays on the buffer. When the rewrite
     /// collapses chroma and ICC bytes are attached (an RGB-class profile
     /// cannot describe a Gray layout), a GRAY-class variant is swapped in
-    /// if the profile's CICP description is derivable (explicit `cicp`
-    /// field, embedded `cICP` tag, or well-known-profile identification);
-    /// otherwise the collapse is suppressed. CICP-only contexts stay
-    /// valid for gray and carry over unchanged.
+    /// if qualified matrix/TRC identification authorizes it and any explicit
+    /// CICP agrees. Embedded tags and metadata-only hashes do not suffice.
+    /// Truncated buffers shorter than the ICC header retain their explicit-CICP
+    /// fallback; otherwise unqualified profiles suppress collapse. CICP-only
+    /// contexts stay valid for gray and carry over unchanged.
     fn reduce_to_load_bearing_format_in_place(&mut self, force_alpha_restructuring: bool);
 }
 
@@ -2208,9 +2215,64 @@ mod tests {
         );
     }
 
+    fn assert_unqualified_icc_survives_gray_content(context: Arc<ColorContext>) {
+        let row = [64u8, 64, 64, 255, 128, 128, 128, 255];
+        let mut padded = Vec::new();
+        for _ in 0..2 {
+            padded.extend_from_slice(&row);
+            padded.extend_from_slice(&[0xa5; 4]);
+        }
+        let pixels = PixelSlice::new(&padded, 2, 2, 12, PixelDescriptor::RGBA8_SRGB)
+            .unwrap()
+            .with_color_context(context.clone());
+        let output = pixels.try_reduce_to_load_bearing_format().unwrap();
+        assert_eq!(output.descriptor().format, PixelFormat::Rgb8);
+        assert_eq!(output.as_slice().color_context().unwrap().icc, context.icc);
+        for y in 0..2 {
+            assert_eq!(output.as_slice().row(y), &[64, 64, 64, 128, 128, 128]);
+        }
+        let mut buffer =
+            lb_buf(&row.repeat(2), 2, 2, PixelFormat::Rgba8).with_color_context(context.clone());
+        buffer.reduce_to_load_bearing_format_in_place(true);
+        assert_eq!(buffer.descriptor().format, PixelFormat::Rgb8);
+        assert_eq!(buffer.as_slice().color_context().unwrap().icc, context.icc);
+        for y in 0..2 {
+            assert_eq!(buffer.as_slice().row(y), output.as_slice().row(y));
+        }
+    }
+
+    #[cfg(feature = "icc-db")]
+    #[test]
+    fn metadata_only_icc_cannot_authorize_gray_replacement() {
+        use crate::icc_profiles::SynthesizedIcc;
+        let cicp = Cicp::new(9, 16, 0, true);
+        let SynthesizedIcc::Profile(profile) = SynthesizedIcc::for_cicp(cicp) else {
+            panic!("qualified PQ export must exist");
+        };
+        assert_eq!(
+            zenpixels::icc::IccIdentification::from_icc(&profile)
+                .unwrap()
+                .valid_use,
+            zenpixels::icc::IdentificationUse::MetadataOnly,
+        );
+        let mut context = ColorContext::from_icc(profile.into_owned());
+        context.cicp = Some(cicp);
+        let context = Arc::new(context);
+        assert_unqualified_icc_survives_gray_content(context);
+    }
+
+    #[test]
+    fn contradictory_cicp_cannot_replace_an_authoritative_rgb_icc() {
+        let mut context = ColorContext::from_icc(crate::icc_profiles::DISPLAY_P3_V4);
+        context.cicp = Some(Cicp::new(12, 4, 0, true));
+        let context = Arc::new(context);
+        assert_unqualified_icc_survives_gray_content(context);
+    }
+
     // ── Gray-class ICC swap on collapse ────────────────────────────
 
     /// Assert the context carries a GRAY-class ICC (header bytes 16..20).
+    #[cfg(feature = "icc-db")]
     fn assert_gray_class_icc(ctx: Option<&Arc<ColorContext>>) -> Arc<[u8]> {
         let icc = ctx
             .expect("reduced buffer must carry a context")

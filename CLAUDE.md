@@ -118,6 +118,85 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Corrected ICC exports are staged in separate unmerged PR128 (2026-11-08),
+  not published. The actual replacement bundle is 93,377 bytes with 313
+  RGB/gray mappings; the 21 removed mappings are targetless HLG exports.
+  Historical hashes remain recognized, with new exports MetadataOnly.
+  All 168 PQ intent/direction cells, 292 SDR cells and 313 independent
+  libpng/C LCMS 2.20 containers pass. Native U8/U16 RGB/RGBA/GRAY/GRAY_ALPHA
+  LCMS tests preserve alpha; U8 is exact and U16 differs from correctly rounded
+  analytic codes by at most 2 on decode / 1 on encode. MoxCMS explicitly
+  declines unsupported float pipelines. The six-platform CMS matrix passes.
+  HLG retains native CICP until an explicit rendering target exists.
+  Browser witnesses establish selected paths, not physical HDR display accuracy;
+  WebKit GRAY remains unqualified. See `docs/corrected-icc-export.md` and
+  `benchmarks/icc-export/native_integer_2026-11-08.meta`. The separate
+  grayscale-collapse authority guard is separate from PR128. Its compatible
+  variant preserves the existing truncated-input fallback and all established
+  assertions; only complete ICCs require qualified matrix/TRC replacement.
+  The stricter malformed-input proposal remains preserved, not adopted.
+  The self dev-dependency re-enables defaults in unit tests even with
+  --no-default-features. Its established configuration is retained: an isolated
+  attempt to disable it passes 60 focused controls but exposes 10 unit tests
+  expecting bundled profiles with the database absent. Original failures and
+  that alternative are preserved; no old expectation is changed.
+  tools/icc-collapse-no-db verifies genuine no-database/std/CMS normal-dependency
+  behavior through four passing controls; just icc-collapse-check.
+
+- PQ PNG compatibility qualification (2026-11-08): keep native CICP plus a
+  qualified ICC companion where permitted. The float-table pilot alone is not
+  sufficient: Chromium 153 and explicitly color-managed Firefox 155 use its
+  conventional fallback in a contradictory-TRC witness, while C LCMS 2.20
+  uses DToB1. ICC-embedded CICP must be isolated in such controls. Headless
+  defaults and SDR canvas output do not establish real HDR display accuracy.
+  After preserving the initial library failures, isolated Linux WPE WebKit
+  26.6 honors float DToB but does not give PNG CICP precedence in these controls.
+  Exact source identities, differences and configuration limits are in
+  `docs/corrected-icc-export.md`; no Safari coverage is claimed.
+- Fixed in the staged adapter (2026-11-08): MoxCMS does not implement float
+  DToB/BToD pipelines. ICC permits fallback, but it can lose requested precision.
+  The adapter now declines these profiles so a capable configured backend can
+  handle them. A regression failed before the guard; shared CMS14/2oldignores
+  and unchanged Mox17+21 accuracy / LCMS8 production controls pass. The external
+  W3C PQ file is an explicitly approximate legacy fallback, not proof that all
+  HDR profile representations work equivalently. Its Mox highlight limit also
+  reproduces without the row adapter; bounded mAB rules versus LCMS extended
+  float evaluation must be distinguished from a specification violation.
+
+- Historical bundle audit (2026-11-08): all 175 old GRAY
+  mappings are Display-class but store native white in `wtpt`, contrary to
+  ICC.1:2022 9.2.36's PCS-D50 requirement. This dates to `75eb953`; the
+  October `27c17a6` gray test explicitly preserves the wrong expectation.
+  The first 0.9.2 proposal and constructor controls copied these bytes unchanged.
+  PR128 instead corrects the Display-class wtpt and preserves old recognition.
+  Independent reader acceptance does not establish the tag's correctness.
+  `just icc-bundle-definition-audit REVISION` inspects actual historical
+  assets; see `docs/icc-bundle-history-and-correctness.md`. No binary,
+  existing assertion or pixel tolerance is changed by this finding.
+
+- Historical profile triage (2026-11-08): the inherited curves in all three RGB
+  candidates have limits missed by the sparse read-back samples. On every
+  normalized U16 input, TC9/TC10 have maximum absolute linear errors
+  0.004917139850733618 / 0.0015508450894103343 near encoded zero; TC17 reaches
+  0.0005306961467401727 near its saturation knee. PQ has 3,587 nonzero-reference
+  input codes rounded to zero per profile. These are measurements, not new
+  accepted tolerances. HLG is a neutral reference-display curve, not a general
+  luminance-dependent RGB OOTF. See `docs/first-class-lcms-and-profile-triage.md`.
+
+- Fixed in the standalone Rust-LCMS contract adapter (2026-11-08): it selected
+  `lcms::virt::INTENT_RELATIVE_COLORIMETRIC`, whose value is 3 in the pinned
+  port, requesting absolute intent. Use `lcms::types::INTENT_RELATIVE_COLORIMETRIC`
+  (1). A measured-media-white regression fails before the correction and
+  passes after it; all four JXL CMYK fixture samples then match C LCMS 2.20
+  float bits. This changes test equipment, not the product CMS default.
+  `docs/rgb-icc-and-lcms-2026-11-08.md` records the source pins and limits.
+
+- Open in the stable-dependency review (2026-11-07): requiring moxcms 0.9.2
+  changes fresh RGB ICC serialization/colorimetry and fails the existing bundle
+  equality gate. The bundled binary and goldens are unchanged. Keep the
+  pure-gamma sign/range guards: the released backend still reproduces the
+  exact-zero ProPhoto F32 failure. See `docs/stable-dependencies-2026-11-07.md`.
+
 - Fixed explorer lock drift (2026-11-07): the converter adopted pastey while
   the browser standalone lock retained its paste dependency edge. Locked WASM
   Clippy refused before compilation. Refresh the standalone graph and run
@@ -159,7 +238,7 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 - Fixed 2026-11-04: planning added the gamut matrix after layout and depth steps, so wide
   RGB into gray or from RGBA to RGB ran it on rows of the wrong shape, and U16 rows ran U8
-  steps. `tests/gamut_across_layouts.rs` measures every route against independent `f64`
+  steps. `src/kernel_tests/gamut_across_layouts.rs` measures every route against independent `f64`
   math. A row split could also change `f32` bits, and an odd scratch size could misalign
   F32 rows: `tests/row_partition_parity.rs`. BT.709 and Gamma22 `f32` output keep negative
   values while sRGB `f32` clips: that difference is existing behavior, pinned by the test.
@@ -170,14 +249,19 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 - Fixed (2026-11-04): a PQ or HLG matte put white at the format's peak: 10,000 cd/m² on PQ.
   `CompositeOnto::reference_white` now places it, defaulting to BT.2408.
 
-- Open (2026-11-04): `RowConverter::new` puts SDR white at PQ's peak, 10,000 cd/m², where CSS puts 203. `ColorConvertExt::try_convert_to` refuses this.
-  PR #115 refuses SDR-encoded sources into PQ and HLG; it doesn't cover the case below and waits on the HDR API decision.
-- Open (2026-11-05): Linear into PQ has two defaults for one input. Linear BT.2020 (1, 1, 1) with no anchor into `RGB16_BT2100_PQ`
-  gives 65535 (10,000 cd/m²) from `convert_to` and `RowConverter`, and 38055 (203 cd/m²) from `quantize_to`; both match the analytic
-  PQ codes. With a 203 anchor in a `ColorContext::from_cicp(Cicp::BT2100_PQ)`, `convert_to` refuses with
-  `CicpDescriptor(NonIdentityMatrix(9))` while `quantize_to` accepts it. Measured on `fde59b96`. The proposed fix (one anchor rule:
-  explicit option, then context, then refuse) is in `docs/hdr-anchor-api-design.md` §6.
-  `docs/css-color-parity.md` lists this and the other CSS differences.
+- HDR intent correction (2026-11-06, PR #120 candidate): unanchored relative/absolute
+  conversions refuse with `SdrWhiteRequired`; `ConvertOptions::with_sdr_white` overrides
+  `ColorContext::diffuse_white`, then absence refuses. Row, buffer and quantizer paths
+  agree at 203 nits (PQ16 white code 38055). Invalid/conflicting CICP remains rejected
+  consistently; an anchor-only context avoids falsely tagging linear samples as PQ.
+  Buffer HDR-to-SDR conversion measures MaxRGB peak by default; row/output plans require
+  an explicit or context-declared peak. SDR target peak is explicit. HLG transfer
+  conversion returns `HlgOotfNotImplemented` until a display OOTF exists. Old HDR-config
+  constructors remain available for compatibility; the preferred interface is
+  `convert_to_with_options` / `new_explicit`. Design: `docs/hdr-anchor-api-design.md` §6.
+  Kernel tests moved to `src/kernel_tests`: the same numerical assertions and frozen
+  digest `509de40f680b9c2e` still pass, including raw HLG transfer kernels exercised
+  privately; the public API separately refuses unimplemented light-domain work.
 
 - Fixed (2026-11-04): the matte was not converted to wide-gamut source primaries, so sRGB red over a P3 source came out as P3's red.
   `CompositeOnto::background` is now a `Color`, converted to the source's primaries; `zenpixels-convert/tests/color.rs`.
@@ -280,6 +364,9 @@ retained. The regenerated blob is 35,379 bytes, SHA-256
 All 159 RGB and 175 gray mappings pass fresh-synthesis equality. All 334
 profiles pass structural checks, Little CMS parsing and exact libpng ICC
 roundtrips without warnings; a non-D50 negative control fails.
+Those historical checks covered the PCS header, alignment and reader
+acceptance, not every tag requirement. The 2026-11-08 history audit above
+identifies the preserved gray Display-class `wtpt` inconsistency.
 
 `just icc-bundle-identification OUTPUT_DIR` generates and adds bundle hashes
 without dropping recognition of older profile bytes. Full corpus regeneration
@@ -320,3 +407,20 @@ contract. In the current revision, pow_midp(NaN,1.8)=0 and
 pow_midp(-0.5,1.8)=MIN_POSITIVE on both measured backends. These limits need
 caller handling; no sibling source was changed. Details, raw counts, source
 links and reproduction are in `benchmarks/pow-comparison/README.md`.
+
+### CMYK precision and capability controls (2026-11-08)
+
+The qualified native JXL input matches C LCMS 2.20 byte-for-byte through Rust
+LCMS. MoxCMS 0.9.2 retains 937/786432 components over the existing 0.0013 bound,
+maximum 0.006689250469207764; no threshold relaxed. The typed matrix accepts
+256 LCMS cases and 192 MoxCMS cases, with 64 explicit MoxCMS CMYK16 declines.
+See docs/cmyk-cms-qualification.md for intent/BPC controls and Argyll scope.
+
+### Hash authorization boundary reviewed (2026-11-09)
+
+ICC recognition uses normalized FNV-1a64; canonical replacement checks that hash
+and byte length, without normalized byte equality. FNV's zero-state property
+and ordinary collisions mean a hit is not a proof of transform identity. No
+valid hostile ICC collision was demonstrated in this review. Preserve lookup
+semantics while strengthening any pixel-changing authorization; see
+docs/pr-contract-review-2026-11-09.md for the exact source and proposed gates.

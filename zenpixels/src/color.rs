@@ -333,11 +333,13 @@ pub struct ColorContext {
     pub cicp: Option<Cicp>,
     /// Absolute-luminance anchor: the cd/m² (nits) that a relative-linear
     /// sample value of `1.0` represents. `None` means unsignaled — consumers
-    /// default to [`DiffuseWhite::BT2408`] (203 nits, the cross-vendor
-    /// convention). Travels with the pixels so the HDR converter can map
+    /// require an explicit anchor when crossing relative and absolute light.
+    /// Travels with the pixels so the HDR converter can map
     /// relative-linear light to absolute luminance for PQ/HLG encode and
     /// tone-mapping.
     pub diffuse_white: Option<DiffuseWhite>,
+    /// Declared source peak luminance, used only when explicitly requested.
+    pub hdr_peak: Option<crate::hdr::Nits>,
 }
 
 impl ColorContext {
@@ -347,6 +349,7 @@ impl ColorContext {
             icc: Some(icc.into()),
             cicp: None,
             diffuse_white: None,
+            hdr_peak: None,
         }
     }
 
@@ -356,6 +359,7 @@ impl ColorContext {
             icc: None,
             cicp: Some(cicp),
             diffuse_white: None,
+            hdr_peak: None,
         }
     }
 
@@ -369,6 +373,12 @@ impl ColorContext {
     #[must_use]
     pub fn with_diffuse_white(mut self, white: DiffuseWhite) -> Self {
         self.diffuse_white = Some(white);
+        self
+    }
+
+    /// Set declared source peak luminance for `HdrPeak::Declared` conversion.
+    pub fn with_hdr_peak(mut self, peak: crate::hdr::Nits) -> Self {
+        self.hdr_peak = Some(peak);
         self
     }
 
@@ -648,6 +658,7 @@ mod tests {
             icc: None,
             cicp: None,
             diffuse_white: None,
+            hdr_peak: None,
         };
         assert!(ctx.as_profile_source().is_none());
     }

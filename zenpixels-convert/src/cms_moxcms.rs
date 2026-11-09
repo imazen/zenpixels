@@ -153,6 +153,29 @@ fn validate_channel_curves(profile: &ColorProfile) -> Result<(), MoxCmsError> {
     Ok(())
 }
 
+/// moxcms 0.9.2 does not parse float DToB/BToD pipelines. Those tags
+/// take precedence when supported. ICC.1 8.10 permits unsupported CMMs to use
+/// fallback tags, but that can lose the requested precision. Our adapter instead
+/// declines so a capable configured backend can evaluate the float pipeline.
+/// Only tags for the requested relative intent matter; other intents retain
+/// their own precedence and cannot disable this relative-colorimetric route.
+fn has_float_pipeline(source: &crate::ColorProfileSource<'_>, signature: &[u8; 4]) -> bool {
+    let crate::ColorProfileSource::Icc(bytes) = source else {
+        return false;
+    };
+    let Some(header) = bytes.get(..132) else {
+        return false;
+    };
+    let count = u32::from_be_bytes(header[128..132].try_into().unwrap()) as usize;
+    let available = (bytes.len() - 132) / 12;
+    bytes[132..]
+        .as_chunks::<12>()
+        .0
+        .iter()
+        .take(count.min(available))
+        .any(|entry| &entry[..4] == signature)
+}
+
 // ---------------------------------------------------------------------------
 // RowTransform wrapper
 // ---------------------------------------------------------------------------
@@ -1103,6 +1126,9 @@ impl crate::cms::PluggableCms for MoxCms {
     ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, whereat::At<crate::cms::CmsPluginError>>>
     {
         use crate::cms::CmsPluginError;
+        if has_float_pipeline(&src, b"D2B1") || has_float_pipeline(&dst, b"B2D1") {
+            return None;
+        }
         // Depths the plan can convert aren't this backend's problem, so it declines them. Sample types
         // nothing here can convert are diagnosed.
         let plannable = |t: ChannelType| {
@@ -1384,56 +1410,17 @@ fn with_pcs_white(mut profile: ColorProfile) -> ColorProfile {
     profile
 }
 
-/// Generate ICC profile bytes for a CICP via moxcms, or `None` if moxcms doesn't
-/// recognize the **color-defining** code points (primaries / transfer).
-///
-/// Strict on purpose: unlike [`cicp_to_moxcms_profile`] (the transform path, which
-/// falls back to Bt709/sRGB defaults), synthesis must never emit a profile whose
-/// TRC/gamut contradicts the source — a `None` here surfaces as
-/// [`SynthesizedIcc::CmsUnsupported`](crate::icc_profiles::SynthesizedIcc::CmsUnsupported)
-/// so the caller carries the color via CICP instead of embedding a wrong profile.
-/// Matrix coefficients are irrelevant to an RGB ICC, so they're defaulted rather
-/// than required.
-///
-/// Test-only: the bundled blob (generated from this exact logic at build time) is
-/// the runtime coverage source, so `synthesize_icc_for_cicp` no longer calls this.
-/// It's retained as the oracle the `blob_decodes_byte_identical_to_moxcms` guard
-/// compares the committed blob against — catching a moxcms version bump that would
-/// shift the canonical bytes.
-#[cfg(test)]
+/// Rebuild an RGB export profile from the shared, explicit H.273 recipe.
+/// Test-only: runtime synthesis reads the committed bundle without a CMS.
+/// Freshness tests compare canonical bytes; independent colorimetry tests
+/// separately check those bytes against the standard.
+#[cfg(all(test, feature = "icc-db"))]
 pub(crate) fn icc_bytes_for_cicp(cicp: &Cicp) -> Option<alloc::vec::Vec<u8>> {
-    // `try_from` on these moxcms enums never errors: every u8 maps to a variant,
-    // with reserved/unassigned codes folding into `Reserved`. So these conversions
-    // are NOT the validity gate — the real check is whether moxcms could populate
-    // the colorimetry below.
-    let color_primaries = moxcms::CicpColorPrimaries::try_from(cicp.color_primaries).ok()?;
-    let transfer_characteristics =
-        moxcms::TransferCharacteristics::try_from(cicp.transfer_characteristics).ok()?;
-    // Matrix coefficients don't affect an RGB ICC's colorimetry; default rather
-    // than reject so an unusual matrix code doesn't block synthesis.
-    let matrix_coefficients = moxcms::MatrixCoefficients::try_from(cicp.matrix_coefficients)
-        .unwrap_or(moxcms::MatrixCoefficients::Identity);
-
-    let profile = ColorProfile::new_from_cicp(moxcms::CicpProfile {
-        color_primaries,
-        transfer_characteristics,
-        matrix_coefficients,
-        full_range: cicp.full_range,
-    });
-
-    // `new_from_cicp` discards the bool from `update_rgb_colorimetry_from_cicp`, so
-    // for `Reserved`/`Unspecified` primaries or transfer it silently returns a base
-    // profile with no colorants and no TRC. moxcms sets `red_trc` only after every
-    // primaries + white-point + transfer-curve gate passes, so a populated `red_trc`
-    // is the signal synthesis was faithful. No TRC ⇒ moxcms can't represent this
-    // CICP — bail with None (surfaces as `CmsUnsupported`) rather than emit a
-    // degenerate profile whose colorimetry omits or contradicts the requested color.
-    profile.red_trc.as_ref()?;
-    crate::icc_profiles::canonical::canonicalize(profile.encode().ok()?)
+    crate::icc_profiles::synthesis::rgb(cicp.color_primaries, cicp.transfer_characteristics)
 }
 
-/// moxcms's D50 white point (`white_point_from_temperature(5003)`), reconstructed so
-/// the gray oracle below builds against the whole `>=0.8.1, <0.10` moxcms range.
+/// Historical moxcms D50 approximation, retained for the upstream-value regression.
+/// The corrected export recipe uses ICC PCS D50 instead.
 ///
 /// moxcms exposed this value as the const `WHITE_POINT_D50` (moxcms ≤ 0.8) and then
 /// renamed it to the fn `white_point_d50()` (moxcms ≥ 0.9) — identical value,
@@ -1451,80 +1438,12 @@ fn moxcms_d50_xyz() -> moxcms::Xyz {
     moxcms::XyY::new(X, Y, 1.0).to_xyz()
 }
 
-/// Synthesize a **GRAY-class** ICC for a CICP, exactly as `icc-gen`'s
-/// `cicp_bundle_gen` generator does for the committed gray bundle: `kTRC` =
-/// the transfer's tone curve (taken from a throwaway RGB synthesis so the
-/// gray and RGB recipes can never disagree about a curve), media white point
-/// = the primaries' H.273 white, and a per-white Bradford white→D50 `chad`.
-/// The generator zeroes the creation timestamp for reproducibility; this
-/// fresh path leaves it — the roundtrip test masks bytes 24..36 on both
-/// sides.
-///
-/// Test-only, mirroring [`icc_bytes_for_cicp`]: the bundled gray blob is
-/// the runtime coverage source; this is the oracle the gray
-/// `blob_decodes_byte_identical_to_moxcms` guard compares the committed
-/// blob against.
-#[cfg(test)]
+/// Rebuild a GRAY export profile from the same build-time recipe.
+/// Display-class media white is PCS D50; chad records full adaptation from
+/// the explicitly selected H.273 source white. Timestamp and ID are canonical.
+#[cfg(all(test, feature = "icc-db"))]
 pub(crate) fn gray_icc_bytes_for_cicp(cicp: &Cicp) -> Option<alloc::vec::Vec<u8>> {
-    let color_primaries = moxcms::CicpColorPrimaries::try_from(cicp.color_primaries).ok()?;
-    let transfer_characteristics =
-        moxcms::TransferCharacteristics::try_from(cicp.transfer_characteristics).ok()?;
-    let matrix_coefficients = moxcms::MatrixCoefficients::try_from(cicp.matrix_coefficients)
-        .unwrap_or(moxcms::MatrixCoefficients::Identity);
-
-    let rgb = ColorProfile::new_from_cicp(moxcms::CicpProfile {
-        color_primaries,
-        transfer_characteristics,
-        matrix_coefficients,
-        full_range: cicp.full_range,
-    });
-    // Same faithful-synthesis gate as the RGB path.
-    let trc = rgb.red_trc.as_ref()?.clone();
-
-    let (white_name, wx, wy) = h273_white_xy(cicp.color_primaries)?;
-    let white = moxcms::Xyzd {
-        x: wx / wy,
-        y: 1.0,
-        z: (1.0 - wx - wy) / wy,
-    };
-
-    let mut gray = ColorProfile::new_gray_with_gamma(2.2);
-    gray.gray_trc = Some(trc);
-    gray.media_white_point = Some(white);
-    gray.chromatic_adaptation = Some(moxcms::adaption_matrix_d(white.to_xyz(), moxcms_d50_xyz()));
-    gray.description = Some(moxcms::ProfileText::Localizable(alloc::vec![
-        moxcms::LocalizableString::new(
-            "en".into(),
-            "US".into(),
-            format!(
-                "Gray H.273 TC{} {white_name} white",
-                cicp.transfer_characteristics
-            ),
-        )
-    ]));
-
-    crate::icc_profiles::canonical::canonicalize(gray.encode().ok()?)
-}
-
-/// The white point of an H.273 colour-primaries code, as CIE xy
-/// (Rec. ITU-T H.273 Table 2). Mirror of the table in `icc-gen`'s
-/// `cicp_bundle_gen` — the gray-bundle roundtrip test pins the two copies
-/// together. The name keys the gray profile's description so primaries
-/// sharing a white dedup to identical bytes.
-#[cfg(test)]
-fn h273_white_xy(primaries: u8) -> Option<(&'static str, f64, f64)> {
-    Some(match primaries {
-        // D65: BT.709, BT.470BG, SMPTE 170M, SMPTE 240M, BT.2020,
-        // P3-D65 (SMPTE EG 432-1), EBU Tech 3213-E.
-        1 | 5 | 6 | 7 | 9 | 12 | 22 => ("D65", 0.3127, 0.3290),
-        // Illuminant C: BT.470M, generic film.
-        4 | 8 => ("C", 0.310, 0.316),
-        // Illuminant E: SMPTE ST 428-1 (CIE XYZ).
-        10 => ("E", 1.0 / 3.0, 1.0 / 3.0),
-        // DCI white: SMPTE RP 431-2 (P3-DCI theater white).
-        11 => ("DCI", 0.314, 0.351),
-        _ => return None,
-    })
+    crate::icc_profiles::synthesis::gray(cicp.color_primaries, cicp.transfer_characteristics)
 }
 
 /// Convert CICP to a moxcms ColorProfile.

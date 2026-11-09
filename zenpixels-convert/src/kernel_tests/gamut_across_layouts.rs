@@ -3,11 +3,11 @@
 //! Gamut kernels read RGB or RGBA, so a plan that removes channels first would feed
 //! them the wrong rows: P3 `[200, 100, 50]` to gray once gave `117, 117, 117, 128, 0`.
 
+use super::KernelConverter as RowConverter;
 use zenpixels::{
     AlphaMode, ChannelLayout as L, ChannelType as C, ColorPrimaries as P, PixelDescriptor as D,
     TransferFunction as T,
 };
-use zenpixels_convert::RowConverter;
 
 type M = [[f64; 3]; 3];
 
@@ -260,7 +260,7 @@ fn color_to_color_matches_float_math() {
                             let src = source_row(from);
                             let width = (src.len() / from.bytes_per_pixel()) as u32;
                             let mut out = vec![0u8; width as usize * to.bytes_per_pixel()];
-                            RowConverter::new(from, to)
+                            normalized_converter(from, to)
                                 .unwrap_or_else(|e| panic!("{from:?} to {to:?}: {e:?}"))
                                 .convert_row(&src, &mut out, width);
                             let limit = tolerance(to_c).max(tolerance(from_c) * 2.0);
@@ -314,7 +314,7 @@ fn color_to_gray_goes_through_the_targets_primaries() {
                         let src = source_row(from);
                         let width = (src.len() / from.bytes_per_pixel()) as u32;
                         let mut direct = vec![0u8; width as usize * to.bytes_per_pixel()];
-                        RowConverter::new(from, to)
+                        normalized_converter(from, to)
                             .unwrap_or_else(|e| panic!("{from:?} to {to:?}: {e:?}"))
                             .convert_row(&src, &mut direct, width);
 
@@ -357,10 +357,10 @@ fn gray_sources_skip_the_matrix() {
                 let width = (src.len() / from.bytes_per_pixel()) as u32;
                 let bytes = width as usize * to.bytes_per_pixel();
                 let (mut crossed, mut kept) = (vec![0u8; bytes], vec![0u8; bytes]);
-                RowConverter::new(from, to)
+                normalized_converter(from, to)
                     .unwrap_or_else(|e| panic!("{from:?} to {to:?}: {e:?}"))
                     .convert_row(&src, &mut crossed, width);
-                RowConverter::new(from, same)
+                normalized_converter(from, same)
                     .unwrap()
                     .convert_row(&src, &mut kept, width);
                 assert_eq!(crossed, kept, "{from:?} to {to:?}");
@@ -378,13 +378,13 @@ fn rgba_to_rgb_keeps_colors_and_length() {
     RowConverter::new_explicit(
         from,
         D::RGB8_SRGB,
-        &zenpixels_convert::policy::ConvertOptions::permissive()
-            .with_alpha_policy(zenpixels_convert::policy::AlphaPolicy::DiscardUnchecked),
+        &crate::policy::ConvertOptions::permissive()
+            .with_alpha_policy(crate::policy::AlphaPolicy::DiscardUnchecked),
     )
     .unwrap()
     .convert_row(&rows, &mut out, 3);
     let mut rgb = [0u8; 3];
-    RowConverter::new(D::RGB8_SRGB.with_primaries(P::DisplayP3), D::RGB8_SRGB)
+    normalized_converter(D::RGB8_SRGB.with_primaries(P::DisplayP3), D::RGB8_SRGB)
         .unwrap()
         .convert_row(&[200, 100, 50], &mut rgb, 1);
     assert_eq!(
@@ -393,4 +393,17 @@ fn rgba_to_rgb_keeps_colors_and_length() {
             rgb[0], rgb[1], rgb[2], rgb[0], rgb[1], rgb[2], rgb[0], rgb[1], rgb[2]
         ]
     );
+}
+
+fn normalized_converter(
+    from: zenpixels::PixelDescriptor,
+    to: zenpixels::PixelDescriptor,
+) -> Result<super::KernelConverter, whereat::At<crate::ConvertError>> {
+    RowConverter::new_explicit(
+        from,
+        to,
+        &zenpixels::ConvertOptions::permissive()
+            .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked)
+            .with_sdr_white(zenpixels::hdr::DiffuseWhite::new(10_000.)),
+    )
 }

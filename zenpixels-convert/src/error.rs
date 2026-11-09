@@ -69,6 +69,16 @@ pub enum ConvertError {
     /// Original CMS build/row failure, retaining its concrete error chain.
     /// Clones share the error; equality compares error identity.
     CmsBackend(alloc::sync::Arc<crate::cms::CmsPluginError>),
+    /// Relative/absolute light conversion needs an explicit SDR-white anchor.
+    SdrWhiteRequired,
+    /// Tone mapping needs a declared or explicit source peak; rows cannot measure a buffer.
+    HdrPeakRequired,
+    /// Tone mapping needs an explicit destination SDR peak.
+    SdrPeakRequired,
+    /// The requested HDR conversion needs a Cargo feature that is not enabled.
+    HdrFeatureRequired,
+    /// HLG light-domain conversion requires the unimplemented display OOTF.
+    HlgOotfNotImplemented,
     /// The conversion is HDR (`Pq` / `Hlg`) → SDR but no usable peak
     /// luminance was supplied. Raised both when no peak was given at all
     /// (the plain [`ConvertPlan::new`](crate::ConvertPlan::new) entry
@@ -91,26 +101,69 @@ pub enum ConvertError {
         from: PixelDescriptor,
         to: PixelDescriptor,
     },
-    /// The injected [`ToneMapper`](crate::hdr::ToneMapper) declared
-    /// [`Requirements::full_image == true`](crate::hdr::Requirements::full_image)
+    #[cfg_attr(
+        feature = "hdr-experimental",
+        doc = "The injected [`ToneMapper`](crate::hdr::ToneMapper) declared"
+    )]
+    #[cfg_attr(
+        not(feature = "hdr-experimental"),
+        doc = "The injected `ToneMapper` declared"
+    )]
+    #[cfg_attr(
+        feature = "hdr-experimental",
+        doc = "[`Requirements::full_image == true`](crate::hdr::Requirements::full_image)"
+    )]
+    #[cfg_attr(
+        not(feature = "hdr-experimental"),
+        doc = "`Requirements::full_image == true`"
+    )]
     /// from
-    /// [`ConvertPlan::new_with_tone_mapper`](crate::ConvertPlan::new_with_tone_mapper),
+    #[cfg_attr(
+        feature = "hdr-experimental",
+        doc = "[`ConvertPlan::new_with_tone_mapper`](crate::ConvertPlan::new_with_tone_mapper),"
+    )]
+    #[cfg_attr(
+        not(feature = "hdr-experimental"),
+        doc = "`ConvertPlan::new_with_tone_mapper`,"
+    )]
     /// but this pipeline does not yet support full-image local
     /// operators (Mantiuk gradient processing, Fattal, bilateral, …).
     ///
     /// The capacity is reserved in the public types
-    /// ([`Requirements::full_image`](crate::hdr::Requirements::full_image)
-    /// and [`PreparedMapper::Buffered`](crate::hdr::PreparedMapper))
+    #[cfg_attr(
+        feature = "hdr-experimental",
+        doc = "([`Requirements::full_image`](crate::hdr::Requirements::full_image)"
+    )]
+    #[cfg_attr(not(feature = "hdr-experimental"), doc = "(`Requirements::full_image`")]
+    #[cfg_attr(
+        feature = "hdr-experimental",
+        doc = "and [`PreparedMapper::Buffered`](crate::hdr::PreparedMapper))"
+    )]
+    #[cfg_attr(
+        not(feature = "hdr-experimental"),
+        doc = "and `PreparedMapper::Buffered`)"
+    )]
     /// under `#[non_exhaustive]` so the variant can be activated in a
     /// patch release without semver impact. Pick a streaming mapper
     /// (any pointwise curve — BT.2446-A, ACES, FilmicSpline, the
     /// adaptive family in zentone, …) until that lands.
     ///
-    /// `mapper_name` is the [`ToneMapper::name`](crate::hdr::ToneMapper::name)
+    #[cfg_attr(
+        feature = "hdr-experimental",
+        doc = "`mapper_name` is the [`ToneMapper::name`](crate::hdr::ToneMapper::name)"
+    )]
+    #[cfg_attr(
+        not(feature = "hdr-experimental"),
+        doc = "`mapper_name` is the `ToneMapper::name`"
+    )]
     /// of the offending mapper, captured for diagnostics.
     FullImageMapperNotSupported {
         /// The kebab-case identifier returned by
-        /// [`ToneMapper::name`](crate::hdr::ToneMapper::name).
+        #[cfg_attr(
+            feature = "hdr-experimental",
+            doc = "[`ToneMapper::name`](crate::hdr::ToneMapper::name)."
+        )]
+        #[cfg_attr(not(feature = "hdr-experimental"), doc = "`ToneMapper::name`.")]
         mapper_name: &'static str,
     },
     /// The conversion requires a color management plugin but none was provided.
@@ -236,6 +289,11 @@ impl fmt::Display for ConvertError {
             Self::CicpDescriptor(e) => write!(f, "color declaration failed: {e}"),
             Self::CmsBackend(error) => write!(f, "CMS failure: {error}"),
             Self::CmsError(msg) => write!(f, "CMS transform failed: {msg}"),
+            Self::SdrWhiteRequired => f.write_str("SDR white is missing; use ConvertOptions::with_sdr_white or ColorContext::with_diffuse_white"),
+            Self::HdrPeakRequired => f.write_str("HDR peak is missing; buffer conversion measures it, or use ConvertOptions::with_hdr_peak(HdrPeak::Nits(...))"),
+            Self::SdrPeakRequired => f.write_str("SDR target peak is missing; use ConvertOptions::with_sdr_peak"),
+            Self::HdrFeatureRequired => f.write_str("HDR tone mapping requires the bt2446a Cargo feature"),
+            Self::HlgOotfNotImplemented => f.write_str("HLG display OOTF conversion is not implemented"),
             Self::HdrSourceRequiresPeak { from, to } => write!(
                 f,
                 "HDR→SDR conversion ({:?} → {:?}) requires positive, finite peak \

@@ -177,16 +177,21 @@ impl Pixel for GrayAlphaF32 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum BufferError {
-    /// Data pointer is not aligned for the channel type.
+    /// Data pointer or stride is not aligned for the channel type.
+    ///
+    /// A stride must be a multiple of the sample size, so that every row starts
+    /// on a sample.
     AlignmentViolation,
     /// Data slice is too small for the given dimensions and stride.
     InsufficientData,
     /// Stride is smaller than `width * bytes_per_pixel`.
     StrideTooSmall,
-    /// Stride is not a multiple of `bytes_per_pixel`.
+    /// Stride is not a multiple of `bytes_per_pixel`, for a representation that
+    /// counts its stride in pixels.
     ///
-    /// Every row must start on a pixel boundary. If stride is not a
-    /// multiple of bpp, rows after the first will be misaligned.
+    /// Pixel views accept such a stride. Conversions that can't express one return
+    /// this instead of misreading rows: an `imgref` image, for example, has no way
+    /// to describe RGB8 rows 8 bytes apart.
     StrideNotPixelAligned,
     /// Width or height is zero or causes overflow.
     InvalidDimensions,
@@ -548,8 +553,9 @@ fn validate_slice(
     if stride_bytes < min_stride {
         return Err(BufferError::StrideTooSmall);
     }
-    if bpp > 0 && stride_bytes % bpp != 0 {
-        return Err(BufferError::StrideNotPixelAligned);
+    let align = descriptor.min_alignment();
+    if stride_bytes % align != 0 {
+        return Err(BufferError::AlignmentViolation);
     }
     if rows > 0 {
         let required = required_bytes(rows, stride_bytes, min_stride)?;
@@ -557,11 +563,17 @@ fn validate_slice(
             return Err(BufferError::InsufficientData);
         }
     }
-    let align = descriptor.min_alignment();
     if (data_ptr as usize) % align != 0 {
         return Err(BufferError::AlignmentViolation);
     }
     Ok(())
+}
+
+/// Whether a typed view of these rows has every row start aligned for `Q`. A sample-aligned
+/// stride is enough for a pixel made of samples; a custom `Pixel` can ask for more.
+fn rows_aligned_for<Q>(first_row: *const u8, width: u32, rows: u32, stride: usize) -> bool {
+    let align = core::mem::align_of::<Q>();
+    width == 0 || rows == 0 || ((first_row as usize) % align == 0 && stride % align == 0)
 }
 
 /// Minimum bytes needed: `(rows - 1) * stride + min_stride`.
@@ -698,7 +710,9 @@ impl<P> Clone for PixelSlice<'_, P> {
 impl<'a> PixelSlice<'a> {
     /// Create a new pixel slice with validation.
     ///
-    /// `stride_bytes` is the byte distance between the start of consecutive rows.
+    /// `stride_bytes` is the byte distance between the start of consecutive rows. It
+    /// must be at least `width * bytes_per_pixel` and a multiple of the sample size.
+    /// It need not be a whole number of pixels: RGB8 rows 8 bytes apart are fine.
     ///
     /// # Endianness contract
     ///
@@ -713,7 +727,7 @@ impl<'a> PixelSlice<'a> {
     /// # Errors
     ///
     /// Returns an error if the data is too small, the stride is too small,
-    /// or the data is not aligned for the channel type.
+    /// or the data or stride is not aligned for the channel type.
     #[track_caller]
     pub fn new(
         data: &'a [u8],
@@ -766,14 +780,15 @@ impl<'a, P> PixelSlice<'a, P> {
     /// Try to reinterpret as a typed pixel slice.
     ///
     /// Succeeds if the descriptors are layout-compatible (same channel type
-    /// and layout). Transfer function and alpha mode are metadata, not
-    /// layout constraints.
+    /// and layout) and every row start is aligned for `Q`. Transfer function and
+    /// alpha mode are metadata, not layout constraints.
+    ///
+    /// The stride stays in bytes and need not be a whole number of `Q`s, so
+    /// `bytemuck::cast_slice::<u8, Q>(slice.row(y))` works on any row.
     pub fn try_typed<Q: Pixel>(self) -> Option<PixelSlice<'a, Q>> {
         if self.descriptor.typed_view_compatible(Q::DESCRIPTOR)
             && core::mem::size_of::<Q>() == Q::DESCRIPTOR.bytes_per_pixel()
-            && (self.width == 0
-                || self.rows == 0
-                || (self.data.as_ptr() as usize) % core::mem::align_of::<Q>() == 0)
+            && rows_aligned_for::<Q>(self.data.as_ptr(), self.width, self.rows, self.stride)
         {
             Some(PixelSlice {
                 data: self.data,
@@ -1403,7 +1418,9 @@ pub struct PixelSliceMut<'a, P = ()> {
 impl<'a> PixelSliceMut<'a> {
     /// Create a new mutable pixel slice with validation.
     ///
-    /// `stride_bytes` is the byte distance between the start of consecutive rows.
+    /// `stride_bytes` is the byte distance between the start of consecutive rows. It
+    /// must be at least `width * bytes_per_pixel` and a multiple of the sample size.
+    /// It need not be a whole number of pixels.
     ///
     /// # Endianness contract
     ///
@@ -1413,7 +1430,7 @@ impl<'a> PixelSliceMut<'a> {
     /// # Errors
     ///
     /// Returns an error if the data is too small, the stride is too small,
-    /// or the data is not aligned for the channel type.
+    /// or the data or stride is not aligned for the channel type.
     #[track_caller]
     pub fn new(
         data: &'a mut [u8],
@@ -1461,13 +1478,11 @@ impl<'a, P> PixelSliceMut<'a, P> {
 
     /// Try to reinterpret as a typed mutable pixel slice.
     ///
-    /// Succeeds if the descriptors are layout-compatible.
+    /// See [`PixelSlice::try_typed()`] for the conditions.
     pub fn try_typed<Q: Pixel>(self) -> Option<PixelSliceMut<'a, Q>> {
         if self.descriptor.typed_view_compatible(Q::DESCRIPTOR)
             && core::mem::size_of::<Q>() == Q::DESCRIPTOR.bytes_per_pixel()
-            && (self.width == 0
-                || self.rows == 0
-                || (self.data.as_ptr() as usize) % core::mem::align_of::<Q>() == 0)
+            && rows_aligned_for::<Q>(self.data.as_ptr(), self.width, self.rows, self.stride)
         {
             Some(PixelSliceMut {
                 data: self.data,
@@ -2013,7 +2028,7 @@ impl<'a> PixelSliceMut<'a, BGRA<u8>> {
 /// The type parameter `P` tracks pixel format at compile time, same as
 /// [`PixelSlice`].
 ///
-/// `S` defaults to `Vec<u8>`, which is what most allocating constructors make;
+/// `S` defaults to [`PixelStorage`], which owns U8, U16 or F32 samples;
 /// [`PixelBuffer::try_new_aligned`] makes [`AlignedSamples`].
 /// [`PixelBuffer::try_from_parts`] adopts any
 /// [`SampleStorage`] without copying: a `Vec<u16>` or
@@ -2511,6 +2526,17 @@ impl<P: Pixel> PixelBuffer<P> {
 impl<P: Pixel> PixelBuffer<P> {
     /// Construct from a typed pixel `Vec`.
     ///
+    /// This selects sample storage from `P` and needs no integer inference on
+    /// a `PixelStorage::from(vec![...])` call:
+    ///
+    /// ```
+    /// use zenpixels::PixelBuffer;
+    /// let pixels = vec![rgb::Rgb::new(0xa5_u8, 0, 0); 4];
+    /// let buffer = PixelBuffer::from_pixels(pixels, 2, 2)?;
+    /// assert_eq!(buffer.width(), 2);
+    /// # Ok::<(), whereat::At<zenpixels::BufferError>>(())
+    /// ```
+    ///
     /// Zero-copy when `P` has alignment 1 (u8-component types like `Rgb<u8>`).
     /// Copies the data for types with higher alignment (`Rgb<u16>`, `Rgb<f32>`, etc.)
     /// because `Vec` tracks allocation alignment and `Vec<u8>` requires alignment 1.
@@ -2657,9 +2683,17 @@ impl<P: Pixel, S: ByteStorage> PixelBuffer<P, S> {
     ///
     /// # Panics
     ///
-    /// Panics if the stride is not pixel-aligned (always succeeds for
-    /// buffers created via `new_typed()`, `from_pixels()`, or `from_imgvec()`).
+    /// Panics if the stride is not a whole number of pixels, which `imgref` can't
+    /// express. That can't happen for buffers created via `new_typed()`,
+    /// `from_pixels()`, or `from_imgvec()`. For a buffer adopted from foreign rows,
+    /// check `stride() % size_of::<P>()` first, or use
+    /// [`try_as_imgref`](PixelBuffer::try_as_imgref) on the erased buffer.
     pub fn as_imgref(&self) -> ImgRef<'_, P> {
+        assert_eq!(
+            self.stride % core::mem::size_of::<P>(),
+            0,
+            "ImgRef requires a stride in whole pixels"
+        );
         let total_bytes = if self.height == 0 || self.width == 0 {
             0
         } else {
@@ -2673,11 +2707,6 @@ impl<P: Pixel, S: ByteStorage> PixelBuffer<P, S> {
         } else {
             bytemuck::cast_slice(data)
         };
-        assert_eq!(
-            self.stride % core::mem::size_of::<P>(),
-            0,
-            "ImgRef requires a stride in whole pixels"
-        );
         // imgref requires positive stride even for zero-area views.
         let stride_px = (self.stride / core::mem::size_of::<P>()).max(1);
         imgref::Img::new_stride(pixels, self.width as usize, self.height as usize, stride_px)
@@ -2689,7 +2718,17 @@ impl<P: Pixel, S: ByteStorageMut> PixelBuffer<P, S> {
     /// Borrow the buffer as a mutable [`ImgRefMut`](imgref::ImgRefMut).
     ///
     /// Zero-copy: reinterprets the raw bytes as typed pixels.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stride is not a whole number of pixels; see
+    /// [`as_imgref`](Self::as_imgref).
     pub fn as_imgref_mut(&mut self) -> imgref::ImgRefMut<'_, P> {
+        assert_eq!(
+            self.stride % core::mem::size_of::<P>(),
+            0,
+            "ImgRef requires a stride in whole pixels"
+        );
         // Mutable access can change any sample: end current-sample evidence.
         self.exact = None;
         let total_bytes = if self.height == 0 || self.width == 0 {
@@ -2705,11 +2744,6 @@ impl<P: Pixel, S: ByteStorageMut> PixelBuffer<P, S> {
         } else {
             bytemuck::cast_slice_mut(data)
         };
-        assert_eq!(
-            self.stride % core::mem::size_of::<P>(),
-            0,
-            "ImgRef requires a stride in whole pixels"
-        );
         // imgref requires positive stride even for zero-area views.
         let stride_px = (self.stride / core::mem::size_of::<P>()).max(1);
         imgref::Img::new_stride(pixels, self.width as usize, self.height as usize, stride_px)
@@ -2744,8 +2778,9 @@ impl PixelBuffer {
     /// and rows are tightly packed (no stride padding). Returns `None` otherwise.
     ///
     /// This is a convenience for the common case where you just need a flat
-    /// pixel slice without imgref metadata. For strided access, use
-    /// [`try_as_imgref()`](Self::try_as_imgref).
+    /// pixel slice without imgref metadata. For padded rows, use
+    /// [`try_as_imgref()`](Self::try_as_imgref) when the stride is a whole number of
+    /// pixels, or cast each of [`rows`](PixelBuffer::rows).
     pub fn as_contiguous_pixels<P: Pixel>(&self) -> Option<&[P]> {
         if !self.descriptor.typed_view_compatible(P::DESCRIPTOR)
             || core::mem::size_of::<P>() != self.descriptor.bytes_per_pixel()
@@ -2822,17 +2857,11 @@ impl PixelBuffer {
 impl<S: ByteStorage> PixelBuffer<(), S> {
     /// Try to borrow the buffer as a typed [`ImgRef`].
     ///
-    /// Returns `None` if the descriptor is not layout-compatible with `P`.
+    /// Returns `None` for incompatible pixels, insufficient alignment or a stride
+    /// that is not a whole number of pixels. Row access still supports sample strides.
+    #[track_caller]
     pub fn try_as_imgref<P: Pixel>(&self) -> Option<ImgRef<'_, P>> {
-        if !self.descriptor.typed_view_compatible(P::DESCRIPTOR)
-            || core::mem::size_of::<P>() != self.descriptor.bytes_per_pixel()
-        {
-            return None;
-        }
-        let pixel_size = core::mem::size_of::<P>();
-        if pixel_size == 0 || self.stride % pixel_size != 0 {
-            return None;
-        }
+        let pixel_size = check_imgref::<P>(self.descriptor, self.stride).ok()?;
         let total_bytes = if self.height == 0 || self.width == 0 {
             0
         } else {
@@ -2860,31 +2889,27 @@ impl<S: ByteStorage> PixelBuffer<(), S> {
 impl<S: ByteStorageMut> PixelBuffer<(), S> {
     /// Try to borrow the buffer as a typed mutable [`ImgRefMut`](imgref::ImgRefMut).
     ///
-    /// Returns `None` if the descriptor is not layout-compatible with `P`.
+    /// On refusal (`None`), exact-depth evidence is unchanged.
+    ///
+    /// Refusal conditions match [`try_as_imgref`](Self::try_as_imgref).
+    #[track_caller]
     pub fn try_as_imgref_mut<P: Pixel>(&mut self) -> Option<imgref::ImgRefMut<'_, P>> {
-        // Mutable access can change any sample: end current-sample evidence.
-        self.exact = None;
-        if !self.descriptor.typed_view_compatible(P::DESCRIPTOR)
-            || core::mem::size_of::<P>() != self.descriptor.bytes_per_pixel()
-        {
-            return None;
-        }
-        let pixel_size = core::mem::size_of::<P>();
-        if pixel_size == 0 || self.stride % pixel_size != 0 {
-            return None;
-        }
+        let pixel_size = check_imgref::<P>(self.descriptor, self.stride).ok()?;
         let total_bytes = if self.height == 0 || self.width == 0 {
             0
         } else {
             (self.height as usize - 1) * self.stride + self.width as usize * pixel_size
         };
         let offset = self.offset as usize;
-        let data = &mut self.data.as_bytes_mut()[offset..offset + total_bytes];
+        let bytes = self.data.as_bytes_mut();
+        let data = &mut bytes[offset..offset + total_bytes];
         let pixels: &mut [P] = if data.is_empty() {
             &mut []
         } else {
             bytemuck::try_cast_slice_mut(data).ok()?
         };
+        // Mutable access can change any sample: end current-sample evidence.
+        self.exact = None;
         // imgref refuses a stride of 0, even for an empty image.
         let stride_px = (self.stride / pixel_size).max(1);
         Some(imgref::Img::new_stride(
@@ -2894,6 +2919,26 @@ impl<S: ByteStorageMut> PixelBuffer<(), S> {
             stride_px,
         ))
     }
+}
+
+/// What [`PixelBuffer::try_as_imgref`] checks before it reads any bytes. Returns the pixel size.
+#[cfg(feature = "imgref")]
+#[track_caller]
+fn check_imgref<P: Pixel>(
+    descriptor: PixelDescriptor,
+    stride: usize,
+) -> Result<usize, At<BufferError>> {
+    let pixel_size = core::mem::size_of::<P>();
+    if !descriptor.typed_view_compatible(P::DESCRIPTOR)
+        || pixel_size != descriptor.bytes_per_pixel()
+        || pixel_size == 0
+    {
+        return Err(whereat::at!(BufferError::IncompatibleDescriptor));
+    }
+    if stride % pixel_size != 0 {
+        return Err(whereat::at!(BufferError::StrideNotPixelAligned));
+    }
+    Ok(pixel_size)
 }
 
 /// Everything a layout-changing in-place transform receives from
@@ -3084,15 +3129,17 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
 
     /// Try to reinterpret as a typed pixel buffer.
     ///
-    /// Succeeds if the descriptors are layout-compatible.
+    /// See [`PixelSlice::try_typed()`] for the conditions. The stride may leave
+    /// [`as_imgref`](PixelBuffer::as_imgref) unusable: it needs a whole number of pixels.
     pub fn try_typed<Q: Pixel>(self) -> Option<PixelBuffer<Q, S>> {
         if self.descriptor.typed_view_compatible(Q::DESCRIPTOR)
             && core::mem::size_of::<Q>() == Q::DESCRIPTOR.bytes_per_pixel()
-            && (self.width == 0
-                || self.height == 0
-                || (self.data.as_bytes()[(self.offset as usize)..].as_ptr() as usize)
-                    % core::mem::align_of::<Q>()
-                    == 0)
+            && rows_aligned_for::<Q>(
+                self.data.as_bytes()[(self.offset as usize)..].as_ptr(),
+                self.width,
+                self.height,
+                self.stride,
+            )
         {
             Some(PixelBuffer {
                 data: self.data,
@@ -4381,18 +4428,36 @@ mod tests {
     }
 
     #[test]
-    fn stride_not_pixel_aligned_rejected() {
-        // RGB8 bpp=3, stride=32 is not a multiple of 3
+    fn stride_need_not_be_whole_pixels() {
+        // RGB8 bpp=3, stride=32 is not a multiple of 3, but every sample still fits.
         let data = [0u8; 128];
-        let err = PixelSlice::new(&data, 10, 1, 32, PixelDescriptor::RGB8_SRGB);
-        assert_eq!(
-            *err.unwrap_err().error(),
-            BufferError::StrideNotPixelAligned
-        );
+        let slice = PixelSlice::new(&data, 10, 2, 32, PixelDescriptor::RGB8_SRGB).unwrap();
+        assert_eq!(slice.stride(), 32);
+        assert_eq!(slice.row(1).len(), 30);
+        assert_eq!(slice.row(1).as_ptr(), data[32..].as_ptr());
+    }
 
-        // stride=33 IS a multiple of 3 -> accepted
-        let ok = PixelSlice::new(&data, 10, 1, 33, PixelDescriptor::RGB8_SRGB);
-        assert!(ok.is_ok());
+    #[test]
+    fn stride_must_be_whole_samples() {
+        let words = [0u32; 32];
+        let data: &[u8] = bytemuck::cast_slice(&words);
+        for (descriptor, width, stride) in [
+            (PixelDescriptor::RGB16_SRGB, 2, 13),
+            (PixelDescriptor::RGBF32_LINEAR, 1, 14),
+            (PixelDescriptor::RGBF32_LINEAR, 1, 15),
+        ] {
+            for rows in [1, 2] {
+                assert_eq!(
+                    *PixelSlice::new(data, width, rows, stride, descriptor)
+                        .unwrap_err()
+                        .error(),
+                    BufferError::AlignmentViolation,
+                    "{descriptor:?} stride {stride} rows {rows}"
+                );
+            }
+        }
+        assert!(PixelSlice::new(data, 2, 2, 14, PixelDescriptor::RGB16_SRGB).is_ok());
+        assert!(PixelSlice::new(data, 1, 2, 16, PixelDescriptor::RGBF32_LINEAR).is_ok());
     }
 
     #[test]

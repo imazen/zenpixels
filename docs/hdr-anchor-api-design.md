@@ -186,7 +186,7 @@ Each story states the persona, the need, the **auto-or-explicit** tier, and the
 
 ---
 
-## 4. What we are deliberately **not** adding (YAGNI ledger)
+## 4. Historical scope decisions (superseded where section 6 differs)
 
 - **Anchor on `ConvertOptions`.** Considered for full-pipeline threading;
   rejected for now — it drops `ConvertOptions: Eq/Hash` (f32) for a *hypothetical*
@@ -202,7 +202,7 @@ Each story states the persona, the need, the **auto-or-explicit** tier, and the
 
 ---
 
-## 5. Summary — the public surface this justifies
+## 5. Historical surface proposal
 
 | Item | Tier | Surface (decade commitment) |
 |---|---|---|
@@ -219,7 +219,7 @@ The one-line rule to carry forward: **auto-convert what the pixels already
 determine; require an explicit, safe-defaulted policy for everything that loses
 information or encodes the caller's taste.**
 
-## 6. Review, 2026-11-05: what the shipped API does, and a proposal (pending owner decision)
+## 6. Approved HDR intent (2026-11-06; implementation in PR 120)
 
 Measured on `fde59b96`, Linear BT.2020 (1, 1, 1) into `RGB16_BT2100_PQ`:
 
@@ -239,14 +239,14 @@ Other friction found in the same review:
 - Measured-peak-by-default with an override, the owner's decision, exists only as zenpipe's `ToneMapPeak`.
 - HLG has no anchored route.
 
-Proposal, not yet approved: put HDR intent on `ConvertOptions`, which is already `Copy`, `#[non_exhaustive]` and built with const methods, so every planning entry point reads it:
+Owner-approved design: put HDR intent on `ConvertOptions`, which is already `Copy`, `#[non_exhaustive]` and built with const methods, so every planning entry point reads it:
 
 ```rust
 // Sketch, not compiled.
 let opts = ConvertOptions::permissive()
     .with_sdr_white(DiffuseWhite::BT2408)   // what SDR white and linear 1.0 mean
-    .with_hdr_peak(HdrPeak::Measured)       // or Declared, or Nits(1000.0)
-    .with_sdr_peak(Nits(100.0));
+    .with_hdr_peak(HdrPeak::Measured)       // or Declared, or Nits(Nits::new(1000.0))
+    .with_sdr_peak(Nits::new(100.0));
 let plan = ConvertPlan::new_explicit(from, to, &opts)?;
 ```
 

@@ -1,0 +1,340 @@
+{
+  "scope": "PNG16 to canvas sRGB U8; capability witnesses, no HDR display accuracy claim",
+  "playwright": "1.63.0",
+  "sources": {
+    "original": "3cc45b2abff548624924b813f67819a3c81c34f7ad4ea20f8cf21279fae88c28",
+    "floating": "1c4375db659d42b11fa1c2fc00f4b1d2e262834891277312605e50d392c3c52d",
+    "external": "8a66e7e397f1a833f34b584681857589144a1da01918e2b52447c56bdebd5e4f"
+  },
+  "width": 60,
+  "height": 1,
+  "commands": [
+    "PLAYWRIGHT_MODULE=<installed-playwright> run-heavy --mem 4G --jobs 2 -- just icc-pq-png-readers ORIGINAL.icc FLOAT16385.icc W3C.icc FRESH_OUTPUT chromium firefox firefox-cms",
+    "C-LCMS-2.20/color-c220 float.icc float-linear-fallback.icc"
+  ],
+  "script_sha256": "5d7a965018229051c2c1c9d03e7f037f8fbc6d6380a8a6f647b6ed5bd00d79aa",
+  "readers": {
+    "chromium": {
+      "version": "153.0.8010.12",
+      "executableSha256": "8c599d43aec53f2460a31ae2f4af6bd863f8258b34ff519564bc5d4726bfaa1e",
+      "options": {},
+      "comparisons": {
+        "float-vs-original": {
+          "differentRgbChannels": 0,
+          "maxCodeDifference": 0
+        },
+        "float-vs-diagnostic-fallback": {
+          "differentRgbChannels": 120,
+          "maxCodeDifference": 226
+        },
+        "diagnostic-vs-linear-only": {
+          "differentRgbChannels": 0,
+          "maxCodeDifference": 0
+        },
+        "cicp-overrides-icc-witness": {
+          "differentRgbChannels": 0,
+          "maxCodeDifference": 0
+        },
+        "dual-vs-cicp-only": {
+          "differentRgbChannels": 0,
+          "maxCodeDifference": 0
+        },
+        "cicp-changes-linear-icc": {
+          "differentRgbChannels": 120,
+          "maxCodeDifference": 226
+        },
+        "linear-icc-vs-untagged": {
+          "differentRgbChannels": 120,
+          "maxCodeDifference": 107
+        },
+        "embedded-cicp-vs-icc-curves": {
+          "differentRgbChannels": 102,
+          "maxCodeDifference": 169
+        }
+      },
+      "neutral_32768_over_65535": {
+        "original": [
+          24,
+          24,
+          24
+        ],
+        "float": [
+          24,
+          24,
+          24
+        ],
+        "original-embedded-cicp": [
+          131,
+          131,
+          131
+        ],
+        "float-linear-fallback": [
+          188,
+          188,
+          188
+        ],
+        "linear-only": [
+          188,
+          188,
+          188
+        ],
+        "float-cicp": [
+          131,
+          131,
+          131
+        ],
+        "linear-cicp": [
+          131,
+          131,
+          131
+        ],
+        "cicp-only": [
+          131,
+          131,
+          131
+        ],
+        "external": [
+          246,
+          246,
+          246
+        ],
+        "untagged": [
+          128,
+          128,
+          128
+        ]
+      }
+    },
+    "firefox": {
+      "version": "155.0",
+      "executableSha256": "062272ac4d851eade5b75db2dc7c14569d96cb3ca38f949337cdc1b74367e35b",
+      "options": {},
+      "comparisons": {
+        "float-vs-original": {
+          "differentRgbChannels": 0,
+          "maxCodeDifference": 0
+        },
+        "float-vs-diagnostic-fallback": {
+          "differentRgbChannels": 0,
+          "maxCodeDifference": 0
+        },
+        "diagnostic-vs-linear-only": {
+          "differentRgbChannels": 0,
+          "maxCodeDifference": 0
+        },
+        "cicp-overrides-icc-witness": {
+          "differentRgbChannels": 0,
+          "maxCodeDifference": 0
+        },
+        "dual-vs-cicp-only": {
+          "differentRgbChannels": 0,
+          "maxCodeDifference": 0
+        },
+        "cicp-changes-linear-icc": {
+          "differentRgbChannels": 0,
+          "maxCodeDifference": 0
+        },
+        "linear-icc-vs-untagged": {
+          "differentRgbChannels": 0,
+          "maxCodeDifference": 0
+        },
+        "embedded-cicp-vs-icc-curves": {
+          "differentRgbChannels": 0,
+          "maxCodeDifference": 0
+        }
+      },
+      "neutral_32768_over_65535": {
+        "original": [
+          128,
+          128,
+          128
+        ],
+        "float": [
+          128,
+          128,
+          128
+        ],
+        "original-embedded-cicp": [
+          128,
+          128,
+          128
+        ],
+        "float-linear-fallback": [
+          128,
+          128,
+          128
+        ],
+        "linear-only": [
+          128,
+          128,
+          128
+        ],
+        "float-cicp": [
+          128,
+          128,
+          128
+        ],
+        "linear-cicp": [
+          128,
+          128,
+          128
+        ],
+        "cicp-only": [
+          128,
+          128,
+          128
+        ],
+        "external": [
+          128,
+          128,
+          128
+        ],
+        "untagged": [
+          128,
+          128,
+          128
+        ]
+      }
+    },
+    "firefox-cms": {
+      "version": "155.0",
+      "executableSha256": "062272ac4d851eade5b75db2dc7c14569d96cb3ca38f949337cdc1b74367e35b",
+      "options": {
+        "firefoxUserPrefs": {
+          "gfx.color_management.mode": 1,
+          "gfx.color_management.enablev4": true,
+          "gfx.color_management.force_srgb": true
+        }
+      },
+      "comparisons": {
+        "float-vs-original": {
+          "differentRgbChannels": 0,
+          "maxCodeDifference": 0
+        },
+        "float-vs-diagnostic-fallback": {
+          "differentRgbChannels": 120,
+          "maxCodeDifference": 226
+        },
+        "diagnostic-vs-linear-only": {
+          "differentRgbChannels": 0,
+          "maxCodeDifference": 0
+        },
+        "cicp-overrides-icc-witness": {
+          "differentRgbChannels": 0,
+          "maxCodeDifference": 0
+        },
+        "dual-vs-cicp-only": {
+          "differentRgbChannels": 0,
+          "maxCodeDifference": 0
+        },
+        "cicp-changes-linear-icc": {
+          "differentRgbChannels": 120,
+          "maxCodeDifference": 226
+        },
+        "linear-icc-vs-untagged": {
+          "differentRgbChannels": 120,
+          "maxCodeDifference": 107
+        },
+        "embedded-cicp-vs-icc-curves": {
+          "differentRgbChannels": 0,
+          "maxCodeDifference": 0
+        }
+      },
+      "neutral_32768_over_65535": {
+        "original": [
+          24,
+          24,
+          24
+        ],
+        "float": [
+          24,
+          24,
+          24
+        ],
+        "original-embedded-cicp": [
+          24,
+          24,
+          24
+        ],
+        "float-linear-fallback": [
+          188,
+          188,
+          188
+        ],
+        "linear-only": [
+          188,
+          188,
+          188
+        ],
+        "float-cicp": [
+          24,
+          24,
+          24
+        ],
+        "linear-cicp": [
+          24,
+          24,
+          24
+        ],
+        "cicp-only": [
+          24,
+          24,
+          24
+        ],
+        "external": [
+          247,
+          247,
+          247
+        ],
+        "untagged": [
+          128,
+          128,
+          128
+        ]
+      }
+    }
+  },
+  "c_lcms_control": {
+    "version": "2.20",
+    "source": "7717fce0d85447ef3b2df0cca2e99207c15eeecd",
+    "relative": {
+      "inputs": 136,
+      "output_channels": 408,
+      "different_channels": 0,
+      "max_absolute_difference": 0
+    },
+    "absolute_no_DToB3": {
+      "inputs": 136,
+      "output_channels": 408,
+      "different_channels": 384,
+      "max_absolute_difference": 0.7096963340023876
+    }
+  },
+  "resource": {
+    "browser_run": {
+      "seconds": 5,
+      "peak_rss_gib": 0.42,
+      "min_available_mib": 17064,
+      "peak_load": 0.28,
+      "mem_cap_gib": 4,
+      "jobs": 2
+    },
+    "c_control": {
+      "seconds": 0,
+      "peak_rss_gib_rounded_by_wrapper": 0.0,
+      "min_available_mib": 28250,
+      "peak_load": 6.06,
+      "mem_cap_gib": 1,
+      "jobs": 1
+    }
+  },
+  "coverage_limits": [
+    "Two of three requested browser engines ran; WebKit failed to launch: libevent-2.1.so.7 missing. Original failure preserved.",
+    "Unmodified headless Firefox has no positive color-management control; enabled configuration is distinct.",
+    "60 RGB triplets; sRGB U8 canvas, not HDR display or dense precision qualification.",
+    "Diagnostic linear fallback profiles are deliberately contradictory, not exports.",
+    "Input original/float profiles use peak-normalized PQ; W3C uses a different 100-nit-relative convention.",
+    "Actual export blob unchanged; no thresholds, goldens or established pixel expectations replaced."
+  ],
+  "full_report_sha256": "76a98bf2c6c40bd6083ebcf10f222df2c0a618657d0c1bfc7023a597b2f569cb"
+}

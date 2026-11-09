@@ -13,10 +13,11 @@
 // written form, but round correctly during compilation. Silence clippy.
 #![allow(clippy::excessive_precision)]
 
+use super::KernelConverter as RowConverter;
+use crate::policy::ConvertOptions;
 use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
 };
-use zenpixels_convert::{RowConverter, policy::ConvertOptions};
 
 // ── Ground-truth EOTF/OETF ───────────────────────────────────────────────
 
@@ -244,7 +245,7 @@ fn u8_same_depth_pq_to_srgb_diverges_wildly() {
     let dst_d = rgb(ChannelType::U8, TransferFunction::Srgb);
     #[cfg(feature = "bt2446a")]
     {
-        use zenpixels_convert::{ConvertError, ConvertPlan};
+        use crate::{ConvertError, ConvertPlan};
         let err = RowConverter::new(src_d, dst_d).expect_err("must refuse");
         assert!(matches!(
             *err.error(),
@@ -274,7 +275,7 @@ fn u8_same_depth_pq_to_srgb_diverges_wildly() {
         *RowConverter::new(src_d, dst_d)
             .expect_err("HDR mapping requires a supplied peak even without the feature")
             .error(),
-        zenpixels_convert::ConvertError::HdrSourceRequiresPeak { .. }
+        crate::ConvertError::HdrSourceRequiresPeak { .. }
     ));
 }
 
@@ -543,7 +544,7 @@ fn u16_pq_to_u8_srgb_fused_path() {
     let dst_d = rgb(ChannelType::U8, TransferFunction::Srgb);
     #[cfg(feature = "bt2446a")]
     {
-        use zenpixels_convert::{ConvertError, ConvertPlan};
+        use crate::{ConvertError, ConvertPlan};
         let err = RowConverter::new(src_d, dst_d).expect_err("must refuse");
         assert!(matches!(
             *err.error(),
@@ -565,7 +566,7 @@ fn u16_pq_to_u8_srgb_fused_path() {
         *RowConverter::new(src_d, dst_d)
             .expect_err("HDR mapping requires a supplied peak even without the feature")
             .error(),
-        zenpixels_convert::ConvertError::HdrSourceRequiresPeak { .. }
+        crate::ConvertError::HdrSourceRequiresPeak { .. }
     ));
 }
 

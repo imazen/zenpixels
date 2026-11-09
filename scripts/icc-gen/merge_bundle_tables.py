@@ -5,6 +5,15 @@ import re
 import sys
 
 source, destination = map(Path, sys.argv[1:])
+def retained_row(row):
+    # Curve closeness and a CICP hint do not qualify the profile's complete
+    # matrix, native-white adaptation or rendering-intent behavior. Historical
+    # and fresh bundle fingerprints remain useful identification metadata.
+    if "cicp bundle:" in row:
+        row = re.sub(r"Safe::[A-Za-z]+", "Safe::IdOnly", row)
+    return row
+
+
 pattern = re.compile(r"^    (?:// )?\(0x([0-9a-f_]+),", re.MULTILINE)
 for kind in ("rgb", "gray"):
     target = destination / f"icc_table_{kind}.inc"
@@ -13,7 +22,7 @@ for kind in ("rgb", "gray"):
     rows = {}
     for match in pattern.finditer(original):
         end = original.find("\n", match.start())
-        rows[int(match[1].replace("_", ""), 16)] = original[match.start():end]
+        rows[int(match[1].replace("_", ""), 16)] = retained_row(original[match.start():end])
     added = 0
     for match in pattern.finditer(fresh):
         end = fresh.find("\n", match.start())
@@ -22,7 +31,7 @@ for kind in ("rgb", "gray"):
             continue
         key = int(match[1].replace("_", ""), 16)
         if key not in rows:
-            rows[key] = row
+            rows[key] = retained_row(row)
             added += 1
     start = pattern.search(original).start()
     output = original[:start] + "\n".join(rows[key] for key in sorted(rows)) + "\n]\n"

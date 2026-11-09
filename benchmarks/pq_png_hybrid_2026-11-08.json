@@ -1,0 +1,249 @@
+{
+  "sources": {
+    "pq_precision_sha256": "b359e2da254ca65a6ed571c28070e0653be2001dd3e18e4478336fa5513c96f4",
+    "browser_probe_sha256": "20e1bb9110450d6e325e39e0c63798ed0fa2f414a9ddc9888149b21f03798f4b",
+    "rust_lcms": "39068cc62f470d183e078637e19504ac9ecf7392",
+    "moxcms": "0.9.2",
+    "c_lcms_220": "7717fce0d85447ef3b2df0cca2e99207c15eeecd"
+  },
+  "runs": {
+    "u8": {
+      "scope": "PNG16 to canvas sRGB U8; capability witnesses, no HDR display accuracy claim",
+      "width": 60,
+      "height": 1,
+      "readers": {
+        "chromium": {
+          "version": "153.0.8010.12",
+          "executableSha256": "8c599d43aec53f2460a31ae2f4af6bd863f8258b34ff519564bc5d4726bfaa1e",
+          "options": {
+            "isolatedWebkitRuntime": false
+          },
+          "comparisons": {
+            "hybrid3-vs-float": {
+              "differentRgbChannels": 0,
+              "maxCodeDifference": 0
+            },
+            "hybrid3-vs-conventional": {
+              "differentRgbChannels": 0,
+              "maxCodeDifference": 0
+            },
+            "hybrid8-vs-float": {
+              "differentRgbChannels": 0,
+              "maxCodeDifference": 0
+            },
+            "hybrid8-vs-conventional": {
+              "differentRgbChannels": 0,
+              "maxCodeDifference": 0
+            }
+          }
+        },
+        "firefox-cms": {
+          "version": "155.0",
+          "executableSha256": "062272ac4d851eade5b75db2dc7c14569d96cb3ca38f949337cdc1b74367e35b",
+          "options": {
+            "firefoxUserPrefs": {
+              "gfx.color_management.mode": 1,
+              "gfx.color_management.enablev4": true,
+              "gfx.color_management.force_srgb": true
+            },
+            "isolatedWebkitRuntime": false
+          },
+          "comparisons": {
+            "hybrid3-vs-float": {
+              "differentRgbChannels": 7,
+              "maxCodeDifference": 1
+            },
+            "hybrid3-vs-conventional": {
+              "differentRgbChannels": 0,
+              "maxCodeDifference": 0
+            },
+            "hybrid8-vs-float": {
+              "differentRgbChannels": 8,
+              "maxCodeDifference": 1
+            },
+            "hybrid8-vs-conventional": {
+              "differentRgbChannels": 0,
+              "maxCodeDifference": 0
+            }
+          }
+        },
+        "webkit": {
+          "version": "26.6",
+          "executableSha256": "e22e33a2a8dad1fb2d8e0716f37b6cf548bd8e73fdf5e11389a4042359b8b8a9",
+          "options": {
+            "isolatedWebkitRuntime": true
+          },
+          "comparisons": {
+            "hybrid3-vs-float": {
+              "differentRgbChannels": 0,
+              "maxCodeDifference": 0
+            },
+            "hybrid3-vs-conventional": {
+              "differentRgbChannels": 1,
+              "maxCodeDifference": 1
+            },
+            "hybrid8-vs-float": {
+              "differentRgbChannels": 0,
+              "maxCodeDifference": 0
+            },
+            "hybrid8-vs-conventional": {
+              "differentRgbChannels": 1,
+              "maxCodeDifference": 1
+            }
+          }
+        }
+      },
+      "profiles": {
+        "original": {
+          "icc_bytes": 6532,
+          "icc_deflate_bytes": 1803,
+          "sha256": "4ffeab5e56ef3305c11868dfe78d057183cd884ec90aeca2841b7c30e82f7945"
+        },
+        "float": {
+          "icc_bytes": 105644,
+          "icc_deflate_bytes": 18276,
+          "sha256": "f733236a0daaeb58ea464ceae4c5f36b2bbf6489bc4d063dc8e87be8ccbe98f0"
+        },
+        "hybrid3": {
+          "icc_bytes": 155404,
+          "icc_deflate_bytes": 26999,
+          "sha256": "5f7f5a76c63b2773fa4188c7df68fa7482fb088917f366bcb71fa8d09ba863ae"
+        },
+        "hybrid8": {
+          "icc_bytes": 155404,
+          "icc_deflate_bytes": 27094,
+          "sha256": "7ce622576661e2041013d75c6668bbbc81e4dcd44251dd0a1b1354f17bacf484"
+        }
+      },
+      "report_sha256": "28e00cf000215ea4860a0c331b719ac759c6d179fe506de901fa308bd08bbb05"
+    },
+    "f16": {
+      "scope": "PNG16 to canvas sRGB F16; capability witnesses, no HDR display accuracy claim",
+      "width": 75,
+      "height": 1,
+      "readers": {
+        "chromium": {
+          "version": "153.0.8010.12",
+          "executableSha256": "8c599d43aec53f2460a31ae2f4af6bd863f8258b34ff519564bc5d4726bfaa1e",
+          "options": {
+            "isolatedWebkitRuntime": false
+          },
+          "comparisons": {
+            "hybrid3-vs-float": {
+              "differentRgbChannels": 111,
+              "maxChannelDifference": 0.00048828125
+            },
+            "hybrid3-vs-conventional": {
+              "differentRgbChannels": 0,
+              "maxChannelDifference": 0
+            },
+            "hybrid8-vs-float": {
+              "differentRgbChannels": 120,
+              "maxChannelDifference": 0.00048828125
+            },
+            "hybrid8-vs-conventional": {
+              "differentRgbChannels": 0,
+              "maxChannelDifference": 0
+            }
+          },
+          "code_1024_red": {
+            "original": 0,
+            "float": 0,
+            "hybrid3": 6.9141387939453125e-06,
+            "hybrid8": 6.9141387939453125e-06
+          }
+        }
+      },
+      "profiles": {
+        "original": {
+          "icc_bytes": 6532,
+          "icc_deflate_bytes": 1803,
+          "sha256": "4ffeab5e56ef3305c11868dfe78d057183cd884ec90aeca2841b7c30e82f7945"
+        },
+        "float": {
+          "icc_bytes": 105644,
+          "icc_deflate_bytes": 18276,
+          "sha256": "f733236a0daaeb58ea464ceae4c5f36b2bbf6489bc4d063dc8e87be8ccbe98f0"
+        },
+        "hybrid3": {
+          "icc_bytes": 155404,
+          "icc_deflate_bytes": 26999,
+          "sha256": "5f7f5a76c63b2773fa4188c7df68fa7482fb088917f366bcb71fa8d09ba863ae"
+        },
+        "hybrid8": {
+          "icc_bytes": 155404,
+          "icc_deflate_bytes": 27094,
+          "sha256": "7ce622576661e2041013d75c6668bbbc81e4dcd44251dd0a1b1354f17bacf484"
+        }
+      },
+      "report_sha256": "98ec596dd338e3bcf16cf71339d5a71ed6accde5c4757a02dec8d2917427059b"
+    }
+  },
+  "all_u16_neutral_red_measurements": [
+    "rgb\tmab3-4097\tbytes=56292",
+    "rgb\tmab3-4097\tmox\tmax_abs=9.879843441e-3\trel_above_0.001nit=3.362918210e0\tzeros=0\twhite=[1.0000422, 1.0000288, 0.99998325]",
+    "rgb\tmab3-4097\tlcms\tmax_abs=7.860331726e-5\trel_above_0.001nit=8.997117382e-3\tzeros=0\twhite=[1.0000421, 1.000029, 0.9999832]",
+    "rgb\tmab8-4097\tbytes=56292",
+    "rgb\tmab8-4097\tmox\tmax_abs=1.006009899e-2\trel_above_0.001nit=3.331546566e0\tzeros=0\twhite=[1.0000422, 1.0000288, 0.99998325]",
+    "rgb\tmab8-4097\tlcms\tmax_abs=1.472459918e-4\trel_above_0.001nit=8.368297694e-4\tzeros=0\twhite=[1.0000421, 1.000029, 0.9999832]",
+    "gray\tmab3-4097\tbytes=19308",
+    "gray\tmab3-4097\tmox\tunsupported",
+    "gray\tmab3-4097\tlcms\tmax_abs=9.019247542e-5\trel_above_0.001nit=9.093231144e-3\tzeros=0\twhite=[0.99994504, 1.000015, 1.0000242]",
+    "gray\tmab8-4097\tbytes=19308",
+    "gray\tmab8-4097\tmox\tunsupported",
+    "gray\tmab8-4097\tlcms\tmax_abs=1.686518513e-4\trel_above_0.001nit=9.337477076e-4\tzeros=0\twhite=[0.99994504, 1.000015, 1.0000242]"
+  ],
+  "c_relative_hybrid8_vs_float": {
+    "inputs": 136,
+    "output_channels": 408,
+    "different_channels": 0,
+    "maximum_absolute_difference": 0
+  },
+  "c_absolute_no_DToB3": {
+    "inputs": 136,
+    "output_channels": 408,
+    "different_channels": 405,
+    "maximum_absolute_difference": 3.671590093290433e-05
+  },
+  "c_control_provenance": "Run used the float4097 profile at float.icc. Its bytes are preserved as float-4097-hybrid-control.icc; float.icc was restored byte-for-byte to the earlier float16385 witness afterward. Input identity is the U8 float profile SHA above.",
+  "commands": [
+    "just icc-pq-precision RGB_PQ_ICC GRAY_PQ_ICC FRESH_OUTPUT",
+    "PQ_READER_HYBRIDS=<explicit JSON name-to-compound-file mapping> just icc-pq-png-readers ORIGINAL FLOAT4097 W3C FRESH_OUTPUT chromium firefox-cms webkit",
+    "PQ_READER_FLOAT16=1 PQ_READER_HYBRIDS=<same mapping> just icc-pq-png-readers ORIGINAL FLOAT4097 W3C FRESH_OUTPUT chromium",
+    "cargo clippy --locked --manifest-path cms-contract/Cargo.toml --all-targets -- -D warnings"
+  ],
+  "resource": {
+    "u16_pilot": {
+      "seconds": 9,
+      "peak_rss_gib": 0.23,
+      "min_available_mib": 27569,
+      "peak_load": 6.08
+    },
+    "u8_browsers": {
+      "seconds": 6,
+      "peak_rss_gib": 0.41,
+      "min_available_mib": 15631,
+      "peak_load": 1.53
+    },
+    "f16_chromium": {
+      "seconds": 4,
+      "peak_rss_gib": 0.41,
+      "min_available_mib": 17321,
+      "peak_load": 1.62
+    },
+    "strict_clippy": {
+      "seconds": 1,
+      "peak_rss_gib": 0.14,
+      "min_available_mib": 28019,
+      "peak_load": 6.09
+    }
+  },
+  "limits": [
+    "Representation pilot only; export blob and all established thresholds unchanged.",
+    "U16 errors are neutral red-channel measurements, not maxima over all colors.",
+    "C relative control includes colored and extended samples but only 136 inputs.",
+    "Reverse transforms, physical luminance convention, gray native PNG/browser readback and full bundle size remain unqualified.",
+    "Raw/PNG-compressed sizes measured for one profile; no full-bundle extrapolation.",
+    "Firefox explicit CMS prefs and Linux WPE custom runtime are separate configurations; no Safari claim."
+  ]
+}

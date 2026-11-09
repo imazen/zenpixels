@@ -1,0 +1,138 @@
+{
+  "purpose": "Independent decoded-color observations; no replacement fixture or threshold acceptance.",
+  "dependency": "moxcms0.9.2",
+  "lcms_pkg_config_version": "2.17",
+  "profile_count": 159,
+  "samples_per_profile_per_intent": 136,
+  "intents": {
+    "1": "relative colorimetric; adaptation1",
+    "3": "absolute colorimetric; adaptation0"
+  },
+  "old_bundle": {
+    "bytes": 35379,
+    "sha256": "10aaba9c228d86b47718d5e2f4bea739b336fea808c3fd68d7d40ff7a0f80a2f"
+  },
+  "proposed_bundle": {
+    "bytes": 37260,
+    "sha256": "ef6f028fabb3075d4e56e352793c2de65b0e8048ebd6986fed4330c6ae9c2d6f"
+  },
+  "summary": {
+    "1": {
+      "adaptation_state": 1.0,
+      "cells": 21624,
+      "changed_cells": 21215,
+      "changed_channels": 56110,
+      "max_abs_xyz_difference": 0.0009500835403741803,
+      "neutral_max_difference": 0.0009500835403741803,
+      "extended_max_difference": 0.0009500835403741803,
+      "pq_max_difference": 0.0003052307283724076,
+      "hlg_max_difference": 0.0003052307283724076,
+      "old_white_max_xyz_error": 0.0002952974069354575,
+      "new_white_max_xyz_error": 1.52587890625e-05,
+      "worst": {
+        "profile": "rgb-11-5.icc",
+        "sample": 135,
+        "input": [
+          1.5,
+          1.5,
+          1.5
+        ],
+        "old": [
+          3.0017077655247704,
+          3.1131002327310853,
+          2.568915745468985
+        ],
+        "new": [
+          3.001660320951487,
+          3.1131002327310853,
+          2.5679656619286106
+        ]
+      }
+    },
+    "3": {
+      "adaptation_state": 0.0,
+      "cells": 21624,
+      "changed_cells": 21215,
+      "changed_channels": 63645,
+      "max_abs_xyz_difference": 1.0975832351687131,
+      "neutral_max_difference": 1.0975832351687131,
+      "extended_max_difference": 1.0975832351687131,
+      "pq_max_difference": 0.37183623364398954,
+      "hlg_max_difference": 0.37183623364398954,
+      "old_white_max_xyz_error": 0.35254968215519233,
+      "new_white_max_xyz_error": 0.00026225190600892567,
+      "worst": {
+        "profile": "rgb-4-5.icc",
+        "sample": 135,
+        "input": [
+          1.5,
+          1.5,
+          1.5
+        ],
+        "old": [
+          2.915821167134709,
+          3.0379685323350714,
+          2.5869697168855055
+        ],
+        "new": [
+          3.0540040828600468,
+          3.1131061931046133,
+          3.6845529520542186
+        ]
+      }
+    }
+  },
+  "unit_cube_and_white_details": {
+    "1": {
+      "unit_cube_max": 0.0003052307283724076,
+      "unit_cube_worst": {
+        "profile": "rgb-9-1.icc",
+        "intent": "1",
+        "sample": "104",
+        "r": "1",
+        "g": "0",
+        "b": "1",
+        "old_x": "0.79855344099996728",
+        "old_y": "0.32466124805523577",
+        "old_z": "0.79521181718519074",
+        "new_x": "0.79852292388750357",
+        "new_y": "0.32464598949900392",
+        "new_z": "0.79490658645681833"
+      }
+    },
+    "3": {
+      "unit_cube_max": 0.3718362932477248,
+      "unit_cube_worst": {
+        "profile": "rgb-8-5.icc",
+        "intent": "3",
+        "sample": "9",
+        "r": "0",
+        "g": "0.00999999978",
+        "b": "1",
+        "old_x": "0.25879774968416314",
+        "old_y": "0.12686979894851902",
+        "old_z": "0.74799713550874003",
+        "new_x": "0.20145777917036867",
+        "new_y": "0.068082366624366841",
+        "new_z": "1.1198334287564649"
+      },
+      "new_white_error": 0.00026225190600892567,
+      "new_white_worst": {
+        "profile": "rgb-9-1.icc",
+        "expected": [
+          0.9504559270516716,
+          1,
+          1.0890577507598784
+        ],
+        "new": [
+          0.9504205994971926,
+          0.9999914168292889,
+          1.0887954988538695
+        ]
+      }
+    }
+  },
+  "reproduce": "just icc-bundle-color-compare OLD_PROFILE_EXPORT PROPOSED_PROFILE_EXPORT NEW_OUTPUT_DIR",
+  "comparator_source_sha256": "370834adb09b1134fcd2155da2358819a6fc2aeb4061879638a802bf634005aa",
+  "unqualified": "No HLG OOTF, no corpus rendering equivalence, no merge approval or numerical-equivalence claim."
+}

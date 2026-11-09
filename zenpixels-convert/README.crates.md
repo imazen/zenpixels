@@ -93,12 +93,13 @@ let mut conv = RowConverter::new_explicit(
 conv.convert_row(p3_row, srgb_row, width);
 ```
 
-Custom ICC profiles (vendor-specific, LUT-based, perceptual intent) need a CMS backend. Pass one via [`PluggableCms`] — the plan delegates to the plugin when the profiles differ, and uses the built-in matlut fast path when both sides are well-known. The `cms-moxcms` feature provides a concrete backend ([`MoxCms`]) built on [moxcms](https://crates.io/crates/moxcms).
+Custom ICC profiles (vendor-specific, LUT-based, perceptual intent) need a CMS backend. Pass one via [`PluggableCms`] — the plan delegates to the plugin when the profiles differ, and uses the built-in matlut fast path when both sides are well-known. Enable `cms-moxcms` for [`MoxCms`] or `cms-lcms` for [`Lcms`], using the pure-Rust Little CMS port. Both implement the same interface. Choose the backend explicitly; enabling both changes neither selection nor the built-in paths.
 
 ```rust
 use zenpixels_convert::{RowConverter, ConvertOptions, MoxCms, cms::PluggableCms};
 
 let cms: &dyn PluggableCms = &MoxCms;
+// With `cms-lcms`, use `&zenpixels_convert::Lcms` instead.
 let mut conv = RowConverter::new_explicit_with_cms(
     source_desc, target_desc,
     &ConvertOptions::permissive(),
@@ -112,7 +113,7 @@ For HDR and wide-gamut pipelines that defer tone/gamut mapping, build `ConvertOp
 
 Every operation that destroys information requires an explicit policy via [`ConvertOptions`] (from `zenpixels`, re-exported here):
 
-- **Alpha removal**: `DiscardIfOpaque`, `CompositeOnto { r, g, b }`, `DiscardUnchecked`, or `Forbid`.
+- **Alpha removal**: `DiscardIfOpaque`, `CompositeOnto { background, reference_white }`, `DiscardUnchecked`, or `Forbid`.
 - **Depth reduction**: `Round`, `Truncate`, or `Forbid`.
 - **RGB → gray**: requires explicit luma coefficients (`Bt709`, `Bt601`, `Bt2020`, or `DisplayP3`), or `None` to forbid. Uses Y' (encoded luma) semantics — round-trips bit-exactly when `R == G == B`.
 
@@ -129,19 +130,22 @@ The cost model separates **effort** (CPU work) from **loss** (information destro
 | `Blend` | 1× | 4× | Compositing — premultiplied alpha |
 | `Perceptual` | 1× | 3× | Color grading, sharpening |
 
-[`Provenance`] guides cost-model ranking, not exactness after edits. Use `ConvertPlan::new_preserving_samples` for proven representation changes or explicitly request value analysis. Three entry points: [`best_match`] (simple), [`best_match_with`] (with consumer costs), [`negotiate`] (full control with provenance).
+[`Provenance`] guides cost-model ranking, not exactness after edits. Use `ConvertPlan::new_preserving_samples` for proven representation changes or explicitly request value analysis. Three entry points: [`best_match`] (simple), [`best_match_within`] (with a loss ceiling), [`negotiate`] (full control with provenance).
 
 ## What `MoxCms` does at each depth
 
 Matrix-and-curve profiles take this crate's U8 kernels at 8 bits, using each profile's own curve and colorants, when the source's channels
-share a curve and the target has sRGB's. Everything else, including table profiles and CMYK, takes moxcms's F32 path and rounds to nearest,
-so it matches that path's result. Against moxcms's own F32 output, 0.13% of samples or fewer miss nearest on Display P3, Adobe RGB and BT.2020.
+share a curve and the target has sRGB's. Everything else at 8 bits, including table profiles and CMYK, takes the F32 path and rounds to nearest,
+so it matches that path's result. Over all 2^24 8-bit inputs, against exact math on each profile's curve and colorants, Display P3 and Adobe RGB into sRGB, sRGB into P3, and P3 into BT.2020 each miss nearest on at most 0.16% of samples, worst 0.502 of a code; P3 into Adobe RGB misses on 0.14%, worst 1.0.
+16-bit takes moxcms's own path, whose sRGB table truncates: 57% of samples miss nearest, for a mean of -0.64 of a 16-bit code.
 
-moxcms is a different implementation from lcms2 and is expected to differ from it. On table profiles the two differ more: on mozjpeg's `test1.icc` about 16% of 8-bit samples differ, and on `test3.icc` 61%.
+moxcms is a different implementation from lcms2 and is expected to differ from it. On table profiles the two differ more: lcms2's float path matches an exact evaluation of the tables to 0.35 of a code on mozjpeg's `test1.icc` and `test3.icc`. moxcms 0.9.1 interpolates Lab and XYZ tables trilinearly where lcms2 uses tetrahedra, scales a pre-v4 `lut8Type` table's Lab as if it were `lut16Type` (a mean of +0.68 of a code on `test3.icc`; fixed on its master, unreleased), and maps a v4 RGB table profile's black to zero (a mean of about -1 of a code on JPEG XL's PQ and HLG profiles). `benchmarks/jxl-cms-parity/README.md` has the HDR measurements.
 `CmykF32` and `CmykF32Inverted` sources convert to any RGB target; converting into F32 CMYK is refused. `Cmyk8` runs the
 same transform and rounds, so both have F32 CMYK's black-point compensation to sRGB.
 
-Every backend passes the same contract in `cms-contract/`: `just cms-contract`.
+Every backend runs through the same contract in `cms-contract/`: `just cms-contract`.
+
+`Lcms` supports native U8/U16/F32 RGB, gray and ICC-described CMYK inputs, including byte BGR/BGRA and alpha. It uses relative colorimetric intent with black-point compensation for CMYK sources. F32 CMYK destinations are refused; mixed depths and unqualified layouts decline to the planner. Prepared float CMYK rows reuse scratch. The Rust port is pinned to an unreleased Git revision, so publishing this feature requires a released port dependency. See [qualification and profile triage](https://github.com/imazen/zenpixels/blob/review/first-class-lcms-20261108/docs/first-class-lcms-and-profile-triage.md).
 
 ## Row conversion tiers
 
@@ -196,7 +200,7 @@ Use measured workload costs and explicit buffer/stride arithmetic.
 | `ConvertOptions` (re-export) | Explicit lossy-operation policy |
 | [`ConvertPlan`] | Lower-level plan, run through `RowConverter::from_plan` |
 | `PixelSlice::adapt_for_encode` / [`adapt::adapt_raw_rows_for_encode`] / `PixelBuffer::try_adapt_in_place` | One-call negotiate-and-convert helpers |
-| [`PluggableCms`] / [`RowTransformMut`] / [`MoxCms`] | Pluggable CMS backend interface + moxcms impl |
+| [`PluggableCms`] / [`RowTransformMut`] / [`MoxCms`] / [`Lcms`] | Pluggable CMS interface with explicit backend selection |
 | [`GamutMatrix`] | Gamut matrix construction and application, in place on rows |
 | [`ConvertPlan::new_with_hdr_peak`] / [`ConvertPlan::new_with_hdr_config`] | HDR→SDR conversion plan constructors (`bt2446a` feature) |
 | [`Bt2446A`] / [`SoftCompress`] / [`CllMeasure`] | ITU-R BT.2446 Method A curve + OKLch knee + CTA-861.3 CLL measurement (`hdr-experimental` feature) |
@@ -220,11 +224,12 @@ Use measured workload costs and explicit buffer/stride arithmetic.
 | `hdr-experimental` | | HDR→SDR display mapping (ITU-R BT.2446 Method A curve + OKLch soft compress + CTA-861.3 CLL measurement). API shape may move ahead of 0.3.0 (in particular `measure_robust` → `measure` rename); scan kernels and accuracy contracts are stable. See [HDR section](#gamut-hdr-oklab) above. |
 | `bt2446a` | | The BT.2446 Method A tone-mapping curve (implies `hdr-experimental`) |
 | `cms-moxcms` | | ICC profile transforms via [moxcms](https://crates.io/crates/moxcms) (implies `std`) |
+| `cms-lcms` | | ICC profile transforms via pure-Rust LCMS (implies `std`) |
 | `serde` | | No-op stub (soft-removed in 0.2.15, queued for removal in the next breaking release); previously forwarded to `zenpixels/serde`. Kept so `features = ["serde"]` from 0.2.14 still builds |
 
 ### `no_std`
 
-`zenpixels-convert` is `no_std + alloc` by default-construction (`std` is on by default but everything works without it). For `no_std`, set `default-features = false` and re-enable only what you need (note that `cms-moxcms` requires `std`):
+`zenpixels-convert` is `no_std + alloc` by default-construction (`std` is on by default but everything works without it). For `no_std`, set `default-features = false` and re-enable only what you need (both CMS features require `std`):
 
 ```toml
 zenpixels-convert = { version = "0.3.1", default-features = false }

@@ -18,9 +18,11 @@ pub(crate) fn canonicalize(icc: Vec<u8>) -> Option<Vec<u8>> {
     output[68..80].copy_from_slice(&[
         0x00, 0x00, 0xf6, 0xd6, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0xd3, 0x2d,
     ]);
-    output[24..36].fill(0); // Reproducible creation timestamp.
+    // Fixed creation epoch of this recipe, a valid ICC dateTimeNumber.
+    // Zero month/day are not valid calendar fields.
+    output[24..36].copy_from_slice(&[0x07, 0xea, 0, 11, 0, 8, 0, 0, 0, 0, 0, 0]);
     output[84..100].fill(0); // No stale profile ID after changing serialization.
-    let mut offsets = BTreeMap::new();
+    let mut offsets: BTreeMap<&[u8], u32> = BTreeMap::new();
     for index in 0..count {
         let entry = 132 + index * 12;
         let offset = read(entry + 4)?;
@@ -29,13 +31,13 @@ pub(crate) fn canonicalize(icc: Vec<u8>) -> Option<Vec<u8>> {
             return None;
         }
         let payload = icc.get(offset..offset.checked_add(size)?)?;
-        let next = if let Some(&shared) = offsets.get(&(offset, size)) {
+        let next = if let Some(&shared) = offsets.get(payload) {
             shared
         } else {
             output.resize(output.len().checked_add(3)? & !3, 0);
             let next = u32::try_from(output.len()).ok()?;
             output.extend_from_slice(payload);
-            offsets.insert((offset, size), next);
+            offsets.insert(payload, next);
             next
         };
         output[entry + 4..entry + 8].copy_from_slice(&next.to_be_bytes());
@@ -99,5 +101,25 @@ mod tests {
         bytes[136..140].copy_from_slice(&u32::MAX.to_be_bytes());
         bytes[140..144].copy_from_slice(&8_u32.to_be_bytes());
         assert!(canonicalize(bytes).is_none());
+    }
+
+    #[test]
+    fn equal_tag_payloads_share_storage_and_creation_date_is_valid() {
+        let mut bytes = alloc::vec![0; 172];
+        bytes[..4].copy_from_slice(&172_u32.to_be_bytes());
+        bytes[36..40].copy_from_slice(b"acsp");
+        bytes[128..132].copy_from_slice(&2_u32.to_be_bytes());
+        for (i, offset) in [156_u32, 164].into_iter().enumerate() {
+            let entry = 132 + i * 12;
+            bytes[entry..entry + 4].copy_from_slice(if i == 0 { b"D2B0" } else { b"D2B1" });
+            bytes[entry + 4..entry + 8].copy_from_slice(&offset.to_be_bytes());
+            bytes[entry + 8..entry + 12].copy_from_slice(&8_u32.to_be_bytes());
+            bytes[offset as usize..offset as usize + 8].copy_from_slice(b"mpet\0\0\0\0");
+        }
+        let result = canonicalize(bytes).unwrap();
+        assert_eq!(result.len(), 164);
+        assert_eq!(&result[136..140], &result[148..152]);
+        assert_eq!(&result[24..36], &[7, 234, 0, 11, 0, 8, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(canonicalize(result.clone()).unwrap(), result);
     }
 }

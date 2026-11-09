@@ -177,6 +177,9 @@ pub struct ConvertOptions {
     clip_out_of_gamut: bool,
     /// What happens to colors outside the target's gamut.
     gamut_mapping: GamutMapping,
+    sdr_white: Option<crate::hdr::DiffuseWhite>,
+    hdr_peak: crate::hdr::HdrPeak,
+    sdr_peak: Option<crate::hdr::Nits>,
 }
 
 impl ConvertOptions {
@@ -200,6 +203,9 @@ impl ConvertOptions {
             luma: None,
             clip_out_of_gamut: true,
             gamut_mapping: GamutMapping::Clip,
+            sdr_white: None,
+            hdr_peak: crate::hdr::HdrPeak::Measured,
+            sdr_peak: None,
         }
     }
 
@@ -217,7 +223,38 @@ impl ConvertOptions {
             luma: Some(LumaCoefficients::Bt709),
             clip_out_of_gamut: true,
             gamut_mapping: GamutMapping::Clip,
+            sdr_white: None,
+            hdr_peak: crate::hdr::HdrPeak::Measured,
+            sdr_peak: None,
         }
+    }
+
+    /// Explicit luminance represented by relative-linear 1.0 / SDR white.
+    pub const fn sdr_white(&self) -> Option<crate::hdr::DiffuseWhite> {
+        self.sdr_white
+    }
+    /// Source peak selection; buffers measure by default.
+    pub const fn hdr_peak(&self) -> crate::hdr::HdrPeak {
+        self.hdr_peak
+    }
+    /// Explicit target SDR peak; tone mapping refuses when it is absent.
+    pub const fn sdr_peak(&self) -> Option<crate::hdr::Nits> {
+        self.sdr_peak
+    }
+    /// Set the SDR-white anchor, overriding a source color context.
+    pub const fn with_sdr_white(mut self, white: crate::hdr::DiffuseWhite) -> Self {
+        self.sdr_white = Some(white);
+        self
+    }
+    /// Choose measured, declared or explicit source peak luminance.
+    pub const fn with_hdr_peak(mut self, peak: crate::hdr::HdrPeak) -> Self {
+        self.hdr_peak = peak;
+        self
+    }
+    /// Set target SDR peak luminance for tone mapping.
+    pub const fn with_sdr_peak(mut self, peak: crate::hdr::Nits) -> Self {
+        self.sdr_peak = Some(peak);
+        self
     }
 
     /// How grayscale expands to RGB.
@@ -418,6 +455,9 @@ mod tests {
             luma: Some(LumaCoefficients::Bt709),
             clip_out_of_gamut: true,
             gamut_mapping: GamutMapping::Clip,
+            sdr_white: None,
+            hdr_peak: crate::hdr::HdrPeak::Measured,
+            sdr_peak: None,
         };
         #[allow(clippy::clone_on_copy)]
         let opts2 = opts.clone();
@@ -447,6 +487,9 @@ mod tests {
             luma: None,
             clip_out_of_gamut: true,
             gamut_mapping: GamutMapping::Clip,
+            sdr_white: None,
+            hdr_peak: crate::hdr::HdrPeak::Measured,
+            sdr_peak: None,
         };
         let mut h = std::hash::DefaultHasher::new();
         opts.hash(&mut h);

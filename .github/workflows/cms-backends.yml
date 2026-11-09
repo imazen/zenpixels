@@ -1,0 +1,77 @@
+name: CMS backend qualification
+
+# Focused replay for backend/profile and ICC-authority changes, including
+# actual native integer layouts and genuinely isolated consumer features.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, "review/**"]
+    paths:
+      - .github/workflows/cms-backends.yml
+      - Cargo.toml
+      - Cargo.lock
+      - zenpixels-convert/Cargo.toml
+      - zenpixels-convert/tests/cms_lcms_contracts.rs
+      - zenpixels-convert/src/cms_lcms.rs
+      - zenpixels-convert/src/cms_moxcms.rs
+      - zenpixels-convert/src/load_bearing.rs
+      - zenpixels-convert/src/profiles/cicp_bundle.lz4
+      - cms-contract/**
+      - tools/icc-collapse-no-db/**
+
+concurrency:
+  group: cms-backends-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  native:
+    name: CMS (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest, windows-11-arm]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Production LCMS layouts and PQ precision
+        run: cargo test --locked -p zenpixels-convert --features cms-lcms --test cms_lcms_contracts -- --nocapture
+      - name: Shared MoxCMS and LCMS contract
+        run: cargo test --locked --manifest-path cms-contract/Cargo.toml
+      - name: ICC authority during grayscale collapse
+        run: "cargo test --locked -p zenpixels-convert --lib load_bearing::"
+      - name: Grayscale collapse without an ICC database
+        run: cargo test --locked --manifest-path tools/icc-collapse-no-db/Cargo.toml
+      - name: Strict converter Clippy
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo clippy --locked -p zenpixels-convert --all-targets -- -D warnings
+
+  i686:
+    name: CMS (i686)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-unknown-linux-gnu
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cms-cross-i686
+      - name: Production LCMS layouts and PQ precision
+        run: cross test --locked -p zenpixels-convert --features cms-lcms --test cms_lcms_contracts --target i686-unknown-linux-gnu -- --nocapture
+      - name: Shared MoxCMS and LCMS contract
+        run: cross test --locked --manifest-path cms-contract/Cargo.toml --target i686-unknown-linux-gnu
+      - name: ICC authority during grayscale collapse
+        run: "cross test --locked -p zenpixels-convert --lib --target i686-unknown-linux-gnu load_bearing::"
+      - name: Grayscale collapse without an ICC database
+        run: cross test --locked --manifest-path tools/icc-collapse-no-db/Cargo.toml --target i686-unknown-linux-gnu

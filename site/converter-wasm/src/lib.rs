@@ -158,9 +158,27 @@ fn run(v: &Value) -> Result<Value, String> {
             .row_mut(y)
             .copy_from_slice(&bytes[y as usize * stride..y as usize * stride + row_bytes]);
     }
-    let options = ConvertOptions::permissive()
+    let mut options = ConvertOptions::permissive()
         .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
         .with_luma(Some(luma(v)?));
+    for (key, destination) in [("sdrWhite", 0), ("hdrPeak", 1), ("sdrPeak", 2)] {
+        if let Some(value) = v[key].as_f64() {
+            let value = value as f32;
+            if destination == 0 {
+                let white = zenpixels::hdr::DiffuseWhite::try_new(value)
+                    .ok_or_else(|| format!("{key} must be positive and finite"))?;
+                options = options.with_sdr_white(white);
+            } else {
+                let nits = zenpixels::hdr::Nits::try_new(value)
+                    .ok_or_else(|| format!("{key} must be positive and finite"))?;
+                options = if destination == 1 {
+                    options.with_hdr_peak(zenpixels::hdr::HdrPeak::Nits(nits))
+                } else {
+                    options.with_sdr_peak(nits)
+                };
+            }
+        }
+    }
     let mut converter =
         RowConverter::new_explicit(from, to, &options).map_err(|e| format!("{:?}", e.error()))?;
     // Debug is the existing inspection surface; no new core API is needed.

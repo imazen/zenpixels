@@ -115,6 +115,9 @@ fn every_rgb_matrix_has_rank_and_h273_d50_colorants() {
     let mut checked = 0;
     for &p in PRIMARIES.iter().rev() {
         for &t in TRANSFERS {
+            if t == 18 {
+                continue;
+            }
             let result = synthesize_icc_for_cicp(Cicp::new(p, t, 0, true));
             let SynthesizedIcc::Profile(icc) = result else {
                 assert!(
@@ -131,7 +134,7 @@ fn every_rgb_matrix_has_rank_and_h273_d50_colorants() {
             for (col, want) in actual.into_iter().zip(expected_colorants(p)) {
                 for (a, b) in col.into_iter().zip(want) {
                     assert!(
-                        (a - b).abs() < 0.001,
+                        (a - b).abs() < 0.00002,
                         "({p},{t}) colorants {actual:?}, expected {:?}",
                         expected_colorants(p)
                     );
@@ -140,113 +143,21 @@ fn every_rgb_matrix_has_rank_and_h273_d50_colorants() {
             checked += 1;
         }
     }
-    assert_eq!(checked, 159);
+    assert_eq!(checked, 149);
 }
 
-fn curve(trc: &[u8], x: f64) -> f64 {
-    match &trc[..4] {
-        b"para" => {
-            let kind = u16::from_be_bytes(trc[8..10].try_into().unwrap());
-            let v: Vec<_> = (0..(trc.len() - 12) / 4)
-                .map(|i| fixed(&trc[12 + 4 * i..]))
-                .collect();
-            match kind {
-                0 => x.powf(v[0]),
-                1 => {
-                    if x >= -v[2] / v[1] {
-                        (v[1] * x + v[2]).powf(v[0])
-                    } else {
-                        0.0
-                    }
-                }
-                2 => {
-                    if x >= -v[2] / v[1] {
-                        (v[1] * x + v[2]).powf(v[0]) + v[3]
-                    } else {
-                        v[3]
-                    }
-                }
-                3 => {
-                    if x >= v[4] {
-                        (v[1] * x + v[2]).powf(v[0])
-                    } else {
-                        v[3] * x
-                    }
-                }
-                4 => {
-                    if x >= v[4] {
-                        (v[1] * x + v[2]).powf(v[0]) + v[5]
-                    } else {
-                        v[3] * x + v[6]
-                    }
-                }
-                _ => panic!("unknown para function {kind}"),
-            }
-        }
-        b"curv" => {
-            let n = u32be(&trc[8..]);
-            let sample = |i: usize| {
-                f64::from(u16::from_be_bytes(
-                    trc[12 + 2 * i..14 + 2 * i].try_into().unwrap(),
-                ))
-            };
-            match n {
-                0 => x,
-                1 => x.powf(sample(0) / 256.0),
-                _ => {
-                    let position = x * (n - 1) as f64;
-                    let i = (position.floor() as usize).min(n - 2);
-                    (sample(i) + (sample(i + 1) - sample(i)) * (position - i as f64)) / 65535.0
-                }
-            }
-        }
-        other => panic!("unsupported TRC {other:?}"),
-    }
-}
-fn inverse_oetf(x: f64, slope: f64, alpha: f64, beta: f64, power: f64) -> f64 {
-    if x < slope * beta {
-        x / slope
-    } else {
-        ((x + alpha - 1.0) / alpha).powf(power)
-    }
-}
-fn analytic(t: u8, x: f64) -> f64 {
-    let bt709 = || inverse_oetf(x, 4.5, 1.099296826809442, 0.018053968510807, 1.0 / 0.45);
-    match t {
-        1 | 6 | 11 | 12 | 14 | 15 => bt709(), // 11/12 agree on [0,1].
-        4 => x.powf(2.2),
-        5 => x.powf(2.8),
-        7 => inverse_oetf(x, 4.0, 1.111572195921731, 0.022821585529445, 1.0 / 0.45),
-        8 => x,
-        9 => 10_f64.powf(2.0 * (x - 1.0)),
-        10 => 10_f64.powf(2.5 * (x - 1.0)),
-        13 => inverse_oetf(x, 12.92, 1.0550107189475866, 0.003_041_282_560_127_521, 2.4),
-        16 => {
-            let e = x.powf(32.0 / 2523.0);
-            ((e - 107.0 / 128.0).max(0.0) / (2413.0 / 128.0 - 2392.0 / 128.0 * e))
-                .powf(8192.0 / 1305.0)
-        }
-        // A u16 curv LUT saturates at 1; ST428's nominal endpoint is 52.37/48.
-        17 => (x.powf(2.6) * 52.37 / 48.0).min(1.0),
-        18 => {
-            let scene = if x <= 0.5 {
-                x * x / 3.0
-            } else {
-                (((x - 0.55991073) / 0.17883277).exp() + 0.28466892) / 12.0
-            };
-            // The shipped HLG ICC encodes BT.2100 reference-display neutral
-            // EOTF (1000 cd/m², system gamma 1.2), including its OOTF.
-            scene.powf(1.2)
-        }
-        _ => panic!("unassigned transfer {t}"),
-    }
-}
+#[path = "transfer_reference.rs"]
+mod transfer_reference;
+use transfer_reference::{analytic, curve};
 
 #[test]
 fn every_rgb_and_gray_transfer_matches_analytic_h273() {
     let mut checked = [0, 0];
     for &p in PRIMARIES {
         for &t in TRANSFERS {
+            if t == 18 {
+                continue;
+            }
             for (kind, synth) in [synthesize_icc_for_cicp, synthesize_gray_icc_for_cicp]
                 .into_iter()
                 .enumerate()
@@ -288,7 +199,13 @@ fn every_rgb_and_gray_transfer_matches_analytic_h273() {
                                 "({p},{t}) kind {kind} {sig:?} zero inverse {actual} outside [0,{cutoff}]"
                             );
                         } else {
-                            let want = analytic(t, x);
+                            let want = if t == 17 {
+                                let peak = xyz(&icc, b"lumi")[1];
+                                assert!((peak - 52.37).abs() < 0.00001);
+                                analytic(t, x) * 48.0 / peak
+                            } else {
+                                analytic(t, x)
+                            };
                             assert!(
                                 (actual - want).abs() <= tolerance,
                                 "({p},{t}) kind {kind} {sig:?} x={x}: {actual} vs {want} (tolerance {tolerance})"
@@ -300,7 +217,7 @@ fn every_rgb_and_gray_transfer_matches_analytic_h273() {
             }
         }
     }
-    assert_eq!(checked, [159, 175]);
+    assert_eq!(checked, [149, 164]);
 }
 
 #[test]
@@ -338,6 +255,9 @@ fn gray_white_and_bradford_adaptation_are_independent_of_rgb_gamut() {
     let mut checked = 0;
     for &p in PRIMARIES {
         for &t in TRANSFERS {
+            if t == 18 {
+                continue;
+            }
             if p == 1 && t == 13 {
                 continue;
             }
@@ -347,7 +267,7 @@ fn gray_white_and_bradford_adaptation_are_independent_of_rgb_gamut() {
                 panic!("missing gray ({p},{t})");
             };
             let want = xy_xyz(white(p));
-            for (got, w) in xyz(&icc, b"wtpt").into_iter().zip(want) {
+            for (got, w) in xyz(&icc, b"wtpt").into_iter().zip([0.9642, 1.0, 0.8249]) {
                 assert!(
                     (got - w).abs() < 0.00002,
                     "gray ({p},{t}) white {got} != {w}"
@@ -357,15 +277,255 @@ fn gray_white_and_bradford_adaptation_are_independent_of_rgb_gamut() {
             for i in 0..3 {
                 let row = core::array::from_fn(|j| fixed(&chad[8 + 4 * (3 * i + j)..]));
                 assert!(
-                    // The gray recipe targets a 5003 K D50 approximation;
-                    // compare to ICC D50 with the colorant tolerance, while
-                    // preserving the tight source-white check above.
-                    (dot(row, want) - [0.9642, 1.0, 0.8249][i]).abs() < 0.001,
+                    (dot(row, want) - [0.9642, 1.0, 0.8249][i]).abs() < 0.00002,
                     "gray ({p},{t}) chad"
                 );
             }
             checked += 1;
         }
     }
-    assert_eq!(checked, 175);
+    assert_eq!(checked, 164);
+}
+
+#[test]
+fn hlg_synthesis_refuses_without_a_rendering_target_in_every_build() {
+    for primaries in 0..=255 {
+        let cicp = Cicp::new(primaries, 18, 0, true);
+        assert_eq!(
+            synthesize_icc_for_cicp(cicp),
+            SynthesizedIcc::CmsUnsupported
+        );
+        assert_eq!(
+            synthesize_gray_icc_for_cicp(cicp),
+            SynthesizedIcc::CmsUnsupported
+        );
+    }
+}
+
+#[test]
+fn rgb_media_white_and_full_adaptation_match_pcs() {
+    for &p in PRIMARIES.iter().filter(|&&p| p != 10) {
+        let SynthesizedIcc::Profile(icc) = synthesize_icc_for_cicp(Cicp::new(p, 8, 0, true)) else {
+            panic!("linear RGB profile {p}");
+        };
+        for (actual, expected) in xyz(&icc, b"wtpt").into_iter().zip([0.9642, 1.0, 0.8249]) {
+            assert!((actual - expected).abs() < 0.000008);
+        }
+        let chad = tag(&icc, b"chad");
+        let native = xy_xyz(white(p));
+        for i in 0..3 {
+            let row = core::array::from_fn(|j| fixed(&chad[8 + 4 * (3 * i + j)..]));
+            assert!((dot(row, native) - [0.9642, 1.0, 0.8249][i]).abs() < 0.00002);
+        }
+        assert_eq!(&icc[8..12], &[4, 0x40, 0, 0]);
+    }
+}
+
+// Qualify the build-time recipe before replacing the stored export bytes.
+// PQ's representation is evaluated separately by the backend precision harness.
+#[cfg(feature = "cms-moxcms")]
+#[test]
+fn corrected_recipe_matches_independent_colorimetry_and_dense_sdr_curves() {
+    for &p in PRIMARIES {
+        for &t in TRANSFERS.iter().filter(|&&t| !matches!(t, 16 | 18)) {
+            for (kind, synth) in [super::synthesis::rgb, super::synthesis::gray]
+                .into_iter()
+                .enumerate()
+            {
+                if kind == 0 && p == 10 {
+                    continue;
+                }
+                let icc = synth(p, t).expect("supported explicit recipe");
+                for (actual, expected) in xyz(&icc, b"wtpt").into_iter().zip([0.9642, 1.0, 0.8249])
+                {
+                    assert!(
+                        (actual - expected).abs() < 0.000008,
+                        "({p},{t}) kind {kind} wtpt"
+                    );
+                }
+                if kind == 0 {
+                    let actual = [b"rXYZ", b"gXYZ", b"bXYZ"].map(|sig| xyz(&icc, sig));
+                    for (a, b) in actual
+                        .into_iter()
+                        .flatten()
+                        .zip(expected_colorants(p).into_iter().flatten())
+                    {
+                        assert!((a - b).abs() < 0.00002, "({p},{t}) colorants");
+                    }
+                }
+                let chad = tag(&icc, b"chad");
+                for i in 0..3 {
+                    let row = core::array::from_fn(|j| fixed(&chad[8 + 4 * (3 * i + j)..]));
+                    assert!(
+                        (dot(row, xy_xyz(white(p))) - [0.9642, 1.0, 0.8249][i]).abs() < 0.00002
+                    );
+                }
+                // Four white groups share curves. One representative gamut per
+                // transfer suffices for the dense scalar serialization check.
+                if p != 1 {
+                    continue;
+                }
+                let trc = tag(&icc, if kind == 0 { b"rTRC" } else { b"kTRC" });
+                for code in 0..=65535 {
+                    let x = f64::from(code) / 65535.0;
+                    let actual = curve(trc, x);
+                    if code == 0 && matches!(t, 9 | 10) {
+                        let cutoff = if t == 9 { 0.01 } else { 10_f64.sqrt() / 1000.0 };
+                        assert!((0.0..=cutoff).contains(&actual));
+                        continue;
+                    }
+                    let expected = if t == 17 {
+                        analytic(t, x) * 48.0 / xyz(&icc, b"lumi")[1]
+                    } else {
+                        analytic(t, x)
+                    };
+                    assert!(
+                        (actual - expected).abs() <= 0.0005,
+                        "TC{t} kind {kind} code {code}: {actual} versus {expected}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn exported_pq_declares_absolute_scale_and_both_pipeline_directions() {
+    for &p in PRIMARIES {
+        for (gray, profile) in [
+            (false, synthesize_icc_for_cicp(Cicp::new(p, 16, 0, true))),
+            (
+                true,
+                synthesize_gray_icc_for_cicp(Cicp::new(p, 16, 0, true)),
+            ),
+        ] {
+            if !gray && p == 10 {
+                continue;
+            }
+            let SynthesizedIcc::Profile(icc) = profile else {
+                panic!("PQ profile ({p},{gray})");
+            };
+            assert_eq!(xyz(&icc, b"lumi"), [0.0, 10000.0, 0.0]);
+            for sig in [b"D2B0", b"D2B1", b"D2B2", b"B2D0", b"B2D1", b"B2D2"] {
+                assert_eq!(&tag(&icc, sig)[..4], b"mpet");
+            }
+            for sig in [b"A2B0", b"A2B1", b"A2B2"] {
+                assert_eq!(&tag(&icc, sig)[..4], b"mAB ");
+            }
+            for sig in [b"B2A0", b"B2A1", b"B2A2"] {
+                assert_eq!(&tag(&icc, sig)[..4], b"mBA ");
+            }
+            let date: [u16; 6] = core::array::from_fn(|i| {
+                u16::from_be_bytes(icc[24 + 2 * i..26 + 2 * i].try_into().unwrap())
+            });
+            assert!(date[0] >= 2000 && (1..=12).contains(&date[1]) && (1..=31).contains(&date[2]));
+            if !gray {
+                let pipe = tag(&icc, b"D2B1");
+                let mut found = false;
+                for i in 0..u32be(&pipe[12..]) {
+                    let at = u32be(&pipe[16 + i * 8..]);
+                    if &pipe[at..at + 4] != b"matf" {
+                        continue;
+                    }
+                    let want = [b"rXYZ", b"gXYZ", b"bXYZ"].map(|sig| xyz(&icc, sig));
+                    for (column, values) in want.iter().enumerate() {
+                        for (row, &expected) in values.iter().enumerate() {
+                            let at = at + 12 + (row * 3 + column) * 4;
+                            let actual = f32::from_be_bytes(pipe[at..at + 4].try_into().unwrap());
+                            assert_eq!(
+                                actual, expected as f32,
+                                "PQ matrix and declared primaries disagree"
+                            );
+                        }
+                    }
+                    found = true;
+                }
+                assert!(found, "missing float RGB-to-PCS matrix");
+            }
+        }
+    }
+}
+
+#[cfg(feature = "cms-lcms")]
+#[test]
+fn exported_pq_dense_neutral_roundtrip_has_no_black_plateau() {
+    use crate::{ColorProfileSource, ConvertOptions, PixelFormat, PluggableCms, cms_lcms::Lcms};
+    for gray in [false, true] {
+        let synth = if gray {
+            synthesize_gray_icc_for_cicp
+        } else {
+            synthesize_icc_for_cicp
+        };
+        let SynthesizedIcc::Profile(pq) = synth(Cicp::new(9, 16, 0, true)) else {
+            panic!("PQ ICC");
+        };
+        let SynthesizedIcc::Profile(linear) = synth(Cicp::new(9, 8, 0, true)) else {
+            panic!("linear ICC");
+        };
+        let channels = if gray { 1 } else { 3 };
+        let format = if gray {
+            PixelFormat::GrayF32
+        } else {
+            PixelFormat::RgbF32
+        };
+        for reverse in [false, true] {
+            let input: alloc::vec::Vec<f32> = (0..=65535)
+                .flat_map(|code| {
+                    let value = code as f32 / 65535.0;
+                    let value = if reverse {
+                        analytic(16, f64::from(value)) as f32
+                    } else {
+                        value
+                    };
+                    core::iter::repeat_n(value, channels)
+                })
+                .collect();
+            let mut output = alloc::vec![0.0_f32; input.len()];
+            let (src, dst) = if reverse {
+                (&linear, &pq)
+            } else {
+                (&pq, &linear)
+            };
+            let mut transform = Lcms
+                .build_source_transform(
+                    ColorProfileSource::Icc(src),
+                    ColorProfileSource::Icc(dst),
+                    format,
+                    format,
+                    &ConvertOptions::permissive().with_clip_out_of_gamut(false),
+                )
+                .expect("qualified LCMS path")
+                .expect("build transform");
+            transform
+                .try_transform_row(
+                    bytemuck::cast_slice(&input),
+                    bytemuck::cast_slice_mut(&mut output),
+                    65536,
+                )
+                .expect("complete row");
+            for (code, pixel) in output.chunks_exact(channels).enumerate() {
+                let encoded = code as f32 / 65535.0;
+                let expected = if reverse {
+                    f64::from(encoded)
+                } else {
+                    analytic(16, f64::from(encoded))
+                };
+                for (c, &actual) in pixel.iter().enumerate() {
+                    assert!(
+                        actual.is_finite() && (f64::from(actual) - expected).abs() <= 0.0005,
+                        "PQ {gray} reverse {reverse} code {code} actual {actual} expected {expected}"
+                    );
+                    if code == 0 {
+                        assert_eq!(actual, 0.0);
+                    } else {
+                        assert!(actual > 0.0, "PQ positive tone became black at code {code}");
+                        assert!(
+                            actual >= output[(code - 1) * channels + c],
+                            "nonmonotonic PQ tone"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }

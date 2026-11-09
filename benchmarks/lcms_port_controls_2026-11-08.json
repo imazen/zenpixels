@@ -1,0 +1,76 @@
+{
+  "source": "ed526322",
+  "rust_lcms": "39068cc62f470d183e078637e19504ac9ecf7392",
+  "c_lcms": "7717fce0d85447ef3b2df0cca2e99207c15eeecd",
+  "c_flags": [
+    "-O2",
+    "-fno-strict-aliasing"
+  ],
+  "platform": "Linux aarch64",
+  "scope": "Same-host C2.20/Rust exact color controls; not cross-platform or all-path port qualification",
+  "bundle_comparison": {
+    "cells": 43248,
+    "channels": 259488,
+    "mismatched_channels": 0,
+    "max_abs_difference": 0.0,
+    "first_mismatches": []
+  },
+  "bundle_profiles": 159,
+  "samples_per_profile": 136,
+  "intents": {
+    "relative": {
+      "code": 1,
+      "adaptation": 1
+    },
+    "absolute": {
+      "code": 3,
+      "adaptation": 0
+    }
+  },
+  "cmyk_fixture_icc_sha256": "4855b8fabb96bdc6495d45d089bb8c8efb1ae18389e0dc9e75a5f701a9c0b662",
+  "cmyk_bitwise_components": 12,
+  "cmyk_different_components": 0,
+  "shared_contract": {
+    "pass": 13,
+    "fail": 0,
+    "existing_ignored": 2
+  },
+  "paper_white_regression": {
+    "before": [
+      0.906331,
+      0.9063337,
+      0.9063367
+    ],
+    "after": "passes unchanged new bound0.001 against1.0",
+    "cause": "adapter used virt constant3; types relative constant1 fixes it"
+  },
+  "run_heavy": {
+    "initial_rust_check": {
+      "rc": 101,
+      "seconds": 41,
+      "peak_rss_gib": 0.43,
+      "reason": "newer all-target Clippy double-ended-iterator-last lint, corrected without changing assertion"
+    },
+    "same_host_c_oracle": {
+      "rc": 0,
+      "seconds": 30,
+      "peak_rss_gib": 0.25
+    },
+    "fixture_export_and_probe": {
+      "rc": 0,
+      "seconds": 99,
+      "peak_rss_gib": 0.78
+    },
+    "paper_white_before": {
+      "rc": 101,
+      "seconds": 2,
+      "peak_rss_gib": 0.25
+    },
+    "corrected_contract_and_cmyk": {
+      "rc": 0,
+      "seconds": 6,
+      "peak_rss_gib": 0.25
+    }
+  },
+  "raw_receipts": "lcms-color-controls-20261108: full logs, tables, exported inputs, binary identities; preserved outside git"
+}

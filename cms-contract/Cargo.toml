@@ -5,17 +5,26 @@ edition = "2024"
 publish = false
 description = "Runs every PluggableCms backend through one behavioral contract and compares them"
 
-# Standalone, outside the workspace: CI and plain `cargo test` never compile the lcms port.
+# Standalone comparison runner; the production LCMS backend is separately opt-in.
 [workspace]
 
 [dependencies]
 zenpixels = { path = "../zenpixels" }
-zenpixels-convert = { path = "../zenpixels-convert", features = ["cms-moxcms"] }
-lcms = { git = "https://github.com/imazen/lcms", rev = "39068cc62f470d183e078637e19504ac9ecf7392" }
+zenpixels-convert = { path = "../zenpixels-convert", features = ["cms-moxcms", "cms-lcms"] }
+lcms = { git = "https://github.com/imazen/lcms", rev = "55b59476cf64920345e9ca32eb3a4678bf0bbece" }
+moxcms = "0.9.2"
 whereat = "0.1"
 bytemuck = "1.21"
-archmage = ">=0.9.31-beta.2, <0.10.0"
+archmage = "0.9.31"
 
 [patch.crates-io]
-garb = { git = "https://github.com/imazen/garb", rev = "605276d717ea0b31a1cd2a36ae05301383c7b8b5" }
+garb = { git = "https://github.com/imazen/garb", rev = "8f9aa10d09f84bb0a1e3fdbd1773f610eec1b784" }
 linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24664315586bd60e5f048253b1f69052" }
+
+[dev-dependencies]
+zenbench = "0.1.11"
+lz4_flex = { version = "0.14.0", default-features = false, features = ["safe-decode"] }
+
+[[bench]]
+name = "icc_synthesis"
+harness = false

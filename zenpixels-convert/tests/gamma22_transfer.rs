@@ -7,7 +7,7 @@
 use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
 };
-use zenpixels_convert::{ConvertOptions, ConvertPlan, RowConverter};
+use zenpixels_convert::{ConvertOptions, ConvertPlan};
 
 #[allow(clippy::excessive_precision)]
 const ADOBE_GAMMA: f32 = 2.19921875; // 563/256, Adobe RGB 1998 spec (exact in f32).
@@ -35,7 +35,7 @@ fn f32_rgb_gamma22() -> PixelDescriptor {
 }
 
 fn convert_f32_rgb(src_desc: PixelDescriptor, dst_desc: PixelDescriptor, src: &[f32]) -> Vec<f32> {
-    let mut conv = RowConverter::new(src_desc, dst_desc).unwrap();
+    let mut conv = normalized_converter(src_desc, dst_desc).unwrap();
     let width = (src.len() / 3) as u32;
     let mut dst = vec![0.0f32; src.len()];
     conv.convert_row(
@@ -177,7 +177,7 @@ fn adobe_rgb_u8_to_srgb_u8_neutral_gray() {
 
     let src = [64u8, 64, 64, 128, 128, 128, 200, 200, 200];
     let mut dst = [0u8; 9];
-    let mut conv = RowConverter::new(src_desc, dst_desc).unwrap();
+    let mut conv = normalized_converter(src_desc, dst_desc).unwrap();
     conv.convert_row(&src, &mut dst, 3);
 
     // Neutral gray should stay neutral (same luminance on gamut axis).
@@ -220,7 +220,7 @@ fn adobe_rgb_rgba_f32_to_bt709_rgba_f32_opaque_alpha_preserved() {
 
     let src = [0.5f32, 0.3, 0.7, 1.0, 0.9, 0.8, 0.6, 1.0];
     let mut dst = [0.0f32; 8];
-    let mut conv = RowConverter::new(src_desc, dst_desc).unwrap();
+    let mut conv = normalized_converter(src_desc, dst_desc).unwrap();
     conv.convert_row(
         bytemuck::cast_slice(&src),
         bytemuck::cast_slice_mut(&mut dst),
@@ -317,7 +317,7 @@ fn adobe_rgb_u8_to_srgb_u8_within_one_code_value() {
         TransferFunction::Gamma22,
     )
     .with_primaries(ColorPrimaries::AdobeRgb);
-    let mut conv = RowConverter::new(src_desc, PixelDescriptor::RGB8_SRGB).unwrap();
+    let mut conv = normalized_converter(src_desc, PixelDescriptor::RGB8_SRGB).unwrap();
     let px = grid();
     let src: Vec<u8> = px.iter().flatten().copied().collect();
     let mut dst = vec![0u8; src.len()];
@@ -419,4 +419,17 @@ fn bt709_transfer_p3_u8_to_linear_bt709_matches_textbook() {
             );
         }
     }
+}
+
+fn normalized_converter(
+    from: zenpixels::PixelDescriptor,
+    to: zenpixels::PixelDescriptor,
+) -> Result<zenpixels_convert::RowConverter, whereat::At<zenpixels_convert::ConvertError>> {
+    zenpixels_convert::RowConverter::new_explicit(
+        from,
+        to,
+        &zenpixels::ConvertOptions::permissive()
+            .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked)
+            .with_sdr_white(zenpixels::hdr::DiffuseWhite::new(10_000.)),
+    )
 }

@@ -155,7 +155,8 @@ let stride_bytes = 320usize;                   // padded; > width*bpp (256)
 let backing: Vec<u8> = vec![0u8; stride_bytes * rows as usize];
 
 // Borrows `backing` (lifetime-bound, zero-copy). `stride_bytes` is BYTES
-// between row starts, and must be a multiple of bytes_per_pixel.
+// between row starts: at least width*bpp and a multiple of the sample size.
+// It need not be a whole number of pixels (RGB8 rows 8 bytes apart are fine).
 let view = PixelSlice::new(&backing, width, rows, stride_bytes, PixelDescriptor::RGBA8_SRGB)?;
 assert_eq!(view.width(), 64);
 # Ok::<(), zenpixels::At<zenpixels::BufferError>>(())
@@ -165,7 +166,9 @@ Multi-byte samples (U16/F16/F32) are read in **native byte order** — a decoder
 holding big-endian container data (e.g. 16-bit PNG) must byte-swap before
 wrapping. `PixelSlice::new` validates length, stride, and channel alignment,
 returning `At<BufferError>` (`InsufficientData` / `StrideTooSmall` /
-`StrideNotPixelAligned` / `AlignmentViolation`) on a mismatch.
+`AlignmentViolation`) on a mismatch. `imgref` counts its stride in pixels, so
+`try_as_imgref` returns `StrideNotPixelAligned` for rows that aren't a whole number
+of pixels apart; read those through `row(y)`.
 
 ## Format conversion (zenpixels-convert)
 
@@ -322,7 +325,7 @@ Every buffer carries one. Every codec declares which ones it produces and consum
 
 `ColorOrigin` is the immutable provenance record: *how the source file described its color*, not what the pixels currently are. Used at encode time to decide whether to re-embed the original profile.
 
-**CICP → ICC synthesis** (zenpixels-convert): `SynthesizedIcc::for_cicp(Cicp)` resolves an embeddable ICC profile for any assigned H.273 combination — bundled compressed database (`icc-db` feature, on by default; ~36 KB asset, lazily decoded per transfer group, no CMS required), with PQ/HLG HDR included. `synthesize_gray_icc_for_cicp` is the GRAY-class sibling for single-channel output (libpng rejects gray images paired with RGB-class profiles). The sRGB default answers `NotNeeded`; everything the database serves round-trips back through `extract_cicp` / `identify_common`.
+**CICP → ICC synthesis** (zenpixels-convert): `SynthesizedIcc::for_cicp(Cicp)` serves 149 RGB mappings, and `SynthesizedIcc::for_gray_cicp(Cicp)` serves 164 GRAY mappings from the compressed database (`icc-db`, enabled by default; 93,377 bytes, lazily decoded per transfer group, no runtime CMS dependency). PQ has qualified float and conventional ICC pipelines. HLG refuses synthesis without a rendering target; retain native CICP. The sRGB default answers `NotNeeded`. Export bytes and input-recognition fingerprints have separate purposes; bundle-derived identification is metadata-only. See [qualification and reader limits](docs/corrected-icc-export.md).
 
 ### Orientation
 
@@ -523,7 +526,7 @@ Convenience constructors: `ConvertOptions::retain_channels()` (forbids alpha and
 
 **Oklab** — `OklabSpace` holds both LMS matrices for a set of primaries and does scalar conversions, with public LMS/XYZ/Oklab matrices. Non-sRGB sources get correct LMS matrices without an intermediate sRGB step.
 
-**CMS** — `PluggableCms` trait (dyn-compatible, accepts `ColorProfileSource` directly — CICP, named profiles, or raw ICC bytes) plugs an external backend into `RowConverter`. `RowTransformMut` is the `&mut self` row-level transform returned by plugins. `cms-contract/` holds every backend to the same behavior. The `cms-moxcms` feature provides a concrete backend using [moxcms](https://crates.io/crates/moxcms), supporting u8/u16/f32 transforms with automatic profile identification..
+**CMS** — `PluggableCms` trait (dyn-compatible, accepts `ColorProfileSource` directly — CICP, named profiles, or raw ICC bytes) plugs an external backend into `RowConverter`. `RowTransformMut` is the `&mut self` row-level transform returned by plugins. `cms-contract/` holds every backend to the same behavior. The `cms-moxcms` and `cms-lcms` features provide `MoxCms` and `Lcms` backends. Callers select one explicitly; enabling both does not change conversion defaults. Both support native u8/u16/f32 rows. See [backend contracts and profile triage](docs/first-class-lcms-and-profile-triage.md).
 
 **ICC identification** — `zenpixels::icc::IccIdentification::from_icc(icc_bytes)` recognizes 298 well-known RGB + 69 grayscale profiles via normalized FNV-1a hash lookup (~100ns), including every profile the CICP database itself embeds in encoded output. Returns primaries, transfer function, and `IdentificationUse` (whether matrix+TRC substitution is safe vs CMS-only). Covers sRGB, Display P3, BT.2020, Adobe RGB variants across ICC v2–v5; `extract_cicp` reads embedded `cICP` tags directly.
 
@@ -566,7 +569,7 @@ branch. See the [code review](https://github.com/imazen/zenpixels/blob/main/docs
 | Feature | Default | What it enables |
 |---|---|---|
 | `std` | yes | Standard library |
-| `icc-db` | yes | Bundled CICP→ICC profile database (~36 KB asset) behind `SynthesizedIcc::for_cicp`; disable for size-sensitive builds (they answer `NeedsCms` instead) |
+| `icc-db` | yes | Bundled CICP→ICC profile database (93 KB asset) behind `SynthesizedIcc::for_cicp`; disable for size-sensitive builds (they answer `NeedsCms` instead) |
 | `fast-transpose` | | SIMD transpose kernels (x86-64 AVX2 + aarch64 NEON) for orientation; portable scalar otherwise (output is bit-identical) |
 | `avx512` | | 16-wide AVX-512F f16 conversion kernels (runtime-dispatched) |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed convenience methods (`to_rgb8()`, `to_rgba8()`, etc.) |
@@ -576,6 +579,7 @@ branch. See the [code review](https://github.com/imazen/zenpixels/blob/main/docs
 | `bt2446a` | | The BT.2446 Method A tone-mapping curve (implies `hdr-experimental`) |
 | `hdr-experimental` | | Native HDR→SDR display mapping inside `ConvertPlan` (with `bt2446a`: BT.2446 Method A + OKLch soft compress + CTA-861.3 CLL measurement); API shape may move ahead of 0.3.0 |
 | `cms-moxcms` | | ICC profile transforms via [moxcms](https://crates.io/crates/moxcms) (implies `std`) |
+| `cms-lcms` | | ICC profile transforms via the pure-Rust LCMS port (implies `std`; pinned unreleased dependency) |
 | `serde` | | No-op stub (soft-removed in 0.2.15, queued for removal); previously forwarded to `zenpixels/serde` |
 
 ## Build time
