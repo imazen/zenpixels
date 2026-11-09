@@ -704,3 +704,15 @@ design-feature-check:
     cargo test -p zenpixels-convert --release --all-features --lib --test design_invariants --test cll_measure
     cargo test -p icc-gen --release --bin icc-gen
     cargo clippy -p zenpixels -p zenpixels-convert -p icc-gen --all-targets --all-features -- -D warnings
+
+# Local completion gates for the repository portions of 69/83/132/133/134/135.
+repository-issues-check:
+    cargo test -p zenpixels --features rgb --test native_codes --test typed_extraction_contract
+    cargo test -p zenpixels-convert --test authority_boundaries --test output_allocation_contract --test native_canonical --test native_samples --test output_current_color --test output_contracts
+    cargo test -p zenpixels-convert --features bt2446a --test hlg_rendering --test hdr_intent
+    cargo test -p zenpixels-convert --doc
+
+# Force patch-level reporting against the explicit 0.2.17 bridge source baseline.
+repository-issues-semver:
+    cargo semver-checks check-release -p zenpixels -p zenpixels-convert --baseline-rev e96e4e9c65020a0c7fac4937819fc044886ae4df --release-type patch
+
