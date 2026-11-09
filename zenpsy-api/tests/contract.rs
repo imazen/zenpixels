@@ -1,157 +1,157 @@
-use std::{borrow::Cow, sync::Arc};
-use zenpsy_api::zenpixels::plane::{
-    AnyPlane, PlanarLayout, PlaneEncoding, PlaneRef, PlaneRole, PlaneSpec,
+use std::rc::Rc;
+use zenpsy_api::{
+    zenpixels::{PixelDescriptor, PixelSlice},
+    *,
 };
-use zenpsy_api::zenpixels::sample::{ChromaSiting, ChromaSubsampling, SampleEncoding};
-use zenpsy_api::zenpixels::{ChannelType, Cicp, ColorContext, PixelDescriptor, PixelSlice};
-use zenpsy_api::*;
 
-struct Control {
-    calls: usize,
-    value: f64,
-    nonfinite: NonFinite,
+#[derive(Debug)]
+struct Native {
+    values: [f64; 2],
+    keys: [ScoreSpec; 2],
+    // Proves the core does not impose Send/Sync on native assessments.
+    detail: Rc<u32>,
 }
-impl Metric for Control {
+impl Evaluation for Native {
+    fn scores(&self) -> impl Iterator<Item = Score<'_>> {
+        self.keys
+            .iter()
+            .zip(self.values)
+            .map(|(s, v)| Score::new(s, v))
+    }
+}
+struct Scorer {
+    values: [f64; 2],
+    duplicate: bool,
+}
+impl Metric for Scorer {
+    type Output = Native;
     fn id(&self) -> MetricId {
-        MetricId::new("control", Implementation::new("contract", "1", 1))
-    }
-    fn outputs(&self) -> Cow<'static, [ScoreSpec]> {
-        Cow::Owned(vec![
-            ScoreSpec::new("score", ScoreKind::Feature).with_nonfinite(self.nonfinite),
-        ])
-    }
-    fn accepts(&self, _: &InputFormat) -> bool {
-        true
+        MetricId::new("control", Implementation::new("test", "1", 1)).with_config("display", "hdr")
     }
     fn evaluate(
         &mut self,
-        _: Image<'_>,
-        _: Image<'_>,
-        _: EvalOpts<'_>,
-    ) -> MetricResult<Box<dyn Evaluation>> {
-        self.calls += 1;
-        Ok(Box::new(ScalarEval::single("score", self.value)))
+        r: &PixelSlice<'_>,
+        d: &PixelSlice<'_>,
+        opts: EvalOpts<'_>,
+    ) -> MetricResult<Native> {
+        opts.checkpoint()?;
+        assert_eq!(r.descriptor(), d.descriptor());
+        assert!(!opts.diagnostics());
+        Ok(Native {
+            values: self.values,
+            keys: [
+                ScoreSpec::new("max", Direction::Lower),
+                ScoreSpec::new(
+                    if self.duplicate { "max" } else { "pnorm" },
+                    Direction::Lower,
+                ),
+            ],
+            detail: Rc::new(17),
+        })
     }
 }
-fn image() -> Image<'static> {
-    PixelSlice::new(&[0; 18], 3, 2, 9, PixelDescriptor::RGB8_SRGB)
-        .unwrap()
-        .into()
+struct Prepared {
+    values: [f64; 2],
+}
+impl PrepareReference for Scorer {
+    type Prepared<'a> = Prepared;
+    fn warm_reference(&mut self, _: &PixelSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<Prepared> {
+        opts.checkpoint()?;
+        Ok(Prepared {
+            values: self.values,
+        })
+    }
+}
+impl WarmReference for Prepared {
+    type Output = Native;
+    fn evaluate(&mut self, d: &PixelSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<Native> {
+        Scorer {
+            values: self.values,
+            duplicate: false,
+        }
+        .evaluate(d, d, opts)
+    }
+}
+fn image(rows: u32) -> PixelSlice<'static> {
+    PixelSlice::new(&[0; 12], 2, rows, 6, PixelDescriptor::RGB8_SRGB).unwrap()
 }
 #[test]
-fn admission_precedes_native_work_and_nonfinite_policy_is_enforced() {
-    let mut m = Control {
-        calls: 0,
-        value: f64::INFINITY,
-        nonfinite: NonFinite::Refuse,
+fn preserves_multiple_outputs_native_data_and_prepared_geometry() {
+    let mut m = Scorer {
+        values: [1.25, 0.375],
+        duplicate: false,
     };
+    let cold = score(&mut m, &image(2), &image(2), EvalOpts::new()).unwrap();
+    assert_eq!(*cold.detail, 17);
     assert_eq!(
-        score(&mut m, image(), image(), EvalOpts::new().with_max_pixels(5))
+        cold.scores()
+            .map(|s| (s.spec.key.as_ref(), s.value))
+            .collect::<Vec<_>>(),
+        [("max", 1.25), ("pnorm", 0.375)]
+    );
+    let mut warm = prepare_reference(&mut m, &image(2), EvalOpts::new()).unwrap();
+    assert_eq!(
+        warm.score(&image(1), EvalOpts::new())
             .unwrap_err()
             .error()
             .kind(),
+        ErrorKind::DimensionMismatch
+    );
+    assert_eq!(
+        warm.score(&image(2), EvalOpts::new())
+            .unwrap()
+            .values
+            .map(f64::to_bits),
+        cold.values.map(f64::to_bits)
+    );
+}
+#[test]
+fn refuses_duplicate_nonfinite_and_over_budget_inputs() {
+    for (values, duplicate) in [
+        ([1.0, 2.0], true),
+        ([f64::NAN, 2.0], false),
+        ([1.0, f64::INFINITY], false),
+    ] {
+        assert_eq!(
+            score(
+                &mut Scorer { values, duplicate },
+                &image(2),
+                &image(2),
+                EvalOpts::new()
+            )
+            .unwrap_err()
+            .error()
+            .kind(),
+            ErrorKind::Internal
+        );
+    }
+    assert_eq!(
+        score(
+            &mut Scorer {
+                values: [1.0, 2.0],
+                duplicate: false
+            },
+            &image(2),
+            &image(2),
+            EvalOpts::new().with_max_pixels(3)
+        )
+        .unwrap_err()
+        .error()
+        .kind(),
         ErrorKind::Resource
     );
-    assert_eq!(m.calls, 0);
-    assert_eq!(
-        score(&mut m, image(), image(), EvalOpts::new())
-            .unwrap_err()
-            .error()
-            .kind(),
-        ErrorKind::Internal
-    );
-    m.nonfinite = NonFinite::PositiveInfinity;
-    assert_eq!(
-        score(&mut m, image(), image(), EvalOpts::new())
-            .unwrap()
-            .result
-            .score(),
-        f64::INFINITY
-    );
-    m.value = f64::NAN;
-    assert!(score(&mut m, image(), image(), EvalOpts::new()).is_err());
-    assert!(prepare_reference(&mut m, image(), EvalOpts::new()).is_err());
 }
 #[test]
-fn rgb_helper_preserves_minimal_strides_and_refuses_conflicting_context() {
-    let bytes = [0u8; 21];
-    let p = PixelSlice::new(&bytes, 3, 2, 12, PixelDescriptor::RGB8_SRGB).unwrap();
-    let image = Image::from(p.clone());
-    let view = rgb8_view(&image).unwrap();
-    assert_eq!(view.pixels.as_ptr(), bytes.as_ptr());
-    assert_eq!(view.stride, 12);
-    assert_eq!(contiguous_rgb8(&view).len(), 18);
-    let p = p.with_color_context(Arc::new(ColorContext::from_cicp(Cicp::new(9, 16, 0, true))));
+fn identity_retains_config_and_actual_implementation_without_column_policy() {
+    let a = Scorer {
+        values: [1.0, 2.0],
+        duplicate: false,
+    }
+    .id();
+    assert_eq!(a.config_value("display"), Some("hdr"));
+    assert_ne!(a.clone().with_backend(Backend::Gpu { api: "cuda" }), a);
     assert_eq!(
-        rgb8_view(&p.into()).unwrap_err().error().kind(),
-        ErrorKind::UnsupportedInput
-    );
-}
-#[test]
-fn native_odd_subsampled_planes_use_shared_layout_without_copying() {
-    let enc = PlaneEncoding::Code(SampleEncoding::new(ChannelType::U16, 10, 6).unwrap());
-    let layout = PlanarLayout::new(
-        vec![
-            PlaneSpec::new(PlaneRole::Luma, enc),
-            PlaneSpec::new(PlaneRole::Cb, enc),
-            PlaneSpec::new(PlaneRole::Cr, enc),
-        ],
-        ChromaSubsampling::Yuv420,
-        ChromaSiting::Left,
-    )
-    .unwrap();
-    let y = [0u16; 17];
-    let uv = [0u16; 7];
-    let planes = [
-        AnyPlane::U16(PlaneRef::new(&y[..], 5, 3, 6).unwrap()),
-        AnyPlane::U16(PlaneRef::new(&uv[..], 3, 2, 4).unwrap()),
-        AnyPlane::U16(PlaneRef::new(&uv[..], 3, 2, 4).unwrap()),
-    ];
-    let p = Planes::new(&layout, &planes, 5, 3, Cicp::new(9, 16, 9, false)).unwrap();
-    assert_eq!(p.layout().planes()[0].encoding(), enc);
-    match p.planes()[0] {
-        AnyPlane::U16(p) => assert_eq!(p.strided_samples().as_ptr(), y.as_ptr()),
-        _ => panic!("sample width changed"),
-    }
-    let image = Image::from(p);
-    assert_eq!((image.width(), image.height()), (5, 3));
-    assert!(Planes::new(&layout, &planes, 6, 3, Cicp::new(9, 16, 9, false)).is_err());
-}
-struct Nr;
-impl NoReferenceMetric for Nr {
-    fn id(&self) -> MetricId {
-        MetricId::new("nr", Implementation::new("contract", "1", 1))
-    }
-    fn outputs(&self) -> Cow<'static, [ScoreSpec]> {
-        Cow::Owned(vec![ScoreSpec::new("score", ScoreKind::Quality)])
-    }
-    fn accepts(&self, f: &InputFormat) -> bool {
-        is_rgb8_srgb(f)
-    }
-    fn evaluate_image(
-        &mut self,
-        r: Image<'_>,
-        opts: EvalOpts<'_>,
-    ) -> MetricResult<Box<dyn Evaluation>> {
-        opts.refuse_map("nr")?;
-        let v = rgb8_view(&r)?;
-        Ok(Box::new(ScalarEval::single(
-            "score",
-            f64::from(v.pixels[0]),
-        )))
-    }
-}
-#[test]
-fn paired_no_reference_retains_both_named_outputs_and_real_reference_work() {
-    let mut m = PairedNoReference::new(Nr);
-    let r = image();
-    let dbytes = [7; 18];
-    let d = Image::from(PixelSlice::new(&dbytes, 3, 2, 9, PixelDescriptor::RGB8_SRGB).unwrap());
-    conformance::assert_conforms(&mut m, &r, &d);
-    let mut warm = prepare_reference(&mut m, r, EvalOpts::new()).unwrap();
-    let out = warm.score(d, EvalOpts::new()).unwrap();
-    assert_eq!(
-        out.result.scores().collect::<Vec<_>>(),
-        vec![("score".into(), 7.0), ("score_ref".into(), 0.0)]
+        a.clone().with_config("x", 1).with_config("y", 2),
+        a.with_config("y", 2).with_config("x", 1)
     );
 }

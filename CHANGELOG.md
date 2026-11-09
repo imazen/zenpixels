@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Simplify the unpublished IQA contract to typed native assessments, named score
+  views, configured identity, classified errors and optional prepared references.
+  Move runtime erasure, persistence policy and diagnostic processing to consumers.
+
 ### QUEUED BREAKING CHANGES
 
 None. This new companion is an unpublished review API.

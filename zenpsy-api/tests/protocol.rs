@@ -135,10 +135,21 @@ impl Drop for Recorder {
     }
 }
 
-fn image() -> Image<'static> {
-    PixelSlice::new(&[0; 12], 2, 2, 6, PixelDescriptor::RGB8_SRGB)
-        .unwrap()
-        .into()
+fn image() -> PixelSlice<'static> {
+    PixelSlice::new(&[0; 12], 2, 2, 6, PixelDescriptor::RGB8_SRGB).unwrap()
+}
+#[derive(Debug)]
+struct NativeScore(f64);
+impl NativeScore {
+    fn score(&self) -> f64 {
+        self.0
+    }
+}
+impl Evaluation for NativeScore {
+    fn scores(&self) -> impl Iterator<Item = Score<'_>> {
+        static SPEC: ScoreSpec = ScoreSpec::new("score", Direction::Lower);
+        core::iter::once(Score::new(&SPEC, self.0))
+    }
 }
 struct Worker {
     stop_at_return: bool,
@@ -146,34 +157,32 @@ struct Worker {
     log: Arc<Log>,
 }
 impl Metric for Worker {
+    type Output = NativeScore;
     fn id(&self) -> MetricId {
         MetricId::new("control", Implementation::new("protocol", "1", 1))
     }
-    fn outputs(&self) -> std::borrow::Cow<'static, [ScoreSpec]> {
-        std::borrow::Cow::Owned(vec![ScoreSpec::new("score", ScoreKind::Difference)])
-    }
-    fn accepts(&self, f: &InputFormat) -> bool {
-        is_rgb8_srgb(f)
-    }
     fn evaluate(
         &mut self,
-        _: Image<'_>,
-        _: Image<'_>,
+        _: &PixelSlice<'_>,
+        _: &PixelSlice<'_>,
         opts: EvalOpts<'_>,
-    ) -> Result<Box<dyn Evaluation>> {
+    ) -> Result<NativeScore> {
         opts.pulse.set_total(Total::Exact(2)).unwrap();
         let shared = opts.pulse.share().unwrap();
         // An owned worker gets the complete view, including progress and stop.
-        std::thread::spawn(move || EvalOpts::new().with_pulse(shared.as_pulse()).step(2))
-            .join()
-            .unwrap()?;
+        std::thread::spawn(move || {
+            how_far::ProgressExt::step(shared.as_pulse(), 2)
+                .map_err(|r| whereat::at(MetricError::stopped(r)))
+        })
+        .join()
+        .unwrap()?;
         if self.stop_at_return {
             self.log.stopped.store(true, Ordering::Release);
         }
         if let Some(error) = self.error.take() {
             return Err(error);
         }
-        Ok(Box::new(ScalarEval::single("score", 1.25)))
+        Ok(NativeScore(1.25))
     }
 }
 fn worker(log: &Arc<Log>) -> Worker {
@@ -195,8 +204,8 @@ fn owned_worker_reporting_and_parent_result_handoffs_compose() {
         |pulse| {
             score(
                 &mut metric,
-                image(),
-                image(),
+                &image(),
+                &image(),
                 EvalOpts::new().with_pulse(pulse),
             )
         },
@@ -205,7 +214,6 @@ fn owned_worker_reporting_and_parent_result_handoffs_compose() {
         caller
             .complete_classified(result, |e| stop_reason(e).is_some())
             .unwrap()
-            .result
             .score(),
         1.25
     );
@@ -240,8 +248,8 @@ fn cancellation_and_failure_complete_owned_children_without_finishing_parent() {
         }
         let error = score(
             &mut metric,
-            image(),
-            image(),
+            &image(),
+            &image(),
             EvalOpts::new().with_pulse(&pulse),
         )
         .unwrap_err();
@@ -270,12 +278,11 @@ fn rejected_observation_plan_retains_cancellation_without_inventing_progress() {
     assert_eq!(
         score(
             &mut metric,
-            image(),
-            image(),
+            &image(),
+            &image(),
             EvalOpts::new().with_pulse(&pulse)
         )
         .unwrap()
-        .result
         .score(),
         1.25
     );
@@ -288,8 +295,8 @@ fn rejected_observation_plan_retains_cancellation_without_inventing_progress() {
         stop_reason(
             &score(
                 &mut metric,
-                image(),
-                image(),
+                &image(),
+                &image(),
                 EvalOpts::new().with_pulse(&pulse)
             )
             .unwrap_err()
@@ -322,8 +329,8 @@ fn native_trace_cause_and_error_priority_survive_the_envelope_and_scoring_bounda
     metric.stop_at_return = true;
     let error = score(
         &mut metric,
-        image(),
-        image(),
+        &image(),
+        &image(),
         EvalOpts::new().with_pulse(&pulse),
     )
     .unwrap_err();

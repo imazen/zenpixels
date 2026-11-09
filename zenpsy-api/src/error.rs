@@ -31,7 +31,7 @@ pub type MetricResult<T> = Result<T, At<MetricError>>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ErrorKind {
     /// The input's pixel format/layout/transfer isn't one the metric
-    /// accepts natively ([`crate::Metric::accepts`] would say `false`).
+    /// accepts natively.
     UnsupportedInput,
     /// Reference and distorted (or successive frames, or a warm reference
     /// and a candidate) disagree on dimensions.
@@ -51,7 +51,7 @@ pub enum ErrorKind {
     /// A map was requested from a metric that publishes none.
     NoMap,
     /// A well-formed request this metric doesn't implement (an unknown
-    /// `MapFold::Custom` name, a temporal call on a still-image metric).
+    /// diagnostic request).
     UnsupportedRequest,
     /// Stopped through the caller's `Stop`/`Pulse` — cancelled or past
     /// its deadline.
