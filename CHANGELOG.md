@@ -42,8 +42,8 @@ This companion remains an unpublished review API; no release is authorized.
 
 ### Changed
 
-- Use TinyVec for per-assessment borrowed output-key validation, retaining 64
-  inline keys, fallible overflow and empty/duplicate-key errors. Keys remain
+- Use a plain Vec for per-assessment borrowed output-key validation, retaining
+  fallible growth and empty/duplicate-key errors. Keys remain
   owned by native descriptors; no static registry or copied name set is added.
 
 - Name the unpublished shared contract `zenpsy-api`, with the Rust

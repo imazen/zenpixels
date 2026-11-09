@@ -48,9 +48,8 @@ score iteration; it does not copy native diagnostic arrays or score descriptors.
 The erased path allocates a result box and short-lived explicit score iterators; typed
 calls keep their native result and iterator. Use `native::<ConcreteOutput>()`
 when a caller needs the retained native fields. Checked validation visits each
-output set directly, without constructing erased iterators. Small output-name
-sets use TinyVec inline storage; larger sets grow fallibly. The validation set
-is local to each assessment and borrows descriptor keys, whether their native
+output set directly, without constructing erased iterators. Output-key storage
+is a plain Vec with fallible growth. The validation set is local to each assessment and borrows descriptor keys, whether their native
 source is a static string or an owned runtime key. No global name registry or
 per-key string copy is introduced.
 

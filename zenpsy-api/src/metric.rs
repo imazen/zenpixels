@@ -1,5 +1,6 @@
 //! Typed comparisons and optional reusable reference work.
 use crate::{ErrorKind, Evaluation, MetricError, MetricId, MetricResult, fail};
+use alloc::vec::Vec;
 use core::fmt;
 use how_far::{Complete, NoPulse, Pulse, Stop};
 use whereat::ResultAtExt as _;
@@ -207,10 +208,10 @@ fn validate(result: &impl Evaluation) -> MetricResult<()> {
     validate_scores(crate::EvaluationRef::new(result))
 }
 
-// Most native output sets fit inline. Reserve before pushing so overflow
-// allocation remains fallible; TinyVec owns the storage mechanics.
+// Borrow descriptor keys for this assessment; reserve before pushing so
+// allocation failures retain their Resource classification.
 #[track_caller]
-fn insert_name<'a>(names: &mut tinyvec::TinyVec<[&'a str; 64]>, key: &'a str) -> MetricResult<()> {
+fn insert_name<'a>(names: &mut Vec<&'a str>, key: &'a str) -> MetricResult<()> {
     if key.is_empty() || names.contains(&key) {
         return fail(
             MetricError::new(ErrorKind::Internal).with_message("empty or duplicate output key"),
@@ -224,7 +225,7 @@ fn insert_name<'a>(names: &mut tinyvec::TinyVec<[&'a str; 64]>, key: &'a str) ->
 }
 #[track_caller]
 pub(crate) fn validate_scores(result: crate::EvaluationRef<'_>) -> MetricResult<()> {
-    let mut names = tinyvec::TinyVec::new();
+    let mut names = Vec::new();
     let mut status = Ok(());
     let mut count = 0;
     result.visit_scores(|score| {
@@ -335,7 +336,7 @@ pub(crate) fn validate_map_views(
     if !opts.diagnostics() {
         return Ok(());
     }
-    let mut names = tinyvec::TinyVec::new();
+    let mut names = Vec::new();
     let mut found = false;
     let mut status = Ok(());
     result.visit_maps(|map| {

@@ -1,4 +1,4 @@
-//! Public validation across the inline/spilled output-key boundary.
+//! Public validation of small and large native output-key sets.
 //! Map witnesses are synthetic one-cell views, requested only in these tests.
 use zenpsy_api::{
     zenpixels::{PixelDescriptor, PixelSlice, plane::*},
@@ -75,7 +75,7 @@ fn run(keys: Vec<String>, maps: bool) -> MetricResult<ErasedEvaluation> {
     )
 }
 #[test]
-fn native_names_validate_inline_and_after_spilling_for_scores_and_maps() {
+fn native_names_validate_small_and_large_score_and_map_sets() {
     for maps in [false, true] {
         for n in [64, 65, 130] {
             let output = run(names(n), maps).unwrap();
@@ -91,7 +91,7 @@ fn native_names_validate_inline_and_after_spilling_for_scores_and_maps() {
     }
 }
 #[test]
-fn empty_and_duplicate_names_are_refused_across_both_storage_regions() {
+fn empty_and_duplicate_names_are_refused_early_and_late() {
     for maps in [false, true] {
         for (at, duplicate_of) in [(1, 0), (64, 0), (129, 0), (129, 64)] {
             let mut keys = names(130);
