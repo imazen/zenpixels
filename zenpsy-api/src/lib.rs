@@ -15,8 +15,10 @@ mod erased;
 mod error;
 mod eval;
 mod identity;
+mod maps;
 mod metric;
-pub use erased::{DynMetric, DynPrepareReference, Erased, ErasedEvaluation};
+mod no_reference;
+pub use erased::{DynMetric, DynNoReferenceMetric, DynPrepareReference, Erased, ErasedEvaluation};
 pub use error::{
     ErrorKind, MetricError, MetricResult, ResultMetricExt, fail, find_metric_error, is_stopped,
     stop_reason,
@@ -24,8 +26,11 @@ pub use error::{
 pub use eval::{Direction, Evaluation, Score, ScoreSpec};
 pub use how_far;
 pub use identity::{Backend, Implementation, MetricId};
+pub use maps::{MapGrid, MapView};
 pub use metric::{
     EvalOpts, Metric, PrepareReference, PreparedReference, WarmReference, prepare_reference, score,
+    score_image,
 };
+pub use no_reference::{NoReferenceMetric, PairedEvaluation, PairedNoReference, PairedReference};
 pub use whereat;
 pub use zenpixels;

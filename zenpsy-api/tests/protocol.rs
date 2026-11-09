@@ -408,3 +408,56 @@ fn native_trace_cause_and_error_priority_survive_the_envelope_and_scoring_bounda
         Outcome::Failed
     );
 }
+
+impl NoReferenceMetric for Worker {
+    type Output = NativeScore;
+    fn id(&self) -> MetricId {
+        Metric::id(self)
+    }
+    fn evaluate_image(
+        &mut self,
+        image: &PixelSlice<'_>,
+        opts: EvalOpts<'_>,
+    ) -> Result<NativeScore> {
+        self.evaluate(image, image, opts)
+    }
+}
+#[test]
+fn no_reference_erasure_preserves_progress_failure_and_stop_priority() {
+    for failed in [false, true] {
+        let log = Arc::new(Log::default());
+        let pulse = Recorder::root(&log);
+        let mut inner = worker(&log);
+        if failed {
+            inner.error =
+                Some(Error::from_detail(ErrorKind::Backend, Native(Box::new(17))).start_at());
+            inner.stop_at_return = true;
+        }
+        let mut m: Box<DynNoReferenceMetric<'_>> = Box::new(Erased::new(Erased::new(inner)));
+        let result = score_image(&mut m, &image(), EvalOpts::new().with_pulse(&pulse));
+        if failed {
+            let error = result.err().unwrap();
+            assert_eq!(error.error().kind(), ErrorKind::Backend);
+            assert!(
+                std::error::Error::source(error.error())
+                    .unwrap()
+                    .is::<Native>()
+            );
+        } else {
+            assert_eq!(
+                result.unwrap().native::<NativeScore>().unwrap().score(),
+                1.25
+            );
+        }
+        assert_eq!(log.reports.lock().unwrap()["caller/score one image"], 2);
+        assert_eq!(
+            log.outcomes.lock().unwrap()["caller/score one image"],
+            if failed {
+                Outcome::Failed
+            } else {
+                Outcome::Succeeded
+            }
+        );
+        assert!(!log.outcomes.lock().unwrap().contains_key("caller"));
+    }
+}
