@@ -20,6 +20,8 @@ use crate::ChannelType;
 use core::fmt;
 
 mod exact;
+mod native;
+pub use native::{NativeCodeError, NativeCodeSlice, NativeEncoding};
 mod plane;
 pub use exact::{ExactDepth, ExactDepthError};
 pub use plane::{ChromaSiting, ChromaSubsampling, CodePlane, CodePlaneError};

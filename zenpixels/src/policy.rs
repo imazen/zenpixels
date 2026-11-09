@@ -180,6 +180,7 @@ pub struct ConvertOptions {
     sdr_white: Option<crate::hdr::DiffuseWhite>,
     hdr_peak: crate::hdr::HdrPeak,
     sdr_peak: Option<crate::hdr::Nits>,
+    hlg_rendering: Option<crate::hdr::HlgRendering>,
 }
 
 impl ConvertOptions {
@@ -206,6 +207,7 @@ impl ConvertOptions {
             sdr_white: None,
             hdr_peak: crate::hdr::HdrPeak::Measured,
             sdr_peak: None,
+            hlg_rendering: None,
         }
     }
 
@@ -226,7 +228,18 @@ impl ConvertOptions {
             sdr_white: None,
             hdr_peak: crate::hdr::HdrPeak::Measured,
             sdr_peak: None,
+            hlg_rendering: None,
         }
+    }
+
+    /// Explicit scene-to-display rendering conditions for HLG boundaries.
+    pub const fn hlg_rendering(&self) -> Option<crate::hdr::HlgRendering> {
+        self.hlg_rendering
+    }
+    /// Opt into HLG rendering. Native identity transport remains independent of this policy.
+    pub const fn with_hlg_rendering(mut self, rendering: crate::hdr::HlgRendering) -> Self {
+        self.hlg_rendering = Some(rendering);
+        self
     }
 
     /// Explicit luminance represented by relative-linear 1.0 / SDR white.
@@ -458,6 +471,7 @@ mod tests {
             sdr_white: None,
             hdr_peak: crate::hdr::HdrPeak::Measured,
             sdr_peak: None,
+            hlg_rendering: None,
         };
         #[allow(clippy::clone_on_copy)]
         let opts2 = opts.clone();
@@ -490,6 +504,7 @@ mod tests {
             sdr_white: None,
             hdr_peak: crate::hdr::HdrPeak::Measured,
             sdr_peak: None,
+            hlg_rendering: None,
         };
         let mut h = std::hash::DefaultHasher::new();
         opts.hash(&mut h);

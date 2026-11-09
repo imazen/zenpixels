@@ -4,8 +4,12 @@
 
 The owner approved a distinct native-code view using existing storage machinery,
 with per-channel code width, placement and signed interpretation. Ordinary
-processing views retain their canonical numerical meaning. This is an approved
-design direction, not a claim that the view or wider conversions exist today.
+processing views retain their canonical numerical meaning. `sample::NativeCodeSlice` implements this boundary with `NativeEncoding` and
+borrowed native-endian byte rows. `codes::native_to_u16` is the first consumer:
+it canonicalizes unsigned payloads up to 16 bits with explicit range and refuses
+signed/wider payload conversion before writes. Wider payload identity remains exact.
+`hdr::St2086Codes` preserves a documented RGB-order 24-byte representation; wire
+formats with another primary order must adapt explicitly.
 
 Identity transport of a supported native-code view preserves all storage bits,
 including padding. Explicit canonicalization interprets the codes; encoding back

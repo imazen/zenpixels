@@ -501,3 +501,80 @@ fn lcm(a: u32, b: u32) -> u32 {
     }
     a / x * b
 }
+
+/// Canonicalize unsigned native RGB/gray words into U16 samples.
+///
+/// Layout and dimensions must match. The destination descriptor supplies color
+/// meaning: this operation does no color conversion. Signed or >16-bit payloads
+/// refuse before any writes. Alpha uses full range regardless of color range.
+/// Native sample padding is ignored; destination row padding is untouched.
+pub fn native_to_u16(
+    source: zenpixels::sample::NativeCodeSlice<'_>,
+    destination: &mut PixelSliceMut<'_>,
+    range: SignalRange,
+) -> Result<(), NativeConversionError> {
+    let d = destination.descriptor();
+    if d.signal_range != range
+        || d.channel_type() != ChannelType::U16
+        || d.layout() != source.layout()
+        || destination.width() != source.width()
+        || destination.rows() != source.height()
+    {
+        return Err(NativeConversionError::Destination);
+    }
+    let target = SampleEncoding::new(ChannelType::U16, 16, 0).unwrap();
+    let mut maps = [None; 4];
+    let channels = source.encodings().len();
+    for (i, e) in source.encodings().iter().enumerate() {
+        if !matches!(
+            e.storage(),
+            ChannelType::U8 | ChannelType::U16 | ChannelType::U32 | ChannelType::U64
+        ) || e.code_bits() > 16
+        {
+            return Err(NativeConversionError::UnsupportedEncoding);
+        }
+        let encoding = SampleEncoding::new(ChannelType::U16, e.code_bits(), 0).unwrap();
+        let role = if d.has_alpha() && i == channels - 1 {
+            CodeRole::Alpha
+        } else {
+            CodeRole::Intensity
+        };
+        maps[i] = Some(
+            CodeMap::new(encoding, target, role, d.signal_range)
+                .map_err(NativeConversionError::Map)?,
+        );
+    }
+    if source.width() == 0 {
+        return Ok(());
+    }
+    for y in 0..source.height() {
+        let row = destination.row_mut(y);
+        for x in 0..source.width() {
+            for (c, map) in maps[..channels].iter().enumerate() {
+                let code = source.code(x, y, c).unwrap() as u16;
+                let out = map.unwrap().code(code).to_ne_bytes();
+                let offset = (x as usize * channels + c) * 2;
+                row[offset..offset + 2].copy_from_slice(&out);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Native canonicalization refuses unsupported interpretation before writing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NativeConversionError {
+    /// Destination must be matching U16 geometry and layout.
+    Destination,
+    /// Signed or wider-than-U16 payload needs a separately qualified conversion.
+    UnsupportedEncoding,
+    /// Range/depth mapping is unsupported.
+    Map(CodeMapError),
+}
+impl core::fmt::Display for NativeConversionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "native canonicalization refused: {self:?}")
+    }
+}
+impl core::error::Error for NativeConversionError {}
