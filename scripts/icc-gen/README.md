@@ -46,17 +46,26 @@ profile files from `s3://codec-corpus/icc-profiles/` into
 `~/.cache/zenpixels-icc/`. The recipe requires the R2 credentials named in the
 justfile. `icc-upload` is the existing upload/manifest maintenance path.
 
-A read-only inventory on 2026-11-09 found 1,224 ICC/ICM objects. All 1,210
+A verified inventory on 2026-11-09 found 1,224 ICC/ICM objects. All 1,210
 manifest entries were present; 14 profile objects were not listed in that
-manifest. This establishes retention, not complete coverage of the current
-normalized identification hashes or their historical tolerance qualifications.
-The next audit should map every retained table hash to original bytes and
-record complete-file digests/provenance before revalidating tolerances.
+manifest. Exact originals were located for all 412 active and 186 deferred
+table hashes, using the archive, checked-in profiles, historical bundles and
+embedded corpus profiles. The archive prefix alone covers 259 of those hashes.
+See the [coverage and equivalence audit](../../docs/icc-retention-audit.md)
+for the source breakdown, new-object results and remaining qualification work.
 
-Authenticated download tooling does not establish private access: the manifest
-and one sampled profile were also accessible without authentication on that
-date. Restricted originals require an archive with suitable access controls;
-no access settings were changed by this inventory.
+To inventory original bytes without requalifying or changing the tables:
+
+```
+just icc-inventory <input-dir> <output-dir>
+# Additional input directories are supported by the binary:
+cargo run -p icc-gen --release --bin icc-gen -- --inventory <dir1> <dir2> <output-dir>
+```
+
+The output contains `inventory.tsv` (normalized hash and source path) and
+`bundle-originals/` (exact bytes decoded from the current committed bundle).
+Inventory includes profiles rejected by classification. Retain full-file
+SHA-256 digests and source provenance alongside the resulting hash coverage.
 
 ## Optional `lcms2-crosscheck`
 
@@ -67,7 +76,9 @@ on the system):
 cargo run -p icc-gen --release --features lcms2-crosscheck -- ...
 ```
 
-The default build uses only `moxcms` — no system libraries required.
+The default build enables this independent cross-check and needs liblcms2.
+Use `--no-default-features` for moxcms-only diagnostics; those runs do not
+establish the independent-reader qualification.
 
 ## What it writes
 

@@ -189,7 +189,7 @@
     (0x6896_0bb0_d765_02d7, CP::Bt2020, TF::Srgb,  1, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp9-tc13
     (0x6987_0c8c_bad7_2911, CP::DisplayP3, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp12-tc6
     (0x69f2_c01a_1ce9_5bf6, CP::Bt709, TF::Gamma22,  0, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp1-tc4
-    (0x6a66_9bf1_e1bf_97d6, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] 敮啓srgb c56e1685
+    (0x6a66_9bf1_e1bf_97d6, CP::Bt709, TF::Srgb,  1, Safe::IdOnly),               // [-] 敮啓srgb c56e1685
     // (0x6ac6_1996_1a7d_d1d6, CP::Bt470Bg, TF::Gamma22,  0, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp5-tc4  [primaries deferred]
     (0x6b76_9029_87cd_0c1c, CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] installed-linux-arm64-Bluish
     // (0x6c7a_2cd4_2a10_57eb, CP::DciP3, TF::Pq,  1, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp11-tc16  [primaries deferred]

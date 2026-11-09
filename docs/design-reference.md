@@ -138,13 +138,14 @@ See [icc-gen corpus retention](../scripts/icc-gen/README.md#retained-corpus-orig
 The 2026-11-09 inventory found 1,224 ICC/ICM objects with all 1,210 manifest
 entries present. Creating a new archive is not an established missing task.
 
-Lowest-priority follow-up: map every recognition-table hash to an original,
-record full-file digests and provenance, and revalidate historical qualifications.
-The inventory did not establish normalized-hash coverage. Do not substitute a
-similarly named profile, assume authenticated tooling means private storage,
-or publish restricted bytes. Record generator/CMS identity, sample domain and
-tolerance for future qualification runs. Historical tolerance revalidation is
-still incomplete.
+The [retention audit](icc-retention-audit.md) locates exact original bytes for
+all 412 active and 186 deferred recognition hashes, with full-file digests and
+provenance retained in its receipt. The R2 prefix, current assets, historical
+bundles and two embedded corpus profiles all contribute; the R2 prefix alone
+does not contain every original. All 14 objects absent from the manifest were
+tested, and one stale substitution permission was removed. Revalidating every
+historical tolerance remains the lowest-priority follow-up. Future runs must
+record generator/CMS identity, sample domain and tolerance.
 
 Descriptor/trace follow-up validation: `just approved-contracts-check`,
 `just design-feature-check` and `just api-doc` passed. Trace capture stays at the failing operation; inline error-mapping closures
