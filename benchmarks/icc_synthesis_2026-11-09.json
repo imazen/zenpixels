@@ -1,0 +1,149 @@
+{
+  "date": "2026-11-09",
+  "source": "9f15c221",
+  "production_source": "af19bcdab06b0df55745288931a1bdfaa6232665",
+  "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "host": "r7900x (Zen 4)",
+  "scope": "6 named profile witnesses; exact shared recipes are byte-identical to bundled exports before timing",
+  "benchmark": "zenbench 0.1.11, release, no target-cpu=native, cpuset CPU10, 3 processes x12 rounds, shared host benchmark admission",
+  "status": "UNCONFIRMED: zenbench rejected noise/resource observations. Descriptive means only; no promotion or speed ratio claim.",
+  "timings": [
+    {
+      "case": "rgb-p3-srgb",
+      "operation": "qualified-synthesis",
+      "mean": "2.12\u00b5s",
+      "median": "2.17\u00b5s"
+    },
+    {
+      "case": "rgb-p3-srgb",
+      "operation": "uncached-group-decode",
+      "mean": "874.8ns",
+      "median": "849.0ns"
+    },
+    {
+      "case": "rgb-p3-srgb",
+      "operation": "cached-bundle-lookup",
+      "mean": "28.3ns",
+      "median": "28.3ns"
+    },
+    {
+      "case": "rgb-2020-bt2020",
+      "operation": "qualified-synthesis",
+      "mean": "2.11\u00b5s",
+      "median": "2.02\u00b5s"
+    },
+    {
+      "case": "rgb-2020-bt2020",
+      "operation": "uncached-group-decode",
+      "mean": "760.9ns",
+      "median": "790.7ns"
+    },
+    {
+      "case": "rgb-2020-bt2020",
+      "operation": "cached-bundle-lookup",
+      "mean": "106.7ns",
+      "median": "28.4ns"
+    },
+    {
+      "case": "rgb-2020-pq",
+      "operation": "qualified-synthesis",
+      "mean": "1.49ms",
+      "median": "1.51ms"
+    },
+    {
+      "case": "rgb-2020-pq",
+      "operation": "uncached-group-decode",
+      "mean": "27.30\u00b5s",
+      "median": "26.42\u00b5s"
+    },
+    {
+      "case": "rgb-2020-pq",
+      "operation": "cached-bundle-lookup",
+      "mean": "31.7ns",
+      "median": "31.6ns"
+    },
+    {
+      "case": "gray-p3-srgb",
+      "operation": "qualified-synthesis",
+      "mean": "2.60\u00b5s",
+      "median": "2.61\u00b5s"
+    },
+    {
+      "case": "gray-p3-srgb",
+      "operation": "uncached-group-decode",
+      "mean": "685.7ns",
+      "median": "707.9ns"
+    },
+    {
+      "case": "gray-p3-srgb",
+      "operation": "cached-bundle-lookup",
+      "mean": "22.4ns",
+      "median": "22.2ns"
+    },
+    {
+      "case": "gray-pq",
+      "operation": "qualified-synthesis",
+      "mean": "1.14ms",
+      "median": "1.14ms"
+    },
+    {
+      "case": "gray-pq",
+      "operation": "uncached-group-decode",
+      "mean": "25.12\u00b5s",
+      "median": "23.50\u00b5s"
+    },
+    {
+      "case": "gray-pq",
+      "operation": "cached-bundle-lookup",
+      "mean": "26.8ns",
+      "median": "27.0ns"
+    },
+    {
+      "case": "gray-log100",
+      "operation": "qualified-synthesis",
+      "mean": "16.16\u00b5s",
+      "median": "14.64\u00b5s"
+    },
+    {
+      "case": "gray-log100",
+      "operation": "uncached-group-decode",
+      "mean": "1.02\u00b5s",
+      "median": "1.06\u00b5s"
+    },
+    {
+      "case": "gray-log100",
+      "operation": "cached-bundle-lookup",
+      "mean": "22.4ns",
+      "median": "22.4ns"
+    }
+  ],
+  "sizes": {
+    "main_bundle_bytes": 35379,
+    "pr128_bundle_bytes": 93377,
+    "increase_bytes": 57998,
+    "pq_compressed_group_bytes": 68083,
+    "pq_decoded_group_payload_bytes": 627456,
+    "rgb_pq_profile_bytes": 54596,
+    "gray_pq_profile_bytes": 20376
+  },
+  "binary_sha256": "7f934a92165654fbf87e4c9cc1cdf5d06a20d5cb88838925df05bac9bf425f04",
+  "runtime_scope": "Pure synthesis and serialization includes result destruction. Group decode includes a new output allocation. Cached lookup is already initialized. No file IO or subprocess overhead is timed.",
+  "resources": "run-heavy rc=2 36s; client peak RSS 0.03 GiB, min available15989MiB, peak load4.76. Docker payload had a separate 2GiB memory/no-swap cap; client RSS is not payload peak.",
+  "rounding_witness": {
+    "source": "historical PR116 f64 curve/colorant oracle and deterministic seed, preserved",
+    "pixels": 4096,
+    "components": 12288,
+    "moxcms": "0.9.2",
+    "native_u16": {
+      "missed_nearest": 3815,
+      "mean_signed_codes": -0.22530724849902325,
+      "max_abs_codes": 6.57835333676303
+    },
+    "f32_rounded": {
+      "missed_nearest": 1630,
+      "mean_signed_codes": 0.1413105900426434,
+      "max_abs_codes": 5.767520010184626
+    }
+  },
+  "limits": "No new golden, existing assertion, default feature, public type or bundle changed. Timing confirmation did not pass. Original orchestration/fixture failures retained."
+}

@@ -388,3 +388,12 @@ LCMS. MoxCMS 0.9.2 retains 937/786432 components over the existing 0.0013 bound,
 maximum 0.006689250469207764; no threshold relaxed. The typed matrix accepts
 256 LCMS cases and 192 MoxCMS cases, with 64 explicit MoxCMS CMYK16 declines.
 See docs/cmyk-cms-qualification.md for intent/BPC controls and Argyll scope.
+
+### Hash authorization boundary reviewed (2026-11-09)
+
+ICC recognition uses normalized FNV-1a64; canonical replacement checks that hash
+and byte length, without normalized byte equality. FNV's zero-state property
+and ordinary collisions mean a hit is not a proof of transform identity. No
+valid hostile ICC collision was demonstrated in this review. Preserve lookup
+semantics while strengthening any pixel-changing authorization; see
+docs/pr-contract-review-2026-11-09.md for the exact source and proposed gates.
