@@ -120,6 +120,15 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed in the refinement pass (2026-11-09): CMS dispatch omitted BGR from
+  its RGB-to-gray luma-policy check and could accept a plugin without explicit
+  coefficients. Planner, row CMS and output planning now share one preflight.
+
+- Fixed in the refinement pass (2026-11-09): in-place adaptation compacted
+  pixels before rejecting an invalid target descriptor, then panicked while
+  rebuilding the view. Target validation now precedes mutation; invalid-target
+  regression checks preserve the original descriptor and bytes.
+
 - Fixed (2026-11-09): direct MoxCms construction admitted HLG transfer crossings
   without the coupled display renderer. It now declines identified HLG crossings;
   the public backend regression preserves explicit rendering ownership.

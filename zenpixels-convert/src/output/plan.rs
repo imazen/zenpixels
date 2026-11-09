@@ -204,16 +204,7 @@ impl OutputPlan {
         {
             return Err(whereat::at!(ConvertError::DepthReductionForbidden));
         }
-        if matches!(
-            source_desc.layout(),
-            crate::ChannelLayout::Rgb | crate::ChannelLayout::Rgba | crate::ChannelLayout::Bgra
-        ) && matches!(
-            target_desc_full.layout(),
-            crate::ChannelLayout::Gray | crate::ChannelLayout::GrayAlpha
-        ) && options.luma().is_none()
-        {
-            return Err(whereat::at!(ConvertError::RgbToGray));
-        }
+        crate::convert::validate_luma_policy(source_desc, target_desc_full, options)?;
 
         // Determine output metadata based on target profile.
         let metadata = match &target_profile {

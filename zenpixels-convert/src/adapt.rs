@@ -395,12 +395,9 @@ pub(crate) fn try_adapt_in_place(
     target: PixelDescriptor,
 ) -> Result<(), At<ConvertError>> {
     let src = buf.descriptor();
-    let no_path = || {
-        Err(whereat::at!(ConvertError::NoPath {
-            from: src,
-            to: target
-        }))
-    };
+    target
+        .validate()
+        .map_err(|error| whereat::at!(ConvertError::Buffer(error)))?;
 
     // Physical adaptation does not execute transfer/gamut/range conversion.
     // Refuse before mutation, without scanning pixels or allocating scratch.
@@ -409,7 +406,10 @@ pub(crate) fn try_adapt_in_place(
         || src.signal_range != target.signal_range
         || (src.bytes_per_pixel() == target.bytes_per_pixel() && src.alpha != target.alpha)
     {
-        return no_path();
+        return Err(whereat::at!(ConvertError::NoPath {
+            from: src,
+            to: target
+        }));
     }
 
     // Same byte layout: metadata-only re-tag, no pixel work.
@@ -431,7 +431,10 @@ pub(crate) fn try_adapt_in_place(
                     | (ChannelLayout::Bgra, ChannelLayout::Rgba)
             );
         if !swappable {
-            return no_path();
+            return Err(whereat::at!(ConvertError::NoPath {
+                from: src,
+                to: target
+            }));
         }
         buf.transform_in_place(|px| {
             let width = px.width as usize;
@@ -452,10 +455,16 @@ pub(crate) fn try_adapt_in_place(
         src.alpha,
         Some(AlphaMode::Undefined) | Some(AlphaMode::Opaque)
     ) {
-        return no_path();
+        return Err(whereat::at!(ConvertError::NoPath {
+            from: src,
+            to: target
+        }));
     }
     if src.channel_type() != target.channel_type() {
-        return no_path();
+        return Err(whereat::at!(ConvertError::NoPath {
+            from: src,
+            to: target
+        }));
     }
     // Channel-selection map in element units; mirrors the load-bearing
     // rewrite's transition table for the lane-drop subset.
@@ -465,7 +474,12 @@ pub(crate) fn try_adapt_in_place(
         // B<->R reorder (U8 only; no Bgra16/F32 formats exist).
         (ChannelLayout::Bgra, ChannelLayout::Rgb) => &[2, 1, 0],
         (ChannelLayout::GrayAlpha, ChannelLayout::Gray) => &[0],
-        _ => return no_path(),
+        _ => {
+            return Err(whereat::at!(ConvertError::NoPath {
+                from: src,
+                to: target
+            }));
+        }
     };
 
     let in_bpp = src.bytes_per_pixel();
@@ -539,8 +553,9 @@ fn rewrap<'a>(
 }
 
 /// [`PixelSliceConvertExt::adapt_for_encode`] for raw rows that a [`PixelSlice`]
-/// can't describe: padding that isn't a whole number of pixels, as in rows aligned
-/// to 4 bytes. Such rows are copied to tight ones when they match a supported format.
+/// cannot describe because row starts are not aligned for the declared sample type.
+/// Sample-aligned partial-pixel padding already works through PixelSlice.
+/// Unaligned raw rows are copied to aligned storage when the format matches.
 ///
 /// [`PixelSliceConvertExt::adapt_for_encode`]: crate::ext::PixelSliceConvertExt::adapt_for_encode
 #[track_caller]

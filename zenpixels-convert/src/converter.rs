@@ -231,6 +231,7 @@ impl RowConverter {
         // Check before CMS setup: its profile/format interface cannot express
         // the missing narrow-range depth scaling either.
         crate::convert::validate_descriptors(from, to)?;
+        crate::convert::validate_luma_policy(from, to, options)?;
         if from.transfer() != to.transfer()
             && matches!(
                 (from.transfer(), to.transfer()),
@@ -366,15 +367,6 @@ impl RowConverter {
                 if reduces_depth && options.depth_policy() == DepthPolicy::Forbid {
                     return Err(whereat::at!(ConvertError::DepthReductionForbidden));
                 }
-                let src_is_rgb = matches!(
-                    from.layout(),
-                    ChannelLayout::Rgb | ChannelLayout::Rgba | ChannelLayout::Bgra
-                );
-                let dst_is_gray =
-                    matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha);
-                if src_is_rgb && dst_is_gray && options.luma().is_none() {
-                    return Err(whereat::at!(ConvertError::RgbToGray));
-                }
 
                 return Ok(Self {
                     plan: ConvertPlan::identity(from, to),
@@ -413,6 +405,7 @@ impl RowConverter {
             .map(|(p, t)| to.with_primaries(p).with_transfer(t))
             .unwrap_or(to);
         crate::convert::validate_descriptors(from, to)?;
+        crate::convert::validate_luma_policy(from, to, options)?;
         if from.transfer() != to.transfer()
             && matches!(
                 (from.transfer(), to.transfer()),
