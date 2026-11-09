@@ -96,41 +96,10 @@ impl ColorPrimariesExt for ColorPrimaries {
     }
 }
 
-/// Retain an ICC only while its samples' color meaning is unchanged.
-fn context_after_conversion(
-    source: &PixelSlice<'_>,
-    target: PixelDescriptor,
-) -> Option<Arc<zenpixels::ColorContext>> {
-    let from = source.descriptor();
-    let pq_decoded =
-        from.transfer() == TransferFunction::Pq && target.transfer() == TransferFunction::Linear;
-    let empty = zenpixels::ColorContext::default();
-    let current = match source.color_context() {
-        Some(c) => c.as_ref(),
-        None if pq_decoded => &empty,
-        None => return None,
-    };
-    if from.transfer() == target.transfer()
-        && from.primaries == target.primaries
-        && from.signal_range == target.signal_range
-    {
-        return source.color_context().map(Arc::clone);
-    }
-    let mut next = zenpixels::ColorContext::default();
-    next.diffuse_white = if pq_decoded {
-        Some(zenpixels::hdr::DiffuseWhite::new(10_000.0))
-    } else {
-        current.diffuse_white
-    };
-    if let (Some(p), Some(t)) = (target.primaries.to_cicp(), target.transfer().to_cicp()) {
-        next.cicp = Some(zenpixels::Cicp::new(
-            p,
-            t,
-            0,
-            target.signal_range == zenpixels::SignalRange::Full,
-        ));
-    }
-    Some(Arc::new(next))
+/// The conversion worker and output interpretation are resolved together.
+struct PreparedConversion {
+    converter: crate::RowConverter,
+    context: Option<Arc<zenpixels::ColorContext>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -315,42 +284,47 @@ fn converter_for(
     source: &PixelSlice<'_>,
     target: PixelDescriptor,
     options: &zenpixels::ConvertOptions,
-) -> Result<crate::RowConverter, At<crate::ConvertError>> {
+) -> Result<PreparedConversion, At<crate::ConvertError>> {
     let src_desc = source.descriptor();
     check_needs_cms(&src_desc, &target)?;
-    let mut options = *options;
-    if options.sdr_white().is_none()
-        && let Some(white) = source.color_context().and_then(|c| c.diffuse_white)
-    {
-        options = options.with_sdr_white(white);
-    }
+    let options =
+        crate::interpretation::resolve_options(source.color_context().map(Arc::as_ref), options);
     let source_profile =
         crate::output::current_profile_for(src_desc, source.color_context().map(Arc::as_ref))?;
     let changes_color =
         src_desc.transfer() != target.transfer() || src_desc.primaries != target.primaries;
-    if changes_color && matches!(source_profile, zenpixels::ColorProfileSource::Icc(_)) {
-        // The profile-only CMS interface cannot express absolute-light intent.
-        if matches!(
-            (src_desc.transfer(), target.transfer()),
-            (TransferFunction::Pq | TransferFunction::Hlg, _)
-                | (_, TransferFunction::Pq | TransferFunction::Hlg)
-        ) {
-            return Err(whereat::at!(crate::ConvertError::NeedsCms {
-                from: src_desc,
-                to: target
-            }));
-        }
-        crate::RowConverter::new_with_sources(
-            src_desc,
-            target,
-            source_profile,
-            target.color_profile_source(),
-            &options,
-            None,
-        )
-    } else {
-        crate::RowConverter::new_explicit(src_desc, target, &options).at()
-    }
+    let converter =
+        if changes_color && matches!(source_profile, zenpixels::ColorProfileSource::Icc(_)) {
+            // The profile-only CMS interface cannot express absolute-light intent.
+            if matches!(
+                (src_desc.transfer(), target.transfer()),
+                (TransferFunction::Pq | TransferFunction::Hlg, _)
+                    | (_, TransferFunction::Pq | TransferFunction::Hlg)
+            ) {
+                return Err(whereat::at!(crate::ConvertError::NeedsCms {
+                    from: src_desc,
+                    to: target
+                }));
+            }
+            crate::RowConverter::new_with_sources(
+                src_desc,
+                target,
+                source_profile,
+                target.color_profile_source(),
+                &options,
+                None,
+            )
+        } else {
+            crate::RowConverter::new_explicit(src_desc, target, &options).at()
+        }?;
+    let context = crate::interpretation::output_context(
+        src_desc,
+        target,
+        source.color_context(),
+        &options,
+        false,
+    );
+    Ok(PreparedConversion { converter, context })
 }
 
 fn default_options() -> zenpixels::ConvertOptions {
@@ -518,31 +492,17 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
             };
             resolved = resolved.with_hdr_peak(zenpixels::hdr::HdrPeak::Nits(peak));
         }
-        let mut converter = converter_for(self, target, &resolved)?;
+        let PreparedConversion {
+            mut converter,
+            context,
+        } = converter_for(self, target, &resolved)?;
         let mut buf = PixelBuffer::try_new(width, self.rows(), target)
             .map_err_at(crate::ConvertError::from)?;
         let mut destination = buf.as_slice_mut();
         for y in 0..self.rows() {
             converter.try_convert_row(self.row(y), destination.row_mut(y), width)?;
         }
-        let anchor = if crate::convert::is_hdr_to_sdr(src_desc.transfer(), target.transfer()) {
-            resolved
-                .sdr_peak()
-                .map(|n| zenpixels::hdr::DiffuseWhite::new(n.nits()))
-        } else {
-            resolved
-                .sdr_white()
-                .or_else(|| self.color_context().and_then(|c| c.diffuse_white))
-        };
-        let context = context_after_conversion(self, target);
-        if let Some(white) = anchor {
-            let context = context
-                .as_deref()
-                .cloned()
-                .unwrap_or_default()
-                .with_diffuse_white(white);
-            buf = buf.with_color_context(Arc::new(context));
-        } else if let Some(context) = context {
+        if let Some(context) = context {
             buf = buf.with_color_context(context);
         }
         if let Some(exact) = self
@@ -572,12 +532,15 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
             }));
         }
         let target = dst.descriptor();
-        let mut converter = converter_for(self, target, &default_options())?;
+        let PreparedConversion {
+            mut converter,
+            context,
+        } = converter_for(self, target, &default_options())?;
         for y in 0..self.rows() {
             converter.try_convert_row(self.row(y), dst.row_mut(y), self.width())?;
         }
         // The pixels are new, so nothing the destination said about its old ones still holds.
-        Ok(match context_after_conversion(self, target) {
+        Ok(match context {
             Some(ctx) => dst.with_color_context(ctx),
             None if dst.color_context().is_some() => {
                 dst.with_color_context(Arc::new(zenpixels::ColorContext::default()))
@@ -592,6 +555,9 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
         supported: &[PixelDescriptor],
         options: &zenpixels::ConvertOptions,
     ) -> Result<PixelCow<'a>, At<crate::ConvertError>> {
+        let resolved =
+            crate::interpretation::resolve_options(self.color_context().map(Arc::as_ref), options);
+        let options = &resolved;
         // A current ICC profile outranks the descriptor, as it does in `convert_to`.
         if let Some(target) = crate::adapt::encode_conversion_target(self.descriptor(), supported) {
             let source = self.descriptor();
@@ -622,7 +588,13 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
                     }
                 }
                 return Ok(PixelCow::Owned(
-                    match context_after_conversion(self, target) {
+                    match crate::interpretation::output_context(
+                        self.descriptor(),
+                        target,
+                        self.color_context(),
+                        options,
+                        false,
+                    ) {
                         Some(ctx) => output.with_color_context(ctx),
                         None => output,
                     },
@@ -643,12 +615,16 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
                 Some(ctx) => borrowed.with_color_context(Arc::clone(ctx)),
                 None => borrowed,
             }),
-            PixelCow::Owned(owned) => {
-                PixelCow::Owned(match context_after_conversion(self, owned.descriptor()) {
-                    Some(ctx) => owned.with_color_context(ctx),
-                    None => owned,
-                })
-            }
+            PixelCow::Owned(owned) => PixelCow::Owned(match crate::interpretation::output_context(
+                self.descriptor(),
+                owned.descriptor(),
+                self.color_context(),
+                options,
+                false,
+            ) {
+                Some(ctx) => owned.with_color_context(ctx),
+                None => owned,
+            }),
         })
     }
 
@@ -894,16 +870,16 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
 
         let mut buf = PixelBuffer::from_vec(out, self.width(), self.height(), target)
             .map_err_at(crate::ConvertError::from)?;
-        if matches!(
-            src_desc.transfer(),
-            TransferFunction::Linear | TransferFunction::Pq
+        let options = zenpixels::ConvertOptions::permissive()
+            .with_sdr_peak(zenpixels::hdr::Nits::new(hdr.target_peak_nits))
+            .with_sdr_white(zenpixels::hdr::DiffuseWhite::new(hdr.target_peak_nits));
+        if let Some(ctx) = crate::interpretation::output_context(
+            src_desc,
+            target,
+            self.color_context(),
+            &options,
+            true,
         ) {
-            let mut context = context_after_conversion(&self.as_slice(), target)
-                .map(|c| (*c).clone())
-                .unwrap_or_default();
-            context.diffuse_white = Some(zenpixels::hdr::DiffuseWhite::new(hdr.target_peak_nits));
-            buf = buf.with_color_context(Arc::new(context));
-        } else if let Some(ctx) = context_after_conversion(&self.as_slice(), target) {
             buf = buf.with_color_context(ctx);
         }
         Ok(buf)

@@ -50,7 +50,7 @@ Tests must distinguish those defects from primitive rounding differences.
 |---|---|---|
 | Unified integer encoding and shared native geometry | Implemented | Native signed/wide carriage, code mapping, empty/strided planes |
 | Finalized operation chain and policy preservation | Implemented | Compositing/swizzle combinations, prepared and partitioned execution |
-| Unified output context | Pending | Allocating/into/adaptation pixels and white-anchor parity |
+| Unified output context | Implemented | Allocating/into/adaptation pixels and white-anchor parity |
 | Descriptor and generic-layout invariants | Implemented | Invalid alpha descriptors, U64 channel removal, empty row swaps |
 | Payload and histogram algorithm corrections | Pending | F16 alpha bits, positive percentile ranks; primitive parity separate |
 | ICC qualification and API cleanup | Pending | Parametric curve types, failed qualification, fallible clone callers |

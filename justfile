@@ -690,3 +690,7 @@ design-check:
 # Planner rewrites, complete operation contracts, and explicit HDR policy.
 plan-design-check:
     cargo test -p zenpixels-convert --release --features __trace_ops,bt2446a --test plan_validation --test design_invariants --test matte_row_kernels --test hlg_rendering
+
+# Pixel/context parity across allocation strategies and profile finalization.
+context-design-check:
+    cargo test -p zenpixels-convert --release --test design_invariants --test output_descriptor --test output_native --test hdr_intent
