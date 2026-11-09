@@ -11,8 +11,11 @@ identical-pair value. No universal range or normalization is assumed.
 score sets. Inputs are existing `PixelSlice` views: active strided rows, precision,
 colour context and HDR signalling pass through unchanged. Implementations must
 reject unsupported interpretations; the contract does not convert pixels.
-This first minimal surface accepts packed views; it does not replace native
-planar entry points.
+Packed traits remain unchanged. Optional `PlanarMetric` and
+`PreparePlanarReference` accept the shared `zenpixels::plane::PlanarSlice`:
+borrowed standard planes/layout, explicit color/luminance and alpha, without
+packing or copying samples. Checked prepared calls bind that interpretation;
+independent candidate strides are preserved.
 
 `PrepareReference` is optional and returns actual reusable work through a native
 associated type. Checked prepared calls preserve geometry and use fresh controls.
@@ -27,12 +30,21 @@ Repeated erasure keeps the original native downcast target.
 
 `ErasedEvaluation` moves the native assessment into a box and forwards borrowed
 score iteration; it does not copy native diagnostic arrays or score descriptors.
-The erased path allocates a result box and short-lived score iterators; typed
+The erased path allocates a result box and short-lived explicit score iterators; typed
 calls keep their native result and iterator. Use `native::<ConcreteOutput>()`
-when a caller needs the retained native fields.
+when a caller needs the retained native fields. Checked validation visits each
+output set directly, without constructing erased iterators. Small output-name
+sets use stack storage; larger sets grow fallibly.
+
+Public metadata is built with constructors/builders and read through accessors.
+`EvalOpts` alone supplies `Default`; empty score descriptors/maps have no semantic
+default. Runtime descriptor keys use `with_key`, and infinity permission is
+independent of identity. `MapGrid` constructors refuse empty/zero-step geometry.
+The unpublished field/privacy and checked-grid changes require caller updates.
 
 Diagnostics are off by default. `EvalOpts::with_native_map` explicitly requests
-native diagnostic data in the concrete result; callers must bound witnesses and
+native diagnostic data in the concrete result; `with_map(key)` additionally
+requires that exact common map or returns `NoMap`; callers must bound witnesses and
 storage. `Evaluation::maps()` exposes borrowed `MapView`s: existing zenpixels `AnyPlane`
 views, native `ScoreSpec` semantics and a regular `MapGrid` in input coordinates.
 Typed and erased results keep the original sample allocations, precision and
@@ -51,6 +63,16 @@ stay unchanged and reference keys append `_ref`. Only candidate diagnostics are
 requested. Actual preparation caches the reference assessment once, sharing its
 native storage across candidate results without cloning diagnostic arrays.
 Both originals remain available through `PairedEvaluation` accessors.
+
+For encoder loops, owned planar preparation can survive dropping the factory.
+`PreparedPlanarReference::with_evaluation` lends an `EvaluationRef` to a callback
+with borrowed scalar/map visitors. Its default borrows an owned native result;
+a native implementation may override it to consume scratch before recycling,
+without exporting a second map. Stacked erasure forwards lending directly.
+The checked callback validates scores, requested maps, geometry, interpretation,
+cancellation and exactly-once invocation. A returned value cannot borrow the
+callback's temporary assessment. Commit consumer side effects after success.
+No encoder block reduction, normalization or target calibration is imposed.
 
 `MetricId` records the effective configuration and actual implementation.
 Persistence columns, fingerprint algorithms, registries, resource estimation,

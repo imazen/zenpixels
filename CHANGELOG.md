@@ -15,6 +15,10 @@
 
 ### QUEUED BREAKING CHANGES
 
+- Unpublished zenpsy-api metadata fields become private; use accessors/builders.
+  MapGrid construction is checked. The GPU variant uses `Backend::gpu`.
+
+
 - Remove the duplicate `PixelFormat::create_from` constructor; use `from_parts(sample, layout, None)`. Remove root `at` and `ResultAtExt` reexports; import those from `whereat`. Retain the public encoder adaptation module and its raw-row/Cow entry points for existing codec consumers.
 
 None. This new companion is an unpublished review API.

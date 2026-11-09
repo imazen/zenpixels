@@ -72,9 +72,10 @@ fn reference<M: NoReferenceMetric>(
     let specs = result
         .scores()
         .map(|score| {
-            let mut spec = score.spec.clone();
-            spec.key = format!("{}_ref", spec.key).into();
-            spec
+            score
+                .spec
+                .clone()
+                .with_key(format!("{}_ref", score.spec.key()))
         })
         .collect::<Vec<_>>()
         .into();

@@ -4,20 +4,33 @@ use core::fmt;
 use how_far::{Complete, NoPulse, Pulse, Stop};
 use whereat::ResultAtExt as _;
 use zenpixels::PixelSlice;
+/// Explicit native diagnostic request. A named request requires a common map
+/// with this exact key; absence is an error, never successful empty output.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MapRequest<'a> {
+    /// Score-only work.
+    None,
+    /// Native diagnostics; richer native results may omit common map views.
+    Native,
+    /// A specific common map, in its native units and placement.
+    Named(&'a str),
+}
+
 /// Operation-local controls. Diagnostic arrays are off by default.
 #[non_exhaustive]
 #[derive(Clone, Copy)]
 pub struct EvalOpts<'a> {
     /// Cancellation/progress, never retained beyond the operation.
-    pub pulse: &'a dyn Pulse,
+    pulse: &'a dyn Pulse,
     /// Active-pixel ceiling per input, excluding native scratch.
-    pub max_pixels: Option<u64>,
-    diagnostics: bool,
+    max_pixels: Option<u64>,
+    maps: MapRequest<'a>,
 }
 impl fmt::Debug for EvalOpts<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("EvalOpts")
-            .field("diagnostics", &self.diagnostics)
+            .field("maps", &self.maps)
             .field("max_pixels", &self.max_pixels)
             .finish_non_exhaustive()
     }
@@ -33,35 +46,62 @@ impl<'a> EvalOpts<'a> {
         EvalOpts {
             pulse: &NoPulse,
             max_pixels: None,
-            diagnostics: false,
+            maps: MapRequest::None,
         }
     }
     /// Opt into native diagnostic arrays. The caller bounds the witness set
     /// and storage budget. Unsupported diagnostics must be refused.
     pub const fn with_native_map(mut self) -> Self {
-        self.diagnostics = true;
+        self.maps = MapRequest::Native;
         self
     }
     pub(crate) const fn without_diagnostics(mut self) -> Self {
-        self.diagnostics = false;
+        self.maps = MapRequest::None;
         self
+    }
+    /// Require a common native map by its stable key. Implementations may
+    /// compute shared components, but must not substitute another map.
+    pub fn with_map<'b>(self, key: &'b str) -> EvalOpts<'b>
+    where
+        'a: 'b,
+    {
+        EvalOpts {
+            pulse: self.pulse,
+            max_pixels: self.max_pixels,
+            maps: MapRequest::Named(key),
+        }
+    }
+    /// Requested diagnostic selection.
+    pub const fn map_request(&self) -> MapRequest<'a> {
+        self.maps
     }
     /// Whether diagnostics were explicitly requested.
     pub const fn diagnostics(&self) -> bool {
-        self.diagnostics
+        !matches!(self.maps, MapRequest::None)
     }
     /// Replace operation-local observation; never complete its parent.
-    pub fn with_pulse<'b>(self, pulse: &'b dyn Pulse) -> EvalOpts<'b> {
+    pub fn with_pulse<'b>(self, pulse: &'b dyn Pulse) -> EvalOpts<'b>
+    where
+        'a: 'b,
+    {
         EvalOpts {
             pulse,
             max_pixels: self.max_pixels,
-            diagnostics: self.diagnostics,
+            maps: self.maps,
         }
     }
     /// Limit active pixels per input.
     pub const fn with_max_pixels(mut self, limit: u64) -> Self {
         self.max_pixels = Some(limit);
         self
+    }
+    /// Operation-local progress and cancellation source.
+    pub const fn pulse(&self) -> &'a dyn Pulse {
+        self.pulse
+    }
+    /// Active-pixel limit, when configured.
+    pub const fn max_pixels(&self) -> Option<u64> {
+        self.max_pixels
     }
     /// Borrow cancellation for native kernels accepting only Stop.
     pub fn stop(&self) -> &'a dyn Stop {
@@ -142,6 +182,9 @@ impl<P: WarmReference> PreparedReference<P> {
 #[track_caller]
 fn admit(image: &PixelSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<()> {
     opts.checkpoint()?;
+    if matches!(opts.maps, MapRequest::Named("")) {
+        return fail(MetricError::new(ErrorKind::InvalidConfig).with_message("empty map request"));
+    }
     if image.width() == 0 || image.rows() == 0 {
         return fail(MetricError::new(ErrorKind::InvalidInput));
     }
@@ -155,29 +198,72 @@ fn admit(image: &PixelSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<()> {
 }
 #[track_caller]
 fn validate(result: &impl Evaluation) -> MetricResult<()> {
-    let mut count = 0;
-    for (index, score) in result.scores().enumerate() {
-        count += 1;
-        if score.spec.key.is_empty()
-            || (!score.value.is_finite()
-                && !(score.spec.positive_infinity && score.value == f64::INFINITY))
-            || result
-                .scores()
-                .take(index)
-                .any(|other| other.spec.key == score.spec.key)
-        {
-            return fail(
-                MetricError::new(ErrorKind::Internal).with_message("invalid native score set"),
-            );
+    validate_scores(crate::EvaluationRef::new(result))
+}
+
+// Names normally fit on the stack, including SSIMULACRA2 component maps.
+// Larger native output sets grow fallibly; no descriptor/iterator is boxed.
+struct Names<'a> {
+    stack: [Option<&'a str>; 64],
+    len: usize,
+    extra: alloc::vec::Vec<&'a str>,
+}
+impl<'a> Names<'a> {
+    fn new() -> Self {
+        Self {
+            stack: [None; 64],
+            len: 0,
+            extra: alloc::vec::Vec::new(),
         }
     }
+    fn insert(&mut self, key: &'a str) -> MetricResult<()> {
+        if key.is_empty()
+            || self.stack[..self.len].contains(&Some(key))
+            || self.extra.contains(&key)
+        {
+            return fail(
+                MetricError::new(ErrorKind::Internal).with_message("empty or duplicate output key"),
+            );
+        }
+        if self.len < self.stack.len() {
+            self.stack[self.len] = Some(key);
+            self.len += 1;
+        } else {
+            self.extra
+                .try_reserve(1)
+                .map_err(|e| whereat::at(MetricError::from_detail(ErrorKind::Resource, e)))?;
+            self.extra.push(key);
+        }
+        Ok(())
+    }
+}
+#[track_caller]
+pub(crate) fn validate_scores(result: crate::EvaluationRef<'_>) -> MetricResult<()> {
+    let mut names = Names::new();
+    let mut status = Ok(());
+    let mut count = 0;
+    result.visit_scores(|score| {
+        if status.is_err() {
+            return;
+        }
+        count += 1;
+        if !score.value.is_finite()
+            && !(score.spec.positive_infinity() && score.value == f64::INFINITY)
+        {
+            status =
+                fail(MetricError::new(ErrorKind::Internal).with_message("invalid native score"));
+        } else {
+            status = names.insert(score.spec.key());
+        }
+    });
+    status?;
     if count == 0 {
         return fail(MetricError::new(ErrorKind::Internal).with_message("empty native score set"));
     }
     Ok(())
 }
 #[track_caller]
-fn operation<T>(
+pub(crate) fn operation<T>(
     opts: EvalOpts<'_>,
     label: &'static str,
     work: impl FnOnce(EvalOpts<'_>) -> MetricResult<T>,
@@ -252,26 +338,43 @@ fn validate_maps(
     height: u32,
     opts: EvalOpts<'_>,
 ) -> MetricResult<()> {
+    validate_map_views(crate::EvaluationRef::new(result), width, height, opts)
+}
+#[track_caller]
+pub(crate) fn validate_map_views(
+    result: crate::EvaluationRef<'_>,
+    width: u32,
+    height: u32,
+    opts: EvalOpts<'_>,
+) -> MetricResult<()> {
     if !opts.diagnostics() {
         return Ok(());
     }
-    for (index, map) in result.maps().enumerate() {
-        if map.spec.key.is_empty()
-            || map.values.width() == 0
-            || map.values.height() == 0
-            || map.grid.input_width != width
-            || map.grid.input_height != height
-            || map.grid.cell_width == 0
-            || map.grid.cell_height == 0
-            || result
-                .maps()
-                .take(index)
-                .any(|other| other.spec.key == map.spec.key)
-        {
-            return fail(
-                MetricError::new(ErrorKind::Internal).with_message("invalid native map view"),
-            );
+    let mut names = Names::new();
+    let mut found = false;
+    let mut status = Ok(());
+    result.visit_maps(|map| {
+        if status.is_err() {
+            return;
         }
+        if map.values.width() == 0
+            || map.values.height() == 0
+            || map.grid.input_width() != width
+            || map.grid.input_height() != height
+        {
+            status =
+                fail(MetricError::new(ErrorKind::Internal).with_message("invalid native map view"));
+            return;
+        }
+        found |= matches!(opts.maps, MapRequest::Named(key) if key == map.spec.key());
+        status = names.insert(map.spec.key());
+    });
+    status?;
+    if matches!(opts.maps, MapRequest::Named(_)) && !found {
+        return fail(
+            MetricError::new(ErrorKind::NoMap)
+                .with_message("requested common map was not returned"),
+        );
     }
     Ok(())
 }

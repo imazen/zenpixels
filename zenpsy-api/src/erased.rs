@@ -7,7 +7,7 @@ use alloc::boxed::Box;
 use core::any::{Any, TypeId};
 use zenpixels::PixelSlice;
 
-trait NativeEvaluation {
+trait NativeEvaluation: crate::eval::EvaluationAccess {
     fn scores(&self) -> Box<dyn Iterator<Item = Score<'_>> + '_>;
     fn maps(&self) -> Box<dyn Iterator<Item = MapView<'_>> + '_>;
     fn as_any(&self) -> &dyn Any;
@@ -52,6 +52,12 @@ impl ErasedEvaluation {
     }
 }
 impl Evaluation for ErasedEvaluation {
+    fn visit_scores<'a>(&'a self, visitor: &mut dyn FnMut(Score<'a>)) {
+        crate::eval::EvaluationAccess::visit_scores(&*self.inner, visitor);
+    }
+    fn visit_maps<'a>(&'a self, visitor: &mut dyn FnMut(MapView<'a>)) {
+        crate::eval::EvaluationAccess::visit_maps(&*self.inner, visitor);
+    }
     fn scores(&self) -> impl Iterator<Item = Score<'_>> {
         self.inner.scores()
     }
@@ -228,5 +234,93 @@ impl<M: NoReferenceMetric + ?Sized> NoReferenceMetric for Box<M> {
         opts: EvalOpts<'_>,
     ) -> MetricResult<Self::Output> {
         (**self).evaluate_image(image, opts)
+    }
+}
+
+impl<M: crate::PlanarMetric> crate::PlanarMetric for Erased<M>
+where
+    M::Output: 'static,
+{
+    fn evaluate_planar(
+        &mut self,
+        r: &zenpixels::plane::PlanarSlice<'_>,
+        d: &zenpixels::plane::PlanarSlice<'_>,
+        opts: EvalOpts<'_>,
+    ) -> MetricResult<Self::Output> {
+        self.0
+            .evaluate_planar(r, d, opts)
+            .map(ErasedEvaluation::new)
+    }
+}
+impl<P: crate::PlanarWarmReference> crate::PlanarWarmReference for Erased<P>
+where
+    P::Output: 'static,
+{
+    type Output = ErasedEvaluation;
+    fn evaluate_planar(
+        &mut self,
+        d: &zenpixels::plane::PlanarSlice<'_>,
+        opts: EvalOpts<'_>,
+    ) -> MetricResult<Self::Output> {
+        self.0.evaluate_planar(d, opts).map(ErasedEvaluation::new)
+    }
+    fn with_evaluation(
+        &mut self,
+        d: &zenpixels::plane::PlanarSlice<'_>,
+        opts: EvalOpts<'_>,
+        consumer: &mut dyn FnMut(crate::EvaluationRef<'_>),
+    ) -> MetricResult<()> {
+        self.0.with_evaluation(d, opts, consumer)
+    }
+}
+impl<M: crate::PreparePlanarReference> crate::PreparePlanarReference for Erased<M>
+where
+    M::Output: 'static,
+{
+    type PlanarPrepared = Erased<M::PlanarPrepared>;
+    fn warm_planar_reference(
+        &mut self,
+        r: &zenpixels::plane::PlanarSlice<'_>,
+        opts: EvalOpts<'_>,
+    ) -> MetricResult<Self::PlanarPrepared> {
+        self.0.warm_planar_reference(r, opts).map(Erased::new)
+    }
+}
+impl<M: crate::PlanarMetric + ?Sized> crate::PlanarMetric for Box<M> {
+    fn evaluate_planar(
+        &mut self,
+        r: &zenpixels::plane::PlanarSlice<'_>,
+        d: &zenpixels::plane::PlanarSlice<'_>,
+        opts: EvalOpts<'_>,
+    ) -> MetricResult<Self::Output> {
+        (**self).evaluate_planar(r, d, opts)
+    }
+}
+impl<P: crate::PlanarWarmReference + ?Sized> crate::PlanarWarmReference for Box<P> {
+    type Output = P::Output;
+    fn evaluate_planar(
+        &mut self,
+        d: &zenpixels::plane::PlanarSlice<'_>,
+        opts: EvalOpts<'_>,
+    ) -> MetricResult<Self::Output> {
+        (**self).evaluate_planar(d, opts)
+    }
+    fn with_evaluation(
+        &mut self,
+        d: &zenpixels::plane::PlanarSlice<'_>,
+        opts: EvalOpts<'_>,
+        consumer: &mut dyn FnMut(crate::EvaluationRef<'_>),
+    ) -> MetricResult<()> {
+        (**self).with_evaluation(d, opts, consumer)
+    }
+}
+impl<M: crate::PreparePlanarReference + ?Sized> crate::PreparePlanarReference for Box<M> {
+    type PlanarPrepared = M::PlanarPrepared;
+    fn warm_planar_reference(
+        &mut self,
+        r: &zenpixels::plane::PlanarSlice<'_>,
+        opts: EvalOpts<'_>,
+    ) -> MetricResult<Self::PlanarPrepared> {
+        (**self).warm_planar_reference(r, opts)
     }
 }

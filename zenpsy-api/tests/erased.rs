@@ -165,7 +165,7 @@ fn heterogeneous_stack_runs_every_metric_and_keeps_original_native_data() {
             assert_eq!(
                 result
                     .scores()
-                    .map(|s| (s.spec.key.as_ref(), s.value))
+                    .map(|s| (s.spec.key(), s.value))
                     .collect::<Vec<_>>(),
                 [("max", 78.0), ("p3", 78.0)]
             );
@@ -223,4 +223,44 @@ fn checked_generic_code_accepts_erased_trait_objects_without_another_wrapper() {
     let mut metric: Box<DynMetric<'_>> = Box::new(Erased::new(B));
     let out = score(metric.as_mut(), &view(2), &view(2), EvalOpts::new()).unwrap();
     assert_eq!(out.native::<NativeB>().unwrap().0, 3.5);
+}
+
+#[test]
+fn erased_checked_scoring_visits_each_output_set_without_boxed_iterators() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    struct V(Arc<AtomicUsize>);
+    static SPEC: ScoreSpec = ScoreSpec::new("native", Direction::Lower);
+    impl Evaluation for V {
+        fn scores(&self) -> impl Iterator<Item = Score<'_>> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            std::iter::once(Score::new(&SPEC, 0.0))
+        }
+        fn visit_scores<'a>(&'a self, f: &mut dyn FnMut(Score<'a>)) {
+            f(Score::new(&SPEC, 0.0));
+        }
+    }
+    struct M(Arc<AtomicUsize>);
+    impl Metric for M {
+        type Output = V;
+        fn id(&self) -> MetricId {
+            MetricId::new("visitor-control", Implementation::new("test", "1", 1))
+        }
+        fn evaluate(
+            &mut self,
+            _: &PixelSlice<'_>,
+            _: &PixelSlice<'_>,
+            _: EvalOpts<'_>,
+        ) -> MetricResult<V> {
+            Ok(V(self.0.clone()))
+        }
+    }
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut metric = Erased::new(Erased::new(M(calls.clone())));
+    let output = score(&mut metric, &view(2), &view(2), EvalOpts::new()).unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(output.scores().next().unwrap().value, 0.0);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }

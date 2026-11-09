@@ -57,12 +57,8 @@ impl NoReferenceMetric for ImageMetric {
             )
             .unwrap()
         });
-        let grid = MapGrid::new(p.width(), p.rows()).with_cells(
-            -1,
-            1,
-            if self.malformed { 0 } else { 2 },
-            2,
-        );
+        let grid = MapGrid::new(p.width() + u32::from(self.malformed), p.rows())?
+            .with_cells(-1, 1, 2, 2)?;
         Ok(Native {
             scores: [sum as f64, f64::from(max)],
             map,
@@ -84,7 +80,7 @@ fn image(bytes: &[u8]) -> PixelSlice<'_> {
 fn bits(result: &impl Evaluation) -> Vec<(String, u64)> {
     result
         .scores()
-        .map(|s| (s.spec.key.to_string(), s.value.to_bits()))
+        .map(|s| (s.spec.key().to_string(), s.value.to_bits()))
         .collect()
 }
 #[test]
@@ -115,7 +111,10 @@ fn native_maps_borrow_the_original_strided_plane_through_stacked_erasure() {
     assert_eq!((plane.width(), plane.height(), plane.stride()), (2, 2, 3));
     assert_eq!(plane.row(1).unwrap(), [3.0, 4.0]);
     assert_eq!(plane.row(0).unwrap()[1].to_bits(), 0x7fc0_1234);
-    assert_eq!(map.grid, MapGrid::new(2, 2).with_cells(-1, 1, 2, 2));
+    assert_eq!(
+        map.grid,
+        MapGrid::new(2, 2).unwrap().with_cells(-1, 1, 2, 2).unwrap()
+    );
     assert!(out.native::<ErasedEvaluation>().is_none());
 }
 #[test]
@@ -195,6 +194,8 @@ fn unsupported_maps_bad_grids_and_admission_fail_explicitly() {
             .kind(),
         ErrorKind::Internal
     );
+    assert!(MapGrid::new(0, 2).is_err());
+    assert!(MapGrid::new(2, 2).unwrap().with_cells(0, 0, 0, 1).is_err());
     // Borrowed plane construction independently rejects short strides/storage.
     assert!(PlaneRef::new(&[1.0f32; 4][..], 2, 2, 1).is_err());
 }
