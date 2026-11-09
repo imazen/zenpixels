@@ -120,6 +120,10 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed (2026-11-09): direct MoxCms construction admitted HLG transfer crossings
+  without the coupled display renderer. It now declines identified HLG crossings;
+  the public backend regression preserves explicit rendering ownership.
+
 - Fixed (2026-11-09): shared trace-producing `no_path`, cast and extent
   closures collapsed distinct failure sites to one location. Capture inline
   at each operation instead. Inline `at!` in a lambda is appropriate.

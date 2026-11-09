@@ -243,3 +243,27 @@ fn extended_sign_clipping_and_nonfinite_rgb_are_explicit() {
     assert!(nan[..3].iter().all(|v| v.is_nan()));
     assert_eq!(nan[3].to_bits(), (-0.0f32).to_bits());
 }
+
+#[cfg(feature = "cms-moxcms")]
+#[test]
+fn profile_backends_do_not_silently_render_hlg_without_conditions() {
+    use zenpixels::{Cicp, ColorProfileSource, PixelFormat};
+    use zenpixels_convert::cms::PluggableCms;
+    let from = ColorProfileSource::Cicp(Cicp::new(9, 18, 0, true));
+    let to = ColorProfileSource::Cicp(Cicp::new(9, 8, 0, true));
+    let check = |cms: &dyn PluggableCms| {
+        let built = cms.build_source_transform(
+            from,
+            to,
+            PixelFormat::RgbF32,
+            PixelFormat::RgbF32,
+            &ConvertOptions::permissive(),
+        );
+        assert!(
+            !matches!(built, Some(Ok(_))),
+            "backend bypassed explicit HLG rendering"
+        );
+    };
+    #[cfg(feature = "cms-moxcms")]
+    check(&zenpixels_convert::MoxCms);
+}
