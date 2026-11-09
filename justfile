@@ -577,7 +577,7 @@ icc-synthesis-measure binary cpu data:
 # Container cpuset supplies the enforced process boundary required by zenbench.
 # Host libraries match the compiler host; the reference image is supplied by immutable ID.
 icc-synthesis-container binary image cpu data *options:
-    docker run --rm --network none --memory 2g --memory-swap 2g --cpuset-cpus {{cpu}} --user "$(id -u):$(id -g)" --mount type=bind,src={{binary}},dst=/bench,readonly --mount type=bind,src={{data}},dst=/results --mount type=bind,src=/lib/x86_64-linux-gnu,dst=/lib/x86_64-linux-gnu,readonly --env TMPDIR=/results --env ZENBENCH_DATA_DIR=/results/evidence --entrypoint /usr/bin/nice {{image}} -n19 /bench --cpu-policy=auto --cpu-set={{cpu}} --mode=confirm --processes=3 --rounds=12 --workload-id=icc-qualified-af19-synthesis-v1 --timeout=600 --format=llm {{options}}
+    docker run --rm --network none --pid host --workdir /results --memory 2g --memory-swap 2g --cpuset-cpus {{cpu}} --user "$(id -u):$(id -g)" --mount type=bind,src={{binary}},dst=/bench,readonly --mount type=bind,src={{data}},dst=/results --mount type=bind,src=/lib/x86_64-linux-gnu,dst=/lib/x86_64-linux-gnu,readonly --mount type=bind,src="${HOME}/.cache/zenbench/admission-v1",dst=/coord --env ZENBENCH_COORDINATION_DIR=/coord --env TMPDIR=/results --env ZENBENCH_DATA_DIR=/results/evidence --entrypoint /usr/bin/nice {{image}} -n19 /bench --cpu-policy=auto --cpu-set={{cpu}} --mode=confirm --processes=3 --rounds=12 --workload-id=icc-qualified-af19-synthesis-v1 --timeout=600 --format=llm {{options}}
 
 icc-u16-rounding-probe:
     cargo run --locked --release --manifest-path cms-contract/Cargo.toml --example u16_rounding_probe
