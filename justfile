@@ -672,6 +672,7 @@ p3-export-check SOURCE OUT:
 
 # Complete approved contract gate; release avoids debug exhaustive-grid overhead.
 approved-contracts-check:
+    cargo test -p zenpixels-convert --release --features __trace_ops --test plan_validation
     cargo test --workspace --release --lib --tests
     cargo test --workspace --release --doc
     cargo test -p zenpixels-convert --release --all-features --test hlg_rendering --test hdr_intent --test matte_row_kernels --test native_canonical

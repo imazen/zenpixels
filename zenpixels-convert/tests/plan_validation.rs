@@ -138,7 +138,7 @@ fn rgba_to_gray_same_tf_is_one_step() {
 // ── No waste: matte composite is single-step (kernel handles TF inline) ──
 
 #[test]
-fn matte_composite_is_single_step_for_every_tf() {
+fn matte_composite_uses_required_rendering_steps() {
     for tf in [
         TransferFunction::Srgb,
         TransferFunction::Linear,
@@ -147,12 +147,19 @@ fn matte_composite_is_single_step_for_every_tf() {
         TransferFunction::Hlg,
         TransferFunction::Gamma22,
     ] {
-        let src = rgba_u16(tf);
-        let dst = rgb_u16(tf);
-        let opts = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
+        let mut src = rgba_u16(tf);
+        let mut dst = rgb_u16(tf);
+        let mut opts = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
             background: zenpixels::Color::srgb8(0, 0, 0),
             reference_white: None,
         });
+        if tf == TransferFunction::Hlg {
+            src = src.with_primaries(ColorPrimaries::Bt2020);
+            dst = dst.with_primaries(ColorPrimaries::Bt2020);
+            opts = opts
+                .with_sdr_white(zenpixels::hdr::DiffuseWhite::new(1000.0))
+                .with_hlg_rendering(zenpixels::hdr::HlgRendering::REFERENCE_1000_NIT);
+        }
         let mut conv = RowConverter::new_explicit(src, dst, &opts).unwrap();
         let pixel: [u16; 4] = [32768, 32768, 32768, 32768];
         let src_bytes: [u8; 8] = bytemuck::cast(pixel);
@@ -162,8 +169,18 @@ fn matte_composite_is_single_step_for_every_tf() {
         let trace = tracer::stop_recording();
         assert_eq!(
             trace,
-            vec!["MatteComposite"],
-            "TF {tf:?}: matte composite must be one step (kernel handles TF inline), got {trace:?}"
+            if tf == TransferFunction::Hlg {
+                vec![
+                    "U16ToF32",
+                    "HlgRender",
+                    "MatteComposite",
+                    "HlgRender",
+                    "F32ToU16",
+                ]
+            } else {
+                vec!["MatteComposite"]
+            },
+            "TF {tf:?}: unexpected rendering/compositing sequence: {trace:?}"
         );
     }
 }
