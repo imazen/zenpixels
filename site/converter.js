@@ -103,19 +103,17 @@ window.renderConverter = renderConverter;
 
 function renderStorage() {
   if (!wasmInspectStorage) return;
-  const result = JSON.parse(wasmInspectStorage(JSON.stringify({ case: $('storage-case').value, offset: Number($('storage-offset').value), padding: $('storage-padding').checked })));
+  const result = JSON.parse(wasmInspectStorage(JSON.stringify({ case: $('storage-case').value, padding: $('storage-padding').checked })));
   window.lastStorageInspection = result;
   $('storage-status').textContent = result.error || 'Executed by this build of zenpixels. No color conversion is implied.';
   if (result.error) return;
-  $('storage-geometry').textContent = `${result.role}: ${result.width} positions × ${result.rows} rows; byte stride ${result.stride}; byte-adapter offset ${result.offset}`;
+  $('storage-geometry').textContent = `${result.role}: ${result.width} positions × ${result.rows} rows; byte stride ${result.stride}`;
   $('storage-bytes').textContent = hexBytes(result.bytes);
   $('plane-status').textContent = result.planeStatus;
-  $('native-status').textContent = result.nativeStatus;
   const codeRows = codes => codes.map((values, i) => `row ${Math.floor(i / result.width)}, position ${i % result.width}: ${values.join(', ')}`).join('\n');
   $('plane-codes').textContent = result.planeCodes ? codeRows(result.planeCodes) : 'Not representable by CodePlane';
-  $('native-codes').textContent = result.nativeCodes ? codeRows(result.nativeCodes) : 'No matching NativeCodeSlice layout';
 }
-for (const id of ['storage-case', 'storage-offset', 'storage-padding']) $(id).addEventListener('change', renderStorage);
+for (const id of ['storage-case', 'storage-padding']) $(id).addEventListener('change', renderStorage);
 
 fetch('./build-info.json').then(r => { if (!r.ok) throw new Error('No build stamp'); return r.json(); }).then(info => {
   $('build-identity').textContent = `Build: ${info.revision.slice(0, 12)}${info.dirty ? ' + local changes' : ''}; ${info.builtAt}.`;

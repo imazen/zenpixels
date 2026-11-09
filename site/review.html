@@ -5,15 +5,15 @@
 <h1>What the updated explorer exposes</h1>
 <p>Review candidate, 9 November 2026. These are implementation and design observations, not a release-completion claim.</p>
 <h2>The native view duplicates more than its explanation suggested</h2>
-<p><code>PlaneRole::CbCr</code> and <code>CrCb</code> already exist. <code>CodePlane::component</code> reads interleaved components with individually supplied encodings. The RGB10 + alpha1 witness works through both it and <code>NativeCodeSlice</code>.</p>
-<p>The remaining differences are byte-unaligned and signed/wide access. Adding them only to an RGB/gray adapter split the capabilities: ordinary component readers handle chroma but cannot read wide words; the new adapter reads wide words but cannot describe chroma.</p>
-<p><strong>Recommendation before freezing 0.3:</strong> consolidate around the existing component-view model, retaining exact signed/wide access and typed fast paths. Do not add chroma variants to a pixel-color layout merely to disguise the split. The core API redesign is not implemented by this explorer update.</p>
+<p><code>PlaneRole::CbCr</code> and <code>CrCb</code> already exist. <code>CodePlane::component</code> reads interleaved components with individually supplied encodings. The RGB10 + alpha1 witness uses this existing component reader.</p>
+<p>The speculative NativeCodeSlice adapter and its dependent conversion APIs have been removed at the owner’s direction. No production caller justified them. The explorer now shows the existing component-view path, without a replacement public adapter.</p>
+<p>Signed/wide SampleEncoding descriptions, native pixel identity carriage and exact ST2086 metadata remain. Signed/wide component reading and unaligned access are not implied by those capabilities; extensions need concrete consumers.</p>
 <h2>HLG presentation was stale</h2>
 <p>The converter now supports explicit display rendering. The live panel accepts display peak, black, effective gamma and SDR white; missing conditions still refuse. The JavaScript swatch uses only the HLG OETF, so it is no longer presented as a byte oracle for display rendering. ICC synthesis remains unavailable.</p>
 <h2>Outstanding issues updated today</h2>
 <p>The issue descriptions assess main; this explorer runs a review candidate. Candidate code, merged implementation and downstream qualification are separate states.</p>
 <table><thead><tr><th>Issue</th><th>Remaining review boundary</th></tr></thead><tbody>
-<tr><td><a href="https://github.com/imazen/zenpixels/issues/83">83 — Native samples</a></td><td>Exact carriers exist on the candidate; resolve the duplicated component-view API and qualify actual consumers.</td></tr>
+<tr><td><a href="https://github.com/imazen/zenpixels/issues/83">83 — Native samples</a></td><td>The duplicate adapter is removed. Existing U16 component reading and exact metadata remain; further native-reader requirements and actual consumers need qualification.</td></tr>
 <tr><td><a href="https://github.com/imazen/zenpixels/issues/69">69 — Identity allocations</a></td><td>Borrowed finalization still returns owned pixels. Existing OutputPlan borrowing does not establish a consuming finalizer.</td></tr>
 <tr><td><a href="https://github.com/imazen/zenpixels/issues/132">132 — HLG</a></td><td>Rendering exists on the candidate; complete entry-point and consumer qualification remains separate from ICC synthesis.</td></tr>
 <tr><td><a href="https://github.com/imazen/zenpixels/issues/133">133 — API documentation</a></td><td>Stale ablation/export docs, private-helper examples and complete release semver classification remain open.</td></tr>

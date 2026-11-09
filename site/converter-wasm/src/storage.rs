@@ -1,54 +1,26 @@
-//! Executable examples of the current storage views, not numerical conversions.
+//! Executable examples of existing typed component views.
 use serde_json::{Value, json};
+use zenpixels::ChannelType;
 use zenpixels::plane::{AnyPlane, PlaneRef, PlaneRole};
-use zenpixels::sample::{CodePlane, NativeCodeSlice, SampleEncoding};
-use zenpixels::{ChannelLayout, ChannelType};
+use zenpixels::sample::{CodePlane, SampleEncoding};
 
 pub(crate) fn inspect(v: &Value) -> Result<Value, String> {
     let case = v["case"].as_str().ok_or("Choose a storage example")?;
-    let offset = v["offset"].as_u64().unwrap_or(0).min(1) as usize;
     let padding = v["padding"].as_bool().unwrap_or(true);
-    if case == "u64" || case == "i64" {
-        let storage = if case == "u64" {
-            ChannelType::U64
-        } else {
-            ChannelType::I64
-        };
-        let enc = [SampleEncoding::new(storage, 64, 0).map_err(|e| e.to_string())?];
-        let mut bytes = vec![0xA5; offset];
-        bytes.extend_from_slice(&u64::MAX.to_ne_bytes());
-        let native = NativeCodeSlice::new(&bytes[offset..], 1, 1, 8, ChannelLayout::Gray, &enc)
-            .map_err(|e| e.to_string())?;
-        return Ok(
-            json!({"case":case, "role":"Gray", "bytes": &bytes[offset..],
-            "nativeCodes":[[native.code(0,0,0).unwrap().to_string()]],
-            "planeCodes":null, "planeStatus":"AnyPlane has U8/U16/F32 variants; CodePlane cannot read signed or wide integer words.",
-            "nativeStatus":"Exact integer carriage, including byte-unaligned input. Numerical conversion is a separate capability.",
-            "width":1,"rows":1,"stride":8,"offset":offset}),
-        );
-    }
-    let (components, bits, shifts, role, layout) = match case {
+    let (components, bits, shifts, role) = match case {
         "p010" => (
             PlaneRole::CbCr.components(),
             vec![10, 10],
             vec![6, 6],
             "CbCr",
-            None,
         ),
         "crcb" => (
             PlaneRole::CrCb.components(),
             vec![10, 10],
             vec![6, 6],
             "CrCb",
-            None,
         ),
-        "rgba10a1" => (
-            4,
-            vec![10, 10, 10, 1],
-            vec![0; 4],
-            "RGBA",
-            Some(ChannelLayout::Rgba),
-        ),
+        "rgba10a1" => (4, vec![10, 10, 10, 1], vec![0; 4], "RGBA"),
         _ => return Err("Unknown storage example".into()),
     };
     let enc: Vec<_> = bits
@@ -93,38 +65,10 @@ pub(crate) fn inspect(v: &Value) -> Result<Value, String> {
             );
         }
     }
-    let mut bytes = vec![0xA5; offset];
-    for word in &words {
-        bytes.extend_from_slice(&word.to_ne_bytes());
-    }
-    let native_codes = if let Some(layout) = layout {
-        let native = NativeCodeSlice::new(
-            &bytes[offset..],
-            width as u32,
-            rows as u32,
-            stride * 2,
-            layout,
-            &enc,
-        )
-        .map_err(|e| e.to_string())?;
-        let mut codes = Vec::new();
-        for y in 0..rows {
-            for x in 0..width {
-                codes.push(
-                    (0..components)
-                        .map(|c| native.code(x as u32, y as u32, c).unwrap().to_string())
-                        .collect::<Vec<_>>(),
-                );
-            }
-        }
-        Some(codes)
-    } else {
-        None
-    };
+    let bytes: Vec<_> = words.iter().flat_map(|word| word.to_ne_bytes()).collect();
     Ok(
-        json!({"case":case,"role":role,"bytes":&bytes[offset..], "width":width,"rows":rows,"stride":stride*2,"offset":offset,
-        "planeCodes":plane_codes,"nativeCodes":native_codes,
-        "planeStatus":"CodePlane::component already supports interleaved components and a different SampleEncoding for each. This reads the original typed U16 plane.",
-        "nativeStatus":if layout.is_some() { "Same codes via the byte-backed RGB/gray adapter. An odd byte offset is supported here; the typed plane needs aligned storage." } else { "No CbCr/CrCb layout in NativeCodeSlice. Do not relabel chroma as GrayAlpha to force it through." }}),
+        json!({"case":case,"role":role,"bytes":bytes,"width":width,"rows":rows,"stride":stride*2,
+        "planeCodes":plane_codes,
+        "planeStatus":"CodePlane::component reads interleaved components with a different SampleEncoding for each. The storage is an aligned typed U16 plane."}),
     )
 }

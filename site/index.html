@@ -419,24 +419,18 @@ footer { color: var(--muted); font-size: .82rem; padding: 10px 0 40px; display: 
         <option value="p010">CbCr: 10-bit codes in U16, shifted by 6</option>
         <option value="crcb">CrCb: reversed component order</option>
         <option value="rgba10a1">RGBA: RGB10 + alpha1, right aligned in U16</option>
-        <option value="i64">Signed I64: all bits set means −1</option>
-        <option value="u64">Unsigned U64: exact maximum integer</option>
       </select></div>
-      <div class="field"><label for="storage-offset">Byte adapter start offset</label><select id="storage-offset"><option value="0">0 bytes</option><option value="1">1 byte (unaligned wide words)</option></select></div>
       <label><input id="storage-padding" type="checkbox" checked> Set unused sample bits; code values must stay unchanged</label>
     </div>
     <p id="storage-status" role="status">Live examples require the WASM assets.</p>
     <pre id="storage-geometry" style="white-space:pre-wrap"></pre>
     <h3>Stored bytes (including row and sample padding)</h3><pre id="storage-bytes" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
     <h3>Existing typed plane → CodePlane::component</h3><p id="plane-status"></p><pre id="plane-codes"></pre>
-    <h3>Byte rows → NativeCodeSlice</h3><p id="native-status"></p><pre id="native-codes"></pre>
-    <p>Rows here omit trailing padding after the final active row. Each code list is one position, in the displayed component order. Wide integers are displayed as decimal strings, without JavaScript Number rounding. These are extracted codes, not normalized intensities or rendered colors.</p>
-    <details><summary>What this exposes in the current design</summary>
-      <ul><li>The typed U16 RGB10 + alpha1 example works through both views. Per-component interpretation already existed.</li>
-      <li>NativeCodeSlice adds byte-unaligned and signed/wide reading, but only accepts gray/RGB layouts. CodePlane handles chroma/interleaving but only U8/U16 codes. This splits capabilities across two public views.</li>
-      <li>PlaneRole describes CbCr/CrCb and separate RGB planes; it has no packed RGB/RGBA role. CodePlane’s component reader is broader than PlanarLayout’s named roles.</li>
-      <li>RGB565 has multiple component payloads in one word. Both views require an explicit unpacking step before treating it as RGB components.</li></ul>
-      <p>The duplication is a design concern, not evidence that all native storage fits the current typed CodePlane. A unified component view would need to preserve both existing chroma semantics and exact signed/wide/unaligned carriage.</p>
+    <p>Rows here omit trailing padding after the final active row. Each code list is one position, in the displayed component order. These are extracted codes, not normalized intensities or rendered colors.</p>
+    <details><summary>Scope and remaining limits</summary>
+      <p>The speculative NativeCodeSlice adapter was removed. Existing CodePlane component readers handle interleaved chroma and mixed RGB10 + alpha1 without another public view.</p>
+      <p>CodePlane reads U8/U16 codes. SampleEncoding can describe signed/wide payloads, but this does not add signed/wide code readers or arithmetic. Native PixelFormat::Generic identity carriage remains separate.</p>
+      <p>Typed wide samples require alignment. No unaligned byte-reader API is added without a demonstrated consumer. RGB565 needs unpacking before it can be treated as separate RGB components.</p>
     </details>
   </section>
 </main>

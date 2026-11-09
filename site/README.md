@@ -41,9 +41,9 @@ plus SDR white. Missing/invalid policy still refuses. The JavaScript bare-OETF
 model is not used as a display-rendering byte oracle.
 
 The live storage panel exercises `PlaneRole::CbCr`/`CrCb`, interleaved
-`CodePlane::component`, RGB10 + alpha1 through both current views, ignored sample
-padding, final-row extents, odd byte offsets, signed I64 and exact U64 codes.
-It exposes overlap rather than treating NativeCodeSlice as necessary for every
-interleaved native representation. See the [design review and outstanding
-issues](../docs/explorer-design-review.md). These are code extraction examples,
-not range expansion, chroma reconstruction or color conversion.
+`CodePlane::component`, RGB10 + alpha1, ignored sample padding and final-row
+extents. The speculative NativeCodeSlice and its signed/wide/unaligned reader
+controls have been removed. SampleEncoding descriptions are not promises of
+component-reading or numerical-conversion support. See the [design review and
+outstanding issues](../docs/explorer-design-review.md). These are code extraction
+examples, not range expansion, chroma reconstruction or color conversion.

@@ -67,28 +67,19 @@ if (!url) throw new Error('Pass the served site URL');
     assert.match(await page.locator('#wasm-status').innerText(), /gamma must be/);
     await page.locator('#hlg-gamma').fill('1.2');
     await page.locator('#hlg-enabled').uncheck();
-    // Read the SAME interleaved RGB10/alpha1 values with both existing APIs.
+    // Existing component readers handle interleaved RGB10/alpha1 without another view.
     await select('storage-case', 'rgba10a1');
     const padded = await page.evaluate(() => window.lastStorageInspection);
-    assert.deepEqual(padded.planeCodes, padded.nativeCodes);
     assert.deepEqual(padded.planeCodes[0], ['1023','1023','1023','1']);
     await page.locator('#storage-padding').uncheck();
     const unpadded = await page.evaluate(() => window.lastStorageInspection);
     assert.deepEqual(unpadded.planeCodes, padded.planeCodes);
     assert.notDeepEqual(unpadded.bytes, padded.bytes);
-    await select('storage-offset', '1');
-    assert.deepEqual((await page.evaluate(() => window.lastStorageInspection)).nativeCodes, padded.nativeCodes);
     for (const role of ['p010','crcb']) {
       await select('storage-case', role);
       const result = await page.evaluate(() => window.lastStorageInspection);
       assert.deepEqual(result.planeCodes[0], ['1023','1023']);
-      assert.equal(result.nativeCodes, null);
-      assert.match(result.nativeStatus, /No CbCr/);
     }
-    await select('storage-case', 'u64');
-    assert.deepEqual((await page.evaluate(() => window.lastStorageInspection)).nativeCodes, [['18446744073709551615']]);
-    await select('storage-case', 'i64');
-    assert.deepEqual((await page.evaluate(() => window.lastStorageInspection)).nativeCodes, [['-1']]);
     await select('to-transfer', 'Srgb');
     await select('format', 'Cmyk8');
     assert.equal(await page.locator('#wasm-status').getAttribute('data-state'), 'refused');
