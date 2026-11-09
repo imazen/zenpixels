@@ -716,3 +716,7 @@ repository-issues-check:
 repository-issues-semver:
     cargo semver-checks check-release -p zenpixels -p zenpixels-convert --baseline-rev e96e4e9c65020a0c7fac4937819fc044886ae4df --release-type patch --default-features
 
+
+# Fallible in-place admission and consistent luma policy before CMS setup.
+refinement-check:
+    cargo test -p zenpixels-convert --test refinement_boundaries --test authority_boundaries --test output_contracts

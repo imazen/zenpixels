@@ -29,6 +29,9 @@ Status below distinguishes the intended design from completed implementation.
   separately mutable vector of descriptors accompanies an operation list.
 - Output context derives from the resolved conversion, not wrapper-specific
   reconstruction. Pixel descriptor, white anchor and current profile agree.
+- Fallible in-place adapters validate target descriptors before rewriting bytes.
+- RGB-to-gray luma policy is checked consistently before built-in or CMS
+  construction, including BGR input.
 - Constructors enforce the same descriptor validity rules. Fallible constructors
   return `DescriptorError`, displaying the supplied sample type, layout, alpha
   interpretation and violated rule. Buffer validation preserves that diagnostic.
