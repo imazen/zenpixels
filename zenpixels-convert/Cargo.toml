@@ -164,6 +164,8 @@ zenpixels = { workspace = true, features = ["planar", "imgref"] }
 # (verified: it appears in `cargo test --lib -- --list` under default
 # features, imazen/zenpixels#40). Dropping `cms-moxcms` here would silently
 # remove those gates from CI.
+# Unit tests intentionally include the dev defaults. Genuine normal-dependency
+# feature isolation is checked by tools/icc-collapse-no-db instead.
 zenpixels-convert = { path = ".", features = ["imgref", "cms-moxcms"] }
 zenbench = { version = "0.1.11" }
 # DEV-only: lets benches/kernel_tiers.rs disable the baseline SIMD token (NEON

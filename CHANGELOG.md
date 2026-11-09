@@ -33,25 +33,29 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [Unreleased]
 
+- Integrate the qualified CMS/export stack and ICC-authority guard. Run the
+  six-platform CMS workflow on main, retain all historical failure receipts,
+  and stop tracking Python bytecode (local caches remain intact).
+
 - Regenerate corrected H.273 exports after independent color qualification:
   149 RGB and 164 gray mappings, explicit white/adaptation, accurate gamma,
   logarithmic inverse endpoint and ST428 luminance. PQ has bidirectional
   float and conventional pipelines with 10,000-nit luminance; targetless HLG
   refuses synthesis. Preserve all historical recognition keys; fresh bundle
   fingerprints remain metadata-only. Qualify the four-entry-only LCMS absolute-intent correction
-  on a frozen-source descendant; no main merge or publication.
+  on a frozen-source descendant.
 
 
 - Refuse HLG ICC export without a rendering target; keep native CICP where
   permitted. Stage explicit H.273/PCS-D50 export definitions and dense analytic
-  controls. The stored bundle awaits separate PQ representation qualification
-  (`7dcc7166`, `2024ced4`).
+  controls. The final qualified bundle includes the subsequent PQ representation work;
+  `7dcc7166` and `2024ced4` preserve the intermediate investigation.
 - Keep historical bundle hashes as identification metadata, requiring a CMS
   until complete substitution is qualified; honor that permission in the sRGB
   shortcut. Decline unsupported float DToB/BToD ICC pipelines in MoxCMS so a
   configured capable backend can handle them (`48eb12ea`, `a9da5a59`).
 
-- Add opt-in `cms-lcms` / `Lcms` alongside `MoxCms`, using the pinned pure-Rust LCMS port. Select either through `PluggableCms`; defaults and bundled profiles are unchanged (`4b96fd7d`).
+- Add opt-in `cms-lcms` / `Lcms` alongside `MoxCms`, using the pinned pure-Rust LCMS port. Select either through `PluggableCms`; backend defaults are unchanged (`4b96fd7d`).
 
 - Correct the standalone Rust-LCMS contract adapter to request relative
   colorimetric intent. Add a paper-white regression and exact Rust/C bundle

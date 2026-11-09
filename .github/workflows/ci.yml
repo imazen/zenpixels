@@ -81,12 +81,11 @@ jobs:
       - name: Test (zenpixels-convert BT.2446 Method A, bt2446a)
         run: cargo test -p zenpixels-convert --features bt2446a
 
-      # Downstream consumers ship `default-features = false, features = ["rgb"]`
-      # (no `icc-db`, no `std`). Run the whole suite in that exact configuration
-      # so the no-db gray-collapse suppress path and the feature-gated test
-      # helpers stay green — the feature-powerset job below only `check`s
-      # (imazen/zenpixels#40).
-      - name: Test (zenpixels-convert no-default-features + rgb)
+      # Keep the established unit-test configuration, whose self dev-dependency
+      # re-enables defaults. This is not proof of no-database behavior:
+      # tools/icc-collapse-no-db checks an isolated normal dependency without
+      # icc-db, std or CMS backends in the focused CMS workflow.
+      - name: Test (zenpixels-convert requested no-default-features + rgb)
         run: cargo test -p zenpixels-convert --no-default-features --features rgb
 
       # The `avx512` feature routes the f16 slice path and the AVX-512 SIMD

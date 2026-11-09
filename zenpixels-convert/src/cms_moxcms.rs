@@ -1410,14 +1410,11 @@ fn with_pcs_white(mut profile: ColorProfile) -> ColorProfile {
     profile
 }
 
-/// Generate ICC profile bytes for a CICP via moxcms, or `None` if moxcms doesn't
-/// recognize the **color-defining** code points (primaries / transfer).
-///
 /// Rebuild an RGB export profile from the shared, explicit H.273 recipe.
 /// Test-only: runtime synthesis reads the committed bundle without a CMS.
 /// Freshness tests compare canonical bytes; independent colorimetry tests
 /// separately check those bytes against the standard.
-#[cfg(test)]
+#[cfg(all(test, feature = "icc-db"))]
 pub(crate) fn icc_bytes_for_cicp(cicp: &Cicp) -> Option<alloc::vec::Vec<u8>> {
     crate::icc_profiles::synthesis::rgb(cicp.color_primaries, cicp.transfer_characteristics)
 }
@@ -1444,7 +1441,7 @@ fn moxcms_d50_xyz() -> moxcms::Xyz {
 /// Rebuild a GRAY export profile from the same build-time recipe.
 /// Display-class media white is PCS D50; chad records full adaptation from
 /// the explicitly selected H.273 source white. Timestamp and ID are canonical.
-#[cfg(test)]
+#[cfg(all(test, feature = "icc-db"))]
 pub(crate) fn gray_icc_bytes_for_cicp(cicp: &Cicp) -> Option<alloc::vec::Vec<u8>> {
     crate::icc_profiles::synthesis::gray(cicp.color_primaries, cicp.transfer_characteristics)
 }

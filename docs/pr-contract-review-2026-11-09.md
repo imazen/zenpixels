@@ -135,3 +135,19 @@ alone does not establish SDR-white placement, peak policy or tone mapping.
 The intermediate stable/constructor proposals precede the qualified exports;
 review their chronology rather than treating every open snapshot as an
 independent recommended merge. This review includes no merge or publication.
+
+## Integration disposition
+
+The owner authorized revising and merging the review queue on 2026-11-09.
+The final CMS/export stack, grayscale authority guard, CMYK qualification
+and cost investigation are integrated together; intermediate failing bundle
+revisions remain in history rather than becoming separate main states.
+The preceding measurements describe their explicitly named historical heads.
+
+Integration replay: `cargo test --workspace --features cms-moxcms,cms-lcms,icc-db
+--locked` passes 1,591 tests, with 46 existing ignored tests unchanged.
+`just main-cms-integration-check` passes strict workspace all-target Clippy,
+shared backend contracts and isolated no-database tests/Clippy.
+Resource receipts on r7900x: test rc=0, 185s, peak RSS 2.65 GiB; extra checks
+rc=0, 13s, peak RSS 0.43 GiB. These are test-process resource observations,
+not profile-synthesis memory measurements.
