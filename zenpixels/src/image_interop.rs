@@ -7,6 +7,7 @@
 
 use alloc::sync::Arc;
 use core::ops::{Deref, DerefMut};
+use whereat::ResultAtExt as _;
 
 use image::flat::{FlatSamples, SampleLayout};
 use image::metadata::{
@@ -487,7 +488,7 @@ macro_rules! flat_views {
                     _ => return Err(at!(BufferError::IncompatibleDescriptor)),
                 };
                 let samples: &'a [$sample] = bytemuck::try_cast_slice(slice.as_strided_bytes())
-                    .map_err(|_| at!(BufferError::AlignmentViolation))?;
+                    .map_err(|_| BufferError::AlignmentViolation).map_err(whereat::At::wrap).at_crate(crate::at_crate_info()).at()?;
                 Ok(FlatSamples {
                     samples,
                     layout: SampleLayout {

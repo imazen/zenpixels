@@ -327,7 +327,10 @@ fn descriptor_for_profile(
     if let crate::ColorProfileSource::Cicp(cicp) = profile {
         return cicp
             .try_to_descriptor(format)
-            .map_err(|error| whereat::at!(ConvertError::CicpDescriptor(error)));
+            .map_err(ConvertError::CicpDescriptor)
+            .map_err(whereat::At::wrap)
+            .at_crate(crate::at_crate_info())
+            .at();
     }
     let (primaries, transfer) = profile
         .resolve()

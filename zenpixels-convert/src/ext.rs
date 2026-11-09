@@ -473,7 +473,10 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
                 zenpixels::hdr::HdrPeak::Declared => self
                     .color_context()
                     .and_then(|c| c.hdr_peak)
-                    .ok_or_else(|| whereat::at!(crate::ConvertError::HdrPeakRequired))?,
+                    .ok_or(crate::ConvertError::HdrPeakRequired)
+                    .map_err(whereat::At::wrap)
+                    .at_crate(crate::at_crate_info())
+                    .at()?,
                 zenpixels::hdr::HdrPeak::Measured => {
                     #[cfg(feature = "bt2446a")]
                     {
@@ -576,7 +579,10 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
                     None,
                 )?;
                 let mut output = PixelBuffer::try_new(self.width(), self.rows(), target)
-                    .map_err(|_| whereat::at!(crate::ConvertError::AllocationFailed))?;
+                    .map_err(|_| crate::ConvertError::AllocationFailed)
+                    .map_err(whereat::At::wrap)
+                    .at_crate(crate::at_crate_info())
+                    .at()?;
                 {
                     let mut destination = output.as_slice_mut();
                     for y in 0..self.rows() {
@@ -651,7 +657,10 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
         &self,
         orientation: zenpixels::Orientation,
     ) -> Result<PixelBuffer, At<crate::ConvertError>> {
-        crate::orient::apply_orientation(self.clone(), orientation).map_err(|e| whereat::at!(e))
+        crate::orient::apply_orientation(self.clone(), orientation)
+            .map_err(whereat::At::wrap)
+            .at_crate(crate::at_crate_info())
+            .at()
     }
 
     #[track_caller]
@@ -661,7 +670,9 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
         dst: PixelSliceMut<'_>,
     ) -> Result<(), At<crate::ConvertError>> {
         crate::orient::apply_orientation_into(self.clone(), orientation, dst)
-            .map_err(|e| whereat::at!(e))
+            .map_err(whereat::At::wrap)
+            .at_crate(crate::at_crate_info())
+            .at()
     }
 }
 
@@ -857,7 +868,10 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
         let dst_stride = target.aligned_stride(self.width());
         let total = dst_stride
             .checked_mul(self.height() as usize)
-            .ok_or_else(|| whereat::at!(crate::ConvertError::AllocationFailed))?;
+            .ok_or(crate::ConvertError::AllocationFailed)
+            .map_err(whereat::At::wrap)
+            .at_crate(crate::at_crate_info())
+            .at()?;
         let mut out = alloc::vec![0u8; total];
 
         let src_slice = self.as_slice();
@@ -914,10 +928,16 @@ fn measured_peak(
     let mut converter = crate::RowConverter::new_explicit(from, linear, &options)?;
     let count = (source.width() as usize)
         .checked_mul(linear.channels())
-        .ok_or_else(|| whereat::at!(crate::ConvertError::AllocationFailed))?;
+        .ok_or(crate::ConvertError::AllocationFailed)
+        .map_err(whereat::At::wrap)
+        .at_crate(crate::at_crate_info())
+        .at()?;
     let mut row = Vec::new();
     row.try_reserve_exact(count)
-        .map_err(|_| whereat::at!(crate::ConvertError::AllocationFailed))?;
+        .map_err(|_| crate::ConvertError::AllocationFailed)
+        .map_err(whereat::At::wrap)
+        .at_crate(crate::at_crate_info())
+        .at()?;
     row.resize(count, 0_f32);
     let mut peak = 0_f32;
     for y in 0..source.rows() {
@@ -1172,7 +1192,7 @@ impl ColorConvertExt for zenpixels::Color {
     ) -> Result<Self, whereat::At<crate::ConvertError>> {
         use zenpixels::{AlphaMode, ChannelLayout, ChannelType, TransferFunction as Tf};
         let from = self.descriptor();
-        let no_path = || whereat::at!(crate::ConvertError::NoPath { from, to: target });
+        let no_path = || crate::ConvertError::NoPath { from, to: target };
         let hdr = |t: Tf| matches!(t, Tf::Pq | Tf::Hlg);
         if hdr(from.transfer())
             || hdr(target.transfer())
@@ -1181,10 +1201,13 @@ impl ColorConvertExt for zenpixels::Color {
                 ChannelLayout::Rgb | ChannelLayout::Rgba | ChannelLayout::Bgra
             )
         {
-            return Err(no_path());
+            return Err(whereat::at!(no_path()));
         }
-        let space =
-            crate::oklab::OklabSpace::for_primaries(target.primaries).ok_or_else(no_path)?;
+        let space = crate::oklab::OklabSpace::for_primaries(target.primaries)
+            .ok_or_else(no_path)
+            .map_err(whereat::At::wrap)
+            .at_crate(crate::at_crate_info())
+            .at()?;
         let options = zenpixels::ConvertOptions::permissive()
             .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked);
 
@@ -1206,7 +1229,7 @@ impl ColorConvertExt for zenpixels::Color {
         let mut out = [[0f32; 4]; 1];
         let bytes = bytemuck::cast_slice_mut::<[f32; 4], u8>(&mut out);
         if target.bytes_per_pixel() > bytes.len() {
-            return Err(no_path());
+            return Err(whereat::at!(no_path()));
         }
         let bytes = &mut bytes[..target.bytes_per_pixel()];
         crate::RowConverter::new_explicit(linear, target, &options)?.try_convert_row(
@@ -1214,7 +1237,11 @@ impl ColorConvertExt for zenpixels::Color {
             bytes,
             1,
         )?;
-        Self::try_new(target, bytes).map_err(|e| whereat::at!(crate::ConvertError::Buffer(e)))
+        Self::try_new(target, bytes)
+            .map_err(crate::ConvertError::Buffer)
+            .map_err(whereat::At::wrap)
+            .at_crate(crate::at_crate_info())
+            .at()
     }
 
     fn try_convert_to(
@@ -1232,7 +1259,11 @@ impl ColorConvertExt for zenpixels::Color {
         }
         let pixel = &mut pixel[..target.bytes_per_pixel()];
         converter.try_convert_row(self.as_bytes(), pixel, 1)?;
-        Self::try_new(target, pixel).map_err(|e| whereat::at!(crate::ConvertError::Buffer(e)))
+        Self::try_new(target, pixel)
+            .map_err(crate::ConvertError::Buffer)
+            .map_err(whereat::At::wrap)
+            .at_crate(crate::at_crate_info())
+            .at()
     }
 }
 

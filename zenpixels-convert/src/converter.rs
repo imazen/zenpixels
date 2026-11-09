@@ -76,11 +76,17 @@ impl AlphaPipeline {
         ] {
             let len = (width as usize)
                 .checked_mul(desc.bytes_per_pixel() / 4)
-                .ok_or_else(|| whereat::at!(ConvertError::InvalidWidth(width)))?;
+                .ok_or_else(|| ConvertError::InvalidWidth(width))
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()?;
             if len > buffer.len() {
                 buffer
                     .try_reserve(len - buffer.len())
-                    .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
+                    .map_err(|_| ConvertError::AllocationFailed)
+                    .map_err(whereat::At::wrap)
+                    .at_crate(crate::at_crate_info())
+                    .at()?;
                 buffer.resize(len, 0.0);
             }
         }
@@ -638,7 +644,10 @@ impl RowConverter {
          -> Result<usize, At<ConvertError>> {
             let expected = (width as usize)
                 .checked_mul(desc.bytes_per_pixel())
-                .ok_or_else(|| whereat::at!(ConvertError::InvalidWidth(width)))?;
+                .ok_or_else(|| ConvertError::InvalidWidth(width))
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()?;
             if len < expected {
                 return Err(whereat::at!(ConvertError::BufferSize {
                     expected,
@@ -665,9 +674,10 @@ impl RowConverter {
             #[cfg(feature = "std")]
             Some(ExternalTransform::Owned(t)) => t
                 .lock()
-                .map_err(|_| {
-                    whereat::at!(ConvertError::CmsError("CMS worker was poisoned".into()))
-                })?
+                .map_err(|_| ConvertError::CmsError("CMS worker was poisoned".into()))
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()?
                 .try_transform_row(src, dst, width),
             Some(ExternalTransform::Independent(t)) => {
                 t.get_mut().try_transform_row(src, dst, width)
@@ -730,7 +740,10 @@ impl RowConverter {
         ] {
             let row_bytes = (width as usize)
                 .checked_mul(desc.bytes_per_pixel())
-                .ok_or_else(|| whereat::at!(ConvertError::InvalidWidth(width)))?;
+                .ok_or_else(|| ConvertError::InvalidWidth(width))
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()?;
             if stride < row_bytes {
                 return Err(whereat::at!(ConvertError::Buffer(
                     zenpixels::BufferError::StrideTooSmall
@@ -739,7 +752,10 @@ impl RowConverter {
             let expected = (rows as usize - 1)
                 .checked_mul(stride)
                 .and_then(|v| v.checked_add(row_bytes))
-                .ok_or_else(|| whereat::at!(ConvertError::InvalidWidth(width)))?;
+                .ok_or_else(|| ConvertError::InvalidWidth(width))
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()?;
             if expected > len {
                 return Err(whereat::at!(ConvertError::BufferSize {
                     expected,

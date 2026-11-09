@@ -27,6 +27,7 @@
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::sync::Arc;
+use whereat::ResultAtExt as _;
 
 use moxcms::{
     BarycentricWeightScale, ColorProfile, InterpolationMethod, Layout, TransformExecutor,
@@ -1020,39 +1021,53 @@ fn try_mox_row(
     dst: &mut [u8],
     width: u32,
 ) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
-    let cast_error = |_| {
-        whereat::at!(crate::cms::CmsPluginError::msg(
-            "CMS sample alignment or extent mismatch"
-        ))
-    };
+    let cast_error = |_| crate::cms::CmsPluginError::msg("CMS sample alignment or extent mismatch");
     let pixels = width as usize;
-    let extent_error = || {
-        whereat::at!(crate::cms::CmsPluginError::msg(
-            "CMS row is shorter than its width"
-        ))
-    };
+    let extent_error = || crate::cms::CmsPluginError::msg("CMS row is shorter than its width");
     let src = src
         .get(..pixels.saturating_mul(extent.source_bytes))
-        .ok_or_else(extent_error)?;
+        .ok_or_else(extent_error)
+        .map_err(whereat::At::wrap)
+        .at_crate(crate::at_crate_info())
+        .at()?;
     let dst = dst
         .get_mut(..pixels.saturating_mul(extent.target_bytes))
-        .ok_or_else(extent_error)?;
+        .ok_or_else(extent_error)
+        .map_err(whereat::At::wrap)
+        .at_crate(crate::at_crate_info())
+        .at()?;
     let result = match inner {
         MoxTransformInner::U8(t) => t.transform(src, dst),
         MoxTransformInner::U16(t) => t.transform(
-            bytemuck::try_cast_slice(src).map_err(cast_error)?,
-            bytemuck::try_cast_slice_mut(dst).map_err(cast_error)?,
+            bytemuck::try_cast_slice(src)
+                .map_err(cast_error)
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()?,
+            bytemuck::try_cast_slice_mut(dst)
+                .map_err(cast_error)
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()?,
         ),
         MoxTransformInner::F32(t) => t.transform(
-            bytemuck::try_cast_slice(src).map_err(cast_error)?,
-            bytemuck::try_cast_slice_mut(dst).map_err(cast_error)?,
+            bytemuck::try_cast_slice(src)
+                .map_err(cast_error)
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()?,
+            bytemuck::try_cast_slice_mut(dst)
+                .map_err(cast_error)
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()?,
         ),
     };
-    result.map_err(|e| {
-        whereat::at!(crate::cms::CmsPluginError::msg(format!(
-            "moxcms row failed: {e}"
-        )))
-    })
+    result
+        .map_err(|e| crate::cms::CmsPluginError::msg(format!("moxcms row failed: {e}")))
+        .map_err(whereat::At::wrap)
+        .at_crate(crate::at_crate_info())
+        .at()
 }
 
 // ---------------------------------------------------------------------------
@@ -1205,7 +1220,10 @@ impl crate::cms::PluggableCms for MoxCms {
                         extent: RowExtent::of(src_format, dst_format),
                     }) as Box<dyn crate::cms::RowTransformMut>
                 })
-                .map_err(|error| whereat::at!(CmsPluginError::new(error))),
+                .map_err(CmsPluginError::new)
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at(),
             );
         }
         // Into another ink profile is a different operation, with its own path below. Otherwise the
@@ -1253,7 +1271,10 @@ impl crate::cms::PluggableCms for MoxCms {
                         extent: RowExtent::of(src_format, dst_format),
                     }) as Box<dyn crate::cms::RowTransformMut>
                 })
-                .map_err(|error| whereat::at!(CmsPluginError::new(error))),
+                .map_err(CmsPluginError::new)
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at(),
             );
         }
         if is_cmyk_f32(dst_format) {

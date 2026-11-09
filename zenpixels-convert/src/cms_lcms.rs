@@ -27,6 +27,7 @@ use crate::icc_profiles::SynthesizedIcc;
 use crate::{ChannelType, Cicp, ColorModel, ColorProfileSource, PixelFormat};
 use alloc::{boxed::Box, format, vec::Vec};
 use lcms::{profile, types, virt, xform};
+use whereat::ResultAtExt as _;
 
 /// The pure-Rust Little CMS backend.
 ///
@@ -87,13 +88,17 @@ fn describe(format: PixelFormat) -> Option<Format> {
 }
 
 type Error = whereat::At<CmsPluginError>;
+#[track_caller]
 fn error(message: impl Into<alloc::string::String>) -> Error {
     whereat::at!(CmsPluginError::msg(message))
 }
 
 fn gray_srgb() -> Result<Box<profile::IccProfile>, Error> {
-    let mut rgb =
-        virt::create_srgb_profile(None).ok_or_else(|| error("lcms sRGB profile failed"))?;
+    let mut rgb = virt::create_srgb_profile(None)
+        .ok_or_else(|| CmsPluginError::msg("lcms sRGB profile failed"))
+        .map_err(whereat::At::wrap)
+        .at_crate(crate::at_crate_info())
+        .at()?;
     let curve = match profile::cms_read_tag(&mut rgb, lcms::signatures::tag::SigRedTRCTag) {
         Some(
             lcms::tagtypes::TagObject::Curve(curve)
@@ -107,7 +112,10 @@ fn gray_srgb() -> Result<Box<profile::IccProfile>, Error> {
         Y: 1.0,
     };
     virt::create_gray_profile(None, Some(&white), Some(&curve))
-        .ok_or_else(|| error("lcms gray sRGB profile failed"))
+        .ok_or_else(|| CmsPluginError::msg("lcms gray sRGB profile failed"))
+        .map_err(whereat::At::wrap)
+        .at_crate(crate::at_crate_info())
+        .at()
 }
 
 fn open_cicp(cicp: Cicp, gray: bool) -> Result<Option<Box<profile::IccProfile>>, Error> {
@@ -122,7 +130,10 @@ fn open_cicp(cicp: Cicp, gray: bool) -> Result<Option<Box<profile::IccProfile>>,
         } else {
             virt::create_srgb_profile(None)
                 .map(Some)
-                .ok_or_else(|| error("lcms sRGB profile failed"))
+                .ok_or_else(|| CmsPluginError::msg("lcms sRGB profile failed"))
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()
         };
     }
     let synthesized = if gray {
@@ -133,7 +144,10 @@ fn open_cicp(cicp: Cicp, gray: bool) -> Result<Option<Box<profile::IccProfile>>,
     match synthesized {
         SynthesizedIcc::Profile(bytes) => profile::open_profile_from_mem(None, &bytes)
             .map(Some)
-            .ok_or_else(|| error("lcms could not parse the selected CICP profile")),
+            .ok_or_else(|| CmsPluginError::msg("lcms could not parse the selected CICP profile"))
+            .map_err(whereat::At::wrap)
+            .at_crate(crate::at_crate_info())
+            .at(),
         _ => Ok(None),
     }
 }
@@ -146,7 +160,10 @@ fn open(
     match source {
         ColorProfileSource::Icc(bytes) => profile::open_profile_from_mem(None, bytes)
             .map(Some)
-            .ok_or_else(|| error("lcms could not parse ICC profile")),
+            .ok_or_else(|| CmsPluginError::msg("lcms could not parse ICC profile"))
+            .map_err(whereat::At::wrap)
+            .at_crate(crate::at_crate_info())
+            .at(),
         _ if format.color_model() == ColorModel::Cmyk => Ok(None),
         ColorProfileSource::Cicp(cicp) => open_cicp(cicp, gray),
         ColorProfileSource::Named(named) => {
@@ -235,7 +252,10 @@ impl PluggableCms for Lcms {
                 to.code,
                 flags,
             )
-            .ok_or_else(|| error("lcms refused this ICC/layout transform"))?;
+            .ok_or_else(|| CmsPluginError::msg("lcms refused this ICC/layout transform"))
+            .map_err(whereat::At::wrap)
+            .at_crate(crate::at_crate_info())
+            .at()?;
             Ok(Some(Box::new(Row {
                 transform,
                 from,
@@ -267,11 +287,19 @@ impl Row {
         if self.from.ink != Ink::None {
             let length = (width as usize)
                 .checked_mul(4)
-                .ok_or_else(|| error("lcms row overflow"))?;
+                .ok_or_else(|| CmsPluginError::msg("lcms row overflow"))
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()?;
             if length > self.scratch.len() {
                 self.scratch
                     .try_reserve(length - self.scratch.len())
-                    .map_err(|e| error(format!("lcms CMYK scratch allocation failed: {e}")))?;
+                    .map_err(|e| {
+                        CmsPluginError::msg(format!("lcms CMYK scratch allocation failed: {e}"))
+                    })
+                    .map_err(whereat::At::wrap)
+                    .at_crate(crate::at_crate_info())
+                    .at()?;
                 self.scratch.resize(length, 0.0);
             }
         }
@@ -289,10 +317,16 @@ impl RowTransformMut for Row {
         let pixels = width as usize;
         let source_length = pixels
             .checked_mul(self.from.bytes)
-            .ok_or_else(|| error("lcms row overflow"))?;
+            .ok_or_else(|| CmsPluginError::msg("lcms row overflow"))
+            .map_err(whereat::At::wrap)
+            .at_crate(crate::at_crate_info())
+            .at()?;
         let target_length = pixels
             .checked_mul(self.to.bytes)
-            .ok_or_else(|| error("lcms row overflow"))?;
+            .ok_or_else(|| CmsPluginError::msg("lcms row overflow"))
+            .map_err(whereat::At::wrap)
+            .at_crate(crate::at_crate_info())
+            .at()?;
         if src.len() < source_length || dst.len() < target_length {
             return Err(error("lcms row is shorter than its width"));
         }

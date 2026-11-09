@@ -60,6 +60,8 @@ mod gamut_compress;
 #[cfg(feature = "hdr-experimental")]
 mod tone_mapper;
 
+use whereat::ResultAtExt as _;
+
 /// Re-exports of the experimental [`measure`] surface at the [`hdr`](self)
 /// boundary, so callers can write
 /// `use zenpixels_convert::hdr::CllMeasure;` instead of the full
@@ -119,7 +121,10 @@ fn quantize_setup(
     let diffuse_white = px
         .color_context()
         .and_then(|c| c.diffuse_white)
-        .ok_or_else(|| whereat::at!(ConvertError::SdrWhiteRequired))?;
+        .ok_or(ConvertError::SdrWhiteRequired)
+        .map_err(whereat::At::wrap)
+        .at_crate(crate::at_crate_info())
+        .at()?;
     let desc = px.descriptor();
     let src = match desc.pixel_format() {
         PixelFormat::RgbF32 => PixelDescriptor::RGBF32_LINEAR,

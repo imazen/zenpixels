@@ -56,9 +56,15 @@ pub(crate) fn validate_descriptors(
     to: PixelDescriptor,
 ) -> Result<(), At<ConvertError>> {
     from.validate()
-        .map_err(|e| whereat::at!(ConvertError::Buffer(e)))?;
+        .map_err(ConvertError::Buffer)
+        .map_err(whereat::At::wrap)
+        .at_crate(crate::at_crate_info())
+        .at()?;
     to.validate()
-        .map_err(|e| whereat::at!(ConvertError::Buffer(e)))?;
+        .map_err(ConvertError::Buffer)
+        .map_err(whereat::At::wrap)
+        .at_crate(crate::at_crate_info())
+        .at()?;
     if to.alpha() == Some(AlphaMode::Opaque)
         && from.has_alpha()
         && from.alpha() != Some(AlphaMode::Opaque)
@@ -719,16 +725,22 @@ impl ConvertPlan {
     ) -> Result<Self, At<ConvertError>> {
         let (first, last) = (canonical(from), canonical(to));
         let mut plan = Self::plan_native(first, last)?;
-        let no_path = || whereat::at!(ConvertError::NoPath { from, to });
+        let no_path = || ConvertError::NoPath { from, to };
         if from != first {
             plan = Self::build(from, first, vec![swizzle.clone()])
                 .compose(&plan)
-                .ok_or_else(no_path)?;
+                .ok_or_else(no_path)
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()?;
         }
         if to != last {
             plan = plan
                 .compose(&Self::build(last, to, vec![swizzle]))
-                .ok_or_else(no_path)?;
+                .ok_or_else(no_path)
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()?;
         }
         Ok(plan)
     }
@@ -875,7 +887,10 @@ impl ConvertPlan {
         if let Some(pivot) = oklab_pivot(from, to) {
             return Self::plan_native(from, pivot)?
                 .compose(&Self::plan_native(pivot, to)?)
-                .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
+                .ok_or(ConvertError::NoPath { from, to })
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at();
         }
         if needs_cms_for_color_model(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
@@ -1015,7 +1030,10 @@ impl ConvertPlan {
                     .with_signal_range(from.signal_range);
                 return Self::plan_native(from, middle)?
                     .compose(&Self::plan_native(middle, to)?)
-                    .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
+                    .ok_or(ConvertError::NoPath { from, to })
+                    .map_err(whereat::At::wrap)
+                    .at_crate(crate::at_crate_info())
+                    .at();
             }
         }
 
@@ -1123,7 +1141,9 @@ impl ConvertPlan {
                         to.transfer(),
                         from.primaries == to.primaries,
                     )
-                    .map_err(|e| whereat::at!(e))?,
+                    .map_err(whereat::At::wrap)
+                    .at_crate(crate::at_crate_info())
+                    .at()?,
                 );
                 steps.extend(layout_steps(from.layout(), to.layout()));
             } else {
@@ -1138,7 +1158,9 @@ impl ConvertPlan {
                             to.transfer(),
                             from.primaries == to.primaries,
                         )
-                        .map_err(|e| whereat::at!(e))?,
+                        .map_err(whereat::At::wrap)
+                        .at_crate(crate::at_crate_info())
+                        .at()?,
                     );
                 }
             }
@@ -1151,7 +1173,9 @@ impl ConvertPlan {
                     to.transfer(),
                     from.primaries == to.primaries,
                 )
-                .map_err(|e| whereat::at!(e))?,
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()?,
             );
         }
 
@@ -1692,7 +1716,9 @@ impl ConvertPlan {
                 TransferFunction::Linear,
                 false,
             )
-            .map_err(|e| whereat::at!(e))?,
+            .map_err(whereat::At::wrap)
+            .at_crate(crate::at_crate_info())
+            .at()?,
         );
 
         // ---- The mapper is either the caller-supplied one (via `new_with_tone_mapper`) or the in-crate
@@ -1723,7 +1749,7 @@ impl ConvertPlan {
                 return Ok(None);
             }
             let Some(matrix) = crate::gamut::conversion_matrix(a, b) else {
-                return Err(whereat::at!(ConvertError::NoPath { from, to }));
+                return Err(ConvertError::NoPath { from, to });
             };
             let flat = [
                 matrix.0[0][0],
@@ -1744,7 +1770,12 @@ impl ConvertPlan {
         };
 
         // ---- (b) Source primaries → the mapper's working primaries.
-        steps.extend(gamut_step(from.primaries, working_primaries)?);
+        steps.extend(
+            gamut_step(from.primaries, working_primaries)
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()?,
+        );
 
         // ---- (c) Tone-map step. The shared `OnceBox` is freshly allocated so plan clones
         // reuse the same lazy cache.
@@ -1759,7 +1790,12 @@ impl ConvertPlan {
 
         // ---- (d) Working primaries → target primaries.
         if to.primaries != ColorPrimaries::Unknown {
-            steps.extend(gamut_step(working_primaries, to.primaries)?);
+            steps.extend(
+                gamut_step(working_primaries, to.primaries)
+                    .map_err(whereat::At::wrap)
+                    .at_crate(crate::at_crate_info())
+                    .at()?,
+            );
         }
 
         // ---- (e) OKLch soft chroma compression (skip when target IS BT.2020;
@@ -1791,7 +1827,9 @@ impl ConvertPlan {
                     to.transfer(),
                     false,
                 )
-                .map_err(|e| whereat::at!(e))?,
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()?,
             );
         }
 
@@ -1833,10 +1871,16 @@ impl ConvertPlan {
     ) -> Result<Self, At<ConvertError>> {
         let rendering = options
             .hlg_rendering()
-            .ok_or_else(|| whereat::at!(ConvertError::HlgRenderingRequired))?;
+            .ok_or(ConvertError::HlgRenderingRequired)
+            .map_err(whereat::At::wrap)
+            .at_crate(crate::at_crate_info())
+            .at()?;
         let white = options
             .sdr_white()
-            .ok_or_else(|| whereat::at!(ConvertError::SdrWhiteRequired))?;
+            .ok_or(ConvertError::SdrWhiteRequired)
+            .map_err(whereat::At::wrap)
+            .at_crate(crate::at_crate_info())
+            .at()?;
         let inverse = to.transfer() == TransferFunction::Hlg;
         // Internal F32 storage must not masquerade as a caller-requested depth
         // reduction. Preserve the gate on the actual endpoints.
@@ -1900,7 +1944,7 @@ impl ConvertPlan {
                 ))],
             )
         };
-        let no_path = || whereat::at!(ConvertError::NoPath { from, to });
+        let no_path = || ConvertError::NoPath { from, to };
         if inverse {
             let before = Self::new_explicit(from, linear, options)?;
             let after = Self::new_explicit(encoded, to, options)?;
@@ -1908,9 +1952,17 @@ impl ConvertPlan {
                 .compose_preserving(&bridge)
                 .and_then(|p| p.compose_preserving(&after))
                 .ok_or_else(no_path)
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()
         } else {
             let before = Self::new_explicit(from, encoded, options)?;
-            let mut plan = before.compose_preserving(&bridge).ok_or_else(no_path)?;
+            let mut plan = before
+                .compose_preserving(&bridge)
+                .ok_or_else(no_path)
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()?;
             if is_hdr_to_sdr(from.transfer(), to.transfer()) {
                 // Preserve the existing tone-map policy gates by entering the
                 // qualified PQ path with the same absolute luminance.
@@ -1923,9 +1975,18 @@ impl ConvertPlan {
                 .with_primaries(ColorPrimaries::Bt2020);
                 let encode =
                     Self::new_explicit(linear, pq, &options.with_clip_out_of_gamut(false))?;
-                plan = plan.compose_preserving(&encode).ok_or_else(no_path)?;
+                plan = plan
+                    .compose_preserving(&encode)
+                    .ok_or_else(no_path)
+                    .map_err(whereat::At::wrap)
+                    .at_crate(crate::at_crate_info())
+                    .at()?;
                 let after = Self::new_explicit(pq, to, options)?;
-                plan.compose_preserving(&after).ok_or_else(no_path)
+                plan.compose_preserving(&after)
+                    .ok_or_else(no_path)
+                    .map_err(whereat::At::wrap)
+                    .at_crate(crate::at_crate_info())
+                    .at()
             } else {
                 let mut after = Self::new_explicit(linear, to, options)?;
                 // This intermediate is display-linear relative to `white`, not
@@ -1951,7 +2012,11 @@ impl ConvertPlan {
                         }
                     }
                 }
-                plan.compose_preserving(&after).ok_or_else(no_path)
+                plan.compose_preserving(&after)
+                    .ok_or_else(no_path)
+                    .map_err(whereat::At::wrap)
+                    .at_crate(crate::at_crate_info())
+                    .at()
             }
         }
     }
@@ -1998,7 +2063,10 @@ impl ConvertPlan {
         if let Some(pivot) = oklab_pivot(from, to) {
             return Self::new_explicit(from, pivot, options)?
                 .compose(&Self::new_explicit(pivot, to, options)?)
-                .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
+                .ok_or(ConvertError::NoPath { from, to })
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at();
         }
         // Check alpha removal policy.
         let drops_alpha = from.has_alpha() && !to.has_alpha();
@@ -2062,7 +2130,10 @@ impl ConvertPlan {
             };
             let target_peak = options
                 .sdr_peak()
-                .ok_or_else(|| whereat::at!(ConvertError::SdrPeakRequired))?;
+                .ok_or(ConvertError::SdrPeakRequired)
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()?;
             #[cfg(feature = "bt2446a")]
             {
                 Self::new_with_hdr_config(
@@ -2089,7 +2160,10 @@ impl ConvertPlan {
         {
             let anchor = options
                 .sdr_white()
-                .ok_or_else(|| whereat::at!(ConvertError::SdrWhiteRequired))?;
+                .ok_or(ConvertError::SdrWhiteRequired)
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()?;
             plan = plan.with_pq_anchor(anchor);
         }
 
@@ -2883,15 +2957,24 @@ impl ConvertScratch {
     ) -> Result<(), At<ConvertError>> {
         let half = (width as usize)
             .checked_mul(plan.max_intermediate_bpp())
-            .ok_or_else(|| whereat::at!(ConvertError::InvalidWidth(width)))?;
+            .ok_or_else(|| ConvertError::InvalidWidth(width))
+            .map_err(whereat::At::wrap)
+            .at_crate(crate::at_crate_info())
+            .at()?;
         let words = half
             .checked_add(3)
             .and_then(|n| (n / 4).checked_mul(2))
-            .ok_or_else(|| whereat::at!(ConvertError::InvalidWidth(width)))?;
+            .ok_or_else(|| ConvertError::InvalidWidth(width))
+            .map_err(whereat::At::wrap)
+            .at_crate(crate::at_crate_info())
+            .at()?;
         if self.buf.len() < words {
             self.buf
                 .try_reserve(words - self.buf.len())
-                .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
+                .map_err(|_| ConvertError::AllocationFailed)
+                .map_err(whereat::At::wrap)
+                .at_crate(crate::at_crate_info())
+                .at()?;
             self.buf.resize(words, 0);
         }
         self.hdr.prepare(width)?;
