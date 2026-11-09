@@ -19,22 +19,50 @@ a signaled peak alone does not select all rendering conditions.
   SDR ICC profile. ICC synthesis remains a separate representation and
   interoperability qualification, not an automatic consequence of OOTF support.
 
-This approves the architecture, not numerical preset constants or public
-signatures. The contract must still specify luminance coefficients, zero,
-negative and extended RGB behavior, and the scene/display meaning of each
-endpoint against the normative equations and the existing zentone implementation.
-Acceptance requires independent numerical vectors, identity preservation,
-consistent entry-point refusals and row-partition parity. Existing refusal
-behavior stays until the replacement qualifies. Track the contract in
-[issue #132](https://github.com/imazen/zenpixels/issues/132) and downstream authority
-routing in [issue #139](https://github.com/imazen/zenpixels/issues/139).
+## Implemented rendering contract — 2026-11-09
 
-Status: design / proposal. Decides which of the HDR-convert items are worth a
-**public** commitment (each `pub` in zenpixels is a decade-long contract — see
-`CLAUDE.md` "Public API surface"), what shape they take, and — the load-bearing
-question — **which conversions happen automatically vs. which the caller must
-ask for**. Companion to the prior-art survey (`hdr-design-survey-2026-06-13.md`)
-and the M×N epic (#45).
+`ConvertOptions::with_hlg_rendering(HlgRendering)` selects display rendering.
+`HlgRendering::new(peak, black_nits, system_gamma)` validates explicit conditions;
+the supplied effective gamma includes the caller's surround adjustment.
+`REFERENCE_1000_NIT` is opt-in: 1000 cd/m² peak, ideal zero black, gamma 1.2,
+reference 5 cd/m² surround. Neither metadata nor a missing option selects it.
+The separate `sdr_white` option defines relative-linear 1.0 in cd/m².
+
+The plan resolves beta, luminance scale and gamma once. Its F64 analytic kernel
+uses BT.2020 luminance coefficients (0.2627, 0.6780, 0.0593) and the coupled OOTF
+and inverse in [BT.2100-3, Table 5](https://www.itu.int/dms_pubrec/itu-r/rec/bt/R-REC-BT.2100-3-202502-I!!PDF-E.pdf).
+The OOTF structure follows zentone's HLG implementation at `f32e091c`.
+The qualified HLG endpoint is full-range BT.2020 RGB/RGBA, U8/U16/F16/F32.
+Alpha association and storage conversion surround the straight F32 rendering
+step. Gray, other HLG primaries and narrow-range rendering refuse.
+
+With clipping disabled, the declared extension uses odd transfer curves and
+absolute luminance in the shared power multiplier. Zero luminance maps to zero
+before inverse black-lift removal; cancellation colors are not promised an
+invertible mapping. Nonfinite RGB produces RGB NaN, while alpha bits pass through
+the rendering kernel unchanged. With clipping enabled, forward HLG signals and
+inverse HLG output are bounded to [0,1]. This extended-domain policy is ours,
+not a claim about normative negative RGB in BT.2100.
+
+Explicit row and buffer entry points share this plan. Buffer peak measurement
+uses rendered light; row tone mapping still needs a supplied peak. HLG/PQ
+conversion, compositing onto a matte, and HLG/linear conversion use the explicit
+policy. Identity and encoded depth changes do not render. Low-level legacy
+transfer kernels retain their scene-transfer meaning; legacy HDR constructors
+without rendering options retain their refusal. Existing same-HLG gamut transforms retain their scene-transfer semantics;
+they do not select display rendering. HLG ICC synthesis remains unsupported: this numerical
+renderer does not qualify an ICC representation.
+
+`tests/hlg_rendering.rs` checks analytic neutral/colored vectors, black lift,
+extended values, clipping, nonfinite RGB, alpha payloads, inverse conversion,
+policy refusals, original-endpoint depth policy, row partitions and strided
+buffer parity. Existing matte tolerances remain unchanged; their HLG expectations
+now use the explicit coupled display-light equation. No SIMD speed claim is made.
+
+Track the contract in [issue #132](https://github.com/imazen/zenpixels/issues/132)
+and downstream authority routing in [issue #139](https://github.com/imazen/zenpixels/issues/139).
+The remaining sections preserve the earlier API discussion; sections 6 and this
+implemented contract supersede its older automatic/default-HLG proposals.
 
 Personas referenced throughout:
 
@@ -79,7 +107,7 @@ The clean restatement, and the test to apply to any new step:
 | Transfer encode/decode (sRGB / BT.709 / PQ / HLG / γ2.2 ↔ linear) | **AUTO** | deterministic, precision-bounded |
 | **Absolute-luminance anchor** (relative-linear ↔ PQ-absolute via `diffuse_white`) | **AUTO** | the anchor is data on `ColorContext`; placing diffuse white is lossless |
 | Gamut **matrix** between known primaries, in-gamut (709 ↔ P3 ↔ 2020) | **AUTO** | deterministic 3×3 in linear light |
-| HLG OOTF for a **signaled** display peak | **AUTO** | peak is signaled data; OOTF is deterministic given it |
+| HLG display OOTF | **EXPLICIT** | peak, black and effective system gamma are rendering choices |
 | Lossless layout/depth (u8→u16, add opaque alpha, premul ↔ straight) | **AUTO** | reversible |
 | Anchor **value** when unsignaled → `DiffuseWhite::BT2408` (203) | **AUTO (default)** | cross-vendor convention; safe, overridable |
 | — | — | — |

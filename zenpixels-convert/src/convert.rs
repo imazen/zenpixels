@@ -214,13 +214,11 @@ pub struct ConvertPlan {
 
 /// The linear value of SDR white in `transfer`, for a background composited into it.
 ///
-/// PQ's linear is absolute, with 1.0 at 10000 cd/m². HLG's is scene-referred, so the
-/// luminance goes through BT.2100's display OOTF inverted, at the nominal 1000 cd/m² peak
-/// and its system gamma of 1.2. 203 cd/m² lands at signal 0.75, as BT.2408 specifies.
+/// PQ's linear is absolute, with 1.0 at 10000 cd/m². HLG compositing is
+/// prepared separately in display-linear space with explicit conditions.
 fn matte_white(transfer: TransferFunction, white: zenpixels::hdr::DiffuseWhite) -> f32 {
     match transfer {
         TransferFunction::Pq => white.nits() / 10_000.0,
-        TransferFunction::Hlg => libm::powf(white.nits() / 1_000.0, 1.0 / 1.2),
         _ => 1.0,
     }
 }
@@ -231,6 +229,9 @@ fn matte_background(
     reference_white: Option<zenpixels::hdr::DiffuseWhite>,
     source: PixelDescriptor,
 ) -> Result<[f32; 3], At<ConvertError>> {
+    if source.transfer() == TransferFunction::Hlg {
+        return Err(whereat::at!(ConvertError::HlgOotfNotImplemented));
+    }
     let from = background.descriptor();
     let hdr = matches!(
         from.transfer(),
@@ -400,6 +401,7 @@ impl core::fmt::Debug for ToneMapStep {
 pub(crate) enum ConvertStep {
     /// No-op (identity).
     Identity,
+    HlgRender(hlg_render::PreparedHlg),
     /// BGRA → RGBA byte swizzle (or vice versa).
     SwizzleBgraRgba,
     /// BGR → RGB byte swizzle (or vice versa), at 8 bits.
@@ -420,7 +422,9 @@ pub(crate) enum ConvertStep {
     /// treated as linear regardless of color-channel TF. The matte
     /// `linear` is the background in the source's primaries and linear light, resolved once at
     /// planning so that rows only blend.
-    MatteComposite { linear: [f32; 3] },
+    MatteComposite {
+        linear: [f32; 3],
+    },
     /// Gray → RGB (replicate gray to all 3 channels).
     GrayToRgb,
     /// Gray → RGBA (replicate + opaque alpha).
@@ -436,12 +440,18 @@ pub(crate) enum ConvertStep {
     /// Coefficients are resolved from `ConvertOptions::luma` at plan build
     /// time (`new_explicit`). Default for plans built via `Self::new`
     /// without options is `LumaCoefficients::Bt709`.
-    RgbToGray { coefficients: LumaCoefficients },
+    RgbToGray {
+        coefficients: LumaCoefficients,
+    },
     /// RGBA → Gray, drop alpha. See [`RgbToGray`](Self::RgbToGray) for
     /// semantic and coefficient resolution.
-    RgbaToGray { coefficients: LumaCoefficients },
+    RgbaToGray {
+        coefficients: LumaCoefficients,
+    },
     /// RGBA → GrayAlpha, preserving alpha and using encoded luma coefficients.
-    RgbaToGrayAlpha { coefficients: LumaCoefficients },
+    RgbaToGrayAlpha {
+        coefficients: LumaCoefficients,
+    },
     /// GrayAlpha → RGBA (replicate gray, keep alpha).
     GrayAlphaToRgba,
     /// GrayAlpha → RGB (replicate gray, drop alpha).
@@ -461,7 +471,9 @@ pub(crate) enum ConvertStep {
     /// Exact u16 → u8 round-to-nearest.
     U16ToU8,
     /// Composite SDR transfer conversion and final u16 → u8 quantisation in f64.
-    SdrU16ToU8 { to: TransferFunction },
+    SdrU16ToU8 {
+        to: TransferFunction,
+    },
     /// u8 → u16 (v * 257).
     U8ToU16,
     /// u16 → f32 (v / 65535.0).
@@ -535,7 +547,10 @@ pub(crate) enum ConvertStep {
     /// linearize → matrix → encode shape to dispatch. Replaces the 3-step
     /// sequence `[<lin>, GamutMatrix*F32, <enc>]` whenever the planner can
     /// peephole it. See [`FusedKind`] for the supported shapes.
-    Fused { kind: FusedKind, matrix: [f32; 9] },
+    Fused {
+        kind: FusedKind,
+        matrix: [f32; 9],
+    },
     /// Pluggable HDR→SDR tone-map step on linear-light f32 RGB in the
     /// working primaries declared by
     /// [`ToneMapper::working_primaries_for`](crate::hdr::ToneMapper::working_primaries_for)
@@ -588,6 +603,7 @@ impl ConvertStep {
     pub(crate) const fn variant_name(&self) -> &'static str {
         match self {
             Self::Identity => "Identity",
+            Self::HlgRender(_) => "HlgRender",
             Self::SwizzleBgraRgba => "SwizzleBgraRgba",
             Self::SwizzleBgrRgb => "SwizzleBgrRgb",
             Self::RgbToBgra => "RgbToBgra",
@@ -1760,6 +1776,138 @@ impl ConvertPlan {
         })
     }
 
+    // HLG rendering uses straight F32 BT.2020 RGB(A); the ordinary planner
+    // handles storage, association, gamut and tone mapping around that boundary.
+    fn plan_hlg_rendering(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        options: &ConvertOptions,
+    ) -> Result<Self, At<ConvertError>> {
+        let rendering = options
+            .hlg_rendering()
+            .ok_or_else(|| whereat::at!(ConvertError::HlgOotfNotImplemented))?;
+        let white = options
+            .sdr_white()
+            .ok_or_else(|| whereat::at!(ConvertError::SdrWhiteRequired))?;
+        let inverse = to.transfer() == TransferFunction::Hlg;
+        // Internal F32 storage must not masquerade as a caller-requested depth
+        // reduction. Preserve the gate on the actual endpoints.
+        let endpoint_reduction = crate::negotiate::channel_bits(from.channel_type())
+            > crate::negotiate::channel_bits(to.channel_type());
+        if endpoint_reduction && options.depth_policy() == DepthPolicy::Forbid {
+            return Err(whereat::at!(ConvertError::DepthReductionForbidden));
+        }
+        let internal_options =
+            if !endpoint_reduction && options.depth_policy() == DepthPolicy::Forbid {
+                options.with_depth_policy(DepthPolicy::Round)
+            } else {
+                *options
+            };
+        let options = &internal_options;
+        let hlg = if inverse { to } else { from };
+        if hlg.primaries != ColorPrimaries::Bt2020
+            || hlg.signal_range != crate::SignalRange::Full
+            || !matches!(hlg.layout(), ChannelLayout::Rgb | ChannelLayout::Rgba)
+            || !matches!(
+                hlg.channel_type(),
+                ChannelType::U8 | ChannelType::U16 | ChannelType::F16 | ChannelType::F32
+            )
+        {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
+        let encoded = PixelDescriptor::new(
+            ChannelType::F32,
+            hlg.layout(),
+            hlg.alpha().map(|_| AlphaMode::Straight),
+            TransferFunction::Hlg,
+        )
+        .with_primaries(ColorPrimaries::Bt2020);
+        let linear = PixelDescriptor::new(
+            ChannelType::F32,
+            hlg.layout(),
+            encoded.alpha(),
+            TransferFunction::Linear,
+        )
+        .with_primaries(ColorPrimaries::Bt2020);
+        let bridge = if inverse {
+            Self::build(
+                linear,
+                encoded,
+                vec![ConvertStep::HlgRender(hlg_render::PreparedHlg::new(
+                    rendering,
+                    inverse,
+                    white.nits(),
+                    options.clip_out_of_gamut(),
+                ))],
+            )
+        } else {
+            Self::build(
+                encoded,
+                linear,
+                vec![ConvertStep::HlgRender(hlg_render::PreparedHlg::new(
+                    rendering,
+                    inverse,
+                    white.nits(),
+                    options.clip_out_of_gamut(),
+                ))],
+            )
+        };
+        let no_path = || whereat::at!(ConvertError::NoPath { from, to });
+        if inverse {
+            let before = Self::new_explicit(from, linear, options)?;
+            let after = Self::new_explicit(encoded, to, options)?;
+            before
+                .compose_preserving(&bridge)
+                .and_then(|p| p.compose_preserving(&after))
+                .ok_or_else(no_path)
+        } else {
+            let before = Self::new_explicit(from, encoded, options)?;
+            let mut plan = before.compose_preserving(&bridge).ok_or_else(no_path)?;
+            if is_hdr_to_sdr(from.transfer(), to.transfer()) {
+                // Preserve the existing tone-map policy gates by entering the
+                // qualified PQ path with the same absolute luminance.
+                let pq = PixelDescriptor::new(
+                    ChannelType::F32,
+                    linear.layout(),
+                    linear.alpha(),
+                    TransferFunction::Pq,
+                )
+                .with_primaries(ColorPrimaries::Bt2020);
+                let encode =
+                    Self::new_explicit(linear, pq, &options.with_clip_out_of_gamut(false))?;
+                plan = plan.compose_preserving(&encode).ok_or_else(no_path)?;
+                let after = Self::new_explicit(pq, to, options)?;
+                plan.compose_preserving(&after).ok_or_else(no_path)
+            } else {
+                let mut after = Self::new_explicit(linear, to, options)?;
+                // This intermediate is display-linear relative to `white`, not
+                // ordinary SDR linear. Preserve the matte's separate anchor.
+                if let AlphaPolicy::CompositeOnto {
+                    background,
+                    reference_white,
+                } = options.alpha_policy()
+                {
+                    let background_white =
+                        if background.descriptor().transfer() == TransferFunction::Pq {
+                            10_000.0
+                        } else {
+                            reference_white
+                                .unwrap_or(zenpixels::hdr::DiffuseWhite::BT2408)
+                                .nits()
+                        };
+                    for step in &mut after.steps {
+                        if let ConvertStep::MatteComposite { linear } = step {
+                            for value in linear {
+                                *value *= background_white / white.nits();
+                            }
+                        }
+                    }
+                }
+                plan.compose_preserving(&after).ok_or_else(no_path)
+            }
+        }
+    }
+
     /// Create a conversion plan with explicit policy enforcement.
     ///
     /// Validates that the planned conversion steps are allowed by the given
@@ -1778,13 +1926,15 @@ impl ConvertPlan {
         to: PixelDescriptor,
         options: &ConvertOptions,
     ) -> Result<Self, At<ConvertError>> {
-        if from.transfer() != to.transfer()
-            && matches!(
-                (from.transfer(), to.transfer()),
-                (TransferFunction::Hlg, _) | (_, TransferFunction::Hlg)
-            )
-        {
-            return Err(whereat::at!(ConvertError::HlgOotfNotImplemented));
+        let hlg_boundary = from.transfer() != to.transfer()
+            && (from.transfer() == TransferFunction::Hlg || to.transfer() == TransferFunction::Hlg);
+        let hlg_composite = from.transfer() == TransferFunction::Hlg
+            && to.transfer() == TransferFunction::Hlg
+            && from.has_alpha()
+            && !to.has_alpha()
+            && matches!(options.alpha_policy(), AlphaPolicy::CompositeOnto { .. });
+        if hlg_boundary || hlg_composite {
+            return Self::plan_hlg_rendering(from, to, options);
         }
         if needs_cms_for_color_model(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
@@ -3251,6 +3401,16 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
         // shape — they only update pixel values.
         #[cfg(feature = "hdr-experimental")]
         ConvertStep::ToneMap(_) => current,
+        ConvertStep::HlgRender(prepared) => PixelDescriptor::new(
+            ChannelType::F32,
+            current.layout(),
+            current.alpha(),
+            if prepared.inverse {
+                TransferFunction::Hlg
+            } else {
+                TransferFunction::Linear
+            },
+        ),
         ConvertStep::SoftCompressOklch { .. } => current,
     };
     next.primaries = current.primaries;
@@ -3260,6 +3420,8 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
 
 #[path = "convert_kernels.rs"]
 mod convert_kernels;
+#[path = "hlg_render.rs"]
+mod hlg_render;
 use convert_kernels::apply_step_u8;
 pub(crate) use convert_kernels::{hlg_eotf, hlg_oetf, pq_eotf, pq_oetf};
 

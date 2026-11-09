@@ -488,7 +488,7 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
         }
         let mut resolved = *options;
         if crate::convert::is_hdr_to_sdr(src_desc.transfer(), target.transfer()) {
-            if src_desc.transfer() == TransferFunction::Hlg {
+            if src_desc.transfer() == TransferFunction::Hlg && resolved.hlg_rendering().is_none() {
                 return Err(whereat::at!(crate::ConvertError::HlgOotfNotImplemented));
             }
             if resolved.sdr_peak().is_none() {
@@ -503,7 +503,11 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
                 zenpixels::hdr::HdrPeak::Measured => {
                     #[cfg(feature = "bt2446a")]
                     {
-                        measured_peak(self, resolved.sdr_peak().expect("validated target peak"))?
+                        measured_peak(
+                            self,
+                            resolved.sdr_peak().expect("validated target peak"),
+                            &resolved,
+                        )?
                     }
                     #[cfg(not(feature = "bt2446a"))]
                     {
@@ -912,6 +916,7 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
 fn measured_peak(
     source: &PixelSlice<'_>,
     black_frame_axis: zenpixels::hdr::Nits,
+    rendering_options: &crate::ConvertOptions,
 ) -> Result<zenpixels::hdr::Nits, At<crate::ConvertError>> {
     let from = source.descriptor();
     crate::output::current_profile_for(from, source.color_context().map(Arc::as_ref))?;
@@ -929,7 +934,7 @@ fn measured_peak(
         from.primaries,
     )
     .with_signal_range(from.signal_range);
-    let options = default_options().with_sdr_white(zenpixels::hdr::DiffuseWhite::new(10_000.0));
+    let options = rendering_options.with_sdr_white(zenpixels::hdr::DiffuseWhite::new(10_000.0));
     let mut converter = crate::RowConverter::new_explicit(from, linear, &options)?;
     let count = (source.width() as usize)
         .checked_mul(linear.channels())

@@ -47,18 +47,70 @@ fn matte(transfer: Tf) -> [f32; 3] {
 }
 
 fn converter(t: T, transfer: Tf) -> RowConverter {
-    let from = D::new(t, L::Rgba, Some(AlphaMode::Straight), transfer);
-    let to = D::new(t, L::Rgb, None, transfer);
+    let mut from = D::new(t, L::Rgba, Some(AlphaMode::Straight), transfer);
+    let mut to = D::new(t, L::Rgb, None, transfer);
+    if transfer == Tf::Hlg {
+        from.primaries = zenpixels::ColorPrimaries::Bt2020;
+        to.primaries = zenpixels::ColorPrimaries::Bt2020;
+    }
     let policy = AlphaPolicy::CompositeOnto {
         background: zenpixels::Color::srgb8(MATTE.0, MATTE.1, MATTE.2),
         reference_white: None,
     };
-    RowConverter::new_explicit(
-        from,
-        to,
-        &ConvertOptions::permissive().with_alpha_policy(policy),
-    )
-    .unwrap()
+    let mut options = ConvertOptions::permissive().with_alpha_policy(policy);
+    if transfer == Tf::Hlg {
+        let background = [MATTE.0, MATTE.1, MATTE.2].map(ds::srgb_u8_to_linear);
+        options = options
+            .with_hlg_rendering(zenpixels::hdr::HlgRendering::REFERENCE_1000_NIT)
+            .with_sdr_white(zenpixels::hdr::DiffuseWhite::new(1000.0))
+            .with_alpha_policy(AlphaPolicy::CompositeOnto {
+                background: zenpixels::Color::try_new(
+                    D::RGBF32_LINEAR.with_primaries(zenpixels::ColorPrimaries::Bt2020),
+                    bytemuck::cast_slice(&background),
+                )
+                .unwrap(),
+                reference_white: Some(zenpixels::hdr::DiffuseWhite::new(203.0)),
+            });
+    }
+    RowConverter::new_explicit(from, to, &options).unwrap()
+}
+
+// Independent display-light oracle for the explicitly selected HLG reference
+// rendering. Other transfers retain their previous per-channel oracle.
+fn expected(transfer: Tf, p: [f32; 4], m: [f32; 3]) -> [f32; 3] {
+    if transfer != Tf::Hlg {
+        return core::array::from_fn(|k| oetf(transfer, blend(eotf(transfer, p[k]), p[3], m[k])));
+    }
+    let a = 0.17883277f64;
+    let b = 1.0 - 4.0 * a;
+    let c = 0.5 - a * (4.0 * a).ln();
+    let decode = |x: f64| {
+        if x <= 0.5 {
+            x * x / 3.0
+        } else {
+            ((x - c) / a).exp() / 12.0 + b / 12.0
+        }
+    };
+    let encode = |x: f64| {
+        if x <= 1.0 / 12.0 {
+            (3.0 * x).sqrt()
+        } else {
+            a * (12.0 * x - b).ln() + c
+        }
+    };
+    let mut rgb = [0.0; 3];
+    for k in 0..3 {
+        rgb[k] = decode(f64::from(p[k].clamp(0.0, 1.0)));
+    }
+    let y = 0.2627 * rgb[0] + 0.6780 * rgb[1] + 0.0593 * rgb[2];
+    let alpha = f64::from(p[3].clamp(0.0, 1.0));
+    let matte = [MATTE.0, MATTE.1, MATTE.2].map(|v| f64::from(ds::srgb_u8_to_linear(v)) * 0.203);
+    for k in 0..3 {
+        rgb[k] = rgb[k] * y.powf(0.2) * alpha + matte[k] * (1.0 - alpha);
+    }
+    let y = 0.2627 * rgb[0] + 0.6780 * rgb[1] + 0.0593 * rgb[2];
+    let scale = if y == 0.0 { 0.0 } else { y.powf(-1.0 / 6.0) };
+    rgb.map(|v| encode(v * scale).clamp(0.0, 1.0) as f32)
 }
 
 fn samples(max: u32) -> Vec<u32> {
@@ -138,10 +190,11 @@ fn integer_output_stays_within_one_code() {
             let mut out = vec![0u8; WIDTH * 3];
             converter(T::U8, transfer).convert_row(&src, &mut out, WIDTH as u32);
             for (i, p) in src.as_chunks::<4>().0.iter().enumerate() {
-                let a = f32::from(p[3]) * (1.0 / 255.0);
                 for k in 0..3 {
-                    let v = eotf(transfer, f32::from(p[k]) * (1.0 / 255.0));
-                    let want = oetf(transfer, blend(v, a, m[k])).clamp(0.0, 1.0) * 255.0 + 0.5;
+                    let want = expected(transfer, p.map(|v| f32::from(v) * (1.0 / 255.0)), m)[k]
+                        .clamp(0.0, 1.0)
+                        * 255.0
+                        + 0.5;
                     assert!(
                         (i32::from(out[i * 3 + k]) - want as i32).abs() <= 1,
                         "{transfer:?} {p:?}"
@@ -157,10 +210,11 @@ fn integer_output_stays_within_one_code() {
             WIDTH as u32,
         );
         for (i, p) in src.as_chunks::<4>().0.iter().enumerate() {
-            let a = f32::from(p[3]) * (1.0 / 65535.0);
             for k in 0..3 {
-                let v = eotf(transfer, f32::from(p[k]) * (1.0 / 65535.0));
-                let want = oetf(transfer, blend(v, a, m[k])).clamp(0.0, 1.0) * 65535.0 + 0.5;
+                let want = expected(transfer, p.map(|v| f32::from(v) * (1.0 / 65535.0)), m)[k]
+                    .clamp(0.0, 1.0)
+                    * 65535.0
+                    + 0.5;
                 assert!(
                     (i32::from(out[i * 3 + k]) - want as i32).abs() <= 1,
                     "{transfer:?} {p:?}"
@@ -186,7 +240,7 @@ fn float_output_stays_within_rounding() {
         );
         for (i, p) in src.as_chunks::<4>().0.iter().enumerate() {
             for k in 0..3 {
-                let want = oetf(transfer, blend(eotf(transfer, p[k]), p[3], m[k]));
+                let want = expected(transfer, *p, m)[k];
                 let got = out[i * 3 + k];
                 assert!(
                     (got - want).abs() <= 1e-6,
@@ -212,10 +266,11 @@ fn half_float_output_stays_within_one_step() {
             WIDTH as u32,
         );
         for (i, p) in src.as_chunks::<4>().0.iter().enumerate() {
-            let a = half::f16::from_bits(p[3]).to_f32();
             for k in 0..3 {
-                let v = eotf(transfer, half::f16::from_bits(p[k]).to_f32());
-                let want = half::f16::from_f32(oetf(transfer, blend(v, a, m[k]))).to_bits();
+                let want = half::f16::from_f32(
+                    expected(transfer, p.map(|v| half::f16::from_bits(v).to_f32()), m)[k],
+                )
+                .to_bits();
                 assert!(
                     out[i * 3 + k].abs_diff(want) <= 1,
                     "{transfer:?} {p:?}: {} {want}",
@@ -245,7 +300,7 @@ fn out_of_range_float_samples_follow_the_formula() {
             n as u32,
         );
         for (i, p) in src.as_chunks::<4>().0.iter().enumerate() {
-            let want = oetf(transfer, blend(eotf(transfer, p[0]), p[3], m[0]));
+            let want = expected(transfer, *p, m)[0];
             let got = out[i * 3];
             assert!(
                 (got - want).abs() <= 1e-5 + want.abs() * 1e-5,
@@ -277,9 +332,16 @@ mod reference_white {
             background: zenpixels::Color::srgb8(255, 255, 255),
             reference_white,
         };
-        let options = ConvertOptions::permissive().with_alpha_policy(policy);
-        let from = D::new(T::F32, L::Rgba, Some(AlphaMode::Straight), transfer);
-        let to = D::new(T::F32, L::Rgb, None, transfer);
+        let options = ConvertOptions::permissive()
+            .with_alpha_policy(policy)
+            .with_hlg_rendering(zenpixels::hdr::HlgRendering::REFERENCE_1000_NIT)
+            .with_sdr_white(DiffuseWhite::new(1000.0));
+        let mut from = D::new(T::F32, L::Rgba, Some(AlphaMode::Straight), transfer);
+        let mut to = D::new(T::F32, L::Rgb, None, transfer);
+        if transfer == Tf::Hlg {
+            from.primaries = zenpixels::ColorPrimaries::Bt2020;
+            to.primaries = zenpixels::ColorPrimaries::Bt2020;
+        }
         let mut out = [0f32; 3];
         RowConverter::new_explicit(from, to, &options)
             .unwrap()

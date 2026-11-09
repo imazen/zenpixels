@@ -38,8 +38,9 @@ pub enum AlphaPolicy {
         /// on an SDR source or an HDR background, whose luminance is already known.
         ///
         /// **Set this for HDR sources, to the reference white the content was graded to.**
-        /// `None` assumes [`DiffuseWhite::BT2408`]'s 203 cd/m², which may not match. On HLG, a
-        /// value also assumes BT.2100's nominal 1000 cd/m² display.
+        /// `None` assumes [`DiffuseWhite::BT2408`]'s 203 cd/m², which may not match.
+        /// HLG additionally requires explicit [`ConvertOptions::with_hlg_rendering`]
+        /// conditions and an SDR-white anchor for the display-linear intermediate.
         reference_white: Option<DiffuseWhite>,
     },
     /// Return error rather than dropping alpha.

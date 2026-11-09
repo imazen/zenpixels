@@ -77,6 +77,10 @@ pub(super) fn apply_step_u8(
     let w = width as usize;
 
     match step {
+        ConvertStep::HlgRender(prepared) => {
+            super::hlg_render::row(src, dst, w, from.layout(), prepared);
+        }
+
         ConvertStep::Identity => {
             let len = min(src.len(), dst.len());
             dst[..len].copy_from_slice(&src[..len]);

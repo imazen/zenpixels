@@ -118,6 +118,11 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed in the explicit HLG rendering work (2026-11-09): HLG matte compositing
+  previously used implicit rendering assumptions. It now requires explicit
+  rendering conditions and white, and uses the luminance-coupled OOTF. Existing matte error
+  tolerances are retained.
+
 - Corrected ICC exports landed on main in 49f00314 (2026-11-09),
   after separate PR128 qualification; no crate has been published. The actual replacement bundle is 93,377 bytes with 313
   RGB/gray mappings; the 21 removed mappings are targetless HLG exports.
