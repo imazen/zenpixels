@@ -39,6 +39,11 @@ None. This new companion is an unpublished review API.
 
 ### QUEUED BREAKING CHANGES
 
+- Remove the unshipped speculative `NativeCodeSlice` / `NativeCodeError` and
+  `codes::{native_to_u16, u16_to_native, NativeConversionError, NativePadding}`.
+  Interleaved U8/U16 callers use `CodePlane::component` and `codes::to_canonical`;
+  shared encoding descriptions and exact ST2086 carriage remain (`92ef77ae`).
+
 - Unify native integer encoding in `SampleEncoding`; remove the unshipped
   duplicate `NativeEncoding` (`c4c3352d`).
 - Remove infallible `RowConverter::clone`; use `try_clone` for workers that may

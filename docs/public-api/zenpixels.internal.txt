@@ -9,9 +9,9 @@
 
 ## summary
 #
-#   inherent methods                           59
+#   inherent methods                           58
 #   enum variants                              14
-#   trait roster entries (type × trait)        62
+#   trait roster entries (type × trait)        60
 #
 # per-module pub lines:
 #   (root)                            7
@@ -26,9 +26,9 @@
 #   plane                             7
 #   policy                            6
 #   precision                         5
-#   sample                            8
+#   sample                            7
 
-## items (73 lines)
+## items (72 lines)
 
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
 pub fn buffer::BufferError::assert_fields_are_eq(&self)
@@ -86,7 +86,6 @@ pub fn sample::ChromaSubsampling::assert_fields_are_eq(&self)
 pub fn sample::CodePlaneError::assert_fields_are_eq(&self)
 pub fn sample::ExactDepth::assert_fields_are_eq(&self)
 pub fn sample::ExactDepthError::assert_fields_are_eq(&self)
-pub fn sample::NativeCodeError::assert_fields_are_eq(&self)
 pub fn sample::SampleEncoding::assert_fields_are_eq(&self)
 pub fn sample::SampleEncodingError::assert_fields_are_eq(&self)
 pub AlphaMode::__Reserved(descriptor::reserved::Reserved)
@@ -104,7 +103,7 @@ pub descriptor::ColorPrimaries::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::SignalRange::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::TransferFunction::__Reserved(descriptor::reserved::Reserved)
 
-## trait impls (62 types)
+## trait impls (60 types)
 
 buffer::Bgrx: TrivialClone
 buffer::BufferError: TrivialClone
@@ -164,7 +163,5 @@ sample::CodePlane<'a>: TrivialClone
 sample::CodePlaneError: TrivialClone
 sample::ExactDepth: TrivialClone
 sample::ExactDepthError: TrivialClone
-sample::NativeCodeError: TrivialClone
-sample::NativeCodeSlice<'a>: TrivialClone
 sample::SampleEncoding: TrivialClone
 sample::SampleEncodingError: TrivialClone

@@ -4,12 +4,22 @@ Compared the review candidate (parent `79f5df8b`) with the current plane and
 sample APIs, and the outstanding issues updated today. The issue descriptions
 use main `d234f3c6`; review-branch implementation is not merged-main completion.
 
-## What the live examples establish
+## Resolution
 
-The explorer now runs these through the actual Rust/WASM APIs, rather than
-illustrating native storage exclusively with JavaScript conventions:
+The owner directed removal of NativeCodeSlice. It and its solely dependent
+conversion/error/padding APIs are removed from the candidate, with no replacement
+public view. The explorer now demonstrates the existing CodePlane route only;
+its unaligned and signed/wide reader controls are removed. Shared encoding
+metadata, exact ST2086 and native pixel identity carriage remain.
 
-| Case | Existing `CodePlane` | `NativeCodeSlice` |
+The comparison below records the evidence that led to removal; the removed
+adapter column is historical, not an available API.
+
+## Evidence that led to removal
+
+The pre-removal explorer ran these through actual Rust/WASM APIs:
+
+| Case | Existing `CodePlane` | Removed adapter (historical) |
 |---|---|---|
 | Interleaved CbCr / CrCb in U16 | Supported by `component`; roles exist in `PlaneRole` | No matching layout |
 | Interleaved U16 RGB10 + alpha1 | Supported: each component reader takes its own encoding | Supported; same extracted codes |
@@ -44,19 +54,16 @@ copy; it does not claim an unaligned typed U16 borrow is possible.
    missing-policy refusal, and does not compare that result against a bare-curve
    JavaScript model as though they were the same operation.
 
-Recommendation before freezing 0.3: make the existing component-view abstraction
-cover typed and byte-backed carriers, retaining the U8/U16 path and exact
-signed/wide reads. Migrate the native conversion entry points to that shared
-abstraction and remove NativeCodeSlice if the consumer fixtures prove it adds
-no separate semantic contract. Do not broaden ChannelLayout with chroma merely
-to make the new adapter appear universal. This review does not implement that
-public API redesign or claim downstream callers have been migrated.
+No demonstrated production caller used the new view. Tests, the explorer and
+conversion functions added with it were circular justification. Removing that
+surface resolves the immediate duplication; it does not authorize a speculative
+replacement or assert that all native component requirements are now implemented.
 
 ## Outstanding issues updated today
 
 | Issue | Candidate evidence and remaining boundary |
 |---|---|
-| [83 — native samples](https://github.com/imazen/zenpixels/issues/83) | Signed/wide SampleEncoding, native fixtures and exact ST2086 carriage exist on the review branch. The new live witness exposes duplicated U16 component reading. Resolve the view design before claiming the representation contract finalized; downstream IMIJ integration is separate. |
+| [83 — native samples](https://github.com/imazen/zenpixels/issues/83) | Signed/wide SampleEncoding and exact ST2086 carriage remain. The duplicate native view is removed; U16 RGB10/alpha1 uses the existing component route. Any further signed/wide component support needs a concrete consumer; downstream IMIJ integration is separate. |
 | [69 — identity allocations](https://github.com/imazen/zenpixels/issues/69) | EncodeReady::finalize still takes a borrow and documents an owned output allocation. OutputPlan has borrow_rows/convert_rows. Shared interpretation work did not solve consuming finalization or prove allocator-compatible typed extraction. |
 | [132 — HLG](https://github.com/imazen/zenpixels/issues/132) | HlgRendering and hlg_rendering.rs exist on the candidate; explorer now exercises explicit rendering and missing/invalid policy. This does not establish every CMS/consumer entry point or HLG ICC synthesis. |
 | [133 — documentation/API reconciliation](https://github.com/imazen/zenpixels/issues/133) | API snapshots were refreshed, but ABLATION-zenpixels-convert.md still describes an old feature branch, adapt.rs retains an ignored private-helper example, and corrected-icc-export.md still says unmerged. These are concrete remaining documentation debt, not solved by the explorer. Full semver classification against the intended baseline remains open. |
@@ -77,9 +84,8 @@ an explorer or by a type appearing in an API snapshot.
 
 ## Validation
 
-`just explorer-boundary-check`, `just site-build`, `just site-check` and the color
-model tests passed. Browser checks exercised all 54 × 54 format pairs, the new
-storage witnesses, HLG refusal/success/invalid conditions, mobile controls and
-missing-WASM fallback. Route availability is not a correctness proof for every
-conversion. The storage fixtures use decimal strings for wide codes, so the
-U64 maximum is never rounded through JavaScript Number.
+After removal, the core contract and feature gates cover existing component
+canonicalization, native pixel carriage and ST2086 preservation. Explorer checks
+cover the existing U16 component witnesses, sample padding, HLG policy and
+missing-WASM fallback. The historical odd-offset and signed/wide reader controls
+were removed with their implementation, not retained as simulated support.

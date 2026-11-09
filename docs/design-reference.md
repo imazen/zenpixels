@@ -54,7 +54,7 @@ Tests must distinguish those defects from primitive rounding differences.
 
 | Work | Status | Regression gate |
 |---|---|---|
-| Unified integer encoding and shared native geometry | Encoding implemented; public component-view overlap remains open | Native signed/wide carriage, code mapping, empty/strided planes |
+| Integer encoding and existing component views | Shared encoding retained; speculative native adapter removed | CodePlane RGB10/alpha1, code mapping, empty/strided planes |
 | Finalized operation chain and policy preservation | Implemented | Compositing/swizzle combinations, prepared and partitioned execution |
 | Unified output context | Implemented | Allocating/into/adaptation pixels and white-anchor parity |
 | Descriptor and generic-layout invariants | Implemented | Invalid alpha descriptors, U64 channel removal, empty row swaps |
@@ -97,17 +97,19 @@ Run `just sample-design-check`, `just plan-design-check`,
 `just api-doc` refreshes the public surface snapshots. Resource wrappers and
 platform admission are the caller's responsibility.
 
-## Native component views: unresolved overlap
+## Native component views
 
-`CodePlane::component` already reads interleaved components, including CbCr/CrCb,
-and can use a different encoding for each U16 RGB/alpha component. The earlier
-claim that this required NativeCodeSlice was incorrect. NativeCodeSlice adds
-byte-unaligned and signed/wide reads, but limits layouts to RGB/gray. Sharing
-Plane geometry does not eliminate this public API split.
+The owner directed removal of `NativeCodeSlice` and the conversion/error/padding
+APIs introduced solely around it. No production consumer justified that surface.
+`CodePlane::component` already reads interleaved U8/U16 components, including
+CbCr/CrCb and RGB10 + alpha1; `codes::to_canonical` is the existing conversion
+boundary. No replacement view or compatibility alias is introduced.
 
-See the [explorer-driven review](explorer-design-review.md) for executable overlap
-witnesses, the proposed consolidation and the outstanding issue-by-issue scope.
-The view design remains open before 0.3 is frozen.
+Signed/wide `SampleEncoding` descriptions and native PixelFormat identity
+carriage remain, but do not imply signed/wide component reading or arithmetic.
+Any extension of those capabilities needs a concrete consumer first.
+See the [explorer-driven review](explorer-design-review.md) for the finding and
+outstanding issue scope.
 
 ## Validation receipt — 2026-11-09
 

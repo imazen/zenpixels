@@ -9,19 +9,19 @@
 ## summary
 #
 #   pub modules                                13
-#   pub types (struct/enum/trait/alias)       134
-#   pub consts/statics                        365
+#   pub types (struct/enum/trait/alias)       132
+#   pub consts/statics                        362
 #   free functions                              2
-#   inherent methods                          380
+#   inherent methods                          376
 #   struct fields                             120
-#   enum variants                             323
+#   enum variants                             321
 #   re-exports                                  1
-#   trait roster entries (type × trait)       488
-#   auto-trait-complete types                  69
+#   trait roster entries (type × trait)       478
+#   auto-trait-complete types                  67
 #   auto-trait exceptions                       9
 #
 # per-module pub lines:
-#   (root)                          509
+#   (root)                          506
 #   buffer                          311
 #   cicp                             38
 #   color                            83
@@ -33,9 +33,9 @@
 #   plane                            94
 #   policy                           22
 #   precision                        20
-#   sample                           41
+#   sample                           33
 
-## items (1185 lines)
+## items (1174 lines)
 
 pub mod zenpixels
 pub use At
@@ -756,9 +756,6 @@ pub sample::ExactDepthError::InvalidBits
 pub sample::ExactDepthError::NarrowBelowEightBits
 pub sample::ExactDepthError::UnsupportedLayout
 pub sample::ExactDepthError::UnsupportedStorage
-#[non_exhaustive] pub enum sample::NativeCodeError
-pub sample::NativeCodeError::Channels
-pub sample::NativeCodeError::Geometry
 #[non_exhaustive] pub enum sample::SampleEncodingError
 pub sample::SampleEncodingError::InvalidBitDepth
 pub sample::SampleEncodingError::InvalidBitShift
@@ -782,14 +779,6 @@ pub fn sample::ExactDepth::measure<P>(&buffer::PixelSlice<'_, P>) -> core::resul
 pub const fn sample::ExactDepth::new(descriptor::ChannelType, descriptor::SignalRange, u8, u8) -> core::result::Result<Self, sample::ExactDepthError>
 pub const fn sample::ExactDepth::range(self) -> descriptor::SignalRange
 pub const fn sample::ExactDepth::storage(self) -> descriptor::ChannelType
-pub struct sample::NativeCodeSlice<'a>
-pub fn sample::NativeCodeSlice<'a>::code(self, u32, u32, usize) -> core::option::Option<i128>
-pub const fn sample::NativeCodeSlice<'a>::encodings(self) -> &'a [sample::SampleEncoding]
-pub fn sample::NativeCodeSlice<'a>::height(self) -> u32
-pub const fn sample::NativeCodeSlice<'a>::layout(self) -> descriptor::ChannelLayout
-pub fn sample::NativeCodeSlice<'a>::new(&'a [u8], u32, u32, usize, descriptor::ChannelLayout, &'a [sample::SampleEncoding]) -> core::result::Result<Self, sample::NativeCodeError>
-pub fn sample::NativeCodeSlice<'a>::row(self, u32) -> core::option::Option<&'a [u8]>
-pub const fn sample::NativeCodeSlice<'a>::width(self) -> u32
 pub struct sample::SampleEncoding
 pub const fn sample::SampleEncoding::bit_shift(self) -> u8
 pub const fn sample::SampleEncoding::code_bits(self) -> u8
@@ -1223,7 +1212,7 @@ pub trait Pixel: bytemuck::pod::Pod [also: buffer]
 pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 pub trait StorageSample: buffer::storage_sample::Sealed + bytemuck::pod::Pod + core::marker::Sized [also: buffer]
 
-## trait impls (98 types)
+## trait impls (96 types)
 
 &S: plane::SampleStorage
 &mut S: plane::SampleStorage, plane::SampleStorageMut
@@ -1315,8 +1304,6 @@ sample::CodePlane<'a>: Clone, Copy, Debug
 sample::CodePlaneError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 sample::ExactDepth: Clone, Copy, Debug, Eq, Hash, PartialEq
 sample::ExactDepthError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
-sample::NativeCodeError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
-sample::NativeCodeSlice<'a>: Clone, Copy, Debug
 sample::SampleEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
 sample::SampleEncodingError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 u16: buffer::StorageSample, plane::PlaneSample

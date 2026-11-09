@@ -1,48 +1,36 @@
 # Explicit integer sample encoding
 
-## Approved follow-up boundary — 2026-11-09
+## Current boundary — 2026-11-09
 
-The owner approved a distinct native-code view using existing storage machinery,
-with per-channel code width, placement and signed interpretation. Ordinary
-processing views retain their canonical numerical meaning. `sample::NativeCodeSlice` implements this boundary with `SampleEncoding` and
-borrowed native-endian byte rows. `codes::native_to_u16` is the first consumer:
-it canonicalizes unsigned payloads up to 16 bits with explicit range and refuses
-signed/wider payload conversion before writes. Wider payload identity remains exact.
-`hdr::St2086Codes` preserves a documented RGB-order 24-byte representation; wire
-formats with another primary order must adapt explicitly.
+The owner directed removal of the speculative `NativeCodeSlice` adapter after
+its call-site audit found no production consumer. Its associated
+`native_to_u16`, `u16_to_native`, `NativeConversionError`, `NativePadding` and
+`NativeCodeError` APIs are also removed from the unshipped candidate. They are
+not replaced by aliases or another public view.
 
-Identity transport of a supported native-code view preserves all storage bits,
-including padding. Explicit canonicalization interprets the codes; encoding back
-has an explicit padding policy. This does not change the existing code writer's
-zero-padding behavior. Source precision and `ExactDepth` remain separate facts.
-Unsupported numerical conversion refuses rather than widening exact integers
-through F32. Exact ST2086 carriage gets a separate raw/integer representation
-alongside the semantic floating-point view.
+Existing `CodePlane::component` handles interleaved U8/U16 components with
+independent `SampleEncoding` values, including RGB10 + alpha1 and CbCr/CrCb.
+`codes::to_canonical` widens those components into canonical pixel storage.
+The RGB10/alpha1 regression uses this existing route and preserves output row
+padding. `CodeMap` retains its established numerical and padding contracts.
 
-Not every external encoding must be representable. The owner explicitly permits
-conversion before representation, including RGB565. Multiple components packed
-into one word do not require a universal bitfield format or a new named
-`PixelFormat`. An adapter unpacks such input into a supported representation;
-retaining the original wire bytes, if required, is the adapter/container's job.
-Native-view identity preservation applies after admission to that representation,
-not to reconstructing arbitrary original wire packing from canonical pixels.
+The 0.3 candidate retains the extension of `SampleEncoding` to signed/wide
+integer descriptions. This does not provide a signed/wide component reader or
+numerical conversion. `PixelFormat::Generic` retains exact native pixel identity
+carriage; these are separate capabilities. No public byte-unaligned reader is
+introduced without a concrete consumer.
 
-Implementation gates: consumer-shaped RGB10/alpha1 fixtures with nonzero padding,
-signed and wide integer identity/refusal cases, explicit canonicalization checks,
-and exact 24-byte ST2086 round trips. `codes::u16_to_native` is the inverse
-boundary: callers explicitly choose `NativePadding::Zero` or `Preserve`, and
-narrowing needs `DepthPolicy::Round`. It validates before writes and preserves
-row padding. Exhaustive ten-bit round trips cover both sample-padding policies.
-Signed and wider numerical conversion remains unsupported; exact borrowed
-carriage is supported through 64 bits. RGB565 is tested as an unpack-first case.
-These public boundaries are submitted for consumer/API review. Track implementation in [issue #83](https://github.com/imazen/zenpixels/issues/83).
+`hdr::St2086Codes` retains exact 24-byte RGB-order metadata carriage alongside
+the semantic floating-point view. Wire formats with another primary order
+must adapt explicitly. Source precision and `ExactDepth` remain separate facts.
 
-In the 0.2 bridge, `sample::SampleEncoding` described unsigned U8/U16 words.
-The 0.3 candidate extends this same type to all integer words through 64 bits,
-including signed payloads. It introduces no default or sample-value scan.
-The packed native view delegates geometry to `Plane`; `CodePlane` remains the
-typed U8/U16 component adapter. Both use the same encoding model.
-See [design reference](design-reference.md) for the consolidation invariants.
+Not every external encoding must be directly representable. RGB565 and other
+multi-component words require an explicit unpacking adapter; preserving original
+wire bytes remains the container/adapter's responsibility.
+
+See [issue #83](https://github.com/imazen/zenpixels/issues/83) and the
+[design reference](design-reference.md). A representation requirement is not
+by itself justification for another public view.
 
 The concrete consumer is `zencodec_media::plane::Plane` and its native AV1 adapter
 (`zencodec/media/src/av1.rs`). The adapter retains rav1d-safe's frame allocation and
