@@ -832,7 +832,6 @@ impl RowConverter {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use alloc::vec;

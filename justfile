@@ -694,3 +694,7 @@ plan-design-check:
 # Pixel/context parity across allocation strategies and profile finalization.
 context-design-check:
     cargo test -p zenpixels-convert --release --test design_invariants --test output_descriptor --test output_native --test hdr_intent
+
+# Local algorithm/payload consistency; magetypes primitive convergence is separate.
+local-numerics-check:
+    cargo test -p zenpixels-convert --release --features hdr-experimental --test design_invariants --test cll_measure

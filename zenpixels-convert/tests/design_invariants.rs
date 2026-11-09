@@ -117,3 +117,69 @@ fn allocating_into_and_adaptation_share_output_interpretation() {
         );
     }
 }
+
+#[test]
+fn f16_alpha_payload_survives_association_at_every_position() {
+    for layout in [ChannelLayout::Rgba, ChannelLayout::GrayAlpha] {
+        let channels = layout.channels();
+        for alpha in [0x7c01u16, 0x7e55, 0x8000, 0, 0x3800, 0x3c00] {
+            for (a, b) in [
+                (AlphaMode::Straight, AlphaMode::Premultiplied),
+                (AlphaMode::Premultiplied, AlphaMode::Straight),
+            ] {
+                let from = PixelDescriptor::new(
+                    ChannelType::F16,
+                    layout,
+                    Some(a),
+                    TransferFunction::Linear,
+                );
+                let to = from.with_alpha(Some(b));
+                let mut source = vec![0x3800u16; channels * 19];
+                for pixel in source.chunks_exact_mut(channels) {
+                    pixel[channels - 1] = alpha;
+                }
+                let mut output = vec![0u16; source.len()];
+                let mut converter = zenpixels_convert::RowConverter::new(from, to).unwrap();
+                converter
+                    .try_convert_row(
+                        bytemuck::cast_slice(&source),
+                        bytemuck::cast_slice_mut(&mut output),
+                        19,
+                    )
+                    .unwrap();
+                for pixel in output.chunks_exact(channels) {
+                    assert_eq!(pixel[channels - 1], alpha);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "hdr-experimental")]
+#[test]
+fn histogram_shape_and_small_positive_ranks_are_consistent() {
+    use zenpixels_convert::hdr::{CllMeasure, LightLevelMethod};
+    for value in [0.01f32, 0.1, 0.3, 0.7, 1.0] {
+        let data = [value; 24];
+        let bytes = bytemuck::cast_slice(&data);
+        let wide = PixelSlice::new(bytes, 8, 1, 96, PixelDescriptor::RGBF32_LINEAR).unwrap();
+        let tall = PixelSlice::new(bytes, 1, 8, 12, PixelDescriptor::RGBF32_LINEAR).unwrap();
+        for method in [LightLevelMethod::MaxRgb, LightLevelMethod::LuminanceBt2020] {
+            let a = hdr::ContentLightLevel::measure_histogram(
+                wide.clone(),
+                hdr::DiffuseWhite::BT2408,
+                method,
+            )
+            .unwrap();
+            let b = hdr::ContentLightLevel::measure_histogram(
+                tall.clone(),
+                hdr::DiffuseWhite::BT2408,
+                method,
+            )
+            .unwrap();
+            assert_eq!(a.bins(), b.bins());
+            assert!(a.percentile(0.01) > value * 203.0 * 0.9);
+            assert!(a.percentile(0.01) <= value * 203.0 * 1.01);
+        }
+    }
+}

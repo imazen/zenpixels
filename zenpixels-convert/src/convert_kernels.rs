@@ -2095,6 +2095,10 @@ fn premul_f16_ga(src: &[u16], dst: &mut [u16], width: usize) {
         }
 
         f32_to_f16_bits_slice(&scratch_dst, &mut dst[start..start + CHUNK_LANES]);
+        // Alpha is a payload, not an arithmetic output. Preserve NaN bits and signed zero.
+        for lane in (1..CHUNK_LANES).step_by(2) {
+            dst[start + lane] = src[start + lane];
+        }
     }
 
     let tail_start = whole * CHUNK_PIXELS;
@@ -2128,6 +2132,10 @@ fn premul_f16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
         }
 
         f32_to_f16_bits_slice(&scratch_dst, &mut dst[start..start + CHUNK_LANES]);
+        // Alpha is a payload, not an arithmetic output. Preserve NaN bits and signed zero.
+        for lane in (3..CHUNK_LANES).step_by(4) {
+            dst[start + lane] = src[start + lane];
+        }
     }
 
     let tail_start = whole * CHUNK_PIXELS;
@@ -2339,6 +2347,10 @@ fn unpremul_f16_ga(src: &[u16], dst: &mut [u16], width: usize) {
         }
 
         f32_to_f16_bits_slice(&scratch_dst, &mut dst[start..start + CHUNK_LANES]);
+        // Alpha is a payload, not an arithmetic output. Preserve NaN bits and signed zero.
+        for lane in (1..CHUNK_LANES).step_by(2) {
+            dst[start + lane] = src[start + lane];
+        }
     }
 
     let tail_start = whole * CHUNK_PIXELS;
@@ -2347,7 +2359,7 @@ fn unpremul_f16_ga(src: &[u16], dst: &mut [u16], width: usize) {
         let a = f16_bits_to_f32(src[base + 1]);
         if a == 0.0 {
             dst[base] = 0;
-            dst[base + 1] = 0;
+            dst[base + 1] = src[base + 1];
         } else {
             let inv_a = 1.0 / a;
             dst[base] = f32_to_f16_bits(f16_bits_to_f32(src[base]) * inv_a);
@@ -2386,6 +2398,10 @@ fn unpremul_f16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
         }
 
         f32_to_f16_bits_slice(&scratch_dst, &mut dst[start..start + CHUNK_LANES]);
+        // Alpha is a payload, not an arithmetic output. Preserve NaN bits and signed zero.
+        for lane in (3..CHUNK_LANES).step_by(4) {
+            dst[start + lane] = src[start + lane];
+        }
     }
 
     let tail_start = whole * CHUNK_PIXELS;
@@ -2396,7 +2412,7 @@ fn unpremul_f16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
             dst[base] = 0;
             dst[base + 1] = 0;
             dst[base + 2] = 0;
-            dst[base + 3] = 0;
+            dst[base + 3] = src[base + 3];
         } else {
             let inv_a = 1.0 / a;
             dst[base] = f32_to_f16_bits(f16_bits_to_f32(src[base]) * inv_a);
