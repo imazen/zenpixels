@@ -84,10 +84,11 @@ def main():
                     continue
                 if len(matches) != 1 or Path(matches[0]["manifest_path"]).parent != core_copy / package:
                     raise RuntimeError(f"{name}: expected exactly one selected {package} from the cohort")
-            command = ["cargo", "test", "--manifest-path", str(manifest), "--all-targets"]
+            scope = ["--manifest-path", str(manifest)]
             if name == "codec":
-                command += ["--workspace", "--features", "std"]
-            run(command, name + "-tests")
+                scope += ["--workspace", "--features", "std"]
+            run(["cargo", "check", *scope, "--all-targets"], name + "-check")
+            run(["cargo", "test", *scope, "--lib", "--tests"], name + "-tests")
         receipt["status"] = "passed"
         save()
         print(f"Cohort passed: {output / 'receipt.json'}")
