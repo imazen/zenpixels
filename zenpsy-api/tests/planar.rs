@@ -237,3 +237,42 @@ fn borrowed_picture_checks_geometry_and_alpha_without_inspecting_padding() {
     };
     assert_eq!(r.strided_samples().as_ptr(), data.as_ptr());
 }
+
+#[test]
+fn heterogeneous_planar_objects_retain_checked_lending() {
+    let l = layout();
+    let c = color();
+    let data = [0.0; 5];
+    let planes = planes(&data);
+    let p = PlanarSlice::new(&planes, &l, 2, 2, &c, None).unwrap();
+    let mut metrics: Vec<Box<dyn DynPreparePlanarReference>> = vec![
+        Box::new(Erased::new(MetricFactory {
+            preparations: Arc::default(),
+            behavior: 0,
+        })),
+        Box::new(Erased::new(Erased::new(MetricFactory {
+            preparations: Arc::default(),
+            behavior: 0,
+        }))),
+    ];
+    for metric in &mut metrics {
+        let mut prepared = metric.prepare_planar(&p, EvalOpts::new()).unwrap();
+        let mut n = 0;
+        prepared
+            .with_evaluation(&p, EvalOpts::new().with_map("error"), &mut |view| {
+                view.visit_maps(|m| {
+                    n += 1;
+                    assert_eq!(m.spec.key(), "error");
+                })
+            })
+            .unwrap();
+        assert_eq!(n, 1);
+        assert!(
+            prepared
+                .evaluate_planar(&p, EvalOpts::new())
+                .unwrap()
+                .native::<Output>()
+                .is_some()
+        );
+    }
+}

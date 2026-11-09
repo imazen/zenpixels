@@ -68,7 +68,10 @@ For encoder loops, owned planar preparation can survive dropping the factory.
 `PreparedPlanarReference::with_evaluation` lends an `EvaluationRef` to a callback
 with borrowed scalar/map visitors. Its default borrows an owned native result;
 a native implementation may override it to consume scratch before recycling,
-without exporting a second map. Stacked erasure forwards lending directly.
+without exporting a second map. Stacked erasure forwards lending directly. Heterogeneous planar factories use
+`Box<dyn DynPreparePlanarReference>` and `prepare_planar`; the resulting
+`Box<dyn PlanarWarmReference<Output = ErasedEvaluation>>` retains the checked
+lending path.
 The checked callback validates scores, requested maps, geometry, interpretation,
 cancellation and exactly-once invocation. A returned value cannot borrow the
 callback's temporary assessment. Commit consumer side effects after success.

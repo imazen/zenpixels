@@ -202,3 +202,25 @@ pub fn prepare_planar_reference<M: PreparePlanarReference + ?Sized>(
         })
     })
 }
+
+impl<P: PlanarWarmReference> PlanarWarmReference for PreparedPlanarReference<P> {
+    type Output = P::Output;
+    fn evaluate_planar(
+        &mut self,
+        candidate: &PlanarSlice<'_>,
+        opts: EvalOpts<'_>,
+    ) -> MetricResult<Self::Output> {
+        self.score(candidate, opts)
+    }
+    fn with_evaluation(
+        &mut self,
+        candidate: &PlanarSlice<'_>,
+        opts: EvalOpts<'_>,
+        consume: &mut dyn FnMut(EvaluationRef<'_>),
+    ) -> MetricResult<()> {
+        PreparedPlanarReference::with_evaluation(self, candidate, opts, |view| {
+            consume(view);
+            Ok(())
+        })
+    }
+}

@@ -21,7 +21,10 @@ mod maps;
 mod metric;
 mod no_reference;
 mod planar;
-pub use erased::{DynMetric, DynNoReferenceMetric, DynPrepareReference, Erased, ErasedEvaluation};
+pub use erased::{
+    DynMetric, DynNoReferenceMetric, DynPreparePlanarReference, DynPrepareReference, Erased,
+    ErasedEvaluation,
+};
 pub use error::{
     ErrorKind, MetricError, MetricResult, ResultMetricExt, fail, find_metric_error, is_stopped,
     stop_reason,

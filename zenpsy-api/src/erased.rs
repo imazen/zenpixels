@@ -324,3 +324,28 @@ impl<M: crate::PreparePlanarReference + ?Sized> crate::PreparePlanarReference fo
         (**self).warm_planar_reference(r, opts)
     }
 }
+
+/// Object-safe owned planar preparation for heterogeneous metric collections.
+/// The returned object retains checked geometry and interpretation. Native
+/// prepared state can still lend its map without boxing an assessment.
+pub trait DynPreparePlanarReference: crate::PlanarMetric<Output = ErasedEvaluation> {
+    /// Prepare actual owned native work, with fresh per-candidate controls.
+    fn prepare_planar(
+        &mut self,
+        reference: &zenpixels::plane::PlanarSlice<'_>,
+        opts: EvalOpts<'_>,
+    ) -> MetricResult<Box<dyn crate::PlanarWarmReference<Output = ErasedEvaluation> + '_>>;
+}
+impl<M: crate::PreparePlanarReference> DynPreparePlanarReference for Erased<M>
+where
+    M::Output: 'static,
+{
+    fn prepare_planar(
+        &mut self,
+        reference: &zenpixels::plane::PlanarSlice<'_>,
+        opts: EvalOpts<'_>,
+    ) -> MetricResult<Box<dyn crate::PlanarWarmReference<Output = ErasedEvaluation> + '_>> {
+        crate::prepare_planar_reference(self, reference, opts)
+            .map(|p| Box::new(p) as Box<dyn crate::PlanarWarmReference<Output = ErasedEvaluation>>)
+    }
+}
