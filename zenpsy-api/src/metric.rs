@@ -187,7 +187,7 @@ fn operation<T>(
 /// Admit image geometry and validate scores, preserving typed native results
 /// and located failures. Native errors take precedence over a later stop.
 #[track_caller]
-pub fn score<M: Metric>(
+pub fn score<M: Metric + ?Sized>(
     metric: &mut M,
     reference: &PixelSlice<'_>,
     candidate: &PixelSlice<'_>,
@@ -207,7 +207,7 @@ pub fn score<M: Metric>(
 }
 /// Prepare native reference work with admission and an owned child phase.
 #[track_caller]
-pub fn prepare_reference<'a, M: PrepareReference>(
+pub fn prepare_reference<'a, M: PrepareReference + ?Sized>(
     metric: &'a mut M,
     reference: &PixelSlice<'_>,
     opts: EvalOpts<'_>,

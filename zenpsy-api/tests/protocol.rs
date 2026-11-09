@@ -194,6 +194,52 @@ fn worker(log: &Arc<Log>) -> Worker {
 }
 
 #[test]
+fn stacked_erasure_forwards_one_observation_phase_and_the_original_failure() {
+    for failed in [false, true] {
+        let log = Arc::new(Log::default());
+        let pulse = Recorder::root(&log);
+        let mut inner = worker(&log);
+        if failed {
+            inner.error =
+                Some(Error::from_detail(ErrorKind::Backend, Native(Box::new(17))).start_at());
+        }
+        let mut metric: Box<DynMetric<'_>> = Box::new(Erased::new(Erased::new(Box::new(inner))));
+        let out = score(
+            &mut metric,
+            &image(),
+            &image(),
+            EvalOpts::new().with_pulse(&pulse),
+        );
+        if failed {
+            let error = out.err().unwrap();
+            assert_eq!(error.error().kind(), ErrorKind::Backend);
+            assert!(
+                std::error::Error::source(error.error())
+                    .unwrap()
+                    .is::<Native>()
+            );
+        } else {
+            assert_eq!(
+                out.ok().unwrap().native::<NativeScore>().unwrap().score(),
+                1.25
+            );
+        }
+        assert_eq!(
+            *log.outcomes.lock().unwrap(),
+            BTreeMap::from([(
+                "caller/score image pair".into(),
+                if failed {
+                    Outcome::Failed
+                } else {
+                    Outcome::Succeeded
+                }
+            )])
+        );
+        assert_eq!(log.reports.lock().unwrap()["caller/score image pair"], 2);
+    }
+}
+
+#[test]
 fn owned_worker_reporting_and_parent_result_handoffs_compose() {
     let log = Arc::new(Log::default());
     let pulse = Recorder::root(&log);

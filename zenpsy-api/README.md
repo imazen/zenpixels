@@ -18,6 +18,19 @@ planar entry points.
 associated type. Checked prepared calls preserve geometry and use fresh controls.
 Scorers and results need not be Send/Sync; consumers add worker-specific bounds.
 
+For heterogeneous collections, stack `Erased::new(metric)` around any typed
+wrapper and store it as `Box<DynMetric<'_>>`. The wrapper also implements typed
+preparation when its inner metric does. Prepared collections use
+`Box<dyn DynPrepareReference>` and `prepare`, returning checked erased reference
+objects. Native errors, pixel contexts and Pulse ownership pass through.
+Repeated erasure keeps the original native downcast target.
+
+`ErasedEvaluation` moves the native assessment into a box and forwards borrowed
+score iteration; it does not copy native diagnostic arrays or score descriptors.
+The erased path allocates a result box and short-lived score iterators; typed
+calls keep their native result and iterator. Use `native::<ConcreteOutput>()`
+when a caller needs the retained native fields.
+
 Diagnostics are off by default. `EvalOpts::with_native_map` explicitly requests
 native diagnostic data in the concrete result; callers must bound witnesses and
 storage. Map geometry, component arrays and processing remain native APIs.

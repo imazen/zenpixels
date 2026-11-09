@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Add stackable erased metric/results and an optional object-safe prepared-reference
+  extension for heterogeneous collections without an orchestrator dependency.
+
 - Simplify the unpublished IQA contract to typed native assessments, named score
   views, configured identity, classified errors and optional prepared references.
   Move runtime erasure, persistence policy and diagnostic processing to consumers.
