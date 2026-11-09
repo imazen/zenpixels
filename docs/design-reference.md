@@ -53,9 +53,18 @@ Tests must distinguish those defects from primitive rounding differences.
 | Unified output context | Implemented | Allocating/into/adaptation pixels and white-anchor parity |
 | Descriptor and generic-layout invariants | Implemented | Invalid alpha descriptors, U64 channel removal, empty row swaps |
 | Payload and histogram algorithm corrections | Implemented | F16 alpha bits, positive percentile ranks; primitive parity separate |
-| ICC qualification and API cleanup | Pending | Parametric curve types, failed qualification, fallible clone callers |
+| ICC qualification and API cleanup | Implemented; historical table requalification remains separate | Parametric curve types, failed qualification, fallible clone callers |
 | Final release-candidate validation | Pending | Workspace tests, feature gates, Clippy, API snapshots and CI |
 
 Do not infer completion from an API name or a passing unrelated test. Update
 this ledger with the implementation and link specialized detail rather than
 copying these rules into several documents. No publication is authorized here.
+
+## ICC qualification limit
+
+The generator now requires empirical evidence, checks all RGB curves, and refuses
+truncated/unsupported curves. Existing recognition tables retain historical
+qualification flags; this change does not retroactively requalify their corpus.
+Their error column is a curve-fit error, not a complete-transform error bound.
+Bundle-derived rows remain identification-only. A sampled CMS gate is not proof
+of global bit-exact substitution. Do not cite it as one.
