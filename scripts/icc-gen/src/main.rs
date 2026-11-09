@@ -1757,6 +1757,18 @@ fn main() {
         }
 
         let fname = path.file_name().unwrap().to_string_lossy().to_string();
+        if report_mode {
+            // Audit every supplied object, including those whose nonstandard
+            // primaries prevent canonical classification. Bundle rows keep the
+            // existing compact summary below.
+            eprintln!(
+                "Object {} hash={:016x} space={} CMS-deltas={:?}",
+                fname,
+                fnv1a_64_normalized(&data),
+                String::from_utf8_lossy(&data[16..20]),
+                lcms2_crosscheck_deltas(&data)
+            );
+        }
         ingest_profile(
             &fname,
             &data,
