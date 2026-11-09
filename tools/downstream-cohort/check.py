@@ -38,13 +38,17 @@ def main():
     def save():
         (output / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
 
-    def run(command, label):
+    def run(command, label, json_output=False):
         receipt["commands"].append(command)
         receipt["stage"] = label
         receipt["status"] = "running"
         save()
         with (output / f"{label}.log").open("wb") as log:
-            completed = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)
+            if json_output:
+                with (output / f"{label}.json").open("wb") as data:
+                    completed = subprocess.run(command, stdout=data, stderr=log)
+            else:
+                completed = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)
         if completed.returncode:
             raise RuntimeError(f"{label} exited {completed.returncode}; see {output / (label + '.log')}")
 
@@ -72,8 +76,8 @@ def main():
         for name, manifest in [("codec", consumer_copy / "Cargo.toml"), ("render", consumer_copy / "zencodec-render/Cargo.toml")]:
             # Resolve separately: the render crate is a standalone workspace.
             command = ["cargo", "metadata", "--manifest-path", str(manifest), "--format-version", "1"]
-            run(command, name + "-metadata")
-            metadata = json.loads((output / (name + "-metadata.log")).read_text())
+            run(command, name + "-metadata", json_output=True)
+            metadata = json.loads((output / (name + "-metadata.json")).read_text())
             for package in ["zenpixels", "zenpixels-convert"]:
                 matches = [p for p in metadata["packages"] if p["name"] == package]
                 if not matches and name == "codec" and package == "zenpixels-convert":
