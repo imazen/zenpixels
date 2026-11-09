@@ -290,17 +290,19 @@ pub(super) fn apply_step_u8(
             oklaba_to_linear_rgba_f32(src, dst, w, from.primaries);
         }
 
-        ConvertStep::GamutMatrixRgbF32(flat) => {
+        ConvertStep::GamutMatrixRgbF32(flat, _) => {
             gamut_matrix_rgb_f32(src, dst, w, flat);
         }
 
-        ConvertStep::GamutMatrixRgbaF32(flat) => {
+        ConvertStep::GamutMatrixRgbaF32(flat, _) => {
             gamut_matrix_rgba_f32(src, dst, w, flat);
         }
 
         // All fused TF + matrix + TF kernels share the same row-major
         // 3×3 unflatten then dispatch on `kind`.
-        ConvertStep::Fused { kind, matrix: flat } => {
+        ConvertStep::Fused {
+            kind, matrix: flat, ..
+        } => {
             let m = [
                 [flat[0], flat[1], flat[2]],
                 [flat[3], flat[4], flat[5]],

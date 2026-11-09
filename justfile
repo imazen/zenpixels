@@ -686,3 +686,7 @@ sample-design-check:
 # Regressions for the single-contract conversion design.
 design-check:
     cargo test -p zenpixels -p zenpixels-convert --test design_invariants
+
+# Planner rewrites, complete operation contracts, and explicit HDR policy.
+plan-design-check:
+    cargo test -p zenpixels-convert --release --features __trace_ops,bt2446a --test plan_validation --test design_invariants --test matte_row_kernels --test hlg_rendering

@@ -199,17 +199,17 @@ pub(crate) fn is_hdr_to_sdr(from: TransferFunction, to: TransferFunction) -> boo
 pub struct ConvertPlan {
     pub(crate) from: PixelDescriptor,
     pub(crate) to: PixelDescriptor,
-    pub(crate) steps: Vec<ConvertStep>,
-    /// Relative-linear → PQ-absolute scale = `diffuse_white_nits / 10000`,
-    /// applied by the PQ kernels (encode multiplies pre-OETF, decode divides
-    /// post-EOTF). `1.0` is the unsignaled default and means "treat linear as
-    /// already PQ-absolute (1.0 = 10000 cd/m²)" — i.e. exactly the prior
-    /// behavior, so plans built without an anchor are byte-for-byte unchanged.
-    /// Set via [`with_pq_anchor`](Self::with_pq_anchor). HLG steps ignore it
-    /// (scene-referred — different anchoring, out of scope here).
-    pub(crate) pq_anchor_scale: f32,
-    // Composition retains the exact descriptor/anchor at each materialized step.
-    execution: Option<Vec<(PixelDescriptor, PixelDescriptor, f32)>>,
+    operations: Vec<PlannedOperation>,
+}
+
+/// One executable operation and the complete meaning of its input/output.
+/// Rewrites replace whole operations, so composition cannot desynchronize metadata.
+#[derive(Clone, Debug)]
+struct PlannedOperation {
+    step: ConvertStep,
+    from: PixelDescriptor,
+    to: PixelDescriptor,
+    pq_anchor_scale: f32,
 }
 
 /// The linear value of SDR white in `transfer`, for a background composited into it.
@@ -539,9 +539,9 @@ pub(crate) enum ConvertStep {
     /// Used for color primaries conversion (e.g., BT.709 ↔ Display P3 ↔ BT.2020).
     /// Data must be in linear light. The matrix is row-major `[[f32; 3]; 3]`
     /// flattened to `[f32; 9]`.
-    GamutMatrixRgbF32([f32; 9]),
+    GamutMatrixRgbF32([f32; 9], ColorPrimaries),
     /// Apply a 3×3 gamut matrix to linear RGBA f32 (4 channels, alpha passthrough).
-    GamutMatrixRgbaF32([f32; 9]),
+    GamutMatrixRgbaF32([f32; 9], ColorPrimaries),
     /// Fused TF + 3×3 gamut + TF in one pass. Carries the matrix flattened
     /// row-major to `[f32; 9]`, plus a [`FusedKind`] tag selecting which
     /// linearize → matrix → encode shape to dispatch. Replaces the 3-step
@@ -550,6 +550,7 @@ pub(crate) enum ConvertStep {
     Fused {
         kind: FusedKind,
         matrix: [f32; 9],
+        primaries: ColorPrimaries,
     },
     /// Pluggable HDR→SDR tone-map step on linear-light f32 RGB in the
     /// working primaries declared by
@@ -654,8 +655,8 @@ impl ConvertStep {
             Self::OklabToLinearRgb => "OklabToLinearRgb",
             Self::LinearRgbaToOklaba => "LinearRgbaToOklaba",
             Self::OklabaToLinearRgba => "OklabaToLinearRgba",
-            Self::GamutMatrixRgbF32(_) => "GamutMatrixRgbF32",
-            Self::GamutMatrixRgbaF32(_) => "GamutMatrixRgbaF32",
+            Self::GamutMatrixRgbF32(..) => "GamutMatrixRgbF32",
+            Self::GamutMatrixRgbaF32(..) => "GamutMatrixRgbaF32",
             Self::Fused { kind, .. } => kind.variant_name(),
             #[cfg(feature = "hdr-experimental")]
             // The variant name is the generic tag; the concrete mapper's
@@ -717,7 +718,7 @@ impl ConvertPlan {
         swizzle: ConvertStep,
     ) -> Result<Self, At<ConvertError>> {
         let (first, last) = (canonical(from), canonical(to));
-        let mut plan = Self::new(first, last)?;
+        let mut plan = Self::plan_native(first, last)?;
         let no_path = || whereat::at!(ConvertError::NoPath { from, to });
         if from != first {
             plan = Self::build(from, first, vec![swizzle.clone()])
@@ -733,13 +734,55 @@ impl ConvertPlan {
     }
 
     fn build(from: PixelDescriptor, to: PixelDescriptor, steps: Vec<ConvertStep>) -> Self {
+        let count = steps.len();
+        let mut current = from;
+        let operations = steps
+            .into_iter()
+            .enumerate()
+            .map(|(index, step)| {
+                let next = if index + 1 == count {
+                    to
+                } else {
+                    intermediate_desc(current, &step)
+                };
+                let operation = PlannedOperation {
+                    step,
+                    from: current,
+                    to: next,
+                    pq_anchor_scale: 1.0,
+                };
+                current = next;
+                operation
+            })
+            .collect();
         Self {
             from,
             to,
-            steps,
-            pq_anchor_scale: 1.0,
-            execution: None,
+            operations,
         }
+    }
+
+    fn prepend(&mut self, from: PixelDescriptor, step: ConvertStep) {
+        self.operations.insert(
+            0,
+            PlannedOperation {
+                step,
+                from,
+                to: self.from,
+                pq_anchor_scale: 1.0,
+            },
+        );
+        self.from = from;
+    }
+
+    fn append(&mut self, to: PixelDescriptor, step: ConvertStep) {
+        self.operations.push(PlannedOperation {
+            step,
+            from: self.to,
+            to,
+            pq_anchor_scale: 1.0,
+        });
+        self.to = to;
     }
 
     /// Anchor this plan's **PQ** steps to an absolute-luminance white point —
@@ -759,11 +802,8 @@ impl ConvertPlan {
         // is the fraction of PQ's 10000 cd/m² peak that relative-linear 1.0 sits at.
         let diffuse_white_nits = f64::from(anchor.nits());
         const PQ_PEAK_NITS: f64 = 10_000.0;
-        self.pq_anchor_scale = (diffuse_white_nits / PQ_PEAK_NITS) as f32;
-        if let Some(execution) = &mut self.execution {
-            for (_, _, scale) in execution {
-                *scale = self.pq_anchor_scale;
-            }
+        for operation in &mut self.operations {
+            operation.pq_anchor_scale = (diffuse_white_nits / PQ_PEAK_NITS) as f32;
         }
         self
     }
@@ -780,16 +820,22 @@ impl ConvertPlan {
             let scale = white.nits() / source_peak;
             let matrix = [scale, 0., 0., 0., scale, 0., 0., 0., scale];
             let index = self
-                .steps
+                .operations
                 .iter()
-                .position(|step| matches!(step, ConvertStep::ToneMap(_)))
+                .position(|op| matches!(op.step, ConvertStep::ToneMap(_)))
                 .expect("HDR linear plan contains tone mapping");
-            self.steps.insert(
+            let boundary = self.operations[index].from;
+            self.operations.insert(
                 index,
-                if self.from.has_alpha() {
-                    ConvertStep::GamutMatrixRgbaF32(matrix)
-                } else {
-                    ConvertStep::GamutMatrixRgbF32(matrix)
+                PlannedOperation {
+                    step: if boundary.has_alpha() {
+                        ConvertStep::GamutMatrixRgbaF32(matrix, boundary.primaries)
+                    } else {
+                        ConvertStep::GamutMatrixRgbF32(matrix, boundary.primaries)
+                    },
+                    from: boundary,
+                    to: boundary,
+                    pq_anchor_scale: 1.0,
                 },
             );
         }
@@ -985,8 +1031,7 @@ impl ConvertPlan {
             .with_primaries(from.primaries)
             .with_signal_range(from.signal_range);
             let mut plan = Self::plan_native(rgb, to)?;
-            plan.steps.insert(0, ConvertStep::DropAlpha);
-            plan.from = from;
+            plan.prepend(from, ConvertStep::DropAlpha);
             return Ok(plan);
         }
 
@@ -1006,9 +1051,9 @@ impl ConvertPlan {
                 to
             };
             let mut plan = Self::plan_native(straight_from, straight_to)?;
-            plan.steps.insert(0, ConvertStep::PremulToStraight);
+            plan.prepend(from, ConvertStep::PremulToStraight);
             if to.alpha() == Some(AlphaMode::Premultiplied) {
-                plan.steps.push(ConvertStep::StraightToPremul);
+                plan.append(to, ConvertStep::StraightToPremul);
             }
             plan.from = from;
             plan.to = to;
@@ -1180,9 +1225,9 @@ impl ConvertPlan {
                     }
                 }
                 let gamut_step = if desc.layout().has_alpha() {
-                    ConvertStep::GamutMatrixRgbaF32(flat)
+                    ConvertStep::GamutMatrixRgbaF32(flat, to.primaries)
                 } else {
-                    ConvertStep::GamutMatrixRgbF32(flat)
+                    ConvertStep::GamutMatrixRgbF32(flat, to.primaries)
                 };
                 steps.insert(insert_pos, gamut_step);
             } else {
@@ -1195,9 +1240,9 @@ impl ConvertPlan {
                     desc = intermediate_desc(desc, step);
                 }
                 let gamut_step = if desc.layout().has_alpha() || has_alpha {
-                    ConvertStep::GamutMatrixRgbaF32(flat)
+                    ConvertStep::GamutMatrixRgbaF32(flat, to.primaries)
                 } else {
-                    ConvertStep::GamutMatrixRgbF32(flat)
+                    ConvertStep::GamutMatrixRgbF32(flat, to.primaries)
                 };
 
                 // Insert linearize → gamut → encode-to-target-tf at the end,
@@ -1235,6 +1280,7 @@ impl ConvertPlan {
                     gamut_steps.push(ConvertStep::Fused {
                         kind: FusedKind::SrgbU16GamutRgb,
                         matrix: flat,
+                        primaries: to.primaries,
                     });
                     steps.extend(gamut_steps);
                     if steps.is_empty() {
@@ -1254,6 +1300,7 @@ impl ConvertPlan {
                     gamut_steps.push(ConvertStep::Fused {
                         kind: FusedKind::SrgbU8ToLinearF32Rgb,
                         matrix: flat,
+                        primaries: to.primaries,
                     });
                     steps.extend(gamut_steps);
                     if steps.is_empty() {
@@ -1273,6 +1320,7 @@ impl ConvertPlan {
                     gamut_steps.push(ConvertStep::Fused {
                         kind: FusedKind::LinearF32ToSrgbU8Rgb,
                         matrix: flat,
+                        primaries: to.primaries,
                     });
                     steps.extend(gamut_steps);
                     if steps.is_empty() {
@@ -1372,9 +1420,9 @@ impl ConvertPlan {
         if from.transfer() != to.transfer()
             || from.primaries != to.primaries
             || (from.has_alpha() && from.alpha() != to.alpha())
-            || !plan.steps.iter().all(|step| {
+            || !plan.operations.iter().all(|operation| {
                 matches!(
-                    step,
+                    operation.step,
                     ConvertStep::Identity
                         | ConvertStep::SwizzleBgraRgba
                         | ConvertStep::SwizzleBgrRgb
@@ -1609,9 +1657,9 @@ impl ConvertPlan {
                 to
             };
             let mut plan = Self::plan_hdr(straight_from, straight_to, hdr, mapper_override)?;
-            plan.steps.insert(0, ConvertStep::PremulToStraight);
+            plan.prepend(from, ConvertStep::PremulToStraight);
             if to.alpha() == Some(AlphaMode::Premultiplied) {
-                plan.steps.push(ConvertStep::StraightToPremul);
+                plan.append(to, ConvertStep::StraightToPremul);
             }
             plan.from = from;
             plan.to = to;
@@ -1689,9 +1737,9 @@ impl ConvertPlan {
                 matrix.0[2][2],
             ];
             Ok(Some(if after_decode.layout().has_alpha() {
-                ConvertStep::GamutMatrixRgbaF32(flat)
+                ConvertStep::GamutMatrixRgbaF32(flat, b)
             } else {
-                ConvertStep::GamutMatrixRgbF32(flat)
+                ConvertStep::GamutMatrixRgbF32(flat, b)
             }))
         };
 
@@ -1895,8 +1943,8 @@ impl ConvertPlan {
                                 .unwrap_or(zenpixels::hdr::DiffuseWhite::BT2408)
                                 .nits()
                         };
-                    for step in &mut after.steps {
-                        if let ConvertStep::MatteComposite { linear } = step {
+                    for operation in &mut after.operations {
+                        if let ConvertStep::MatteComposite { linear } = &mut operation.step {
                             for value in linear {
                                 *value *= background_white / white.nits();
                             }
@@ -1974,7 +2022,7 @@ impl ConvertPlan {
         // Check RGB→Gray requires luma coefficients.
         let src_is_rgb = matches!(
             from.layout(),
-            ChannelLayout::Rgb | ChannelLayout::Rgba | ChannelLayout::Bgra
+            ChannelLayout::Rgb | ChannelLayout::Bgr | ChannelLayout::Rgba | ChannelLayout::Bgra
         );
         let dst_is_gray = matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha);
         if src_is_rgb && dst_is_gray && options.luma().is_none() {
@@ -2082,44 +2130,53 @@ impl ConvertPlan {
                 reference_white,
             } = options.alpha_policy()
         {
-            let matte = matte_background(background, reference_white, from)?;
             let mut expanded = Vec::new();
-            for step in plan.steps.drain(..) {
-                match step {
-                    ConvertStep::RgbaToGray { coefficients } => expanded.extend([
+            for operation in plan.operations {
+                let steps = match &operation.step {
+                    ConvertStep::RgbaToGray { coefficients } => vec![
                         ConvertStep::DropAlpha,
-                        ConvertStep::RgbToGray { coefficients },
-                    ]),
+                        ConvertStep::RgbToGray {
+                            coefficients: *coefficients,
+                        },
+                    ],
                     ConvertStep::GrayAlphaToRgb => {
-                        expanded.extend([ConvertStep::GrayAlphaToRgba, ConvertStep::DropAlpha])
+                        vec![ConvertStep::GrayAlphaToRgba, ConvertStep::DropAlpha]
                     }
-                    ConvertStep::GrayAlphaToGray => expanded.extend([
+                    ConvertStep::GrayAlphaToGray => vec![
                         ConvertStep::GrayAlphaToRgba,
                         ConvertStep::DropAlpha,
                         ConvertStep::RgbToGray {
                             coefficients: options.luma().unwrap_or(LumaCoefficients::Bt709),
                         },
-                    ]),
-                    other => expanded.push(other),
-                }
-            }
-            plan.steps = expanded;
-            // The ordinary planner already unassociates sources when dropping alpha.
-            let src_is_premul = from.alpha() == Some(AlphaMode::Premultiplied)
-                && !plan
-                    .steps
-                    .iter()
-                    .any(|s| matches!(s, ConvertStep::PremulToStraight));
-            let mut idx = 0;
-            while idx < plan.steps.len() {
-                if matches!(plan.steps[idx], ConvertStep::DropAlpha) {
-                    plan.steps[idx] = ConvertStep::MatteComposite { linear: matte };
-                    if src_is_premul {
-                        plan.steps.insert(idx, ConvertStep::PremulToStraight);
-                        idx += 1;
+                    ],
+                    _ => {
+                        expanded.push(operation);
+                        continue;
                     }
+                };
+                let mut replacement = Self::build(operation.from, operation.to, steps);
+                for op in &mut replacement.operations {
+                    op.pq_anchor_scale = operation.pq_anchor_scale;
                 }
-                idx += 1;
+                expanded.extend(replacement.operations);
+            }
+            plan.operations = Vec::new();
+            for mut operation in expanded {
+                if matches!(operation.step, ConvertStep::DropAlpha) {
+                    if operation.from.alpha() == Some(AlphaMode::Premultiplied) {
+                        let straight = operation.from.with_alpha(Some(AlphaMode::Straight));
+                        plan.operations.push(PlannedOperation {
+                            step: ConvertStep::PremulToStraight,
+                            from: operation.from,
+                            to: straight,
+                            pq_anchor_scale: operation.pq_anchor_scale,
+                        });
+                        operation.from = straight;
+                    }
+                    let matte = matte_background(background, reference_white, operation.from)?;
+                    operation.step = ConvertStep::MatteComposite { linear: matte };
+                }
+                plan.operations.push(operation);
             }
         }
 
@@ -2128,7 +2185,8 @@ impl ConvertPlan {
         // Fused u8/u16 matlut steps are unaffected (integer I/O can't
         // represent extended range anyway).
         if !options.clip_out_of_gamut() {
-            for step in &mut plan.steps {
+            for operation in &mut plan.operations {
+                let step = &mut operation.step;
                 match step {
                     ConvertStep::SrgbF32ToLinearF32 => {
                         *step = ConvertStep::SrgbF32ToLinearF32Extended;
@@ -2153,8 +2211,8 @@ impl ConvertPlan {
         // because it has no access to options; we replace with the user's
         // explicit choice (or the permissive default of Bt709) here.
         let user_luma = options.luma().unwrap_or(LumaCoefficients::Bt709);
-        for step in &mut plan.steps {
-            match step {
+        for operation in &mut plan.operations {
+            match &mut operation.step {
                 ConvertStep::RgbToGray { coefficients }
                 | ConvertStep::RgbaToGray { coefficients }
                 | ConvertStep::RgbaToGrayAlpha { coefficients } => {
@@ -2203,13 +2261,19 @@ impl ConvertPlan {
                 .with_alpha_policy(AlphaPolicy::DiscardUnchecked),
         )?;
         let out = Self::new_explicit(middle, to, &plain.with_clip_out_of_gamut(true))?;
-        let mut steps = into.steps;
-        steps.push(ConvertStep::SoftCompressOklch {
-            primaries: to.primaries,
-            knee: crate::hdr::SoftCompress::DEFAULT_KNEE,
-        });
-        steps.extend(out.steps);
-        Ok(Self::build(from, to, steps))
+        let compression = Self::build(
+            middle,
+            middle,
+            vec![ConvertStep::SoftCompressOklch {
+                primaries: to.primaries,
+                knee: crate::hdr::SoftCompress::DEFAULT_KNEE,
+            }],
+        );
+        Ok(into
+            .compose_preserving(&compression)
+            .expect("matching intermediate")
+            .compose_preserving(&out)
+            .expect("matching intermediate"))
     }
 
     /// Create a shell plan that records from/to but has no conversion steps.
@@ -2240,92 +2304,56 @@ impl ConvertPlan {
         self.compose_impl(other, true)
     }
 
-    fn execution(&self) -> Vec<(PixelDescriptor, PixelDescriptor, f32)> {
-        if let Some(execution) = &self.execution {
-            return execution.clone();
-        }
-        let mut current = self.from;
-        self.steps
-            .iter()
-            .enumerate()
-            .map(|(i, step)| {
-                let next = if i + 1 == self.steps.len() {
-                    self.to
-                } else {
-                    intermediate_desc(current, step)
-                };
-                let entry = (current, next, self.pq_anchor_scale);
-                current = next;
-                entry
-            })
-            .collect()
-    }
-
     fn compose_impl(&self, other: &Self, preserve: bool) -> Option<Self> {
         if self.to != other.from {
             return None;
         }
-        let mut steps = Vec::new();
-        let mut execution: Vec<(PixelDescriptor, PixelDescriptor, f32)> = Vec::new();
-        for (step, context) in self
-            .steps
-            .iter()
-            .cloned()
-            .zip(self.execution())
-            .chain(other.steps.iter().cloned().zip(other.execution()))
-        {
-            if matches!(step, ConvertStep::Identity) {
+        let mut operations: Vec<PlannedOperation> = Vec::new();
+        for operation in self.operations.iter().chain(&other.operations).cloned() {
+            if matches!(operation.step, ConvertStep::Identity) {
                 continue;
             }
             if !preserve
-                && steps.last().is_some_and(|last| are_inverse(last, &step))
-                && execution
-                    .last()
-                    .is_some_and(|previous| previous.0 == context.1 && previous.2 == context.2)
+                && operations.last().is_some_and(|last| {
+                    are_inverse(&last.step, &operation.step)
+                        && last.from == operation.to
+                        && last.pq_anchor_scale == operation.pq_anchor_scale
+                })
             {
-                steps.pop();
-                execution.pop();
+                operations.pop();
             } else {
-                steps.push(step);
-                execution.push(context);
+                operations.push(operation);
             }
         }
-        if steps.is_empty() {
+        if operations.is_empty() {
             return Some(Self::build(
                 self.from,
                 other.to,
                 vec![ConvertStep::Identity],
             ));
         }
-        let mut result = Self::build(self.from, other.to, steps);
-        result.execution = Some(execution);
-        Some(result)
+        Some(Self {
+            from: self.from,
+            to: other.to,
+            operations,
+        })
     }
 
     /// True if conversion is a no-op.
     #[must_use]
     pub fn is_identity(&self) -> bool {
-        self.steps.len() == 1 && matches!(self.steps[0], ConvertStep::Identity)
+        self.operations.len() == 1 && matches!(self.operations[0].step, ConvertStep::Identity)
     }
 
     /// Maximum bytes-per-pixel across all intermediate formats in the plan.
     ///
     /// Used to pre-allocate scratch buffers for streaming conversion.
     pub(crate) fn max_intermediate_bpp(&self) -> usize {
-        if let Some(execution) = &self.execution {
-            return execution
-                .iter()
-                .map(|(a, b, _)| a.bytes_per_pixel().max(b.bytes_per_pixel()))
-                .max()
-                .unwrap_or(0);
-        }
-        let mut desc = self.from;
-        let mut max_bpp = self.from.bytes_per_pixel().max(self.to.bytes_per_pixel());
-        for step in &self.steps {
-            desc = intermediate_desc(desc, step);
-            max_bpp = max_bpp.max(desc.bytes_per_pixel());
-        }
-        max_bpp
+        self.operations
+            .iter()
+            .map(|op| op.from.bytes_per_pixel().max(op.to.bytes_per_pixel()))
+            .max()
+            .unwrap_or(0)
     }
 
     /// Source descriptor.
@@ -2938,14 +2966,11 @@ pub(crate) fn convert_row_buffered(
         return;
     }
 
-    if plan.steps.len() == 1 {
-        let (from, to, scale) = plan.execution.as_ref().map(|e| e[0]).unwrap_or((
-            plan.from,
-            plan.to,
-            plan.pq_anchor_scale,
-        ));
+    if plan.operations.len() == 1 {
+        let operation = &plan.operations[0];
+        let (from, to, scale) = (operation.from, operation.to, operation.pq_anchor_scale);
         apply_step_u8(
-            &plan.steps[0],
+            &operation.step,
             src,
             dst,
             width,
@@ -2966,24 +2991,12 @@ pub(crate) fn convert_row_buffered(
     let half = buf_bytes.len() / 2;
     let (buf_a, buf_b) = buf_bytes.split_at_mut(half);
 
-    let num_steps = plan.steps.len();
-    let mut current_desc = plan.from;
-
-    for (i, step) in plan.steps.iter().enumerate() {
+    let num_steps = plan.operations.len();
+    for (i, operation) in plan.operations.iter().enumerate() {
         let is_last = i == num_steps - 1;
-        let (step_from, next_desc, scale) =
-            plan.execution.as_ref().map(|e| e[i]).unwrap_or_else(|| {
-                (
-                    current_desc,
-                    if is_last {
-                        plan.to
-                    } else {
-                        intermediate_desc(current_desc, step)
-                    },
-                    plan.pq_anchor_scale,
-                )
-            });
-        current_desc = step_from;
+        let step = &operation.step;
+        let (current_desc, next_desc, scale) =
+            (operation.from, operation.to, operation.pq_anchor_scale);
 
         let next_len = (width as usize) * next_desc.bytes_per_pixel();
         let curr_len = (width as usize) * current_desc.bytes_per_pixel();
@@ -3042,8 +3055,6 @@ pub(crate) fn convert_row_buffered(
                 );
             }
         }
-
-        current_desc = next_desc;
     }
 }
 
@@ -3056,19 +3067,21 @@ fn fuse_matlut_patterns(steps: &mut Vec<ConvertStep>) {
         let rewrite = match (&steps[i], &steps[i + 1], &steps[i + 2]) {
             (
                 ConvertStep::SrgbU8ToLinearF32,
-                ConvertStep::GamutMatrixRgbF32(m),
+                ConvertStep::GamutMatrixRgbF32(m, primaries),
                 ConvertStep::LinearF32ToSrgbU8,
             ) => Some(ConvertStep::Fused {
                 kind: FusedKind::SrgbU8GamutRgb,
                 matrix: *m,
+                primaries: *primaries,
             }),
             (
                 ConvertStep::SrgbU8ToLinearF32,
-                ConvertStep::GamutMatrixRgbaF32(m),
+                ConvertStep::GamutMatrixRgbaF32(m, primaries),
                 ConvertStep::LinearF32ToSrgbU8,
             ) => Some(ConvertStep::Fused {
                 kind: FusedKind::SrgbU8GamutRgba,
                 matrix: *m,
+                primaries: *primaries,
             }),
             _ => None,
         };
@@ -3352,16 +3365,14 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
         .with_primaries(current.primaries),
 
         // Gamut matrix: same depth/layout/TF, but primaries change.
-        // The actual target primaries are embedded in the matrix, not tracked
-        // here — we mark them as Unknown since the step doesn't carry that info.
-        // The final plan.to descriptor has the correct primaries.
-        ConvertStep::GamutMatrixRgbF32(_) => PixelDescriptor::new(
+        // The operation carries the destination primaries as well as its matrix.
+        ConvertStep::GamutMatrixRgbF32(..) => PixelDescriptor::new(
             ChannelType::F32,
             current.layout(),
             current.alpha(),
             TransferFunction::Linear,
         ),
-        ConvertStep::GamutMatrixRgbaF32(_) => PixelDescriptor::new(
+        ConvertStep::GamutMatrixRgbaF32(..) => PixelDescriptor::new(
             ChannelType::F32,
             current.layout(),
             current.alpha(),
@@ -3413,7 +3424,12 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
         ),
         ConvertStep::SoftCompressOklch { .. } => current,
     };
-    next.primaries = current.primaries;
+    next.primaries = match step {
+        ConvertStep::GamutMatrixRgbF32(_, primaries)
+        | ConvertStep::GamutMatrixRgbaF32(_, primaries)
+        | ConvertStep::Fused { primaries, .. } => *primaries,
+        _ => current.primaries,
+    };
     next.signal_range = current.signal_range;
     next
 }
