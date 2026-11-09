@@ -1,9 +1,10 @@
 //! A pixel's output must not depend on where it sits in a row or how the row is split.
+use super::KernelConverter as RowConverter;
+use crate::{AlphaPolicy, ConvertOptions};
 use zenpixels::{
     AlphaMode, ChannelLayout as L, ChannelType as T, ColorPrimaries, PixelDescriptor as D,
     TransferFunction as Tf,
 };
-use zenpixels_convert::{AlphaPolicy, ConvertOptions, RowConverter};
 
 const WIDTH: usize = 1031;
 

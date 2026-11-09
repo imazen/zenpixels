@@ -328,8 +328,7 @@ fn output_color_context_is_declared_before_rows_and_carried_by_every_batch() {
     let rows = plan.convert_rows(source, destination).unwrap();
     assert!(Arc::ptr_eq(rows.color_context().unwrap(), &declared));
 
-    // PQ to linear output gains a luminance anchor the source does not have:
-    // a context rebuilt from the metadata plus the source's anchor is wrong.
+    // PQ decoding honors the source's explicit relative-linear white anchor.
     use zenpixels::hdr::DiffuseWhite;
     let pq = PixelDescriptor::new_full(
         zenpixels_convert::ChannelType::F32,
@@ -359,6 +358,6 @@ fn output_color_context_is_declared_before_rows_and_carried_by_every_batch() {
     let declared = linear.output_color_context();
     assert_eq!(declared.cicp, linear.metadata().cicp);
     assert_eq!(declared.icc, linear.metadata().icc);
-    assert_eq!(declared.diffuse_white, Some(DiffuseWhite::new(10_000.0)));
-    assert_ne!(declared.diffuse_white, pq_context.diffuse_white);
+    assert_eq!(declared.diffuse_white, Some(DiffuseWhite::new(203.0)));
+    assert_eq!(declared.diffuse_white, pq_context.diffuse_white);
 }

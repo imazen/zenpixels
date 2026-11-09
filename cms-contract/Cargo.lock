@@ -269,6 +269,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "enough"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "877362cb7b70d1c617f0cd3c67708bd58d894a86af5104018e2c10ebaee3c02f"
+
+[[package]]
 name = "equivalent"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1029,6 +1035,7 @@ version = "0.3.1"
 dependencies = [
  "archmage",
  "bytemuck",
+ "enough",
  "garb",
  "lcms",
  "libm",

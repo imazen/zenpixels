@@ -8,36 +8,38 @@
 
 ## summary
 #
-#   pub modules                                15
-#   pub types (struct/enum/trait/alias)        53
-#   pub consts/statics                         32
+#   pub modules                                16
+#   pub types (struct/enum/trait/alias)        66
+#   pub consts/statics                         40
 #   free functions                              2
-#   inherent methods                          168
-#   struct fields                              73
-#   enum variants                              83
-#   re-exports                                  3
-#   trait roster entries (type × trait)       111
-#   auto-trait-complete types                  20
-#   auto-trait exceptions                       4
+#   inherent methods                          178
+#   struct fields                              95
+#   enum variants                             111
+#   re-exports                                  8
+#   trait roster entries (type × trait)       166
+#   conditional trait impls (verbatim)          1
+#   auto-trait-complete types                  29
+#   auto-trait exceptions                       6
 #
 # per-module pub lines:
-#   (root)                          190
+#   (root)                          207
 #   adapt                             1
 #   cms                              18
 #   codes                            39
 #   converter                        31
 #   css                               3
-#   error                            36
-#   ext                              28
+#   error                            41
+#   ext                              31
 #   gamut                            11
 #   hdr                               2
 #   icc_profiles                     10
 #   load_bearing                     11
 #   oklab                             8
 #   output                           19
+#   precision                        62
 #   ycbcr                            22
 
-## items (406 lines)
+## items (493 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -136,9 +138,12 @@ pub error::ConvertError::DepthReductionForbidden
 pub error::ConvertError::EmptyFormatList
 pub error::ConvertError::FullImageMapperNotSupported
 pub error::ConvertError::FullImageMapperNotSupported::mapper_name: &'static str
+pub error::ConvertError::HdrFeatureRequired
+pub error::ConvertError::HdrPeakRequired
 pub error::ConvertError::HdrSourceRequiresPeak
 pub error::ConvertError::HdrSourceRequiresPeak::from: zenpixels::descriptor::PixelDescriptor
 pub error::ConvertError::HdrSourceRequiresPeak::to: zenpixels::descriptor::PixelDescriptor
+pub error::ConvertError::HlgOotfNotImplemented
 pub error::ConvertError::InvalidWidth(u32)
 pub error::ConvertError::NeedsCms
 pub error::ConvertError::NeedsCms::from: zenpixels::descriptor::PixelDescriptor
@@ -152,6 +157,8 @@ pub error::ConvertError::OutputInterpretationMismatch
 pub error::ConvertError::OutputInterpretationMismatch::profile: zenpixels::descriptor::PixelDescriptor
 pub error::ConvertError::OutputInterpretationMismatch::requested: zenpixels::descriptor::PixelDescriptor
 pub error::ConvertError::RgbToGray
+pub error::ConvertError::SdrPeakRequired
+pub error::ConvertError::SdrWhiteRequired
 pub error::ConvertError::SourceInterpretationChanged
 pub error::ConvertError::UnsupportedTransfer
 pub error::ConvertError::UnsupportedTransfer::from: zenpixels::descriptor::TransferFunction
@@ -164,6 +171,7 @@ pub fn ext::ColorConvertExt::try_convert_to(&self, zenpixels::descriptor::PixelD
 pub fn ext::ColorPrimariesExt::from_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
 pub fn ext::ColorPrimariesExt::to_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
 pub fn ext::PixelBufferConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn ext::PixelBufferConvertExt::convert_to_with_options(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::delinearize(&self, zenpixels::descriptor::TransferFunction) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::into_oriented(self, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferConvertExt::linearize(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
@@ -175,9 +183,11 @@ pub fn ext::PixelSliceConvertExt::adapt_for_encode(&self, &[zenpixels::descripto
 pub fn ext::PixelSliceConvertExt::check_opaque(&self) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn ext::PixelSliceConvertExt::convert_into<'d>(&self, zenpixels::buffer::PixelSliceMut<'d>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'d>, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelSliceConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn ext::PixelSliceConvertExt::convert_to_with_options(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelSliceConvertExt::oriented(&self, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelSliceConvertExt::oriented_into(&self, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn ext::PixelSliceConvertExt::quantize_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn ext::PixelSliceConvertExt::scan_source_precision(&self, &dyn enough::Stop) -> core::result::Result<zenpixels::precision::SourcePrecision, whereat::at::At<enough::reason::StopReason>>
 pub fn ext::TransferFunctionExt::delinearize(&self, f32) -> f32
 pub fn ext::TransferFunctionExt::linearize(&self, f32) -> f32
 pub mod gamut
@@ -244,6 +254,77 @@ pub fn OutputPlan::new_with_descriptor(zenpixels::descriptor::PixelDescriptor, c
 pub fn OutputPlan::output_color_context(&self) -> &alloc::sync::Arc<zenpixels::color::ColorContext>
 pub fn OutputPlan::output_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn OutputPlan::prepare(&mut self, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub mod precision
+pub use precision::AlphaContent
+pub use precision::ConversionEffect
+pub use precision::ConversionOffer
+pub use precision::OutputChoice
+pub use precision::SourcePrecision
+#[non_exhaustive] pub enum precision::ConversionDecision
+pub precision::ConversionDecision::Choose(usize)
+pub precision::ConversionDecision::Defer
+pub precision::ConversionDecision::Refuse
+#[non_exhaustive] pub enum precision::ConversionFailure<E>
+pub precision::ConversionFailure::Refused(precision::ConversionRefusal)
+pub precision::ConversionFailure::Resolver(E)
+#[non_exhaustive] pub enum precision::ConversionPreset
+pub precision::ConversionPreset::DropPrecisionForMemory
+pub precision::ConversionPreset::KeepPrecision
+#[non_exhaustive] pub enum precision::ConversionRefusal
+pub precision::ConversionRefusal::CostUnknown
+pub precision::ConversionRefusal::DropsAlpha
+pub precision::ConversionRefusal::DropsAlpha::output: zenpixels::descriptor::PixelDescriptor
+pub precision::ConversionRefusal::DropsPrecision
+pub precision::ConversionRefusal::DropsPrecision::best_kept: u8
+pub precision::ConversionRefusal::DropsPrecision::output: zenpixels::descriptor::PixelDescriptor
+pub precision::ConversionRefusal::DropsPrecision::significant_bits: u8
+pub precision::ConversionRefusal::DropsRange
+pub precision::ConversionRefusal::DropsRange::output: zenpixels::descriptor::PixelDescriptor
+pub precision::ConversionRefusal::InvalidChoice
+pub precision::ConversionRefusal::InvalidChoice::index: usize
+pub precision::ConversionRefusal::MemoryOrPrecision
+pub precision::ConversionRefusal::MemoryOrPrecision::keep_bytes: u64
+pub precision::ConversionRefusal::MemoryOrPrecision::limit: u64
+pub precision::ConversionRefusal::MemoryOrPrecision::narrow_bytes: u64
+pub precision::ConversionRefusal::MemoryOrPrecision::narrow_drops: u8
+pub precision::ConversionRefusal::NoOffers
+pub precision::ConversionRefusal::NoneAdmitted
+pub precision::ConversionRefusal::NoneAdmitted::max_peak_bytes: core::option::Option<u64>
+pub precision::ConversionRefusal::NoneAdmitted::min_bits: core::option::Option<u8>
+pub precision::ConversionRefusal::ResolverRefused
+#[non_exhaustive] pub enum precision::DecidedBy
+pub precision::DecidedBy::Preset
+pub precision::DecidedBy::Resolver
+#[non_exhaustive] pub struct precision::ChainFailure<E>
+pub precision::ChainFailure::failure: precision::ConversionFailure<E>
+pub precision::ChainFailure::node: usize
+#[non_exhaustive] pub struct precision::ChainPlan
+pub precision::ChainPlan::peak_bytes: core::option::Option<u64>
+pub precision::ChainPlan::steps: alloc::vec::Vec<precision::ConversionRecord>
+pub struct precision::ConversionChoice<'a>
+pub const fn precision::ConversionChoice<'a>::effect(self) -> zenpixels::precision::ConversionEffect
+pub const fn precision::ConversionChoice<'a>::index(self) -> usize
+pub const fn precision::ConversionChoice<'a>::offer(self) -> &'a zenpixels::precision::ConversionOffer
+#[non_exhaustive] pub struct precision::ConversionPolicy
+pub const fn precision::ConversionPolicy::new() -> Self
+pub fn precision::ConversionPolicy::plan_chain<R: precision::ConversionResolver + ?core::marker::Sized>(&self, &zenpixels::precision::SourcePrecision, zenpixels::descriptor::PixelDescriptor, &[&[zenpixels::precision::ConversionOffer]], zenpixels::precision::OutputChoice, &mut R) -> core::result::Result<precision::ChainPlan, whereat::at::At<precision::ChainFailure<<R as precision::ConversionResolver>::Error>>>
+pub fn precision::ConversionPolicy::resolve_preset(&self, &zenpixels::precision::SourcePrecision, zenpixels::precision::OutputChoice, &[zenpixels::precision::ConversionOffer]) -> core::result::Result<precision::ConversionRecord, whereat::at::At<precision::ConversionRefusal>>
+pub const fn precision::ConversionPolicy::with_max_peak_bytes(self, u64) -> Self
+pub const fn precision::ConversionPolicy::with_min_bits(self, u8) -> Self
+pub const fn precision::ConversionPolicy::with_preset(self, precision::ConversionPreset) -> Self
+#[non_exhaustive] pub struct precision::ConversionQuestion<'a>
+pub precision::ConversionQuestion::choice: zenpixels::precision::OutputChoice
+pub precision::ConversionQuestion::source: &'a zenpixels::precision::SourcePrecision
+pub fn precision::ConversionQuestion<'a>::admitted(&self) -> impl core::iter::traits::iterator::Iterator<Item = precision::ConversionChoice<'a>> + use<'a>
+pub const fn precision::ConversionQuestion<'a>::new(&'a zenpixels::precision::SourcePrecision, zenpixels::precision::OutputChoice, &'a [zenpixels::precision::ConversionOffer], precision::ConversionPolicy) -> Self
+#[non_exhaustive] pub struct precision::ConversionRecord
+pub precision::ConversionRecord::decided_by: precision::DecidedBy
+pub precision::ConversionRecord::effect: zenpixels::precision::ConversionEffect
+pub precision::ConversionRecord::index: usize
+pub precision::ConversionRecord::output: zenpixels::descriptor::PixelDescriptor
+pub trait precision::ConversionResolver
+pub type precision::ConversionResolver::Error: core::error::Error + core::marker::Send + core::marker::Sync + 'static
+pub fn precision::ConversionResolver::resolve(&mut self, precision::ConversionQuestion<'_>) -> core::result::Result<precision::ConversionDecision, whereat::at::At<Self::Error>>
 pub mod ycbcr
 #[non_exhaustive] pub enum ycbcr::YcbcrError
 pub ycbcr::YcbcrError::OutputDescriptor
@@ -284,9 +365,12 @@ pub ConvertError::DepthReductionForbidden
 pub ConvertError::EmptyFormatList
 pub ConvertError::FullImageMapperNotSupported
 pub ConvertError::FullImageMapperNotSupported::mapper_name: &'static str
+pub ConvertError::HdrFeatureRequired
+pub ConvertError::HdrPeakRequired
 pub ConvertError::HdrSourceRequiresPeak
 pub ConvertError::HdrSourceRequiresPeak::from: zenpixels::descriptor::PixelDescriptor
 pub ConvertError::HdrSourceRequiresPeak::to: zenpixels::descriptor::PixelDescriptor
+pub ConvertError::HlgOotfNotImplemented
 pub ConvertError::InvalidWidth(u32)
 pub ConvertError::NeedsCms
 pub ConvertError::NeedsCms::from: zenpixels::descriptor::PixelDescriptor
@@ -300,6 +384,8 @@ pub ConvertError::OutputInterpretationMismatch
 pub ConvertError::OutputInterpretationMismatch::profile: zenpixels::descriptor::PixelDescriptor
 pub ConvertError::OutputInterpretationMismatch::requested: zenpixels::descriptor::PixelDescriptor
 pub ConvertError::RgbToGray
+pub ConvertError::SdrPeakRequired
+pub ConvertError::SdrWhiteRequired
 pub ConvertError::SourceInterpretationChanged
 pub ConvertError::UnsupportedTransfer
 pub ConvertError::UnsupportedTransfer::from: zenpixels::descriptor::TransferFunction
@@ -411,6 +497,7 @@ pub fn ColorPrimariesExt::from_xyz_matrix(&self) -> core::option::Option<&'stati
 pub fn ColorPrimariesExt::to_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
 pub trait PixelBufferConvertExt: sealed::Sealed + core::marker::Sized [also: ext]
 pub fn PixelBufferConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn PixelBufferConvertExt::convert_to_with_options(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::delinearize(&self, zenpixels::descriptor::TransferFunction) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::into_oriented(self, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::linearize(&self) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
@@ -425,9 +512,11 @@ pub fn PixelSliceConvertExt::adapt_for_encode(&self, &[zenpixels::descriptor::Pi
 pub fn PixelSliceConvertExt::check_opaque(&self) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn PixelSliceConvertExt::convert_into<'d>(&self, zenpixels::buffer::PixelSliceMut<'d>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'d>, whereat::at::At<error::ConvertError>>
 pub fn PixelSliceConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn PixelSliceConvertExt::convert_to_with_options(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelSliceConvertExt::oriented(&self, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelSliceConvertExt::oriented_into(&self, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn PixelSliceConvertExt::quantize_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn PixelSliceConvertExt::scan_source_precision(&self, &dyn enough::Stop) -> core::result::Result<zenpixels::precision::SourcePrecision, whereat::at::At<enough::reason::StopReason>>
 pub trait PixelSliceLoadBearingExt: load_bearing::sealed::Sealed [also: load_bearing]
 pub fn PixelSliceLoadBearingExt::determine_load_bearing(&self) -> load_bearing::LoadBearingReport
 pub fn PixelSliceLoadBearingExt::try_reduce_to_load_bearing_format(&self) -> core::option::Option<zenpixels::buffer::PixelBuffer>
@@ -446,7 +535,7 @@ pub trait TransferFunctionExt: sealed::Sealed [also: ext]
 pub fn TransferFunctionExt::delinearize(&self, f32) -> f32
 pub fn TransferFunctionExt::linearize(&self, f32) -> f32
 
-## trait impls (28 types)
+## trait impls (39 types)
 
 ConversionCost: Add, Clone, Copy, Debug, Default, Eq, PartialEq
 ConvertIntent: Clone, Copy, Debug, Default, Eq, PartialEq
@@ -469,6 +558,17 @@ load_bearing::LoadBearingReport: Clone, Copy, Debug, Default
 oklab::OklabSpace: Clone, Copy, Debug, PartialEq
 output::OutputMetadata: Clone, Debug
 output::OutputProfile: Clone, Debug
+precision::ChainFailure<E>: Debug, Display, Error
+precision::ChainPlan: Clone, Debug, Eq, PartialEq
+precision::ConversionChoice<'a>: Clone, Copy, Debug, Eq, PartialEq
+precision::ConversionDecision: Clone, Copy, Debug, Eq, PartialEq
+precision::ConversionFailure<E>: Debug, Display, Error
+precision::ConversionPolicy: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+precision::ConversionPreset: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+precision::ConversionQuestion<'a>: Clone, Copy, Debug
+precision::ConversionRecord: Clone, Copy, Debug, Eq, PartialEq
+precision::ConversionRefusal: Clone, Copy, Debug, Display, Eq, Error, PartialEq
+precision::DecidedBy: Clone, Copy, Debug, Eq, Hash, PartialEq
 ycbcr::YcbcrError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 zenpixels::buffer::PixelBuffer: ext::PixelBufferConvertExt, load_bearing::PixelBufferLoadBearingExt
 zenpixels::buffer::PixelSlice<'_, P>: load_bearing::PixelSliceLoadBearingExt
@@ -476,6 +576,7 @@ zenpixels::buffer::PixelSlice<'a>: ext::PixelSliceConvertExt<'a>
 zenpixels::color::Color: ext::ColorConvertExt
 zenpixels::descriptor::ColorPrimaries: ext::ColorPrimariesExt
 zenpixels::descriptor::TransferFunction: ext::TransferFunctionExt
+impl<F, E> precision::ConversionResolver for F where F: core::ops::function::FnMut(precision::ConversionQuestion<'_>) -> core::result::Result<precision::ConversionDecision, whereat::at::At<E>>, E: core::error::Error + core::marker::Send + core::marker::Sync + 'static
 
 ## auto traits
 
@@ -483,3 +584,5 @@ OutputPlan: !Freeze !RefUnwindSafe !UnwindSafe
 cms::CmsPluginError: !RefUnwindSafe !UnwindSafe
 converter::RowConverter: !Freeze !RefUnwindSafe !UnwindSafe
 error::ConvertError: !RefUnwindSafe !UnwindSafe
+precision::ChainFailure<E>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
+precision::ConversionFailure<E>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe

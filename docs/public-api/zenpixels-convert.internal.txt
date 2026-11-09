@@ -13,9 +13,9 @@
 #   pub types (struct/enum/trait/alias)         4
 #   pub consts/statics                          3
 #   free functions                             11
-#   inherent methods                           43
+#   inherent methods                           51
 #   struct fields                               4
-#   trait roster entries (type × trait)        36
+#   trait roster entries (type × trait)        44
 #   auto-trait-complete types                   2
 #
 # per-module pub lines:
@@ -28,10 +28,11 @@
 #   hdr                              23
 #   icc_profiles                      1
 #   orient                            2
+#   precision                         8
 #   ycbcr                             1
 #   zenpixels                         4
 
-## items (68 lines)
+## items (76 lines)
 
 #[non_exhaustive] pub struct hdr::LightLevelHistogram [also: hdr::measure]
 pub const hdr::measure::LightLevelHistogram::BIN_MAX_NITS: f32
@@ -90,6 +91,14 @@ pub fn hdr::measure::LightLevelMethod::assert_fields_are_eq(&self)
 pub fn icc_profiles::SynthesizedIcc::assert_fields_are_eq(&self)
 pub fn orient::__bench_apply_orientation_scalar(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation) -> zenpixels::buffer::PixelBuffer
 pub fn orient::__bench_apply_orientation_staged(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), error::ConvertError>
+pub fn precision::ChainPlan::assert_fields_are_eq(&self)
+pub fn precision::ConversionChoice<'a>::assert_fields_are_eq(&self)
+pub fn precision::ConversionDecision::assert_fields_are_eq(&self)
+pub fn precision::ConversionPolicy::assert_fields_are_eq(&self)
+pub fn precision::ConversionPreset::assert_fields_are_eq(&self)
+pub fn precision::ConversionRecord::assert_fields_are_eq(&self)
+pub fn precision::ConversionRefusal::assert_fields_are_eq(&self)
+pub fn precision::DecidedBy::assert_fields_are_eq(&self)
 pub fn ycbcr::YcbcrError::assert_fields_are_eq(&self)
 pub mod __bench_scan
 pub mod __bench_u16_hybrids
@@ -102,7 +111,7 @@ pub __bench_scan::FusedRequest::check_opaque: bool
 pub __bench_scan::FusedResult::is_grayscale: bool
 pub __bench_scan::FusedResult::is_opaque: bool
 
-## trait impls (23 types)
+## trait impls (31 types)
 
 ConversionCost: TrivialClone
 ConvertIntent: TrivialClone
@@ -126,4 +135,12 @@ hdr::measure::LightLevelHistogram: Clone, Debug
 hdr::measure::LightLevelMethod: TrivialClone
 load_bearing::LoadBearingReport: TrivialClone
 oklab::OklabSpace: TrivialClone
+precision::ConversionChoice<'a>: TrivialClone
+precision::ConversionDecision: TrivialClone
+precision::ConversionPolicy: TrivialClone
+precision::ConversionPreset: TrivialClone
+precision::ConversionQuestion<'a>: TrivialClone
+precision::ConversionRecord: TrivialClone
+precision::ConversionRefusal: TrivialClone
+precision::DecidedBy: TrivialClone
 ycbcr::YcbcrError: TrivialClone

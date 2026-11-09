@@ -4,13 +4,13 @@
 //! path, and every cross-TF conversion for correctness, monotonicity,
 //! and roundtrip accuracy.
 
+use super::KernelConverter as RowConverter;
+use crate::ext::{PixelBufferConvertExt, TransferFunctionExt};
 use zenpixels::buffer::PixelBuffer;
 use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, Cicp, ColorPrimaries, NamedProfile, PixelDescriptor,
     PixelFormat, SignalRange, TransferFunction,
 };
-use zenpixels_convert::RowConverter;
-use zenpixels_convert::ext::{PixelBufferConvertExt, TransferFunctionExt};
 
 /// True when `(src, dst)` is an HDR-encoded source paired with an
 /// SDR-encoded destination. Such a transition now refuses through the
@@ -864,7 +864,12 @@ fn make_test_rgb8_buffer(tf: TransferFunction) -> PixelBuffer {
         255, 255, 255, // white
     ];
     let desc = PixelDescriptor::new(ChannelType::U8, ChannelLayout::Rgb, None, tf);
-    PixelBuffer::from_vec(data, 4, 1, desc).unwrap()
+    PixelBuffer::from_vec(data, 4, 1, desc)
+        .unwrap()
+        .with_color_context(alloc::sync::Arc::new(
+            zenpixels::ColorContext::default()
+                .with_diffuse_white(zenpixels::hdr::DiffuseWhite::new(10_000.)),
+        ))
 }
 
 /// Helper: create a 4-pixel RGB F32 buffer with known linear values.
@@ -874,7 +879,12 @@ fn make_test_rgbf32_buffer(tf: TransferFunction, primaries: ColorPrimaries) -> P
     ];
     let data: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
     let desc = PixelDescriptor::new_full(ChannelType::F32, ChannelLayout::Rgb, None, tf, primaries);
-    PixelBuffer::from_vec(data, 4, 1, desc).unwrap()
+    PixelBuffer::from_vec(data, 4, 1, desc)
+        .unwrap()
+        .with_color_context(alloc::sync::Arc::new(
+            zenpixels::ColorContext::default()
+                .with_diffuse_white(zenpixels::hdr::DiffuseWhite::new(10_000.)),
+        ))
 }
 
 /// Helper: read F32 value from a PixelBuffer row at byte offset.
@@ -946,12 +956,10 @@ fn buffer_linearize_pq_f32() {
 #[test]
 fn buffer_linearize_hlg_f32() {
     let buf = make_test_rgbf32_buffer(TransferFunction::Hlg, ColorPrimaries::Bt2020);
-    let lin = buf.linearize().unwrap();
-
-    assert_eq!(lin.descriptor().transfer(), TransferFunction::Linear);
-    assert_eq!(lin.descriptor().primaries, ColorPrimaries::Bt2020);
-    // HLG black → 0
-    assert!(read_f32(&lin, 0).abs() < 1e-6);
+    assert!(matches!(
+        buf.linearize().unwrap_err().error(),
+        crate::ConvertError::HlgOotfNotImplemented
+    ));
 }
 
 /// delinearize() applies sRGB OETF to linear F32 buffer.
@@ -988,12 +996,10 @@ fn buffer_delinearize_pq() {
 #[test]
 fn buffer_delinearize_hlg() {
     let buf = make_test_rgbf32_buffer(TransferFunction::Linear, ColorPrimaries::Bt2020);
-    let hlg = buf.delinearize(TransferFunction::Hlg).unwrap();
-
-    assert_eq!(hlg.descriptor().transfer(), TransferFunction::Hlg);
-    assert_eq!(hlg.descriptor().primaries, ColorPrimaries::Bt2020);
-    // 0 → 0
-    assert!(read_f32(&hlg, 0).abs() < 1e-6);
+    assert!(matches!(
+        buf.delinearize(TransferFunction::Hlg).unwrap_err().error(),
+        crate::ConvertError::HlgOotfNotImplemented
+    ));
 }
 
 /// linearize → delinearize roundtrip preserves values for all TFs.
@@ -1008,6 +1014,13 @@ fn buffer_linearize_delinearize_roundtrip_all_tfs() {
 
     for tf in tfs {
         let buf = make_test_rgbf32_buffer(tf, ColorPrimaries::Bt709);
+        if tf == TransferFunction::Hlg {
+            assert!(matches!(
+                buf.linearize().unwrap_err().error(),
+                crate::ConvertError::HlgOotfNotImplemented
+            ));
+            continue;
+        }
         let lin = buf.linearize().unwrap();
         let back = lin.delinearize(tf).unwrap();
 
@@ -1183,7 +1196,7 @@ fn hlg_u16_f32_u16_roundtrip_wide_range() {
 #[test]
 #[cfg(feature = "bt2446a")]
 fn pq_u16_to_srgb_u8_correctness() {
-    use zenpixels_convert::ConvertPlan;
+    use crate::ConvertPlan;
     let pq_u16 = PixelDescriptor::new(
         ChannelType::U16,
         ChannelLayout::Rgb,
@@ -1235,10 +1248,7 @@ fn pq_u16_to_srgb_u8_correctness() {
 #[cfg(feature = "bt2446a")]
 fn hlg_u16_to_srgb_u8_requires_display_mapping() {
     let hlg = PixelDescriptor::RGB16_SRGB.with_transfer(TransferFunction::Hlg);
-    assert!(
-        zenpixels_convert::ConvertPlan::new_with_hdr_peak(hlg, PixelDescriptor::RGB8_SRGB, 1000.)
-            .is_err()
-    );
+    assert!(crate::ConvertPlan::new_with_hdr_peak(hlg, PixelDescriptor::RGB8_SRGB, 1000.).is_err());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

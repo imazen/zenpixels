@@ -117,13 +117,13 @@ fn a_reachable_format_is_still_the_cheapest_one() {
         ConvertIntent::Fastest.best_match(D::RGB8_SRGB, &[D::RGBAF32_LINEAR, D::RGB8_SRGB]),
         Some(D::RGB8_SRGB)
     );
-    // PQ reaches linear f32 and needs a peak for sRGB.
+    // PQ needs an anchor for linear and peaks for SDR. Its native format remains reachable.
     let pq = D::RGB16_SRGB
         .with_transfer(Tf::Pq)
         .with_primaries(P::Bt2020);
     assert_eq!(
-        ConvertIntent::Fastest.best_match(pq, &[D::RGB8_SRGB, D::RGBF32_LINEAR]),
-        Some(D::RGBF32_LINEAR)
+        ConvertIntent::Fastest.best_match(pq, &[D::RGB8_SRGB, D::RGBF32_LINEAR, pq]),
+        Some(pq)
     );
     // With nothing reachable, the cheapest comes back, so converting explains why.
     assert_eq!(

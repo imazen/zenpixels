@@ -68,6 +68,8 @@ fn an_injected_mapper_runs_in_place_of_the_default() {
 
 #[test]
 fn the_default_gives_the_bytes_of_the_curve_itself() {
+    // See `rows_split_and_alpha_pass_through`.
+    let _tier = archmage::testing::lock_token_testing();
     let src = ramp();
     let config = HdrConfig::for_source_peak(1000.0);
     let by_default = run(
@@ -100,6 +102,9 @@ fn the_default_gives_the_bytes_of_the_curve_itself() {
 /// A row's split must not show, and alpha passes through.
 #[test]
 fn rows_split_and_alpha_pass_through() {
+    // Another test here turns SIMD tiers off, process-wide, and tiers differ by a few ULP. Both runs
+    // of this comparison must see one tier.
+    let _tier = archmage::testing::lock_token_testing();
     let d = D::RGBAF32_LINEAR.with_primaries(P::Bt2020);
     let src: Vec<f32> = (0..64)
         .flat_map(|i| {

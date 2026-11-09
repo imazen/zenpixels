@@ -118,6 +118,7 @@ __bench_orient = []
 __bench_scan = []
 
 [dependencies]
+enough = { version = "0.4.4", default-features = false }
 zenpixels = { workspace = true, default-features = false, features = ["icc"] }
 linear-srgb = { version = "0.6.12", default-features = false, features = ["transfer"] }
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }

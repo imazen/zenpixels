@@ -151,3 +151,10 @@ shared backend contracts and isolated no-database tests/Clippy.
 Resource receipts on r7900x: test rc=0, 185s, peak RSS 2.65 GiB; extra checks
 rc=0, 13s, peak RSS 0.43 GiB. These are test-process resource observations,
 not profile-synthesis memory measurements.
+
+PR120 integration moves presets, resolver interfaces and chain planning into
+`zenpixels_convert::precision`. Shared source/offer/effect types remain in core,
+re-exported by that converter module. `preserves_modeled_capacity` names the
+bounded claim; it does not certify gamut preservation or pixel equality.
+The core policy-nesting prototype must import converter policy types explicitly;
+its data-only offers can continue using core facts. No core main was changed.

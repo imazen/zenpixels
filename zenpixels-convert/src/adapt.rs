@@ -53,13 +53,16 @@ use alloc::vec::Vec;
 
 use crate::convert::ConvertPlan;
 use crate::converter::RowConverter;
-use crate::negotiate::{ConvertIntent, best_match};
+use crate::negotiate::{ConvertIntent, FormatOption, Provenance, best_match, negotiate};
 use crate::policy::{AlphaPolicy, ConvertOptions};
 use crate::{
     AlphaMode, ChannelLayout, ChannelType, ColorModel, ConvertError, PixelBuffer, PixelCow,
     PixelDescriptor, PixelSlice, PixelSliceMut,
 };
+use enough::{Stop, StopReason};
 use whereat::{At, ResultAtExt};
+use zenpixels::precision::{AlphaContent, ConversionEffect, ConversionOffer, SourcePrecision};
+use zenpixels::sample::ExactDepth;
 
 /// Reject CMYK on either side of a `from`/`to` pair at the public-API
 /// boundary, surfacing it as a [`ConvertError::NoPath`] (which carries
@@ -327,7 +330,14 @@ pub(crate) fn convert_into_with_anchor(
 
     // `from == to` yields an Identity plan, whose row step copies src → dst — so
     // the strided loop handles it too (no packed-only special case needed).
-    let plan = ConvertPlan::new(from, to).at()?.with_pq_anchor(anchor);
+    let plan = ConvertPlan::new_explicit(
+        from,
+        to,
+        &zenpixels::ConvertOptions::permissive()
+            .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked)
+            .with_sdr_white(anchor),
+    )
+    .at()?;
     let mut converter = RowConverter::from_plan(plan);
     let src_row = (width as usize) * from.bytes_per_pixel();
 
@@ -565,7 +575,7 @@ pub fn adapt_raw_rows_for_encode<'a>(
     }
 
     // Need conversion — pick best target, then validate policies.
-    let target = best_match(descriptor, supported, ConvertIntent::Fastest)
+    let target = encode_target(descriptor, supported)
         .ok_or_else(|| whereat::at!(ConvertError::EmptyFormatList))?;
 
     let checked_options = if descriptor.has_alpha() && !target.has_alpha() {
@@ -609,7 +619,30 @@ pub(crate) fn encode_conversion_target(
     if relabels {
         return None;
     }
-    best_match(descriptor, supported, ConvertIntent::Fastest)
+    encode_target(descriptor, supported)
+}
+
+/// The cheapest format that holds everything `descriptor` can carry, or, if none does, the cheapest.
+///
+/// The cost model alone ranks RGB8 under RGBF32 for RGB16 input, because narrowing is less work.
+/// This is the format an encoder adapter chooses for its caller, so the precision rule goes first.
+/// Whether a narrowing is then allowed stays with the caller's [`ConvertOptions`].
+fn encode_target(
+    descriptor: PixelDescriptor,
+    supported: &[PixelDescriptor],
+) -> Option<PixelDescriptor> {
+    let source = SourcePrecision::from_storage(descriptor);
+    let holding = supported.iter().filter(|&&target| {
+        let effect = ConversionEffect::of(&source, &ConversionOffer::new(target));
+        effect.bits_dropped == 0 && !effect.range_dropped
+    });
+    negotiate(
+        descriptor,
+        Provenance::from_source(descriptor),
+        holding.map(|&target| FormatOption::from(target)),
+        ConvertIntent::Fastest,
+    )
+    .or_else(|| best_match(descriptor, supported, ConvertIntent::Fastest))
 }
 
 /// Whole-image adapters preflight conditional alpha before allocation or output writes. Row planners
@@ -625,6 +658,60 @@ pub(crate) fn options_after_opacity_check(
         return Ok(options.with_alpha_policy(AlphaPolicy::DiscardUnchecked));
     }
     Ok(*options)
+}
+
+/// One pass over the samples: the depths whose grids hold every row, and whether alpha is used.
+pub(crate) fn scan_source_precision(
+    pixels: &PixelSlice<'_>,
+    stop: &dyn Stop,
+) -> Result<SourcePrecision, At<StopReason>> {
+    let descriptor = pixels.descriptor();
+    let storage = SourcePrecision::from_storage(descriptor);
+    // Bit `d - 1` stays set while every row so far lies on the d-bit grid.
+    let mut color = u32::MAX >> (32 - descriptor.channel_type().byte_size().min(2) * 8);
+    let mut alpha = color;
+    let has_alpha = descriptor.has_alpha();
+    let mut translucent = false;
+    let holds = |exact_at: &dyn Fn(u8) -> bool, mask: &mut u32| {
+        for depth in 1..=16u8 {
+            if !exact_at(depth) {
+                *mask &= !(1u32 << (depth - 1));
+            }
+        }
+    };
+    for y in 0..pixels.rows() {
+        stop.check().map_err(|reason| whereat::at!(reason))?;
+        let row = pixels.sub_rows(y, 1);
+        let Ok(exact) = ExactDepth::measure(&row) else {
+            return Ok(storage);
+        };
+        holds(&|depth| exact.color_exact_at(depth), &mut color);
+        if has_alpha {
+            holds(&|depth| exact.alpha_exact_at(depth), &mut alpha);
+            translucent |= check_opaque(&row).is_err();
+        }
+        let storage_bit = 1u32 << (exact.storage().byte_size() * 8 - 1);
+        let settled = |mask: u32| mask & (storage_bit - 1) == 0;
+        if settled(color) && (!has_alpha || (settled(alpha) && translucent)) {
+            break;
+        }
+    }
+    let bits = |mask: u32| mask.trailing_zeros() as u8 + 1;
+    let deepest = bits(color).max(if has_alpha { bits(alpha) } else { 0 });
+    let Some(source) =
+        SourcePrecision::declared(deepest, descriptor.transfer(), descriptor.signal_range)
+    else {
+        return Ok(storage);
+    };
+    Ok(if descriptor.may_have_transparency() {
+        source.with_alpha(if translucent {
+            AlphaContent::Translucent
+        } else {
+            AlphaContent::Opaque
+        })
+    } else {
+        source
+    })
 }
 
 /// Explicit opacity preflight: scans visible alpha samples, stopping at the
