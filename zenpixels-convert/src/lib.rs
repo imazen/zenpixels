@@ -395,8 +395,6 @@ pub mod __trace_ops;
 #[cfg(not(feature = "__trace_ops"))]
 #[allow(dead_code, unused_imports)]
 pub(crate) mod __trace_ops;
-#[allow(dead_code)]
-pub(crate) mod builtin_profiles;
 pub mod cms;
 #[cfg(feature = "cms-lcms")]
 pub mod cms_lcms;
