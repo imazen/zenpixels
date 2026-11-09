@@ -14,11 +14,11 @@
 <p>The issue descriptions assess main; this explorer runs a review candidate. Candidate code, merged implementation and downstream qualification are separate states.</p>
 <table><thead><tr><th>Issue</th><th>Remaining review boundary</th></tr></thead><tbody>
 <tr><td><a href="https://github.com/imazen/zenpixels/issues/83">83 — Native samples</a></td><td>The duplicate adapter is removed. Existing U16 component reading and exact metadata remain; further native-reader requirements and actual consumers need qualification.</td></tr>
-<tr><td><a href="https://github.com/imazen/zenpixels/issues/69">69 — Identity allocations</a></td><td>Borrowed finalization still returns owned pixels. Existing OutputPlan borrowing does not establish a consuming finalizer.</td></tr>
-<tr><td><a href="https://github.com/imazen/zenpixels/issues/132">132 — HLG</a></td><td>Rendering exists on the candidate; complete entry-point and consumer qualification remains separate from ICC synthesis.</td></tr>
-<tr><td><a href="https://github.com/imazen/zenpixels/issues/133">133 — API documentation</a></td><td>Stale ablation/export docs, private-helper examples and complete release semver classification remain open.</td></tr>
-<tr><td><a href="https://github.com/imazen/zenpixels/issues/134">134 — ICC/CICP authority</a></td><td>Complete conflict/unsupported-signal table and matrix/range synthesis preconditions need explicit qualification.</td></tr>
-<tr><td><a href="https://github.com/imazen/zenpixels/issues/135">135 — P3 exports</a></td><td>Candidate includes compact exports and independent oracle tooling; release-ref reconciliation is still distinct.</td></tr>
+<tr><td><a href="https://github.com/imazen/zenpixels/issues/69">69 — Identity allocations</a></td><td>Borrowed OutputPlan identity rows are allocation-free in packed/padded controls; owned finalization intentionally copies. Typed U8/U16/F32 extraction reuse is qualified.</td></tr>
+<tr><td><a href="https://github.com/imazen/zenpixels/issues/132">132 — HLG</a></td><td>Fixed a direct MoxCms HLG bypass; both backend refusals are tested. Consumer qualification and HLG ICC synthesis remain separate.</td></tr>
+<tr><td><a href="https://github.com/imazen/zenpixels/issues/133">133 — API documentation</a></td><td>Public examples compile; ablation and export docs are refreshed. Explicit-baseline semver findings and tool limitations are recorded.</td></tr>
+<tr><td><a href="https://github.com/imazen/zenpixels/issues/134">134 — ICC/CICP authority</a></td><td>Presence/authority tables exercise both output APIs; unsupported authority refuses. Synthesis matrix/range preconditions are documented and tested.</td></tr>
+<tr><td><a href="https://github.com/imazen/zenpixels/issues/135">135 — P3 exports</a></td><td>Current default/no-db bytes pass fresh native and independent color controls. Old release refs remain gated pending reconciliation.</td></tr>
 <tr><td><a href="https://github.com/imazen/zenpixels/issues/136">136 — Gain-map transcodes</a></td><td>Consumer reconstruction and end-to-end HDR pixels, not merely metadata carriage.</td></tr>
 <tr><td><a href="https://github.com/imazen/zenpixels/issues/137">137 — JXL luminance</a></td><td>Consumer qualification of content peak, intensity_target and diffuse white.</td></tr>
 <tr><td><a href="https://github.com/imazen/zenpixels/issues/138">138 — AVIF matrix resolution</a></td><td>Consumer migration to shared resolution, with a decoded fixture witness.</td></tr>
@@ -28,5 +28,5 @@
 <tr><td><a href="https://github.com/imazen/zenpixels/issues/142">142 — Apple gain maps</a></td><td>Independent reconstruction measurements and explicit acceptance remain open.</td></tr>
 <tr><td><a href="https://github.com/imazen/zenpixels/issues/143">143 — Downstream compilation</a></td><td>Compile actual consumers against one candidate revision, including newly changed descriptor errors and worker cloning.</td></tr>
 </tbody></table>
-<p><a href="https://github.com/imazen/zenpixels/blob/review/explicit-hlg-native-codes/docs/explorer-design-review.md">Full source-backed review</a> · <a href="https://github.com/imazen/zenpixels/pull/145">Review PR</a></p>
+<p><a href="https://github.com/imazen/zenpixels/blob/review/explicit-hlg-native-codes/docs/explorer-design-review.md">Full source-backed review</a> · <a href="https://github.com/imazen/zenpixels/blob/review/explicit-hlg-native-codes/docs/repository-issue-completion.md">Repository improvements and qualification</a> · <a href="https://github.com/imazen/zenpixels/pull/145">Review PR</a></p>
 </main></html>
