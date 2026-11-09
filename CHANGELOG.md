@@ -54,6 +54,10 @@ None. This new companion is an unpublished review API.
 
 ### Fixed
 
+- Validate in-place adaptation targets before rewriting pixels; invalid alpha
+  descriptors return an error without changing storage. Apply one RGB/BGR-to-gray
+  luma-policy check before built-in or CMS construction (`f8d05990`).
+
 - Direct MoxCms HLG crossings decline instead of bypassing explicit display
   rendering; qualify authority and allocation/extraction contracts
   (`2cf54240`, `3b442ffd`).

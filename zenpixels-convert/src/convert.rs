@@ -76,6 +76,22 @@ pub(crate) fn validate_descriptors(
     Ok(())
 }
 
+/// Apply the same color-to-gray policy before built-in or CMS construction.
+#[track_caller]
+pub(crate) fn validate_luma_policy(
+    from: PixelDescriptor,
+    to: PixelDescriptor,
+    options: &ConvertOptions,
+) -> Result<(), At<ConvertError>> {
+    if from.color_model() == crate::ColorModel::Rgb
+        && to.color_model() == crate::ColorModel::Gray
+        && options.luma().is_none()
+    {
+        return Err(whereat::at!(ConvertError::RgbToGray));
+    }
+    Ok(())
+}
+
 /// HDR→SDR tone-mapping configuration for
 /// [`ConvertPlan::new_with_hdr_config`].
 ///
@@ -2024,14 +2040,7 @@ impl ConvertPlan {
         }
 
         // Check RGB→Gray requires luma coefficients.
-        let src_is_rgb = matches!(
-            from.layout(),
-            ChannelLayout::Rgb | ChannelLayout::Bgr | ChannelLayout::Rgba | ChannelLayout::Bgra
-        );
-        let dst_is_gray = matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha);
-        if src_is_rgb && dst_is_gray && options.luma().is_none() {
-            return Err(whereat::at!(ConvertError::RgbToGray));
-        }
+        validate_luma_policy(from, to, options)?;
 
         if drops_alpha
             && to.alpha() == Some(AlphaMode::Undefined)
