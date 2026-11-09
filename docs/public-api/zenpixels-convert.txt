@@ -153,7 +153,7 @@ pub error::ConvertError::HdrPeakRequired
 pub error::ConvertError::HdrSourceRequiresPeak
 pub error::ConvertError::HdrSourceRequiresPeak::from: zenpixels::descriptor::PixelDescriptor
 pub error::ConvertError::HdrSourceRequiresPeak::to: zenpixels::descriptor::PixelDescriptor
-pub error::ConvertError::HlgOotfNotImplemented
+pub error::ConvertError::HlgRenderingRequired
 pub error::ConvertError::InvalidWidth(u32)
 pub error::ConvertError::NeedsCms
 pub error::ConvertError::NeedsCms::from: zenpixels::descriptor::PixelDescriptor
@@ -380,7 +380,7 @@ pub ConvertError::HdrPeakRequired
 pub ConvertError::HdrSourceRequiresPeak
 pub ConvertError::HdrSourceRequiresPeak::from: zenpixels::descriptor::PixelDescriptor
 pub ConvertError::HdrSourceRequiresPeak::to: zenpixels::descriptor::PixelDescriptor
-pub ConvertError::HlgOotfNotImplemented
+pub ConvertError::HlgRenderingRequired
 pub ConvertError::InvalidWidth(u32)
 pub ConvertError::NeedsCms
 pub ConvertError::NeedsCms::from: zenpixels::descriptor::PixelDescriptor

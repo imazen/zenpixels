@@ -198,7 +198,7 @@ fn sdr_to_hdr_transfers_are_refused() {
             assert!(
                 matches!(
                     e.error(),
-                    ConvertError::SdrWhiteRequired | ConvertError::HlgOotfNotImplemented
+                    ConvertError::SdrWhiteRequired | ConvertError::HlgRenderingRequired
                 ),
                 "{sdr:?} to {target:?}: {e:?}"
             );
@@ -224,6 +224,6 @@ fn linear_reaches_pq_with_explicit_units_and_hlg_requires_ootf() {
             .try_convert_to(D::RGBF32_LINEAR, &options)
             .unwrap_err()
             .error(),
-        ConvertError::HlgOotfNotImplemented
+        ConvertError::HlgRenderingRequired
     ));
 }

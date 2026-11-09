@@ -77,9 +77,9 @@ pub enum ConvertError {
     SdrPeakRequired,
     /// The requested HDR conversion needs a Cargo feature that is not enabled.
     HdrFeatureRequired,
-    /// HLG rendering needs explicit supported conditions. The historical variant
-    /// name is retained for compatibility; use `ConvertOptions::with_hlg_rendering`.
-    HlgOotfNotImplemented,
+    /// HLG rendering needs explicit conditions supplied through
+    /// [`zenpixels::ConvertOptions::with_hlg_rendering`].
+    HlgRenderingRequired,
     /// The conversion is HDR (`Pq` / `Hlg`) → SDR but no usable peak
     /// luminance was supplied. Raised both when no peak was given at all
     /// (the plain [`ConvertPlan::new`](crate::ConvertPlan::new) entry
@@ -294,7 +294,7 @@ impl fmt::Display for ConvertError {
             Self::HdrPeakRequired => f.write_str("HDR peak is missing; buffer conversion measures it, or use ConvertOptions::with_hdr_peak(HdrPeak::Nits(...))"),
             Self::SdrPeakRequired => f.write_str("SDR target peak is missing; use ConvertOptions::with_sdr_peak"),
             Self::HdrFeatureRequired => f.write_str("HDR tone mapping requires the bt2446a Cargo feature"),
-            Self::HlgOotfNotImplemented => f.write_str("HLG rendering requires explicit supported display conditions"),
+            Self::HlgRenderingRequired => f.write_str("HLG rendering requires explicit supported display conditions"),
             Self::HdrSourceRequiresPeak { from, to } => write!(
                 f,
                 "HDR→SDR conversion ({:?} → {:?}) requires positive, finite peak \

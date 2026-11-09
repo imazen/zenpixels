@@ -131,6 +131,9 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ### QUEUED BREAKING CHANGES
 
+- Rename `ConvertError::HlgOotfNotImplemented` to `HlgRenderingRequired`; the
+  implementation exists and callers must supply rendering conditions.
+
 - HDR transfer conversion now requires explicit or context-supplied SDR white; buffers measure source peak by default for tone mapping, while row plans require an explicit peak. HLG light-domain conversion refuses until its display OOTF is implemented. Quantization retains actual source primaries.
 
 See the 0.3.1 candidate entries below for the approved breaking release queue.

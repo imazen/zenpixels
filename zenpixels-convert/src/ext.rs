@@ -489,7 +489,7 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
         let mut resolved = *options;
         if crate::convert::is_hdr_to_sdr(src_desc.transfer(), target.transfer()) {
             if src_desc.transfer() == TransferFunction::Hlg && resolved.hlg_rendering().is_none() {
-                return Err(whereat::at!(crate::ConvertError::HlgOotfNotImplemented));
+                return Err(whereat::at!(crate::ConvertError::HlgRenderingRequired));
             }
             if resolved.sdr_peak().is_none() {
                 return Err(whereat::at!(crate::ConvertError::SdrPeakRequired));

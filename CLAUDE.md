@@ -262,7 +262,8 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
   consistently; an anchor-only context avoids falsely tagging linear samples as PQ.
   Buffer HDR-to-SDR conversion measures MaxRGB peak by default; row/output plans require
   an explicit or context-declared peak. SDR target peak is explicit. HLG transfer
-  conversion returns `HlgOotfNotImplemented` until a display OOTF exists. Old HDR-config
+  conversion requires explicit `HlgRendering` conditions; omission returns
+  `HlgRenderingRequired`. Old HDR-config
   constructors remain available for compatibility; the preferred interface is
   `convert_to_with_options` / `new_explicit`. Design: `docs/hdr-anchor-api-design.md` §6.
   Kernel tests moved to `src/kernel_tests`: the same numerical assertions and frozen

@@ -57,7 +57,7 @@ if (!url) throw new Error('Pass the served site URL');
     await page.locator('#sdr-white').fill('10000');
     assert.equal(await page.locator('#wasm-status').getAttribute('data-state'), 'different');
     await select('to-transfer', 'Hlg');
-    assert.match(await page.locator('#wasm-status').innerText(), /HlgOotfNotImplemented/);
+    assert.match(await page.locator('#wasm-status').innerText(), /HlgRenderingRequired/);
     await select('to-transfer', 'Srgb');
     await select('format', 'Cmyk8');
     assert.equal(await page.locator('#wasm-status').getAttribute('data-state'), 'refused');

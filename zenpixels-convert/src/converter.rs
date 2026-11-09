@@ -1376,7 +1376,7 @@ mod tests {
             TransferFunction::Pq,
         );
         match RowConverter::new(hlg_f32, pq_f32) {
-            Err(e) => assert!(matches!(*e.error(), ConvertError::HlgOotfNotImplemented)),
+            Err(e) => assert!(matches!(*e.error(), ConvertError::HlgRenderingRequired)),
             Ok(_) => panic!("HLG→PQ must refuse, not emit wrong pixels"),
         }
         // Both directions and the u16 form refuse.
@@ -1390,7 +1390,7 @@ mod tests {
         );
         for to in [PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBF32_LINEAR] {
             let error = RowConverter::new(hlg_f32, to).expect_err("HLG requires a display OOTF");
-            assert!(matches!(error.error(), ConvertError::HlgOotfNotImplemented));
+            assert!(matches!(error.error(), ConvertError::HlgRenderingRequired));
         }
     }
 
@@ -1439,7 +1439,7 @@ mod tests {
             .expect_err("plain HDR→SDR must refuse")
             .error()
             .clone();
-        assert!(matches!(err, ConvertError::HlgOotfNotImplemented));
+        assert!(matches!(err, ConvertError::HlgRenderingRequired));
 
         assert!(
             ConvertPlan::new_with_hdr_peak(hlg_u16, PixelDescriptor::RGB8_SRGB, 1000.0).is_err(),

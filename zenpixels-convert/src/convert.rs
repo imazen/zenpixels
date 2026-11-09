@@ -230,7 +230,7 @@ fn matte_background(
     source: PixelDescriptor,
 ) -> Result<[f32; 3], At<ConvertError>> {
     if source.transfer() == TransferFunction::Hlg {
-        return Err(whereat::at!(ConvertError::HlgOotfNotImplemented));
+        return Err(whereat::at!(ConvertError::HlgRenderingRequired));
     }
     let from = background.descriptor();
     let hdr = matches!(
@@ -1546,7 +1546,7 @@ impl ConvertPlan {
             return Self::new(from, to);
         }
         if from.transfer() == TransferFunction::Hlg || to.transfer() == TransferFunction::Hlg {
-            return Err(whereat::at!(ConvertError::HlgOotfNotImplemented));
+            return Err(whereat::at!(ConvertError::HlgRenderingRequired));
         }
         // Reject unusable peak luminances up front (only on the HDR path —
         // the SDR early-return above documents `hdr` as ignored there).
@@ -1785,7 +1785,7 @@ impl ConvertPlan {
     ) -> Result<Self, At<ConvertError>> {
         let rendering = options
             .hlg_rendering()
-            .ok_or_else(|| whereat::at!(ConvertError::HlgOotfNotImplemented))?;
+            .ok_or_else(|| whereat::at!(ConvertError::HlgRenderingRequired))?;
         let white = options
             .sdr_white()
             .ok_or_else(|| whereat::at!(ConvertError::SdrWhiteRequired))?;
