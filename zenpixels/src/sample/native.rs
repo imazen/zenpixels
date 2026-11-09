@@ -7,8 +7,6 @@ use core::fmt;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum NativeCodeError {
-    /// Unsupported storage or payload outside its word.
-    Encoding,
     /// Layout/channel count mismatch or mixed storage word types.
     Channels,
     /// Overflow, insufficient bytes or stride shorter than the active row.
