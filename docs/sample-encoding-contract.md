@@ -4,7 +4,7 @@
 
 The owner approved a distinct native-code view using existing storage machinery,
 with per-channel code width, placement and signed interpretation. Ordinary
-processing views retain their canonical numerical meaning. `sample::NativeCodeSlice` implements this boundary with `NativeEncoding` and
+processing views retain their canonical numerical meaning. `sample::NativeCodeSlice` implements this boundary with `SampleEncoding` and
 borrowed native-endian byte rows. `codes::native_to_u16` is the first consumer:
 it canonicalizes unsigned payloads up to 16 bits with explicit range and refuses
 signed/wider payload conversion before writes. Wider payload identity remains exact.
@@ -37,9 +37,12 @@ Signed and wider numerical conversion remains unsupported; exact borrowed
 carriage is supported through 64 bits. RGB565 is tested as an unpack-first case.
 These public boundaries are submitted for consumer/API review. Track implementation in [issue #83](https://github.com/imazen/zenpixels/issues/83).
 
-`sample::SampleEncoding` is the small additive bridge for the last 0.2.x release.
-It describes one unsigned code per U8/U16 storage word using private fields and
-a checked constant constructor. It introduces no default or sample-value scan.
+In the 0.2 bridge, `sample::SampleEncoding` described unsigned U8/U16 words.
+The 0.3 candidate extends this same type to all integer words through 64 bits,
+including signed payloads. It introduces no default or sample-value scan.
+The packed native view delegates geometry to `Plane`; `CodePlane` remains the
+typed U8/U16 component adapter. Both use the same encoding model.
+See [design reference](design-reference.md) for the consolidation invariants.
 
 The concrete consumer is `zencodec_media::plane::Plane` and its native AV1 adapter
 (`zencodec/media/src/av1.rs`). The adapter retains rav1d-safe's frame allocation and

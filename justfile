@@ -678,3 +678,7 @@ approved-contracts-check:
     cargo test -p zenpixels-convert --release --all-features --test hlg_rendering --test hdr_intent --test matte_row_kernels --test native_canonical
     cargo test -p zenpixels --no-default-features --test native_codes
     cargo clippy -p zenpixels -p zenpixels-convert --all-targets -- -D warnings
+
+# Shared sample interpretation and native carriage capability boundaries.
+sample-design-check:
+    cargo test -p zenpixels -p zenpixels-convert --test sample_encoding --test code_planes --test native_codes --test native_canonical --test codes_exhaustive

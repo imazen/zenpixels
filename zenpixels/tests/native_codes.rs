@@ -1,15 +1,15 @@
 use zenpixels::{
     ChannelLayout as L, ChannelType as T,
     hdr::St2086Codes,
-    sample::{NativeCodeSlice, NativeEncoding},
+    sample::{NativeCodeSlice, SampleEncoding},
 };
 #[test]
 fn payloads_and_storage_are_distinct() {
     let e = [
-        NativeEncoding::new(T::U16, 10, 0).unwrap(),
-        NativeEncoding::new(T::U16, 10, 0).unwrap(),
-        NativeEncoding::new(T::U16, 10, 0).unwrap(),
-        NativeEncoding::new(T::U16, 1, 0).unwrap(),
+        SampleEncoding::new(T::U16, 10, 0).unwrap(),
+        SampleEncoding::new(T::U16, 10, 0).unwrap(),
+        SampleEncoding::new(T::U16, 10, 0).unwrap(),
+        SampleEncoding::new(T::U16, 1, 0).unwrap(),
     ];
     let words = [0xfc00u16 | 1023, 0xfc00 | 512, 0xfc00, 0xfffe | 1, 123, 456];
     let bytes = bytemuck::cast_slice(&words);
@@ -31,7 +31,7 @@ fn signed_and_wide_are_exact() {
         (T::I64, 64, 1 << 63, i64::MIN as i128),
         (T::U32, 32, u32::MAX as u64, u32::MAX as i128),
     ] {
-        let e = [NativeEncoding::new(t, bits, 0).unwrap()];
+        let e = [SampleEncoding::new(t, bits, 0).unwrap()];
         let bytes = match t.byte_size() {
             2 => (word as u16).to_ne_bytes().to_vec(),
             4 => (word as u32).to_ne_bytes().to_vec(),
@@ -41,7 +41,7 @@ fn signed_and_wide_are_exact() {
             .unwrap();
         assert_eq!(v.code(0, 0, 0), Some(want));
     }
-    let e = [NativeEncoding::new(T::U64, 64, 0).unwrap()];
+    let e = [SampleEncoding::new(T::U64, 64, 0).unwrap()];
     let empty = NativeCodeSlice::new(&[], 0, 2, usize::MAX, L::Gray, &e).unwrap();
     assert_eq!(empty.row(1), Some(&[][..]));
     assert!(NativeCodeSlice::new(&[], 1, 2, usize::MAX, L::Gray, &e).is_err());
@@ -68,9 +68,9 @@ fn metadata_preserves_each_byte_and_float_loss_is_visible() {
 #[test]
 fn rgb565_wire_words_require_unpacking() {
     let enc = [
-        NativeEncoding::new(T::U16, 5, 11).unwrap(),
-        NativeEncoding::new(T::U16, 6, 5).unwrap(),
-        NativeEncoding::new(T::U16, 5, 0).unwrap(),
+        SampleEncoding::new(T::U16, 5, 11).unwrap(),
+        SampleEncoding::new(T::U16, 6, 5).unwrap(),
+        SampleEncoding::new(T::U16, 5, 0).unwrap(),
     ];
     assert!(NativeCodeSlice::new(&[0xff, 0xff], 1, 1, 2, L::Rgb, &enc).is_err());
 }

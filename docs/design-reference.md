@@ -48,7 +48,7 @@ Tests must distinguish those defects from primitive rounding differences.
 
 | Work | Status | Regression gate |
 |---|---|---|
-| Unified integer encoding and shared native geometry | Pending | Native signed/wide carriage, code mapping, empty/strided planes |
+| Unified integer encoding and shared native geometry | Implemented | Native signed/wide carriage, code mapping, empty/strided planes |
 | Finalized operation chain and policy preservation | Pending | Compositing/swizzle combinations, prepared and partitioned execution |
 | Unified output context | Pending | Allocating/into/adaptation pixels and white-anchor parity |
 | Descriptor and generic-layout invariants | Pending | Invalid alpha descriptors, U64 channel removal, empty row swaps |

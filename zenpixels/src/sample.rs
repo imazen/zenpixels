@@ -13,20 +13,20 @@
 //!
 //! Stored samples use native endianness. A byte-backed adapter must decode its
 //! declared byte order before applying the bit placement. Packed samples holding
-//! multiple components, signed integers and floating point are not described
-//! by this one-unsigned-component-per-sample representation.
+//! multiple components and floating point are not described by this representation.
+//! Signed integer payloads use two's complement within the declared code bits.
 
 use crate::ChannelType;
 use core::fmt;
 
 mod exact;
 mod native;
-pub use native::{NativeCodeError, NativeCodeSlice, NativeEncoding};
+pub use native::{NativeCodeError, NativeCodeSlice};
 mod plane;
 pub use exact::{ExactDepth, ExactDepthError};
 pub use plane::{ChromaSiting, ChromaSubsampling, CodePlane, CodePlaneError};
 
-/// Checked interpretation of one unsigned integer code in a stored sample.
+/// Checked interpretation of one integer code in a stored sample.
 ///
 /// Extract a code with `(sample >> bit_shift) & ((1 << code_bits) - 1)`, using
 /// sufficiently wide arithmetic. Bits outside that payload are padding: ignore
@@ -45,9 +45,9 @@ pub struct SampleEncoding {
 }
 
 impl SampleEncoding {
-    /// Describe an unsigned component without examining or changing samples.
+    /// Describe an integer component without examining or changing samples.
     ///
-    /// `storage` must be U8 or U16. Code depth must be positive and fit in the
+    /// `storage` must be an integer type. Code depth must be positive and fit in the
     /// storage type; adding the low padding bits must also fit. The check accepts
     /// all such placements, including 8-bit codes in U16 and 10/12-bit codes
     /// aligned to either end of U16. A consuming codec can support a narrower
@@ -58,8 +58,10 @@ impl SampleEncoding {
         bit_shift: u8,
     ) -> Result<Self, SampleEncodingError> {
         let storage_bits = match storage {
-            ChannelType::U8 => 8,
-            ChannelType::U16 => 16,
+            ChannelType::U8 | ChannelType::I8 => 8,
+            ChannelType::U16 | ChannelType::I16 => 16,
+            ChannelType::U32 | ChannelType::I32 => 32,
+            ChannelType::U64 | ChannelType::I64 => 64,
             _ => return Err(SampleEncodingError::UnsupportedStorage),
         };
         if code_bits == 0 || code_bits > storage_bits {
@@ -77,7 +79,7 @@ impl SampleEncoding {
         })
     }
 
-    /// Storage type (`U8` or `U16`); this does not determine the code depth.
+    /// Integer storage type; this does not determine the code depth.
     pub const fn storage(self) -> ChannelType {
         self.storage
     }
@@ -91,13 +93,35 @@ impl SampleEncoding {
     pub const fn bit_shift(self) -> u8 {
         self.bit_shift
     }
+    pub(crate) fn signed(self) -> bool {
+        matches!(
+            self.storage,
+            ChannelType::I8 | ChannelType::I16 | ChannelType::I32 | ChannelType::I64
+        )
+    }
+    pub(crate) fn decode(self, bytes: &[u8]) -> i128 {
+        let word = match bytes.len() {
+            1 => u64::from(bytes[0]),
+            2 => u64::from(u16::from_ne_bytes(bytes.try_into().unwrap())),
+            4 => u64::from(u32::from_ne_bytes(bytes.try_into().unwrap())),
+            8 => u64::from_ne_bytes(bytes.try_into().unwrap()),
+            _ => unreachable!(),
+        };
+        let mask = u64::MAX >> (64 - self.code_bits);
+        let code = (word >> self.bit_shift) & mask;
+        if self.signed() && code & (1u64 << (self.code_bits - 1)) != 0 {
+            i128::from(code) - (1i128 << self.code_bits)
+        } else {
+            i128::from(code)
+        }
+    }
 }
 
 /// An integer sample description cannot fit its declared storage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SampleEncodingError {
-    /// The storage type is not U8 or U16.
+    /// The storage type is not an integer.
     UnsupportedStorage,
     /// Code depth is zero or exceeds storage width.
     InvalidBitDepth,
@@ -108,7 +132,7 @@ pub enum SampleEncodingError {
 impl fmt::Display for SampleEncodingError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::UnsupportedStorage => "integer samples require U8 or U16 storage",
+            Self::UnsupportedStorage => "sample encoding requires integer storage",
             Self::InvalidBitDepth => "sample code depth must be positive and fit its storage",
             Self::InvalidBitShift => "sample code bits and low padding exceed storage width",
         })

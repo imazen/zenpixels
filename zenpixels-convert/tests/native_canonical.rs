@@ -1,15 +1,15 @@
 use zenpixels::{
     ChannelLayout as L, ChannelType as T, PixelDescriptor as D, PixelSliceMut,
-    sample::{NativeCodeSlice, NativeEncoding},
+    sample::{NativeCodeSlice, SampleEncoding},
 };
 use zenpixels_convert::codes::{NativeConversionError, native_to_u16};
 #[test]
 fn per_channel_canonicalization_preserves_padding_and_refuses_signed() {
     let enc = [
-        NativeEncoding::new(T::U16, 10, 0).unwrap(),
-        NativeEncoding::new(T::U16, 10, 0).unwrap(),
-        NativeEncoding::new(T::U16, 10, 0).unwrap(),
-        NativeEncoding::new(T::U16, 1, 0).unwrap(),
+        SampleEncoding::new(T::U16, 10, 0).unwrap(),
+        SampleEncoding::new(T::U16, 10, 0).unwrap(),
+        SampleEncoding::new(T::U16, 10, 0).unwrap(),
+        SampleEncoding::new(T::U16, 1, 0).unwrap(),
     ];
     let words = [
         0xffffu16, 0xfc00, 0xffff, 0xffff, 99, 99, 0xfc00, 0xffff, 0xfc00, 0xfffe,
@@ -22,7 +22,7 @@ fn per_channel_canonicalization_preserves_padding_and_refuses_signed() {
         native_to_u16(src, &mut dst, zenpixels::SignalRange::Full).unwrap();
     }
     assert_eq!(out, [65535, 0, 65535, 65535, 42, 42, 0, 65535, 0, 0]);
-    let signed = [NativeEncoding::new(T::I16, 10, 0).unwrap(); 4];
+    let signed = [SampleEncoding::new(T::I16, 10, 0).unwrap(); 4];
     let src =
         NativeCodeSlice::new(bytemuck::cast_slice(&words), 1, 2, 12, L::Rgba, &signed).unwrap();
     let before = out;
@@ -40,7 +40,7 @@ fn per_channel_canonicalization_preserves_padding_and_refuses_signed() {
 #[test]
 fn encoding_back_obeys_padding_policy_and_recovers_every_ten_bit_code() {
     use zenpixels_convert::codes::{NativePadding, u16_to_native};
-    let enc = [NativeEncoding::new(T::U16, 10, 0).unwrap()];
+    let enc = [SampleEncoding::new(T::U16, 10, 0).unwrap()];
     let words: Vec<u16> = (0..1024).map(|v| v | 0xfc00).collect();
     let src =
         NativeCodeSlice::new(bytemuck::cast_slice(&words), 1024, 1, 2048, L::Gray, &enc).unwrap();
@@ -95,5 +95,32 @@ fn encoding_back_obeys_padding_policy_and_recovers_every_ten_bit_code() {
     .unwrap();
     for (i, &v) in dest.iter().enumerate() {
         assert_eq!(v, i as u16);
+    }
+}
+
+#[test]
+fn wide_and_signed_carriage_does_not_grant_code_arithmetic() {
+    use zenpixels_convert::codes::{CodeMap, CodeMapError, CodeRole};
+    let canonical = SampleEncoding::new(T::U16, 16, 0).unwrap();
+    for storage in [T::I8, T::I16, T::U32, T::I32, T::U64, T::I64] {
+        let encoding = SampleEncoding::new(storage, 8, 0).unwrap();
+        assert!(matches!(
+            CodeMap::new(
+                encoding,
+                canonical,
+                CodeRole::Intensity,
+                zenpixels::SignalRange::Full
+            ),
+            Err(CodeMapError::UnsupportedStorage)
+        ));
+        assert!(matches!(
+            CodeMap::new(
+                canonical,
+                encoding,
+                CodeRole::Intensity,
+                zenpixels::SignalRange::Full
+            ),
+            Err(CodeMapError::UnsupportedStorage)
+        ));
     }
 }
