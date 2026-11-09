@@ -20,8 +20,6 @@ use crate::ChannelType;
 use core::fmt;
 
 mod exact;
-mod native;
-pub use native::{NativeCodeError, NativeCodeSlice};
 mod plane;
 pub use exact::{ExactDepth, ExactDepthError};
 pub use plane::{ChromaSiting, ChromaSubsampling, CodePlane, CodePlaneError};
@@ -92,28 +90,6 @@ impl SampleEncoding {
     /// Number of low padding bits below the code in its stored sample.
     pub const fn bit_shift(self) -> u8 {
         self.bit_shift
-    }
-    pub(crate) fn signed(self) -> bool {
-        matches!(
-            self.storage,
-            ChannelType::I8 | ChannelType::I16 | ChannelType::I32 | ChannelType::I64
-        )
-    }
-    pub(crate) fn decode(self, bytes: &[u8]) -> i128 {
-        let word = match bytes.len() {
-            1 => u64::from(bytes[0]),
-            2 => u64::from(u16::from_ne_bytes(bytes.try_into().unwrap())),
-            4 => u64::from(u32::from_ne_bytes(bytes.try_into().unwrap())),
-            8 => u64::from_ne_bytes(bytes.try_into().unwrap()),
-            _ => unreachable!(),
-        };
-        let mask = u64::MAX >> (64 - self.code_bits);
-        let code = (word >> self.bit_shift) & mask;
-        if self.signed() && code & (1u64 << (self.code_bits - 1)) != 0 {
-            i128::from(code) - (1i128 << self.code_bits)
-        } else {
-            i128::from(code)
-        }
     }
 }
 
