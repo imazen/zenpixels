@@ -150,9 +150,9 @@ fn borrow_or_copy<'a>(
         return Ok(PixelCow::Borrowed(slice));
     }
 
-    // Raw codec rows are allowed to have byte padding that is not a whole
-    // pixel. PixelSlice deliberately rejects that geometry, so normalize it
-    // into an aligned owned buffer instead of weakening PixelSlice's invariant.
+    // Raw codec rows may start off a sample boundary: a misaligned pointer, or a
+    // stride that isn't a whole number of samples. No PixelSlice can describe
+    // those, so copy them into an aligned owned buffer.
     let row_bytes = (width as usize)
         .checked_mul(descriptor.bytes_per_pixel())
         .ok_or_else(|| whereat::at!(ConvertError::AllocationFailed))?;
@@ -373,10 +373,10 @@ pub(crate) fn convert_into_with_anchor(
 ///   the formats exist — **only** when the source's alpha mode is
 ///   [`AlphaMode::Undefined`] (X padding) or [`AlphaMode::Opaque`]
 ///   (declared all-max): in those modes dropping the lane is value-exact
-///   by contract. The stride is kept as close as the slice rules allow —
-///   rounded down to a whole number of target pixels — so when the input
-///   stride already divides evenly rows compact **at their own bases**
-///   with zero cross-row movement and the freed bytes become row padding.
+///   by contract. The stride is rounded down to a whole number of target
+///   pixels, so a buffer that could be viewed through `imgref` still can. When
+///   the input stride already divides evenly rows compact **at their own
+///   bases** with zero cross-row movement and the freed bytes become row padding.
 ///   Straight or premultiplied alpha returns `Err`: a blind discard would
 ///   silently diverge from `adapt_for_encode`'s alpha policy (which
 ///   mattes); for *measured*-opaque alpha use
@@ -480,8 +480,7 @@ pub(crate) fn try_adapt_in_place(
 }
 
 /// The lane-drop transform behind [`try_adapt_in_place`], split out so
-/// arbitrary-stride geometries (not constructible through the public
-/// buffer constructors) stay unit-testable.
+/// its stride handling stays unit-testable.
 fn drop_lane_impl<'a>(
     px: zenpixels::InPlacePixels<'a>,
     target: PixelDescriptor,
@@ -492,9 +491,9 @@ fn drop_lane_impl<'a>(
 ) -> PixelSliceMut<'a> {
     let width = px.width as usize;
     // Output stride: the input stride rounded down to a whole number
-    // of target pixels (PixelSlice requires stride % bpp == 0). When
-    // the input stride is already a multiple of the narrower pixel,
-    // rows stay at their own bases (zero cross-row movement, freed
+    // of target pixels, which a tight input needs to stay viewable through
+    // `imgref`. When the input stride is already a multiple of the narrower
+    // pixel, rows stay at their own bases (zero cross-row movement, freed
     // bytes become row padding); otherwise rows shift up slightly.
     // Either way dst(y, x) <= src(y, x) for every pixel, so a
     // forward pass staged through a fixed temp never clobbers unread
@@ -1465,9 +1464,7 @@ mod tests {
     #[test]
     fn drop_lane_impl_keeps_divisible_stride_rows_in_place() {
         // Stride 12 (divisible by 3): rows stay at their own bases —
-        // zero cross-row movement, freed bytes become padding. Exercised
-        // at the transform level because the public constructors only
-        // produce pixel-tight or simd-aligned strides.
+        // zero cross-row movement, freed bytes become padding.
         let mut bytes = [
             1u8, 2, 3, 0xEE, 4, 5, 6, 0xEE, 0xAA, 0xAA, 0xAA, 0xAA, // row 0 + pad
             7, 8, 9, 0xEE, 10, 11, 12, 0xEE, 0xBB, 0xBB, 0xBB, 0xBB, // row 1 + pad

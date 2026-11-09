@@ -623,3 +623,8 @@ main-hdr-final-check:
     cargo test --manifest-path cms-contract/Cargo.toml
     cargo test --manifest-path tools/icc-collapse-no-db/Cargo.toml
     cargo check --manifest-path site/converter-wasm/Cargo.toml --target wasm32-unknown-unknown
+
+main-byte-stride-check:
+    cargo test --locked -p zenpixels --all-features --test byte_stride --test parts --test image_interop
+    cargo test --locked -p zenpixels-convert --features bt2446a,cms-lcms --test byte_stride
+    cargo clippy --locked -p zenpixels -p zenpixels-convert --all-targets --all-features -- -D warnings

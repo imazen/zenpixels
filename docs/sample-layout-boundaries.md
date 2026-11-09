@@ -4,7 +4,8 @@ Written 2026-10-31 against `feat/0.3.1-extensibility` (`746bd24`, PR #96).
 Answers six questions: how alignment works, what to do for F16 CMYK, how to
 make native-endian U16 safer, how to handle packed formats, what belongs in
 garb versus a codec boundary, and planar data. Recommendations are proposals;
-nothing here is implemented.
+nothing here is implemented, except the stride rule in section 1, which changed
+in 2026-11 (issue #91).
 
 ## The invariant that answers most of these
 
@@ -24,10 +25,11 @@ Current rules (`zenpixels/src/buffer.rs`, `descriptor.rs`):
   `PixelDescriptor::min_alignment()`, which is the channel byte size (1, 2, 4
   or 8). The doc comment at `descriptor.rs:1403` still says "1, 2, or 4"; F64,
   U64 and I64 give 8.
-- **Stride:** at least `width × bytes_per_pixel`, and a whole multiple of
-  `bytes_per_pixel` (`BufferError::StrideNotPixelAligned`). That makes every
-  row start pixel-aligned and lets typed views and `imgref` (whose stride is
-  in pixels) cover the buffer.
+- **Stride:** at least `width × bytes_per_pixel`, and a multiple of
+  `min_alignment()` (`BufferError::AlignmentViolation`), so every row starts on a
+  sample. It need not be a whole number of pixels. `imgref` counts its stride in
+  pixels, so `try_as_imgref` returns `BufferError::StrideNotPixelAligned` for such
+  rows, and typed `as_imgref` panics.
 - **Owned buffers** over-allocate by `align - 1` bytes and store an offset, so
   a `Vec<u8>` can hold U16/F32 rows. `into_parts()` exposes that offset.
 - **SIMD:** `new_simd_aligned` uses stride `lcm(bpp, simd_align)`, so every row
@@ -38,26 +40,22 @@ Current rules (`zenpixels/src/buffer.rs`, `descriptor.rs`):
 
 Gaps and proposals:
 
-- **The stride rule rejects common padded rows.** A 24-bit BMP/DIB pads rows
-  to 4 bytes: width 1 gives stride 4, and 4 is not a multiple of 3, so those
-  rows cannot be borrowed and must be repacked. Any RGB8 or RGB16 source with
-  a power-of-two row pitch hits the same rule. An earlier version of this doc
-  proposed relaxing the rule to "a multiple of `min_alignment()`". **Withdrawn
-  (2026-10-31): the whole-pixel stride is a contract callers rely on.**
-  - zenwebp computes `stride_pixels = pixels.stride() / bytes_per_pixel()`
-    (`zenwebp/src/codec.rs:984`) and hands it to its encoder: a non-pixel
-    stride would truncate and read wrong rows without any error.
-  - `as_imgref`/`as_imgref_mut` (`buffer.rs:2265`, `:2294`) call bytemuck's
-    panicking `cast_slice` over the whole buffer before their stride assert;
-    with a non-pixel stride the slice length is not a multiple of
-    `size_of::<P>()`, so these infallible methods would start panicking.
+- **The stride rule used to reject common padded rows (changed 2026-11, #91).** A
+  24-bit BMP/DIB pads rows to 4 bytes: width 1 gives stride 4, and 4 is not a
+  multiple of 3. Any RGB8 or RGB16 source with a power-of-two row pitch hit the
+  same rule, and so did native JXL f32 RGB with 16 bytes of padding. These rows
+  are now borrowed as they are. An earlier version of this doc withdrew that change
+  because callers rely on the whole-pixel stride. The owner's rule, that row
+  functions take strided rows natively, settles it; the costs recorded then remain:
+  - **Consumers that divide the stride by the pixel size misread rows silently.**
+    zenwebp computes `stride_pixels = pixels.stride() / bytes_per_pixel()`
+    (`zenwebp/src/codec.rs:984`) and hands it to its encoder: a non-pixel stride
+    truncates and reads wrong rows without any error. Each such site has to change
+    before it depends on this rule. The audit is in the PR that made the change.
+  - `as_imgref`/`as_imgref_mut` panic on such a stride, now reachable through
+    `try_from_parts` + `try_typed`. `try_as_imgref` returns the typed error.
   - Nothing becomes unsound: both crates are `forbid(unsafe_code)` and every
-    cast is checked. The risk is wrong pixels downstream and new panics, which
-    a grep cannot rule out across every consumer.
-
-  Padded sources stay a boundary concern: the decoder repacks rows into a
-  whole-pixel stride (one copy, already what happens), or exposes the samples
-  as `sample::CodePlane`s, which take any byte stride and an element step.
+    cast is checked.
 - **Typed `Vec` adoption copies.** Backing the owned buffer with storage of the
   sample's alignment (for example `Vec<u16>`/`Vec<u32>`/`Vec<u64>` behind an
   enum) would make `from_pixels(Vec<Rgb<f32>>)` zero-copy. The 0.3.1 work
@@ -157,10 +155,10 @@ lcm rule wastes space whenever bpp is not a power of two (computed as
 Recommendation (revised 2026-10-31, after the soundness audit and the
 measurements):
 
-- **Keep the whole-pixel stride on `PixelSlice`/`PixelBuffer`.** The lcm rule
-  is the price of that contract. It costs padding only on narrow rows (at most
-  `lcm(bpp, 64) - 1` bytes per row: 191 for RGB8, 0% at 1920 px); typed views,
-  `imgref` and downstream `stride / bpp` stay correct.
+- **Allocate whole-pixel strides, accept any sample-aligned one.** Views take
+  foreign rows at any sample-aligned stride (#91). What we allocate keeps the lcm
+  rule, so `imgref` keeps working on our own buffers. It costs padding only on
+  narrow rows (at most `lcm(bpp, 64) - 1` bytes per row: 191 for RGB8, 0% at 1920 px).
 - **Use 64 for `simd_align` on every CPU tier.** It covers 16-, 32- and
   64-byte vectors and the x86/Neoverse line; the measured gain is on AVX2 and
   AVX-512. Keep the argument for GPU staging (256).

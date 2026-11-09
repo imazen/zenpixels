@@ -151,7 +151,8 @@ let stride_bytes = 320usize;                   // padded; > width*bpp (256)
 let backing: Vec<u8> = vec![0u8; stride_bytes * rows as usize];
 
 // Borrows `backing` (lifetime-bound, zero-copy). `stride_bytes` is BYTES
-// between row starts, and must be a multiple of bytes_per_pixel.
+// between row starts: at least width*bpp and a multiple of the sample size.
+// It need not be a whole number of pixels (RGB8 rows 8 bytes apart are fine).
 let view = PixelSlice::new(&backing, width, rows, stride_bytes, PixelDescriptor::RGBA8_SRGB)?;
 assert_eq!(view.width(), 64);
 # Ok::<(), zenpixels::At<zenpixels::BufferError>>(())
@@ -161,7 +162,9 @@ Multi-byte samples (U16/F16/F32) are read in **native byte order** — a decoder
 holding big-endian container data (e.g. 16-bit PNG) must byte-swap before
 wrapping. `PixelSlice::new` validates length, stride, and channel alignment,
 returning `At<BufferError>` (`InsufficientData` / `StrideTooSmall` /
-`StrideNotPixelAligned` / `AlignmentViolation`) on a mismatch.
+`AlignmentViolation`) on a mismatch. `imgref` counts its stride in pixels, so
+`try_as_imgref` returns `StrideNotPixelAligned` for rows that aren't a whole number
+of pixels apart; read those through `row(y)`.
 
 ## Format conversion (zenpixels-convert)
 

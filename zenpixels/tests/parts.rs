@@ -104,7 +104,7 @@ fn rejection_preserves_allocation_and_can_be_repaired() {
 fn rejection_validates_stride_extent_overflow_and_alignment() {
     for (stride, height, expected) in [
         (2, 2, BufferError::StrideTooSmall),
-        (4, 2, BufferError::StrideNotPixelAligned),
+        (4, 2, BufferError::InsufficientData),
         (9, 3, BufferError::InsufficientData),
         (
             usize::MAX - usize::MAX % 3,
