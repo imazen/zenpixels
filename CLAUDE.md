@@ -197,6 +197,18 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
   pure-gamma sign/range guards: the released backend still reproduces the
   exact-zero ProPhoto F32 failure. See `docs/stable-dependencies-2026-11-07.md`.
 
+- Fixed explorer lock drift (2026-11-07): the converter adopted pastey while
+  the browser standalone lock retained its paste dependency edge. Locked WASM
+  Clippy refused before compilation. Refresh the standalone graph and run
+  `just explorer-boundary-check`; strict WASM Clippy and fmt pass without
+  changing source algorithms or assertions.
+
+- Fixed IQA conformance portability (2026-11-05): the new native trace test
+  assumed forward-slash source paths and failed on Windows x64/ARM64. It now
+  compares the recorded source path with `file!()` while retaining the exact
+  origin-line, context, cause-identity and propagation assertions. IQA scalar
+  arithmetic and native metric expectations are unchanged.
+
 - Fixed at F32 (2026-11-05): moxcms's `ToneCurveEvaluatorPureGamma` uses `dirty_powf`, which returns unrelated values where the power isn't representable (gamma 1.8 of zero is -1.65e8) and takes a negative base's sign from the exponent's integer part. A zero channel of a ProPhoto F32 sample clipped ordinary colors to full scale: 13,254 of 421,824 channels were over 2 codes from the 8-bit route, worst 255; now 0, worst 1. `PureGammaCurve` keeps the backend's evaluator for representable magnitudes and takes `libm` for the rest, on sources and gray routes. Evidence and limits: `benchmarks/pure_gamma_f32_2026-11-05.md`.
 
 - Open (2026-11-05), can't be fixed in the adapter: table source to pure-gamma RGB target. The backend interpolates a grid filled through the target's curve, so a grid node can be corrected but a value between a negative node and a positive one mixes two forms: worst 18 codes on a synthetic table, from 144 before. Upstream's own fix would remove this.

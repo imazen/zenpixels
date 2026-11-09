@@ -6,7 +6,7 @@ members = ["zenpixels", "zenpixels-convert", "scripts/icc-gen"]
 # `benchmarks/transpose-shootout/` is dev-box-only measurement equipment
 # (external transpose crates + optional C++ Simd FFI) — never built by CI/tests.
 # `cms-contract/` compares the production CMS backends; `just cms-contract`.
-exclude = ["benchmarks/moxcms-gamma", "site/converter-wasm", "apidoc", "benchmarks/transpose-shootout", "cms-contract", "tools/icc-collapse-no-db"]
+exclude = ["zenpsy-api", "benchmarks/moxcms-gamma", "site/converter-wasm", "apidoc", "benchmarks/transpose-shootout", "cms-contract", "tools/icc-collapse-no-db"]
 resolver = "2"
 
 [workspace.dependencies]

@@ -51,9 +51,11 @@ Gaps and proposals:
     zenwebp computes `stride_pixels = pixels.stride() / bytes_per_pixel()`
     (`zenwebp/src/codec.rs:984`) and hands it to its encoder: a non-pixel stride
     truncates and reads wrong rows without any error. Each such site has to change
-    before it depends on this rule. The audit is in the PR that made the change.
+    before it depends on this rule. zenwebp b6008d84 now borrows representable
+    strides and compacts other row pitches before entering the encoder.
   - `as_imgref`/`as_imgref_mut` panic on such a stride, now reachable through
-    `try_from_parts` + `try_typed`. `try_as_imgref` returns the typed error.
+    `try_from_parts` + `try_typed`. The checked `try_as_imgref` and
+    `try_as_imgref_mut` retain their `Option` signatures and return `None`.
   - Nothing becomes unsound: both crates are `forbid(unsafe_code)` and every
     cast is checked.
 - **Typed `Vec` adoption copies.** Backing the owned buffer with storage of the
