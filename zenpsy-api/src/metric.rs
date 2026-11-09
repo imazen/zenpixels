@@ -207,45 +207,24 @@ fn validate(result: &impl Evaluation) -> MetricResult<()> {
     validate_scores(crate::EvaluationRef::new(result))
 }
 
-// Names normally fit on the stack, including SSIMULACRA2 component maps.
-// Larger native output sets grow fallibly; no descriptor/iterator is boxed.
-struct Names<'a> {
-    stack: [Option<&'a str>; 64],
-    len: usize,
-    extra: alloc::vec::Vec<&'a str>,
-}
-impl<'a> Names<'a> {
-    fn new() -> Self {
-        Self {
-            stack: [None; 64],
-            len: 0,
-            extra: alloc::vec::Vec::new(),
-        }
+// Most native output sets fit inline. Reserve before pushing so overflow
+// allocation remains fallible; TinyVec owns the storage mechanics.
+#[track_caller]
+fn insert_name<'a>(names: &mut tinyvec::TinyVec<[&'a str; 64]>, key: &'a str) -> MetricResult<()> {
+    if key.is_empty() || names.contains(&key) {
+        return fail(
+            MetricError::new(ErrorKind::Internal).with_message("empty or duplicate output key"),
+        );
     }
-    fn insert(&mut self, key: &'a str) -> MetricResult<()> {
-        if key.is_empty()
-            || self.stack[..self.len].contains(&Some(key))
-            || self.extra.contains(&key)
-        {
-            return fail(
-                MetricError::new(ErrorKind::Internal).with_message("empty or duplicate output key"),
-            );
-        }
-        if self.len < self.stack.len() {
-            self.stack[self.len] = Some(key);
-            self.len += 1;
-        } else {
-            self.extra
-                .try_reserve(1)
-                .map_err(|e| whereat::at(MetricError::from_detail(ErrorKind::Resource, e)))?;
-            self.extra.push(key);
-        }
-        Ok(())
-    }
+    names
+        .try_reserve(1)
+        .map_err(|e| whereat::at(MetricError::from_detail(ErrorKind::Resource, e)))?;
+    names.push(key);
+    Ok(())
 }
 #[track_caller]
 pub(crate) fn validate_scores(result: crate::EvaluationRef<'_>) -> MetricResult<()> {
-    let mut names = Names::new();
+    let mut names = tinyvec::TinyVec::new();
     let mut status = Ok(());
     let mut count = 0;
     result.visit_scores(|score| {
@@ -259,7 +238,7 @@ pub(crate) fn validate_scores(result: crate::EvaluationRef<'_>) -> MetricResult<
             status =
                 fail(MetricError::new(ErrorKind::Internal).with_message("invalid native score"));
         } else {
-            status = names.insert(score.spec.key());
+            status = insert_name(&mut names, score.spec.key());
         }
     });
     status?;
@@ -356,7 +335,7 @@ pub(crate) fn validate_map_views(
     if !opts.diagnostics() {
         return Ok(());
     }
-    let mut names = Names::new();
+    let mut names = tinyvec::TinyVec::new();
     let mut found = false;
     let mut status = Ok(());
     result.visit_maps(|map| {
@@ -373,7 +352,7 @@ pub(crate) fn validate_map_views(
             return;
         }
         found |= matches!(opts.maps, MapRequest::Named(key) if key == map.spec.key());
-        status = names.insert(map.spec.key());
+        status = insert_name(&mut names, map.spec.key());
     });
     status?;
     if matches!(opts.maps, MapRequest::Named(_)) && !found {

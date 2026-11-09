@@ -49,7 +49,10 @@ The erased path allocates a result box and short-lived explicit score iterators;
 calls keep their native result and iterator. Use `native::<ConcreteOutput>()`
 when a caller needs the retained native fields. Checked validation visits each
 output set directly, without constructing erased iterators. Small output-name
-sets use stack storage; larger sets grow fallibly.
+sets use TinyVec inline storage; larger sets grow fallibly. The validation set
+is local to each assessment and borrows descriptor keys, whether their native
+source is a static string or an owned runtime key. No global name registry or
+per-key string copy is introduced.
 
 Public metadata is built with constructors/builders and read through accessors.
 `EvalOpts` alone supplies `Default`; empty score descriptors/maps have no semantic
