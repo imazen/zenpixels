@@ -9,23 +9,23 @@
 ## summary
 #
 #   pub modules                                13
-#   pub types (struct/enum/trait/alias)       133
+#   pub types (struct/enum/trait/alias)       134
 #   pub consts/statics                        365
 #   free functions                              2
 #   inherent methods                          380
 #   struct fields                             120
-#   enum variants                             321
+#   enum variants                             323
 #   re-exports                                  1
-#   trait roster entries (type × trait)       481
-#   auto-trait-complete types                  68
+#   trait roster entries (type × trait)       488
+#   auto-trait-complete types                  69
 #   auto-trait exceptions                       9
 #
 # per-module pub lines:
-#   (root)                          508
-#   buffer                          310
+#   (root)                          509
+#   buffer                          311
 #   cicp                             38
 #   color                            83
-#   descriptor                      167
+#   descriptor                      168
 #   hdr                              21
 #   icc                              11
 #   orientation                      11
@@ -35,7 +35,7 @@
 #   precision                        20
 #   sample                           41
 
-## items (1182 lines)
+## items (1185 lines)
 
 pub mod zenpixels
 pub use At
@@ -44,6 +44,7 @@ pub buffer::BufferError::AlignmentViolation
 pub buffer::BufferError::AllocationFailed
 pub buffer::BufferError::IncompatibleDescriptor
 pub buffer::BufferError::InsufficientData
+pub buffer::BufferError::InvalidDescriptor(descriptor::DescriptorError)
 pub buffer::BufferError::InvalidDimensions
 pub buffer::BufferError::StrideNotPixelAligned
 pub buffer::BufferError::StrideTooSmall
@@ -404,6 +405,7 @@ pub descriptor::TransferFunction::Unknown
 pub const fn descriptor::TransferFunction::from_cicp(u8) -> core::option::Option<Self> [also: (root)]
 pub fn descriptor::TransferFunction::reference_white_nits(&self) -> f32
 pub const fn descriptor::TransferFunction::to_cicp(self) -> core::option::Option<u8> [also: (root)]
+pub struct descriptor::DescriptorError
 pub struct descriptor::GenericFormat
 pub descriptor::PixelDescriptor::alpha: core::option::Option<descriptor::AlphaMode>
 pub descriptor::PixelDescriptor::format: descriptor::PixelFormat
@@ -471,8 +473,8 @@ pub const fn descriptor::PixelDescriptor::new_full(descriptor::ChannelType, desc
 pub const fn descriptor::PixelDescriptor::pixel_format(&self) -> descriptor::PixelFormat [also: (root)]
 pub const fn descriptor::PixelDescriptor::simd_aligned_stride(self, u32, usize) -> usize [also: (root)]
 pub const fn descriptor::PixelDescriptor::transfer(&self) -> descriptor::TransferFunction [also: (root)]
-pub const fn descriptor::PixelDescriptor::try_new(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>, descriptor::TransferFunction) -> core::option::Option<Self> [also: (root)]
-pub const fn descriptor::PixelDescriptor::try_new_full(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>, descriptor::TransferFunction, descriptor::ColorPrimaries) -> core::option::Option<Self> [also: (root)]
+pub const fn descriptor::PixelDescriptor::try_new(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>, descriptor::TransferFunction) -> core::result::Result<Self, descriptor::DescriptorError> [also: (root)]
+pub const fn descriptor::PixelDescriptor::try_new_full(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>, descriptor::TransferFunction, descriptor::ColorPrimaries) -> core::result::Result<Self, descriptor::DescriptorError> [also: (root)]
 pub fn descriptor::PixelDescriptor::validate(self) -> core::result::Result<(), buffer::BufferError>
 pub const fn descriptor::PixelDescriptor::with_alpha(self, core::option::Option<descriptor::AlphaMode>) -> Self [also: (root)]
 pub const fn descriptor::PixelDescriptor::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self [also: (root)]
@@ -810,6 +812,7 @@ pub BufferError::AlignmentViolation
 pub BufferError::AllocationFailed
 pub BufferError::IncompatibleDescriptor
 pub BufferError::InsufficientData
+pub BufferError::InvalidDescriptor(descriptor::DescriptorError)
 pub BufferError::InvalidDimensions
 pub BufferError::StrideNotPixelAligned
 pub BufferError::StrideTooSmall
@@ -1220,7 +1223,7 @@ pub trait Pixel: bytemuck::pod::Pod [also: buffer]
 pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 pub trait StorageSample: buffer::storage_sample::Sealed + bytemuck::pod::Pod + core::marker::Sized [also: buffer]
 
-## trait impls (97 types)
+## trait impls (98 types)
 
 &S: plane::SampleStorage
 &mut S: plane::SampleStorage, plane::SampleStorageMut
@@ -1259,6 +1262,7 @@ descriptor::ChannelLayout: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::ChannelType: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::ColorModel: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::ColorPrimaries: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq
+descriptor::DescriptorError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 descriptor::GenericFormat: Clone, Copy, Debug, Eq, Hash, PartialEq
 descriptor::PixelDescriptor: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::PixelFormat: Clone, Copy, Debug, Display, Eq, Hash, PartialEq

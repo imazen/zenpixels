@@ -44,9 +44,13 @@ None. This new companion is an unpublished review API.
 - Remove infallible `RowConverter::clone`; use `try_clone` for workers that may
   refuse cloning (`6be5db6f`).
 - Enforce alpha/layout consistency in every descriptor constructor (`9297c114`).
+- Return descriptive `DescriptorError` results from `PixelDescriptor::try_new`
+  and `try_new_full` instead of `Option` (`0cc49ab6`).
 
 ### Fixed
 
+- Capture error trace locations outside closures and preserve the public
+  `track_caller` chain (`f0fdc3f9`).
 - Keep each conversion operation with its descriptors and scale; preserve
   policy across channel swizzles and compositing rewrites (`0e309692`).
 - Resolve output white/context consistently across allocating, into, adaptation

@@ -29,7 +29,13 @@ Status below distinguishes the intended design from completed implementation.
   separately mutable vector of descriptors accompanies an operation list.
 - Output context derives from the resolved conversion, not wrapper-specific
   reconstruction. Pixel descriptor, white anchor and current profile agree.
-- Constructors enforce the same descriptor validity rules.
+- Constructors enforce the same descriptor validity rules. Fallible constructors
+  return `DescriptorError`, displaying the supplied sample type, layout, alpha
+  interpretation and violated rule. Buffer validation preserves that diagnostic.
+- Error closures construct raw errors. Wrap them with `At::wrap`, attach crate
+  metadata with `at_crate`, and call `.at()` outside the closure so tracing
+  preserves the calling function’s `track_caller` chain. `at_crate` alone does
+  not add the first location frame.
 - Generic layout operations do not assume a maximum sixteen-byte pixel.
 - ICC identification does not grant permission to replace a profile. Empirical
   rejection cannot be overridden by a structural matrix-shaper classification.
@@ -75,6 +81,9 @@ of global bit-exact substitution. Do not cite it as one.
   the storage/bits/shift arguments; its error is `SampleEncodingError`.
 - Replace `RowConverter::clone()` with `try_clone()?`. A stateful CMS worker can
   refuse cloning; callers can prepare another worker explicitly.
+- `PixelDescriptor::try_new` and `try_new_full` return `Result<Self,
+  descriptor::DescriptorError>` instead of `Option<Self>`; use `?` or inspect
+  the displayed reason.
 - Invalid descriptor alpha/layout combinations now fail consistently in fallible
   constructors and panic consistently in infallible constructors.
 - No new feature flags or public planning types are needed. `PlannedOperation`
@@ -109,3 +118,33 @@ floor ranks and only excludes rank zero; the existing outlier gates pass.
 Public API snapshots were regenerated. Cross-platform CI is tracked in
 [PR145](https://github.com/imazen/zenpixels/pull/145); local results are not a
 claim that remote CI or historical release branches have been qualified.
+
+## Profile assets and retention
+
+Removing the private, unused `builtin_profiles` implementation was intentional.
+It did not supply the exported ICC assets: `icc_profiles` and its bundled profile
+bytes remain available. The removal does not remove named-profile export.
+
+Lowest-priority follow-up: retain the original bytes of every profile represented
+by a recognition-table hash in private R2 storage or a private repository, with
+license/provenance records. Keep a cryptographic digest of the complete original
+file alongside its normalized recognition hash; normalization must not erase the
+identity needed to reproduce qualification. Record the generator revision, CMS
+backend, sample domain and tolerance used for each qualification run.
+
+Before requalifying historical rows, inventory table-to-asset coverage and report
+missing originals explicitly. Do not substitute a similarly named profile or
+publish restricted bytes. This retention inventory and historical revalidation
+have not been completed by the current code changes.
+
+`NativeCodeSlice` is an interleaved-byte adapter, not another storage owner or
+encoding model. It supplies the component boundaries needed by `native_to_u16`
+and `u16_to_native`; `CodePlane` supplies one component from typed U8/U16 storage.
+A separate public type is not mathematically necessary, but replacing it with a
+single universal view would need to carry both sets of layout rules. Retain the
+small adapter over shared `Plane` geometry for the current native conversion API;
+do not grow it into a second plane framework.
+
+Descriptor/trace follow-up validation: `just approved-contracts-check`,
+`just design-feature-check` and `just api-doc` passed. The overflow regression
+checks the exact public callsite, not only the error text.

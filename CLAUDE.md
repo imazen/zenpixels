@@ -120,6 +120,10 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed (2026-11-09): tracing inside error-mapping closures lost the public
+  `track_caller` chain. Error construction and trace capture are now separate;
+  the allocation-overflow regression verifies the exact public callsite.
+
 - Fixed in the 0.3 design consolidation: composed matte plans could retain stale
   execution descriptors, causing BGRA/P3 RGBA to gray conversions to panic.
   Each operation now owns its descriptors and scale (`0e309692`).
