@@ -263,12 +263,14 @@ For `v_frame`, which has no feature because nothing here consumes it:
 
 ### Packed buffers: `PixelStorage`
 
-`PixelBuffer<P, S = PixelStorage>` holds a `Vec` of the format's real sample type. A
-`Vec` must free memory with the alignment it allocated, so an owned `Vec<u8>` can never
-become a `Vec<u16>` or the reverse without a copy; only the same alignment casts
-(`Vec<Rgb<u16>>` to `Vec<u16>`, measured). An enum is what lets that survive type
-erasure: `DecodeOutput` goes through `dyn` dispatch, so a type parameter can't carry it.
-Only `as_bytes` branches on the variant. `PixelSlice` stays `&[u8]`, so `row()` and
+The default `PixelBuffer<P, S = PixelStorage>` holds a global `Vec` of the
+format's real sample type. Consuming casts between global `Vec<u8>` and
+`Vec<u16>` cannot preserve their different deallocation alignments; compatible
+same-alignment casts can reuse storage (`Vec<Rgb<u16>>` to `Vec<u16>`, measured).
+The enum provides a fixed owner type for APIs requiring the default PixelBuffer;
+it is not the only possible ownership-erasure mechanism. A generic storage owner
+can instead be retained behind an existing image-storage trait object. Only
+`as_bytes` branches on this enum's variant. `PixelSlice` stays `&[u8]`, so `row()` and
 kernels have no branch.
 
 - **Going in:** `PixelBufferParts::new(rgb_f32.into(), ...)` moves a decoder's `Vec`.
@@ -334,3 +336,108 @@ Where adapters live: mediaframe, pixon and yuvutils-rs are pre-1.0, so a public
 `From` impl naming their types would tie zenpixels' version to theirs. Put those
 adapters in a separate crate or in the codec adapter that needs them; a feature
 in zenpixels fits only 1.x crates such as pix (as `imgref` does today).
+
+## Plane views, picture views and allocator ownership — PR144
+
+Source audit: PR144 at `983ba43f`. This section describes the current types;
+proposed changes to owned erasure are explicitly marked below.
+
+| Type | Unit and access | Owns pixel allocation? | Interpretation |
+|---|---|---|---|
+| `Plane<C>` | One strided 2-D array | Determined by `C` | Sample storage and geometry only |
+| `PlaneRef<T>` | One shared plane, `Plane<&[T]>` | No | No role/color inference |
+| `PlaneMut<T>` | One exclusively borrowed plane, `Plane<&mut [T]>` | No | Mutation under Rust's exclusive borrow |
+| `AnyPlane` | One shared plane with erased sample type | No | Retains geometry and the native sample type |
+| `PlanarSlice` | Whole read-only planar picture | No | Borrows AnyPlanes, layout, color context and alpha declaration |
+| `PixelBuffer<P, S>` | Packed picture over storage `S` | Determined by `S` | Packed descriptor, context, offsets and byte stride |
+| `PixelStorage` | Runtime selection of a typed owned vector | Yes, global allocator | Preserves sample type for ownership recovery |
+
+PlanarSlice contains PlaneRefs through AnyPlane; it does not replace PlaneRef
+or PlaneMut. A single plane can hold interleaved Cb/Cr, and a complete monochrome
+picture can have only one plane. PlanarLayout alone describes roles/encodings;
+it does not borrow the samples or bind their current color context. No mutable
+picture aggregate is needed for IQA: producers mutate owner/PlaneMut storage,
+then lend shared picture views for scoring. Borrowing keeps the owner alive.
+
+### What Rust1.100 support already covers
+
+[Allocator](https://doc.rust-lang.org/nightly/std/alloc/trait.Allocator.html)
+and [Vec<T,A>](https://doc.rust-lang.org/nightly/std/vec/struct.Vec.html#method.new_in)
+are marked stable from Rust1.100 in the current official docs. The existing
+`allocator_api` feature enables generic Vec/Box storage implementations at that
+compiler version and is a no-op on older compilers.
+
+- Plane<Vec<T,A>> and Plane<Box<[T],A>> preserve the allocator owner for the
+  supported PlaneSample types (currently U8/U16/F32).
+- PixelBuffer<(),Vec<T,A>> works through the existing storage traits and
+  try_from_parts/into_parts. It need not become PixelStorage.
+- PlaneRef, PlaneMut, AnyPlane and PlanarSlice borrow samples independently of
+  their allocator. They cannot grow, free or replace the original allocation.
+- PlaneBuf<T> remains the convenient global-Vec alias. PixelStorage's public
+  variants and its Vec adoption/extraction APIs also remain Global-only.
+  AlignedSamples currently owns a global Vec<64-byte-aligned Chunk>.
+
+The existing allocator_api tests cover generic owners and extraction. PR144's
+additional beta control mutates through PlaneMut, lends a PlanarSlice with a
+short final row, then recovers Vec<u16,System> with the original pointer,
+allocator and padding. This is an ownership/interpretation test, not a
+performance or allocation-count measurement.
+
+### Alignment has separate obligations
+
+1. **Allocation layout:** retain the allocator, allocation size/capacity and
+   alignment needed for eventual deallocation or growth. A numerically aligned
+   pointer does not establish a compatible owned-vector allocation layout.
+2. **Typed sample access:** every referenced sample must meet align_of<T>, and
+   byte-backed views must validate their offset and stride for that type.
+3. **Row alignment:** an aligned allocation does not align every row. For
+   alignment A, both first-row address and row stride must be multiples of A.
+4. **Subview alignment:** cropping changes the first address. A parent aligned
+   to A can produce a crop that is only sample-aligned. Kernels must preserve a
+   valid unaligned path and active-row bounds, including short final rows.
+5. **Ownership transfer:** a borrowed reinterpretation and a consuming vector
+   conversion have different requirements. Recovering the original owner and
+   borrowing typed views preserves its deallocation contract; retyping an owned
+   Vec also needs compatible layout/capacity and valid element representation.
+
+For a scalar plane the row/crop address is
+`base + offset_bytes + y * stride_bytes + x * size_of<T>()`.
+An aligned allocator controls base; it does not choose offsets, pitches or crop
+coordinates. Over-alignment alone never supplies padding or permission to read
+past active rows. The official [allocator memory-fitting contract](https://doc.rust-lang.org/nightly/std/alloc/trait.Allocator.html#memory-fitting)
+requires the allocator and allocation alignment to remain compatible.
+
+### Gap and direction for owned erasure
+
+Custom allocator storage can reach today's borrowed processing paths, but cannot
+be moved into PixelStorage without satisfying its Global-Vec representation.
+A fixed PixelBuffer field, such as zencodec DecodeOutput at
+[dc128a4f](https://github.com/imazen/zencodec/blob/dc128a4faaa161d7f63559c4c640a0530e3490a6/src/output.rs),
+therefore narrows the available owners. Generic storage support alone does not
+fix that ownership-transfer boundary.
+
+There is already another erasure layer:
+[zencodec ImageOutput at dc128a4f](https://github.com/imazen/zencodec/blob/dc128a4faaa161d7f63559c4c640a0530e3490a6/src/image.rs)
+holds Arc<dyn ImageStorage>. That private trait owns the mapping lifetime;
+ImageOutput clones share the owner. Its current packed adapter still holds the
+default PixelBuffer. The smallest proposed extension is a private Packed<S>
+retaining PixelBuffer<(),S>, with a reviewed constructor accepting that storage.
+This can hide the concrete allocator/pool owner without allocator parameters
+across every codec or deep-cloning its pixels. The current Send/Sync/static
+ownership and mapping contracts must still hold. This extension is not
+implemented by PR144.
+
+Keep processing APIs on borrowed views and retain concrete S through owned
+handoffs where possible. Allocator-generic typed-vector storage (conceptually
+PixelStorage<A=Global>) remains an alternative when the enum itself needs to
+carry allocator A. It preserves one allocator type but does not by itself solve
+fixed output signatures or non-Vec owners. A new owner-erased carrier would
+also have to define mutability, cloning/fallible copying, lifetime/Send bounds,
+growth and recovery; first use the erasure already present. Do not add an enum
+variant with implicit copying or allocator loss under the existing Clone
+contract.
+
+No new allocator trait is needed: existing SampleStorage/ByteStorage and
+borrowed picture views are the processing boundary. Supplied allocator
+implementations can provide over-alignment without adding unsafe allocator
+implementation code to zenpixels.
