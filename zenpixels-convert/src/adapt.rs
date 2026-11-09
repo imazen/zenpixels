@@ -496,7 +496,7 @@ fn drop_lane_impl<'a>(
     // pixel, rows stay at their own bases (zero cross-row movement, freed
     // bytes become row padding); otherwise rows shift up slightly.
     // Either way dst(y, x) <= src(y, x) for every pixel, so a
-    // forward pass staged through a fixed temp never clobbers unread
+    // forward pass never clobbers unread
     // source.
     let out_stride = px.stride - (px.stride % out_bpp);
     for y in 0..px.rows as usize {
@@ -504,12 +504,19 @@ fn drop_lane_impl<'a>(
         let dbase = y * out_stride;
         for x in 0..width {
             let s = sbase + x * in_bpp;
-            let mut tmp = [0u8; 16];
-            tmp[..in_bpp].copy_from_slice(&px.bytes[s..s + in_bpp]);
+            // Only the U8 BGR mapping reorders components. Preserve its
+            // original pixel before overwriting; monotonic maps copy directly.
+            if map == [2, 1, 0] {
+                debug_assert_eq!(elem, 1);
+                let rgb = [px.bytes[s + 2], px.bytes[s + 1], px.bytes[s]];
+                let d = dbase + x * out_bpp;
+                px.bytes[d..d + 3].copy_from_slice(&rgb);
+                continue;
+            }
             let d = dbase + x * out_bpp;
             for (k, &c) in map.iter().enumerate() {
-                px.bytes[d + k * elem..d + (k + 1) * elem]
-                    .copy_from_slice(&tmp[c * elem..(c + 1) * elem]);
+                px.bytes
+                    .copy_within(s + c * elem..s + (c + 1) * elem, d + k * elem);
             }
         }
     }

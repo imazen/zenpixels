@@ -1883,6 +1883,9 @@ fn for_each_pixel_4bpp(
     mut f: impl FnMut(&mut [u8; 4]),
 ) {
     let row_bytes = width as usize * 4;
+    if row_bytes == 0 {
+        return;
+    }
     for y in 0..rows as usize {
         let row_start = y * stride;
         let row = &mut data[row_start..row_start + row_bytes];

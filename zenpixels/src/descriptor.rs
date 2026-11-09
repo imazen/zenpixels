@@ -865,17 +865,7 @@ impl PixelDescriptor {
         alpha: Option<AlphaMode>,
         transfer: TransferFunction,
     ) -> Option<Self> {
-        match PixelFormat::from_parts(channel_type, layout, alpha) {
-            // A layout with alpha needs a mode, and one without can't have one.
-            Some(format) if layout.has_alpha() == alpha.is_some() => Some(Self {
-                format,
-                transfer,
-                alpha,
-                primaries: ColorPrimaries::Bt709,
-                signal_range: SignalRange::Full,
-            }),
-            _ => None,
-        }
+        Self::try_new_full(channel_type, layout, alpha, transfer, ColorPrimaries::Bt709)
     }
 
     /// [`new_full`](Self::new_full), or `None` for a combination with no [`PixelFormat`].
@@ -889,14 +879,14 @@ impl PixelDescriptor {
         primaries: ColorPrimaries,
     ) -> Option<Self> {
         match PixelFormat::from_parts(channel_type, layout, alpha) {
-            Some(format) => Some(Self {
+            Some(format) if layout.has_alpha() == alpha.is_some() => Some(Self {
                 format,
                 transfer,
                 alpha,
                 primaries,
                 signal_range: SignalRange::Full,
             }),
-            None => None,
+            _ => None,
         }
     }
 
@@ -922,16 +912,9 @@ impl PixelDescriptor {
         alpha: Option<AlphaMode>,
         transfer: TransferFunction,
     ) -> Self {
-        let format = match PixelFormat::from_parts(channel_type, layout, alpha) {
-            Some(f) => f,
-            None => panic!("unsupported PixelFormat combination"),
-        };
-        Self {
-            format,
-            transfer,
-            alpha,
-            primaries: ColorPrimaries::Bt709,
-            signal_range: SignalRange::Full,
+        match Self::try_new(channel_type, layout, alpha, transfer) {
+            Some(descriptor) => descriptor,
+            None => panic!("unsupported PixelDescriptor combination"),
         }
     }
 
@@ -957,16 +940,9 @@ impl PixelDescriptor {
         transfer: TransferFunction,
         primaries: ColorPrimaries,
     ) -> Self {
-        let format = match PixelFormat::from_parts(channel_type, layout, alpha) {
-            Some(f) => f,
-            None => panic!("unsupported PixelFormat combination"),
-        };
-        Self {
-            format,
-            transfer,
-            alpha,
-            primaries,
-            signal_range: SignalRange::Full,
+        match Self::try_new_full(channel_type, layout, alpha, transfer, primaries) {
+            Some(descriptor) => descriptor,
+            None => panic!("unsupported PixelDescriptor combination"),
         }
     }
 

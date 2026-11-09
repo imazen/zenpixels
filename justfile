@@ -682,3 +682,7 @@ approved-contracts-check:
 # Shared sample interpretation and native carriage capability boundaries.
 sample-design-check:
     cargo test -p zenpixels -p zenpixels-convert --test sample_encoding --test code_planes --test native_codes --test native_canonical --test codes_exhaustive
+
+# Regressions for the single-contract conversion design.
+design-check:
+    cargo test -p zenpixels -p zenpixels-convert --test design_invariants
