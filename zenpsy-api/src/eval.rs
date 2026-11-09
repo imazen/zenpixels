@@ -11,7 +11,8 @@ pub enum Direction {
     /// No quality ordering is defined.
     Unordered,
 }
-/// Native scalar semantics. No universal range or normalization is imposed.
+/// Native output semantics, shared by scalars and maps. No universal range
+/// or normalization is imposed.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct ScoreSpec {
@@ -70,4 +71,10 @@ impl<'a> Score<'a> {
 pub trait Evaluation {
     /// All scalar outputs and their semantics, headline first when applicable.
     fn scores(&self) -> impl Iterator<Item = Score<'_>>;
+    /// Borrow native map planes when diagnostics were requested. The default
+    /// publishes none; a metric without diagnostics must refuse a request.
+    /// Native fields remain accessible even when no common map view is exposed.
+    fn maps(&self) -> impl Iterator<Item = crate::MapView<'_>> {
+        core::iter::empty()
+    }
 }

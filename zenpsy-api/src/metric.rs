@@ -42,6 +42,10 @@ impl<'a> EvalOpts<'a> {
         self.diagnostics = true;
         self
     }
+    pub(crate) const fn without_diagnostics(mut self) -> Self {
+        self.diagnostics = false;
+        self
+    }
     /// Whether diagnostics were explicitly requested.
     pub const fn diagnostics(&self) -> bool {
         self.diagnostics
@@ -129,6 +133,7 @@ impl<P: WarmReference> PreparedReference<P> {
             }
             let result = self.inner.evaluate(image, opts).at()?;
             validate(&result)?;
+            validate_maps(&result, image.width(), image.rows(), opts)?;
             opts.checkpoint()?;
             Ok(result)
         })
@@ -201,6 +206,7 @@ pub fn score<M: Metric + ?Sized>(
         }
         let result = metric.evaluate(reference, candidate, opts).at()?;
         validate(&result)?;
+        validate_maps(&result, candidate.width(), candidate.rows(), opts)?;
         opts.checkpoint()?;
         Ok(result)
     })
@@ -221,4 +227,51 @@ pub fn prepare_reference<'a, M: PrepareReference + ?Sized>(
             inner,
         })
     })
+}
+
+/// Admit one image and validate its complete native no-reference assessment.
+#[track_caller]
+pub fn score_image<M: crate::NoReferenceMetric + ?Sized>(
+    metric: &mut M,
+    image: &PixelSlice<'_>,
+    opts: EvalOpts<'_>,
+) -> MetricResult<M::Output> {
+    operation(opts, "score one image", |opts| {
+        admit(image, opts)?;
+        let result = metric.evaluate_image(image, opts).at()?;
+        validate(&result)?;
+        validate_maps(&result, image.width(), image.rows(), opts)?;
+        opts.checkpoint()?;
+        Ok(result)
+    })
+}
+#[track_caller]
+fn validate_maps(
+    result: &impl Evaluation,
+    width: u32,
+    height: u32,
+    opts: EvalOpts<'_>,
+) -> MetricResult<()> {
+    if !opts.diagnostics() {
+        return Ok(());
+    }
+    for (index, map) in result.maps().enumerate() {
+        if map.spec.key.is_empty()
+            || map.values.width() == 0
+            || map.values.height() == 0
+            || map.grid.input_width != width
+            || map.grid.input_height != height
+            || map.grid.cell_width == 0
+            || map.grid.cell_height == 0
+            || result
+                .maps()
+                .take(index)
+                .any(|other| other.spec.key == map.spec.key)
+        {
+            return fail(
+                MetricError::new(ErrorKind::Internal).with_message("invalid native map view"),
+            );
+        }
+    }
+    Ok(())
 }

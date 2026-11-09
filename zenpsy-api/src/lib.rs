@@ -2,7 +2,9 @@
 //!
 //! [`Metric::Output`] preserves native structured assessments. [`Evaluation`]
 //! exposes named scalars; [`PrepareReference`] optionally reuses reference work.
-//! Diagnostic arrays remain native data, explicitly requested in [`EvalOpts`].
+//! Diagnostic arrays remain native data, explicitly requested in [`EvalOpts`];
+//! borrowed [`MapView`]s expose common native placement and semantics.
+//! [`NoReferenceMetric`] provides the corresponding one-image contract.
 //! [`Erased`] composes with typed wrappers and supports heterogeneous metric
 //! collections. Persistence, map processing, scheduling and video composition
 //! belong to consumers. Worker adapters supply any required
@@ -15,8 +17,10 @@ mod erased;
 mod error;
 mod eval;
 mod identity;
+mod maps;
 mod metric;
-pub use erased::{DynMetric, DynPrepareReference, Erased, ErasedEvaluation};
+mod no_reference;
+pub use erased::{DynMetric, DynNoReferenceMetric, DynPrepareReference, Erased, ErasedEvaluation};
 pub use error::{
     ErrorKind, MetricError, MetricResult, ResultMetricExt, fail, find_metric_error, is_stopped,
     stop_reason,
@@ -24,8 +28,11 @@ pub use error::{
 pub use eval::{Direction, Evaluation, Score, ScoreSpec};
 pub use how_far;
 pub use identity::{Backend, Implementation, MetricId};
+pub use maps::{MapGrid, MapView};
 pub use metric::{
     EvalOpts, Metric, PrepareReference, PreparedReference, WarmReference, prepare_reference, score,
+    score_image,
 };
+pub use no_reference::{NoReferenceMetric, PairedEvaluation, PairedNoReference, PairedReference};
 pub use whereat;
 pub use zenpixels;

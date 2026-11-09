@@ -1,7 +1,7 @@
 //! Optional erasure at collection boundaries, preserving native results.
 use crate::{
-    EvalOpts, Evaluation, Metric, MetricId, MetricResult, PrepareReference, PreparedReference,
-    Score, WarmReference,
+    EvalOpts, Evaluation, MapView, Metric, MetricId, MetricResult, NoReferenceMetric,
+    PrepareReference, PreparedReference, Score, WarmReference,
 };
 use alloc::boxed::Box;
 use core::any::{Any, TypeId};
@@ -9,11 +9,15 @@ use zenpixels::PixelSlice;
 
 trait NativeEvaluation {
     fn scores(&self) -> Box<dyn Iterator<Item = Score<'_>> + '_>;
+    fn maps(&self) -> Box<dyn Iterator<Item = MapView<'_>> + '_>;
     fn as_any(&self) -> &dyn Any;
 }
 impl<T: Evaluation + 'static> NativeEvaluation for T {
     fn scores(&self) -> Box<dyn Iterator<Item = Score<'_>> + '_> {
         Box::new(Evaluation::scores(self))
+    }
+    fn maps(&self) -> Box<dyn Iterator<Item = MapView<'_>> + '_> {
+        Box::new(Evaluation::maps(self))
     }
     fn as_any(&self) -> &dyn Any {
         self
@@ -50,6 +54,9 @@ impl ErasedEvaluation {
 impl Evaluation for ErasedEvaluation {
     fn scores(&self) -> impl Iterator<Item = Score<'_>> {
         self.inner.scores()
+    }
+    fn maps(&self) -> impl Iterator<Item = MapView<'_>> {
+        self.inner.maps()
     }
 }
 
@@ -186,5 +193,40 @@ impl<M: PrepareReference + ?Sized> PrepareReference for Box<M> {
         opts: EvalOpts<'_>,
     ) -> MetricResult<Self::Prepared<'_>> {
         (**self).warm_reference(r, opts)
+    }
+}
+
+/// A heterogeneous one-image metric object. Scorer configuration may be borrowed;
+/// the erased owned native assessment must be static for downcasting.
+pub type DynNoReferenceMetric<'a> = dyn NoReferenceMetric<Output = ErasedEvaluation> + 'a;
+impl<M: NoReferenceMetric> NoReferenceMetric for Erased<M>
+where
+    M::Output: 'static,
+{
+    type Output = ErasedEvaluation;
+    fn id(&self) -> MetricId {
+        self.0.id()
+    }
+    fn evaluate_image(
+        &mut self,
+        image: &PixelSlice<'_>,
+        opts: EvalOpts<'_>,
+    ) -> MetricResult<Self::Output> {
+        self.0
+            .evaluate_image(image, opts)
+            .map(ErasedEvaluation::new)
+    }
+}
+impl<M: NoReferenceMetric + ?Sized> NoReferenceMetric for Box<M> {
+    type Output = M::Output;
+    fn id(&self) -> MetricId {
+        (**self).id()
+    }
+    fn evaluate_image(
+        &mut self,
+        image: &PixelSlice<'_>,
+        opts: EvalOpts<'_>,
+    ) -> MetricResult<Self::Output> {
+        (**self).evaluate_image(image, opts)
     }
 }

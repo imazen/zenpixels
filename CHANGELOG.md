@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- zenpsy-api: borrow native map planes and grid/semantics through typed and erased
+  assessments; add checked no-reference scoring and explicit paired/cached
+  composition (`71ab39be`).
+
 - Add stackable erased metric/results and an optional object-safe prepared-reference
   extension for heterogeneous collections without an orchestrator dependency.
 
