@@ -236,6 +236,11 @@ pub enum SynthesizedIcc {
 impl SynthesizedIcc {
     /// The profile to embed for `cicp`, by transfer and primaries together.
     ///
+    /// The input supplies color primaries and transfer only. Matrix coefficients
+    /// and signal range describe coded samples and are not applied by synthesis.
+    /// The returned RGB profile describes samples after the caller has decoded
+    /// the matrix and expanded range. It must not be attached to raw YCbCr or
+    /// limited-range code values as though synthesis had converted them.
     /// See the variants and precision caveats for supported combinations.
     /// HLG returns [`CmsUnsupported`](Self::CmsUnsupported) without a rendering target.
     #[must_use]
@@ -245,6 +250,8 @@ impl SynthesizedIcc {
 
     /// The GRAY-class counterpart of [`for_cicp`](Self::for_cicp), for gray images: containers such as
     /// PNG refuse an RGB profile on a gray image.
+    /// As with `for_cicp`, the caller must first decode coded matrix/range;
+    /// synthesis describes color and does not transform sample values.
     #[must_use]
     pub fn for_gray_cicp(cicp: Cicp) -> Self {
         synthesize_gray_icc_for_cicp(cicp)

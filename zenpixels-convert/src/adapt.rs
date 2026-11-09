@@ -8,7 +8,8 @@
 //!
 //! [`PixelSliceConvertExt::adapt_for_encode`](crate::ext::PixelSliceConvertExt::adapt_for_encode)
 //! covers pixels a [`PixelSlice`] can describe. [`adapt_raw_rows_for_encode`] covers
-//! raw rows with padding that isn't a whole number of pixels.
+//! raw rows whose sample alignment cannot be represented by PixelSlice.
+//! PixelSlice accepts sample-aligned byte strides, including partial-pixel padding.
 //!
 //! # Zero-copy fast path
 //!
@@ -31,21 +32,15 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
-//! use zenpixels_convert::adapt::adapt_for_encode_cow;
-//!
-//! let supported = &[
-//!     PixelDescriptor::RGB8_SRGB,
-//!     PixelDescriptor::GRAY8_SRGB,
-//! ];
-//!
-//! let adapted = adapt_for_encode_cow(
-//!     raw_bytes, source_desc, width, rows, stride, supported,
-//! )?;
-//!
-//! let view = adapted.as_slice();
-//! encoder.write_rows(view)?; // carries stride and descriptor
-
+//! ```
+//! use zenpixels::{PixelDescriptor, ConvertOptions};
+//! use zenpixels_convert::adapt::adapt_raw_rows_for_encode;
+//! let bytes = [10u8, 20, 30, 0, 40, 50, 60];
+//! let supported = [PixelDescriptor::RGB8_SRGB];
+//! let adapted = adapt_raw_rows_for_encode(&bytes, supported[0], 1, 2, 4,
+//!     &supported, &ConvertOptions::retain_channels())?;
+//! assert_eq!(adapted.as_slice().row(1), &[40, 50, 60]);
+//! # Ok::<(), whereat::At<zenpixels_convert::ConvertError>>(())
 //! ```
 
 use alloc::vec;
@@ -388,10 +383,12 @@ pub(crate) fn convert_into_with_anchor(
 /// alpha) — the buffer is **untouched**; fall through to the allocating
 /// `PixelSliceConvertExt::adapt_for_encode` or the `PixelBuffer` conversion methods:
 ///
-/// ```rust,ignore
-/// if try_adapt_in_place(&mut buf, target).is_err() {
-///     // needs a real conversion — allocate via adapt_for_encode
-/// }
+/// ```
+/// use zenpixels::{PixelBuffer, PixelDescriptor};
+/// use zenpixels_convert::PixelBufferConvertExt;
+/// let mut buf = PixelBuffer::try_new(1, 1, PixelDescriptor::RGB8_SRGB)?;
+/// buf.try_adapt_in_place(PixelDescriptor::RGB8_SRGB)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub(crate) fn try_adapt_in_place(
     buf: &mut PixelBuffer,

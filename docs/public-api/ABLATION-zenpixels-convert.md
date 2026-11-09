@@ -1,6 +1,16 @@
 # Free functions and other cut candidates, 2026-11-04
 
-Every public free function in `zenpixels` and `zenpixels-convert`, plus other candidates, with where each went. All of it is applied on `feat/api-ablation`, except the two rows marked **not yet**.
+Current surface: see the committed [converter API snapshot](zenpixels-convert.txt).
+The default free operations are `adapt::adapt_raw_rows_for_encode` (raw bytes
+that a typed pixel view cannot admit) and `codes::to_canonical` (a collection
+of independently encoded components has no single pixel receiver). Neither
+justifies another convenience wrapper. Feature-enabled surfaces are checked by
+`just design-feature-check`; public signatures are recorded by `just api-doc`.
+
+The table below is a historical migration inventory from 2026-11-04, not a
+claim about current callers or an unmerged feature branch. Its old caller counts
+are not current consumer qualification. The speculative NativeCodeSlice family
+has been removed from the candidate.
 
 `zpc` = `zenpixels_convert`, `zp` = `zenpixels`, `Desc` = `zp::PixelDescriptor`, `E` = `whereat::At<ConvertError>`.
 
