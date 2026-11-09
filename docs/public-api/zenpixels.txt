@@ -9,19 +9,19 @@
 ## summary
 #
 #   pub modules                                13
-#   pub types (struct/enum/trait/alias)       132
-#   pub consts/statics                        362
+#   pub types (struct/enum/trait/alias)       133
+#   pub consts/statics                        368
 #   free functions                              2
-#   inherent methods                          376
+#   inherent methods                          377
 #   struct fields                             120
-#   enum variants                             321
+#   enum variants                             322
 #   re-exports                                  1
-#   trait roster entries (type × trait)       478
-#   auto-trait-complete types                  67
+#   trait roster entries (type × trait)       481
+#   auto-trait-complete types                  68
 #   auto-trait exceptions                       9
 #
 # per-module pub lines:
-#   (root)                          506
+#   (root)                          512
 #   buffer                          311
 #   cicp                             38
 #   color                            83
@@ -30,12 +30,12 @@
 #   icc                              11
 #   orientation                      11
 #   pixel_types                       9
-#   plane                            94
+#   plane                            97
 #   policy                           22
 #   precision                        20
 #   sample                           33
 
-## items (1174 lines)
+## items (1183 lines)
 
 pub mod zenpixels
 pub use At
@@ -574,6 +574,7 @@ pub fn plane::AnyPlane<'_>::width(&self) -> usize
 pub plane::FloatEncodingError::NotFinite
 pub plane::FloatEncodingError::ZeroScale
 #[non_exhaustive] pub enum plane::LayoutError
+pub plane::LayoutError::AlphaInterpretation
 pub plane::LayoutError::Dimensions
 pub plane::LayoutError::Dimensions::actual: (usize, usize)
 pub plane::LayoutError::Dimensions::expected: (usize, usize)
@@ -628,6 +629,14 @@ pub fn plane::PlanarLayout::planes(&self) -> &[plane::PlaneSpec]
 pub fn plane::PlanarLayout::roles(&self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = plane::PlaneRole> + core::clone::Clone + '_
 pub fn plane::PlanarLayout::siting(&self) -> sample::ChromaSiting
 pub fn plane::PlanarLayout::subsampling(&self) -> sample::ChromaSubsampling
+pub struct plane::PlanarSlice<'a>
+pub const fn plane::PlanarSlice<'a>::alpha_mode(self) -> core::option::Option<descriptor::AlphaMode>
+pub const fn plane::PlanarSlice<'a>::color_context(self) -> &'a color::ColorContext
+pub const fn plane::PlanarSlice<'a>::height(self) -> u32
+pub const fn plane::PlanarSlice<'a>::layout(self) -> &'a plane::PlanarLayout
+pub fn plane::PlanarSlice<'a>::new(&'a [plane::AnyPlane<'a>], &'a plane::PlanarLayout, u32, u32, &'a color::ColorContext, core::option::Option<descriptor::AlphaMode>) -> core::result::Result<Self, plane::LayoutError>
+pub const fn plane::PlanarSlice<'a>::planes(self) -> &'a [plane::AnyPlane<'a>]
+pub const fn plane::PlanarSlice<'a>::width(self) -> u32
 pub struct plane::Plane<C>
 pub fn plane::Plane<&'a [T]>::into_strided_samples(self) -> &'a [T]
 pub fn plane::Plane<&'a mut [T]>::into_strided_samples_mut(self) -> &'a mut [T]
@@ -1212,7 +1221,7 @@ pub trait Pixel: bytemuck::pod::Pod [also: buffer]
 pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 pub trait StorageSample: buffer::storage_sample::Sealed + bytemuck::pod::Pod + core::marker::Sized [also: buffer]
 
-## trait impls (96 types)
+## trait impls (97 types)
 
 &S: plane::SampleStorage
 &mut S: plane::SampleStorage, plane::SampleStorageMut
@@ -1282,6 +1291,7 @@ plane::FloatEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
 plane::FloatEncodingError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 plane::LayoutError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 plane::PlanarLayout: Clone, Debug, Eq, Hash, PartialEq
+plane::PlanarSlice<'a>: Clone, Copy, Debug
 plane::Plane<C>: Clone, Copy, Debug
 plane::PlaneEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
 plane::PlaneError: Clone, Copy, Debug, Display, Eq, Error, PartialEq

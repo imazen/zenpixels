@@ -15,17 +15,36 @@
 
 ### QUEUED BREAKING CHANGES
 
+- Unpublished zenpsy-api metadata fields become private; use accessors/builders.
+  MapGrid construction is checked. The GPU variant uses `Backend::gpu`
+  (`e53e3ea1`).
+
+
 - Remove the duplicate `PixelFormat::create_from` constructor; use `from_parts(sample, layout, None)`. Remove root `at` and `ResultAtExt` reexports; import those from `whereat`. Retain the public encoder adaptation module and its raw-row/Cow entry points for existing codec consumers.
 
-None. This new companion is an unpublished review API.
+This companion remains an unpublished review API; no release is authorized.
 
 ### Added
+
+- Rework the planar IQA review on the unified main pixel interpretation contract
+  (`591d87a6`): use existing native code/layout readers and unchanged authoritative
+  color metadata; no normalization or inferred HLG rendering. Packed and planar
+  operation admission now share request and resource checks.
+
+- Optional standard planar ingress, owned reference preparation and checked
+  lending of structured assessments, including stacked erasure and heterogeneous
+  prepared collections (`e53e3ea1`, `20cbfe10`). Named map requests refuse missing
+  outputs; erased validation visits outputs without boxed iterators.
 
 - Still-image metric contracts with rich results, native plane validation,
   persistent identity, map geometry/folds, real reference reuse and conformance
   controls. No metric implementations or video session contracts are included.
 
 ### Changed
+
+- Use a plain Vec for per-assessment borrowed output-key validation, retaining
+  fallible growth and empty/duplicate-key errors. Keys remain
+  owned by native descriptors; no static registry or copied name set is added.
 
 - Name the unpublished shared contract `zenpsy-api`, with the Rust
   namespace `zenpsy_api`; retain `iqa` as a consumer-local alias.

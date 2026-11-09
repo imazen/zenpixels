@@ -67,4 +67,48 @@ mod with_allocator {
         m.row_mut(1).unwrap()[1] = 5;
         assert_eq!(v[3], 5);
     }
+    #[test]
+    fn mutable_plane_and_picture_borrows_preserve_the_allocator_owner() {
+        use zenpixels::plane::{
+            AnyPlane, PlanarLayout, PlanarSlice, PlaneEncoding, PlaneRole, PlaneSpec,
+        };
+        use zenpixels::sample::{ChromaSiting, ChromaSubsampling, SampleEncoding};
+        use zenpixels::{Cicp, ColorContext};
+        let mut data = in_system::<u16>(19); // 5x3, stride 7, short final row.
+        data[5] = 0xbeef; // Row padding must remain unchanged.
+        let ptr = data.as_ptr();
+        let mut owner = Plane::new(data, 5, 3, 7).unwrap();
+        {
+            let mut writable: PlaneMut<'_, u16> = owner.view_mut();
+            writable.row_mut(2).unwrap()[4] = 0x1234;
+        }
+        let layout = PlanarLayout::new(
+            vec![PlaneSpec::new(
+                PlaneRole::Luma,
+                PlaneEncoding::Code(
+                    SampleEncoding::new(zenpixels::ChannelType::U16, 10, 6).unwrap(),
+                ),
+            )],
+            ChromaSubsampling::Mono,
+            ChromaSiting::Unknown,
+        )
+        .unwrap();
+        let context = ColorContext::from_cicp(Cicp::new(1, 1, 0, true));
+        {
+            let borrowed: PlaneRef<'_, u16> = owner.view();
+            let planes = [AnyPlane::U16(borrowed)];
+            let picture = PlanarSlice::new(&planes, &layout, 5, 3, &context, None).unwrap();
+            let AnyPlane::U16(plane) = picture.planes()[0] else {
+                panic!("u16")
+            };
+            assert_eq!(plane.strided_samples().as_ptr(), ptr);
+            assert_eq!(plane.row(2).unwrap()[4], 0x1234);
+            assert!(core::ptr::eq(picture.color_context(), &context));
+        }
+        // Both view layers borrow; neither consumes/replaces the allocator.
+        let recovered: Vec<u16, System> = owner.try_into_vec().unwrap();
+        assert_eq!(recovered.as_ptr(), ptr);
+        let _: &System = recovered.allocator();
+        assert_eq!((recovered[5], recovered[18]), (0xbeef, 0x1234));
+    }
 }

@@ -85,7 +85,7 @@ fn preserves_multiple_outputs_native_data_and_prepared_geometry() {
     assert_eq!(*cold.detail, 17);
     assert_eq!(
         cold.scores()
-            .map(|s| (s.spec.key.as_ref(), s.value))
+            .map(|s| (s.spec.key(), s.value))
             .collect::<Vec<_>>(),
         [("max", 1.25), ("pnorm", 0.375)]
     );
@@ -149,9 +149,33 @@ fn identity_retains_config_and_actual_implementation_without_column_policy() {
     }
     .id();
     assert_eq!(a.config_value("display"), Some("hdr"));
-    assert_ne!(a.clone().with_backend(Backend::Gpu { api: "cuda" }), a);
+    assert_ne!(a.clone().with_backend(Backend::gpu("cuda")), a);
     assert_eq!(
         a.clone().with_config("x", 1).with_config("y", 2),
         a.with_config("y", 2).with_config("x", 1)
+    );
+}
+
+#[test]
+fn descriptors_support_owned_keys_and_infinity_without_identity_defaults() {
+    let spec = ScoreSpec::new("placeholder", Direction::Lower)
+        .with_key(String::from("runtime-key"))
+        .with_positive_infinity(true);
+    assert_eq!(spec.key(), "runtime-key");
+    assert_eq!(spec.perfect(), None);
+    assert!(spec.positive_infinity());
+    assert!(!EvalOpts::default().diagnostics());
+    assert_eq!(
+        MapGrid::new(0, 1).unwrap_err().error().kind(),
+        ErrorKind::InvalidConfig
+    );
+    assert_eq!(
+        MapGrid::new(1, 1)
+            .unwrap()
+            .with_cells(0, 0, 0, 1)
+            .unwrap_err()
+            .error()
+            .kind(),
+        ErrorKind::InvalidConfig
     );
 }

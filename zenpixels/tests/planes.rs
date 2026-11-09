@@ -572,3 +572,99 @@ fn a_lone_alpha_plane_is_a_layout() {
     let plane = AlignedPlane::<u8>::alloc(5, 3).unwrap();
     assert_eq!(plane.row(2).unwrap().len(), 5);
 }
+
+#[test]
+fn planar_picture_reuses_native_code_components_and_preserves_interpretation() {
+    use zenpixels::sample::CodePlane;
+    use zenpixels::{AlphaMode, Cicp, ColorContext, ColorProfileSource};
+    let layout = PlanarLayout::new(
+        vec![
+            PlaneSpec::new(PlaneRole::Luma, codes(ChannelType::U16, 10, 6)),
+            PlaneSpec::new(PlaneRole::CrCb, codes(ChannelType::U16, 10, 6)),
+            PlaneSpec::new(PlaneRole::Alpha, codes(ChannelType::U8, 1, 0)),
+        ],
+        ChromaSubsampling::Yuv420,
+        ChromaSiting::Left,
+    )
+    .unwrap();
+    let y: Vec<u16> = (0..19).map(|i| ((i + 64) << 6) | 63).collect();
+    let uv: Vec<u16> = (0..15).map(|i| ((i + 300) << 6) | 31).collect();
+    let alpha: Vec<u8> = (0..17).map(|i| 0xfe | (i & 1)).collect();
+    let planes = [
+        AnyPlane::U16(PlaneRef::new(&y[..], 5, 3, 7).unwrap()),
+        AnyPlane::U16(PlaneRef::new(&uv[..], 6, 2, 9).unwrap()),
+        AnyPlane::U8(PlaneRef::new(&alpha[..], 5, 3, 6).unwrap()),
+    ];
+    // HLG signaling is not display rendering, and no white/peak is inferred.
+    let context = ColorContext::from_cicp(Cicp::new(9, 18, 9, false));
+    let image =
+        PlanarSlice::new(&planes, &layout, 5, 3, &context, Some(AlphaMode::Straight)).unwrap();
+    assert!(core::ptr::eq(image.color_context(), &context));
+    assert!(image.color_context().diffuse_white.is_none());
+    assert!(image.color_context().hdr_peak.is_none());
+    assert_eq!(image.layout().siting(), ChromaSiting::Left);
+    assert_eq!(image.alpha_mode(), Some(AlphaMode::Straight));
+    let cr = CodePlane::component(
+        image.planes()[1],
+        2,
+        0,
+        SampleEncoding::new(ChannelType::U16, 10, 6).unwrap(),
+    )
+    .unwrap();
+    let cb = CodePlane::component(image.planes()[1], 2, 1, cr.encoding()).unwrap();
+    assert_eq!(cr.code(2, 1), Some(313));
+    assert_eq!(cb.code(2, 1), Some(314));
+    let a = CodePlane::new(
+        image.planes()[2],
+        SampleEncoding::new(ChannelType::U8, 1, 0).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(a.code(4, 2), Some(0));
+    let AnyPlane::U16(luma) = image.planes()[0] else {
+        panic!("U16")
+    };
+    assert_eq!(luma.strided_samples().as_ptr(), y.as_ptr());
+    assert_eq!(luma.row(2).unwrap(), &y[14..19]);
+    assert_eq!(y[5], (69 << 6) | 63); // Padding and low payload padding are untouched.
+
+    // Raw unknown signaling and opaque ICC bytes remain transportable. The
+    // enclosing context's existing authority rule decides which source is used.
+    let icc: Arc<[u8]> = Arc::from([1, 2, 3, 4]);
+    let declared = ColorContext::from_cicp(Cicp::new(200, 201, 202, false)).with_icc(icc.clone());
+    let image =
+        PlanarSlice::new(&planes, &layout, 5, 3, &declared, Some(AlphaMode::Straight)).unwrap();
+    assert_eq!(image.color_context().cicp, declared.cicp);
+    assert!(Arc::ptr_eq(
+        image.color_context().icc.as_ref().unwrap(),
+        &icc
+    ));
+    assert_eq!(
+        image.color_context().as_profile_source(),
+        Some(ColorProfileSource::Icc(icc.as_ref()))
+    );
+}
+
+#[test]
+fn signed_and_wide_encoding_descriptions_do_not_relabel_plane_storage() {
+    use zenpixels::ColorContext;
+    let data = [0xffffu16];
+    let planes = [AnyPlane::U16(PlaneRef::new(&data[..], 1, 1, 1).unwrap())];
+    let context = ColorContext::default();
+    for storage in [ChannelType::I16, ChannelType::U32, ChannelType::I64] {
+        let encoding = SampleEncoding::new(storage, 10, 0).unwrap();
+        let layout = PlanarLayout::new(
+            vec![PlaneSpec::new(
+                PlaneRole::Luma,
+                PlaneEncoding::Code(encoding),
+            )],
+            ChromaSubsampling::Mono,
+            ChromaSiting::Unknown,
+        )
+        .unwrap();
+        assert_eq!(
+            PlanarSlice::new(&planes, &layout, 1, 1, &context, None).unwrap_err(),
+            LayoutError::SampleType { index: 0 }
+        );
+    }
+    assert_eq!(data, [0xffff]);
+}

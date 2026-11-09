@@ -167,8 +167,8 @@ impl Metric for Worker {
         _: &PixelSlice<'_>,
         opts: EvalOpts<'_>,
     ) -> Result<NativeScore> {
-        opts.pulse.set_total(Total::Exact(2)).unwrap();
-        let shared = opts.pulse.share().unwrap();
+        opts.pulse().set_total(Total::Exact(2)).unwrap();
+        let shared = opts.pulse().share().unwrap();
         // An owned worker gets the complete view, including progress and stop.
         std::thread::spawn(move || {
             how_far::ProgressExt::step(shared.as_pulse(), 2)

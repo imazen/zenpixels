@@ -152,3 +152,26 @@ remain supported.
 The repository follow-up for authority, HLG backend refusal, P3 exports, API
 migrations and allocation ownership is recorded in
 [repository issue improvements](repository-issue-completion.md).
+
+## IQA planar consumer review — PR144
+
+The optional zenpsy planar path builds on Plane/AnyPlane, PlanarLayout,
+SampleEncoding and ColorContext. Its borrowed PlanarSlice is used by the
+prepared metric/JXL consumer; it does not restore NativeCodeSlice or add a
+second payload-encoding model. Existing CodePlane::component reads supported
+interleaved native components. Signed/wide descriptions still do not imply
+reader or metric support.
+
+Storage/layout validation does not resolve color or display policy. The view
+retains unknown CICP, ICC authority, matrix/range, siting and alpha without
+conversion or allocation. HLG display rendering and luminance anchors remain
+explicit metric/converter configuration. Checked prepared calls bind the
+interpretation used during preparation; changing pitch alone remains valid.
+Original bitstream signaling is not a substitute for the current sample context.
+
+Regression coverage uses odd-sized 4:2:0 CrCb with 10-bit high-aligned words,
+independent one-bit alpha, short final rows and untouched padding; existing
+component readers recover the exact payloads. Erased preparation/lending checks
+retain opaque ICC and unknown signaling, distinguish absent/explicit HDR anchors,
+and reject changed preparation interpretation. These are transport/operation
+controls, not HDR metric-quality or conversion qualification.

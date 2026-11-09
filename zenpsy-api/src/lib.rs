@@ -20,19 +20,28 @@ mod identity;
 mod maps;
 mod metric;
 mod no_reference;
-pub use erased::{DynMetric, DynNoReferenceMetric, DynPrepareReference, Erased, ErasedEvaluation};
+mod planar;
+pub use erased::{
+    DynMetric, DynNoReferenceMetric, DynPreparePlanarReference, DynPrepareReference, Erased,
+    ErasedEvaluation,
+};
 pub use error::{
     ErrorKind, MetricError, MetricResult, ResultMetricExt, fail, find_metric_error, is_stopped,
     stop_reason,
 };
-pub use eval::{Direction, Evaluation, Score, ScoreSpec};
+pub use eval::{Direction, Evaluation, EvaluationRef, Score, ScoreSpec};
 pub use how_far;
 pub use identity::{Backend, Implementation, MetricId};
 pub use maps::{MapGrid, MapView};
 pub use metric::{
-    EvalOpts, Metric, PrepareReference, PreparedReference, WarmReference, prepare_reference, score,
-    score_image,
+    EvalOpts, MapRequest, Metric, PrepareReference, PreparedReference, WarmReference,
+    prepare_reference, score, score_image,
 };
 pub use no_reference::{NoReferenceMetric, PairedEvaluation, PairedNoReference, PairedReference};
 pub use whereat;
 pub use zenpixels;
+
+pub use planar::{
+    PlanarMetric, PlanarWarmReference, PreparePlanarReference, PreparedPlanarReference,
+    prepare_planar_reference, score_planar,
+};

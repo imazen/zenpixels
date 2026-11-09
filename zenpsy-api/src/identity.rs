@@ -13,10 +13,18 @@ pub enum Backend {
     /// Host CPU (any SIMD tier; tiers must agree bit for bit).
     Cpu,
     /// A GPU through the named API (`"cuda"`, `"wgpu"`, `"metal"`).
+    #[non_exhaustive]
     Gpu {
         /// The GPU API, lowercase.
         api: &'static str,
     },
+}
+
+impl Backend {
+    /// GPU through the named API; device details may be added independently.
+    pub const fn gpu(api: &'static str) -> Self {
+        Self::Gpu { api }
+    }
 }
 
 /// Which code computed a score. Build it with [`crate::implementation!`] so the
@@ -25,16 +33,16 @@ pub enum Backend {
 #[non_exhaustive]
 pub struct Implementation {
     /// The implementing crate (`CARGO_PKG_NAME`).
-    pub crate_name: &'static str,
+    crate_name: &'static str,
     /// Its version (`CARGO_PKG_VERSION`). Implementation provenance.
-    pub crate_version: &'static str,
+    crate_version: &'static str,
     /// Output revision. Bump whenever any output can change.
-    pub score_revision: u32,
+    score_revision: u32,
     /// Where it runs.
-    pub backend: Backend,
+    backend: Backend,
     /// Optional build id (a commit hash), from `ZENMETRICS_BUILD_ID` at
     /// compile time. Implementation provenance.
-    pub build: Option<&'static str>,
+    build: Option<&'static str>,
 }
 
 impl Implementation {
@@ -53,6 +61,26 @@ impl Implementation {
         }
     }
 
+    /// Implementing crate name.
+    pub const fn crate_name(&self) -> &'static str {
+        self.crate_name
+    }
+    /// Implementing crate version.
+    pub const fn crate_version(&self) -> &'static str {
+        self.crate_version
+    }
+    /// Output definition revision.
+    pub const fn score_revision(&self) -> u32 {
+        self.score_revision
+    }
+    /// Actual compute backend.
+    pub const fn backend(&self) -> Backend {
+        self.backend
+    }
+    /// Optional implementation build identity.
+    pub const fn build(&self) -> Option<&'static str> {
+        self.build
+    }
     /// Replace the backend.
     #[must_use]
     pub const fn with_backend(mut self, backend: Backend) -> Self {
@@ -74,8 +102,8 @@ impl Implementation {
 ///
 /// ```
 /// let imp = zenpsy_api::implementation!(3);
-/// assert_eq!(imp.crate_name, "zenpsy-api");
-/// assert_eq!(imp.score_revision, 3);
+/// assert_eq!(imp.crate_name(), "zenpsy-api");
+/// assert_eq!(imp.score_revision(), 3);
 /// ```
 #[macro_export]
 macro_rules! implementation {

@@ -1040,6 +1040,8 @@ impl PlaneSpec {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum LayoutError {
+    /// Alpha interpretation must be present exactly when an alpha plane exists.
+    AlphaInterpretation,
     /// The layout has no planes.
     Empty,
     /// A component appears in more than one plane.
@@ -1086,6 +1088,9 @@ pub enum LayoutError {
 impl fmt::Display for LayoutError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::AlphaInterpretation => {
+                f.write_str("planar alpha role and interpretation disagree")
+            }
             Self::Empty => f.write_str("planar layout has no planes"),
             Self::DuplicateRole(r) => write!(f, "planar layout holds {r:?} twice"),
             Self::MixedFamilies => f.write_str("planar layout mixes YCbCr and RGB components"),
@@ -1286,5 +1291,81 @@ impl PlanarLayout {
             });
         }
         Ok(())
+    }
+}
+
+/// A borrowed, color-described planar picture using standard plane roles,
+/// encodings, strides and subsampling. Construction checks storage and layout;
+/// it does not convert, normalize or infer color. Empty pictures are allowed
+/// here; consumers decide their minimum geometry.
+///
+/// Integer payload depth and placement use [`SampleEncoding`]; read supported
+/// native components through [`crate::sample::CodePlane`]. A representable
+/// encoding does not establish support for reading or processing that storage.
+/// Color signaling is carried verbatim: unknown CICP, authoritative ICC and
+/// missing luminance anchors are not normalized or replaced. In particular,
+/// an HLG tag does not select [`crate::hdr::HlgRendering`]; a metric or converter
+/// supplies any required display conditions in its own configuration.
+#[derive(Clone, Copy, Debug)]
+pub struct PlanarSlice<'a> {
+    planes: &'a [AnyPlane<'a>],
+    layout: &'a PlanarLayout,
+    width: u32,
+    height: u32,
+    color: &'a crate::ColorContext,
+    alpha: Option<crate::AlphaMode>,
+}
+impl<'a> PlanarSlice<'a> {
+    /// Borrow a complete picture, preserving independently strided planes.
+    /// `color` describes these samples, including matrix/range for YCbCr and
+    /// an explicit luminance anchor when relative and absolute light interact.
+    /// `alpha` is required exactly when the layout contains an alpha plane.
+    ///
+    /// # Errors
+    /// Returns a layout, storage, geometry or alpha-interpretation mismatch.
+    pub fn new(
+        planes: &'a [AnyPlane<'a>],
+        layout: &'a PlanarLayout,
+        width: u32,
+        height: u32,
+        color: &'a crate::ColorContext,
+        alpha: Option<crate::AlphaMode>,
+    ) -> Result<Self, LayoutError> {
+        layout.check(planes, width, height)?;
+        if layout.roles().any(|r| r == PlaneRole::Alpha) != alpha.is_some() {
+            return Err(LayoutError::AlphaInterpretation);
+        }
+        Ok(Self {
+            planes,
+            layout,
+            width,
+            height,
+            color,
+            alpha,
+        })
+    }
+    /// Borrowed native storage, in layout order.
+    pub const fn planes(self) -> &'a [AnyPlane<'a>] {
+        self.planes
+    }
+    /// Role, sample encoding, subsampling and siting of each plane.
+    pub const fn layout(self) -> &'a PlanarLayout {
+        self.layout
+    }
+    /// Complete image width, before any chroma subsampling.
+    pub const fn width(self) -> u32 {
+        self.width
+    }
+    /// Complete image height.
+    pub const fn height(self) -> u32 {
+        self.height
+    }
+    /// Color and luminance signaling for the actual samples.
+    pub const fn color_context(self) -> &'a crate::ColorContext {
+        self.color
+    }
+    /// Declared alpha interpretation.
+    pub const fn alpha_mode(self) -> Option<crate::AlphaMode> {
+        self.alpha
     }
 }
