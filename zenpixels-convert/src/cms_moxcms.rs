@@ -1142,9 +1142,11 @@ impl crate::cms::PluggableCms for MoxCms {
         use crate::cms::CmsPluginError;
         // A profile TRC cannot apply the coupled HLG display OOTF. Decline
         // crossings even with options: the caller's renderer owns that policy.
-        let hlg_crossing = matches!((src.resolve(), dst.resolve()),
-            (Some((_, a)), Some((_, b))) if a != b &&
-            (a == crate::TransferFunction::Hlg || b == crate::TransferFunction::Hlg));
+        let source_transfer = src.resolve().map(|(_, transfer)| transfer);
+        let target_transfer = dst.resolve().map(|(_, transfer)| transfer);
+        let hlg_crossing = source_transfer != target_transfer
+            && (source_transfer == Some(crate::TransferFunction::Hlg)
+                || target_transfer == Some(crate::TransferFunction::Hlg));
         if hlg_crossing {
             return None;
         }

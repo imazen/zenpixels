@@ -108,3 +108,48 @@ fn unsupported_authoritative_origin_never_falls_back_to_icc() {
         assert_eq!(buffer.as_slice().row(0), [17, 51, 193]);
     }
 }
+
+#[derive(Default)]
+struct RoutingSpy(std::sync::Mutex<Vec<bool>>);
+impl zenpixels_convert::cms::PluggableCms for RoutingSpy {
+    fn build_source_transform(
+        &self,
+        _: ColorProfileSource<'_>,
+        target: ColorProfileSource<'_>,
+        _: PixelFormat,
+        _: PixelFormat,
+        _: &ConvertOptions,
+    ) -> Option<
+        Result<
+            Box<dyn zenpixels_convert::cms::RowTransformMut>,
+            whereat::At<zenpixels_convert::cms::CmsPluginError>,
+        >,
+    > {
+        self.0
+            .lock()
+            .unwrap()
+            .push(matches!(target, ColorProfileSource::Icc(_)));
+        None
+    }
+}
+#[test]
+fn unknown_authoritative_icc_reaches_cms_and_cannot_be_replaced_by_cicp() {
+    let spy = RoutingSpy::default();
+    let origin = ColorOrigin::from_icc_and_cicp(vec![1, 2, 3], Cicp::SRGB)
+        .with_color_authority(ColorAuthority::Icc);
+    let source = PixelBuffer::from_vec(vec![10, 20, 30], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
+    assert!(
+        EncodeReady::finalize(
+            &source,
+            &origin,
+            OutputProfile::SameAsOrigin,
+            PixelFormat::Rgb8,
+            Some(&spy)
+        )
+        .is_err()
+    );
+    let seen = spy.0.lock().unwrap();
+    assert!(!seen.is_empty());
+    assert!(seen.iter().all(|icc| *icc));
+    assert_eq!(source.as_slice().row(0), [10, 20, 30]);
+}
