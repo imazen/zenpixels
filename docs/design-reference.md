@@ -133,17 +133,18 @@ Removing the private, unused `builtin_profiles` implementation was intentional.
 It did not supply the exported ICC assets: `icc_profiles` and its bundled profile
 bytes remain available. The removal does not remove named-profile export.
 
-Lowest-priority follow-up: retain the original bytes of every profile represented
-by a recognition-table hash in private R2 storage or a private repository, with
-license/provenance records. Keep a cryptographic digest of the complete original
-file alongside its normalized recognition hash; normalization must not erase the
-identity needed to reproduce qualification. Record the generator revision, CMS
-backend, sample domain and tolerance used for each qualification run.
+The original corpus already exists at the R2 prefix used by `just icc-fetch`.
+See [icc-gen corpus retention](../scripts/icc-gen/README.md#retained-corpus-originals).
+The 2026-11-09 inventory found 1,224 ICC/ICM objects with all 1,210 manifest
+entries present. Creating a new archive is not an established missing task.
 
-Before requalifying historical rows, inventory table-to-asset coverage and report
-missing originals explicitly. Do not substitute a similarly named profile or
-publish restricted bytes. This retention inventory and historical revalidation
-have not been completed by the current code changes.
+Lowest-priority follow-up: map every recognition-table hash to an original,
+record full-file digests and provenance, and revalidate historical qualifications.
+The inventory did not establish normalized-hash coverage. Do not substitute a
+similarly named profile, assume authenticated tooling means private storage,
+or publish restricted bytes. Record generator/CMS identity, sample domain and
+tolerance for future qualification runs. Historical tolerance revalidation is
+still incomplete.
 
 Descriptor/trace follow-up validation: `just approved-contracts-check`,
 `just design-feature-check` and `just api-doc` passed. Trace capture stays at the failing operation; inline error-mapping closures

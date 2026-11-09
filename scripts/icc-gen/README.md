@@ -39,6 +39,25 @@ The default invocation uses:
 - input: `~/.cache/zenpixels-icc/` + `zenpixels-convert/src/profiles/`
 - output: `zenpixels/src/icc/`
 
+## Retained corpus originals
+
+The existing `just icc-fetch` recipe downloads `MANIFEST.txt` and the original
+profile files from `s3://codec-corpus/icc-profiles/` into
+`~/.cache/zenpixels-icc/`. The recipe requires the R2 credentials named in the
+justfile. `icc-upload` is the existing upload/manifest maintenance path.
+
+A read-only inventory on 2026-11-09 found 1,224 ICC/ICM objects. All 1,210
+manifest entries were present; 14 profile objects were not listed in that
+manifest. This establishes retention, not complete coverage of the current
+normalized identification hashes or their historical tolerance qualifications.
+The next audit should map every retained table hash to original bytes and
+record complete-file digests/provenance before revalidating tolerances.
+
+Authenticated download tooling does not establish private access: the manifest
+and one sampled profile were also accessible without authentication on that
+date. Restricted originals require an archive with suitable access controls;
+no access settings were changed by this inventory.
+
 ## Optional `lcms2-crosscheck`
 
 To cross-check profiles against Little CMS 2 (requires liblcms2 installed
