@@ -145,3 +145,7 @@ have not been completed by the current code changes.
 Descriptor/trace follow-up validation: `just approved-contracts-check`,
 `just design-feature-check` and `just api-doc` passed. Trace capture stays at the failing operation; inline error-mapping closures
 remain supported.
+
+The repository follow-up for authority, HLG backend refusal, P3 exports, API
+migrations and allocation ownership is recorded in
+[repository issue improvements](repository-issue-completion.md).

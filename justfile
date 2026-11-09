@@ -714,5 +714,5 @@ repository-issues-check:
 
 # Force patch-level reporting against the explicit 0.2.17 bridge source baseline.
 repository-issues-semver:
-    cargo semver-checks check-release -p zenpixels -p zenpixels-convert --baseline-rev e96e4e9c65020a0c7fac4937819fc044886ae4df --release-type patch
+    cargo semver-checks check-release -p zenpixels -p zenpixels-convert --baseline-rev e96e4e9c65020a0c7fac4937819fc044886ae4df --release-type patch --default-features
 

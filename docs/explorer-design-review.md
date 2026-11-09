@@ -61,6 +61,10 @@ replacement or assert that all native component requirements are now implemented
 
 ## Outstanding issues updated today
 
+Follow-up implementation and qualification for 69/83/132/133/134/135 is recorded
+in [repository issue improvements](repository-issue-completion.md). The rows below
+retain the earlier review baseline; consult that follow-up for current status.
+
 | Issue | Candidate evidence and remaining boundary |
 |---|---|
 | [83 — native samples](https://github.com/imazen/zenpixels/issues/83) | Signed/wide SampleEncoding and exact ST2086 carriage remain. The duplicate native view is removed; U16 RGB10/alpha1 uses the existing component route. Any further signed/wide component support needs a concrete consumer; downstream IMIJ integration is separate. |

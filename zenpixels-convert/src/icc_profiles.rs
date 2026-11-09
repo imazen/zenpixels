@@ -54,11 +54,10 @@
 //! separate compatibility variants. See the linked correctness overview below.
 //! Some readers identify a gamut by colorant tags within a tolerance:
 //! our libultrahdr colorant-matching regression (0.001 tolerance) rejects
-//! `DISPLAY_P3_V4` as an exact P3 match. With the
-//! `icc-db` feature, [`SynthesizedIcc::for_cicp`] therefore serves the
-//! generated, `cicp`-tagged profile for every pair and uses these constants
-//! only as the fallback of a build without `icc-db`. They remain exported for
-//! callers that embed them directly.
+//! `DISPLAY_P3_V4` as an exact P3 match. P3 synthesis uses separately qualified
+//! compact P3/sRGB and P3/BT.709 exports in both default and no-db builds.
+//! Other database-supported pairs use the generated CICP-tagged bundle.
+//! Compatibility constants remain available for callers selecting them explicitly.
 //!
 //! Profile format, colorimetry, precision and reader compatibility are separate
 //! checks: <https://github.com/imazen/zenpixels/blob/review/first-class-lcms-20261108/docs/color-correctness-and-compatibility.md>.

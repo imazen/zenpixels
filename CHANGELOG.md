@@ -54,6 +54,11 @@ None. This new companion is an unpublished review API.
 
 ### Fixed
 
+- Direct MoxCms HLG crossings decline instead of bypassing explicit display
+  rendering; qualify authority and allocation/extraction contracts
+  (`2cf54240`, `3b442ffd`).
+- Compile public adapter examples and correct sample-stride, P3 export and
+  typed-allocation guidance (`b64772c0`).
 - Preserve distinct error origins instead of routing them through shared
   trace-producing closures. Inline error-mapping closures remain supported.
 - Keep each conversion operation with its descriptors and scale; preserve
