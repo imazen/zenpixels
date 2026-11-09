@@ -183,7 +183,9 @@ impl LightLevelHistogram {
             // who reasonably expect `p=0` → `0.0`. Pin to 0.
             return 0.0;
         }
-        let threshold = (p as f64 * self.total as f64).ceil() as u64;
+        // Preserve the established floor-rank outlier policy, but a positive
+        // percentile must select an occupied bin rather than rank zero.
+        let threshold = ((p as f64 * self.total as f64) as u64).max(1);
         let mut cum: u64 = 0;
         let inv_step = Self::inv_log2_step();
         for (i, &count) in self.bins.iter().enumerate() {
