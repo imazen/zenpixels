@@ -339,6 +339,13 @@ moxcms-gamma-check:
     cargo run --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --bin probe
     cargo run --locked --manifest-path benchmarks/moxcms-gamma/Cargo.toml --bin black
 
+# Borrowed planar views, layout validation and typed-vector docs.
+planar-api-check:
+    cargo test --locked -p zenpixels --all-features
+    cargo clippy --locked -p zenpixels --all-targets --all-features -- -D warnings
+    cargo check --locked -p zenpixels --no-default-features
+    ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
+
 # Add fresh bundle hashes without dropping recognition of older profile bytes.
 icc-bundle-identification output:
     cargo run --locked -p icc-gen --release --bin icc-gen -- zenpixels-convert/src/profiles {{output}}

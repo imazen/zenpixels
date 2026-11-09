@@ -33,6 +33,9 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [Unreleased]
 
+- Add checked plane byte-stride access and per-plane layout validation while
+  preserving `PlanarLayout::new(Vec<PlaneSpec>)` and growable ownership.
+
 - Integrate HDR luminance intent with one explicit-option/context/refusal rule.
   Keep shared precision facts in core and move selection policy and chain
   planning to `zenpixels-convert::precision`; the capacity predicate does not

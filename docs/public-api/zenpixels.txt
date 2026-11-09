@@ -12,9 +12,9 @@
 #   pub types (struct/enum/trait/alias)       129
 #   pub consts/statics                        353
 #   free functions                              2
-#   inherent methods                          371
-#   struct fields                             118
-#   enum variants                             318
+#   inherent methods                          375
+#   struct fields                             120
+#   enum variants                             319
 #   re-exports                                  4
 #   trait roster entries (type × trait)       459
 #   auto-trait-complete types                  64
@@ -30,12 +30,12 @@
 #   icc                              11
 #   orientation                      11
 #   pixel_types                       9
-#   plane                            87
+#   plane                            94
 #   policy                           22
 #   precision                        20
 #   sample                           33
 
-## items (1156 lines)
+## items (1163 lines)
 
 pub mod zenpixels
 pub use At
@@ -557,8 +557,10 @@ pub mod plane
 pub plane::AnyPlane::F32(plane::PlaneRef<'a, f32>)
 pub plane::AnyPlane::U16(plane::PlaneRef<'a, u16>)
 pub plane::AnyPlane::U8(plane::PlaneRef<'a, u8>)
+pub fn plane::AnyPlane<'_>::as_strided_bytes(&self) -> &[u8]
 pub fn plane::AnyPlane<'_>::channel_type(&self) -> descriptor::ChannelType
 pub fn plane::AnyPlane<'_>::height(&self) -> usize
+pub fn plane::AnyPlane<'_>::stride_bytes(&self) -> core::result::Result<usize, plane::PlaneError>
 pub fn plane::AnyPlane<'_>::width(&self) -> usize
 #[non_exhaustive] pub enum plane::FloatEncodingError
 pub plane::FloatEncodingError::NotFinite
@@ -575,6 +577,9 @@ pub plane::LayoutError::MixedFamilies
 pub plane::LayoutError::PlaneCount
 pub plane::LayoutError::PlaneCount::actual: usize
 pub plane::LayoutError::PlaneCount::expected: usize
+pub plane::LayoutError::PlaneIndex
+pub plane::LayoutError::PlaneIndex::count: usize
+pub plane::LayoutError::PlaneIndex::index: usize
 pub plane::LayoutError::SampleType
 pub plane::LayoutError::SampleType::index: usize
 pub plane::LayoutError::Subsampling
@@ -608,9 +613,11 @@ pub const fn plane::FloatEncoding::offset(self) -> f32
 pub const fn plane::FloatEncoding::scale(self) -> f32
 pub struct plane::PlanarLayout
 pub fn plane::PlanarLayout::check(&self, &[plane::AnyPlane<'_>], u32, u32) -> core::result::Result<(), plane::LayoutError>
+pub fn plane::PlanarLayout::check_plane(&self, usize, &plane::AnyPlane<'_>, u32, u32) -> core::result::Result<(), plane::LayoutError>
 pub fn plane::PlanarLayout::new(alloc::vec::Vec<plane::PlaneSpec>, sample::ChromaSubsampling, sample::ChromaSiting) -> core::result::Result<Self, plane::LayoutError>
 pub fn plane::PlanarLayout::plane_size(&self, usize, u32, u32) -> core::option::Option<(u32, u32)>
 pub fn plane::PlanarLayout::planes(&self) -> &[plane::PlaneSpec]
+pub fn plane::PlanarLayout::roles(&self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = plane::PlaneRole> + core::clone::Clone + '_
 pub fn plane::PlanarLayout::siting(&self) -> sample::ChromaSiting
 pub fn plane::PlanarLayout::subsampling(&self) -> sample::ChromaSubsampling
 pub struct plane::Plane<C>
