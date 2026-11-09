@@ -968,7 +968,7 @@ impl Color {
 /// assert_eq!(small.as_bytes(), [255, 0, 0]);
 /// assert!(small.as_color().is_some());
 ///
-/// let format = PixelFormat::create_from(ChannelType::F64, ChannelLayout::Gray).unwrap();
+/// let format = PixelFormat::from_parts(ChannelType::F64, ChannelLayout::Gray, None).unwrap();
 /// let descriptor = PixelDescriptor::from_pixel_format(format);
 /// let wide = AnyColor::try_new(descriptor, &0.5f64.to_ne_bytes()).unwrap();
 /// let samples: &[f64] = bytemuck::cast_slice(wide.as_bytes());

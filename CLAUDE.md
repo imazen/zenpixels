@@ -118,8 +118,8 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
-- Corrected ICC exports are staged in separate unmerged PR128 (2026-11-08),
-  not published. The actual replacement bundle is 93,377 bytes with 313
+- Corrected ICC exports landed on main in 49f00314 (2026-11-09),
+  after separate PR128 qualification; no crate has been published. The actual replacement bundle is 93,377 bytes with 313
   RGB/gray mappings; the 21 removed mappings are targetless HLG exports.
   Historical hashes remain recognized, with new exports MetadataOnly.
   All 168 PQ intent/direction cells, 292 SDR cells and 313 independent
@@ -130,8 +130,8 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
   HLG retains native CICP until an explicit rendering target exists.
   Browser witnesses establish selected paths, not physical HDR display accuracy;
   WebKit GRAY remains unqualified. See `docs/corrected-icc-export.md` and
-  `benchmarks/icc-export/native_integer_2026-11-08.meta`. The separate
-  grayscale-collapse authority guard is separate from PR128. Its compatible
+  `benchmarks/icc-export/native_integer_2026-11-08.meta`. The independently reviewed
+  grayscale-collapse authority guard landed in the same main integration. Its compatible
   variant preserves the existing truncated-input fallback and all established
   assertions; only complete ICCs require qualified matrix/TRC replacement.
   The stricter malformed-input proposal remains preserved, not adopted.
@@ -153,7 +153,7 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
   26.6 honors float DToB but does not give PNG CICP precedence in these controls.
   Exact source identities, differences and configuration limits are in
   `docs/corrected-icc-export.md`; no Safari coverage is claimed.
-- Fixed in the staged adapter (2026-11-08): MoxCMS does not implement float
+- Fixed in the adapter, landed in 49f00314 (2026-11-09): MoxCMS does not implement float
   DToB/BToD pipelines. ICC permits fallback, but it can lose requested precision.
   The adapter now declines these profiles so a capable configured backend can
   handle them. A regression failed before the guard; shared CMS14/2oldignores
@@ -191,9 +191,10 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
   float bits. This changes test equipment, not the product CMS default.
   `docs/rgb-icc-and-lcms-2026-11-08.md` records the source pins and limits.
 
-- Open in the stable-dependency review (2026-11-07): requiring moxcms 0.9.2
-  changes fresh RGB ICC serialization/colorimetry and fails the existing bundle
-  equality gate. The bundled binary and goldens are unchanged. Keep the
+- Historical stable-dependency failure (2026-11-07): requiring moxcms 0.9.2
+  changed fresh RGB ICC serialization/colorimetry and failed the old bundle
+  equality gate. The owner-approved corrected export definition now passes
+  fresh-synthesis equality on main; the original failure receipts remain. Keep the
   pure-gamma sign/range guards: the released backend still reproduces the
   exact-zero ProPhoto F32 failure. See `docs/stable-dependencies-2026-11-07.md`.
 
@@ -424,3 +425,19 @@ and ordinary collisions mean a hit is not a proof of transform identity. No
 valid hostile ICC collision was demonstrated in this review. Preserve lookup
 semantics while strengthening any pixel-changing authorization; see
 docs/pr-contract-review-2026-11-09.md for the exact source and proposed gates.
+
+## Main consolidation decisions (2026-11-09)
+
+- Core precision types describe source/output capacity; conversion policies,
+  presets and chain solving belong to zenpixels-convert. Capacity preservation
+  is not a pixel-equality promise.
+- PlanarLayout retains its growable Vec storage and constructor. No fixed
+  four-plane limit or speculative Planes wrapper was adopted.
+- Sample-aligned byte pitches are supported. imgref checked borrowing retains
+  Option and succeeds only for whole-pixel pitches; image FlatSamples can
+  retain other sample pitches. Encoder adapters remain public for zenpipe and
+  zenmetrics callers.
+- The CLL histogram, percentile and smoothed research methods remain behind
+  hdr-experimental with their regression tests. zentone experiments consume
+  them; removing them without migrating those experiments was rejected.
+  Production peak selection remains measure_max.

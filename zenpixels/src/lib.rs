@@ -117,5 +117,5 @@ pub use policy::{
     AlphaPolicy, ConvertOptions, DepthPolicy, GamutMapping, GrayExpand, LumaCoefficients,
 };
 
-// Re-export whereat types for error tracing.
-pub use whereat::{At, ResultAtExt, at};
+// Every fallible signature here names it.
+pub use whereat::At;

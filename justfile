@@ -650,3 +650,8 @@ main-byte-stride-check:
 explorer-boundary-check:
     cargo fmt --manifest-path site/converter-wasm/Cargo.toml --check
     cargo clippy --manifest-path site/converter-wasm/Cargo.toml --locked --target wasm32-unknown-unknown -- -D warnings
+
+main-api-cleanup-check:
+    cargo test --locked --workspace --all-features
+    cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+    just api-doc
