@@ -220,7 +220,7 @@ pub const ADOBE_RGB_V4: &[u8] = ADOBE_RGB;
 
 ## Items Requiring No Action (already correct)
 
-- `builtin_profiles` — correctly `pub(crate)` in `lib.rs:403`
+- `builtin_profiles` — removed during the 0.3 design consolidation; it had no runtime consumer
 - `registry` (in zenpixels core) — correctly `pub(crate)`
 - All sealed traits — sealed pattern is correct
 - `__bench_u16_hybrids`, `__bench_scan`, `__trace_ops` — double-underscore convention signals internal; keep as-is

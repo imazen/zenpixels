@@ -9,19 +9,19 @@
 ## summary
 #
 #   pub modules                                13
-#   pub types (struct/enum/trait/alias)       134
-#   pub consts/statics                        370
+#   pub types (struct/enum/trait/alias)       133
+#   pub consts/statics                        365
 #   free functions                              2
-#   inherent methods                          379
+#   inherent methods                          380
 #   struct fields                             120
-#   enum variants                             322
+#   enum variants                             321
 #   re-exports                                  1
-#   trait roster entries (type × trait)       487
-#   auto-trait-complete types                  69
+#   trait roster entries (type × trait)       481
+#   auto-trait-complete types                  68
 #   auto-trait exceptions                       9
 #
 # per-module pub lines:
-#   (root)                          513
+#   (root)                          508
 #   buffer                          310
 #   cicp                             38
 #   color                            83
@@ -33,9 +33,9 @@
 #   plane                            94
 #   policy                           22
 #   precision                        20
-#   sample                           42
+#   sample                           41
 
-## items (1188 lines)
+## items (1182 lines)
 
 pub mod zenpixels
 pub use At
@@ -756,7 +756,6 @@ pub sample::ExactDepthError::UnsupportedLayout
 pub sample::ExactDepthError::UnsupportedStorage
 #[non_exhaustive] pub enum sample::NativeCodeError
 pub sample::NativeCodeError::Channels
-pub sample::NativeCodeError::Encoding
 pub sample::NativeCodeError::Geometry
 #[non_exhaustive] pub enum sample::SampleEncodingError
 pub sample::SampleEncodingError::InvalidBitDepth
@@ -783,17 +782,12 @@ pub const fn sample::ExactDepth::range(self) -> descriptor::SignalRange
 pub const fn sample::ExactDepth::storage(self) -> descriptor::ChannelType
 pub struct sample::NativeCodeSlice<'a>
 pub fn sample::NativeCodeSlice<'a>::code(self, u32, u32, usize) -> core::option::Option<i128>
-pub const fn sample::NativeCodeSlice<'a>::encodings(self) -> &'a [sample::NativeEncoding]
-pub const fn sample::NativeCodeSlice<'a>::height(self) -> u32
+pub const fn sample::NativeCodeSlice<'a>::encodings(self) -> &'a [sample::SampleEncoding]
+pub fn sample::NativeCodeSlice<'a>::height(self) -> u32
 pub const fn sample::NativeCodeSlice<'a>::layout(self) -> descriptor::ChannelLayout
-pub fn sample::NativeCodeSlice<'a>::new(&'a [u8], u32, u32, usize, descriptor::ChannelLayout, &'a [sample::NativeEncoding]) -> core::result::Result<Self, sample::NativeCodeError>
+pub fn sample::NativeCodeSlice<'a>::new(&'a [u8], u32, u32, usize, descriptor::ChannelLayout, &'a [sample::SampleEncoding]) -> core::result::Result<Self, sample::NativeCodeError>
 pub fn sample::NativeCodeSlice<'a>::row(self, u32) -> core::option::Option<&'a [u8]>
 pub const fn sample::NativeCodeSlice<'a>::width(self) -> u32
-pub struct sample::NativeEncoding
-pub const fn sample::NativeEncoding::bit_shift(self) -> u8
-pub const fn sample::NativeEncoding::code_bits(self) -> u8
-pub const fn sample::NativeEncoding::new(descriptor::ChannelType, u8, u8) -> core::result::Result<Self, sample::NativeCodeError>
-pub const fn sample::NativeEncoding::storage(self) -> descriptor::ChannelType
 pub struct sample::SampleEncoding
 pub const fn sample::SampleEncoding::bit_shift(self) -> u8
 pub const fn sample::SampleEncoding::code_bits(self) -> u8
@@ -1226,7 +1220,7 @@ pub trait Pixel: bytemuck::pod::Pod [also: buffer]
 pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 pub trait StorageSample: buffer::storage_sample::Sealed + bytemuck::pod::Pod + core::marker::Sized [also: buffer]
 
-## trait impls (98 types)
+## trait impls (97 types)
 
 &S: plane::SampleStorage
 &mut S: plane::SampleStorage, plane::SampleStorageMut
@@ -1319,7 +1313,6 @@ sample::ExactDepth: Clone, Copy, Debug, Eq, Hash, PartialEq
 sample::ExactDepthError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 sample::NativeCodeError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 sample::NativeCodeSlice<'a>: Clone, Copy, Debug
-sample::NativeEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
 sample::SampleEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
 sample::SampleEncodingError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 u16: buffer::StorageSample, plane::PlaneSample

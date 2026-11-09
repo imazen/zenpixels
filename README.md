@@ -8,6 +8,9 @@
 
 Pixel format types and transfer-function-aware conversion for Rust image codecs.
 
+The [design reference](docs/design-reference.md) explains sample interpretation,
+conversion policy, output metadata, and the 0.3 consolidation status.
+
 The unpublished [zenpsy-api](zenpsy-api/README.md) companion provides typed
 still-image quality results and optional prepared references over zenpixels.
 It adds no dependency to the pixel crates.

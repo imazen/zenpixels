@@ -37,6 +37,28 @@ None. This new companion is an unpublished review API.
 
 ## 0.3.1 cleanup — release reconciliation (2026-09-28)
 
+### QUEUED BREAKING CHANGES
+
+- Unify native integer encoding in `SampleEncoding`; remove the unshipped
+  duplicate `NativeEncoding` (`c4c3352d`).
+- Remove infallible `RowConverter::clone`; use `try_clone` for workers that may
+  refuse cloning (`6be5db6f`).
+- Enforce alpha/layout consistency in every descriptor constructor (`9297c114`).
+
+### Fixed
+
+- Keep each conversion operation with its descriptors and scale; preserve
+  policy across channel swizzles and compositing rewrites (`0e309692`).
+- Resolve output white/context consistently across allocating, into, adaptation
+  and finalization paths (`efe55343`).
+- Handle cropped final-row splits, empty channel swaps and wide integer channel
+  removal without assuming full padding or sixteen-byte pixels (`9297c114`).
+- Preserve F16 alpha payloads and share histogram binning between bodies/tails;
+  positive percentile ranks cannot select an empty bin (`e29bca51`).
+- ICC generation refuses missing qualification and truncated curves, evaluates
+  type-2 parametric curves and checks all RGB channel curves (`8309b21b`).
+
+
 Includes all 0.2.17 behavior fixes and `SampleEncoding`, then removes:
 
 - All estimation APIs and implementation, even with the compatibility feature.

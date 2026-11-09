@@ -698,3 +698,9 @@ context-design-check:
 # Local algorithm/payload consistency; magetypes primitive convergence is separate.
 local-numerics-check:
     cargo test -p zenpixels-convert --release --features hdr-experimental --test design_invariants --test cll_measure
+
+# Additional feature and generator checks for the breaking-release consolidation.
+design-feature-check:
+    cargo test -p zenpixels-convert --release --all-features --lib --test design_invariants --test cll_measure
+    cargo test -p icc-gen --release --bin icc-gen
+    cargo clippy -p zenpixels -p zenpixels-convert -p icc-gen --all-targets --all-features -- -D warnings

@@ -16,8 +16,8 @@ Status below distinguishes the intended design from completed implementation.
    chain and output interpretation. Allocating and caller-buffer APIs execute
    the same conversion and attach the same metadata.
 4. **Policy survives layout changes.** Swizzling cannot introduce defaults for
-   alpha, luma, HDR rendering or clipping. Unknown color stays unknown unless
-   authoritative metadata or an explicit caller choice resolves it.
+   alpha, luma, HDR rendering or clipping. Callers must provide authoritative
+   metadata or explicit choices for conversions needing known color.
 5. **Untouched components stay untouched.** Alpha payloads and row padding are
    preserved bitwise when the operation does not change them.
 
@@ -54,7 +54,7 @@ Tests must distinguish those defects from primitive rounding differences.
 | Descriptor and generic-layout invariants | Implemented | Invalid alpha descriptors, U64 channel removal, empty row swaps |
 | Payload and histogram algorithm corrections | Implemented | F16 alpha bits, positive percentile ranks; primitive parity separate |
 | ICC qualification and API cleanup | Implemented; historical table requalification remains separate | Parametric curve types, failed qualification, fallible clone callers |
-| Final release-candidate validation | Pending | Workspace tests, feature gates, Clippy, API snapshots and CI |
+| Final release-candidate validation | Local gates passed; remote CI tracked on PR145 | Workspace tests, feature gates, Clippy, API snapshots and CI |
 
 Do not infer completion from an API name or a passing unrelated test. Update
 this ledger with the implementation and link specialized detail rather than
@@ -68,3 +68,44 @@ qualification flags; this change does not retroactively requalify their corpus.
 Their error column is a curve-fit error, not a complete-transform error bound.
 Bundle-derived rows remain identification-only. A sampled CMS gate is not proof
 of global bit-exact substitution. Do not cite it as one.
+
+## Migration
+
+- Replace `NativeEncoding` with `sample::SampleEncoding`. The constructor keeps
+  the storage/bits/shift arguments; its error is `SampleEncodingError`.
+- Replace `RowConverter::clone()` with `try_clone()?`. A stateful CMS worker can
+  refuse cloning; callers can prepare another worker explicitly.
+- Invalid descriptor alpha/layout combinations now fail consistently in fallible
+  constructors and panic consistently in infallible constructors.
+- No new feature flags or public planning types are needed. `PlannedOperation`
+  and output-interpretation resolution are private implementation details.
+
+## Regression commands
+
+Run `just sample-design-check`, `just plan-design-check`,
+`just context-design-check` and `just local-numerics-check` for focused gates.
+`just approved-contracts-check` covers the workspace and existing feature gates;
+`just api-doc` refreshes the public surface snapshots. Resource wrappers and
+platform admission are the caller's responsibility.
+
+## Why two views remain
+
+`CodePlane` reads one component from an existing typed U8/U16 plane, including
+interleaved chroma. `NativeCodeSlice` adapts packed RGB/gray byte rows whose
+components can have different payload widths, including signed/wide words.
+They share `SampleEncoding`; the packed adapter stores a borrowed byte `Plane`
+for geometry. Neither promises that every represented encoding has a numerical
+conversion kernel. There is no duplicate encoding type or compatibility alias.
+
+## Validation receipt — 2026-11-09
+
+`approved-contracts-check` passed workspace release library/integration/doc
+checks, existing focused feature checks, no-default native carriage and strict
+Clippy. `design-feature-check` additionally passed the all-feature library,
+new design regressions, histogram tests, generator qualification tests and
+strict all-target/all-feature Clippy across all workspace crates. Existing
+expectations were not weakened. The positive-percentile correction retains
+floor ranks and only excludes rank zero; the existing outlier gates pass.
+Public API snapshots were regenerated. Cross-platform CI is tracked in
+[PR145](https://github.com/imazen/zenpixels/pull/145); local results are not a
+claim that remote CI or historical release branches have been qualified.
