@@ -11,7 +11,7 @@
 #
 #   inherent methods                           55
 #   enum variants                              14
-#   trait roster entries (type × trait)        57
+#   trait roster entries (type × trait)        58
 #
 # per-module pub lines:
 #   (root)                            7
@@ -100,7 +100,7 @@ pub descriptor::ColorPrimaries::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::SignalRange::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::TransferFunction::__Reserved(descriptor::reserved::Reserved)
 
-## trait impls (57 types)
+## trait impls (58 types)
 
 buffer::Bgrx: TrivialClone
 buffer::BufferError: TrivialClone
@@ -136,6 +136,7 @@ plane::AnyPlane<'a>: TrivialClone
 plane::FloatEncoding: TrivialClone
 plane::FloatEncodingError: TrivialClone
 plane::LayoutError: TrivialClone
+plane::PlanarSlice<'a>: TrivialClone
 plane::PlaneEncoding: TrivialClone
 plane::PlaneError: TrivialClone
 plane::PlaneRole: TrivialClone
