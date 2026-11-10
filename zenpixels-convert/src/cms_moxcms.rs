@@ -60,6 +60,15 @@ pub(crate) fn transform_opts() -> TransformOptions {
 
 use crate::{ChannelType, Cicp, PixelFormat};
 
+/// magetypes `try_powf` with `libm::powf` as the domain fallback — the new
+/// generic transcendental handles every in-domain input; `Err` (negative
+/// base with non-integer exponent, etc.) falls through to the previous
+/// implementation so behavior is unchanged on every input.
+#[inline]
+fn powf(base: f32, exponent: f32) -> f32 {
+    magetypes::powf::try_powf(base, exponent).unwrap_or_else(|_| libm::powf(base, exponent))
+}
+
 /// CMS backend using moxcms.
 ///
 /// Stateless — all configuration comes from the ICC profiles and pixel formats
@@ -307,7 +316,7 @@ impl TransformExecutor<f32> for PureGammaOutput {
         self.transform.transform(source, target)?;
         for pixel in target.chunks_exact_mut(self.target_channels) {
             for value in &mut pixel[..3] {
-                *value = libm::powf(value.abs(), self.exponent).copysign(*value);
+                *value = powf(value.abs(), self.exponent).copysign(*value);
             }
         }
         Ok(())
@@ -363,8 +372,8 @@ impl PureGammaCurve {
         evaluator: alloc::boxed::Box<dyn moxcms::ToneCurveEvaluator + Send + Sync>,
         exponent: f32,
     ) -> Self {
-        let fast_min = libm::powf(2.0, -125.0 / exponent).max(f32::MIN_POSITIVE);
-        let fast_max = libm::powf(2.0, 126.0 / exponent).min(f32::MAX);
+        let fast_min = powf(2.0, -125.0 / exponent).max(f32::MIN_POSITIVE);
+        let fast_max = powf(2.0, 126.0 / exponent).min(f32::MAX);
         Self {
             evaluator,
             exponent,
@@ -381,7 +390,7 @@ impl PureGammaCurve {
     #[cold]
     #[inline(never)]
     fn exact(&self, x: f32) -> f32 {
-        libm::powf(x.abs(), self.exponent).copysign(x)
+        powf(x.abs(), self.exponent).copysign(x)
     }
 
     #[inline(always)]
@@ -488,7 +497,7 @@ impl TransformExecutor<f32> for TableSourcePureGammaOutput {
         for pixel in target.chunks_exact_mut(self.target_channels) {
             for value in &mut pixel[..3] {
                 if *value < 0.0 {
-                    *value = -libm::powf(-*value, self.exponent);
+                    *value = -powf(-*value, self.exponent);
                 }
             }
         }

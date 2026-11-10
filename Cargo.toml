@@ -26,3 +26,6 @@ categories = ["multimedia::images"]
 [patch.crates-io]
 garb = { git = "https://github.com/imazen/garb", rev = "58ce9cad7b337418a7abe9b1f6e3e4bd1928b385" }
 linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24664315586bd60e5f048253b1f69052" }
+# Try the new generic transcendentals (powf module) from magetypes main.
+archmage = { git = "https://github.com/imazen/archmage", rev = "91a13739b73f46213ecfe7083c77297c531fc8ad" }
+magetypes = { git = "https://github.com/imazen/archmage", rev = "91a13739b73f46213ecfe7083c77297c531fc8ad" }
