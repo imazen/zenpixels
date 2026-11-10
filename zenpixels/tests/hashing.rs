@@ -54,7 +54,7 @@ fn storage_stride_and_write_boundaries_do_not_change_hashes() {
         assert_eq!(writes(&PixelCow::Borrowed(a.clone())), writes(&a));
         let mut owner = owner;
         assert_eq!(writes(&owner.as_slice_mut()), writes(&a));
-        let mut state = zenhash::RapidhashV3::new();
+        let mut state = zenhash::Xxh3::new();
         a.hash(&mut state);
         assert_eq!(state.digest(), a.hash_with(HashInclusions::default()));
     }
@@ -292,4 +292,41 @@ fn zero_width_views_do_not_iterate_the_declared_empty_rows() {
     let a = view(&[], 0, u32::MAX, 0);
     let b = view(&[], 0, u32::MAX - 1, 0);
     assert_ne!(writes(&a), writes(&b));
+}
+
+#[test]
+fn portable_v1_golden_hashes() {
+    // Freeze the complete v1 serialization/backend output across targets.
+    // Independent algorithm goldens are checked separately in icc::murmur3_tests
+    // and zenhash's C-reference conformance matrix.
+    let p = view(&[1, 2, 3, 4], 1, 1, 4);
+    assert_eq!(p.hash_with(HashInclusions::All), 0xac0c_c9b2_0351_b75a);
+    let samples = [0x1234u16, 0xabcd];
+    let p = PlaneRef::new(&samples[..], 2, 1, 2).unwrap();
+    assert_eq!(p.hash_with(HashInclusions::All), 0x959d_7fe7_6c2e_f808);
+
+    let samples = [63u16, 127, 65535];
+    let planes = [AnyPlane::U16(PlaneRef::new(&samples[..], 3, 1, 3).unwrap())];
+    let e = PlaneEncoding::Code(SampleEncoding::new(ChannelType::U16, 10, 6).unwrap());
+    let layout = PlanarLayout::new(
+        vec![PlaneSpec::new(PlaneRole::Luma, e)],
+        ChromaSubsampling::Mono,
+        ChromaSiting::Center,
+    )
+    .unwrap();
+    let color = ColorContext::default();
+    let p = PlanarSlice::new(&planes, &layout, 3, 1, &color, None).unwrap();
+    assert_eq!(p.hash_with(HashInclusions::All), 0x60ba_798c_2efa_a06e);
+
+    let samples = [0x8000_0000_0000_0000u64, 0x7ff8_0000_0000_0001];
+    let desc = PixelDescriptor::try_new(
+        ChannelType::F64,
+        ChannelLayout::Gray,
+        None,
+        TransferFunction::Linear,
+    )
+    .unwrap();
+    let bytes: Vec<_> = samples.into_iter().flat_map(u64::to_ne_bytes).collect();
+    let p = PixelBuffer::from_vec(bytes, 2, 1, desc).unwrap();
+    assert_eq!(p.hash_with(HashInclusions::All), 0x6e78_65c3_8572_b77e);
 }

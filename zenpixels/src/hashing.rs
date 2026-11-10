@@ -110,9 +110,9 @@ fn fixed<H: Hasher>(state: &mut H, f: impl FnOnce(&mut FixedWrites<'_, H>)) {
     state.flush();
 }
 
-fn digest(f: impl FnOnce(&mut zenhash::RapidhashV3)) -> u64 {
-    let mut state = zenhash::RapidhashV3::new();
-    f(&mut state);
+fn digest(f: impl FnOnce(&mut FixedWrites<'_, zenhash::Xxh3>)) -> u64 {
+    let mut state = zenhash::Xxh3::new();
+    fixed(&mut state, f);
     state.digest()
 }
 

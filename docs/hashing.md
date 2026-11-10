@@ -27,7 +27,7 @@ storage variants of Plane and use that implementation.
 `Hash` feeds the complete selected byte stream to the caller's Hasher. It emits fixed 1 KiB writes (plus the final remainder) so caller hashers
 that distinguish write boundaries also ignore storage strides. It does
 not collapse the object to an intermediate 64-bit digest. `hash_with` returns a
-64-bit fingerprint using the backend selected by the accompanying benchmark.
+64-bit XXH3 fingerprint through zenhash, using the same fixed-block serializer.
 
 | Field | SamplesOnly | Pixels | All (default) |
 |---|---|---|---|
@@ -65,5 +65,5 @@ unvalidated PixelBufferParts and ownership handoff errors have no pixel Hash API
 
 Without `hash`, the existing dependency graph and Rust 1.85 core floor remain.
 Enabling `hash` requires Rust 1.89 through zenhash, and works with no_std + alloc.
-Benchmark selection, reproducible commands and measured limits will be recorded
-with the retained results before this feature lands.
+Backend selection, reproducible commands and measured limits are recorded in
+[the pixel-hash benchmark](../benchmarks/pixel-hash/README.md).

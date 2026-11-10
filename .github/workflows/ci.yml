@@ -160,6 +160,20 @@ jobs:
       - name: Test (zenpixels-convert SIMD fallback i686, fast-transpose)
         run: cross test -p zenpixels-convert --features fast-transpose --target i686-unknown-linux-gnu
 
+  hash-big-endian:
+    name: Pixel Hash (s390x big-endian)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: s390x-unknown-linux-gnu
+      - uses: taiki-e/install-action@cross
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: hash-s390x
+      - run: cross test --locked -p zenpixels --features hash --lib --test hashing --target s390x-unknown-linux-gnu
+
   # ==========================================================================
   # WASM check
   # ==========================================================================
