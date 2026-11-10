@@ -130,3 +130,9 @@ Use `just hash-bench-summarize <aggregate.json.gz> <summary.csv>` to reproduce
 both CSVs. The extractor retains every group and both backends, reports the
 aggregate/round flags and executable identity, and refuses to overwrite a
 nonidentical existing result. It reproduces the committed CSVs byte for byte.
+
+The subsequent [regression review](regressions_2026-11-09.md) identifies and
+fixes native code extraction/serialization work, with fixed-work instruction
+counts, unchanged output checksums, all paired timing observations and explicit
+resource-gate limits. It also checks the existing hash backends against pinned
+sources and records the new canonical x64_128 algorithm's cost separately.

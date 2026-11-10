@@ -120,6 +120,11 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed in the hash follow-up: native P010 hashing used a variable-step scalar
+  reader and per-code memcpy. Contiguous CodePlane reads and whole-code-block
+  serialization preserve portable digests; the measured instruction witness
+  and unconfirmed timing controls are in benchmarks/pixel-hash/regressions_2026-11-09.md.
+
 - Fixed in the #150 follow-up: a real planar Alpha role accepted Undefined,
   and ColorContext predicates read secondary CICP despite selecting ICC.
   Regression gates cover every declared alpha mode and opaque/empty ICC with

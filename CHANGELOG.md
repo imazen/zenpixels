@@ -58,6 +58,9 @@ This companion remains an unpublished review API; no release is authorized.
 
 ### Fixed
 
+- Restore efficient native-code hashing with contiguous reads and whole code
+  block serialization; preserve component strides and portable digests (`6ce0d349`).
+
 - Require normalized byte equality after paired-fingerprint filtering before
   replacing ICC bytes with a bundled canonical profile (#150).
 

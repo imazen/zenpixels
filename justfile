@@ -767,3 +767,9 @@ hash-prof-callgrind BINARY OUTPUT MODE='hash' ITERATIONS='1':
 hash-regression-build:
     cargo build --locked --release --manifest-path benchmarks/pixel-hash/Cargo.toml --bench regressions --bin profile_codes
     cargo clippy --locked --manifest-path benchmarks/pixel-hash/Cargo.toml --all-targets -- -D warnings
+
+hash-regression-bench *ARGS:
+    cargo bench --locked --manifest-path benchmarks/pixel-hash/Cargo.toml --bench regressions -- {{ARGS}}
+
+hash-regression-summarize INPUT OUTPUT:
+    python3 benchmarks/pixel-hash/summarize.py --regressions "{{INPUT}}" "{{OUTPUT}}"
