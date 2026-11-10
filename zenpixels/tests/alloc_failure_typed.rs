@@ -97,3 +97,57 @@ fn try_into_contiguous_pixels_refuses_wrong_layout() {
         Ok(None)
     ));
 }
+
+// ---------------------------------------------------------------------------
+// Pointer-identity contract for `try_into_contiguous_pixels` (issue #69):
+// same-alignment typed storage moves the allocation; erased `Vec<u8>`
+// backing must copy for `align(P) > 1`.
+// ---------------------------------------------------------------------------
+
+/// `from_pixels_erased` storage holds `P` samples in a matching channel vec,
+/// so extraction is a move — the returned `Vec<P>` shares the source
+/// allocation's address for u8/u16/f32 pixel types.
+#[test]
+fn typed_storage_extraction_is_zero_copy() {
+    let pixels8 = vec![rgb::Rgb::<u8>::new(1, 2, 3); 8];
+    let ptr8 = pixels8.as_ptr() as usize;
+    let out8 = PixelBuffer::from_pixels_erased(pixels8, 4, 2)
+        .unwrap()
+        .into_contiguous_pixels::<rgb::Rgb<u8>>()
+        .unwrap();
+    assert_eq!(out8.as_ptr() as usize, ptr8);
+    assert_eq!(out8.len(), 8);
+
+    let pixels16 = vec![rgb::Rgb::<u16>::new(1, 2, 3); 8];
+    let ptr16 = pixels16.as_ptr() as usize;
+    let out16 = PixelBuffer::from_pixels_erased(pixels16, 4, 2)
+        .unwrap()
+        .into_contiguous_pixels::<rgb::Rgb<u16>>()
+        .unwrap();
+    assert_eq!(out16.as_ptr() as usize, ptr16);
+    assert_eq!(out16.len(), 8);
+
+    let pixelsf = vec![rgb::Rgb::<f32>::new(1.0, 2.0, 3.0); 8];
+    let ptrf = pixelsf.as_ptr() as usize;
+    let outf = PixelBuffer::from_pixels_erased(pixelsf, 4, 2)
+        .unwrap()
+        .into_contiguous_pixels::<rgb::Rgb<f32>>()
+        .unwrap();
+    assert_eq!(outf.as_ptr() as usize, ptrf);
+    assert_eq!(outf.len(), 8);
+}
+
+/// Erased `Vec<u8>` storage can never satisfy `align_of::<Rgb<u16>>()`, so the
+/// copy arm produces a new allocation at a different address.
+#[test]
+fn erased_byte_storage_extraction_copies() {
+    let buf =
+        PixelBuffer::from_vec(vec![7u8; 4 * 2 * 6], 4, 2, PixelDescriptor::RGB16_SRGB).unwrap();
+    let src_ptr = buf.as_slice().as_strided_bytes().as_ptr();
+    let out = buf
+        .try_into_contiguous_pixels::<rgb::Rgb<u16>>()
+        .unwrap()
+        .unwrap();
+    assert_ne!(out.as_ptr() as *const u8, src_ptr);
+    assert!(out.iter().all(|p| p.r == 0x0707));
+}

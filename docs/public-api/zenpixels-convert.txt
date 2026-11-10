@@ -12,7 +12,7 @@
 #   pub types (struct/enum/trait/alias)        66
 #   pub consts/statics                         40
 #   free functions                              2
-#   inherent methods                          180
+#   inherent methods                          182
 #   struct fields                              95
 #   enum variants                             112
 #   re-exports                                  8
@@ -35,11 +35,11 @@
 #   icc_profiles                     10
 #   load_bearing                     12
 #   oklab                             8
-#   output                           19
+#   output                           21
 #   precision                        62
 #   ycbcr                            22
 
-## items (496 lines)
+## items (498 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -242,6 +242,7 @@ pub output::OutputProfile::Named(zenpixels::cicp::Cicp)
 pub output::OutputProfile::SameAsOrigin
 pub fn output::OutputProfile::normalize_known_icc(self) -> Self
 pub fn output::EncodeReady::finalize(&zenpixels::buffer::PixelBuffer, &zenpixels::color::ColorOrigin, output::OutputProfile, zenpixels::descriptor::PixelFormat, core::option::Option<&dyn cms::PluggableCms>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn output::EncodeReady::finalize_owned(zenpixels::buffer::PixelBuffer, &zenpixels::color::ColorOrigin, output::OutputProfile, zenpixels::descriptor::PixelFormat, core::option::Option<&dyn cms::PluggableCms>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn output::EncodeReady::into_parts(self) -> (zenpixels::buffer::PixelBuffer, output::OutputMetadata)
 pub fn output::EncodeReady::metadata(&self) -> &output::OutputMetadata
 pub fn output::EncodeReady::pixels(&self) -> zenpixels::buffer::PixelSlice<'_>
@@ -434,6 +435,7 @@ pub fn ConvertPlan::new_preserving_samples(zenpixels::descriptor::PixelDescripto
 pub fn ConvertPlan::to(&self) -> zenpixels::descriptor::PixelDescriptor
 #[non_exhaustive] pub struct EncodeReady [also: output]
 pub fn output::EncodeReady::finalize(&zenpixels::buffer::PixelBuffer, &zenpixels::color::ColorOrigin, output::OutputProfile, zenpixels::descriptor::PixelFormat, core::option::Option<&dyn cms::PluggableCms>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn output::EncodeReady::finalize_owned(zenpixels::buffer::PixelBuffer, &zenpixels::color::ColorOrigin, output::OutputProfile, zenpixels::descriptor::PixelFormat, core::option::Option<&dyn cms::PluggableCms>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn output::EncodeReady::into_parts(self) -> (zenpixels::buffer::PixelBuffer, output::OutputMetadata)
 pub fn output::EncodeReady::metadata(&self) -> &output::OutputMetadata
 pub fn output::EncodeReady::pixels(&self) -> zenpixels::buffer::PixelSlice<'_>
