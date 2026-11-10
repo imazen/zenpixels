@@ -371,6 +371,13 @@ impl OutputPlan {
         self.target
     }
 
+    /// Whether the plan runs any pixel transform — `false` is the
+    /// [`Self::borrow_rows`] branch: samples move through unchanged and a
+    /// consuming caller may move the source allocation.
+    pub(crate) fn transforms_pixels(&self) -> bool {
+        self.converter.is_some()
+    }
+
     /// Color signaling matching the produced samples. This is a planned
     /// contract, not proof that a particular codec has emitted these carriers.
     pub fn metadata(&self) -> &OutputMetadata {

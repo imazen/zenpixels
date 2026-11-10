@@ -140,9 +140,9 @@ pub struct OutputMetadata {
 /// Use [`into_parts()`](Self::into_parts) to destructure if needed, but
 /// the default path keeps them coupled.
 ///
-/// The pixels are always owned (one full output buffer per call, even when
-/// no conversion was needed); see the *Allocation* section on
-/// [`EncodeReady::finalize`].
+/// The pixels are always owned. [`Self::finalize`] allocates an output buffer;
+/// [`Self::finalize_owned`] reuses the consumed allocation when no sample
+/// conversion is needed.
 #[non_exhaustive]
 pub struct EncodeReady {
     pixels: PixelBuffer,
@@ -184,6 +184,33 @@ impl EncodeReady {
     pub fn into_parts(self) -> (PixelBuffer, OutputMetadata) {
         (self.pixels, self.metadata)
     }
+
+    /// Finalize an owned pixel buffer, moving its allocation into the result
+    /// when the plan requires no pixel transform.
+    ///
+    /// Behaves like [`Self::finalize`] except `buffer` is consumed. When the
+    /// prepared [`OutputPlan`] proves the output is sample-identical — the
+    /// [`OutputPlan::borrow_rows`] branch, where only descriptor fields such
+    /// as primaries/transfer may be completed from authoritative signaling —
+    /// `buffer` is re-tagged and moved into the [`EncodeReady`] with no pixel
+    /// allocation and no copy. It keeps its own stride in that case.
+    ///
+    /// When a transform is required this allocates exactly one output
+    /// buffer, exactly as [`Self::finalize`].
+    ///
+    /// # Errors
+    ///
+    /// As for [`Self::finalize`].
+    #[track_caller]
+    pub fn finalize_owned(
+        buffer: PixelBuffer,
+        origin: &ColorOrigin,
+        target: OutputProfile,
+        pixel_format: PixelFormat,
+        cms: Option<&dyn crate::cms::PluggableCms>,
+    ) -> Result<Self, At<ConvertError>> {
+        finalize_owned_for_output_with(buffer, origin, target, pixel_format, cms)
+    }
 }
 
 /// Finalize a pixel buffer for output using the [`PluggableCms`](crate::cms::PluggableCms) dispatch chain.
@@ -204,7 +231,8 @@ impl EncodeReady {
 /// agree on format, transfer, primaries, and signal range), where the source
 /// rows are copied into it unchanged. The signature (`&PixelBuffer` in,
 /// owned out) makes that copy structural rather than avoidable; a
-/// by-value/borrowing sibling is tracked in imazen/zenpixels#69. No other
+/// consuming alternative is [`EncodeReady::finalize_owned`]; streaming callers
+/// can borrow identity rows with [`OutputPlan::borrow_rows`]. No other
 /// per-image allocation occurs: the conversion path's scratch is per-row and
 /// lives inside [`RowConverter`](crate::RowConverter).
 ///
@@ -232,6 +260,49 @@ pub(crate) fn finalize_for_output_with(
         &options,
         cms,
     )?;
+    let mut pixels =
+        PixelBuffer::try_new(buffer.width(), buffer.height(), plan.output_descriptor())
+            .map_err_at(ConvertError::from)?;
+    plan.convert_rows(buffer.as_slice(), pixels.as_slice_mut())?;
+    Ok(EncodeReady {
+        pixels: pixels.with_color_context(plan.output_color_context().clone()),
+        metadata: plan.into_metadata(),
+    })
+}
+
+/// By-value sibling of [`finalize_for_output_with`] backing
+/// [`EncodeReady::finalize_owned`].
+///
+/// When the plan proves no pixel transform is required, the consumed
+/// buffer's allocation is moved into the result after a descriptor/context
+/// retag — `borrow_rows` semantics, but the whole buffer. Otherwise this
+/// allocates and converts exactly like the borrowed form.
+pub(crate) fn finalize_owned_for_output_with(
+    buffer: PixelBuffer,
+    origin: &ColorOrigin,
+    target: OutputProfile,
+    pixel_format: PixelFormat,
+    cms: Option<&dyn crate::cms::PluggableCms>,
+) -> Result<EncodeReady, At<ConvertError>> {
+    let options = crate::policy::ConvertOptions::permissive()
+        .with_alpha_policy(crate::AlphaPolicy::DiscardUnchecked);
+    let mut plan = OutputPlan::new(
+        buffer.descriptor(),
+        buffer.color_context().cloned(),
+        origin,
+        target,
+        pixel_format,
+        &options,
+        cms,
+    )?;
+    if !plan.transforms_pixels() {
+        return Ok(EncodeReady {
+            pixels: buffer
+                .with_descriptor(plan.output_descriptor())
+                .with_color_context(plan.output_color_context().clone()),
+            metadata: plan.into_metadata(),
+        });
+    }
     let mut pixels =
         PixelBuffer::try_new(buffer.width(), buffer.height(), plan.output_descriptor())
             .map_err_at(ConvertError::from)?;
