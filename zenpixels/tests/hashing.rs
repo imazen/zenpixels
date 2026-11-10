@@ -330,3 +330,34 @@ fn portable_v1_golden_hashes() {
     let p = PixelBuffer::from_vec(bytes, 2, 1, desc).unwrap();
     assert_eq!(p.hash_with(HashInclusions::All), 0x6e78_65c3_8572_b77e);
 }
+#[test]
+fn planar_u8_subbyte_codes_ignore_unused_bits() {
+    let encoding = SampleEncoding::new(ChannelType::U8, 1, 3).unwrap();
+    let layout = PlanarLayout::new(
+        vec![PlaneSpec::new(
+            PlaneRole::Luma,
+            PlaneEncoding::Code(encoding),
+        )],
+        ChromaSubsampling::Mono,
+        ChromaSiting::Unknown,
+    )
+    .unwrap();
+    let color = ColorContext::default();
+    let clean = [0x08u8, 0x00, 0x08];
+    let padded = [0xffu8, 0xf7, 0xff];
+    let changed = [0x08u8, 0x08, 0x08];
+    let a = [AnyPlane::U8(PlaneRef::new(&clean[..], 3, 1, 3).unwrap())];
+    let b = [AnyPlane::U8(PlaneRef::new(&padded[..], 3, 1, 3).unwrap())];
+    let c = [AnyPlane::U8(PlaneRef::new(&changed[..], 3, 1, 3).unwrap())];
+    let a = PlanarSlice::new(&a, &layout, 3, 1, &color, None).unwrap();
+    let b = PlanarSlice::new(&b, &layout, 3, 1, &color, None).unwrap();
+    let c = PlanarSlice::new(&c, &layout, 3, 1, &color, None).unwrap();
+    for mode in [
+        HashInclusions::SamplesOnly,
+        HashInclusions::Pixels,
+        HashInclusions::All,
+    ] {
+        assert_eq!(a.hash_with(mode), b.hash_with(mode));
+        assert_ne!(a.hash_with(mode), c.hash_with(mode));
+    }
+}

@@ -177,3 +177,31 @@ component readers recover the exact payloads. Erased preparation/lending checks
 retain opaque ICC and unknown signaling, distinguish absent/explicit HDR anchors,
 and reject changed preparation interpretation. These are transport/operation
 controls, not HDR metric-quality or conversion qualification.
+
+## Current interpretation checks (review #150)
+
+A planar `Alpha` role requires a defined interpretation: Straight,
+Premultiplied or Opaque. `Undefined` denotes padding in packed layouts and
+cannot describe a real alpha plane. Layouts without an Alpha role accept no
+alpha interpretation. This rule also applies to empty planar pictures.
+
+`ColorContext::as_profile_source` selects the current profile. Its predicates
+follow the same selection: an ICC-selected context has unknown transfer and
+is not established to be sRGB, even when a secondary CICP field is present.
+These convenience methods do not identify ICC bytes. Decoders select the
+format's authority once and retain original claims in `ColorOrigin`.
+
+Explicit canonical ICC replacement uses paired fingerprints only as a filter.
+It then requires `icc::normalized_eq` against the retained canonical bytes:
+length, every tag and rendering intent must match; only the shared five
+metadata-only header ranges are ignored. The fingerprint and equality APIs
+share that normalization predicate. Approximate table recognition still has its
+separate qualification and intent limits; this is not strict preservation of
+profiles merely judged close by historical tolerance measurements.
+
+The remaining #150 work concerns current processing requirements versus source
+origin, historical approximate ICC substitution qualifications, and an explicit
+whole-operation memory accounting scope. Capacity/peak documentation states
+what the existing planner actually computes; it does not add those models.
+The separate [allocation audit](allocation-audit.md) records verified starting
+points and the still-missing completion gates for #151.

@@ -738,3 +738,38 @@ hash-check:
 # Backend comparison: timing excludes construction/allocation; raw packets are retained by zenbench.
 hash-bench *ARGS:
     cargo bench --manifest-path benchmarks/pixel-hash/Cargo.toml --bench pixel_hash -- {{ARGS}}
+
+# Current planar alpha and selected color authority regression contracts.
+interpretation-review-check:
+    cargo test --locked -p zenpixels-convert --test known_profile_normalization
+    cargo test --locked -p zenpixels --features hash --lib --test planes --test hashing
+    cargo clippy --locked -p zenpixels --features hash --lib --test planes --test hashing -- -D warnings
+    cargo check --locked -p zenpixels --no-default-features
+
+# Retain both backends and all groups, including resource-flagged observations.
+hash-bench-summarize INPUT OUTPUT:
+    python3 benchmarks/pixel-hash/summarize.py {{INPUT}} {{OUTPUT}}
+
+# Retain exact originals privately; absence of DEST verifies an existing receipt.
+icc-retain-originals RECEIPT DEST='':
+    python3 scripts/icc-gen/retain_originals.py "{{RECEIPT}}" {{ if DEST == "" { "" } else { '"' + DEST + '"' } }}
+
+icc-retain-tool-check:
+    python3 -m unittest discover -s scripts/icc-gen -p test_retain_originals.py
+
+# Fixed-work profiler probes; run through the host resource wrapper.
+hash-prof-stat BINARY OUTPUT MODE='hash' ITERATIONS='32':
+    perf stat -r 3 -e instructions,cycles,branches,branch-misses -o "{{OUTPUT}}" -- "{{BINARY}}" {{MODE}} {{ITERATIONS}}
+
+hash-prof-callgrind BINARY OUTPUT MODE='hash' ITERATIONS='1':
+    valgrind --tool=callgrind --callgrind-out-file="{{OUTPUT}}" "{{BINARY}}" {{MODE}} {{ITERATIONS}}
+
+hash-regression-build:
+    cargo build --locked --release --manifest-path benchmarks/pixel-hash/Cargo.toml --bench regressions --bin profile_codes
+    cargo clippy --locked --manifest-path benchmarks/pixel-hash/Cargo.toml --all-targets -- -D warnings
+
+hash-regression-bench *ARGS:
+    cargo bench --locked --manifest-path benchmarks/pixel-hash/Cargo.toml --bench regressions -- {{ARGS}}
+
+hash-regression-summarize INPUT OUTPUT:
+    python3 benchmarks/pixel-hash/summarize.py --regressions "{{INPUT}}" "{{OUTPUT}}"

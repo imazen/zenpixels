@@ -19,8 +19,10 @@ pub use zenpixels::precision::{
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ConversionPreset {
-    /// The first offer that loses nothing, in offer order. If none does, a format the caller named
-    /// takes the one that keeps the most bits, and anything else refuses.
+    /// The first offer preserving modeled capacity, alpha and range, in offer
+    /// order. This does not prove exact preservation of processed pixel values.
+    /// If none does, a format the caller named takes the one that keeps the most
+    /// bits, and anything else refuses.
     #[default]
     KeepPrecision,
     /// The offer with the smallest known peak, even if it drops bits.
@@ -60,6 +62,9 @@ pub struct ChainPlan {
     /// The choice at each node.
     pub steps: Vec<ConversionRecord>,
     /// The largest peak any step states, or `None` if a step states none.
+    /// This is a maximum over caller-reported routes, not a sum or lifetime
+    /// analysis. It bounds a whole operation only if those reports already
+    /// account for overlapping storage, workers, scratch and shared caches.
     pub peak_bytes: Option<u64>,
 }
 
@@ -405,7 +410,8 @@ impl ConversionPolicy {
     /// every other node is [`OutputChoice::Hidden`]. `start` is the format the chain receives.
     /// `resolver` is asked once per node, and an answer pins that node.
     ///
-    /// Everywhere else, [`ConversionPreset::KeepPrecision`] uses only candidates that lose nothing,
+    /// Everywhere else, [`ConversionPreset::KeepPrecision`] uses only candidates
+    /// preserving the modeled capacity, alpha and range,
     /// with the same consent as [`resolve_preset`](Self::resolve_preset) at the last node, and
     /// [`ConversionPreset::DropPrecisionForMemory`] uses any that keep alpha and range. Among the
     /// plans left, this takes the lowest peak, then the fewest format changes, then offer order.

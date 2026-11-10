@@ -28,8 +28,8 @@ prefers the archive where multiple originals share a normalized hash:
 | Exact profiles decoded from historical committed bundles | 217 |
 | Embedded corpus profiles | 2 |
 
-Thus the archive alone is incomplete. Adding current assets still leaves 219
-hashes to recover. The historical bytes are retained in Git, rather than
+Thus the live R2 archive alone is incomplete. Adding current assets leaves
+219 hashes whose exact originals were recovered from history/corpora. The historical bytes are retained in Git, rather than
 recreated with today's generator. The eight inspected bundle/index revisions
 are `210fd9c`, `2171b79`, `b6b12bb`, `b8374b9`, `75eb953`, `b12cbaf`,
 `d6ac448` and `0d3d7d5`; decoding their existing LZ4 groups recovers all 217.
@@ -103,5 +103,43 @@ recognition with `IdentificationUse::MetadataOnly` and rejects
 
 Full historical tolerance requalification is still outstanding. Original-byte
 coverage is complete; only the 14 manifest additions received the qualification
-run described here. Consolidating historical and corpus originals into the ICC
-archive and updating its manifest remain archive maintenance work.
+run described here. The private consolidated archive below now retains every
+selected original. Updating the separate R2 archive/manifest remains maintenance
+work; no R2 object or access setting was changed.
+
+## Paired fingerprint verification
+
+The MurmurHash3 migration rechecked all 598 selected originals against the
+actual hash-enabled core/zenhash implementation and their full-file SHA-256
+identities. Every `(FNV-1a64, MurmurHash3_x86_32)` pair matches the independent
+upstream-derived mapping; no original is missing and no qualification or
+intent permission changed in this migration. The Murmur seed is 3_242_157_231.
+
+The extended receipt is `coverage-murmur3.json` beside `coverage-final.json`;
+SHA-256 is
+`09abe622e727cf6ee7bc92386f6b3232579b4d18b2e03ecfba7d2cbf541744a1`.
+`murmur-verification.txt` records the 598/598 implementation check. This verifies
+fingerprint coverage, not the still-separate historical tolerance requalification.
+
+
+## Private consolidated witness archive
+
+All 598 selected originals are copied to the private artifact archive at
+`output/zenpixels/icc-originals-2026-11-09/`, totaling 1,657,355 profile bytes.
+Each object is named `profiles/<full-file-sha256>.icc`. Its portable manifest
+retains active/deferred state, both normalized fingerprints, full-file identity
+and original source provenance. Paths resolve relative to the manifest, so
+future revalidation does not depend on the audit host's scattered caches.
+
+The manifest SHA-256 is
+`6c9dfa82a4730d86cb73e260419ae5d0ac43584454cfc3a74c3f42d84fb143d0`.
+Verification on the private archive passed for every object after transfer.
+This retention change commits no original profile bytes to the public repository.
+
+Use `just icc-retain-originals <receipt.json> <private-directory>` to construct
+an archive, or omit the destination to verify its manifest. The tool checks
+all source sizes/digests before copying, preserves links/provenance, and refuses
+to replace conflicting retained objects or manifests. `just icc-retain-tool-check`
+checks corruption, missing-source preflight and preservation of existing data.
+This verifies retention only; fingerprint computation and tolerance qualification
+remain their own checks.

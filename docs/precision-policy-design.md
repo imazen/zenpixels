@@ -237,3 +237,17 @@ The capacity predicate is `preserves_modeled_capacity`, not a lossless-color
 guarantee. Processing and gamut changes can alter samples even when it returns
 true. Core contains no resolver or graph solver. The converter re-exports the
 shared fact types from its precision module so their identity stays unchanged.
+
+Review #150 separates three facts: immutable decoded origin, current processing
+capacity requirements, and exact representability of current values. An 8-bit
+origin does not establish an 8-bit code grid after resizing or color arithmetic.
+The existing capacity planner does not model that processing step and must not
+be described as a proof of exact preservation. An operation boundary still
+needs to supply current requirements or current ExactDepth evidence.
+
+`ChainPlan::peak_bytes` is the maximum of selected offers' caller-reported
+peaks; any unknown report makes it unknown. It does not add concurrent node
+storage, workers, caches or overlapping input/output lifetimes. A whole-operation
+memory admission promise requires an execution-scope budget including those
+costs. These are explicit scope limits, not completion of #150's processing
+requirements or whole-operation memory design.

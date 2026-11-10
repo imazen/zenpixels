@@ -449,8 +449,10 @@ version = "0.0.0"
 dependencies = [
  "bytemuck",
  "zenbench",
- "zenhash",
- "zenpixels",
+ "zenhash 0.1.0 (git+https://github.com/imazen/zenhash?rev=1836e2fa31d8)",
+ "zenhash 0.1.0 (git+https://github.com/imazen/zenhash?rev=98c385a4e54a)",
+ "zenpixels 0.3.1",
+ "zenpixels 0.3.1 (git+https://github.com/imazen/zenpixels?rev=e853eb7545668f46550aa72e42897fa30ebba8de)",
 ]
 
 [[package]]
@@ -927,6 +929,15 @@ dependencies = [
 [[package]]
 name = "zenhash"
 version = "0.1.0"
+source = "git+https://github.com/imazen/zenhash?rev=1836e2fa31d8#1836e2fa31d8699d674099919d91b34a965a8aa3"
+dependencies = [
+ "archmage",
+ "whereat",
+]
+
+[[package]]
+name = "zenhash"
+version = "0.1.0"
 source = "git+https://github.com/imazen/zenhash?rev=98c385a4e54a#98c385a4e54a1d41870610e13a614295c538275c"
 dependencies = [
  "archmage",
@@ -939,7 +950,17 @@ version = "0.3.1"
 dependencies = [
  "bytemuck",
  "whereat",
- "zenhash",
+ "zenhash 0.1.0 (git+https://github.com/imazen/zenhash?rev=98c385a4e54a)",
+]
+
+[[package]]
+name = "zenpixels"
+version = "0.3.1"
+source = "git+https://github.com/imazen/zenpixels?rev=e853eb7545668f46550aa72e42897fa30ebba8de#e853eb7545668f46550aa72e42897fa30ebba8de"
+dependencies = [
+ "bytemuck",
+ "whereat",
+ "zenhash 0.1.0 (git+https://github.com/imazen/zenhash?rev=98c385a4e54a)",
 ]
 
 [[package]]

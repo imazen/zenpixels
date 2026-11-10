@@ -4,6 +4,14 @@
 
 The normalized fingerprint is a pair `(FNV-1a64, MurmurHash3_x86_32)`.
 Both must match before identification or explicit known-profile normalization.
+Canonical replacement then requires normalized byte equality against the
+retained bundled profile; fingerprints are only a filter.
+Murmur's architecture labels name algorithms, not ISA dispatch: fixed
+`x86_32` is portable, as is zenhash's explicit `x64_128` API. `x64_128` remains
+that algorithm on 32-bit x86 and does not become the different `x86_128` hash.
+Both use fixed little-endian words on every target. The existing ICC pair here
+still uses x86_32; pixel `hash_with` remains XXH3-64.
+
 The metadata normalization ranges remain unchanged; the Murmur seed is fixed
 at 3_242_157_231 and the variant always reads little-endian words. The second
 fingerprint is not merely a finalizer on the first.
@@ -67,3 +75,10 @@ Without `hash`, the existing dependency graph and Rust 1.85 core floor remain.
 Enabling `hash` requires Rust 1.89 through zenhash, and works with no_std + alloc.
 Backend selection, reproducible commands and measured limits are recorded in
 [the pixel-hash benchmark](../benchmarks/pixel-hash/README.md).
+
+Hashing a validated view uses bounded stack buffers and borrowed data; the
+selected zero-seed XXH3 state uses zenhash's static default secret. These paths
+do not allocate sample storage. This describes hashing only, not view/metadata
+construction or a caller-supplied Hasher. The broader allocation audit in #151
+remains separate. Performance measurements use std/runtime dispatch; no_std
+performance has not been measured.

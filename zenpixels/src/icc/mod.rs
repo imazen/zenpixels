@@ -5,16 +5,19 @@
 //! - **CICP extraction**: [`Cicp::from_icc`] reads the `cicp` tag from ICC v4.4+
 //!   profiles (~100ns, no allocation).
 //!
-//! - **Hash-based identification**: [`IccIdentification::from_icc`] recognizes 181
-//!   well-known profiles (sRGB, Display P3, BT.2020, Adobe RGB,
+//! - **Hash-based identification**: [`IccIdentification::from_icc`] recognizes
+//!   retained profile fingerprints (sRGB, Display P3, BT.2020, Adobe RGB,
 //!   grayscale) via paired normalized FNV-1a64/MurmurHash3_x86_32 lookup.
 //!
 //! The hash table covers profiles found in a web corpus of 55,539 spidered
 //! images, plus Compact-ICC-Profiles, skcms, ICC.org, colord, Ghostscript,
 //! moxcms, and zenpixels-convert bundled profiles. Metadata-only header
 //! fields are zeroed before hashing to collapse functionally identical
-//! profiles — safe across ICC v2.0–v4.4 and v5/iccMAX. Each entry is
-//! verified against its reference EOTF for all 65536 u16 values.
+//! profiles across ICC v2.0–v4.4 and v5/iccMAX. Stored curve-fit errors concern
+//! red/gray TRCs; intent permissions carry separate historical qualification.
+//! Neither establishes bit-exact full-transform equivalence. Exact original
+//! coverage is documented in `docs/icc-retention-audit.md`; complete historical
+//! tolerance requalification remains separate.
 //!
 //! # Example
 //!
@@ -24,7 +27,7 @@
 //! # let icc_bytes: &[u8] = &[];
 //! if let Some(id) = IccIdentification::from_icc(icc_bytes) {
 //!     if id.valid_use == IdentificationUse::MatrixTrcSubstitution {
-//!         // Safe to skip CMS — use matrix+TRC math directly
+//!         // Eligible for matrix+TRC under the caller's approximation policy.
 //!     }
 //!     // id.primaries and id.transfer are always available for metadata
 //! }
@@ -80,6 +83,14 @@ const ICC_DEVICE: core::ops::Range<usize> = 48..56;
 const ICC_CREATOR_ID: core::ops::Range<usize> = 80..100;
 /// Number of header bytes that need conditional zeroing.
 const ICC_HEADER_NORMALIZE_END: usize = 100;
+
+const fn is_metadata_field(i: usize) -> bool {
+    (i >= ICC_CMM_TYPE.start && i < ICC_CMM_TYPE.end)
+        || (i >= ICC_DATE_TIME.start && i < ICC_DATE_TIME.end)
+        || (i >= ICC_PLATFORM.start && i < ICC_PLATFORM.end)
+        || (i >= ICC_DEVICE.start && i < ICC_DEVICE.end)
+        || (i >= ICC_CREATOR_ID.start && i < ICC_CREATOR_ID.end)
+}
 
 // ── CICP extraction ──────────────────────────────────────────────────────
 
@@ -404,9 +415,11 @@ impl IccIdentification {
 
 /// TRC match tolerance for ICC profile identification.
 ///
-/// Each entry in the hash table stores its measured maximum error in u16
-/// space (0–65535), verified against the reference EOTF for all 65536
-/// input values. This tolerance controls which entries are accepted.
+/// Each entry stores a historical red/gray curve-fit error in u16 space
+/// (0–65535). The generator evaluates that curve against reference EOTFs for
+/// all 65536 input values; this is not a complete CMS transform measurement.
+/// This tolerance controls which entries are accepted, without requalifying
+/// the retained original at runtime.
 ///
 /// A small curve error does not guarantee equal quantized output: values
 /// near a rounding midpoint can differ. This is identification tolerance,
@@ -653,14 +666,6 @@ pub const fn normalized_hash(data: &[u8]) -> (u64, u32) {
     let mut hash = FNV_OFFSET;
     let mut header = [0u8; ICC_HEADER_NORMALIZE_END];
 
-    const fn is_metadata_field(i: usize) -> bool {
-        (i >= ICC_CMM_TYPE.start && i < ICC_CMM_TYPE.end)
-            || (i >= ICC_DATE_TIME.start && i < ICC_DATE_TIME.end)
-            || (i >= ICC_PLATFORM.start && i < ICC_PLATFORM.end)
-            || (i >= ICC_DEVICE.start && i < ICC_DEVICE.end)
-            || (i >= ICC_CREATOR_ID.start && i < ICC_CREATOR_ID.end)
-    }
-
     // Phase 1: header bytes — zero metadata fields.
     let header_len = if data.len() < ICC_HEADER_NORMALIZE_END {
         data.len()
@@ -694,6 +699,33 @@ pub const fn normalized_hash(data: &[u8]) -> (u64, u32) {
         state.digest()
     };
     (hash, murmur)
+}
+
+/// Compare every byte except the metadata-only header fields ignored by
+/// [`normalized_hash`]. No allocation, profile parsing or hashing is performed.
+///
+/// This establishes equality under that exact normalization, including every
+/// tag and rendering-intent byte. It does not establish that either input is a
+/// valid ICC profile or that different transforms are colorimetrically close.
+/// Matching fingerprints alone cannot establish equality; callers replacing a
+/// profile can use them as a filter and then compare the retained bytes here.
+/// Inputs of different lengths never compare equal; identical empty inputs do.
+///
+/// Used by `zenpixels-convert::OutputProfile::normalize_known_icc` before
+/// replacing a profile with its bundled canonical bytes.
+#[must_use]
+pub const fn normalized_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < left.len() {
+        if !is_metadata_field(i) && left[i] != right[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
 }
 
 // ── Hash tables ──────────────────────────────────────────────────────────
@@ -917,6 +949,33 @@ mod tests {
         let mut c = a.clone();
         c[20] = 0xFF;
         assert_ne!(normalized_hash(&a), normalized_hash(&c));
+    }
+
+    #[test]
+    fn normalized_equality_checks_every_non_metadata_byte() {
+        const {
+            assert!(normalized_eq(b"same", b"same"));
+            assert!(!normalized_eq(b"a", b"b"));
+        }
+        assert!(normalized_eq(&[], &[]));
+        let a = [0x5au8; 300];
+        assert!(!normalized_eq(&a[..299], &a));
+        assert!(!normalized_eq(&a, &a[..299]));
+        for index in 0..a.len() {
+            let mut b = a;
+            b[index] ^= 0xff;
+            let metadata = [4..8, 24..36, 40..44, 48..56, 80..100]
+                .iter()
+                .any(|range| range.contains(&index));
+            assert_eq!(normalized_eq(&a, &b), metadata, "byte {index}");
+            assert_eq!(normalized_eq(&b, &a), metadata, "byte {index}");
+            // The same predicate must hold when an input ends inside a field.
+            assert_eq!(
+                normalized_eq(&a[..=index], &b[..=index]),
+                metadata,
+                "truncated byte {index}"
+            );
+        }
     }
 
     #[test]

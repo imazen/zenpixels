@@ -153,3 +153,62 @@ fn chroma_size_rounds_up_and_mono_has_no_chroma() {
     assert_eq!(S::Yuv420.chroma_size(0, 0), Some((0, 0)));
     assert_eq!(ChromaSiting::default(), ChromaSiting::Unknown);
 }
+#[test]
+fn bulk_codes_preserve_every_encoding_and_component_step() {
+    use zenpixels::ChannelType;
+    use zenpixels::plane::{AnyPlane, PlaneRef};
+    use zenpixels::sample::{CodePlane, SampleEncoding};
+    for ty in [ChannelType::U8, ChannelType::U16] {
+        let storage_bits = if ty == ChannelType::U8 { 8 } else { 16 };
+        for bits in 1..=storage_bits {
+            for shift in 0..=storage_bits - bits {
+                let encoding = SampleEncoding::new(ty, bits, shift).unwrap();
+                let mask = ((1u32 << bits) - 1) as u16;
+                for components in [1, 2] {
+                    for width in [0, 1, 7, 16, 17, 127, 128, 129] {
+                        let stride = width * components + 7;
+                        let wide: Vec<u16> = (0..stride * 3)
+                            .map(|i| (i as u16).wrapping_mul(1297) ^ 0xa57c)
+                            .collect();
+                        let narrow: Vec<u8> = wide.iter().map(|v| *v as u8).collect();
+                        let plane = match ty {
+                            ChannelType::U8 => AnyPlane::U8(
+                                PlaneRef::new(&narrow[..], width * components, 3, stride).unwrap(),
+                            ),
+                            ChannelType::U16 => AnyPlane::U16(
+                                PlaneRef::new(&wide[..], width * components, 3, stride).unwrap(),
+                            ),
+                            _ => unreachable!(),
+                        };
+                        for component in 0..components {
+                            let codes =
+                                CodePlane::component(plane, components, component, encoding)
+                                    .unwrap();
+                            for y in 0..3 {
+                                for start in [0, width / 2, width] {
+                                    let mut actual = vec![0xffff; width - start];
+                                    codes.read_codes(start, y, &mut actual).unwrap();
+                                    let expected: Vec<_> = (start..width)
+                                        .map(|x| {
+                                            let i = y * stride + x * components + component;
+                                            let word = if ty == ChannelType::U8 {
+                                                u16::from(narrow[i])
+                                            } else {
+                                                wide[i]
+                                            };
+                                            (word >> shift) & mask
+                                        })
+                                        .collect();
+                                    assert_eq!(
+                                        actual, expected,
+                                        "{ty:?} bits={bits} shift={shift} components={components} width={width} start={start}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

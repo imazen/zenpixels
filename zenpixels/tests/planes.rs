@@ -574,6 +574,41 @@ fn a_lone_alpha_plane_is_a_layout() {
 }
 
 #[test]
+fn planar_alpha_role_requires_a_defined_interpretation() {
+    use zenpixels::{AlphaMode, ColorContext};
+    let samples = [255u8];
+    let planes = [AnyPlane::U8(PlaneRef::new(&samples[..], 1, 1, 1).unwrap())];
+    let color = ColorContext::default();
+    for role in [PlaneRole::Alpha, PlaneRole::Luma] {
+        let layout = PlanarLayout::new(
+            vec![PlaneSpec::new(role, codes(ChannelType::U8, 8, 0))],
+            ChromaSubsampling::Mono,
+            ChromaSiting::Unknown,
+        )
+        .unwrap();
+        for alpha in [
+            None,
+            Some(AlphaMode::Undefined),
+            Some(AlphaMode::Straight),
+            Some(AlphaMode::Premultiplied),
+            Some(AlphaMode::Opaque),
+        ] {
+            let result = PlanarSlice::new(&planes, &layout, 1, 1, &color, alpha);
+            let valid = if role == PlaneRole::Alpha {
+                alpha.is_some() && alpha != Some(AlphaMode::Undefined)
+            } else {
+                alpha.is_none()
+            };
+            if valid {
+                assert_eq!(result.unwrap().alpha_mode(), alpha);
+            } else {
+                assert_eq!(result.unwrap_err(), LayoutError::AlphaInterpretation);
+            }
+        }
+    }
+}
+
+#[test]
 fn planar_picture_reuses_native_code_components_and_preserves_interpretation() {
     use zenpixels::sample::CodePlane;
     use zenpixels::{AlphaMode, Cicp, ColorContext, ColorProfileSource};

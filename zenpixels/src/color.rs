@@ -413,16 +413,27 @@ impl ColorContext {
         }
     }
 
-    /// Derive transfer function from CICP (or `Unknown` if no CICP).
+    /// Derive the selected current profile's transfer function.
+    ///
+    /// CICP is used only when it is the selected authority. ICC remains opaque
+    /// here, so an ICC-selected context returns `Unknown`, even if CICP is also
+    /// present. This method does not identify or approximate ICC profiles.
     pub fn transfer_function(&self) -> TransferFunction {
-        self.cicp
-            .and_then(|c| TransferFunction::from_cicp(c.transfer_characteristics))
-            .unwrap_or(TransferFunction::Unknown)
+        match self.as_profile_source() {
+            Some(ColorProfileSource::Cicp(c)) => {
+                TransferFunction::from_cicp(c.transfer_characteristics)
+                    .unwrap_or(TransferFunction::Unknown)
+            }
+            _ => TransferFunction::Unknown,
+        }
     }
 
-    /// True if this describes sRGB (either via CICP or trivially).
+    /// True when the selected current profile is explicitly CICP sRGB.
+    ///
+    /// An authoritative ICC is opaque here; a secondary CICP claim does not
+    /// establish the ICC's identity or permit bypassing color management.
     pub fn is_srgb(&self) -> bool {
-        self.cicp == Some(Cicp::SRGB)
+        self.as_profile_source() == Some(ColorProfileSource::Cicp(Cicp::SRGB))
     }
 }
 
@@ -609,6 +620,27 @@ mod tests {
         let ctx = ColorContext::from_icc(vec![1, 2, 3]).with_cicp(Cicp::SRGB);
         let src = ctx.as_profile_source().unwrap();
         assert_eq!(src, ColorProfileSource::Icc(&[1, 2, 3]));
+    }
+
+    #[test]
+    fn current_color_predicates_follow_the_selected_authority() {
+        for cicp in [Cicp::SRGB, Cicp::BT2100_PQ] {
+            for icc in [&[][..], &[1, 2, 3][..]] {
+                let context = ColorContext::from_icc(icc).with_cicp(cicp);
+                assert_eq!(
+                    context.as_profile_source(),
+                    Some(ColorProfileSource::Icc(icc))
+                );
+                assert_eq!(context.transfer_function(), TransferFunction::Unknown);
+                assert!(!context.is_srgb());
+                // Selecting the current authority does not erase source claims.
+                assert_eq!(context.cicp, Some(cicp));
+                assert_eq!(context.icc.as_deref(), Some(icc));
+            }
+        }
+        let unknown = ColorContext::default();
+        assert_eq!(unknown.transfer_function(), TransferFunction::Unknown);
+        assert!(!unknown.is_srgb());
     }
 
     #[test]

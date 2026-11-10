@@ -368,16 +368,24 @@ fn code_samples(view: &CodePlane<'_>, size: usize, state: &mut impl Hasher) {
         return;
     }
     let mut codes = [0u16; 128];
-    let mut bytes = [0u8; 256];
+    let mut bytes = [0u8; 128];
     for y in 0..view.height() {
         for x in (0..view.width()).step_by(codes.len()) {
             let n = (view.width() - x).min(codes.len());
             view.read_codes(x, y, &mut codes[..n])
                 .expect("checked active code plane extent");
-            for (code, bytes) in codes[..n].iter().zip(bytes.chunks_exact_mut(size)) {
-                bytes.copy_from_slice(&code.to_le_bytes()[..size]);
+            match size {
+                // Reuse the wide-sample serializer. Little-endian hosts can
+                // hash the complete code block directly, without per-code copies.
+                2 => samples(bytemuck::cast_slice(&codes[..n]), 2, state),
+                1 => {
+                    for (byte, code) in bytes[..n].iter_mut().zip(&codes[..n]) {
+                        *byte = *code as u8;
+                    }
+                    state.write(&bytes[..n]);
+                }
+                _ => unreachable!("CodePlane supports U8/U16 containers"),
             }
-            state.write(&bytes[..n * size]);
         }
     }
 }
