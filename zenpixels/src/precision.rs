@@ -8,8 +8,10 @@ use crate::{ChannelType, PixelDescriptor, SignalRange, TransferFunction};
 
 /// How much information the source really had, which no later edit changes.
 ///
-/// This differs from the descriptor of the current samples: a JPEG held in `f32` linear still has
-/// 8 significant bits after a resize. It also differs from
+/// This differs from the descriptor of the current samples: an 8-bit JPEG
+/// decoded into linear `f32` still has an 8-bit source origin. Resizing can
+/// create values outside its original code grid; this record does not prove
+/// that encoding the processed values in 8 bits preserves them. It differs from
 /// [`ExactDepth`](crate::sample::ExactDepth), which says where the current samples sit and which
 /// any arithmetic ends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,7 +122,8 @@ impl SourcePrecision {
         self
     }
 
-    /// Significant bits per sample. For a float source, its mantissa width.
+    /// Declared source capacity in bits. For a float source, its mantissa width.
+    /// This is not measured precision or exact-depth evidence for processed values.
     pub const fn significant_bits(&self) -> u8 {
         self.bits
     }
@@ -147,7 +150,9 @@ pub struct ConversionOffer {
     pub output: PixelDescriptor,
     /// Alpha is composited onto a matte, so leaving it out of the output drops nothing.
     pub matte: bool,
-    /// Peak bytes for this route, if known. Unknown is not zero: a memory limit refuses it.
+    /// Caller-reported peak bytes for this route, if known. Unknown is not zero:
+    /// a memory limit refuses it. The caller defines the accounting scope;
+    /// chain planning does not infer overlapping lifetimes or worker/cache costs.
     pub peak_bytes: Option<u64>,
 }
 

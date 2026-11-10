@@ -198,3 +198,10 @@ metadata-only header ranges are ignored. The fingerprint and equality APIs
 share that normalization predicate. Approximate table recognition still has its
 separate qualification and intent limits; this is not strict preservation of
 profiles merely judged close by historical tolerance measurements.
+
+The remaining #150 work concerns current processing requirements versus source
+origin, historical approximate ICC substitution qualifications, and an explicit
+whole-operation memory accounting scope. Capacity/peak documentation states
+what the existing planner actually computes; it does not add those models.
+The separate [allocation audit](allocation-audit.md) records verified starting
+points and the still-missing completion gates for #151.
