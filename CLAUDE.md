@@ -120,6 +120,12 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed (2026-11-10): the isolated no-database consumer still required the
+  retired truncated-ICC/sRGB fallback after the #134 authority fix. The focused
+  CMS workflow failed on every platform. Its regression now requires original
+  ICC/RGB preservation across empty, short and unrecognized declarations, with
+  absent, sRGB or P3 companion CICP; exact opaque-alpha removal remains allowed.
+
 - Fixed in the explorer/docs pass: intrinsic grid/byte-group widths expanded
   the page beyond a mobile viewport. Panels now shrink and wide diagrams scroll
   locally. Copied Rust examples also omitted explicit Unknown color fields and

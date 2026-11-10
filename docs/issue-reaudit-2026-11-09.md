@@ -195,3 +195,13 @@ After rebasing onto `ec0d8ab0`, the default repository gate, expanded backend
 gate, `design-feature-check` (including all-feature library/generator tests
 and strict workspace all-target Clippy) and API snapshot check passed again:
 `run-heavy: done rc=0 45s | peak-RSS 1.13GiB | min-avail 13169MiB | peak-load 1.00`.
+
+
+## Isolated authority replay — 2026-11-10
+
+The no-database consumer still asserted the retired truncated-ICC/sRGB fallback,
+so the focused CMS workflow failed even though the core authority controls passed.
+The isolated fixture now requires RGB samples and the original ICC to survive,
+while permitting exact opaque-alpha removal. It covers empty, short and
+unrecognized ICC declarations with no CICP, sRGB and Display P3 companions.
+The positive known-ICC and genuine no-database controls remain in place.
