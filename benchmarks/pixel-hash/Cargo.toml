@@ -20,3 +20,7 @@ harness = false
 
 [profile.bench]
 lto = "thin"
+
+[[bin]]
+name = "profile_codes"
+path = "src/profile_codes.rs"
