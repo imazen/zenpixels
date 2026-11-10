@@ -5,16 +5,19 @@
 //! - **CICP extraction**: [`Cicp::from_icc`] reads the `cicp` tag from ICC v4.4+
 //!   profiles (~100ns, no allocation).
 //!
-//! - **Hash-based identification**: [`IccIdentification::from_icc`] recognizes 181
-//!   well-known profiles (sRGB, Display P3, BT.2020, Adobe RGB,
+//! - **Hash-based identification**: [`IccIdentification::from_icc`] recognizes
+//!   retained profile fingerprints (sRGB, Display P3, BT.2020, Adobe RGB,
 //!   grayscale) via paired normalized FNV-1a64/MurmurHash3_x86_32 lookup.
 //!
 //! The hash table covers profiles found in a web corpus of 55,539 spidered
 //! images, plus Compact-ICC-Profiles, skcms, ICC.org, colord, Ghostscript,
 //! moxcms, and zenpixels-convert bundled profiles. Metadata-only header
 //! fields are zeroed before hashing to collapse functionally identical
-//! profiles — safe across ICC v2.0–v4.4 and v5/iccMAX. Each entry is
-//! verified against its reference EOTF for all 65536 u16 values.
+//! profiles across ICC v2.0–v4.4 and v5/iccMAX. Stored curve-fit errors concern
+//! red/gray TRCs; intent permissions carry separate historical qualification.
+//! Neither establishes bit-exact full-transform equivalence. Exact original
+//! coverage is documented in `docs/icc-retention-audit.md`; complete historical
+//! tolerance requalification remains separate.
 //!
 //! # Example
 //!
@@ -24,7 +27,7 @@
 //! # let icc_bytes: &[u8] = &[];
 //! if let Some(id) = IccIdentification::from_icc(icc_bytes) {
 //!     if id.valid_use == IdentificationUse::MatrixTrcSubstitution {
-//!         // Safe to skip CMS — use matrix+TRC math directly
+//!         // Eligible for matrix+TRC under the caller's approximation policy.
 //!     }
 //!     // id.primaries and id.transfer are always available for metadata
 //! }
@@ -412,9 +415,11 @@ impl IccIdentification {
 
 /// TRC match tolerance for ICC profile identification.
 ///
-/// Each entry in the hash table stores its measured maximum error in u16
-/// space (0–65535), verified against the reference EOTF for all 65536
-/// input values. This tolerance controls which entries are accepted.
+/// Each entry stores a historical red/gray curve-fit error in u16 space
+/// (0–65535). The generator evaluates that curve against reference EOTFs for
+/// all 65536 input values; this is not a complete CMS transform measurement.
+/// This tolerance controls which entries are accepted, without requalifying
+/// the retained original at runtime.
 ///
 /// A small curve error does not guarantee equal quantized output: values
 /// near a rounding midpoint can differ. This is identification tolerance,
