@@ -575,6 +575,8 @@ icc-export-runtime-check:
 
 icc-authority-check:
     cargo test --locked -p zenpixels-convert --lib --features cms-moxcms,cms-lcms,icc-db load_bearing
+    cargo test --locked -p zenpixels-convert --features cms-moxcms,cms-lcms --test authority_boundaries --test output_current_color --test output_contracts
+    cargo test --locked -p zenpixels-convert --no-default-features --test authority_boundaries
 
 icc-export-source-check:
     cargo fmt -p zenpixels -p zenpixels-convert -p icc-gen --check

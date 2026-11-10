@@ -231,3 +231,100 @@ fn opaque_and_metadata_only_icc_authority_table_reaches_both_boundaries() {
         }
     }
 }
+
+#[test]
+fn grayscale_reduction_preserves_unusable_icc_but_allows_exact_alpha_and_depth_reduction() {
+    use zenpixels_convert::{PixelBufferLoadBearingExt, PixelSliceLoadBearingExt};
+
+    for channel in [ChannelType::U8, ChannelType::U16] {
+        for has_alpha in [false, true] {
+            for force_alpha in [false, true] {
+                for icc_len in [0, 8, 128] {
+                    for cicp in [Cicp::SRGB, Cicp::DISPLAY_P3] {
+                        let context =
+                            Arc::new(ColorContext::from_icc(vec![0; icc_len]).with_cicp(cicp));
+                        let descriptor = PixelDescriptor::new(
+                            channel,
+                            if has_alpha {
+                                ChannelLayout::Rgba
+                            } else {
+                                ChannelLayout::Rgb
+                            },
+                            has_alpha.then_some(AlphaMode::Straight),
+                            TransferFunction::Srgb,
+                        )
+                        .with_primaries(ColorPrimaries::Bt709);
+                        let row_len = 2 * descriptor.bytes_per_pixel();
+                        // Sample-aligned partial-pixel padding, absent on the final row.
+                        let stride = row_len + 3 * channel.byte_size();
+                        let mut bytes = vec![0xa5; stride + row_len];
+                        let mut rgb = Vec::new();
+                        let mut rgba = Vec::new();
+                        for (pixel, value) in [64u8, 128, 17, 51].into_iter().enumerate() {
+                            rgb.extend_from_slice(&[value; 3]);
+                            rgba.extend_from_slice(&[value, value, value, 255]);
+                            for c in 0..descriptor.channels() {
+                                let sample = if c == 3 { 255 } else { value };
+                                let index = (pixel / 2) * stride
+                                    + (pixel % 2) * descriptor.bytes_per_pixel()
+                                    + c * channel.byte_size();
+                                match channel {
+                                    ChannelType::U8 => bytes[index] = sample,
+                                    ChannelType::U16 => bytes[index..index + 2]
+                                        .copy_from_slice(&(u16::from(sample) * 257).to_ne_bytes()),
+                                    _ => unreachable!(),
+                                }
+                            }
+                        }
+                        let original = bytes.clone();
+                        let mut buffer = PixelBuffer::try_from_parts(PixelBufferParts::new(
+                            bytes.into(),
+                            2,
+                            2,
+                            stride,
+                            descriptor,
+                        ))
+                        .unwrap()
+                        .with_color_context(context.clone());
+                        let report = buffer.as_slice().determine_load_bearing();
+                        assert_eq!(report.uses_chroma, Some(false));
+                        assert_eq!(report.uses_alpha, Some(false));
+                        assert_eq!(report.uses_low_bits, Some(false));
+
+                        let copied = buffer.as_slice().try_reduce_to_load_bearing_format();
+                        if has_alpha || channel == ChannelType::U16 {
+                            let copied = copied.unwrap();
+                            assert_eq!(copied.descriptor(), PixelDescriptor::RGB8_SRGB);
+                            assert_eq!(copied.as_contiguous_bytes().unwrap(), rgb);
+                            assert!(Arc::ptr_eq(
+                                copied.as_slice().color_context().unwrap(),
+                                &context
+                            ));
+                        } else {
+                            assert!(copied.is_none(), "already RGB8; no safe reduction remains");
+                        }
+                        assert_eq!(buffer.as_slice().as_strided_bytes(), original);
+
+                        buffer.reduce_to_load_bearing_format_in_place(force_alpha);
+                        let retain_alpha = has_alpha && !force_alpha;
+                        let expected = if retain_alpha {
+                            PixelDescriptor::RGBA8_SRGB.with_alpha(Some(AlphaMode::Opaque))
+                        } else {
+                            PixelDescriptor::RGB8_SRGB
+                        };
+                        assert_eq!(buffer.descriptor(), expected);
+                        let expected_pixels = if retain_alpha { &rgba } else { &rgb };
+                        let row = expected_pixels.len() / 2;
+                        for (y, expected_row) in expected_pixels.chunks_exact(row).enumerate() {
+                            assert_eq!(buffer.as_slice().row(y as u32), expected_row);
+                        }
+                        assert!(Arc::ptr_eq(
+                            buffer.as_slice().color_context().unwrap(),
+                            &context
+                        ));
+                    }
+                }
+            }
+        }
+    }
+}

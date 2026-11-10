@@ -157,8 +157,8 @@ migrations and allocation ownership is recorded in
 [repository issue improvements](repository-issue-completion.md).
 The [merged issue re-audit](issue-reaudit-2026-11-09.md) separates completed
 contracts from remaining consumer, authority and release work for 83, 132–135
-and 150. It includes the RGB565 shared-word route and the retained truncated-ICC
-grayscale fallback; neither requires another pixel-view type.
+and 150. It includes the RGB565 shared-word route and the review of the former
+truncated-ICC grayscale fallback; neither requires another pixel-view type.
 
 ## IQA planar consumer review — PR144
 
@@ -195,6 +195,13 @@ follow the same selection: an ICC-selected context has unknown transfer and
 is not established to be sRGB, even when a secondary CICP field is present.
 These convenience methods do not identify ICC bytes. Decoders select the
 format's authority once and retain original claims in `ColorOrigin`.
+
+The #134 follow-up applies this rule to grayscale reduction too. An unusable
+ICC, including an empty/truncated declaration, cannot be replaced from companion
+CICP. The rewrite keeps RGB and the same context; independently exact alpha
+removal and full-range U16-to-U8 narrowing can still proceed. Raw content
+analysis still reports R==G==B truthfully. Qualified ICC replacement with an
+agreeing companion and CICP-only grayscale reduction remain supported.
 
 Explicit canonical ICC replacement uses paired fingerprints only as a filter.
 It then requires `icc::normalized_eq` against the retained canonical bytes:

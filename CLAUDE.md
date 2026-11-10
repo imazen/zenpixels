@@ -120,6 +120,12 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed in the #134 follow-up: grayscale reduction used companion CICP to
+  replace a truncated authoritative ICC. Empty/truncated/unrecognized ICCs
+  now preserve RGB interpretation and their original context while exact
+  alpha/depth reductions remain available. The positive ICC replacement test
+  uses a real qualified profile; malformed declarations have separate refusals.
+
 - Fixed in the hash follow-up: native P010 hashing used a variable-step scalar
   reader and per-code memcpy. Contiguous CodePlane reads and whole-code-block
   serialization preserve portable digests; the measured instruction witness
@@ -184,10 +190,12 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
   Browser witnesses establish selected paths, not physical HDR display accuracy;
   WebKit GRAY remains unqualified. See `docs/corrected-icc-export.md` and
   `benchmarks/icc-export/native_integer_2026-11-08.meta`. The independently reviewed
-  grayscale-collapse authority guard landed in the same main integration. Its compatible
-  variant preserves the existing truncated-input fallback and all established
-  assertions; only complete ICCs require qualified matrix/TRC replacement.
-  The stricter malformed-input proposal remains preserved, not adopted.
+  grayscale-collapse authority guard landed in the same main integration.
+  The #134 follow-up removes its truncated-input fallback: all selected ICC
+  declarations require qualified matrix/TRC replacement before grayscale
+  rewriting, including empty and malformed bytes. Companion CICP alone is
+  insufficient. Tests retain genuine qualified replacement and exact
+  alpha/depth reduction controls.
   The self dev-dependency re-enables defaults in unit tests even with
   --no-default-features. Its established configuration is retained: an isolated
   attempt to disable it passes 60 focused controls but exposes 10 unit tests
