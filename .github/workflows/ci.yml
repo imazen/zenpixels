@@ -226,6 +226,9 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: ICC original retention controls (synthetic bytes)
+        run: python3 -m unittest discover -s scripts/icc-gen -p test_retain_originals.py
+
       # Broken intra-doc links (e.g. `[\`Foo\`]` referring to a renamed/removed
       # item) are only caught by actually running rustdoc; plain `cargo check`
       # never sees them. RUSTDOCFLAGS=-D warnings turns those warnings into a
