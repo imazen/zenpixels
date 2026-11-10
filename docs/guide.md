@@ -207,6 +207,9 @@ conversion refuses. You do not need another buffer family to carry them.
 `ColorOrigin` retains what the original file said. After a conversion, original
 metadata must not override the current samples. An attached ICC remains
 authoritative even if a CICP companion disagrees or the ICC is unusable.
+Resolve source claims at the codec boundary: output planning requires a single
+current ICC or CICP declaration and refuses a context carrying both. An unusable
+ICC is a reason to refuse an unsupported operation, not to substitute CICP silently.
 
 `into_parts()` moves storage, offset, dimensions, stride, descriptor and context
 together. Use `PixelBuffer::try_from_parts` for checked reconstruction. A receiver
