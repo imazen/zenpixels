@@ -749,3 +749,10 @@ interpretation-review-check:
 # Retain both backends and all groups, including resource-flagged observations.
 hash-bench-summarize INPUT OUTPUT:
     python3 benchmarks/pixel-hash/summarize.py {{INPUT}} {{OUTPUT}}
+
+# Retain exact originals privately; absence of DEST verifies an existing receipt.
+icc-retain-originals RECEIPT DEST='':
+    python3 scripts/icc-gen/retain_originals.py "{{RECEIPT}}" {{ if DEST == "" { "" } else { '"' + DEST + '"' } }}
+
+icc-retain-tool-check:
+    python3 -m unittest discover -s scripts/icc-gen -p test_retain_originals.py

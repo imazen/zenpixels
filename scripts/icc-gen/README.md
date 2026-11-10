@@ -67,6 +67,20 @@ The output contains `inventory.tsv` (normalized hash and source path) and
 Inventory includes profiles rejected by classification. Retain full-file
 SHA-256 digests and source provenance alongside the resulting hash coverage.
 
+To retain a portable private copy of every selected witness:
+
+```
+just icc-retain-originals <coverage-receipt.json> <private-archive-directory>
+just icc-retain-originals <private-archive-directory>/manifest.json
+just icc-retain-tool-check
+```
+
+The first call copies full-SHA-256-addressed originals and their provenance.
+The second verifies every archived size/digest without changing the archive.
+Conflicting existing data is refused. The private consolidated witness archive
+and manifest identity are recorded in the linked audit; no copyrighted profile
+bytes are added to this public repository.
+
 ## Optional `lcms2-crosscheck`
 
 To cross-check profiles against Little CMS 2 (requires liblcms2 installed
