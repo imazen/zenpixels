@@ -2,9 +2,9 @@ name: Pixel Format Explorer
 on:
   push:
     branches: [main]
-    paths: ['site/**', 'zenpixels/**', 'zenpixels-convert/**', 'docs/color-explorer/**', 'docs/format_browser.html', 'Cargo.toml', '.github/workflows/pages.yml']
+    paths: ['site/**', 'zenpixels/**', 'zenpixels-convert/**', 'docs/guide.md', 'docs/color-explorer/**', 'docs/format_browser.html', 'README.md', 'scripts/check-guide.py', 'Cargo.toml', '.github/workflows/pages.yml']
   pull_request:
-    paths: ['site/**', 'zenpixels/**', 'zenpixels-convert/**', 'docs/color-explorer/**', 'docs/format_browser.html', 'Cargo.toml', '.github/workflows/pages.yml']
+    paths: ['site/**', 'zenpixels/**', 'zenpixels-convert/**', 'docs/guide.md', 'docs/color-explorer/**', 'docs/format_browser.html', 'README.md', 'scripts/check-guide.py', 'Cargo.toml', '.github/workflows/pages.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -41,7 +41,10 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/browser" playwright@1.63.0
           "$RUNNER_TEMP/browser/node_modules/.bin/playwright" install --with-deps chromium
           python3 -m http.server 3116 --bind 127.0.0.1 --directory site/dist > "$RUNNER_TEMP/site.log" 2>&1 &
-          PLAYWRIGHT_MODULE="$RUNNER_TEMP/browser/node_modules/playwright" node site/smoke.cjs http://127.0.0.1:3116
+          mkdir -p "$HOME/tmp"
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/browser/node_modules/playwright" EXPLORER_RUST_EXAMPLES="$HOME/tmp/explorer-examples.md" node site/smoke.cjs http://127.0.0.1:3116
+      - name: Compile guide, README and copied explorer examples
+        run: TMPDIR="$HOME/tmp" python3 scripts/check-guide.py --examples "$HOME/tmp/explorer-examples.md"
       - uses: actions/upload-pages-artifact@v5
         with:
           path: site/dist

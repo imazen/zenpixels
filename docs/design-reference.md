@@ -3,6 +3,9 @@
 This is the reference for the authorized 0.3 breaking-release consolidation.
 Status below distinguishes the intended design from completed implementation.
 
+Start with the [pixel types guide](guide.md) for everyday ownership, subimages,
+stride and conversion. This document records the detailed contracts and limits.
+
 ## What callers need to know
 
 1. **Storage is not interpretation.** `SampleEncoding` describes one integer
@@ -211,9 +214,11 @@ share that normalization predicate. Approximate table recognition still has its
 separate qualification and intent limits; this is not strict preservation of
 profiles merely judged close by historical tolerance measurements.
 
-The remaining #150 work concerns current processing requirements versus source
-origin, historical approximate ICC substitution qualifications, and an explicit
-whole-operation memory accounting scope. Capacity/peak documentation states
+The remaining work from closed #150 is tracked in
+[issue #154](https://github.com/imazen/zenpixels/issues/154): current processing
+requirements versus source origin and lower-priority historical approximate ICC
+qualification. Whole-operation memory admission belongs to the executor;
+capacity/peak documentation states
 what the existing planner actually computes; it does not add those models.
 The separate [allocation audit](allocation-audit.md) records the merged #151
 allocation fixes, failure-injection controls and named infallible exceptions.

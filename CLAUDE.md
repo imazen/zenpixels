@@ -120,6 +120,13 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed in the explorer/docs pass: intrinsic grid/byte-group widths expanded
+  the page beyond a mobile viewport. Panels now shrink and wide diagrams scroll
+  locally. Copied Rust examples also omitted explicit Unknown color fields and
+  non-default generic alpha; the browser exports them for executable Rust checks.
+  The guide treats PixelSlice as a borrowed rectangular image view retaining
+  parent stride, not merely a row. Use `just guide-check` and `just site-check`.
+
 - Fixed in the #134 follow-up: grayscale reduction used companion CICP to
   replace a truncated authoritative ICC. Empty/truncated/unrecognized ICCs
   now preserve RGB interpretation and their original context while exact
