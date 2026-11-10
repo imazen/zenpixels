@@ -6,10 +6,14 @@
 
 use crate::{ChannelType, PixelDescriptor, SignalRange, TransferFunction};
 
-/// How much information the source really had, which no later edit changes.
+/// Declared source capacity, updated by explicit composition/conversion modeling.
 ///
 /// This differs from the descriptor of the current samples: an 8-bit JPEG
-/// decoded into linear `f32` still has an 8-bit source origin. Resizing can
+/// decoded into linear `f32` still has an 8-bit source origin. This value is
+/// not an immutable origin record: [`joined_with`](Self::joined_with) and
+/// [`after_conversion`](Self::after_conversion) update its capacity model.
+/// Retain original source facts separately when they must survive those updates.
+/// Resizing can
 /// create values outside its original code grid; this record does not prove
 /// that encoding the processed values in 8 bits preserves them. It differs from
 /// [`ExactDepth`](crate::sample::ExactDepth), which says where the current samples sit and which

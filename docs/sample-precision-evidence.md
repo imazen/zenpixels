@@ -1,7 +1,8 @@
 # Native codes, canonical samples and current-precision evidence
 
-2026-10-27, on top of output-plan `86d0e2d3` (PR #92). **Status: implemented in an unreleased
-branch, pending review; new public API goes through a PR assigned to lilith.** Arithmetic claims
+2026-10-27, on top of output-plan `86d0e2d3` (PR #92). **Current status: the core
+sample/evidence APIs are merged; the model encoder-depth resolver remains a
+test-only consumer proposal.** Arithmetic claims
 below were checked exhaustively by an independent Python oracle and are pinned by Rust tests that
 pass (2026-10-28, r7900x, rustc 1.99.1): `zenpixels-convert/tests/codes_exhaustive.rs` 17/17,
 `tests/precision_evidence.rs` 16/16, `tests/codes_alloc.rs` (zero allocations), and

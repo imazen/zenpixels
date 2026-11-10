@@ -3,6 +3,13 @@
 Proposal, 2026-11-04, revised 2026-11-05 after implementing shared facts in `zenpixels::precision` and policy in `zenpixels_convert::precision`. Signatures go through a PR for
 review. The measurements are in [precision-audit-2026-11-04.md](precision-audit-2026-11-04.md).
 
+Current scope: this is a declared-capacity selection policy, not a proof that
+processed samples can be represented exactly. `SourcePrecision` can be updated
+by composition and conversion; it is not an immutable origin record. Current
+`ExactDepth` evidence and explicit sample-preserving conversion are separate.
+Memory offers report their own scope, not a complete operation budget. See the
+[merged issue re-audit](issue-reaudit-2026-11-09.md) for unresolved consumer work.
+
 ## The rule
 
 Bits that arrived in the decoded image don't get dropped unless someone asked for that by name.
@@ -10,7 +17,7 @@ Bits that were only ever storage can go without anyone asking.
 
 | Situation | Default |
 |---|---|
-| 8-bit source, any working format that holds it, 8-bit output | Allowed, no event. Going through `u16`, `i16` or `f32` linear and back to 8 lost nothing that arrived. `u8` linear doesn't hold it: see "What a format holds" |
+| 8-bit source, any working format that holds it, 8-bit output | Allowed by the capacity policy. Processing may create off-grid values; exact preservation needs current evidence or a sample-preserving path. `u8` linear doesn't hold the modeled sRGB source capacity: see "What a format holds" |
 | 8-bit content in `u16` storage, 8-bit output | Allowed, no event, once the content is known to be 8-bit |
 | Real 16-bit source, output can hold it | Keep it |
 | Real 16-bit source, output format chosen automatically | Pick a format that holds it |
