@@ -66,6 +66,10 @@ extern crate alloc;
 whereat::define_at_crate_info!(path = "zenpixels/");
 
 pub mod descriptor;
+#[cfg(feature = "hash")]
+mod hashing;
+#[cfg(feature = "hash")]
+pub use hashing::HashInclusions;
 #[cfg(feature = "image")]
 mod image_interop;
 pub mod orientation;

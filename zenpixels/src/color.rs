@@ -325,6 +325,7 @@ impl ColorAuthority {
 // `None`) is the empty "no color signaling" context — the only way to construct
 // one now that the struct literal is sealed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "hash", derive(Hash))]
 #[non_exhaustive]
 pub struct ColorContext {
     /// Raw ICC profile bytes.
@@ -456,6 +457,7 @@ pub enum ColorProvenance {
 /// [`PixelDescriptor`] for the current state
 /// and can consult `ColorOrigin` for provenance decisions.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "hash", derive(Hash))]
 #[non_exhaustive]
 pub struct ColorOrigin {
     /// Raw ICC profile bytes from the source file, if any.
