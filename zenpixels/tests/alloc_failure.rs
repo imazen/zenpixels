@@ -4,75 +4,15 @@
 //! A `#[global_allocator]` returns null for every allocation larger than a
 //! run-time threshold, so each `try_*` path can be pushed over its own reserve
 //! without depending on host memory pressure. This file is its own test
-//! binary, so the allocator affects only these tests; every test that lowers
-//! the threshold holds `FAIL_LOCK` so a neighbor's big allocation can't fail
-//! spuriously.
+//! binary. Injection applies only to the calling thread, so concurrent test
+//! harness allocations retain their normal allocator.
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+#[path = "common/fail_allocator.rs"]
+mod fail_allocator;
+use fail_allocator::{failing_above, lock};
 
 use zenpixels::plane::{AlignedSamples, PlaneError};
 use zenpixels::{BufferError, PixelBuffer, PixelDescriptor, PixelSlice};
-
-/// Allocations larger than this many bytes fail; `usize::MAX` means never.
-static THRESHOLD: AtomicUsize = AtomicUsize::new(usize::MAX);
-
-/// Serializes threshold manipulation across tests in this binary.
-static FAIL_LOCK: Mutex<()> = Mutex::new(());
-
-struct FailOver;
-
-// SAFETY: `alloc`/`alloc_zeroed`/`realloc` return null past the threshold
-// (callers observe failure, the contract's only requirement); smaller
-// allocations and all `dealloc`s delegate to `System` with the same layout.
-unsafe impl GlobalAlloc for FailOver {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if layout.size() > THRESHOLD.load(Ordering::Relaxed) {
-            return core::ptr::null_mut();
-        }
-        unsafe { System.alloc(layout) }
-    }
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        if layout.size() > THRESHOLD.load(Ordering::Relaxed) {
-            return core::ptr::null_mut();
-        }
-        unsafe { System.alloc_zeroed(layout) }
-    }
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if new_size > THRESHOLD.load(Ordering::Relaxed) {
-            return core::ptr::null_mut();
-        }
-        unsafe { System.realloc(ptr, layout, new_size) }
-    }
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        unsafe { System.dealloc(ptr, layout) }
-    }
-}
-
-#[global_allocator]
-static FAIL_OVER: FailOver = FailOver;
-
-/// Restore the threshold on drop, even when a test assertion panics while it
-/// is lowered.
-struct ThresholdGuard;
-
-impl Drop for ThresholdGuard {
-    fn drop(&mut self) {
-        THRESHOLD.store(usize::MAX, Ordering::Relaxed);
-    }
-}
-
-/// Fail every allocation above `bytes` while `body` runs, then restore.
-fn failing_above<T>(bytes: usize, body: impl FnOnce() -> T) -> T {
-    THRESHOLD.store(bytes, Ordering::Relaxed);
-    let _guard = ThresholdGuard;
-    body()
-}
-
-fn lock() -> std::sync::MutexGuard<'static, ()> {
-    FAIL_LOCK.lock().unwrap_or_else(|e| e.into_inner())
-}
 
 fn assert_alloc_failed(err: &whereat::At<BufferError>) {
     assert_eq!(
@@ -218,4 +158,28 @@ fn aligned_samples_try_zeroed_reports_allocation_failure() {
         assert_eq!(err, PlaneError::AllocationFailed);
     });
     assert!(AlignedSamples::<u16>::try_zeroed(64 * 64 * 3).is_ok());
+}
+
+#[test]
+fn failure_scope_leaves_other_threads_allocations_available() {
+    use std::sync::{Arc, Barrier};
+    let _g = lock();
+    let barrier = Arc::new(Barrier::new(2));
+    let worker_barrier = barrier.clone();
+    let worker = std::thread::spawn(move || {
+        worker_barrier.wait();
+        let allowed = Vec::<u8>::new().try_reserve_exact(8192).is_ok();
+        worker_barrier.wait();
+        allowed
+    });
+    failing_above(4096, || {
+        barrier.wait();
+        let refused = Vec::<u8>::new().try_reserve_exact(8192).is_err();
+        barrier.wait();
+        assert!(refused, "the injected operation must still fail");
+    });
+    assert!(
+        worker.join().unwrap(),
+        "unrelated thread must retain its allocator"
+    );
 }

@@ -120,6 +120,11 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed (2026-11-10): allocation-failure injection used a process-wide gate,
+  allowing unrelated harness allocations to abort even while fixtures held the
+  mutex. The shared test allocator now scopes the same cutoff to the calling
+  thread. A synchronized cross-thread allocation control fails before the fix.
+
 - Fixed (2026-11-10): the isolated no-database consumer still required the
   retired truncated-ICC/sRGB fallback after the #134 authority fix. The focused
   CMS workflow failed on every platform. Its regression now requires original
