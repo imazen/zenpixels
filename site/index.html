@@ -46,6 +46,17 @@ body::before {
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
 }
 .wrap { position: relative; z-index: 1; max-width: 1240px; margin: 0 auto; padding: 0 28px; }
+/* Grid tracks may shrink below a byte diagram's intrinsic width. Long rows
+   scroll inside their panel; they must not widen the document. */
+.stack > *, .story > *, .sec > *, .mem > *, .memrow > *, .inspect > * { min-width: 0; }
+input, select, fieldset { min-width: 0; max-width: 100%; }
+code, .hexeq, .descpill, .card-ch .mean { overflow-wrap: anywhere; }
+.controls { display: flex; flex-wrap: wrap; gap: 14px; align-items: end; }
+.controls > .field, .memctl > .field { flex: 1 1 160px; min-width: 0; max-width: 100%; }
+.controls > label { flex: 1 1 240px; }
+fieldset { margin: 0; border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+legend { max-width: 100%; }
+.site-nav { display: flex; flex-wrap: wrap; gap: 10px 22px; padding-top: 22px; font-size: .9rem; }
 @media (max-width: 700px) { .wrap { padding: 0 16px; } }
 h1, h2, h3 { font-family: var(--font-display); margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
 h2 { font-size: clamp(1.35rem, 2.4vw, 1.9rem); font-weight: 700; }
@@ -59,7 +70,7 @@ a { color: var(--gold); }
 .hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr); gap: 44px; padding: 44px 0 30px; align-items: start; }
 @media (max-width: 980px) { .hero { grid-template-columns: 1fr; gap: 28px; padding-top: 28px; } }
 .eyebrow { font-family: var(--font-mono); font-size: .76rem; letter-spacing: .14em; text-transform: uppercase; color: var(--gold); }
-.hero h1 { font-size: clamp(2.4rem, 5.6vw, 4.6rem); font-weight: 800; line-height: .98; margin: 14px 0 18px; }
+.hero h1 { font-size: clamp(1.9rem, 5.6vw, 4.6rem); font-weight: 800; line-height: .98; margin: 14px 0 18px; }
 .hero h1 .px { display: inline-block; width: .62em; height: .62em; margin-left: .12em; border-radius: .08em; background: var(--hero, #ff7a1a);
   box-shadow: 0 0 .5em color-mix(in srgb, var(--hero, #ff7a1a) 70%, transparent); vertical-align: .02em; }
 .lede { color: var(--muted); font-size: 1.06rem; }
@@ -145,7 +156,7 @@ details.tune[open] summary::after { content: "−"; }
 .num { font-family: var(--font-mono); font-size: .8rem; color: var(--gold); }
 .sub { color: var(--muted); }
 .memctl { display: flex; flex-wrap: wrap; gap: 14px; align-items: end; }
-.memctl .field { min-width: 110px; }
+.memctl .align-field { flex-basis: 230px; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
 .seg button { font: 500 .82rem var(--font-body); background: transparent; color: var(--text); border: 0; padding: 8px 12px; cursor: pointer; }
 .seg button[aria-pressed="true"] { background: var(--gold); color: var(--gold-ink); }
@@ -158,7 +169,8 @@ details.tune[open] summary::after { content: "−"; }
 .mem { display: grid; gap: 16px; }
 .memrow { display: grid; gap: 8px; }
 .memrow-h { font-size: .74rem; color: var(--muted); font-family: var(--font-mono); }
-.bytes { display: flex; flex-wrap: wrap; gap: 14px 6px; align-items: flex-end; }
+.bytes { display: flex; flex-wrap: wrap; gap: 14px 6px; align-items: flex-end; overflow-x: auto; padding: 12px 2px 4px; }
+.pxg { flex-shrink: 0; }
 .pxg { display: flex; gap: 2px; padding: 4px; border: 1px dashed var(--line); border-radius: 8px; position: relative; }
 .pxg-label { position: absolute; top: -10px; left: 8px; font-size: .6rem; background: var(--panel); padding: 0 4px; color: var(--muted); font-family: var(--font-mono); }
 .smp { display: flex; gap: 1px; border-radius: 5px; padding: 1px; cursor: pointer; }
@@ -196,13 +208,13 @@ tr.cmprow { cursor: pointer; }
 tr.cmprow:hover td, tr.cmprow:focus-visible td { background: color-mix(in srgb, var(--gold) 8%, transparent); }
 tr.cmprow.cur td:first-child { box-shadow: inset 3px 0 0 var(--gold); }
 .swatch-s { display: inline-block; width: 16px; height: 16px; border-radius: 4px; vertical-align: -3px; margin-right: 8px; border: 1px solid var(--line); }
-ol.primer { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; counter-reset: p; }
+ol.primer { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 12px; counter-reset: p; }
 ol.primer li { counter-increment: p; border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: grid; gap: 10px; align-content: space-between; background: var(--night); }
 ol.primer li h3::before { content: counter(p, decimal-leading-zero) "  "; font-family: var(--font-mono); color: var(--gold); font-size: .78rem; }
 ol.primer p { color: var(--muted); font-size: .9rem; }
 .btn { font: 600 .82rem var(--font-body); border: 1px solid var(--gold); color: var(--gold); background: transparent; padding: 7px 14px; border-radius: 999px; cursor: pointer; justify-self: start; }
 .btn:hover { background: var(--gold); color: var(--gold-ink); }
-dl.gloss { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin: 0; }
+dl.gloss { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 12px; margin: 0; }
 dl.gloss div { border-top: 1px solid var(--line); padding: 10px 2px 0; }
 dl.gloss dt { font-family: var(--font-display); font-weight: 600; font-size: .92rem; }
 dl.gloss dd { margin: 4px 0 0; color: var(--muted); font-size: .9rem; }
@@ -213,10 +225,11 @@ footer { color: var(--muted); font-size: .82rem; padding: 10px 0 40px; display: 
 </head>
 <body>
 <div class="wrap">
+<nav class="site-nav" aria-label="Documentation"><a href="guide.html">Start here: pixel types in Rust</a><a href="#h-mem">Explore bytes</a><a href="color-explorer/">Color decisions</a></nav>
 <header class="hero">
   <div class="stack">
     <p class="eyebrow">zenpixels · pixel format explorer</p>
-    <h1>One pixel,<br><span style="white-space:nowrap">every byte<span class="px" aria-hidden="true"></span></span></h1>
+    <h1>One pixel,<br><span>every byte<span class="px" aria-hidden="true"></span></span></h1>
     <p class="lede">A color on screen is just a few numbers in memory. Which numbers depends on the pixel format. Pick one and watch the same color change shape. All you need to start is knowing what a web hex code is.</p>
     <div class="stack" style="gap:8px">
       <span class="lbl" id="chipslbl">Pick a format</span>
@@ -232,7 +245,7 @@ footer { color: var(--muted); font-size: .82rem; padding: 10px 0 40px; display: 
       <summary>Fine-tune the format</summary>
       <div class="tunegrid">
         <div class="field wide">
-          <label for="format">Interleaved pixel format (54 choices)</label>
+          <label for="format">Interleaved pixel format (<span id="format-count"></span> choices)</label>
           <select id="format"></select>
           <small id="formatnote"></small>
         </div>
@@ -321,10 +334,10 @@ footer { color: var(--muted); font-size: .82rem; padding: 10px 0 40px; display: 
     <div class="memctl">
       <div class="field"><label for="w">Width</label><input type="number" id="w" min="1" max="8" value="3"></div>
       <div class="field"><label for="h">Rows</label><input type="number" id="h" min="1" max="4" value="2"></div>
-      <div class="field" style="min-width:230px"><label for="align">Row alignment</label>
+      <div class="field align-field"><label for="align">Row alignment</label>
         <select id="align">
-          <option value="0">Packed (PixelBuffer::try_new)</option>
-          <option value="64" selected>64 bytes (try_new_aligned)</option>
+          <option value="0" selected>Packed (PixelBuffer::try_new)</option>
+          <option value="64">64 bytes (try_new_aligned)</option>
         </select></div>
       <div class="field"><span class="lbl" id="endlbl">Byte order shown</span>
         <div class="seg" role="group" aria-labelledby="endlbl">
@@ -347,7 +360,7 @@ footer { color: var(--muted); font-size: .82rem; padding: 10px 0 40px; display: 
   <section class="sec" aria-labelledby="h-cmp">
     <div class="sec-head"><span class="num">03</span><h2 id="h-cmp">Same color, other formats</h2></div>
     <p class="sub">One color, many byte patterns. Select a row to switch.</p>
-    <div class="tablewrap"><table id="cmp"></table></div>
+    <div class="tablewrap" tabindex="0" role="region" aria-label="Comparison of pixel formats"><table id="cmp"></table></div>
   </section>
 
   <section class="sec" aria-labelledby="h-primer">
@@ -360,26 +373,27 @@ footer { color: var(--muted); font-size: .82rem; padding: 10px 0 40px; display: 
     <div class="sec-head"><span class="num">05</span><h2 id="h-gloss">Words you will meet</h2></div>
     <dl class="gloss">
       <div><dt>Channel and sample</dt><dd>A channel is one ingredient of a pixel (red, alpha, cyan, lightness). A sample is one channel's number in one pixel.</dd></div>
-      <div><dt>Channel type</dt><dd>How each sample is stored: <code>U8</code> (0–255), <code>U16</code> (0–65535), <code>F16</code>/<code>F32</code> (floats where 1.0 is full), or a native type like <code>I16</code>.</dd></div>
+      <div><dt>Channel type</dt><dd>How each sample is stored: <code>U8</code> (0–255), <code>U16</code> (0–65535), floating-point <code>F16</code>/<code>F32</code>, or native types such as <code>I16</code> and <code>U64</code>. The descriptor determines what those numbers mean.</dd></div>
       <div><dt>Transfer function</dt><dd>The curve between stored number and amount of light. sRGB spends more codes on darks, the way eyes do. Linear stores light itself.</dd></div>
-      <div><dt>Primaries</dt><dd>Which exact red, green and blue the numbers mix. Wider primaries reach more saturated colors, so the same color needs smaller numbers.</dd></div>
-      <div><dt>White point</dt><dd>The color equal R, G and B make. All primaries here use D65 (x 0.3127, y 0.3290), so white stays (1, 1, 1).</dd></div>
+      <div><dt>Primaries</dt><dd>Which exact red, green and blue the numbers mix. Wide gamuts can reach colors outside sRGB. Converting primaries adjusts the numbers to preserve the represented color where possible.</dd></div>
+      <div><dt>White point</dt><dd>The color equal R, G and B make. The known primaries in this demo use D65 (x 0.3127, y 0.3290).</dd></div>
       <div><dt>Gamut</dt><dd>Every color a set of primaries reaches with values 0 to 1. Outside it you need values below 0 or above 1, which only floats can hold.</dd></div>
       <div><dt>Signal range</dt><dd>Full uses every code. Narrow (TV) puts black at 16 and white at 235 in 8 bits; 4096 and 60160 in 16 bits.</dd></div>
       <div><dt>Alpha</dt><dd>Straight: color and opacity apart. Premultiplied: color already times opacity. Opaque: always full. Undefined: a padding byte that means nothing.</dd></div>
       <div><dt>Channel order</dt><dd>BGRA stores blue first. Still RGB color, just a different order in memory; zenpixels records it in the layout.</dd></div>
-      <div><dt>Stride</dt><dd>Bytes from the start of one row to the next. Can exceed the pixels, leaving padding. zenpixels requires a whole number of pixels.</dd></div>
+      <div><dt>Stride and subimages</dt><dd>Bytes from one row start to the next. A <code>PixelSlice</code> can borrow a cropped rectangle and keep its parent's stride. Padding needs sample alignment, not a whole number of pixels; <code>row(y)</code> returns only the view's active pixels.</dd></div>
       <div><dt>Endianness</dt><dd>Which byte of a multi-byte number comes first. zenpixels uses the CPU's own order; 16-bit PNG files are big-endian, so decoders swap.</dd></div>
       <div><dt>Descriptor</dt><dd><code>PixelDescriptor</code> = <code>PixelFormat</code> (type and layout) plus curve, primaries, alpha and range. Same bytes, different descriptor: a different color.</dd></div>
       <div><dt>Native samples</dt><dd><code>I16</code>, <code>F64</code> and friends use <code>PixelFormat::Generic</code>. Identity carriage preserves their bits. General numerical conversion refuses. Integer code interpretation is available separately through SampleEncoding; see the plane examples below.</dd></div>
       <div><dt>CMYK and ICC</dt><dd>Printer ink amounts. Turning them into screen color needs that printer's ICC profile and a color management system.</dd></div>
       <div><dt>Oklab</dt><dd>Perceptual color: L is lightness, a runs green to red, b runs blue to yellow. Edits in Oklab look even.</dd></div>
-      <div><dt>PQ and HLG</dt><dd>HDR curves. PQ codes absolute brightness up to 10,000 nits, so white needs an anchor. HLG is relative to the display.</dd></div>
+      <div><dt>PQ and HLG</dt><dd>HDR curves. PQ codes absolute brightness up to 10,000 nits; conversion from relative light needs a white anchor. Mapping HLG into display light needs explicit rendering conditions.</dd></div>
     </dl>
   </section>
 
   <section class="sec" aria-labelledby="h-code">
     <div class="copyrow"><div class="sec-head"><span class="num">06</span><h2 id="h-code">In Rust</h2></div><button type="button" class="btn" id="copy">Copy code</button></div>
+    <p>This example allocates zero-filled storage with the selected format and row layout. The borrowed view can cover the whole image or a crop. <a href="guide.html#borrow-the-part-you-need">See a cropped view in the guide</a>.</p>
     <pre id="code"></pre>
   </section>
 
@@ -411,34 +425,36 @@ footer { color: var(--muted); font-size: .82rem; padding: 10px 0 40px; display: 
     <h3>JavaScript model: first output pixel</h3><pre id="model-bytes"></pre>
     <details><summary>Conversion plan and steps</summary><pre id="wasm-plan" style="white-space:pre-wrap"></pre></details>
   </section>
-  <section aria-labelledby="h-storage">
-    <div class="sec-head"><span class="num">05</span><h2 id="h-storage">Planes, interleaved components and native codes</h2></div>
+  <section class="sec" aria-labelledby="h-storage">
+    <div class="sec-head"><span class="num">08</span><h2 id="h-storage">Planes, interleaved components and native codes</h2></div>
     <p><code>PlaneRole::CbCr</code> and <code>CrCb</code> already describe interleaved chroma. <code>CodePlane::component</code> selects one component from interleaved storage, with its own <code>SampleEncoding</code>. Interleaving and RGB10 + alpha1 do not by themselves require a new view type.</p>
     <div class="controls">
       <div class="field"><label for="storage-case">Live storage example</label><select id="storage-case">
         <option value="p010">CbCr: 10-bit codes in U16, shifted by 6</option>
         <option value="crcb">CrCb: reversed component order</option>
         <option value="rgba10a1">RGBA: RGB10 + alpha1, right aligned in U16</option>
+        <option value="rgb565">RGB565: three bitfields in each U16 word</option>
       </select></div>
       <label><input id="storage-padding" type="checkbox" checked> Set unused sample bits; code values must stay unchanged</label>
     </div>
     <p id="storage-status" role="status">Live examples require the WASM assets.</p>
     <pre id="storage-geometry" style="white-space:pre-wrap"></pre>
     <h3>Stored bytes (including row and sample padding)</h3><pre id="storage-bytes" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
-    <h3>Existing typed plane → CodePlane::component</h3><p id="plane-status"></p><pre id="plane-codes"></pre>
+    <h3>Existing typed plane → component readers</h3><p id="plane-status"></p><pre id="plane-codes"></pre>
+    <div id="storage-canonical" hidden><h3>Converted to canonical RGB8 pixels</h3><pre id="canonical-bytes"></pre><p>Code extraction and full-range numerical widening run together through <code>codes::to_canonical</code>.</p></div>
     <p>Rows here omit trailing padding after the final active row. Each code list is one position, in the displayed component order. These are extracted codes, not normalized intensities or rendered colors.</p>
     <details><summary>Scope and remaining limits</summary>
-      <p>The speculative NativeCodeSlice adapter was removed. Existing CodePlane component readers handle interleaved chroma and mixed RGB10 + alpha1 without another public view.</p>
+      <p>Use ordinary typed planes and component readers for interleaved chroma and RGB10 + alpha1. Each reader retains the relevant sample encoding.</p>
       <p>CodePlane reads U8/U16 codes. SampleEncoding can describe signed/wide payloads, but this does not add signed/wide code readers or arithmetic. Native PixelFormat::Generic identity carriage remains separate.</p>
-      <p>Typed wide samples require alignment. No unaligned byte-reader API is added without a demonstrated consumer. RGB565 needs unpacking before it can be treated as separate RGB components.</p>
+      <p>Typed multi-byte samples require sample alignment. For RGB565, three <code>CodePlane::new</code> views select different bitfields of the same U16 words. <code>codes::to_canonical</code> can unpack and widen them directly into ordinary RGB pixels.</p>
     </details>
   </section>
 </main>
 
 <footer>
   <p id="build-identity">No build stamp loaded.</p>
-  <p><a href="color-explorer/">Color and sample decisions</a> · <a href="format_browser.html">Format recommendations</a> · <a href="https://github.com/imazen/zenpixels">Source and documentation</a> · <a href="review.html">Design review and outstanding issues</a></p>
-  <p>This explorer is built with the accompanying zenpixels 0.3.1 review checkout; it is not a claim about the deployed main branch. Values are computed in double precision from the formulas zenpixels-convert uses: IEC 61966-2-1 sRGB, BT.709 with linear-srgb's constants, Adobe's 563/256 gamma, SMPTE ST 2084 PQ, ARIB STD-B67 HLG, Oklab through XYZ with Ottosson's matrices, and primaries from the crate's chromaticity table. The crate's fast kernels approximate, so its F32 and U16 results can differ in the last digits; the converter panel compares the current stored pixels against a live WASM build, byte by byte.</p>
+  <p><a href="guide.html">Pixel types in Rust</a> · <a href="color-explorer/">Color and sample decisions</a> · <a href="format_browser.html">Format recommendations</a> · <a href="https://github.com/imazen/zenpixels">Source and documentation</a> · <a href="review.html">Design review and outstanding issues</a></p>
+  <p>The build stamp identifies the source revision compiled into this explorer. The JavaScript color model is an illustration, not a converter correctness oracle. It uses double-precision sRGB, BT.709, Adobe gamma, PQ, scene-transfer HLG and Oklab formulas. The converter panel runs that build of zenpixels-convert on the actual stored samples and reports byte differences without treating the illustration as ground truth.</p>
   <p>The big swatch is drawn with CSS <code>color(srgb-linear …)</code>, so a wide-gamut screen shows colors outside sRGB. Brightness above white is not shown.</p>
 </footer>
 </div>
@@ -620,7 +636,7 @@ function parseHex(t) {
 }
 const hex2 = n => n.toString(16).padStart(2, "0");
 const S = { lin: [255,122,26].map(c => srgbEotf(c/255)), a: 204/255, format: "Rgba8", transfer: "Srgb", primaries: "Bt709",
-  alphaMode: "Straight", range: "Full", luma: "Bt709", pq: 203, w: 3, h: 2, align: 64, be: false, sel: { y: 0, x: 0, c: 0 } };
+  alphaMode: "Straight", range: "Full", luma: "Bt709", pq: 203, w: 3, h: 2, align: 0, be: false, sel: { y: 0, x: 0, c: 0 } };
 
 const isColorish = f => ["Rgb","Bgr","Rgba","Bgra","Gray","GrayAlpha"].includes(f.layout);
 function hexOf(lin) {
@@ -895,7 +911,7 @@ function render() {
   let html = "";
   for (let y = 0; y < S.h; y++) {
     const start = y * st;
-    html += `<div class="memrow"><div class="memrow-h">row ${y} · bytes ${start}–${start + st - 1}</div><div class="bytes">`;
+    html += `<div class="memrow"><div class="memrow-h">row ${y} · bytes ${start}–${start + st - 1}</div><div class="bytes" tabindex="0" role="region" aria-label="Stored bytes of row ${y}">`;
     for (let x = 0; x < S.w; x++) {
       const p0 = start + x * bpp;
       html += `<div class="pxg"><span class="pxg-label">(${x},${y}) @${p0}</span>`;
@@ -1029,9 +1045,11 @@ function rustCode(R, st) {
     fmtExpr = "format";
   }
   const chain = [];
-  if (isColorish(f) && cfg.transfer !== "Unknown") { chain.push(`.with_transfer(TransferFunction::${cfg.transfer})`); uses.add("TransferFunction"); }
-  if (isColorish(f) && cfg.primaries !== "Bt709") { chain.push(`.with_primaries(ColorPrimaries::${cfg.primaries})`); uses.add("ColorPrimaries"); }
-  if (f.alphaKind === "alpha" && cfg.alphaMode !== "Straight" && !f.generic) { chain.push(`.with_alpha(Some(AlphaMode::${cfg.alphaMode}))`); uses.add("AlphaMode"); }
+  if (isColorish(f)) {
+    chain.push(`.with_transfer(TransferFunction::${cfg.transfer})`); uses.add("TransferFunction");
+    chain.push(`.with_primaries(ColorPrimaries::${cfg.primaries})`); uses.add("ColorPrimaries");
+  }
+  if (f.alphaKind === "alpha" && cfg.alphaMode !== "Straight") { chain.push(`.with_alpha(Some(AlphaMode::${cfg.alphaMode}))`); uses.add("AlphaMode"); }
   if (R.narrow) { chain.push(`.with_signal_range(SignalRange::Narrow)`); uses.add("SignalRange"); }
   lines.push(`let descriptor = PixelDescriptor::from_pixel_format(${fmtExpr})` + chain.map(c => `\n    ${c}`).join("") + ";");
   lines.push(`assert_eq!(descriptor.bytes_per_pixel(), ${CT[f.ct].bytes * f.chans.length});`, "");
@@ -1054,7 +1072,7 @@ const PRIMER = [
   ["Opacity is a fourth channel", "#RRGGBBAA adds alpha. Straight alpha keeps color and opacity apart; premultiplied alpha bakes the opacity into the color, which makes compositing faster.", { format: "Rgba8", transfer: "Srgb", primaries: "Bt709", alphaMode: "Premultiplied", range: "Full" }],
   ["More bits, finer steps", "8 bits give 256 levels per channel, which can band in smooth skies. 16 bits give 65,536. The color is the same; only the precision changes.", { format: "Rgb16", transfer: "Srgb", primaries: "Bt709", range: "Full" }],
   ["The curve is a choice", "Hex codes are curve-encoded: #808080 is not half the light of white. Linear storage holds the light itself, which math needs. Same color, smaller numbers in the darks.", { format: "RgbF32", transfer: "Linear", primaries: "Bt709", range: "Full" }],
-  ["Which red? Primaries", "sRGB's red is not the reddest red a phone can show. Display P3 and BT.2020 use more saturated primaries, so the same color takes smaller numbers, and new colors become reachable.", { format: "Rgb16", transfer: "Srgb", primaries: "DisplayP3", range: "Full" }],
+  ["Which red? Primaries", "Display P3 and BT.2020 can represent colors outside sRGB. Changing primaries changes which red, green and blue the numbers refer to. Conversion adjusts the numbers to preserve a color where possible.", { format: "Rgb16", transfer: "Srgb", primaries: "DisplayP3", range: "Full" }],
   ["Brighter than white: HDR", "PQ codes absolute brightness up to 10,000 nits, so ordinary white sits around 58% of the range, with headroom for highlights. BT.2020 primaries usually come with it.", { format: "Rgb16", transfer: "Pq", primaries: "Bt2020", range: "Full", pq: 203 }],
   ["TV uses fewer codes", "Video often uses narrow range: black is 16 and white is 235 in 8 bits. Read as full range, it looks washed out.", { format: "Rgb8", transfer: "Bt709", primaries: "Bt709", range: "Narrow" }],
   ["Order and padding", "Windows and GPUs often store blue first (BGRA), and sometimes an unused fourth byte (X) so each pixel is 4 bytes. Still the same RGB color.", { format: "Bgrx8", transfer: "Srgb", primaries: "Bt709", range: "Full" }],
@@ -1078,6 +1096,7 @@ const NOTE_ALPHA = { Straight: "Color as-is, plus opacity.", Premultiplied: "Col
 const NOTE_RANGE = { Full: "Every code is used: 0 is black, max is white.", Narrow: "TV range: black 16, white 235 in 8 bits (×256 in 16 bits)." };
 
 function fillFormats() {
+  $("format-count").textContent = FORMATS.length;
   const groups = [...new Set(FORMATS.map(f => f.group))];
   $("format").innerHTML = groups.map(g => `<optgroup label="${esc(g)}">` +
     FORMATS.filter(f => f.group === g).map(f => `<option value="${f.id}">${esc(f.name)}</option>`).join("") + `</optgroup>`).join("");

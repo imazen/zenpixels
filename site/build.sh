@@ -7,6 +7,8 @@ wasm-bindgen --version | grep -Fx 'wasm-bindgen 0.2.130'
 wasm-bindgen "${CARGO_TARGET_DIR:-site/converter-wasm/target}/wasm32-unknown-unknown/release/pixel_explorer_converter.wasm" --target web --out-dir site/wasm --out-name converter
 mkdir -p site/dist/color-explorer
 cp site/index.html site/review.html site/converter.js site/dist/
+rustdoc --edition=2024 docs/guide.md -o site/dist --markdown-no-toc --markdown-css guide.css --html-in-header site/guide-head.html --html-before-content site/guide-nav.html
+cp site/guide.css site/dist/
 cp -R site/wasm site/dist/
 cp docs/color-explorer/{index.html,model.js,view.js} site/dist/color-explorer/
 cp docs/format_browser.html site/dist/

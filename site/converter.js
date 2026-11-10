@@ -90,6 +90,15 @@ window.renderConverter = renderConverter;
     if (!available.ok) throw new Error('WASM assets have not been built');
     const module = await import(path);
     await module.default();
+    const catalog = JSON.parse(module.format_catalog());
+    window.formatCatalog = catalog;
+    if (catalog.length !== FORMATS.length) throw new Error('Format catalog differs from the explorer model');
+    for (const entry of catalog) {
+      const model = FMAP[entry.id];
+      if (!model || model.ct !== entry.ct || model.layout !== entry.layout || model.generic !== entry.generic || CT[model.ct].bytes * model.chans.length !== entry.bytes) {
+        throw new Error('Explorer format facts differ from the crate: ' + entry.id);
+      }
+    }
     wasmConvert = module.convert;
     wasmInspectStorage = module.inspect_storage;
     renderStorage();
@@ -107,11 +116,15 @@ function renderStorage() {
   window.lastStorageInspection = result;
   $('storage-status').textContent = result.error || 'Executed by this build of zenpixels. No color conversion is implied.';
   if (result.error) return;
+  $('storage-padding').disabled = result.allBitsUsed === true;
+  $('storage-padding').title = result.allBitsUsed ? 'All 16 bits contain RGB components; there are no unused sample bits.' : '';
   $('storage-geometry').textContent = `${result.role}: ${result.width} positions × ${result.rows} rows; byte stride ${result.stride}`;
   $('storage-bytes').textContent = hexBytes(result.bytes);
   $('plane-status').textContent = result.planeStatus;
   const codeRows = codes => codes.map((values, i) => `row ${Math.floor(i / result.width)}, position ${i % result.width}: ${values.join(', ')}`).join('\n');
   $('plane-codes').textContent = result.planeCodes ? codeRows(result.planeCodes) : 'Not representable by CodePlane';
+  $('storage-canonical').hidden = !result.canonicalBytes;
+  $('canonical-bytes').textContent = result.canonicalBytes ? hexBytes(result.canonicalBytes) : '';
 }
 for (const id of ['storage-case', 'storage-padding']) $(id).addEventListener('change', renderStorage);
 

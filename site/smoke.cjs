@@ -1,4 +1,6 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const url = process.argv[2];
 if (!url) throw new Error('Pass the served site URL');
@@ -7,19 +9,44 @@ if (!url) throw new Error('Pass the served site URL');
   try {
     const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
     const errors = [];
+    const screenshots = process.env.EXPLORER_SCREENSHOTS;
+    if (screenshots) fs.mkdirSync(screenshots); // A fresh, explicitly requested capture directory.
     page.on('pageerror', e => errors.push(e.message));
     await page.goto(url);
-    await page.waitForFunction(() => document.getElementById('wasm-status').dataset.loaded === 'true');
+    await page.waitForFunction(() => {
+      const state = document.getElementById('wasm-status');
+      return state.dataset.loaded === 'true' || state.dataset.state === 'unavailable';
+    });
+    assert.equal(await page.locator('#wasm-status').getAttribute('data-loaded'), 'true', await page.locator('#wasm-status').innerText());
     await page.evaluate(() => document.querySelectorAll('details').forEach(e => e.open = true));
     const select = async (id, value) => page.selectOption('#' + id, value);
     const formats = await page.$$eval('#format option', o => o.map(x => x.value));
     const alignments = await page.$$eval('#align option', o => o.map(x => x.value));
     let combinations = 0;
+    assert.deepEqual(
+      (await page.evaluate(() => window.formatCatalog.map(f => f.id))).sort(),
+      [...formats].sort(),
+    );
+    const rustExamples = [];
     for (const format of formats) for (const align of alignments) {
       await select('format', format); await select('align', align);
       assert(!await page.locator('body').innerText().then(t => /undefined|NaN/.test(t)), format + '/' + align);
       assert.notEqual(await page.locator('#wasm-status').getAttribute('data-state'), 'error');
+      rustExamples.push(await page.locator('#code').innerText());
       combinations++;
+    }
+    // Unknown declarations must be explicit in the copied code too.
+    await select('format', 'Rgb8');
+    await select('transfer', 'Unknown'); await select('primaries', 'Unknown');
+    assert.match(await page.locator('#code').innerText(), /with_transfer\(TransferFunction::Unknown\)/);
+    assert.match(await page.locator('#code').innerText(), /with_primaries\(ColorPrimaries::Unknown\)/);
+    rustExamples.push(await page.locator('#code').innerText());
+    await select('format', 'RgbaI16'); await select('alphamode', 'Opaque');
+    assert.match(await page.locator('#code').innerText(), /with_alpha\(Some\(AlphaMode::Opaque\)\)/);
+    rustExamples.push(await page.locator('#code').innerText());
+    if (process.env.EXPLORER_RUST_EXAMPLES) {
+      fs.writeFileSync(process.env.EXPLORER_RUST_EXAMPLES,
+        rustExamples.map((s, i) => `## Explorer example ${i}\n\n\`\`\`rust\n# fn main() -> Result<(), Box<dyn std::error::Error>> {\n${s}\n# Ok(())\n# }\n\`\`\`\n`).join('\n'));
     }
     // Exercise every source/destination route through the actual WASM boundary.
     const matrix = await page.evaluate(() => {
@@ -80,12 +107,34 @@ if (!url) throw new Error('Pass the served site URL');
       const result = await page.evaluate(() => window.lastStorageInspection);
       assert.deepEqual(result.planeCodes[0], ['1023','1023']);
     }
+    await select('storage-case', 'rgb565');
+    const rgb565 = await page.evaluate(() => window.lastStorageInspection);
+    assert.deepEqual(rgb565.planeCodes[0], ['31','63','31']);
+    assert.deepEqual(rgb565.canonicalBytes.slice(0, 3), [255,255,255]);
+    assert(await page.locator('#storage-padding').isDisabled());
+    assert(await page.locator('#storage-canonical').isVisible());
     await select('to-transfer', 'Srgb');
     await select('format', 'Cmyk8');
     assert.equal(await page.locator('#wasm-status').getAttribute('data-state'), 'refused');
     assert.match(await page.locator('#wasm-status').innerText(), /NeedsCms/);
-    await page.setViewportSize({ width: 390, height: 844 });
-    assert(await page.locator('#to-format').isVisible());
+    // Wide native words and open advanced panels exposed the original overflow.
+    await select('format', 'RgbaF64');
+    for (const width of [320, 360, 390, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 844 });
+      const extent = await page.evaluate(() => ({page: document.documentElement.scrollWidth, viewport: innerWidth}));
+      assert.equal(extent.page, extent.viewport, 'Explorer overflow at ' + width);
+      assert(await page.locator('#to-format').isVisible());
+    }
+    if (screenshots) {
+      await select('format', 'Rgba8'); await select('transfer', 'Srgb');
+      await select('primaries', 'Bt709'); await select('alphamode', 'Straight');
+      await page.evaluate(() => document.querySelectorAll('details').forEach(e => e.open = false));
+      for (const width of [390, 1440]) {
+        await page.setViewportSize({ width, height: 1000 });
+        await page.evaluate(() => scrollTo(0, 0));
+        await page.screenshot({ path: path.join(screenshots, `explorer-${width}.png`) });
+      }
+    }
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ combinations, formats: formats.length, matrix, pageErrors: errors.length }));
     const review = await page.request.get(new URL('review.html', url.endsWith('/') ? url : url + '/').href);
@@ -93,6 +142,30 @@ if (!url) throw new Error('Pass the served site URL');
     assert.match(await review.text(), /CodePlane::component/);
     const build = await page.request.get(new URL('build-info.json', url.endsWith('/') ? url : url + '/').href);
     assert.match((await build.json()).revision, /^[a-f0-9]{40}$/);
+    // Every linked teaching page must be readable without document overflow.
+    for (const teachingPath of ['guide.html', 'color-explorer/', 'review.html', 'format_browser.html']) {
+      const teaching = await browser.newPage();
+      await teaching.goto(new URL(teachingPath, url.endsWith('/') ? url : url + '/').href);
+      if (teachingPath === 'guide.html') {
+        assert.match(await teaching.locator('body').innerText(), /Borrow the part you need/);
+        assert.match(await teaching.locator('body').innerText(), /parent stride/);
+      }
+      for (const width of [320, 390, 768, 1440]) {
+        await teaching.setViewportSize({ width, height: 900 });
+        const extent = await teaching.evaluate(() => ({page: document.documentElement.scrollWidth, viewport: innerWidth}));
+        assert.equal(extent.page, extent.viewport, teachingPath + ' overflow at ' + width);
+      }
+      if (screenshots && teachingPath === 'guide.html') {
+        for (const width of [390, 1440]) {
+          await teaching.setViewportSize({ width, height: 1000 });
+          await teaching.screenshot({ path: path.join(screenshots, `guide-${width}.png`) });
+        }
+        await teaching.setViewportSize({ width: 390, height: 1000 });
+        await teaching.locator('#borrow-the-part-you-need').scrollIntoViewIfNeeded();
+        await teaching.screenshot({ path: path.join(screenshots, 'guide-crop.png') });
+      }
+      await teaching.close();
+    }
     // Offline/asset-free operation remains functional.
     await page.route('**/wasm/**', route => route.fulfill({ status: 404, body: '' }));
     await page.reload();
