@@ -2,6 +2,8 @@
 
 This records the work for issues 134, 135, 133, 132, 83 and 69 on the 0.3 review
 candidate. It does not authorize publication or claim downstream qualification.
+The [merged-main re-audit](issue-reaudit-2026-11-09.md) supersedes its completion
+assessment and records the remaining truncated-ICC authority exception.
 
 ## Authority and synthesis — 134
 
@@ -27,6 +29,7 @@ remains provenance, not a replacement description of converted RGB samples.
 | OutputPlan / EncodeReady | Same-profile carriage | Profile-only paths cannot express display rendering; refuse |
 | Internal lite CMS | Declines trivial identity | Builds the explicit plan, preserving its refusal |
 | Public MoxCms | Declines trivial identity | Now declines identified HLG crossings; a TRC is not the coupled OOTF |
+| Public Lcms | Profile-based carriage | HLG CICP synthesis declines; direct no-policy crossing is tested alongside MoxCms |
 | SynthesizedIcc | No pixel operation | HLG ICC synthesis refuses |
 
 The new direct-MoxCms regression failed before the fix: it built a successful
@@ -43,8 +46,10 @@ NativeCodeSlice and its dependent APIs are removed. Existing CodePlane component
 readers and to_canonical cover RGB10/alpha1, interleaving and padding. The signed/
 wide SampleEncoding description does not grant numerical support. Native pixel
 identity/refusal and exact ST2086 controls remain in native_samples/native_codes.
-RGB565 is unpack-first. A complete IMIJ adapter remains a consumer task; there
-is no demonstrated reason to add another core view now.
+RGB565 needs an explicit unpack into canonical pixels; existing CodePlane views
+can extract its three bitfields directly from shared U16 words, without an
+intermediate buffer. A complete IMIJ adapter remains a consumer task; there is
+no demonstrated reason to add another core view now.
 
 ## Ownership and allocations — 69
 

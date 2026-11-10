@@ -8,7 +8,8 @@ Status below distinguishes the intended design from completed implementation.
 1. **Storage is not interpretation.** `SampleEncoding` describes one integer
    payload per word, including signedness, precision and placement. A plane
    supplies geometry. Color, range and component roles come from the enclosing
-   signal. RGB565 and other multi-component packed words require unpacking.
+   signal. RGB565 requires explicit unpacking into canonical pixels; existing
+   CodePlane views can extract its shared-word bitfields during that conversion.
 2. **Representation is not processing support.** Exact integer carriage can
    support more types than numerical conversion. Unsupported arithmetic refuses
    before writing; it never guesses a normalization.
@@ -154,6 +155,10 @@ remain supported.
 The repository follow-up for authority, HLG backend refusal, P3 exports, API
 migrations and allocation ownership is recorded in
 [repository issue improvements](repository-issue-completion.md).
+The [merged issue re-audit](issue-reaudit-2026-11-09.md) separates completed
+contracts from remaining consumer, authority and release work for 83, 132–135
+and 150. It includes the RGB565 shared-word route and the retained truncated-ICC
+grayscale fallback; neither requires another pixel-view type.
 
 ## IQA planar consumer review — PR144
 
@@ -203,5 +208,6 @@ The remaining #150 work concerns current processing requirements versus source
 origin, historical approximate ICC substitution qualifications, and an explicit
 whole-operation memory accounting scope. Capacity/peak documentation states
 what the existing planner actually computes; it does not add those models.
-The separate [allocation audit](allocation-audit.md) records verified starting
-points and the still-missing completion gates for #151.
+The separate [allocation audit](allocation-audit.md) records the merged #151
+allocation fixes, failure-injection controls and named infallible exceptions.
+Fallible allocation does not provide a whole-operation admission budget.

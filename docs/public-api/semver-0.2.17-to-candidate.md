@@ -7,6 +7,13 @@ comparison. The checker reports 15 major lint families for core and 16 for the
 converter; exit 100 is expected for the authorized breaking 0.3 release.
 This is not a semver-clean patch claim.
 
+Replayed against merged main `feb55611` after PR152 with checker 0.51.0 and
+the same explicit baseline/default-feature/forced-patch configuration. The
+same 15 core and 16 converter major lint families remain; exit 100 is expected.
+The current public-API snapshot check also passes. This does not expand the
+comparison to opt-in features: the new `hash` feature and its Hash impls are
+reviewed additions, not covered by a default-feature baseline comparison.
+
 ## Classification and migration
 
 The symbol findings below are approved breaking-release migrations under the

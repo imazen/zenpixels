@@ -80,13 +80,16 @@ an explicitly documented panic contract:
   `icc_profiles` `OnceBox` tables, `ToneMapStep.prepared` `OnceBox` (warmed
   by `ConvertScratch::prepare`). These are deliberately lazy caches; they are
   listed so no reader assumes a cold first call is allocation-free.
-- **Planner/metadata vectors, bounded by descriptor algebra**: `ConvertPlan::build`'s
-  `Vec`/`vec!` of steps (≤ ~10), `precision.rs` candidate lists
-  (`Vec<Vec<Candidate>>`, ≤ ~30 nodes), `negotiate::pick_target` `collect` of
+- **Planner/metadata vectors**: `ConvertPlan::build`'s
+  `Vec`/`vec!` of descriptor-derived steps, `precision.rs` candidate lists
+  (`Vec<Vec<Candidate>>`, sized by caller-provided nodes and offers),
+  `negotiate::pick_target` `collect` of
   caller-provided candidates, `operations` `push`/`insert`, `exact_depth`'s
   `to_vec`/`to_owned` (~50 B), `try_reduce_to_load_bearing_format` ICC
   `into_owned` (≤ profile size, ~4 KB) — caller-count-bounded and not
-  image-sized; all return `Option`/`Result` for their real failure modes.
+  image-sized. The chain/candidate APIs enforce no fixed node/offer-count
+  ceiling; these vectors are infallible exceptions even though their APIs
+  return `Option`/`Result`. Caller-count dependence is not an allocation bound.
 - **`ToneMapper::prepare` → `PreparedMapper` / `StripMapper`** (`Box`/`Arc`
   inside the `OnceBox`): the pluggable-curve contract is infallible by
   signature — a `Result`-returning prepare would be an API change to the
