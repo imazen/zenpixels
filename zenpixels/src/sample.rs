@@ -12,8 +12,9 @@
 //! codes become canonical samples through `zenpixels_convert::codes`.
 //!
 //! Stored samples use native endianness. A byte-backed adapter must decode its
-//! declared byte order before applying the bit placement. Packed samples holding
-//! multiple components and floating point are not described by this representation.
+//! declared byte order before applying the bit placement. Each description selects
+//! one component; multiple views can select different bitfields of a shared word.
+//! Floating point is not described by this representation.
 //! Signed integer payloads use two's complement within the declared code bits.
 
 use crate::ChannelType;

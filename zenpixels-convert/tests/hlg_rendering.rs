@@ -244,7 +244,7 @@ fn extended_sign_clipping_and_nonfinite_rgb_are_explicit() {
     assert_eq!(nan[3].to_bits(), (-0.0f32).to_bits());
 }
 
-#[cfg(feature = "cms-moxcms")]
+#[cfg(any(feature = "cms-moxcms", feature = "cms-lcms"))]
 #[test]
 fn profile_backends_do_not_silently_render_hlg_without_conditions() {
     use zenpixels::{Cicp, ColorProfileSource, PixelFormat};
@@ -253,8 +253,8 @@ fn profile_backends_do_not_silently_render_hlg_without_conditions() {
     let to = ColorProfileSource::Cicp(Cicp::new(9, 8, 0, true));
     let check = |cms: &dyn PluggableCms| {
         let built = cms.build_source_transform(
-            from,
-            to,
+            from.clone(),
+            to.clone(),
             PixelFormat::RgbF32,
             PixelFormat::RgbF32,
             &ConvertOptions::permissive(),
@@ -266,4 +266,6 @@ fn profile_backends_do_not_silently_render_hlg_without_conditions() {
     };
     #[cfg(feature = "cms-moxcms")]
     check(&zenpixels_convert::MoxCms);
+    #[cfg(feature = "cms-lcms")]
+    check(&zenpixels_convert::Lcms);
 }

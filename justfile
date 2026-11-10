@@ -716,6 +716,15 @@ repository-issues-check:
     cargo test -p zenpixels-convert --features bt2446a --test hlg_rendering --test hdr_intent
     cargo test -p zenpixels-convert --doc
 
+# Authority conflicts and HLG refusal with both public CMS backends enabled.
+repository-issues-backends-check:
+    cargo test --locked -p zenpixels-convert --features cms-moxcms,cms-lcms,bt2446a --test authority_boundaries --test hlg_rendering --test hdr_intent --test native_canonical
+
+# Source-depth/evidence distinction and retained grayscale signaling contracts.
+repository-issues-precision-check:
+    cargo test --locked -p zenpixels-convert --test precision_evidence --test precision_policy
+    cargo test --locked -p zenpixels-convert --lib load_bearing::tests
+
 # Force patch-level reporting against the explicit 0.2.17 bridge source baseline.
 repository-issues-semver:
     cargo semver-checks check-release -p zenpixels -p zenpixels-convert --baseline-rev e96e4e9c65020a0c7fac4937819fc044886ae4df --release-type patch --default-features

@@ -10,9 +10,10 @@ fn origin_authority_table_at_both_output_boundaries() {
         for has_icc in [false, true] {
             for has_cicp in [false, true] {
                 let origin = match (has_icc, has_cicp) {
-                    (true, true) => ColorOrigin::from_icc_and_cicp(icc.clone(), Cicp::DISPLAY_P3),
+                    // Deliberately contradictory: P3 ICC versus sRGB CICP.
+                    (true, true) => ColorOrigin::from_icc_and_cicp(icc.clone(), Cicp::SRGB),
                     (true, false) => ColorOrigin::from_icc(icc.clone()),
-                    (false, true) => ColorOrigin::from_cicp(Cicp::DISPLAY_P3),
+                    (false, true) => ColorOrigin::from_cicp(Cicp::SRGB),
                     _ => ColorOrigin::assumed(),
                 }
                 .with_color_authority(authority);
@@ -39,10 +40,25 @@ fn origin_authority_table_at_both_output_boundaries() {
                 .unwrap();
                 assert_eq!(plan.metadata().icc, ready.metadata().icc);
                 assert_eq!(plan.metadata().cicp, ready.metadata().cicp);
-                let selected_icc = authority
-                    .select(has_icc.then_some(true), has_cicp.then_some(false))
-                    .unwrap_or(false);
+                // Independent expectations, rather than using the selector
+                // under test as the oracle for its own routing.
+                let selected_icc = has_icc && (authority == ColorAuthority::Icc || !has_cicp);
                 assert_eq!(ready.metadata().icc.is_some(), selected_icc);
+                assert_eq!(
+                    ready.metadata().icc.as_deref(),
+                    selected_icc.then_some(icc.as_ref())
+                );
+                assert_eq!(
+                    ready.metadata().cicp,
+                    (has_cicp && !selected_icc).then_some(Cicp::SRGB)
+                );
+                assert_eq!(plan.output_descriptor(), ready.pixels().descriptor());
+                let context = ready.pixels().color_context().unwrap().clone();
+                assert_eq!(context.icc, ready.metadata().icc);
+                assert_eq!(context.cicp, ready.metadata().cicp);
+                if !selected_icc {
+                    assert_eq!(ready.pixels().row(0), [17, 51, 193]);
+                }
                 assert_eq!(buffer.as_slice().row(0), [17, 51, 193]);
             }
         }
@@ -152,4 +168,66 @@ fn unknown_authoritative_icc_reaches_cms_and_cannot_be_replaced_by_cicp() {
     assert!(!seen.is_empty());
     assert!(seen.iter().all(|icc| *icc));
     assert_eq!(source.as_slice().row(0), [10, 20, 30]);
+}
+
+#[test]
+fn opaque_and_metadata_only_icc_authority_table_reaches_both_boundaries() {
+    let SynthesizedIcc::Profile(p3) = SynthesizedIcc::for_cicp(Cicp::DISPLAY_P3) else {
+        panic!("qualified P3 export missing")
+    };
+    assert_eq!(
+        icc::IccIdentification::from_icc(&p3).unwrap().valid_use,
+        icc::IdentificationUse::MetadataOnly
+    );
+    for bytes in [b"opaque ICC declaration".as_slice(), p3.as_ref()] {
+        for authority in [ColorAuthority::Icc, ColorAuthority::Cicp] {
+            for has_icc in [false, true] {
+                for has_cicp in [false, true] {
+                    let origin = match (has_icc, has_cicp) {
+                        (true, true) => ColorOrigin::from_icc_and_cicp(bytes, Cicp::SRGB),
+                        (true, false) => ColorOrigin::from_icc(bytes),
+                        (false, true) => ColorOrigin::from_cicp(Cicp::SRGB),
+                        _ => ColorOrigin::assumed(),
+                    }
+                    .with_color_authority(authority);
+                    let source =
+                        PixelBuffer::from_vec(vec![17, 51, 193], 1, 1, PixelDescriptor::RGB8_SRGB)
+                            .unwrap();
+                    let spy = RoutingSpy::default();
+                    let plan = OutputPlan::new(
+                        source.descriptor(),
+                        None,
+                        &origin,
+                        OutputProfile::SameAsOrigin,
+                        PixelFormat::Rgb8,
+                        &ConvertOptions::permissive(),
+                        Some(&spy),
+                    );
+                    let ready = EncodeReady::finalize(
+                        &source,
+                        &origin,
+                        OutputProfile::SameAsOrigin,
+                        PixelFormat::Rgb8,
+                        Some(&spy),
+                    );
+                    let selected_icc = has_icc && (authority == ColorAuthority::Icc || !has_cicp);
+                    assert_eq!(plan.is_err(), selected_icc);
+                    assert_eq!(ready.is_err(), selected_icc);
+                    let routes = spy.0.lock().unwrap();
+                    if selected_icc {
+                        // Each boundary must offer the selected ICC to the CMS.
+                        assert!(routes.len() >= 2);
+                        assert!(routes.iter().all(|icc| *icc));
+                    } else {
+                        assert!(routes.is_empty());
+                        let ready = ready.unwrap();
+                        assert_eq!(ready.metadata().cicp, has_cicp.then_some(Cicp::SRGB));
+                        assert_eq!(ready.metadata().icc, None);
+                        assert_eq!(ready.pixels().row(0), [17, 51, 193]);
+                    }
+                    assert_eq!(source.as_slice().row(0), [17, 51, 193]);
+                }
+            }
+        }
+    }
 }

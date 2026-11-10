@@ -26,6 +26,37 @@ fn per_channel_canonicalization_preserves_padding() {
 }
 
 #[test]
+fn rgb565_bitfields_use_existing_component_readers() {
+    // One word per pixel, two rows, and no final-row padding. Each reader
+    // extracts its own bitfield from the same words; no intermediate unpack.
+    let words = [0xffffu16, 0x0000, 0xf800, 0xdead, 0x07e0, 0x001f, 0x94b2];
+    let plane = AnyPlane::U16(PlaneRef::new(&words[..], 3, 2, 4).unwrap());
+    let components = [(5, 11), (6, 5), (5, 0)].map(|(bits, shift)| {
+        CodePlane::new(plane, SampleEncoding::new(T::U16, bits, shift).unwrap()).unwrap()
+    });
+    let mut out = [0xa5u8; 22];
+    let dst = PixelSliceMut::new(&mut out, 3, 2, 12, D::RGB8_SRGB).unwrap();
+    to_canonical(&components, zenpixels::SignalRange::Full, 0, 0, dst).unwrap();
+    for y in 0..2 {
+        for x in 0..3 {
+            let word = words[y * 4 + x];
+            for (c, (bits, shift)) in [(5, 11), (6, 5), (5, 0)].into_iter().enumerate() {
+                let max = (1u32 << bits) - 1;
+                let code = (u32::from(word) >> shift) & max;
+                let expected = (code * 255 + max / 2) / max;
+                assert_eq!(u32::from(out[y * 12 + x * 3 + c]), expected);
+            }
+        }
+    }
+    assert_eq!(&out[9..12], &[0xa5; 3]);
+    assert_eq!(out[21], 0xa5);
+    assert_eq!(
+        words,
+        [0xffff, 0x0000, 0xf800, 0xdead, 0x07e0, 0x001f, 0x94b2]
+    );
+}
+
+#[test]
 fn wide_and_signed_carriage_does_not_grant_code_arithmetic() {
     use zenpixels_convert::codes::{CodeMap, CodeMapError, CodeRole};
     let canonical = SampleEncoding::new(T::U16, 16, 0).unwrap();

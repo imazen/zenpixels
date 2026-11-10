@@ -26,7 +26,7 @@ The pre-removal explorer ran these through actual Rust/WASM APIs:
 | Nonzero unused sample bits and padded rows | Ignores unused bits on read, leaves storage unchanged | Same |
 | Wide words starting at an odd byte address | Requires aligned typed storage or adapter copy | Byte-backed read supports it |
 | Signed I64 / unsigned U64 | Unsupported by `AnyPlane` / `CodePlane` | Exact integer read |
-| RGB565 | Raw word carriage is possible; component decoding requires unpacking | Requires unpacking before RGB construction |
+| RGB565 | Three CodePlane views can select bitfields of shared U16 words | Existing to_canonical unpacks and widens directly into RGB pixels |
 
 `CodePlane::component` is more general than `PlanarLayout`: it takes a component
 count/index, whereas the latter's named roles include paired chroma and separate

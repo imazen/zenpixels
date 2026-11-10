@@ -52,7 +52,7 @@ fn metadata_preserves_each_byte_and_float_loss_is_visible() {
 }
 
 #[test]
-fn rgb565_wire_words_require_unpacking() {
+fn rgb565_bitfields_are_not_three_interleaved_storage_words() {
     let words = [0xffffu16];
     let plane = AnyPlane::U16(PlaneRef::new(&words[..], 1, 1, 1).unwrap());
     let encoding = SampleEncoding::new(T::U16, 5, 11).unwrap();

@@ -24,8 +24,13 @@ introduced without a concrete consumer.
 the semantic floating-point view. Wire formats with another primary order
 must adapt explicitly. Source precision and `ExactDepth` remain separate facts.
 
-Not every external encoding must be directly representable. RGB565 and other
-multi-component words require an explicit unpacking adapter; preserving original
+Not every external encoding must be an ordinary pixel format. RGB565 needs
+explicit unpacking into canonical pixels, but requires no new reader: three
+`CodePlane::new` views can share its U16 plane with encodings `(5, 11)`, `(6, 5)`
+and `(5, 0)`. `codes::to_canonical` performs extraction and numerical widening
+directly. This differs from `CodePlane::component`, which selects interleaved
+storage words. The `rgb565_bitfields_use_existing_component_readers` regression
+checks both rows, an interior value and untouched padding. Preserving original
 wire bytes remains the container/adapter's responsibility.
 
 See [issue #83](https://github.com/imazen/zenpixels/issues/83) and the
@@ -112,9 +117,10 @@ decode the file byte order first.
 These are native sample codes. Signed values have no implicit normalization
 or display range. The new format descriptors default to unknown transfer;
 adapters must retain the actual interpretation separately or attach known
-color information. The existing `SampleEncoding` bridge still accepts only
-unsigned U8/U16 words; this change does not extend it to signed scientific
-scales, per-channel significant bits or arbitrary band layouts.
+color information. `SampleEncoding` accepts signed and wide integer descriptions;
+the existing `CodePlane` readers and `CodeMap` numerical operations support only
+unsigned U8/U16 words. These descriptions do not provide signed scientific
+scales, signed/wide component extraction or arbitrary band layouts.
 
 `just native-samples-check` tests strided buffer creation, owned handoff,
 cropping and identity row copying for all seven new types and four layouts.
