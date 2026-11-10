@@ -134,7 +134,7 @@ future revalidation does not depend on the audit host's scattered caches.
 The manifest SHA-256 is
 `6c9dfa82a4730d86cb73e260419ae5d0ac43584454cfc3a74c3f42d84fb143d0`.
 Verification on the private archive passed for every object after transfer.
-No original bytes are committed to this public repository.
+This retention change commits no original profile bytes to the public repository.
 
 Use `just icc-retain-originals <receipt.json> <private-directory>` to construct
 an archive, or omit the destination to verify its manifest. The tool checks
