@@ -2919,14 +2919,10 @@ impl ConvertScratch {
         // Warm only the selected kernels/LUTs using one synthetic aligned pixel.
         // No source image is inspected and no full-image preflight is hidden here.
         let words = plan.max_intermediate_bpp().div_ceil(4);
-        let mut src: alloc::vec::Vec<u32> = alloc::vec::Vec::new();
-        src.try_reserve_exact(words)
-            .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
-        src.resize(words, 0);
-        let mut dst: alloc::vec::Vec<u32> = alloc::vec::Vec::new();
-        dst.try_reserve_exact(words)
-            .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
-        dst.resize(words, 0);
+        let src: alloc::vec::Vec<u32> = bytemuck::allocation::try_zeroed_vec(words)
+            .map_err(|()| whereat::at!(ConvertError::AllocationFailed))?;
+        let mut dst: alloc::vec::Vec<u32> = bytemuck::allocation::try_zeroed_vec(words)
+            .map_err(|()| whereat::at!(ConvertError::AllocationFailed))?;
         convert_row_buffered(
             plan,
             &bytemuck::cast_slice::<u32, u8>(&src)[..plan.from().bytes_per_pixel()],
@@ -2950,10 +2946,8 @@ impl ConvertScratch {
             .ok_or_else(|| whereat::at!(ConvertError::InvalidWidth(width)))?;
         let total_u32 = half_bytes.div_ceil(4) * 2;
         if self.buf.len() < total_u32 {
-            self.buf
-                .try_reserve(total_u32 - self.buf.len())
-                .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
-            self.buf.resize(total_u32, 0);
+            self.buf = bytemuck::allocation::try_zeroed_vec::<u32>(total_u32)
+                .map_err(|()| whereat::at!(ConvertError::AllocationFailed))?;
         }
         Ok(())
     }

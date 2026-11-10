@@ -12,7 +12,7 @@
 #   pub types (struct/enum/trait/alias)        66
 #   pub consts/statics                         40
 #   free functions                              2
-#   inherent methods                          178
+#   inherent methods                          180
 #   struct fields                              95
 #   enum variants                             112
 #   re-exports                                  8
@@ -22,7 +22,7 @@
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
-#   (root)                          207
+#   (root)                          208
 #   adapt                             1
 #   cms                              18
 #   codes                            40
@@ -33,13 +33,13 @@
 #   gamut                            11
 #   hdr                               2
 #   icc_profiles                     10
-#   load_bearing                     11
+#   load_bearing                     12
 #   oklab                             8
 #   output                           19
 #   precision                        62
 #   ycbcr                            22
 
-## items (494 lines)
+## items (496 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -222,6 +222,7 @@ pub const fn load_bearing::LoadBearingReport::any_analyzed(&self) -> bool [also:
 pub fn load_bearing::LoadBearingReport::apply_to(&self, &zenpixels::descriptor::PixelDescriptor) -> zenpixels::descriptor::PixelDescriptor
 pub fn load_bearing::PixelBufferLoadBearingExt::reduce_to_load_bearing_format_in_place(&mut self, bool)
 pub fn load_bearing::PixelSliceLoadBearingExt::determine_load_bearing(&self) -> load_bearing::LoadBearingReport
+pub fn load_bearing::PixelSliceLoadBearingExt::reduce_to_load_bearing_format(&self) -> core::result::Result<core::option::Option<zenpixels::buffer::PixelBuffer>, whereat::at::At<error::ConvertError>>
 pub fn load_bearing::PixelSliceLoadBearingExt::try_reduce_to_load_bearing_format(&self) -> core::option::Option<zenpixels::buffer::PixelBuffer>
 pub mod oklab
 pub struct oklab::OklabSpace
@@ -520,6 +521,7 @@ pub fn PixelSliceConvertExt::quantize_to(&self, zenpixels::descriptor::PixelDesc
 pub fn PixelSliceConvertExt::scan_source_precision(&self, &dyn enough::Stop) -> core::result::Result<zenpixels::precision::SourcePrecision, whereat::at::At<enough::reason::StopReason>>
 pub trait PixelSliceLoadBearingExt: load_bearing::sealed::Sealed [also: load_bearing]
 pub fn PixelSliceLoadBearingExt::determine_load_bearing(&self) -> load_bearing::LoadBearingReport
+pub fn PixelSliceLoadBearingExt::reduce_to_load_bearing_format(&self) -> core::result::Result<core::option::Option<zenpixels::buffer::PixelBuffer>, whereat::at::At<error::ConvertError>>
 pub fn PixelSliceLoadBearingExt::try_reduce_to_load_bearing_format(&self) -> core::option::Option<zenpixels::buffer::PixelBuffer>
 pub trait PluggableCms: core::marker::Send + core::marker::Sync [also: cms]
 pub fn PluggableCms::build_shared_source_transform(&self, zenpixels::color::ColorProfileSource<'_>, zenpixels::color::ColorProfileSource<'_>, zenpixels::descriptor::PixelFormat, zenpixels::descriptor::PixelFormat, &zenpixels::policy::ConvertOptions) -> core::option::Option<core::result::Result<alloc::sync::Arc<dyn cms::RowTransform>, whereat::at::At<cms::CmsPluginError>>>

@@ -209,10 +209,9 @@ pub(crate) fn convert_buffer(
     let src_stride = (width as usize) * src_bpp;
     ensure_src_buffer_fits(src.len(), from, width, rows, src_stride)?;
     if from == to {
-        let mut copy = Vec::new();
-        copy.try_reserve_exact(src.len())
-            .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
-        copy.extend_from_slice(src);
+        let mut copy: Vec<u8> = bytemuck::allocation::try_zeroed_vec(src.len())
+            .map_err(|()| whereat::at!(ConvertError::AllocationFailed))?;
+        copy.copy_from_slice(src);
         return Ok(copy);
     }
 
