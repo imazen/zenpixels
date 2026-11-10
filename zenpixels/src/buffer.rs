@@ -2447,9 +2447,8 @@ impl<S: ByteStorage> PixelBuffer<(), S> {
 impl PixelBuffer {
     /// Allocate a zero-filled buffer for the given dimensions and format.
     ///
-    /// The default path is infallible for speed — see the
-    /// [allocation policy](crate#allocation-policy) for the rationale and
-    /// for guidance on when to reach for the `try_*` sibling.
+    /// Panicking convenience wrapper around [`try_new`](Self::try_new).
+    /// See the [allocation policy](crate#allocation-policy) for failure handling.
     ///
     /// # Panics
     ///
@@ -2551,9 +2550,8 @@ impl<P: Pixel> PixelBuffer<P> {
     ///
     /// The descriptor is derived from `P::DESCRIPTOR`.
     ///
-    /// The default path is infallible for speed — see the
-    /// [allocation policy](crate#allocation-policy) for the rationale and
-    /// for guidance on when to reach for the `try_*` sibling.
+    /// Panicking convenience wrapper around [`try_new_typed`](Self::try_new_typed).
+    /// See the [allocation policy](crate#allocation-policy) for failure handling.
     ///
     /// # Panics
     ///

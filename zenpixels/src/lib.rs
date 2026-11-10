@@ -1,62 +1,67 @@
-//! Pixel format interchange types for Rust image codecs.
+//! Pixel storage, image views and color descriptions for Rust image code.
 //!
-//! This crate provides the type system for describing pixel data: what the
-//! bytes are ([`PixelFormat`]), what they mean ([`PixelDescriptor`]), and where
-//! they live ([`PixelBuffer`], [`PixelSlice`], [`PixelSliceMut`]).
+//! Start with three types:
 //!
-//! No conversion logic lives here. For transfer-function-aware conversion,
-//! gamut mapping, and codec format negotiation, see
-//! [`zenpixels-convert`](https://docs.rs/zenpixels-convert).
+//! - [`PixelBuffer`] owns an image's samples and metadata.
+//! - [`PixelSlice`] borrows an image or a rectangular subimage, keeping its stride.
+//! - [`PixelDescriptor`] describes the samples: format, transfer, primaries, alpha and range.
 //!
-//! # Core types
+//! [`PixelSliceMut`] provides writable access. Borrowing or cropping does not copy pixels:
 //!
-//! - [`PixelFormat`] — flat enum of byte layouts (`Rgb8`, `Rgba16`, `OklabF32`, etc.)
-//! - [`PixelDescriptor`] — format + transfer function + primaries + alpha mode + signal range
-//! - [`PixelBuffer`] — owned pixel storage with SIMD-aligned allocation
-//! - [`PixelSlice`] / [`PixelSliceMut`] — borrowed views with stride support
-//! - [`plane::Plane`] / [`plane::PlanarLayout`] — strided planes of one word type, and planar picture layouts
-//! - [`Pixel`] — trait mapping concrete types to their descriptor
-//! - [`Cicp`] — ITU-T H.273 color signaling codes
-//! - [`ColorContext`] — ICC profile bytes and/or CICP, `Arc`-shared
-//! - [`ConvertOptions`] — policies for lossy operations (alpha removal, depth reduction)
+//! ```
+//! use zenpixels::{PixelBuffer, PixelDescriptor};
+//!
+//! let image = PixelBuffer::try_new(8, 6, PixelDescriptor::RGB8_SRGB)?;
+//! let crop = image.crop_view(2, 1, 3, 2);
+//! assert_eq!(crop.stride(), image.stride()); // Parent stride, in bytes.
+//! assert_eq!(crop.row(0).len(), 9);          // Only the crop's active samples.
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! Read the [pixel types guide](https://imazen.github.io/zenpixels/guide.html)
+//! for decoded bytes, cropped views, typed pixels and native codes. The
+//! [interactive explorer](https://imazen.github.io/zenpixels/) shows their memory layout.
+//!
+//! # Layout and meaning
+//!
+//! [`PixelFormat`] has common named formats and [`PixelFormat::Generic`] for native
+//! combinations. Construct a format with [`PixelFormat::from_parts`]. A descriptor
+//! adds color meaning; changing a declaration does not convert existing samples.
+//! For conversion, see [zenpixels-convert](https://docs.rs/zenpixels-convert).
+//!
+//! [`ColorContext`] carries the current ICC/CICP and luminance declarations;
+//! [`ColorOrigin`] retains original file claims. [`plane::Plane`] carries strided
+//! samples; [`plane::PlanarSlice`] combines validated plane roles and interpretation.
+//! [`sample::SampleEncoding`] describes native integer payloads, while
+//! [`sample::ExactDepth`] is evidence about the current canonical code grid.
 //!
 //! # Allocation policy
 //!
-//! All default [`PixelBuffer`] constructors (`new`,
-//! `new_typed`, `from_imgvec`) **panic on allocation failure**. This is a
-//! deliberate default: the infallible path has no error to handle, and
-//! keeps hot construction sites branch-free, which matters for codecs that
-//! allocate one buffer per frame or strip.
+//! Width/height count pixels; erased byte-view strides count bytes. `row(y)` excludes
+//! padding. A view can retain its parent's stride and omit final-row padding.
+//! Row starts require sample alignment; typed views also respect the Rust type's alignment.
 //!
-//! For code that handles untrusted input or must recover from OOM, use the
-//! fallible siblings instead:
-//!
-//! | Panicking                         | Fallible sibling                       |
-//! |-----------------------------------|----------------------------------------|
-//! | [`PixelBuffer::new`]              | [`PixelBuffer::try_new`]               |
-//! | `PixelBuffer::<P>::new_typed`     | `PixelBuffer::<P>::try_new_typed`      |
-//!
-//! The fallible siblings return
-//! [`BufferError::AllocationFailed`]
-//! via [`Vec::try_reserve_exact`] + `resize(_, 0)`. They are slightly slower
-//! than the panicking path because the reserve-then-zero pattern cannot be
-//! collapsed into a single `calloc` the way `vec![0; n]` can.
-//!
-//! There is currently **no runtime or compile-time toggle** to make the
-//! default constructors fallible. If a Cargo feature (e.g. `fallible-alloc`)
-//! or a runtime option would better fit your use case, please open an issue
-//! at <https://github.com/imazen/zen/issues> describing the caller and we'll
-//! evaluate adding one. Until then, reach directly for the `try_*` variants.
+//! [`PixelBuffer::try_new`] makes packed, zero-filled typed storage. Use
+//! [`PixelBuffer::try_new_aligned`] for a 64-byte-aligned owner with padded rows.
+//! Fallible image allocation returns located [`BufferError`] errors. `new` and
+//! other documented convenience APIs panic on allocation failure. Some control,
+//! cache and dependency allocations remain infallible; see the
+//! [allocation audit](https://github.com/imazen/zenpixels/blob/main/docs/allocation-audit.md).
+//! There is no general operation-level memory budget in this crate.
 //!
 //! # Feature flags
 //!
-//! | Feature | What it enables |
-//! |---------|----------------|
-//! | `std` | Standard library (default; currently a no-op, everything is `no_std + alloc`) |
-//! | `rgb` | [`Pixel`] impls for `rgb` crate types, typed `from_pixels()` constructors |
-//! | `imgref` | `From<ImgRef>` / `From<ImgVec>` conversions (implies `rgb`) |
-//! | `planar` | Retained no-op feature spelling; legacy planar API removed |
-
+//! | Feature | Effect |
+//! |---------|--------|
+//! | `std` | Default; omit for `no_std + alloc` |
+//! | `icc` | Default; paired-fingerprint ICC recognition with scoped use permission |
+//! | `rgb` | Concrete `rgb` pixel types |
+//! | `imgref` | imgref adapters; enables `rgb` |
+//! | `image` | image 0.25 interop (Rust 1.88+) |
+//! | `hash` | Pixel hashing and configurable inclusions (Rust 1.89+) |
+//! | `allocator_api` | Allocator-parameterized storage on supported compilers |
+//! | `planar`, `serde` | Retained compatibility spellings; no API |
+//!
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 #![cfg_attr(test, allow(deprecated))]
