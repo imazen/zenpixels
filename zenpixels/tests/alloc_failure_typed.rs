@@ -109,6 +109,7 @@ fn try_into_contiguous_pixels_refuses_wrong_layout() {
 /// allocation's address for u8/u16/f32 pixel types.
 #[test]
 fn typed_storage_extraction_is_zero_copy() {
+    let _g = lock();
     let pixels8 = vec![rgb::Rgb::<u8>::new(1, 2, 3); 8];
     let ptr8 = pixels8.as_ptr() as usize;
     let out8 = PixelBuffer::from_pixels_erased(pixels8, 4, 2)
@@ -137,10 +138,12 @@ fn typed_storage_extraction_is_zero_copy() {
     assert_eq!(outf.len(), 8);
 }
 
-/// Erased `Vec<u8>` storage can never satisfy `align_of::<Rgb<u16>>()`, so the
-/// copy arm produces a new allocation at a different address.
+/// A `Vec<u8>` allocation has an alignment-1 allocation layout even when its
+/// address happens to be aligned for `Rgb<u16>`. Extraction must copy rather
+/// than change the layout used to deallocate it.
 #[test]
 fn erased_byte_storage_extraction_copies() {
+    let _g = lock();
     let buf =
         PixelBuffer::from_vec(vec![7u8; 4 * 2 * 6], 4, 2, PixelDescriptor::RGB16_SRGB).unwrap();
     let src_ptr = buf.as_slice().as_strided_bytes().as_ptr();

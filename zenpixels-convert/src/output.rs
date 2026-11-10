@@ -140,9 +140,9 @@ pub struct OutputMetadata {
 /// Use [`into_parts()`](Self::into_parts) to destructure if needed, but
 /// the default path keeps them coupled.
 ///
-/// The pixels are always owned (one full output buffer per call, even when
-/// no conversion was needed); see the *Allocation* section on
-/// [`EncodeReady::finalize`].
+/// The pixels are always owned. [`Self::finalize`] allocates an output buffer;
+/// [`Self::finalize_owned`] reuses the consumed allocation when no sample
+/// conversion is needed.
 #[non_exhaustive]
 pub struct EncodeReady {
     pixels: PixelBuffer,
@@ -231,7 +231,8 @@ impl EncodeReady {
 /// agree on format, transfer, primaries, and signal range), where the source
 /// rows are copied into it unchanged. The signature (`&PixelBuffer` in,
 /// owned out) makes that copy structural rather than avoidable; a
-/// by-value/borrowing sibling is tracked in imazen/zenpixels#69. No other
+/// consuming alternative is [`EncodeReady::finalize_owned`]; streaming callers
+/// can borrow identity rows with [`OutputPlan::borrow_rows`]. No other
 /// per-image allocation occurs: the conversion path's scratch is per-row and
 /// lives inside [`RowConverter`](crate::RowConverter).
 ///

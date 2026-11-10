@@ -149,3 +149,53 @@ fn finalize_owned_allocates_and_matches_when_transform_required() {
         assert_eq!(owned.pixels().row(y), reference.pixels().row(y));
     }
 }
+
+/// Completing interpretation from the same authoritative ICC must preserve
+/// offsets, padding and every sample bit, including float alpha payloads.
+#[test]
+fn finalize_owned_preserves_offset_and_wide_samples_when_completing_icc() {
+    use std::sync::Arc;
+    for format in [
+        PixelFormat::Rgba8,
+        PixelFormat::Rgba16,
+        PixelFormat::RgbaF32,
+    ] {
+        let descriptor = format
+            .descriptor()
+            .with_primaries(ColorPrimaries::Unknown)
+            .with_transfer(TransferFunction::Unknown);
+        let bpp = descriptor.bytes_per_pixel();
+        let offset = bpp;
+        let stride = 3 * bpp;
+        // Minimal final-row extent, with a prefix and inter-row padding.
+        let data = vec![0x7fc0_1234u32; (offset + stride + 2 * bpp) / 4];
+        let profile: Arc<[u8]> = Arc::from(zenpixels_convert::icc_profiles::DISPLAY_P3_V4);
+        let mut parts = PixelBufferParts::new(data.into(), 2, 2, stride, descriptor);
+        parts.offset = offset;
+        parts.color_context = Some(Arc::new(ColorContext::from_icc(profile.clone())));
+        let buffer = PixelBuffer::try_from_parts(parts).unwrap();
+        let ptr = buffer.as_slice().as_strided_bytes().as_ptr();
+        let bytes = buffer.as_slice().as_strided_bytes().to_vec();
+        let origin = ColorOrigin::from_icc(profile);
+        let reference =
+            EncodeReady::finalize(&buffer, &origin, OutputProfile::SameAsOrigin, format, None)
+                .unwrap();
+        let owned =
+            EncodeReady::finalize_owned(buffer, &origin, OutputProfile::SameAsOrigin, format, None)
+                .unwrap();
+        let view = owned.pixels();
+        assert_eq!(view.as_strided_bytes().as_ptr(), ptr);
+        assert_eq!(view.as_strided_bytes(), bytes);
+        assert_eq!(view.stride(), stride);
+        assert_eq!(view.descriptor(), reference.pixels().descriptor());
+        assert_eq!(view.descriptor().primaries, ColorPrimaries::DisplayP3);
+        assert_eq!(view.descriptor().transfer(), TransferFunction::Srgb);
+        assert_eq!(view.color_context(), reference.pixels().color_context());
+        assert_eq!(owned.metadata().icc, reference.metadata().icc);
+        assert_eq!(owned.metadata().cicp, reference.metadata().cicp);
+        for y in 0..2 {
+            assert_eq!(view.row(y), reference.pixels().row(y));
+        }
+        assert_eq!(owned.into_parts().0.into_parts().offset, offset);
+    }
+}
