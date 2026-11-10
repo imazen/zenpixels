@@ -1,250 +1,168 @@
 # zenpixels-convert [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenpixels/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenpixels/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/zenpixels-convert?style=flat-square)](https://crates.io/crates/zenpixels-convert) [![lib.rs](https://img.shields.io/crates/v/zenpixels-convert?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/zenpixels-convert) [![docs.rs](https://img.shields.io/docsrs/zenpixels-convert?style=flat-square)](https://docs.rs/zenpixels-convert) [![MSRV](https://img.shields.io/badge/MSRV-1.89-blue?style=flat-square)](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field) [![license](https://img.shields.io/crates/l/zenpixels-convert?style=flat-square)](#license)
 
-Transfer-function-aware pixel conversion, gamut mapping, and codec format negotiation for Rust image pipelines.
+Convert pixel samples while keeping their description and output metadata in
+agreement. This crate re-exports zenpixels, so most applications need just this
+one dependency.
 
-A JPEG decoder may produce `RGB8` in sRGB; an AVIF decoder may produce full-range `RGBA16` in BT.2020 PQ. Other native code depths and color signaling remain explicit. A resize library wants `RGBF32` in linear light. Without shared types, every codec pair needs hand-rolled conversion — and gets transfer functions wrong, silently drops alpha, or writes "sRGB" in the ICC profile while the pixels are linear.
-
-`zenpixels-convert` is the math half of the [`zenpixels`](https://crates.io/crates/zenpixels) ecosystem. `zenpixels` carries the format/color types ([`PixelBuffer`], [`PixelDescriptor`], [`PixelFormat`], `TransferFunction`, `ColorPrimaries`, `ColorContext`); this crate handles transfer functions, gamut matrices, depth scaling, alpha compositing, format negotiation, and HDR tone mapping so codecs don't have to. It **re-exports everything from `zenpixels`** at its crate root, so downstream pipelines can depend on `zenpixels-convert` alone.
-
-`no_std + alloc`, `#![forbid(unsafe_code)]`, no system dependencies. SIMD where available, runtime-dispatched.
+New to the types? Start with the [image and subimage guide](https://imazen.github.io/zenpixels/guide.html).
+Use the [interactive explorer](https://imazen.github.io/zenpixels/) to inspect
+bytes and try actual conversion routes.
 
 ## Install
 
-These snippets target the unpublished 0.3.1 candidate described here. For the
-currently published API, see the [0.2.16 reference](https://docs.rs/zenpixels-convert/0.2.16/zenpixels_convert/).
+These examples follow the **unpublished 0.3.1 candidate**. The
+[published reference](https://docs.rs/zenpixels-convert) may describe an earlier API.
 
 ```toml
-[dependencies]
 zenpixels-convert = "0.3.1"
-```
-
-Common feature combinations:
-
-```toml
-# Plus the rgb crate's typed buffers and convenience methods
-zenpixels-convert = { version = "0.3.1", features = ["rgb"] }
-
-# Plus a pluggable CMS backend (moxcms) for arbitrary ICC profiles
-zenpixels-convert = { version = "0.3.1", features = ["cms-moxcms"] }
-
-# Plus the experimental HDR→SDR display-mapping surface
-zenpixels-convert = { version = "0.3.1", features = ["hdr-experimental"] }
-
-# Size-sensitive / wasm builds (drops the bundled CICP->ICC database)
-zenpixels-convert = { version = "0.3.1", default-features = false, features = ["std"] }
 ```
 
 ## Quick start
 
-### Negotiate a format, then convert row by row
-
-[`ConvertIntent::best_match`] picks the cheapest target format an encoder supports for a given source descriptor; [`RowConverter`] plans conversion once. On the unreleased bridge, `prepare` reserves scratch and initializes selected tables before fallible execution.
-
-For current ICC/CICP context and matching output signaling, the review branch
-adds `OutputPlan`: prepare from final color facts before pixels arrive, then
-convert into supplied row views. See the
-[output preparation contract](https://github.com/imazen/zenpixels/blob/main/docs/implemented-bridge-contracts.md#output-preparation-added-on-the-review-branch-2026-10-25).
+For known descriptor-based color, convert an image or a borrowed subimage:
 
 ```rust
-use zenpixels_convert::{RowConverter, ConvertIntent};
+use zenpixels_convert::{PixelBuffer, PixelDescriptor, PixelSliceConvertExt};
 
-// Pick the cheapest target format the encoder supports.
-let target = ConvertIntent::Fastest.best_match(source_desc, &encoder_formats)
-    .ok_or("no compatible format")?;
+let image = PixelBuffer::from_vec(
+    vec![255, 0, 0, 0, 255, 0], 2, 1, PixelDescriptor::RGB8_SRGB,
+)?;
+let green = image.crop_view(1, 0, 1, 1);
+let linear = green.convert_to(PixelDescriptor::RGBF32_LINEAR)?;
 
-// Unreleased bridge: setup costs occur before the row loop.
-let mut converter = RowConverter::new(source_desc, target)?;
-converter.prepare(width)?;
-for y in 0..height {
-    converter.try_convert_row(src_row, dst_row, width)?;
+assert_eq!(linear.width(), 1);
+assert_eq!(linear.descriptor(), PixelDescriptor::RGBF32_LINEAR);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The crop borrows the parent's storage and stride. The conversion creates a new
+output buffer. Changing a descriptor alone would not perform this conversion.
+
+## Convert rows with explicit options
+
+Build the converter once. `prepare` reserves built-in scratch and initializes
+selected tables before the loop. Rows may come from a crop or padded storage:
+
+```rust
+use zenpixels_convert::{ConvertOptions, PixelBuffer, PixelDescriptor, RowConverter};
+
+let source = PixelBuffer::from_vec(
+    vec![64, 128, 192, 255, 0, 0], 2, 1, PixelDescriptor::RGB8_SRGB,
+)?;
+let mut output = PixelBuffer::try_new(2, 1, PixelDescriptor::RGBF32_LINEAR)?;
+let options = ConvertOptions::retain_channels().with_clip_out_of_gamut(false);
+let mut converter = RowConverter::new_explicit(
+    source.descriptor(), output.descriptor(), &options,
+)?;
+converter.prepare(source.width())?;
+
+for y in 0..source.height() {
+    converter.try_convert_row(
+        source.as_slice().row(y),
+        output.as_slice_mut().row_mut(y),
+        source.width(),
+    )?;
 }
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Within prepared capacity, built-in execution does not allocate. Each stateful
-CMS worker must be built independently and support preparation; cloning a shared
-mutable worker does not create an independent worker. Row extent/alignment errors
-precede writes. A backend error can leave partial destination data.
+Within prepared capacity, built-in row execution needs no new scratch
+allocation. CMS backends have their own preparation contract. Execution validates
+row extents/alignment before writes; a backend failure may leave partial output.
+Use `try_clone()` for a fallible independent converter worker.
 
-`compose` optimizes the final output and may remove incidental quantization.
-Use `compose_preserving` for intentional integer boundaries. Use
-`PixelSlice::check_opaque` explicitly before requesting `DiscardUnchecked` if opacity
-is required; ordinary row planning refuses `DiscardIfOpaque` without inspecting
-pixels. `ConvertPlan::new_preserving_samples` proves supported exact changes or
-refuses without scanning.
+## Choose what may change
 
-These additions are unreleased. See the [tested bridge examples](https://github.com/imazen/zenpixels/blob/main/docs/implemented-bridge-contracts.md).
+- `RowConverter::new` keeps legacy permissive defaults, including unchecked
+  alpha discard. Naming a target is not a general lossless guarantee.
+- `ConvertOptions::retain_channels()` forbids alpha/depth loss, but defaults
+  to gamut clipping. Add `.with_clip_out_of_gamut(false)` for extended floats.
+- Use explicit alpha/depth/luma policies when requesting lossy operations.
+  RGB-to-gray requires chosen luma coefficients.
+- `ConvertPlan::new_preserving_samples` accepts proven representation changes
+  or refuses. It does not infer preservation from original source depth.
+- `compose` may remove incidental intermediate quantization;
+  `compose_preserving` retains intentional stage boundaries.
 
-### Color profile conversion (no CMS needed for named profiles)
+## Keep encoder metadata with the result
 
-Named-profile pairs (sRGB ↔ Display P3 ↔ BT.2020 ↔ Adobe RGB) use hardcoded matrices with fused SIMD kernels — LUT-decode + SIMD matrix + SIMD polynomial encode for u16, fused matlut for u8. No CMS backend required.
+`EncodeReady::finalize` creates independent owned output and its matching color
+metadata together:
 
 ```rust
-use zenpixels::{PixelDescriptor, ColorPrimaries};
-use zenpixels_convert::{RowConverter, ConvertOptions};
+use zenpixels_convert::{
+    Cicp, ColorOrigin, EncodeReady, OutputProfile,
+    PixelBuffer, PixelDescriptor, PixelFormat,
+};
 
-let p3   = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
-let srgb = PixelDescriptor::RGB8_SRGB;
-
-let mut conv = RowConverter::new_explicit(
-    p3, srgb, &ConvertOptions::permissive(),
+let source = PixelBuffer::from_vec(vec![64, 128, 192], 1, 1, PixelDescriptor::RGB8_SRGB)?;
+let ready = EncodeReady::finalize(
+    &source, &ColorOrigin::assumed(), OutputProfile::Named(Cicp::SRGB),
+    PixelFormat::Rgb16, None,
 )?;
-conv.convert_row(p3_row, srgb_row, width);
+assert_eq!(ready.pixels().descriptor().pixel_format(), PixelFormat::Rgb16);
+assert_eq!(ready.metadata().cicp, Some(Cicp::SRGB));
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Custom ICC profiles (vendor-specific, LUT-based, perceptual intent) need a CMS backend. Pass one via [`PluggableCms`] — the plan delegates to the plugin when the profiles differ, and uses the built-in matlut fast path when both sides are well-known. Enable `cms-moxcms` for [`MoxCms`] or `cms-lcms` for [`Lcms`], using the pure-Rust Little CMS port. Both implement the same interface. Choose the backend explicitly; enabling both changes neither selection nor the built-in paths.
+Use `OutputPlan` when an encoder can borrow unchanged rows or you supply the
+output storage. `borrow_rows` can avoid identity pixel copies; `convert_rows`
+writes to the supplied destination. Configure the encoder from the plan's
+metadata. Original `ColorOrigin` declarations cannot override converted current
+pixels. [Output contracts](https://github.com/imazen/zenpixels/blob/main/docs/design-reference.md).
 
-```rust
-use zenpixels_convert::{RowConverter, ConvertOptions, MoxCms, cms::PluggableCms};
+## Color profiles and HDR
 
-let cms: &dyn PluggableCms = &MoxCms;
-// With `cms-lcms`, use `&zenpixels_convert::Lcms` instead.
-let mut conv = RowConverter::new_explicit_with_cms(
-    source_desc, target_desc,
-    &ConvertOptions::permissive(),
-    Some(cms),
-)?;
-```
+Named descriptor-based primaries/transfer pairs use the built-in paths.
+Arbitrary ICC profiles need a selected `PluggableCms`: enable `cms-moxcms` for
+`MoxCms` or `cms-lcms` for `Lcms`. Enabling a feature does not select a backend
+for you. Metadata-only ICC recognition does not authorize substitution.
 
-For HDR and wide-gamut pipelines that defer tone/gamut mapping, build `ConvertOptions` with gamut clipping disabled so f32 sRGB transfers preserve negative and supernormal values through the conversion.
+`SynthesizedIcc::for_cicp` describes already-decoded RGB; it does not apply
+YCbCr matrices or expand limited-range codes. Unsupported synthesis reports
+its refusal. HLG ICC synthesis remains unsupported.
 
-## No silent lossy conversions
+Relative/absolute light conversions need an explicit white anchor. Display HLG
+rendering needs explicit display peak, black and effective gamma; an opt-in
+named reference preset is available. Tone mapping also needs an explicit
+rendering policy and appropriate peak inputs. Source metadata does not silently
+select a display. [HDR contract](https://github.com/imazen/zenpixels/blob/main/docs/hdr-anchor-api-design.md).
 
-Every operation that destroys information requires an explicit policy via [`ConvertOptions`] (from `zenpixels`, re-exported here):
-
-- **Alpha removal**: `DiscardIfOpaque`, `CompositeOnto { background, reference_white }`, `DiscardUnchecked`, or `Forbid`.
-- **Depth reduction**: `Round`, `Truncate`, or `Forbid`.
-- **RGB → gray**: requires explicit luma coefficients (`Bt709`, `Bt601`, `Bt2020`, or `DisplayP3`), or `None` to forbid. Uses Y' (encoded luma) semantics — round-trips bit-exactly when `R == G == B`.
-
-Convenience constructors: `ConvertOptions::retain_channels()` (forbids alpha and depth loss, still clips out-of-gamut floats) and `ConvertOptions::permissive()` (sensible lossy defaults), plus `with_alpha_policy()` / `with_depth_policy()` for customization.
-
-## Format negotiation
-
-The cost model separates **effort** (CPU work) from **loss** (information destroyed). [`ConvertIntent`] controls the weighting:
-
-| Intent | Effort | Loss | Use case |
-|---|---|---|---|
-| `Fastest` | 4× | 1× | Encoding — get there fast |
-| `LinearLight` | 1× | 4× | Resize, blur — need linear math |
-| `Blend` | 1× | 4× | Compositing — premultiplied alpha |
-| `Perceptual` | 1× | 3× | Color grading, sharpening |
-
-[`Provenance`] guides cost-model ranking, not exactness after edits. Use `ConvertPlan::new_preserving_samples` for proven representation changes or explicitly request value analysis. Three entry points: [`best_match`] (simple), [`best_match_within`] (with a loss ceiling), [`negotiate`] (full control with provenance).
-
-## What `MoxCms` does at each depth
-
-Matrix-and-curve profiles take this crate's U8 kernels at 8 bits, using each profile's own curve and colorants, when the source's channels
-share a curve and the target has sRGB's. Everything else at 8 bits, including table profiles and CMYK, takes the F32 path and rounds to nearest,
-so it matches that path's result. Over all 2^24 8-bit inputs, against exact math on each profile's curve and colorants, Display P3 and Adobe RGB into sRGB, sRGB into P3, and P3 into BT.2020 each miss nearest on at most 0.16% of samples, worst 0.502 of a code; P3 into Adobe RGB misses on 0.14%, worst 1.0.
-16-bit takes moxcms's own path, whose sRGB table truncates: 57% of samples miss nearest, for a mean of -0.64 of a 16-bit code.
-
-moxcms is a different implementation from lcms2 and is expected to differ from it. On table profiles the two differ more: lcms2's float path matches an exact evaluation of the tables to 0.35 of a code on mozjpeg's `test1.icc` and `test3.icc`. moxcms 0.9.1 interpolates Lab and XYZ tables trilinearly where lcms2 uses tetrahedra, scales a pre-v4 `lut8Type` table's Lab as if it were `lut16Type` (a mean of +0.68 of a code on `test3.icc`; fixed on its master, unreleased), and maps a v4 RGB table profile's black to zero (a mean of about -1 of a code on JPEG XL's PQ and HLG profiles). `benchmarks/jxl-cms-parity/README.md` has the HDR measurements.
-`CmykF32` and `CmykF32Inverted` sources convert to any RGB target; converting into F32 CMYK is refused. `Cmyk8` runs the
-same transform and rounds, so both have F32 CMYK's black-point compensation to sRGB.
-
-Every backend runs through the same contract in `cms-contract/`: `just cms-contract`.
-
-`Lcms` supports native U8/U16/F32 RGB, gray and ICC-described CMYK inputs, including byte BGR/BGRA and alpha. It uses relative colorimetric intent with black-point compensation for CMYK sources. F32 CMYK destinations are refused; mixed depths and unqualified layouts decline to the planner. Prepared float CMYK rows reuse scratch. The Rust port is pinned to an unreleased Git revision, so publishing this feature requires a released port dependency. See [qualification and profile triage](https://github.com/imazen/zenpixels/blob/review/first-class-lcms-20261108/docs/first-class-lcms-and-profile-triage.md).
-
-## Row conversion tiers
-
-[`RowConverter`] pre-computes a conversion plan from a source/target descriptor pair, choosing one of three tiers:
-
-1. **Direct kernels** for common pairs (byte swizzle, depth shift, transfer-function LUTs).
-2. **Composed plans** for less common pairs (e.g. `RGB8_SRGB` → `RGBA16_LINEAR`).
-3. **Hub path** through linear sRGB f32 as the universal fallback.
-
-## Gamut, HDR, Oklab
-
-- **Gamut matrices** — 3×3 row-major f32 between BT.709, Display P3, BT.2020 via [`GamutMatrix`], with `between`, `then`, `apply` and in-place `apply_row_rgb` / `apply_row_rgba`. No CMS needed for named-profile conversions.
-- **HDR (`hdr-experimental`)** — `ConvertPlan::new_with_tone_mapper` takes any `ToneMapper`. With `bt2446a`, explicit `ConvertPlan::new_with_hdr_config` runs BT.2446 Method A tone mapping plus gamut compression with supplied peak/white policy. `convert_to_sdr_measuring_peak` explicitly requests an additional rowwise scan; `hdr::measure::CllMeasure` provides measurements. Plain HDR→SDR conversion refuses missing peak policy. `hdr::quantize_to` converts anchored linear samples to PQ16. Shared metadata types live in `zenpixels::hdr`; core measurement, the old bundle and naive global curves are removed in 0.3.1.
-- **Oklab** — `OklabSpace` holds both LMS matrices for a set of primaries and does scalar conversions. Non-sRGB sources get correct LMS matrices without an intermediate sRGB step.
-
-## CICP / ICC
-
-- **ICC identification** — `zenpixels::icc::IccIdentification::from_icc(icc_bytes)` recognizes hundreds of well-known RGB + grayscale profiles via a normalized hash lookup (~100ns), returning primaries, transfer function, and whether matrix+TRC substitution is safe vs CMS-only. `extract_cicp` reads embedded `cICP` tags directly.
-- **CICP → ICC synthesis** — `icc_profiles::SynthesizedIcc::for_cicp(Cicp)` serves 149 RGB mappings; `SynthesizedIcc::for_gray_cicp(Cicp)` serves 164 GRAY mappings. The default `icc-db` feature embeds a 93,377-byte database, decoded lazily without a runtime CMS. PQ includes float and conventional pipelines; targetless HLG refuses synthesis, retaining native CICP instead. The sRGB default answers `NotNeeded`. See [qualification and reader limits](../docs/corrected-icc-export.md).
-
-## Orientation
-
-The buffer-baking half of the zen orientation story lives here (the `Orientation` enum and its composition algebra are in `zenpixels`):
-
-- `PixelSlice::oriented` — fresh buffer; SIMD-tiled transpose for 4-byte pixels (behind the `fast-transpose` feature; portable scalar otherwise).
-- `PixelSlice::oriented_into` — caller-provided target, no allocation.
-- `PixelBuffer::into_oriented` — reuses the buffer's own allocation.
-
-## Atomic output assembly
-
-[`EncodeReady::finalize`] couples converted pixels with matching encoder metadata in one step, preventing the bug where pixel values don't match the embedded ICC/CICP profile. Returns an [`EncodeReady`] bundle.
-
-## Resource estimation
-
-Retired: all estimation APIs warn in 0.2.17 and are removed in 0.3.1.
-`estimation-experimental` is a compatibility feature only; it does not suppress
-warnings or restore removed APIs. No replacement cost predictor is promised.
-Use measured workload costs and explicit buffer/stride arithmetic.
-
-## Load-bearing analysis
-
-[`PixelSliceLoadBearingExt`] / [`PixelBufferLoadBearingExt`] run SIMD predicates over a buffer to report which channels actually carry information (e.g. is the alpha fully opaque, is the image grayscale), returning a [`LoadBearingReport`] used to drive lossless format-reduction decisions.
-
-## Key types and functions
-
-| Item | What it does |
-|---|---|
-| [`RowConverter`] | Pre-computed per-row conversion plan (`new`, `new_explicit`, `new_explicit_with_cms`, `convert_row`, `convert_rows`) |
-| [`ConvertIntent::best_match`] / [`ConvertIntent::best_match_within`] / [`ConvertIntent::negotiate`] | Format negotiation entry points |
-| [`ConvertIntent`] | Effort-vs-loss weighting for negotiation |
-| [`Provenance`] / [`ConversionCost`] / [`FormatOption`] | Cost-model inputs and results |
-| `ConvertOptions` (re-export) | Explicit lossy-operation policy |
-| [`ConvertPlan`] | Lower-level plan, run through `RowConverter::from_plan` |
-| `PixelSlice::adapt_for_encode` / [`adapt::adapt_raw_rows_for_encode`] / `PixelBuffer::try_adapt_in_place` | One-call negotiate-and-convert helpers |
-| [`PluggableCms`] / [`RowTransformMut`] / [`MoxCms`] / [`Lcms`] | Pluggable CMS interface with explicit backend selection |
-| [`GamutMatrix`] | Gamut matrix construction and application, in place on rows |
-| [`ConvertPlan::new_with_hdr_peak`] / [`ConvertPlan::new_with_hdr_config`] | HDR→SDR conversion plan constructors (`bt2446a` feature) |
-| [`Bt2446A`] / [`SoftCompress`] / [`CllMeasure`] | ITU-R BT.2446 Method A curve + OKLch knee + CTA-861.3 CLL measurement (`hdr-experimental` feature) |
-| `PixelSlice::quantize_to` | Anchor-aware linear→PQ16 quantizer |
-| [`EncodeReady::finalize`] / [`EncodeReady`] / [`OutputMetadata`] | Atomic pixels-plus-metadata output assembly |
-| [`TransferFunctionExt`] / [`ColorPrimariesExt`] / [`PixelBufferConvertExt`] / [`PixelSliceConvertExt`] | Conversion methods bolted onto interchange types |
-| [`LoadBearingReport`] / [`PixelSliceLoadBearingExt`] | Channel-information analysis |
-| [`ConvertError`] | Conversion error type |
+Native integer code extraction is separate from color conversion.
+`codes::to_canonical` handles supported component encodings; generic signed/wide
+storage does not grant numerical conversion support.
 
 ## Features
 
-| Feature | Default | What it enables |
-|---|---|---|
-| `std` | yes | Standard library |
-| `icc-db` | yes | Bundled CICP→ICC profile database (93 KB asset) behind `SynthesizedIcc::for_cicp`; disable for size-sensitive builds (they answer `NeedsCms` instead) |
-| `fast-transpose` | | SIMD transpose kernels (x86-64 AVX2 + aarch64 NEON) for orientation; portable scalar otherwise |
-| `avx512` | | 16-wide AVX-512F f16 conversion kernels (runtime-dispatched) |
-| `rgb` | | `Pixel` impls for the [`rgb`](https://crates.io/crates/rgb) crate's types + typed convenience methods (`to_rgb8()`, `to_rgba8()`, …) |
-| `imgref` | | `ImgRef` / `ImgVec` conversions (implies `rgb`) |
-| `planar` | | Retained no-op feature; legacy planar API removed |
-| `hdr-experimental` | | HDR→SDR display mapping (ITU-R BT.2446 Method A curve + OKLch soft compress + CTA-861.3 CLL measurement). API shape may move ahead of 0.3.0 (in particular `measure_robust` → `measure` rename); scan kernels and accuracy contracts are stable. See [HDR section](#gamut-hdr-oklab) above. |
-| `bt2446a` | | The BT.2446 Method A tone-mapping curve (implies `hdr-experimental`) |
-| `cms-moxcms` | | ICC profile transforms via [moxcms](https://crates.io/crates/moxcms) (implies `std`) |
-| `cms-lcms` | | ICC profile transforms via pure-Rust LCMS (implies `std`) |
-| `serde` | | No-op stub (soft-removed in 0.2.15, queued for removal in the next breaking release); previously forwarded to `zenpixels/serde`. Kept so `features = ["serde"]` from 0.2.14 still builds |
+| Feature | Effect |
+|---|---|
+| `std` | Default; omit for `no_std + alloc` |
+| `icc-db` | Default; qualified CICP-to-ICC recipes with lazy group decoding |
+| `cms-moxcms`, `cms-lcms` | Explicitly selected CMS implementations |
+| `rgb`, `imgref` | Core typed-pixel and imgref interop |
+| `fast-transpose` | Additional runtime-dispatched orientation kernels |
+| `avx512` | Opt-in wider row-kernel tiers |
+| `hdr-experimental`, `bt2446a` | HDR measurement/rendering and BT.2446A |
+| `planar`, `serde`, `estimation-experimental` | Retained compatibility spellings |
 
-### `no_std`
-
-`zenpixels-convert` is `no_std + alloc` by default-construction (`std` is on by default but everything works without it). For `no_std`, set `default-features = false` and re-enable only what you need (both CMS features require `std`):
-
-```toml
-zenpixels-convert = { version = "0.3.1", default-features = false }
-```
+Disabling `icc-db` retains supported compact exports and explicit synthesis
+refusal elsewhere. It does not restore the legacy P3 fallback. Resource-estimation
+APIs are retired.
 
 ## MSRV
 
-Rust 1.89+ (for the safe SIMD intrinsics it uses), 2024 edition. The companion `zenpixels` crate requires 1.85+.
+Rust 1.89, edition 2024. `no_std + alloc`; unsafe code is forbidden.
 
 ## See also
 
-- [`zenpixels`](https://crates.io/crates/zenpixels) — the pixel format/color type system this crate operates on.
-- [`linear-srgb`](https://crates.io/crates/linear-srgb) — the linear↔sRGB transfer math used internally.
+[Pixel types guide](https://imazen.github.io/zenpixels/guide.html) ·
+[Core types](https://github.com/imazen/zenpixels) ·
+[API reference](https://docs.rs/zenpixels-convert) ·
+[Design contracts](https://github.com/imazen/zenpixels/blob/main/docs/design-reference.md)
 
 ## License
 
-Apache-2.0 OR MIT.
+Apache-2.0 OR MIT
 
 ## Image tech I maintain
 
