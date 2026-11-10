@@ -1022,11 +1022,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "zenhash"
+version = "0.1.0"
+source = "git+https://github.com/imazen/zenhash?rev=98c385a4e54a#98c385a4e54a1d41870610e13a614295c538275c"
+dependencies = [
+ "archmage",
+ "whereat",
+]
+
+[[package]]
 name = "zenpixels"
 version = "0.3.1"
 dependencies = [
  "bytemuck",
  "whereat",
+ "zenhash",
 ]
 
 [[package]]

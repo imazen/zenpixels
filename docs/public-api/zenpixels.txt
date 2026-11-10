@@ -529,7 +529,7 @@ pub fn icc::IccIdentification::from_icc(&[u8]) -> core::option::Option<Self>
 pub fn icc::IccIdentification::is_common_srgb(&[u8]) -> bool
 pub fn icc::IccIdentification::is_srgb(&self) -> bool
 pub fn icc::IccIdentification::to_cicp(&self) -> core::option::Option<cicp::Cicp>
-pub const fn icc::normalized_hash(&[u8]) -> u64
+pub const fn icc::normalized_hash(&[u8]) -> (u64, u32)
 pub mod orientation
 pub orientation::Orientation::FlipH = 2
 pub orientation::Orientation::FlipV = 4

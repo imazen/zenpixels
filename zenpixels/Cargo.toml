@@ -17,7 +17,9 @@ include = [
 
 [features]
 default = ["std", "icc"]
-std = []
+std = ["zenhash?/std"]
+# Pixel fingerprints and Hash impls; this opt-in feature requires Rust 1.89.
+hash = ["dep:zenhash", "zenhash/murmur3"]
 # Retained feature spelling for shared 0.2/0.3 consumer manifests; no API.
 planar = []
 icc = []
@@ -42,6 +44,7 @@ image = ["dep:image", "std"]
 serde = []
 
 [dependencies]
+zenhash = { git = "https://github.com/imazen/zenhash", rev = "98c385a4e54a", default-features = false, features = ["xxh3", "avx512"], optional = true }
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
 imgref = { version = "1.12", optional = true }

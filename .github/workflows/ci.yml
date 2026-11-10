@@ -52,6 +52,9 @@ jobs:
       - name: Test (workspace)
         run: cargo test --workspace
 
+      - name: Test pixel Hash and ICC golden pairs
+        run: cargo test --locked -p zenpixels --features hash
+
       - name: Test still-image IQA contract
         run: cargo test --locked --manifest-path zenpsy-api/Cargo.toml --all-features
 
@@ -145,6 +148,9 @@ jobs:
       - name: Test (i686/QEMU)
         run: cross test --workspace --target i686-unknown-linux-gnu
 
+      - name: Test pixel Hash and ICC goldens (i686)
+        run: cross test --locked -p zenpixels --features hash --lib --test hashing --target i686-unknown-linux-gnu
+
       - name: Test still-image IQA contract (i686)
         run: cross test --locked --manifest-path zenpsy-api/Cargo.toml --target i686-unknown-linux-gnu
 
@@ -153,6 +159,20 @@ jobs:
       # dispatch's non-native fallback branch, distinct from the x64/arm64 runs.
       - name: Test (zenpixels-convert SIMD fallback i686, fast-transpose)
         run: cross test -p zenpixels-convert --features fast-transpose --target i686-unknown-linux-gnu
+
+  hash-big-endian:
+    name: Pixel Hash (s390x big-endian)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: s390x-unknown-linux-gnu
+      - uses: taiki-e/install-action@cross
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: hash-s390x
+      - run: cross test --locked -p zenpixels --features hash --lib --test hashing --target s390x-unknown-linux-gnu
 
   # ==========================================================================
   # WASM check
@@ -176,6 +196,12 @@ jobs:
 
       - name: Check WASM (no_std)
         run: cargo check --workspace --target wasm32-wasip1 --no-default-features
+
+      - uses: taiki-e/install-action@wasmtime
+      - name: Test pixel Hash and ICC goldens (WASI)
+        run: cargo test --locked -p zenpixels --features hash --lib --test hashing --target wasm32-wasip1
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
 
   # ==========================================================================
   # Clippy
@@ -339,6 +365,9 @@ jobs:
 
       - name: Check MSRV (zenpixels @ 1.85)
         run: cargo +1.85.0 check -p zenpixels
+
+      - name: Check optional Hash MSRV (zenpixels @ 1.89)
+        run: cargo +1.89.0 check --locked -p zenpixels --lib --no-default-features --features hash
 
       - name: Check MSRV (zenpixels-convert @ 1.89)
         run: cargo +1.89.0 check -p zenpixels-convert

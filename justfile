@@ -728,3 +728,13 @@ refinement-check:
 # Frozen source, exact pixel/numerical pins, separate codec and render workspaces.
 downstream-cohort-check CONSUMER OUTPUT:
     python3 tools/downstream-cohort/check.py {{CONSUMER}} {{OUTPUT}}
+
+# Pixel/plane hashing and both implementations of the ICC golden algorithm.
+hash-check:
+    cargo test --locked -p zenpixels --features hash
+    cargo test --locked -p zenpixels --no-default-features --features icc --lib icc::murmur3_tests
+    cargo clippy --locked -p zenpixels -p icc-gen --lib --bin icc-gen --test hashing --features zenpixels/hash -- -D warnings
+
+# Backend comparison: timing excludes construction/allocation; raw packets are retained by zenbench.
+hash-bench *ARGS:
+    cargo bench --manifest-path benchmarks/pixel-hash/Cargo.toml --bench pixel_hash -- {{ARGS}}

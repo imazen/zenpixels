@@ -1,0 +1,22 @@
+[package]
+name = "pixel-hash-bench"
+version = "0.0.0"
+edition = "2024"
+publish = false
+autobins = false
+
+[workspace]
+
+[dependencies]
+zenpixels = { path = "../../zenpixels", features = ["hash"] }
+zenhash = { git = "https://github.com/imazen/zenhash", rev = "98c385a4e54a", default-features = false, features = ["std", "avx512", "rapidhash", "xxh3"] }
+zenbench = "0.1.11"
+bytemuck = "1.25.2"
+
+[[bench]]
+name = "pixel_hash"
+path = "src/main.rs"
+harness = false
+
+[profile.bench]
+lto = "thin"

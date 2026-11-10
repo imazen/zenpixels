@@ -10,6 +10,13 @@
 
 Pixel format types and transfer-function-aware conversion for Rust image codecs.
 
+The [design reference](docs/design-reference.md) explains sample interpretation,
+conversion policy, output metadata, and the 0.3 consolidation status.
+
+The unpublished [zenpsy-api](zenpsy-api/README.md) companion provides typed
+still-image quality results and optional prepared references over zenpixels.
+It adds no dependency to the pixel crates.
+
 > **Unreleased bridge work (2026-09-27):** checked storage/ownership,
 > prepared and fallible conversion, alpha/output fixes, explicit preserved-stage
 > composition and fused U16 analysis are implemented. See the
@@ -20,7 +27,8 @@ Pixel format types and transfer-function-aware conversion for Rust image codecs.
 > [0.2.16 reference](https://docs.rs/zenpixels/0.2.16/zenpixels/).
 
 See the [finalization/release contract](https://github.com/imazen/zenpixels/blob/main/docs/finalization-release-contract.md)
-and the [interactive color & sample explorer](https://github.com/imazen/zenpixels/blob/main/docs/color-explorer/index.html).
+and the [Pixel Format Explorer](https://imazen.github.io/zenpixels/) with a live WASM converter.
+The [color & sample decision model](https://imazen.github.io/zenpixels/color-explorer/) explains metadata choices.
 Estimation is retired in both release plans; the 0.2 feature no longer suppresses warnings.
 
 Native codec planes can now carry a checked
@@ -322,7 +330,7 @@ Every buffer carries one. Every codec declares which ones it produces and consum
 
 `ColorOrigin` is the immutable provenance record: *how the source file described its color*, not what the pixels currently are. Used at encode time to decide whether to re-embed the original profile.
 
-**CICP → ICC synthesis** (zenpixels-convert): `SynthesizedIcc::for_cicp(Cicp)` resolves an embeddable ICC profile for any assigned H.273 combination — bundled compressed database (`icc-db` feature, on by default; ~36 KB asset, lazily decoded per transfer group, no CMS required), with PQ/HLG HDR included. `synthesize_gray_icc_for_cicp` is the GRAY-class sibling for single-channel output (libpng rejects gray images paired with RGB-class profiles). The sRGB default answers `NotNeeded`; everything the database serves round-trips back through `extract_cicp` / `identify_common`.
+**CICP → ICC synthesis** (zenpixels-convert): `SynthesizedIcc::for_cicp(Cicp)` serves 149 RGB mappings, and `SynthesizedIcc::for_gray_cicp(Cicp)` serves 164 GRAY mappings from the compressed database (`icc-db`, enabled by default; 93,377 bytes, lazily decoded per transfer group, no runtime CMS dependency). PQ has qualified float and conventional ICC pipelines. HLG refuses synthesis without a rendering target; retain native CICP. The sRGB default answers `NotNeeded`. Export bytes and input-recognition fingerprints have separate purposes; bundle-derived identification is metadata-only. See [qualification and reader limits](docs/corrected-icc-export.md).
 
 ### Orientation
 
@@ -523,9 +531,9 @@ Convenience constructors: `ConvertOptions::retain_channels()` (forbids alpha and
 
 **Oklab** — `OklabSpace` holds both LMS matrices for a set of primaries and does scalar conversions, with public LMS/XYZ/Oklab matrices. Non-sRGB sources get correct LMS matrices without an intermediate sRGB step.
 
-**CMS** — `PluggableCms` trait (dyn-compatible, accepts `ColorProfileSource` directly — CICP, named profiles, or raw ICC bytes) plugs an external backend into `RowConverter`. `RowTransformMut` is the `&mut self` row-level transform returned by plugins. `cms-contract/` holds every backend to the same behavior. The `cms-moxcms` feature provides a concrete backend using [moxcms](https://crates.io/crates/moxcms), supporting u8/u16/f32 transforms with automatic profile identification..
+**CMS** — `PluggableCms` trait (dyn-compatible, accepts `ColorProfileSource` directly — CICP, named profiles, or raw ICC bytes) plugs an external backend into `RowConverter`. `RowTransformMut` is the `&mut self` row-level transform returned by plugins. `cms-contract/` holds every backend to the same behavior. The `cms-moxcms` and `cms-lcms` features provide `MoxCms` and `Lcms` backends. Callers select one explicitly; enabling both does not change conversion defaults. Both support native u8/u16/f32 rows. See [backend contracts and profile triage](docs/first-class-lcms-and-profile-triage.md).
 
-**ICC identification** — `zenpixels::icc::IccIdentification::from_icc(icc_bytes)` recognizes 298 well-known RGB + 69 grayscale profiles via normalized FNV-1a hash lookup (~100ns), including every profile the CICP database itself embeds in encoded output. Returns primaries, transfer function, and `IdentificationUse` (whether matrix+TRC substitution is safe vs CMS-only). Covers sRGB, Display P3, BT.2020, Adobe RGB variants across ICC v2–v5; `extract_cicp` reads embedded `cICP` tags directly.
+**ICC identification** — `zenpixels::icc::IccIdentification::from_icc(icc_bytes)` recognizes 271 RGB and 141 grayscale entries through paired normalized FNV-1a64/MurmurHash3_x86_32 fingerprints. Both must match. Identification returns approximate primaries/transfer plus permission to use that result; recognition alone does not authorize CMS substitution. Unsupported historical mappings remain deferred. See the [retained-original audit](docs/icc-retention-audit.md) and [hashing contract](docs/hashing.md).
 
 ### Resource estimation
 
@@ -555,7 +563,8 @@ branch. See the [code review](https://github.com/imazen/zenpixels/blob/main/docs
 | Feature | Default | What it enables |
 |---|---|---|
 | `std` | yes | Standard library (currently a no-op; everything is `no_std + alloc`) |
-| `icc` | yes | `icc` module — hash-based ICC profile identification (~100ns) |
+| `icc` | yes | `icc` module — paired-fingerprint ICC identification |
+| `hash` | | Pixel `Hash` and `hash_with(HashInclusions)`, backed by zenhash; requires Rust 1.89 |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed `from_pixels()` constructors |
 | `imgref` | | `From<ImgRef>` / `From<ImgVec>` conversions (implies `rgb`) |
 | `planar` | | Retained no-op feature; legacy planar API removed |
@@ -566,7 +575,7 @@ branch. See the [code review](https://github.com/imazen/zenpixels/blob/main/docs
 | Feature | Default | What it enables |
 |---|---|---|
 | `std` | yes | Standard library |
-| `icc-db` | yes | Bundled CICP→ICC profile database (~36 KB asset) behind `SynthesizedIcc::for_cicp`; disable for size-sensitive builds (they answer `NeedsCms` instead) |
+| `icc-db` | yes | Bundled CICP→ICC profile database (93 KB asset) behind `SynthesizedIcc::for_cicp`; disable for size-sensitive builds (they answer `NeedsCms` instead) |
 | `fast-transpose` | | SIMD transpose kernels (x86-64 AVX2 + aarch64 NEON) for orientation; portable scalar otherwise (output is bit-identical) |
 | `avx512` | | 16-wide AVX-512F f16 conversion kernels (runtime-dispatched) |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed convenience methods (`to_rgb8()`, `to_rgba8()`, etc.) |
@@ -576,6 +585,7 @@ branch. See the [code review](https://github.com/imazen/zenpixels/blob/main/docs
 | `bt2446a` | | The BT.2446 Method A tone-mapping curve (implies `hdr-experimental`) |
 | `hdr-experimental` | | Native HDR→SDR display mapping inside `ConvertPlan` (with `bt2446a`: BT.2446 Method A + OKLch soft compress + CTA-861.3 CLL measurement); API shape may move ahead of 0.3.0 |
 | `cms-moxcms` | | ICC profile transforms via [moxcms](https://crates.io/crates/moxcms) (implies `std`) |
+| `cms-lcms` | | ICC profile transforms via the pure-Rust LCMS port (implies `std`; pinned unreleased dependency) |
 | `serde` | | No-op stub (soft-removed in 0.2.15, queued for removal); previously forwarded to `zenpixels/serde` |
 
 ## Build time
@@ -584,7 +594,7 @@ branch. See the [code review](https://github.com/imazen/zenpixels/blob/main/docs
 
 ## MSRV
 
-`zenpixels` requires Rust 1.85+. `zenpixels-convert` requires Rust 1.89+ (for the safe SIMD intrinsics it uses). 2024 edition.
+`zenpixels` requires Rust 1.85+; the opt-in `hash` feature requires 1.89+. `zenpixels-convert` requires Rust 1.89+ (for the safe SIMD intrinsics it uses). 2024 edition.
 
 ## License
 

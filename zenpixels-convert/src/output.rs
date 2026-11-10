@@ -73,7 +73,7 @@ impl OutputProfile {
     pub fn normalize_known_icc(self) -> Self {
         use crate::icc_profiles::{ADOBE_RGB, DISPLAY_P3_V2, DISPLAY_P3_V4, REC2020_V4};
         use zenpixels::icc::normalized_hash;
-        const KNOWN: &[(u64, &[u8])] = &[
+        const KNOWN: &[((u64, u32), &[u8])] = &[
             (normalized_hash(DISPLAY_P3_V4), DISPLAY_P3_V4),
             (normalized_hash(DISPLAY_P3_V2), DISPLAY_P3_V2),
             (normalized_hash(ADOBE_RGB), ADOBE_RGB),
