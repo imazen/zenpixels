@@ -9,12 +9,12 @@
 
 ## summary
 #
-#   inherent methods                           58
+#   inherent methods                           59
 #   enum variants                              14
-#   trait roster entries (type × trait)        61
+#   trait roster entries (type × trait)        62
 #
 # per-module pub lines:
-#   (root)                            7
+#   (root)                            8
 #   buffer                            3
 #   cicp                              2
 #   color                             8
@@ -28,8 +28,9 @@
 #   precision                         5
 #   sample                            7
 
-## items (72 lines)
+## items (73 lines)
 
+pub fn HashInclusions::assert_fields_are_eq(&self)
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
 pub fn buffer::BufferError::assert_fields_are_eq(&self)
 pub fn buffer::Rgbx::assert_fields_are_eq(&self)
@@ -103,8 +104,9 @@ pub descriptor::ColorPrimaries::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::SignalRange::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::TransferFunction::__Reserved(descriptor::reserved::Reserved)
 
-## trait impls (61 types)
+## trait impls (62 types)
 
+HashInclusions: TrivialClone
 buffer::Bgrx: TrivialClone
 buffer::BufferError: TrivialClone
 buffer::Rgbx: TrivialClone

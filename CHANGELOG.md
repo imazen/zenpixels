@@ -58,6 +58,8 @@ This companion remains an unpublished review API; no release is authorized.
 
 ### QUEUED BREAKING CHANGES
 
+- ICC `normalized_hash` returns `(u64, u32)`: retained FNV-1a64 plus full MurmurHash3_x86_32. Both components are required for recognition and known-profile normalization.
+
 - Remove the unshipped speculative `NativeCodeSlice` / `NativeCodeError` and
   `codes::{native_to_u16, u16_to_native, NativeConversionError, NativePadding}`.
   Interleaved U8/U16 callers use `CodePlane::component` and `codes::to_canonical`;
@@ -189,6 +191,8 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 - Preserve the standalone, unpublished moxcms gamma diagnostics and paired benches in `benchmarks/moxcms-gamma`, with pinned source reconstruction and hashes for all six original experiment arms.
 
 ### Added
+
+- Opt-in `hash` feature: pixel/plane Hash and `hash_with(HashInclusions)`; see `docs/hashing.md`.
 
 - CMYK native-layout and multi-CMS qualification tools; see [coverage and limitations](docs/cmyk-cms-qualification.md). No backend default or pixel expectation changes.
 

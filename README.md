@@ -531,7 +531,7 @@ Convenience constructors: `ConvertOptions::retain_channels()` (forbids alpha and
 
 **CMS** — `PluggableCms` trait (dyn-compatible, accepts `ColorProfileSource` directly — CICP, named profiles, or raw ICC bytes) plugs an external backend into `RowConverter`. `RowTransformMut` is the `&mut self` row-level transform returned by plugins. `cms-contract/` holds every backend to the same behavior. The `cms-moxcms` and `cms-lcms` features provide `MoxCms` and `Lcms` backends. Callers select one explicitly; enabling both does not change conversion defaults. Both support native u8/u16/f32 rows. See [backend contracts and profile triage](docs/first-class-lcms-and-profile-triage.md).
 
-**ICC identification** — `zenpixels::icc::IccIdentification::from_icc(icc_bytes)` recognizes 298 well-known RGB + 69 grayscale profiles via normalized FNV-1a hash lookup (~100ns), including every profile the CICP database itself embeds in encoded output. Returns primaries, transfer function, and `IdentificationUse` (whether matrix+TRC substitution is safe vs CMS-only). Covers sRGB, Display P3, BT.2020, Adobe RGB variants across ICC v2–v5; `extract_cicp` reads embedded `cICP` tags directly.
+**ICC identification** — `zenpixels::icc::IccIdentification::from_icc(icc_bytes)` recognizes 271 RGB and 141 grayscale entries through paired normalized FNV-1a64/MurmurHash3_x86_32 fingerprints. Both must match. Identification returns approximate primaries/transfer plus permission to use that result; recognition alone does not authorize CMS substitution. Unsupported historical mappings remain deferred. See the [retained-original audit](docs/icc-retention-audit.md) and [hashing contract](docs/hashing.md).
 
 ### Resource estimation
 
@@ -561,7 +561,8 @@ branch. See the [code review](https://github.com/imazen/zenpixels/blob/main/docs
 | Feature | Default | What it enables |
 |---|---|---|
 | `std` | yes | Standard library (currently a no-op; everything is `no_std + alloc`) |
-| `icc` | yes | `icc` module — hash-based ICC profile identification (~100ns) |
+| `icc` | yes | `icc` module — paired-fingerprint ICC identification |
+| `hash` | | Pixel `Hash` and `hash_with(HashInclusions)`, backed by zenhash; requires Rust 1.89 |
 | `rgb` | | `Pixel` impls for `rgb` crate types, typed `from_pixels()` constructors |
 | `imgref` | | `From<ImgRef>` / `From<ImgVec>` conversions (implies `rgb`) |
 | `planar` | | Retained no-op feature; legacy planar API removed |
@@ -591,7 +592,7 @@ branch. See the [code review](https://github.com/imazen/zenpixels/blob/main/docs
 
 ## MSRV
 
-`zenpixels` requires Rust 1.85+. `zenpixels-convert` requires Rust 1.89+ (for the safe SIMD intrinsics it uses). 2024 edition.
+`zenpixels` requires Rust 1.85+; the opt-in `hash` feature requires 1.89+. `zenpixels-convert` requires Rust 1.89+ (for the safe SIMD intrinsics it uses). 2024 edition.
 
 ## License
 

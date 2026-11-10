@@ -485,3 +485,15 @@ docs/pr-contract-review-2026-11-09.md for the exact source and proposed gates.
   hdr-experimental with their regression tests. zentone experiments consume
   them; removing them without migrating those experiments was rejected.
   Production peak selection remains measure_max.
+
+## Hashing
+
+`docs/hashing.md` owns inclusion semantics. Hash implementations must exclude
+allocation/row/undefined-alpha padding and emit fixed write boundaries, because
+Hasher::write need not concatenate calls. Native code padding follows the
+existing CodePlane reader. Float payloads are bit-exact. The optional `hash`
+feature has a Rust 1.89 floor through zenhash; default core/ICC stays at 1.85.
+The ICC key is a normalized FNV64/Murmur3-32 pair, with the latter fixed to
+x86_32, little-endian and Quickwit's seed on every target. Do not weaken
+qualification masks when regenerating fingerprints. The mirrored const module
+and zenhash are checked against the same independently produced golden pairs.

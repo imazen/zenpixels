@@ -52,6 +52,9 @@ jobs:
       - name: Test (workspace)
         run: cargo test --workspace
 
+      - name: Test pixel Hash and ICC golden pairs
+        run: cargo test --locked -p zenpixels --features hash
+
       - name: Test still-image IQA contract
         run: cargo test --locked --manifest-path zenpsy-api/Cargo.toml --all-features
 
