@@ -39,10 +39,10 @@
   function evaluate(s) {
     const notes = [], decisions = [];
     const native = s.layout === 'planar' || s.layout === 'semiplanar';
-    if (s.layout === 'semiplanar') notes.push('PlaneRole::CbCr already describes interleaved chroma. CodePlane::component reads each component; this does not require NativeCodeSlice.');
+    if (s.layout === 'semiplanar') notes.push('PlaneRole::CbCr describes interleaved chroma. CodePlane::component reads each component with its own SampleEncoding.');
     if (native) decisions.push('Decode/unpack range and YUV matrix explicitly before packed RGB conversion; retain chroma siting and subsampling.');
     if (s.bits === 10 || s.bits === 12) notes.push('Native codes in U16 are not full-range zenpixels RGB16. SampleEncoding records meaning; it does not convert samples.');
-    if (s.authority === 'both') notes.push('BLOCKED: choose current ICC or CICP authority at decode. Keep both original blocks in provenance if needed.');
+    if (s.authority === 'both') notes.push('BLOCKED: choose current ICC or CICP authority from the source format at decode. This scenario models unresolved source claims, not an ambiguous ColorContext. A current context selects its present ICC; retain original blocks in ColorOrigin.');
     if ((s.transfer === 'pq' || s.transfer === 'hlg') && s.target === 'srgb') notes.push('REQUIRES EXPLICIT POLICY: HDR → SDR tone mapping, source peak and output white; no hidden peak scan.');
     if (s.transfer === 'hlg') notes.push('The converter supports explicit HlgRendering (display peak, black and effective gamma) with SDR white for full-range BT.2020 RGB/RGBA endpoints. CICP alone supplies none of those rendering conditions; HLG ICC synthesis still refuses.');
     if (s.transfer === 'linear') notes.push('Linear values need a luminance anchor. Do not conflate 203-nit relative white with raw PQ decode (1.0 = 10,000 nits).');

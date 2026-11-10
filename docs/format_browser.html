@@ -30,7 +30,7 @@ select, input[type="text"] {
   border-radius: 4px; padding: 0.4rem 0.6rem; font-size: 0.85rem;
 }
 select:focus, input:focus { outline: 1px solid var(--green); border-color: var(--green); }
-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; margin-bottom: 1rem; }
+table { display: block; max-width: 100%; overflow-x: auto; width: 100%; border-collapse: collapse; font-size: 0.82rem; margin-bottom: 1rem; }
 th { background: var(--surface); color: var(--green); text-align: left; padding: 0.4rem 0.6rem; border: 1px solid var(--border); font-weight: 600; white-space: nowrap; }
 td { padding: 0.35rem 0.6rem; border: 1px solid var(--border); vertical-align: top; }
 tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
@@ -77,8 +77,10 @@ footer { margin-top: 2rem; color: var(--muted); font-size: 0.75rem; text-align: 
 </head>
 <body>
 
+<nav><a href="guide.html">Pixel types guide</a> · <a href="index.html">Live pixel explorer</a></nav>
 <h1>Pixel Format Recommendation Browser</h1>
-<p class="subtitle">zenpixels — source × operation × output conversion matrix</p>
+<p class="subtitle">Historical recommendation model — illustrative source × operation × output choices</p>
+<p>These recommendations are design examples, not a current converter support table or a lossless guarantee. Use the live explorer to execute a route and the guide for current APIs.</p>
 
 <div class="controls">
   <div>

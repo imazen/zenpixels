@@ -69,8 +69,14 @@ fn qualified_rgb_stays_rgb_when_gray_synthesis_is_unavailable() {
 }
 
 #[test]
-fn truncated_srgb_hint_retains_existing_fallback() {
-    let mut context = ColorContext::from_icc(vec![0u8; 8]);
-    context.cicp = Some(Cicp::SRGB);
-    assert_reduction(context, PixelFormat::Gray8, false);
+fn unusable_icc_keeps_rgb_and_profile_with_or_without_cicp() {
+    // A secondary hint cannot authorize replacing an unusable current ICC.
+    // Opaque-alpha removal remains exact and is independent of color.
+    for len in [0, 1, 8, 127, 128, 129] {
+        for companion in [None, Some(Cicp::SRGB), Some(Cicp::DISPLAY_P3)] {
+            let mut context = ColorContext::from_icc(vec![0u8; len]);
+            context.cicp = companion;
+            assert_reduction(context, PixelFormat::Rgb8, true);
+        }
+    }
 }

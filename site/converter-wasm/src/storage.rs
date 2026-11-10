@@ -6,6 +6,9 @@ use zenpixels::sample::{CodePlane, SampleEncoding};
 
 pub(crate) fn inspect(v: &Value) -> Result<Value, String> {
     let case = v["case"].as_str().ok_or("Choose a storage example")?;
+    if case == "rgb565" {
+        return rgb565();
+    }
     let padding = v["padding"].as_bool().unwrap_or(true);
     let (components, bits, shifts, role) = match case {
         "p010" => (
@@ -71,4 +74,39 @@ pub(crate) fn inspect(v: &Value) -> Result<Value, String> {
         "planeCodes":plane_codes,
         "planeStatus":"CodePlane::component reads interleaved components with a different SampleEncoding for each. The storage is an aligned typed U16 plane."}),
     )
+}
+
+fn rgb565() -> Result<Value, String> {
+    use zenpixels::{PixelDescriptor, PixelSliceMut, SignalRange};
+    use zenpixels_convert::codes::to_canonical;
+
+    let words = [0xffffu16, 0x8410, 0xa5a5, 0, 0x1234];
+    let plane = AnyPlane::U16(PlaneRef::new(&words[..], 2, 2, 3).map_err(|e| e.to_string())?);
+    let readers = [(5, 11), (6, 5), (5, 0)].map(|(bits, shift)| {
+        CodePlane::new(
+            plane,
+            SampleEncoding::new(ChannelType::U16, bits, shift).unwrap(),
+        )
+        .unwrap()
+    });
+    let mut plane_codes = Vec::new();
+    for y in 0..2 {
+        for x in 0..2 {
+            plane_codes.push(
+                readers
+                    .iter()
+                    .map(|p| p.code(x, y).unwrap().to_string())
+                    .collect::<Vec<_>>(),
+            );
+        }
+    }
+    let mut canonical = [0; 12];
+    let dst = PixelSliceMut::new(&mut canonical, 2, 2, 6, PixelDescriptor::RGB8_SRGB)
+        .map_err(|e| e.to_string())?;
+    to_canonical(&readers, SignalRange::Full, 0, 0, dst).map_err(|e| e.to_string())?;
+    let bytes: Vec<_> = words.iter().flat_map(|word| word.to_ne_bytes()).collect();
+    Ok(json!({"case":"rgb565", "role":"RGB565", "bytes":bytes,
+        "width":2,"rows":2,"stride":6,"planeCodes":plane_codes,
+        "canonicalBytes":canonical,"allBitsUsed":true,
+        "planeStatus":"Three CodePlane::new views read (5 bits, shift 11), (6, 5) and (5, 0) from the same U16 words. to_canonical extracts and widens directly into RGB8; no intermediate unpacked plane is needed."}))
 }

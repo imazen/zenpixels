@@ -346,6 +346,15 @@ site-build:
 site-check URL='http://127.0.0.1:3116':
     node site/smoke.cjs {{URL}}
 
+# Run the guide and README Rust examples against actual local crate artifacts.
+guide-check EXAMPLES='':
+    python3 scripts/check-guide.py {{ if EXAMPLES == "" { "" } else { '--examples "' + EXAMPLES + '"' } }}
+
+# Keep crates.io copies derived from their owning READMEs.
+readme-sync:
+    sh "${ZENUTILS:-../zenutils}/scripts/gen-readme-crates.sh" .
+    sh "${ZENUTILS:-../zenutils}/scripts/gen-readme-crates.sh" zenpixels-convert
+
 # Explicit HDR units, existing kernel goldens and public API contracts.
 hdr-intent-check:
     cargo test --locked --workspace --all-features
@@ -784,3 +793,9 @@ hash-regression-bench *ARGS:
 
 hash-regression-summarize INPUT OUTPUT:
     python3 benchmarks/pixel-hash/summarize.py --regressions "{{INPUT}}" "{{OUTPUT}}"
+
+
+# Failure injection preserves the calling thread's cutoff and unrelated allocations.
+allocation-failure-check:
+    cargo test --locked -p zenpixels --features hash,rgb --test alloc_failure --test alloc_failure_typed -- --test-threads=16
+    cargo clippy --locked -p zenpixels --features hash,rgb --test alloc_failure --test alloc_failure_typed -- -D warnings

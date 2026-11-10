@@ -242,3 +242,60 @@ pub fn inspect_storage(request: &str) -> String {
         Err(error) => json!({"error":error}).to_string(),
     }
 }
+
+/// Source-derived format facts used to check the teaching model for drift.
+#[wasm_bindgen]
+pub fn format_catalog() -> String {
+    let mut formats = Vec::new();
+    for channel in [
+        ChannelType::U8,
+        ChannelType::U16,
+        ChannelType::F16,
+        ChannelType::F32,
+        ChannelType::I8,
+        ChannelType::I16,
+        ChannelType::U32,
+        ChannelType::I32,
+        ChannelType::U64,
+        ChannelType::I64,
+        ChannelType::F64,
+    ] {
+        for layout in [
+            ChannelLayout::Gray,
+            ChannelLayout::GrayAlpha,
+            ChannelLayout::Rgb,
+            ChannelLayout::Rgba,
+        ] {
+            let alpha = layout.has_alpha().then_some(AlphaMode::Straight);
+            formats.push(PixelFormat::from_parts(channel, layout, alpha).unwrap());
+        }
+    }
+    formats.extend([
+        PixelFormat::Bgr8,
+        PixelFormat::Bgra8,
+        PixelFormat::Rgbx8,
+        PixelFormat::Bgrx8,
+        PixelFormat::OklabF32,
+        PixelFormat::OklabaF32,
+        PixelFormat::Cmyk8,
+        PixelFormat::Cmyk16,
+        PixelFormat::CmykF32,
+        PixelFormat::CmykF32Inverted,
+    ]);
+    let entries: Vec<_> = formats
+        .into_iter()
+        .map(|f| {
+            let d = f.descriptor();
+            let generic = matches!(f, PixelFormat::Generic(_));
+            let id = if generic {
+                f.name().to_string()
+            } else {
+                format!("{f:?}")
+            };
+            json!({"id":id, "ct":format!("{:?}", f.channel_type()),
+            "layout":format!("{:?}", d.layout()), "bytes":d.bytes_per_pixel(),
+            "generic":generic})
+        })
+        .collect();
+    json!(entries).to_string()
+}

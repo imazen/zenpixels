@@ -120,6 +120,24 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed (2026-11-10): allocation-failure injection used a process-wide gate,
+  allowing unrelated harness allocations to abort even while fixtures held the
+  mutex. The shared test allocator now scopes the same cutoff to the calling
+  thread. A synchronized cross-thread allocation control fails before the fix.
+
+- Fixed (2026-11-10): the isolated no-database consumer still required the
+  retired truncated-ICC/sRGB fallback after the #134 authority fix. The focused
+  CMS workflow failed on every platform. Its regression now requires original
+  ICC/RGB preservation across empty, short and unrecognized declarations, with
+  absent, sRGB or P3 companion CICP; exact opaque-alpha removal remains allowed.
+
+- Fixed in the explorer/docs pass: intrinsic grid/byte-group widths expanded
+  the page beyond a mobile viewport. Panels now shrink and wide diagrams scroll
+  locally. Copied Rust examples also omitted explicit Unknown color fields and
+  non-default generic alpha; the browser exports them for executable Rust checks.
+  The guide treats PixelSlice as a borrowed rectangular image view retaining
+  parent stride, not merely a row. Use `just guide-check` and `just site-check`.
+
 - Fixed in the #134 follow-up: grayscale reduction used companion CICP to
   replace a truncated authoritative ICC. Empty/truncated/unrecognized ICCs
   now preserve RGB interpretation and their original context while exact

@@ -121,7 +121,7 @@ pub trait PixelBufferConvertExt: crate::sealed::Sealed + Sized {
     /// Uses [`RowConverter`](crate::RowConverter) for transfer-function-aware
     /// conversion. Layout/depth-only changes retain current color metadata;
     /// color changes replace it with the destination signaling. An attached ICC
-    /// requiring a full CMS returns `NeedsCms`; use `finalize_for_output_with`.
+    /// requiring a full CMS returns `NeedsCms`; use [`EncodeReady::finalize`](crate::EncodeReady::finalize) or [`OutputPlan`](crate::OutputPlan).
     /// Contradictory current CICP/descriptor signaling is refused.
     ///
     /// **Allocates** a new [`PixelBuffer`].
