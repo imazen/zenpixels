@@ -953,10 +953,10 @@ mod tests {
 
     #[test]
     fn normalized_equality_checks_every_non_metadata_byte() {
-        const SAME: bool = normalized_eq(b"same", b"same");
-        const DIFFERENT: bool = normalized_eq(b"a", b"b");
-        assert!(SAME);
-        assert!(!DIFFERENT);
+        const {
+            assert!(normalized_eq(b"same", b"same"));
+            assert!(!normalized_eq(b"a", b"b"));
+        }
         assert!(normalized_eq(&[], &[]));
         let a = [0x5au8; 300];
         assert!(!normalized_eq(&a[..299], &a));
