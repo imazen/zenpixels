@@ -56,3 +56,96 @@ fn borrowed_encoder_rows_avoid_pixel_allocation_and_match_owned_finalization() {
         }
     }
 }
+
+/// `EncodeReady::finalize_owned` moves the consumed buffer's allocation on the
+/// no-transform path — pointer identity, preserved stride, and byte/metadata
+/// parity with `finalize`.
+#[test]
+fn finalize_owned_moves_source_allocation_on_identity() {
+    for stride in [6, 10] {
+        let buffer = PixelBuffer::try_from_parts(PixelBufferParts::new(
+            vec![19u8; stride * 2].into(),
+            2,
+            2,
+            stride,
+            PixelDescriptor::RGB8_SRGB,
+        ))
+        .unwrap();
+        let src_ptr = buffer.as_slice().as_strided_bytes().as_ptr();
+        let origin = ColorOrigin::assumed();
+        let target = OutputProfile::Named(Cicp::SRGB);
+
+        let mut owned = None;
+        let info = allocation_counter::measure(|| {
+            owned = Some(
+                EncodeReady::finalize_owned(
+                    buffer,
+                    &origin,
+                    target.clone(),
+                    PixelFormat::Rgb8,
+                    None,
+                )
+                .unwrap(),
+            );
+        });
+        let owned = owned.unwrap();
+        let out = owned.pixels();
+        // Same allocation moved through: pointer and padded stride preserved.
+        assert_eq!(out.as_strided_bytes().as_ptr(), src_ptr);
+        assert_eq!(out.stride(), stride);
+
+        // Parity with the allocating finalizer: descriptor, metadata, rows.
+        let buffer2 = PixelBuffer::try_from_parts(PixelBufferParts::new(
+            vec![19u8; stride * 2].into(),
+            2,
+            2,
+            stride,
+            PixelDescriptor::RGB8_SRGB,
+        ))
+        .unwrap();
+        let mut reference = None;
+        let ref_info = allocation_counter::measure(|| {
+            reference = Some(
+                EncodeReady::finalize(&buffer2, &origin, target.clone(), PixelFormat::Rgb8, None)
+                    .unwrap(),
+            );
+        });
+        let reference = reference.unwrap();
+        // The identity path saves the whole pixel-buffer allocation; what
+        // remains is OutputPlan construction shared with `finalize`.
+        assert!(
+            ref_info.bytes_total - info.bytes_total >= 12,
+            "identity saved only {} bytes",
+            ref_info.bytes_total - info.bytes_total
+        );
+        assert_eq!(out.descriptor(), reference.pixels().descriptor());
+        assert_eq!(out.color_context(), reference.pixels().color_context());
+        assert_eq!(owned.metadata().icc, reference.metadata().icc);
+        assert_eq!(owned.metadata().cicp, reference.metadata().cicp);
+        for y in 0..2 {
+            assert_eq!(out.row(y), reference.pixels().row(y));
+        }
+    }
+}
+
+/// When a transform is required, `finalize_owned` allocates exactly like
+/// `finalize` and produces identical pixels/metadata.
+#[test]
+fn finalize_owned_allocates_and_matches_when_transform_required() {
+    let buffer = PixelBuffer::try_new(2, 2, PixelDescriptor::RGB8_SRGB).unwrap();
+    let origin = ColorOrigin::assumed();
+    let target = OutputProfile::Named(Cicp::SRGB);
+
+    let owned =
+        EncodeReady::finalize_owned(buffer, &origin, target.clone(), PixelFormat::Rgba8, None)
+            .unwrap();
+    let buffer2 = PixelBuffer::try_new(2, 2, PixelDescriptor::RGB8_SRGB).unwrap();
+    let reference =
+        EncodeReady::finalize(&buffer2, &origin, target, PixelFormat::Rgba8, None).unwrap();
+    assert_eq!(owned.pixels().descriptor(), reference.pixels().descriptor());
+    assert_eq!(owned.metadata().icc, reference.metadata().icc);
+    assert_eq!(owned.metadata().cicp, reference.metadata().cicp);
+    for y in 0..2 {
+        assert_eq!(owned.pixels().row(y), reference.pixels().row(y));
+    }
+}

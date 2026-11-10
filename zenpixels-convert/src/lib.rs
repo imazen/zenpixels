@@ -276,7 +276,22 @@
 //!
 //! - Use [`EncodeReady::finalize`] to bundle pixels and metadata atomically.
 //!   This prevents the most common color management bug: pixel values that
-//!   don't match the embedded ICC/CICP.
+//!   don't match the embedded ICC/CICP. When the decoded pixels are already
+//!   owned, prefer [`EncodeReady::finalize_owned`]: on the no-conversion
+//!   path it moves the buffer's allocation into the result instead of
+//!   copying it into a second one.
+//!
+//! - Pick the allocation model before the API. Streaming encode paths
+//!   should drive [`OutputPlan`] directly: [`OutputPlan::borrow_rows`]
+//!   returns the source rows unchanged (zero copy) when the plan requires
+//!   no pixel transform, and [`OutputPlan::convert_rows`] writes into a
+//!   caller-owned destination ([`PixelSliceConvertExt::convert_into`] for
+//!   generic conversion). Whole-buffer conveniences —
+//!   [`EncodeReady::finalize`], [`PixelBufferConvertExt::convert_to`],
+//!   `to_rgba8` and friends — always allocate their output, including when
+//!   the descriptors already match; [`EncodeReady::finalize_owned`] and
+//!   [`PixelBufferConvertExt::into_oriented`] are the consuming forms that
+//!   can move the allocation instead.
 //!
 //! - Always embed color metadata when the format supports it. Omitting color metadata causes browsers and OS viewers
 //!   to assume sRGB, which corrupts Display P3 and HDR content.

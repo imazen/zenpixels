@@ -1998,7 +1998,8 @@ fn gamma22_f32_extended(
     };
     for (s, d) in source.iter().zip(output.iter_mut()) {
         if s.abs() > 1.0 || !s.is_finite() {
-            *d = libm::powf(s.abs(), exponent);
+            *d = magetypes::powf::try_powf(s.abs(), exponent)
+                .unwrap_or_else(|_| libm::powf(s.abs(), exponent));
         }
         *d = d.copysign(*s);
     }
