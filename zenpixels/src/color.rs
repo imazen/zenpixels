@@ -1046,12 +1046,11 @@ impl AnyColor {
         if Color::fits(descriptor) {
             return Color::try_new(descriptor, pixel).map(Self::from);
         }
-        let mut words = alloc::vec::Vec::new();
-        words
-            .try_reserve_exact(bytes.div_ceil(8))
-            .map_err(|_| BufferError::AllocationFailed)?;
-        words.resize(bytes.div_ceil(8), 0u64);
+        let mut words = bytemuck::allocation::try_zeroed_vec::<u64>(bytes.div_ceil(8))
+            .map_err(|()| BufferError::AllocationFailed)?;
         bytemuck::cast_slice_mut::<u64, u8>(&mut words)[..bytes].copy_from_slice(pixel);
+        // `Box::new(wide)` stays infallible: a single fixed ~32 B control
+        // allocation — not worth a fallible-`Box` workaround's extra copy.
         let wide = WideColor {
             descriptor,
             words: words.into_boxed_slice(),

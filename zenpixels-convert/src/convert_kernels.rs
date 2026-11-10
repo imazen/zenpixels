@@ -40,16 +40,12 @@ pub(super) struct HdrKernelScratch {
 impl HdrKernelScratch {
     pub(super) fn prepare(&mut self, _width: u32) -> Result<(), whereat::At<crate::ConvertError>> {
         if self.rgb_strip.len() < _width as usize {
-            self.rgb_strip
-                .try_reserve(_width as usize - self.rgb_strip.len())
-                .map_err(|_| whereat::at!(crate::ConvertError::AllocationFailed))?;
-            self.rgb_strip.resize(_width as usize, [0.; 3]);
+            self.rgb_strip = bytemuck::allocation::try_zeroed_vec::<[f32; 3]>(_width as usize)
+                .map_err(|()| whereat::at!(crate::ConvertError::AllocationFailed))?;
         }
         if self.rgb_out.len() < _width as usize {
-            self.rgb_out
-                .try_reserve(_width as usize - self.rgb_out.len())
-                .map_err(|_| whereat::at!(crate::ConvertError::AllocationFailed))?;
-            self.rgb_out.resize(_width as usize, [0.; 3]);
+            self.rgb_out = bytemuck::allocation::try_zeroed_vec::<[f32; 3]>(_width as usize)
+                .map_err(|()| whereat::at!(crate::ConvertError::AllocationFailed))?;
         }
         Ok(())
     }

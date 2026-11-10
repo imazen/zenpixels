@@ -40,6 +40,7 @@ use zenpixels::{
 };
 
 use crate::scan::{self, FusedRequest};
+use whereat::ResultAtExt;
 
 /// What a buffer's content actually exercises about its declared
 /// descriptor. Each field is `Option<T>` so it self-reports whether
@@ -207,7 +208,21 @@ pub trait PixelSliceLoadBearingExt: sealed::Sealed {
     /// declaration. RGB-to-gray rewriting requires qualified replacement of
     /// that ICC and agreement from any companion CICP. Otherwise RGB is kept;
     /// exact alpha/depth reductions remain available with the original context.
+    ///
+    /// `None` collapses two distinct causes; use
+    /// [`Self::reduce_to_load_bearing_format`] to distinguish
+    /// "no reduction" from an allocation failure.
     fn try_reduce_to_load_bearing_format(&self) -> Option<PixelBuffer>;
+
+    /// [`Self::try_reduce_to_load_bearing_format`] with the
+    /// allocation-failure cause preserved.
+    ///
+    /// `Ok(None)` means the buffer is already at its load-bearing
+    /// minimum or the predicates couldn't run; `Err` reports the
+    /// failed output allocation (`ConvertError::Buffer(AllocationFailed)`).
+    fn reduce_to_load_bearing_format(
+        &self,
+    ) -> Result<Option<PixelBuffer>, whereat::At<crate::ConvertError>>;
 }
 
 impl<P> PixelSliceLoadBearingExt for PixelSlice<'_, P> {
@@ -376,6 +391,12 @@ impl<P> PixelSliceLoadBearingExt for PixelSlice<'_, P> {
     }
 
     fn try_reduce_to_load_bearing_format(&self) -> Option<PixelBuffer> {
+        self.reduce_to_load_bearing_format().ok().flatten()
+    }
+
+    fn reduce_to_load_bearing_format(
+        &self,
+    ) -> Result<Option<PixelBuffer>, whereat::At<crate::ConvertError>> {
         let src = self.descriptor();
         let mut report = self.determine_load_bearing();
         // Color-signaling plan: collapsing RGB(A) to gray would pair an
@@ -390,13 +411,16 @@ impl<P> PixelSliceLoadBearingExt for PixelSlice<'_, P> {
         }
         let target = report.apply_to(&src);
         if target == src {
-            return None;
+            return Ok(None);
         }
         // One fallible zeroed allocation (calloc path) at the target's
         // standard aligned stride; rows are then written in place --
         // no per-pixel Vec growth anywhere in the rewrite.
-        let mut out = PixelBuffer::try_new(self.width(), self.rows(), target).ok()?;
-        transform_into(self, &src, &target, &mut out)?;
+        let mut out = PixelBuffer::try_new(self.width(), self.rows(), target)
+            .map_err_at(crate::ConvertError::from)?;
+        if transform_into(self, &src, &target, &mut out).is_none() {
+            return Ok(None);
+        }
         // Every reduction is value-exact, so color metadata travels with
         // the reduced buffer: swapped to the GRAY-class context when the
         // rewrite collapsed chroma under a Swap plan, carried verbatim
@@ -405,10 +429,10 @@ impl<P> PixelSliceLoadBearingExt for PixelSlice<'_, P> {
             (true, GraySignalPlan::Swap(swapped)) => swapped,
             _ => self.color_context().cloned(),
         };
-        Some(match ctx {
+        Ok(Some(match ctx {
             Some(ctx) => out.with_color_context(ctx),
             None => out,
-        })
+        }))
     }
 }
 

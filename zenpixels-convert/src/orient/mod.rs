@@ -263,11 +263,12 @@ pub(crate) fn apply_orientation_in_place(
             | Orientation::Rotate270
             | Orientation::Transverse
     );
-    let mut moved = alloc::vec::Vec::new();
+    let mut moved: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if transposing && dst.width() != dst.height() {
-        moved
-            .try_reserve_exact(dst.width() as usize * dst.height() as usize)
-            .map_err(|_| ConvertError::AllocationFailed)?;
+        moved = bytemuck::allocation::try_zeroed_vec::<u8>(
+            (dst.width() as usize * dst.height() as usize).div_ceil(8),
+        )
+        .map_err(|()| ConvertError::AllocationFailed)?;
     }
     // The permutation keeps every sample value, so restore the evidence that
     // the in-place mutable access had to end.
@@ -284,7 +285,7 @@ pub(crate) fn apply_orientation_in_place(
 fn orient_in_place_impl(
     px: InPlacePixels<'_>,
     orientation: Orientation,
-    mut moved: alloc::vec::Vec<bool>,
+    mut moved: alloc::vec::Vec<u8>,
 ) -> PixelSliceMut<'_> {
     let InPlacePixels {
         bytes,
@@ -417,10 +418,11 @@ fn inplace_reverse_elements(a: &mut [u8], bpp: usize) {
 /// `(cur*w) mod (n-1)` (the inverse, since `w*h ≡ 1`), walking each cycle once
 /// with a one-element temp and an `n`-bit visited set. `0` and `n-1` are fixed.
 ///
-/// `moved` holds the visited set. The caller reserves `w * h` bits of capacity
-/// (see [`apply_orientation_in_place`]); it may arrive empty for the square
-/// path, which doesn't cycle-follow.
-fn inplace_transpose(a: &mut [u8], w: u32, h: u32, bpp: usize, moved: &mut alloc::vec::Vec<bool>) {
+/// `moved` holds the visited set as a bitset (`w * h` bits, so `w * h / 8`
+/// bytes rounded up). The caller zero-allocates it (see
+/// [`apply_orientation_in_place`]); it may arrive empty for the square path,
+/// which doesn't cycle-follow.
+fn inplace_transpose(a: &mut [u8], w: u32, h: u32, bpp: usize, moved: &mut [u8]) {
     if w == h {
         let n = w as usize;
         for i in 0..n {
@@ -441,23 +443,22 @@ fn inplace_transpose(a: &mut [u8], w: u32, h: u32, bpp: usize, moved: &mut alloc
     }
     let mn1 = n - 1;
     debug_assert!(
-        moved.capacity() >= n,
+        moved.len() * 8 >= n,
         "in-place transpose scratch was not reserved for {w}x{h}"
     );
-    moved.resize(n, false);
-    moved[0] = true;
-    moved[mn1] = true;
+    moved[0] |= 1;
+    moved[mn1 / 8] |= 1 << (mn1 % 8);
     let mut tmp = [0u8; MAX_INPLACE_BPP];
     let mut start = 1;
     while start < mn1 {
-        if moved[start] {
+        if moved[start / 8] & (1 << (start % 8)) != 0 {
             start += 1;
             continue;
         }
         tmp[..bpp].copy_from_slice(&a[start * bpp..start * bpp + bpp]);
         let mut cur = start;
         loop {
-            moved[cur] = true;
+            moved[cur / 8] |= 1 << (cur % 8);
             // The element that belongs at `cur`. The product overflows a 32-bit usize.
             let prev = ((cur as u64 * w as u64) % mn1 as u64) as usize;
             if prev == start {

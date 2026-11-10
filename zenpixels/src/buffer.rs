@@ -681,11 +681,9 @@ fn pixels_to_bytes<P: bytemuck::Pod>(pixels: Vec<P>) -> Result<(Vec<u8>, usize),
             let Some(total) = bytes.len().checked_add(align - 1) else {
                 return Err(pixels);
             };
-            let mut data = Vec::new();
-            if data.try_reserve_exact(total).is_err() {
+            let Ok(mut data) = bytemuck::allocation::try_zeroed_vec::<u8>(total) else {
                 return Err(pixels);
-            }
-            data.resize(total, 0);
+            };
             let offset = align_offset(data.as_ptr(), align);
             data[offset..offset + bytes.len()].copy_from_slice(bytes);
             Ok((data, offset))
@@ -2251,8 +2249,7 @@ impl<'a> PixelCow<'a> {
     ///
     /// Panics if the clone fails to allocate — same contract as
     /// [`Cow::to_mut`](alloc::borrow::Cow::to_mut). For a recoverable
-    /// clone, use [`PixelSlice::try_to_tight_buffer`] on the borrowed view
-    /// before assigning `Self::Owned`.
+    /// clone, use [`try_to_mut`](Self::try_to_mut).
     pub fn to_mut(&mut self) -> &mut PixelBuffer {
         if let Self::Borrowed(slice) = self {
             let owned = pixel_slice_to_owned(slice);
@@ -2264,18 +2261,41 @@ impl<'a> PixelCow<'a> {
         }
     }
 
+    /// Fallible [`to_mut`](Self::to_mut): materializing the borrowed pixels
+    /// returns [`BufferError::AllocationFailed`] instead of panicking.
+    /// An `Self::Owned` is returned without touching the allocator.
+    pub fn try_to_mut(&mut self) -> Result<&mut PixelBuffer, At<BufferError>> {
+        if let Self::Borrowed(slice) = self {
+            let owned = try_pixel_slice_to_owned(slice)?;
+            *self = Self::Owned(owned);
+        }
+        match self {
+            Self::Owned(buffer) => Ok(buffer),
+            Self::Borrowed(_) => unreachable!(),
+        }
+    }
+
     /// Consume this value, cloning the pixels only when they are borrowed.
     ///
     /// # Panics
     ///
     /// Panics if the clone fails to allocate — same contract as
     /// [`Cow::into_owned`](alloc::borrow::Cow::into_owned). For a
-    /// recoverable clone, match on the variant or use
-    /// [`PixelSlice::try_to_tight_buffer`] on the borrowed view.
+    /// recoverable clone, use [`try_into_owned`](Self::try_into_owned).
     pub fn into_owned(self) -> PixelBuffer {
         match self {
             Self::Borrowed(slice) => pixel_slice_to_owned(&slice),
             Self::Owned(buffer) => buffer,
+        }
+    }
+
+    /// Fallible [`into_owned`](Self::into_owned): `Self::Owned` is returned
+    /// unchanged — no allocation — and `Self::Borrowed` clones or reports
+    /// [`BufferError::AllocationFailed`].
+    pub fn try_into_owned(self) -> Result<PixelBuffer, At<BufferError>> {
+        match self {
+            Self::Borrowed(slice) => try_pixel_slice_to_owned(&slice),
+            Self::Owned(buffer) => Ok(buffer),
         }
     }
 }
@@ -2646,11 +2666,8 @@ impl<P: Pixel> PixelBuffer<P> {
     /// # Panics
     ///
     /// Panics if the copy path (triggered for `P` with alignment > 1) fails
-    /// to allocate. There is no fallible sibling today; if you need one,
-    /// pre-convert the `ImgVec` into a `Vec<P>` and use
-    /// [`try_new_typed`](Self::try_new_typed) followed by a manual copy, or
-    /// file a request against the crate (see the
-    /// [allocation policy](crate#allocation-policy)).
+    /// to allocate — use [`try_from_imgvec`](Self::try_from_imgvec) to
+    /// recover instead.
     pub fn from_imgvec(img: ImgVec<P>) -> Self {
         const { assert!(core::mem::size_of::<P>() == P::DESCRIPTOR.bytes_per_pixel()) }
         let width = u32::try_from(img.width()).expect("image width exceeds u32");
@@ -2676,6 +2693,45 @@ impl<P: Pixel> PixelBuffer<P> {
             exact: None,
             _pixel: PhantomData,
         }
+    }
+
+    /// Fallible [`from_imgvec`](Self::from_imgvec): the copy path reports
+    /// [`BufferError::AllocationFailed`] instead of panicking.
+    ///
+    /// # Errors
+    ///
+    /// [`BufferError::InvalidDimensions`] when a dimension doesn't fit `u32`
+    /// or the stride overflows `usize`, and
+    /// [`BufferError::AllocationFailed`] when storage for a `P` with
+    /// alignment > 1 can't be reserved.
+    pub fn try_from_imgvec(img: ImgVec<P>) -> Result<Self, At<BufferError>> {
+        const { assert!(core::mem::size_of::<P>() == P::DESCRIPTOR.bytes_per_pixel()) }
+        let width =
+            u32::try_from(img.width()).map_err(|_| whereat::at!(BufferError::InvalidDimensions))?;
+        let height = u32::try_from(img.height())
+            .map_err(|_| whereat::at!(BufferError::InvalidDimensions))?;
+        let stride_pixels = img.stride();
+        let descriptor = P::DESCRIPTOR;
+        descriptor.validate().map_err(whereat::at)?;
+        let stride_bytes = stride_pixels
+            .checked_mul(core::mem::size_of::<P>())
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        // Keep the actual backing storage and its stride; do not compact an
+        // allocation only to retain the pre-compaction stride.
+        let (data, offset) = try_pixels_into_storage(img.into_buf(), descriptor.channel_type())
+            .map_err(|_| whereat::at!(BufferError::AllocationFailed))?;
+        Ok(Self {
+            data,
+            offset,
+            width,
+            height,
+            stride: stride_bytes,
+            descriptor,
+
+            color: None,
+            exact: None,
+            _pixel: PhantomData,
+        })
     }
 }
 
@@ -2871,22 +2927,43 @@ impl PixelBuffer {
     ///
     /// # Panics
     ///
-    /// Panics if the alignment-mismatch copy fails to allocate — there is no
-    /// `try_` sibling today (see the
+    /// Panics if the alignment-mismatch copy fails to allocate. Use
+    /// [`try_into_contiguous_pixels`](Self::try_into_contiguous_pixels) for
+    /// fallible allocation (see the
     /// [allocation policy](crate#allocation-policy)).
+    #[track_caller]
     pub fn into_contiguous_pixels<P: Pixel>(self) -> Option<Vec<P>> {
+        match self.try_into_contiguous_pixels() {
+            Ok(pixels) => pixels,
+            Err(_at) => panic!("pixel buffer allocation failed"),
+        }
+    }
+
+    /// Consume the buffer and return the pixels as a typed `Vec<P>`, reporting
+    /// a failed copy reserve instead of panicking.
+    ///
+    /// `Ok(None)` is the same layout-incompatibility refusal as
+    /// [`into_contiguous_pixels`](Self::into_contiguous_pixels);
+    /// `Err(BufferError::AllocationFailed)` means the alignment-mismatch copy
+    /// could not be reserved. The zero-copy `try_cast_vec` arm never
+    /// allocates and cannot fail this way.
+    ///
+    /// # Errors
+    ///
+    /// [`BufferError::AllocationFailed`] if the copy allocation is refused.
+    pub fn try_into_contiguous_pixels<P: Pixel>(self) -> Result<Option<Vec<P>>, At<BufferError>> {
         if !self.descriptor.typed_view_compatible(P::DESCRIPTOR)
             || core::mem::size_of::<P>() != self.descriptor.bytes_per_pixel()
         {
-            return None;
+            return Ok(None);
         }
         let pixel_size = core::mem::size_of::<P>();
         if pixel_size == 0 {
-            return None;
+            return Ok(None);
         }
         let total_pixels = self.width as usize * self.height as usize;
         if total_pixels == 0 {
-            return Some(Vec::new());
+            return Ok(Some(Vec::new()));
         }
 
         let mut packed = self.into_contiguous();
@@ -2901,18 +2978,26 @@ impl PixelBuffer {
         packed.data.truncate_bytes(len);
         // The cast moves the allocation when the alignments match and the capacity
         // is a whole number of pixels. Otherwise copy.
-        Some(for_each_storage!(packed.data, v => {
+        let pixels = for_each_storage!(packed.data, v => {
             match bytemuck::allocation::try_cast_vec::<_, P>(v) {
-                Ok(pixels) => pixels,
+                Ok(pixels) => Ok::<Vec<P>, At<BufferError>>(pixels),
                 Err((_, v)) => {
+                    let Ok(mut out) =
+                        bytemuck::allocation::try_zeroed_vec::<P>(total_pixels)
+                    else {
+                        return Err(whereat::at!(BufferError::AllocationFailed));
+                    };
                     let bytes: &[u8] = bytemuck::cast_slice(v.as_slice());
-                    bytes[..len]
-                        .chunks_exact(pixel_size)
-                        .map(bytemuck::pod_read_unaligned)
-                        .collect()
+                    for (slot, chunk) in
+                        out.iter_mut().zip(bytes[..len].chunks_exact(pixel_size))
+                    {
+                        *slot = bytemuck::pod_read_unaligned::<P>(chunk);
+                    }
+                    Ok(out)
                 }
             }
-        }))
+        })?;
+        Ok(Some(pixels))
     }
 }
 
@@ -3969,6 +4054,22 @@ fn pixel_slice_to_owned(slice: &PixelSlice<'_>) -> PixelBuffer {
     // An exact copy of the same values keeps their evidence.
     buffer.exact = slice.exact_depth();
     buffer
+}
+
+fn try_pixel_slice_to_owned(slice: &PixelSlice<'_>) -> Result<PixelBuffer, At<BufferError>> {
+    let mut buffer = PixelBuffer::try_new(slice.width(), slice.rows(), slice.descriptor())?;
+    {
+        let mut destination = buffer.as_slice_mut();
+        for y in 0..slice.rows() {
+            destination.row_mut(y).copy_from_slice(slice.row(y));
+        }
+    }
+    if let Some(color) = slice.color_context() {
+        buffer = buffer.with_color_context(color.clone());
+    }
+    // An exact copy of the same values keeps their evidence.
+    buffer.exact = slice.exact_depth();
+    Ok(buffer)
 }
 
 // ---------------------------------------------------------------------------

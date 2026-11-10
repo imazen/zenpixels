@@ -63,3 +63,7 @@ rgb = { version = "0.8", default-features = false, features = ["bytemuck"] }
 [[test]]
 name = "typed_extraction_contract"
 required-features = ["rgb"]
+
+[[test]]
+name = "alloc_failure_typed"
+required-features = ["rgb"]

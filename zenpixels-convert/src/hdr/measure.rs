@@ -31,7 +31,6 @@
 const DEFAULT_PERCENTILE: f32 = 0.99999;
 
 use alloc::boxed::Box;
-use alloc::vec;
 
 use zenpixels::hdr::{ContentLightLevel, DiffuseWhite};
 use zenpixels::{PixelFormat, PixelSlice, TransferFunction};
@@ -653,7 +652,9 @@ impl CllMeasure for ContentLightLevel {
 
         if w == 0 || h == 0 {
             return Some(LightLevelHistogram {
-                bins: vec![0u32; LightLevelHistogram::NUM_BINS].into_boxed_slice(),
+                bins: bytemuck::allocation::try_zeroed_vec::<u32>(LightLevelHistogram::NUM_BINS)
+                    .ok()?
+                    .into_boxed_slice(),
                 total: 0,
                 sum_nits: 0.0,
                 literal_max_nits: 0.0,
@@ -671,9 +672,9 @@ impl CllMeasure for ContentLightLevel {
         // hot histogram increment. Reduces at the end. archmage + magetypes
         // are hard deps of zenpixels-convert, so SIMD dispatch is always
         // available (tier-fallback handles boxes without V3/NEON).
-        Some(simd_kernel::measure_histogram_simd(
+        simd_kernel::measure_histogram_simd(
             bytes, w, h, stride, channels, row_len, white_nits, method,
-        ))
+        )
     }
 }
 
@@ -732,8 +733,12 @@ mod simd_kernel {
     /// conflict-free histogram.
     type SubHists = alloc::boxed::Box<[u32]>;
 
-    fn zero_subhists() -> SubHists {
-        alloc::vec![0u32; LANES * LightLevelHistogram::NUM_BINS].into_boxed_slice()
+    fn zero_subhists() -> Option<SubHists> {
+        Some(
+            bytemuck::allocation::try_zeroed_vec::<u32>(LANES * LightLevelHistogram::NUM_BINS)
+                .ok()?
+                .into_boxed_slice(),
+        )
     }
 
     /// Reduce the per-lane sub-histograms into the final flat histogram.
@@ -762,8 +767,8 @@ mod simd_kernel {
         row_len: usize,
         white_nits: f32,
         method: LightLevelMethod,
-    ) -> LightLevelHistogram {
-        let mut sub = zero_subhists();
+    ) -> Option<LightLevelHistogram> {
+        let mut sub = zero_subhists()?;
         let mut sum_nits = 0.0_f64;
         let mut literal_max_nits = 0.0_f32;
 
@@ -824,16 +829,18 @@ mod simd_kernel {
             }
         }
 
-        let mut bins = alloc::vec![0u32; LightLevelHistogram::NUM_BINS].into_boxed_slice();
+        let mut bins = bytemuck::allocation::try_zeroed_vec::<u32>(LightLevelHistogram::NUM_BINS)
+            .ok()?
+            .into_boxed_slice();
         merge_subhists(&sub, &mut bins);
 
-        LightLevelHistogram {
+        Some(LightLevelHistogram {
             bins,
             total: (w as u64) * (h as u64),
             sum_nits,
             literal_max_nits,
             method,
-        }
+        })
     }
 
     /// Tiered SIMD kernel for the `MaxRgb` reduction. Processes one

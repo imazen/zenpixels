@@ -12,7 +12,7 @@
 #   pub types (struct/enum/trait/alias)       133
 #   pub consts/statics                        369
 #   free functions                              2
-#   inherent methods                          377
+#   inherent methods                          381
 #   struct fields                             120
 #   enum variants                             322
 #   re-exports                                  1
@@ -22,7 +22,7 @@
 #
 # per-module pub lines:
 #   (root)                          513
-#   buffer                          311
+#   buffer                          315
 #   cicp                             38
 #   color                            83
 #   descriptor                      168
@@ -35,7 +35,7 @@
 #   precision                        20
 #   sample                           33
 
-## items (1184 lines)
+## items (1188 lines)
 
 pub mod zenpixels
 pub use At
@@ -52,6 +52,8 @@ pub buffer::PixelCow::Borrowed(buffer::PixelSlice<'a, P>)
 pub buffer::PixelCow::Owned(buffer::PixelBuffer<P>)
 pub fn buffer::PixelCow<'a>::into_owned(self) -> buffer::PixelBuffer
 pub fn buffer::PixelCow<'a>::to_mut(&mut self) -> &mut buffer::PixelBuffer
+pub fn buffer::PixelCow<'a>::try_into_owned(self) -> core::result::Result<buffer::PixelBuffer, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelCow<'a>::try_to_mut(&mut self) -> core::result::Result<&mut buffer::PixelBuffer, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelCow<'_, P>::as_slice(&self) -> buffer::PixelSlice<'_, P>
 pub const fn buffer::PixelCow<'_, P>::is_borrowed(&self) -> bool [also: (root)]
 pub const fn buffer::PixelCow<'_, P>::is_owned(&self) -> bool [also: (root)]
@@ -905,6 +907,8 @@ pub PixelCow::Borrowed(buffer::PixelSlice<'a, P>)
 pub PixelCow::Owned(buffer::PixelBuffer<P>)
 pub fn buffer::PixelCow<'a>::into_owned(self) -> buffer::PixelBuffer
 pub fn buffer::PixelCow<'a>::to_mut(&mut self) -> &mut buffer::PixelBuffer
+pub fn buffer::PixelCow<'a>::try_into_owned(self) -> core::result::Result<buffer::PixelBuffer, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelCow<'a>::try_to_mut(&mut self) -> core::result::Result<&mut buffer::PixelBuffer, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelCow<'_, P>::as_slice(&self) -> buffer::PixelSlice<'_, P>
 #[non_exhaustive] pub enum PixelFormat [also: descriptor]
 pub PixelFormat::Bgr8
