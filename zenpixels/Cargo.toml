@@ -19,7 +19,7 @@ include = [
 default = ["std", "icc"]
 std = ["zenhash?/std"]
 # Pixel fingerprints and Hash impls; this opt-in feature requires Rust 1.89.
-hash = ["dep:zenhash"]
+hash = ["dep:zenhash", "zenhash/murmur3"]
 # Retained feature spelling for shared 0.2/0.3 consumer manifests; no API.
 planar = []
 icc = []

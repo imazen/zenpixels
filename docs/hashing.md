@@ -24,7 +24,8 @@ Typed, erased, mutable, borrowed and owned views hash identically when they
 carry the same logical samples and fields. PlaneBuf/PlaneMut/AlignedPlane are
 storage variants of Plane and use that implementation.
 
-`Hash` feeds the complete selected byte stream to the caller's Hasher. It does
+`Hash` feeds the complete selected byte stream to the caller's Hasher. It emits fixed 1 KiB writes (plus the final remainder) so caller hashers
+that distinguish write boundaries also ignore storage strides. It does
 not collapse the object to an intermediate 64-bit digest. `hash_with` returns a
 64-bit fingerprint using the backend selected by the accompanying benchmark.
 
@@ -45,7 +46,7 @@ Every mode excludes row padding, allocation prefix/suffix, stride, addresses,
 allocator identity, storage owner and Rust pixel marker type. Undefined alpha
 components (RGBX/BGRX and other explicitly undefined alpha) are excluded.
 Native CodePlane and planar integer encodings ignore unused container bits and
-hash extracted codes; raw Plane has no encoding and hashes every active sample
+hash extracted codes through the existing CodePlane reader (also in SamplesOnly); raw Plane has no encoding and hashes every active sample
 bit. SamplesOnly still separates geometry/type/plane boundaries; it does not
 convert packed data to planar, change channel order or decode color spaces.
 

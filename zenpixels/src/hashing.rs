@@ -58,6 +58,58 @@ fn begin<H: Hasher>(state: &mut H, domain: &[u8], inclusions: HashInclusions) {
     }]);
 }
 
+// Hasher::write need not concatenate separate calls. Serialize the same fixed
+// blocks for tight and strided views, including with non-streaming hashers.
+struct FixedWrites<'a, H> {
+    state: &'a mut H,
+    bytes: [u8; 1024],
+    len: usize,
+}
+impl<H: Hasher> FixedWrites<'_, H> {
+    fn flush(&mut self) {
+        if self.len != 0 {
+            self.state.write(&self.bytes[..self.len]);
+            self.len = 0;
+        }
+    }
+}
+impl<H: Hasher> Hasher for FixedWrites<'_, H> {
+    fn write(&mut self, mut bytes: &[u8]) {
+        if self.len != 0 {
+            let n = (self.bytes.len() - self.len).min(bytes.len());
+            self.bytes[self.len..self.len + n].copy_from_slice(&bytes[..n]);
+            self.len += n;
+            bytes = &bytes[n..];
+            if self.len == self.bytes.len() {
+                self.flush();
+            }
+        }
+        while bytes.len() >= self.bytes.len() {
+            let (head, rest) = bytes.split_at(self.bytes.len());
+            self.state.write(head);
+            bytes = rest;
+        }
+        if !bytes.is_empty() {
+            self.bytes[..bytes.len()].copy_from_slice(bytes);
+            self.len = bytes.len();
+        }
+    }
+    fn finish(&self) -> u64 {
+        // This private adapter only serializes our closed, derived metadata
+        // Hash impls. A Hash serializer must not ask its state for a digest.
+        unreachable!("pixel Hash serialization only writes to its state")
+    }
+}
+fn fixed<H: Hasher>(state: &mut H, f: impl FnOnce(&mut FixedWrites<'_, H>)) {
+    let mut state = FixedWrites {
+        state,
+        bytes: [0; 1024],
+        len: 0,
+    };
+    f(&mut state);
+    state.flush();
+}
+
 fn digest(f: impl FnOnce(&mut zenhash::RapidhashV3)) -> u64 {
     let mut state = zenhash::RapidhashV3::new();
     f(&mut state);
@@ -135,43 +187,33 @@ fn packed<P, H: Hasher>(view: &PixelSlice<'_, P>, inclusions: HashInclusions, st
     }
 }
 
-fn plane<C: SampleStorage, H: Hasher>(
-    view: &Plane<C>,
+fn plane_header(
+    state: &mut impl Hasher,
     inclusions: HashInclusions,
-    encoding: Option<SampleEncoding>,
-    state: &mut H,
+    width: usize,
+    height: usize,
+    ty: crate::ChannelType,
 ) {
     begin(state, b"plane\0", inclusions);
-    {
-        let mut p = Portable(state);
-        view.width().hash(&mut p);
-        view.height().hash(&mut p);
-        <C::Sample as crate::plane::PlaneSample>::CHANNEL_TYPE.hash(&mut p);
-    }
+    let mut p = Portable(state);
+    width.hash(&mut p);
+    height.hash(&mut p);
+    ty.hash(&mut p);
+}
+
+fn plane<C: SampleStorage, H: Hasher>(view: &Plane<C>, inclusions: HashInclusions, state: &mut H) {
+    plane_header(
+        state,
+        inclusions,
+        view.width(),
+        view.height(),
+        <C::Sample as crate::plane::PlaneSample>::CHANNEL_TYPE,
+    );
     if view.width() == 0 || view.height() == 0 {
         return;
     }
     let size = core::mem::size_of::<C::Sample>();
-    let partial = encoding.filter(|e| usize::from(e.code_bits()) != size * 8);
-    if let Some(e) = partial {
-        let mut buf = [0u8; 256];
-        let mask = (1u32 << e.code_bits()) - 1;
-        for row in view.rows() {
-            let bytes: &[u8] = bytemuck::cast_slice(row);
-            for group in bytes.chunks(buf.len()) {
-                for (src, dst) in group.chunks_exact(size).zip(buf.chunks_exact_mut(size)) {
-                    let value = if size == 1 {
-                        u32::from(src[0])
-                    } else {
-                        u32::from(u16::from_ne_bytes([src[0], src[1]]))
-                    };
-                    let code = (value >> e.bit_shift()) & mask;
-                    dst.copy_from_slice(&code.to_le_bytes()[..size]);
-                }
-                state.write(&buf[..group.len()]);
-            }
-        }
-    } else if view.stride() == view.width() {
+    if view.stride() == view.width() {
         samples(bytemuck::cast_slice(view.strided_samples()), size, state);
     } else {
         for row in view.rows() {
@@ -186,10 +228,24 @@ fn any_plane<H: Hasher>(
     encoding: Option<SampleEncoding>,
     state: &mut H,
 ) {
+    let size = view.channel_type().byte_size();
+    if let Some(e) = encoding.filter(|e| usize::from(e.code_bits()) != size * 8) {
+        // Reuse the checked native-code reader; padding rules have one owner.
+        let codes = CodePlane::new(*view, e).expect("validated planar integer encoding");
+        plane_header(
+            state,
+            inclusions,
+            view.width(),
+            view.height(),
+            view.channel_type(),
+        );
+        code_samples(&codes, size, state);
+        return;
+    }
     match view {
-        AnyPlane::U8(v) => plane(v, inclusions, encoding, state),
-        AnyPlane::U16(v) => plane(v, inclusions, encoding, state),
-        AnyPlane::F32(v) => plane(v, inclusions, None, state),
+        AnyPlane::U8(v) => plane(v, inclusions, state),
+        AnyPlane::U16(v) => plane(v, inclusions, state),
+        AnyPlane::F32(v) => plane(v, inclusions, state),
     }
 }
 
@@ -217,7 +273,7 @@ fn planar(view: &PlanarSlice<'_>, inclusions: HashInclusions, state: &mut impl H
 
 impl<P> Hash for PixelSlice<'_, P> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        packed(self, HashInclusions::default(), state);
+        fixed(state, |h| packed(self, HashInclusions::default(), h));
     }
 }
 impl<P> PixelSlice<'_, P> {
@@ -246,19 +302,21 @@ packed_owner!(PixelSliceMut<'_, P>, as_pixel_slice);
 
 impl<C: SampleStorage> Hash for Plane<C> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        plane(self, HashInclusions::default(), None, state);
+        fixed(state, |h| plane(self, HashInclusions::default(), h));
     }
 }
 impl<C: SampleStorage> Plane<C> {
     /// Fingerprint active samples and geometry, excluding stride and storage.
     #[must_use]
     pub fn hash_with(&self, inclusions: HashInclusions) -> u64 {
-        digest(|h| plane(self, inclusions, None, h))
+        digest(|h| plane(self, inclusions, h))
     }
 }
 impl Hash for AnyPlane<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        any_plane(self, HashInclusions::default(), None, state);
+        fixed(state, |h| {
+            any_plane(self, HashInclusions::default(), None, h)
+        });
     }
 }
 impl AnyPlane<'_> {
@@ -270,7 +328,7 @@ impl AnyPlane<'_> {
 }
 impl Hash for PlanarSlice<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        planar(self, HashInclusions::default(), state);
+        fixed(state, |h| planar(self, HashInclusions::default(), h));
     }
 }
 impl PlanarSlice<'_> {
@@ -283,7 +341,7 @@ impl PlanarSlice<'_> {
 
 impl Hash for CodePlane<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        codes(self, HashInclusions::default(), state);
+        fixed(state, |h| codes(self, HashInclusions::default(), h));
     }
 }
 impl CodePlane<'_> {
@@ -303,6 +361,9 @@ fn codes(view: &CodePlane<'_>, inclusions: HashInclusions, state: &mut impl Hash
             view.encoding().hash(&mut p);
         }
     }
+    code_samples(view, 2, state);
+}
+fn code_samples(view: &CodePlane<'_>, size: usize, state: &mut impl Hasher) {
     if view.width() == 0 {
         return;
     }
@@ -313,10 +374,10 @@ fn codes(view: &CodePlane<'_>, inclusions: HashInclusions, state: &mut impl Hash
             let n = (view.width() - x).min(codes.len());
             view.read_codes(x, y, &mut codes[..n])
                 .expect("checked active code plane extent");
-            for (code, bytes) in codes[..n].iter().zip(bytes.chunks_exact_mut(2)) {
-                bytes.copy_from_slice(&code.to_le_bytes());
+            for (code, bytes) in codes[..n].iter().zip(bytes.chunks_exact_mut(size)) {
+                bytes.copy_from_slice(&code.to_le_bytes()[..size]);
             }
-            state.write(&bytes[..n * 2]);
+            state.write(&bytes[..n * size]);
         }
     }
 }
