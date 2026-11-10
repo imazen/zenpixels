@@ -61,18 +61,20 @@ impl OutputProfile {
     /// Replace an exactly recognized ICC with its bundled canonical profile.
     ///
     /// Uses the same normalized hash as `zenpixels::icc` identification, but
-    /// only exact bundled fingerprints, never approximate color-space matches.
+    /// requires normalized byte equality after filtering bundled fingerprints,
+    /// never approximate color-space matches or a fingerprint match alone.
     /// Header CMM, timestamp, platform, device, creator and ID differences are
     /// ignored. Tags, rendering intent and color transforms are not ignored.
     /// This is explicit metadata normalization, not ICC sanitization or a CMS
     /// conversion. Unknown profiles and non-ICC targets remain unchanged.
     ///
-    /// Cost: one pass over the input profile; a recognized profile allocates
+    /// Cost: one fingerprint pass plus comparison with a matching candidate;
+    /// a recognized profile allocates
     /// a small canonical `Arc`. No pixel access, scan, or image allocation.
     #[must_use]
     pub fn normalize_known_icc(self) -> Self {
         use crate::icc_profiles::{ADOBE_RGB, DISPLAY_P3_V2, DISPLAY_P3_V4, REC2020_V4};
-        use zenpixels::icc::normalized_hash;
+        use zenpixels::icc::{normalized_eq, normalized_hash};
         const KNOWN: &[((u64, u32), &[u8])] = &[
             (normalized_hash(DISPLAY_P3_V4), DISPLAY_P3_V4),
             (normalized_hash(DISPLAY_P3_V2), DISPLAY_P3_V2),
@@ -83,7 +85,7 @@ impl OutputProfile {
             let hash = normalized_hash(profile);
             if let Some((_, canonical)) = KNOWN
                 .iter()
-                .find(|(key, bytes)| *key == hash && bytes.len() == profile.len())
+                .find(|(key, bytes)| *key == hash && normalized_eq(profile, bytes))
             {
                 return Self::Icc(Arc::from(*canonical));
             }

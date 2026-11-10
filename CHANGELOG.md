@@ -58,6 +58,9 @@ This companion remains an unpublished review API; no release is authorized.
 
 ### Fixed
 
+- Require normalized byte equality after paired-fingerprint filtering before
+  replacing ICC bytes with a bundled canonical profile (#150).
+
 - Reject Undefined interpretation for real planar Alpha roles; make current
   ColorContext predicates follow the selected profile authority (#150).
 

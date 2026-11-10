@@ -81,6 +81,14 @@ const ICC_CREATOR_ID: core::ops::Range<usize> = 80..100;
 /// Number of header bytes that need conditional zeroing.
 const ICC_HEADER_NORMALIZE_END: usize = 100;
 
+const fn is_metadata_field(i: usize) -> bool {
+    (i >= ICC_CMM_TYPE.start && i < ICC_CMM_TYPE.end)
+        || (i >= ICC_DATE_TIME.start && i < ICC_DATE_TIME.end)
+        || (i >= ICC_PLATFORM.start && i < ICC_PLATFORM.end)
+        || (i >= ICC_DEVICE.start && i < ICC_DEVICE.end)
+        || (i >= ICC_CREATOR_ID.start && i < ICC_CREATOR_ID.end)
+}
+
 // ── CICP extraction ──────────────────────────────────────────────────────
 
 /// Extract CICP (Coding-Independent Code Points) from an ICC profile's tag table.
@@ -653,14 +661,6 @@ pub const fn normalized_hash(data: &[u8]) -> (u64, u32) {
     let mut hash = FNV_OFFSET;
     let mut header = [0u8; ICC_HEADER_NORMALIZE_END];
 
-    const fn is_metadata_field(i: usize) -> bool {
-        (i >= ICC_CMM_TYPE.start && i < ICC_CMM_TYPE.end)
-            || (i >= ICC_DATE_TIME.start && i < ICC_DATE_TIME.end)
-            || (i >= ICC_PLATFORM.start && i < ICC_PLATFORM.end)
-            || (i >= ICC_DEVICE.start && i < ICC_DEVICE.end)
-            || (i >= ICC_CREATOR_ID.start && i < ICC_CREATOR_ID.end)
-    }
-
     // Phase 1: header bytes — zero metadata fields.
     let header_len = if data.len() < ICC_HEADER_NORMALIZE_END {
         data.len()
@@ -694,6 +694,33 @@ pub const fn normalized_hash(data: &[u8]) -> (u64, u32) {
         state.digest()
     };
     (hash, murmur)
+}
+
+/// Compare every byte except the metadata-only header fields ignored by
+/// [`normalized_hash`]. No allocation, profile parsing or hashing is performed.
+///
+/// This establishes equality under that exact normalization, including every
+/// tag and rendering-intent byte. It does not establish that either input is a
+/// valid ICC profile or that different transforms are colorimetrically close.
+/// Matching fingerprints alone cannot establish equality; callers replacing a
+/// profile can use them as a filter and then compare the retained bytes here.
+/// Inputs of different lengths never compare equal; identical empty inputs do.
+///
+/// Used by `zenpixels-convert::OutputProfile::normalize_known_icc` before
+/// replacing a profile with its bundled canonical bytes.
+#[must_use]
+pub const fn normalized_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < left.len() {
+        if !is_metadata_field(i) && left[i] != right[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
 }
 
 // ── Hash tables ──────────────────────────────────────────────────────────
@@ -917,6 +944,33 @@ mod tests {
         let mut c = a.clone();
         c[20] = 0xFF;
         assert_ne!(normalized_hash(&a), normalized_hash(&c));
+    }
+
+    #[test]
+    fn normalized_equality_checks_every_non_metadata_byte() {
+        const SAME: bool = normalized_eq(b"same", b"same");
+        const DIFFERENT: bool = normalized_eq(b"a", b"b");
+        assert!(SAME);
+        assert!(!DIFFERENT);
+        assert!(normalized_eq(&[], &[]));
+        let a = [0x5au8; 300];
+        assert!(!normalized_eq(&a[..299], &a));
+        assert!(!normalized_eq(&a, &a[..299]));
+        for index in 0..a.len() {
+            let mut b = a;
+            b[index] ^= 0xff;
+            let metadata = [4..8, 24..36, 40..44, 48..56, 80..100]
+                .iter()
+                .any(|range| range.contains(&index));
+            assert_eq!(normalized_eq(&a, &b), metadata, "byte {index}");
+            assert_eq!(normalized_eq(&b, &a), metadata, "byte {index}");
+            // The same predicate must hold when an input ends inside a field.
+            assert_eq!(
+                normalized_eq(&a[..=index], &b[..=index]),
+                metadata,
+                "truncated byte {index}"
+            );
+        }
     }
 
     #[test]

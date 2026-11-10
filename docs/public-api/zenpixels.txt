@@ -10,7 +10,7 @@
 #
 #   pub modules                                13
 #   pub types (struct/enum/trait/alias)       133
-#   pub consts/statics                        368
+#   pub consts/statics                        369
 #   free functions                              2
 #   inherent methods                          377
 #   struct fields                             120
@@ -21,7 +21,7 @@
 #   auto-trait exceptions                       9
 #
 # per-module pub lines:
-#   (root)                          512
+#   (root)                          513
 #   buffer                          311
 #   cicp                             38
 #   color                            83
@@ -35,7 +35,7 @@
 #   precision                        20
 #   sample                           33
 
-## items (1183 lines)
+## items (1184 lines)
 
 pub mod zenpixels
 pub use At
@@ -529,6 +529,7 @@ pub fn icc::IccIdentification::from_icc(&[u8]) -> core::option::Option<Self>
 pub fn icc::IccIdentification::is_common_srgb(&[u8]) -> bool
 pub fn icc::IccIdentification::is_srgb(&self) -> bool
 pub fn icc::IccIdentification::to_cicp(&self) -> core::option::Option<cicp::Cicp>
+pub const fn icc::normalized_eq(&[u8], &[u8]) -> bool
 pub const fn icc::normalized_hash(&[u8]) -> (u64, u32)
 pub mod orientation
 pub orientation::Orientation::FlipH = 2

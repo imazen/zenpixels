@@ -4,6 +4,8 @@
 
 The normalized fingerprint is a pair `(FNV-1a64, MurmurHash3_x86_32)`.
 Both must match before identification or explicit known-profile normalization.
+Canonical replacement then requires normalized byte equality against the
+retained bundled profile; fingerprints are only a filter.
 The metadata normalization ranges remain unchanged; the Murmur seed is fixed
 at 3_242_157_231 and the variant always reads little-endian words. The second
 fingerprint is not merely a finalizer on the first.
