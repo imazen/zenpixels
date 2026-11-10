@@ -1,23 +1,23 @@
 <!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Pixel explorer: design review and outstanding work</title>
 <style>body{font:17px/1.6 system-ui;background:#101824;color:#e4edf6;max-width:1050px;margin:auto;padding:24px}a{color:#90ddd5}table{border-collapse:collapse;width:100%}td,th{padding:12px;text-align:left;border-bottom:1px solid #38465a;vertical-align:top}code{color:#a8dfed}h1,h2{line-height:1.25}main{overflow-wrap:anywhere}</style>
-<main><p><a href="index.html#h-storage">← Live plane and native-code examples</a></p>
+<main><p><a href="guide.html">Pixel types guide</a> · <a href="index.html#h-storage">← Live plane and native-code examples</a></p>
 <h1>What the updated explorer exposes</h1>
-<p>Review candidate, 9 November 2026. These are implementation and design observations, not a release-completion claim.</p>
+<p>Reviewed 10 November 2026 against merged source. These are implementation and design observations, not a release-completion claim.</p>
 <h2>The native view duplicates more than its explanation suggested</h2>
 <p><code>PlaneRole::CbCr</code> and <code>CrCb</code> already exist. <code>CodePlane::component</code> reads interleaved components with individually supplied encodings. The RGB10 + alpha1 witness uses this existing component reader.</p>
 <p>The speculative NativeCodeSlice adapter and its dependent conversion APIs have been removed at the owner’s direction. No production caller justified them. The explorer now shows the existing component-view path, without a replacement public adapter.</p>
 <p>Signed/wide SampleEncoding descriptions, native pixel identity carriage and exact ST2086 metadata remain. Signed/wide component reading and unaligned access are not implied by those capabilities; extensions need concrete consumers.</p>
 <h2>HLG presentation was stale</h2>
 <p>The converter now supports explicit display rendering. The live panel accepts display peak, black, effective gamma and SDR white; missing conditions still refuse. The JavaScript swatch uses only the HLG OETF, so it is no longer presented as a byte oracle for display rendering. ICC synthesis remains unavailable.</p>
-<h2>Outstanding issues updated today</h2>
-<p>The issue descriptions assess main; this explorer runs a review candidate. Candidate code, merged implementation and downstream qualification are separate states.</p>
+<h2>Completed contracts and remaining work</h2>
+<p>The build stamp on the explorer identifies the compiled source. Statuses below are a dated review; issue links show current tracking. Downstream qualification remains separate.</p>
 <table><thead><tr><th>Issue</th><th>Remaining review boundary</th></tr></thead><tbody>
-<tr><td><a href="https://github.com/imazen/zenpixels/issues/83">83 — Native samples</a></td><td>The duplicate adapter is removed. Existing U16 component reading and exact metadata remain; further native-reader requirements and actual consumers need qualification.</td></tr>
+<tr><td><a href="https://github.com/imazen/zenpixels/issues/83">83 — Native samples</a></td><td>Closed: generic native storage, code descriptions and exact metadata satisfy the core scope. IMIJ adapter integration remains consumer work.</td></tr>
 <tr><td><a href="https://github.com/imazen/zenpixels/issues/69">69 — Identity allocations</a></td><td>Borrowed OutputPlan identity rows are allocation-free in packed/padded controls; owned finalization intentionally copies. Typed U8/U16/F32 extraction reuse is qualified.</td></tr>
-<tr><td><a href="https://github.com/imazen/zenpixels/issues/132">132 — HLG</a></td><td>Fixed a direct MoxCms HLG bypass; both backend refusals are tested. Consumer qualification and HLG ICC synthesis remain separate.</td></tr>
-<tr><td><a href="https://github.com/imazen/zenpixels/issues/133">133 — API documentation</a></td><td>Public examples compile; ablation and export docs are refreshed. Explicit-baseline semver findings and tool limitations are recorded.</td></tr>
-<tr><td><a href="https://github.com/imazen/zenpixels/issues/134">134 — ICC/CICP authority</a></td><td>Presence/authority tables exercise both output APIs; unsupported authority refuses. Synthesis matrix/range preconditions are documented and tested.</td></tr>
+<tr><td><a href="https://github.com/imazen/zenpixels/issues/132">132 — HLG</a></td><td>Closed: explicit rendering conditions and both backend refusals are qualified. Consumer work and HLG ICC synthesis remain separate.</td></tr>
+<tr><td><a href="https://github.com/imazen/zenpixels/issues/133">133 — API documentation</a></td><td>Closed: API/documentation task completed. This guide and the copied explorer snippets now have executable Rust checks.</td></tr>
+<tr><td><a href="https://github.com/imazen/zenpixels/issues/134">134 — ICC/CICP authority</a></td><td>Closed: both output boundaries enforce authority. Grayscale reduction preserves unusable ICCs; companion CICP cannot repair them. Synthesis preconditions are explicit.</td></tr>
 <tr><td><a href="https://github.com/imazen/zenpixels/issues/135">135 — P3 exports</a></td><td>Current default/no-db bytes pass fresh native and independent color controls. Old release refs remain gated pending reconciliation.</td></tr>
 <tr><td><a href="https://github.com/imazen/zenpixels/issues/136">136 — Gain-map transcodes</a></td><td>Consumer reconstruction and end-to-end HDR pixels, not merely metadata carriage.</td></tr>
 <tr><td><a href="https://github.com/imazen/zenpixels/issues/137">137 — JXL luminance</a></td><td>Consumer qualification of content peak, intensity_target and diffuse white.</td></tr>
@@ -27,6 +27,7 @@
 <tr><td><a href="https://github.com/imazen/zenpixels/issues/141">141 — PNG/EXIF provenance</a></td><td>Reader fixtures and provenance qualification remain open.</td></tr>
 <tr><td><a href="https://github.com/imazen/zenpixels/issues/142">142 — Apple gain maps</a></td><td>Independent reconstruction measurements and explicit acceptance remain open.</td></tr>
 <tr><td><a href="https://github.com/imazen/zenpixels/issues/143">143 — Downstream compilation</a></td><td>Compile actual consumers against one candidate revision, including newly changed descriptor errors and worker cloning.</td></tr>
+<tr><td><a href="https://github.com/imazen/zenpixels/issues/154">154 — Current precision requirements</a></td><td>Remaining consumer integration: select encoder precision from current evidence and explicit requirements. Original depth alone is not preservation evidence. Historical approximate ICC qualification remains lower priority.</td></tr>
 </tbody></table>
-<p><a href="https://github.com/imazen/zenpixels/blob/review/explicit-hlg-native-codes/docs/explorer-design-review.md">Full source-backed review</a> · <a href="https://github.com/imazen/zenpixels/blob/review/explicit-hlg-native-codes/docs/repository-issue-completion.md">Repository improvements and qualification</a> · <a href="https://github.com/imazen/zenpixels/pull/145">Review PR</a></p>
+<p><a href="https://github.com/imazen/zenpixels/blob/main/docs/explorer-design-review.md">Full source-backed review</a> · <a href="https://github.com/imazen/zenpixels/blob/main/docs/repository-issue-completion.md">Repository improvements and qualification</a></p>
 </main></html>
