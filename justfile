@@ -793,3 +793,9 @@ hash-regression-bench *ARGS:
 
 hash-regression-summarize INPUT OUTPUT:
     python3 benchmarks/pixel-hash/summarize.py --regressions "{{INPUT}}" "{{OUTPUT}}"
+
+
+# Failure injection preserves the calling thread's cutoff and unrelated allocations.
+allocation-failure-check:
+    cargo test --locked -p zenpixels --features hash,rgb --test alloc_failure --test alloc_failure_typed -- --test-threads=16
+    cargo clippy --locked -p zenpixels --features hash,rgb --test alloc_failure --test alloc_failure_typed -- -D warnings

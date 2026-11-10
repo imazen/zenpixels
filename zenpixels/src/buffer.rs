@@ -654,7 +654,7 @@ fn try_pixels_into_storage<P: bytemuck::Pod>(
 
 /// Infallible convenience over [`try_pixels_into_storage`], for constructors
 /// whose contract already documents a panic on allocation failure.
-#[cfg(feature = "rgb")]
+#[cfg(feature = "imgref")]
 fn pixels_into_storage<P: bytemuck::Pod>(
     pixels: Vec<P>,
     channel: ChannelType,
