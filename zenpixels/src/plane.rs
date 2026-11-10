@@ -1320,6 +1320,8 @@ impl<'a> PlanarSlice<'a> {
     /// `color` describes these samples, including matrix/range for YCbCr and
     /// an explicit luminance anchor when relative and absolute light interact.
     /// `alpha` is required exactly when the layout contains an alpha plane.
+    /// A real alpha plane requires Straight, Premultiplied or Opaque;
+    /// Undefined describes padding and is not an alpha-plane interpretation.
     ///
     /// # Errors
     /// Returns a layout, storage, geometry or alpha-interpretation mismatch.
@@ -1332,7 +1334,9 @@ impl<'a> PlanarSlice<'a> {
         alpha: Option<crate::AlphaMode>,
     ) -> Result<Self, LayoutError> {
         layout.check(planes, width, height)?;
-        if layout.roles().any(|r| r == PlaneRole::Alpha) != alpha.is_some() {
+        if layout.roles().any(|r| r == PlaneRole::Alpha) != alpha.is_some()
+            || alpha == Some(crate::AlphaMode::Undefined)
+        {
             return Err(LayoutError::AlphaInterpretation);
         }
         Ok(Self {

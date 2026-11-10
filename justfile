@@ -738,3 +738,9 @@ hash-check:
 # Backend comparison: timing excludes construction/allocation; raw packets are retained by zenbench.
 hash-bench *ARGS:
     cargo bench --manifest-path benchmarks/pixel-hash/Cargo.toml --bench pixel_hash -- {{ARGS}}
+
+# Current planar alpha and selected color authority regression contracts.
+interpretation-review-check:
+    cargo test --locked -p zenpixels --features hash --lib --test planes --test hashing
+    cargo clippy --locked -p zenpixels --features hash --lib --test planes --test hashing -- -D warnings
+    cargo check --locked -p zenpixels --no-default-features

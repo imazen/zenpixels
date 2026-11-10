@@ -177,3 +177,16 @@ component readers recover the exact payloads. Erased preparation/lending checks
 retain opaque ICC and unknown signaling, distinguish absent/explicit HDR anchors,
 and reject changed preparation interpretation. These are transport/operation
 controls, not HDR metric-quality or conversion qualification.
+
+## Current interpretation checks (review #150)
+
+A planar `Alpha` role requires a defined interpretation: Straight,
+Premultiplied or Opaque. `Undefined` denotes padding in packed layouts and
+cannot describe a real alpha plane. Layouts without an Alpha role accept no
+alpha interpretation. This rule also applies to empty planar pictures.
+
+`ColorContext::as_profile_source` selects the current profile. Its predicates
+follow the same selection: an ICC-selected context has unknown transfer and
+is not established to be sRGB, even when a secondary CICP field is present.
+These convenience methods do not identify ICC bytes. Decoders select the
+format's authority once and retain original claims in `ColorOrigin`.

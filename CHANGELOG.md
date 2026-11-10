@@ -56,6 +56,11 @@ This companion remains an unpublished review API; no release is authorized.
 
 ## 0.3.1 cleanup — release reconciliation (2026-09-28)
 
+### Fixed
+
+- Reject Undefined interpretation for real planar Alpha roles; make current
+  ColorContext predicates follow the selected profile authority (#150).
+
 ### QUEUED BREAKING CHANGES
 
 - ICC `normalized_hash` returns `(u64, u32)`: retained FNV-1a64 plus full MurmurHash3_x86_32. Both components are required for recognition and known-profile normalization.
