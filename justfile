@@ -724,3 +724,7 @@ repository-issues-semver:
 # Fallible in-place admission and consistent luma policy before CMS setup.
 refinement-check:
     cargo test -p zenpixels-convert --test refinement_boundaries --test authority_boundaries --test output_contracts
+
+# Frozen source, exact pixel/numerical pins, separate codec and render workspaces.
+downstream-cohort-check CONSUMER OUTPUT:
+    python3 tools/downstream-cohort/check.py {{CONSUMER}} {{OUTPUT}}

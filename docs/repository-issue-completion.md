@@ -103,3 +103,14 @@ dependency patches and actual downstream compilation under issue 143.
 Run `just repository-issues-check`, `just design-feature-check`, `just api-doc`,
 and `just p3-export-check SOURCE FRESH_OUTPUT`. The semver recipe forces patch
 reporting so approved 0.3 breaks remain visible; it is expected to exit 100.
+
+## Downstream start after PR144/146 merge
+
+Main `c4c18b44` contains both reviewed changes. The
+[frozen consumer cohort](../tools/downstream-cohort/README.md) now qualifies
+zencodec `1fb997bb` and its standalone render workspace against matching pixel
+source: all-target compilation and library/integration tests pass. The run
+retains exact source identities, dependency graphs and fresh locks. Consumer
+source checkouts and their older manifest pins are unchanged. This is the first
+completed cohort for issue 143, not a claim that all consumers or optional
+features have migrated.
