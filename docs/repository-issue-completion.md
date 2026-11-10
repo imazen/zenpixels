@@ -3,7 +3,7 @@
 This records the work for issues 134, 135, 133, 132, 83 and 69 on the 0.3 review
 candidate. It does not authorize publication or claim downstream qualification.
 The [merged-main re-audit](issue-reaudit-2026-11-09.md) supersedes its completion
-assessment and records the remaining truncated-ICC authority exception.
+assessment and records the resolved truncated-ICC authority exception.
 
 ## Authority and synthesis — 134
 
@@ -12,6 +12,11 @@ OutputPlan and EncodeReady. Unknown authoritative ICC is offered to the CMS and
 cannot be replaced with conflicting CICP. Unsupported authoritative CICP refuses;
 source samples remain unchanged. Existing output_current_color controls compare
 real ICC pixels, premultiplication and descriptor/current-context conflicts.
+
+The final authority correction (`11266ff8`) removes the grayscale reducer's
+truncated-ICC fallback. An empty/unusable ICC keeps RGB interpretation and the
+original context, even with companion CICP; exact alpha/depth reductions remain
+available. Both copying and in-place paths have strided U8/U16 controls.
 
 SynthesizedIcc uses primaries/transfer to synthesize a profile of decoded RGB
 (or decoded gray). It deliberately does not perform coded matrix/range conversion.

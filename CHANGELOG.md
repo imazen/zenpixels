@@ -149,6 +149,9 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 - Add explicit HLG display rendering with validated peak, black and system gamma,
   an opt-in reference preset, coupled OOTF/inverse and shared row/buffer planning.
   HLG compositing now requires rendering conditions and a white anchor.
+- Preserve unusable authoritative ICC declarations during grayscale reduction;
+  companion CICP no longer replaces them. Exact alpha/depth reductions and
+  qualified ICC gray replacement remain supported (`11266ff8`).
 - Add strided native integer code views, explicit U16 canonicalization and
   encoding with padding policy, and exact raw ST2086 carriage. RGB565 requires
   unpacking; signed/wide numerical conversion remains unsupported.

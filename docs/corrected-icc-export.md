@@ -304,11 +304,13 @@ for a deliberately linear fallback, so grayscale color handling in this
 reader remains unqualified. Successful gray decoding alone is not a color
 accuracy result. WebKit RGB/gray probes used 0.14/0.13 GiB peak RSS.
 
-An existing separate grayscale-collapse path can trust a contradictory
-context CICP when replacing an attached ICC. A new regression reproduces
-RGB-to-gray replacement under a wrong gamma hint. A conservative guard is
-preserved separately: changing the pre-existing malformed-ICC contract needs
-an explicit decision. That guard is not part of this bundle proposal.
+At bundle qualification, a separate grayscale-collapse path could trust a
+contradictory context CICP when replacing an attached ICC. Its initial guard
+retained the malformed-ICC fallback. The owner-directed #134 follow-up
+(`11266ff8`) removes that exception: unusable ICCs keep their RGB interpretation
+and original context; companion CICP cannot authorize repair. Qualified ICC
+replacement and exact alpha/depth reduction controls remain. See the
+[current interpretation contract](design-reference.md#current-interpretation-checks-review-150).
 
 ## Measured change from the actual historical exports
 

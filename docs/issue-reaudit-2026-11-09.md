@@ -6,20 +6,28 @@ the audit. That change does not supply whole-operation memory admission.
 The accompanying changes strengthen tests and correct documentation; they add
 no public signatures, change no numerical kernels and relax no established
 expectations. This is repository qualification, not publication approval or an
-IMIJ end-to-end qualification. GitHub issues were not edited or closed.
+IMIJ end-to-end qualification. The initial audit did not close issues; the
+owner subsequently directed closure of 132/133 and the foundation scope of 83,
+and implementation of the remaining 134 authority correction.
 
 ## Disposition
 
 | Issue | Assessment | Remaining work |
 |---|---|---|
-| [83](https://github.com/imazen/zenpixels/issues/83) | Partly done; opening assessment is stale | Signed/wide per-channel extraction and an actual IMIJ adapter remain unqualified. Exact ST2086 carriage and signed/wide SampleEncoding descriptions already exist. |
-| [132](https://github.com/imazen/zenpixels/issues/132) | Original design/refusal task is complete | Close the bounded issue. HLG ICC representation and consumer orchestration remain separate; unsupported synthesis deliberately refuses. |
-| [133](https://github.com/imazen/zenpixels/issues/133) | Original local task is complete with these documentation corrections | Close the bounded issue after this follow-up lands. Package/dependency release gates and broader downstream qualification remain separate. |
-| [134](https://github.com/imazen/zenpixels/issues/134) | Most boundaries are correct; one retained authority exception | Resolve the truncated-ICC grayscale fallback before claiming universal ICC-first behavior. |
+| [83](https://github.com/imazen/zenpixels/issues/83) | Closed: foundation scope is complete | IMIJ integration belongs with consumer issues 131 in zencodec and 88 in zenpipe. No additional core API is justified without a concrete missing operation. |
+| [132](https://github.com/imazen/zenpixels/issues/132) | Closed: original design/refusal task is complete | HLG ICC representation and consumer orchestration remain separate; unsupported synthesis deliberately refuses. |
+| [133](https://github.com/imazen/zenpixels/issues/133) | Closed: original local task is complete | Package/dependency release gates and broader downstream qualification remain separate. |
+| [134](https://github.com/imazen/zenpixels/issues/134) | Repository boundary work complete in `11266ff8` | Truncated-ICC grayscale fallback is removed; unsupported declaration/refusal, synthesis preconditions and current/original separation retain their controls. Consumer tasks remain 139/140. |
 | [135](https://github.com/imazen/zenpixels/issues/135) | Current main's export fix is qualified | Historical release refs still select old fallback bytes. Reconcile supported release candidates before closing the release-exposure portion. |
 | [150](https://github.com/imazen/zenpixels/issues/150) | Alpha, predicates and canonical byte equality are fixed; capacity/evidence work is partial | Integrate current-value requirements at a real processing consumer. Approximate ICC qualification remains a distinct, lower-priority task. Whole-operation admission belongs to the executor, not the node-peak model. |
 
 ## 83: descriptions, readers and canonical pixels
+
+The foundation scope is closed. Generic formats, checked descriptions and
+explicit numerical refusal satisfy the core requirement; wider arithmetic is
+not implied. Actual IMIJ integration remains in
+[zencodec 131](https://github.com/imazen/zencodec/issues/131) and
+[zenpipe 88](https://github.com/imazen/zenpipe/issues/88).
 
 `SampleEncoding::new` accepts all signed and unsigned integer storage types;
 its opening issue assessment still says U8/U16 only. Actual `CodePlane` readers
@@ -81,7 +89,7 @@ immutable origin record. It also removes the precision proposal's claim that
 returning processed eight-bit-origin data to eight bits necessarily loses no
 information. Existing exactness tests demonstrate otherwise.
 
-## 134: genuine conflicts and the remaining malformed-ICC exception
+## 134: genuine conflicts and the resolved malformed-ICC exception
 
 The previous origin table used P3 ICC plus P3 CICP and reused
 `ColorAuthority::select` to derive its expected answer. It could not by itself
@@ -96,20 +104,32 @@ These pass. Present-but-unsupported authoritative CICP still refuses instead
 of using companion ICC. Synthesis still describes already-decoded full-range
 RGB/gray: the matrix/range regression proves it does not decode coded pixels.
 
-One exception remains in `load_bearing::plan_chroma_collapse_signaling`:
-an ICC shorter than 128 bytes permits fallback to `ctx.cicp`, generating a
-replacement gray ICC. In contrast, ColorContext predicates now select that
-present ICC and report unknown color. The existing
-`icc_with_cicp_swaps_to_gray_class_profile_on_collapse` test explicitly requires
-the fallback with an eight-byte ICC and P3 CICP; both copying and in-place
-paths pass. This is a policy inconsistency on malformed declarations, not a
-demonstrated wrong-pixel result for a valid ICC.
+The initial audit found that `load_bearing::plan_chroma_collapse_signaling`
+used companion CICP to replace ICCs shorter than 128 bytes. ColorContext instead
+selected that present ICC and reported unknown color. A new regression failed
+on the old source: it produced Gray8 where authority preservation required RGB8.
+This was a policy inconsistency on malformed declarations, not a demonstrated
+wrong-pixel result for a valid ICC.
 
-Recommend suppressing gray collapse when the selected ICC is unusable, preserving
-that declaration while allowing independent alpha/depth reductions. A caller
-choosing CICP should resolve current authority explicitly. Changing the existing
-fallback expectation requires review; this audit preserves it. No new metadata
-framework is necessary.
+The owner directed the #134 follow-up. Commit `11266ff8` removes this fallback:
+gray replacement requires qualified identification of the ICC itself and
+agreement from any CICP companion. Empty/truncated/unrecognized ICCs keep RGB
+interpretation and the same context. Exact alpha/depth reductions still proceed;
+raw chroma analysis still reports neutral content truthfully.
+
+The former P3 positive fixture now uses a real qualified ICC instead of eight
+zero bytes, preserving genuine gray replacement coverage. The former implicit
+sRGB-repair expectation now requires preserving the unusable ICC. Negative
+controls cover lengths 0, 1, 8, 127, 128 and 129, with absent/sRGB/P3 companions.
+Public strided controls additionally exercise RGB/RGBA U8/U16, short final rows,
+both alpha-restructuring modes, and original-context pointer identity. CICP-only
+and qualified/agreeing ICC positive controls remain. No new metadata framework
+or public signature is introduced.
+
+`just icc-authority-check` now includes both CMS features at output boundaries
+and the no-default-features public boundary target. It, the repository gate,
+all-feature library/generator checks, strict Clippy and API snapshots pass:
+`run-heavy: done rc=0 46s | peak-RSS 1.13GiB | min-avail 10631MiB | peak-load 2.35`.
 
 ## 135: qualified current bytes, stale release candidates
 
