@@ -756,3 +756,14 @@ icc-retain-originals RECEIPT DEST='':
 
 icc-retain-tool-check:
     python3 -m unittest discover -s scripts/icc-gen -p test_retain_originals.py
+
+# Fixed-work profiler probes; run through the host resource wrapper.
+hash-prof-stat BINARY OUTPUT MODE='hash' ITERATIONS='32':
+    perf stat -r 3 -e instructions,cycles,branches,branch-misses -o "{{OUTPUT}}" -- "{{BINARY}}" {{MODE}} {{ITERATIONS}}
+
+hash-prof-callgrind BINARY OUTPUT MODE='hash' ITERATIONS='1':
+    valgrind --tool=callgrind --callgrind-out-file="{{OUTPUT}}" "{{BINARY}}" {{MODE}} {{ITERATIONS}}
+
+hash-regression-build:
+    cargo build --locked --release --manifest-path benchmarks/pixel-hash/Cargo.toml --bench regressions --bin profile_codes
+    cargo clippy --locked --manifest-path benchmarks/pixel-hash/Cargo.toml --all-targets -- -D warnings
