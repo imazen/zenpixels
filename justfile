@@ -741,6 +741,11 @@ hash-bench *ARGS:
 
 # Current planar alpha and selected color authority regression contracts.
 interpretation-review-check:
+    cargo test --locked -p zenpixels-convert --test known_profile_normalization
     cargo test --locked -p zenpixels --features hash --lib --test planes --test hashing
     cargo clippy --locked -p zenpixels --features hash --lib --test planes --test hashing -- -D warnings
     cargo check --locked -p zenpixels --no-default-features
+
+# Retain both backends and all groups, including resource-flagged observations.
+hash-bench-summarize INPUT OUTPUT:
+    python3 benchmarks/pixel-hash/summarize.py {{INPUT}} {{OUTPUT}}

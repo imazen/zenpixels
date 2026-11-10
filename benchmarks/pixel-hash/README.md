@@ -125,3 +125,8 @@ Private full evidence, executable identities, raw rounds, flags, progress
 records and rejected attempts are mirrored under
 `output/zenpixels/pixel-hash-2026-11-09/` in the private artifact archive.
 Captures include process metadata and are intentionally not committed here.
+
+Use `just hash-bench-summarize <aggregate.json.gz> <summary.csv>` to reproduce
+both CSVs. The extractor retains every group and both backends, reports the
+aggregate/round flags and executable identity, and refuses to overwrite a
+nonidentical existing result. It reproduces the committed CSVs byte for byte.
