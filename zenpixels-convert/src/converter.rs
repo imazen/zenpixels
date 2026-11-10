@@ -666,8 +666,7 @@ impl RowConverter {
                 t.get_mut().try_transform_row(src, dst, width)
             }
             None => {
-                convert_row_buffered(&self.plan, src, dst, width, &mut self.scratch);
-                return Ok(());
+                return convert_row_buffered(&self.plan, src, dst, width, &mut self.scratch);
             }
         };
         result.map_err(|e| {

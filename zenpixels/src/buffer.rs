@@ -617,11 +617,15 @@ fn validate_parts(
 
 /// Convert `Vec<P>` to `Vec<u8>`. Zero-copy when alignment matches (u8-component
 /// types), copies via `cast_slice` otherwise.
+///
+/// The copy path keeps the allocation fallible: on failure the original
+/// `Vec<P>` comes back in the `Err`, so a caller that promised recoverability
+/// can drop it (as [`PixelBuffer::from_pixels`] does) or keep it.
 #[cfg(feature = "rgb")]
-fn pixels_into_storage<P: bytemuck::Pod>(
+fn try_pixels_into_storage<P: bytemuck::Pod>(
     pixels: Vec<P>,
     channel: ChannelType,
-) -> (PixelStorage, u32) {
+) -> Result<(PixelStorage, u32), Vec<P>> {
     fn cast<P: bytemuck::Pod, T: StorageSample>(pixels: Vec<P>) -> Result<PixelStorage, Vec<P>> {
         bytemuck::allocation::try_cast_vec::<P, T>(pixels)
             .map(Into::into)
@@ -640,26 +644,51 @@ fn pixels_into_storage<P: bytemuck::Pod>(
         _ => cast::<P, u8>(pixels),
     };
     match moved {
-        Ok(storage) => (storage, 0),
+        Ok(storage) => Ok((storage, 0)),
         Err(pixels) => {
-            let (bytes, offset) = pixels_to_bytes(pixels);
-            (bytes.into(), offset as u32)
+            let (bytes, offset) = pixels_to_bytes(pixels)?;
+            Ok((bytes.into(), offset as u32))
         }
     }
 }
 
-/// Copy fallback for pixels whose alignment differs from their channel type's.
+/// Infallible convenience over [`try_pixels_into_storage`], for constructors
+/// whose contract already documents a panic on allocation failure.
 #[cfg(feature = "rgb")]
-fn pixels_to_bytes<P: bytemuck::Pod>(pixels: Vec<P>) -> (Vec<u8>, usize) {
+fn pixels_into_storage<P: bytemuck::Pod>(
+    pixels: Vec<P>,
+    channel: ChannelType,
+) -> (PixelStorage, u32) {
+    match try_pixels_into_storage(pixels, channel) {
+        Ok(done) => done,
+        Err(_pixels) => panic!("pixel buffer allocation failed"),
+    }
+}
+
+/// Copy fallback for pixels whose layout can't move into byte storage in
+/// place. `try_cast_vec` to `u8` succeeds whenever the allocation's byte
+/// capacity is already pixel-aligned for `u8` (alignment 1 accepts every
+/// pointer), so the copy arm is a defensive path: it reserves fallibly and
+/// returns the source `Vec` on failure rather than aborting inside a
+/// `Result`-returning constructor.
+#[cfg(feature = "rgb")]
+fn pixels_to_bytes<P: bytemuck::Pod>(pixels: Vec<P>) -> Result<(Vec<u8>, usize), Vec<P>> {
     match bytemuck::try_cast_vec(pixels) {
-        Ok(bytes) => (bytes, 0),
+        Ok(bytes) => Ok((bytes, 0)),
         Err((_err, pixels)) => {
             let bytes = bytemuck::cast_slice::<P, u8>(&pixels);
             let align = core::mem::align_of::<P>();
-            let mut data = alloc::vec![0; bytes.len().checked_add(align - 1).expect("pixel allocation overflow")];
+            let Some(total) = bytes.len().checked_add(align - 1) else {
+                return Err(pixels);
+            };
+            let mut data = Vec::new();
+            if data.try_reserve_exact(total).is_err() {
+                return Err(pixels);
+            }
+            data.resize(total, 0);
             let offset = align_offset(data.as_ptr(), align);
             data[offset..offset + bytes.len()].copy_from_slice(bytes);
-            (data, offset)
+            Ok((data, offset))
         }
     }
 }
@@ -1106,6 +1135,12 @@ impl<'a, P> PixelSlice<'a, P> {
     ///
     /// Returns `Cow::Borrowed` when rows are contiguous (zero-copy),
     /// `Cow::Owned` when stride padding must be stripped.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the padding-strip copy fails to allocate. Use
+    /// [`try_contiguous_bytes`](Self::try_contiguous_bytes) for fallible
+    /// allocation (see the [allocation policy](crate#allocation-policy)).
     pub fn contiguous_bytes(&self) -> alloc::borrow::Cow<'a, [u8]> {
         if let Some(bytes) = self.as_contiguous_bytes() {
             alloc::borrow::Cow::Borrowed(bytes)
@@ -2211,6 +2246,13 @@ impl<P> PixelCow<'_, P> {
 
 impl<'a> PixelCow<'a> {
     /// Obtain mutable owned pixels, cloning the borrowed pixels if needed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the clone fails to allocate — same contract as
+    /// [`Cow::to_mut`](alloc::borrow::Cow::to_mut). For a recoverable
+    /// clone, use [`PixelSlice::try_to_tight_buffer`] on the borrowed view
+    /// before assigning `Self::Owned`.
     pub fn to_mut(&mut self) -> &mut PixelBuffer {
         if let Self::Borrowed(slice) = self {
             let owned = pixel_slice_to_owned(slice);
@@ -2223,6 +2265,13 @@ impl<'a> PixelCow<'a> {
     }
 
     /// Consume this value, cloning the pixels only when they are borrowed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the clone fails to allocate — same contract as
+    /// [`Cow::into_owned`](alloc::borrow::Cow::into_owned). For a
+    /// recoverable clone, match on the variant or use
+    /// [`PixelSlice::try_to_tight_buffer`] on the borrowed view.
     pub fn into_owned(self) -> PixelBuffer {
         match self {
             Self::Borrowed(slice) => pixel_slice_to_owned(&slice),
@@ -2549,7 +2598,8 @@ impl<P: Pixel> PixelBuffer<P> {
     ///
     /// # Errors
     ///
-    /// Returns [`BufferError::InvalidDimensions`] if `pixels.len() != width * height`.
+    /// Returns [`BufferError::InvalidDimensions`] if `pixels.len() != width * height`,
+    /// or [`BufferError::AllocationFailed`] if the copy path's reserve fails.
     #[track_caller]
     pub fn from_pixels(pixels: Vec<P>, width: u32, height: u32) -> Result<Self, At<BufferError>> {
         const { assert!(core::mem::size_of::<P>() == P::DESCRIPTOR.bytes_per_pixel()) }
@@ -2569,7 +2619,8 @@ impl<P: Pixel> PixelBuffer<P> {
         let stride = (width as usize)
             .checked_mul(descriptor.bytes_per_pixel())
             .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
-        let (data, offset) = pixels_into_storage(pixels, descriptor.channel_type());
+        let (data, offset) = try_pixels_into_storage(pixels, descriptor.channel_type())
+            .map_err(|_pixels| whereat::at!(BufferError::AllocationFailed))?;
         Ok(Self {
             data,
             offset,
@@ -2817,6 +2868,12 @@ impl PixelBuffer {
     /// sample type has the same alignment as `P` and capacity is a multiple of
     /// its size. This includes U16/F32 typed storage, not only byte storage.
     /// Incompatible allocator layouts require one copy into a typed allocation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the alignment-mismatch copy fails to allocate — there is no
+    /// `try_` sibling today (see the
+    /// [allocation policy](crate#allocation-policy)).
     pub fn into_contiguous_pixels<P: Pixel>(self) -> Option<Vec<P>> {
         if !self.descriptor.typed_view_compatible(P::DESCRIPTOR)
             || core::mem::size_of::<P>() != self.descriptor.bytes_per_pixel()
@@ -3431,6 +3488,13 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
     /// Returns exactly `width * height * bytes_per_pixel` bytes in row-major order.
     /// For buffers already tightly packed (stride == width * bpp), this is a single memcpy.
     /// For padded buffers, this strips the padding row by row.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the copy fails to allocate. Use
+    /// [`try_copy_to_contiguous_bytes`](Self::try_copy_to_contiguous_bytes)
+    /// for fallible allocation (see the
+    /// [allocation policy](crate#allocation-policy)).
     pub fn copy_to_contiguous_bytes(&self) -> Vec<u8> {
         let bpp = self.descriptor.bytes_per_pixel();
         let row_bytes = self.width as usize * bpp;

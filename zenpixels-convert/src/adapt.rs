@@ -43,7 +43,6 @@
 //! # Ok::<(), whereat::At<zenpixels_convert::ConvertError>>(())
 //! ```
 
-use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::convert::ConvertPlan;
@@ -210,13 +209,19 @@ pub(crate) fn convert_buffer(
     let src_stride = (width as usize) * src_bpp;
     ensure_src_buffer_fits(src.len(), from, width, rows, src_stride)?;
     if from == to {
-        return Ok(src.to_vec());
+        let mut copy = Vec::new();
+        copy.try_reserve_exact(src.len())
+            .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
+        copy.extend_from_slice(src);
+        return Ok(copy);
     }
 
     let mut converter = RowConverter::new(from, to).at()?;
     let dst_bpp = to.bytes_per_pixel();
     let dst_stride = (width as usize) * dst_bpp;
-    let mut output = vec![0u8; checked_byte_alloc(rows, dst_stride)?];
+    let mut output: Vec<u8> =
+        bytemuck::allocation::try_zeroed_vec(checked_byte_alloc(rows, dst_stride)?)
+            .map_err(|()| whereat::at!(ConvertError::AllocationFailed))?;
 
     for y in 0..rows {
         let src_start = y as usize * src_stride;

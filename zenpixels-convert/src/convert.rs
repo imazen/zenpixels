@@ -282,7 +282,7 @@ fn matte_background(
         bytemuck::cast_slice_mut(&mut linear),
         1,
         &mut ConvertScratch::new(),
-    );
+    )?;
     if hdr {
         return Ok(linear);
     }
@@ -2369,6 +2369,24 @@ impl ConvertPlan {
             .unwrap_or(0)
     }
 
+    /// Whether any step uses the HDR kernel scratch (RGB strips for the
+    /// tone-map and soft-compress kernels). Lets the scratch reserve those
+    /// strips only when a plan actually runs them.
+    pub(crate) fn needs_hdr_scratch(&self) -> bool {
+        self.operations.iter().any(|op| {
+            matches!(op.step, ConvertStep::SoftCompressOklch { .. }) || {
+                #[cfg(feature = "hdr-experimental")]
+                {
+                    matches!(op.step, ConvertStep::ToneMap(_))
+                }
+                #[cfg(not(feature = "hdr-experimental"))]
+                {
+                    false
+                }
+            }
+        })
+    }
+
     /// Source descriptor.
     pub fn from(&self) -> PixelDescriptor {
         self.from
@@ -2894,44 +2912,50 @@ impl ConvertScratch {
         plan: &ConvertPlan,
         width: u32,
     ) -> Result<(), At<ConvertError>> {
-        let half = (width as usize)
-            .checked_mul(plan.max_intermediate_bpp())
-            .ok_or_else(|| whereat::at!(ConvertError::InvalidWidth(width)))?;
-        let words = half
-            .checked_add(3)
-            .and_then(|n| (n / 4).checked_mul(2))
-            .ok_or_else(|| whereat::at!(ConvertError::InvalidWidth(width)))?;
-        if self.buf.len() < words {
-            self.buf
-                .try_reserve(words - self.buf.len())
-                .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
-            self.buf.resize(words, 0);
+        self.try_ensure_capacity(plan, width)?;
+        if plan.needs_hdr_scratch() {
+            self.hdr.prepare(width)?;
         }
-        self.hdr.prepare(width)?;
         // Warm only the selected kernels/LUTs using one synthetic aligned pixel.
         // No source image is inspected and no full-image preflight is hidden here.
         let words = plan.max_intermediate_bpp().div_ceil(4);
-        let src = vec![0u32; words];
-        let mut dst = vec![0u32; words];
+        let mut src: alloc::vec::Vec<u32> = alloc::vec::Vec::new();
+        src.try_reserve_exact(words)
+            .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
+        src.resize(words, 0);
+        let mut dst: alloc::vec::Vec<u32> = alloc::vec::Vec::new();
+        dst.try_reserve_exact(words)
+            .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
+        dst.resize(words, 0);
         convert_row_buffered(
             plan,
             &bytemuck::cast_slice::<u32, u8>(&src)[..plan.from().bytes_per_pixel()],
             &mut bytemuck::cast_slice_mut::<u32, u8>(&mut dst)[..plan.to().bytes_per_pixel()],
             1,
             self,
-        );
+        )?;
         Ok(())
     }
 
     /// Ensure the buffer is large enough for two halves of the max
-    /// intermediate format at the given width.
-    fn ensure_capacity(&mut self, plan: &ConvertPlan, width: u32) {
+    /// intermediate format at the given width, reporting a failed reserve.
+    fn try_ensure_capacity(
+        &mut self,
+        plan: &ConvertPlan,
+        width: u32,
+    ) -> Result<(), At<ConvertError>> {
         // An even count of u32 puts both halves on a u32 boundary, as F32 rows need.
-        let half_bytes = (width as usize) * plan.max_intermediate_bpp();
+        let half_bytes = (width as usize)
+            .checked_mul(plan.max_intermediate_bpp())
+            .ok_or_else(|| whereat::at!(ConvertError::InvalidWidth(width)))?;
         let total_u32 = half_bytes.div_ceil(4) * 2;
         if self.buf.len() < total_u32 {
+            self.buf
+                .try_reserve(total_u32 - self.buf.len())
+                .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
             self.buf.resize(total_u32, 0);
         }
+        Ok(())
     }
 }
 
@@ -2959,24 +2983,35 @@ pub(crate) fn soft_compress_applies(from: &PixelDescriptor, to: &PixelDescriptor
 /// One row with fresh scratch, for tests that run a plan directly.
 #[cfg(test)]
 fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
-    convert_row_buffered(plan, src, dst, width, &mut ConvertScratch::new());
+    convert_row_buffered(plan, src, dst, width, &mut ConvertScratch::new())
+        .expect("test row conversion");
 }
 
 /// Convert one row of `width` pixels, reusing pre-allocated scratch buffers.
 ///
 /// For multi-step plans this avoids per-row heap allocation by ping-ponging
 /// between two halves of a scratch buffer. Single-step plans bypass scratch.
+///
+/// # Errors
+///
+/// [`ConvertError::AllocationFailed`] when the scratch has to grow past its
+/// prepared capacity (a `width` larger than [`ConvertScratch::prepare`]
+/// covered, or no `prepare` call at all) and the reserve fails.
 pub(crate) fn convert_row_buffered(
     plan: &ConvertPlan,
     src: &[u8],
     dst: &mut [u8],
     width: u32,
     scratch: &mut ConvertScratch,
-) {
+) -> Result<(), At<ConvertError>> {
     if plan.is_identity() {
         let len = width as usize * plan.to.bytes_per_pixel();
         dst[..len].copy_from_slice(&src[..len]);
-        return;
+        return Ok(());
+    }
+
+    if plan.needs_hdr_scratch() {
+        scratch.hdr.prepare(width)?;
     }
 
     if plan.operations.len() == 1 {
@@ -2992,10 +3027,10 @@ pub(crate) fn convert_row_buffered(
             scale,
             &mut scratch.hdr,
         );
-        return;
+        return Ok(());
     }
 
-    scratch.ensure_capacity(plan, width);
+    scratch.try_ensure_capacity(plan, width)?;
 
     // Destructure so the ping-pong halves and the HDR kernel scratch are
     // disjoint mutable borrows across the step loop.
@@ -3069,6 +3104,7 @@ pub(crate) fn convert_row_buffered(
             }
         }
     }
+    Ok(())
 }
 
 /// Check if two steps are inverses that cancel each other.

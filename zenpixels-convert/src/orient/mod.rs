@@ -220,7 +220,9 @@ const MAX_INPLACE_BPP: usize = 16;
 /// cycle-following (an `n`-element visited scratch — not a 2× pixel buffer).
 ///
 /// Returns [`ConvertError::BufferSize`] if `bpp` exceeds 16 (the per-element temp
-/// limit) or if re-describing the output fails.
+/// limit) or if re-describing the output fails, and
+/// [`ConvertError::AllocationFailed`] if the non-square transpose's `n`-bit
+/// visited scratch can't be reserved.
 pub(crate) fn apply_orientation_in_place(
     dst: &mut PixelBuffer,
     orientation: Orientation,
@@ -251,10 +253,26 @@ pub(crate) fn apply_orientation_in_place(
             actual: 0,
         });
     }
+    // Non-square transposing orientations follow the permutation's cycles and
+    // track visited elements in an `n`-bit scratch. Reserve it here, fallibly:
+    // the `transform_in_place` closure has no way to report a failure.
+    let transposing = matches!(
+        orientation,
+        Orientation::Transpose
+            | Orientation::Rotate90
+            | Orientation::Rotate270
+            | Orientation::Transverse
+    );
+    let mut moved = alloc::vec::Vec::new();
+    if transposing && dst.width() != dst.height() {
+        moved
+            .try_reserve_exact(dst.width() as usize * dst.height() as usize)
+            .map_err(|_| ConvertError::AllocationFailed)?;
+    }
     // The permutation keeps every sample value, so restore the evidence that
     // the in-place mutable access had to end.
     let exact = dst.exact_depth();
-    dst.transform_in_place(|px| orient_in_place_impl(px, orientation));
+    dst.transform_in_place(|px| orient_in_place_impl(px, orientation, moved));
     dst.set_exact_depth(exact)
         .expect("apply_orientation_in_place: descriptor is unchanged");
     Ok(())
@@ -263,7 +281,11 @@ pub(crate) fn apply_orientation_in_place(
 /// The transform body behind [`PixelBufferConvertExt::into_oriented`](crate::ext::PixelBufferConvertExt::into_oriented): permute the
 /// bytes and return the re-described tight-stride view for
 /// [`PixelBuffer::transform_in_place`] to adopt.
-fn orient_in_place_impl(px: InPlacePixels<'_>, orientation: Orientation) -> PixelSliceMut<'_> {
+fn orient_in_place_impl(
+    px: InPlacePixels<'_>,
+    orientation: Orientation,
+    mut moved: alloc::vec::Vec<bool>,
+) -> PixelSliceMut<'_> {
     let InPlacePixels {
         bytes,
         width: w,
@@ -315,17 +337,17 @@ fn orient_in_place_impl(px: InPlacePixels<'_>, orientation: Orientation) -> Pixe
         Orientation::FlipH => inplace_flip_h(content, w, h, bpp),
         Orientation::FlipV => inplace_flip_v(content, w, h, bpp),
         Orientation::Rotate180 => inplace_reverse_elements(content, bpp),
-        Orientation::Transpose => inplace_transpose(content, w, h, bpp),
+        Orientation::Transpose => inplace_transpose(content, w, h, bpp, &mut moved),
         Orientation::Rotate90 => {
-            inplace_transpose(content, w, h, bpp);
+            inplace_transpose(content, w, h, bpp, &mut moved);
             inplace_flip_h(content, ow, oh, bpp); // transpose ∘ FlipH
         }
         Orientation::Rotate270 => {
-            inplace_transpose(content, w, h, bpp);
+            inplace_transpose(content, w, h, bpp, &mut moved);
             inplace_flip_v(content, ow, oh, bpp); // transpose ∘ FlipV
         }
         Orientation::Transverse => {
-            inplace_transpose(content, w, h, bpp);
+            inplace_transpose(content, w, h, bpp, &mut moved);
             inplace_reverse_elements(content, bpp); // transpose ∘ Rotate180
         }
         // Pre-checked in `apply_orientation_in_place`; unreachable here.
@@ -394,7 +416,11 @@ fn inplace_reverse_elements(a: &mut [u8], bpp: usize) {
 /// maps to `c*h+r ≡ (k*h) mod (n-1)`; to fill position `cur` we gather from
 /// `(cur*w) mod (n-1)` (the inverse, since `w*h ≡ 1`), walking each cycle once
 /// with a one-element temp and an `n`-bit visited set. `0` and `n-1` are fixed.
-fn inplace_transpose(a: &mut [u8], w: u32, h: u32, bpp: usize) {
+///
+/// `moved` holds the visited set. The caller reserves `w * h` bits of capacity
+/// (see [`apply_orientation_in_place`]); it may arrive empty for the square
+/// path, which doesn't cycle-follow.
+fn inplace_transpose(a: &mut [u8], w: u32, h: u32, bpp: usize, moved: &mut alloc::vec::Vec<bool>) {
     if w == h {
         let n = w as usize;
         for i in 0..n {
@@ -414,7 +440,11 @@ fn inplace_transpose(a: &mut [u8], w: u32, h: u32, bpp: usize) {
         return;
     }
     let mn1 = n - 1;
-    let mut moved = alloc::vec![false; n];
+    debug_assert!(
+        moved.capacity() >= n,
+        "in-place transpose scratch was not reserved for {w}x{h}"
+    );
+    moved.resize(n, false);
     moved[0] = true;
     moved[mn1] = true;
     let mut tmp = [0u8; MAX_INPLACE_BPP];

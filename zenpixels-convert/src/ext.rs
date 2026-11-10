@@ -858,7 +858,8 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
         let total = dst_stride
             .checked_mul(self.height() as usize)
             .ok_or_else(|| whereat::at!(crate::ConvertError::AllocationFailed))?;
-        let mut out = alloc::vec![0u8; total];
+        let mut out: alloc::vec::Vec<u8> = bytemuck::allocation::try_zeroed_vec(total)
+            .map_err(|()| whereat::at!(crate::ConvertError::AllocationFailed))?;
 
         let src_slice = self.as_slice();
         for y in 0..self.height() {
