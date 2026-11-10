@@ -1396,13 +1396,18 @@ struct Args {
     out: PathBuf,
     /// When set, print structural-vs-empirical disagreements per profile.
     report: bool,
+    /// Inventory original hashes and bundle bytes without numerical qualification.
+    inventory: bool,
 }
 
 fn parse_args() -> Args {
     let mut positional: Vec<String> = Vec::new();
     let mut report = false;
+    let mut inventory = false;
     for arg in std::env::args().skip(1) {
-        if arg == "--report" {
+        if arg == "--inventory" {
+            inventory = true;
+        } else if arg == "--report" {
             report = true;
         } else {
             positional.push(arg);
@@ -1433,6 +1438,7 @@ fn parse_args() -> Args {
         inputs,
         out,
         report,
+        inventory,
     }
 }
 
@@ -1686,6 +1692,36 @@ fn main() {
     }
 
     let entries = collect_entries(&input_dirs);
+    if args.inventory {
+        // Reuse the table generator's exact fingerprint and bundle decoder.
+        // Keep this independent of qualification: rejected profiles still matter
+        // when auditing retained originals for historical table entries.
+        std::fs::create_dir_all(&out_dir).expect("create inventory directory");
+        let mut inventory = String::from("normalized_hash\tsource\n");
+        for path in &entries {
+            let bytes = std::fs::read(path).expect("read retained original");
+            inventory.push_str(&format!(
+                "{:016x}\t{}\n",
+                fnv1a_64_normalized(&bytes),
+                path.display()
+            ));
+        }
+        let bundle_dir = out_dir.join("bundle-originals");
+        std::fs::create_dir_all(&bundle_dir).expect("create bundle originals directory");
+        for (name, bytes) in collect_bundle_profiles() {
+            let path = bundle_dir.join(format!("{}.icc", name.replace(':', "-")));
+            std::fs::write(&path, &bytes).expect("retain exact bundle bytes");
+            inventory.push_str(&format!(
+                "{:016x}\t{}\n",
+                fnv1a_64_normalized(&bytes),
+                path.display()
+            ));
+        }
+        let path = out_dir.join("inventory.tsv");
+        std::fs::write(&path, inventory).expect("write hash inventory");
+        eprintln!("Wrote {}", path.display());
+        return;
+    }
     eprintln!(
         "Scanning {} files across {} dirs...",
         entries.len(),
@@ -1721,6 +1757,18 @@ fn main() {
         }
 
         let fname = path.file_name().unwrap().to_string_lossy().to_string();
+        if report_mode {
+            // Audit every supplied object, including those whose nonstandard
+            // primaries prevent canonical classification. Bundle rows keep the
+            // existing compact summary below.
+            eprintln!(
+                "Object {} hash={:016x} space={} CMS-deltas={:?}",
+                fname,
+                fnv1a_64_normalized(&data),
+                String::from_utf8_lossy(&data[16..20]),
+                lcms2_crosscheck_deltas(&data)
+            );
+        }
         ingest_profile(
             &fname,
             &data,

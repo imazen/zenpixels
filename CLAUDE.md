@@ -120,6 +120,11 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed (2026-11-09): retained sRGB hash `6a669bf1e1bf97d6` granted substitution
+  despite a measured 298-u16 canonical transform error exceeding the existing
+  256-u16 qualification gate. Recognition remains; the intent mask is now
+  identification-only. Exact original and run provenance: `docs/icc-retention-audit.md`.
+
 - Fixed in the refinement pass (2026-11-09): CMS dispatch omitted BGR from
   its RGB-to-gray luma-policy check and could accept a plugin without explicit
   coefficients. Planner, row CMS and output planning now share one preflight.

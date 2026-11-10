@@ -154,6 +154,10 @@ icc-ensure-sources:
 icc-build-gen:
     cargo build -p icc-gen --release
 
+# Fingerprint all originals, including rejected profiles and the current bundle.
+icc-inventory input output:
+    cargo run -p icc-gen --release --bin icc-gen -- --inventory "{{input}}" "{{output}}"
+
 # Regenerate .inc table files from ICC profile cache + bundled profiles
 icc-gen: icc-build-gen icc-ensure-sources
     ./target/release/icc-gen "{{icc_cache}}" "zenpixels-convert/src/profiles" "{{icc_out}}"

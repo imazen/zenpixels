@@ -73,6 +73,10 @@ This companion remains an unpublished review API; no release is authorized.
 
 ### Fixed
 
+- Retain identification but remove CMS substitution permission for sRGB hash
+  `6a669bf1e1bf97d6`: requalification exceeds the existing colorimetric
+  tolerance. See [the retained-original audit](docs/icc-retention-audit.md).
+
 - Validate in-place adaptation targets before rewriting pixels; invalid alpha
   descriptors return an error without changing storage. Apply one RGB/BGR-to-gray
   luma-policy check before built-in or CMS construction (`f8d05990`).
