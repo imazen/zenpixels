@@ -1040,7 +1040,8 @@ impl PlaneSpec {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum LayoutError {
-    /// Alpha interpretation must be present exactly when an alpha plane exists.
+    /// A real Alpha plane requires Straight, Premultiplied or Opaque; otherwise
+    /// the interpretation must be absent. Undefined is padding, not alpha.
     AlphaInterpretation,
     /// The layout has no planes.
     Empty,
@@ -1089,7 +1090,7 @@ impl fmt::Display for LayoutError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::AlphaInterpretation => {
-                f.write_str("planar alpha role and interpretation disagree")
+                f.write_str("planar Alpha requires Straight, Premultiplied or Opaque; without Alpha, interpretation must be absent")
             }
             Self::Empty => f.write_str("planar layout has no planes"),
             Self::DuplicateRole(r) => write!(f, "planar layout holds {r:?} twice"),

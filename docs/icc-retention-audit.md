@@ -105,3 +105,17 @@ Full historical tolerance requalification is still outstanding. Original-byte
 coverage is complete; only the 14 manifest additions received the qualification
 run described here. Consolidating historical and corpus originals into the ICC
 archive and updating its manifest remain archive maintenance work.
+
+## Paired fingerprint verification
+
+The MurmurHash3 migration rechecked all 598 selected originals against the
+actual hash-enabled core/zenhash implementation and their full-file SHA-256
+identities. Every `(FNV-1a64, MurmurHash3_x86_32)` pair matches the independent
+upstream-derived mapping; no original is missing and no qualification or
+intent permission changed in this migration. The Murmur seed is 3_242_157_231.
+
+The extended receipt is `coverage-murmur3.json` beside `coverage-final.json`;
+SHA-256 is
+`09abe622e727cf6ee7bc92386f6b3232579b4d18b2e03ecfba7d2cbf541744a1`.
+`murmur-verification.txt` records the 598/598 implementation check. This verifies
+fingerprint coverage, not the still-separate historical tolerance requalification.
