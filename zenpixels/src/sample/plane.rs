@@ -213,19 +213,29 @@ impl<'a> CodePlane<'a> {
         let (shift, mask) = (self.encoding.bit_shift(), self.code_mask());
         match self.words {
             Words::U8(s) => {
-                for (code, word) in codes
-                    .iter_mut()
-                    .zip(s[start..end].iter().step_by(self.step_words))
-                {
-                    *code = (u16::from(*word) >> shift) & mask;
+                let words = &s[start..end];
+                if self.step_words == 1 {
+                    for (code, word) in codes.iter_mut().zip(words) {
+                        *code = (u16::from(*word) >> shift) & mask;
+                    }
+                } else {
+                    for (code, word) in codes.iter_mut().zip(words.iter().step_by(self.step_words))
+                    {
+                        *code = (u16::from(*word) >> shift) & mask;
+                    }
                 }
             }
             Words::U16(s) => {
-                for (code, word) in codes
-                    .iter_mut()
-                    .zip(s[start..end].iter().step_by(self.step_words))
-                {
-                    *code = (*word >> shift) & mask;
+                let words = &s[start..end];
+                if self.step_words == 1 {
+                    for (code, word) in codes.iter_mut().zip(words) {
+                        *code = (*word >> shift) & mask;
+                    }
+                } else {
+                    for (code, word) in codes.iter_mut().zip(words.iter().step_by(self.step_words))
+                    {
+                        *code = (*word >> shift) & mask;
+                    }
                 }
             }
         }
