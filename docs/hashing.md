@@ -67,3 +67,10 @@ Without `hash`, the existing dependency graph and Rust 1.85 core floor remain.
 Enabling `hash` requires Rust 1.89 through zenhash, and works with no_std + alloc.
 Backend selection, reproducible commands and measured limits are recorded in
 [the pixel-hash benchmark](../benchmarks/pixel-hash/README.md).
+
+Hashing a validated view uses bounded stack buffers and borrowed data; the
+selected zero-seed XXH3 state uses zenhash's static default secret. These paths
+do not allocate sample storage. This describes hashing only, not view/metadata
+construction or a caller-supplied Hasher. The broader allocation audit in #151
+remains separate. Performance measurements use std/runtime dispatch; no_std
+performance has not been measured.

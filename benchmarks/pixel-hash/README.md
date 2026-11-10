@@ -72,3 +72,56 @@ not used for selection. Failed CPU-set admission attempts are also preserved.
 The optional zenhash dependency is pinned to a reviewed git revision while its
 MurmurHash3 addition awaits release. Replace it with the published version
 before publishing zenpixels; this change does not authorize a crate release.
+
+## Second x86 host and retained rejected attempts
+
+A second complete run used a Core Ultra 7 265K, the same x86 executable and
+three processes × 12 rounds × 116 groups. A kernel-enforced CPU set restricted
+the entire process tree to performance CPUs 0–7; no group pin was applied.
+Runtime dispatch was enabled (`zenhash/std`, `xxh3`, `avx512`, `rapidhash`).
+Without std, zenhash selects only compile-time-proven tiers; that configuration
+is correctness-tested but its performance is not measured here.
+
+This run also **failed resource confirmation** (exit 2). Only 2762 of 4176
+round observations were clean. All observations, including flagged rounds,
+remain in [the second CSV](results_2026-11-09_i265.csv) and raw archive; they
+must not be promoted to a confirmed comparison. The following are descriptive
+medians in nanoseconds:
+
+| Case | RapidhashV3 | XXH3 |
+|---|---:|---:|
+| packed RGBA8, 1×1 | 34.303 | 55.958 |
+| planar RGB8, 1×1 | 88.560 | 167.704 |
+| packed RGBA8, 3840×2160 | 2002392.417 | 1649521.083 |
+| planar RGB8, 3840×2160 | 1403391.750 | 930131.528 |
+| packed RGBA8 1×1 + 128 KiB ICC | 6906.804 | 3094.674 |
+| P010, 3840×2160 | 20254055.750 | 19044341.000 |
+
+XXH3 had the lower median in 73 of 116 groups. It remains the selected default
+for bulk image/profile hashing; rapid's advantage on tiny values is preserved
+in the data. A caller prioritizing tiny keys can use `Hash` with RapidhashV3.
+The available shared hosts did not provide a clean strict confirmation run;
+this limits the confidence of the performance decision, not hash correctness.
+No universal winner, confirmed speedup, or cross-platform throughput claim is
+established. A quiet-host confirmation remains a performance evidence task.
+
+The wrapper recorded 248 seconds, peak RSS 0.74 GiB, minimum available memory
+21381 MiB, peak load 1.15. The user-manager scope was unavailable in the nested
+launch, so the wrapper reported no cap; a 5 GiB/no-swap cap was then applied
+and verified on this experiment's outer system scope while it was running.
+Future reproduction should apply both CPU and memory limits to the outer
+scope at launch. The aggregate object is
+`71c0faa8c1f63ce0eab1dc15667e20db862f549ea17df84317a4e14a27db29f0.json.gz`.
+
+Two further attempts are retained without selecting favorable subsets: a
+pinned repeat stopped after its checkpoint was already flagged, and a
+seven-group unpinned diagnostic (three processes) that completed but failed
+confirmation. The diagnostic identified foreign session processes and kernel
+compaction in its gate trace. An ARM attempt was stopped when live fuzz
+workers were observed; its partial results establish no performance claim.
+No foreign jobs were stopped and no thresholds or admission gates were relaxed.
+
+Private full evidence, executable identities, raw rounds, flags, progress
+records and rejected attempts are mirrored under
+`output/zenpixels/pixel-hash-2026-11-09/` in the private artifact archive.
+Captures include process metadata and are intentionally not committed here.
