@@ -5,7 +5,8 @@
 //! crate. Measurement / SIMD machinery lives ONLY in `zenpixels-convert`
 //! (`CllMeasure`); anything heavier belongs in a downstream crate.
 //!
-//! The owner added two exceptions on 2026-11-03, `image` and `rustversion`. They
+//! The owner added `image` and `rustversion` on 2026-11-03, and explicitly
+//! requested optional `zenhash` for the `hash` feature on 2026-11-09. They
 //! may only ever be optional and outside the default features, which this checks,
 //! so a default build's dependency set is unchanged.
 //!
@@ -22,7 +23,16 @@
 const ALLOWED: &[&str] = &["bytemuck", "rgb", "imgref", "whereat"];
 
 /// Allowed only as `optional = true` dependencies that no default feature enables.
-const OPTIONAL_ONLY: &[&str] = &["image", "rustversion"];
+const OPTIONAL_ONLY: &[&str] = &["image", "rustversion", "zenhash"];
+
+/// Weak forwarding (`dep?/feature`) never activates an optional dependency.
+fn activates_dependency(line: &str, name: &str) -> bool {
+    line.split('"').skip(1).step_by(2).any(|term| {
+        term == name
+            || term.strip_prefix("dep:") == Some(name)
+            || term.split_once('/').is_some_and(|(dep, _)| dep == name)
+    })
+}
 
 /// Collect dependency names from every guarded table (runtime + build,
 /// including `[target.'cfg(..)'.…]` forms); `[dev-dependencies]` is exempt.
@@ -128,14 +138,29 @@ fn exceptions_stay_optional_and_out_of_the_default_build() {
     for name in OPTIONAL_ONLY {
         assert!(!default.contains(name), "{name} is in the default features");
     }
+    assert!(
+        !activates_dependency(&default, "hash"),
+        "hash must stay opt-in"
+    );
     // Neither default feature may turn them on indirectly.
     for line in manifest.lines().map(str::trim) {
         if line.starts_with("std =") || line.starts_with("icc =") {
             for name in OPTIONAL_ONLY {
-                assert!(!line.contains(name), "{line} enables {name}");
+                assert!(!activates_dependency(line, name), "{line} enables {name}");
             }
         }
     }
+}
+
+#[test]
+fn optional_forwarding_is_distinguished_from_dependency_activation() {
+    assert!(!activates_dependency(
+        r#"std = ["zenhash?/std"]"#,
+        "zenhash"
+    ));
+    assert!(activates_dependency(r#"std = ["zenhash/std"]"#, "zenhash"));
+    assert!(activates_dependency(r#"hash = ["dep:zenhash"]"#, "zenhash"));
+    assert!(activates_dependency(r#"default = ["hash"]"#, "hash"));
 }
 
 #[test]

@@ -148,6 +148,9 @@ jobs:
       - name: Test (i686/QEMU)
         run: cross test --workspace --target i686-unknown-linux-gnu
 
+      - name: Test pixel Hash and ICC goldens (i686)
+        run: cross test --locked -p zenpixels --features hash --lib --test hashing --target i686-unknown-linux-gnu
+
       - name: Test still-image IQA contract (i686)
         run: cross test --locked --manifest-path zenpsy-api/Cargo.toml --target i686-unknown-linux-gnu
 
@@ -179,6 +182,12 @@ jobs:
 
       - name: Check WASM (no_std)
         run: cargo check --workspace --target wasm32-wasip1 --no-default-features
+
+      - uses: taiki-e/install-action@wasmtime
+      - name: Test pixel Hash and ICC goldens (WASI)
+        run: cargo test --locked -p zenpixels --features hash --lib --test hashing --target wasm32-wasip1
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
 
   # ==========================================================================
   # Clippy
@@ -342,6 +351,9 @@ jobs:
 
       - name: Check MSRV (zenpixels @ 1.85)
         run: cargo +1.85.0 check -p zenpixels
+
+      - name: Check optional Hash MSRV (zenpixels @ 1.89)
+        run: cargo +1.89.0 check --locked -p zenpixels --lib --no-default-features --features hash
 
       - name: Check MSRV (zenpixels-convert @ 1.89)
         run: cargo +1.89.0 check -p zenpixels-convert
