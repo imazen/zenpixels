@@ -4,12 +4,24 @@
 
 ### Added
 
+- Generalize planar ownership over `PlaneStorage` / `PlaneStorageMut`, preserving
+  aligned, pooled and shared owners. Add recoverable planar parts transfer.
+- Unify `StorageSample` and `PlaneSample`: typed/aligned and runtime plane storage
+  carry all ten native sample types, including signed/wide integers and F64.
+  Numerical CodePlane support remains U8/U16. Wide/signed planar hashes mask
+  unused payload bits while retaining existing portable goldens.
+
 - Owned `PlanarBuffer` / `AnyPlaneBuf` and writable `PlanarSliceMut` /
   `AnyPlaneMut` adopt or borrow independently strided planes. Shared layout,
   geometry and alpha checks; no allocation when adopting existing owners or
   borrowing views. Layout remains Vec-backed (`c8949ec2`).
 
 ### QUEUED BREAKING CHANGES
+
+- `PlanarBuffer<P>` and `PlanarSliceMut<'a, P>` carry concrete plane owner types;
+  the latter replaces the initial two-lifetime-only review signature. Explicit
+  empty owner lists need a sample/owner type annotation. `PlaneSample` becomes
+  an alias of the shared `StorageSample` trait; plane enums gain native variants.
 
 - `PlanarSlice::planes()` returns an exact-size iterator of borrowed plane
   values instead of a descriptor slice, allowing allocation-free views of

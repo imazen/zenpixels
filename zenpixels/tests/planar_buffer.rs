@@ -261,11 +261,11 @@ fn owned_and_mutable_constructors_share_validation() {
         actual: 0,
     };
     assert_eq!(
-        PlanarBuffer::new(vec![], l.clone(), 1, 1, color.clone(), None).unwrap_err(),
+        PlanarBuffer::<AnyPlaneBuf>::new(vec![], l.clone(), 1, 1, color.clone(), None).unwrap_err(),
         expected
     );
     assert_eq!(
-        PlanarSliceMut::new(&mut [], &l, 1, 1, &color, None).unwrap_err(),
+        PlanarSliceMut::<AnyPlaneMut<'_>>::new(&mut [], &l, 1, 1, &color, None).unwrap_err(),
         expected
     );
     let mut wrong = [0u16];

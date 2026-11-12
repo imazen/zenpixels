@@ -362,3 +362,54 @@ fn planar_u8_subbyte_codes_ignore_unused_bits() {
         assert_ne!(a.hash_with(mode), c.hash_with(mode));
     }
 }
+
+#[test]
+fn wide_and_signed_planar_hashes_ignore_unused_bits_and_row_padding() {
+    macro_rules! check {
+        ($t:ty, $variant:ident, $bits:expr, $shift:expr) => {{
+            let e = SampleEncoding::new(ChannelType::$variant, $bits, $shift).unwrap();
+            let mask = ((1u64 << $bits) - 1) << $shift;
+            let low = [0u64, 1, (1u64 << ($bits - 1)), (1u64 << $bits) - 1];
+            let clean: Vec<$t> = low.iter().map(|&v| (v << $shift) as $t).collect();
+            let padded: Vec<$t> = vec![
+                ((low[0] << $shift) | !mask) as $t,
+                ((low[1] << $shift) | !mask) as $t,
+                17 as $t, // padding between rows, not part of the picture
+                ((low[2] << $shift) | !mask) as $t,
+                ((low[3] << $shift) | !mask) as $t,
+            ];
+            let clean = Plane::new(clean, 2, 2, 2).unwrap();
+            let padded = Plane::new(padded, 2, 2, 3).unwrap();
+            let layout = PlanarLayout::new(
+                vec![PlaneSpec::new(PlaneRole::Luma, PlaneEncoding::Code(e))],
+                ChromaSubsampling::Mono,
+                ChromaSiting::Unknown,
+            )
+            .unwrap();
+            let color = ColorContext::default();
+            let a = [clean.as_plane()];
+            let b = [padded.as_plane()];
+            let a = PlanarSlice::new(&a, &layout, 2, 2, &color, None).unwrap();
+            let b = PlanarSlice::new(&b, &layout, 2, 2, &color, None).unwrap();
+            assert_eq!(writes(&a), writes(&b));
+            assert_eq!(
+                a.hash_with(HashInclusions::SamplesOnly),
+                b.hash_with(HashInclusions::SamplesOnly)
+            );
+            // The final payload bytes must be independently packed little-endian
+            // codes of the storage width, not host-endian or sign-extended data.
+            let mut expected = Vec::new();
+            for v in low {
+                expected.extend_from_slice(&v.to_le_bytes()[..core::mem::size_of::<$t>()]);
+            }
+            let serialized = writes(&a).0.concat();
+            assert!(serialized.ends_with(&expected));
+        }};
+    }
+    check!(i8, I8, 6, 1);
+    check!(i16, I16, 10, 4);
+    check!(u32, U32, 24, 4);
+    check!(i32, I32, 24, 4);
+    check!(u64, U64, 48, 8);
+    check!(i64, I64, 48, 8);
+}

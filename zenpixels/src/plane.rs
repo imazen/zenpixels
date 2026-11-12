@@ -49,31 +49,9 @@ use crate::sample::{ChromaSiting, ChromaSubsampling, SampleEncoding};
 use alloc::{boxed::Box, vec::Vec};
 use core::fmt;
 
-mod sealed {
-    pub trait Sealed {}
-    impl Sealed for u8 {}
-    impl Sealed for u16 {}
-    impl Sealed for f32 {}
-}
-
-/// The sample type of a plane: `u8`, `u16` or `f32`.
-///
-/// Sealed; `f16` can be added when a consumer exchanges half-float planes.
-pub trait PlaneSample:
-    sealed::Sealed + bytemuck::Pod + Default + PartialEq + fmt::Debug + Send + Sync + 'static
-{
-    /// The channel type of this sample.
-    const CHANNEL_TYPE: ChannelType;
-}
-impl PlaneSample for u8 {
-    const CHANNEL_TYPE: ChannelType = ChannelType::U8;
-}
-impl PlaneSample for u16 {
-    const CHANNEL_TYPE: ChannelType = ChannelType::U16;
-}
-impl PlaneSample for f32 {
-    const CHANNEL_TYPE: ChannelType = ChannelType::F32;
-}
+/// The shared native storage sample contract. This is the same sealed trait
+/// used by [`crate::buffer::PixelStorage`], not a separate plane-only roster.
+pub use crate::buffer::StorageSample as PlaneSample;
 
 /// Read access to the samples of a plane's owner.
 ///
@@ -352,16 +330,18 @@ fn extent(start: usize, width: usize, height: usize, stride: usize) -> Result<us
 }
 
 impl<C> Plane<C> {
-    /// The storage, whatever row 0's index.
-    #[cfg(feature = "image")]
-    pub(crate) fn into_storage(self) -> C {
-        self.buf
-    }
-
     /// The index of row 0 in the storage.
     #[cfg(feature = "image")]
     pub(crate) fn samples_start(&self) -> usize {
         self.start
+    }
+}
+
+impl<C> Plane<C> {
+    /// Recover the original storage owner without copying samples, discarding
+    /// plane geometry. Read dimensions/stride first if the next owner needs them.
+    pub fn into_storage(self) -> C {
+        self.buf
     }
 }
 
@@ -794,17 +774,30 @@ impl<T: PlaneSample> TryFrom<PlaneBuf<T>> for imgref::ImgVec<T> {
     }
 }
 
-/// A borrowed plane of any sample type, for interfaces that carry planes of
-/// different sample types side by side.
+/// A read-only borrowed plane with runtime-selected native sample type.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub enum AnyPlane<'a> {
-    /// 8-bit samples.
+    /// Native `u8` samples.
     U8(PlaneRef<'a, u8>),
-    /// 16-bit samples.
+    /// Native `i8` samples.
+    I8(PlaneRef<'a, i8>),
+    /// Native `u16` samples.
     U16(PlaneRef<'a, u16>),
-    /// 32-bit float samples.
+    /// Native `i16` samples.
+    I16(PlaneRef<'a, i16>),
+    /// Native `u32` samples.
+    U32(PlaneRef<'a, u32>),
+    /// Native `i32` samples.
+    I32(PlaneRef<'a, i32>),
+    /// Native `f32` samples.
     F32(PlaneRef<'a, f32>),
+    /// Native `u64` samples.
+    U64(PlaneRef<'a, u64>),
+    /// Native `i64` samples.
+    I64(PlaneRef<'a, i64>),
+    /// Native `f64` samples.
+    F64(PlaneRef<'a, f64>),
 }
 
 impl AnyPlane<'_> {
@@ -812,116 +805,289 @@ impl AnyPlane<'_> {
     pub fn width(&self) -> usize {
         match self {
             Self::U8(p) => p.width(),
+            Self::I8(p) => p.width(),
             Self::U16(p) => p.width(),
+            Self::I16(p) => p.width(),
+            Self::U32(p) => p.width(),
+            Self::I32(p) => p.width(),
             Self::F32(p) => p.width(),
+            Self::U64(p) => p.width(),
+            Self::I64(p) => p.width(),
+            Self::F64(p) => p.width(),
         }
     }
-
     /// Rows.
     pub fn height(&self) -> usize {
         match self {
             Self::U8(p) => p.height(),
+            Self::I8(p) => p.height(),
             Self::U16(p) => p.height(),
+            Self::I16(p) => p.height(),
+            Self::U32(p) => p.height(),
+            Self::I32(p) => p.height(),
             Self::F32(p) => p.height(),
+            Self::U64(p) => p.height(),
+            Self::I64(p) => p.height(),
+            Self::F64(p) => p.height(),
         }
     }
-
-    /// Bytes between row starts. A sample stride may exceed byte-addressable
-    /// storage for an empty or single-row view; that returns GeometryOverflow.
+    /// Native storage type.
+    pub fn channel_type(&self) -> ChannelType {
+        match self {
+            Self::U8(_) => ChannelType::U8,
+            Self::I8(_) => ChannelType::I8,
+            Self::U16(_) => ChannelType::U16,
+            Self::I16(_) => ChannelType::I16,
+            Self::U32(_) => ChannelType::U32,
+            Self::I32(_) => ChannelType::I32,
+            Self::F32(_) => ChannelType::F32,
+            Self::U64(_) => ChannelType::U64,
+            Self::I64(_) => ChannelType::I64,
+            Self::F64(_) => ChannelType::F64,
+        }
+    }
+    /// Bytes between row starts, with checked sample-to-byte multiplication.
     pub fn stride_bytes(&self) -> Result<usize, PlaneError> {
         let stride = match self {
             Self::U8(p) => p.stride(),
+            Self::I8(p) => p.stride(),
             Self::U16(p) => p.stride(),
+            Self::I16(p) => p.stride(),
+            Self::U32(p) => p.stride(),
+            Self::I32(p) => p.stride(),
             Self::F32(p) => p.stride(),
+            Self::U64(p) => p.stride(),
+            Self::I64(p) => p.stride(),
+            Self::F64(p) => p.stride(),
         };
         stride
             .checked_mul(self.channel_type().byte_size())
             .ok_or(PlaneError::GeometryOverflow)
     }
-
-    /// Native-endian bytes from the first through the last active sample,
-    /// including intervening row padding, without trailing row padding.
+    /// Native-endian samples and intervening padding, without final-row padding.
     pub fn as_strided_bytes(&self) -> &[u8] {
         match self {
-            Self::U8(p) => p.strided_samples(),
+            Self::U8(p) => bytemuck::cast_slice(p.strided_samples()),
+            Self::I8(p) => bytemuck::cast_slice(p.strided_samples()),
             Self::U16(p) => bytemuck::cast_slice(p.strided_samples()),
+            Self::I16(p) => bytemuck::cast_slice(p.strided_samples()),
+            Self::U32(p) => bytemuck::cast_slice(p.strided_samples()),
+            Self::I32(p) => bytemuck::cast_slice(p.strided_samples()),
             Self::F32(p) => bytemuck::cast_slice(p.strided_samples()),
-        }
-    }
-
-    /// The sample type.
-    pub fn channel_type(&self) -> ChannelType {
-        match self {
-            Self::U8(_) => ChannelType::U8,
-            Self::U16(_) => ChannelType::U16,
-            Self::F32(_) => ChannelType::F32,
+            Self::U64(p) => bytemuck::cast_slice(p.strided_samples()),
+            Self::I64(p) => bytemuck::cast_slice(p.strided_samples()),
+            Self::F64(p) => bytemuck::cast_slice(p.strided_samples()),
         }
     }
 }
 
-/// A mutably borrowed plane with a runtime sample type.
-/// Reborrowing never changes the original plane's geometry or storage.
+/// A writable borrowed plane with runtime-selected native sample type.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum AnyPlaneMut<'a> {
-    /// 8-bit samples.
+    /// Native `u8` samples.
     U8(PlaneMut<'a, u8>),
-    /// 16-bit samples.
+    /// Native `i8` samples.
+    I8(PlaneMut<'a, i8>),
+    /// Native `u16` samples.
     U16(PlaneMut<'a, u16>),
-    /// 32-bit float samples.
+    /// Native `i16` samples.
+    I16(PlaneMut<'a, i16>),
+    /// Native `u32` samples.
+    U32(PlaneMut<'a, u32>),
+    /// Native `i32` samples.
+    I32(PlaneMut<'a, i32>),
+    /// Native `f32` samples.
     F32(PlaneMut<'a, f32>),
+    /// Native `u64` samples.
+    U64(PlaneMut<'a, u64>),
+    /// Native `i64` samples.
+    I64(PlaneMut<'a, i64>),
+    /// Native `f64` samples.
+    F64(PlaneMut<'a, f64>),
 }
 
 impl AnyPlaneMut<'_> {
-    /// Read the plane without allocating or copying samples.
+    /// Borrow without allocating or copying samples.
     pub fn as_ref(&self) -> AnyPlane<'_> {
         match self {
             Self::U8(p) => AnyPlane::U8(p.view()),
+            Self::I8(p) => AnyPlane::I8(p.view()),
             Self::U16(p) => AnyPlane::U16(p.view()),
+            Self::I16(p) => AnyPlane::I16(p.view()),
+            Self::U32(p) => AnyPlane::U32(p.view()),
+            Self::I32(p) => AnyPlane::I32(p.view()),
             Self::F32(p) => AnyPlane::F32(p.view()),
+            Self::U64(p) => AnyPlane::U64(p.view()),
+            Self::I64(p) => AnyPlane::I64(p.view()),
+            Self::F64(p) => AnyPlane::F64(p.view()),
         }
     }
-
-    /// Reborrow writable samples, retaining the original descriptor.
+    /// Reborrow writable samples without replacing the original descriptor.
     pub fn as_mut(&mut self) -> AnyPlaneMut<'_> {
         match self {
             Self::U8(p) => AnyPlaneMut::U8(p.view_mut()),
+            Self::I8(p) => AnyPlaneMut::I8(p.view_mut()),
             Self::U16(p) => AnyPlaneMut::U16(p.view_mut()),
+            Self::I16(p) => AnyPlaneMut::I16(p.view_mut()),
+            Self::U32(p) => AnyPlaneMut::U32(p.view_mut()),
+            Self::I32(p) => AnyPlaneMut::I32(p.view_mut()),
             Self::F32(p) => AnyPlaneMut::F32(p.view_mut()),
+            Self::U64(p) => AnyPlaneMut::U64(p.view_mut()),
+            Self::I64(p) => AnyPlaneMut::I64(p.view_mut()),
+            Self::F64(p) => AnyPlaneMut::F64(p.view_mut()),
         }
     }
 }
 
-/// An owned, independently strided plane with a runtime sample type.
-/// The existing sample allocation is moved into this enum, without copying.
+/// A Vec-owned plane with runtime-selected native sample type.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum AnyPlaneBuf {
-    /// 8-bit samples.
+    /// Native `u8` samples.
     U8(PlaneBuf<u8>),
-    /// 16-bit samples.
+    /// Native `i8` samples.
+    I8(PlaneBuf<i8>),
+    /// Native `u16` samples.
     U16(PlaneBuf<u16>),
-    /// 32-bit float samples.
+    /// Native `i16` samples.
+    I16(PlaneBuf<i16>),
+    /// Native `u32` samples.
+    U32(PlaneBuf<u32>),
+    /// Native `i32` samples.
+    I32(PlaneBuf<i32>),
+    /// Native `f32` samples.
     F32(PlaneBuf<f32>),
+    /// Native `u64` samples.
+    U64(PlaneBuf<u64>),
+    /// Native `i64` samples.
+    I64(PlaneBuf<i64>),
+    /// Native `f64` samples.
+    F64(PlaneBuf<f64>),
 }
 
 impl AnyPlaneBuf {
-    /// Borrow samples without allocating descriptors or copying pixels.
+    /// Borrow without allocating or copying samples.
     pub fn as_ref(&self) -> AnyPlane<'_> {
         match self {
             Self::U8(p) => AnyPlane::U8(p.view()),
+            Self::I8(p) => AnyPlane::I8(p.view()),
             Self::U16(p) => AnyPlane::U16(p.view()),
+            Self::I16(p) => AnyPlane::I16(p.view()),
+            Self::U32(p) => AnyPlane::U32(p.view()),
+            Self::I32(p) => AnyPlane::I32(p.view()),
             Self::F32(p) => AnyPlane::F32(p.view()),
+            Self::U64(p) => AnyPlane::U64(p.view()),
+            Self::I64(p) => AnyPlane::I64(p.view()),
+            Self::F64(p) => AnyPlane::F64(p.view()),
         }
     }
-
-    /// Borrow writable samples without changing the owned descriptor.
+    /// Reborrow writable samples without replacing the original descriptor.
     pub fn as_mut(&mut self) -> AnyPlaneMut<'_> {
         match self {
             Self::U8(p) => AnyPlaneMut::U8(p.view_mut()),
+            Self::I8(p) => AnyPlaneMut::I8(p.view_mut()),
             Self::U16(p) => AnyPlaneMut::U16(p.view_mut()),
+            Self::I16(p) => AnyPlaneMut::I16(p.view_mut()),
+            Self::U32(p) => AnyPlaneMut::U32(p.view_mut()),
+            Self::I32(p) => AnyPlaneMut::I32(p.view_mut()),
             Self::F32(p) => AnyPlaneMut::F32(p.view_mut()),
+            Self::U64(p) => AnyPlaneMut::U64(p.view_mut()),
+            Self::I64(p) => AnyPlaneMut::I64(p.view_mut()),
+            Self::F64(p) => AnyPlaneMut::F64(p.view_mut()),
         }
+    }
+}
+
+/// A plane owner or view that can lend native samples and geometry.
+///
+/// Implement this for a runtime-selected owner such as a codec's accounted
+/// plane enum. Typed [`Plane<C>`] implements it for every [`SampleStorage`].
+/// The geometry and native sample type must remain stable while borrowed by a
+/// picture; interior mutation must not replace or resize the backing storage.
+/// This trait carries no color interpretation and does not allocate.
+pub trait PlaneStorage {
+    /// Borrow this plane's native samples and geometry.
+    fn as_plane(&self) -> AnyPlane<'_>;
+}
+
+/// Exclusive sample access to a [`PlaneStorage`]. Read-only/shared owners need
+/// not implement this. The writable view must have the same geometry and sample
+/// type as `as_plane`; mutation changes samples, not the storage descriptor.
+pub trait PlaneStorageMut: PlaneStorage {
+    /// Reborrow writable samples, preserving the owner's descriptor.
+    fn as_plane_mut(&mut self) -> AnyPlaneMut<'_>;
+}
+
+impl<C: SampleStorage> PlaneStorage for Plane<C> {
+    fn as_plane(&self) -> AnyPlane<'_> {
+        <C::Sample as crate::buffer::storage_sample::Sealed>::plane_view(
+            self.view(),
+            crate::buffer::storage_sample::Private(()),
+        )
+    }
+}
+impl<C: SampleStorageMut> PlaneStorageMut for Plane<C> {
+    fn as_plane_mut(&mut self) -> AnyPlaneMut<'_> {
+        <C::Sample as crate::buffer::storage_sample::Sealed>::plane_view_mut(
+            self.view_mut(),
+            crate::buffer::storage_sample::Private(()),
+        )
+    }
+}
+impl PlaneStorage for AnyPlane<'_> {
+    fn as_plane(&self) -> AnyPlane<'_> {
+        *self
+    }
+}
+impl PlaneStorage for AnyPlaneMut<'_> {
+    fn as_plane(&self) -> AnyPlane<'_> {
+        self.as_ref()
+    }
+}
+impl PlaneStorageMut for AnyPlaneMut<'_> {
+    fn as_plane_mut(&mut self) -> AnyPlaneMut<'_> {
+        self.as_mut()
+    }
+}
+impl PlaneStorage for AnyPlaneBuf {
+    fn as_plane(&self) -> AnyPlane<'_> {
+        self.as_ref()
+    }
+}
+impl PlaneStorageMut for AnyPlaneBuf {
+    fn as_plane_mut(&mut self) -> AnyPlaneMut<'_> {
+        self.as_mut()
+    }
+}
+
+// Erase the collection owner only for shared picture views. Writable views
+// retain their concrete plane-owner type and iterate its slice directly.
+trait PlaneCollection: Sync {
+    fn len(&self) -> usize;
+    fn get(&self, index: usize) -> Option<AnyPlane<'_>>;
+}
+impl<P: PlaneStorage + Sync> PlaneCollection for Vec<P> {
+    fn len(&self) -> usize {
+        self.as_slice().len()
+    }
+    fn get(&self, index: usize) -> Option<AnyPlane<'_>> {
+        self.as_slice().get(index).map(PlaneStorage::as_plane)
+    }
+}
+impl<P: PlaneStorage + Sync> PlaneCollection for &mut [P] {
+    fn len(&self) -> usize {
+        <[P]>::len(self)
+    }
+    fn get(&self, index: usize) -> Option<AnyPlane<'_>> {
+        <[P]>::get(self, index).map(PlaneStorage::as_plane)
+    }
+}
+impl fmt::Debug for dyn PlaneCollection + '_ {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list()
+            .entries((0..self.len()).map(|i| self.get(i)))
+            .finish()
     }
 }
 
@@ -931,22 +1097,19 @@ impl AnyPlaneBuf {
 #[derive(Clone, Copy, Debug)]
 enum Planes<'a> {
     Borrowed(&'a [AnyPlane<'a>]),
-    Mutable(&'a [AnyPlaneMut<'a>]),
-    Owned(&'a [AnyPlaneBuf]),
+    Owner(&'a dyn PlaneCollection),
 }
 impl<'a> Planes<'a> {
     fn len(self) -> usize {
         match self {
             Self::Borrowed(p) => p.len(),
-            Self::Mutable(p) => p.len(),
-            Self::Owned(p) => p.len(),
+            Self::Owner(p) => p.len(),
         }
     }
     fn get(self, index: usize) -> Option<AnyPlane<'a>> {
         match self {
             Self::Borrowed(p) => p.get(index).copied(),
-            Self::Mutable(p) => p.get(index).map(AnyPlaneMut::as_ref),
-            Self::Owned(p) => p.get(index).map(AnyPlaneBuf::as_ref),
+            Self::Owner(p) => p.get(index),
         }
     }
     fn check(
@@ -973,47 +1136,6 @@ impl<'a> Planes<'a> {
         Ok(())
     }
 }
-
-#[derive(Debug)]
-enum PlanesMut<'a, 'storage> {
-    Borrowed(&'a mut [AnyPlaneMut<'storage>]),
-    Owned(&'a mut [AnyPlaneBuf]),
-}
-impl PlanesMut<'_, '_> {
-    fn as_ref(&self) -> Planes<'_> {
-        match self {
-            Self::Borrowed(p) => Planes::Mutable(p),
-            Self::Owned(p) => Planes::Owned(p),
-        }
-    }
-    fn get_mut(&mut self, index: usize) -> Option<AnyPlaneMut<'_>> {
-        match self {
-            Self::Borrowed(p) => p.get_mut(index).map(AnyPlaneMut::as_mut),
-            Self::Owned(p) => p.get_mut(index).map(AnyPlaneBuf::as_mut),
-        }
-    }
-}
-
-enum PlanesIterMut<'a, 'storage> {
-    Borrowed(core::slice::IterMut<'a, AnyPlaneMut<'storage>>),
-    Owned(core::slice::IterMut<'a, AnyPlaneBuf>),
-}
-impl<'a> Iterator for PlanesIterMut<'a, '_> {
-    type Item = AnyPlaneMut<'a>;
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Borrowed(p) => p.next().map(AnyPlaneMut::as_mut),
-            Self::Owned(p) => p.next().map(AnyPlaneBuf::as_mut),
-        }
-    }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        match self {
-            Self::Borrowed(p) => p.size_hint(),
-            Self::Owned(p) => p.size_hint(),
-        }
-    }
-}
-impl ExactSizeIterator for PlanesIterMut<'_, '_> {}
 
 /// What a plane holds.
 ///
@@ -1150,12 +1272,15 @@ impl core::hash::Hash for FloatEncoding {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum PlaneEncoding {
-    /// Integer codes in `u8` or `u16` samples; range comes from the enclosing
-    /// signal.
+    /// Integer codes in native signed or unsigned storage; range comes from
+    /// the enclosing signal. Storage support does not imply numerical conversion.
     Code(SampleEncoding),
     /// Floating-point samples (`f32`); the encoding describes values, not the
     /// sample width.
     Float(FloatEncoding),
+    /// Native F64 samples, with the same explicit affine interpretation.
+    /// Scale and offset are described by [`FloatEncoding`]; samples are not narrowed.
+    Float64(FloatEncoding),
 }
 
 impl PlaneEncoding {
@@ -1164,6 +1289,7 @@ impl PlaneEncoding {
         match self {
             Self::Code(e) => e.storage(),
             Self::Float(_) => ChannelType::F32,
+            Self::Float64(_) => ChannelType::F64,
         }
     }
 }
@@ -1533,37 +1659,32 @@ impl<'a> PlanarSlice<'a> {
     }
 }
 
-/// A writable, color-described planar picture with checked geometry and encoding.
+/// A writable planar picture over concrete plane owners or borrowed views.
 ///
-/// Each plane is independently strided. Accessors reborrow samples and never
-/// expose the descriptor list for replacement, preserving constructor checks.
-/// This type does not infer color, convert samples or carry video timing.
-/// The picture borrow (`'a`) is independent of the backing mutable planes'
-/// sample lifetime (`'storage`), so a descriptor list can be borrowed again
-/// after each processing pass.
+/// Each plane keeps its own stride. Access reborrows samples without exposing
+/// replaceable descriptors. The owner type `P` retains any backing-sample
+/// lifetime independently of the short picture borrow `'a`.
 #[derive(Debug)]
-pub struct PlanarSliceMut<'a, 'storage> {
-    planes: PlanesMut<'a, 'storage>,
+pub struct PlanarSliceMut<'a, P = AnyPlaneMut<'a>> {
+    planes: &'a mut [P],
     layout: &'a PlanarLayout,
     width: u32,
     height: u32,
     color: &'a crate::ColorContext,
     alpha: Option<crate::AlphaMode>,
 }
-impl<'a, 'storage> PlanarSliceMut<'a, 'storage> {
-    /// Borrow writable planes with the same validation as [`PlanarSlice::new`].
-    /// Does not allocate. Empty pictures are allowed; alpha must be explicit
-    /// exactly when an Alpha plane exists, and cannot be Undefined.
+impl<'a, P: PlaneStorageMut + Sync> PlanarSliceMut<'a, P> {
+    /// Check and borrow writable plane owners or views without allocation.
+    /// Validation matches [`PlanarSlice::new`]. No color is inferred.
     pub fn new(
-        planes: &'a mut [AnyPlaneMut<'storage>],
+        planes: &'a mut [P],
         layout: &'a PlanarLayout,
         width: u32,
         height: u32,
         color: &'a crate::ColorContext,
         alpha: Option<crate::AlphaMode>,
     ) -> Result<Self, LayoutError> {
-        let planes = PlanesMut::Borrowed(planes);
-        planes.as_ref().check(layout, width, height, alpha)?;
+        Planes::Owner(&planes).check(layout, width, height, alpha)?;
         Ok(Self {
             planes,
             layout,
@@ -1573,11 +1694,10 @@ impl<'a, 'storage> PlanarSliceMut<'a, 'storage> {
             alpha,
         })
     }
-
-    /// Borrow the complete read-only picture without allocation.
+    /// Read the complete picture without allocation or sample copies.
     pub fn as_slice(&self) -> PlanarSlice<'_> {
         PlanarSlice {
-            planes: self.planes.as_ref(),
+            planes: Planes::Owner(&self.planes),
             layout: self.layout,
             width: self.width,
             height: self.height,
@@ -1585,29 +1705,27 @@ impl<'a, 'storage> PlanarSliceMut<'a, 'storage> {
             alpha: self.alpha,
         }
     }
-
-    /// Borrow one writable plane. Replacing this returned descriptor cannot
-    /// change the original picture's geometry, encoding or storage.
+    /// Reborrow one writable plane without exposing a replaceable descriptor.
     pub fn plane_mut(&mut self, index: usize) -> Option<AnyPlaneMut<'_>> {
-        self.planes.get_mut(index)
+        self.planes
+            .get_mut(index)
+            .map(PlaneStorageMut::as_plane_mut)
     }
-
-    /// Borrow all writable planes in layout order, allowing simultaneous access
-    /// to disjoint planes. No descriptor or pixel allocation occurs.
+    /// Lend disjoint writable planes simultaneously, without allocating.
     pub fn planes_mut(&mut self) -> impl ExactSizeIterator<Item = AnyPlaneMut<'_>> {
-        match &mut self.planes {
-            PlanesMut::Borrowed(p) => PlanesIterMut::Borrowed(p.iter_mut()),
-            PlanesMut::Owned(p) => PlanesIterMut::Owned(p.iter_mut()),
-        }
+        self.planes.iter_mut().map(PlaneStorageMut::as_plane_mut)
     }
 }
 
 /// An owned planar picture, including layout and current color interpretation.
 ///
-/// Adopts separately allocated U8, U16 or F32 planes without copying samples.
+/// The default owner is [`AnyPlaneBuf`], an enum of native typed vectors.
+/// Use `PlanarBuffer<Plane<C>>` for typed aligned, pooled or shared storage,
+/// or implement [`PlaneStorage`] for a codec's heterogeneous owner enum.
 /// Borrowing creates neither sample nor descriptor allocations. Layout remains
 /// Vec-backed; there is no fixed-capacity descriptor array. Frame timing belongs
-/// to the codec or media layer, not this pixel container.
+/// to the codec or media layer, not this pixel container. Owners must be `Sync`
+/// to lend the shared, thread-safe [`PlanarSlice`]. `Send` is not required.
 ///
 /// ```
 /// use zenpixels::{ChannelType, Cicp, ColorContext, plane::*, sample::*};
@@ -1634,27 +1752,55 @@ impl<'a, 'storage> PlanarSliceMut<'a, 'storage> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug)]
-pub struct PlanarBuffer {
-    planes: Vec<AnyPlaneBuf>,
+pub struct PlanarBuffer<P = AnyPlaneBuf> {
+    planes: Vec<P>,
     layout: PlanarLayout,
     width: u32,
     height: u32,
     color: crate::ColorContext,
     alpha: Option<crate::AlphaMode>,
 }
-impl PlanarBuffer {
+impl<P: PlaneStorage + Sync> PlanarBuffer<P> {
     /// Check and adopt existing allocations and interpretation. On failure,
     /// the supplied owned values are dropped. This constructor allocates nothing.
     /// Validation matches [`PlanarSlice::new`], including subsampled odd edges.
     pub fn new(
-        planes: Vec<AnyPlaneBuf>,
+        planes: Vec<P>,
         layout: PlanarLayout,
         width: u32,
         height: u32,
         color: crate::ColorContext,
         alpha: Option<crate::AlphaMode>,
     ) -> Result<Self, LayoutError> {
-        Planes::Owned(&planes).check(&layout, width, height, alpha)?;
+        Self::try_from_parts(PlanarBufferParts::new(
+            planes, layout, width, height, color, alpha,
+        ))
+        .map_err(PlanarFromPartsError::without_buffer)
+    }
+
+    /// Validate and adopt plane owners, retaining all storage and interpretation
+    /// on failure. No allocation or sample copy occurs on either path.
+    #[allow(clippy::result_large_err)] // Retain rejected owners inline, without allocating an error box.
+    pub fn try_from_parts(parts: PlanarBufferParts<P>) -> Result<Self, PlanarFromPartsError<P>> {
+        if let Err(error) = Planes::Owner(&parts.planes).check(
+            &parts.layout,
+            parts.width,
+            parts.height,
+            parts.alpha,
+        ) {
+            return Err(PlanarFromPartsError {
+                error,
+                parts: Some(parts),
+            });
+        }
+        let PlanarBufferParts {
+            planes,
+            layout,
+            width,
+            height,
+            color,
+            alpha,
+        } = parts;
         Ok(Self {
             planes,
             layout,
@@ -1665,10 +1811,22 @@ impl PlanarBuffer {
         })
     }
 
+    /// Move every owner and its interpretation out without cloning or copying.
+    pub fn into_parts(self) -> PlanarBufferParts<P> {
+        PlanarBufferParts::new(
+            self.planes,
+            self.layout,
+            self.width,
+            self.height,
+            self.color,
+            self.alpha,
+        )
+    }
+
     /// Read the complete picture without allocating or copying samples.
     pub fn as_slice(&self) -> PlanarSlice<'_> {
         PlanarSlice {
-            planes: Planes::Owned(&self.planes),
+            planes: Planes::Owner(&self.planes),
             layout: &self.layout,
             width: self.width,
             height: self.height,
@@ -1680,9 +1838,12 @@ impl PlanarBuffer {
     /// Write samples without allocating, copying, or exposing replaceable
     /// descriptors. Interpretation is retained verbatim; mutation does not
     /// perform a color conversion or establish precision evidence.
-    pub fn as_slice_mut(&mut self) -> PlanarSliceMut<'_, '_> {
+    pub fn as_slice_mut(&mut self) -> PlanarSliceMut<'_, P>
+    where
+        P: PlaneStorageMut,
+    {
         PlanarSliceMut {
-            planes: PlanesMut::Owned(&mut self.planes),
+            planes: &mut self.planes,
             layout: &self.layout,
             width: self.width,
             height: self.height,
@@ -1693,7 +1854,87 @@ impl PlanarBuffer {
 
     /// Recover the plane allocations, discarding the picture interpretation.
     /// No samples are copied. Read any needed interpretation before consuming.
-    pub fn into_planes(self) -> Vec<AnyPlaneBuf> {
+    pub fn into_planes(self) -> Vec<P> {
         self.planes
+    }
+}
+
+/// Plane owners and complete picture interpretation, transferred together.
+/// This record is unvalidated; use [`PlanarBuffer::try_from_parts`] after editing.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct PlanarBufferParts<P = AnyPlaneBuf> {
+    /// Plane owners in layout order.
+    pub planes: Vec<P>,
+    /// Roles, sample encodings, chroma subsampling and siting.
+    pub layout: PlanarLayout,
+    /// Complete image width, before subsampling.
+    pub width: u32,
+    /// Complete image height.
+    pub height: u32,
+    /// Current sample interpretation, retained verbatim.
+    pub color: crate::ColorContext,
+    /// Alpha interpretation, present exactly when an Alpha role exists.
+    pub alpha: Option<crate::AlphaMode>,
+}
+impl<P> PlanarBufferParts<P> {
+    /// Assemble an unvalidated transfer record without allocation or copying.
+    pub fn new(
+        planes: Vec<P>,
+        layout: PlanarLayout,
+        width: u32,
+        height: u32,
+        color: crate::ColorContext,
+        alpha: Option<crate::AlphaMode>,
+    ) -> Self {
+        Self {
+            planes,
+            layout,
+            width,
+            height,
+            color,
+            alpha,
+        }
+    }
+}
+
+/// Failed planar adoption retaining all original owners and interpretation.
+/// Use `take_parts()` for recovery, or `without_buffer()` before retaining an
+/// error when its potentially large image storage is no longer needed.
+#[must_use]
+pub struct PlanarFromPartsError<P = AnyPlaneBuf> {
+    error: LayoutError,
+    parts: Option<PlanarBufferParts<P>>,
+}
+impl<P> PlanarFromPartsError<P> {
+    /// The validation failure.
+    pub fn error(&self) -> &LayoutError {
+        &self.error
+    }
+    /// Recover the original transfer record; `None` after the first call.
+    pub fn take_parts(&mut self) -> Option<PlanarBufferParts<P>> {
+        self.parts.take()
+    }
+    /// Discard the retained owners and return only the validation failure.
+    pub fn without_buffer(self) -> LayoutError {
+        self.error
+    }
+}
+impl<P> fmt::Debug for PlanarFromPartsError<P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PlanarFromPartsError")
+            .field("error", &self.error)
+            .field("has_parts", &self.parts.is_some())
+            .finish()
+    }
+}
+impl<P> fmt::Display for PlanarFromPartsError<P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.error.fmt(f)
+    }
+}
+impl<P> core::error::Error for PlanarFromPartsError<P> {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        Some(&self.error)
     }
 }

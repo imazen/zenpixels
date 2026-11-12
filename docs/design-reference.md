@@ -226,8 +226,12 @@ Fallible allocation does not provide a whole-operation admission budget.
 
 ## Owned and writable planar storage
 
-`PlanarBuffer` adopts independently strided U8/U16/F32 plane allocations and
-owns their layout and current color interpretation. `PlanarSlice` and
+`PlanarBuffer<P>` retains concrete plane owners, including aligned, pooled and
+shared storage, with their layout and current color interpretation. Default
+`AnyPlaneBuf` ownership uses typed vectors. Typed, aligned and runtime-selected
+storage share the same ten native sample types. Read-only owners need not offer
+mutable access. `try_from_parts` retains rejected owners and metadata for recovery;
+`into_parts` moves a complete picture without cloning. `PlanarSlice` and
 `PlanarSliceMut` borrow descriptors from the owner without allocation or pixel
 copies. Mutable access reborrows samples and cannot replace the validated
 storage descriptors. Caller-owned writable plane lists use the same checks.
