@@ -975,11 +975,11 @@ impl<'a> Planes<'a> {
 }
 
 #[derive(Debug)]
-enum PlanesMut<'a> {
-    Borrowed(&'a mut [AnyPlaneMut<'a>]),
+enum PlanesMut<'a, 'storage> {
+    Borrowed(&'a mut [AnyPlaneMut<'storage>]),
     Owned(&'a mut [AnyPlaneBuf]),
 }
-impl PlanesMut<'_> {
+impl PlanesMut<'_, '_> {
     fn as_ref(&self) -> Planes<'_> {
         match self {
             Self::Borrowed(p) => Planes::Mutable(p),
@@ -1538,21 +1538,24 @@ impl<'a> PlanarSlice<'a> {
 /// Each plane is independently strided. Accessors reborrow samples and never
 /// expose the descriptor list for replacement, preserving constructor checks.
 /// This type does not infer color, convert samples or carry video timing.
+/// The picture borrow (`'a`) is independent of the backing mutable planes'
+/// sample lifetime (`'storage`), so a descriptor list can be borrowed again
+/// after each processing pass.
 #[derive(Debug)]
-pub struct PlanarSliceMut<'a> {
-    planes: PlanesMut<'a>,
+pub struct PlanarSliceMut<'a, 'storage> {
+    planes: PlanesMut<'a, 'storage>,
     layout: &'a PlanarLayout,
     width: u32,
     height: u32,
     color: &'a crate::ColorContext,
     alpha: Option<crate::AlphaMode>,
 }
-impl<'a> PlanarSliceMut<'a> {
+impl<'a, 'storage> PlanarSliceMut<'a, 'storage> {
     /// Borrow writable planes with the same validation as [`PlanarSlice::new`].
     /// Does not allocate. Empty pictures are allowed; alpha must be explicit
     /// exactly when an Alpha plane exists, and cannot be Undefined.
     pub fn new(
-        planes: &'a mut [AnyPlaneMut<'a>],
+        planes: &'a mut [AnyPlaneMut<'storage>],
         layout: &'a PlanarLayout,
         width: u32,
         height: u32,
@@ -1677,7 +1680,7 @@ impl PlanarBuffer {
     /// Write samples without allocating, copying, or exposing replaceable
     /// descriptors. Interpretation is retained verbatim; mutation does not
     /// perform a color conversion or establish precision evidence.
-    pub fn as_slice_mut(&mut self) -> PlanarSliceMut<'_> {
+    pub fn as_slice_mut(&mut self) -> PlanarSliceMut<'_, '_> {
         PlanarSliceMut {
             planes: PlanesMut::Owned(&mut self.planes),
             layout: &self.layout,

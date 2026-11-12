@@ -370,7 +370,9 @@ The last row needs no trailing padding; chroma sizes round up at odd edges.
 
 Mutable access returns reborrowed plane values, never a writable descriptor
 slice. `planes_mut()` can lend several disjoint planes simultaneously. Replacing
-one returned value does not replace the original descriptor. Read interpretation
+one returned value does not replace the original descriptor. The mutable view
+has separate picture-borrow and backing-sample lifetimes, so a caller can borrow
+the same descriptor list again for a later processing pass. Read interpretation
 through `as_slice()`. Neither view infers color or performs conversion. Frame
 timing and shared/hardware-backed frame ownership remain media-layer concerns.
 
@@ -469,3 +471,20 @@ No new allocator trait is needed: existing SampleStorage/ByteStorage and
 borrowed picture views are the processing boundary. Supplied allocator
 implementations can provide over-alignment without adding unsafe allocator
 implementation code to zenpixels.
+
+## Owned-planar qualification
+
+The owned-planar review adds `just planar-storage-check`: all-feature core tests
+and strict all-target Clippy, a genuine no-default-features build, and the
+zenpsy consumer suite. It passes without relaxing existing expectations.
+Core doctests include a decoder-style Y/Cb/Cr adoption example. Public API
+snapshots are regenerated with `just api-doc`.
+
+`tests/planar_buffer.rs` refuses every allocation while adopting existing
+owners and borrowing read/write views, verifies original sample pointers,
+mutates three live plane borrows simultaneously, and checks untouched padding.
+It also checks mixed U16/F32 encodings, descriptor replacement isolation,
+invalid count/type/geometry/alpha and sequential mutable descriptor-list reuse.
+The last control originally failed with E0499/E0502 when both lifetimes were
+tied together; separating picture and backing-sample lifetimes fixes it.
+These are storage-contract tests, not a benchmark or codec-integration claim.

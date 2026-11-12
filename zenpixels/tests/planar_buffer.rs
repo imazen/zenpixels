@@ -302,3 +302,22 @@ fn owned_and_mutable_constructors_share_validation() {
         expected
     );
 }
+
+#[test]
+fn mutable_descriptor_list_can_be_reborrowed_for_sequential_operations() {
+    let e = code(ChannelType::U8, 8);
+    let layout = layout(&[(PlaneRole::Luma, e)], ChromaSubsampling::Mono);
+    let color = ColorContext::default();
+    let mut data = [0u8];
+    let mut planes = [AnyPlaneMut::U8(
+        PlaneMut::new(&mut data[..], 1, 1, 1).unwrap(),
+    )];
+    for value in [1, 2] {
+        let mut picture = PlanarSliceMut::new(&mut planes, &layout, 1, 1, &color, None).unwrap();
+        let AnyPlaneMut::U8(mut p) = picture.plane_mut(0).unwrap() else {
+            panic!()
+        };
+        p.row_mut(0).unwrap()[0] = value;
+    }
+    assert_eq!(planes[0].as_ref().as_strided_bytes(), &[2]);
+}
