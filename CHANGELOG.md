@@ -1,3 +1,21 @@
+# zenpixels
+
+## [Unreleased]
+
+### Added
+
+- Owned `PlanarBuffer` / `AnyPlaneBuf` and writable `PlanarSliceMut` /
+  `AnyPlaneMut` adopt or borrow independently strided planes. Shared layout,
+  geometry and alpha checks; no allocation when adopting existing owners or
+  borrowing views. Layout remains Vec-backed.
+
+### QUEUED BREAKING CHANGES
+
+- `PlanarSlice::planes()` returns an exact-size iterator of borrowed plane
+  values instead of a descriptor slice, allowing allocation-free views of
+  owned and writable storage. Use `plane(index)` for checked indexed access.
+  Existing constructor and interpretation accessors are unchanged.
+
 # zenpsy-api
 
 ## [Unreleased]

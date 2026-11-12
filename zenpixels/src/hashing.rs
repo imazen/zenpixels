@@ -262,12 +262,12 @@ fn planar(view: &PlanarSlice<'_>, inclusions: HashInclusions, state: &mut impl H
             view.alpha_mode().hash(&mut p);
         }
     }
-    for (view, spec) in view.planes().iter().zip(view.layout().planes()) {
+    for (view, spec) in view.planes().zip(view.layout().planes()) {
         let encoding = match spec.encoding() {
             PlaneEncoding::Code(e) => Some(e),
             PlaneEncoding::Float(_) => None,
         };
-        any_plane(view, inclusions, encoding, state);
+        any_plane(&view, inclusions, encoding, state);
     }
 }
 

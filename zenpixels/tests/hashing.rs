@@ -276,7 +276,8 @@ fn planar_native_padding_and_metadata_are_independent() {
         ChromaSiting::Center,
     )
     .unwrap();
-    let c = PlanarSlice::new(b.planes(), &different, 3, 3, &color, None).unwrap();
+    let borrowed = b.planes().collect::<Vec<_>>();
+    let c = PlanarSlice::new(&borrowed, &different, 3, 3, &color, None).unwrap();
     assert_eq!(
         a.hash_with(HashInclusions::SamplesOnly),
         c.hash_with(HashInclusions::SamplesOnly)

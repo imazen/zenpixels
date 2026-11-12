@@ -223,3 +223,14 @@ what the existing planner actually computes; it does not add those models.
 The separate [allocation audit](allocation-audit.md) records the merged #151
 allocation fixes, failure-injection controls and named infallible exceptions.
 Fallible allocation does not provide a whole-operation admission budget.
+
+## Owned and writable planar storage
+
+`PlanarBuffer` adopts independently strided U8/U16/F32 plane allocations and
+owns their layout and current color interpretation. `PlanarSlice` and
+`PlanarSliceMut` borrow descriptors from the owner without allocation or pixel
+copies. Mutable access reborrows samples and cannot replace the validated
+storage descriptors. Caller-owned writable plane lists use the same checks.
+See [planar types](planar-types.md#plane-views-picture-views-and-allocator-ownership--pr144)
+for the iterator accessor migration and custom-owner limits. Timing, frame
+presentation and shared-frame copy-on-write policy stay outside zenpixels.

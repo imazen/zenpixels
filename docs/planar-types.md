@@ -339,8 +339,8 @@ in zenpixels fits only 1.x crates such as pix (as `imgref` does today).
 
 ## Plane views, picture views and allocator ownership — PR144
 
-Source audit: PR144 at `983ba43f`. This section describes the current types;
-proposed changes to owned erasure are explicitly marked below.
+The shared types cover one plane and complete owned or borrowed pictures.
+Custom allocator owners remain available through `Plane<C>`.
 
 | Type | Unit and access | Owns pixel allocation? | Interpretation |
 |---|---|---|---|
@@ -348,16 +348,44 @@ proposed changes to owned erasure are explicitly marked below.
 | `PlaneRef<T>` | One shared plane, `Plane<&[T]>` | No | No role/color inference |
 | `PlaneMut<T>` | One exclusively borrowed plane, `Plane<&mut [T]>` | No | Mutation under Rust's exclusive borrow |
 | `AnyPlane` | One shared plane with erased sample type | No | Retains geometry and the native sample type |
-| `PlanarSlice` | Whole read-only planar picture | No | Borrows AnyPlanes, layout, color context and alpha declaration |
+| `AnyPlaneMut` | One writable plane with erased sample type | No | Reborrows samples without replacing the owner's descriptor |
+| `AnyPlaneBuf` | One owned U8/U16/F32 plane | Yes, global allocator | Retains each plane's stride and sample type |
+| `PlanarBuffer` | Whole owned planar picture | Yes, adopts a Vec of AnyPlaneBuf | Owns layout, color context and alpha declaration |
+| `PlanarSlice` | Whole read-only planar picture | No | Borrows descriptors and interpretation from an owner or caller |
+| `PlanarSliceMut` | Whole writable planar picture | No | Reborrows each plane, preserving checked geometry and interpretation |
 | `PixelBuffer<P, S>` | Packed picture over storage `S` | Determined by `S` | Packed descriptor, context, offsets and byte stride |
 | `PixelStorage` | Runtime selection of a typed owned vector | Yes, global allocator | Preserves sample type for ownership recovery |
 
 PlanarSlice contains PlaneRefs through AnyPlane; it does not replace PlaneRef
 or PlaneMut. A single plane can hold interleaved Cb/Cr, and a complete monochrome
 picture can have only one plane. PlanarLayout alone describes roles/encodings;
-it does not borrow the samples or bind their current color context. No mutable
-picture aggregate is needed for IQA: producers mutate owner/PlaneMut storage,
-then lend shared picture views for scoring. Borrowing keeps the owner alive.
+it does not borrow the samples or bind their current color context.
+
+A codec can return `PlanarBuffer` by moving its Y/Cb/Cr allocations into
+`AnyPlaneBuf` values. `as_slice()` and `as_slice_mut()` allocate neither pixel
+storage nor descriptor lists. A caller-owned array of `AnyPlaneMut` can also
+be passed to `PlanarSliceMut::new`. Both constructors validate plane count,
+geometry, sample encoding and alpha using the same rules as `PlanarSlice`.
+The last row needs no trailing padding; chroma sizes round up at odd edges.
+
+Mutable access returns reborrowed plane values, never a writable descriptor
+slice. `planes_mut()` can lend several disjoint planes simultaneously. Replacing
+one returned value does not replace the original descriptor. Read interpretation
+through `as_slice()`. Neither view infers color or performs conversion. Frame
+timing and shared/hardware-backed frame ownership remain media-layer concerns.
+
+**Accessor migration:** `PlanarSlice::planes()` now returns an exact-size,
+double-ended iterator of `AnyPlane` values instead of a descriptor slice.
+Use `plane(i)` for checked indexed access, and `planes().zip(...)` for iteration.
+`PlanarSlice::new` still accepts the same borrowed descriptor slice. The private
+view representation borrows the descriptor owner; `PlanarLayout` remains
+Vec-backed and no fixed plane-count storage limit is introduced.
+
+`PlanarBuffer` currently adopts global `Vec` storage only. Its constructor drops
+supplied owners on invalid layout; validate caller views first if ownership must
+be retained on failure. `into_planes()` returns the allocations and discards the
+picture interpretation. Custom allocator, accounted/shared and hardware owners
+can continue lending views without converting ownership into `PlanarBuffer`.
 
 ### What Rust1.100 support already covers
 

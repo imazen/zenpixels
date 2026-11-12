@@ -799,3 +799,10 @@ hash-regression-summarize INPUT OUTPUT:
 allocation-failure-check:
     cargo test --locked -p zenpixels --features hash,rgb --test alloc_failure --test alloc_failure_typed -- --test-threads=16
     cargo clippy --locked -p zenpixels --features hash,rgb --test alloc_failure --test alloc_failure_typed -- -D warnings
+
+# Owned and borrowed planar boundaries, including allocation refusal controls.
+planar-storage-check:
+    cargo test --locked -p zenpixels --all-features
+    cargo clippy --locked -p zenpixels --all-features --all-targets -- -D warnings
+    cargo check --locked -p zenpixels --no-default-features
+    cargo test --locked --manifest-path zenpsy-api/Cargo.toml

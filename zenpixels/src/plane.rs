@@ -859,6 +859,162 @@ impl AnyPlane<'_> {
     }
 }
 
+/// A mutably borrowed plane with a runtime sample type.
+/// Reborrowing never changes the original plane's geometry or storage.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum AnyPlaneMut<'a> {
+    /// 8-bit samples.
+    U8(PlaneMut<'a, u8>),
+    /// 16-bit samples.
+    U16(PlaneMut<'a, u16>),
+    /// 32-bit float samples.
+    F32(PlaneMut<'a, f32>),
+}
+
+impl AnyPlaneMut<'_> {
+    /// Read the plane without allocating or copying samples.
+    pub fn as_ref(&self) -> AnyPlane<'_> {
+        match self {
+            Self::U8(p) => AnyPlane::U8(p.view()),
+            Self::U16(p) => AnyPlane::U16(p.view()),
+            Self::F32(p) => AnyPlane::F32(p.view()),
+        }
+    }
+
+    /// Reborrow writable samples, retaining the original descriptor.
+    pub fn as_mut(&mut self) -> AnyPlaneMut<'_> {
+        match self {
+            Self::U8(p) => AnyPlaneMut::U8(p.view_mut()),
+            Self::U16(p) => AnyPlaneMut::U16(p.view_mut()),
+            Self::F32(p) => AnyPlaneMut::F32(p.view_mut()),
+        }
+    }
+}
+
+/// An owned, independently strided plane with a runtime sample type.
+/// The existing sample allocation is moved into this enum, without copying.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum AnyPlaneBuf {
+    /// 8-bit samples.
+    U8(PlaneBuf<u8>),
+    /// 16-bit samples.
+    U16(PlaneBuf<u16>),
+    /// 32-bit float samples.
+    F32(PlaneBuf<f32>),
+}
+
+impl AnyPlaneBuf {
+    /// Borrow samples without allocating descriptors or copying pixels.
+    pub fn as_ref(&self) -> AnyPlane<'_> {
+        match self {
+            Self::U8(p) => AnyPlane::U8(p.view()),
+            Self::U16(p) => AnyPlane::U16(p.view()),
+            Self::F32(p) => AnyPlane::F32(p.view()),
+        }
+    }
+
+    /// Borrow writable samples without changing the owned descriptor.
+    pub fn as_mut(&mut self) -> AnyPlaneMut<'_> {
+        match self {
+            Self::U8(p) => AnyPlaneMut::U8(p.view_mut()),
+            Self::U16(p) => AnyPlaneMut::U16(p.view_mut()),
+            Self::F32(p) => AnyPlaneMut::F32(p.view_mut()),
+        }
+    }
+}
+
+// Views borrow the descriptor owner, rather than allocating a second descriptor
+// list or imposing a fixed plane-count limit. Mutable storage is only exposed
+// through reborrows: replacing a returned descriptor cannot invalidate its owner.
+#[derive(Clone, Copy, Debug)]
+enum Planes<'a> {
+    Borrowed(&'a [AnyPlane<'a>]),
+    Mutable(&'a [AnyPlaneMut<'a>]),
+    Owned(&'a [AnyPlaneBuf]),
+}
+impl<'a> Planes<'a> {
+    fn len(self) -> usize {
+        match self {
+            Self::Borrowed(p) => p.len(),
+            Self::Mutable(p) => p.len(),
+            Self::Owned(p) => p.len(),
+        }
+    }
+    fn get(self, index: usize) -> Option<AnyPlane<'a>> {
+        match self {
+            Self::Borrowed(p) => p.get(index).copied(),
+            Self::Mutable(p) => p.get(index).map(AnyPlaneMut::as_ref),
+            Self::Owned(p) => p.get(index).map(AnyPlaneBuf::as_ref),
+        }
+    }
+    fn check(
+        self,
+        layout: &PlanarLayout,
+        width: u32,
+        height: u32,
+        alpha: Option<crate::AlphaMode>,
+    ) -> Result<(), LayoutError> {
+        if self.len() != layout.planes().len() {
+            return Err(LayoutError::PlaneCount {
+                expected: layout.planes().len(),
+                actual: self.len(),
+            });
+        }
+        for i in 0..self.len() {
+            layout.check_plane(i, &self.get(i).expect("in bounds"), width, height)?;
+        }
+        if layout.roles().any(|r| r == PlaneRole::Alpha) != alpha.is_some()
+            || alpha == Some(crate::AlphaMode::Undefined)
+        {
+            return Err(LayoutError::AlphaInterpretation);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+enum PlanesMut<'a> {
+    Borrowed(&'a mut [AnyPlaneMut<'a>]),
+    Owned(&'a mut [AnyPlaneBuf]),
+}
+impl PlanesMut<'_> {
+    fn as_ref(&self) -> Planes<'_> {
+        match self {
+            Self::Borrowed(p) => Planes::Mutable(p),
+            Self::Owned(p) => Planes::Owned(p),
+        }
+    }
+    fn get_mut(&mut self, index: usize) -> Option<AnyPlaneMut<'_>> {
+        match self {
+            Self::Borrowed(p) => p.get_mut(index).map(AnyPlaneMut::as_mut),
+            Self::Owned(p) => p.get_mut(index).map(AnyPlaneBuf::as_mut),
+        }
+    }
+}
+
+enum PlanesIterMut<'a, 'storage> {
+    Borrowed(core::slice::IterMut<'a, AnyPlaneMut<'storage>>),
+    Owned(core::slice::IterMut<'a, AnyPlaneBuf>),
+}
+impl<'a> Iterator for PlanesIterMut<'a, '_> {
+    type Item = AnyPlaneMut<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Borrowed(p) => p.next().map(AnyPlaneMut::as_mut),
+            Self::Owned(p) => p.next().map(AnyPlaneBuf::as_mut),
+        }
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Self::Borrowed(p) => p.size_hint(),
+            Self::Owned(p) => p.size_hint(),
+        }
+    }
+}
+impl ExactSizeIterator for PlanesIterMut<'_, '_> {}
+
 /// What a plane holds.
 ///
 /// A gray or monochrome picture is a `Luma` plane. Semi-planar chroma (NV12,
@@ -1309,7 +1465,7 @@ impl PlanarLayout {
 /// supplies any required display conditions in its own configuration.
 #[derive(Clone, Copy, Debug)]
 pub struct PlanarSlice<'a> {
-    planes: &'a [AnyPlane<'a>],
+    planes: Planes<'a>,
     layout: &'a PlanarLayout,
     width: u32,
     height: u32,
@@ -1334,12 +1490,8 @@ impl<'a> PlanarSlice<'a> {
         color: &'a crate::ColorContext,
         alpha: Option<crate::AlphaMode>,
     ) -> Result<Self, LayoutError> {
-        layout.check(planes, width, height)?;
-        if layout.roles().any(|r| r == PlaneRole::Alpha) != alpha.is_some()
-            || alpha == Some(crate::AlphaMode::Undefined)
-        {
-            return Err(LayoutError::AlphaInterpretation);
-        }
+        let planes = Planes::Borrowed(planes);
+        planes.check(layout, width, height, alpha)?;
         Ok(Self {
             planes,
             layout,
@@ -1349,9 +1501,15 @@ impl<'a> PlanarSlice<'a> {
             alpha,
         })
     }
-    /// Borrowed native storage, in layout order.
-    pub const fn planes(self) -> &'a [AnyPlane<'a>] {
-        self.planes
+    /// Borrowed native storage, in layout order. No allocation or pixel copy.
+    pub fn planes(
+        self,
+    ) -> impl ExactSizeIterator<Item = AnyPlane<'a>> + DoubleEndedIterator + Clone {
+        (0..self.planes.len()).map(move |i| self.planes.get(i).expect("in bounds"))
+    }
+    /// Borrow one plane by its layout index; `None` past the last plane.
+    pub fn plane(self, index: usize) -> Option<AnyPlane<'a>> {
+        self.planes.get(index)
     }
     /// Role, sample encoding, subsampling and siting of each plane.
     pub const fn layout(self) -> &'a PlanarLayout {
@@ -1372,5 +1530,167 @@ impl<'a> PlanarSlice<'a> {
     /// Declared alpha interpretation.
     pub const fn alpha_mode(self) -> Option<crate::AlphaMode> {
         self.alpha
+    }
+}
+
+/// A writable, color-described planar picture with checked geometry and encoding.
+///
+/// Each plane is independently strided. Accessors reborrow samples and never
+/// expose the descriptor list for replacement, preserving constructor checks.
+/// This type does not infer color, convert samples or carry video timing.
+#[derive(Debug)]
+pub struct PlanarSliceMut<'a> {
+    planes: PlanesMut<'a>,
+    layout: &'a PlanarLayout,
+    width: u32,
+    height: u32,
+    color: &'a crate::ColorContext,
+    alpha: Option<crate::AlphaMode>,
+}
+impl<'a> PlanarSliceMut<'a> {
+    /// Borrow writable planes with the same validation as [`PlanarSlice::new`].
+    /// Does not allocate. Empty pictures are allowed; alpha must be explicit
+    /// exactly when an Alpha plane exists, and cannot be Undefined.
+    pub fn new(
+        planes: &'a mut [AnyPlaneMut<'a>],
+        layout: &'a PlanarLayout,
+        width: u32,
+        height: u32,
+        color: &'a crate::ColorContext,
+        alpha: Option<crate::AlphaMode>,
+    ) -> Result<Self, LayoutError> {
+        let planes = PlanesMut::Borrowed(planes);
+        planes.as_ref().check(layout, width, height, alpha)?;
+        Ok(Self {
+            planes,
+            layout,
+            width,
+            height,
+            color,
+            alpha,
+        })
+    }
+
+    /// Borrow the complete read-only picture without allocation.
+    pub fn as_slice(&self) -> PlanarSlice<'_> {
+        PlanarSlice {
+            planes: self.planes.as_ref(),
+            layout: self.layout,
+            width: self.width,
+            height: self.height,
+            color: self.color,
+            alpha: self.alpha,
+        }
+    }
+
+    /// Borrow one writable plane. Replacing this returned descriptor cannot
+    /// change the original picture's geometry, encoding or storage.
+    pub fn plane_mut(&mut self, index: usize) -> Option<AnyPlaneMut<'_>> {
+        self.planes.get_mut(index)
+    }
+
+    /// Borrow all writable planes in layout order, allowing simultaneous access
+    /// to disjoint planes. No descriptor or pixel allocation occurs.
+    pub fn planes_mut(&mut self) -> impl ExactSizeIterator<Item = AnyPlaneMut<'_>> {
+        match &mut self.planes {
+            PlanesMut::Borrowed(p) => PlanesIterMut::Borrowed(p.iter_mut()),
+            PlanesMut::Owned(p) => PlanesIterMut::Owned(p.iter_mut()),
+        }
+    }
+}
+
+/// An owned planar picture, including layout and current color interpretation.
+///
+/// Adopts separately allocated U8, U16 or F32 planes without copying samples.
+/// Borrowing creates neither sample nor descriptor allocations. Layout remains
+/// Vec-backed; there is no fixed-capacity descriptor array. Frame timing belongs
+/// to the codec or media layer, not this pixel container.
+///
+/// ```
+/// use zenpixels::{ChannelType, Cicp, ColorContext, plane::*, sample::*};
+///
+/// // A decoder can move its existing Y/Cb/Cr allocations into these planes.
+/// let encoding = PlaneEncoding::Code(SampleEncoding::new(ChannelType::U8, 8, 0)?);
+/// let layout = PlanarLayout::new(
+///     [PlaneRole::Luma, PlaneRole::Cb, PlaneRole::Cr]
+///         .map(|role| PlaneSpec::new(role, encoding)).to_vec(),
+///     ChromaSubsampling::Yuv420, ChromaSiting::Center,
+/// )?;
+/// let mut picture = PlanarBuffer::new(vec![
+///     AnyPlaneBuf::U8(PlaneBuf::new(vec![16; 15], 5, 3, 5)?),
+///     AnyPlaneBuf::U8(PlaneBuf::new(vec![128; 6], 3, 2, 3)?),
+///     AnyPlaneBuf::U8(PlaneBuf::new(vec![128; 6], 3, 2, 3)?),
+/// ], layout, 5, 3, ColorContext::from_cicp(Cicp::new(1, 13, 6, true)), None)?;
+/// {
+///     let mut writable = picture.as_slice_mut();
+///     if let Some(AnyPlaneMut::U8(mut y)) = writable.plane_mut(0) {
+///         y.row_mut(0).unwrap().fill(32);
+///     }
+/// }
+/// assert_eq!(picture.as_slice().planes().len(), 3);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug)]
+pub struct PlanarBuffer {
+    planes: Vec<AnyPlaneBuf>,
+    layout: PlanarLayout,
+    width: u32,
+    height: u32,
+    color: crate::ColorContext,
+    alpha: Option<crate::AlphaMode>,
+}
+impl PlanarBuffer {
+    /// Check and adopt existing allocations and interpretation. On failure,
+    /// the supplied owned values are dropped. This constructor allocates nothing.
+    /// Validation matches [`PlanarSlice::new`], including subsampled odd edges.
+    pub fn new(
+        planes: Vec<AnyPlaneBuf>,
+        layout: PlanarLayout,
+        width: u32,
+        height: u32,
+        color: crate::ColorContext,
+        alpha: Option<crate::AlphaMode>,
+    ) -> Result<Self, LayoutError> {
+        Planes::Owned(&planes).check(&layout, width, height, alpha)?;
+        Ok(Self {
+            planes,
+            layout,
+            width,
+            height,
+            color,
+            alpha,
+        })
+    }
+
+    /// Read the complete picture without allocating or copying samples.
+    pub fn as_slice(&self) -> PlanarSlice<'_> {
+        PlanarSlice {
+            planes: Planes::Owned(&self.planes),
+            layout: &self.layout,
+            width: self.width,
+            height: self.height,
+            color: &self.color,
+            alpha: self.alpha,
+        }
+    }
+
+    /// Write samples without allocating, copying, or exposing replaceable
+    /// descriptors. Interpretation is retained verbatim; mutation does not
+    /// perform a color conversion or establish precision evidence.
+    pub fn as_slice_mut(&mut self) -> PlanarSliceMut<'_> {
+        PlanarSliceMut {
+            planes: PlanesMut::Owned(&mut self.planes),
+            layout: &self.layout,
+            width: self.width,
+            height: self.height,
+            color: &self.color,
+            alpha: self.alpha,
+        }
+    }
+
+    /// Recover the plane allocations, discarding the picture interpretation.
+    /// No samples are copied. Read any needed interpretation before consuming.
+    pub fn into_planes(self) -> Vec<AnyPlaneBuf> {
+        self.planes
     }
 }
