@@ -637,7 +637,7 @@ pub const fn plane::FloatEncoding::offset(self) -> f32
 pub const fn plane::FloatEncoding::scale(self) -> f32
 pub struct plane::PlanarBuffer
 pub fn plane::PlanarBuffer::as_slice(&self) -> plane::PlanarSlice<'_>
-pub fn plane::PlanarBuffer::as_slice_mut(&mut self) -> plane::PlanarSliceMut<'_>
+pub fn plane::PlanarBuffer::as_slice_mut(&mut self) -> plane::PlanarSliceMut<'_, '_>
 pub fn plane::PlanarBuffer::into_planes(self) -> alloc::vec::Vec<plane::AnyPlaneBuf>
 pub fn plane::PlanarBuffer::new(alloc::vec::Vec<plane::AnyPlaneBuf>, plane::PlanarLayout, u32, u32, color::ColorContext, core::option::Option<descriptor::AlphaMode>) -> core::result::Result<Self, plane::LayoutError>
 pub struct plane::PlanarLayout
@@ -658,11 +658,11 @@ pub fn plane::PlanarSlice<'a>::new(&'a [plane::AnyPlane<'a>], &'a plane::PlanarL
 pub fn plane::PlanarSlice<'a>::plane(self, usize) -> core::option::Option<plane::AnyPlane<'a>>
 pub fn plane::PlanarSlice<'a>::planes(self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = plane::AnyPlane<'a>> + core::iter::traits::double_ended::DoubleEndedIterator + core::clone::Clone
 pub const fn plane::PlanarSlice<'a>::width(self) -> u32
-pub struct plane::PlanarSliceMut<'a>
-pub fn plane::PlanarSliceMut<'a>::as_slice(&self) -> plane::PlanarSlice<'_>
-pub fn plane::PlanarSliceMut<'a>::new(&'a mut [plane::AnyPlaneMut<'a>], &'a plane::PlanarLayout, u32, u32, &'a color::ColorContext, core::option::Option<descriptor::AlphaMode>) -> core::result::Result<Self, plane::LayoutError>
-pub fn plane::PlanarSliceMut<'a>::plane_mut(&mut self, usize) -> core::option::Option<plane::AnyPlaneMut<'_>>
-pub fn plane::PlanarSliceMut<'a>::planes_mut(&mut self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = plane::AnyPlaneMut<'_>>
+pub struct plane::PlanarSliceMut<'a, 'storage>
+pub fn plane::PlanarSliceMut<'a, 'storage>::as_slice(&self) -> plane::PlanarSlice<'_>
+pub fn plane::PlanarSliceMut<'a, 'storage>::new(&'a mut [plane::AnyPlaneMut<'storage>], &'a plane::PlanarLayout, u32, u32, &'a color::ColorContext, core::option::Option<descriptor::AlphaMode>) -> core::result::Result<Self, plane::LayoutError>
+pub fn plane::PlanarSliceMut<'a, 'storage>::plane_mut(&mut self, usize) -> core::option::Option<plane::AnyPlaneMut<'_>>
+pub fn plane::PlanarSliceMut<'a, 'storage>::planes_mut(&mut self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = plane::AnyPlaneMut<'_>>
 pub struct plane::Plane<C>
 pub fn plane::Plane<&'a [T]>::into_strided_samples(self) -> &'a [T]
 pub fn plane::Plane<&'a mut [T]>::into_strided_samples_mut(self) -> &'a mut [T]
@@ -1323,7 +1323,7 @@ plane::LayoutError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 plane::PlanarBuffer: Debug
 plane::PlanarLayout: Clone, Debug, Eq, Hash, PartialEq
 plane::PlanarSlice<'a>: Clone, Copy, Debug
-plane::PlanarSliceMut<'a>: Debug
+plane::PlanarSliceMut<'a, 'storage>: Debug
 plane::Plane<C>: Clone, Copy, Debug
 plane::PlaneEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
 plane::PlaneError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
@@ -1364,5 +1364,5 @@ buffer::PixelSlice<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 buffer::PixelSliceMut<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 plane::AlignedSamples<T>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 plane::AnyPlaneMut<'a>: !UnwindSafe
-plane::PlanarSliceMut<'a>: !UnwindSafe
+plane::PlanarSliceMut<'a, 'storage>: !UnwindSafe
 plane::Plane<C>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
