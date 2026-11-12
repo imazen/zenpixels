@@ -339,27 +339,58 @@ in zenpixels fits only 1.x crates such as pix (as `imgref` does today).
 
 ## Plane views, picture views and allocator ownership — PR144
 
-The shared types cover one plane and complete owned or borrowed pictures.
-Custom allocator owners remain available through `Plane<C>`.
+The types vary along two independent axes: **what they describe** and
+**whether they own or borrow storage**. Lifetimes are omitted in this table.
 
-| Type | Unit and access | Owns pixel allocation? | Interpretation |
+### Geometry-bearing types: owner → read view → write view
+
+| What it describes | Owned form | Read-only borrow | Writable borrow | Interpretation carried |
+|---|---|---|---|---|
+| One plane, sample type `T` selected at compile time | `PlaneBuf<T>` | `PlaneRef<T>` | `PlaneMut<T>` | Dimensions and sample stride; no role or color |
+| One plane, sample type selected at runtime | `AnyPlaneBuf` | `AnyPlane` | `AnyPlaneMut` | Dimensions, sample stride and selected sample type; no role or color |
+| One interleaved picture | `PixelBuffer<P, S>` | `PixelSlice<P>` | `PixelSliceMut<P>` | Dimensions, byte stride, pixel descriptor and color context |
+| One planar picture | `PlanarBuffer` | `PlanarSlice` | `PlanarSliceMut` | Planes, image dimensions, layout, color context and alpha interpretation |
+
+“Runtime-selected sample type” means an enum containing a concrete typed value,
+not loss of sample-type information. For example, `AnyPlane::U16` contains a
+`PlaneRef<u16>`, while `AnyPlaneBuf::U16` contains a `PlaneBuf<u16>`.
+The AnyPlane family currently supports U8, U16 and F32.
+
+The typed plane family is one generic type: `Plane<C>`. Its aliases select
+`C = Vec<T>`, `&[T]` or `&mut [T]`. `AlignedPlane<T>` is another owning alias,
+using `AlignedSamples<T>`. Custom owners implement `SampleStorage` and,
+when writable, `SampleStorageMut`.
+
+`PixelBuffer` defaults to owned `PixelStorage`; its generic `S` determines
+actual storage ownership. `P` describes the compile-time pixel type, with `()`
+for runtime-described pixels. Interleaved does **not** mean tightly packed:
+these picture types retain row stride and can include padding.
+
+### Storage underneath the geometry
+
+These hold allocations, not image dimensions, row strides or color interpretation.
+
+| Storage type | Sample selection | Ownership | Used by |
 |---|---|---|---|
-| `Plane<C>` | One strided 2-D array | Determined by `C` | Sample storage and geometry only |
-| `PlaneRef<T>` | One shared plane, `Plane<&[T]>` | No | No role/color inference |
-| `PlaneMut<T>` | One exclusively borrowed plane, `Plane<&mut [T]>` | No | Mutation under Rust's exclusive borrow |
-| `AnyPlane` | One shared plane with erased sample type | No | Retains geometry and the native sample type |
-| `AnyPlaneMut` | One writable plane with erased sample type | No | Reborrows samples without replacing the owner's descriptor |
-| `AnyPlaneBuf` | One owned U8/U16/F32 plane | Yes, global allocator | Retains each plane's stride and sample type |
-| `PlanarBuffer` | Whole owned planar picture | Yes, adopts a Vec of AnyPlaneBuf | Owns layout, color context and alpha declaration |
-| `PlanarSlice` | Whole read-only planar picture | No | Borrows descriptors and interpretation from an owner or caller |
-| `PlanarSliceMut` | Whole writable planar picture | No | Reborrows each plane, preserving checked geometry and interpretation |
-| `PixelBuffer<P, S>` | Packed picture over storage `S` | Determined by `S` | Packed descriptor, context, offsets and byte stride |
-| `PixelStorage` | Runtime selection of a typed owned vector | Yes, global allocator | Preserves sample type for ownership recovery |
+| `Vec<T>` | Compile-time `T` | Owns a contiguous allocation | `PlaneBuf<T>`; supported typed `PixelBuffer` storage |
+| `AlignedSamples<T>` | Compile-time `T` | Owns aligned sample storage | `AlignedPlane<T>`; aligned `PixelBuffer` storage |
+| `PixelStorage` | Runtime-selected typed vector | Owns the selected vector | Default `PixelBuffer` storage |
 
-PlanarSlice contains PlaneRefs through AnyPlane; it does not replace PlaneRef
-or PlaneMut. A single plane can hold interleaved Cb/Cr, and a complete monochrome
-picture can have only one plane. PlanarLayout alone describes roles/encodings;
-it does not borrow the samples or bind their current color context.
+`PixelStorage` and `AnyPlaneBuf` both select a sample type at runtime, but at
+different levels: **PixelStorage holds an allocation; AnyPlaneBuf holds an
+allocation plus plane geometry.** Their supported sample-type sets also differ;
+PixelStorage includes signed and wider storage types beyond the AnyPlane family.
+
+### Descriptions without storage
+
+`PlanarLayout` describes plane roles, encodings, subsampling and chroma siting.
+`PixelDescriptor` describes interleaved pixel format and interpretation.
+`ColorContext` carries current color signaling. None owns pixel samples;
+the complete picture types bind these descriptions to actual storage.
+
+A single plane can hold interleaved Cb/Cr, and a complete monochrome picture
+can contain only one plane. “Plane” describes one strided sample array;
+“picture” adds the interpretation needed to use it as an image.
 
 A codec can return `PlanarBuffer` by moving its Y/Cb/Cr allocations into
 `AnyPlaneBuf` values. `as_slice()` and `as_slice_mut()` allocate neither pixel
