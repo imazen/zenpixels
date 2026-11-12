@@ -6,7 +6,7 @@ zencodec. zencodec keeps what is frame-specific (crop, timing, color claims,
 configuration epoch, owner and mapping traits) and builds on these.
 The inventory that motivated this is `docs/planar-inventory.md`.
 
-Terms: a **sample** is one stored element of a plane (`u8`, `u16` or `f32`),
+Terms: a **sample** is one stored native integer or floating-point element,
 as in FFmpeg's "stride in samples". A **code** is the integer value a sample
 holds after removing padding bits (`SampleEncoding`). A **position** is a pixel
 location; a semi-planar chroma plane stores two samples per position.
@@ -24,8 +24,8 @@ location; a semi-planar chroma plane stores two samples per position.
 
 ## Layers
 
-1. **Storage geometry: `Plane<C>`.** A strided 2-D array of samples (`u8`, `u16`
-   or `f32`; sealed `PlaneSample`). `width` and `stride` count samples, so a stride
+1. **Storage geometry: `Plane<C>`.** A strided 2-D array of native samples
+   (the shared sealed `StorageSample` contract, also named `PlaneSample`). `width` and `stride` count samples, so a stride
    always holds whole samples and typed rows never need a checked cast. Rows are
    contiguous `&[T]`; the last row needs no padding after it.
    - `PlaneRef<'a, T>` = `Plane<&'a [T]>`, `PlaneMut<'a, T>` = `Plane<&'a mut [T]>`,
@@ -50,7 +50,8 @@ location; a semi-planar chroma plane stores two samples per position.
      scale + offset`. Nominal Y/R/G/B/A run 0..1, Cb/Cr -0.5..0.5. zenjpeg's
      centered planes are scale 255, offset -128 (Y) and 0 (Cb, Cr). A decoder
      that keeps limited-range levels in floats states them here, so float
-     planes need no separate range.
+     planes need no separate range. `Float64(FloatEncoding)` retains F64 samples
+     without narrowing; the affine scale/offset description remains F32.
 3. **The picture: `PlanarLayout`.** Ordered `PlaneSpec`s, `ChromaSubsampling`,
    `ChromaSiting`. Construction refuses duplicate components, mixed YCbCr/RGB,
    missing Luma (with chroma) or R/G/B, a lone Cb or Cr, and subsampling that
@@ -339,25 +340,112 @@ in zenpixels fits only 1.x crates such as pix (as `imgref` does today).
 
 ## Plane views, picture views and allocator ownership — PR144
 
-Source audit: PR144 at `983ba43f`. This section describes the current types;
-proposed changes to owned erasure are explicitly marked below.
+The types vary along two independent axes: **what they describe** and
+**whether they own or borrow storage**. Lifetimes are omitted in this table.
 
-| Type | Unit and access | Owns pixel allocation? | Interpretation |
+### Geometry-bearing types: owner → read view → write view
+
+| What it describes | Owned form | Read-only borrow | Writable borrow | Interpretation carried |
+|---|---|---|---|---|
+| One plane, sample type `T` selected at compile time | `PlaneBuf<T>` | `PlaneRef<T>` | `PlaneMut<T>` | Dimensions and sample stride; no role or color |
+| One plane, sample type selected at runtime | `AnyPlaneBuf` | `AnyPlane` | `AnyPlaneMut` | Dimensions, sample stride and selected sample type; no role or color |
+| One interleaved picture | `PixelBuffer<P, S>` | `PixelSlice<P>` | `PixelSliceMut<P>` | Dimensions, byte stride, pixel descriptor and color context |
+| One planar picture | `PlanarBuffer<P>` | `PlanarSlice` | `PlanarSliceMut<P>` | Planes, image dimensions, layout, color context and alpha interpretation |
+
+“Runtime-selected sample type” means an enum containing a concrete typed value,
+not loss of sample-type information. For example, `AnyPlane::U16` contains a
+`PlaneRef<u16>`, while `AnyPlaneBuf::U16` contains a `PlaneBuf<u16>`.
+The shared sample roster is U8/I8/U16/I16/U32/I32/U64/I64/F32/F64.
+`StorageSample` and `PlaneSample` name the **same trait**. Typed planes,
+aligned samples, PixelStorage and all three AnyPlane forms use that roster.
+Half-float payloads still use U16 storage; no F16 primitive or numerical reader
+is added. `CodePlane` numerical reading remains limited to U8/U16.
+
+The typed plane family is one generic type: `Plane<C>`. Its aliases select
+`C = Vec<T>`, `&[T]` or `&mut [T]`. `AlignedPlane<T>` is another owning alias,
+using `AlignedSamples<T>`. Custom owners implement `SampleStorage` and,
+when writable, `SampleStorageMut`.
+
+`PixelBuffer` defaults to owned `PixelStorage`; its generic `S` determines
+actual storage ownership. `P` describes the compile-time pixel type, with `()`
+for runtime-described pixels. Interleaved does **not** mean tightly packed:
+these picture types retain row stride and can include padding.
+
+### Storage underneath the geometry
+
+These hold allocations, not image dimensions, row strides or color interpretation.
+
+| Storage type | Sample selection | Ownership | Used by |
 |---|---|---|---|
-| `Plane<C>` | One strided 2-D array | Determined by `C` | Sample storage and geometry only |
-| `PlaneRef<T>` | One shared plane, `Plane<&[T]>` | No | No role/color inference |
-| `PlaneMut<T>` | One exclusively borrowed plane, `Plane<&mut [T]>` | No | Mutation under Rust's exclusive borrow |
-| `AnyPlane` | One shared plane with erased sample type | No | Retains geometry and the native sample type |
-| `PlanarSlice` | Whole read-only planar picture | No | Borrows AnyPlanes, layout, color context and alpha declaration |
-| `PixelBuffer<P, S>` | Packed picture over storage `S` | Determined by `S` | Packed descriptor, context, offsets and byte stride |
-| `PixelStorage` | Runtime selection of a typed owned vector | Yes, global allocator | Preserves sample type for ownership recovery |
+| `Vec<T>` | Compile-time `T` | Owns a contiguous allocation | `PlaneBuf<T>`; supported typed `PixelBuffer` storage |
+| `AlignedSamples<T>` | Compile-time `T` | Owns aligned sample storage | `AlignedPlane<T>`; aligned `PixelBuffer` storage |
+| `PixelStorage` | Runtime-selected typed vector | Owns the selected vector | Default `PixelBuffer` storage |
 
-PlanarSlice contains PlaneRefs through AnyPlane; it does not replace PlaneRef
-or PlaneMut. A single plane can hold interleaved Cb/Cr, and a complete monochrome
-picture can have only one plane. PlanarLayout alone describes roles/encodings;
-it does not borrow the samples or bind their current color context. No mutable
-picture aggregate is needed for IQA: producers mutate owner/PlaneMut storage,
-then lend shared picture views for scoring. Borrowing keeps the owner alive.
+`PixelStorage` and `AnyPlaneBuf` both select a sample type at runtime, but at
+different levels: **PixelStorage holds an allocation; AnyPlaneBuf holds an
+allocation plus plane geometry.** Both are convenient enums of ordinary typed
+vectors. Neither requires custom storage to become an ordinary vector:
+`PixelBuffer<P, S>` keeps its concrete `S`, and `PlanarBuffer<P>` keeps each
+concrete plane owner `P`.
+
+For aligned planar storage, use `PlanarBuffer<AlignedPlane<T>>`. For a pool or
+accounted owner, use `PlanarBuffer<Plane<MyStorage>>`. For heterogeneous owner
+kinds or sample types, implement `PlaneStorage` on the owner's enum, and
+`PlaneStorageMut` only if it can lend exclusive samples. This is the same
+extension point needed by zencodec-media's existing vector/accounted plane enum;
+no codec dependency or per-owner enum variant belongs in zenpixels.
+
+Owners must be `Sync` to lend the shared thread-safe `PlanarSlice`; they need
+not be `Send`. Read-only owners need not implement mutable access. These
+contracts require stable geometry and sample type while a picture borrows them.
+No allocation, boxing, or pixel copy is introduced by owner erasure when lending
+read-only views; writable views retain the concrete owner type.
+
+An aligned allocation cannot become an ordinary `Vec<T>` without copying: its
+deallocation layout differs. `Plane::into_storage()` returns the **original**
+owner, preserving alignment, allocator/pool identity and its release behavior.
+
+### Descriptions without storage
+
+`PlanarLayout` describes plane roles, encodings, subsampling and chroma siting.
+`PixelDescriptor` describes interleaved pixel format and interpretation.
+`ColorContext` carries current color signaling. None owns pixel samples;
+the complete picture types bind these descriptions to actual storage.
+
+A single plane can hold interleaved Cb/Cr, and a complete monochrome picture
+can contain only one plane. “Plane” describes one strided sample array;
+“picture” adds the interpretation needed to use it as an image.
+
+A codec can return `PlanarBuffer` by moving its Y/Cb/Cr allocations into
+`AnyPlaneBuf` values. `as_slice()` and `as_slice_mut()` allocate neither pixel
+storage nor descriptor lists. A caller-owned array of `AnyPlaneMut` can also
+be passed to `PlanarSliceMut::new`. Both constructors validate plane count,
+geometry, sample encoding and alpha using the same rules as `PlanarSlice`.
+The last row needs no trailing padding; chroma sizes round up at odd edges.
+
+Mutable access returns reborrowed plane values, never a writable descriptor
+slice. `planes_mut()` can lend several disjoint planes simultaneously. Replacing
+one returned value does not replace the original descriptor. The mutable view
+keeps the short picture borrow separate from any backing lifetime in its owner
+type, so a caller can borrow the same list again for a later processing pass. Read interpretation
+through `as_slice()`. Neither view infers color or performs conversion. Frame
+timing and shared/hardware-backed frame ownership remain media-layer concerns.
+
+**Accessor migration:** `PlanarSlice::planes()` now returns an exact-size,
+double-ended iterator of `AnyPlane` values instead of a descriptor slice.
+Use `plane(i)` for checked indexed access, and `planes().zip(...)` for iteration.
+`PlanarSlice::new` still accepts the same borrowed descriptor slice. The private
+view representation borrows the descriptor owner; `PlanarLayout` remains
+Vec-backed and no fixed plane-count storage limit is introduced.
+
+`PlanarBuffer::try_from_parts` preserves every owner, layout and color field on
+failure, matching the packed buffer's recovery pattern. `take_parts()` recovers
+the rejected transfer record for correction and retry; `without_buffer()` drops
+it when recovery is unnecessary. `into_parts()` moves a valid picture's owners
+and interpretation together. Neither success nor failure requires allocation.
+The convenience `new` constructor still drops rejected inputs, like packed
+convenience constructors. `into_planes()` deliberately discards interpretation;
+use `into_parts()` when transferring a complete picture.
 
 ### What Rust1.100 support already covers
 
@@ -368,7 +456,7 @@ are marked stable from Rust1.100 in the current official docs. The existing
 compiler version and is a no-op on older compilers.
 
 - Plane<Vec<T,A>> and Plane<Box<[T],A>> preserve the allocator owner for the
-  supported PlaneSample types (currently U8/U16/F32).
+  shared native storage sample roster listed above.
 - PixelBuffer<(),Vec<T,A>> works through the existing storage traits and
   try_from_parts/into_parts. It need not become PixelStorage.
 - PlaneRef, PlaneMut, AnyPlane and PlanarSlice borrow samples independently of
@@ -441,3 +529,29 @@ No new allocator trait is needed: existing SampleStorage/ByteStorage and
 borrowed picture views are the processing boundary. Supplied allocator
 implementations can provide over-alignment without adding unsafe allocator
 implementation code to zenpixels.
+
+## Owned-planar qualification
+
+The owned-planar review adds `just planar-storage-check`: all-feature core tests
+and strict all-target Clippy, a genuine no-default-features build, and the
+zenpsy consumer suite. It passes without relaxing existing expectations.
+Core doctests include a decoder-style Y/Cb/Cr adoption example. Public API
+snapshots are regenerated with `just api-doc`.
+
+`tests/planar_buffer.rs` refuses every allocation while adopting existing
+owners and borrowing read/write views, verifies original sample pointers,
+mutates three live plane borrows simultaneously, and checks untouched padding.
+It also checks mixed U16/F32 encodings, descriptor replacement isolation,
+invalid count/type/geometry/alpha and sequential mutable descriptor-list reuse.
+The last control originally failed with E0499/E0502 when both lifetimes were
+tied together; separating picture and backing-sample lifetimes fixes it.
+These are storage-contract tests, not a benchmark or codec-integration claim.
+
+The storage-symmetry controls extend this qualification to every native storage
+type, including signed endpoints, float negative zero and NaN payloads. Custom
+pool and aligned owners retain their original pointers and release exactly once;
+shared read-only owners do not implement writable access. Rejected adoption
+retains the original storage and color for correction and retry with allocation
+refused. Wide/signed planar hashing masks payload bits in little-endian order;
+existing portable hash goldens and U8/U16 code-reader behavior stay unchanged.
+This establishes carriage and ownership, not wider numerical conversion support.
