@@ -806,3 +806,8 @@ planar-storage-check:
     cargo clippy --locked -p zenpixels --all-features --all-targets -- -D warnings
     cargo check --locked -p zenpixels --no-default-features
     cargo test --locked --manifest-path zenpsy-api/Cargo.toml
+
+# Check all converter/generator users of the unified core storage contract.
+planar-storage-integration-check:
+    cargo check --locked --workspace --all-targets --all-features
+    just api-doc

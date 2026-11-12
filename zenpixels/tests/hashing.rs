@@ -413,3 +413,29 @@ fn wide_and_signed_planar_hashes_ignore_unused_bits_and_row_padding() {
     check!(u64, U64, 48, 8);
     check!(i64, I64, 48, 8);
 }
+
+#[test]
+fn empty_wide_code_planes_do_not_iterate_declared_rows() {
+    let plane = Plane::new(Vec::<i64>::new(), 0, u32::MAX as usize, usize::MAX).unwrap();
+    let encoding = SampleEncoding::new(ChannelType::I64, 48, 8).unwrap();
+    let layout = PlanarLayout::new(
+        vec![PlaneSpec::new(
+            PlaneRole::Luma,
+            PlaneEncoding::Code(encoding),
+        )],
+        ChromaSubsampling::Mono,
+        ChromaSiting::Unknown,
+    )
+    .unwrap();
+    let image = PlanarBuffer::new(
+        vec![plane],
+        layout,
+        0,
+        u32::MAX,
+        ColorContext::default(),
+        None,
+    )
+    .unwrap();
+    let view = image.as_slice();
+    let _ = writes(&view); // Must finish without iterating u32::MAX empty rows.
+}

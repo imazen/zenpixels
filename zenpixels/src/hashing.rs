@@ -275,6 +275,9 @@ fn masked_plane<C: SampleStorage>(
     encoding: SampleEncoding,
     state: &mut impl Hasher,
 ) {
+    if view.width() == 0 || view.height() == 0 {
+        return;
+    }
     let size = core::mem::size_of::<C::Sample>();
     let mask = u64::MAX >> (64 - encoding.code_bits());
     let mut bytes = [0u8; 1024];

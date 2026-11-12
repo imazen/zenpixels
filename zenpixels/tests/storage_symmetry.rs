@@ -59,6 +59,30 @@ fn all_native_storage_types_have_typed_aligned_and_runtime_plane_views() {
                 bytemuck::bytes_of(&storage[1]),
                 bytemuck::bytes_of(&values[2])
             );
+            // The same aligned owner also works as packed storage for every
+            // native type; changing the container never changes its allocator.
+            let descriptor = zenpixels::PixelDescriptor::try_new_full(
+                ChannelType::$variant,
+                zenpixels::ChannelLayout::Gray,
+                None,
+                zenpixels::TransferFunction::Unknown,
+                zenpixels::ColorPrimaries::Unknown,
+            )
+            .unwrap();
+            let parts = zenpixels::PixelBufferParts::new(
+                storage,
+                3,
+                1,
+                3 * core::mem::size_of::<$t>(),
+                descriptor,
+            );
+            let packed =
+                failing_above(0, || zenpixels::PixelBuffer::try_from_parts(parts).unwrap());
+            assert_eq!(
+                packed.as_slice().row(0),
+                bytemuck::cast_slice::<_, u8>(&[values[0], values[2], values[2]])
+            );
+            assert_eq!(packed.into_parts().data.as_ptr(), pointer);
             // The default packed owner and default planar owner retain the
             // same native vector type and exact bits (including float payloads).
             let storage = PixelStorage::from(values.to_vec());
