@@ -9,26 +9,26 @@
 
 ## summary
 #
-#   inherent methods                           59
+#   inherent methods                           61
 #   enum variants                              14
-#   trait roster entries (type × trait)        62
+#   trait roster entries (type × trait)        64
 #
 # per-module pub lines:
 #   (root)                            8
 #   buffer                            3
 #   cicp                              2
-#   color                             8
+#   color                             9
 #   descriptor                       18
 #   hdr                               4
 #   icc                               2
 #   orientation                       1
 #   pixel_types                       2
-#   plane                             7
+#   plane                             8
 #   policy                            6
 #   precision                         5
 #   sample                            7
 
-## items (73 lines)
+## items (75 lines)
 
 pub fn HashInclusions::assert_fields_are_eq(&self)
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
@@ -44,6 +44,7 @@ pub fn color::ColorOrigin::assert_fields_are_eq(&self)
 pub fn color::ColorProfileSource<'a>::assert_fields_are_eq(&self)
 pub fn color::ColorProvenance::assert_fields_are_eq(&self)
 pub fn color::NamedProfile::assert_fields_are_eq(&self)
+pub fn color::PixelEncoding<'a>::assert_fields_are_eq(&self)
 pub fn descriptor::AlphaMode::assert_fields_are_eq(&self)
 pub fn descriptor::ChannelLayout::assert_fields_are_eq(&self)
 pub fn descriptor::ChannelType::assert_fields_are_eq(&self)
@@ -71,6 +72,7 @@ pub fn plane::PlaneEncoding::assert_fields_are_eq(&self)
 pub fn plane::PlaneError::assert_fields_are_eq(&self)
 pub fn plane::PlaneRole::assert_fields_are_eq(&self)
 pub fn plane::PlaneSpec::assert_fields_are_eq(&self)
+pub fn plane::RowAlign::assert_fields_are_eq(&self)
 pub fn policy::AlphaPolicy::assert_fields_are_eq(&self)
 pub fn policy::ConvertOptions::assert_fields_are_eq(&self)
 pub fn policy::DepthPolicy::assert_fields_are_eq(&self)
@@ -104,7 +106,7 @@ pub descriptor::ColorPrimaries::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::SignalRange::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::TransferFunction::__Reserved(descriptor::reserved::Reserved)
 
-## trait impls (62 types)
+## trait impls (64 types)
 
 HashInclusions: TrivialClone
 buffer::Bgrx: TrivialClone
@@ -116,6 +118,7 @@ color::Color: TrivialClone
 color::ColorAuthority: TrivialClone
 color::ColorProvenance: TrivialClone
 color::NamedProfile: TrivialClone
+color::PixelEncoding<'a>: TrivialClone
 descriptor::AlphaMode: TrivialClone
 descriptor::ChannelLayout: TrivialClone
 descriptor::ChannelType: TrivialClone
@@ -149,6 +152,7 @@ plane::PlaneEncoding: TrivialClone
 plane::PlaneError: TrivialClone
 plane::PlaneRole: TrivialClone
 plane::PlaneSpec: TrivialClone
+plane::RowAlign: TrivialClone
 policy::AlphaPolicy: TrivialClone
 policy::ConvertOptions: TrivialClone
 policy::DepthPolicy: TrivialClone

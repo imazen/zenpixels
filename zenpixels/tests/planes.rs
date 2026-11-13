@@ -635,8 +635,8 @@ fn planar_picture_reuses_native_code_components_and_preserves_interpretation() {
     let image =
         PlanarSlice::new(&planes, &layout, 5, 3, &context, Some(AlphaMode::Straight)).unwrap();
     assert!(core::ptr::eq(image.color_context(), &context));
-    assert!(image.color_context().diffuse_white.is_none());
-    assert!(image.color_context().hdr_peak.is_none());
+    assert!(image.color_context().diffuse_white().is_none());
+    assert!(image.color_context().hdr_peak().is_none());
     assert_eq!(image.layout().siting(), ChromaSiting::Left);
     assert_eq!(image.alpha_mode(), Some(AlphaMode::Straight));
     let cr = CodePlane::component(
@@ -662,17 +662,22 @@ fn planar_picture_reuses_native_code_components_and_preserves_interpretation() {
     assert_eq!(luma.row(2).unwrap(), &y[14..19]);
     assert_eq!(y[5], (69 << 6) | 63); // Padding and low payload padding are untouched.
 
-    // Raw unknown signaling and opaque ICC bytes remain transportable. The
-    // enclosing context's existing authority rule decides which source is used.
+    // Raw unknown signaling and opaque ICC bytes remain transportable;
+    // ColorContext holds a single active profile authority at a time.
+    let raw_cicp = ColorContext::from_cicp(Cicp::new(200, 201, 202, false));
+    let image =
+        PlanarSlice::new(&planes, &layout, 5, 3, &raw_cicp, Some(AlphaMode::Straight)).unwrap();
+    assert_eq!(
+        image.color_context().cicp(),
+        Some(Cicp::new(200, 201, 202, false))
+    );
+
     let icc: Arc<[u8]> = Arc::from([1, 2, 3, 4]);
-    let declared = ColorContext::from_cicp(Cicp::new(200, 201, 202, false)).with_icc(icc.clone());
+    let declared = raw_cicp.with_icc(icc.clone());
     let image =
         PlanarSlice::new(&planes, &layout, 5, 3, &declared, Some(AlphaMode::Straight)).unwrap();
-    assert_eq!(image.color_context().cicp, declared.cicp);
-    assert!(Arc::ptr_eq(
-        image.color_context().icc.as_ref().unwrap(),
-        &icc
-    ));
+    assert_eq!(image.color_context().cicp(), None);
+    assert!(Arc::ptr_eq(image.color_context().icc_arc().unwrap(), &icc));
     assert_eq!(
         image.color_context().as_profile_source(),
         Some(ColorProfileSource::Icc(icc.as_ref()))

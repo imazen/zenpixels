@@ -79,6 +79,11 @@ Use `as_contiguous_bytes()` when you specifically require packed rows; it
 returns `None` for a strided view. Use `try_contiguous_bytes()` to borrow when
 packed or make a fallible packed copy otherwise.
 
+For separate Y/Cb/Cr or RGB planes, `plane::PlanarBuffer` adopts existing
+allocations and lends `PlanarSlice` / `PlanarSliceMut` without copying pixels or
+allocating descriptors. Each plane keeps its own stride and sample encoding;
+see [planar storage](docs/planar-types.md).
+
 ## Type system
 
 A `PixelFormat` describes storage and layout. A `PixelDescriptor` adds transfer
@@ -98,12 +103,13 @@ general signed/wide numerical conversion remains unsupported. See the
 
 ## Color and native samples
 
-- `ColorContext` describes the **current** samples, including an attached ICC
-  or CICP and luminance anchors. An attached ICC is authoritative even if a
-  companion disagrees or the ICC is unusable; unsupported operations refuse or
-  preserve the original interpretation.
-- `ColorOrigin` keeps original file declarations separately. Converted samples
-  must be emitted with matching current metadata.
+- `ColorContext` describes the **current** samples with at most one `ColorProfile`
+  (`Cicp` or `Icc`) plus luminance anchors, and `PixelEncoding` borrows a
+  descriptor and optional context together.
+- `ColorOrigin` keeps original file declarations separately (including dual
+  ICC + CICP container claims; an attached ICC is authoritative even if a
+  companion disagrees or the ICC is unusable). Converted samples must be emitted
+  with matching current metadata.
 - `SampleEncoding` describes native integer code depth and bit placement.
   `CodePlane` reads U8/U16 component codes from typed planes. Ten-bit white 1023
   is not ordinary full-range U16 white 65535: canonicalization is explicit.

@@ -84,10 +84,12 @@ fn bgr_icc_output_cannot_bypass_missing_luma_policy() {
     };
     use zenpixels_convert::{ConvertError, OutputPlan, OutputProfile};
     let cms = AcceptingCms(AtomicUsize::new(0));
-    let current = Arc::new(ColorContext::from_icc(Arc::<[u8]>::from(&b"current"[..])));
+    let current = ColorContext::from_icc(Arc::<[u8]>::from(&b"current"[..]));
     let result = OutputPlan::new(
-        PixelDescriptor::BGR8.with_transfer(TransferFunction::Srgb),
-        Some(current),
+        PixelEncoding::new(
+            PixelDescriptor::BGR8.with_transfer(TransferFunction::Srgb),
+            Some(&current),
+        ),
         &ColorOrigin::assumed(),
         OutputProfile::Icc(Arc::from(&b"target"[..])),
         PixelFormat::Gray8,

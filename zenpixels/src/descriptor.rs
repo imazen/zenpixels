@@ -1479,7 +1479,13 @@ impl PixelDescriptor {
         matches!(self.transfer, TransferFunction::Unknown)
     }
 
-    /// Minimum byte alignment required for the channel type (1, 2, or 4).
+    /// Pair this compact descriptor with no extended [`ColorContext`](crate::ColorContext).
+    #[inline]
+    pub const fn encoding(self) -> crate::PixelEncoding<'static> {
+        crate::PixelEncoding::from_descriptor(self)
+    }
+
+    /// Minimum byte alignment required for the channel type (1, 2, 4, or 8).
     #[inline]
     pub const fn min_alignment(self) -> usize {
         self.format.channel_type().byte_size()
@@ -1517,6 +1523,51 @@ impl PixelDescriptor {
         let raw = (width as usize).saturating_mul(bpp);
         let align = lcm(bpp, simd_align);
         align_up_general(raw, align)
+    }
+
+    /// Fallibly compute the byte stride for `width` pixels under [`RowAlign`](crate::RowAlign).
+    ///
+    /// Returns `None` if `width * bytes_per_pixel` or the alignment step
+    /// overflows `usize`.
+    #[inline]
+    pub const fn try_aligned_stride(self, width: u32, align: crate::RowAlign) -> Option<usize> {
+        let bpp = self.bytes_per_pixel();
+        let Some(raw) = (width as usize).checked_mul(bpp) else {
+            return None;
+        };
+        match align {
+            crate::RowAlign::Tight => Some(raw),
+            crate::RowAlign::Cache64 => {
+                let Some(row_bytes) = checked_align_up(raw, 64) else {
+                    return None;
+                };
+                if row_bytes != 0 && row_bytes % 4096 == 0 {
+                    row_bytes.checked_add(64)
+                } else {
+                    Some(row_bytes)
+                }
+            }
+            crate::RowAlign::PixelCache64 => {
+                let Some(step) = checked_lcm(bpp, 64) else {
+                    return None;
+                };
+                let Some(row_bytes) = checked_align_up(raw, step) else {
+                    return None;
+                };
+                if row_bytes != 0 && row_bytes % 4096 == 0 {
+                    row_bytes.checked_add(step)
+                } else {
+                    Some(row_bytes)
+                }
+            }
+            crate::RowAlign::Samples(n) => {
+                let n = if n == 0 { 1 } else { n as usize };
+                let Some(step) = n.checked_mul(self.min_alignment()) else {
+                    return None;
+                };
+                checked_align_up(raw, step)
+            }
+        }
     }
 
     /// Validate that alpha semantics agree with the physical format.
@@ -1589,6 +1640,26 @@ const fn lcm(a: usize, b: usize) -> usize {
         0
     } else {
         (a / gcd(a, b)).saturating_mul(b)
+    }
+}
+
+const fn checked_lcm(a: usize, b: usize) -> Option<usize> {
+    if a == 0 || b == 0 {
+        Some(0)
+    } else {
+        (a / gcd(a, b)).checked_mul(b)
+    }
+}
+
+const fn checked_align_up(value: usize, align: usize) -> Option<usize> {
+    if align == 0 {
+        return None;
+    }
+    let rem = value % align;
+    if rem == 0 {
+        Some(value)
+    } else {
+        value.checked_add(align - rem)
     }
 }
 
@@ -2586,6 +2657,46 @@ mod tests {
         assert!(stride >= 300);
         assert_eq!(stride % 16, 0);
         assert_eq!(stride % 3, 0); // pixel-aligned
+    }
+
+    #[test]
+    fn try_aligned_stride_covers_all_row_align_policies() {
+        use crate::RowAlign;
+
+        // Tight
+        assert_eq!(
+            PixelDescriptor::RGB8_SRGB.try_aligned_stride(5, RowAlign::Tight),
+            Some(15)
+        );
+        // Cache64: 5 * 3 = 15 -> 64 (sample-aligned, 64B-aligned, not forced to 192B)
+        assert_eq!(
+            PixelDescriptor::RGB8_SRGB.try_aligned_stride(5, RowAlign::Cache64),
+            Some(64)
+        );
+        // PixelCache64: 5 * 3 = 15 -> lcm(3, 64) = 192
+        assert_eq!(
+            PixelDescriptor::RGB8_SRGB.try_aligned_stride(5, RowAlign::PixelCache64),
+            Some(192)
+        );
+        // 4096 B anti-aliasing bump on Cache64 and PixelCache64, but NOT on Samples
+        assert_eq!(
+            PixelDescriptor::RGBA8_SRGB.try_aligned_stride(1024, RowAlign::Cache64),
+            Some(4160)
+        );
+        assert_eq!(
+            PixelDescriptor::RGBA8_SRGB.try_aligned_stride(1024, RowAlign::PixelCache64),
+            Some(4160)
+        );
+        assert_eq!(
+            PixelDescriptor::RGBA8_SRGB.try_aligned_stride(1024, RowAlign::from_bytes::<u8>(256)),
+            Some(4096)
+        );
+        // Samples(n) scales by sample byte width (2 for U16)
+        assert_eq!(
+            PixelDescriptor::RGBA16_SRGB.try_aligned_stride(10, RowAlign::from_bytes::<u16>(256)),
+            Some(256)
+        );
+        assert_eq!(RowAlign::try_from_bytes(3, 2), None);
     }
 
     // --- new_full and from_pixel_format ---

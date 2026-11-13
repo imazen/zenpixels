@@ -280,7 +280,7 @@ fn color_zenpixels_cannot_name_is_kept_and_blocks_the_return_trip() {
     let buffer: PixelBuffer = PixelBuffer::try_from(img).unwrap();
     assert_eq!(buffer.descriptor().primaries, ColorPrimaries::Unknown);
     assert_eq!(buffer.descriptor().transfer, TransferFunction::Unknown);
-    let cicp = buffer.color_context().unwrap().cicp.unwrap();
+    let cicp = buffer.color_context().unwrap().cicp().unwrap();
     assert_eq!(
         (cicp.color_primaries, cicp.transfer_characteristics),
         (7, 7)
@@ -405,9 +405,14 @@ fn flat_views_refuse_what_image_cannot_read() {
     let raw = fill_u8(32);
     let slice = PixelSlice::new(&raw, 4, 2, 16, bgra).unwrap();
     assert!(FlatSamples::<&[u8]>::try_from(slice).is_err());
-    let rgb16 = PixelBuffer::try_new_aligned(4, 2, PixelDescriptor::RGB16_SRGB)
-        .map(|b: PixelBuffer<(), AlignedSamples<u8>>| b)
-        .unwrap();
+    let rgb16 = PixelBuffer::try_new_aligned(
+        4,
+        2,
+        PixelDescriptor::RGB16_SRGB,
+        zenpixels::RowAlign::Cache64,
+    )
+    .map(|b: PixelBuffer<(), AlignedSamples<u8>>| b)
+    .unwrap();
     assert!(FlatSamples::<&[u8]>::try_from(rgb16.as_slice()).is_err());
     assert!(FlatSamples::<&[f32]>::try_from(rgb16.as_slice()).is_err());
     assert!(FlatSamples::<&[u16]>::try_from(rgb16.as_slice()).is_ok());

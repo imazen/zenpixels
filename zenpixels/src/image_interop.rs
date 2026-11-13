@@ -268,17 +268,18 @@ fn image_color(
     let primaries = image_primaries(descriptor.primaries)?;
     let transfer = image_transfer(descriptor.transfer)?;
     if let Some(context) = context {
-        if context.icc.is_some() {
-            return None;
-        }
-        if let Some(cicp) = context.cicp {
-            let matches = Some(cicp.color_primaries) == descriptor.primaries.to_cicp()
-                && Some(cicp.transfer_characteristics) == descriptor.transfer.to_cicp()
-                && cicp.matrix_coefficients == 0
-                && cicp.full_range;
-            if !matches {
-                return None;
+        match context.profile() {
+            Some(crate::ColorProfile::Icc(_)) => return None,
+            Some(crate::ColorProfile::Cicp(cicp)) => {
+                let matches = Some(cicp.color_primaries) == descriptor.primaries.to_cicp()
+                    && Some(cicp.transfer_characteristics) == descriptor.transfer.to_cicp()
+                    && cicp.matrix_coefficients == 0
+                    && cicp.full_range;
+                if !matches {
+                    return None;
+                }
             }
+            None => {}
         }
     }
     Some((primaries, transfer))

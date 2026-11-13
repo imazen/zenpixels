@@ -153,7 +153,7 @@ fn measure_max_custom_anchor_on_pixel_buffer_color_context() {
     ));
     let ctx_anchor = buf
         .color_context()
-        .and_then(|c| c.diffuse_white)
+        .and_then(|c| c.diffuse_white())
         .expect("ColorContext carries the 100-nit anchor");
     let cll = ContentLightLevel::measure_max(buf.as_slice(), ctx_anchor, LightLevelMethod::MaxRgb)
         .expect("linear input");

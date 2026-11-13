@@ -208,7 +208,7 @@ pub trait PixelBufferConvertTypedExt: PixelBufferConvertExt {
     fn to_gray8(&self) -> PixelBuffer<rgb::Gray<u8>>;
 
     /// Convert to BGRA8, allocating a new buffer.
-    fn to_bgra8(&self) -> PixelBuffer<rgb::alt::BGRA<u8>>;
+    fn to_bgra8(&self) -> PixelBuffer<rgb::Bgra<u8>>;
 }
 
 /// Reject conversions that require a CMS plugin from these
@@ -289,8 +289,7 @@ fn converter_for(
     check_needs_cms(&src_desc, &target)?;
     let options =
         crate::interpretation::resolve_options(source.color_context().map(Arc::as_ref), options);
-    let source_profile =
-        crate::output::current_profile_for(src_desc, source.color_context().map(Arc::as_ref))?;
+    let source_profile = crate::output::current_profile_for(source.encoding())?;
     let changes_color =
         src_desc.transfer() != target.transfer() || src_desc.primaries != target.primaries;
     let converter =
@@ -445,7 +444,7 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
         let width = self.width();
         if src_desc == target {
             check_needs_cms(&src_desc, &target)?;
-            crate::output::current_profile_for(src_desc, self.color_context().map(Arc::as_ref))?;
+            crate::output::current_profile_for(self.encoding())?;
             let mut buf = PixelBuffer::try_new(width, self.rows(), target)
                 .map_err_at(crate::ConvertError::from)?;
             let mut destination = buf.as_slice_mut();
@@ -472,7 +471,7 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
                 zenpixels::hdr::HdrPeak::Nits(peak) => peak,
                 zenpixels::hdr::HdrPeak::Declared => self
                     .color_context()
-                    .and_then(|c| c.hdr_peak)
+                    .and_then(|c| c.hdr_peak())
                     .ok_or_else(|| whereat::at!(crate::ConvertError::HdrPeakRequired))?,
                 zenpixels::hdr::HdrPeak::Measured => {
                     #[cfg(feature = "bt2446a")]
@@ -561,8 +560,7 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
         // A current ICC profile outranks the descriptor, as it does in `convert_to`.
         if let Some(target) = crate::adapt::encode_conversion_target(self.descriptor(), supported) {
             let source = self.descriptor();
-            let profile =
-                crate::output::current_profile_for(source, self.color_context().map(Arc::as_ref))?;
+            let profile = crate::output::current_profile_for(self.encoding())?;
             let changes_color =
                 source.transfer() != target.transfer() || source.primaries != target.primaries;
             if changes_color && matches!(profile, zenpixels::ColorProfileSource::Icc(_)) {
@@ -849,7 +847,7 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
         // `ConvertPlan::new`).
 
         let mut plan = crate::ConvertPlan::new_with_hdr_config(src_desc, target, hdr).at()?;
-        if let Some(white) = self.color_context().and_then(|c| c.diffuse_white) {
+        if let Some(white) = self.color_context().and_then(|c| c.diffuse_white()) {
             plan = plan.with_linear_input_white(white, hdr.source_peak_nits);
         }
         let mut converter = crate::RowConverter::from_plan(plan);
@@ -896,8 +894,8 @@ fn measured_peak(
     rendering_options: &crate::ConvertOptions,
 ) -> Result<zenpixels::hdr::Nits, At<crate::ConvertError>> {
     let from = source.descriptor();
-    crate::output::current_profile_for(from, source.color_context().map(Arc::as_ref))?;
-    if source.color_context().is_some_and(|c| c.icc.is_some()) {
+    crate::output::current_profile_for(source.encoding())?;
+    if source.color_context().is_some_and(|c| c.icc().is_some()) {
         return Err(whereat::at!(crate::ConvertError::NeedsCms {
             from,
             to: from
@@ -958,7 +956,7 @@ impl PixelBufferConvertTypedExt for PixelBuffer {
         convert_to_typed(self, PixelDescriptor::GRAY8_SRGB)
     }
 
-    fn to_bgra8(&self) -> PixelBuffer<rgb::alt::BGRA<u8>> {
+    fn to_bgra8(&self) -> PixelBuffer<rgb::Bgra<u8>> {
         convert_to_typed(self, PixelDescriptor::BGRA8_SRGB)
     }
 }
@@ -1682,7 +1680,7 @@ mod tests {
     fn to_bgra8() {
         let data = vec![100u8, 150, 200, 50, 100, 150];
         let buf = PixelBuffer::from_vec(data, 2, 1, PixelDescriptor::RGB8_SRGB).unwrap();
-        let typed: PixelBuffer<rgb::alt::BGRA<u8>> = buf.to_bgra8();
+        let typed: PixelBuffer<rgb::Bgra<u8>> = buf.to_bgra8();
         assert_eq!(typed.width(), 2);
         assert_eq!(typed.height(), 1);
         let slice = typed.as_slice();

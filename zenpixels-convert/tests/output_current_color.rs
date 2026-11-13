@@ -118,7 +118,7 @@ fn current_icc_and_target_icc_reach_the_plugin_even_when_descriptors_match() {
     assert_eq!(output.pixels().row(0), &[248, 204, 62]);
     assert_eq!(output.metadata().icc.as_deref(), Some(target.as_ref()));
     assert_eq!(
-        output.pixels().color_context().unwrap().icc.as_deref(),
+        output.pixels().color_context().unwrap().icc(),
         Some(target.as_ref())
     );
 }
@@ -166,7 +166,7 @@ fn same_as_origin_converts_current_linear_pixels_back_to_original_srgb() {
     assert_eq!(output.pixels().row(0), &[188, 188, 188]);
     assert_eq!(output.pixels().descriptor(), PixelDescriptor::RGB8_SRGB);
     assert_eq!(
-        output.pixels().color_context().unwrap().cicp,
+        output.pixels().color_context().unwrap().cicp(),
         Some(Cicp::SRGB)
     );
 }
@@ -226,7 +226,7 @@ fn real_icc_input_matches_direct_moxcms_and_keeps_straight_alpha() {
     assert_eq!([expected[3], expected[7], expected[11]], [0, 128, 255]);
     assert_eq!(ready.pixels().descriptor(), PixelDescriptor::RGBA8_SRGB);
     assert_eq!(
-        ready.pixels().color_context().unwrap().cicp,
+        ready.pixels().color_context().unwrap().cicp(),
         Some(Cicp::SRGB)
     );
 }

@@ -724,10 +724,75 @@ impl<T> ExactSizeIterator for RowsMut<'_, T> {}
 /// Row starts on 64 bytes, the widest SIMD vector and the x86/Neoverse line.
 const ROW_ALIGN: usize = 64;
 
+/// Row-start alignment policy for [`Plane::alloc_aligned`] and
+/// [`crate::PixelBuffer::try_new_aligned`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum RowAlign {
+    /// Tightly packed rows (`stride == width` samples, or `width * bytes_per_pixel` bytes).
+    #[default]
+    Tight,
+    /// 64-byte row alignment (widest SIMD vector and x86/ARM cache line), plus
+    /// a 64-byte anti-aliasing bump when the aligned row is a non-zero multiple
+    /// of 4096 bytes (`benchmarks/stride_aliasing_2026-11-01.md`).
+    ///
+    /// For 3-channel packed formats such as `RGB8` (3 B/px) or `RGB16` (6 B/px),
+    /// byte stride is a multiple of 64 (and of `size_of::<T>()`), not necessarily
+    /// a multiple of `bytes_per_pixel`.
+    Cache64,
+    /// Whole-pixel 64-byte row alignment (`lcm(bytes_per_pixel, 64)`), plus one
+    /// alignment step when the aligned row is a non-zero multiple of 4096 bytes.
+    ///
+    /// Every row starts on both a 64-byte boundary and a whole-pixel boundary,
+    /// satisfying whole-pixel stride consumers such as `imgref`. On a single-sample
+    /// [`Plane`], this equals [`Self::Cache64`].
+    PixelCache64,
+    /// Align row stride to a multiple of `N` samples (`0` is treated as `1`,
+    /// i.e. tight), with no 4096-byte bump.
+    ///
+    /// Use [`Self::from_bytes`] or [`Self::try_from_bytes`] to translate a
+    /// hardware byte-pitch requirement (such as `wgpu`'s 256-byte row alignment).
+    Samples(u16),
+}
+
+const _: () = assert!(core::mem::size_of::<RowAlign>() == 4);
+
+impl RowAlign {
+    /// Convert a hardware byte-pitch requirement into a sample-count alignment
+    /// for sample type `T`.
+    ///
+    /// # Panics
+    ///
+    /// Panics (at compile time in `const` context) if `bytes == 0` or `bytes`
+    /// is not a multiple of `size_of::<T>()`.
+    #[inline]
+    pub const fn from_bytes<T: PlaneSample>(bytes: u16) -> Self {
+        match Self::try_from_bytes(bytes, core::mem::size_of::<T>()) {
+            Some(align) => align,
+            None => panic!("RowAlign::from_bytes requires a non-zero multiple of size_of::<T>()"),
+        }
+    }
+
+    /// Fallibly convert a byte-pitch alignment into `RowAlign::Samples` for a
+    /// given `sample_bytes` width (`1`, `2`, `4`, or `8`).
+    ///
+    /// Returns `None` if `bytes == 0`, `sample_bytes == 0`, or `bytes` is not
+    /// divisible by `sample_bytes`.
+    #[inline]
+    pub const fn try_from_bytes(bytes: u16, sample_bytes: usize) -> Option<Self> {
+        if bytes == 0 || sample_bytes == 0 || (bytes as usize) % sample_bytes != 0 {
+            None
+        } else {
+            Some(Self::Samples((bytes as usize / sample_bytes) as u16))
+        }
+    }
+}
+
 impl<T: PlaneSample> Plane<AlignedSamples<T>> {
     /// Allocate a zeroed `width` x `height` plane for SIMD kernels.
     ///
-    /// Every row starts on a 64-byte boundary, with row 0 at index 0. The stride
+    /// Equivalent to `Self::alloc_aligned(width, height, RowAlign::Cache64)`:
+    /// every row starts on a 64-byte boundary, with row 0 at index 0. The stride
     /// is the row rounded up to 64 bytes, plus 64 more when that is a multiple of
     /// 4096: such strides put a column's rows in one cache set, which cost
     /// cache-resident 12-row vertical filters 19-48% on Zen 4
@@ -739,17 +804,50 @@ impl<T: PlaneSample> Plane<AlignedSamples<T>> {
     /// [`PlaneError::GeometryOverflow`] when the size overflows,
     /// [`PlaneError::AllocationFailed`] when the allocator refuses.
     pub fn alloc(width: usize, height: usize) -> Result<Self, PlaneError> {
+        Self::alloc_aligned(width, height, RowAlign::Cache64)
+    }
+
+    /// Allocate a zeroed `width` x `height` plane with explicit [`RowAlign`] row
+    /// alignment, with row 0 on a 64-byte boundary at index 0.
+    ///
+    /// # Errors
+    ///
+    /// [`PlaneError::GeometryOverflow`] when the size overflows,
+    /// [`PlaneError::AllocationFailed`] when the allocator refuses.
+    pub fn alloc_aligned(width: usize, height: usize, align: RowAlign) -> Result<Self, PlaneError> {
         let size = core::mem::size_of::<T>();
-        let row_bytes = width
-            .checked_mul(size)
-            .and_then(|b| b.checked_next_multiple_of(ROW_ALIGN))
-            .ok_or(PlaneError::GeometryOverflow)?;
-        let stride_bytes = if row_bytes != 0 && row_bytes % 4096 == 0 {
-            row_bytes + ROW_ALIGN
-        } else {
-            row_bytes
+        let stride = match align {
+            RowAlign::Tight => {
+                width
+                    .checked_mul(size)
+                    .ok_or(PlaneError::GeometryOverflow)?;
+                width
+            }
+            RowAlign::Cache64 | RowAlign::PixelCache64 => {
+                let row_bytes = width
+                    .checked_mul(size)
+                    .and_then(|b| b.checked_next_multiple_of(ROW_ALIGN))
+                    .ok_or(PlaneError::GeometryOverflow)?;
+                let stride_bytes = if row_bytes != 0 && row_bytes % 4096 == 0 {
+                    row_bytes
+                        .checked_add(ROW_ALIGN)
+                        .ok_or(PlaneError::GeometryOverflow)?
+                } else {
+                    row_bytes
+                };
+                stride_bytes / size
+            }
+            RowAlign::Samples(n) => {
+                let step = usize::from(n.max(1));
+                let stride = width
+                    .checked_next_multiple_of(step)
+                    .ok_or(PlaneError::GeometryOverflow)?;
+                stride
+                    .checked_mul(size)
+                    .ok_or(PlaneError::GeometryOverflow)?;
+                stride
+            }
         };
-        let stride = stride_bytes / size;
         let len = stride
             .checked_mul(height)
             .ok_or(PlaneError::GeometryOverflow)?;

@@ -51,6 +51,7 @@ fn try_new_aligned_reports_allocation_failure() {
             64,
             64,
             PixelDescriptor::RGB16_SRGB,
+            zenpixels::RowAlign::Cache64,
         )
         .unwrap_err();
         assert_alloc_failed(&err);

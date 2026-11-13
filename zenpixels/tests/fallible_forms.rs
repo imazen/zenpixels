@@ -19,6 +19,12 @@ fn slice_forms_agree_in_bounds_and_refuse_out_of_bounds() {
     assert_eq!(s.try_row(2), None);
     assert_eq!(s.try_row_with_stride(0), Some(s.row_with_stride(0)));
     assert_eq!(s.try_row_with_stride(2), None);
+    let cropped = s.crop_view(0, 0, 2, 2);
+    assert_eq!(
+        cropped.try_row_with_stride(0),
+        Some(cropped.row_with_stride(0))
+    );
+    assert_eq!(cropped.try_row_with_stride(1), None);
     assert_eq!(
         s.try_sub_rows(1, 1).unwrap().row(0),
         s.sub_rows(1, 1).row(0)

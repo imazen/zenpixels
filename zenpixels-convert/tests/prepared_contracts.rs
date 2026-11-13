@@ -322,7 +322,7 @@ fn hdr_unassociates_before_nonlinear_mapping() {
 }
 
 #[test]
-fn conversion_replaces_current_color_signaling_and_refuses_ambiguous_context() {
+fn conversion_replaces_current_color_signaling_and_enforces_single_authority() {
     use std::sync::Arc;
     use zenpixels::{Cicp, ColorContext, PixelBuffer};
     use zenpixels_convert::PixelBufferConvertExt;
@@ -334,17 +334,18 @@ fn conversion_replaces_current_color_signaling_and_refuses_ambiguous_context() {
         linear
             .color_context()
             .unwrap()
-            .cicp
+            .cicp()
             .unwrap()
             .transfer_characteristics,
         8
     );
-    assert!(linear.color_context().unwrap().icc.is_none());
-    let ambiguous = buffer.with_color_context(Arc::new(
+    assert!(linear.color_context().unwrap().icc().is_none());
+    let opaque_icc = buffer.with_color_context(Arc::new(
         ColorContext::from_cicp(Cicp::SRGB).with_icc(vec![1, 2, 3]),
     ));
+    assert!(opaque_icc.color_context().unwrap().cicp().is_none());
     assert!(
-        ambiguous
+        opaque_icc
             .convert_to(PixelDescriptor::RGBF32_LINEAR)
             .is_err()
     );
@@ -385,7 +386,7 @@ fn pq_and_explicit_linear_anchor_describe_the_same_luminance() {
         assert!((a - b).abs() < 0.001, "{a} vs {b}");
     }
     assert_eq!(
-        b.color_context().unwrap().diffuse_white.unwrap().nits(),
+        b.color_context().unwrap().diffuse_white().unwrap().nits(),
         100.
     );
 }

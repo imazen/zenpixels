@@ -203,13 +203,14 @@ conversion refuses. You do not need another buffer family to carry them.
 
 ## Carry color and ownership together
 
-`ColorContext` holds the current pixels' ICC/CICP and luminance declarations.
-`ColorOrigin` retains what the original file said. After a conversion, original
-metadata must not override the current samples. An attached ICC remains
-authoritative even if a CICP companion disagrees or the ICC is unusable.
-Resolve source claims at the codec boundary: output planning requires a single
-current ICC or CICP declaration and refuses a context carrying both. An unusable
-ICC is a reason to refuse an unsupported operation, not to substitute CICP silently.
+`ColorContext` holds the current pixels' single `ColorProfile` (`Cicp` or `Icc`)
+and luminance declarations; `PixelEncoding` borrows both a `PixelDescriptor` and
+an optional `ColorContext` without cloning `Arc`s. `ColorOrigin` retains what the
+original file said, including dual ICC + CICP container claims. Resolve source
+claims at the codec boundary: an attached ICC remains authoritative even if a
+CICP companion disagrees or the ICC is unusable, and an unusable ICC is a reason
+to refuse an unsupported operation rather than substitute CICP silently. After a
+conversion, original metadata must not override the current samples.
 
 `into_parts()` moves storage, offset, dimensions, stride, descriptor and context
 together. Use `PixelBuffer::try_from_parts` for checked reconstruction. A receiver

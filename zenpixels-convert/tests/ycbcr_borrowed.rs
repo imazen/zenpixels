@@ -27,7 +27,7 @@ fn run(plan: &YcbcrToRgbF32<'_>, x: usize, y: usize, width: u32, rows: u32) -> V
     )
     .unwrap();
     let result = plan.convert_rows(x, y, dst).unwrap();
-    assert_eq!(result.color_context().unwrap().cicp, Some(Cicp::SRGB));
+    assert_eq!(result.color_context().unwrap().cicp(), Some(Cicp::SRGB));
     output
         .chunks_exact(stride)
         .flat_map(|r| {
