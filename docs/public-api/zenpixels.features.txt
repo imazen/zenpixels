@@ -12,7 +12,7 @@
 #   pub types (struct/enum/trait/alias)         1
 #   inherent methods                           38
 #   enum variants                               3
-#   trait roster entries (type × trait)        88
+#   trait roster entries (type × trait)        90
 #   conditional trait impls (verbatim)         98
 #   auto-trait-complete types                   1
 #
@@ -67,7 +67,7 @@ pub fn buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>::swap_to_rgba(sel
 pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::swap_to_bgra(self) -> buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>
 pub fn buffer::PixelSliceMut<'_, P>::hash_with(&self, HashInclusions) -> u64
 
-## trait impls (69 types)
+## trait impls (71 types)
 
 HashInclusions: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 buffer::PixelBuffer: TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<f32>, alloc::vec::Vec<f32>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<u16>, alloc::vec::Vec<u16>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<u8>, alloc::vec::Vec<u8>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<f32>, alloc::vec::Vec<f32>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<u16>, alloc::vec::Vec<u16>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<u8>, alloc::vec::Vec<u8>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<f32>, alloc::vec::Vec<f32>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<u16>, alloc::vec::Vec<u16>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<u8>, alloc::vec::Vec<u8>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<f32>, alloc::vec::Vec<f32>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<u16>, alloc::vec::Vec<u16>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<u8>, alloc::vec::Vec<u8>>>, TryFrom<image::images::dynimage::DynamicImage>
@@ -99,6 +99,8 @@ buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>: From<imgref::Img<&'a mu
 buffer::PixelSliceMut<'a>: TryFrom<&'a mut image::images::dynimage::DynamicImage>
 color::ColorContext: Hash
 color::ColorOrigin: Hash
+color::ColorProfile: Hash
+color::PixelEncoding<'a>: Hash
 descriptor::PixelFormat: TryFrom<image::color::ColorType>, TryFrom<image::color::ExtendedColorType>
 image::color::ColorType: TryFrom<descriptor::PixelFormat>
 image::color::ExtendedColorType: TryFrom<descriptor::PixelFormat>

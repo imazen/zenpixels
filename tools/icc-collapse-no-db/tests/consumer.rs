@@ -22,15 +22,8 @@ fn assert_reduction(context: ColorContext, expected: PixelFormat, keep_icc: bool
     buffer.reduce_to_load_bearing_format_in_place(true);
     for view in [output.as_slice(), buffer.as_slice()] {
         assert_eq!(view.descriptor().pixel_format(), expected);
-        let actual_icc = view.color_context().and_then(|c| c.icc.as_deref());
-        assert_eq!(
-            actual_icc,
-            if keep_icc {
-                context.icc.as_deref()
-            } else {
-                None
-            }
-        );
+        let actual_icc = view.color_context().and_then(|c| c.icc());
+        assert_eq!(actual_icc, if keep_icc { context.icc() } else { None });
         for y in 0..2 {
             let expected_row: &[u8] = if expected == PixelFormat::Gray8 {
                 &[64, 128]
@@ -53,13 +46,6 @@ fn feature_isolation_proves_gray_database_is_absent() {
 }
 
 #[test]
-fn conflicting_hint_preserves_valid_icc_and_rgb() {
-    let mut context = ColorContext::from_icc(DISPLAY_P3_V4);
-    context.cicp = Some(Cicp::new(12, 4, 0, true));
-    assert_reduction(context, PixelFormat::Rgb8, true);
-}
-
-#[test]
 fn qualified_rgb_stays_rgb_when_gray_synthesis_is_unavailable() {
     assert_reduction(
         ColorContext::from_icc(DISPLAY_P3_V4),
@@ -69,14 +55,11 @@ fn qualified_rgb_stays_rgb_when_gray_synthesis_is_unavailable() {
 }
 
 #[test]
-fn unusable_icc_keeps_rgb_and_profile_with_or_without_cicp() {
-    // A secondary hint cannot authorize replacing an unusable current ICC.
+fn unusable_icc_keeps_rgb_and_profile() {
+    // An unusable current ICC cannot be dropped silently without a CMS.
     // Opaque-alpha removal remains exact and is independent of color.
     for len in [0, 1, 8, 127, 128, 129] {
-        for companion in [None, Some(Cicp::SRGB), Some(Cicp::DISPLAY_P3)] {
-            let mut context = ColorContext::from_icc(vec![0u8; len]);
-            context.cicp = companion;
-            assert_reduction(context, PixelFormat::Rgb8, true);
-        }
+        let context = ColorContext::from_icc(vec![0u8; len]);
+        assert_reduction(context, PixelFormat::Rgb8, true);
     }
 }

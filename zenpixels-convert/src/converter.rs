@@ -387,6 +387,46 @@ impl RowConverter {
         })
     }
 
+    /// Create a converter from borrowed [`PixelEncoding`](crate::PixelEncoding)
+    /// pairs (`descriptor` + optional `ColorContext`), honoring authoritative
+    /// ICC profiles, CICP agreement checks, and diffuse-white / HDR-peak anchors
+    /// on `from`.
+    #[track_caller]
+    pub fn new_with_encoding(
+        from: crate::PixelEncoding<'_>,
+        to: crate::PixelEncoding<'_>,
+        options: &crate::policy::ConvertOptions,
+        cms: Option<&dyn crate::cms::PluggableCms>,
+    ) -> Result<Self, At<ConvertError>> {
+        let resolved = crate::interpretation::resolve_options(from.color_context(), options);
+        let options = &resolved;
+        let source_profile = crate::output::current_profile_for(from)?;
+        let target_profile = crate::output::current_profile_for(to)?;
+        let from_desc = from.descriptor();
+        let to_desc = to.descriptor();
+        if crate::negotiate::channel_bits(from_desc.channel_type())
+            > crate::negotiate::channel_bits(to_desc.channel_type())
+            && options.depth_policy() == crate::policy::DepthPolicy::Forbid
+        {
+            return Err(whereat::at!(ConvertError::DepthReductionForbidden));
+        }
+        let needs_profiles = !crate::output::profiles_match(&source_profile, &target_profile)
+            && (matches!(source_profile, crate::ColorProfileSource::Icc(_))
+                || matches!(target_profile, crate::ColorProfileSource::Icc(_)));
+        if needs_profiles {
+            Self::new_with_sources(
+                from_desc,
+                to_desc,
+                source_profile,
+                target_profile,
+                options,
+                cms,
+            )
+        } else {
+            Self::new_explicit_with_cms(from_desc, to_desc, options, cms)
+        }
+    }
+
     /// Build from actual current/target profiles, including opaque ICC bytes.
     pub(crate) fn new_with_sources(
         from: PixelDescriptor,

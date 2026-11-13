@@ -1,8 +1,9 @@
 //! Prepared color conversion and its matching output signaling.
 use super::{OutputMetadata, OutputProfile};
 use crate::{
-    Cicp, ColorContext, ColorOrigin, ColorPrimaries, ConvertError, ConvertOptions, PixelDescriptor,
-    PixelFormat, PixelSlice, PixelSliceMut, RowConverter, TransferFunction,
+    Cicp, ColorContext, ColorOrigin, ColorPrimaries, ColorProfile, ConvertError, ConvertOptions,
+    PixelDescriptor, PixelEncoding, PixelFormat, PixelSlice, PixelSliceMut, RowConverter,
+    TransferFunction,
 };
 use alloc::sync::Arc;
 use whereat::At;
@@ -24,8 +25,12 @@ use whereat::At;
 /// use zenpixels_convert::{ColorOrigin, OutputPlan, OutputProfile,
 ///     Cicp, PixelDescriptor, PixelSlice, PixelSliceMut};
 /// let descriptor = PixelDescriptor::RGB8_SRGB;
-/// let mut plan = OutputPlan::new_preserving_samples(descriptor, None, &ColorOrigin::assumed(),
-///     OutputProfile::Named(Cicp::SRGB), descriptor)?;
+/// let mut plan = OutputPlan::new_preserving_samples(
+///     descriptor.encoding(),
+///     &ColorOrigin::assumed(),
+///     OutputProfile::Named(Cicp::SRGB),
+///     descriptor,
+/// )?;
 /// plan.prepare(2)?;
 /// // The adapter can validate plan.metadata() against its encoder now, and
 /// // declare plan.output_color_context() as the rows' interpretation.
@@ -35,13 +40,13 @@ use whereat::At;
 /// let destination = PixelSliceMut::new(&mut output, 2, 1, 6, plan.output_descriptor())?;
 /// let converted = plan.convert_rows(source, destination)?;
 /// assert_eq!(converted.row(0), &input);
-/// assert_eq!(converted.color_context().unwrap().cicp, Some(Cicp::SRGB));
+/// assert_eq!(converted.color_context().unwrap().cicp(), Some(Cicp::SRGB));
 /// assert!(std::sync::Arc::ptr_eq(converted.color_context().unwrap(), plan.output_color_context()));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub struct OutputPlan {
     source: PixelDescriptor,
-    current: Option<Arc<ColorContext>>,
+    current: Option<ColorContext>,
     target: PixelDescriptor,
     context: Arc<ColorContext>,
     metadata: OutputMetadata,
@@ -71,8 +76,7 @@ impl OutputPlan {
     /// own state; this does not establish a whole-operation memory bound.
     #[allow(deprecated)]
     pub fn new(
-        source_desc: PixelDescriptor,
-        current: Option<Arc<ColorContext>>,
+        source: PixelEncoding<'_>,
         origin: &ColorOrigin,
         target: OutputProfile,
         pixel_format: PixelFormat,
@@ -80,8 +84,7 @@ impl OutputPlan {
         cms: Option<&dyn crate::cms::PluggableCms>,
     ) -> Result<Self, At<ConvertError>> {
         Self::build(
-            source_desc,
-            current,
+            source,
             origin,
             target,
             TargetLayout::Format(pixel_format),
@@ -104,8 +107,7 @@ impl OutputPlan {
     /// [`Self::new`] remains the format-only convenience, including its existing
     /// default alpha association. Both constructors use the same execution path.
     pub fn new_with_descriptor(
-        source_desc: PixelDescriptor,
-        current: Option<Arc<ColorContext>>,
+        source: PixelEncoding<'_>,
         origin: &ColorOrigin,
         target: OutputProfile,
         output: PixelDescriptor,
@@ -113,8 +115,7 @@ impl OutputPlan {
         cms: Option<&dyn crate::cms::PluggableCms>,
     ) -> Result<Self, At<ConvertError>> {
         Self::build(
-            source_desc,
-            current,
+            source,
             origin,
             target,
             TargetLayout::Required(output),
@@ -133,15 +134,13 @@ impl OutputPlan {
     /// This preserves represented samples, not encoded file bytes or descriptive
     /// metadata. It does not infer exactness from the source's provenance.
     pub fn new_preserving_samples(
-        source_desc: PixelDescriptor,
-        current: Option<Arc<ColorContext>>,
+        source: PixelEncoding<'_>,
         origin: &ColorOrigin,
         target: OutputProfile,
         output: PixelDescriptor,
     ) -> Result<Self, At<ConvertError>> {
         Self::build(
-            source_desc,
-            current,
+            source,
             origin,
             target,
             TargetLayout::Required(output),
@@ -151,22 +150,23 @@ impl OutputPlan {
 
     #[allow(deprecated)] // OutputMetadata's legacy HDR field remains None.
     fn build(
-        source_desc: PixelDescriptor,
-        current: Option<Arc<ColorContext>>,
+        source: PixelEncoding<'_>,
         origin: &ColorOrigin,
         target: OutputProfile,
         layout: TargetLayout,
         policy: PlanPolicy<'_>,
     ) -> Result<Self, At<ConvertError>> {
+        let source_desc = source.descriptor();
+        let current = source.color_context();
         let exact = matches!(policy, PlanPolicy::PreserveSamples);
         let conservative = ConvertOptions::retain_channels();
         let (options, cms) = match policy {
             PlanPolicy::Convert(options, cms) => (options, cms),
             PlanPolicy::PreserveSamples => (&conservative, None),
         };
-        let resolved_options = crate::interpretation::resolve_options(current.as_deref(), options);
+        let resolved_options = crate::interpretation::resolve_options(current, options);
         let options = &resolved_options;
-        let source_profile = super::current_profile_for(source_desc, current.as_deref())?;
+        let source_profile = super::current_profile_for(source)?;
         let target_profile = match &target {
             OutputProfile::SameAsOrigin => {
                 super::origin_profile(origin).unwrap_or_else(|| source_profile.clone())
@@ -216,7 +216,7 @@ impl OutputPlan {
                     OutputProfile::SameAsOrigin => origin
                         .icc
                         .clone()
-                        .or_else(|| current.as_ref().and_then(|c| c.icc.clone()))
+                        .or_else(|| current.and_then(|c| c.icc_arc().cloned()))
                         .unwrap_or_else(|| Arc::from(*icc)),
                     _ => Arc::from(*icc),
                 }),
@@ -258,18 +258,20 @@ impl OutputPlan {
         };
 
         // The current context must describe the returned samples, including identity.
-        let mut context = crate::interpretation::output_context(
+        let profile = if let Some(icc) = &metadata.icc {
+            Some(ColorProfile::Icc(Arc::clone(icc)))
+        } else {
+            metadata.cicp.map(ColorProfile::Cicp)
+        };
+        let context = crate::interpretation::output_context_value(
             source_desc,
             target_desc_full,
-            current.as_ref(),
+            current,
             options,
             false,
         )
-        .as_deref()
-        .cloned()
-        .unwrap_or_default();
-        context.icc = metadata.icc.clone();
-        context.cicp = metadata.cicp;
+        .unwrap_or_default()
+        .with_profile(profile);
         let context = Arc::new(context);
 
         // A decoder may carry an authoritative ICC while leaving the compact
@@ -357,7 +359,7 @@ impl OutputPlan {
         };
         Ok(Self {
             source: source_desc,
-            current,
+            current: current.cloned(),
             target: target_desc_full,
             context,
             metadata,
@@ -438,12 +440,8 @@ impl OutputPlan {
         {
             return Err(whereat::at!(ConvertError::InvalidWidth(source.width())));
         }
-        let context_matches = match (&self.current, source.color_context()) {
-            (None, None) => true,
-            (Some(a), Some(b)) => Arc::ptr_eq(a, b) || a == b,
-            _ => false,
-        };
-        if source.descriptor() != self.source || !context_matches {
+        let expected = PixelEncoding::new(self.source, self.current.as_ref());
+        if source.encoding() != expected {
             return Err(whereat::at!(ConvertError::SourceInterpretationChanged));
         }
         Ok(())

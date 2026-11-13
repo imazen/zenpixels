@@ -64,9 +64,9 @@ fn storage_stride_and_write_boundaries_do_not_change_hashes() {
 fn samples_metadata_geometry_and_exact_evidence_follow_inclusions() {
     let bytes = [1u8, 2, 3, 4, 5, 6, 7, 8];
     let base = view(&bytes, 2, 1, 8);
-    let tagged = base.clone().with_color_context(Arc::new(
-        ColorContext::from_icc(vec![1, 2, 3]).with_cicp(Cicp::SRGB),
-    ));
+    let tagged = base
+        .clone()
+        .with_color_context(Arc::new(ColorContext::from_icc(vec![1, 2, 3])));
     assert_eq!(
         base.hash_with(HashInclusions::SamplesOnly),
         tagged.hash_with(HashInclusions::SamplesOnly)
@@ -75,7 +75,7 @@ fn samples_metadata_geometry_and_exact_evidence_follow_inclusions() {
         base.hash_with(HashInclusions::Pixels),
         tagged.hash_with(HashInclusions::Pixels)
     );
-    let ctx = Arc::new(ColorContext::from_icc(vec![1, 2, 4]).with_cicp(Cicp::SRGB));
+    let ctx = Arc::new(ColorContext::from_icc(vec![1, 2, 4]));
     assert_ne!(
         writes(&tagged),
         writes(&base.clone().with_color_context(ctx))

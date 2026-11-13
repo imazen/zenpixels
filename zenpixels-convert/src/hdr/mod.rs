@@ -112,13 +112,10 @@ fn quantize_setup(
     px: &PixelSlice<'_>,
     target: PixelDescriptor,
 ) -> Result<(PixelDescriptor, DiffuseWhite, u32, u32), At<ConvertError>> {
-    crate::output::current_profile_for(
-        px.descriptor(),
-        px.color_context().map(alloc::sync::Arc::as_ref),
-    )?;
+    crate::output::current_profile_for(px.encoding())?;
     let diffuse_white = px
         .color_context()
-        .and_then(|c| c.diffuse_white)
+        .and_then(|c| c.diffuse_white())
         .ok_or_else(|| whereat::at!(ConvertError::SdrWhiteRequired))?;
     let desc = px.descriptor();
     let src = match desc.pixel_format() {
@@ -527,14 +524,17 @@ mod tests {
         ));
         let out = quantize_to(buf.as_slice(), target).unwrap();
         let ctx = out.color_context().expect("output carries a ColorContext");
-        assert_eq!(ctx.diffuse_white, Some(DiffuseWhite::new(100.0)));
-        assert!(ctx.cicp.is_some(), "target CICP rides along for re-encode");
+        assert_eq!(ctx.diffuse_white(), Some(DiffuseWhite::new(100.0)));
+        assert!(
+            ctx.cicp().is_some(),
+            "target CICP rides along for re-encode"
+        );
 
         // An unsignaled source still yields a self-describing output at the 203 default.
         let plain = rgbf32(&[[1.0; 3]], 1, 1);
         let out = quantize_to(plain.as_slice(), target).unwrap();
         assert_eq!(
-            out.color_context().unwrap().diffuse_white,
+            out.color_context().unwrap().diffuse_white(),
             Some(DiffuseWhite::BT2408)
         );
     }

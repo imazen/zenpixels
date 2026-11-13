@@ -16,8 +16,7 @@ fn borrowed_encoder_rows_avoid_pixel_allocation_and_match_owned_finalization() {
         let origin = ColorOrigin::assumed();
         let target = OutputProfile::Named(Cicp::SRGB);
         let plan = OutputPlan::new(
-            buffer.descriptor(),
-            None,
+            buffer.encoding(),
             &origin,
             target.clone(),
             PixelFormat::Rgb8,
