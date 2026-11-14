@@ -1734,7 +1734,7 @@ mod tests {
             PixelFormat::GrayAF16,
             PixelFormat::OklabF32,
             PixelFormat::OklabaF32,
-            PixelFormat::Cmyk8,
+            PixelFormat::CMYK8,
         ] {
             let bytes = dummy_bytes_for(fmt);
             let s = make_slice(&bytes, 1, 1, fmt);

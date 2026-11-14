@@ -24,9 +24,10 @@
 
 use crate::cms::{CmsPluginError, PluggableCms, RowTransformMut};
 use crate::icc_profiles::SynthesizedIcc;
-use crate::{ChannelType, Cicp, ColorModel, ColorProfileSource, PixelFormat};
+use crate::{ChannelLayout, ChannelType, Cicp, ColorModel, ColorProfileSource, PixelFormat};
 use alloc::{boxed::Box, format, vec::Vec};
 use lcms::{profile, types, virt, xform};
+use zenpixels::InkPolarity;
 
 /// The pure-Rust Little CMS backend.
 ///
@@ -47,6 +48,7 @@ enum Ink {
 #[derive(Clone, Copy)]
 struct Format {
     code: u32,
+    space: u32,
     bytes: usize,
     colors: usize,
     alpha: bool,
@@ -56,6 +58,13 @@ struct Format {
 
 fn describe(format: PixelFormat) -> Option<Format> {
     use PixelFormat::*;
+    let sample = format.channel_type();
+    if !matches!(
+        sample,
+        ChannelType::U8 | ChannelType::U16 | ChannelType::F32
+    ) {
+        return None;
+    }
     let (space, colors, alpha, swap, first, ink) = match format {
         Rgb8 | Rgb16 | RgbF32 => (4, 3, false, false, false, Ink::None),
         Rgba8 | Rgba16 | RgbaF32 => (4, 3, true, false, false, Ink::None),
@@ -63,13 +72,81 @@ fn describe(format: PixelFormat) -> Option<Format> {
         Bgra8 => (4, 3, true, true, true, Ink::None),
         Gray8 | Gray16 | GrayF32 => (3, 1, false, false, false, Ink::None),
         GrayA8 | GrayA16 | GrayAF32 => (3, 1, true, false, false, Ink::None),
-        Cmyk8 | Cmyk16 => (6, 4, false, false, false, Ink::None),
-        Cmyk8Inverted | Cmyk16Inverted => (6, 4, false, false, false, Ink::InvertedInteger),
-        CmykF32 => (6, 4, false, false, false, Ink::Float),
-        CmykF32Inverted => (6, 4, false, false, false, Ink::FloatInverted),
+        Generic(g) => match (g.layout(), sample, g.ink_polarity()) {
+            (
+                ChannelLayout::Cmyk | ChannelLayout::CmykAlpha,
+                ChannelType::U8 | ChannelType::U16,
+                Some(InkPolarity::ZeroIsNoInk),
+            ) => (
+                6,
+                4,
+                g.layout() == ChannelLayout::CmykAlpha,
+                false,
+                false,
+                Ink::None,
+            ),
+            (
+                ChannelLayout::Cmyk | ChannelLayout::CmykAlpha,
+                ChannelType::U8 | ChannelType::U16,
+                Some(InkPolarity::ZeroIsFullInk),
+            ) => (
+                6,
+                4,
+                g.layout() == ChannelLayout::CmykAlpha,
+                false,
+                false,
+                Ink::InvertedInteger,
+            ),
+            (
+                ChannelLayout::Cmyk | ChannelLayout::CmykAlpha,
+                ChannelType::F32,
+                Some(InkPolarity::ZeroIsNoInk),
+            ) => (
+                6,
+                4,
+                g.layout() == ChannelLayout::CmykAlpha,
+                false,
+                false,
+                Ink::Float,
+            ),
+            (
+                ChannelLayout::Cmyk | ChannelLayout::CmykAlpha,
+                ChannelType::F32,
+                Some(InkPolarity::ZeroIsFullInk),
+            ) => (
+                6,
+                4,
+                g.layout() == ChannelLayout::CmykAlpha,
+                false,
+                false,
+                Ink::FloatInverted,
+            ),
+            (ChannelLayout::Lab | ChannelLayout::LabAlpha, _, _) => (
+                10,
+                3,
+                g.layout() == ChannelLayout::LabAlpha,
+                false,
+                false,
+                Ink::None,
+            ),
+            // LittleCMS has no 8-bit u1Fixed15 XYZ unpacker (`unroll3_bytes` would
+            // mis-scale by ~2x against 1.0 == 0x8000), so XYZ is U16 and F32 only.
+            (
+                ChannelLayout::Xyz | ChannelLayout::XyzAlpha,
+                ChannelType::U16 | ChannelType::F32,
+                _,
+            ) => (
+                9,
+                3,
+                g.layout() == ChannelLayout::XyzAlpha,
+                false,
+                false,
+                Ink::None,
+            ),
+            _ => return None,
+        },
         _ => return None,
     };
-    let sample = format.channel_type();
     let size = sample.byte_size();
     let code = u32::from(sample == ChannelType::F32) << 22
         | space << 16
@@ -80,6 +157,7 @@ fn describe(format: PixelFormat) -> Option<Format> {
         | size as u32;
     Some(Format {
         code,
+        space,
         bytes: format.bytes_per_pixel(),
         colors: colors as usize,
         alpha,
@@ -198,6 +276,19 @@ fn open_parametric(
                 };
                 extract_red_trc(rgb)?
             }
+            zenpixels::ParametricTransfer::IccParametric(c) => {
+                let raw = c.icc_params();
+                let mut params = [0.0f64; 7];
+                for (dst, &src) in params[..raw.len()].iter_mut().zip(raw) {
+                    *dst = f64::from(src);
+                }
+                lcms::gamma::build_parametric_tone_curve(
+                    None,
+                    i32::from(c.function_type()) + 1,
+                    &params[..raw.len()],
+                )
+                .ok_or_else(|| error("lcms parametric curve failed"))?
+            }
             _ => return Ok(None),
         };
 
@@ -260,7 +351,13 @@ fn open(
         ColorProfileSource::Icc(bytes) => profile::open_profile_from_mem(None, bytes)
             .map(Some)
             .ok_or_else(|| error("lcms could not parse ICC profile")),
-        _ if format.color_model() == ColorModel::Cmyk => Ok(None),
+        _ if matches!(
+            format.color_model(),
+            ColorModel::Cmyk | ColorModel::Lab | ColorModel::Xyz
+        ) =>
+        {
+            Ok(None)
+        }
         ColorProfileSource::Cicp(cicp) => open_cicp(cicp, gray),
         ColorProfileSource::Parametric(p) => open_parametric(p, gray),
         ColorProfileSource::Named(named) => {
@@ -299,6 +396,16 @@ fn open(
     }
 }
 
+const fn lcms_rendering_intent(intent: zenpixels::RenderingIntent) -> u32 {
+    match intent {
+        zenpixels::RenderingIntent::Perceptual => types::INTENT_PERCEPTUAL,
+        zenpixels::RenderingIntent::RelativeColorimetric => types::INTENT_RELATIVE_COLORIMETRIC,
+        zenpixels::RenderingIntent::Saturation => types::INTENT_SATURATION,
+        zenpixels::RenderingIntent::AbsoluteColorimetric => types::INTENT_ABSOLUTE_COLORIMETRIC,
+        _ => types::INTENT_RELATIVE_COLORIMETRIC,
+    }
+}
+
 impl PluggableCms for Lcms {
     fn build_source_transform(
         &self,
@@ -318,6 +425,11 @@ impl PluggableCms for Lcms {
                 "conversion into F32 or inverted CMYK is not qualified",
             )));
         }
+        let intent = options.rendering_intent().unwrap_or(match src {
+            ColorProfileSource::Parametric(p) => p.rendering_intent,
+            _ => zenpixels::RenderingIntent::RelativeColorimetric,
+        });
+        let lcms_intent = lcms_rendering_intent(intent);
         let built = (|| {
             let Some(source) = open(src, src_format)? else {
                 return Ok(None);
@@ -326,7 +438,8 @@ impl PluggableCms for Lcms {
                 return Ok(None);
             };
             let mut profiles = [source, target];
-            let bpc = src_format.color_model() == ColorModel::Cmyk;
+            let bpc = src_format.color_model() == ColorModel::Cmyk
+                && intent == zenpixels::RenderingIntent::RelativeColorimetric;
             let flags = types::FLAGS_NOOPTIMIZE
                 | types::FLAGS_NOCACHE
                 | if from.alpha && to.alpha {
@@ -339,12 +452,17 @@ impl PluggableCms for Lcms {
                 } else {
                     0
                 };
+            let adaptation = if lcms_intent == types::INTENT_ABSOLUTE_COLORIMETRIC {
+                0.0
+            } else {
+                1.0
+            };
             let transform = xform::create_extended_transform(
                 None,
                 &mut profiles,
                 &mut [bpc; 2],
-                &[types::INTENT_RELATIVE_COLORIMETRIC; 2],
-                &[1.0; 2],
+                &[lcms_intent; 2],
+                &[adaptation; 2],
                 None,
                 0,
                 from.code,
@@ -358,7 +476,9 @@ impl PluggableCms for Lcms {
                 to,
                 scratch: Vec::new(),
                 prepared: None,
-                clip: options.clip_out_of_gamut() && to.sample == ChannelType::F32,
+                clip: options.clip_out_of_gamut()
+                    && to.sample == ChannelType::F32
+                    && matches!(to.space, 3 | 4),
             }) as Box<dyn RowTransformMut>))
         })();
         match built {
@@ -381,8 +501,9 @@ struct Row {
 impl Row {
     fn reserve(&mut self, width: u32) -> Result<(), Error> {
         if self.from.ink != Ink::None {
+            let channels = self.from.colors + usize::from(self.from.alpha);
             let length = (width as usize)
-                .checked_mul(4)
+                .checked_mul(channels)
                 .ok_or_else(|| error("lcms row overflow"))?;
             if length > self.scratch.len() {
                 self.scratch
@@ -427,31 +548,52 @@ impl RowTransformMut for Row {
             }
             Ink::InvertedInteger => {
                 // Bitwise NOT inverts both u8 (`255 - x`) and native-endian u16 (`65535 - x`).
+                // On 5-channel CmykAlpha, only the 4 ink channels are inverted; alpha is copied.
                 let inverted: &mut [u8] =
                     &mut bytemuck::cast_slice_mut(&mut self.scratch)[..source_length];
-                for (out, byte) in inverted.iter_mut().zip(src) {
-                    *out = !*byte;
+                if self.from.alpha {
+                    let ink_bytes = self.from.colors * self.from.sample.byte_size();
+                    for (out_px, in_px) in inverted
+                        .chunks_exact_mut(self.from.bytes)
+                        .zip(src.chunks_exact(self.from.bytes))
+                    {
+                        for (out, byte) in out_px[..ink_bytes].iter_mut().zip(&in_px[..ink_bytes]) {
+                            *out = !*byte;
+                        }
+                        out_px[ink_bytes..].copy_from_slice(&in_px[ink_bytes..]);
+                    }
+                } else {
+                    for (out, byte) in inverted.iter_mut().zip(src) {
+                        *out = !*byte;
+                    }
                 }
                 self.transform.do_transform(inverted, dst, width);
             }
             Ink::Float | Ink::FloatInverted => {
-                for (out, bytes) in self.scratch[..pixels * 4]
-                    .iter_mut()
-                    .zip(src.as_chunks::<4>().0)
-                {
-                    let value = f32::from_ne_bytes(*bytes);
-                    *out = 100.0
-                        * if self.from.ink == Ink::FloatInverted {
-                            1.0 - value
-                        } else {
-                            value
-                        };
+                let channels = self.from.colors + usize::from(self.from.alpha);
+                let staged = &mut self.scratch[..pixels * channels];
+                let invert = self.from.ink == Ink::FloatInverted;
+                if self.from.alpha {
+                    for (out_px, in_px) in staged
+                        .as_chunks_mut::<5>()
+                        .0
+                        .iter_mut()
+                        .zip(src.as_chunks::<4>().0.as_chunks::<5>().0)
+                    {
+                        for (out, bytes) in out_px[..4].iter_mut().zip(&in_px[..4]) {
+                            let value = f32::from_ne_bytes(*bytes);
+                            *out = 100.0 * if invert { 1.0 - value } else { value };
+                        }
+                        out_px[4] = f32::from_ne_bytes(in_px[4]);
+                    }
+                } else {
+                    for (out, bytes) in staged.iter_mut().zip(src.as_chunks::<4>().0) {
+                        let value = f32::from_ne_bytes(*bytes);
+                        *out = 100.0 * if invert { 1.0 - value } else { value };
+                    }
                 }
-                self.transform.do_transform(
-                    bytemuck::cast_slice(&self.scratch[..pixels * 4]),
-                    dst,
-                    width,
-                );
+                self.transform
+                    .do_transform(bytemuck::cast_slice(staged), dst, width);
             }
         }
         if self.to.alpha && !self.from.alpha {

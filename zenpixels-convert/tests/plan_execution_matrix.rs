@@ -5,8 +5,27 @@ use zenpixels_convert::{ConvertPlan, PixelFormat, RowConverter, TransferFunction
 fn accepted_format_and_transfer_pairs_prepare_and_execute() {
     use PixelFormat::*;
     let formats = [
-        Rgb8, Rgba8, Rgb16, Rgba16, RgbF32, RgbaF32, Gray8, Gray16, GrayF32, GrayA8, GrayA16,
-        GrayAF32, Bgra8, Rgbx8, Bgrx8, OklabF32, OklabaF32, Cmyk8, RgbF16, RgbaF16, GrayF16,
+        Rgb8,
+        Rgba8,
+        Rgb16,
+        Rgba16,
+        RgbF32,
+        RgbaF32,
+        Gray8,
+        Gray16,
+        GrayF32,
+        GrayA8,
+        GrayA16,
+        GrayAF32,
+        Bgra8,
+        Rgbx8,
+        Bgrx8,
+        OklabF32,
+        OklabaF32,
+        PixelFormat::CMYK8,
+        RgbF16,
+        RgbaF16,
+        GrayF16,
         GrayAF16,
     ];
     for source in formats {

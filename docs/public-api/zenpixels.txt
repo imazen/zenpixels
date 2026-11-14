@@ -9,23 +9,23 @@
 ## summary
 #
 #   pub modules                                13
-#   pub types (struct/enum/trait/alias)       161
-#   pub consts/statics                        547
+#   pub types (struct/enum/trait/alias)       166
+#   pub consts/statics                        643
 #   free functions                              2
-#   inherent methods                          435
+#   inherent methods                          437
 #   struct fields                             134
-#   enum variants                             427
+#   enum variants                             449
 #   re-exports                                  1
-#   trait roster entries (type × trait)       558
-#   auto-trait-complete types                  78
+#   trait roster entries (type × trait)       572
+#   auto-trait-complete types                  80
 #   auto-trait exceptions                      15
 #
 # per-module pub lines:
-#   (root)                          675
+#   (root)                          747
 #   buffer                          336
 #   cicp                             38
-#   color                           157
-#   descriptor                      206
+#   color                           186
+#   descriptor                      230
 #   hdr                              21
 #   icc                              11
 #   orientation                      11
@@ -35,7 +35,7 @@
 #   precision                        20
 #   sample                           36
 
-## items (1501 lines)
+## items (1594 lines)
 
 pub mod zenpixels
 pub use At
@@ -291,19 +291,25 @@ pub const fn color::NamedProfile::from_cicp(cicp::Cicp) -> core::option::Option<
 pub const fn color::NamedProfile::from_primaries_transfer(descriptor::ColorPrimaries, descriptor::TransferFunction) -> core::option::Option<Self> [also: (root)]
 pub const fn color::NamedProfile::to_cicp(self) -> core::option::Option<cicp::Cicp> [also: (root)]
 pub const fn color::NamedProfile::to_primaries_transfer(self) -> (descriptor::ColorPrimaries, descriptor::TransferFunction) [also: (root)]
+pub color::ParametricPrimaries::Aces2065_1
+pub color::ParametricPrimaries::AcesCg
 pub color::ParametricPrimaries::AdobeRgb
 pub color::ParametricPrimaries::Bt2020
+pub color::ParametricPrimaries::Bt601_525
+pub color::ParametricPrimaries::Bt601_625
 pub color::ParametricPrimaries::Bt709
 pub color::ParametricPrimaries::Custom
 pub color::ParametricPrimaries::Custom::blue: color::CieXy
 pub color::ParametricPrimaries::Custom::green: color::CieXy
 pub color::ParametricPrimaries::Custom::red: color::CieXy
 pub color::ParametricPrimaries::P3
+pub color::ParametricPrimaries::ProPhotoRgb
 pub const fn color::ParametricPrimaries::cie_xy(self) -> (color::CieXy, color::CieXy, color::CieXy) [also: (root)]
 pub color::ParametricTransfer::Bt709
 pub color::ParametricTransfer::Dci
 pub color::ParametricTransfer::Gamma(color::GammaCurve)
 pub color::ParametricTransfer::Hlg
+pub color::ParametricTransfer::IccParametric(color::IccParametricCurve)
 pub color::ParametricTransfer::Linear
 pub color::ParametricTransfer::Pq
 pub color::ParametricTransfer::Srgb
@@ -316,8 +322,10 @@ pub color::RenderingIntent::RelativeColorimetric
 pub color::RenderingIntent::Saturation
 pub const fn color::RenderingIntent::from_icc_code(u8) -> core::option::Option<Self> [also: (root)]
 pub const fn color::RenderingIntent::to_icc_code(self) -> u8 [also: (root)]
+pub color::WhitePoint::C
 pub color::WhitePoint::Custom(color::CieXy)
 pub color::WhitePoint::D50
+pub color::WhitePoint::D60
 pub color::WhitePoint::D65
 pub color::WhitePoint::Dci
 pub color::WhitePoint::E
@@ -326,7 +334,9 @@ pub fn color::AnyColor::as_bytes(&self) -> &[u8]
 pub fn color::AnyColor::as_color(&self) -> core::option::Option<color::Color>
 pub fn color::AnyColor::descriptor(&self) -> descriptor::PixelDescriptor
 pub fn color::AnyColor::try_new(descriptor::PixelDescriptor, &[u8]) -> core::result::Result<Self, buffer::BufferError>
+pub const color::CieXy::C: Self
 pub const color::CieXy::D50: Self
+pub const color::CieXy::D60: Self
 pub const color::CieXy::D65: Self
 pub const color::CieXy::DCI: Self
 pub const color::CieXy::E: Self
@@ -387,16 +397,39 @@ pub const fn color::GammaCurve::from_encoding_exponent(f32) -> Self [also: (root
 pub const fn color::GammaCurve::from_eotf_exponent(f32) -> Self [also: (root)]
 pub const fn color::GammaCurve::try_from_encoding_exponent(f32) -> core::option::Option<Self> [also: (root)]
 pub const fn color::GammaCurve::try_from_eotf_exponent(f32) -> core::option::Option<Self> [also: (root)]
+pub const color::IccParametricCurve::BT709: Self
+pub const color::IccParametricCurve::PROPHOTO_RGB: Self
+pub const color::IccParametricCurve::SRGB: Self
+pub const fn color::IccParametricCurve::all_params(self) -> [f32; 7] [also: (root)]
+pub const fn color::IccParametricCurve::function_type(self) -> u8 [also: (root)]
+pub fn color::IccParametricCurve::icc_params(&self) -> &[f32]
+pub const fn color::IccParametricCurve::param_count(u16) -> core::option::Option<usize> [also: (root)]
+pub const fn color::IccParametricCurve::try_from_icc_para(u16, &[f32]) -> core::option::Option<Self> [also: (root)]
+pub const fn color::IccParametricCurve::try_type0_gamma(f32) -> core::option::Option<Self> [also: (root)]
+pub const fn color::IccParametricCurve::try_type1_cie122(f32, f32, f32) -> core::option::Option<Self> [also: (root)]
+pub const fn color::IccParametricCurve::try_type2_iec61966_3(f32, f32, f32, f32) -> core::option::Option<Self> [also: (root)]
+pub const fn color::IccParametricCurve::try_type3_iec61966_2_1(f32, f32, f32, f32, f32) -> core::option::Option<Self> [also: (root)]
+pub const fn color::IccParametricCurve::try_type4(f32, f32, f32, f32, f32, f32, f32) -> core::option::Option<Self> [also: (root)]
+pub const fn color::IccParametricCurve::type0_gamma(f32) -> Self [also: (root)]
+pub const fn color::IccParametricCurve::type1_cie122(f32, f32, f32) -> Self [also: (root)]
+pub const fn color::IccParametricCurve::type2_iec61966_3(f32, f32, f32, f32) -> Self [also: (root)]
+pub const fn color::IccParametricCurve::type3_iec61966_2_1(f32, f32, f32, f32, f32) -> Self [also: (root)]
+pub const fn color::IccParametricCurve::type4(f32, f32, f32, f32, f32, f32, f32) -> Self [also: (root)]
 pub color::ParametricColor::primaries: core::option::Option<color::ParametricPrimaries>
 pub color::ParametricColor::rendering_intent: color::RenderingIntent
 pub color::ParametricColor::transfer: color::ParametricTransfer
 pub color::ParametricColor::white_point: color::WhitePoint
+pub const color::ParametricColor::ACES_2065_1: Self
+pub const color::ParametricColor::ACES_CG: Self
 pub const color::ParametricColor::ADOBE_RGB: Self
 pub const color::ParametricColor::BT2100_HLG: Self
 pub const color::ParametricColor::BT2100_PQ: Self
 pub const color::ParametricColor::DCI_P3: Self
 pub const color::ParametricColor::DISPLAY_P3: Self
+pub const color::ParametricColor::LINEAR_SRGB: Self
+pub const color::ParametricColor::PROPHOTO_RGB: Self
 pub const color::ParametricColor::SRGB: Self
+pub const fn color::ParametricColor::from_cicp(cicp::Cicp) -> core::option::Option<Self> [also: (root)]
 pub const fn color::ParametricColor::gray(color::WhitePoint, color::ParametricTransfer) -> Self [also: (root)]
 pub const fn color::ParametricColor::rgb(color::ParametricPrimaries, color::WhitePoint, color::ParametricTransfer) -> Self [also: (root)]
 pub const fn color::ParametricColor::to_cicp(&self) -> core::option::Option<cicp::Cicp> [also: (root)]
@@ -422,12 +455,17 @@ pub const fn descriptor::AlphaMode::has_alpha(self) -> bool [also: (root)]
 pub descriptor::ChannelLayout::Bgr
 pub descriptor::ChannelLayout::Bgra
 pub descriptor::ChannelLayout::Cmyk
+pub descriptor::ChannelLayout::CmykAlpha
 pub descriptor::ChannelLayout::Gray
 pub descriptor::ChannelLayout::GrayAlpha
+pub descriptor::ChannelLayout::Lab
+pub descriptor::ChannelLayout::LabAlpha
 pub descriptor::ChannelLayout::Oklab
 pub descriptor::ChannelLayout::OklabA
 pub descriptor::ChannelLayout::Rgb
 pub descriptor::ChannelLayout::Rgba
+pub descriptor::ChannelLayout::Xyz
+pub descriptor::ChannelLayout::XyzAlpha
 pub const fn descriptor::ChannelLayout::channels(self) -> usize [also: (root)]
 pub const fn descriptor::ChannelLayout::has_alpha(self) -> bool [also: (root)]
 pub descriptor::ChannelType::F16
@@ -450,8 +488,10 @@ pub const fn descriptor::ChannelType::is_u16(self) -> bool [also: (root)]
 pub const fn descriptor::ChannelType::is_u8(self) -> bool [also: (root)]
 pub descriptor::ColorModel::Cmyk
 pub descriptor::ColorModel::Gray
+pub descriptor::ColorModel::Lab
 pub descriptor::ColorModel::Oklab
 pub descriptor::ColorModel::Rgb
+pub descriptor::ColorModel::Xyz
 pub descriptor::ColorModel::YCbCr
 pub const fn descriptor::ColorModel::color_channels(self) -> u8 [also: (root)]
 pub fn descriptor::ColorModel::from_icc(&[u8]) -> core::option::Option<Self>
@@ -467,15 +507,12 @@ pub const fn descriptor::ColorPrimaries::from_cicp(u8) -> core::option::Option<S
 pub const fn descriptor::ColorPrimaries::gamut_matrix_to(self, Self) -> core::option::Option<[[f32; 3]; 3]> [also: (root)]
 pub const fn descriptor::ColorPrimaries::to_cicp(self) -> core::option::Option<u8> [also: (root)]
 pub const fn descriptor::ColorPrimaries::white_point(self) -> core::option::Option<(f32, f32)> [also: (root)]
+pub descriptor::InkPolarity::ZeroIsFullInk
+pub descriptor::InkPolarity::ZeroIsNoInk
+pub const fn descriptor::InkPolarity::is_inverted(self) -> bool [also: (root)]
 pub descriptor::PixelFormat::Bgr8
 pub descriptor::PixelFormat::Bgra8
 pub descriptor::PixelFormat::Bgrx8
-pub descriptor::PixelFormat::Cmyk16
-pub descriptor::PixelFormat::Cmyk16Inverted
-pub descriptor::PixelFormat::Cmyk8
-pub descriptor::PixelFormat::Cmyk8Inverted
-pub descriptor::PixelFormat::CmykF32
-pub descriptor::PixelFormat::CmykF32Inverted
 pub descriptor::PixelFormat::Generic(descriptor::GenericFormat)
 pub descriptor::PixelFormat::Gray16
 pub descriptor::PixelFormat::Gray8
@@ -496,18 +533,30 @@ pub descriptor::PixelFormat::Rgba8
 pub descriptor::PixelFormat::RgbaF16
 pub descriptor::PixelFormat::RgbaF32
 pub descriptor::PixelFormat::Rgbx8
+pub const descriptor::PixelFormat::CMYK16: Self
+pub const descriptor::PixelFormat::CMYK16_INVERTED: Self
+pub const descriptor::PixelFormat::CMYK8: Self
+pub const descriptor::PixelFormat::CMYK8_INVERTED: Self
+pub const descriptor::PixelFormat::CMYKF16: Self
+pub const descriptor::PixelFormat::CMYKF16_INVERTED: Self
+pub const descriptor::PixelFormat::CMYKF32: Self
+pub const descriptor::PixelFormat::CMYKF32_INVERTED: Self
 pub const fn descriptor::PixelFormat::bytes_per_pixel(self) -> usize [also: (root)]
 pub const fn descriptor::PixelFormat::channel_type(self) -> descriptor::ChannelType [also: (root)]
 pub const fn descriptor::PixelFormat::channels(self) -> usize [also: (root)]
+pub const fn descriptor::PixelFormat::cmyk(descriptor::ChannelType, descriptor::InkPolarity) -> Self [also: (root)]
+pub const fn descriptor::PixelFormat::cmyka(descriptor::ChannelType, descriptor::InkPolarity) -> Self [also: (root)]
 pub const fn descriptor::PixelFormat::color_model(self) -> descriptor::ColorModel [also: (root)]
 pub const fn descriptor::PixelFormat::default_alpha(self) -> core::option::Option<descriptor::AlphaMode> [also: (root)]
 pub const fn descriptor::PixelFormat::descriptor(self) -> descriptor::PixelDescriptor [also: (root)]
 pub const fn descriptor::PixelFormat::from_parts(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>) -> core::option::Option<Self> [also: (root)]
 pub const fn descriptor::PixelFormat::has_alpha_bytes(self) -> bool [also: (root)]
+pub const fn descriptor::PixelFormat::ink_polarity(self) -> core::option::Option<descriptor::InkPolarity> [also: (root)]
 pub const fn descriptor::PixelFormat::is_grayscale(self) -> bool [also: (root)]
 pub const fn descriptor::PixelFormat::is_inverted_cmyk(self) -> bool [also: (root)]
 pub const fn descriptor::PixelFormat::layout(self) -> descriptor::ChannelLayout [also: (root)]
 pub const fn descriptor::PixelFormat::name(self) -> &'static str [also: (root)]
+pub const fn descriptor::PixelFormat::with_ink_polarity(self, descriptor::InkPolarity) -> core::option::Option<Self> [also: (root)]
 pub descriptor::SignalRange::Full
 pub descriptor::SignalRange::Narrow
 pub descriptor::TransferFunction::Bt709
@@ -521,7 +570,9 @@ pub const fn descriptor::TransferFunction::from_cicp(u8) -> core::option::Option
 pub fn descriptor::TransferFunction::reference_white_nits(&self) -> f32
 pub const fn descriptor::TransferFunction::to_cicp(self) -> core::option::Option<u8> [also: (root)]
 pub struct descriptor::DescriptorError
-pub struct descriptor::GenericFormat
+pub const fn descriptor::GenericFormat::channel_type(self) -> descriptor::ChannelType [also: (root)]
+pub const fn descriptor::GenericFormat::ink_polarity(self) -> core::option::Option<descriptor::InkPolarity> [also: (root)]
+pub const fn descriptor::GenericFormat::layout(self) -> descriptor::ChannelLayout [also: (root)]
 pub descriptor::PixelDescriptor::alpha: core::option::Option<descriptor::AlphaMode>
 pub descriptor::PixelDescriptor::format: descriptor::PixelFormat
 pub descriptor::PixelDescriptor::primaries: descriptor::ColorPrimaries
@@ -536,6 +587,8 @@ pub const descriptor::PixelDescriptor::CMYK16: Self
 pub const descriptor::PixelDescriptor::CMYK16_INVERTED: Self
 pub const descriptor::PixelDescriptor::CMYK8: Self
 pub const descriptor::PixelDescriptor::CMYK8_INVERTED: Self
+pub const descriptor::PixelDescriptor::CMYKF16: Self
+pub const descriptor::PixelDescriptor::CMYKF16_INVERTED: Self
 pub const descriptor::PixelDescriptor::CMYKF32: Self
 pub const descriptor::PixelDescriptor::CMYKF32_INVERTED: Self
 pub const descriptor::PixelDescriptor::GRAY16: Self
@@ -588,11 +641,14 @@ pub const fn descriptor::PixelDescriptor::bytes_per_channel(self) -> usize [also
 pub const fn descriptor::PixelDescriptor::bytes_per_pixel(self) -> usize [also: (root)]
 pub const fn descriptor::PixelDescriptor::channel_type(&self) -> descriptor::ChannelType [also: (root)]
 pub const fn descriptor::PixelDescriptor::channels(self) -> usize [also: (root)]
+pub const fn descriptor::PixelDescriptor::cmyk(descriptor::ChannelType, descriptor::InkPolarity) -> Self [also: (root)]
+pub const fn descriptor::PixelDescriptor::cmyka(descriptor::ChannelType, descriptor::InkPolarity, descriptor::AlphaMode) -> Self [also: (root)]
 pub const fn descriptor::PixelDescriptor::color_model(&self) -> descriptor::ColorModel [also: (root)]
 pub const fn descriptor::PixelDescriptor::color_profile_source(&self) -> color::ColorProfileSource<'static> [also: (root)]
 pub const fn descriptor::PixelDescriptor::encoding(self) -> color::PixelEncoding<'static> [also: (root)]
 pub const fn descriptor::PixelDescriptor::from_pixel_format(descriptor::PixelFormat) -> Self [also: (root)]
 pub const fn descriptor::PixelDescriptor::has_alpha(self) -> bool [also: (root)]
+pub const fn descriptor::PixelDescriptor::ink_polarity(self) -> core::option::Option<descriptor::InkPolarity> [also: (root)]
 pub const fn descriptor::PixelDescriptor::is_bgr(self) -> bool [also: (root)]
 pub const fn descriptor::PixelDescriptor::is_grayscale(self) -> bool [also: (root)]
 pub const fn descriptor::PixelDescriptor::is_linear(self) -> bool [also: (root)]
@@ -613,6 +669,7 @@ pub const fn descriptor::PixelDescriptor::try_new_full(descriptor::ChannelType, 
 pub fn descriptor::PixelDescriptor::validate(self) -> core::result::Result<(), buffer::BufferError>
 pub const fn descriptor::PixelDescriptor::with_alpha(self, core::option::Option<descriptor::AlphaMode>) -> Self [also: (root)]
 pub const fn descriptor::PixelDescriptor::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self [also: (root)]
+pub const fn descriptor::PixelDescriptor::with_ink_polarity(self, descriptor::InkPolarity) -> core::option::Option<Self> [also: (root)]
 pub const fn descriptor::PixelDescriptor::with_primaries(self, descriptor::ColorPrimaries) -> Self [also: (root)]
 pub const fn descriptor::PixelDescriptor::with_signal_range(self, descriptor::SignalRange) -> Self [also: (root)]
 pub const fn descriptor::PixelDescriptor::with_transfer(self, descriptor::TransferFunction) -> Self [also: (root)]
@@ -921,6 +978,7 @@ pub const fn policy::ConvertOptions::hdr_peak(&self) -> hdr::HdrPeak [also: (roo
 pub const fn policy::ConvertOptions::hlg_rendering(&self) -> core::option::Option<hdr::HlgRendering> [also: (root)]
 pub const fn policy::ConvertOptions::luma(&self) -> core::option::Option<policy::LumaCoefficients> [also: (root)]
 pub const fn policy::ConvertOptions::permissive() -> Self [also: (root)]
+pub const fn policy::ConvertOptions::rendering_intent(&self) -> core::option::Option<color::RenderingIntent> [also: (root)]
 pub const fn policy::ConvertOptions::retain_channels() -> Self [also: (root)]
 pub const fn policy::ConvertOptions::sdr_peak(&self) -> core::option::Option<hdr::Nits> [also: (root)]
 pub const fn policy::ConvertOptions::sdr_white(&self) -> core::option::Option<hdr::DiffuseWhite> [also: (root)]
@@ -932,6 +990,7 @@ pub const fn policy::ConvertOptions::with_gray_expand(self, policy::GrayExpand) 
 pub const fn policy::ConvertOptions::with_hdr_peak(self, hdr::HdrPeak) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_hlg_rendering(self, hdr::HlgRendering) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_luma(self, core::option::Option<policy::LumaCoefficients>) -> Self [also: (root)]
+pub const fn policy::ConvertOptions::with_rendering_intent(self, color::RenderingIntent) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_sdr_peak(self, hdr::Nits) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_sdr_white(self, hdr::DiffuseWhite) -> Self [also: (root)]
 pub mod precision
@@ -1041,12 +1100,17 @@ pub BufferError::StrideTooSmall
 pub ChannelLayout::Bgr
 pub ChannelLayout::Bgra
 pub ChannelLayout::Cmyk
+pub ChannelLayout::CmykAlpha
 pub ChannelLayout::Gray
 pub ChannelLayout::GrayAlpha
+pub ChannelLayout::Lab
+pub ChannelLayout::LabAlpha
 pub ChannelLayout::Oklab
 pub ChannelLayout::OklabA
 pub ChannelLayout::Rgb
 pub ChannelLayout::Rgba
+pub ChannelLayout::Xyz
+pub ChannelLayout::XyzAlpha
 #[non_exhaustive] pub enum ChannelType [also: descriptor]
 pub ChannelType::F16
 pub ChannelType::F32
@@ -1066,8 +1130,10 @@ pub fn color::ColorAuthority::select<T>(self, core::option::Option<T>, core::opt
 #[non_exhaustive] pub enum ColorModel [also: descriptor]
 pub ColorModel::Cmyk
 pub ColorModel::Gray
+pub ColorModel::Lab
 pub ColorModel::Oklab
 pub ColorModel::Rgb
+pub ColorModel::Xyz
 pub ColorModel::YCbCr
 pub fn descriptor::ColorModel::from_icc(&[u8]) -> core::option::Option<Self>
 #[non_exhaustive] pub enum ColorPrimaries [also: descriptor]
@@ -1107,6 +1173,9 @@ pub GamutMapping::Clip
 pub GamutMapping::SoftCompress
 #[non_exhaustive] pub enum GrayExpand [also: policy]
 pub GrayExpand::Broadcast
+#[non_exhaustive] pub enum InkPolarity [also: descriptor]
+pub InkPolarity::ZeroIsFullInk
+pub InkPolarity::ZeroIsNoInk
 #[non_exhaustive] pub enum LumaCoefficients [also: policy]
 pub LumaCoefficients::Bt2020
 pub LumaCoefficients::Bt601
@@ -1131,19 +1200,25 @@ pub Orientation::Transpose = 5
 pub Orientation::Transverse = 7
 pub const orientation::Orientation::ALL: [orientation::Orientation; 8]
 #[non_exhaustive] pub enum ParametricPrimaries [also: color]
+pub ParametricPrimaries::Aces2065_1
+pub ParametricPrimaries::AcesCg
 pub ParametricPrimaries::AdobeRgb
 pub ParametricPrimaries::Bt2020
+pub ParametricPrimaries::Bt601_525
+pub ParametricPrimaries::Bt601_625
 pub ParametricPrimaries::Bt709
 pub ParametricPrimaries::Custom
 pub ParametricPrimaries::Custom::blue: color::CieXy
 pub ParametricPrimaries::Custom::green: color::CieXy
 pub ParametricPrimaries::Custom::red: color::CieXy
 pub ParametricPrimaries::P3
+pub ParametricPrimaries::ProPhotoRgb
 #[non_exhaustive] pub enum ParametricTransfer [also: color]
 pub ParametricTransfer::Bt709
 pub ParametricTransfer::Dci
 pub ParametricTransfer::Gamma(color::GammaCurve)
 pub ParametricTransfer::Hlg
+pub ParametricTransfer::IccParametric(color::IccParametricCurve)
 pub ParametricTransfer::Linear
 pub ParametricTransfer::Pq
 pub ParametricTransfer::Srgb
@@ -1161,12 +1236,6 @@ pub fn buffer::PixelCow<'_, P>::encoding(&self) -> color::PixelEncoding<'_>
 pub PixelFormat::Bgr8
 pub PixelFormat::Bgra8
 pub PixelFormat::Bgrx8
-pub PixelFormat::Cmyk16
-pub PixelFormat::Cmyk16Inverted
-pub PixelFormat::Cmyk8
-pub PixelFormat::Cmyk8Inverted
-pub PixelFormat::CmykF32
-pub PixelFormat::CmykF32Inverted
 pub PixelFormat::Generic(descriptor::GenericFormat)
 pub PixelFormat::Gray16
 pub PixelFormat::Gray8
@@ -1187,6 +1256,14 @@ pub PixelFormat::Rgba8
 pub PixelFormat::RgbaF16
 pub PixelFormat::RgbaF32
 pub PixelFormat::Rgbx8
+pub const descriptor::PixelFormat::CMYK16: Self
+pub const descriptor::PixelFormat::CMYK16_INVERTED: Self
+pub const descriptor::PixelFormat::CMYK8: Self
+pub const descriptor::PixelFormat::CMYK8_INVERTED: Self
+pub const descriptor::PixelFormat::CMYKF16: Self
+pub const descriptor::PixelFormat::CMYKF16_INVERTED: Self
+pub const descriptor::PixelFormat::CMYKF32: Self
+pub const descriptor::PixelFormat::CMYKF32_INVERTED: Self
 #[non_exhaustive] pub enum PixelStorage [also: buffer]
 pub PixelStorage::F32(alloc::vec::Vec<f32>)
 pub PixelStorage::F64(alloc::vec::Vec<f64>)
@@ -1222,8 +1299,10 @@ pub TransferFunction::Srgb
 pub TransferFunction::Unknown
 pub fn descriptor::TransferFunction::reference_white_nits(&self) -> f32
 #[non_exhaustive] pub enum WhitePoint [also: color]
+pub WhitePoint::C
 pub WhitePoint::Custom(color::CieXy)
 pub WhitePoint::D50
+pub WhitePoint::D60
 pub WhitePoint::D65
 pub WhitePoint::Dci
 pub WhitePoint::E
@@ -1255,7 +1334,9 @@ pub fn cicp::Cicp::transfer_function_enum(&self) -> descriptor::TransferFunction
 pub fn cicp::Cicp::try_to_descriptor(&self, descriptor::PixelFormat) -> core::result::Result<descriptor::PixelDescriptor, cicp::CicpDescriptorError>
 pub fn cicp::Cicp::from_icc(&[u8]) -> core::option::Option<Self>
 pub struct CieXy [also: color]
+pub const color::CieXy::C: Self
 pub const color::CieXy::D50: Self
+pub const color::CieXy::D60: Self
 pub const color::CieXy::D65: Self
 pub const color::CieXy::DCI: Self
 pub const color::CieXy::E: Self
@@ -1294,6 +1375,7 @@ pub struct GammaCurve(_) [also: color]
 pub const color::GammaCurve::ADOBE_RGB: Self
 pub const color::GammaCurve::DCI: Self
 pub const color::GammaCurve::GAMMA_22: Self
+pub struct GenericFormat [also: descriptor]
 #[repr(C)] pub struct GrayAlpha16 [also: pixel_types]
 pub GrayAlpha16::a: u16
 pub GrayAlpha16::v: u16
@@ -1303,6 +1385,11 @@ pub GrayAlpha8::v: u8
 #[repr(C)] pub struct GrayAlphaF32 [also: pixel_types]
 pub GrayAlphaF32::a: f32
 pub GrayAlphaF32::v: f32
+pub struct IccParametricCurve [also: color]
+pub const color::IccParametricCurve::BT709: Self
+pub const color::IccParametricCurve::PROPHOTO_RGB: Self
+pub const color::IccParametricCurve::SRGB: Self
+pub fn color::IccParametricCurve::icc_params(&self) -> &[f32]
 #[non_exhaustive] pub struct InPlacePixels<'a> [also: buffer]
 pub InPlacePixels::bytes: &'a mut [u8]
 pub InPlacePixels::color: core::option::Option<alloc::sync::Arc<color::ColorContext>>
@@ -1317,11 +1404,15 @@ pub ParametricColor::primaries: core::option::Option<color::ParametricPrimaries>
 pub ParametricColor::rendering_intent: color::RenderingIntent
 pub ParametricColor::transfer: color::ParametricTransfer
 pub ParametricColor::white_point: color::WhitePoint
+pub const color::ParametricColor::ACES_2065_1: Self
+pub const color::ParametricColor::ACES_CG: Self
 pub const color::ParametricColor::ADOBE_RGB: Self
 pub const color::ParametricColor::BT2100_HLG: Self
 pub const color::ParametricColor::BT2100_PQ: Self
 pub const color::ParametricColor::DCI_P3: Self
 pub const color::ParametricColor::DISPLAY_P3: Self
+pub const color::ParametricColor::LINEAR_SRGB: Self
+pub const color::ParametricColor::PROPHOTO_RGB: Self
 pub const color::ParametricColor::SRGB: Self
 #[non_exhaustive] pub struct PixelBuffer<P, S> [also: buffer]
 pub fn buffer::PixelBuffer::from_vec(alloc::vec::Vec<u8>, u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
@@ -1397,6 +1488,8 @@ pub const descriptor::PixelDescriptor::CMYK16: Self
 pub const descriptor::PixelDescriptor::CMYK16_INVERTED: Self
 pub const descriptor::PixelDescriptor::CMYK8: Self
 pub const descriptor::PixelDescriptor::CMYK8_INVERTED: Self
+pub const descriptor::PixelDescriptor::CMYKF16: Self
+pub const descriptor::PixelDescriptor::CMYKF16_INVERTED: Self
 pub const descriptor::PixelDescriptor::CMYKF32: Self
 pub const descriptor::PixelDescriptor::CMYKF32_INVERTED: Self
 pub const descriptor::PixelDescriptor::GRAY16: Self
@@ -1539,7 +1632,7 @@ pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 pub trait StorageSample: buffer::storage_sample::Sealed + bytemuck::pod::Pod + core::default::Default + core::cmp::PartialEq + core::fmt::Debug + core::marker::Send + core::marker::Sync + 'static [also: buffer]
 pub const StorageSample::CHANNEL_TYPE: descriptor::ChannelType
 
-## trait impls (116 types)
+## trait impls (118 types)
 
 &S: plane::SampleStorage
 &mut S: plane::SampleStorage, plane::SampleStorageMut
@@ -1575,6 +1668,7 @@ color::ColorProfile: Clone, Debug, Eq, From<alloc::sync::Arc<[u8]>>, From<cicp::
 color::ColorProfileSource<'a>: Clone, Debug, Eq, PartialEq
 color::ColorProvenance: Clone, Copy, Debug, Eq, Hash, PartialEq
 color::GammaCurve: Clone, Copy, Debug, Eq, Hash, PartialEq
+color::IccParametricCurve: Clone, Copy, Debug, Eq, Hash, PartialEq
 color::NamedProfile: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 color::ParametricColor: Clone, Copy, Debug, Eq, Hash, PartialEq
 color::ParametricPrimaries: Clone, Copy, Debug, Eq, Hash, PartialEq
@@ -1590,6 +1684,7 @@ descriptor::ColorModel: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::ColorPrimaries: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq
 descriptor::DescriptorError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 descriptor::GenericFormat: Clone, Copy, Debug, Eq, Hash, PartialEq
+descriptor::InkPolarity: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq
 descriptor::PixelDescriptor: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::PixelFormat: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::SignalRange: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq

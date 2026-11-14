@@ -45,13 +45,15 @@
 
 use alloc::vec::Vec;
 
+#[cfg(test)]
+use crate::ColorModel;
 use crate::convert::ConvertPlan;
 use crate::converter::RowConverter;
 use crate::negotiate::{ConvertIntent, FormatOption, Provenance, best_match, negotiate};
 use crate::policy::{AlphaPolicy, ConvertOptions};
 use crate::{
-    AlphaMode, ChannelLayout, ChannelType, ColorModel, ConvertError, PixelBuffer, PixelCow,
-    PixelDescriptor, PixelSlice, PixelSliceMut,
+    AlphaMode, ChannelLayout, ChannelType, ConvertError, PixelBuffer, PixelCow, PixelDescriptor,
+    PixelSlice, PixelSliceMut,
 };
 use enough::{Stop, StopReason};
 use whereat::{At, ResultAtExt};
@@ -78,7 +80,7 @@ use zenpixels::sample::ExactDepth;
 /// a CMS can inspect `from.color_model() == ColorModel::Cmyk` on the
 /// returned `NoPath` — information-equivalent.
 fn reject_cmyk(from: PixelDescriptor, to: PixelDescriptor) -> Result<(), At<ConvertError>> {
-    if from.color_model() == ColorModel::Cmyk || to.color_model() == ColorModel::Cmyk {
+    if crate::convert::needs_cms_for_color_model(&from, &to) {
         return Err(whereat::at!(ConvertError::NoPath { from, to }));
     }
     Ok(())

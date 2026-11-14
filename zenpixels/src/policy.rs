@@ -182,6 +182,7 @@ pub struct ConvertOptions {
     hdr_peak: crate::hdr::HdrPeak,
     sdr_peak: Option<crate::hdr::Nits>,
     hlg_rendering: Option<crate::hdr::HlgRendering>,
+    rendering_intent: Option<crate::color::RenderingIntent>,
 }
 
 impl ConvertOptions {
@@ -209,6 +210,7 @@ impl ConvertOptions {
             hdr_peak: crate::hdr::HdrPeak::Measured,
             sdr_peak: None,
             hlg_rendering: None,
+            rendering_intent: None,
         }
     }
 
@@ -230,7 +232,23 @@ impl ConvertOptions {
             hdr_peak: crate::hdr::HdrPeak::Measured,
             sdr_peak: None,
             hlg_rendering: None,
+            rendering_intent: None,
         }
+    }
+
+    /// Explicit ICC rendering intent override for CMS-backed transforms.
+    ///
+    /// When `None`, CMS backends honor a rendering intent carried on the source
+    /// [`ColorContext`](crate::ColorContext) / [`ParametricColor`](crate::ParametricColor),
+    /// falling back to [`RenderingIntent::RelativeColorimetric`](crate::RenderingIntent::RelativeColorimetric).
+    pub const fn rendering_intent(&self) -> Option<crate::color::RenderingIntent> {
+        self.rendering_intent
+    }
+
+    /// Override the ICC rendering intent for CMS-backed transforms.
+    pub const fn with_rendering_intent(mut self, intent: crate::color::RenderingIntent) -> Self {
+        self.rendering_intent = Some(intent);
+        self
     }
 
     /// Explicit scene-to-display rendering conditions for HLG boundaries.
@@ -473,10 +491,17 @@ mod tests {
             hdr_peak: crate::hdr::HdrPeak::Measured,
             sdr_peak: None,
             hlg_rendering: None,
+            rendering_intent: None,
         };
         #[allow(clippy::clone_on_copy)]
         let opts2 = opts.clone();
         assert_eq!(opts, opts2);
+        assert_eq!(opts.rendering_intent(), None);
+        assert_eq!(
+            opts.with_rendering_intent(crate::RenderingIntent::Perceptual)
+                .rendering_intent(),
+            Some(crate::RenderingIntent::Perceptual)
+        );
         let _ = format!("{opts:?}");
     }
 
@@ -506,6 +531,7 @@ mod tests {
             hdr_peak: crate::hdr::HdrPeak::Measured,
             sdr_peak: None,
             hlg_rendering: None,
+            rendering_intent: None,
         };
         let mut h = std::hash::DefaultHasher::new();
         opts.hash(&mut h);

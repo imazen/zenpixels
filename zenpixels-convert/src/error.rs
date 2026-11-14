@@ -245,6 +245,14 @@ impl fmt::Display for ConvertError {
                          such as moxcms for CMYK↔RGB)"
                     )?;
                 }
+                let pcs_blocked = matches!(from.color_model(), ColorModel::Lab | ColorModel::Xyz)
+                    || matches!(to.color_model(), ColorModel::Lab | ColorModel::Xyz);
+                if pcs_blocked {
+                    write!(
+                        f,
+                        " (CIE Lab/XYZ conversion requires a CMS backend such as Lcms or MoxCms)"
+                    )?;
+                }
                 if from.signal_range != to.signal_range {
                     write!(
                         f,

@@ -230,7 +230,7 @@ fn relative_intent_maps_paper_white_to_destination_white() {
     let bytes = lcms::profile::save_profile_to_mem(&mut profile).unwrap();
     let options = ConvertOptions::permissive().with_clip_out_of_gamut(false);
     let mut transform = LcmsPort
-        .build_source_transform(Source::Icc(&bytes), SRGB, F::CmykF32, F::RgbF32, &options)
+        .build_source_transform(Source::Icc(&bytes), SRGB, F::CMYKF32, F::RgbF32, &options)
         .unwrap()
         .unwrap();
     let input = [0.0f32; 4];
@@ -254,8 +254,8 @@ fn relative_intent_maps_paper_white_to_destination_white() {
 fn f32_cmyk_ink_polarity_and_limits() {
     let icc = synthetic_icc::synthetic_cmyk_icc();
     for (name, cms) in backends() {
-        let mut plain = build(cms, Source::Icc(&icc), SRGB, F::CmykF32, F::RgbF32);
-        let mut flipped = build(cms, Source::Icc(&icc), SRGB, F::CmykF32Inverted, F::RgbF32);
+        let mut plain = build(cms, Source::Icc(&icc), SRGB, F::CMYKF32, F::RgbF32);
+        let mut flipped = build(cms, Source::Icc(&icc), SRGB, F::CMYKF32_INVERTED, F::RgbF32);
         let f32s = |v: &[f32]| -> Vec<u8> { v.iter().flat_map(|x| x.to_ne_bytes()).collect() };
         let show = |t: &mut Box<dyn RowTransformMut>, ink: [f32; 4]| {
             codes(F::RgbF32, &run(t, &f32s(&ink), 1, F::RgbF32))
@@ -276,7 +276,7 @@ fn f32_cmyk_ink_polarity_and_limits() {
             }
         }
         assert!(matches!(
-            cms.build_source_transform(SRGB, Source::Icc(&icc), F::RgbF32, F::CmykF32, &opts()),
+            cms.build_source_transform(SRGB, Source::Icc(&icc), F::RgbF32, F::CMYKF32, &opts()),
             Some(Err(_))
         ));
     }
@@ -342,13 +342,13 @@ fn f32_cmyk_backends_agree() {
         .flat_map(|i: u32| (((i * 37 + i / 4 * 11) % 101) as f32 / 100.0).to_ne_bytes())
         .collect();
     let a = run(
-        &mut build(mox, Source::Icc(&icc), SRGB, F::CmykF32, F::RgbF32),
+        &mut build(mox, Source::Icc(&icc), SRGB, F::CMYKF32, F::RgbF32),
         &ink,
         4096,
         F::RgbF32,
     );
     let b = run(
-        &mut build(lcms, Source::Icc(&icc), SRGB, F::CmykF32, F::RgbF32),
+        &mut build(lcms, Source::Icc(&icc), SRGB, F::CMYKF32, F::RgbF32),
         &ink,
         4096,
         F::RgbF32,
@@ -403,13 +403,13 @@ fn eight_bit_cmyk_agrees() {
         .map(|i: u32| ((i * 37 + i / 4 * 11) % 256) as u8)
         .collect();
     let a = run(
-        &mut build(mox, Source::Icc(&icc), SRGB, F::Cmyk8, F::Rgb8),
+        &mut build(mox, Source::Icc(&icc), SRGB, F::CMYK8, F::Rgb8),
         &ink,
         4096,
         F::Rgb8,
     );
     let b = run(
-        &mut build(lcms, Source::Icc(&icc), SRGB, F::Cmyk8, F::Rgb8),
+        &mut build(lcms, Source::Icc(&icc), SRGB, F::CMYK8, F::Rgb8),
         &ink,
         4096,
         F::Rgb8,
@@ -477,7 +477,7 @@ fn real_profiles_agree() {
                 (F::Rgb16, F::Rgb16),
                 (F::RgbF32, F::RgbF32),
             ],
-            b"CMYK" => &[(F::Cmyk8, F::Rgb8), (F::CmykF32, F::RgbF32)],
+            b"CMYK" => &[(F::CMYK8, F::Rgb8), (F::CMYKF32, F::RgbF32)],
             b"GRAY" => &[(F::Gray8, F::Rgb8)],
             other => {
                 eprintln!("{name}: {} not covered", String::from_utf8_lossy(other));
@@ -487,10 +487,10 @@ fn real_profiles_agree() {
         for &(from, to) in cases {
             let input: Vec<u8> = match from {
                 F::Rgb8 | F::Rgb16 | F::RgbF32 => row(from, 4096),
-                F::CmykF32 => (0..4096 * 4)
+                F::CMYKF32 => (0..4096 * 4)
                     .flat_map(|i: u32| (((i * 37 + i / 4 * 11) % 101) as f32 / 100.0).to_ne_bytes())
                     .collect(),
-                F::Cmyk8 => (0..4096 * 4)
+                F::CMYK8 => (0..4096 * 4)
                     .map(|i: u32| ((i * 37 + i / 4 * 11) % 256) as u8)
                     .collect(),
                 _ => (0..4096).map(|i: u32| (i % 256) as u8).collect(),
@@ -531,7 +531,7 @@ fn k_only_ink_is_black() {
         .flat_map(|v| v.to_ne_bytes())
         .collect();
     for (name, cms) in backends() {
-        let mut t = build(cms, Source::Icc(&icc), SRGB, F::CmykF32, F::RgbF32);
+        let mut t = build(cms, Source::Icc(&icc), SRGB, F::CMYKF32, F::RgbF32);
         let got = codes(F::RgbF32, &run(&mut t, &ink, 1, F::RgbF32));
         assert!(got.iter().all(|v| v.abs() < 1.0), "{name}: {got:?}");
     }
@@ -598,10 +598,10 @@ fn cmyk8_against_f32_and_lcms() {
                     _ => None,
                 };
                 let cells = (
-                    run_one(mox, F::Cmyk8, to8, &ink),
-                    run_one(mox, F::CmykF32, tof, &ink_f),
-                    run_one(lcms, F::Cmyk8, to8, &ink),
-                    run_one(lcms, F::CmykF32, tof, &ink_f),
+                    run_one(mox, F::CMYK8, to8, &ink),
+                    run_one(mox, F::CMYKF32, tof, &ink_f),
+                    run_one(lcms, F::CMYK8, to8, &ink),
+                    run_one(lcms, F::CMYKF32, tof, &ink_f),
                 );
                 let (Some(m8), Some(mf), Some(l8), Some(lf)) = cells else {
                     println!("{name}|{tname}|{lname}|a backend refused");
@@ -745,8 +745,8 @@ fn inverted_integer_cmyk_matches_negated_standard_cmyk_bit_exact() {
 
     for (name, cms) in backends() {
         for to in [F::Rgb8, F::Rgba8] {
-            let mut t_std = build(cms, Source::Icc(&cmyk_icc), SRGB, F::Cmyk8, to);
-            let mut t_inv = build(cms, Source::Icc(&cmyk_icc), SRGB, F::Cmyk8Inverted, to);
+            let mut t_std = build(cms, Source::Icc(&cmyk_icc), SRGB, F::CMYK8, to);
+            let mut t_inv = build(cms, Source::Icc(&cmyk_icc), SRGB, F::CMYK8_INVERTED, to);
             let out_std = run(&mut t_std, &std8, n, to);
             let out_inv = run(&mut t_inv, &inv8, n, to);
             assert_eq!(out_inv, out_std, "{name} Cmyk8Inverted -> {to:?}");
@@ -754,9 +754,9 @@ fn inverted_integer_cmyk_matches_negated_standard_cmyk_bit_exact() {
 
         // Inverted CMYK is never accepted as an output format without an explicit inversion kernel.
         for (src_fmt, bad_dst) in [
-            (F::Rgb8, F::Cmyk8Inverted),
-            (F::Rgb16, F::Cmyk16Inverted),
-            (F::RgbF32, F::CmykF32Inverted),
+            (F::Rgb8, F::CMYK8_INVERTED),
+            (F::Rgb16, F::CMYK16_INVERTED),
+            (F::RgbF32, F::CMYKF32_INVERTED),
         ] {
             let built =
                 cms.build_source_transform(SRGB, Source::Icc(&cmyk_icc), src_fmt, bad_dst, &opts());
@@ -777,12 +777,12 @@ fn inverted_integer_cmyk_matches_negated_standard_cmyk_bit_exact() {
         .flat_map(|w| (!*w).to_ne_bytes())
         .collect();
     for to in [F::Rgb16, F::Rgba16] {
-        let mut t_std = build(&LcmsPort, Source::Icc(&cmyk_icc), SRGB, F::Cmyk16, to);
+        let mut t_std = build(&LcmsPort, Source::Icc(&cmyk_icc), SRGB, F::CMYK16, to);
         let mut t_inv = build(
             &LcmsPort,
             Source::Icc(&cmyk_icc),
             SRGB,
-            F::Cmyk16Inverted,
+            F::CMYK16_INVERTED,
             to,
         );
         let out_std = run(&mut t_std, &std16, n, to);
@@ -794,7 +794,7 @@ fn inverted_integer_cmyk_matches_negated_standard_cmyk_bit_exact() {
             .build_source_transform(
                 Source::Icc(&cmyk_icc),
                 SRGB,
-                F::Cmyk16Inverted,
+                F::CMYK16_INVERTED,
                 F::Rgb16,
                 &opts()
             )
@@ -875,4 +875,569 @@ fn parametric_color_source_and_destination_agree_across_backends() {
     for (x, y) in g_mox.iter().zip(&g_lcms) {
         assert!((x - y).abs() <= 1.0, "gray parametric mismatch: {x} vs {y}");
     }
+}
+
+#[test]
+fn cmyka_five_channel_preserves_alpha_and_inverts_only_ink() {
+    use zenpixels::{ChannelType, InkPolarity};
+
+    let cmyk_icc = synthetic_icc::synthetic_cmyk_icc();
+    let cmyka8 = F::cmyka(ChannelType::U8, InkPolarity::ZeroIsNoInk);
+    let cmyka8_inv = F::cmyka(ChannelType::U8, InkPolarity::ZeroIsFullInk);
+    let cmyka16 = F::cmyka(ChannelType::U16, InkPolarity::ZeroIsNoInk);
+    let cmyka16_inv = F::cmyka(ChannelType::U16, InkPolarity::ZeroIsFullInk);
+    let cmykaf32 = F::cmyka(ChannelType::F32, InkPolarity::ZeroIsNoInk);
+    let cmykaf32_inv = F::cmyka(ChannelType::F32, InkPolarity::ZeroIsFullInk);
+
+    // MoxCms declines 5-channel CmykAlpha cleanly so a plugin chain can hand off to Lcms.
+    for fmt in [cmyka8, cmyka8_inv, cmyka16, cmykaf32] {
+        assert!(
+            MoxCms
+                .build_source_transform(Source::Icc(&cmyk_icc), SRGB, fmt, F::Rgba8, &opts(),)
+                .is_none()
+        );
+    }
+
+    // U8 CMYKA: alpha must pass through untouched even when ink polarity is inverted.
+    let cmyk4_u8 = [0u8, 0, 0, 0, 30, 80, 120, 40];
+    let cmyka5_std_u8 = [0u8, 0, 0, 0, 37, 30, 80, 120, 40, 201];
+    let cmyka5_inv_u8 = [255u8, 255, 255, 255, 37, !30, !80, !120, !40, 201];
+
+    let mut t4 = build(&LcmsPort, Source::Icc(&cmyk_icc), SRGB, F::CMYK8, F::Rgb8);
+    let mut t5_std = build(&LcmsPort, Source::Icc(&cmyk_icc), SRGB, cmyka8, F::Rgba8);
+    let mut t5_inv = build(
+        &LcmsPort,
+        Source::Icc(&cmyk_icc),
+        SRGB,
+        cmyka8_inv,
+        F::Rgba8,
+    );
+    let out4 = run(&mut t4, &cmyk4_u8, 2, F::Rgb8);
+    let out5_std = run(&mut t5_std, &cmyka5_std_u8, 2, F::Rgba8);
+    let out5_inv = run(&mut t5_inv, &cmyka5_inv_u8, 2, F::Rgba8);
+    assert_eq!(out5_std, out5_inv);
+    assert_eq!(&out5_std[0..3], &out4[0..3]);
+    assert_eq!(&out5_std[4..7], &out4[3..6]);
+    assert_eq!(out5_std[3], 37);
+    assert_eq!(out5_std[7], 201);
+
+    // U16 CMYKA: 16-bit ink inversion leaves 16-bit alpha exact.
+    let cmyka5_std_u16: [u16; 5] = [1000, 12000, 24000, 4000, 50_123];
+    let cmyka5_inv_u16: [u16; 5] = [!1000, !12000, !24000, !4000, 50_123];
+    let mut t16_std = build(&LcmsPort, Source::Icc(&cmyk_icc), SRGB, cmyka16, F::Rgba16);
+    let mut t16_inv = build(
+        &LcmsPort,
+        Source::Icc(&cmyk_icc),
+        SRGB,
+        cmyka16_inv,
+        F::Rgba16,
+    );
+    let out16_std = run(
+        &mut t16_std,
+        bytemuck::cast_slice(&cmyka5_std_u16),
+        1,
+        F::Rgba16,
+    );
+    let out16_inv = run(
+        &mut t16_inv,
+        bytemuck::cast_slice(&cmyka5_inv_u16),
+        1,
+        F::Rgba16,
+    );
+    assert_eq!(out16_std, out16_inv);
+    let out16_words: &[u16] = bytemuck::cast_slice(&out16_std);
+    assert_eq!(out16_words[3], 50_123);
+
+    // F32 CMYKA: 0..1 ink scales to 0..100% internally while 5th-channel alpha stays 0..1.
+    let cmyka5_std_f32: [f32; 5] = [0.1, 0.3, 0.5, 0.2, 0.42];
+    let cmyka5_inv_f32: [f32; 5] = [0.9, 0.7, 0.5, 0.8, 0.42];
+    let mut tf_std = build(
+        &LcmsPort,
+        Source::Icc(&cmyk_icc),
+        SRGB,
+        cmykaf32,
+        F::RgbaF32,
+    );
+    let mut tf_inv = build(
+        &LcmsPort,
+        Source::Icc(&cmyk_icc),
+        SRGB,
+        cmykaf32_inv,
+        F::RgbaF32,
+    );
+    let outf_std = run(
+        &mut tf_std,
+        bytemuck::cast_slice(&cmyka5_std_f32),
+        1,
+        F::RgbaF32,
+    );
+    let outf_inv = run(
+        &mut tf_inv,
+        bytemuck::cast_slice(&cmyka5_inv_f32),
+        1,
+        F::RgbaF32,
+    );
+    let f_std: &[f32] = bytemuck::cast_slice(&outf_std);
+    let f_inv: &[f32] = bytemuck::cast_slice(&outf_inv);
+    for (a, b) in f_std[..3].iter().zip(&f_inv[..3]) {
+        assert!((a - b).abs() < 1e-5, "{f_std:?} vs {f_inv:?}");
+    }
+    assert_eq!(f_std[3].to_bits(), 0.42f32.to_bits());
+    assert_eq!(f_inv[3].to_bits(), 0.42f32.to_bits());
+}
+
+#[test]
+fn lab_and_xyz_icc_transforms_and_backend_agreement() {
+    use zenpixels::{AlphaMode, ChannelLayout, ChannelType, ColorModel};
+    use zenpixels_convert::{ConvertError, RowConverter};
+
+    let mut lab_prof = lcms::virt::create_lab4_profile(None, None).unwrap();
+    let lab_icc = lcms::profile::save_profile_to_mem(&mut lab_prof).unwrap();
+    let mut xyz_prof = lcms::virt::create_xyz_profile(None).unwrap();
+    let xyz_icc = lcms::profile::save_profile_to_mem(&mut xyz_prof).unwrap();
+
+    assert_eq!(ColorModel::from_icc(&lab_icc), Some(ColorModel::Lab));
+    assert_eq!(ColorModel::from_icc(&xyz_icc), Some(ColorModel::Xyz));
+
+    let lab8 = F::from_parts(ChannelType::U8, ChannelLayout::Lab, None).unwrap();
+    let laba8 = F::from_parts(
+        ChannelType::U8,
+        ChannelLayout::LabAlpha,
+        Some(AlphaMode::Straight),
+    )
+    .unwrap();
+    let lab16 = F::from_parts(ChannelType::U16, ChannelLayout::Lab, None).unwrap();
+    let labf32 = F::from_parts(ChannelType::F32, ChannelLayout::Lab, None).unwrap();
+    let xyz8 = F::from_parts(ChannelType::U8, ChannelLayout::Xyz, None).unwrap();
+    let xyz16 = F::from_parts(ChannelType::U16, ChannelLayout::Xyz, None).unwrap();
+    let xyzf32 = F::from_parts(ChannelType::F32, ChannelLayout::Xyz, None).unwrap();
+
+    // Without a CMS, Lab and XYZ descriptors require CMS rather than reinterpreting channels.
+    for fmt in [lab8, lab16, labf32, xyz16, xyzf32] {
+        let err =
+            RowConverter::new(fmt.descriptor(), zenpixels::PixelDescriptor::RGB8_SRGB).unwrap_err();
+        assert!(matches!(*err.error(), ConvertError::NeedsCms { .. }));
+    }
+
+    // 8-bit XYZ is intentionally declined by both backends (no standard u1Fixed15 byte packing).
+    for (_, cms) in backends() {
+        assert!(
+            cms.build_source_transform(Source::Icc(&xyz_icc), SRGB, xyz8, F::Rgb8, &opts())
+                .is_none()
+        );
+    }
+
+    // Lcms LabF32 <-> RgbF32: sRGB white (1, 1, 1) maps to L*=100, a*=0, b*=0 without 0..1 clamping.
+    let mut srgb_to_lab = build(&LcmsPort, SRGB, Source::Icc(&lab_icc), F::RgbF32, labf32);
+    let lab_white_bytes = run(
+        &mut srgb_to_lab,
+        bytemuck::cast_slice(&[1.0f32, 1.0, 1.0]),
+        1,
+        labf32,
+    );
+    let lab_white: &[f32] = bytemuck::cast_slice(&lab_white_bytes);
+    assert!(
+        (lab_white[0] - 100.0).abs() < 0.05,
+        "Lab white: {lab_white:?}"
+    );
+    assert!(
+        lab_white[1].abs() < 0.05 && lab_white[2].abs() < 0.05,
+        "Lab white: {lab_white:?}"
+    );
+
+    let mut lab_to_srgb = build(&LcmsPort, Source::Icc(&lab_icc), SRGB, labf32, F::RgbF32);
+    let rgb_back_bytes = run(&mut lab_to_srgb, &lab_white_bytes, 1, F::RgbF32);
+    let rgb_back: &[f32] = bytemuck::cast_slice(&rgb_back_bytes);
+    for &c in rgb_back {
+        assert!((c - 1.0).abs() < 1e-3, "LabF32->sRGB white: {rgb_back:?}");
+    }
+
+    // Lcms XyzF32 <-> RgbF32: D50 PCS white (0.9642, 1.0, 0.8249) maps to sRGB white (1, 1, 1).
+    let mut xyz_to_srgb = build(&LcmsPort, Source::Icc(&xyz_icc), SRGB, xyzf32, F::RgbF32);
+    let xyz_d50 = [0.9642f32, 1.0, 0.8249];
+    let xyz_rgb_bytes = run(
+        &mut xyz_to_srgb,
+        bytemuck::cast_slice(&xyz_d50),
+        1,
+        F::RgbF32,
+    );
+    let xyz_rgb: &[f32] = bytemuck::cast_slice(&xyz_rgb_bytes);
+    for &c in xyz_rgb {
+        assert!((c - 1.0).abs() < 2e-3, "XyzF32 D50->sRGB: {xyz_rgb:?}");
+    }
+
+    // Lab8, LabA8, Lab16 in Lcms and MoxCms (using a generic v4 Lab->Lab mAB identity profile so both parse it).
+    let mut mox_lab = moxcms::ColorProfile::new_lab();
+    mox_lab.pcs = moxcms::DataColorSpace::Lab;
+    let mox_lab_icc = mox_lab.encode().unwrap();
+    // Neutral L*=100 (255, 128, 128) and L*=50 (128, 128, 128) in ICC v4 8-bit Lab.
+    let lab8_in = [255u8, 128, 128, 128, 128, 128];
+    let mut mox_lab8 = build(&MoxCms, Source::Icc(&mox_lab_icc), SRGB, lab8, F::Rgb8);
+    let mut lcms_lab8 = build(&LcmsPort, Source::Icc(&mox_lab_icc), SRGB, lab8, F::Rgb8);
+    let out_mox8 = run(&mut mox_lab8, &lab8_in, 2, F::Rgb8);
+    let out_lcms8 = run(&mut lcms_lab8, &lab8_in, 2, F::Rgb8);
+    for (&a, &b) in out_mox8.iter().zip(&out_lcms8) {
+        assert!(
+            a.abs_diff(b) <= 2,
+            "Lab8 mox vs lcms: {out_mox8:?} vs {out_lcms8:?}"
+        );
+    }
+
+    // LabA8 preserves alpha across both backends.
+    let laba8_in = [255u8, 128, 128, 91];
+    for (name, cms) in backends() {
+        let mut t = build(cms, Source::Icc(&mox_lab_icc), SRGB, laba8, F::Rgba8);
+        let out = run(&mut t, &laba8_in, 1, F::Rgba8);
+        assert_eq!(out[3], 91, "{name} LabA8 alpha: {out:?}");
+    }
+
+    // Lab16 neutral white (0xffff, 0x8080, 0x8080) and mid-gray (0x8000, 0x8080, 0x8080) across both backends.
+    // Note: moxcms bakes a 33^3 3D LUT whose grid nodes (16/32 and 17/32) straddle 128/255 and clip at the
+    // L*=100 gamut apex by ~0.5% (~331 u16 codes, ~1.3 u8 codes); inside the gamut (L*=50) both match tightly.
+    let lab16_neutrals: [u16; 6] = [0xffff, 0x8080, 0x8080, 0x8000, 0x8080, 0x8080];
+    let mut mox_lab16 = build(&MoxCms, Source::Icc(&mox_lab_icc), SRGB, lab16, F::Rgb16);
+    let mut lcms_lab16 = build(&LcmsPort, Source::Icc(&mox_lab_icc), SRGB, lab16, F::Rgb16);
+    let out_mox16: [u16; 6] = bytemuck::cast_slice(&run(
+        &mut mox_lab16,
+        bytemuck::cast_slice(&lab16_neutrals),
+        2,
+        F::Rgb16,
+    ))
+    .try_into()
+    .unwrap();
+    let out_lcms16: [u16; 6] = bytemuck::cast_slice(&run(
+        &mut lcms_lab16,
+        bytemuck::cast_slice(&lab16_neutrals),
+        2,
+        F::Rgb16,
+    ))
+    .try_into()
+    .unwrap();
+    for c in &out_mox16[..3] {
+        assert!(*c >= 65100, "mox Lab16 white: {out_mox16:?}");
+    }
+    for c in &out_lcms16[..3] {
+        assert!(*c >= 65500, "lcms Lab16 white: {out_lcms16:?}");
+    }
+    for (&a, &b) in out_mox16[3..].iter().zip(&out_lcms16[3..]) {
+        assert!(
+            a.abs_diff(b) <= 200,
+            "Lab16 mid-gray mox vs lcms (<1 u8 code): {out_mox16:?} vs {out_lcms16:?}"
+        );
+    }
+
+    // Xyz16 u1Fixed15 D50 white (0.9642 * 32768 = 31595, 32768, 0.8249 * 32768 = 27030) in Lcms.
+    let xyz16_d50: [u16; 3] = [31595, 32768, 27030];
+    let mut lcms_xyz16 = build(&LcmsPort, Source::Icc(&xyz_icc), SRGB, xyz16, F::Rgb16);
+    let out_xyz16: [u16; 3] = bytemuck::cast_slice(&run(
+        &mut lcms_xyz16,
+        bytemuck::cast_slice(&xyz16_d50),
+        1,
+        F::Rgb16,
+    ))
+    .try_into()
+    .unwrap();
+    for c in out_xyz16 {
+        assert!(c >= 65450, "lcms Xyz16 D50->sRGB: {out_xyz16:?}");
+    }
+}
+
+#[test]
+fn working_spaces_and_icc_parametric_curves_agree_across_backends() {
+    use zenpixels::{
+        IccParametricCurve, ParametricColor, ParametricPrimaries, ParametricTransfer, WhitePoint,
+    };
+
+    // Continuous 7-parameter ICC type-4 curve with distinct (g, a, b, c, d, e, f) and e != f.
+    let type4_g = 2.4_f32;
+    let type4_e = 0.01_f32;
+    let type4_f = 0.002_f32;
+    let type4_b = 0.05_f32;
+    let type4_a = (1.0_f32 - type4_e).powf(1.0 / type4_g) - type4_b;
+    let type4_d = 0.08_f32;
+    let type4_c = ((type4_a * type4_d + type4_b).powf(type4_g) + type4_e - type4_f) / type4_d;
+
+    let curves = [
+        IccParametricCurve::type0_gamma(2.2),
+        IccParametricCurve::type1_cie122(2.2, 0.947_867_3, 0.052_132_7),
+        IccParametricCurve::type2_iec61966_3(2.2, 0.947_867_3, 0.052_132_7, 0.01),
+        IccParametricCurve::SRGB,
+        IccParametricCurve::type4(
+            type4_g, type4_a, type4_b, type4_c, type4_d, type4_e, type4_f,
+        ),
+    ];
+
+    let mut spaces = vec![
+        ParametricColor::LINEAR_SRGB,
+        ParametricColor::PROPHOTO_RGB,
+        ParametricColor::ACES_CG,
+        ParametricColor::ACES_2065_1,
+        ParametricColor::rgb(
+            ParametricPrimaries::Bt601_525,
+            WhitePoint::D65,
+            ParametricTransfer::Bt709,
+        ),
+        ParametricColor::rgb(
+            ParametricPrimaries::Bt601_625,
+            WhitePoint::C,
+            ParametricTransfer::Gamma(zenpixels::GammaCurve::GAMMA_22),
+        ),
+    ];
+    for c in curves {
+        spaces.push(ParametricColor::rgb(
+            ParametricPrimaries::P3,
+            WhitePoint::D65,
+            ParametricTransfer::IccParametric(c),
+        ));
+    }
+
+    let input_rgb = row(F::Rgb8, 64);
+    for space in spaces {
+        let mut mox_to = build(&MoxCms, Source::Parametric(space), SRGB, F::Rgb8, F::Rgb8);
+        let mut lcms_to = build(&LcmsPort, Source::Parametric(space), SRGB, F::Rgb8, F::Rgb8);
+        let a = codes(F::Rgb8, &run(&mut mox_to, &input_rgb, 64, F::Rgb8));
+        let b = codes(F::Rgb8, &run(&mut lcms_to, &input_rgb, 64, F::Rgb8));
+        for (x, y) in a.iter().zip(&b) {
+            assert!(
+                (x - y).abs() <= 1.0,
+                "working/curve space -> sRGB ({space:?}): {x} vs {y}"
+            );
+        }
+
+        let mut mox_from = build(&MoxCms, SRGB, Source::Parametric(space), F::Rgb8, F::Rgb8);
+        let mut lcms_from = build(&LcmsPort, SRGB, Source::Parametric(space), F::Rgb8, F::Rgb8);
+        let c = codes(F::Rgb8, &run(&mut mox_from, &input_rgb, 64, F::Rgb8));
+        let d = codes(F::Rgb8, &run(&mut lcms_from, &input_rgb, 64, F::Rgb8));
+        for (x, y) in c.iter().zip(&d) {
+            assert!(
+                (x - y).abs() <= 1.0,
+                "sRGB -> working/curve space ({space:?}): {x} vs {y}"
+            );
+        }
+    }
+
+    // Discontinuous piecewise curve: forward (source -> sRGB) agrees across both backends,
+    // while MoxCms declines inverse (sRGB -> dst) cleanly so LcmsPort handles it in a chain.
+    let discontinuous = ParametricColor::rgb(
+        ParametricPrimaries::P3,
+        WhitePoint::D65,
+        ParametricTransfer::IccParametric(IccParametricCurve::type4(
+            2.4,
+            1.0 / 1.055,
+            0.055 / 1.055,
+            1.0 / 12.92,
+            0.04045,
+            0.02,
+            0.0,
+        )),
+    );
+    let mut mox_fwd = build(
+        &MoxCms,
+        Source::Parametric(discontinuous),
+        SRGB,
+        F::Rgb8,
+        F::Rgb8,
+    );
+    let mut lcms_fwd = build(
+        &LcmsPort,
+        Source::Parametric(discontinuous),
+        SRGB,
+        F::Rgb8,
+        F::Rgb8,
+    );
+    let fwd_a = codes(F::Rgb8, &run(&mut mox_fwd, &input_rgb, 64, F::Rgb8));
+    let fwd_b = codes(F::Rgb8, &run(&mut lcms_fwd, &input_rgb, 64, F::Rgb8));
+    for (x, y) in fwd_a.iter().zip(&fwd_b) {
+        assert!((x - y).abs() <= 1.0, "discontinuous forward: {x} vs {y}");
+    }
+    assert!(
+        MoxCms
+            .build_source_transform(
+                SRGB,
+                Source::Parametric(discontinuous),
+                F::Rgb8,
+                F::Rgb8,
+                &opts(),
+            )
+            .is_none()
+    );
+    assert!(
+        LcmsPort
+            .build_source_transform(
+                SRGB,
+                Source::Parametric(discontinuous),
+                F::Rgb8,
+                F::Rgb8,
+                &opts(),
+            )
+            .unwrap()
+            .is_ok()
+    );
+}
+
+#[test]
+fn active_rendering_intent_in_convert_options_and_color_context() {
+    use lcms::{lut, profile, signatures::tag, tagtypes::TagObject, virt};
+    use std::sync::Arc;
+    use zenpixels::{
+        ColorContext, ParametricColor, PixelDescriptor, PixelEncoding, RenderingIntent,
+    };
+    use zenpixels_convert::RowConverter;
+
+    // Build an RGB LUT ICC profile whose AToB0 (Perceptual) scales by 0.5 and AToB1 (RelativeColorimetric) is identity.
+    let mut multi = virt::create_srgb_profile(None).unwrap();
+    let make_lut = |scale: f64| {
+        let mut pipe = lut::pipeline_alloc(None, 3, 3).unwrap();
+        let curve = lcms::gamma::build_gamma(None, 1.0).unwrap();
+        assert!(pipe.insert_stage(
+            lut::StageLoc::AtEnd,
+            lut::stage_alloc_tone_curves(None, 3, Some(&[&curve, &curve, &curve])).unwrap()
+        ));
+        // 2x2x2 CLUT mapping (r, g, b) -> PCS XYZ D50 * scale
+        let mut table = Vec::with_capacity(8 * 3);
+        for r in [0.0f64, 1.0] {
+            for g in [0.0f64, 1.0] {
+                for b in [0.0f64, 1.0] {
+                    let x = (0.4360 * r + 0.3851 * g + 0.1431 * b) * scale;
+                    let y = (0.2225 * r + 0.7169 * g + 0.0606 * b) * scale;
+                    let z = (0.0139 * r + 0.0971 * g + 0.7139 * b) * scale;
+                    table.push((x * 32768.0).round() as u16);
+                    table.push((y * 32768.0).round() as u16);
+                    table.push((z * 32768.0).round() as u16);
+                }
+            }
+        }
+        assert!(pipe.insert_stage(
+            lut::StageLoc::AtEnd,
+            lut::stage_alloc_clut16bit(None, 2, 3, 3, Some(&table)).unwrap()
+        ));
+        assert!(pipe.insert_stage(
+            lut::StageLoc::AtEnd,
+            lut::stage_alloc_tone_curves(None, 3, Some(&[&curve, &curve, &curve])).unwrap()
+        ));
+        pipe
+    };
+    multi.pcs = lcms::signatures::colorspace::SigXYZData;
+    assert!(profile::cms_write_tag(
+        &mut multi,
+        tag::SigAToB0Tag,
+        Some(TagObject::LutA2B(make_lut(0.25)))
+    ));
+    assert!(profile::cms_write_tag(
+        &mut multi,
+        tag::SigAToB1Tag,
+        Some(TagObject::LutA2B(make_lut(1.0)))
+    ));
+    let multi_icc: Arc<[u8]> = Arc::from(profile::save_profile_to_mem(&mut multi).unwrap());
+
+    let srgb_ctx = ColorContext::from_cicp(zenpixels::Cicp::SRGB);
+    let dst_enc = PixelEncoding::new(PixelDescriptor::RGB8_SRGB, Some(&srgb_ctx));
+    let white_in = [255u8, 255, 255];
+
+    for (name, cms) in backends() {
+        // 1. ConvertOptions::with_rendering_intent switches between Perceptual (AToB0) and RelativeColorimetric (AToB1).
+        let src_ctx = ColorContext::from_icc(multi_icc.clone());
+        let src_enc = PixelEncoding::new(PixelDescriptor::RGB8, Some(&src_ctx));
+
+        let mut rel = RowConverter::new_with_encoding(
+            src_enc,
+            dst_enc,
+            &opts().with_rendering_intent(RenderingIntent::RelativeColorimetric),
+            Some(cms),
+        )
+        .unwrap();
+        let mut perc = RowConverter::new_with_encoding(
+            src_enc,
+            dst_enc,
+            &opts().with_rendering_intent(RenderingIntent::Perceptual),
+            Some(cms),
+        )
+        .unwrap();
+        let mut out_rel = [0u8; 3];
+        let mut out_perc = [0u8; 3];
+        rel.try_convert_row(&white_in, &mut out_rel, 1).unwrap();
+        perc.try_convert_row(&white_in, &mut out_perc, 1).unwrap();
+        assert!(
+            out_rel[1] > 240 && out_perc[1] < 160,
+            "{name} intent failed to switch AToB0 vs AToB1: rel={out_rel:?} perc={out_perc:?}"
+        );
+
+        // 2. ColorContext::with_rendering_intent flows automatically when ConvertOptions leaves rendering_intent unset.
+        let src_perc_ctx = ColorContext::from_icc(multi_icc.clone())
+            .with_rendering_intent(RenderingIntent::Perceptual);
+        let mut from_ctx = RowConverter::new_with_encoding(
+            PixelEncoding::new(PixelDescriptor::RGB8, Some(&src_perc_ctx)),
+            dst_enc,
+            &opts(),
+            Some(cms),
+        )
+        .unwrap();
+        let mut out_ctx = [0u8; 3];
+        from_ctx
+            .try_convert_row(&white_in, &mut out_ctx, 1)
+            .unwrap();
+        assert_eq!(out_ctx, out_perc, "{name} ColorContext rendering_intent");
+    }
+
+    // 3. AbsoluteColorimetric: MoxCms declines cleanly (no media-white unadaptation in moxcms 0.9.2),
+    // while LcmsPort evaluates true ICC absolute colorimetric white shift (D65 sRGB -> D50 ProPhoto).
+    let abs_opts = opts()
+        .with_clip_out_of_gamut(false)
+        .with_rendering_intent(RenderingIntent::AbsoluteColorimetric);
+    assert!(
+        MoxCms
+            .build_source_transform(
+                SRGB,
+                Source::Parametric(ParametricColor::PROPHOTO_RGB),
+                F::RgbF32,
+                F::RgbF32,
+                &abs_opts,
+            )
+            .is_none()
+    );
+    let mut lcms_rel = LcmsPort
+        .build_source_transform(
+            SRGB,
+            Source::Parametric(ParametricColor::PROPHOTO_RGB),
+            F::RgbF32,
+            F::RgbF32,
+            &opts().with_clip_out_of_gamut(false),
+        )
+        .unwrap()
+        .unwrap();
+    let mut lcms_abs = LcmsPort
+        .build_source_transform(
+            SRGB,
+            Source::Parametric(ParametricColor::PROPHOTO_RGB),
+            F::RgbF32,
+            F::RgbF32,
+            &abs_opts,
+        )
+        .unwrap()
+        .unwrap();
+    let white_f32 = [1.0f32, 1.0, 1.0];
+    let rel_out: [f32; 3] = bytemuck::cast_slice(&run(
+        &mut lcms_rel,
+        bytemuck::cast_slice(&white_f32),
+        1,
+        F::RgbF32,
+    ))
+    .try_into()
+    .unwrap();
+    let abs_out: [f32; 3] = bytemuck::cast_slice(&run(
+        &mut lcms_abs,
+        bytemuck::cast_slice(&white_f32),
+        1,
+        F::RgbF32,
+    ))
+    .try_into()
+    .unwrap();
+    assert!(
+        (rel_out[2] - 1.0).abs() < 1e-3,
+        "rel D65->D50 white: {rel_out:?}"
+    );
+    assert!(
+        abs_out[2] > 1.05,
+        "abs D65->D50 white must preserve D65 blue excess (>1.0): {abs_out:?}"
+    );
 }

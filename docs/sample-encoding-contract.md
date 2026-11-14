@@ -148,8 +148,8 @@ retains the native allocation for recovery through `FromPartsError`.
 
 The raw JXL consumer in zencodec's `perf/spatial-validation/src/jxl_layers.rs`
 needs four native F32 components. CMY plus separate black cannot be labeled RGB.
-`PixelFormat::CmykF32` is conventional ICC device polarity (zero means no ink).
-`PixelFormat::CmykF32Inverted` is the reversed polarity emitted by native JPEG XL
+`PixelFormat::CMYKF32` (`PixelFormat::Generic(GenericFormat)` with `InkPolarity::ZeroIsNoInk`) is conventional ICC device polarity (zero means no ink).
+`PixelFormat::CMYKF32_INVERTED` (`InkPolarity::ZeroIsFullInk`) is the reversed polarity emitted by native JPEG XL
 (one means no ink), as specified by
 [libjxl's CMS interface](https://github.com/libjxl/libjxl/blob/v0.11.1/lib/include/jxl/cms_interface.h#L119).
 They share channel layout and size, but are distinct formats

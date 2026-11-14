@@ -49,6 +49,10 @@ impl CieXy {
     pub const D65: Self = Self::new(0.3127, 0.3290);
     /// CIE Standard Illuminant D50 (`(0.34567, 0.35850)`), ICC PCS white.
     pub const D50: Self = Self::new(0.34567, 0.35850);
+    /// SMPTE ST 2065-1 ACES reference white D60 (`(0.32168, 0.33767)`).
+    pub const D60: Self = Self::new(0.32168, 0.33767);
+    /// CIE Standard Illuminant C (`(0.310, 0.316)`), ITU-T H.273 Table 2 (CICP 4 / 8).
+    pub const C: Self = Self::new(0.310, 0.316);
     /// Equal-energy illuminant E (`(1/3, 1/3)`).
     pub const E: Self = Self::new(1.0 / 3.0, 1.0 / 3.0);
     /// SMPTE RP 431-2 theatrical DCI white (`(0.314, 0.351)`).
@@ -119,6 +123,10 @@ pub enum WhitePoint {
     D65,
     /// CIE Standard Illuminant D50 (`(0.34567, 0.35850)`), ICC PCS white.
     D50,
+    /// SMPTE ST 2065-1 ACES reference white D60 (`(0.32168, 0.33767)`).
+    D60,
+    /// CIE Standard Illuminant C (`(0.310, 0.316)`).
+    C,
     /// Equal-energy illuminant E (`(1/3, 1/3)`).
     E,
     /// SMPTE RP 431-2 theatrical DCI white (`(0.314, 0.351)`).
@@ -135,6 +143,8 @@ impl WhitePoint {
         match self {
             Self::D65 => CieXy::D65,
             Self::D50 => CieXy::D50,
+            Self::D60 => CieXy::D60,
+            Self::C => CieXy::C,
             Self::E => CieXy::E,
             Self::Dci => CieXy::DCI,
             Self::Custom(xy) => xy,
@@ -160,6 +170,16 @@ pub enum ParametricPrimaries {
     P3,
     /// Adobe RGB (1998) RGB primaries.
     AdobeRgb,
+    /// ISO 22028-2 ROMM RGB / ProPhoto RGB primaries (nominally paired with [`WhitePoint::D50`]).
+    ProPhotoRgb,
+    /// ACEScg (AP1) working-space primaries (nominally paired with [`WhitePoint::D60`]).
+    AcesCg,
+    /// SMPTE ST 2065-1 ACES archival (AP0) primaries (nominally paired with [`WhitePoint::D60`]).
+    Aces2065_1,
+    /// ITU-R BT.601-7 525-line / SMPTE 170M NTSC primaries (CICP 6, paired with [`WhitePoint::D65`]).
+    Bt601_525,
+    /// ITU-R BT.601-7 625-line / BT.470 System B, G PAL/SECAM primaries (CICP 5, paired with [`WhitePoint::D65`]).
+    Bt601_625,
     /// Arbitrary CIE 1931 `(x, y)` red, green, and blue primaries.
     Custom {
         /// Red primary chromaticity.
@@ -195,6 +215,31 @@ impl ParametricPrimaries {
             Self::AdobeRgb => (
                 CieXy::new(0.64, 0.33),
                 CieXy::new(0.21, 0.71),
+                CieXy::new(0.15, 0.06),
+            ),
+            Self::ProPhotoRgb => (
+                CieXy::new(0.734699, 0.265301),
+                CieXy::new(0.159597, 0.840403),
+                CieXy::new(0.036598, 0.000105),
+            ),
+            Self::AcesCg => (
+                CieXy::new(0.713, 0.293),
+                CieXy::new(0.165, 0.830),
+                CieXy::new(0.128, 0.044),
+            ),
+            Self::Aces2065_1 => (
+                CieXy::new(0.7347, 0.2653),
+                CieXy::new(0.0000, 1.0000),
+                CieXy::new(0.0001, -0.0770),
+            ),
+            Self::Bt601_525 => (
+                CieXy::new(0.630, 0.340),
+                CieXy::new(0.310, 0.595),
+                CieXy::new(0.155, 0.070),
+            ),
+            Self::Bt601_625 => (
+                CieXy::new(0.64, 0.33),
+                CieXy::new(0.29, 0.60),
                 CieXy::new(0.15, 0.06),
             ),
             Self::Custom { red, green, blue } => (red, green, blue),
@@ -310,6 +355,303 @@ impl GammaCurve {
     }
 }
 
+/// ICC.1 §10.18 `parametricCurveType` (`para`) EOTF transfer curve (`encoded -> linear`).
+///
+/// Represents the five standard ICC parametric curve forms (function types `0..=4`):
+/// - **Type 0** (`[g]`): `Y = X^g` (`X >= 0`, else `0`)
+/// - **Type 1** (`[g, a, b]`, CIE 122-1966): `Y = (aX + b)^g` (`X >= -b/a`, else `0`)
+/// - **Type 2** (`[g, a, b, c]`, IEC 61966-3): `Y = (aX + b)^g + c` (`X >= -b/a`, else `c`)
+/// - **Type 3** (`[g, a, b, c, d]`, IEC 61966-2-1): `Y = (aX + b)^g` (`X >= d`), `Y = cX` (`X < d`)
+/// - **Type 4** (`[g, a, b, c, d, e, f]`): `Y = (aX + b)^g + e` (`X >= d`), `Y = cX + f` (`X < d`)
+///
+/// All active parameters are validated to be finite with `g > 0.0` (and `a != 0.0`
+/// for types `1` and `2`, which divide by `a`). `-0.0` is canonicalized to `+0.0`
+/// and unused parameter slots are zeroed so bitwise [`Eq`] and [`Hash`](core::hash::Hash)
+/// are reflexive and canonical.
+#[derive(Clone, Copy, Debug)]
+pub struct IccParametricCurve {
+    func_type: u8,
+    params: [f32; 7],
+}
+
+impl PartialEq for IccParametricCurve {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.func_type == other.func_type
+            && self.params[0].to_bits() == other.params[0].to_bits()
+            && self.params[1].to_bits() == other.params[1].to_bits()
+            && self.params[2].to_bits() == other.params[2].to_bits()
+            && self.params[3].to_bits() == other.params[3].to_bits()
+            && self.params[4].to_bits() == other.params[4].to_bits()
+            && self.params[5].to_bits() == other.params[5].to_bits()
+            && self.params[6].to_bits() == other.params[6].to_bits()
+    }
+}
+
+impl Eq for IccParametricCurve {}
+
+impl core::hash::Hash for IccParametricCurve {
+    #[inline]
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.func_type.hash(state);
+        for p in self.params {
+            p.to_bits().hash(state);
+        }
+    }
+}
+
+impl IccParametricCurve {
+    /// IEC 61966-2-1 sRGB curve (`funcType = 3`: `g = 2.4, a = 1/1.055, b = 0.055/1.055, c = 1/12.92, d = 0.04045`).
+    pub const SRGB: Self =
+        Self::type3_iec61966_2_1(2.4, 1.0 / 1.055, 0.055 / 1.055, 1.0 / 12.92, 0.04045);
+    /// ITU-R BT.709 OETF inverse (`funcType = 3`: `g = 1/0.45, a = 1/1.099, b = 0.099/1.099, c = 1/4.5, d = 0.081`).
+    pub const BT709: Self =
+        Self::type3_iec61966_2_1(1.0 / 0.45, 1.0 / 1.099, 0.099 / 1.099, 1.0 / 4.5, 0.081);
+    /// ISO 22028-2:2013 §6.3 ROMM RGB / ProPhoto RGB curve
+    /// (`funcType = 3`: `g = 1.8, a = 1.0, b = 0.0, c = 1/16, d = 1/32`).
+    pub const PROPHOTO_RGB: Self = Self::type3_iec61966_2_1(1.8, 1.0, 0.0, 1.0 / 16.0, 1.0 / 32.0);
+
+    #[inline]
+    const fn canon(x: f32) -> f32 {
+        if x == 0.0 { 0.0 } else { x }
+    }
+
+    /// Expected ICC parameter count for `func_type` (`0..=4`), or `None` for reserved types.
+    #[inline]
+    #[must_use]
+    pub const fn param_count(func_type: u16) -> Option<usize> {
+        match func_type {
+            0 => Some(1),
+            1 => Some(3),
+            2 => Some(4),
+            3 => Some(5),
+            4 => Some(7),
+            _ => None,
+        }
+    }
+
+    /// Construct from an ICC `parametricCurveType` function code (`0..=4`) and parameter slice.
+    ///
+    /// Returns `None` if `func_type > 4`, `params.len()` does not match [`Self::param_count`],
+    /// any parameter is NaN/infinite, `g <= 0.0`, or `a == 0.0` for function types `1` or `2`.
+    #[must_use]
+    pub const fn try_from_icc_para(func_type: u16, params: &[f32]) -> Option<Self> {
+        match (func_type, params) {
+            (0, &[g]) => Self::try_type0_gamma(g),
+            (1, &[g, a, b]) => Self::try_type1_cie122(g, a, b),
+            (2, &[g, a, b, c]) => Self::try_type2_iec61966_3(g, a, b, c),
+            (3, &[g, a, b, c, d]) => Self::try_type3_iec61966_2_1(g, a, b, c, d),
+            (4, &[g, a, b, c, d, e, f]) => Self::try_type4(g, a, b, c, d, e, f),
+            _ => None,
+        }
+    }
+
+    /// ICC function type `0`: `Y = X^g` (`g > 0`).
+    #[inline]
+    #[must_use]
+    pub const fn try_type0_gamma(g: f32) -> Option<Self> {
+        if g.is_finite() && g > 0.0 {
+            Some(Self {
+                func_type: 0,
+                params: [Self::canon(g), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            })
+        } else {
+            None
+        }
+    }
+
+    /// ICC function type `0`: `Y = X^g`, panicking if `g` is invalid.
+    #[inline]
+    #[track_caller]
+    #[must_use]
+    pub const fn type0_gamma(g: f32) -> Self {
+        match Self::try_type0_gamma(g) {
+            Some(c) => c,
+            None => panic!("ICC parametric type 0 requires finite g > 0"),
+        }
+    }
+
+    /// ICC function type `1` (CIE 122-1966): `Y = (aX + b)^g` for `X >= -b/a`, else `0`.
+    #[inline]
+    #[must_use]
+    pub const fn try_type1_cie122(g: f32, a: f32, b: f32) -> Option<Self> {
+        if g.is_finite() && g > 0.0 && a.is_finite() && a != 0.0 && b.is_finite() {
+            Some(Self {
+                func_type: 1,
+                params: [
+                    Self::canon(g),
+                    Self::canon(a),
+                    Self::canon(b),
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                ],
+            })
+        } else {
+            None
+        }
+    }
+
+    /// ICC function type `1` (CIE 122-1966), panicking if parameters are invalid.
+    #[inline]
+    #[track_caller]
+    #[must_use]
+    pub const fn type1_cie122(g: f32, a: f32, b: f32) -> Self {
+        match Self::try_type1_cie122(g, a, b) {
+            Some(c) => c,
+            None => {
+                panic!("ICC parametric type 1 requires finite parameters with g > 0 and a != 0")
+            }
+        }
+    }
+
+    /// ICC function type `2` (IEC 61966-3): `Y = (aX + b)^g + c` for `X >= -b/a`, else `c`.
+    #[inline]
+    #[must_use]
+    pub const fn try_type2_iec61966_3(g: f32, a: f32, b: f32, c: f32) -> Option<Self> {
+        if g.is_finite() && g > 0.0 && a.is_finite() && a != 0.0 && b.is_finite() && c.is_finite() {
+            Some(Self {
+                func_type: 2,
+                params: [
+                    Self::canon(g),
+                    Self::canon(a),
+                    Self::canon(b),
+                    Self::canon(c),
+                    0.0,
+                    0.0,
+                    0.0,
+                ],
+            })
+        } else {
+            None
+        }
+    }
+
+    /// ICC function type `2` (IEC 61966-3), panicking if parameters are invalid.
+    #[inline]
+    #[track_caller]
+    #[must_use]
+    pub const fn type2_iec61966_3(g: f32, a: f32, b: f32, c: f32) -> Self {
+        match Self::try_type2_iec61966_3(g, a, b, c) {
+            Some(curve) => curve,
+            None => {
+                panic!("ICC parametric type 2 requires finite parameters with g > 0 and a != 0")
+            }
+        }
+    }
+
+    /// ICC function type `3` (IEC 61966-2-1): `Y = (aX + b)^g` for `X >= d`, `Y = cX` for `X < d`.
+    #[inline]
+    #[must_use]
+    pub const fn try_type3_iec61966_2_1(g: f32, a: f32, b: f32, c: f32, d: f32) -> Option<Self> {
+        if g.is_finite()
+            && g > 0.0
+            && a.is_finite()
+            && b.is_finite()
+            && c.is_finite()
+            && d.is_finite()
+        {
+            Some(Self {
+                func_type: 3,
+                params: [
+                    Self::canon(g),
+                    Self::canon(a),
+                    Self::canon(b),
+                    Self::canon(c),
+                    Self::canon(d),
+                    0.0,
+                    0.0,
+                ],
+            })
+        } else {
+            None
+        }
+    }
+
+    /// ICC function type `3` (IEC 61966-2-1), panicking if parameters are invalid.
+    #[inline]
+    #[track_caller]
+    #[must_use]
+    pub const fn type3_iec61966_2_1(g: f32, a: f32, b: f32, c: f32, d: f32) -> Self {
+        match Self::try_type3_iec61966_2_1(g, a, b, c, d) {
+            Some(curve) => curve,
+            None => panic!("ICC parametric type 3 requires finite parameters with g > 0"),
+        }
+    }
+
+    /// ICC function type `4`: `Y = (aX + b)^g + e` for `X >= d`, `Y = cX + f` for `X < d`.
+    #[inline]
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub const fn try_type4(g: f32, a: f32, b: f32, c: f32, d: f32, e: f32, f: f32) -> Option<Self> {
+        if g.is_finite()
+            && g > 0.0
+            && a.is_finite()
+            && b.is_finite()
+            && c.is_finite()
+            && d.is_finite()
+            && e.is_finite()
+            && f.is_finite()
+        {
+            Some(Self {
+                func_type: 4,
+                params: [
+                    Self::canon(g),
+                    Self::canon(a),
+                    Self::canon(b),
+                    Self::canon(c),
+                    Self::canon(d),
+                    Self::canon(e),
+                    Self::canon(f),
+                ],
+            })
+        } else {
+            None
+        }
+    }
+
+    /// ICC function type `4`, panicking if parameters are invalid.
+    #[inline]
+    #[track_caller]
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub const fn type4(g: f32, a: f32, b: f32, c: f32, d: f32, e: f32, f: f32) -> Self {
+        match Self::try_type4(g, a, b, c, d, e, f) {
+            Some(curve) => curve,
+            None => panic!("ICC parametric type 4 requires finite parameters with g > 0"),
+        }
+    }
+
+    /// ICC `parametricCurveType` function type (`0..=4`).
+    #[inline]
+    #[must_use]
+    pub const fn function_type(self) -> u8 {
+        self.func_type
+    }
+
+    /// Active ICC parameters (`1`, `3`, `4`, `5`, or `7` elements according to [`Self::function_type`]).
+    #[inline]
+    #[must_use]
+    pub fn icc_params(&self) -> &[f32] {
+        let len = match self.func_type {
+            0 => 1,
+            1 => 3,
+            2 => 4,
+            3 => 5,
+            _ => 7,
+        };
+        &self.params[..len]
+    }
+
+    /// Full 7-slot parameter array `[g, a, b, c, d, e, f]` (with unused trailing slots zeroed).
+    #[inline]
+    #[must_use]
+    pub const fn all_params(self) -> [f32; 7] {
+        self.params
+    }
+}
+
 /// Transfer curve for [`ParametricColor`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -328,6 +670,8 @@ pub enum ParametricTransfer {
     Dci,
     /// Pure power-law transfer curve (`encoded = linear^g`).
     Gamma(GammaCurve),
+    /// ICC.1 §10.18 `parametricCurveType` EOTF curve (`funcType` `0..=4`).
+    IccParametric(IccParametricCurve),
     /// Unspecified or unknown transfer curve.
     #[default]
     Unknown,
@@ -351,8 +695,8 @@ impl ParametricTransfer {
 
     /// Map to a compact [`TransferFunction`] when an exact built-in curve exists.
     ///
-    /// Returns `None` for [`Self::Dci`], [`Self::Unknown`], and [`Self::Gamma`]
-    /// exponents other than [`GammaCurve::ADOBE_RGB`] (`256/563`).
+    /// Returns `None` for [`Self::Dci`], [`Self::IccParametric`], [`Self::Unknown`],
+    /// and [`Self::Gamma`] exponents other than [`GammaCurve::ADOBE_RGB`] (`256/563`).
     #[inline]
     #[must_use]
     pub const fn to_transfer_function(self) -> Option<TransferFunction> {
@@ -368,7 +712,7 @@ impl ParametricTransfer {
             {
                 Some(TransferFunction::Gamma22)
             }
-            Self::Dci | Self::Gamma(_) | Self::Unknown => None,
+            Self::Dci | Self::Gamma(_) | Self::IccParametric(_) | Self::Unknown => None,
         }
     }
 }
@@ -473,6 +817,30 @@ impl ParametricColor {
         WhitePoint::D65,
         ParametricTransfer::Hlg,
     );
+    /// Linear-light sRGB / BT.709 (`Bt709` + `D65` + `Linear` + `RelativeColorimetric`).
+    pub const LINEAR_SRGB: Self = Self::rgb(
+        ParametricPrimaries::Bt709,
+        WhitePoint::D65,
+        ParametricTransfer::Linear,
+    );
+    /// ISO 22028-2 ROMM RGB / ProPhoto RGB (`ProPhotoRgb` + `D50` + `IccParametric::PROPHOTO_RGB` + `RelativeColorimetric`).
+    pub const PROPHOTO_RGB: Self = Self::rgb(
+        ParametricPrimaries::ProPhotoRgb,
+        WhitePoint::D50,
+        ParametricTransfer::IccParametric(IccParametricCurve::PROPHOTO_RGB),
+    );
+    /// ACEScg (AP1) linear working space (`AcesCg` + `D60` + `Linear` + `RelativeColorimetric`).
+    pub const ACES_CG: Self = Self::rgb(
+        ParametricPrimaries::AcesCg,
+        WhitePoint::D60,
+        ParametricTransfer::Linear,
+    );
+    /// SMPTE ST 2065-1 ACES archival (AP0) linear space (`Aces2065_1` + `D60` + `Linear` + `RelativeColorimetric`).
+    pub const ACES_2065_1: Self = Self::rgb(
+        ParametricPrimaries::Aces2065_1,
+        WhitePoint::D60,
+        ParametricTransfer::Linear,
+    );
 
     /// Construct an RGB parametric color description with default
     /// [`RenderingIntent::RelativeColorimetric`].
@@ -530,12 +898,51 @@ impl ParametricColor {
             Some(ParametricPrimaries::Bt2020) => ColorPrimaries::Bt2020,
             Some(ParametricPrimaries::P3) => ColorPrimaries::DisplayP3,
             Some(ParametricPrimaries::AdobeRgb) => ColorPrimaries::AdobeRgb,
-            Some(ParametricPrimaries::Custom { .. }) | None => return None,
+            Some(
+                ParametricPrimaries::ProPhotoRgb
+                | ParametricPrimaries::AcesCg
+                | ParametricPrimaries::Aces2065_1
+                | ParametricPrimaries::Bt601_525
+                | ParametricPrimaries::Bt601_625
+                | ParametricPrimaries::Custom { .. },
+            )
+            | None => return None,
         };
         match self.transfer.to_transfer_function() {
             Some(transfer) => Some((primaries, transfer)),
             None => None,
         }
+    }
+
+    /// Construct from full-range RGB ITU-T H.273 [`Cicp`] (`matrix_coefficients == 0`
+    /// and `full_range == true`) when `color_primaries` and `transfer_characteristics`
+    /// map to known parametric presets.
+    #[inline]
+    #[must_use]
+    pub const fn from_cicp(cicp: Cicp) -> Option<Self> {
+        if cicp.matrix_coefficients != 0 || !cicp.full_range {
+            return None;
+        }
+        let (primaries, white_point) = match cicp.color_primaries {
+            1 => (ParametricPrimaries::Bt709, WhitePoint::D65),
+            5 => (ParametricPrimaries::Bt601_625, WhitePoint::D65),
+            6 | 7 => (ParametricPrimaries::Bt601_525, WhitePoint::D65),
+            9 => (ParametricPrimaries::Bt2020, WhitePoint::D65),
+            11 => (ParametricPrimaries::P3, WhitePoint::Dci),
+            12 => (ParametricPrimaries::P3, WhitePoint::D65),
+            _ => return None,
+        };
+        let transfer = match cicp.transfer_characteristics {
+            1 | 6 | 14 | 15 => ParametricTransfer::Bt709,
+            4 => ParametricTransfer::Gamma(GammaCurve::GAMMA_22),
+            8 => ParametricTransfer::Linear,
+            13 => ParametricTransfer::Srgb,
+            16 => ParametricTransfer::Pq,
+            17 => ParametricTransfer::Dci,
+            18 => ParametricTransfer::Hlg,
+            _ => return None,
+        };
+        Some(Self::rgb(primaries, white_point, transfer))
     }
 
     /// Convert to full-range RGB ITU-T H.273 [`Cicp`] (`matrix_coefficients = 0`,
@@ -549,6 +956,8 @@ impl ParametricColor {
     pub const fn to_cicp(&self) -> Option<Cicp> {
         let cp = match (self.primaries, self.white_point) {
             (Some(ParametricPrimaries::Bt709), WhitePoint::D65) => 1,
+            (Some(ParametricPrimaries::Bt601_625), WhitePoint::D65) => 5,
+            (Some(ParametricPrimaries::Bt601_525), WhitePoint::D65) => 6,
             (Some(ParametricPrimaries::Bt2020), WhitePoint::D65) => 9,
             (Some(ParametricPrimaries::P3), WhitePoint::Dci) => 11,
             (Some(ParametricPrimaries::P3), WhitePoint::D65) => 12,
@@ -1967,6 +2376,53 @@ mod tests {
         assert_eq!(origin.provenance, ColorProvenance::Parametric);
         assert_eq!(origin.parametric, Some(ParametricColor::DCI_P3));
         assert_eq!(origin.cicp, Some(Cicp::new(11, 17, 0, true)));
+    }
+
+    #[test]
+    fn icc_parametric_curve_and_working_space_presets() {
+        assert_eq!(IccParametricCurve::PROPHOTO_RGB.function_type(), 3);
+        assert_eq!(
+            IccParametricCurve::PROPHOTO_RGB.icc_params(),
+            &[1.8, 1.0, 0.0, 1.0 / 16.0, 1.0 / 32.0]
+        );
+        // -0.0 canonicalizes to +0.0 for Eq/Hash.
+        let neg_zero =
+            IccParametricCurve::try_from_icc_para(3, &[1.8, 1.0, -0.0, 1.0 / 16.0, 1.0 / 32.0])
+                .unwrap();
+        assert_eq!(neg_zero, IccParametricCurve::PROPHOTO_RGB);
+        // Invalid parameter counts, NaN, g <= 0, and a == 0 for types 1/2 reject cleanly.
+        assert_eq!(IccParametricCurve::try_from_icc_para(0, &[1.8, 1.0]), None);
+        assert_eq!(IccParametricCurve::try_from_icc_para(5, &[1.0]), None);
+        assert_eq!(IccParametricCurve::try_type0_gamma(0.0), None);
+        assert_eq!(IccParametricCurve::try_type0_gamma(f32::NAN), None);
+        assert_eq!(IccParametricCurve::try_type1_cie122(2.2, 0.0, 0.0), None);
+        assert_eq!(
+            IccParametricCurve::try_type2_iec61966_3(2.2, 0.0, 0.0, 0.0),
+            None
+        );
+        assert!(IccParametricCurve::try_type4(2.4, 0.9, 0.1, 0.08, 0.04, 0.01, -0.01).is_some());
+
+        // Working-space presets and CICP round-trip for BT.601 525/625.
+        assert_eq!(
+            ParametricColor::LINEAR_SRGB.to_cicp(),
+            Some(Cicp::new(1, 8, 0, true))
+        );
+        assert_eq!(
+            ParametricColor::LINEAR_SRGB.to_primaries_transfer(),
+            Some((ColorPrimaries::Bt709, TransferFunction::Linear))
+        );
+        assert_eq!(ParametricColor::PROPHOTO_RGB.white_point, WhitePoint::D50);
+        assert_eq!(ParametricColor::ACES_CG.white_point, WhitePoint::D60);
+        assert_eq!(ParametricColor::ACES_2065_1.white_point, WhitePoint::D60);
+        assert_eq!(WhitePoint::C.cie_xy(), CieXy::C);
+        assert_eq!(ParametricColor::PROPHOTO_RGB.to_cicp(), None);
+        assert_eq!(ParametricColor::ACES_CG.to_cicp(), None);
+
+        for code in [1u8, 5, 6, 9, 11, 12] {
+            let cicp = Cicp::new(code, 1, 0, true);
+            let p = ParametricColor::from_cicp(cicp).unwrap();
+            assert_eq!(p.to_cicp(), Some(cicp));
+        }
     }
 }
 

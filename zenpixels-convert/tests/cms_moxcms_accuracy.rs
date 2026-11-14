@@ -276,11 +276,11 @@ fn eight_bit_cmyk_is_f32_cmyk_rounded() {
     for target in [SRGB, Source::Icc(ADOBE_RGB), Source::Icc(&tagged), p3] {
         for (to8, tof, channels) in [(F::Rgb8, F::RgbF32, 3), (F::Rgba8, F::RgbaF32, 4)] {
             let mut bytes = vec![0u8; 4096 * channels];
-            build(Source::Icc(&icc), target.clone(), F::Cmyk8, to8)
+            build(Source::Icc(&icc), target.clone(), F::CMYK8, to8)
                 .try_transform_row(&ink, &mut bytes, 4096)
                 .unwrap();
             let mut floats = vec![0f32; 4096 * channels];
-            build(Source::Icc(&icc), target.clone(), F::CmykF32, tof)
+            build(Source::Icc(&icc), target.clone(), F::CMYKF32, tof)
                 .try_transform_row(
                     bytemuck::cast_slice(&ink_f32),
                     bytemuck::cast_slice_mut(&mut floats),
@@ -301,7 +301,7 @@ fn eight_bit_cmyk_rows_split_and_alpha_is_opaque() {
     let icc = synthetic_icc::synthetic_cmyk_icc();
     let ink: Vec<u8> = (0..600u32 * 4).map(|i| (i * 53 % 256) as u8).collect();
     let mut whole = vec![0u8; 600 * 4];
-    let mut t = build(Source::Icc(&icc), SRGB, F::Cmyk8, F::Rgba8);
+    let mut t = build(Source::Icc(&icc), SRGB, F::CMYK8, F::Rgba8);
     t.try_transform_row(&ink, &mut whole, 600).unwrap();
     let mut parts = Vec::new();
     for row in ink.chunks(7 * 4) {
@@ -321,10 +321,10 @@ fn cmyk_targets_agree_with_and_without_alpha() {
     let ink: Vec<u8> = (0..4096u32 * 4).map(|i| (i * 61 % 256) as u8).collect();
     let mut rgb = vec![0u8; 4096 * 3];
     let mut rgba = vec![0u8; 4096 * 4];
-    build(Source::Icc(&icc), SRGB, F::Cmyk8, F::Rgb8)
+    build(Source::Icc(&icc), SRGB, F::CMYK8, F::Rgb8)
         .try_transform_row(&ink, &mut rgb, 4096)
         .unwrap();
-    build(Source::Icc(&icc), SRGB, F::Cmyk8, F::Rgba8)
+    build(Source::Icc(&icc), SRGB, F::CMYK8, F::Rgba8)
         .try_transform_row(&ink, &mut rgba, 4096)
         .unwrap();
     for (a, b) in rgb.as_chunks::<3>().0.iter().zip(rgba.as_chunks::<4>().0) {
@@ -333,14 +333,14 @@ fn cmyk_targets_agree_with_and_without_alpha() {
     let ink_f32: Vec<f32> = ink.iter().map(|&v| f32::from(v) / 255.0).collect();
     let mut rgb = vec![0f32; 4096 * 3];
     let mut rgba = vec![0f32; 4096 * 4];
-    build(Source::Icc(&icc), SRGB, F::CmykF32, F::RgbF32)
+    build(Source::Icc(&icc), SRGB, F::CMYKF32, F::RgbF32)
         .try_transform_row(
             bytemuck::cast_slice(&ink_f32),
             bytemuck::cast_slice_mut(&mut rgb),
             4096,
         )
         .unwrap();
-    build(Source::Icc(&icc), SRGB, F::CmykF32, F::RgbaF32)
+    build(Source::Icc(&icc), SRGB, F::CMYKF32, F::RgbaF32)
         .try_transform_row(
             bytemuck::cast_slice(&ink_f32),
             bytemuck::cast_slice_mut(&mut rgba),

@@ -651,8 +651,8 @@ impl TryFrom<ExtendedColorType> for PixelFormat {
             ExtendedColorType::Bgra8 => Self::Bgra8,
             ExtendedColorType::Rgb32F => Self::RgbF32,
             ExtendedColorType::Rgba32F => Self::RgbaF32,
-            ExtendedColorType::Cmyk8 => Self::Cmyk8,
-            ExtendedColorType::Cmyk16 => Self::Cmyk16,
+            ExtendedColorType::Cmyk8 => Self::CMYK8,
+            ExtendedColorType::Cmyk16 => Self::CMYK16,
             ExtendedColorType::Bgr8 => Self::Bgr8,
             _ => return Err(BufferError::IncompatibleDescriptor),
         })
@@ -675,8 +675,8 @@ impl TryFrom<PixelFormat> for ExtendedColorType {
             PixelFormat::Bgra8 => Self::Bgra8,
             PixelFormat::RgbF32 => Self::Rgb32F,
             PixelFormat::RgbaF32 => Self::Rgba32F,
-            PixelFormat::Cmyk8 => Self::Cmyk8,
-            PixelFormat::Cmyk16 => Self::Cmyk16,
+            PixelFormat::CMYK8 => Self::Cmyk8,
+            PixelFormat::CMYK16 => Self::Cmyk16,
             PixelFormat::Bgr8 => Self::Bgr8,
             _ => return Err(BufferError::IncompatibleDescriptor),
         })

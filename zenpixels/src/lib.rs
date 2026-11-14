@@ -99,8 +99,8 @@ pub use orientation::Orientation;
 // Re-export key descriptor types at crate root for ergonomics.
 #[doc(inline)]
 pub use descriptor::{
-    AlphaMode, ChannelLayout, ChannelType, ColorModel, ColorPrimaries, PixelDescriptor,
-    PixelFormat, SignalRange, TransferFunction,
+    AlphaMode, ChannelLayout, ChannelType, ColorModel, ColorPrimaries, GenericFormat, InkPolarity,
+    PixelDescriptor, PixelFormat, SignalRange, TransferFunction,
 };
 
 // Re-export buffer and alignment types at crate root.
@@ -118,8 +118,9 @@ pub use cicp::Cicp;
 #[doc(inline)]
 pub use color::{
     AnyColor, CieXy, Color, ColorAuthority, ColorContext, ColorOrigin, ColorProfile,
-    ColorProfileSource, ColorProvenance, GammaCurve, NamedProfile, ParametricColor,
-    ParametricPrimaries, ParametricTransfer, PixelEncoding, RenderingIntent, WhitePoint,
+    ColorProfileSource, ColorProvenance, GammaCurve, IccParametricCurve, NamedProfile,
+    ParametricColor, ParametricPrimaries, ParametricTransfer, PixelEncoding, RenderingIntent,
+    WhitePoint,
 };
 
 // Re-export GrayAlpha pixel types at crate root.

@@ -646,10 +646,10 @@ fn extended_color_types_map_or_refuse_explicitly() {
         (E::Rgba16, PixelFormat::Rgba16),
         (E::Bgra8, PixelFormat::Bgra8),
         (E::Bgr8, PixelFormat::Bgr8),
-        (E::Cmyk16, PixelFormat::Cmyk16),
+        (E::Cmyk16, PixelFormat::CMYK16),
         (E::Rgb32F, PixelFormat::RgbF32),
         (E::Rgba32F, PixelFormat::RgbaF32),
-        (E::Cmyk8, PixelFormat::Cmyk8),
+        (E::Cmyk8, PixelFormat::CMYK8),
     ];
     for (color, format) in mapped {
         assert_eq!(PixelFormat::try_from(color).unwrap(), format);

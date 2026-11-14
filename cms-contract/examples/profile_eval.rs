@@ -14,13 +14,32 @@ fn format(icc: &[u8]) -> Result<(u32, PixelFormat, usize), Box<dyn std::error::E
             PixelFormat::GrayF32,
             1,
         )),
-        Some(b"XYZ ") => Ok(((1 << 22) | (9 << 16) | (3 << 3) | 4, PixelFormat::RgbF32, 3)),
+        Some(b"XYZ ") => Ok((
+            (1 << 22) | (9 << 16) | (3 << 3) | 4,
+            PixelFormat::from_parts(
+                zenpixels::ChannelType::F32,
+                zenpixels::ChannelLayout::Xyz,
+                None,
+            )
+            .unwrap(),
+            3,
+        )),
+        Some(b"Lab ") => Ok((
+            (1 << 22) | (10 << 16) | (3 << 3) | 4,
+            PixelFormat::from_parts(
+                zenpixels::ChannelType::F32,
+                zenpixels::ChannelLayout::Lab,
+                None,
+            )
+            .unwrap(),
+            3,
+        )),
         Some(b"CMYK") => Ok((
             (1 << 22) | (6 << 16) | (4 << 3) | 4,
-            PixelFormat::CmykF32,
+            PixelFormat::CMYKF32,
             4,
         )),
-        _ => Err("only RGB/GRAY/XYZ/CMYK float fixtures supported".into()),
+        _ => Err("only RGB/GRAY/XYZ/Lab/CMYK float fixtures supported".into()),
     }
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -52,8 +71,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     ColorProfileSource::Icc(&dst)
                 },
-                if inverted && src_format == PixelFormat::CmykF32 {
-                    PixelFormat::CmykF32Inverted
+                if inverted && src_format == PixelFormat::CMYKF32 {
+                    PixelFormat::CMYKF32_INVERTED
                 } else {
                     src_format
                 },
@@ -115,7 +134,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         // Little CMS represents floating ink in percent; the probe interface
         // uses normalized ICC ink, matching the production pixel API.
-        if src_format == PixelFormat::CmykF32 {
+        if src_format == PixelFormat::CMYKF32 {
             for value in input.as_chunks_mut::<4>().0.iter_mut() {
                 let scaled = f32::from_ne_bytes(*value) * 100.0;
                 value.copy_from_slice(&scaled.to_ne_bytes());
@@ -146,7 +165,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .ok_or("literal-intent transform")?;
         transform.do_transform(&input, &mut output, u32::try_from(count)?);
-        if dst_format == PixelFormat::CmykF32 {
+        if dst_format == PixelFormat::CMYKF32 {
             for value in output.as_chunks_mut::<4>().0.iter_mut() {
                 let normalized = f32::from_ne_bytes(*value) / 100.0;
                 value.copy_from_slice(&normalized.to_ne_bytes());

@@ -329,7 +329,7 @@ fn portable_v1_golden_hashes() {
     .unwrap();
     let bytes: Vec<_> = samples.into_iter().flat_map(u64::to_ne_bytes).collect();
     let p = PixelBuffer::from_vec(bytes, 2, 1, desc).unwrap();
-    assert_eq!(p.hash_with(HashInclusions::All), 0x6e78_65c3_8572_b77e);
+    assert_eq!(p.hash_with(HashInclusions::All), 0x899b_f7c2_4321_3df9);
 }
 #[test]
 fn planar_u8_subbyte_codes_ignore_unused_bits() {
@@ -487,6 +487,35 @@ fn parametric_color_and_rendering_intent_participate_in_metadata_hashes() {
     assert_ne!(
         buf_cicp_rel.hash_with(HashInclusions::All),
         buf_cicp_abs.hash_with(HashInclusions::All)
+    );
+
+    // Generic CMYK ink polarity and IccParametricCurve participate in Pixels/All hashes.
+    let cmyk_std =
+        PixelBuffer::from_vec(vec![10, 20, 30, 40], 1, 1, PixelDescriptor::CMYK8).unwrap();
+    let cmyk_inv =
+        PixelBuffer::from_vec(vec![10, 20, 30, 40], 1, 1, PixelDescriptor::CMYK8_INVERTED).unwrap();
+    assert_eq!(
+        cmyk_std.hash_with(HashInclusions::SamplesOnly),
+        cmyk_inv.hash_with(HashInclusions::SamplesOnly)
+    );
+    assert_ne!(
+        cmyk_std.hash_with(HashInclusions::Pixels),
+        cmyk_inv.hash_with(HashInclusions::Pixels)
+    );
+
+    let prophoto = PixelBuffer::from_vec(vec![10, 20, 30, 255], 1, 1, PixelDescriptor::RGBA8)
+        .unwrap()
+        .with_parametric(ParametricColor::PROPHOTO_RGB);
+    let pure_18 = PixelBuffer::from_vec(vec![10, 20, 30, 255], 1, 1, PixelDescriptor::RGBA8)
+        .unwrap()
+        .with_parametric(ParametricColor::rgb(
+            ParametricPrimaries::ProPhotoRgb,
+            WhitePoint::D50,
+            ParametricTransfer::Gamma(GammaCurve::from_eotf_exponent(1.8)),
+        ));
+    assert_ne!(
+        prophoto.hash_with(HashInclusions::Pixels),
+        pure_18.hash_with(HashInclusions::Pixels)
     );
 
     // CodePlane over U32 masks unused bits and ignores row padding when hashed directly.

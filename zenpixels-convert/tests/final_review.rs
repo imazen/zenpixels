@@ -303,14 +303,14 @@ fn unknown_input_still_encodes_as_the_target_says() {
 fn opposite_ink_polarity_is_not_layout_compatible() {
     use zenpixels::PixelFormat as F;
     assert!(
-        !F::CmykF32
+        !F::CMYKF32
             .descriptor()
-            .layout_compatible(F::CmykF32Inverted.descriptor())
+            .layout_compatible(F::CMYKF32_INVERTED.descriptor())
     );
     assert!(
-        F::CmykF32
+        F::CMYKF32
             .descriptor()
-            .layout_compatible(F::CmykF32.descriptor())
+            .layout_compatible(F::CMYKF32.descriptor())
     );
 }
 
