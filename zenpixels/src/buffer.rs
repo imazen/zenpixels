@@ -1069,6 +1069,32 @@ impl<'a, P> PixelSlice<'a, P> {
         self.with_color_context(Arc::new(ctx))
     }
 
+    /// Relabel the source [`crate::ParametricColor`] profile. **Reinterpretation
+    /// only** — pixels are untouched. Clones any existing [`ColorContext`], sets
+    /// `parametric`, and re-attaches it.
+    #[must_use]
+    pub fn with_parametric(self, parametric: crate::ParametricColor) -> Self {
+        let ctx = self
+            .color_context()
+            .map(|c| (**c).clone())
+            .unwrap_or_default()
+            .with_parametric(parametric);
+        self.with_color_context(Arc::new(ctx))
+    }
+
+    /// Relabel the source [`crate::RenderingIntent`]. **Reinterpretation only**
+    /// — pixels are untouched. Clones any existing [`ColorContext`], sets its
+    /// rendering intent, and re-attaches it.
+    #[must_use]
+    pub fn with_rendering_intent(self, intent: crate::RenderingIntent) -> Self {
+        let ctx = self
+            .color_context()
+            .map(|c| (**c).clone())
+            .unwrap_or_default()
+            .with_rendering_intent(intent);
+        self.with_color_context(Arc::new(ctx))
+    }
+
     /// Whether rows are tightly packed (no stride padding).
     ///
     /// When true, the entire pixel data is contiguous in memory and
@@ -1731,6 +1757,32 @@ impl<'a, P> PixelSliceMut<'a, P> {
             .map(|c| (**c).clone())
             .unwrap_or_default()
             .with_icc(icc);
+        self.with_color_context(Arc::new(ctx))
+    }
+
+    /// Relabel the source [`crate::ParametricColor`] profile. **Reinterpretation
+    /// only** — pixels are untouched. Clones any existing [`ColorContext`], sets
+    /// `parametric`, and re-attaches it.
+    #[must_use]
+    pub fn with_parametric(self, parametric: crate::ParametricColor) -> Self {
+        let ctx = self
+            .color_context()
+            .map(|c| (**c).clone())
+            .unwrap_or_default()
+            .with_parametric(parametric);
+        self.with_color_context(Arc::new(ctx))
+    }
+
+    /// Relabel the source [`crate::RenderingIntent`]. **Reinterpretation only**
+    /// — pixels are untouched. Clones any existing [`ColorContext`], sets its
+    /// rendering intent, and re-attaches it.
+    #[must_use]
+    pub fn with_rendering_intent(self, intent: crate::RenderingIntent) -> Self {
+        let ctx = self
+            .color_context()
+            .map(|c| (**c).clone())
+            .unwrap_or_default()
+            .with_rendering_intent(intent);
         self.with_color_context(Arc::new(ctx))
     }
 
@@ -3770,6 +3822,32 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
             .map(|c| (**c).clone())
             .unwrap_or_default()
             .with_icc(icc);
+        self.with_color_context(Arc::new(ctx))
+    }
+
+    /// Relabel the source [`crate::ParametricColor`] profile. **Reinterpretation
+    /// only** — pixels are untouched. Clones any existing [`ColorContext`], sets
+    /// `parametric`, and re-attaches it.
+    #[must_use]
+    pub fn with_parametric(self, parametric: crate::ParametricColor) -> Self {
+        let ctx = self
+            .color_context()
+            .map(|c| (**c).clone())
+            .unwrap_or_default()
+            .with_parametric(parametric);
+        self.with_color_context(Arc::new(ctx))
+    }
+
+    /// Relabel the source [`crate::RenderingIntent`]. **Reinterpretation only**
+    /// — pixels are untouched. Clones any existing [`ColorContext`], sets its
+    /// rendering intent, and re-attaches it.
+    #[must_use]
+    pub fn with_rendering_intent(self, intent: crate::RenderingIntent) -> Self {
+        let ctx = self
+            .color_context()
+            .map(|c| (**c).clone())
+            .unwrap_or_default()
+            .with_rendering_intent(intent);
         self.with_color_context(Arc::new(ctx))
     }
 

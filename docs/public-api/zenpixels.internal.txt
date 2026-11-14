@@ -9,15 +9,15 @@
 
 ## summary
 #
-#   inherent methods                           61
+#   inherent methods                           66
 #   enum variants                              14
-#   trait roster entries (type × trait)        64
+#   trait roster entries (type × trait)        71
 #
 # per-module pub lines:
 #   (root)                            8
 #   buffer                            3
 #   cicp                              2
-#   color                             9
+#   color                            14
 #   descriptor                       18
 #   hdr                               4
 #   icc                               2
@@ -28,7 +28,7 @@
 #   precision                         5
 #   sample                            7
 
-## items (75 lines)
+## items (80 lines)
 
 pub fn HashInclusions::assert_fields_are_eq(&self)
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
@@ -44,7 +44,12 @@ pub fn color::ColorOrigin::assert_fields_are_eq(&self)
 pub fn color::ColorProfileSource<'a>::assert_fields_are_eq(&self)
 pub fn color::ColorProvenance::assert_fields_are_eq(&self)
 pub fn color::NamedProfile::assert_fields_are_eq(&self)
+pub fn color::ParametricColor::assert_fields_are_eq(&self)
+pub fn color::ParametricPrimaries::assert_fields_are_eq(&self)
+pub fn color::ParametricTransfer::assert_fields_are_eq(&self)
 pub fn color::PixelEncoding<'a>::assert_fields_are_eq(&self)
+pub fn color::RenderingIntent::assert_fields_are_eq(&self)
+pub fn color::WhitePoint::assert_fields_are_eq(&self)
 pub fn descriptor::AlphaMode::assert_fields_are_eq(&self)
 pub fn descriptor::ChannelLayout::assert_fields_are_eq(&self)
 pub fn descriptor::ChannelType::assert_fields_are_eq(&self)
@@ -106,7 +111,7 @@ pub descriptor::ColorPrimaries::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::SignalRange::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::TransferFunction::__Reserved(descriptor::reserved::Reserved)
 
-## trait impls (64 types)
+## trait impls (71 types)
 
 HashInclusions: TrivialClone
 buffer::Bgrx: TrivialClone
@@ -114,11 +119,18 @@ buffer::BufferError: TrivialClone
 buffer::Rgbx: TrivialClone
 cicp::Cicp: TrivialClone
 cicp::CicpDescriptorError: TrivialClone
+color::CieXy: TrivialClone
 color::Color: TrivialClone
 color::ColorAuthority: TrivialClone
 color::ColorProvenance: TrivialClone
+color::GammaCurve: TrivialClone
 color::NamedProfile: TrivialClone
+color::ParametricColor: TrivialClone
+color::ParametricPrimaries: TrivialClone
+color::ParametricTransfer: TrivialClone
 color::PixelEncoding<'a>: TrivialClone
+color::RenderingIntent: TrivialClone
+color::WhitePoint: TrivialClone
 descriptor::AlphaMode: TrivialClone
 descriptor::ChannelLayout: TrivialClone
 descriptor::ChannelType: TrivialClone

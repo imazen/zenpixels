@@ -196,3 +196,123 @@ fn missing_origin_does_not_emit_untagged_p3() {
     .unwrap();
     assert_eq!(ready.metadata().cicp, Some(Cicp::DISPLAY_P3));
 }
+
+#[test]
+fn parametric_origin_and_output_profile_preserve_custom_color_and_route_cms() {
+    use zenpixels::*;
+    use zenpixels_convert::output::{OutputPlan, OutputProfile};
+
+    // Custom JXL-style xy primaries + perceptual rendering intent borrow zero-copy on SameAsOrigin.
+    let custom = ParametricColor::rgb(
+        ParametricPrimaries::Custom {
+            red: CieXy::new(0.68, 0.32),
+            green: CieXy::new(0.265, 0.69),
+            blue: CieXy::new(0.15, 0.06),
+        },
+        WhitePoint::D65,
+        ParametricTransfer::Gamma(GammaCurve::GAMMA_22),
+    )
+    .with_rendering_intent(RenderingIntent::Perceptual);
+
+    let b = PixelBuffer::from_vec(
+        vec![210, 110, 45],
+        1,
+        1,
+        PixelDescriptor::RGB8.with_primaries(ColorPrimaries::Unknown),
+    )
+    .unwrap()
+    .with_parametric(custom);
+    let origin = ColorOrigin::from_parametric(custom);
+
+    let plan = OutputPlan::new(
+        b.encoding(),
+        &origin,
+        OutputProfile::SameAsOrigin,
+        PixelFormat::Rgb8,
+        &ConvertOptions::permissive(),
+        None,
+    )
+    .unwrap();
+    let borrowed = plan
+        .borrow_rows(b.as_slice())
+        .unwrap()
+        .expect("matching parametric identity must borrow zero-copy");
+    assert_eq!(borrowed.row(0), [210, 110, 45]);
+    assert_eq!(plan.metadata().parametric, Some(custom));
+    assert!(plan.metadata().icc.is_none());
+
+    let ready = zenpixels_convert::EncodeReady::finalize(
+        &b,
+        &origin,
+        OutputProfile::SameAsOrigin,
+        PixelFormat::Rgb8,
+        None,
+    )
+    .unwrap();
+    assert_eq!(ready.pixels().row(0), [210, 110, 45]);
+    assert_eq!(ready.metadata().parametric, Some(custom));
+
+    // Standard Display P3 -> sRGB via OutputProfile::Parametric works natively without CMS.
+    let p3_buf = PixelBuffer::from_vec(
+        vec![220, 40, 30],
+        1,
+        1,
+        PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3),
+    )
+    .unwrap()
+    .with_parametric(ParametricColor::DISPLAY_P3);
+    let srgb_ready = zenpixels_convert::EncodeReady::finalize(
+        &p3_buf,
+        &ColorOrigin::from_parametric(ParametricColor::DISPLAY_P3),
+        OutputProfile::Parametric(ParametricColor::SRGB),
+        PixelFormat::Rgb8,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        srgb_ready.metadata().parametric,
+        Some(ParametricColor::SRGB)
+    );
+    assert!(srgb_ready.metadata().cicp.is_none());
+    assert_eq!(
+        srgb_ready.metadata().parametric.unwrap().to_cicp(),
+        Some(Cicp::SRGB)
+    );
+    assert_ne!(srgb_ready.pixels().row(0), [220, 40, 30]);
+
+    // DCI-P3 (SMPTE 431-2 theatrical white + gamma 2.6) requires a CMS for conversion from sRGB.
+    let srgb_buf =
+        PixelBuffer::from_vec(vec![200, 120, 60], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
+    assert!(
+        zenpixels_convert::EncodeReady::finalize(
+            &srgb_buf,
+            &ColorOrigin::from_cicp(Cicp::SRGB),
+            OutputProfile::Parametric(ParametricColor::DCI_P3),
+            PixelFormat::Rgb8,
+            None,
+        )
+        .is_err()
+    );
+
+    #[cfg(feature = "cms-moxcms")]
+    {
+        let dci_ready = zenpixels_convert::EncodeReady::finalize(
+            &srgb_buf,
+            &ColorOrigin::from_cicp(Cicp::SRGB),
+            OutputProfile::Parametric(ParametricColor::DCI_P3),
+            PixelFormat::Rgb8,
+            Some(&zenpixels_convert::cms_moxcms::MoxCms),
+        )
+        .unwrap();
+        assert_eq!(
+            dci_ready.metadata().parametric,
+            Some(ParametricColor::DCI_P3)
+        );
+        assert!(dci_ready.metadata().cicp.is_none());
+        assert_eq!(
+            dci_ready.metadata().parametric.unwrap().to_cicp(),
+            Some(Cicp::new(11, 17, 0, true))
+        );
+        assert_ne!(dci_ready.pixels().row(0), [200, 120, 60]);
+    }
+}

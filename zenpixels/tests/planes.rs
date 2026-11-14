@@ -708,3 +708,127 @@ fn signed_and_wide_encoding_descriptions_do_not_relabel_plane_storage() {
     }
     assert_eq!(data, [0xffff]);
 }
+
+#[test]
+fn planar_cmyk_and_extra_roles_validate_and_size_correctly() {
+    use ChromaSubsampling::*;
+    use PlaneRole::*;
+    use zenpixels::{AlphaMode, ColorContext};
+
+    let u8c = codes(ChannelType::U8, 8, 0);
+    let u16c = codes(ChannelType::U16, 16, 0);
+    let f32n = PlaneEncoding::Float(FloatEncoding::NOMINAL);
+    let spec = PlaneSpec::new;
+
+    for r in [Cyan, Magenta, Yellow, Black] {
+        assert!(r.is_color());
+        assert!(r.is_cmyk());
+        assert!(!r.is_extra());
+        assert_eq!(r.components(), 1);
+    }
+    for r in [
+        Depth,
+        SelectionMask,
+        Thermal,
+        SpotColor(0),
+        SpotColor(1),
+        Cfa(0),
+        Auxiliary(2),
+    ] {
+        assert!(!r.is_color());
+        assert!(!r.is_cmyk());
+        assert!(r.is_extra());
+        assert_eq!(r.components(), 1);
+    }
+
+    // Full planar CMYK + Alpha + JXL extra channels at 4:4:4.
+    let cmyk_extra = PlanarLayout::new(
+        vec![
+            spec(Cyan, u16c),
+            spec(Magenta, u16c),
+            spec(Yellow, u16c),
+            spec(Black, u16c),
+            spec(Alpha, u16c),
+            spec(Depth, f32n),
+            spec(SpotColor(0), u16c),
+            spec(SpotColor(1), u16c),
+            spec(SelectionMask, u8c),
+        ],
+        Yuv444,
+        ChromaSiting::Unknown,
+    )
+    .unwrap();
+    for i in 0..9 {
+        assert_eq!(cmyk_extra.plane_size(i, 7, 5), Some((7, 5)));
+    }
+
+    let c_buf = [1000u16; 35];
+    let m_buf = [2000u16; 35];
+    let y_buf = [3000u16; 35];
+    let k_buf = [4000u16; 35];
+    let a_buf = [65535u16; 35];
+    let d_buf = [0.5f32; 35];
+    let s0_buf = [100u16; 35];
+    let s1_buf = [200u16; 35];
+    let mask_buf = [255u8; 35];
+    let planes = [
+        AnyPlane::U16(PlaneRef::new(&c_buf[..], 7, 5, 7).unwrap()),
+        AnyPlane::U16(PlaneRef::new(&m_buf[..], 7, 5, 7).unwrap()),
+        AnyPlane::U16(PlaneRef::new(&y_buf[..], 7, 5, 7).unwrap()),
+        AnyPlane::U16(PlaneRef::new(&k_buf[..], 7, 5, 7).unwrap()),
+        AnyPlane::U16(PlaneRef::new(&a_buf[..], 7, 5, 7).unwrap()),
+        AnyPlane::F32(PlaneRef::new(&d_buf[..], 7, 5, 7).unwrap()),
+        AnyPlane::U16(PlaneRef::new(&s0_buf[..], 7, 5, 7).unwrap()),
+        AnyPlane::U16(PlaneRef::new(&s1_buf[..], 7, 5, 7).unwrap()),
+        AnyPlane::U8(PlaneRef::new(&mask_buf[..], 7, 5, 7).unwrap()),
+    ];
+    let context = ColorContext::default();
+    let slice = PlanarSlice::new(
+        &planes,
+        &cmyk_extra,
+        7,
+        5,
+        &context,
+        Some(AlphaMode::Straight),
+    )
+    .unwrap();
+    assert_eq!(slice.planes().count(), 9);
+
+    // Standalone extra channels require Mono subsampling.
+    let depth_only =
+        PlanarLayout::new(vec![spec(Depth, f32n)], Mono, ChromaSiting::Unknown).unwrap();
+    assert_eq!(depth_only.plane_size(0, 11, 9), Some((11, 9)));
+
+    let err = |roles: &[PlaneRole], s| {
+        let specs = roles.iter().map(|&r| spec(r, u8c)).collect();
+        PlanarLayout::new(specs, s, ChromaSiting::Unknown).unwrap_err()
+    };
+    assert_eq!(
+        err(&[Cyan, Magenta, Yellow], Yuv444),
+        LayoutError::MissingRole(Black)
+    );
+    assert_eq!(
+        err(&[Cyan, Magenta, Yellow, Black], Yuv420),
+        LayoutError::Subsampling
+    );
+    assert_eq!(
+        err(&[Cyan, Magenta, Yellow, Black], Mono),
+        LayoutError::Subsampling
+    );
+    assert_eq!(err(&[Depth], Yuv444), LayoutError::Subsampling);
+    assert_eq!(
+        err(&[Red, Green, Blue, Black], Yuv444),
+        LayoutError::MixedFamilies
+    );
+    assert_eq!(
+        err(&[Luma, Cyan, Magenta, Yellow, Black], Yuv444),
+        LayoutError::MixedFamilies
+    );
+    assert_eq!(
+        err(
+            &[Cyan, Magenta, Yellow, Black, SpotColor(0), SpotColor(0)],
+            Yuv444
+        ),
+        LayoutError::DuplicateRole(SpotColor(0))
+    );
+}

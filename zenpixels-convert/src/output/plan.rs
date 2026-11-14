@@ -173,6 +173,7 @@ impl OutputPlan {
             }
             OutputProfile::Named(cicp) => crate::ColorProfileSource::Cicp(*cicp),
             OutputProfile::Icc(icc) => crate::ColorProfileSource::Icc(icc),
+            OutputProfile::Parametric(p) => crate::ColorProfileSource::Parametric(*p),
         };
         let pixel_format = match layout {
             TargetLayout::Format(format) => format,
@@ -221,10 +222,17 @@ impl OutputPlan {
                     _ => Arc::from(*icc),
                 }),
                 cicp: None,
+                parametric: None,
             },
             crate::ColorProfileSource::Cicp(cicp) => OutputMetadata {
                 icc: None,
                 cicp: Some(*cicp),
+                parametric: None,
+            },
+            crate::ColorProfileSource::Parametric(parametric) => OutputMetadata {
+                icc: None,
+                cicp: None,
+                parametric: Some(*parametric),
             },
             _ => {
                 let (p, t) = target_profile.resolve().ok_or_else(|| {
@@ -237,6 +245,7 @@ impl OutputPlan {
                     OutputMetadata {
                         icc: None,
                         cicp: None,
+                        parametric: None,
                     }
                 } else if let (Some(p), Some(t)) = (p.to_cicp(), t.to_cicp()) {
                     OutputMetadata {
@@ -247,6 +256,7 @@ impl OutputPlan {
                             0,
                             target_desc_full.signal_range == crate::SignalRange::Full,
                         )),
+                        parametric: None,
                     }
                 } else {
                     return Err(whereat::at!(ConvertError::NeedsCms {
@@ -260,6 +270,8 @@ impl OutputPlan {
         // The current context must describe the returned samples, including identity.
         let profile = if let Some(icc) = &metadata.icc {
             Some(ColorProfile::Icc(Arc::clone(icc)))
+        } else if let Some(parametric) = metadata.parametric {
+            Some(ColorProfile::Parametric(parametric))
         } else {
             metadata.cicp.map(ColorProfile::Cicp)
         };
@@ -274,17 +286,19 @@ impl OutputPlan {
         .with_profile(profile);
         let context = Arc::new(context);
 
-        // A decoder may carry an authoritative ICC while leaving the compact
-        // descriptor's primaries/transfer unknown (native TIFF does this).
-        // Completing only those unknown fields from that exact profile does
-        // not change sample coordinates. Do not send same-profile samples
-        // through a CMS round trip, which can change even U8 values by one bit.
-        // Known descriptor fields, range, alpha and storage are never replaced.
-        // Distinct ICC bytes still require conversion even if they resolve to
-        // the same compact descriptor.
+        // A decoder may carry an authoritative ICC or parametric header while
+        // leaving the compact descriptor's primaries/transfer unknown (native
+        // TIFF and custom-header codecs do this). Completing only those unknown
+        // fields from that exact profile does not change sample coordinates. Do
+        // not send same-profile samples through a CMS round trip, which can
+        // change even U8 values by one bit. Known descriptor fields, range,
+        // alpha and storage are never replaced. Distinct ICC bytes still
+        // require conversion even if they resolve to the same compact descriptor.
         let mut described_source = source_desc;
-        if let crate::ColorProfileSource::Icc(_) = source_profile
-            && let Some((primaries, transfer)) = source_profile.resolve()
+        if matches!(
+            source_profile,
+            crate::ColorProfileSource::Icc(_) | crate::ColorProfileSource::Parametric(_)
+        ) && let Some((primaries, transfer)) = source_profile.resolve()
         {
             if described_source.primaries == ColorPrimaries::Unknown {
                 described_source.primaries = primaries;
@@ -336,8 +350,13 @@ impl OutputPlan {
                 options,
             )?)
         } else {
-            let needs_profiles = matches!(source_profile, crate::ColorProfileSource::Icc(_))
-                || matches!(target_profile, crate::ColorProfileSource::Icc(_));
+            let needs_profiles = matches!(
+                source_profile,
+                crate::ColorProfileSource::Icc(_) | crate::ColorProfileSource::Parametric(_)
+            ) || matches!(
+                target_profile,
+                crate::ColorProfileSource::Icc(_) | crate::ColorProfileSource::Parametric(_)
+            );
             let converter = if needs_profiles {
                 crate::RowConverter::new_with_sources(
                     source_desc,

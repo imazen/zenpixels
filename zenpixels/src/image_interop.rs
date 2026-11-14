@@ -268,8 +268,14 @@ fn image_color(
     let primaries = image_primaries(descriptor.primaries)?;
     let transfer = image_transfer(descriptor.transfer)?;
     if let Some(context) = context {
+        if context
+            .rendering_intent()
+            .is_some_and(|i| i != crate::RenderingIntent::RelativeColorimetric)
+        {
+            return None;
+        }
         match context.profile() {
-            Some(crate::ColorProfile::Icc(_)) => return None,
+            Some(crate::ColorProfile::Icc(_) | crate::ColorProfile::Parametric(_)) => return None,
             Some(crate::ColorProfile::Cicp(cicp)) => {
                 let matches = Some(cicp.color_primaries) == descriptor.primaries.to_cicp()
                     && Some(cicp.transfer_characteristics) == descriptor.transfer.to_cicp()

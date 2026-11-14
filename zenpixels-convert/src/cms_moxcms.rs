@@ -88,9 +88,10 @@ fn pixel_format_to_layout(format: PixelFormat) -> Option<Layout> {
         // CMYK shares the 4-channel interleaved layout with RGBA in moxcms;
         // moxcms's `check_layout` validates `DataColorSpace::Cmyk` against
         // `Layout::Rgba` (see moxcms/src/profile.rs).
-        PixelFormat::Cmyk8 | PixelFormat::CmykF32 | PixelFormat::CmykF32Inverted => {
-            Some(Layout::Rgba)
-        }
+        PixelFormat::Cmyk8
+        | PixelFormat::Cmyk8Inverted
+        | PixelFormat::CmykF32
+        | PixelFormat::CmykF32Inverted => Some(Layout::Rgba),
         _ => None,
     }
 }
@@ -341,7 +342,10 @@ fn pure_gamma_exponent(
             [gamma] if *gamma != 0 => Some(256.0 / f32::from(*gamma)),
             _ => None,
         },
-        moxcms::ToneReprCurve::Parametric(_) => None,
+        moxcms::ToneReprCurve::Parametric(params) => match params.as_slice() {
+            [gamma] if gamma.is_finite() && *gamma > 0.0 => Some(1.0 / *gamma),
+            _ => None,
+        },
     }
 }
 
@@ -533,7 +537,10 @@ fn stored_gamma(curve: &moxcms::ToneReprCurve) -> Option<f32> {
             [gamma] if *gamma != 0 => Some(f32::from(*gamma) / 256.0),
             _ => None,
         },
-        moxcms::ToneReprCurve::Parametric(_) => None,
+        moxcms::ToneReprCurve::Parametric(params) => match params.as_slice() {
+            [gamma] if gamma.is_finite() && *gamma > 0.0 => Some(*gamma),
+            _ => None,
+        },
     }
 }
 
@@ -700,6 +707,7 @@ struct U8ThroughF32 {
     transform: Arc<dyn TransformExecutor<f32> + Send + Sync>,
     source_channels: usize,
     target_channels: usize,
+    invert_input: bool,
 }
 
 impl TransformExecutor<u8> for U8ThroughF32 {
@@ -722,7 +730,8 @@ impl TransformExecutor<u8> for U8ThroughF32 {
         {
             let in_float = &mut float_source[..src.len()];
             for (float, sample) in in_float.iter_mut().zip(src) {
-                *float = f32::from(*sample) / 255.0;
+                let byte = if self.invert_input { !*sample } else { *sample };
+                *float = f32::from(byte) / 255.0;
             }
             let out_float = &mut float_target[..dst.len()];
             self.transform.transform(in_float, out_float)?;
@@ -749,6 +758,7 @@ fn u8_transform(
         transform,
         source_channels: layout.0.channels(),
         target_channels: layout.1.channels(),
+        invert_input: false,
     })))
 }
 
@@ -774,6 +784,7 @@ fn names_srgb(source: &crate::ColorProfileSource<'_>) -> bool {
         crate::ColorProfileSource::Cicp(cicp) => {
             cicp.color_primaries == 1 && cicp.transfer_characteristics == 13
         }
+        crate::ColorProfileSource::Parametric(p) => p.to_cicp() == Some(Cicp::SRGB),
         crate::ColorProfileSource::Named(zenpixels::NamedProfile::Srgb) => true,
         crate::ColorProfileSource::PrimariesTransferPair {
             primaries,
@@ -1234,51 +1245,64 @@ impl crate::cms::PluggableCms for MoxCms {
         }
         // Into another ink profile is a different operation, with its own path below. Otherwise the
         // F32 path with the same profiles, built for F32, so the two depths can't differ.
-        if src_format == PixelFormat::Cmyk8
-            && dst_profile.color_space != moxcms::DataColorSpace::Cmyk
-        {
-            let float_target = match dst_format {
-                PixelFormat::Rgb8 => PixelFormat::RgbF32,
-                PixelFormat::Rgba8 => PixelFormat::RgbaF32,
-                PixelFormat::Gray8 => PixelFormat::GrayF32,
-                PixelFormat::GrayA8 => PixelFormat::GrayAF32,
-                _ => {
+        if dst_format.is_inverted_cmyk() {
+            return Some(Err(whereat::at!(CmsPluginError::msg(
+                "conversion into inverted CMYK is not qualified"
+            ))));
+        }
+        if matches!(src_format, PixelFormat::Cmyk8 | PixelFormat::Cmyk8Inverted) {
+            if dst_profile.color_space == moxcms::DataColorSpace::Cmyk {
+                if src_format == PixelFormat::Cmyk8Inverted {
                     return Some(Err(whereat::at!(CmsPluginError::msg(
-                        "Cmyk8 has no conversion to this format"
+                        "conversion from Cmyk8Inverted into CMYK is not qualified"
                     ))));
                 }
-            };
-            let built =
-                build_moxcms_profile_for_format(&src, PixelFormat::CmykF32).and_then(|source| {
-                    let target = build_moxcms_profile_for_format(&dst, float_target)?;
-                    Ok((source, target))
-                });
-            let Ok((Some(source), Some(target))) = built else {
-                return Some(Err(whereat::at!(CmsPluginError::msg(
-                    "moxcms could not build the F32 form of these profiles"
-                ))));
-            };
-            return Some(
-                cmyk_float_transform(
-                    &source,
-                    &target,
-                    PixelFormat::CmykF32,
-                    float_target,
-                    names_srgb(&dst),
-                    true,
-                )
-                .map(|transform| {
-                    Box::new(MoxRowTransformMut {
-                        inner: MoxTransformInner::U8(Arc::new(U8ThroughF32 {
-                            transform,
-                            source_channels: src_layout.channels(),
-                            target_channels: dst_layout.channels(),
-                        })),
-                        extent: RowExtent::of(src_format, dst_format),
-                    }) as Box<dyn crate::cms::RowTransformMut>
-                })
-                .map_err(|error| whereat::at!(CmsPluginError::new(error))),
-            );
+            } else {
+                let float_target = match dst_format {
+                    PixelFormat::Rgb8 => PixelFormat::RgbF32,
+                    PixelFormat::Rgba8 => PixelFormat::RgbaF32,
+                    PixelFormat::Gray8 => PixelFormat::GrayF32,
+                    PixelFormat::GrayA8 => PixelFormat::GrayAF32,
+                    _ => {
+                        return Some(Err(whereat::at!(CmsPluginError::msg(
+                            "Cmyk8 has no conversion to this format"
+                        ))));
+                    }
+                };
+                let built = build_moxcms_profile_for_format(&src, PixelFormat::CmykF32).and_then(
+                    |source| {
+                        let target = build_moxcms_profile_for_format(&dst, float_target)?;
+                        Ok((source, target))
+                    },
+                );
+                let Ok((Some(source), Some(target))) = built else {
+                    return Some(Err(whereat::at!(CmsPluginError::msg(
+                        "moxcms could not build the F32 form of these profiles"
+                    ))));
+                };
+                return Some(
+                    cmyk_float_transform(
+                        &source,
+                        &target,
+                        PixelFormat::CmykF32,
+                        float_target,
+                        names_srgb(&dst),
+                        true,
+                    )
+                    .map(|transform| {
+                        Box::new(MoxRowTransformMut {
+                            inner: MoxTransformInner::U8(Arc::new(U8ThroughF32 {
+                                transform,
+                                source_channels: src_layout.channels(),
+                                target_channels: dst_layout.channels(),
+                                invert_input: src_format == PixelFormat::Cmyk8Inverted,
+                            })),
+                            extent: RowExtent::of(src_format, dst_format),
+                        }) as Box<dyn crate::cms::RowTransformMut>
+                    })
+                    .map_err(|error| whereat::at!(CmsPluginError::new(error))),
+                );
+            }
         }
         if is_cmyk_f32(dst_format) {
             return Some(Err(whereat::at!(CmsPluginError::msg(
@@ -1370,6 +1394,9 @@ fn build_moxcms_profile_for_format(
                 Some(profile)
             })
             .map_err(|e| MoxCmsError(format!("failed to parse ICC: {e}"))),
+        crate::ColorProfileSource::Parametric(p) if !is_cmyk => {
+            parametric_to_moxcms_profile(p, format)
+        }
         // CICP describes RGB colorimetry; CMYK descriptors with CICP
         // (which is unusual — CICP rarely tags CMYK) decline so the
         // caller can attach a real CMYK ICC instead.
@@ -1501,6 +1528,122 @@ fn primaries_transfer_to_moxcms_profile(
         None => return Ok(None),
     };
     Ok(Some(cicp_to_moxcms_profile(&Cicp::new(cp, tc, 0, true))))
+}
+
+const fn mox_rendering_intent(intent: zenpixels::RenderingIntent) -> moxcms::RenderingIntent {
+    match intent {
+        zenpixels::RenderingIntent::Perceptual => moxcms::RenderingIntent::Perceptual,
+        zenpixels::RenderingIntent::RelativeColorimetric => {
+            moxcms::RenderingIntent::RelativeColorimetric
+        }
+        zenpixels::RenderingIntent::Saturation => moxcms::RenderingIntent::Saturation,
+        zenpixels::RenderingIntent::AbsoluteColorimetric => {
+            moxcms::RenderingIntent::AbsoluteColorimetric
+        }
+        _ => moxcms::RenderingIntent::RelativeColorimetric,
+    }
+}
+
+fn parametric_to_moxcms_profile(
+    p: &zenpixels::ParametricColor,
+    format: PixelFormat,
+) -> Result<Option<ColorProfile>, MoxCmsError> {
+    let rgb_format = is_rgb_format(format);
+    if rgb_format != p.primaries.is_some() {
+        return Ok(None);
+    }
+    if matches!(
+        p.transfer,
+        zenpixels::ParametricTransfer::Hlg | zenpixels::ParametricTransfer::Unknown
+    ) {
+        return Ok(None);
+    }
+    // Standard D65 CICP combinations (excluding DCI, whose JXL/RP 431-2 curve is
+    // pure gamma 2.6 without H.273 ST 428-1's 48/52.37 factor).
+    if rgb_format
+        && p.transfer != zenpixels::ParametricTransfer::Dci
+        && let Some(cicp) = p.to_cicp()
+        && moxcms::CicpColorPrimaries::try_from(cicp.color_primaries).is_ok()
+        && moxcms::TransferCharacteristics::try_from(cicp.transfer_characteristics).is_ok()
+    {
+        let mut profile = with_pcs_white(cicp_to_moxcms_profile(&cicp));
+        profile.rendering_intent = mox_rendering_intent(p.rendering_intent);
+        return Ok(Some(profile));
+    }
+
+    let trc = match p.transfer {
+        zenpixels::ParametricTransfer::Linear => {
+            moxcms::ToneReprCurve::Parametric(alloc::vec![1.0])
+        }
+        zenpixels::ParametricTransfer::Srgb => ColorProfile::new_srgb()
+            .red_trc
+            .ok_or_else(|| MoxCmsError("moxcms sRGB TRC unavailable".into()))?,
+        zenpixels::ParametricTransfer::Bt709 => cicp_to_moxcms_profile(&Cicp::new(1, 1, 0, true))
+            .red_trc
+            .ok_or_else(|| MoxCmsError("moxcms BT.709 TRC unavailable".into()))?,
+        zenpixels::ParametricTransfer::Pq => cicp_to_moxcms_profile(&Cicp::new(9, 16, 0, true))
+            .red_trc
+            .ok_or_else(|| MoxCmsError("moxcms PQ TRC unavailable".into()))?,
+        zenpixels::ParametricTransfer::Dci => moxcms::ToneReprCurve::Parametric(alloc::vec![2.6]),
+        zenpixels::ParametricTransfer::Gamma(g) => {
+            moxcms::ToneReprCurve::Parametric(alloc::vec![g.eotf_exponent()])
+        }
+        _ => return Ok(None),
+    };
+
+    let wp = p.white_point.cie_xy();
+    if wp.y() <= 0.0 {
+        return Err(MoxCmsError(
+            "parametric white point y must be positive".into(),
+        ));
+    }
+    let white = moxcms::XyY {
+        x: f64::from(wp.x()),
+        y: f64::from(wp.y()),
+        yb: 1.0,
+    };
+
+    if !rgb_format {
+        const PCS_D50: moxcms::Xyzd = moxcms::Xyzd {
+            x: 0.9642,
+            y: 1.0,
+            z: 0.8249,
+        };
+        let mut gray = ColorProfile::new_gray_with_gamma(1.0);
+        gray.gray_trc = Some(trc);
+        gray.white_point = PCS_D50;
+        gray.media_white_point = Some(PCS_D50);
+        gray.chromatic_adaptation = Some(moxcms::adapt_to_d50_d(moxcms::Matrix3d::IDENTITY, white));
+        gray.rendering_intent = mox_rendering_intent(p.rendering_intent);
+        return Ok(Some(gray));
+    }
+
+    let Some(prim) = p.primaries else {
+        return Ok(None);
+    };
+    let (r, g, b) = prim.cie_xy();
+    if r.y() == 0.0 || g.y() == 0.0 || b.y() == 0.0 {
+        return Err(MoxCmsError("parametric primary y must be non-zero".into()));
+    }
+    let mut profile = ColorProfile::new_srgb();
+    profile.cicp = None;
+    profile.update_rgb_colorimetry(
+        white,
+        moxcms::ColorPrimaries {
+            red: moxcms::Chromaticity { x: r.x(), y: r.y() },
+            green: moxcms::Chromaticity { x: g.x(), y: g.y() },
+            blue: moxcms::Chromaticity { x: b.x(), y: b.y() },
+        },
+    );
+    let inv = profile.colorant_matrix().inverse();
+    if !inv.v.iter().flatten().all(|v| v.is_finite()) {
+        return Err(MoxCmsError("singular parametric RGB primaries".into()));
+    }
+    profile.red_trc = Some(trc.clone());
+    profile.green_trc = Some(trc.clone());
+    profile.blue_trc = Some(trc);
+    profile.rendering_intent = mox_rendering_intent(p.rendering_intent);
+    Ok(Some(with_pcs_white(profile)))
 }
 
 // ---------------------------------------------------------------------------

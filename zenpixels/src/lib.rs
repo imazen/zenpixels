@@ -117,8 +117,9 @@ pub use plane::RowAlign;
 pub use cicp::Cicp;
 #[doc(inline)]
 pub use color::{
-    AnyColor, Color, ColorAuthority, ColorContext, ColorOrigin, ColorProfile, ColorProfileSource,
-    ColorProvenance, NamedProfile, PixelEncoding,
+    AnyColor, CieXy, Color, ColorAuthority, ColorContext, ColorOrigin, ColorProfile,
+    ColorProfileSource, ColorProvenance, GammaCurve, NamedProfile, ParametricColor,
+    ParametricPrimaries, ParametricTransfer, PixelEncoding, RenderingIntent, WhitePoint,
 };
 
 // Re-export GrayAlpha pixel types at crate root.

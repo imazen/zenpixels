@@ -505,7 +505,9 @@ F("GrayAF32","GrayAF32","F32","GrayAlpha","alpha","Float (32-bit)");
 F("OklabF32","OklabF32","F32","Oklab","none","Perceptual (Oklab)");
 F("OklabaF32","OklabaF32","F32","OklabA","alpha","Perceptual (Oklab)");
 F("Cmyk8","CMYK8","U8","Cmyk","none","Print (CMYK)");
+F("Cmyk8Inverted","Cmyk8Inverted","U8","Cmyk","none","Print (CMYK)");
 F("Cmyk16","CMYK16","U16","Cmyk","none","Print (CMYK)");
+F("Cmyk16Inverted","Cmyk16Inverted","U16","Cmyk","none","Print (CMYK)");
 F("CmykF32","CmykF32","F32","Cmyk","none","Print (CMYK)");
 F("CmykF32Inverted","CmykF32Inverted","F32","Cmyk","none","Print (CMYK)");
 for (const ct of ["I8","I16","U32","I32","U64","I64","F64"]) {
@@ -709,11 +711,11 @@ function compute(cfg) {
     comps = [...cmy, k];
     notes.push(["warn", "CMYK holds ink amounts for one specific printer and paper. Turning a color into CMYK needs that printer's ICC profile and a color management system; zenpixels has no formula for it. The numbers here come from the uncalibrated textbook formula, only so the layout has something to show."]);
     steps.push({ t: "Illustration: textbook CMYK (not what the crate does)", p: "K = 1 − max(R, G, B) on sRGB-encoded values, then C, M, Y from what remains. 0 = no ink, 1 = full ink.", vals: v3(comps, ["C","M","CY","K"]) });
-    if (f.id === "CmykF32Inverted") {
+    if (f.id === "Cmyk8Inverted" || f.id === "Cmyk16Inverted" || f.id === "CmykF32Inverted") {
       comps = comps.map(v => 1 - v);
-      steps.push({ t: "Invert polarity", p: "CmykF32Inverted, as JPEG XL emits it, stores 1 − ink: 1 means no ink. Relabeling it as CmykF32 without inverting mislabels every sample.", vals: v3(comps, ["C","M","CY","K"]) });
+      steps.push({ t: "Invert polarity", p: `${f.name}, as Adobe CMYK JPEGs and JPEG XL emit it, stores max − ink: max means no ink. Relabeling it as non-inverted CMYK without inverting mislabels every sample.`, vals: v3(comps, ["C","M","CY","K"]) });
     }
-    if (f.id === "Cmyk8") notes.push(["info", "CMYK8 does not fix ink polarity. Many CMYK JPEGs store it inverted (the Adobe convention); the source's markers and ICC profile decide."]);
+    if (f.id === "Cmyk8" || f.id === "Cmyk16") notes.push(["info", `${f.name} stores standard ink polarity (0 = no ink, max = full ink). Adobe-inverted CMYK JPEGs and JPEG XL integer CMYK use Cmyk8Inverted / Cmyk16Inverted.`]);
   }
 
   let alphaNorm = null;
@@ -848,7 +850,7 @@ function decodePixel(cfg, norms) {
     lin = mul3(inv3(rgbToXyz("Bt709")), mul3(OK_XYZ_FROM_LMS, lms));
   } else {
     let [c, m, y, k] = [n.C, n.M, n.CY, n.K];
-    if (f.id === "CmykF32Inverted") [c, m, y, k] = [c, m, y, k].map(v => 1 - v);
+    if (f.id === "Cmyk8Inverted" || f.id === "Cmyk16Inverted" || f.id === "CmykF32Inverted") [c, m, y, k] = [c, m, y, k].map(v => 1 - v);
     lin = [c, m, y].map(v => srgbEotf(clamp01((1 - v) * (1 - k))));
   }
   return { lin, a };
@@ -1124,7 +1126,9 @@ function syncControls() {
   $("alpha").value = Math.round(S.a * 255);
   $("alphaout").textContent = `${Math.round(S.a * 255)} / 255${f.alphaKind !== "alpha" ? " (this format has no alpha)" : ""}`;
   const FN = { Bgra8: "Blue first, as on Windows and many GPUs.", Rgbx8: "Fourth byte is padding, keeping pixels 4 bytes.", Bgrx8: "Blue first; fourth byte is padding.",
-    OklabF32: "Perceptual lightness plus two color axes.", OklabaF32: "Oklab plus straight alpha.", Cmyk8: "Printer ink amounts; needs an ICC profile.",
+    OklabF32: "Perceptual lightness plus two color axes.", OklabaF32: "Oklab plus straight alpha.", Cmyk8: "Printer ink amounts (0 = no ink); needs an ICC profile.",
+    Cmyk8Inverted: "Inverted 8-bit ink amounts (255 = no ink, Adobe/JXL convention).", Cmyk16: "16-bit ink amounts (0 = no ink); needs an ICC profile.",
+    Cmyk16Inverted: "Inverted 16-bit ink amounts (65535 = no ink, JXL/Adobe convention).",
     CmykF32: "Float ink amounts, 0 = no ink.", CmykF32Inverted: "Float ink amounts, 1 = no ink (as JPEG XL emits)." };
   $("formatnote").textContent = f.generic ? "Native samples: carried bit for bit, never converted." : (FN[f.id] || `${f.chans.length} channels × ${CT[f.ct].bytes} byte${CT[f.ct].bytes > 1 ? "s" : ""} = ${CT[f.ct].bytes * f.chans.length} bytes per pixel.`);
   $("endLE").setAttribute("aria-pressed", String(!S.be)); $("endBE").setAttribute("aria-pressed", String(S.be));

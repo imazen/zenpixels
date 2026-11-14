@@ -439,3 +439,69 @@ fn empty_wide_code_planes_do_not_iterate_declared_rows() {
     let view = image.as_slice();
     let _ = writes(&view); // Must finish without iterating u32::MAX empty rows.
 }
+
+#[test]
+fn parametric_color_and_rendering_intent_participate_in_metadata_hashes() {
+    use zenpixels::{
+        CieXy, GammaCurve, ParametricColor, ParametricPrimaries, ParametricTransfer,
+        RenderingIntent, WhitePoint,
+    };
+
+    let custom_a = ParametricColor::rgb(
+        ParametricPrimaries::Custom {
+            red: CieXy::new(0.7347, 0.2653),
+            green: CieXy::new(0.0, 1.0),
+            blue: CieXy::new(0.0001, -0.0770),
+        },
+        WhitePoint::Custom(CieXy::new(0.32168, 0.33767)),
+        ParametricTransfer::Gamma(GammaCurve::from_encoding_exponent(0.45)),
+    );
+    let custom_b = custom_a.with_rendering_intent(RenderingIntent::Perceptual);
+
+    let buf_a = PixelBuffer::from_vec(vec![10, 20, 30, 255], 1, 1, PixelDescriptor::RGBA8)
+        .unwrap()
+        .with_parametric(custom_a);
+    let buf_b = PixelBuffer::from_vec(vec![10, 20, 30, 255], 1, 1, PixelDescriptor::RGBA8)
+        .unwrap()
+        .with_parametric(custom_b);
+    let buf_cicp_rel = PixelBuffer::from_vec(vec![10, 20, 30, 255], 1, 1, PixelDescriptor::RGBA8)
+        .unwrap()
+        .with_cicp(Cicp::SRGB);
+    let buf_cicp_abs = PixelBuffer::from_vec(vec![10, 20, 30, 255], 1, 1, PixelDescriptor::RGBA8)
+        .unwrap()
+        .with_cicp(Cicp::SRGB)
+        .with_rendering_intent(RenderingIntent::AbsoluteColorimetric);
+
+    assert_eq!(
+        buf_a.hash_with(HashInclusions::SamplesOnly),
+        buf_b.hash_with(HashInclusions::SamplesOnly)
+    );
+    assert_ne!(
+        buf_a.hash_with(HashInclusions::Pixels),
+        buf_b.hash_with(HashInclusions::Pixels)
+    );
+    assert_ne!(
+        buf_a.hash_with(HashInclusions::All),
+        buf_b.hash_with(HashInclusions::All)
+    );
+    assert_ne!(
+        buf_cicp_rel.hash_with(HashInclusions::All),
+        buf_cicp_abs.hash_with(HashInclusions::All)
+    );
+
+    // CodePlane over U32 masks unused bits and ignores row padding when hashed directly.
+    let enc = SampleEncoding::new(ChannelType::U32, 24, 4).unwrap();
+    let clean = [0x0123_4560u32, 0x0fed_cba0];
+    let dirty = [0xf123_456fu32, 0x7fed_cbaf, 0xdead_beef];
+    let cp_clean = CodePlane::new(
+        AnyPlane::U32(PlaneRef::new(&clean[..], 2, 1, 2).unwrap()),
+        enc,
+    )
+    .unwrap();
+    let cp_dirty = CodePlane::new(
+        AnyPlane::U32(PlaneRef::new(&dirty[..], 2, 1, 3).unwrap()),
+        enc,
+    )
+    .unwrap();
+    assert_eq!(writes(&cp_clean), writes(&cp_dirty));
+}

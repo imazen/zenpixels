@@ -1049,6 +1049,20 @@ impl PixelDescriptor {
         Some(AlphaMode::Straight),
         TransferFunction::Linear,
     );
+    /// Linear-light f16 RGB.
+    pub const RGBF16_LINEAR: Self = Self::new(
+        ChannelType::F16,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Linear,
+    );
+    /// Linear-light f16 RGBA with straight alpha.
+    pub const RGBAF16_LINEAR: Self = Self::new(
+        ChannelType::F16,
+        ChannelLayout::Rgba,
+        Some(AlphaMode::Straight),
+        TransferFunction::Linear,
+    );
     /// 8-bit sRGB grayscale.
     pub const GRAY8_SRGB: Self = Self::new(
         ChannelType::U8,
@@ -1070,6 +1084,13 @@ impl PixelDescriptor {
         None,
         TransferFunction::Linear,
     );
+    /// Linear-light f16 grayscale.
+    pub const GRAYF16_LINEAR: Self = Self::new(
+        ChannelType::F16,
+        ChannelLayout::Gray,
+        None,
+        TransferFunction::Linear,
+    );
     /// 8-bit sRGB grayscale with straight alpha.
     pub const GRAYA8_SRGB: Self = Self::new(
         ChannelType::U8,
@@ -1087,6 +1108,13 @@ impl PixelDescriptor {
     /// Linear-light f32 grayscale with straight alpha.
     pub const GRAYAF32_LINEAR: Self = Self::new(
         ChannelType::F32,
+        ChannelLayout::GrayAlpha,
+        Some(AlphaMode::Straight),
+        TransferFunction::Linear,
+    );
+    /// Linear-light f16 grayscale with straight alpha.
+    pub const GRAYAF16_LINEAR: Self = Self::new(
+        ChannelType::F16,
         ChannelLayout::GrayAlpha,
         Some(AlphaMode::Straight),
         TransferFunction::Linear,
@@ -1128,6 +1156,14 @@ impl PixelDescriptor {
         TransferFunction::Pq,
         ColorPrimaries::Bt2020,
     );
+    /// 16-bit BT.2100 PQ RGBA with straight alpha — CICP `(9, 16, 0, full)`.
+    pub const RGBA16_BT2100_PQ: Self = Self::new_full(
+        ChannelType::U16,
+        ChannelLayout::Rgba,
+        Some(AlphaMode::Straight),
+        TransferFunction::Pq,
+        ColorPrimaries::Bt2020,
+    );
     /// 16-bit BT.2100 HLG RGB (BT.2020 primaries, HLG transfer, full range) —
     /// CICP `(9, 18, 0, full)`.
     ///
@@ -1137,6 +1173,48 @@ impl PixelDescriptor {
         ChannelType::U16,
         ChannelLayout::Rgb,
         None,
+        TransferFunction::Hlg,
+        ColorPrimaries::Bt2020,
+    );
+    /// 16-bit BT.2100 HLG RGBA with straight alpha — CICP `(9, 18, 0, full)`.
+    pub const RGBA16_BT2100_HLG: Self = Self::new_full(
+        ChannelType::U16,
+        ChannelLayout::Rgba,
+        Some(AlphaMode::Straight),
+        TransferFunction::Hlg,
+        ColorPrimaries::Bt2020,
+    );
+    /// f32 BT.2100 PQ RGB (BT.2020 primaries, PQ transfer, full range) —
+    /// CICP `(9, 16, 0, full)`.
+    pub const RGBF32_BT2100_PQ: Self = Self::new_full(
+        ChannelType::F32,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Pq,
+        ColorPrimaries::Bt2020,
+    );
+    /// f32 BT.2100 PQ RGBA with straight alpha — CICP `(9, 16, 0, full)`.
+    pub const RGBAF32_BT2100_PQ: Self = Self::new_full(
+        ChannelType::F32,
+        ChannelLayout::Rgba,
+        Some(AlphaMode::Straight),
+        TransferFunction::Pq,
+        ColorPrimaries::Bt2020,
+    );
+    /// f32 BT.2100 HLG RGB (BT.2020 primaries, HLG transfer, full range) —
+    /// CICP `(9, 18, 0, full)`.
+    pub const RGBF32_BT2100_HLG: Self = Self::new_full(
+        ChannelType::F32,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Hlg,
+        ColorPrimaries::Bt2020,
+    );
+    /// f32 BT.2100 HLG RGBA with straight alpha — CICP `(9, 18, 0, full)`.
+    pub const RGBAF32_BT2100_HLG: Self = Self::new_full(
+        ChannelType::F32,
+        ChannelLayout::Rgba,
+        Some(AlphaMode::Straight),
         TransferFunction::Hlg,
         ColorPrimaries::Bt2020,
     );
@@ -1228,30 +1306,31 @@ impl PixelDescriptor {
         TransferFunction::Unknown,
     );
 
-    // -- F16 constants (pub(crate) — internal use by PixelFormat::descriptor()
-    //    mapping. Tests construct via PixelDescriptor::new(). Linear-TF
-    //    F16 variants would be added if an external codec consumer needs
-    //    them — none today.) -----------------------------------------------
+    // -- F16 transfer-agnostic constants --------------------------------------
 
-    pub(crate) const RGBF16: Self = Self::new(
+    /// f16 RGB, transfer unknown.
+    pub const RGBF16: Self = Self::new(
         ChannelType::F16,
         ChannelLayout::Rgb,
         None,
         TransferFunction::Unknown,
     );
-    pub(crate) const RGBAF16: Self = Self::new(
+    /// f16 RGBA with straight alpha, transfer unknown.
+    pub const RGBAF16: Self = Self::new(
         ChannelType::F16,
         ChannelLayout::Rgba,
         Some(AlphaMode::Straight),
         TransferFunction::Unknown,
     );
-    pub(crate) const GRAYF16: Self = Self::new(
+    /// f16 grayscale, transfer unknown.
+    pub const GRAYF16: Self = Self::new(
         ChannelType::F16,
         ChannelLayout::Gray,
         None,
         TransferFunction::Unknown,
     );
-    pub(crate) const GRAYAF16: Self = Self::new(
+    /// f16 grayscale with straight alpha, transfer unknown.
+    pub const GRAYAF16: Self = Self::new(
         ChannelType::F16,
         ChannelLayout::GrayAlpha,
         Some(AlphaMode::Straight),
@@ -1300,10 +1379,18 @@ impl PixelDescriptor {
 
     // -- CMYK constants --------------------------------------------------------
 
-    /// 8-bit CMYK, no transfer function or primaries.
+    /// 8-bit CMYK, conventional ICC polarity (`0 = no ink, 255 = full ink`).
     pub const CMYK8: Self = Self::from_pixel_format(PixelFormat::Cmyk8);
-    /// 16-bit CMYK, no transfer function or primaries.
+    /// 8-bit CMYK with reversed ink polarity (`0 = full ink, 255 = no ink`), as used by JPEG XL and Adobe JPEG.
+    pub const CMYK8_INVERTED: Self = Self::from_pixel_format(PixelFormat::Cmyk8Inverted);
+    /// 16-bit CMYK, conventional ICC polarity (`0 = no ink, 65535 = full ink`).
     pub const CMYK16: Self = Self::from_pixel_format(PixelFormat::Cmyk16);
+    /// 16-bit CMYK with reversed ink polarity (`0 = full ink, 65535 = no ink`), as used by JPEG XL.
+    pub const CMYK16_INVERTED: Self = Self::from_pixel_format(PixelFormat::Cmyk16Inverted);
+    /// f32 CMYK, conventional ICC polarity (`0.0 = no ink, 1.0 = full ink`).
+    pub const CMYKF32: Self = Self::from_pixel_format(PixelFormat::CmykF32);
+    /// f32 CMYK with reversed ink polarity (`0.0 = full ink, 1.0 = no ink`), as used by JPEG XL.
+    pub const CMYKF32_INVERTED: Self = Self::from_pixel_format(PixelFormat::CmykF32Inverted);
     /// 8-bit BGR with no alpha and unknown transfer.
     pub const BGR8: Self = Self::from_pixel_format(PixelFormat::Bgr8);
 
@@ -1608,9 +1695,8 @@ impl PixelDescriptor {
     pub const fn layout_compatible(self, other: Self) -> bool {
         self.format.channel_type().same(other.format.channel_type())
             && self.layout().same(other.layout())
-            // Same bytes, opposite meaning: 1.0 is full ink in one and no ink in the other.
-            && matches!(self.format, PixelFormat::CmykF32Inverted)
-                == matches!(other.format, PixelFormat::CmykF32Inverted)
+            // Same bytes, opposite meaning: max is full ink in one and no ink in the other.
+            && self.format.is_inverted_cmyk() == other.format.is_inverted_cmyk()
     }
 }
 
@@ -1826,6 +1912,22 @@ pub enum PixelFormat {
     /// implied. Query the parts with [`PixelFormat::channel_type`] and
     /// [`PixelFormat::layout`].
     Generic(GenericFormat),
+    /// 8-bit CMYK (4 bytes per pixel) with reversed ink polarity (`0 = full ink,
+    /// 255 = no ink`), as emitted by JPEG XL and Adobe-convention CMYK JPEG.
+    ///
+    /// Source ICC profiles describe conventional device values (`0 = no ink`),
+    /// so applying an ICC profile requires an explicit polarity inversion
+    /// (`255 - x`). Merely relabeling this format as [`Self::Cmyk8`] mislabels
+    /// every sample.
+    Cmyk8Inverted,
+    /// 16-bit native-endian CMYK (8 bytes per pixel) with reversed ink polarity
+    /// (`0 = full ink, 65535 = no ink`), as emitted by JPEG XL.
+    ///
+    /// Source ICC profiles describe conventional device values (`0 = no ink`),
+    /// so applying an ICC profile requires an explicit polarity inversion
+    /// (`65535 - x`). Merely relabeling this format as [`Self::Cmyk16`]
+    /// mislabels every sample.
+    Cmyk16Inverted,
 }
 
 /// Interleaved sample type and layout without a named [`PixelFormat`] variant.
@@ -1914,10 +2016,14 @@ impl PixelFormat {
             | Self::Rgbx8
             | Self::Bgrx8
             | Self::Bgr8
-            | Self::Cmyk8 => ChannelType::U8,
-            Self::Rgb16 | Self::Rgba16 | Self::Gray16 | Self::GrayA16 | Self::Cmyk16 => {
-                ChannelType::U16
-            }
+            | Self::Cmyk8
+            | Self::Cmyk8Inverted => ChannelType::U8,
+            Self::Rgb16
+            | Self::Rgba16
+            | Self::Gray16
+            | Self::GrayA16
+            | Self::Cmyk16
+            | Self::Cmyk16Inverted => ChannelType::U16,
             Self::RgbF32
             | Self::RgbaF32
             | Self::GrayF32
@@ -1949,9 +2055,12 @@ impl PixelFormat {
             Self::Bgr8 => ChannelLayout::Bgr,
             Self::OklabF32 => ChannelLayout::Oklab,
             Self::OklabaF32 => ChannelLayout::OklabA,
-            Self::Cmyk8 | Self::Cmyk16 | Self::CmykF32 | Self::CmykF32Inverted => {
-                ChannelLayout::Cmyk
-            }
+            Self::Cmyk8
+            | Self::Cmyk8Inverted
+            | Self::Cmyk16
+            | Self::Cmyk16Inverted
+            | Self::CmykF32
+            | Self::CmykF32Inverted => ChannelLayout::Cmyk,
             Self::Generic(generic) => generic.layout,
             _ => ChannelLayout::Rgb,
         }
@@ -1979,7 +2088,12 @@ impl PixelFormat {
                 ColorModel::Gray
             }
             Self::OklabF32 | Self::OklabaF32 => ColorModel::Oklab,
-            Self::Cmyk8 | Self::Cmyk16 | Self::CmykF32 | Self::CmykF32Inverted => ColorModel::Cmyk,
+            Self::Cmyk8
+            | Self::Cmyk8Inverted
+            | Self::Cmyk16
+            | Self::Cmyk16Inverted
+            | Self::CmykF32
+            | Self::CmykF32Inverted => ColorModel::Cmyk,
             _ => ColorModel::Rgb,
         }
     }
@@ -2008,6 +2122,17 @@ impl PixelFormat {
         matches!(self.color_model(), ColorModel::Gray)
     }
 
+    /// Whether this format stores CMYK with reversed ink polarity (`0 = full ink`,
+    /// maximum sample value = no ink), as emitted by JPEG XL and Adobe-convention
+    /// CMYK JPEG.
+    #[inline]
+    pub const fn is_inverted_cmyk(self) -> bool {
+        matches!(
+            self,
+            Self::Cmyk8Inverted | Self::Cmyk16Inverted | Self::CmykF32Inverted
+        )
+    }
+
     /// Default alpha mode for this format.
     ///
     /// - Formats with no alpha bytes → `None`
@@ -2027,7 +2152,9 @@ impl PixelFormat {
             | Self::GrayF16
             | Self::OklabF32
             | Self::Cmyk8
+            | Self::Cmyk8Inverted
             | Self::Cmyk16
+            | Self::Cmyk16Inverted
             | Self::Bgr8
             | Self::CmykF32
             | Self::CmykF32Inverted => None,
@@ -2060,7 +2187,9 @@ impl PixelFormat {
             Self::OklabF32 => "OklabF32",
             Self::OklabaF32 => "OklabaF32",
             Self::Cmyk8 => "CMYK8",
+            Self::Cmyk8Inverted => "Cmyk8Inverted",
             Self::Cmyk16 => "CMYK16",
+            Self::Cmyk16Inverted => "Cmyk16Inverted",
             Self::Bgr8 => "BGR8",
             Self::CmykF32 => "CmykF32",
             Self::CmykF32Inverted => "CmykF32Inverted",
@@ -2079,9 +2208,9 @@ impl PixelFormat {
     ///
     /// `U8` with `Rgba` or `Bgra` resolves to [`Rgba8`](Self::Rgba8) or
     /// [`Bgra8`](Self::Bgra8); [`AlphaMode::Undefined`] selects the padding formats.
-    /// CMYK resolves to conventional ink polarity;
-    /// reversed F32 ink polarity must be selected explicitly with
-    /// [`Self::CmykF32Inverted`]. Channel layout alone does not retain polarity.
+    /// CMYK resolves to conventional ink polarity; reversed ink polarity must be
+    /// selected explicitly with [`Self::Cmyk8Inverted`], [`Self::Cmyk16Inverted`],
+    /// or [`Self::CmykF32Inverted`]. Channel layout alone does not retain polarity.
     #[inline]
     pub const fn from_parts(
         channel_type: ChannelType,
@@ -2152,9 +2281,12 @@ impl PixelFormat {
             Self::OklabF32 => PixelDescriptor::OKLABF32,
             Self::OklabaF32 => PixelDescriptor::OKLABAF32,
             Self::Cmyk8 => PixelDescriptor::CMYK8,
+            Self::Cmyk8Inverted => PixelDescriptor::CMYK8_INVERTED,
             Self::Cmyk16 => PixelDescriptor::CMYK16,
+            Self::Cmyk16Inverted => PixelDescriptor::CMYK16_INVERTED,
             Self::Bgr8 => PixelDescriptor::BGR8,
-            Self::CmykF32 | Self::CmykF32Inverted => PixelDescriptor::from_pixel_format(self),
+            Self::CmykF32 => PixelDescriptor::CMYKF32,
+            Self::CmykF32Inverted => PixelDescriptor::CMYKF32_INVERTED,
             Self::RgbF16 => PixelDescriptor::RGBF16,
             Self::RgbaF16 => PixelDescriptor::RGBAF16,
             Self::GrayF16 => PixelDescriptor::GRAYF16,
@@ -2809,5 +2941,132 @@ mod tests {
     #[test]
     fn cmyk_channel_layout_no_alpha() {
         assert!(!ChannelLayout::Cmyk.has_alpha());
+    }
+
+    #[test]
+    fn inverted_cmyk_formats_preserve_polarity_and_layout() {
+        for (conv, inv, ct, bpp, name) in [
+            (
+                PixelFormat::Cmyk8,
+                PixelFormat::Cmyk8Inverted,
+                ChannelType::U8,
+                4,
+                "Cmyk8Inverted",
+            ),
+            (
+                PixelFormat::Cmyk16,
+                PixelFormat::Cmyk16Inverted,
+                ChannelType::U16,
+                8,
+                "Cmyk16Inverted",
+            ),
+            (
+                PixelFormat::CmykF32,
+                PixelFormat::CmykF32Inverted,
+                ChannelType::F32,
+                16,
+                "CmykF32Inverted",
+            ),
+        ] {
+            assert!(!conv.is_inverted_cmyk());
+            assert!(inv.is_inverted_cmyk());
+            assert_eq!(inv.channel_type(), ct);
+            assert_eq!(inv.layout(), ChannelLayout::Cmyk);
+            assert_eq!(inv.color_model(), ColorModel::Cmyk);
+            assert_eq!(inv.channels(), 4);
+            assert_eq!(inv.bytes_per_pixel(), bpp);
+            assert_eq!(inv.default_alpha(), None);
+            assert_eq!(inv.name(), name);
+            assert!(inv.descriptor().layout_compatible(inv.descriptor()));
+            assert!(!conv.descriptor().layout_compatible(inv.descriptor()));
+            assert!(!inv.descriptor().layout_compatible(conv.descriptor()));
+        }
+        assert_eq!(
+            PixelFormat::Cmyk8Inverted.descriptor(),
+            PixelDescriptor::CMYK8_INVERTED
+        );
+        assert_eq!(
+            PixelFormat::Cmyk16Inverted.descriptor(),
+            PixelDescriptor::CMYK16_INVERTED
+        );
+        assert_eq!(PixelFormat::CmykF32.descriptor(), PixelDescriptor::CMYKF32);
+        assert_eq!(
+            PixelFormat::CmykF32Inverted.descriptor(),
+            PixelDescriptor::CMYKF32_INVERTED
+        );
+    }
+
+    #[test]
+    fn f16_and_bt2100_preset_constants() {
+        assert_eq!(
+            PixelDescriptor::RGBF16_LINEAR.pixel_format(),
+            PixelFormat::RgbF16
+        );
+        assert_eq!(
+            PixelDescriptor::RGBF16_LINEAR.transfer(),
+            TransferFunction::Linear
+        );
+        assert_eq!(
+            PixelDescriptor::RGBAF16_LINEAR.pixel_format(),
+            PixelFormat::RgbaF16
+        );
+        assert_eq!(
+            PixelDescriptor::RGBAF16_LINEAR.alpha(),
+            Some(AlphaMode::Straight)
+        );
+        assert_eq!(
+            PixelDescriptor::GRAYF16_LINEAR.pixel_format(),
+            PixelFormat::GrayF16
+        );
+        assert_eq!(
+            PixelDescriptor::GRAYAF16_LINEAR.pixel_format(),
+            PixelFormat::GrayAF16
+        );
+
+        for (desc, fmt, tf) in [
+            (
+                PixelDescriptor::RGBA16_BT2100_PQ,
+                PixelFormat::Rgba16,
+                TransferFunction::Pq,
+            ),
+            (
+                PixelDescriptor::RGBA16_BT2100_HLG,
+                PixelFormat::Rgba16,
+                TransferFunction::Hlg,
+            ),
+            (
+                PixelDescriptor::RGBF32_BT2100_PQ,
+                PixelFormat::RgbF32,
+                TransferFunction::Pq,
+            ),
+            (
+                PixelDescriptor::RGBAF32_BT2100_PQ,
+                PixelFormat::RgbaF32,
+                TransferFunction::Pq,
+            ),
+            (
+                PixelDescriptor::RGBF32_BT2100_HLG,
+                PixelFormat::RgbF32,
+                TransferFunction::Hlg,
+            ),
+            (
+                PixelDescriptor::RGBAF32_BT2100_HLG,
+                PixelFormat::RgbaF32,
+                TransferFunction::Hlg,
+            ),
+        ] {
+            assert_eq!(desc.pixel_format(), fmt);
+            assert_eq!(desc.transfer(), tf);
+            assert_eq!(desc.primaries, ColorPrimaries::Bt2020);
+        }
+    }
+
+    #[test]
+    fn hot_path_descriptor_and_view_sizes_stay_compact() {
+        assert!(size_of::<PixelDescriptor>() <= 8);
+        assert_eq!(size_of::<crate::PixelEncoding<'static>>(), 16);
+        assert_eq!(size_of::<crate::PixelSlice<'static>>(), 56);
+        assert_eq!(size_of::<crate::PixelSliceMut<'static>>(), 48);
+        assert_eq!(size_of::<crate::PixelBuffer>(), 72);
     }
 }

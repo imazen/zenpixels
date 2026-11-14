@@ -731,3 +731,148 @@ fn relative_intent_ignores_float_tags_for_other_intents() {
         }
     }
 }
+
+#[test]
+fn inverted_integer_cmyk_matches_negated_standard_cmyk_bit_exact() {
+    let cmyk_icc = synthetic_icc::synthetic_cmyk_icc();
+    let n = 64usize;
+
+    // 8-bit inverted CMYK across both MoxCms and LcmsPort.
+    let std8: Vec<u8> = (0..n * 4)
+        .map(|i| ((i * 37 + (i / 4) * 13) % 256) as u8)
+        .collect();
+    let inv8: Vec<u8> = std8.iter().map(|&b| !b).collect();
+
+    for (name, cms) in backends() {
+        for to in [F::Rgb8, F::Rgba8] {
+            let mut t_std = build(cms, Source::Icc(&cmyk_icc), SRGB, F::Cmyk8, to);
+            let mut t_inv = build(cms, Source::Icc(&cmyk_icc), SRGB, F::Cmyk8Inverted, to);
+            let out_std = run(&mut t_std, &std8, n, to);
+            let out_inv = run(&mut t_inv, &inv8, n, to);
+            assert_eq!(out_inv, out_std, "{name} Cmyk8Inverted -> {to:?}");
+        }
+
+        // Inverted CMYK is never accepted as an output format without an explicit inversion kernel.
+        for (src_fmt, bad_dst) in [
+            (F::Rgb8, F::Cmyk8Inverted),
+            (F::Rgb16, F::Cmyk16Inverted),
+            (F::RgbF32, F::CmykF32Inverted),
+        ] {
+            let built =
+                cms.build_source_transform(SRGB, Source::Icc(&cmyk_icc), src_fmt, bad_dst, &opts());
+            assert!(
+                !matches!(built, Some(Ok(_))),
+                "{name} unexpectedly accepted destination {bad_dst:?}"
+            );
+        }
+    }
+
+    // 16-bit inverted CMYK in LcmsPort (MoxCms declines 16-bit CMYK).
+    let std16_words: Vec<u16> = (0..n * 4)
+        .map(|i| ((i * 2573 + (i / 4) * 977) & 0xffff) as u16)
+        .collect();
+    let std16: Vec<u8> = std16_words.iter().flat_map(|w| w.to_ne_bytes()).collect();
+    let inv16: Vec<u8> = std16_words
+        .iter()
+        .flat_map(|w| (!*w).to_ne_bytes())
+        .collect();
+    for to in [F::Rgb16, F::Rgba16] {
+        let mut t_std = build(&LcmsPort, Source::Icc(&cmyk_icc), SRGB, F::Cmyk16, to);
+        let mut t_inv = build(
+            &LcmsPort,
+            Source::Icc(&cmyk_icc),
+            SRGB,
+            F::Cmyk16Inverted,
+            to,
+        );
+        let out_std = run(&mut t_std, &std16, n, to);
+        let out_inv = run(&mut t_inv, &inv16, n, to);
+        assert_eq!(out_inv, out_std, "lcms Cmyk16Inverted -> {to:?}");
+    }
+    assert!(
+        MoxCms
+            .build_source_transform(
+                Source::Icc(&cmyk_icc),
+                SRGB,
+                F::Cmyk16Inverted,
+                F::Rgb16,
+                &opts()
+            )
+            .is_none()
+    );
+}
+
+#[test]
+fn parametric_color_source_and_destination_agree_across_backends() {
+    use zenpixels::{
+        CieXy, GammaCurve, ParametricColor, ParametricPrimaries, ParametricTransfer,
+        RenderingIntent, WhitePoint,
+    };
+
+    let custom_rgb = ParametricColor::rgb(
+        ParametricPrimaries::Custom {
+            red: CieXy::new(0.68, 0.32),
+            green: CieXy::new(0.265, 0.69),
+            blue: CieXy::new(0.15, 0.06),
+        },
+        WhitePoint::D65,
+        ParametricTransfer::Gamma(GammaCurve::from_eotf_exponent(2.4)),
+    );
+    let gray_22 = ParametricColor::gray(
+        WhitePoint::D65,
+        ParametricTransfer::Gamma(GammaCurve::GAMMA_22),
+    );
+
+    let input_rgb = row(F::Rgb8, 32);
+    for param in [
+        ParametricColor::DCI_P3,
+        ParametricColor::ADOBE_RGB,
+        custom_rgb,
+        custom_rgb.with_rendering_intent(RenderingIntent::Perceptual),
+    ] {
+        let mut mox_to_srgb = build(&MoxCms, Source::Parametric(param), SRGB, F::Rgb8, F::Rgb8);
+        let mut lcms_to_srgb = build(&LcmsPort, Source::Parametric(param), SRGB, F::Rgb8, F::Rgb8);
+        let a = codes(F::Rgb8, &run(&mut mox_to_srgb, &input_rgb, 32, F::Rgb8));
+        let b = codes(F::Rgb8, &run(&mut lcms_to_srgb, &input_rgb, 32, F::Rgb8));
+        for (x, y) in a.iter().zip(&b) {
+            assert!(
+                (x - y).abs() <= 1.0,
+                "mox vs lcms parametric->sRGB ({param:?}): {x} vs {y}"
+            );
+        }
+
+        let mut mox_from_srgb = build(&MoxCms, SRGB, Source::Parametric(param), F::Rgb8, F::Rgb8);
+        let mut lcms_from_srgb =
+            build(&LcmsPort, SRGB, Source::Parametric(param), F::Rgb8, F::Rgb8);
+        let c = codes(F::Rgb8, &run(&mut mox_from_srgb, &input_rgb, 32, F::Rgb8));
+        let d = codes(F::Rgb8, &run(&mut lcms_from_srgb, &input_rgb, 32, F::Rgb8));
+        for (x, y) in c.iter().zip(&d) {
+            assert!(
+                (x - y).abs() <= 1.0,
+                "mox vs lcms sRGB->parametric ({param:?}): {x} vs {y}"
+            );
+        }
+    }
+
+    // Grayscale parametric source to sRGB across both backends.
+    let gray_in: Vec<u8> = (0..16).map(|i| (i * 17) as u8).collect();
+    let mut mox_g = build(
+        &MoxCms,
+        Source::Parametric(gray_22),
+        SRGB,
+        F::Gray8,
+        F::Rgb8,
+    );
+    let mut lcms_g = build(
+        &LcmsPort,
+        Source::Parametric(gray_22),
+        SRGB,
+        F::Gray8,
+        F::Rgb8,
+    );
+    let g_mox = codes(F::Rgb8, &run(&mut mox_g, &gray_in, 16, F::Rgb8));
+    let g_lcms = codes(F::Rgb8, &run(&mut lcms_g, &gray_in, 16, F::Rgb8));
+    for (x, y) in g_mox.iter().zip(&g_lcms) {
+        assert!((x - y).abs() <= 1.0, "gray parametric mismatch: {x} vs {y}");
+    }
+}

@@ -94,11 +94,12 @@ fn descriptor(v: &Value) -> Result<PixelDescriptor, String> {
         "none" => None,
         _ => return Err("Unknown alpha kind".into()),
     };
-    let format = if field(v, "id")? == "CmykF32Inverted" {
-        PixelFormat::CmykF32Inverted
-    } else {
-        PixelFormat::from_parts(channel(v)?, layout(v)?, a)
-            .ok_or("Unsupported channel/layout combination")?
+    let format = match field(v, "id")? {
+        "Cmyk8Inverted" => PixelFormat::Cmyk8Inverted,
+        "Cmyk16Inverted" => PixelFormat::Cmyk16Inverted,
+        "CmykF32Inverted" => PixelFormat::CmykF32Inverted,
+        _ => PixelFormat::from_parts(channel(v)?, layout(v)?, a)
+            .ok_or("Unsupported channel/layout combination")?,
     };
     let mut d = format.descriptor().with_alpha(a);
     if matches!(
@@ -278,7 +279,9 @@ pub fn format_catalog() -> String {
         PixelFormat::OklabF32,
         PixelFormat::OklabaF32,
         PixelFormat::Cmyk8,
+        PixelFormat::Cmyk8Inverted,
         PixelFormat::Cmyk16,
+        PixelFormat::Cmyk16Inverted,
         PixelFormat::CmykF32,
         PixelFormat::CmykF32Inverted,
     ]);

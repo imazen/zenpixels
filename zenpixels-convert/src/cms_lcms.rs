@@ -39,8 +39,9 @@ pub struct Lcms;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Ink {
     None,
+    InvertedInteger,
     Float,
-    Inverted,
+    FloatInverted,
 }
 
 #[derive(Clone, Copy)]
@@ -63,8 +64,9 @@ fn describe(format: PixelFormat) -> Option<Format> {
         Gray8 | Gray16 | GrayF32 => (3, 1, false, false, false, Ink::None),
         GrayA8 | GrayA16 | GrayAF32 => (3, 1, true, false, false, Ink::None),
         Cmyk8 | Cmyk16 => (6, 4, false, false, false, Ink::None),
+        Cmyk8Inverted | Cmyk16Inverted => (6, 4, false, false, false, Ink::InvertedInteger),
         CmykF32 => (6, 4, false, false, false, Ink::Float),
-        CmykF32Inverted => (6, 4, false, false, false, Ink::Inverted),
+        CmykF32Inverted => (6, 4, false, false, false, Ink::FloatInverted),
         _ => return None,
     };
     let sample = format.channel_type();
@@ -139,6 +141,116 @@ fn open_cicp(cicp: Cicp, gray: bool) -> Result<Option<Box<profile::IccProfile>>,
     }
 }
 
+fn extract_red_trc(mut rgb: Box<profile::IccProfile>) -> Result<lcms::gamma::ToneCurve, Error> {
+    match profile::cms_read_tag(&mut rgb, lcms::signatures::tag::SigRedTRCTag) {
+        Some(
+            lcms::tagtypes::TagObject::Curve(curve)
+            | lcms::tagtypes::TagObject::ParametricCurve(curve),
+        ) => Ok(curve.clone()),
+        _ => Err(error("lcms reference TRC unavailable")),
+    }
+}
+
+fn open_parametric(
+    p: zenpixels::ParametricColor,
+    gray: bool,
+) -> Result<Option<Box<profile::IccProfile>>, Error> {
+    if gray != p.primaries.is_none() {
+        return Ok(None);
+    }
+    if matches!(
+        p.transfer,
+        zenpixels::ParametricTransfer::Hlg | zenpixels::ParametricTransfer::Unknown
+    ) {
+        return Ok(None);
+    }
+    if !gray
+        && p.transfer != zenpixels::ParametricTransfer::Dci
+        && let Some(cicp) = p.to_cicp()
+    {
+        return open_cicp(cicp, false);
+    }
+
+    let curve =
+        match p.transfer {
+            zenpixels::ParametricTransfer::Linear => lcms::gamma::build_gamma(None, 1.0)
+                .ok_or_else(|| error("lcms linear curve failed"))?,
+            zenpixels::ParametricTransfer::Dci => lcms::gamma::build_gamma(None, 2.6)
+                .ok_or_else(|| error("lcms DCI 2.6 curve failed"))?,
+            zenpixels::ParametricTransfer::Gamma(g) => {
+                lcms::gamma::build_gamma(None, f64::from(g.eotf_exponent()))
+                    .ok_or_else(|| error("lcms gamma curve failed"))?
+            }
+            zenpixels::ParametricTransfer::Srgb => {
+                let rgb = virt::create_srgb_profile(None)
+                    .ok_or_else(|| error("lcms sRGB profile failed"))?;
+                extract_red_trc(rgb)?
+            }
+            zenpixels::ParametricTransfer::Bt709 => {
+                let Some(rgb) = open_cicp(Cicp::new(1, 1, 0, true), false)? else {
+                    return Ok(None);
+                };
+                extract_red_trc(rgb)?
+            }
+            zenpixels::ParametricTransfer::Pq => {
+                let Some(rgb) = open_cicp(Cicp::new(9, 16, 0, true), false)? else {
+                    return Ok(None);
+                };
+                extract_red_trc(rgb)?
+            }
+            _ => return Ok(None),
+        };
+
+    let wp = p.white_point.cie_xy();
+    if wp.y() <= 0.0 {
+        return Err(error("parametric white point y must be positive"));
+    }
+    let white = lcms::types::CiexyY {
+        x: f64::from(wp.x()),
+        y: f64::from(wp.y()),
+        Y: 1.0,
+    };
+
+    if gray {
+        return virt::create_gray_profile(None, Some(&white), Some(&curve))
+            .map(Some)
+            .ok_or_else(|| error("lcms parametric gray profile failed"));
+    }
+
+    let Some(prim) = p.primaries else {
+        return Ok(None);
+    };
+    let (r, g, b) = prim.cie_xy();
+    if r.y() == 0.0 || g.y() == 0.0 || b.y() == 0.0 {
+        return Err(error("parametric primary y must be non-zero"));
+    }
+    let triple = lcms::types::CiexyYTriple {
+        Red: lcms::types::CiexyY {
+            x: f64::from(r.x()),
+            y: f64::from(r.y()),
+            Y: 1.0,
+        },
+        Green: lcms::types::CiexyY {
+            x: f64::from(g.x()),
+            y: f64::from(g.y()),
+            Y: 1.0,
+        },
+        Blue: lcms::types::CiexyY {
+            x: f64::from(b.x()),
+            y: f64::from(b.y()),
+            Y: 1.0,
+        },
+    };
+    virt::create_rgb_profile(
+        None,
+        Some(&white),
+        Some(&triple),
+        Some([&curve, &curve, &curve]),
+    )
+    .map(Some)
+    .ok_or_else(|| error("lcms parametric RGB profile failed"))
+}
+
 fn open(
     source: ColorProfileSource<'_>,
     format: PixelFormat,
@@ -150,6 +262,7 @@ fn open(
             .ok_or_else(|| error("lcms could not parse ICC profile")),
         _ if format.color_model() == ColorModel::Cmyk => Ok(None),
         ColorProfileSource::Cicp(cicp) => open_cicp(cicp, gray),
+        ColorProfileSource::Parametric(p) => open_parametric(p, gray),
         ColorProfileSource::Named(named) => {
             if let Some(cicp) = named.to_cicp() {
                 open_cicp(cicp, gray)
@@ -201,7 +314,9 @@ impl PluggableCms for Lcms {
             return None;
         }
         if to.ink != Ink::None {
-            return Some(Err(error("conversion into F32 CMYK is not qualified")));
+            return Some(Err(error(
+                "conversion into F32 or inverted CMYK is not qualified",
+            )));
         }
         let built = (|| {
             let Some(source) = open(src, src_format)? else {
@@ -306,26 +421,38 @@ impl RowTransformMut for Row {
         self.reserve(width)?;
         let src = &src[..source_length];
         let dst = &mut dst[..target_length];
-        if self.from.ink == Ink::None {
-            self.transform.do_transform(src, dst, width);
-        } else {
-            for (out, bytes) in self.scratch[..pixels * 4]
-                .iter_mut()
-                .zip(src.as_chunks::<4>().0)
-            {
-                let value = f32::from_ne_bytes(*bytes);
-                *out = 100.0
-                    * if self.from.ink == Ink::Inverted {
-                        1.0 - value
-                    } else {
-                        value
-                    };
+        match self.from.ink {
+            Ink::None => {
+                self.transform.do_transform(src, dst, width);
             }
-            self.transform.do_transform(
-                bytemuck::cast_slice(&self.scratch[..pixels * 4]),
-                dst,
-                width,
-            );
+            Ink::InvertedInteger => {
+                // Bitwise NOT inverts both u8 (`255 - x`) and native-endian u16 (`65535 - x`).
+                let inverted: &mut [u8] =
+                    &mut bytemuck::cast_slice_mut(&mut self.scratch)[..source_length];
+                for (out, byte) in inverted.iter_mut().zip(src) {
+                    *out = !*byte;
+                }
+                self.transform.do_transform(inverted, dst, width);
+            }
+            Ink::Float | Ink::FloatInverted => {
+                for (out, bytes) in self.scratch[..pixels * 4]
+                    .iter_mut()
+                    .zip(src.as_chunks::<4>().0)
+                {
+                    let value = f32::from_ne_bytes(*bytes);
+                    *out = 100.0
+                        * if self.from.ink == Ink::FloatInverted {
+                            1.0 - value
+                        } else {
+                            value
+                        };
+                }
+                self.transform.do_transform(
+                    bytemuck::cast_slice(&self.scratch[..pixels * 4]),
+                    dst,
+                    width,
+                );
+            }
         }
         if self.to.alpha && !self.from.alpha {
             let size = self.to.sample.byte_size();
