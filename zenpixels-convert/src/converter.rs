@@ -411,8 +411,13 @@ impl RowConverter {
             return Err(whereat::at!(ConvertError::DepthReductionForbidden));
         }
         let needs_profiles = !crate::output::profiles_match(&source_profile, &target_profile)
-            && (matches!(source_profile, crate::ColorProfileSource::Icc(_))
-                || matches!(target_profile, crate::ColorProfileSource::Icc(_)));
+            && (matches!(
+                source_profile,
+                crate::ColorProfileSource::Icc(_) | crate::ColorProfileSource::Parametric(_)
+            ) || matches!(
+                target_profile,
+                crate::ColorProfileSource::Icc(_) | crate::ColorProfileSource::Parametric(_)
+            ));
         if needs_profiles {
             Self::new_with_sources(
                 from_desc,

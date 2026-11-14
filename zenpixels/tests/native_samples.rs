@@ -131,13 +131,13 @@ fn cmyk_f32_carries_strides_profiles_and_every_sample_bit() {
         TransferFunction::Unknown,
     )
     .with_primaries(ColorPrimaries::Unknown);
-    assert_eq!(descriptor.format, PixelFormat::CmykF32);
+    assert_eq!(descriptor.format, PixelFormat::CMYKF32);
     assert_eq!(descriptor.color_model(), ColorModel::Cmyk);
     assert_eq!(descriptor.bytes_per_pixel(), 16);
     assert!(!descriptor.has_alpha());
-    assert_eq!(PixelFormat::CmykF32.default_alpha(), None);
-    assert_eq!(PixelFormat::CmykF32.descriptor().format, descriptor.format);
-    for descriptor in [descriptor, PixelFormat::CmykF32Inverted.descriptor()] {
+    assert_eq!(PixelFormat::CMYKF32.default_alpha(), None);
+    assert_eq!(PixelFormat::CMYKF32.descriptor().format, descriptor.format);
+    for descriptor in [descriptor, PixelFormat::CMYKF32_INVERTED.descriptor()] {
         assert_eq!(descriptor.layout(), ChannelLayout::Cmyk);
         assert_eq!(descriptor.channel_type(), ChannelType::F32);
         assert_eq!(descriptor.color_model(), ColorModel::Cmyk);
@@ -237,10 +237,25 @@ fn native_combinations_have_one_generic_representation() {
     for channel in NATIVE {
         for layout in [
             ChannelLayout::Bgra,
-            ChannelLayout::Cmyk,
+            ChannelLayout::Bgr,
             ChannelLayout::Oklab,
+            ChannelLayout::OklabA,
         ] {
             assert_eq!(PixelFormat::from_parts(channel, layout, None), None);
+        }
+        // CMYK, CMYKA, Lab, LabA, XYZ, and XYZA are carried generically across all ChannelTypes.
+        for layout in [
+            ChannelLayout::Cmyk,
+            ChannelLayout::CmykAlpha,
+            ChannelLayout::Lab,
+            ChannelLayout::LabAlpha,
+            ChannelLayout::Xyz,
+            ChannelLayout::XyzAlpha,
+        ] {
+            let fmt = PixelFormat::from_parts(channel, layout, None).unwrap();
+            assert!(matches!(fmt, PixelFormat::Generic(_)));
+            assert_eq!(fmt.channel_type(), channel);
+            assert_eq!(fmt.layout(), layout);
         }
     }
 }
@@ -268,22 +283,30 @@ fn from_parts_uses_the_named_format_whenever_one_exists() {
         (T::U8, L::Bgra, F::Bgra8),
         (T::F32, L::Oklab, F::OklabF32),
         (T::F32, L::OklabA, F::OklabaF32),
-        (T::U8, L::Cmyk, F::Cmyk8),
-        (T::U16, L::Cmyk, F::Cmyk16),
-        (T::F32, L::Cmyk, F::CmykF32),
+        (T::U8, L::Cmyk, F::CMYK8),
+        (T::U16, L::Cmyk, F::CMYK16),
+        (T::F32, L::Cmyk, F::CMYKF32),
         (T::U8, L::Bgr, F::Bgr8),
     ];
     for (channel, layout, want) in named {
         assert_eq!(F::from_parts(channel, layout, None), Some(want));
     }
     for channel in [T::I8, T::I16, T::U32, T::I32, T::U64, T::I64, T::F64] {
-        for layout in [L::Gray, L::GrayAlpha, L::Rgb, L::Rgba] {
+        for layout in [
+            L::Gray,
+            L::GrayAlpha,
+            L::Rgb,
+            L::Rgba,
+            L::Cmyk,
+            L::Lab,
+            L::Xyz,
+        ] {
             let format = F::from_parts(channel, layout, None).unwrap();
             assert!(matches!(format, F::Generic(_)), "{channel:?} {layout:?}");
             assert_eq!((format.channel_type(), format.layout()), (channel, layout));
         }
         // Layouts without a generic form stay unrepresentable.
-        assert_eq!(F::from_parts(channel, L::Cmyk, None), None);
+        assert_eq!(F::from_parts(channel, L::Oklab, None), None);
     }
 }
 
@@ -297,9 +320,9 @@ fn bgr8_and_cmyk16_carry_exact_samples() {
     assert_eq!(F::Bgr8.channel_type(), T::U8);
     assert_eq!(F::Bgr8.descriptor().alpha(), None);
     assert!(F::Bgr8.descriptor().is_bgr());
-    assert_eq!(F::Cmyk16.bytes_per_pixel(), 8);
-    assert_eq!(F::Cmyk16.channel_type(), T::U16);
-    assert_eq!(F::Cmyk16.layout(), L::Cmyk);
+    assert_eq!(F::CMYK16.bytes_per_pixel(), 8);
+    assert_eq!(F::CMYK16.channel_type(), T::U16);
+    assert_eq!(F::CMYK16.layout(), L::Cmyk);
     assert_eq!(D::CMYK16.color_model(), zenpixels::ColorModel::Cmyk);
     assert_eq!(format!("{}", L::Bgr), "BGR");
     for d in [D::BGR8, D::CMYK16] {

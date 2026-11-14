@@ -139,11 +139,11 @@ fn moxcms_does_not_dispatch_native_samples_as_f32() {
 
 #[test]
 fn cmyk_f32_does_not_gain_unqualified_conversion_routes() {
-    for format in [PixelFormat::CmykF32, PixelFormat::CmykF32Inverted] {
+    for format in [PixelFormat::CMYKF32, PixelFormat::CMYKF32_INVERTED] {
         let descriptor = format.descriptor();
         for target in [
-            PixelFormat::CmykF32.descriptor(),
-            PixelFormat::CmykF32Inverted.descriptor(),
+            PixelFormat::CMYKF32.descriptor(),
+            PixelFormat::CMYKF32_INVERTED.descriptor(),
             PixelDescriptor::CMYK8,
             PixelDescriptor::RGBF32,
         ] {
@@ -158,7 +158,7 @@ fn cmyk_f32_does_not_gain_unqualified_conversion_routes() {
 #[test]
 fn cmyk_f32_is_not_dispatched_to_a_three_component_cms_transform() {
     use zenpixels_convert::{cms::PluggableCms, cms_moxcms::MoxCms};
-    for format in [PixelFormat::CmykF32, PixelFormat::CmykF32Inverted] {
+    for format in [PixelFormat::CMYKF32, PixelFormat::CMYKF32_INVERTED] {
         let from = format.descriptor().color_profile_source();
         let to = PixelDescriptor::RGBF32.color_profile_source();
         assert!(

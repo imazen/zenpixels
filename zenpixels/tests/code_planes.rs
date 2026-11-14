@@ -212,3 +212,69 @@ fn bulk_codes_preserve_every_encoding_and_component_step() {
         }
     }
 }
+
+#[test]
+fn u32_code_planes_support_up_to_32_bits_and_guard_narrow_u16_reads() {
+    use zenpixels::ChannelType;
+    use zenpixels::plane::{AnyPlane, PlaneRef};
+    use zenpixels::sample::{CodePlane, CodePlaneError, SampleEncoding};
+
+    for &(bits, shift) in &[
+        (1u8, 0u8),
+        (1, 31),
+        (10, 6),
+        (16, 0),
+        (16, 16),
+        (24, 0),
+        (24, 8),
+        (31, 1),
+        (32, 0),
+    ] {
+        let encoding = SampleEncoding::new(ChannelType::U32, bits, shift).unwrap();
+        let mask = u32::MAX >> (32 - u32::from(bits));
+        for components in [1usize, 3] {
+            let width = 19usize;
+            let stride = width * components + 5;
+            let words: Vec<u32> = (0..stride * 3)
+                .map(|i| (i as u32).wrapping_mul(0x9e37_79b9) ^ 0xa5a5_5a5a)
+                .collect();
+            let plane =
+                AnyPlane::U32(PlaneRef::new(&words[..], width * components, 3, stride).unwrap());
+            for component in 0..components {
+                let cp = CodePlane::component(plane, components, component, encoding).unwrap();
+                for y in 0..3 {
+                    let mut actual_u32 = vec![0xdead_beefu32; width];
+                    cp.read_codes_u32(0, y, &mut actual_u32).unwrap();
+                    let expected_u32: Vec<u32> = (0..width)
+                        .map(|x| (words[y * stride + x * components + component] >> shift) & mask)
+                        .collect();
+                    assert_eq!(
+                        actual_u32, expected_u32,
+                        "bits={bits} shift={shift} c={component}"
+                    );
+                    for (x, &expected) in expected_u32.iter().enumerate() {
+                        assert_eq!(cp.code_u32(x, y), Some(expected));
+                    }
+                    assert_eq!(cp.code_u32(width, y), None);
+
+                    if bits <= 16 {
+                        let expected_u16: Vec<u16> =
+                            expected_u32.iter().map(|&v| v as u16).collect();
+                        let mut actual_u16 = vec![0xffffu16; width];
+                        cp.read_codes(0, y, &mut actual_u16).unwrap();
+                        assert_eq!(actual_u16, expected_u16);
+                        assert_eq!(cp.code(0, y), Some(expected_u16[0]));
+                    } else {
+                        assert_eq!(cp.code(0, y), None);
+                        let mut untouched = vec![0x1234u16; width];
+                        assert_eq!(
+                            cp.read_codes(0, y, &mut untouched),
+                            Err(CodePlaneError::NarrowDestination)
+                        );
+                        assert!(untouched.iter().all(|&v| v == 0x1234));
+                    }
+                }
+            }
+        }
+    }
+}

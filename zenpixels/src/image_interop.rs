@@ -268,8 +268,14 @@ fn image_color(
     let primaries = image_primaries(descriptor.primaries)?;
     let transfer = image_transfer(descriptor.transfer)?;
     if let Some(context) = context {
+        if context
+            .rendering_intent()
+            .is_some_and(|i| i != crate::RenderingIntent::RelativeColorimetric)
+        {
+            return None;
+        }
         match context.profile() {
-            Some(crate::ColorProfile::Icc(_)) => return None,
+            Some(crate::ColorProfile::Icc(_) | crate::ColorProfile::Parametric(_)) => return None,
             Some(crate::ColorProfile::Cicp(cicp)) => {
                 let matches = Some(cicp.color_primaries) == descriptor.primaries.to_cicp()
                     && Some(cicp.transfer_characteristics) == descriptor.transfer.to_cicp()
@@ -645,8 +651,8 @@ impl TryFrom<ExtendedColorType> for PixelFormat {
             ExtendedColorType::Bgra8 => Self::Bgra8,
             ExtendedColorType::Rgb32F => Self::RgbF32,
             ExtendedColorType::Rgba32F => Self::RgbaF32,
-            ExtendedColorType::Cmyk8 => Self::Cmyk8,
-            ExtendedColorType::Cmyk16 => Self::Cmyk16,
+            ExtendedColorType::Cmyk8 => Self::CMYK8,
+            ExtendedColorType::Cmyk16 => Self::CMYK16,
             ExtendedColorType::Bgr8 => Self::Bgr8,
             _ => return Err(BufferError::IncompatibleDescriptor),
         })
@@ -669,8 +675,8 @@ impl TryFrom<PixelFormat> for ExtendedColorType {
             PixelFormat::Bgra8 => Self::Bgra8,
             PixelFormat::RgbF32 => Self::Rgb32F,
             PixelFormat::RgbaF32 => Self::Rgba32F,
-            PixelFormat::Cmyk8 => Self::Cmyk8,
-            PixelFormat::Cmyk16 => Self::Cmyk16,
+            PixelFormat::CMYK8 => Self::Cmyk8,
+            PixelFormat::CMYK16 => Self::Cmyk16,
             PixelFormat::Bgr8 => Self::Bgr8,
             _ => return Err(BufferError::IncompatibleDescriptor),
         })

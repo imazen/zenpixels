@@ -702,8 +702,8 @@ fn native_color_model(m: crate::ColorModel) -> bool {
     // been applied, but no kernel here consumes raw `YCbCr` pixels: every
     // entry point that touches YCbCr first lifts it into RGB via the
     // decoder's own coefficient pair, so the planner never sees a
-    // `YCbCr` color model on either side. CMYK is the only non-native
-    // model that currently reaches the planner.
+    // `YCbCr` color model on either side. CMYK, CIE Lab, and CIE XYZ are the
+    // non-native models that require a CMS transform.
     matches!(
         m,
         crate::ColorModel::Gray | crate::ColorModel::Rgb | crate::ColorModel::Oklab

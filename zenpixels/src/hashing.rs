@@ -242,12 +242,11 @@ fn any_plane<H: Hasher>(
         if let Ok(codes) = codes {
             code_samples(&codes, size, state);
         } else {
-            // Wide/signed native carriers are hashable without claiming support
-            // in the U8/U16 numerical CodePlane reader.
+            // Signed and 64-bit native carriers are hashable without claiming
+            // support in the U8/U16/U32 numerical CodePlane reader.
             match view {
                 AnyPlane::I8(p) => masked_plane(p, e, state),
                 AnyPlane::I16(p) => masked_plane(p, e, state),
-                AnyPlane::U32(p) => masked_plane(p, e, state),
                 AnyPlane::I32(p) => masked_plane(p, e, state),
                 AnyPlane::U64(p) => masked_plane(p, e, state),
                 AnyPlane::I64(p) => masked_plane(p, e, state),
@@ -411,10 +410,27 @@ fn codes(view: &CodePlane<'_>, inclusions: HashInclusions, state: &mut impl Hash
             view.encoding().hash(&mut p);
         }
     }
-    code_samples(view, 2, state);
+    let size = if view.encoding().storage() == crate::ChannelType::U32 {
+        4
+    } else {
+        2
+    };
+    code_samples(view, size, state);
 }
 fn code_samples(view: &CodePlane<'_>, size: usize, state: &mut impl Hasher) {
     if view.width() == 0 {
+        return;
+    }
+    if size == 4 {
+        let mut codes32 = [0u32; 128];
+        for y in 0..view.height() {
+            for x in (0..view.width()).step_by(codes32.len()) {
+                let n = (view.width() - x).min(codes32.len());
+                view.read_codes_u32(x, y, &mut codes32[..n])
+                    .expect("checked active code plane extent");
+                samples(bytemuck::cast_slice(&codes32[..n]), 4, state);
+            }
+        }
         return;
     }
     let mut codes = [0u16; 128];
@@ -434,7 +450,7 @@ fn code_samples(view: &CodePlane<'_>, size: usize, state: &mut impl Hasher) {
                     }
                     state.write(&bytes[..n]);
                 }
-                _ => unreachable!("CodePlane supports U8/U16 containers"),
+                _ => unreachable!("CodePlane supports U8/U16/U32 containers"),
             }
         }
     }

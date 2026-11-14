@@ -13,8 +13,8 @@
 #   pub consts/statics                         40
 #   free functions                              2
 #   inherent methods                          182
-#   struct fields                              95
-#   enum variants                             112
+#   struct fields                              97
+#   enum variants                             114
 #   re-exports                                  8
 #   trait roster entries (type × trait)       165
 #   conditional trait impls (verbatim)          1
@@ -22,7 +22,7 @@
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
-#   (root)                          208
+#   (root)                          210
 #   adapt                             1
 #   cms                              18
 #   codes                            40
@@ -35,11 +35,11 @@
 #   icc_profiles                     10
 #   load_bearing                     12
 #   oklab                             8
-#   output                           19
+#   output                           21
 #   precision                        62
 #   ycbcr                            22
 
-## items (498 lines)
+## items (502 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -240,6 +240,7 @@ pub const oklab::XYZ_FROM_LMS: gamut::GamutMatrix
 pub mod output
 pub output::OutputProfile::Icc(alloc::sync::Arc<[u8]>)
 pub output::OutputProfile::Named(zenpixels::cicp::Cicp)
+pub output::OutputProfile::Parametric(zenpixels::color::ParametricColor)
 pub output::OutputProfile::SameAsOrigin
 pub fn output::OutputProfile::normalize_known_icc(self) -> Self
 pub fn output::EncodeReady::finalize(&zenpixels::buffer::PixelBuffer, &zenpixels::color::ColorOrigin, output::OutputProfile, zenpixels::descriptor::PixelFormat, core::option::Option<&dyn cms::PluggableCms>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
@@ -248,6 +249,7 @@ pub fn output::EncodeReady::metadata(&self) -> &output::OutputMetadata
 pub fn output::EncodeReady::pixels(&self) -> zenpixels::buffer::PixelSlice<'_>
 pub output::OutputMetadata::cicp: core::option::Option<zenpixels::cicp::Cicp>
 pub output::OutputMetadata::icc: core::option::Option<alloc::sync::Arc<[u8]>>
+pub output::OutputMetadata::parametric: core::option::Option<zenpixels::color::ParametricColor>
 pub fn OutputPlan::borrow_rows<'a>(&self, zenpixels::buffer::PixelSlice<'a>) -> core::result::Result<core::option::Option<zenpixels::buffer::PixelSlice<'a>>, whereat::at::At<error::ConvertError>>
 pub fn OutputPlan::convert_rows<'a>(&mut self, zenpixels::buffer::PixelSlice<'_>, zenpixels::buffer::PixelSliceMut<'a>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, whereat::at::At<error::ConvertError>>
 pub fn OutputPlan::metadata(&self) -> &output::OutputMetadata
@@ -410,6 +412,7 @@ pub LossBucket::SideBySide
 #[non_exhaustive] pub enum OutputProfile [also: output]
 pub OutputProfile::Icc(alloc::sync::Arc<[u8]>)
 pub OutputProfile::Named(zenpixels::cicp::Cicp)
+pub OutputProfile::Parametric(zenpixels::color::ParametricColor)
 pub OutputProfile::SameAsOrigin
 pub fn output::OutputProfile::normalize_known_icc(self) -> Self
 pub struct CmsPluginError(_) [also: cms]
@@ -456,6 +459,7 @@ pub fn load_bearing::LoadBearingReport::apply_to(&self, &zenpixels::descriptor::
 #[non_exhaustive] pub struct OutputMetadata [also: output]
 pub OutputMetadata::cicp: core::option::Option<zenpixels::cicp::Cicp>
 pub OutputMetadata::icc: core::option::Option<alloc::sync::Arc<[u8]>>
+pub OutputMetadata::parametric: core::option::Option<zenpixels::color::ParametricColor>
 pub struct OutputPlan [also: output]
 pub fn OutputPlan::borrow_rows<'a>(&self, zenpixels::buffer::PixelSlice<'a>) -> core::result::Result<core::option::Option<zenpixels::buffer::PixelSlice<'a>>, whereat::at::At<error::ConvertError>>
 pub fn OutputPlan::convert_rows<'a>(&mut self, zenpixels::buffer::PixelSlice<'_>, zenpixels::buffer::PixelSliceMut<'a>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, whereat::at::At<error::ConvertError>>

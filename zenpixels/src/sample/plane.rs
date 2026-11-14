@@ -55,6 +55,7 @@ pub enum ChromaSiting {
 enum Words<'a> {
     U8(&'a [u8]),
     U16(&'a [u16]),
+    U32(&'a [u32]),
 }
 
 /// Integer codes of one component in a borrowed plane, without normalization
@@ -64,10 +65,10 @@ enum Words<'a> {
 /// padding bits are ignored on reads. The enclosing format supplies roles,
 /// range, matrix, transfer and sample location. Nothing is copied or allocated.
 ///
-/// The plane is a [`crate::plane::Plane`] of `u8` or `u16` samples. A plane may
-/// hold several interleaved components per position, such as the Cb/Cr plane
-/// of NV12 or P010, or interleaved RGB(A); [`component`](Self::component)
-/// reads one of them:
+/// The plane is a [`crate::plane::Plane`] of `u8`, `u16`, or `u32` samples. A
+/// plane may hold several interleaved components per position, such as the
+/// Cb/Cr plane of NV12 or P010, or interleaved RGB(A);
+/// [`component`](Self::component) reads one of them:
 ///
 /// ```
 /// use zenpixels::{ChannelType, plane::{AnyPlane, PlaneRef}, sample::{CodePlane, SampleEncoding}};
@@ -95,13 +96,16 @@ pub struct CodePlane<'a> {
 #[non_exhaustive]
 pub enum CodePlaneError {
     /// The plane's sample type differs from the sample encoding's storage, or
-    /// is not an integer type.
+    /// is not a supported unsigned integer container (`U8`, `U16`, `U32`).
     StorageMismatch,
     /// The component index is not below the component count, or the plane's
     /// width does not hold whole positions.
     Components,
     /// A requested read extends beyond the active plane.
     OutsideActivePlane,
+    /// A `u16` destination was passed for an encoding with `code_bits() > 16`;
+    /// use [`CodePlane::code_u32`] or [`CodePlane::read_codes_u32`].
+    NarrowDestination,
 }
 impl fmt::Display for CodePlaneError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -109,6 +113,7 @@ impl fmt::Display for CodePlaneError {
             Self::StorageMismatch => "code plane storage disagrees with sample encoding",
             Self::Components => "component index or plane width disagrees with the component count",
             Self::OutsideActivePlane => "code plane read extends beyond the active plane",
+            Self::NarrowDestination => "code plane bit depth exceeds u16 destination width",
         })
     }
 }
@@ -120,7 +125,7 @@ impl<'a> CodePlane<'a> {
     /// # Errors
     ///
     /// [`CodePlaneError::StorageMismatch`] when the plane's samples differ from
-    /// `encoding`'s storage.
+    /// `encoding`'s storage or are not `U8`, `U16`, or `U32`.
     pub fn new(plane: AnyPlane<'a>, encoding: SampleEncoding) -> Result<Self, CodePlaneError> {
         Self::component(plane, 1, 0, encoding)
     }
@@ -134,7 +139,7 @@ impl<'a> CodePlane<'a> {
     /// [`CodePlaneError::Components`] for an index not below `components` or
     /// a width that is not a multiple of it, and
     /// [`CodePlaneError::StorageMismatch`] when the plane's samples differ from
-    /// `encoding`'s storage.
+    /// `encoding`'s storage or are not `U8`, `U16`, or `U32`.
     pub fn component(
         plane: AnyPlane<'a>,
         components: usize,
@@ -153,6 +158,7 @@ impl<'a> CodePlane<'a> {
         let (words, stride_words) = match plane {
             AnyPlane::U8(p) => (Words::U8(&p.into_strided_samples()[skip..]), p.stride()),
             AnyPlane::U16(p) => (Words::U16(&p.into_strided_samples()[skip..]), p.stride()),
+            AnyPlane::U32(p) => (Words::U32(&p.into_strided_samples()[skip..]), p.stride()),
             _ => return Err(CodePlaneError::StorageMismatch),
         };
         Ok(Self {
@@ -178,25 +184,42 @@ impl<'a> CodePlane<'a> {
         self.encoding
     }
 
-    /// Extract one code, ignoring padding bits; outside the active plane is None.
+    /// Extract one `1..=16`-bit code, ignoring padding bits; returns `None`
+    /// outside the active plane or when `self.encoding().code_bits() > 16`
+    /// (use [`code_u32`](Self::code_u32) for `17..=32`-bit codes).
     pub fn code(self, x: usize, y: usize) -> Option<u16> {
+        if self.encoding.code_bits() > 16 {
+            return None;
+        }
+        self.code_u32(x, y).map(|c| c as u16)
+    }
+
+    /// Extract one `1..=32`-bit code as `u32`, ignoring padding bits; outside
+    /// the active plane is `None`.
+    pub fn code_u32(self, x: usize, y: usize) -> Option<u32> {
         if x >= self.width || y >= self.height {
             return None;
         }
         let i = y * self.stride_words + x * self.step_words;
         let word = match self.words {
-            Words::U8(s) => u16::from(s[i]),
-            Words::U16(s) => s[i],
+            Words::U8(s) => u32::from(s[i]),
+            Words::U16(s) => u32::from(s[i]),
+            Words::U32(s) => s[i],
         };
-        Some((word >> self.encoding.bit_shift()) & self.code_mask())
+        Some((word >> self.encoding.bit_shift()) & self.code_mask_u32())
     }
 
-    /// Extract `codes.len()` consecutive codes of row `y`, starting at column `x`.
+    /// Extract `codes.len()` consecutive `1..=16`-bit codes of row `y`, starting
+    /// at column `x`.
     ///
-    /// Padding bits are ignored, as in [`code`](Self::code). The extent is checked
-    /// before writing; on error `codes` is unchanged. This reads only the requested
-    /// samples and allocates nothing.
+    /// Padding bits are ignored, as in [`code`](Self::code). Returns
+    /// [`CodePlaneError::NarrowDestination`] when `self.encoding().code_bits() > 16`
+    /// (use [`read_codes_u32`](Self::read_codes_u32) instead). The extent is
+    /// checked before writing; on error `codes` is unchanged.
     pub fn read_codes(self, x: usize, y: usize, codes: &mut [u16]) -> Result<(), CodePlaneError> {
+        if self.encoding.code_bits() > 16 {
+            return Err(CodePlaneError::NarrowDestination);
+        }
         if y >= self.height
             || x.checked_add(codes.len())
                 .is_none_or(|end| end > self.width)
@@ -238,11 +261,97 @@ impl<'a> CodePlane<'a> {
                     }
                 }
             }
+            Words::U32(s) => {
+                let mask32 = u32::from(mask);
+                let words = &s[start..end];
+                if self.step_words == 1 {
+                    for (code, word) in codes.iter_mut().zip(words) {
+                        *code = ((*word >> shift) & mask32) as u16;
+                    }
+                } else {
+                    for (code, word) in codes.iter_mut().zip(words.iter().step_by(self.step_words))
+                    {
+                        *code = ((*word >> shift) & mask32) as u16;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Extract `codes.len()` consecutive `1..=32`-bit codes of row `y` into `u32`,
+    /// starting at column `x`.
+    ///
+    /// Padding bits are ignored, as in [`code_u32`](Self::code_u32). Works for
+    /// `U8`, `U16`, and `U32` planes across all `1..=32` code depths. The extent
+    /// is checked before writing; on error `codes` is unchanged.
+    pub fn read_codes_u32(
+        self,
+        x: usize,
+        y: usize,
+        codes: &mut [u32],
+    ) -> Result<(), CodePlaneError> {
+        if y >= self.height
+            || x.checked_add(codes.len())
+                .is_none_or(|end| end > self.width)
+        {
+            return Err(CodePlaneError::OutsideActivePlane);
+        }
+        let Some(last) = codes.len().checked_sub(1) else {
+            return Ok(());
+        };
+        let start = y * self.stride_words + x * self.step_words;
+        let end = start + last * self.step_words + 1;
+        let (shift, mask) = (self.encoding.bit_shift(), self.code_mask_u32());
+        match self.words {
+            Words::U8(s) => {
+                let words = &s[start..end];
+                if self.step_words == 1 {
+                    for (code, word) in codes.iter_mut().zip(words) {
+                        *code = (u32::from(*word) >> shift) & mask;
+                    }
+                } else {
+                    for (code, word) in codes.iter_mut().zip(words.iter().step_by(self.step_words))
+                    {
+                        *code = (u32::from(*word) >> shift) & mask;
+                    }
+                }
+            }
+            Words::U16(s) => {
+                let words = &s[start..end];
+                if self.step_words == 1 {
+                    for (code, word) in codes.iter_mut().zip(words) {
+                        *code = (u32::from(*word) >> shift) & mask;
+                    }
+                } else {
+                    for (code, word) in codes.iter_mut().zip(words.iter().step_by(self.step_words))
+                    {
+                        *code = (u32::from(*word) >> shift) & mask;
+                    }
+                }
+            }
+            Words::U32(s) => {
+                let words = &s[start..end];
+                if self.step_words == 1 {
+                    for (code, word) in codes.iter_mut().zip(words) {
+                        *code = (*word >> shift) & mask;
+                    }
+                } else {
+                    for (code, word) in codes.iter_mut().zip(words.iter().step_by(self.step_words))
+                    {
+                        *code = (*word >> shift) & mask;
+                    }
+                }
+            }
         }
         Ok(())
     }
 
     const fn code_mask(self) -> u16 {
         ((1u32 << self.encoding.code_bits()) - 1) as u16
+    }
+
+    const fn code_mask_u32(self) -> u32 {
+        u32::MAX >> (32 - self.encoding.code_bits() as u32)
     }
 }

@@ -622,6 +622,8 @@ pub(crate) fn profile_color_space(icc_bytes: &[u8]) -> Option<crate::ColorModel>
         b"RGB " => Some(crate::ColorModel::Rgb),
         b"GRAY" => Some(crate::ColorModel::Gray),
         b"CMYK" => Some(crate::ColorModel::Cmyk),
+        b"Lab " => Some(crate::ColorModel::Lab),
+        b"XYZ " => Some(crate::ColorModel::Xyz),
         _ => None,
     }
 }
@@ -1186,6 +1188,12 @@ mod tests {
 
         header[16..20].copy_from_slice(b"GRAY");
         assert_eq!(profile_color_space(&header), Some(crate::ColorModel::Gray));
+
+        header[16..20].copy_from_slice(b"Lab ");
+        assert_eq!(profile_color_space(&header), Some(crate::ColorModel::Lab));
+
+        header[16..20].copy_from_slice(b"XYZ ");
+        assert_eq!(profile_color_space(&header), Some(crate::ColorModel::Xyz));
     }
 
     #[test]
@@ -1197,7 +1205,7 @@ mod tests {
     #[test]
     fn profile_color_space_unknown() {
         let mut header = vec![0u8; 128];
-        header[16..20].copy_from_slice(b"Lab ");
+        header[16..20].copy_from_slice(b"5CLR");
         assert_eq!(profile_color_space(&header), None);
     }
 }

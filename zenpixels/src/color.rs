@@ -14,12 +14,981 @@ use crate::hdr::DiffuseWhite;
 use crate::{ColorPrimaries, TransferFunction};
 use alloc::sync::Arc;
 
-/// A source color profile — either ICC bytes, CICP parameters, a named
-/// profile, or a primaries + transfer function pair.
+/// CIE 1931 `(x, y)` chromaticity coordinates with finite `f32` components.
+///
+/// Negative coordinates are permitted because wide/virtual gamuts such as ACES
+/// AP0 (`blue.y = -0.077`) and JPEG XL custom chromaticities (`[-2, 2]`) use
+/// imaginary primaries outside the spectral locus. NaN and infinities are
+/// rejected at construction, and `-0.0` is canonicalized to `+0.0` so bitwise
+/// [`Eq`] and [`Hash`](core::hash::Hash) are reflexive and consistent.
+#[derive(Clone, Copy, Debug)]
+pub struct CieXy {
+    x: f32,
+    y: f32,
+}
+
+impl PartialEq for CieXy {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.x.to_bits() == other.x.to_bits() && self.y.to_bits() == other.y.to_bits()
+    }
+}
+
+impl Eq for CieXy {}
+
+impl core::hash::Hash for CieXy {
+    #[inline]
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.x.to_bits().hash(state);
+        self.y.to_bits().hash(state);
+    }
+}
+
+impl CieXy {
+    /// CIE Standard Illuminant D65 (`(0.3127, 0.3290)`).
+    pub const D65: Self = Self::new(0.3127, 0.3290);
+    /// CIE Standard Illuminant D50 (`(0.34567, 0.35850)`), ICC PCS white.
+    pub const D50: Self = Self::new(0.34567, 0.35850);
+    /// SMPTE ST 2065-1 ACES reference white D60 (`(0.32168, 0.33767)`).
+    pub const D60: Self = Self::new(0.32168, 0.33767);
+    /// CIE Standard Illuminant C (`(0.310, 0.316)`), ITU-T H.273 Table 2 (CICP 4 / 8).
+    pub const C: Self = Self::new(0.310, 0.316);
+    /// Equal-energy illuminant E (`(1/3, 1/3)`).
+    pub const E: Self = Self::new(1.0 / 3.0, 1.0 / 3.0);
+    /// SMPTE RP 431-2 theatrical DCI white (`(0.314, 0.351)`).
+    pub const DCI: Self = Self::new(0.314, 0.351);
+
+    /// Construct `(x, y)` chromaticity coordinates, returning `None` if either
+    /// coordinate is NaN or infinite.
+    #[inline]
+    #[must_use]
+    pub const fn try_new(x: f32, y: f32) -> Option<Self> {
+        if x.is_finite() && y.is_finite() {
+            let x = if x == 0.0 { 0.0 } else { x };
+            let y = if y == 0.0 { 0.0 } else { y };
+            Some(Self { x, y })
+        } else {
+            None
+        }
+    }
+
+    /// Construct `(x, y)` chromaticity coordinates.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `x` or `y` is NaN or infinite.
+    #[inline]
+    #[track_caller]
+    #[must_use]
+    pub const fn new(x: f32, y: f32) -> Self {
+        match Self::try_new(x, y) {
+            Some(xy) => xy,
+            None => panic!("CIE xy chromaticity coordinates must be finite"),
+        }
+    }
+
+    /// CIE 1931 `x` chromaticity coordinate.
+    #[inline]
+    #[must_use]
+    pub const fn x(self) -> f32 {
+        self.x
+    }
+
+    /// CIE 1931 `y` chromaticity coordinate.
+    #[inline]
+    #[must_use]
+    pub const fn y(self) -> f32 {
+        self.y
+    }
+
+    /// `(x, y)` chromaticity pair.
+    #[inline]
+    #[must_use]
+    pub const fn to_tuple(self) -> (f32, f32) {
+        (self.x, self.y)
+    }
+}
+
+/// Reference white point for [`ParametricColor`].
+///
+/// Named variants preserve compact header enum tags (such as JPEG XL's
+/// `WhitePoint::D65`, `E`, and `Dci`) instead of flattening them into
+/// approximate floats, while [`Self::Custom`] carries arbitrary CIE 1931 `(x, y)`
+/// coordinates (PNG `cHRM`, JPEG XL `WhitePoint::Custom`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum WhitePoint {
+    /// CIE Standard Illuminant D65 (`(0.3127, 0.3290)`).
+    #[default]
+    D65,
+    /// CIE Standard Illuminant D50 (`(0.34567, 0.35850)`), ICC PCS white.
+    D50,
+    /// SMPTE ST 2065-1 ACES reference white D60 (`(0.32168, 0.33767)`).
+    D60,
+    /// CIE Standard Illuminant C (`(0.310, 0.316)`).
+    C,
+    /// Equal-energy illuminant E (`(1/3, 1/3)`).
+    E,
+    /// SMPTE RP 431-2 theatrical DCI white (`(0.314, 0.351)`).
+    Dci,
+    /// Arbitrary CIE 1931 `(x, y)` white point.
+    Custom(CieXy),
+}
+
+impl WhitePoint {
+    /// CIE 1931 `(x, y)` coordinates of this white point.
+    #[inline]
+    #[must_use]
+    pub const fn cie_xy(self) -> CieXy {
+        match self {
+            Self::D65 => CieXy::D65,
+            Self::D50 => CieXy::D50,
+            Self::D60 => CieXy::D60,
+            Self::C => CieXy::C,
+            Self::E => CieXy::E,
+            Self::Dci => CieXy::DCI,
+            Self::Custom(xy) => xy,
+        }
+    }
+}
+
+/// RGB primary chromaticities for [`ParametricColor`], independent of white point.
+///
+/// Unlike [`ColorPrimaries`] (which bundles RGB primaries with D65 on
+/// [`PixelDescriptor`]), `ParametricPrimaries` separates the RGB triangle from
+/// [`WhitePoint`] so combinations like `P3` + [`WhitePoint::Dci`] (theatrical
+/// DCI-P3) and `P3` + [`WhitePoint::D65`] (Display P3), as well as custom `(x, y)`
+/// primaries from JPEG XL headers or PNG `cHRM`, round-trip losslessly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ParametricPrimaries {
+    /// ITU-R BT.709 / sRGB RGB primaries.
+    Bt709,
+    /// ITU-R BT.2020 / BT.2100 RGB primaries.
+    Bt2020,
+    /// SMPTE RP 431-2 / EG 432-1 P3 RGB primaries.
+    P3,
+    /// Adobe RGB (1998) RGB primaries.
+    AdobeRgb,
+    /// ISO 22028-2 ROMM RGB / ProPhoto RGB primaries (nominally paired with [`WhitePoint::D50`]).
+    ProPhotoRgb,
+    /// ACEScg (AP1) working-space primaries (nominally paired with [`WhitePoint::D60`]).
+    AcesCg,
+    /// SMPTE ST 2065-1 ACES archival (AP0) primaries (nominally paired with [`WhitePoint::D60`]).
+    Aces2065_1,
+    /// ITU-R BT.601-7 525-line / SMPTE 170M NTSC primaries (CICP 6, paired with [`WhitePoint::D65`]).
+    Bt601_525,
+    /// ITU-R BT.601-7 625-line / BT.470 System B, G PAL/SECAM primaries (CICP 5, paired with [`WhitePoint::D65`]).
+    Bt601_625,
+    /// Arbitrary CIE 1931 `(x, y)` red, green, and blue primaries.
+    Custom {
+        /// Red primary chromaticity.
+        red: CieXy,
+        /// Green primary chromaticity.
+        green: CieXy,
+        /// Blue primary chromaticity.
+        blue: CieXy,
+    },
+}
+
+impl ParametricPrimaries {
+    /// `(red, green, blue)` CIE 1931 chromaticity coordinates.
+    #[inline]
+    #[must_use]
+    pub const fn cie_xy(self) -> (CieXy, CieXy, CieXy) {
+        match self {
+            Self::Bt709 => (
+                CieXy::new(0.64, 0.33),
+                CieXy::new(0.30, 0.60),
+                CieXy::new(0.15, 0.06),
+            ),
+            Self::Bt2020 => (
+                CieXy::new(0.708, 0.292),
+                CieXy::new(0.170, 0.797),
+                CieXy::new(0.131, 0.046),
+            ),
+            Self::P3 => (
+                CieXy::new(0.680, 0.320),
+                CieXy::new(0.265, 0.690),
+                CieXy::new(0.150, 0.060),
+            ),
+            Self::AdobeRgb => (
+                CieXy::new(0.64, 0.33),
+                CieXy::new(0.21, 0.71),
+                CieXy::new(0.15, 0.06),
+            ),
+            Self::ProPhotoRgb => (
+                CieXy::new(0.734699, 0.265301),
+                CieXy::new(0.159597, 0.840403),
+                CieXy::new(0.036598, 0.000105),
+            ),
+            Self::AcesCg => (
+                CieXy::new(0.713, 0.293),
+                CieXy::new(0.165, 0.830),
+                CieXy::new(0.128, 0.044),
+            ),
+            Self::Aces2065_1 => (
+                CieXy::new(0.7347, 0.2653),
+                CieXy::new(0.0000, 1.0000),
+                CieXy::new(0.0001, -0.0770),
+            ),
+            Self::Bt601_525 => (
+                CieXy::new(0.630, 0.340),
+                CieXy::new(0.310, 0.595),
+                CieXy::new(0.155, 0.070),
+            ),
+            Self::Bt601_625 => (
+                CieXy::new(0.64, 0.33),
+                CieXy::new(0.29, 0.60),
+                CieXy::new(0.15, 0.06),
+            ),
+            Self::Custom { red, green, blue } => (red, green, blue),
+        }
+    }
+}
+
+/// Pure power-law transfer exponent with explicit OETF vs EOTF direction.
+///
+/// Image formats disagree on whether "gamma" names the encoding exponent `g`
+/// (`encoded = linear^g`, ~`0.45455`, used by JPEG XL `TransferFunction::Gamma`
+/// and PNG `gAMA`) or the decoding/display EOTF exponent `γ`
+/// (`linear = encoded^γ`, ~`2.2`, used by ICC `curv` tags and CSS/display specs).
+/// `GammaCurve` has no bare-`f32` constructor so callers must state the
+/// convention explicitly at the call site.
+#[derive(Clone, Copy, Debug)]
+pub struct GammaCurve(f32);
+
+impl PartialEq for GammaCurve {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.0.to_bits() == other.0.to_bits()
+    }
+}
+
+impl Eq for GammaCurve {}
+
+impl core::hash::Hash for GammaCurve {
+    #[inline]
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.0.to_bits().hash(state);
+    }
+}
+
+impl GammaCurve {
+    /// Adobe RGB (1998) power law (`encoded = linear^(256/563)`, `linear = encoded^(563/256)`).
+    pub const ADOBE_RGB: Self = Self::from_encoding_exponent(256.0 / 563.0);
+    /// ITU-R BT.470M 2.2 display power law (`encoded = linear^(1/2.2)`, `linear = encoded^2.2`).
+    pub const GAMMA_22: Self = Self::from_eotf_exponent(2.2);
+    /// SMPTE ST 428-1 2.6 theatrical power law (`encoded = linear^(1/2.6)`, `linear = encoded^2.6`).
+    pub const DCI: Self = Self::from_eotf_exponent(2.6);
+
+    /// Construct from the encoding (OETF) exponent `g` where `encoded = linear^g`
+    /// (JPEG XL `gamma` and PNG `gAMA / 100_000`), returning `None` unless `g` is
+    /// finite and strictly positive.
+    #[inline]
+    #[must_use]
+    pub const fn try_from_encoding_exponent(g: f32) -> Option<Self> {
+        if g.is_finite() && g > 0.0 {
+            Some(Self(g))
+        } else {
+            None
+        }
+    }
+
+    /// Construct from the encoding (OETF) exponent `g` where `encoded = linear^g`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `g` is zero, negative, NaN, or infinite.
+    #[inline]
+    #[track_caller]
+    #[must_use]
+    pub const fn from_encoding_exponent(g: f32) -> Self {
+        match Self::try_from_encoding_exponent(g) {
+            Some(curve) => curve,
+            None => panic!("gamma encoding exponent must be finite and strictly positive"),
+        }
+    }
+
+    /// Construct from the decoding (EOTF) exponent `gamma` where `linear = encoded^gamma`
+    /// (e.g. `2.2`), returning `None` unless both `gamma` and `1.0 / gamma` are
+    /// finite and strictly positive.
+    #[inline]
+    #[must_use]
+    pub const fn try_from_eotf_exponent(gamma: f32) -> Option<Self> {
+        if gamma.is_finite() && gamma > 0.0 {
+            Self::try_from_encoding_exponent(1.0 / gamma)
+        } else {
+            None
+        }
+    }
+
+    /// Construct from the decoding (EOTF) exponent `gamma` where `linear = encoded^gamma`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `gamma` or `1.0 / gamma` is zero, negative, NaN, or infinite.
+    #[inline]
+    #[track_caller]
+    #[must_use]
+    pub const fn from_eotf_exponent(gamma: f32) -> Self {
+        match Self::try_from_eotf_exponent(gamma) {
+            Some(curve) => curve,
+            None => panic!("gamma EOTF exponent must be finite and strictly positive"),
+        }
+    }
+
+    /// Encoding (OETF) exponent `g` in `encoded = linear^g` (for example ~`0.45455`
+    /// for 2.2 display gamma). Matches JPEG XL `TransferFunction::Gamma` and PNG `gAMA`.
+    #[inline]
+    #[must_use]
+    pub const fn encoding_exponent(self) -> f32 {
+        self.0
+    }
+
+    /// Decoding (EOTF) exponent `1 / g` in `linear = encoded^(1/g)` (for example
+    /// ~`2.2` for standard display gamma).
+    #[inline]
+    #[must_use]
+    pub const fn eotf_exponent(self) -> f32 {
+        1.0 / self.0
+    }
+}
+
+/// ICC.1 §10.18 `parametricCurveType` (`para`) EOTF transfer curve (`encoded -> linear`).
+///
+/// Represents the five standard ICC parametric curve forms (function types `0..=4`):
+/// - **Type 0** (`[g]`): `Y = X^g` (`X >= 0`, else `0`)
+/// - **Type 1** (`[g, a, b]`, CIE 122-1966): `Y = (aX + b)^g` (`X >= -b/a`, else `0`)
+/// - **Type 2** (`[g, a, b, c]`, IEC 61966-3): `Y = (aX + b)^g + c` (`X >= -b/a`, else `c`)
+/// - **Type 3** (`[g, a, b, c, d]`, IEC 61966-2-1): `Y = (aX + b)^g` (`X >= d`), `Y = cX` (`X < d`)
+/// - **Type 4** (`[g, a, b, c, d, e, f]`): `Y = (aX + b)^g + e` (`X >= d`), `Y = cX + f` (`X < d`)
+///
+/// All active parameters are validated to be finite with `g > 0.0` (and `a != 0.0`
+/// for types `1` and `2`, which divide by `a`). `-0.0` is canonicalized to `+0.0`
+/// and unused parameter slots are zeroed so bitwise [`Eq`] and [`Hash`](core::hash::Hash)
+/// are reflexive and canonical.
+#[derive(Clone, Copy, Debug)]
+pub struct IccParametricCurve {
+    func_type: u8,
+    params: [f32; 7],
+}
+
+impl PartialEq for IccParametricCurve {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.func_type == other.func_type
+            && self.params[0].to_bits() == other.params[0].to_bits()
+            && self.params[1].to_bits() == other.params[1].to_bits()
+            && self.params[2].to_bits() == other.params[2].to_bits()
+            && self.params[3].to_bits() == other.params[3].to_bits()
+            && self.params[4].to_bits() == other.params[4].to_bits()
+            && self.params[5].to_bits() == other.params[5].to_bits()
+            && self.params[6].to_bits() == other.params[6].to_bits()
+    }
+}
+
+impl Eq for IccParametricCurve {}
+
+impl core::hash::Hash for IccParametricCurve {
+    #[inline]
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.func_type.hash(state);
+        for p in self.params {
+            p.to_bits().hash(state);
+        }
+    }
+}
+
+impl IccParametricCurve {
+    /// IEC 61966-2-1 sRGB curve (`funcType = 3`: `g = 2.4, a = 1/1.055, b = 0.055/1.055, c = 1/12.92, d = 0.04045`).
+    pub const SRGB: Self =
+        Self::type3_iec61966_2_1(2.4, 1.0 / 1.055, 0.055 / 1.055, 1.0 / 12.92, 0.04045);
+    /// ITU-R BT.709 OETF inverse (`funcType = 3`: `g = 1/0.45, a = 1/1.099, b = 0.099/1.099, c = 1/4.5, d = 0.081`).
+    pub const BT709: Self =
+        Self::type3_iec61966_2_1(1.0 / 0.45, 1.0 / 1.099, 0.099 / 1.099, 1.0 / 4.5, 0.081);
+    /// ISO 22028-2:2013 §6.3 ROMM RGB / ProPhoto RGB curve
+    /// (`funcType = 3`: `g = 1.8, a = 1.0, b = 0.0, c = 1/16, d = 1/32`).
+    pub const PROPHOTO_RGB: Self = Self::type3_iec61966_2_1(1.8, 1.0, 0.0, 1.0 / 16.0, 1.0 / 32.0);
+
+    #[inline]
+    const fn canon(x: f32) -> f32 {
+        if x == 0.0 { 0.0 } else { x }
+    }
+
+    /// Expected ICC parameter count for `func_type` (`0..=4`), or `None` for reserved types.
+    #[inline]
+    #[must_use]
+    pub const fn param_count(func_type: u16) -> Option<usize> {
+        match func_type {
+            0 => Some(1),
+            1 => Some(3),
+            2 => Some(4),
+            3 => Some(5),
+            4 => Some(7),
+            _ => None,
+        }
+    }
+
+    /// Construct from an ICC `parametricCurveType` function code (`0..=4`) and parameter slice.
+    ///
+    /// Returns `None` if `func_type > 4`, `params.len()` does not match [`Self::param_count`],
+    /// any parameter is NaN/infinite, `g <= 0.0`, or `a == 0.0` for function types `1` or `2`.
+    #[must_use]
+    pub const fn try_from_icc_para(func_type: u16, params: &[f32]) -> Option<Self> {
+        match (func_type, params) {
+            (0, &[g]) => Self::try_type0_gamma(g),
+            (1, &[g, a, b]) => Self::try_type1_cie122(g, a, b),
+            (2, &[g, a, b, c]) => Self::try_type2_iec61966_3(g, a, b, c),
+            (3, &[g, a, b, c, d]) => Self::try_type3_iec61966_2_1(g, a, b, c, d),
+            (4, &[g, a, b, c, d, e, f]) => Self::try_type4(g, a, b, c, d, e, f),
+            _ => None,
+        }
+    }
+
+    /// ICC function type `0`: `Y = X^g` (`g > 0`).
+    #[inline]
+    #[must_use]
+    pub const fn try_type0_gamma(g: f32) -> Option<Self> {
+        if g.is_finite() && g > 0.0 {
+            Some(Self {
+                func_type: 0,
+                params: [Self::canon(g), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            })
+        } else {
+            None
+        }
+    }
+
+    /// ICC function type `0`: `Y = X^g`, panicking if `g` is invalid.
+    #[inline]
+    #[track_caller]
+    #[must_use]
+    pub const fn type0_gamma(g: f32) -> Self {
+        match Self::try_type0_gamma(g) {
+            Some(c) => c,
+            None => panic!("ICC parametric type 0 requires finite g > 0"),
+        }
+    }
+
+    /// ICC function type `1` (CIE 122-1966): `Y = (aX + b)^g` for `X >= -b/a`, else `0`.
+    #[inline]
+    #[must_use]
+    pub const fn try_type1_cie122(g: f32, a: f32, b: f32) -> Option<Self> {
+        if g.is_finite() && g > 0.0 && a.is_finite() && a != 0.0 && b.is_finite() {
+            Some(Self {
+                func_type: 1,
+                params: [
+                    Self::canon(g),
+                    Self::canon(a),
+                    Self::canon(b),
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                ],
+            })
+        } else {
+            None
+        }
+    }
+
+    /// ICC function type `1` (CIE 122-1966), panicking if parameters are invalid.
+    #[inline]
+    #[track_caller]
+    #[must_use]
+    pub const fn type1_cie122(g: f32, a: f32, b: f32) -> Self {
+        match Self::try_type1_cie122(g, a, b) {
+            Some(c) => c,
+            None => {
+                panic!("ICC parametric type 1 requires finite parameters with g > 0 and a != 0")
+            }
+        }
+    }
+
+    /// ICC function type `2` (IEC 61966-3): `Y = (aX + b)^g + c` for `X >= -b/a`, else `c`.
+    #[inline]
+    #[must_use]
+    pub const fn try_type2_iec61966_3(g: f32, a: f32, b: f32, c: f32) -> Option<Self> {
+        if g.is_finite() && g > 0.0 && a.is_finite() && a != 0.0 && b.is_finite() && c.is_finite() {
+            Some(Self {
+                func_type: 2,
+                params: [
+                    Self::canon(g),
+                    Self::canon(a),
+                    Self::canon(b),
+                    Self::canon(c),
+                    0.0,
+                    0.0,
+                    0.0,
+                ],
+            })
+        } else {
+            None
+        }
+    }
+
+    /// ICC function type `2` (IEC 61966-3), panicking if parameters are invalid.
+    #[inline]
+    #[track_caller]
+    #[must_use]
+    pub const fn type2_iec61966_3(g: f32, a: f32, b: f32, c: f32) -> Self {
+        match Self::try_type2_iec61966_3(g, a, b, c) {
+            Some(curve) => curve,
+            None => {
+                panic!("ICC parametric type 2 requires finite parameters with g > 0 and a != 0")
+            }
+        }
+    }
+
+    /// ICC function type `3` (IEC 61966-2-1): `Y = (aX + b)^g` for `X >= d`, `Y = cX` for `X < d`.
+    #[inline]
+    #[must_use]
+    pub const fn try_type3_iec61966_2_1(g: f32, a: f32, b: f32, c: f32, d: f32) -> Option<Self> {
+        if g.is_finite()
+            && g > 0.0
+            && a.is_finite()
+            && b.is_finite()
+            && c.is_finite()
+            && d.is_finite()
+        {
+            Some(Self {
+                func_type: 3,
+                params: [
+                    Self::canon(g),
+                    Self::canon(a),
+                    Self::canon(b),
+                    Self::canon(c),
+                    Self::canon(d),
+                    0.0,
+                    0.0,
+                ],
+            })
+        } else {
+            None
+        }
+    }
+
+    /// ICC function type `3` (IEC 61966-2-1), panicking if parameters are invalid.
+    #[inline]
+    #[track_caller]
+    #[must_use]
+    pub const fn type3_iec61966_2_1(g: f32, a: f32, b: f32, c: f32, d: f32) -> Self {
+        match Self::try_type3_iec61966_2_1(g, a, b, c, d) {
+            Some(curve) => curve,
+            None => panic!("ICC parametric type 3 requires finite parameters with g > 0"),
+        }
+    }
+
+    /// ICC function type `4`: `Y = (aX + b)^g + e` for `X >= d`, `Y = cX + f` for `X < d`.
+    #[inline]
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub const fn try_type4(g: f32, a: f32, b: f32, c: f32, d: f32, e: f32, f: f32) -> Option<Self> {
+        if g.is_finite()
+            && g > 0.0
+            && a.is_finite()
+            && b.is_finite()
+            && c.is_finite()
+            && d.is_finite()
+            && e.is_finite()
+            && f.is_finite()
+        {
+            Some(Self {
+                func_type: 4,
+                params: [
+                    Self::canon(g),
+                    Self::canon(a),
+                    Self::canon(b),
+                    Self::canon(c),
+                    Self::canon(d),
+                    Self::canon(e),
+                    Self::canon(f),
+                ],
+            })
+        } else {
+            None
+        }
+    }
+
+    /// ICC function type `4`, panicking if parameters are invalid.
+    #[inline]
+    #[track_caller]
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub const fn type4(g: f32, a: f32, b: f32, c: f32, d: f32, e: f32, f: f32) -> Self {
+        match Self::try_type4(g, a, b, c, d, e, f) {
+            Some(curve) => curve,
+            None => panic!("ICC parametric type 4 requires finite parameters with g > 0"),
+        }
+    }
+
+    /// ICC `parametricCurveType` function type (`0..=4`).
+    #[inline]
+    #[must_use]
+    pub const fn function_type(self) -> u8 {
+        self.func_type
+    }
+
+    /// Active ICC parameters (`1`, `3`, `4`, `5`, or `7` elements according to [`Self::function_type`]).
+    #[inline]
+    #[must_use]
+    pub fn icc_params(&self) -> &[f32] {
+        let len = match self.func_type {
+            0 => 1,
+            1 => 3,
+            2 => 4,
+            3 => 5,
+            _ => 7,
+        };
+        &self.params[..len]
+    }
+
+    /// Full 7-slot parameter array `[g, a, b, c, d, e, f]` (with unused trailing slots zeroed).
+    #[inline]
+    #[must_use]
+    pub const fn all_params(self) -> [f32; 7] {
+        self.params
+    }
+}
+
+/// Transfer curve for [`ParametricColor`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ParametricTransfer {
+    /// Linear light (`gamma = 1.0`, CICP 8).
+    Linear,
+    /// IEC 61966-2-1 sRGB piecewise transfer (CICP 13).
+    Srgb,
+    /// ITU-R BT.709 / BT.601 / BT.2020 SDR transfer (CICP 1 / 6 / 14 / 15).
+    Bt709,
+    /// SMPTE ST 2084 Perceptual Quantizer (CICP 16).
+    Pq,
+    /// ITU-R BT.2100 Hybrid Log-Gamma (CICP 18).
+    Hlg,
+    /// SMPTE ST 428-1 theatrical 2.6 power law (CICP 17, JPEG XL `TransferFunction::Dci`).
+    Dci,
+    /// Pure power-law transfer curve (`encoded = linear^g`).
+    Gamma(GammaCurve),
+    /// ICC.1 §10.18 `parametricCurveType` EOTF curve (`funcType` `0..=4`).
+    IccParametric(IccParametricCurve),
+    /// Unspecified or unknown transfer curve.
+    #[default]
+    Unknown,
+}
+
+impl ParametricTransfer {
+    /// Convert from a compact [`TransferFunction`].
+    #[inline]
+    #[must_use]
+    pub const fn from_transfer_function(tf: TransferFunction) -> Self {
+        match tf {
+            TransferFunction::Linear => Self::Linear,
+            TransferFunction::Srgb => Self::Srgb,
+            TransferFunction::Bt709 => Self::Bt709,
+            TransferFunction::Pq => Self::Pq,
+            TransferFunction::Hlg => Self::Hlg,
+            TransferFunction::Gamma22 => Self::Gamma(GammaCurve::ADOBE_RGB),
+            TransferFunction::Unknown => Self::Unknown,
+        }
+    }
+
+    /// Map to a compact [`TransferFunction`] when an exact built-in curve exists.
+    ///
+    /// Returns `None` for [`Self::Dci`], [`Self::IccParametric`], [`Self::Unknown`],
+    /// and [`Self::Gamma`] exponents other than [`GammaCurve::ADOBE_RGB`] (`256/563`).
+    #[inline]
+    #[must_use]
+    pub const fn to_transfer_function(self) -> Option<TransferFunction> {
+        match self {
+            Self::Linear => Some(TransferFunction::Linear),
+            Self::Srgb => Some(TransferFunction::Srgb),
+            Self::Bt709 => Some(TransferFunction::Bt709),
+            Self::Pq => Some(TransferFunction::Pq),
+            Self::Hlg => Some(TransferFunction::Hlg),
+            Self::Gamma(g)
+                if g.encoding_exponent().to_bits()
+                    == GammaCurve::ADOBE_RGB.encoding_exponent().to_bits() =>
+            {
+                Some(TransferFunction::Gamma22)
+            }
+            Self::Dci | Self::Gamma(_) | Self::IccParametric(_) | Self::Unknown => None,
+        }
+    }
+}
+
+/// ICC / PNG `sRGB` / JPEG XL rendering intent.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum RenderingIntent {
+    /// Perceptual gamut compression (ICC / PNG / JPEG XL code `0`).
+    Perceptual,
+    /// Media-relative colorimetric, preserving in-gamut colors relative to white (code `1`).
+    #[default]
+    RelativeColorimetric,
+    /// Saturation-preserving business graphics intent (code `2`).
+    Saturation,
+    /// ICC-absolute colorimetric, preserving white-point chromaticity (code `3`).
+    AbsoluteColorimetric,
+}
+
+impl RenderingIntent {
+    /// Decode from the 0..=3 integer code shared by ICC headers, PNG `sRGB` chunks,
+    /// and JPEG XL `ColorEncoding`.
+    #[inline]
+    #[must_use]
+    pub const fn from_icc_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(Self::Perceptual),
+            1 => Some(Self::RelativeColorimetric),
+            2 => Some(Self::Saturation),
+            3 => Some(Self::AbsoluteColorimetric),
+            _ => None,
+        }
+    }
+
+    /// Encode to the 0..=3 integer code shared by ICC headers, PNG `sRGB` chunks,
+    /// and JPEG XL `ColorEncoding`.
+    #[inline]
+    #[must_use]
+    pub const fn to_icc_code(self) -> u8 {
+        match self {
+            Self::Perceptual => 0,
+            Self::RelativeColorimetric => 1,
+            Self::Saturation => 2,
+            Self::AbsoluteColorimetric => 3,
+        }
+    }
+}
+
+/// Non-ICC parametric color description for boxed [`ColorContext`] and [`ColorOrigin`].
+///
+/// Captures compact parametric color headers — JPEG XL's non-ICC `ColorEncoding`
+/// (`primaries`, `white_point`, `transfer_function`, `rendering_intent`, including
+/// custom CIE `xy` chromaticities and explicit power-law gamma) as well as PNG
+/// `gAMA` + `cHRM` (+ `sRGB` rendering intent) — without inflating [`PixelDescriptor`]
+/// on inner row/window loops or synthesizing fake ICC bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ParametricColor {
+    /// RGB primaries, or `None` for grayscale color encodings.
+    pub primaries: Option<ParametricPrimaries>,
+    /// Reference white point.
+    pub white_point: WhitePoint,
+    /// Electro-optical / opto-electronic transfer curve.
+    pub transfer: ParametricTransfer,
+    /// Rendering intent signaled alongside the parametric header.
+    pub rendering_intent: RenderingIntent,
+}
+
+impl ParametricColor {
+    /// Standard sRGB (`Bt709` + `D65` + `Srgb` + `RelativeColorimetric`).
+    pub const SRGB: Self = Self::rgb(
+        ParametricPrimaries::Bt709,
+        WhitePoint::D65,
+        ParametricTransfer::Srgb,
+    );
+    /// Apple Display P3 (`P3` + `D65` + `Srgb` + `RelativeColorimetric`).
+    pub const DISPLAY_P3: Self = Self::rgb(
+        ParametricPrimaries::P3,
+        WhitePoint::D65,
+        ParametricTransfer::Srgb,
+    );
+    /// Theatrical SMPTE DCI-P3 (`P3` + `Dci` + `Dci` + `RelativeColorimetric`).
+    pub const DCI_P3: Self = Self::rgb(
+        ParametricPrimaries::P3,
+        WhitePoint::Dci,
+        ParametricTransfer::Dci,
+    );
+    /// Adobe RGB (1998) (`AdobeRgb` + `D65` + `Gamma(256/563)` + `RelativeColorimetric`).
+    pub const ADOBE_RGB: Self = Self::rgb(
+        ParametricPrimaries::AdobeRgb,
+        WhitePoint::D65,
+        ParametricTransfer::Gamma(GammaCurve::ADOBE_RGB),
+    );
+    /// ITU-R BT.2100 PQ (`Bt2020` + `D65` + `Pq` + `RelativeColorimetric`).
+    pub const BT2100_PQ: Self = Self::rgb(
+        ParametricPrimaries::Bt2020,
+        WhitePoint::D65,
+        ParametricTransfer::Pq,
+    );
+    /// ITU-R BT.2100 HLG (`Bt2020` + `D65` + `Hlg` + `RelativeColorimetric`).
+    pub const BT2100_HLG: Self = Self::rgb(
+        ParametricPrimaries::Bt2020,
+        WhitePoint::D65,
+        ParametricTransfer::Hlg,
+    );
+    /// Linear-light sRGB / BT.709 (`Bt709` + `D65` + `Linear` + `RelativeColorimetric`).
+    pub const LINEAR_SRGB: Self = Self::rgb(
+        ParametricPrimaries::Bt709,
+        WhitePoint::D65,
+        ParametricTransfer::Linear,
+    );
+    /// ISO 22028-2 ROMM RGB / ProPhoto RGB (`ProPhotoRgb` + `D50` + `IccParametric::PROPHOTO_RGB` + `RelativeColorimetric`).
+    pub const PROPHOTO_RGB: Self = Self::rgb(
+        ParametricPrimaries::ProPhotoRgb,
+        WhitePoint::D50,
+        ParametricTransfer::IccParametric(IccParametricCurve::PROPHOTO_RGB),
+    );
+    /// ACEScg (AP1) linear working space (`AcesCg` + `D60` + `Linear` + `RelativeColorimetric`).
+    pub const ACES_CG: Self = Self::rgb(
+        ParametricPrimaries::AcesCg,
+        WhitePoint::D60,
+        ParametricTransfer::Linear,
+    );
+    /// SMPTE ST 2065-1 ACES archival (AP0) linear space (`Aces2065_1` + `D60` + `Linear` + `RelativeColorimetric`).
+    pub const ACES_2065_1: Self = Self::rgb(
+        ParametricPrimaries::Aces2065_1,
+        WhitePoint::D60,
+        ParametricTransfer::Linear,
+    );
+
+    /// Construct an RGB parametric color description with default
+    /// [`RenderingIntent::RelativeColorimetric`].
+    #[inline]
+    #[must_use]
+    pub const fn rgb(
+        primaries: ParametricPrimaries,
+        white_point: WhitePoint,
+        transfer: ParametricTransfer,
+    ) -> Self {
+        Self {
+            primaries: Some(primaries),
+            white_point,
+            transfer,
+            rendering_intent: RenderingIntent::RelativeColorimetric,
+        }
+    }
+
+    /// Construct a grayscale parametric color description (`primaries = None`)
+    /// with default [`RenderingIntent::RelativeColorimetric`].
+    #[inline]
+    #[must_use]
+    pub const fn gray(white_point: WhitePoint, transfer: ParametricTransfer) -> Self {
+        Self {
+            primaries: None,
+            white_point,
+            transfer,
+            rendering_intent: RenderingIntent::RelativeColorimetric,
+        }
+    }
+
+    /// Override the rendering intent.
+    #[inline]
+    #[must_use]
+    pub const fn with_rendering_intent(mut self, intent: RenderingIntent) -> Self {
+        self.rendering_intent = intent;
+        self
+    }
+
+    /// Decompose to a compact `(ColorPrimaries, TransferFunction)` pair when this
+    /// description uses exact [`WhitePoint::D65`], named RGB primaries, and a
+    /// built-in [`TransferFunction`].
+    ///
+    /// Returns `None` for grayscale (`primaries: None`), non-D65 white points
+    /// (such as theatrical `P3` + [`WhitePoint::Dci`]), custom CIE `xy` primaries,
+    /// [`ParametricTransfer::Dci`], or arbitrary [`GammaCurve`] exponents.
+    #[inline]
+    #[must_use]
+    pub const fn to_primaries_transfer(&self) -> Option<(ColorPrimaries, TransferFunction)> {
+        if !matches!(self.white_point, WhitePoint::D65) {
+            return None;
+        }
+        let primaries = match self.primaries {
+            Some(ParametricPrimaries::Bt709) => ColorPrimaries::Bt709,
+            Some(ParametricPrimaries::Bt2020) => ColorPrimaries::Bt2020,
+            Some(ParametricPrimaries::P3) => ColorPrimaries::DisplayP3,
+            Some(ParametricPrimaries::AdobeRgb) => ColorPrimaries::AdobeRgb,
+            Some(
+                ParametricPrimaries::ProPhotoRgb
+                | ParametricPrimaries::AcesCg
+                | ParametricPrimaries::Aces2065_1
+                | ParametricPrimaries::Bt601_525
+                | ParametricPrimaries::Bt601_625
+                | ParametricPrimaries::Custom { .. },
+            )
+            | None => return None,
+        };
+        match self.transfer.to_transfer_function() {
+            Some(transfer) => Some((primaries, transfer)),
+            None => None,
+        }
+    }
+
+    /// Construct from full-range RGB ITU-T H.273 [`Cicp`] (`matrix_coefficients == 0`
+    /// and `full_range == true`) when `color_primaries` and `transfer_characteristics`
+    /// map to known parametric presets.
+    #[inline]
+    #[must_use]
+    pub const fn from_cicp(cicp: Cicp) -> Option<Self> {
+        if cicp.matrix_coefficients != 0 || !cicp.full_range {
+            return None;
+        }
+        let (primaries, white_point) = match cicp.color_primaries {
+            1 => (ParametricPrimaries::Bt709, WhitePoint::D65),
+            5 => (ParametricPrimaries::Bt601_625, WhitePoint::D65),
+            6 | 7 => (ParametricPrimaries::Bt601_525, WhitePoint::D65),
+            9 => (ParametricPrimaries::Bt2020, WhitePoint::D65),
+            11 => (ParametricPrimaries::P3, WhitePoint::Dci),
+            12 => (ParametricPrimaries::P3, WhitePoint::D65),
+            _ => return None,
+        };
+        let transfer = match cicp.transfer_characteristics {
+            1 | 6 | 14 | 15 => ParametricTransfer::Bt709,
+            4 => ParametricTransfer::Gamma(GammaCurve::GAMMA_22),
+            8 => ParametricTransfer::Linear,
+            13 => ParametricTransfer::Srgb,
+            16 => ParametricTransfer::Pq,
+            17 => ParametricTransfer::Dci,
+            18 => ParametricTransfer::Hlg,
+            _ => return None,
+        };
+        Some(Self::rgb(primaries, white_point, transfer))
+    }
+
+    /// Convert to full-range RGB ITU-T H.273 [`Cicp`] (`matrix_coefficients = 0`,
+    /// `full_range = true`) when an exact CICP code point exists for
+    /// `(primaries, white_point, transfer)`.
+    ///
+    /// Note that CICP does not carry [`RenderingIntent`]; inspect
+    /// `self.rendering_intent` separately when rendering intent is load-bearing.
+    #[inline]
+    #[must_use]
+    pub const fn to_cicp(&self) -> Option<Cicp> {
+        let cp = match (self.primaries, self.white_point) {
+            (Some(ParametricPrimaries::Bt709), WhitePoint::D65) => 1,
+            (Some(ParametricPrimaries::Bt601_625), WhitePoint::D65) => 5,
+            (Some(ParametricPrimaries::Bt601_525), WhitePoint::D65) => 6,
+            (Some(ParametricPrimaries::Bt2020), WhitePoint::D65) => 9,
+            (Some(ParametricPrimaries::P3), WhitePoint::Dci) => 11,
+            (Some(ParametricPrimaries::P3), WhitePoint::D65) => 12,
+            _ => return None,
+        };
+        let tc = match self.transfer {
+            ParametricTransfer::Bt709 => 1,
+            ParametricTransfer::Gamma(g)
+                if g.encoding_exponent().to_bits()
+                    == GammaCurve::GAMMA_22.encoding_exponent().to_bits() =>
+            {
+                4
+            }
+            ParametricTransfer::Linear => 8,
+            ParametricTransfer::Srgb => 13,
+            ParametricTransfer::Pq => 16,
+            ParametricTransfer::Dci => 17,
+            ParametricTransfer::Hlg => 18,
+            _ => return None,
+        };
+        Some(Cicp::new(cp, tc, 0, true))
+    }
+}
+
+/// A source color profile — ICC bytes, CICP parameters, parametric header
+/// signaling, a named profile, or a primaries + transfer function pair.
 ///
 /// This unified type lets consumers pass decoded image color info
 /// directly to a CMS backend without caring whether the source had
-/// an ICC profile, CICP codes, or a well-known named profile.
+/// an ICC profile, CICP codes, parametric chromaticities/gamma, or a
+/// well-known named profile.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ColorProfileSource<'a> {
@@ -27,6 +996,8 @@ pub enum ColorProfileSource<'a> {
     Icc(&'a [u8]),
     /// CICP parameters (a CMS can synthesize an equivalent profile).
     Cicp(Cicp),
+    /// Non-ICC parametric color header (JPEG XL `ColorEncoding`, PNG `gAMA`+`cHRM`).
+    Parametric(ParametricColor),
     /// Well-known named profile.
     Named(NamedProfile),
     /// Color primaries + transfer function pair.
@@ -163,6 +1134,7 @@ impl<'a> ColorProfileSource<'a> {
     /// - `PrimariesTransferPair` — returns directly
     /// - `Named` — decomposes via [`NamedProfile::to_primaries_transfer`]
     /// - `Cicp` — maps via [`ColorPrimaries::from_cicp`] and [`TransferFunction::from_cicp`]
+    /// - `Parametric` — decomposes via [`ParametricColor::to_primaries_transfer`]
     /// - `Icc` — returns `None` (requires profile parsing)
     pub const fn primaries_transfer(&self) -> Option<(ColorPrimaries, TransferFunction)> {
         match self {
@@ -179,6 +1151,7 @@ impl<'a> ColorProfileSource<'a> {
                     _ => None,
                 }
             }
+            Self::Parametric(p) => p.to_primaries_transfer(),
             Self::Icc(_) => None,
         }
     }
@@ -192,12 +1165,14 @@ impl<'a> ColorProfileSource<'a> {
     /// - `Cicp` — maps via `from_cicp`, but returns `None` if `matrix_coefficients`
     ///   is non-zero (YCbCr data requires matrix conversion first) or `full_range`
     ///   is false (narrow-range data needs range expansion first)
+    /// - `Parametric` — decomposes via [`ParametricColor::to_primaries_transfer`]
     /// - `Icc` — validated common-profile identification permitting matrix/TRC
     ///   substitution. Embedded CICP alone is insufficient; other ICCs need a CMS.
     ///
     /// Returns `None` when the profile is unknown or when reducing to
     /// (primaries, transfer) would discard significant information
-    /// (YCbCr matrix coefficients, narrow signal range).
+    /// (YCbCr matrix coefficients, narrow signal range, custom chromaticities,
+    /// non-D65 white point, or arbitrary gamma).
     #[cfg(feature = "icc")]
     #[allow(unreachable_patterns)]
     pub fn resolve(&self) -> Option<(ColorPrimaries, TransferFunction)> {
@@ -221,6 +1196,7 @@ impl<'a> ColorProfileSource<'a> {
                 let t = TransferFunction::from_cicp(cicp.transfer_characteristics)?;
                 Some((p, t))
             }
+            Self::Parametric(p) => p.to_primaries_transfer(),
             Self::Icc(icc_bytes) => {
                 // Only use the identification if matrix+TRC substitution is
                 // safe — profiles with LUTs, non-Bradford chad, or Lab PCS
@@ -314,10 +1290,11 @@ impl ColorAuthority {
 /// Authoritative extended color profile carried by [`ColorContext`].
 ///
 /// A current pixel buffer has at most one active extended profile authority:
-/// either ITU-T H.273 [`Cicp`] parameters or raw ICC profile bytes, never both
-/// simultaneously. File-level dual signaling (for example PNG `cICP` + `iCCP`
-/// or AVIF `colr` boxes) belongs on [`ColorOrigin`] alongside
-/// [`ColorAuthority`], which resolves to a single authority at decode time.
+/// ITU-T H.273 [`Cicp`] parameters, raw ICC profile bytes, or a non-ICC
+/// [`ParametricColor`] header description — never more than one simultaneously.
+/// File-level multi-carrier signaling (for example PNG `cICP` + `iCCP` or AVIF
+/// `colr` boxes) belongs on [`ColorOrigin`] alongside [`ColorAuthority`], which
+/// resolves to a single authority at decode time.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum ColorProfile {
@@ -325,6 +1302,8 @@ pub enum ColorProfile {
     Cicp(Cicp),
     /// Raw ICC profile bytes.
     Icc(Arc<[u8]>),
+    /// Non-ICC parametric color description (JPEG XL `ColorEncoding`, PNG `gAMA`+`cHRM`).
+    Parametric(ParametricColor),
 }
 
 impl PartialEq for ColorProfile {
@@ -332,6 +1311,7 @@ impl PartialEq for ColorProfile {
         match (self, other) {
             (Self::Cicp(a), Self::Cicp(b)) => a == b,
             (Self::Icc(a), Self::Icc(b)) => Arc::ptr_eq(a, b) || a == b,
+            (Self::Parametric(a), Self::Parametric(b)) => a == b,
             _ => false,
         }
     }
@@ -346,6 +1326,7 @@ impl core::hash::Hash for ColorProfile {
         match self {
             Self::Cicp(cicp) => cicp.hash(state),
             Self::Icc(icc) => icc[..].hash(state),
+            Self::Parametric(p) => p.hash(state),
         }
     }
 }
@@ -362,6 +1343,12 @@ impl From<Arc<[u8]>> for ColorProfile {
     }
 }
 
+impl From<ParametricColor> for ColorProfile {
+    fn from(parametric: ParametricColor) -> Self {
+        Self::Parametric(parametric)
+    }
+}
+
 impl ColorProfile {
     /// Borrow as a [`ColorProfileSource`] for CMS integration.
     #[inline]
@@ -369,6 +1356,7 @@ impl ColorProfile {
         match self {
             Self::Cicp(cicp) => ColorProfileSource::Cicp(*cicp),
             Self::Icc(icc) => ColorProfileSource::Icc(icc),
+            Self::Parametric(p) => ColorProfileSource::Parametric(*p),
         }
     }
 
@@ -377,7 +1365,7 @@ impl ColorProfile {
     pub const fn cicp(&self) -> Option<Cicp> {
         match self {
             Self::Cicp(cicp) => Some(*cicp),
-            Self::Icc(_) => None,
+            _ => None,
         }
     }
 
@@ -385,8 +1373,8 @@ impl ColorProfile {
     #[inline]
     pub fn icc(&self) -> Option<&[u8]> {
         match self {
-            Self::Cicp(_) => None,
             Self::Icc(icc) => Some(icc),
+            _ => None,
         }
     }
 
@@ -394,24 +1382,36 @@ impl ColorProfile {
     #[inline]
     pub const fn icc_arc(&self) -> Option<&Arc<[u8]>> {
         match self {
-            Self::Cicp(_) => None,
             Self::Icc(icc) => Some(icc),
+            _ => None,
+        }
+    }
+
+    /// The [`ParametricColor`] parameters when this profile is `Parametric`.
+    #[inline]
+    pub const fn parametric(&self) -> Option<ParametricColor> {
+        match self {
+            Self::Parametric(p) => Some(*p),
+            _ => None,
         }
     }
 }
 
 /// Extended color space and luminance metadata for current pixel data.
 ///
-/// Bundles at most one authoritative [`ColorProfile`] (either ICC bytes or
-/// CICP parameters, never both) plus optional scene/display luminance anchors
-/// into a single shareable context. Carried boxed out-of-line via
-/// `Option<Arc<ColorContext>>` on pixel slices and buffers so inner window/row
-/// loops stay compact in registers while color metadata travels without
-/// per-strip byte cloning.
+/// Bundles at most one authoritative [`ColorProfile`] (ICC bytes, CICP
+/// parameters, or [`ParametricColor`], never more than one) plus optional
+/// rendering intent and scene/display luminance anchors into a single shareable
+/// context. Carried boxed out-of-line via `Option<Arc<ColorContext>>` on pixel
+/// slices and buffers so inner window/row loops stay compact in registers while
+/// color metadata travels without per-strip byte cloning.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ColorContext {
     profile: Option<ColorProfile>,
+    // Always `None` when `profile` is `Some(ColorProfile::Parametric(_))` so
+    // `ParametricColor.rendering_intent` is the single canonical slot.
+    rendering_intent: Option<RenderingIntent>,
     diffuse_white: Option<DiffuseWhite>,
     hdr_peak: Option<crate::hdr::Nits>,
 }
@@ -423,15 +1423,21 @@ impl core::hash::Hash for ColorContext {
         self.cicp().hash(state);
         self.diffuse_white.hash(state);
         self.hdr_peak.hash(state);
+        if self.parametric().is_some() || self.rendering_intent.is_some() {
+            state.write(b"zenpixels/color/ext1\0");
+            self.parametric().hash(state);
+            self.rendering_intent.hash(state);
+        }
     }
 }
 
 impl ColorContext {
-    /// Create an empty context with no profile or luminance anchors.
+    /// Create an empty context with no profile, rendering intent, or luminance anchors.
     #[inline]
     pub const fn new() -> Self {
         Self {
             profile: None,
+            rendering_intent: None,
             diffuse_white: None,
             hdr_peak: None,
         }
@@ -442,6 +1448,7 @@ impl ColorContext {
     pub const fn from_profile(profile: ColorProfile) -> Self {
         Self {
             profile: Some(profile),
+            rendering_intent: None,
             diffuse_white: None,
             hdr_peak: None,
         }
@@ -456,6 +1463,12 @@ impl ColorContext {
     #[inline]
     pub const fn from_cicp(cicp: Cicp) -> Self {
         Self::from_profile(ColorProfile::Cicp(cicp))
+    }
+
+    /// Create from a non-ICC [`ParametricColor`] header description.
+    #[inline]
+    pub const fn from_parametric(parametric: ParametricColor) -> Self {
+        Self::from_profile(ColorProfile::Parametric(parametric))
     }
 
     /// The active extended [`ColorProfile`], if any.
@@ -491,6 +1504,25 @@ impl ColorContext {
         }
     }
 
+    /// Parametric color parameters when the active profile is [`ColorProfile::Parametric`].
+    #[inline]
+    pub const fn parametric(&self) -> Option<ParametricColor> {
+        match &self.profile {
+            Some(ColorProfile::Parametric(p)) => Some(*p),
+            _ => None,
+        }
+    }
+
+    /// Explicit rendering intent when signaled (either standalone on the context
+    /// or inside an active [`ColorProfile::Parametric`]).
+    #[inline]
+    pub const fn rendering_intent(&self) -> Option<RenderingIntent> {
+        match &self.profile {
+            Some(ColorProfile::Parametric(p)) => Some(p.rendering_intent),
+            _ => self.rendering_intent,
+        }
+    }
+
     /// Absolute-luminance anchor: the cd/m² (nits) that a relative-linear
     /// sample value of `1.0` represents, or `None` when unsignaled.
     #[inline]
@@ -504,16 +1536,38 @@ impl ColorContext {
         self.hdr_peak
     }
 
-    /// True when neither a profile nor any luminance anchor is set.
+    /// True when no profile, rendering intent, or luminance anchor is set.
     #[inline]
     pub const fn is_empty(&self) -> bool {
-        self.profile.is_none() && self.diffuse_white.is_none() && self.hdr_peak.is_none()
+        self.profile.is_none()
+            && self.rendering_intent.is_none()
+            && self.diffuse_white.is_none()
+            && self.hdr_peak.is_none()
     }
 
     /// Set or clear the active [`ColorProfile`], preserving luminance anchors.
     #[must_use]
-    pub fn with_profile(mut self, profile: Option<ColorProfile>) -> Self {
+    pub fn with_profile(mut self, mut profile: Option<ColorProfile>) -> Self {
+        if let Some(ColorProfile::Parametric(p)) = &mut profile {
+            if let Some(intent) = self.rendering_intent.take() {
+                p.rendering_intent = intent;
+            }
+        }
         self.profile = profile;
+        self
+    }
+
+    /// Set explicit [`RenderingIntent`] on this context (updating
+    /// `ParametricColor::rendering_intent` in place when the active profile is
+    /// [`ColorProfile::Parametric`]).
+    #[must_use]
+    pub const fn with_rendering_intent(mut self, intent: RenderingIntent) -> Self {
+        if let Some(ColorProfile::Parametric(p)) = &mut self.profile {
+            p.rendering_intent = intent;
+            self.rendering_intent = None;
+        } else {
+            self.rendering_intent = Some(intent);
+        }
         self
     }
 
@@ -537,47 +1591,62 @@ impl ColorContext {
         self
     }
 
-    /// Set [`Cicp`] as the active profile, replacing any prior ICC or CICP profile.
+    /// Set [`Cicp`] as the active profile, replacing any prior profile.
     #[must_use]
     pub fn with_cicp(mut self, cicp: Cicp) -> Self {
         self.profile = Some(ColorProfile::Cicp(cicp));
         self
     }
 
-    /// Set raw ICC bytes as the active profile, replacing any prior CICP or ICC profile.
+    /// Set raw ICC bytes as the active profile, replacing any prior profile.
     #[must_use]
     pub fn with_icc(mut self, icc: impl Into<Arc<[u8]>>) -> Self {
         self.profile = Some(ColorProfile::Icc(icc.into()));
         self
     }
 
+    /// Set [`ParametricColor`] as the active profile, replacing any prior profile.
+    #[must_use]
+    pub fn with_parametric(mut self, parametric: ParametricColor) -> Self {
+        self.profile = Some(ColorProfile::Parametric(parametric));
+        self.rendering_intent = None;
+        self
+    }
+
     /// Get a [`ColorProfileSource`] reference for CMS integration.
     ///
-    /// Returns [`ColorProfileSource::Icc`] or [`ColorProfileSource::Cicp`]
-    /// according to the single active [`ColorProfile`], or `None` when no
-    /// extended profile is set.
+    /// Returns [`ColorProfileSource::Icc`], [`ColorProfileSource::Cicp`], or
+    /// [`ColorProfileSource::Parametric`] according to the single active
+    /// [`ColorProfile`], or `None` when no extended profile is set.
     pub fn as_profile_source(&self) -> Option<ColorProfileSource<'_>> {
         self.profile.as_ref().map(ColorProfile::as_profile_source)
     }
 
     /// Derive the selected current profile's transfer function.
     ///
-    /// CICP is used when it is the active profile. ICC remains opaque here, so
-    /// an ICC-backed context returns `Unknown` without identifying or
-    /// approximating ICC profiles.
+    /// CICP or [`ParametricColor`] is used when it is the active profile. ICC
+    /// remains opaque here, so an ICC-backed context returns `Unknown` without
+    /// identifying or approximating ICC profiles.
     pub fn transfer_function(&self) -> TransferFunction {
         match self.as_profile_source() {
             Some(ColorProfileSource::Cicp(c)) => {
                 TransferFunction::from_cicp(c.transfer_characteristics)
                     .unwrap_or(TransferFunction::Unknown)
             }
+            Some(ColorProfileSource::Parametric(p)) => p
+                .transfer
+                .to_transfer_function()
+                .unwrap_or(TransferFunction::Unknown),
             _ => TransferFunction::Unknown,
         }
     }
 
-    /// True when the active profile is explicitly CICP sRGB.
+    /// True when the active profile is explicitly sRGB via CICP or [`ParametricColor`].
     pub fn is_srgb(&self) -> bool {
         self.cicp() == Some(Cicp::SRGB)
+            || self
+                .parametric()
+                .is_some_and(|p| p.to_cicp() == Some(Cicp::SRGB))
     }
 }
 
@@ -650,6 +1719,24 @@ impl<'a> PixelEncoding<'a> {
         }
     }
 
+    /// Parametric color parameters when the attached context holds [`ColorProfile::Parametric`].
+    #[inline]
+    pub const fn parametric(self) -> Option<ParametricColor> {
+        match self.color {
+            Some(ctx) => ctx.parametric(),
+            None => None,
+        }
+    }
+
+    /// Signaled rendering intent on the attached context, if any.
+    #[inline]
+    pub const fn rendering_intent(self) -> Option<RenderingIntent> {
+        match self.color {
+            Some(ctx) => ctx.rendering_intent(),
+            None => None,
+        }
+    }
+
     /// Signaled diffuse-white anchor on the attached context, if any.
     #[inline]
     pub const fn diffuse_white(self) -> Option<DiffuseWhite> {
@@ -694,19 +1781,22 @@ pub enum ColorProvenance {
     Cicp,
     /// Color was described via PNG gAMA + cHRM chunks or similar.
     GamaChrm,
-    /// Color was assumed (no explicit metadata in source).
+    /// Color was assume-defaulted (no explicit metadata in source).
     Assumed,
+    /// Color was described via a non-ICC parametric header (e.g. JPEG XL `ColorEncoding`).
+    Parametric,
 }
 
 /// Immutable record of how the source file described its color.
 ///
 /// Tracks the original color description from the decoded file so
 /// encoders can make provenance-aware decisions (e.g., re-embed the
-/// original ICC profile, or prefer CICP when re-encoding to AVIF).
+/// original ICC profile, re-emit a compact JPEG XL `ColorEncoding`,
+/// or prefer CICP when re-encoding to AVIF).
 ///
 /// `ColorOrigin` is immutable once set. It records how color was
 /// described, not what the pixels currently are. The encoder uses
-/// [`PixelDescriptor`] for the current state
+/// [`PixelEncoding`] for the current state
 /// and can consult `ColorOrigin` for provenance decisions.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "hash", derive(Hash))]
@@ -716,6 +1806,8 @@ pub struct ColorOrigin {
     pub icc: Option<Arc<[u8]>>,
     /// CICP parameters from the source file, if any.
     pub cicp: Option<Cicp>,
+    /// Parametric header color description (JPEG XL `ColorEncoding` or PNG `gAMA`+`cHRM`), if any.
+    pub parametric: Option<ParametricColor>,
     /// How the color information was originally described.
     pub provenance: ColorProvenance,
     /// Which field a CMS should treat as authoritative for transforms.
@@ -728,6 +1820,7 @@ impl ColorOrigin {
         Self {
             icc: Some(icc.into()),
             cicp: None,
+            parametric: None,
             provenance: ColorProvenance::Icc,
             color_authority: ColorAuthority::Icc,
         }
@@ -738,6 +1831,7 @@ impl ColorOrigin {
         Self {
             icc: None,
             cicp: Some(cicp),
+            parametric: None,
             provenance: ColorProvenance::Cicp,
             color_authority: ColorAuthority::Cicp,
         }
@@ -749,7 +1843,30 @@ impl ColorOrigin {
         Self {
             icc: Some(icc.into()),
             cicp: Some(cicp),
+            parametric: None,
             provenance: ColorProvenance::Cicp,
+            color_authority: ColorAuthority::Cicp,
+        }
+    }
+
+    /// Create from a non-ICC [`ParametricColor`] header (e.g. JPEG XL `ColorEncoding`).
+    pub const fn from_parametric(parametric: ParametricColor) -> Self {
+        Self {
+            icc: None,
+            cicp: parametric.to_cicp(),
+            parametric: Some(parametric),
+            provenance: ColorProvenance::Parametric,
+            color_authority: ColorAuthority::Cicp,
+        }
+    }
+
+    /// Create from PNG `gAMA` / `cHRM` chunks with preserved [`ParametricColor`] values.
+    pub const fn from_gama_chrm_parametric(parametric: ParametricColor) -> Self {
+        Self {
+            icc: None,
+            cicp: None,
+            parametric: Some(parametric),
+            provenance: ColorProvenance::GamaChrm,
             color_authority: ColorAuthority::Cicp,
         }
     }
@@ -759,6 +1876,7 @@ impl ColorOrigin {
         Self {
             icc: None,
             cicp: None,
+            parametric: None,
             provenance: ColorProvenance::GamaChrm,
             color_authority: ColorAuthority::Icc,
         }
@@ -769,6 +1887,7 @@ impl ColorOrigin {
         Self {
             icc: None,
             cicp: None,
+            parametric: None,
             provenance: ColorProvenance::Assumed,
             color_authority: ColorAuthority::Icc,
         }
@@ -1154,6 +2273,156 @@ mod tests {
         let _ = alloc::format!("{a:?}");
         let c = ColorOrigin::assumed();
         assert_ne!(a, c);
+    }
+
+    #[test]
+    fn cie_xy_validates_finite_and_normalizes_negative_zero() {
+        assert_eq!(CieXy::try_new(f32::NAN, 0.3), None);
+        assert_eq!(CieXy::try_new(0.3, f32::INFINITY), None);
+        // Imaginary primaries such as ACES AP0 blue (y = -0.077) are valid.
+        let ap0_blue = CieXy::new(0.18, -0.077);
+        assert_eq!(ap0_blue.to_tuple(), (0.18, -0.077));
+        // -0.0 canonicalizes to +0.0 so bitwise Eq/Hash agree with numeric zero.
+        let neg = CieXy::new(-0.0, -0.0);
+        let pos = CieXy::new(0.0, 0.0);
+        assert_eq!(neg, pos);
+        assert_eq!(neg.x().to_bits(), 0);
+        assert_eq!(neg.y().to_bits(), 0);
+    }
+
+    #[test]
+    fn gamma_curve_distinguishes_oetf_from_eotf_exponent() {
+        assert_eq!(GammaCurve::try_from_encoding_exponent(0.0), None);
+        assert_eq!(GammaCurve::try_from_encoding_exponent(-0.5), None);
+        assert_eq!(GammaCurve::try_from_eotf_exponent(f32::NAN), None);
+
+        let jxl_22 = GammaCurve::from_eotf_exponent(2.2);
+        assert!((jxl_22.encoding_exponent() - (1.0 / 2.2)).abs() < 1e-7);
+        assert!((jxl_22.eotf_exponent() - 2.2).abs() < 1e-6);
+
+        let png_gama = GammaCurve::from_encoding_exponent(45455.0 / 100_000.0);
+        assert_eq!(png_gama.encoding_exponent(), 0.45455);
+        assert!((png_gama.eotf_exponent() - 2.2).abs() < 1e-4);
+    }
+
+    #[test]
+    fn parametric_color_cicp_and_primaries_transfer_resolution() {
+        assert_eq!(ParametricColor::SRGB.to_cicp(), Some(Cicp::SRGB));
+        assert_eq!(
+            ParametricColor::SRGB.to_primaries_transfer(),
+            Some((ColorPrimaries::Bt709, TransferFunction::Srgb))
+        );
+        assert_eq!(
+            ParametricColor::DISPLAY_P3.to_cicp(),
+            Some(Cicp::DISPLAY_P3)
+        );
+        assert_eq!(
+            ParametricColor::DISPLAY_P3.to_primaries_transfer(),
+            Some((ColorPrimaries::DisplayP3, TransferFunction::Srgb))
+        );
+        // Theatrical DCI-P3 has CICP (11, 17, 0, true), NOT DisplayP3 (D65).
+        assert_eq!(
+            ParametricColor::DCI_P3.to_cicp(),
+            Some(Cicp::new(11, 17, 0, true))
+        );
+        assert_eq!(ParametricColor::DCI_P3.to_primaries_transfer(), None);
+
+        // Adobe RGB maps to compact (AdobeRgb, Gamma22) but has no CICP code.
+        assert_eq!(ParametricColor::ADOBE_RGB.to_cicp(), None);
+        assert_eq!(
+            ParametricColor::ADOBE_RGB.to_primaries_transfer(),
+            Some((ColorPrimaries::AdobeRgb, TransferFunction::Gamma22))
+        );
+
+        // Custom primaries / non-D65 white point / arbitrary gamma do not collapse.
+        let custom = ParametricColor::rgb(
+            ParametricPrimaries::Custom {
+                red: CieXy::new(0.7347, 0.2653),
+                green: CieXy::new(0.0, 1.0),
+                blue: CieXy::new(0.0001, -0.077),
+            },
+            WhitePoint::Custom(CieXy::new(0.32168, 0.33767)),
+            ParametricTransfer::Gamma(GammaCurve::from_encoding_exponent(0.5)),
+        )
+        .with_rendering_intent(RenderingIntent::Perceptual);
+        assert_eq!(custom.to_cicp(), None);
+        assert_eq!(custom.to_primaries_transfer(), None);
+    }
+
+    #[test]
+    fn color_context_parametric_and_canonical_rendering_intent() {
+        let a = ColorContext::from_parametric(
+            ParametricColor::DCI_P3.with_rendering_intent(RenderingIntent::Perceptual),
+        );
+        let b = ColorContext::from_parametric(ParametricColor::DCI_P3)
+            .with_rendering_intent(RenderingIntent::Perceptual);
+        assert_eq!(a, b);
+        assert_eq!(a.rendering_intent(), Some(RenderingIntent::Perceptual));
+        assert_eq!(
+            a.parametric().map(|p| p.rendering_intent),
+            Some(RenderingIntent::Perceptual)
+        );
+
+        let cicp_perceptual =
+            ColorContext::from_cicp(Cicp::SRGB).with_rendering_intent(RenderingIntent::Perceptual);
+        assert_eq!(cicp_perceptual.cicp(), Some(Cicp::SRGB));
+        assert_eq!(
+            cicp_perceptual.rendering_intent(),
+            Some(RenderingIntent::Perceptual)
+        );
+        assert_ne!(cicp_perceptual, ColorContext::from_cicp(Cicp::SRGB));
+
+        let origin = ColorOrigin::from_parametric(ParametricColor::DCI_P3);
+        assert_eq!(origin.provenance, ColorProvenance::Parametric);
+        assert_eq!(origin.parametric, Some(ParametricColor::DCI_P3));
+        assert_eq!(origin.cicp, Some(Cicp::new(11, 17, 0, true)));
+    }
+
+    #[test]
+    fn icc_parametric_curve_and_working_space_presets() {
+        assert_eq!(IccParametricCurve::PROPHOTO_RGB.function_type(), 3);
+        assert_eq!(
+            IccParametricCurve::PROPHOTO_RGB.icc_params(),
+            &[1.8, 1.0, 0.0, 1.0 / 16.0, 1.0 / 32.0]
+        );
+        // -0.0 canonicalizes to +0.0 for Eq/Hash.
+        let neg_zero =
+            IccParametricCurve::try_from_icc_para(3, &[1.8, 1.0, -0.0, 1.0 / 16.0, 1.0 / 32.0])
+                .unwrap();
+        assert_eq!(neg_zero, IccParametricCurve::PROPHOTO_RGB);
+        // Invalid parameter counts, NaN, g <= 0, and a == 0 for types 1/2 reject cleanly.
+        assert_eq!(IccParametricCurve::try_from_icc_para(0, &[1.8, 1.0]), None);
+        assert_eq!(IccParametricCurve::try_from_icc_para(5, &[1.0]), None);
+        assert_eq!(IccParametricCurve::try_type0_gamma(0.0), None);
+        assert_eq!(IccParametricCurve::try_type0_gamma(f32::NAN), None);
+        assert_eq!(IccParametricCurve::try_type1_cie122(2.2, 0.0, 0.0), None);
+        assert_eq!(
+            IccParametricCurve::try_type2_iec61966_3(2.2, 0.0, 0.0, 0.0),
+            None
+        );
+        assert!(IccParametricCurve::try_type4(2.4, 0.9, 0.1, 0.08, 0.04, 0.01, -0.01).is_some());
+
+        // Working-space presets and CICP round-trip for BT.601 525/625.
+        assert_eq!(
+            ParametricColor::LINEAR_SRGB.to_cicp(),
+            Some(Cicp::new(1, 8, 0, true))
+        );
+        assert_eq!(
+            ParametricColor::LINEAR_SRGB.to_primaries_transfer(),
+            Some((ColorPrimaries::Bt709, TransferFunction::Linear))
+        );
+        assert_eq!(ParametricColor::PROPHOTO_RGB.white_point, WhitePoint::D50);
+        assert_eq!(ParametricColor::ACES_CG.white_point, WhitePoint::D60);
+        assert_eq!(ParametricColor::ACES_2065_1.white_point, WhitePoint::D60);
+        assert_eq!(WhitePoint::C.cie_xy(), CieXy::C);
+        assert_eq!(ParametricColor::PROPHOTO_RGB.to_cicp(), None);
+        assert_eq!(ParametricColor::ACES_CG.to_cicp(), None);
+
+        for code in [1u8, 5, 6, 9, 11, 12] {
+            let cicp = Cicp::new(code, 1, 0, true);
+            let p = ParametricColor::from_cicp(cicp).unwrap();
+            assert_eq!(p.to_cicp(), Some(cicp));
+        }
     }
 }
 

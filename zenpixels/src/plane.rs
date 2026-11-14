@@ -1239,8 +1239,11 @@ impl<'a> Planes<'a> {
 ///
 /// A gray or monochrome picture is a `Luma` plane. Semi-planar chroma (NV12,
 /// P010, NV21) is one plane holding two components per position, in the order
-/// the variant names.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// the variant names. Planar CMYK holds `Cyan`, `Magenta`, `Yellow` and `Black`
+/// planes. Extra channels (`Alpha`, `Depth`, `SelectionMask`, `Thermal`,
+/// `SpotColor`, `Cfa`, `Auxiliary`) may accompany any color family at full
+/// picture resolution or form an extra-only `Mono` layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PlaneRole {
     /// Y, or gray.
@@ -1261,6 +1264,59 @@ pub enum PlaneRole {
     Blue,
     /// Alpha.
     Alpha,
+    /// Cyan ink component in planar CMYK.
+    Cyan,
+    /// Magenta ink component in planar CMYK.
+    Magenta,
+    /// Yellow ink component in planar CMYK.
+    Yellow,
+    /// Black (key) ink component in planar CMYK.
+    Black,
+    /// Scene or camera depth map extra channel.
+    Depth,
+    /// Selection or segmentation mask extra channel.
+    SelectionMask,
+    /// Thermal / infrared radiance extra channel.
+    Thermal,
+    /// Spot-color ink extra channel (`0..=255`).
+    SpotColor(u8),
+    /// Bayer / color-filter-array sensor sub-channel (`0..=255`).
+    Cfa(u8),
+    /// Codec-generic auxiliary extra channel (`0..=255`, e.g. JPEG XL `Optional` / `Unknown`).
+    Auxiliary(u8),
+}
+
+// Explicit Hash preserves the `isize` discriminant width of the original unit
+// variants (`0..=8`) so `portable_v1_golden_hashes` remains bit-for-bit stable
+// across compilers and enum representation changes.
+impl core::hash::Hash for PlaneRole {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        let (tag, index): (isize, Option<u8>) = match *self {
+            Self::Luma => (0, None),
+            Self::Cb => (1, None),
+            Self::Cr => (2, None),
+            Self::CbCr => (3, None),
+            Self::CrCb => (4, None),
+            Self::Red => (5, None),
+            Self::Green => (6, None),
+            Self::Blue => (7, None),
+            Self::Alpha => (8, None),
+            Self::Cyan => (9, None),
+            Self::Magenta => (10, None),
+            Self::Yellow => (11, None),
+            Self::Black => (12, None),
+            Self::Depth => (13, None),
+            Self::SelectionMask => (14, None),
+            Self::Thermal => (15, None),
+            Self::SpotColor(i) => (16, Some(i)),
+            Self::Cfa(i) => (17, Some(i)),
+            Self::Auxiliary(i) => (18, Some(i)),
+        };
+        state.write_isize(tag);
+        if let Some(i) = index {
+            state.write_u8(i);
+        }
+    }
 }
 
 impl PlaneRole {
@@ -1271,6 +1327,34 @@ impl PlaneRole {
             Self::CbCr | Self::CrCb => 2,
             _ => 1,
         }
+    }
+
+    /// True when this role is a primary color component (`Luma`/chroma, `RGB`, or `CMYK`).
+    pub const fn is_color(self) -> bool {
+        !self.is_extra()
+    }
+
+    /// True when this role is one of the four planar CMYK ink components.
+    pub const fn is_cmyk(self) -> bool {
+        matches!(
+            self,
+            Self::Cyan | Self::Magenta | Self::Yellow | Self::Black
+        )
+    }
+
+    /// True when this role is an extra channel (`Alpha`, `Depth`, `SelectionMask`,
+    /// `Thermal`, `SpotColor`, `Cfa`, or `Auxiliary`).
+    pub const fn is_extra(self) -> bool {
+        matches!(
+            self,
+            Self::Alpha
+                | Self::Depth
+                | Self::SelectionMask
+                | Self::Thermal
+                | Self::SpotColor(_)
+                | Self::Cfa(_)
+                | Self::Auxiliary(_)
+        )
     }
 
     const fn is_chroma(self) -> bool {
@@ -1427,14 +1511,14 @@ pub enum LayoutError {
     Empty,
     /// A component appears in more than one plane.
     DuplicateRole(PlaneRole),
-    /// YCbCr and RGB components are mixed.
+    /// Primary color families (YCbCr, RGB, CMYK) are mixed.
     MixedFamilies,
-    /// A component the others require is missing (Luma with chroma, or one
-    /// of R, G, B).
+    /// A component the others require is missing (Luma with chroma, one of
+    /// R, G, B, or one of C, M, Y, K).
     MissingRole(PlaneRole),
     /// Subsampling disagrees with the planes: chroma planes need a
-    /// subsampling other than `Mono`, a luma-only layout needs `Mono`, and
-    /// planar RGB needs `Yuv444`.
+    /// subsampling other than `Mono`, luma-only and extra-only layouts need
+    /// `Mono`, and planar RGB or CMYK needs `Yuv444`.
     Subsampling,
     /// The number of planes differs from the layout.
     PlaneCount {
@@ -1474,7 +1558,9 @@ impl fmt::Display for LayoutError {
             }
             Self::Empty => f.write_str("planar layout has no planes"),
             Self::DuplicateRole(r) => write!(f, "planar layout holds {r:?} twice"),
-            Self::MixedFamilies => f.write_str("planar layout mixes YCbCr and RGB components"),
+            Self::MixedFamilies => {
+                f.write_str("planar layout mixes incompatible color families (YCbCr, RGB, CMYK)")
+            }
             Self::MissingRole(r) => write!(f, "planar layout lacks {r:?}"),
             Self::Subsampling => f.write_str("chroma subsampling disagrees with the planes"),
             Self::PlaneCount { expected, actual } => {
@@ -1514,10 +1600,17 @@ pub struct PlanarLayout {
 impl PlanarLayout {
     /// Check and adopt a plane list.
     ///
-    /// Each component appears once. YCbCr layouts hold Luma, optionally both
-    /// Cb and Cr (separately or in one interleaved plane), and optionally
-    /// Alpha; RGB layouts hold Red, Green, Blue and optionally Alpha; an alpha-only
-    /// layout holds Alpha alone, with `Mono` subsampling.
+    /// Each role appears at most once. Primary color families are mutually
+    /// exclusive:
+    /// - **YCbCr / Gray**: `Luma`, optionally both `Cb` and `Cr` (separately or
+    ///   in one `CbCr`/`CrCb` plane).
+    /// - **RGB**: `Red`, `Green`, and `Blue` with `Yuv444`.
+    /// - **CMYK**: `Cyan`, `Magenta`, `Yellow`, and `Black` with `Yuv444`.
+    ///
+    /// Extra roles (`Alpha`, `Depth`, `SelectionMask`, `Thermal`,
+    /// `SpotColor(i)`, `Cfa(i)`, `Auxiliary(i)`) may accompany any primary
+    /// family at full picture dimensions, or stand alone with `Mono`
+    /// subsampling.
     ///
     /// # Errors
     ///
@@ -1549,8 +1642,9 @@ impl PlanarLayout {
             cr |= holds_cr;
         }
         let rgb = planes.iter().any(|p| p.role.is_rgb());
+        let cmyk = planes.iter().any(|p| p.role.is_cmyk());
         let ycbcr = has(PlaneRole::Luma) || cb || cr;
-        if rgb && ycbcr {
+        if u8::from(rgb) + u8::from(cmyk) + u8::from(ycbcr) > 1 {
             return Err(LayoutError::MixedFamilies);
         }
         if rgb {
@@ -1562,10 +1656,22 @@ impl PlanarLayout {
             if subsampling != ChromaSubsampling::Yuv444 {
                 return Err(LayoutError::Subsampling);
             }
-        } else {
-            // A lone alpha plane is a valid image (`image`'s `A8`); anything else needs luma.
-            let alpha_only = planes.len() == 1 && has(PlaneRole::Alpha);
-            if !has(PlaneRole::Luma) && !alpha_only {
+        } else if cmyk {
+            for r in [
+                PlaneRole::Cyan,
+                PlaneRole::Magenta,
+                PlaneRole::Yellow,
+                PlaneRole::Black,
+            ] {
+                if !has(r) {
+                    return Err(LayoutError::MissingRole(r));
+                }
+            }
+            if subsampling != ChromaSubsampling::Yuv444 {
+                return Err(LayoutError::Subsampling);
+            }
+        } else if ycbcr {
+            if !has(PlaneRole::Luma) {
                 return Err(LayoutError::MissingRole(PlaneRole::Luma));
             }
             if cb != cr {
@@ -1575,6 +1681,9 @@ impl PlanarLayout {
             if cb == (subsampling == ChromaSubsampling::Mono) {
                 return Err(LayoutError::Subsampling);
             }
+        } else if subsampling != ChromaSubsampling::Mono {
+            // Extra-only layout (e.g. lone Alpha or Depth/Mask planes) has no chroma.
+            return Err(LayoutError::Subsampling);
         }
         Ok(Self {
             planes,
