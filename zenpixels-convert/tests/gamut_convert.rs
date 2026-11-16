@@ -260,6 +260,6 @@ fn convert_to_preserves_color_context() {
         "color context should be preserved after conversion"
     );
     let out_ctx = out.color_context().unwrap();
-    assert!(out_ctx.icc.is_some());
-    assert_eq!(out_ctx.icc.as_ref().unwrap().len(), 32);
+    assert!(out_ctx.icc().is_some());
+    assert_eq!(out_ctx.icc().unwrap().len(), 32);
 }

@@ -60,8 +60,8 @@ fn adapt_for_encode_honors_the_current_profile_as_convert_to_does() {
     let adapted = adapted.as_slice();
     assert_eq!(adapted.row(0), direct.as_slice().row(0));
     assert_eq!(
-        adapted.color_context().map(|c| c.cicp),
-        direct.as_slice().color_context().map(|c| c.cicp)
+        adapted.color_context().map(|c| c.cicp()),
+        direct.as_slice().color_context().map(|c| c.cicp())
     );
 }
 
@@ -75,7 +75,7 @@ fn convert_into_replaces_the_destination_color_context() {
     let stale = Arc::new(ColorContext::from_cicp(zenpixels::Cicp::DISPLAY_P3));
     let dst = buffer.as_slice_mut().with_color_context(stale);
     let converted = source.convert_into(dst).unwrap();
-    let cicp = converted.color_context().and_then(|c| c.cicp);
+    let cicp = converted.color_context().and_then(|c| c.cicp());
     assert_ne!(cicp, Some(zenpixels::Cicp::DISPLAY_P3));
 }
 

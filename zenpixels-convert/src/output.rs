@@ -224,8 +224,7 @@ pub(crate) fn finalize_for_output_with(
     let options = crate::policy::ConvertOptions::permissive()
         .with_alpha_policy(crate::AlphaPolicy::DiscardUnchecked);
     let mut plan = OutputPlan::new(
-        buffer.descriptor(),
-        buffer.color_context().cloned(),
+        buffer.encoding(),
         origin,
         target,
         pixel_format,
@@ -247,23 +246,15 @@ pub(crate) fn finalize_for_output_with(
 pub(crate) fn current_profile(
     buffer: &PixelBuffer,
 ) -> Result<crate::ColorProfileSource<'_>, At<ConvertError>> {
-    current_profile_for(buffer.descriptor(), buffer.color_context().map(Arc::as_ref))
+    current_profile_for(buffer.encoding())
 }
 
 pub(crate) fn current_profile_for(
-    desc: PixelDescriptor,
-    current: Option<&crate::ColorContext>,
+    encoding: crate::PixelEncoding<'_>,
 ) -> Result<crate::ColorProfileSource<'_>, At<ConvertError>> {
-    if let Some(context) = current {
-        // Select the authoritative field at decode time. Keeping both here
-        // makes current color ambiguous; ColorOrigin is the roundtrip carrier.
-        if context.icc.is_some() && context.cicp.is_some() {
-            return Err(whereat::at!(ConvertError::NeedsCms {
-                from: desc,
-                to: desc
-            }));
-        }
-        if let Some(cicp) = context.cicp {
+    let desc = encoding.descriptor();
+    if let Some(context) = encoding.color_context() {
+        if let Some(cicp) = context.cicp() {
             // A claim that leaves primaries or transfer unresolved (H.273
             // code 2, unspecified, or a code zenpixels does not model)
             // describes no colour space for those fields. It agrees with a
@@ -340,7 +331,10 @@ fn descriptor_for_profile(
         .with_transfer(transfer))
 }
 
-fn profiles_match(a: &crate::ColorProfileSource<'_>, b: &crate::ColorProfileSource<'_>) -> bool {
+pub(crate) fn profiles_match(
+    a: &crate::ColorProfileSource<'_>,
+    b: &crate::ColorProfileSource<'_>,
+) -> bool {
     match (a, b) {
         (crate::ColorProfileSource::Icc(a), crate::ColorProfileSource::Icc(b)) => a == b,
         (crate::ColorProfileSource::Icc(_), _) | (_, crate::ColorProfileSource::Icc(_)) => false,

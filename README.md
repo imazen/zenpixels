@@ -101,12 +101,13 @@ general signed/wide numerical conversion remains unsupported. See the
 
 ## Color and native samples
 
-- `ColorContext` describes the **current** samples, including an attached ICC
-  or CICP and luminance anchors. An attached ICC is authoritative even if a
-  companion disagrees or the ICC is unusable; unsupported operations refuse or
-  preserve the original interpretation.
-- `ColorOrigin` keeps original file declarations separately. Converted samples
-  must be emitted with matching current metadata.
+- `ColorContext` describes the **current** samples with at most one `ColorProfile`
+  (`Cicp` or `Icc`) plus luminance anchors, and `PixelEncoding` borrows a
+  descriptor and optional context together.
+- `ColorOrigin` keeps original file declarations separately (including dual
+  ICC + CICP container claims; an attached ICC is authoritative even if a
+  companion disagrees or the ICC is unusable). Converted samples must be emitted
+  with matching current metadata.
 - `SampleEncoding` describes native integer code depth and bit placement.
   `CodePlane` reads U8/U16 component codes from typed planes. Ten-bit white 1023
   is not ordinary full-range U16 white 65535: canonicalization is explicit.

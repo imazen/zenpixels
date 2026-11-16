@@ -627,8 +627,7 @@ fn output_plan_rows_match_packed() {
             _ => PixelFormat::RgbaF32,
         };
         let mut plan = OutputPlan::new(
-            source,
-            None,
+            source.encoding(),
             &ColorOrigin::assumed(),
             profile.clone(),
             format,
@@ -671,8 +670,7 @@ fn output_plan_rows_match_packed() {
 
         // An identity plan hands the rows straight back, padding and all.
         let plan = OutputPlan::new_with_descriptor(
-            source,
-            None,
+            source.encoding(),
             &ColorOrigin::assumed(),
             profile.clone(),
             source,

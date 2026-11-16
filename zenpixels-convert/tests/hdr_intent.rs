@@ -85,7 +85,7 @@ fn explicit_white_overrides_context_and_survives_strided_conversion() {
         .unwrap();
     assert_eq!(codes(&inherited), codes(&converted));
     assert_eq!(
-        inherited.color_context().unwrap().diffuse_white,
+        inherited.color_context().unwrap().diffuse_white(),
         Some(DiffuseWhite::new(100.))
     );
     assert_ne!(codes(&inherited), vec![38055; 3]);
@@ -214,7 +214,7 @@ fn black_frame_measurement_maps_to_black_without_inventing_a_declared_peak() {
     for row in 0..result.height() {
         assert_eq!(result.as_slice().row(row), &[0; 6]);
     }
-    assert_eq!(result.color_context().unwrap().hdr_peak, None);
+    assert_eq!(result.color_context().unwrap().hdr_peak(), None);
 }
 
 #[cfg(feature = "bt2446a")]

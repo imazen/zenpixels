@@ -5,8 +5,8 @@ use std::sync::{
 };
 use zenpixels_convert::{
     AlphaPolicy, Cicp, ColorContext, ColorOrigin, ColorProfileSource, ConvertError, ConvertOptions,
-    OutputPlan, OutputProfile, PixelDescriptor, PixelFormat, PixelSlice, PixelSliceMut,
-    TransferFunction,
+    OutputPlan, OutputProfile, PixelDescriptor, PixelEncoding, PixelFormat, PixelSlice,
+    PixelSliceMut, RowConverter, TransferFunction,
     cms::{CmsPluginError, PluggableCms, RowTransform},
 };
 
@@ -68,8 +68,7 @@ fn transforms_are_prepared_before_rows_and_execute_with_matching_signaling() {
     let target: Arc<[u8]> = Arc::from(&b"target"[..]);
     let cms = Spy::default();
     let mut plan = OutputPlan::new(
-        opaque(),
-        Some(current.clone()),
+        PixelEncoding::new(opaque(), Some(&current)),
         &origin,
         OutputProfile::Icc(target.clone()),
         PixelFormat::Rgb8,
@@ -96,8 +95,8 @@ fn transforms_are_prepared_before_rows_and_execute_with_matching_signaling() {
             .with_color_context(current.clone());
         let destination = PixelSliceMut::new(&mut output, 2, 2, 12, target_desc).unwrap();
         let rows = plan.convert_rows(source, destination).unwrap();
-        assert_eq!(rows.color_context().unwrap().icc.as_ref(), Some(&target));
-        assert!(rows.color_context().unwrap().cicp.is_none());
+        assert_eq!(rows.color_context().unwrap().icc_arc(), Some(&target));
+        assert!(rows.color_context().unwrap().cicp().is_none());
     });
     assert_eq!(allocations.count_total, 0);
     assert_eq!(cms.rows.load(Ordering::SeqCst), 2);
@@ -119,8 +118,7 @@ fn changed_interpretation_and_geometry_refuse_before_destination_writes() {
     let descriptor = PixelDescriptor::RGB8_SRGB;
     let current = Arc::new(ColorContext::from_cicp(Cicp::SRGB));
     let mut plan = OutputPlan::new(
-        descriptor,
-        Some(current.clone()),
+        PixelEncoding::new(descriptor, Some(&current)),
         &ColorOrigin::assumed(),
         OutputProfile::Named(Cicp::SRGB),
         PixelFormat::Rgb8,
@@ -184,7 +182,7 @@ fn changed_interpretation_and_geometry_refuse_before_destination_writes() {
         )
         .unwrap();
     assert_eq!(rows.row(0), &[1, 2, 3, 4, 5, 6]);
-    assert_eq!(rows.color_context().unwrap().cicp, Some(Cicp::SRGB));
+    assert_eq!(rows.color_context().unwrap().cicp(), Some(Cicp::SRGB));
 }
 
 #[test]
@@ -219,8 +217,7 @@ fn required_sample_policies_cannot_be_waived_by_an_opaque_profile_plugin() {
     ] {
         let cms = Spy::default();
         let error = OutputPlan::new(
-            source,
-            Some(current.clone()),
+            PixelEncoding::new(source, Some(&current)),
             &ColorOrigin::assumed(),
             OutputProfile::Icc(target.clone()),
             format,
@@ -270,8 +267,7 @@ fn native_icc_rows_match_a_separately_built_cms_worker_and_keep_strides() {
             .unwrap();
     }
     let mut plan = OutputPlan::new(
-        PixelDescriptor::RGB8_SRGB,
-        Some(current.clone()),
+        PixelEncoding::new(PixelDescriptor::RGB8_SRGB, Some(&current)),
         &ColorOrigin::from_cicp(Cicp::SRGB),
         OutputProfile::Named(Cicp::SRGB),
         PixelFormat::Rgb8,
@@ -293,7 +289,7 @@ fn native_icc_rows_match_a_separately_built_cms_worker_and_keep_strides() {
     )
     .unwrap();
     let converted = plan.convert_rows(source, destination).unwrap();
-    assert_eq!(converted.color_context().unwrap().cicp, Some(Cicp::SRGB));
+    assert_eq!(converted.color_context().unwrap().cicp(), Some(Cicp::SRGB));
     assert_eq!(plan.metadata().cicp, Some(Cicp::SRGB));
     assert!(plan.metadata().icc.is_none());
     assert_eq!(output, expected);
@@ -307,8 +303,7 @@ fn output_color_context_is_declared_before_rows_and_carried_by_every_batch() {
     let target: Arc<[u8]> = Arc::from(&b"target"[..]);
     let cms = Spy::default();
     let mut plan = OutputPlan::new(
-        opaque(),
-        Some(current.clone()),
+        PixelEncoding::new(opaque(), Some(&current)),
         &ColorOrigin::assumed(),
         OutputProfile::Icc(target.clone()),
         PixelFormat::Rgb8,
@@ -317,7 +312,7 @@ fn output_color_context_is_declared_before_rows_and_carried_by_every_batch() {
     )
     .unwrap();
     let declared = plan.output_color_context().clone();
-    assert_eq!(declared.icc.as_ref(), Some(&target));
+    assert_eq!(declared.icc_arc(), Some(&target));
     assert_ne!(*declared, *current);
     let input = [1, 2, 3, 4, 5, 6];
     let mut output = [0; 6];
@@ -342,8 +337,7 @@ fn output_color_context_is_declared_before_rows_and_carried_by_every_batch() {
             .with_diffuse_white(DiffuseWhite::new(203.0)),
     );
     let linear = OutputPlan::new(
-        pq,
-        Some(pq_context.clone()),
+        PixelEncoding::new(pq, Some(&pq_context)),
         &ColorOrigin::assumed(),
         OutputProfile::Named(Cicp::new(9, 8, 0, true)),
         PixelFormat::RgbF32,
@@ -356,8 +350,29 @@ fn output_color_context_is_declared_before_rows_and_carried_by_every_batch() {
         TransferFunction::Linear
     );
     let declared = linear.output_color_context();
-    assert_eq!(declared.cicp, linear.metadata().cicp);
-    assert_eq!(declared.icc, linear.metadata().icc);
-    assert_eq!(declared.diffuse_white, Some(DiffuseWhite::new(203.0)));
-    assert_eq!(declared.diffuse_white, pq_context.diffuse_white);
+    assert_eq!(declared.cicp(), linear.metadata().cicp);
+    assert_eq!(declared.icc_arc().cloned(), linear.metadata().icc);
+    assert_eq!(declared.diffuse_white(), Some(DiffuseWhite::new(203.0)));
+    assert_eq!(declared.diffuse_white(), pq_context.diffuse_white());
+}
+
+#[test]
+fn row_converter_new_with_encoding_uses_current_profiles_and_anchors() {
+    let src_ctx = ColorContext::from_icc(Arc::<[u8]>::from(&b"src-icc"[..]));
+    let dst_ctx = ColorContext::from_icc(Arc::<[u8]>::from(&b"dst-icc"[..]));
+    let cms = Spy::default();
+    let mut conv = RowConverter::new_with_encoding(
+        PixelEncoding::new(opaque(), Some(&src_ctx)),
+        PixelEncoding::new(opaque(), Some(&dst_ctx)),
+        &ConvertOptions::retain_channels(),
+        Some(&cms),
+    )
+    .unwrap();
+    assert_eq!(
+        *cms.profiles.lock().unwrap(),
+        [(b"src-icc".to_vec(), b"dst-icc".to_vec())]
+    );
+    let mut out = [0u8; 3];
+    conv.try_convert_row(&[10, 20, 30], &mut out, 1).unwrap();
+    assert_eq!(out, [245, 235, 225]);
 }

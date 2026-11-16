@@ -122,7 +122,7 @@ enough = { version = "0.4.4", default-features = false }
 zenpixels = { workspace = true, default-features = false, features = ["icc"] }
 linear-srgb = { version = "0.6.12", default-features = false, features = ["transfer"] }
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
-rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
+rgb = { version = "0.8.53", default-features = false, features = ["bytemuck"], optional = true }
 garb = { version = "0.2.8", default-features = false, features = ["experimental"] }
 # Unified macros require the stable 0.9.31 release. SIMD types stay internal.
 archmage = { version = "0.9.31", default-features = false }

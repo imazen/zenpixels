@@ -106,13 +106,13 @@ fn allocating_into_and_adaptation_share_output_interpretation() {
             assert_eq!(owned.as_slice().row(y), destination.row(y));
             assert_eq!(owned.as_slice().row(y), adapted.as_slice().row(y));
         }
-        assert_eq!(owned.color_context().unwrap().diffuse_white, Some(white));
+        assert_eq!(owned.color_context().unwrap().diffuse_white(), Some(white));
         assert_eq!(
-            destination.color_context().unwrap().diffuse_white,
+            destination.color_context().unwrap().diffuse_white(),
             Some(white)
         );
         assert_eq!(
-            adapted.as_slice().color_context().unwrap().diffuse_white,
+            adapted.as_slice().color_context().unwrap().diffuse_white(),
             Some(white)
         );
     }
