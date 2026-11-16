@@ -9,16 +9,16 @@
 
 ## summary
 #
-#   inherent methods                           67
-#   enum variants                              16
-#   trait roster entries (type × trait)        73
+#   inherent methods                           66
+#   enum variants                              14
+#   trait roster entries (type × trait)        72
 #
 # per-module pub lines:
-#   (root)                            9
+#   (root)                            8
 #   buffer                            3
 #   cicp                              2
 #   color                            14
-#   descriptor                       20
+#   descriptor                       18
 #   hdr                               4
 #   icc                               2
 #   orientation                       1
@@ -28,7 +28,7 @@
 #   precision                         5
 #   sample                            7
 
-## items (83 lines)
+## items (80 lines)
 
 pub fn HashInclusions::assert_fields_are_eq(&self)
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
@@ -57,7 +57,6 @@ pub fn descriptor::ColorModel::assert_fields_are_eq(&self)
 pub fn descriptor::ColorPrimaries::assert_fields_are_eq(&self)
 pub fn descriptor::DescriptorError::assert_fields_are_eq(&self)
 pub fn descriptor::GenericFormat::assert_fields_are_eq(&self)
-pub fn descriptor::InkPolarity::assert_fields_are_eq(&self)
 pub fn descriptor::PixelDescriptor::assert_fields_are_eq(&self)
 pub fn descriptor::PixelFormat::assert_fields_are_eq(&self)
 pub fn descriptor::SignalRange::assert_fields_are_eq(&self)
@@ -102,7 +101,6 @@ pub ChannelLayout::__Reserved(descriptor::reserved::Reserved)
 pub ChannelType::__Reserved(descriptor::reserved::Reserved)
 pub ColorModel::__Reserved(descriptor::reserved::Reserved)
 pub ColorPrimaries::__Reserved(descriptor::reserved::Reserved)
-pub InkPolarity::__Reserved(descriptor::reserved::Reserved)
 pub SignalRange::__Reserved(descriptor::reserved::Reserved)
 pub TransferFunction::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::AlphaMode::__Reserved(descriptor::reserved::Reserved)
@@ -110,11 +108,10 @@ pub descriptor::ChannelLayout::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::ChannelType::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::ColorModel::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::ColorPrimaries::__Reserved(descriptor::reserved::Reserved)
-pub descriptor::InkPolarity::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::SignalRange::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::TransferFunction::__Reserved(descriptor::reserved::Reserved)
 
-## trait impls (73 types)
+## trait impls (72 types)
 
 HashInclusions: TrivialClone
 buffer::Bgrx: TrivialClone
@@ -142,7 +139,6 @@ descriptor::ColorModel: TrivialClone
 descriptor::ColorPrimaries: TrivialClone
 descriptor::DescriptorError: TrivialClone
 descriptor::GenericFormat: TrivialClone
-descriptor::InkPolarity: TrivialClone
 descriptor::PixelDescriptor: TrivialClone
 descriptor::PixelFormat: TrivialClone
 descriptor::SignalRange: TrivialClone

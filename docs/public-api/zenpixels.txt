@@ -9,23 +9,23 @@
 ## summary
 #
 #   pub modules                                13
-#   pub types (struct/enum/trait/alias)       166
-#   pub consts/statics                        643
+#   pub types (struct/enum/trait/alias)       164
+#   pub consts/statics                        693
 #   free functions                              2
 #   inherent methods                          437
 #   struct fields                             134
-#   enum variants                             449
+#   enum variants                             485
 #   re-exports                                  1
-#   trait roster entries (type × trait)       572
-#   auto-trait-complete types                  80
+#   trait roster entries (type × trait)       564
+#   auto-trait-complete types                  79
 #   auto-trait exceptions                      15
 #
 # per-module pub lines:
-#   (root)                          747
+#   (root)                          766
 #   buffer                          336
 #   cicp                             38
 #   color                           186
-#   descriptor                      230
+#   descriptor                      295
 #   hdr                              21
 #   icc                              11
 #   orientation                      11
@@ -35,7 +35,7 @@
 #   precision                        20
 #   sample                           36
 
-## items (1594 lines)
+## items (1678 lines)
 
 pub mod zenpixels
 pub use At
@@ -456,18 +456,34 @@ pub descriptor::ChannelLayout::Bgr
 pub descriptor::ChannelLayout::Bgra
 pub descriptor::ChannelLayout::Cmyk
 pub descriptor::ChannelLayout::CmykAlpha
+pub descriptor::ChannelLayout::CmykInverted
+pub descriptor::ChannelLayout::CmykInvertedAlpha
 pub descriptor::ChannelLayout::Gray
 pub descriptor::ChannelLayout::GrayAlpha
+pub descriptor::ChannelLayout::Hsl
+pub descriptor::ChannelLayout::HslAlpha
+pub descriptor::ChannelLayout::Hsv
+pub descriptor::ChannelLayout::HsvAlpha
+pub descriptor::ChannelLayout::Jzazbz
+pub descriptor::ChannelLayout::JzazbzAlpha
+pub descriptor::ChannelLayout::Jzczhz
+pub descriptor::ChannelLayout::JzczhzAlpha
 pub descriptor::ChannelLayout::Lab
 pub descriptor::ChannelLayout::LabAlpha
+pub descriptor::ChannelLayout::Lch
+pub descriptor::ChannelLayout::LchAlpha
 pub descriptor::ChannelLayout::Oklab
 pub descriptor::ChannelLayout::OklabA
+pub descriptor::ChannelLayout::Oklch
+pub descriptor::ChannelLayout::OklchAlpha
 pub descriptor::ChannelLayout::Rgb
 pub descriptor::ChannelLayout::Rgba
 pub descriptor::ChannelLayout::Xyz
 pub descriptor::ChannelLayout::XyzAlpha
 pub const fn descriptor::ChannelLayout::channels(self) -> usize [also: (root)]
 pub const fn descriptor::ChannelLayout::has_alpha(self) -> bool [also: (root)]
+pub const fn descriptor::ChannelLayout::is_inverted_cmyk(self) -> bool [also: (root)]
+pub const fn descriptor::ChannelLayout::is_polar(self) -> bool [also: (root)]
 pub descriptor::ChannelType::F16
 pub descriptor::ChannelType::F32
 pub descriptor::ChannelType::F64
@@ -488,12 +504,19 @@ pub const fn descriptor::ChannelType::is_u16(self) -> bool [also: (root)]
 pub const fn descriptor::ChannelType::is_u8(self) -> bool [also: (root)]
 pub descriptor::ColorModel::Cmyk
 pub descriptor::ColorModel::Gray
+pub descriptor::ColorModel::Hsl
+pub descriptor::ColorModel::Hsv
+pub descriptor::ColorModel::Jzazbz
+pub descriptor::ColorModel::Jzczhz
 pub descriptor::ColorModel::Lab
+pub descriptor::ColorModel::Lch
 pub descriptor::ColorModel::Oklab
+pub descriptor::ColorModel::Oklch
 pub descriptor::ColorModel::Rgb
 pub descriptor::ColorModel::Xyz
 pub descriptor::ColorModel::YCbCr
 pub const fn descriptor::ColorModel::color_channels(self) -> u8 [also: (root)]
+pub const fn descriptor::ColorModel::is_polar(self) -> bool [also: (root)]
 pub fn descriptor::ColorModel::from_icc(&[u8]) -> core::option::Option<Self>
 pub descriptor::ColorPrimaries::AdobeRgb
 pub descriptor::ColorPrimaries::Bt2020
@@ -507,9 +530,6 @@ pub const fn descriptor::ColorPrimaries::from_cicp(u8) -> core::option::Option<S
 pub const fn descriptor::ColorPrimaries::gamut_matrix_to(self, Self) -> core::option::Option<[[f32; 3]; 3]> [also: (root)]
 pub const fn descriptor::ColorPrimaries::to_cicp(self) -> core::option::Option<u8> [also: (root)]
 pub const fn descriptor::ColorPrimaries::white_point(self) -> core::option::Option<(f32, f32)> [also: (root)]
-pub descriptor::InkPolarity::ZeroIsFullInk
-pub descriptor::InkPolarity::ZeroIsNoInk
-pub const fn descriptor::InkPolarity::is_inverted(self) -> bool [also: (root)]
 pub descriptor::PixelFormat::Bgr8
 pub descriptor::PixelFormat::Bgra8
 pub descriptor::PixelFormat::Bgrx8
@@ -541,22 +561,34 @@ pub const descriptor::PixelFormat::CMYKF16: Self
 pub const descriptor::PixelFormat::CMYKF16_INVERTED: Self
 pub const descriptor::PixelFormat::CMYKF32: Self
 pub const descriptor::PixelFormat::CMYKF32_INVERTED: Self
+pub const descriptor::PixelFormat::HSLAF32: Self
+pub const descriptor::PixelFormat::HSLF32: Self
+pub const descriptor::PixelFormat::HSVAF32: Self
+pub const descriptor::PixelFormat::HSVF32: Self
+pub const descriptor::PixelFormat::JZAZBZAF32: Self
+pub const descriptor::PixelFormat::JZAZBZF32: Self
+pub const descriptor::PixelFormat::JZCZHZAF32: Self
+pub const descriptor::PixelFormat::JZCZHZF32: Self
+pub const descriptor::PixelFormat::LCHAF32: Self
+pub const descriptor::PixelFormat::LCHF32: Self
+pub const descriptor::PixelFormat::OKLCHAF32: Self
+pub const descriptor::PixelFormat::OKLCHF32: Self
 pub const fn descriptor::PixelFormat::bytes_per_pixel(self) -> usize [also: (root)]
 pub const fn descriptor::PixelFormat::channel_type(self) -> descriptor::ChannelType [also: (root)]
 pub const fn descriptor::PixelFormat::channels(self) -> usize [also: (root)]
-pub const fn descriptor::PixelFormat::cmyk(descriptor::ChannelType, descriptor::InkPolarity) -> Self [also: (root)]
-pub const fn descriptor::PixelFormat::cmyka(descriptor::ChannelType, descriptor::InkPolarity) -> Self [also: (root)]
+pub const fn descriptor::PixelFormat::cmyk(descriptor::ChannelType) -> Self [also: (root)]
+pub const fn descriptor::PixelFormat::cmyk_inverted(descriptor::ChannelType) -> Self [also: (root)]
+pub const fn descriptor::PixelFormat::cmyka(descriptor::ChannelType) -> Self [also: (root)]
+pub const fn descriptor::PixelFormat::cmyka_inverted(descriptor::ChannelType) -> Self [also: (root)]
 pub const fn descriptor::PixelFormat::color_model(self) -> descriptor::ColorModel [also: (root)]
 pub const fn descriptor::PixelFormat::default_alpha(self) -> core::option::Option<descriptor::AlphaMode> [also: (root)]
 pub const fn descriptor::PixelFormat::descriptor(self) -> descriptor::PixelDescriptor [also: (root)]
 pub const fn descriptor::PixelFormat::from_parts(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>) -> core::option::Option<Self> [also: (root)]
 pub const fn descriptor::PixelFormat::has_alpha_bytes(self) -> bool [also: (root)]
-pub const fn descriptor::PixelFormat::ink_polarity(self) -> core::option::Option<descriptor::InkPolarity> [also: (root)]
 pub const fn descriptor::PixelFormat::is_grayscale(self) -> bool [also: (root)]
 pub const fn descriptor::PixelFormat::is_inverted_cmyk(self) -> bool [also: (root)]
 pub const fn descriptor::PixelFormat::layout(self) -> descriptor::ChannelLayout [also: (root)]
 pub const fn descriptor::PixelFormat::name(self) -> &'static str [also: (root)]
-pub const fn descriptor::PixelFormat::with_ink_polarity(self, descriptor::InkPolarity) -> core::option::Option<Self> [also: (root)]
 pub descriptor::SignalRange::Full
 pub descriptor::SignalRange::Narrow
 pub descriptor::TransferFunction::Bt709
@@ -571,7 +603,6 @@ pub fn descriptor::TransferFunction::reference_white_nits(&self) -> f32
 pub const fn descriptor::TransferFunction::to_cicp(self) -> core::option::Option<u8> [also: (root)]
 pub struct descriptor::DescriptorError
 pub const fn descriptor::GenericFormat::channel_type(self) -> descriptor::ChannelType [also: (root)]
-pub const fn descriptor::GenericFormat::ink_polarity(self) -> core::option::Option<descriptor::InkPolarity> [also: (root)]
 pub const fn descriptor::GenericFormat::layout(self) -> descriptor::ChannelLayout [also: (root)]
 pub descriptor::PixelDescriptor::alpha: core::option::Option<descriptor::AlphaMode>
 pub descriptor::PixelDescriptor::format: descriptor::PixelFormat
@@ -607,8 +638,20 @@ pub const descriptor::PixelDescriptor::GRAYF16: Self
 pub const descriptor::PixelDescriptor::GRAYF16_LINEAR: Self
 pub const descriptor::PixelDescriptor::GRAYF32: Self
 pub const descriptor::PixelDescriptor::GRAYF32_LINEAR: Self
+pub const descriptor::PixelDescriptor::HSLAF32_SRGB: Self
+pub const descriptor::PixelDescriptor::HSLF32_SRGB: Self
+pub const descriptor::PixelDescriptor::HSVAF32_SRGB: Self
+pub const descriptor::PixelDescriptor::HSVF32_SRGB: Self
+pub const descriptor::PixelDescriptor::JZAZBZAF32: Self
+pub const descriptor::PixelDescriptor::JZAZBZF32: Self
+pub const descriptor::PixelDescriptor::JZCZHZAF32: Self
+pub const descriptor::PixelDescriptor::JZCZHZF32: Self
+pub const descriptor::PixelDescriptor::LCHAF32: Self
+pub const descriptor::PixelDescriptor::LCHF32: Self
 pub const descriptor::PixelDescriptor::OKLABAF32: Self
 pub const descriptor::PixelDescriptor::OKLABF32: Self
+pub const descriptor::PixelDescriptor::OKLCHAF32: Self
+pub const descriptor::PixelDescriptor::OKLCHF32: Self
 pub const descriptor::PixelDescriptor::RGB16: Self
 pub const descriptor::PixelDescriptor::RGB16_BT2100_HLG: Self
 pub const descriptor::PixelDescriptor::RGB16_BT2100_PQ: Self
@@ -641,14 +684,15 @@ pub const fn descriptor::PixelDescriptor::bytes_per_channel(self) -> usize [also
 pub const fn descriptor::PixelDescriptor::bytes_per_pixel(self) -> usize [also: (root)]
 pub const fn descriptor::PixelDescriptor::channel_type(&self) -> descriptor::ChannelType [also: (root)]
 pub const fn descriptor::PixelDescriptor::channels(self) -> usize [also: (root)]
-pub const fn descriptor::PixelDescriptor::cmyk(descriptor::ChannelType, descriptor::InkPolarity) -> Self [also: (root)]
-pub const fn descriptor::PixelDescriptor::cmyka(descriptor::ChannelType, descriptor::InkPolarity, descriptor::AlphaMode) -> Self [also: (root)]
+pub const fn descriptor::PixelDescriptor::cmyk(descriptor::ChannelType) -> Self [also: (root)]
+pub const fn descriptor::PixelDescriptor::cmyk_inverted(descriptor::ChannelType) -> Self [also: (root)]
+pub const fn descriptor::PixelDescriptor::cmyka(descriptor::ChannelType, descriptor::AlphaMode) -> Self [also: (root)]
+pub const fn descriptor::PixelDescriptor::cmyka_inverted(descriptor::ChannelType, descriptor::AlphaMode) -> Self [also: (root)]
 pub const fn descriptor::PixelDescriptor::color_model(&self) -> descriptor::ColorModel [also: (root)]
 pub const fn descriptor::PixelDescriptor::color_profile_source(&self) -> color::ColorProfileSource<'static> [also: (root)]
 pub const fn descriptor::PixelDescriptor::encoding(self) -> color::PixelEncoding<'static> [also: (root)]
 pub const fn descriptor::PixelDescriptor::from_pixel_format(descriptor::PixelFormat) -> Self [also: (root)]
 pub const fn descriptor::PixelDescriptor::has_alpha(self) -> bool [also: (root)]
-pub const fn descriptor::PixelDescriptor::ink_polarity(self) -> core::option::Option<descriptor::InkPolarity> [also: (root)]
 pub const fn descriptor::PixelDescriptor::is_bgr(self) -> bool [also: (root)]
 pub const fn descriptor::PixelDescriptor::is_grayscale(self) -> bool [also: (root)]
 pub const fn descriptor::PixelDescriptor::is_linear(self) -> bool [also: (root)]
@@ -669,7 +713,6 @@ pub const fn descriptor::PixelDescriptor::try_new_full(descriptor::ChannelType, 
 pub fn descriptor::PixelDescriptor::validate(self) -> core::result::Result<(), buffer::BufferError>
 pub const fn descriptor::PixelDescriptor::with_alpha(self, core::option::Option<descriptor::AlphaMode>) -> Self [also: (root)]
 pub const fn descriptor::PixelDescriptor::with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> Self [also: (root)]
-pub const fn descriptor::PixelDescriptor::with_ink_polarity(self, descriptor::InkPolarity) -> core::option::Option<Self> [also: (root)]
 pub const fn descriptor::PixelDescriptor::with_primaries(self, descriptor::ColorPrimaries) -> Self [also: (root)]
 pub const fn descriptor::PixelDescriptor::with_signal_range(self, descriptor::SignalRange) -> Self [also: (root)]
 pub const fn descriptor::PixelDescriptor::with_transfer(self, descriptor::TransferFunction) -> Self [also: (root)]
@@ -1101,12 +1144,26 @@ pub ChannelLayout::Bgr
 pub ChannelLayout::Bgra
 pub ChannelLayout::Cmyk
 pub ChannelLayout::CmykAlpha
+pub ChannelLayout::CmykInverted
+pub ChannelLayout::CmykInvertedAlpha
 pub ChannelLayout::Gray
 pub ChannelLayout::GrayAlpha
+pub ChannelLayout::Hsl
+pub ChannelLayout::HslAlpha
+pub ChannelLayout::Hsv
+pub ChannelLayout::HsvAlpha
+pub ChannelLayout::Jzazbz
+pub ChannelLayout::JzazbzAlpha
+pub ChannelLayout::Jzczhz
+pub ChannelLayout::JzczhzAlpha
 pub ChannelLayout::Lab
 pub ChannelLayout::LabAlpha
+pub ChannelLayout::Lch
+pub ChannelLayout::LchAlpha
 pub ChannelLayout::Oklab
 pub ChannelLayout::OklabA
+pub ChannelLayout::Oklch
+pub ChannelLayout::OklchAlpha
 pub ChannelLayout::Rgb
 pub ChannelLayout::Rgba
 pub ChannelLayout::Xyz
@@ -1130,8 +1187,14 @@ pub fn color::ColorAuthority::select<T>(self, core::option::Option<T>, core::opt
 #[non_exhaustive] pub enum ColorModel [also: descriptor]
 pub ColorModel::Cmyk
 pub ColorModel::Gray
+pub ColorModel::Hsl
+pub ColorModel::Hsv
+pub ColorModel::Jzazbz
+pub ColorModel::Jzczhz
 pub ColorModel::Lab
+pub ColorModel::Lch
 pub ColorModel::Oklab
+pub ColorModel::Oklch
 pub ColorModel::Rgb
 pub ColorModel::Xyz
 pub ColorModel::YCbCr
@@ -1173,9 +1236,6 @@ pub GamutMapping::Clip
 pub GamutMapping::SoftCompress
 #[non_exhaustive] pub enum GrayExpand [also: policy]
 pub GrayExpand::Broadcast
-#[non_exhaustive] pub enum InkPolarity [also: descriptor]
-pub InkPolarity::ZeroIsFullInk
-pub InkPolarity::ZeroIsNoInk
 #[non_exhaustive] pub enum LumaCoefficients [also: policy]
 pub LumaCoefficients::Bt2020
 pub LumaCoefficients::Bt601
@@ -1264,6 +1324,18 @@ pub const descriptor::PixelFormat::CMYKF16: Self
 pub const descriptor::PixelFormat::CMYKF16_INVERTED: Self
 pub const descriptor::PixelFormat::CMYKF32: Self
 pub const descriptor::PixelFormat::CMYKF32_INVERTED: Self
+pub const descriptor::PixelFormat::HSLAF32: Self
+pub const descriptor::PixelFormat::HSLF32: Self
+pub const descriptor::PixelFormat::HSVAF32: Self
+pub const descriptor::PixelFormat::HSVF32: Self
+pub const descriptor::PixelFormat::JZAZBZAF32: Self
+pub const descriptor::PixelFormat::JZAZBZF32: Self
+pub const descriptor::PixelFormat::JZCZHZAF32: Self
+pub const descriptor::PixelFormat::JZCZHZF32: Self
+pub const descriptor::PixelFormat::LCHAF32: Self
+pub const descriptor::PixelFormat::LCHF32: Self
+pub const descriptor::PixelFormat::OKLCHAF32: Self
+pub const descriptor::PixelFormat::OKLCHF32: Self
 #[non_exhaustive] pub enum PixelStorage [also: buffer]
 pub PixelStorage::F32(alloc::vec::Vec<f32>)
 pub PixelStorage::F64(alloc::vec::Vec<f64>)
@@ -1508,8 +1580,20 @@ pub const descriptor::PixelDescriptor::GRAYF16: Self
 pub const descriptor::PixelDescriptor::GRAYF16_LINEAR: Self
 pub const descriptor::PixelDescriptor::GRAYF32: Self
 pub const descriptor::PixelDescriptor::GRAYF32_LINEAR: Self
+pub const descriptor::PixelDescriptor::HSLAF32_SRGB: Self
+pub const descriptor::PixelDescriptor::HSLF32_SRGB: Self
+pub const descriptor::PixelDescriptor::HSVAF32_SRGB: Self
+pub const descriptor::PixelDescriptor::HSVF32_SRGB: Self
+pub const descriptor::PixelDescriptor::JZAZBZAF32: Self
+pub const descriptor::PixelDescriptor::JZAZBZF32: Self
+pub const descriptor::PixelDescriptor::JZCZHZAF32: Self
+pub const descriptor::PixelDescriptor::JZCZHZF32: Self
+pub const descriptor::PixelDescriptor::LCHAF32: Self
+pub const descriptor::PixelDescriptor::LCHF32: Self
 pub const descriptor::PixelDescriptor::OKLABAF32: Self
 pub const descriptor::PixelDescriptor::OKLABF32: Self
+pub const descriptor::PixelDescriptor::OKLCHAF32: Self
+pub const descriptor::PixelDescriptor::OKLCHF32: Self
 pub const descriptor::PixelDescriptor::RGB16: Self
 pub const descriptor::PixelDescriptor::RGB16_BT2100_HLG: Self
 pub const descriptor::PixelDescriptor::RGB16_BT2100_PQ: Self
@@ -1632,7 +1716,7 @@ pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 pub trait StorageSample: buffer::storage_sample::Sealed + bytemuck::pod::Pod + core::default::Default + core::cmp::PartialEq + core::fmt::Debug + core::marker::Send + core::marker::Sync + 'static [also: buffer]
 pub const StorageSample::CHANNEL_TYPE: descriptor::ChannelType
 
-## trait impls (118 types)
+## trait impls (117 types)
 
 &S: plane::SampleStorage
 &mut S: plane::SampleStorage, plane::SampleStorageMut
@@ -1684,7 +1768,6 @@ descriptor::ColorModel: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::ColorPrimaries: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq
 descriptor::DescriptorError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 descriptor::GenericFormat: Clone, Copy, Debug, Eq, Hash, PartialEq
-descriptor::InkPolarity: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq
 descriptor::PixelDescriptor: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::PixelFormat: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::SignalRange: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq

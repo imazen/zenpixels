@@ -557,10 +557,23 @@ impl fmt::Debug for PixelStorage {
     }
 }
 
-// The enum's tag costs 8 bytes; `offset` is stored as `u32`, and that plus the
-// struct's padding absorbs them, so the default buffer stays this size.
+// The enum's tag costs 8 bytes; `offset` and `stride_samples` are stored as `u32`,
+// and paired with the 6-byte `PixelDescriptor` and 2-byte `Option<ExactDepth>` the
+// default buffer fits in a single 64-byte cache line.
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<PixelBuffer>() == 72);
+const _: () = assert!(core::mem::size_of::<PixelBuffer>() == 64);
+
+#[inline]
+fn checked_stride_samples(
+    stride_bytes: usize,
+    descriptor: &PixelDescriptor,
+) -> Result<u32, BufferError> {
+    let align = descriptor.min_alignment();
+    if stride_bytes % align != 0 {
+        return Err(BufferError::AlignmentViolation);
+    }
+    u32::try_from(stride_bytes / align).map_err(|_| BufferError::InvalidDimensions)
+}
 
 /// Validate slice parameters (shared by erased and typed constructors).
 fn validate_slice(
@@ -1146,6 +1159,8 @@ impl<'a, P> PixelSlice<'a, P> {
             let start = y * self.stride;
             &self.data[start..start + row_bytes]
         });
+        let stride_samples =
+            checked_stride_samples(row_bytes, &self.descriptor).map_err(|e| whereat::at!(e))?;
         let data = PixelStorage::try_from_rows(self.descriptor.channel_type(), total, rows)
             .map_err(|e| whereat::at!(e))?;
         Ok(PixelBuffer {
@@ -1153,7 +1168,7 @@ impl<'a, P> PixelSlice<'a, P> {
             offset: 0,
             width: self.width,
             height: self.rows,
-            stride: row_bytes,
+            stride_samples,
             descriptor: self.descriptor,
             color: self.color.clone(),
             exact: self.exact,
@@ -2176,11 +2191,13 @@ impl<'a> PixelSliceMut<'a, Bgra<u8>> {
 pub struct PixelBuffer<P = (), S = PixelStorage> {
     data: S,
     /// Byte offset from `data` start to the first pixel. `u32` keeps the default
-    /// buffer at 72 bytes; `try_from_parts` refuses anything larger.
+    /// buffer in one 64-byte cache line; `try_from_parts` refuses anything larger.
     offset: u32,
     width: u32,
     height: u32,
-    stride: usize,
+    /// Row stride in sample units (`stride_bytes / descriptor.min_alignment()`),
+    /// decoupling maximum row width from sample byte size (`U8`..`F64`).
+    stride_samples: u32,
     descriptor: PixelDescriptor,
     color: Option<Arc<ColorContext>>,
     /// Current-sample evidence; cleared by every mutable access.
@@ -2190,8 +2207,8 @@ pub struct PixelBuffer<P = (), S = PixelStorage> {
 
 #[cfg(target_pointer_width = "64")]
 const _: () = {
-    assert!(core::mem::size_of::<PixelBuffer>() == 72);
-    assert!(core::mem::size_of::<PixelSlice<'static>>() == 56);
+    assert!(core::mem::size_of::<PixelBuffer>() == 64);
+    assert!(core::mem::size_of::<PixelSlice<'static>>() == 48);
     assert!(core::mem::size_of::<PixelSliceMut<'static>>() == 48);
 };
 
@@ -2468,6 +2485,8 @@ impl<T: PlaneSample> PixelBuffer<(), AlignedSamples<T>> {
         let stride = descriptor
             .try_aligned_stride(width, align)
             .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        let stride_samples =
+            checked_stride_samples(stride, &descriptor).map_err(|e| whereat::at!(e))?;
         let total = stride
             .checked_mul(height as usize)
             .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
@@ -2482,7 +2501,7 @@ impl<T: PlaneSample> PixelBuffer<(), AlignedSamples<T>> {
             offset: 0,
             width,
             height,
-            stride,
+            stride_samples,
             descriptor,
             color: None,
             exact: None,
@@ -2538,11 +2557,14 @@ impl<S: ByteStorage> PixelBuffer<(), S> {
             &parts.descriptor,
         );
         let stored = u32::try_from(parts.offset);
-        let validation = validation.and_then(|()| {
-            stored
-                .map(|_| ())
-                .map_err(|_| BufferError::InvalidDimensions)
-        });
+        let stored_stride = checked_stride_samples(parts.stride_bytes, &parts.descriptor);
+        let validation = validation
+            .and_then(|()| {
+                stored
+                    .map(|_| ())
+                    .map_err(|_| BufferError::InvalidDimensions)
+            })
+            .and_then(|()| stored_stride.map(|_| ()));
         if let Err(error) = validation {
             return Err(FromPartsError {
                 error: whereat::at!(error),
@@ -2550,12 +2572,13 @@ impl<S: ByteStorage> PixelBuffer<(), S> {
             });
         }
         let stored_offset = stored.unwrap_or_default();
+        let stride_samples = stored_stride.unwrap_or_default();
         Ok(Self {
             data: parts.data,
             offset: stored_offset,
             width: parts.width,
             height: parts.height,
-            stride: parts.stride_bytes,
+            stride_samples,
             descriptor: parts.descriptor,
             color: parts.color_context,
             exact: None,
@@ -2593,6 +2616,8 @@ impl PixelBuffer {
         let stride = (width as usize)
             .checked_mul(descriptor.bytes_per_pixel())
             .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        let stride_samples =
+            checked_stride_samples(stride, &descriptor).map_err(|e| whereat::at!(e))?;
         let total = stride
             .checked_mul(height as usize)
             .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
@@ -2603,7 +2628,7 @@ impl PixelBuffer {
             offset,
             width,
             height,
-            stride,
+            stride_samples,
             descriptor,
 
             color: None,
@@ -2635,6 +2660,8 @@ impl PixelBuffer {
         let stride = (width as usize)
             .checked_mul(descriptor.bytes_per_pixel())
             .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        let stride_samples =
+            checked_stride_samples(stride, &descriptor).map_err(|e| whereat::at!(e))?;
         let total = stride
             .checked_mul(height as usize)
             .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
@@ -2655,7 +2682,7 @@ impl PixelBuffer {
             offset,
             width,
             height,
-            stride,
+            stride_samples,
             descriptor,
 
             color: None,
@@ -2694,6 +2721,8 @@ impl<P: Pixel> PixelBuffer<P> {
         let stride = (width as usize)
             .checked_mul(descriptor.bytes_per_pixel())
             .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        let stride_samples =
+            checked_stride_samples(stride, &descriptor).map_err(|e| whereat::at!(e))?;
         let total = stride
             .checked_mul(height as usize)
             .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
@@ -2705,7 +2734,7 @@ impl<P: Pixel> PixelBuffer<P> {
             offset,
             width,
             height,
-            stride,
+            stride_samples,
             descriptor,
 
             color: None,
@@ -2757,6 +2786,8 @@ impl<P: Pixel> PixelBuffer<P> {
         let stride = (width as usize)
             .checked_mul(descriptor.bytes_per_pixel())
             .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        let stride_samples =
+            checked_stride_samples(stride, &descriptor).map_err(|e| whereat::at!(e))?;
         let (data, offset) = try_pixels_into_storage(pixels, descriptor.channel_type())
             .map_err(|_pixels| whereat::at!(BufferError::AllocationFailed))?;
         Ok(Self {
@@ -2764,7 +2795,7 @@ impl<P: Pixel> PixelBuffer<P> {
             offset,
             width,
             height,
-            stride,
+            stride_samples,
             descriptor,
 
             color: None,
@@ -2796,6 +2827,8 @@ impl<P: Pixel> PixelBuffer<P> {
         let stride_bytes = stride_pixels
             .checked_mul(core::mem::size_of::<P>())
             .expect("image stride overflow");
+        let stride_samples =
+            checked_stride_samples(stride_bytes, &descriptor).expect("image stride overflow");
         // Keep the actual backing storage and its stride; do not compact an
         // allocation only to retain the pre-compaction stride.
         let (data, offset) = pixels_into_storage(img.into_buf(), descriptor.channel_type());
@@ -2804,7 +2837,7 @@ impl<P: Pixel> PixelBuffer<P> {
             offset,
             width,
             height,
-            stride: stride_bytes,
+            stride_samples,
             descriptor,
 
             color: None,
@@ -2834,6 +2867,8 @@ impl<P: Pixel> PixelBuffer<P> {
         let stride_bytes = stride_pixels
             .checked_mul(core::mem::size_of::<P>())
             .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        let stride_samples =
+            checked_stride_samples(stride_bytes, &descriptor).map_err(whereat::at)?;
         // Keep the actual backing storage and its stride; do not compact an
         // allocation only to retain the pre-compaction stride.
         let (data, offset) = try_pixels_into_storage(img.into_buf(), descriptor.channel_type())
@@ -2843,7 +2878,7 @@ impl<P: Pixel> PixelBuffer<P> {
             offset,
             width,
             height,
-            stride: stride_bytes,
+            stride_samples,
             descriptor,
 
             color: None,
@@ -2865,11 +2900,12 @@ impl<P: Pixel> TryFrom<PixelBuffer<P>> for ImgVec<P> {
     fn try_from(buffer: PixelBuffer<P>) -> Result<Self, PixelBuffer<P>> {
         const { assert!(core::mem::size_of::<P>() == P::DESCRIPTOR.bytes_per_pixel()) }
         let size = core::mem::size_of::<P>();
-        if buffer.offset != 0 || size == 0 || buffer.stride % size != 0 {
+        let stride_bytes = buffer.stride();
+        if buffer.offset != 0 || size == 0 || stride_bytes % size != 0 {
             return Err(buffer);
         }
         let (width, height) = (buffer.width as usize, buffer.height as usize);
-        let stride = buffer.stride / size;
+        let stride = stride_bytes / size;
         // imgref requires a nonzero stride and a buffer covering every full row.
         let covers = stride
             .checked_mul(height)
@@ -2882,7 +2918,7 @@ impl<P: Pixel> TryFrom<PixelBuffer<P>> for ImgVec<P> {
             offset,
             width: w,
             height: h,
-            stride: stride_bytes,
+            stride_samples,
             descriptor,
             color,
             exact,
@@ -2895,7 +2931,7 @@ impl<P: Pixel> TryFrom<PixelBuffer<P>> for ImgVec<P> {
                 offset,
                 width: w,
                 height: h,
-                stride: stride_bytes,
+                stride_samples,
                 descriptor,
                 color,
                 exact,
@@ -2920,16 +2956,16 @@ impl<P: Pixel, S: ByteStorage> PixelBuffer<P, S> {
     /// check `stride() % size_of::<P>()` first, or use
     /// [`try_as_imgref`](PixelBuffer::try_as_imgref) on the erased buffer.
     pub fn as_imgref(&self) -> ImgRef<'_, P> {
+        let stride = self.stride();
         assert_eq!(
-            self.stride % core::mem::size_of::<P>(),
+            stride % core::mem::size_of::<P>(),
             0,
             "ImgRef requires a stride in whole pixels"
         );
         let total_bytes = if self.height == 0 || self.width == 0 {
             0
         } else {
-            (self.height as usize - 1) * self.stride
-                + self.width as usize * core::mem::size_of::<P>()
+            (self.height as usize - 1) * stride + self.width as usize * core::mem::size_of::<P>()
         };
         let data =
             &self.data.as_bytes()[(self.offset as usize)..(self.offset as usize) + total_bytes];
@@ -2939,7 +2975,7 @@ impl<P: Pixel, S: ByteStorage> PixelBuffer<P, S> {
             bytemuck::cast_slice(data)
         };
         // imgref requires positive stride even for zero-area views.
-        let stride_px = (self.stride / core::mem::size_of::<P>()).max(1);
+        let stride_px = (stride / core::mem::size_of::<P>()).max(1);
         imgref::Img::new_stride(pixels, self.width as usize, self.height as usize, stride_px)
     }
 }
@@ -2955,8 +2991,9 @@ impl<P: Pixel, S: ByteStorageMut> PixelBuffer<P, S> {
     /// Panics if the stride is not a whole number of pixels; see
     /// [`as_imgref`](Self::as_imgref).
     pub fn as_imgref_mut(&mut self) -> imgref::ImgRefMut<'_, P> {
+        let stride = self.stride();
         assert_eq!(
-            self.stride % core::mem::size_of::<P>(),
+            stride % core::mem::size_of::<P>(),
             0,
             "ImgRef requires a stride in whole pixels"
         );
@@ -2965,8 +3002,7 @@ impl<P: Pixel, S: ByteStorageMut> PixelBuffer<P, S> {
         let total_bytes = if self.height == 0 || self.width == 0 {
             0
         } else {
-            (self.height as usize - 1) * self.stride
-                + self.width as usize * core::mem::size_of::<P>()
+            (self.height as usize - 1) * stride + self.width as usize * core::mem::size_of::<P>()
         };
         let offset = self.offset as usize;
         let data = &mut self.data.as_bytes_mut()[offset..offset + total_bytes];
@@ -2976,7 +3012,7 @@ impl<P: Pixel, S: ByteStorageMut> PixelBuffer<P, S> {
             bytemuck::cast_slice_mut(data)
         };
         // imgref requires positive stride even for zero-area views.
-        let stride_px = (self.stride / core::mem::size_of::<P>()).max(1);
+        let stride_px = (stride / core::mem::size_of::<P>()).max(1);
         imgref::Img::new_stride(pixels, self.width as usize, self.height as usize, stride_px)
     }
 }
@@ -3023,7 +3059,7 @@ impl PixelBuffer {
             return Some(&[]);
         }
         let row_bytes = self.width as usize * pixel_size;
-        if pixel_size == 0 || self.stride != row_bytes {
+        if pixel_size == 0 || self.stride() != row_bytes {
             return None;
         }
         let total = row_bytes * self.height as usize;
@@ -3128,11 +3164,12 @@ impl<S: ByteStorage> PixelBuffer<(), S> {
     /// that is not a whole number of pixels. Row access still supports sample strides.
     #[track_caller]
     pub fn try_as_imgref<P: Pixel>(&self) -> Option<ImgRef<'_, P>> {
-        let pixel_size = check_imgref::<P>(self.descriptor, self.stride).ok()?;
+        let stride = self.stride();
+        let pixel_size = check_imgref::<P>(self.descriptor, stride).ok()?;
         let total_bytes = if self.height == 0 || self.width == 0 {
             0
         } else {
-            (self.height as usize - 1) * self.stride + self.width as usize * pixel_size
+            (self.height as usize - 1) * stride + self.width as usize * pixel_size
         };
         let data =
             &self.data.as_bytes()[(self.offset as usize)..(self.offset as usize) + total_bytes];
@@ -3142,7 +3179,7 @@ impl<S: ByteStorage> PixelBuffer<(), S> {
             bytemuck::try_cast_slice(data).ok()?
         };
         // imgref refuses a stride of 0, even for an empty image.
-        let stride_px = (self.stride / pixel_size).max(1);
+        let stride_px = (stride / pixel_size).max(1);
         Some(imgref::Img::new_stride(
             pixels,
             self.width as usize,
@@ -3161,11 +3198,12 @@ impl<S: ByteStorageMut> PixelBuffer<(), S> {
     /// Refusal conditions match [`try_as_imgref`](Self::try_as_imgref).
     #[track_caller]
     pub fn try_as_imgref_mut<P: Pixel>(&mut self) -> Option<imgref::ImgRefMut<'_, P>> {
-        let pixel_size = check_imgref::<P>(self.descriptor, self.stride).ok()?;
+        let stride = self.stride();
+        let pixel_size = check_imgref::<P>(self.descriptor, stride).ok()?;
         let total_bytes = if self.height == 0 || self.width == 0 {
             0
         } else {
-            (self.height as usize - 1) * self.stride + self.width as usize * pixel_size
+            (self.height as usize - 1) * stride + self.width as usize * pixel_size
         };
         let offset = self.offset as usize;
         let bytes = self.data.as_bytes_mut();
@@ -3178,7 +3216,7 @@ impl<S: ByteStorageMut> PixelBuffer<(), S> {
         // Mutable access can change any sample: end current-sample evidence.
         self.exact = None;
         // imgref refuses a stride of 0, even for an empty image.
-        let stride_px = (self.stride / pixel_size).max(1);
+        let stride_px = (stride / pixel_size).max(1);
         Some(imgref::Img::new_stride(
             pixels,
             self.width as usize,
@@ -3341,11 +3379,12 @@ impl PixelBuffer {
         let avail = self.data.as_bytes().len() - offset;
         let base = self.data.as_bytes()[offset..].as_ptr() as usize;
 
+        let stride = self.stride();
         let out = f(InPlacePixels::new_unchecked(
             &mut self.data.as_bytes_mut()[offset..offset + total],
             self.width,
             self.height,
-            self.stride,
+            stride,
             self.descriptor,
             self.color.clone(),
         ));
@@ -3361,10 +3400,13 @@ impl PixelBuffer {
             "transform_in_place: returned view exceeds the original allocation"
         );
 
+        let out_descriptor = out.descriptor();
+        let stride_samples = checked_stride_samples(out.stride(), &out_descriptor)
+            .expect("transform_in_place: returned stride exceeds sample-stride capacity");
         self.width = out.width();
         self.height = out.rows();
-        self.stride = out.stride();
-        self.descriptor = out.descriptor();
+        self.stride_samples = stride_samples;
+        self.descriptor = out_descriptor;
         self.color = out.color_context().cloned();
     }
 }
@@ -3373,7 +3415,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
     // Retain available final-row padding, but do not require it. Validation
     // establishes the visible extent; padding need not fit or even be representable.
     fn storage_span_len(&self) -> usize {
-        self.stride
+        self.stride()
             .saturating_mul(self.height as usize)
             .min(self.data.as_bytes().len() - (self.offset as usize))
     }
@@ -3385,7 +3427,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
             offset: self.offset,
             width: self.width,
             height: self.height,
-            stride: self.stride,
+            stride_samples: self.stride_samples,
             descriptor: self.descriptor,
 
             color: self.color,
@@ -3405,7 +3447,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
                 self.data.as_bytes()[(self.offset as usize)..].as_ptr(),
                 self.width,
                 self.height,
-                self.stride,
+                self.stride(),
             )
         {
             Some(PixelBuffer {
@@ -3413,7 +3455,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
                 offset: self.offset,
                 width: self.width,
                 height: self.height,
-                stride: self.stride,
+                stride_samples: self.stride_samples,
                 descriptor: self.descriptor,
 
                 color: self.color,
@@ -3456,18 +3498,22 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
         {
             return Err(whereat::at!(BufferError::IncompatibleDescriptor));
         }
+        let stride_bytes = self.stride();
         validate_slice(
             self.data.as_bytes().len() - (self.offset as usize),
             self.data.as_bytes()[(self.offset as usize)..].as_ptr(),
             self.width,
             self.height,
-            self.stride,
+            stride_bytes,
             &descriptor,
         )
         .map_err(|e| whereat::at!(e))?;
+        let stride_samples =
+            checked_stride_samples(stride_bytes, &descriptor).map_err(|e| whereat::at!(e))?;
         if !exact_survives(self.descriptor, descriptor) {
             self.exact = None;
         }
+        self.stride_samples = stride_samples;
         self.descriptor = descriptor;
         Ok(self)
     }
@@ -3532,10 +3578,11 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
     /// requires packed rows; otherwise pass the offset and stride onward.
     #[must_use]
     pub fn into_parts(self) -> PixelBufferParts<S> {
+        let stride_bytes = self.stride();
         PixelBufferParts {
             data: self.data,
             offset: self.offset as usize,
-            stride_bytes: self.stride,
+            stride_bytes,
             width: self.width,
             height: self.height,
             descriptor: self.descriptor,
@@ -3555,7 +3602,7 @@ impl<P> PixelBuffer<P> {
     /// or [`copy_to_contiguous_bytes`](Self::copy_to_contiguous_bytes) for a copy.
     pub fn try_into_tight_u8_vec(self) -> Result<Vec<u8>, Self> {
         let row = self.width as usize * self.descriptor.bytes_per_pixel();
-        let tight = self.stride == row || self.height <= 1;
+        let tight = self.stride() == row || self.height <= 1;
         if self.offset != 0 || !tight {
             return Err(self);
         }
@@ -3565,7 +3612,7 @@ impl<P> PixelBuffer<P> {
             offset,
             width,
             height,
-            stride,
+            stride_samples,
             descriptor,
             color,
             exact,
@@ -3581,7 +3628,7 @@ impl<P> PixelBuffer<P> {
                 offset,
                 width,
                 height,
-                stride,
+                stride_samples,
                 descriptor,
                 color,
                 exact,
@@ -3630,13 +3677,14 @@ impl<P> PixelBuffer<P> {
             .offset_bytes()
             .checked_add(pixel_bytes)
             .expect("pixel buffer extent overflows usize");
+        let stride = self.stride();
 
         if pixel_bytes != 0 {
             // Check the visible extent, not stride * height: a layout transform
             // can return a view without padding after its final row.
-            assert!(self.stride >= row_bytes, "pixel buffer stride is too small");
+            assert!(stride >= row_bytes, "pixel buffer stride is too small");
             let source_end = (self.height as usize - 1)
-                .checked_mul(self.stride)
+                .checked_mul(stride)
                 .and_then(|n| n.checked_add(self.offset as usize))
                 .and_then(|n| n.checked_add(row_bytes))
                 .expect("pixel buffer extent overflows usize");
@@ -3644,11 +3692,11 @@ impl<P> PixelBuffer<P> {
                 source_end <= self.data.as_bytes().len(),
                 "pixel buffer storage is too short"
             );
-            if self.stride != row_bytes {
+            if stride != row_bytes {
                 // Destinations never reach a subsequent source row. copy_within
                 // also handles overlap within the current row, without scratch.
                 for y in 1..self.height as usize {
-                    let src = (self.offset as usize) + y * self.stride;
+                    let src = (self.offset as usize) + y * stride;
                     let dst = (self.offset as usize) + y * row_bytes;
                     self.data
                         .as_bytes_mut()
@@ -3661,7 +3709,8 @@ impl<P> PixelBuffer<P> {
             "pixel buffer storage is too short"
         );
         self.data.truncate_bytes(packed_end);
-        self.stride = row_bytes;
+        self.stride_samples = checked_stride_samples(row_bytes, &self.descriptor)
+            .expect("packed pixel buffer row stride fits sample stride");
         self
     }
 }
@@ -3678,7 +3727,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
         }
         let bpp = self.descriptor.bytes_per_pixel();
         let row_bytes = self.width as usize * bpp;
-        if self.stride == row_bytes {
+        if self.stride() == row_bytes {
             let total = row_bytes * self.height as usize;
             Some(&self.data.as_bytes()[(self.offset as usize)..(self.offset as usize) + total])
         } else {
@@ -3704,7 +3753,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
         let total = row_bytes * self.height as usize;
 
         // Fast path: already contiguous
-        if self.stride == row_bytes {
+        if self.stride() == row_bytes {
             let start = self.offset as usize;
             return self.data.as_bytes()[start..start + total].to_vec();
         }
@@ -3733,7 +3782,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
     /// Byte stride between row starts.
     #[inline]
     pub fn stride(&self) -> usize {
-        self.stride
+        (self.stride_samples as usize) * self.descriptor.min_alignment()
     }
 
     /// Pixel format descriptor.
@@ -3858,7 +3907,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
             data: &self.data.as_bytes()[(self.offset as usize)..(self.offset as usize) + total],
             width: self.width,
             rows: self.height,
-            stride: self.stride,
+            stride: self.stride(),
             descriptor: self.descriptor,
 
             color: self.color.clone(),
@@ -3881,11 +3930,12 @@ impl<P, S: ByteStorageMut> PixelBuffer<P, S> {
         self.exact = None;
         let total = self.storage_span_len();
         let offset = self.offset as usize;
+        let stride = self.stride();
         PixelSliceMut {
             data: &mut self.data.as_bytes_mut()[offset..offset + total],
             width: self.width,
             rows: self.height,
-            stride: self.stride,
+            stride,
             descriptor: self.descriptor,
 
             color: self.color.clone(),
@@ -3969,12 +4019,13 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
             "rows({y}, {count}) out of bounds (height: {})",
             self.height
         );
+        let stride = self.stride();
         if count == 0 || self.width == 0 {
             return PixelSlice {
                 data: &[],
                 width: self.width,
                 rows: count,
-                stride: self.stride,
+                stride,
                 descriptor: self.descriptor,
 
                 color: self.color.clone(),
@@ -3983,15 +4034,15 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
             };
         }
         let bpp = self.descriptor.bytes_per_pixel();
-        let start = (self.offset as usize) + y as usize * self.stride;
+        let start = (self.offset as usize) + y as usize * stride;
         let end = (self.offset as usize)
-            + (y as usize + count as usize - 1) * self.stride
+            + (y as usize + count as usize - 1) * stride
             + self.width as usize * bpp;
         PixelSlice {
             data: &self.data.as_bytes()[start..end],
             width: self.width,
             rows: count,
-            stride: self.stride,
+            stride,
             descriptor: self.descriptor,
 
             color: self.color.clone(),
@@ -4023,12 +4074,13 @@ impl<P, S: ByteStorageMut> PixelBuffer<P, S> {
             "rows_mut({y}, {count}) out of bounds (height: {})",
             self.height
         );
+        let stride = self.stride();
         if count == 0 || self.width == 0 {
             return PixelSliceMut {
                 data: &mut [],
                 width: self.width,
                 rows: count,
-                stride: self.stride,
+                stride,
                 descriptor: self.descriptor,
 
                 color: self.color.clone(),
@@ -4036,15 +4088,15 @@ impl<P, S: ByteStorageMut> PixelBuffer<P, S> {
             };
         }
         let bpp = self.descriptor.bytes_per_pixel();
-        let start = (self.offset as usize) + y as usize * self.stride;
+        let start = (self.offset as usize) + y as usize * stride;
         let end = (self.offset as usize)
-            + (y as usize + count as usize - 1) * self.stride
+            + (y as usize + count as usize - 1) * stride
             + self.width as usize * bpp;
         PixelSliceMut {
             data: &mut self.data.as_bytes_mut()[start..end],
             width: self.width,
             rows: count,
-            stride: self.stride,
+            stride,
             descriptor: self.descriptor,
 
             color: self.color.clone(),
@@ -4070,12 +4122,13 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
             "crop y={y} h={h} exceeds height {}",
             self.height
         );
+        let stride = self.stride();
         if h == 0 || w == 0 {
             return PixelSlice {
                 data: &[],
                 width: w,
                 rows: h,
-                stride: self.stride,
+                stride,
                 descriptor: self.descriptor,
 
                 color: self.color.clone(),
@@ -4084,15 +4137,15 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
             };
         }
         let bpp = self.descriptor.bytes_per_pixel();
-        let start = (self.offset as usize) + y as usize * self.stride + x as usize * bpp;
+        let start = (self.offset as usize) + y as usize * stride + x as usize * bpp;
         let end = (self.offset as usize)
-            + (y as usize + h as usize - 1) * self.stride
+            + (y as usize + h as usize - 1) * stride
             + (x as usize + w as usize) * bpp;
         PixelSlice {
             data: &self.data.as_bytes()[start..end],
             width: w,
             rows: h,
-            stride: self.stride,
+            stride,
             descriptor: self.descriptor,
 
             color: self.color.clone(),
@@ -4118,6 +4171,8 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
             .try_crop_view(x, y, w, h)
             .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let stride = self.descriptor.aligned_stride(w);
+        let stride_samples =
+            checked_stride_samples(stride, &self.descriptor).map_err(|e| whereat::at!(e))?;
         let align = self.descriptor.min_alignment();
         let total = stride
             .checked_mul(h as usize)
@@ -4129,7 +4184,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
             offset,
             width: w,
             height: h,
-            stride,
+            stride_samples,
             descriptor: self.descriptor,
 
             color: self.color.clone(),
@@ -4140,7 +4195,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
         let row_bytes = w as usize * bpp;
         for row_y in 0..h {
             let src_row = src.row(row_y);
-            let dst_start = dst.offset as usize + row_y as usize * dst.stride;
+            let dst_start = dst.offset as usize + row_y as usize * stride;
             dst.data.as_bytes_mut()[dst_start..dst_start + row_bytes]
                 .copy_from_slice(&src_row[..row_bytes]);
         }
@@ -4518,7 +4573,8 @@ mod tests {
                                     offset: offset as u32,
                                     width,
                                     height,
-                                    stride,
+                                    stride_samples: checked_stride_samples(stride, &descriptor)
+                                        .unwrap(),
                                     descriptor,
                                     color: None,
                                     exact: None,
@@ -4558,7 +4614,7 @@ mod tests {
             buffer.data.as_bytes().len(),
             buffer.data.capacity_bytes(),
             buffer.offset as usize,
-            buffer.stride,
+            buffer.stride(),
         );
         let parts = buffer.into_parts();
         assert_eq!(parts.data.as_bytes().as_ptr(), pointer);

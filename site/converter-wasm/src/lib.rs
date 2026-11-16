@@ -43,6 +43,7 @@ fn layout(v: &Value) -> Result<ChannelLayout, String> {
         "Oklab" => Ok(ChannelLayout::Oklab),
         "OklabA" => Ok(ChannelLayout::OklabA),
         "Cmyk" => Ok(ChannelLayout::Cmyk),
+        "CmykInverted" => Ok(ChannelLayout::CmykInverted),
         other => Err(format!("Unknown layout: {other}")),
     }
 }
@@ -94,13 +95,8 @@ fn descriptor(v: &Value) -> Result<PixelDescriptor, String> {
         "none" => None,
         _ => return Err("Unknown alpha kind".into()),
     };
-    let format = match field(v, "id")? {
-        "Cmyk8Inverted" => PixelFormat::CMYK8_INVERTED,
-        "Cmyk16Inverted" => PixelFormat::CMYK16_INVERTED,
-        "CmykF32Inverted" => PixelFormat::CMYKF32_INVERTED,
-        _ => PixelFormat::from_parts(channel(v)?, layout(v)?, a)
-            .ok_or("Unsupported channel/layout combination")?,
-    };
+    let format = PixelFormat::from_parts(channel(v)?, layout(v)?, a)
+        .ok_or("Unsupported channel/layout combination")?;
     let mut d = format.descriptor().with_alpha(a);
     if matches!(
         d.layout(),

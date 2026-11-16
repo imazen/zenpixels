@@ -329,7 +329,7 @@ fn portable_v1_golden_hashes() {
     .unwrap();
     let bytes: Vec<_> = samples.into_iter().flat_map(u64::to_ne_bytes).collect();
     let p = PixelBuffer::from_vec(bytes, 2, 1, desc).unwrap();
-    assert_eq!(p.hash_with(HashInclusions::All), 0x899b_f7c2_4321_3df9);
+    assert_eq!(p.hash_with(HashInclusions::All), 0xf30a_c2cb_1b02_0062);
 }
 #[test]
 fn planar_u8_subbyte_codes_ignore_unused_bits() {

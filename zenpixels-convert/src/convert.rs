@@ -608,6 +608,8 @@ pub(crate) enum ConvertStep {
         primaries: ColorPrimaries,
         knee: f32,
     },
+    /// Closed-form perceptual and polar/cylindrical step (`Oklch`, `Lch`, `Jzazbz`, `Jzczhz`, `Hsl`, `Hsv`).
+    Perceptual(perceptual::PerceptualStep),
 }
 
 impl ConvertStep {
@@ -684,6 +686,7 @@ impl ConvertStep {
             #[cfg(feature = "hdr-experimental")]
             Self::ToneMap(_) => "ToneMap",
             Self::SoftCompressOklch { .. } => "SoftCompressOklch",
+            Self::Perceptual(p) => p.variant_name(),
         }
     }
 }
@@ -691,26 +694,28 @@ impl ConvertStep {
 /// Color models that zenpixels-convert's built-in kernels resolve natively.
 ///
 /// Anything outside this set is a device-dependent / CMS-only path —
-/// CMYK today, Lab / XYZ / spot inks if/when those land as
-/// [`crate::ColorModel`] variants. Used internally before planning.
+/// CMYK, CIE Lab (except direct `Lab <-> Lch` polar coordinate changes),
+/// and CIE XYZ. Used internally before planning.
 #[inline]
 fn native_color_model(m: crate::ColorModel) -> bool {
-    // `Gray`, `Rgb` and `Oklab` are the colorimetric spaces the built-in
-    // kernels handle end-to-end (gamut matrices, transfer LUTs, fused
-    // matluts, polyfit decoders, the OKLab gamut-compression path, …).
-    // `YCbCr` is also colorimetric-equivalent to RGB once the matrix has
-    // been applied, but no kernel here consumes raw `YCbCr` pixels: every
-    // entry point that touches YCbCr first lifts it into RGB via the
-    // decoder's own coefficient pair, so the planner never sees a
-    // `YCbCr` color model on either side. CMYK, CIE Lab, and CIE XYZ are the
-    // non-native models that require a CMS transform.
     matches!(
         m,
-        crate::ColorModel::Gray | crate::ColorModel::Rgb | crate::ColorModel::Oklab
+        crate::ColorModel::Gray
+            | crate::ColorModel::Rgb
+            | crate::ColorModel::Oklab
+            | crate::ColorModel::Oklch
+            | crate::ColorModel::Lch
+            | crate::ColorModel::Jzazbz
+            | crate::ColorModel::Jzczhz
+            | crate::ColorModel::Hsl
+            | crate::ColorModel::Hsv
     )
 }
 
 pub(crate) fn needs_cms_for_color_model(from: &PixelDescriptor, to: &PixelDescriptor) -> bool {
+    if perceptual::is_direct_lab_lch_pair(from, to) {
+        return false;
+    }
     !native_color_model(from.color_model()) || !native_color_model(to.color_model())
 }
 
@@ -887,6 +892,19 @@ impl ConvertPlan {
         to: PixelDescriptor,
     ) -> Result<Self, At<ConvertError>> {
         validate_descriptors(from, to)?;
+        if from == to && !needs_cms_for_color_model(&from, &to) {
+            return Ok(Self::build(from, to, vec![ConvertStep::Identity]));
+        }
+        if let Some(pivot) = perceptual::pivot(from, to) {
+            return Self::plan_native(from, pivot)?
+                .compose(&Self::plan_native(pivot, to)?)
+                .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
+        }
+        match perceptual::try_direct_step(from, to) {
+            Ok(Some(step)) => return Ok(Self::build(from, to, vec![step])),
+            Err(()) => return Err(whereat::at!(ConvertError::NoPath { from, to })),
+            Ok(None) => {}
+        }
         if let Some(pivot) = oklab_pivot(from, to) {
             return Self::plan_native(from, pivot)?
                 .compose(&Self::plan_native(pivot, to)?)
@@ -2007,8 +2025,16 @@ impl ConvertPlan {
         if needs_cms_for_color_model(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
         }
+        let involves_jzazbz = matches!(
+            from.color_model(),
+            crate::ColorModel::Jzazbz | crate::ColorModel::Jzczhz
+        ) || matches!(
+            to.color_model(),
+            crate::ColorModel::Jzazbz | crate::ColorModel::Jzczhz
+        );
         let pq_boundary = from.transfer() != to.transfer()
-            && (from.transfer() == TransferFunction::Pq || to.transfer() == TransferFunction::Pq);
+            && (from.transfer() == TransferFunction::Pq || to.transfer() == TransferFunction::Pq)
+            && !involves_jzazbz;
         if pq_boundary
             && !is_hdr_to_sdr(from.transfer(), to.transfer())
             && options.sdr_white().is_none()
@@ -2096,13 +2122,16 @@ impl ConvertPlan {
         } else {
             Self::plan_native(from, to).at()?
         };
-        if from.transfer() != to.transfer()
-            && (from.transfer() == TransferFunction::Pq || to.transfer() == TransferFunction::Pq)
-            && !is_hdr_to_sdr(from.transfer(), to.transfer())
-        {
+        if pq_boundary && !is_hdr_to_sdr(from.transfer(), to.transfer()) {
             let anchor = options
                 .sdr_white()
                 .ok_or_else(|| whereat::at!(ConvertError::SdrWhiteRequired))?;
+            plan = plan.with_pq_anchor(anchor);
+        } else if involves_jzazbz
+            && from.transfer() != TransferFunction::Pq
+            && to.transfer() != TransferFunction::Pq
+            && let Some(anchor) = options.sdr_white()
+        {
             plan = plan.with_pq_anchor(anchor);
         }
 
@@ -3183,7 +3212,7 @@ fn are_inverse(a: &ConvertStep, b: &ConvertStep) -> bool {
         // Extended-range sRGB f32 pairs
         | (ConvertStep::SrgbF32ToLinearF32Extended, ConvertStep::LinearF32ToSrgbF32Extended)
         | (ConvertStep::LinearF32ToSrgbF32Extended, ConvertStep::SrgbF32ToLinearF32Extended)
-    )
+    ) || matches!((a, b), (ConvertStep::Perceptual(pa), ConvertStep::Perceptual(pb)) if pa.is_inverse_of(pb))
 }
 
 /// Compute the descriptor after applying one step.
@@ -3466,6 +3495,7 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             },
         ),
         ConvertStep::SoftCompressOklch { .. } => current,
+        ConvertStep::Perceptual(p) => p.output_descriptor(current),
     };
     next.primaries = match step {
         ConvertStep::GamutMatrixRgbF32(_, primaries)
@@ -3481,6 +3511,8 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
 mod convert_kernels;
 #[path = "hlg_render.rs"]
 mod hlg_render;
+#[path = "perceptual.rs"]
+mod perceptual;
 use convert_kernels::apply_step_u8;
 pub(crate) use convert_kernels::{hlg_eotf, hlg_oetf, pq_eotf, pq_oetf};
 

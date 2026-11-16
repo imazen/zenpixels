@@ -472,7 +472,7 @@ const CT = {
 };
 const LAYOUT = {
   Rgb: ["R","G","B"], Bgr: ["B","G","R"], Rgba: ["R","G","B","A"], Bgra: ["B","G","R","A"], Gray: ["Y"], GrayAlpha: ["Y","A"],
-  Oklab: ["L","OA","OB"], OklabA: ["L","OA","OB","A"], Cmyk: ["C","M","CY","K"],
+  Oklab: ["L","OA","OB"], OklabA: ["L","OA","OB","A"], Cmyk: ["C","M","CY","K"], CmykInverted: ["C","M","CY","K"],
 };
 const CHNAME = { R:"Red", G:"Green", B:"Blue", A:"Alpha", X:"Padding (X)", Y:"Gray (luma)", L:"Oklab L", OA:"Oklab a", OB:"Oklab b",
   C:"Cyan", M:"Magenta", CY:"Yellow", K:"Black (K)" };
@@ -505,11 +505,11 @@ F("GrayAF32","GrayAF32","F32","GrayAlpha","alpha","Float (32-bit)");
 F("OklabF32","OklabF32","F32","Oklab","none","Perceptual (Oklab)");
 F("OklabaF32","OklabaF32","F32","OklabA","alpha","Perceptual (Oklab)");
 F("Cmyk8","CMYK8","U8","Cmyk","none","Print (CMYK)");
-F("Cmyk8Inverted","Cmyk8Inverted","U8","Cmyk","none","Print (CMYK)");
+F("Cmyk8Inverted","Cmyk8Inverted","U8","CmykInverted","none","Print (CMYK)");
 F("Cmyk16","CMYK16","U16","Cmyk","none","Print (CMYK)");
-F("Cmyk16Inverted","Cmyk16Inverted","U16","Cmyk","none","Print (CMYK)");
+F("Cmyk16Inverted","Cmyk16Inverted","U16","CmykInverted","none","Print (CMYK)");
 F("CmykF32","CmykF32","F32","Cmyk","none","Print (CMYK)");
-F("CmykF32Inverted","CmykF32Inverted","F32","Cmyk","none","Print (CMYK)");
+F("CmykF32Inverted","CmykF32Inverted","F32","CmykInverted","none","Print (CMYK)");
 for (const ct of ["I8","I16","U32","I32","U64","I64","F64"]) {
   for (const [layout, prefix, ak] of [["Gray","Gray","none"],["GrayAlpha","GrayA","alpha"],["Rgb","Rgb","none"],["Rgba","Rgba","alpha"]]) {
     FORMATS.push({ id: prefix + ct, name: prefix + ct, ct, layout, alphaKind: ak, group: "Native samples (PixelFormat::Generic)",
@@ -656,7 +656,7 @@ function compute(cfg) {
   const f = FMAP[cfg.format], ct = CT[f.ct];
   const notes = [], steps = [];
   const isRgb = ["Rgb","Bgr","Rgba","Bgra"].includes(f.layout), isGray = f.layout === "Gray" || f.layout === "GrayAlpha";
-  const isOk = f.layout.startsWith("Oklab"), isCmyk = f.layout === "Cmyk";
+  const isOk = f.layout.startsWith("Oklab"), isCmyk = f.layout === "Cmyk" || f.layout === "CmykInverted";
   const colorish = isRgb || isGray;
   const tf = colorish ? cfg.transfer : "Unknown";
   const prim = colorish ? cfg.primaries : (isOk ? "Bt709" : "Unknown");

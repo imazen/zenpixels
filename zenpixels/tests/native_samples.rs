@@ -137,8 +137,14 @@ fn cmyk_f32_carries_strides_profiles_and_every_sample_bit() {
     assert!(!descriptor.has_alpha());
     assert_eq!(PixelFormat::CMYKF32.default_alpha(), None);
     assert_eq!(PixelFormat::CMYKF32.descriptor().format, descriptor.format);
-    for descriptor in [descriptor, PixelFormat::CMYKF32_INVERTED.descriptor()] {
-        assert_eq!(descriptor.layout(), ChannelLayout::Cmyk);
+    for (descriptor, expected_layout) in [
+        (descriptor, ChannelLayout::Cmyk),
+        (
+            PixelFormat::CMYKF32_INVERTED.descriptor(),
+            ChannelLayout::CmykInverted,
+        ),
+    ] {
+        assert_eq!(descriptor.layout(), expected_layout);
         assert_eq!(descriptor.channel_type(), ChannelType::F32);
         assert_eq!(descriptor.color_model(), ColorModel::Cmyk);
         assert_eq!(descriptor.bytes_per_pixel(), 16);
@@ -243,14 +249,29 @@ fn native_combinations_have_one_generic_representation() {
         ] {
             assert_eq!(PixelFormat::from_parts(channel, layout, None), None);
         }
-        // CMYK, CMYKA, Lab, LabA, XYZ, and XYZA are carried generically across all ChannelTypes.
+        // Generic layouts (including inverted CMYK, CIE Lab/XYZ, and perceptual/polar spaces)
+        // are carried across all ChannelTypes.
         for layout in [
             ChannelLayout::Cmyk,
             ChannelLayout::CmykAlpha,
+            ChannelLayout::CmykInverted,
+            ChannelLayout::CmykInvertedAlpha,
             ChannelLayout::Lab,
             ChannelLayout::LabAlpha,
             ChannelLayout::Xyz,
             ChannelLayout::XyzAlpha,
+            ChannelLayout::Oklch,
+            ChannelLayout::OklchAlpha,
+            ChannelLayout::Lch,
+            ChannelLayout::LchAlpha,
+            ChannelLayout::Jzazbz,
+            ChannelLayout::JzazbzAlpha,
+            ChannelLayout::Jzczhz,
+            ChannelLayout::JzczhzAlpha,
+            ChannelLayout::Hsl,
+            ChannelLayout::HslAlpha,
+            ChannelLayout::Hsv,
+            ChannelLayout::HsvAlpha,
         ] {
             let fmt = PixelFormat::from_parts(channel, layout, None).unwrap();
             assert!(matches!(fmt, PixelFormat::Generic(_)));

@@ -52,7 +52,7 @@ pub enum ChromaSiting {
 }
 
 #[derive(Clone, Copy, Debug)]
-enum Words<'a> {
+enum Samples<'a> {
     U8(&'a [u8]),
     U16(&'a [u16]),
     U32(&'a [u32]),
@@ -82,14 +82,18 @@ enum Words<'a> {
 /// ```
 #[derive(Clone, Copy, Debug)]
 pub struct CodePlane<'a> {
-    // Starts at this component's first word.
-    words: Words<'a>,
+    // Starts at this component's first sample, cast to bytes with alignment
+    // guaranteed by the typed source slice; sample type comes from `encoding.storage()`.
+    sample_bytes: &'a [u8],
     width: usize,
     height: usize,
-    stride_words: usize,
-    step_words: usize,
+    stride_samples: usize,
+    step_samples: u32,
     encoding: SampleEncoding,
 }
+
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<CodePlane<'static>>() == 48);
 
 /// Codes cannot be read from a plane as requested.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -149,26 +153,45 @@ impl<'a> CodePlane<'a> {
         if index >= components || plane.width() % components != 0 {
             return Err(CodePlaneError::Components);
         }
+        let Ok(step_samples) = u32::try_from(components) else {
+            return Err(CodePlaneError::Components);
+        };
         if plane.channel_type() != encoding.storage() {
             return Err(CodePlaneError::StorageMismatch);
         }
         let (width, height) = (plane.width() / components, plane.height());
         // A nonempty plane's span reaches past `index`; an empty one is never read.
         let skip = if width == 0 || height == 0 { 0 } else { index };
-        let (words, stride_words) = match plane {
-            AnyPlane::U8(p) => (Words::U8(&p.into_strided_samples()[skip..]), p.stride()),
-            AnyPlane::U16(p) => (Words::U16(&p.into_strided_samples()[skip..]), p.stride()),
-            AnyPlane::U32(p) => (Words::U32(&p.into_strided_samples()[skip..]), p.stride()),
+        let (sample_bytes, stride_samples) = match plane {
+            AnyPlane::U8(p) => (&p.into_strided_samples()[skip..], p.stride()),
+            AnyPlane::U16(p) => (
+                bytemuck::cast_slice(&p.into_strided_samples()[skip..]),
+                p.stride(),
+            ),
+            AnyPlane::U32(p) => (
+                bytemuck::cast_slice(&p.into_strided_samples()[skip..]),
+                p.stride(),
+            ),
             _ => return Err(CodePlaneError::StorageMismatch),
         };
         Ok(Self {
-            words,
+            sample_bytes,
             width,
             height,
-            stride_words,
-            step_words: components,
+            stride_samples,
+            step_samples,
             encoding,
         })
+    }
+
+    #[inline]
+    fn samples(self) -> Samples<'a> {
+        match self.encoding.storage() {
+            crate::ChannelType::U8 => Samples::U8(self.sample_bytes),
+            crate::ChannelType::U16 => Samples::U16(bytemuck::cast_slice(self.sample_bytes)),
+            crate::ChannelType::U32 => Samples::U32(bytemuck::cast_slice(self.sample_bytes)),
+            _ => unreachable!("CodePlane only accepts U8, U16, or U32 storage"),
+        }
     }
 
     /// Active samples per row.
@@ -200,13 +223,14 @@ impl<'a> CodePlane<'a> {
         if x >= self.width || y >= self.height {
             return None;
         }
-        let i = y * self.stride_words + x * self.step_words;
-        let word = match self.words {
-            Words::U8(s) => u32::from(s[i]),
-            Words::U16(s) => u32::from(s[i]),
-            Words::U32(s) => s[i],
+        let step = self.step_samples as usize;
+        let i = y * self.stride_samples + x * step;
+        let sample = match self.samples() {
+            Samples::U8(s) => u32::from(s[i]),
+            Samples::U16(s) => u32::from(s[i]),
+            Samples::U32(s) => s[i],
         };
-        Some((word >> self.encoding.bit_shift()) & self.code_mask_u32())
+        Some((sample >> self.encoding.bit_shift()) & self.code_mask_u32())
     }
 
     /// Extract `codes.len()` consecutive `1..=16`-bit codes of row `y`, starting
@@ -229,49 +253,47 @@ impl<'a> CodePlane<'a> {
         let Some(last) = codes.len().checked_sub(1) else {
             return Ok(());
         };
+        let step = self.step_samples as usize;
         // Construction proved the last active sample is addressable, so these
         // products of smaller coordinates cannot overflow.
-        let start = y * self.stride_words + x * self.step_words;
-        let end = start + last * self.step_words + 1;
+        let start = y * self.stride_samples + x * step;
+        let end = start + last * step + 1;
         let (shift, mask) = (self.encoding.bit_shift(), self.code_mask());
-        match self.words {
-            Words::U8(s) => {
-                let words = &s[start..end];
-                if self.step_words == 1 {
-                    for (code, word) in codes.iter_mut().zip(words) {
-                        *code = (u16::from(*word) >> shift) & mask;
+        match self.samples() {
+            Samples::U8(s) => {
+                let samples = &s[start..end];
+                if step == 1 {
+                    for (code, sample) in codes.iter_mut().zip(samples) {
+                        *code = (u16::from(*sample) >> shift) & mask;
                     }
                 } else {
-                    for (code, word) in codes.iter_mut().zip(words.iter().step_by(self.step_words))
-                    {
-                        *code = (u16::from(*word) >> shift) & mask;
+                    for (code, sample) in codes.iter_mut().zip(samples.iter().step_by(step)) {
+                        *code = (u16::from(*sample) >> shift) & mask;
                     }
                 }
             }
-            Words::U16(s) => {
-                let words = &s[start..end];
-                if self.step_words == 1 {
-                    for (code, word) in codes.iter_mut().zip(words) {
-                        *code = (*word >> shift) & mask;
+            Samples::U16(s) => {
+                let samples = &s[start..end];
+                if step == 1 {
+                    for (code, sample) in codes.iter_mut().zip(samples) {
+                        *code = (*sample >> shift) & mask;
                     }
                 } else {
-                    for (code, word) in codes.iter_mut().zip(words.iter().step_by(self.step_words))
-                    {
-                        *code = (*word >> shift) & mask;
+                    for (code, sample) in codes.iter_mut().zip(samples.iter().step_by(step)) {
+                        *code = (*sample >> shift) & mask;
                     }
                 }
             }
-            Words::U32(s) => {
+            Samples::U32(s) => {
                 let mask32 = u32::from(mask);
-                let words = &s[start..end];
-                if self.step_words == 1 {
-                    for (code, word) in codes.iter_mut().zip(words) {
-                        *code = ((*word >> shift) & mask32) as u16;
+                let samples = &s[start..end];
+                if step == 1 {
+                    for (code, sample) in codes.iter_mut().zip(samples) {
+                        *code = ((*sample >> shift) & mask32) as u16;
                     }
                 } else {
-                    for (code, word) in codes.iter_mut().zip(words.iter().step_by(self.step_words))
-                    {
-                        *code = ((*word >> shift) & mask32) as u16;
+                    for (code, sample) in codes.iter_mut().zip(samples.iter().step_by(step)) {
+                        *code = ((*sample >> shift) & mask32) as u16;
                     }
                 }
             }
@@ -300,46 +322,44 @@ impl<'a> CodePlane<'a> {
         let Some(last) = codes.len().checked_sub(1) else {
             return Ok(());
         };
-        let start = y * self.stride_words + x * self.step_words;
-        let end = start + last * self.step_words + 1;
+        let step = self.step_samples as usize;
+        let start = y * self.stride_samples + x * step;
+        let end = start + last * step + 1;
         let (shift, mask) = (self.encoding.bit_shift(), self.code_mask_u32());
-        match self.words {
-            Words::U8(s) => {
-                let words = &s[start..end];
-                if self.step_words == 1 {
-                    for (code, word) in codes.iter_mut().zip(words) {
-                        *code = (u32::from(*word) >> shift) & mask;
+        match self.samples() {
+            Samples::U8(s) => {
+                let samples = &s[start..end];
+                if step == 1 {
+                    for (code, sample) in codes.iter_mut().zip(samples) {
+                        *code = (u32::from(*sample) >> shift) & mask;
                     }
                 } else {
-                    for (code, word) in codes.iter_mut().zip(words.iter().step_by(self.step_words))
-                    {
-                        *code = (u32::from(*word) >> shift) & mask;
+                    for (code, sample) in codes.iter_mut().zip(samples.iter().step_by(step)) {
+                        *code = (u32::from(*sample) >> shift) & mask;
                     }
                 }
             }
-            Words::U16(s) => {
-                let words = &s[start..end];
-                if self.step_words == 1 {
-                    for (code, word) in codes.iter_mut().zip(words) {
-                        *code = (u32::from(*word) >> shift) & mask;
+            Samples::U16(s) => {
+                let samples = &s[start..end];
+                if step == 1 {
+                    for (code, sample) in codes.iter_mut().zip(samples) {
+                        *code = (u32::from(*sample) >> shift) & mask;
                     }
                 } else {
-                    for (code, word) in codes.iter_mut().zip(words.iter().step_by(self.step_words))
-                    {
-                        *code = (u32::from(*word) >> shift) & mask;
+                    for (code, sample) in codes.iter_mut().zip(samples.iter().step_by(step)) {
+                        *code = (u32::from(*sample) >> shift) & mask;
                     }
                 }
             }
-            Words::U32(s) => {
-                let words = &s[start..end];
-                if self.step_words == 1 {
-                    for (code, word) in codes.iter_mut().zip(words) {
-                        *code = (*word >> shift) & mask;
+            Samples::U32(s) => {
+                let samples = &s[start..end];
+                if step == 1 {
+                    for (code, sample) in codes.iter_mut().zip(samples) {
+                        *code = (*sample >> shift) & mask;
                     }
                 } else {
-                    for (code, word) in codes.iter_mut().zip(words.iter().step_by(self.step_words))
-                    {
-                        *code = (*word >> shift) & mask;
+                    for (code, sample) in codes.iter_mut().zip(samples.iter().step_by(step)) {
+                        *code = (*sample >> shift) & mask;
                     }
                 }
             }

@@ -27,7 +27,6 @@ use crate::icc_profiles::SynthesizedIcc;
 use crate::{ChannelLayout, ChannelType, Cicp, ColorModel, ColorProfileSource, PixelFormat};
 use alloc::{boxed::Box, format, vec::Vec};
 use lcms::{profile, types, virt, xform};
-use zenpixels::InkPolarity;
 
 /// The pure-Rust Little CMS backend.
 ///
@@ -72,56 +71,34 @@ fn describe(format: PixelFormat) -> Option<Format> {
         Bgra8 => (4, 3, true, true, true, Ink::None),
         Gray8 | Gray16 | GrayF32 => (3, 1, false, false, false, Ink::None),
         GrayA8 | GrayA16 | GrayAF32 => (3, 1, true, false, false, Ink::None),
-        Generic(g) => match (g.layout(), sample, g.ink_polarity()) {
+        Generic(g) => match (g.layout(), sample) {
             (
                 ChannelLayout::Cmyk | ChannelLayout::CmykAlpha,
                 ChannelType::U8 | ChannelType::U16,
-                Some(InkPolarity::ZeroIsNoInk),
-            ) => (
-                6,
-                4,
-                g.layout() == ChannelLayout::CmykAlpha,
-                false,
-                false,
-                Ink::None,
-            ),
+            ) => (6, 4, g.layout().has_alpha(), false, false, Ink::None),
             (
-                ChannelLayout::Cmyk | ChannelLayout::CmykAlpha,
+                ChannelLayout::CmykInverted | ChannelLayout::CmykInvertedAlpha,
                 ChannelType::U8 | ChannelType::U16,
-                Some(InkPolarity::ZeroIsFullInk),
             ) => (
                 6,
                 4,
-                g.layout() == ChannelLayout::CmykAlpha,
+                g.layout().has_alpha(),
                 false,
                 false,
                 Ink::InvertedInteger,
             ),
-            (
-                ChannelLayout::Cmyk | ChannelLayout::CmykAlpha,
-                ChannelType::F32,
-                Some(InkPolarity::ZeroIsNoInk),
-            ) => (
+            (ChannelLayout::Cmyk | ChannelLayout::CmykAlpha, ChannelType::F32) => {
+                (6, 4, g.layout().has_alpha(), false, false, Ink::Float)
+            }
+            (ChannelLayout::CmykInverted | ChannelLayout::CmykInvertedAlpha, ChannelType::F32) => (
                 6,
                 4,
-                g.layout() == ChannelLayout::CmykAlpha,
-                false,
-                false,
-                Ink::Float,
-            ),
-            (
-                ChannelLayout::Cmyk | ChannelLayout::CmykAlpha,
-                ChannelType::F32,
-                Some(InkPolarity::ZeroIsFullInk),
-            ) => (
-                6,
-                4,
-                g.layout() == ChannelLayout::CmykAlpha,
+                g.layout().has_alpha(),
                 false,
                 false,
                 Ink::FloatInverted,
             ),
-            (ChannelLayout::Lab | ChannelLayout::LabAlpha, _, _) => (
+            (ChannelLayout::Lab | ChannelLayout::LabAlpha, _) => (
                 10,
                 3,
                 g.layout() == ChannelLayout::LabAlpha,
@@ -131,18 +108,16 @@ fn describe(format: PixelFormat) -> Option<Format> {
             ),
             // LittleCMS has no 8-bit u1Fixed15 XYZ unpacker (`unroll3_bytes` would
             // mis-scale by ~2x against 1.0 == 0x8000), so XYZ is U16 and F32 only.
-            (
-                ChannelLayout::Xyz | ChannelLayout::XyzAlpha,
-                ChannelType::U16 | ChannelType::F32,
-                _,
-            ) => (
-                9,
-                3,
-                g.layout() == ChannelLayout::XyzAlpha,
-                false,
-                false,
-                Ink::None,
-            ),
+            (ChannelLayout::Xyz | ChannelLayout::XyzAlpha, ChannelType::U16 | ChannelType::F32) => {
+                (
+                    9,
+                    3,
+                    g.layout() == ChannelLayout::XyzAlpha,
+                    false,
+                    false,
+                    Ink::None,
+                )
+            }
             _ => return None,
         },
         _ => return None,

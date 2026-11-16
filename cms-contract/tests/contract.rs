@@ -879,15 +879,15 @@ fn parametric_color_source_and_destination_agree_across_backends() {
 
 #[test]
 fn cmyka_five_channel_preserves_alpha_and_inverts_only_ink() {
-    use zenpixels::{ChannelType, InkPolarity};
+    use zenpixels::ChannelType;
 
     let cmyk_icc = synthetic_icc::synthetic_cmyk_icc();
-    let cmyka8 = F::cmyka(ChannelType::U8, InkPolarity::ZeroIsNoInk);
-    let cmyka8_inv = F::cmyka(ChannelType::U8, InkPolarity::ZeroIsFullInk);
-    let cmyka16 = F::cmyka(ChannelType::U16, InkPolarity::ZeroIsNoInk);
-    let cmyka16_inv = F::cmyka(ChannelType::U16, InkPolarity::ZeroIsFullInk);
-    let cmykaf32 = F::cmyka(ChannelType::F32, InkPolarity::ZeroIsNoInk);
-    let cmykaf32_inv = F::cmyka(ChannelType::F32, InkPolarity::ZeroIsFullInk);
+    let cmyka8 = F::cmyka(ChannelType::U8);
+    let cmyka8_inv = F::cmyka_inverted(ChannelType::U8);
+    let cmyka16 = F::cmyka(ChannelType::U16);
+    let cmyka16_inv = F::cmyka_inverted(ChannelType::U16);
+    let cmykaf32 = F::cmyka(ChannelType::F32);
+    let cmykaf32_inv = F::cmyka_inverted(ChannelType::F32);
 
     // MoxCms declines 5-channel CmykAlpha cleanly so a plugin chain can hand off to Lcms.
     for fmt in [cmyka8, cmyka8_inv, cmyka16, cmykaf32] {

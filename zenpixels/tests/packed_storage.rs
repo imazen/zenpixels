@@ -358,6 +358,22 @@ fn offset_past_u32_is_refused_not_truncated() {
 }
 
 #[test]
+fn stride_samples_past_u32_is_refused_not_truncated() {
+    // 0-height buffer needs 0 backing bytes, isolating the sample-stride capacity check.
+    let mut parts: PixelBufferParts = PixelBufferParts::new(
+        Vec::<u8>::new().into(),
+        1,
+        0,
+        4,
+        PixelDescriptor::RGBAF32_LINEAR,
+    );
+    if let Ok(wide_stride) = usize::try_from((u64::from(u32::MAX) + 1) * 4) {
+        parts.stride_bytes = wide_stride;
+        assert!(PixelBuffer::try_from_parts(parts).is_err());
+    }
+}
+
+#[test]
 fn tight_byte_handoff_is_fallible_on_storage_offset_and_stride() {
     let tight = PixelBuffer::new(2, 2, PixelDescriptor::RGB8_SRGB);
     let ptr = tight.as_slice().as_strided_bytes().as_ptr();

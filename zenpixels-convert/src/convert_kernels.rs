@@ -361,6 +361,10 @@ pub(super) fn apply_step_u8(
         ConvertStep::SoftCompressOklch { primaries, knee } => {
             soft_compress_oklch_kernel(src, dst, w, from, *primaries, *knee, hdr_scratch);
         }
+
+        ConvertStep::Perceptual(p) => {
+            super::perceptual::apply_row(*p, src, dst, w, from.primaries, _to.primaries, pq_scale);
+        }
     }
 }
 

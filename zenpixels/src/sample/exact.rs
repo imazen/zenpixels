@@ -43,12 +43,41 @@ use core::fmt;
 /// let narrow = ExactDepth::new(ChannelType::U16, SignalRange::Narrow, 10, 16).unwrap();
 /// assert!(narrow.color_exact_at(12)); // narrow grids nest by powers of two
 /// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ExactDepth {
-    storage: ChannelType,
-    range: SignalRange,
-    color_bits: u8,
-    alpha_bits: u8,
+    // Bit 7: always 1 (NonZeroU8 niche so Option<ExactDepth> is also 2 bytes).
+    // Bit 5: storage (0 = U8, 1 = U16).
+    // Bit 4: range (0 = Full, 1 = Narrow).
+    // Bits 0..=3: color_bits - 1 (0..=15 -> 1..=16).
+    packed_color: core::num::NonZeroU8,
+    // Bits 0..=3: alpha_bits - 1 (0..=15 -> 1..=16).
+    alpha_minus_one: u8,
+}
+
+const _: () = {
+    assert!(core::mem::size_of::<ExactDepth>() == 2);
+    assert!(core::mem::size_of::<Option<ExactDepth>>() == 2);
+};
+
+impl fmt::Debug for ExactDepth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExactDepth")
+            .field("storage", &self.storage())
+            .field("range", &self.range())
+            .field("color_bits", &self.color_bits())
+            .field("alpha_bits", &self.alpha_bits())
+            .finish()
+    }
+}
+
+impl core::hash::Hash for ExactDepth {
+    #[inline]
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.storage().hash(state);
+        self.range().hash(state);
+        self.color_bits().hash(state);
+        self.alpha_bits().hash(state);
+    }
 }
 
 /// An exact-depth statement is impossible for its storage or range.
@@ -111,32 +140,55 @@ impl ExactDepth {
             SignalRange::Narrow if color_bits >= 8 => {}
             SignalRange::Narrow => return Err(ExactDepthError::NarrowBelowEightBits),
         }
+        let storage_bit = match storage {
+            ChannelType::U16 => 0x20,
+            _ => 0x00,
+        };
+        let range_bit = match range {
+            SignalRange::Narrow => 0x10,
+            _ => 0x00,
+        };
+        let Some(packed_color) =
+            core::num::NonZeroU8::new(0x80 | storage_bit | range_bit | (color_bits - 1))
+        else {
+            unreachable!()
+        };
         Ok(Self {
-            storage,
-            range,
-            color_bits,
-            alpha_bits,
+            packed_color,
+            alpha_minus_one: alpha_bits - 1,
         })
     }
 
     /// Storage the statement applies to.
+    #[inline]
     pub const fn storage(self) -> ChannelType {
-        self.storage
+        if (self.packed_color.get() & 0x20) != 0 {
+            ChannelType::U16
+        } else {
+            ChannelType::U8
+        }
     }
 
     /// Signal range whose canonical rule defines the color grid.
+    #[inline]
     pub const fn range(self) -> SignalRange {
-        self.range
+        if (self.packed_color.get() & 0x10) != 0 {
+            SignalRange::Narrow
+        } else {
+            SignalRange::Full
+        }
     }
 
     /// Smallest proven exact color depth.
+    #[inline]
     pub const fn color_bits(self) -> u8 {
-        self.color_bits
+        (self.packed_color.get() & 0x0f) + 1
     }
 
     /// Smallest proven exact alpha depth.
+    #[inline]
     pub const fn alpha_bits(self) -> u8 {
-        self.alpha_bits
+        self.alpha_minus_one + 1
     }
 
     /// Whether quantizing color to `bits` and widening back reproduces every sample.
@@ -146,9 +198,9 @@ impl ExactDepth {
     pub const fn color_exact_at(self, bits: u8) -> bool {
         grid_nests(
             self.storage_bits(),
-            self.color_bits,
+            self.color_bits(),
             bits,
-            matches!(self.range, SignalRange::Narrow),
+            matches!(self.range(), SignalRange::Narrow),
         )
     }
 
@@ -157,7 +209,7 @@ impl ExactDepth {
     /// Alpha is always full scale. `alpha_bits == 1` allows both transparent and
     /// opaque samples; it does not prove an opaque image.
     pub const fn alpha_exact_at(self, bits: u8) -> bool {
-        grid_nests(self.storage_bits(), self.alpha_bits, bits, false)
+        grid_nests(self.storage_bits(), self.alpha_bits(), bits, false)
     }
 
     /// Measure the smallest depths whose grids hold every current sample.
@@ -219,17 +271,19 @@ impl ExactDepth {
     pub fn holds_for<P>(self, rows: &PixelSlice<'_, P>) -> Result<bool, ExactDepthError> {
         let descriptor = rows.descriptor();
         let roles = Roles::of(descriptor)?;
-        if self.storage != descriptor.channel_type() || self.range != descriptor.signal_range {
+        if self.storage() != descriptor.channel_type() || self.range() != descriptor.signal_range {
             return Err(ExactDepthError::DescriptorMismatch);
         }
         let storage_bits = roles.storage_bits;
+        let color_bits = self.color_bits();
+        let alpha_bits = self.alpha_bits();
         Ok(roles.for_each(rows, |is_alpha, v| {
             if is_alpha {
-                on_full_grid(v, storage_bits, self.alpha_bits)
+                on_full_grid(v, storage_bits, alpha_bits)
             } else if roles.narrow {
-                on_narrow_grid(v, storage_bits, self.color_bits)
+                on_narrow_grid(v, storage_bits, color_bits)
             } else {
-                on_full_grid(v, storage_bits, self.color_bits)
+                on_full_grid(v, storage_bits, color_bits)
             }
         }))
     }
@@ -237,11 +291,11 @@ impl ExactDepth {
     /// Whether the N-bit color codes survive a `bits`-deep encoding, recoverable
     /// by quantizing the decoded samples back to N bits. Weaker than exactness.
     pub const fn color_codes_recoverable_at(self, bits: u8) -> bool {
-        bits >= self.color_bits
+        bits >= self.color_bits()
     }
 
     const fn storage_bits(self) -> u8 {
-        match self.storage {
+        match self.storage() {
             ChannelType::U8 => 8,
             _ => 16,
         }

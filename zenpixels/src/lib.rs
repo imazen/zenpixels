@@ -99,7 +99,7 @@ pub use orientation::Orientation;
 // Re-export key descriptor types at crate root for ergonomics.
 #[doc(inline)]
 pub use descriptor::{
-    AlphaMode, ChannelLayout, ChannelType, ColorModel, ColorPrimaries, GenericFormat, InkPolarity,
+    AlphaMode, ChannelLayout, ChannelType, ColorModel, ColorPrimaries, GenericFormat,
     PixelDescriptor, PixelFormat, SignalRange, TransferFunction,
 };
 

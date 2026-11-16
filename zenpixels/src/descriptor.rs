@@ -218,11 +218,11 @@ pub enum ChannelLayout {
     Oklab,
     /// Oklab perceptual color with alpha: L, a, b, alpha.
     OklabA,
-    /// C, M, Y, K channel order.
+    /// C, M, Y, K channel order (`0 = no ink`, max = full ink).
     Cmyk,
     /// B, G, R channel order.
     Bgr,
-    /// C, M, Y, K, alpha channel order (5 channels).
+    /// C, M, Y, K, alpha channel order (5 channels, `0 = no ink`, straight alpha).
     CmykAlpha,
     /// CIE 1976 L*, a*, b* channel order.
     Lab,
@@ -232,6 +232,36 @@ pub enum ChannelLayout {
     Xyz,
     /// CIE 1931 X, Y, Z, alpha channel order.
     XyzAlpha,
+    /// C, M, Y, K channel order with reversed ink polarity (`0 = full ink`, max = no ink;
+    /// JPEG XL and Adobe APP14 `transform=0` CMYK JPEG).
+    CmykInverted,
+    /// C, M, Y, K, alpha channel order (5 channels) with reversed ink polarity on C, M, Y, K
+    /// (`0 = full ink`) and normal alpha polarity (`0 = transparent`, max = opaque).
+    CmykInvertedAlpha,
+    /// Polar Oklab: L, C, h° (`h` in `[0, 360)` for float, `[0, 1)` normalized for unsigned integer).
+    Oklch,
+    /// Polar Oklab with alpha: L, C, h°, alpha.
+    OklchAlpha,
+    /// Polar CIE 1976 L*C*h°: L*, C*, h° (`h` in `[0, 360)` for float, `[0, 1)` normalized for unsigned integer).
+    Lch,
+    /// Polar CIE 1976 L*C*h° with alpha: L*, C*, h°, alpha.
+    LchAlpha,
+    /// Safdar et al. (2017) HDR perceptual opponent space: Jz, az, bz.
+    Jzazbz,
+    /// Safdar et al. (2017) HDR perceptual opponent space with alpha: Jz, az, bz, alpha.
+    JzazbzAlpha,
+    /// Polar Jzazbz: Jz, Cz, hz° (`hz` in `[0, 360)` for float, `[0, 1)` normalized for unsigned integer).
+    Jzczhz,
+    /// Polar Jzazbz with alpha: Jz, Cz, hz°, alpha.
+    JzczhzAlpha,
+    /// RGB-relative cylindrical Hue, Saturation, Lightness: H°, S, L.
+    Hsl,
+    /// RGB-relative cylindrical Hue, Saturation, Lightness with alpha: H°, S, L, alpha.
+    HslAlpha,
+    /// RGB-relative cylindrical Hue, Saturation, Value: H°, S, V.
+    Hsv,
+    /// RGB-relative cylindrical Hue, Saturation, Value with alpha: H°, S, V, alpha.
+    HsvAlpha,
     #[doc(hidden)]
     __Reserved(reserved::Reserved),
 }
@@ -244,14 +274,31 @@ impl ChannelLayout {
         match self {
             Self::Gray => 1,
             Self::GrayAlpha => 2,
-            Self::Rgb | Self::Bgr | Self::Oklab | Self::Lab | Self::Xyz => 3,
+            Self::Rgb
+            | Self::Bgr
+            | Self::Oklab
+            | Self::Lab
+            | Self::Xyz
+            | Self::Oklch
+            | Self::Lch
+            | Self::Jzazbz
+            | Self::Jzczhz
+            | Self::Hsl
+            | Self::Hsv => 3,
             Self::Rgba
             | Self::Bgra
             | Self::OklabA
             | Self::Cmyk
+            | Self::CmykInverted
             | Self::LabAlpha
-            | Self::XyzAlpha => 4,
-            Self::CmykAlpha => 5,
+            | Self::XyzAlpha
+            | Self::OklchAlpha
+            | Self::LchAlpha
+            | Self::JzazbzAlpha
+            | Self::JzczhzAlpha
+            | Self::HslAlpha
+            | Self::HsvAlpha => 4,
+            Self::CmykAlpha | Self::CmykInvertedAlpha => 5,
             _ => 0,
         }
     }
@@ -267,8 +314,39 @@ impl ChannelLayout {
                 | Self::Bgra
                 | Self::OklabA
                 | Self::CmykAlpha
+                | Self::CmykInvertedAlpha
                 | Self::LabAlpha
                 | Self::XyzAlpha
+                | Self::OklchAlpha
+                | Self::LchAlpha
+                | Self::JzazbzAlpha
+                | Self::JzczhzAlpha
+                | Self::HslAlpha
+                | Self::HsvAlpha
+        )
+    }
+
+    /// Whether this layout stores CMYK ink with reversed polarity (`0 = full ink`, max = no ink).
+    #[inline]
+    pub const fn is_inverted_cmyk(self) -> bool {
+        matches!(self, Self::CmykInverted | Self::CmykInvertedAlpha)
+    }
+
+    /// Whether this layout has a cyclic polar hue angle channel (which cannot be premultiplied by alpha).
+    #[inline]
+    pub const fn is_polar(self) -> bool {
+        matches!(
+            self,
+            Self::Oklch
+                | Self::OklchAlpha
+                | Self::Lch
+                | Self::LchAlpha
+                | Self::Jzczhz
+                | Self::JzczhzAlpha
+                | Self::Hsl
+                | Self::HslAlpha
+                | Self::Hsv
+                | Self::HsvAlpha
         )
     }
 
@@ -291,6 +369,20 @@ impl ChannelLayout {
                 | (Self::LabAlpha, Self::LabAlpha)
                 | (Self::Xyz, Self::Xyz)
                 | (Self::XyzAlpha, Self::XyzAlpha)
+                | (Self::CmykInverted, Self::CmykInverted)
+                | (Self::CmykInvertedAlpha, Self::CmykInvertedAlpha)
+                | (Self::Oklch, Self::Oklch)
+                | (Self::OklchAlpha, Self::OklchAlpha)
+                | (Self::Lch, Self::Lch)
+                | (Self::LchAlpha, Self::LchAlpha)
+                | (Self::Jzazbz, Self::Jzazbz)
+                | (Self::JzazbzAlpha, Self::JzazbzAlpha)
+                | (Self::Jzczhz, Self::Jzczhz)
+                | (Self::JzczhzAlpha, Self::JzczhzAlpha)
+                | (Self::Hsl, Self::Hsl)
+                | (Self::HslAlpha, Self::HslAlpha)
+                | (Self::Hsv, Self::Hsv)
+                | (Self::HsvAlpha, Self::HsvAlpha)
         )
     }
 }
@@ -313,55 +405,20 @@ impl fmt::Display for ChannelLayout {
             Self::LabAlpha => f.write_str("LabA"),
             Self::Xyz => f.write_str("XYZ"),
             Self::XyzAlpha => f.write_str("XYZA"),
-            Self::__Reserved(never) => match *never {},
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Ink polarity
-// ---------------------------------------------------------------------------
-
-/// Ink polarity for subtractive CMYK channels.
-///
-/// ICC CMYK profiles operate on conventional device ink amounts
-/// ([`Self::ZeroIsNoInk`]), whereas JPEG XL and Adobe APP14 `transform=0`
-/// CMYK JPEGs store reversed ink amounts ([`Self::ZeroIsFullInk`]).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum InkPolarity {
-    /// Conventional ICC device polarity: `0` = no ink (paper white),
-    /// maximum sample value (`255`, `65535`, `1.0`, …) = full ink.
-    #[default]
-    ZeroIsNoInk,
-    /// Reversed ink polarity (JPEG XL, Adobe CMYK JPEG): `0` = full ink,
-    /// maximum sample value = no ink.
-    ZeroIsFullInk,
-    #[doc(hidden)]
-    __Reserved(reserved::Reserved),
-}
-
-impl InkPolarity {
-    /// Whether `0` represents full ink ([`Self::ZeroIsFullInk`]).
-    #[inline]
-    pub const fn is_inverted(self) -> bool {
-        matches!(self, Self::ZeroIsFullInk)
-    }
-
-    #[allow(unreachable_patterns)]
-    pub(crate) const fn same(self, other: Self) -> bool {
-        matches!(
-            (self, other),
-            (Self::ZeroIsNoInk, Self::ZeroIsNoInk) | (Self::ZeroIsFullInk, Self::ZeroIsFullInk)
-        )
-    }
-}
-
-impl fmt::Display for InkPolarity {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ZeroIsNoInk => f.write_str("zero-is-no-ink"),
-            Self::ZeroIsFullInk => f.write_str("zero-is-full-ink"),
+            Self::CmykInverted => f.write_str("CmykInverted"),
+            Self::CmykInvertedAlpha => f.write_str("CmykInvertedAlpha"),
+            Self::Oklch => f.write_str("Oklch"),
+            Self::OklchAlpha => f.write_str("OklchA"),
+            Self::Lch => f.write_str("LCh"),
+            Self::LchAlpha => f.write_str("LChA"),
+            Self::Jzazbz => f.write_str("Jzazbz"),
+            Self::JzazbzAlpha => f.write_str("JzazbzA"),
+            Self::Jzczhz => f.write_str("Jzczhz"),
+            Self::JzczhzAlpha => f.write_str("JzczhzA"),
+            Self::Hsl => f.write_str("HSL"),
+            Self::HslAlpha => f.write_str("HSLA"),
+            Self::Hsv => f.write_str("HSV"),
+            Self::HsvAlpha => f.write_str("HSVA"),
             Self::__Reserved(never) => match *never {},
         }
     }
@@ -989,6 +1046,14 @@ impl PixelDescriptor {
                 },
             });
         }
+        if layout.is_polar() && matches!(alpha, Some(AlphaMode::Premultiplied)) {
+            return Err(DescriptorError {
+                channel_type,
+                layout,
+                alpha,
+                reason: "polar/cylindrical hue layouts cannot use Premultiplied alpha; supply Straight, Opaque or Undefined",
+            });
+        }
         match PixelFormat::from_parts(channel_type, layout, alpha) {
             Some(format) => Ok(Self {
                 format,
@@ -1479,44 +1544,65 @@ impl PixelDescriptor {
     /// 8-bit BGR with no alpha and unknown transfer.
     pub const BGR8: Self = Self::from_pixel_format(PixelFormat::Bgr8);
 
-    /// Construct a 4-channel CMYK descriptor for any [`ChannelType`] and [`InkPolarity`].
+    // -- Perceptual & polar/cylindrical constants -----------------------------
+
+    /// Polar Oklch f32 (`L ∈ [0, 1], C ≥ 0, h ∈ [0, 360)`).
+    pub const OKLCHF32: Self = Self::from_pixel_format(PixelFormat::OKLCHF32);
+    /// Polar Oklch f32 with straight alpha (`L, C, h°, A`).
+    pub const OKLCHAF32: Self = Self::from_pixel_format(PixelFormat::OKLCHAF32);
+    /// Polar CIE 1976 L*C*h° f32 (`L* ∈ [0, 100], C* ≥ 0, h° ∈ [0, 360)`).
+    pub const LCHF32: Self = Self::from_pixel_format(PixelFormat::LCHF32);
+    /// Polar CIE 1976 L*C*h° f32 with straight alpha.
+    pub const LCHAF32: Self = Self::from_pixel_format(PixelFormat::LCHAF32);
+    /// Safdar et al. (2017) HDR perceptual Jzazbz f32 (`Jz, az, bz`).
+    pub const JZAZBZF32: Self = Self::from_pixel_format(PixelFormat::JZAZBZF32);
+    /// Safdar et al. (2017) HDR perceptual Jzazbz f32 with straight alpha.
+    pub const JZAZBZAF32: Self = Self::from_pixel_format(PixelFormat::JZAZBZAF32);
+    /// Polar JzCzhz f32 (`Jz, Cz, hz° ∈ [0, 360)`).
+    pub const JZCZHZF32: Self = Self::from_pixel_format(PixelFormat::JZCZHZF32);
+    /// Polar JzCzhz f32 with straight alpha.
+    pub const JZCZHZAF32: Self = Self::from_pixel_format(PixelFormat::JZCZHZAF32);
+    /// sRGB cylindrical HSL f32 (`H ∈ [0, 360), S ∈ [0, 1], L ∈ [0, 1]`).
+    pub const HSLF32_SRGB: Self =
+        Self::from_pixel_format(PixelFormat::HSLF32).with_transfer(TransferFunction::Srgb);
+    /// sRGB cylindrical HSLA f32 with straight alpha.
+    pub const HSLAF32_SRGB: Self =
+        Self::from_pixel_format(PixelFormat::HSLAF32).with_transfer(TransferFunction::Srgb);
+    /// sRGB cylindrical HSV f32 (`H ∈ [0, 360), S ∈ [0, 1], V ∈ [0, 1]`).
+    pub const HSVF32_SRGB: Self =
+        Self::from_pixel_format(PixelFormat::HSVF32).with_transfer(TransferFunction::Srgb);
+    /// sRGB cylindrical HSVA f32 with straight alpha.
+    pub const HSVAF32_SRGB: Self =
+        Self::from_pixel_format(PixelFormat::HSVAF32).with_transfer(TransferFunction::Srgb);
+
+    /// Construct a 4-channel conventional CMYK descriptor (`0 = no ink`) for any [`ChannelType`].
     #[inline]
     #[must_use]
-    pub const fn cmyk(channel_type: ChannelType, ink_polarity: InkPolarity) -> Self {
-        Self::from_pixel_format(PixelFormat::cmyk(channel_type, ink_polarity))
+    pub const fn cmyk(channel_type: ChannelType) -> Self {
+        Self::from_pixel_format(PixelFormat::cmyk(channel_type))
     }
 
-    /// Construct a 5-channel CMYK+alpha descriptor for any [`ChannelType`], [`InkPolarity`],
+    /// Construct a 4-channel reversed-polarity CMYK descriptor (`0 = full ink`) for any [`ChannelType`].
+    #[inline]
+    #[must_use]
+    pub const fn cmyk_inverted(channel_type: ChannelType) -> Self {
+        Self::from_pixel_format(PixelFormat::cmyk_inverted(channel_type))
+    }
+
+    /// Construct a 5-channel conventional CMYK+alpha descriptor (`0 = no ink`) for any [`ChannelType`]
     /// and [`AlphaMode`].
     #[inline]
     #[must_use]
-    pub const fn cmyka(
-        channel_type: ChannelType,
-        ink_polarity: InkPolarity,
-        alpha: AlphaMode,
-    ) -> Self {
-        Self::from_pixel_format(PixelFormat::cmyka(channel_type, ink_polarity))
-            .with_alpha(Some(alpha))
+    pub const fn cmyka(channel_type: ChannelType, alpha: AlphaMode) -> Self {
+        Self::from_pixel_format(PixelFormat::cmyka(channel_type)).with_alpha(Some(alpha))
     }
 
-    /// Ink polarity when this descriptor describes a CMYK or CMYK+alpha layout.
+    /// Construct a 5-channel reversed-polarity CMYK+alpha descriptor (`0 = full ink`, normal alpha)
+    /// for any [`ChannelType`] and [`AlphaMode`].
     #[inline]
     #[must_use]
-    pub const fn ink_polarity(self) -> Option<InkPolarity> {
-        self.format.ink_polarity()
-    }
-
-    /// Return a copy of this descriptor relabeled with `ink_polarity`, or `None` when
-    /// this descriptor is not CMYK / CMYK+alpha.
-    ///
-    /// **Metadata-only**: does not invert sample bytes.
-    #[inline]
-    #[must_use]
-    pub const fn with_ink_polarity(self, ink_polarity: InkPolarity) -> Option<Self> {
-        match self.format.with_ink_polarity(ink_polarity) {
-            Some(format) => Some(Self { format, ..self }),
-            None => None,
-        }
+    pub const fn cmyka_inverted(channel_type: ChannelType, alpha: AlphaMode) -> Self {
+        Self::from_pixel_format(PixelFormat::cmyka_inverted(channel_type)).with_alpha(Some(alpha))
     }
 
     // -- Methods --------------------------------------------------------------
@@ -1787,6 +1873,14 @@ impl PixelDescriptor {
     /// Descriptors remain freely constructible declarations. Buffer acceptance
     /// and conversion planning call this before using them; no pixels are read.
     pub fn validate(self) -> Result<(), crate::BufferError> {
+        if self.layout().is_polar() && matches!(self.alpha, Some(AlphaMode::Premultiplied)) {
+            return Err(crate::BufferError::InvalidDescriptor(DescriptorError {
+                channel_type: self.channel_type(),
+                layout: self.layout(),
+                alpha: self.alpha,
+                reason: "polar/cylindrical hue layouts cannot use Premultiplied alpha; supply Straight, Opaque or Undefined",
+            }));
+        }
         let valid = match self.format.default_alpha() {
             None => self.alpha.is_none(),
             Some(AlphaMode::Undefined) => self.alpha == Some(AlphaMode::Undefined),
@@ -1815,17 +1909,12 @@ impl PixelDescriptor {
     /// Whether this descriptor's channel type and layout are compatible with `other`.
     ///
     /// "Compatible" means the raw bytes can be reinterpreted as `other`
-    /// without any pixel transformation — same channel type, same layout.
+    /// without any pixel transformation — same channel type, same layout
+    /// (including ink polarity: `Cmyk` vs `CmykInverted` are distinct layouts).
     #[inline]
     pub const fn layout_compatible(self, other: Self) -> bool {
         self.format.channel_type().same(other.format.channel_type())
             && self.layout().same(other.layout())
-            // Same bytes, opposite meaning: max is full ink in one and no ink in the other.
-            && match (self.format.ink_polarity(), other.format.ink_polarity()) {
-                (Some(a), Some(b)) => a.same(b),
-                (None, None) => true,
-                _ => false,
-            }
     }
 }
 
@@ -1945,6 +2034,18 @@ pub enum ColorModel {
     Lab,
     /// CIE 1931 XYZ tristimulus color space.
     Xyz,
+    /// Polar Oklab perceptual color space (`L, C, h°`).
+    Oklch,
+    /// Polar CIE 1976 L*C*h° perceptual color space (`L*, C*, h°`).
+    Lch,
+    /// Safdar et al. (2017) HDR perceptual opponent color space (`Jz, az, bz`).
+    Jzazbz,
+    /// Polar Jzazbz HDR perceptual color space (`Jz, Cz, hz°`).
+    Jzczhz,
+    /// RGB-relative cylindrical Hue, Saturation, Lightness (`H°, S, L`).
+    Hsl,
+    /// RGB-relative cylindrical Hue, Saturation, Value (`H°, S, V`).
+    Hsv,
     #[doc(hidden)]
     __Reserved(reserved::Reserved),
 }
@@ -1960,6 +2061,15 @@ impl ColorModel {
             _ => 3,
         }
     }
+
+    /// Whether this color model includes a cyclic polar hue angle channel.
+    #[inline]
+    pub const fn is_polar(self) -> bool {
+        matches!(
+            self,
+            Self::Oklch | Self::Lch | Self::Jzczhz | Self::Hsl | Self::Hsv
+        )
+    }
 }
 
 impl fmt::Display for ColorModel {
@@ -1973,6 +2083,12 @@ impl fmt::Display for ColorModel {
             Self::Cmyk => f.write_str("CMYK"),
             Self::Lab => f.write_str("Lab"),
             Self::Xyz => f.write_str("XYZ"),
+            Self::Oklch => f.write_str("Oklch"),
+            Self::Lch => f.write_str("LCh"),
+            Self::Jzazbz => f.write_str("Jzazbz"),
+            Self::Jzczhz => f.write_str("Jzczhz"),
+            Self::Hsl => f.write_str("HSL"),
+            Self::Hsv => f.write_str("HSV"),
             Self::__Reserved(never) => match *never {},
         }
     }
@@ -1986,12 +2102,12 @@ impl fmt::Display for ColorModel {
 ///
 /// Named variants are the canonical RGB, Gray, and Oklab formats that inner
 /// processing code is expected to consider. All CMYK, CMYK+alpha, CIE L*a*b*,
-/// CIE XYZ, and signed/wide/F64 interleaved sample-type combinations are
-/// carried by [`Self::Generic`] instead of adding a named variant per
-/// combination. Common CMYK formats remain available as `pub const` presets
-/// ([`Self::CMYK8`], [`Self::CMYK8_INVERTED`], [`Self::CMYK16`],
-/// [`Self::CMYK16_INVERTED`], [`Self::CMYKF16`], [`Self::CMYKF16_INVERTED`],
-/// [`Self::CMYKF32`], [`Self::CMYKF32_INVERTED`]), which can be used in both
+/// CIE L*C*h°, CIE XYZ, Oklch, Jzazbz, JzCzhz, HSL, HSV, and signed/wide/F64
+/// interleaved sample-type combinations are carried by [`Self::Generic`]
+/// instead of adding a named variant per combination. Common CMYK and
+/// perceptual/polar formats are available as `pub const` presets
+/// ([`Self::CMYK8`], [`Self::CMYK8_INVERTED`], [`Self::OKLCHF32`],
+/// [`Self::JZAZBZF32`], [`Self::HSLF32`], …), which can be used in both
 /// expressions and `match` patterns. Transfer function and alpha mode live on
 /// [`PixelDescriptor`], not here.
 ///
@@ -2030,28 +2146,26 @@ pub enum PixelFormat {
     GrayF16,
     /// f16 (IEEE 754 half-precision) grayscale with alpha.
     GrayAF16,
-    /// Interleaved samples without a named variant: all CMYK, CMYK+alpha,
-    /// CIE L*a*b*, and CIE XYZ formats across every [`ChannelType`], plus
-    /// signed integer, 32/64-bit integer, and F64 samples in Gray, GrayAlpha,
-    /// Rgb, or Rgba layouts. Views and owned buffers carry them exactly; no
-    /// conversion is implied. Query the parts with [`PixelFormat::channel_type`],
-    /// [`PixelFormat::layout`], and [`PixelFormat::ink_polarity`].
+    /// Interleaved samples without a named variant: all CMYK (conventional and
+    /// inverted), CMYK+alpha, CIE L*a*b*, CIE L*C*h°, CIE XYZ, Oklch, Jzazbz,
+    /// JzCzhz, HSL, and HSV formats across every [`ChannelType`], plus signed
+    /// integer, 32/64-bit integer, and F64 samples in Gray, GrayAlpha, Rgb, or
+    /// Rgba layouts. Views and owned buffers carry them exactly; no conversion
+    /// is implied. Query the parts with [`PixelFormat::channel_type`] and
+    /// [`PixelFormat::layout`].
     Generic(GenericFormat),
 }
 
-/// Interleaved sample type, layout, and (for CMYK layouts) [`InkPolarity`]
-/// without a named [`PixelFormat`] variant.
+/// Interleaved sample type and layout without a named [`PixelFormat`] variant.
 ///
 /// Obtain one from [`PixelFormat::from_parts`], [`PixelFormat::cmyk`],
-/// [`PixelFormat::cmyka`], or by matching [`PixelFormat::Generic`]. It has no
-/// unchecked public struct literal, so a combination that has a named variant
-/// is never represented generically and non-CMYK layouts always carry a single
-/// canonical internal representation.
+/// [`PixelFormat::cmyk_inverted`], or by matching [`PixelFormat::Generic`].
+/// It has no unchecked public struct literal, so a combination that has a
+/// named variant is never represented generically.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct GenericFormat {
     channel_type: ChannelType,
     layout: ChannelLayout,
-    ink_polarity: InkPolarity,
 }
 
 impl GenericFormat {
@@ -2069,33 +2183,11 @@ impl GenericFormat {
         self.layout
     }
 
-    /// Ink polarity when this format is [`ChannelLayout::Cmyk`] or
-    /// [`ChannelLayout::CmykAlpha`], or `None` for non-CMYK layouts.
     #[inline]
-    #[must_use]
-    pub const fn ink_polarity(self) -> Option<InkPolarity> {
-        if matches!(self.layout, ChannelLayout::Cmyk | ChannelLayout::CmykAlpha) {
-            Some(self.ink_polarity)
-        } else {
-            None
-        }
-    }
-
-    #[inline]
-    const fn cmyk(channel_type: ChannelType, ink_polarity: InkPolarity) -> Self {
+    const fn new(channel_type: ChannelType, layout: ChannelLayout) -> Self {
         Self {
             channel_type,
-            layout: ChannelLayout::Cmyk,
-            ink_polarity,
-        }
-    }
-
-    #[inline]
-    const fn cmyka(channel_type: ChannelType, ink_polarity: InkPolarity) -> Self {
-        Self {
-            channel_type,
-            layout: ChannelLayout::CmykAlpha,
-            ink_polarity,
+            layout,
         }
     }
 
@@ -2105,11 +2197,25 @@ impl GenericFormat {
         let always_generic_layout = matches!(
             layout,
             ChannelLayout::Cmyk
+                | ChannelLayout::CmykInverted
                 | ChannelLayout::CmykAlpha
+                | ChannelLayout::CmykInvertedAlpha
                 | ChannelLayout::Lab
                 | ChannelLayout::LabAlpha
                 | ChannelLayout::Xyz
                 | ChannelLayout::XyzAlpha
+                | ChannelLayout::Oklch
+                | ChannelLayout::OklchAlpha
+                | ChannelLayout::Lch
+                | ChannelLayout::LchAlpha
+                | ChannelLayout::Jzazbz
+                | ChannelLayout::JzazbzAlpha
+                | ChannelLayout::Jzczhz
+                | ChannelLayout::JzczhzAlpha
+                | ChannelLayout::Hsl
+                | ChannelLayout::HslAlpha
+                | ChannelLayout::Hsv
+                | ChannelLayout::HsvAlpha
         );
         let generic_type = matches!(
             channel_type,
@@ -2132,7 +2238,6 @@ impl GenericFormat {
             Some(Self {
                 channel_type,
                 layout,
-                ink_polarity: InkPolarity::ZeroIsNoInk,
             })
         } else {
             None
@@ -2142,140 +2247,194 @@ impl GenericFormat {
     /// Static display name, matching historical CMYK and native-sample names.
     #[allow(unreachable_patterns)]
     const fn name(self) -> &'static str {
-        macro_rules! cmyk_and_cie_names {
+        macro_rules! generic_layout_names {
             ($($ty:ident => [
                 $cmyk:literal, $cmyk_inv:literal,
                 $cmyka:literal, $cmyka_inv:literal,
                 $lab:literal, $laba:literal,
-                $xyz:literal, $xyza:literal
+                $xyz:literal, $xyza:literal,
+                $oklch:literal, $oklcha:literal,
+                $lch:literal, $lcha:literal,
+                $jz:literal, $jza:literal,
+                $jzc:literal, $jzca:literal,
+                $hsl:literal, $hsla:literal,
+                $hsv:literal, $hsva:literal
             ]),* $(,)?) => {
-                match (self.channel_type, self.layout, self.ink_polarity) {
+                match (self.channel_type, self.layout) {
                     $(
-                        (ChannelType::$ty, ChannelLayout::Cmyk, InkPolarity::ZeroIsNoInk) => $cmyk,
-                        (ChannelType::$ty, ChannelLayout::Cmyk, InkPolarity::ZeroIsFullInk) => $cmyk_inv,
-                        (ChannelType::$ty, ChannelLayout::CmykAlpha, InkPolarity::ZeroIsNoInk) => $cmyka,
-                        (ChannelType::$ty, ChannelLayout::CmykAlpha, InkPolarity::ZeroIsFullInk) => $cmyka_inv,
-                        (ChannelType::$ty, ChannelLayout::Lab, _) => $lab,
-                        (ChannelType::$ty, ChannelLayout::LabAlpha, _) => $laba,
-                        (ChannelType::$ty, ChannelLayout::Xyz, _) => $xyz,
-                        (ChannelType::$ty, ChannelLayout::XyzAlpha, _) => $xyza,
+                        (ChannelType::$ty, ChannelLayout::Cmyk) => $cmyk,
+                        (ChannelType::$ty, ChannelLayout::CmykInverted) => $cmyk_inv,
+                        (ChannelType::$ty, ChannelLayout::CmykAlpha) => $cmyka,
+                        (ChannelType::$ty, ChannelLayout::CmykInvertedAlpha) => $cmyka_inv,
+                        (ChannelType::$ty, ChannelLayout::Lab) => $lab,
+                        (ChannelType::$ty, ChannelLayout::LabAlpha) => $laba,
+                        (ChannelType::$ty, ChannelLayout::Xyz) => $xyz,
+                        (ChannelType::$ty, ChannelLayout::XyzAlpha) => $xyza,
+                        (ChannelType::$ty, ChannelLayout::Oklch) => $oklch,
+                        (ChannelType::$ty, ChannelLayout::OklchAlpha) => $oklcha,
+                        (ChannelType::$ty, ChannelLayout::Lch) => $lch,
+                        (ChannelType::$ty, ChannelLayout::LchAlpha) => $lcha,
+                        (ChannelType::$ty, ChannelLayout::Jzazbz) => $jz,
+                        (ChannelType::$ty, ChannelLayout::JzazbzAlpha) => $jza,
+                        (ChannelType::$ty, ChannelLayout::Jzczhz) => $jzc,
+                        (ChannelType::$ty, ChannelLayout::JzczhzAlpha) => $jzca,
+                        (ChannelType::$ty, ChannelLayout::Hsl) => $hsl,
+                        (ChannelType::$ty, ChannelLayout::HslAlpha) => $hsla,
+                        (ChannelType::$ty, ChannelLayout::Hsv) => $hsv,
+                        (ChannelType::$ty, ChannelLayout::HsvAlpha) => $hsva,
                     )*
-                    _ => match (self.channel_type, self.layout) {
-                        (ChannelType::I8, ChannelLayout::Gray) => "GrayI8",
-                        (ChannelType::I8, ChannelLayout::GrayAlpha) => "GrayAI8",
-                        (ChannelType::I8, ChannelLayout::Rgb) => "RgbI8",
-                        (ChannelType::I8, ChannelLayout::Rgba) => "RgbaI8",
-                        (ChannelType::I16, ChannelLayout::Gray) => "GrayI16",
-                        (ChannelType::I16, ChannelLayout::GrayAlpha) => "GrayAI16",
-                        (ChannelType::I16, ChannelLayout::Rgb) => "RgbI16",
-                        (ChannelType::I16, ChannelLayout::Rgba) => "RgbaI16",
-                        (ChannelType::U32, ChannelLayout::Gray) => "GrayU32",
-                        (ChannelType::U32, ChannelLayout::GrayAlpha) => "GrayAU32",
-                        (ChannelType::U32, ChannelLayout::Rgb) => "RgbU32",
-                        (ChannelType::U32, ChannelLayout::Rgba) => "RgbaU32",
-                        (ChannelType::I32, ChannelLayout::Gray) => "GrayI32",
-                        (ChannelType::I32, ChannelLayout::GrayAlpha) => "GrayAI32",
-                        (ChannelType::I32, ChannelLayout::Rgb) => "RgbI32",
-                        (ChannelType::I32, ChannelLayout::Rgba) => "RgbaI32",
-                        (ChannelType::U64, ChannelLayout::Gray) => "GrayU64",
-                        (ChannelType::U64, ChannelLayout::GrayAlpha) => "GrayAU64",
-                        (ChannelType::U64, ChannelLayout::Rgb) => "RgbU64",
-                        (ChannelType::U64, ChannelLayout::Rgba) => "RgbaU64",
-                        (ChannelType::I64, ChannelLayout::Gray) => "GrayI64",
-                        (ChannelType::I64, ChannelLayout::GrayAlpha) => "GrayAI64",
-                        (ChannelType::I64, ChannelLayout::Rgb) => "RgbI64",
-                        (ChannelType::I64, ChannelLayout::Rgba) => "RgbaI64",
-                        (ChannelType::F64, ChannelLayout::Gray) => "GrayF64",
-                        (ChannelType::F64, ChannelLayout::GrayAlpha) => "GrayAF64",
-                        (ChannelType::F64, ChannelLayout::Rgb) => "RgbF64",
-                        (ChannelType::F64, ChannelLayout::Rgba) => "RgbaF64",
-                        _ => "Generic",
-                    },
+                    (ChannelType::I8, ChannelLayout::Gray) => "GrayI8",
+                    (ChannelType::I8, ChannelLayout::GrayAlpha) => "GrayAI8",
+                    (ChannelType::I8, ChannelLayout::Rgb) => "RgbI8",
+                    (ChannelType::I8, ChannelLayout::Rgba) => "RgbaI8",
+                    (ChannelType::I16, ChannelLayout::Gray) => "GrayI16",
+                    (ChannelType::I16, ChannelLayout::GrayAlpha) => "GrayAI16",
+                    (ChannelType::I16, ChannelLayout::Rgb) => "RgbI16",
+                    (ChannelType::I16, ChannelLayout::Rgba) => "RgbaI16",
+                    (ChannelType::U32, ChannelLayout::Gray) => "GrayU32",
+                    (ChannelType::U32, ChannelLayout::GrayAlpha) => "GrayAU32",
+                    (ChannelType::U32, ChannelLayout::Rgb) => "RgbU32",
+                    (ChannelType::U32, ChannelLayout::Rgba) => "RgbaU32",
+                    (ChannelType::I32, ChannelLayout::Gray) => "GrayI32",
+                    (ChannelType::I32, ChannelLayout::GrayAlpha) => "GrayAI32",
+                    (ChannelType::I32, ChannelLayout::Rgb) => "RgbI32",
+                    (ChannelType::I32, ChannelLayout::Rgba) => "RgbaI32",
+                    (ChannelType::U64, ChannelLayout::Gray) => "GrayU64",
+                    (ChannelType::U64, ChannelLayout::GrayAlpha) => "GrayAU64",
+                    (ChannelType::U64, ChannelLayout::Rgb) => "RgbU64",
+                    (ChannelType::U64, ChannelLayout::Rgba) => "RgbaU64",
+                    (ChannelType::I64, ChannelLayout::Gray) => "GrayI64",
+                    (ChannelType::I64, ChannelLayout::GrayAlpha) => "GrayAI64",
+                    (ChannelType::I64, ChannelLayout::Rgb) => "RgbI64",
+                    (ChannelType::I64, ChannelLayout::Rgba) => "RgbaI64",
+                    (ChannelType::F64, ChannelLayout::Gray) => "GrayF64",
+                    (ChannelType::F64, ChannelLayout::GrayAlpha) => "GrayAF64",
+                    (ChannelType::F64, ChannelLayout::Rgb) => "RgbF64",
+                    (ChannelType::F64, ChannelLayout::Rgba) => "RgbaF64",
+                    _ => "Generic",
                 }
             };
         }
-        cmyk_and_cie_names!(
-            U8 => ["CMYK8", "Cmyk8Inverted", "CMYKA8", "Cmyka8Inverted", "Lab8", "LabA8", "XYZ8", "XYZA8"],
-            U16 => ["CMYK16", "Cmyk16Inverted", "CMYKA16", "Cmyka16Inverted", "Lab16", "LabA16", "XYZ16", "XYZA16"],
-            F16 => ["CmykF16", "CmykF16Inverted", "CmykaF16", "CmykaF16Inverted", "LabF16", "LabAF16", "XyzF16", "XyzaF16"],
-            F32 => ["CmykF32", "CmykF32Inverted", "CmykaF32", "CmykaF32Inverted", "LabF32", "LabAF32", "XyzF32", "XyzaF32"],
-            I8 => ["CmykI8", "CmykI8Inverted", "CmykaI8", "CmykaI8Inverted", "LabI8", "LabAI8", "XyzI8", "XyzaI8"],
-            I16 => ["CmykI16", "CmykI16Inverted", "CmykaI16", "CmykaI16Inverted", "LabI16", "LabAI16", "XyzI16", "XyzaI16"],
-            U32 => ["CmykU32", "CmykU32Inverted", "CmykaU32", "CmykaU32Inverted", "LabU32", "LabAU32", "XyzU32", "XyzaU32"],
-            I32 => ["CmykI32", "CmykI32Inverted", "CmykaI32", "CmykaI32Inverted", "LabI32", "LabAI32", "XyzI32", "XyzaI32"],
-            U64 => ["CmykU64", "CmykU64Inverted", "CmykaU64", "CmykaU64Inverted", "LabU64", "LabAU64", "XyzU64", "XyzaU64"],
-            I64 => ["CmykI64", "CmykI64Inverted", "CmykaI64", "CmykaI64Inverted", "LabI64", "LabAI64", "XyzI64", "XyzaI64"],
-            F64 => ["CmykF64", "CmykF64Inverted", "CmykaF64", "CmykaF64Inverted", "LabF64", "LabAF64", "XyzF64", "XyzaF64"],
+        generic_layout_names!(
+            U8 => ["CMYK8", "Cmyk8Inverted", "CMYKA8", "Cmyka8Inverted", "Lab8", "LabA8", "XYZ8", "XYZA8", "Oklch8", "OklchA8", "Lch8", "LchA8", "Jzazbz8", "JzazbzA8", "Jzczhz8", "JzczhzA8", "HSL8", "HSLA8", "HSV8", "HSVA8"],
+            U16 => ["CMYK16", "Cmyk16Inverted", "CMYKA16", "Cmyka16Inverted", "Lab16", "LabA16", "XYZ16", "XYZA16", "Oklch16", "OklchA16", "Lch16", "LchA16", "Jzazbz16", "JzazbzA16", "Jzczhz16", "JzczhzA16", "HSL16", "HSLA16", "HSV16", "HSVA16"],
+            F16 => ["CmykF16", "CmykF16Inverted", "CmykaF16", "CmykaF16Inverted", "LabF16", "LabAF16", "XyzF16", "XyzaF16", "OklchF16", "OklchAF16", "LchF16", "LchAF16", "JzazbzF16", "JzazbzAF16", "JzczhzF16", "JzczhzAF16", "HslF16", "HslaF16", "HsvF16", "HsvaF16"],
+            F32 => ["CmykF32", "CmykF32Inverted", "CmykaF32", "CmykaF32Inverted", "LabF32", "LabAF32", "XyzF32", "XyzaF32", "OklchF32", "OklchAF32", "LchF32", "LchAF32", "JzazbzF32", "JzazbzAF32", "JzczhzF32", "JzczhzAF32", "HslF32", "HslaF32", "HsvF32", "HsvaF32"],
+            I8 => ["CmykI8", "CmykI8Inverted", "CmykaI8", "CmykaI8Inverted", "LabI8", "LabAI8", "XyzI8", "XyzaI8", "OklchI8", "OklchAI8", "LchI8", "LchAI8", "JzazbzI8", "JzazbzAI8", "JzczhzI8", "JzczhzAI8", "HslI8", "HslaI8", "HsvI8", "HsvaI8"],
+            I16 => ["CmykI16", "CmykI16Inverted", "CmykaI16", "CmykaI16Inverted", "LabI16", "LabAI16", "XyzI16", "XyzaI16", "OklchI16", "OklchAI16", "LchI16", "LchAI16", "JzazbzI16", "JzazbzAI16", "JzczhzI16", "JzczhzAI16", "HslI16", "HslaI16", "HsvI16", "HsvaI16"],
+            U32 => ["CmykU32", "CmykU32Inverted", "CmykaU32", "CmykaU32Inverted", "LabU32", "LabAU32", "XyzU32", "XyzaU32", "OklchU32", "OklchAU32", "LchU32", "LchAU32", "JzazbzU32", "JzazbzAU32", "JzczhzU32", "JzczhzAU32", "HslU32", "HslaU32", "HsvU32", "HsvaU32"],
+            I32 => ["CmykI32", "CmykI32Inverted", "CmykaI32", "CmykaI32Inverted", "LabI32", "LabAI32", "XyzI32", "XyzaI32", "OklchI32", "OklchAI32", "LchI32", "LchAI32", "JzazbzI32", "JzazbzAI32", "JzczhzI32", "JzczhzAI32", "HslI32", "HslaI32", "HsvI32", "HsvaI32"],
+            U64 => ["CmykU64", "CmykU64Inverted", "CmykaU64", "CmykaU64Inverted", "LabU64", "LabAU64", "XyzU64", "XyzaU64", "OklchU64", "OklchAU64", "LchU64", "LchAU64", "JzazbzU64", "JzazbzAU64", "JzczhzU64", "JzczhzAU64", "HslU64", "HslaU64", "HsvU64", "HsvaU64"],
+            I64 => ["CmykI64", "CmykI64Inverted", "CmykaI64", "CmykaI64Inverted", "LabI64", "LabAI64", "XyzI64", "XyzaI64", "OklchI64", "OklchAI64", "LchI64", "LchAI64", "JzazbzI64", "JzazbzAI64", "JzczhzI64", "JzczhzAI64", "HslI64", "HslaI64", "HsvI64", "HsvaI64"],
+            F64 => ["CmykF64", "CmykF64Inverted", "CmykaF64", "CmykaF64Inverted", "LabF64", "LabAF64", "XyzF64", "XyzaF64", "OklchF64", "OklchAF64", "LchF64", "LchAF64", "JzazbzF64", "JzazbzAF64", "JzczhzF64", "JzczhzAF64", "HslF64", "HslaF64", "HsvF64", "HsvaF64"],
         )
     }
 }
 
 impl PixelFormat {
     /// 8-bit CMYK (4 bytes per pixel), conventional ICC polarity (`0 = no ink, 255 = full ink`).
-    pub const CMYK8: Self = Self::cmyk(ChannelType::U8, InkPolarity::ZeroIsNoInk);
+    pub const CMYK8: Self = Self::cmyk(ChannelType::U8);
     /// 8-bit CMYK (4 bytes per pixel) with reversed ink polarity (`0 = full ink, 255 = no ink`),
     /// as emitted by JPEG XL and Adobe-convention CMYK JPEG.
-    pub const CMYK8_INVERTED: Self = Self::cmyk(ChannelType::U8, InkPolarity::ZeroIsFullInk);
+    pub const CMYK8_INVERTED: Self = Self::cmyk_inverted(ChannelType::U8);
     /// 16-bit native-endian CMYK (8 bytes per pixel), conventional ICC polarity (`0 = no ink`).
-    pub const CMYK16: Self = Self::cmyk(ChannelType::U16, InkPolarity::ZeroIsNoInk);
+    pub const CMYK16: Self = Self::cmyk(ChannelType::U16);
     /// 16-bit native-endian CMYK (8 bytes per pixel) with reversed ink polarity (`0 = full ink,
     /// 65535 = no ink`), as emitted by JPEG XL.
-    pub const CMYK16_INVERTED: Self = Self::cmyk(ChannelType::U16, InkPolarity::ZeroIsFullInk);
+    pub const CMYK16_INVERTED: Self = Self::cmyk_inverted(ChannelType::U16);
     /// f16 CMYK (8 bytes per pixel), conventional ICC polarity (`0.0 = no ink, 1.0 = full ink`).
-    pub const CMYKF16: Self = Self::cmyk(ChannelType::F16, InkPolarity::ZeroIsNoInk);
+    pub const CMYKF16: Self = Self::cmyk(ChannelType::F16);
     /// f16 CMYK (8 bytes per pixel) with reversed ink polarity (`0.0 = full ink, 1.0 = no ink`).
-    pub const CMYKF16_INVERTED: Self = Self::cmyk(ChannelType::F16, InkPolarity::ZeroIsFullInk);
+    pub const CMYKF16_INVERTED: Self = Self::cmyk_inverted(ChannelType::F16);
     /// Native-endian F32 CMYK device values (16 bytes per pixel), conventional ICC polarity
     /// (`0.0 = no ink, 1.0 = full ink`).
-    pub const CMYKF32: Self = Self::cmyk(ChannelType::F32, InkPolarity::ZeroIsNoInk);
+    pub const CMYKF32: Self = Self::cmyk(ChannelType::F32);
     /// Native-endian F32 CMYK with reversed ink polarity (`0.0 = full ink, 1.0 = no ink`),
     /// as emitted by JPEG XL.
-    pub const CMYKF32_INVERTED: Self = Self::cmyk(ChannelType::F32, InkPolarity::ZeroIsFullInk);
+    pub const CMYKF32_INVERTED: Self = Self::cmyk_inverted(ChannelType::F32);
 
-    /// Construct a 4-channel CMYK format for any [`ChannelType`] and [`InkPolarity`].
+    /// Polar Oklch F32 (`L ∈ [0, 1], C ≥ 0, h ∈ [0, 360)`).
+    pub const OKLCHF32: Self =
+        Self::Generic(GenericFormat::new(ChannelType::F32, ChannelLayout::Oklch));
+    /// Polar Oklch F32 with alpha (`L, C, h°, A`).
+    pub const OKLCHAF32: Self = Self::Generic(GenericFormat::new(
+        ChannelType::F32,
+        ChannelLayout::OklchAlpha,
+    ));
+    /// Polar CIE 1976 L*C*h° F32 (`L* ∈ [0, 100], C* ≥ 0, h° ∈ [0, 360)`).
+    pub const LCHF32: Self =
+        Self::Generic(GenericFormat::new(ChannelType::F32, ChannelLayout::Lch));
+    /// Polar CIE 1976 L*C*h° F32 with alpha.
+    pub const LCHAF32: Self = Self::Generic(GenericFormat::new(
+        ChannelType::F32,
+        ChannelLayout::LchAlpha,
+    ));
+    /// Safdar et al. (2017) HDR perceptual Jzazbz F32 (`Jz, az, bz`).
+    pub const JZAZBZF32: Self =
+        Self::Generic(GenericFormat::new(ChannelType::F32, ChannelLayout::Jzazbz));
+    /// Safdar et al. (2017) HDR perceptual Jzazbz F32 with alpha.
+    pub const JZAZBZAF32: Self = Self::Generic(GenericFormat::new(
+        ChannelType::F32,
+        ChannelLayout::JzazbzAlpha,
+    ));
+    /// Polar JzCzhz F32 (`Jz, Cz, hz° ∈ [0, 360)`).
+    pub const JZCZHZF32: Self =
+        Self::Generic(GenericFormat::new(ChannelType::F32, ChannelLayout::Jzczhz));
+    /// Polar JzCzhz F32 with alpha.
+    pub const JZCZHZAF32: Self = Self::Generic(GenericFormat::new(
+        ChannelType::F32,
+        ChannelLayout::JzczhzAlpha,
+    ));
+    /// Cylindrical HSL F32 (`H ∈ [0, 360), S ∈ [0, 1], L ∈ [0, 1]`).
+    pub const HSLF32: Self =
+        Self::Generic(GenericFormat::new(ChannelType::F32, ChannelLayout::Hsl));
+    /// Cylindrical HSLA F32 (`H, S, L, A`).
+    pub const HSLAF32: Self = Self::Generic(GenericFormat::new(
+        ChannelType::F32,
+        ChannelLayout::HslAlpha,
+    ));
+    /// Cylindrical HSV F32 (`H ∈ [0, 360), S ∈ [0, 1], V ∈ [0, 1]`).
+    pub const HSVF32: Self =
+        Self::Generic(GenericFormat::new(ChannelType::F32, ChannelLayout::Hsv));
+    /// Cylindrical HSVA F32 (`H, S, V, A`).
+    pub const HSVAF32: Self = Self::Generic(GenericFormat::new(
+        ChannelType::F32,
+        ChannelLayout::HsvAlpha,
+    ));
+
+    /// Construct a 4-channel conventional CMYK format (`0 = no ink`) for any [`ChannelType`].
     #[inline]
     #[must_use]
-    pub const fn cmyk(channel_type: ChannelType, ink_polarity: InkPolarity) -> Self {
-        Self::Generic(GenericFormat::cmyk(channel_type, ink_polarity))
+    pub const fn cmyk(channel_type: ChannelType) -> Self {
+        Self::Generic(GenericFormat::new(channel_type, ChannelLayout::Cmyk))
     }
 
-    /// Construct a 5-channel CMYK+alpha format for any [`ChannelType`] and [`InkPolarity`].
+    /// Construct a 4-channel reversed-polarity CMYK format (`0 = full ink`) for any [`ChannelType`].
     #[inline]
     #[must_use]
-    pub const fn cmyka(channel_type: ChannelType, ink_polarity: InkPolarity) -> Self {
-        Self::Generic(GenericFormat::cmyka(channel_type, ink_polarity))
+    pub const fn cmyk_inverted(channel_type: ChannelType) -> Self {
+        Self::Generic(GenericFormat::new(
+            channel_type,
+            ChannelLayout::CmykInverted,
+        ))
     }
 
-    /// Ink polarity when this format is CMYK or CMYK+alpha, or `None` otherwise.
+    /// Construct a 5-channel conventional CMYK+alpha format (`0 = no ink`) for any [`ChannelType`].
     #[inline]
     #[must_use]
-    pub const fn ink_polarity(self) -> Option<InkPolarity> {
-        match self {
-            Self::Generic(generic) => generic.ink_polarity(),
-            _ => None,
-        }
+    pub const fn cmyka(channel_type: ChannelType) -> Self {
+        Self::Generic(GenericFormat::new(channel_type, ChannelLayout::CmykAlpha))
     }
 
-    /// Return a copy of this format with `ink_polarity` when this format uses a CMYK
-    /// or CMYK+alpha layout, or `None` for non-CMYK formats.
+    /// Construct a 5-channel reversed-polarity CMYK+alpha format (`0 = full ink`, normal alpha)
+    /// for any [`ChannelType`].
     #[inline]
     #[must_use]
-    pub const fn with_ink_polarity(self, ink_polarity: InkPolarity) -> Option<Self> {
-        match self {
-            Self::Generic(generic)
-                if matches!(
-                    generic.layout,
-                    ChannelLayout::Cmyk | ChannelLayout::CmykAlpha
-                ) =>
-            {
-                Some(Self::Generic(GenericFormat {
-                    channel_type: generic.channel_type,
-                    layout: generic.layout,
-                    ink_polarity,
-                }))
-            }
-            _ => None,
-        }
+    pub const fn cmyka_inverted(channel_type: ChannelType) -> Self {
+        Self::Generic(GenericFormat::new(
+            channel_type,
+            ChannelLayout::CmykInvertedAlpha,
+        ))
     }
 
     /// Channel storage type.
@@ -2342,9 +2501,18 @@ impl PixelFormat {
             Self::OklabF32 | Self::OklabaF32 => ColorModel::Oklab,
             Self::Generic(generic) => match generic.layout {
                 ChannelLayout::Gray | ChannelLayout::GrayAlpha => ColorModel::Gray,
-                ChannelLayout::Cmyk | ChannelLayout::CmykAlpha => ColorModel::Cmyk,
+                ChannelLayout::Cmyk
+                | ChannelLayout::CmykInverted
+                | ChannelLayout::CmykAlpha
+                | ChannelLayout::CmykInvertedAlpha => ColorModel::Cmyk,
                 ChannelLayout::Lab | ChannelLayout::LabAlpha => ColorModel::Lab,
                 ChannelLayout::Xyz | ChannelLayout::XyzAlpha => ColorModel::Xyz,
+                ChannelLayout::Oklch | ChannelLayout::OklchAlpha => ColorModel::Oklch,
+                ChannelLayout::Lch | ChannelLayout::LchAlpha => ColorModel::Lch,
+                ChannelLayout::Jzazbz | ChannelLayout::JzazbzAlpha => ColorModel::Jzazbz,
+                ChannelLayout::Jzczhz | ChannelLayout::JzczhzAlpha => ColorModel::Jzczhz,
+                ChannelLayout::Hsl | ChannelLayout::HslAlpha => ColorModel::Hsl,
+                ChannelLayout::Hsv | ChannelLayout::HsvAlpha => ColorModel::Hsv,
                 _ => ColorModel::Rgb,
             },
             _ => ColorModel::Rgb,
@@ -2380,7 +2548,7 @@ impl PixelFormat {
     /// Adobe-convention CMYK JPEG.
     #[inline]
     pub const fn is_inverted_cmyk(self) -> bool {
-        matches!(self.ink_polarity(), Some(InkPolarity::ZeroIsFullInk))
+        self.layout().is_inverted_cmyk()
     }
 
     /// Default alpha mode for this format.
@@ -2446,10 +2614,9 @@ impl PixelFormat {
     ///
     /// `U8` with `Rgba` or `Bgra` resolves to [`Rgba8`](Self::Rgba8) or
     /// [`Bgra8`](Self::Bgra8); [`AlphaMode::Undefined`] selects the padding formats.
-    /// CMYK and CMYK+alpha resolve to conventional ink polarity
-    /// ([`InkPolarity::ZeroIsNoInk`]); reversed ink polarity must be selected
-    /// explicitly with [`Self::cmyk`], [`Self::cmyka`], [`Self::with_ink_polarity`],
-    /// or a `CMYK*_INVERTED` constant.
+    /// Every representable `(channel_type, layout)` pair — including
+    /// [`ChannelLayout::CmykInverted`] and [`ChannelLayout::CmykInvertedAlpha`] —
+    /// round-trips losslessly through `from_parts`.
     #[inline]
     pub const fn from_parts(
         channel_type: ChannelType,
@@ -2648,9 +2815,10 @@ mod tests {
 
     #[test]
     fn pixel_format_enum_size() {
-        // Niche-packed GenericFormat { ChannelType, ChannelLayout, InkPolarity } keeps
-        // PixelFormat at 3 bytes and PixelDescriptor at 7 bytes (<= 8-byte hot-path slot).
-        assert_eq!(size_of::<PixelFormat>(), 3);
+        // Niche-packed GenericFormat { ChannelType, ChannelLayout } keeps
+        // PixelFormat at 2 bytes and PixelDescriptor at 6 bytes (<= 8-byte hot-path slot).
+        assert_eq!(size_of::<PixelFormat>(), 2);
+        assert_eq!(size_of::<PixelDescriptor>(), 6);
         assert!(size_of::<PixelDescriptor>() <= 8);
     }
 
@@ -3140,7 +3308,7 @@ mod tests {
         assert_eq!(fmt.channel_type(), ChannelType::U8);
         assert_eq!(fmt.layout(), ChannelLayout::Cmyk);
         assert_eq!(fmt.color_model(), ColorModel::Cmyk);
-        assert_eq!(fmt.ink_polarity(), Some(InkPolarity::ZeroIsNoInk));
+        assert!(!fmt.is_inverted_cmyk());
         assert!(!fmt.has_alpha_bytes());
         assert!(!fmt.is_grayscale());
         assert_eq!(fmt.name(), "CMYK8");
@@ -3166,7 +3334,12 @@ mod tests {
     #[test]
     fn cmyk_channel_layout_display() {
         assert_eq!(format!("{}", ChannelLayout::Cmyk), "CMYK");
+        assert_eq!(format!("{}", ChannelLayout::CmykInverted), "CmykInverted");
         assert_eq!(format!("{}", ChannelLayout::CmykAlpha), "CMYKA");
+        assert_eq!(
+            format!("{}", ChannelLayout::CmykInvertedAlpha),
+            "CmykInvertedAlpha"
+        );
         assert_eq!(format!("{}", ChannelLayout::Lab), "Lab");
         assert_eq!(format!("{}", ChannelLayout::LabAlpha), "LabA");
         assert_eq!(format!("{}", ChannelLayout::Xyz), "XYZ");
@@ -3176,7 +3349,9 @@ mod tests {
     #[test]
     fn cmyk_channel_layout_no_alpha() {
         assert!(!ChannelLayout::Cmyk.has_alpha());
+        assert!(!ChannelLayout::CmykInverted.has_alpha());
         assert!(ChannelLayout::CmykAlpha.has_alpha());
+        assert!(ChannelLayout::CmykInvertedAlpha.has_alpha());
         assert!(!ChannelLayout::Lab.has_alpha());
         assert!(ChannelLayout::LabAlpha.has_alpha());
         assert!(!ChannelLayout::Xyz.has_alpha());
@@ -3184,7 +3359,7 @@ mod tests {
     }
 
     #[test]
-    fn inverted_cmyk_formats_preserve_polarity_and_layout() {
+    fn inverted_cmyk_formats_preserve_polarity_and_roundtrip_from_parts() {
         for (conv, inv, ct, bpp, name) in [
             (
                 PixelFormat::CMYK8,
@@ -3217,15 +3392,12 @@ mod tests {
         ] {
             assert!(!conv.is_inverted_cmyk());
             assert!(inv.is_inverted_cmyk());
-            assert_eq!(conv.ink_polarity(), Some(InkPolarity::ZeroIsNoInk));
-            assert_eq!(inv.ink_polarity(), Some(InkPolarity::ZeroIsFullInk));
             assert_eq!(
-                conv.with_ink_polarity(InkPolarity::ZeroIsFullInk),
+                PixelFormat::from_parts(inv.channel_type(), inv.layout(), inv.default_alpha()),
                 Some(inv)
             );
-            assert_eq!(inv.with_ink_polarity(InkPolarity::ZeroIsNoInk), Some(conv));
             assert_eq!(inv.channel_type(), ct);
-            assert_eq!(inv.layout(), ChannelLayout::Cmyk);
+            assert_eq!(inv.layout(), ChannelLayout::CmykInverted);
             assert_eq!(inv.color_model(), ColorModel::Cmyk);
             assert_eq!(inv.channels(), 4);
             assert_eq!(inv.bytes_per_pixel(), bpp);
@@ -3251,7 +3423,7 @@ mod tests {
     }
 
     #[test]
-    fn generic_cmyka_lab_and_xyz_across_all_channel_types() {
+    fn generic_cmyka_lab_xyz_and_polar_across_all_channel_types() {
         let all_types = [
             ChannelType::U8,
             ChannelType::U16,
@@ -3267,35 +3439,83 @@ mod tests {
         ];
         for ct in all_types {
             let cmyk = PixelFormat::from_parts(ct, ChannelLayout::Cmyk, None).unwrap();
-            assert_eq!(cmyk, PixelFormat::cmyk(ct, InkPolarity::ZeroIsNoInk));
+            assert_eq!(cmyk, PixelFormat::cmyk(ct));
             assert_eq!(cmyk.color_model(), ColorModel::Cmyk);
             assert_eq!(cmyk.channels(), 4);
 
-            let cmyka_inv = PixelFormat::cmyka(ct, InkPolarity::ZeroIsFullInk);
-            assert_eq!(cmyka_inv.layout(), ChannelLayout::CmykAlpha);
+            let cmyka_inv = PixelFormat::cmyka_inverted(ct);
+            assert_eq!(cmyka_inv.layout(), ChannelLayout::CmykInvertedAlpha);
+            assert_eq!(
+                PixelFormat::from_parts(
+                    ct,
+                    ChannelLayout::CmykInvertedAlpha,
+                    Some(AlphaMode::Straight)
+                ),
+                Some(cmyka_inv)
+            );
             assert_eq!(cmyka_inv.channels(), 5);
             assert_eq!(cmyka_inv.color_model(), ColorModel::Cmyk);
             assert_eq!(cmyka_inv.default_alpha(), Some(AlphaMode::Straight));
-            assert_eq!(
-                cmyka_inv.descriptor().ink_polarity(),
-                Some(InkPolarity::ZeroIsFullInk)
-            );
+            assert!(cmyka_inv.is_inverted_cmyk());
 
-            for (layout, model, ch, has_a) in [
-                (ChannelLayout::Lab, ColorModel::Lab, 3, false),
-                (ChannelLayout::LabAlpha, ColorModel::Lab, 4, true),
-                (ChannelLayout::Xyz, ColorModel::Xyz, 3, false),
-                (ChannelLayout::XyzAlpha, ColorModel::Xyz, 4, true),
+            for (layout, model, ch, has_a, is_polar) in [
+                (ChannelLayout::Lab, ColorModel::Lab, 3, false, false),
+                (ChannelLayout::LabAlpha, ColorModel::Lab, 4, true, false),
+                (ChannelLayout::Xyz, ColorModel::Xyz, 3, false, false),
+                (ChannelLayout::XyzAlpha, ColorModel::Xyz, 4, true, false),
+                (ChannelLayout::Oklch, ColorModel::Oklch, 3, false, true),
+                (ChannelLayout::OklchAlpha, ColorModel::Oklch, 4, true, true),
+                (ChannelLayout::Lch, ColorModel::Lch, 3, false, true),
+                (ChannelLayout::LchAlpha, ColorModel::Lch, 4, true, true),
+                (ChannelLayout::Jzazbz, ColorModel::Jzazbz, 3, false, false),
+                (
+                    ChannelLayout::JzazbzAlpha,
+                    ColorModel::Jzazbz,
+                    4,
+                    true,
+                    false,
+                ),
+                (ChannelLayout::Jzczhz, ColorModel::Jzczhz, 3, false, true),
+                (
+                    ChannelLayout::JzczhzAlpha,
+                    ColorModel::Jzczhz,
+                    4,
+                    true,
+                    true,
+                ),
+                (ChannelLayout::Hsl, ColorModel::Hsl, 3, false, true),
+                (ChannelLayout::HslAlpha, ColorModel::Hsl, 4, true, true),
+                (ChannelLayout::Hsv, ColorModel::Hsv, 3, false, true),
+                (ChannelLayout::HsvAlpha, ColorModel::Hsv, 4, true, true),
             ] {
+                assert_eq!(layout.is_polar(), is_polar);
+                assert_eq!(model.is_polar(), is_polar);
                 let alpha = has_a.then_some(AlphaMode::Straight);
                 let fmt = PixelFormat::from_parts(ct, layout, alpha).unwrap();
                 assert_eq!(fmt.channel_type(), ct);
                 assert_eq!(fmt.layout(), layout);
                 assert_eq!(fmt.color_model(), model);
                 assert_eq!(fmt.channels(), ch);
-                assert_eq!(fmt.ink_polarity(), None);
-                assert_eq!(fmt.with_ink_polarity(InkPolarity::ZeroIsFullInk), None);
                 assert_ne!(fmt.name(), "Generic");
+                assert!(fmt.descriptor().validate().is_ok());
+
+                if has_a && is_polar {
+                    assert!(
+                        PixelDescriptor::try_new(
+                            ct,
+                            layout,
+                            Some(AlphaMode::Premultiplied),
+                            TransferFunction::Unknown
+                        )
+                        .is_err()
+                    );
+                    assert!(
+                        fmt.descriptor()
+                            .with_alpha(Some(AlphaMode::Premultiplied))
+                            .validate()
+                            .is_err()
+                    );
+                }
             }
         }
     }
@@ -3367,16 +3587,18 @@ mod tests {
 
     #[test]
     fn hot_path_descriptor_and_view_sizes_stay_compact() {
-        assert_eq!(size_of::<InkPolarity>(), 1);
-        assert_eq!(size_of::<GenericFormat>(), 3);
-        assert_eq!(size_of::<PixelFormat>(), 3);
-        assert_eq!(size_of::<PixelDescriptor>(), 7);
+        assert_eq!(size_of::<GenericFormat>(), 2);
+        assert_eq!(size_of::<PixelFormat>(), 2);
+        assert_eq!(size_of::<PixelDescriptor>(), 6);
         assert!(size_of::<PixelDescriptor>() <= 8);
+        assert_eq!(size_of::<crate::sample::ExactDepth>(), 2);
+        assert_eq!(size_of::<Option<crate::sample::ExactDepth>>(), 2);
         assert_eq!(size_of::<crate::PixelEncoding<'static>>(), 16);
         assert_eq!(size_of::<crate::Color>(), 24);
         assert_eq!(size_of::<crate::AnyColor>(), 24);
-        assert_eq!(size_of::<crate::PixelSlice<'static>>(), 56);
+        assert_eq!(size_of::<crate::PixelSlice<'static>>(), 48);
         assert_eq!(size_of::<crate::PixelSliceMut<'static>>(), 48);
-        assert_eq!(size_of::<crate::PixelBuffer>(), 72);
+        assert_eq!(size_of::<crate::PixelBuffer>(), 64);
+        assert_eq!(size_of::<crate::sample::CodePlane<'static>>(), 48);
     }
 }
