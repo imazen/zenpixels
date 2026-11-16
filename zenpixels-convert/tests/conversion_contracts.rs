@@ -148,16 +148,21 @@ mod tests {
         assert!((TransferFunction::Srgb.linearize(0.5) - 0.214041).abs() < 1e-5);
     }
     #[test]
-    fn adobe_oklab_plan_refuses_unsupported_primaries() {
-        let src = PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::AdobeRgb);
+    fn unknown_oklab_plan_refuses_unsupported_primaries() {
+        let src = PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::Unknown);
         let dst = PixelDescriptor::new(
             ChannelType::F32,
             ChannelLayout::Oklab,
             None,
             TransferFunction::Linear,
         )
-        .with_primaries(ColorPrimaries::AdobeRgb);
+        .with_primaries(ColorPrimaries::Unknown);
         assert!(RowConverter::new(src, dst).is_err());
+
+        // Adobe RGB is supported natively via exact rational XYZ/Oklab matrices.
+        let adobe = PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::AdobeRgb);
+        let adobe_oklab = dst.with_primaries(ColorPrimaries::AdobeRgb);
+        assert!(RowConverter::new(adobe, adobe_oklab).is_ok());
     }
     #[cfg(feature = "cms-moxcms")]
     #[test]

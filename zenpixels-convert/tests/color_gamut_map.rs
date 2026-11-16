@@ -76,12 +76,18 @@ fn eight_bit_targets_and_alpha() {
 #[test]
 fn refuses_what_it_cannot_map() {
     let c = Color::srgb8(1, 2, 3);
+    // Adobe RGB now has exact XYZ/Oklab matrices and maps cleanly.
+    let p3_green = Color::try_new(D::RGB8_SRGB.with_primaries(P::DisplayP3), &[0, 255, 0]).unwrap();
+    let adobe_mapped = p3_green
+        .map_to_gamut(D::RGB8_SRGB.with_primaries(P::AdobeRgb))
+        .unwrap();
+    assert_eq!(adobe_mapped.descriptor().primaries, P::AdobeRgb);
+
     let refused = [
         D::RGB16_SRGB
             .with_transfer(Tf::Pq)
             .with_primaries(P::Bt2020),
         D::GRAY8_SRGB,
-        D::RGB8_SRGB.with_primaries(P::AdobeRgb),
         D::RGB8_SRGB.with_primaries(P::Unknown),
     ];
     for target in refused {

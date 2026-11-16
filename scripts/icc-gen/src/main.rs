@@ -1573,7 +1573,13 @@ fn ingest_profile(
         // Empirical intent-safety check only once per unique hash — this
         // is where the cost is (moxcms builds + transforms two profiles
         // over a 320-pixel ramp for each of 3 intents, ~1-5ms).
-        let (mask, provenance) = compute_rgb_intent_mask(data, cp_name, tf_name);
+        // Bundle-derived entries remain metadata-only (`Safe::IdOnly`) per
+        // `docs/corrected-icc-export.md` and `tests/authority_boundaries.rs`.
+        let (mask, provenance) = if fname.starts_with("cicp_bundle:") {
+            (0, MaskProvenance::Unavailable)
+        } else {
+            compute_rgb_intent_mask(data, cp_name, tf_name)
+        };
 
         if report_mode {
             report_rows.push(build_report_row(

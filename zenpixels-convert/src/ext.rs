@@ -81,6 +81,7 @@ impl ColorPrimariesExt for ColorPrimaries {
             Self::Bt709 => Some(&crate::gamut::BT709_TO_XYZ),
             Self::DisplayP3 => Some(&crate::gamut::DISPLAY_P3_TO_XYZ),
             Self::Bt2020 => Some(&crate::gamut::BT2020_TO_XYZ),
+            Self::AdobeRgb => Some(&crate::gamut::ADOBE_RGB_TO_XYZ),
             _ => None,
         }
     }
@@ -91,6 +92,7 @@ impl ColorPrimariesExt for ColorPrimaries {
             Self::Bt709 => Some(&crate::gamut::XYZ_TO_BT709),
             Self::DisplayP3 => Some(&crate::gamut::XYZ_TO_DISPLAY_P3),
             Self::Bt2020 => Some(&crate::gamut::XYZ_TO_BT2020),
+            Self::AdobeRgb => Some(&crate::gamut::XYZ_TO_ADOBE_RGB),
             _ => None,
         }
     }

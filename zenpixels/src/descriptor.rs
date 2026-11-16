@@ -573,10 +573,10 @@ impl TransferFunction {
     #[inline]
     pub const fn from_cicp(tc: u8) -> Option<Self> {
         match tc {
-            1 => Some(Self::Bt709),
-            // SMPTE 170M (6) uses BT.709. SMPTE 240M (7) differs;
-            // leave it unresolved until a matching kernel exists.
-            6 => Some(Self::Bt709),
+            // BT.709 (1), SMPTE 170M / BT.601 (6), and BT.2020 10-bit / 12-bit (14, 15)
+            // share the exact same continuous function in ITU-T H.273 Table 3.
+            // SMPTE 240M (7) differs; leave it unresolved until a matching kernel exists.
+            1 | 6 | 14 | 15 => Some(Self::Bt709),
             8 => Some(Self::Linear),
             13 => Some(Self::Srgb),
             16 => Some(Self::Pq),
@@ -2972,10 +2972,12 @@ mod tests {
 
     #[test]
     fn transfer_function_from_cicp() {
-        assert_eq!(
-            TransferFunction::from_cicp(1),
-            Some(TransferFunction::Bt709)
-        );
+        for tc in [1, 6, 14, 15] {
+            assert_eq!(
+                TransferFunction::from_cicp(tc),
+                Some(TransferFunction::Bt709)
+            );
+        }
         assert_eq!(
             TransferFunction::from_cicp(8),
             Some(TransferFunction::Linear)

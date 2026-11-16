@@ -451,10 +451,9 @@ fn parse_color_function(inner: &str) -> Result<Color, CssColorError> {
         "a98-rgb" => float_color(T::Gamma22, P::AdobeRgb, v, alpha),
         "rec2100-pq" => float_color(T::Pq, P::Bt2020, v, alpha),
         "rec2100-hlg" => float_color(T::Hlg, P::Bt2020, v, alpha),
-        // CSS puts 1.0 at 203 cd/m², and our linear puts it at PQ's peak.
-        "rec2100-linear" => {
-            float_color(T::Linear, P::Bt2020, v.map(|c| c * 203.0 / 10_000.0), alpha)
-        }
+        // W3C CSS Color HDR 1 §4.1: `1.0` in `rec2100-linear` is media white (203 cd/m²),
+        // matching zenpixels' relative-linear `(TransferFunction::Linear, ColorPrimaries::Bt2020)`.
+        "rec2100-linear" => float_color(T::Linear, P::Bt2020, v, alpha),
         // Gamma 2.4 has no transfer function here.
         "rec2020" => float_color(T::Linear, P::Bt2020, v.map(|c| signed_pow(c, 2.4)), alpha),
         "prophoto-rgb" => {

@@ -1057,7 +1057,7 @@ impl NamedProfile {
         ) {
             (1, 13, 0) => Some(Self::Srgb),
             (12, 13, 0) => Some(Self::DisplayP3),
-            (9, 1, 0) => Some(Self::Bt2020),
+            (9, 1 | 6 | 14 | 15, 0) => Some(Self::Bt2020),
             (9, 16, 0 | 1 | 4..=17) => Some(Self::Bt2020Pq),
             (9, 18, 0 | 1 | 4..=17) => Some(Self::Bt2020Hlg),
             (1, 8, 0) => Some(Self::LinearSrgb),

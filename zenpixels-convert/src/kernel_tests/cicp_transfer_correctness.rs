@@ -80,11 +80,13 @@ fn transfer_function_cicp_bijection() {
         let tf = TransferFunction::from_cicp(code).unwrap();
         assert_eq!(tf.to_cicp(), Some(code));
     }
-    // Aliases that map to another primary code (SMPTE 170M → BT.709 curve)
-    assert_eq!(
-        TransferFunction::from_cicp(6),
-        Some(TransferFunction::Bt709)
-    );
+    // Aliases that map to another primary code (SMPTE 170M=6, BT.2020 10/12-bit=14,15 → BT.709 curve)
+    for alias in [6u8, 14, 15] {
+        assert_eq!(
+            TransferFunction::from_cicp(alias),
+            Some(TransferFunction::Bt709)
+        );
+    }
     // SMPTE 240M is not BT.709; keep raw CICP and use a capable CMS.
     assert_eq!(TransferFunction::from_cicp(7), None);
     // Reverse: every non-Unknown enum maps to its primary code
@@ -123,8 +125,8 @@ fn color_primaries_cicp_bijection() {
 /// Unrecognized CICP codes return None.
 #[test]
 fn unknown_cicp_codes_return_none() {
-    // TransferFunction: recognized = 1, 6, 7, 8, 13, 16, 18
-    for code in [0, 2, 3, 4, 5, 9, 10, 11, 12, 14, 15, 17, 19, 99, 255] {
+    // TransferFunction: recognized = 1, 6, 8, 13, 14, 15, 16, 18
+    for code in [0, 2, 3, 4, 5, 7, 9, 10, 11, 12, 17, 19, 99, 255] {
         assert!(
             TransferFunction::from_cicp(code).is_none(),
             "TC code {code} should not be recognized"

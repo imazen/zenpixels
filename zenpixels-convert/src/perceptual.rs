@@ -12,24 +12,14 @@ use crate::{
 
 #[inline]
 fn primaries_to_xyz(primaries: ColorPrimaries) -> Option<&'static GamutMatrix> {
-    match primaries {
-        ColorPrimaries::Bt709 => Some(&crate::gamut::BT709_TO_XYZ),
-        ColorPrimaries::DisplayP3 => Some(&crate::gamut::DISPLAY_P3_TO_XYZ),
-        ColorPrimaries::Bt2020 => Some(&crate::gamut::BT2020_TO_XYZ),
-        ColorPrimaries::AdobeRgb => Some(&crate::gamut::ADOBE_RGB_TO_XYZ),
-        _ => None,
-    }
+    use crate::ext::ColorPrimariesExt;
+    primaries.to_xyz_matrix()
 }
 
 #[inline]
 fn primaries_from_xyz(primaries: ColorPrimaries) -> Option<&'static GamutMatrix> {
-    match primaries {
-        ColorPrimaries::Bt709 => Some(&crate::gamut::XYZ_TO_BT709),
-        ColorPrimaries::DisplayP3 => Some(&crate::gamut::XYZ_TO_DISPLAY_P3),
-        ColorPrimaries::Bt2020 => Some(&crate::gamut::XYZ_TO_BT2020),
-        ColorPrimaries::AdobeRgb => Some(&crate::gamut::XYZ_TO_ADOBE_RGB),
-        _ => None,
-    }
+    use crate::ext::ColorPrimariesExt;
+    primaries.from_xyz_matrix()
 }
 
 /// Elementary step inside `ConvertStep::Perceptual`.

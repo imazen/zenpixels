@@ -770,3 +770,123 @@ fn moxcms_declines_absolute_colorimetric_and_preserves_model_consistency() {
     let pf = PixelFormat::from_parts(ChannelType::F32, ChannelLayout::Jzazbz, None).unwrap();
     assert_eq!(pf.color_model(), ColorModel::Jzazbz);
 }
+
+#[test]
+fn decisions_a1_b1_c1_d1_conformance() {
+    use zenpixels::GamutMapping;
+    use zenpixels_convert::icc_profiles::SynthesizedIcc;
+
+    // A1: Synthesized RGB ICC profiles (including PQ TC=16 and Display P3 exports)
+    // carry ICC.1:2022-05 §8.2 required 'desc' and 'cprt' mluc tags and remain identifiable.
+    for cicp in [
+        Cicp::DISPLAY_P3,
+        Cicp::new(12, 1, 0, true),
+        Cicp::new(9, 16, 0, true),
+        Cicp::new(9, 14, 0, true),
+    ] {
+        let SynthesizedIcc::Profile(icc) = SynthesizedIcc::for_cicp(cicp) else {
+            panic!("expected synthesized profile for {cicp:?}");
+        };
+        let tag_count = u32::from_be_bytes(icc[128..132].try_into().unwrap()) as usize;
+        let mut has_desc = false;
+        let mut has_cprt = false;
+        for i in 0..tag_count {
+            let entry = &icc[132 + 12 * i..144 + 12 * i];
+            let off = u32::from_be_bytes(entry[4..8].try_into().unwrap()) as usize;
+            let len = u32::from_be_bytes(entry[8..12].try_into().unwrap()) as usize;
+            if &entry[..4] == b"desc" && &icc[off..off + 4] == b"mluc" && len >= 16 {
+                has_desc = true;
+            }
+            if &entry[..4] == b"cprt" && &icc[off..off + 4] == b"mluc" && len >= 16 {
+                has_cprt = true;
+            }
+        }
+        assert!(has_desc && has_cprt, "{cicp:?} missing 'desc' or 'cprt'");
+        assert_eq!(Cicp::from_icc(&icc), Some(cicp));
+    }
+
+    // B1: W3C CSS Color HDR 1 §4.1 `color(rec2100-linear 1 1 1)` == sRGB white `#ffffff`.
+    let rec2100_white = Color::parse_css("color(rec2100-linear 1 1 1)").unwrap();
+    assert!(rec2100_white.same_color(&Color::srgb8(255, 255, 255)));
+    let mut srgb8_out = [0_u8; 3];
+    RowConverter::new(rec2100_white.descriptor(), PixelDescriptor::RGB8_SRGB)
+        .unwrap()
+        .convert_row(rec2100_white.as_bytes(), &mut srgb8_out, 1);
+    assert_eq!(srgb8_out, [255, 255, 255]);
+
+    // C1: ITU-T H.273 Table 3 TC=14 and TC=15 (BT.2020 10/12-bit SDR) resolve to TransferFunction::Bt709.
+    for tc in [14_u8, 15] {
+        let bt2020_sdr = Cicp::new(9, tc, 0, true);
+        assert_eq!(
+            TransferFunction::from_cicp(tc),
+            Some(TransferFunction::Bt709)
+        );
+        assert_eq!(
+            NamedProfile::from_cicp(bt2020_sdr),
+            Some(NamedProfile::Bt2020)
+        );
+        assert_eq!(
+            ColorProfileSource::Cicp(bt2020_sdr).primaries_transfer(),
+            Some((ColorPrimaries::Bt2020, TransferFunction::Bt709))
+        );
+        let desc = bt2020_sdr.try_to_descriptor(PixelFormat::Rgb16).unwrap();
+        assert_eq!(desc.primaries, ColorPrimaries::Bt2020);
+        assert_eq!(desc.transfer(), TransferFunction::Bt709);
+    }
+
+    // D1: Adobe RGB (1998) supports native Oklab, Oklch, map_to_gamut, same_color, and SoftCompress.
+    let adobe_lin = PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::AdobeRgb);
+    for perceptual in [PixelDescriptor::OKLABF32, PixelDescriptor::OKLCHF32] {
+        let mut fwd = RowConverter::new(adobe_lin, perceptual).unwrap();
+        let mut inv = RowConverter::new(perceptual, adobe_lin).unwrap();
+        let px = [0.25_f32, 0.80, 0.35];
+        let mut mid = [0.0_f32; 3];
+        let mut rt = [0.0_f32; 3];
+        fwd.convert_row(
+            bytemuck::cast_slice(&px),
+            bytemuck::cast_slice_mut(&mut mid),
+            1,
+        );
+        inv.convert_row(
+            bytemuck::cast_slice(&mid),
+            bytemuck::cast_slice_mut(&mut rt),
+            1,
+        );
+        for c in 0..3 {
+            assert!(
+                (rt[c] - px[c]).abs() < 1e-4,
+                "AdobeRGB {perceptual:?}: {rt:?} vs {px:?}"
+            );
+        }
+    }
+    let adobe_white =
+        Color::try_new(adobe_lin, bytemuck::cast_slice(&[1.0_f32, 1.0, 1.0])).unwrap();
+    assert!(adobe_white.same_color(&Color::srgb8(255, 255, 255)));
+
+    let bt2020_green = Color::try_new(
+        PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::Bt2020),
+        &[0, 255, 0],
+    )
+    .unwrap();
+    let adobe_srgb = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::AdobeRgb);
+    assert!(bt2020_green.map_to_gamut(adobe_srgb).is_ok());
+
+    let soft_opts = ConvertOptions::permissive().with_gamut_mapping(GamutMapping::SoftCompress);
+    let mut soft_conv = RowConverter::new_explicit(
+        PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::Bt2020),
+        adobe_lin,
+        &soft_opts,
+    )
+    .unwrap();
+    let oog = [0.0_f32, 1.0, 0.0];
+    let mut compressed = [0.0_f32; 3];
+    soft_conv.convert_row(
+        bytemuck::cast_slice(&oog),
+        bytemuck::cast_slice_mut(&mut compressed),
+        1,
+    );
+    assert!(
+        compressed.iter().all(|&c| (0.0..=1.0).contains(&c)),
+        "SoftCompress into AdobeRGB stayed in gamut: {compressed:?}"
+    );
+}
