@@ -49,8 +49,8 @@ use crate::TransferFunction;
 /// Handles conversions between any color spaces that can be described by
 /// a (primaries, transfer) pair. This includes:
 ///
-/// - **ICC profiles**: identified via 132-profile hash table (~100ns) and
-///   CICP-in-ICC extraction. Covers sRGB, Display P3, BT.2020, Adobe RGB,
+/// - **ICC profiles**: identified via normalized profile fingerprint table (~100ns)
+///   and CICP-in-ICC extraction. Covers sRGB, Display P3, BT.2020, Adobe RGB,
 ///   and their variants across ICC v2–v5.
 /// - **CICP codes**: mapped directly to primaries + transfer.
 /// - **Named profiles**: decomposed to primaries + transfer.
@@ -128,6 +128,17 @@ impl crate::cms::PluggableCms for ZenCmsLite {
     ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, whereat::At<crate::cms::CmsPluginError>>>
     {
         use zenpixels::PixelDescriptor;
+
+        // ZenCmsLite implements D65 media-relative matrix+TRC math only. Decline
+        // ICC-Absolute colorimetric requests so a capable backend (such as Lcms)
+        // in the plugin chain can evaluate unadapted PCS white points.
+        let explicit_intent = options.rendering_intent().or(match &src {
+            crate::ColorProfileSource::Parametric(p) => Some(p.rendering_intent),
+            _ => None,
+        });
+        if explicit_intent == Some(zenpixels::RenderingIntent::AbsoluteColorimetric) {
+            return None;
+        }
 
         // Decline when either source can't be resolved to (primaries, transfer)
         // — custom ICC, narrow-range CICP, YCbCr matrix. Not an error;
@@ -1097,4 +1108,38 @@ fn missing_hlg_rendering_cannot_be_bypassed_through_lite_cms() {
         &crate::ConvertOptions::permissive(),
     );
     assert!(!matches!(result, Some(Ok(_))));
+}
+
+#[cfg(test)]
+#[test]
+fn absolute_colorimetric_intent_declines_so_capable_cms_handles_pcs_white() {
+    use crate::cms::PluggableCms;
+    let src = crate::ColorProfileSource::Named(zenpixels::NamedProfile::DisplayP3);
+    let dst = crate::ColorProfileSource::Named(zenpixels::NamedProfile::Srgb);
+    let abs_opts = crate::ConvertOptions::permissive()
+        .with_rendering_intent(zenpixels::RenderingIntent::AbsoluteColorimetric);
+    assert!(
+        ZenCmsLite
+            .build_source_transform(
+                src,
+                dst.clone(),
+                PixelFormat::Rgb8,
+                PixelFormat::Rgb8,
+                &abs_opts
+            )
+            .is_none()
+    );
+    let mut param = zenpixels::ParametricColor::from_cicp(crate::Cicp::DISPLAY_P3).unwrap();
+    param.rendering_intent = zenpixels::RenderingIntent::AbsoluteColorimetric;
+    assert!(
+        ZenCmsLite
+            .build_source_transform(
+                crate::ColorProfileSource::Parametric(param),
+                dst,
+                PixelFormat::Rgb8,
+                PixelFormat::Rgb8,
+                &crate::ConvertOptions::permissive(),
+            )
+            .is_none()
+    );
 }

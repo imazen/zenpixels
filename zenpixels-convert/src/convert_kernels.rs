@@ -109,8 +109,8 @@ pub(super) fn apply_step_u8(
             drop_alpha(src, dst, w, from.channel_type());
         }
 
-        ConvertStep::MatteComposite { linear } => {
-            matte_composite(src, dst, w, from, *linear);
+        ConvertStep::MatteComposite { linear, clip } => {
+            matte_composite(src, dst, w, from, *linear, *clip);
         }
 
         ConvertStep::GrayToRgb => {
@@ -163,9 +163,15 @@ pub(super) fn apply_step_u8(
         ConvertStep::NaiveF32ToU8 => {
             naive_f32_to_u8(src, dst, w, from.layout().channels());
         }
+        ConvertStep::NaiveF32ToU8Truncate => {
+            naive_f32_to_u8_truncate(src, dst, w, from.layout().channels());
+        }
 
         ConvertStep::U16ToU8 => {
             u16_to_u8(src, dst, w, from.layout().channels());
+        }
+        ConvertStep::U16ToU8Truncate => {
+            u16_to_u8_truncate(src, dst, w, from.layout().channels());
         }
         ConvertStep::SdrU16ToU8 { to } => {
             sdr_u16_to_u8(src, dst, w, from.layout(), from.transfer(), *to);
@@ -181,6 +187,9 @@ pub(super) fn apply_step_u8(
 
         ConvertStep::F32ToU16 => {
             f32_to_u16(src, dst, w, from.layout().channels());
+        }
+        ConvertStep::F32ToU16Truncate => {
+            f32_to_u16_truncate(src, dst, w, from.layout().channels());
         }
 
         ConvertStep::F16ToF32 => {
@@ -648,6 +657,7 @@ fn matte_composite(
     width: usize,
     from: PixelDescriptor,
     matte: [f32; 3],
+    clip: bool,
 ) {
     let ch_type = from.channel_type();
     if !matches!(
@@ -658,7 +668,9 @@ fn matte_composite(
         return;
     }
     let tf = from.transfer();
-    let srgb_u8 = ch_type == ChannelType::U8 && tf == TransferFunction::Srgb;
+    let is_premul = from.alpha() == Some(zenpixels::AlphaMode::Premultiplied);
+    let srgb_u8 = ch_type == ChannelType::U8 && tf == TransferFunction::Srgb && !is_premul;
+    let clip_f32 = clip || ch_type != ChannelType::F32;
 
     const PIXELS: usize = 128;
     let mut rgba = [0f32; PIXELS * 4];
@@ -699,14 +711,18 @@ fn matte_composite(
                 *a = f32::from(byte[3]) * (1.0 / 255.0);
             }
         } else {
-            matte_to_linear(rgb, tf);
+            matte_to_linear(rgb, tf, clip_f32);
         }
-        matte_blend(rgb, alpha, matte);
+        if is_premul {
+            matte_blend_premul(rgb, alpha, matte);
+        } else {
+            matte_blend(rgb, alpha, matte);
+        }
         if srgb_u8 {
             linear_srgb::default::linear_to_srgb_u8_slice(rgb, d);
             continue;
         }
-        matte_from_linear(rgb, tf);
+        matte_from_linear(rgb, tf, clip_f32);
         match ch_type {
             ChannelType::U8 => garb::bytes::convert_f32_to_u8(bytemuck::cast_slice(&*rgb), d)
                 .expect("pre-validated row size"),
@@ -718,7 +734,7 @@ fn matte_composite(
     }
 }
 
-/// RGBA samples to separate RGB and clamped alpha.
+/// RGBA samples to separate RGB and clamped alpha (scrubbing NaN alpha to 0.0).
 #[attune(dispatch, -_neon, -_wasm128)]
 fn matte_split(rgba: &[f32], rgb: &mut [f32], alpha: &mut [f32]) {
     for ((s, d), a) in rgba
@@ -729,11 +745,16 @@ fn matte_split(rgba: &[f32], rgb: &mut [f32], alpha: &mut [f32]) {
         .zip(alpha)
     {
         *d = [s[0], s[1], s[2]];
-        *a = s[3].clamp(0.0, 1.0);
+        let raw_a = s[3];
+        *a = if raw_a.is_nan() {
+            0.0
+        } else {
+            raw_a.clamp(0.0, 1.0)
+        };
     }
 }
 
-/// `rgb * alpha + matte * (1 - alpha)`, in linear light.
+/// `rgb * alpha + matte * (1 - alpha)`, in linear light (straight alpha).
 #[attune(dispatch, -_neon, -_wasm128)]
 fn matte_blend(rgb: &mut [f32], alpha: &[f32], matte: [f32; 3]) {
     for (p, a) in rgb.as_chunks_mut::<3>().0.iter_mut().zip(alpha) {
@@ -744,29 +765,51 @@ fn matte_blend(rgb: &mut [f32], alpha: &[f32], matte: [f32; 3]) {
     }
 }
 
+/// `rgb + matte * (1 - alpha)`, in linear light (premultiplied alpha, W3C Compositing-1 §5.1).
+fn matte_blend_premul(rgb: &mut [f32], alpha: &[f32], matte: [f32; 3]) {
+    for (p, a) in rgb.as_chunks_mut::<3>().0.iter_mut().zip(alpha) {
+        let inv = 1.0 - a;
+        p[0] += matte[0] * inv;
+        p[1] += matte[1] * inv;
+        p[2] += matte[2] * inv;
+    }
+}
+
 /// Decodes samples to linear in place. Anything without a curve here passes through.
-fn matte_to_linear(rgb: &mut [f32], tf: TransferFunction) {
+fn matte_to_linear(rgb: &mut [f32], tf: TransferFunction, clip: bool) {
     match tf {
-        TransferFunction::Srgb => linear_srgb::default::srgb_to_linear_slice(rgb),
+        TransferFunction::Srgb if clip => linear_srgb::default::srgb_to_linear_slice(rgb),
+        TransferFunction::Srgb => linear_srgb::default::srgb_to_linear_extended_slice(rgb),
         TransferFunction::Bt709 => linear_srgb::default::bt709_to_linear_slice(rgb),
         TransferFunction::Pq => pq_eotf_slice(rgb),
         TransferFunction::Hlg => linear_srgb::default::hlg_to_linear_slice(rgb),
-        TransferFunction::Gamma22 => {
+        TransferFunction::Gamma22 if clip => {
             linear_srgb::default::gamma_to_linear_slice(rgb, ADOBE_GAMMA);
+        }
+        TransferFunction::Gamma22 => {
+            for v in &mut *rgb {
+                *v = libm::powf(v.abs(), ADOBE_GAMMA).copysign(*v);
+            }
         }
         _ => {}
     }
 }
 
 /// Encodes linear samples in place. The inverse of [`matte_to_linear`].
-fn matte_from_linear(rgb: &mut [f32], tf: TransferFunction) {
+fn matte_from_linear(rgb: &mut [f32], tf: TransferFunction, clip: bool) {
     match tf {
-        TransferFunction::Srgb => linear_srgb::default::linear_to_srgb_slice(rgb),
+        TransferFunction::Srgb if clip => linear_srgb::default::linear_to_srgb_slice(rgb),
+        TransferFunction::Srgb => linear_srgb::default::linear_to_srgb_extended_slice(rgb),
         TransferFunction::Bt709 => linear_srgb::default::linear_to_bt709_slice(rgb),
         TransferFunction::Pq => pq_oetf_slice(rgb),
         TransferFunction::Hlg => linear_srgb::default::linear_to_hlg_slice(rgb),
-        TransferFunction::Gamma22 => {
+        TransferFunction::Gamma22 if clip => {
             linear_srgb::default::linear_to_gamma_slice(rgb, ADOBE_GAMMA);
+        }
+        TransferFunction::Gamma22 => {
+            for v in &mut *rgb {
+                *v = libm::powf(v.abs(), 1.0 / ADOBE_GAMMA).copysign(*v);
+            }
         }
         _ => {}
     }
@@ -1422,6 +1465,36 @@ fn u16_to_u8(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     }
 }
 
+/// u16 → u8 high-byte truncation (`v >> 8`, `DepthPolicy::Truncate`).
+fn u16_to_u8_truncate(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let (pairs, _) = src[..count * 2].as_chunks::<2>();
+    for (s, d) in pairs.iter().zip(dst[..count].iter_mut()) {
+        *d = (u16::from_ne_bytes(*s) >> 8) as u8;
+    }
+}
+
+/// f32 → u8 floor truncation (`clamp(0, 1) * 255`, `DepthPolicy::Truncate`).
+fn naive_f32_to_u8_truncate(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    for (s, d) in srcf.iter().zip(dst[..count].iter_mut()) {
+        let v = if s.is_nan() { 0.0 } else { s.clamp(0.0, 1.0) };
+        *d = (v * 255.0) as u8;
+    }
+}
+
+/// f32 → u16 floor truncation (`clamp(0, 1) * 65535`, `DepthPolicy::Truncate`).
+fn f32_to_u16_truncate(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..count * 2]);
+    for (s, d) in srcf.iter().zip(dst16.iter_mut()) {
+        let v = if s.is_nan() { 0.0 } else { s.clamp(0.0, 1.0) };
+        *d = (v * 65535.0) as u16;
+    }
+}
+
 /// Compose an actual SDR transfer change before the one final quantisation.
 /// Alpha is always linear and only narrows; color channels use f64 so the
 /// f32 transfer approximations cannot flip values close to u8 midpoints.
@@ -1746,7 +1819,9 @@ fn pq_f32_to_linear_f32(
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    dstf[..count].copy_from_slice(&srcf[..count]);
+    for (d, &s) in dstf[..count].iter_mut().zip(&srcf[..count]) {
+        *d = if s.is_nan() { 0.0 } else { s.clamp(0.0, 1.0) };
+    }
     pq_eotf_slice(&mut dstf[..count]);
     multiply_color_channels(&mut dstf[..count], channels, 1.0 / scale);
     restore_alpha_f32_f32(&srcf[..count], &mut dstf[..count], layout);
@@ -1770,6 +1845,9 @@ fn linear_f32_to_pq_f32(
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
     dstf[..count].copy_from_slice(&srcf[..count]);
     multiply_color_channels(&mut dstf[..count], channels, scale);
+    for d in &mut dstf[..count] {
+        *d = if d.is_nan() { 0.0 } else { d.clamp(0.0, 1.0) };
+    }
     pq_oetf_slice(&mut dstf[..count]);
     restore_alpha_f32_f32(&srcf[..count], &mut dstf[..count], layout);
 }
@@ -2029,7 +2107,7 @@ fn premul_u8_ga(src: &[u8], dst: &mut [u8], width: usize) {
         let s: &[u8; 2] = (&src[base..base + 2]).try_into().unwrap();
         let d: &mut [u8; 2] = (&mut dst[base..base + 2]).try_into().unwrap();
         let a = s[1] as u32;
-        d[0] = ((s[0] as u32 * a + 128) / 255) as u8;
+        d[0] = ((s[0] as u32 * a + 127) / 255) as u8;
         d[1] = s[1];
     }
 }
@@ -2041,7 +2119,7 @@ fn premul_u16_ga(src: &[u16], dst: &mut [u16], width: usize) {
         let s: &[u16; 2] = (&src[base..base + 2]).try_into().unwrap();
         let d: &mut [u16; 2] = (&mut dst[base..base + 2]).try_into().unwrap();
         let a = s[1] as u32;
-        d[0] = ((s[0] as u32 * a + 32768) / 65535) as u16;
+        d[0] = ((s[0] as u32 * a + 32767) / 65535) as u16;
         d[1] = s[1];
     }
 }
@@ -2053,9 +2131,9 @@ fn premul_u16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
         let s: &[u16; 4] = (&src[base..base + 4]).try_into().unwrap();
         let d: &mut [u16; 4] = (&mut dst[base..base + 4]).try_into().unwrap();
         let a = s[3] as u32;
-        d[0] = ((s[0] as u32 * a + 32768) / 65535) as u16;
-        d[1] = ((s[1] as u32 * a + 32768) / 65535) as u16;
-        d[2] = ((s[2] as u32 * a + 32768) / 65535) as u16;
+        d[0] = ((s[0] as u32 * a + 32767) / 65535) as u16;
+        d[1] = ((s[1] as u32 * a + 32767) / 65535) as u16;
+        d[2] = ((s[2] as u32 * a + 32767) / 65535) as u16;
         d[3] = s[3];
     }
 }

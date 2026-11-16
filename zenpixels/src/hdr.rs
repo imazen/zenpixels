@@ -144,17 +144,17 @@ pub enum HdrPeak {
     Nits(Nits),
 }
 
-/// HDR content light level metadata (CEA-861.3 / CTA-861-H).
+/// HDR content light level metadata (CEA-861.3 / CTA-861-H / ITU-T H.274 §8.10).
 ///
-/// Describes the peak brightness characteristics of HDR content.
-/// Used by AVIF, JXL, PNG (cLLi chunk), and video containers.
+/// Describes the peak light-level characteristics of HDR content.
+/// Used by AVIF, JXL, PNG (`cLLI` chunk, scaled in `0.0001 cd/m²` units), and video containers.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ContentLightLevel {
     /// Maximum Content Light Level (MaxCLL) in cd/m² (nits).
-    /// Peak luminance of any single pixel in the content.
+    /// Peak `max(R, G, B)` light level of any single pixel in the content (ITU-T H.274 §8.10.2).
     pub max_content_light_level: u16,
     /// Maximum Frame-Average Light Level (MaxFALL) in cd/m².
-    /// Peak average luminance of any single frame.
+    /// Peak frame-average `max(R, G, B)` light level of any single frame.
     pub max_frame_average_light_level: u16,
 }
 
@@ -375,6 +375,7 @@ impl HlgRendering {
         {
             return None;
         }
+        let black_nits = if black_nits == 0.0 { 0.0 } else { black_nits };
         Some(Self {
             peak,
             black_bits: black_nits.to_bits(),

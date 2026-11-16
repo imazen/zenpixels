@@ -279,7 +279,8 @@ impl GammaCurve {
     pub const ADOBE_RGB: Self = Self::from_encoding_exponent(256.0 / 563.0);
     /// ITU-R BT.470M 2.2 display power law (`encoded = linear^(1/2.2)`, `linear = encoded^2.2`).
     pub const GAMMA_22: Self = Self::from_eotf_exponent(2.2);
-    /// SMPTE ST 428-1 2.6 theatrical power law (`encoded = linear^(1/2.6)`, `linear = encoded^2.6`).
+    /// Theatrical 2.6 power law (`encoded = linear^(1/2.6)`, `linear = encoded^2.6`;
+    /// matches JPEG XL `TransferFunction::Dci`, without H.273 `TC=17`'s `48 / 52.37` luminance scale).
     pub const DCI: Self = Self::from_eotf_exponent(2.6);
 
     /// Construct from the encoding (OETF) exponent `g` where `encoded = linear^g`
@@ -475,7 +476,7 @@ impl IccParametricCurve {
     #[inline]
     #[must_use]
     pub const fn try_type1_cie122(g: f32, a: f32, b: f32) -> Option<Self> {
-        if g.is_finite() && g > 0.0 && a.is_finite() && a != 0.0 && b.is_finite() {
+        if g.is_finite() && g > 0.0 && a.is_finite() && a > 0.0 && b.is_finite() {
             Some(Self {
                 func_type: 1,
                 params: [
@@ -501,7 +502,7 @@ impl IccParametricCurve {
         match Self::try_type1_cie122(g, a, b) {
             Some(c) => c,
             None => {
-                panic!("ICC parametric type 1 requires finite parameters with g > 0 and a != 0")
+                panic!("ICC parametric type 1 requires finite parameters with g > 0 and a > 0")
             }
         }
     }
@@ -510,7 +511,7 @@ impl IccParametricCurve {
     #[inline]
     #[must_use]
     pub const fn try_type2_iec61966_3(g: f32, a: f32, b: f32, c: f32) -> Option<Self> {
-        if g.is_finite() && g > 0.0 && a.is_finite() && a != 0.0 && b.is_finite() && c.is_finite() {
+        if g.is_finite() && g > 0.0 && a.is_finite() && a > 0.0 && b.is_finite() && c.is_finite() {
             Some(Self {
                 func_type: 2,
                 params: [
@@ -536,7 +537,7 @@ impl IccParametricCurve {
         match Self::try_type2_iec61966_3(g, a, b, c) {
             Some(curve) => curve,
             None => {
-                panic!("ICC parametric type 2 requires finite parameters with g > 0 and a != 0")
+                panic!("ICC parametric type 2 requires finite parameters with g > 0 and a > 0")
             }
         }
     }
@@ -1043,8 +1044,12 @@ impl NamedProfile {
     /// Recognizes sRGB, Display P3, BT.2020 (SDR), BT.2100 PQ,
     /// and Linear sRGB. Returns `None` for unrecognized combinations.
     pub const fn from_cicp(cicp: Cicp) -> Option<Self> {
-        // Match on (primaries, transfer, matrix, full_range).
-        // We match matrix_coefficients == 0 (Identity/RGB) for all RGB profiles.
+        if !cicp.full_range {
+            return None;
+        }
+        // Match on (primaries, transfer, matrix) for full-range profiles.
+        // SDR RGB profiles require matrix_coefficients == 0 (Identity); BT.2100 PQ/HLG
+        // also accept assigned H.273 video matrix codes (excluding Unspecified=2 and Reserved).
         match (
             cicp.color_primaries,
             cicp.transfer_characteristics,
@@ -1053,8 +1058,8 @@ impl NamedProfile {
             (1, 13, 0) => Some(Self::Srgb),
             (12, 13, 0) => Some(Self::DisplayP3),
             (9, 1, 0) => Some(Self::Bt2020),
-            (9, 16, _) => Some(Self::Bt2020Pq), // BT.2100 PQ (any matrix)
-            (9, 18, _) => Some(Self::Bt2020Hlg), // BT.2100 HLG (any matrix)
+            (9, 16, 0 | 1 | 4..=17) => Some(Self::Bt2020Pq),
+            (9, 18, 0 | 1 | 4..=17) => Some(Self::Bt2020Hlg),
             (1, 8, 0) => Some(Self::LinearSrgb),
             _ => None,
         }
@@ -1134,6 +1139,7 @@ impl<'a> ColorProfileSource<'a> {
     /// - `PrimariesTransferPair` — returns directly
     /// - `Named` — decomposes via [`NamedProfile::to_primaries_transfer`]
     /// - `Cicp` — maps via [`ColorPrimaries::from_cicp`] and [`TransferFunction::from_cicp`]
+    ///   when `matrix_coefficients == 0` and `full_range` is `true`
     /// - `Parametric` — decomposes via [`ParametricColor::to_primaries_transfer`]
     /// - `Icc` — returns `None` (requires profile parsing)
     pub const fn primaries_transfer(&self) -> Option<(ColorPrimaries, TransferFunction)> {
@@ -1144,6 +1150,9 @@ impl<'a> ColorProfileSource<'a> {
             } => Some((*primaries, *transfer)),
             Self::Named(named) => Some(named.to_primaries_transfer()),
             Self::Cicp(cicp) => {
+                if cicp.matrix_coefficients != 0 || !cicp.full_range {
+                    return None;
+                }
                 let p = ColorPrimaries::from_cicp(cicp.color_primaries);
                 let t = TransferFunction::from_cicp(cicp.transfer_characteristics);
                 match (p, t) {

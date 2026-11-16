@@ -145,15 +145,6 @@ fn options_for_profiles(
     if format.channel_type() != ChannelType::F32 {
         options.barycentric_weight_scale = BarycentricWeightScale::Low;
     }
-    // ICC falls back to A2B0 when A2B1 is absent, as lcms2 does. JPEG XL's PQ and HLG profiles have
-    // only A2B0, and the backend refuses them under relative colorimetric intent.
-    if explicit_intent.is_none()
-        && source.lut_a_to_b_colorimetric.is_none()
-        && source.lut_a_to_b_perceptual.is_some()
-        && source.red_trc.is_none()
-    {
-        options.rendering_intent = moxcms::RenderingIntent::Perceptual;
-    }
     // Native F32 ICC-to-P3 comparisons exposed quantization near black and
     // clipping of layer samples outside 0..1. Keep float arithmetic and use
     // analytic curves when available. This does not qualify arbitrary LUTs.
@@ -171,10 +162,27 @@ fn options_for_profiles(
     options
 }
 
-/// An explicit ICC request selects its actual curves. The extended evaluator checks CICP
-/// independently of `allow_use_cicp_transfer`, so only this private parsed copy loses the hint.
+/// An explicit ICC request selects its actual curves, and populates per-profile
+/// ICC.1:2022 §8.10.2 Table 25 LUT fallbacks (`A2B1/A2B2 -> A2B0`, `B2A1/B2A2 -> B2A0`)
+/// when colorimetric/saturation LUTs and TRCs are absent (e.g. JPEG XL PQ/HLG A2B0-only
+/// profiles), without mutating the other profile's rendering intent.
 fn prefer_icc_curves(profile: &mut ColorProfile) {
     profile.cicp = None;
+    let no_trcs = profile.red_trc.is_none() && profile.gray_trc.is_none();
+    if no_trcs {
+        if profile.lut_a_to_b_colorimetric.is_none() {
+            profile.lut_a_to_b_colorimetric = profile.lut_a_to_b_perceptual.clone();
+        }
+        if profile.lut_a_to_b_saturation.is_none() {
+            profile.lut_a_to_b_saturation = profile.lut_a_to_b_perceptual.clone();
+        }
+        if profile.lut_b_to_a_colorimetric.is_none() {
+            profile.lut_b_to_a_colorimetric = profile.lut_b_to_a_perceptual.clone();
+        }
+        if profile.lut_b_to_a_saturation.is_none() {
+            profile.lut_b_to_a_saturation = profile.lut_b_to_a_perceptual.clone();
+        }
+    }
 }
 
 fn validate_channel_curves(profile: &ColorProfile) -> Result<(), MoxCmsError> {
@@ -268,10 +276,7 @@ impl U8MatrixShaper {
         let matrix_shaper = |p: &ColorProfile| {
             p.color_space == moxcms::DataColorSpace::Rgb
                 && p.pcs == moxcms::DataColorSpace::Xyz
-                && p.lut_a_to_b_colorimetric.is_none()
-                && p.lut_a_to_b_perceptual.is_none()
-                && p.lut_b_to_a_colorimetric.is_none()
-                && p.lut_b_to_a_perceptual.is_none()
+                && !has_tables(p)
                 && p.red_trc.is_some()
                 && p.red_trc == p.green_trc
                 && p.red_trc == p.blue_trc
@@ -364,13 +369,8 @@ fn pure_gamma_exponent(
     target_layout: Layout,
     options: &TransformOptions,
 ) -> Option<f32> {
-    let no_tables = |p: &ColorProfile| {
-        p.color_space == moxcms::DataColorSpace::Rgb
-            && p.lut_a_to_b_colorimetric.is_none()
-            && p.lut_a_to_b_perceptual.is_none()
-            && p.lut_b_to_a_colorimetric.is_none()
-            && p.lut_b_to_a_perceptual.is_none()
-    };
+    let no_tables =
+        |p: &ColorProfile| p.color_space == moxcms::DataColorSpace::Rgb && !has_tables(p);
     if !options.allow_extended_range_rgb_xyz
         || !no_tables(source)
         || !no_tables(target)
@@ -549,8 +549,10 @@ const fn color_channels(channels: usize) -> usize {
 fn has_tables(p: &ColorProfile) -> bool {
     p.lut_a_to_b_colorimetric.is_some()
         || p.lut_a_to_b_perceptual.is_some()
+        || p.lut_a_to_b_saturation.is_some()
         || p.lut_b_to_a_colorimetric.is_some()
         || p.lut_b_to_a_perceptual.is_some()
+        || p.lut_b_to_a_saturation.is_some()
 }
 
 /// A profile whose curves alone convert it, gray or RGB.

@@ -96,9 +96,15 @@ pub(super) fn row(
             } else {
                 for v in &mut rgb {
                     if clip {
-                        *v = v.clamp(0.0, 1.0);
+                        // ITU-R BT.2100-3 Table 5 Note 5h: clamp super-white at 1.0,
+                        // apply black-level lift first so PLUGE sub-blacks in
+                        // [-beta / (1 - beta), 0) decode smoothly to [0, L_B], and
+                        // clamp below display black at 0.0.
+                        let v_clamped = v.min(1.0);
+                        *v = decode(((1.0 - beta) * v_clamped + beta).max(0.0));
+                    } else {
+                        *v = decode((1.0 - beta) * *v + beta);
                     }
-                    *v = decode((1.0 - beta) * *v + beta);
                 }
                 let y = 0.2627 * rgb[0] + 0.6780 * rgb[1] + 0.0593 * rgb[2];
                 let gain = if y == 0.0 {

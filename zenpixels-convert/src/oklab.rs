@@ -133,11 +133,18 @@ pub(crate) fn lms_to_rgb_matrix(primaries: ColorPrimaries) -> Option<GamutMatrix
 /// Newton-Raphson iterations. Handles negative inputs and zero correctly.
 #[inline]
 pub(crate) fn fast_cbrt(x: f32) -> f32 {
-    if x == 0.0 {
-        return 0.0;
+    if x == 0.0 || !x.is_finite() {
+        return x;
     }
     let sign = x.signum();
-    let x = x.abs();
+    let mut x = x.abs();
+    let mut scale = 1.0_f32;
+    if x < f32::MIN_POSITIVE {
+        // Normalize subnormals by 2^24 (`cbrt(2^24) = 256`) so the IEEE 754
+        // biased-exponent bit estimate stays accurate across the subnormal range.
+        x *= 16_777_216.0;
+        scale = 1.0 / 256.0;
+    }
 
     // Initial estimate via IEEE 754 bit trick: cbrt(x) ≈ 2^(log2(x)/3)
     let bits = x.to_bits();
@@ -149,7 +156,7 @@ pub(crate) fn fast_cbrt(x: f32) -> f32 {
     y = (2.0 * y + x / (y * y)) / 3.0;
     y = (2.0 * y + x / (y * y)) / 3.0;
 
-    sign * y
+    sign * y * scale
 }
 
 // ---------------------------------------------------------------------------

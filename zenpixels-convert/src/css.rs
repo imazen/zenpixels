@@ -75,9 +75,21 @@ const LMS_CBRT_FROM_OKLAB: M3 = [
 ];
 const XYZ_FROM_LMS: M3 = [
     [1.2268798758459243, -0.5578149944602171, 0.2813910456659647],
-    [-0.0405757452148619, 1.112286803280317, -0.0717110580655164],
+    [-0.0405757452148008, 1.112286803280317, -0.0717110580655164],
     [-0.0763729366746601, -0.4214933324022432, 1.5869240198367816],
 ];
+
+/// CSS Syntax 3 §4.2 whitespace characters (ASCII space, tab, LF, CR, FF).
+const CSS_WS: &[char] = &[' ', '\t', '\n', '\r', '\x0C'];
+
+fn trim_css(s: &str) -> &str {
+    s.trim_matches(CSS_WS)
+}
+
+fn starts_with_from_keyword(s: &str) -> bool {
+    s.strip_prefix("from")
+        .is_some_and(|rest| rest.starts_with(CSS_WS))
+}
 
 fn mul(m: &M3, v: [f64; 3]) -> [f64; 3] {
     core::array::from_fn(|i| m[i][0] * v[0] + m[i][1] * v[1] + m[i][2] * v[2])
@@ -160,10 +172,10 @@ fn parse_arg(token: &str) -> Result<Arg, CssColorError> {
         return Ok(Arg::None);
     }
     let number = |text: &str| -> Result<f64, CssColorError> {
-        // Rust's float syntax also takes `inf` and `nan`, which CSS doesn't.
+        // CSS Syntax 3 §4.3.3: no `inf`/`nan`, and a `.` must be followed by a digit.
         let digits = text.bytes().any(|c| c.is_ascii_digit());
         let letters = text.bytes().all(|c| !c.is_ascii_alphabetic() || c == b'e');
-        if !digits || !letters {
+        if !digits || !letters || text.ends_with('.') || text.contains(".e") {
             return Err(CssColorError::Invalid);
         }
         let value: f64 = text.parse().map_err(|_| CssColorError::Invalid)?;
@@ -194,45 +206,58 @@ fn parse_args(
     count: usize,
     legacy_commas: bool,
 ) -> Result<([Arg; 4], f64), CssColorError> {
-    let (components, alpha_text) = if inner.contains(',') {
+    let trimmed = trim_css(inner);
+    if starts_with_from_keyword(trimmed) {
+        return Err(CssColorError::Unsupported);
+    }
+    let has_commas = inner.contains(',');
+    let (components, alpha_text) = if has_commas {
         if !legacy_commas || inner.contains('/') {
             return Err(CssColorError::Invalid);
         }
         (inner, None)
     } else {
         match inner.split_once('/') {
-            Some((c, a)) => (c, Some(a.trim())),
+            Some((c, a)) => (c, Some(trim_css(a))),
             None => (inner, None),
         }
     };
     let mut args = [Arg::None; 4];
     let mut n = 0;
     let mut alpha_arg = None;
-    let separators: &[char] = if inner.contains(',') {
-        &[',']
-    } else {
-        &[' ', '\t', '\n']
-    };
-    for token in components
-        .split(separators)
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-    {
-        if n == count {
-            // Only the comma form puts alpha in the list.
-            if !inner.contains(',') || alpha_arg.is_some() {
+    if has_commas {
+        for raw in components.split(',') {
+            let token = trim_css(raw);
+            if token.is_empty() {
                 return Err(CssColorError::Invalid);
             }
-            alpha_arg = Some(parse_arg(token)?);
-            continue;
+            if n == count {
+                if alpha_arg.is_some() {
+                    return Err(CssColorError::Invalid);
+                }
+                alpha_arg = Some(parse_arg(token)?);
+                continue;
+            }
+            args[n] = parse_arg(token)?;
+            n += 1;
         }
-        args[n] = parse_arg(token)?;
-        n += 1;
+    } else {
+        for token in components
+            .split(CSS_WS)
+            .map(trim_css)
+            .filter(|t| !t.is_empty())
+        {
+            if n == count {
+                return Err(CssColorError::Invalid);
+            }
+            args[n] = parse_arg(token)?;
+            n += 1;
+        }
     }
     if n != count {
         return Err(CssColorError::Invalid);
     }
-    if inner.contains(',') && args[..count].iter().any(|a| matches!(a, Arg::None)) {
+    if has_commas && args[..count].iter().any(|a| matches!(a, Arg::None)) {
         return Err(CssColorError::Invalid);
     }
     if let Some(text) = alpha_text {
@@ -263,6 +288,15 @@ fn parse_hex(hex: &str) -> Result<Color, CssColorError> {
 
 fn parse_rgb(inner: &str) -> Result<Color, CssColorError> {
     let (args, alpha) = parse_args(inner, 3, true)?;
+    if inner.contains(',') {
+        // CSS Color 4 §5.1: legacy comma rgb() requires all three RGB channels
+        // to be either <percentage> or <number>, never mixed.
+        let all_pct = args[..3].iter().all(|a| matches!(a, Arg::Percent(_)));
+        let all_num = args[..3].iter().all(|a| matches!(a, Arg::Number(_)));
+        if !all_pct && !all_num {
+            return Err(CssColorError::Invalid);
+        }
+    }
     // Numbers run to 255. Values outside the range clamp at parse time.
     let channels: [f64; 3] = [
         args[0].value(255.0)?.clamp(0.0, 255.0),
@@ -285,6 +319,12 @@ fn parse_rgb(inner: &str) -> Result<Color, CssColorError> {
 
 fn parse_hsl(inner: &str) -> Result<Color, CssColorError> {
     let (args, alpha) = parse_args(inner, 3, true)?;
+    if inner.contains(',')
+        && (!matches!(args[1], Arg::Percent(_)) || !matches!(args[2], Arg::Percent(_)))
+    {
+        // CSS Color 4 §7.1: legacy comma hsl() requires <percentage> for S and L.
+        return Err(CssColorError::Invalid);
+    }
     let h = wrap(args[0].hue()?, 360.0);
     let s = (args[1].value(100.0)? / 100.0).max(0.0);
     let l = args[2].value(100.0)? / 100.0;
@@ -390,10 +430,11 @@ fn signed_pow(v: f64, exponent: f64) -> f64 {
 }
 
 fn parse_color_function(inner: &str) -> Result<Color, CssColorError> {
-    let inner = inner.trim_start();
-    let split = inner
-        .find(|c: char| c.is_ascii_whitespace())
-        .ok_or(CssColorError::Invalid)?;
+    let inner = trim_css(inner);
+    if starts_with_from_keyword(inner) {
+        return Err(CssColorError::Unsupported);
+    }
+    let split = inner.find(CSS_WS).ok_or(CssColorError::Invalid)?;
     let (space, rest) = inner.split_at(split);
     let (args, alpha) = parse_args(rest, 3, false)?;
     let v = [
@@ -433,15 +474,22 @@ fn parse_color_function(inner: &str) -> Result<Color, CssColorError> {
 }
 
 pub(crate) fn parse(css: &str) -> Result<Color, CssColorError> {
-    let text = css.trim().to_ascii_lowercase();
+    if !css.is_ascii() {
+        return Err(CssColorError::Invalid);
+    }
+    let text = trim_css(css).to_ascii_lowercase();
     if let Some(hex) = text.strip_prefix('#') {
         return parse_hex(hex);
     }
     if let Some(open) = text.find('(') {
+        // CSS Syntax 3 §4.3.6: `<function-token>` allows no whitespace between ident and `(`.
+        if text[..open].ends_with(CSS_WS) {
+            return Err(CssColorError::Invalid);
+        }
         let inner = text[open + 1..]
             .strip_suffix(')')
             .ok_or(CssColorError::Invalid)?;
-        let name = text[..open].trim_end();
+        let name = &text[..open];
         return match name {
             "rgb" | "rgba" => parse_rgb(inner),
             "hsl" | "hsla" => parse_hsl(inner),
@@ -455,7 +503,11 @@ pub(crate) fn parse(css: &str) -> Result<Color, CssColorError> {
     }
     match text.as_str() {
         "transparent" => u8_color(0, 0, 0, 0),
-        "currentcolor" | "canvas" | "canvastext" => Err(CssColorError::Unsupported),
+        // CSS Color 4 §6.1 (`currentcolor`) and §6.2 (`<system-color>` keywords).
+        "currentcolor" | "accentcolor" | "accentcolortext" | "activetext" | "buttonborder"
+        | "buttonface" | "buttontext" | "canvas" | "canvastext" | "field" | "fieldtext"
+        | "graytext" | "highlight" | "highlighttext" | "linktext" | "mark" | "marktext"
+        | "selecteditem" | "selecteditemtext" | "visitedtext" => Err(CssColorError::Unsupported),
         name => named(name)
             .map(|[r, g, b]| Color::srgb8(r, g, b))
             .ok_or(CssColorError::Invalid),

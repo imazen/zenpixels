@@ -5,10 +5,32 @@
 //! - CIE 1976 D50 `L*a*b*` / `L*C*h°` <-> linear RGB (Bradford D65 <-> D50)
 //! - Cylindrical `HSL` / `HSV` <-> RGB (`F32` degrees `[0, 360)`, integer `[0, 1)` turns)
 
-use crate::ext::ColorPrimariesExt;
+use crate::gamut::GamutMatrix;
 use crate::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
 };
+
+#[inline]
+fn primaries_to_xyz(primaries: ColorPrimaries) -> Option<&'static GamutMatrix> {
+    match primaries {
+        ColorPrimaries::Bt709 => Some(&crate::gamut::BT709_TO_XYZ),
+        ColorPrimaries::DisplayP3 => Some(&crate::gamut::DISPLAY_P3_TO_XYZ),
+        ColorPrimaries::Bt2020 => Some(&crate::gamut::BT2020_TO_XYZ),
+        ColorPrimaries::AdobeRgb => Some(&crate::gamut::ADOBE_RGB_TO_XYZ),
+        _ => None,
+    }
+}
+
+#[inline]
+fn primaries_from_xyz(primaries: ColorPrimaries) -> Option<&'static GamutMatrix> {
+    match primaries {
+        ColorPrimaries::Bt709 => Some(&crate::gamut::XYZ_TO_BT709),
+        ColorPrimaries::DisplayP3 => Some(&crate::gamut::XYZ_TO_DISPLAY_P3),
+        ColorPrimaries::Bt2020 => Some(&crate::gamut::XYZ_TO_BT2020),
+        ColorPrimaries::AdobeRgb => Some(&crate::gamut::XYZ_TO_ADOBE_RGB),
+        _ => None,
+    }
+}
 
 /// Elementary step inside `ConvertStep::Perceptual`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,18 +39,28 @@ pub(crate) enum PerceptualStep {
     CartesianToPolar { target_layout: ChannelLayout },
     /// `(L, C, h°[, A]) -> (L, a, b[, A])` on `F32` (`Oklch -> Oklab`, `Lch -> Lab`, `Jzczhz -> Jzazbz`).
     PolarToCartesian { target_layout: ChannelLayout },
-    /// Linear `F32` RGB(A) -> `Jzazbz`(A) `F32` (anchored by `pq_anchor_scale`, default `203` cd/m²).
-    LinearRgbToJzazbz { has_alpha: bool },
+    /// Linear `F32` RGB(A) -> `Jzazbz`(A) `F32` (anchored by `pq_anchor_scale` when `anchored`, else `203` cd/m²).
+    LinearRgbToJzazbz { has_alpha: bool, anchored: bool },
     /// `Jzazbz`(A) `F32` -> linear `F32` RGB(A).
-    JzazbzToLinearRgb { has_alpha: bool },
+    JzazbzToLinearRgb {
+        has_alpha: bool,
+        anchored: bool,
+        primaries: ColorPrimaries,
+    },
     /// ST 2084 PQ `F32` RGB(A) -> `Jzazbz`(A) `F32` (`0..10,000` cd/m² direct HDR <-> HDR).
     PqRgbToJzazbz { has_alpha: bool },
     /// `Jzazbz`(A) `F32` -> ST 2084 PQ `F32` RGB(A).
-    JzazbzToPqRgb { has_alpha: bool },
+    JzazbzToPqRgb {
+        has_alpha: bool,
+        primaries: ColorPrimaries,
+    },
     /// Linear `F32` RGB(A) (D65 primaries) -> CIE 1976 D50 `L*C*h°`(A) `F32`.
     LinearRgbToLch { has_alpha: bool },
     /// CIE 1976 D50 `L*C*h°`(A) `F32` -> linear `F32` RGB(A) (D65 primaries).
-    LchToLinearRgb { has_alpha: bool },
+    LchToLinearRgb {
+        has_alpha: bool,
+        primaries: ColorPrimaries,
+    },
     /// Encoded `F32` RGB(A) -> cylindrical `HSL`(A) `F32` (`H ∈ [0, 360), S, L ∈ [0, 1]`).
     RgbToHsl { has_alpha: bool },
     /// Cylindrical `HSL`(A) `F32` -> encoded `F32` RGB(A).
@@ -72,30 +104,29 @@ impl PerceptualStep {
 
     #[inline]
     pub(crate) fn is_inverse_of(&self, other: &Self) -> bool {
-        matches!(
-            (self, other),
+        match (*self, *other) {
             (Self::CartesianToPolar { .. }, Self::PolarToCartesian { .. })
-                | (Self::PolarToCartesian { .. }, Self::CartesianToPolar { .. })
-                | (
-                    Self::LinearRgbToJzazbz { .. },
-                    Self::JzazbzToLinearRgb { .. }
-                )
-                | (
-                    Self::JzazbzToLinearRgb { .. },
-                    Self::LinearRgbToJzazbz { .. }
-                )
-                | (Self::PqRgbToJzazbz { .. }, Self::JzazbzToPqRgb { .. })
-                | (Self::JzazbzToPqRgb { .. }, Self::PqRgbToJzazbz { .. })
-                | (Self::LinearRgbToLch { .. }, Self::LchToLinearRgb { .. })
-                | (Self::LchToLinearRgb { .. }, Self::LinearRgbToLch { .. })
-                | (Self::RgbToHsl { .. }, Self::HslToRgb { .. })
-                | (Self::HslToRgb { .. }, Self::RgbToHsl { .. })
-                | (Self::RgbToHsv { .. }, Self::HsvToRgb { .. })
-                | (Self::HsvToRgb { .. }, Self::RgbToHsv { .. })
-        )
+            | (Self::PolarToCartesian { .. }, Self::CartesianToPolar { .. })
+            | (Self::PqRgbToJzazbz { .. }, Self::JzazbzToPqRgb { .. })
+            | (Self::JzazbzToPqRgb { .. }, Self::PqRgbToJzazbz { .. })
+            | (Self::LinearRgbToLch { .. }, Self::LchToLinearRgb { .. })
+            | (Self::LchToLinearRgb { .. }, Self::LinearRgbToLch { .. })
+            | (Self::RgbToHsl { .. }, Self::HslToRgb { .. })
+            | (Self::HslToRgb { .. }, Self::RgbToHsl { .. }) => true,
+            (
+                Self::LinearRgbToJzazbz { anchored: a1, .. },
+                Self::JzazbzToLinearRgb { anchored: a2, .. },
+            )
+            | (
+                Self::JzazbzToLinearRgb { anchored: a1, .. },
+                Self::LinearRgbToJzazbz { anchored: a2, .. },
+            ) => a1 == a2,
+            _ => false,
+        }
     }
 
     pub(crate) fn output_descriptor(&self, current: PixelDescriptor) -> PixelDescriptor {
+        let mut out_primaries = current.primaries;
         let out = match *self {
             Self::CartesianToPolar { target_layout } | Self::PolarToCartesian { target_layout } => {
                 PixelDescriptor::new(
@@ -105,7 +136,8 @@ impl PerceptualStep {
                     current.transfer(),
                 )
             }
-            Self::LinearRgbToJzazbz { has_alpha } | Self::PqRgbToJzazbz { has_alpha } => {
+            Self::LinearRgbToJzazbz { has_alpha, .. } | Self::PqRgbToJzazbz { has_alpha } => {
+                out_primaries = ColorPrimaries::Bt709;
                 let layout = if has_alpha {
                     ChannelLayout::JzazbzAlpha
                 } else {
@@ -118,7 +150,16 @@ impl PerceptualStep {
                     TransferFunction::Unknown,
                 )
             }
-            Self::JzazbzToLinearRgb { has_alpha } | Self::LchToLinearRgb { has_alpha } => {
+            Self::JzazbzToLinearRgb {
+                has_alpha,
+                primaries,
+                ..
+            }
+            | Self::LchToLinearRgb {
+                has_alpha,
+                primaries,
+            } => {
+                out_primaries = primaries;
                 let layout = if has_alpha {
                     ChannelLayout::Rgba
                 } else {
@@ -131,7 +172,11 @@ impl PerceptualStep {
                     TransferFunction::Linear,
                 )
             }
-            Self::JzazbzToPqRgb { has_alpha } => {
+            Self::JzazbzToPqRgb {
+                has_alpha,
+                primaries,
+            } => {
+                out_primaries = primaries;
                 let layout = if has_alpha {
                     ChannelLayout::Rgba
                 } else {
@@ -145,6 +190,7 @@ impl PerceptualStep {
                 )
             }
             Self::LinearRgbToLch { has_alpha } => {
+                out_primaries = ColorPrimaries::Bt709;
                 let layout = if has_alpha {
                     ChannelLayout::LchAlpha
                 } else {
@@ -206,7 +252,7 @@ impl PerceptualStep {
                 PixelDescriptor::new(to_type, layout, current.alpha(), current.transfer())
             }
         };
-        out.with_primaries(current.primaries)
+        out.with_primaries(out_primaries)
             .with_signal_range(current.signal_range)
     }
 }
@@ -426,6 +472,8 @@ pub(crate) fn pivot(from: PixelDescriptor, to: PixelDescriptor) -> Option<PixelD
     }
 
     // 5. Jzazbz <-> PQ F32 RGB(A) (when the other side uses PQ) or Linear F32 RGB(A).
+    //    Use the RGB side's primaries so wide-gamut Rec.2020/P3/AdobeRGB converts
+    //    directly to/from XYZ D65 without routing through BT.709.
     if matches!(
         from.layout(),
         ChannelLayout::Jzazbz | ChannelLayout::JzazbzAlpha
@@ -440,8 +488,16 @@ pub(crate) fn pivot(from: PixelDescriptor, to: PixelDescriptor) -> Option<PixelD
         } else {
             TransferFunction::Linear
         };
+        let rgb_primaries = if matches!(
+            to.color_model(),
+            crate::ColorModel::Rgb | crate::ColorModel::Gray
+        ) {
+            to.primaries
+        } else {
+            from.primaries
+        };
         let p = PixelDescriptor::new(ChannelType::F32, rgb_layout, from.alpha(), tf)
-            .with_primaries(from.primaries)
+            .with_primaries(rgb_primaries)
             .with_signal_range(from.signal_range);
         return Some(p).filter(|d| *d != from);
     }
@@ -459,8 +515,16 @@ pub(crate) fn pivot(from: PixelDescriptor, to: PixelDescriptor) -> Option<PixelD
         } else {
             TransferFunction::Linear
         };
+        let rgb_primaries = if matches!(
+            from.color_model(),
+            crate::ColorModel::Rgb | crate::ColorModel::Gray
+        ) {
+            from.primaries
+        } else {
+            to.primaries
+        };
         let p = PixelDescriptor::new(ChannelType::F32, rgb_layout, to.alpha(), tf)
-            .with_primaries(to.primaries)
+            .with_primaries(rgb_primaries)
             .with_signal_range(to.signal_range);
         return Some(p).filter(|d| *d != to);
     }
@@ -472,13 +536,21 @@ pub(crate) fn pivot(from: PixelDescriptor, to: PixelDescriptor) -> Option<PixelD
         } else {
             ChannelLayout::Rgb
         };
+        let rgb_primaries = if matches!(
+            to.color_model(),
+            crate::ColorModel::Rgb | crate::ColorModel::Gray
+        ) {
+            to.primaries
+        } else {
+            from.primaries
+        };
         let p = PixelDescriptor::new(
             ChannelType::F32,
             rgb_layout,
             from.alpha(),
             TransferFunction::Linear,
         )
-        .with_primaries(from.primaries)
+        .with_primaries(rgb_primaries)
         .with_signal_range(from.signal_range);
         return Some(p).filter(|d| *d != from);
     }
@@ -488,13 +560,21 @@ pub(crate) fn pivot(from: PixelDescriptor, to: PixelDescriptor) -> Option<PixelD
         } else {
             ChannelLayout::Rgb
         };
+        let rgb_primaries = if matches!(
+            from.color_model(),
+            crate::ColorModel::Rgb | crate::ColorModel::Gray
+        ) {
+            from.primaries
+        } else {
+            to.primaries
+        };
         let p = PixelDescriptor::new(
             ChannelType::F32,
             rgb_layout,
             to.alpha(),
             TransferFunction::Linear,
         )
-        .with_primaries(to.primaries)
+        .with_primaries(rgb_primaries)
         .with_signal_range(to.signal_range);
         return Some(p).filter(|d| *d != to);
     }
@@ -543,7 +623,7 @@ pub(crate) fn try_direct_step(
     if from.channel_type() != ChannelType::F32 || to.channel_type() != ChannelType::F32 {
         return Ok(None);
     }
-    if from.primaries != to.primaries || from.alpha() != to.alpha() {
+    if from.alpha() != to.alpha() {
         return Ok(None);
     }
     // Premultiplied alpha cannot cross directly into/out of nonlinear perceptual/polar layouts;
@@ -553,10 +633,17 @@ pub(crate) fn try_direct_step(
     }
 
     let step = match (from.layout(), to.layout()) {
-        // Polar <-> Cartesian pairs (primaries-agnostic when both sides agree on metadata).
+        // Polar <-> Cartesian pairs (`Oklab <-> Oklch` requires matching primaries;
+        // `Lab <-> Lch` and `Jzazbz <-> Jzczhz` are absolute XYZ spaces).
         (ChannelLayout::Oklab, ChannelLayout::Oklch)
         | (ChannelLayout::OklabA, ChannelLayout::OklchAlpha)
-        | (ChannelLayout::Lab, ChannelLayout::Lch)
+            if from.primaries == to.primaries && from.transfer() == to.transfer() =>
+        {
+            PerceptualStep::CartesianToPolar {
+                target_layout: to.layout(),
+            }
+        }
+        (ChannelLayout::Lab, ChannelLayout::Lch)
         | (ChannelLayout::LabAlpha, ChannelLayout::LchAlpha)
         | (ChannelLayout::Jzazbz, ChannelLayout::Jzczhz)
         | (ChannelLayout::JzazbzAlpha, ChannelLayout::JzczhzAlpha)
@@ -568,7 +655,13 @@ pub(crate) fn try_direct_step(
         }
         (ChannelLayout::Oklch, ChannelLayout::Oklab)
         | (ChannelLayout::OklchAlpha, ChannelLayout::OklabA)
-        | (ChannelLayout::Lch, ChannelLayout::Lab)
+            if from.primaries == to.primaries && from.transfer() == to.transfer() =>
+        {
+            PerceptualStep::PolarToCartesian {
+                target_layout: to.layout(),
+            }
+        }
+        (ChannelLayout::Lch, ChannelLayout::Lab)
         | (ChannelLayout::LchAlpha, ChannelLayout::LabAlpha)
         | (ChannelLayout::Jzczhz, ChannelLayout::Jzazbz)
         | (ChannelLayout::JzczhzAlpha, ChannelLayout::JzazbzAlpha)
@@ -579,19 +672,20 @@ pub(crate) fn try_direct_step(
             }
         }
 
-        // Jzazbz <-> Linear / PQ RGB(A) (requires known RGB->XYZ primaries).
+        // Jzazbz <-> Linear / PQ RGB(A) (requires known RGB->XYZ primaries on the RGB side).
         (
             ChannelLayout::Rgb | ChannelLayout::Rgba,
             ChannelLayout::Jzazbz | ChannelLayout::JzazbzAlpha,
         ) if from.layout().has_alpha() == to.layout().has_alpha()
             && to.transfer() == TransferFunction::Unknown =>
         {
-            if from.primaries.to_xyz_matrix().is_none() {
+            if primaries_to_xyz(from.primaries).is_none() {
                 return Err(());
             }
             match from.transfer() {
                 TransferFunction::Linear => PerceptualStep::LinearRgbToJzazbz {
                     has_alpha: from.layout().has_alpha(),
+                    anchored: false,
                 },
                 TransferFunction::Pq => PerceptualStep::PqRgbToJzazbz {
                     has_alpha: from.layout().has_alpha(),
@@ -605,21 +699,24 @@ pub(crate) fn try_direct_step(
         ) if from.layout().has_alpha() == to.layout().has_alpha()
             && from.transfer() == TransferFunction::Unknown =>
         {
-            if to.primaries.from_xyz_matrix().is_none() {
+            if primaries_from_xyz(to.primaries).is_none() {
                 return Err(());
             }
             match to.transfer() {
                 TransferFunction::Linear => PerceptualStep::JzazbzToLinearRgb {
                     has_alpha: to.layout().has_alpha(),
+                    anchored: false,
+                    primaries: to.primaries,
                 },
                 TransferFunction::Pq => PerceptualStep::JzazbzToPqRgb {
                     has_alpha: to.layout().has_alpha(),
+                    primaries: to.primaries,
                 },
                 _ => return Ok(None),
             }
         }
 
-        // Lch <-> Linear RGB(A) (requires known RGB->XYZ primaries).
+        // Lch <-> Linear RGB(A) (requires known RGB->XYZ primaries on the RGB side).
         (
             ChannelLayout::Rgb | ChannelLayout::Rgba,
             ChannelLayout::Lch | ChannelLayout::LchAlpha,
@@ -627,7 +724,7 @@ pub(crate) fn try_direct_step(
             && from.transfer() == TransferFunction::Linear
             && to.transfer() == TransferFunction::Unknown =>
         {
-            if from.primaries.to_xyz_matrix().is_none() {
+            if primaries_to_xyz(from.primaries).is_none() {
                 return Err(());
             }
             PerceptualStep::LinearRgbToLch {
@@ -641,11 +738,12 @@ pub(crate) fn try_direct_step(
             && from.transfer() == TransferFunction::Unknown
             && to.transfer() == TransferFunction::Linear =>
         {
-            if to.primaries.from_xyz_matrix().is_none() {
+            if primaries_from_xyz(to.primaries).is_none() {
                 return Err(());
             }
             PerceptualStep::LchToLinearRgb {
                 has_alpha: to.layout().has_alpha(),
+                primaries: to.primaries,
             }
         }
 
@@ -653,7 +751,8 @@ pub(crate) fn try_direct_step(
         (
             ChannelLayout::Rgb | ChannelLayout::Rgba,
             ChannelLayout::Hsl | ChannelLayout::HslAlpha,
-        ) if from.layout().has_alpha() == to.layout().has_alpha()
+        ) if from.primaries == to.primaries
+            && from.layout().has_alpha() == to.layout().has_alpha()
             && from.transfer() == to.transfer() =>
         {
             PerceptualStep::RgbToHsl {
@@ -663,7 +762,8 @@ pub(crate) fn try_direct_step(
         (
             ChannelLayout::Hsl | ChannelLayout::HslAlpha,
             ChannelLayout::Rgb | ChannelLayout::Rgba,
-        ) if from.layout().has_alpha() == to.layout().has_alpha()
+        ) if from.primaries == to.primaries
+            && from.layout().has_alpha() == to.layout().has_alpha()
             && from.transfer() == to.transfer() =>
         {
             PerceptualStep::HslToRgb {
@@ -673,7 +773,8 @@ pub(crate) fn try_direct_step(
         (
             ChannelLayout::Rgb | ChannelLayout::Rgba,
             ChannelLayout::Hsv | ChannelLayout::HsvAlpha,
-        ) if from.layout().has_alpha() == to.layout().has_alpha()
+        ) if from.primaries == to.primaries
+            && from.layout().has_alpha() == to.layout().has_alpha()
             && from.transfer() == to.transfer() =>
         {
             PerceptualStep::RgbToHsv {
@@ -683,7 +784,8 @@ pub(crate) fn try_direct_step(
         (
             ChannelLayout::Hsv | ChannelLayout::HsvAlpha,
             ChannelLayout::Rgb | ChannelLayout::Rgba,
-        ) if from.layout().has_alpha() == to.layout().has_alpha()
+        ) if from.primaries == to.primaries
+            && from.layout().has_alpha() == to.layout().has_alpha()
             && from.transfer() == to.transfer() =>
         {
             PerceptualStep::HsvToRgb {
@@ -739,19 +841,42 @@ const JZ_LMSP_FROM_IAB: [[f64; 3]; 3] = [
     [1.0, -0.0960192420263189, -0.8118918960560388],
 ];
 
+/// `JZ_C1^JZ_P` — exact ST 2084 / Safdar PQ offset at zero cone response (`u == 0`).
+const JZ_PQ_ZERO: f64 = 3.7035226210190005e-11;
+
 #[inline]
-fn jz_pq_fwd(u: f64) -> f64 {
-    let s = (u / 10_000.0).max(0.0);
-    let t = libm::pow(s, JZ_N);
+fn jz_pq_pos(u: f64) -> f64 {
+    let t = libm::pow(u / 10_000.0, JZ_N);
     libm::pow((JZ_C1 + JZ_C2 * t) / (1.0 + JZ_C3 * t), JZ_P)
 }
 
 #[inline]
-fn jz_pq_inv(up: f64) -> f64 {
+fn jz_pq_inv_pos(up: f64) -> f64 {
     let q = libm::pow(up.max(0.0), 1.0 / JZ_P);
     let num = (q - JZ_C1).max(0.0);
     let den = (JZ_C2 - JZ_C3 * q).max(1e-30);
     libm::pow(num / den, 1.0 / JZ_N) * 10_000.0
+}
+
+/// Safdar et al. (2017) modified PQ curve, reflected odd-symmetrically around
+/// `(0, JZ_PQ_ZERO)` so sub-black / extended-range cone values remain strictly
+/// monotonic, pole-free, and losslessly invertible.
+#[inline]
+fn jz_pq_fwd(u: f64) -> f64 {
+    if u >= 0.0 {
+        jz_pq_pos(u)
+    } else {
+        2.0 * JZ_PQ_ZERO - jz_pq_pos(-u)
+    }
+}
+
+#[inline]
+fn jz_pq_inv(up: f64) -> f64 {
+    if up >= JZ_PQ_ZERO {
+        jz_pq_inv_pos(up)
+    } else {
+        -jz_pq_inv_pos(2.0 * JZ_PQ_ZERO - up)
+    }
 }
 
 #[inline]
@@ -769,13 +894,14 @@ fn xyz_d65_nits_to_jzazbz([x, y, z]: [f64; 3]) -> [f32; 3] {
         JZ_IAB_FROM_LMSP[1][0] * lp + JZ_IAB_FROM_LMSP[1][1] * mp + JZ_IAB_FROM_LMSP[1][2] * sp;
     let bz =
         JZ_IAB_FROM_LMSP[2][0] * lp + JZ_IAB_FROM_LMSP[2][1] * mp + JZ_IAB_FROM_LMSP[2][2] * sp;
-    let jz = (((1.0 + JZ_D) * iz) / (1.0 + JZ_D * iz) - JZ_D0).max(0.0);
+    let denom = (1.0 + JZ_D * iz).max(1e-30);
+    let jz = ((1.0 + JZ_D) * iz) / denom - JZ_D0;
     [jz as f32, az as f32, bz as f32]
 }
 
 #[inline]
 fn jzazbz_to_xyz_d65_nits([jz, az, bz]: [f32; 3]) -> [f64; 3] {
-    let j = (f64::from(jz) + JZ_D0).max(0.0);
+    let j = f64::from(jz) + JZ_D0;
     let denom = (1.0 + JZ_D - JZ_D * j).max(1e-30);
     let iz = j / denom;
     let a = f64::from(az);
@@ -920,9 +1046,22 @@ pub(crate) fn rgb_to_hsl([r, g, b]: [f32; 3]) -> [f32; 3] {
     if !d.is_finite() || d <= 1e-7 {
         return [0.0, 0.0, l];
     }
-    let denom = 1.0 - libm::fabsf(2.0 * l - 1.0);
-    let s = if denom <= 1e-7 { 0.0 } else { d / denom };
-    let h = rgb_hue_deg(r, g, b, max, d);
+    // W3C CSS Color 4 §7.2 / §19: signed denominator `min(L, 1 - L)`; out-of-gamut
+    // colors with `L < 0` or `L > 1` yield negative `s`, normalized by rotating
+    // hue by 180° and taking `|s|` so `hsl_to_rgb` inverts extended-range RGB.
+    let half_span = l.min(1.0 - l);
+    if libm::fabsf(half_span) <= 1e-7 {
+        return [0.0, 0.0, l];
+    }
+    let mut s = (max - l) / half_span;
+    let mut h = rgb_hue_deg(r, g, b, max, d);
+    if s < 0.0 {
+        s = -s;
+        h = wrap_degrees(h + 180.0);
+    }
+    if s <= 1e-7 {
+        return [0.0, 0.0, l];
+    }
     [h, s, l]
 }
 
@@ -1052,13 +1191,6 @@ pub(crate) fn apply_row(
     to_primaries: ColorPrimaries,
     pq_scale: f32,
 ) {
-    // Default SDR diffuse white for Jzazbz when unanchored (`pq_scale == 1.0`) is ITU-R BT.2408 203 cd/m².
-    let sdr_nits = if pq_scale == 1.0 {
-        203.0_f64
-    } else {
-        f64::from(pq_scale) * 10_000.0
-    };
-
     match step {
         PerceptualStep::CartesianToPolar { target_layout } => {
             map_f32_3_or_4(src, dst, width, target_layout.has_alpha(), cart_to_polar);
@@ -1066,9 +1198,16 @@ pub(crate) fn apply_row(
         PerceptualStep::PolarToCartesian { target_layout } => {
             map_f32_3_or_4(src, dst, width, target_layout.has_alpha(), polar_to_cart);
         }
-        PerceptualStep::LinearRgbToJzazbz { has_alpha } => {
-            let m = *from_primaries
-                .to_xyz_matrix()
+        PerceptualStep::LinearRgbToJzazbz {
+            has_alpha,
+            anchored,
+        } => {
+            let sdr_nits = if anchored {
+                f64::from(pq_scale) * 10_000.0
+            } else {
+                203.0_f64
+            };
+            let m = *primaries_to_xyz(from_primaries)
                 .expect("validated RGB->XYZ primaries")
                 .rows();
             map_f32_3_or_4(src, dst, width, has_alpha, |[r, g, b]| {
@@ -1087,9 +1226,17 @@ pub(crate) fn apply_row(
                 xyz_d65_nits_to_jzazbz([x, y, z])
             });
         }
-        PerceptualStep::JzazbzToLinearRgb { has_alpha } => {
-            let m = *to_primaries
-                .from_xyz_matrix()
+        PerceptualStep::JzazbzToLinearRgb {
+            has_alpha,
+            anchored,
+            ..
+        } => {
+            let sdr_nits = if anchored {
+                f64::from(pq_scale) * 10_000.0
+            } else {
+                203.0_f64
+            };
+            let m = *primaries_from_xyz(to_primaries)
                 .expect("validated XYZ->RGB primaries")
                 .rows();
             let inv_nits = 1.0 / sdr_nits.max(1e-30);
@@ -1107,23 +1254,21 @@ pub(crate) fn apply_row(
             });
         }
         PerceptualStep::PqRgbToJzazbz { has_alpha } => {
-            let m = *from_primaries
-                .to_xyz_matrix()
+            let m = *primaries_to_xyz(from_primaries)
                 .expect("validated RGB->XYZ primaries")
                 .rows();
             map_f32_3_or_4(src, dst, width, has_alpha, |[pr, pg, pb]| {
-                let r = f64::from(super::pq_eotf(pr)) * 10_000.0;
-                let g = f64::from(super::pq_eotf(pg)) * 10_000.0;
-                let b = f64::from(super::pq_eotf(pb)) * 10_000.0;
+                let r = f64::from(super::pq_eotf(pr.clamp(0.0, 1.0))) * 10_000.0;
+                let g = f64::from(super::pq_eotf(pg.clamp(0.0, 1.0))) * 10_000.0;
+                let b = f64::from(super::pq_eotf(pb.clamp(0.0, 1.0))) * 10_000.0;
                 let x = f64::from(m[0][0]) * r + f64::from(m[0][1]) * g + f64::from(m[0][2]) * b;
                 let y = f64::from(m[1][0]) * r + f64::from(m[1][1]) * g + f64::from(m[1][2]) * b;
                 let z = f64::from(m[2][0]) * r + f64::from(m[2][1]) * g + f64::from(m[2][2]) * b;
                 xyz_d65_nits_to_jzazbz([x, y, z])
             });
         }
-        PerceptualStep::JzazbzToPqRgb { has_alpha } => {
-            let m = *to_primaries
-                .from_xyz_matrix()
+        PerceptualStep::JzazbzToPqRgb { has_alpha, .. } => {
+            let m = *primaries_from_xyz(to_primaries)
                 .expect("validated XYZ->RGB primaries")
                 .rows();
             map_f32_3_or_4(src, dst, width, has_alpha, |jab| {
@@ -1135,12 +1280,15 @@ pub(crate) fn apply_row(
                     as f32;
                 let b = (f64::from(m[2][0]) * x + f64::from(m[2][1]) * y + f64::from(m[2][2]) * z)
                     as f32;
-                [super::pq_oetf(r), super::pq_oetf(g), super::pq_oetf(b)]
+                [
+                    super::pq_oetf(r.clamp(0.0, 1.0)),
+                    super::pq_oetf(g.clamp(0.0, 1.0)),
+                    super::pq_oetf(b.clamp(0.0, 1.0)),
+                ]
             });
         }
         PerceptualStep::LinearRgbToLch { has_alpha } => {
-            let m = *from_primaries
-                .to_xyz_matrix()
+            let m = *primaries_to_xyz(from_primaries)
                 .expect("validated RGB->XYZ primaries")
                 .rows();
             map_f32_3_or_4(src, dst, width, has_alpha, |[r, g, b]| {
@@ -1156,9 +1304,8 @@ pub(crate) fn apply_row(
                 xyz_d65_to_lch([x, y, z])
             });
         }
-        PerceptualStep::LchToLinearRgb { has_alpha } => {
-            let m = *to_primaries
-                .from_xyz_matrix()
+        PerceptualStep::LchToLinearRgb { has_alpha, .. } => {
+            let m = *primaries_from_xyz(to_primaries)
                 .expect("validated XYZ->RGB primaries")
                 .rows();
             map_f32_3_or_4(src, dst, width, has_alpha, |lch| {

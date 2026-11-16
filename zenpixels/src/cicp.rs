@@ -57,11 +57,11 @@ impl core::error::Error for CicpDescriptorError {}
 /// without requiring an ICC profile. Used by AVIF, HEIF, JPEG XL, and
 /// video codecs (H.264, H.265, AV1).
 ///
-/// Common combinations for RGB content (matrix_coefficients = 0 = Identity):
+/// Common combinations for RGB content (`matrix_coefficients = 0` = Identity):
 /// - sRGB: `(1, 13, 0, true)` — BT.709 primaries, sRGB transfer
 /// - Display P3: `(12, 13, 0, true)` — P3 primaries, sRGB transfer
-/// - BT.2100 PQ (HDR): `(9, 16, 0, true)` — BT.2020 primaries, PQ transfer
-/// - BT.2100 HLG (HDR): `(9, 18, 0, true)` — BT.2020 primaries, HLG transfer
+/// - BT.2100 PQ RGB (HDR): `(9, 16, 0, true)` — BT.2020 primaries, PQ transfer (`Cicp::BT2100_PQ` uses `MC=9` YCbCr)
+/// - BT.2100 HLG RGB (HDR): `(9, 18, 0, true)` — BT.2020 primaries, HLG transfer (`Cicp::BT2100_HLG` uses `MC=9` YCbCr)
 ///
 /// Video/YCbCr content uses non-zero matrix_coefficients (e.g., 6=BT.601, 9=BT.2020).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -148,16 +148,23 @@ impl Cicp {
 
     /// Create a CICP from a [`PixelDescriptor`].
     ///
-    /// Returns `None` if the descriptor's transfer function or color primaries
-    /// cannot be mapped to CICP code points (e.g., `Unknown` variants).
+    /// Returns `None` if the descriptor is not an RGB or grayscale model, or if its
+    /// transfer function or color primaries cannot be mapped to CICP code points
+    /// (e.g., `Unknown` or `AdobeRgb` variants).
     pub fn from_descriptor(desc: &crate::PixelDescriptor) -> Option<Self> {
+        if !matches!(
+            desc.color_model(),
+            crate::ColorModel::Rgb | crate::ColorModel::Gray
+        ) {
+            return None;
+        }
         let tc = desc.transfer.to_cicp()?;
         let cp = desc.primaries.to_cicp()?;
         let full_range = matches!(desc.signal_range, crate::SignalRange::Full);
         Some(Self {
             color_primaries: cp,
             transfer_characteristics: tc,
-            matrix_coefficients: 0, // RGB content uses Identity
+            matrix_coefficients: 0, // Identity (H.273 MC=0) for RGB/Gray descriptors
             full_range,
         })
     }
@@ -175,7 +182,10 @@ impl Cicp {
     ///
     /// # MC=0 (Identity)
     ///
-    /// MC=0 means the planes are already in RGB order — no matrix is applied.
+    /// No matrix is applied. Note that in coded 3-plane video/image bitstreams
+    /// (H.273 §8.3 Eqs. 48–50), MC=0 orders coded planes `(Y, Cb, Cr)` as **GBR**
+    /// (`G`, `B`, `R`, or `YZX` when `color_primaries == 10`), whereas interleaved
+    /// RGB containers (such as PNG `cICP`) store samples in RGB channel order.
     /// `Ok(self)` is returned without consuming the hint.
     ///
     /// # MC=12/13 (Chroma NCL / Chroma CL)

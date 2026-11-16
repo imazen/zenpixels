@@ -13,38 +13,40 @@ pub(super) fn curve(trc: &[u8], x: f64) -> f64 {
             let v: Vec<_> = (0..(trc.len() - 12) / 4)
                 .map(|i| fixed(&trc[12 + 4 * i..]))
                 .collect();
-            match kind {
-                0 => x.powf(v[0]),
+            // ICC.1:2022 §10.18: clip output to [0.0, 1.0]; guard negative base on types 3/4.
+            let y = match kind {
+                0 => x.max(0.0).powf(v[0]),
                 1 => {
                     if x >= -v[2] / v[1] {
-                        (v[1] * x + v[2]).powf(v[0])
+                        (v[1] * x + v[2]).max(0.0).powf(v[0])
                     } else {
                         0.0
                     }
                 }
                 2 => {
                     if x >= -v[2] / v[1] {
-                        (v[1] * x + v[2]).powf(v[0]) + v[3]
+                        (v[1] * x + v[2]).max(0.0).powf(v[0]) + v[3]
                     } else {
                         v[3]
                     }
                 }
                 3 => {
                     if x >= v[4] {
-                        (v[1] * x + v[2]).powf(v[0])
+                        (v[1] * x + v[2]).max(0.0).powf(v[0])
                     } else {
                         v[3] * x
                     }
                 }
                 4 => {
                     if x >= v[4] {
-                        (v[1] * x + v[2]).powf(v[0]) + v[5]
+                        (v[1] * x + v[2]).max(0.0).powf(v[0]) + v[5]
                     } else {
                         v[3] * x + v[6]
                     }
                 }
                 _ => panic!("unknown para function {kind}"),
-            }
+            };
+            y.clamp(0.0, 1.0)
         }
         b"curv" => {
             let n = u32be(&trc[8..]);
