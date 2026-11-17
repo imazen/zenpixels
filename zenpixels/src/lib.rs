@@ -106,8 +106,8 @@ pub use descriptor::{
 // Re-export buffer and alignment types at crate root.
 #[doc(inline)]
 pub use buffer::{
-    Bgrx, BufferError, ByteStorage, ByteStorageMut, FromPartsError, InPlacePixels, Pixel,
-    PixelBuffer, PixelBufferParts, PixelCow, PixelSlice, PixelSliceMut, PixelStorage, Rgbx,
+    Bgrx, BufferError, ByteStorage, ByteStorageMut, FromPartsError, InPlacePixels, InteropTarget,
+    Pixel, PixelBuffer, PixelBufferParts, PixelCow, PixelSlice, PixelSliceMut, PixelStorage, Rgbx,
     StorageSample,
 };
 #[doc(inline)]

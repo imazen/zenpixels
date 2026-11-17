@@ -10,36 +10,65 @@
 ## summary
 #
 #   pub types (struct/enum/trait/alias)         1
-#   inherent methods                           38
+#   inherent methods                           96
 #   enum variants                               3
-#   trait roster entries (type × trait)        94
+#   trait roster entries (type × trait)       157
 #   conditional trait impls (verbatim)         98
 #   auto-trait-complete types                   1
 #
 # per-module pub lines:
 #   (root)                            4
-#   buffer                           34
+#   buffer                           92
 #   plane                             3
 #   sample                            1
 
-## items (42 lines)
+## items (100 lines)
 
 pub fn buffer::PixelCow<'_, P>::hash_with(&self, HashInclusions) -> u64
 pub fn buffer::PixelBuffer::as_contiguous_pixels<P: buffer::Pixel>(&self) -> core::option::Option<&[P]>
 pub fn buffer::PixelBuffer::from_pixels_erased<P: buffer::Pixel>(alloc::vec::Vec<P>, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::into_contiguous_pixels<P: buffer::Pixel>(self) -> core::option::Option<alloc::vec::Vec<P>>
 pub fn buffer::PixelBuffer::try_into_contiguous_pixels<P: buffer::Pixel>(self) -> core::result::Result<core::option::Option<alloc::vec::Vec<P>>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::from_imgvec_erased<P: buffer::Pixel>(imgref::ImgVec<P>) -> Self
+pub fn buffer::PixelBuffer::into_imgvec<P: buffer::Pixel>(self) -> core::option::Option<imgref::ImgVec<P>>
+pub fn buffer::PixelBuffer::try_from_imgvec_erased<P: buffer::Pixel>(imgref::ImgVec<P>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::try_into_imgvec<P: buffer::Pixel>(self) -> core::result::Result<core::option::Option<imgref::ImgVec<P>>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::try_into_imgvec_zero_copy<P: buffer::Pixel>(self) -> core::result::Result<imgref::ImgVec<P>, Self>
 pub fn buffer::PixelBuffer<P, S>::hash_with(&self, HashInclusions) -> u64
 pub fn buffer::PixelBuffer<P, S>::as_imgref(&self) -> imgref::ImgRef<'_, P>
 pub fn buffer::PixelBuffer<P, S>::as_imgref_mut(&mut self) -> imgref::ImgRefMut<'_, P>
 pub fn buffer::PixelBuffer<P>::from_imgvec(imgref::ImgVec<P>) -> Self
+pub fn buffer::PixelBuffer<P>::into_imgvec(self) -> imgref::ImgVec<P>
 pub fn buffer::PixelBuffer<P>::try_from_imgvec(imgref::ImgVec<P>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer<P>::try_into_imgvec(self) -> core::result::Result<imgref::ImgVec<P>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P>::from_pixels(alloc::vec::Vec<P>, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<(), S>::try_as_imgref<P: buffer::Pixel>(&self) -> core::option::Option<imgref::ImgRef<'_, P>>
+pub fn buffer::PixelBuffer<(), S>::try_as_sample_imgref<T: buffer::StorageSample>(&self) -> core::option::Option<imgref::ImgRef<'_, T>>
 pub fn buffer::PixelBuffer<(), S>::try_as_imgref_mut<P: buffer::Pixel>(&mut self) -> core::option::Option<imgref::ImgRefMut<'_, P>>
+pub fn buffer::PixelBuffer<(), S>::try_as_sample_imgref_mut<T: buffer::StorageSample>(&mut self) -> core::option::Option<imgref::ImgRefMut<'_, T>>
+pub fn buffer::PixelSlice<'a, P>::as_imgref(&self) -> imgref::ImgRef<'a, P>
+pub fn buffer::PixelSlice<'a, P>::try_as_imgref(&self) -> core::option::Option<imgref::ImgRef<'a, P>>
+pub fn buffer::PixelSlice<'a>::from_imgref<P: buffer::Pixel>(imgref::ImgRef<'a, P>) -> Self where buffer::PixelSlice<'a, P>: core::convert::From<imgref::ImgRef<'a, P>>
+pub fn buffer::PixelSlice<'a>::try_as_imgref<P: buffer::Pixel>(&self) -> core::option::Option<imgref::ImgRef<'a, P>>
+pub fn buffer::PixelSlice<'a>::try_as_sample_imgref<T: buffer::StorageSample>(&self) -> core::option::Option<imgref::ImgRef<'a, T>>
+pub fn buffer::PixelSlice<'a>::try_from_imgref_with<T: bytemuck::pod::Pod>(imgref::ImgRef<'a, T>, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSlice<'a>::try_from_sample_imgref_with<T: buffer::StorageSample>(imgref::ImgRef<'a, T>, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSlice<'_, P>::hash_with(&self, HashInclusions) -> u64
+pub fn buffer::PixelSliceMut<'a, P>::as_imgref(&self) -> imgref::ImgRef<'_, P>
+pub fn buffer::PixelSliceMut<'a, P>::as_imgref_mut(&mut self) -> imgref::ImgRefMut<'_, P>
+pub fn buffer::PixelSliceMut<'a, P>::into_imgref_mut(self) -> imgref::ImgRefMut<'a, P>
+pub fn buffer::PixelSliceMut<'a, P>::try_as_imgref(&self) -> core::option::Option<imgref::ImgRef<'_, P>>
+pub fn buffer::PixelSliceMut<'a, P>::try_as_imgref_mut(&mut self) -> core::option::Option<imgref::ImgRefMut<'_, P>>
+pub fn buffer::PixelSliceMut<'a, P>::try_into_imgref_mut(self) -> core::result::Result<imgref::ImgRefMut<'a, P>, Self>
 pub fn buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>::swap_to_rgba(self) -> buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>
 pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::swap_to_bgra(self) -> buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>
+pub fn buffer::PixelSliceMut<'a>::from_imgref_mut<P: buffer::Pixel>(imgref::ImgRefMut<'a, P>) -> Self where buffer::PixelSliceMut<'a, P>: core::convert::From<imgref::ImgRefMut<'a, P>>
+pub fn buffer::PixelSliceMut<'a>::try_as_imgref<P: buffer::Pixel>(&self) -> core::option::Option<imgref::ImgRef<'_, P>>
+pub fn buffer::PixelSliceMut<'a>::try_as_imgref_mut<P: buffer::Pixel>(&mut self) -> core::option::Option<imgref::ImgRefMut<'_, P>>
+pub fn buffer::PixelSliceMut<'a>::try_as_sample_imgref<T: buffer::StorageSample>(&self) -> core::option::Option<imgref::ImgRef<'_, T>>
+pub fn buffer::PixelSliceMut<'a>::try_as_sample_imgref_mut<T: buffer::StorageSample>(&mut self) -> core::option::Option<imgref::ImgRefMut<'_, T>>
+pub fn buffer::PixelSliceMut<'a>::try_from_imgref_mut_with<T: bytemuck::pod::Pod>(imgref::ImgRefMut<'a, T>, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSliceMut<'a>::try_from_sample_imgref_mut_with<T: buffer::StorageSample>(imgref::ImgRefMut<'a, T>, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSliceMut<'_, P>::hash_with(&self, HashInclusions) -> u64
 pub fn plane::AnyPlane<'_>::hash_with(&self, HashInclusions) -> u64
 pub fn plane::PlanarSlice<'_>::hash_with(&self, HashInclusions) -> u64
@@ -54,49 +83,111 @@ pub fn buffer::PixelBuffer::as_contiguous_pixels<P: buffer::Pixel>(&self) -> cor
 pub fn buffer::PixelBuffer::from_pixels_erased<P: buffer::Pixel>(alloc::vec::Vec<P>, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::into_contiguous_pixels<P: buffer::Pixel>(self) -> core::option::Option<alloc::vec::Vec<P>>
 pub fn buffer::PixelBuffer::try_into_contiguous_pixels<P: buffer::Pixel>(self) -> core::result::Result<core::option::Option<alloc::vec::Vec<P>>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::from_imgvec_erased<P: buffer::Pixel>(imgref::ImgVec<P>) -> Self
+pub fn buffer::PixelBuffer::into_imgvec<P: buffer::Pixel>(self) -> core::option::Option<imgref::ImgVec<P>>
+pub fn buffer::PixelBuffer::try_from_imgvec_erased<P: buffer::Pixel>(imgref::ImgVec<P>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::try_into_imgvec<P: buffer::Pixel>(self) -> core::result::Result<core::option::Option<imgref::ImgVec<P>>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::try_into_imgvec_zero_copy<P: buffer::Pixel>(self) -> core::result::Result<imgref::ImgVec<P>, Self>
 pub fn buffer::PixelBuffer<P, S>::hash_with(&self, HashInclusions) -> u64
 pub fn buffer::PixelBuffer<P, S>::as_imgref(&self) -> imgref::ImgRef<'_, P>
 pub fn buffer::PixelBuffer<P, S>::as_imgref_mut(&mut self) -> imgref::ImgRefMut<'_, P>
 pub fn buffer::PixelBuffer<P>::from_imgvec(imgref::ImgVec<P>) -> Self
+pub fn buffer::PixelBuffer<P>::into_imgvec(self) -> imgref::ImgVec<P>
 pub fn buffer::PixelBuffer<P>::try_from_imgvec(imgref::ImgVec<P>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer<P>::try_into_imgvec(self) -> core::result::Result<imgref::ImgVec<P>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P>::from_pixels(alloc::vec::Vec<P>, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<(), S>::try_as_imgref<P: buffer::Pixel>(&self) -> core::option::Option<imgref::ImgRef<'_, P>>
+pub fn buffer::PixelBuffer<(), S>::try_as_sample_imgref<T: buffer::StorageSample>(&self) -> core::option::Option<imgref::ImgRef<'_, T>>
 pub fn buffer::PixelBuffer<(), S>::try_as_imgref_mut<P: buffer::Pixel>(&mut self) -> core::option::Option<imgref::ImgRefMut<'_, P>>
+pub fn buffer::PixelBuffer<(), S>::try_as_sample_imgref_mut<T: buffer::StorageSample>(&mut self) -> core::option::Option<imgref::ImgRefMut<'_, T>>
+pub fn buffer::PixelSlice<'a, P>::as_imgref(&self) -> imgref::ImgRef<'a, P>
+pub fn buffer::PixelSlice<'a, P>::try_as_imgref(&self) -> core::option::Option<imgref::ImgRef<'a, P>>
+pub fn buffer::PixelSlice<'a>::from_imgref<P: buffer::Pixel>(imgref::ImgRef<'a, P>) -> Self where buffer::PixelSlice<'a, P>: core::convert::From<imgref::ImgRef<'a, P>>
+pub fn buffer::PixelSlice<'a>::try_as_imgref<P: buffer::Pixel>(&self) -> core::option::Option<imgref::ImgRef<'a, P>>
+pub fn buffer::PixelSlice<'a>::try_as_sample_imgref<T: buffer::StorageSample>(&self) -> core::option::Option<imgref::ImgRef<'a, T>>
+pub fn buffer::PixelSlice<'a>::try_from_imgref_with<T: bytemuck::pod::Pod>(imgref::ImgRef<'a, T>, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSlice<'a>::try_from_sample_imgref_with<T: buffer::StorageSample>(imgref::ImgRef<'a, T>, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSlice<'_, P>::hash_with(&self, HashInclusions) -> u64
+pub fn buffer::PixelSliceMut<'a, P>::as_imgref(&self) -> imgref::ImgRef<'_, P>
+pub fn buffer::PixelSliceMut<'a, P>::as_imgref_mut(&mut self) -> imgref::ImgRefMut<'_, P>
+pub fn buffer::PixelSliceMut<'a, P>::into_imgref_mut(self) -> imgref::ImgRefMut<'a, P>
+pub fn buffer::PixelSliceMut<'a, P>::try_as_imgref(&self) -> core::option::Option<imgref::ImgRef<'_, P>>
+pub fn buffer::PixelSliceMut<'a, P>::try_as_imgref_mut(&mut self) -> core::option::Option<imgref::ImgRefMut<'_, P>>
+pub fn buffer::PixelSliceMut<'a, P>::try_into_imgref_mut(self) -> core::result::Result<imgref::ImgRefMut<'a, P>, Self>
 pub fn buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>::swap_to_rgba(self) -> buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>
 pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::swap_to_bgra(self) -> buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>
+pub fn buffer::PixelSliceMut<'a>::from_imgref_mut<P: buffer::Pixel>(imgref::ImgRefMut<'a, P>) -> Self where buffer::PixelSliceMut<'a, P>: core::convert::From<imgref::ImgRefMut<'a, P>>
+pub fn buffer::PixelSliceMut<'a>::try_as_imgref<P: buffer::Pixel>(&self) -> core::option::Option<imgref::ImgRef<'_, P>>
+pub fn buffer::PixelSliceMut<'a>::try_as_imgref_mut<P: buffer::Pixel>(&mut self) -> core::option::Option<imgref::ImgRefMut<'_, P>>
+pub fn buffer::PixelSliceMut<'a>::try_as_sample_imgref<T: buffer::StorageSample>(&self) -> core::option::Option<imgref::ImgRef<'_, T>>
+pub fn buffer::PixelSliceMut<'a>::try_as_sample_imgref_mut<T: buffer::StorageSample>(&mut self) -> core::option::Option<imgref::ImgRefMut<'_, T>>
+pub fn buffer::PixelSliceMut<'a>::try_from_imgref_mut_with<T: bytemuck::pod::Pod>(imgref::ImgRefMut<'a, T>, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSliceMut<'a>::try_from_sample_imgref_mut_with<T: buffer::StorageSample>(imgref::ImgRefMut<'a, T>, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSliceMut<'_, P>::hash_with(&self, HashInclusions) -> u64
 
-## trait impls (75 types)
+## trait impls (126 types)
 
 HashInclusions: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
-buffer::PixelBuffer: TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<f32>, alloc::vec::Vec<f32>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<u16>, alloc::vec::Vec<u16>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<u8>, alloc::vec::Vec<u8>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<f32>, alloc::vec::Vec<f32>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<u16>, alloc::vec::Vec<u16>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<u8>, alloc::vec::Vec<u8>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<f32>, alloc::vec::Vec<f32>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<u16>, alloc::vec::Vec<u16>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<u8>, alloc::vec::Vec<u8>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<f32>, alloc::vec::Vec<f32>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<u16>, alloc::vec::Vec<u16>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<u8>, alloc::vec::Vec<u8>>>, TryFrom<image::images::dynimage::DynamicImage>
+buffer::PixelBuffer: TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<f32>, alloc::vec::Vec<f32>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<u16>, alloc::vec::Vec<u16>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<u8>, alloc::vec::Vec<u8>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<f32>, alloc::vec::Vec<f32>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<u16>, alloc::vec::Vec<u16>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<u8>, alloc::vec::Vec<u8>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<f32>, alloc::vec::Vec<f32>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<u16>, alloc::vec::Vec<u16>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<u8>, alloc::vec::Vec<u8>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<f32>, alloc::vec::Vec<f32>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<u16>, alloc::vec::Vec<u16>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<u8>, alloc::vec::Vec<u8>>>, TryFrom<image::images::dynimage::DynamicImage>, TryFrom<image::images::flat::FlatSamples<alloc::vec::Vec<f32>>>, TryFrom<image::images::flat::FlatSamples<alloc::vec::Vec<pixel_types::F16Sample>>>, TryFrom<image::images::flat::FlatSamples<alloc::vec::Vec<u16>>>, TryFrom<image::images::flat::FlatSamples<alloc::vec::Vec<u8>>>
 buffer::PixelBuffer<P, S>: Hash
 buffer::PixelCow<'_, P>: Hash
 buffer::PixelSlice<'_, P>: Hash
+buffer::PixelSlice<'a, buffer::Bgrx>: From<imgref::Img<&'a [buffer::Bgrx]>>
+buffer::PixelSlice<'a, buffer::Rgbx>: From<imgref::Img<&'a [buffer::Rgbx]>>
+buffer::PixelSlice<'a, pixel_types::GrayAlpha16>: From<imgref::Img<&'a [pixel_types::GrayAlpha16]>>
+buffer::PixelSlice<'a, pixel_types::GrayAlpha8>: From<imgref::Img<&'a [pixel_types::GrayAlpha8]>>
+buffer::PixelSlice<'a, pixel_types::GrayAlphaF16>: From<imgref::Img<&'a [pixel_types::GrayAlphaF16]>>
+buffer::PixelSlice<'a, pixel_types::GrayAlphaF32>: From<imgref::Img<&'a [pixel_types::GrayAlphaF32]>>
+buffer::PixelSlice<'a, rgb::formats::bgr::Bgr<f32>>: From<imgref::Img<&'a [rgb::formats::bgr::Bgr<f32>]>>
+buffer::PixelSlice<'a, rgb::formats::bgr::Bgr<pixel_types::F16Sample>>: From<imgref::Img<&'a [rgb::formats::bgr::Bgr<pixel_types::F16Sample>]>>
+buffer::PixelSlice<'a, rgb::formats::bgr::Bgr<u16>>: From<imgref::Img<&'a [rgb::formats::bgr::Bgr<u16>]>>
+buffer::PixelSlice<'a, rgb::formats::bgr::Bgr<u8>>: From<imgref::Img<&'a [rgb::formats::bgr::Bgr<u8>]>>
+buffer::PixelSlice<'a, rgb::formats::bgra::Bgra<f32>>: From<imgref::Img<&'a [rgb::formats::bgra::Bgra<f32>]>>
+buffer::PixelSlice<'a, rgb::formats::bgra::Bgra<pixel_types::F16Sample>>: From<imgref::Img<&'a [rgb::formats::bgra::Bgra<pixel_types::F16Sample>]>>
+buffer::PixelSlice<'a, rgb::formats::bgra::Bgra<u16>>: From<imgref::Img<&'a [rgb::formats::bgra::Bgra<u16>]>>
 buffer::PixelSlice<'a, rgb::formats::bgra::Bgra<u8>>: From<imgref::Img<&'a [rgb::formats::bgra::Bgra<u8>]>>
 buffer::PixelSlice<'a, rgb::formats::gray::Gray_v08<f32>>: From<imgref::Img<&'a [rgb::formats::gray::Gray_v08<f32>]>>
+buffer::PixelSlice<'a, rgb::formats::gray::Gray_v08<pixel_types::F16Sample>>: From<imgref::Img<&'a [rgb::formats::gray::Gray_v08<pixel_types::F16Sample>]>>
 buffer::PixelSlice<'a, rgb::formats::gray::Gray_v08<u16>>: From<imgref::Img<&'a [rgb::formats::gray::Gray_v08<u16>]>>
 buffer::PixelSlice<'a, rgb::formats::gray::Gray_v08<u8>>: From<imgref::Img<&'a [rgb::formats::gray::Gray_v08<u8>]>>
 buffer::PixelSlice<'a, rgb::formats::rgb::Rgb<f32>>: From<imgref::Img<&'a [rgb::formats::rgb::Rgb<f32>]>>
+buffer::PixelSlice<'a, rgb::formats::rgb::Rgb<pixel_types::F16Sample>>: From<imgref::Img<&'a [rgb::formats::rgb::Rgb<pixel_types::F16Sample>]>>
 buffer::PixelSlice<'a, rgb::formats::rgb::Rgb<u16>>: From<imgref::Img<&'a [rgb::formats::rgb::Rgb<u16>]>>
 buffer::PixelSlice<'a, rgb::formats::rgb::Rgb<u8>>: From<imgref::Img<&'a [rgb::formats::rgb::Rgb<u8>]>>
 buffer::PixelSlice<'a, rgb::formats::rgba::Rgba<f32>>: From<imgref::Img<&'a [rgb::formats::rgba::Rgba<f32>]>>
+buffer::PixelSlice<'a, rgb::formats::rgba::Rgba<pixel_types::F16Sample>>: From<imgref::Img<&'a [rgb::formats::rgba::Rgba<pixel_types::F16Sample>]>>
 buffer::PixelSlice<'a, rgb::formats::rgba::Rgba<u16>>: From<imgref::Img<&'a [rgb::formats::rgba::Rgba<u16>]>>
 buffer::PixelSlice<'a, rgb::formats::rgba::Rgba<u8>>: From<imgref::Img<&'a [rgb::formats::rgba::Rgba<u8>]>>
-buffer::PixelSlice<'a>: TryFrom<&'a image::images::dynimage::DynamicImage>
+buffer::PixelSlice<'a>: TryFrom<&'a image::images::dynimage::DynamicImage>, TryFrom<image::images::flat::FlatSamples<&'a [f32]>>, TryFrom<image::images::flat::FlatSamples<&'a [pixel_types::F16Sample]>>, TryFrom<image::images::flat::FlatSamples<&'a [u16]>>, TryFrom<image::images::flat::FlatSamples<&'a [u8]>>
 buffer::PixelSliceMut<'_, P>: Hash
+buffer::PixelSliceMut<'a, buffer::Bgrx>: From<imgref::Img<&'a mut [buffer::Bgrx]>>
+buffer::PixelSliceMut<'a, buffer::Rgbx>: From<imgref::Img<&'a mut [buffer::Rgbx]>>
+buffer::PixelSliceMut<'a, pixel_types::GrayAlpha16>: From<imgref::Img<&'a mut [pixel_types::GrayAlpha16]>>
+buffer::PixelSliceMut<'a, pixel_types::GrayAlpha8>: From<imgref::Img<&'a mut [pixel_types::GrayAlpha8]>>
+buffer::PixelSliceMut<'a, pixel_types::GrayAlphaF16>: From<imgref::Img<&'a mut [pixel_types::GrayAlphaF16]>>
+buffer::PixelSliceMut<'a, pixel_types::GrayAlphaF32>: From<imgref::Img<&'a mut [pixel_types::GrayAlphaF32]>>
+buffer::PixelSliceMut<'a, rgb::formats::bgr::Bgr<f32>>: From<imgref::Img<&'a mut [rgb::formats::bgr::Bgr<f32>]>>
+buffer::PixelSliceMut<'a, rgb::formats::bgr::Bgr<pixel_types::F16Sample>>: From<imgref::Img<&'a mut [rgb::formats::bgr::Bgr<pixel_types::F16Sample>]>>
+buffer::PixelSliceMut<'a, rgb::formats::bgr::Bgr<u16>>: From<imgref::Img<&'a mut [rgb::formats::bgr::Bgr<u16>]>>
+buffer::PixelSliceMut<'a, rgb::formats::bgr::Bgr<u8>>: From<imgref::Img<&'a mut [rgb::formats::bgr::Bgr<u8>]>>
+buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<f32>>: From<imgref::Img<&'a mut [rgb::formats::bgra::Bgra<f32>]>>
+buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<pixel_types::F16Sample>>: From<imgref::Img<&'a mut [rgb::formats::bgra::Bgra<pixel_types::F16Sample>]>>
+buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u16>>: From<imgref::Img<&'a mut [rgb::formats::bgra::Bgra<u16>]>>
 buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>: From<imgref::Img<&'a mut [rgb::formats::bgra::Bgra<u8>]>>
 buffer::PixelSliceMut<'a, rgb::formats::gray::Gray_v08<f32>>: From<imgref::Img<&'a mut [rgb::formats::gray::Gray_v08<f32>]>>
+buffer::PixelSliceMut<'a, rgb::formats::gray::Gray_v08<pixel_types::F16Sample>>: From<imgref::Img<&'a mut [rgb::formats::gray::Gray_v08<pixel_types::F16Sample>]>>
 buffer::PixelSliceMut<'a, rgb::formats::gray::Gray_v08<u16>>: From<imgref::Img<&'a mut [rgb::formats::gray::Gray_v08<u16>]>>
 buffer::PixelSliceMut<'a, rgb::formats::gray::Gray_v08<u8>>: From<imgref::Img<&'a mut [rgb::formats::gray::Gray_v08<u8>]>>
 buffer::PixelSliceMut<'a, rgb::formats::rgb::Rgb<f32>>: From<imgref::Img<&'a mut [rgb::formats::rgb::Rgb<f32>]>>
+buffer::PixelSliceMut<'a, rgb::formats::rgb::Rgb<pixel_types::F16Sample>>: From<imgref::Img<&'a mut [rgb::formats::rgb::Rgb<pixel_types::F16Sample>]>>
 buffer::PixelSliceMut<'a, rgb::formats::rgb::Rgb<u16>>: From<imgref::Img<&'a mut [rgb::formats::rgb::Rgb<u16>]>>
 buffer::PixelSliceMut<'a, rgb::formats::rgb::Rgb<u8>>: From<imgref::Img<&'a mut [rgb::formats::rgb::Rgb<u8>]>>
 buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<f32>>: From<imgref::Img<&'a mut [rgb::formats::rgba::Rgba<f32>]>>
+buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<pixel_types::F16Sample>>: From<imgref::Img<&'a mut [rgb::formats::rgba::Rgba<pixel_types::F16Sample>]>>
 buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u16>>: From<imgref::Img<&'a mut [rgb::formats::rgba::Rgba<u16>]>>
 buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>: From<imgref::Img<&'a mut [rgb::formats::rgba::Rgba<u8>]>>
-buffer::PixelSliceMut<'a>: TryFrom<&'a mut image::images::dynimage::DynamicImage>
+buffer::PixelSliceMut<'a>: TryFrom<&'a mut image::images::dynimage::DynamicImage>, TryFrom<image::images::flat::FlatSamples<&'a mut [f32]>>, TryFrom<image::images::flat::FlatSamples<&'a mut [pixel_types::F16Sample]>>, TryFrom<image::images::flat::FlatSamples<&'a mut [u16]>>, TryFrom<image::images::flat::FlatSamples<&'a mut [u8]>>
+cicp::Cicp: From<image::metadata::cicp::Cicp>
 color::ColorContext: Hash
 color::ColorOrigin: Hash
 color::ColorProfile: Hash
@@ -119,17 +210,35 @@ image::images::buffer::ImageBuffer<image::color::Rgba<u8>, alloc::vec::Vec<u8>>:
 image::images::dynimage::DynamicImage: TryFrom<buffer::PixelBuffer>
 image::images::flat::FlatSamples<&'a [T]>: TryFrom<plane::Plane<&'a [T]>>
 image::images::flat::FlatSamples<&'a [f32]>: TryFrom<buffer::PixelSlice<'a>>
+image::images::flat::FlatSamples<&'a [pixel_types::F16Sample]>: TryFrom<buffer::PixelSlice<'a>>
 image::images::flat::FlatSamples<&'a [u16]>: TryFrom<buffer::PixelSlice<'a>>
 image::images::flat::FlatSamples<&'a [u8]>: TryFrom<buffer::PixelSlice<'a>>
 image::images::flat::FlatSamples<&'a mut [T]>: TryFrom<plane::Plane<&'a mut [T]>>
+image::images::flat::FlatSamples<&'a mut [f32]>: TryFrom<buffer::PixelSliceMut<'a>>
+image::images::flat::FlatSamples<&'a mut [pixel_types::F16Sample]>: TryFrom<buffer::PixelSliceMut<'a>>
+image::images::flat::FlatSamples<&'a mut [u16]>: TryFrom<buffer::PixelSliceMut<'a>>
+image::images::flat::FlatSamples<&'a mut [u8]>: TryFrom<buffer::PixelSliceMut<'a>>
+image::images::flat::FlatSamples<alloc::vec::Vec<f32>>: TryFrom<buffer::PixelBuffer>
+image::images::flat::FlatSamples<alloc::vec::Vec<pixel_types::F16Sample>>: TryFrom<buffer::PixelBuffer>
+image::images::flat::FlatSamples<alloc::vec::Vec<u16>>: TryFrom<buffer::PixelBuffer>
+image::images::flat::FlatSamples<alloc::vec::Vec<u8>>: TryFrom<buffer::PixelBuffer>
+image::metadata::Orientation: From<orientation::Orientation>
+image::metadata::cicp::Cicp: TryFrom<cicp::Cicp>
 imgref::ImgRef<'a, T>: TryFrom<plane::Plane<&'a [T]>>
 imgref::ImgRefMut<'a, T>: TryFrom<plane::Plane<&'a mut [T]>>
 imgref::ImgVec<P>: TryFrom<buffer::PixelBuffer<P>>
 imgref::ImgVec<T>: TryFrom<plane::Plane<alloc::vec::Vec<T>>>
+orientation::Orientation: From<image::metadata::Orientation>
 plane::AnyPlane<'_>: Hash
 plane::PlanarSlice<'_>: Hash
 plane::Plane<C>: Hash
+rgb::formats::bgr::Bgr<f32>: buffer::Pixel
+rgb::formats::bgr::Bgr<pixel_types::F16Sample>: buffer::Pixel
+rgb::formats::bgr::Bgr<u16>: buffer::Pixel
+rgb::formats::bgr::Bgr<u8>: buffer::Pixel
+rgb::formats::bgra::Bgra<f32>: buffer::Pixel
 rgb::formats::bgra::Bgra<pixel_types::F16Sample>: buffer::Pixel
+rgb::formats::bgra::Bgra<u16>: buffer::Pixel
 rgb::formats::bgra::Bgra<u8>: buffer::Pixel
 rgb::formats::gray::Gray_v08<f32>: buffer::Pixel
 rgb::formats::gray::Gray_v08<pixel_types::F16Sample>: buffer::Pixel

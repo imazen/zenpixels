@@ -9,13 +9,13 @@
 
 ## summary
 #
-#   inherent methods                           66
+#   inherent methods                           67
 #   enum variants                              14
-#   trait roster entries (type × trait)        74
+#   trait roster entries (type × trait)        75
 #
 # per-module pub lines:
 #   (root)                            8
-#   buffer                            3
+#   buffer                            4
 #   cicp                              2
 #   color                            14
 #   descriptor                       18
@@ -28,11 +28,12 @@
 #   precision                         5
 #   sample                            7
 
-## items (80 lines)
+## items (81 lines)
 
 pub fn HashInclusions::assert_fields_are_eq(&self)
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
 pub fn buffer::BufferError::assert_fields_are_eq(&self)
+pub fn buffer::InteropTarget::assert_fields_are_eq(&self)
 pub fn buffer::Rgbx::assert_fields_are_eq(&self)
 pub fn cicp::Cicp::assert_fields_are_eq(&self)
 pub fn cicp::CicpDescriptorError::assert_fields_are_eq(&self)
@@ -111,11 +112,12 @@ pub descriptor::ColorPrimaries::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::SignalRange::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::TransferFunction::__Reserved(descriptor::reserved::Reserved)
 
-## trait impls (74 types)
+## trait impls (75 types)
 
 HashInclusions: TrivialClone
 buffer::Bgrx: TrivialClone
 buffer::BufferError: TrivialClone
+buffer::InteropTarget: TrivialClone
 buffer::Rgbx: TrivialClone
 cicp::Cicp: TrivialClone
 cicp::CicpDescriptorError: TrivialClone
