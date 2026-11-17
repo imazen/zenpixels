@@ -357,10 +357,12 @@
 //! - [ ] Test round-trip: native format → encode → decode = lossless
 //! - [ ] Test negotiation: `ConvertIntent::Fastest.best_match(my_format, my_supported)` picks identity
 
-#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(not(test), no_std)]
 #![forbid(unsafe_code)]
 
 extern crate alloc;
+#[cfg(all(not(test), feature = "__trace_ops"))]
+extern crate std;
 
 whereat::define_at_crate_info!(path = "zenpixels-convert/");
 

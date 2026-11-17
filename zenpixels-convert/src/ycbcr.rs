@@ -298,6 +298,8 @@ fn axis(position: usize, length: usize, subsampled: bool) -> (usize, usize, u32)
 fn fma(a: f32, b: f32, c: f32) -> f32 {
     #[cfg(feature = "std")]
     {
+        #[cfg(not(test))]
+        extern crate std;
         a.mul_add(b, c)
     }
     #[cfg(not(feature = "std"))]

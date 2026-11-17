@@ -63,7 +63,7 @@
 //! | `hash` | Pixel hashing and configurable inclusions (Rust 1.89+) |
 //! | `allocator_api` | Allocator-parameterized storage on supported compilers |
 //!
-#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(not(test), no_std)]
 #![forbid(unsafe_code)]
 
 extern crate alloc;

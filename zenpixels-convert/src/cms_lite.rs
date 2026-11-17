@@ -117,15 +117,14 @@ impl crate::cms::RowTransformMut for LiteTransformMut {
     }
 }
 
-impl crate::cms::PluggableCms for ZenCmsLite {
-    fn build_source_transform(
-        &self,
+impl ZenCmsLite {
+    pub(crate) fn build_converter(
         src: crate::ColorProfileSource<'_>,
         dst: crate::ColorProfileSource<'_>,
         src_format: PixelFormat,
         dst_format: PixelFormat,
         options: &crate::policy::ConvertOptions,
-    ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, whereat::At<crate::cms::CmsPluginError>>>
+    ) -> Option<Result<crate::converter::RowConverter, whereat::At<crate::cms::CmsPluginError>>>
     {
         use zenpixels::PixelDescriptor;
 
@@ -146,14 +145,6 @@ impl crate::cms::PluggableCms for ZenCmsLite {
         let (src_p, src_t) = src.resolve()?;
         let (dst_p, dst_t) = dst.resolve()?;
 
-        // Build the descriptors first so we can run the native-model check
-        // against them. Pre-0.2.16 we built these AFTER the same-space
-        // shortcut and called straight into `ConvertPlan::new_explicit`,
-        // which now answers `NeedsCms` for CMYK / Lab / XYZ etc. instead of
-        // panicking. Surfacing that as `Some(Err(...))` would stop the
-        // dispatch chain — but ZenCmsLite recognizes only native RGB-family
-        // gamut/transfer work, so the right answer is `None` (decline) so
-        // the next plugin (e.g. MoxCms) gets a chance.
         let from = PixelDescriptor::from_pixel_format(src_format)
             .with_primaries(src_p)
             .with_transfer(src_t);
@@ -161,9 +152,7 @@ impl crate::cms::PluggableCms for ZenCmsLite {
             .with_primaries(dst_p)
             .with_transfer(dst_t);
 
-        // Decline non-native color models (CMYK today; Lab / XYZ / spot inks
-        // when they land). We have no kernels for them — let MoxCms or the
-        // user-supplied plugin handle it.
+        // Decline non-native color models (CMYK, Lab, XYZ, etc.).
         if crate::convert::needs_cms_for_color_model(&from, &to) {
             return None;
         }
@@ -179,19 +168,30 @@ impl crate::cms::PluggableCms for ZenCmsLite {
         // failure (we recognized the pair) — surface it instead of
         // declining.
         match crate::convert::ConvertPlan::new_explicit(from, to, options) {
-            Ok(plan) => {
-                let inner = crate::converter::RowConverter::from_plan(plan);
-                Some(Ok(Box::new(LiteTransformMut { inner })))
-            }
-            // Render the inner At<ConvertError> (which carries its own trace
-            // frames) into the message, then `map_error` so those frames carry
-            // through to At<CmsPluginError> instead of being dropped by a fresh
-            // `at!` frame.
+            Ok(plan) => Some(Ok(crate::converter::RowConverter::from_plan(plan))),
             Err(e) => {
                 let msg = alloc::format!("ZenCmsLite plan construction failed: {e:?}");
                 Some(Err(e.map_error(|_| crate::cms::CmsPluginError::msg(msg))))
             }
         }
+    }
+}
+
+impl crate::cms::PluggableCms for ZenCmsLite {
+    fn build_source_transform(
+        &self,
+        src: crate::ColorProfileSource<'_>,
+        dst: crate::ColorProfileSource<'_>,
+        src_format: PixelFormat,
+        dst_format: PixelFormat,
+        options: &crate::policy::ConvertOptions,
+    ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, whereat::At<crate::cms::CmsPluginError>>>
+    {
+        Self::build_converter(src, dst, src_format, dst_format, options).map(|res| {
+            res.map(|inner| {
+                Box::new(LiteTransformMut { inner }) as Box<dyn crate::cms::RowTransformMut>
+            })
+        })
     }
 }
 

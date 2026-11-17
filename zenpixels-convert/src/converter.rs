@@ -43,20 +43,53 @@ pub struct RowConverter {
 enum ExternalTransform {
     /// Stateless, shareable. Supports cheap clone and parallel use.
     Shared(alloc::sync::Arc<dyn crate::cms::RowTransform>),
-    /// Owned, stateful. Shares the same backing `RowTransformMut` across
-    /// clones via `Arc<Mutex<_>>` (std-only — `RowTransformMut::transform_row`
-    /// is `&mut self`, so two `RowConverter`s holding the same impl serialize
-    /// transforms through the mutex).
-    ///
-    /// Pre-0.2.16 this was a `Box<dyn RowTransformMut>` and Clone silently
-    /// dropped the transform — see the audit `T4` note + the
-    /// `pluggable_cms_owned_path_survives_clone` test for the regression
-    /// gate that caught the drop.
-    #[cfg(feature = "std")]
-    Owned(alloc::sync::Arc<std::sync::Mutex<Box<dyn crate::cms::RowTransformMut>>>),
-    /// A prepared worker owns its state without locking or cross-worker sharing.
-    Independent(IndependentWorker),
+    /// Owned, stateful per-converter worker (`Box<dyn RowTransformMut>`).
+    Independent(Box<dyn crate::cms::RowTransformMut>),
+    /// Built-in `ZenCmsLite` matrix/LUT converter, concrete and independently cloneable.
+    Lite(Box<RowConverter>),
     Alpha(Box<AlphaPipeline>),
+}
+
+#[track_caller]
+fn dispatch_cms_chain(
+    source: crate::ColorProfileSource<'_>,
+    target: crate::ColorProfileSource<'_>,
+    src_fmt: crate::PixelFormat,
+    dst_fmt: crate::PixelFormat,
+    options: &crate::policy::ConvertOptions,
+    cms: Option<&dyn crate::cms::PluggableCms>,
+) -> Result<Option<ExternalTransform>, At<ConvertError>> {
+    let map_error = |e: At<crate::cms::CmsPluginError>| {
+        e.map_error(|error| ConvertError::CmsBackend(alloc::sync::Arc::new(error)))
+    };
+    if let Some(plugin) = cms {
+        if let Some(result) = plugin.build_shared_source_transform(
+            source.clone(),
+            target.clone(),
+            src_fmt,
+            dst_fmt,
+            options,
+        ) {
+            return whereat::at_crate!(result)
+                .map(|t| Some(ExternalTransform::Shared(t)))
+                .map_err(map_error);
+        }
+        if let Some(result) =
+            plugin.build_source_transform(source.clone(), target.clone(), src_fmt, dst_fmt, options)
+        {
+            return whereat::at_crate!(result)
+                .map(|t| Some(ExternalTransform::Independent(t)))
+                .map_err(map_error);
+        }
+    }
+    if let Some(result) =
+        crate::cms_lite::ZenCmsLite::build_converter(source, target, src_fmt, dst_fmt, options)
+    {
+        return whereat::at_crate!(result)
+            .map(|c| Some(ExternalTransform::Lite(Box::new(c))))
+            .map_err(map_error);
+    }
+    Ok(None)
 }
 
 // Alpha is associated in the source encoding, never inside an ICC transform.
@@ -108,54 +141,6 @@ impl AlphaPipeline {
             source: alloc::vec::Vec::new(),
             target: alloc::vec::Vec::new(),
         })
-    }
-}
-
-// Keep the published std Sync auto-trait without any execution-time locking.
-// A Mutex<T> can expose T through get_mut when the owner has exclusive access.
-// No reference to this private container is shared and it is never locked.
-struct IndependentWorker {
-    #[cfg(feature = "std")]
-    inner: std::sync::Mutex<Box<dyn crate::cms::RowTransformMut>>,
-    #[cfg(not(feature = "std"))]
-    inner: Box<dyn crate::cms::RowTransformMut>,
-}
-impl IndependentWorker {
-    fn new(worker: Box<dyn crate::cms::RowTransformMut>) -> Self {
-        Self {
-            #[cfg(feature = "std")]
-            inner: std::sync::Mutex::new(worker),
-            #[cfg(not(feature = "std"))]
-            inner: worker,
-        }
-    }
-    fn get_mut(&mut self) -> &mut dyn crate::cms::RowTransformMut {
-        #[cfg(feature = "std")]
-        {
-            self.inner
-                .get_mut()
-                .expect("private worker is never locked")
-                .as_mut()
-        }
-        #[cfg(not(feature = "std"))]
-        {
-            self.inner.as_mut()
-        }
-    }
-}
-
-/// Wrap a freshly-built `Box<dyn RowTransformMut>` into the
-/// `ExternalTransform::Owned` carrier — `Arc<Mutex<_>>` when std is on
-/// (share-on-clone), independent `Box` when not (clone refuses).
-#[inline]
-fn owned_external(t: Box<dyn crate::cms::RowTransformMut>) -> ExternalTransform {
-    #[cfg(feature = "std")]
-    {
-        ExternalTransform::Owned(alloc::sync::Arc::new(std::sync::Mutex::new(t)))
-    }
-    #[cfg(not(feature = "std"))]
-    {
-        ExternalTransform::Independent(IndependentWorker::new(t))
     }
 }
 
@@ -295,86 +280,28 @@ impl RowConverter {
             && to.alpha() != Some(crate::AlphaMode::Premultiplied)
             && from.alpha() != Some(crate::AlphaMode::Undefined)
             && to.alpha() != Some(crate::AlphaMode::Undefined)
+            && let Some(external) = dispatch_cms_chain(
+                from.color_profile_source(),
+                to.color_profile_source(),
+                from.pixel_format(),
+                to.pixel_format(),
+                options,
+                cms,
+            )?
         {
-            let src_src = from.color_profile_source();
-            let dst_src = to.color_profile_source();
-            let src_fmt = from.pixel_format();
-            let dst_fmt = to.pixel_format();
-
-            // Helper: ask one plugin for a transform, preferring shared.
-            // Returns:
-            //   Ok(Some(t)) → plugin accepted
-            //   Ok(None)    → plugin declined
-            //   Err(e)      → plugin tried and failed (At<CmsPluginError>
-            //                 carries the plugin's internal failure point
-            //                 plus a zenpixels-convert crate boundary stamp
-            //                 added via `whereat::at_crate!`).
-            let try_cms = |plugin: &dyn crate::cms::PluggableCms| -> Result<
-                Option<ExternalTransform>,
-                whereat::At<crate::cms::CmsPluginError>,
-            > {
-                if let Some(result) = plugin.build_shared_source_transform(
-                    src_src.clone(),
-                    dst_src.clone(),
-                    src_fmt,
-                    dst_fmt,
-                    options,
-                ) {
-                    return whereat::at_crate!(result).map(|t| Some(ExternalTransform::Shared(t)));
-                }
-                if let Some(result) = plugin.build_source_transform(
-                    src_src.clone(),
-                    dst_src.clone(),
-                    src_fmt,
-                    dst_fmt,
-                    options,
-                ) {
-                    return whereat::at_crate!(result).map(|t| Some(owned_external(t)));
-                }
-                Ok(None)
-            };
-
-            // Convert a plugin failure into ConvertError::CmsError. The
-            // `At<CmsPluginError>` Display impl already renders the full
-            // frame trace + crate info (plugin + crate boundary). Render that
-            // into the message first, then `map_error` so the accumulated
-            // At<_> trace frames carry through to At<ConvertError> instead of
-            // being dropped by a fresh `at!` frame.
-            let plugin_err = |e: whereat::At<crate::cms::CmsPluginError>| {
-                e.map_error(|error| ConvertError::CmsBackend(alloc::sync::Arc::new(error)))
-            };
-
-            let mut external: Option<ExternalTransform> = None;
-            if let Some(plugin) = cms {
-                match try_cms(plugin) {
-                    Ok(Some(t)) => external = Some(t),
-                    Ok(None) => {}
-                    Err(e) => return Err(plugin_err(e)),
-                }
-            }
-            if external.is_none() {
-                match try_cms(&crate::cms_lite::ZenCmsLite) {
-                    Ok(Some(t)) => external = Some(t),
-                    Ok(None) => {}
-                    Err(e) => return Err(plugin_err(e)),
-                }
+            // Precision bits, not byte size — see convert.rs for rationale.
+            let reduces_depth = crate::negotiate::channel_bits(from.channel_type())
+                > crate::negotiate::channel_bits(to.channel_type());
+            if reduces_depth && options.depth_policy() == DepthPolicy::Forbid {
+                return Err(whereat::at!(ConvertError::DepthReductionForbidden));
             }
 
-            if let Some(external) = external {
-                // Precision bits, not byte size — see convert.rs for rationale.
-                let reduces_depth = crate::negotiate::channel_bits(from.channel_type())
-                    > crate::negotiate::channel_bits(to.channel_type());
-                if reduces_depth && options.depth_policy() == DepthPolicy::Forbid {
-                    return Err(whereat::at!(ConvertError::DepthReductionForbidden));
-                }
-
-                return Ok(Self {
-                    plan: ConvertPlan::identity(from, to),
-                    scratch: ConvertScratch::new(),
-                    prepared_width: None,
-                    external: Some(external),
-                });
-            }
+            return Ok(Self {
+                plan: ConvertPlan::identity(from, to),
+                scratch: ConvertScratch::new(),
+                prepared_width: None,
+                external: Some(external),
+            });
         }
 
         // Same profiles, or CMS chain declined — built-in plan.
@@ -569,39 +496,20 @@ impl RowConverter {
                 external: Some(ExternalTransform::Alpha(Box::new(pipeline))),
             });
         }
-        for plugin in cms.into_iter().chain(core::iter::once(
-            &crate::cms_lite::ZenCmsLite as &dyn crate::cms::PluggableCms,
-        )) {
-            let map_error = |e: At<crate::cms::CmsPluginError>| {
-                e.map_error(|error| ConvertError::CmsBackend(alloc::sync::Arc::new(error)))
-            };
-            let external = if let Some(result) = plugin.build_shared_source_transform(
-                source.clone(),
-                target.clone(),
-                from.pixel_format(),
-                to.pixel_format(),
-                options,
-            ) {
-                Some(ExternalTransform::Shared(result.map_err(map_error)?))
-            } else if let Some(result) = plugin.build_source_transform(
-                source.clone(),
-                target.clone(),
-                from.pixel_format(),
-                to.pixel_format(),
-                options,
-            ) {
-                Some(owned_external(result.map_err(map_error)?))
-            } else {
-                None
-            };
-            if let Some(external) = external {
-                return Ok(Self {
-                    plan: ConvertPlan::identity(from, to),
-                    scratch: ConvertScratch::new(),
-                    prepared_width: None,
-                    external: Some(external),
-                });
-            }
+        if let Some(external) = dispatch_cms_chain(
+            source.clone(),
+            target.clone(),
+            from.pixel_format(),
+            to.pixel_format(),
+            options,
+            cms,
+        )? {
+            return Ok(Self {
+                plan: ConvertPlan::identity(from, to),
+                scratch: ConvertScratch::new(),
+                prepared_width: None,
+                external: Some(external),
+            });
         }
         // An unresolved ICC must never fall through to descriptor-only work.
         if source.resolve().is_none() || target.resolve().is_none() {
@@ -621,39 +529,20 @@ impl RowConverter {
         err_from: PixelDescriptor,
         err_to: PixelDescriptor,
     ) -> Result<Self, At<ConvertError>> {
-        for plugin in cms.into_iter().chain(core::iter::once(
-            &crate::cms_lite::ZenCmsLite as &dyn crate::cms::PluggableCms,
-        )) {
-            let map_error = |e: At<crate::cms::CmsPluginError>| {
-                e.map_error(|error| ConvertError::CmsBackend(alloc::sync::Arc::new(error)))
-            };
-            let external = if let Some(result) = plugin.build_shared_source_transform(
-                source.clone(),
-                target.clone(),
-                from.pixel_format(),
-                to.pixel_format(),
-                options,
-            ) {
-                Some(ExternalTransform::Shared(result.map_err(map_error)?))
-            } else if let Some(result) = plugin.build_source_transform(
-                source.clone(),
-                target.clone(),
-                from.pixel_format(),
-                to.pixel_format(),
-                options,
-            ) {
-                Some(owned_external(result.map_err(map_error)?))
-            } else {
-                None
-            };
-            if let Some(external) = external {
-                return Ok(Self {
-                    plan: ConvertPlan::identity(from, to),
-                    scratch: ConvertScratch::new(),
-                    prepared_width: None,
-                    external: Some(external),
-                });
-            }
+        if let Some(external) = dispatch_cms_chain(
+            source,
+            target,
+            from.pixel_format(),
+            to.pixel_format(),
+            options,
+            cms,
+        )? {
+            return Ok(Self {
+                plan: ConvertPlan::identity(from, to),
+                scratch: ConvertScratch::new(),
+                prepared_width: None,
+                external: Some(external),
+            });
         }
         Err(whereat::at!(ConvertError::NeedsCms {
             from: err_from,
@@ -879,44 +768,14 @@ impl RowConverter {
     /// Allocate scratch and initialize selected LUTs/backend state up front.
     /// Subsequent execution refuses widths exceeding this capacity. Built-in
     /// kernels allocate no scratch/LUTs while executing within capacity.
-    /// Stateful CMS clones that share a worker are refused: construct each
-    /// worker independently, then prepare it.
     pub fn prepare(&mut self, max_width: u32) -> Result<(), At<ConvertError>> {
-        #[cfg(feature = "std")]
-        if let Some(ExternalTransform::Owned(arc)) = &self.external {
-            if alloc::sync::Arc::strong_count(arc) != 1 {
-                return Err(whereat::at!(ConvertError::CmsError(
-                    "prepare requires an independent CMS worker; build a converter per worker"
-                        .into()
-                )));
-            }
-            if let Some(ExternalTransform::Owned(arc)) = self.external.take() {
-                let mutex = alloc::sync::Arc::try_unwrap(arc)
-                    .unwrap_or_else(|_| unreachable!("unique owned worker"));
-                let (worker, poisoned) = match mutex.into_inner() {
-                    Ok(worker) => (worker, false),
-                    Err(error) => (error.into_inner(), true),
-                };
-                self.external = Some(ExternalTransform::Independent(IndependentWorker::new(
-                    worker,
-                )));
-                if poisoned {
-                    return Err(whereat::at!(ConvertError::CmsError(
-                        "CMS worker was poisoned".into()
-                    )));
-                }
-            }
-        }
         let map_error = |e: At<crate::cms::CmsPluginError>| {
             e.map_error(|error| ConvertError::CmsBackend(alloc::sync::Arc::new(error)))
         };
         match &mut self.external {
             Some(ExternalTransform::Shared(t)) => t.prepare(max_width).map_err(map_error)?,
-            Some(ExternalTransform::Independent(t)) => {
-                t.get_mut().prepare(max_width).map_err(map_error)?
-            }
-            #[cfg(feature = "std")]
-            Some(ExternalTransform::Owned(_)) => unreachable!("moved to independent worker above"),
+            Some(ExternalTransform::Independent(t)) => t.prepare(max_width).map_err(map_error)?,
+            Some(ExternalTransform::Lite(c)) => c.prepare(max_width)?,
             Some(ExternalTransform::Alpha(p)) => p.prepare(max_width)?,
             None => self.scratch.prepare(&self.plan, max_width)?,
         }
@@ -965,17 +824,9 @@ impl RowConverter {
         let dst = &mut dst[..dlen];
         let result = match &mut self.external {
             Some(ExternalTransform::Alpha(p)) => return p.convert(src, dst, width),
+            Some(ExternalTransform::Lite(c)) => return c.try_convert_row(src, dst, width),
             Some(ExternalTransform::Shared(t)) => t.try_transform_row(src, dst, width),
-            #[cfg(feature = "std")]
-            Some(ExternalTransform::Owned(t)) => t
-                .lock()
-                .map_err(|_| {
-                    whereat::at!(ConvertError::CmsError("CMS worker was poisoned".into()))
-                })?
-                .try_transform_row(src, dst, width),
-            Some(ExternalTransform::Independent(t)) => {
-                t.get_mut().try_transform_row(src, dst, width)
-            }
+            Some(ExternalTransform::Independent(t)) => t.try_transform_row(src, dst, width),
             None => {
                 return convert_row_buffered(&self.plan, src, dst, width, &mut self.scratch);
             }
@@ -985,17 +836,19 @@ impl RowConverter {
         })
     }
 
-    /// Fallible clone. Shared transforms and legacy std mutex workers may be
-    /// shared; an independently owned stateful worker cannot be duplicated.
-    /// Construct another converter from the backend to obtain a parallel worker.
+    /// Fallible clone. Shared stateless transforms (`RowTransform`) and built-in
+    /// plans are cloned; an owned stateful worker (`RowTransformMut`) cannot be
+    /// duplicated — construct another converter from the backend for a parallel
+    /// worker.
     pub fn try_clone(&self) -> Result<Self, At<ConvertError>> {
         let external = match &self.external {
             Some(ExternalTransform::Alpha(p)) => {
                 Some(ExternalTransform::Alpha(Box::new(p.try_clone()?)))
             }
+            Some(ExternalTransform::Lite(c)) => {
+                Some(ExternalTransform::Lite(Box::new(c.try_clone()?)))
+            }
             Some(ExternalTransform::Shared(t)) => Some(ExternalTransform::Shared(t.clone())),
-            #[cfg(feature = "std")]
-            Some(ExternalTransform::Owned(t)) => Some(ExternalTransform::Owned(t.clone())),
             Some(ExternalTransform::Independent(_)) => {
                 return Err(whereat::at!(ConvertError::CmsError(
                     "stateful worker cannot be cloned; construct another converter".into()
@@ -2257,17 +2110,18 @@ mod tests {
         );
     }
 
-    /// Audit `T4` regression gate: the `ExternalTransform::Owned` path
-    /// (when a `PluggableCms` returns a `RowTransformMut`) used to be
-    /// silently dropped on Clone, so a cloned converter would fall
-    /// through to the built-in plan and produce different bytes. The
-    /// `Arc<Mutex<dyn RowTransformMut>>` carrier now keeps the same
-    /// backing impl alive across clones; this test pins that shape.
-    #[cfg(feature = "std")]
+    /// Audit `T4` regression gate: a stateful `RowTransformMut`-only plugin
+    /// must NEVER be silently dropped on `try_clone` (falling back to the
+    /// built-in plan) — `try_clone` refuses honestly while keeping the
+    /// original converter intact. Stateless plugins share via `RowTransform`.
     #[test]
-    fn pluggable_cms_owned_path_survives_clone() {
+    fn pluggable_cms_owned_path_refuses_clone() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<crate::RowConverter>();
+        assert_send_sync::<crate::OutputPlan>();
+
         // P3 → sRGB so the plugin is consulted; PaintRedCms only offers
-        // the `Owned` (RowTransformMut) path — no `build_shared_*`.
+        // the stateful `RowTransformMut` path — no `build_shared_*`.
         let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(zenpixels::ColorPrimaries::DisplayP3);
         let srgb = PixelDescriptor::RGB8_SRGB;
         let cms = PaintRedCms {
@@ -2282,22 +2136,14 @@ mod tests {
         conv.convert_row(&[10, 20, 30, 40, 50, 60], &mut dst, 2);
         assert_eq!(dst, [255, 0, 0, 255, 0, 0]);
 
-        // The clone MUST carry the same RowTransformMut behind an
-        // Arc<Mutex<_>>. Pre-fix this silently dropped, fell back to
-        // the built-in P3→sRGB plan, and produced non-red output —
-        // which is exactly the regression we're gating against.
-        let mut conv_cloned = conv.try_clone().unwrap();
+        // Stateful worker refuses `try_clone` instead of silently dropping
+        // the plugin or serializing threads behind a hidden mutex.
+        assert!(conv.try_clone().is_err());
+
+        // Original converter still runs the plugin cleanly.
         let mut dst2 = [0u8; 6];
-        conv_cloned.convert_row(&[10, 20, 30, 40, 50, 60], &mut dst2, 2);
-        assert_eq!(
-            dst, dst2,
-            "cloned RowConverter must run the same RowTransformMut as the source"
-        );
-        assert_eq!(
-            dst2,
-            [255, 0, 0, 255, 0, 0],
-            "cloned converter should still paint red, not fall through to built-in plan"
-        );
+        conv.convert_row(&[10, 20, 30, 40, 50, 60], &mut dst2, 2);
+        assert_eq!(dst2, [255, 0, 0, 255, 0, 0]);
     }
 
     #[test]

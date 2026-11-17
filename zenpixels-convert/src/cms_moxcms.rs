@@ -26,6 +26,7 @@
 
 use alloc::boxed::Box;
 use alloc::format;
+use alloc::string::String;
 use alloc::sync::Arc;
 
 use moxcms::{
@@ -1129,24 +1130,36 @@ fn try_mox_row(
 // PluggableCms — the dispatch chain RowConverter actually consults.
 // ---------------------------------------------------------------------------
 
-/// `RowTransformMut` wrapper for moxcms transform executors at the three
-/// supported bit depths. It exposes the
-/// `RowTransformMut` (`&mut self`) shape that [`PluggableCms`] expects.
-///
-/// moxcms `TransformExecutor::transform` is `&self`, so there's no actual
-/// per-call mutable state — the `&mut self` shape is a trait-level
-/// convenience and matches the [`RowConverter`] ownership model
-/// (`Box<dyn RowTransformMut>` per converter).
-///
-/// [`RowConverter`]: crate::RowConverter
-struct MoxRowTransformMut {
+/// Stateless moxcms transform executor wrapper at the three supported bit
+/// depths. `moxcms::TransformExecutor::transform` is `&self`, so this wrapper
+/// implements both [`RowTransform`](crate::cms::RowTransform) (for lock-free
+/// `Arc` sharing across threads and `RowConverter::try_clone`) and
+/// [`RowTransformMut`](crate::cms::RowTransformMut).
+struct MoxRowTransform {
     inner: MoxTransformInner,
     extent: RowExtent,
 }
 
-impl crate::cms::RowTransformMut for MoxRowTransformMut {
-    fn transform_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
+impl crate::cms::RowTransform for MoxRowTransform {
+    fn transform_row(&self, src: &[u8], dst: &mut [u8], width: u32) {
         try_mox_row(&self.inner, self.extent, src, dst, width).expect("moxcms row failed");
+    }
+    fn try_transform_row(
+        &self,
+        src: &[u8],
+        dst: &mut [u8],
+        width: u32,
+    ) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
+        try_mox_row(&self.inner, self.extent, src, dst, width)
+    }
+    fn prepare(&self, _max_width: u32) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
+        Ok(())
+    }
+}
+
+impl crate::cms::RowTransformMut for MoxRowTransform {
+    fn transform_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
+        crate::cms::RowTransform::transform_row(self, src, dst, width);
     }
     fn try_transform_row(
         &mut self,
@@ -1154,38 +1167,224 @@ impl crate::cms::RowTransformMut for MoxRowTransformMut {
         dst: &mut [u8],
         width: u32,
     ) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
-        try_mox_row(&self.inner, self.extent, src, dst, width)
+        crate::cms::RowTransform::try_transform_row(self, src, dst, width)
     }
-    fn prepare(&mut self, _max_width: u32) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
-        Ok(())
+    fn prepare(&mut self, max_width: u32) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
+        crate::cms::RowTransform::prepare(self, max_width)
     }
+}
+
+fn build_mox_stateless(
+    src: crate::ColorProfileSource<'_>,
+    dst: crate::ColorProfileSource<'_>,
+    src_format: PixelFormat,
+    dst_format: PixelFormat,
+    options: &crate::policy::ConvertOptions,
+) -> Option<Result<MoxRowTransform, whereat::At<crate::cms::CmsPluginError>>> {
+    use crate::cms::CmsPluginError;
+    let explicit_intent = requested_intent(&src, options);
+    // moxcms 0.9.2 aliases AbsoluteColorimetric to lut_a_to_b_colorimetric
+    // without unadapting mediaWhitePoint; decline so a capable backend in
+    // the plugin chain (such as Lcms) can evaluate true ICC absolute intent.
+    if explicit_intent == Some(zenpixels::RenderingIntent::AbsoluteColorimetric) {
+        return None;
+    }
+    let (d2b_tag, b2d_tag) = float_pipeline_tags(
+        explicit_intent.unwrap_or(zenpixels::RenderingIntent::RelativeColorimetric),
+    );
+    if has_float_pipeline(&src, d2b_tag) || has_float_pipeline(&dst, b2d_tag) {
+        return None;
+    }
+    if crate::convert::hlg_render::is_hlg_profile(&src)
+        || crate::convert::hlg_render::is_hlg_profile(&dst)
+    {
+        return None;
+    }
+    // Depths the plan can convert aren't this backend's problem, so it declines them. Sample types
+    // nothing here can convert are diagnosed.
+    let plannable = |t: ChannelType| {
+        matches!(
+            t,
+            ChannelType::U8 | ChannelType::U16 | ChannelType::F16 | ChannelType::F32
+        )
+    };
+    let (src_type, dst_type) = (src_format.channel_type(), dst_format.channel_type());
+    if plannable(src_type)
+        && plannable(dst_type)
+        && (src_type != dst_type || src_type == ChannelType::F16)
+    {
+        return None;
+    }
+    if src_type != dst_type || !plannable(src_type) {
+        return Some(Err(whereat::at!(CmsPluginError::msg(
+            "moxcms requires matching U8, U16 or F32 sample types; convert depth separately"
+        ))));
+    }
+    // Decline when the format pair has no `Layout` mapping (e.g. Bgra
+    // swizzles, Rgbx alpha-padding, Oklab variants). moxcms can't
+    // describe those; let the built-in pipeline handle layout
+    // shuffling and route the colorimetric work back through after.
+    let src_layout = pixel_format_to_layout(src_format)?;
+    let dst_layout = pixel_format_to_layout(dst_format)?;
+
+    // Build moxcms profiles. CMYK as a `PrimariesTransferPair` has no
+    // synthesizable mapping — decline so the caller knows to attach an
+    // ICC via `ColorProfileSource::Icc(...)`.
+    let src_profile = match build_moxcms_profile_for_format(&src, src_format, false) {
+        Ok(Some(p)) => p,
+        Ok(None) => return None,
+        Err(e) => {
+            return Some(Err(whereat::at!(CmsPluginError::msg(format!(
+                "moxcms source profile build failed: {e}"
+            )))));
+        }
+    };
+    let dst_profile = match build_moxcms_profile_for_format(&dst, dst_format, true) {
+        Ok(Some(p)) => p,
+        Ok(None) => return None,
+        Err(e) => {
+            return Some(Err(whereat::at!(CmsPluginError::msg(format!(
+                "moxcms destination profile build failed: {e}"
+            )))));
+        }
+    };
+
+    if is_cmyk_f32(src_format) {
+        return Some(
+            cmyk_float_transform(
+                &src_profile,
+                &dst_profile,
+                src_format,
+                dst_format,
+                names_srgb(&dst),
+                options.clip_out_of_gamut(),
+                explicit_intent,
+            )
+            .map(|transform| MoxRowTransform {
+                inner: MoxTransformInner::F32(transform),
+                extent: RowExtent::of(src_format, dst_format),
+            })
+            .map_err(|error| whereat::at!(CmsPluginError::new(error))),
+        );
+    }
+    if dst_format.is_inverted_cmyk() {
+        return Some(Err(whereat::at!(CmsPluginError::msg(
+            "conversion into inverted CMYK is not qualified"
+        ))));
+    }
+    if matches!(src_format, PixelFormat::CMYK8 | PixelFormat::CMYK8_INVERTED) {
+        if dst_profile.color_space == moxcms::DataColorSpace::Cmyk {
+            if src_format == PixelFormat::CMYK8_INVERTED {
+                return Some(Err(whereat::at!(CmsPluginError::msg(
+                    "conversion from Cmyk8Inverted into CMYK is not qualified"
+                ))));
+            }
+        } else {
+            let float_target = match dst_format {
+                PixelFormat::Rgb8 => PixelFormat::RgbF32,
+                PixelFormat::Rgba8 => PixelFormat::RgbaF32,
+                PixelFormat::Gray8 => PixelFormat::GrayF32,
+                PixelFormat::GrayA8 => PixelFormat::GrayAF32,
+                _ => {
+                    return Some(Err(whereat::at!(CmsPluginError::msg(
+                        "Cmyk8 has no conversion to this format"
+                    ))));
+                }
+            };
+            let built = build_moxcms_profile_for_format(&src, PixelFormat::CMYKF32, false)
+                .and_then(|source| {
+                    let target = build_moxcms_profile_for_format(&dst, float_target, true)?;
+                    Ok((source, target))
+                });
+            let Ok((Some(source), Some(target))) = built else {
+                return Some(Err(whereat::at!(CmsPluginError::msg(
+                    "moxcms could not build the F32 form of these profiles"
+                ))));
+            };
+            return Some(
+                cmyk_float_transform(
+                    &source,
+                    &target,
+                    PixelFormat::CMYKF32,
+                    float_target,
+                    names_srgb(&dst),
+                    true,
+                    explicit_intent,
+                )
+                .map(|transform| MoxRowTransform {
+                    inner: MoxTransformInner::U8(Arc::new(U8ThroughF32 {
+                        transform,
+                        source_channels: src_layout.channels(),
+                        target_channels: dst_layout.channels(),
+                        invert_input: src_format == PixelFormat::CMYK8_INVERTED,
+                    })),
+                    extent: RowExtent::of(src_format, dst_format),
+                })
+                .map_err(|error| whereat::at!(CmsPluginError::new(error))),
+            );
+        }
+    }
+    if is_cmyk_f32(dst_format) {
+        return Some(Err(whereat::at!(CmsPluginError::msg(
+            "conversion into F32 CMYK is not qualified"
+        ))));
+    }
+
+    if let Err(error) =
+        validate_channel_curves(&src_profile).and_then(|()| validate_channel_curves(&dst_profile))
+    {
+        return Some(Err(whereat::at!(CmsPluginError::new(error))));
+    }
+    let opts = options_for_profiles(src_format, &src_profile, &dst_profile, explicit_intent);
+
+    let depth = src_format.channel_type();
+    let inner_result = match depth {
+        ChannelType::U8 => u8_transform(
+            &src_profile,
+            &dst_profile,
+            (src_layout, dst_layout),
+            options_for_profiles(
+                PixelFormat::RgbF32,
+                &src_profile,
+                &dst_profile,
+                explicit_intent,
+            ),
+        ),
+        ChannelType::U16 => src_profile
+            .create_transform_16bit(src_layout, &dst_profile, dst_layout, opts)
+            .map(MoxTransformInner::U16),
+        ChannelType::F16 | ChannelType::F32 | _ => {
+            exact_gamma_f32_transform(&src_profile, &dst_profile, (src_layout, dst_layout), opts)
+                .map(|transform| {
+                    float_transform(
+                        transform,
+                        src_layout,
+                        dst_layout,
+                        options.clip_out_of_gamut(),
+                    )
+                })
+        }
+    };
+
+    let inner = match inner_result {
+        Ok(i) => i,
+        Err(e) => {
+            return Some(Err(whereat::at!(CmsPluginError::msg(format!(
+                "moxcms create_transform_{:?}bit failed: {e}",
+                depth
+            )))));
+        }
+    };
+
+    Some(Ok(MoxRowTransform {
+        inner,
+        extent: RowExtent::of(src_format, dst_format),
+    }))
 }
 
 impl crate::cms::PluggableCms for MoxCms {
     /// Build a moxcms-backed row transform for the given
     /// `(src, dst, src_format, dst_format)`.
-    ///
-    /// **Decline (`None`)** when either source can't be mapped to a moxcms
-    /// `ColorProfile` (custom signature we don't recognize), when the
-    /// pixel formats don't have a `Layout` mapping, or when the
-    /// `(src, dst, src_format, dst_format)` tuple is the trivial identity
-    /// (let the built-in mechanical plan handle it).
-    ///
-    /// **Fail (`Some(Err(_))`)** when we recognized the pair and started
-    /// to build profiles or a transform but the construction itself
-    /// failed (ICC parse errors, CMYK-without-ICC, moxcms's
-    /// `check_layout` rejecting the combination, …). The dispatch chain
-    /// stops here — falling back to ZenCmsLite or the built-in plan would
-    /// silently produce different output.
-    ///
-    /// **CMYK ↔ RGB** is the primary new path enabled by this impl. moxcms
-    /// requires a real CMYK ICC profile to populate the device→PCS LUT
-    /// (no synthesizable default exists for a device-dependent ink
-    /// space), so callers must pass `ColorProfileSource::Icc(...)` for
-    /// the CMYK side. A `PrimariesTransferPair` for a CMYK descriptor
-    /// without an attached ICC is declined (`None`) rather than failed —
-    /// upstream paths (the no-CMS extension entry points) already
-    /// answer `NeedsCms`, and we want the user to provide an actual ICC.
     fn build_source_transform(
         &self,
         src: crate::ColorProfileSource<'_>,
@@ -1195,233 +1394,43 @@ impl crate::cms::PluggableCms for MoxCms {
         options: &crate::policy::ConvertOptions,
     ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, whereat::At<crate::cms::CmsPluginError>>>
     {
-        use crate::cms::CmsPluginError;
-        let explicit_intent = requested_intent(&src, options);
-        // moxcms 0.9.2 aliases AbsoluteColorimetric to lut_a_to_b_colorimetric
-        // without unadapting mediaWhitePoint; decline so a capable backend in
-        // the plugin chain (such as Lcms) can evaluate true ICC absolute intent.
-        if explicit_intent == Some(zenpixels::RenderingIntent::AbsoluteColorimetric) {
-            return None;
-        }
-        let (d2b_tag, b2d_tag) = float_pipeline_tags(
-            explicit_intent.unwrap_or(zenpixels::RenderingIntent::RelativeColorimetric),
-        );
-        if has_float_pipeline(&src, d2b_tag) || has_float_pipeline(&dst, b2d_tag) {
-            return None;
-        }
         if crate::convert::hlg_render::is_hlg_profile(&src)
             || crate::convert::hlg_render::is_hlg_profile(&dst)
         {
+            let explicit_intent = requested_intent(&src, options);
+            if explicit_intent == Some(zenpixels::RenderingIntent::AbsoluteColorimetric) {
+                return None;
+            }
+            let (d2b_tag, b2d_tag) = float_pipeline_tags(
+                explicit_intent.unwrap_or(zenpixels::RenderingIntent::RelativeColorimetric),
+            );
+            if has_float_pipeline(&src, d2b_tag) || has_float_pipeline(&dst, b2d_tag) {
+                return None;
+            }
             return crate::convert::hlg_render::build_cms_hlg_transform(
                 self, src, dst, src_format, dst_format, options, false,
             );
         }
-        // Depths the plan can convert aren't this backend's problem, so it declines them. Sample types
-        // nothing here can convert are diagnosed.
-        let plannable = |t: ChannelType| {
-            matches!(
-                t,
-                ChannelType::U8 | ChannelType::U16 | ChannelType::F16 | ChannelType::F32
-            )
-        };
-        let (src_type, dst_type) = (src_format.channel_type(), dst_format.channel_type());
-        if plannable(src_type)
-            && plannable(dst_type)
-            && (src_type != dst_type || src_type == ChannelType::F16)
-        {
-            return None;
-        }
-        if src_type != dst_type || !plannable(src_type) {
-            return Some(Err(whereat::at!(CmsPluginError::msg(
-                "moxcms requires matching U8, U16 or F32 sample types; convert depth separately"
-            ))));
-        }
-        // Decline when the format pair has no `Layout` mapping (e.g. Bgra
-        // swizzles, Rgbx alpha-padding, Oklab variants). moxcms can't
-        // describe those; let the built-in pipeline handle layout
-        // shuffling and route the colorimetric work back through after.
-        let src_layout = pixel_format_to_layout(src_format)?;
-        let dst_layout = pixel_format_to_layout(dst_format)?;
+        build_mox_stateless(src, dst, src_format, dst_format, options)
+            .map(|res| res.map(|xform| Box::new(xform) as Box<dyn crate::cms::RowTransformMut>))
+    }
 
-        // Build moxcms profiles. CMYK as a `PrimariesTransferPair` has no
-        // synthesizable mapping — decline so the caller knows to attach an
-        // ICC via `ColorProfileSource::Icc(...)`.
-        let src_profile = match build_moxcms_profile_for_format(&src, src_format, false) {
-            Ok(Some(p)) => p,
-            Ok(None) => return None,
-            Err(e) => {
-                return Some(Err(whereat::at!(CmsPluginError::msg(format!(
-                    "moxcms source profile build failed: {e}"
-                )))));
-            }
-        };
-        let dst_profile = match build_moxcms_profile_for_format(&dst, dst_format, true) {
-            Ok(Some(p)) => p,
-            Ok(None) => return None,
-            Err(e) => {
-                return Some(Err(whereat::at!(CmsPluginError::msg(format!(
-                    "moxcms destination profile build failed: {e}"
-                )))));
-            }
-        };
-
-        // Identity bytes-out (same profile, same format) is left to the
-        // built-in mechanical plan via `None`; the dispatch chain falls
-        // through to `ConvertPlan::new_explicit` which emits an Identity
-        // step. But this only fires for the truly trivial case — the
-        // mismatch dispatch above already handled CMYK by reaching this
-        // function, so a CMYK→CMYK identity is fine to decline.
-        //
-        // We don't have a cheap profile-equality check, so we just attempt
-        // the transform; moxcms returns Ok with a no-op LUT when the
-        // device→PCS→device round-trip is identity.
-
-        if is_cmyk_f32(src_format) {
-            return Some(
-                cmyk_float_transform(
-                    &src_profile,
-                    &dst_profile,
-                    src_format,
-                    dst_format,
-                    names_srgb(&dst),
-                    options.clip_out_of_gamut(),
-                    explicit_intent,
-                )
-                .map(|transform| {
-                    Box::new(MoxRowTransformMut {
-                        inner: MoxTransformInner::F32(transform),
-                        extent: RowExtent::of(src_format, dst_format),
-                    }) as Box<dyn crate::cms::RowTransformMut>
-                })
-                .map_err(|error| whereat::at!(CmsPluginError::new(error))),
-            );
-        }
-        // Into another ink profile is a different operation, with its own path below. Otherwise the
-        // F32 path with the same profiles, built for F32, so the two depths can't differ.
-        if dst_format.is_inverted_cmyk() {
-            return Some(Err(whereat::at!(CmsPluginError::msg(
-                "conversion into inverted CMYK is not qualified"
-            ))));
-        }
-        if matches!(src_format, PixelFormat::CMYK8 | PixelFormat::CMYK8_INVERTED) {
-            if dst_profile.color_space == moxcms::DataColorSpace::Cmyk {
-                if src_format == PixelFormat::CMYK8_INVERTED {
-                    return Some(Err(whereat::at!(CmsPluginError::msg(
-                        "conversion from Cmyk8Inverted into CMYK is not qualified"
-                    ))));
-                }
-            } else {
-                let float_target = match dst_format {
-                    PixelFormat::Rgb8 => PixelFormat::RgbF32,
-                    PixelFormat::Rgba8 => PixelFormat::RgbaF32,
-                    PixelFormat::Gray8 => PixelFormat::GrayF32,
-                    PixelFormat::GrayA8 => PixelFormat::GrayAF32,
-                    _ => {
-                        return Some(Err(whereat::at!(CmsPluginError::msg(
-                            "Cmyk8 has no conversion to this format"
-                        ))));
-                    }
-                };
-                let built = build_moxcms_profile_for_format(&src, PixelFormat::CMYKF32, false)
-                    .and_then(|source| {
-                        let target = build_moxcms_profile_for_format(&dst, float_target, true)?;
-                        Ok((source, target))
-                    });
-                let Ok((Some(source), Some(target))) = built else {
-                    return Some(Err(whereat::at!(CmsPluginError::msg(
-                        "moxcms could not build the F32 form of these profiles"
-                    ))));
-                };
-                return Some(
-                    cmyk_float_transform(
-                        &source,
-                        &target,
-                        PixelFormat::CMYKF32,
-                        float_target,
-                        names_srgb(&dst),
-                        true,
-                        explicit_intent,
-                    )
-                    .map(|transform| {
-                        Box::new(MoxRowTransformMut {
-                            inner: MoxTransformInner::U8(Arc::new(U8ThroughF32 {
-                                transform,
-                                source_channels: src_layout.channels(),
-                                target_channels: dst_layout.channels(),
-                                invert_input: src_format == PixelFormat::CMYK8_INVERTED,
-                            })),
-                            extent: RowExtent::of(src_format, dst_format),
-                        }) as Box<dyn crate::cms::RowTransformMut>
-                    })
-                    .map_err(|error| whereat::at!(CmsPluginError::new(error))),
-                );
-            }
-        }
-        if is_cmyk_f32(dst_format) {
-            return Some(Err(whereat::at!(CmsPluginError::msg(
-                "conversion into F32 CMYK is not qualified"
-            ))));
-        }
-
-        if let Err(error) = validate_channel_curves(&src_profile)
-            .and_then(|()| validate_channel_curves(&dst_profile))
-        {
-            return Some(Err(whereat::at!(CmsPluginError::new(error))));
-        }
-        let opts = options_for_profiles(src_format, &src_profile, &dst_profile, explicit_intent);
-
-        // Dispatch on the source `ChannelType`. F16 is widened to f32
-        // before the CMS step in this crate, so we route F16 to the f32
-        // transform path (the same convention `build_transform_inner`
-        // above uses). Note: when src and dst differ on channel type, we
-        // pick the source side; the layout/bit-depth conversion happens
-        // outside moxcms in a separate plan step.
-        let depth = src_format.channel_type();
-        let inner_result = match depth {
-            ChannelType::U8 => u8_transform(
-                &src_profile,
-                &dst_profile,
-                (src_layout, dst_layout),
-                options_for_profiles(
-                    PixelFormat::RgbF32,
-                    &src_profile,
-                    &dst_profile,
-                    explicit_intent,
-                ),
-            ),
-            ChannelType::U16 => src_profile
-                .create_transform_16bit(src_layout, &dst_profile, dst_layout, opts)
-                .map(MoxTransformInner::U16),
-            ChannelType::F16 | ChannelType::F32 | _ => exact_gamma_f32_transform(
-                &src_profile,
-                &dst_profile,
-                (src_layout, dst_layout),
-                opts,
-            )
-            .map(|transform| {
-                float_transform(
-                    transform,
-                    src_layout,
-                    dst_layout,
-                    options.clip_out_of_gamut(),
-                )
-            }),
-        };
-
-        let inner = match inner_result {
-            Ok(i) => i,
-            Err(e) => {
-                return Some(Err(whereat::at!(CmsPluginError::msg(format!(
-                    "moxcms create_transform_{:?}bit failed: {e}",
-                    depth
-                )))));
-            }
-        };
-
-        Some(Ok(Box::new(MoxRowTransformMut {
-            inner,
-            extent: RowExtent::of(src_format, dst_format),
-        })))
+    fn build_shared_source_transform(
+        &self,
+        src: crate::ColorProfileSource<'_>,
+        dst: crate::ColorProfileSource<'_>,
+        src_format: PixelFormat,
+        dst_format: PixelFormat,
+        options: &crate::policy::ConvertOptions,
+    ) -> Option<
+        Result<
+            alloc::sync::Arc<dyn crate::cms::RowTransform>,
+            whereat::At<crate::cms::CmsPluginError>,
+        >,
+    > {
+        build_mox_stateless(src, dst, src_format, dst_format, options).map(|res| {
+            res.map(|xform| Arc::new(xform) as alloc::sync::Arc<dyn crate::cms::RowTransform>)
+        })
     }
 }
 
@@ -1771,5 +1780,30 @@ mod moxcms_d50_tests {
         assert_eq!(d50.x.to_bits(), 0x3f76_c28e); // 0.9639062
         assert_eq!(d50.y, 1.0_f32);
         assert_eq!(d50.z.to_bits(), 0x3f53_2290); // 0.8247461
+    }
+
+    #[test]
+    fn moxcms_uses_shared_row_transform_and_clones_after_prepare() {
+        use super::MoxCms;
+        use crate::{ColorPrimaries, ConvertOptions, PixelDescriptor, RowConverter};
+
+        let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
+        let mut conv = RowConverter::new_explicit_with_cms(
+            p3,
+            PixelDescriptor::RGB8_SRGB,
+            &ConvertOptions::permissive(),
+            Some(&MoxCms),
+        )
+        .unwrap();
+        conv.prepare(2).unwrap();
+        let mut cloned = conv.try_clone().unwrap();
+        cloned.prepare(2).unwrap();
+
+        let src = [220u8, 40, 30, 10, 200, 90];
+        let (mut out1, mut out2) = ([0u8; 6], [0u8; 6]);
+        conv.try_convert_row(&src, &mut out1, 2).unwrap();
+        cloned.try_convert_row(&src, &mut out2, 2).unwrap();
+        assert_eq!(out1, out2);
+        assert_ne!(out1, src);
     }
 }

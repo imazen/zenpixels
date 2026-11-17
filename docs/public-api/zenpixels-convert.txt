@@ -489,7 +489,7 @@ pub trait RowTransform: core::marker::Send + core::marker::Sync [also: cms]
 pub fn RowTransform::prepare(&self, u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
 pub fn RowTransform::transform_row(&self, &[u8], &mut [u8], u32)
 pub fn RowTransform::try_transform_row(&self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
-pub trait RowTransformMut: core::marker::Send [also: cms]
+pub trait RowTransformMut: core::marker::Send + core::marker::Sync [also: cms]
 pub fn RowTransformMut::prepare(&mut self, u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
 pub fn RowTransformMut::transform_row(&mut self, &[u8], &mut [u8], u32)
 pub fn RowTransformMut::try_transform_row(&mut self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
@@ -539,9 +539,9 @@ impl<F, E> precision::ConversionResolver for F where F: core::ops::function::FnM
 
 ## auto traits
 
-OutputPlan: !Freeze !RefUnwindSafe !UnwindSafe
+OutputPlan: !RefUnwindSafe !UnwindSafe
 cms::CmsPluginError: !RefUnwindSafe !UnwindSafe
-converter::RowConverter: !Freeze !RefUnwindSafe !UnwindSafe
+converter::RowConverter: !RefUnwindSafe !UnwindSafe
 error::ConvertError: !RefUnwindSafe !UnwindSafe
 precision::ChainFailure<E>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 precision::ConversionFailure<E>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe

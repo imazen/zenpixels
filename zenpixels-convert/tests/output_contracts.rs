@@ -114,9 +114,8 @@ mod tests {
         a.convert_row(&[1, 2, 3], &mut direct, 1);
         assert_eq!(direct, [42, 42, 42]);
     }
-    #[cfg(not(feature = "std"))]
     #[test]
-    fn no_std_clone_refuses_to_discard_external_transform() {
+    fn clone_refuses_to_discard_external_transform() {
         let mut a = custom_converter();
         assert!(a.try_clone().is_err());
         let mut direct = [0; 3];
