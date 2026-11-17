@@ -27,6 +27,7 @@ fn constructors_share_alpha_validation() {
     }
 }
 
+#[cfg(feature = "planar")]
 #[test]
 fn final_row_split_does_not_address_trailing_padding() {
     let mut bytes = [4u8, 9];

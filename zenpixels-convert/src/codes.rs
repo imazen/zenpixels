@@ -3,7 +3,7 @@
 //! A *code* is the unsigned integer that a [`SampleEncoding`] extracts from a
 //! storage word. Ordinary (canonical) `U16` and `U8` image samples are codes of
 //! the full word width: a canonical `U16` white is 65535, never a ten-bit 1023.
-//! Native codecs keep their codes in [`CodePlane`] views; this module converts
+//! Native codecs keep their codes in `CodePlane` views; this module converts
 //! between those codes and canonical samples, or between two native encodings.
 //!
 //! The rule depends on what the component means, not on its storage:
@@ -50,11 +50,14 @@
 //! ```
 
 use core::fmt;
+#[cfg(feature = "planar")]
 use whereat::At;
+#[cfg(feature = "planar")]
 use zenpixels::{
-    ChannelLayout, ChannelType, PixelDescriptor, PixelSliceMut, SignalRange,
-    sample::{CodePlane, CodePlaneError, ExactDepth, SampleEncoding},
+    AlphaMode, ChannelLayout, PixelDescriptor, PixelSliceMut,
+    sample::{CodePlane, CodePlaneError, ExactDepth},
 };
+use zenpixels::{ChannelType, SignalRange, sample::SampleEncoding};
 
 /// What a component's codes mean, which selects its depth-conversion rule.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -72,7 +75,8 @@ pub enum CodeRole {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CodeMapError {
-    /// Numerical mapping requires unsigned U8/U16 words.
+    /// Numerical mapping requires matching-signedness 8/16/32-bit integer words,
+    /// or a word-slice helper was called with a narrower word type than the encoding.
     UnsupportedStorage,
     /// The signal range has no defined code rule here.
     UnsupportedRange(SignalRange),
@@ -100,7 +104,9 @@ pub enum CodeMapError {
 impl fmt::Display for CodeMapError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnsupportedStorage => f.write_str("code mapping requires unsigned U8/U16 words"),
+            Self::UnsupportedStorage => f.write_str(
+                "code mapping requires matching unsigned (U8/U16/U32) or signed (I8/I16/I32) integer words",
+            ),
             Self::UnsupportedRange(range) => write!(f, "no code rule for signal range {range}"),
             Self::NarrowBelowEightBits { bits } => {
                 write!(f, "narrow-range codes need at least 8 bits, got {bits}")
@@ -122,19 +128,44 @@ impl fmt::Display for CodeMapError {
 
 impl core::error::Error for CodeMapError {}
 
+#[inline]
+const fn mask_u32(bits: u8) -> u32 {
+    if bits >= 32 {
+        u32::MAX
+    } else {
+        (1u32 << bits) - 1
+    }
+}
+
+#[inline]
+const fn max_u64(bits: u8) -> u64 {
+    mask_u32(bits) as u64
+}
+
+#[inline]
+const fn sign_extend_i32(raw: u32, bits: u8) -> i32 {
+    let shift = 32 - (bits as u32);
+    ((raw << shift) as i32) >> shift
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Rule {
     Same,
-    Nearest { from_max: u32, to_max: u32 },
+    Nearest { from_max: u64, to_max: u64 },
     ShiftLeft(u32),
     RoundShiftRight { shift: u32, max: u32 },
+    SignedSame,
+    SignedScale { from_bits: u8, to_bits: u8 },
 }
 
 /// A checked conversion of one component from one sample encoding to another.
 ///
 /// Construction selects the rule once from the role, signal range and both
 /// encodings; mapping performs integer arithmetic only and never allocates.
-/// See the [module documentation](self) for the rules and their guarantees.
+/// Supports unsigned (`U8`, `U16`, `U32`, `1..=32` bits) and signed
+/// two's-complement (`I8`, `I16`, `I32`, `1..=32` bits) sample encodings when
+/// both endpoints share signedness. See the [module documentation](self) for
+/// the rules and their guarantees.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CodeMap {
     from: SampleEncoding,
@@ -150,9 +181,21 @@ impl CodeMap {
         role: CodeRole,
         range: SignalRange,
     ) -> Result<Self, CodeMapError> {
-        if !matches!(from.storage(), ChannelType::U8 | ChannelType::U16)
-            || !matches!(to.storage(), ChannelType::U8 | ChannelType::U16)
-        {
+        let unsigned_pair = matches!(
+            from.storage(),
+            ChannelType::U8 | ChannelType::U16 | ChannelType::U32
+        ) && matches!(
+            to.storage(),
+            ChannelType::U8 | ChannelType::U16 | ChannelType::U32
+        );
+        let signed_pair = matches!(
+            from.storage(),
+            ChannelType::I8 | ChannelType::I16 | ChannelType::I32
+        ) && matches!(
+            to.storage(),
+            ChannelType::I8 | ChannelType::I16 | ChannelType::I32
+        );
+        if !unsigned_pair && !signed_pair {
             return Err(CodeMapError::UnsupportedStorage);
         }
         let (n, m) = (from.code_bits(), to.code_bits());
@@ -162,6 +205,20 @@ impl CodeMap {
             (_, SignalRange::Narrow) => false,
             (_, other) => return Err(CodeMapError::UnsupportedRange(other)),
         };
+        if signed_pair {
+            if !full_scale {
+                return Err(CodeMapError::UnsupportedRange(range));
+            }
+            let rule = if n == m {
+                Rule::SignedSame
+            } else {
+                Rule::SignedScale {
+                    from_bits: n,
+                    to_bits: m,
+                }
+            };
+            return Ok(Self { from, to, rule });
+        }
         let rule = if n == m {
             Rule::Same
         } else if full_scale {
@@ -172,8 +229,8 @@ impl CodeMap {
                 });
             }
             Rule::Nearest {
-                from_max: (1u32 << n) - 1,
-                to_max: (1u32 << m) - 1,
+                from_max: max_u64(n),
+                to_max: max_u64(m),
             }
         } else if n < 8 || m < 8 {
             return Err(CodeMapError::NarrowBelowEightBits {
@@ -184,7 +241,7 @@ impl CodeMap {
         } else {
             Rule::RoundShiftRight {
                 shift: (n - m) as u32,
-                max: (1u32 << m) - 1,
+                max: mask_u32(m),
             }
         };
         Ok(Self { from, to, rule })
@@ -200,34 +257,133 @@ impl CodeMap {
         self.to
     }
 
-    /// Convert one source code (bits above its depth are ignored) to a destination code.
+    /// Convert one unsigned `1..=16`-bit source code (bits above its depth are ignored)
+    /// to a destination code. For `>16`-bit unsigned encodings, use [`code_u32`](Self::code_u32).
     pub const fn code(&self, code: u16) -> u16 {
-        let q = (code as u32) & ((1u32 << self.from.code_bits()) - 1);
-        (match self.rule {
-            Rule::Same => q,
-            // max ≤ 65535: q·to_max + from_max/2 < 2^32.
-            Rule::Nearest { from_max, to_max } => (q * to_max + from_max / 2) / from_max,
-            Rule::ShiftLeft(s) => q << s,
-            Rule::RoundShiftRight { shift, max } => {
-                let r = (q + (1 << (shift - 1))) >> shift;
-                if r > max { max } else { r }
-            }
-        }) as u16
+        self.code_u32(code as u32) as u16
     }
 
-    /// Extract the code from a source word, convert it and place it in a destination word.
+    /// Convert one unsigned `1..=32`-bit source code (bits above its depth are ignored)
+    /// to a destination code.
+    pub const fn code_u32(&self, code: u32) -> u32 {
+        let q = code & mask_u32(self.from.code_bits());
+        match self.rule {
+            Rule::Same => q,
+            // q ≤ 2^32 - 1, to_max ≤ 2^32 - 1: q·to_max + from_max/2 < 2^64.
+            Rule::Nearest { from_max, to_max } => {
+                (((q as u64) * to_max + from_max / 2) / from_max) as u32
+            }
+            Rule::ShiftLeft(s) => q << s,
+            Rule::RoundShiftRight { shift, max } => {
+                let r = (((q as u64) + (1u64 << (shift - 1))) >> shift) as u32;
+                if r > max { max } else { r }
+            }
+            Rule::SignedSame | Rule::SignedScale { .. } => {
+                (self.code_i32(q as i32) as u32) & mask_u32(self.to.code_bits())
+            }
+        }
+    }
+
+    /// Convert one signed two's-complement `1..=32`-bit source code (bits above its depth
+    /// are ignored via sign extension) to a sign-extended destination code.
+    ///
+    /// Preserves neutral `0`, maps positive codes `[0, 2^(N-1)-1]` by tie-free odd-denominator
+    /// nearest scaling onto `[0, 2^(M-1)-1]`, and scales negative codes `[-2^(N-1), -1]` onto
+    /// `[-2^(M-1), -1]` with exact widening/narrowing round-trip.
+    pub const fn code_i32(&self, code: i32) -> i32 {
+        match self.rule {
+            Rule::SignedSame => sign_extend_i32(code as u32, self.from.code_bits()),
+            Rule::SignedScale {
+                from_bits: n,
+                to_bits: m,
+            } => {
+                let q = sign_extend_i32(code as u32, n);
+                if q >= 0 {
+                    if n <= 1 || m <= 1 {
+                        0
+                    } else {
+                        let from_pos = (1u64 << (n - 1)) - 1;
+                        let to_pos = (1u64 << (m - 1)) - 1;
+                        (((q as u64) * to_pos + from_pos / 2) / from_pos) as i32
+                    }
+                } else {
+                    let mag = q.unsigned_abs() as u64;
+                    let scaled = if m >= n {
+                        mag << (m - n)
+                    } else {
+                        let shift = (n - m) as u32;
+                        let max_neg = 1u64 << (m - 1);
+                        let r = (mag + (1u64 << (shift - 1))) >> shift;
+                        if r > max_neg { max_neg } else { r }
+                    };
+                    0i32.wrapping_sub(scaled as i32)
+                }
+            }
+            _ => self.code_u32(code as u32) as i32,
+        }
+    }
+
+    /// Extract the code from a `u16` source word, convert it and place it in a `u16` destination word.
     ///
     /// Source padding is ignored; destination padding is zero. A destination with
     /// `U8` storage always fits in the low byte of the result.
     pub const fn word(&self, word: u16) -> u16 {
-        self.code(word >> self.from.bit_shift()) << self.to.bit_shift()
+        self.word_u32(word as u32) as u16
     }
 
-    /// Map equal-length runs of source words to destination words.
+    /// Extract the code from a `u32` source word, convert it and place it in a `u32` destination word.
     ///
-    /// Use this for contiguous plane rows or interleaved rows whose components share
-    /// one encoding. The lengths are checked before any write.
+    /// Source padding is ignored; destination padding is zero. Destinations with
+    /// `U8` or `U16` storage fit in the low 8 or 16 bits of the result.
+    pub const fn word_u32(&self, word: u32) -> u32 {
+        self.code_u32(word >> self.from.bit_shift()) << self.to.bit_shift()
+    }
+
+    /// Extract the signed code from an `i16` source word, convert it and place it in an `i16`
+    /// destination word (`I8` destinations are sign-extended from the low byte when top-aligned).
+    pub const fn word_i16(&self, word: i16) -> i16 {
+        let raw = ((word as u16) as u32) >> self.from.bit_shift();
+        let c = self.code_i32(raw as i32);
+        let placed = ((c as u32) & mask_u32(self.to.code_bits())) << self.to.bit_shift();
+        if matches!(self.to.storage(), ChannelType::I8)
+            && self.to.code_bits() + self.to.bit_shift() == 8
+        {
+            (placed as u8 as i8) as i16
+        } else {
+            placed as u16 as i16
+        }
+    }
+
+    /// Extract the signed code from an `i32` source word, convert it and place it in an `i32`
+    /// destination word (`I8`/`I16` destinations are sign-extended when top-aligned in their container).
+    pub const fn word_i32(&self, word: i32) -> i32 {
+        let raw = (word as u32) >> self.from.bit_shift();
+        let c = self.code_i32(raw as i32);
+        let placed = ((c as u32) & mask_u32(self.to.code_bits())) << self.to.bit_shift();
+        if matches!(self.to.storage(), ChannelType::I8)
+            && self.to.code_bits() + self.to.bit_shift() == 8
+        {
+            (placed as u8 as i8) as i32
+        } else if matches!(self.to.storage(), ChannelType::I16)
+            && self.to.code_bits() + self.to.bit_shift() == 16
+        {
+            (placed as u16 as i16) as i32
+        } else {
+            placed as i32
+        }
+    }
+
+    /// Map equal-length runs of `U8`/`U16` source words to destination words.
+    ///
+    /// Returns [`CodeMapError::UnsupportedStorage`] if either encoding is signed or uses `U32` storage
+    /// (use [`map_words_u32`](Self::map_words_u32), [`map_words_i16`](Self::map_words_i16), or
+    /// [`map_words_i32`](Self::map_words_i32)). The lengths are checked before any write.
     pub fn map_words(&self, source: &[u16], destination: &mut [u16]) -> Result<(), CodeMapError> {
+        if !matches!(self.from.storage(), ChannelType::U8 | ChannelType::U16)
+            || !matches!(self.to.storage(), ChannelType::U8 | ChannelType::U16)
+        {
+            return Err(CodeMapError::UnsupportedStorage);
+        }
         if source.len() != destination.len() {
             return Err(CodeMapError::LengthMismatch {
                 source: source.len(),
@@ -239,13 +395,86 @@ impl CodeMap {
         }
         Ok(())
     }
+
+    /// Map equal-length runs of unsigned `U8`/`U16`/`U32` source words to destination words.
+    ///
+    /// Returns [`CodeMapError::UnsupportedStorage`] on signed encodings. The lengths are checked before any write.
+    pub fn map_words_u32(
+        &self,
+        source: &[u32],
+        destination: &mut [u32],
+    ) -> Result<(), CodeMapError> {
+        if self.from.is_signed() || self.to.is_signed() {
+            return Err(CodeMapError::UnsupportedStorage);
+        }
+        if source.len() != destination.len() {
+            return Err(CodeMapError::LengthMismatch {
+                source: source.len(),
+                destination: destination.len(),
+            });
+        }
+        for (d, s) in destination.iter_mut().zip(source) {
+            *d = self.word_u32(*s);
+        }
+        Ok(())
+    }
+
+    /// Map equal-length runs of signed `I8`/`I16` source words to destination words.
+    ///
+    /// Returns [`CodeMapError::UnsupportedStorage`] if either encoding is unsigned or uses `I32` storage.
+    pub fn map_words_i16(
+        &self,
+        source: &[i16],
+        destination: &mut [i16],
+    ) -> Result<(), CodeMapError> {
+        if !matches!(self.from.storage(), ChannelType::I8 | ChannelType::I16)
+            || !matches!(self.to.storage(), ChannelType::I8 | ChannelType::I16)
+        {
+            return Err(CodeMapError::UnsupportedStorage);
+        }
+        if source.len() != destination.len() {
+            return Err(CodeMapError::LengthMismatch {
+                source: source.len(),
+                destination: destination.len(),
+            });
+        }
+        for (d, s) in destination.iter_mut().zip(source) {
+            *d = self.word_i16(*s);
+        }
+        Ok(())
+    }
+
+    /// Map equal-length runs of signed `I8`/`I16`/`I32` source words to destination words.
+    ///
+    /// Returns [`CodeMapError::UnsupportedStorage`] on unsigned encodings. The lengths are checked before any write.
+    pub fn map_words_i32(
+        &self,
+        source: &[i32],
+        destination: &mut [i32],
+    ) -> Result<(), CodeMapError> {
+        if !self.from.is_signed() || !self.to.is_signed() {
+            return Err(CodeMapError::UnsupportedStorage);
+        }
+        if source.len() != destination.len() {
+            return Err(CodeMapError::LengthMismatch {
+                source: source.len(),
+                destination: destination.len(),
+            });
+        }
+        for (d, s) in destination.iter_mut().zip(source) {
+            *d = self.word_i32(*s);
+        }
+        Ok(())
+    }
 }
 
 /// Native components cannot be widened into the requested canonical image.
+#[cfg(feature = "planar")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CodesError {
-    /// The destination is not canonical U8/U16 gray, gray-alpha, RGB or RGBA.
+    /// The destination is not a supported canonical U8/U16 layout
+    /// (gray, gray-alpha, RGB/BGR, RGBA/BGRA/RGBX/BGRX, or CMYK/CMYKA).
     Destination {
         /// The destination descriptor.
         actual: PixelDescriptor,
@@ -257,9 +486,9 @@ pub enum CodesError {
         /// Range declared by the destination.
         destination: SignalRange,
     },
-    /// The number of components differs from the destination's channels.
+    /// The number of components differs from the destination's active channels.
     ComponentCount {
-        /// Destination channels.
+        /// Destination active channels.
         expected: usize,
         /// Supplied components.
         actual: usize,
@@ -295,12 +524,13 @@ pub enum CodesError {
     Read(CodePlaneError),
 }
 
+#[cfg(feature = "planar")]
 impl fmt::Display for CodesError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Destination { actual } => write!(
                 f,
-                "canonical destination must be U8/U16 gray, gray-alpha, RGB or RGBA, got {actual:?}"
+                "canonical destination must be U8/U16 gray, gray-alpha, RGB/BGR, RGBA/BGRA/RGBX/BGRX or CMYK/CMYKA, got {actual:?}"
             ),
             Self::RangeMismatch {
                 source,
@@ -338,15 +568,19 @@ impl fmt::Display for CodesError {
     }
 }
 
+#[cfg(feature = "planar")]
 impl core::error::Error for CodesError {}
 
 /// Codes converted per bounded batch; the stack buffer is 512 bytes.
+#[cfg(feature = "planar")]
 const BATCH: usize = 256;
 
 /// Widen borrowed native components into a canonical strided image region.
 ///
-/// `components` are in destination channel order (gray; gray, alpha; R, G, B;
-/// or R, G, B, A); the alpha component is always full scale. Each component's
+/// `components` are in destination active channel order (gray; gray, alpha;
+/// R, G, B; B, G, R; R, G, B, A; B, G, R, A; C, M, Y, K; or C, M, Y, K, A;
+/// `RGBX`/`BGRX` padding slots take 3 color components and leave the 4th
+/// padding channel untouched); the alpha component is always full scale. Each component's
 /// codes are widened exactly with the rule for its role and `range`, which must
 /// equal the destination's declared signal range; this never converts range.
 /// `(x, y)` is the region origin in plane coordinates, so crops and row
@@ -363,6 +597,7 @@ const BATCH: usize = 256;
 /// smallest depth every component's grid nests in) and the alpha code depth.
 /// The caller owns that evidence; it stops describing the samples as soon as
 /// they are changed.
+#[cfg(feature = "planar")]
 pub fn to_canonical<'b>(
     components: &[CodePlane<'_>],
     range: SignalRange,
@@ -376,9 +611,25 @@ pub fn to_canonical<'b>(
         ChannelType::U16 => 16,
         _ => return Err(whereat::at!(CodesError::Destination { actual: descriptor })),
     };
-    let has_alpha = match descriptor.layout() {
-        ChannelLayout::Gray | ChannelLayout::Rgb => false,
-        ChannelLayout::GrayAlpha | ChannelLayout::Rgba => true,
+    let channels = descriptor.channels();
+    let (has_alpha, expected_components) = match (descriptor.layout(), descriptor.alpha()) {
+        (
+            ChannelLayout::Gray
+            | ChannelLayout::Rgb
+            | ChannelLayout::Bgr
+            | ChannelLayout::Cmyk
+            | ChannelLayout::CmykInverted,
+            None,
+        ) => (false, channels),
+        (ChannelLayout::Rgba | ChannelLayout::Bgra, Some(AlphaMode::Undefined)) => (false, 3),
+        (
+            ChannelLayout::GrayAlpha
+            | ChannelLayout::Rgba
+            | ChannelLayout::Bgra
+            | ChannelLayout::CmykAlpha
+            | ChannelLayout::CmykInvertedAlpha,
+            Some(_),
+        ) => (true, channels),
         _ => return Err(whereat::at!(CodesError::Destination { actual: descriptor })),
     };
     if descriptor.signal_range != range {
@@ -387,10 +638,9 @@ pub fn to_canonical<'b>(
             destination: descriptor.signal_range,
         }));
     }
-    let channels = descriptor.channels();
-    if components.len() != channels {
+    if components.len() != expected_components {
         return Err(whereat::at!(CodesError::ComponentCount {
-            expected: channels,
+            expected: expected_components,
             actual: components.len(),
         }));
     }
@@ -399,7 +649,7 @@ pub fn to_canonical<'b>(
         Err(_) => return Err(whereat::at!(CodesError::Destination { actual: descriptor })),
     };
     let (width, height) = (destination.width() as usize, destination.rows() as usize);
-    let mut maps = [None; 4];
+    let mut maps = [None; 5];
     for (component, plane) in components.iter().enumerate() {
         let bits = plane.encoding().code_bits();
         if bits > storage_bits {
@@ -409,7 +659,7 @@ pub fn to_canonical<'b>(
                 destination_bits: storage_bits,
             }));
         }
-        let role = if has_alpha && component + 1 == channels {
+        let role = if has_alpha && component + 1 == expected_components {
             CodeRole::Alpha
         } else {
             CodeRole::Intensity
@@ -470,6 +720,7 @@ pub fn to_canonical<'b>(
 }
 
 /// Evidence established by exactly widening `components` into canonical storage.
+#[cfg(feature = "planar")]
 fn established_depth(
     components: &[CodePlane<'_>],
     range: SignalRange,
@@ -502,6 +753,7 @@ fn established_depth(
     ExactDepth::new(storage, range, color, alpha).ok()
 }
 
+#[cfg(feature = "planar")]
 fn lcm(a: u32, b: u32) -> u32 {
     let (mut x, mut y) = (a, b);
     while y != 0 {

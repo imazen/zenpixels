@@ -1,7 +1,9 @@
 //! `PixelBuffer` over storage other than `Vec<u8>`: nothing is copied, and
 //! layout validation matches the `Vec<u8>` path.
 
-use zenpixels::plane::{AlignedPlane, AlignedSamples, SampleStorage, SampleStorageMut};
+use zenpixels::buffer::{AlignedSamples, SampleStorage, SampleStorageMut};
+#[cfg(feature = "planar")]
+use zenpixels::plane::AlignedPlane;
 use zenpixels::{PixelBuffer, PixelBufferParts, PixelDescriptor, RowAlign};
 
 const W: u32 = 37;
@@ -254,16 +256,19 @@ fn aligned_buffers_can_hold_the_channel_type_directly() {
     .unwrap();
     assert_eq!(custom.stride() % 256, 0);
 
-    let plane = AlignedPlane::<u16>::alloc_aligned(
-        W as usize,
-        H as usize,
-        RowAlign::from_bytes::<u16>(256),
-    )
-    .unwrap();
-    assert_eq!((plane.stride() * 2) % 256, 0);
-    let tight_plane =
-        AlignedPlane::<u16>::alloc_aligned(W as usize, H as usize, RowAlign::Tight).unwrap();
-    assert_eq!(tight_plane.stride(), W as usize);
+    #[cfg(feature = "planar")]
+    {
+        let plane = AlignedPlane::<u16>::alloc_aligned(
+            W as usize,
+            H as usize,
+            RowAlign::from_bytes::<u16>(256),
+        )
+        .unwrap();
+        assert_eq!((plane.stride() * 2) % 256, 0);
+        let tight_plane =
+            AlignedPlane::<u16>::alloc_aligned(W as usize, H as usize, RowAlign::Tight).unwrap();
+        assert_eq!(tight_plane.stride(), W as usize);
+    }
 
     let mismatch = PixelBuffer::<(), AlignedSamples<u16>>::try_new_aligned(
         W,

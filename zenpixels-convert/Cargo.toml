@@ -156,7 +156,7 @@ lcms = { version = "0.0.0", git = "https://github.com/imazen/lcms", rev = "55b59
 # Build-time ICC recipe writer, shared with the standalone generator. This
 # does not enable the optional production backend for consumers.
 lcms = { version = "0.0.0", git = "https://github.com/imazen/lcms", rev = "55b59476cf64920345e9ca32eb3a4678bf0bbece" }
-zenpixels = { workspace = true, features = ["planar", "imgref"] }
+zenpixels = { workspace = true, features = ["imgref"] }
 # Self dev-dependency: these features unify into every test/bench build of
 # this crate, so plain `cargo test -p zenpixels-convert` (default features)
 # already compiles the lib WITH `cms-moxcms` and runs the `#[cfg(feature =
@@ -192,6 +192,26 @@ allocation-counter = "0.8.1"
 name = "hdr_sdr_alloc"
 path = "tests/hdr_sdr_alloc.rs"
 required-features = ["bt2446a"]
+
+[[test]]
+name = "ycbcr_borrowed"
+path = "tests/ycbcr_borrowed.rs"
+required-features = ["planar"]
+
+[[test]]
+name = "native_canonical"
+path = "tests/native_canonical.rs"
+required-features = ["planar"]
+
+[[test]]
+name = "codes_alloc"
+path = "tests/codes_alloc.rs"
+required-features = ["planar"]
+
+[[test]]
+name = "precision_evidence"
+path = "tests/precision_evidence.rs"
+required-features = ["planar"]
 
 [[bench]]
 name = "bench_cms"
@@ -298,6 +318,7 @@ harness = false
 name = "bench_codes"
 path = "benches/bench_codes.rs"
 harness = false
+required-features = ["planar"]
 
 [[bench]]
 name = "bench_sdr_u16_lut"

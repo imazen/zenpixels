@@ -45,12 +45,13 @@ fn run(plan: &YcbcrToRgbF32<'_>, x: usize, y: usize, width: u32, rows: u32) -> V
 #[test]
 fn code_placement_and_row_partition_do_not_change_rgb() {
     for bits in [8, 10, 12] {
-        for sub in [Sub::Yuv444, Sub::Yuv422, Sub::Yuv420] {
+        for sub in [Sub::Yuv444, Sub::Yuv422, Sub::Yuv420, Sub::Yuv440] {
             for full in [false, true] {
                 let (w, h) = (5usize, 3usize);
                 let (cw, ch) = match sub {
                     Sub::Yuv444 => (w, h),
                     Sub::Yuv422 => (3, h),
+                    Sub::Yuv440 => (w, 2),
                     _ => (3, 2),
                 };
                 let y: Vec<u16> = (0..w * h)
@@ -142,25 +143,33 @@ fn bad_interpretation_and_output_fail_before_writes() {
         }
     );
     for site in [Site::Unknown, Site::Left, Site::TopLeft] {
-        assert_eq!(
-            *YcbcrToRgbF32::new([p, c, c], Sub::Yuv420, site, color)
-                .err()
-                .unwrap()
-                .error(),
-            YcbcrError::UnsupportedChroma {
-                subsampling: Sub::Yuv420,
-                siting: site
-            }
-        );
+        for sub in [Sub::Yuv420, Sub::Yuv440] {
+            let chroma = if sub == Sub::Yuv440 {
+                CodePlane::new(plane8(&samples, 2, 1, 2), enc).unwrap()
+            } else {
+                c
+            };
+            assert_eq!(
+                *YcbcrToRgbF32::new([p, chroma, chroma], sub, site, color)
+                    .err()
+                    .unwrap()
+                    .error(),
+                YcbcrError::UnsupportedChroma {
+                    subsampling: sub,
+                    siting: site
+                }
+            );
+        }
     }
     assert_eq!(
         *YcbcrToRgbF32::new([p, c, c], Sub::Yuv440, Site::Center, color)
             .err()
             .unwrap()
             .error(),
-        YcbcrError::UnsupportedChroma {
-            subsampling: Sub::Yuv440,
-            siting: Site::Center
+        YcbcrError::SourceGeometry {
+            plane: 1,
+            actual: (1, 1),
+            expected: Some((2, 1))
         }
     );
     let signed_enc = SampleEncoding::new(ChannelType::I8, 8, 0).unwrap();

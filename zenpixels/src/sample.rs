@@ -23,7 +23,9 @@ use core::fmt;
 mod exact;
 mod plane;
 pub use exact::{ExactDepth, ExactDepthError};
-pub use plane::{ChromaSiting, ChromaSubsampling, CodePlane, CodePlaneError};
+pub use plane::{ChromaSiting, ChromaSubsampling};
+#[cfg(feature = "planar")]
+pub use plane::{CodePlane, CodePlaneError, CodePlaneMut};
 
 /// Checked interpretation of one integer code in a stored sample.
 ///

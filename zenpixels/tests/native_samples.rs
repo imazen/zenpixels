@@ -90,7 +90,7 @@ fn native_storage_survives_strides_subviews_and_owned_handoff() {
             assert_eq!(descriptor.layout(), layout);
             assert_eq!(descriptor.alpha(), alpha);
             let mut buffer =
-                PixelBuffer::<(), zenpixels::plane::AlignedSamples<u8>>::try_new_aligned(
+                PixelBuffer::<(), zenpixels::buffer::AlignedSamples<u8>>::try_new_aligned(
                     5,
                     3,
                     descriptor,

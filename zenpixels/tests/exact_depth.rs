@@ -317,15 +317,71 @@ fn contradictory_samples_and_mismatched_statements_are_refused() {
         claim(16, true, 10, 16).holds_for(&clean_view),
         Err(ExactDepthError::DescriptorMismatch)
     );
-    let cmyk = PixelSlice::new(&[0u8; 4], 1, 1, 4, PixelDescriptor::CMYK8).unwrap();
+    let lab8_desc =
+        zenpixels::PixelFormat::from_parts(ChannelType::U8, zenpixels::ChannelLayout::Lab, None)
+            .unwrap()
+            .descriptor();
+    let lab8 = PixelSlice::new(&[0u8; 3], 1, 1, 3, lab8_desc).unwrap();
     assert_eq!(
-        claim(8, false, 8, 8).holds_for(&cmyk),
+        claim(8, false, 8, 8).holds_for(&lab8),
         Err(ExactDepthError::UnsupportedLayout)
     );
     assert_eq!(
-        ExactDepth::measure(&cmyk),
+        ExactDepth::measure(&lab8),
         Err(ExactDepthError::UnsupportedLayout)
     );
+    // BGR, CMYK (conventional & inverted, with & without alpha), and RGBX/BGRX
+    // are supported on canonical U8/U16 grids.
+    let ten_u16 = bytes(16, &[0, 64, 65535, 0, 64, 65535]);
+    let bgr16 = PixelDescriptor::try_new(
+        ChannelType::U16,
+        zenpixels::ChannelLayout::Bgr,
+        None,
+        zenpixels::TransferFunction::Srgb,
+    )
+    .unwrap();
+    let bgr_slice = PixelSlice::new(&ten_u16, 2, 1, 12, bgr16).unwrap();
+    let bgr_measured = ExactDepth::measure(&bgr_slice).unwrap();
+    assert_eq!(
+        (bgr_measured.color_bits(), bgr_measured.alpha_bits()),
+        (10, 16)
+    );
+    assert_eq!(bgr_measured.holds_for(&bgr_slice), Ok(true));
+
+    let cmyk16_bytes = bytes(16, &[0, 64, 128, 65535]);
+    for cmyk_desc in [PixelDescriptor::CMYK16, PixelDescriptor::CMYK16_INVERTED] {
+        let cmyk_slice = PixelSlice::new(&cmyk16_bytes, 1, 1, 8, cmyk_desc).unwrap();
+        let m = ExactDepth::measure(&cmyk_slice).unwrap();
+        assert_eq!((m.color_bits(), m.alpha_bits()), (10, 16));
+        assert_eq!(m.holds_for(&cmyk_slice), Ok(true));
+    }
+
+    let cmyka16_bytes = bytes(16, &[0, 64, 128, 65535, 257]);
+    for layout in [
+        zenpixels::ChannelLayout::CmykAlpha,
+        zenpixels::ChannelLayout::CmykInvertedAlpha,
+    ] {
+        let desc = zenpixels::PixelFormat::from_parts(
+            ChannelType::U16,
+            layout,
+            Some(zenpixels::AlphaMode::Straight),
+        )
+        .unwrap()
+        .descriptor();
+        let slice = PixelSlice::new(&cmyka16_bytes, 1, 1, 10, desc).unwrap();
+        let m = ExactDepth::measure(&slice).unwrap();
+        assert_eq!((m.color_bits(), m.alpha_bits()), (10, 8));
+        assert_eq!(m.holds_for(&slice), Ok(true));
+    }
+
+    // RGBX8 / BGRX8 ignore the 4th undefined padding byte.
+    let padded_rgbx = [0u8, 255, 0, 123];
+    for desc in [PixelDescriptor::RGBX8, PixelDescriptor::BGRX8] {
+        let s = PixelSlice::new(&padded_rgbx, 1, 1, 4, desc).unwrap();
+        let m = ExactDepth::measure(&s).unwrap();
+        assert_eq!((m.color_bits(), m.alpha_bits()), (1, 8));
+        assert_eq!(m.holds_for(&s), Ok(true));
+    }
     // An owned buffer aligns its storage; a byte array need not be f32-aligned.
     let floats = PixelBuffer::new(1, 1, PixelDescriptor::RGBF32_LINEAR);
     let f32_view = floats.as_slice();

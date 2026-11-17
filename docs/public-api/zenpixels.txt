@@ -8,21 +8,21 @@
 
 ## summary
 #
-#   pub modules                                13
-#   pub types (struct/enum/trait/alias)       170
-#   pub consts/statics                        754
+#   pub modules                                12
+#   pub types (struct/enum/trait/alias)       146
+#   pub consts/statics                        733
 #   free functions                              2
-#   inherent methods                          469
-#   struct fields                             138
-#   enum variants                             502
+#   inherent methods                          404
+#   struct fields                             124
+#   enum variants                             430
 #   re-exports                                  1
-#   trait roster entries (type × trait)       591
-#   auto-trait-complete types                  82
-#   auto-trait exceptions                      15
+#   trait roster entries (type × trait)       514
+#   auto-trait-complete types                  71
+#   auto-trait exceptions                       8
 #
 # per-module pub lines:
-#   (root)                          816
-#   buffer                          359
+#   (root)                          795
+#   buffer                          379
 #   cicp                             38
 #   color                           186
 #   descriptor                      295
@@ -30,12 +30,11 @@
 #   icc                              11
 #   orientation                      11
 #   pixel_types                      49
-#   plane                           182
 #   policy                           22
 #   precision                        20
-#   sample                           39
+#   sample                           25
 
-## items (1777 lines)
+## items (1580 lines)
 
 pub mod zenpixels
 pub use At
@@ -76,6 +75,20 @@ pub buffer::PixelStorage::U32(alloc::vec::Vec<u32>)
 pub buffer::PixelStorage::U64(alloc::vec::Vec<u64>)
 pub buffer::PixelStorage::U8(alloc::vec::Vec<u8>)
 pub fn buffer::PixelStorage::try_into_vec<T: buffer::StorageSample>(self) -> core::result::Result<alloc::vec::Vec<T>, Self>
+#[non_exhaustive] pub enum buffer::PlaneError
+pub buffer::PlaneError::AllocationFailed
+pub buffer::PlaneError::GeometryOverflow
+pub buffer::PlaneError::OutsidePlane
+pub buffer::PlaneError::ShortBuffer
+pub buffer::PlaneError::ShortStride
+pub buffer::RowAlign::Cache64
+pub buffer::RowAlign::PixelCache64
+pub buffer::RowAlign::Samples(u16)
+pub buffer::RowAlign::Tight
+pub const fn RowAlign::from_bytes<T: buffer::StorageSample>(u16) -> Self [also: (root)]
+pub const fn RowAlign::try_from_bytes(u16, usize) -> core::option::Option<Self> [also: (root)]
+pub struct buffer::AlignedSamples<T>
+pub fn buffer::AlignedSamples<T>::try_zeroed(usize) -> core::result::Result<Self, buffer::PlaneError>
 pub buffer::Bgrx::b: u8
 pub buffer::Bgrx::g: u8
 pub buffer::Bgrx::r: u8
@@ -96,7 +109,7 @@ pub fn buffer::PixelBuffer::new(u32, u32, descriptor::PixelDescriptor) -> Self
 pub fn buffer::PixelBuffer::new_for(u32, u32, descriptor::PixelDescriptor, buffer::InteropTarget) -> Self
 pub fn buffer::PixelBuffer::try_new(u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::try_new_for(u32, u32, descriptor::PixelDescriptor, buffer::InteropTarget) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuffer::try_new_with_align(u32, u32, descriptor::PixelDescriptor, plane::RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::try_new_with_align(u32, u32, descriptor::PixelDescriptor, RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::transform_in_place<F>(&mut self, F) where F: for<'a> core::ops::function::FnOnce(buffer::InPlacePixels<'a>) -> buffer::PixelSliceMut<'a>
 pub fn buffer::PixelBuffer<P, S>::as_contiguous_bytes(&self) -> core::option::Option<&[u8]>
 pub fn buffer::PixelBuffer<P, S>::as_slice(&self) -> buffer::PixelSlice<'_, P>
@@ -144,7 +157,7 @@ pub fn buffer::PixelBuffer<P>::try_new_typed(u32, u32) -> core::result::Result<S
 pub fn buffer::PixelBuffer<P>::into_contiguous(self) -> Self
 pub fn buffer::PixelBuffer<P>::try_into_tight_u8_vec(self) -> core::result::Result<alloc::vec::Vec<u8>, Self>
 pub fn buffer::PixelBuffer<(), S>::try_from_parts(buffer::PixelBufferParts<S>) -> core::result::Result<Self, buffer::FromPartsError<S>>
-pub fn buffer::PixelBuffer<(), plane::AlignedSamples<T>>::try_new_aligned(u32, u32, descriptor::PixelDescriptor, plane::RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer<(), buffer::AlignedSamples<T>>::try_new_aligned(u32, u32, descriptor::PixelDescriptor, RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub buffer::PixelBufferParts::color_context: core::option::Option<alloc::sync::Arc<color::ColorContext>>
 pub buffer::PixelBufferParts::data: S
 pub buffer::PixelBufferParts::descriptor: descriptor::PixelDescriptor
@@ -238,6 +251,16 @@ pub buffer::Rgbx::x: u8
 pub fn buffer::ByteStorage::as_bytes(&self) -> &[u8]
 pub fn buffer::ByteStorageMut::as_bytes_mut(&mut self) -> &mut [u8]
 pub const buffer::Pixel::DESCRIPTOR: descriptor::PixelDescriptor
+pub trait buffer::PlaneSample: buffer::storage_sample::Sealed + bytemuck::pod::Pod + core::default::Default + core::cmp::PartialEq + core::fmt::Debug + core::marker::Send + core::marker::Sync + 'static
+pub const buffer::PlaneSample::CHANNEL_TYPE: descriptor::ChannelType
+pub trait buffer::SampleStorage
+pub type buffer::SampleStorage::Sample: buffer::StorageSample
+pub fn buffer::SampleStorage::samples(&self) -> &[Self::Sample]
+pub type &mut S::Sample = <S as buffer::SampleStorage>::Sample
+pub fn &mut S::samples(&self) -> &[<S as buffer::SampleStorage>::Sample]
+pub trait buffer::SampleStorageMut: buffer::SampleStorage
+pub fn buffer::SampleStorageMut::samples_mut(&mut self) -> &mut [Self::Sample]
+pub fn &mut S::samples_mut(&mut self) -> &mut [<S as buffer::SampleStorage>::Sample]
 pub const buffer::StorageSample::CHANNEL_TYPE: descriptor::ChannelType
 pub mod cicp
 #[non_exhaustive] pub enum cicp::CicpDescriptorError
@@ -721,7 +744,7 @@ pub const fn descriptor::PixelDescriptor::new_full(descriptor::ChannelType, desc
 pub const fn descriptor::PixelDescriptor::pixel_format(&self) -> descriptor::PixelFormat [also: (root)]
 pub const fn descriptor::PixelDescriptor::simd_aligned_stride(self, u32, usize) -> usize [also: (root)]
 pub const fn descriptor::PixelDescriptor::transfer(&self) -> descriptor::TransferFunction [also: (root)]
-pub const fn descriptor::PixelDescriptor::try_aligned_stride(self, u32, plane::RowAlign) -> core::option::Option<usize> [also: (root)]
+pub const fn descriptor::PixelDescriptor::try_aligned_stride(self, u32, RowAlign) -> core::option::Option<usize> [also: (root)]
 pub const fn descriptor::PixelDescriptor::try_new(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>, descriptor::TransferFunction) -> core::result::Result<Self, descriptor::DescriptorError> [also: (root)]
 pub const fn descriptor::PixelDescriptor::try_new_full(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>, descriptor::TransferFunction, descriptor::ColorPrimaries) -> core::result::Result<Self, descriptor::DescriptorError> [also: (root)]
 pub fn descriptor::PixelDescriptor::validate(self) -> core::result::Result<(), buffer::BufferError>
@@ -848,210 +871,6 @@ pub const fn pixel_types::GrayAlphaF16::new(pixel_types::F16Sample, pixel_types:
 pub pixel_types::GrayAlphaF32::a: f32
 pub pixel_types::GrayAlphaF32::v: f32
 pub const fn pixel_types::GrayAlphaF32::new(f32, f32) -> Self [also: (root)]
-pub mod plane
-#[non_exhaustive] pub enum plane::AnyPlane<'a>
-pub plane::AnyPlane::F16(plane::PlaneRef<'a, pixel_types::F16Sample>)
-pub plane::AnyPlane::F32(plane::PlaneRef<'a, f32>)
-pub plane::AnyPlane::F64(plane::PlaneRef<'a, f64>)
-pub plane::AnyPlane::I16(plane::PlaneRef<'a, i16>)
-pub plane::AnyPlane::I32(plane::PlaneRef<'a, i32>)
-pub plane::AnyPlane::I64(plane::PlaneRef<'a, i64>)
-pub plane::AnyPlane::I8(plane::PlaneRef<'a, i8>)
-pub plane::AnyPlane::U16(plane::PlaneRef<'a, u16>)
-pub plane::AnyPlane::U32(plane::PlaneRef<'a, u32>)
-pub plane::AnyPlane::U64(plane::PlaneRef<'a, u64>)
-pub plane::AnyPlane::U8(plane::PlaneRef<'a, u8>)
-pub fn plane::AnyPlane<'_>::as_strided_bytes(&self) -> &[u8]
-pub fn plane::AnyPlane<'_>::channel_type(&self) -> descriptor::ChannelType
-pub fn plane::AnyPlane<'_>::height(&self) -> usize
-pub fn plane::AnyPlane<'_>::stride_bytes(&self) -> core::result::Result<usize, plane::PlaneError>
-pub fn plane::AnyPlane<'_>::width(&self) -> usize
-#[non_exhaustive] pub enum plane::AnyPlaneBuf
-pub plane::AnyPlaneBuf::F16(plane::PlaneBuf<pixel_types::F16Sample>)
-pub plane::AnyPlaneBuf::F32(plane::PlaneBuf<f32>)
-pub plane::AnyPlaneBuf::F64(plane::PlaneBuf<f64>)
-pub plane::AnyPlaneBuf::I16(plane::PlaneBuf<i16>)
-pub plane::AnyPlaneBuf::I32(plane::PlaneBuf<i32>)
-pub plane::AnyPlaneBuf::I64(plane::PlaneBuf<i64>)
-pub plane::AnyPlaneBuf::I8(plane::PlaneBuf<i8>)
-pub plane::AnyPlaneBuf::U16(plane::PlaneBuf<u16>)
-pub plane::AnyPlaneBuf::U32(plane::PlaneBuf<u32>)
-pub plane::AnyPlaneBuf::U64(plane::PlaneBuf<u64>)
-pub plane::AnyPlaneBuf::U8(plane::PlaneBuf<u8>)
-pub fn plane::AnyPlaneBuf::as_mut(&mut self) -> plane::AnyPlaneMut<'_>
-pub fn plane::AnyPlaneBuf::as_ref(&self) -> plane::AnyPlane<'_>
-#[non_exhaustive] pub enum plane::AnyPlaneMut<'a>
-pub plane::AnyPlaneMut::F16(plane::PlaneMut<'a, pixel_types::F16Sample>)
-pub plane::AnyPlaneMut::F32(plane::PlaneMut<'a, f32>)
-pub plane::AnyPlaneMut::F64(plane::PlaneMut<'a, f64>)
-pub plane::AnyPlaneMut::I16(plane::PlaneMut<'a, i16>)
-pub plane::AnyPlaneMut::I32(plane::PlaneMut<'a, i32>)
-pub plane::AnyPlaneMut::I64(plane::PlaneMut<'a, i64>)
-pub plane::AnyPlaneMut::I8(plane::PlaneMut<'a, i8>)
-pub plane::AnyPlaneMut::U16(plane::PlaneMut<'a, u16>)
-pub plane::AnyPlaneMut::U32(plane::PlaneMut<'a, u32>)
-pub plane::AnyPlaneMut::U64(plane::PlaneMut<'a, u64>)
-pub plane::AnyPlaneMut::U8(plane::PlaneMut<'a, u8>)
-pub fn plane::AnyPlaneMut<'_>::as_mut(&mut self) -> plane::AnyPlaneMut<'_>
-pub fn plane::AnyPlaneMut<'_>::as_ref(&self) -> plane::AnyPlane<'_>
-#[non_exhaustive] pub enum plane::FloatEncodingError
-pub plane::FloatEncodingError::NotFinite
-pub plane::FloatEncodingError::ZeroScale
-#[non_exhaustive] pub enum plane::LayoutError
-pub plane::LayoutError::AlphaInterpretation
-pub plane::LayoutError::Dimensions
-pub plane::LayoutError::Dimensions::actual: (usize, usize)
-pub plane::LayoutError::Dimensions::expected: (usize, usize)
-pub plane::LayoutError::Dimensions::index: usize
-pub plane::LayoutError::DuplicateRole(plane::PlaneRole)
-pub plane::LayoutError::Empty
-pub plane::LayoutError::MissingRole(plane::PlaneRole)
-pub plane::LayoutError::MixedFamilies
-pub plane::LayoutError::PlaneCount
-pub plane::LayoutError::PlaneCount::actual: usize
-pub plane::LayoutError::PlaneCount::expected: usize
-pub plane::LayoutError::PlaneIndex
-pub plane::LayoutError::PlaneIndex::count: usize
-pub plane::LayoutError::PlaneIndex::index: usize
-pub plane::LayoutError::SampleType
-pub plane::LayoutError::SampleType::index: usize
-pub plane::LayoutError::Subsampling
-#[non_exhaustive] pub enum plane::PlaneEncoding
-pub plane::PlaneEncoding::Code(sample::SampleEncoding)
-pub plane::PlaneEncoding::Float(plane::FloatEncoding)
-pub plane::PlaneEncoding::Float16(plane::FloatEncoding)
-pub plane::PlaneEncoding::Float64(plane::FloatEncoding)
-pub const fn plane::PlaneEncoding::channel_type(self) -> descriptor::ChannelType
-#[non_exhaustive] pub enum plane::PlaneError
-pub plane::PlaneError::AllocationFailed
-pub plane::PlaneError::GeometryOverflow
-pub plane::PlaneError::OutsidePlane
-pub plane::PlaneError::ShortBuffer
-pub plane::PlaneError::ShortStride
-#[non_exhaustive] pub enum plane::PlaneRole
-pub plane::PlaneRole::Alpha
-pub plane::PlaneRole::Auxiliary(u8)
-pub plane::PlaneRole::Black
-pub plane::PlaneRole::Blue
-pub plane::PlaneRole::Cb
-pub plane::PlaneRole::CbCr
-pub plane::PlaneRole::Cfa(u8)
-pub plane::PlaneRole::Cr
-pub plane::PlaneRole::CrCb
-pub plane::PlaneRole::Cyan
-pub plane::PlaneRole::Depth
-pub plane::PlaneRole::Green
-pub plane::PlaneRole::Luma
-pub plane::PlaneRole::Magenta
-pub plane::PlaneRole::Red
-pub plane::PlaneRole::SelectionMask
-pub plane::PlaneRole::SpotColor(u8)
-pub plane::PlaneRole::Thermal
-pub plane::PlaneRole::Yellow
-pub const fn plane::PlaneRole::components(self) -> usize
-pub const fn plane::PlaneRole::is_alpha(self) -> bool
-pub const fn plane::PlaneRole::is_cmyk(self) -> bool
-pub const fn plane::PlaneRole::is_color(self) -> bool
-pub const fn plane::PlaneRole::is_extra(self) -> bool
-pub plane::RowAlign::Cache64
-pub plane::RowAlign::PixelCache64
-pub plane::RowAlign::Samples(u16)
-pub plane::RowAlign::Tight
-pub const fn plane::RowAlign::from_bytes<T: buffer::StorageSample>(u16) -> Self [also: (root)]
-pub const fn plane::RowAlign::try_from_bytes(u16, usize) -> core::option::Option<Self> [also: (root)]
-pub struct plane::AlignedSamples<T>
-pub fn plane::AlignedSamples<T>::try_zeroed(usize) -> core::result::Result<Self, plane::PlaneError>
-pub struct plane::FloatEncoding
-pub const plane::FloatEncoding::NOMINAL: Self
-pub fn plane::FloatEncoding::new(f32, f32) -> core::result::Result<Self, plane::FloatEncodingError>
-pub const fn plane::FloatEncoding::offset(self) -> f32
-pub const fn plane::FloatEncoding::scale(self) -> f32
-pub struct plane::PlanarBuffer<P>
-pub fn plane::PlanarBuffer<P>::as_slice(&self) -> plane::PlanarSlice<'_>
-pub fn plane::PlanarBuffer<P>::as_slice_mut(&mut self) -> plane::PlanarSliceMut<'_, P> where P: plane::PlaneStorageMut
-pub fn plane::PlanarBuffer<P>::into_parts(self) -> plane::PlanarBufferParts<P>
-pub fn plane::PlanarBuffer<P>::into_planes(self) -> alloc::vec::Vec<P>
-pub fn plane::PlanarBuffer<P>::new(alloc::vec::Vec<P>, plane::PlanarLayout, u32, u32, color::ColorContext, core::option::Option<descriptor::AlphaMode>) -> core::result::Result<Self, plane::LayoutError>
-pub fn plane::PlanarBuffer<P>::try_from_parts(plane::PlanarBufferParts<P>) -> core::result::Result<Self, plane::PlanarFromPartsError<P>>
-#[non_exhaustive] pub struct plane::PlanarBufferParts<P>
-pub plane::PlanarBufferParts::alpha: core::option::Option<descriptor::AlphaMode>
-pub plane::PlanarBufferParts::color: color::ColorContext
-pub plane::PlanarBufferParts::height: u32
-pub plane::PlanarBufferParts::layout: plane::PlanarLayout
-pub plane::PlanarBufferParts::planes: alloc::vec::Vec<P>
-pub plane::PlanarBufferParts::width: u32
-pub fn plane::PlanarBufferParts<P>::new(alloc::vec::Vec<P>, plane::PlanarLayout, u32, u32, color::ColorContext, core::option::Option<descriptor::AlphaMode>) -> Self
-pub struct plane::PlanarFromPartsError<P>
-pub fn plane::PlanarFromPartsError<P>::error(&self) -> &plane::LayoutError
-pub fn plane::PlanarFromPartsError<P>::take_parts(&mut self) -> core::option::Option<plane::PlanarBufferParts<P>>
-pub fn plane::PlanarFromPartsError<P>::without_buffer(self) -> plane::LayoutError
-pub struct plane::PlanarLayout
-pub fn plane::PlanarLayout::check(&self, &[plane::AnyPlane<'_>], u32, u32) -> core::result::Result<(), plane::LayoutError>
-pub fn plane::PlanarLayout::check_plane(&self, usize, &plane::AnyPlane<'_>, u32, u32) -> core::result::Result<(), plane::LayoutError>
-pub const fn plane::PlanarLayout::is_inverted_cmyk(&self) -> bool
-pub fn plane::PlanarLayout::new(alloc::vec::Vec<plane::PlaneSpec>, sample::ChromaSubsampling, sample::ChromaSiting) -> core::result::Result<Self, plane::LayoutError>
-pub fn plane::PlanarLayout::plane_size(&self, usize, u32, u32) -> core::option::Option<(u32, u32)>
-pub fn plane::PlanarLayout::planes(&self) -> &[plane::PlaneSpec]
-pub fn plane::PlanarLayout::roles(&self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = plane::PlaneRole> + core::clone::Clone + '_
-pub fn plane::PlanarLayout::siting(&self) -> sample::ChromaSiting
-pub fn plane::PlanarLayout::subsampling(&self) -> sample::ChromaSubsampling
-pub struct plane::PlanarSlice<'a>
-pub const fn plane::PlanarSlice<'a>::alpha_mode(self) -> core::option::Option<descriptor::AlphaMode>
-pub const fn plane::PlanarSlice<'a>::color_context(self) -> &'a color::ColorContext
-pub const fn plane::PlanarSlice<'a>::height(self) -> u32
-pub const fn plane::PlanarSlice<'a>::layout(self) -> &'a plane::PlanarLayout
-pub fn plane::PlanarSlice<'a>::new(&'a [plane::AnyPlane<'a>], &'a plane::PlanarLayout, u32, u32, &'a color::ColorContext, core::option::Option<descriptor::AlphaMode>) -> core::result::Result<Self, plane::LayoutError>
-pub fn plane::PlanarSlice<'a>::plane(self, usize) -> core::option::Option<plane::AnyPlane<'a>>
-pub fn plane::PlanarSlice<'a>::planes(self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = plane::AnyPlane<'a>> + core::iter::traits::double_ended::DoubleEndedIterator + core::clone::Clone
-pub const fn plane::PlanarSlice<'a>::width(self) -> u32
-pub struct plane::PlanarSliceMut<'a, P>
-pub fn plane::PlanarSliceMut<'a, P>::as_slice(&self) -> plane::PlanarSlice<'_>
-pub fn plane::PlanarSliceMut<'a, P>::new(&'a mut [P], &'a plane::PlanarLayout, u32, u32, &'a color::ColorContext, core::option::Option<descriptor::AlphaMode>) -> core::result::Result<Self, plane::LayoutError>
-pub fn plane::PlanarSliceMut<'a, P>::plane_mut(&mut self, usize) -> core::option::Option<plane::AnyPlaneMut<'_>>
-pub fn plane::PlanarSliceMut<'a, P>::planes_mut(&mut self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = plane::AnyPlaneMut<'_>>
-pub struct plane::Plane<C>
-pub fn plane::Plane<&'a [T]>::into_strided_samples(self) -> &'a [T]
-pub fn plane::Plane<&'a mut [T]>::into_strided_samples_mut(self) -> &'a mut [T]
-pub fn plane::Plane<C>::height(&self) -> usize
-pub fn plane::Plane<C>::new(C, usize, usize, usize) -> core::result::Result<Self, plane::PlaneError>
-pub fn plane::Plane<C>::row(&self, usize) -> core::option::Option<&[<C as plane::SampleStorage>::Sample]>
-pub fn plane::Plane<C>::rows(&self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = &[<C as plane::SampleStorage>::Sample]> + core::iter::traits::exact_size::ExactSizeIterator
-pub fn plane::Plane<C>::stride(&self) -> usize
-pub fn plane::Plane<C>::strided_samples(&self) -> &[<C as plane::SampleStorage>::Sample]
-pub fn plane::Plane<C>::sub(&self, usize, usize, usize, usize) -> core::result::Result<plane::PlaneRef<'_, <C as plane::SampleStorage>::Sample>, plane::PlaneError>
-pub fn plane::Plane<C>::view(&self) -> plane::PlaneRef<'_, <C as plane::SampleStorage>::Sample>
-pub fn plane::Plane<C>::width(&self) -> usize
-pub fn plane::Plane<C>::row_mut(&mut self, usize) -> core::option::Option<&mut [<C as plane::SampleStorage>::Sample]>
-pub fn plane::Plane<C>::rows_mut(&mut self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = &mut [<C as plane::SampleStorage>::Sample]> + core::iter::traits::exact_size::ExactSizeIterator
-pub fn plane::Plane<C>::sub_mut(&mut self, usize, usize, usize, usize) -> core::result::Result<plane::PlaneMut<'_, <C as plane::SampleStorage>::Sample>, plane::PlaneError>
-pub fn plane::Plane<C>::view_mut(&mut self) -> plane::PlaneMut<'_, <C as plane::SampleStorage>::Sample>
-pub fn plane::Plane<C>::into_storage(self) -> C
-pub fn plane::Plane<&mut [T]>::split_at_row(self, usize) -> core::result::Result<(Self, Self), plane::PlaneError>
-pub fn plane::Plane<alloc::vec::Vec<T>>::try_into_vec(self) -> core::result::Result<alloc::vec::Vec<T>, Self>
-pub fn plane::Plane<plane::AlignedSamples<T>>::alloc(usize, usize) -> core::result::Result<Self, plane::PlaneError>
-pub fn plane::Plane<plane::AlignedSamples<T>>::alloc_aligned(usize, usize, plane::RowAlign) -> core::result::Result<Self, plane::PlaneError>
-pub struct plane::PlaneSpec
-pub const fn plane::PlaneSpec::encoding(self) -> plane::PlaneEncoding
-pub const fn plane::PlaneSpec::new(plane::PlaneRole, plane::PlaneEncoding) -> Self
-pub const fn plane::PlaneSpec::role(self) -> plane::PlaneRole
-pub trait plane::PlaneSample: buffer::storage_sample::Sealed + bytemuck::pod::Pod + core::default::Default + core::cmp::PartialEq + core::fmt::Debug + core::marker::Send + core::marker::Sync + 'static
-pub const plane::PlaneSample::CHANNEL_TYPE: descriptor::ChannelType
-pub trait plane::PlaneStorage
-pub fn plane::PlaneStorage::as_plane(&self) -> plane::AnyPlane<'_>
-pub trait plane::PlaneStorageMut: plane::PlaneStorage
-pub fn plane::PlaneStorageMut::as_plane_mut(&mut self) -> plane::AnyPlaneMut<'_>
-pub trait plane::SampleStorage
-pub type plane::SampleStorage::Sample: buffer::StorageSample
-pub fn plane::SampleStorage::samples(&self) -> &[Self::Sample]
-pub type &mut S::Sample = <S as plane::SampleStorage>::Sample
-pub fn &mut S::samples(&self) -> &[<S as plane::SampleStorage>::Sample]
-pub trait plane::SampleStorageMut: plane::SampleStorage
-pub fn plane::SampleStorageMut::samples_mut(&mut self) -> &mut [Self::Sample]
-pub fn &mut S::samples_mut(&mut self) -> &mut [<S as plane::SampleStorage>::Sample]
-pub type plane::AlignedPlane<T> = plane::Plane<plane::AlignedSamples<T>>
-pub type plane::PlaneBuf<T> = plane::Plane<alloc::vec::Vec<T>>
-pub type plane::PlaneMut<'a, T> = plane::Plane<&'a mut [T]>
-pub type plane::PlaneRef<'a, T> = plane::Plane<&'a [T]>
 pub mod policy
 pub policy::AlphaPolicy::CompositeOnto
 pub policy::AlphaPolicy::CompositeOnto::background: color::Color
@@ -1136,11 +955,6 @@ pub sample::ChromaSubsampling::Yuv422
 pub sample::ChromaSubsampling::Yuv440
 pub sample::ChromaSubsampling::Yuv444
 pub const fn sample::ChromaSubsampling::chroma_size(self, u32, u32) -> core::option::Option<(u32, u32)>
-#[non_exhaustive] pub enum sample::CodePlaneError
-pub sample::CodePlaneError::Components
-pub sample::CodePlaneError::NarrowDestination
-pub sample::CodePlaneError::OutsideActivePlane
-pub sample::CodePlaneError::StorageMismatch
 #[non_exhaustive] pub enum sample::ExactDepthError
 pub sample::ExactDepthError::DescriptorMismatch
 pub sample::ExactDepthError::InvalidBits
@@ -1151,18 +965,6 @@ pub sample::ExactDepthError::UnsupportedStorage
 pub sample::SampleEncodingError::InvalidBitDepth
 pub sample::SampleEncodingError::InvalidBitShift
 pub sample::SampleEncodingError::UnsupportedStorage
-pub struct sample::CodePlane<'a>
-pub fn sample::CodePlane<'a>::code(self, usize, usize) -> core::option::Option<u16>
-pub fn sample::CodePlane<'a>::code_i32(self, usize, usize) -> core::option::Option<i32>
-pub fn sample::CodePlane<'a>::code_u32(self, usize, usize) -> core::option::Option<u32>
-pub fn sample::CodePlane<'a>::component(plane::AnyPlane<'a>, usize, usize, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
-pub const fn sample::CodePlane<'a>::encoding(self) -> sample::SampleEncoding
-pub const fn sample::CodePlane<'a>::height(self) -> usize
-pub fn sample::CodePlane<'a>::new(plane::AnyPlane<'a>, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
-pub fn sample::CodePlane<'a>::read_codes(self, usize, usize, &mut [u16]) -> core::result::Result<(), sample::CodePlaneError>
-pub fn sample::CodePlane<'a>::read_codes_i32(self, usize, usize, &mut [i32]) -> core::result::Result<(), sample::CodePlaneError>
-pub fn sample::CodePlane<'a>::read_codes_u32(self, usize, usize, &mut [u32]) -> core::result::Result<(), sample::CodePlaneError>
-pub const fn sample::CodePlane<'a>::width(self) -> usize
 pub struct sample::ExactDepth
 pub const fn sample::ExactDepth::alpha_bits(self) -> u8
 pub const fn sample::ExactDepth::alpha_exact_at(self, u8) -> bool
@@ -1423,7 +1225,7 @@ pub RenderingIntent::AbsoluteColorimetric
 pub RenderingIntent::Perceptual
 pub RenderingIntent::RelativeColorimetric
 pub RenderingIntent::Saturation
-#[non_exhaustive] pub enum RowAlign [also: plane]
+#[non_exhaustive] pub enum RowAlign [also: buffer]
 pub RowAlign::Cache64
 pub RowAlign::PixelCache64
 pub RowAlign::Samples(u16)
@@ -1584,7 +1386,7 @@ pub fn buffer::PixelBuffer::new(u32, u32, descriptor::PixelDescriptor) -> Self
 pub fn buffer::PixelBuffer::new_for(u32, u32, descriptor::PixelDescriptor, buffer::InteropTarget) -> Self
 pub fn buffer::PixelBuffer::try_new(u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::try_new_for(u32, u32, descriptor::PixelDescriptor, buffer::InteropTarget) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuffer::try_new_with_align(u32, u32, descriptor::PixelDescriptor, plane::RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::try_new_with_align(u32, u32, descriptor::PixelDescriptor, RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::transform_in_place<F>(&mut self, F) where F: for<'a> core::ops::function::FnOnce(buffer::InPlacePixels<'a>) -> buffer::PixelSliceMut<'a>
 pub fn buffer::PixelBuffer<P, S>::as_contiguous_bytes(&self) -> core::option::Option<&[u8]>
 pub fn buffer::PixelBuffer<P, S>::as_slice(&self) -> buffer::PixelSlice<'_, P>
@@ -1632,7 +1434,7 @@ pub fn buffer::PixelBuffer<P>::try_new_typed(u32, u32) -> core::result::Result<S
 pub fn buffer::PixelBuffer<P>::into_contiguous(self) -> Self
 pub fn buffer::PixelBuffer<P>::try_into_tight_u8_vec(self) -> core::result::Result<alloc::vec::Vec<u8>, Self>
 pub fn buffer::PixelBuffer<(), S>::try_from_parts(buffer::PixelBufferParts<S>) -> core::result::Result<Self, buffer::FromPartsError<S>>
-pub fn buffer::PixelBuffer<(), plane::AlignedSamples<T>>::try_new_aligned(u32, u32, descriptor::PixelDescriptor, plane::RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer<(), buffer::AlignedSamples<T>>::try_new_aligned(u32, u32, descriptor::PixelDescriptor, RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 #[non_exhaustive] pub struct PixelBufferParts<S> [also: buffer]
 pub PixelBufferParts::color_context: core::option::Option<alloc::sync::Arc<color::ColorContext>>
 pub PixelBufferParts::data: S
@@ -1815,14 +1617,16 @@ pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 pub trait StorageSample: buffer::storage_sample::Sealed + bytemuck::pod::Pod + core::default::Default + core::cmp::PartialEq + core::fmt::Debug + core::marker::Send + core::marker::Sync + 'static [also: buffer]
 pub const StorageSample::CHANNEL_TYPE: descriptor::ChannelType
 
-## trait impls (120 types)
+## trait impls (100 types)
 
-&S: plane::SampleStorage
-&mut S: plane::SampleStorage, plane::SampleStorageMut
+&S: buffer::SampleStorage
+&mut S: buffer::SampleStorage, buffer::SampleStorageMut
+RowAlign: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 S: buffer::ByteStorage, buffer::ByteStorageMut
-[T]: plane::SampleStorage, plane::SampleStorageMut
-alloc::boxed::Box<S>: plane::SampleStorage, plane::SampleStorageMut
-alloc::vec::Vec<T>: plane::SampleStorage, plane::SampleStorageMut
+[T]: buffer::SampleStorage, buffer::SampleStorageMut
+alloc::boxed::Box<S>: buffer::SampleStorage, buffer::SampleStorageMut
+alloc::vec::Vec<T>: buffer::SampleStorage, buffer::SampleStorageMut
+buffer::AlignedSamples<T>: Clone, Debug, Deref, DerefMut, buffer::SampleStorage, buffer::SampleStorageMut
 buffer::Bgrx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 buffer::BufferError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 buffer::FromPartsError<S>: Debug, Display, Error
@@ -1838,6 +1642,7 @@ buffer::PixelSlice<'a>: From<buffer::PixelSlice<'a, P>>
 buffer::PixelSliceMut<'_, P>: Debug
 buffer::PixelSliceMut<'a>: From<buffer::PixelSliceMut<'a, P>>
 buffer::PixelStorage: Clone, Debug, From<alloc::vec::Vec<T>>, buffer::ByteStorage, buffer::ByteStorageMut
+buffer::PlaneError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 buffer::Rgbx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 cicp::Cicp: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 cicp::CicpDescriptorError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
@@ -1893,27 +1698,6 @@ pixel_types::GrayAlpha16: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buff
 pixel_types::GrayAlpha8: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 pixel_types::GrayAlphaF16: Clone, Copy, Debug, Default, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 pixel_types::GrayAlphaF32: Clone, Copy, Debug, Default, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
-plane::AlignedSamples<T>: Clone, Debug, Deref, DerefMut, plane::SampleStorage, plane::SampleStorageMut
-plane::AnyPlane<'_>: plane::PlaneStorage
-plane::AnyPlane<'a>: Clone, Copy, Debug
-plane::AnyPlaneBuf: Debug, plane::PlaneStorage, plane::PlaneStorageMut
-plane::AnyPlaneMut<'_>: plane::PlaneStorage, plane::PlaneStorageMut
-plane::AnyPlaneMut<'a>: Debug
-plane::FloatEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
-plane::FloatEncodingError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
-plane::LayoutError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
-plane::PlanarBuffer<P>: Debug
-plane::PlanarBufferParts<P>: Debug
-plane::PlanarFromPartsError<P>: Debug, Display, Error
-plane::PlanarLayout: Clone, Debug, Eq, Hash, PartialEq
-plane::PlanarSlice<'a>: Clone, Copy, Debug
-plane::PlanarSliceMut<'a, P>: Debug
-plane::Plane<C>: Clone, Copy, Debug, plane::PlaneStorage, plane::PlaneStorageMut
-plane::PlaneEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
-plane::PlaneError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
-plane::PlaneRole: Clone, Copy, Debug, Eq, Hash, PartialEq
-plane::PlaneSpec: Clone, Copy, Debug, Eq, Hash, PartialEq
-plane::RowAlign: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 policy::AlphaPolicy: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::ConvertOptions: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::DepthPolicy: Clone, Copy, Debug, Eq, Hash, PartialEq
@@ -1927,8 +1711,6 @@ precision::OutputChoice: Clone, Copy, Debug, Eq, Hash, PartialEq
 precision::SourcePrecision: Clone, Copy, Debug, Eq, PartialEq
 sample::ChromaSiting: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 sample::ChromaSubsampling: Clone, Copy, Debug, Eq, Hash, PartialEq
-sample::CodePlane<'a>: Clone, Copy, Debug
-sample::CodePlaneError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 sample::ExactDepth: Clone, Copy, Debug, Eq, Hash, PartialEq
 sample::ExactDepthError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 sample::SampleEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
@@ -1940,6 +1722,7 @@ u8: buffer::StorageSample
 
 ## auto traits
 
+buffer::AlignedSamples<T>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 buffer::FromPartsError<S>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 buffer::InPlacePixels<'a>: !UnwindSafe
 buffer::PixelBuffer<P, S>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
@@ -1947,11 +1730,3 @@ buffer::PixelBufferParts<S>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSa
 buffer::PixelCow<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 buffer::PixelSlice<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 buffer::PixelSliceMut<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
-plane::AlignedSamples<T>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
-plane::AnyPlaneMut<'a>: !UnwindSafe
-plane::PlanarBuffer<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
-plane::PlanarBufferParts<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
-plane::PlanarFromPartsError<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
-plane::PlanarSlice<'a>: !RefUnwindSafe !UnwindSafe
-plane::PlanarSliceMut<'a, P>: !RefUnwindSafe !Send !Sync !UnwindSafe
-plane::Plane<C>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe

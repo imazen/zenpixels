@@ -8,24 +8,24 @@
 
 ## summary
 #
-#   pub modules                                16
-#   pub types (struct/enum/trait/alias)        66
-#   pub consts/statics                         40
-#   free functions                              2
-#   inherent methods                          182
-#   struct fields                              97
-#   enum variants                             114
+#   pub modules                                15
+#   pub types (struct/enum/trait/alias)        63
+#   pub consts/statics                         44
+#   free functions                              1
+#   inherent methods                          183
+#   struct fields                              71
+#   enum variants                             101
 #   re-exports                                  8
-#   trait roster entries (type × trait)       165
+#   trait roster entries (type × trait)       151
 #   conditional trait impls (verbatim)          1
-#   auto-trait-complete types                  29
+#   auto-trait-complete types                  26
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
-#   (root)                          210
+#   (root)                          213
 #   adapt                             1
 #   cms                              18
-#   codes                            40
+#   codes                            20
 #   converter                        33
 #   css                               3
 #   error                            41
@@ -37,9 +37,8 @@
 #   oklab                             8
 #   output                           21
 #   precision                        62
-#   ycbcr                            22
 
-## items (502 lines)
+## items (463 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -73,36 +72,21 @@ pub codes::CodeMapError::UnsupportedStorage
 pub codes::CodeRole::Alpha
 pub codes::CodeRole::Chroma
 pub codes::CodeRole::Intensity
-#[non_exhaustive] pub enum codes::CodesError
-pub codes::CodesError::ComponentCount
-pub codes::CodesError::ComponentCount::actual: usize
-pub codes::CodesError::ComponentCount::expected: usize
-pub codes::CodesError::Destination
-pub codes::CodesError::Destination::actual: zenpixels::descriptor::PixelDescriptor
-pub codes::CodesError::Extent
-pub codes::CodesError::Extent::component: usize
-pub codes::CodesError::Extent::extent: (usize, usize)
-pub codes::CodesError::Extent::origin: (usize, usize)
-pub codes::CodesError::Extent::plane: (usize, usize)
-pub codes::CodesError::Map
-pub codes::CodesError::Map::component: usize
-pub codes::CodesError::Map::error: codes::CodeMapError
-pub codes::CodesError::Narrowing
-pub codes::CodesError::Narrowing::bits: u8
-pub codes::CodesError::Narrowing::component: usize
-pub codes::CodesError::Narrowing::destination_bits: u8
-pub codes::CodesError::RangeMismatch
-pub codes::CodesError::RangeMismatch::destination: zenpixels::descriptor::SignalRange
-pub codes::CodesError::RangeMismatch::source: zenpixels::descriptor::SignalRange
-pub codes::CodesError::Read(zenpixels::sample::plane::CodePlaneError)
 pub struct codes::CodeMap
 pub const fn codes::CodeMap::code(&self, u16) -> u16
+pub const fn codes::CodeMap::code_i32(&self, i32) -> i32
+pub const fn codes::CodeMap::code_u32(&self, u32) -> u32
 pub const fn codes::CodeMap::input(&self) -> zenpixels::sample::SampleEncoding
 pub fn codes::CodeMap::map_words(&self, &[u16], &mut [u16]) -> core::result::Result<(), codes::CodeMapError>
+pub fn codes::CodeMap::map_words_i16(&self, &[i16], &mut [i16]) -> core::result::Result<(), codes::CodeMapError>
+pub fn codes::CodeMap::map_words_i32(&self, &[i32], &mut [i32]) -> core::result::Result<(), codes::CodeMapError>
+pub fn codes::CodeMap::map_words_u32(&self, &[u32], &mut [u32]) -> core::result::Result<(), codes::CodeMapError>
 pub const fn codes::CodeMap::new(zenpixels::sample::SampleEncoding, zenpixels::sample::SampleEncoding, codes::CodeRole, zenpixels::descriptor::SignalRange) -> core::result::Result<Self, codes::CodeMapError>
 pub const fn codes::CodeMap::output(&self) -> zenpixels::sample::SampleEncoding
 pub const fn codes::CodeMap::word(&self, u16) -> u16
-pub fn codes::to_canonical<'b>(&[zenpixels::sample::plane::CodePlane<'_>], zenpixels::descriptor::SignalRange, usize, usize, zenpixels::buffer::PixelSliceMut<'b>) -> core::result::Result<(zenpixels::buffer::PixelSliceMut<'b>, zenpixels::sample::exact::ExactDepth), whereat::at::At<codes::CodesError>>
+pub const fn codes::CodeMap::word_i16(&self, i16) -> i16
+pub const fn codes::CodeMap::word_i32(&self, i32) -> i32
+pub const fn codes::CodeMap::word_u32(&self, u32) -> u32
 pub mod converter
 pub fn converter::RowConverter::compose(&self, &Self) -> core::option::Option<Self>
 pub fn converter::RowConverter::compose_preserving(&self, &Self) -> core::option::Option<Self>
@@ -330,30 +314,6 @@ pub precision::ConversionRecord::output: zenpixels::descriptor::PixelDescriptor
 pub trait precision::ConversionResolver
 pub type precision::ConversionResolver::Error: core::error::Error + core::marker::Send + core::marker::Sync + 'static
 pub fn precision::ConversionResolver::resolve(&mut self, precision::ConversionQuestion<'_>) -> core::result::Result<precision::ConversionDecision, whereat::at::At<Self::Error>>
-pub mod ycbcr
-#[non_exhaustive] pub enum ycbcr::YcbcrError
-pub ycbcr::YcbcrError::OutputDescriptor
-pub ycbcr::YcbcrError::OutputDescriptor::actual: zenpixels::descriptor::PixelDescriptor
-pub ycbcr::YcbcrError::OutputGeometry
-pub ycbcr::YcbcrError::OutputGeometry::extent: (usize, usize)
-pub ycbcr::YcbcrError::OutputGeometry::origin: (usize, usize)
-pub ycbcr::YcbcrError::OutputGeometry::source: (usize, usize)
-pub ycbcr::YcbcrError::SourceGeometry
-pub ycbcr::YcbcrError::SourceGeometry::actual: (usize, usize)
-pub ycbcr::YcbcrError::SourceGeometry::expected: core::option::Option<(usize, usize)>
-pub ycbcr::YcbcrError::SourceGeometry::plane: usize
-pub ycbcr::YcbcrError::UnsupportedChroma
-pub ycbcr::YcbcrError::UnsupportedChroma::siting: zenpixels::sample::plane::ChromaSiting
-pub ycbcr::YcbcrError::UnsupportedChroma::subsampling: zenpixels::sample::plane::ChromaSubsampling
-pub ycbcr::YcbcrError::UnsupportedColor
-pub ycbcr::YcbcrError::UnsupportedColor::actual: zenpixels::cicp::Cicp
-pub ycbcr::YcbcrError::UnsupportedEncoding
-pub ycbcr::YcbcrError::UnsupportedEncoding::actual: zenpixels::sample::SampleEncoding
-pub ycbcr::YcbcrError::UnsupportedEncoding::plane: usize
-pub struct ycbcr::YcbcrToRgbF32<'a>
-pub fn ycbcr::YcbcrToRgbF32<'a>::convert_rows<'b>(&self, usize, usize, zenpixels::buffer::PixelSliceMut<'b>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'b>, whereat::at::At<ycbcr::YcbcrError>>
-pub fn ycbcr::YcbcrToRgbF32<'a>::new([zenpixels::sample::plane::CodePlane<'a>; 3], zenpixels::sample::plane::ChromaSubsampling, zenpixels::sample::plane::ChromaSiting, zenpixels::cicp::Cicp) -> core::result::Result<Self, whereat::at::At<ycbcr::YcbcrError>>
-pub const fn ycbcr::YcbcrToRgbF32<'a>::output_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
 #[non_exhaustive] pub enum ConvertError [also: error]
 pub ConvertError::AllocationFailed
 pub ConvertError::AlphaCheckRequired
@@ -544,7 +504,7 @@ pub trait TransferFunctionExt: sealed::Sealed [also: ext]
 pub fn TransferFunctionExt::delinearize(&self, f32) -> f32
 pub fn TransferFunctionExt::linearize(&self, f32) -> f32
 
-## trait impls (39 types)
+## trait impls (37 types)
 
 ConversionCost: Add, Clone, Copy, Debug, Default, Eq, PartialEq
 ConvertIntent: Clone, Copy, Debug, Default, Eq, PartialEq
@@ -557,7 +517,6 @@ cms::CmsPluginError: Debug, Display, Error, PartialEq
 codes::CodeMap: Clone, Copy, Debug, Eq, PartialEq
 codes::CodeMapError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 codes::CodeRole: Clone, Copy, Debug, Eq, Hash, PartialEq
-codes::CodesError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 converter::RowConverter: Debug
 css::CssColorError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 error::ConvertError: Clone, Debug, Display, Error, From<zenpixels::buffer::BufferError>, PartialEq
@@ -578,7 +537,6 @@ precision::ConversionQuestion<'a>: Clone, Copy, Debug
 precision::ConversionRecord: Clone, Copy, Debug, Eq, PartialEq
 precision::ConversionRefusal: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 precision::DecidedBy: Clone, Copy, Debug, Eq, Hash, PartialEq
-ycbcr::YcbcrError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 zenpixels::buffer::PixelBuffer: ext::PixelBufferConvertExt, load_bearing::PixelBufferLoadBearingExt
 zenpixels::buffer::PixelSlice<'_, P>: load_bearing::PixelSliceLoadBearingExt
 zenpixels::buffer::PixelSlice<'a>: ext::PixelSliceConvertExt<'a>

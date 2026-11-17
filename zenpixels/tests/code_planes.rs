@@ -362,3 +362,96 @@ fn signed_i8_i16_i32_code_planes_sign_extend_twos_complement() {
         assert_eq!(cp_i32.code_i32(x, 0), Some(want));
     }
 }
+
+#[test]
+fn writable_code_plane_mut_packs_unsigned_signed_and_shared_bitfields() {
+    use zenpixels::ChannelType;
+    use zenpixels::plane::{AnyPlaneMut, PlaneMut};
+    use zenpixels::sample::{CodePlaneError, CodePlaneMut, SampleEncoding};
+
+    // 1. P010 interleaved Cb/Cr over dirty buffer: writes zero low padding bits on target component
+    //    while leaving sibling component and row padding untouched.
+    let p010 = SampleEncoding::new(ChannelType::U16, 10, 6).unwrap();
+    let mut uv = [0xFFFFu16; 10]; // 2 rows, width 4 samples (2 positions), stride 5
+    {
+        let plane = AnyPlaneMut::U16(PlaneMut::new(&mut uv[..], 4, 2, 5).unwrap());
+        let mut cb = CodePlaneMut::component(plane, 2, 0, p010).unwrap();
+        assert_eq!((cb.width(), cb.height()), (2, 2));
+        // Out-of-range write is rejected atomically without mutating any sample.
+        assert_eq!(
+            cb.write_codes(0, 0, &[512, 1024]),
+            Err(CodePlaneError::CodeOutOfRange)
+        );
+    }
+    assert!(uv.iter().all(|&w| w == 0xFFFF));
+    {
+        let plane = AnyPlaneMut::U16(PlaneMut::new(&mut uv[..], 4, 2, 5).unwrap());
+        let mut cb = CodePlaneMut::component(plane, 2, 0, p010).unwrap();
+        cb.write_codes(0, 0, &[512, 1023]).unwrap();
+        cb.set_code(1, 1, 7).unwrap();
+        assert_eq!(cb.code(0, 0), Some(512));
+        assert_eq!(cb.code(1, 0), Some(1023));
+        assert_eq!(cb.code(1, 1), Some(7));
+    }
+    assert_eq!(uv[0], 512 << 6); // low 6 padding bits cleared to 0
+    assert_eq!(uv[1], 0xFFFF); // Cr untouched
+    assert_eq!(uv[2], 1023 << 6);
+    assert_eq!(uv[4], 0xFFFF); // row stride padding untouched
+    assert_eq!(uv[7], 7 << 6);
+
+    // 2. Shared-word multi-bitfield packing (R10G10B10A2 in U32) via preserving_other_bits().
+    let r_enc = SampleEncoding::new(ChannelType::U32, 10, 0).unwrap();
+    let g_enc = SampleEncoding::new(ChannelType::U32, 10, 10).unwrap();
+    let b_enc = SampleEncoding::new(ChannelType::U32, 10, 20).unwrap();
+    let a_enc = SampleEncoding::new(ChannelType::U32, 2, 30).unwrap();
+    let mut word = [0u32; 2];
+    for (enc, vals) in [
+        (r_enc, &[100u16, 1023][..]),
+        (g_enc, &[200u16, 511][..]),
+        (b_enc, &[300u16, 0][..]),
+        (a_enc, &[3u16, 1][..]),
+    ] {
+        let p = AnyPlaneMut::U32(PlaneMut::new(&mut word[..], 2, 1, 2).unwrap());
+        let mut writer = CodePlaneMut::new(p, enc).unwrap().preserving_other_bits();
+        writer.write_codes(0, 0, vals).unwrap();
+    }
+    assert_eq!(word[0], 100 | (200 << 10) | (300 << 20) | (3 << 30));
+    assert_eq!(word[1], 1023 | (511 << 10) | (1 << 30));
+
+    // 3. 24-bit unsigned U32 and 12-bit signed I16 writes + error guards.
+    let u24 = SampleEncoding::new(ChannelType::U32, 24, 4).unwrap();
+    let mut buf32 = [0u32; 2];
+    {
+        let p = AnyPlaneMut::U32(PlaneMut::new(&mut buf32[..], 2, 1, 2).unwrap());
+        let mut w = CodePlaneMut::new(p, u24).unwrap();
+        assert_eq!(w.set_code(0, 0, 1), Err(CodePlaneError::NarrowDestination));
+        assert_eq!(
+            w.set_code_u32(0, 0, 1 << 24),
+            Err(CodePlaneError::CodeOutOfRange)
+        );
+        w.write_codes_u32(0, 0, &[0x00ab_cdef, 0x00ff_ffff])
+            .unwrap();
+        assert_eq!(w.code_u32(0, 0), Some(0x00ab_cdef));
+        assert_eq!(w.code_u32(1, 0), Some(0x00ff_ffff));
+    }
+
+    let i12 = SampleEncoding::new(ChannelType::I16, 12, 2).unwrap();
+    let mut buf16 = [0i16; 3];
+    {
+        let p = AnyPlaneMut::I16(PlaneMut::new(&mut buf16[..], 3, 1, 3).unwrap());
+        let mut w = CodePlaneMut::new(p, i12).unwrap();
+        assert_eq!(w.set_code(0, 0, 1), Err(CodePlaneError::StorageMismatch));
+        assert_eq!(
+            w.set_code_i32(0, 0, -2049),
+            Err(CodePlaneError::CodeOutOfRange)
+        );
+        assert_eq!(
+            w.set_code_i32(0, 0, 2048),
+            Err(CodePlaneError::CodeOutOfRange)
+        );
+        w.write_codes_i32(0, 0, &[-2048, -1, 2047]).unwrap();
+        assert_eq!(w.code_i32(0, 0), Some(-2048));
+        assert_eq!(w.code_i32(1, 0), Some(-1));
+        assert_eq!(w.code_i32(2, 0), Some(2047));
+    }
+}

@@ -3622,7 +3622,7 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
 #[path = "convert_kernels.rs"]
 mod convert_kernels;
 #[path = "hlg_render.rs"]
-mod hlg_render;
+pub(crate) mod hlg_render;
 #[path = "perceptual.rs"]
 mod perceptual;
 use convert_kernels::apply_step_u8;

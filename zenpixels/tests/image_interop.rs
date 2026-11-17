@@ -8,9 +8,9 @@ use image::{
     ColorType, DynamicImage, ExtendedColorType, GenericImage, GenericImageView, ImageBuffer, Luma,
     LumaA, Pixel, Rgb, Rgba,
 };
-use zenpixels::plane::{
-    AlignedPlane, AlignedSamples, Plane, PlaneBuf, PlaneMut, PlaneRef, SampleStorage,
-};
+use zenpixels::buffer::{AlignedSamples, SampleStorage};
+#[cfg(feature = "planar")]
+use zenpixels::plane::{AlignedPlane, Plane, PlaneBuf, PlaneMut, PlaneRef};
 use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelBuffer, PixelBufferParts,
     PixelDescriptor, PixelFormat, PixelSlice, PixelSliceMut, SignalRange, TransferFunction,
@@ -418,6 +418,7 @@ fn flat_views_refuse_what_image_cannot_read() {
     assert!(FlatSamples::<&[u16]>::try_from(rgb16.as_slice()).is_ok());
 }
 
+#[cfg(feature = "planar")]
 macro_rules! gray_planes {
     ($($name:ident: $sample:ty, $fill:ident;)*) => {$(
         mod $name {
@@ -512,11 +513,13 @@ macro_rules! gray_planes {
     )*};
 }
 
+#[cfg(feature = "planar")]
 gray_planes! {
     plane8: u8, fill_u8;
     plane16: u16, fill_u16;
 }
 
+#[cfg(feature = "planar")]
 mod planef {
     use super::*;
 

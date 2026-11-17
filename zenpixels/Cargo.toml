@@ -15,12 +15,16 @@ include = [
     "/src/**",
 ]
 
+[package.metadata.docs.rs]
+all-features = true
+
 [features]
 default = ["std", "icc"]
 std = ["zenhash?/std"]
 # Pixel fingerprints and Hash impls; this opt-in feature requires Rust 1.89.
 hash = ["dep:zenhash", "zenhash/murmur3"]
-# Retained feature spelling for shared 0.2/0.3 consumer manifests; no API.
+# Multi-plane layouts, native planes (`zenpixels::plane`), and bit-packed integer
+# code views (`CodePlane`, `CodePlaneMut`); off by default for faster packed-only builds.
 planar = []
 icc = []
 rgb = ["dep:rgb"]
@@ -67,3 +71,27 @@ required-features = ["rgb"]
 [[test]]
 name = "alloc_failure_typed"
 required-features = ["rgb"]
+
+[[test]]
+name = "planes"
+required-features = ["planar"]
+
+[[test]]
+name = "planar_picture"
+required-features = ["planar"]
+
+[[test]]
+name = "planar_buffer"
+required-features = ["planar"]
+
+[[test]]
+name = "native_codes"
+required-features = ["planar"]
+
+[[test]]
+name = "code_planes"
+required-features = ["planar"]
+
+[[test]]
+name = "storage_symmetry"
+required-features = ["planar"]

@@ -378,6 +378,8 @@ mod sealed {
     impl<P> Sealed for zenpixels::PixelBuffer<P> {}
     impl Sealed for zenpixels::PixelSlice<'_> {}
     impl Sealed for zenpixels::hdr::ContentLightLevel {}
+    #[cfg(feature = "planar")]
+    impl<C> Sealed for zenpixels::plane::Plane<C> {}
 }
 pub mod error;
 pub(crate) mod f16_scalar;
@@ -468,6 +470,7 @@ pub(crate) mod orient;
 #[doc(hidden)]
 pub mod orient;
 pub mod output;
+#[cfg(feature = "planar")]
 pub mod ycbcr;
 // Crate-internal SIMD predicates backing `load_bearing` -- the module
 // stays private so the per-(layout × channel-type) kernel set never
@@ -489,6 +492,8 @@ pub use negotiate::{ConversionCost, ConvertIntent, FormatOption, LossBucket, Pro
 pub use ext::PixelBufferConvertTypedExt;
 #[cfg(feature = "hdr-experimental")]
 pub use ext::PixelBufferHdrConvertExt;
+#[cfg(feature = "planar")]
+pub use ext::PlaneConvertExt;
 #[doc(inline)]
 pub use ext::{
     ColorConvertExt, ColorPrimariesExt, PixelBufferConvertExt, PixelSliceConvertExt,

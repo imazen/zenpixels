@@ -1196,16 +1196,6 @@ impl crate::cms::PluggableCms for MoxCms {
     ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, whereat::At<crate::cms::CmsPluginError>>>
     {
         use crate::cms::CmsPluginError;
-        // A profile TRC cannot apply the coupled HLG display OOTF. Decline
-        // crossings even with options: the caller's renderer owns that policy.
-        let source_transfer = src.resolve().map(|(_, transfer)| transfer);
-        let target_transfer = dst.resolve().map(|(_, transfer)| transfer);
-        let hlg_crossing = source_transfer != target_transfer
-            && (source_transfer == Some(crate::TransferFunction::Hlg)
-                || target_transfer == Some(crate::TransferFunction::Hlg));
-        if hlg_crossing {
-            return None;
-        }
         let explicit_intent = requested_intent(&src, options);
         // moxcms 0.9.2 aliases AbsoluteColorimetric to lut_a_to_b_colorimetric
         // without unadapting mediaWhitePoint; decline so a capable backend in
@@ -1218,6 +1208,13 @@ impl crate::cms::PluggableCms for MoxCms {
         );
         if has_float_pipeline(&src, d2b_tag) || has_float_pipeline(&dst, b2d_tag) {
             return None;
+        }
+        if crate::convert::hlg_render::is_hlg_profile(&src)
+            || crate::convert::hlg_render::is_hlg_profile(&dst)
+        {
+            return crate::convert::hlg_render::build_cms_hlg_transform(
+                self, src, dst, src_format, dst_format, options, false,
+            );
         }
         // Depths the plan can convert aren't this backend's problem, so it declines them. Sample types
         // nothing here can convert are diagnosed.

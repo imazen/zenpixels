@@ -52,8 +52,11 @@ jobs:
       - name: Test (workspace)
         run: cargo test --workspace
 
+      - name: Test planar picture, code planes, YCbCr, and plane orientation
+        run: cargo test --locked --workspace --features zenpixels/planar,zenpixels-convert/planar
+
       - name: Test pixel Hash and ICC golden pairs
-        run: cargo test --locked -p zenpixels --features hash
+        run: cargo test --locked -p zenpixels --features hash,planar
 
       - name: Test still-image IQA contract
         run: cargo test --locked --manifest-path zenpsy-api/Cargo.toml --all-features
@@ -149,7 +152,7 @@ jobs:
         run: cross test --workspace --target i686-unknown-linux-gnu
 
       - name: Test pixel Hash and ICC goldens (i686)
-        run: cross test --locked -p zenpixels --features hash --lib --test hashing --target i686-unknown-linux-gnu
+        run: cross test --locked -p zenpixels --features hash,planar --lib --test hashing --target i686-unknown-linux-gnu
 
       - name: Test still-image IQA contract (i686)
         run: cross test --locked --manifest-path zenpsy-api/Cargo.toml --target i686-unknown-linux-gnu
@@ -172,7 +175,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: hash-s390x
-      - run: cross test --locked -p zenpixels --features hash --lib --test hashing --target s390x-unknown-linux-gnu
+      - run: cross test --locked -p zenpixels --features hash,planar --lib --test hashing --target s390x-unknown-linux-gnu
 
   # ==========================================================================
   # WASM check
@@ -199,7 +202,7 @@ jobs:
 
       - uses: taiki-e/install-action@wasmtime
       - name: Test pixel Hash and ICC goldens (WASI)
-        run: cargo test --locked -p zenpixels --features hash --lib --test hashing --target wasm32-wasip1
+        run: cargo test --locked -p zenpixels --features hash,planar --lib --test hashing --target wasm32-wasip1
         env:
           CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
 
@@ -314,7 +317,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Test zenpixels with Vec<T, A> and Box<S, A> storage
-        run: cargo test -p zenpixels
+        run: cargo test -p zenpixels --features planar
 
   # ==========================================================================
   # Format check
@@ -369,11 +372,17 @@ jobs:
       - name: Check MSRV (zenpixels @ 1.85)
         run: cargo +1.85.0 check -p zenpixels
 
+      - name: Check MSRV (zenpixels planar @ 1.85)
+        run: cargo +1.85.0 check -p zenpixels --features planar
+
       - name: Check optional Hash MSRV (zenpixels @ 1.89)
-        run: cargo +1.89.0 check --locked -p zenpixels --lib --no-default-features --features hash
+        run: cargo +1.89.0 check --locked -p zenpixels --lib --no-default-features --features hash,planar
 
       - name: Check MSRV (zenpixels-convert @ 1.89)
         run: cargo +1.89.0 check -p zenpixels-convert
+
+      - name: Check MSRV (zenpixels-convert planar @ 1.89)
+        run: cargo +1.89.0 check -p zenpixels-convert --features planar
 
       - name: Check MSRV (Rust LCMS backend @ 1.89)
         run: cargo +1.89.0 check --locked -p zenpixels-convert --lib --no-default-features --features cms-lcms

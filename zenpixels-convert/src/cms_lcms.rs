@@ -390,6 +390,13 @@ impl PluggableCms for Lcms {
         dst_format: PixelFormat,
         options: &crate::policy::ConvertOptions,
     ) -> Option<Result<Box<dyn RowTransformMut>, Error>> {
+        if crate::convert::hlg_render::is_hlg_profile(&src)
+            || crate::convert::hlg_render::is_hlg_profile(&dst)
+        {
+            return crate::convert::hlg_render::build_cms_hlg_transform(
+                self, src, dst, src_format, dst_format, options, true,
+            );
+        }
         let from = describe(src_format)?;
         let to = describe(dst_format)?;
         if from.sample != to.sample {

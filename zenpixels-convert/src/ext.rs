@@ -296,17 +296,6 @@ fn converter_for(
         src_desc.transfer() != target.transfer() || src_desc.primaries != target.primaries;
     let converter =
         if changes_color && matches!(source_profile, zenpixels::ColorProfileSource::Icc(_)) {
-            // The profile-only CMS interface cannot express absolute-light intent.
-            if matches!(
-                (src_desc.transfer(), target.transfer()),
-                (TransferFunction::Pq | TransferFunction::Hlg, _)
-                    | (_, TransferFunction::Pq | TransferFunction::Hlg)
-            ) {
-                return Err(whereat::at!(crate::ConvertError::NeedsCms {
-                    from: src_desc,
-                    to: target
-                }));
-            }
             crate::RowConverter::new_with_sources(
                 src_desc,
                 target,
@@ -1239,6 +1228,82 @@ impl ColorConvertExt for zenpixels::Color {
         let pixel = &mut pixel[..target.bytes_per_pixel()];
         converter.try_convert_row(self.as_bytes(), pixel, 1)?;
         Self::try_new(target, pixel).map_err(|e| whereat::at!(crate::ConvertError::Buffer(e)))
+    }
+}
+
+/// Physical EXIF orientation transforms on single-component planes (`Plane<C>`,
+/// `PlaneRef<'_, T>`, `PlaneBuf<T>`).
+///
+/// Requires the `planar` feature. Preserves exact sample bit patterns across all
+/// [`PlaneSample`](zenpixels::buffer::PlaneSample) types (`u8`, `i8`, `u16`, `i16`,
+/// `F16Sample`, `u32`, `i32`, `f32`, `u64`, `i64`, `f64`) and leaves destination row
+/// padding untouched.
+#[cfg(feature = "planar")]
+pub trait PlaneConvertExt<T: zenpixels::buffer::PlaneSample>: crate::sealed::Sealed {
+    /// Physically apply `orientation`, returning a freshly allocated
+    /// [`AlignedPlane`](zenpixels::plane::AlignedPlane) with 64-byte SIMD-aligned
+    /// row stride and swapped dimensions for transposing orientations.
+    fn oriented(
+        &self,
+        orientation: zenpixels::Orientation,
+    ) -> Result<zenpixels::plane::AlignedPlane<T>, At<crate::ConvertError>>;
+
+    /// Physically apply `orientation` into a caller-provided [`PlaneMut`](zenpixels::plane::PlaneMut)
+    /// without allocating.
+    fn oriented_into(
+        &self,
+        orientation: zenpixels::Orientation,
+        dst: zenpixels::plane::PlaneMut<'_, T>,
+    ) -> Result<(), At<crate::ConvertError>>;
+}
+
+#[cfg(feature = "planar")]
+impl<C> PlaneConvertExt<C::Sample> for zenpixels::plane::Plane<C>
+where
+    C: zenpixels::buffer::SampleStorage,
+{
+    #[track_caller]
+    fn oriented(
+        &self,
+        orientation: zenpixels::Orientation,
+    ) -> Result<zenpixels::plane::AlignedPlane<C::Sample>, At<crate::ConvertError>> {
+        let w32 = u32::try_from(self.width()).map_err(|_| {
+            whereat::at!(crate::ConvertError::Buffer(
+                zenpixels::BufferError::InvalidDimensions
+            ))
+        })?;
+        let h32 = u32::try_from(self.height()).map_err(|_| {
+            whereat::at!(crate::ConvertError::Buffer(
+                zenpixels::BufferError::InvalidDimensions
+            ))
+        })?;
+        let (ow, oh) = orientation.output_dimensions(w32, h32);
+        let mut out = zenpixels::plane::AlignedPlane::alloc(ow as usize, oh as usize)
+            .map_err(|_| whereat::at!(crate::ConvertError::AllocationFailed))?;
+        self.oriented_into(orientation, out.view_mut())?;
+        Ok(out)
+    }
+
+    #[track_caller]
+    fn oriented_into(
+        &self,
+        orientation: zenpixels::Orientation,
+        mut dst: zenpixels::plane::PlaneMut<'_, C::Sample>,
+    ) -> Result<(), At<crate::ConvertError>> {
+        let (dw, dh, dst_stride) = (dst.width(), dst.height(), dst.stride());
+        crate::orient::apply_plane_orientation_bytes(
+            bytemuck::cast_slice(self.strided_samples()),
+            self.width(),
+            self.height(),
+            self.stride(),
+            bytemuck::cast_slice_mut(dst.strided_samples_mut()),
+            dw,
+            dh,
+            dst_stride,
+            <C::Sample as zenpixels::buffer::PlaneSample>::CHANNEL_TYPE,
+            orientation,
+        )
+        .map_err(|e| whereat::at!(e))
     }
 }
 

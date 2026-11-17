@@ -92,7 +92,7 @@ pub enum ExactDepthError {
     NarrowBelowEightBits,
     /// The evidence names a different storage type or signal range than the pixels.
     DescriptorMismatch,
-    /// Scans cover gray, gray-alpha, RGB, RGBA and BGRA layouts only.
+    /// Scans cover gray, gray-alpha, RGB, BGR, RGBA, BGRA, RGBX, BGRX, and CMYK layouts only.
     UnsupportedLayout,
 }
 
@@ -103,7 +103,9 @@ impl fmt::Display for ExactDepthError {
             Self::InvalidBits => "exact depth must be positive and fit its storage",
             Self::NarrowBelowEightBits => "narrow-range exact depth needs at least 8 bits",
             Self::DescriptorMismatch => "exact-depth evidence disagrees with the pixel descriptor",
-            Self::UnsupportedLayout => "exact-depth scans need gray, gray-alpha, RGB, RGBA or BGRA",
+            Self::UnsupportedLayout => {
+                "exact-depth scans need gray, gray-alpha, RGB/BGR, RGBA/BGRA/RGBX/BGRX, or CMYK"
+            }
         })
     }
 }
@@ -219,7 +221,12 @@ impl ExactDepth {
     /// padding or an RGBX/BGRX padding slot) and stops once only the storage
     /// depth remains. Evidence the view already carries is not consulted. An
     /// empty view is exact at every depth.
+    #[inline]
     pub fn measure<P>(pixels: &PixelSlice<'_, P>) -> Result<Self, ExactDepthError> {
+        Self::measure_erased(&pixels.reborrow_erased_no_color())
+    }
+
+    fn measure_erased(pixels: &PixelSlice<'_>) -> Result<Self, ExactDepthError> {
         let descriptor = pixels.descriptor();
         let roles = Roles::of(descriptor)?;
         let mut color = GridScan::new(roles.storage_bits, roles.narrow);
@@ -268,7 +275,12 @@ impl ExactDepth {
     /// assert_eq!(ExactDepth::measure(&edited)?.color_bits(), 16);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
+    #[inline]
     pub fn holds_for<P>(self, rows: &PixelSlice<'_, P>) -> Result<bool, ExactDepthError> {
+        self.holds_for_erased(&rows.reborrow_erased_no_color())
+    }
+
+    fn holds_for_erased(self, rows: &PixelSlice<'_>) -> Result<bool, ExactDepthError> {
         let descriptor = rows.descriptor();
         let roles = Roles::of(descriptor)?;
         if self.storage() != descriptor.channel_type() || self.range() != descriptor.signal_range {
@@ -356,10 +368,16 @@ impl Roles {
         };
         let channels = descriptor.channels();
         let last = match descriptor.layout() {
-            ChannelLayout::Gray | ChannelLayout::Rgb => None,
-            ChannelLayout::GrayAlpha | ChannelLayout::Rgba | ChannelLayout::Bgra => {
-                Some(channels - 1)
-            }
+            ChannelLayout::Gray
+            | ChannelLayout::Rgb
+            | ChannelLayout::Bgr
+            | ChannelLayout::Cmyk
+            | ChannelLayout::CmykInverted => None,
+            ChannelLayout::GrayAlpha
+            | ChannelLayout::Rgba
+            | ChannelLayout::Bgra
+            | ChannelLayout::CmykAlpha
+            | ChannelLayout::CmykInvertedAlpha => Some(channels - 1),
             _ => return Err(ExactDepthError::UnsupportedLayout),
         };
         let (alpha, padding) = match last {
@@ -378,11 +396,7 @@ impl Roles {
 
     /// Visit active samples in order as `(is_alpha, value)` until `visit`
     /// returns false; returns whether every visited sample was accepted.
-    fn for_each<P>(
-        &self,
-        pixels: &PixelSlice<'_, P>,
-        mut visit: impl FnMut(bool, u32) -> bool,
-    ) -> bool {
+    fn for_each(&self, pixels: &PixelSlice<'_>, mut visit: impl FnMut(bool, u32) -> bool) -> bool {
         let samples = pixels.width() as usize * self.channels;
         for y in 0..pixels.rows() {
             let row = pixels.row(y);

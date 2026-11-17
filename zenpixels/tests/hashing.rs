@@ -3,6 +3,7 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use zenpixels::hdr::{DiffuseWhite, Nits};
+#[cfg(feature = "planar")]
 use zenpixels::plane::*;
 use zenpixels::sample::*;
 use zenpixels::*;
@@ -202,6 +203,7 @@ fn wide_native_sample_bits_are_not_narrowed() {
     }
 }
 
+#[cfg(feature = "planar")]
 #[test]
 fn planes_and_component_views_exclude_padding_and_other_components() {
     let a = [1u16, 2, 3, 4];
@@ -239,6 +241,7 @@ fn planes_and_component_views_exclude_padding_and_other_components() {
     assert_ne!(writes(&a), writes(&b));
 }
 
+#[cfg(feature = "planar")]
 #[test]
 fn planar_native_padding_and_metadata_are_independent() {
     let e = PlaneEncoding::Code(SampleEncoding::new(ChannelType::U16, 10, 6).unwrap());
@@ -287,9 +290,12 @@ fn planar_native_padding_and_metadata_are_independent() {
 
 #[test]
 fn zero_width_views_do_not_iterate_the_declared_empty_rows() {
-    let a = PlaneRef::new(&[] as &[u8], 0, usize::MAX, usize::MAX).unwrap();
-    let b = PlaneRef::new(&[] as &[u8], 0, usize::MAX - 1, usize::MAX).unwrap();
-    assert_ne!(writes(&a), writes(&b));
+    #[cfg(feature = "planar")]
+    {
+        let a = PlaneRef::new(&[] as &[u8], 0, usize::MAX, usize::MAX).unwrap();
+        let b = PlaneRef::new(&[] as &[u8], 0, usize::MAX - 1, usize::MAX).unwrap();
+        assert_ne!(writes(&a), writes(&b));
+    }
     let a = view(&[], 0, u32::MAX, 0);
     let b = view(&[], 0, u32::MAX - 1, 0);
     assert_ne!(writes(&a), writes(&b));
@@ -302,22 +308,25 @@ fn portable_v1_golden_hashes() {
     // and zenhash's C-reference conformance matrix.
     let p = view(&[1, 2, 3, 4], 1, 1, 4);
     assert_eq!(p.hash_with(HashInclusions::All), 0xac0c_c9b2_0351_b75a);
-    let samples = [0x1234u16, 0xabcd];
-    let p = PlaneRef::new(&samples[..], 2, 1, 2).unwrap();
-    assert_eq!(p.hash_with(HashInclusions::All), 0x959d_7fe7_6c2e_f808);
+    #[cfg(feature = "planar")]
+    {
+        let samples = [0x1234u16, 0xabcd];
+        let p = PlaneRef::new(&samples[..], 2, 1, 2).unwrap();
+        assert_eq!(p.hash_with(HashInclusions::All), 0x959d_7fe7_6c2e_f808);
 
-    let samples = [63u16, 127, 65535];
-    let planes = [AnyPlane::U16(PlaneRef::new(&samples[..], 3, 1, 3).unwrap())];
-    let e = PlaneEncoding::Code(SampleEncoding::new(ChannelType::U16, 10, 6).unwrap());
-    let layout = PlanarLayout::new(
-        vec![PlaneSpec::new(PlaneRole::Luma, e)],
-        ChromaSubsampling::Mono,
-        ChromaSiting::Center,
-    )
-    .unwrap();
-    let color = ColorContext::default();
-    let p = PlanarSlice::new(&planes, &layout, 3, 1, &color, None).unwrap();
-    assert_eq!(p.hash_with(HashInclusions::All), 0x60ba_798c_2efa_a06e);
+        let samples = [63u16, 127, 65535];
+        let planes = [AnyPlane::U16(PlaneRef::new(&samples[..], 3, 1, 3).unwrap())];
+        let e = PlaneEncoding::Code(SampleEncoding::new(ChannelType::U16, 10, 6).unwrap());
+        let layout = PlanarLayout::new(
+            vec![PlaneSpec::new(PlaneRole::Luma, e)],
+            ChromaSubsampling::Mono,
+            ChromaSiting::Center,
+        )
+        .unwrap();
+        let color = ColorContext::default();
+        let p = PlanarSlice::new(&planes, &layout, 3, 1, &color, None).unwrap();
+        assert_eq!(p.hash_with(HashInclusions::All), 0x60ba_798c_2efa_a06e);
+    }
 
     let samples = [0x8000_0000_0000_0000u64, 0x7ff8_0000_0000_0001];
     let desc = PixelDescriptor::try_new(
@@ -331,6 +340,7 @@ fn portable_v1_golden_hashes() {
     let p = PixelBuffer::from_vec(bytes, 2, 1, desc).unwrap();
     assert_eq!(p.hash_with(HashInclusions::All), 0xf30a_c2cb_1b02_0062);
 }
+#[cfg(feature = "planar")]
 #[test]
 fn planar_u8_subbyte_codes_ignore_unused_bits() {
     let encoding = SampleEncoding::new(ChannelType::U8, 1, 3).unwrap();
@@ -363,6 +373,7 @@ fn planar_u8_subbyte_codes_ignore_unused_bits() {
     }
 }
 
+#[cfg(feature = "planar")]
 #[test]
 fn wide_and_signed_planar_hashes_ignore_unused_bits_and_row_padding() {
     macro_rules! check {
@@ -414,6 +425,7 @@ fn wide_and_signed_planar_hashes_ignore_unused_bits_and_row_padding() {
     check!(i64, I64, 48, 8);
 }
 
+#[cfg(feature = "planar")]
 #[test]
 fn empty_wide_code_planes_do_not_iterate_declared_rows() {
     let plane = Plane::new(Vec::<i64>::new(), 0, u32::MAX as usize, usize::MAX).unwrap();
@@ -518,54 +530,57 @@ fn parametric_color_and_rendering_intent_participate_in_metadata_hashes() {
         pure_18.hash_with(HashInclusions::Pixels)
     );
 
-    // CodePlane over U32 masks unused bits and ignores row padding when hashed directly.
-    let enc = SampleEncoding::new(ChannelType::U32, 24, 4).unwrap();
-    let clean = [0x0123_4560u32, 0x0fed_cba0];
-    let dirty = [0xf123_456fu32, 0x7fed_cbaf, 0xdead_beef];
-    let cp_clean = CodePlane::new(
-        AnyPlane::U32(PlaneRef::new(&clean[..], 2, 1, 2).unwrap()),
-        enc,
-    )
-    .unwrap();
-    let cp_dirty = CodePlane::new(
-        AnyPlane::U32(PlaneRef::new(&dirty[..], 2, 1, 3).unwrap()),
-        enc,
-    )
-    .unwrap();
-    assert_eq!(writes(&cp_clean), writes(&cp_dirty));
+    #[cfg(feature = "planar")]
+    {
+        // CodePlane over U32 masks unused bits and ignores row padding when hashed directly.
+        let enc = SampleEncoding::new(ChannelType::U32, 24, 4).unwrap();
+        let clean = [0x0123_4560u32, 0x0fed_cba0];
+        let dirty = [0xf123_456fu32, 0x7fed_cbaf, 0xdead_beef];
+        let cp_clean = CodePlane::new(
+            AnyPlane::U32(PlaneRef::new(&clean[..], 2, 1, 2).unwrap()),
+            enc,
+        )
+        .unwrap();
+        let cp_dirty = CodePlane::new(
+            AnyPlane::U32(PlaneRef::new(&dirty[..], 2, 1, 3).unwrap()),
+            enc,
+        )
+        .unwrap();
+        assert_eq!(writes(&cp_clean), writes(&cp_dirty));
 
-    // Signed CodePlanes over I16/I32 also hash cleanly, masking unused bits and padding.
-    let enc_i16 = SampleEncoding::new(ChannelType::I16, 12, 2).unwrap();
-    let i16_clean = [-8192i16, 0x1ff8];
-    let i16_dirty = [-8192i16 | 0x0003, 0x1ff8 | -0x8000i16 | 0x0003, 12345];
-    let cp_i16_clean = CodePlane::new(
-        AnyPlane::I16(PlaneRef::new(&i16_clean[..], 2, 1, 2).unwrap()),
-        enc_i16,
-    )
-    .unwrap();
-    let cp_i16_dirty = CodePlane::new(
-        AnyPlane::I16(PlaneRef::new(&i16_dirty[..], 2, 1, 3).unwrap()),
-        enc_i16,
-    )
-    .unwrap();
-    assert_eq!(writes(&cp_i16_clean), writes(&cp_i16_dirty));
+        // Signed CodePlanes over I16/I32 also hash cleanly, masking unused bits and padding.
+        let enc_i16 = SampleEncoding::new(ChannelType::I16, 12, 2).unwrap();
+        let i16_clean = [-8192i16, 0x1ff8];
+        let i16_dirty = [-8192i16 | 0x0003, 0x1ff8 | -0x8000i16 | 0x0003, 12345];
+        let cp_i16_clean = CodePlane::new(
+            AnyPlane::I16(PlaneRef::new(&i16_clean[..], 2, 1, 2).unwrap()),
+            enc_i16,
+        )
+        .unwrap();
+        let cp_i16_dirty = CodePlane::new(
+            AnyPlane::I16(PlaneRef::new(&i16_dirty[..], 2, 1, 3).unwrap()),
+            enc_i16,
+        )
+        .unwrap();
+        assert_eq!(writes(&cp_i16_clean), writes(&cp_i16_dirty));
 
-    let enc_i32 = SampleEncoding::new(ChannelType::I32, 24, 4).unwrap();
-    let i32_clean = [-0x0800_0000i32, 0x07ff_fff0];
-    let i32_dirty = [
-        -0x0800_0000i32 | 0x0f,
-        0x07ff_fff0 | -0x8000_0000i32 | 0x0f,
-        -1,
-    ];
-    let cp_i32_clean = CodePlane::new(
-        AnyPlane::I32(PlaneRef::new(&i32_clean[..], 2, 1, 2).unwrap()),
-        enc_i32,
-    )
-    .unwrap();
-    let cp_i32_dirty = CodePlane::new(
-        AnyPlane::I32(PlaneRef::new(&i32_dirty[..], 2, 1, 3).unwrap()),
-        enc_i32,
-    )
-    .unwrap();
-    assert_eq!(writes(&cp_i32_clean), writes(&cp_i32_dirty));
+        let enc_i32 = SampleEncoding::new(ChannelType::I32, 24, 4).unwrap();
+        let i32_clean = [-0x0800_0000i32, 0x07ff_fff0];
+        let i32_dirty = [
+            -0x0800_0000i32 | 0x0f,
+            0x07ff_fff0 | -0x8000_0000i32 | 0x0f,
+            -1,
+        ];
+        let cp_i32_clean = CodePlane::new(
+            AnyPlane::I32(PlaneRef::new(&i32_clean[..], 2, 1, 2).unwrap()),
+            enc_i32,
+        )
+        .unwrap();
+        let cp_i32_dirty = CodePlane::new(
+            AnyPlane::I32(PlaneRef::new(&i32_dirty[..], 2, 1, 3).unwrap()),
+            enc_i32,
+        )
+        .unwrap();
+        assert_eq!(writes(&cp_i32_clean), writes(&cp_i32_dirty));
+    }
 }

@@ -451,16 +451,33 @@ impl RowConverter {
             .unwrap_or(to);
         crate::convert::validate_descriptors(from, to)?;
         crate::convert::validate_luma_policy(from, to, options)?;
-        if from.transfer() != to.transfer()
-            && matches!(
-                (from.transfer(), to.transfer()),
-                (TransferFunction::Pq | TransferFunction::Hlg, _)
-                    | (_, TransferFunction::Pq | TransferFunction::Hlg)
-            )
-        {
-            // Profile-only transforms cannot express the luminance intent.
-            return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
+
+        let profile_tf = |desc_tf: TransferFunction, p: &crate::ColorProfileSource<'_>| {
+            if let crate::ColorProfileSource::Parametric(param) = p {
+                match param.transfer {
+                    zenpixels::ParametricTransfer::Linear => TransferFunction::Linear,
+                    zenpixels::ParametricTransfer::Srgb => TransferFunction::Srgb,
+                    zenpixels::ParametricTransfer::Bt709 => TransferFunction::Bt709,
+                    zenpixels::ParametricTransfer::Pq => TransferFunction::Pq,
+                    zenpixels::ParametricTransfer::Hlg => TransferFunction::Hlg,
+                    zenpixels::ParametricTransfer::Dci
+                    | zenpixels::ParametricTransfer::Gamma(_)
+                    | zenpixels::ParametricTransfer::IccParametric(_) => TransferFunction::Gamma22,
+                    _ => desc_tf,
+                }
+            } else {
+                desc_tf
+            }
+        };
+        let src_tf = profile_tf(from.transfer(), &source);
+        let dst_tf = profile_tf(to.transfer(), &target);
+        let hdr_crossing = !crate::output::profiles_match(&source, &target)
+            && (matches!(src_tf, TransferFunction::Pq | TransferFunction::Hlg)
+                || matches!(dst_tf, TransferFunction::Pq | TransferFunction::Hlg));
+        if hdr_crossing && source.resolve().is_some() && target.resolve().is_some() {
+            return Self::new_explicit(from, to, options);
         }
+
         // No ICC transform here can honor a mapping, and clipping silently would be wrong.
         if options.gamut_mapping() != crate::policy::GamutMapping::Clip {
             return Err(whereat::at!(ConvertError::NoPath { from, to }));
@@ -487,6 +504,12 @@ impl RowConverter {
                 }
                 _ => return Err(whereat::at!(ConvertError::AlphaRemovalForbidden)),
             }
+        }
+
+        if hdr_crossing {
+            return Self::new_with_sources_hdr_pivot(
+                from, to, src_tf, dst_tf, source, target, composites, options, cms,
+            );
         }
         // A plugin takes one depth, straight alpha and no layout change that loses channels, so the
         // color change runs in straight F32 and the plan handles the rest on either side of it.
@@ -585,6 +608,249 @@ impl RowConverter {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
         }
         Self::new_explicit(from, to, options)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_cms_only(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        source: crate::ColorProfileSource<'_>,
+        target: crate::ColorProfileSource<'_>,
+        options: &crate::policy::ConvertOptions,
+        cms: Option<&dyn crate::cms::PluggableCms>,
+        err_from: PixelDescriptor,
+        err_to: PixelDescriptor,
+    ) -> Result<Self, At<ConvertError>> {
+        for plugin in cms.into_iter().chain(core::iter::once(
+            &crate::cms_lite::ZenCmsLite as &dyn crate::cms::PluggableCms,
+        )) {
+            let map_error = |e: At<crate::cms::CmsPluginError>| {
+                e.map_error(|error| ConvertError::CmsBackend(alloc::sync::Arc::new(error)))
+            };
+            let external = if let Some(result) = plugin.build_shared_source_transform(
+                source.clone(),
+                target.clone(),
+                from.pixel_format(),
+                to.pixel_format(),
+                options,
+            ) {
+                Some(ExternalTransform::Shared(result.map_err(map_error)?))
+            } else if let Some(result) = plugin.build_source_transform(
+                source.clone(),
+                target.clone(),
+                from.pixel_format(),
+                to.pixel_format(),
+                options,
+            ) {
+                Some(owned_external(result.map_err(map_error)?))
+            } else {
+                None
+            };
+            if let Some(external) = external {
+                return Ok(Self {
+                    plan: ConvertPlan::identity(from, to),
+                    scratch: ConvertScratch::new(),
+                    prepared_width: None,
+                    external: Some(external),
+                });
+            }
+        }
+        Err(whereat::at!(ConvertError::NeedsCms {
+            from: err_from,
+            to: err_to,
+        }))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_sources_hdr_pivot(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        src_tf: TransferFunction,
+        dst_tf: TransferFunction,
+        source: crate::ColorProfileSource<'_>,
+        target: crate::ColorProfileSource<'_>,
+        composites: bool,
+        options: &crate::policy::ConvertOptions,
+        cms: Option<&dyn crate::cms::PluggableCms>,
+    ) -> Result<Self, At<ConvertError>> {
+        let endpoint_reduction = crate::negotiate::channel_bits(from.channel_type())
+            > crate::negotiate::channel_bits(to.channel_type());
+        if endpoint_reduction && options.depth_policy() == crate::policy::DepthPolicy::Forbid {
+            return Err(whereat::at!(ConvertError::DepthReductionForbidden));
+        }
+
+        let involves_hlg = src_tf == TransferFunction::Hlg || dst_tf == TransferFunction::Hlg;
+        if involves_hlg && options.hlg_rendering().is_none() {
+            return Err(whereat::at!(ConvertError::HlgRenderingRequired));
+        }
+        let dst_is_sdr = matches!(src_tf, TransferFunction::Pq | TransferFunction::Hlg)
+            && !matches!(
+                dst_tf,
+                TransferFunction::Linear | TransferFunction::Pq | TransferFunction::Hlg
+            );
+        if dst_is_sdr {
+            if src_tf == TransferFunction::Hlg && options.sdr_white().is_none() {
+                return Err(whereat::at!(ConvertError::SdrWhiteRequired));
+            }
+            if !matches!(options.hdr_peak(), zenpixels::hdr::HdrPeak::Nits(_)) {
+                return Err(whereat::at!(ConvertError::HdrPeakRequired));
+            }
+            if options.sdr_peak().is_none() {
+                return Err(whereat::at!(ConvertError::SdrPeakRequired));
+            }
+            #[cfg(not(feature = "bt2446a"))]
+            {
+                return Err(whereat::at!(ConvertError::HdrFeatureRequired));
+            }
+        } else if options.sdr_white().is_none() {
+            return Err(whereat::at!(ConvertError::SdrWhiteRequired));
+        }
+
+        let leg_opts = if !endpoint_reduction
+            && options.depth_policy() == crate::policy::DepthPolicy::Forbid
+        {
+            options.with_depth_policy(crate::policy::DepthPolicy::Round)
+        } else {
+            *options
+        };
+        let straight_float = |layout: ChannelLayout, color: PixelDescriptor| {
+            let format = match layout {
+                ChannelLayout::Rgb => crate::PixelFormat::RgbF32,
+                ChannelLayout::Rgba | ChannelLayout::Bgra => crate::PixelFormat::RgbaF32,
+                ChannelLayout::Gray => crate::PixelFormat::GrayF32,
+                ChannelLayout::GrayAlpha => crate::PixelFormat::GrayAF32,
+                _ => return Err(whereat::at!(ConvertError::NoPath { from, to })),
+            };
+            Ok(format
+                .descriptor()
+                .with_primaries(color.primaries)
+                .with_transfer(color.transfer()))
+        };
+        let to_gray = matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha)
+            && !matches!(
+                from.layout(),
+                ChannelLayout::Gray | ChannelLayout::GrayAlpha
+            );
+
+        if source.resolve().is_some() {
+            // Resolved source -> BT.2020 F32 handoff -> unresolved target via CMS -> `to`.
+            let keep_alpha = if composites { false } else { to.has_alpha() };
+            let handoff_fmt = if keep_alpha {
+                crate::PixelFormat::RgbaF32
+            } else {
+                crate::PixelFormat::RgbF32
+            };
+            let (handoff_tf, handoff_cicp) = if dst_tf == TransferFunction::Pq {
+                (TransferFunction::Pq, crate::Cicp::new(9, 16, 0, true))
+            } else if matches!(dst_tf, TransferFunction::Linear | TransferFunction::Hlg) {
+                (TransferFunction::Linear, crate::Cicp::new(9, 8, 0, true))
+            } else {
+                (TransferFunction::Bt709, crate::Cicp::new(9, 1, 0, true))
+            };
+            let handoff_desc = handoff_fmt
+                .descriptor()
+                .with_primaries(crate::ColorPrimaries::Bt2020)
+                .with_transfer(handoff_tf);
+            let dst_f32_layout = if to_gray {
+                if keep_alpha {
+                    ChannelLayout::Rgba
+                } else {
+                    ChannelLayout::Rgb
+                }
+            } else if keep_alpha {
+                ChannelLayout::Rgba
+            } else if matches!(to.layout(), ChannelLayout::Gray) {
+                ChannelLayout::Gray
+            } else {
+                ChannelLayout::Rgb
+            };
+            let straight_to = straight_float(dst_f32_layout, to)?;
+            let before =
+                Self::new_explicit(from, handoff_desc, &leg_opts.with_clip_out_of_gamut(false))?;
+            let cms_opts = if to.channel_type() == crate::ChannelType::F32 {
+                leg_opts
+            } else {
+                leg_opts.with_clip_out_of_gamut(true)
+            };
+            let color = Self::build_cms_only(
+                handoff_desc,
+                straight_to,
+                crate::ColorProfileSource::Cicp(handoff_cicp),
+                target,
+                &cms_opts,
+                cms,
+                from,
+                to,
+            )?;
+            let after = Self::new_explicit(straight_to, to, &leg_opts)?;
+            return Ok(Self {
+                plan: ConvertPlan::identity(from, to),
+                scratch: ConvertScratch::new(),
+                prepared_width: None,
+                external: Some(ExternalTransform::Alpha(Box::new(AlphaPipeline {
+                    before,
+                    color,
+                    after,
+                    source: alloc::vec::Vec::new(),
+                    target: alloc::vec::Vec::new(),
+                }))),
+            });
+        }
+
+        // Unresolved source -> BT.2020 F32 handoff via CMS -> `target`.
+        let straight_from = straight_float(from.layout(), from)?;
+        let handoff_fmt = if from.has_alpha() {
+            crate::PixelFormat::RgbaF32
+        } else {
+            crate::PixelFormat::RgbF32
+        };
+        let (handoff_tf, handoff_cicp) = if src_tf == TransferFunction::Pq {
+            (TransferFunction::Pq, crate::Cicp::new(9, 16, 0, true))
+        } else if src_tf == TransferFunction::Hlg && dst_is_sdr {
+            (TransferFunction::Bt709, crate::Cicp::new(9, 1, 0, true))
+        } else {
+            (TransferFunction::Linear, crate::Cicp::new(9, 8, 0, true))
+        };
+        let handoff_desc = handoff_fmt
+            .descriptor()
+            .with_primaries(crate::ColorPrimaries::Bt2020)
+            .with_transfer(handoff_tf);
+        let unclipped = leg_opts.with_clip_out_of_gamut(false);
+        let before = Self::new_explicit(from, straight_from, &unclipped)?;
+        let color = Self::build_cms_only(
+            straight_from,
+            handoff_desc,
+            source,
+            crate::ColorProfileSource::Cicp(handoff_cicp),
+            &unclipped,
+            cms,
+            from,
+            to,
+        )?;
+        let after = if target.resolve().is_some() {
+            Self::new_explicit(handoff_desc, to, &leg_opts)?
+        } else {
+            Self::new_with_sources(
+                handoff_desc,
+                to,
+                crate::ColorProfileSource::Cicp(handoff_cicp),
+                target,
+                &leg_opts,
+                cms,
+            )?
+        };
+        Ok(Self {
+            plan: ConvertPlan::identity(from, to),
+            scratch: ConvertScratch::new(),
+            prepared_width: None,
+            external: Some(ExternalTransform::Alpha(Box::new(AlphaPipeline {
+                before,
+                color,
+                after,
+                source: alloc::vec::Vec::new(),
+                target: alloc::vec::Vec::new(),
+            }))),
+        })
     }
 
     /// Create a converter from a pre-computed plan.

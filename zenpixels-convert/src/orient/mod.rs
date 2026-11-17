@@ -207,6 +207,63 @@ pub(crate) fn apply_orientation_into(
     Ok(())
 }
 
+/// Apply `orientation` to a single sample-strided plane represented as native-endian bytes.
+#[cfg(feature = "planar")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_plane_orientation_bytes(
+    src_bytes: &[u8],
+    w: usize,
+    h: usize,
+    src_stride_samples: usize,
+    dst_bytes: &mut [u8],
+    dw: usize,
+    dh: usize,
+    dst_stride_samples: usize,
+    channel_type: zenpixels::ChannelType,
+    orientation: Orientation,
+) -> Result<(), ConvertError> {
+    let bpp = channel_type.byte_size();
+    let w32 = u32::try_from(w)
+        .map_err(|_| ConvertError::Buffer(zenpixels::BufferError::InvalidDimensions))?;
+    let h32 = u32::try_from(h)
+        .map_err(|_| ConvertError::Buffer(zenpixels::BufferError::InvalidDimensions))?;
+    let dw32 = u32::try_from(dw)
+        .map_err(|_| ConvertError::Buffer(zenpixels::BufferError::InvalidDimensions))?;
+    let dh32 = u32::try_from(dh)
+        .map_err(|_| ConvertError::Buffer(zenpixels::BufferError::InvalidDimensions))?;
+    let (ow, oh) = orientation.output_dimensions(w32, h32);
+    if dw32 != ow || dh32 != oh {
+        return Err(ConvertError::BufferSize {
+            expected: (ow as usize)
+                .saturating_mul(oh as usize)
+                .saturating_mul(bpp),
+            actual: dw.saturating_mul(dh).saturating_mul(bpp),
+        });
+    }
+    if w == 0 || h == 0 {
+        return Ok(());
+    }
+    let desc =
+        zenpixels::PixelFormat::from_parts(channel_type, zenpixels::ChannelLayout::Gray, None)
+            .ok_or_else(|| ConvertError::Buffer(zenpixels::BufferError::InvalidDimensions))?
+            .descriptor();
+    let src_stride_bytes = src_stride_samples
+        .checked_mul(bpp)
+        .ok_or(ConvertError::Buffer(
+            zenpixels::BufferError::InvalidDimensions,
+        ))?;
+    let dst_stride_bytes = dst_stride_samples
+        .checked_mul(bpp)
+        .ok_or(ConvertError::Buffer(
+            zenpixels::BufferError::InvalidDimensions,
+        ))?;
+    let src_slice = PixelSlice::new(src_bytes, w32, h32, src_stride_bytes, desc)
+        .map_err(|e| ConvertError::Buffer(*e.error()))?;
+    let dst_slice = PixelSliceMut::new(dst_bytes, dw32, dh32, dst_stride_bytes, desc)
+        .map_err(|e| ConvertError::Buffer(*e.error()))?;
+    apply_orientation_into(src_slice, orientation, dst_slice)
+}
+
 /// Largest bytes-per-pixel the in-place path's per-element temp supports — covers
 /// every current format up to RGBA f32 (16 bytes).
 const MAX_INPLACE_BPP: usize = 16;

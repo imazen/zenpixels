@@ -140,7 +140,8 @@ impl<'a> YcbcrToRgbF32<'a> {
             ChromaSubsampling::Yuv444 => (w, h),
             ChromaSubsampling::Yuv422 => (w.div_ceil(2), h),
             ChromaSubsampling::Yuv420 => (w.div_ceil(2), h.div_ceil(2)),
-            ChromaSubsampling::Yuv440 | _ => {
+            ChromaSubsampling::Yuv440 => (w, h.div_ceil(2)),
+            _ => {
                 return Err(whereat::at!(YcbcrError::UnsupportedChroma {
                     subsampling: sub,
                     siting
@@ -272,7 +273,8 @@ impl<'a> YcbcrToRgbF32<'a> {
             ChromaSubsampling::Yuv444 => (false, false),
             ChromaSubsampling::Yuv422 => (true, false),
             ChromaSubsampling::Yuv420 => (true, true),
-            _ => unreachable!("unsupported subsampling rejected in YcbcrPlanes::new"),
+            ChromaSubsampling::Yuv440 => (false, true),
+            _ => unreachable!("unsupported subsampling rejected in YcbcrToRgbF32::new"),
         };
         let (x0, x1, wx) = axis(x, p.width(), h_sub);
         let (y0, y1, wy) = axis(y, p.height(), v_sub);
