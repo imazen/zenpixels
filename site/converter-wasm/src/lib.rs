@@ -43,6 +43,7 @@ fn layout(v: &Value) -> Result<ChannelLayout, String> {
         "Oklab" => Ok(ChannelLayout::Oklab),
         "OklabA" => Ok(ChannelLayout::OklabA),
         "Cmyk" => Ok(ChannelLayout::Cmyk),
+        "CmykInverted" => Ok(ChannelLayout::CmykInverted),
         other => Err(format!("Unknown layout: {other}")),
     }
 }
@@ -94,12 +95,8 @@ fn descriptor(v: &Value) -> Result<PixelDescriptor, String> {
         "none" => None,
         _ => return Err("Unknown alpha kind".into()),
     };
-    let format = if field(v, "id")? == "CmykF32Inverted" {
-        PixelFormat::CmykF32Inverted
-    } else {
-        PixelFormat::from_parts(channel(v)?, layout(v)?, a)
-            .ok_or("Unsupported channel/layout combination")?
-    };
+    let format = PixelFormat::from_parts(channel(v)?, layout(v)?, a)
+        .ok_or("Unsupported channel/layout combination")?;
     let mut d = format.descriptor().with_alpha(a);
     if matches!(
         d.layout(),
@@ -277,20 +274,24 @@ pub fn format_catalog() -> String {
         PixelFormat::Bgrx8,
         PixelFormat::OklabF32,
         PixelFormat::OklabaF32,
-        PixelFormat::Cmyk8,
-        PixelFormat::Cmyk16,
-        PixelFormat::CmykF32,
-        PixelFormat::CmykF32Inverted,
+        PixelFormat::CMYK8,
+        PixelFormat::CMYK8_INVERTED,
+        PixelFormat::CMYK16,
+        PixelFormat::CMYK16_INVERTED,
+        PixelFormat::CMYKF32,
+        PixelFormat::CMYKF32_INVERTED,
     ]);
     let entries: Vec<_> = formats
         .into_iter()
         .map(|f| {
             let d = f.descriptor();
-            let generic = matches!(f, PixelFormat::Generic(_));
-            let id = if generic {
-                f.name().to_string()
-            } else {
-                format!("{f:?}")
+            let is_cmyk = matches!(f.color_model(), zenpixels::ColorModel::Cmyk);
+            let generic = matches!(f, PixelFormat::Generic(_)) && !is_cmyk;
+            let id = match f {
+                PixelFormat::CMYK8 => "Cmyk8".to_string(),
+                PixelFormat::CMYK16 => "Cmyk16".to_string(),
+                _ if is_cmyk || generic => f.name().to_string(),
+                _ => format!("{f:?}"),
             };
             json!({"id":id, "ct":format!("{:?}", f.channel_type()),
             "layout":format!("{:?}", d.layout()), "bytes":d.bytes_per_pixel(),

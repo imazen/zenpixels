@@ -5,7 +5,7 @@ use zenpixels_convert::{ConvertOptions, OutputPlan, OutputProfile};
 
 #[test]
 fn native_cmyk_identity_plan_preserves_float_bits_and_strides() {
-    for format in [PixelFormat::CmykF32, PixelFormat::CmykF32Inverted] {
+    for format in [PixelFormat::CMYKF32, PixelFormat::CMYKF32_INVERTED] {
         let descriptor = format
             .descriptor()
             .with_primaries(zenpixels::ColorPrimaries::Unknown);

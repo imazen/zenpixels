@@ -117,6 +117,14 @@ pub(crate) fn extract_cicp(data: &[u8]) -> Option<Cicp> {
     if data.get(ICC_SIGNATURE_OFFSET..ICC_SIGNATURE_OFFSET + 4)? != b"acsp" {
         return None;
     }
+    // ICC.1 §9.2.17: `cicpTag` exists only in v4+ Input, Display, or ColorSpace profiles.
+    let version = u32::from_be_bytes(data.get(8..12)?.try_into().ok()?);
+    if version < 0x0400_0000 {
+        return None;
+    }
+    if !matches!(data.get(12..16)?, b"scnr" | b"mntr" | b"spac") {
+        return None;
+    }
 
     let tag_count = u32::from_be_bytes(
         data[ICC_TAG_COUNT_OFFSET..ICC_TAG_COUNT_OFFSET + 4]
@@ -140,19 +148,19 @@ pub(crate) fn extract_cicp(data: &[u8]) -> Option<Cicp> {
             return None;
         }
 
-        let tag_data = data.get(data_offset..data_offset + 12)?;
+        let tag_span = data.get(data_offset..data_offset.checked_add(data_size)?)?;
+        let tag_data = &tag_span[..12];
 
-        // Tag data starts with type signature (should also be "cicp").
-        if tag_data[..4] != *b"cicp" {
+        // Tag data starts with type signature "cicp" + 4 zero reserved bytes (ICC.1 §10.4).
+        if tag_data[..4] != *b"cicp" || tag_data[4..8] != [0; 4] || tag_data[11] > 1 {
             return None;
         }
-        // Bytes 4..8 are reserved (should be zero).
         // Bytes 8..12 are the four CICP fields.
         return Some(Cicp::new(
             tag_data[8],
             tag_data[9],
             tag_data[10],
-            tag_data[11] != 0,
+            tag_data[11] == 1,
         ));
     }
 
@@ -189,6 +197,8 @@ pub(crate) struct ProfileFeatures {
     pub(crate) has_b2a1: bool,
     /// Has `B2A2` LUT (saturation PCS→device).
     pub(crate) has_b2a2: bool,
+    /// Has `D2B0..3` or `B2D0..3` float multi-processing element tags (ICC.1:2022 §8.10.2).
+    pub(crate) has_mpe_lut: bool,
     /// Has matrix-shaper tags (rXYZ + gXYZ + bXYZ + rTRC + gTRC + bTRC).
     pub(crate) has_matrix_shaper: bool,
 }
@@ -209,6 +219,7 @@ impl ProfileFeatures {
             && !self.has_b2a0
             && !self.has_b2a1
             && !self.has_b2a2
+            && !self.has_mpe_lut
             && (!self.has_chad || self.chad_is_bradford)
     }
 }
@@ -258,13 +269,14 @@ pub(crate) fn inspect_profile(data: &[u8]) -> Option<ProfileFeatures> {
     let mut has_rtrc = false;
     let mut has_gtrc = false;
     let mut has_btrc = false;
-    let mut chad_off = None;
+    let mut chad_span: Option<(usize, usize)> = None;
 
     for i in 0..tag_count {
         let entry_offset = ICC_TAG_TABLE_OFFSET + i * ICC_TAG_ENTRY_SIZE;
         let entry = data.get(entry_offset..entry_offset + ICC_TAG_ENTRY_SIZE)?;
         let sig = &entry[..4];
         let d_off = u32::from_be_bytes(entry[4..8].try_into().ok()?) as usize;
+        let d_size = u32::from_be_bytes(entry[8..12].try_into().ok()?) as usize;
         match sig {
             b"rXYZ" => has_rxyz = true,
             b"gXYZ" => has_gxyz = true,
@@ -278,7 +290,10 @@ pub(crate) fn inspect_profile(data: &[u8]) -> Option<ProfileFeatures> {
             b"B2A0" => feat.has_b2a0 = true,
             b"B2A1" => feat.has_b2a1 = true,
             b"B2A2" => feat.has_b2a2 = true,
-            b"chad" => chad_off = Some(d_off),
+            b"D2B0" | b"D2B1" | b"D2B2" | b"D2B3" | b"B2D0" | b"B2D1" | b"B2D2" | b"B2D3" => {
+                feat.has_mpe_lut = true;
+            }
+            b"chad" => chad_span = Some((d_off, d_size)),
             _ => {}
         }
     }
@@ -286,10 +301,13 @@ pub(crate) fn inspect_profile(data: &[u8]) -> Option<ProfileFeatures> {
     feat.has_matrix_shaper = has_rxyz && has_gxyz && has_bxyz && has_rtrc && has_gtrc && has_btrc;
 
     // Parse chad matrix if present
-    if let Some(off) = chad_off {
+    if let Some((off, d_size)) = chad_span {
         feat.has_chad = true;
-        // chad tag: "sf32" (signature) + 4 reserved + 9 × s15Fixed16 (f64 values)
-        if data.get(off..off + 8)? == b"sf32\0\0\0\0" && data.len() >= off + 8 + 36 {
+        // chad tag: "sf32" (signature) + 4 reserved + 9 × s15Fixed16 (44 bytes minimum)
+        if d_size >= 44
+            && off.checked_add(d_size).is_some_and(|end| end <= data.len())
+            && data.get(off..off + 8)? == b"sf32\0\0\0\0"
+        {
             let mut m = [0.0f64; 9];
             let mut ok = true;
             for (i, slot) in m.iter_mut().enumerate() {
@@ -579,6 +597,11 @@ pub(crate) fn identify_common_for(
     tolerance: Tolerance,
     use_for: CoalesceForUse,
 ) -> Option<IccIdentification> {
+    // All table entries are D65 profiles; ICC-Absolute colorimetric (ICC.1 §6.3.2.3)
+    // undoes D65->D50 adaptation in PCS, so D50-adapted relative matrix math is never equivalent.
+    if matches!(use_for, CoalesceForUse::AbsoluteColorimetric) {
+        return None;
+    }
     let hash = normalized_hash(icc_bytes);
     let required = use_for.required_mask();
 
@@ -622,6 +645,8 @@ pub(crate) fn profile_color_space(icc_bytes: &[u8]) -> Option<crate::ColorModel>
         b"RGB " => Some(crate::ColorModel::Rgb),
         b"GRAY" => Some(crate::ColorModel::Gray),
         b"CMYK" => Some(crate::ColorModel::Cmyk),
+        b"Lab " => Some(crate::ColorModel::Lab),
+        b"XYZ " => Some(crate::ColorModel::Xyz),
         _ => None,
     }
 }
@@ -1019,10 +1044,14 @@ mod tests {
 
     // ── extract_cicp tests ───────────────────────────────────────────
 
-    /// Helper: build a minimal ICC profile with a cicp tag.
+    /// Helper: build a minimal ICC v4.4 Display profile with a cicp tag.
     fn build_icc_with_cicp(cp: u8, tc: u8, mc: u8, fr: bool) -> alloc::vec::Vec<u8> {
         let mut data = alloc::vec![0u8; 256];
         data[0..4].copy_from_slice(&256u32.to_be_bytes());
+        data[8..12].copy_from_slice(&[4, 0x40, 0, 0]);
+        data[12..16].copy_from_slice(b"mntr");
+        data[16..20].copy_from_slice(b"RGB ");
+        data[20..24].copy_from_slice(b"XYZ ");
         data[36..40].copy_from_slice(b"acsp");
         data[128..132].copy_from_slice(&1u32.to_be_bytes());
         data[132..136].copy_from_slice(b"cicp");
@@ -1076,13 +1105,8 @@ mod tests {
 
     #[test]
     fn extract_cicp_no_tag() {
-        let mut data = alloc::vec![0u8; 256];
-        data[0..4].copy_from_slice(&256u32.to_be_bytes());
-        data[36..40].copy_from_slice(b"acsp");
-        data[128..132].copy_from_slice(&1u32.to_be_bytes());
+        let mut data = build_icc_with_cicp(1, 13, 0, true);
         data[132..136].copy_from_slice(b"desc"); // not cicp
-        data[136..140].copy_from_slice(&144u32.to_be_bytes());
-        data[140..144].copy_from_slice(&12u32.to_be_bytes());
         assert!(extract_cicp(&data).is_none());
     }
 
@@ -1102,12 +1126,39 @@ mod tests {
 
     #[test]
     fn extract_cicp_malicious_tag_count() {
-        let mut data = alloc::vec![0u8; 256];
-        data[0..4].copy_from_slice(&256u32.to_be_bytes());
-        data[36..40].copy_from_slice(b"acsp");
+        let mut data = build_icc_with_cicp(1, 13, 0, true);
+        data[132..136].copy_from_slice(b"desc");
         // Absurd tag count — capped to 200
         data[128..132].copy_from_slice(&u32::MAX.to_be_bytes());
         assert!(extract_cicp(&data).is_none());
+    }
+
+    #[test]
+    fn extract_cicp_rejects_v2_link_reserved_truncation_and_bad_range() {
+        // ICC v2.4 header -> rejected per ICC.1 §9.2.17
+        let mut v2 = build_icc_with_cicp(1, 13, 0, true);
+        v2[8..12].copy_from_slice(&[2, 0x40, 0, 0]);
+        assert!(extract_cicp(&v2).is_none());
+
+        // DeviceLink ('link') class -> rejected per ICC.1 §9.2.17
+        let mut link = build_icc_with_cicp(1, 13, 0, true);
+        link[12..16].copy_from_slice(b"link");
+        assert!(extract_cicp(&link).is_none());
+
+        // Non-zero reserved bytes 4..8 -> rejected per ICC.1 §10.4
+        let mut reserved = build_icc_with_cicp(1, 13, 0, true);
+        reserved[148] = 1;
+        assert!(extract_cicp(&reserved).is_none());
+
+        // Declared data_size extends past end of buffer -> rejected
+        let mut truncated = build_icc_with_cicp(1, 13, 0, true);
+        truncated[140..144].copy_from_slice(&500u32.to_be_bytes());
+        assert!(extract_cicp(&truncated).is_none());
+
+        // Invalid full_range byte (> 1) -> rejected per ICC.1 §10.4
+        let mut bad_fr = build_icc_with_cicp(1, 13, 0, true);
+        bad_fr[155] = 2;
+        assert!(extract_cicp(&bad_fr).is_none());
     }
 
     /// Survey profile features across the local ICC cache.
@@ -1186,6 +1237,12 @@ mod tests {
 
         header[16..20].copy_from_slice(b"GRAY");
         assert_eq!(profile_color_space(&header), Some(crate::ColorModel::Gray));
+
+        header[16..20].copy_from_slice(b"Lab ");
+        assert_eq!(profile_color_space(&header), Some(crate::ColorModel::Lab));
+
+        header[16..20].copy_from_slice(b"XYZ ");
+        assert_eq!(profile_color_space(&header), Some(crate::ColorModel::Xyz));
     }
 
     #[test]
@@ -1197,7 +1254,7 @@ mod tests {
     #[test]
     fn profile_color_space_unknown() {
         let mut header = vec![0u8; 128];
-        header[16..20].copy_from_slice(b"Lab ");
+        header[16..20].copy_from_slice(b"5CLR");
         assert_eq!(profile_color_space(&header), None);
     }
 }

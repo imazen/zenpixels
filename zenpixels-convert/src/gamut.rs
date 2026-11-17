@@ -165,6 +165,20 @@ pub(crate) const XYZ_TO_BT2020: GamutMatrix = GamutMatrix([
     [0.0176398574, -0.0427706133, 0.9421031212],
 ]);
 
+/// Adobe RGB (1998) → CIE XYZ (D65). Derived from exact CIE 1931 xy chromaticities.
+pub(crate) const ADOBE_RGB_TO_XYZ: GamutMatrix = GamutMatrix([
+    [0.5766690429, 0.1855582379, 0.1882286462],
+    [0.2973449753, 0.6273635663, 0.0752914585],
+    [0.0270313614, 0.0706888525, 0.9913375368],
+]);
+
+/// CIE XYZ (D65) → Adobe RGB (1998).
+pub(crate) const XYZ_TO_ADOBE_RGB: GamutMatrix = GamutMatrix([
+    [2.0415879038, -0.5650069743, -0.3447313508],
+    [-0.9692436363, 1.8759675015, 0.0415550574],
+    [0.0134442806, -0.1183623922, 1.0151749944],
+]);
+
 /// [`GamutMatrix::between`], except that equal primaries give `None`: the plan
 /// builders use it to decide whether a matrix step exists at all.
 pub(crate) fn conversion_matrix(from: ColorPrimaries, to: ColorPrimaries) -> Option<GamutMatrix> {

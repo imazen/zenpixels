@@ -8,34 +8,33 @@
 
 ## summary
 #
-#   pub modules                                13
-#   pub types (struct/enum/trait/alias)       147
-#   pub consts/statics                        418
+#   pub modules                                12
+#   pub types (struct/enum/trait/alias)       146
+#   pub consts/statics                        639
 #   free functions                              2
-#   inherent methods                          419
-#   struct fields                             118
-#   enum variants                             362
+#   inherent methods                          404
+#   struct fields                             124
+#   enum variants                             430
 #   re-exports                                  1
-#   trait roster entries (type × trait)       512
+#   trait roster entries (type × trait)       514
 #   auto-trait-complete types                  71
-#   auto-trait exceptions                      15
+#   auto-trait exceptions                       8
 #
 # per-module pub lines:
-#   (root)                          566
-#   buffer                          324
-#   cicp                             38
-#   color                            89
-#   descriptor                      168
+#   (root)                          797
+#   buffer                          377
+#   cicp                             48
+#   color                           176
+#   descriptor                      201
 #   hdr                              21
 #   icc                              11
 #   orientation                      11
-#   pixel_types                       9
-#   plane                           168
+#   pixel_types                      49
 #   policy                           22
 #   precision                        20
-#   sample                           33
+#   sample                           25
 
-## items (1300 lines)
+## items (1486 lines)
 
 pub mod zenpixels
 pub use At
@@ -48,6 +47,12 @@ pub buffer::BufferError::InvalidDescriptor(descriptor::DescriptorError)
 pub buffer::BufferError::InvalidDimensions
 pub buffer::BufferError::StrideNotPixelAligned
 pub buffer::BufferError::StrideTooSmall
+pub buffer::InteropTarget::DynamicImage
+pub buffer::InteropTarget::FlatSamples
+pub buffer::InteropTarget::ImageBuffer
+pub buffer::InteropTarget::Imgref
+pub buffer::InteropTarget::Tight
+pub fn buffer::InteropTarget::supports(self, descriptor::PixelDescriptor) -> bool
 pub buffer::PixelCow::Borrowed(buffer::PixelSlice<'a, P>)
 pub buffer::PixelCow::Owned(buffer::PixelBuffer<P>)
 pub fn buffer::PixelCow<'a>::into_owned(self) -> buffer::PixelBuffer
@@ -58,6 +63,7 @@ pub fn buffer::PixelCow<'_, P>::as_slice(&self) -> buffer::PixelSlice<'_, P>
 pub fn buffer::PixelCow<'_, P>::encoding(&self) -> color::PixelEncoding<'_>
 pub const fn buffer::PixelCow<'_, P>::is_borrowed(&self) -> bool [also: (root)]
 pub const fn buffer::PixelCow<'_, P>::is_owned(&self) -> bool [also: (root)]
+pub buffer::PixelStorage::F16(alloc::vec::Vec<pixel_types::F16Sample>)
 pub buffer::PixelStorage::F32(alloc::vec::Vec<f32>)
 pub buffer::PixelStorage::F64(alloc::vec::Vec<f64>)
 pub buffer::PixelStorage::I16(alloc::vec::Vec<i16>)
@@ -68,7 +74,21 @@ pub buffer::PixelStorage::U16(alloc::vec::Vec<u16>)
 pub buffer::PixelStorage::U32(alloc::vec::Vec<u32>)
 pub buffer::PixelStorage::U64(alloc::vec::Vec<u64>)
 pub buffer::PixelStorage::U8(alloc::vec::Vec<u8>)
-pub fn buffer::PixelStorage::try_into_vec<T: buffer::StorageSample>(self) -> core::result::Result<alloc::vec::Vec<T>, Self>
+pub fn PixelStorage::try_into_vec<T: StorageSample>(self) -> core::result::Result<alloc::vec::Vec<T>, Self>
+#[non_exhaustive] pub enum buffer::PlaneError
+pub buffer::PlaneError::AllocationFailed
+pub buffer::PlaneError::GeometryOverflow
+pub buffer::PlaneError::OutsidePlane
+pub buffer::PlaneError::ShortBuffer
+pub buffer::PlaneError::ShortStride
+pub buffer::RowAlign::Cache64
+pub buffer::RowAlign::PixelCache64
+pub buffer::RowAlign::Samples(u16)
+pub buffer::RowAlign::Tight
+pub const fn RowAlign::from_bytes<T: StorageSample>(u16) -> Self [also: (root)]
+pub const fn RowAlign::try_from_bytes(u16, usize) -> core::option::Option<Self> [also: (root)]
+pub struct buffer::AlignedSamples<T>
+pub fn buffer::AlignedSamples<T>::try_zeroed(usize) -> core::result::Result<Self, buffer::PlaneError>
 pub buffer::Bgrx::b: u8
 pub buffer::Bgrx::g: u8
 pub buffer::Bgrx::r: u8
@@ -86,7 +106,10 @@ pub fn buffer::InPlacePixels<'a>::new(&'a mut [u8], u32, u32, usize, descriptor:
 pub fn buffer::InPlacePixels<'a>::try_new(&'a mut [u8], u32, u32, usize, descriptor::PixelDescriptor, core::option::Option<alloc::sync::Arc<color::ColorContext>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::from_vec(alloc::vec::Vec<u8>, u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::new(u32, u32, descriptor::PixelDescriptor) -> Self
+pub fn buffer::PixelBuffer::new_for(u32, u32, descriptor::PixelDescriptor, buffer::InteropTarget) -> Self
 pub fn buffer::PixelBuffer::try_new(u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::try_new_for(u32, u32, descriptor::PixelDescriptor, buffer::InteropTarget) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::try_new_with_align(u32, u32, descriptor::PixelDescriptor, RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::transform_in_place<F>(&mut self, F) where F: for<'a> core::ops::function::FnOnce(buffer::InPlacePixels<'a>) -> buffer::PixelSliceMut<'a>
 pub fn buffer::PixelBuffer<P, S>::as_contiguous_bytes(&self) -> core::option::Option<&[u8]>
 pub fn buffer::PixelBuffer<P, S>::as_slice(&self) -> buffer::PixelSlice<'_, P>
@@ -103,6 +126,8 @@ pub fn buffer::PixelBuffer<P, S>::with_cicp(self, cicp::Cicp) -> Self
 pub fn buffer::PixelBuffer<P, S>::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
 pub fn buffer::PixelBuffer<P, S>::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
 pub fn buffer::PixelBuffer<P, S>::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
+pub fn buffer::PixelBuffer<P, S>::with_parametric(self, color::ParametricColor) -> Self
+pub fn buffer::PixelBuffer<P, S>::with_rendering_intent(self, color::RenderingIntent) -> Self
 pub fn buffer::PixelBuffer<P, S>::crop_copy(&self, u32, u32, u32, u32) -> core::result::Result<buffer::PixelBuffer<P>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P, S>::crop_view(&self, u32, u32, u32, u32) -> buffer::PixelSlice<'_, P>
 pub fn buffer::PixelBuffer<P, S>::erase(self) -> buffer::PixelBuffer<(), S>
@@ -123,14 +148,16 @@ pub fn buffer::PixelBuffer<P, S>::try_rows(&self, u32, u32) -> core::option::Opt
 pub fn buffer::PixelBuffer<P, S>::try_with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P, S>::try_with_descriptor(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P, S>::as_slice_mut(&mut self) -> buffer::PixelSliceMut<'_, P>
+pub fn buffer::PixelBuffer<P, S>::crop_view_mut(&mut self, u32, u32, u32, u32) -> buffer::PixelSliceMut<'_, P>
 pub fn buffer::PixelBuffer<P, S>::rows_mut(&mut self, u32, u32) -> buffer::PixelSliceMut<'_, P>
+pub fn buffer::PixelBuffer<P, S>::try_crop_view_mut(&mut self, u32, u32, u32, u32) -> core::option::Option<buffer::PixelSliceMut<'_, P>>
 pub fn buffer::PixelBuffer<P, S>::try_rows_mut(&mut self, u32, u32) -> core::option::Option<buffer::PixelSliceMut<'_, P>>
 pub fn buffer::PixelBuffer<P>::new_typed(u32, u32) -> Self
 pub fn buffer::PixelBuffer<P>::try_new_typed(u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P>::into_contiguous(self) -> Self
 pub fn buffer::PixelBuffer<P>::try_into_tight_u8_vec(self) -> core::result::Result<alloc::vec::Vec<u8>, Self>
 pub fn buffer::PixelBuffer<(), S>::try_from_parts(buffer::PixelBufferParts<S>) -> core::result::Result<Self, buffer::FromPartsError<S>>
-pub fn buffer::PixelBuffer<(), plane::AlignedSamples<T>>::try_new_aligned(u32, u32, descriptor::PixelDescriptor, plane::RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer<(), buffer::AlignedSamples<T>>::try_new_aligned(u32, u32, descriptor::PixelDescriptor, RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub buffer::PixelBufferParts::color_context: core::option::Option<alloc::sync::Arc<color::ColorContext>>
 pub buffer::PixelBufferParts::data: S
 pub buffer::PixelBufferParts::descriptor: descriptor::PixelDescriptor
@@ -166,7 +193,9 @@ pub fn buffer::PixelSlice<'a, P>::with_descriptor(self, descriptor::PixelDescrip
 pub fn buffer::PixelSlice<'a, P>::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_exact_depth(self, sample::ExactDepth) -> core::result::Result<Self, sample::ExactDepthError>
 pub fn buffer::PixelSlice<'a, P>::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
+pub fn buffer::PixelSlice<'a, P>::with_parametric(self, color::ParametricColor) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
+pub fn buffer::PixelSlice<'a, P>::with_rendering_intent(self, color::RenderingIntent) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_signal_range(self, descriptor::SignalRange) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_transfer(self, descriptor::TransferFunction) -> Self
 pub fn buffer::PixelSlice<'a, P>::get_pixel(&self, u32, u32) -> core::option::Option<color::AnyColor>
@@ -183,6 +212,7 @@ pub fn buffer::PixelSliceMut<'a, P>::as_pixel_slice(&self) -> buffer::PixelSlice
 pub fn buffer::PixelSliceMut<'a, P>::as_strided_bytes(&self) -> &[u8]
 pub fn buffer::PixelSliceMut<'a, P>::as_strided_bytes_mut(&mut self) -> &mut [u8]
 pub fn buffer::PixelSliceMut<'a, P>::color_context(&self) -> core::option::Option<&alloc::sync::Arc<color::ColorContext>>
+pub fn buffer::PixelSliceMut<'a, P>::crop_view_mut(&mut self, u32, u32, u32, u32) -> buffer::PixelSliceMut<'_, P>
 pub fn buffer::PixelSliceMut<'a, P>::descriptor(&self) -> descriptor::PixelDescriptor
 pub fn buffer::PixelSliceMut<'a, P>::encoding(&self) -> color::PixelEncoding<'_>
 pub fn buffer::PixelSliceMut<'a, P>::erase(self) -> buffer::PixelSliceMut<'a>
@@ -200,12 +230,15 @@ pub fn buffer::PixelSliceMut<'a, P>::with_color_context(self, alloc::sync::Arc<c
 pub fn buffer::PixelSliceMut<'a, P>::with_descriptor(self, descriptor::PixelDescriptor) -> Self
 pub fn buffer::PixelSliceMut<'a, P>::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
 pub fn buffer::PixelSliceMut<'a, P>::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
+pub fn buffer::PixelSliceMut<'a, P>::with_parametric(self, color::ParametricColor) -> Self
 pub fn buffer::PixelSliceMut<'a, P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
+pub fn buffer::PixelSliceMut<'a, P>::with_rendering_intent(self, color::RenderingIntent) -> Self
 pub fn buffer::PixelSliceMut<'a, P>::with_signal_range(self, descriptor::SignalRange) -> Self
 pub fn buffer::PixelSliceMut<'a, P>::with_transfer(self, descriptor::TransferFunction) -> Self
 pub fn buffer::PixelSliceMut<'a, buffer::Bgrx>::swap_to_rgbx(self) -> buffer::PixelSliceMut<'a, buffer::Rgbx>
 pub fn buffer::PixelSliceMut<'a, buffer::Rgbx>::swap_to_bgrx(self) -> buffer::PixelSliceMut<'a, buffer::Bgrx>
 pub fn buffer::PixelSliceMut<'a>::new(&'a mut [u8], u32, u32, usize, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSliceMut<'_, P>::try_crop_view_mut(&mut self, u32, u32, u32, u32) -> core::option::Option<buffer::PixelSliceMut<'_, P>>
 pub fn buffer::PixelSliceMut<'_, P>::try_row(&self, u32) -> core::option::Option<&[u8]>
 pub fn buffer::PixelSliceMut<'_, P>::try_row_mut(&mut self, u32) -> core::option::Option<&mut [u8]>
 pub fn buffer::PixelSliceMut<'_, P>::try_sub_rows_mut(&mut self, u32, u32) -> core::option::Option<buffer::PixelSliceMut<'_, P>>
@@ -218,6 +251,16 @@ pub buffer::Rgbx::x: u8
 pub fn buffer::ByteStorage::as_bytes(&self) -> &[u8]
 pub fn buffer::ByteStorageMut::as_bytes_mut(&mut self) -> &mut [u8]
 pub const buffer::Pixel::DESCRIPTOR: descriptor::PixelDescriptor
+pub trait buffer::PlaneSample: buffer::pixel_storage::storage_sample::Sealed + bytemuck::pod::Pod + core::default::Default + core::cmp::PartialEq + core::fmt::Debug + core::marker::Send + core::marker::Sync + 'static
+pub const buffer::PlaneSample::CHANNEL_TYPE: descriptor::ChannelType
+pub trait buffer::SampleStorage
+pub type buffer::SampleStorage::Sample: StorageSample
+pub fn buffer::SampleStorage::samples(&self) -> &[Self::Sample]
+pub type &mut S::Sample = <S as buffer::SampleStorage>::Sample
+pub fn &mut S::samples(&self) -> &[<S as buffer::SampleStorage>::Sample]
+pub trait buffer::SampleStorageMut: buffer::SampleStorage
+pub fn buffer::SampleStorageMut::samples_mut(&mut self) -> &mut [Self::Sample]
+pub fn &mut S::samples_mut(&mut self) -> &mut [<S as buffer::SampleStorage>::Sample]
 pub const buffer::StorageSample::CHANNEL_TYPE: descriptor::ChannelType
 pub mod cicp
 #[non_exhaustive] pub enum cicp::CicpDescriptorError
@@ -230,8 +273,13 @@ pub cicp::Cicp::full_range: bool
 pub cicp::Cicp::matrix_coefficients: u8
 pub cicp::Cicp::transfer_characteristics: u8
 pub const cicp::Cicp::BT2100_HLG: Self
+pub const cicp::Cicp::BT2100_HLG_RGB: Self
 pub const cicp::Cicp::BT2100_PQ: Self
+pub const cicp::Cicp::BT2100_PQ_RGB: Self
+pub const cicp::Cicp::BT709_RGB: Self
 pub const cicp::Cicp::DISPLAY_P3: Self
+pub const cicp::Cicp::DISPLAY_P3_PQ: Self
+pub const cicp::Cicp::LINEAR_SRGB: Self
 pub const cicp::Cicp::SRGB: Self
 pub fn cicp::Cicp::color_primaries_enum(&self) -> descriptor::ColorPrimaries
 pub fn cicp::Cicp::color_primaries_name(u8) -> &'static str
@@ -253,13 +301,16 @@ pub color::ColorAuthority::Icc
 pub fn color::ColorAuthority::select<T>(self, core::option::Option<T>, core::option::Option<T>) -> core::option::Option<T>
 pub color::ColorProfile::Cicp(cicp::Cicp)
 pub color::ColorProfile::Icc(alloc::sync::Arc<[u8]>)
+pub color::ColorProfile::Parametric(color::ParametricColor)
 pub fn color::ColorProfile::as_profile_source(&self) -> color::ColorProfileSource<'_>
 pub const fn color::ColorProfile::cicp(&self) -> core::option::Option<cicp::Cicp> [also: (root)]
 pub fn color::ColorProfile::icc(&self) -> core::option::Option<&[u8]>
 pub const fn color::ColorProfile::icc_arc(&self) -> core::option::Option<&alloc::sync::Arc<[u8]>> [also: (root)]
+pub const fn color::ColorProfile::parametric(&self) -> core::option::Option<color::ParametricColor> [also: (root)]
 pub color::ColorProfileSource::Cicp(cicp::Cicp)
 pub color::ColorProfileSource::Icc(&'a [u8])
 pub color::ColorProfileSource::Named(color::NamedProfile)
+pub color::ColorProfileSource::Parametric(color::ParametricColor)
 pub color::ColorProfileSource::PrimariesTransferPair
 pub color::ColorProfileSource::PrimariesTransferPair::primaries: descriptor::ColorPrimaries
 pub color::ColorProfileSource::PrimariesTransferPair::transfer: descriptor::TransferFunction
@@ -270,6 +321,7 @@ pub color::ColorProvenance::Assumed
 pub color::ColorProvenance::Cicp
 pub color::ColorProvenance::GamaChrm
 pub color::ColorProvenance::Icc
+pub color::ColorProvenance::Parametric
 pub color::NamedProfile::AdobeRgb
 pub color::NamedProfile::Bt2020
 pub color::NamedProfile::Bt2020Hlg
@@ -281,10 +333,60 @@ pub const fn color::NamedProfile::from_cicp(cicp::Cicp) -> core::option::Option<
 pub const fn color::NamedProfile::from_primaries_transfer(descriptor::ColorPrimaries, descriptor::TransferFunction) -> core::option::Option<Self> [also: (root)]
 pub const fn color::NamedProfile::to_cicp(self) -> core::option::Option<cicp::Cicp> [also: (root)]
 pub const fn color::NamedProfile::to_primaries_transfer(self) -> (descriptor::ColorPrimaries, descriptor::TransferFunction) [also: (root)]
+pub color::ParametricPrimaries::Aces2065_1
+pub color::ParametricPrimaries::AcesCg
+pub color::ParametricPrimaries::AdobeRgb
+pub color::ParametricPrimaries::Bt2020
+pub color::ParametricPrimaries::Bt601_525
+pub color::ParametricPrimaries::Bt601_625
+pub color::ParametricPrimaries::Bt709
+pub color::ParametricPrimaries::Custom
+pub color::ParametricPrimaries::Custom::blue: color::CieXy
+pub color::ParametricPrimaries::Custom::green: color::CieXy
+pub color::ParametricPrimaries::Custom::red: color::CieXy
+pub color::ParametricPrimaries::P3
+pub color::ParametricPrimaries::ProPhotoRgb
+pub const fn color::ParametricPrimaries::cie_xy(self) -> (color::CieXy, color::CieXy, color::CieXy) [also: (root)]
+pub color::ParametricTransfer::Bt709
+pub color::ParametricTransfer::Dci
+pub color::ParametricTransfer::Gamma(color::GammaCurve)
+pub color::ParametricTransfer::Hlg
+pub color::ParametricTransfer::IccParametric(color::IccParametricCurve)
+pub color::ParametricTransfer::Linear
+pub color::ParametricTransfer::Pq
+pub color::ParametricTransfer::Srgb
+pub color::ParametricTransfer::Unknown
+pub const fn color::ParametricTransfer::from_transfer_function(descriptor::TransferFunction) -> Self [also: (root)]
+pub const fn color::ParametricTransfer::to_transfer_function(self) -> core::option::Option<descriptor::TransferFunction> [also: (root)]
+pub color::RenderingIntent::AbsoluteColorimetric
+pub color::RenderingIntent::Perceptual
+pub color::RenderingIntent::RelativeColorimetric
+pub color::RenderingIntent::Saturation
+pub const fn color::RenderingIntent::from_icc_code(u8) -> core::option::Option<Self> [also: (root)]
+pub const fn color::RenderingIntent::to_icc_code(self) -> u8 [also: (root)]
+pub color::WhitePoint::C
+pub color::WhitePoint::Custom(color::CieXy)
+pub color::WhitePoint::D50
+pub color::WhitePoint::D60
+pub color::WhitePoint::D65
+pub color::WhitePoint::Dci
+pub color::WhitePoint::E
+pub const fn color::WhitePoint::cie_xy(self) -> color::CieXy [also: (root)]
 pub fn color::AnyColor::as_bytes(&self) -> &[u8]
 pub fn color::AnyColor::as_color(&self) -> core::option::Option<color::Color>
 pub fn color::AnyColor::descriptor(&self) -> descriptor::PixelDescriptor
 pub fn color::AnyColor::try_new(descriptor::PixelDescriptor, &[u8]) -> core::result::Result<Self, buffer::BufferError>
+pub const color::CieXy::C: Self
+pub const color::CieXy::D50: Self
+pub const color::CieXy::D60: Self
+pub const color::CieXy::D65: Self
+pub const color::CieXy::DCI: Self
+pub const color::CieXy::E: Self
+pub const fn color::CieXy::new(f32, f32) -> Self [also: (root)]
+pub const fn color::CieXy::to_tuple(self) -> (f32, f32) [also: (root)]
+pub const fn color::CieXy::try_new(f32, f32) -> core::option::Option<Self> [also: (root)]
+pub const fn color::CieXy::x(self) -> f32 [also: (root)]
+pub const fn color::CieXy::y(self) -> f32 [also: (root)]
 pub const color::Color::TRANSPARENT: Self
 pub fn color::Color::as_bytes(&self) -> &[u8]
 pub const fn color::Color::descriptor(&self) -> descriptor::PixelDescriptor [also: (root)]
@@ -296,6 +398,7 @@ pub const fn color::ColorContext::cicp(&self) -> core::option::Option<cicp::Cicp
 pub const fn color::ColorContext::diffuse_white(&self) -> core::option::Option<hdr::DiffuseWhite> [also: (root)]
 pub const fn color::ColorContext::from_cicp(cicp::Cicp) -> Self [also: (root)]
 pub fn color::ColorContext::from_icc(impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
+pub const fn color::ColorContext::from_parametric(color::ParametricColor) -> Self [also: (root)]
 pub const fn color::ColorContext::from_profile(color::ColorProfile) -> Self [also: (root)]
 pub const fn color::ColorContext::hdr_peak(&self) -> core::option::Option<hdr::Nits> [also: (root)]
 pub fn color::ColorContext::icc(&self) -> core::option::Option<&[u8]>
@@ -303,23 +406,72 @@ pub const fn color::ColorContext::icc_arc(&self) -> core::option::Option<&alloc:
 pub const fn color::ColorContext::is_empty(&self) -> bool [also: (root)]
 pub fn color::ColorContext::is_srgb(&self) -> bool
 pub const fn color::ColorContext::new() -> Self [also: (root)]
+pub const fn color::ColorContext::parametric(&self) -> core::option::Option<color::ParametricColor> [also: (root)]
 pub const fn color::ColorContext::profile(&self) -> core::option::Option<&color::ColorProfile> [also: (root)]
+pub const fn color::ColorContext::rendering_intent(&self) -> core::option::Option<color::RenderingIntent> [also: (root)]
 pub fn color::ColorContext::transfer_function(&self) -> descriptor::TransferFunction
 pub fn color::ColorContext::with_cicp(self, cicp::Cicp) -> Self
 pub const fn color::ColorContext::with_diffuse_white(self, hdr::DiffuseWhite) -> Self [also: (root)]
 pub const fn color::ColorContext::with_hdr_peak(self, hdr::Nits) -> Self [also: (root)]
 pub fn color::ColorContext::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
+pub fn color::ColorContext::with_parametric(self, color::ParametricColor) -> Self
 pub fn color::ColorContext::with_profile(self, core::option::Option<color::ColorProfile>) -> Self
+pub const fn color::ColorContext::with_rendering_intent(self, color::RenderingIntent) -> Self [also: (root)]
 pub color::ColorOrigin::cicp: core::option::Option<cicp::Cicp>
 pub color::ColorOrigin::color_authority: color::ColorAuthority
 pub color::ColorOrigin::icc: core::option::Option<alloc::sync::Arc<[u8]>>
+pub color::ColorOrigin::parametric: core::option::Option<color::ParametricColor>
 pub color::ColorOrigin::provenance: color::ColorProvenance
 pub fn color::ColorOrigin::assumed() -> Self
 pub fn color::ColorOrigin::from_cicp(cicp::Cicp) -> Self
 pub fn color::ColorOrigin::from_gama_chrm() -> Self
+pub const fn color::ColorOrigin::from_gama_chrm_parametric(color::ParametricColor) -> Self [also: (root)]
 pub fn color::ColorOrigin::from_icc(impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
 pub fn color::ColorOrigin::from_icc_and_cicp(impl core::convert::Into<alloc::sync::Arc<[u8]>>, cicp::Cicp) -> Self
+pub const fn color::ColorOrigin::from_parametric(color::ParametricColor) -> Self [also: (root)]
 pub fn color::ColorOrigin::with_color_authority(self, color::ColorAuthority) -> Self
+pub const color::GammaCurve::ADOBE_RGB: Self
+pub const color::GammaCurve::DCI: Self
+pub const color::GammaCurve::GAMMA_22: Self
+pub const fn color::GammaCurve::encoding_exponent(self) -> f32 [also: (root)]
+pub const fn color::GammaCurve::eotf_exponent(self) -> f32 [also: (root)]
+pub const fn color::GammaCurve::from_encoding_exponent(f32) -> Self [also: (root)]
+pub const fn color::GammaCurve::from_eotf_exponent(f32) -> Self [also: (root)]
+pub const fn color::GammaCurve::try_from_encoding_exponent(f32) -> core::option::Option<Self> [also: (root)]
+pub const fn color::GammaCurve::try_from_eotf_exponent(f32) -> core::option::Option<Self> [also: (root)]
+pub const color::IccParametricCurve::BT709: Self
+pub const color::IccParametricCurve::PROPHOTO_RGB: Self
+pub const color::IccParametricCurve::SRGB: Self
+pub const fn color::IccParametricCurve::all_params(self) -> [f32; 7] [also: (root)]
+pub const fn color::IccParametricCurve::function_type(self) -> u8 [also: (root)]
+pub fn color::IccParametricCurve::icc_params(&self) -> &[f32]
+pub const fn color::IccParametricCurve::param_count(u16) -> core::option::Option<usize> [also: (root)]
+pub const fn color::IccParametricCurve::try_from_icc_para(u16, &[f32]) -> core::option::Option<Self> [also: (root)]
+pub const fn color::IccParametricCurve::try_type0_gamma(f32) -> core::option::Option<Self> [also: (root)]
+pub const fn color::IccParametricCurve::try_type1_cie122(f32, f32, f32) -> core::option::Option<Self> [also: (root)]
+pub const fn color::IccParametricCurve::try_type2_iec61966_3(f32, f32, f32, f32) -> core::option::Option<Self> [also: (root)]
+pub const fn color::IccParametricCurve::try_type3_iec61966_2_1(f32, f32, f32, f32, f32) -> core::option::Option<Self> [also: (root)]
+pub const fn color::IccParametricCurve::try_type4(f32, f32, f32, f32, f32, f32, f32) -> core::option::Option<Self> [also: (root)]
+pub const fn color::IccParametricCurve::type0_gamma(f32) -> Self [also: (root)]
+pub const fn color::IccParametricCurve::type1_cie122(f32, f32, f32) -> Self [also: (root)]
+pub const fn color::IccParametricCurve::type2_iec61966_3(f32, f32, f32, f32) -> Self [also: (root)]
+pub const fn color::IccParametricCurve::type3_iec61966_2_1(f32, f32, f32, f32, f32) -> Self [also: (root)]
+pub const fn color::IccParametricCurve::type4(f32, f32, f32, f32, f32, f32, f32) -> Self [also: (root)]
+pub color::ParametricColor::primaries: core::option::Option<color::ParametricPrimaries>
+pub color::ParametricColor::rendering_intent: color::RenderingIntent
+pub color::ParametricColor::transfer: color::ParametricTransfer
+pub color::ParametricColor::white_point: color::WhitePoint
+pub const color::ParametricColor::ACES_2065_1: Self
+pub const color::ParametricColor::ACES_CG: Self
+pub const color::ParametricColor::ADOBE_RGB: Self
+pub const color::ParametricColor::DCI_P3: Self
+pub const color::ParametricColor::PROPHOTO_RGB: Self
+pub const fn color::ParametricColor::from_cicp(cicp::Cicp) -> core::option::Option<Self> [also: (root)]
+pub const fn color::ParametricColor::gray(color::WhitePoint, color::ParametricTransfer) -> Self [also: (root)]
+pub const fn color::ParametricColor::rgb(color::ParametricPrimaries, color::WhitePoint, color::ParametricTransfer) -> Self [also: (root)]
+pub const fn color::ParametricColor::to_cicp(&self) -> core::option::Option<cicp::Cicp> [also: (root)]
+pub const fn color::ParametricColor::to_primaries_transfer(&self) -> core::option::Option<(descriptor::ColorPrimaries, descriptor::TransferFunction)> [also: (root)]
+pub const fn color::ParametricColor::with_rendering_intent(self, color::RenderingIntent) -> Self [also: (root)]
 pub const fn color::PixelEncoding<'a>::cicp(self) -> core::option::Option<cicp::Cicp> [also: (root)]
 pub const fn color::PixelEncoding<'a>::color_context(self) -> core::option::Option<&'a color::ColorContext> [also: (root)]
 pub fn color::PixelEncoding<'a>::color_profile_source(self) -> color::ColorProfileSource<'a>
@@ -329,6 +481,8 @@ pub const fn color::PixelEncoding<'a>::from_descriptor(descriptor::PixelDescript
 pub const fn color::PixelEncoding<'a>::hdr_peak(self) -> core::option::Option<hdr::Nits> [also: (root)]
 pub fn color::PixelEncoding<'a>::icc(self) -> core::option::Option<&'a [u8]>
 pub const fn color::PixelEncoding<'a>::new(descriptor::PixelDescriptor, core::option::Option<&'a color::ColorContext>) -> Self [also: (root)]
+pub const fn color::PixelEncoding<'a>::parametric(self) -> core::option::Option<color::ParametricColor> [also: (root)]
+pub const fn color::PixelEncoding<'a>::rendering_intent(self) -> core::option::Option<color::RenderingIntent> [also: (root)]
 pub mod descriptor
 pub descriptor::AlphaMode::Opaque
 pub descriptor::AlphaMode::Premultiplied
@@ -338,14 +492,35 @@ pub const fn descriptor::AlphaMode::has_alpha(self) -> bool [also: (root)]
 pub descriptor::ChannelLayout::Bgr
 pub descriptor::ChannelLayout::Bgra
 pub descriptor::ChannelLayout::Cmyk
+pub descriptor::ChannelLayout::CmykAlpha
+pub descriptor::ChannelLayout::CmykInverted
+pub descriptor::ChannelLayout::CmykInvertedAlpha
 pub descriptor::ChannelLayout::Gray
 pub descriptor::ChannelLayout::GrayAlpha
+pub descriptor::ChannelLayout::Hsl
+pub descriptor::ChannelLayout::HslAlpha
+pub descriptor::ChannelLayout::Hsv
+pub descriptor::ChannelLayout::HsvAlpha
+pub descriptor::ChannelLayout::Jzazbz
+pub descriptor::ChannelLayout::JzazbzAlpha
+pub descriptor::ChannelLayout::Jzczhz
+pub descriptor::ChannelLayout::JzczhzAlpha
+pub descriptor::ChannelLayout::Lab
+pub descriptor::ChannelLayout::LabAlpha
+pub descriptor::ChannelLayout::Lch
+pub descriptor::ChannelLayout::LchAlpha
 pub descriptor::ChannelLayout::Oklab
 pub descriptor::ChannelLayout::OklabA
+pub descriptor::ChannelLayout::Oklch
+pub descriptor::ChannelLayout::OklchAlpha
 pub descriptor::ChannelLayout::Rgb
 pub descriptor::ChannelLayout::Rgba
+pub descriptor::ChannelLayout::Xyz
+pub descriptor::ChannelLayout::XyzAlpha
 pub const fn descriptor::ChannelLayout::channels(self) -> usize [also: (root)]
 pub const fn descriptor::ChannelLayout::has_alpha(self) -> bool [also: (root)]
+pub const fn descriptor::ChannelLayout::is_inverted_cmyk(self) -> bool [also: (root)]
+pub const fn descriptor::ChannelLayout::is_polar(self) -> bool [also: (root)]
 pub descriptor::ChannelType::F16
 pub descriptor::ChannelType::F32
 pub descriptor::ChannelType::F64
@@ -366,10 +541,19 @@ pub const fn descriptor::ChannelType::is_u16(self) -> bool [also: (root)]
 pub const fn descriptor::ChannelType::is_u8(self) -> bool [also: (root)]
 pub descriptor::ColorModel::Cmyk
 pub descriptor::ColorModel::Gray
+pub descriptor::ColorModel::Hsl
+pub descriptor::ColorModel::Hsv
+pub descriptor::ColorModel::Jzazbz
+pub descriptor::ColorModel::Jzczhz
+pub descriptor::ColorModel::Lab
+pub descriptor::ColorModel::Lch
 pub descriptor::ColorModel::Oklab
+pub descriptor::ColorModel::Oklch
 pub descriptor::ColorModel::Rgb
+pub descriptor::ColorModel::Xyz
 pub descriptor::ColorModel::YCbCr
 pub const fn descriptor::ColorModel::color_channels(self) -> u8 [also: (root)]
+pub const fn descriptor::ColorModel::is_polar(self) -> bool [also: (root)]
 pub fn descriptor::ColorModel::from_icc(&[u8]) -> core::option::Option<Self>
 pub descriptor::ColorPrimaries::AdobeRgb
 pub descriptor::ColorPrimaries::Bt2020
@@ -386,10 +570,6 @@ pub const fn descriptor::ColorPrimaries::white_point(self) -> core::option::Opti
 pub descriptor::PixelFormat::Bgr8
 pub descriptor::PixelFormat::Bgra8
 pub descriptor::PixelFormat::Bgrx8
-pub descriptor::PixelFormat::Cmyk16
-pub descriptor::PixelFormat::Cmyk8
-pub descriptor::PixelFormat::CmykF32
-pub descriptor::PixelFormat::CmykF32Inverted
 pub descriptor::PixelFormat::Generic(descriptor::GenericFormat)
 pub descriptor::PixelFormat::Gray16
 pub descriptor::PixelFormat::Gray8
@@ -410,15 +590,26 @@ pub descriptor::PixelFormat::Rgba8
 pub descriptor::PixelFormat::RgbaF16
 pub descriptor::PixelFormat::RgbaF32
 pub descriptor::PixelFormat::Rgbx8
+pub const descriptor::PixelFormat::CMYK16: Self
+pub const descriptor::PixelFormat::CMYK16_INVERTED: Self
+pub const descriptor::PixelFormat::CMYK8: Self
+pub const descriptor::PixelFormat::CMYK8_INVERTED: Self
+pub const descriptor::PixelFormat::CMYKF32: Self
+pub const descriptor::PixelFormat::CMYKF32_INVERTED: Self
 pub const fn descriptor::PixelFormat::bytes_per_pixel(self) -> usize [also: (root)]
 pub const fn descriptor::PixelFormat::channel_type(self) -> descriptor::ChannelType [also: (root)]
 pub const fn descriptor::PixelFormat::channels(self) -> usize [also: (root)]
+pub const fn descriptor::PixelFormat::cmyk(descriptor::ChannelType) -> Self [also: (root)]
+pub const fn descriptor::PixelFormat::cmyk_inverted(descriptor::ChannelType) -> Self [also: (root)]
+pub const fn descriptor::PixelFormat::cmyka(descriptor::ChannelType) -> Self [also: (root)]
+pub const fn descriptor::PixelFormat::cmyka_inverted(descriptor::ChannelType) -> Self [also: (root)]
 pub const fn descriptor::PixelFormat::color_model(self) -> descriptor::ColorModel [also: (root)]
 pub const fn descriptor::PixelFormat::default_alpha(self) -> core::option::Option<descriptor::AlphaMode> [also: (root)]
 pub const fn descriptor::PixelFormat::descriptor(self) -> descriptor::PixelDescriptor [also: (root)]
 pub const fn descriptor::PixelFormat::from_parts(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>) -> core::option::Option<Self> [also: (root)]
 pub const fn descriptor::PixelFormat::has_alpha_bytes(self) -> bool [also: (root)]
 pub const fn descriptor::PixelFormat::is_grayscale(self) -> bool [also: (root)]
+pub const fn descriptor::PixelFormat::is_inverted_cmyk(self) -> bool [also: (root)]
 pub const fn descriptor::PixelFormat::layout(self) -> descriptor::ChannelLayout [also: (root)]
 pub const fn descriptor::PixelFormat::name(self) -> &'static str [also: (root)]
 pub descriptor::SignalRange::Full
@@ -434,19 +625,17 @@ pub const fn descriptor::TransferFunction::from_cicp(u8) -> core::option::Option
 pub fn descriptor::TransferFunction::reference_white_nits(&self) -> f32
 pub const fn descriptor::TransferFunction::to_cicp(self) -> core::option::Option<u8> [also: (root)]
 pub struct descriptor::DescriptorError
-pub struct descriptor::GenericFormat
+pub const fn descriptor::GenericFormat::channel_type(self) -> descriptor::ChannelType [also: (root)]
+pub const fn descriptor::GenericFormat::layout(self) -> descriptor::ChannelLayout [also: (root)]
 pub descriptor::PixelDescriptor::alpha: core::option::Option<descriptor::AlphaMode>
 pub descriptor::PixelDescriptor::format: descriptor::PixelFormat
 pub descriptor::PixelDescriptor::primaries: descriptor::ColorPrimaries
 pub descriptor::PixelDescriptor::signal_range: descriptor::SignalRange
 pub descriptor::PixelDescriptor::transfer: descriptor::TransferFunction
-pub const descriptor::PixelDescriptor::BGR8: Self
-pub const descriptor::PixelDescriptor::BGRA8: Self
 pub const descriptor::PixelDescriptor::BGRA8_SRGB: Self
-pub const descriptor::PixelDescriptor::BGRX8: Self
 pub const descriptor::PixelDescriptor::BGRX8_SRGB: Self
-pub const descriptor::PixelDescriptor::CMYK16: Self
 pub const descriptor::PixelDescriptor::CMYK8: Self
+pub const descriptor::PixelDescriptor::CMYK8_INVERTED: Self
 pub const descriptor::PixelDescriptor::GRAY16: Self
 pub const descriptor::PixelDescriptor::GRAY16_SRGB: Self
 pub const descriptor::PixelDescriptor::GRAY8: Self
@@ -471,8 +660,10 @@ pub const descriptor::PixelDescriptor::RGBA16: Self
 pub const descriptor::PixelDescriptor::RGBA16_SRGB: Self
 pub const descriptor::PixelDescriptor::RGBA8: Self
 pub const descriptor::PixelDescriptor::RGBA8_SRGB: Self
+pub const descriptor::PixelDescriptor::RGBAF16_LINEAR: Self
 pub const descriptor::PixelDescriptor::RGBAF32: Self
 pub const descriptor::PixelDescriptor::RGBAF32_LINEAR: Self
+pub const descriptor::PixelDescriptor::RGBF16_LINEAR: Self
 pub const descriptor::PixelDescriptor::RGBF32: Self
 pub const descriptor::PixelDescriptor::RGBF32_LINEAR: Self
 pub const descriptor::PixelDescriptor::RGBX8: Self
@@ -483,6 +674,10 @@ pub const fn descriptor::PixelDescriptor::bytes_per_channel(self) -> usize [also
 pub const fn descriptor::PixelDescriptor::bytes_per_pixel(self) -> usize [also: (root)]
 pub const fn descriptor::PixelDescriptor::channel_type(&self) -> descriptor::ChannelType [also: (root)]
 pub const fn descriptor::PixelDescriptor::channels(self) -> usize [also: (root)]
+pub const fn descriptor::PixelDescriptor::cmyk(descriptor::ChannelType) -> Self [also: (root)]
+pub const fn descriptor::PixelDescriptor::cmyk_inverted(descriptor::ChannelType) -> Self [also: (root)]
+pub const fn descriptor::PixelDescriptor::cmyka(descriptor::ChannelType, descriptor::AlphaMode) -> Self [also: (root)]
+pub const fn descriptor::PixelDescriptor::cmyka_inverted(descriptor::ChannelType, descriptor::AlphaMode) -> Self [also: (root)]
 pub const fn descriptor::PixelDescriptor::color_model(&self) -> descriptor::ColorModel [also: (root)]
 pub const fn descriptor::PixelDescriptor::color_profile_source(&self) -> color::ColorProfileSource<'static> [also: (root)]
 pub const fn descriptor::PixelDescriptor::encoding(self) -> color::PixelEncoding<'static> [also: (root)]
@@ -502,7 +697,7 @@ pub const fn descriptor::PixelDescriptor::new_full(descriptor::ChannelType, desc
 pub const fn descriptor::PixelDescriptor::pixel_format(&self) -> descriptor::PixelFormat [also: (root)]
 pub const fn descriptor::PixelDescriptor::simd_aligned_stride(self, u32, usize) -> usize [also: (root)]
 pub const fn descriptor::PixelDescriptor::transfer(&self) -> descriptor::TransferFunction [also: (root)]
-pub const fn descriptor::PixelDescriptor::try_aligned_stride(self, u32, plane::RowAlign) -> core::option::Option<usize> [also: (root)]
+pub const fn descriptor::PixelDescriptor::try_aligned_stride(self, u32, RowAlign) -> core::option::Option<usize> [also: (root)]
 pub const fn descriptor::PixelDescriptor::try_new(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>, descriptor::TransferFunction) -> core::result::Result<Self, descriptor::DescriptorError> [also: (root)]
 pub const fn descriptor::PixelDescriptor::try_new_full(descriptor::ChannelType, descriptor::ChannelLayout, core::option::Option<descriptor::AlphaMode>, descriptor::TransferFunction, descriptor::ColorPrimaries) -> core::result::Result<Self, descriptor::DescriptorError> [also: (root)]
 pub fn descriptor::PixelDescriptor::validate(self) -> core::result::Result<(), buffer::BufferError>
@@ -582,200 +777,53 @@ pub const fn orientation::Orientation::swaps_axes(self) -> bool [also: (root)]
 pub const fn orientation::Orientation::then(self, Self) -> Self [also: (root)]
 pub const fn orientation::Orientation::to_exif(self) -> u8 [also: (root)]
 pub mod pixel_types
+pub const pixel_types::F16Sample::EPSILON: Self
+pub const pixel_types::F16Sample::INFINITY: Self
+pub const pixel_types::F16Sample::MAX: Self
+pub const pixel_types::F16Sample::MIN: Self
+pub const pixel_types::F16Sample::MIN_POSITIVE: Self
+pub const pixel_types::F16Sample::NAN: Self
+pub const pixel_types::F16Sample::NEG_INFINITY: Self
+pub const pixel_types::F16Sample::NEG_ONE: Self
+pub const pixel_types::F16Sample::NEG_ZERO: Self
+pub const pixel_types::F16Sample::ONE: Self
+pub const pixel_types::F16Sample::ZERO: Self
+pub fn pixel_types::F16Sample::as_bits_slice(&[Self]) -> &[u16]
+pub fn pixel_types::F16Sample::as_bits_slice_mut(&mut [Self]) -> &mut [u16]
+pub const fn pixel_types::F16Sample::from_be_bytes([u8; 2]) -> Self [also: (root)]
+pub const fn pixel_types::F16Sample::from_bits(u16) -> Self [also: (root)]
+pub fn pixel_types::F16Sample::from_bits_slice(&[u16]) -> &[Self]
+pub fn pixel_types::F16Sample::from_bits_slice_mut(&mut [u16]) -> &mut [Self]
+pub const fn pixel_types::F16Sample::from_f32(f32) -> Self [also: (root)]
+pub const fn pixel_types::F16Sample::from_le_bytes([u8; 2]) -> Self [also: (root)]
+pub const fn pixel_types::F16Sample::from_ne_bytes([u8; 2]) -> Self [also: (root)]
+pub const fn pixel_types::F16Sample::is_finite(self) -> bool [also: (root)]
+pub const fn pixel_types::F16Sample::is_infinite(self) -> bool [also: (root)]
+pub const fn pixel_types::F16Sample::is_nan(self) -> bool [also: (root)]
+pub const fn pixel_types::F16Sample::is_normal(self) -> bool [also: (root)]
+pub const fn pixel_types::F16Sample::is_sign_negative(self) -> bool [also: (root)]
+pub const fn pixel_types::F16Sample::is_sign_positive(self) -> bool [also: (root)]
+pub const fn pixel_types::F16Sample::is_subnormal(self) -> bool [also: (root)]
+pub const fn pixel_types::F16Sample::to_be_bytes(self) -> [u8; 2] [also: (root)]
+pub const fn pixel_types::F16Sample::to_bits(self) -> u16 [also: (root)]
+pub const fn pixel_types::F16Sample::to_f32(self) -> f32 [also: (root)]
+pub const fn pixel_types::F16Sample::to_le_bytes(self) -> [u8; 2] [also: (root)]
+pub const fn pixel_types::F16Sample::to_ne_bytes(self) -> [u8; 2] [also: (root)]
+pub fn pixel_types::F16Sample::total_cmp(&self, &Self) -> core::cmp::Ordering
+pub fn pixel_types::F16Sample::vec_from_bits(alloc::vec::Vec<u16>) -> alloc::vec::Vec<Self>
+pub fn pixel_types::F16Sample::vec_into_bits(alloc::vec::Vec<Self>) -> alloc::vec::Vec<u16>
 pub pixel_types::GrayAlpha16::a: u16
 pub pixel_types::GrayAlpha16::v: u16
 pub const fn pixel_types::GrayAlpha16::new(u16, u16) -> Self [also: (root)]
 pub pixel_types::GrayAlpha8::a: u8
 pub pixel_types::GrayAlpha8::v: u8
 pub const fn pixel_types::GrayAlpha8::new(u8, u8) -> Self [also: (root)]
+pub pixel_types::GrayAlphaF16::a: pixel_types::F16Sample
+pub pixel_types::GrayAlphaF16::v: pixel_types::F16Sample
+pub const fn pixel_types::GrayAlphaF16::new(pixel_types::F16Sample, pixel_types::F16Sample) -> Self [also: (root)]
 pub pixel_types::GrayAlphaF32::a: f32
 pub pixel_types::GrayAlphaF32::v: f32
 pub const fn pixel_types::GrayAlphaF32::new(f32, f32) -> Self [also: (root)]
-pub mod plane
-#[non_exhaustive] pub enum plane::AnyPlane<'a>
-pub plane::AnyPlane::F32(plane::PlaneRef<'a, f32>)
-pub plane::AnyPlane::F64(plane::PlaneRef<'a, f64>)
-pub plane::AnyPlane::I16(plane::PlaneRef<'a, i16>)
-pub plane::AnyPlane::I32(plane::PlaneRef<'a, i32>)
-pub plane::AnyPlane::I64(plane::PlaneRef<'a, i64>)
-pub plane::AnyPlane::I8(plane::PlaneRef<'a, i8>)
-pub plane::AnyPlane::U16(plane::PlaneRef<'a, u16>)
-pub plane::AnyPlane::U32(plane::PlaneRef<'a, u32>)
-pub plane::AnyPlane::U64(plane::PlaneRef<'a, u64>)
-pub plane::AnyPlane::U8(plane::PlaneRef<'a, u8>)
-pub fn plane::AnyPlane<'_>::as_strided_bytes(&self) -> &[u8]
-pub fn plane::AnyPlane<'_>::channel_type(&self) -> descriptor::ChannelType
-pub fn plane::AnyPlane<'_>::height(&self) -> usize
-pub fn plane::AnyPlane<'_>::stride_bytes(&self) -> core::result::Result<usize, plane::PlaneError>
-pub fn plane::AnyPlane<'_>::width(&self) -> usize
-#[non_exhaustive] pub enum plane::AnyPlaneBuf
-pub plane::AnyPlaneBuf::F32(plane::PlaneBuf<f32>)
-pub plane::AnyPlaneBuf::F64(plane::PlaneBuf<f64>)
-pub plane::AnyPlaneBuf::I16(plane::PlaneBuf<i16>)
-pub plane::AnyPlaneBuf::I32(plane::PlaneBuf<i32>)
-pub plane::AnyPlaneBuf::I64(plane::PlaneBuf<i64>)
-pub plane::AnyPlaneBuf::I8(plane::PlaneBuf<i8>)
-pub plane::AnyPlaneBuf::U16(plane::PlaneBuf<u16>)
-pub plane::AnyPlaneBuf::U32(plane::PlaneBuf<u32>)
-pub plane::AnyPlaneBuf::U64(plane::PlaneBuf<u64>)
-pub plane::AnyPlaneBuf::U8(plane::PlaneBuf<u8>)
-pub fn plane::AnyPlaneBuf::as_mut(&mut self) -> plane::AnyPlaneMut<'_>
-pub fn plane::AnyPlaneBuf::as_ref(&self) -> plane::AnyPlane<'_>
-#[non_exhaustive] pub enum plane::AnyPlaneMut<'a>
-pub plane::AnyPlaneMut::F32(plane::PlaneMut<'a, f32>)
-pub plane::AnyPlaneMut::F64(plane::PlaneMut<'a, f64>)
-pub plane::AnyPlaneMut::I16(plane::PlaneMut<'a, i16>)
-pub plane::AnyPlaneMut::I32(plane::PlaneMut<'a, i32>)
-pub plane::AnyPlaneMut::I64(plane::PlaneMut<'a, i64>)
-pub plane::AnyPlaneMut::I8(plane::PlaneMut<'a, i8>)
-pub plane::AnyPlaneMut::U16(plane::PlaneMut<'a, u16>)
-pub plane::AnyPlaneMut::U32(plane::PlaneMut<'a, u32>)
-pub plane::AnyPlaneMut::U64(plane::PlaneMut<'a, u64>)
-pub plane::AnyPlaneMut::U8(plane::PlaneMut<'a, u8>)
-pub fn plane::AnyPlaneMut<'_>::as_mut(&mut self) -> plane::AnyPlaneMut<'_>
-pub fn plane::AnyPlaneMut<'_>::as_ref(&self) -> plane::AnyPlane<'_>
-#[non_exhaustive] pub enum plane::FloatEncodingError
-pub plane::FloatEncodingError::NotFinite
-pub plane::FloatEncodingError::ZeroScale
-#[non_exhaustive] pub enum plane::LayoutError
-pub plane::LayoutError::AlphaInterpretation
-pub plane::LayoutError::Dimensions
-pub plane::LayoutError::Dimensions::actual: (usize, usize)
-pub plane::LayoutError::Dimensions::expected: (usize, usize)
-pub plane::LayoutError::Dimensions::index: usize
-pub plane::LayoutError::DuplicateRole(plane::PlaneRole)
-pub plane::LayoutError::Empty
-pub plane::LayoutError::MissingRole(plane::PlaneRole)
-pub plane::LayoutError::MixedFamilies
-pub plane::LayoutError::PlaneCount
-pub plane::LayoutError::PlaneCount::actual: usize
-pub plane::LayoutError::PlaneCount::expected: usize
-pub plane::LayoutError::PlaneIndex
-pub plane::LayoutError::PlaneIndex::count: usize
-pub plane::LayoutError::PlaneIndex::index: usize
-pub plane::LayoutError::SampleType
-pub plane::LayoutError::SampleType::index: usize
-pub plane::LayoutError::Subsampling
-#[non_exhaustive] pub enum plane::PlaneEncoding
-pub plane::PlaneEncoding::Code(sample::SampleEncoding)
-pub plane::PlaneEncoding::Float(plane::FloatEncoding)
-pub plane::PlaneEncoding::Float64(plane::FloatEncoding)
-pub const fn plane::PlaneEncoding::channel_type(self) -> descriptor::ChannelType
-#[non_exhaustive] pub enum plane::PlaneError
-pub plane::PlaneError::AllocationFailed
-pub plane::PlaneError::GeometryOverflow
-pub plane::PlaneError::OutsidePlane
-pub plane::PlaneError::ShortBuffer
-pub plane::PlaneError::ShortStride
-#[non_exhaustive] pub enum plane::PlaneRole
-pub plane::PlaneRole::Alpha
-pub plane::PlaneRole::Blue
-pub plane::PlaneRole::Cb
-pub plane::PlaneRole::CbCr
-pub plane::PlaneRole::Cr
-pub plane::PlaneRole::CrCb
-pub plane::PlaneRole::Green
-pub plane::PlaneRole::Luma
-pub plane::PlaneRole::Red
-pub const fn plane::PlaneRole::components(self) -> usize
-pub plane::RowAlign::Cache64
-pub plane::RowAlign::PixelCache64
-pub plane::RowAlign::Samples(u16)
-pub plane::RowAlign::Tight
-pub const fn plane::RowAlign::from_bytes<T: buffer::StorageSample>(u16) -> Self [also: (root)]
-pub const fn plane::RowAlign::try_from_bytes(u16, usize) -> core::option::Option<Self> [also: (root)]
-pub struct plane::AlignedSamples<T>
-pub fn plane::AlignedSamples<T>::try_zeroed(usize) -> core::result::Result<Self, plane::PlaneError>
-pub struct plane::FloatEncoding
-pub const plane::FloatEncoding::NOMINAL: Self
-pub fn plane::FloatEncoding::new(f32, f32) -> core::result::Result<Self, plane::FloatEncodingError>
-pub const fn plane::FloatEncoding::offset(self) -> f32
-pub const fn plane::FloatEncoding::scale(self) -> f32
-pub struct plane::PlanarBuffer<P>
-pub fn plane::PlanarBuffer<P>::as_slice(&self) -> plane::PlanarSlice<'_>
-pub fn plane::PlanarBuffer<P>::as_slice_mut(&mut self) -> plane::PlanarSliceMut<'_, P> where P: plane::PlaneStorageMut
-pub fn plane::PlanarBuffer<P>::into_parts(self) -> plane::PlanarBufferParts<P>
-pub fn plane::PlanarBuffer<P>::into_planes(self) -> alloc::vec::Vec<P>
-pub fn plane::PlanarBuffer<P>::new(alloc::vec::Vec<P>, plane::PlanarLayout, u32, u32, color::ColorContext, core::option::Option<descriptor::AlphaMode>) -> core::result::Result<Self, plane::LayoutError>
-pub fn plane::PlanarBuffer<P>::try_from_parts(plane::PlanarBufferParts<P>) -> core::result::Result<Self, plane::PlanarFromPartsError<P>>
-#[non_exhaustive] pub struct plane::PlanarBufferParts<P>
-pub plane::PlanarBufferParts::alpha: core::option::Option<descriptor::AlphaMode>
-pub plane::PlanarBufferParts::color: color::ColorContext
-pub plane::PlanarBufferParts::height: u32
-pub plane::PlanarBufferParts::layout: plane::PlanarLayout
-pub plane::PlanarBufferParts::planes: alloc::vec::Vec<P>
-pub plane::PlanarBufferParts::width: u32
-pub fn plane::PlanarBufferParts<P>::new(alloc::vec::Vec<P>, plane::PlanarLayout, u32, u32, color::ColorContext, core::option::Option<descriptor::AlphaMode>) -> Self
-pub struct plane::PlanarFromPartsError<P>
-pub fn plane::PlanarFromPartsError<P>::error(&self) -> &plane::LayoutError
-pub fn plane::PlanarFromPartsError<P>::take_parts(&mut self) -> core::option::Option<plane::PlanarBufferParts<P>>
-pub fn plane::PlanarFromPartsError<P>::without_buffer(self) -> plane::LayoutError
-pub struct plane::PlanarLayout
-pub fn plane::PlanarLayout::check(&self, &[plane::AnyPlane<'_>], u32, u32) -> core::result::Result<(), plane::LayoutError>
-pub fn plane::PlanarLayout::check_plane(&self, usize, &plane::AnyPlane<'_>, u32, u32) -> core::result::Result<(), plane::LayoutError>
-pub fn plane::PlanarLayout::new(alloc::vec::Vec<plane::PlaneSpec>, sample::ChromaSubsampling, sample::ChromaSiting) -> core::result::Result<Self, plane::LayoutError>
-pub fn plane::PlanarLayout::plane_size(&self, usize, u32, u32) -> core::option::Option<(u32, u32)>
-pub fn plane::PlanarLayout::planes(&self) -> &[plane::PlaneSpec]
-pub fn plane::PlanarLayout::roles(&self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = plane::PlaneRole> + core::clone::Clone + '_
-pub fn plane::PlanarLayout::siting(&self) -> sample::ChromaSiting
-pub fn plane::PlanarLayout::subsampling(&self) -> sample::ChromaSubsampling
-pub struct plane::PlanarSlice<'a>
-pub const fn plane::PlanarSlice<'a>::alpha_mode(self) -> core::option::Option<descriptor::AlphaMode>
-pub const fn plane::PlanarSlice<'a>::color_context(self) -> &'a color::ColorContext
-pub const fn plane::PlanarSlice<'a>::height(self) -> u32
-pub const fn plane::PlanarSlice<'a>::layout(self) -> &'a plane::PlanarLayout
-pub fn plane::PlanarSlice<'a>::new(&'a [plane::AnyPlane<'a>], &'a plane::PlanarLayout, u32, u32, &'a color::ColorContext, core::option::Option<descriptor::AlphaMode>) -> core::result::Result<Self, plane::LayoutError>
-pub fn plane::PlanarSlice<'a>::plane(self, usize) -> core::option::Option<plane::AnyPlane<'a>>
-pub fn plane::PlanarSlice<'a>::planes(self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = plane::AnyPlane<'a>> + core::iter::traits::double_ended::DoubleEndedIterator + core::clone::Clone
-pub const fn plane::PlanarSlice<'a>::width(self) -> u32
-pub struct plane::PlanarSliceMut<'a, P>
-pub fn plane::PlanarSliceMut<'a, P>::as_slice(&self) -> plane::PlanarSlice<'_>
-pub fn plane::PlanarSliceMut<'a, P>::new(&'a mut [P], &'a plane::PlanarLayout, u32, u32, &'a color::ColorContext, core::option::Option<descriptor::AlphaMode>) -> core::result::Result<Self, plane::LayoutError>
-pub fn plane::PlanarSliceMut<'a, P>::plane_mut(&mut self, usize) -> core::option::Option<plane::AnyPlaneMut<'_>>
-pub fn plane::PlanarSliceMut<'a, P>::planes_mut(&mut self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = plane::AnyPlaneMut<'_>>
-pub struct plane::Plane<C>
-pub fn plane::Plane<&'a [T]>::into_strided_samples(self) -> &'a [T]
-pub fn plane::Plane<&'a mut [T]>::into_strided_samples_mut(self) -> &'a mut [T]
-pub fn plane::Plane<C>::height(&self) -> usize
-pub fn plane::Plane<C>::new(C, usize, usize, usize) -> core::result::Result<Self, plane::PlaneError>
-pub fn plane::Plane<C>::row(&self, usize) -> core::option::Option<&[<C as plane::SampleStorage>::Sample]>
-pub fn plane::Plane<C>::rows(&self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = &[<C as plane::SampleStorage>::Sample]> + core::iter::traits::exact_size::ExactSizeIterator
-pub fn plane::Plane<C>::stride(&self) -> usize
-pub fn plane::Plane<C>::strided_samples(&self) -> &[<C as plane::SampleStorage>::Sample]
-pub fn plane::Plane<C>::sub(&self, usize, usize, usize, usize) -> core::result::Result<plane::PlaneRef<'_, <C as plane::SampleStorage>::Sample>, plane::PlaneError>
-pub fn plane::Plane<C>::view(&self) -> plane::PlaneRef<'_, <C as plane::SampleStorage>::Sample>
-pub fn plane::Plane<C>::width(&self) -> usize
-pub fn plane::Plane<C>::row_mut(&mut self, usize) -> core::option::Option<&mut [<C as plane::SampleStorage>::Sample]>
-pub fn plane::Plane<C>::rows_mut(&mut self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = &mut [<C as plane::SampleStorage>::Sample]> + core::iter::traits::exact_size::ExactSizeIterator
-pub fn plane::Plane<C>::sub_mut(&mut self, usize, usize, usize, usize) -> core::result::Result<plane::PlaneMut<'_, <C as plane::SampleStorage>::Sample>, plane::PlaneError>
-pub fn plane::Plane<C>::view_mut(&mut self) -> plane::PlaneMut<'_, <C as plane::SampleStorage>::Sample>
-pub fn plane::Plane<C>::into_storage(self) -> C
-pub fn plane::Plane<&mut [T]>::split_at_row(self, usize) -> core::result::Result<(Self, Self), plane::PlaneError>
-pub fn plane::Plane<alloc::vec::Vec<T>>::try_into_vec(self) -> core::result::Result<alloc::vec::Vec<T>, Self>
-pub fn plane::Plane<plane::AlignedSamples<T>>::alloc(usize, usize) -> core::result::Result<Self, plane::PlaneError>
-pub fn plane::Plane<plane::AlignedSamples<T>>::alloc_aligned(usize, usize, plane::RowAlign) -> core::result::Result<Self, plane::PlaneError>
-pub struct plane::PlaneSpec
-pub const fn plane::PlaneSpec::encoding(self) -> plane::PlaneEncoding
-pub const fn plane::PlaneSpec::new(plane::PlaneRole, plane::PlaneEncoding) -> Self
-pub const fn plane::PlaneSpec::role(self) -> plane::PlaneRole
-pub trait plane::PlaneSample: buffer::storage_sample::Sealed + bytemuck::pod::Pod + core::default::Default + core::cmp::PartialEq + core::fmt::Debug + core::marker::Send + core::marker::Sync + 'static
-pub const plane::PlaneSample::CHANNEL_TYPE: descriptor::ChannelType
-pub trait plane::PlaneStorage
-pub fn plane::PlaneStorage::as_plane(&self) -> plane::AnyPlane<'_>
-pub trait plane::PlaneStorageMut: plane::PlaneStorage
-pub fn plane::PlaneStorageMut::as_plane_mut(&mut self) -> plane::AnyPlaneMut<'_>
-pub trait plane::SampleStorage
-pub type plane::SampleStorage::Sample: buffer::StorageSample
-pub fn plane::SampleStorage::samples(&self) -> &[Self::Sample]
-pub type &mut S::Sample = <S as plane::SampleStorage>::Sample
-pub fn &mut S::samples(&self) -> &[<S as plane::SampleStorage>::Sample]
-pub trait plane::SampleStorageMut: plane::SampleStorage
-pub fn plane::SampleStorageMut::samples_mut(&mut self) -> &mut [Self::Sample]
-pub fn &mut S::samples_mut(&mut self) -> &mut [<S as plane::SampleStorage>::Sample]
-pub type plane::AlignedPlane<T> = plane::Plane<plane::AlignedSamples<T>>
-pub type plane::PlaneBuf<T> = plane::Plane<alloc::vec::Vec<T>>
-pub type plane::PlaneMut<'a, T> = plane::Plane<&'a mut [T]>
-pub type plane::PlaneRef<'a, T> = plane::Plane<&'a [T]>
 pub mod policy
 pub policy::AlphaPolicy::CompositeOnto
 pub policy::AlphaPolicy::CompositeOnto::background: color::Color
@@ -803,6 +851,7 @@ pub const fn policy::ConvertOptions::hdr_peak(&self) -> hdr::HdrPeak [also: (roo
 pub const fn policy::ConvertOptions::hlg_rendering(&self) -> core::option::Option<hdr::HlgRendering> [also: (root)]
 pub const fn policy::ConvertOptions::luma(&self) -> core::option::Option<policy::LumaCoefficients> [also: (root)]
 pub const fn policy::ConvertOptions::permissive() -> Self [also: (root)]
+pub const fn policy::ConvertOptions::rendering_intent(&self) -> core::option::Option<color::RenderingIntent> [also: (root)]
 pub const fn policy::ConvertOptions::retain_channels() -> Self [also: (root)]
 pub const fn policy::ConvertOptions::sdr_peak(&self) -> core::option::Option<hdr::Nits> [also: (root)]
 pub const fn policy::ConvertOptions::sdr_white(&self) -> core::option::Option<hdr::DiffuseWhite> [also: (root)]
@@ -814,6 +863,7 @@ pub const fn policy::ConvertOptions::with_gray_expand(self, policy::GrayExpand) 
 pub const fn policy::ConvertOptions::with_hdr_peak(self, hdr::HdrPeak) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_hlg_rendering(self, hdr::HlgRendering) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_luma(self, core::option::Option<policy::LumaCoefficients>) -> Self [also: (root)]
+pub const fn policy::ConvertOptions::with_rendering_intent(self, color::RenderingIntent) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_sdr_peak(self, hdr::Nits) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_sdr_white(self, hdr::DiffuseWhite) -> Self [also: (root)]
 pub mod precision
@@ -855,12 +905,9 @@ pub sample::ChromaSiting::Unknown
 pub sample::ChromaSubsampling::Mono
 pub sample::ChromaSubsampling::Yuv420
 pub sample::ChromaSubsampling::Yuv422
+pub sample::ChromaSubsampling::Yuv440
 pub sample::ChromaSubsampling::Yuv444
 pub const fn sample::ChromaSubsampling::chroma_size(self, u32, u32) -> core::option::Option<(u32, u32)>
-#[non_exhaustive] pub enum sample::CodePlaneError
-pub sample::CodePlaneError::Components
-pub sample::CodePlaneError::OutsideActivePlane
-pub sample::CodePlaneError::StorageMismatch
 #[non_exhaustive] pub enum sample::ExactDepthError
 pub sample::ExactDepthError::DescriptorMismatch
 pub sample::ExactDepthError::InvalidBits
@@ -871,14 +918,6 @@ pub sample::ExactDepthError::UnsupportedStorage
 pub sample::SampleEncodingError::InvalidBitDepth
 pub sample::SampleEncodingError::InvalidBitShift
 pub sample::SampleEncodingError::UnsupportedStorage
-pub struct sample::CodePlane<'a>
-pub fn sample::CodePlane<'a>::code(self, usize, usize) -> core::option::Option<u16>
-pub fn sample::CodePlane<'a>::component(plane::AnyPlane<'a>, usize, usize, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
-pub const fn sample::CodePlane<'a>::encoding(self) -> sample::SampleEncoding
-pub const fn sample::CodePlane<'a>::height(self) -> usize
-pub fn sample::CodePlane<'a>::new(plane::AnyPlane<'a>, sample::SampleEncoding) -> core::result::Result<Self, sample::CodePlaneError>
-pub fn sample::CodePlane<'a>::read_codes(self, usize, usize, &mut [u16]) -> core::result::Result<(), sample::CodePlaneError>
-pub const fn sample::CodePlane<'a>::width(self) -> usize
 pub struct sample::ExactDepth
 pub const fn sample::ExactDepth::alpha_bits(self) -> u8
 pub const fn sample::ExactDepth::alpha_exact_at(self, u8) -> bool
@@ -893,6 +932,7 @@ pub const fn sample::ExactDepth::storage(self) -> descriptor::ChannelType
 pub struct sample::SampleEncoding
 pub const fn sample::SampleEncoding::bit_shift(self) -> u8
 pub const fn sample::SampleEncoding::code_bits(self) -> u8
+pub const fn sample::SampleEncoding::is_signed(self) -> bool
 pub const fn sample::SampleEncoding::new(descriptor::ChannelType, u8, u8) -> core::result::Result<Self, sample::SampleEncodingError>
 pub const fn sample::SampleEncoding::storage(self) -> descriptor::ChannelType
 #[non_exhaustive] pub enum AlphaMode [also: descriptor]
@@ -920,12 +960,31 @@ pub BufferError::StrideTooSmall
 pub ChannelLayout::Bgr
 pub ChannelLayout::Bgra
 pub ChannelLayout::Cmyk
+pub ChannelLayout::CmykAlpha
+pub ChannelLayout::CmykInverted
+pub ChannelLayout::CmykInvertedAlpha
 pub ChannelLayout::Gray
 pub ChannelLayout::GrayAlpha
+pub ChannelLayout::Hsl
+pub ChannelLayout::HslAlpha
+pub ChannelLayout::Hsv
+pub ChannelLayout::HsvAlpha
+pub ChannelLayout::Jzazbz
+pub ChannelLayout::JzazbzAlpha
+pub ChannelLayout::Jzczhz
+pub ChannelLayout::JzczhzAlpha
+pub ChannelLayout::Lab
+pub ChannelLayout::LabAlpha
+pub ChannelLayout::Lch
+pub ChannelLayout::LchAlpha
 pub ChannelLayout::Oklab
 pub ChannelLayout::OklabA
+pub ChannelLayout::Oklch
+pub ChannelLayout::OklchAlpha
 pub ChannelLayout::Rgb
 pub ChannelLayout::Rgba
+pub ChannelLayout::Xyz
+pub ChannelLayout::XyzAlpha
 #[non_exhaustive] pub enum ChannelType [also: descriptor]
 pub ChannelType::F16
 pub ChannelType::F32
@@ -945,8 +1004,16 @@ pub fn color::ColorAuthority::select<T>(self, core::option::Option<T>, core::opt
 #[non_exhaustive] pub enum ColorModel [also: descriptor]
 pub ColorModel::Cmyk
 pub ColorModel::Gray
+pub ColorModel::Hsl
+pub ColorModel::Hsv
+pub ColorModel::Jzazbz
+pub ColorModel::Jzczhz
+pub ColorModel::Lab
+pub ColorModel::Lch
 pub ColorModel::Oklab
+pub ColorModel::Oklch
 pub ColorModel::Rgb
+pub ColorModel::Xyz
 pub ColorModel::YCbCr
 pub fn descriptor::ColorModel::from_icc(&[u8]) -> core::option::Option<Self>
 #[non_exhaustive] pub enum ColorPrimaries [also: descriptor]
@@ -959,12 +1026,14 @@ pub const descriptor::ColorPrimaries::WHITE_D65: (f32, f32)
 #[non_exhaustive] pub enum ColorProfile [also: color]
 pub ColorProfile::Cicp(cicp::Cicp)
 pub ColorProfile::Icc(alloc::sync::Arc<[u8]>)
+pub ColorProfile::Parametric(color::ParametricColor)
 pub fn color::ColorProfile::as_profile_source(&self) -> color::ColorProfileSource<'_>
 pub fn color::ColorProfile::icc(&self) -> core::option::Option<&[u8]>
 #[non_exhaustive] pub enum ColorProfileSource<'a> [also: color]
 pub ColorProfileSource::Cicp(cicp::Cicp)
 pub ColorProfileSource::Icc(&'a [u8])
 pub ColorProfileSource::Named(color::NamedProfile)
+pub ColorProfileSource::Parametric(color::ParametricColor)
 pub ColorProfileSource::PrimariesTransferPair
 pub ColorProfileSource::PrimariesTransferPair::primaries: descriptor::ColorPrimaries
 pub ColorProfileSource::PrimariesTransferPair::transfer: descriptor::TransferFunction
@@ -974,6 +1043,7 @@ pub ColorProvenance::Assumed
 pub ColorProvenance::Cicp
 pub ColorProvenance::GamaChrm
 pub ColorProvenance::Icc
+pub ColorProvenance::Parametric
 #[non_exhaustive] pub enum DepthPolicy [also: policy]
 pub DepthPolicy::Forbid
 pub DepthPolicy::Round
@@ -983,6 +1053,13 @@ pub GamutMapping::Clip
 pub GamutMapping::SoftCompress
 #[non_exhaustive] pub enum GrayExpand [also: policy]
 pub GrayExpand::Broadcast
+#[non_exhaustive] pub enum InteropTarget [also: buffer]
+pub InteropTarget::DynamicImage
+pub InteropTarget::FlatSamples
+pub InteropTarget::ImageBuffer
+pub InteropTarget::Imgref
+pub InteropTarget::Tight
+pub fn buffer::InteropTarget::supports(self, descriptor::PixelDescriptor) -> bool
 #[non_exhaustive] pub enum LumaCoefficients [also: policy]
 pub LumaCoefficients::Bt2020
 pub LumaCoefficients::Bt601
@@ -1006,6 +1083,30 @@ pub Orientation::Rotate90 = 6
 pub Orientation::Transpose = 5
 pub Orientation::Transverse = 7
 pub const orientation::Orientation::ALL: [orientation::Orientation; 8]
+#[non_exhaustive] pub enum ParametricPrimaries [also: color]
+pub ParametricPrimaries::Aces2065_1
+pub ParametricPrimaries::AcesCg
+pub ParametricPrimaries::AdobeRgb
+pub ParametricPrimaries::Bt2020
+pub ParametricPrimaries::Bt601_525
+pub ParametricPrimaries::Bt601_625
+pub ParametricPrimaries::Bt709
+pub ParametricPrimaries::Custom
+pub ParametricPrimaries::Custom::blue: color::CieXy
+pub ParametricPrimaries::Custom::green: color::CieXy
+pub ParametricPrimaries::Custom::red: color::CieXy
+pub ParametricPrimaries::P3
+pub ParametricPrimaries::ProPhotoRgb
+#[non_exhaustive] pub enum ParametricTransfer [also: color]
+pub ParametricTransfer::Bt709
+pub ParametricTransfer::Dci
+pub ParametricTransfer::Gamma(color::GammaCurve)
+pub ParametricTransfer::Hlg
+pub ParametricTransfer::IccParametric(color::IccParametricCurve)
+pub ParametricTransfer::Linear
+pub ParametricTransfer::Pq
+pub ParametricTransfer::Srgb
+pub ParametricTransfer::Unknown
 pub enum PixelCow<'a, P> [also: buffer]
 pub PixelCow::Borrowed(buffer::PixelSlice<'a, P>)
 pub PixelCow::Owned(buffer::PixelBuffer<P>)
@@ -1019,10 +1120,6 @@ pub fn buffer::PixelCow<'_, P>::encoding(&self) -> color::PixelEncoding<'_>
 pub PixelFormat::Bgr8
 pub PixelFormat::Bgra8
 pub PixelFormat::Bgrx8
-pub PixelFormat::Cmyk16
-pub PixelFormat::Cmyk8
-pub PixelFormat::CmykF32
-pub PixelFormat::CmykF32Inverted
 pub PixelFormat::Generic(descriptor::GenericFormat)
 pub PixelFormat::Gray16
 pub PixelFormat::Gray8
@@ -1043,7 +1140,14 @@ pub PixelFormat::Rgba8
 pub PixelFormat::RgbaF16
 pub PixelFormat::RgbaF32
 pub PixelFormat::Rgbx8
+pub const descriptor::PixelFormat::CMYK16: Self
+pub const descriptor::PixelFormat::CMYK16_INVERTED: Self
+pub const descriptor::PixelFormat::CMYK8: Self
+pub const descriptor::PixelFormat::CMYK8_INVERTED: Self
+pub const descriptor::PixelFormat::CMYKF32: Self
+pub const descriptor::PixelFormat::CMYKF32_INVERTED: Self
 #[non_exhaustive] pub enum PixelStorage [also: buffer]
+pub PixelStorage::F16(alloc::vec::Vec<pixel_types::F16Sample>)
 pub PixelStorage::F32(alloc::vec::Vec<f32>)
 pub PixelStorage::F64(alloc::vec::Vec<f64>)
 pub PixelStorage::I16(alloc::vec::Vec<i16>)
@@ -1054,8 +1158,13 @@ pub PixelStorage::U16(alloc::vec::Vec<u16>)
 pub PixelStorage::U32(alloc::vec::Vec<u32>)
 pub PixelStorage::U64(alloc::vec::Vec<u64>)
 pub PixelStorage::U8(alloc::vec::Vec<u8>)
-pub fn buffer::PixelStorage::try_into_vec<T: buffer::StorageSample>(self) -> core::result::Result<alloc::vec::Vec<T>, Self>
-#[non_exhaustive] pub enum RowAlign [also: plane]
+pub fn PixelStorage::try_into_vec<T: StorageSample>(self) -> core::result::Result<alloc::vec::Vec<T>, Self>
+#[non_exhaustive] pub enum RenderingIntent [also: color]
+pub RenderingIntent::AbsoluteColorimetric
+pub RenderingIntent::Perceptual
+pub RenderingIntent::RelativeColorimetric
+pub RenderingIntent::Saturation
+#[non_exhaustive] pub enum RowAlign [also: buffer]
 pub RowAlign::Cache64
 pub RowAlign::PixelCache64
 pub RowAlign::Samples(u16)
@@ -1072,6 +1181,14 @@ pub TransferFunction::Pq
 pub TransferFunction::Srgb
 pub TransferFunction::Unknown
 pub fn descriptor::TransferFunction::reference_white_nits(&self) -> f32
+#[non_exhaustive] pub enum WhitePoint [also: color]
+pub WhitePoint::C
+pub WhitePoint::Custom(color::CieXy)
+pub WhitePoint::D50
+pub WhitePoint::D60
+pub WhitePoint::D65
+pub WhitePoint::Dci
+pub WhitePoint::E
 pub struct AnyColor(_) [also: color]
 pub fn color::AnyColor::as_bytes(&self) -> &[u8]
 pub fn color::AnyColor::as_color(&self) -> core::option::Option<color::Color>
@@ -1088,8 +1205,13 @@ pub Cicp::full_range: bool
 pub Cicp::matrix_coefficients: u8
 pub Cicp::transfer_characteristics: u8
 pub const cicp::Cicp::BT2100_HLG: Self
+pub const cicp::Cicp::BT2100_HLG_RGB: Self
 pub const cicp::Cicp::BT2100_PQ: Self
+pub const cicp::Cicp::BT2100_PQ_RGB: Self
+pub const cicp::Cicp::BT709_RGB: Self
 pub const cicp::Cicp::DISPLAY_P3: Self
+pub const cicp::Cicp::DISPLAY_P3_PQ: Self
+pub const cicp::Cicp::LINEAR_SRGB: Self
 pub const cicp::Cicp::SRGB: Self
 pub fn cicp::Cicp::color_primaries_enum(&self) -> descriptor::ColorPrimaries
 pub fn cicp::Cicp::color_primaries_name(u8) -> &'static str
@@ -1099,6 +1221,13 @@ pub fn cicp::Cicp::transfer_characteristics_name(u8) -> &'static str
 pub fn cicp::Cicp::transfer_function_enum(&self) -> descriptor::TransferFunction
 pub fn cicp::Cicp::try_to_descriptor(&self, descriptor::PixelFormat) -> core::result::Result<descriptor::PixelDescriptor, cicp::CicpDescriptorError>
 pub fn cicp::Cicp::from_icc(&[u8]) -> core::option::Option<Self>
+pub struct CieXy [also: color]
+pub const color::CieXy::C: Self
+pub const color::CieXy::D50: Self
+pub const color::CieXy::D60: Self
+pub const color::CieXy::D65: Self
+pub const color::CieXy::DCI: Self
+pub const color::CieXy::E: Self
 pub struct Color [also: color]
 pub const color::Color::TRANSPARENT: Self
 pub fn color::Color::as_bytes(&self) -> &[u8]
@@ -1111,11 +1240,13 @@ pub fn color::ColorContext::is_srgb(&self) -> bool
 pub fn color::ColorContext::transfer_function(&self) -> descriptor::TransferFunction
 pub fn color::ColorContext::with_cicp(self, cicp::Cicp) -> Self
 pub fn color::ColorContext::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
+pub fn color::ColorContext::with_parametric(self, color::ParametricColor) -> Self
 pub fn color::ColorContext::with_profile(self, core::option::Option<color::ColorProfile>) -> Self
 #[non_exhaustive] pub struct ColorOrigin [also: color]
 pub ColorOrigin::cicp: core::option::Option<cicp::Cicp>
 pub ColorOrigin::color_authority: color::ColorAuthority
 pub ColorOrigin::icc: core::option::Option<alloc::sync::Arc<[u8]>>
+pub ColorOrigin::parametric: core::option::Option<color::ParametricColor>
 pub ColorOrigin::provenance: color::ColorProvenance
 pub fn color::ColorOrigin::assumed() -> Self
 pub fn color::ColorOrigin::from_cicp(cicp::Cicp) -> Self
@@ -1124,19 +1255,51 @@ pub fn color::ColorOrigin::from_icc(impl core::convert::Into<alloc::sync::Arc<[u
 pub fn color::ColorOrigin::from_icc_and_cicp(impl core::convert::Into<alloc::sync::Arc<[u8]>>, cicp::Cicp) -> Self
 pub fn color::ColorOrigin::with_color_authority(self, color::ColorAuthority) -> Self
 #[non_exhaustive] pub struct ConvertOptions [also: policy]
+#[repr(transparent)] pub struct F16Sample(_) [also: pixel_types]
+pub const pixel_types::F16Sample::EPSILON: Self
+pub const pixel_types::F16Sample::INFINITY: Self
+pub const pixel_types::F16Sample::MAX: Self
+pub const pixel_types::F16Sample::MIN: Self
+pub const pixel_types::F16Sample::MIN_POSITIVE: Self
+pub const pixel_types::F16Sample::NAN: Self
+pub const pixel_types::F16Sample::NEG_INFINITY: Self
+pub const pixel_types::F16Sample::NEG_ONE: Self
+pub const pixel_types::F16Sample::NEG_ZERO: Self
+pub const pixel_types::F16Sample::ONE: Self
+pub const pixel_types::F16Sample::ZERO: Self
+pub fn pixel_types::F16Sample::as_bits_slice(&[Self]) -> &[u16]
+pub fn pixel_types::F16Sample::as_bits_slice_mut(&mut [Self]) -> &mut [u16]
+pub fn pixel_types::F16Sample::from_bits_slice(&[u16]) -> &[Self]
+pub fn pixel_types::F16Sample::from_bits_slice_mut(&mut [u16]) -> &mut [Self]
+pub fn pixel_types::F16Sample::total_cmp(&self, &Self) -> core::cmp::Ordering
+pub fn pixel_types::F16Sample::vec_from_bits(alloc::vec::Vec<u16>) -> alloc::vec::Vec<Self>
+pub fn pixel_types::F16Sample::vec_into_bits(alloc::vec::Vec<Self>) -> alloc::vec::Vec<u16>
 pub struct FromPartsError<S> [also: buffer]
 pub fn buffer::FromPartsError<S>::error(&self) -> &whereat::at::At<buffer::BufferError>
 pub fn buffer::FromPartsError<S>::take_parts(&mut self) -> core::option::Option<buffer::PixelBufferParts<S>>
 pub fn buffer::FromPartsError<S>::without_buffer(self) -> whereat::at::At<buffer::BufferError>
+pub struct GammaCurve(_) [also: color]
+pub const color::GammaCurve::ADOBE_RGB: Self
+pub const color::GammaCurve::DCI: Self
+pub const color::GammaCurve::GAMMA_22: Self
+pub struct GenericFormat [also: descriptor]
 #[repr(C)] pub struct GrayAlpha16 [also: pixel_types]
 pub GrayAlpha16::a: u16
 pub GrayAlpha16::v: u16
 #[repr(C)] pub struct GrayAlpha8 [also: pixel_types]
 pub GrayAlpha8::a: u8
 pub GrayAlpha8::v: u8
+#[repr(C)] pub struct GrayAlphaF16 [also: pixel_types]
+pub GrayAlphaF16::a: pixel_types::F16Sample
+pub GrayAlphaF16::v: pixel_types::F16Sample
 #[repr(C)] pub struct GrayAlphaF32 [also: pixel_types]
 pub GrayAlphaF32::a: f32
 pub GrayAlphaF32::v: f32
+pub struct IccParametricCurve [also: color]
+pub const color::IccParametricCurve::BT709: Self
+pub const color::IccParametricCurve::PROPHOTO_RGB: Self
+pub const color::IccParametricCurve::SRGB: Self
+pub fn color::IccParametricCurve::icc_params(&self) -> &[f32]
 #[non_exhaustive] pub struct InPlacePixels<'a> [also: buffer]
 pub InPlacePixels::bytes: &'a mut [u8]
 pub InPlacePixels::color: core::option::Option<alloc::sync::Arc<color::ColorContext>>
@@ -1146,10 +1309,23 @@ pub InPlacePixels::stride: usize
 pub InPlacePixels::width: u32
 pub fn buffer::InPlacePixels<'a>::new(&'a mut [u8], u32, u32, usize, descriptor::PixelDescriptor, core::option::Option<alloc::sync::Arc<color::ColorContext>>) -> Self
 pub fn buffer::InPlacePixels<'a>::try_new(&'a mut [u8], u32, u32, usize, descriptor::PixelDescriptor, core::option::Option<alloc::sync::Arc<color::ColorContext>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+#[non_exhaustive] pub struct ParametricColor [also: color]
+pub ParametricColor::primaries: core::option::Option<color::ParametricPrimaries>
+pub ParametricColor::rendering_intent: color::RenderingIntent
+pub ParametricColor::transfer: color::ParametricTransfer
+pub ParametricColor::white_point: color::WhitePoint
+pub const color::ParametricColor::ACES_2065_1: Self
+pub const color::ParametricColor::ACES_CG: Self
+pub const color::ParametricColor::ADOBE_RGB: Self
+pub const color::ParametricColor::DCI_P3: Self
+pub const color::ParametricColor::PROPHOTO_RGB: Self
 #[non_exhaustive] pub struct PixelBuffer<P, S> [also: buffer]
 pub fn buffer::PixelBuffer::from_vec(alloc::vec::Vec<u8>, u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::new(u32, u32, descriptor::PixelDescriptor) -> Self
+pub fn buffer::PixelBuffer::new_for(u32, u32, descriptor::PixelDescriptor, buffer::InteropTarget) -> Self
 pub fn buffer::PixelBuffer::try_new(u32, u32, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::try_new_for(u32, u32, descriptor::PixelDescriptor, buffer::InteropTarget) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer::try_new_with_align(u32, u32, descriptor::PixelDescriptor, RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::transform_in_place<F>(&mut self, F) where F: for<'a> core::ops::function::FnOnce(buffer::InPlacePixels<'a>) -> buffer::PixelSliceMut<'a>
 pub fn buffer::PixelBuffer<P, S>::as_contiguous_bytes(&self) -> core::option::Option<&[u8]>
 pub fn buffer::PixelBuffer<P, S>::as_slice(&self) -> buffer::PixelSlice<'_, P>
@@ -1166,6 +1342,8 @@ pub fn buffer::PixelBuffer<P, S>::with_cicp(self, cicp::Cicp) -> Self
 pub fn buffer::PixelBuffer<P, S>::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
 pub fn buffer::PixelBuffer<P, S>::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
 pub fn buffer::PixelBuffer<P, S>::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
+pub fn buffer::PixelBuffer<P, S>::with_parametric(self, color::ParametricColor) -> Self
+pub fn buffer::PixelBuffer<P, S>::with_rendering_intent(self, color::RenderingIntent) -> Self
 pub fn buffer::PixelBuffer<P, S>::crop_copy(&self, u32, u32, u32, u32) -> core::result::Result<buffer::PixelBuffer<P>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P, S>::crop_view(&self, u32, u32, u32, u32) -> buffer::PixelSlice<'_, P>
 pub fn buffer::PixelBuffer<P, S>::erase(self) -> buffer::PixelBuffer<(), S>
@@ -1186,14 +1364,16 @@ pub fn buffer::PixelBuffer<P, S>::try_rows(&self, u32, u32) -> core::option::Opt
 pub fn buffer::PixelBuffer<P, S>::try_with_alpha_mode(self, core::option::Option<descriptor::AlphaMode>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P, S>::try_with_descriptor(self, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P, S>::as_slice_mut(&mut self) -> buffer::PixelSliceMut<'_, P>
+pub fn buffer::PixelBuffer<P, S>::crop_view_mut(&mut self, u32, u32, u32, u32) -> buffer::PixelSliceMut<'_, P>
 pub fn buffer::PixelBuffer<P, S>::rows_mut(&mut self, u32, u32) -> buffer::PixelSliceMut<'_, P>
+pub fn buffer::PixelBuffer<P, S>::try_crop_view_mut(&mut self, u32, u32, u32, u32) -> core::option::Option<buffer::PixelSliceMut<'_, P>>
 pub fn buffer::PixelBuffer<P, S>::try_rows_mut(&mut self, u32, u32) -> core::option::Option<buffer::PixelSliceMut<'_, P>>
 pub fn buffer::PixelBuffer<P>::new_typed(u32, u32) -> Self
 pub fn buffer::PixelBuffer<P>::try_new_typed(u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer<P>::into_contiguous(self) -> Self
 pub fn buffer::PixelBuffer<P>::try_into_tight_u8_vec(self) -> core::result::Result<alloc::vec::Vec<u8>, Self>
 pub fn buffer::PixelBuffer<(), S>::try_from_parts(buffer::PixelBufferParts<S>) -> core::result::Result<Self, buffer::FromPartsError<S>>
-pub fn buffer::PixelBuffer<(), plane::AlignedSamples<T>>::try_new_aligned(u32, u32, descriptor::PixelDescriptor, plane::RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuffer<(), buffer::AlignedSamples<T>>::try_new_aligned(u32, u32, descriptor::PixelDescriptor, RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 #[non_exhaustive] pub struct PixelBufferParts<S> [also: buffer]
 pub PixelBufferParts::color_context: core::option::Option<alloc::sync::Arc<color::ColorContext>>
 pub PixelBufferParts::data: S
@@ -1209,13 +1389,10 @@ pub PixelDescriptor::format: descriptor::PixelFormat
 pub PixelDescriptor::primaries: descriptor::ColorPrimaries
 pub PixelDescriptor::signal_range: descriptor::SignalRange
 pub PixelDescriptor::transfer: descriptor::TransferFunction
-pub const descriptor::PixelDescriptor::BGR8: Self
-pub const descriptor::PixelDescriptor::BGRA8: Self
 pub const descriptor::PixelDescriptor::BGRA8_SRGB: Self
-pub const descriptor::PixelDescriptor::BGRX8: Self
 pub const descriptor::PixelDescriptor::BGRX8_SRGB: Self
-pub const descriptor::PixelDescriptor::CMYK16: Self
 pub const descriptor::PixelDescriptor::CMYK8: Self
+pub const descriptor::PixelDescriptor::CMYK8_INVERTED: Self
 pub const descriptor::PixelDescriptor::GRAY16: Self
 pub const descriptor::PixelDescriptor::GRAY16_SRGB: Self
 pub const descriptor::PixelDescriptor::GRAY8: Self
@@ -1240,8 +1417,10 @@ pub const descriptor::PixelDescriptor::RGBA16: Self
 pub const descriptor::PixelDescriptor::RGBA16_SRGB: Self
 pub const descriptor::PixelDescriptor::RGBA8: Self
 pub const descriptor::PixelDescriptor::RGBA8_SRGB: Self
+pub const descriptor::PixelDescriptor::RGBAF16_LINEAR: Self
 pub const descriptor::PixelDescriptor::RGBAF32: Self
 pub const descriptor::PixelDescriptor::RGBAF32_LINEAR: Self
+pub const descriptor::PixelDescriptor::RGBF16_LINEAR: Self
 pub const descriptor::PixelDescriptor::RGBF32: Self
 pub const descriptor::PixelDescriptor::RGBF32_LINEAR: Self
 pub const descriptor::PixelDescriptor::RGBX8: Self
@@ -1278,7 +1457,9 @@ pub fn buffer::PixelSlice<'a, P>::with_descriptor(self, descriptor::PixelDescrip
 pub fn buffer::PixelSlice<'a, P>::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_exact_depth(self, sample::ExactDepth) -> core::result::Result<Self, sample::ExactDepthError>
 pub fn buffer::PixelSlice<'a, P>::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
+pub fn buffer::PixelSlice<'a, P>::with_parametric(self, color::ParametricColor) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
+pub fn buffer::PixelSlice<'a, P>::with_rendering_intent(self, color::RenderingIntent) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_signal_range(self, descriptor::SignalRange) -> Self
 pub fn buffer::PixelSlice<'a, P>::with_transfer(self, descriptor::TransferFunction) -> Self
 pub fn buffer::PixelSlice<'a, P>::get_pixel(&self, u32, u32) -> core::option::Option<color::AnyColor>
@@ -1296,6 +1477,7 @@ pub fn buffer::PixelSliceMut<'a, P>::as_pixel_slice(&self) -> buffer::PixelSlice
 pub fn buffer::PixelSliceMut<'a, P>::as_strided_bytes(&self) -> &[u8]
 pub fn buffer::PixelSliceMut<'a, P>::as_strided_bytes_mut(&mut self) -> &mut [u8]
 pub fn buffer::PixelSliceMut<'a, P>::color_context(&self) -> core::option::Option<&alloc::sync::Arc<color::ColorContext>>
+pub fn buffer::PixelSliceMut<'a, P>::crop_view_mut(&mut self, u32, u32, u32, u32) -> buffer::PixelSliceMut<'_, P>
 pub fn buffer::PixelSliceMut<'a, P>::descriptor(&self) -> descriptor::PixelDescriptor
 pub fn buffer::PixelSliceMut<'a, P>::encoding(&self) -> color::PixelEncoding<'_>
 pub fn buffer::PixelSliceMut<'a, P>::erase(self) -> buffer::PixelSliceMut<'a>
@@ -1313,12 +1495,15 @@ pub fn buffer::PixelSliceMut<'a, P>::with_color_context(self, alloc::sync::Arc<c
 pub fn buffer::PixelSliceMut<'a, P>::with_descriptor(self, descriptor::PixelDescriptor) -> Self
 pub fn buffer::PixelSliceMut<'a, P>::with_diffuse_white(self, hdr::DiffuseWhite) -> Self
 pub fn buffer::PixelSliceMut<'a, P>::with_icc(self, impl core::convert::Into<alloc::sync::Arc<[u8]>>) -> Self
+pub fn buffer::PixelSliceMut<'a, P>::with_parametric(self, color::ParametricColor) -> Self
 pub fn buffer::PixelSliceMut<'a, P>::with_primaries(self, descriptor::ColorPrimaries) -> Self
+pub fn buffer::PixelSliceMut<'a, P>::with_rendering_intent(self, color::RenderingIntent) -> Self
 pub fn buffer::PixelSliceMut<'a, P>::with_signal_range(self, descriptor::SignalRange) -> Self
 pub fn buffer::PixelSliceMut<'a, P>::with_transfer(self, descriptor::TransferFunction) -> Self
 pub fn buffer::PixelSliceMut<'a, buffer::Bgrx>::swap_to_rgbx(self) -> buffer::PixelSliceMut<'a, buffer::Rgbx>
 pub fn buffer::PixelSliceMut<'a, buffer::Rgbx>::swap_to_bgrx(self) -> buffer::PixelSliceMut<'a, buffer::Bgrx>
 pub fn buffer::PixelSliceMut<'a>::new(&'a mut [u8], u32, u32, usize, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelSliceMut<'_, P>::try_crop_view_mut(&mut self, u32, u32, u32, u32) -> core::option::Option<buffer::PixelSliceMut<'_, P>>
 pub fn buffer::PixelSliceMut<'_, P>::try_row(&self, u32) -> core::option::Option<&[u8]>
 pub fn buffer::PixelSliceMut<'_, P>::try_row_mut(&mut self, u32) -> core::option::Option<&mut [u8]>
 pub fn buffer::PixelSliceMut<'_, P>::try_sub_rows_mut(&mut self, u32, u32) -> core::option::Option<buffer::PixelSliceMut<'_, P>>
@@ -1331,24 +1516,28 @@ pub Rgbx::r: u8
 pub Rgbx::x: u8
 pub trait ByteStorage [also: buffer]
 pub fn ByteStorage::as_bytes(&self) -> &[u8]
-pub trait ByteStorageMut: buffer::ByteStorage [also: buffer]
+pub trait ByteStorageMut: ByteStorage [also: buffer]
 pub fn ByteStorageMut::as_bytes_mut(&mut self) -> &mut [u8]
 pub trait Pixel: bytemuck::pod::Pod [also: buffer]
 pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
-pub trait StorageSample: buffer::storage_sample::Sealed + bytemuck::pod::Pod + core::default::Default + core::cmp::PartialEq + core::fmt::Debug + core::marker::Send + core::marker::Sync + 'static [also: buffer]
+pub trait StorageSample: buffer::pixel_storage::storage_sample::Sealed + bytemuck::pod::Pod + core::default::Default + core::cmp::PartialEq + core::fmt::Debug + core::marker::Send + core::marker::Sync + 'static [also: buffer]
 pub const StorageSample::CHANNEL_TYPE: descriptor::ChannelType
 
-## trait impls (109 types)
+## trait impls (100 types)
 
-&S: plane::SampleStorage
-&mut S: plane::SampleStorage, plane::SampleStorageMut
-S: buffer::ByteStorage, buffer::ByteStorageMut
-[T]: plane::SampleStorage, plane::SampleStorageMut
-alloc::boxed::Box<S>: plane::SampleStorage, plane::SampleStorageMut
-alloc::vec::Vec<T>: plane::SampleStorage, plane::SampleStorageMut
+&S: buffer::SampleStorage
+&mut S: buffer::SampleStorage, buffer::SampleStorageMut
+PixelStorage: ByteStorage, ByteStorageMut, Clone, Debug, From<alloc::vec::Vec<T>>
+RowAlign: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+S: ByteStorage, ByteStorageMut
+[T]: buffer::SampleStorage, buffer::SampleStorageMut
+alloc::boxed::Box<S>: buffer::SampleStorage, buffer::SampleStorageMut
+alloc::vec::Vec<T>: buffer::SampleStorage, buffer::SampleStorageMut
+buffer::AlignedSamples<T>: Clone, Debug, Deref, DerefMut, buffer::SampleStorage, buffer::SampleStorageMut
 buffer::Bgrx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 buffer::BufferError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 buffer::FromPartsError<S>: Debug, Display, Error
+buffer::InteropTarget: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 buffer::PixelBuffer: From<buffer::PixelBuffer<P>>
 buffer::PixelBuffer<P, S>: Debug
 buffer::PixelBufferParts<S>: Debug
@@ -1359,22 +1548,30 @@ buffer::PixelSlice<'a, P>: From<buffer::PixelSliceMut<'a, P>>
 buffer::PixelSlice<'a>: From<buffer::PixelSlice<'a, P>>
 buffer::PixelSliceMut<'_, P>: Debug
 buffer::PixelSliceMut<'a>: From<buffer::PixelSliceMut<'a, P>>
-buffer::PixelStorage: Clone, Debug, From<alloc::vec::Vec<T>>, buffer::ByteStorage, buffer::ByteStorageMut
+buffer::PlaneError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 buffer::Rgbx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 cicp::Cicp: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 cicp::CicpDescriptorError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 cicp::UnspecifiedMatrixError: Debug, Display, Error
 color::AnyColor: Clone, Debug, Eq, From<color::Color>, Hash, PartialEq
+color::CieXy: Clone, Copy, Debug, Eq, Hash, PartialEq
 color::Color: Clone, Copy, Debug, Eq, Hash, PartialEq
 color::ColorAuthority: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 color::ColorContext: Clone, Debug, Default, Eq, PartialEq
 color::ColorOrigin: Clone, Debug, Eq, PartialEq
-color::ColorProfile: Clone, Debug, Eq, From<alloc::sync::Arc<[u8]>>, From<cicp::Cicp>, PartialEq
+color::ColorProfile: Clone, Debug, Eq, From<alloc::sync::Arc<[u8]>>, From<cicp::Cicp>, From<color::ParametricColor>, PartialEq
 color::ColorProfileSource<'a>: Clone, Debug, Eq, PartialEq
 color::ColorProvenance: Clone, Copy, Debug, Eq, Hash, PartialEq
+color::GammaCurve: Clone, Copy, Debug, Eq, Hash, PartialEq
+color::IccParametricCurve: Clone, Copy, Debug, Eq, Hash, PartialEq
 color::NamedProfile: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+color::ParametricColor: Clone, Copy, Debug, Eq, Hash, PartialEq
+color::ParametricPrimaries: Clone, Copy, Debug, Eq, Hash, PartialEq
+color::ParametricTransfer: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 color::PixelEncoding<'a>: Clone, Copy, Debug, Eq, PartialEq
 color::PixelEncoding<'static>: From<descriptor::PixelDescriptor>
+color::RenderingIntent: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+color::WhitePoint: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 descriptor::AlphaMode: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::ChannelLayout: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::ChannelType: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
@@ -1386,8 +1583,8 @@ descriptor::PixelDescriptor: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::PixelFormat: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::SignalRange: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq
 descriptor::TransferFunction: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
-f32: buffer::StorageSample
-f64: buffer::StorageSample
+f32: From<pixel_types::F16Sample>, StorageSample
+f64: From<pixel_types::F16Sample>, StorageSample
 hdr::ContentLightLevel: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 hdr::DiffuseWhite: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 hdr::HdrPeak: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
@@ -1395,37 +1592,18 @@ hdr::HlgRendering: Clone, Copy, Debug, Eq, Hash, PartialEq
 hdr::MasteringDisplay: Clone, Copy, Debug, Default, PartialEq
 hdr::Nits: Clone, Copy, Debug, Eq, Hash, PartialEq
 hdr::St2086Codes: Clone, Copy, Debug, Eq, Hash, PartialEq
-i16: buffer::StorageSample
-i32: buffer::StorageSample
-i64: buffer::StorageSample
-i8: buffer::StorageSample
+i16: StorageSample
+i32: StorageSample
+i64: StorageSample
+i8: StorageSample
 icc::IccIdentification: Clone, Copy, Debug, Eq, Hash, PartialEq
 icc::IdentificationUse: Clone, Copy, Debug, Eq, Hash, PartialEq
 orientation::Orientation: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+pixel_types::F16Sample: Clone, Copy, Debug, Default, Display, PartialEq, PartialOrd, StorageSample, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 pixel_types::GrayAlpha16: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 pixel_types::GrayAlpha8: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
+pixel_types::GrayAlphaF16: Clone, Copy, Debug, Default, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 pixel_types::GrayAlphaF32: Clone, Copy, Debug, Default, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
-plane::AlignedSamples<T>: Clone, Debug, Deref, DerefMut, plane::SampleStorage, plane::SampleStorageMut
-plane::AnyPlane<'_>: plane::PlaneStorage
-plane::AnyPlane<'a>: Clone, Copy, Debug
-plane::AnyPlaneBuf: Debug, plane::PlaneStorage, plane::PlaneStorageMut
-plane::AnyPlaneMut<'_>: plane::PlaneStorage, plane::PlaneStorageMut
-plane::AnyPlaneMut<'a>: Debug
-plane::FloatEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
-plane::FloatEncodingError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
-plane::LayoutError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
-plane::PlanarBuffer<P>: Debug
-plane::PlanarBufferParts<P>: Debug
-plane::PlanarFromPartsError<P>: Debug, Display, Error
-plane::PlanarLayout: Clone, Debug, Eq, Hash, PartialEq
-plane::PlanarSlice<'a>: Clone, Copy, Debug
-plane::PlanarSliceMut<'a, P>: Debug
-plane::Plane<C>: Clone, Copy, Debug, plane::PlaneStorage, plane::PlaneStorageMut
-plane::PlaneEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
-plane::PlaneError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
-plane::PlaneRole: Clone, Copy, Debug, Eq, Hash, PartialEq
-plane::PlaneSpec: Clone, Copy, Debug, Eq, Hash, PartialEq
-plane::RowAlign: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 policy::AlphaPolicy: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::ConvertOptions: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::DepthPolicy: Clone, Copy, Debug, Eq, Hash, PartialEq
@@ -1439,19 +1617,18 @@ precision::OutputChoice: Clone, Copy, Debug, Eq, Hash, PartialEq
 precision::SourcePrecision: Clone, Copy, Debug, Eq, PartialEq
 sample::ChromaSiting: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 sample::ChromaSubsampling: Clone, Copy, Debug, Eq, Hash, PartialEq
-sample::CodePlane<'a>: Clone, Copy, Debug
-sample::CodePlaneError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 sample::ExactDepth: Clone, Copy, Debug, Eq, Hash, PartialEq
 sample::ExactDepthError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 sample::SampleEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
 sample::SampleEncodingError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
-u16: buffer::StorageSample
-u32: buffer::StorageSample
-u64: buffer::StorageSample
-u8: buffer::StorageSample
+u16: StorageSample
+u32: StorageSample
+u64: StorageSample
+u8: StorageSample
 
 ## auto traits
 
+buffer::AlignedSamples<T>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 buffer::FromPartsError<S>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 buffer::InPlacePixels<'a>: !UnwindSafe
 buffer::PixelBuffer<P, S>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
@@ -1459,11 +1636,3 @@ buffer::PixelBufferParts<S>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSa
 buffer::PixelCow<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 buffer::PixelSlice<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 buffer::PixelSliceMut<'a, P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
-plane::AlignedSamples<T>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
-plane::AnyPlaneMut<'a>: !UnwindSafe
-plane::PlanarBuffer<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
-plane::PlanarBufferParts<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
-plane::PlanarFromPartsError<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
-plane::PlanarSlice<'a>: !RefUnwindSafe !UnwindSafe
-plane::PlanarSliceMut<'a, P>: !RefUnwindSafe !Send !Sync !UnwindSafe
-plane::Plane<C>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe

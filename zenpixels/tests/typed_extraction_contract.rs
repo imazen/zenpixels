@@ -15,7 +15,46 @@ fn matching_typed_allocations_survive_erasure_and_extraction() {
     }
     check!(u8, 17);
     check!(u16, 12345);
+    check!(zenpixels::F16Sample, zenpixels::F16Sample::from_f32(0.25));
     check!(f32, 0.25);
+
+    // Typed F16 RGBA, BGRA, Gray, and GrayAlphaF16 round-trip zero-copy as well.
+    let ga = vec![
+        zenpixels::GrayAlphaF16::new(
+            zenpixels::F16Sample::from_f32(0.5),
+            zenpixels::F16Sample::ONE
+        );
+        2
+    ];
+    let ga_mismatch: PixelBuffer = PixelBuffer::from_pixels(ga.clone(), 2, 1).unwrap().into();
+    let ga_ptr = ga.as_ptr();
+    let ga_buf: PixelBuffer = PixelBuffer::from_pixels(ga, 2, 1).unwrap().into();
+    assert_eq!(
+        ga_buf.descriptor(),
+        zenpixels::PixelFormat::GrayAF16.descriptor()
+    );
+    // Extracting as GrayAlpha16 must fail cleanly (no silent F16 -> U16 confusion).
+    assert!(
+        ga_mismatch
+            .into_contiguous_pixels::<zenpixels::GrayAlpha16>()
+            .is_none()
+    );
+    assert!(
+        ga_buf
+            .as_slice()
+            .try_typed::<zenpixels::GrayAlpha16>()
+            .is_none()
+    );
+    assert!(
+        ga_buf
+            .as_slice()
+            .try_typed::<zenpixels::GrayAlphaF16>()
+            .is_some()
+    );
+    let ga_out = ga_buf
+        .into_contiguous_pixels::<zenpixels::GrayAlphaF16>()
+        .unwrap();
+    assert_eq!(ga_ptr, ga_out.as_ptr());
 }
 
 #[test]

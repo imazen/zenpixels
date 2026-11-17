@@ -8,7 +8,7 @@ autobins = false
 [workspace]
 
 [dependencies]
-zenpixels = { path = "../../zenpixels", features = ["hash"] }
+zenpixels = { path = "../../zenpixels", features = ["hash", "planar"] }
 zenhash = { git = "https://github.com/imazen/zenhash", rev = "98c385a4e54a", default-features = false, features = ["std", "avx512", "rapidhash", "xxh3", "fnv", "murmur3"] }
 zenpixels-before = { package = "zenpixels", git = "https://github.com/imazen/zenpixels", rev = "e853eb7545668f46550aa72e42897fa30ebba8de", features = ["hash"] }
 zenhash-next = { package = "zenhash", git = "https://github.com/imazen/zenhash", rev = "1836e2fa31d8", default-features = false, features = ["std", "avx512", "xxh3", "fnv", "murmur3"] }

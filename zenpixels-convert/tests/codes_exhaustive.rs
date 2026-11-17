@@ -3,16 +3,23 @@
 //! The oracle rounds in f64 rather than with the kernel's integer formula. Every
 //! code of every depth 1..=16 is visited; the full set runs in well under a second.
 
+#[cfg(feature = "planar")]
 use zenpixels::plane::{AnyPlane, PlaneRef};
 use zenpixels::{
-    ChannelType, PixelDescriptor, PixelSlice, PixelSliceMut, SignalRange,
-    sample::{CodePlane, ExactDepth, ExactDepthError, SampleEncoding},
+    ChannelType, PixelDescriptor, PixelSlice, SignalRange,
+    sample::{ExactDepth, ExactDepthError, SampleEncoding},
 };
-use zenpixels_convert::codes::{CodeMap, CodeMapError, CodeRole, CodesError, to_canonical};
+#[cfg(feature = "planar")]
+use zenpixels::{PixelSliceMut, sample::CodePlane};
+use zenpixels_convert::codes::{CodeMap, CodeMapError, CodeRole};
+#[cfg(feature = "planar")]
+use zenpixels_convert::codes::{CodesError, to_canonical};
 
+#[cfg(feature = "planar")]
 fn plane8(words: &[u8], width: usize, height: usize, stride: usize) -> AnyPlane<'_> {
     AnyPlane::U8(PlaneRef::new(words, width, height, stride).unwrap())
 }
+#[cfg(feature = "planar")]
 fn plane16(words: &[u16], width: usize, height: usize, stride: usize) -> AnyPlane<'_> {
     AnyPlane::U16(PlaneRef::new(words, width, height, stride).unwrap())
 }
@@ -270,12 +277,17 @@ fn unexact_rules_refuse_at_construction() {
     assert_eq!(out, [0, 65535, 32800]);
 }
 
+fn full(storage: ChannelType, color: u8, alpha: u8) -> ExactDepth {
+    ExactDepth::new(storage, SignalRange::Full, color, alpha).unwrap()
+}
+
 // ---------------------------------------------------------------------------
 // to_canonical: borrowed native components → canonical strided image
 // ---------------------------------------------------------------------------
 
 /// Run `to_canonical` into a U16 destination with three pixels of row padding
 /// filled with a sentinel; return active samples and assert padding is intact.
+#[cfg(feature = "planar")]
 fn canonical_u16(
     components: &[CodePlane<'_>],
     range: SignalRange,
@@ -312,10 +324,8 @@ fn canonical_u16(
         .collect();
     result.map(|exact| (active, exact))
 }
-fn full(storage: ChannelType, color: u8, alpha: u8) -> ExactDepth {
-    ExactDepth::new(storage, SignalRange::Full, color, alpha).unwrap()
-}
 
+#[cfg(feature = "planar")]
 #[test]
 fn interleaved_twelve_bit_rgb_widens_exactly_into_strided_rows() {
     let (w, h) = (7usize, 3usize);
@@ -390,6 +400,7 @@ fn interleaved_twelve_bit_rgb_widens_exactly_into_strided_rows() {
     assert_eq!([top, bottom].concat(), expect);
 }
 
+#[cfg(feature = "planar")]
 #[test]
 fn per_component_encodings_cover_ten_bit_color_with_sixteen_bit_alpha() {
     let color = [0u16, 1023, 512, 64];
@@ -432,6 +443,7 @@ fn per_component_encodings_cover_ten_bit_color_with_sixteen_bit_alpha() {
     );
 }
 
+#[cfg(feature = "planar")]
 #[test]
 fn p010_luma_with_zero_padding_is_already_canonical_narrow_u16() {
     let p010 = enc(10, 6);
@@ -458,6 +470,7 @@ fn p010_luma_with_zero_padding_is_already_canonical_narrow_u16() {
     assert_ne!(out, luma);
 }
 
+#[cfg(feature = "planar")]
 #[test]
 fn eight_bit_codes_widen_by_257_and_copy_into_u8() {
     let codes: Vec<u8> = (0..=255).collect();
@@ -484,6 +497,7 @@ fn eight_bit_codes_widen_by_257_and_copy_into_u8() {
     assert_eq!(bytes, codes);
 }
 
+#[cfg(feature = "planar")]
 #[test]
 fn refusals_precede_every_write() {
     let ten = enc(10, 0);

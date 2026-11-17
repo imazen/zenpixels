@@ -1,7 +1,9 @@
 //! `PixelBuffer` over storage other than `Vec<u8>`: nothing is copied, and
 //! layout validation matches the `Vec<u8>` path.
 
-use zenpixels::plane::{AlignedPlane, AlignedSamples, SampleStorage, SampleStorageMut};
+use zenpixels::buffer::{AlignedSamples, SampleStorage, SampleStorageMut};
+#[cfg(feature = "planar")]
+use zenpixels::plane::AlignedPlane;
 use zenpixels::{PixelBuffer, PixelBufferParts, PixelDescriptor, RowAlign};
 
 const W: u32 = 37;
@@ -254,16 +256,19 @@ fn aligned_buffers_can_hold_the_channel_type_directly() {
     .unwrap();
     assert_eq!(custom.stride() % 256, 0);
 
-    let plane = AlignedPlane::<u16>::alloc_aligned(
-        W as usize,
-        H as usize,
-        RowAlign::from_bytes::<u16>(256),
-    )
-    .unwrap();
-    assert_eq!((plane.stride() * 2) % 256, 0);
-    let tight_plane =
-        AlignedPlane::<u16>::alloc_aligned(W as usize, H as usize, RowAlign::Tight).unwrap();
-    assert_eq!(tight_plane.stride(), W as usize);
+    #[cfg(feature = "planar")]
+    {
+        let plane = AlignedPlane::<u16>::alloc_aligned(
+            W as usize,
+            H as usize,
+            RowAlign::from_bytes::<u16>(256),
+        )
+        .unwrap();
+        assert_eq!((plane.stride() * 2) % 256, 0);
+        let tight_plane =
+            AlignedPlane::<u16>::alloc_aligned(W as usize, H as usize, RowAlign::Tight).unwrap();
+        assert_eq!(tight_plane.stride(), W as usize);
+    }
 
     let mismatch = PixelBuffer::<(), AlignedSamples<u16>>::try_new_aligned(
         W,
@@ -353,6 +358,22 @@ fn offset_past_u32_is_refused_not_truncated() {
         PixelBufferParts::new(vec![0u8; 12].into(), 2, 2, 6, PixelDescriptor::RGB8_SRGB);
     if let Ok(offset) = usize::try_from(u64::from(u32::MAX) + 1) {
         parts.offset = offset;
+        assert!(PixelBuffer::try_from_parts(parts).is_err());
+    }
+}
+
+#[test]
+fn stride_samples_past_u32_is_refused_not_truncated() {
+    // 0-height buffer needs 0 backing bytes, isolating the sample-stride capacity check.
+    let mut parts: PixelBufferParts = PixelBufferParts::new(
+        Vec::<u8>::new().into(),
+        1,
+        0,
+        4,
+        PixelDescriptor::RGBAF32_LINEAR,
+    );
+    if let Ok(wide_stride) = usize::try_from((u64::from(u32::MAX) + 1) * 4) {
+        parts.stride_bytes = wide_stride;
         assert!(PixelBuffer::try_from_parts(parts).is_err());
     }
 }

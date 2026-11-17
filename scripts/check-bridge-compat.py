@@ -21,7 +21,7 @@ def main():
     parser.add_argument('--packages', type=Path, required=True)
     parser.add_argument('--siblings', type=Path)
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix='zenpixels-compat-', dir='/tmp') as directory:
+    with tempfile.TemporaryDirectory(prefix='zenpixels-compat-') as directory:
         base = Path(directory)
         for name in ['zenpixels', 'zenpixels-convert']:
             for version in ['0.2.17', '0.3.1']:
@@ -49,8 +49,8 @@ edition = "2024"
 default = ["std", "zenpixels-convert/icc-db"]
 std = ["zenpixels/std", "zenpixels-convert/std"]
 interop = ["zenpixels/rgb", "zenpixels/imgref", "zenpixels-convert/rgb", "zenpixels-convert/imgref"]
-experimental = ["zenpixels-convert/hdr-experimental", "zenpixels-convert/estimation-experimental"]
-legacy-features = ["zenpixels/planar", "zenpixels-convert/planar", "zenpixels-convert/serde"]
+experimental = ["zenpixels-convert/hdr-experimental"]
+planar-features = ["zenpixels/planar", "zenpixels-convert/planar"]
 siblings = {sibling_features}
 [dependencies]
 zenpixels = {{ version = "={core}", default-features = false }}
@@ -63,7 +63,7 @@ zenpixels-convert = {{ path = {json.dumps(str(base / f"zenpixels-convert-{conver
 {sibling_patch}
 ''')
                 env = dict(os.environ, CARGO_TARGET_DIR=str(Path(os.environ.get('CARGO_TARGET_DIR', Path(tempfile.gettempdir()) / 'zenpixels-validation')) / 'bridge-compat'))
-                cases = [('--no-default-features',), (), ('--features', 'interop,experimental,legacy-features')]
+                cases = [('--no-default-features',), (), ('--features', 'interop,experimental,planar-features')]
                 if args.siblings:
                     cases.append(('--features', 'siblings,interop'))
                 for flags in cases:

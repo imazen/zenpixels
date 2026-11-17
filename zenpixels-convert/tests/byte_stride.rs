@@ -3,14 +3,20 @@
 //! is poisoned so a kernel that reads it changes the answer.
 
 use whereat::At;
+#[cfg(feature = "planar")]
+use zenpixels::SignalRange;
+#[cfg(feature = "planar")]
 use zenpixels::plane::{AnyPlane, PlaneRef};
+#[cfg(feature = "planar")]
 use zenpixels::sample::{ChromaSiting, ChromaSubsampling, CodePlane, SampleEncoding};
 use zenpixels::{
     AlphaMode, ChannelType, Cicp, ColorOrigin, Orientation, PixelBuffer, PixelBufferParts,
-    PixelDescriptor as D, PixelFormat, PixelSlice, PixelSliceMut, SignalRange, TransferFunction,
+    PixelDescriptor as D, PixelFormat, PixelSlice, PixelSliceMut, TransferFunction,
 };
 use zenpixels_convert::adapt::adapt_raw_rows_for_encode;
+#[cfg(feature = "planar")]
 use zenpixels_convert::codes::to_canonical;
+#[cfg(feature = "planar")]
 use zenpixels_convert::ycbcr::YcbcrToRgbF32;
 use zenpixels_convert::{
     ConvertError, ConvertOptions, OutputPlan, OutputProfile, PixelBufferConvertExt,
@@ -688,6 +694,7 @@ fn output_plan_rows_match_packed() {
 }
 
 /// Native components widen into a destination whose rows aren't whole pixels.
+#[cfg(feature = "planar")]
 #[test]
 fn to_canonical_writes_samples_and_leaves_padding() {
     let (w, h) = (5usize, 3usize);
@@ -751,6 +758,7 @@ fn to_canonical_writes_samples_and_leaves_padding() {
 }
 
 /// YCbCr writes into a destination with the native JXL shape: f32 RGB with 16 bytes of padding.
+#[cfg(feature = "planar")]
 #[test]
 fn ycbcr_writes_samples_and_leaves_padding() {
     let (w, h) = (5usize, 3usize);

@@ -49,8 +49,9 @@
 //! compatibility rebalancing: the adapted red primary's negative Z is set to
 //! zero, with other colorants and `chad` adjusted to compensate. This changes
 //! the represented colorimetry, and these constants carry no `cicp` tag.
-//! ICC.1:2022 permits negative PCSXYZ in signed encodings; retaining such a
-//! value can be correct. Older ICC wording and reader behavior motivated the
+//! ICC.1:2022 permits negative PCSXYZ in signed `s15Fixed16Number` `XYZType`
+//! colorant tags (and float32 `multiProcessElementsType`); retaining such a
+//! value is spec-conformant. Older ICC wording and reader behavior motivated the
 //! separate compatibility variants. See the linked correctness overview below.
 //! Some readers identify a gamut by colorant tags within a tolerance:
 //! our libultrahdr colorant-matching regression (0.001 tolerance) rejects

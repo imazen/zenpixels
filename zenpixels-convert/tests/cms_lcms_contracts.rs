@@ -44,7 +44,7 @@ fn preparation_bounds_and_short_rows_fail_before_writes() {
 #[test]
 fn prepared_float_ink_rows_allocate_nothing_and_preserve_padding() {
     let icc = synthetic_icc::synthetic_cmyk_icc();
-    let mut transform = build(Source::Icc(&icc), SRGB, F::CmykF32Inverted, F::RgbF32);
+    let mut transform = build(Source::Icc(&icc), SRGB, F::CMYKF32_INVERTED, F::RgbF32);
     transform.prepare(17).unwrap();
     let input = [1.0f32; 17 * 4];
     let mut output = [f32::from_bits(0x7fc01234); 17 * 3 + 3];
@@ -104,7 +104,7 @@ fn adding_alpha_makes_it_opaque_without_touching_later_pixels() {
 #[test]
 fn cmyk_u16_is_native_and_paper_white_keeps_alpha_opaque() {
     let icc = synthetic_icc::synthetic_cmyk_icc();
-    let mut transform = build(Source::Icc(&icc), SRGB, F::Cmyk16, F::Rgba16);
+    let mut transform = build(Source::Icc(&icc), SRGB, F::CMYK16, F::Rgba16);
     let mut output = [0u16; 4];
     transform
         .try_transform_row(
@@ -126,7 +126,7 @@ fn unsupported_and_device_dependent_descriptions_decline() {
         );
     }
     assert!(
-        Lcms.build_source_transform(SRGB, SRGB, F::Cmyk8, F::Rgb8, &ConvertOptions::permissive())
+        Lcms.build_source_transform(SRGB, SRGB, F::CMYK8, F::Rgb8, &ConvertOptions::permissive())
             .is_none()
     );
     assert!(

@@ -401,7 +401,7 @@ fn padding_is_not_alpha_and_opaque_requires_a_proof() {
             [10, 20, 30, 255],
         ),
         (
-            PixelDescriptor::BGRX8.with_transfer(TransferFunction::Srgb),
+            PixelDescriptor::BGRX8_SRGB,
             [30, 20, 10, 0],
             [10, 20, 30, 255],
         ),

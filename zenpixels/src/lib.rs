@@ -30,8 +30,9 @@
 //! For conversion, see [zenpixels-convert](https://docs.rs/zenpixels-convert).
 //!
 //! [`ColorContext`] carries the current ICC/CICP and luminance declarations;
-//! [`ColorOrigin`] retains original file claims. [`plane::Plane`] carries strided
-//! samples; [`plane::PlanarSlice`] combines validated plane roles and interpretation.
+//! [`ColorOrigin`] retains original file claims. With `feature = "planar"`,
+//! `plane::Plane` carries strided samples and `plane::PlanarSlice` combines
+//! validated plane roles and interpretation.
 //! [`sample::SampleEncoding`] describes native integer payloads, while
 //! [`sample::ExactDepth`] is evidence about the current canonical code grid.
 //!
@@ -55,16 +56,15 @@
 //! |---------|--------|
 //! | `std` | Default; omit for `no_std + alloc` |
 //! | `icc` | Default; paired-fingerprint ICC recognition with scoped use permission |
+//! | `planar` | Opt-in; `plane` module (`Plane`, `PlanarLayout`, `PlanarSlice`, `PlanarBuffer`) and `sample::CodePlane` |
 //! | `rgb` | Concrete `rgb` pixel types |
 //! | `imgref` | imgref adapters; enables `rgb` |
 //! | `image` | image 0.25 interop (Rust 1.88+) |
 //! | `hash` | Pixel hashing and configurable inclusions (Rust 1.89+) |
 //! | `allocator_api` | Allocator-parameterized storage on supported compilers |
-//! | `planar`, `serde` | Retained compatibility spellings; no API |
 //!
-#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(not(test), no_std)]
 #![forbid(unsafe_code)]
-#![cfg_attr(test, allow(deprecated))]
 
 extern crate alloc;
 
@@ -78,10 +78,12 @@ pub use hashing::HashInclusions;
 #[cfg(feature = "image")]
 mod image_interop;
 pub mod orientation;
+#[cfg(feature = "planar")]
 pub mod plane;
 pub mod policy;
 pub mod precision;
 pub mod sample;
+pub(crate) mod storage;
 
 pub mod cicp;
 pub mod color;
@@ -99,30 +101,32 @@ pub use orientation::Orientation;
 // Re-export key descriptor types at crate root for ergonomics.
 #[doc(inline)]
 pub use descriptor::{
-    AlphaMode, ChannelLayout, ChannelType, ColorModel, ColorPrimaries, PixelDescriptor,
-    PixelFormat, SignalRange, TransferFunction,
+    AlphaMode, ChannelLayout, ChannelType, ColorModel, ColorPrimaries, GenericFormat,
+    PixelDescriptor, PixelFormat, SignalRange, TransferFunction,
 };
 
 // Re-export buffer and alignment types at crate root.
 #[doc(inline)]
 pub use buffer::{
-    Bgrx, BufferError, ByteStorage, ByteStorageMut, FromPartsError, InPlacePixels, Pixel,
-    PixelBuffer, PixelBufferParts, PixelCow, PixelSlice, PixelSliceMut, PixelStorage, Rgbx,
+    Bgrx, BufferError, ByteStorage, ByteStorageMut, FromPartsError, InPlacePixels, InteropTarget,
+    Pixel, PixelBuffer, PixelBufferParts, PixelCow, PixelSlice, PixelSliceMut, PixelStorage, Rgbx,
     StorageSample,
 };
 #[doc(inline)]
-pub use plane::RowAlign;
+pub use storage::RowAlign;
 
 // Re-export color types at crate root.
 pub use cicp::Cicp;
 #[doc(inline)]
 pub use color::{
-    AnyColor, Color, ColorAuthority, ColorContext, ColorOrigin, ColorProfile, ColorProfileSource,
-    ColorProvenance, NamedProfile, PixelEncoding,
+    AnyColor, CieXy, Color, ColorAuthority, ColorContext, ColorOrigin, ColorProfile,
+    ColorProfileSource, ColorProvenance, GammaCurve, IccParametricCurve, NamedProfile,
+    ParametricColor, ParametricPrimaries, ParametricTransfer, PixelEncoding, RenderingIntent,
+    WhitePoint,
 };
 
-// Re-export GrayAlpha pixel types at crate root.
-pub use pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};
+// Re-export f16 sample and GrayAlpha pixel types at crate root.
+pub use pixel_types::{F16Sample, GrayAlpha8, GrayAlpha16, GrayAlphaF16, GrayAlphaF32};
 
 pub use policy::{
     AlphaPolicy, ConvertOptions, DepthPolicy, GamutMapping, GrayExpand, LumaCoefficients,

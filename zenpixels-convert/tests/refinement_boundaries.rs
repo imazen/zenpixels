@@ -85,11 +85,11 @@ fn bgr_icc_output_cannot_bypass_missing_luma_policy() {
     use zenpixels_convert::{ConvertError, OutputPlan, OutputProfile};
     let cms = AcceptingCms(AtomicUsize::new(0));
     let current = ColorContext::from_icc(Arc::<[u8]>::from(&b"current"[..]));
+    let bgr8_srgb = PixelFormat::Bgr8
+        .descriptor()
+        .with_transfer(TransferFunction::Srgb);
     let result = OutputPlan::new(
-        PixelEncoding::new(
-            PixelDescriptor::BGR8.with_transfer(TransferFunction::Srgb),
-            Some(&current),
-        ),
+        PixelEncoding::new(bgr8_srgb, Some(&current)),
         &ColorOrigin::assumed(),
         OutputProfile::Icc(Arc::from(&b"target"[..])),
         PixelFormat::Gray8,
@@ -107,7 +107,9 @@ fn bgr_icc_output_cannot_bypass_missing_luma_policy() {
 fn bgr_cms_row_conversion_requires_luma_policy() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let cms = AcceptingCms(AtomicUsize::new(0));
-    let from = PixelDescriptor::BGR8.with_transfer(TransferFunction::Srgb);
+    let from = PixelFormat::Bgr8
+        .descriptor()
+        .with_transfer(TransferFunction::Srgb);
     let to = PixelDescriptor::GRAY8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
     let result = zenpixels_convert::RowConverter::new_explicit_with_cms(
         from,
@@ -127,7 +129,9 @@ fn explicit_luma_still_allows_cms_dispatch() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     for from in [
         PixelDescriptor::RGB8_SRGB,
-        PixelDescriptor::BGR8.with_transfer(TransferFunction::Srgb),
+        PixelFormat::Bgr8
+            .descriptor()
+            .with_transfer(TransferFunction::Srgb),
     ] {
         let cms = AcceptingCms(AtomicUsize::new(0));
         let to = PixelDescriptor::GRAY8_SRGB.with_primaries(ColorPrimaries::DisplayP3);

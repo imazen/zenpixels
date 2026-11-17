@@ -178,12 +178,13 @@ enum Trc {
 }
 
 fn eval_para(p: &[f64], x: f64) -> f64 {
-    match p.len() {
-        1 => x.powf(p[0]),
+    // ICC.1:2022 §10.18: clip output to [0.0, 1.0]; guard negative base on types 3/4.
+    let y = match p.len() {
+        1 => x.max(0.0).powf(p[0]),
         3 => {
             let (g, a, b) = (p[0], p[1], p[2]);
             if x >= -b / a {
-                (a * x + b).powf(g)
+                (a * x + b).max(0.0).powf(g)
             } else {
                 0.0
             }
@@ -191,25 +192,30 @@ fn eval_para(p: &[f64], x: f64) -> f64 {
         4 => {
             let (g, a, b, c) = (p[0], p[1], p[2], p[3]);
             if x >= -b / a {
-                (a * x + b).powf(g) + c
+                (a * x + b).max(0.0).powf(g) + c
             } else {
                 c
             }
         }
         5 => {
             let (g, a, b, c, d) = (p[0], p[1], p[2], p[3], p[4]);
-            if x >= d { (a * x + b).powf(g) } else { c * x }
+            if x >= d {
+                (a * x + b).max(0.0).powf(g)
+            } else {
+                c * x
+            }
         }
         7 => {
             let (g, a, b, c, d, e, f) = (p[0], p[1], p[2], p[3], p[4], p[5], p[6]);
             if x >= d {
-                (a * x + b).powf(g) + e
+                (a * x + b).max(0.0).powf(g) + e
             } else {
                 c * x + f
             }
         }
         _ => unreachable!("parser admits only ICC parametric function types 0 through 4"),
-    }
+    };
+    y.clamp(0.0, 1.0)
 }
 
 fn eval_trc(t: &Trc, x: f64) -> f64 {
@@ -256,6 +262,9 @@ fn parse_trc(d: &[u8], o: usize) -> Option<Trc> {
                 }
                 p.push(i32::from_be_bytes([d[q], d[q + 1], d[q + 2], d[q + 3]]) as f64 / 65536.0);
             }
+            if p[0] <= 0.0 || (n >= 3 && p[1] <= 0.0) {
+                return None;
+            }
             Some(Trc::Para(p))
         }
         b"curv" => {
@@ -264,9 +273,11 @@ fn parse_trc(d: &[u8], o: usize) -> Option<Trc> {
             if c == 0 {
                 Some(Trc::Gamma(1.0))
             } else if c == 1 {
-                Some(Trc::Gamma(
-                    u16::from_be_bytes([d[o + 12], d[o + 13]]) as f64 / 256.0,
-                ))
+                let g = u16::from_be_bytes([d[o + 12], d[o + 13]]) as f64 / 256.0;
+                if g <= 0.0 {
+                    return None;
+                }
+                Some(Trc::Gamma(g))
             } else {
                 let mut l = Vec::with_capacity(c);
                 for i in 0..c {
@@ -322,7 +333,11 @@ fn max_u16_err(trc: &Trc, eotf: fn(f64) -> f64) -> u32 {
     let mut mx = 0u32;
     for i in 0..=65535u16 {
         let x = i as f64 / 65535.0;
-        let a = (eval_trc(trc, x) * 65535.0).round() as i64;
+        let val = eval_trc(trc, x);
+        if !val.is_finite() {
+            return u32::MAX;
+        }
+        let a = (val * 65535.0).round() as i64;
         let b = (eotf(x) * 65535.0).round() as i64;
         let d = (a - b).unsigned_abs() as u32;
         if d > mx {
@@ -978,12 +993,12 @@ fn scan_lut_tags(data: &[u8]) -> LutTags {
             break;
         }
         match &data[b..b + 4] {
-            b"A2B0" => out.a2b0 = true,
-            b"A2B1" => out.a2b1 = true,
-            b"A2B2" => out.a2b2 = true,
-            b"B2A0" => out.b2a0 = true,
-            b"B2A1" => out.b2a1 = true,
-            b"B2A2" => out.b2a2 = true,
+            b"A2B0" | b"D2B1" | b"D2B3" => out.a2b0 = true,
+            b"A2B1" | b"D2B0" => out.a2b1 = true,
+            b"A2B2" | b"D2B2" => out.a2b2 = true,
+            b"B2A0" | b"B2D1" | b"B2D3" => out.b2a0 = true,
+            b"B2A1" | b"B2D0" => out.b2a1 = true,
+            b"B2A2" | b"B2D2" => out.b2a2 = true,
             _ => {}
         }
     }
@@ -1558,7 +1573,13 @@ fn ingest_profile(
         // Empirical intent-safety check only once per unique hash — this
         // is where the cost is (moxcms builds + transforms two profiles
         // over a 320-pixel ramp for each of 3 intents, ~1-5ms).
-        let (mask, provenance) = compute_rgb_intent_mask(data, cp_name, tf_name);
+        // Bundle-derived entries remain metadata-only (`Safe::IdOnly`) per
+        // `docs/corrected-icc-export.md` and `tests/authority_boundaries.rs`.
+        let (mask, provenance) = if fname.starts_with("cicp_bundle:") {
+            (0, MaskProvenance::Unavailable)
+        } else {
+            compute_rgb_intent_mask(data, cp_name, tf_name)
+        };
 
         if report_mode {
             report_rows.push(build_report_row(

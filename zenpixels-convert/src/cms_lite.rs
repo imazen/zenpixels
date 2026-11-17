@@ -49,8 +49,8 @@ use crate::TransferFunction;
 /// Handles conversions between any color spaces that can be described by
 /// a (primaries, transfer) pair. This includes:
 ///
-/// - **ICC profiles**: identified via 132-profile hash table (~100ns) and
-///   CICP-in-ICC extraction. Covers sRGB, Display P3, BT.2020, Adobe RGB,
+/// - **ICC profiles**: identified via normalized profile fingerprint table (~100ns)
+///   and CICP-in-ICC extraction. Covers sRGB, Display P3, BT.2020, Adobe RGB,
 ///   and their variants across ICC v2–v5.
 /// - **CICP codes**: mapped directly to primaries + transfer.
 /// - **Named profiles**: decomposed to primaries + transfer.
@@ -117,17 +117,27 @@ impl crate::cms::RowTransformMut for LiteTransformMut {
     }
 }
 
-impl crate::cms::PluggableCms for ZenCmsLite {
-    fn build_source_transform(
-        &self,
+impl ZenCmsLite {
+    pub(crate) fn build_converter(
         src: crate::ColorProfileSource<'_>,
         dst: crate::ColorProfileSource<'_>,
         src_format: PixelFormat,
         dst_format: PixelFormat,
         options: &crate::policy::ConvertOptions,
-    ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, whereat::At<crate::cms::CmsPluginError>>>
+    ) -> Option<Result<crate::converter::RowConverter, whereat::At<crate::cms::CmsPluginError>>>
     {
         use zenpixels::PixelDescriptor;
+
+        // ZenCmsLite implements D65 media-relative matrix+TRC math only. Decline
+        // ICC-Absolute colorimetric requests so a capable backend (such as Lcms)
+        // in the plugin chain can evaluate unadapted PCS white points.
+        let explicit_intent = options.rendering_intent().or(match &src {
+            crate::ColorProfileSource::Parametric(p) => Some(p.rendering_intent),
+            _ => None,
+        });
+        if explicit_intent == Some(zenpixels::RenderingIntent::AbsoluteColorimetric) {
+            return None;
+        }
 
         // Decline when either source can't be resolved to (primaries, transfer)
         // — custom ICC, narrow-range CICP, YCbCr matrix. Not an error;
@@ -135,14 +145,6 @@ impl crate::cms::PluggableCms for ZenCmsLite {
         let (src_p, src_t) = src.resolve()?;
         let (dst_p, dst_t) = dst.resolve()?;
 
-        // Build the descriptors first so we can run the native-model check
-        // against them. Pre-0.2.16 we built these AFTER the same-space
-        // shortcut and called straight into `ConvertPlan::new_explicit`,
-        // which now answers `NeedsCms` for CMYK / Lab / XYZ etc. instead of
-        // panicking. Surfacing that as `Some(Err(...))` would stop the
-        // dispatch chain — but ZenCmsLite recognizes only native RGB-family
-        // gamut/transfer work, so the right answer is `None` (decline) so
-        // the next plugin (e.g. MoxCms) gets a chance.
         let from = PixelDescriptor::from_pixel_format(src_format)
             .with_primaries(src_p)
             .with_transfer(src_t);
@@ -150,9 +152,7 @@ impl crate::cms::PluggableCms for ZenCmsLite {
             .with_primaries(dst_p)
             .with_transfer(dst_t);
 
-        // Decline non-native color models (CMYK today; Lab / XYZ / spot inks
-        // when they land). We have no kernels for them — let MoxCms or the
-        // user-supplied plugin handle it.
+        // Decline non-native color models (CMYK, Lab, XYZ, etc.).
         if crate::convert::needs_cms_for_color_model(&from, &to) {
             return None;
         }
@@ -168,19 +168,30 @@ impl crate::cms::PluggableCms for ZenCmsLite {
         // failure (we recognized the pair) — surface it instead of
         // declining.
         match crate::convert::ConvertPlan::new_explicit(from, to, options) {
-            Ok(plan) => {
-                let inner = crate::converter::RowConverter::from_plan(plan);
-                Some(Ok(Box::new(LiteTransformMut { inner })))
-            }
-            // Render the inner At<ConvertError> (which carries its own trace
-            // frames) into the message, then `map_error` so those frames carry
-            // through to At<CmsPluginError> instead of being dropped by a fresh
-            // `at!` frame.
+            Ok(plan) => Some(Ok(crate::converter::RowConverter::from_plan(plan))),
             Err(e) => {
                 let msg = alloc::format!("ZenCmsLite plan construction failed: {e:?}");
                 Some(Err(e.map_error(|_| crate::cms::CmsPluginError::msg(msg))))
             }
         }
+    }
+}
+
+impl crate::cms::PluggableCms for ZenCmsLite {
+    fn build_source_transform(
+        &self,
+        src: crate::ColorProfileSource<'_>,
+        dst: crate::ColorProfileSource<'_>,
+        src_format: PixelFormat,
+        dst_format: PixelFormat,
+        options: &crate::policy::ConvertOptions,
+    ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, whereat::At<crate::cms::CmsPluginError>>>
+    {
+        Self::build_converter(src, dst, src_format, dst_format, options).map(|res| {
+            res.map(|inner| {
+                Box::new(LiteTransformMut { inner }) as Box<dyn crate::cms::RowTransformMut>
+            })
+        })
     }
 }
 
@@ -1097,4 +1108,38 @@ fn missing_hlg_rendering_cannot_be_bypassed_through_lite_cms() {
         &crate::ConvertOptions::permissive(),
     );
     assert!(!matches!(result, Some(Ok(_))));
+}
+
+#[cfg(test)]
+#[test]
+fn absolute_colorimetric_intent_declines_so_capable_cms_handles_pcs_white() {
+    use crate::cms::PluggableCms;
+    let src = crate::ColorProfileSource::Named(zenpixels::NamedProfile::DisplayP3);
+    let dst = crate::ColorProfileSource::Named(zenpixels::NamedProfile::Srgb);
+    let abs_opts = crate::ConvertOptions::permissive()
+        .with_rendering_intent(zenpixels::RenderingIntent::AbsoluteColorimetric);
+    assert!(
+        ZenCmsLite
+            .build_source_transform(
+                src,
+                dst.clone(),
+                PixelFormat::Rgb8,
+                PixelFormat::Rgb8,
+                &abs_opts
+            )
+            .is_none()
+    );
+    let mut param = zenpixels::ParametricColor::from_cicp(crate::Cicp::DISPLAY_P3).unwrap();
+    param.rendering_intent = zenpixels::RenderingIntent::AbsoluteColorimetric;
+    assert!(
+        ZenCmsLite
+            .build_source_transform(
+                crate::ColorProfileSource::Parametric(param),
+                dst,
+                PixelFormat::Rgb8,
+                PixelFormat::Rgb8,
+                &crate::ConvertOptions::permissive(),
+            )
+            .is_none()
+    );
 }

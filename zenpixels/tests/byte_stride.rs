@@ -31,7 +31,7 @@ fn cases() -> Vec<(D, u32, u32, usize)> {
         (D::GRAYA16_SRGB, 3, 2, 14),
         (D::BGRA8_SRGB, 3, 2, 15),
         (D::CMYK8, 2, 3, 9),
-        (D::CMYK16, 2, 3, 18),
+        (D::cmyk(zenpixels::ChannelType::U16), 2, 3, 18),
         (
             D::from_pixel_format(zenpixels::PixelFormat::RgbF16),
             2,

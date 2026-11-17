@@ -163,6 +163,13 @@ fn main() {
 """, "estimate", True,
 )
 
+PROBES["css_default_off"] = (
+    "use zenpixels_convert::ColorConvertExt; fn main() { let _ = zenpixels::Color::parse_css(\"#000\"); }",
+    "parse_css",
+    False,
+)
+
+
 def workspace_patches() -> str:
     """The workspace's own crates.io patches, which an outside probe doesn't inherit."""
     text = (ROOT / "Cargo.toml").read_text()
@@ -186,7 +193,6 @@ version = "0.0.0"
 edition = "2021"
 [features]
 default = ["zenpixels-convert/default"]
-estimation-experimental = ["zenpixels-convert/estimation-experimental"]
 [dependencies]
 zenpixels = {{ path = {json.dumps(str(ROOT / "zenpixels"))}, default-features = false }}
 zenpixels-convert = {{ path = {json.dumps(str(ROOT / 'zenpixels-convert'))}, default-features = false }}
@@ -199,35 +205,32 @@ zenpixels = {{ path = {json.dumps(str(ROOT / 'zenpixels'))} }}
         env = dict(os.environ, CARGO_TARGET_DIR=str(Path(os.environ.get("CARGO_TARGET_DIR", Path(tempfile.gettempdir()) / "zenpixels-validation")) / "deprecation-ui"))
         count = 0
         for defaults in (True, False):
-            for opted_in in (False, True):
-                for name, (_, expected, estimation) in PROBES.items():
-                    command = ["cargo", "check", "--offline", "--message-format=json", "--bin", name]
-                    if name.startswith("planar_"):
-                        command.extend(["--features", "zenpixels/planar,zenpixels-convert/planar"])
-                    if not defaults:
-                        command.append("--no-default-features")
-                    if opted_in:
-                        command.extend(["--features", "estimation-experimental"])
-                    result = subprocess.run(command, cwd=project, env=env, capture_output=True, text=True)
-                    errors = []
-                    for line in result.stdout.splitlines():
-                        item = json.loads(line)
-                        if item.get("reason") == "compiler-message" and item["message"]["level"] == "error":
-                            errors.append(item["message"])
-                    should_warn = expected is not None
-                    if should_warn:
-                        ok = result.returncode != 0 and bool(errors) and all(
-                            (error.get("code") or {}).get("code") in {"E0432", "E0433", "E0425", "E0412", "E0599", "E0422", "E0277"} for error in errors
-                        ) and any(expected in error["message"] for error in errors)
-                    else:
-                        ok = result.returncode == 0
-                    if not ok:
-                        raise AssertionError(
-                            f"{name}: default={defaults}, opt_in={opted_in}, expected_warning={should_warn}\n"
-                            + result.stderr + "\n" + "\n".join(e.get("rendered", e["message"]) for e in errors)
-                        )
-                    count += 1
-        print(f"Passed {count} downstream legacy-removal checks (default/no-default, opt-in/off).")
+            for name, (_, expected, _estimation) in PROBES.items():
+                command = ["cargo", "check", "--offline", "--message-format=json", "--bin", name]
+                if name.startswith("planar_"):
+                    command.extend(["--features", "zenpixels/planar,zenpixels-convert/planar"])
+                if not defaults:
+                    command.append("--no-default-features")
+                result = subprocess.run(command, cwd=project, env=env, capture_output=True, text=True)
+                errors = []
+                for line in result.stdout.splitlines():
+                    item = json.loads(line)
+                    if item.get("reason") == "compiler-message" and item["message"]["level"] == "error":
+                        errors.append(item["message"])
+                should_warn = expected is not None
+                if should_warn:
+                    ok = result.returncode != 0 and bool(errors) and all(
+                        (error.get("code") or {}).get("code") in {"E0432", "E0433", "E0425", "E0412", "E0599", "E0422", "E0277"} for error in errors
+                    ) and any(expected in error["message"] for error in errors)
+                else:
+                    ok = result.returncode == 0
+                if not ok:
+                    raise AssertionError(
+                        f"{name}: default={defaults}, expected_warning={should_warn}\n"
+                        + result.stderr + "\n" + "\n".join(e.get("rendered", e["message"]) for e in errors)
+                    )
+                count += 1
+        print(f"Passed {count} downstream legacy-removal checks (default/no-default).")
 
 
 if __name__ == "__main__":

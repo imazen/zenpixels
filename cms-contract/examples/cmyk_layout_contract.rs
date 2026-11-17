@@ -35,10 +35,10 @@ fn main() -> Result<(), Error> {
     let options = ConvertOptions::permissive().with_clip_out_of_gamut(false);
     for (name, backend) in [("lcms", &Lcms as &dyn PluggableCms), ("mox", &MoxCms)] {
         for (from, rgb, rgba, size, kind, inverted) in [
-            (F::Cmyk8, F::Rgb8, F::Rgba8, 1, "u8", false),
-            (F::Cmyk16, F::Rgb16, F::Rgba16, 2, "u16", false),
-            (F::CmykF32, F::RgbF32, F::RgbaF32, 4, "f32", false),
-            (F::CmykF32Inverted, F::RgbF32, F::RgbaF32, 4, "f32", true),
+            (F::CMYK8, F::Rgb8, F::Rgba8, 1, "u8", false),
+            (F::CMYK16, F::Rgb16, F::Rgba16, 2, "u16", false),
+            (F::CMYKF32, F::RgbF32, F::RgbaF32, 4, "f32", false),
+            (F::CMYKF32_INVERTED, F::RgbF32, F::RgbaF32, 4, "f32", true),
         ] {
             let stride = (WIDTH + 3) * 4 * size;
             let prefix = size;
@@ -65,7 +65,7 @@ fn main() -> Result<(), Error> {
                 }
             }
             let input_before = input.to_vec();
-            let input_file = output.join(format!("{name}-{from:?}.f32"));
+            let input_file = output.join(format!("{name}-{from}.f32"));
             std::fs::write(&input_file, canonical)?;
             let reference = Command::new(&args[2])
                 .args([
@@ -102,7 +102,7 @@ fn main() -> Result<(), Error> {
                 ) else {
                     assert_eq!(
                         (name, from),
-                        ("mox", F::Cmyk16),
+                        ("mox", F::CMYK16),
                         "unexpected capability decline"
                     );
                     println!("{name}|{from:?}|{to:?}|declined");

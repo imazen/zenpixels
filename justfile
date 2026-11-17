@@ -48,10 +48,10 @@ test:
 
 # Native borrowed code-plane conversion, default and freestanding compilation.
 ycbcr-check:
-    cargo test -p zenpixels --test code_planes
-    cargo test -p zenpixels-convert --test ycbcr_borrowed
-    cargo test -p zenpixels-convert --no-default-features --test ycbcr_borrowed
-    cargo clippy -p zenpixels -p zenpixels-convert --lib --test code_planes --test ycbcr_borrowed -- -D warnings
+    cargo test -p zenpixels --features planar --test code_planes
+    cargo test -p zenpixels-convert --features planar --test ycbcr_borrowed
+    cargo test -p zenpixels-convert --no-default-features --features planar --test ycbcr_borrowed
+    cargo clippy -p zenpixels -p zenpixels-convert --features zenpixels/planar,zenpixels-convert/planar --lib --test code_planes --test ycbcr_borrowed -- -D warnings
     cargo check -p zenpixels -p zenpixels-convert --no-default-features --target wasm32-unknown-unknown
 
 # Structural size_of/align_of of pixel views at BASE vs this tree (not heap or RSS).

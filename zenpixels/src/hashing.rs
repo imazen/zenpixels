@@ -4,7 +4,9 @@ use core::hash::{Hash, Hasher};
 
 use crate::AlphaMode;
 use crate::buffer::{ByteStorage, PixelBuffer, PixelCow, PixelSlice, PixelSliceMut};
-use crate::plane::{AnyPlane, PlanarSlice, Plane, PlaneEncoding, SampleStorage};
+#[cfg(feature = "planar")]
+use crate::plane::{AnyPlane, PlanarSlice, Plane, PlaneEncoding, PlaneSample, SampleStorage};
+#[cfg(feature = "planar")]
 use crate::sample::{CodePlane, SampleEncoding};
 
 /// Fields included in a pixel fingerprint. Storage padding is always excluded.
@@ -134,7 +136,7 @@ fn samples<H: Hasher>(bytes: &[u8], size: usize, state: &mut H) {
     }
 }
 
-fn packed<P, H: Hasher>(view: &PixelSlice<'_, P>, inclusions: HashInclusions, state: &mut H) {
+fn packed<H: Hasher>(view: &PixelSlice<'_>, inclusions: HashInclusions, state: &mut H) {
     begin(state, b"packed\0", inclusions);
     let descriptor = view.descriptor();
     let size = descriptor.channel_type().byte_size();
@@ -187,6 +189,7 @@ fn packed<P, H: Hasher>(view: &PixelSlice<'_, P>, inclusions: HashInclusions, st
     }
 }
 
+#[cfg(feature = "planar")]
 fn plane_header(
     state: &mut impl Hasher,
     inclusions: HashInclusions,
@@ -201,27 +204,48 @@ fn plane_header(
     ty.hash(&mut p);
 }
 
-fn plane<C: SampleStorage, H: Hasher>(view: &Plane<C>, inclusions: HashInclusions, state: &mut H) {
-    plane_header(
-        state,
-        inclusions,
-        view.width(),
-        view.height(),
-        <C::Sample as crate::plane::PlaneSample>::CHANNEL_TYPE,
-    );
-    if view.width() == 0 || view.height() == 0 {
+#[cfg(feature = "planar")]
+fn plane_bytes<H: Hasher>(
+    width: usize,
+    height: usize,
+    stride_samples: usize,
+    ty: crate::ChannelType,
+    strided_bytes: &[u8],
+    inclusions: HashInclusions,
+    state: &mut H,
+) {
+    plane_header(state, inclusions, width, height, ty);
+    if width == 0 || height == 0 {
         return;
     }
-    let size = core::mem::size_of::<C::Sample>();
-    if view.stride() == view.width() {
-        samples(bytemuck::cast_slice(view.strided_samples()), size, state);
+    let size = ty.byte_size();
+    if stride_samples == width {
+        samples(strided_bytes, size, state);
     } else {
-        for row in view.rows() {
-            samples(bytemuck::cast_slice(row), size, state);
+        let row_bytes = width * size;
+        let stride_bytes = stride_samples * size;
+        for y in 0..height {
+            let off = y * stride_bytes;
+            samples(&strided_bytes[off..off + row_bytes], size, state);
         }
     }
 }
 
+#[cfg(feature = "planar")]
+#[inline]
+fn plane<C: SampleStorage, H: Hasher>(view: &Plane<C>, inclusions: HashInclusions, state: &mut H) {
+    plane_bytes(
+        view.width(),
+        view.height(),
+        view.stride(),
+        <C::Sample as PlaneSample>::CHANNEL_TYPE,
+        bytemuck::cast_slice(view.strided_samples()),
+        inclusions,
+        state,
+    );
+}
+
+#[cfg(feature = "planar")]
 fn any_plane<H: Hasher>(
     view: &AnyPlane<'_>,
     inclusions: HashInclusions,
@@ -242,47 +266,77 @@ fn any_plane<H: Hasher>(
         if let Ok(codes) = codes {
             code_samples(&codes, size, state);
         } else {
-            // Wide/signed native carriers are hashable without claiming support
-            // in the U8/U16 numerical CodePlane reader.
+            // 64-bit native carriers are hashable without claiming
+            // support in the 8/16/32-bit numerical CodePlane reader.
             match view {
-                AnyPlane::I8(p) => masked_plane(p, e, state),
-                AnyPlane::I16(p) => masked_plane(p, e, state),
-                AnyPlane::U32(p) => masked_plane(p, e, state),
-                AnyPlane::I32(p) => masked_plane(p, e, state),
-                AnyPlane::U64(p) => masked_plane(p, e, state),
-                AnyPlane::I64(p) => masked_plane(p, e, state),
+                AnyPlane::U64(p) => masked_plane_bytes(
+                    p.width(),
+                    p.height(),
+                    p.stride(),
+                    8,
+                    bytemuck::cast_slice(p.strided_samples()),
+                    e,
+                    state,
+                ),
+                AnyPlane::I64(p) => masked_plane_bytes(
+                    p.width(),
+                    p.height(),
+                    p.stride(),
+                    8,
+                    bytemuck::cast_slice(p.strided_samples()),
+                    e,
+                    state,
+                ),
                 _ => unreachable!("validated planar integer encoding"),
             }
         }
         return;
     }
-    match view {
-        AnyPlane::U8(v) => plane(v, inclusions, state),
-        AnyPlane::U16(v) => plane(v, inclusions, state),
-        AnyPlane::I8(v) => plane(v, inclusions, state),
-        AnyPlane::I16(v) => plane(v, inclusions, state),
-        AnyPlane::U32(v) => plane(v, inclusions, state),
-        AnyPlane::I32(v) => plane(v, inclusions, state),
-        AnyPlane::F32(v) => plane(v, inclusions, state),
-        AnyPlane::U64(v) => plane(v, inclusions, state),
-        AnyPlane::I64(v) => plane(v, inclusions, state),
-        AnyPlane::F64(v) => plane(v, inclusions, state),
-    }
+    let stride_samples = match view {
+        AnyPlane::U8(v) => v.stride(),
+        AnyPlane::I8(v) => v.stride(),
+        AnyPlane::U16(v) => v.stride(),
+        AnyPlane::I16(v) => v.stride(),
+        AnyPlane::F16(v) => v.stride(),
+        AnyPlane::U32(v) => v.stride(),
+        AnyPlane::I32(v) => v.stride(),
+        AnyPlane::F32(v) => v.stride(),
+        AnyPlane::U64(v) => v.stride(),
+        AnyPlane::I64(v) => v.stride(),
+        AnyPlane::F64(v) => v.stride(),
+    };
+    plane_bytes(
+        view.width(),
+        view.height(),
+        stride_samples,
+        view.channel_type(),
+        view.as_strided_bytes(),
+        inclusions,
+        state,
+    );
 }
 
-fn masked_plane<C: SampleStorage>(
-    view: &Plane<C>,
+#[cfg(feature = "planar")]
+fn masked_plane_bytes(
+    width: usize,
+    height: usize,
+    stride_samples: usize,
+    size: usize,
+    strided_bytes: &[u8],
     encoding: SampleEncoding,
     state: &mut impl Hasher,
 ) {
-    if view.width() == 0 || view.height() == 0 {
+    if width == 0 || height == 0 {
         return;
     }
-    let size = core::mem::size_of::<C::Sample>();
     let mask = u64::MAX >> (64 - encoding.code_bits());
     let mut bytes = [0u8; 1024];
-    for row in view.rows() {
-        for block in bytemuck::cast_slice::<_, u8>(row).chunks(bytes.len()) {
+    let row_bytes = width * size;
+    let stride_bytes = stride_samples * size;
+    for y in 0..height {
+        let off = y * stride_bytes;
+        let row = &strided_bytes[off..off + row_bytes];
+        for block in row.chunks(bytes.len()) {
             for (input, output) in block.chunks_exact(size).zip(bytes.chunks_exact_mut(size)) {
                 let word = match size {
                     1 => u64::from(input[0]),
@@ -299,6 +353,7 @@ fn masked_plane<C: SampleStorage>(
     }
 }
 
+#[cfg(feature = "planar")]
 fn planar(view: &PlanarSlice<'_>, inclusions: HashInclusions, state: &mut impl Hasher) {
     begin(state, b"planar\0", inclusions);
     {
@@ -315,34 +370,40 @@ fn planar(view: &PlanarSlice<'_>, inclusions: HashInclusions, state: &mut impl H
     for (view, spec) in view.planes().zip(view.layout().planes()) {
         let encoding = match spec.encoding() {
             PlaneEncoding::Code(e) => Some(e),
-            PlaneEncoding::Float(_) | PlaneEncoding::Float64(_) => None,
+            PlaneEncoding::Float(_) | PlaneEncoding::Float64(_) | PlaneEncoding::Float16(_) => None,
         };
         any_plane(&view, inclusions, encoding, state);
     }
 }
 
 impl<P> Hash for PixelSlice<'_, P> {
+    #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
-        fixed(state, |h| packed(self, HashInclusions::default(), h));
+        let erased = self.reborrow_erased();
+        fixed(state, |h| packed(&erased, HashInclusions::default(), h));
     }
 }
 impl<P> PixelSlice<'_, P> {
     /// Fingerprint active pixels with the selected inclusion policy.
+    #[inline]
     #[must_use]
     pub fn hash_with(&self, inclusions: HashInclusions) -> u64 {
-        digest(|h| packed(self, inclusions, h))
+        let erased = self.reborrow_erased();
+        digest(|h| packed(&erased, inclusions, h))
     }
 }
 
 macro_rules! packed_owner {
     ($ty:ty, $view:ident $(, $storage:ident : $bound:path)?) => {
         impl<P $(, $storage: $bound)?> Hash for $ty {
-            fn hash<H: Hasher>(&self, state: &mut H) { self.$view().hash(state); }
+            #[inline]
+            fn hash<H: Hasher>(&self, state: &mut H) { self.$view().erase().hash(state); }
         }
         impl<P $(, $storage: $bound)?> $ty {
             /// Fingerprint the current active view, excluding storage padding.
+            #[inline]
             #[must_use]
-            pub fn hash_with(&self, inclusions: HashInclusions) -> u64 { self.$view().hash_with(inclusions) }
+            pub fn hash_with(&self, inclusions: HashInclusions) -> u64 { self.$view().erase().hash_with(inclusions) }
         }
     };
 }
@@ -350,11 +411,13 @@ packed_owner!(PixelBuffer<P, S>, as_slice, S: ByteStorage);
 packed_owner!(PixelCow<'_, P>, as_slice);
 packed_owner!(PixelSliceMut<'_, P>, as_pixel_slice);
 
+#[cfg(feature = "planar")]
 impl<C: SampleStorage> Hash for Plane<C> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         fixed(state, |h| plane(self, HashInclusions::default(), h));
     }
 }
+#[cfg(feature = "planar")]
 impl<C: SampleStorage> Plane<C> {
     /// Fingerprint active samples and geometry, excluding stride and storage.
     #[must_use]
@@ -362,6 +425,7 @@ impl<C: SampleStorage> Plane<C> {
         digest(|h| plane(self, inclusions, h))
     }
 }
+#[cfg(feature = "planar")]
 impl Hash for AnyPlane<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         fixed(state, |h| {
@@ -369,6 +433,7 @@ impl Hash for AnyPlane<'_> {
         });
     }
 }
+#[cfg(feature = "planar")]
 impl AnyPlane<'_> {
     /// Fingerprint active samples identically to the corresponding typed plane.
     #[must_use]
@@ -376,11 +441,13 @@ impl AnyPlane<'_> {
         digest(|h| any_plane(self, inclusions, None, h))
     }
 }
+#[cfg(feature = "planar")]
 impl Hash for PlanarSlice<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         fixed(state, |h| planar(self, HashInclusions::default(), h));
     }
 }
+#[cfg(feature = "planar")]
 impl PlanarSlice<'_> {
     /// Fingerprint active planes and the selected picture metadata.
     #[must_use]
@@ -389,11 +456,13 @@ impl PlanarSlice<'_> {
     }
 }
 
+#[cfg(feature = "planar")]
 impl Hash for CodePlane<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         fixed(state, |h| codes(self, HashInclusions::default(), h));
     }
 }
+#[cfg(feature = "planar")]
 impl CodePlane<'_> {
     /// Fingerprint component codes, ignoring unused bits and other components.
     #[must_use]
@@ -401,6 +470,7 @@ impl CodePlane<'_> {
         digest(|h| codes(self, inclusions, h))
     }
 }
+#[cfg(feature = "planar")]
 fn codes(view: &CodePlane<'_>, inclusions: HashInclusions, state: &mut impl Hasher) {
     begin(state, b"codes\0", inclusions);
     {
@@ -411,19 +481,60 @@ fn codes(view: &CodePlane<'_>, inclusions: HashInclusions, state: &mut impl Hash
             view.encoding().hash(&mut p);
         }
     }
-    code_samples(view, 2, state);
+    let size = if matches!(
+        view.encoding().storage(),
+        crate::ChannelType::U32 | crate::ChannelType::I32
+    ) {
+        4
+    } else {
+        2
+    };
+    code_samples(view, size, state);
 }
+#[cfg(feature = "planar")]
 fn code_samples(view: &CodePlane<'_>, size: usize, state: &mut impl Hasher) {
     if view.width() == 0 {
         return;
     }
+    let signed = view.encoding().is_signed();
+    let mask = u32::MAX >> (32 - u32::from(view.encoding().code_bits()));
+    if size == 4 {
+        let mut codes32 = [0u32; 128];
+        let mut signed32 = [0i32; 128];
+        for y in 0..view.height() {
+            for x in (0..view.width()).step_by(codes32.len()) {
+                let n = (view.width() - x).min(codes32.len());
+                if signed {
+                    view.read_codes_i32(x, y, &mut signed32[..n])
+                        .expect("checked active code plane extent");
+                    for (dst, &src) in codes32[..n].iter_mut().zip(&signed32[..n]) {
+                        *dst = (src as u32) & mask;
+                    }
+                } else {
+                    view.read_codes_u32(x, y, &mut codes32[..n])
+                        .expect("checked active code plane extent");
+                }
+                samples(bytemuck::cast_slice(&codes32[..n]), 4, state);
+            }
+        }
+        return;
+    }
     let mut codes = [0u16; 128];
+    let mut signed32 = [0i32; 128];
     let mut bytes = [0u8; 128];
     for y in 0..view.height() {
         for x in (0..view.width()).step_by(codes.len()) {
             let n = (view.width() - x).min(codes.len());
-            view.read_codes(x, y, &mut codes[..n])
-                .expect("checked active code plane extent");
+            if signed {
+                view.read_codes_i32(x, y, &mut signed32[..n])
+                    .expect("checked active code plane extent");
+                for (dst, &src) in codes[..n].iter_mut().zip(&signed32[..n]) {
+                    *dst = ((src as u32) & mask) as u16;
+                }
+            } else {
+                view.read_codes(x, y, &mut codes[..n])
+                    .expect("checked active code plane extent");
+            }
             match size {
                 // Reuse the wide-sample serializer. Little-endian hosts can
                 // hash the complete code block directly, without per-code copies.
@@ -434,7 +545,7 @@ fn code_samples(view: &CodePlane<'_>, size: usize, state: &mut impl Hasher) {
                     }
                     state.write(&bytes[..n]);
                 }
-                _ => unreachable!("CodePlane supports U8/U16 containers"),
+                _ => unreachable!("CodePlane supports 8/16/32-bit containers"),
             }
         }
     }
