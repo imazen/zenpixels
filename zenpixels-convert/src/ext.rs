@@ -1005,6 +1005,7 @@ pub trait ColorConvertExt: crate::sealed::Sealed + Sized {
     /// [`CssColorError::Unsupported`](crate::css::CssColorError::Unsupported) for forms that
     /// need context, such as `currentcolor`, and
     /// [`CssColorError::Invalid`](crate::css::CssColorError::Invalid) otherwise.
+    #[cfg(feature = "css")]
     fn parse_css(css: &str) -> Result<Self, crate::css::CssColorError>;
 
     /// This color in `target`, moved into its gamut if needed, keeping hue and lightness.
@@ -1108,6 +1109,7 @@ fn css_gamut_map(space: &crate::oklab::OklabSpace, rgb: [f32; 3]) -> [f32; 3] {
 }
 
 impl ColorConvertExt for zenpixels::Color {
+    #[cfg(feature = "css")]
     fn parse_css(css: &str) -> Result<Self, crate::css::CssColorError> {
         crate::css::parse(css)
     }

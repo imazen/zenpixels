@@ -80,8 +80,9 @@ fn named_hdr_rgb_profiles_match_their_cicp() {
 fn typed_layout_changes_require_erasure() {
     let data = [1, 2, 3, 4];
     let typed = PixelSlice::<rgb::RGBA<u8>>::new_typed(&data, 1, 1, 1).unwrap();
-    assert!(typed.clone().reinterpret(PixelDescriptor::BGRA8).is_err());
-    let changed = typed.erase().reinterpret(PixelDescriptor::BGRA8).unwrap();
+    let bgra8 = zenpixels::PixelFormat::Bgra8.descriptor();
+    assert!(typed.clone().reinterpret(bgra8).is_err());
+    let changed = typed.erase().reinterpret(bgra8).unwrap();
     assert!(changed.try_typed::<rgb::Bgra<u8>>().is_some());
 }
 
@@ -151,7 +152,7 @@ fn interop_target_contracts_validate_upfront_with_zero_padding() {
     // and rejects CMYK / Oklab / F64.
     assert!(InteropTarget::Imgref.supports(PixelDescriptor::RGB8));
     assert!(InteropTarget::Imgref.supports(PixelDescriptor::RGBF16_LINEAR));
-    assert!(InteropTarget::Imgref.supports(PixelDescriptor::BGR8));
+    assert!(InteropTarget::Imgref.supports(zenpixels::PixelFormat::Bgr8.descriptor()));
     assert!(InteropTarget::Imgref.supports(PixelDescriptor::RGBX8_SRGB));
     assert!(!InteropTarget::Imgref.supports(PixelDescriptor::CMYK8));
     assert!(!InteropTarget::Imgref.supports(PixelDescriptor::OKLABF32));
@@ -163,9 +164,9 @@ fn interop_target_contracts_validate_upfront_with_zero_padding() {
     );
 
     // FlatSamples accepts Gray/GrayAlpha/Rgb/Rgba in U8/U16/F16/F32, rejects BGR/BGRA/CMYK.
-    assert!(InteropTarget::FlatSamples.supports(PixelDescriptor::RGBF16));
+    assert!(InteropTarget::FlatSamples.supports(zenpixels::PixelFormat::RgbF16.descriptor()));
     assert!(InteropTarget::FlatSamples.supports(PixelDescriptor::GRAYF32_LINEAR));
-    assert!(!InteropTarget::FlatSamples.supports(PixelDescriptor::BGR8));
+    assert!(!InteropTarget::FlatSamples.supports(zenpixels::PixelFormat::Bgr8.descriptor()));
     assert!(!InteropTarget::FlatSamples.supports(PixelDescriptor::BGRA8_SRGB));
 
     // ImageBuffer requires known CICP color, full range, non-premultiplied/non-undefined alpha, U8/U16/F32.
@@ -404,7 +405,12 @@ fn symmetric_slice_imgref_sample_imgref_and_bgr_f16_types_roundtrip_zero_copy() 
     );
     let ga_ptr = ga_img.buf().as_ptr().cast::<u8>();
     let ga_slice: PixelSlice<'_, GrayAlphaF16> = ga_img.as_ref().into();
-    assert_eq!(ga_slice.descriptor(), PixelDescriptor::GRAYAF16_LINEAR);
+    assert_eq!(
+        ga_slice.descriptor(),
+        zenpixels::PixelFormat::GrayAF16
+            .descriptor()
+            .with_transfer(zenpixels::TransferFunction::Linear)
+    );
     let ga_buf = PixelBuffer::from_imgvec(ga_img);
     assert_eq!(ga_buf.as_slice().as_strided_bytes().as_ptr(), ga_ptr);
 }

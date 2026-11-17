@@ -137,17 +137,17 @@ storage does not grant numerical conversion support.
 | Feature | Effect |
 |---|---|
 | `std` | Default; omit for `no_std + alloc` |
-| `icc-db` | Default; qualified CICP-to-ICC recipes with lazy group decoding |
+| `fast-transpose` | Default; runtime-dispatched SIMD orientation kernels |
+| `icc-db` | Qualified CICP-to-ICC recipes with lazy group decoding |
+| `css` | CSS Color 4 string parser (`css` module and `ColorConvertExt::parse_css`) |
+| `planar` | Planar YCbCr conversion, N-bit code extraction, and plane orientation |
 | `cms-moxcms`, `cms-lcms` | Explicitly selected CMS implementations |
 | `rgb`, `imgref` | Core typed-pixel and imgref interop |
-| `fast-transpose` | Additional runtime-dispatched orientation kernels |
 | `avx512` | Opt-in wider row-kernel tiers |
 | `hdr-experimental`, `bt2446a` | HDR measurement/rendering and BT.2446A |
-| `planar`, `serde`, `estimation-experimental` | Retained compatibility spellings |
 
-Disabling `icc-db` retains supported compact exports and explicit synthesis
-refusal elsewhere. It does not restore the legacy P3 fallback. Resource-estimation
-APIs are retired.
+Without `icc-db`, synthesis retains supported compact exports and explicit
+refusal elsewhere; it does not restore the legacy P3 fallback.
 
 ## MSRV
 

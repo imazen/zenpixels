@@ -34,18 +34,6 @@ imgref = ["dep:imgref", "rgb"]
 allocator_api = ["dep:rustversion"]
 # Conversions to and from `image` 0.25, which needs Rust 1.88.
 image = ["dep:image", "std"]
-# Soft-removed in 0.2.16 (unreleased at the time; crates.io latest was
-# 0.2.14, whose builds are unaffected). The `serde` feature previously pulled an optional
-# `serde` dependency and added `Serialize`/`Deserialize` derives on the
-# descriptor/CICP/HDR-metadata types. A 2026-07 sweep of every Cargo.toml,
-# CI workflow, and Rust source under ~/work found ZERO consumers enabling
-# it (no `features = ["serde"]`, no `zenpixels/serde` forwarding, no code
-# serializing these types) — the derives were pure speculative surface.
-# Kept as an empty stub so any external consumer that wrote
-# `features = ["serde"]` still builds; the feature does nothing and is
-# queued for hard removal in 0.3.0. Mirrors the zenpixels-convert 0.2.15
-# soft-removal precedent.
-serde = []
 
 [dependencies]
 zenhash = { git = "https://github.com/imazen/zenhash", rev = "98c385a4e54a", default-features = false, features = ["xxh3", "avx512"], optional = true }

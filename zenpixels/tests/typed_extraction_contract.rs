@@ -29,7 +29,10 @@ fn matching_typed_allocations_survive_erasure_and_extraction() {
     let ga_mismatch: PixelBuffer = PixelBuffer::from_pixels(ga.clone(), 2, 1).unwrap().into();
     let ga_ptr = ga.as_ptr();
     let ga_buf: PixelBuffer = PixelBuffer::from_pixels(ga, 2, 1).unwrap().into();
-    assert_eq!(ga_buf.descriptor(), zenpixels::PixelDescriptor::GRAYAF16);
+    assert_eq!(
+        ga_buf.descriptor(),
+        zenpixels::PixelFormat::GrayAF16.descriptor()
+    );
     // Extracting as GrayAlpha16 must fail cleanly (no silent F16 -> U16 confusion).
     assert!(
         ga_mismatch

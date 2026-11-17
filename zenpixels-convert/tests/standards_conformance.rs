@@ -18,6 +18,43 @@ use zenpixels_convert::css::CssColorError;
 use zenpixels_convert::ext::ColorConvertExt;
 use zenpixels_convert::{ConvertError, ConvertPlan, RowConverter};
 
+const OKLCHF32: PixelDescriptor = PixelDescriptor::new(
+    ChannelType::F32,
+    ChannelLayout::Oklch,
+    None,
+    TransferFunction::Unknown,
+);
+const LCHF32: PixelDescriptor = PixelDescriptor::new(
+    ChannelType::F32,
+    ChannelLayout::Lch,
+    None,
+    TransferFunction::Unknown,
+);
+const JZAZBZF32: PixelDescriptor = PixelDescriptor::new(
+    ChannelType::F32,
+    ChannelLayout::Jzazbz,
+    None,
+    TransferFunction::Unknown,
+);
+const JZCZHZF32: PixelDescriptor = PixelDescriptor::new(
+    ChannelType::F32,
+    ChannelLayout::Jzczhz,
+    None,
+    TransferFunction::Unknown,
+);
+const HSLF32_SRGB: PixelDescriptor = PixelDescriptor::new(
+    ChannelType::F32,
+    ChannelLayout::Hsl,
+    None,
+    TransferFunction::Srgb,
+);
+const HSVF32_SRGB: PixelDescriptor = PixelDescriptor::new(
+    ChannelType::F32,
+    ChannelLayout::Hsv,
+    None,
+    TransferFunction::Srgb,
+);
+
 #[test]
 fn cicp_from_descriptor_rejects_non_rgb_models() {
     assert_eq!(
@@ -39,14 +76,14 @@ fn cicp_from_descriptor_rejects_non_rgb_models() {
     for non_rgb in [
         PixelDescriptor::CMYK8,
         PixelDescriptor::OKLABF32,
-        PixelDescriptor::OKLCHF32,
+        OKLCHF32,
         lab_f32,
-        PixelDescriptor::LCHF32,
+        LCHF32,
         xyz_f32,
-        PixelDescriptor::JZAZBZF32,
-        PixelDescriptor::JZCZHZF32,
-        PixelDescriptor::HSLF32_SRGB,
-        PixelDescriptor::HSVF32_SRGB,
+        JZAZBZF32,
+        JZCZHZF32,
+        HSLF32_SRGB,
+        HSVF32_SRGB,
     ] {
         assert_eq!(
             Cicp::from_descriptor(&non_rgb),
@@ -187,7 +224,7 @@ fn hlg_rendering_negative_zero_canonical_and_pluge_sub_black_lift() {
 fn adobe_rgb_jzazbz_and_lch_roundtrip_matches_exact_rationals() {
     // Linear AdobeRGB <-> JZAZBZF32 and LCHF32 roundtrip using exact Adobe RGB (1998) §4.3.4.1 XYZ matrices.
     let adobe_lin = PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::AdobeRgb);
-    for target in [PixelDescriptor::JZAZBZF32, PixelDescriptor::LCHF32] {
+    for target in [JZAZBZF32, LCHF32] {
         let mut fwd = RowConverter::new(adobe_lin, target).unwrap();
         let mut inv = RowConverter::new(target, adobe_lin).unwrap();
         let px = [0.2_f32, 0.85, 0.3];
@@ -222,7 +259,7 @@ fn cross_gamut_bt2020_pq_jzazbz_and_jzczhz_preserve_wide_gamut() {
         .with_transfer(TransferFunction::Pq);
     let px = [0.05_f32, 0.72, 0.08];
 
-    for perceptual_desc in [PixelDescriptor::JZAZBZF32, PixelDescriptor::JZCZHZF32] {
+    for perceptual_desc in [JZAZBZF32, JZCZHZF32] {
         let mut fwd = RowConverter::new(bt2020_pq, perceptual_desc).unwrap();
         let mut inv = RowConverter::new(perceptual_desc, bt2020_pq).unwrap();
         let mut mid = [0.0_f32; 3];
@@ -249,7 +286,7 @@ fn cross_gamut_bt2020_pq_jzazbz_and_jzczhz_preserve_wide_gamut() {
 #[test]
 fn jzazbz_diffuse_white_10000_nits_anchor_reaches_peak_jz_one() {
     let lin = PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::Bt2020);
-    let jab = PixelDescriptor::JZAZBZF32;
+    let jab = JZAZBZF32;
 
     // Default unanchored: linear 1.0 = 203 cd/m² -> Jz ≈ 0.2220.
     let mut def_conv = RowConverter::new(lin, jab).unwrap();
@@ -297,18 +334,10 @@ fn jzazbz_and_hsl_extended_range_roundtrip_without_poles() {
 
     // Sub-black / imaginary linear RGB values (including tiny negatives near -1e-6)
     // must remain finite and invert cleanly in Jzazbz.
-    let mut to_jab = RowConverter::new_explicit(
-        PixelDescriptor::RGBF32_LINEAR,
-        PixelDescriptor::JZAZBZF32,
-        &unclipped,
-    )
-    .unwrap();
-    let mut from_jab = RowConverter::new_explicit(
-        PixelDescriptor::JZAZBZF32,
-        PixelDescriptor::RGBF32_LINEAR,
-        &unclipped,
-    )
-    .unwrap();
+    let mut to_jab =
+        RowConverter::new_explicit(PixelDescriptor::RGBF32_LINEAR, JZAZBZF32, &unclipped).unwrap();
+    let mut from_jab =
+        RowConverter::new_explicit(JZAZBZF32, PixelDescriptor::RGBF32_LINEAR, &unclipped).unwrap();
     for px in [
         [-0.25_f32, 0.5, 1.4],
         [-5e-7, -5e-7, -5e-7],
@@ -340,7 +369,7 @@ fn jzazbz_and_hsl_extended_range_roundtrip_without_poles() {
 
     // Extended-range HSL with L > 1 and L < 0 (W3C CSS Color 4 §7.2 / §19).
     let srgb_f32 = PixelDescriptor::RGBF32_LINEAR.with_transfer(TransferFunction::Srgb);
-    let hsl_f32 = PixelDescriptor::HSLF32_SRGB;
+    let hsl_f32 = HSLF32_SRGB;
     let mut to_hsl = RowConverter::new_explicit(srgb_f32, hsl_f32, &unclipped).unwrap();
     let mut from_hsl = RowConverter::new_explicit(hsl_f32, srgb_f32, &unclipped).unwrap();
     for px in [[0.8_f32, 1.4, 1.6], [-0.8, -0.3, -0.1], [-0.2, 0.5, 1.3]] {
@@ -836,7 +865,7 @@ fn decisions_a1_b1_c1_d1_conformance() {
 
     // D1: Adobe RGB (1998) supports native Oklab, Oklch, map_to_gamut, same_color, and SoftCompress.
     let adobe_lin = PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::AdobeRgb);
-    for perceptual in [PixelDescriptor::OKLABF32, PixelDescriptor::OKLCHF32] {
+    for perceptual in [PixelDescriptor::OKLABF32, OKLCHF32] {
         let mut fwd = RowConverter::new(adobe_lin, perceptual).unwrap();
         let mut inv = RowConverter::new(perceptual, adobe_lin).unwrap();
         let px = [0.25_f32, 0.80, 0.35];

@@ -1168,7 +1168,7 @@ fn working_spaces_and_icc_parametric_curves_agree_across_backends() {
     ];
 
     let mut spaces = vec![
-        ParametricColor::LINEAR_SRGB,
+        ParametricColor::from_cicp(Cicp::LINEAR_SRGB).unwrap(),
         ParametricColor::PROPHOTO_RGB,
         ParametricColor::ACES_CG,
         ParametricColor::ACES_2065_1,

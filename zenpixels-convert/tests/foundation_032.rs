@@ -325,13 +325,24 @@ mod planar_032 {
 
 #[test]
 fn parametric_hdr_honest_errors_and_cms_free_resolved_paths() {
-    let hlg_ctx = ColorContext::from_parametric(ParametricColor::BT2100_HLG);
-    let pq_ctx = ColorContext::from_parametric(ParametricColor::BT2100_PQ);
-    let srgb_ctx = ColorContext::from_parametric(ParametricColor::SRGB);
-    let lin_ctx = ColorContext::from_parametric(ParametricColor::LINEAR_SRGB);
+    let bt2100_hlg = ParametricColor::from_cicp(zenpixels::Cicp::BT2100_HLG_RGB).unwrap();
+    let bt2100_pq = ParametricColor::from_cicp(zenpixels::Cicp::BT2100_PQ_RGB).unwrap();
+    let srgb = ParametricColor::from_cicp(zenpixels::Cicp::SRGB).unwrap();
+    let lin_srgb = ParametricColor::from_cicp(zenpixels::Cicp::LINEAR_SRGB).unwrap();
 
-    let hlg_enc = PixelEncoding::new(PixelDescriptor::RGBF32_BT2100_HLG, Some(&hlg_ctx));
-    let pq_enc = PixelEncoding::new(PixelDescriptor::RGBF32_BT2100_PQ, Some(&pq_ctx));
+    let hlg_ctx = ColorContext::from_parametric(bt2100_hlg);
+    let pq_ctx = ColorContext::from_parametric(bt2100_pq);
+    let srgb_ctx = ColorContext::from_parametric(srgb);
+    let lin_ctx = ColorContext::from_parametric(lin_srgb);
+
+    let hlg_desc = PixelDescriptor::RGBF32_LINEAR
+        .with_primaries(zenpixels::ColorPrimaries::Bt2020)
+        .with_transfer(zenpixels::TransferFunction::Hlg);
+    let pq_desc = PixelDescriptor::RGBF32_LINEAR
+        .with_primaries(zenpixels::ColorPrimaries::Bt2020)
+        .with_transfer(zenpixels::TransferFunction::Pq);
+    let hlg_enc = PixelEncoding::new(hlg_desc, Some(&hlg_ctx));
+    let pq_enc = PixelEncoding::new(pq_desc, Some(&pq_ctx));
     let srgb_enc = PixelEncoding::new(
         PixelDescriptor::RGBF32_LINEAR.with_transfer(zenpixels::TransferFunction::Srgb),
         Some(&srgb_ctx),
@@ -362,8 +373,8 @@ fn parametric_hdr_honest_errors_and_cms_free_resolved_paths() {
         .with_clip_out_of_gamut(false);
     let mut plan = OutputPlan::new(
         hlg_enc,
-        &ColorOrigin::from_parametric(ParametricColor::BT2100_HLG),
-        OutputProfile::Parametric(ParametricColor::LINEAR_SRGB),
+        &ColorOrigin::from_parametric(bt2100_hlg),
+        OutputProfile::Parametric(lin_srgb),
         PixelFormat::RgbF32,
         &opts,
         None,
@@ -513,7 +524,9 @@ fn moxcms_and_lcms_handle_parametric_hlg_and_hdr_icc_pivots() {
         let tm_opts = opts
             .with_hdr_peak(HdrPeak::Nits(Nits::new(1000.0)))
             .with_sdr_peak(Nits::new(100.0));
-        let pq_ctx = ColorContext::from_parametric(ParametricColor::BT2100_PQ);
+        let pq_ctx = ColorContext::from_parametric(
+            ParametricColor::from_cicp(zenpixels::Cicp::BT2100_PQ_RGB).unwrap(),
+        );
         let dci_ctx = ColorContext::from_parametric(ParametricColor::DCI_P3);
         let mut tm_conv = RowConverter::new_with_encoding(
             PixelEncoding::new(PixelDescriptor::RGB16_BT2100_PQ, Some(&pq_ctx)),

@@ -129,6 +129,52 @@ impl Cicp {
         full_range: true,
     };
 
+    /// Linear-light sRGB / BT.709 RGB: BT.709 primaries, linear transfer (`TC = 8`), Identity matrix, full range.
+    pub const LINEAR_SRGB: Self = Self {
+        color_primaries: 1,
+        transfer_characteristics: 8,
+        matrix_coefficients: 0,
+        full_range: true,
+    };
+
+    /// ITU-R BT.709 RGB: BT.709 primaries, BT.709 transfer (`TC = 1`), Identity matrix, full range.
+    pub const BT709_RGB: Self = Self {
+        color_primaries: 1,
+        transfer_characteristics: 1,
+        matrix_coefficients: 0,
+        full_range: true,
+    };
+
+    /// BT.2100 PQ RGB (HDR10 RGB): BT.2020 primaries, PQ transfer (`TC = 16`), Identity (`MC = 0`) matrix, full range.
+    ///
+    /// Unlike [`Self::BT2100_PQ`] (`MC = 9` YCbCr), this carries `MC = 0` so [`Self::try_to_descriptor`]
+    /// maps directly to RGB/gray [`PixelDescriptor`]s.
+    pub const BT2100_PQ_RGB: Self = Self {
+        color_primaries: 9,
+        transfer_characteristics: 16,
+        matrix_coefficients: 0,
+        full_range: true,
+    };
+
+    /// BT.2100 HLG RGB: BT.2020 primaries, HLG transfer (`TC = 18`), Identity (`MC = 0`) matrix, full range.
+    ///
+    /// Unlike [`Self::BT2100_HLG`] (`MC = 9` YCbCr), this carries `MC = 0` so [`Self::try_to_descriptor`]
+    /// maps directly to RGB/gray [`PixelDescriptor`]s.
+    pub const BT2100_HLG_RGB: Self = Self {
+        color_primaries: 9,
+        transfer_characteristics: 18,
+        matrix_coefficients: 0,
+        full_range: true,
+    };
+
+    /// Display P3 PQ RGB: P3 D65 primaries (`CP = 12`), PQ transfer (`TC = 16`), Identity matrix, full range.
+    pub const DISPLAY_P3_PQ: Self = Self {
+        color_primaries: 12,
+        transfer_characteristics: 16,
+        matrix_coefficients: 0,
+        full_range: true,
+    };
+
     /// Map the CICP `color_primaries` code to a [`ColorPrimaries`] enum.
     ///
     /// Returns [`Unknown`](ColorPrimaries::Unknown) for unrecognized codes.

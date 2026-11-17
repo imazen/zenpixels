@@ -783,18 +783,6 @@ pub struct ParametricColor {
 }
 
 impl ParametricColor {
-    /// Standard sRGB (`Bt709` + `D65` + `Srgb` + `RelativeColorimetric`).
-    pub const SRGB: Self = Self::rgb(
-        ParametricPrimaries::Bt709,
-        WhitePoint::D65,
-        ParametricTransfer::Srgb,
-    );
-    /// Apple Display P3 (`P3` + `D65` + `Srgb` + `RelativeColorimetric`).
-    pub const DISPLAY_P3: Self = Self::rgb(
-        ParametricPrimaries::P3,
-        WhitePoint::D65,
-        ParametricTransfer::Srgb,
-    );
     /// Theatrical SMPTE DCI-P3 (`P3` + `Dci` + `Dci` + `RelativeColorimetric`).
     pub const DCI_P3: Self = Self::rgb(
         ParametricPrimaries::P3,
@@ -806,24 +794,6 @@ impl ParametricColor {
         ParametricPrimaries::AdobeRgb,
         WhitePoint::D65,
         ParametricTransfer::Gamma(GammaCurve::ADOBE_RGB),
-    );
-    /// ITU-R BT.2100 PQ (`Bt2020` + `D65` + `Pq` + `RelativeColorimetric`).
-    pub const BT2100_PQ: Self = Self::rgb(
-        ParametricPrimaries::Bt2020,
-        WhitePoint::D65,
-        ParametricTransfer::Pq,
-    );
-    /// ITU-R BT.2100 HLG (`Bt2020` + `D65` + `Hlg` + `RelativeColorimetric`).
-    pub const BT2100_HLG: Self = Self::rgb(
-        ParametricPrimaries::Bt2020,
-        WhitePoint::D65,
-        ParametricTransfer::Hlg,
-    );
-    /// Linear-light sRGB / BT.709 (`Bt709` + `D65` + `Linear` + `RelativeColorimetric`).
-    pub const LINEAR_SRGB: Self = Self::rgb(
-        ParametricPrimaries::Bt709,
-        WhitePoint::D65,
-        ParametricTransfer::Linear,
     );
     /// ISO 22028-2 ROMM RGB / ProPhoto RGB (`ProPhotoRgb` + `D50` + `IccParametric::PROPHOTO_RGB` + `RelativeColorimetric`).
     pub const PROPHOTO_RGB: Self = Self::rgb(
@@ -2317,17 +2287,16 @@ mod tests {
 
     #[test]
     fn parametric_color_cicp_and_primaries_transfer_resolution() {
-        assert_eq!(ParametricColor::SRGB.to_cicp(), Some(Cicp::SRGB));
+        let srgb = ParametricColor::from_cicp(Cicp::SRGB).unwrap();
+        assert_eq!(srgb.to_cicp(), Some(Cicp::SRGB));
         assert_eq!(
-            ParametricColor::SRGB.to_primaries_transfer(),
+            srgb.to_primaries_transfer(),
             Some((ColorPrimaries::Bt709, TransferFunction::Srgb))
         );
+        let display_p3 = ParametricColor::from_cicp(Cicp::DISPLAY_P3).unwrap();
+        assert_eq!(display_p3.to_cicp(), Some(Cicp::DISPLAY_P3));
         assert_eq!(
-            ParametricColor::DISPLAY_P3.to_cicp(),
-            Some(Cicp::DISPLAY_P3)
-        );
-        assert_eq!(
-            ParametricColor::DISPLAY_P3.to_primaries_transfer(),
+            display_p3.to_primaries_transfer(),
             Some((ColorPrimaries::DisplayP3, TransferFunction::Srgb))
         );
         // Theatrical DCI-P3 has CICP (11, 17, 0, true), NOT DisplayP3 (D65).
@@ -2413,12 +2382,10 @@ mod tests {
         assert!(IccParametricCurve::try_type4(2.4, 0.9, 0.1, 0.08, 0.04, 0.01, -0.01).is_some());
 
         // Working-space presets and CICP round-trip for BT.601 525/625.
+        let linear_srgb = ParametricColor::from_cicp(Cicp::LINEAR_SRGB).unwrap();
+        assert_eq!(linear_srgb.to_cicp(), Some(Cicp::LINEAR_SRGB));
         assert_eq!(
-            ParametricColor::LINEAR_SRGB.to_cicp(),
-            Some(Cicp::new(1, 8, 0, true))
-        );
-        assert_eq!(
-            ParametricColor::LINEAR_SRGB.to_primaries_transfer(),
+            linear_srgb.to_primaries_transfer(),
             Some((ColorPrimaries::Bt709, TransferFunction::Linear))
         );
         assert_eq!(ParametricColor::PROPHOTO_RGB.white_point, WhitePoint::D50);

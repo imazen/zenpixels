@@ -62,11 +62,9 @@
 //! | `image` | image 0.25 interop (Rust 1.88+) |
 //! | `hash` | Pixel hashing and configurable inclusions (Rust 1.89+) |
 //! | `allocator_api` | Allocator-parameterized storage on supported compilers |
-//! | `serde` | Retained compatibility spelling; no API |
 //!
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
-#![cfg_attr(test, allow(deprecated))]
 
 extern crate alloc;
 

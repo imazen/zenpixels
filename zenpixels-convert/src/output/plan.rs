@@ -74,7 +74,6 @@ impl OutputPlan {
     /// Prepare profiles, matching output signaling and an actual transform.
     /// No image or row buffer is required. CMS construction can allocate its
     /// own state; this does not establish a whole-operation memory bound.
-    #[allow(deprecated)]
     pub fn new(
         source: PixelEncoding<'_>,
         origin: &ColorOrigin,
@@ -148,7 +147,6 @@ impl OutputPlan {
         )
     }
 
-    #[allow(deprecated)] // OutputMetadata's legacy HDR field remains None.
     fn build(
         source: PixelEncoding<'_>,
         origin: &ColorOrigin,

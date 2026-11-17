@@ -231,7 +231,7 @@ fn color_and_alpha_are_checked_against_their_own_grids() {
     }
     // BGRA keeps alpha last.
     let bgra = [17u8, 34, 51, 255, 68, 85, 102, 0];
-    let bgra = PixelSlice::new(&bgra, 2, 1, 8, PixelDescriptor::BGRA8).unwrap();
+    let bgra = PixelSlice::new(&bgra, 2, 1, 8, zenpixels::PixelFormat::Bgra8.descriptor()).unwrap();
     let measured = ExactDepth::measure(&bgra).unwrap();
     assert_eq!((measured.color_bits(), measured.alpha_bits()), (4, 1));
 }
@@ -349,7 +349,10 @@ fn contradictory_samples_and_mismatched_statements_are_refused() {
     assert_eq!(bgr_measured.holds_for(&bgr_slice), Ok(true));
 
     let cmyk16_bytes = bytes(16, &[0, 64, 128, 65535]);
-    for cmyk_desc in [PixelDescriptor::CMYK16, PixelDescriptor::CMYK16_INVERTED] {
+    for cmyk_desc in [
+        PixelDescriptor::cmyk(ChannelType::U16),
+        PixelDescriptor::cmyk_inverted(ChannelType::U16),
+    ] {
         let cmyk_slice = PixelSlice::new(&cmyk16_bytes, 1, 1, 8, cmyk_desc).unwrap();
         let m = ExactDepth::measure(&cmyk_slice).unwrap();
         assert_eq!((m.color_bits(), m.alpha_bits()), (10, 16));
@@ -376,7 +379,10 @@ fn contradictory_samples_and_mismatched_statements_are_refused() {
 
     // RGBX8 / BGRX8 ignore the 4th undefined padding byte.
     let padded_rgbx = [0u8, 255, 0, 123];
-    for desc in [PixelDescriptor::RGBX8, PixelDescriptor::BGRX8] {
+    for desc in [
+        PixelDescriptor::RGBX8,
+        zenpixels::PixelFormat::Bgrx8.descriptor(),
+    ] {
         let s = PixelSlice::new(&padded_rgbx, 1, 1, 4, desc).unwrap();
         let m = ExactDepth::measure(&s).unwrap();
         assert_eq!((m.color_bits(), m.alpha_bits()), (1, 8));
@@ -447,7 +453,7 @@ fn strided_rows_of_each_layout_skip_padding_and_catch_bad_active_samples() {
     let layouts = [
         (8u32, PixelDescriptor::RGB8, None),
         (8, PixelDescriptor::RGBA8, Some(3usize)),
-        (8, PixelDescriptor::BGRA8, Some(3)),
+        (8, zenpixels::PixelFormat::Bgra8.descriptor(), Some(3)),
         (8, PixelDescriptor::GRAYA8, Some(1)),
         (16, PixelDescriptor::RGB16, None),
         (16, PixelDescriptor::RGBA16, Some(3)),

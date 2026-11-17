@@ -8,28 +8,27 @@
 
 ## summary
 #
-#   pub modules                                15
-#   pub types (struct/enum/trait/alias)        63
+#   pub modules                                14
+#   pub types (struct/enum/trait/alias)        62
 #   pub consts/statics                         44
 #   free functions                              1
-#   inherent methods                          183
+#   inherent methods                          181
 #   struct fields                              71
-#   enum variants                             101
+#   enum variants                              99
 #   re-exports                                  8
-#   trait roster entries (type × trait)       151
+#   trait roster entries (type × trait)       144
 #   conditional trait impls (verbatim)          1
-#   auto-trait-complete types                  26
+#   auto-trait-complete types                  25
 #   auto-trait exceptions                       6
 #
 # per-module pub lines:
-#   (root)                          213
+#   (root)                          211
 #   adapt                             1
 #   cms                              18
 #   codes                            20
 #   converter                        33
-#   css                               3
 #   error                            41
-#   ext                              31
+#   ext                              30
 #   gamut                            11
 #   hdr                               2
 #   icc_profiles                     10
@@ -38,7 +37,7 @@
 #   output                           21
 #   precision                        62
 
-## items (463 lines)
+## items (457 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -104,10 +103,6 @@ pub fn converter::RowConverter::prepare(&mut self, u32) -> core::result::Result<
 pub fn converter::RowConverter::to_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn converter::RowConverter::try_clone(&self) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::try_convert_row(&mut self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub mod css
-#[non_exhaustive] pub enum css::CssColorError
-pub css::CssColorError::Invalid
-pub css::CssColorError::Unsupported
 pub mod error
 pub error::ConvertError::AllocationFailed
 pub error::ConvertError::AlphaCheckRequired
@@ -151,7 +146,6 @@ pub error::ConvertError::UnsupportedTransfer::from: zenpixels::descriptor::Trans
 pub error::ConvertError::UnsupportedTransfer::to: zenpixels::descriptor::TransferFunction
 pub mod ext
 pub fn ext::ColorConvertExt::map_to_gamut(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn ext::ColorConvertExt::parse_css(&str) -> core::result::Result<Self, css::CssColorError>
 pub fn ext::ColorConvertExt::same_color(&self, &Self) -> bool
 pub fn ext::ColorConvertExt::try_convert_to(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn ext::ColorPrimariesExt::from_xyz_matrix(&self) -> core::option::Option<&'static gamut::GamutMatrix>
@@ -457,7 +451,6 @@ pub fn converter::RowConverter::try_clone(&self) -> core::result::Result<Self, w
 pub fn converter::RowConverter::try_convert_row(&mut self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub trait ColorConvertExt: sealed::Sealed + core::marker::Sized [also: ext]
 pub fn ColorConvertExt::map_to_gamut(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn ColorConvertExt::parse_css(&str) -> core::result::Result<Self, css::CssColorError>
 pub fn ColorConvertExt::same_color(&self, &Self) -> bool
 pub fn ColorConvertExt::try_convert_to(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub trait ColorPrimariesExt: sealed::Sealed [also: ext]
@@ -504,7 +497,7 @@ pub trait TransferFunctionExt: sealed::Sealed [also: ext]
 pub fn TransferFunctionExt::delinearize(&self, f32) -> f32
 pub fn TransferFunctionExt::linearize(&self, f32) -> f32
 
-## trait impls (37 types)
+## trait impls (36 types)
 
 ConversionCost: Add, Clone, Copy, Debug, Default, Eq, PartialEq
 ConvertIntent: Clone, Copy, Debug, Default, Eq, PartialEq
@@ -518,7 +511,6 @@ codes::CodeMap: Clone, Copy, Debug, Eq, PartialEq
 codes::CodeMapError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 codes::CodeRole: Clone, Copy, Debug, Eq, Hash, PartialEq
 converter::RowConverter: Debug
-css::CssColorError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 error::ConvertError: Clone, Debug, Display, Error, From<zenpixels::buffer::BufferError>, PartialEq
 gamut::GamutMatrix: Clone, Copy, Debug, PartialEq
 icc_profiles::SynthesizedIcc: Clone, Debug, Eq, PartialEq

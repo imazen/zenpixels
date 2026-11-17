@@ -348,11 +348,14 @@ pub(crate) fn pivot(from: PixelDescriptor, to: PixelDescriptor) -> Option<PixelD
         return None;
     }
 
+    let valid_pivot = |p: PixelDescriptor| Some(p).filter(|d| *d != from && *d != to);
+
     // 2. Polar Oklch <-> Cartesian Oklab (preserving alpha presence).
     if matches!(
         from.layout(),
         ChannelLayout::Oklch | ChannelLayout::OklchAlpha
-    ) {
+    ) && from.transfer() == TransferFunction::Unknown
+    {
         let cart = if from.layout().has_alpha() {
             ChannelLayout::OklabA
         } else {
@@ -366,12 +369,13 @@ pub(crate) fn pivot(from: PixelDescriptor, to: PixelDescriptor) -> Option<PixelD
         )
         .with_primaries(from.primaries)
         .with_signal_range(from.signal_range);
-        return Some(p).filter(|d| *d != from);
+        return valid_pivot(p);
     }
     if matches!(
         to.layout(),
         ChannelLayout::Oklch | ChannelLayout::OklchAlpha
-    ) {
+    ) && to.transfer() == TransferFunction::Unknown
+    {
         let cart = if to.layout().has_alpha() {
             ChannelLayout::OklabA
         } else {
@@ -385,14 +389,15 @@ pub(crate) fn pivot(from: PixelDescriptor, to: PixelDescriptor) -> Option<PixelD
         )
         .with_primaries(to.primaries)
         .with_signal_range(to.signal_range);
-        return Some(p).filter(|d| *d != to);
+        return valid_pivot(p);
     }
 
     // 3. Polar Jzczhz <-> Cartesian Jzazbz.
     if matches!(
         from.layout(),
         ChannelLayout::Jzczhz | ChannelLayout::JzczhzAlpha
-    ) {
+    ) && from.transfer() == TransferFunction::Unknown
+    {
         let cart = if from.layout().has_alpha() {
             ChannelLayout::JzazbzAlpha
         } else {
@@ -406,12 +411,13 @@ pub(crate) fn pivot(from: PixelDescriptor, to: PixelDescriptor) -> Option<PixelD
         )
         .with_primaries(from.primaries)
         .with_signal_range(from.signal_range);
-        return Some(p).filter(|d| *d != from);
+        return valid_pivot(p);
     }
     if matches!(
         to.layout(),
         ChannelLayout::Jzczhz | ChannelLayout::JzczhzAlpha
-    ) {
+    ) && to.transfer() == TransferFunction::Unknown
+    {
         let cart = if to.layout().has_alpha() {
             ChannelLayout::JzazbzAlpha
         } else {
@@ -425,7 +431,7 @@ pub(crate) fn pivot(from: PixelDescriptor, to: PixelDescriptor) -> Option<PixelD
         )
         .with_primaries(to.primaries)
         .with_signal_range(to.signal_range);
-        return Some(p).filter(|d| *d != to);
+        return valid_pivot(p);
     }
 
     // 4. HSL / HSV <-> encoded F32 RGB(A) at the HSL/HSV descriptor's (primaries, transfer).
@@ -447,7 +453,7 @@ pub(crate) fn pivot(from: PixelDescriptor, to: PixelDescriptor) -> Option<PixelD
         let p = PixelDescriptor::new(ChannelType::F32, rgb_layout, from.alpha(), from.transfer())
             .with_primaries(from.primaries)
             .with_signal_range(from.signal_range);
-        return Some(p).filter(|d| *d != from);
+        return valid_pivot(p);
     }
     if is_hsl_hsv(to.layout()) {
         let rgb_layout = if to.layout().has_alpha() {
@@ -458,7 +464,7 @@ pub(crate) fn pivot(from: PixelDescriptor, to: PixelDescriptor) -> Option<PixelD
         let p = PixelDescriptor::new(ChannelType::F32, rgb_layout, to.alpha(), to.transfer())
             .with_primaries(to.primaries)
             .with_signal_range(to.signal_range);
-        return Some(p).filter(|d| *d != to);
+        return valid_pivot(p);
     }
 
     // 5. Jzazbz <-> PQ F32 RGB(A) (when the other side uses PQ) or Linear F32 RGB(A).
@@ -467,7 +473,8 @@ pub(crate) fn pivot(from: PixelDescriptor, to: PixelDescriptor) -> Option<PixelD
     if matches!(
         from.layout(),
         ChannelLayout::Jzazbz | ChannelLayout::JzazbzAlpha
-    ) {
+    ) && from.transfer() == TransferFunction::Unknown
+    {
         let rgb_layout = if from.layout().has_alpha() {
             ChannelLayout::Rgba
         } else {
@@ -489,12 +496,13 @@ pub(crate) fn pivot(from: PixelDescriptor, to: PixelDescriptor) -> Option<PixelD
         let p = PixelDescriptor::new(ChannelType::F32, rgb_layout, from.alpha(), tf)
             .with_primaries(rgb_primaries)
             .with_signal_range(from.signal_range);
-        return Some(p).filter(|d| *d != from);
+        return valid_pivot(p);
     }
     if matches!(
         to.layout(),
         ChannelLayout::Jzazbz | ChannelLayout::JzazbzAlpha
-    ) {
+    ) && to.transfer() == TransferFunction::Unknown
+    {
         let rgb_layout = if to.layout().has_alpha() {
             ChannelLayout::Rgba
         } else {
@@ -516,11 +524,13 @@ pub(crate) fn pivot(from: PixelDescriptor, to: PixelDescriptor) -> Option<PixelD
         let p = PixelDescriptor::new(ChannelType::F32, rgb_layout, to.alpha(), tf)
             .with_primaries(rgb_primaries)
             .with_signal_range(to.signal_range);
-        return Some(p).filter(|d| *d != to);
+        return valid_pivot(p);
     }
 
     // 6. CIE L*C*h° <-> Linear F32 RGB(A).
-    if matches!(from.layout(), ChannelLayout::Lch | ChannelLayout::LchAlpha) {
+    if matches!(from.layout(), ChannelLayout::Lch | ChannelLayout::LchAlpha)
+        && from.transfer() == TransferFunction::Unknown
+    {
         let rgb_layout = if from.layout().has_alpha() {
             ChannelLayout::Rgba
         } else {
@@ -542,9 +552,11 @@ pub(crate) fn pivot(from: PixelDescriptor, to: PixelDescriptor) -> Option<PixelD
         )
         .with_primaries(rgb_primaries)
         .with_signal_range(from.signal_range);
-        return Some(p).filter(|d| *d != from);
+        return valid_pivot(p);
     }
-    if matches!(to.layout(), ChannelLayout::Lch | ChannelLayout::LchAlpha) {
+    if matches!(to.layout(), ChannelLayout::Lch | ChannelLayout::LchAlpha)
+        && to.transfer() == TransferFunction::Unknown
+    {
         let rgb_layout = if to.layout().has_alpha() {
             ChannelLayout::Rgba
         } else {
@@ -566,7 +578,7 @@ pub(crate) fn pivot(from: PixelDescriptor, to: PixelDescriptor) -> Option<PixelD
         )
         .with_primaries(rgb_primaries)
         .with_signal_range(to.signal_range);
-        return Some(p).filter(|d| *d != to);
+        return valid_pivot(p);
     }
 
     None

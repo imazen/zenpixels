@@ -169,11 +169,10 @@ Reusing pixel storage is not a promise that every operation allocates nothing.
 | `image` | image 0.25 interop; requires Rust 1.88 |
 | `hash` | Pixel `Hash` and configurable inclusions via zenhash; requires Rust 1.89 |
 | `allocator_api` | Allocator-parameterized storage on supported compilers |
-| `planar`, `serde` | Retained compatibility spellings; no API |
+| `planar` | Multi-plane buffers (`PlanarBuffer`, `PlanarSlice`), `Plane`, and N-bit `CodePlane` |
 
 The converter's [feature list](https://github.com/imazen/zenpixels/blob/main/zenpixels-convert/README.md#features)
-covers the ICC database, CMS backends, interop and HDR options. Resource-estimation
-APIs are retired; their compatibility feature does not restore them.
+covers the ICC database, CSS parser, CMS backends, interop and HDR options.
 
 ## MSRV
 

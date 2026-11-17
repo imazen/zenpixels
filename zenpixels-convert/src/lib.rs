@@ -414,6 +414,7 @@ pub(crate) mod cms_lite;
 pub mod cms_moxcms;
 pub mod codes;
 pub mod converter;
+#[cfg(feature = "css")]
 pub mod css;
 pub mod ext;
 #[allow(
@@ -508,7 +509,6 @@ pub use gamut::GamutMatrix;
 pub use load_bearing::{LoadBearingReport, PixelBufferLoadBearingExt, PixelSliceLoadBearingExt};
 
 // Re-export CMS traits, enums, and implementations.
-#[allow(deprecated)]
 pub use cms::{CmsPluginError, PluggableCms, RowTransform, RowTransformMut};
 // TODO: pub use cms_lite::ZenCmsLite once benchmarked on aarch64.
 #[cfg(feature = "cms-lcms")]
@@ -518,7 +518,6 @@ pub use cms_moxcms::MoxCms;
 
 // Re-export output types.
 pub use output::OutputPlan;
-#[allow(deprecated)]
 pub use output::{EncodeReady, OutputMetadata, OutputProfile};
 
 #[cfg(test)]

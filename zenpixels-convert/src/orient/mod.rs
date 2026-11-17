@@ -80,15 +80,13 @@ use zenpixels::{InPlacePixels, Orientation, PixelBuffer, PixelSlice, PixelSliceM
 
 use crate::error::ConvertError;
 
-// Cross-arch SIMD: the `#[magetypes(...)]` codegen attribute + `incant!`
-// runtime dispatch from the archmage prelude, and the token-parameterized
-// generic `f32x4` from magetypes — whose `transpose_4x4` lowers to SSE
-// `_MM_TRANSPOSE4_PS` on x86, the NEON `zip`/`trn` cascade on aarch64, and the
-// `i32x4.shuffle` cascade on wasm128.
+// Cross-arch SIMD: `#[attune(dispatch, ...)]` from the archmage prelude
+// generates the 4×4 register transpose (`f32x4::transpose_4x4`, lowering to
+// the `i32x4.shuffle` cascade on wasm128 with scalar fallback elsewhere) while
+// natively excluding `_v3` and `_neon`, which use the dedicated per-width
+// kernels in `pxn_x86` / `rgb3_x86` / `pxn_neon`.
 #[cfg(feature = "fast-transpose")]
 use archmage::prelude::*;
-#[cfg(feature = "fast-transpose")]
-use magetypes::simd::generic::f32x4 as GenericF32x4;
 
 /// Side length of the cache-blocking tile for transposing orientations, in
 /// pixels. At `bpp = 4` a 32×32 tile touches 4 KiB of source and 4 KiB of
@@ -663,16 +661,13 @@ fn do_transpose(
         }
         #[cfg(feature = "fast-transpose")]
         if bpp == 4 {
-            // Non-x86 tiers (NEON / WASM SIMD128 / scalar) via the magetypes
-            // 4×4 register transpose. Explicit tier list matching its
-            // `#[magetypes(v3, neon, wasm128, scalar)]` attribute: a bare
-            // `incant!` expands the full cascade and references a `_v4`
-            // variant that was never generated, breaking `--features avx512`
-            // builds (caught by the feature-powerset CI job).
-            incant!(
-                transpose4_simd(src, dst, orientation, w, h),
-                [v3, neon, wasm128, scalar]
-            );
+            // Non-x86_64/aarch64 tiers (WASM SIMD128, plus scalar fallback on
+            // pre-AVX2 x86 or 32-bit targets) via the magetypes 4×4 register
+            // transpose. `_v3` and `_neon` are natively excluded on
+            // `transpose4_simd` via `#[attune(dispatch, -_v3, -_neon, ...)]`
+            // because x86_64 and aarch64 already take the dedicated per-width
+            // kernels above.
+            transpose4_simd(src, dst, orientation, w, h);
             return;
         }
         // Monomorphised per pixel size so the inner copy is a fixed-size
@@ -1014,26 +1009,24 @@ fn tile_dest(
 }
 
 /// SIMD path: transpose full 4×4 tiles via `f32x4::transpose_4x4` (the classic
-/// `_MM_TRANSPOSE4_PS`-shaped shuffle cascade), scalar for the edges. The
-/// `#[magetypes]` attribute generates one variant per SIMD tier from this single
-/// body; `incant!` in [`do_transpose`] picks the best at runtime.
+/// `_MM_TRANSPOSE4_PS`-shaped shuffle cascade), scalar for the edges.
+/// `#[attune(dispatch, -_v3, -_neon, define(f32x4))]` generates the WASM SIMD128
+/// and scalar variants plus a tokenless dispatcher while natively excluding `_v3`
+/// and `_neon` (handled by `pxn_x86` / `pxn_neon` in [`do_transpose`]).
 ///
 /// Each 4-byte pixel rides as one f32 lane. The transpose only *shuffles whole
 /// 32-bit lanes* (no float arithmetic), so the reinterpret is bit-exact for any
 /// 4-byte pixel format, including bit patterns that happen to be NaN.
 #[cfg(feature = "fast-transpose")]
-#[magetypes(v3, neon, wasm128, scalar)]
+#[attune(dispatch, -_v3, -_neon, define(f32x4))]
 fn transpose4_simd(
-    token: Token,
     src: &PixelSlice<'_>,
     dst: &mut PixelSliceMut<'_>,
     orientation: Orientation,
     w: u32,
     h: u32,
 ) {
-    #[allow(non_camel_case_types)]
-    type f32x4 = GenericF32x4<Token>;
-
+    let token = Token::from_context();
     let full_w = w & !3; // largest multiple of 4 ≤ w
     let full_h = h & !3;
 

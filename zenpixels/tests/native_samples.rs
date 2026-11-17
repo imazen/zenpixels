@@ -341,9 +341,9 @@ fn bgr8_and_cmyk16_carry_exact_samples() {
     assert_eq!(F::CMYK16.bytes_per_pixel(), 8);
     assert_eq!(F::CMYK16.channel_type(), T::U16);
     assert_eq!(F::CMYK16.layout(), L::Cmyk);
-    assert_eq!(D::CMYK16.color_model(), zenpixels::ColorModel::Cmyk);
+    assert_eq!(D::cmyk(T::U16).color_model(), zenpixels::ColorModel::Cmyk);
     assert_eq!(format!("{}", L::Bgr), "BGR");
-    for d in [D::BGR8, D::CMYK16] {
+    for d in [F::Bgr8.descriptor(), D::cmyk(T::U16)] {
         let mut buffer = PixelBuffer::new(3, 2, d);
         let row = 3 * d.bytes_per_pixel();
         let expected: Vec<u8> = (0..row as u8).collect();
@@ -352,7 +352,7 @@ fn bgr8_and_cmyk16_carry_exact_samples() {
         assert_eq!(buffer.stride(), row);
     }
     assert!(matches!(
-        PixelBuffer::new(1, 1, D::CMYK16).into_parts().data,
+        PixelBuffer::new(1, 1, D::cmyk(T::U16)).into_parts().data,
         zenpixels::PixelStorage::U16(_)
     ));
 }

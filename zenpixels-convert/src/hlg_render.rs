@@ -258,9 +258,11 @@ fn hlg_linear_counterpart(
                 CmsPluginError::msg("unsupported CICP parameters for HLG transform")
             })?
         }
-        ColorProfileSource::Named(zenpixels::NamedProfile::Bt2020Hlg) => {
-            ParametricColor::BT2100_HLG
-        }
+        ColorProfileSource::Named(zenpixels::NamedProfile::Bt2020Hlg) => ParametricColor::rgb(
+            ParametricPrimaries::Bt2020,
+            WhitePoint::D65,
+            ParametricTransfer::Hlg,
+        ),
         ColorProfileSource::PrimariesTransferPair {
             primaries,
             transfer,

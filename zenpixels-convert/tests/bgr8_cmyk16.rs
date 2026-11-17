@@ -6,7 +6,7 @@ use zenpixels::{
 use zenpixels_convert::RowConverter;
 use zenpixels_convert::policy::{AlphaPolicy, ConvertOptions};
 
-const SRGB_BGR: D = D::BGR8.with_transfer(T::Srgb);
+const SRGB_BGR: D = D::new(ChannelType::U8, ChannelLayout::Bgr, None, T::Srgb);
 
 #[test]
 fn bgr8_swaps_channels_both_ways() {
@@ -104,7 +104,7 @@ fn bgr8_matches_rgb8_through_every_route() {
 
 #[test]
 fn bgr8_changes_transfer_through_rgb() {
-    let linear = D::BGR8.with_transfer(T::Linear);
+    let linear = SRGB_BGR.with_transfer(T::Linear);
     let mut out = [0u8; 3];
     RowConverter::new(linear, SRGB_BGR)
         .unwrap()
@@ -119,6 +119,7 @@ fn bgr8_changes_transfer_through_rgb() {
 
 #[test]
 fn cmyk16_has_no_numeric_conversion() {
-    assert!(RowConverter::new(D::CMYK16, D::RGB16_SRGB).is_err());
-    assert!(RowConverter::new(D::RGB16_SRGB, D::CMYK16).is_err());
+    let cmyk16 = zenpixels::PixelFormat::CMYK16.descriptor();
+    assert!(RowConverter::new(cmyk16, D::RGB16_SRGB).is_err());
+    assert!(RowConverter::new(D::RGB16_SRGB, cmyk16).is_err());
 }

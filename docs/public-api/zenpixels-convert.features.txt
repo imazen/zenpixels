@@ -1,5 +1,5 @@
 # zenpixels-convert public API — additions from non-default features
-# features: avx512,bt2446a,cms-lcms,cms-moxcms,estimation-experimental,fast-transpose,hdr-experimental,icc-db,imgref,planar,precise-portable,rgb,serde,std
+# features: avx512,bt2446a,cms-lcms,cms-moxcms,css,fast-transpose,hdr-experimental,icc-db,imgref,planar,precise-portable,rgb,std
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -9,27 +9,29 @@
 
 ## summary
 #
-#   pub modules                                 4
-#   pub types (struct/enum/trait/alias)        26
+#   pub modules                                 5
+#   pub types (struct/enum/trait/alias)        27
 #   pub consts/statics                          4
 #   free functions                              1
-#   inherent methods                           42
+#   inherent methods                           46
 #   struct fields                              34
-#   enum variants                              18
-#   trait roster entries (type × trait)        58
+#   enum variants                              20
+#   trait roster entries (type × trait)        65
 #   conditional trait impls (verbatim)          2
-#   auto-trait-complete types                  13
+#   auto-trait-complete types                  14
 #
 # per-module pub lines:
-#   (root)                           27
+#   (root)                           29
 #   cms_lcms                          1
 #   cms_moxcms                        2
 #   codes                            23
-#   ext                              11
+#   css                               3
+#   ext                              12
 #   hdr                              43
 #   ycbcr                            22
+#   zenpixels                         2
 
-## items (122 lines)
+## items (130 lines)
 
 pub mod cms_lcms
 pub mod cms_moxcms
@@ -57,6 +59,12 @@ pub codes::CodesError::RangeMismatch::destination: zenpixels::descriptor::Signal
 pub codes::CodesError::RangeMismatch::source: zenpixels::descriptor::SignalRange
 pub codes::CodesError::Read(zenpixels::sample::plane::CodePlaneError)
 pub fn codes::to_canonical<'b>(&[zenpixels::sample::plane::CodePlane<'_>], zenpixels::descriptor::SignalRange, usize, usize, zenpixels::buffer::PixelSliceMut<'b>) -> core::result::Result<(zenpixels::buffer::PixelSliceMut<'b>, zenpixels::sample::exact::ExactDepth), whereat::at::At<codes::CodesError>>
+pub mod css
+#[non_exhaustive] pub enum css::CssColorError
+pub css::CssColorError::Invalid
+pub css::CssColorError::Unsupported
+pub fn ext::ColorConvertExt::parse_css(&str) -> core::result::Result<Self, css::CssColorError>
+pub fn zenpixels::color::Color::parse_css(&str) -> core::result::Result<Self, css::CssColorError>
 pub fn ext::PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::bgra::Bgra<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_gray8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_rgb8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgb::Rgb<u8>>
@@ -142,6 +150,8 @@ pub fn HdrConfig::with_gamut_knee(self, f32) -> Self
 pub fn HdrConfig::with_target_peak_nits(self, f32) -> Self
 pub struct Lcms [also: cms_lcms]
 pub struct MoxCms [also: cms_moxcms]
+pub fn ColorConvertExt::parse_css(&str) -> core::result::Result<Self, css::CssColorError>
+pub fn zenpixels::color::Color::parse_css(&str) -> core::result::Result<Self, css::CssColorError>
 pub trait PixelBufferConvertTypedExt: ext::PixelBufferConvertExt [also: ext]
 pub fn PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::bgra::Bgra<u8>>
 pub fn PixelBufferConvertTypedExt::to_gray8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>
@@ -150,17 +160,18 @@ pub fn PixelBufferConvertTypedExt::to_rgba8(&self) -> zenpixels::buffer::PixelBu
 pub trait PixelBufferHdrConvertExt: sealed::Sealed [also: ext]
 pub fn PixelBufferHdrConvertExt::convert_to_sdr_measuring_peak(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferHdrConvertExt::convert_to_with_hdr_config(&self, zenpixels::descriptor::PixelDescriptor, HdrConfig) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
-pub trait PlaneConvertExt<T: zenpixels::buffer::StorageSample>: sealed::Sealed [also: ext]
+pub trait PlaneConvertExt<T: zenpixels::buffer::pixel_storage::StorageSample>: sealed::Sealed [also: ext]
 pub fn PlaneConvertExt::oriented(&self, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::plane::AlignedPlane<T>, whereat::at::At<error::ConvertError>>
 pub fn PlaneConvertExt::oriented_into(&self, zenpixels::orientation::Orientation, zenpixels::plane::PlaneMut<'_, T>) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 
-## trait impls (14 types)
+## trait impls (15 types)
 
 HdrConfig: Clone, Copy, Debug, Default, PartialEq
 cms_lcms::Lcms: Clone, Copy, Debug, Default, cms::PluggableCms
 cms_moxcms::MoxCms: Clone, Copy, Debug, Default, cms::PluggableCms
 cms_moxcms::MoxCmsError: Clone, Debug, Display, Error
 codes::CodesError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
+css::CssColorError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 hdr::Bt2446A: Clone, Copy, Debug, hdr::ToneMapper
 hdr::PreparedMapper: Debug
 hdr::Requirements: Clone, Copy, Debug, Default, Eq, PartialEq

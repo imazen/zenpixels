@@ -19,10 +19,12 @@ include = [
 
 # docs.rs builds with the public opt-in features enabled so the gated
 # surfaces (hdr::measure / CllMeasure, the HDR ConvertPlan constructors,
-# cms-moxcms, rgb/imgref/planar interop, fast-transpose) are documented
-# and their intra-doc links resolve. Bench-only `__*` features stay out.
+# icc-db, css, cms-moxcms, rgb/imgref/planar interop, fast-transpose) are
+# documented and their intra-doc links resolve. Bench-only `__*` features stay out.
 [package.metadata.docs.rs]
 features = [
+    "icc-db",
+    "css",
     "hdr-experimental",
     "bt2446a",
     "cms-moxcms",
@@ -34,23 +36,21 @@ features = [
 ]
 
 [features]
-default = ["std", "icc-db"]
+default = ["std", "fast-transpose"]
 # The committed CICP->ICC profile database: the LZ4-compressed bundle
 # (93,377-byte asset) + lazy decode machinery: 149 RGB / 164 gray mappings
 # without a runtime CMS. HLG requires a rendering target and is refused.
-# Disable (default-features = false) for size-sensitive / wasm builds: the
-# synthesis retains the qualified compact P3 exports and supported compact
-# constants, and otherwise reports its explicit refusal. The load-bearing gray
-# ICC swap suppresses collapse where a replacement profile is unavailable.
+# Opt-in (`features = ["icc-db"]`): without it, synthesis retains the qualified
+# compact P3 exports and supported compact constants, and otherwise reports its
+# explicit refusal. The load-bearing gray ICC swap suppresses collapse where a
+# replacement profile is unavailable.
 icc-db = ["dep:lz4_flex"]
+# CSS Color 4 string parser (`css` module and `ColorConvertExt::parse_css`).
+css = []
 std = ["zenpixels/std", "linear-srgb/std", "garb/std"]
-# SIMD transpose kernels (x86-64 AVX2 + aarch64 NEON) behind apply_orientation*.
-# Opt-in: without it, apply_orientation* use the portable scalar tiled/blocked
-# paths (correct, slower). archmage/magetypes are ALREADY unconditional deps (the
-# gamut/f16 SIMD paths pull them), so enabling this adds ~0 compile time and only
-# ~36 KB of .text — for 1.1-4.7× faster transposes (biggest at thumbnail→mid sizes;
-# memory-bound by 12MP). Output is bit-identical. Default-on is queued for 0.3.0;
-# see benchmarks/orient_fast_transpose_2026-06-18.md + orient/{pxn_x86,pxn_neon,rgb3_x86}.rs.
+# SIMD transpose kernels (x86-64 AVX2 + aarch64 NEON + WASM SIMD128) behind
+# apply_orientation*. Enabled by default; disable (`default-features = false`)
+# when portable scalar tiled/blocked transposes suffice. Output is bit-identical.
 fast-transpose = []
 # Adds a v4x tier to the row kernels that measured at least 1.2x faster than v3 on Zen 4
 # (benchmarks/row_kernel_tiers_2026-11-04.md), which default builds leave out for size. Also
@@ -69,8 +69,6 @@ precise-portable = ["linear-srgb/precise-portable"]
 rgb = ["zenpixels/rgb", "dep:rgb"]
 imgref = ["zenpixels/imgref", "rgb"]
 planar = ["zenpixels/planar"]
-# Compatibility feature name only. Estimation is removed.
-estimation-experimental = []
 # Experimental HDR analysis surface (gates `hdr::measure` — the `CllMeasure`
 # extension trait + `LightLevelHistogram` / `LightLevelMethod` + the SIMD
 # CLL scan kernel). The underlying scan + accuracy contracts are stable —
@@ -87,14 +85,6 @@ bt2446a = ["hdr-experimental"]
 cms-moxcms = ["std", "dep:moxcms"]
 # Pure-Rust Little CMS backend. The port is pinned while awaiting its release.
 cms-lcms = ["std", "dep:lcms"]
-# Soft-removed in 0.2.15. The `serde` feature previously forwarded to
-# `zenpixels/serde` and added a `Serialize`/`Deserialize` derive on
-# `hdr::measure::LightLevelMethod` — a 2-variant enum whose serialization
-# is trivial to handle at the caller side without dragging in a serde
-# dep. Kept as an empty stub so consumers of 0.2.14 that wrote
-# `features = ["serde"]` still build; the feature does nothing and is
-# queued for removal in the next breaking release.
-serde = []
 # Bench-only: exposes `pub mod __bench_u16_hybrids` shims for
 # `bench_u16_hybrids`. Not intended for non-bench use; the production u16
 # RGB gamut path uses `convert_u16_rgb_simd_lutdec_polyenc` directly.
@@ -165,9 +155,11 @@ zenpixels = { workspace = true, features = ["imgref"] }
 # (verified: it appears in `cargo test --lib -- --list` under default
 # features, imazen/zenpixels#40). Dropping `cms-moxcms` here would silently
 # remove those gates from CI.
-# Unit tests intentionally include the dev defaults. Genuine normal-dependency
-# feature isolation is checked by tools/icc-collapse-no-db instead.
-zenpixels-convert = { path = ".", features = ["imgref", "cms-moxcms"] }
+# Unit tests intentionally include the dev defaults. `default-features = false`
+# lets `--no-default-features` exercise the scalar transpose tiers without
+# `fast-transpose`; genuine normal-dependency `icc-db` isolation is checked by
+# tools/icc-collapse-no-db.
+zenpixels-convert = { path = ".", default-features = false, features = ["imgref", "cms-moxcms", "icc-db", "css"] }
 zenbench = { version = "0.1.11" }
 # DEV-only: lets benches/kernel_tiers.rs disable the baseline SIMD token (NEON
 # on aarch64) so the "scalar" arm is real. Feature unification applies this to

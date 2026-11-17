@@ -1049,7 +1049,6 @@ mod anchor_tests {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
     use zenpixels::descriptor::{ColorPrimaries, SignalRange};

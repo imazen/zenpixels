@@ -253,6 +253,8 @@ fn parametric_origin_and_output_profile_preserve_custom_color_and_route_cms() {
     assert_eq!(ready.metadata().parametric, Some(custom));
 
     // Standard Display P3 -> sRGB via OutputProfile::Parametric works natively without CMS.
+    let p3_param = ParametricColor::from_cicp(Cicp::DISPLAY_P3).unwrap();
+    let srgb_param = ParametricColor::from_cicp(Cicp::SRGB).unwrap();
     let p3_buf = PixelBuffer::from_vec(
         vec![220, 40, 30],
         1,
@@ -260,19 +262,16 @@ fn parametric_origin_and_output_profile_preserve_custom_color_and_route_cms() {
         PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3),
     )
     .unwrap()
-    .with_parametric(ParametricColor::DISPLAY_P3);
+    .with_parametric(p3_param);
     let srgb_ready = zenpixels_convert::EncodeReady::finalize(
         &p3_buf,
-        &ColorOrigin::from_parametric(ParametricColor::DISPLAY_P3),
-        OutputProfile::Parametric(ParametricColor::SRGB),
+        &ColorOrigin::from_parametric(p3_param),
+        OutputProfile::Parametric(srgb_param),
         PixelFormat::Rgb8,
         None,
     )
     .unwrap();
-    assert_eq!(
-        srgb_ready.metadata().parametric,
-        Some(ParametricColor::SRGB)
-    );
+    assert_eq!(srgb_ready.metadata().parametric, Some(srgb_param));
     assert!(srgb_ready.metadata().cicp.is_none());
     assert_eq!(
         srgb_ready.metadata().parametric.unwrap().to_cicp(),

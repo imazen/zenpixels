@@ -1,160 +1,14 @@
-//! Color space registry — single source of truth for known color spaces.
+//! Color space gamut matrix computation.
 //!
-//! Maps between [`ColorPrimaries`], [`TransferFunction`], [`NamedProfile`],
-//! and CICP codes. All the conversion functions (`from_cicp`, `to_cicp`,
-//! `to_primaries_transfer`, etc.) should derive from this table.
-//!
-//! # Matrix computation
-//!
-//! Rather than hardcoding O(n²) pairwise matrices, we store one RGB→XYZ
-//! matrix per primaries set and compute any src→dst matrix on demand:
+//! Computes 3×3 linear RGB→XYZ and gamut conversion matrices from CIE 1931 `xy`
+//! chromaticity coordinates and white points, applying Bradford chromatic
+//! adaptation when white points differ:
 //!
 //! ```text
 //! M = inv(dst_xyz) × adapt(src_wp, dst_wp) × src_xyz
 //! ```
-//!
-//! The Bradford chromatic adaptation is only needed when white points differ.
 
-use crate::color::NamedProfile;
-use crate::{ColorPrimaries, TransferFunction};
-
-/// A known color space entry in the registry.
-#[allow(dead_code)] // used in tests; will back from_cicp/to_cicp derivation
-#[derive(Clone, Copy, Debug)]
-#[doc(hidden)] // 0.3.0 demote/remove: positioned-for-future registry, no consumers
-pub struct KnownColorSpace {
-    /// Color primaries (gamut + white point).
-    pub primaries: ColorPrimaries,
-    /// Transfer function (EOTF encoding).
-    pub transfer: TransferFunction,
-    /// CICP codes (color_primaries, transfer_characteristics), if a mapping exists.
-    pub cicp: Option<(u8, u8)>,
-    /// Named profile variant, if one exists.
-    pub named: Option<NamedProfile>,
-}
-
-/// The registry of all known color spaces.
-///
-/// This is the single source of truth. All `from_cicp`, `to_cicp`,
-/// `to_primaries_transfer`, and `from_primaries_transfer` functions
-/// should be derivable from this table.
-#[allow(dead_code)] // used in tests; will back from_cicp/to_cicp derivation
-#[doc(hidden)]
-pub const REGISTRY: &[KnownColorSpace] = &[
-    KnownColorSpace {
-        primaries: ColorPrimaries::Bt709,
-        transfer: TransferFunction::Srgb,
-        cicp: Some((1, 13)),
-        named: Some(NamedProfile::Srgb),
-    },
-    KnownColorSpace {
-        primaries: ColorPrimaries::DisplayP3,
-        transfer: TransferFunction::Srgb,
-        cicp: Some((12, 13)),
-        named: Some(NamedProfile::DisplayP3),
-    },
-    KnownColorSpace {
-        primaries: ColorPrimaries::Bt2020,
-        transfer: TransferFunction::Bt709,
-        cicp: Some((9, 1)),
-        named: Some(NamedProfile::Bt2020),
-    },
-    KnownColorSpace {
-        primaries: ColorPrimaries::Bt2020,
-        transfer: TransferFunction::Pq,
-        cicp: Some((9, 16)),
-        named: Some(NamedProfile::Bt2020Pq),
-    },
-    KnownColorSpace {
-        primaries: ColorPrimaries::Bt2020,
-        transfer: TransferFunction::Hlg,
-        cicp: Some((9, 18)),
-        named: Some(NamedProfile::Bt2020Hlg),
-    },
-    KnownColorSpace {
-        primaries: ColorPrimaries::AdobeRgb,
-        transfer: TransferFunction::Gamma22,
-        cicp: None,
-        named: Some(NamedProfile::AdobeRgb),
-    },
-    KnownColorSpace {
-        primaries: ColorPrimaries::Bt709,
-        transfer: TransferFunction::Linear,
-        cicp: Some((1, 8)),
-        named: Some(NamedProfile::LinearSrgb),
-    },
-    KnownColorSpace {
-        primaries: ColorPrimaries::DisplayP3,
-        transfer: TransferFunction::Linear,
-        cicp: Some((12, 8)),
-        named: None,
-    },
-    KnownColorSpace {
-        primaries: ColorPrimaries::Bt2020,
-        transfer: TransferFunction::Linear,
-        cicp: Some((9, 8)),
-        named: None,
-    },
-    KnownColorSpace {
-        primaries: ColorPrimaries::DisplayP3,
-        transfer: TransferFunction::Pq,
-        cicp: Some((12, 16)),
-        named: None,
-    },
-];
-
-// =========================================================================
-// Lookup functions
-// =========================================================================
-
-/// Find a registry entry by CICP codes.
-#[allow(dead_code)] // used in tests; will back from_cicp derivation
-#[doc(hidden)]
-pub const fn find_by_cicp(cp: u8, tc: u8) -> Option<&'static KnownColorSpace> {
-    let mut i = 0;
-    while i < REGISTRY.len() {
-        if let Some((rcp, rtc)) = REGISTRY[i].cicp {
-            if rcp == cp && rtc == tc {
-                return Some(&REGISTRY[i]);
-            }
-        }
-        i += 1;
-    }
-    None
-}
-
-/// Find a registry entry by primaries + transfer.
-#[allow(dead_code)] // used in tests; will back to_primaries_transfer derivation
-#[doc(hidden)]
-pub const fn find_by_primaries_transfer(
-    primaries: ColorPrimaries,
-    transfer: TransferFunction,
-) -> Option<&'static KnownColorSpace> {
-    let mut i = 0;
-    while i < REGISTRY.len() {
-        if REGISTRY[i].primaries.same(primaries) && REGISTRY[i].transfer.same(transfer) {
-            return Some(&REGISTRY[i]);
-        }
-        i += 1;
-    }
-    None
-}
-
-/// Find a registry entry by named profile.
-#[allow(dead_code)] // used in tests; will back from_named derivation
-#[doc(hidden)]
-pub const fn find_by_named(named: NamedProfile) -> Option<&'static KnownColorSpace> {
-    let mut i = 0;
-    while i < REGISTRY.len() {
-        if let Some(rn) = REGISTRY[i].named {
-            if rn as u8 == named as u8 {
-                return Some(&REGISTRY[i]);
-            }
-        }
-        i += 1;
-    }
-    None
-}
+use crate::ColorPrimaries;
 
 // =========================================================================
 // Matrix computation
@@ -359,53 +213,6 @@ const fn solve_3x3(a: &Mat3, b: &[f32; 3]) -> Option<[f32; 3]> {
 #[allow(clippy::needless_range_loop)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn all_registry_entries_unique() {
-        for i in 0..REGISTRY.len() {
-            for j in (i + 1)..REGISTRY.len() {
-                let a = &REGISTRY[i];
-                let b = &REGISTRY[j];
-                assert!(
-                    a.primaries != b.primaries || a.transfer != b.transfer,
-                    "duplicate registry entry: {:?} and {:?}",
-                    a,
-                    b
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn cicp_lookup_roundtrips() {
-        for entry in REGISTRY {
-            if let Some((cp, tc)) = entry.cicp {
-                let found = find_by_cicp(cp, tc).unwrap();
-                assert_eq!(found.primaries, entry.primaries);
-                assert_eq!(found.transfer, entry.transfer);
-            }
-        }
-    }
-
-    #[test]
-    fn named_lookup_roundtrips() {
-        for entry in REGISTRY {
-            if let Some(named) = entry.named {
-                let found = find_by_named(named).unwrap();
-                assert_eq!(found.primaries, entry.primaries);
-                assert_eq!(found.transfer, entry.transfer);
-            }
-        }
-    }
-
-    #[test]
-    fn primaries_transfer_lookup_roundtrips() {
-        for entry in REGISTRY {
-            let found = find_by_primaries_transfer(entry.primaries, entry.transfer).unwrap();
-            assert_eq!(found.primaries, entry.primaries);
-            assert_eq!(found.transfer, entry.transfer);
-        }
-    }
 
     #[test]
     fn rgb_to_xyz_white_is_d65_for_srgb() {

@@ -14,6 +14,51 @@ use zenpixels::{
 use zenpixels_convert::{PixelBufferConvertExt, RowConverter};
 
 const RGBF32_SRGB: PixelDescriptor = PixelDescriptor::RGBF32.with_transfer(TransferFunction::Srgb);
+const OKLCHF32: PixelDescriptor = PixelDescriptor::new(
+    ChannelType::F32,
+    ChannelLayout::Oklch,
+    None,
+    TransferFunction::Unknown,
+);
+const LCHF32: PixelDescriptor = PixelDescriptor::new(
+    ChannelType::F32,
+    ChannelLayout::Lch,
+    None,
+    TransferFunction::Unknown,
+);
+const JZAZBZF32: PixelDescriptor = PixelDescriptor::new(
+    ChannelType::F32,
+    ChannelLayout::Jzazbz,
+    None,
+    TransferFunction::Unknown,
+);
+const JZCZHZF32: PixelDescriptor = PixelDescriptor::new(
+    ChannelType::F32,
+    ChannelLayout::Jzczhz,
+    None,
+    TransferFunction::Unknown,
+);
+const HSLF32_SRGB: PixelDescriptor = PixelDescriptor::new(
+    ChannelType::F32,
+    ChannelLayout::Hsl,
+    None,
+    TransferFunction::Srgb,
+);
+const HSLAF32_SRGB: PixelDescriptor = PixelDescriptor::new(
+    ChannelType::F32,
+    ChannelLayout::HslAlpha,
+    Some(AlphaMode::Straight),
+    TransferFunction::Srgb,
+);
+const HSVF32_SRGB: PixelDescriptor = PixelDescriptor::new(
+    ChannelType::F32,
+    ChannelLayout::Hsv,
+    None,
+    TransferFunction::Srgb,
+);
+const RGBF32_BT2100_PQ: PixelDescriptor = PixelDescriptor::RGBF32_LINEAR
+    .with_primaries(ColorPrimaries::Bt2020)
+    .with_transfer(TransferFunction::Pq);
 
 fn convert_f32_3(from: PixelDescriptor, to: PixelDescriptor, px: [f32; 3]) -> [f32; 3] {
     let mut conv = RowConverter::new(from, to).unwrap();
@@ -37,7 +82,7 @@ fn oklch_matches_palette_oracle_and_roundtrips() {
         [0.20, 0.30, 0.95],
     ];
     for rgb in samples {
-        let got = convert_f32_3(RGBF32_SRGB, PixelDescriptor::OKLCHF32, rgb);
+        let got = convert_f32_3(RGBF32_SRGB, OKLCHF32, rgb);
         let oracle: PalOklch<f32> = PalOklch::from_color(Srgb::new(rgb[0], rgb[1], rgb[2]));
         assert!(
             (got[0] - oracle.l).abs() < 5e-4,
@@ -62,7 +107,7 @@ fn oklch_matches_palette_oracle_and_roundtrips() {
             );
         }
 
-        let back = convert_f32_3(PixelDescriptor::OKLCHF32, RGBF32_SRGB, got);
+        let back = convert_f32_3(OKLCHF32, RGBF32_SRGB, got);
         for k in 0..3 {
             assert!(
                 (back[k] - rgb[k]).abs() < 5e-4,
@@ -73,11 +118,7 @@ fn oklch_matches_palette_oracle_and_roundtrips() {
 
     // Powerless / NaN hue at C == 0 produces clean neutral gray, never NaN.
     let nan_hue = [0.6_f32, 0.0, f32::NAN];
-    let gray_rgb = convert_f32_3(
-        PixelDescriptor::OKLCHF32,
-        PixelDescriptor::RGBF32_LINEAR,
-        nan_hue,
-    );
+    let gray_rgb = convert_f32_3(OKLCHF32, PixelDescriptor::RGBF32_LINEAR, nan_hue);
     assert!(gray_rgb.iter().all(|v| v.is_finite()));
     assert!((gray_rgb[0] - gray_rgb[1]).abs() < 1e-4 && (gray_rgb[1] - gray_rgb[2]).abs() < 1e-4);
 }
@@ -92,7 +133,7 @@ fn cie_lch_d50_matches_palette_and_converts_directly_with_lab() {
         [0.2, 0.3, 0.9],
     ];
     for rgb in samples {
-        let lch = convert_f32_3(RGBF32_SRGB, PixelDescriptor::LCHF32, rgb);
+        let lch = convert_f32_3(RGBF32_SRGB, LCHF32, rgb);
         let xyz_d65: palette::Xyz<palette::white_point::D65, f32> =
             Srgb::new(rgb[0], rgb[1], rgb[2]).into_color();
         let xyz_d50: palette::Xyz<palette::white_point::D50, f32> = xyz_d65.adapt_into_unclamped();
@@ -118,7 +159,7 @@ fn cie_lch_d50_matches_palette_and_converts_directly_with_lab() {
             );
         }
 
-        let back = convert_f32_3(PixelDescriptor::LCHF32, RGBF32_SRGB, lch);
+        let back = convert_f32_3(LCHF32, RGBF32_SRGB, lch);
         for k in 0..3 {
             assert!(
                 (back[k] - rgb[k]).abs() < 2e-4,
@@ -130,8 +171,8 @@ fn cie_lch_d50_matches_palette_and_converts_directly_with_lab() {
         let labf32 = PixelFormat::from_parts(ChannelType::F32, ChannelLayout::Lab, None)
             .unwrap()
             .descriptor();
-        let lab = convert_f32_3(PixelDescriptor::LCHF32, labf32, lch);
-        let lch_back = convert_f32_3(labf32, PixelDescriptor::LCHF32, lab);
+        let lab = convert_f32_3(LCHF32, labf32, lch);
+        let lch_back = convert_f32_3(labf32, LCHF32, lab);
         assert!((lch_back[0] - lch[0]).abs() < 1e-5);
         assert!((lch_back[1] - lch[1]).abs() < 1e-5);
     }
@@ -140,19 +181,11 @@ fn cie_lch_d50_matches_palette_and_converts_directly_with_lab() {
 #[test]
 fn jzazbz_and_jzczhz_cover_sdr_anchors_and_10000_nit_pq_hdr() {
     // 1. Exact black [0, 0, 0] -> [0, 0, 0].
-    let black = convert_f32_3(
-        PixelDescriptor::RGBF32_LINEAR,
-        PixelDescriptor::JZAZBZF32,
-        [0.0, 0.0, 0.0],
-    );
+    let black = convert_f32_3(PixelDescriptor::RGBF32_LINEAR, JZAZBZF32, [0.0, 0.0, 0.0]);
     assert!(black[0].abs() < 1e-7 && black[1].abs() < 1e-7 && black[2].abs() < 1e-7);
 
     // 2. Default SDR 203 cd/m² D65 white -> Safdar et al. Jz ≈ 0.22206, chroma ≈ 0.
-    let sdr_white = convert_f32_3(
-        PixelDescriptor::RGBF32_LINEAR,
-        PixelDescriptor::JZAZBZF32,
-        [1.0, 1.0, 1.0],
-    );
+    let sdr_white = convert_f32_3(PixelDescriptor::RGBF32_LINEAR, JZAZBZF32, [1.0, 1.0, 1.0]);
     assert!(
         (sdr_white[0] - 0.222_065).abs() < 5e-4,
         "203 nit Jz: {sdr_white:?}"
@@ -168,7 +201,7 @@ fn jzazbz_and_jzczhz_cover_sdr_anchors_and_10000_nit_pq_hdr() {
     )
     .unwrap()
     .with_diffuse_white(DiffuseWhite::new(100.0));
-    let out_100 = buf_100.convert_to(PixelDescriptor::JZAZBZF32).unwrap();
+    let out_100 = buf_100.convert_to(JZAZBZF32).unwrap();
     let slice_100 = out_100.as_slice();
     let jz_100: &[f32] = bytemuck::cast_slice(slice_100.row(0));
     assert!(
@@ -179,11 +212,11 @@ fn jzazbz_and_jzczhz_cover_sdr_anchors_and_10000_nit_pq_hdr() {
     );
 
     // 4. Direct BT.2100 PQ HDR (up to 10,000 nits!) <-> Jzazbz <-> Jzczhz round-trip without tone-map clipping.
-    let jz_bt2020 = PixelDescriptor::JZCZHZF32.with_primaries(ColorPrimaries::Bt2020);
+    let jz_bt2020 = JZCZHZF32.with_primaries(ColorPrimaries::Bt2020);
     let hdr_pq_px = [0.75_f32, 0.52, 0.38]; // ~1,000+ nit chromatic HDR highlight
-    let jzczhz = convert_f32_3(PixelDescriptor::RGBF32_BT2100_PQ, jz_bt2020, hdr_pq_px);
+    let jzczhz = convert_f32_3(RGBF32_BT2100_PQ, jz_bt2020, hdr_pq_px);
     assert!(jzczhz[0] > 0.3 && jzczhz[1] > 0.01);
-    let pq_back = convert_f32_3(jz_bt2020, PixelDescriptor::RGBF32_BT2100_PQ, jzczhz);
+    let pq_back = convert_f32_3(jz_bt2020, RGBF32_BT2100_PQ, jzczhz);
     for k in 0..3 {
         assert!(
             (pq_back[k] - hdr_pq_px[k]).abs() < 2e-5,
@@ -204,8 +237,8 @@ fn hsl_and_hsv_match_palette_across_float_integer_and_matte_composite() {
         [0.15, 0.55, 0.85],
     ];
     for rgb in samples {
-        let hsl = convert_f32_3(RGBF32_SRGB, PixelDescriptor::HSLF32_SRGB, rgb);
-        let hsv = convert_f32_3(RGBF32_SRGB, PixelDescriptor::HSVF32_SRGB, rgb);
+        let hsl = convert_f32_3(RGBF32_SRGB, HSLF32_SRGB, rgb);
+        let hsv = convert_f32_3(RGBF32_SRGB, HSVF32_SRGB, rgb);
         let o_hsl: PalHsl<_, f32> = PalHsl::from_color(Srgb::new(rgb[0], rgb[1], rgb[2]));
         let o_hsv: PalHsv<_, f32> = PalHsv::from_color(Srgb::new(rgb[0], rgb[1], rgb[2]));
 
@@ -222,8 +255,8 @@ fn hsl_and_hsv_match_palette_across_float_integer_and_matte_composite() {
             assert!(dh.min(360.0 - dh) < 1e-3);
         }
 
-        let back_hsl = convert_f32_3(PixelDescriptor::HSLF32_SRGB, RGBF32_SRGB, hsl);
-        let back_hsv = convert_f32_3(PixelDescriptor::HSVF32_SRGB, RGBF32_SRGB, hsv);
+        let back_hsl = convert_f32_3(HSLF32_SRGB, RGBF32_SRGB, hsl);
+        let back_hsv = convert_f32_3(HSVF32_SRGB, RGBF32_SRGB, hsv);
         for k in 0..3 {
             assert!((back_hsl[k] - rgb[k]).abs() < 1e-5);
             assert!((back_hsv[k] - rgb[k]).abs() < 1e-5);
@@ -260,12 +293,8 @@ fn hsl_and_hsv_match_palette_across_float_integer_and_matte_composite() {
         background: Color::srgb8(255, 255, 255),
         reference_white: None,
     });
-    let mut matte_conv = RowConverter::new_explicit(
-        PixelDescriptor::HSLAF32_SRGB,
-        PixelDescriptor::RGB8_SRGB,
-        &opts,
-    )
-    .unwrap();
+    let mut matte_conv =
+        RowConverter::new_explicit(HSLAF32_SRGB, PixelDescriptor::RGB8_SRGB, &opts).unwrap();
     let mut pink_rgb = [0u8; 3];
     matte_conv.convert_row(bytemuck::cast_slice(&hsla_red), &mut pink_rgb, 1);
     assert_eq!(pink_rgb[0], 255, "red over white R: {pink_rgb:?}");
@@ -280,9 +309,23 @@ fn hsl_and_hsv_match_palette_across_float_integer_and_matte_composite() {
 
     // Premultiplied alpha is rejected on all polar layouts.
     assert!(
-        PixelDescriptor::HSLAF32_SRGB
+        HSLAF32_SRGB
             .with_alpha(Some(AlphaMode::Premultiplied))
             .validate()
             .is_err()
     );
+}
+
+#[test]
+fn non_unknown_transfer_on_perceptual_layouts_refuses_cleanly_without_recursion() {
+    for (layout, bad_tf) in [
+        (ChannelLayout::Oklch, TransferFunction::Linear),
+        (ChannelLayout::Lch, TransferFunction::Srgb),
+        (ChannelLayout::Jzazbz, TransferFunction::Pq),
+        (ChannelLayout::Jzczhz, TransferFunction::Pq),
+    ] {
+        let bad = PixelDescriptor::new(ChannelType::F32, layout, None, bad_tf);
+        assert!(RowConverter::new(PixelDescriptor::RGBF32_LINEAR, bad).is_err());
+        assert!(RowConverter::new(bad, PixelDescriptor::RGBF32_LINEAR).is_err());
+    }
 }

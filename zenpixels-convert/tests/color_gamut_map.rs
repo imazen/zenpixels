@@ -205,7 +205,7 @@ mod same_color {
         let gray = Color::try_new(D::GRAY8_SRGB, &[128]).unwrap();
         assert!(gray.same_color(&Color::srgb8(128, 128, 128)));
         assert!(!gray.same_color(&Color::srgb8(128, 128, 129)));
-        let bgr = Color::try_new(D::BGR8.with_transfer(T::Srgb), &[30, 20, 10]).unwrap();
+        let bgr = Color::try_new(D::new(C::U8, L::Bgr, None, T::Srgb), &[30, 20, 10]).unwrap();
         assert!(bgr.same_color(&Color::srgb8(10, 20, 30)));
         assert!(!bgr.same_color(&Color::srgb8(30, 20, 10)));
         let bgra = Color::try_new(D::BGRA8_SRGB, &[30, 20, 10, 255]).unwrap();
