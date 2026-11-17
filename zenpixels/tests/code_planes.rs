@@ -273,8 +273,92 @@ fn u32_code_planes_support_up_to_32_bits_and_guard_narrow_u16_reads() {
                         );
                         assert!(untouched.iter().all(|&v| v == 0x1234));
                     }
+                    assert_eq!(cp.code_i32(0, y), None);
+                    assert_eq!(
+                        cp.read_codes_i32(0, y, &mut [0i32; 1]),
+                        Err(CodePlaneError::StorageMismatch)
+                    );
                 }
             }
         }
+    }
+}
+
+#[test]
+fn signed_i8_i16_i32_code_planes_sign_extend_twos_complement() {
+    use zenpixels::ChannelType;
+    use zenpixels::plane::{AnyPlane, PlaneRef};
+    use zenpixels::sample::{CodePlane, CodePlaneError, SampleEncoding};
+
+    // I8: 8-bit full and 5-bit shifted two's complement.
+    let i8_vals: [i8; 6] = [-128, -1, 0, 1, 127, -42];
+    let enc_i8 = SampleEncoding::new(ChannelType::I8, 8, 0).unwrap();
+    assert!(enc_i8.is_signed());
+    let cp_i8 = CodePlane::new(
+        AnyPlane::I8(PlaneRef::new(&i8_vals[..], 3, 2, 3).unwrap()),
+        enc_i8,
+    )
+    .unwrap();
+    let mut row_i8 = [0i32; 3];
+    cp_i8.read_codes_i32(0, 0, &mut row_i8).unwrap();
+    assert_eq!(row_i8, [-128, -1, 0]);
+    assert_eq!(cp_i8.code_i32(2, 1), Some(-42));
+    assert_eq!(cp_i8.code(0, 0), None);
+    assert_eq!(cp_i8.code_u32(0, 0), None);
+    assert_eq!(
+        cp_i8.read_codes(0, 0, &mut [0u16; 1]),
+        Err(CodePlaneError::StorageMismatch)
+    );
+    assert_eq!(
+        cp_i8.read_codes_u32(0, 0, &mut [0u32; 1]),
+        Err(CodePlaneError::StorageMismatch)
+    );
+
+    // I16: 10-bit signed payloads shifted by 4 bits, with noisy high/low padding bits.
+    let enc_i16_10 = SampleEncoding::new(ChannelType::I16, 10, 4).unwrap();
+    let pack10 = |v: i16, pad_hi: u16, pad_lo: u16| -> i16 {
+        let raw10 = (v as u16) & 0x03ff;
+        ((pad_hi << 14) | (raw10 << 4) | (pad_lo & 0x0f)) as i16
+    };
+    let i16_words = [
+        pack10(-512, 0b11, 0b1010),
+        pack10(-1, 0b00, 0b0101),
+        pack10(0, 0b11, 0b1111),
+        pack10(511, 0b10, 0b1100),
+    ];
+    let cp_i16 = CodePlane::component(
+        AnyPlane::I16(PlaneRef::new(&i16_words[..], 4, 1, 4).unwrap()),
+        2,
+        0,
+        enc_i16_10,
+    )
+    .unwrap();
+    let cp_i16_odd = CodePlane::component(
+        AnyPlane::I16(PlaneRef::new(&i16_words[..], 4, 1, 4).unwrap()),
+        2,
+        1,
+        enc_i16_10,
+    )
+    .unwrap();
+    let mut even = [0i32; 2];
+    let mut odd = [0i32; 2];
+    cp_i16.read_codes_i32(0, 0, &mut even).unwrap();
+    cp_i16_odd.read_codes_i32(0, 0, &mut odd).unwrap();
+    assert_eq!(even, [-512, 0]);
+    assert_eq!(odd, [-1, 511]);
+
+    // I32: full 32-bit extremes + 24-bit shifted signed codes.
+    let i32_words = [i32::MIN, -1, 0, i32::MAX];
+    let enc_i32 = SampleEncoding::new(ChannelType::I32, 32, 0).unwrap();
+    let cp_i32 = CodePlane::new(
+        AnyPlane::I32(PlaneRef::new(&i32_words[..], 4, 1, 4).unwrap()),
+        enc_i32,
+    )
+    .unwrap();
+    let mut out_i32 = [0i32; 4];
+    cp_i32.read_codes_i32(0, 0, &mut out_i32).unwrap();
+    assert_eq!(out_i32, i32_words);
+    for (x, &want) in i32_words.iter().enumerate() {
+        assert_eq!(cp_i32.code_i32(x, 0), Some(want));
     }
 }

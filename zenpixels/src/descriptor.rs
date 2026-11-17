@@ -1067,13 +1067,9 @@ impl PixelDescriptor {
                 layout,
                 alpha,
                 reason: match layout {
-                    ChannelLayout::Bgr | ChannelLayout::Bgra => {
-                        "BGR/BGRA storage requires U8 samples"
-                    }
                     ChannelLayout::Oklab | ChannelLayout::OklabA => {
                         "Oklab storage requires F32 samples"
                     }
-                    ChannelLayout::Cmyk => "CMYK storage requires U8, U16 or F32 samples",
                     _ => "this sample type and layout have no representable pixel format",
                 },
             }),
@@ -2233,8 +2229,12 @@ impl GenericFormat {
                 | ChannelLayout::GrayAlpha
                 | ChannelLayout::Rgb
                 | ChannelLayout::Rgba
+                | ChannelLayout::Bgr
+                | ChannelLayout::Bgra
         );
-        if always_generic_layout || (generic_type && generic_rgb_gray_layout) {
+        let unnamed_bgr = !matches!(channel_type, ChannelType::U8)
+            && matches!(layout, ChannelLayout::Bgr | ChannelLayout::Bgra);
+        if always_generic_layout || unnamed_bgr || (generic_type && generic_rgb_gray_layout) {
             Some(Self {
                 channel_type,
                 layout,
@@ -2283,34 +2283,54 @@ impl GenericFormat {
                         (ChannelType::$ty, ChannelLayout::Hsv) => $hsv,
                         (ChannelType::$ty, ChannelLayout::HsvAlpha) => $hsva,
                     )*
+                    (ChannelType::U16, ChannelLayout::Bgr) => "Bgr16",
+                    (ChannelType::U16, ChannelLayout::Bgra) => "Bgra16",
+                    (ChannelType::F16, ChannelLayout::Bgr) => "BgrF16",
+                    (ChannelType::F16, ChannelLayout::Bgra) => "BgraF16",
+                    (ChannelType::F32, ChannelLayout::Bgr) => "BgrF32",
+                    (ChannelType::F32, ChannelLayout::Bgra) => "BgraF32",
                     (ChannelType::I8, ChannelLayout::Gray) => "GrayI8",
                     (ChannelType::I8, ChannelLayout::GrayAlpha) => "GrayAI8",
                     (ChannelType::I8, ChannelLayout::Rgb) => "RgbI8",
                     (ChannelType::I8, ChannelLayout::Rgba) => "RgbaI8",
+                    (ChannelType::I8, ChannelLayout::Bgr) => "BgrI8",
+                    (ChannelType::I8, ChannelLayout::Bgra) => "BgraI8",
                     (ChannelType::I16, ChannelLayout::Gray) => "GrayI16",
                     (ChannelType::I16, ChannelLayout::GrayAlpha) => "GrayAI16",
                     (ChannelType::I16, ChannelLayout::Rgb) => "RgbI16",
                     (ChannelType::I16, ChannelLayout::Rgba) => "RgbaI16",
+                    (ChannelType::I16, ChannelLayout::Bgr) => "BgrI16",
+                    (ChannelType::I16, ChannelLayout::Bgra) => "BgraI16",
                     (ChannelType::U32, ChannelLayout::Gray) => "GrayU32",
                     (ChannelType::U32, ChannelLayout::GrayAlpha) => "GrayAU32",
                     (ChannelType::U32, ChannelLayout::Rgb) => "RgbU32",
                     (ChannelType::U32, ChannelLayout::Rgba) => "RgbaU32",
+                    (ChannelType::U32, ChannelLayout::Bgr) => "BgrU32",
+                    (ChannelType::U32, ChannelLayout::Bgra) => "BgraU32",
                     (ChannelType::I32, ChannelLayout::Gray) => "GrayI32",
                     (ChannelType::I32, ChannelLayout::GrayAlpha) => "GrayAI32",
                     (ChannelType::I32, ChannelLayout::Rgb) => "RgbI32",
                     (ChannelType::I32, ChannelLayout::Rgba) => "RgbaI32",
+                    (ChannelType::I32, ChannelLayout::Bgr) => "BgrI32",
+                    (ChannelType::I32, ChannelLayout::Bgra) => "BgraI32",
                     (ChannelType::U64, ChannelLayout::Gray) => "GrayU64",
                     (ChannelType::U64, ChannelLayout::GrayAlpha) => "GrayAU64",
                     (ChannelType::U64, ChannelLayout::Rgb) => "RgbU64",
                     (ChannelType::U64, ChannelLayout::Rgba) => "RgbaU64",
+                    (ChannelType::U64, ChannelLayout::Bgr) => "BgrU64",
+                    (ChannelType::U64, ChannelLayout::Bgra) => "BgraU64",
                     (ChannelType::I64, ChannelLayout::Gray) => "GrayI64",
                     (ChannelType::I64, ChannelLayout::GrayAlpha) => "GrayAI64",
                     (ChannelType::I64, ChannelLayout::Rgb) => "RgbI64",
                     (ChannelType::I64, ChannelLayout::Rgba) => "RgbaI64",
+                    (ChannelType::I64, ChannelLayout::Bgr) => "BgrI64",
+                    (ChannelType::I64, ChannelLayout::Bgra) => "BgraI64",
                     (ChannelType::F64, ChannelLayout::Gray) => "GrayF64",
                     (ChannelType::F64, ChannelLayout::GrayAlpha) => "GrayAF64",
                     (ChannelType::F64, ChannelLayout::Rgb) => "RgbF64",
                     (ChannelType::F64, ChannelLayout::Rgba) => "RgbaF64",
+                    (ChannelType::F64, ChannelLayout::Bgr) => "BgrF64",
+                    (ChannelType::F64, ChannelLayout::Bgra) => "BgraF64",
                     _ => "Generic",
                 }
             };

@@ -87,14 +87,7 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::SwizzleBgrRgb => {
-            for (out, px) in dst[..w * 3]
-                .as_chunks_mut::<3>()
-                .0
-                .iter_mut()
-                .zip(src[..w * 3].as_chunks::<3>().0)
-            {
-                *out = [px[2], px[1], px[0]];
-            }
+            swizzle_bgr_rgb(src, dst, w, from.channel_type());
         }
 
         ConvertStep::AddAlpha => {
@@ -530,17 +523,100 @@ fn soft_compress_oklch_kernel(
 // ----------------------------------------------------------------------------
 
 /// BGRA ↔ RGBA swizzle. BGRA exists only as 8-bit formats.
-fn swizzle_bgra_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
-    assert_eq!(ch_type, ChannelType::U8, "BGRA is an 8-bit format");
-    let n = width * 4;
-    garb::bytes::rgba_to_bgra(&src[..n], &mut dst[..n]).expect("pre-validated row size");
+fn swizzle_bgr_rgb(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
+    match ch_type {
+        ChannelType::U8 => {
+            for (out, px) in dst[..width * 3]
+                .as_chunks_mut::<3>()
+                .0
+                .iter_mut()
+                .zip(src[..width * 3].as_chunks::<3>().0)
+            {
+                *out = [px[2], px[1], px[0]];
+            }
+        }
+        ChannelType::U16 | ChannelType::F16 => {
+            for (out, px) in dst[..width * 6]
+                .as_chunks_mut::<6>()
+                .0
+                .iter_mut()
+                .zip(src[..width * 6].as_chunks::<6>().0)
+            {
+                *out = [px[4], px[5], px[2], px[3], px[0], px[1]];
+            }
+        }
+        ChannelType::F32 => {
+            for (out, px) in dst[..width * 12]
+                .as_chunks_mut::<12>()
+                .0
+                .iter_mut()
+                .zip(src[..width * 12].as_chunks::<12>().0)
+            {
+                out[0..4].copy_from_slice(&px[8..12]);
+                out[4..8].copy_from_slice(&px[4..8]);
+                out[8..12].copy_from_slice(&px[0..4]);
+            }
+        }
+        other => unreachable!("unsupported channel type {other:?}"),
+    }
 }
 
-/// Fused RGB → BGRA: byte-swap R↔B and add opaque alpha in one SIMD pass.
+fn swizzle_bgra_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
+    match ch_type {
+        ChannelType::U8 => {
+            let n = width * 4;
+            garb::bytes::rgba_to_bgra(&src[..n], &mut dst[..n]).expect("pre-validated row size");
+        }
+        ChannelType::U16 | ChannelType::F16 => {
+            for (out, px) in dst[..width * 8]
+                .as_chunks_mut::<8>()
+                .0
+                .iter_mut()
+                .zip(src[..width * 8].as_chunks::<8>().0)
+            {
+                *out = [px[4], px[5], px[2], px[3], px[0], px[1], px[6], px[7]];
+            }
+        }
+        ChannelType::F32 => {
+            for (out, px) in dst[..width * 16]
+                .as_chunks_mut::<16>()
+                .0
+                .iter_mut()
+                .zip(src[..width * 16].as_chunks::<16>().0)
+            {
+                out[0..4].copy_from_slice(&px[8..12]);
+                out[4..8].copy_from_slice(&px[4..8]);
+                out[8..12].copy_from_slice(&px[0..4]);
+                out[12..16].copy_from_slice(&px[12..16]);
+            }
+        }
+        other => unreachable!("unsupported channel type {other:?}"),
+    }
+}
+
+/// Fused RGB → BGRA: swap R↔B and add opaque alpha.
 fn rgb_to_bgra(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
-    assert_eq!(ch_type, ChannelType::U8, "BGRA is an 8-bit format");
-    garb::bytes::rgb_to_bgra(&src[..width * 3], &mut dst[..width * 4])
-        .expect("pre-validated row size");
+    match ch_type {
+        ChannelType::U8 => {
+            garb::bytes::rgb_to_bgra(&src[..width * 3], &mut dst[..width * 4])
+                .expect("pre-validated row size");
+        }
+        ChannelType::U16 | ChannelType::F16 => {
+            add_alpha(src, dst, width, ch_type);
+            for px in dst[..width * 8].as_chunks_mut::<8>().0 {
+                px.swap(0, 4);
+                px.swap(1, 5);
+            }
+        }
+        ChannelType::F32 => {
+            add_alpha(src, dst, width, ch_type);
+            for px in dst[..width * 16].as_chunks_mut::<16>().0 {
+                let (head, tail) = px.split_at_mut(8);
+                head[0..4].swap_with_slice(&mut tail[0..4]);
+            }
+        }
+        other => unreachable!("unsupported channel type {other:?}"),
+    }
 }
 
 // -- add_alpha (inserts opaque alpha: differs per type) ----------------------

@@ -1226,7 +1226,7 @@ impl<'a> Planes<'a> {
         for i in 0..self.len() {
             layout.check_plane(i, &self.get(i).expect("in bounds"), width, height)?;
         }
-        if layout.roles().any(|r| r == PlaneRole::Alpha) != alpha.is_some()
+        if layout.roles().any(PlaneRole::is_alpha) != alpha.is_some()
             || alpha == Some(crate::AlphaMode::Undefined)
         {
             return Err(LayoutError::AlphaInterpretation);
@@ -1240,9 +1240,13 @@ impl<'a> Planes<'a> {
 /// A gray or monochrome picture is a `Luma` plane. Semi-planar chroma (NV12,
 /// P010, NV21) is one plane holding two components per position, in the order
 /// the variant names. Planar CMYK holds `Cyan`, `Magenta`, `Yellow` and `Black`
-/// planes. Extra channels (`Alpha`, `Depth`, `SelectionMask`, `Thermal`,
-/// `SpotColor`, `Cfa`, `Auxiliary`) may accompany any color family at full
-/// picture resolution or form an extra-only `Mono` layout.
+/// planes (ink polarity belongs to [`PlanarLayout::is_inverted_cmyk`], not to
+/// separate role variants). Extra channels (`Alpha`, `Depth`, `SelectionMask`,
+/// `Thermal`, `SpotColor`, `Cfa`, `Auxiliary`) may accompany any color family
+/// or form an extra-only `Mono` layout; callers should query
+/// [`PlanarLayout::plane_size`] for every plane's dimensions and use
+/// [`PlaneRole::is_alpha`] / [`PlaneRole::is_cmyk`] rather than hardcoding
+/// variant equality.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PlaneRole {
@@ -1334,7 +1338,18 @@ impl PlaneRole {
         !self.is_extra()
     }
 
+    /// True when this role is an alpha plane (today [`Self::Alpha`]; future
+    /// minor releases may add indexed secondary alpha variants).
+    ///
+    /// Prefer `role.is_alpha()` over `role == PlaneRole::Alpha`.
+    pub const fn is_alpha(self) -> bool {
+        matches!(self, Self::Alpha)
+    }
+
     /// True when this role is one of the four planar CMYK ink components.
+    ///
+    /// Prefer `role.is_cmyk()` combined with [`PlanarLayout::is_inverted_cmyk`]
+    /// rather than expecting polarity-specific role variants.
     pub const fn is_cmyk(self) -> bool {
         matches!(
             self,
@@ -1451,6 +1466,13 @@ impl core::hash::Hash for FloatEncoding {
 }
 
 /// How a plane's samples encode component values.
+///
+/// Note on half-precision (`F16`) storage: just as packed [`crate::buffer::PixelStorage::U16`]
+/// carries IEEE 754 `binary16` bits in `u16` without a `half` crate dependency,
+/// future `0.3.x` half-float planes will pair a `Float16(FloatEncoding)` variant
+/// (`channel_type() == ChannelType::F16`) with [`AnyPlane::U16`] bit storage.
+/// Consumers should inspect `PlaneSpec::encoding()` for semantic integer vs float
+/// interpretation rather than assuming `AnyPlane::channel_type() == PlaneEncoding::channel_type()`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum PlaneEncoding {
@@ -1600,8 +1622,7 @@ pub struct PlanarLayout {
 impl PlanarLayout {
     /// Check and adopt a plane list.
     ///
-    /// Each role appears at most once. Primary color families are mutually
-    /// exclusive:
+    /// Primary color families are mutually exclusive:
     /// - **YCbCr / Gray**: `Luma`, optionally both `Cb` and `Cr` (separately or
     ///   in one `CbCr`/`CrCb` plane).
     /// - **RGB**: `Red`, `Green`, and `Blue` with `Yuv444`.
@@ -1609,8 +1630,18 @@ impl PlanarLayout {
     ///
     /// Extra roles (`Alpha`, `Depth`, `SelectionMask`, `Thermal`,
     /// `SpotColor(i)`, `Cfa(i)`, `Auxiliary(i)`) may accompany any primary
-    /// family at full picture dimensions, or stand alone with `Mono`
-    /// subsampling.
+    /// family or stand alone with `Mono` subsampling.
+    ///
+    /// **Forward-compatibility notes for `0.3.x` consumers**:
+    /// - Always query [`PlanarLayout::plane_size`] for every plane rather than
+    ///   assuming non-chroma / extra planes match `(width, height)`: future minor
+    ///   releases may attach per-plane subsampling (`dim_shift`) to [`PlaneSpec`].
+    /// - Today [`PlanarLayout::new`] rejects duplicate roles, but future minor
+    ///   constructors may permit multiple extra channels (e.g. secondary alphas,
+    ///   masks, or depth planes); use [`PlaneRole::is_alpha`] and iterate
+    ///   [`PlanarLayout::planes`] rather than assuming at most one extra channel.
+    /// - Planar CMYK ink polarity belongs to [`PlanarLayout::is_inverted_cmyk`],
+    ///   keeping [`PlaneRole`] purely semantic.
     ///
     /// # Errors
     ///
@@ -1710,6 +1741,17 @@ impl PlanarLayout {
     /// Chroma siting.
     pub fn siting(&self) -> ChromaSiting {
         self.siting
+    }
+
+    /// Whether planar CMYK ink planes use inverted polarity (`0 = full ink`,
+    /// max/1.0 = no ink, as in JPEG XL / Adobe APP14 CMYK) rather than
+    /// conventional ICC ink polarity (`0 = no ink`).
+    ///
+    /// Always `false` for layouts built by [`PlanarLayout::new`]; reserved on
+    /// [`PlanarLayout`] so inverted planar CMYK can be added in `0.3.x` without
+    /// adding polarity-duplicated [`PlaneRole`] variants.
+    pub const fn is_inverted_cmyk(&self) -> bool {
+        false
     }
 
     /// Positions (not samples) per row and rows of plane `index` in a

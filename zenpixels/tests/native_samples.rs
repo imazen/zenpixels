@@ -241,17 +241,14 @@ fn native_combinations_have_one_generic_representation() {
     }
     // Layouts without generic carriage stay unrepresentable.
     for channel in NATIVE {
-        for layout in [
-            ChannelLayout::Bgra,
-            ChannelLayout::Bgr,
-            ChannelLayout::Oklab,
-            ChannelLayout::OklabA,
-        ] {
+        for layout in [ChannelLayout::Oklab, ChannelLayout::OklabA] {
             assert_eq!(PixelFormat::from_parts(channel, layout, None), None);
         }
-        // Generic layouts (including inverted CMYK, CIE Lab/XYZ, and perceptual/polar spaces)
-        // are carried across all ChannelTypes.
+        // Generic layouts (including Bgr/Bgra, inverted CMYK, CIE Lab/XYZ, and perceptual/polar spaces)
+        // are carried across all non-named ChannelTypes.
         for layout in [
+            ChannelLayout::Bgr,
+            ChannelLayout::Bgra,
             ChannelLayout::Cmyk,
             ChannelLayout::CmykAlpha,
             ChannelLayout::CmykInverted,

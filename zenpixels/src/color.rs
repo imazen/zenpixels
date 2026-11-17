@@ -770,6 +770,7 @@ impl RenderingIntent {
 /// `gAMA` + `cHRM` (+ `sRGB` rendering intent) — without inflating [`PixelDescriptor`]
 /// on inner row/window loops or synthesizing fake ICC bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct ParametricColor {
     /// RGB primaries, or `None` for grayscale color encodings.
     pub primaries: Option<ParametricPrimaries>,

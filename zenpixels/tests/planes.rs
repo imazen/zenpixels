@@ -723,9 +723,12 @@ fn planar_cmyk_and_extra_roles_validate_and_size_correctly() {
     for r in [Cyan, Magenta, Yellow, Black] {
         assert!(r.is_color());
         assert!(r.is_cmyk());
+        assert!(!r.is_alpha());
         assert!(!r.is_extra());
         assert_eq!(r.components(), 1);
     }
+    assert!(Alpha.is_alpha());
+    assert!(Alpha.is_extra());
     for r in [
         Depth,
         SelectionMask,
@@ -737,9 +740,20 @@ fn planar_cmyk_and_extra_roles_validate_and_size_correctly() {
     ] {
         assert!(!r.is_color());
         assert!(!r.is_cmyk());
+        assert!(!r.is_alpha());
         assert!(r.is_extra());
         assert_eq!(r.components(), 1);
     }
+    assert_eq!(Yuv440.chroma_size(5, 3), Some((5, 2)));
+    let l440 = PlanarLayout::new(
+        vec![spec(Luma, u8c), spec(Cb, u8c), spec(Cr, u8c)],
+        Yuv440,
+        ChromaSiting::Center,
+    )
+    .unwrap();
+    assert!(!l440.is_inverted_cmyk());
+    assert_eq!(l440.plane_size(0, 5, 3), Some((5, 3)));
+    assert_eq!(l440.plane_size(1, 5, 3), Some((5, 2)));
 
     // Full planar CMYK + Alpha + JXL extra channels at 4:4:4.
     let cmyk_extra = PlanarLayout::new(

@@ -49,13 +49,13 @@ fn empty_channel_reorders_do_not_address_rows() {
 fn invalid_descriptor_explains_input_and_remedy() {
     let error = PixelDescriptor::try_new(
         ChannelType::U16,
-        ChannelLayout::Bgra,
+        ChannelLayout::OklabA,
         Some(AlphaMode::Straight),
-        TransferFunction::Srgb,
+        TransferFunction::Linear,
     )
     .unwrap_err()
     .to_string();
-    for expected in ["U16", "Bgra", "Straight", "requires U8"] {
+    for expected in ["U16", "OklabA", "Straight", "requires F32"] {
         assert!(error.contains(expected), "{error}");
     }
     let error = PixelDescriptor::try_new(

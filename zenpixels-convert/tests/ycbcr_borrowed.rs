@@ -154,6 +154,38 @@ fn bad_interpretation_and_output_fail_before_writes() {
         );
     }
     assert_eq!(
+        *YcbcrToRgbF32::new([p, c, c], Sub::Yuv440, Site::Center, color)
+            .err()
+            .unwrap()
+            .error(),
+        YcbcrError::UnsupportedChroma {
+            subsampling: Sub::Yuv440,
+            siting: Site::Center
+        }
+    );
+    let signed_enc = SampleEncoding::new(ChannelType::I8, 8, 0).unwrap();
+    let signed_bytes = [0i8; 4];
+    let signed_plane = CodePlane::new(
+        AnyPlane::I8(zenpixels::plane::PlaneRef::new(&signed_bytes[..], 2, 2, 2).unwrap()),
+        signed_enc,
+    )
+    .unwrap();
+    assert_eq!(
+        *YcbcrToRgbF32::new(
+            [signed_plane, signed_plane, signed_plane],
+            Sub::Yuv444,
+            Site::Unknown,
+            color
+        )
+        .err()
+        .unwrap()
+        .error(),
+        YcbcrError::UnsupportedEncoding {
+            plane: 0,
+            actual: signed_enc
+        }
+    );
+    assert_eq!(
         *YcbcrToRgbF32::new([p, p, c], Sub::Yuv420, Site::Center, color)
             .err()
             .unwrap()

@@ -289,12 +289,35 @@ fn shared_read_only_owner_needs_no_mutable_implementation() {
 }
 
 #[test]
-fn carrying_signed_or_wide_samples_does_not_claim_code_reader_support() {
-    let p = Plane::new(vec![-1i32], 1, 1, 1).unwrap();
+fn carrying_signed_or_wide_samples_enforces_code_reader_boundaries() {
+    let p_i32 = Plane::new(vec![-1i32], 1, 1, 1).unwrap();
+    let cp_i32 = CodePlane::new(
+        p_i32.as_plane(),
+        SampleEncoding::new(ChannelType::I32, 24, 4).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(cp_i32.code_i32(0, 0), Some(-1));
+    assert_eq!(cp_i32.code_u32(0, 0), None);
+    let mut dst_u32 = [0u32; 1];
+    assert_eq!(
+        cp_i32.read_codes_u32(0, 0, &mut dst_u32),
+        Err(CodePlaneError::StorageMismatch)
+    );
+
+    let p_u64 = Plane::new(vec![u64::MAX], 1, 1, 1).unwrap();
     assert_eq!(
         CodePlane::new(
-            p.as_plane(),
-            SampleEncoding::new(ChannelType::I32, 24, 4).unwrap()
+            p_u64.as_plane(),
+            SampleEncoding::new(ChannelType::U64, 48, 8).unwrap()
+        )
+        .unwrap_err(),
+        CodePlaneError::StorageMismatch
+    );
+    let p_i64 = Plane::new(vec![-1i64], 1, 1, 1).unwrap();
+    assert_eq!(
+        CodePlane::new(
+            p_i64.as_plane(),
+            SampleEncoding::new(ChannelType::I64, 48, 8).unwrap()
         )
         .unwrap_err(),
         CodePlaneError::StorageMismatch

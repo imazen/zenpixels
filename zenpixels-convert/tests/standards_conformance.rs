@@ -889,4 +889,53 @@ fn decisions_a1_b1_c1_d1_conformance() {
         compressed.iter().all(|&c| (0.0..=1.0).contains(&c)),
         "SoftCompress into AdobeRGB stayed in gamut: {compressed:?}"
     );
+
+    // Deep BGR / BGRA generic formats (U16, F16, F32) round-trip through RGB / RGBA.
+    let bgr16 = PixelFormat::from_parts(ChannelType::U16, ChannelLayout::Bgr, None).unwrap();
+    assert_eq!(bgr16.name(), "Bgr16");
+    let bgra16 = PixelFormat::from_parts(
+        ChannelType::U16,
+        ChannelLayout::Bgra,
+        Some(AlphaMode::Straight),
+    )
+    .unwrap();
+    assert_eq!(bgra16.name(), "Bgra16");
+    let bgr16_srgb = bgr16.descriptor().with_transfer(TransferFunction::Srgb);
+    let bgra16_srgb = bgra16
+        .descriptor()
+        .with_alpha(Some(AlphaMode::Straight))
+        .with_transfer(TransferFunction::Srgb);
+    let rgb16_px = [1000_u16, 2000, 3000];
+    let mut bgr16_out = [0_u16; 3];
+    let mut bgra16_out = [0_u16; 4];
+    RowConverter::new(PixelDescriptor::RGB16_SRGB, bgr16_srgb)
+        .unwrap()
+        .convert_row(
+            bytemuck::cast_slice(&rgb16_px),
+            bytemuck::cast_slice_mut(&mut bgr16_out),
+            1,
+        );
+    assert_eq!(bgr16_out, [3000, 2000, 1000]);
+    RowConverter::new(PixelDescriptor::RGB16_SRGB, bgra16_srgb)
+        .unwrap()
+        .convert_row(
+            bytemuck::cast_slice(&rgb16_px),
+            bytemuck::cast_slice_mut(&mut bgra16_out),
+            1,
+        );
+    assert_eq!(bgra16_out, [3000, 2000, 1000, 65535]);
+
+    let bgrf32 = PixelFormat::from_parts(ChannelType::F32, ChannelLayout::Bgr, None).unwrap();
+    assert_eq!(bgrf32.name(), "BgrF32");
+    let bgrf32_lin = bgrf32.descriptor().with_transfer(TransferFunction::Linear);
+    let rgbf32_px = [0.1_f32, 0.2, 0.3];
+    let mut bgrf32_out = [0.0_f32; 3];
+    RowConverter::new(PixelDescriptor::RGBF32_LINEAR, bgrf32_lin)
+        .unwrap()
+        .convert_row(
+            bytemuck::cast_slice(&rgbf32_px),
+            bytemuck::cast_slice_mut(&mut bgrf32_out),
+            1,
+        );
+    assert_eq!(bgrf32_out, [0.3, 0.2, 0.1]);
 }

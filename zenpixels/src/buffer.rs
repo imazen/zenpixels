@@ -1914,6 +1914,50 @@ impl<'a, P> PixelSliceMut<'a, P> {
             _pixel: PhantomData,
         }
     }
+
+    /// Zero-copy mutable crop view. Adjusts the data pointer and width; stride
+    /// remains the same as the parent.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the crop region is out of bounds.
+    pub fn crop_view_mut(&mut self, x: u32, y: u32, w: u32, h: u32) -> PixelSliceMut<'_, P> {
+        assert!(
+            x.checked_add(w).is_some_and(|end| end <= self.width),
+            "crop x={x} w={w} exceeds width {}",
+            self.width
+        );
+        assert!(
+            y.checked_add(h).is_some_and(|end| end <= self.rows),
+            "crop y={y} h={h} exceeds rows {}",
+            self.rows
+        );
+        if h == 0 || w == 0 {
+            return PixelSliceMut {
+                data: &mut [],
+                width: w,
+                rows: h,
+                stride: self.stride,
+                descriptor: self.descriptor,
+
+                color: self.color.clone(),
+                _pixel: PhantomData,
+            };
+        }
+        let bpp = self.descriptor.bytes_per_pixel();
+        let start = y as usize * self.stride + x as usize * bpp;
+        let end = (y as usize + h as usize - 1) * self.stride + (x as usize + w as usize) * bpp;
+        PixelSliceMut {
+            data: &mut self.data[start..end],
+            width: w,
+            rows: h,
+            stride: self.stride,
+            descriptor: self.descriptor,
+
+            color: self.color.clone(),
+            _pixel: PhantomData,
+        }
+    }
 }
 
 impl<'a, P: Pixel> PixelSliceMut<'a, P> {
@@ -1978,6 +2022,20 @@ impl<P> PixelSliceMut<'_, P> {
         y.checked_add(count)
             .is_some_and(|end| end <= self.rows)
             .then(|| self.sub_rows_mut(y, count))
+    }
+
+    /// [`crop_view_mut`](Self::crop_view_mut), or `None` when the region is out of bounds.
+    #[must_use]
+    pub fn try_crop_view_mut(
+        &mut self,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+    ) -> Option<PixelSliceMut<'_, P>> {
+        let fits = x.checked_add(w).is_some_and(|end| end <= self.width)
+            && y.checked_add(h).is_some_and(|end| end <= self.rows);
+        fits.then(|| self.crop_view_mut(x, y, w, h))
     }
 
     /// [`with_descriptor`](Self::with_descriptor) for a descriptor that may not fit.
@@ -4096,6 +4154,68 @@ impl<P, S: ByteStorageMut> PixelBuffer<P, S> {
             data: &mut self.data.as_bytes_mut()[start..end],
             width: self.width,
             rows: count,
+            stride,
+            descriptor: self.descriptor,
+
+            color: self.color.clone(),
+            _pixel: PhantomData,
+        }
+    }
+
+    /// [`crop_view_mut`](Self::crop_view_mut), or `None` when the region is out of bounds.
+    #[must_use]
+    pub fn try_crop_view_mut(
+        &mut self,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+    ) -> Option<PixelSliceMut<'_, P>> {
+        let fits = x.checked_add(w).is_some_and(|end| end <= self.width)
+            && y.checked_add(h).is_some_and(|end| end <= self.height);
+        fits.then(|| self.crop_view_mut(x, y, w, h))
+    }
+
+    /// Zero-copy mutable sub-region view.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the crop region is out of bounds.
+    pub fn crop_view_mut(&mut self, x: u32, y: u32, w: u32, h: u32) -> PixelSliceMut<'_, P> {
+        // Mutable access can change any sample: end current-sample evidence.
+        self.exact = None;
+        assert!(
+            x.checked_add(w).is_some_and(|end| end <= self.width),
+            "crop x={x} w={w} exceeds width {}",
+            self.width
+        );
+        assert!(
+            y.checked_add(h).is_some_and(|end| end <= self.height),
+            "crop y={y} h={h} exceeds height {}",
+            self.height
+        );
+        let stride = self.stride();
+        if h == 0 || w == 0 {
+            return PixelSliceMut {
+                data: &mut [],
+                width: w,
+                rows: h,
+                stride,
+                descriptor: self.descriptor,
+
+                color: self.color.clone(),
+                _pixel: PhantomData,
+            };
+        }
+        let bpp = self.descriptor.bytes_per_pixel();
+        let start = (self.offset as usize) + y as usize * stride + x as usize * bpp;
+        let end = (self.offset as usize)
+            + (y as usize + h as usize - 1) * stride
+            + (x as usize + w as usize) * bpp;
+        PixelSliceMut {
+            data: &mut self.data.as_bytes_mut()[start..end],
+            width: w,
+            rows: h,
             stride,
             descriptor: self.descriptor,
 

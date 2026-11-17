@@ -533,4 +533,39 @@ fn parametric_color_and_rendering_intent_participate_in_metadata_hashes() {
     )
     .unwrap();
     assert_eq!(writes(&cp_clean), writes(&cp_dirty));
+
+    // Signed CodePlanes over I16/I32 also hash cleanly, masking unused bits and padding.
+    let enc_i16 = SampleEncoding::new(ChannelType::I16, 12, 2).unwrap();
+    let i16_clean = [-8192i16, 0x1ff8];
+    let i16_dirty = [-8192i16 | 0x0003, 0x1ff8 | -0x8000i16 | 0x0003, 12345];
+    let cp_i16_clean = CodePlane::new(
+        AnyPlane::I16(PlaneRef::new(&i16_clean[..], 2, 1, 2).unwrap()),
+        enc_i16,
+    )
+    .unwrap();
+    let cp_i16_dirty = CodePlane::new(
+        AnyPlane::I16(PlaneRef::new(&i16_dirty[..], 2, 1, 3).unwrap()),
+        enc_i16,
+    )
+    .unwrap();
+    assert_eq!(writes(&cp_i16_clean), writes(&cp_i16_dirty));
+
+    let enc_i32 = SampleEncoding::new(ChannelType::I32, 24, 4).unwrap();
+    let i32_clean = [-0x0800_0000i32, 0x07ff_fff0];
+    let i32_dirty = [
+        -0x0800_0000i32 | 0x0f,
+        0x07ff_fff0 | -0x8000_0000i32 | 0x0f,
+        -1,
+    ];
+    let cp_i32_clean = CodePlane::new(
+        AnyPlane::I32(PlaneRef::new(&i32_clean[..], 2, 1, 2).unwrap()),
+        enc_i32,
+    )
+    .unwrap();
+    let cp_i32_dirty = CodePlane::new(
+        AnyPlane::I32(PlaneRef::new(&i32_dirty[..], 2, 1, 3).unwrap()),
+        enc_i32,
+    )
+    .unwrap();
+    assert_eq!(writes(&cp_i32_clean), writes(&cp_i32_dirty));
 }

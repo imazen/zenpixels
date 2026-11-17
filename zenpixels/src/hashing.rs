@@ -242,12 +242,9 @@ fn any_plane<H: Hasher>(
         if let Ok(codes) = codes {
             code_samples(&codes, size, state);
         } else {
-            // Signed and 64-bit native carriers are hashable without claiming
-            // support in the U8/U16/U32 numerical CodePlane reader.
+            // 64-bit native carriers are hashable without claiming
+            // support in the 8/16/32-bit numerical CodePlane reader.
             match view {
-                AnyPlane::I8(p) => masked_plane(p, e, state),
-                AnyPlane::I16(p) => masked_plane(p, e, state),
-                AnyPlane::I32(p) => masked_plane(p, e, state),
                 AnyPlane::U64(p) => masked_plane(p, e, state),
                 AnyPlane::I64(p) => masked_plane(p, e, state),
                 _ => unreachable!("validated planar integer encoding"),
@@ -410,7 +407,10 @@ fn codes(view: &CodePlane<'_>, inclusions: HashInclusions, state: &mut impl Hash
             view.encoding().hash(&mut p);
         }
     }
-    let size = if view.encoding().storage() == crate::ChannelType::U32 {
+    let size = if matches!(
+        view.encoding().storage(),
+        crate::ChannelType::U32 | crate::ChannelType::I32
+    ) {
         4
     } else {
         2
@@ -421,25 +421,45 @@ fn code_samples(view: &CodePlane<'_>, size: usize, state: &mut impl Hasher) {
     if view.width() == 0 {
         return;
     }
+    let signed = view.encoding().is_signed();
+    let mask = u32::MAX >> (32 - u32::from(view.encoding().code_bits()));
     if size == 4 {
         let mut codes32 = [0u32; 128];
+        let mut signed32 = [0i32; 128];
         for y in 0..view.height() {
             for x in (0..view.width()).step_by(codes32.len()) {
                 let n = (view.width() - x).min(codes32.len());
-                view.read_codes_u32(x, y, &mut codes32[..n])
-                    .expect("checked active code plane extent");
+                if signed {
+                    view.read_codes_i32(x, y, &mut signed32[..n])
+                        .expect("checked active code plane extent");
+                    for (dst, &src) in codes32[..n].iter_mut().zip(&signed32[..n]) {
+                        *dst = (src as u32) & mask;
+                    }
+                } else {
+                    view.read_codes_u32(x, y, &mut codes32[..n])
+                        .expect("checked active code plane extent");
+                }
                 samples(bytemuck::cast_slice(&codes32[..n]), 4, state);
             }
         }
         return;
     }
     let mut codes = [0u16; 128];
+    let mut signed32 = [0i32; 128];
     let mut bytes = [0u8; 128];
     for y in 0..view.height() {
         for x in (0..view.width()).step_by(codes.len()) {
             let n = (view.width() - x).min(codes.len());
-            view.read_codes(x, y, &mut codes[..n])
-                .expect("checked active code plane extent");
+            if signed {
+                view.read_codes_i32(x, y, &mut signed32[..n])
+                    .expect("checked active code plane extent");
+                for (dst, &src) in codes[..n].iter_mut().zip(&signed32[..n]) {
+                    *dst = ((src as u32) & mask) as u16;
+                }
+            } else {
+                view.read_codes(x, y, &mut codes[..n])
+                    .expect("checked active code plane extent");
+            }
             match size {
                 // Reuse the wide-sample serializer. Little-endian hosts can
                 // hash the complete code block directly, without per-code copies.
@@ -450,7 +470,7 @@ fn code_samples(view: &CodePlane<'_>, size: usize, state: &mut impl Hasher) {
                     }
                     state.write(&bytes[..n]);
                 }
-                _ => unreachable!("CodePlane supports U8/U16/U32 containers"),
+                _ => unreachable!("CodePlane supports 8/16/32-bit containers"),
             }
         }
     }

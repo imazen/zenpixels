@@ -17,6 +17,8 @@ pub enum ChromaSubsampling {
     Yuv422,
     /// Half horizontal and vertical resolution, rounded up at odd edges.
     Yuv420,
+    /// Equal horizontal resolution and half vertical resolution, rounded up at an odd edge (4:4:0).
+    Yuv440,
 }
 
 impl ChromaSubsampling {
@@ -28,6 +30,7 @@ impl ChromaSubsampling {
             Self::Yuv444 => Some((width, height)),
             Self::Yuv422 => Some((width.div_ceil(2), height)),
             Self::Yuv420 => Some((width.div_ceil(2), height.div_ceil(2))),
+            Self::Yuv440 => Some((width, height.div_ceil(2))),
         }
     }
 }
@@ -53,9 +56,9 @@ pub enum ChromaSiting {
 
 #[derive(Clone, Copy, Debug)]
 enum Samples<'a> {
-    U8(&'a [u8]),
-    U16(&'a [u16]),
-    U32(&'a [u32]),
+    Bytes1(&'a [u8]),
+    Words2(&'a [u16]),
+    Words4(&'a [u32]),
 }
 
 /// Integer codes of one component in a borrowed plane, without normalization
@@ -65,7 +68,12 @@ enum Samples<'a> {
 /// padding bits are ignored on reads. The enclosing format supplies roles,
 /// range, matrix, transfer and sample location. Nothing is copied or allocated.
 ///
-/// The plane is a [`crate::plane::Plane`] of `u8`, `u16`, or `u32` samples. A
+/// The plane is a [`crate::plane::Plane`] of `u8`/`i8`, `u16`/`i16`, or
+/// `u32`/`i32` samples. Unsigned encodings read via [`code`](Self::code),
+/// [`code_u32`](Self::code_u32), [`read_codes`](Self::read_codes), and
+/// [`read_codes_u32`](Self::read_codes_u32); signed two's-complement encodings
+/// read via [`code_i32`](Self::code_i32) and
+/// [`read_codes_i32`](Self::read_codes_i32). A
 /// plane may hold several interleaved components per position, such as the
 /// Cb/Cr plane of NV12 or P010, or interleaved RGB(A);
 /// [`component`](Self::component) reads one of them:
@@ -99,8 +107,10 @@ const _: () = assert!(core::mem::size_of::<CodePlane<'static>>() == 48);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CodePlaneError {
-    /// The plane's sample type differs from the sample encoding's storage, or
-    /// is not a supported unsigned integer container (`U8`, `U16`, `U32`).
+    /// The plane's sample type differs from the sample encoding's storage,
+    /// is not a supported 8/16/32-bit integer container (`U8`/`I8`, `U16`/`I16`,
+    /// `U32`/`I32`), or an unsigned/signed read was called on the opposite
+    /// signedness.
     StorageMismatch,
     /// The component index is not below the component count, or the plane's
     /// width does not hold whole positions.
@@ -129,7 +139,7 @@ impl<'a> CodePlane<'a> {
     /// # Errors
     ///
     /// [`CodePlaneError::StorageMismatch`] when the plane's samples differ from
-    /// `encoding`'s storage or are not `U8`, `U16`, or `U32`.
+    /// `encoding`'s storage or are not `U8`/`I8`, `U16`/`I16`, or `U32`/`I32`.
     pub fn new(plane: AnyPlane<'a>, encoding: SampleEncoding) -> Result<Self, CodePlaneError> {
         Self::component(plane, 1, 0, encoding)
     }
@@ -143,7 +153,7 @@ impl<'a> CodePlane<'a> {
     /// [`CodePlaneError::Components`] for an index not below `components` or
     /// a width that is not a multiple of it, and
     /// [`CodePlaneError::StorageMismatch`] when the plane's samples differ from
-    /// `encoding`'s storage or are not `U8`, `U16`, or `U32`.
+    /// `encoding`'s storage or are not `U8`/`I8`, `U16`/`I16`, or `U32`/`I32`.
     pub fn component(
         plane: AnyPlane<'a>,
         components: usize,
@@ -164,11 +174,23 @@ impl<'a> CodePlane<'a> {
         let skip = if width == 0 || height == 0 { 0 } else { index };
         let (sample_bytes, stride_samples) = match plane {
             AnyPlane::U8(p) => (&p.into_strided_samples()[skip..], p.stride()),
+            AnyPlane::I8(p) => (
+                bytemuck::cast_slice(&p.into_strided_samples()[skip..]),
+                p.stride(),
+            ),
             AnyPlane::U16(p) => (
                 bytemuck::cast_slice(&p.into_strided_samples()[skip..]),
                 p.stride(),
             ),
+            AnyPlane::I16(p) => (
+                bytemuck::cast_slice(&p.into_strided_samples()[skip..]),
+                p.stride(),
+            ),
             AnyPlane::U32(p) => (
+                bytemuck::cast_slice(&p.into_strided_samples()[skip..]),
+                p.stride(),
+            ),
+            AnyPlane::I32(p) => (
                 bytemuck::cast_slice(&p.into_strided_samples()[skip..]),
                 p.stride(),
             ),
@@ -187,10 +209,14 @@ impl<'a> CodePlane<'a> {
     #[inline]
     fn samples(self) -> Samples<'a> {
         match self.encoding.storage() {
-            crate::ChannelType::U8 => Samples::U8(self.sample_bytes),
-            crate::ChannelType::U16 => Samples::U16(bytemuck::cast_slice(self.sample_bytes)),
-            crate::ChannelType::U32 => Samples::U32(bytemuck::cast_slice(self.sample_bytes)),
-            _ => unreachable!("CodePlane only accepts U8, U16, or U32 storage"),
+            crate::ChannelType::U8 | crate::ChannelType::I8 => Samples::Bytes1(self.sample_bytes),
+            crate::ChannelType::U16 | crate::ChannelType::I16 => {
+                Samples::Words2(bytemuck::cast_slice(self.sample_bytes))
+            }
+            crate::ChannelType::U32 | crate::ChannelType::I32 => {
+                Samples::Words4(bytemuck::cast_slice(self.sample_bytes))
+            }
+            _ => unreachable!("CodePlane only accepts 8/16/32-bit integer storage"),
         }
     }
 
@@ -207,40 +233,67 @@ impl<'a> CodePlane<'a> {
         self.encoding
     }
 
-    /// Extract one `1..=16`-bit code, ignoring padding bits; returns `None`
-    /// outside the active plane or when `self.encoding().code_bits() > 16`
-    /// (use [`code_u32`](Self::code_u32) for `17..=32`-bit codes).
-    pub fn code(self, x: usize, y: usize) -> Option<u16> {
-        if self.encoding.code_bits() > 16 {
-            return None;
-        }
-        self.code_u32(x, y).map(|c| c as u16)
-    }
-
-    /// Extract one `1..=32`-bit code as `u32`, ignoring padding bits; outside
-    /// the active plane is `None`.
-    pub fn code_u32(self, x: usize, y: usize) -> Option<u32> {
+    #[inline]
+    fn raw_code_u32(self, x: usize, y: usize) -> Option<u32> {
         if x >= self.width || y >= self.height {
             return None;
         }
         let step = self.step_samples as usize;
         let i = y * self.stride_samples + x * step;
         let sample = match self.samples() {
-            Samples::U8(s) => u32::from(s[i]),
-            Samples::U16(s) => u32::from(s[i]),
-            Samples::U32(s) => s[i],
+            Samples::Bytes1(s) => u32::from(s[i]),
+            Samples::Words2(s) => u32::from(s[i]),
+            Samples::Words4(s) => s[i],
         };
         Some((sample >> self.encoding.bit_shift()) & self.code_mask_u32())
     }
 
-    /// Extract `codes.len()` consecutive `1..=16`-bit codes of row `y`, starting
-    /// at column `x`.
+    /// Extract one unsigned `1..=16`-bit code, ignoring padding bits; returns
+    /// `None` outside the active plane, when the encoding is signed (use
+    /// [`code_i32`](Self::code_i32)), or when `self.encoding().code_bits() > 16`
+    /// (use [`code_u32`](Self::code_u32) for `17..=32`-bit codes).
+    pub fn code(self, x: usize, y: usize) -> Option<u16> {
+        if self.encoding.is_signed() || self.encoding.code_bits() > 16 {
+            return None;
+        }
+        self.raw_code_u32(x, y).map(|c| c as u16)
+    }
+
+    /// Extract one unsigned `1..=32`-bit code as `u32`, ignoring padding bits;
+    /// returns `None` outside the active plane or when the encoding is signed
+    /// (use [`code_i32`](Self::code_i32)).
+    pub fn code_u32(self, x: usize, y: usize) -> Option<u32> {
+        if self.encoding.is_signed() {
+            return None;
+        }
+        self.raw_code_u32(x, y)
+    }
+
+    /// Extract one signed two's-complement `1..=32`-bit code sign-extended to
+    /// `i32`, ignoring padding bits; returns `None` outside the active plane
+    /// or when the encoding is unsigned (use [`code`](Self::code) /
+    /// [`code_u32`](Self::code_u32)).
+    pub fn code_i32(self, x: usize, y: usize) -> Option<i32> {
+        if !self.encoding.is_signed() {
+            return None;
+        }
+        let sign_shift = 32 - u32::from(self.encoding.code_bits());
+        self.raw_code_u32(x, y)
+            .map(|raw| ((raw << sign_shift) as i32) >> sign_shift)
+    }
+
+    /// Extract `codes.len()` consecutive unsigned `1..=16`-bit codes of row `y`,
+    /// starting at column `x`.
     ///
     /// Padding bits are ignored, as in [`code`](Self::code). Returns
+    /// [`CodePlaneError::StorageMismatch`] when the encoding is signed, and
     /// [`CodePlaneError::NarrowDestination`] when `self.encoding().code_bits() > 16`
     /// (use [`read_codes_u32`](Self::read_codes_u32) instead). The extent is
     /// checked before writing; on error `codes` is unchanged.
     pub fn read_codes(self, x: usize, y: usize, codes: &mut [u16]) -> Result<(), CodePlaneError> {
+        if self.encoding.is_signed() {
+            return Err(CodePlaneError::StorageMismatch);
+        }
         if self.encoding.code_bits() > 16 {
             return Err(CodePlaneError::NarrowDestination);
         }
@@ -260,7 +313,7 @@ impl<'a> CodePlane<'a> {
         let end = start + last * step + 1;
         let (shift, mask) = (self.encoding.bit_shift(), self.code_mask());
         match self.samples() {
-            Samples::U8(s) => {
+            Samples::Bytes1(s) => {
                 let samples = &s[start..end];
                 if step == 1 {
                     for (code, sample) in codes.iter_mut().zip(samples) {
@@ -272,7 +325,7 @@ impl<'a> CodePlane<'a> {
                     }
                 }
             }
-            Samples::U16(s) => {
+            Samples::Words2(s) => {
                 let samples = &s[start..end];
                 if step == 1 {
                     for (code, sample) in codes.iter_mut().zip(samples) {
@@ -284,7 +337,7 @@ impl<'a> CodePlane<'a> {
                     }
                 }
             }
-            Samples::U32(s) => {
+            Samples::Words4(s) => {
                 let mask32 = u32::from(mask);
                 let samples = &s[start..end];
                 if step == 1 {
@@ -301,18 +354,53 @@ impl<'a> CodePlane<'a> {
         Ok(())
     }
 
-    /// Extract `codes.len()` consecutive `1..=32`-bit codes of row `y` into `u32`,
-    /// starting at column `x`.
+    /// Extract `codes.len()` consecutive unsigned `1..=32`-bit codes of row `y`
+    /// into `u32`, starting at column `x`.
     ///
     /// Padding bits are ignored, as in [`code_u32`](Self::code_u32). Works for
-    /// `U8`, `U16`, and `U32` planes across all `1..=32` code depths. The extent
-    /// is checked before writing; on error `codes` is unchanged.
+    /// `U8`, `U16`, and `U32` planes across all `1..=32` code depths, and returns
+    /// [`CodePlaneError::StorageMismatch`] on signed planes. The extent is
+    /// checked before writing; on error `codes` is unchanged.
     pub fn read_codes_u32(
         self,
         x: usize,
         y: usize,
         codes: &mut [u32],
     ) -> Result<(), CodePlaneError> {
+        if self.encoding.is_signed() {
+            return Err(CodePlaneError::StorageMismatch);
+        }
+        self.read_raw_u32(x, y, codes)
+    }
+
+    /// Extract `codes.len()` consecutive signed two's-complement `1..=32`-bit
+    /// codes of row `y` sign-extended into `i32`, starting at column `x`.
+    ///
+    /// Padding bits are ignored, as in [`code_i32`](Self::code_i32). Works for
+    /// `I8`, `I16`, and `I32` planes across all `1..=32` code depths, and returns
+    /// [`CodePlaneError::StorageMismatch`] on unsigned planes. The extent is
+    /// checked before writing; on error `codes` is unchanged.
+    pub fn read_codes_i32(
+        self,
+        x: usize,
+        y: usize,
+        codes: &mut [i32],
+    ) -> Result<(), CodePlaneError> {
+        if !self.encoding.is_signed() {
+            return Err(CodePlaneError::StorageMismatch);
+        }
+        let raw: &mut [u32] = bytemuck::cast_slice_mut(codes);
+        self.read_raw_u32(x, y, raw)?;
+        let sign_shift = 32 - u32::from(self.encoding.code_bits());
+        if sign_shift != 0 {
+            for code in codes.iter_mut() {
+                *code = ((*code as u32) << sign_shift) as i32 >> sign_shift;
+            }
+        }
+        Ok(())
+    }
+
+    fn read_raw_u32(self, x: usize, y: usize, codes: &mut [u32]) -> Result<(), CodePlaneError> {
         if y >= self.height
             || x.checked_add(codes.len())
                 .is_none_or(|end| end > self.width)
@@ -327,7 +415,7 @@ impl<'a> CodePlane<'a> {
         let end = start + last * step + 1;
         let (shift, mask) = (self.encoding.bit_shift(), self.code_mask_u32());
         match self.samples() {
-            Samples::U8(s) => {
+            Samples::Bytes1(s) => {
                 let samples = &s[start..end];
                 if step == 1 {
                     for (code, sample) in codes.iter_mut().zip(samples) {
@@ -339,7 +427,7 @@ impl<'a> CodePlane<'a> {
                     }
                 }
             }
-            Samples::U16(s) => {
+            Samples::Words2(s) => {
                 let samples = &s[start..end];
                 if step == 1 {
                     for (code, sample) in codes.iter_mut().zip(samples) {
@@ -351,7 +439,7 @@ impl<'a> CodePlane<'a> {
                     }
                 }
             }
-            Samples::U32(s) => {
+            Samples::Words4(s) => {
                 let samples = &s[start..end];
                 if step == 1 {
                     for (code, sample) in codes.iter_mut().zip(samples) {

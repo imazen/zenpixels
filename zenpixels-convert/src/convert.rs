@@ -992,14 +992,8 @@ impl ConvertPlan {
             }));
         }
 
-        // BGR kernels only swap bytes, at U8. Everything else happens as RGB in between.
+        // BGR kernels swap R↔B at the endpoint, with RGB intermediates in between.
         if from.layout() == ChannelLayout::Bgr || to.layout() == ChannelLayout::Bgr {
-            let eight_bit = |d: PixelDescriptor| {
-                d.layout() != ChannelLayout::Bgr || d.channel_type() == ChannelType::U8
-            };
-            if !eight_bit(from) || !eight_bit(to) {
-                return Err(whereat::at!(ConvertError::NoPath { from, to }));
-            }
             let canonical = |d: PixelDescriptor| {
                 if d.layout() == ChannelLayout::Bgr {
                     PixelDescriptor::new(d.channel_type(), ChannelLayout::Rgb, None, d.transfer())
