@@ -123,8 +123,8 @@ pub use color::{
     WhitePoint,
 };
 
-// Re-export GrayAlpha pixel types at crate root.
-pub use pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};
+// Re-export f16 sample and GrayAlpha pixel types at crate root.
+pub use pixel_types::{F16Sample, GrayAlpha8, GrayAlpha16, GrayAlphaF16, GrayAlphaF32};
 
 pub use policy::{
     AlphaPolicy, ConvertOptions, DepthPolicy, GamutMapping, GrayExpand, LumaCoefficients,

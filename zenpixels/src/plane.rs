@@ -45,6 +45,7 @@
 //! ```
 
 use crate::ChannelType;
+use crate::pixel_types::F16Sample;
 use crate::sample::{ChromaSiting, ChromaSubsampling, SampleEncoding};
 use alloc::{boxed::Box, vec::Vec};
 use core::fmt;
@@ -884,6 +885,8 @@ pub enum AnyPlane<'a> {
     U16(PlaneRef<'a, u16>),
     /// Native `i16` samples.
     I16(PlaneRef<'a, i16>),
+    /// Native `f16` (`F16Sample`) samples.
+    F16(PlaneRef<'a, F16Sample>),
     /// Native `u32` samples.
     U32(PlaneRef<'a, u32>),
     /// Native `i32` samples.
@@ -906,6 +909,7 @@ impl AnyPlane<'_> {
             Self::I8(p) => p.width(),
             Self::U16(p) => p.width(),
             Self::I16(p) => p.width(),
+            Self::F16(p) => p.width(),
             Self::U32(p) => p.width(),
             Self::I32(p) => p.width(),
             Self::F32(p) => p.width(),
@@ -921,6 +925,7 @@ impl AnyPlane<'_> {
             Self::I8(p) => p.height(),
             Self::U16(p) => p.height(),
             Self::I16(p) => p.height(),
+            Self::F16(p) => p.height(),
             Self::U32(p) => p.height(),
             Self::I32(p) => p.height(),
             Self::F32(p) => p.height(),
@@ -936,6 +941,7 @@ impl AnyPlane<'_> {
             Self::I8(_) => ChannelType::I8,
             Self::U16(_) => ChannelType::U16,
             Self::I16(_) => ChannelType::I16,
+            Self::F16(_) => ChannelType::F16,
             Self::U32(_) => ChannelType::U32,
             Self::I32(_) => ChannelType::I32,
             Self::F32(_) => ChannelType::F32,
@@ -951,6 +957,7 @@ impl AnyPlane<'_> {
             Self::I8(p) => p.stride(),
             Self::U16(p) => p.stride(),
             Self::I16(p) => p.stride(),
+            Self::F16(p) => p.stride(),
             Self::U32(p) => p.stride(),
             Self::I32(p) => p.stride(),
             Self::F32(p) => p.stride(),
@@ -969,6 +976,7 @@ impl AnyPlane<'_> {
             Self::I8(p) => bytemuck::cast_slice(p.strided_samples()),
             Self::U16(p) => bytemuck::cast_slice(p.strided_samples()),
             Self::I16(p) => bytemuck::cast_slice(p.strided_samples()),
+            Self::F16(p) => bytemuck::cast_slice(p.strided_samples()),
             Self::U32(p) => bytemuck::cast_slice(p.strided_samples()),
             Self::I32(p) => bytemuck::cast_slice(p.strided_samples()),
             Self::F32(p) => bytemuck::cast_slice(p.strided_samples()),
@@ -991,6 +999,8 @@ pub enum AnyPlaneMut<'a> {
     U16(PlaneMut<'a, u16>),
     /// Native `i16` samples.
     I16(PlaneMut<'a, i16>),
+    /// Native `f16` (`F16Sample`) samples.
+    F16(PlaneMut<'a, F16Sample>),
     /// Native `u32` samples.
     U32(PlaneMut<'a, u32>),
     /// Native `i32` samples.
@@ -1013,6 +1023,7 @@ impl AnyPlaneMut<'_> {
             Self::I8(p) => AnyPlane::I8(p.view()),
             Self::U16(p) => AnyPlane::U16(p.view()),
             Self::I16(p) => AnyPlane::I16(p.view()),
+            Self::F16(p) => AnyPlane::F16(p.view()),
             Self::U32(p) => AnyPlane::U32(p.view()),
             Self::I32(p) => AnyPlane::I32(p.view()),
             Self::F32(p) => AnyPlane::F32(p.view()),
@@ -1028,6 +1039,7 @@ impl AnyPlaneMut<'_> {
             Self::I8(p) => AnyPlaneMut::I8(p.view_mut()),
             Self::U16(p) => AnyPlaneMut::U16(p.view_mut()),
             Self::I16(p) => AnyPlaneMut::I16(p.view_mut()),
+            Self::F16(p) => AnyPlaneMut::F16(p.view_mut()),
             Self::U32(p) => AnyPlaneMut::U32(p.view_mut()),
             Self::I32(p) => AnyPlaneMut::I32(p.view_mut()),
             Self::F32(p) => AnyPlaneMut::F32(p.view_mut()),
@@ -1050,6 +1062,8 @@ pub enum AnyPlaneBuf {
     U16(PlaneBuf<u16>),
     /// Native `i16` samples.
     I16(PlaneBuf<i16>),
+    /// Native `f16` (`F16Sample`) samples.
+    F16(PlaneBuf<F16Sample>),
     /// Native `u32` samples.
     U32(PlaneBuf<u32>),
     /// Native `i32` samples.
@@ -1072,6 +1086,7 @@ impl AnyPlaneBuf {
             Self::I8(p) => AnyPlane::I8(p.view()),
             Self::U16(p) => AnyPlane::U16(p.view()),
             Self::I16(p) => AnyPlane::I16(p.view()),
+            Self::F16(p) => AnyPlane::F16(p.view()),
             Self::U32(p) => AnyPlane::U32(p.view()),
             Self::I32(p) => AnyPlane::I32(p.view()),
             Self::F32(p) => AnyPlane::F32(p.view()),
@@ -1087,6 +1102,7 @@ impl AnyPlaneBuf {
             Self::I8(p) => AnyPlaneMut::I8(p.view_mut()),
             Self::U16(p) => AnyPlaneMut::U16(p.view_mut()),
             Self::I16(p) => AnyPlaneMut::I16(p.view_mut()),
+            Self::F16(p) => AnyPlaneMut::F16(p.view_mut()),
             Self::U32(p) => AnyPlaneMut::U32(p.view_mut()),
             Self::I32(p) => AnyPlaneMut::I32(p.view_mut()),
             Self::F32(p) => AnyPlaneMut::F32(p.view_mut()),
@@ -1466,13 +1482,6 @@ impl core::hash::Hash for FloatEncoding {
 }
 
 /// How a plane's samples encode component values.
-///
-/// Note on half-precision (`F16`) storage: just as packed [`crate::buffer::PixelStorage::U16`]
-/// carries IEEE 754 `binary16` bits in `u16` without a `half` crate dependency,
-/// future `0.3.x` half-float planes will pair a `Float16(FloatEncoding)` variant
-/// (`channel_type() == ChannelType::F16`) with [`AnyPlane::U16`] bit storage.
-/// Consumers should inspect `PlaneSpec::encoding()` for semantic integer vs float
-/// interpretation rather than assuming `AnyPlane::channel_type() == PlaneEncoding::channel_type()`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum PlaneEncoding {
@@ -1485,6 +1494,9 @@ pub enum PlaneEncoding {
     /// Native F64 samples, with the same explicit affine interpretation.
     /// Scale and offset are described by [`FloatEncoding`]; samples are not narrowed.
     Float64(FloatEncoding),
+    /// Native F16 ([`F16Sample`]) samples, with the same explicit affine
+    /// interpretation (`scale` and `offset` in [`FloatEncoding`]).
+    Float16(FloatEncoding),
 }
 
 impl PlaneEncoding {
@@ -1494,6 +1506,7 @@ impl PlaneEncoding {
             Self::Code(e) => e.storage(),
             Self::Float(_) => ChannelType::F32,
             Self::Float64(_) => ChannelType::F64,
+            Self::Float16(_) => ChannelType::F16,
         }
     }
 }

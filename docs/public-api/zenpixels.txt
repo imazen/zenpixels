@@ -9,33 +9,33 @@
 ## summary
 #
 #   pub modules                                13
-#   pub types (struct/enum/trait/alias)       164
-#   pub consts/statics                        696
+#   pub types (struct/enum/trait/alias)       168
+#   pub consts/statics                        754
 #   free functions                              2
-#   inherent methods                          447
-#   struct fields                             134
-#   enum variants                             486
+#   inherent methods                          461
+#   struct fields                             138
+#   enum variants                             492
 #   re-exports                                  1
-#   trait roster entries (type × trait)       564
-#   auto-trait-complete types                  79
+#   trait roster entries (type × trait)       584
+#   auto-trait-complete types                  81
 #   auto-trait exceptions                      15
 #
 # per-module pub lines:
-#   (root)                          769
-#   buffer                          344
+#   (root)                          810
+#   buffer                          345
 #   cicp                             38
 #   color                           186
 #   descriptor                      295
 #   hdr                              21
 #   icc                              11
 #   orientation                      11
-#   pixel_types                       9
-#   plane                           178
+#   pixel_types                      49
+#   plane                           182
 #   policy                           22
 #   precision                        20
 #   sample                           39
 
-## items (1692 lines)
+## items (1758 lines)
 
 pub mod zenpixels
 pub use At
@@ -58,6 +58,7 @@ pub fn buffer::PixelCow<'_, P>::as_slice(&self) -> buffer::PixelSlice<'_, P>
 pub fn buffer::PixelCow<'_, P>::encoding(&self) -> color::PixelEncoding<'_>
 pub const fn buffer::PixelCow<'_, P>::is_borrowed(&self) -> bool [also: (root)]
 pub const fn buffer::PixelCow<'_, P>::is_owned(&self) -> bool [also: (root)]
+pub buffer::PixelStorage::F16(alloc::vec::Vec<pixel_types::F16Sample>)
 pub buffer::PixelStorage::F32(alloc::vec::Vec<f32>)
 pub buffer::PixelStorage::F64(alloc::vec::Vec<f64>)
 pub buffer::PixelStorage::I16(alloc::vec::Vec<i16>)
@@ -791,17 +792,56 @@ pub const fn orientation::Orientation::swaps_axes(self) -> bool [also: (root)]
 pub const fn orientation::Orientation::then(self, Self) -> Self [also: (root)]
 pub const fn orientation::Orientation::to_exif(self) -> u8 [also: (root)]
 pub mod pixel_types
+pub const pixel_types::F16Sample::EPSILON: Self
+pub const pixel_types::F16Sample::INFINITY: Self
+pub const pixel_types::F16Sample::MAX: Self
+pub const pixel_types::F16Sample::MIN: Self
+pub const pixel_types::F16Sample::MIN_POSITIVE: Self
+pub const pixel_types::F16Sample::NAN: Self
+pub const pixel_types::F16Sample::NEG_INFINITY: Self
+pub const pixel_types::F16Sample::NEG_ONE: Self
+pub const pixel_types::F16Sample::NEG_ZERO: Self
+pub const pixel_types::F16Sample::ONE: Self
+pub const pixel_types::F16Sample::ZERO: Self
+pub fn pixel_types::F16Sample::as_bits_slice(&[Self]) -> &[u16]
+pub fn pixel_types::F16Sample::as_bits_slice_mut(&mut [Self]) -> &mut [u16]
+pub const fn pixel_types::F16Sample::from_be_bytes([u8; 2]) -> Self [also: (root)]
+pub const fn pixel_types::F16Sample::from_bits(u16) -> Self [also: (root)]
+pub fn pixel_types::F16Sample::from_bits_slice(&[u16]) -> &[Self]
+pub fn pixel_types::F16Sample::from_bits_slice_mut(&mut [u16]) -> &mut [Self]
+pub const fn pixel_types::F16Sample::from_f32(f32) -> Self [also: (root)]
+pub const fn pixel_types::F16Sample::from_le_bytes([u8; 2]) -> Self [also: (root)]
+pub const fn pixel_types::F16Sample::from_ne_bytes([u8; 2]) -> Self [also: (root)]
+pub const fn pixel_types::F16Sample::is_finite(self) -> bool [also: (root)]
+pub const fn pixel_types::F16Sample::is_infinite(self) -> bool [also: (root)]
+pub const fn pixel_types::F16Sample::is_nan(self) -> bool [also: (root)]
+pub const fn pixel_types::F16Sample::is_normal(self) -> bool [also: (root)]
+pub const fn pixel_types::F16Sample::is_sign_negative(self) -> bool [also: (root)]
+pub const fn pixel_types::F16Sample::is_sign_positive(self) -> bool [also: (root)]
+pub const fn pixel_types::F16Sample::is_subnormal(self) -> bool [also: (root)]
+pub const fn pixel_types::F16Sample::to_be_bytes(self) -> [u8; 2] [also: (root)]
+pub const fn pixel_types::F16Sample::to_bits(self) -> u16 [also: (root)]
+pub const fn pixel_types::F16Sample::to_f32(self) -> f32 [also: (root)]
+pub const fn pixel_types::F16Sample::to_le_bytes(self) -> [u8; 2] [also: (root)]
+pub const fn pixel_types::F16Sample::to_ne_bytes(self) -> [u8; 2] [also: (root)]
+pub fn pixel_types::F16Sample::total_cmp(&self, &Self) -> core::cmp::Ordering
+pub fn pixel_types::F16Sample::vec_from_bits(alloc::vec::Vec<u16>) -> alloc::vec::Vec<Self>
+pub fn pixel_types::F16Sample::vec_into_bits(alloc::vec::Vec<Self>) -> alloc::vec::Vec<u16>
 pub pixel_types::GrayAlpha16::a: u16
 pub pixel_types::GrayAlpha16::v: u16
 pub const fn pixel_types::GrayAlpha16::new(u16, u16) -> Self [also: (root)]
 pub pixel_types::GrayAlpha8::a: u8
 pub pixel_types::GrayAlpha8::v: u8
 pub const fn pixel_types::GrayAlpha8::new(u8, u8) -> Self [also: (root)]
+pub pixel_types::GrayAlphaF16::a: pixel_types::F16Sample
+pub pixel_types::GrayAlphaF16::v: pixel_types::F16Sample
+pub const fn pixel_types::GrayAlphaF16::new(pixel_types::F16Sample, pixel_types::F16Sample) -> Self [also: (root)]
 pub pixel_types::GrayAlphaF32::a: f32
 pub pixel_types::GrayAlphaF32::v: f32
 pub const fn pixel_types::GrayAlphaF32::new(f32, f32) -> Self [also: (root)]
 pub mod plane
 #[non_exhaustive] pub enum plane::AnyPlane<'a>
+pub plane::AnyPlane::F16(plane::PlaneRef<'a, pixel_types::F16Sample>)
 pub plane::AnyPlane::F32(plane::PlaneRef<'a, f32>)
 pub plane::AnyPlane::F64(plane::PlaneRef<'a, f64>)
 pub plane::AnyPlane::I16(plane::PlaneRef<'a, i16>)
@@ -818,6 +858,7 @@ pub fn plane::AnyPlane<'_>::height(&self) -> usize
 pub fn plane::AnyPlane<'_>::stride_bytes(&self) -> core::result::Result<usize, plane::PlaneError>
 pub fn plane::AnyPlane<'_>::width(&self) -> usize
 #[non_exhaustive] pub enum plane::AnyPlaneBuf
+pub plane::AnyPlaneBuf::F16(plane::PlaneBuf<pixel_types::F16Sample>)
 pub plane::AnyPlaneBuf::F32(plane::PlaneBuf<f32>)
 pub plane::AnyPlaneBuf::F64(plane::PlaneBuf<f64>)
 pub plane::AnyPlaneBuf::I16(plane::PlaneBuf<i16>)
@@ -831,6 +872,7 @@ pub plane::AnyPlaneBuf::U8(plane::PlaneBuf<u8>)
 pub fn plane::AnyPlaneBuf::as_mut(&mut self) -> plane::AnyPlaneMut<'_>
 pub fn plane::AnyPlaneBuf::as_ref(&self) -> plane::AnyPlane<'_>
 #[non_exhaustive] pub enum plane::AnyPlaneMut<'a>
+pub plane::AnyPlaneMut::F16(plane::PlaneMut<'a, pixel_types::F16Sample>)
 pub plane::AnyPlaneMut::F32(plane::PlaneMut<'a, f32>)
 pub plane::AnyPlaneMut::F64(plane::PlaneMut<'a, f64>)
 pub plane::AnyPlaneMut::I16(plane::PlaneMut<'a, i16>)
@@ -868,6 +910,7 @@ pub plane::LayoutError::Subsampling
 #[non_exhaustive] pub enum plane::PlaneEncoding
 pub plane::PlaneEncoding::Code(sample::SampleEncoding)
 pub plane::PlaneEncoding::Float(plane::FloatEncoding)
+pub plane::PlaneEncoding::Float16(plane::FloatEncoding)
 pub plane::PlaneEncoding::Float64(plane::FloatEncoding)
 pub const fn plane::PlaneEncoding::channel_type(self) -> descriptor::ChannelType
 #[non_exhaustive] pub enum plane::PlaneError
@@ -1347,6 +1390,7 @@ pub const descriptor::PixelFormat::LCHF32: Self
 pub const descriptor::PixelFormat::OKLCHAF32: Self
 pub const descriptor::PixelFormat::OKLCHF32: Self
 #[non_exhaustive] pub enum PixelStorage [also: buffer]
+pub PixelStorage::F16(alloc::vec::Vec<pixel_types::F16Sample>)
 pub PixelStorage::F32(alloc::vec::Vec<f32>)
 pub PixelStorage::F64(alloc::vec::Vec<f64>)
 pub PixelStorage::I16(alloc::vec::Vec<i16>)
@@ -1449,6 +1493,25 @@ pub fn color::ColorOrigin::from_icc(impl core::convert::Into<alloc::sync::Arc<[u
 pub fn color::ColorOrigin::from_icc_and_cicp(impl core::convert::Into<alloc::sync::Arc<[u8]>>, cicp::Cicp) -> Self
 pub fn color::ColorOrigin::with_color_authority(self, color::ColorAuthority) -> Self
 #[non_exhaustive] pub struct ConvertOptions [also: policy]
+#[repr(transparent)] pub struct F16Sample(_) [also: pixel_types]
+pub const pixel_types::F16Sample::EPSILON: Self
+pub const pixel_types::F16Sample::INFINITY: Self
+pub const pixel_types::F16Sample::MAX: Self
+pub const pixel_types::F16Sample::MIN: Self
+pub const pixel_types::F16Sample::MIN_POSITIVE: Self
+pub const pixel_types::F16Sample::NAN: Self
+pub const pixel_types::F16Sample::NEG_INFINITY: Self
+pub const pixel_types::F16Sample::NEG_ONE: Self
+pub const pixel_types::F16Sample::NEG_ZERO: Self
+pub const pixel_types::F16Sample::ONE: Self
+pub const pixel_types::F16Sample::ZERO: Self
+pub fn pixel_types::F16Sample::as_bits_slice(&[Self]) -> &[u16]
+pub fn pixel_types::F16Sample::as_bits_slice_mut(&mut [Self]) -> &mut [u16]
+pub fn pixel_types::F16Sample::from_bits_slice(&[u16]) -> &[Self]
+pub fn pixel_types::F16Sample::from_bits_slice_mut(&mut [u16]) -> &mut [Self]
+pub fn pixel_types::F16Sample::total_cmp(&self, &Self) -> core::cmp::Ordering
+pub fn pixel_types::F16Sample::vec_from_bits(alloc::vec::Vec<u16>) -> alloc::vec::Vec<Self>
+pub fn pixel_types::F16Sample::vec_into_bits(alloc::vec::Vec<Self>) -> alloc::vec::Vec<u16>
 pub struct FromPartsError<S> [also: buffer]
 pub fn buffer::FromPartsError<S>::error(&self) -> &whereat::at::At<buffer::BufferError>
 pub fn buffer::FromPartsError<S>::take_parts(&mut self) -> core::option::Option<buffer::PixelBufferParts<S>>
@@ -1464,6 +1527,9 @@ pub GrayAlpha16::v: u16
 #[repr(C)] pub struct GrayAlpha8 [also: pixel_types]
 pub GrayAlpha8::a: u8
 pub GrayAlpha8::v: u8
+#[repr(C)] pub struct GrayAlphaF16 [also: pixel_types]
+pub GrayAlphaF16::a: pixel_types::F16Sample
+pub GrayAlphaF16::v: pixel_types::F16Sample
 #[repr(C)] pub struct GrayAlphaF32 [also: pixel_types]
 pub GrayAlphaF32::a: f32
 pub GrayAlphaF32::v: f32
@@ -1730,7 +1796,7 @@ pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 pub trait StorageSample: buffer::storage_sample::Sealed + bytemuck::pod::Pod + core::default::Default + core::cmp::PartialEq + core::fmt::Debug + core::marker::Send + core::marker::Sync + 'static [also: buffer]
 pub const StorageSample::CHANNEL_TYPE: descriptor::ChannelType
 
-## trait impls (117 types)
+## trait impls (119 types)
 
 &S: plane::SampleStorage
 &mut S: plane::SampleStorage, plane::SampleStorageMut
@@ -1786,8 +1852,8 @@ descriptor::PixelDescriptor: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::PixelFormat: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 descriptor::SignalRange: Clone, Copy, Debug, Default, Display, Eq, Hash, PartialEq
 descriptor::TransferFunction: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
-f32: buffer::StorageSample
-f64: buffer::StorageSample
+f32: From<pixel_types::F16Sample>, buffer::StorageSample
+f64: From<pixel_types::F16Sample>, buffer::StorageSample
 hdr::ContentLightLevel: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 hdr::DiffuseWhite: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 hdr::HdrPeak: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
@@ -1802,8 +1868,10 @@ i8: buffer::StorageSample
 icc::IccIdentification: Clone, Copy, Debug, Eq, Hash, PartialEq
 icc::IdentificationUse: Clone, Copy, Debug, Eq, Hash, PartialEq
 orientation::Orientation: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+pixel_types::F16Sample: Clone, Copy, Debug, Default, Display, PartialEq, PartialOrd, buffer::StorageSample, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 pixel_types::GrayAlpha16: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 pixel_types::GrayAlpha8: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
+pixel_types::GrayAlphaF16: Clone, Copy, Debug, Default, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 pixel_types::GrayAlphaF32: Clone, Copy, Debug, Default, PartialEq, buffer::Pixel, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 plane::AlignedSamples<T>: Clone, Debug, Deref, DerefMut, plane::SampleStorage, plane::SampleStorageMut
 plane::AnyPlane<'_>: plane::PlaneStorage

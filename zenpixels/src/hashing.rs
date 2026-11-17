@@ -257,6 +257,7 @@ fn any_plane<H: Hasher>(
         AnyPlane::U16(v) => plane(v, inclusions, state),
         AnyPlane::I8(v) => plane(v, inclusions, state),
         AnyPlane::I16(v) => plane(v, inclusions, state),
+        AnyPlane::F16(v) => plane(v, inclusions, state),
         AnyPlane::U32(v) => plane(v, inclusions, state),
         AnyPlane::I32(v) => plane(v, inclusions, state),
         AnyPlane::F32(v) => plane(v, inclusions, state),
@@ -311,7 +312,7 @@ fn planar(view: &PlanarSlice<'_>, inclusions: HashInclusions, state: &mut impl H
     for (view, spec) in view.planes().zip(view.layout().planes()) {
         let encoding = match spec.encoding() {
             PlaneEncoding::Code(e) => Some(e),
-            PlaneEncoding::Float(_) | PlaneEncoding::Float64(_) => None,
+            PlaneEncoding::Float(_) | PlaneEncoding::Float64(_) | PlaneEncoding::Float16(_) => None,
         };
         any_plane(&view, inclusions, encoding, state);
     }

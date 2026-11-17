@@ -11,7 +11,7 @@
 #
 #   inherent methods                           66
 #   enum variants                              14
-#   trait roster entries (type × trait)        72
+#   trait roster entries (type × trait)        74
 #
 # per-module pub lines:
 #   (root)                            8
@@ -111,7 +111,7 @@ pub descriptor::ColorPrimaries::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::SignalRange::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::TransferFunction::__Reserved(descriptor::reserved::Reserved)
 
-## trait impls (72 types)
+## trait impls (74 types)
 
 HashInclusions: TrivialClone
 buffer::Bgrx: TrivialClone
@@ -153,8 +153,10 @@ hdr::St2086Codes: TrivialClone
 icc::IccIdentification: TrivialClone
 icc::IdentificationUse: TrivialClone
 orientation::Orientation: TrivialClone
+pixel_types::F16Sample: TrivialClone
 pixel_types::GrayAlpha16: TrivialClone
 pixel_types::GrayAlpha8: TrivialClone
+pixel_types::GrayAlphaF16: TrivialClone
 pixel_types::GrayAlphaF32: TrivialClone
 plane::AnyPlane<'a>: TrivialClone
 plane::FloatEncoding: TrivialClone

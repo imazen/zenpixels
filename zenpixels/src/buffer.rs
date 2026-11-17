@@ -38,7 +38,7 @@ use crate::descriptor::{
     AlphaMode, ColorPrimaries, PixelDescriptor, SignalRange, TransferFunction,
 };
 use crate::hdr::DiffuseWhite;
-use crate::pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF32};
+use crate::pixel_types::{F16Sample, GrayAlpha8, GrayAlpha16, GrayAlphaF16, GrayAlphaF32};
 use crate::sample::{ExactDepth, ExactDepthError};
 
 // ---------------------------------------------------------------------------
@@ -136,6 +136,21 @@ impl Pixel for Gray<u16> {
 }
 
 #[cfg(feature = "rgb")]
+impl Pixel for Rgb<F16Sample> {
+    const DESCRIPTOR: PixelDescriptor = PixelDescriptor::RGBF16;
+}
+
+#[cfg(feature = "rgb")]
+impl Pixel for Rgba<F16Sample> {
+    const DESCRIPTOR: PixelDescriptor = PixelDescriptor::RGBAF16;
+}
+
+#[cfg(feature = "rgb")]
+impl Pixel for Gray<F16Sample> {
+    const DESCRIPTOR: PixelDescriptor = PixelDescriptor::GRAYF16;
+}
+
+#[cfg(feature = "rgb")]
 impl Pixel for Rgb<f32> {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::RGBF32;
 }
@@ -155,12 +170,26 @@ impl Pixel for Bgra<u8> {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::BGRA8;
 }
 
+#[cfg(feature = "rgb")]
+impl Pixel for Bgra<F16Sample> {
+    const DESCRIPTOR: PixelDescriptor = PixelDescriptor::new(
+        ChannelType::F16,
+        crate::descriptor::ChannelLayout::Bgra,
+        Some(AlphaMode::Straight),
+        TransferFunction::Unknown,
+    );
+}
+
 impl Pixel for GrayAlpha8 {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::GRAYA8;
 }
 
 impl Pixel for GrayAlpha16 {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::GRAYA16;
+}
+
+impl Pixel for GrayAlphaF16 {
+    const DESCRIPTOR: PixelDescriptor = PixelDescriptor::GRAYAF16;
 }
 
 impl Pixel for GrayAlphaF32 {
@@ -321,11 +350,11 @@ pub trait StorageSample:
 
 /// Owned samples of the type a pixel format is made of.
 ///
-/// This is the default storage of [`PixelBuffer`], so a decoder's `Vec<u16>` or
-/// `Vec<f32>` crosses type-erased boundaries such as `DecodeOutput` and comes back
-/// out without a copy. A `Vec` must free memory with the alignment it allocated, so
-/// a `Vec<u8>` can never become a `Vec<u16>`, or the reverse, without copying;
-/// holding the real sample type avoids that. Half-float samples use [`U16`](Self::U16).
+/// This is the default storage of [`PixelBuffer`], so a decoder's `Vec<u16>`,
+/// `Vec<F16Sample>`, or `Vec<f32>` crosses type-erased boundaries such as
+/// `DecodeOutput` and comes back out without a copy. A `Vec` must free memory
+/// with the alignment it allocated, so a `Vec<u8>` can never become a `Vec<u16>`,
+/// or the reverse, without copying; holding the real sample type avoids that.
 ///
 /// Bytes are always available through [`ByteStorage`]. Only that reference branches
 /// on the variant, so `row()` and kernels are unaffected.
@@ -336,10 +365,12 @@ pub enum PixelStorage {
     U8(Vec<u8>),
     /// `i8` samples.
     I8(Vec<i8>),
-    /// `u16` samples, including half floats.
+    /// `u16` samples.
     U16(Vec<u16>),
     /// `i16` samples.
     I16(Vec<i16>),
+    /// `f16` (IEEE 754 half-precision float) samples.
+    F16(Vec<F16Sample>),
     /// `u32` samples.
     U32(Vec<u32>),
     /// `i32` samples.
@@ -361,6 +392,7 @@ macro_rules! for_each_storage {
             PixelStorage::I8($vec) => $body,
             PixelStorage::U16($vec) => $body,
             PixelStorage::I16($vec) => $body,
+            PixelStorage::F16($vec) => $body,
             PixelStorage::U32($vec) => $body,
             PixelStorage::I32($vec) => $body,
             PixelStorage::F32($vec) => $body,
@@ -399,7 +431,7 @@ macro_rules! storage_samples {
     )*};
 }
 storage_samples! {
-    u8 => U8, i8 => I8, u16 => U16, i16 => I16, u32 => U32,
+    u8 => U8, i8 => I8, u16 => U16, i16 => I16, F16Sample => F16, u32 => U32,
     i32 => I32, f32 => F32, u64 => U64, i64 => I64, f64 => F64,
 }
 
@@ -462,8 +494,9 @@ impl PixelStorage {
         }
         match channel {
             ChannelType::I8 => gather::<i8>(bytes, rows),
-            ChannelType::U16 | ChannelType::F16 => gather::<u16>(bytes, rows),
+            ChannelType::U16 => gather::<u16>(bytes, rows),
             ChannelType::I16 => gather::<i16>(bytes, rows),
+            ChannelType::F16 => gather::<F16Sample>(bytes, rows),
             ChannelType::U32 => gather::<u32>(bytes, rows),
             ChannelType::I32 => gather::<i32>(bytes, rows),
             ChannelType::F32 => gather::<f32>(bytes, rows),
@@ -486,8 +519,9 @@ impl PixelStorage {
         }
         match channel {
             ChannelType::I8 => zeroed::<i8>(bytes),
-            ChannelType::U16 | ChannelType::F16 => zeroed::<u16>(bytes),
+            ChannelType::U16 => zeroed::<u16>(bytes),
             ChannelType::I16 => zeroed::<i16>(bytes),
+            ChannelType::F16 => zeroed::<F16Sample>(bytes),
             ChannelType::U32 => zeroed::<u32>(bytes),
             ChannelType::I32 => zeroed::<i32>(bytes),
             ChannelType::F32 => zeroed::<f32>(bytes),
@@ -672,8 +706,9 @@ fn try_pixels_into_storage<P: bytemuck::Pod>(
     }
     let moved = match channel {
         ChannelType::I8 => cast::<P, i8>(pixels),
-        ChannelType::U16 | ChannelType::F16 => cast::<P, u16>(pixels),
+        ChannelType::U16 => cast::<P, u16>(pixels),
         ChannelType::I16 => cast::<P, i16>(pixels),
+        ChannelType::F16 => cast::<P, F16Sample>(pixels),
         ChannelType::U32 => cast::<P, u32>(pixels),
         ChannelType::I32 => cast::<P, i32>(pixels),
         ChannelType::F32 => cast::<P, f32>(pixels),

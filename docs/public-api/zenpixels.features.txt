@@ -12,7 +12,7 @@
 #   pub types (struct/enum/trait/alias)         1
 #   inherent methods                           38
 #   enum variants                               3
-#   trait roster entries (type × trait)        90
+#   trait roster entries (type × trait)        94
 #   conditional trait impls (verbatim)         98
 #   auto-trait-complete types                   1
 #
@@ -67,7 +67,7 @@ pub fn buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>::swap_to_rgba(sel
 pub fn buffer::PixelSliceMut<'a, rgb::formats::rgba::Rgba<u8>>::swap_to_bgra(self) -> buffer::PixelSliceMut<'a, rgb::formats::bgra::Bgra<u8>>
 pub fn buffer::PixelSliceMut<'_, P>::hash_with(&self, HashInclusions) -> u64
 
-## trait impls (71 types)
+## trait impls (75 types)
 
 HashInclusions: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 buffer::PixelBuffer: TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<f32>, alloc::vec::Vec<f32>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<u16>, alloc::vec::Vec<u16>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<u8>, alloc::vec::Vec<u8>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<f32>, alloc::vec::Vec<f32>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<u16>, alloc::vec::Vec<u16>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<u8>, alloc::vec::Vec<u8>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<f32>, alloc::vec::Vec<f32>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<u16>, alloc::vec::Vec<u16>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<u8>, alloc::vec::Vec<u8>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<f32>, alloc::vec::Vec<f32>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<u16>, alloc::vec::Vec<u16>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<u8>, alloc::vec::Vec<u8>>>, TryFrom<image::images::dynimage::DynamicImage>
@@ -129,14 +129,18 @@ imgref::ImgVec<T>: TryFrom<plane::Plane<alloc::vec::Vec<T>>>
 plane::AnyPlane<'_>: Hash
 plane::PlanarSlice<'_>: Hash
 plane::Plane<C>: Hash
+rgb::formats::bgra::Bgra<pixel_types::F16Sample>: buffer::Pixel
 rgb::formats::bgra::Bgra<u8>: buffer::Pixel
 rgb::formats::gray::Gray_v08<f32>: buffer::Pixel
+rgb::formats::gray::Gray_v08<pixel_types::F16Sample>: buffer::Pixel
 rgb::formats::gray::Gray_v08<u16>: buffer::Pixel
 rgb::formats::gray::Gray_v08<u8>: buffer::Pixel
 rgb::formats::rgb::Rgb<f32>: buffer::Pixel
+rgb::formats::rgb::Rgb<pixel_types::F16Sample>: buffer::Pixel
 rgb::formats::rgb::Rgb<u16>: buffer::Pixel
 rgb::formats::rgb::Rgb<u8>: buffer::Pixel
 rgb::formats::rgba::Rgba<f32>: buffer::Pixel
+rgb::formats::rgba::Rgba<pixel_types::F16Sample>: buffer::Pixel
 rgb::formats::rgba::Rgba<u16>: buffer::Pixel
 rgb::formats::rgba::Rgba<u8>: buffer::Pixel
 sample::CodePlane<'_>: Hash
