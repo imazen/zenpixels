@@ -713,9 +713,9 @@ function compute(cfg) {
     steps.push({ t: "Illustration: textbook CMYK (not what the crate does)", p: "K = 1 − max(R, G, B) on sRGB-encoded values, then C, M, Y from what remains. 0 = no ink, 1 = full ink.", vals: v3(comps, ["C","M","CY","K"]) });
     if (f.id === "Cmyk8Inverted" || f.id === "Cmyk16Inverted" || f.id === "CmykF32Inverted") {
       comps = comps.map(v => 1 - v);
-      steps.push({ t: "Invert polarity", p: `${f.name}, as Adobe CMYK JPEGs and JPEG XL emit it, stores max − ink: max means no ink. Relabeling it as non-inverted CMYK without inverting mislabels every sample.`, vals: v3(comps, ["C","M","CY","K"]) });
+      steps.push({ t: "Invert polarity", p: `${f.name}, standard in JPEG XL and Adobe CMYK JPEGs, stores max − ink (max = no ink), which is inverted compared to TIFF (PhotometricInterpretation = 5) and ICC profiles. Relabeling it as non-inverted CMYK without inverting mislabels every sample.`, vals: v3(comps, ["C","M","CY","K"]) });
     }
-    if (f.id === "Cmyk8" || f.id === "Cmyk16") notes.push(["info", `${f.name} stores standard ink polarity (0 = no ink, max = full ink). Adobe-inverted CMYK JPEGs and JPEG XL integer CMYK use Cmyk8Inverted / Cmyk16Inverted.`]);
+    if (f.id === "Cmyk8" || f.id === "Cmyk16") notes.push(["info", `${f.name} stores standard TIFF / ICC / PDF ink polarity (0 = no ink, max = full ink). Adobe-inverted CMYK JPEGs and JPEG XL invert this (max = no ink) and use Cmyk8Inverted / Cmyk16Inverted.`]);
   }
 
   let alphaNorm = null;
@@ -1035,7 +1035,15 @@ function renderCompare() {
 
 function rustCode(R, st) {
   const { f, cfg } = R, lines = [], uses = new Set(["PixelBuffer", "PixelDescriptor", "PixelFormat"]);
-  let fmtExpr = `PixelFormat::${f.id}`;
+  const RUST_CONST = {
+    Cmyk8: "CMYK8",
+    Cmyk8Inverted: "CMYK8_INVERTED",
+    Cmyk16: "CMYK16",
+    Cmyk16Inverted: "CMYK16_INVERTED",
+    CmykF32: "CMYKF32",
+    CmykF32Inverted: "CMYKF32_INVERTED",
+  };
+  let fmtExpr = `PixelFormat::${RUST_CONST[f.id] || f.id}`;
   if (f.generic) {
     uses.add("ChannelLayout"); uses.add("ChannelType");
     const alpha = f.alphaKind === "alpha" ? `Some(AlphaMode::${cfg.alphaMode})` : "None";
@@ -1126,10 +1134,10 @@ function syncControls() {
   $("alpha").value = Math.round(S.a * 255);
   $("alphaout").textContent = `${Math.round(S.a * 255)} / 255${f.alphaKind !== "alpha" ? " (this format has no alpha)" : ""}`;
   const FN = { Bgra8: "Blue first, as on Windows and many GPUs.", Rgbx8: "Fourth byte is padding, keeping pixels 4 bytes.", Bgrx8: "Blue first; fourth byte is padding.",
-    OklabF32: "Perceptual lightness plus two color axes.", OklabaF32: "Oklab plus straight alpha.", Cmyk8: "Printer ink amounts (0 = no ink); needs an ICC profile.",
-    Cmyk8Inverted: "Inverted 8-bit ink amounts (255 = no ink, Adobe/JXL convention).", Cmyk16: "16-bit ink amounts (0 = no ink); needs an ICC profile.",
-    Cmyk16Inverted: "Inverted 16-bit ink amounts (65535 = no ink, JXL/Adobe convention).",
-    CmykF32: "Float ink amounts, 0 = no ink.", CmykF32Inverted: "Float ink amounts, 1 = no ink (as JPEG XL emits)." };
+    OklabF32: "Perceptual lightness plus two color axes.", OklabaF32: "Oklab plus straight alpha.", Cmyk8: "Printer ink amounts (0 = no ink; standard TIFF/ICC/PDF polarity); needs an ICC profile.",
+    Cmyk8Inverted: "Reversed 8-bit ink amounts (255 = no ink, Adobe JPEG / JXL convention; inverted vs TIFF/ICC).", Cmyk16: "16-bit ink amounts (0 = no ink; standard TIFF/ICC polarity); needs an ICC profile.",
+    Cmyk16Inverted: "Reversed 16-bit ink amounts (65535 = no ink, JXL/Adobe convention; inverted vs TIFF/ICC).",
+    CmykF32: "Float ink amounts, 0 = no ink (standard TIFF/ICC/PDF polarity).", CmykF32Inverted: "Float ink amounts, 1 = no ink (JPEG XL / Adobe convention; inverted vs TIFF/ICC)." };
   $("formatnote").textContent = f.generic ? "Native samples: carried bit for bit, never converted." : (FN[f.id] || `${f.chans.length} channels × ${CT[f.ct].bytes} byte${CT[f.ct].bytes > 1 ? "s" : ""} = ${CT[f.ct].bytes * f.chans.length} bytes per pixel.`);
   $("endLE").setAttribute("aria-pressed", String(!S.be)); $("endBE").setAttribute("aria-pressed", String(S.be));
   const H = hexOf(S.lin);

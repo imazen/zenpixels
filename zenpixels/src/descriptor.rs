@@ -218,11 +218,14 @@ pub enum ChannelLayout {
     Oklab,
     /// Oklab perceptual color with alpha: L, a, b, alpha.
     OklabA,
-    /// C, M, Y, K channel order (`0 = no ink`, max = full ink).
+    /// C, M, Y, K channel order (`0 = no ink`, max = full ink; standard in TIFF
+    /// `PhotometricInterpretation = 5`, ICC profiles, and PDF/PostScript; inverted
+    /// compared to Adobe APP14 CMYK JPEG and JPEG XL).
     Cmyk,
     /// B, G, R channel order.
     Bgr,
-    /// C, M, Y, K, alpha channel order (5 channels, `0 = no ink`, straight alpha).
+    /// C, M, Y, K, alpha channel order (5 channels, `0 = no ink`, straight alpha;
+    /// standard TIFF/ICC ink polarity).
     CmykAlpha,
     /// CIE 1976 L*, a*, b* channel order.
     Lab,
@@ -233,10 +236,12 @@ pub enum ChannelLayout {
     /// CIE 1931 X, Y, Z, alpha channel order.
     XyzAlpha,
     /// C, M, Y, K channel order with reversed ink polarity (`0 = full ink`, max = no ink;
-    /// JPEG XL and Adobe APP14 `transform=0` CMYK JPEG).
+    /// standard in JPEG XL and Adobe APP14 `transform=0`/`2` CMYK/YCCK JPEG, inverted
+    /// compared to TIFF `PhotometricInterpretation = 5` and ICC profiles).
     CmykInverted,
     /// C, M, Y, K, alpha channel order (5 channels) with reversed ink polarity on C, M, Y, K
-    /// (`0 = full ink`) and normal alpha polarity (`0 = transparent`, max = opaque).
+    /// (`0 = full ink`, max = no ink, as in JPEG XL / Adobe JPEG) and normal alpha polarity
+    /// (`0 = transparent`, max = opaque).
     CmykInvertedAlpha,
     /// Polar Oklab: L, C, h° (`h` in `[0, 360)` for float, `[0, 1)` normalized for unsigned integer).
     Oklch,
@@ -1521,21 +1526,29 @@ impl PixelDescriptor {
 
     // -- CMYK constants --------------------------------------------------------
 
-    /// 8-bit CMYK, conventional ICC polarity (`0 = no ink, 255 = full ink`).
+    /// 8-bit CMYK, standard TIFF (`PhotometricInterpretation = 5`) and ICC polarity
+    /// (`0 = no ink, 255 = full ink`; inverted compared to Adobe JPEG and JPEG XL).
     pub const CMYK8: Self = Self::from_pixel_format(PixelFormat::CMYK8);
-    /// 8-bit CMYK with reversed ink polarity (`0 = full ink, 255 = no ink`), as used by JPEG XL and Adobe JPEG.
+    /// 8-bit CMYK with reversed ink polarity (`0 = full ink, 255 = no ink`), standard in
+    /// JPEG XL and Adobe APP14 CMYK/YCCK JPEG (inverted compared to TIFF and ICC profiles).
     pub const CMYK8_INVERTED: Self = Self::from_pixel_format(PixelFormat::CMYK8_INVERTED);
-    /// 16-bit CMYK, conventional ICC polarity (`0 = no ink, 65535 = full ink`).
+    /// 16-bit CMYK, standard TIFF (`PhotometricInterpretation = 5`) and ICC polarity
+    /// (`0 = no ink, 65535 = full ink`; inverted compared to JPEG XL).
     pub const CMYK16: Self = Self::from_pixel_format(PixelFormat::CMYK16);
-    /// 16-bit CMYK with reversed ink polarity (`0 = full ink, 65535 = no ink`), as used by JPEG XL.
+    /// 16-bit CMYK with reversed ink polarity (`0 = full ink, 65535 = no ink`), as used by
+    /// JPEG XL (inverted compared to TIFF and ICC profiles).
     pub const CMYK16_INVERTED: Self = Self::from_pixel_format(PixelFormat::CMYK16_INVERTED);
-    /// f16 CMYK, conventional ICC polarity (`0.0 = no ink, 1.0 = full ink`).
+    /// f16 CMYK, standard TIFF and ICC polarity (`0.0 = no ink, 1.0 = full ink`;
+    /// inverted compared to JPEG XL).
     pub const CMYKF16: Self = Self::from_pixel_format(PixelFormat::CMYKF16);
-    /// f16 CMYK with reversed ink polarity (`0.0 = full ink, 1.0 = no ink`), as used by JPEG XL.
+    /// f16 CMYK with reversed ink polarity (`0.0 = full ink, 1.0 = no ink`), as used by
+    /// JPEG XL (inverted compared to TIFF and ICC profiles).
     pub const CMYKF16_INVERTED: Self = Self::from_pixel_format(PixelFormat::CMYKF16_INVERTED);
-    /// f32 CMYK, conventional ICC polarity (`0.0 = no ink, 1.0 = full ink`).
+    /// f32 CMYK, standard TIFF and ICC polarity (`0.0 = no ink, 1.0 = full ink`;
+    /// inverted compared to JPEG XL).
     pub const CMYKF32: Self = Self::from_pixel_format(PixelFormat::CMYKF32);
-    /// f32 CMYK with reversed ink polarity (`0.0 = full ink, 1.0 = no ink`), as used by JPEG XL.
+    /// f32 CMYK with reversed ink polarity (`0.0 = full ink, 1.0 = no ink`), as used by
+    /// JPEG XL (inverted compared to TIFF and ICC profiles).
     pub const CMYKF32_INVERTED: Self = Self::from_pixel_format(PixelFormat::CMYKF32_INVERTED);
     /// 8-bit BGR with no alpha and unknown transfer.
     pub const BGR8: Self = Self::from_pixel_format(PixelFormat::Bgr8);
@@ -2352,25 +2365,29 @@ impl GenericFormat {
 }
 
 impl PixelFormat {
-    /// 8-bit CMYK (4 bytes per pixel), conventional ICC polarity (`0 = no ink, 255 = full ink`).
+    /// 8-bit CMYK (4 bytes per pixel), standard TIFF (`PhotometricInterpretation = 5`) and ICC
+    /// polarity (`0 = no ink, 255 = full ink`; inverted compared to Adobe JPEG and JPEG XL).
     pub const CMYK8: Self = Self::cmyk(ChannelType::U8);
     /// 8-bit CMYK (4 bytes per pixel) with reversed ink polarity (`0 = full ink, 255 = no ink`),
-    /// as emitted by JPEG XL and Adobe-convention CMYK JPEG.
+    /// standard in JPEG XL and Adobe APP14 CMYK/YCCK JPEG (inverted compared to TIFF and ICC).
     pub const CMYK8_INVERTED: Self = Self::cmyk_inverted(ChannelType::U8);
-    /// 16-bit native-endian CMYK (8 bytes per pixel), conventional ICC polarity (`0 = no ink`).
+    /// 16-bit native-endian CMYK (8 bytes per pixel), standard TIFF (`PhotometricInterpretation = 5`)
+    /// and ICC polarity (`0 = no ink, 65535 = full ink`; inverted compared to JPEG XL).
     pub const CMYK16: Self = Self::cmyk(ChannelType::U16);
     /// 16-bit native-endian CMYK (8 bytes per pixel) with reversed ink polarity (`0 = full ink,
-    /// 65535 = no ink`), as emitted by JPEG XL.
+    /// 65535 = no ink`), standard in JPEG XL (inverted compared to TIFF and ICC profiles).
     pub const CMYK16_INVERTED: Self = Self::cmyk_inverted(ChannelType::U16);
-    /// f16 CMYK (8 bytes per pixel), conventional ICC polarity (`0.0 = no ink, 1.0 = full ink`).
+    /// f16 CMYK (8 bytes per pixel), standard TIFF and ICC polarity (`0.0 = no ink, 1.0 = full ink`;
+    /// inverted compared to JPEG XL).
     pub const CMYKF16: Self = Self::cmyk(ChannelType::F16);
-    /// f16 CMYK (8 bytes per pixel) with reversed ink polarity (`0.0 = full ink, 1.0 = no ink`).
+    /// f16 CMYK (8 bytes per pixel) with reversed ink polarity (`0.0 = full ink, 1.0 = no ink`),
+    /// standard in JPEG XL (inverted compared to TIFF and ICC profiles).
     pub const CMYKF16_INVERTED: Self = Self::cmyk_inverted(ChannelType::F16);
-    /// Native-endian F32 CMYK device values (16 bytes per pixel), conventional ICC polarity
-    /// (`0.0 = no ink, 1.0 = full ink`).
+    /// Native-endian F32 CMYK device values (16 bytes per pixel), standard TIFF and ICC polarity
+    /// (`0.0 = no ink, 1.0 = full ink`; inverted compared to JPEG XL).
     pub const CMYKF32: Self = Self::cmyk(ChannelType::F32);
     /// Native-endian F32 CMYK with reversed ink polarity (`0.0 = full ink, 1.0 = no ink`),
-    /// as emitted by JPEG XL.
+    /// standard in JPEG XL (inverted compared to TIFF and ICC profiles).
     pub const CMYKF32_INVERTED: Self = Self::cmyk_inverted(ChannelType::F32);
 
     /// Polar Oklch F32 (`L ∈ [0, 1], C ≥ 0, h ∈ [0, 360)`).
@@ -3615,12 +3632,20 @@ mod tests {
         assert!(size_of::<PixelDescriptor>() <= 8);
         assert_eq!(size_of::<crate::sample::ExactDepth>(), 2);
         assert_eq!(size_of::<Option<crate::sample::ExactDepth>>(), 2);
-        assert_eq!(size_of::<crate::PixelEncoding<'static>>(), 16);
         assert_eq!(size_of::<crate::Color>(), 24);
         assert_eq!(size_of::<crate::AnyColor>(), 24);
-        assert_eq!(size_of::<crate::PixelSlice<'static>>(), 48);
-        assert_eq!(size_of::<crate::PixelSliceMut<'static>>(), 48);
-        assert_eq!(size_of::<crate::PixelBuffer>(), 64);
-        assert_eq!(size_of::<crate::sample::CodePlane<'static>>(), 48);
+        assert!(size_of::<crate::PixelEncoding<'static>>() <= 16);
+        assert!(size_of::<crate::PixelSlice<'static>>() <= 48);
+        assert!(size_of::<crate::PixelSliceMut<'static>>() <= 48);
+        assert!(size_of::<crate::PixelBuffer>() <= 64);
+        assert!(size_of::<crate::sample::CodePlane<'static>>() <= 48);
+        #[cfg(target_pointer_width = "64")]
+        {
+            assert_eq!(size_of::<crate::PixelEncoding<'static>>(), 16);
+            assert_eq!(size_of::<crate::PixelSlice<'static>>(), 48);
+            assert_eq!(size_of::<crate::PixelSliceMut<'static>>(), 48);
+            assert_eq!(size_of::<crate::PixelBuffer>(), 64);
+            assert_eq!(size_of::<crate::sample::CodePlane<'static>>(), 48);
+        }
     }
 }
