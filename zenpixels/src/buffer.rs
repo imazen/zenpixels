@@ -2693,6 +2693,7 @@ impl PixelBuffer {
             checked_stride_samples(stride, &descriptor).map_err(|e| whereat::at!(e))?;
         let total = stride
             .checked_mul(height as usize)
+            .filter(|&bytes| bytes <= isize::MAX as usize)
             .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let (data, offset) = alloc_storage(&descriptor, total, descriptor.min_alignment())
             .map_err(|e| whereat::at!(e))?;

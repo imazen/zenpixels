@@ -248,7 +248,7 @@ impl BandedPixelBuffer {
         if orientation.swaps_axes() {
             return Err(BufferError::InvalidDimensions);
         }
-        let (width, height) = (self.layout.width, self.layout.height);
+        let height = self.layout.height;
         if matches!(orientation, Orientation::FlipV | Orientation::Rotate180) {
             for y in 0..height / 2 {
                 let (a, ay) = self.layout.locate(y).expect("row in bounds");
@@ -271,11 +271,7 @@ impl BandedPixelBuffer {
             let bpp = self.descriptor.bytes_per_pixel();
             for y in 0..height {
                 let row = self.row_mut(y).expect("row in bounds");
-                for x in 0..(width / 2) as usize {
-                    let opposite = (width as usize - 1 - x) * bpp;
-                    let (front, back) = row.split_at_mut(opposite);
-                    front[x * bpp..(x + 1) * bpp].swap_with_slice(&mut back[..bpp]);
-                }
+                reverse_pixel_row(row, bpp);
             }
         }
         Ok(())
@@ -295,22 +291,41 @@ impl BandedPixelBuffer {
             return Err(BufferError::InvalidDimensions);
         }
         let bpp = self.descriptor.bytes_per_pixel();
-        const TILE: u32 = 32;
-        for y0 in (0..h).step_by(TILE as usize) {
-            for x0 in (0..w).step_by(TILE as usize) {
-                for sy in y0..y0.saturating_add(TILE).min(h) {
-                    let s = self.row(sy).expect("row in bounds");
-                    for sx in x0..x0.saturating_add(TILE).min(w) {
-                        let (dx, dy) = orientation.forward_map(sx, sy, w, h);
-                        let d = dst.row_mut(dy).expect("mapped row in bounds");
-                        let source = sx as usize * bpp;
-                        let target = dx as usize * bpp;
-                        d[target..target + bpp].copy_from_slice(&s[source..source + bpp]);
-                    }
-                }
+        for_each_orientation_tile(w, h, |sy, columns| {
+            let s = self.row(sy).expect("row in bounds");
+            for sx in columns {
+                let (dx, dy) = orientation.forward_map(sx, sy, w, h);
+                let d = dst.row_mut(dy).expect("mapped row in bounds");
+                let source = sx as usize * bpp;
+                let target = dx as usize * bpp;
+                d[target..target + bpp].copy_from_slice(&s[source..source + bpp]);
             }
-        }
+        });
         dst.color = self.color.clone();
         Ok(())
+    }
+}
+
+pub(crate) fn reverse_pixel_row(row: &mut [u8], bytes: usize) {
+    let width = row.len() / bytes;
+    for x in 0..width / 2 {
+        let opposite = (width - 1 - x) * bytes;
+        let (front, back) = row.split_at_mut(opposite);
+        front[x * bytes..(x + 1) * bytes].swap_with_slice(&mut back[..bytes]);
+    }
+}
+
+pub(crate) fn for_each_orientation_tile(
+    width: u32,
+    height: u32,
+    mut row: impl FnMut(u32, Range<u32>),
+) {
+    const TILE: u32 = 32;
+    for y0 in (0..height).step_by(TILE as usize) {
+        for x0 in (0..width).step_by(TILE as usize) {
+            for y in y0..y0.saturating_add(TILE).min(height) {
+                row(y, x0..x0.saturating_add(TILE).min(width));
+            }
+        }
     }
 }

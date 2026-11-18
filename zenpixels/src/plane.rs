@@ -242,7 +242,6 @@ fn aligned_plane_stride(
     };
     let len = stride
         .checked_mul(height)
-        .filter(|&n| n <= (isize::MAX as usize) / size)
         .ok_or(PlaneError::GeometryOverflow)?;
     Ok((stride, len))
 }

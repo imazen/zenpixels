@@ -112,7 +112,7 @@ fn planar_bands_keep_chroma_phase_at_boundaries() {
     assert_eq!(huge.pixel_count(), 1_600_080_001);
     assert!(huge.band_count() > 1);
     assert_eq!(huge.band_rows() % 2, 0);
-    let frame =
+    let mut frame =
         BandedPlanarBuffer::try_new(&layout, 5, 5, zenpixels::ColorContext::default(), None, 16)
             .unwrap();
     assert_eq!(
@@ -126,4 +126,161 @@ fn planar_bands_keep_chroma_phase_at_boundaries() {
             .sum::<usize>(),
         3
     );
+    for y in 0..3 {
+        frame.plane_row_mut(1, y).unwrap().fill(10 + y as u8);
+    }
+    assert_eq!(frame.plane_row(1, 2), Some(&[12, 12, 12][..]));
+    assert!(frame.plane_row(1, 3).is_none());
+    assert!(frame.plane_row(3, 0).is_none());
+    #[cfg(feature = "hash")]
+    {
+        use zenpixels::plane::{AnyPlane, PlanarSlice, PlaneRef};
+        let y = [0u8; 25];
+        let cb = [10u8, 10, 10, 11, 11, 11, 12, 12, 12];
+        let cr = [0u8; 9];
+        let planes = [
+            AnyPlane::U8(PlaneRef::new(&y[..], 5, 5, 5).unwrap()),
+            AnyPlane::U8(PlaneRef::new(&cb[..], 3, 3, 3).unwrap()),
+            AnyPlane::U8(PlaneRef::new(&cr[..], 3, 3, 3).unwrap()),
+        ];
+        let color = zenpixels::ColorContext::default();
+        let contiguous = PlanarSlice::new(&planes, &layout, 5, 5, &color, None).unwrap();
+        for mode in [
+            zenpixels::HashInclusions::SamplesOnly,
+            zenpixels::HashInclusions::Pixels,
+            zenpixels::HashInclusions::All,
+        ] {
+            assert_eq!(frame.hash_with(mode), contiguous.hash_with(mode));
+        }
+    }
+}
+
+#[cfg(feature = "planar")]
+#[test]
+fn typed_plane_orientation_matches_contiguous_samples_and_hash() {
+    use zenpixels::plane::{BandedPlane, PlaneRef};
+    let geometry = BandedPlane::<u16>::band_layout(40_000, 30_001, i32::MAX as u64).unwrap();
+    assert_eq!(geometry.pixel_count(), 1_200_040_000);
+    assert!(geometry.band_count() > 1);
+
+    let mut source = BandedPlane::<u16>::try_new(32, 5, 128).unwrap();
+    for y in 0..5 {
+        for (x, sample) in source.row_mut(y).unwrap().iter_mut().enumerate() {
+            *sample = (y * 32 + x as u32) as u16 * 7;
+        }
+    }
+    let expected: Vec<u16> = (0..5)
+        .flat_map(|y| source.row(y).unwrap().iter().copied())
+        .collect();
+    #[cfg(feature = "hash")]
+    {
+        let contiguous = PlaneRef::new(expected.as_slice(), 32, 5, 32).unwrap();
+        assert_eq!(
+            source.hash_with(zenpixels::HashInclusions::All),
+            contiguous.hash_with(zenpixels::HashInclusions::All)
+        );
+    }
+    #[cfg(not(feature = "hash"))]
+    let _ = (expected, core::mem::size_of::<PlaneRef<'_, u16>>());
+
+    for orientation in Orientation::ALL {
+        let (w, h) = orientation.output_dimensions(32, 5);
+        let mut dst = BandedPlane::try_new(w, h, 64).unwrap();
+        source.oriented_into(orientation, &mut dst).unwrap();
+        for y in 0..5 {
+            for x in 0..32 {
+                let (dx, dy) = orientation.forward_map(x, y, 32, 5);
+                assert_eq!(
+                    dst.row(dy).unwrap()[dx as usize],
+                    source.row(y).unwrap()[x as usize]
+                );
+            }
+        }
+        if !orientation.swaps_axes() {
+            let mut in_place = BandedPlane::try_new(32, 5, 192).unwrap();
+            for y in 0..5 {
+                in_place
+                    .row_mut(y)
+                    .unwrap()
+                    .copy_from_slice(source.row(y).unwrap());
+            }
+            in_place.orient_in_place(orientation).unwrap();
+            for y in 0..5 {
+                assert_eq!(in_place.row(y), dst.row(y));
+            }
+        }
+    }
+}
+
+#[cfg(feature = "planar")]
+#[test]
+fn planar_orientation_carries_chroma_lattice_across_band_boundaries() {
+    use zenpixels::plane::{
+        BandedPlanarBuffer, PlanarBandError, PlanarLayout, PlaneEncoding, PlaneRole, PlaneSpec,
+    };
+    use zenpixels::sample::{ChromaSiting, ChromaSubsampling, SampleEncoding};
+    let encoding =
+        PlaneEncoding::Code(SampleEncoding::new(zenpixels::ChannelType::U8, 8, 0).unwrap());
+    let layout = PlanarLayout::new(
+        [PlaneRole::Luma, PlaneRole::Cb, PlaneRole::Cr]
+            .map(|role| PlaneSpec::new(role, encoding))
+            .into(),
+        ChromaSubsampling::Yuv420,
+        ChromaSiting::Center,
+    )
+    .unwrap();
+    let new = |w, h, cap| {
+        BandedPlanarBuffer::try_new(&layout, w, h, zenpixels::ColorContext::default(), None, cap)
+            .unwrap()
+    };
+    let mut source = new(6, 8, 20);
+    for index in 0..3 {
+        let (_, h) = layout.plane_size(index, 6, 8).unwrap();
+        for y in 0..h {
+            for (x, sample) in source
+                .plane_row_mut(index, y)
+                .unwrap()
+                .iter_mut()
+                .enumerate()
+            {
+                *sample = (y * 19 + x as u32 * 3) as u8;
+            }
+        }
+    }
+    for orientation in Orientation::ALL {
+        let (w, h) = orientation.output_dimensions(6, 8);
+        let mut output = new(w, h, 48);
+        source.oriented_into(orientation, &mut output).unwrap();
+        for index in 0..3 {
+            let (pw, ph) = layout.plane_size(index, 6, 8).unwrap();
+            for y in 0..ph {
+                for x in 0..pw {
+                    let (dx, dy) = orientation.forward_map(x, y, pw, ph);
+                    assert_eq!(
+                        output.plane_row(index, dy).unwrap()[dx as usize],
+                        source.plane_row(index, y).unwrap()[x as usize],
+                    );
+                }
+            }
+        }
+        if !orientation.swaps_axes() {
+            let mut own = new(6, 8, 36);
+            source
+                .oriented_into(Orientation::Identity, &mut own)
+                .unwrap();
+            own.orient_in_place(orientation).unwrap();
+            for index in 0..3 {
+                for y in 0..layout.plane_size(index, 6, 8).unwrap().1 {
+                    assert_eq!(own.plane_row(index, y), output.plane_row(index, y));
+                }
+            }
+        }
+    }
+    let mut odd = new(5, 5, 16);
+    odd.plane_row_mut(0, 0).unwrap().fill(99);
+    assert!(matches!(
+        odd.orient_in_place(Orientation::FlipH),
+        Err(PlanarBandError::OrientationNeedsResampling)
+    ));
+    assert_eq!(odd.plane_row(0, 0), Some(&[99; 5][..]));
 }
