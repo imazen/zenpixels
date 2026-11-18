@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use zenpixels::*;
 use zenpixels_convert::icc_profiles::SynthesizedIcc;
-use zenpixels_convert::{ConvertOptions, EncodeReady, OutputPlan, OutputProfile};
+use zenpixels_convert::{ConvertOptions, OutputProfile};
 
 #[test]
 fn origin_authority_table_at_both_output_boundaries() {
@@ -20,16 +20,19 @@ fn origin_authority_table_at_both_output_boundaries() {
                 let buffer =
                     PixelBuffer::from_vec(vec![17, 51, 193], 1, 1, PixelDescriptor::RGB8_SRGB)
                         .unwrap();
-                let plan = OutputPlan::new(
+                let plan = crate::test_conversion::output_plan(
                     buffer.encoding(),
                     &origin,
                     OutputProfile::SameAsOrigin,
                     PixelFormat::Rgb8,
-                    &ConvertOptions::permissive(),
+                    &ConvertOptions::retain_channels()
+                        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
                     None,
                 )
                 .unwrap();
-                let ready = EncodeReady::finalize(
+                let ready = crate::test_conversion::copy_output(
                     &buffer,
                     &origin,
                     OutputProfile::SameAsOrigin,
@@ -99,18 +102,21 @@ fn unsupported_authoritative_origin_never_falls_back_to_icc() {
         let origin = ColorOrigin::from_icc_and_cicp(vec![1, 2, 3], bad)
             .with_color_authority(ColorAuthority::Cicp);
         assert!(
-            OutputPlan::new(
+            crate::test_conversion::output_plan(
                 descriptor.encoding(),
                 &origin,
                 OutputProfile::SameAsOrigin,
                 PixelFormat::Rgb8,
-                &ConvertOptions::permissive(),
+                &ConvertOptions::retain_channels()
+                    .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                    .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                    .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
                 None
             )
             .is_err()
         );
         assert!(
-            EncodeReady::finalize(
+            crate::test_conversion::copy_output(
                 &buffer,
                 &origin,
                 OutputProfile::SameAsOrigin,
@@ -126,24 +132,34 @@ fn unsupported_authoritative_origin_never_falls_back_to_icc() {
 #[derive(Default)]
 struct RoutingSpy(std::sync::Mutex<Vec<bool>>);
 impl zenpixels_convert::cms::PluggableCms for RoutingSpy {
-    fn build_source_transform(
+    fn build(
         &self,
-        _: ColorProfileSource<'_>,
-        target: ColorProfileSource<'_>,
-        _: PixelFormat,
-        _: PixelFormat,
-        _: &ConvertOptions,
-    ) -> Option<
+        request: &zenpixels_convert::cms::CmsRequest<'_>,
+    ) -> Result<zenpixels_convert::cms::CmsSupport, whereat::At<zenpixels_convert::CmsPluginError>>
+    {
+        let build = || -> Option<
         Result<
             Box<dyn zenpixels_convert::cms::RowTransformMut>,
             whereat::At<zenpixels_convert::cms::CmsPluginError>,
         >,
     > {
+let _ = request.source();
+let target = request.target();
+let _ = request.from().pixel_format();
+let _ = request.to().pixel_format();
+let _ = request.options();
+
         self.0
             .lock()
             .unwrap()
             .push(matches!(target, ColorProfileSource::Icc(_)));
         None
+
+};
+        if let Some(worker) = build() {
+            return worker.map(zenpixels_convert::cms::CmsSupport::Owned);
+        }
+        Ok(zenpixels_convert::cms::CmsSupport::Declined)
     }
 }
 #[test]
@@ -153,7 +169,7 @@ fn unknown_authoritative_icc_reaches_cms_and_cannot_be_replaced_by_cicp() {
         .with_color_authority(ColorAuthority::Icc);
     let source = PixelBuffer::from_vec(vec![10, 20, 30], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
     assert!(
-        EncodeReady::finalize(
+        crate::test_conversion::copy_output(
             &source,
             &origin,
             OutputProfile::SameAsOrigin,
@@ -192,15 +208,18 @@ fn opaque_and_metadata_only_icc_authority_table_reaches_both_boundaries() {
                         PixelBuffer::from_vec(vec![17, 51, 193], 1, 1, PixelDescriptor::RGB8_SRGB)
                             .unwrap();
                     let spy = RoutingSpy::default();
-                    let plan = OutputPlan::new(
+                    let plan = crate::test_conversion::output_plan(
                         source.encoding(),
                         &origin,
                         OutputProfile::SameAsOrigin,
                         PixelFormat::Rgb8,
-                        &ConvertOptions::permissive(),
+                        &ConvertOptions::retain_channels()
+                            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
                         Some(&spy),
                     );
-                    let ready = EncodeReady::finalize(
+                    let ready = crate::test_conversion::copy_output(
                         &source,
                         &origin,
                         OutputProfile::SameAsOrigin,
@@ -322,3 +341,6 @@ fn grayscale_reduction_preserves_unusable_icc_but_allows_exact_alpha_and_depth_r
         }
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

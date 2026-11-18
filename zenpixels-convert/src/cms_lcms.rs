@@ -382,7 +382,26 @@ const fn lcms_rendering_intent(intent: zenpixels::RenderingIntent) -> u32 {
 }
 
 impl PluggableCms for Lcms {
-    fn build_source_transform(
+    fn build(&self, request: &crate::cms::CmsRequest<'_>) -> Result<crate::cms::CmsSupport, Error> {
+        self.build_native(
+            request.source(),
+            request.target(),
+            request.from().pixel_format(),
+            request.to().pixel_format(),
+            request.options(),
+        )
+        .transpose()
+        .map(|worker| {
+            worker.map_or(
+                crate::cms::CmsSupport::Declined,
+                crate::cms::CmsSupport::Owned,
+            )
+        })
+    }
+}
+
+impl Lcms {
+    fn build_native(
         &self,
         src: ColorProfileSource<'_>,
         dst: ColorProfileSource<'_>,
@@ -458,7 +477,7 @@ impl PluggableCms for Lcms {
                 to,
                 scratch: Vec::new(),
                 prepared: None,
-                clip: options.clip_out_of_gamut()
+                clip: options.gamut_policy() == crate::GamutPolicy::Clip
                     && to.sample == ChannelType::F32
                     && matches!(to.space, 3 | 4),
             }) as Box<dyn RowTransformMut>))
@@ -499,11 +518,6 @@ impl Row {
 }
 
 impl RowTransformMut for Row {
-    fn transform_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
-        self.try_transform_row(src, dst, width)
-            .expect("lcms row failed");
-    }
-
     fn try_transform_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) -> Result<(), Error> {
         let pixels = width as usize;
         let source_length = pixels

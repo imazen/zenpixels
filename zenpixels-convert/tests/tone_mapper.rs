@@ -5,7 +5,7 @@ use zenpixels::{ColorPrimaries as P, PixelDescriptor as D};
 use zenpixels_convert::hdr::{
     Bt2446A, PreparedMapper, Requirements, StripMapper, ToneMapContext, ToneMapper,
 };
-use zenpixels_convert::{ConvertError, ConvertPlan, HdrConfig, RowConverter};
+use zenpixels_convert::{ConvertError, ConvertPlan, HdrConfig};
 
 fn linear_2020() -> D {
     D::RGBF32_LINEAR.with_primaries(P::Bt2020)
@@ -17,11 +17,13 @@ fn ramp() -> Vec<f32> {
 
 fn run(plan: ConvertPlan, src: &[f32], width: u32) -> Vec<f32> {
     let mut out = vec![0f32; src.len()];
-    RowConverter::from_plan(plan).convert_row(
-        bytemuck::cast_slice(src),
-        bytemuck::cast_slice_mut(&mut out),
-        width,
-    );
+    crate::test_conversion::worker(plan)
+        .try_convert_row(
+            bytemuck::cast_slice(src),
+            bytemuck::cast_slice_mut(&mut out),
+            width,
+        )
+        .unwrap();
     out
 }
 
@@ -41,9 +43,12 @@ impl ToneMapper for Halve {
     fn requirements(&self) -> Requirements {
         Requirements::NONE
     }
-    fn prepare(&self, ctx: &ToneMapContext) -> PreparedMapper {
+    fn prepare(
+        &self,
+        ctx: &ToneMapContext,
+    ) -> Result<PreparedMapper, whereat::At<zenpixels_convert::ConvertError>> {
         assert_eq!(ctx.source_peak_nits, 1000.0);
-        PreparedMapper::Streaming(Box::new(HalveStrip))
+        Ok(PreparedMapper::Streaming(Box::new(HalveStrip)))
     }
     fn name(&self) -> &'static str {
         "halve"
@@ -53,7 +58,7 @@ impl ToneMapper for Halve {
 #[test]
 fn an_injected_mapper_runs_in_place_of_the_default() {
     let src = ramp();
-    let plan = ConvertPlan::new_with_tone_mapper(
+    let plan = crate::test_conversion::mapper_plan(
         linear_2020(),
         linear_2020(),
         HdrConfig::for_source_peak(1000.0),
@@ -73,12 +78,12 @@ fn the_default_gives_the_bytes_of_the_curve_itself() {
     let src = ramp();
     let config = HdrConfig::for_source_peak(1000.0);
     let by_default = run(
-        ConvertPlan::new_with_hdr_config(linear_2020(), linear_2020(), config).unwrap(),
+        crate::test_conversion::hdr_plan(linear_2020(), linear_2020(), config).unwrap(),
         &src,
         64,
     );
     let injected = run(
-        ConvertPlan::new_with_tone_mapper(
+        crate::test_conversion::mapper_plan(
             linear_2020(),
             linear_2020(),
             config,
@@ -113,16 +118,18 @@ fn rows_split_and_alpha_pass_through() {
         })
         .collect();
     let plan =
-        || ConvertPlan::new_with_hdr_config(d, d, HdrConfig::for_source_peak(1000.0)).unwrap();
+        || crate::test_conversion::hdr_plan(d, d, HdrConfig::for_source_peak(1000.0)).unwrap();
     let whole = run(plan(), &src, 64);
-    let mut converter = RowConverter::from_plan(plan());
+    let mut converter = crate::test_conversion::worker(plan());
     let mut parts = vec![0f32; src.len()];
     for (a, b) in src.chunks(7 * 4).zip(parts.chunks_mut(7 * 4)) {
-        converter.convert_row(
-            bytemuck::cast_slice(a),
-            bytemuck::cast_slice_mut(b),
-            (a.len() / 4) as u32,
-        );
+        converter
+            .try_convert_row(
+                bytemuck::cast_slice(a),
+                bytemuck::cast_slice_mut(b),
+                (a.len() / 4) as u32,
+            )
+            .unwrap();
     }
     assert_eq!(whole, parts);
     for (o, i) in whole.chunks(4).zip(src.chunks(4)) {
@@ -138,7 +145,10 @@ impl ToneMapper for NeedsEverything {
         r.full_image = true;
         r
     }
-    fn prepare(&self, _: &ToneMapContext) -> PreparedMapper {
+    fn prepare(
+        &self,
+        _: &ToneMapContext,
+    ) -> Result<PreparedMapper, whereat::At<zenpixels_convert::ConvertError>> {
         unreachable!()
     }
     fn name(&self) -> &'static str {
@@ -148,7 +158,7 @@ impl ToneMapper for NeedsEverything {
 
 #[test]
 fn full_image_mappers_refuse_at_construction() {
-    let error = ConvertPlan::new_with_tone_mapper(
+    let error = crate::test_conversion::mapper_plan(
         linear_2020(),
         linear_2020(),
         HdrConfig::for_source_peak(1000.0),
@@ -226,8 +236,13 @@ impl ToneMapper for Recording {
     fn requirements(&self) -> Requirements {
         Requirements::NONE
     }
-    fn prepare(&self, _: &ToneMapContext) -> PreparedMapper {
-        PreparedMapper::Streaming(Box::new(RecordingStrip(self.called.clone())))
+    fn prepare(
+        &self,
+        _: &ToneMapContext,
+    ) -> Result<PreparedMapper, whereat::At<zenpixels_convert::ConvertError>> {
+        Ok(PreparedMapper::Streaming(Box::new(RecordingStrip(
+            self.called.clone(),
+        ))))
     }
     fn name(&self) -> &'static str {
         "recording"
@@ -246,14 +261,14 @@ fn a_premultiplied_source_keeps_the_injected_mapper() {
         working: P::Bt2020,
         called: called.clone(),
     });
-    let plan = ConvertPlan::new_with_tone_mapper(
+    let plan = crate::test_conversion::mapper_plan(
         d.with_alpha(Some(AlphaMode::Premultiplied)),
         d.with_alpha(Some(AlphaMode::Straight)),
         HdrConfig::for_source_peak(1000.0),
         mapper,
     )
     .unwrap();
-    let mut converter = RowConverter::from_plan(plan);
+    let mut converter = crate::test_conversion::worker(plan);
     let src = [0.1f32, 0.2, 0.3, 0.5];
     let mut dst = [0f32; 4];
     converter
@@ -277,14 +292,14 @@ fn a_mapper_receives_its_working_primaries() {
         working: Bt709,
         called: called.clone(),
     });
-    let plan = ConvertPlan::new_with_tone_mapper(
+    let plan = crate::test_conversion::mapper_plan(
         D::RGBF32_LINEAR.with_primaries(Bt709),
         D::RGBF32_LINEAR.with_primaries(Bt2020),
         HdrConfig::for_source_peak(1000.0),
         mapper,
     )
     .unwrap();
-    let mut converter = RowConverter::from_plan(plan);
+    let mut converter = crate::test_conversion::worker(plan);
     let src = [1.0f32, 0.0, 0.0];
     let mut dst = [0f32; 3];
     converter
@@ -304,3 +319,6 @@ fn a_mapper_receives_its_working_primaries() {
     assert!((dst[0] - 0.3137).abs() < 1e-3, "{dst:?}");
     assert!((dst[1] - 0.0345).abs() < 1e-3, "{dst:?}");
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

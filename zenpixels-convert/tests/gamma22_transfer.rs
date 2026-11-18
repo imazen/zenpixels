@@ -7,7 +7,7 @@
 use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
 };
-use zenpixels_convert::{ConvertOptions, ConvertPlan};
+use zenpixels_convert::ConvertOptions;
 
 #[allow(clippy::excessive_precision)]
 const ADOBE_GAMMA: f32 = 2.19921875; // 563/256, Adobe RGB 1998 spec (exact in f32).
@@ -38,11 +38,12 @@ fn convert_f32_rgb(src_desc: PixelDescriptor, dst_desc: PixelDescriptor, src: &[
     let mut conv = normalized_converter(src_desc, dst_desc).unwrap();
     let width = (src.len() / 3) as u32;
     let mut dst = vec![0.0f32; src.len()];
-    conv.convert_row(
+    conv.try_convert_row(
         bytemuck::cast_slice(src),
         bytemuck::cast_slice_mut(&mut dst),
         width,
-    );
+    )
+    .unwrap();
     dst
 }
 
@@ -178,7 +179,7 @@ fn adobe_rgb_u8_to_srgb_u8_neutral_gray() {
     let src = [64u8, 64, 64, 128, 128, 128, 200, 200, 200];
     let mut dst = [0u8; 9];
     let mut conv = normalized_converter(src_desc, dst_desc).unwrap();
-    conv.convert_row(&src, &mut dst, 3);
+    conv.try_convert_row(&src, &mut dst, 3).unwrap();
 
     // Neutral gray should stay neutral (same luminance on gamut axis).
     for px in dst.as_chunks::<3>().0 {
@@ -221,11 +222,12 @@ fn adobe_rgb_rgba_f32_to_bt709_rgba_f32_opaque_alpha_preserved() {
     let src = [0.5f32, 0.3, 0.7, 1.0, 0.9, 0.8, 0.6, 1.0];
     let mut dst = [0.0f32; 8];
     let mut conv = normalized_converter(src_desc, dst_desc).unwrap();
-    conv.convert_row(
+    conv.try_convert_row(
         bytemuck::cast_slice(&src),
         bytemuck::cast_slice_mut(&mut dst),
         2,
-    );
+    )
+    .unwrap();
 
     assert!((dst[3] - 1.0).abs() < 1e-4, "alpha ch0: {}", dst[3]);
     assert!((dst[7] - 1.0).abs() < 1e-4, "alpha ch1: {}", dst[7]);
@@ -274,16 +276,20 @@ fn adobe_rgb_u8_to_linear_bt709_matches_textbook_with_gamut_kept() {
         TransferFunction::Gamma22,
     )
     .with_primaries(ColorPrimaries::AdobeRgb);
-    let opts = ConvertOptions::permissive().with_clip_out_of_gamut(false);
-    let plan = ConvertPlan::new_explicit(src_desc, PixelDescriptor::RGBF32_LINEAR, &opts).unwrap();
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended);
+    let plan =
+        crate::test_conversion::explicit_plan(src_desc, PixelDescriptor::RGBF32_LINEAR, &opts)
+            .unwrap();
     let px = grid();
     let src: Vec<u8> = px.iter().flatten().copied().collect();
     let mut dst = vec![0f32; src.len()];
-    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(
-        &src,
-        bytemuck::cast_slice_mut(&mut dst),
-        px.len() as u32,
-    );
+    crate::test_conversion::worker(plan.try_clone().unwrap())
+        .try_convert_row(&src, bytemuck::cast_slice_mut(&mut dst), px.len() as u32)
+        .unwrap();
     for (i, p) in px.iter().enumerate() {
         let want = adobe_u8_textbook_linear(*p);
         for c in 0..3 {
@@ -297,11 +303,9 @@ fn adobe_rgb_u8_to_linear_bt709_matches_textbook_with_gamut_kept() {
     }
     // (59, 106, 90): red falls outside sRGB and stays negative with clipping off.
     let mut one = [0f32; 3];
-    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(
-        &[59, 106, 90],
-        bytemuck::cast_slice_mut(&mut one),
-        1,
-    );
+    crate::test_conversion::worker(plan.try_clone().unwrap())
+        .try_convert_row(&[59, 106, 90], bytemuck::cast_slice_mut(&mut one), 1)
+        .unwrap();
     assert!(
         one[0] < 0.0,
         "out-of-gamut red should stay negative: {one:?}"
@@ -321,7 +325,8 @@ fn adobe_rgb_u8_to_srgb_u8_within_one_code_value() {
     let px = grid();
     let src: Vec<u8> = px.iter().flatten().copied().collect();
     let mut dst = vec![0u8; src.len()];
-    conv.convert_row(&src, &mut dst, px.len() as u32);
+    conv.try_convert_row(&src, &mut dst, px.len() as u32)
+        .unwrap();
     for (i, p) in px.iter().enumerate() {
         let want = adobe_u8_textbook_linear(*p).map(|l| {
             let l = l.clamp(0.0, 1.0);
@@ -352,16 +357,24 @@ fn adobe_rgb_u16_to_linear_bt709_matches_textbook() {
         TransferFunction::Gamma22,
     )
     .with_primaries(ColorPrimaries::AdobeRgb);
-    let opts = ConvertOptions::permissive().with_clip_out_of_gamut(false);
-    let plan = ConvertPlan::new_explicit(src_desc, PixelDescriptor::RGBF32_LINEAR, &opts).unwrap();
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended);
+    let plan =
+        crate::test_conversion::explicit_plan(src_desc, PixelDescriptor::RGBF32_LINEAR, &opts)
+            .unwrap();
     let px = grid();
     let src: Vec<u16> = px.iter().flatten().map(|&v| u16::from(v) * 257).collect();
     let mut dst = vec![0f32; src.len()];
-    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(
-        bytemuck::cast_slice(&src),
-        bytemuck::cast_slice_mut(&mut dst),
-        px.len() as u32,
-    );
+    crate::test_conversion::worker(plan.try_clone().unwrap())
+        .try_convert_row(
+            bytemuck::cast_slice(&src),
+            bytemuck::cast_slice_mut(&mut dst),
+            px.len() as u32,
+        )
+        .unwrap();
     for (i, p) in px.iter().enumerate() {
         let want = adobe_u8_textbook_linear(*p);
         for c in 0..3 {
@@ -397,16 +410,20 @@ fn bt709_transfer_p3_u8_to_linear_bt709_matches_textbook() {
         TransferFunction::Bt709,
     )
     .with_primaries(ColorPrimaries::DisplayP3);
-    let opts = ConvertOptions::permissive().with_clip_out_of_gamut(false);
-    let plan = ConvertPlan::new_explicit(src_desc, PixelDescriptor::RGBF32_LINEAR, &opts).unwrap();
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended);
+    let plan =
+        crate::test_conversion::explicit_plan(src_desc, PixelDescriptor::RGBF32_LINEAR, &opts)
+            .unwrap();
     let px = grid();
     let src: Vec<u8> = px.iter().flatten().copied().collect();
     let mut dst = vec![0f32; src.len()];
-    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(
-        &src,
-        bytemuck::cast_slice_mut(&mut dst),
-        px.len() as u32,
-    );
+    crate::test_conversion::worker(plan.try_clone().unwrap())
+        .try_convert_row(&src, bytemuck::cast_slice_mut(&mut dst), px.len() as u32)
+        .unwrap();
     for (i, p) in px.iter().enumerate() {
         let l = p.map(|v| eotf(f64::from(v) / 255.0));
         let want = P3_TO_SRGB.map(|row| row[0] * l[0] + row[1] * l[1] + row[2] * l[2]);
@@ -425,11 +442,17 @@ fn normalized_converter(
     from: zenpixels::PixelDescriptor,
     to: zenpixels::PixelDescriptor,
 ) -> Result<zenpixels_convert::RowConverter, whereat::At<zenpixels_convert::ConvertError>> {
-    zenpixels_convert::RowConverter::new_explicit(
+    crate::test_conversion::explicit_worker(
         from,
         to,
-        &zenpixels::ConvertOptions::permissive()
+        &zenpixels::ConvertOptions::retain_channels()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
             .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked)
             .with_sdr_white(zenpixels::hdr::DiffuseWhite::new(10_000.)),
     )
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

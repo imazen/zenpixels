@@ -84,6 +84,28 @@ pub struct LoadBearingReport {
 }
 
 impl LoadBearingReport {
+    /// Scan all packed bands, keeping an unsupported predicate unknown.
+    pub fn scan_bands(pixels: &zenpixels::banded::BandedPixelBuffer) -> Self {
+        fn merge(a: Option<bool>, b: Option<bool>) -> Option<bool> {
+            match (a, b) {
+                (Some(true), _) | (_, Some(true)) => Some(true),
+                (Some(false), Some(false)) => Some(false),
+                _ => None,
+            }
+        }
+        let mut bands = pixels.bands();
+        let mut result = bands
+            .next()
+            .map_or_else(Self::default, |band| band.determine_load_bearing());
+        for band in bands {
+            let current = band.determine_load_bearing();
+            result.uses_alpha = merge(result.uses_alpha, current.uses_alpha);
+            result.uses_chroma = merge(result.uses_chroma, current.uses_chroma);
+            result.uses_low_bits = merge(result.uses_low_bits, current.uses_low_bits);
+        }
+        result
+    }
+
     /// True if the analysis returned at least one non-`None` field --
     /// i.e. some predicate ran (or answered structurally). Codecs that
     /// need a quick "is there anything actionable here" check before

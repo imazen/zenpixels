@@ -82,19 +82,19 @@ pub enum ConvertError {
     HlgRenderingRequired,
     /// The conversion is HDR (`Pq` / `Hlg`) → SDR but no usable peak
     /// luminance was supplied. Raised both when no peak was given at all
-    /// (the plain [`ConvertPlan::new`](crate::ConvertPlan::new) entry
+    /// (the plain [`ConvertPlan::build`](crate::ConvertPlan::build) entry
     /// point doesn't take one) and when a supplied `HdrConfig` carries a
     /// non-finite or non-positive `source_peak_nits` / `target_peak_nits`
     /// (including the unset `HdrConfig::default()` value `0.0`) — a
     /// degenerate peak would tone-map every pixel to black. Build the
-    /// plan via `ConvertPlan::new_with_hdr_peak` (or
-    /// `ConvertPlan::new_with_hdr_config` for full knob control), and
+    /// plan via `NativePlan::new_with_hdr_peak` (or
+    /// `NativePlan::new_with_hdr_config` for full knob control), and
     /// pass the source's MaxCLL — e.g. from
     /// `hdr::measure::CllMeasure::measure_max`. All three live behind
     /// the `hdr-experimental` Cargo feature (plain code spans here, not
     /// intra-doc links, so this page renders link-clean without it).
     ///
-    /// Pre-0.2.16 the plain `ConvertPlan::new` silently routed HDR→SDR
+    /// Pre-0.2.16 the plain `NativePlan::new` silently routed HDR→SDR
     /// through the linear intermediate with no tone-mapping, producing
     /// semantically wrong pixels. This variant replaces that with a
     /// loud refusal.
@@ -121,11 +121,11 @@ pub enum ConvertError {
     /// from
     #[cfg_attr(
         feature = "hdr-experimental",
-        doc = "[`ConvertPlan::new_with_tone_mapper`](crate::ConvertPlan::new_with_tone_mapper),"
+        doc = "[`ConversionSpec::with_tone_mapper`](crate::ConversionSpec::with_tone_mapper),"
     )]
     #[cfg_attr(
         not(feature = "hdr-experimental"),
-        doc = "`ConvertPlan::new_with_tone_mapper`,"
+        doc = "`NativePlan::new_with_tone_mapper`,"
     )]
     /// but this pipeline does not yet support full-image local
     /// operators (Mantiuk gradient processing, Fattal, bilateral, …).
@@ -173,7 +173,7 @@ pub enum ConvertError {
     /// Lab, XYZ, spot inks, or any future device-dependent space — that
     /// `zenpixels-convert` cannot resolve with its built-in kernels. Attach
     /// a plugin via
-    /// [`RowConverter::new_explicit_with_cms`](crate::RowConverter::new_explicit_with_cms)
+    /// [`ConversionSpec::with_cms`](crate::ConversionSpec::with_cms)
     /// (e.g. `Some(&MoxCms)` under the `cms-moxcms` feature) and the plan
     /// will dispatch the full row work to it.
     ///
@@ -306,7 +306,7 @@ impl fmt::Display for ConvertError {
             Self::HdrSourceRequiresPeak { from, to } => write!(
                 f,
                 "HDR→SDR conversion ({:?} → {:?}) requires positive, finite peak \
-                 luminances; build the plan via ConvertPlan::new_with_hdr_peak (or \
+                 luminances; build the plan via NativePlan::new_with_hdr_peak (or \
                  new_with_hdr_config) and pass the source's MaxCLL (e.g. \
                  CllMeasure::measure_max)",
                 from.transfer(),
@@ -315,7 +315,7 @@ impl fmt::Display for ConvertError {
             Self::FullImageMapperNotSupported { mapper_name } => write!(
                 f,
                 "tone mapper '{mapper_name}' requires full-image buffering \
-                 (Requirements::full_image == true); ConvertPlan only \
+                 (Requirements::full_image == true); NativePlan only \
                  supports streaming mappers. Pick a pointwise curve (Bt2446A, ACES, \
                  FilmicSpline, …) — local-operator support is reserved capacity",
             ),

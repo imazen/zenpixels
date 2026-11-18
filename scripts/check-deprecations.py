@@ -14,9 +14,13 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 PLAN = """
-use zenpixels_convert::{ConvertPlan, PixelDescriptor};
+use zenpixels_convert::{ConversionSpec, ConvertPlan, PixelDescriptor};
 fn plan() -> ConvertPlan {
-    ConvertPlan::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap()
+    ConvertPlan::build(
+        PixelDescriptor::RGB8_SRGB.encoding(),
+        PixelDescriptor::RGBA8_SRGB.encoding(),
+        &ConversionSpec::preserve_samples(),
+    ).unwrap()
 }
 """
 PROBES = {
@@ -78,7 +82,7 @@ fn main() { let _ = legacy_provider().as_pixel_slice(); }
         """
 fn main() {
     let d = zenpixels_convert::PixelDescriptor::RGB8_SRGB;
-    let result = zenpixels_convert::adapt::adapt_raw_rows_for_encode(&[0, 0, 0], d, 1, 1, 3, &[d], &zenpixels_convert::ConvertOptions::permissive()).unwrap();
+    let result = zenpixels_convert::adapt::adapt_raw_rows_for_encode(&[0, 0, 0], d, 1, 1, 3, &[d], &zenpixels_convert::ConvertOptions::retain_channels()).unwrap();
     let _ = result.as_slice();
 }
 """,
@@ -151,17 +155,33 @@ PROBES["sealed_transfer_extension"] = (
 PROBES["extended_gamma_estimate"] = (
     """
 use zenpixels::{PixelDescriptor, TransferFunction};
-use zenpixels_convert::{ConvertPlan, ConvertOptions};
+use zenpixels_convert::{ConversionSpec, ConvertPlan, ConvertOptions, GamutPolicy};
 fn main() {
     let from = PixelDescriptor::RGBF32_LINEAR;
-    let plan = ConvertPlan::new_explicit(
-        from, from.with_transfer(TransferFunction::Gamma22),
-        &ConvertOptions::retain_channels().with_clip_out_of_gamut(false),
+    let plan = ConvertPlan::build(
+        from.encoding(), from.with_transfer(TransferFunction::Gamma22).encoding(),
+        &ConversionSpec::new(ConvertOptions::retain_channels().with_gamut_policy(GamutPolicy::PreserveExtended)),
     ).unwrap();
     let _ = plan.estimate(5, 3);
 }
 """, "estimate", True,
 )
+
+PROBES["compiled_recipe"] = (
+    PLAN + "fn main() { let _ = plan().prepare(1).unwrap(); }", None, False,
+)
+PROBES["introspection_default_off"] = (
+    PLAN + "fn main() { let _ = plan().steps(); }", "steps", False,
+)
+for name, expression in {
+    "permissive_options": ("zenpixels::ConvertOptions::permissive()", "permissive"),
+    "row_from_plan": ("zenpixels_convert::RowConverter::from_plan", "from_plan"),
+    "row_plan": ("plan().prepare(1).unwrap().plan()", "plan"),
+    "row_panicking": ("plan().prepare(1).unwrap().convert_row(&[0; 3], &mut [0; 4], 1)", "convert_row"),
+    "finalize": ("zenpixels_convert::EncodeReady::finalize", "finalize"),
+}.items():
+    snippet, removed = expression
+    PROBES[name] = (PLAN + f"fn main() {{ let _ = {snippet}; }}", removed, False)
 
 PROBES["css_default_off"] = (
     "use zenpixels_convert::ColorConvertExt; fn main() { let _ = zenpixels::Color::parse_css(\"#000\"); }",
@@ -220,7 +240,7 @@ zenpixels = {{ path = {json.dumps(str(ROOT / 'zenpixels'))} }}
                 should_warn = expected is not None
                 if should_warn:
                     ok = result.returncode != 0 and bool(errors) and all(
-                        (error.get("code") or {}).get("code") in {"E0432", "E0433", "E0425", "E0412", "E0599", "E0422", "E0277"} for error in errors
+                        (error.get("code") or {}).get("code") in {"E0432", "E0433", "E0425", "E0412", "E0599", "E0624", "E0422", "E0277"} for error in errors
                     ) and any(expected in error["message"] for error in errors)
                 else:
                     ok = result.returncode == 0

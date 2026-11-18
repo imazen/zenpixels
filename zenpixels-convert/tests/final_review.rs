@@ -10,7 +10,7 @@ use zenpixels::{
 };
 use zenpixels_convert::adapt::adapt_raw_rows_for_encode;
 use zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
-use zenpixels_convert::{ConvertOptions, PixelSliceConvertExt, RowConverter};
+use zenpixels_convert::{ConvertOptions, PixelSliceConvertExt};
 
 fn f16_bytes(values: &[u16]) -> Vec<u8> {
     values.iter().flat_map(|v| v.to_ne_bytes()).collect()
@@ -30,9 +30,10 @@ fn f16_cross_gamut_converts_whole_rows() {
     let to = linear.with_primaries(P::Bt709);
     let src = f16_bytes(&[ONE; 6]);
     let mut dst = vec![0xAA; 12];
-    RowConverter::new(from, to)
+    crate::test_conversion::new_worker(from, to)
         .unwrap()
-        .convert_row(&src, &mut dst, 2);
+        .try_convert_row(&src, &mut dst, 2)
+        .unwrap();
     for i in 0..6 {
         let code = u16::from_ne_bytes([dst[i * 2], dst[i * 2 + 1]]);
         assert!(code.abs_diff(ONE) <= 2, "{code:#x}");
@@ -55,7 +56,13 @@ fn adapt_for_encode_honors_the_current_profile_as_convert_to_does() {
     let slice = p3_tagged(&pixel);
     let direct = slice.convert_to(target).unwrap();
     let adapted = slice
-        .adapt_for_encode(&[target], &ConvertOptions::permissive())
+        .adapt_for_encode(
+            &[target],
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
+        )
         .unwrap();
     let adapted = adapted.as_slice();
     assert_eq!(adapted.row(0), direct.as_slice().row(0));
@@ -99,7 +106,10 @@ fn color_refuses_samples_its_storage_cannot_align() {
 /// A final row needs no padding, and a stride shorter than a row is an error rather than a panic.
 #[test]
 fn raw_adapter_geometry() {
-    let options = ConvertOptions::permissive();
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709));
     let view =
         adapt_raw_rows_for_encode(&[0u8; 9], D::RGB8_SRGB, 1, 2, 6, &[D::RGB8_SRGB], &options);
     assert!(view.is_ok(), "{:?}", view.err().map(|e| e.to_string()));
@@ -123,7 +133,7 @@ fn close(got: &[f32], want: &[f32], tolerance: f32) {
 
 fn to_oklab(from: D, to: D, src: &[u8], pixels: u32) -> Vec<f32> {
     let mut out = vec![0f32; pixels as usize * to.channels()];
-    RowConverter::new(from, to)
+    crate::test_conversion::new_worker(from, to)
         .unwrap()
         .try_convert_row(src, bytemuck::cast_slice_mut(&mut out), pixels)
         .unwrap();
@@ -138,7 +148,7 @@ fn oklab_conversions_pass_through_linear_rgb() {
     close(&gray, &[0.5998752, 0.0, 0.0], 1e-4);
 
     let mut back = [0u8; 3];
-    RowConverter::new(D::OKLABF32, D::RGB8_SRGB)
+    crate::test_conversion::new_worker(D::OKLABF32, D::RGB8_SRGB)
         .unwrap()
         .try_convert_row(
             bytemuck::cast_slice(&[0.5998752f32, 0.0, 0.0]),
@@ -166,10 +176,13 @@ fn a_cms_handles_depth_alpha_and_gray_like_the_plan_does() {
     let p3 = |d: D| d.with_primaries(P::DisplayP3);
 
     // Across depths.
-    let mut c = RowConverter::new_explicit_with_cms(
+    let mut c = crate::test_conversion::cms_worker(
         p3(D::RGB16_SRGB),
         D::RGB8_SRGB,
-        &ConvertOptions::permissive(),
+        &ConvertOptions::retain_channels()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
         Some(cms),
     )
     .unwrap();
@@ -179,12 +192,16 @@ fn a_cms_handles_depth_alpha_and_gray_like_the_plan_does() {
     assert_eq!(out, [255; 3]);
 
     // Compositing is the plan's to do, not a plugin's to skip.
-    let white = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-        background: Color::srgb8(255, 255, 255),
-        reference_white: None,
-    });
+    let white = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_alpha_policy(AlphaPolicy::CompositeOnto {
+            background: Color::srgb8(255, 255, 255),
+            reference_white: None,
+        });
     let mut c =
-        RowConverter::new_explicit_with_cms(p3(D::RGBA8_SRGB), D::RGB8_SRGB, &white, Some(cms))
+        crate::test_conversion::cms_worker(p3(D::RGBA8_SRGB), D::RGB8_SRGB, &white, Some(cms))
             .unwrap();
     let mut out = [0u8; 3];
     c.try_convert_row(&[0, 0, 0, 0], &mut out, 1).unwrap();
@@ -205,7 +222,7 @@ fn orientation_refuses_a_different_format_of_the_same_size() {
 }
 
 /// One conversion of a row and of its pixels one at a time must give the same bytes, through
-/// `RowConverter::new`, which takes the fast gamut kernels.
+/// `crate::test_conversion::new_worker`, which takes the fast gamut kernels.
 #[test]
 fn fast_gamut_kernels_are_row_split_invariant() {
     use zenpixels::ChannelType as C;
@@ -231,7 +248,7 @@ fn fast_gamut_kernels_are_row_split_invariant() {
             ] {
                 let from = base.with_transfer(transfer_in).with_primaries(a);
                 let to = base.with_transfer(transfer_out).with_primaries(b);
-                let Ok(mut c) = RowConverter::new(from, to) else {
+                let Ok(mut c) = crate::test_conversion::new_worker(from, to) else {
                     continue;
                 };
                 let n = 65_537usize;
@@ -276,7 +293,7 @@ fn fast_gamut_kernels_are_row_split_invariant() {
 
     // The pixel that first showed it.
     let from = D::RGB8_SRGB.with_primaries(P::DisplayP3);
-    let mut c = RowConverter::new(from, D::RGB8_SRGB).unwrap();
+    let mut c = crate::test_conversion::new_worker(from, D::RGB8_SRGB).unwrap();
     let src: Vec<u8> = [12u8, 153, 195].repeat(9);
     let mut out = vec![0u8; 27];
     c.try_convert_row(&src, &mut out, 9).unwrap();
@@ -292,7 +309,7 @@ fn unknown_input_still_encodes_as_the_target_says() {
         .with_transfer(T::Linear)
         .with_primaries(P::Bt709);
     let mut out = [0u8; 3];
-    RowConverter::new(from, to)
+    crate::test_conversion::new_worker(from, to)
         .unwrap()
         .try_convert_row(&[128, 128, 128], &mut out, 1)
         .unwrap();
@@ -386,7 +403,7 @@ fn fast_gamut_kernels_are_the_same_at_every_tier() {
     let mut failures = Vec::new();
     let report = for_each_token_permutation(CompileTimePolicy::WarnStderr, |perm| {
         let mut out = vec![0u8; n * 3];
-        RowConverter::new(from, D::RGB8_SRGB)
+        crate::test_conversion::new_worker(from, D::RGB8_SRGB)
             .unwrap()
             .try_convert_row(&src, &mut out, n as u32)
             .unwrap();
@@ -401,3 +418,6 @@ fn fast_gamut_kernels_are_the_same_at_every_tier() {
     });
     assert!(failures.is_empty(), "{failures:#?}\n{report}");
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

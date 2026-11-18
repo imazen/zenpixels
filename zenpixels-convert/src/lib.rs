@@ -11,11 +11,11 @@
 //!
 //! # Core concepts
 //!
-//! - **Format negotiation**: [`ConvertIntent::best_match`] picks the cheapest conversion
-//!   target from a codec's supported formats for a given source descriptor.
+//! - **Format negotiation**: [`ConvertPlan::select`] returns an admitted target
+//!   and its executable recipe.
 //!
-//! - **Row conversion**: [`RowConverter`] pre-computes a conversion plan and
-//!   `prepare` moves scratch/table setup out of the row loop; `try_convert_row`
+//! - **Row conversion**: [`ConvertPlan::prepare`] moves scratch and table setup
+//!   out of the row loop. [`RowConverter::try_convert_row`]
 //!   executes within that capacity, using SIMD where available.
 //!
 //! - **Codec helpers**: [`PixelSliceConvertExt::adapt_for_encode`] negotiates format and converts
@@ -51,12 +51,12 @@
 //!
 //! 4. **Pixels and metadata travel together.** [`ColorContext`] rides on
 //!    [`PixelBuffer`] via `Arc` so ICC/CICP metadata follows pixel data
-//!    through the pipeline. [`EncodeReady::finalize`] couples converted pixels
+//!    through the pipeline. [`EncodeReady::from_owned`] couples converted pixels
 //!    with matching encoder metadata atomically.
 //!
 //! 5. **Provenance informs negotiation, not exactness.** Origin precision is
 //!    a cost-model hint. Edits can create new values; use
-//!    [`ConvertPlan::new_preserving_samples`] for a metadata-proven exact path
+//!    [`ConversionSpec::preserve_samples`] for a metadata-proven exact path
 //!    or an explicitly requested content analysis.
 //!
 //! ## The pixel lifecycle
@@ -122,83 +122,26 @@
 //!   not what the pixels are. This is immutable and used only at encode time
 //!   for provenance decisions (e.g., "re-embed the original ICC profile").
 //!
-//! - Report what you know about real precision. [`Provenance`] carries origin depth
-//!   into negotiation, as a cost estimate: RGB rebuilt from 10-bit YCbCr is not on a
-//!   10-bit grid. [`ExactDepth`](zenpixels::sample::ExactDepth) is measured evidence
-//!   that samples are exact lower-depth codes.
-//!   [`SourcePrecision`](zenpixels::precision::SourcePrecision) is what decides whether
-//!   a format chosen for the caller may drop any of it.
+//! - [`ExactDepth`](zenpixels::sample::ExactDepth) is sample evidence.
+//!   [`SourcePrecision`](zenpixels::precision::SourcePrecision) describes capacity
+//!   and can constrain admission when the caller has not chosen the loss.
 //!
 //! ### Step 2: Negotiate
 //!
-//! Before encoding, the pipeline must pick a format the encoder accepts.
-//! Negotiation uses the two-axis cost model (effort vs. loss) weighted by
-//! [`ConvertIntent`].
+//! Offer the encoder's native targets as [`CandidateTarget`] values. Use
+//! [`ConvertPlan::select`] to choose an admitted target with the supplied
+//! [`ConversionSpec`]. Use [`ConvertPlan::build`] for a specific target.
 //!
-//! Three entry points:
-//!
-//! - **[`ConvertIntent::best_match`]**: Pass a source descriptor and a list of
-//!   supported descriptors. Good for simple encode paths.
-//!
-//! - **[`ConvertIntent::best_match_within`]**: Adds a ceiling on modeled loss, as a
-//!   [`LossBucket`]. Returns `None` when no format qualifies.
-//!
-//! - **[`ConvertIntent::negotiate`]**: Adds explicit [`Provenance`] (so the cost
-//!   model knows the data's origin) and consumer costs ([`FormatOption`]). Use it
-//!   when an encoder has fast internal paths (a JPEG encoder with a fused f32→u8+DCT
-//!   kernel can advertise `RGBF32_LINEAR` with low consumer cost), or in processing
-//!   pipelines where data has been widened from a lower-precision source (JPEG u8
-//!   decoded to f32: provenance says "u8 origin", so converting back to u8 reports
-//!   zero loss, which understates the rounding once a resize or filter has changed
-//!   the samples).
-//!
-//! ```rust,ignore
-//! // Simple: "what format should I encode to?"
-//! let target = ConvertIntent::Fastest
-//!     .best_match(buffer.descriptor(), &encoder_supported)
-//!     .ok_or("no compatible format")?;
-//!
-//! // With provenance: "this f32 data came from u8 JPEG"
-//! let target = ConvertIntent::Fastest.negotiate(
-//!     current_desc,
-//!     Provenance::with_origin_depth(ChannelType::U8),
-//!     options.iter().copied(),
-//! );
-//! ```
-//!
-//! **Rules for negotiation:**
-//!
-//! - Use [`ConvertIntent::Fastest`] when encoding. The encoder knows what it
-//!   wants; get there with minimal work.
-//!
-//! - Use [`ConvertIntent::LinearLight`] for resize, blur, anti-aliasing.
-//!   These operations need linear light for gamma-correct results.
-//!
-//! - Use [`ConvertIntent::Blend`] for compositing. This ensures premultiplied
-//!   alpha for correct Porter-Duff math.
-//!
-//! - Use [`ConvertIntent::Perceptual`] for sharpening, contrast, saturation.
-//!   These are perceptual operations that work best in sRGB or Oklab space.
-//!
-//! - Track provenance when data has been widened. If you decoded a JPEG (u8)
-//!   into f32 for processing, tell the cost model via
-//!   `Provenance::with_origin_depth(ChannelType::U8)`. Otherwise it will
-//!   rank depth reduction differently. This is a heuristic: after edits,
-//!   narrowing may lose new values regardless of the original depth.
-//!
-//! - If an operation genuinely expands the data's gamut (e.g., saturation
-//!   boost in BT.2020 that pushes colors outside sRGB), call
-//!   [`Provenance::invalidate_primaries`] with the current working primaries.
-//!   Otherwise the cost model will incorrectly report gamut narrowing as
-//!   lossless.
+//! Choose a linear-light target before resizing or filtering. For blending,
+//! choose a linear-light target with premultiplied alpha.
 //!
 //! ### Step 3: Convert
 //!
 //! Once a target format is chosen, convert pixel data row-by-row.
 //!
 //! ```rust,ignore
-//! let mut converter = RowConverter::new(source_desc, target_desc)?;
-//! converter.prepare(width)?;
+//! let plan = ConvertPlan::build(source.encoding(), target_encoding, &spec)?;
+//! let mut converter = plan.prepare(width)?;
 //! for y in 0..height {
 //!     converter.try_convert_row(src_row, dst_row, width)?;
 //! }
@@ -246,16 +189,13 @@
 //! The encoder receives pixel data in a format it natively supports and
 //! must embed correct color metadata.
 //!
-//! For the atomic path (recommended), use [`EncodeReady::finalize`]:
+//! For the atomic path (recommended), use [`EncodeReady::from_owned`]:
 //!
 //! ```rust,ignore
-//! let ready = EncodeReady::finalize(
-//!     &buffer,
-//!     &color_origin,
-//!     OutputProfile::SameAsOrigin,
-//!     target_format,
-//!     Some(&cms),
-//! )?;
+//! let destination = OutputTarget::new(OutputProfile::SameAsOrigin, target_format)
+//!     .with_origin(&color_origin);
+//! let plan = OutputPlan::build(buffer.encoding(), destination, &spec.with_cms(&cms))?;
+//! let ready = EncodeReady::from_owned(buffer, plan)?;
 //!
 //! // Pixels and metadata are guaranteed to match
 //! encoder.write_pixels(ready.pixels())?;
@@ -270,13 +210,10 @@
 //!   unless you actually handle RGBA natively (not just by stripping alpha
 //!   internally). Let the conversion system handle format changes.
 //!
-//! - If you have fast internal conversion paths, advertise them via
-//!   [`FormatOption::with_cost`]. Example: a JPEG encoder with a fused
-//!   f32→DCT path can accept `RGBF32_LINEAR` at `ConversionCost::new(5, 0)`,
-//!   so negotiation will route f32 data directly to the encoder instead of
-//!   doing a redundant f32→u8 conversion first.
+//! - Offer a format if the encoder can consume it directly, including fused
+//!   conversion paths such as an f32 input to a JPEG transform.
 //!
-//! - Use [`EncodeReady::finalize`] to bundle pixels and metadata atomically.
+//! - Use [`EncodeReady::from_owned`] to bundle pixels and metadata atomically.
 //!   This prevents the most common color management bug: pixel values that
 //!   don't match the embedded ICC/CICP.
 //!
@@ -291,25 +228,10 @@
 //!   - [`OutputProfile::Icc`]: Use specific ICC profile bytes. Requires a
 //!     [`PluggableCms`] implementation.
 //!
-//! ## Cost model
+//! ## Workspace and diagnostics
 //!
-//! Format negotiation uses a two-axis cost model separating **effort**
-//! (CPU work) from **loss** (information destroyed). These are independent:
-//! a fast conversion can be very lossy (f32 HDR → u8 clamp), and a slow
-//! conversion can be lossless (u8 sRGB → f32 linear).
-//!
-//! [`ConvertIntent`] controls how the axes are weighted:
-//!
-//! | Intent         | Effort weight | Loss weight | Use case |
-//! |----------------|---------------|-------------|----------|
-//! | `Fastest`      | 4x            | 1x          | Encoding |
-//! | `LinearLight`  | 1x            | 4x          | Resize, blur |
-//! | `Blend`        | 1x            | 4x          | Compositing |
-//! | `Perceptual`   | 1x            | 3x          | Color grading |
-//!
-//! Cost components are additive: total = transfer_cost + depth_cost +
-//! layout_cost + alpha_cost + primaries_cost + consumer_cost +
-//! suitability_loss. The lowest-scoring candidate wins.
+//! [`ConvertPlan::workspace`] reports allocator requests by lifetime.
+//! Enable `introspection` to inspect the lowered operators and their accuracy.
 //!
 //! ## CMS integration
 //!
@@ -321,7 +243,7 @@
 //! Codecs that handle ICC profiles must:
 //! 1. Extract ICC bytes on decode and store them on [`ColorContext`].
 //! 2. Record provenance on [`ColorOrigin`].
-//! 3. On encode, let [`EncodeReady::finalize`] handle the ICC transform
+//! 3. On encode, let [`EncodeReady::from_owned`] handle the ICC transform
 //!    (if the target profile differs from the source) or pass-through
 //!    (if `SameAsOrigin`).
 //!
@@ -349,13 +271,13 @@
 //!
 //! - [ ] Decode: extract ICC + CICP → [`ColorContext`]
 //! - [ ] Decode: record provenance → [`ColorOrigin`]
-//! - [ ] Encode: negotiate via [`ConvertIntent::best_match`] or [`PixelSliceConvertExt::adapt_for_encode`]
+//! - [ ] Encode: negotiate via [`ConvertPlan::select`] or [`PixelSliceConvertExt::adapt_for_encode`]
 //! - [ ] Encode: convert via [`RowConverter`] (not hand-rolled)
-//! - [ ] Encode: embed metadata via [`EncodeReady::finalize`]
+//! - [ ] Encode: embed metadata via [`EncodeReady::from_owned`]
 //! - [ ] Encode: embed ICC/CICP when the format supports it
 //! - [ ] Handle [`ConvertError`] variants specifically
 //! - [ ] Test round-trip: native format → encode → decode = lossless
-//! - [ ] Test negotiation: `ConvertIntent::Fastest.best_match(my_format, my_supported)` picks identity
+//! - [ ] Test negotiation: `ConvertPlan::select(source, targets, &spec)` picks identity
 
 #![cfg_attr(not(test), no_std)]
 #![forbid(unsafe_code)]
@@ -385,7 +307,8 @@ mod sealed {
 }
 pub mod error;
 pub(crate) mod f16_scalar;
-pub(crate) mod negotiate;
+#[cfg(feature = "introspection")]
+mod negotiate;
 
 pub mod adapt;
 // Internal only — zero consumers today. Kept for a future caller;
@@ -481,14 +404,23 @@ pub mod ycbcr;
 mod scan;
 
 // Re-export key conversion types at crate root.
-pub use convert::ConvertPlan;
+pub(crate) use convert::NativePlan;
+mod plan;
+mod route;
 #[cfg(feature = "hdr-experimental")]
 pub use convert::HdrConfig;
 #[doc(inline)]
 pub use converter::RowConverter;
 #[doc(inline)]
 pub use error::ConvertError;
+#[cfg(feature = "introspection")]
 pub use negotiate::{ConversionCost, ConvertIntent, FormatOption, LossBucket, Provenance};
+pub use plan::{
+    AllocationRequirements, ByteBound, CandidateTarget, ConversionSpec, ConvertPlan, PlanError,
+    PrepareError, SelectedConversion, WorkExtent,
+};
+#[cfg(feature = "introspection")]
+pub use route::{AccuracyContract, KernelTier, PlannedStepInfo};
 
 // Re-export extension traits.
 #[cfg(feature = "rgb")]
@@ -511,7 +443,9 @@ pub use gamut::GamutMatrix;
 pub use load_bearing::{LoadBearingReport, PixelBufferLoadBearingExt, PixelSliceLoadBearingExt};
 
 // Re-export CMS traits, enums, and implementations.
-pub use cms::{CmsPluginError, PluggableCms, RowTransform, RowTransformMut};
+pub use cms::{
+    CmsPluginError, CmsRequest, CmsSupport, PluggableCms, RowTransform, RowTransformMut,
+};
 // TODO: pub use cms_lite::ZenCmsLite once benchmarked on aarch64.
 #[cfg(feature = "cms-lcms")]
 pub use cms_lcms::Lcms;
@@ -519,8 +453,8 @@ pub use cms_lcms::Lcms;
 pub use cms_moxcms::MoxCms;
 
 // Re-export output types.
-pub use output::OutputPlan;
 pub use output::{EncodeReady, OutputMetadata, OutputProfile};
+pub use output::{OutputPlan, OutputTarget};
 
 #[cfg(test)]
 mod kernel_tests;

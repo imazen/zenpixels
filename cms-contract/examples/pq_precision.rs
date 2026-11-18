@@ -240,7 +240,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ColorProfileSource::Icc(&dest),
                     fmt,
                     PixelFormat::RgbF32,
-                    &ConvertOptions::permissive().with_clip_out_of_gamut(false),
+                    &ConvertOptions::retain_channels()
+                        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+                        .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended),
                 );
                 let Some(Ok(mut transform)) = result else {
                     println!("{kind}\t{variant}\t{engine}\tunsupported");
@@ -273,3 +277,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
+
+#[path = "../../zenpixels-convert/tests/support/cms.rs"]
+mod test_cms;
+#[allow(unused_imports)]
+use test_cms::TestCmsExt as _;

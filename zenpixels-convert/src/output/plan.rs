@@ -1,9 +1,8 @@
 //! Prepared color conversion and its matching output signaling.
 use super::{OutputMetadata, OutputProfile};
 use crate::{
-    Cicp, ColorContext, ColorOrigin, ColorPrimaries, ColorProfile, ConvertError, ConvertOptions,
-    PixelDescriptor, PixelEncoding, PixelFormat, PixelSlice, PixelSliceMut, RowConverter,
-    TransferFunction,
+    Cicp, ColorContext, ColorOrigin, ColorPrimaries, ColorProfile, ConvertError, PixelDescriptor,
+    PixelEncoding, PixelFormat, PixelSlice, PixelSliceMut, RowConverter, TransferFunction,
 };
 use alloc::sync::Arc;
 use whereat::At;
@@ -23,13 +22,14 @@ use whereat::At;
 ///
 /// ```
 /// use zenpixels_convert::{ColorOrigin, OutputPlan, OutputProfile,
-///     Cicp, PixelDescriptor, PixelSlice, PixelSliceMut};
+///     Cicp, ConversionSpec, OutputTarget, PixelDescriptor, PixelSlice, PixelSliceMut};
 /// let descriptor = PixelDescriptor::RGB8_SRGB;
-/// let mut plan = OutputPlan::new_preserving_samples(
+/// let origin = ColorOrigin::assumed();
+/// let mut plan = OutputPlan::build(
 ///     descriptor.encoding(),
-///     &ColorOrigin::assumed(),
-///     OutputProfile::Named(Cicp::SRGB),
-///     descriptor,
+///     OutputTarget::new(OutputProfile::Named(Cicp::SRGB), descriptor.pixel_format())
+///         .with_origin(&origin),
+///     &ConversionSpec::preserve_samples(),
 /// )?;
 /// plan.prepare(2)?;
 /// // The adapter can validate plan.metadata() against its encoder now, and
@@ -53,14 +53,43 @@ pub struct OutputPlan {
     converter: Option<RowConverter>,
     prepared_width: Option<u32>,
 }
-enum PlanPolicy<'a> {
-    Convert(&'a ConvertOptions, Option<&'a dyn crate::cms::PluggableCms>),
-    PreserveSamples,
+/// Target signaling and packed carrier for an output plan.
+#[derive(Clone, Debug)]
+pub struct OutputTarget<'a> {
+    profile: OutputProfile,
+    layout: TargetLayout,
+    origin: Option<&'a ColorOrigin>,
 }
+
+#[derive(Clone, Copy, Debug)]
 enum TargetLayout {
     Format(PixelFormat),
     Required(PixelDescriptor),
 }
+
+impl<'a> OutputTarget<'a> {
+    /// Choose a carrier, using the selected profile to complete its descriptor.
+    pub fn new(profile: OutputProfile, format: PixelFormat) -> Self {
+        Self {
+            profile,
+            layout: TargetLayout::Format(format),
+            origin: None,
+        }
+    }
+
+    /// Require the exact descriptor, including its alpha association.
+    pub fn with_descriptor(mut self, descriptor: PixelDescriptor) -> Self {
+        self.layout = TargetLayout::Required(descriptor);
+        self
+    }
+
+    /// Supply the original profile for [OutputProfile::SameAsOrigin].
+    pub fn with_origin(mut self, origin: &'a ColorOrigin) -> Self {
+        self.origin = Some(origin);
+        self
+    }
+}
+
 impl core::fmt::Debug for OutputPlan {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("OutputPlan")
@@ -71,108 +100,39 @@ impl core::fmt::Debug for OutputPlan {
     }
 }
 impl OutputPlan {
-    /// Prepare profiles, matching output signaling and an actual transform.
-    /// No image or row buffer is required. CMS construction can allocate its
-    /// own state; this does not establish a whole-operation memory bound.
-    pub fn new(
+    /// Plan a conversion and derive matching encoder signaling.
+    pub fn build(
         source: PixelEncoding<'_>,
-        origin: &ColorOrigin,
-        target: OutputProfile,
-        pixel_format: PixelFormat,
-        options: &ConvertOptions,
-        cms: Option<&dyn crate::cms::PluggableCms>,
+        target: OutputTarget<'_>,
+        spec: &crate::ConversionSpec<'_>,
     ) -> Result<Self, At<ConvertError>> {
-        Self::build(
-            source,
+        let OutputTarget {
+            profile: target,
+            layout,
             origin,
-            target,
-            TargetLayout::Format(pixel_format),
-            PlanPolicy::Convert(options, cms),
-        )
-    }
-
-    /// Prepare conversion to an exact output descriptor and selected profile.
-    ///
-    /// This retains an explicitly requested alpha association instead of using
-    /// the pixel format's straight-alpha default. The descriptor's transfer,
-    /// primaries and signal range must agree with the selected profile; a
-    /// conflict returns [`ConvertError::OutputInterpretationMismatch`] before
-    /// invoking a CMS. Opaque ICC profiles require unknown primaries/transfer
-    /// when this crate cannot resolve them. They can still pass through exactly
-    /// under the same current profile, including premultiplied sample bits.
-    ///
-    /// Descriptor acceptance does not add numerical conversion support. Existing
-    /// alpha, depth, range and HDR requirements still return their typed refusal.
-    /// [`Self::new`] remains the format-only convenience, including its existing
-    /// default alpha association. Both constructors use the same execution path.
-    pub fn new_with_descriptor(
-        source: PixelEncoding<'_>,
-        origin: &ColorOrigin,
-        target: OutputProfile,
-        output: PixelDescriptor,
-        options: &ConvertOptions,
-        cms: Option<&dyn crate::cms::PluggableCms>,
-    ) -> Result<Self, At<ConvertError>> {
-        Self::build(
-            source,
-            origin,
-            target,
-            TargetLayout::Required(output),
-            PlanPolicy::Convert(options, cms),
-        )
-    }
-
-    /// Require a reversible representation change without color arithmetic.
-    ///
-    /// The current and requested profiles must match; equal compact color tags
-    /// do not make different ICC bytes interchangeable. Exact identity,
-    /// supported channel reorder/expansion and U8-to-U16 widening are accepted.
-    /// Alpha reassociation, transfer/gamut changes, quantization and sample
-    /// removal are refused before execution. No CMS is consulted.
-    ///
-    /// This preserves represented samples, not encoded file bytes or descriptive
-    /// metadata. It does not infer exactness from the source's provenance.
-    pub fn new_preserving_samples(
-        source: PixelEncoding<'_>,
-        origin: &ColorOrigin,
-        target: OutputProfile,
-        output: PixelDescriptor,
-    ) -> Result<Self, At<ConvertError>> {
-        Self::build(
-            source,
-            origin,
-            target,
-            TargetLayout::Required(output),
-            PlanPolicy::PreserveSamples,
-        )
-    }
-
-    fn build(
-        source: PixelEncoding<'_>,
-        origin: &ColorOrigin,
-        target: OutputProfile,
-        layout: TargetLayout,
-        policy: PlanPolicy<'_>,
-    ) -> Result<Self, At<ConvertError>> {
+        } = target;
         let source_desc = source.descriptor();
         let current = source.color_context();
-        let exact = matches!(policy, PlanPolicy::PreserveSamples);
-        let conservative = ConvertOptions::retain_channels();
-        let (options, cms) = match policy {
-            PlanPolicy::Convert(options, cms) => (options, cms),
-            PlanPolicy::PreserveSamples => (&conservative, None),
-        };
-        let resolved_options = crate::interpretation::resolve_options(current, options);
-        let options = &resolved_options;
+        let options = spec.options();
         let source_profile = super::current_profile_for(source)?;
         let target_profile = match &target {
-            OutputProfile::SameAsOrigin => {
-                super::origin_profile(origin).unwrap_or_else(|| source_profile.clone())
-            }
+            OutputProfile::SameAsOrigin => origin
+                .and_then(super::origin_profile)
+                .unwrap_or_else(|| source_profile.clone()),
             OutputProfile::Named(cicp) => crate::ColorProfileSource::Cicp(*cicp),
             OutputProfile::Icc(icc) => crate::ColorProfileSource::Icc(icc),
             OutputProfile::Parametric(p) => crate::ColorProfileSource::Parametric(*p),
         };
+        if matches!(layout, TargetLayout::Format(_))
+            && source_desc.alpha() == Some(crate::AlphaMode::Premultiplied)
+            && matches!(source_profile, crate::ColorProfileSource::Icc(_))
+            && super::profiles_match(&source_profile, &target_profile)
+        {
+            return Err(whereat::at!(ConvertError::NeedsCms {
+                from: source_desc,
+                to: source_desc.with_alpha(Some(crate::AlphaMode::Straight)),
+            }));
+        }
         let pixel_format = match layout {
             TargetLayout::Format(format) => format,
             TargetLayout::Required(descriptor) => descriptor.pixel_format(),
@@ -197,8 +157,8 @@ impl OutputPlan {
         crate::convert::validate_descriptors(source_desc, target_desc_full)?;
         // The opaque-profile CMS path cannot delegate required sample policy
         // to a plugin: a plugin may accept a transform while ignoring options.
-        if crate::negotiate::channel_bits(source_desc.channel_type())
-            > crate::negotiate::channel_bits(target_desc_full.channel_type())
+        if crate::route::channel_bits(source_desc.channel_type())
+            > crate::route::channel_bits(target_desc_full.channel_type())
             && options.depth_policy() == crate::DepthPolicy::Forbid
         {
             return Err(whereat::at!(ConvertError::DepthReductionForbidden));
@@ -213,8 +173,7 @@ impl OutputPlan {
                 icc: Some(match &target {
                     OutputProfile::Icc(bytes) => Arc::clone(bytes),
                     OutputProfile::SameAsOrigin => origin
-                        .icc
-                        .clone()
+                        .and_then(|origin| origin.icc.clone())
                         .or_else(|| current.and_then(|c| c.icc_arc().cloned()))
                         .unwrap_or_else(|| Arc::from(*icc)),
                     _ => Arc::from(*icc),
@@ -273,107 +232,21 @@ impl OutputPlan {
         } else {
             metadata.cicp.map(ColorProfile::Cicp)
         };
-        let context = crate::interpretation::output_context_value(
-            source_desc,
-            target_desc_full,
-            current,
-            options,
-            false,
+        let target_context = ColorContext::default().with_profile(profile);
+        let compiled = crate::ConvertPlan::build(
+            source,
+            PixelEncoding::new(target_desc_full, Some(&target_context)),
+            spec,
         )
-        .unwrap_or_default()
-        .with_profile(profile);
-        let context = Arc::new(context);
-
-        // A decoder may carry an authoritative ICC or parametric header while
-        // leaving the compact descriptor's primaries/transfer unknown (native
-        // TIFF and custom-header codecs do this). Completing only those unknown
-        // fields from that exact profile does not change sample coordinates. Do
-        // not send same-profile samples through a CMS round trip, which can
-        // change even U8 values by one bit. Known descriptor fields, range,
-        // alpha and storage are never replaced. Distinct ICC bytes still
-        // require conversion even if they resolve to the same compact descriptor.
-        let mut described_source = source_desc;
-        if matches!(
-            source_profile,
-            crate::ColorProfileSource::Icc(_) | crate::ColorProfileSource::Parametric(_)
-        ) && let Some((primaries, transfer)) = source_profile.resolve()
-        {
-            if described_source.primaries == ColorPrimaries::Unknown {
-                described_source.primaries = primaries;
-            }
-            if described_source.transfer == TransferFunction::Unknown {
-                described_source.transfer = transfer;
-            }
-        }
-        let identity = source_desc.layout_compatible(target_desc_full)
-            && super::descriptors_match(&described_source, &target_desc_full)
-            && super::profiles_match(&source_profile, &target_profile);
-        // Adding opaque alpha changes storage, not the color coordinates. An
-        // unchanged opaque ICC does not require a CMS round trip for this.
-        // Keep this shortcut narrower than general same-profile conversion:
-        // alpha removal/compositing, depth and color-model changes still use
-        // their existing policy and backend paths.
-        let alpha_addition = super::profiles_match(&source_profile, &target_profile)
-            && source_desc.channel_type() == target_desc_full.channel_type()
-            && source_desc.transfer == target_desc_full.transfer
-            && source_desc.primaries == target_desc_full.primaries
-            && source_desc.signal_range == target_desc_full.signal_range
-            && source_desc.alpha().is_none()
-            && target_desc_full.alpha() == Some(crate::AlphaMode::Straight)
-            && matches!(
-                (source_desc.layout(), target_desc_full.layout()),
-                (crate::ChannelLayout::Rgb, crate::ChannelLayout::Rgba)
-                    | (crate::ChannelLayout::Gray, crate::ChannelLayout::GrayAlpha)
-            );
-        let converter = if exact {
-            if !super::profiles_match(&source_profile, &target_profile) {
-                return Err(whereat::at!(ConvertError::NoPath {
-                    from: source_desc,
-                    to: target_desc_full,
-                }));
-            }
-            if identity {
-                None
-            } else {
-                Some(RowConverter::from_plan(
-                    crate::ConvertPlan::new_preserving_samples(described_source, target_desc_full)?,
-                ))
-            }
-        } else if identity {
-            None
-        } else if alpha_addition {
-            Some(crate::RowConverter::new_explicit(
-                source_desc,
-                target_desc_full,
-                options,
-            )?)
-        } else {
-            let needs_profiles = matches!(
-                source_profile,
-                crate::ColorProfileSource::Icc(_) | crate::ColorProfileSource::Parametric(_)
-            ) || matches!(
-                target_profile,
-                crate::ColorProfileSource::Icc(_) | crate::ColorProfileSource::Parametric(_)
-            );
-            let converter = if needs_profiles {
-                crate::RowConverter::new_with_sources(
-                    source_desc,
-                    target_desc_full,
-                    source_profile,
-                    target_profile,
-                    options,
-                    cms,
-                )?
-            } else {
-                crate::RowConverter::new_explicit_with_cms(
-                    source_desc,
-                    target_desc_full,
-                    options,
-                    cms,
-                )?
-            };
-            Some(converter)
-        };
+        .map_err(|e| e.map_error(|error| error.into_conversion(source_desc, target_desc_full)))?;
+        let context = Arc::new(
+            compiled
+                .output_encoding()
+                .color_context()
+                .cloned()
+                .unwrap_or_default(),
+        );
+        let converter = (!compiled.is_identity()).then(|| compiled.into_worker());
         Ok(Self {
             source: source_desc,
             current: current.cloned(),

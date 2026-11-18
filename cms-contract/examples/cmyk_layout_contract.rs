@@ -32,7 +32,11 @@ fn main() -> Result<(), Error> {
     std::fs::create_dir(&output)?;
     const WIDTH: usize = 257;
     const ROWS: usize = 2;
-    let options = ConvertOptions::permissive().with_clip_out_of_gamut(false);
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended);
     for (name, backend) in [("lcms", &Lcms as &dyn PluggableCms), ("mox", &MoxCms)] {
         for (from, rgb, rgba, size, kind, inverted) in [
             (F::CMYK8, F::Rgb8, F::Rgba8, 1, "u8", false),
@@ -175,3 +179,8 @@ fn main() -> Result<(), Error> {
     }
     Ok(())
 }
+
+#[path = "../../zenpixels-convert/tests/support/cms.rs"]
+mod test_cms;
+#[allow(unused_imports)]
+use test_cms::TestCmsExt as _;

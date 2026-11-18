@@ -1,5 +1,5 @@
 use zenpixels::*;
-use zenpixels_convert::{ConvertOptions, EncodeReady, OutputPlan, OutputProfile};
+use zenpixels_convert::{ConvertOptions, OutputProfile};
 
 #[test]
 fn borrowed_encoder_rows_avoid_pixel_allocation_and_match_owned_finalization() {
@@ -15,7 +15,7 @@ fn borrowed_encoder_rows_avoid_pixel_allocation_and_match_owned_finalization() {
         .unwrap();
         let origin = ColorOrigin::assumed();
         let target = OutputProfile::Named(Cicp::SRGB);
-        let plan = OutputPlan::new(
+        let plan = crate::test_conversion::output_plan(
             buffer.encoding(),
             &origin,
             target.clone(),
@@ -38,7 +38,14 @@ fn borrowed_encoder_rows_avoid_pixel_allocation_and_match_owned_finalization() {
         let mut owned = None;
         let info = allocation_counter::measure(|| {
             owned = Some(
-                EncodeReady::finalize(&buffer, &origin, target, PixelFormat::Rgb8, None).unwrap(),
+                crate::test_conversion::copy_output(
+                    &buffer,
+                    &origin,
+                    target,
+                    PixelFormat::Rgb8,
+                    None,
+                )
+                .unwrap(),
             );
         });
         assert!(info.bytes_total >= 12);
@@ -55,3 +62,6 @@ fn borrowed_encoder_rows_avoid_pixel_allocation_and_match_owned_finalization() {
         }
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

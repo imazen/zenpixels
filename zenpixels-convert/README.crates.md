@@ -12,11 +12,11 @@ bytes and try actual conversion routes.
 
 ## Install
 
-These examples follow the **unpublished 0.3.1 candidate**. The
+These examples follow the **unpublished 0.4.0 candidate**. The
 [published reference](https://docs.rs/zenpixels-convert) may describe an earlier API.
 
 ```toml
-zenpixels-convert = "0.3.1"
+zenpixels-convert = "0.4.0"
 ```
 
 ## Quick start
@@ -46,17 +46,17 @@ Build the converter once. `prepare` reserves built-in scratch and initializes
 selected tables before the loop. Rows may come from a crop or padded storage:
 
 ```rust
-use zenpixels_convert::{ConvertOptions, PixelBuffer, PixelDescriptor, RowConverter};
+use zenpixels_convert::{ConversionSpec, ConvertOptions, ConvertPlan, GamutPolicy, PixelBuffer, PixelDescriptor};
 
 let source = PixelBuffer::from_vec(
     vec![64, 128, 192, 255, 0, 0], 2, 1, PixelDescriptor::RGB8_SRGB,
 )?;
 let mut output = PixelBuffer::try_new(2, 1, PixelDescriptor::RGBF32_LINEAR)?;
-let options = ConvertOptions::retain_channels().with_clip_out_of_gamut(false);
-let mut converter = RowConverter::new_explicit(
-    source.descriptor(), output.descriptor(), &options,
+let options = ConvertOptions::retain_channels().with_gamut_policy(GamutPolicy::PreserveExtended);
+let plan = ConvertPlan::build(
+    source.encoding(), output.encoding(), &ConversionSpec::new(options),
 )?;
-converter.prepare(source.width())?;
+let mut converter = plan.prepare(source.width())?;
 
 for y in 0..source.height() {
     converter.try_convert_row(
@@ -75,33 +75,34 @@ Use `try_clone()` for a fallible independent converter worker.
 
 ## Choose what may change
 
-- `RowConverter::new` keeps legacy permissive defaults, including unchecked
-  alpha discard. Naming a target is not a general lossless guarantee.
-- `ConvertOptions::retain_channels()` forbids alpha/depth loss, but defaults
-  to gamut clipping. Add `.with_clip_out_of_gamut(false)` for extended floats.
-- Use explicit alpha/depth/luma policies when requesting lossy operations.
-  RGB-to-gray requires chosen luma coefficients.
-- `ConvertPlan::new_preserving_samples` accepts proven representation changes
-  or refuses. It does not infer preservation from original source depth.
-- `compose` may remove incidental intermediate quantization;
-  `compose_preserving` retains intentional stage boundaries.
+- Choose alpha, depth, luma and gamut policies on `ConvertOptions`.
+  `retain_channels()` forbids alpha and depth loss and selects gamut clipping.
+- `ConversionSpec::preserve_samples()` admits proven reversible representation
+  changes. Provide source interpretation for unknown transfer or request a
+  relabel when you know the actual interpretation.
+- `ConvertPlan::select` returns a candidate index and an executable plan.
+  `ConvertPlan::then` preserves the samples and interpretation at a materialized
+  boundary, including intermediate quantization.
 
 ## Keep encoder metadata with the result
 
-`EncodeReady::finalize` creates independent owned output and its matching color
-metadata together:
+`EncodeReady::from_owned` reuses the source allocation for identity output and
+publishes matching color metadata. Use `copy_from` to create independent output
+from borrowed pixels.
 
 ```rust
 use zenpixels_convert::{
-    Cicp, ColorOrigin, EncodeReady, OutputProfile,
+    Cicp, ConversionSpec, EncodeReady, OutputPlan, OutputProfile, OutputTarget,
     PixelBuffer, PixelDescriptor, PixelFormat,
 };
 
 let source = PixelBuffer::from_vec(vec![64, 128, 192], 1, 1, PixelDescriptor::RGB8_SRGB)?;
-let ready = EncodeReady::finalize(
-    &source, &ColorOrigin::assumed(), OutputProfile::Named(Cicp::SRGB),
-    PixelFormat::Rgb16, None,
+let plan = OutputPlan::build(
+    source.encoding(),
+    OutputTarget::new(OutputProfile::Named(Cicp::SRGB), PixelFormat::Rgb16),
+    &ConversionSpec::preserve_samples(),
 )?;
+let ready = EncodeReady::from_owned(source, plan)?;
 assert_eq!(ready.pixels().descriptor().pixel_format(), PixelFormat::Rgb16);
 assert_eq!(ready.metadata().cicp, Some(Cicp::SRGB));
 # Ok::<(), Box<dyn std::error::Error>>(())
@@ -145,6 +146,7 @@ storage does not grant numerical conversion support.
 | `planar` | Planar YCbCr conversion, N-bit code extraction, and plane orientation |
 | `cms-moxcms`, `cms-lcms` | Explicitly selected CMS implementations |
 | `rgb`, `imgref` | Core typed-pixel and imgref interop |
+| `introspection` | Opt-in compiled step, accuracy and dispatch diagnostics |
 | `avx512` | Opt-in wider row-kernel tiers |
 | `hdr-experimental`, `bt2446a` | HDR measurement/rendering and BT.2446A |
 

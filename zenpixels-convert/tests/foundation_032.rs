@@ -1,5 +1,5 @@
 //! End-to-end tests for the 0.3.2 `zenpixels-convert` additions:
-//! - Item 2.1: Parametric HDR (`Pq` / `Hlg`) + CMS (`RowConverter::new_with_encoding`,
+//! - Item 2.1: Parametric HDR (`Pq` / `Hlg`) + CMS (`crate::test_conversion::encoded_worker`,
 //!   `OutputPlan`, `MoxCms`, `Lcms`) and honest missing-anchor errors.
 //! - Item 2.2: `CodeMap` `U32` (`1..=32` bits) + signed two's-complement `I8`/`I16`/`I32`,
 //!   plus `codes::to_canonical` layout parity (`Bgr`, `Bgra`, `Rgbx`, `Bgrx`, `Cmyk*`, `CmykAlpha*`).
@@ -13,7 +13,7 @@ use zenpixels::{
     sample::SampleEncoding,
 };
 use zenpixels_convert::{
-    ConvertError, OutputPlan, OutputProfile, RowConverter,
+    ConvertError, OutputProfile,
     codes::{CodeMap, CodeMapError, CodeRole},
 };
 
@@ -350,28 +350,53 @@ fn parametric_hdr_honest_errors_and_cms_free_resolved_paths() {
     let lin_enc = PixelEncoding::new(PixelDescriptor::RGBF32_LINEAR, Some(&lin_ctx));
 
     // 1. Missing HLG rendering returns HlgRenderingRequired (NOT NeedsCms!).
-    let err =
-        RowConverter::new_with_encoding(hlg_enc, lin_enc, &ConvertOptions::permissive(), None)
-            .unwrap_err();
+    let err = crate::test_conversion::encoded_worker(
+        hlg_enc,
+        lin_enc,
+        &ConvertOptions::retain_channels()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
+        None,
+    )
+    .unwrap_err();
     assert_eq!(err.error(), &ConvertError::HlgRenderingRequired);
 
     // 2. Missing SDR white returns SdrWhiteRequired (NOT NeedsCms!).
-    let err = RowConverter::new_with_encoding(pq_enc, lin_enc, &ConvertOptions::permissive(), None)
-        .unwrap_err();
+    let err = crate::test_conversion::encoded_worker(
+        pq_enc,
+        lin_enc,
+        &ConvertOptions::retain_channels()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
+        None,
+    )
+    .unwrap_err();
     assert_eq!(err.error(), &ConvertError::SdrWhiteRequired);
 
     // 3. Missing HDR peak on PQ -> sRGB returns HdrPeakRequired (NOT NeedsCms!).
-    let err =
-        RowConverter::new_with_encoding(pq_enc, srgb_enc, &ConvertOptions::permissive(), None)
-            .unwrap_err();
+    let err = crate::test_conversion::encoded_worker(
+        pq_enc,
+        srgb_enc,
+        &ConvertOptions::retain_channels()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
+        None,
+    )
+    .unwrap_err();
     assert_eq!(err.error(), &ConvertError::HdrPeakRequired);
 
     // 4. With explicit anchors, Parametric BT2100_HLG -> Parametric LINEAR_SRGB runs natively without CMS!
-    let opts = ConvertOptions::permissive()
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
         .with_hlg_rendering(HlgRendering::REFERENCE_1000_NIT)
         .with_sdr_white(DiffuseWhite::BT2408)
-        .with_clip_out_of_gamut(false);
-    let mut plan = OutputPlan::new(
+        .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended);
+    let mut plan = crate::test_conversion::output_plan(
         hlg_enc,
         &ColorOrigin::from_parametric(bt2100_hlg),
         OutputProfile::Parametric(lin_srgb),
@@ -419,10 +444,13 @@ fn moxcms_and_lcms_handle_parametric_hlg_and_hdr_icc_pivots() {
         WhitePoint::D65,
         ParametricTransfer::Hlg,
     );
-    let opts = ConvertOptions::permissive()
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
         .with_hlg_rendering(HlgRendering::REFERENCE_1000_NIT)
         .with_sdr_white(DiffuseWhite::BT2408)
-        .with_clip_out_of_gamut(false);
+        .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended);
 
     // Both MoxCms and Lcms accept ParametricTransfer::Hlg when HlgRendering + sdr_white are set,
     // and decline (`None`) when omitted.
@@ -433,7 +461,10 @@ fn moxcms_and_lcms_handle_parametric_hlg_and_hdr_icc_pivots() {
                 zenpixels::ColorProfileSource::Parametric(ParametricColor::ACES_CG),
                 PixelFormat::RgbF32,
                 PixelFormat::RgbF32,
-                &ConvertOptions::permissive(),
+                &ConvertOptions::retain_channels()
+                    .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                    .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                    .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
             )
             .is_none()
         );
@@ -487,14 +518,14 @@ fn moxcms_and_lcms_handle_parametric_hlg_and_hdr_icc_pivots() {
         );
     }
 
-    // Also verify RowConverter::new_with_encoding on custom-primaries HLG <-> ProPhoto RGB ICC/Parametric!
+    // Also verify crate::test_conversion::encoded_worker on custom-primaries HLG <-> ProPhoto RGB ICC/Parametric!
     let custom_ctx = ColorContext::from_parametric(custom_hlg);
     let acescg_ctx = ColorContext::from_parametric(ParametricColor::ACES_CG);
     let unknown_rgb = PixelFormat::RgbF32
         .descriptor()
         .with_primaries(zenpixels::ColorPrimaries::Unknown)
         .with_transfer(zenpixels::TransferFunction::Unknown);
-    let mut conv = RowConverter::new_with_encoding(
+    let mut conv = crate::test_conversion::encoded_worker(
         PixelEncoding::new(unknown_rgb, Some(&custom_ctx)),
         PixelEncoding::new(unknown_rgb, Some(&acescg_ctx)),
         &opts,
@@ -528,7 +559,7 @@ fn moxcms_and_lcms_handle_parametric_hlg_and_hdr_icc_pivots() {
             ParametricColor::from_cicp(zenpixels::Cicp::BT2100_PQ_RGB).unwrap(),
         );
         let dci_ctx = ColorContext::from_parametric(ParametricColor::DCI_P3);
-        let mut tm_conv = RowConverter::new_with_encoding(
+        let mut tm_conv = crate::test_conversion::encoded_worker(
             PixelEncoding::new(PixelDescriptor::RGB16_BT2100_PQ, Some(&pq_ctx)),
             PixelEncoding::new(
                 PixelDescriptor::RGB8.with_primaries(zenpixels::ColorPrimaries::Unknown),
@@ -546,3 +577,12 @@ fn moxcms_and_lcms_handle_parametric_hlg_and_hdr_icc_pivots() {
         assert!(dst_dci8.iter().all(|&c| c > 100));
     }
 }
+
+#[allow(dead_code)]
+#[path = "support/cms.rs"]
+mod test_cms;
+#[allow(unused_imports)]
+use test_cms::TestCmsExt as _;
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

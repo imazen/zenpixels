@@ -130,7 +130,7 @@ pub use color::{
 pub use pixel_types::{F16Sample, GrayAlpha8, GrayAlpha16, GrayAlphaF16, GrayAlphaF32};
 
 pub use policy::{
-    AlphaPolicy, ConvertOptions, DepthPolicy, GamutMapping, GrayExpand, LumaCoefficients,
+    AlphaPolicy, ConvertOptions, DepthPolicy, GamutPolicy, GrayExpand, LumaCoefficients,
 };
 
 // Every fallible signature here names it.

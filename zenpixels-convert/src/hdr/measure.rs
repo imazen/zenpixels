@@ -413,6 +413,20 @@ pub trait CllMeasure: crate::sealed::Sealed {
         method: LightLevelMethod,
     ) -> Option<ContentLightLevel>;
 
+    /// Measure a banded linear RGB(A) image in the same global row order.
+    fn measure_max_banded(
+        px: &zenpixels::banded::BandedPixelBuffer,
+        white: DiffuseWhite,
+        method: LightLevelMethod,
+    ) -> Option<ContentLightLevel>;
+
+    /// Build a histogram across bands without merging rounded per-band means.
+    fn measure_histogram_banded(
+        px: &zenpixels::banded::BandedPixelBuffer,
+        white: DiffuseWhite,
+        method: LightLevelMethod,
+    ) -> Option<LightLevelHistogram>;
+
     /// **Internal / experimental.** 3×1 horizontal box-filtered max as
     /// an alternative defect-rejection strategy to percentile-based
     /// [`measure_robust`](Self::measure_robust).
@@ -519,6 +533,17 @@ pub trait CllMeasure: crate::sealed::Sealed {
     ) -> Option<LightLevelHistogram>;
 }
 
+fn measure_channels(desc: zenpixels::PixelDescriptor) -> Option<usize> {
+    if desc.transfer() != TransferFunction::Linear {
+        return None;
+    }
+    match desc.pixel_format() {
+        PixelFormat::RgbF32 => Some(3),
+        PixelFormat::RgbaF32 => Some(4),
+        _ => None,
+    }
+}
+
 impl CllMeasure for ContentLightLevel {
     fn measure_max(
         px: PixelSlice<'_>,
@@ -555,6 +580,31 @@ impl CllMeasure for ContentLightLevel {
             nits_to_u16(max_nits),
             nits_to_u16(fall_nits),
         ))
+    }
+
+    fn measure_max_banded(
+        px: &zenpixels::banded::BandedPixelBuffer,
+        white: DiffuseWhite,
+        method: LightLevelMethod,
+    ) -> Option<ContentLightLevel> {
+        let channels = measure_channels(px.encoding().descriptor())?;
+        let rows = (0..px.layout().height()).map(|y| px.row(y).expect("row in bounds"));
+        let (max_rel, sum_rel) = simd_kernel::scan_max_mean_rows(rows, channels, method);
+        let nits = f64::from(white.nits());
+        Some(ContentLightLevel::new(
+            nits_to_u16(f64::from(max_rel) * nits),
+            nits_to_u16(sum_rel / px.pixel_count() as f64 * nits),
+        ))
+    }
+
+    fn measure_histogram_banded(
+        px: &zenpixels::banded::BandedPixelBuffer,
+        white: DiffuseWhite,
+        method: LightLevelMethod,
+    ) -> Option<LightLevelHistogram> {
+        let channels = measure_channels(px.encoding().descriptor())?;
+        let rows = (0..px.layout().height()).map(|y| px.row(y).expect("row in bounds"));
+        simd_kernel::measure_histogram_rows(rows, px.pixel_count(), channels, white.nits(), method)
     }
 
     fn measure_max_smoothed(
@@ -768,12 +818,22 @@ mod simd_kernel {
         white_nits: f32,
         method: LightLevelMethod,
     ) -> Option<LightLevelHistogram> {
+        let rows = (0..h).map(|row| &bytes[row * stride..row * stride + row_len]);
+        measure_histogram_rows(rows, w as u64 * h as u64, channels, white_nits, method)
+    }
+
+    pub(super) fn measure_histogram_rows<'a>(
+        rows: impl Iterator<Item = &'a [u8]>,
+        total: u64,
+        channels: usize,
+        white_nits: f32,
+        method: LightLevelMethod,
+    ) -> Option<LightLevelHistogram> {
         let mut sub = zero_subhists()?;
         let mut sum_nits = 0.0_f64;
         let mut literal_max_nits = 0.0_f32;
 
-        for row in 0..h {
-            let row_bytes = &bytes[row * stride..row * stride + row_len];
+        for row_bytes in rows {
             let floats: &[f32] = bytemuck::cast_slice(row_bytes);
             match method {
                 LightLevelMethod::MaxRgb => {
@@ -836,7 +896,7 @@ mod simd_kernel {
 
         Some(LightLevelHistogram {
             bins,
-            total: (w as u64) * (h as u64),
+            total,
             sum_nits,
             literal_max_nits,
             method,
@@ -1109,10 +1169,18 @@ mod simd_kernel {
         row_len: usize,
         method: LightLevelMethod,
     ) -> (f32, f64) {
+        let rows = (0..h).map(|row| &bytes[row * stride..row * stride + row_len]);
+        scan_max_mean_rows(rows, channels, method)
+    }
+
+    pub(super) fn scan_max_mean_rows<'a>(
+        rows: impl Iterator<Item = &'a [u8]>,
+        channels: usize,
+        method: LightLevelMethod,
+    ) -> (f32, f64) {
         let mut max_rel = 0.0_f32;
         let mut sum_rel = 0.0_f64;
-        for row in 0..h {
-            let row_bytes = &bytes[row * stride..row * stride + row_len];
+        for row_bytes in rows {
             let floats: &[f32] = bytemuck::cast_slice(row_bytes);
             let (rm, rs) = match method {
                 LightLevelMethod::MaxRgb => {

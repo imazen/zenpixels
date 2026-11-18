@@ -360,11 +360,6 @@ impl HlgCmsWorker {
 
 #[cfg(any(feature = "cms-moxcms", feature = "cms-lcms"))]
 impl crate::cms::RowTransformMut for HlgCmsWorker {
-    fn transform_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
-        self.try_transform_row(src, dst, width)
-            .expect("HLG CMS row transform failed");
-    }
-
     fn prepare(&mut self, max_width: u32) -> Result<(), At<crate::cms::CmsPluginError>> {
         self.prepared_width = None;
         self.ensure_scratch(max_width)?;
@@ -437,7 +432,7 @@ impl crate::cms::RowTransformMut for HlgCmsWorker {
                 layout,
                 prep,
             );
-            self.scratch_a[..in_len].copy_from_slice(&self.scratch_b[..in_len]);
+            core::mem::swap(&mut self.scratch_a, &mut self.scratch_b);
         }
 
         // 3. Optional HDR->SDR BT.2446-A tone-map stage (in F32).
@@ -448,7 +443,7 @@ impl crate::cms::RowTransformMut for HlgCmsWorker {
                 width,
             )
             .map_err(|e| whereat::at!(crate::cms::CmsPluginError::new(e)))?;
-            self.scratch_a[..in_len].copy_from_slice(&self.scratch_b[..in_len]);
+            core::mem::swap(&mut self.scratch_a, &mut self.scratch_b);
         }
 
         // 4. Linear / SDR CMS stage: scratch_a[..in_len] -> scratch_b[..out_len].
@@ -492,7 +487,7 @@ impl crate::cms::RowTransformMut for HlgCmsWorker {
                 prep,
             );
         } else {
-            self.scratch_a[..out_len].copy_from_slice(&self.scratch_b[..out_len]);
+            core::mem::swap(&mut self.scratch_a, &mut self.scratch_b);
         }
 
         // 6. Narrow F32 in scratch_a[..out_len] to dst[..dst_bytes].
@@ -651,20 +646,20 @@ pub(crate) fn build_cms_hlg_transform(
                     .with_transfer(crate::TransferFunction::Linear);
                 let pq_desc = lin_desc.with_transfer(crate::TransferFunction::Pq);
                 let sdr_desc = lin_desc.with_transfer(crate::TransferFunction::Bt709);
-                let to_pq = match crate::ConvertPlan::new_explicit(
+                let to_pq = match crate::NativePlan::new_explicit(
                     lin_desc,
                     pq_desc,
-                    &options.with_clip_out_of_gamut(false),
+                    &options.with_gamut_policy(crate::GamutPolicy::PreserveExtended),
                 ) {
                     Ok(p) => p,
                     Err(e) => {
                         return Some(Err(e.map_error(crate::cms::CmsPluginError::new)));
                     }
                 };
-                let to_sdr = match crate::ConvertPlan::new_explicit(
+                let to_sdr = match crate::NativePlan::new_explicit(
                     pq_desc,
                     sdr_desc,
-                    &options.with_clip_out_of_gamut(false),
+                    &options.with_gamut_policy(crate::GamutPolicy::PreserveExtended),
                 ) {
                     Ok(p) => p,
                     Err(e) => {
@@ -679,12 +674,13 @@ pub(crate) fn build_cms_hlg_transform(
                 // If custom primaries != BT.2020, adapt custom linear -> BT.2020 linear first!
                 if src_lin_param.to_cicp() != Some(bt2020_lin_cicp) {
                     // Build a two-step CMS: src_lin_param -> bt2020_lin, then tone-map, then bt2020_sdr -> dst.
-                    let to_bt2020 = cms.build_source_transform(
+                    let to_bt2020 = crate::cms::build_owned(
+                        cms,
                         ColorProfileSource::Parametric(src_lin_param),
                         ColorProfileSource::Cicp(bt2020_lin_cicp),
                         src_f32_fmt,
                         src_f32_fmt,
-                        &options.with_clip_out_of_gamut(false),
+                        &options.with_gamut_policy(crate::GamutPolicy::PreserveExtended),
                     )?;
                     let mut pre_cms = match to_bt2020 {
                         Ok(t) => t,
@@ -696,7 +692,8 @@ pub(crate) fn build_cms_hlg_transform(
                     ) {
                         None
                     } else {
-                        match cms.build_source_transform(
+                        match crate::cms::build_owned(
+                            cms,
                             ColorProfileSource::Cicp(bt2020_sdr_cicp),
                             dst,
                             src_f32_fmt,
@@ -717,9 +714,6 @@ pub(crate) fn build_cms_hlg_transform(
                         ch: usize,
                     }
                     impl crate::cms::RowTransformMut for CustomHlgToSdr {
-                        fn transform_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
-                            self.try_transform_row(src, dst, width).unwrap();
-                        }
                         fn prepare(
                             &mut self,
                             max_width: u32,
@@ -837,7 +831,8 @@ pub(crate) fn build_cms_hlg_transform(
         } else {
             white.nits()
         };
-        let clip = options.clip_out_of_gamut() || dst_format.channel_type() != ChannelType::F32;
+        let clip = options.gamut_policy() == crate::GamutPolicy::Clip
+            || dst_format.channel_type() != ChannelType::F32;
         let prep = PreparedHlg::new_with_luma(rendering, true, eff_white, clip, luma);
         (
             Some((dst_hlg_layout, prep)),
@@ -849,7 +844,11 @@ pub(crate) fn build_cms_hlg_transform(
 
     let cms_options =
         if dst_is_hlg || (!dst_is_sdr && dst_format.channel_type() == ChannelType::F32) {
-            options.with_clip_out_of_gamut(options.clip_out_of_gamut() && !dst_is_hlg)
+            options.with_gamut_policy(if dst_is_hlg {
+                crate::GamutPolicy::PreserveExtended
+            } else {
+                options.gamut_policy()
+            })
         } else {
             *options
         };
@@ -857,7 +856,8 @@ pub(crate) fn build_cms_hlg_transform(
     let cms_stage = if crate::output::profiles_match(&cms_src, &cms_dst) {
         None
     } else {
-        match cms.build_source_transform(
+        match crate::cms::build_owned(
+            cms,
             cms_src,
             cms_dst,
             src_f32_fmt,

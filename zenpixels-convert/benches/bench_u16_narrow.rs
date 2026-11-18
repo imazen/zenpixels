@@ -19,7 +19,6 @@
 use std::time::Duration;
 use zenbench::prelude::*;
 use zenpixels::{ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
-use zenpixels_convert::RowConverter;
 
 const SIZES: &[(&str, usize)] = &[
     ("64²", 64 * 64),
@@ -83,9 +82,14 @@ fn main() {
     let exact_sat = check_exact("sat u16", sat_u16);
     let exact_bytes = check_exact("byte lanes", byte_lanes);
     let exact_garb = check_exact("garb", garb_inexact);
-    let mut shipped =
-        RowConverter::new(PixelDescriptor::GRAY16_SRGB, PixelDescriptor::GRAY8_SRGB).unwrap();
-    let exact_shipped = check_exact("shipped", |src, dst| shipped.convert_row(src, dst, 65536));
+    let mut shipped = crate::test_conversion::new_worker(
+        PixelDescriptor::GRAY16_SRGB,
+        PixelDescriptor::GRAY8_SRGB,
+    )
+    .unwrap();
+    let exact_shipped = check_exact("shipped", |src, dst| {
+        shipped.try_convert_row(src, dst, 65536).unwrap()
+    });
     assert!(
         exact_shift && exact_sat && exact_bytes && exact_shipped,
         "candidate kernels must be exact"
@@ -110,7 +114,7 @@ fn main() {
                 None,
                 TransferFunction::Linear,
             );
-            let mut conv = RowConverter::new(desc16, desc8).unwrap();
+            let mut conv = crate::test_conversion::new_worker(desc16, desc8).unwrap();
 
             let s1 = src.clone();
             let s2 = src.clone();
@@ -135,7 +139,7 @@ fn main() {
                 let mut d = vec![0u8; count];
                 g.bench("shipped", move |b| {
                     b.iter(|| {
-                        conv.convert_row(&s4, &mut d, width as u32);
+                        conv.try_convert_row(&s4, &mut d, width as u32).unwrap();
                         black_box(());
                     })
                 });
@@ -143,3 +147,6 @@ fn main() {
         }
     });
 }
+
+#[path = "../tests/support/conversion.rs"]
+mod test_conversion;

@@ -19,8 +19,8 @@ use zenpixels_convert::codes::to_canonical;
 #[cfg(feature = "planar")]
 use zenpixels_convert::ycbcr::YcbcrToRgbF32;
 use zenpixels_convert::{
-    ConvertError, ConvertOptions, OutputPlan, OutputProfile, PixelBufferConvertExt,
-    PixelBufferLoadBearingExt, PixelSliceConvertExt, PixelSliceLoadBearingExt, RowConverter,
+    ConvertError, ConvertOptions, OutputProfile, PixelBufferConvertExt, PixelBufferLoadBearingExt,
+    PixelSliceConvertExt, PixelSliceLoadBearingExt,
 };
 
 const PAD: u8 = 0xEE;
@@ -143,7 +143,10 @@ fn targets(d: D) -> Vec<D> {
 }
 
 fn options() -> ConvertOptions {
-    ConvertOptions::permissive()
+    ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
 }
 
 #[test]
@@ -241,7 +244,8 @@ fn row_converter_rows_match_packed() {
             (D::RGB8_SRGB, 3 * w as usize + 1),
             (D::RGBF32_LINEAR, 12 * w as usize + 4),
         ] {
-            let mut converter = RowConverter::new_explicit(d, target, &options()).unwrap();
+            let mut converter =
+                crate::test_conversion::explicit_worker(d, target, &options()).unwrap();
             let out_row = w as usize * target.bytes_per_pixel();
             let total = (h as usize - 1) * dst_stride + out_row;
             let mut got = vec![u32::from_ne_bytes([PAD; 4]); total.div_ceil(4)];
@@ -257,7 +261,8 @@ fn row_converter_rows_match_packed() {
                 )
                 .unwrap();
             let mut want = vec![0u32; (out_row * h as usize).div_ceil(4)];
-            let mut converter = RowConverter::new_explicit(d, target, &options()).unwrap();
+            let mut converter =
+                crate::test_conversion::explicit_worker(d, target, &options()).unwrap();
             converter
                 .convert_rows(
                     bytemuck::cast_slice(&packed),
@@ -632,7 +637,7 @@ fn output_plan_rows_match_packed() {
             ChannelType::U16 => PixelFormat::Rgba16,
             _ => PixelFormat::RgbaF32,
         };
-        let mut plan = OutputPlan::new(
+        let mut plan = crate::test_conversion::output_plan(
             source.encoding(),
             &ColorOrigin::assumed(),
             profile.clone(),
@@ -675,7 +680,7 @@ fn output_plan_rows_match_packed() {
         }
 
         // An identity plan hands the rows straight back, padding and all.
-        let plan = OutputPlan::new_with_descriptor(
+        let plan = crate::test_conversion::output_descriptor_plan(
             source.encoding(),
             &ColorOrigin::assumed(),
             profile.clone(),
@@ -874,3 +879,6 @@ mod hdr {
         }
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

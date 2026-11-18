@@ -15,7 +15,7 @@ use zenpixels::{
 /// True when `(src, dst)` is an HDR-encoded source paired with an
 /// SDR-encoded destination. Such a transition now refuses through the
 /// plain plan path (`HdrSourceRequiresPeak`); the HDR-aware constructors
-/// (`ConvertPlan::new_with_hdr_peak` etc.) accept a source-peak luminance
+/// (`NativePlan::new_with_hdr_peak` etc.) accept a source-peak luminance
 /// and emit a tone-mapped chain. The transfer-function correctness tests
 /// in this file only exercise straight TF math (no tone curve) — skip
 /// these pairs because the new semantics are intentionally lossy.
@@ -1189,16 +1189,16 @@ fn hlg_u16_f32_u16_roundtrip_wide_range() {
 
 /// PQ U16 → sRGB U8: HDR to SDR path produces reasonable output.
 ///
-/// Pre-0.2.16 the plain `ConvertPlan::new` silently routed PQ→sRGB
+/// Pre-0.2.16 the plain `NativePlan::new` silently routed PQ→sRGB
 /// through a linear intermediate with no tone-mapping (all near-peak
 /// samples saturated to 255). The new HDR-aware constructor
-/// (`ConvertPlan::new_with_hdr_peak`) inserts a BT.2446 Method A tone
+/// (`NativePlan::new_with_hdr_peak`) inserts a BT.2446 Method A tone
 /// curve — black stays black, mid-grey rises with luminance, and peak
 /// HDR maps near SDR peak.
 #[test]
 #[cfg(feature = "bt2446a")]
 fn pq_u16_to_srgb_u8_correctness() {
-    use crate::ConvertPlan;
+    use crate::NativePlan;
     let pq_u16 = PixelDescriptor::new(
         ChannelType::U16,
         ChannelLayout::Rgb,
@@ -1206,7 +1206,7 @@ fn pq_u16_to_srgb_u8_correctness() {
         TransferFunction::Pq,
     );
     let srgb_u8 = PixelDescriptor::RGB8_SRGB;
-    let plan = ConvertPlan::new_with_hdr_peak(pq_u16, srgb_u8, 1000.0).unwrap();
+    let plan = NativePlan::new_with_hdr_peak(pq_u16, srgb_u8, 1000.0).unwrap();
     let mut conv = RowConverter::from_plan(plan);
 
     // Build test data: 5 pixels at different PQ levels.
@@ -1250,7 +1250,7 @@ fn pq_u16_to_srgb_u8_correctness() {
 #[cfg(feature = "bt2446a")]
 fn hlg_u16_to_srgb_u8_requires_display_mapping() {
     let hlg = PixelDescriptor::RGB16_SRGB.with_transfer(TransferFunction::Hlg);
-    assert!(crate::ConvertPlan::new_with_hdr_peak(hlg, PixelDescriptor::RGB8_SRGB, 1000.).is_err());
+    assert!(crate::NativePlan::new_with_hdr_peak(hlg, PixelDescriptor::RGB8_SRGB, 1000.).is_err());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

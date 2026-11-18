@@ -263,7 +263,9 @@ fn white_black_preservation_all_pairs() {
 
             // White
             let mut dst = [0u8; 3];
-            xform.transform_row(&[255, 255, 255], &mut dst, 1);
+            xform
+                .try_transform_row(&[255, 255, 255], &mut dst, 1)
+                .unwrap();
             let w_err = dst
                 .iter()
                 .map(|&v| (255i32 - v as i32).abs())
@@ -276,7 +278,7 @@ fn white_black_preservation_all_pairs() {
 
             // Black
             let mut dst = [0u8; 3];
-            xform.transform_row(&[0, 0, 0], &mut dst, 1);
+            xform.try_transform_row(&[0, 0, 0], &mut dst, 1).unwrap();
             let b_err = dst.iter().map(|&v| v as i32).max().unwrap();
             if b_err > black_max_err {
                 black_max_err = b_err;
@@ -368,8 +370,8 @@ fn roundtrip_accuracy_key_pairs() {
                     let mut mid = [0u8; 3];
                     let mut back = [0u8; 3];
 
-                    forward.transform_row(&src_px, &mut mid, 1);
-                    inverse.transform_row(&mid, &mut back, 1);
+                    forward.try_transform_row(&src_px, &mut mid, 1).unwrap();
+                    inverse.try_transform_row(&mid, &mut back, 1).unwrap();
 
                     let err = (0..3)
                         .map(|c| (back[c] as i32 - src_px[c] as i32).abs())
@@ -454,20 +456,26 @@ fn format_aware_transforms_real_profiles() {
     // Test mid-gray through all three: results should be consistent
     // u8
     let mut dst_u8 = [0u8; 3];
-    xform_u8.transform_row(&[128, 128, 128], &mut dst_u8, 1);
+    xform_u8
+        .try_transform_row(&[128, 128, 128], &mut dst_u8, 1)
+        .unwrap();
 
     // u16
     let src_u16: [u16; 3] = [32768, 32768, 32768];
     let src_u16_bytes: [u8; 6] = bytemuck::cast(src_u16);
     let mut dst_u16_bytes = [0u8; 6];
-    xform_u16.transform_row(&src_u16_bytes, &mut dst_u16_bytes, 1);
+    xform_u16
+        .try_transform_row(&src_u16_bytes, &mut dst_u16_bytes, 1)
+        .unwrap();
     let dst_u16: [u16; 3] = bytemuck::cast(dst_u16_bytes);
 
     // f32
     let src_f32: [f32; 3] = [0.5020, 0.5020, 0.5020]; // ~128/255
     let src_f32_bytes: [u8; 12] = bytemuck::cast(src_f32);
     let mut dst_f32_bytes = [0u8; 12];
-    xform_f32.transform_row(&src_f32_bytes, &mut dst_f32_bytes, 1);
+    xform_f32
+        .try_transform_row(&src_f32_bytes, &mut dst_f32_bytes, 1)
+        .unwrap();
     let dst_f32: [f32; 3] = bytemuck::cast(dst_f32_bytes);
 
     eprintln!("  sRGB→AdobeRGB mid-gray:");
@@ -532,7 +540,7 @@ fn rgba_alpha_preserved_real_profiles() {
             for alpha in [0u8, 1, 42, 128, 254, 255] {
                 let src = [200, 100, 50, alpha];
                 let mut dst = [0u8; 4];
-                xform.transform_row(&src, &mut dst, 1);
+                xform.try_transform_row(&src, &mut dst, 1).unwrap();
 
                 assert_eq!(
                     dst[3], alpha,
@@ -578,13 +586,13 @@ fn multi_pixel_consistency() {
     // Individual transforms
     let mut individual = [[0u8; 3]; 4];
     for (i, px) in pixels.iter().enumerate() {
-        xform.transform_row(px, &mut individual[i], 1);
+        xform.try_transform_row(px, &mut individual[i], 1).unwrap();
     }
 
     // Row transform
     let row_src: Vec<u8> = pixels.iter().flat_map(|p| p.iter().copied()).collect();
     let mut row_dst = vec![0u8; 12];
-    xform.transform_row(&row_src, &mut row_dst, 4);
+    xform.try_transform_row(&row_src, &mut row_dst, 4).unwrap();
 
     // Compare
     for i in 0..4 {
@@ -662,7 +670,7 @@ fn near_identity_profile_pairs() {
             for b in (0..=255).step_by(5) {
                 let src = [r as u8, g as u8, b as u8];
                 let mut dst = [0u8; 3];
-                xform.transform_row(&src, &mut dst, 1);
+                xform.try_transform_row(&src, &mut dst, 1).unwrap();
 
                 let diff = (0..3)
                     .map(|c| (dst[c] as i32 - src[c] as i32).abs())

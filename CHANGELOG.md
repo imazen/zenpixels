@@ -4,6 +4,9 @@
 
 ### Added
 
+- Add bounded row-band allocations for packed and planar images with u64
+  picture geometry and band-independent sample hashes (`c4d200ff`).
+
 - Generalize planar ownership over `PlaneStorage` / `PlaneStorageMut`, preserving
   aligned, pooled and shared owners. Add recoverable planar parts transfer
   (`2ce00f93`).
@@ -29,6 +32,19 @@
   values instead of a descriptor slice, allowing allocation-free views of
   owned and writable storage. Use `plane(index)` for checked indexed access.
   Existing constructor and interpretation accessors are unchanged (`c8949ec2`).
+
+# zenpixels-convert
+
+## [Unreleased]
+
+### QUEUED BREAKING CHANGES
+
+- Compile validated encodings with `ConvertPlan::build` or `select`, prepare row
+  workers from the resulting recipe and compose with `then`.
+- Use a fallible CMS builder and row transform. Finalize through
+  `OutputPlan::build` and `EncodeReady::copy_from` or `from_owned`.
+- Choose a `GamutPolicy` and explicit permissions for unchecked alpha removal
+  and unknown transfer relabeling. Enable `introspection` for step diagnostics.
 
 # zenpsy-api
 

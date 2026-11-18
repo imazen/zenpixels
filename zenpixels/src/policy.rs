@@ -116,7 +116,9 @@ impl LumaCoefficients {
 /// rather than clipping. See `docs/gamut-mapping-survey.md`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum GamutMapping {
+pub enum GamutPolicy {
+    /// Keep extended-range floating-point values through conversion.
+    PreserveExtended,
     /// Clamp each channel. In-gamut colors are untouched and it's the fastest, but
     /// saturated colors can change hue, up to 19° for BT.2020 blue in OKLab.
     #[default]
@@ -141,10 +143,10 @@ pub enum GamutMapping {
 /// let retained = ConvertOptions::retain_channels();
 ///
 /// // Allow common lossy operations with sensible defaults
-/// let permissive = ConvertOptions::permissive();
+/// let options = ConvertOptions::retain_channels().with_depth_policy(DepthPolicy::Round);
 ///
 /// // Customize from a preset
-/// let custom = ConvertOptions::permissive()
+/// let custom = ConvertOptions::retain_channels()
 ///     .with_alpha_policy(AlphaPolicy::CompositeOnto {
 ///         background: Color::srgb8(255, 255, 255),
 ///         reference_white: None,
@@ -163,21 +165,8 @@ pub struct ConvertOptions {
     /// Luma coefficients for RGB→Gray conversion. `None` means
     /// RGB→Gray is forbidden (returns `ConvertError::RgbToGray`).
     luma: Option<LumaCoefficients>,
-    /// Whether to clamp out-of-gamut values to [0, 1] during f32 transfer
-    /// function conversions.
-    ///
-    /// - `true` (default): clamp sRGB/BT.709/PQ/HLG transfers to [0, 1].
-    ///   Matches display expectations; safe for standard workflows.
-    /// - `false`: use sign-preserving extended-range transfer functions.
-    ///   Preserves out-of-gamut (negative, > 1.0) values through the f32
-    ///   pipeline for HDR and wide-gamut workflows where tone mapping or
-    ///   gamut mapping happens later in the pipeline.
-    ///
-    /// Only affects f32 intermediate conversions. u8/u16 outputs always
-    /// clip since those formats can't represent out-of-gamut values.
-    clip_out_of_gamut: bool,
-    /// What happens to colors outside the target's gamut.
-    gamut_mapping: GamutMapping,
+    /// How to handle values outside the destination's gamut.
+    gamut_policy: GamutPolicy,
     sdr_white: Option<crate::hdr::DiffuseWhite>,
     hdr_peak: crate::hdr::HdrPeak,
     sdr_peak: Option<crate::hdr::Nits>,
@@ -192,7 +181,7 @@ impl ConvertOptions {
     /// Gray-to-RGB expansion remains permitted. Requested color and alpha
     /// association conversions may still change sample values; this is not an
     /// exactness guarantee. Float transfer clipping remains enabled, matching
-    /// the historical preset. Select `with_clip_out_of_gamut(false)` explicitly
+    /// the historical preset. Select `with_gamut_policy(GamutPolicy::PreserveExtended)` explicitly
     /// when an extended-range conversion is required.
     ///
     /// For reversible representation changes only, use
@@ -204,30 +193,7 @@ impl ConvertOptions {
             alpha_policy: AlphaPolicy::Forbid,
             depth_policy: DepthPolicy::Forbid,
             luma: None,
-            clip_out_of_gamut: true,
-            gamut_mapping: GamutMapping::Clip,
-            sdr_white: None,
-            hdr_peak: crate::hdr::HdrPeak::Measured,
-            sdr_peak: None,
-            hlg_rendering: None,
-            rendering_intent: None,
-        }
-    }
-
-    /// Allow common lossy operations with sensible defaults.
-    ///
-    /// - Alpha removal: discard only if all pixels are opaque
-    /// - Depth reduction: round to nearest
-    /// - RGB→Gray: BT.709 luma coefficients
-    /// - Gray→RGB: broadcast (lossless)
-    pub const fn permissive() -> Self {
-        Self {
-            gray_expand: GrayExpand::Broadcast,
-            alpha_policy: AlphaPolicy::DiscardIfOpaque,
-            depth_policy: DepthPolicy::Round,
-            luma: Some(LumaCoefficients::Bt709),
-            clip_out_of_gamut: true,
-            gamut_mapping: GamutMapping::Clip,
+            gamut_policy: GamutPolicy::Clip,
             sdr_white: None,
             hdr_peak: crate::hdr::HdrPeak::Measured,
             sdr_peak: None,
@@ -309,14 +275,9 @@ impl ConvertOptions {
         self.luma
     }
 
-    /// Whether `f32` transfer conversions clamp to `0..=1`. `u8` and `u16` outputs always clip.
-    pub const fn clip_out_of_gamut(&self) -> bool {
-        self.clip_out_of_gamut
-    }
-
-    /// What happens to colors outside the target's gamut.
-    pub const fn gamut_mapping(&self) -> GamutMapping {
-        self.gamut_mapping
+    /// Treatment of extended-range or out-of-gamut values.
+    pub const fn gamut_policy(&self) -> GamutPolicy {
+        self.gamut_policy
     }
 
     /// Set the alpha removal policy.
@@ -339,15 +300,10 @@ impl ConvertOptions {
 
     /// Set whether f32 transfer conversions clamp to [0, 1] (`true`, default)
     /// or preserve extended-range values via sign-preserving transfers
-    /// (`false`). u8/u16 outputs always clip.
-    pub const fn with_clip_out_of_gamut(mut self, clip: bool) -> Self {
-        self.clip_out_of_gamut = clip;
-        self
-    }
-
-    /// Set what happens to colors outside the target's gamut.
-    pub const fn with_gamut_mapping(mut self, mapping: GamutMapping) -> Self {
-        self.gamut_mapping = mapping;
+    /// Choose how to handle extended-range or out-of-gamut values.
+    #[must_use]
+    pub const fn with_gamut_policy(mut self, policy: GamutPolicy) -> Self {
+        self.gamut_policy = policy;
         self
     }
 
@@ -372,7 +328,7 @@ mod tests {
         assert_eq!(options.depth_policy, DepthPolicy::Forbid);
         assert_eq!(options.luma, None);
         assert_eq!(options.gray_expand, GrayExpand::Broadcast);
-        assert!(options.clip_out_of_gamut);
+        assert_eq!(options.gamut_policy(), GamutPolicy::Clip);
     }
 
     #[test]
@@ -485,8 +441,7 @@ mod tests {
             alpha_policy: AlphaPolicy::DiscardUnchecked,
             depth_policy: DepthPolicy::Round,
             luma: Some(LumaCoefficients::Bt709),
-            clip_out_of_gamut: true,
-            gamut_mapping: GamutMapping::Clip,
+            gamut_policy: GamutPolicy::Clip,
             sdr_white: None,
             hdr_peak: crate::hdr::HdrPeak::Measured,
             sdr_peak: None,
@@ -525,8 +480,7 @@ mod tests {
             alpha_policy: AlphaPolicy::Forbid,
             depth_policy: DepthPolicy::Forbid,
             luma: None,
-            clip_out_of_gamut: true,
-            gamut_mapping: GamutMapping::Clip,
+            gamut_policy: GamutPolicy::Clip,
             sdr_white: None,
             hdr_peak: crate::hdr::HdrPeak::Measured,
             sdr_peak: None,

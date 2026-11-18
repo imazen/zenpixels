@@ -1,9 +1,10 @@
 //! Unclipped requests must not collapse negative or above-white color values.
-use zenpixels_convert::{ConvertOptions, PixelDescriptor, RowConverter, TransferFunction};
+use zenpixels_convert::{ConvertOptions, PixelDescriptor, TransferFunction};
 
 #[test]
 fn explicit_unclipped_sdr_transfers_preserve_extended_values() {
-    let options = ConvertOptions::retain_channels().with_clip_out_of_gamut(false);
+    let options = ConvertOptions::retain_channels()
+        .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended);
     for transfer in [
         TransferFunction::Srgb,
         TransferFunction::Bt709,
@@ -12,7 +13,8 @@ fn explicit_unclipped_sdr_transfers_preserve_extended_values() {
         let encoded = PixelDescriptor::RGBF32_LINEAR.with_transfer(transfer);
         let linear = PixelDescriptor::RGBF32_LINEAR;
         for (from, to) in [(encoded, linear), (linear, encoded)] {
-            let mut converter = RowConverter::new_explicit(from, to, &options).unwrap();
+            let mut converter =
+                crate::test_conversion::explicit_worker(from, to, &options).unwrap();
             let source = [-0.25f32, 0.5, 1.5];
             let mut output = [0.0f32; 3];
             converter
@@ -59,8 +61,9 @@ fn extended_gamma_preserves_in_range_results_alpha_padding_and_row_partitions() 
         (encoded, linear, 563.0f64 / 256.0),
         (linear, encoded, 256.0 / 563.0),
     ] {
-        let unclipped = ConvertOptions::retain_channels().with_clip_out_of_gamut(false);
-        let mut all = RowConverter::new_explicit(from, to, &unclipped).unwrap();
+        let unclipped = ConvertOptions::retain_channels()
+            .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended);
+        let mut all = crate::test_conversion::explicit_worker(from, to, &unclipped).unwrap();
         all.prepare(width as u32).unwrap();
         let mut output = vec![sentinel; target_stride * rows];
         all.convert_rows(
@@ -73,9 +76,10 @@ fn extended_gamma_preserves_in_range_results_alpha_padding_and_row_partitions() 
         )
         .unwrap();
         let mut split = vec![sentinel; target_stride * rows];
-        let mut individual = RowConverter::new_explicit(from, to, &unclipped).unwrap();
+        let mut individual = crate::test_conversion::explicit_worker(from, to, &unclipped).unwrap();
         let mut default =
-            RowConverter::new_explicit(from, to, &ConvertOptions::retain_channels()).unwrap();
+            crate::test_conversion::explicit_worker(from, to, &ConvertOptions::retain_channels())
+                .unwrap();
         for y in 0..rows {
             let input = &source[y * source_stride..y * source_stride + width * 4];
             let destination = &mut split[y * target_stride..y * target_stride + width * 4];
@@ -125,3 +129,6 @@ fn extended_gamma_preserves_in_range_results_alpha_padding_and_row_partitions() 
 
 // Retired estimation is checked by the downstream extended_gamma_estimate
 // compile-failure probe; pixel and stride assertions above remain unchanged.
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

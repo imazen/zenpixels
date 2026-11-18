@@ -38,13 +38,16 @@ pub(super) struct HdrKernelScratch {
 }
 
 impl HdrKernelScratch {
-    pub(super) fn prepare(&mut self, _width: u32) -> Result<(), whereat::At<crate::ConvertError>> {
-        if self.rgb_strip.len() < _width as usize {
-            self.rgb_strip = bytemuck::allocation::try_zeroed_vec::<[f32; 3]>(_width as usize)
+    pub(super) fn reserve(
+        &mut self,
+        lengths: [usize; 2],
+    ) -> Result<(), whereat::At<crate::ConvertError>> {
+        if self.rgb_strip.len() < lengths[0] {
+            self.rgb_strip = bytemuck::allocation::try_zeroed_vec::<[f32; 3]>(lengths[0])
                 .map_err(|()| whereat::at!(crate::ConvertError::AllocationFailed))?;
         }
-        if self.rgb_out.len() < _width as usize {
-            self.rgb_out = bytemuck::allocation::try_zeroed_vec::<[f32; 3]>(_width as usize)
+        if self.rgb_out.len() < lengths[1] {
+            self.rgb_out = bytemuck::allocation::try_zeroed_vec::<[f32; 3]>(lengths[1])
                 .map_err(|()| whereat::at!(crate::ConvertError::AllocationFailed))?;
         }
         Ok(())
@@ -360,8 +363,8 @@ pub(super) fn apply_step_u8(
             tone_map_kernel(src, dst, w, from, step, hdr_scratch);
         }
 
-        ConvertStep::SoftCompressOklch { primaries, knee } => {
-            soft_compress_oklch_kernel(src, dst, w, from, *primaries, *knee, hdr_scratch);
+        ConvertStep::SoftCompressOklch(compressor) => {
+            soft_compress_oklch_kernel(src, dst, w, from, compressor, hdr_scratch);
         }
 
         ConvertStep::Perceptual(p) => {
@@ -396,33 +399,15 @@ fn tone_map_kernel(
     step: &super::ToneMapStep,
     scratch: &mut HdrKernelScratch,
 ) {
-    // Compile the strip executor on the first row through this step. The `Arc<OnceBox>` is
-    // shared across plan clones, so `prepare` runs at most once.
-    let strip_mapper: &alloc::sync::Arc<dyn crate::hdr::StripMapper> =
-        step.prepared.get_or_init(|| {
-            let ctx = crate::hdr::ToneMapContext {
-                source_peak_nits: step.source_peak_nits,
-                target_peak_nits: step.target_peak_nits,
-                working_primaries: step.working_primaries,
-            };
-            match step.mapper.prepare(&ctx) {
-                crate::hdr::PreparedMapper::Streaming(boxed) => {
-                    alloc::boxed::Box::new(alloc::sync::Arc::from(boxed))
-                }
-            }
-        });
+    let strip_mapper = step
+        .prepared
+        .get()
+        .expect("mapper prepared before execution");
 
     let channels = if from.layout().has_alpha() { 4 } else { 3 };
     let src_f32: &[f32] = bytemuck::cast_slice(src);
     let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(dst);
 
-    // Grow-only scratch, sliced to the row, so no row allocates.
-    if scratch.rgb_strip.len() < width {
-        scratch.rgb_strip.resize(width, [0.0; 3]);
-    }
-    if scratch.rgb_out.len() < width {
-        scratch.rgb_out.resize(width, [0.0; 3]);
-    }
     let rgb_in = &mut scratch.rgb_strip[..width];
     let rgb_out = &mut scratch.rgb_out[..width];
 
@@ -466,14 +451,9 @@ fn soft_compress_oklch_kernel(
     dst: &mut [u8],
     width: usize,
     from: PixelDescriptor,
-    primaries: ColorPrimaries,
-    knee: f32,
+    compressor: &crate::hdr::SoftCompress,
     scratch: &mut HdrKernelScratch,
 ) {
-    let space = crate::oklab::OklabSpace::for_primaries(primaries)
-        .expect("target primaries have defined LMS matrices");
-    let compressor = crate::hdr::SoftCompress::new(&space, knee);
-
     let has_alpha = from.layout().has_alpha();
     let channels = if has_alpha { 4 } else { 3 };
     let src_f32: &[f32] = bytemuck::cast_slice(src);
@@ -481,9 +461,6 @@ fn soft_compress_oklch_kernel(
 
     if has_alpha {
         // Row-persistent RGB strip; see `tone_map_bt2446a_kernel`.
-        if scratch.rgb_strip.len() < width {
-            scratch.rgb_strip.resize(width, [0.0; 3]);
-        }
         let rgb_strip = &mut scratch.rgb_strip[..width];
         for p in 0..width {
             let base = p * channels;

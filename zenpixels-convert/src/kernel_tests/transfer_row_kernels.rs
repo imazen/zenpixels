@@ -8,7 +8,15 @@ use zenpixels::{
 
 fn f32_row(from: Tf, to: Tf, input: &[f32]) -> Vec<f32> {
     let d = |tf| D::new(T::F32, L::Gray, None, tf);
-    let mut c = RowConverter::new_explicit(d(from), d(to), &ConvertOptions::permissive()).unwrap();
+    let mut c = RowConverter::new_explicit(
+        d(from),
+        d(to),
+        &ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709)),
+    )
+    .unwrap();
     let mut out = vec![0f32; input.len()];
     c.convert_row(
         bytemuck::cast_slice(input),
@@ -66,7 +74,10 @@ fn bt709_rows_stay_within_rounding_of_per_sample_math() {
 #[test]
 fn hlg_u16_codes_round_trip() {
     let d = |t, tf| D::new(t, L::Gray, None, tf);
-    let opts = ConvertOptions::permissive();
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(crate::DepthPolicy::Round)
+        .with_luma(Some(crate::LumaCoefficients::Bt709));
     let codes: Vec<u16> = (0..=u16::MAX).collect();
     let mut linear = vec![0f32; codes.len()];
     RowConverter::new_explicit(d(T::U16, Tf::Hlg), d(T::F32, Tf::Linear), &opts)

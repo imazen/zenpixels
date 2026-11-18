@@ -147,7 +147,10 @@ fn srgb_u8_to_linear_f32_carries_alpha() {
     let dst = run_row(
         rgba(ChannelType::U8, TransferFunction::Srgb),
         rgba(ChannelType::F32, TransferFunction::Linear),
-        &ConvertOptions::permissive(),
+        &ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709)),
         &src,
         WIDTH * 4 * 4,
         "SrgbU8ToLinearF32",
@@ -162,7 +165,10 @@ fn linear_f32_to_srgb_u8_carries_alpha() {
     let dst = run_row(
         rgba(ChannelType::F32, TransferFunction::Linear),
         rgba(ChannelType::U8, TransferFunction::Srgb),
-        &ConvertOptions::permissive(),
+        &ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709)),
         &src,
         WIDTH * 4,
         "LinearF32ToSrgbU8",
@@ -187,8 +193,15 @@ fn linear_f32_to_srgb_u8_carries_alpha() {
 fn f32_transfer_kernels_carry_alpha() {
     let color = |i: usize| f32::from(COLOR_U8[i]) / 255.0;
     let src = src_rgba_f32(color);
-    let clip = ConvertOptions::permissive();
-    let noclip = ConvertOptions::permissive().with_clip_out_of_gamut(false);
+    let clip = ConvertOptions::retain_channels()
+        .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(crate::DepthPolicy::Round)
+        .with_luma(Some(crate::LumaCoefficients::Bt709));
+    let noclip = ConvertOptions::retain_channels()
+        .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(crate::DepthPolicy::Round)
+        .with_luma(Some(crate::LumaCoefficients::Bt709))
+        .with_gamut_policy(crate::GamutPolicy::PreserveExtended);
 
     let cases: [(TransferFunction, &ConvertOptions, &str, &str); 5] = [
         (
@@ -267,7 +280,10 @@ fn hlg_u16_to_linear_f32_carries_alpha() {
     let dst = run_row(
         rgba(ChannelType::U16, TransferFunction::Hlg),
         rgba(ChannelType::F32, TransferFunction::Linear),
-        &ConvertOptions::permissive(),
+        &ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709)),
         &src,
         WIDTH * 4 * 4,
         "HlgU16ToLinearF32",
@@ -283,7 +299,10 @@ fn linear_f32_to_hlg_u16_carries_alpha() {
     let dst = run_row(
         rgba(ChannelType::F32, TransferFunction::Linear),
         rgba(ChannelType::U16, TransferFunction::Hlg),
-        &ConvertOptions::permissive(),
+        &ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709)),
         &src,
         WIDTH * 4 * 2,
         "LinearF32ToHlgU16",
@@ -315,7 +334,10 @@ fn gray_alpha_pq_carries_alpha() {
     let dst = run_row(
         gray_alpha(ChannelType::F32, TransferFunction::Pq),
         gray_alpha(ChannelType::F32, TransferFunction::Linear),
-        &ConvertOptions::permissive(),
+        &ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709)),
         &src,
         WIDTH * 2 * 4,
         "PqF32ToLinearF32",
@@ -336,7 +358,10 @@ fn pq_u16_round_trip_still_carries_alpha() {
     let dst = run_row(
         rgba(ChannelType::U16, TransferFunction::Pq),
         rgba(ChannelType::F32, TransferFunction::Linear),
-        &ConvertOptions::permissive(),
+        &ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709)),
         &src,
         WIDTH * 4 * 4,
         "PqU16ToLinearF32",
@@ -353,7 +378,10 @@ fn pq_f32_still_carries_alpha() {
     let dst = run_row(
         rgba(ChannelType::F32, TransferFunction::Pq),
         rgba(ChannelType::F32, TransferFunction::Linear),
-        &ConvertOptions::permissive(),
+        &ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709)),
         &src,
         WIDTH * 4 * 4,
         "PqF32ToLinearF32",
@@ -363,7 +391,10 @@ fn pq_f32_still_carries_alpha() {
     let dst = run_row(
         rgba(ChannelType::F32, TransferFunction::Linear),
         rgba(ChannelType::F32, TransferFunction::Pq),
-        &ConvertOptions::permissive(),
+        &ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709)),
         &src,
         WIDTH * 4 * 4,
         "LinearF32ToPqF32",
@@ -383,7 +414,10 @@ fn gray_alpha_f32_transfer_carries_alpha() {
     let dst = run_row(
         gray_alpha(ChannelType::F32, TransferFunction::Srgb),
         gray_alpha(ChannelType::F32, TransferFunction::Linear),
-        &ConvertOptions::permissive(),
+        &ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709)),
         &src,
         WIDTH * 2 * 4,
         "SrgbF32ToLinearF32",
@@ -405,8 +439,15 @@ fn gray_alpha_f32_transfer_carries_alpha() {
 /// and test nothing. Splitting the hop forces both kernels to run.
 #[test]
 fn alpha_survives_a_full_round_trip_through_every_sdr_pairing() {
-    let clip = ConvertOptions::permissive();
-    let noclip = ConvertOptions::permissive().with_clip_out_of_gamut(false);
+    let clip = ConvertOptions::retain_channels()
+        .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(crate::DepthPolicy::Round)
+        .with_luma(Some(crate::LumaCoefficients::Bt709));
+    let noclip = ConvertOptions::retain_channels()
+        .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(crate::DepthPolicy::Round)
+        .with_luma(Some(crate::LumaCoefficients::Bt709))
+        .with_gamut_policy(crate::GamutPolicy::PreserveExtended);
 
     // f32 encoded <-> f32 linear, for each transfer function.
     let color = |i: usize| f32::from(COLOR_U8[i]) / 255.0;
@@ -488,7 +529,10 @@ fn alpha_byte_survives_the_u8_srgb_round_trip() {
     let lin = run_row(
         rgba(ChannelType::U8, TransferFunction::Srgb),
         rgba(ChannelType::F32, TransferFunction::Linear),
-        &ConvertOptions::permissive(),
+        &ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709)),
         &src,
         WIDTH * 4 * 4,
         "SrgbU8ToLinearF32",
@@ -496,7 +540,10 @@ fn alpha_byte_survives_the_u8_srgb_round_trip() {
     let back = run_row(
         rgba(ChannelType::F32, TransferFunction::Linear),
         rgba(ChannelType::U8, TransferFunction::Srgb),
-        &ConvertOptions::permissive(),
+        &ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709)),
         &lin,
         WIDTH * 4,
         "LinearF32ToSrgbU8",
@@ -531,7 +578,10 @@ fn alpha_survives_the_u16_hdr_round_trips() {
         let lin = run_row(
             rgba(ChannelType::U16, tf),
             rgba(ChannelType::F32, TransferFunction::Linear),
-            &ConvertOptions::permissive(),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(crate::DepthPolicy::Round)
+                .with_luma(Some(crate::LumaCoefficients::Bt709)),
             &src,
             WIDTH * 4 * 4,
             decode,
@@ -539,7 +589,10 @@ fn alpha_survives_the_u16_hdr_round_trips() {
         let back = run_row(
             rgba(ChannelType::F32, TransferFunction::Linear),
             rgba(ChannelType::U16, tf),
-            &ConvertOptions::permissive(),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(crate::DepthPolicy::Round)
+                .with_luma(Some(crate::LumaCoefficients::Bt709)),
             &lin,
             WIDTH * 4 * 2,
             encode,
@@ -627,7 +680,10 @@ fn pq_u16_alpha_survives_across_the_chunk_boundary() {
         let mut conv = RowConverter::new_explicit(
             desc(ChannelType::F32, TransferFunction::Linear),
             desc(ChannelType::U16, TransferFunction::Pq),
-            &ConvertOptions::permissive(),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(crate::DepthPolicy::Round)
+                .with_luma(Some(crate::LumaCoefficients::Bt709)),
         )
         .unwrap();
         let mut dst = vec![0u8; width * layout_channels * 2];

@@ -13,39 +13,44 @@
 #   pub types (struct/enum/trait/alias)         4
 #   pub consts/statics                          3
 #   free functions                             11
-#   inherent methods                           51
+#   inherent methods                           58
 #   struct fields                               4
-#   trait roster entries (type × trait)        44
+#   trait roster entries (type × trait)        52
 #   auto-trait-complete types                   2
 #
 # per-module pub lines:
-#   (root)                            8
+#   (root)                           12
 #   __bench_scan                     19
 #   __bench_u16_hybrids               4
 #   __trace_ops                       2
 #   codes                             4
 #   css                               1
-#   hdr                              23
+#   hdr                              25
 #   icc_profiles                      1
 #   orient                            2
 #   precision                         8
 #   ycbcr                             1
-#   zenpixels                         4
+#   zenpixels                         5
 
-## items (76 lines)
+## items (83 lines)
 
 #[non_exhaustive] pub struct hdr::LightLevelHistogram [also: hdr::measure]
 pub const hdr::measure::LightLevelHistogram::BIN_MAX_NITS: f32
 pub const hdr::measure::LightLevelHistogram::BIN_MIN_NITS: f32
 pub const hdr::measure::LightLevelHistogram::NUM_BINS: usize
 pub fn zenpixels::hdr::ContentLightLevel::measure_histogram(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<hdr::measure::LightLevelHistogram>
+pub fn zenpixels::hdr::ContentLightLevel::measure_histogram_banded(&zenpixels::banded::BandedPixelBuffer, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<hdr::measure::LightLevelHistogram>
 pub fn zenpixels::hdr::ContentLightLevel::measure_max_smoothed(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
 pub fn zenpixels::hdr::ContentLightLevel::measure_percentile(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, f32, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
 pub fn zenpixels::hdr::ContentLightLevel::measure_robust(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
+pub fn AccuracyContract::assert_fields_are_eq(&self)
+pub fn ByteBound::assert_fields_are_eq(&self)
 pub fn ConversionCost::assert_fields_are_eq(&self)
 pub fn ConvertIntent::assert_fields_are_eq(&self)
+pub fn KernelTier::assert_fields_are_eq(&self)
 pub fn LossBucket::assert_fields_are_eq(&self)
 pub fn Provenance::assert_fields_are_eq(&self)
+pub fn WorkExtent::assert_fields_are_eq(&self)
 pub fn __bench_scan::FusedRequest::assert_fields_are_eq(&self)
 pub fn __bench_scan::FusedRequest::clone(&self) -> __bench_scan::FusedRequest
 pub fn __bench_scan::FusedRequest::default() -> __bench_scan::FusedRequest
@@ -71,15 +76,17 @@ pub fn codes::CodeRole::assert_fields_are_eq(&self)
 pub fn codes::CodesError::assert_fields_are_eq(&self)
 pub fn css::CssColorError::assert_fields_are_eq(&self)
 pub fn hdr::CllMeasure::measure_histogram(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<hdr::measure::LightLevelHistogram>
+pub fn hdr::CllMeasure::measure_histogram_banded(&zenpixels::banded::BandedPixelBuffer, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<hdr::measure::LightLevelHistogram>
 pub fn hdr::CllMeasure::measure_max_smoothed(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
 pub fn hdr::CllMeasure::measure_percentile(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, f32, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
 pub fn hdr::CllMeasure::measure_robust(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
 pub fn hdr::Requirements::assert_fields_are_eq(&self)
 pub fn hdr::measure::CllMeasure::measure_histogram(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<hdr::measure::LightLevelHistogram>
+pub fn hdr::measure::CllMeasure::measure_histogram_banded(&zenpixels::banded::BandedPixelBuffer, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<hdr::measure::LightLevelHistogram>
 pub fn hdr::measure::CllMeasure::measure_max_smoothed(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
 pub fn hdr::measure::CllMeasure::measure_percentile(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, f32, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
 pub fn hdr::measure::CllMeasure::measure_robust(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
-pub fn hdr::measure::LightLevelHistogram::bins(&self) -> &[u32]
+pub fn hdr::measure::LightLevelHistogram::bins(&self) -> &[u64]
 pub fn hdr::measure::LightLevelHistogram::clone(&self) -> hdr::measure::LightLevelHistogram
 pub fn hdr::measure::LightLevelHistogram::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn hdr::measure::LightLevelHistogram::max(&self) -> f32
@@ -111,14 +118,22 @@ pub __bench_scan::FusedRequest::check_opaque: bool
 pub __bench_scan::FusedResult::is_grayscale: bool
 pub __bench_scan::FusedResult::is_opaque: bool
 
-## trait impls (31 types)
+## trait impls (39 types)
 
+AccuracyContract: TrivialClone
+AllocationRequirements: TrivialClone
+ByteBound: TrivialClone
+CandidateTarget<'a>: TrivialClone
 ConversionCost: TrivialClone
+ConversionSpec<'a>: TrivialClone
 ConvertIntent: TrivialClone
 FormatOption: TrivialClone
 HdrConfig: TrivialClone
+KernelTier: TrivialClone
 LossBucket: TrivialClone
+PlannedStepInfo: TrivialClone
 Provenance: TrivialClone
+WorkExtent: TrivialClone
 __bench_scan::FusedRequest: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
 __bench_scan::FusedResult: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
 cms_lcms::Lcms: TrivialClone

@@ -7,7 +7,6 @@
 
 use zenbench::prelude::*;
 use zenpixels::{ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
-use zenpixels_convert::RowConverter;
 
 const SIZES: &[(&str, usize)] = &[
     ("  256px", 256),
@@ -43,7 +42,7 @@ fn bench_depth_pair(suite: &mut Suite, from_ct: ChannelType, to_ct: ChannelType)
         let dst_bytes = width * 3 * to_ct.byte_size();
         let mut dst = vec![0u8; dst_bytes];
         let bytes = (src.len() + dst_bytes) as u64;
-        let mut conv = RowConverter::new(src_desc, dst_desc).unwrap();
+        let mut conv = crate::test_conversion::new_worker(src_desc, dst_desc).unwrap();
 
         let group_name = format!(
             "depth {}→{}  {label}",
@@ -54,7 +53,7 @@ fn bench_depth_pair(suite: &mut Suite, from_ct: ChannelType, to_ct: ChannelType)
             g.throughput(Throughput::Bytes(bytes));
             g.bench("Linear RGB", move |b| {
                 b.iter(|| {
-                    conv.convert_row(&src, &mut dst, width as u32);
+                    conv.try_convert_row(&src, &mut dst, width as u32).unwrap();
                     black_box(());
                 })
             });
@@ -83,3 +82,6 @@ fn main() {
         }
     });
 }
+
+#[path = "../tests/support/conversion.rs"]
+mod test_conversion;

@@ -1,3 +1,5 @@
+#![cfg(feature = "introspection")]
+
 //! Tests for format negotiation preference ordering.
 
 use zenpixels_convert::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
@@ -337,10 +339,7 @@ fn hdr_source_penalizes_sdr_target() {
         TransferFunction::Pq,
     );
     let supported = &[PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBF32_LINEAR];
-    assert_eq!(
-        ConvertIntent::Fastest.best_match(src, supported),
-        Some(PixelDescriptor::RGBF32_LINEAR)
-    );
+    assert_eq!(ConvertIntent::Fastest.best_match(src, supported), None);
 }
 
 #[test]

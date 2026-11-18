@@ -18,10 +18,8 @@
 //! returns `PixelCow::Borrowed` — no allocation, no copy, no conversion. This
 //! means the common case (JPEG u8 sRGB → JPEG u8 sRGB) has zero overhead.
 //!
-//! A second fast path handles transfer-agnostic matches: if the source has
-//! `TransferFunction::Unknown` and a supported format matches on everything
-//! else (depth, layout, alpha), it's also zero-copy. This covers codecs
-//! that don't tag their output with a transfer function.
+//! Supply the verified source transfer or include its unknown-transfer descriptor
+//! in the supported formats when the encoder accepts untagged samples.
 //!
 //! # Strided buffers
 //!
@@ -47,9 +45,8 @@ use alloc::vec::Vec;
 
 #[cfg(test)]
 use crate::ColorModel;
-use crate::convert::ConvertPlan;
+use crate::convert::NativePlan;
 use crate::converter::RowConverter;
-use crate::negotiate::{ConvertIntent, FormatOption, Provenance, best_match, negotiate};
 use crate::policy::{AlphaPolicy, ConvertOptions};
 use crate::{
     AlphaMode, ChannelLayout, ChannelType, ConvertError, PixelBuffer, PixelCow, PixelDescriptor,
@@ -57,7 +54,7 @@ use crate::{
 };
 use enough::{Stop, StopReason};
 use whereat::{At, ResultAtExt};
-use zenpixels::precision::{AlphaContent, ConversionEffect, ConversionOffer, SourcePrecision};
+use zenpixels::precision::{AlphaContent, SourcePrecision};
 use zenpixels::sample::ExactDepth;
 
 /// Reject CMYK on either side of a `from`/`to` pair at the public-API
@@ -189,7 +186,11 @@ pub(crate) fn adapt_for_encode_cow<'a>(
         rows,
         stride,
         supported,
-        &ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::DiscardUnchecked),
+        &ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709))
+            .with_alpha_policy(AlphaPolicy::DiscardUnchecked),
     )
 }
 
@@ -229,11 +230,11 @@ pub(crate) fn convert_buffer(
         let src_end = src_start + src_stride;
         let dst_start = y as usize * dst_stride;
         let dst_end = dst_start + dst_stride;
-        converter.convert_row(
+        converter.try_convert_row(
             &src[src_start..src_end],
             &mut output[dst_start..dst_end],
             width,
-        );
+        )?;
     }
 
     Ok(output)
@@ -315,26 +316,35 @@ pub(crate) fn convert_into_with_anchor(
     reject_cmyk(from, to)?;
     ensure_src_buffer_fits(src.len(), from, width, rows, src_stride)?;
 
-    let dst_row = (width as usize) * to.bytes_per_pixel();
+    let dst_row = crate::convert::row_bytes(to, width)?;
     if rows > 0 {
-        // A strided dst must hold each row's content without rows overlapping:
-        // `dst_stride >= dst_row`, and the last row ends at
-        // `(rows-1) * dst_stride + dst_row`.
-        let needed = (rows as usize - 1) * dst_stride + dst_row;
-        if dst_stride < dst_row || dst.len() < needed {
+        if dst_stride < dst_row {
             return Err(whereat::at!(ConvertError::BufferSize {
-                expected: needed.max(dst_row),
-                actual: dst.len().min(dst_stride),
+                expected: dst_row,
+                actual: dst_stride,
+            }));
+        }
+        let needed = (rows as usize - 1)
+            .checked_mul(dst_stride)
+            .and_then(|size| size.checked_add(dst_row))
+            .ok_or_else(|| whereat::at!(ConvertError::InvalidWidth(width)))?;
+        if dst.len() < needed {
+            return Err(whereat::at!(ConvertError::BufferSize {
+                expected: needed,
+                actual: dst.len(),
             }));
         }
     }
 
     // `from == to` yields an Identity plan, whose row step copies src → dst — so
     // the strided loop handles it too (no packed-only special case needed).
-    let plan = ConvertPlan::new_explicit(
+    let plan = NativePlan::new_explicit(
         from,
         to,
-        &zenpixels::ConvertOptions::permissive()
+        &zenpixels::ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709))
             .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked)
             .with_sdr_white(anchor),
     )
@@ -345,11 +355,11 @@ pub(crate) fn convert_into_with_anchor(
     for y in 0..rows as usize {
         let src_start = y * src_stride;
         let dst_start = y * dst_stride;
-        converter.convert_row(
+        converter.try_convert_row(
             &src[src_start..src_start + src_row],
             &mut dst[dst_start..dst_start + dst_row],
             width,
-        );
+        )?;
     }
 
     Ok(())
@@ -575,98 +585,104 @@ pub fn adapt_raw_rows_for_encode<'a>(
     options: &ConvertOptions,
 ) -> Result<PixelCow<'a>, At<ConvertError>> {
     ensure_src_buffer_fits(data.len(), descriptor, width, rows, stride)?;
-    if supported.is_empty() {
+    let aligned = borrow_or_copy(data, width, rows, stride, descriptor)?;
+    match aligned {
+        PixelCow::Borrowed(source) => adapt_slice_for_encode(source, supported, options),
+        PixelCow::Owned(source) => {
+            match adapt_slice_for_encode(source.as_slice(), supported, options)? {
+                PixelCow::Owned(converted) => Ok(PixelCow::Owned(converted)),
+                PixelCow::Borrowed(_) => Ok(PixelCow::Owned(source)),
+            }
+        }
+    }
+}
+
+pub(crate) fn adapt_slice_for_encode<'a>(
+    source: PixelSlice<'a>,
+    supported: &[PixelDescriptor],
+    options: &ConvertOptions,
+) -> Result<PixelCow<'a>, At<ConvertError>> {
+    use crate::{CandidateTarget, ConversionSpec, ConvertPlan};
+    let from = source.descriptor();
+    let Some(&first) = supported.first() else {
         return Err(whereat::at!(ConvertError::EmptyFormatList));
-    }
-    reject_cmyk(descriptor, supported[0])?;
-
-    // Check for exact match (zero-copy path).
-    if supported.contains(&descriptor) {
-        return borrow_or_copy(data, width, rows, stride, descriptor);
-    }
-
-    // Check for transfer-agnostic match (primaries and signal range must match).
-    for &target in supported {
-        if descriptor.transfer == crate::TransferFunction::Unknown
-            && descriptor.channel_type() == target.channel_type()
-            && descriptor.layout() == target.layout()
-            && descriptor.alpha() == target.alpha()
-            && descriptor.primaries == target.primaries
-            && descriptor.signal_range == target.signal_range
-        {
-            return borrow_or_copy(data, width, rows, stride, target);
-        }
-    }
-
-    // Need conversion — pick best target, then validate policies.
-    let target = encode_target(descriptor, supported)
-        .ok_or_else(|| whereat::at!(ConvertError::EmptyFormatList))?;
-
-    let checked_options = if descriptor.has_alpha() && !target.has_alpha() {
-        let view = PixelSlice::new(data, width, rows, stride, descriptor)
-            .map_err_at(ConvertError::from)?;
-        options_after_opacity_check(&view, target, options)?
-    } else {
-        *options
     };
-    let mut converter = RowConverter::new_explicit(descriptor, target, &checked_options).at()?;
-    let src_bpp = descriptor.bytes_per_pixel();
-    let mut output = PixelBuffer::try_new(width, rows, target)
-        .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
+    let current = source.color_context().map(alloc::sync::Arc::as_ref);
+    crate::output::current_profile_for(source.encoding())?;
+    if supported.contains(&from) {
+        return Ok(PixelCow::Borrowed(source));
+    }
+    if supported
+        .iter()
+        .all(|&target| crate::convert::needs_cms_for_color_model(&from, &target))
     {
-        let mut destination = output.as_slice_mut();
-        for y in 0..rows {
-            let src_start = y as usize * stride;
-            let src_end = src_start + (width as usize * src_bpp);
-            converter.try_convert_row(&data[src_start..src_end], destination.row_mut(y), width)?;
+        return Err(whereat::at!(ConvertError::NoPath { from, to: first }));
+    }
+    let mut candidates = Vec::new();
+    candidates
+        .try_reserve_exact(supported.len())
+        .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
+    for &target in supported {
+        let retains_color = from.transfer() == target.transfer()
+            && from.primaries == target.primaries
+            && from.signal_range == target.signal_range;
+        candidates.push(CandidateTarget::new(crate::PixelEncoding::new(
+            target,
+            current.filter(|_| retains_color),
+        )));
+    }
+    let select = |options| {
+        let spec = ConversionSpec::new(options);
+        let capacity = spec.with_source_precision(SourcePrecision::from_storage(from));
+        match ConvertPlan::select(source.encoding(), &candidates, &capacity) {
+            Ok(choice) => Ok(choice),
+            Err(error) if matches!(error.error(), crate::PlanError::NoCandidate { .. }) => {
+                ConvertPlan::select(source.encoding(), &candidates, &spec)
+            }
+            Err(error) => Err(error),
         }
+    };
+    let selected = match select(*options) {
+        Ok(choice) => choice,
+        Err(error)
+            if options.alpha_policy() == AlphaPolicy::DiscardIfOpaque
+                && from.has_alpha()
+                && supported.iter().any(|target| !target.has_alpha()) =>
+        {
+            let target = supported
+                .iter()
+                .find(|target| !target.has_alpha())
+                .copied()
+                .unwrap_or(first);
+            let checked = options_after_opacity_check(&source, target, options)?;
+            if checked == *options {
+                return Err(error.map_error(|error| error.into_conversion(from, first)));
+            }
+            select(checked)
+                .map_err(|error| error.map_error(|error| error.into_conversion(from, first)))?
+        }
+        Err(error) => return Err(error.map_error(|error| error.into_conversion(from, first))),
+    };
+    let compiled = selected.into_plan();
+    let target = compiled.output_encoding().descriptor();
+    let context = compiled
+        .output_encoding()
+        .color_context()
+        .cloned()
+        .map(alloc::sync::Arc::new);
+    let mut worker = compiled.into_worker();
+    let mut output = PixelBuffer::try_new(source.width(), source.rows(), target)
+        .map_err_at(ConvertError::from)?;
+    {
+        let mut dst = output.as_slice_mut();
+        for y in 0..source.rows() {
+            worker.try_convert_row(source.row(y), dst.row_mut(y), source.width())?;
+        }
+    }
+    if let Some(context) = context {
+        output = output.with_color_context(context);
     }
     Ok(PixelCow::Owned(output))
-}
-
-/// The format [`adapt_raw_rows_for_encode`] would convert to, or `None` if it needs no conversion.
-pub(crate) fn encode_conversion_target(
-    descriptor: PixelDescriptor,
-    supported: &[PixelDescriptor],
-) -> Option<PixelDescriptor> {
-    if supported.is_empty() || supported.contains(&descriptor) {
-        return None;
-    }
-    let relabels = supported.iter().any(|target| {
-        descriptor.transfer == crate::TransferFunction::Unknown
-            && descriptor.channel_type() == target.channel_type()
-            && descriptor.layout() == target.layout()
-            && descriptor.alpha() == target.alpha()
-            && descriptor.primaries == target.primaries
-            && descriptor.signal_range == target.signal_range
-    });
-    if relabels {
-        return None;
-    }
-    encode_target(descriptor, supported)
-}
-
-/// The cheapest format that holds everything `descriptor` can carry, or, if none does, the cheapest.
-///
-/// The cost model alone ranks RGB8 under RGBF32 for RGB16 input, because narrowing is less work.
-/// This is the format an encoder adapter chooses for its caller, so the precision rule goes first.
-/// Whether a narrowing is then allowed stays with the caller's [`ConvertOptions`].
-fn encode_target(
-    descriptor: PixelDescriptor,
-    supported: &[PixelDescriptor],
-) -> Option<PixelDescriptor> {
-    let source = SourcePrecision::from_storage(descriptor);
-    let holding = supported.iter().filter(|&&target| {
-        let effect = ConversionEffect::of(&source, &ConversionOffer::new(target));
-        effect.bits_dropped == 0 && !effect.range_dropped
-    });
-    negotiate(
-        descriptor,
-        Provenance::from_source(descriptor),
-        holding.map(|&target| FormatOption::from(target)),
-        ConvertIntent::Fastest,
-    )
-    .or_else(|| best_match(descriptor, supported, ConvertIntent::Fastest))
 }
 
 /// Whole-image adapters preflight conditional alpha before allocation or output writes. Row planners
@@ -1060,9 +1076,9 @@ mod tests {
     }
 
     #[test]
-    fn transfer_agnostic_match_requires_same_primaries() {
+    fn known_transfer_gamut_change_converts() {
         let data = test_rgb8_data();
-        let source = PixelDescriptor::RGB8.with_primaries(ColorPrimaries::Bt2020);
+        let source = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::Bt2020);
         let target = PixelDescriptor::RGB8_SRGB; // BT.709 primaries
 
         let result = adapt_for_encode_cow(&data, source, 2, 1, 6, &[target]).unwrap();
@@ -1084,7 +1100,7 @@ mod tests {
     #[test]
     fn signal_range_mismatch_refuses_not_relabels() {
         let data = test_rgb8_data();
-        let source = PixelDescriptor::RGB8.with_signal_range(SignalRange::Narrow);
+        let source = PixelDescriptor::RGB8_SRGB.with_signal_range(SignalRange::Narrow);
         let target = PixelDescriptor::RGB8_SRGB; // Full range
 
         let err = adapt_for_encode_cow(&data, source, 2, 1, 6, &[target]).unwrap_err();
@@ -1096,12 +1112,11 @@ mod tests {
     }
 
     /// Narrow data is accepted verbatim when a same-range target is offered:
-    /// the transfer-agnostic zero-copy arm applies as usual once the signal
-    /// ranges agree.
+    /// the same-range, same-transfer target takes the identity route.
     #[test]
     fn signal_range_match_zero_copies_narrow_verbatim() {
         let data = test_rgb8_data();
-        let source = PixelDescriptor::RGB8
+        let source = PixelDescriptor::RGB8_SRGB
             .with_primaries(ColorPrimaries::Bt709)
             .with_signal_range(SignalRange::Narrow);
         let full_target = PixelDescriptor::RGB8_SRGB;
@@ -1120,21 +1135,19 @@ mod tests {
     }
 
     #[test]
-    fn transfer_agnostic_match_allows_zero_copy_when_all_match() {
+    fn unknown_transfer_requires_interpretation() {
         let data = test_rgb8_data();
         // Source: RGB8 with unknown transfer, BT.709, Full range.
         let source = PixelDescriptor::RGB8.with_primaries(ColorPrimaries::Bt709);
         // Target: RGB8 sRGB with same primaries and range.
         let target = PixelDescriptor::RGB8_SRGB;
 
-        let result = adapt_for_encode_cow(&data, source, 2, 1, 6, &[target]).unwrap();
+        let error = adapt_for_encode_cow(&data, source, 2, 1, 6, &[target]).unwrap_err();
+        assert!(matches!(error.error(), ConvertError::NoPath { .. }));
 
-        // Should zero-copy (only transfer differs, which is the agnostic part).
-        assert!(
-            matches!(result, PixelCow::Borrowed(_)),
-            "should be zero-copy when only transfer differs"
-        );
-        assert_eq!(result.as_slice().descriptor(), target);
+        let result = adapt_for_encode_cow(&data, source, 2, 1, 6, &[target, source]).unwrap();
+        assert!(matches!(result, PixelCow::Borrowed(_)));
+        assert_eq!(result.as_slice().descriptor(), source);
     }
 
     #[test]
@@ -1209,7 +1222,7 @@ mod tests {
     #[test]
     fn explicit_variant_also_checks_primaries() {
         let data = test_rgb8_data();
-        let source = PixelDescriptor::RGB8.with_primaries(ColorPrimaries::Bt2020);
+        let source = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::Bt2020);
         let target = PixelDescriptor::RGB8_SRGB;
         let options = ConvertOptions::retain_channels()
             .with_alpha_policy(AlphaPolicy::DiscardUnchecked)

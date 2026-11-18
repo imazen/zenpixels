@@ -13,18 +13,18 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use zenpixels_convert::cms_moxcms::MoxCms;
-//! use zenpixels_convert::output::{EncodeReady, OutputProfile};
+//! use zenpixels_convert::{
+//!     ConversionSpec, ConvertOptions, EncodeReady, MoxCms, OutputPlan, OutputProfile,
+//!     OutputTarget, PixelFormat,
+//! };
 //!
-//! let ready = EncodeReady::finalize(
-//!     &buffer, &origin,
-//!     OutputProfile::Icc(dst_icc.into()),
-//!     PixelFormat::Rgb8,
-//!     Some(&MoxCms),
-//! )?;
+//! let spec = ConversionSpec::new(ConvertOptions::retain_channels()).with_cms(&MoxCms);
+//! let target = OutputTarget::new(OutputProfile::Icc(dst_icc.into()), PixelFormat::Rgb8);
+//! let plan = OutputPlan::build(buffer.encoding(), target, &spec)?;
+//! let ready = EncodeReady::from_owned(buffer, plan)?;
+//!
 //! ```
 
-use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
@@ -1141,9 +1141,6 @@ struct MoxRowTransform {
 }
 
 impl crate::cms::RowTransform for MoxRowTransform {
-    fn transform_row(&self, src: &[u8], dst: &mut [u8], width: u32) {
-        try_mox_row(&self.inner, self.extent, src, dst, width).expect("moxcms row failed");
-    }
     fn try_transform_row(
         &self,
         src: &[u8],
@@ -1154,23 +1151,6 @@ impl crate::cms::RowTransform for MoxRowTransform {
     }
     fn prepare(&self, _max_width: u32) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
         Ok(())
-    }
-}
-
-impl crate::cms::RowTransformMut for MoxRowTransform {
-    fn transform_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
-        crate::cms::RowTransform::transform_row(self, src, dst, width);
-    }
-    fn try_transform_row(
-        &mut self,
-        src: &[u8],
-        dst: &mut [u8],
-        width: u32,
-    ) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
-        crate::cms::RowTransform::try_transform_row(self, src, dst, width)
-    }
-    fn prepare(&mut self, max_width: u32) -> Result<(), whereat::At<crate::cms::CmsPluginError>> {
-        crate::cms::RowTransform::prepare(self, max_width)
     }
 }
 
@@ -1257,7 +1237,7 @@ fn build_mox_stateless(
                 src_format,
                 dst_format,
                 names_srgb(&dst),
-                options.clip_out_of_gamut(),
+                options.gamut_policy() == crate::GamutPolicy::Clip,
                 explicit_intent,
             )
             .map(|transform| MoxRowTransform {
@@ -1360,7 +1340,7 @@ fn build_mox_stateless(
                         transform,
                         src_layout,
                         dst_layout,
-                        options.clip_out_of_gamut(),
+                        options.gamut_policy() == crate::GamutPolicy::Clip,
                     )
                 })
         }
@@ -1383,54 +1363,36 @@ fn build_mox_stateless(
 }
 
 impl crate::cms::PluggableCms for MoxCms {
-    /// Build a moxcms-backed row transform for the given
-    /// `(src, dst, src_format, dst_format)`.
-    fn build_source_transform(
+    fn build(
         &self,
-        src: crate::ColorProfileSource<'_>,
-        dst: crate::ColorProfileSource<'_>,
-        src_format: PixelFormat,
-        dst_format: PixelFormat,
-        options: &crate::policy::ConvertOptions,
-    ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, whereat::At<crate::cms::CmsPluginError>>>
-    {
+        request: &crate::cms::CmsRequest<'_>,
+    ) -> Result<crate::cms::CmsSupport, whereat::At<crate::cms::CmsPluginError>> {
+        use crate::cms::CmsSupport;
+        let (src, dst) = (request.source(), request.target());
+        let (src_format, dst_format) = (request.from().pixel_format(), request.to().pixel_format());
+        let options = request.options();
         if crate::convert::hlg_render::is_hlg_profile(&src)
             || crate::convert::hlg_render::is_hlg_profile(&dst)
         {
             let explicit_intent = requested_intent(&src, options);
             if explicit_intent == Some(zenpixels::RenderingIntent::AbsoluteColorimetric) {
-                return None;
+                return Ok(CmsSupport::Declined);
             }
             let (d2b_tag, b2d_tag) = float_pipeline_tags(
                 explicit_intent.unwrap_or(zenpixels::RenderingIntent::RelativeColorimetric),
             );
             if has_float_pipeline(&src, d2b_tag) || has_float_pipeline(&dst, b2d_tag) {
-                return None;
+                return Ok(CmsSupport::Declined);
             }
             return crate::convert::hlg_render::build_cms_hlg_transform(
                 self, src, dst, src_format, dst_format, options, false,
-            );
+            )
+            .transpose()
+            .map(|worker| worker.map_or(CmsSupport::Declined, CmsSupport::Owned));
         }
         build_mox_stateless(src, dst, src_format, dst_format, options)
-            .map(|res| res.map(|xform| Box::new(xform) as Box<dyn crate::cms::RowTransformMut>))
-    }
-
-    fn build_shared_source_transform(
-        &self,
-        src: crate::ColorProfileSource<'_>,
-        dst: crate::ColorProfileSource<'_>,
-        src_format: PixelFormat,
-        dst_format: PixelFormat,
-        options: &crate::policy::ConvertOptions,
-    ) -> Option<
-        Result<
-            alloc::sync::Arc<dyn crate::cms::RowTransform>,
-            whereat::At<crate::cms::CmsPluginError>,
-        >,
-    > {
-        build_mox_stateless(src, dst, src_format, dst_format, options).map(|res| {
-            res.map(|xform| Arc::new(xform) as alloc::sync::Arc<dyn crate::cms::RowTransform>)
-        })
+            .transpose()
+            .map(|worker| worker.map_or(CmsSupport::Declined, |w| CmsSupport::Shared(Arc::new(w))))
     }
 }
 
@@ -1791,7 +1753,10 @@ mod moxcms_d50_tests {
         let mut conv = RowConverter::new_explicit_with_cms(
             p3,
             PixelDescriptor::RGB8_SRGB,
-            &ConvertOptions::permissive(),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(crate::DepthPolicy::Round)
+                .with_luma(Some(crate::LumaCoefficients::Bt709)),
             Some(&MoxCms),
         )
         .unwrap();

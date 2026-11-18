@@ -1,36 +1,15 @@
-//! Atomic output preparation for encoders.
+//! Compile pixel conversion and matching encoder signaling.
 //!
-//! [`EncodeReady::finalize`] converts pixel data and generates matching metadata
-//! in a single atomic operation, preventing the most common color management
-//! bug: pixel values that don't match the embedded color metadata.
+//! [`OutputPlan::build`] selects the executable conversion, output descriptor
+//! and metadata. `ColorContext` describes current samples. `ColorOrigin`
+//! describes their origin and is consulted for [`OutputProfile::SameAsOrigin`].
+//! Attached ICC bytes retain their authority when converting to a named target.
 //!
-//! # Why atomicity matters
-//!
-//! The most common color management bug looks like this:
-//!
-//! ```rust,ignore
-//! // BUG: pixels and metadata can diverge
-//! let pixels = convert_to_p3(&buffer);
-//! let metadata = OutputMetadata { icc: Some(srgb_icc), .. };
-//! // ^^^ pixels are Display P3 but metadata says sRGB — wrong!
-//! ```
-//!
-//! [`EncodeReady::finalize`] prevents this by producing the pixels and metadata
-//! together. The [`EncodeReady`] struct bundles both, and the only way to
-//! create one is through this function. If the conversion fails, neither
-//! pixels nor metadata are produced.
-//!
-//! Use [`EncodeReady::finalize`] for current profile-aware conversion.
-//! `ColorContext` describes current pixels; `ColorOrigin` is provenance.
-//! `SameAsOrigin` requests an actual conversion back to the origin profile.
-//! Attached ICC bytes are passed to the CMS even for a named destination.
-//! Contradictory current CICP/descriptor signaling is refused.
-//!
-//! The result always owns independent pixels. This API allocates an output
-//! image, including for identity; use the cow adaptation APIs for borrowing
-//! when separate output metadata is not needed. No opacity prepass is implicit:
-//! selecting an alpha-free output format discards alpha unconditionally.
-//! Backend failures return an error, never an `EncodeReady` with mismatched tags.
+//! [`EncodeReady::from_owned`] consumes the input and reuses its storage for
+//! identity output. [`EncodeReady::copy_from`] creates independently owned output
+//! from a borrowed view. `OutputPlan` also supports borrowing unchanged rows
+//! and writing into caller-provided storage. Alpha removal follows the
+//! supplied policy.
 
 use alloc::sync::Arc;
 
@@ -42,7 +21,7 @@ use crate::{
 use whereat::{At, ResultAtExt};
 
 mod plan;
-pub use plan::OutputPlan;
+pub use plan::{OutputPlan, OutputTarget};
 
 /// Target output color profile.
 #[derive(Clone, Debug)]
@@ -98,7 +77,7 @@ impl OutputProfile {
 
 /// Metadata that the encoder should embed alongside the pixel data.
 ///
-/// Generated atomically by [`EncodeReady::finalize`] to guarantee that
+/// Generated atomically by [`EncodeReady::from_owned`] to guarantee that
 /// the metadata matches the pixel values.
 ///
 /// # Not the same as `ColorContext` / `ColorOrigin`
@@ -138,15 +117,9 @@ pub struct OutputMetadata {
 
 /// Pixel data bundled with matching metadata, ready for encoding.
 ///
-/// The only way to create an `EncodeReady` is through [`EncodeReady::finalize`],
-/// which guarantees that the pixels and metadata are consistent.
-///
-/// Use [`into_parts()`](Self::into_parts) to destructure if needed, but
-/// the default path keeps them coupled.
-///
-/// The pixels are always owned (one full output buffer per call, even when
-/// no conversion was needed); see the *Allocation* section on
-/// [`EncodeReady::finalize`].
+/// Build an `EncodeReady` through [`EncodeReady::from_owned`] or
+/// [`EncodeReady::copy_from`]. Use [`Self::into_parts`] to separate the
+/// owned buffer from its metadata.
 #[non_exhaustive]
 pub struct EncodeReady {
     pixels: PixelBuffer,
@@ -154,24 +127,43 @@ pub struct EncodeReady {
 }
 
 impl EncodeReady {
-    /// Couple converted pixels with the metadata that describes them, atomically.
-    ///
-    /// Offers a conversion to `cms` first, then to the built-in named-profile
-    /// paths. Streaming callers use [`OutputPlan`]. Always allocates one output
-    /// buffer, including when nothing needs converting.
-    ///
-    /// # Errors
-    ///
-    /// When no plan reaches `pixel_format` for `target`, or allocation fails.
-    #[track_caller]
-    pub fn finalize(
-        buffer: &PixelBuffer,
-        origin: &ColorOrigin,
-        target: OutputProfile,
-        pixel_format: PixelFormat,
-        cms: Option<&dyn crate::cms::PluggableCms>,
+    /// Finalize into independently owned pixels using a previously accepted plan.
+    pub fn copy_from(
+        source: PixelSlice<'_>,
+        mut plan: OutputPlan,
     ) -> Result<Self, At<ConvertError>> {
-        finalize_for_output_with(buffer, origin, target, pixel_format, cms)
+        let exact = plan
+            .borrow_rows(source.clone())?
+            .and_then(|view| view.exact_depth());
+        let mut pixels =
+            PixelBuffer::try_new(source.width(), source.rows(), plan.output_descriptor())
+                .map_err_at(ConvertError::from)?;
+        let output = plan.convert_rows(source, pixels.as_slice_mut())?;
+        let context = output
+            .color_context()
+            .cloned()
+            .unwrap_or_else(|| plan.output_color_context().clone());
+        pixels
+            .set_exact_depth(exact)
+            .expect("identity view validates the same representation");
+        Ok(Self {
+            pixels: pixels.with_color_context(context),
+            metadata: plan.into_metadata(),
+        })
+    }
+
+    /// Take ownership and reuse the allocation when sample bytes already match.
+    pub fn from_owned(source: PixelBuffer, plan: OutputPlan) -> Result<Self, At<ConvertError>> {
+        if plan.borrow_rows(source.as_slice())?.is_some() {
+            let pixels = source
+                .with_descriptor(plan.output_descriptor())
+                .with_color_context(plan.output_color_context().clone());
+            return Ok(Self {
+                pixels,
+                metadata: plan.into_metadata(),
+            });
+        }
+        Self::copy_from(source.as_slice(), plan)
     }
 
     /// Borrow the pixel data.
@@ -188,61 +180,6 @@ impl EncodeReady {
     pub fn into_parts(self) -> (PixelBuffer, OutputMetadata) {
         (self.pixels, self.metadata)
     }
-}
-
-/// Finalize a pixel buffer for output using the [`PluggableCms`](crate::cms::PluggableCms) dispatch chain.
-///
-/// When a CMS plugin is supplied, it is offered the conversion first; on
-/// decline the built-in `ZenCmsLite` dispatcher handles named-profile
-/// matlut fast paths. When `cms` is `None`, only `ZenCmsLite` runs.
-///
-/// Pass `cms = Some(&MoxCms)` (or another `PluggableCms`) for full ICC
-/// support; pass `None` for named-profile-only builds that avoid pulling
-/// in a full CMS dependency.
-///
-/// # Allocation
-///
-/// The returned [`EncodeReady`] always owns its pixels, so this call
-/// allocates exactly one output buffer of `width × height` in
-/// `pixel_format` — including on the no-conversion path (source and target
-/// agree on format, transfer, primaries, and signal range), where the source
-/// rows are copied into it unchanged. The signature (`&PixelBuffer` in,
-/// owned out) makes that copy structural rather than avoidable; a
-/// by-value/borrowing sibling is tracked in imazen/zenpixels#69. No other
-/// per-image allocation occurs: the conversion path's scratch is per-row and
-/// lives inside [`RowConverter`](crate::RowConverter).
-///
-/// # Errors
-///
-/// Returns [`ConvertError`] when no conversion path is available, buffer
-/// allocation fails, or a policy gate (alpha/depth/luma) forbids a
-/// required operation.
-#[track_caller]
-pub(crate) fn finalize_for_output_with(
-    buffer: &PixelBuffer,
-    origin: &ColorOrigin,
-    target: OutputProfile,
-    pixel_format: PixelFormat,
-    cms: Option<&dyn crate::cms::PluggableCms>,
-) -> Result<EncodeReady, At<ConvertError>> {
-    let options = crate::policy::ConvertOptions::permissive()
-        .with_alpha_policy(crate::AlphaPolicy::DiscardUnchecked);
-    let mut plan = OutputPlan::new(
-        buffer.encoding(),
-        origin,
-        target,
-        pixel_format,
-        &options,
-        cms,
-    )?;
-    let mut pixels =
-        PixelBuffer::try_new(buffer.width(), buffer.height(), plan.output_descriptor())
-            .map_err_at(ConvertError::from)?;
-    plan.convert_rows(buffer.as_slice(), pixels.as_slice_mut())?;
-    Ok(EncodeReady {
-        pixels: pixels.with_color_context(plan.output_color_context().clone()),
-        metadata: plan.into_metadata(),
-    })
 }
 
 /// Resolve current color once; provenance never overrides working pixels.
@@ -287,9 +224,11 @@ pub(crate) fn current_profile_for(
                 desc.pixel_format(),
                 &crate::ColorProfileSource::Cicp(cicp),
             )?;
-            if signaled.primaries != desc.primaries
-                || signaled.transfer() != desc.transfer()
-                || signaled.signal_range != desc.signal_range
+            let primaries_conflict =
+                desc.primaries != ColorPrimaries::Unknown && signaled.primaries != desc.primaries;
+            let transfer_conflict = desc.transfer() != TransferFunction::Unknown
+                && signaled.transfer() != desc.transfer();
+            if primaries_conflict || transfer_conflict || signaled.signal_range != desc.signal_range
             {
                 return Err(whereat::at!(ConvertError::NoPath {
                     from: desc,
@@ -361,19 +300,19 @@ pub(crate) fn profiles_match(
 ) -> bool {
     match (a, b) {
         (crate::ColorProfileSource::Icc(a), crate::ColorProfileSource::Icc(b)) => a == b,
+        (crate::ColorProfileSource::Cicp(a), crate::ColorProfileSource::Cicp(b)) => {
+            a == b
+                || (a.full_range
+                    && b.full_range
+                    && a.matrix_coefficients == 0
+                    && b.matrix_coefficients == 0
+                    && a.color_primaries == b.color_primaries
+                    && a.transfer_characteristics == b.transfer_characteristics)
+        }
         (crate::ColorProfileSource::Icc(_), _) | (_, crate::ColorProfileSource::Icc(_)) => false,
         (crate::ColorProfileSource::Parametric(a), crate::ColorProfileSource::Parametric(b)) => {
             a == b
         }
         _ => a.resolve().is_some() && a.resolve() == b.resolve(),
     }
-}
-
-/// Check if two descriptors match in all conversion-relevant fields.
-fn descriptors_match(a: &PixelDescriptor, b: &PixelDescriptor) -> bool {
-    a.format == b.format
-        && a.transfer == b.transfer
-        && a.primaries == b.primaries
-        && a.signal_range == b.signal_range
-        && a.alpha == b.alpha
 }

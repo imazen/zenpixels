@@ -13,7 +13,7 @@
 //!
 //! [`Bt2446A`](crate::hdr::Bt2446A) is this crate's implementation, the ITU-R BT.2446-1 Method A curve.
 //! Any other curve implements the trait and goes to
-//! [`ConvertPlan::new_with_tone_mapper`](crate::ConvertPlan::new_with_tone_mapper).
+//! [`ConversionSpec::with_tone_mapper`](crate::ConversionSpec::with_tone_mapper).
 //!
 //! Gated behind `hdr-experimental` together with the rest of the HDR surface in this module.
 
@@ -88,7 +88,10 @@ pub trait ToneMapper: Send + Sync + UnwindSafe + RefUnwindSafe + Debug {
     /// `ctx` carries every field the mapper declared in
     /// [`requirements`](Self::requirements), plus the always-populated
     /// `source_peak_nits` / `target_peak_nits` / `working_primaries`.
-    fn prepare(&self, ctx: &ToneMapContext) -> PreparedMapper;
+    fn prepare(
+        &self,
+        ctx: &ToneMapContext,
+    ) -> Result<PreparedMapper, whereat::At<crate::ConvertError>>;
 
     /// Short kebab-case identifier for diagnostics, trace logs, and
     /// estimate / oracle cache keys.
@@ -199,7 +202,7 @@ pub struct Requirements {
     /// `prepare`. **Reserved for a future release.** Setting `true` returns
     /// [`FullImageMapperNotSupported`](crate::ConvertError::FullImageMapperNotSupported)
     /// from
-    /// [`ConvertPlan::new_with_tone_mapper`](crate::ConvertPlan::new_with_tone_mapper).
+    /// [`ConversionSpec::with_tone_mapper`](crate::ConversionSpec::with_tone_mapper).
     pub full_image: bool,
 }
 
@@ -306,13 +309,16 @@ mod tests {
                 ..Requirements::NONE
             }
         }
-        fn prepare(&self, ctx: &ToneMapContext) -> PreparedMapper {
+        fn prepare(
+            &self,
+            ctx: &ToneMapContext,
+        ) -> Result<PreparedMapper, whereat::At<crate::ConvertError>> {
             use core::sync::atomic::Ordering;
             self.observed_source_peak_bits
                 .store(ctx.source_peak_nits.to_bits(), Ordering::Relaxed);
             self.observed_target_peak_bits
                 .store(ctx.target_peak_nits.to_bits(), Ordering::Relaxed);
-            PreparedMapper::Streaming(Box::new(IdentityStripMapper))
+            Ok(PreparedMapper::Streaming(Box::new(IdentityStripMapper)))
         }
         fn name(&self) -> &'static str {
             "mock"

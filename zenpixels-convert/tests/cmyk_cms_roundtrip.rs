@@ -2,7 +2,7 @@
 //!
 //! Before this change the public-API entry points panicked via the
 //! pre-#44 `assert_not_cmyk` guard before any CMS plugin was consulted, so
-//! `RowConverter::new_explicit_with_cms(_, _, _, Some(&MoxCms))` was a
+//! `crate::test_conversion::cms_worker(_, _, _, Some(&MoxCms))` was a
 //! documented escape hatch that didn't actually work for CMYK ↔ RGB.
 //!
 //! These tests pin the new behavior:
@@ -39,7 +39,7 @@
 extern crate alloc;
 
 use zenpixels::buffer::PixelBuffer;
-use zenpixels_convert::{ConvertError, ConvertOptions, PixelDescriptor, RowConverter};
+use zenpixels_convert::{ConvertError, ConvertOptions, PixelDescriptor};
 
 #[cfg(feature = "cms-moxcms")]
 use zenpixels_convert::cms_moxcms::MoxCms;
@@ -50,11 +50,12 @@ use zenpixels_convert::cms_moxcms::MoxCms;
 
 #[test]
 fn cmyk_no_cms_returns_needs_cms_not_panic() {
-    // The trait-level `RowConverter::new` (no CMS) used to panic via
+    // The trait-level `crate::test_conversion::new_worker` (no CMS) used to panic via
     // `assert_not_cmyk`. After 0.2.16 it answers a typed
     // `ConvertError::NeedsCms` so a caller can match and re-issue with a
     // plugin.
-    let res = RowConverter::new(PixelDescriptor::CMYK8, PixelDescriptor::RGB8_SRGB);
+    let res =
+        crate::test_conversion::new_worker(PixelDescriptor::CMYK8, PixelDescriptor::RGB8_SRGB);
     let err = match res {
         Ok(_) => panic!("CMYK→RGB without a CMS must error, not succeed"),
         Err(e) => e,
@@ -68,7 +69,8 @@ fn cmyk_no_cms_returns_needs_cms_not_panic() {
 
 #[test]
 fn rgb_to_rgb_does_not_require_cms() {
-    let res = RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGB8_SRGB);
+    let res =
+        crate::test_conversion::new_worker(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGB8_SRGB);
     assert!(res.is_ok(), "RGB→RGB identity must succeed without CMS");
 }
 
@@ -78,11 +80,10 @@ fn cmyk_to_rgb_plan_construction_fails_without_cms() {
     // fail (no usable conversion path); previously the `estimate_*`
     // family swallowed this and returned `Unknown` — same posture as
     // the `NeedsCms` error, just via the plan constructor now.
-    use zenpixels_convert::ConvertPlan;
 
     let _cmyk_buf = PixelBuffer::from_vec(alloc::vec![0u8; 4 * 4], 2, 2, PixelDescriptor::CMYK8)
         .expect("CMYK PixelBuffer construction");
-    let res = ConvertPlan::new(PixelDescriptor::CMYK8, PixelDescriptor::RGB8_SRGB);
+    let res = crate::test_conversion::new_plan(PixelDescriptor::CMYK8, PixelDescriptor::RGB8_SRGB);
     assert!(
         res.is_err(),
         "CMYK→RGB plan must fail without CMS attached, got {res:?}"
@@ -139,12 +140,15 @@ fn make_cmyk_buf_16x16() -> alloc::vec::Vec<u8> {
 fn cmyk_to_rgb_through_moxcms_8bit() {
     use zenpixels::ColorProfileSource;
     use zenpixels_convert::PixelFormat;
-    use zenpixels_convert::cms::PluggableCms;
+
     #[allow(unused_imports)] // only used on the in-memory success path
     use zenpixels_convert::cms::RowTransformMut;
 
     let cms = MoxCms;
-    let opts = ConvertOptions::permissive();
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709));
     let dst_source = ColorProfileSource::PrimariesTransferPair {
         primaries: zenpixels::ColorPrimaries::Bt709,
         transfer: zenpixels::TransferFunction::Srgb,
@@ -170,7 +174,9 @@ fn cmyk_to_rgb_through_moxcms_8bit() {
         for y in 0..16 {
             let s = y * 16 * 4;
             let d = y * 16 * 3;
-            transform.transform_row(&src[s..s + 16 * 4], &mut dst[d..d + 16 * 3], 16);
+            transform
+                .try_transform_row(&src[s..s + 16 * 4], &mut dst[d..d + 16 * 3], 16)
+                .unwrap();
         }
 
         let mut distinct = alloc::collections::BTreeSet::new();
@@ -216,23 +222,26 @@ fn cmyk_to_rgb_through_moxcms_8bit() {
 fn cmyk_with_real_icc_profile() {
     use zenpixels::ColorProfileSource;
     use zenpixels_convert::PixelFormat;
-    use zenpixels_convert::cms::PluggableCms;
+
     #[allow(unused_imports)] // only used on the in-memory success path
     use zenpixels_convert::cms::RowTransformMut;
 
     let cms = MoxCms;
-    let opts = ConvertOptions::permissive();
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709));
 
     let Some(cmyk_icc) = load_cmyk_icc_from_disk() else {
         // No real ICC available — verify the higher-level
-        // `RowConverter::new_explicit_with_cms` path still answers a
+        // `crate::test_conversion::cms_worker` path still answers a
         // typed `NeedsCms` error (rather than panicking) when CMYK
         // descriptors are passed without an attachable ICC.
         // ColorContext-based ICC threading lives in `output::*`, not
         // in `RowConverter` today; the descriptor-only signature here
         // cannot route through to MoxCms without descriptor ICC bytes.
         // See the file header for the on-disk lookup paths.
-        let res = RowConverter::new_explicit_with_cms(
+        let res = crate::test_conversion::cms_worker(
             PixelDescriptor::CMYK8,
             PixelDescriptor::RGB8_SRGB,
             &opts,
@@ -273,7 +282,9 @@ fn cmyk_with_real_icc_profile() {
     for y in 0..16 {
         let s = y * 16 * 4;
         let d = y * 16 * 3;
-        forward.transform_row(&src[s..s + 16 * 4], &mut rgb[d..d + 16 * 3], 16);
+        forward
+            .try_transform_row(&src[s..s + 16 * 4], &mut rgb[d..d + 16 * 3], 16)
+            .unwrap();
     }
 
     let mut distinct = alloc::collections::BTreeSet::new();
@@ -299,8 +310,11 @@ fn cms_attached_for_native_pair_is_unused() {
     // produce an error. The dispatch chain should land on the built-in
     // identity plan (both moxcms and ZenCmsLite decline for the trivial
     // case).
-    let opts = ConvertOptions::permissive();
-    let res = RowConverter::new_explicit_with_cms(
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709));
+    let res = crate::test_conversion::cms_worker(
         PixelDescriptor::RGB8_SRGB,
         PixelDescriptor::RGB8_SRGB,
         &opts,
@@ -321,8 +335,9 @@ mod synthetic_icc;
 /// The parity of this path with lcms2 on real profiles is measured in `benchmarks/jxl-cms-parity`.
 #[cfg(feature = "cms-moxcms")]
 mod cmyk_f32 {
+    use crate::test_cms::TestCmsExt as _;
     use zenpixels::{ColorProfileSource, PixelFormat};
-    use zenpixels_convert::cms::{PluggableCms, RowTransformMut};
+    use zenpixels_convert::cms::RowTransformMut;
     use zenpixels_convert::cms_moxcms::MoxCms;
     use zenpixels_convert::policy::ConvertOptions;
 
@@ -336,7 +351,10 @@ mod cmyk_f32 {
                 SRGB,
                 src,
                 dst,
-                &ConvertOptions::permissive(),
+                &ConvertOptions::retain_channels()
+                    .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                    .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                    .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
             )
             .expect("not declined")
             .expect("built")
@@ -397,8 +415,19 @@ mod cmyk_f32 {
             ColorProfileSource::Icc(&icc),
             PixelFormat::RgbF32,
             PixelFormat::CMYKF32,
-            &ConvertOptions::permissive(),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
         );
         assert!(matches!(refused, Some(Err(_))));
     }
 }
+
+#[path = "support/cms.rs"]
+mod test_cms;
+#[allow(unused_imports)]
+use test_cms::TestCmsExt as _;
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

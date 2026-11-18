@@ -4,7 +4,6 @@ use zenpixels::{
     TransferFunction as Tf,
 };
 use zenpixels_convert::policy::{AlphaPolicy, ConvertOptions};
-use zenpixels_convert::{ConvertIntent, RowConverter};
 
 fn sources() -> Vec<D> {
     let formats: [(ChannelType, ChannelLayout, Option<AlphaMode>); 14] = [
@@ -97,14 +96,28 @@ fn encoders() -> [(&'static str, Vec<D>); 5] {
 /// did before candidates were checked.
 #[test]
 fn best_match_never_picks_a_dead_format_over_a_live_one() {
-    let options = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
-    let reaches = |from: D, to: D| RowConverter::new_explicit(from, to, &options).is_ok();
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_alpha_policy(AlphaPolicy::DiscardUnchecked);
+    use zenpixels_convert::{CandidateTarget, ConversionSpec, ConvertPlan};
+    let spec = ConversionSpec::new(options);
+    let reaches =
+        |from: D, to: D| ConvertPlan::build(from.encoding(), to.encoding(), &spec).is_ok();
     let mut hidden = Vec::new();
     for src in sources() {
         for (name, supported) in encoders() {
-            let target = ConvertIntent::Fastest.best_match(src, &supported).unwrap();
-            if !reaches(src, target) && supported.iter().any(|&t| reaches(src, t)) {
-                hidden.push(format!("{src:?} into {name}: chose {target:?}"));
+            let targets: Vec<_> = supported
+                .iter()
+                .map(|d| CandidateTarget::new(d.encoding()))
+                .collect();
+            match ConvertPlan::select(src.encoding(), &targets, &spec) {
+                Ok(selected) => assert!(reaches(src, supported[selected.candidate_index()])),
+                Err(error) if supported.iter().any(|&t| reaches(src, t)) => {
+                    hidden.push(format!("{src:?} into {name}: {error}"));
+                }
+                Err(_) => {}
             }
         }
     }
@@ -112,22 +125,20 @@ fn best_match_never_picks_a_dead_format_over_a_live_one() {
 }
 
 #[test]
-fn a_reachable_format_is_still_the_cheapest_one() {
-    assert_eq!(
-        ConvertIntent::Fastest.best_match(D::RGB8_SRGB, &[D::RGBAF32_LINEAR, D::RGB8_SRGB]),
-        Some(D::RGB8_SRGB)
-    );
-    // PQ needs an anchor for linear and peaks for SDR. Its native format remains reachable.
+fn the_identity_candidate_remains_available_when_other_candidates_refuse() {
+    use zenpixels_convert::{CandidateTarget, ConversionSpec, ConvertPlan, PlanError};
     let pq = D::RGB16_SRGB
         .with_transfer(Tf::Pq)
         .with_primaries(P::Bt2020);
-    assert_eq!(
-        ConvertIntent::Fastest.best_match(pq, &[D::RGB8_SRGB, D::RGBF32_LINEAR, pq]),
-        Some(pq)
-    );
-    // With nothing reachable, the cheapest comes back, so converting explains why.
-    assert_eq!(
-        ConvertIntent::Fastest.best_match(pq, &[D::RGB8_SRGB]),
-        Some(D::RGB8_SRGB)
-    );
+    let sdr = CandidateTarget::new(D::RGB8_SRGB.encoding());
+    let native = CandidateTarget::new(pq.encoding());
+    let spec = ConversionSpec::new(ConvertOptions::retain_channels());
+    let selected = ConvertPlan::select(pq.encoding(), &[sdr, native], &spec).unwrap();
+    assert_eq!(selected.candidate_index(), 1);
+    assert!(selected.into_plan().is_identity());
+    let error = ConvertPlan::select(pq.encoding(), &[sdr], &spec).unwrap_err();
+    assert!(matches!(
+        error.error(),
+        PlanError::NoCandidate { index: 0, .. }
+    ));
 }

@@ -1,7 +1,7 @@
 //! ICC-to-ICC transforms through `PluggableCms`, with the call shape these tests use.
 
 use zenpixels::{ColorProfileSource, PixelFormat};
-use zenpixels_convert::cms::{PluggableCms, RowTransformMut};
+use zenpixels_convert::cms::RowTransformMut;
 use zenpixels_convert::cms_moxcms::MoxCms;
 use zenpixels_convert::policy::ConvertOptions;
 
@@ -39,7 +39,10 @@ impl IccTransforms for MoxCms {
             ColorProfileSource::Icc(dst),
             src_format,
             dst_format,
-            &ConvertOptions::permissive(),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
         ) {
             Some(Ok(transform)) => Ok(transform),
             Some(Err(error)) => Err(error.to_string()),
@@ -47,3 +50,7 @@ impl IccTransforms for MoxCms {
         }
     }
 }
+
+#[path = "../support/cms.rs"]
+mod test_cms;
+pub(crate) use test_cms::TestCmsExt;

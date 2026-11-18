@@ -4,8 +4,7 @@ use zenpixels::{
     SignalRange, TransferFunction,
 };
 use zenpixels_convert::{
-    ConvertError, ConvertOptions, ConvertPlan, PixelBufferLoadBearingExt, PixelSliceLoadBearingExt,
-    RowConverter,
+    ConvertError, ConvertOptions, PixelBufferLoadBearingExt, PixelSliceLoadBearingExt,
 };
 
 fn assert_refused<T>(result: Result<T, whereat::At<ConvertError>>) {
@@ -35,11 +34,14 @@ fn all_channel_type_changes_refuse_in_ordinary_and_explicit_plans() {
                     .with_signal_range(SignalRange::Narrow);
                 let to = PixelDescriptor::new(to_type, layout, alpha, TransferFunction::Srgb)
                     .with_signal_range(SignalRange::Narrow);
-                let options = ConvertOptions::permissive();
-                assert_refused(ConvertPlan::new(from, to));
-                assert_refused(ConvertPlan::new_explicit(from, to, &options));
-                assert_refused(RowConverter::new(from, to));
-                assert_refused(RowConverter::new_explicit(from, to, &options));
+                let options = ConvertOptions::retain_channels()
+                    .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                    .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                    .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709));
+                assert_refused(crate::test_conversion::new_plan(from, to));
+                assert_refused(crate::test_conversion::explicit_plan(from, to, &options));
+                assert_refused(crate::test_conversion::new_worker(from, to));
+                assert_refused(crate::test_conversion::explicit_worker(from, to, &options));
             }
         }
     }
@@ -47,19 +49,30 @@ fn all_channel_type_changes_refuse_in_ordinary_and_explicit_plans() {
 
 #[test]
 fn cms_cannot_bypass_range_guards() {
-    use zenpixels::{ColorProfileSource, PixelFormat};
     use zenpixels_convert::cms::{CmsPluginError, PluggableCms, RowTransformMut};
     struct MustNotBuild;
     impl PluggableCms for MustNotBuild {
-        fn build_source_transform(
+        fn build(
             &self,
-            _: ColorProfileSource<'_>,
-            _: ColorProfileSource<'_>,
-            _: PixelFormat,
-            _: PixelFormat,
-            _: &ConvertOptions,
-        ) -> Option<Result<Box<dyn RowTransformMut>, whereat::At<CmsPluginError>>> {
-            panic!("CMS setup must not run for unsupported range conversion");
+            request: &zenpixels_convert::cms::CmsRequest<'_>,
+        ) -> Result<
+            zenpixels_convert::cms::CmsSupport,
+            whereat::At<zenpixels_convert::CmsPluginError>,
+        > {
+            let build =
+                || -> Option<Result<Box<dyn RowTransformMut>, whereat::At<CmsPluginError>>> {
+                    let _ = request.source();
+                    let _ = request.target();
+                    let _ = request.from().pixel_format();
+                    let _ = request.to().pixel_format();
+                    let _ = request.options();
+
+                    panic!("CMS setup must not run for unsupported range conversion");
+                };
+            if let Some(worker) = build() {
+                return worker.map(zenpixels_convert::cms::CmsSupport::Owned);
+            }
+            Ok(zenpixels_convert::cms::CmsSupport::Declined)
         }
     }
     let narrow8 = PixelDescriptor::RGB8_SRGB.with_signal_range(SignalRange::Narrow);
@@ -72,10 +85,13 @@ fn cms_cannot_bypass_range_guards() {
         (narrow8, narrow16.with_signal_range(SignalRange::Full)),
         (narrow16.with_signal_range(SignalRange::Full), narrow8),
     ] {
-        assert_refused(RowConverter::new_explicit_with_cms(
+        assert_refused(crate::test_conversion::cms_worker(
             from,
             to,
-            &ConvertOptions::permissive(),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
             Some(&MustNotBuild),
         ));
     }
@@ -91,7 +107,7 @@ fn hdr_constructor_refuses_narrow_depth_changes() {
         .with_transfer(TransferFunction::Pq)
         .with_signal_range(SignalRange::Narrow);
     for (from, to) in [(narrow8, narrow16), (narrow16, narrow8)] {
-        assert_refused(ConvertPlan::new_with_hdr_config(
+        assert_refused(crate::test_conversion::hdr_plan(
             from,
             to,
             zenpixels_convert::HdrConfig::for_source_peak(1000.0),
@@ -103,17 +119,19 @@ fn hdr_constructor_refuses_narrow_depth_changes() {
 fn full_range_widening_and_narrowing_remain_exact() {
     let input: Vec<u8> = (0..=255).collect();
     let mut wide = vec![0u16; 256];
-    RowConverter::new(PixelDescriptor::GRAY8_SRGB, PixelDescriptor::GRAY16_SRGB)
+    crate::test_conversion::new_worker(PixelDescriptor::GRAY8_SRGB, PixelDescriptor::GRAY16_SRGB)
         .unwrap()
-        .convert_row(&input, bytemuck::cast_slice_mut(&mut wide), 256);
+        .try_convert_row(&input, bytemuck::cast_slice_mut(&mut wide), 256)
+        .unwrap();
     for (q, &value) in wide.iter().enumerate() {
         assert_eq!(value, q as u16 * 257);
     }
     let all: Vec<u16> = (0..=65535).collect();
     let mut narrow = vec![0u8; all.len()];
-    RowConverter::new(PixelDescriptor::GRAY16_SRGB, PixelDescriptor::GRAY8_SRGB)
+    crate::test_conversion::new_worker(PixelDescriptor::GRAY16_SRGB, PixelDescriptor::GRAY8_SRGB)
         .unwrap()
-        .convert_row(bytemuck::cast_slice(&all), &mut narrow, 65536);
+        .try_convert_row(bytemuck::cast_slice(&all), &mut narrow, 65536)
+        .unwrap();
     for (q, &value) in narrow.iter().enumerate() {
         assert_eq!(u32::from(value), (q as u32 + 128) / 257);
     }
@@ -123,14 +141,21 @@ fn full_range_widening_and_narrowing_remain_exact() {
 fn narrow_identity_and_same_depth_channel_addition_still_work() {
     let rgb = PixelDescriptor::RGB16_SRGB.with_signal_range(SignalRange::Narrow);
     let rgba = PixelDescriptor::RGBA16_SRGB.with_signal_range(SignalRange::Narrow);
-    assert!(ConvertPlan::new(rgb, rgb).unwrap().is_identity());
+    assert!(
+        crate::test_conversion::new_plan(rgb, rgb)
+            .unwrap()
+            .is_identity()
+    );
     let input = [4096u16, 60160, 32768];
     let mut output = [0u16; 4];
-    RowConverter::new(rgb, rgba).unwrap().convert_row(
-        bytemuck::cast_slice(&input),
-        bytemuck::cast_slice_mut(&mut output),
-        1,
-    );
+    crate::test_conversion::new_worker(rgb, rgba)
+        .unwrap()
+        .try_convert_row(
+            bytemuck::cast_slice(&input),
+            bytemuck::cast_slice_mut(&mut output),
+            1,
+        )
+        .unwrap();
     // Preserve color codes; alpha remains full-scale even for narrow color.
     assert_eq!(output, [4096, 60160, 32768, 65535]);
 }
@@ -193,3 +218,6 @@ fn narrow_depth_guard_keeps_independent_alpha_and_gray_reductions() {
         );
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

@@ -1,7 +1,7 @@
 //! Kernel-level transfer tests keep their original thresholds and byte goldens.
 //! HLG's scene transfer primitives remain testable internally even though the
 //! public light-domain API refuses HLG until its display OOTF is implemented.
-use crate::{ConvertOptions, ConvertPlan, PixelDescriptor, TransferFunction};
+use crate::{ConvertOptions, NativePlan, PixelDescriptor, TransferFunction};
 use whereat::At;
 
 #[derive(Debug)]
@@ -11,7 +11,11 @@ impl KernelConverter {
         Self::new_explicit(
             from,
             to,
-            &ConvertOptions::permissive().with_alpha_policy(crate::AlphaPolicy::DiscardUnchecked),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(crate::DepthPolicy::Round)
+                .with_luma(Some(crate::LumaCoefficients::Bt709))
+                .with_alpha_policy(crate::AlphaPolicy::DiscardUnchecked),
         )
     }
     fn new_explicit(
@@ -24,7 +28,7 @@ impl KernelConverter {
                 && (from.transfer() == TransferFunction::Hlg
                     || to.transfer() == TransferFunction::Hlg)
         {
-            return ConvertPlan::plan_native(from, to)
+            return NativePlan::plan_native(from, to)
                 .map(crate::RowConverter::from_plan)
                 .map(Self);
         }
@@ -32,7 +36,7 @@ impl KernelConverter {
         crate::RowConverter::new_explicit(from, to, &options).map(Self)
     }
     #[cfg(feature = "hdr-experimental")]
-    fn from_plan(plan: ConvertPlan) -> Self {
+    fn from_plan(plan: NativePlan) -> Self {
         Self(crate::RowConverter::from_plan(plan))
     }
 }

@@ -88,6 +88,7 @@
 //! penalizes non-linear formats by 120 loss points, steering the
 //! negotiator toward f32 linear even when u8 sRGB is cheaper to deliver.
 
+use crate::route::channel_bits;
 use core::ops::Add;
 
 use crate::{
@@ -298,7 +299,7 @@ impl ConvertIntent {
 ///
 /// This ranks formats. It isn't a guarantee about particular pixels: even
 /// [`Imperceptible`](Self::Imperceptible) can change samples. For hard guarantees use
-/// `ConvertPlan::new_preserving_samples`, which refuses anything that isn't a proven
+/// `NativePlan::new_preserving_samples`, which refuses anything that isn't a proven
 /// reversible change, or the refusals in `ConvertOptions`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
@@ -581,12 +582,10 @@ fn best_of(
         .collect();
     ranked.sort_by_key(|&(score, _)| score);
     // The cost model doesn't know which pairs can be planned. Skip a cheap format that
-    // can't be reached when a dearer one can. If none can, return the cheapest, so that
-    // converting to it reports why.
+    // cannot be reached under the descriptor-only policy.
     ranked
         .iter()
-        .find(|&&(_, target)| crate::ConvertPlan::new(source, target).is_ok())
-        .or(ranked.first())
+        .find(|&&(_, target)| crate::NativePlan::new(source, target).is_ok())
         .map(|&(_, target)| target)
 }
 
@@ -774,22 +773,6 @@ fn depth_loss(target_depth: ChannelType, origin_depth: ChannelType) -> u16 {
         (ChannelType::F16, ChannelType::U8) => 8,  // measured ΔE=0.000 (f16 >8 bits precision)
         (ChannelType::U16, ChannelType::F16) => 30, // 16→10 mantissa bits, moderate loss
         _ => 50,
-    }
-}
-
-/// Nominal precision bits for a channel type (for ordering, not bit-exact).
-///
-/// F16 has 10 mantissa bits (~3.3 decimal digits) — between U8 (8 bits) and
-/// U16 (16 bits).
-#[allow(unreachable_patterns)] // non_exhaustive: future variants
-pub(crate) fn channel_bits(ct: ChannelType) -> u16 {
-    match ct {
-        ChannelType::U8 | ChannelType::I8 => 8,
-        ChannelType::F16 => 11, // 10 mantissa + 1 implicit
-        ChannelType::U16 | ChannelType::I16 => 16,
-        ChannelType::F32 | ChannelType::U32 | ChannelType::I32 => 32,
-        ChannelType::U64 | ChannelType::I64 | ChannelType::F64 => 64,
-        _ => 0,
     }
 }
 

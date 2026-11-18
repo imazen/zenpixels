@@ -53,7 +53,7 @@ mod bt2446a;
 mod gamut_compress;
 
 /// Pluggable two-phase HDR→SDR tone-mapper trait — the permanent DI
-/// surface for injecting custom curves into [`crate::ConvertPlan`].
+/// surface for injecting custom curves into [`crate::ConversionSpec`].
 ///
 /// Gated behind `hdr-experimental` together with the rest of the HDR
 /// surface.
@@ -67,9 +67,9 @@ mod tone_mapper;
 #[cfg(feature = "hdr-experimental")]
 pub use measure::{CllMeasure, LightLevelHistogram, LightLevelMethod};
 
-// HDR → SDR conversion now lives in the main `ConvertPlan` infrastructure:
-// build via [`crate::ConvertPlan::new_with_hdr_peak`] /
-// [`crate::ConvertPlan::new_with_hdr_config`] and run through the standard
+// HDR → SDR conversion now lives in the main `NativePlan` infrastructure:
+// build via [`crate::NativePlan::new_with_hdr_peak`] /
+// [`crate::NativePlan::new_with_hdr_config`] and run through the standard
 // [`crate::RowConverter`] / `PixelBuffer` conversion entry points. The
 // underlying `Bt2446A` and `SoftCompress` primitives stay public for advanced
 // callers that want to drive the math directly.
@@ -160,7 +160,7 @@ fn quantize_setup(
 /// in-kernel; codes match the f64 ST 2084 oracle within ±1.
 ///
 /// **Alpha follows the target.** An RGB target (e.g.
-/// [`RGB16_BT2100_PQ`](PixelDescriptor::RGB16_BT2100_PQ)) drops alpha; an RGBA
+/// [`RGB16_BT2100_PQ`](PixelDescriptor::RGB16_BT2100_PQ)) requires opaque alpha; an RGBA
 /// PQ target (`RGBA16.with_transfer(Pq).with_primaries(…)`) preserves it,
 /// carried linearly and **never PQ-encoded or anchor-scaled**.
 ///
@@ -192,6 +192,9 @@ pub(crate) fn quantize_to(
     // drops or preserves alpha per `target`. The anchor travels with the pixels
     // (S1a): `quantize_setup` reads it from the source `ColorContext`.
     let (src, diffuse_white, w, h) = quantize_setup(&px, target)?;
+    if src.has_alpha() && !target.has_alpha() {
+        crate::adapt::check_opaque(&px)?;
+    }
     let out = convert_buffer_with_anchor(
         px.as_strided_bytes(),
         w,
@@ -221,7 +224,7 @@ pub(crate) fn quantize_to(
 /// into a sub-region of a bigger buffer); `dst` must hold
 /// `(rows - 1) * dst_stride + width * target.bpp` bytes, else
 /// [`ConvertError::BufferSize`]. Anchor sourcing, strided-**source** handling,
-/// and target-driven alpha (drop for an RGB target, preserve for an RGBA one)
+/// and target-driven alpha (check opacity for RGB, preserve for RGBA)
 /// are identical to [`quantize_to`]; this only avoids allocating the output. Unlike
 /// [`quantize_to`], it writes raw bytes with no `PixelBuffer` to tag, so the
 /// caller owns the output's color envelope (e.g. re-attaching the
@@ -247,6 +250,9 @@ pub(crate) fn quantize_into(
     dst_stride: usize,
 ) -> Result<(), At<ConvertError>> {
     let (src, diffuse_white, w, h) = quantize_setup(&px, target)?;
+    if src.has_alpha() && !target.has_alpha() {
+        crate::adapt::check_opaque(&px)?;
+    }
     convert_into_with_anchor(
         px.as_strided_bytes(),
         w,
@@ -397,6 +403,17 @@ mod tests {
         // The 100-nit result differs from the 203-nit default for the same input.
         let want_203 = (pq_oracle(203.0 / 10_000.0) * 65535.0).round() as i64;
         assert_ne!(want, want_203);
+    }
+
+    #[test]
+    fn quantize_to_rgb_requires_opaque_alpha() {
+        let values = rgbaf32(&[[1.0, 1.0, 1.0, 0.5]], 1, 1);
+        let target = PixelDescriptor::RGB16_BT2100_PQ;
+        let error = quantize_to(values.as_slice(), target).unwrap_err();
+        assert!(matches!(error.error(), ConvertError::AlphaNotOpaque));
+
+        let opaque = rgbaf32(&[[1.0, 1.0, 1.0, 1.0]], 1, 1);
+        assert!(quantize_to(opaque.as_slice(), target).is_ok());
     }
 
     #[test]

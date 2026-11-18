@@ -151,8 +151,12 @@ pub(crate) fn apply_orientation_into(
     let dst_bpp = dst.descriptor().bytes_per_pixel();
     if dst.width() != ow || dst.rows() != oh || dst_bpp != bpp {
         return Err(ConvertError::BufferSize {
-            expected: ow as usize * oh as usize * bpp,
-            actual: dst.width() as usize * dst.rows() as usize * dst_bpp,
+            expected: (ow as usize)
+                .saturating_mul(oh as usize)
+                .saturating_mul(bpp),
+            actual: (dst.width() as usize)
+                .saturating_mul(dst.rows() as usize)
+                .saturating_mul(dst_bpp),
         });
     }
     // Orientation moves pixels; it can't change what their bytes mean.
@@ -938,8 +942,12 @@ pub fn __bench_apply_orientation_staged(
     let (ow, oh) = orientation.output_dimensions(w, h);
     if dst.width() != ow || dst.rows() != oh || dst.descriptor().bytes_per_pixel() != bpp {
         return Err(ConvertError::BufferSize {
-            expected: ow as usize * oh as usize * bpp,
-            actual: dst.width() as usize * dst.rows() as usize * dst.descriptor().bytes_per_pixel(),
+            expected: (ow as usize)
+                .saturating_mul(oh as usize)
+                .saturating_mul(bpp),
+            actual: (dst.width() as usize)
+                .saturating_mul(dst.rows() as usize)
+                .saturating_mul(dst.descriptor().bytes_per_pixel()),
         });
     }
     if w == 0 || h == 0 || bpp == 0 {

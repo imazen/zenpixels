@@ -10,7 +10,6 @@ use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction,
     policy::{AlphaPolicy, ConvertOptions},
 };
-use zenpixels_convert::RowConverter;
 
 // ── Sizes ──────────────────────────────────────────────────────────────────
 
@@ -95,13 +94,13 @@ fn bench_swizzle_bgra_rgba(suite: &mut Suite) {
         let src = make_rgba_bytes(width, ChannelType::U8);
         let bytes = src.len() as u64;
         let mut dst = vec![0u8; src.len()];
-        let mut conv = RowConverter::new(src_desc, dst_desc).unwrap();
+        let mut conv = crate::test_conversion::new_worker(src_desc, dst_desc).unwrap();
 
         suite.group(format!("swizzle BGRA↔RGBA  {label}"), move |g| {
             g.throughput(Throughput::Bytes(bytes));
             g.bench("U8   sRGB", move |b| {
                 b.iter(|| {
-                    conv.convert_row(&src, &mut dst, width as u32);
+                    conv.try_convert_row(&src, &mut dst, width as u32).unwrap();
                     black_box(());
                 })
             });
@@ -124,13 +123,13 @@ fn bench_add_alpha(suite: &mut Suite) {
             let dst_bytes = width * 4 * ct.byte_size();
             let bytes = (src.len() + dst_bytes) as u64;
             let mut dst = vec![0u8; dst_bytes];
-            let mut conv = RowConverter::new(src_desc, dst_desc).unwrap();
+            let mut conv = crate::test_conversion::new_worker(src_desc, dst_desc).unwrap();
 
             suite.group(format!("add_alpha RGB→RGBA  {label}"), move |g| {
                 g.throughput(Throughput::Bytes(bytes));
                 g.bench(format!("{} sRGB", ct_label(ct)), move |b| {
                     b.iter(|| {
-                        conv.convert_row(&src, &mut dst, width as u32);
+                        conv.try_convert_row(&src, &mut dst, width as u32).unwrap();
                         black_box(());
                     })
                 });
@@ -154,13 +153,13 @@ fn bench_drop_alpha(suite: &mut Suite) {
             let dst_bytes = width * 3 * ct.byte_size();
             let bytes = (src.len() + dst_bytes) as u64;
             let mut dst = vec![0u8; dst_bytes];
-            let mut conv = RowConverter::new(src_desc, dst_desc).unwrap();
+            let mut conv = crate::test_conversion::new_worker(src_desc, dst_desc).unwrap();
 
             suite.group(format!("drop_alpha RGBA→RGB  {label}"), move |g| {
                 g.throughput(Throughput::Bytes(bytes));
                 g.bench(format!("{} sRGB", ct_label(ct)), move |b| {
                     b.iter(|| {
-                        conv.convert_row(&src, &mut dst, width as u32);
+                        conv.try_convert_row(&src, &mut dst, width as u32).unwrap();
                         black_box(());
                     })
                 });
@@ -184,13 +183,13 @@ fn bench_gray_alpha_to_rgba(suite: &mut Suite) {
             let dst_bytes = width * 4 * ct.byte_size();
             let bytes = (src.len() + dst_bytes) as u64;
             let mut dst = vec![0u8; dst_bytes];
-            let mut conv = RowConverter::new(src_desc, dst_desc).unwrap();
+            let mut conv = crate::test_conversion::new_worker(src_desc, dst_desc).unwrap();
 
             suite.group(format!("gray_alpha_to_rgba  {label}"), move |g| {
                 g.throughput(Throughput::Bytes(bytes));
                 g.bench(format!("{} sRGB", ct_label(ct)), move |b| {
                     b.iter(|| {
-                        conv.convert_row(&src, &mut dst, width as u32);
+                        conv.try_convert_row(&src, &mut dst, width as u32).unwrap();
                         black_box(());
                     })
                 });
@@ -214,13 +213,13 @@ fn bench_gray_to_rgb(suite: &mut Suite) {
             let dst_bytes = width * 3 * ct.byte_size();
             let bytes = (src.len() + dst_bytes) as u64;
             let mut dst = vec![0u8; dst_bytes];
-            let mut conv = RowConverter::new(src_desc, dst_desc).unwrap();
+            let mut conv = crate::test_conversion::new_worker(src_desc, dst_desc).unwrap();
 
             suite.group(format!("gray_to_rgb  {label}"), move |g| {
                 g.throughput(Throughput::Bytes(bytes));
                 g.bench(format!("{} sRGB", ct_label(ct)), move |b| {
                     b.iter(|| {
-                        conv.convert_row(&src, &mut dst, width as u32);
+                        conv.try_convert_row(&src, &mut dst, width as u32).unwrap();
                         black_box(());
                     })
                 });
@@ -269,16 +268,19 @@ fn bench_matte_composite(suite: &mut Suite) {
                 for &tf in tfs {
                     let src_desc = rgba_desc(ct, tf, AlphaMode::Straight);
                     let dst_desc = rgb_desc(ct, tf);
-                    let opts = ConvertOptions::permissive().with_alpha_policy(
-                        AlphaPolicy::CompositeOnto {
+                    let opts = ConvertOptions::retain_channels()
+                        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+                        .with_alpha_policy(AlphaPolicy::CompositeOnto {
                             background: zenpixels::Color::srgb8(64, 64, 64),
                             reference_white: None,
-                        },
-                    );
-                    let mut conv = match RowConverter::new_explicit(src_desc, dst_desc, &opts) {
-                        Ok(c) => c,
-                        Err(_) => continue,
-                    };
+                        });
+                    let mut conv =
+                        match crate::test_conversion::explicit_worker(src_desc, dst_desc, &opts) {
+                            Ok(c) => c,
+                            Err(_) => continue,
+                        };
                     let src = make_rgba_bytes(width, ct);
                     let dst_bytes = width * bytes_per_pixel_dst * ct.byte_size();
                     let src_bytes = width * bytes_per_pixel_src * ct.byte_size();
@@ -289,7 +291,7 @@ fn bench_matte_composite(suite: &mut Suite) {
                     g.throughput(Throughput::Bytes(throughput));
                     g.bench(name, move |b| {
                         b.iter(|| {
-                            conv.convert_row(&src, &mut dst, width as u32);
+                            conv.try_convert_row(&src, &mut dst, width as u32).unwrap();
                             black_box(());
                         })
                     });
@@ -309,3 +311,6 @@ fn main() {
         bench_matte_composite(suite);
     });
 }
+
+#[path = "../tests/support/conversion.rs"]
+mod test_conversion;
