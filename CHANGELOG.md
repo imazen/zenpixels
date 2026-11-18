@@ -4,6 +4,11 @@
 
 ### Added
 
+- Add bounded row-band allocations (`BandedPixelBuffer`, `BandedPlane`,
+  `BandedPlanarBuffer`) for gigapixel (`> 10^9` px) packed and planar images with
+  `u64` picture geometry, configurable `RowAlign`, `ExactDepth` preservation,
+  address-space preflight on 32-bit targets, and band-independent sample hashes.
+
 - Generalize planar ownership over `PlaneStorage` / `PlaneStorageMut`, preserving
   aligned, pooled and shared owners. Add recoverable planar parts transfer
   (`2ce00f93`).
@@ -29,6 +34,32 @@
   values instead of a descriptor slice, allowing allocation-free views of
   owned and writable storage. Use `plane(index)` for checked indexed access.
   Existing constructor and interpretation accessors are unchanged (`c8949ec2`).
+
+# zenpixels-convert
+
+## [Unreleased]
+
+### Added
+
+- Add `BandedPixelBufferConvertExt` (`oriented_into` using cache-blocked SIMD
+  transpose across band intersections, `scan_source_precision`, and
+  `check_opaque`), `RowConverter::convert_bands` band zipper, typed
+  `RowConverter::convert_rows` alongside `convert_raw_rows`, and fallible
+  `LightLevelHistogram::try_merge`.
+
+### QUEUED BREAKING CHANGES
+
+- Compile validated encodings with `ConvertPlan::build` or `select` (returning
+  unified `At<ConvertError>`), steer selection with optional `ConvertIntent` and
+  `Provenance`, prepare row workers via `ConvertPlan::prepare` or
+  `prepare_shared`, and compose materialized boundaries with `then`.
+- Use a fallible `PluggableCms` builder and row transform. Finalize through
+  `OutputPlan::build` and `EncodeReady::copy_from` or `from_owned`.
+- Choose a `GamutPolicy` and explicit permissions for unchecked alpha removal;
+  unverified `Unknown` ↔ known transfer changes require an authoritative
+  `ColorContext` or explicit `ConvertPlan::relabel_transfer`. Enable
+  `introspection` for `PlannedStepInfo`, `AccuracyContract`, `SemanticEffects`,
+  `KernelTier`, `ConversionCost`, and `LossBucket` diagnostics.
 
 # zenpsy-api
 

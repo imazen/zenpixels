@@ -23,7 +23,7 @@ fn invalid_current_or_target_cicp_retains_the_declaration_error() {
                 input = input.with_color_context(Arc::new(ColorContext::from_cicp(bad)));
             }
             let target = OutputProfile::Named(if bad_is_current { Cicp::SRGB } else { bad });
-            let error = zenpixels_convert::EncodeReady::finalize(
+            let error = crate::test_conversion::copy_output(
                 &input,
                 &ColorOrigin::assumed(),
                 target,
@@ -50,43 +50,61 @@ fn invalid_current_or_target_cicp_retains_the_declaration_error() {
 struct RecordingCms(Mutex<Vec<(Vec<u8>, Vec<u8>)>>);
 struct Invert;
 impl RowTransform for Invert {
-    fn transform_row(&self, source: &[u8], target: &mut [u8], _: u32) {
+    fn try_transform_row(
+        &self,
+        source: &[u8],
+        target: &mut [u8],
+        _: u32,
+    ) -> Result<(), whereat::At<zenpixels_convert::CmsPluginError>> {
         for (to, from) in target.iter_mut().zip(source) {
             *to = 255 - from;
         }
+        Ok(())
     }
 }
 impl PluggableCms for RecordingCms {
-    fn build_source_transform(
+    fn build(
         &self,
-        _: ColorProfileSource<'_>,
-        _: ColorProfileSource<'_>,
-        _: PixelFormat,
-        _: PixelFormat,
-        _: &ConvertOptions,
-    ) -> Option<
-        Result<
-            Box<dyn zenpixels_convert::cms::RowTransformMut>,
-            whereat::At<zenpixels_convert::cms::CmsPluginError>,
-        >,
-    > {
-        None
-    }
-    fn build_shared_source_transform(
-        &self,
-        source: ColorProfileSource<'_>,
-        target: ColorProfileSource<'_>,
-        _: PixelFormat,
-        _: PixelFormat,
-        _: &ConvertOptions,
-    ) -> Option<Result<Arc<dyn RowTransform>, whereat::At<zenpixels_convert::cms::CmsPluginError>>>
+        request: &zenpixels_convert::cms::CmsRequest<'_>,
+    ) -> Result<zenpixels_convert::cms::CmsSupport, whereat::At<zenpixels_convert::CmsPluginError>>
     {
+        let build = || -> Option<Result<Arc<dyn RowTransform>, whereat::At<zenpixels_convert::cms::CmsPluginError>>> {
+let source = request.source();
+let target = request.target();
+let _ = request.from().pixel_format();
+let _ = request.to().pixel_format();
+let _ = request.options();
+
         if let (ColorProfileSource::Icc(a), ColorProfileSource::Icc(b)) = (source, target) {
             self.0.lock().unwrap().push((a.to_vec(), b.to_vec()));
             Some(Ok(Arc::new(Invert)))
         } else {
             None
         }
+
+};
+        if let Some(worker) = build() {
+            return worker.map(zenpixels_convert::cms::CmsSupport::Shared);
+        }
+        let build = || -> Option<
+        Result<
+            Box<dyn zenpixels_convert::cms::RowTransformMut>,
+            whereat::At<zenpixels_convert::cms::CmsPluginError>,
+        >,
+    > {
+let _ = request.source();
+let _ = request.target();
+let _ = request.from().pixel_format();
+let _ = request.to().pixel_format();
+let _ = request.options();
+
+        None
+
+};
+        if let Some(worker) = build() {
+            return worker.map(zenpixels_convert::cms::CmsSupport::Owned);
+        }
+        Ok(zenpixels_convert::cms::CmsSupport::Declined)
     }
 }
 
@@ -103,7 +121,7 @@ fn current_icc_and_target_icc_reach_the_plugin_even_when_descriptors_match() {
     // Original file metadata is intentionally stale; current pixels win.
     let origin = ColorOrigin::from_icc(Arc::<[u8]>::from(&b"original-profile"[..]));
     let cms = RecordingCms::default();
-    let output = zenpixels_convert::EncodeReady::finalize(
+    let output = crate::test_conversion::copy_output(
         &buffer,
         &origin,
         OutputProfile::Icc(target.clone()),
@@ -134,7 +152,7 @@ fn unsupported_icc_conversion_is_an_error_instead_of_a_relabel() {
             &b"source"[..],
         ))));
     assert!(
-        zenpixels_convert::EncodeReady::finalize(
+        crate::test_conversion::copy_output(
             &buffer,
             &ColorOrigin::assumed(),
             OutputProfile::Icc(Arc::from(&b"target"[..])),
@@ -155,7 +173,7 @@ fn same_as_origin_converts_current_linear_pixels_back_to_original_srgb() {
     )
     .unwrap()
     .with_cicp(Cicp::new(1, 8, 0, true));
-    let output = zenpixels_convert::EncodeReady::finalize(
+    let output = crate::test_conversion::copy_output(
         &input,
         &ColorOrigin::from_cicp(Cicp::SRGB),
         OutputProfile::SameAsOrigin,
@@ -177,7 +195,7 @@ fn conflicting_current_cicp_is_not_silently_overruled_by_the_descriptor() {
         .unwrap()
         .with_cicp(Cicp::new(1, 8, 0, true));
     assert!(
-        zenpixels_convert::EncodeReady::finalize(
+        crate::test_conversion::copy_output(
             &input,
             &ColorOrigin::assumed(),
             OutputProfile::Named(Cicp::SRGB),
@@ -207,13 +225,16 @@ fn real_icc_input_matches_direct_moxcms_and_keeps_straight_alpha() {
             ColorProfileSource::Cicp(Cicp::SRGB),
             PixelFormat::Rgba8,
             PixelFormat::Rgba8,
-            &ConvertOptions::permissive(),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
         )
         .unwrap()
         .unwrap();
     let mut expected = [0u8; 12];
-    direct.transform_row(&input, &mut expected, 3);
-    let ready = zenpixels_convert::EncodeReady::finalize(
+    direct.try_transform_row(&input, &mut expected, 3).unwrap();
+    let ready = crate::test_conversion::copy_output(
         &buffer,
         &ColorOrigin::assumed(),
         OutputProfile::Named(Cicp::SRGB),
@@ -238,7 +259,7 @@ fn premultiplied_icc_finalization_uses_current_profile() {
     use zenpixels_convert::AlphaMode;
     use zenpixels_convert::{
         Cicp, ColorContext, ColorOrigin, ColorProfileSource, PixelBuffer, PixelFormat,
-        cms::PluggableCms, cms_moxcms::MoxCms, icc_profiles::ADOBE_RGB, output::OutputProfile,
+        cms_moxcms::MoxCms, icc_profiles::ADOBE_RGB, output::OutputProfile,
     };
     let source = PixelBuffer::from_vec(
         vec![64, 32, 16, 128],
@@ -250,7 +271,7 @@ fn premultiplied_icc_finalization_uses_current_profile() {
     .with_color_context(Arc::new(ColorContext::from_icc(Arc::<[u8]>::from(
         ADOBE_RGB,
     ))));
-    let actual = zenpixels_convert::EncodeReady::finalize(
+    let actual = crate::test_conversion::copy_output(
         &source,
         &ColorOrigin::assumed(),
         OutputProfile::Named(Cicp::SRGB),
@@ -265,11 +286,15 @@ fn premultiplied_icc_finalization_uses_current_profile() {
             ColorProfileSource::Cicp(Cicp::SRGB),
             PixelFormat::Rgba8,
             PixelFormat::Rgba8,
-            &ConvertOptions::permissive(),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
         )
         .unwrap()
         .unwrap()
-        .transform_row(&[128, 64, 32, 128], &mut expected, 1);
+        .try_transform_row(&[128, 64, 32, 128], &mut expected, 1)
+        .unwrap();
     assert_eq!(actual.pixels().row(0)[3], 128);
     for (actual, expected) in actual.pixels().row(0).iter().zip(expected) {
         assert!(actual.abs_diff(expected) <= 1, "{actual} != {expected}");
@@ -284,7 +309,7 @@ fn identity_retains_matching_context_and_luminance_anchor() {
         .with_color_context(Arc::new(
             ColorContext::from_cicp(Cicp::SRGB).with_diffuse_white(DiffuseWhite::new(100.0)),
         ));
-    let ready = zenpixels_convert::EncodeReady::finalize(
+    let ready = crate::test_conversion::copy_output(
         &input,
         &ColorOrigin::assumed(),
         OutputProfile::Named(Cicp::SRGB),
@@ -303,7 +328,7 @@ fn identity_retains_matching_context_and_luminance_anchor() {
 #[test]
 fn original_video_matrix_and_range_do_not_retag_decoded_rgb() {
     let input = PixelBuffer::from_vec(vec![10, 20, 30], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
-    let ready = zenpixels_convert::EncodeReady::finalize(
+    let ready = crate::test_conversion::copy_output(
         &input,
         &ColorOrigin::from_cicp(Cicp::new(1, 13, 1, false)),
         OutputProfile::SameAsOrigin,
@@ -314,7 +339,7 @@ fn original_video_matrix_and_range_do_not_retag_decoded_rgb() {
     assert_eq!(ready.metadata().cicp, Some(Cicp::SRGB));
     assert_eq!(ready.pixels().row(0), &[10, 20, 30]);
     assert!(
-        zenpixels_convert::EncodeReady::finalize(
+        crate::test_conversion::copy_output(
             &input,
             &ColorOrigin::assumed(),
             OutputProfile::Named(Cicp::new(1, 13, 1, false)),
@@ -324,3 +349,11 @@ fn original_video_matrix_and_range_do_not_retag_decoded_rgb() {
         .is_err()
     );
 }
+
+#[path = "support/cms.rs"]
+mod test_cms;
+#[allow(unused_imports)]
+use test_cms::TestCmsExt as _;
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

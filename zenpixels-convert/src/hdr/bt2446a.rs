@@ -198,7 +198,7 @@ impl Bt2446A {
     ///
     /// Expects **finite** linear-light BT.2020 RGB. Non-finite input is
     /// not scrubbed, and `NaN`/`inf` can reach the output. The conversion pipeline
-    /// (`ConvertPlan` tone-map step) scrubs non-finite values *before*
+    /// (`NativePlan` tone-map step) scrubs non-finite values *before*
     /// calling this; direct callers own that themselves.
     ///
     /// **Panics** if called on a
@@ -309,7 +309,10 @@ impl crate::hdr::ToneMapper for Bt2446A {
         }
     }
 
-    fn prepare(&self, ctx: &crate::hdr::ToneMapContext) -> crate::hdr::PreparedMapper {
+    fn prepare(
+        &self,
+        ctx: &crate::hdr::ToneMapContext,
+    ) -> Result<crate::hdr::PreparedMapper, whereat::At<crate::ConvertError>> {
         // Resolve peaks: prefer the descriptor's baked values when
         // present (constructed via `new`); fall back to the pipeline-
         // gathered context otherwise (constructed via
@@ -320,7 +323,9 @@ impl crate::hdr::ToneMapper for Bt2446A {
             (ctx.source_peak_nits, ctx.target_peak_nits)
         };
         let exec = Bt2446AExecutor::compile(src, dst);
-        crate::hdr::PreparedMapper::Streaming(alloc::boxed::Box::new(exec))
+        Ok(crate::hdr::PreparedMapper::Streaming(
+            alloc::boxed::Box::new(exec),
+        ))
     }
 
     fn name(&self) -> &'static str {
@@ -330,7 +335,7 @@ impl crate::hdr::ToneMapper for Bt2446A {
     fn working_primaries_for(&self, _target: crate::ColorPrimaries) -> crate::ColorPrimaries {
         // BT.2446 Method A is defined in BT.2020 RGB — see the
         // struct-level docs and the planner's BT.2020-bracketing of
-        // this step in `ConvertPlan::plan_hdr`.
+        // this step in `NativePlan::plan_hdr`.
         crate::ColorPrimaries::Bt2020
     }
 }

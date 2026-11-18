@@ -14,9 +14,9 @@ use zenpixels::{
     NamedProfile, ParametricColor, PixelDescriptor, PixelFormat, RenderingIntent, SignalRange,
     TransferFunction,
 };
+use zenpixels_convert::ConvertError;
 use zenpixels_convert::css::CssColorError;
 use zenpixels_convert::ext::ColorConvertExt;
-use zenpixels_convert::{ConvertError, ConvertPlan, RowConverter};
 
 const OKLCHF32: PixelDescriptor = PixelDescriptor::new(
     ChannelType::F32,
@@ -189,11 +189,14 @@ fn hlg_rendering_negative_zero_canonical_and_pluge_sub_black_lift() {
         .with_primaries(ColorPrimaries::Bt2020)
         .with_transfer(TransferFunction::Hlg);
     let lin_desc = PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::Bt2020);
-    let opts = ConvertOptions::permissive()
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
         .with_hlg_rendering(hlg_cond)
         .with_sdr_white(DiffuseWhite::new(1000.0))
-        .with_clip_out_of_gamut(true);
-    let mut conv = RowConverter::new_explicit(hlg_desc, lin_desc, &opts).unwrap();
+        .with_gamut_policy(zenpixels_convert::GamutPolicy::Clip);
+    let mut conv = crate::test_conversion::explicit_worker(hlg_desc, lin_desc, &opts).unwrap();
 
     let src = [
         [0.0_f32, 0.0, 0.0],
@@ -201,11 +204,12 @@ fn hlg_rendering_negative_zero_canonical_and_pluge_sub_black_lift() {
         [pluge_floor, pluge_floor, pluge_floor],
     ];
     let mut dst = [[0.0_f32; 3]; 3];
-    conv.convert_row(
+    conv.try_convert_row(
         bytemuck::cast_slice(&src),
         bytemuck::cast_slice_mut(&mut dst),
         3,
-    );
+    )
+    .unwrap();
     let y_zero = dst[0][1];
     let y_pluge = dst[1][1];
     let y_below = dst[2][1];
@@ -225,21 +229,23 @@ fn adobe_rgb_jzazbz_and_lch_roundtrip_matches_exact_rationals() {
     // Linear AdobeRGB <-> JZAZBZF32 and LCHF32 roundtrip using exact Adobe RGB (1998) §4.3.4.1 XYZ matrices.
     let adobe_lin = PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::AdobeRgb);
     for target in [JZAZBZF32, LCHF32] {
-        let mut fwd = RowConverter::new(adobe_lin, target).unwrap();
-        let mut inv = RowConverter::new(target, adobe_lin).unwrap();
+        let mut fwd = crate::test_conversion::new_worker(adobe_lin, target).unwrap();
+        let mut inv = crate::test_conversion::new_worker(target, adobe_lin).unwrap();
         let px = [0.2_f32, 0.85, 0.3];
         let mut mid = [0.0_f32; 3];
         let mut rt = [0.0_f32; 3];
-        fwd.convert_row(
+        fwd.try_convert_row(
             bytemuck::cast_slice(&px),
             bytemuck::cast_slice_mut(&mut mid),
             1,
-        );
-        inv.convert_row(
+        )
+        .unwrap();
+        inv.try_convert_row(
             bytemuck::cast_slice(&mid),
             bytemuck::cast_slice_mut(&mut rt),
             1,
-        );
+        )
+        .unwrap();
         for c in 0..3 {
             assert!(
                 (rt[c] - px[c]).abs() < 1e-4,
@@ -260,20 +266,22 @@ fn cross_gamut_bt2020_pq_jzazbz_and_jzczhz_preserve_wide_gamut() {
     let px = [0.05_f32, 0.72, 0.08];
 
     for perceptual_desc in [JZAZBZF32, JZCZHZF32] {
-        let mut fwd = RowConverter::new(bt2020_pq, perceptual_desc).unwrap();
-        let mut inv = RowConverter::new(perceptual_desc, bt2020_pq).unwrap();
+        let mut fwd = crate::test_conversion::new_worker(bt2020_pq, perceptual_desc).unwrap();
+        let mut inv = crate::test_conversion::new_worker(perceptual_desc, bt2020_pq).unwrap();
         let mut mid = [0.0_f32; 3];
         let mut rt = [0.0_f32; 3];
-        fwd.convert_row(
+        fwd.try_convert_row(
             bytemuck::cast_slice(&px),
             bytemuck::cast_slice_mut(&mut mid),
             1,
-        );
-        inv.convert_row(
+        )
+        .unwrap();
+        inv.try_convert_row(
             bytemuck::cast_slice(&mid),
             bytemuck::cast_slice_mut(&mut rt),
             1,
-        );
+        )
+        .unwrap();
         for c in 0..3 {
             assert!(
                 (rt[c] - px[c]).abs() < 2e-4,
@@ -289,14 +297,16 @@ fn jzazbz_diffuse_white_10000_nits_anchor_reaches_peak_jz_one() {
     let jab = JZAZBZF32;
 
     // Default unanchored: linear 1.0 = 203 cd/m² -> Jz ≈ 0.2220.
-    let mut def_conv = RowConverter::new(lin, jab).unwrap();
+    let mut def_conv = crate::test_conversion::new_worker(lin, jab).unwrap();
     let white = [1.0_f32, 1.0, 1.0];
     let mut out_203 = [0.0_f32; 3];
-    def_conv.convert_row(
-        bytemuck::cast_slice(&white),
-        bytemuck::cast_slice_mut(&mut out_203),
-        1,
-    );
+    def_conv
+        .try_convert_row(
+            bytemuck::cast_slice(&white),
+            bytemuck::cast_slice_mut(&mut out_203),
+            1,
+        )
+        .unwrap();
     assert!(
         (out_203[0] - 0.2220).abs() < 5e-3,
         "203-nit Jz: {out_203:?}"
@@ -304,25 +314,33 @@ fn jzazbz_diffuse_white_10000_nits_anchor_reaches_peak_jz_one() {
 
     // Explicit 10,000 cd/m² anchor (`pq_scale == 1.0`): linear 1.0 = 10,000 cd/m² D65
     // -> Safdar (2017) Jz ≈ 0.98861 (vs 0.2220 at 203 cd/m²)!
-    let opts_10k = ConvertOptions::permissive().with_sdr_white(DiffuseWhite::new(10_000.0));
-    let mut conv_10k = RowConverter::new_explicit(lin, jab, &opts_10k).unwrap();
-    let mut inv_10k = RowConverter::new_explicit(jab, lin, &opts_10k).unwrap();
+    let opts_10k = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_sdr_white(DiffuseWhite::new(10_000.0));
+    let mut conv_10k = crate::test_conversion::explicit_worker(lin, jab, &opts_10k).unwrap();
+    let mut inv_10k = crate::test_conversion::explicit_worker(jab, lin, &opts_10k).unwrap();
     let mut out_10k = [0.0_f32; 3];
     let mut rt_10k = [0.0_f32; 3];
-    conv_10k.convert_row(
-        bytemuck::cast_slice(&white),
-        bytemuck::cast_slice_mut(&mut out_10k),
-        1,
-    );
+    conv_10k
+        .try_convert_row(
+            bytemuck::cast_slice(&white),
+            bytemuck::cast_slice_mut(&mut out_10k),
+            1,
+        )
+        .unwrap();
     assert!(
         (out_10k[0] - 0.98861).abs() < 1e-3,
         "10,000-nit anchored D65 linear 1.0 must reach Safdar Jz ≈ 0.98861, got {out_10k:?}"
     );
-    inv_10k.convert_row(
-        bytemuck::cast_slice(&out_10k),
-        bytemuck::cast_slice_mut(&mut rt_10k),
-        1,
-    );
+    inv_10k
+        .try_convert_row(
+            bytemuck::cast_slice(&out_10k),
+            bytemuck::cast_slice_mut(&mut rt_10k),
+            1,
+        )
+        .unwrap();
     for r in rt_10k {
         assert!((r - 1.0).abs() < 1e-4, "10,000-nit rt: {rt_10k:?}");
     }
@@ -330,14 +348,26 @@ fn jzazbz_diffuse_white_10000_nits_anchor_reaches_peak_jz_one() {
 
 #[test]
 fn jzazbz_and_hsl_extended_range_roundtrip_without_poles() {
-    let unclipped = ConvertOptions::permissive().with_clip_out_of_gamut(false);
+    let unclipped = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended);
 
     // Sub-black / imaginary linear RGB values (including tiny negatives near -1e-6)
     // must remain finite and invert cleanly in Jzazbz.
-    let mut to_jab =
-        RowConverter::new_explicit(PixelDescriptor::RGBF32_LINEAR, JZAZBZF32, &unclipped).unwrap();
-    let mut from_jab =
-        RowConverter::new_explicit(JZAZBZF32, PixelDescriptor::RGBF32_LINEAR, &unclipped).unwrap();
+    let mut to_jab = crate::test_conversion::explicit_worker(
+        PixelDescriptor::RGBF32_LINEAR,
+        JZAZBZF32,
+        &unclipped,
+    )
+    .unwrap();
+    let mut from_jab = crate::test_conversion::explicit_worker(
+        JZAZBZF32,
+        PixelDescriptor::RGBF32_LINEAR,
+        &unclipped,
+    )
+    .unwrap();
     for px in [
         [-0.25_f32, 0.5, 1.4],
         [-5e-7, -5e-7, -5e-7],
@@ -345,20 +375,24 @@ fn jzazbz_and_hsl_extended_range_roundtrip_without_poles() {
     ] {
         let mut jab = [0.0_f32; 3];
         let mut rt = [0.0_f32; 3];
-        to_jab.convert_row(
-            bytemuck::cast_slice(&px),
-            bytemuck::cast_slice_mut(&mut jab),
-            1,
-        );
+        to_jab
+            .try_convert_row(
+                bytemuck::cast_slice(&px),
+                bytemuck::cast_slice_mut(&mut jab),
+                1,
+            )
+            .unwrap();
         assert!(
             jab.iter().all(|v| v.is_finite()),
             "non-finite jab for {px:?}: {jab:?}"
         );
-        from_jab.convert_row(
-            bytemuck::cast_slice(&jab),
-            bytemuck::cast_slice_mut(&mut rt),
-            1,
-        );
+        from_jab
+            .try_convert_row(
+                bytemuck::cast_slice(&jab),
+                bytemuck::cast_slice_mut(&mut rt),
+                1,
+            )
+            .unwrap();
         for c in 0..3 {
             assert!(
                 (rt[c] - px[c]).abs() < 2e-4,
@@ -370,25 +404,31 @@ fn jzazbz_and_hsl_extended_range_roundtrip_without_poles() {
     // Extended-range HSL with L > 1 and L < 0 (W3C CSS Color 4 §7.2 / §19).
     let srgb_f32 = PixelDescriptor::RGBF32_LINEAR.with_transfer(TransferFunction::Srgb);
     let hsl_f32 = HSLF32_SRGB;
-    let mut to_hsl = RowConverter::new_explicit(srgb_f32, hsl_f32, &unclipped).unwrap();
-    let mut from_hsl = RowConverter::new_explicit(hsl_f32, srgb_f32, &unclipped).unwrap();
+    let mut to_hsl =
+        crate::test_conversion::explicit_worker(srgb_f32, hsl_f32, &unclipped).unwrap();
+    let mut from_hsl =
+        crate::test_conversion::explicit_worker(hsl_f32, srgb_f32, &unclipped).unwrap();
     for px in [[0.8_f32, 1.4, 1.6], [-0.8, -0.3, -0.1], [-0.2, 0.5, 1.3]] {
         let mut hsl = [0.0_f32; 3];
         let mut rt = [0.0_f32; 3];
-        to_hsl.convert_row(
-            bytemuck::cast_slice(&px),
-            bytemuck::cast_slice_mut(&mut hsl),
-            1,
-        );
+        to_hsl
+            .try_convert_row(
+                bytemuck::cast_slice(&px),
+                bytemuck::cast_slice_mut(&mut hsl),
+                1,
+            )
+            .unwrap();
         assert!(
             hsl[1] >= 0.0,
             "CSS HSL saturation must be non-negative: {hsl:?}"
         );
-        from_hsl.convert_row(
-            bytemuck::cast_slice(&hsl),
-            bytemuck::cast_slice_mut(&mut rt),
-            1,
-        );
+        from_hsl
+            .try_convert_row(
+                bytemuck::cast_slice(&hsl),
+                bytemuck::cast_slice_mut(&mut rt),
+                1,
+            )
+            .unwrap();
         for c in 0..3 {
             assert!(
                 (rt[c] - px[c]).abs() < 1e-5,
@@ -411,15 +451,18 @@ fn straight_to_premul_with_gamut_change_premultiplies_after_gamut_matrix() {
     let mut ref_premul = [0_u8; 4];
     let mut direct_premul = [0_u8; 4];
 
-    RowConverter::new(p3_straight_u8, bt709_straight_u8)
+    crate::test_conversion::new_worker(p3_straight_u8, bt709_straight_u8)
         .unwrap()
-        .convert_row(&src, &mut straight_mid, 1);
-    RowConverter::new(bt709_straight_u8, bt709_premul_u8)
+        .try_convert_row(&src, &mut straight_mid, 1)
+        .unwrap();
+    crate::test_conversion::new_worker(bt709_straight_u8, bt709_premul_u8)
         .unwrap()
-        .convert_row(&straight_mid, &mut ref_premul, 1);
-    RowConverter::new(p3_straight_u8, bt709_premul_u8)
+        .try_convert_row(&straight_mid, &mut ref_premul, 1)
+        .unwrap();
+    crate::test_conversion::new_worker(p3_straight_u8, bt709_premul_u8)
         .unwrap()
-        .convert_row(&src, &mut direct_premul, 1);
+        .try_convert_row(&src, &mut direct_premul, 1)
+        .unwrap();
 
     for c in 0..4 {
         assert!(
@@ -439,27 +482,30 @@ fn straight_to_premul_with_gamut_change_premultiplies_after_gamut_matrix() {
     let mut mid_f = [0.0_f32; 4];
     let mut want_f = [0.0_f32; 4];
     let mut got_f = [0.0_f32; 4];
-    RowConverter::new(p3_straight_f32, bt709_straight_f32)
+    crate::test_conversion::new_worker(p3_straight_f32, bt709_straight_f32)
         .unwrap()
-        .convert_row(
+        .try_convert_row(
             bytemuck::cast_slice(&src_f),
             bytemuck::cast_slice_mut(&mut mid_f),
             1,
-        );
-    RowConverter::new(bt709_straight_f32, bt709_premul_f32)
+        )
+        .unwrap();
+    crate::test_conversion::new_worker(bt709_straight_f32, bt709_premul_f32)
         .unwrap()
-        .convert_row(
+        .try_convert_row(
             bytemuck::cast_slice(&mid_f),
             bytemuck::cast_slice_mut(&mut want_f),
             1,
-        );
-    RowConverter::new(p3_straight_f32, bt709_premul_f32)
+        )
+        .unwrap();
+    crate::test_conversion::new_worker(p3_straight_f32, bt709_premul_f32)
         .unwrap()
-        .convert_row(
+        .try_convert_row(
             bytemuck::cast_slice(&src_f),
             bytemuck::cast_slice_mut(&mut got_f),
             1,
-        );
+        )
+        .unwrap();
     for c in 0..4 {
         assert!(
             (got_f[c] - want_f[c]).abs() < 1e-5,
@@ -475,24 +521,28 @@ fn narrow_range_rejects_premul_matte_and_non_rgb_models() {
     let rgb_narrow = PixelDescriptor::RGB8_SRGB.with_signal_range(SignalRange::Narrow);
 
     assert!(matches!(
-        ConvertPlan::new(rgba_straight, rgba_premul)
+        crate::test_conversion::new_plan(rgba_straight, rgba_premul)
             .unwrap_err()
             .error(),
         ConvertError::NoPath { .. }
     ));
     assert!(matches!(
-        ConvertPlan::new(rgba_premul, rgba_straight)
+        crate::test_conversion::new_plan(rgba_premul, rgba_straight)
             .unwrap_err()
             .error(),
         ConvertError::NoPath { .. }
     ));
 
-    let matte_opts = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-        background: Color::srgb8(0, 0, 0),
-        reference_white: None,
-    });
+    let matte_opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_alpha_policy(AlphaPolicy::CompositeOnto {
+            background: Color::srgb8(0, 0, 0),
+            reference_white: None,
+        });
     assert!(matches!(
-        ConvertPlan::new_explicit(rgba_straight, rgb_narrow, &matte_opts)
+        crate::test_conversion::explicit_plan(rgba_straight, rgb_narrow, &matte_opts)
             .unwrap_err()
             .error(),
         ConvertError::NoPath { .. }
@@ -501,9 +551,16 @@ fn narrow_range_rejects_premul_matte_and_non_rgb_models() {
     let narrow_lin_f32 = PixelDescriptor::RGBF32_LINEAR.with_signal_range(SignalRange::Narrow);
     let narrow_oklab = PixelDescriptor::OKLABF32.with_signal_range(SignalRange::Narrow);
     assert!(matches!(
-        ConvertPlan::new_explicit(narrow_lin_f32, narrow_oklab, &ConvertOptions::permissive())
-            .unwrap_err()
-            .error(),
+        crate::test_conversion::explicit_plan(
+            narrow_lin_f32,
+            narrow_oklab,
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        )
+        .unwrap_err()
+        .error(),
         ConvertError::NoPath { .. }
     ));
 }
@@ -518,8 +575,8 @@ fn premul_odd_divisor_exact_rounding_u8_ga_and_u16() {
     let rgba8_s = PixelDescriptor::RGBA8_SRGB;
     let rgba8_p = rgba8_s.with_alpha(Some(AlphaMode::Premultiplied));
 
-    let mut conv_ga = RowConverter::new(ga8_s, ga8_p).unwrap();
-    let mut conv_rgba = RowConverter::new(rgba8_s, rgba8_p).unwrap();
+    let mut conv_ga = crate::test_conversion::new_worker(ga8_s, ga8_p).unwrap();
+    let mut conv_rgba = crate::test_conversion::new_worker(rgba8_s, rgba8_p).unwrap();
 
     let mut ga_in = vec![0_u8; 256 * 2];
     let mut ga_out = vec![0_u8; 256 * 2];
@@ -536,8 +593,10 @@ fn premul_odd_divisor_exact_rounding_u8_ga_and_u16() {
             rgba_in[idx * 4 + 2] = g;
             rgba_in[idx * 4 + 3] = a;
         }
-        conv_ga.convert_row(&ga_in, &mut ga_out, 256);
-        conv_rgba.convert_row(&rgba_in, &mut rgba_out, 256);
+        conv_ga.try_convert_row(&ga_in, &mut ga_out, 256).unwrap();
+        conv_rgba
+            .try_convert_row(&rgba_in, &mut rgba_out, 256)
+            .unwrap();
         for a in 0..=255_u8 {
             let idx = usize::from(a);
             let exact = ((u32::from(g) * u32::from(a) + 127) / 255) as u8;
@@ -559,26 +618,36 @@ fn premul_odd_divisor_exact_rounding_u8_ga_and_u16() {
     let rgba16_p = rgba16_s.with_alpha(Some(AlphaMode::Premultiplied));
 
     let mut ga16_out = [0_u16; 4];
-    RowConverter::new(ga16_s, ga16_p).unwrap().convert_row(
-        bytemuck::cast_slice(&[1_u16, 32767, 1, 32768]),
-        bytemuck::cast_slice_mut(&mut ga16_out),
-        2,
-    );
+    crate::test_conversion::new_worker(ga16_s, ga16_p)
+        .unwrap()
+        .try_convert_row(
+            bytemuck::cast_slice(&[1_u16, 32767, 1, 32768]),
+            bytemuck::cast_slice_mut(&mut ga16_out),
+            2,
+        )
+        .unwrap();
     assert_eq!(ga16_out, [0, 32767, 1, 32768]);
 
     let mut rgba16_out = [0_u16; 8];
-    RowConverter::new(rgba16_s, rgba16_p).unwrap().convert_row(
-        bytemuck::cast_slice(&[1_u16, 65533, 0, 32767, 1, 65533, 65535, 32768]),
-        bytemuck::cast_slice_mut(&mut rgba16_out),
-        2,
-    );
+    crate::test_conversion::new_worker(rgba16_s, rgba16_p)
+        .unwrap()
+        .try_convert_row(
+            bytemuck::cast_slice(&[1_u16, 65533, 0, 32767, 1, 65533, 65535, 32768]),
+            bytemuck::cast_slice_mut(&mut rgba16_out),
+            2,
+        )
+        .unwrap();
     assert_eq!(rgba16_out, [0, 32766, 0, 32767, 1, 32767, 32768, 32768]);
 }
 
 #[test]
 fn rgba_to_grayalpha_u8_bt709_matches_exact_bt709_table_4_weights() {
-    let opts = ConvertOptions::permissive().with_luma(Some(LumaCoefficients::Bt709));
-    let mut rgba_ga = RowConverter::new_explicit(
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_luma(Some(LumaCoefficients::Bt709));
+    let mut rgba_ga = crate::test_conversion::explicit_worker(
         PixelDescriptor::RGBA8_SRGB,
         PixelDescriptor::GRAYA8_SRGB,
         &opts,
@@ -592,7 +661,9 @@ fn rgba_to_grayalpha_u8_bt709_matches_exact_bt709_table_4_weights() {
                     (0.2126 * f32::from(r) + 0.7152 * f32::from(g) + 0.0722 * f32::from(b) + 0.5)
                         .clamp(0.0, 255.0) as u8;
                 let mut ga = [0_u8; 2];
-                rgba_ga.convert_row(&[r, g, b, 200], &mut ga, 1);
+                rgba_ga
+                    .try_convert_row(&[r, g, b, 200], &mut ga, 1)
+                    .unwrap();
                 assert_eq!(ga, [want, 200], "({r}, {g}, {b}) mismatch");
             }
         }
@@ -601,18 +672,26 @@ fn rgba_to_grayalpha_u8_bt709_matches_exact_bt709_table_4_weights() {
 
 #[test]
 fn depth_policy_truncate_floors_instead_of_rounding() {
-    let trunc_opts = ConvertOptions::permissive().with_depth_policy(DepthPolicy::Truncate);
-    let round_opts = ConvertOptions::permissive().with_depth_policy(DepthPolicy::Round);
+    let trunc_opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_depth_policy(DepthPolicy::Truncate);
+    let round_opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_depth_policy(DepthPolicy::Round);
 
     // U16 -> U8: 0x00FF (255) truncates to 0 (`255 >> 8`), rounds to 1 (`round(255 / 257)`);
     // 0x01FF (511) truncates to 1 (`511 >> 8`), rounds to 2 (`round(511 / 257)`).
-    let mut u16_trunc = RowConverter::new_explicit(
+    let mut u16_trunc = crate::test_conversion::explicit_worker(
         PixelDescriptor::GRAY16_SRGB,
         PixelDescriptor::GRAY8_SRGB,
         &trunc_opts,
     )
     .unwrap();
-    let mut u16_round = RowConverter::new_explicit(
+    let mut u16_round = crate::test_conversion::explicit_worker(
         PixelDescriptor::GRAY16_SRGB,
         PixelDescriptor::GRAY8_SRGB,
         &round_opts,
@@ -621,8 +700,12 @@ fn depth_policy_truncate_floors_instead_of_rounding() {
     let src16 = [0x00FF_u16, 0x01FF, 0xFFFF];
     let mut out_t = [0_u8; 3];
     let mut out_r = [0_u8; 3];
-    u16_trunc.convert_row(bytemuck::cast_slice(&src16), &mut out_t, 3);
-    u16_round.convert_row(bytemuck::cast_slice(&src16), &mut out_r, 3);
+    u16_trunc
+        .try_convert_row(bytemuck::cast_slice(&src16), &mut out_t, 3)
+        .unwrap();
+    u16_round
+        .try_convert_row(bytemuck::cast_slice(&src16), &mut out_r, 3)
+        .unwrap();
     assert_eq!(out_t, [0, 1, 0xFF]);
     assert_eq!(out_r, [1, 2, 0xFF]);
 
@@ -632,12 +715,14 @@ fn depth_policy_truncate_floors_instead_of_rounding() {
     let srcf = [1.9_f32 / 255.0, 127.8 / 255.0, 1.0];
     let mut ft = [0_u8; 3];
     let mut fr = [0_u8; 3];
-    RowConverter::new_explicit(lin_f32, lin_u8, &trunc_opts)
+    crate::test_conversion::explicit_worker(lin_f32, lin_u8, &trunc_opts)
         .unwrap()
-        .convert_row(bytemuck::cast_slice(&srcf), &mut ft, 3);
-    RowConverter::new_explicit(lin_f32, lin_u8, &round_opts)
+        .try_convert_row(bytemuck::cast_slice(&srcf), &mut ft, 3)
+        .unwrap();
+    crate::test_conversion::explicit_worker(lin_f32, lin_u8, &round_opts)
         .unwrap()
-        .convert_row(bytemuck::cast_slice(&srcf), &mut fr, 3);
+        .try_convert_row(bytemuck::cast_slice(&srcf), &mut fr, 3)
+        .unwrap();
     assert_eq!(ft, [1, 127, 255]);
     assert_eq!(fr, [2, 128, 255]);
 }
@@ -647,23 +732,27 @@ fn linear_premul_matte_composite_preserves_emissive_zero_alpha_and_scrubs_nan() 
     let premul_lin = PixelDescriptor::RGBAF32_LINEAR.with_alpha(Some(AlphaMode::Premultiplied));
     let rgb_lin = PixelDescriptor::RGBF32_LINEAR;
     let bg = Color::try_new(rgb_lin, bytemuck::cast_slice(&[0.1_f32, 0.2, 0.3])).unwrap();
-    let opts = ConvertOptions::permissive()
-        .with_clip_out_of_gamut(false)
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended)
         .with_alpha_policy(AlphaPolicy::CompositeOnto {
             background: bg,
             reference_white: None,
         });
 
-    let mut conv = RowConverter::new_explicit(premul_lin, rgb_lin, &opts).unwrap();
+    let mut conv = crate::test_conversion::explicit_worker(premul_lin, rgb_lin, &opts).unwrap();
     // Pixel 0: emissive additive glow `(rgb > 0, alpha == 0)` -> `cs + bg * (1 - 0) = cs + bg`.
     // Pixel 1: NaN alpha -> scrubbed to 0.0 -> `cs + bg`.
     let src = [[0.4_f32, 0.2, 0.1, 0.0], [0.0, 0.0, 0.0, f32::NAN]];
     let mut dst = [[0.0_f32; 3]; 2];
-    conv.convert_row(
+    conv.try_convert_row(
         bytemuck::cast_slice(&src),
         bytemuck::cast_slice_mut(&mut dst),
         2,
-    );
+    )
+    .unwrap();
     assert!(
         (dst[0][0] - 0.5).abs() < 1e-6
             && (dst[0][1] - 0.4).abs() < 1e-6
@@ -679,15 +768,19 @@ fn linear_premul_matte_composite_preserves_emissive_zero_alpha_and_scrubs_nan() 
 #[test]
 fn oklab_subnormal_cbrt_stays_accurate() {
     // Subnormal linear input `1e-40` has cbrt `≈ 4.6415888e-14`.
-    let mut conv =
-        RowConverter::new(PixelDescriptor::RGBF32_LINEAR, PixelDescriptor::OKLABF32).unwrap();
+    let mut conv = crate::test_conversion::new_worker(
+        PixelDescriptor::RGBF32_LINEAR,
+        PixelDescriptor::OKLABF32,
+    )
+    .unwrap();
     let src = [1e-40_f32, 1e-40, 1e-40];
     let mut oklab = [0.0_f32; 3];
-    conv.convert_row(
+    conv.try_convert_row(
         bytemuck::cast_slice(&src),
         bytemuck::cast_slice_mut(&mut oklab),
         1,
-    );
+    )
+    .unwrap();
     let want_l = 1e-40_f64.cbrt() as f32;
     assert!(
         (oklab[0] - want_l).abs() < 1e-16,
@@ -765,11 +858,13 @@ fn css_color_4_grammar_and_system_colors() {
 #[cfg(feature = "cms-moxcms")]
 #[test]
 fn moxcms_declines_absolute_colorimetric_and_preserves_model_consistency() {
-    use zenpixels_convert::cms::PluggableCms;
     let src = ColorProfileSource::Named(NamedProfile::DisplayP3);
     let dst = ColorProfileSource::Named(NamedProfile::Srgb);
-    let abs_opts =
-        ConvertOptions::permissive().with_rendering_intent(RenderingIntent::AbsoluteColorimetric);
+    let abs_opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_rendering_intent(RenderingIntent::AbsoluteColorimetric);
     assert!(
         zenpixels_convert::MoxCms
             .build_source_transform(
@@ -791,7 +886,10 @@ fn moxcms_declines_absolute_colorimetric_and_preserves_model_consistency() {
                 dst,
                 PixelFormat::Rgb8,
                 PixelFormat::Rgb8,
-                &ConvertOptions::permissive(),
+                &ConvertOptions::retain_channels()
+                    .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                    .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                    .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
             )
             .is_none()
     );
@@ -802,7 +900,7 @@ fn moxcms_declines_absolute_colorimetric_and_preserves_model_consistency() {
 
 #[test]
 fn decisions_a1_b1_c1_d1_conformance() {
-    use zenpixels::GamutMapping;
+    use zenpixels::GamutPolicy;
     use zenpixels_convert::icc_profiles::SynthesizedIcc;
 
     // A1: Synthesized RGB ICC profiles (including PQ TC=16 and Display P3 exports)
@@ -838,9 +936,10 @@ fn decisions_a1_b1_c1_d1_conformance() {
     let rec2100_white = Color::parse_css("color(rec2100-linear 1 1 1)").unwrap();
     assert!(rec2100_white.same_color(&Color::srgb8(255, 255, 255)));
     let mut srgb8_out = [0_u8; 3];
-    RowConverter::new(rec2100_white.descriptor(), PixelDescriptor::RGB8_SRGB)
+    crate::test_conversion::new_worker(rec2100_white.descriptor(), PixelDescriptor::RGB8_SRGB)
         .unwrap()
-        .convert_row(rec2100_white.as_bytes(), &mut srgb8_out, 1);
+        .try_convert_row(rec2100_white.as_bytes(), &mut srgb8_out, 1)
+        .unwrap();
     assert_eq!(srgb8_out, [255, 255, 255]);
 
     // C1: ITU-T H.273 Table 3 TC=14 and TC=15 (BT.2020 10/12-bit SDR) resolve to TransferFunction::Bt709.
@@ -866,21 +965,23 @@ fn decisions_a1_b1_c1_d1_conformance() {
     // D1: Adobe RGB (1998) supports native Oklab, Oklch, map_to_gamut, same_color, and SoftCompress.
     let adobe_lin = PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::AdobeRgb);
     for perceptual in [PixelDescriptor::OKLABF32, OKLCHF32] {
-        let mut fwd = RowConverter::new(adobe_lin, perceptual).unwrap();
-        let mut inv = RowConverter::new(perceptual, adobe_lin).unwrap();
+        let mut fwd = crate::test_conversion::new_worker(adobe_lin, perceptual).unwrap();
+        let mut inv = crate::test_conversion::new_worker(perceptual, adobe_lin).unwrap();
         let px = [0.25_f32, 0.80, 0.35];
         let mut mid = [0.0_f32; 3];
         let mut rt = [0.0_f32; 3];
-        fwd.convert_row(
+        fwd.try_convert_row(
             bytemuck::cast_slice(&px),
             bytemuck::cast_slice_mut(&mut mid),
             1,
-        );
-        inv.convert_row(
+        )
+        .unwrap();
+        inv.try_convert_row(
             bytemuck::cast_slice(&mid),
             bytemuck::cast_slice_mut(&mut rt),
             1,
-        );
+        )
+        .unwrap();
         for c in 0..3 {
             assert!(
                 (rt[c] - px[c]).abs() < 1e-4,
@@ -900,8 +1001,12 @@ fn decisions_a1_b1_c1_d1_conformance() {
     let adobe_srgb = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::AdobeRgb);
     assert!(bt2020_green.map_to_gamut(adobe_srgb).is_ok());
 
-    let soft_opts = ConvertOptions::permissive().with_gamut_mapping(GamutMapping::SoftCompress);
-    let mut soft_conv = RowConverter::new_explicit(
+    let soft_opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_gamut_policy(GamutPolicy::SoftCompress);
+    let mut soft_conv = crate::test_conversion::explicit_worker(
         PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::Bt2020),
         adobe_lin,
         &soft_opts,
@@ -909,11 +1014,13 @@ fn decisions_a1_b1_c1_d1_conformance() {
     .unwrap();
     let oog = [0.0_f32, 1.0, 0.0];
     let mut compressed = [0.0_f32; 3];
-    soft_conv.convert_row(
-        bytemuck::cast_slice(&oog),
-        bytemuck::cast_slice_mut(&mut compressed),
-        1,
-    );
+    soft_conv
+        .try_convert_row(
+            bytemuck::cast_slice(&oog),
+            bytemuck::cast_slice_mut(&mut compressed),
+            1,
+        )
+        .unwrap();
     assert!(
         compressed.iter().all(|&c| (0.0..=1.0).contains(&c)),
         "SoftCompress into AdobeRGB stayed in gamut: {compressed:?}"
@@ -937,21 +1044,23 @@ fn decisions_a1_b1_c1_d1_conformance() {
     let rgb16_px = [1000_u16, 2000, 3000];
     let mut bgr16_out = [0_u16; 3];
     let mut bgra16_out = [0_u16; 4];
-    RowConverter::new(PixelDescriptor::RGB16_SRGB, bgr16_srgb)
+    crate::test_conversion::new_worker(PixelDescriptor::RGB16_SRGB, bgr16_srgb)
         .unwrap()
-        .convert_row(
+        .try_convert_row(
             bytemuck::cast_slice(&rgb16_px),
             bytemuck::cast_slice_mut(&mut bgr16_out),
             1,
-        );
+        )
+        .unwrap();
     assert_eq!(bgr16_out, [3000, 2000, 1000]);
-    RowConverter::new(PixelDescriptor::RGB16_SRGB, bgra16_srgb)
+    crate::test_conversion::new_worker(PixelDescriptor::RGB16_SRGB, bgra16_srgb)
         .unwrap()
-        .convert_row(
+        .try_convert_row(
             bytemuck::cast_slice(&rgb16_px),
             bytemuck::cast_slice_mut(&mut bgra16_out),
             1,
-        );
+        )
+        .unwrap();
     assert_eq!(bgra16_out, [3000, 2000, 1000, 65535]);
 
     let bgrf32 = PixelFormat::from_parts(ChannelType::F32, ChannelLayout::Bgr, None).unwrap();
@@ -959,12 +1068,21 @@ fn decisions_a1_b1_c1_d1_conformance() {
     let bgrf32_lin = bgrf32.descriptor().with_transfer(TransferFunction::Linear);
     let rgbf32_px = [0.1_f32, 0.2, 0.3];
     let mut bgrf32_out = [0.0_f32; 3];
-    RowConverter::new(PixelDescriptor::RGBF32_LINEAR, bgrf32_lin)
+    crate::test_conversion::new_worker(PixelDescriptor::RGBF32_LINEAR, bgrf32_lin)
         .unwrap()
-        .convert_row(
+        .try_convert_row(
             bytemuck::cast_slice(&rgbf32_px),
             bytemuck::cast_slice_mut(&mut bgrf32_out),
             1,
-        );
+        )
+        .unwrap();
     assert_eq!(bgrf32_out, [0.3, 0.2, 0.1]);
 }
+
+#[path = "support/cms.rs"]
+mod test_cms;
+#[allow(unused_imports)]
+use test_cms::TestCmsExt as _;
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

@@ -1,5 +1,5 @@
-//! Coverage for the `ConvertPlan::new_with_hdr_peak` /
-//! `ConvertPlan::new_with_hdr_config` HDR pipeline introduced across
+//! Coverage for the `crate::test_conversion::hdr_peak_plan` /
+//! `crate::test_conversion::hdr_plan` HDR pipeline introduced across
 //! `52fd949`, `e712f84`, `f68b759`, `505d02e8`, `0897f17`, and the
 //! `e1ebf76` empirically-calibrated `gamut_knee = 0.96` default.
 //!
@@ -33,8 +33,8 @@ use zenpixels::buffer::PixelBuffer;
 use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
 };
+use zenpixels_convert::HdrConfig;
 use zenpixels_convert::hdr::{Bt2446A, SoftCompress};
-use zenpixels_convert::{ConvertPlan, HdrConfig};
 
 // ── Test inputs ─────────────────────────────────────────────────────────
 
@@ -93,7 +93,7 @@ fn linear_f32_bt2020_rgb() -> PixelDescriptor {
 #[cfg(feature = "__trace_ops")]
 mod plan_shape {
     use super::*;
-    use zenpixels_convert::{__trace_ops as tracer, RowConverter};
+    use zenpixels_convert::__trace_ops as tracer;
 
     /// Construct a `ConvertPlan` via the HDR config path, run one row
     /// through it, and return the dispatched-step trace.
@@ -104,12 +104,13 @@ mod plan_shape {
         src_bytes: &[u8],
         width: u32,
     ) -> Vec<&'static str> {
-        let plan = ConvertPlan::new_with_hdr_config(src, dst, hdr).expect("hdr plan");
-        let mut conv = RowConverter::from_plan(plan);
+        let plan = crate::test_conversion::hdr_plan(src, dst, hdr).expect("hdr plan");
+        let mut conv = crate::test_conversion::worker(plan);
         let dst_len = (width as usize) * dst.bytes_per_pixel();
         let mut dst_buf = alloc::vec![0u8; dst_len];
         tracer::start_recording();
-        conv.convert_row(src_bytes, &mut dst_buf, width);
+        conv.try_convert_row(src_bytes, &mut dst_buf, width)
+            .unwrap();
         tracer::stop_recording()
     }
 
@@ -195,7 +196,7 @@ mod plan_shape {
     #[test]
     fn hdr_pipeline_hlg_requires_an_explicit_display_mapping() {
         assert!(
-            ConvertPlan::new_with_hdr_config(
+            crate::test_conversion::hdr_plan(
                 hlg_u16_bt2020_rgb(),
                 PixelDescriptor::RGB8_SRGB,
                 HdrConfig::for_source_peak(1000.)
@@ -283,7 +284,7 @@ fn degenerate_peaks_are_rejected_not_tone_mapped_to_black() {
         HdrConfig::for_source_peak(1000.0).with_target_peak_nits(f32::NAN),
     ];
     for (i, cfg) in bad_sources.iter().enumerate() {
-        let err = ConvertPlan::new_with_hdr_config(src, dst, *cfg)
+        let err = crate::test_conversion::hdr_plan(src, dst, *cfg)
             .expect_err("degenerate peak must be rejected");
         assert!(
             matches!(
@@ -294,13 +295,13 @@ fn degenerate_peaks_are_rejected_not_tone_mapped_to_black() {
         );
     }
     // And the peak-shortcut constructor routes through the same guard.
-    assert!(ConvertPlan::new_with_hdr_peak(src, dst, 0.0).is_err());
-    assert!(ConvertPlan::new_with_hdr_peak(src, dst, f32::NAN).is_err());
+    assert!(crate::test_conversion::hdr_peak_plan(src, dst, 0.0).is_err());
+    assert!(crate::test_conversion::hdr_peak_plan(src, dst, f32::NAN).is_err());
 
     // SDR-encoded sources still ignore the config entirely (documented):
     // a degenerate config with an sRGB source builds the plain plan.
     assert!(
-        ConvertPlan::new_with_hdr_config(
+        crate::test_conversion::hdr_plan(
             PixelDescriptor::RGB8_SRGB,
             PixelDescriptor::RGB8_SRGB,
             HdrConfig::default(),
@@ -468,11 +469,13 @@ fn hdr_pipeline_e2e_neutral_gray_lands_in_sdr_range() {
     let src = pq_u16_bt2020_rgb();
     let dst = PixelDescriptor::RGB8_SRGB;
     let hdr = HdrConfig::for_source_peak(1000.0);
-    let plan = ConvertPlan::new_with_hdr_config(src, dst, hdr).expect("hdr plan");
+    let plan = crate::test_conversion::hdr_plan(src, dst, hdr).expect("hdr plan");
     let src_pixel: [u16; 3] = [40_000, 40_000, 40_000];
     let src_bytes: [u8; 6] = bytemuck::cast(src_pixel);
     let mut out = [0u8; 3];
-    zenpixels_convert::RowConverter::from_plan(plan.clone()).convert_row(&src_bytes, &mut out, 1);
+    crate::test_conversion::worker(plan.try_clone().unwrap())
+        .try_convert_row(&src_bytes, &mut out, 1)
+        .unwrap();
     // Neutral gray must stay neutral within ±2 codes (rounding).
     assert!(
         (out[0] as i32 - out[1] as i32).abs() <= 2 && (out[1] as i32 - out[2] as i32).abs() <= 2,
@@ -489,28 +492,24 @@ fn hdr_pipeline_e2e_neutral_gray_lands_in_sdr_range() {
 
 #[test]
 fn new_with_hdr_peak_delegates_to_config_with_defaults() {
-    // `ConvertPlan::new_with_hdr_peak(_, _, peak)` is documented as
+    // `crate::test_conversion::hdr_peak_plan(_, _, peak)` is documented as
     // `new_with_hdr_config(_, _, HdrConfig::for_source_peak(peak))`. Pin
     // that contract by comparing converted samples across the PQ code range.
     let src = pq_u16_bt2020_rgb();
     let dst = PixelDescriptor::RGB8_SRGB;
-    let plan_peak = ConvertPlan::new_with_hdr_peak(src, dst, 1000.0).expect("peak plan");
+    let plan_peak = crate::test_conversion::hdr_peak_plan(src, dst, 1000.0).expect("peak plan");
     let plan_config =
-        ConvertPlan::new_with_hdr_config(src, dst, HdrConfig::for_source_peak(1000.0))
+        crate::test_conversion::hdr_plan(src, dst, HdrConfig::for_source_peak(1000.0))
             .expect("config plan");
     let input: Vec<u16> = (0..=u16::MAX).flat_map(|v| [v; 3]).collect();
     let mut peak = vec![0u8; input.len()];
     let mut config = vec![0u8; input.len()];
-    zenpixels_convert::RowConverter::from_plan(plan_peak.clone()).convert_row(
-        bytemuck::cast_slice(&input),
-        &mut peak,
-        65536,
-    );
-    zenpixels_convert::RowConverter::from_plan(plan_config.clone()).convert_row(
-        bytemuck::cast_slice(&input),
-        &mut config,
-        65536,
-    );
+    crate::test_conversion::worker(plan_peak.try_clone().unwrap())
+        .try_convert_row(bytemuck::cast_slice(&input), &mut peak, 65536)
+        .unwrap();
+    crate::test_conversion::worker(plan_config.try_clone().unwrap())
+        .try_convert_row(bytemuck::cast_slice(&input), &mut config, 65536)
+        .unwrap();
     assert_eq!(peak, config);
 }
 
@@ -557,3 +556,6 @@ fn convert_to_with_hdr_config_runs_end_to_end_from_pixel_buffer() {
         assert!(c >= -1e-3, "pipeline produced negative {c}");
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

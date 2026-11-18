@@ -6,7 +6,6 @@ use zenpixels::{
     AlphaMode, ChannelLayout as L, ChannelType as C, ColorPrimaries as P, PixelDescriptor as D,
     TransferFunction as T,
 };
-use zenpixels_convert::RowConverter;
 
 fn descriptor(c: C, l: L, t: T, p: P) -> D {
     let alpha = l.has_alpha().then_some(AlphaMode::Straight);
@@ -46,18 +45,18 @@ fn splits_change_nothing() {
                                 }
                                 let from = descriptor(from_c, from_l, from_t, from_p);
                                 let to = descriptor(to_c, to_l, to_t, P::Bt709);
-                                let Ok(mut c) = RowConverter::new(from, to) else {
+                                let Ok(mut c) = crate::test_conversion::new_worker(from, to) else {
                                     continue;
                                 };
                                 let pixels = 133;
                                 let src = source_row(from, pixels);
                                 let (s, d) = (from.bytes_per_pixel(), to.bytes_per_pixel());
                                 let mut whole = vec![0u8; pixels * d];
-                                c.convert_row(&src, &mut whole, pixels as u32);
+                                c.try_convert_row(&src, &mut whole, pixels as u32).unwrap();
                                 for n in [1, 3, 7, 8, 9, 16, 17, 64] {
                                     let mut parts = vec![0u8; pixels * d];
                                     for (a, b) in src.chunks(n * s).zip(parts.chunks_mut(n * d)) {
-                                        c.convert_row(a, b, (a.len() / s) as u32);
+                                        c.try_convert_row(a, b, (a.len() / s) as u32).unwrap();
                                     }
                                     checked += 1;
                                     if parts != whole {
@@ -82,3 +81,6 @@ fn splits_change_nothing() {
     );
     assert!(checked > 50_000, "{checked}");
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

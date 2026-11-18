@@ -9,7 +9,6 @@ use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelBuffer, PixelDescriptor,
     PixelFormat, SignalRange, TransferFunction,
 };
-use zenpixels_convert::RowConverter;
 
 fn field<'a>(v: &'a Value, key: &str) -> Result<&'a str, String> {
     v[key]
@@ -157,7 +156,10 @@ fn run(v: &Value) -> Result<Value, String> {
             .row_mut(y)
             .copy_from_slice(&bytes[y as usize * stride..y as usize * stride + row_bytes]);
     }
-    let mut options = ConvertOptions::permissive()
+    let mut options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
         .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
         .with_luma(Some(luma(v)?));
     for (key, destination) in [("sdrWhite", 0), ("hdrPeak", 1), ("sdrPeak", 2)] {
@@ -193,13 +195,16 @@ fn run(v: &Value) -> Result<Value, String> {
             )?;
         options = options.with_hlg_rendering(rendering);
     }
-    let mut converter =
-        RowConverter::new_explicit(from, to, &options).map_err(|e| format!("{:?}", e.error()))?;
-    // Debug is the existing inspection surface; no new core API is needed.
-    let plan = format!("{:#?}", converter.plan());
+    let recipe = zenpixels_convert::ConvertPlan::build(
+        from.into(),
+        to.into(),
+        &zenpixels_convert::ConversionSpec::new(options),
+    )
+    .map_err(|e| format!("{:?}", e.error()))?;
+    let plan = format!("{recipe:#?}");
     let mut output =
         PixelBuffer::try_new(width, rows, to).map_err(|e| format!("{:?}", e.error()))?;
-    converter
+    let mut converter = recipe
         .prepare(width)
         .map_err(|e| format!("{:?}", e.error()))?;
     for y in 0..rows {

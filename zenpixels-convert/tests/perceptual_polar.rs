@@ -11,7 +11,7 @@ use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, Color, ColorPrimaries, PixelBuffer, PixelDescriptor,
     PixelFormat, TransferFunction,
 };
-use zenpixels_convert::{PixelBufferConvertExt, RowConverter};
+use zenpixels_convert::PixelBufferConvertExt;
 
 const RGBF32_SRGB: PixelDescriptor = PixelDescriptor::RGBF32.with_transfer(TransferFunction::Srgb);
 const OKLCHF32: PixelDescriptor = PixelDescriptor::new(
@@ -61,13 +61,14 @@ const RGBF32_BT2100_PQ: PixelDescriptor = PixelDescriptor::RGBF32_LINEAR
     .with_transfer(TransferFunction::Pq);
 
 fn convert_f32_3(from: PixelDescriptor, to: PixelDescriptor, px: [f32; 3]) -> [f32; 3] {
-    let mut conv = RowConverter::new(from, to).unwrap();
+    let mut conv = crate::test_conversion::new_worker(from, to).unwrap();
     let mut out = [0.0_f32; 3];
-    conv.convert_row(
+    conv.try_convert_row(
         bytemuck::cast_slice(&px),
         bytemuck::cast_slice_mut(&mut out),
         1,
-    );
+    )
+    .unwrap();
     out
 }
 
@@ -271,13 +272,17 @@ fn hsl_and_hsv_match_palette_across_float_integer_and_matte_composite() {
         TransferFunction::Srgb,
     )
     .unwrap();
-    let mut to_hsv16 = RowConverter::new(PixelDescriptor::RGB8_SRGB, hsv16).unwrap();
-    let mut from_hsv16 = RowConverter::new(hsv16, PixelDescriptor::RGB8_SRGB).unwrap();
+    let mut to_hsv16 =
+        crate::test_conversion::new_worker(PixelDescriptor::RGB8_SRGB, hsv16).unwrap();
+    let mut from_hsv16 =
+        crate::test_conversion::new_worker(hsv16, PixelDescriptor::RGB8_SRGB).unwrap();
     let rgb8_in = [210u8, 65, 140, 20, 190, 240, 128, 128, 128];
     let mut mid_u16 = [0u8; 18];
     let mut rgb8_out = [0u8; 9];
-    to_hsv16.convert_row(&rgb8_in, &mut mid_u16, 3);
-    from_hsv16.convert_row(&mid_u16, &mut rgb8_out, 3);
+    to_hsv16.try_convert_row(&rgb8_in, &mut mid_u16, 3).unwrap();
+    from_hsv16
+        .try_convert_row(&mid_u16, &mut rgb8_out, 3)
+        .unwrap();
     for (&a, &b) in rgb8_in.iter().zip(&rgb8_out) {
         assert!(
             a.abs_diff(b) <= 1,
@@ -289,14 +294,21 @@ fn hsl_and_hsv_match_palette_across_float_integer_and_matte_composite() {
     // 50% translucent red (H = 0°, S = 1, L = 0.5, A = 0.5) over opaque white must stay pink-red (R > G == B),
     // never shifting hue toward cyan/yellow!
     let hsla_red = [0.0_f32, 1.0, 0.5, 0.5];
-    let opts = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-        background: Color::srgb8(255, 255, 255),
-        reference_white: None,
-    });
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_alpha_policy(AlphaPolicy::CompositeOnto {
+            background: Color::srgb8(255, 255, 255),
+            reference_white: None,
+        });
     let mut matte_conv =
-        RowConverter::new_explicit(HSLAF32_SRGB, PixelDescriptor::RGB8_SRGB, &opts).unwrap();
+        crate::test_conversion::explicit_worker(HSLAF32_SRGB, PixelDescriptor::RGB8_SRGB, &opts)
+            .unwrap();
     let mut pink_rgb = [0u8; 3];
-    matte_conv.convert_row(bytemuck::cast_slice(&hsla_red), &mut pink_rgb, 1);
+    matte_conv
+        .try_convert_row(bytemuck::cast_slice(&hsla_red), &mut pink_rgb, 1)
+        .unwrap();
     assert_eq!(pink_rgb[0], 255, "red over white R: {pink_rgb:?}");
     assert_eq!(
         pink_rgb[1], pink_rgb[2],
@@ -325,7 +337,10 @@ fn non_unknown_transfer_on_perceptual_layouts_refuses_cleanly_without_recursion(
         (ChannelLayout::Jzczhz, TransferFunction::Pq),
     ] {
         let bad = PixelDescriptor::new(ChannelType::F32, layout, None, bad_tf);
-        assert!(RowConverter::new(PixelDescriptor::RGBF32_LINEAR, bad).is_err());
-        assert!(RowConverter::new(bad, PixelDescriptor::RGBF32_LINEAR).is_err());
+        assert!(crate::test_conversion::new_worker(PixelDescriptor::RGBF32_LINEAR, bad).is_err());
+        assert!(crate::test_conversion::new_worker(bad, PixelDescriptor::RGBF32_LINEAR).is_err());
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

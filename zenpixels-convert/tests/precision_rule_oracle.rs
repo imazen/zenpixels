@@ -4,7 +4,6 @@
 use zenpixels::{
     ChannelLayout, ChannelType, PixelDescriptor as D, SignalRange, TransferFunction as T,
 };
-use zenpixels_convert::RowConverter;
 use zenpixels_convert::precision::{ConversionEffect, ConversionOffer, SourcePrecision};
 
 fn rgb(channel: ChannelType, transfer: T) -> D {
@@ -17,11 +16,11 @@ fn codes_lost(from: D, via: D, codes: &[[u8; 6]]) -> usize {
     let src: Vec<u8> = codes.iter().flatten().copied().collect();
     let mut there = vec![0u8; codes.len() * via.bytes_per_pixel()];
     let mut back = vec![0u8; src.len()];
-    RowConverter::new(from, via)
+    crate::test_conversion::new_worker(from, via)
         .unwrap()
         .try_convert_row(&src, &mut there, width)
         .unwrap();
-    RowConverter::new(via, from)
+    crate::test_conversion::new_worker(via, from)
         .unwrap()
         .try_convert_row(&there, &mut back, width)
         .unwrap();
@@ -43,11 +42,11 @@ fn lost_eight_bit(via: D) -> usize {
     let src: Vec<u8> = (0..=255u8).flat_map(|v| [v, v, v]).collect();
     let mut there = vec![0u8; width * via.bytes_per_pixel()];
     let mut back = vec![0u8; src.len()];
-    RowConverter::new(D::RGB8_SRGB, via)
+    crate::test_conversion::new_worker(D::RGB8_SRGB, via)
         .unwrap()
         .try_convert_row(&src, &mut there, width as u32)
         .unwrap();
-    RowConverter::new(via, D::RGB8_SRGB)
+    crate::test_conversion::new_worker(via, D::RGB8_SRGB)
         .unwrap()
         .try_convert_row(&there, &mut back, width as u32)
         .unwrap();
@@ -109,11 +108,11 @@ fn twelve_bit_codes_in_u16_survive_u16_linear() {
     let src: Vec<u8> = codes.iter().flatten().copied().collect();
     let mut there = vec![0u8; src.len()];
     let mut back = vec![0u8; src.len()];
-    RowConverter::new(D::RGB16_SRGB, linear16)
+    crate::test_conversion::new_worker(D::RGB16_SRGB, linear16)
         .unwrap()
         .try_convert_row(&src, &mut there, width)
         .unwrap();
-    RowConverter::new(linear16, D::RGB16_SRGB)
+    crate::test_conversion::new_worker(linear16, D::RGB16_SRGB)
         .unwrap()
         .try_convert_row(&there, &mut back, width)
         .unwrap();
@@ -137,7 +136,10 @@ fn encode_adapter_picks_a_format_that_holds_the_source_when_one_is_offered() {
     use zenpixels_convert::PixelSliceConvertExt;
     let samples: Vec<u16> = vec![1, 2, 3, 65534, 65533, 65532];
     let pixels = PixelSlice::new(bytemuck::cast_slice(&samples), 2, 1, 12, D::RGB16_SRGB).unwrap();
-    let options = zenpixels::ConvertOptions::permissive();
+    let options = zenpixels::ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709));
     let float = rgb(ChannelType::F32, T::Linear);
     for supported in [[D::RGB8_SRGB, float], [float, D::RGB8_SRGB]] {
         let adapted = pixels.adapt_for_encode(&supported, &options).unwrap();
@@ -303,3 +305,6 @@ mod scan {
         assert!(err.frame_count() >= 1);
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

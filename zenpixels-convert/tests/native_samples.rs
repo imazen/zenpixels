@@ -1,7 +1,7 @@
 use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, PixelFormat, TransferFunction,
 };
-use zenpixels_convert::{ConvertOptions, ConvertPlan, RowConverter};
+use zenpixels_convert::ConvertOptions;
 
 fn native_rgb(channel: ChannelType) -> PixelFormat {
     PixelFormat::from_parts(channel, ChannelLayout::Rgb, None).unwrap()
@@ -28,7 +28,7 @@ fn native_identity_is_bit_exact_but_unimplemented_transforms_refuse() {
             let from = PixelFormat::from_parts(ty, layout, alpha)
                 .unwrap()
                 .descriptor();
-            let mut converter = RowConverter::new(from, from).unwrap();
+            let mut converter = crate::test_conversion::new_worker(from, from).unwrap();
             let n = from.bytes_per_pixel() * 3;
             let source: Vec<u8> = (0..n + 17).map(|i| (i * 73 + 19) as u8).collect();
             let mut out = vec![0xa5; n + 17];
@@ -38,34 +38,41 @@ fn native_identity_is_bit_exact_but_unimplemented_transforms_refuse() {
             let target =
                 PixelDescriptor::new(ChannelType::F32, layout, alpha, TransferFunction::Unknown);
             assert!(
-                ConvertPlan::new(from, target).is_err(),
+                crate::test_conversion::new_plan(from, target).is_err(),
                 "unqualified narrowing must refuse: {from}"
             );
             assert!(
-                ConvertPlan::new(target, from).is_err(),
+                crate::test_conversion::new_plan(target, from).is_err(),
                 "unqualified widening must refuse: {from}"
             );
             assert!(
-                ConvertPlan::new(from, from.with_transfer(TransferFunction::Srgb)).is_err(),
+                crate::test_conversion::new_plan(from, from.with_transfer(TransferFunction::Srgb))
+                    .is_err(),
                 "no relabel-only transfer plan: {from}"
             );
             let changed = from.with_transfer(TransferFunction::Srgb);
-            assert!(ConvertPlan::new_preserving_samples(from, changed).is_err());
+            assert!(crate::test_conversion::exact_plan(from, changed).is_err());
             assert!(
-                RowConverter::new_explicit_with_cms(
+                crate::test_conversion::cms_worker(
                     from,
                     changed,
-                    &ConvertOptions::permissive(),
+                    &ConvertOptions::retain_channels()
+                        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
                     None
                 )
                 .is_err()
             );
             let changed = from.with_primaries(zenpixels::ColorPrimaries::DisplayP3);
             assert!(
-                RowConverter::new_explicit_with_cms(
+                crate::test_conversion::cms_worker(
                     from,
                     changed,
-                    &ConvertOptions::permissive(),
+                    &ConvertOptions::retain_channels()
+                        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
                     None
                 )
                 .is_err()
@@ -80,7 +87,7 @@ fn hdr_constructor_cannot_treat_native_identity_as_supported_math() {
     for format in [ChannelType::I16, ChannelType::U32, ChannelType::F64].map(native_rgb) {
         let desc = format.descriptor().with_transfer(TransferFunction::Linear);
         assert!(
-            ConvertPlan::new_with_hdr_config(
+            crate::test_conversion::hdr_plan(
                 desc,
                 desc,
                 zenpixels_convert::HdrConfig::for_source_peak(1000.0)
@@ -105,7 +112,7 @@ fn opaque_profiles_do_not_turn_native_samples_into_a_relabel() {
                 &b"unresolved-source-profile"[..],
             ))));
         assert!(
-            zenpixels_convert::EncodeReady::finalize(
+            crate::test_conversion::copy_output(
                 &buffer,
                 &ColorOrigin::assumed(),
                 OutputProfile::Icc(Arc::from(&b"different-target-profile"[..])),
@@ -121,7 +128,7 @@ fn opaque_profiles_do_not_turn_native_samples_into_a_relabel() {
 #[cfg(feature = "cms-moxcms")]
 #[test]
 fn moxcms_does_not_dispatch_native_samples_as_f32() {
-    use zenpixels_convert::{cms::PluggableCms, cms_moxcms::MoxCms};
+    use zenpixels_convert::cms_moxcms::MoxCms;
     for format in [ChannelType::I16, ChannelType::U32, ChannelType::F64].map(native_rgb) {
         let from = format
             .descriptor()
@@ -130,7 +137,16 @@ fn moxcms_does_not_dispatch_native_samples_as_f32() {
         let to = format.descriptor().color_profile_source();
         assert!(
             MoxCms
-                .build_source_transform(from, to, format, format, &ConvertOptions::permissive())
+                .build_source_transform(
+                    from,
+                    to,
+                    format,
+                    format,
+                    &ConvertOptions::retain_channels()
+                        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+                )
                 .expect("unsupported sample types are diagnosed")
                 .is_err()
         );
@@ -147,9 +163,9 @@ fn cmyk_f32_does_not_gain_unqualified_conversion_routes() {
             PixelDescriptor::CMYK8,
             PixelDescriptor::RGBF32,
         ] {
-            assert!(ConvertPlan::new(descriptor, target).is_err());
-            assert!(ConvertPlan::new(target, descriptor).is_err());
-            assert!(RowConverter::new(descriptor, target).is_err());
+            assert!(crate::test_conversion::new_plan(descriptor, target).is_err());
+            assert!(crate::test_conversion::new_plan(target, descriptor).is_err());
+            assert!(crate::test_conversion::new_worker(descriptor, target).is_err());
         }
     }
 }
@@ -157,7 +173,7 @@ fn cmyk_f32_does_not_gain_unqualified_conversion_routes() {
 #[cfg(feature = "cms-moxcms")]
 #[test]
 fn cmyk_f32_is_not_dispatched_to_a_three_component_cms_transform() {
-    use zenpixels_convert::{cms::PluggableCms, cms_moxcms::MoxCms};
+    use zenpixels_convert::cms_moxcms::MoxCms;
     for format in [PixelFormat::CMYKF32, PixelFormat::CMYKF32_INVERTED] {
         let from = format.descriptor().color_profile_source();
         let to = PixelDescriptor::RGBF32.color_profile_source();
@@ -168,9 +184,20 @@ fn cmyk_f32_is_not_dispatched_to_a_three_component_cms_transform() {
                     to,
                     format,
                     PixelFormat::RgbF32,
-                    &ConvertOptions::permissive()
+                    &ConvertOptions::retain_channels()
+                        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
                 )
                 .is_none()
         );
     }
 }
+
+#[path = "support/cms.rs"]
+mod test_cms;
+#[allow(unused_imports)]
+use test_cms::TestCmsExt as _;
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

@@ -15,16 +15,15 @@
 //! Production builds pay literally nothing.
 //!
 //! Step *parameters* (luma coefficients, matte color, etc.) are not
-//! recorded — those are verified by inspecting the `ConvertPlan` via its
-//! `Debug` impl, which already shows the resolved parameters and is not
-//! feature-gated.
+//! recorded. The `introspection` feature includes resolved parameters
+//! when formatting the compiled plan with `Debug`.
 //!
 //! Usage in tests (gated on `cfg(feature = "__trace_ops")`):
 //!
 //! ```ignore
 //! use zenpixels_convert::__trace_ops;
 //! __trace_ops::start_recording();
-//! conv.convert_row(&src, &mut dst, width);
+//! conv.try_convert_row(&src, &mut dst, width)?;
 //! let steps = __trace_ops::stop_recording();
 //! assert_eq!(steps, vec!["RgbToGray"]);
 //! ```
@@ -61,11 +60,7 @@ mod inner {
 
     /// Record a step name. Called from the kernel dispatch.
     ///
-    /// The name source is [`ConvertStep::variant_name`] — a single source of
-    /// truth shared with [`crate::estimate::step_name`]. Adding a variant
-    /// to `ConvertStep` and forgetting to extend `variant_name` is a
-    /// compile error (exhaustive match in `convert.rs`), so the tracer
-    /// can't silently miss new ops.
+    /// The exhaustive match in `ConvertStep::variant_name` names each kernel.
     #[inline]
     pub(crate) fn record_step(step: &ConvertStep) {
         TRACE.with(|t| {

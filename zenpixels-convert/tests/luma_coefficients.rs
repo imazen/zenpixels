@@ -7,7 +7,6 @@ use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction,
     policy::{ConvertOptions, LumaCoefficients},
 };
-use zenpixels_convert::RowConverter;
 
 fn rgb_u8(tf: TransferFunction) -> PixelDescriptor {
     PixelDescriptor::new(ChannelType::U8, ChannelLayout::Rgb, None, tf)
@@ -37,7 +36,10 @@ fn rgba_u8(tf: TransferFunction) -> PixelDescriptor {
 }
 
 fn opts_with_luma(coefficients: LumaCoefficients) -> ConvertOptions {
-    ConvertOptions::permissive()
+    ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
         .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked)
         .with_luma(Some(coefficients))
 }
@@ -49,10 +51,10 @@ fn convert_u8(
     src: &[u8],
     dst_len: usize,
 ) -> Vec<u8> {
-    let mut conv = RowConverter::new_explicit(src_desc, dst_desc, &opts).unwrap();
+    let mut conv = crate::test_conversion::explicit_worker(src_desc, dst_desc, &opts).unwrap();
     let mut dst = vec![0u8; dst_len];
     let width = (src.len() / src_desc.layout().channels()) as u32;
-    conv.convert_row(src, &mut dst, width);
+    conv.try_convert_row(src, &mut dst, width).unwrap();
     dst
 }
 
@@ -160,14 +162,14 @@ fn u8_rgba_to_gray_honors_coefficients() {
 fn u16_rgb_to_gray_works_and_honors_coefficients() {
     let pixel: [u16; 3] = [65535, 0, 0]; // pure red, full intensity
     let src_bytes: [u8; 6] = bytemuck::cast(pixel);
-    let mut conv = RowConverter::new_explicit(
+    let mut conv = crate::test_conversion::explicit_worker(
         rgb_u16(TransferFunction::Srgb),
         gray_u16(TransferFunction::Srgb),
         &opts_with_luma(LumaCoefficients::Bt709),
     )
     .unwrap();
     let mut dst_bytes = [0u8; 2];
-    conv.convert_row(&src_bytes, &mut dst_bytes, 1);
+    conv.try_convert_row(&src_bytes, &mut dst_bytes, 1).unwrap();
     let dst: [u16; 1] = bytemuck::cast(dst_bytes);
     // BT.709 red on full-scale u16: 0.2126 * 65535 = 13932.7 → 13933
     assert!(
@@ -176,14 +178,16 @@ fn u16_rgb_to_gray_works_and_honors_coefficients() {
         dst[0]
     );
 
-    let mut conv601 = RowConverter::new_explicit(
+    let mut conv601 = crate::test_conversion::explicit_worker(
         rgb_u16(TransferFunction::Srgb),
         gray_u16(TransferFunction::Srgb),
         &opts_with_luma(LumaCoefficients::Bt601),
     )
     .unwrap();
     let mut dst_bytes = [0u8; 2];
-    conv601.convert_row(&src_bytes, &mut dst_bytes, 1);
+    conv601
+        .try_convert_row(&src_bytes, &mut dst_bytes, 1)
+        .unwrap();
     let dst601: [u16; 1] = bytemuck::cast(dst_bytes);
     // BT.601 red: 0.299 * 65535 = 19595.0 → 19595
     assert!(
@@ -199,14 +203,14 @@ fn u16_rgb_to_gray_works_and_honors_coefficients() {
 fn f32_rgb_to_gray_honors_coefficients() {
     let pixel: [f32; 3] = [1.0, 0.0, 0.0];
     let src_bytes: [u8; 12] = bytemuck::cast(pixel);
-    let mut conv = RowConverter::new_explicit(
+    let mut conv = crate::test_conversion::explicit_worker(
         rgb_f32(TransferFunction::Srgb),
         gray_f32(TransferFunction::Srgb),
         &opts_with_luma(LumaCoefficients::Bt709),
     )
     .unwrap();
     let mut dst_bytes = [0u8; 4];
-    conv.convert_row(&src_bytes, &mut dst_bytes, 1);
+    conv.try_convert_row(&src_bytes, &mut dst_bytes, 1).unwrap();
     let dst: [f32; 1] = bytemuck::cast(dst_bytes);
     assert!(
         (dst[0] - 0.2126).abs() < 1e-5,
@@ -214,24 +218,25 @@ fn f32_rgb_to_gray_honors_coefficients() {
         dst[0]
     );
 
-    let mut conv601 = RowConverter::new_explicit(
+    let mut conv601 = crate::test_conversion::explicit_worker(
         rgb_f32(TransferFunction::Srgb),
         gray_f32(TransferFunction::Srgb),
         &opts_with_luma(LumaCoefficients::Bt601),
     )
     .unwrap();
     let mut dst_bytes = [0u8; 4];
-    conv601.convert_row(&src_bytes, &mut dst_bytes, 1);
+    conv601
+        .try_convert_row(&src_bytes, &mut dst_bytes, 1)
+        .unwrap();
     let dst601: [f32; 1] = bytemuck::cast(dst_bytes);
     assert!((dst601[0] - 0.299).abs() < 1e-5);
 }
 
 /// Plan-shape regression: the chosen luma propagates into the variant.
 #[test]
+#[cfg(feature = "introspection")]
 fn plan_records_resolved_coefficients() {
-    use zenpixels_convert::ConvertPlan;
-
-    let plan = ConvertPlan::new_explicit(
+    let plan = crate::test_conversion::explicit_plan(
         rgb_u8(TransferFunction::Srgb),
         gray_u8(TransferFunction::Srgb),
         &opts_with_luma(LumaCoefficients::DisplayP3),
@@ -263,24 +268,27 @@ fn gray_roundtrip_under_all_coefficient_choices() {
     ] {
         for v in [0u8, 64, 128, 200, 255] {
             // Gray → RGB
-            let mut conv_expand = RowConverter::new_explicit(
+            let mut conv_expand = crate::test_conversion::explicit_worker(
                 gray_u8(TransferFunction::Srgb),
                 rgb_u8(TransferFunction::Srgb),
-                &ConvertOptions::permissive(),
+                &ConvertOptions::retain_channels()
+                    .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                    .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                    .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
             )
             .unwrap();
             let mut rgb = [0u8; 3];
-            conv_expand.convert_row(&[v], &mut rgb, 1);
+            conv_expand.try_convert_row(&[v], &mut rgb, 1).unwrap();
 
             // RGB → Gray with the chosen coefficients
-            let mut conv_collapse = RowConverter::new_explicit(
+            let mut conv_collapse = crate::test_conversion::explicit_worker(
                 rgb_u8(TransferFunction::Srgb),
                 gray_u8(TransferFunction::Srgb),
                 &opts_with_luma(coeffs),
             )
             .unwrap();
             let mut gray = [0u8; 1];
-            conv_collapse.convert_row(&rgb, &mut gray, 1);
+            conv_collapse.try_convert_row(&rgb, &mut gray, 1).unwrap();
 
             // Sum-of-weights ≈ 1.0 in f32 → ±1 LSB tolerance.
             assert!(
@@ -292,3 +300,6 @@ fn gray_roundtrip_under_all_coefficient_choices() {
         }
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

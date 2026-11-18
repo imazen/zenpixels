@@ -93,6 +93,7 @@ pub mod icc;
 pub mod pixel_types;
 pub(crate) mod registry;
 
+pub mod banded;
 pub mod buffer;
 
 // Re-export orientation type at crate root.
@@ -128,9 +129,7 @@ pub use color::{
 // Re-export f16 sample and GrayAlpha pixel types at crate root.
 pub use pixel_types::{F16Sample, GrayAlpha8, GrayAlpha16, GrayAlphaF16, GrayAlphaF32};
 
-pub use policy::{
-    AlphaPolicy, ConvertOptions, DepthPolicy, GamutMapping, GrayExpand, LumaCoefficients,
-};
+pub use policy::{AlphaPolicy, ConvertOptions, DepthPolicy, GamutPolicy, LumaCoefficients};
 
 // Every fallible signature here names it.
 pub use whereat::At;

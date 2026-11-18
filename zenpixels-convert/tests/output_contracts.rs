@@ -4,13 +4,13 @@ mod tests {
     use std::sync::Mutex;
     use zenpixels::*;
     use zenpixels_convert::cms::{CmsPluginError, PluggableCms, RowTransformMut};
-    use zenpixels_convert::{RowConverter, output::OutputProfile};
+    use zenpixels_convert::{ConversionSpec, ConvertPlan, output::OutputProfile};
 
     #[test]
     fn same_as_origin_converts_current_pixels() {
         let b = PixelBuffer::from_vec(vec![200, 50, 10], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
         let origin = ColorOrigin::from_cicp(Cicp::DISPLAY_P3);
-        let r = zenpixels_convert::EncodeReady::finalize(
+        let r = crate::test_conversion::copy_output(
             &b,
             &origin,
             OutputProfile::SameAsOrigin,
@@ -27,7 +27,7 @@ mod tests {
     fn output_unassociates_premultiplied_alpha() {
         let d = PixelDescriptor::RGBA8_SRGB.with_alpha(Some(AlphaMode::Premultiplied));
         let b = PixelBuffer::from_vec(vec![64, 32, 16, 128], 1, 1, d).unwrap();
-        let r = zenpixels_convert::EncodeReady::finalize(
+        let r = crate::test_conversion::copy_output(
             &b,
             &ColorOrigin::assumed(),
             OutputProfile::Named(Cicp::SRGB),
@@ -44,7 +44,7 @@ mod tests {
             PixelBuffer::from_vec(vec![255, 255, 255], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
         let narrow = Cicp::new(1, 13, 0, false);
         assert!(
-            zenpixels_convert::EncodeReady::finalize(
+            crate::test_conversion::copy_output(
                 &b,
                 &ColorOrigin::assumed(),
                 OutputProfile::Named(narrow),
@@ -56,26 +56,44 @@ mod tests {
     }
     struct Fill;
     impl RowTransformMut for Fill {
-        fn transform_row(&mut self, _s: &[u8], d: &mut [u8], _: u32) {
-            d.fill(42)
+        fn try_transform_row(
+            &mut self,
+            _s: &[u8],
+            d: &mut [u8],
+            _: u32,
+        ) -> Result<(), whereat::At<zenpixels_convert::CmsPluginError>> {
+            d.fill(42);
+            Ok(())
         }
     }
     #[derive(Default)]
     struct Spy(Mutex<Vec<(bool, bool)>>);
     impl PluggableCms for Spy {
-        fn build_source_transform(
+        fn build(
             &self,
-            s: ColorProfileSource<'_>,
-            d: ColorProfileSource<'_>,
-            _: PixelFormat,
-            _: PixelFormat,
-            _: &ConvertOptions,
-        ) -> Option<Result<Box<dyn RowTransformMut>, whereat::At<CmsPluginError>>> {
-            self.0.lock().unwrap().push((
-                matches!(s, ColorProfileSource::Icc(_)),
-                matches!(d, ColorProfileSource::Icc(_)),
-            ));
-            Some(Ok(Box::new(Fill)))
+            request: &zenpixels_convert::cms::CmsRequest<'_>,
+        ) -> Result<
+            zenpixels_convert::cms::CmsSupport,
+            whereat::At<zenpixels_convert::CmsPluginError>,
+        > {
+            let build =
+                || -> Option<Result<Box<dyn RowTransformMut>, whereat::At<CmsPluginError>>> {
+                    let s = request.source();
+                    let d = request.target();
+                    let _ = request.from().pixel_format();
+                    let _ = request.to().pixel_format();
+                    let _ = request.options();
+
+                    self.0.lock().unwrap().push((
+                        matches!(s, ColorProfileSource::Icc(_)),
+                        matches!(d, ColorProfileSource::Icc(_)),
+                    ));
+                    Some(Ok(Box::new(Fill)))
+                };
+            if let Some(worker) = build() {
+                return worker.map(zenpixels_convert::cms::CmsSupport::Owned);
+            }
+            Ok(zenpixels_convert::cms::CmsSupport::Declined)
         }
     }
     #[test]
@@ -85,7 +103,7 @@ mod tests {
         let b = PixelBuffer::from_vec(vec![200, 50, 10], 1, 1, PixelDescriptor::RGB8_SRGB)
             .unwrap()
             .with_icc(icc.clone());
-        let r = zenpixels_convert::EncodeReady::finalize(
+        let r = crate::test_conversion::copy_output(
             &b,
             &ColorOrigin::from_icc(icc.clone()),
             OutputProfile::Icc(zenpixels_convert::icc_profiles::DISPLAY_P3_V2.into()),
@@ -96,30 +114,46 @@ mod tests {
         assert_eq!(*cms.0.lock().unwrap(), vec![(true, true)]);
         assert_eq!(r.pixels().row(0), [42, 42, 42]);
     }
-    fn custom_converter() -> RowConverter {
-        RowConverter::new_explicit_with_cms(
-            PixelDescriptor::RGB8_SRGB,
-            PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3),
-            &ConvertOptions::permissive(),
-            Some(&Spy::default()),
+    fn custom_plan() -> ConvertPlan {
+        let spy = Spy::default();
+        ConvertPlan::build(
+            PixelDescriptor::RGB8_SRGB.into(),
+            PixelDescriptor::RGB8_SRGB
+                .with_primaries(ColorPrimaries::DisplayP3)
+                .into(),
+            &ConversionSpec::new(ConvertOptions::retain_channels()).with_cms(&spy),
         )
         .unwrap()
     }
     #[test]
-    fn compose_refuses_to_discard_external_transform() {
-        let mut a = custom_converter();
-        let b = RowConverter::new(a.to_descriptor(), a.to_descriptor()).unwrap();
-        assert!(a.compose(&b).is_none());
+    fn composition_preserves_external_transform() {
+        let a = custom_plan();
+        let b = ConvertPlan::build(
+            a.output_encoding(),
+            a.output_encoding(),
+            &ConversionSpec::preserve_samples(),
+        )
+        .unwrap();
+        let mut a = a.then(b).unwrap().prepare(1).unwrap();
+        assert!(!a.is_identity());
         let mut direct = [0; 3];
-        a.convert_row(&[1, 2, 3], &mut direct, 1);
+        a.try_convert_row(&[1, 2, 3], &mut direct, 1).unwrap();
         assert_eq!(direct, [42, 42, 42]);
     }
     #[test]
     fn clone_refuses_to_discard_external_transform() {
-        let mut a = custom_converter();
-        assert!(a.try_clone().is_err());
+        let plan = custom_plan();
+        assert!(matches!(
+            plan.try_clone().unwrap_err().error(),
+            zenpixels_convert::ConvertError::OwnedCmsConsumed
+        ));
+        let mut a = plan.prepare(1).unwrap();
+        assert!(matches!(
+            a.try_clone().unwrap_err().error(),
+            zenpixels_convert::ConvertError::OwnedCmsConsumed
+        ));
         let mut direct = [0; 3];
-        a.convert_row(&[1, 2, 3], &mut direct, 1);
+        a.try_convert_row(&[1, 2, 3], &mut direct, 1).unwrap();
         assert_eq!(direct, [42, 42, 42]);
     }
     #[test]
@@ -162,7 +196,7 @@ fn output_emits_only_the_selected_origin_authority() {
     let b = PixelBuffer::from_vec(vec![100, 50, 20], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
     let origin = ColorOrigin::from_icc_and_cicp(vec![1, 2, 3], Cicp::DISPLAY_P3)
         .with_color_authority(ColorAuthority::Cicp);
-    let ready = zenpixels_convert::EncodeReady::finalize(
+    let ready = crate::test_conversion::copy_output(
         &b,
         &origin,
         OutputProfile::SameAsOrigin,
@@ -185,7 +219,7 @@ fn missing_origin_does_not_emit_untagged_p3() {
         PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3),
     )
     .unwrap();
-    let ready = zenpixels_convert::EncodeReady::finalize(
+    let ready = crate::test_conversion::copy_output(
         &b,
         &ColorOrigin::assumed(),
         OutputProfile::SameAsOrigin,
@@ -199,7 +233,7 @@ fn missing_origin_does_not_emit_untagged_p3() {
 #[test]
 fn parametric_origin_and_output_profile_preserve_custom_color_and_route_cms() {
     use zenpixels::*;
-    use zenpixels_convert::output::{OutputPlan, OutputProfile};
+    use zenpixels_convert::output::OutputProfile;
 
     // Custom JXL-style xy primaries + perceptual rendering intent borrow zero-copy on SameAsOrigin.
     let custom = ParametricColor::rgb(
@@ -223,12 +257,15 @@ fn parametric_origin_and_output_profile_preserve_custom_color_and_route_cms() {
     .with_parametric(custom);
     let origin = ColorOrigin::from_parametric(custom);
 
-    let plan = OutputPlan::new(
+    let plan = crate::test_conversion::output_plan(
         b.encoding(),
         &origin,
         OutputProfile::SameAsOrigin,
         PixelFormat::Rgb8,
-        &ConvertOptions::permissive(),
+        &ConvertOptions::retain_channels()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
         None,
     )
     .unwrap();
@@ -240,7 +277,7 @@ fn parametric_origin_and_output_profile_preserve_custom_color_and_route_cms() {
     assert_eq!(plan.metadata().parametric, Some(custom));
     assert!(plan.metadata().icc.is_none());
 
-    let ready = zenpixels_convert::EncodeReady::finalize(
+    let ready = crate::test_conversion::copy_output(
         &b,
         &origin,
         OutputProfile::SameAsOrigin,
@@ -262,7 +299,7 @@ fn parametric_origin_and_output_profile_preserve_custom_color_and_route_cms() {
     )
     .unwrap()
     .with_parametric(p3_param);
-    let srgb_ready = zenpixels_convert::EncodeReady::finalize(
+    let srgb_ready = crate::test_conversion::copy_output(
         &p3_buf,
         &ColorOrigin::from_parametric(p3_param),
         OutputProfile::Parametric(srgb_param),
@@ -282,7 +319,7 @@ fn parametric_origin_and_output_profile_preserve_custom_color_and_route_cms() {
     let srgb_buf =
         PixelBuffer::from_vec(vec![200, 120, 60], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
     assert!(
-        zenpixels_convert::EncodeReady::finalize(
+        crate::test_conversion::copy_output(
             &srgb_buf,
             &ColorOrigin::from_cicp(Cicp::SRGB),
             OutputProfile::Parametric(ParametricColor::DCI_P3),
@@ -294,7 +331,7 @@ fn parametric_origin_and_output_profile_preserve_custom_color_and_route_cms() {
 
     #[cfg(feature = "cms-moxcms")]
     {
-        let dci_ready = zenpixels_convert::EncodeReady::finalize(
+        let dci_ready = crate::test_conversion::copy_output(
             &srgb_buf,
             &ColorOrigin::from_cicp(Cicp::SRGB),
             OutputProfile::Parametric(ParametricColor::DCI_P3),
@@ -314,3 +351,6 @@ fn parametric_origin_and_output_profile_preserve_custom_color_and_route_cms() {
         assert_ne!(dci_ready.pixels().row(0), [200, 120, 60]);
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

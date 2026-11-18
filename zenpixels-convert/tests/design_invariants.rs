@@ -42,22 +42,22 @@ fn layout_cannot_bypass_luma_policy() {
         let options =
             ConvertOptions::retain_channels().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
         assert!(
-            zenpixels_convert::RowConverter::new_explicit(
-                from,
-                PixelDescriptor::GRAY8_SRGB,
-                &options
-            )
-            .is_err()
+            crate::test_conversion::explicit_worker(from, PixelDescriptor::GRAY8_SRGB, &options)
+                .is_err()
         );
     }
 }
 
 #[test]
 fn composed_matte_to_gray_has_complete_operation_contracts() {
-    let options = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-        background: Color::srgb8(255, 255, 255),
-        reference_white: None,
-    });
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_alpha_policy(AlphaPolicy::CompositeOnto {
+            background: Color::srgb8(255, 255, 255),
+            reference_white: None,
+        });
     for from in [
         PixelDescriptor::BGRA8_SRGB,
         PixelDescriptor::RGBA8_SRGB.with_primaries(ColorPrimaries::DisplayP3),
@@ -69,7 +69,7 @@ fn composed_matte_to_gray_has_complete_operation_contracts() {
                 .with_transfer(TransferFunction::Srgb),
         ] {
             let mut converter =
-                zenpixels_convert::RowConverter::new_explicit(from, to, &options).unwrap();
+                crate::test_conversion::explicit_worker(from, to, &options).unwrap();
             let mut output = [0f32; 4];
             converter
                 .try_convert_row(&[0, 0, 0, 0], bytemuck::cast_slice_mut(&mut output), 1)
@@ -100,7 +100,13 @@ fn allocating_into_and_adaptation_share_output_interpretation() {
             PixelSliceMut::new(bytemuck::cast_slice_mut(&mut into), 1, 2, 12, target).unwrap();
         let destination = source.convert_into(destination).unwrap();
         let adapted = source
-            .adapt_for_encode(&[target], &ConvertOptions::permissive())
+            .adapt_for_encode(
+                &[target],
+                &ConvertOptions::retain_channels()
+                    .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                    .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                    .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
+            )
             .unwrap();
         for y in 0..2 {
             assert_eq!(owned.as_slice().row(y), destination.row(y));
@@ -139,7 +145,7 @@ fn f16_alpha_payload_survives_association_at_every_position() {
                     pixel[channels - 1] = alpha;
                 }
                 let mut output = vec![0u16; source.len()];
-                let mut converter = zenpixels_convert::RowConverter::new(from, to).unwrap();
+                let mut converter = crate::test_conversion::new_worker(from, to).unwrap();
                 converter
                     .try_convert_row(
                         bytemuck::cast_slice(&source),
@@ -187,18 +193,22 @@ fn histogram_shape_and_small_positive_ranks_are_consistent() {
 #[test]
 fn matte_uses_the_primaries_of_its_actual_operation() {
     let background = Color::srgb8(31, 127, 223);
-    let options = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-        background,
-        reference_white: None,
-    });
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_alpha_policy(AlphaPolicy::CompositeOnto {
+            background,
+            reference_white: None,
+        });
     let from = PixelDescriptor::RGBA8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
     let to = PixelDescriptor::RGBF32_LINEAR;
-    let mut converter = zenpixels_convert::RowConverter::new_explicit(from, to, &options).unwrap();
+    let mut converter = crate::test_conversion::explicit_worker(from, to, &options).unwrap();
     let mut actual = [0f32; 3];
     converter
         .try_convert_row(&[0, 0, 0, 0], bytemuck::cast_slice_mut(&mut actual), 1)
         .unwrap();
-    let mut reference = zenpixels_convert::RowConverter::new(background.descriptor(), to).unwrap();
+    let mut reference = crate::test_conversion::new_worker(background.descriptor(), to).unwrap();
     let mut expected = [0f32; 3];
     reference
         .try_convert_row(
@@ -211,3 +221,6 @@ fn matte_uses_the_primaries_of_its_actual_operation() {
         assert!((a - e).abs() < 0.0001, "{a} != {e}");
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

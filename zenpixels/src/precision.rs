@@ -131,6 +131,12 @@ impl SourcePrecision {
     pub const fn significant_bits(&self) -> u8 {
         self.bits
     }
+
+    /// Declared or measured alpha transparency content (`Opaque` vs `Translucent`).
+    #[inline]
+    pub const fn alpha(&self) -> AlphaContent {
+        self.alpha
+    }
 }
 
 /// Who chose the output format. This decides whether a narrowing has consent.

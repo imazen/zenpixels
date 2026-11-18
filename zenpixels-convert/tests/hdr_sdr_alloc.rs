@@ -78,7 +78,11 @@ fn reference_convert_to_sdr(src: &PixelBuffer, target: PixelDescriptor) -> Pixel
     let linear = src
         .convert_to_with_options(
             lin_desc,
-            &zenpixels::ConvertOptions::permissive().with_sdr_white(DiffuseWhite::new(10_000.)),
+            &zenpixels::ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+                .with_sdr_white(DiffuseWhite::new(10_000.)),
         )
         .expect("materialized linear copy");
     let cll = ContentLightLevel::measure_max(

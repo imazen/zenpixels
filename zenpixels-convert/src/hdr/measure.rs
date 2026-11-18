@@ -97,7 +97,7 @@ pub enum LightLevelMethod {
 #[non_exhaustive]
 #[doc(hidden)]
 pub struct LightLevelHistogram {
-    bins: Box<[u32]>,
+    bins: Box<[u64]>,
     total: u64,
     sum_nits: f64,
     literal_max_nits: f32,
@@ -188,7 +188,7 @@ impl LightLevelHistogram {
         let mut cum: u64 = 0;
         let inv_step = Self::inv_log2_step();
         for (i, &count) in self.bins.iter().enumerate() {
-            let count_u64 = count as u64;
+            let count_u64 = count;
             cum += count_u64;
             if cum >= threshold {
                 // Fraction of `count` pixels that fall ≤ threshold
@@ -230,8 +230,31 @@ impl LightLevelHistogram {
     /// `[BIN_MIN_NITS · 2^(i·log2_step), BIN_MIN_NITS · 2^((i+1)·log2_step))`.
     /// Useful for plotting or composing custom readouts (multi-percentile,
     /// mode, etc.).
-    pub fn bins(&self) -> &[u32] {
+    pub fn bins(&self) -> &[u64] {
         &self.bins
+    }
+
+    /// Merge another strip/band histogram of the same [`LightLevelMethod`] into `self`,
+    /// returning `None` (without mutating `self`) if the methods differ or any `u64`
+    /// counter would overflow.
+    #[must_use]
+    pub fn try_merge(&mut self, other: &Self) -> Option<()> {
+        if self.method != other.method || self.bins.len() != other.bins.len() {
+            return None;
+        }
+        let new_total = self.total.checked_add(other.total)?;
+        for (&dst, &src) in self.bins.iter().zip(other.bins.iter()) {
+            dst.checked_add(src)?;
+        }
+        for (dst, &src) in self.bins.iter_mut().zip(other.bins.iter()) {
+            *dst += src;
+        }
+        self.total = new_total;
+        self.sum_nits += other.sum_nits;
+        if other.literal_max_nits > self.literal_max_nits {
+            self.literal_max_nits = other.literal_max_nits;
+        }
+        Some(())
     }
 }
 
@@ -413,6 +436,20 @@ pub trait CllMeasure: crate::sealed::Sealed {
         method: LightLevelMethod,
     ) -> Option<ContentLightLevel>;
 
+    /// Measure a banded linear RGB(A) image in the same global row order.
+    fn measure_max_banded(
+        px: &zenpixels::banded::BandedPixelBuffer,
+        white: DiffuseWhite,
+        method: LightLevelMethod,
+    ) -> Option<ContentLightLevel>;
+
+    /// Build a histogram across bands without merging rounded per-band means.
+    fn measure_histogram_banded(
+        px: &zenpixels::banded::BandedPixelBuffer,
+        white: DiffuseWhite,
+        method: LightLevelMethod,
+    ) -> Option<LightLevelHistogram>;
+
     /// **Internal / experimental.** 3×1 horizontal box-filtered max as
     /// an alternative defect-rejection strategy to percentile-based
     /// [`measure_robust`](Self::measure_robust).
@@ -519,6 +556,17 @@ pub trait CllMeasure: crate::sealed::Sealed {
     ) -> Option<LightLevelHistogram>;
 }
 
+fn measure_channels(desc: zenpixels::PixelDescriptor) -> Option<usize> {
+    if desc.transfer() != TransferFunction::Linear {
+        return None;
+    }
+    match desc.pixel_format() {
+        PixelFormat::RgbF32 => Some(3),
+        PixelFormat::RgbaF32 => Some(4),
+        _ => None,
+    }
+}
+
 impl CllMeasure for ContentLightLevel {
     fn measure_max(
         px: PixelSlice<'_>,
@@ -555,6 +603,31 @@ impl CllMeasure for ContentLightLevel {
             nits_to_u16(max_nits),
             nits_to_u16(fall_nits),
         ))
+    }
+
+    fn measure_max_banded(
+        px: &zenpixels::banded::BandedPixelBuffer,
+        white: DiffuseWhite,
+        method: LightLevelMethod,
+    ) -> Option<ContentLightLevel> {
+        let channels = measure_channels(px.encoding().descriptor())?;
+        let rows = (0..px.layout().height()).map(|y| px.row(y).expect("row in bounds"));
+        let (max_rel, sum_rel) = simd_kernel::scan_max_mean_rows(rows, channels, method);
+        let nits = f64::from(white.nits());
+        Some(ContentLightLevel::new(
+            nits_to_u16(f64::from(max_rel) * nits),
+            nits_to_u16(sum_rel / px.pixel_count() as f64 * nits),
+        ))
+    }
+
+    fn measure_histogram_banded(
+        px: &zenpixels::banded::BandedPixelBuffer,
+        white: DiffuseWhite,
+        method: LightLevelMethod,
+    ) -> Option<LightLevelHistogram> {
+        let channels = measure_channels(px.encoding().descriptor())?;
+        let rows = (0..px.layout().height()).map(|y| px.row(y).expect("row in bounds"));
+        simd_kernel::measure_histogram_rows(rows, px.pixel_count(), channels, white.nits(), method)
     }
 
     fn measure_max_smoothed(
@@ -652,7 +725,7 @@ impl CllMeasure for ContentLightLevel {
 
         if w == 0 || h == 0 {
             return Some(LightLevelHistogram {
-                bins: bytemuck::allocation::try_zeroed_vec::<u32>(LightLevelHistogram::NUM_BINS)
+                bins: bytemuck::allocation::try_zeroed_vec::<u64>(LightLevelHistogram::NUM_BINS)
                     .ok()?
                     .into_boxed_slice(),
                 total: 0,
@@ -731,23 +804,23 @@ mod simd_kernel {
     /// keeps `#![forbid(unsafe_code)]` honoured (no array-shape
     /// transmute) while still giving each SIMD lane its own
     /// conflict-free histogram.
-    type SubHists = alloc::boxed::Box<[u32]>;
+    type SubHists = alloc::boxed::Box<[u64]>;
 
     fn zero_subhists() -> Option<SubHists> {
         Some(
-            bytemuck::allocation::try_zeroed_vec::<u32>(LANES * LightLevelHistogram::NUM_BINS)
+            bytemuck::allocation::try_zeroed_vec::<u64>(LANES * LightLevelHistogram::NUM_BINS)
                 .ok()?
                 .into_boxed_slice(),
         )
     }
 
     /// Reduce the per-lane sub-histograms into the final flat histogram.
-    fn merge_subhists(sub: &SubHists, out: &mut [u32]) {
+    fn merge_subhists(sub: &SubHists, out: &mut [u64]) {
         debug_assert_eq!(out.len(), LightLevelHistogram::NUM_BINS);
         for bin in 0..LightLevelHistogram::NUM_BINS {
-            let mut total: u32 = 0;
+            let mut total: u64 = 0;
             for lane in 0..LANES {
-                total = total.wrapping_add(sub[lane * LightLevelHistogram::NUM_BINS + bin]);
+                total += sub[lane * LightLevelHistogram::NUM_BINS + bin];
             }
             out[bin] = total;
         }
@@ -768,12 +841,22 @@ mod simd_kernel {
         white_nits: f32,
         method: LightLevelMethod,
     ) -> Option<LightLevelHistogram> {
+        let rows = (0..h).map(|row| &bytes[row * stride..row * stride + row_len]);
+        measure_histogram_rows(rows, w as u64 * h as u64, channels, white_nits, method)
+    }
+
+    pub(super) fn measure_histogram_rows<'a>(
+        rows: impl Iterator<Item = &'a [u8]>,
+        total: u64,
+        channels: usize,
+        white_nits: f32,
+        method: LightLevelMethod,
+    ) -> Option<LightLevelHistogram> {
         let mut sub = zero_subhists()?;
         let mut sum_nits = 0.0_f64;
         let mut literal_max_nits = 0.0_f32;
 
-        for row in 0..h {
-            let row_bytes = &bytes[row * stride..row * stride + row_len];
+        for row_bytes in rows {
             let floats: &[f32] = bytemuck::cast_slice(row_bytes);
             match method {
                 LightLevelMethod::MaxRgb => {
@@ -829,14 +912,14 @@ mod simd_kernel {
             }
         }
 
-        let mut bins = bytemuck::allocation::try_zeroed_vec::<u32>(LightLevelHistogram::NUM_BINS)
+        let mut bins = bytemuck::allocation::try_zeroed_vec::<u64>(LightLevelHistogram::NUM_BINS)
             .ok()?
             .into_boxed_slice();
         merge_subhists(&sub, &mut bins);
 
         Some(LightLevelHistogram {
             bins,
-            total: (w as u64) * (h as u64),
+            total,
             sum_nits,
             literal_max_nits,
             method,
@@ -853,7 +936,7 @@ mod simd_kernel {
         token: Token,
         row: &[f32],
         white_nits: f32,
-        sub_hists: &mut [u32],
+        sub_hists: &mut [u64],
         sum_nits: &mut f64,
         literal_max_nits: &mut f32,
     ) {
@@ -976,7 +1059,7 @@ mod simd_kernel {
         token: Token,
         row: &[f32],
         white_nits: f32,
-        sub_hists: &mut [u32],
+        sub_hists: &mut [u64],
         sum_nits: &mut f64,
         literal_max_nits: &mut f32,
     ) {
@@ -1109,10 +1192,18 @@ mod simd_kernel {
         row_len: usize,
         method: LightLevelMethod,
     ) -> (f32, f64) {
+        let rows = (0..h).map(|row| &bytes[row * stride..row * stride + row_len]);
+        scan_max_mean_rows(rows, channels, method)
+    }
+
+    pub(super) fn scan_max_mean_rows<'a>(
+        rows: impl Iterator<Item = &'a [u8]>,
+        channels: usize,
+        method: LightLevelMethod,
+    ) -> (f32, f64) {
         let mut max_rel = 0.0_f32;
         let mut sum_rel = 0.0_f64;
-        for row in 0..h {
-            let row_bytes = &bytes[row * stride..row * stride + row_len];
+        for row_bytes in rows {
             let floats: &[f32] = bytemuck::cast_slice(row_bytes);
             let (rm, rs) = match method {
                 LightLevelMethod::MaxRgb => {
@@ -1644,7 +1735,7 @@ mod tests {
             LightLevelMethod::MaxRgb,
         )
         .unwrap();
-        let bin_total: u64 = h.bins().iter().map(|&c| c as u64).sum();
+        let bin_total: u64 = h.bins().iter().sum();
         assert_eq!(bin_total, h.total_pixels());
         assert_eq!(h.total_pixels(), 5);
         assert_eq!(h.method(), LightLevelMethod::MaxRgb);

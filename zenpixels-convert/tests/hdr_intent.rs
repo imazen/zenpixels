@@ -3,8 +3,8 @@ use std::sync::Arc;
 use zenpixels::hdr::HdrPeak;
 use zenpixels::hdr::{DiffuseWhite, Nits};
 use zenpixels_convert::{
-    ColorContext, ColorPrimaries, ConvertError, ConvertOptions, ConvertPlan, PixelBuffer,
-    PixelBufferConvertExt, PixelDescriptor, PixelSlice, PixelSliceConvertExt, RowConverter,
+    ColorContext, ColorPrimaries, ConvertError, ConvertOptions, PixelBuffer, PixelBufferConvertExt,
+    PixelDescriptor, PixelSlice, PixelSliceConvertExt,
 };
 
 fn linear() -> PixelDescriptor {
@@ -40,26 +40,25 @@ fn every_entry_requires_an_anchor_then_agrees_at_203_nits() {
         ConvertError::SdrWhiteRequired
     ));
     assert!(matches!(
-        source(None)
-            .as_slice()
-            .quantize_to(target)
+        crate::test_conversion::new_worker(linear(), target)
             .unwrap_err()
             .error(),
-        ConvertError::SdrWhiteRequired
-    ));
-    assert!(matches!(
-        RowConverter::new(linear(), target).unwrap_err().error(),
         ConvertError::SdrWhiteRequired
     ));
     let anchored = source(Some(DiffuseWhite::BT2408));
     let expected = anchored.convert_to(target).unwrap();
     assert_eq!(codes(&expected), vec![38055; 3]);
     assert_eq!(
-        codes(&anchored.as_slice().quantize_to(target).unwrap()),
+        codes(&anchored.as_slice().convert_to(target).unwrap()),
         codes(&expected)
     );
-    let options = ConvertOptions::permissive().with_sdr_white(DiffuseWhite::BT2408);
-    let mut converter = RowConverter::new_explicit(linear(), target, &options).unwrap();
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_sdr_white(DiffuseWhite::BT2408);
+    let mut converter =
+        crate::test_conversion::explicit_worker(linear(), target, &options).unwrap();
     let mut output = [0_u16; 3];
     converter
         .try_convert_row(
@@ -75,7 +74,11 @@ fn every_entry_requires_an_anchor_then_agrees_at_203_nits() {
 fn explicit_white_overrides_context_and_survives_strided_conversion() {
     let pixels = [1_f32, 1., 1., -999., -999., -999., 0.5, 0.5, 0.5];
     let slice = PixelSlice::new(bytemuck::cast_slice(&pixels), 1, 2, 24, linear()).unwrap();
-    let options = ConvertOptions::permissive().with_sdr_white(DiffuseWhite::new(100.));
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_sdr_white(DiffuseWhite::new(100.));
     let converted = slice
         .convert_to_with_options(PixelDescriptor::RGB16_BT2100_PQ, &options)
         .unwrap();
@@ -94,21 +97,25 @@ fn explicit_white_overrides_context_and_survives_strided_conversion() {
 fn rows_need_a_peak_and_hlg_names_the_missing_ootf() {
     let from = PixelDescriptor::RGB16_BT2100_PQ;
     let to = PixelDescriptor::RGB8_SRGB;
-    let options = ConvertOptions::permissive().with_sdr_peak(Nits::new(100.));
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_sdr_peak(Nits::new(100.));
     assert!(matches!(
-        ConvertPlan::new_explicit(from, to, &options)
+        crate::test_conversion::explicit_plan(from, to, &options)
             .unwrap_err()
             .error(),
         ConvertError::HdrPeakRequired
     ));
     assert!(matches!(
-        ConvertPlan::new_explicit(PixelDescriptor::RGB16_BT2100_HLG, to, &options)
+        crate::test_conversion::explicit_plan(PixelDescriptor::RGB16_BT2100_HLG, to, &options)
             .unwrap_err()
             .error(),
         ConvertError::HlgRenderingRequired
     ));
     assert!(matches!(
-        ConvertPlan::new(linear(), PixelDescriptor::RGB16_BT2100_HLG)
+        crate::test_conversion::new_plan(linear(), PixelDescriptor::RGB16_BT2100_HLG)
             .unwrap_err()
             .error(),
         ConvertError::HlgRenderingRequired
@@ -121,7 +128,11 @@ fn measured_default_matches_an_explicit_peak_and_declared_peak_refuses_if_absent
         .convert_to(PixelDescriptor::RGB16_BT2100_PQ)
         .unwrap();
     let target = PixelDescriptor::RGB8_SRGB;
-    let options = ConvertOptions::permissive().with_sdr_peak(Nits::new(100.));
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_sdr_peak(Nits::new(100.));
     let measured = encoded.convert_to_with_options(target, &options).unwrap();
     // Decode the actual quantized samples in absolute units, then supply that peak.
     let decoded = encoded
@@ -170,7 +181,11 @@ fn peak_metadata_is_used_only_when_requested_and_options_override_it() {
                 .clone()
                 .with_hdr_peak(Nits::new(1000.)),
         ));
-    let options = ConvertOptions::permissive().with_sdr_peak(Nits::new(100.));
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_sdr_peak(Nits::new(100.));
     let to = PixelDescriptor::RGB8_SRGB;
     let bytes = |value: PixelBuffer| value.as_slice().row(0).to_vec();
     assert_eq!(
@@ -207,7 +222,11 @@ fn peak_metadata_is_used_only_when_requested_and_options_override_it() {
 #[test]
 fn black_frame_measurement_maps_to_black_without_inventing_a_declared_peak() {
     let black = PixelBuffer::new(2, 3, PixelDescriptor::RGB16_BT2100_PQ);
-    let options = ConvertOptions::permissive().with_sdr_peak(Nits::new(100.));
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_sdr_peak(Nits::new(100.));
     let result = black
         .convert_to_with_options(PixelDescriptor::RGB8_SRGB, &options)
         .unwrap();
@@ -222,7 +241,7 @@ fn black_frame_measurement_maps_to_black_without_inventing_a_declared_peak() {
 fn legacy_hdr_constructor_does_not_bypass_sdr_white_or_hlg_refusal() {
     let options = zenpixels_convert::HdrConfig::default();
     assert!(matches!(
-        ConvertPlan::new_with_hdr_config(
+        crate::test_conversion::hdr_plan(
             PixelDescriptor::RGB8_SRGB,
             PixelDescriptor::RGB16_BT2100_PQ,
             options
@@ -232,7 +251,7 @@ fn legacy_hdr_constructor_does_not_bypass_sdr_white_or_hlg_refusal() {
         ConvertError::SdrWhiteRequired
     ));
     assert!(matches!(
-        ConvertPlan::new_with_hdr_config(
+        crate::test_conversion::hdr_plan(
             PixelDescriptor::RGB8_SRGB,
             PixelDescriptor::RGB16_BT2100_HLG,
             options
@@ -242,3 +261,6 @@ fn legacy_hdr_constructor_does_not_bypass_sdr_white_or_hlg_refusal() {
         ConvertError::HlgRenderingRequired
     ));
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

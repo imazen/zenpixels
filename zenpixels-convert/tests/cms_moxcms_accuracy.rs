@@ -7,7 +7,7 @@
 mod synthetic_icc;
 
 use zenpixels::{Cicp, ColorProfileSource as Source, PixelFormat as F};
-use zenpixels_convert::cms::{PluggableCms, RowTransformMut};
+use zenpixels_convert::cms::RowTransformMut;
 use zenpixels_convert::cms_moxcms::MoxCms;
 use zenpixels_convert::icc_profiles::{ADOBE_RGB, DISPLAY_P3_V4, SynthesizedIcc};
 use zenpixels_convert::policy::ConvertOptions;
@@ -16,7 +16,16 @@ const SRGB: Source<'static> = Source::Cicp(Cicp::new(1, 13, 0, true));
 
 fn build(src: Source<'_>, dst: Source<'_>, from: F, to: F) -> Box<dyn RowTransformMut> {
     MoxCms
-        .build_source_transform(src, dst, from, to, &ConvertOptions::permissive())
+        .build_source_transform(
+            src,
+            dst,
+            from,
+            to,
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
+        )
         .expect("declined")
         .expect("refused")
 }
@@ -130,7 +139,11 @@ fn out_of_gamut_samples_clip_on_a_pure_gamma_target() {
             dst,
             F::RgbF32,
             F::RgbF32,
-            &ConvertOptions::permissive().with_clip_out_of_gamut(false),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+                .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended),
         )
         .unwrap()
         .unwrap()
@@ -370,7 +383,11 @@ fn float_row(src: &[u8], dst: &[u8], from: F, to: F, clip: bool, input: &[f32]) 
             Source::Icc(dst),
             from,
             to,
-            &ConvertOptions::retain_channels().with_clip_out_of_gamut(clip),
+            &ConvertOptions::retain_channels().with_gamut_policy(if clip {
+                zenpixels_convert::GamutPolicy::Clip
+            } else {
+                zenpixels_convert::GamutPolicy::PreserveExtended
+            }),
         )
         .expect("declined")
         .expect("refused")
@@ -804,3 +821,8 @@ fn eight_bit_pure_gamma_routes_are_nearest_of_exact_math() {
         }
     }
 }
+
+#[path = "support/cms.rs"]
+mod test_cms;
+#[allow(unused_imports)]
+use test_cms::TestCmsExt as _;

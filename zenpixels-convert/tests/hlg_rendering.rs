@@ -3,7 +3,6 @@ use zenpixels::{
     PixelDescriptor as D, TransferFunction as F,
     hdr::{DiffuseWhite, HlgRendering, Nits},
 };
-use zenpixels_convert::RowConverter;
 fn descriptor(tf: F, alpha: bool) -> D {
     D::new(
         T::F32,
@@ -14,13 +13,16 @@ fn descriptor(tf: F, alpha: bool) -> D {
     .with_primaries(P::Bt2020)
 }
 fn options() -> ConvertOptions {
-    ConvertOptions::permissive()
+    ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
         .with_sdr_white(DiffuseWhite::new(1000.0))
         .with_hlg_rendering(HlgRendering::REFERENCE_1000_NIT)
-        .with_clip_out_of_gamut(false)
+        .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended)
 }
 fn run(from: D, to: D, options: ConvertOptions, src: &[f32]) -> Vec<f32> {
-    let mut c = RowConverter::new_explicit(from, to, &options).unwrap();
+    let mut c = crate::test_conversion::explicit_worker(from, to, &options).unwrap();
     let mut dst = vec![0.0; src.len()];
     c.try_convert_row(
         bytemuck::cast_slice(src),
@@ -83,12 +85,26 @@ fn black_lift_and_inverse_and_partition() {
 fn explicit_policy_and_white_required_and_identity_does_not_render() {
     let h = descriptor(F::Hlg, false);
     let p = descriptor(F::Pq, false);
-    assert!(RowConverter::new_explicit(h, p, &ConvertOptions::permissive()).is_err());
     assert!(
-        RowConverter::new_explicit(
+        crate::test_conversion::explicit_worker(
             h,
             p,
-            &ConvertOptions::permissive().with_hlg_rendering(HlgRendering::REFERENCE_1000_NIT)
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        )
+        .is_err()
+    );
+    assert!(
+        crate::test_conversion::explicit_worker(
+            h,
+            p,
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+                .with_hlg_rendering(HlgRendering::REFERENCE_1000_NIT)
         )
         .is_err()
     );
@@ -122,7 +138,7 @@ fn encoded_depth_and_premultiplied_boundaries() {
     let h16 = D::new(T::U16, L::Rgb, None, F::Hlg).with_primaries(P::Bt2020);
     let src = [32768u16, 13107, 52428];
     let mut out = [0f32; 3];
-    RowConverter::new_explicit(h16, descriptor(F::Linear, false), &options())
+    crate::test_conversion::explicit_worker(h16, descriptor(F::Linear, false), &options())
         .unwrap()
         .try_convert_row(
             bytemuck::cast_slice(&src),
@@ -145,15 +161,18 @@ fn encoded_depth_and_premultiplied_boundaries() {
 fn hlg_compositing_requires_rendering_and_uses_display_white() {
     let h = descriptor(F::Hlg, true);
     let rgb = descriptor(F::Hlg, false);
-    let base = ConvertOptions::permissive()
+    let base = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
         .with_alpha_policy(zenpixels::AlphaPolicy::CompositeOnto {
             background: zenpixels::color::Color::srgb8(255, 255, 255),
             reference_white: Some(DiffuseWhite::new(203.0)),
         })
         .with_sdr_white(DiffuseWhite::new(203.0));
-    assert!(RowConverter::new_explicit(h, rgb, &base).is_err());
+    assert!(crate::test_conversion::explicit_worker(h, rgb, &base).is_err());
     let opt = base.with_hlg_rendering(HlgRendering::REFERENCE_1000_NIT);
-    let mut c = RowConverter::new_explicit(h, rgb, &opt).unwrap();
+    let mut c = crate::test_conversion::explicit_worker(h, rgb, &opt).unwrap();
     let mut out = [0f32; 3];
     c.try_convert_row(
         bytemuck::cast_slice(&[0f32, 0.0, 0.0, 0.0]),
@@ -174,7 +193,7 @@ fn rendered_hlg_to_sdr_uses_explicit_content_peak() {
     let opt = options()
         .with_hdr_peak(zenpixels::hdr::HdrPeak::Nits(Nits::new(1000.0)))
         .with_sdr_peak(Nits::new(203.0));
-    let mut c = RowConverter::new_explicit(h, to, &opt).unwrap();
+    let mut c = crate::test_conversion::explicit_worker(h, to, &opt).unwrap();
     let mut output = [0u8; 3];
     c.try_convert_row(bytemuck::cast_slice(&[0.75f32; 3]), &mut output, 1)
         .unwrap();
@@ -219,9 +238,17 @@ fn internal_float_does_not_weaken_or_invent_depth_policy() {
     let opts = ConvertOptions::retain_channels()
         .with_sdr_white(DiffuseWhite::BT2408)
         .with_hlg_rendering(HlgRendering::REFERENCE_1000_NIT);
-    assert!(RowConverter::new_explicit(D::RGB16_BT2100_HLG, D::RGB16_BT2100_PQ, &opts).is_ok());
     assert!(
-        RowConverter::new_explicit(descriptor(F::Hlg, false), D::RGB16_BT2100_PQ, &opts).is_err()
+        crate::test_conversion::explicit_worker(D::RGB16_BT2100_HLG, D::RGB16_BT2100_PQ, &opts)
+            .is_ok()
+    );
+    assert!(
+        crate::test_conversion::explicit_worker(
+            descriptor(F::Hlg, false),
+            D::RGB16_BT2100_PQ,
+            &opts
+        )
+        .is_err()
     );
 }
 
@@ -236,7 +263,12 @@ fn extended_sign_clipping_and_nonfinite_rgb_are_explicit() {
     for (&a, &b) in src.iter().zip(&back) {
         assert!((a - b).abs() < 2e-6);
     }
-    let clipped = run(h, l, options().with_clip_out_of_gamut(true), &src);
+    let clipped = run(
+        h,
+        l,
+        options().with_gamut_policy(zenpixels_convert::GamutPolicy::Clip),
+        &src,
+    );
     assert_eq!(clipped[0], 0.0);
     assert!((clipped[4] - 1.0).abs() < 2e-6);
     let nan = run(h, l, options(), &[f32::INFINITY, 0.5, 0.5, -0.0]);
@@ -257,7 +289,10 @@ fn profile_backends_do_not_silently_render_hlg_without_conditions() {
             to.clone(),
             PixelFormat::RgbF32,
             PixelFormat::RgbF32,
-            &ConvertOptions::permissive(),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
         );
         assert!(
             !matches!(built, Some(Ok(_))),
@@ -269,3 +304,11 @@ fn profile_backends_do_not_silently_render_hlg_without_conditions() {
     #[cfg(feature = "cms-lcms")]
     check(&zenpixels_convert::Lcms);
 }
+
+#[path = "support/cms.rs"]
+mod test_cms;
+#[allow(unused_imports)]
+use test_cms::TestCmsExt as _;
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

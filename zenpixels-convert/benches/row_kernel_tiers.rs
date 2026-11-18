@@ -18,7 +18,7 @@ use zenpixels::{
     AlphaMode, ChannelLayout as L, ChannelType as T, LumaCoefficients, PixelDescriptor as D,
     PixelFormat, TransferFunction as Tf,
 };
-use zenpixels_convert::{AlphaPolicy, ConvertOptions, RowConverter};
+use zenpixels_convert::{AlphaPolicy, ConvertOptions};
 
 #[cfg(target_arch = "x86_64")]
 const TIERS: &[&str] = if cfg!(feature = "avx512") {
@@ -124,7 +124,10 @@ fn options(name: &str) -> ConvertOptions {
     } else {
         AlphaPolicy::DiscardUnchecked
     };
-    ConvertOptions::permissive()
+    ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
         .with_luma(Some(LumaCoefficients::Bt601))
         .with_alpha_policy(alpha)
 }
@@ -319,7 +322,7 @@ fn main() {
                 eprintln!("skip {name}: no such format");
                 continue;
             };
-            if let Err(e) = RowConverter::new_explicit(from, to, &options(&name)) {
+            if let Err(e) = crate::test_conversion::explicit_worker(from, to, &options(&name)) {
                 eprintln!("skip {name}: {e}");
                 continue;
             }
@@ -331,7 +334,9 @@ fn main() {
                     g.throughput(Throughput::Bytes(src_bytes as u64));
                     g.config().auto_rounds(false).min_rounds(20).max_rounds(20);
                     for &tier in TIERS {
-                        let mut c = RowConverter::new_explicit(from, to, &options(&name)).unwrap();
+                        let mut c =
+                            crate::test_conversion::explicit_worker(from, to, &options(&name))
+                                .unwrap();
                         let (s0, mut src) = placed(src_bytes, 0);
                         fill_source(&mut src[s0..s0 + src_bytes], from, &name);
                         let (d0, mut dst) = placed(dst_bytes, 2048);
@@ -340,7 +345,7 @@ fn main() {
                             b.iter(|| {
                                 let s = &src[s0..s0 + src_bytes];
                                 let o = &mut dst[d0..d0 + dst_bytes];
-                                c.convert_row(s, o, width as u32);
+                                c.try_convert_row(s, o, width as u32).unwrap();
                                 black_box(o[0])
                             })
                         });
@@ -351,3 +356,6 @@ fn main() {
         set_tier(TIERS[0]);
     });
 }
+
+#[path = "../tests/support/conversion.rs"]
+mod test_conversion;

@@ -47,7 +47,13 @@ fn in_gamut_colors_are_a_plain_conversion() {
         let color = linear(P::Bt709, rgb);
         let mapped = color.map_to_gamut(srgb_f32()).unwrap();
         let plain = color
-            .try_convert_to(srgb_f32(), &zenpixels::ConvertOptions::permissive())
+            .try_convert_to(
+                srgb_f32(),
+                &zenpixels::ConvertOptions::retain_channels()
+                    .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                    .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                    .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
+            )
             .unwrap();
         let (a, b): (&[f32], &[f32]) = (
             bytemuck::cast_slice(mapped.as_bytes()),

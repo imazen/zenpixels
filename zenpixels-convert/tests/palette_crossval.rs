@@ -4,9 +4,17 @@
 //! implementations agree with an independent, widely-used color math library.
 
 use palette::{IntoColor, LinSrgb, Oklab, Srgb, Xyz};
-use zenpixels_convert::ext::{ColorPrimariesExt, TransferFunctionExt};
+use zenpixels_convert::gamut::GamutMatrix;
 use zenpixels_convert::oklab::OklabSpace;
 use zenpixels_convert::{ColorPrimaries, TransferFunction};
+
+fn srgb_lin(v: f32) -> f32 {
+    linear_srgb::precise::srgb_to_linear(v)
+}
+
+fn srgb_delin(v: f32) -> f32 {
+    linear_srgb::precise::linear_to_srgb(v)
+}
 
 fn assert_close(a: f32, b: f32, tol: f32, label: &str) {
     let diff = (a - b).abs();
@@ -25,17 +33,17 @@ fn assert_close(a: f32, b: f32, tol: f32, label: &str) {
 /// linear/gamma knee at 0.04045.
 #[test]
 fn srgb_transfer_crossval() {
-    let tf = TransferFunction::Srgb;
+    let _ = TransferFunction::Srgb;
     let values = [0.0, 0.001, 0.003, 0.04045, 0.1, 0.2, 0.5, 0.73, 0.99, 1.0];
 
     for &v in &values {
         // Linearize
-        let ours_lin = tf.linearize(v);
+        let ours_lin = srgb_lin(v);
         let palette_lin = Srgb::new(v, v, v).into_linear().red;
         assert_close(ours_lin, palette_lin, 1e-5, &format!("linearize({v})"));
 
         // Delinearize
-        let ours_delin = tf.delinearize(v);
+        let ours_delin = srgb_delin(v);
         let palette_delin = Srgb::from_linear(LinSrgb::new(v, v, v)).red;
         assert_close(
             ours_delin,
@@ -53,11 +61,9 @@ fn srgb_transfer_crossval() {
 /// Tolerance is 1e-5: minor f32 powf divergence (see test 1 comment).
 #[test]
 fn srgb_transfer_exhaustive_u8() {
-    let tf = TransferFunction::Srgb;
-
     for i in 0..=255u8 {
         let v = i as f32 / 255.0;
-        let ours = tf.linearize(v);
+        let ours = srgb_lin(v);
         let theirs = Srgb::new(v, v, v).into_linear().red;
         assert_close(ours, theirs, 1e-5, &format!("linearize(u8={i}, f={v:.6})"));
     }
@@ -76,15 +82,14 @@ fn srgb_transfer_exhaustive_u8() {
 /// palette's f32 cbrt.
 #[test]
 fn oklab_crossval() {
-    let tf = TransferFunction::Srgb;
     let space = OklabSpace::for_primaries(ColorPrimaries::Bt709).unwrap();
 
     for ri in (0..=255).step_by(17) {
         for gi in (0..=255).step_by(17) {
             for bi in (0..=255).step_by(17) {
-                let lr = tf.linearize(ri as f32 / 255.0);
-                let lg = tf.linearize(gi as f32 / 255.0);
-                let lb = tf.linearize(bi as f32 / 255.0);
+                let lr = srgb_lin(ri as f32 / 255.0);
+                let lg = srgb_lin(gi as f32 / 255.0);
+                let lb = srgb_lin(bi as f32 / 255.0);
 
                 // Our implementation
                 let [ok_l, ok_a, ok_b] = space.from_rgb([lr, lg, lb]);
@@ -107,7 +112,6 @@ fn oklab_crossval() {
 /// verifies the round-trip error is at most 1 in the u8 domain.
 #[test]
 fn oklab_roundtrip_u8() {
-    let tf = TransferFunction::Srgb;
     let space = OklabSpace::for_primaries(ColorPrimaries::Bt709).unwrap();
 
     let mut max_err = 0i32;
@@ -115,9 +119,9 @@ fn oklab_roundtrip_u8() {
     for ri in (0..=255).step_by(5) {
         for gi in (0..=255).step_by(5) {
             for bi in (0..=255).step_by(5) {
-                let lr = tf.linearize(ri as f32 / 255.0);
-                let lg = tf.linearize(gi as f32 / 255.0);
-                let lb = tf.linearize(bi as f32 / 255.0);
+                let lr = srgb_lin(ri as f32 / 255.0);
+                let lg = srgb_lin(gi as f32 / 255.0);
+                let lb = srgb_lin(bi as f32 / 255.0);
 
                 // Forward: linear RGB -> Oklab
                 let [ok_l, ok_a, ok_b] = space.from_rgb([lr, lg, lb]);
@@ -126,9 +130,9 @@ fn oklab_roundtrip_u8() {
                 let [lr2, lg2, lb2] = space.to_rgb([ok_l, ok_a, ok_b]);
 
                 // Back to sRGB u8
-                let r2 = (tf.delinearize(lr2) * 255.0 + 0.5) as i32;
-                let g2 = (tf.delinearize(lg2) * 255.0 + 0.5) as i32;
-                let b2 = (tf.delinearize(lb2) * 255.0 + 0.5) as i32;
+                let r2 = (srgb_delin(lr2) * 255.0 + 0.5) as i32;
+                let g2 = (srgb_delin(lg2) * 255.0 + 0.5) as i32;
+                let b2 = (srgb_delin(lb2) * 255.0 + 0.5) as i32;
 
                 let err_r = (r2 - ri).abs();
                 let err_g = (g2 - gi).abs();
@@ -160,7 +164,7 @@ fn oklab_roundtrip_u8() {
 /// in the Z column where the blue primary coefficient is large.
 #[test]
 fn xyz_matrix_crossval() {
-    let to_xyz = ColorPrimaries::Bt709.to_xyz_matrix().unwrap();
+    let to_xyz = GamutMatrix::to_xyz(ColorPrimaries::Bt709).unwrap();
 
     // Grid of linear RGB values from 0.0 to 1.0 in steps of 0.1
     for ri in 0..=10 {
@@ -192,8 +196,8 @@ fn xyz_matrix_crossval() {
 /// independently via palette, verifying both produce the same result.
 #[test]
 fn gamut_roundtrip_via_xyz() {
-    let to_xyz = ColorPrimaries::Bt709.to_xyz_matrix().unwrap();
-    let from_xyz = ColorPrimaries::Bt709.from_xyz_matrix().unwrap();
+    let to_xyz = GamutMatrix::to_xyz(ColorPrimaries::Bt709).unwrap();
+    let from_xyz = GamutMatrix::from_xyz(ColorPrimaries::Bt709).unwrap();
 
     let test_colors: &[[f32; 3]] = &[
         [0.0, 0.0, 0.0],

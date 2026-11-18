@@ -15,7 +15,10 @@ fn assert_reduction(context: ColorContext, expected: PixelFormat, keep_icc: bool
     let pixels = PixelSlice::new(&padded, 2, 2, 12, PixelDescriptor::RGBA8_SRGB)
         .unwrap()
         .with_color_context(context.clone());
-    let output = pixels.try_reduce_to_load_bearing_format().unwrap();
+    let output = pixels
+        .reduce_to_load_bearing_format()
+        .unwrap()
+        .unwrap();
     let mut buffer = PixelBuffer::from_vec(row.repeat(2), 2, 2, PixelDescriptor::RGBA8_SRGB)
         .unwrap()
         .with_color_context(context.clone());

@@ -7,7 +7,7 @@
 //! `FusedKind::variant_name` so existing trace-format tests keep working.
 //!
 //! These tests pin that mapping for each of the 5 `FusedKind` shapes and
-//! cross-check that `RowConverter::new_explicit` selects the fused kernel
+//! cross-check that `crate::test_conversion::explicit_worker` selects the fused kernel
 //! over the 3-step decomposition. All gated behind `__trace_ops` — without
 //! the feature the recorder is a no-op and trace-shape assertions can't
 //! be made.
@@ -18,7 +18,7 @@ use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
     policy::ConvertOptions,
 };
-use zenpixels_convert::{__trace_ops as tracer, RowConverter};
+use zenpixels_convert::__trace_ops as tracer;
 
 /// Build a converter for `(src, dst)` and return the dispatched-step
 /// trace from a single one-pixel row, scoped to the recording window.
@@ -29,12 +29,16 @@ fn trace_one_row(
     src_bytes: &[u8],
     width: u32,
 ) -> Vec<&'static str> {
-    let opts = ConvertOptions::permissive();
-    let mut conv = RowConverter::new_explicit(src, dst, &opts).expect("converter");
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709));
+    let mut conv = crate::test_conversion::explicit_worker(src, dst, &opts).expect("converter");
     let dst_len = (width as usize) * dst.bytes_per_pixel();
     let mut dst_buf = vec![0u8; dst_len];
     tracer::start_recording();
-    conv.convert_row(src_bytes, &mut dst_buf, width);
+    conv.try_convert_row(src_bytes, &mut dst_buf, width)
+        .unwrap();
     tracer::stop_recording()
 }
 
@@ -251,3 +255,6 @@ fn fused_u8_gamut_avoids_unfused_three_step_pair() {
         "fused plan must not also emit unfused linearize+encode, got {trace:?}"
     );
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

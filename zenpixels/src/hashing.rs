@@ -137,25 +137,46 @@ fn samples<H: Hasher>(bytes: &[u8], size: usize, state: &mut H) {
 }
 
 fn packed<H: Hasher>(view: &PixelSlice<'_>, inclusions: HashInclusions, state: &mut H) {
+    packed_header(
+        (view.width(), view.rows()),
+        view.encoding(),
+        view.exact_depth(),
+        inclusions,
+        state,
+    );
+    packed_samples(view, state);
+}
+
+fn packed_header(
+    (width, height): (u32, u32),
+    encoding: crate::PixelEncoding<'_>,
+    exact: Option<crate::sample::ExactDepth>,
+    inclusions: HashInclusions,
+    state: &mut impl Hasher,
+) {
     begin(state, b"packed\0", inclusions);
+    let descriptor = encoding.descriptor();
+    let channels =
+        descriptor.channels() - usize::from(descriptor.alpha == Some(AlphaMode::Undefined));
+    let mut p = Portable(state);
+    width.hash(&mut p);
+    height.hash(&mut p);
+    descriptor.channel_type().hash(&mut p);
+    channels.hash(&mut p);
+    if inclusions != HashInclusions::SamplesOnly {
+        descriptor.hash(&mut p);
+        encoding.color_context().hash(&mut p);
+    }
+    if inclusions == HashInclusions::All {
+        exact.hash(&mut p);
+    }
+}
+
+fn packed_samples(view: &PixelSlice<'_>, state: &mut impl Hasher) {
     let descriptor = view.descriptor();
     let size = descriptor.channel_type().byte_size();
-    let padding = matches!(descriptor.alpha, Some(AlphaMode::Undefined));
+    let padding = descriptor.alpha == Some(AlphaMode::Undefined);
     let channels = descriptor.channels() - usize::from(padding);
-    {
-        let mut p = Portable(state);
-        view.width().hash(&mut p);
-        view.rows().hash(&mut p);
-        descriptor.channel_type().hash(&mut p);
-        channels.hash(&mut p);
-        if inclusions != HashInclusions::SamplesOnly {
-            descriptor.hash(&mut p);
-            view.color_context().hash(&mut p);
-        }
-        if inclusions == HashInclusions::All {
-            view.exact_depth().hash(&mut p);
-        }
-    }
     if view.width() == 0 || view.rows() == 0 {
         return;
     }
@@ -215,6 +236,18 @@ fn plane_bytes<H: Hasher>(
     state: &mut H,
 ) {
     plane_header(state, inclusions, width, height, ty);
+    plane_samples(width, height, stride_samples, ty, strided_bytes, state);
+}
+
+#[cfg(feature = "planar")]
+fn plane_samples(
+    width: usize,
+    height: usize,
+    stride_samples: usize,
+    ty: crate::ChannelType,
+    strided_bytes: &[u8],
+    state: &mut impl Hasher,
+) {
     if width == 0 || height == 0 {
         return;
     }
@@ -252,17 +285,26 @@ fn any_plane<H: Hasher>(
     encoding: Option<SampleEncoding>,
     state: &mut H,
 ) {
+    plane_header(
+        state,
+        inclusions,
+        view.width(),
+        view.height(),
+        view.channel_type(),
+    );
+    any_plane_samples(view, encoding, state);
+}
+
+#[cfg(feature = "planar")]
+fn any_plane_samples(
+    view: &AnyPlane<'_>,
+    encoding: Option<SampleEncoding>,
+    state: &mut impl Hasher,
+) {
     let size = view.channel_type().byte_size();
     if let Some(e) = encoding.filter(|e| usize::from(e.code_bits()) != size * 8) {
         // Reuse the checked native-code reader; padding rules have one owner.
         let codes = CodePlane::new(*view, e);
-        plane_header(
-            state,
-            inclusions,
-            view.width(),
-            view.height(),
-            view.channel_type(),
-        );
         if let Ok(codes) = codes {
             code_samples(&codes, size, state);
         } else {
@@ -305,13 +347,12 @@ fn any_plane<H: Hasher>(
         AnyPlane::I64(v) => v.stride(),
         AnyPlane::F64(v) => v.stride(),
     };
-    plane_bytes(
+    plane_samples(
         view.width(),
         view.height(),
         stride_samples,
         view.channel_type(),
         view.as_strided_bytes(),
-        inclusions,
         state,
     );
 }
@@ -354,19 +395,30 @@ fn masked_plane_bytes(
 }
 
 #[cfg(feature = "planar")]
-fn planar(view: &PlanarSlice<'_>, inclusions: HashInclusions, state: &mut impl Hasher) {
+fn planar_header(
+    view: &PlanarSlice<'_>,
+    width: u32,
+    height: u32,
+    inclusions: HashInclusions,
+    state: &mut impl Hasher,
+) {
     begin(state, b"planar\0", inclusions);
     {
         let mut p = Portable(state);
-        view.width().hash(&mut p);
-        view.height().hash(&mut p);
-        view.planes().len().hash(&mut p);
+        width.hash(&mut p);
+        height.hash(&mut p);
+        view.layout().planes().len().hash(&mut p);
         if inclusions != HashInclusions::SamplesOnly {
             view.layout().hash(&mut p);
             view.color_context().hash(&mut p);
             view.alpha_mode().hash(&mut p);
         }
     }
+}
+
+#[cfg(feature = "planar")]
+fn planar(view: &PlanarSlice<'_>, inclusions: HashInclusions, state: &mut impl Hasher) {
+    planar_header(view, view.width(), view.height(), inclusions, state);
     for (view, spec) in view.planes().zip(view.layout().planes()) {
         let encoding = match spec.encoding() {
             PlaneEncoding::Code(e) => Some(e),
@@ -548,5 +600,115 @@ fn code_samples(view: &CodePlane<'_>, size: usize, state: &mut impl Hasher) {
                 _ => unreachable!("CodePlane supports 8/16/32-bit containers"),
             }
         }
+    }
+}
+
+impl crate::banded::BandedPixelBuffer {
+    fn hash_into(&self, inclusions: HashInclusions, state: &mut impl Hasher) {
+        let geometry = self.layout();
+        packed_header(
+            (geometry.width(), geometry.height()),
+            self.encoding(),
+            self.exact_depth(),
+            inclusions,
+            state,
+        );
+        for view in self.bands() {
+            packed_samples(&view, state);
+        }
+    }
+
+    /// Hash the same byte stream as a contiguous packed view of the whole image.
+    pub fn hash_with(&self, inclusions: HashInclusions) -> u64 {
+        digest(|h| self.hash_into(inclusions, h))
+    }
+}
+
+impl Hash for crate::banded::BandedPixelBuffer {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        fixed(state, |h| self.hash_into(HashInclusions::default(), h));
+    }
+}
+
+#[cfg(feature = "planar")]
+impl<T: PlaneSample> crate::plane::BandedPlane<T> {
+    fn hash_into(&self, inclusions: HashInclusions, state: &mut impl Hasher) {
+        let geometry = self.layout();
+        plane_header(
+            state,
+            inclusions,
+            geometry.width() as usize,
+            geometry.height() as usize,
+            T::CHANNEL_TYPE,
+        );
+        for band in self.bands() {
+            plane_samples(
+                band.width(),
+                band.height(),
+                band.stride(),
+                T::CHANNEL_TYPE,
+                bytemuck::cast_slice(band.strided_samples()),
+                state,
+            );
+        }
+    }
+
+    /// Hash the same byte stream as a contiguous plane of the whole image.
+    pub fn hash_with(&self, inclusions: HashInclusions) -> u64 {
+        digest(|h| self.hash_into(inclusions, h))
+    }
+}
+
+#[cfg(feature = "planar")]
+impl<T: PlaneSample> Hash for crate::plane::BandedPlane<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        fixed(state, |h| self.hash_into(HashInclusions::default(), h));
+    }
+}
+
+#[cfg(feature = "planar")]
+impl crate::plane::BandedPlanarBuffer {
+    fn hash_into(&self, inclusions: HashInclusions, state: &mut impl Hasher) {
+        let geometry = self.geometry();
+        let (width, height) = (geometry.width(), geometry.height());
+        let first = self.bands().next().expect("nonempty geometry");
+        planar_header(&first, width, height, inclusions, state);
+        for (index, spec) in first.layout().planes().iter().enumerate() {
+            let (w, h) = first
+                .layout()
+                .plane_size(index, width, height)
+                .expect("valid plane index");
+            let samples = w as usize * spec.role().components();
+            plane_header(
+                state,
+                inclusions,
+                samples,
+                h as usize,
+                spec.encoding().channel_type(),
+            );
+            let encoding = match spec.encoding() {
+                PlaneEncoding::Code(e) => Some(e),
+                _ => None,
+            };
+            for band in self.bands() {
+                any_plane_samples(
+                    &band.plane(index).expect("validated band layout"),
+                    encoding,
+                    state,
+                );
+            }
+        }
+    }
+
+    /// Hash samples and interpretation, with the contiguous planar byte stream.
+    pub fn hash_with(&self, inclusions: HashInclusions) -> u64 {
+        digest(|h| self.hash_into(inclusions, h))
+    }
+}
+
+#[cfg(feature = "planar")]
+impl Hash for crate::plane::BandedPlanarBuffer {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        fixed(state, |h| self.hash_into(HashInclusions::default(), h));
     }
 }

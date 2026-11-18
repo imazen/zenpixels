@@ -5,21 +5,30 @@ use zenpixels::{
     PixelFormat, PixelSlice, PixelSliceMut, SignalRange, TransferFunction,
 };
 use zenpixels_convert::{
-    ConvertError, ConvertOptions, OutputPlan, OutputProfile,
+    ConvertError, ConvertOptions, OutputProfile,
     cms::{CmsPluginError, PluggableCms, RowTransformMut},
 };
 
 struct NoCms;
 impl PluggableCms for NoCms {
-    fn build_source_transform(
+    fn build(
         &self,
-        _: zenpixels::ColorProfileSource<'_>,
-        _: zenpixels::ColorProfileSource<'_>,
-        _: PixelFormat,
-        _: PixelFormat,
-        _: &ConvertOptions,
-    ) -> Option<Result<Box<dyn RowTransformMut>, whereat::At<CmsPluginError>>> {
-        panic!("identity and contradictory requirements must not invoke a CMS")
+        request: &zenpixels_convert::cms::CmsRequest<'_>,
+    ) -> Result<zenpixels_convert::cms::CmsSupport, whereat::At<zenpixels_convert::CmsPluginError>>
+    {
+        let build = || -> Option<Result<Box<dyn RowTransformMut>, whereat::At<CmsPluginError>>> {
+            let _ = request.source();
+            let _ = request.target();
+            let _ = request.from().pixel_format();
+            let _ = request.to().pixel_format();
+            let _ = request.options();
+
+            panic!("identity and contradictory requirements must not invoke a CMS")
+        };
+        if let Some(worker) = build() {
+            return worker.map(zenpixels_convert::cms::CmsSupport::Owned);
+        }
+        Ok(zenpixels_convert::cms::CmsSupport::Declined)
     }
 }
 
@@ -51,7 +60,7 @@ fn current_icc_resolves_unknown_descriptor_without_changing_same_profile_samples
                 } else {
                     target.transfer()
                 });
-            let mut plan = OutputPlan::new_with_descriptor(
+            let mut plan = crate::test_conversion::output_descriptor_plan(
                 PixelEncoding::new(source, Some(&context)),
                 &ColorOrigin::assumed(),
                 OutputProfile::Icc(profile.clone()),
@@ -131,7 +140,7 @@ fn required_association_borrows_and_copies_same_opaque_profile_exactly() {
                 .with_primaries(ColorPrimaries::Unknown)
                 .with_transfer(TransferFunction::Unknown)
                 .with_alpha(Some(alpha));
-            let mut plan = OutputPlan::new_with_descriptor(
+            let mut plan = crate::test_conversion::output_descriptor_plan(
                 PixelEncoding::new(descriptor, Some(&context)),
                 &ColorOrigin::from_icc(profile.clone()),
                 OutputProfile::SameAsOrigin,
@@ -211,7 +220,7 @@ fn required_profile_descriptor_conflicts_refuse_before_cms_construction() {
         source.with_transfer(TransferFunction::Linear),
         source.with_signal_range(SignalRange::Narrow),
     ] {
-        let error = OutputPlan::new_with_descriptor(
+        let error = crate::test_conversion::output_descriptor_plan(
             source.encoding(),
             &ColorOrigin::assumed(),
             OutputProfile::Named(Cicp::SRGB),
@@ -229,7 +238,7 @@ fn required_profile_descriptor_conflicts_refuse_before_cms_construction() {
         );
     }
     let private: Arc<[u8]> = Arc::from(&b"private opaque target profile"[..]);
-    let error = OutputPlan::new_with_descriptor(
+    let error = crate::test_conversion::output_descriptor_plan(
         source.encoding(),
         &ColorOrigin::assumed(),
         OutputProfile::Icc(private),
@@ -250,7 +259,7 @@ fn required_association_does_not_change_format_convenience_or_bypass_sample_poli
     let source = PixelDescriptor::RGBA8_SRGB.with_alpha(Some(AlphaMode::Premultiplied));
     let profile = OutputProfile::Named(Cicp::SRGB);
     let options = ConvertOptions::retain_channels();
-    let mut convenience = OutputPlan::new(
+    let mut convenience = crate::test_conversion::output_plan(
         source.encoding(),
         &ColorOrigin::assumed(),
         profile.clone(),
@@ -260,7 +269,7 @@ fn required_association_does_not_change_format_convenience_or_bypass_sample_poli
     )
     .unwrap();
     assert_eq!(convenience.output_descriptor(), PixelDescriptor::RGBA8_SRGB);
-    let mut explicit = OutputPlan::new_with_descriptor(
+    let mut explicit = crate::test_conversion::output_descriptor_plan(
         source.encoding(),
         &ColorOrigin::assumed(),
         profile.clone(),
@@ -290,7 +299,7 @@ fn required_association_does_not_change_format_convenience_or_bypass_sample_poli
     assert_eq!(&a[4..8], &[0x51; 4]);
     assert_eq!(&a[12..], &[0x51; 4]);
 
-    let error = OutputPlan::new_with_descriptor(
+    let error = crate::test_conversion::output_descriptor_plan(
         PixelDescriptor::RGBA8_SRGB.encoding(),
         &ColorOrigin::assumed(),
         profile.clone(),
@@ -300,7 +309,7 @@ fn required_association_does_not_change_format_convenience_or_bypass_sample_poli
     )
     .unwrap_err();
     assert_eq!(error.error(), &ConvertError::AlphaRemovalForbidden);
-    let error = OutputPlan::new_with_descriptor(
+    let error = crate::test_conversion::output_descriptor_plan(
         PixelDescriptor::RGBA8_SRGB.encoding(),
         &ColorOrigin::assumed(),
         profile,
@@ -317,7 +326,7 @@ fn required_descriptor_retains_range_identity_but_does_not_authorize_rescaling()
     let cicp = Cicp::new(1, 13, 0, false);
     let descriptor = cicp.try_to_descriptor(PixelFormat::Rgb8).unwrap();
     let context = Arc::new(ColorContext::from_cicp(cicp));
-    let mut plan = OutputPlan::new_with_descriptor(
+    let mut plan = crate::test_conversion::output_descriptor_plan(
         PixelEncoding::new(descriptor, Some(&context)),
         &ColorOrigin::from_cicp(cicp),
         OutputProfile::Named(cicp),
@@ -338,7 +347,7 @@ fn required_descriptor_retains_range_identity_but_does_not_authorize_rescaling()
     .unwrap();
     assert_eq!(output, input);
     assert_eq!(plan.metadata().cicp, Some(cicp));
-    let error = OutputPlan::new_with_descriptor(
+    let error = crate::test_conversion::output_descriptor_plan(
         PixelDescriptor::RGB8_SRGB.encoding(),
         &ColorOrigin::assumed(),
         OutputProfile::Named(cicp),
@@ -360,7 +369,7 @@ fn matching_required_descriptors_do_not_authorize_relabeling_different_opaque_pr
     let source: Arc<[u8]> = Arc::from(&b"original profile"[..]);
     let target: Arc<[u8]> = Arc::from(&b"different profile"[..]);
     let src_ctx = ColorContext::from_icc(source.clone());
-    let error = OutputPlan::new_with_descriptor(
+    let error = crate::test_conversion::output_descriptor_plan(
         PixelEncoding::new(descriptor, Some(&src_ctx)),
         &ColorOrigin::from_icc(source),
         OutputProfile::Icc(target),
@@ -377,12 +386,13 @@ fn required_premultiplication_executes_exact_linear_math_and_rejects_wrong_desti
     let cicp = Cicp::new(1, 8, 0, true);
     let source = cicp.try_to_descriptor(PixelFormat::RgbaF32).unwrap();
     let required = source.with_alpha(Some(AlphaMode::Premultiplied));
-    let mut plan = OutputPlan::new_with_descriptor(
+    let mut plan = crate::test_conversion::output_descriptor_plan(
         source.encoding(),
         &ColorOrigin::from_cicp(cicp),
         OutputProfile::Named(cicp),
         required,
-        &ConvertOptions::retain_channels().with_clip_out_of_gamut(false),
+        &ConvertOptions::retain_channels()
+            .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended),
         Some(&NoCms),
     )
     .unwrap();
@@ -412,3 +422,6 @@ fn required_premultiplication_executes_exact_linear_math_and_rejects_wrong_desti
     assert_eq!(&output[4..8], &[0xa5a5_a5a5; 4]);
     assert_eq!(&output[12..16], &[0xa5a5_a5a5; 4]);
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

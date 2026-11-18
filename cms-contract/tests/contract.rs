@@ -5,6 +5,7 @@ use zenpixels::{Cicp, ColorProfileSource as Source, PixelFormat as F};
 use zenpixels_convert::cms::{PluggableCms, RowTransformMut};
 use zenpixels_convert::cms_moxcms::MoxCms;
 use zenpixels_convert::policy::ConvertOptions;
+use zenpixels_convert::{ConversionSpec, ConvertError, ConvertPlan};
 
 #[path = "../../zenpixels-convert/tests/common/synthetic_icc.rs"]
 #[allow(dead_code)]
@@ -31,7 +32,10 @@ fn pairs() -> Vec<(&'static str, Source<'static>, Source<'static>)> {
 }
 
 fn opts() -> ConvertOptions {
-    ConvertOptions::permissive()
+    ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
 }
 
 fn build(
@@ -228,7 +232,11 @@ fn relative_intent_maps_paper_white_to_destination_white() {
         })),
     ));
     let bytes = lcms::profile::save_profile_to_mem(&mut profile).unwrap();
-    let options = ConvertOptions::permissive().with_clip_out_of_gamut(false);
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended);
     let mut transform = LcmsPort
         .build_source_transform(Source::Icc(&bytes), SRGB, F::CMYKF32, F::RgbF32, &options)
         .unwrap()
@@ -423,7 +431,6 @@ fn eight_bit_cmyk_agrees() {
 #[test]
 fn row_converter_drives_every_backend() {
     use zenpixels::{ColorPrimaries, PixelDescriptor as D};
-    use zenpixels_convert::RowConverter;
     for (from, to) in [
         (
             D::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3),
@@ -442,8 +449,11 @@ fn row_converter_drives_every_backend() {
         let mut results = Vec::new();
         for (name, cms) in backends() {
             let input = row(f, 512);
-            let mut c = RowConverter::new_explicit_with_cms(from, to, &opts(), Some(cms))
-                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let spec = ConversionSpec::new(opts()).with_cms(cms);
+            let mut c = ConvertPlan::build(from.encoding(), to.encoding(), &spec)
+                .unwrap_or_else(|e| panic!("{name}: {e}"))
+                .prepare(512)
+                .unwrap();
             let mut out = vec![0u8; 512 * f.bytes_per_pixel()];
             c.try_convert_row(&input, &mut out, 512).expect("row");
             results.push(out);
@@ -989,7 +999,7 @@ fn cmyka_five_channel_preserves_alpha_and_inverts_only_ink() {
 #[test]
 fn lab_and_xyz_icc_transforms_and_backend_agreement() {
     use zenpixels::{AlphaMode, ChannelLayout, ChannelType, ColorModel};
-    use zenpixels_convert::{ConvertError, RowConverter};
+    use zenpixels_convert::ConvertError;
 
     let mut lab_prof = lcms::virt::create_lab4_profile(None, None).unwrap();
     let lab_icc = lcms::profile::save_profile_to_mem(&mut lab_prof).unwrap();
@@ -1014,9 +1024,13 @@ fn lab_and_xyz_icc_transforms_and_backend_agreement() {
 
     // Without a CMS, Lab and XYZ descriptors require CMS rather than reinterpreting channels.
     for fmt in [lab8, lab16, labf32, xyz16, xyzf32] {
-        let err =
-            RowConverter::new(fmt.descriptor(), zenpixels::PixelDescriptor::RGB8_SRGB).unwrap_err();
-        assert!(matches!(*err.error(), ConvertError::NeedsCms { .. }));
+        let err = ConvertPlan::build(
+            fmt.descriptor().encoding(),
+            zenpixels::PixelDescriptor::RGB8_SRGB.encoding(),
+            &ConversionSpec::new(opts()),
+        )
+        .unwrap_err();
+        assert!(matches!(err.error(), ConvertError::NeedsCms { .. }));
     }
 
     // 8-bit XYZ is intentionally declined by both backends (no standard u1Fixed15 byte packing).
@@ -1282,7 +1296,6 @@ fn active_rendering_intent_in_convert_options_and_color_context() {
     use zenpixels::{
         ColorContext, ParametricColor, PixelDescriptor, PixelEncoding, RenderingIntent,
     };
-    use zenpixels_convert::RowConverter;
 
     // Build an RGB LUT ICC profile whose AToB0 (Perceptual) scales by 0.5 and AToB1 (RelativeColorimetric) is identity.
     let mut multi = virt::create_srgb_profile(None).unwrap();
@@ -1339,20 +1352,21 @@ fn active_rendering_intent_in_convert_options_and_color_context() {
         let src_ctx = ColorContext::from_icc(multi_icc.clone());
         let src_enc = PixelEncoding::new(PixelDescriptor::RGB8, Some(&src_ctx));
 
-        let mut rel = RowConverter::new_with_encoding(
+        let worker = |source, options| {
+            let spec = ConversionSpec::new(options).with_cms(cms);
+            ConvertPlan::build(source, dst_enc, &spec)
+                .unwrap()
+                .prepare(1)
+                .unwrap()
+        };
+        let mut rel = worker(
             src_enc,
-            dst_enc,
-            &opts().with_rendering_intent(RenderingIntent::RelativeColorimetric),
-            Some(cms),
-        )
-        .unwrap();
-        let mut perc = RowConverter::new_with_encoding(
+            opts().with_rendering_intent(RenderingIntent::RelativeColorimetric),
+        );
+        let mut perc = worker(
             src_enc,
-            dst_enc,
-            &opts().with_rendering_intent(RenderingIntent::Perceptual),
-            Some(cms),
-        )
-        .unwrap();
+            opts().with_rendering_intent(RenderingIntent::Perceptual),
+        );
         let mut out_rel = [0u8; 3];
         let mut out_perc = [0u8; 3];
         rel.try_convert_row(&white_in, &mut out_rel, 1).unwrap();
@@ -1365,13 +1379,10 @@ fn active_rendering_intent_in_convert_options_and_color_context() {
         // 2. ColorContext::with_rendering_intent flows automatically when ConvertOptions leaves rendering_intent unset.
         let src_perc_ctx = ColorContext::from_icc(multi_icc.clone())
             .with_rendering_intent(RenderingIntent::Perceptual);
-        let mut from_ctx = RowConverter::new_with_encoding(
+        let mut from_ctx = worker(
             PixelEncoding::new(PixelDescriptor::RGB8, Some(&src_perc_ctx)),
-            dst_enc,
-            &opts(),
-            Some(cms),
-        )
-        .unwrap();
+            opts(),
+        );
         let mut out_ctx = [0u8; 3];
         from_ctx
             .try_convert_row(&white_in, &mut out_ctx, 1)
@@ -1382,7 +1393,7 @@ fn active_rendering_intent_in_convert_options_and_color_context() {
     // 3. AbsoluteColorimetric: MoxCms declines cleanly (no media-white unadaptation in moxcms 0.9.2),
     // while LcmsPort evaluates true ICC absolute colorimetric white shift (D65 sRGB -> D50 ProPhoto).
     let abs_opts = opts()
-        .with_clip_out_of_gamut(false)
+        .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended)
         .with_rendering_intent(RenderingIntent::AbsoluteColorimetric);
     assert!(
         MoxCms
@@ -1401,7 +1412,7 @@ fn active_rendering_intent_in_convert_options_and_color_context() {
             Source::Parametric(ParametricColor::PROPHOTO_RGB),
             F::RgbF32,
             F::RgbF32,
-            &opts().with_clip_out_of_gamut(false),
+            &opts().with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended),
         )
         .unwrap()
         .unwrap();
@@ -1441,3 +1452,8 @@ fn active_rendering_intent_in_convert_options_and_color_context() {
         "abs D65->D50 white must preserve D65 blue excess (>1.0): {abs_out:?}"
     );
 }
+
+#[path = "../../zenpixels-convert/tests/support/cms.rs"]
+mod test_cms;
+#[allow(unused_imports)]
+use test_cms::TestCmsExt as _;

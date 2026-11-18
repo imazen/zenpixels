@@ -10,25 +10,27 @@
 ## summary
 #
 #   pub modules                                 1
-#   pub types (struct/enum/trait/alias)        36
-#   pub consts/statics                         29
+#   pub types (struct/enum/trait/alias)        39
+#   pub consts/statics                         31
 #   free functions                              4
-#   inherent methods                          187
+#   inherent methods                          208
 #   struct fields                              14
-#   enum variants                              86
-#   trait roster entries (type × trait)       259
+#   enum variants                              90
+#   trait roster entries (type × trait)       270
 #   conditional trait impls (verbatim)         98
-#   auto-trait-complete types                  13
-#   auto-trait exceptions                       9
+#   auto-trait-complete types                  15
+#   auto-trait exceptions                      10
 #
 # per-module pub lines:
-#   (root)                           38
+#   (root)                           40
+#   banded                            1
 #   buffer                           95
-#   plane                           195
+#   plane                           222
 #   sample                           29
 
-## items (353 lines)
+## items (383 lines)
 
+pub fn banded::BandedPixelBuffer::hash_with(&self, HashInclusions) -> u64
 pub fn buffer::PixelCow<'_, P>::hash_with(&self, HashInclusions) -> u64
 pub fn plane::AlignedSamples<T>::try_zeroed(usize) -> core::result::Result<Self, plane::PlaneError>
 pub fn buffer::PixelBuffer::as_contiguous_pixels<P: buffer::Pixel>(&self) -> core::option::Option<&[P]>
@@ -156,6 +158,11 @@ pub plane::LayoutError::PlaneIndex::index: usize
 pub plane::LayoutError::SampleType
 pub plane::LayoutError::SampleType::index: usize
 pub plane::LayoutError::Subsampling
+#[non_exhaustive] pub enum plane::PlanarBandError
+pub plane::PlanarBandError::Geometry(buffer::BufferError)
+pub plane::PlanarBandError::Layout(plane::LayoutError)
+pub plane::PlanarBandError::OrientationNeedsResampling
+pub plane::PlanarBandError::Storage(plane::PlaneError)
 #[non_exhaustive] pub enum plane::PlaneEncoding
 pub plane::PlaneEncoding::Code(sample::SampleEncoding)
 pub plane::PlaneEncoding::Float(plane::FloatEncoding)
@@ -200,6 +207,30 @@ pub plane::RowAlign::Samples(u16)
 pub plane::RowAlign::Tight
 pub struct plane::AlignedSamples<T>
 pub fn plane::AlignedSamples<T>::try_zeroed(usize) -> core::result::Result<Self, plane::PlaneError>
+pub struct plane::BandedPlanarBuffer
+pub fn plane::BandedPlanarBuffer::band_layout(&plane::PlanarLayout, u32, u32, u64) -> core::result::Result<banded::BandLayout, plane::PlanarBandError>
+pub fn plane::BandedPlanarBuffer::bands(&self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = plane::PlanarSlice<'_>> + '_
+pub fn plane::BandedPlanarBuffer::bands_mut(&mut self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = plane::PlanarSliceMut<'_, plane::AnyPlaneBuf>> + '_
+pub const fn plane::BandedPlanarBuffer::geometry(&self) -> banded::BandLayout
+pub fn plane::BandedPlanarBuffer::orient_in_place(&mut self, orientation::Orientation) -> core::result::Result<(), plane::PlanarBandError>
+pub fn plane::BandedPlanarBuffer::oriented_into(&self, orientation::Orientation, &mut Self) -> core::result::Result<(), plane::PlanarBandError>
+pub fn plane::BandedPlanarBuffer::plane_row(&self, usize, u32) -> core::option::Option<&[u8]>
+pub fn plane::BandedPlanarBuffer::plane_row_mut(&mut self, usize, u32) -> core::option::Option<&mut [u8]>
+pub fn plane::BandedPlanarBuffer::try_new(&plane::PlanarLayout, u32, u32, color::ColorContext, core::option::Option<descriptor::AlphaMode>, u64) -> core::result::Result<Self, plane::PlanarBandError>
+pub fn plane::BandedPlanarBuffer::hash_with(&self, HashInclusions) -> u64
+pub struct plane::BandedPlane<T: StorageSample>
+pub fn plane::BandedPlane<T>::band_layout(u32, u32, u64) -> core::result::Result<banded::BandLayout, plane::PlaneError>
+pub fn plane::BandedPlane<T>::band_layout_aligned(u32, u32, u64, RowAlign) -> core::result::Result<banded::BandLayout, plane::PlaneError>
+pub fn plane::BandedPlane<T>::bands(&self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = plane::PlaneRef<'_, T>> + '_
+pub fn plane::BandedPlane<T>::bands_mut(&mut self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = plane::PlaneMut<'_, T>> + '_
+pub const fn plane::BandedPlane<T>::layout(&self) -> banded::BandLayout
+pub fn plane::BandedPlane<T>::orient_in_place(&mut self, orientation::Orientation) -> core::result::Result<(), plane::PlaneError>
+pub fn plane::BandedPlane<T>::oriented_into(&self, orientation::Orientation, &mut Self) -> core::result::Result<(), plane::PlaneError>
+pub fn plane::BandedPlane<T>::row(&self, u32) -> core::option::Option<&[T]>
+pub fn plane::BandedPlane<T>::row_mut(&mut self, u32) -> core::option::Option<&mut [T]>
+pub fn plane::BandedPlane<T>::try_new(u32, u32, u64) -> core::result::Result<Self, plane::PlaneError>
+pub fn plane::BandedPlane<T>::try_new_aligned(u32, u32, u64, RowAlign) -> core::result::Result<Self, plane::PlaneError>
+pub fn plane::BandedPlane<T>::hash_with(&self, HashInclusions) -> u64
 pub struct plane::FloatEncoding
 pub const plane::FloatEncoding::NOMINAL: Self
 pub fn plane::FloatEncoding::new(f32, f32) -> core::result::Result<Self, plane::FloatEncodingError>
@@ -383,7 +414,7 @@ pub fn buffer::PixelSliceMut<'a>::try_from_imgref_mut_with<T: bytemuck::pod::Pod
 pub fn buffer::PixelSliceMut<'a>::try_from_sample_imgref_mut_with<T: StorageSample>(imgref::ImgRefMut<'a, T>, descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelSliceMut<'_, P>::hash_with(&self, HashInclusions) -> u64
 
-## trait impls (153 types)
+## trait impls (157 types)
 
 &S: plane::SampleStorage
 &mut S: plane::SampleStorage, plane::SampleStorageMut
@@ -392,6 +423,7 @@ S: ByteStorage, ByteStorageMut
 [T]: plane::SampleStorage, plane::SampleStorageMut
 alloc::boxed::Box<S>: plane::SampleStorage, plane::SampleStorageMut
 alloc::vec::Vec<T>: plane::SampleStorage, plane::SampleStorageMut
+banded::BandedPixelBuffer: Hash
 buffer::PixelBuffer: TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<f32>, alloc::vec::Vec<f32>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<u16>, alloc::vec::Vec<u16>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Luma<u8>, alloc::vec::Vec<u8>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<f32>, alloc::vec::Vec<f32>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<u16>, alloc::vec::Vec<u16>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::LumaA<u8>, alloc::vec::Vec<u8>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<f32>, alloc::vec::Vec<f32>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<u16>, alloc::vec::Vec<u16>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgb<u8>, alloc::vec::Vec<u8>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<f32>, alloc::vec::Vec<f32>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<u16>, alloc::vec::Vec<u16>>>, TryFrom<image::images::buffer::ImageBuffer<image::color::Rgba<u8>, alloc::vec::Vec<u8>>>, TryFrom<image::images::dynimage::DynamicImage>, TryFrom<image::images::flat::FlatSamples<alloc::vec::Vec<f32>>>, TryFrom<image::images::flat::FlatSamples<alloc::vec::Vec<pixel_types::F16Sample>>>, TryFrom<image::images::flat::FlatSamples<alloc::vec::Vec<u16>>>, TryFrom<image::images::flat::FlatSamples<alloc::vec::Vec<u8>>>
 buffer::PixelBuffer<P, S>: Hash
 buffer::PixelCow<'_, P>: Hash
@@ -499,9 +531,12 @@ plane::AnyPlane<'a>: Clone, Copy, Debug
 plane::AnyPlaneBuf: Debug, plane::PlaneStorage, plane::PlaneStorageMut
 plane::AnyPlaneMut<'_>: plane::PlaneStorage, plane::PlaneStorageMut
 plane::AnyPlaneMut<'a>: Debug
+plane::BandedPlanarBuffer: Debug, Hash
+plane::BandedPlane<T>: Debug, Hash
 plane::FloatEncoding: Clone, Copy, Debug, Eq, Hash, PartialEq
 plane::FloatEncodingError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 plane::LayoutError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
+plane::PlanarBandError: Clone, Debug, Display, Eq, Error, PartialEq
 plane::PlanarBuffer<P>: Debug
 plane::PlanarBufferParts<P>: Debug
 plane::PlanarFromPartsError<P>: Debug, Display, Error
@@ -641,6 +676,7 @@ impl<'a, C> core::convert::TryFrom<&'a mut image::images::buffer::ImageBuffer<im
 
 plane::AlignedSamples<T>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 plane::AnyPlaneMut<'a>: !UnwindSafe
+plane::BandedPlane<T>: !RefUnwindSafe !Unpin !UnwindSafe
 plane::PlanarBuffer<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 plane::PlanarBufferParts<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 plane::PlanarFromPartsError<P>: !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe

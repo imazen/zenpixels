@@ -1,7 +1,7 @@
 //! Qualify the combined native-sample and profile-aware output review APIs.
 use std::sync::Arc;
 use zenpixels::{ColorContext, ColorOrigin, PixelEncoding, PixelFormat, PixelSlice, PixelSliceMut};
-use zenpixels_convert::{ConvertOptions, OutputPlan, OutputProfile};
+use zenpixels_convert::{ConvertOptions, OutputProfile};
 
 #[test]
 fn native_cmyk_identity_plan_preserves_float_bits_and_strides() {
@@ -13,7 +13,7 @@ fn native_cmyk_identity_plan_preserves_float_bits_and_strides() {
         // The real native ICC consumer is qualified separately in zencodec.
         let profile: Arc<[u8]> = Arc::from(&b"unchanged current CMYK profile"[..]);
         let context = Arc::new(ColorContext::from_icc(profile.clone()));
-        let mut plan = OutputPlan::new(
+        let mut plan = crate::test_conversion::output_plan(
             PixelEncoding::new(descriptor, Some(&context)),
             &ColorOrigin::from_icc(profile.clone()),
             OutputProfile::SameAsOrigin,
@@ -83,7 +83,7 @@ fn borrow_rows_refuses_changed_interpretation_and_keeps_real_conversion_availabl
     let input = [7, 19, 121, 23, 51, 93];
     let source = PixelSlice::new(&input, 2, 1, 6, descriptor).unwrap();
     for format in [PixelFormat::Rgb8, PixelFormat::Rgba8] {
-        let mut plan = OutputPlan::new(
+        let mut plan = crate::test_conversion::output_plan(
             source.encoding(),
             &ColorOrigin::assumed(),
             OutputProfile::Named(Cicp::SRGB),
@@ -127,15 +127,27 @@ fn unchanged_opaque_profile_alpha_addition_preserves_strided_color_without_a_cms
     use zenpixels_convert::cms::{CmsPluginError, PluggableCms, RowTransformMut};
     struct NoColorWork;
     impl PluggableCms for NoColorWork {
-        fn build_source_transform(
+        fn build(
             &self,
-            _: zenpixels::ColorProfileSource<'_>,
-            _: zenpixels::ColorProfileSource<'_>,
-            _: PixelFormat,
-            _: PixelFormat,
-            _: &ConvertOptions,
-        ) -> Option<Result<Box<dyn RowTransformMut>, whereat::At<CmsPluginError>>> {
-            panic!("adding opaque alpha requested a color transform")
+            request: &zenpixels_convert::cms::CmsRequest<'_>,
+        ) -> Result<
+            zenpixels_convert::cms::CmsSupport,
+            whereat::At<zenpixels_convert::CmsPluginError>,
+        > {
+            let build =
+                || -> Option<Result<Box<dyn RowTransformMut>, whereat::At<CmsPluginError>>> {
+                    let _ = request.source();
+                    let _ = request.target();
+                    let _ = request.from().pixel_format();
+                    let _ = request.to().pixel_format();
+                    let _ = request.options();
+
+                    panic!("adding opaque alpha requested a color transform")
+                };
+            if let Some(worker) = build() {
+                return worker.map(zenpixels_convert::cms::CmsSupport::Owned);
+            }
+            Ok(zenpixels_convert::cms::CmsSupport::Declined)
         }
     }
     for (from, to) in [
@@ -180,7 +192,7 @@ fn unchanged_opaque_profile_alpha_addition_preserves_strided_color_without_a_cms
             .unwrap()
             .with_color_context(context.clone());
         for cms in [None, Some(&NoColorWork as &dyn PluggableCms)] {
-            let mut plan = OutputPlan::new(
+            let mut plan = crate::test_conversion::output_plan(
                 source.encoding(),
                 &ColorOrigin::from_icc(profile.clone()),
                 OutputProfile::SameAsOrigin,
@@ -243,16 +255,28 @@ fn alpha_addition_does_not_bypass_changed_profile_or_required_depth_policy() {
     };
     struct Decline(AtomicUsize);
     impl PluggableCms for Decline {
-        fn build_source_transform(
+        fn build(
             &self,
-            _: zenpixels::ColorProfileSource<'_>,
-            _: zenpixels::ColorProfileSource<'_>,
-            _: PixelFormat,
-            _: PixelFormat,
-            _: &ConvertOptions,
-        ) -> Option<Result<Box<dyn RowTransformMut>, whereat::At<CmsPluginError>>> {
-            self.0.fetch_add(1, Ordering::SeqCst);
-            None
+            request: &zenpixels_convert::cms::CmsRequest<'_>,
+        ) -> Result<
+            zenpixels_convert::cms::CmsSupport,
+            whereat::At<zenpixels_convert::CmsPluginError>,
+        > {
+            let build =
+                || -> Option<Result<Box<dyn RowTransformMut>, whereat::At<CmsPluginError>>> {
+                    let _ = request.source();
+                    let _ = request.target();
+                    let _ = request.from().pixel_format();
+                    let _ = request.to().pixel_format();
+                    let _ = request.options();
+
+                    self.0.fetch_add(1, Ordering::SeqCst);
+                    None
+                };
+            if let Some(worker) = build() {
+                return worker.map(zenpixels_convert::cms::CmsSupport::Owned);
+            }
+            Ok(zenpixels_convert::cms::CmsSupport::Declined)
         }
     }
     let descriptor = PixelFormat::RgbF32
@@ -263,7 +287,7 @@ fn alpha_addition_does_not_bypass_changed_profile_or_required_depth_policy() {
     let context = Arc::new(ColorContext::from_icc(current.clone()));
     let origin = ColorOrigin::from_icc(current);
     let cms = Decline(AtomicUsize::new(0));
-    let error = OutputPlan::new(
+    let error = crate::test_conversion::output_plan(
         PixelEncoding::new(descriptor, Some(&context)),
         &origin,
         OutputProfile::Icc(Arc::from(&b"different target ICC"[..])),
@@ -274,7 +298,7 @@ fn alpha_addition_does_not_bypass_changed_profile_or_required_depth_policy() {
     .unwrap_err();
     assert!(matches!(error.error(), ConvertError::NeedsCms { .. }));
     assert_eq!(cms.0.load(Ordering::SeqCst), 1);
-    let error = OutputPlan::new(
+    let error = crate::test_conversion::output_plan(
         PixelEncoding::new(descriptor, Some(&context)),
         &origin,
         OutputProfile::SameAsOrigin,
@@ -286,3 +310,6 @@ fn alpha_addition_does_not_bypass_changed_profile_or_required_depth_policy() {
     assert_eq!(error.error(), &ConvertError::DepthReductionForbidden);
     assert_eq!(cms.0.load(Ordering::SeqCst), 1);
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

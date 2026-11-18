@@ -528,12 +528,12 @@ fn required_bytes(rows: u32, stride: usize, min_stride: usize) -> Result<usize, 
     if rows == 0 || min_stride == 0 {
         return Ok(0);
     }
-    let preceding = (rows as usize - 1)
-        .checked_mul(stride)
+    let extent = u64::from(rows - 1)
+        .checked_mul(stride as u64)
+        .and_then(|v| v.checked_add(min_stride as u64))
+        .filter(|&bytes| bytes <= isize::MAX as u64)
         .ok_or(BufferError::InvalidDimensions)?;
-    preceding
-        .checked_add(min_stride)
-        .ok_or(BufferError::InvalidDimensions)
+    Ok(extent as usize)
 }
 
 /// [`PixelBuffer::try_from_parts`]'s checks, on bytes so that they are compiled once
@@ -1071,6 +1071,11 @@ impl<'a, P> PixelSlice<'a, P> {
         self.rows
     }
 
+    /// Active image area, independent of the platform's address width.
+    pub fn pixel_count(&self) -> u64 {
+        u64::from(self.width) * u64::from(self.rows)
+    }
+
     /// Byte stride between row starts.
     #[inline]
     pub fn stride(&self) -> usize {
@@ -1101,6 +1106,12 @@ impl<'a, P> PixelSlice<'a, P> {
     pub fn with_color_context(mut self, ctx: Arc<ColorContext>) -> Self {
         self.color = Some(ctx);
         self
+    }
+
+    /// Replace or clear the color context on this slice.
+    #[inline]
+    pub fn set_color_context(&mut self, color: Option<Arc<ColorContext>>) {
+        self.color = color;
     }
 
     /// Relabel the source diffuse-white anchor — the cd/m² that relative-linear
@@ -1561,6 +1572,10 @@ impl<'a> PixelSliceMut<'a> {
 }
 
 impl<'a, P> PixelSliceMut<'a, P> {
+    pub(crate) fn into_bytes(self) -> &'a mut [u8] {
+        self.data
+    }
+
     /// Erase the pixel type, returning a type-erased mutable slice.
     pub fn erase(self) -> PixelSliceMut<'a> {
         PixelSliceMut {
@@ -1685,6 +1700,11 @@ impl<'a, P> PixelSliceMut<'a, P> {
         self.rows
     }
 
+    /// Active image area, independent of the platform's address width.
+    pub fn pixel_count(&self) -> u64 {
+        u64::from(self.width) * u64::from(self.rows)
+    }
+
     /// Byte stride between row starts.
     #[inline]
     pub fn stride(&self) -> usize {
@@ -1715,6 +1735,12 @@ impl<'a, P> PixelSliceMut<'a, P> {
     pub fn with_color_context(mut self, ctx: Arc<ColorContext>) -> Self {
         self.color = Some(ctx);
         self
+    }
+
+    /// Replace or clear the color context on this slice.
+    #[inline]
+    pub fn set_color_context(&mut self, color: Option<Arc<ColorContext>>) {
+        self.color = color;
     }
 
     /// Relabel the source diffuse-white anchor — the cd/m² that relative-linear
@@ -2679,6 +2705,7 @@ impl PixelBuffer {
             checked_stride_samples(stride, &descriptor).map_err(|e| whereat::at!(e))?;
         let total = stride
             .checked_mul(height as usize)
+            .filter(|&bytes| bytes <= isize::MAX as usize)
             .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
         let (data, offset) = alloc_storage(&descriptor, total, descriptor.min_alignment())
             .map_err(|e| whereat::at!(e))?;
@@ -3650,6 +3677,11 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
         self.height
     }
 
+    /// Active image area, independent of the platform's address width.
+    pub fn pixel_count(&self) -> u64 {
+        u64::from(self.width) * u64::from(self.height)
+    }
+
     /// Byte stride between row starts.
     #[inline]
     pub fn stride(&self) -> usize {
@@ -3703,6 +3735,12 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
     pub fn with_color_context(mut self, ctx: Arc<ColorContext>) -> Self {
         self.color = Some(ctx);
         self
+    }
+
+    /// Replace or clear the color context on this buffer.
+    #[inline]
+    pub fn set_color_context(&mut self, color: Option<Arc<ColorContext>>) {
+        self.color = color;
     }
 
     /// Relabel the source diffuse-white anchor — the cd/m² that relative-linear
@@ -4144,7 +4182,10 @@ fn exact_survives(old: PixelDescriptor, new: PixelDescriptor) -> bool {
         && old.signal_range == new.signal_range
 }
 
-fn check_exact(descriptor: PixelDescriptor, exact: ExactDepth) -> Result<(), ExactDepthError> {
+pub(crate) fn check_exact(
+    descriptor: PixelDescriptor,
+    exact: ExactDepth,
+) -> Result<(), ExactDepthError> {
     if exact.storage() != descriptor.channel_type() || exact.range() != descriptor.signal_range {
         return Err(ExactDepthError::DescriptorMismatch);
     }

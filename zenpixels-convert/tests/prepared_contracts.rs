@@ -1,15 +1,15 @@
 whereat::define_at_crate_info!();
 
 use zenpixels_convert::PixelSliceConvertExt;
-use zenpixels_convert::{AlphaMode, ConvertPlan, PixelDescriptor, RowConverter, TransferFunction};
+use zenpixels_convert::{AlphaMode, PixelDescriptor, RowConverter, TransferFunction};
 
 #[test]
 fn rgb_gamut_preparation_preserves_unprepared_pixels_without_row_allocations() {
     let srgb = PixelDescriptor::RGB8_SRGB;
     let p3 = srgb.with_primaries(zenpixels_convert::ColorPrimaries::DisplayP3);
     for (from, to) in [(srgb, p3), (p3, srgb)] {
-        let mut ordinary = RowConverter::new(from, to).unwrap();
-        let mut prepared = RowConverter::new(from, to).unwrap();
+        let mut ordinary = crate::test_conversion::new_worker(from, to).unwrap();
+        let mut prepared = crate::test_conversion::new_worker(from, to).unwrap();
         prepared.prepare(257).unwrap();
         let input: Vec<u8> = (0..257 * 3).map(|n| (n * 73 + 19) as u8).collect();
         let mut expected = vec![0xa5; input.len()];
@@ -33,7 +33,7 @@ fn rgb_gamut_preparation_preserves_unprepared_pixels_without_row_allocations() {
 fn preparation_moves_scratch_and_lut_cost_before_execution() {
     let from = PixelDescriptor::RGBA16_SRGB.with_transfer(TransferFunction::Linear);
     let to = PixelDescriptor::RGBA8_SRGB;
-    let mut converter = RowConverter::new(from, to).unwrap();
+    let mut converter = crate::test_conversion::new_worker(from, to).unwrap();
     converter.prepare(257).unwrap();
     let src = vec![32768u16; 257 * 4];
     let mut dst = vec![0; 257 * 4];
@@ -59,8 +59,8 @@ fn preparation_covers_multistep_scratch_and_independent_cms() {
     let from = PixelDescriptor::RGBA8_SRGB;
     let to =
         PixelDescriptor::RGBF32_LINEAR.with_primaries(zenpixels_convert::ColorPrimaries::DisplayP3);
-    let mut a = RowConverter::new(from, to).unwrap();
-    let mut b = RowConverter::new(from, to).unwrap();
+    let mut a = crate::test_conversion::new_worker(from, to).unwrap();
+    let mut b = crate::test_conversion::new_worker(from, to).unwrap();
     a.prepare(100).unwrap();
     b.prepare(100).unwrap();
     let src = vec![255u8; 400];
@@ -79,7 +79,8 @@ fn preparation_covers_multistep_scratch_and_independent_cms() {
 #[test]
 fn row_extent_failure_precedes_all_writes_and_identity_respects_width() {
     let mut converter =
-        RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGB8_SRGB).unwrap();
+        crate::test_conversion::new_worker(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGB8_SRGB)
+            .unwrap();
     let mut dst = [99; 12];
     assert!(converter.try_convert_row(&[1; 2], &mut dst, 1).is_err());
     assert_eq!(dst, [99; 12]);
@@ -91,20 +92,11 @@ fn row_extent_failure_precedes_all_writes_and_identity_respects_width() {
 fn explicit_composition_preserves_integer_stage() {
     let f = PixelDescriptor::RGBF32_LINEAR;
     let u = PixelDescriptor::RGB8_SRGB.with_transfer(TransferFunction::Linear);
-    let a = RowConverter::new(f, u).unwrap();
-    let b = RowConverter::new(u, f).unwrap();
-    let mut optimized = a.compose(&b).unwrap();
-    let mut preserved = a.compose_preserving(&b).unwrap();
+    let a = crate::test_conversion::new_plan(f, u).unwrap();
+    let b = crate::test_conversion::new_plan(u, f).unwrap();
+    let mut preserved = a.then(b).unwrap().prepare(1).unwrap();
     let src = [0.1234567f32; 3];
-    let mut exact = [0f32; 3];
     let mut rounded = [0f32; 3];
-    optimized
-        .try_convert_row(
-            bytemuck::cast_slice(&src),
-            bytemuck::cast_slice_mut(&mut exact),
-            1,
-        )
-        .unwrap();
     preserved
         .try_convert_row(
             bytemuck::cast_slice(&src),
@@ -112,7 +104,7 @@ fn explicit_composition_preserves_integer_stage() {
             1,
         )
         .unwrap();
-    assert_eq!(exact, src);
+    assert_ne!(rounded, src);
     assert_eq!(rounded, [31. / 255.; 3]);
 }
 
@@ -135,28 +127,22 @@ fn explicit_opacity_scan_rejects_nonfinite_and_out_of_range_alpha() {
 #[test]
 fn preservation_is_proven_or_refused_without_inspecting_samples() {
     assert!(
-        ConvertPlan::new_preserving_samples(
-            PixelDescriptor::RGB8_SRGB,
-            PixelDescriptor::RGB16_SRGB
-        )
-        .is_ok()
+        crate::test_conversion::exact_plan(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGB16_SRGB)
+            .is_ok()
     );
     assert!(
-        ConvertPlan::new_preserving_samples(
-            PixelDescriptor::RGB16_SRGB,
-            PixelDescriptor::RGB8_SRGB
-        )
-        .is_err()
+        crate::test_conversion::exact_plan(PixelDescriptor::RGB16_SRGB, PixelDescriptor::RGB8_SRGB)
+            .is_err()
     );
     assert!(
-        ConvertPlan::new_preserving_samples(
+        crate::test_conversion::exact_plan(
             PixelDescriptor::RGBF32_LINEAR,
             PixelDescriptor::RGB8_SRGB
         )
         .is_err()
     );
     assert!(
-        ConvertPlan::new_preserving_samples(
+        crate::test_conversion::exact_plan(
             PixelDescriptor::RGBA8_SRGB,
             PixelDescriptor::RGBA8_SRGB.with_alpha(Some(AlphaMode::Opaque))
         )
@@ -174,9 +160,6 @@ impl std::fmt::Display for Sentinel {
 impl std::error::Error for Sentinel {}
 struct FailingWorker;
 impl zenpixels_convert::cms::RowTransformMut for FailingWorker {
-    fn transform_row(&mut self, _: &[u8], _: &mut [u8], _: u32) {
-        panic!("fallible hook must be used")
-    }
     fn try_transform_row(
         &mut self,
         _: &[u8],
@@ -197,20 +180,30 @@ impl zenpixels_convert::cms::RowTransformMut for FailingWorker {
 }
 struct FailingCms;
 impl zenpixels_convert::cms::PluggableCms for FailingCms {
-    fn build_source_transform(
+    fn build(
         &self,
-        _: zenpixels::ColorProfileSource<'_>,
-        _: zenpixels::ColorProfileSource<'_>,
-        _: zenpixels::PixelFormat,
-        _: zenpixels::PixelFormat,
-        _: &zenpixels::ConvertOptions,
-    ) -> Option<
+        request: &zenpixels_convert::cms::CmsRequest<'_>,
+    ) -> Result<zenpixels_convert::cms::CmsSupport, whereat::At<zenpixels_convert::CmsPluginError>>
+    {
+        let build = || -> Option<
         Result<
             Box<dyn zenpixels_convert::cms::RowTransformMut>,
             whereat::At<zenpixels_convert::cms::CmsPluginError>,
         >,
     > {
+let _ = request.source();
+let _ = request.target();
+let _ = request.from().pixel_format();
+let _ = request.to().pixel_format();
+let _ = request.options();
+
         Some(Ok(Box::new(FailingWorker)))
+
+};
+        if let Some(worker) = build() {
+            return worker.map(zenpixels_convert::cms::CmsSupport::Owned);
+        }
+        Ok(zenpixels_convert::cms::CmsSupport::Declined)
     }
 }
 #[test]
@@ -218,10 +211,13 @@ fn backend_row_failure_preserves_concrete_error_and_never_returns_encode_ready()
     use std::error::Error;
     let from = PixelDescriptor::RGB8_SRGB;
     let to = from.with_primaries(zenpixels::ColorPrimaries::DisplayP3);
-    let mut converter = RowConverter::new_explicit_with_cms(
+    let mut converter = crate::test_conversion::cms_worker(
         from,
         to,
-        &zenpixels::ConvertOptions::permissive(),
+        &zenpixels::ConvertOptions::retain_channels()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
         Some(&FailingCms),
     )
     .unwrap();
@@ -244,7 +240,7 @@ fn backend_row_failure_preserves_concrete_error_and_never_returns_encode_ready()
     );
     let buffer = zenpixels::PixelBuffer::from_vec(vec![1, 2, 3], 1, 1, from).unwrap();
     assert!(
-        zenpixels_convert::EncodeReady::finalize(
+        crate::test_conversion::copy_output(
             &buffer,
             &zenpixels::ColorOrigin::assumed(),
             zenpixels_convert::OutputProfile::Named(zenpixels::Cicp::DISPLAY_P3),
@@ -261,9 +257,18 @@ fn composed_hdr_preparation_retains_every_gamut_table() {
     use zenpixels_convert::{ColorPrimaries, HdrConfig};
     let rgb = PixelDescriptor::RGBF32_LINEAR;
     let p3 = rgb.with_primaries(ColorPrimaries::DisplayP3);
-    let a = ConvertPlan::new_with_hdr_config(rgb, p3, HdrConfig::for_source_peak(1000.)).unwrap();
-    let b = ConvertPlan::new_with_hdr_config(p3, rgb, HdrConfig::for_source_peak(500.)).unwrap();
-    let mut worker = RowConverter::from_plan(a.compose_preserving(&b).unwrap());
+    let a = crate::test_conversion::hdr_plan(rgb, p3, HdrConfig::for_source_peak(1000.)).unwrap();
+    let config = HdrConfig::for_source_peak(500.);
+    let b = zenpixels_convert::ConvertPlan::build(
+        a.output_encoding(),
+        rgb.encoding(),
+        &zenpixels_convert::ConversionSpec::new(
+            zenpixels_convert::ConvertOptions::retain_channels(),
+        )
+        .with_hdr(&config),
+    )
+    .unwrap();
+    let mut worker = crate::test_conversion::worker(a.then(b).unwrap());
     worker.prepare(3).unwrap();
     let src = [0.18f32; 9];
     let mut dst = [0f32; 9];
@@ -289,10 +294,12 @@ fn hdr_unassociates_before_nonlinear_mapping() {
     let straight = PixelDescriptor::RGBAF32_LINEAR;
     let premul = straight.with_alpha(Some(AlphaMode::Premultiplied));
     let hdr = HdrConfig::for_source_peak(1000.);
-    let mut a =
-        RowConverter::from_plan(ConvertPlan::new_with_hdr_config(straight, straight, hdr).unwrap());
-    let mut b =
-        RowConverter::from_plan(ConvertPlan::new_with_hdr_config(premul, premul, hdr).unwrap());
+    let mut a = crate::test_conversion::worker(
+        crate::test_conversion::hdr_plan(straight, straight, hdr).unwrap(),
+    );
+    let mut b = crate::test_conversion::worker(
+        crate::test_conversion::hdr_plan(premul, premul, hdr).unwrap(),
+    );
     let src = [0.8f32, 0.4, 0.2, 0.5];
     let associated = [0.4f32, 0.2, 0.1, 0.5];
     let mut out_a = [0f32; 4];
@@ -317,7 +324,7 @@ fn hdr_unassociates_before_nonlinear_mapping() {
         PixelDescriptor::GRAY8_SRGB.with_transfer(TransferFunction::Pq),
         straight.with_primaries(zenpixels_convert::ColorPrimaries::Unknown),
     ] {
-        assert!(ConvertPlan::new_with_hdr_config(invalid, straight, hdr).is_err());
+        assert!(crate::test_conversion::hdr_plan(invalid, straight, hdr).is_err());
     }
 }
 
@@ -356,11 +363,11 @@ fn conversion_replaces_current_color_signaling_and_enforces_single_authority() {
 fn pq_and_explicit_linear_anchor_describe_the_same_luminance() {
     use std::sync::Arc;
     use zenpixels::{ColorContext, ColorPrimaries, PixelBuffer};
-    use zenpixels_convert::{HdrConfig, PixelBufferHdrConvertExt, TransferFunctionExt};
+    use zenpixels_convert::{HdrConfig, PixelBufferHdrConvertExt};
     let linear = PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::Bt2020);
     let pq = linear.with_transfer(TransferFunction::Pq);
     let peak = 1000.;
-    let code = TransferFunction::Pq.delinearize(peak / 10_000.);
+    let code = linear_srgb::tf::linear_to_pq(peak / 10_000.);
     let pq_buffer =
         PixelBuffer::from_vec(bytemuck::cast_slice(&[code; 3]).to_vec(), 1, 1, pq).unwrap();
     let relative = PixelBuffer::from_vec(
@@ -406,20 +413,30 @@ fn padding_is_not_alpha_and_opaque_requires_a_proof() {
             [10, 20, 30, 255],
         ),
     ] {
-        let mut worker = RowConverter::new(from, PixelDescriptor::RGBA8_SRGB).unwrap();
+        let mut worker =
+            crate::test_conversion::new_worker(from, PixelDescriptor::RGBA8_SRGB).unwrap();
         let mut dst = [0; 4];
         worker.try_convert_row(&src, &mut dst, 1).unwrap();
         assert_eq!(dst, expected);
     }
     let rgba = PixelDescriptor::RGBA8_SRGB;
     let padding = PixelDescriptor::RGBX8.with_transfer(TransferFunction::Srgb);
-    assert!(RowConverter::new(rgba, rgba.with_alpha(Some(AlphaMode::Opaque))).is_err());
-    assert!(RowConverter::new_explicit(rgba, padding, &ConvertOptions::retain_channels()).is_err());
-    let options = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-        background: zenpixels::Color::srgb8(255, 255, 255),
-        reference_white: None,
-    });
-    let mut worker = RowConverter::new_explicit(rgba, padding, &options).unwrap();
+    assert!(
+        crate::test_conversion::new_worker(rgba, rgba.with_alpha(Some(AlphaMode::Opaque))).is_err()
+    );
+    assert!(
+        crate::test_conversion::explicit_worker(rgba, padding, &ConvertOptions::retain_channels())
+            .is_err()
+    );
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_alpha_policy(AlphaPolicy::CompositeOnto {
+            background: zenpixels::Color::srgb8(255, 255, 255),
+            reference_white: None,
+        });
+    let mut worker = crate::test_conversion::explicit_worker(rgba, padding, &options).unwrap();
     let mut dst = [0; 4];
     worker.try_convert_row(&[0, 0, 0, 0], &mut dst, 1).unwrap();
     assert_eq!(&dst[..3], &[255; 3]);
@@ -431,3 +448,6 @@ fn row_converter_retains_published_send_sync_traits() {
     fn requires_send_sync<T: Send + Sync>() {}
     requires_send_sync::<RowConverter>();
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

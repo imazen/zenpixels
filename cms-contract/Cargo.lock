@@ -1032,7 +1032,7 @@ dependencies = [
 
 [[package]]
 name = "zenpixels"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "bytemuck",
  "whereat",
@@ -1041,7 +1041,7 @@ dependencies = [
 
 [[package]]
 name = "zenpixels-convert"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "archmage",
  "bytemuck",

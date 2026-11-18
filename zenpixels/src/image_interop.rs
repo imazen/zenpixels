@@ -492,7 +492,7 @@ fn adopt_image_storage<S: ByteStorage>(
     color: ImageCicp,
 ) -> Result<PixelBuffer<(), S>, FromPartsError<S>> {
     let (descriptor, cicp) = describe(channel, layout, alpha, color);
-    let stride = width as usize * descriptor.bytes_per_pixel();
+    let stride = (width as usize).saturating_mul(descriptor.bytes_per_pixel());
     let parts = PixelBufferParts::new(data, width, height, stride, descriptor);
     let buffer = PixelBuffer::try_from_parts(parts)?;
     Ok(match cicp {
@@ -511,7 +511,9 @@ fn slice_from_image_bytes(
     color: ImageCicp,
 ) -> Result<PixelSlice<'_>, At<BufferError>> {
     let (descriptor, cicp) = describe(channel, layout, alpha, color);
-    let stride = width as usize * descriptor.bytes_per_pixel();
+    let stride = (width as usize)
+        .checked_mul(descriptor.bytes_per_pixel())
+        .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
     let slice = PixelSlice::new(bytes, width, height, stride, descriptor)?;
     Ok(match cicp {
         Some(cicp) => slice.with_cicp(cicp),
@@ -529,7 +531,9 @@ fn slice_mut_from_image_bytes(
     color: ImageCicp,
 ) -> Result<PixelSliceMut<'_>, At<BufferError>> {
     let (descriptor, cicp) = describe(channel, layout, alpha, color);
-    let stride = width as usize * descriptor.bytes_per_pixel();
+    let stride = (width as usize)
+        .checked_mul(descriptor.bytes_per_pixel())
+        .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
     let slice = PixelSliceMut::new(bytes, width, height, stride, descriptor)?;
     Ok(match cicp {
         Some(cicp) => slice.with_cicp(cicp),

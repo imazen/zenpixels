@@ -4,13 +4,11 @@
 //! That branch refused nonlinear transfer and tone mapping on associated
 //! samples, and padding-as-coverage; main now implements the first two by
 //! unassociating around the transform, so these tests pin the results.
-use zenpixels_convert::{
-    AlphaMode, ColorPrimaries, PixelDescriptor, RowConverter, policy::ConvertOptions,
-};
+use zenpixels_convert::{AlphaMode, ColorPrimaries, PixelDescriptor, policy::ConvertOptions};
 
 #[test]
 fn nonlinear_transfer_operates_on_unassociated_samples() {
-    use zenpixels_convert::{ConvertPlan, TransferFunction};
+    use zenpixels_convert::TransferFunction;
     let from = PixelDescriptor::RGBAF32_LINEAR
         .with_transfer(TransferFunction::Srgb)
         .with_alpha(Some(AlphaMode::Premultiplied));
@@ -19,14 +17,16 @@ fn nonlinear_transfer_operates_on_unassociated_samples() {
     let linear = [0.21404114_f32, 0.05087609, 0.0, 0.5];
     for target_alpha in [AlphaMode::Straight, AlphaMode::Premultiplied] {
         let to = PixelDescriptor::RGBAF32_LINEAR.with_alpha(Some(target_alpha));
-        assert!(ConvertPlan::new(from, to).is_ok());
-        let mut converter = RowConverter::new(from, to).unwrap();
+        assert!(crate::test_conversion::new_plan(from, to).is_ok());
+        let mut converter = crate::test_conversion::new_worker(from, to).unwrap();
         let mut output = [0.0_f32; 4];
-        converter.convert_row(
-            bytemuck::cast_slice(&input),
-            bytemuck::cast_slice_mut(&mut output),
-            1,
-        );
+        converter
+            .try_convert_row(
+                bytemuck::cast_slice(&input),
+                bytemuck::cast_slice_mut(&mut output),
+                1,
+            )
+            .unwrap();
         for channel in 0..3 {
             let expected = linear[channel]
                 * if target_alpha == AlphaMode::Premultiplied {
@@ -51,8 +51,11 @@ fn nonlinear_transfer_operates_on_unassociated_samples() {
 fn cross_gamut_preserves_partial_alpha_and_cloned_transforms() {
     let from = PixelDescriptor::RGBAF32_LINEAR.with_primaries(ColorPrimaries::DisplayP3);
     let to = PixelDescriptor::RGBAF32_LINEAR;
-    let mut options = ConvertOptions::permissive();
-    options = options.with_clip_out_of_gamut(false);
+    let mut options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709));
+    options = options.with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended);
     let straight = [
         [0.0_f32, 0.0, 0.0, 0.0],
         [0.8, 0.3, 0.1, 0.25],
@@ -60,13 +63,14 @@ fn cross_gamut_preserves_partial_alpha_and_cloned_transforms() {
         [1.0, 0.0, 0.0, 1.0],
     ];
     let mut reference = [[0.0_f32; 4]; 4];
-    RowConverter::new_explicit(from, to, &options)
+    crate::test_conversion::explicit_worker(from, to, &options)
         .unwrap()
-        .convert_row(
+        .try_convert_row(
             bytemuck::cast_slice(&straight),
             bytemuck::cast_slice_mut(&mut reference),
             4,
-        );
+        )
+        .unwrap();
     assert!((reference[3][0] - straight[3][0]).abs() > 0.01);
     for source_alpha in [AlphaMode::Straight, AlphaMode::Premultiplied] {
         for target_alpha in [AlphaMode::Straight, AlphaMode::Premultiplied] {
@@ -88,7 +92,7 @@ fn cross_gamut_preserves_partial_alpha_and_cloned_transforms() {
                     }
                 }
             }
-            let converter = RowConverter::new_explicit(
+            let converter = crate::test_conversion::explicit_worker(
                 from.with_alpha(Some(source_alpha)),
                 to.with_alpha(Some(target_alpha)),
                 &options,
@@ -98,11 +102,13 @@ fn cross_gamut_preserves_partial_alpha_and_cloned_transforms() {
                 let mut output = [[0.0_f32; 4]; 4];
                 // Repeated and changing-width rows exercise scratch reuse.
                 for width in [4, 1, 4] {
-                    converter.convert_row(
-                        bytemuck::cast_slice(&source),
-                        bytemuck::cast_slice_mut(&mut output),
-                        width,
-                    );
+                    converter
+                        .try_convert_row(
+                            bytemuck::cast_slice(&source),
+                            bytemuck::cast_slice_mut(&mut output),
+                            width,
+                        )
+                        .unwrap();
                     for (actual, expected) in output[..width as usize]
                         .iter()
                         .flatten()
@@ -125,21 +131,27 @@ fn padding_becomes_opaque_alpha_without_touching_color() {
         .with_primaries(ColorPrimaries::DisplayP3)
         .with_alpha(Some(AlphaMode::Undefined));
     let opaque = padded.with_alpha(Some(AlphaMode::Straight));
-    let mut reference = RowConverter::new(opaque, PixelDescriptor::RGBAF32_LINEAR).unwrap();
+    let mut reference =
+        crate::test_conversion::new_worker(opaque, PixelDescriptor::RGBAF32_LINEAR).unwrap();
     let mut expected = [0.0_f32; 4];
-    reference.convert_row(
-        bytemuck::cast_slice(&[0.5_f32, 0.25, 0.125, 1.0]),
-        bytemuck::cast_slice_mut(&mut expected),
-        1,
-    );
-    let mut converter = RowConverter::new(padded, PixelDescriptor::RGBAF32_LINEAR).unwrap();
+    reference
+        .try_convert_row(
+            bytemuck::cast_slice(&[0.5_f32, 0.25, 0.125, 1.0]),
+            bytemuck::cast_slice_mut(&mut expected),
+            1,
+        )
+        .unwrap();
+    let mut converter =
+        crate::test_conversion::new_worker(padded, PixelDescriptor::RGBAF32_LINEAR).unwrap();
     for padding in [0.0_f32, 0.5, 7.0, f32::NAN] {
         let mut output = [0.0_f32; 4];
-        converter.convert_row(
-            bytemuck::cast_slice(&[0.5_f32, 0.25, 0.125, padding]),
-            bytemuck::cast_slice_mut(&mut output),
-            1,
-        );
+        converter
+            .try_convert_row(
+                bytemuck::cast_slice(&[0.5_f32, 0.25, 0.125, padding]),
+                bytemuck::cast_slice_mut(&mut output),
+                1,
+            )
+            .unwrap();
         assert_eq!(output, expected, "padding {padding}");
     }
 }
@@ -147,7 +159,6 @@ fn padding_becomes_opaque_alpha_without_touching_color() {
 #[cfg(feature = "bt2446a")]
 #[test]
 fn tone_mapping_associated_samples_matches_straight_samples() {
-    use zenpixels_convert::ConvertPlan;
     let straight = PixelDescriptor::RGBAF32_LINEAR.with_alpha(Some(AlphaMode::Straight));
     let associated = PixelDescriptor::RGBAF32_LINEAR.with_alpha(Some(AlphaMode::Premultiplied));
     for target in [
@@ -160,10 +171,12 @@ fn tone_mapping_associated_samples_matches_straight_samples() {
             ([0.5, 0.5, 0.5], 1.0),
         ] {
             let run = |from: PixelDescriptor, pixel: [f32; 4]| {
-                let plan = ConvertPlan::new_with_hdr_peak(from, target, 1000.0).unwrap();
-                let mut converter = RowConverter::from_plan(plan);
+                let plan = crate::test_conversion::hdr_peak_plan(from, target, 1000.0).unwrap();
+                let mut converter = crate::test_conversion::worker(plan);
                 let mut output = [0_u8; 4];
-                converter.convert_row(bytemuck::cast_slice(&pixel), &mut output, 1);
+                converter
+                    .try_convert_row(bytemuck::cast_slice(&pixel), &mut output, 1)
+                    .unwrap();
                 output
             };
             let [r, g, b] = color;
@@ -175,3 +188,6 @@ fn tone_mapping_associated_samples_matches_straight_samples() {
         }
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

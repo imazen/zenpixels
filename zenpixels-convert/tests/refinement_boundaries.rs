@@ -54,26 +54,42 @@ fn invalid_in_place_target_refuses_before_mutation() {
 struct AcceptingCms(std::sync::atomic::AtomicUsize);
 struct Fill;
 impl zenpixels_convert::cms::RowTransformMut for Fill {
-    fn transform_row(&mut self, _: &[u8], out: &mut [u8], _: u32) {
+    fn try_transform_row(
+        &mut self,
+        _: &[u8],
+        out: &mut [u8],
+        _: u32,
+    ) -> Result<(), whereat::At<zenpixels_convert::CmsPluginError>> {
         out.fill(42);
+        Ok(())
     }
 }
 impl zenpixels_convert::cms::PluggableCms for AcceptingCms {
-    fn build_source_transform(
+    fn build(
         &self,
-        _: ColorProfileSource<'_>,
-        _: ColorProfileSource<'_>,
-        _: PixelFormat,
-        _: PixelFormat,
-        _: &ConvertOptions,
-    ) -> Option<
+        request: &zenpixels_convert::cms::CmsRequest<'_>,
+    ) -> Result<zenpixels_convert::cms::CmsSupport, whereat::At<zenpixels_convert::CmsPluginError>>
+    {
+        let build = || -> Option<
         Result<
             Box<dyn zenpixels_convert::cms::RowTransformMut>,
             whereat::At<zenpixels_convert::cms::CmsPluginError>,
         >,
     > {
+let _ = request.source();
+let _ = request.target();
+let _ = request.from().pixel_format();
+let _ = request.to().pixel_format();
+let _ = request.options();
+
         self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Some(Ok(Box::new(Fill)))
+
+};
+        if let Some(worker) = build() {
+            return worker.map(zenpixels_convert::cms::CmsSupport::Owned);
+        }
+        Ok(zenpixels_convert::cms::CmsSupport::Declined)
     }
 }
 #[test]
@@ -82,13 +98,13 @@ fn bgr_icc_output_cannot_bypass_missing_luma_policy() {
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
-    use zenpixels_convert::{ConvertError, OutputPlan, OutputProfile};
+    use zenpixels_convert::{ConvertError, OutputProfile};
     let cms = AcceptingCms(AtomicUsize::new(0));
     let current = ColorContext::from_icc(Arc::<[u8]>::from(&b"current"[..]));
     let bgr8_srgb = PixelFormat::Bgr8
         .descriptor()
         .with_transfer(TransferFunction::Srgb);
-    let result = OutputPlan::new(
+    let result = crate::test_conversion::output_plan(
         PixelEncoding::new(bgr8_srgb, Some(&current)),
         &ColorOrigin::assumed(),
         OutputProfile::Icc(Arc::from(&b"target"[..])),
@@ -111,7 +127,7 @@ fn bgr_cms_row_conversion_requires_luma_policy() {
         .descriptor()
         .with_transfer(TransferFunction::Srgb);
     let to = PixelDescriptor::GRAY8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
-    let result = zenpixels_convert::RowConverter::new_explicit_with_cms(
+    let result = crate::test_conversion::cms_worker(
         from,
         to,
         &ConvertOptions::retain_channels(),
@@ -137,10 +153,10 @@ fn explicit_luma_still_allows_cms_dispatch() {
         let to = PixelDescriptor::GRAY8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
         let options = ConvertOptions::retain_channels()
             .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709));
-        assert!(
-            zenpixels_convert::RowConverter::new_explicit_with_cms(from, to, &options, Some(&cms))
-                .is_ok()
-        );
+        assert!(crate::test_conversion::cms_worker(from, to, &options, Some(&cms)).is_ok());
         assert_eq!(cms.0.load(Ordering::Relaxed), 1);
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

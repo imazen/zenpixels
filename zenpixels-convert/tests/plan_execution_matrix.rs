@@ -1,5 +1,5 @@
 //! Every accepted built-in format/depth route must be executable after setup.
-use zenpixels_convert::{ConvertPlan, PixelFormat, RowConverter, TransferFunction};
+use zenpixels_convert::{PixelFormat, TransferFunction};
 
 #[test]
 fn accepted_format_and_transfer_pairs_prepare_and_execute() {
@@ -44,11 +44,11 @@ fn accepted_format_and_transfer_pairs_prepare_and_execute() {
                 ] {
                     let from = source.descriptor().with_transfer(from_tf);
                     let to = target.descriptor().with_transfer(to_tf);
-                    let Ok(plan) = ConvertPlan::new(from, to) else {
+                    let Ok(plan) = crate::test_conversion::new_plan(from, to) else {
                         continue;
                     };
-                    let result = std::panic::catch_unwind(|| {
-                        let mut worker = RowConverter::from_plan(plan);
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let mut worker = crate::test_conversion::worker(plan);
                         worker.prepare(17).unwrap();
                         // u32 backing ensures every sample depth is aligned. Zeros
                         // include alpha=0, which must also be a valid kernel input.
@@ -61,7 +61,7 @@ fn accepted_format_and_transfer_pairs_prepare_and_execute() {
                                 17,
                             )
                             .unwrap();
-                    });
+                    }));
                     assert!(
                         result.is_ok(),
                         "accepted but unexecutable: {from:?} -> {to:?}"
@@ -71,3 +71,6 @@ fn accepted_format_and_transfer_pairs_prepare_and_execute() {
         }
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

@@ -378,7 +378,10 @@ fn rgba_to_rgb_keeps_colors_and_length() {
     RowConverter::new_explicit(
         from,
         D::RGB8_SRGB,
-        &crate::policy::ConvertOptions::permissive()
+        &crate::policy::ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709))
             .with_alpha_policy(crate::policy::AlphaPolicy::DiscardUnchecked),
     )
     .unwrap()
@@ -402,7 +405,10 @@ fn normalized_converter(
     RowConverter::new_explicit(
         from,
         to,
-        &zenpixels::ConvertOptions::permissive()
+        &zenpixels::ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709))
             .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked)
             .with_sdr_white(zenpixels::hdr::DiffuseWhite::new(10_000.)),
     )

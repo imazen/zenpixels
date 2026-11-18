@@ -1,6 +1,5 @@
 //! Shared resolution of conversion policy and the meaning of resulting samples.
 //! Storage wrappers must use the same resolved options for pixels and metadata.
-use alloc::sync::Arc;
 use zenpixels::{ColorContext, ConvertOptions, PixelDescriptor};
 
 pub(crate) fn resolve_options(
@@ -67,20 +66,4 @@ pub(crate) fn output_context_value(
     }
     // A new transfer/gamut may change the signal peak. Never carry stale peak evidence.
     Some(next)
-}
-
-pub(crate) fn output_context(
-    from: PixelDescriptor,
-    to: PixelDescriptor,
-    current: Option<&Arc<ColorContext>>,
-    options: &ConvertOptions,
-    tone_mapped: bool,
-) -> Option<Arc<ColorContext>> {
-    let same_color = from.transfer() == to.transfer()
-        && from.primaries == to.primaries
-        && from.signal_range == to.signal_range;
-    if same_color && !tone_mapped {
-        return current.cloned();
-    }
-    output_context_value(from, to, current.map(Arc::as_ref), options, tone_mapped).map(Arc::new)
 }

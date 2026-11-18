@@ -3,7 +3,7 @@ use zenpixels::{
     AlphaMode, ChannelLayout as L, ChannelType as T, PixelDescriptor, PixelFormat,
     TransferFunction as Tf,
 };
-use zenpixels_convert::{AlphaPolicy, ConvertOptions, ConvertPlan, RowConverter};
+use zenpixels_convert::{AlphaPolicy, ConvertOptions};
 
 const TYPES: [T; 4] = [T::U8, T::U16, T::F16, T::F32];
 const LAYOUTS: [L; 9] = [
@@ -44,7 +44,11 @@ fn descriptors() -> Vec<PixelDescriptor> {
 
 #[test]
 fn no_format_pair_runs_a_bgra_step_above_8_bits() {
-    let options = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_alpha_policy(AlphaPolicy::DiscardUnchecked);
     let all = descriptors();
     assert!(all.iter().any(|d| d.layout() == L::Bgra));
     let (mut ran, mut bgra) = (0u32, 0u32);
@@ -52,11 +56,11 @@ fn no_format_pair_runs_a_bgra_step_above_8_bits() {
     let mut dst = [0u8; 64];
     for &from in &all {
         for &to in &all {
-            let Ok(mut c) = RowConverter::new_explicit(from, to, &options) else {
+            let Ok(mut c) = crate::test_conversion::explicit_worker(from, to, &options) else {
                 continue;
             };
             let (n, m) = (2 * from.bytes_per_pixel(), 2 * to.bytes_per_pixel());
-            c.convert_row(&src[..n], &mut dst[..m], 2);
+            c.try_convert_row(&src[..n], &mut dst[..m], 2).unwrap();
             ran += 1;
             if from.layout() == L::Bgra || to.layout() == L::Bgra {
                 bgra += 1;
@@ -69,7 +73,11 @@ fn no_format_pair_runs_a_bgra_step_above_8_bits() {
 
 #[test]
 fn composed_plans_keep_bgra_steps_at_8_bits() {
-    let options = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_alpha_policy(AlphaPolicy::DiscardUnchecked);
     let all = descriptors();
     let bgra: Vec<_> = all
         .iter()
@@ -79,22 +87,25 @@ fn composed_plans_keep_bgra_steps_at_8_bits() {
     let mut composed = 0u32;
     let src = [0x40u8; 64];
     let mut dst = [0u8; 64];
-    let plan = |a, b| ConvertPlan::new_explicit(a, b, &options).ok();
+    let plan = |a, b| crate::test_conversion::explicit_plan(a, b, &options).ok();
     for &b in &bgra {
         for &other in &all {
             for (x, y, z) in [(b, other, b), (other, b, other)] {
                 let (Some(p), Some(q)) = (plan(x, y), plan(y, z)) else {
                     continue;
                 };
-                let Some(joined) = p.compose(&q) else {
+                let Ok(joined) = p.then(q) else {
                     continue;
                 };
-                let mut c = RowConverter::from_plan(joined);
+                let mut c = crate::test_conversion::worker(joined);
                 let (n, m) = (2 * x.bytes_per_pixel(), 2 * z.bytes_per_pixel());
-                c.convert_row(&src[..n], &mut dst[..m], 2);
+                c.try_convert_row(&src[..n], &mut dst[..m], 2).unwrap();
                 composed += 1;
             }
         }
     }
     assert!(composed > 100, "composed {composed}");
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

@@ -3,11 +3,20 @@
 #![forbid(unsafe_code)]
 use zenpixels::{Cicp, ColorProfileSource as Source, PixelFormat as F};
 use zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
-use zenpixels_convert::{ConvertOptions, MoxCms, PluggableCms, RowTransformMut};
+use zenpixels_convert::{ConvertOptions, MoxCms, RowTransformMut};
 const SRGB: Source<'static> = Source::Cicp(Cicp::new(1, 13, 0, true));
 fn build(src: Source<'_>, dst: Source<'_>, from: F, to: F) -> Box<dyn RowTransformMut> {
     MoxCms
-        .build_source_transform(src, dst, from, to, &ConvertOptions::permissive())
+        .build_source_transform(
+            src,
+            dst,
+            from,
+            to,
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
+        )
         .unwrap()
         .unwrap()
 }
@@ -104,3 +113,8 @@ fn main() {
         );
     }
 }
+
+#[path = "../../zenpixels-convert/tests/support/cms.rs"]
+mod test_cms;
+#[allow(unused_imports)]
+use test_cms::TestCmsExt as _;

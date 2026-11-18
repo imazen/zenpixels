@@ -12,14 +12,12 @@ use crate::{
 
 #[inline]
 fn primaries_to_xyz(primaries: ColorPrimaries) -> Option<&'static GamutMatrix> {
-    use crate::ext::ColorPrimariesExt;
-    primaries.to_xyz_matrix()
+    GamutMatrix::to_xyz(primaries)
 }
 
 #[inline]
 fn primaries_from_xyz(primaries: ColorPrimaries) -> Option<&'static GamutMatrix> {
-    use crate::ext::ColorPrimariesExt;
-    primaries.from_xyz_matrix()
+    GamutMatrix::from_xyz(primaries)
 }
 
 /// Elementary step inside `ConvertStep::Perceptual`.

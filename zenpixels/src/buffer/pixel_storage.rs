@@ -405,6 +405,9 @@ impl PixelStorage {
 
     /// Allocate zeroed storage of `channel`'s sample type holding `bytes` bytes.
     pub(super) fn try_zeroed(channel: ChannelType, bytes: usize) -> Result<Self, BufferError> {
+        if bytes > isize::MAX as usize {
+            return Err(BufferError::AllocationFailed);
+        }
         match channel {
             ChannelType::I8 => Ok(Self::I8(cast_same_align(zeroed_u8(bytes)?))),
             ChannelType::U16 => Ok(Self::U16(zeroed_u16(bytes)?)),

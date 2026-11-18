@@ -202,7 +202,7 @@ impl PlaneGeom {
     }
 }
 
-fn aligned_plane_stride(
+pub(super) fn aligned_plane_stride(
     width: usize,
     height: usize,
     size: usize,
@@ -2168,3 +2168,6 @@ impl<P> core::error::Error for PlanarFromPartsError<P> {
         Some(&self.error)
     }
 }
+
+mod banded;
+pub use banded::{BandedPlanarBuffer, BandedPlane, PlanarBandError};

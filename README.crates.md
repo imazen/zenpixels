@@ -10,7 +10,7 @@ It goes from owning an image to borrowing a subimage, then covers color,
 conversion and native samples. The [interactive explorer](https://imazen.github.io/zenpixels/)
 shows the bytes and runs the real converter.
 
-This is the **unpublished 0.3.1 candidate**. The guide follows this source;
+This is the **unpublished 0.4.0 candidate**. The guide follows this source;
 [docs.rs](https://docs.rs/zenpixels) describes the published crate. Publication
 still requires release approval.
 
@@ -132,17 +132,18 @@ assert_eq!(linear.descriptor(), PixelDescriptor::RGBF32_LINEAR);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Use `RowConverter` for rows and prepared scratch, or `OutputPlan` for
-caller-supplied output rows and matching encoder metadata. `EncodeReady::finalize`
-creates independent owned output. Known descriptor-only conversions need no
-CMS; arbitrary ICC transforms need a selected backend. HDR rendering requires
-explicit luminance/rendering inputs.
+Build a `ConvertPlan` from source and target encodings. Prepare it for the
+maximum row width, or use `OutputPlan` to derive the conversion and encoder
+metadata together. `EncodeReady::from_owned` can reuse the source allocation
+for identity output. Known descriptor-based conversions use the native
+kernels. Arbitrary ICC transforms need a selected backend and HDR
+rendering needs explicit luminance and rendering conditions.
 
-Loss policies are explicit with `ConvertOptions`. `retain_channels` prevents
-alpha/depth loss but still defaults to gamut clipping; it is not a general
-lossless guarantee. `RowConverter::new` has legacy permissive defaults, including
-unchecked alpha discard. Use explicit options or `new_preserving_samples` when
-preservation is required.
+Choose permitted sample changes with `ConvertOptions` or use
+`ConversionSpec::preserve_samples()` to require exact representation changes.
+For large images, `banded::BandedPixelBuffer` and the optional plane carriers
+cap individual allocations while retaining 64-bit frame geometry. Prepared
+converters can read and write packed bands with different heights.
 
 [Conversion guide](https://github.com/imazen/zenpixels/blob/main/zenpixels-convert/README.md) ·
 [Design contracts](https://github.com/imazen/zenpixels/blob/main/docs/design-reference.md)
