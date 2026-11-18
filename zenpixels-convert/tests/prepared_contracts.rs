@@ -94,7 +94,7 @@ fn explicit_composition_preserves_integer_stage() {
     let u = PixelDescriptor::RGB8_SRGB.with_transfer(TransferFunction::Linear);
     let a = crate::test_conversion::new_plan(f, u).unwrap();
     let b = crate::test_conversion::new_plan(u, f).unwrap();
-    let mut preserved = a.then(b).unwrap().into_worker();
+    let mut preserved = a.then(b).unwrap().prepare(1).unwrap();
     let src = [0.1234567f32; 3];
     let mut rounded = [0f32; 3];
     preserved
@@ -363,11 +363,11 @@ fn conversion_replaces_current_color_signaling_and_enforces_single_authority() {
 fn pq_and_explicit_linear_anchor_describe_the_same_luminance() {
     use std::sync::Arc;
     use zenpixels::{ColorContext, ColorPrimaries, PixelBuffer};
-    use zenpixels_convert::{HdrConfig, PixelBufferHdrConvertExt, TransferFunctionExt};
+    use zenpixels_convert::{HdrConfig, PixelBufferHdrConvertExt};
     let linear = PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::Bt2020);
     let pq = linear.with_transfer(TransferFunction::Pq);
     let peak = 1000.;
-    let code = TransferFunction::Pq.delinearize(peak / 10_000.);
+    let code = linear_srgb::tf::linear_to_pq(peak / 10_000.);
     let pq_buffer =
         PixelBuffer::from_vec(bytemuck::cast_slice(&[code; 3]).to_vec(), 1, 1, pq).unwrap();
     let relative = PixelBuffer::from_vec(

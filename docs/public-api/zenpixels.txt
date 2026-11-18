@@ -9,21 +9,21 @@
 ## summary
 #
 #   pub modules                                13
-#   pub types (struct/enum/trait/alias)       148
-#   pub consts/statics                        641
+#   pub types (struct/enum/trait/alias)       146
+#   pub consts/statics                        642
 #   free functions                              2
-#   inherent methods                          425
+#   inherent methods                          437
 #   struct fields                             124
-#   enum variants                             432
+#   enum variants                             430
 #   re-exports                                  1
-#   trait roster entries (type × trait)       520
-#   auto-trait-complete types                  73
+#   trait roster entries (type × trait)       514
+#   auto-trait-complete types                  72
 #   auto-trait exceptions                       8
 #
 # per-module pub lines:
-#   (root)                          800
-#   banded                           18
-#   buffer                          383
+#   (root)                          799
+#   banded                           24
+#   buffer                          389
 #   cicp                             48
 #   color                           176
 #   descriptor                      201
@@ -31,11 +31,11 @@
 #   icc                              11
 #   orientation                      11
 #   pixel_types                      49
-#   policy                           23
+#   policy                           21
 #   precision                        20
 #   sample                           25
 
-## items (1517 lines)
+## items (1529 lines)
 
 pub mod zenpixels
 pub use At
@@ -50,10 +50,16 @@ pub fn banded::BandLayout::locate(self, u32) -> core::option::Option<(usize, u32
 pub fn banded::BandLayout::new(u32, u32, descriptor::PixelDescriptor, u64) -> core::result::Result<Self, buffer::BufferError>
 pub const fn banded::BandLayout::pixel_count(self) -> u64
 pub const fn banded::BandLayout::width(self) -> u32
+pub fn banded::BandLayout::with_align(u32, u32, descriptor::PixelDescriptor, u64, RowAlign) -> core::result::Result<Self, buffer::BufferError>
 pub struct banded::BandedPixelBuffer
 pub fn banded::BandedPixelBuffer::bands(&self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = buffer::PixelSlice<'_>> + core::iter::traits::exact_size::ExactSizeIterator
 pub fn banded::BandedPixelBuffer::bands_mut(&mut self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = buffer::PixelSliceMut<'_>> + core::iter::traits::exact_size::ExactSizeIterator
+pub fn banded::BandedPixelBuffer::color_context(&self) -> core::option::Option<&alloc::sync::Arc<color::ColorContext>>
+pub const fn banded::BandedPixelBuffer::descriptor(&self) -> descriptor::PixelDescriptor
 pub fn banded::BandedPixelBuffer::encoding(&self) -> color::PixelEncoding<'_>
+pub const fn banded::BandedPixelBuffer::exact_depth(&self) -> core::option::Option<sample::ExactDepth>
+pub fn banded::BandedPixelBuffer::from_contiguous(buffer::PixelBuffer) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub const fn banded::BandedPixelBuffer::height(&self) -> u32
 pub const fn banded::BandedPixelBuffer::layout(&self) -> banded::BandLayout
 pub fn banded::BandedPixelBuffer::orient_in_place(&mut self, orientation::Orientation) -> core::result::Result<(), buffer::BufferError>
 pub fn banded::BandedPixelBuffer::oriented_into(&self, orientation::Orientation, &mut Self) -> core::result::Result<(), buffer::BufferError>
@@ -61,8 +67,12 @@ pub const fn banded::BandedPixelBuffer::pixel_count(&self) -> u64
 pub fn banded::BandedPixelBuffer::row(&self, u32) -> core::option::Option<&[u8]>
 pub fn banded::BandedPixelBuffer::row_mut(&mut self, u32) -> core::option::Option<&mut [u8]>
 pub fn banded::BandedPixelBuffer::set_color_context(&mut self, core::option::Option<alloc::sync::Arc<color::ColorContext>>)
+pub fn banded::BandedPixelBuffer::set_exact_depth(&mut self, core::option::Option<sample::ExactDepth>) -> core::result::Result<(), sample::ExactDepthError>
 pub fn banded::BandedPixelBuffer::sub_rows(&self, core::ops::range::Range<u32>) -> core::option::Option<impl core::iter::traits::iterator::Iterator<Item = buffer::PixelSlice<'_>>>
+pub fn banded::BandedPixelBuffer::try_into_contiguous(self) -> core::result::Result<buffer::PixelBuffer, whereat::at::At<buffer::BufferError>>
 pub fn banded::BandedPixelBuffer::try_new(u32, u32, descriptor::PixelDescriptor, u64) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn banded::BandedPixelBuffer::try_new_with_align(u32, u32, descriptor::PixelDescriptor, u64, RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub const fn banded::BandedPixelBuffer::width(&self) -> u32
 pub fn banded::BandedPixelBuffer::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
 pub const banded::DEFAULT_MAX_BAND_BYTES: u64
 pub mod buffer
@@ -147,6 +157,7 @@ pub fn buffer::PixelBuffer<P, S>::encoding(&self) -> color::PixelEncoding<'_>
 pub fn buffer::PixelBuffer<P, S>::exact_depth(&self) -> core::option::Option<sample::ExactDepth>
 pub fn buffer::PixelBuffer<P, S>::height(&self) -> u32
 pub fn buffer::PixelBuffer<P, S>::pixel_count(&self) -> u64
+pub fn buffer::PixelBuffer<P, S>::set_color_context(&mut self, core::option::Option<alloc::sync::Arc<color::ColorContext>>)
 pub fn buffer::PixelBuffer<P, S>::set_exact_depth(&mut self, core::option::Option<sample::ExactDepth>) -> core::result::Result<(), sample::ExactDepthError>
 pub fn buffer::PixelBuffer<P, S>::stride(&self) -> usize
 pub fn buffer::PixelBuffer<P, S>::width(&self) -> u32
@@ -210,6 +221,7 @@ pub fn buffer::PixelSlice<'a, P>::reinterpret(self, descriptor::PixelDescriptor)
 pub fn buffer::PixelSlice<'a, P>::row(&self, u32) -> &[u8]
 pub fn buffer::PixelSlice<'a, P>::row_with_stride(&self, u32) -> &[u8]
 pub fn buffer::PixelSlice<'a, P>::rows(&self) -> u32
+pub fn buffer::PixelSlice<'a, P>::set_color_context(&mut self, core::option::Option<alloc::sync::Arc<color::ColorContext>>)
 pub fn buffer::PixelSlice<'a, P>::stride(&self) -> usize
 pub fn buffer::PixelSlice<'a, P>::sub_rows(&self, u32, u32) -> buffer::PixelSlice<'_, P>
 pub fn buffer::PixelSlice<'a, P>::try_to_tight_buffer(&self) -> core::result::Result<buffer::PixelBuffer, whereat::at::At<buffer::BufferError>>
@@ -250,6 +262,7 @@ pub fn buffer::PixelSliceMut<'a, P>::reinterpret(self, descriptor::PixelDescript
 pub fn buffer::PixelSliceMut<'a, P>::row(&self, u32) -> &[u8]
 pub fn buffer::PixelSliceMut<'a, P>::row_mut(&mut self, u32) -> &mut [u8]
 pub fn buffer::PixelSliceMut<'a, P>::rows(&self) -> u32
+pub fn buffer::PixelSliceMut<'a, P>::set_color_context(&mut self, core::option::Option<alloc::sync::Arc<color::ColorContext>>)
 pub fn buffer::PixelSliceMut<'a, P>::stride(&self) -> usize
 pub fn buffer::PixelSliceMut<'a, P>::sub_rows_mut(&mut self, u32, u32) -> buffer::PixelSliceMut<'_, P>
 pub fn buffer::PixelSliceMut<'a, P>::try_typed<Q: buffer::Pixel>(self) -> core::option::Option<buffer::PixelSliceMut<'a, Q>>
@@ -867,7 +880,6 @@ pub policy::DepthPolicy::Truncate
 pub policy::GamutPolicy::Clip
 pub policy::GamutPolicy::PreserveExtended
 pub policy::GamutPolicy::SoftCompress
-pub policy::GrayExpand::Broadcast
 pub policy::LumaCoefficients::Bt2020
 pub policy::LumaCoefficients::Bt601
 pub policy::LumaCoefficients::Bt709
@@ -876,7 +888,6 @@ pub const fn policy::LumaCoefficients::coefficients(self) -> [f32; 3] [also: (ro
 pub const fn policy::ConvertOptions::alpha_policy(&self) -> policy::AlphaPolicy [also: (root)]
 pub const fn policy::ConvertOptions::depth_policy(&self) -> policy::DepthPolicy [also: (root)]
 pub const fn policy::ConvertOptions::gamut_policy(&self) -> policy::GamutPolicy [also: (root)]
-pub const fn policy::ConvertOptions::gray_expand(&self) -> policy::GrayExpand [also: (root)]
 pub const fn policy::ConvertOptions::hdr_peak(&self) -> hdr::HdrPeak [also: (root)]
 pub const fn policy::ConvertOptions::hlg_rendering(&self) -> core::option::Option<hdr::HlgRendering> [also: (root)]
 pub const fn policy::ConvertOptions::luma(&self) -> core::option::Option<policy::LumaCoefficients> [also: (root)]
@@ -887,7 +898,6 @@ pub const fn policy::ConvertOptions::sdr_white(&self) -> core::option::Option<hd
 pub const fn policy::ConvertOptions::with_alpha_policy(self, policy::AlphaPolicy) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_depth_policy(self, policy::DepthPolicy) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_gamut_policy(self, policy::GamutPolicy) -> Self [also: (root)]
-pub const fn policy::ConvertOptions::with_gray_expand(self, policy::GrayExpand) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_hdr_peak(self, hdr::HdrPeak) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_hlg_rendering(self, hdr::HlgRendering) -> Self [also: (root)]
 pub const fn policy::ConvertOptions::with_luma(self, core::option::Option<policy::LumaCoefficients>) -> Self [also: (root)]
@@ -918,6 +928,7 @@ pub const fn precision::ConversionOffer::with_matte(self) -> Self
 pub const fn precision::ConversionOffer::with_peak_bytes(self, u64) -> Self
 pub struct precision::SourcePrecision
 pub fn precision::SourcePrecision::after_conversion(self, &precision::ConversionOffer) -> Self
+pub const fn precision::SourcePrecision::alpha(&self) -> precision::AlphaContent
 pub const fn precision::SourcePrecision::declared(u8, descriptor::TransferFunction, descriptor::SignalRange) -> core::option::Option<Self>
 pub fn precision::SourcePrecision::from_storage(descriptor::PixelDescriptor) -> Self
 pub const fn precision::SourcePrecision::joined_with(self, Self) -> Self
@@ -1080,8 +1091,6 @@ pub DepthPolicy::Truncate
 pub GamutPolicy::Clip
 pub GamutPolicy::PreserveExtended
 pub GamutPolicy::SoftCompress
-#[non_exhaustive] pub enum GrayExpand [also: policy]
-pub GrayExpand::Broadcast
 #[non_exhaustive] pub enum InteropTarget [also: buffer]
 pub InteropTarget::DynamicImage
 pub InteropTarget::FlatSamples
@@ -1365,6 +1374,7 @@ pub fn buffer::PixelBuffer<P, S>::encoding(&self) -> color::PixelEncoding<'_>
 pub fn buffer::PixelBuffer<P, S>::exact_depth(&self) -> core::option::Option<sample::ExactDepth>
 pub fn buffer::PixelBuffer<P, S>::height(&self) -> u32
 pub fn buffer::PixelBuffer<P, S>::pixel_count(&self) -> u64
+pub fn buffer::PixelBuffer<P, S>::set_color_context(&mut self, core::option::Option<alloc::sync::Arc<color::ColorContext>>)
 pub fn buffer::PixelBuffer<P, S>::set_exact_depth(&mut self, core::option::Option<sample::ExactDepth>) -> core::result::Result<(), sample::ExactDepthError>
 pub fn buffer::PixelBuffer<P, S>::stride(&self) -> usize
 pub fn buffer::PixelBuffer<P, S>::width(&self) -> u32
@@ -1476,6 +1486,7 @@ pub fn buffer::PixelSlice<'a, P>::reinterpret(self, descriptor::PixelDescriptor)
 pub fn buffer::PixelSlice<'a, P>::row(&self, u32) -> &[u8]
 pub fn buffer::PixelSlice<'a, P>::row_with_stride(&self, u32) -> &[u8]
 pub fn buffer::PixelSlice<'a, P>::rows(&self) -> u32
+pub fn buffer::PixelSlice<'a, P>::set_color_context(&mut self, core::option::Option<alloc::sync::Arc<color::ColorContext>>)
 pub fn buffer::PixelSlice<'a, P>::stride(&self) -> usize
 pub fn buffer::PixelSlice<'a, P>::sub_rows(&self, u32, u32) -> buffer::PixelSlice<'_, P>
 pub fn buffer::PixelSlice<'a, P>::try_to_tight_buffer(&self) -> core::result::Result<buffer::PixelBuffer, whereat::at::At<buffer::BufferError>>
@@ -1517,6 +1528,7 @@ pub fn buffer::PixelSliceMut<'a, P>::reinterpret(self, descriptor::PixelDescript
 pub fn buffer::PixelSliceMut<'a, P>::row(&self, u32) -> &[u8]
 pub fn buffer::PixelSliceMut<'a, P>::row_mut(&mut self, u32) -> &mut [u8]
 pub fn buffer::PixelSliceMut<'a, P>::rows(&self) -> u32
+pub fn buffer::PixelSliceMut<'a, P>::set_color_context(&mut self, core::option::Option<alloc::sync::Arc<color::ColorContext>>)
 pub fn buffer::PixelSliceMut<'a, P>::stride(&self) -> usize
 pub fn buffer::PixelSliceMut<'a, P>::sub_rows_mut(&mut self, u32, u32) -> buffer::PixelSliceMut<'_, P>
 pub fn buffer::PixelSliceMut<'a, P>::try_typed<Q: buffer::Pixel>(self) -> core::option::Option<buffer::PixelSliceMut<'a, Q>>
@@ -1555,7 +1567,7 @@ pub const Pixel::DESCRIPTOR: descriptor::PixelDescriptor
 pub trait StorageSample: buffer::pixel_storage::storage_sample::Sealed + bytemuck::pod::Pod + core::default::Default + core::cmp::PartialEq + core::fmt::Debug + core::marker::Send + core::marker::Sync + 'static [also: buffer]
 pub const StorageSample::CHANNEL_TYPE: descriptor::ChannelType
 
-## trait impls (102 types)
+## trait impls (101 types)
 
 &S: buffer::SampleStorage
 &mut S: buffer::SampleStorage, buffer::SampleStorageMut
@@ -1642,7 +1654,6 @@ policy::AlphaPolicy: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::ConvertOptions: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::DepthPolicy: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::GamutPolicy: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
-policy::GrayExpand: Clone, Copy, Debug, Eq, Hash, PartialEq
 policy::LumaCoefficients: Clone, Copy, Debug, Eq, Hash, PartialEq
 precision::AlphaContent: Clone, Copy, Debug, Eq, Hash, PartialEq
 precision::ConversionEffect: Clone, Copy, Debug, Eq, Hash, PartialEq

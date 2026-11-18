@@ -251,7 +251,7 @@ fn row_converter_rows_match_packed() {
             let mut got = vec![u32::from_ne_bytes([PAD; 4]); total.div_ceil(4)];
             let got_bytes = bytemuck::cast_slice_mut::<u32, u8>(&mut got);
             converter
-                .convert_rows(
+                .convert_raw_rows(
                     &bytemuck::cast_slice::<u32, u8>(&padded)[..(h as usize - 1) * stride + row],
                     stride,
                     &mut got_bytes[..total],
@@ -264,7 +264,7 @@ fn row_converter_rows_match_packed() {
             let mut converter =
                 crate::test_conversion::explicit_worker(d, target, &options()).unwrap();
             converter
-                .convert_rows(
+                .convert_raw_rows(
                     bytemuck::cast_slice(&packed),
                     row,
                     bytemuck::cast_slice_mut(&mut want),
@@ -351,23 +351,54 @@ fn owned_conversions_match_packed() {
         let row = w as usize * d.bytes_per_pixel();
         let a = owned(packed, d, w, h, row);
         let b = owned(padded, d, w, h, stride);
+        let alpha_target = {
+            let layout = match d.layout() {
+                zenpixels::ChannelLayout::Gray => zenpixels::ChannelLayout::GrayAlpha,
+                zenpixels::ChannelLayout::Rgb => zenpixels::ChannelLayout::Rgba,
+                other => other,
+            };
+            let alpha = if layout.has_alpha() && d.alpha().is_none() {
+                Some(zenpixels::AlphaMode::Straight)
+            } else {
+                d.alpha()
+            };
+            D::new(d.channel_type(), layout, alpha, d.transfer())
+                .with_primaries(d.primaries)
+                .with_signal_range(d.signal_range)
+        };
+        let u16_target = D::new(ChannelType::U16, d.layout(), d.alpha(), d.transfer())
+            .with_primaries(d.primaries)
+            .with_signal_range(d.signal_range);
+        let u8_target = D::new(ChannelType::U8, d.layout(), d.alpha(), d.transfer())
+            .with_primaries(d.primaries)
+            .with_signal_range(d.signal_range);
+        let lin_target = D::new_full(
+            ChannelType::F32,
+            d.layout(),
+            d.alpha(),
+            TransferFunction::Linear,
+            d.primaries,
+        );
         assert_eq!(
-            result_bytes(b.try_add_alpha()),
-            result_bytes(a.try_add_alpha()),
+            result_bytes(b.convert_to(alpha_target)),
+            result_bytes(a.convert_to(alpha_target)),
             "{d:?}"
         );
         assert_eq!(
-            result_bytes(b.try_widen_to_u16()),
-            result_bytes(a.try_widen_to_u16())
+            result_bytes(b.convert_to(u16_target)),
+            result_bytes(a.convert_to(u16_target))
         );
         assert_eq!(
-            result_bytes(b.try_narrow_to_u8()),
-            result_bytes(a.try_narrow_to_u8())
+            result_bytes(b.convert_to_with_options(u8_target, &options())),
+            result_bytes(a.convert_to_with_options(u8_target, &options()))
         );
-        assert_eq!(result_bytes(b.linearize()), result_bytes(a.linearize()));
         assert_eq!(
-            result_bytes(b.delinearize(TransferFunction::Srgb)),
-            result_bytes(a.delinearize(TransferFunction::Srgb))
+            result_bytes(b.convert_to(lin_target)),
+            result_bytes(a.convert_to(lin_target))
+        );
+        assert_eq!(
+            result_bytes(b.convert_to(d.with_transfer(TransferFunction::Srgb))),
+            result_bytes(a.convert_to(d.with_transfer(TransferFunction::Srgb)))
         );
         assert_eq!(
             result_bytes(b.convert_to(D::RGBA8_SRGB)),
@@ -398,7 +429,7 @@ fn scans_ignore_padding() {
         let report = opaque.determine_load_bearing();
         assert_eq!(report.uses_alpha, Some(false), "stride {stride}");
         assert_eq!(report.uses_chroma, Some(false), "stride {stride}");
-        let reduced = opaque.try_reduce_to_load_bearing_format().unwrap();
+        let reduced = opaque.reduce_to_load_bearing_format().unwrap().unwrap();
         assert_eq!(reduced.descriptor().layout(), D::GRAY8_SRGB.layout());
         for y in 0..h {
             assert_eq!(reduced.as_slice().row(y), &[9u8; 4]);
@@ -455,8 +486,8 @@ fn rgb_scans_and_reductions_match_packed() {
                 got.uses_low_bits, want.uses_low_bits,
                 "{d:?} {w}x{h} {stride}"
             );
-            let want = a.try_reduce_to_load_bearing_format();
-            let got = b.try_reduce_to_load_bearing_format();
+            let want = a.reduce_to_load_bearing_format().unwrap();
+            let got = b.reduce_to_load_bearing_format().unwrap();
             assert_eq!(got.is_some(), want.is_some(), "{d:?} {w}x{h} {stride}");
             if let (Some(got), Some(want)) = (got, want) {
                 assert_eq!(got.descriptor(), want.descriptor());
@@ -486,7 +517,8 @@ fn in_place_reduction_matches_the_allocating_path() {
             }
         }
         let want = view(&words, D::RGBA8_SRGB, w, h, stride)
-            .try_reduce_to_load_bearing_format()
+            .reduce_to_load_bearing_format()
+            .unwrap()
             .unwrap();
         let mut buffer = owned(words, D::RGBA8_SRGB, w, h, stride);
         buffer.reduce_to_load_bearing_format_in_place(true);

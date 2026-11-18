@@ -5,7 +5,7 @@
 //! and roundtrip accuracy.
 
 use super::KernelConverter as RowConverter;
-use crate::ext::{PixelBufferConvertExt, TransferFunctionExt};
+use crate::ext::{TestBufExt, TestTfExt};
 use zenpixels::buffer::PixelBuffer;
 use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, Cicp, ColorPrimaries, NamedProfile, PixelDescriptor,

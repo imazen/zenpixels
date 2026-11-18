@@ -5,7 +5,7 @@ use zenpixels::{Cicp, ColorProfileSource as Source, PixelFormat as F};
 use zenpixels_convert::cms::{PluggableCms, RowTransformMut};
 use zenpixels_convert::cms_moxcms::MoxCms;
 use zenpixels_convert::policy::ConvertOptions;
-use zenpixels_convert::{ConversionSpec, ConvertPlan, PlanError};
+use zenpixels_convert::{ConversionSpec, ConvertError, ConvertPlan};
 
 #[path = "../../zenpixels-convert/tests/common/synthetic_icc.rs"]
 #[allow(dead_code)]
@@ -452,7 +452,8 @@ fn row_converter_drives_every_backend() {
             let spec = ConversionSpec::new(opts()).with_cms(cms);
             let mut c = ConvertPlan::build(from.encoding(), to.encoding(), &spec)
                 .unwrap_or_else(|e| panic!("{name}: {e}"))
-                .into_worker();
+                .prepare(512)
+                .unwrap();
             let mut out = vec![0u8; 512 * f.bytes_per_pixel()];
             c.try_convert_row(&input, &mut out, 512).expect("row");
             results.push(out);
@@ -1029,10 +1030,7 @@ fn lab_and_xyz_icc_transforms_and_backend_agreement() {
             &ConversionSpec::new(opts()),
         )
         .unwrap_err();
-        assert!(matches!(
-            err.error(),
-            PlanError::Conversion(ConvertError::NeedsCms { .. })
-        ));
+        assert!(matches!(err.error(), ConvertError::NeedsCms { .. }));
     }
 
     // 8-bit XYZ is intentionally declined by both backends (no standard u1Fixed15 byte packing).
@@ -1358,7 +1356,8 @@ fn active_rendering_intent_in_convert_options_and_color_context() {
             let spec = ConversionSpec::new(options).with_cms(cms);
             ConvertPlan::build(source, dst_enc, &spec)
                 .unwrap()
-                .into_worker()
+                .prepare(1)
+                .unwrap()
         };
         let mut rel = worker(
             src_enc,

@@ -146,10 +146,12 @@ PROBES["hdr_percentile"] = (
 PROBES["hdr_bundle"] = (
     "fn accepts(_: zenpixels_convert::hdr::HdrMetadata) {} fn main() {}", "HdrMetadata", False,
 )
-PROBES["sealed_transfer_extension"] = (
-    "struct External; impl zenpixels_convert::TransferFunctionExt for External {"
-    " fn linearize(&self, v: f32) -> f32 { v }"
-    " fn delinearize(&self, v: f32) -> f32 { v } } fn main() {}", "Sealed", False,
+PROBES["sealed_slice_extension"] = (
+    "struct External; impl zenpixels_convert::PixelBufferConvertExt for External {"
+    " fn convert_to(&self, _: zenpixels::PixelDescriptor) -> Result<zenpixels::PixelBuffer, whereat::At<zenpixels_convert::ConvertError>> { unreachable!() }"
+    " fn convert_to_with_options(&self, _: zenpixels::PixelDescriptor, _: &zenpixels::ConvertOptions) -> Result<zenpixels::PixelBuffer, whereat::At<zenpixels_convert::ConvertError>> { unreachable!() }"
+    " fn try_adapt_in_place(&mut self, _: zenpixels::PixelDescriptor) -> Result<(), whereat::At<zenpixels_convert::ConvertError>> { unreachable!() }"
+    " fn into_oriented(self, _: zenpixels::Orientation) -> Result<zenpixels::PixelBuffer, whereat::At<zenpixels_convert::ConvertError>> { unreachable!() } } fn main() {}", "Sealed", False,
 )
 
 PROBES["extended_gamma_estimate"] = (

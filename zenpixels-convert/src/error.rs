@@ -189,15 +189,33 @@ pub enum ConvertError {
         from: PixelDescriptor,
         to: PixelDescriptor,
     },
-    // CMYK rejection used to be folded into `NoPath { from, to }`. Pre-0.2.16
-    // the public-API entry points panicked via `assert_not_cmyk` BEFORE the CMS
-    // chain was consulted, so the documented escape hatch ("attach moxcms for
-    // CMYK↔RGB") was unreachable. 0.2.16 introduces `NeedsCms { from, to }`:
-    // the panic becomes a typed `Err`, callers can match the variant and
-    // re-issue with a plugin, and the moxcms backend dispatches CMYK→RGB
-    // end-to-end. `NoPath` is retained for genuinely impossible conversions
-    // (signal-range crossings without a kernel; HLG↔PQ until OOTF threading
-    // lands). `ConvertError` is `#[non_exhaustive]` so this is additive.
+    /// Implicit relabeling between [`TransferFunction::Unknown`] and a resolved
+    /// transfer function is forbidden; supply an authoritative [`zenpixels::ColorContext`]
+    /// or call [`ConvertPlan::relabel_transfer`](crate::ConvertPlan::relabel_transfer).
+    UnknownTransferRelabelForbidden {
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+    },
+    /// Composed [`ConvertPlan::then`](crate::ConvertPlan::then) boundary encodings do not match.
+    IntermediateMismatch,
+    /// Conversion loses modeled source capacity disallowed by hidden-choice policy.
+    CapacityLoss(crate::precision::ConversionEffect),
+    /// Requested destination luminance anchor/peak disagrees with the compiled output context.
+    TargetLuminanceMismatch,
+    /// Per-worker scratch exceeds [`ConversionSpec::with_worker_limit`](crate::ConversionSpec::with_worker_limit)
+    /// (or uses an opaque backend whose worker bytes are [`ByteBound::Unknown`](crate::ByteBound::Unknown)).
+    WorkerBudgetExceeded { bytes: crate::ByteBound, limit: u64 },
+    /// None of the offered [`CandidateTarget`](crate::CandidateTarget)s could be admitted.
+    NoCandidate {
+        index: usize,
+        cause: alloc::boxed::Box<ConvertError>,
+    },
+    /// Attempted to clone a [`ConvertPlan`](crate::ConvertPlan) or [`RowConverter`](crate::RowConverter)
+    /// that owns a stateful `RowTransformMut` worker.
+    OwnedCmsConsumed,
+    /// Explicit HDR rendering combined with an unresolved/distinct ICC profile cannot be
+    /// executed by the descriptor-only HDR planner without bypassing profile authority.
+    HdrWithOpaqueProfileUnsupported,
 }
 
 impl fmt::Display for ConvertError {
@@ -322,12 +340,42 @@ impl fmt::Display for ConvertError {
             Self::NeedsCms { from, to } => write!(
                 f,
                 "conversion from {} to {} requires a color management plugin: \
-                 call RowConverter::new_explicit_with_cms(_, _, _, Some(&MoxCms)) \
-                 (or another PluggableCms backend) to dispatch the row work \
-                 to a CMS",
+                 pass ConversionSpec::with_cms(&MoxCms) (or another PluggableCms \
+                 backend) to dispatch the row work to a CMS",
                 from.color_model(),
                 to.color_model(),
             ),
+            Self::UnknownTransferRelabelForbidden { from, to } => write!(
+                f,
+                "implicit Unknown <-> Known transfer conversion ({:?} -> {:?}) is forbidden; \
+                 attach an authoritative ColorContext or call ConvertPlan::relabel_transfer",
+                from.transfer(),
+                to.transfer(),
+            ),
+            Self::IntermediateMismatch => {
+                f.write_str("the materialized intermediate PixelEncoding differs between composed plans")
+            }
+            Self::CapacityLoss(effect) => {
+                write!(f, "the requested output loses modeled source capacity: {effect:?}")
+            }
+            Self::TargetLuminanceMismatch => {
+                f.write_str("the effective output luminance metadata disagrees with the requested target")
+            }
+            Self::WorkerBudgetExceeded { bytes, limit } => {
+                write!(
+                    f,
+                    "worker requires {bytes:?} scratch bytes, exceeding the {limit}-byte limit"
+                )
+            }
+            Self::NoCandidate { index, cause } => {
+                write!(f, "candidate {index} was refused: {cause}")
+            }
+            Self::OwnedCmsConsumed => {
+                f.write_str("cannot clone a plan or worker that owns a stateful RowTransformMut backend")
+            }
+            Self::HdrWithOpaqueProfileUnsupported => {
+                f.write_str("explicit HdrConfig cannot be combined with an unresolved ICC profile without bypassing profile authority")
+            }
         }
     }
 }
@@ -347,6 +395,7 @@ impl core::error::Error for ConvertError {
             Self::CmsBackend(error) => Some(error.as_ref()),
             Self::Buffer(error) => Some(error),
             Self::CicpDescriptor(error) => Some(error),
+            Self::NoCandidate { cause, .. } => Some(cause.as_ref()),
             _ => None,
         }
     }

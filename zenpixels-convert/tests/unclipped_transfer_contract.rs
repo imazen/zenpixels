@@ -66,7 +66,7 @@ fn extended_gamma_preserves_in_range_results_alpha_padding_and_row_partitions() 
         let mut all = crate::test_conversion::explicit_worker(from, to, &unclipped).unwrap();
         all.prepare(width as u32).unwrap();
         let mut output = vec![sentinel; target_stride * rows];
-        all.convert_rows(
+        all.convert_raw_rows(
             bytemuck::cast_slice(&source),
             source_stride * 4,
             bytemuck::cast_slice_mut(&mut output),

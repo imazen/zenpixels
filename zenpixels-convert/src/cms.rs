@@ -59,12 +59,12 @@ pub trait RowTransform: Send + Sync {
         width: u32,
     ) -> Result<(), whereat::At<CmsPluginError>>;
 
-    /// Perform backend setup for bounded-width execution. The default refuses:
-    /// a legacy backend has not promised allocation-free execution.
+    /// Perform backend setup for bounded-width execution (`<= max_width`).
+    ///
+    /// Defaults to `Ok(())` for stateless transforms that need no width-dependent
+    /// setup. Override if bounded-width pre-initialization can fail or allocate.
     fn prepare(&self, _max_width: u32) -> Result<(), whereat::At<CmsPluginError>> {
-        Err(whereat::at!(CmsPluginError::msg(
-            "backend does not support explicit preparation"
-        )))
+        Ok(())
     }
 }
 
@@ -98,11 +98,13 @@ pub trait RowTransformMut: Send + Sync {
         width: u32,
     ) -> Result<(), whereat::At<CmsPluginError>>;
 
-    /// Allocate backend scratch for bounded-width execution before reading pixels.
+    /// Allocate backend scratch for bounded-width execution (`<= max_width`) before reading pixels.
+    ///
+    /// Defaults to `Ok(())` for stateful transforms that need no width-dependent
+    /// buffer pre-allocation. Backends with row-proportional scratch buffers
+    /// must reserve capacity here so `try_transform_row` executes allocation-free.
     fn prepare(&mut self, _max_width: u32) -> Result<(), whereat::At<CmsPluginError>> {
-        Err(whereat::at!(CmsPluginError::msg(
-            "backend does not support explicit preparation"
-        )))
+        Ok(())
     }
 }
 

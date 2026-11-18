@@ -4,7 +4,6 @@
 //! [`OklabSpace`] holds the two matrices that planar Oklab kernels need and does
 //! scalar conversions. The constants are CSS Color 4's, for Björn Ottosson's Oklab.
 
-use crate::ext::ColorPrimariesExt;
 use crate::gamut::GamutMatrix;
 use zenpixels::ColorPrimaries;
 
@@ -115,12 +114,12 @@ impl OklabSpace {
 
 /// `LMS_FROM_XYZ × RGB_TO_XYZ`.
 pub(crate) fn rgb_to_lms_matrix(primaries: ColorPrimaries) -> Option<GamutMatrix> {
-    Some(primaries.to_xyz_matrix()?.then(&LMS_FROM_XYZ))
+    Some(GamutMatrix::to_xyz(primaries)?.then(&LMS_FROM_XYZ))
 }
 
 /// `XYZ_TO_RGB × XYZ_FROM_LMS`.
 pub(crate) fn lms_to_rgb_matrix(primaries: ColorPrimaries) -> Option<GamutMatrix> {
-    Some(XYZ_FROM_LMS.then(primaries.from_xyz_matrix()?))
+    Some(XYZ_FROM_LMS.then(GamutMatrix::from_xyz(primaries)?))
 }
 
 // ---------------------------------------------------------------------------

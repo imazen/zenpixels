@@ -2647,12 +2647,21 @@ fn gamut_clamping_scenarios() {
     }
 
     // The decision this all feeds: a resize picks linear F32 over U8 sRGB.
+    let selected = zenpixels_convert::ConvertPlan::select(
+        PixelDescriptor::RGB8_SRGB.encoding(),
+        &[
+            zenpixels_convert::CandidateTarget::from(PixelDescriptor::RGB8_SRGB),
+            zenpixels_convert::CandidateTarget::from(PixelDescriptor::RGBF32_LINEAR),
+        ],
+        &zenpixels_convert::ConversionSpec::new(
+            zenpixels_convert::ConvertOptions::retain_channels(),
+        )
+        .with_intent(ConvertIntent::LinearLight),
+    )
+    .unwrap();
     assert_eq!(
-        ConvertIntent::LinearLight.best_match(
-            PixelDescriptor::RGB8_SRGB,
-            &[PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBF32_LINEAR]
-        ),
-        Some(PixelDescriptor::RGBF32_LINEAR)
+        selected.plan().output_encoding().descriptor(),
+        PixelDescriptor::RGBF32_LINEAR
     );
 }
 

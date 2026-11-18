@@ -455,7 +455,7 @@ impl crate::cms::RowTransformMut for HlgCmsWorker {
                 width,
             )?;
         } else if self.src_f32_channels == self.dst_f32_channels {
-            self.scratch_b[..out_len].copy_from_slice(&self.scratch_a[..in_len]);
+            core::mem::swap(&mut self.scratch_a, &mut self.scratch_b);
         } else if self.src_f32_channels == 4 && self.dst_f32_channels == 3 {
             for (s, d) in self.scratch_a[..in_len]
                 .as_chunks::<4>()

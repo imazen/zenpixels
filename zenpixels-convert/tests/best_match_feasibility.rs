@@ -126,7 +126,7 @@ fn best_match_never_picks_a_dead_format_over_a_live_one() {
 
 #[test]
 fn the_identity_candidate_remains_available_when_other_candidates_refuse() {
-    use zenpixels_convert::{CandidateTarget, ConversionSpec, ConvertPlan, PlanError};
+    use zenpixels_convert::{CandidateTarget, ConversionSpec, ConvertError, ConvertPlan};
     let pq = D::RGB16_SRGB
         .with_transfer(Tf::Pq)
         .with_primaries(P::Bt2020);
@@ -139,6 +139,6 @@ fn the_identity_candidate_remains_available_when_other_candidates_refuse() {
     let error = ConvertPlan::select(pq.encoding(), &[sdr], &spec).unwrap_err();
     assert!(matches!(
         error.error(),
-        PlanError::NoCandidate { index: 0, .. }
+        ConvertError::NoCandidate { index: 0, .. }
     ));
 }

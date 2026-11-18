@@ -11,8 +11,8 @@
 //! The entry points:
 //!   * [`PixelSliceLoadBearingExt::determine_load_bearing`] -- analysis,
 //!     no buffer modification
-//!   * [`PixelSliceLoadBearingExt::try_reduce_to_load_bearing_format`]
-//!     -- analysis + buffer rewrite into a fresh allocation, `None` when
+//!   * [`PixelSliceLoadBearingExt::reduce_to_load_bearing_format`]
+//!     -- analysis + buffer rewrite into a fresh allocation, `Ok(None)` when
 //!     no narrowing is possible
 //!   * [`PixelBufferLoadBearingExt::reduce_to_load_bearing_format_in_place`]
 //!     -- analysis + buffer rewrite into the buffer's own bytes (no
@@ -133,7 +133,7 @@ impl LoadBearingReport {
     ///
     /// Alpha drop from `Bgra` narrows to `Rgb` -- there is no `Bgr`
     /// layout, so the buffer rewrite in
-    /// [`PixelSliceLoadBearingExt::try_reduce_to_load_bearing_format`]
+    /// [`PixelSliceLoadBearingExt::reduce_to_load_bearing_format`]
     /// reorders channels (B,G,R,A → R,G,B). Callers applying this
     /// descriptor with their own rewrite must do the same reorder.
     ///
@@ -214,12 +214,13 @@ pub trait PixelSliceLoadBearingExt: sealed::Sealed {
     ///
     /// Use [`LoadBearingReport::apply_to`] on the slice's descriptor to
     /// see what the buffer could become; use
-    /// [`Self::try_reduce_to_load_bearing_format`] to actually build it.
+    /// [`Self::reduce_to_load_bearing_format`] to actually build it.
     fn determine_load_bearing(&self) -> LoadBearingReport;
 
     /// Run analysis and return the rewritten buffer if any reduction is
-    /// available; `None` if the buffer is already at its load-bearing
-    /// minimum, the predicates couldn't run, or allocation failed.
+    /// available; `Ok(None)` if the buffer is already at its load-bearing
+    /// minimum or the predicates couldn't run; `Err` reports the failed
+    /// output allocation (`ConvertError::Buffer(AllocationFailed)`).
     ///
     /// The returned [`PixelBuffer`] carries the narrowed descriptor and
     /// the buffer's standard SIMD-aligned row stride (it is not
@@ -230,18 +231,6 @@ pub trait PixelSliceLoadBearingExt: sealed::Sealed {
     /// declaration. RGB-to-gray rewriting requires qualified replacement of
     /// that ICC and agreement from any companion CICP. Otherwise RGB is kept;
     /// exact alpha/depth reductions remain available with the original context.
-    ///
-    /// `None` collapses two distinct causes; use
-    /// [`Self::reduce_to_load_bearing_format`] to distinguish
-    /// "no reduction" from an allocation failure.
-    fn try_reduce_to_load_bearing_format(&self) -> Option<PixelBuffer>;
-
-    /// [`Self::try_reduce_to_load_bearing_format`] with the
-    /// allocation-failure cause preserved.
-    ///
-    /// `Ok(None)` means the buffer is already at its load-bearing
-    /// minimum or the predicates couldn't run; `Err` reports the
-    /// failed output allocation (`ConvertError::Buffer(AllocationFailed)`).
     fn reduce_to_load_bearing_format(
         &self,
     ) -> Result<Option<PixelBuffer>, whereat::At<crate::ConvertError>>;
@@ -412,10 +401,6 @@ impl<P> PixelSliceLoadBearingExt for PixelSlice<'_, P> {
         }
     }
 
-    fn try_reduce_to_load_bearing_format(&self) -> Option<PixelBuffer> {
-        self.reduce_to_load_bearing_format().ok().flatten()
-    }
-
     fn reduce_to_load_bearing_format(
         &self,
     ) -> Result<Option<PixelBuffer>, whereat::At<crate::ConvertError>> {
@@ -560,7 +545,7 @@ pub trait PixelBufferLoadBearingExt: sealed::Sealed {
     /// [`PixelBuffer::descriptor`] before/after to detect it.
     ///
     /// Every rewrite is the same bit-exact byte selection
-    /// [`PixelSliceLoadBearingExt::try_reduce_to_load_bearing_format`]
+    /// [`PixelSliceLoadBearingExt::reduce_to_load_bearing_format`]
     /// performs; only the destination is the buffer itself. Rows are
     /// compacted front-to-back (narrowing means every write lands at or
     /// before the bytes it just consumed), so strided input works and
@@ -998,6 +983,14 @@ fn select_row_u16_to_u8(row_in: &[u8], row_out: &mut [u8], in_ch: usize, map: &[
 
 #[cfg(test)]
 mod tests {
+    trait TestTryReduce {
+        fn try_reduce_to_load_bearing_format(&self) -> Option<super::PixelBuffer>;
+    }
+    impl<P> TestTryReduce for super::PixelSlice<'_, P> {
+        fn try_reduce_to_load_bearing_format(&self) -> Option<super::PixelBuffer> {
+            super::PixelSliceLoadBearingExt::reduce_to_load_bearing_format(self).unwrap()
+        }
+    }
     use super::*;
     use zenpixels::{Cicp, ColorPrimaries, PixelSlice, TransferFunction};
 

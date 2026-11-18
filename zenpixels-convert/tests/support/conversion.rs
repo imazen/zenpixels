@@ -4,10 +4,10 @@
 
 use whereat::At;
 use zenpixels_convert::{
-    AlphaPolicy, ColorOrigin, ConversionSpec, ConvertError, ConvertOptions, ConvertPlan,
-    DepthPolicy, EncodeReady, LumaCoefficients, OutputPlan, OutputProfile, OutputTarget,
-    PixelBuffer, PixelDescriptor, PixelEncoding, PixelFormat, PlanError, PluggableCms,
-    RowConverter,
+    AlphaPolicy, ColorModel, ColorOrigin, ConversionSpec, ConvertError, ConvertOptions,
+    ConvertPlan, DepthPolicy, EncodeReady, LumaCoefficients, OutputPlan, OutputProfile,
+    OutputTarget, PixelBuffer, PixelDescriptor, PixelEncoding, PixelFormat, PluggableCms,
+    RowConverter, TransferFunction,
 };
 
 pub const fn legacy_options() -> ConvertOptions {
@@ -15,16 +15,6 @@ pub const fn legacy_options() -> ConvertOptions {
         .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
         .with_depth_policy(DepthPolicy::Round)
         .with_luma(Some(LumaCoefficients::Bt709))
-}
-
-fn remap(err: At<PlanError>, from: PixelDescriptor, to: PixelDescriptor) -> At<ConvertError> {
-    err.map_error(|error| match error {
-        PlanError::Conversion(error) => error,
-        PlanError::NeedOpacityProof => ConvertError::AlphaCheckRequired,
-        PlanError::DepthLossForbidden => ConvertError::DepthReductionForbidden,
-        PlanError::ExplicitSdrWhiteRequired => ConvertError::SdrWhiteRequired,
-        _ => ConvertError::NoPath { from, to },
-    })
 }
 
 fn with_cms<'a>(spec: ConversionSpec<'a>, cms: Option<&'a dyn PluggableCms>) -> ConversionSpec<'a> {
@@ -39,7 +29,33 @@ fn plan(
     to: PixelEncoding<'_>,
     spec: &ConversionSpec<'_>,
 ) -> Result<ConvertPlan, At<ConvertError>> {
-    ConvertPlan::build(from, to, spec).map_err(|e| remap(e, from.descriptor(), to.descriptor()))
+    let f = from.descriptor();
+    let t = to.descriptor();
+    let uses_tf_f = matches!(f.color_model(), ColorModel::Rgb | ColorModel::Gray);
+    let uses_tf_t = matches!(t.color_model(), ColorModel::Rgb | ColorModel::Gray);
+    if from.color_context().is_none()
+        && uses_tf_f
+        && uses_tf_t
+        && f.transfer() == TransferFunction::Unknown
+        && t.transfer() != TransferFunction::Unknown
+    {
+        let mid = f.with_transfer(t.transfer());
+        let first = ConvertPlan::relabel_transfer(f, mid)?;
+        let rest = ConvertPlan::build(mid.into(), to, spec)?;
+        return first.then(rest);
+    }
+    if to.color_context().is_none()
+        && uses_tf_f
+        && uses_tf_t
+        && f.transfer() != TransferFunction::Unknown
+        && t.transfer() == TransferFunction::Unknown
+    {
+        let mid = t.with_transfer(f.transfer());
+        let first = ConvertPlan::build(from, mid.into(), spec)?;
+        let rest = ConvertPlan::relabel_transfer(mid, t)?;
+        return first.then(rest);
+    }
+    ConvertPlan::build(from, to, spec)
 }
 
 pub fn new_plan(
@@ -54,7 +70,7 @@ pub fn explicit_plan(
     to: PixelDescriptor,
     options: &ConvertOptions,
 ) -> Result<ConvertPlan, At<ConvertError>> {
-    let spec = ConversionSpec::new(*options).with_unknown_transfer_relabel();
+    let spec = ConversionSpec::new(*options);
     plan(from.into(), to.into(), &spec)
 }
 
@@ -62,7 +78,7 @@ pub fn exact_plan(
     from: PixelDescriptor,
     to: PixelDescriptor,
 ) -> Result<ConvertPlan, At<ConvertError>> {
-    plan(from.into(), to.into(), &ConversionSpec::preserve_samples())
+    ConvertPlan::build(from.into(), to.into(), &ConversionSpec::preserve_samples())
 }
 
 pub fn new_worker(
@@ -95,11 +111,8 @@ pub fn encoded_worker(
     options: &ConvertOptions,
     cms: Option<&dyn PluggableCms>,
 ) -> Result<RowConverter, At<ConvertError>> {
-    let spec = with_cms(
-        ConversionSpec::new(*options).with_unknown_transfer_relabel(),
-        cms,
-    );
-    plan(from, to, &spec).map(ConvertPlan::into_worker)
+    let spec = with_cms(ConversionSpec::new(*options), cms);
+    plan(from, to, &spec)?.prepare(65_537)
 }
 
 #[cfg(feature = "hdr-experimental")]
@@ -108,7 +121,7 @@ pub fn hdr_plan(
     to: PixelDescriptor,
     hdr: zenpixels_convert::HdrConfig,
 ) -> Result<ConvertPlan, At<ConvertError>> {
-    plan(
+    ConvertPlan::build(
         from.into(),
         to.into(),
         &ConversionSpec::new(legacy_options()).with_hdr(&hdr),
@@ -135,7 +148,7 @@ pub fn mapper_plan(
     hdr: zenpixels_convert::HdrConfig,
     mapper: std::sync::Arc<dyn zenpixels_convert::hdr::ToneMapper>,
 ) -> Result<ConvertPlan, At<ConvertError>> {
-    plan(
+    ConvertPlan::build(
         from.into(),
         to.into(),
         &ConversionSpec::new(legacy_options())
@@ -212,5 +225,5 @@ pub fn copy_output(
 }
 
 pub fn worker(plan: ConvertPlan) -> RowConverter {
-    plan.into_worker()
+    plan.prepare(65_537).expect("test worker prepare")
 }

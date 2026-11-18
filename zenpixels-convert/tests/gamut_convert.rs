@@ -4,9 +4,7 @@
 //! Primaries conversion is handled separately via `GamutMatrix::between`
 //! + `GamutMatrix::apply_row_rgb`. This tests both paths.
 
-use zenpixels_convert::{
-    ColorPrimaries, PixelDescriptor, ext::ColorPrimariesExt, gamut::GamutMatrix,
-};
+use zenpixels_convert::{ColorPrimaries, PixelDescriptor, gamut::GamutMatrix};
 
 /// Make an f32 RGB descriptor with specific primaries.
 fn f32_linear(primaries: ColorPrimaries) -> PixelDescriptor {
@@ -218,8 +216,8 @@ fn xyz_matrices_invert_correctly() {
         ColorPrimaries::DisplayP3,
         ColorPrimaries::Bt2020,
     ] {
-        let to_xyz = primaries.to_xyz_matrix().unwrap();
-        let from_xyz = primaries.from_xyz_matrix().unwrap();
+        let to_xyz = GamutMatrix::to_xyz(primaries).unwrap();
+        let from_xyz = GamutMatrix::from_xyz(primaries).unwrap();
 
         let original = [0.6f32, 0.3, 0.7];
         let mut v = original;

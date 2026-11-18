@@ -178,7 +178,8 @@ fn replicated_narrow_gray_is_not_reduced_in_either_ownership_path() {
     assert!(
         buffer
             .as_slice()
-            .try_reduce_to_load_bearing_format()
+            .reduce_to_load_bearing_format()
+            .unwrap()
             .is_none()
     );
     for force_alpha in [false, true] {
@@ -206,7 +207,8 @@ fn narrow_depth_guard_keeps_independent_alpha_and_gray_reductions() {
         .copy_from_slice(bytemuck::cast_slice(&values));
     let allocated = buffer
         .as_slice()
-        .try_reduce_to_load_bearing_format()
+        .reduce_to_load_bearing_format()
+        .unwrap()
         .unwrap();
     buffer.reduce_to_load_bearing_format_in_place(true);
     let target = PixelDescriptor::GRAY16_SRGB.with_signal_range(SignalRange::Narrow);

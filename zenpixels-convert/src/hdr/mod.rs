@@ -108,6 +108,7 @@ use zenpixels::hdr::DiffuseWhite;
 /// descriptor + anchor + dimensions. Source primaries remain authoritative,
 /// so an actual gamut conversion is planned when required; the target's
 /// channel count then drives whether alpha is dropped or preserved.
+#[allow(dead_code)]
 fn quantize_setup(
     px: &PixelSlice<'_>,
     target: PixelDescriptor,
@@ -182,6 +183,7 @@ fn quantize_setup(
 ///   scene-referred anchor differs and is not handled here).
 /// - [`ConvertError::InvalidWidth`] for zero-area input, or any error the
 ///   inner anchored conversion raises.
+#[allow(dead_code)]
 pub(crate) fn quantize_to(
     px: PixelSlice<'_>,
     target: PixelDescriptor,

@@ -618,7 +618,7 @@ fn linearize_rgba8_buffer_carries_alpha() {
 
     let src = src_rgba8();
     let buf = PixelBuffer::from_vec(src, WIDTH as u32, 1, PixelDescriptor::RGBA8_SRGB).unwrap();
-    let lin = buf.linearize().unwrap();
+    let lin = buf.convert_to(PixelDescriptor::RGBAF32_LINEAR).unwrap();
     let slice = lin.as_slice();
     let row: &[f32] = bytemuck::cast_slice(slice.row(0));
     for i in 0..WIDTH {

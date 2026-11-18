@@ -256,6 +256,7 @@ pub(crate) fn convert_buffer(
 /// The plan drives any channel change (e.g. `DropAlpha` for an RGB target, or
 /// alpha-preserving passthrough for an RGBA one), so the caller hands the source
 /// straight in. Alpha, if kept, is never PQ-encoded or anchor-scaled.
+#[allow(dead_code)]
 #[track_caller]
 pub(crate) fn convert_buffer_with_anchor(
     src: &[u8],
@@ -608,7 +609,8 @@ pub(crate) fn adapt_slice_for_encode<'a>(
         return Err(whereat::at!(ConvertError::EmptyFormatList));
     };
     let current = source.color_context().map(alloc::sync::Arc::as_ref);
-    crate::output::current_profile_for(source.encoding())?;
+    #[allow(unused_variables)]
+    let src_profile = crate::output::current_profile_for(source.encoding())?;
     if supported.contains(&from) {
         return Ok(PixelCow::Borrowed(source));
     }
@@ -631,12 +633,23 @@ pub(crate) fn adapt_slice_for_encode<'a>(
             current.filter(|_| retains_color),
         )));
     }
+    let unwrap_no_candidate = |e: At<ConvertError>| {
+        e.map_error(|err| match err {
+            ConvertError::NoCandidate { cause, .. } => *cause,
+            other => other,
+        })
+    };
     let select = |options| {
-        let spec = ConversionSpec::new(options);
+        #[allow(unused_mut)]
+        let mut spec = ConversionSpec::new(options);
+        #[cfg(feature = "cms-moxcms")]
+        if matches!(src_profile, crate::ColorProfileSource::Parametric(_)) {
+            spec = spec.with_cms(&crate::MoxCms);
+        }
         let capacity = spec.with_source_precision(SourcePrecision::from_storage(from));
         match ConvertPlan::select(source.encoding(), &candidates, &capacity) {
             Ok(choice) => Ok(choice),
-            Err(error) if matches!(error.error(), crate::PlanError::NoCandidate { .. }) => {
+            Err(error) if matches!(error.error(), ConvertError::NoCandidate { .. }) => {
                 ConvertPlan::select(source.encoding(), &candidates, &spec)
             }
             Err(error) => Err(error),
@@ -656,12 +669,11 @@ pub(crate) fn adapt_slice_for_encode<'a>(
                 .unwrap_or(first);
             let checked = options_after_opacity_check(&source, target, options)?;
             if checked == *options {
-                return Err(error.map_error(|error| error.into_conversion(from, first)));
+                return Err(unwrap_no_candidate(error));
             }
-            select(checked)
-                .map_err(|error| error.map_error(|error| error.into_conversion(from, first)))?
+            select(checked).map_err(unwrap_no_candidate)?
         }
-        Err(error) => return Err(error.map_error(|error| error.into_conversion(from, first))),
+        Err(error) => return Err(unwrap_no_candidate(error)),
     };
     let compiled = selected.into_plan();
     let target = compiled.output_encoding().descriptor();
@@ -781,6 +793,72 @@ pub(crate) fn check_opaque(pixels: &PixelSlice<'_>) -> Result<(), At<ConvertErro
                 return Err(whereat::at!(ConvertError::AlphaNotOpaque));
             }
         }
+    }
+    Ok(())
+}
+
+/// Banded counterpart to [`scan_source_precision`] that streams across bands
+/// without requiring a single contiguous whole-image allocation.
+pub(crate) fn scan_source_precision_banded(
+    banded: &zenpixels::banded::BandedPixelBuffer,
+    stop: &dyn Stop,
+) -> Result<SourcePrecision, At<StopReason>> {
+    let descriptor = banded.descriptor();
+    let storage = SourcePrecision::from_storage(descriptor);
+    let mut color = u32::MAX >> (32 - descriptor.channel_type().byte_size().min(2) * 8);
+    let mut alpha = color;
+    let has_alpha = descriptor.has_alpha();
+    let mut translucent = false;
+    let holds = |exact_at: &dyn Fn(u8) -> bool, mask: &mut u32| {
+        for depth in 1..=16u8 {
+            if !exact_at(depth) {
+                *mask &= !(1u32 << (depth - 1));
+            }
+        }
+    };
+    'bands: for band in banded.bands() {
+        for y in 0..band.rows() {
+            stop.check().map_err(|reason| whereat::at!(reason))?;
+            let row = band.sub_rows(y, 1);
+            let Ok(exact) = ExactDepth::measure(&row) else {
+                return Ok(storage);
+            };
+            holds(&|depth| exact.color_exact_at(depth), &mut color);
+            if has_alpha {
+                holds(&|depth| exact.alpha_exact_at(depth), &mut alpha);
+                translucent |= check_opaque(&row).is_err();
+            }
+            let storage_bit = 1u32 << (exact.storage().byte_size() * 8 - 1);
+            let settled = |mask: u32| mask & (storage_bit - 1) == 0;
+            if settled(color) && (!has_alpha || (settled(alpha) && translucent)) {
+                break 'bands;
+            }
+        }
+    }
+    let bits = |mask: u32| mask.trailing_zeros() as u8 + 1;
+    let deepest = bits(color).max(if has_alpha { bits(alpha) } else { 0 });
+    let Some(source) =
+        SourcePrecision::declared(deepest, descriptor.transfer(), descriptor.signal_range)
+    else {
+        return Ok(storage);
+    };
+    Ok(if descriptor.may_have_transparency() {
+        source.with_alpha(if translucent {
+            AlphaContent::Translucent
+        } else {
+            AlphaContent::Opaque
+        })
+    } else {
+        source
+    })
+}
+
+/// Banded counterpart to [`check_opaque`].
+pub(crate) fn check_opaque_banded(
+    banded: &zenpixels::banded::BandedPixelBuffer,
+) -> Result<(), At<ConvertError>> {
+    for band in banded.bands() {
+        check_opaque(&band)?;
     }
     Ok(())
 }
@@ -1143,7 +1221,10 @@ mod tests {
         let target = PixelDescriptor::RGB8_SRGB;
 
         let error = adapt_for_encode_cow(&data, source, 2, 1, 6, &[target]).unwrap_err();
-        assert!(matches!(error.error(), ConvertError::NoPath { .. }));
+        assert!(matches!(
+            error.error(),
+            ConvertError::UnknownTransferRelabelForbidden { .. }
+        ));
 
         let result = adapt_for_encode_cow(&data, source, 2, 1, 6, &[target, source]).unwrap();
         assert!(matches!(result, PixelCow::Borrowed(_)));

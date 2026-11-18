@@ -2522,7 +2522,64 @@ impl NativePlan {
     pub fn is_identity(&self) -> bool {
         self.operations.len() == 1 && matches!(self.operations[0].step, ConvertStep::Identity)
     }
+}
 
+/// Deduplicating bitmask of process-wide lazy lookup tables referenced by native plans.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SharedLutMask(u16);
+
+impl SharedLutMask {
+    pub(crate) const NONE: Self = Self(0);
+    const SRGB_U16_DECODE_256K: Self = Self(1 << 0);
+    const SRGB_U16_ENCODE_128K: Self = Self(1 << 1);
+    const SRGB_U8_DECODE_1K: Self = Self(1 << 2);
+    const SRGB_U8_ENCODER: Self = Self(1 << 3);
+
+    const fn sdr_u16_to_u8(from: TransferFunction, to: TransferFunction) -> Self {
+        let f_idx = match from {
+            TransferFunction::Linear => 0,
+            TransferFunction::Bt709 => 1,
+            _ => 2,
+        };
+        let t_idx = match to {
+            TransferFunction::Linear => 0,
+            TransferFunction::Bt709 => 1,
+            _ => 2,
+        };
+        Self(1 << (4 + f_idx * 3 + t_idx))
+    }
+
+    #[inline]
+    pub(crate) const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    pub(crate) const fn total_bytes(self) -> u64 {
+        let mut total = 0u64;
+        if (self.0 & Self::SRGB_U16_DECODE_256K.0) != 0 {
+            total += 65_536 * 4;
+        }
+        if (self.0 & Self::SRGB_U16_ENCODE_128K.0) != 0 {
+            total += 65_536 * 2;
+        }
+        if (self.0 & Self::SRGB_U8_DECODE_1K.0) != 0 {
+            total += 256 * 4;
+        }
+        if (self.0 & Self::SRGB_U8_ENCODER.0) != 0 {
+            total += core::mem::size_of::<crate::fast_gamut::SrgbU8Encoder>() as u64;
+        }
+        let mut bit = 4;
+        while bit < 13 {
+            if (self.0 & (1 << bit)) != 0 {
+                total += 65_536;
+            }
+            bit += 1;
+        }
+        total
+    }
+}
+
+impl NativePlan {
     pub(crate) fn has_mapper(&self) -> bool {
         #[cfg(feature = "hdr-experimental")]
         {
@@ -2536,27 +2593,40 @@ impl NativePlan {
         }
     }
 
-    pub(crate) fn plan_allocations(&self) -> (u64, Option<u64>) {
+    pub(crate) fn plan_allocations(&self) -> (u64, Option<SharedLutMask>) {
         let mut heap =
             (self.operations.capacity() * core::mem::size_of::<PlannedOperation>()) as u64;
-        let mut cold = Some(0u64);
+        let mut cold = Some(SharedLutMask::NONE);
         for op in &self.operations {
-            let bytes = match &op.step {
+            let mask = match &op.step {
                 ConvertStep::SoftCompressOklch(_) => {
                     heap += (core::mem::size_of::<crate::hdr::SoftCompress>()
                         + 2 * core::mem::size_of::<usize>()) as u64;
-                    0
+                    SharedLutMask::NONE
                 }
-                ConvertStep::SdrU16ToU8 { .. } => 65536,
+                ConvertStep::SdrU16ToU8 { to } => {
+                    SharedLutMask::sdr_u16_to_u8(op.from.transfer(), *to)
+                }
                 ConvertStep::Fused {
                     kind: FusedKind::SrgbU16GamutRgb,
                     ..
-                } => 65536 * 6,
-                ConvertStep::Fused { .. } => 8192,
+                } => SharedLutMask::SRGB_U16_DECODE_256K.union(SharedLutMask::SRGB_U16_ENCODE_128K),
+                ConvertStep::Fused {
+                    kind: FusedKind::SrgbU8GamutRgb | FusedKind::SrgbU8GamutRgba,
+                    ..
+                } => SharedLutMask::SRGB_U8_DECODE_1K.union(SharedLutMask::SRGB_U8_ENCODER),
+                ConvertStep::Fused {
+                    kind: FusedKind::SrgbU8ToLinearF32Rgb,
+                    ..
+                } => SharedLutMask::SRGB_U8_DECODE_1K,
+                ConvertStep::Fused {
+                    kind: FusedKind::LinearF32ToSrgbU8Rgb,
+                    ..
+                } => SharedLutMask::SRGB_U8_ENCODER,
                 #[cfg(feature = "hdr-experimental")]
                 ConvertStep::ToneMap(_) => {
                     cold = None;
-                    0
+                    SharedLutMask::NONE
                 }
                 // The transfer provider owns any tables behind these kernels.
                 ConvertStep::SrgbU8ToLinearF32
@@ -2564,18 +2634,21 @@ impl NativePlan {
                 | ConvertStep::PqU16ToLinearF32
                 | ConvertStep::LinearF32ToPqU16 => {
                     cold = None;
-                    0
+                    SharedLutMask::NONE
                 }
-                _ => 0,
+                _ => SharedLutMask::NONE,
             };
-            cold = cold.and_then(|n| n.checked_add(bytes));
+            cold = cold.map(|m| m.union(mask));
         }
         (heap, cold)
     }
 
     pub(crate) fn steps(&self) -> impl Iterator<Item = crate::route::PlannedStepInfo> + '_ {
-        use crate::route::{AccuracyContract as A, KernelTier, PlannedStepInfo};
-        self.operations.iter().map(|op| {
+        use crate::route::{
+            AccuracyContract as A, KernelTier, PlannedStepInfo, SemanticEffects as S,
+        };
+        let stage_src_bits = crate::route::channel_bits(self.from.channel_type());
+        self.operations.iter().map(move |op| {
             let accuracy = match op.step {
                 ConvertStep::Identity
                 | ConvertStep::SwizzleBgraRgba
@@ -2587,7 +2660,12 @@ impl NativePlan {
                 | ConvertStep::GrayToGrayAlpha
                 | ConvertStep::GrayAlphaToRgba
                 | ConvertStep::U8ToU16 => A::Exact,
-                ConvertStep::SdrU16ToU8 { .. } | ConvertStep::Fused { .. } => A::Lookup,
+                ConvertStep::SdrU16ToU8 { .. }
+                | ConvertStep::Fused { .. }
+                | ConvertStep::SrgbU8ToLinearF32
+                | ConvertStep::LinearF32ToSrgbU8
+                | ConvertStep::PqU16ToLinearF32
+                | ConvertStep::LinearF32ToPqU16 => A::Lookup,
                 ConvertStep::MatteComposite { .. }
                 | ConvertStep::DropAlpha
                 | ConvertStep::SoftCompressOklch(_)
@@ -2595,13 +2673,87 @@ impl NativePlan {
                 #[cfg(feature = "hdr-experimental")]
                 ConvertStep::ToneMap(_) => A::Rendered,
                 _ if op.from.has_alpha() && !op.to.has_alpha() => A::Rendered,
-                _ if crate::route::channel_bits(op.from.channel_type())
-                    > crate::route::channel_bits(op.to.channel_type()) =>
-                {
-                    A::Quantized
-                }
+                ConvertStep::NaiveF32ToU8
+                | ConvertStep::NaiveF32ToU8Truncate
+                | ConvertStep::U16ToU8
+                | ConvertStep::U16ToU8Truncate
+                | ConvertStep::F32ToU16
+                | ConvertStep::F32ToU16Truncate
+                | ConvertStep::F32ToF16 => A::Quantized,
                 _ => A::Computed,
             };
+            let mut semantic = S::NONE;
+            let op_from_bits = crate::route::channel_bits(op.from.channel_type());
+            let op_to_bits = crate::route::channel_bits(op.to.channel_type());
+            if op_from_bits > op_to_bits && op_to_bits < stage_src_bits {
+                semantic = semantic.union(S::DEPTH_NARROWED);
+            }
+            match &op.step {
+                ConvertStep::DropAlpha
+                | ConvertStep::RgbaToGray { .. }
+                | ConvertStep::GrayAlphaToRgb
+                | ConvertStep::GrayAlphaToGray => {
+                    semantic = semantic.union(S::ALPHA_DISCARDED);
+                }
+                ConvertStep::MatteComposite { clip, .. } => {
+                    semantic = semantic.union(S::MATTE_APPLIED);
+                    if *clip {
+                        semantic = semantic.union(S::CLAMPED);
+                    }
+                }
+                _ => {}
+            }
+            if matches!(
+                op.step,
+                ConvertStep::RgbToGray { .. }
+                    | ConvertStep::RgbaToGray { .. }
+                    | ConvertStep::RgbaToGrayAlpha { .. }
+            ) {
+                semantic = semantic.union(S::LUMA_COLLAPSED);
+            }
+            if matches!(op.step, ConvertStep::SoftCompressOklch(_)) {
+                semantic = semantic.union(S::GAMUT_COMPRESSED);
+            }
+            #[cfg(feature = "hdr-experimental")]
+            if matches!(op.step, ConvertStep::ToneMap(_)) {
+                semantic = semantic.union(S::TONE_MAPPED);
+            }
+            if matches!(op.step, ConvertStep::HlgRender(_))
+                && !matches!(
+                    op.to.transfer(),
+                    TransferFunction::Linear | TransferFunction::Pq | TransferFunction::Hlg
+                )
+            {
+                semantic = semantic.union(S::TONE_MAPPED);
+            }
+            if matches!(
+                op.step,
+                ConvertStep::StraightToPremul | ConvertStep::PremulToStraight
+            ) {
+                semantic = semantic.union(S::ALPHA_REASSOCIATED);
+            }
+            if (op.from.channel_type().is_float() && !op.to.channel_type().is_float())
+                || matches!(
+                    op.step,
+                    ConvertStep::SrgbF32ToLinearF32
+                        | ConvertStep::LinearF32ToSrgbF32
+                        | ConvertStep::Gamma22F32ToLinearF32
+                        | ConvertStep::LinearF32ToGamma22F32
+                        | ConvertStep::PqF32ToLinearF32
+                        | ConvertStep::LinearF32ToPqF32
+                        | ConvertStep::HlgF32ToLinearF32
+                        | ConvertStep::LinearF32ToHlgF32
+                        | ConvertStep::Fused {
+                            kind: FusedKind::SrgbU8GamutRgb
+                                | FusedKind::SrgbU8GamutRgba
+                                | FusedKind::SrgbU16GamutRgb
+                                | FusedKind::LinearF32ToSrgbU8Rgb,
+                            ..
+                        }
+                )
+            {
+                semantic = semantic.union(S::CLAMPED);
+            }
             let tier = match op.step {
                 ConvertStep::Identity
                 | ConvertStep::SdrU16ToU8 { .. }
@@ -2629,6 +2781,7 @@ impl NativePlan {
                 to: op.to,
                 tier,
                 accuracy,
+                semantic,
             }
         })
     }
@@ -3257,17 +3410,28 @@ impl ConvertScratch {
         if width == 0 || plan.is_identity() {
             return Ok(());
         }
-        // All numerical kernels accept at most the existing native channel layouts.
-        // The stack rows cover even the widest format the compact descriptor can express.
+        #[cfg(feature = "hdr-experimental")]
+        plan.prepare_mappers()?;
+        // Warm any lazy LUTs per operation without feeding synthetic dummy pixels
+        // into user-supplied ToneMapper::map_strip implementations.
         let src = [0u64; 256];
         let mut dst = [0u64; 256];
-        convert_row_buffered(
-            plan,
-            &bytemuck::cast_slice::<u64, u8>(&src)[..plan.from().bytes_per_pixel()],
-            &mut bytemuck::cast_slice_mut::<u64, u8>(&mut dst)[..plan.to().bytes_per_pixel()],
-            1,
-            self,
-        )?;
+        for op in &plan.operations {
+            #[cfg(feature = "hdr-experimental")]
+            if matches!(op.step, ConvertStep::ToneMap(_)) {
+                continue;
+            }
+            apply_step_u8(
+                &op.step,
+                &bytemuck::cast_slice::<u64, u8>(&src)[..op.from.bytes_per_pixel()],
+                &mut bytemuck::cast_slice_mut::<u64, u8>(&mut dst)[..op.to.bytes_per_pixel()],
+                1,
+                op.from,
+                op.to,
+                op.pq_anchor_scale,
+                &mut self.hdr,
+            );
+        }
         Ok(())
     }
 }
@@ -3825,7 +3989,9 @@ pub(crate) mod hlg_render;
 #[path = "perceptual.rs"]
 mod perceptual;
 use convert_kernels::apply_step_u8;
-pub(crate) use convert_kernels::{hlg_eotf, hlg_oetf, pq_eotf, pq_oetf};
+#[cfg(test)]
+pub(crate) use convert_kernels::{hlg_eotf, hlg_oetf};
+pub(crate) use convert_kernels::{pq_eotf, pq_oetf};
 
 #[cfg(all(test, feature = "bt2446a"))]
 mod hdr_plan_tests {

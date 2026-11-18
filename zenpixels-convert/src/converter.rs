@@ -15,6 +15,7 @@ pub struct RowConverter {
     recipe: RowRecipe,
     workspace: WorkerSpace,
     prepared_width: Option<u32>,
+    worker_limit: Option<u64>,
     color: Option<alloc::sync::Arc<crate::ColorContext>>,
     source: Option<alloc::sync::Arc<crate::ColorContext>>,
 }
@@ -24,6 +25,8 @@ pub(crate) struct RowRecipe {
     pub(crate) from: PixelDescriptor,
     pub(crate) to: PixelDescriptor,
     stages: alloc::vec::Vec<Stage>,
+    relabel_before: Option<(PixelDescriptor, PixelDescriptor)>,
+    relabel_after: Option<(PixelDescriptor, PixelDescriptor)>,
 }
 
 #[derive(Debug)]
@@ -90,6 +93,18 @@ impl RowRecipe {
             from,
             to,
             stages: alloc::vec::Vec::new(),
+            relabel_before: None,
+            relabel_after: None,
+        }
+    }
+
+    pub(crate) fn relabel_transfer(from: PixelDescriptor, to: PixelDescriptor) -> Self {
+        Self {
+            from,
+            to,
+            stages: alloc::vec::Vec::new(),
+            relabel_before: Some((from, to)),
+            relabel_after: None,
         }
     }
 
@@ -107,14 +122,31 @@ impl RowRecipe {
                 to,
                 operation
             }],
+            relabel_before: None,
+            relabel_after: None,
         }
     }
 
     pub(crate) fn then(mut self, mut next: Self) -> Self {
         debug_assert_eq!(self.to.bytes_per_pixel(), next.from.bytes_per_pixel());
+        let left_identity = self.is_identity_operation();
         self.to = next.to;
-        if self.is_identity_operation() {
+        if left_identity {
             self.stages.clear();
+            if self.relabel_before.is_none() {
+                self.relabel_before = next.relabel_before;
+                self.relabel_after = next.relabel_after;
+            } else {
+                self.relabel_after = next
+                    .relabel_after
+                    .or(next.relabel_before)
+                    .or(self.relabel_after);
+            }
+        } else {
+            self.relabel_after = next
+                .relabel_after
+                .or(next.relabel_before)
+                .or(self.relabel_after);
         }
         if !next.is_identity_operation() {
             if let Some(left) = self.stages.last_mut()
@@ -685,6 +717,7 @@ impl RowRecipe {
             recipe: self,
             workspace: WorkerSpace::default(),
             prepared_width: None,
+            worker_limit: None,
             color,
             source: None,
         }
@@ -714,10 +747,11 @@ impl RowRecipe {
         width: u32,
     ) -> Result<crate::AllocationRequirements, At<ConvertError>> {
         use crate::ByteBound;
+        use crate::convert::SharedLutMask;
         let layout = self.workspace(width)?;
         let native_worker = layout.bytes();
         let mut resident = (self.stages.capacity() * core::mem::size_of::<Stage>()) as u64;
-        let mut shared = 0u64;
+        let mut shared = SharedLutMask::NONE;
         let mut opaque_resident = layout.opaque;
         let mut opaque_setup = layout.opaque;
         for stage in &self.stages {
@@ -725,12 +759,13 @@ impl RowRecipe {
                 let (heap, cold) = native.plan_allocations();
                 resident += heap;
                 match cold {
-                    Some(bytes) => shared = shared.saturating_add(bytes),
+                    Some(mask) => shared = shared.union(mask),
                     None => opaque_setup = true,
                 }
                 opaque_resident |= native.has_mapper();
             }
         }
+        let shared_bytes = shared.total_bytes();
         Ok(crate::AllocationRequirements {
             native_worker,
             worker_heap: if layout.opaque {
@@ -745,32 +780,58 @@ impl RowRecipe {
             },
             shared_cold_setup: if opaque_setup {
                 ByteBound::Unknown
-            } else if shared == 0 {
+            } else if shared_bytes == 0 {
                 ByteBound::Exact(0)
             } else {
-                ByteBound::AtMost(shared)
+                ByteBound::AtMost(shared_bytes)
             },
         })
     }
 
     pub(crate) fn steps(&self) -> impl Iterator<Item = crate::route::PlannedStepInfo> + '_ {
-        use crate::route::{AccuracyContract, KernelTier, PlannedStepInfo};
-        self.stages.iter().flat_map(|stage| {
+        use crate::route::{AccuracyContract, KernelTier, PlannedStepInfo, SemanticEffects};
+        let relabel_step = |(rf, rt)| PlannedStepInfo {
+            operation: "RelabelTransfer",
+            from: rf,
+            to: rt,
+            tier: KernelTier::Scalar,
+            accuracy: AccuracyContract::Exact,
+            semantic: SemanticEffects::RELABELED_TRANSFER,
+        };
+        let before = self.relabel_before.map(relabel_step);
+        let after = self.relabel_after.map(relabel_step);
+        let stage_steps = self.stages.iter().flat_map(|stage| {
             let (native, backend) = match &stage.operation {
                 Operation::Native(plan) => (Some(plan.steps()), None),
-                Operation::Shared(_) | Operation::Owned(_) => (
-                    None,
-                    Some(PlannedStepInfo {
-                        operation: "Cms",
-                        from: stage.from,
-                        to: stage.to,
-                        tier: KernelTier::Backend,
-                        accuracy: AccuracyContract::BackendDefined,
-                    }),
-                ),
+                Operation::Shared(_) | Operation::Owned(_) => {
+                    let mut semantic = SemanticEffects::NONE;
+                    if stage.from.has_alpha() && !stage.to.has_alpha() {
+                        semantic = semantic.union(SemanticEffects::ALPHA_DISCARDED);
+                    }
+                    if crate::route::channel_bits(stage.from.channel_type())
+                        > crate::route::channel_bits(stage.to.channel_type())
+                    {
+                        semantic = semantic.union(SemanticEffects::DEPTH_NARROWED);
+                    }
+                    if !stage.to.channel_type().is_float() {
+                        semantic = semantic.union(SemanticEffects::CLAMPED);
+                    }
+                    (
+                        None,
+                        Some(PlannedStepInfo {
+                            operation: "Cms",
+                            from: stage.from,
+                            to: stage.to,
+                            tier: KernelTier::Backend,
+                            accuracy: AccuracyContract::BackendDefined,
+                            semantic,
+                        }),
+                    )
+                }
             };
             native.into_iter().flatten().chain(backend)
-        })
+        });
+        before.into_iter().chain(stage_steps).chain(after)
     }
 
     pub(crate) fn rank(&self) -> crate::route::RouteRank {
@@ -791,9 +852,7 @@ impl RowRecipe {
                 Operation::Native(plan) => Operation::Native(plan.clone()),
                 Operation::Shared(t) => Operation::Shared(t.clone()),
                 Operation::Owned(_) => {
-                    return Err(whereat::at!(ConvertError::CmsError(
-                        "stateful worker cannot be cloned; build another conversion plan".into()
-                    )));
+                    return Err(whereat::at!(ConvertError::OwnedCmsConsumed));
                 }
             };
             stages.push(Stage {
@@ -806,6 +865,8 @@ impl RowRecipe {
             from: self.from,
             to: self.to,
             stages,
+            relabel_before: self.relabel_before,
+            relabel_after: self.relabel_after,
         })
     }
 }
@@ -895,6 +956,10 @@ impl RowConverter {
         self.source = source;
     }
 
+    pub(crate) fn set_worker_limit(&mut self, limit: Option<u64>) {
+        self.worker_limit = limit;
+    }
+
     pub(crate) fn from_plan(plan: NativePlan) -> Self {
         RowRecipe::native(plan).into_worker(None)
     }
@@ -946,6 +1011,15 @@ impl RowConverter {
     pub fn prepare(&mut self, max_width: u32) -> Result<(), At<ConvertError>> {
         // A failed preparer can partially change backend capacity.
         self.prepared_width = None;
+        if let Some(limit) = self.worker_limit {
+            let bytes = self.recipe.requirements(max_width)?.worker_heap();
+            if !crate::plan::fits_worker_limit(bytes, limit) {
+                return Err(whereat::at!(ConvertError::WorkerBudgetExceeded {
+                    bytes,
+                    limit
+                }));
+            }
+        }
         let layout = self.recipe.workspace(max_width)?;
         self.workspace.reserve(&layout, max_width)?;
         for stage in &mut self.recipe.stages {
@@ -1004,9 +1078,20 @@ impl RowConverter {
             dst.copy_from_slice(src);
             return Ok(());
         }
-        if self.prepared_width.is_none() && self.recipe.stages.len() > 1 {
-            let layout = self.recipe.workspace(width)?;
-            self.workspace.reserve(&layout, width)?;
+        if self.prepared_width.is_none() {
+            if let Some(limit) = self.worker_limit {
+                let bytes = self.recipe.requirements(width)?.worker_heap();
+                if !crate::plan::fits_worker_limit(bytes, limit) {
+                    return Err(whereat::at!(ConvertError::WorkerBudgetExceeded {
+                        bytes,
+                        limit
+                    }));
+                }
+            }
+            if self.recipe.stages.len() > 1 {
+                let layout = self.recipe.workspace(width)?;
+                self.workspace.reserve(&layout, width)?;
+            }
         }
         let stage_count = self.recipe.stages.len();
         let (front, back) = self
@@ -1057,14 +1142,61 @@ impl RowConverter {
             .clone_for_worker()?
             .into_worker(self.color.clone());
         clone.source = self.source.clone();
+        clone.worker_limit = self.worker_limit;
         Ok(clone)
     }
 
-    /// Convert multiple rows from a strided source buffer to a strided destination.
+    /// Convert typed strided [`PixelSlice`](zenpixels::PixelSlice) rows into `dst` and
+    /// write the plan's output [`ColorContext`](crate::ColorContext) onto `dst`.
     ///
-    /// The source and destination can have different strides.
+    /// Clears any stale [`ColorContext`](crate::ColorContext) on `dst` when the compiled
+    /// output interpretation carries no profile or luminance context.
     #[track_caller]
-    pub fn convert_rows(
+    pub fn convert_rows<'a>(
+        &mut self,
+        src: zenpixels::PixelSlice<'_>,
+        mut dst: zenpixels::PixelSliceMut<'a>,
+    ) -> Result<zenpixels::PixelSliceMut<'a>, At<ConvertError>> {
+        if src.descriptor() != self.recipe.from {
+            return Err(whereat::at!(ConvertError::NoPath {
+                from: src.descriptor(),
+                to: self.recipe.to,
+            }));
+        }
+        if src.encoding() != crate::PixelEncoding::new(self.recipe.from, self.source.as_deref()) {
+            return Err(whereat::at!(ConvertError::SourceInterpretationChanged));
+        }
+        if dst.descriptor() != self.recipe.to {
+            return Err(whereat::at!(ConvertError::NoPath {
+                from: self.recipe.from,
+                to: dst.descriptor(),
+            }));
+        }
+        if src.width() != dst.width() || src.rows() != dst.rows() {
+            return Err(whereat::at!(ConvertError::Buffer(
+                zenpixels::BufferError::InvalidDimensions
+            )));
+        }
+        let dst_stride = dst.stride();
+        self.convert_raw_rows(
+            src.as_strided_bytes(),
+            src.stride(),
+            dst.as_strided_bytes_mut(),
+            dst_stride,
+            src.width(),
+            src.rows(),
+        )?;
+        dst.set_color_context(self.color.clone());
+        Ok(dst)
+    }
+
+    /// Convert multiple rows from a raw strided byte buffer to a raw strided destination.
+    ///
+    /// Prefer [`convert_rows`](Self::convert_rows) when [`PixelSlice`](zenpixels::PixelSlice)
+    /// carriers are available so endpoint encodings and output [`ColorContext`](crate::ColorContext)
+    /// are verified and propagated automatically.
+    #[track_caller]
+    pub fn convert_raw_rows(
         &mut self,
         src: &[u8],
         src_stride: usize,
@@ -1140,28 +1272,73 @@ impl RowConverter {
         self.recipe.to
     }
 
-    /// Convert between banded pictures with possibly different band heights.
+    /// Stream rows across [`BandedPixelBuffer`](crate::banded::BandedPixelBuffer)s with
+    /// identical or mismatched band heights using an O(bands) band zipper.
     pub fn convert_bands(
         &mut self,
         src: &crate::banded::BandedPixelBuffer,
         dst: &mut crate::banded::BandedPixelBuffer,
     ) -> Result<(), At<ConvertError>> {
         let extent = src.layout();
-        if extent.width() != dst.layout().width()
-            || extent.height() != dst.layout().height()
-            || src.encoding() != crate::PixelEncoding::new(self.recipe.from, self.source.as_deref())
-            || dst.encoding().descriptor() != self.recipe.to
-        {
+        if extent.width() != dst.layout().width() || extent.height() != dst.layout().height() {
             return Err(whereat::at!(ConvertError::Buffer(
                 crate::BufferError::InvalidDimensions
             )));
         }
-        for y in 0..extent.height() {
-            self.try_convert_row(
-                src.row(y).expect("source row in bounds"),
-                dst.row_mut(y).expect("destination row in bounds"),
-                extent.width(),
-            )?;
+        if src.descriptor() != self.recipe.from {
+            return Err(whereat::at!(ConvertError::NoPath {
+                from: src.descriptor(),
+                to: self.recipe.to,
+            }));
+        }
+        if src.encoding() != crate::PixelEncoding::new(self.recipe.from, self.source.as_deref()) {
+            return Err(whereat::at!(ConvertError::SourceInterpretationChanged));
+        }
+        if dst.descriptor() != self.recipe.to {
+            return Err(whereat::at!(ConvertError::NoPath {
+                from: self.recipe.from,
+                to: dst.descriptor(),
+            }));
+        }
+        let width = extent.width();
+        if self.prepared_width.is_some_and(|cap| width > cap) {
+            return Err(whereat::at!(ConvertError::InvalidWidth(width)));
+        }
+        if width > 0 && extent.height() > 0 {
+            let mut src_iter = src.bands();
+            let mut dst_iter = dst.bands_mut();
+            let mut cur_src = src_iter.next().map(|b| (b, 0u32));
+            let mut cur_dst = dst_iter.next().map(|b| (b, 0u32));
+            let mut y = 0u32;
+            while y < extent.height() {
+                let (sb, sy) = cur_src.as_ref().expect("source bands cover height");
+                let (db, dy) = cur_dst.as_mut().expect("destination bands cover height");
+                let rem_s = sb.rows() - *sy;
+                let rem_d = db.rows() - *dy;
+                let chunk = rem_s.min(rem_d);
+                let s_sub = sb.sub_rows(*sy, chunk);
+                let mut d_sub = db.sub_rows_mut(*dy, chunk);
+                let d_stride = d_sub.stride();
+                self.convert_raw_rows(
+                    s_sub.as_strided_bytes(),
+                    s_sub.stride(),
+                    d_sub.as_strided_bytes_mut(),
+                    d_stride,
+                    width,
+                    chunk,
+                )?;
+                y += chunk;
+                if *sy + chunk == sb.rows() {
+                    cur_src = src_iter.next().map(|b| (b, 0));
+                } else {
+                    cur_src.as_mut().unwrap().1 += chunk;
+                }
+                if *dy + chunk == db.rows() {
+                    cur_dst = dst_iter.next().map(|b| (b, 0));
+                } else {
+                    *dy += chunk;
+                }
+            }
         }
         dst.set_color_context(self.color.clone());
         Ok(())
@@ -1946,7 +2123,7 @@ mod tests {
         let mut dst = [0u8; 8]; // 2 rows × 4 bytes
         let dst_stride = 4;
 
-        conv.convert_rows(&src, src_stride, &mut dst, dst_stride, 1, 2)
+        conv.convert_raw_rows(&src, src_stride, &mut dst, dst_stride, 1, 2)
             .unwrap();
         assert_eq!(&dst[0..4], &[10, 20, 30, 255]);
         assert_eq!(&dst[4..8], &[40, 50, 60, 255]);
@@ -1959,7 +2136,9 @@ mod tests {
 
         let src = [10u8, 20, 30];
         let mut dst = [0u8; 4];
-        let err = conv.convert_rows(&src, 3, &mut dst, 4, 1, 2).unwrap_err();
+        let err = conv
+            .convert_raw_rows(&src, 3, &mut dst, 4, 1, 2)
+            .unwrap_err();
         assert!(matches!(*err.error(), ConvertError::BufferSize { .. }));
     }
 
@@ -2685,12 +2864,10 @@ let _options = request.options();
 
     #[test]
     fn bt709_linear_f32_roundtrip() {
-        use crate::TransferFunctionExt;
-        let tf = TransferFunction::Bt709;
         let values = [0.0f32, 0.1, 0.25, 0.5, 0.75, 1.0];
         for &v in &values {
-            let linear = tf.linearize(v);
-            let back = tf.delinearize(linear);
+            let linear = linear_srgb::tf::bt709_to_linear(v);
+            let back = linear_srgb::tf::linear_to_bt709(linear);
             assert!(
                 (back - v).abs() < 1e-5,
                 "Bt709 roundtrip failed for {v}: linearize={linear}, delinearize={back}"
@@ -2700,21 +2877,10 @@ let _options = request.options();
 
     #[test]
     fn unknown_transfer_roundtrip() {
-        use crate::TransferFunctionExt;
-        let tf = TransferFunction::Unknown;
-        let values = [0.0f32, 0.1, 0.5, 0.99, 1.0];
-        for &v in &values {
-            let linear = tf.linearize(v);
-            assert!(
-                (linear - v).abs() < 1e-7,
-                "Unknown linearize should be identity: {v} -> {linear}"
-            );
-            let back = tf.delinearize(linear);
-            assert!(
-                (back - v).abs() < 1e-7,
-                "Unknown delinearize should be identity: {linear} -> {back}"
-            );
-        }
+        let unknown = PixelDescriptor::RGB8.with_primaries(zenpixels::ColorPrimaries::Bt709);
+        let plan = crate::ConvertPlan::relabel_transfer(unknown, PixelDescriptor::RGB8_SRGB)
+            .expect("explicit unknown transfer relabel");
+        assert!(plan.is_identity());
     }
 
     #[test]

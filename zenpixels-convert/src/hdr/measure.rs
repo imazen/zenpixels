@@ -233,6 +233,29 @@ impl LightLevelHistogram {
     pub fn bins(&self) -> &[u64] {
         &self.bins
     }
+
+    /// Merge another strip/band histogram of the same [`LightLevelMethod`] into `self`,
+    /// returning `None` (without mutating `self`) if the methods differ or any `u64`
+    /// counter would overflow.
+    #[must_use]
+    pub fn try_merge(&mut self, other: &Self) -> Option<()> {
+        if self.method != other.method || self.bins.len() != other.bins.len() {
+            return None;
+        }
+        let new_total = self.total.checked_add(other.total)?;
+        for (&dst, &src) in self.bins.iter().zip(other.bins.iter()) {
+            dst.checked_add(src)?;
+        }
+        for (dst, &src) in self.bins.iter_mut().zip(other.bins.iter()) {
+            *dst += src;
+        }
+        self.total = new_total;
+        self.sum_nits += other.sum_nits;
+        if other.literal_max_nits > self.literal_max_nits {
+            self.literal_max_nits = other.literal_max_nits;
+        }
+        Some(())
+    }
 }
 
 /// `no_std` `exp2` — degree-3 minimax polynomial on the fractional part

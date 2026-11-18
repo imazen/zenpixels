@@ -308,8 +308,20 @@ fn unknown_input_still_encodes_as_the_target_says() {
     let to = D::RGB8_SRGB
         .with_transfer(T::Linear)
         .with_primaries(P::Bt709);
+    let spec = zenpixels_convert::ConversionSpec::new(crate::test_conversion::legacy_options());
+    assert!(matches!(
+        zenpixels_convert::ConvertPlan::build(from.into(), to.into(), &spec)
+            .unwrap_err()
+            .error(),
+        zenpixels_convert::ConvertError::UnknownTransferRelabelForbidden { .. }
+    ));
+    let tagged = from.with_transfer(T::Srgb);
     let mut out = [0u8; 3];
-    crate::test_conversion::new_worker(from, to)
+    zenpixels_convert::ConvertPlan::relabel_transfer(from, tagged)
+        .unwrap()
+        .then(zenpixels_convert::ConvertPlan::build(tagged.into(), to.into(), &spec).unwrap())
+        .unwrap()
+        .prepare(1)
         .unwrap()
         .try_convert_row(&[128, 128, 128], &mut out, 1)
         .unwrap();

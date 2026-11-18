@@ -40,14 +40,6 @@ fn every_entry_requires_an_anchor_then_agrees_at_203_nits() {
         ConvertError::SdrWhiteRequired
     ));
     assert!(matches!(
-        source(None)
-            .as_slice()
-            .quantize_to(target)
-            .unwrap_err()
-            .error(),
-        ConvertError::SdrWhiteRequired
-    ));
-    assert!(matches!(
         crate::test_conversion::new_worker(linear(), target)
             .unwrap_err()
             .error(),
@@ -57,7 +49,7 @@ fn every_entry_requires_an_anchor_then_agrees_at_203_nits() {
     let expected = anchored.convert_to(target).unwrap();
     assert_eq!(codes(&expected), vec![38055; 3]);
     assert_eq!(
-        codes(&anchored.as_slice().quantize_to(target).unwrap()),
+        codes(&anchored.as_slice().convert_to(target).unwrap()),
         codes(&expected)
     );
     let options = ConvertOptions::retain_channels()

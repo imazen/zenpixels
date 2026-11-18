@@ -4,22 +4,25 @@ use alloc::sync::Arc;
 use core::fmt;
 
 use crate::converter::RowRecipe;
-use crate::precision::{ConversionEffect, ConversionOffer, OutputChoice, SourcePrecision};
+use crate::precision::{
+    AlphaContent, ConversionEffect, ConversionOffer, OutputChoice, SourcePrecision,
+};
 use crate::{
-    AlphaMode, AlphaPolicy, ColorContext, ColorModel, ConvertError, ConvertOptions, PixelEncoding,
-    PluggableCms, RowConverter, TransferFunction,
+    AlphaMode, AlphaPolicy, ColorContext, ColorModel, ConvertError, ConvertIntent, ConvertOptions,
+    PixelDescriptor, PixelEncoding, PluggableCms, Provenance, RowConverter, TransferFunction,
 };
 use whereat::At;
 
-/// Policy and backend selection for a conversion request.
+/// Policy, intent, and backend selection for a conversion request.
 #[derive(Clone, Copy)]
 pub struct ConversionSpec<'a> {
     options: ConvertOptions,
     cms: Option<&'a dyn PluggableCms>,
     precision: Option<SourcePrecision>,
     choice: OutputChoice,
+    intent: Option<ConvertIntent>,
+    provenance: Option<Provenance>,
     preserves_samples: bool,
-    relabel_unknown: bool,
     workspace_limit: Option<(u32, u64)>,
     #[cfg(feature = "hdr-experimental")]
     hdr: Option<&'a crate::HdrConfig>,
@@ -35,8 +38,9 @@ impl<'a> ConversionSpec<'a> {
             cms: None,
             precision: None,
             choice: OutputChoice::Hidden,
+            intent: None,
+            provenance: None,
             preserves_samples: false,
-            relabel_unknown: false,
             workspace_limit: None,
             #[cfg(feature = "hdr-experimental")]
             hdr: None,
@@ -70,19 +74,28 @@ impl<'a> ConversionSpec<'a> {
         self
     }
 
-    /// Allow compact unknown transfer to adopt a declared destination label.
+    /// Steer [`ConvertPlan::select`] by operational suitability (`Fastest`,
+    /// `LinearLight`, `Blend`, or `Perceptual`).
     ///
-    /// Use only when the caller knows the correct interpretation of those samples.
-    pub const fn with_unknown_transfer_relabel(mut self) -> Self {
-        self.relabel_unknown = true;
+    /// When omitted, [`ConvertPlan::select`] ranks admitted candidates by semantic
+    /// fidelity first and execution cost second.
+    pub const fn with_intent(mut self, intent: ConvertIntent) -> Self {
+        self.intent = Some(intent);
+        self
+    }
+
+    /// Supply true origin depth and primaries for [`ConvertPlan::select`] cost scoring.
+    pub const fn with_provenance(mut self, provenance: Provenance) -> Self {
+        self.provenance = Some(provenance);
         self
     }
 
     /// Refuse routes whose fresh worker exceeds the byte cap at this width.
     ///
     /// An opaque backend is refused because its worker bytes cannot be bounded.
-    /// This cap covers worker preparation. Recipe construction and shared tables
-    /// have separate lifetimes, reported by [ConvertPlan::workspace].
+    /// This cap covers worker preparation and carries forward onto prepared
+    /// [`RowConverter`]s. Recipe construction and shared tables have separate
+    /// lifetimes, reported by [`ConvertPlan::workspace`].
     pub const fn with_worker_limit(mut self, max_width: u32, bytes: u64) -> Self {
         self.workspace_limit = Some((max_width, bytes));
         self
@@ -115,129 +128,6 @@ impl<'a> ConversionSpec<'a> {
     }
 }
 
-/// Conversion refusal or backend construction failure.
-#[derive(Debug)]
-#[non_exhaustive]
-pub enum PlanError {
-    /// The source has no transfer suitable for the requested color work.
-    UnknownSourceTransfer,
-    /// Conditional alpha removal requires proof or explicit authorization.
-    NeedOpacityProof,
-    /// The requested endpoint reduces precision prohibited by policy.
-    DepthLossForbidden,
-    /// The relative and absolute light domains require a white anchor.
-    ExplicitSdrWhiteRequired,
-    /// The requested materialized boundary disagrees with the next input.
-    IntermediateMismatch,
-    /// The output would exceed the requested capacity-loss policy.
-    CapacityLoss(ConversionEffect),
-    /// A requested output anchor differs from the effective output.
-    TargetLuminanceMismatch,
-    /// The worker cannot be admitted under the requested cap.
-    WorkerBudgetExceeded { bytes: ByteBound, limit: u64 },
-    /// No candidates were supplied.
-    NoCandidates,
-    /// None of the candidates could be admitted. The nested error identifies a refusal.
-    NoCandidate {
-        index: usize,
-        cause: alloc::boxed::Box<At<Self>>,
-    },
-    /// Geometry, conversion, or backend error.
-    Conversion(ConvertError),
-}
-
-impl PlanError {
-    pub(crate) fn into_conversion(
-        self,
-        from: crate::PixelDescriptor,
-        to: crate::PixelDescriptor,
-    ) -> ConvertError {
-        match self {
-            Self::Conversion(error) => error,
-            Self::NoCandidate { cause, .. } => match cause.error() {
-                Self::Conversion(error) => error.clone(),
-                Self::NeedOpacityProof => ConvertError::AlphaCheckRequired,
-                Self::DepthLossForbidden => ConvertError::DepthReductionForbidden,
-                Self::ExplicitSdrWhiteRequired => ConvertError::SdrWhiteRequired,
-                _ => ConvertError::NoPath { from, to },
-            },
-            Self::NeedOpacityProof => ConvertError::AlphaCheckRequired,
-            Self::DepthLossForbidden => ConvertError::DepthReductionForbidden,
-            Self::ExplicitSdrWhiteRequired => ConvertError::SdrWhiteRequired,
-            _ => ConvertError::NoPath { from, to },
-        }
-    }
-
-    fn from_conversion(error: ConvertError) -> Self {
-        match error {
-            ConvertError::AlphaCheckRequired => Self::NeedOpacityProof,
-            ConvertError::DepthReductionForbidden => Self::DepthLossForbidden,
-            ConvertError::SdrWhiteRequired => Self::ExplicitSdrWhiteRequired,
-            error => Self::Conversion(error),
-        }
-    }
-}
-
-impl fmt::Display for PlanError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::UnknownSourceTransfer => {
-                f.write_str("the source transfer needs an explicit interpretation")
-            }
-            Self::NeedOpacityProof => f.write_str("alpha removal requires proof of opacity"),
-            Self::DepthLossForbidden => f.write_str("the requested endpoint reduces depth"),
-            Self::ExplicitSdrWhiteRequired => {
-                f.write_str("the conversion requires an SDR-white anchor")
-            }
-            Self::IntermediateMismatch => {
-                f.write_str("the materialized intermediate interpretation differs")
-            }
-            Self::CapacityLoss(effect) => {
-                write!(f, "the requested output loses modeled capacity: {effect:?}")
-            }
-            Self::TargetLuminanceMismatch => {
-                f.write_str("the output luminance does not match the target")
-            }
-            Self::WorkerBudgetExceeded { bytes, limit } => {
-                write!(
-                    f,
-                    "worker requires {bytes:?} bytes under a {limit}-byte limit"
-                )
-            }
-            Self::NoCandidates => f.write_str("no conversion targets were offered"),
-            Self::NoCandidate { index, cause } => {
-                write!(f, "candidate {index} was refused: {cause}")
-            }
-            Self::Conversion(error) => error.fmt(f),
-        }
-    }
-}
-
-impl core::error::Error for PlanError {
-    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
-        match self {
-            Self::Conversion(error) => Some(error),
-            Self::NoCandidate { cause, .. } => Some(cause.as_ref()),
-            _ => None,
-        }
-    }
-}
-
-/// Allocation or backend preparation failure.
-#[derive(Debug)]
-pub struct PrepareError(ConvertError);
-
-impl fmt::Display for PrepareError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-impl core::error::Error for PrepareError {
-    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
-        Some(&self.0)
-    }
-}
-
 /// Shape of the work to be submitted. Pointwise workers reuse their workspace for all rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WorkExtent {
@@ -249,6 +139,16 @@ impl WorkExtent {
     /// Shape in pixels.
     pub const fn new(width: u32, rows: u32) -> Self {
         Self { width, rows }
+    }
+
+    /// Width in pixels.
+    pub const fn width(self) -> u32 {
+        self.width
+    }
+
+    /// Row count.
+    pub const fn rows(self) -> u32 {
+        self.rows
     }
 
     /// Number of pixels, including on 32-bit platforms.
@@ -297,11 +197,12 @@ impl AllocationRequirements {
     }
 }
 
-/// A destination offered to the converter.
+/// A destination offered to [`ConvertPlan::select`].
 #[derive(Debug, Clone, Copy)]
 pub struct CandidateTarget<'a> {
     target: PixelEncoding<'a>,
     preference: u32,
+    consumer_cost: crate::negotiate::ConversionCost,
 }
 
 impl<'a> CandidateTarget<'a> {
@@ -310,12 +211,43 @@ impl<'a> CandidateTarget<'a> {
         Self {
             target,
             preference: 0,
+            consumer_cost: crate::negotiate::ConversionCost::ZERO,
         }
     }
+
     /// Prefer smaller values among otherwise equivalent routes.
     pub const fn with_preference(mut self, preference: u32) -> Self {
         self.preference = preference;
         self
+    }
+
+    /// Account for downstream conversion effort and loss inside the consumer.
+    pub const fn with_consumer_cost(mut self, effort: u16, loss: u16) -> Self {
+        self.consumer_cost = crate::negotiate::ConversionCost::new(effort, loss);
+        self
+    }
+
+    /// Target encoding offered by this candidate.
+    pub const fn encoding(&self) -> PixelEncoding<'a> {
+        self.target
+    }
+}
+
+impl<'a> From<PixelEncoding<'a>> for CandidateTarget<'a> {
+    fn from(target: PixelEncoding<'a>) -> Self {
+        Self::new(target)
+    }
+}
+
+impl From<PixelDescriptor> for CandidateTarget<'static> {
+    fn from(descriptor: PixelDescriptor) -> Self {
+        Self::new(PixelEncoding::from(descriptor))
+    }
+}
+
+impl From<&PixelDescriptor> for CandidateTarget<'static> {
+    fn from(descriptor: &PixelDescriptor) -> Self {
+        Self::new(PixelEncoding::from(*descriptor))
     }
 }
 
@@ -331,6 +263,12 @@ impl SelectedConversion {
     pub const fn candidate_index(&self) -> usize {
         self.index
     }
+
+    /// Borrow the selected conversion plan.
+    pub const fn plan(&self) -> &ConvertPlan {
+        &self.plan
+    }
+
     /// Reuse the plan without rebuilding the backend.
     pub fn into_plan(self) -> ConvertPlan {
         self.plan
@@ -342,6 +280,7 @@ pub struct ConvertPlan {
     recipe: RowRecipe,
     input: Option<Arc<ColorContext>>,
     output: Option<Arc<ColorContext>>,
+    worker_limit: Option<u64>,
 }
 
 impl fmt::Debug for ConvertPlan {
@@ -357,66 +296,87 @@ impl fmt::Debug for ConvertPlan {
     }
 }
 
+fn profile_defines_transfer(profile: &crate::ColorProfileSource<'_>) -> bool {
+    match profile {
+        crate::ColorProfileSource::Icc(_) | crate::ColorProfileSource::Parametric(_) => true,
+        _ => profile
+            .resolve()
+            .is_some_and(|(_, tf)| tf != TransferFunction::Unknown),
+    }
+}
+
 impl ConvertPlan {
     /// Check authority and policy and compile the actual route.
     pub fn build(
         source: PixelEncoding<'_>,
         target: PixelEncoding<'_>,
         spec: &ConversionSpec<'_>,
-    ) -> Result<Self, At<PlanError>> {
+    ) -> Result<Self, At<ConvertError>> {
         let from = source.descriptor();
         let to = target.descriptor();
-        let convert_error = |e: At<ConvertError>| e.map_error(PlanError::from_conversion);
-        let src_profile = crate::output::current_profile_for(source).map_err(convert_error)?;
-        let dst_profile = crate::output::current_profile_for(target).map_err(convert_error)?;
+        let src_profile = crate::output::current_profile_for(source)?;
+        let dst_profile = crate::output::current_profile_for(target)?;
         let same_profile = crate::output::profiles_match(&src_profile, &dst_profile)
             || (from == to && source.color_context() == target.color_context());
+
         let mut options =
             crate::interpretation::resolve_options(source.color_context(), spec.options());
-        if from.alpha() == Some(AlphaMode::Opaque)
-            && options.alpha_policy() == AlphaPolicy::DiscardIfOpaque
+        if options.alpha_policy() == AlphaPolicy::DiscardIfOpaque
+            && from.has_alpha()
+            && !to.has_alpha()
         {
-            options = options.with_alpha_policy(AlphaPolicy::DiscardUnchecked);
+            if from.alpha() == Some(AlphaMode::Opaque)
+                || spec
+                    .precision
+                    .is_some_and(|p| p.alpha() == AlphaContent::Opaque)
+            {
+                options = options.with_alpha_policy(AlphaPolicy::DiscardUnchecked);
+            } else if spec
+                .precision
+                .is_some_and(|p| p.alpha() == AlphaContent::Translucent)
+            {
+                return Err(whereat::at!(ConvertError::AlphaNotOpaque));
+            }
         }
-        if from.transfer() == TransferFunction::Unknown
-            && to.transfer() != TransferFunction::Unknown
-            && matches!(from.color_model(), ColorModel::Rgb | ColorModel::Gray)
-            && !matches!(
-                src_profile,
-                crate::ColorProfileSource::Icc(_) | crate::ColorProfileSource::Parametric(_)
-            )
-            && src_profile
-                .resolve()
-                .is_none_or(|(_, transfer)| transfer == TransferFunction::Unknown)
-            && !spec.relabel_unknown
-        {
-            return Err(whereat::at!(PlanError::UnknownSourceTransfer));
+
+        let src_unverified_tf = matches!(from.color_model(), ColorModel::Rgb | ColorModel::Gray)
+            && from.transfer() == TransferFunction::Unknown
+            && !profile_defines_transfer(&src_profile);
+        let dst_unverified_tf = matches!(to.color_model(), ColorModel::Rgb | ColorModel::Gray)
+            && to.transfer() == TransferFunction::Unknown
+            && !profile_defines_transfer(&dst_profile);
+        if src_unverified_tf != dst_unverified_tf {
+            return Err(whereat::at!(
+                ConvertError::UnknownTransferRelabelForbidden { from, to }
+            ));
         }
 
         if let Some(precision) = spec.precision {
+            if from.alpha() == Some(AlphaMode::Opaque)
+                && precision.alpha() == AlphaContent::Translucent
+            {
+                return Err(whereat::at!(ConvertError::NoPath { from, to }));
+            }
             let mut offer = ConversionOffer::new(to);
             if matches!(options.alpha_policy(), AlphaPolicy::CompositeOnto { .. }) {
                 offer = offer.with_matte();
             }
             let effect = ConversionEffect::of(&precision, &offer);
             if spec.choice == OutputChoice::Hidden && !effect.preserves_modeled_capacity() {
-                return Err(whereat::at!(PlanError::CapacityLoss(effect)));
+                return Err(whereat::at!(ConvertError::CapacityLoss(effect)));
             }
         }
 
-        let mut recipe =
-            compile(source, target, same_profile, &options, spec).map_err(convert_error)?;
+        let mut recipe = compile(source, target, same_profile, &options, spec)?;
         // The row endpoints use the caller's carriers even if the kernel resolved
         // fields of a compact descriptor using attached profile evidence.
         recipe.from = from;
         recipe.to = to;
+        let worker_limit = spec.workspace_limit.map(|(_, limit)| limit);
         if let Some((width, limit)) = spec.workspace_limit {
-            let bytes = recipe
-                .requirements(width)
-                .map_err(convert_error)?
-                .worker_heap();
+            let bytes = recipe.requirements(width)?.worker_heap();
             if !fits_worker_limit(bytes, limit) {
-                return Err(whereat::at!(PlanError::WorkerBudgetExceeded {
+                return Err(whereat::at!(ConvertError::WorkerBudgetExceeded {
                     bytes,
                     limit
                 }));
@@ -424,19 +384,23 @@ impl ConvertPlan {
         }
         let output = resolve_output(source, target, same_profile, &options);
         #[cfg(feature = "hdr-experimental")]
-        let output = if let Some(hdr) = spec.hdr
-            && (matches!(
-                from.transfer(),
-                TransferFunction::Linear | TransferFunction::Pq
-            )) {
-            Some(
+        let output = {
+            let effective_src_tf = src_profile.resolve().map_or(from.transfer(), |(_, tf)| tf);
+            if let Some(hdr) = spec.hdr
+                && matches!(
+                    effective_src_tf,
+                    TransferFunction::Linear | TransferFunction::Pq
+                )
+            {
+                Some(
+                    output
+                        .unwrap_or_default()
+                        .with_diffuse_white(zenpixels::hdr::DiffuseWhite::new(hdr.target_peak_nits))
+                        .with_hdr_peak(zenpixels::hdr::Nits::new(hdr.target_peak_nits)),
+                )
+            } else {
                 output
-                    .unwrap_or_default()
-                    .with_diffuse_white(zenpixels::hdr::DiffuseWhite::new(hdr.target_peak_nits))
-                    .with_hdr_peak(zenpixels::hdr::Nits::new(hdr.target_peak_nits)),
-            )
-        } else {
-            output
+            }
         };
         if let Some(requested) = target.color_context()
             && (requested.diffuse_white().is_some_and(|white| {
@@ -445,12 +409,51 @@ impl ConvertPlan {
                 .hdr_peak()
                 .is_some_and(|peak| output.as_ref().and_then(ColorContext::hdr_peak) != Some(peak)))
         {
-            return Err(whereat::at!(PlanError::TargetLuminanceMismatch));
+            return Err(whereat::at!(ConvertError::TargetLuminanceMismatch));
         }
         Ok(Self {
             recipe,
             input: source.color_context().cloned().map(Arc::new),
             output: output.map(Arc::new),
+            worker_limit,
+        })
+    }
+
+    /// Explicitly reinterpret sample bytes across an `Unknown` ↔ known transfer boundary
+    /// without changing layout, depth, alpha, primaries, or signal range.
+    ///
+    /// Use this when the caller has out-of-band knowledge of the true transfer curve
+    /// (and compose with [`ConvertPlan::then`] when further conversion is needed).
+    /// Ordinary [`ConvertPlan::build`] calls refuse unverified `Unknown` ↔ known
+    /// transfer changes with [`ConvertError::UnknownTransferRelabelForbidden`].
+    pub fn relabel_transfer(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+    ) -> Result<Self, At<ConvertError>> {
+        crate::convert::validate_descriptors(from, to)?;
+        let supported_sample = matches!(
+            from.channel_type(),
+            crate::ChannelType::U8
+                | crate::ChannelType::U16
+                | crate::ChannelType::F16
+                | crate::ChannelType::F32
+        );
+        let only_transfer_differs = from.pixel_format() == to.pixel_format()
+            && from.alpha() == to.alpha()
+            && from.primaries == to.primaries
+            && from.signal_range == to.signal_range;
+        let uses_transfer = matches!(from.color_model(), ColorModel::Rgb | ColorModel::Gray);
+        let bridges_unknown = from.transfer() != to.transfer()
+            && (from.transfer() == TransferFunction::Unknown
+                || to.transfer() == TransferFunction::Unknown);
+        if !supported_sample || !only_transfer_differs || !uses_transfer || !bridges_unknown {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
+        Ok(Self {
+            recipe: RowRecipe::relabel_transfer(from, to),
+            input: None,
+            output: None,
+            worker_limit: None,
         })
     }
 
@@ -459,9 +462,17 @@ impl ConvertPlan {
         source: PixelEncoding<'_>,
         targets: &[CandidateTarget<'_>],
         spec: &ConversionSpec<'_>,
-    ) -> Result<SelectedConversion, At<PlanError>> {
+    ) -> Result<SelectedConversion, At<ConvertError>> {
+        if targets.is_empty() {
+            return Err(whereat::at!(ConvertError::EmptyFormatList));
+        }
         let mut admitted = crate::route::RouteFrontier::new();
+        let mut intent_best: Option<((u32, crate::route::TieKey), SelectedConversion)> = None;
         let mut refusal = None;
+        let prov = spec
+            .provenance
+            .unwrap_or_else(|| Provenance::from_source(source.descriptor()));
+
         for (index, candidate) in targets.iter().enumerate() {
             match Self::build(source, candidate.target, spec) {
                 Ok(plan) => {
@@ -470,20 +481,41 @@ impl ConvertPlan {
                         .map(|(width, _)| plan.workspace(WorkExtent::new(width, 1)))
                         .transpose()?
                         .map_or(0, |memory| memory.native_worker());
-                    admitted.offer(
-                        plan.recipe.rank(),
-                        candidate.preference,
-                        scratch,
-                        index,
-                        SelectedConversion { index, plan },
-                    );
+                    if let Some(intent) = spec.intent {
+                        let score = crate::negotiate::score_target(
+                            source.descriptor(),
+                            prov,
+                            candidate.target.descriptor(),
+                            candidate.consumer_cost,
+                            intent,
+                        );
+                        let key = (
+                            score,
+                            plan.recipe
+                                .rank()
+                                .tie_key(candidate.preference, scratch, index),
+                        );
+                        if intent_best.as_ref().is_none_or(|(best, _)| key < *best) {
+                            intent_best = Some((key, SelectedConversion { index, plan }));
+                        }
+                    } else {
+                        let pref = candidate.preference.saturating_add(
+                            u32::from(candidate.consumer_cost.loss) * 4
+                                + u32::from(candidate.consumer_cost.effort),
+                        );
+                        admitted.offer(
+                            plan.recipe.rank(),
+                            pref,
+                            scratch,
+                            index,
+                            SelectedConversion { index, plan },
+                        );
+                    }
                 }
                 Err(e)
                     if matches!(
                         e.error(),
-                        PlanError::Conversion(
-                            ConvertError::AllocationFailed | ConvertError::CmsBackend(_)
-                        )
+                        ConvertError::AllocationFailed | ConvertError::CmsBackend(_)
                     ) =>
                 {
                     return Err(e);
@@ -495,16 +527,17 @@ impl ConvertPlan {
                 }
             }
         }
+        if let Some((_, selected)) = intent_best {
+            return Ok(selected);
+        }
         if let Some(selected) = admitted.finish() {
             return Ok(selected);
         }
-        if let Some((index, cause)) = refusal {
-            return Err(whereat::at!(PlanError::NoCandidate {
-                index,
-                cause: alloc::boxed::Box::new(cause)
-            }));
-        }
-        Err(whereat::at!(PlanError::NoCandidates))
+        let (index, cause) = refusal.expect("non-empty targets had no admitted plan");
+        Err(cause.map_error(|c| ConvertError::NoCandidate {
+            index,
+            cause: alloc::boxed::Box::new(c),
+        }))
     }
 
     /// Inspect the lowered native and backend operators in execution order.
@@ -529,49 +562,58 @@ impl ConvertPlan {
     }
 
     /// Compose with an explicitly materialized boundary, including its interpretation and rounding.
-    pub fn then(self, next: Self) -> Result<Self, At<PlanError>> {
+    pub fn then(self, next: Self) -> Result<Self, At<ConvertError>> {
         if self.output_encoding() != next.source_encoding() {
-            return Err(whereat::at!(PlanError::IntermediateMismatch));
+            return Err(whereat::at!(ConvertError::IntermediateMismatch));
         }
+        let worker_limit = match (self.worker_limit, next.worker_limit) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
         Ok(Self {
             recipe: self.recipe.then(next.recipe),
             input: self.input,
             output: next.output,
+            worker_limit,
         })
     }
 
     /// Report memory for the same layout used to prepare this recipe.
-    pub fn workspace(&self, extent: WorkExtent) -> Result<AllocationRequirements, At<PlanError>> {
-        self.recipe
-            .requirements(extent.width)
-            .map_err(|e| e.map_error(PlanError::from_conversion))
+    pub fn workspace(
+        &self,
+        extent: WorkExtent,
+    ) -> Result<AllocationRequirements, At<ConvertError>> {
+        self.recipe.requirements(extent.width)
     }
 
     /// Build an independent worker and reserve scratch for rows at most this wide.
-    pub fn prepare(self, max_width: u32) -> Result<RowConverter, At<PrepareError>> {
+    pub fn prepare(self, max_width: u32) -> Result<RowConverter, At<ConvertError>> {
         let mut worker = self.into_worker();
-        worker
-            .prepare(max_width)
-            .map_err(|e| e.map_error(PrepareError))?;
+        worker.prepare(max_width)?;
         Ok(worker)
     }
 
+    /// Duplicate a reusable native or shared-backend plan and prepare an independent worker.
+    pub fn prepare_shared(&self, max_width: u32) -> Result<RowConverter, At<ConvertError>> {
+        self.try_clone()?.prepare(max_width)
+    }
+
     /// Duplicate a reusable native or shared-backend plan.
-    pub fn try_clone(&self) -> Result<Self, At<PlanError>> {
+    pub fn try_clone(&self) -> Result<Self, At<ConvertError>> {
         Ok(Self {
-            recipe: self
-                .recipe
-                .clone_for_worker()
-                .map_err(|e| e.map_error(PlanError::from_conversion))?,
+            recipe: self.recipe.clone_for_worker()?,
             input: self.input.clone(),
             output: self.output.clone(),
+            worker_limit: self.worker_limit,
         })
     }
 
-    /// Create a worker that grows scratch on demand. Prefer [Self::prepare] for bounded work.
-    pub fn into_worker(self) -> RowConverter {
+    pub(crate) fn into_worker(self) -> RowConverter {
         let mut worker = self.recipe.into_worker(self.output);
         worker.set_source_context(self.input);
+        worker.set_worker_limit(self.worker_limit);
         worker
     }
 }
@@ -625,6 +667,19 @@ fn compile(
     }
     #[cfg(feature = "hdr-experimental")]
     if let Some(hdr) = spec.hdr {
+        let src_profile = crate::output::current_profile_for(source)?;
+        let dst_profile = crate::output::current_profile_for(target)?;
+        if !same_profile && (src_profile.resolve().is_none() || dst_profile.resolve().is_none()) {
+            return Err(whereat::at!(ConvertError::HdrWithOpaqueProfileUnsupported));
+        }
+        let from = src_profile
+            .resolve()
+            .map(|(p, t)| from.with_primaries(p).with_transfer(t))
+            .unwrap_or(from);
+        let to = dst_profile
+            .resolve()
+            .map(|(p, t)| to.with_primaries(p).with_transfer(t))
+            .unwrap_or(to);
         crate::convert::validate_descriptors(from, to)?;
         crate::convert::validate_luma_policy(from, to, options)?;
         // The special linear-HDR entry still applies the endpoint permissions.
@@ -671,12 +726,12 @@ fn compile(
 // The finite exact subgraph comprises the endpoints and the endpoint
 // layout/depth cross-products. Existing native code proves each edge.
 fn exact_path(
-    from: crate::PixelDescriptor,
-    to: crate::PixelDescriptor,
+    from: PixelDescriptor,
+    to: PixelDescriptor,
     limit: Option<(u32, u64)>,
 ) -> Option<RowRecipe> {
     #[derive(Clone, Copy)]
-    struct State(crate::PixelDescriptor);
+    struct State(PixelDescriptor);
 
     fn edge(from: State, to: State) -> Option<RowRecipe> {
         crate::NativePlan::new_preserving_samples(from.0, to.0)
@@ -709,14 +764,9 @@ fn exact_path(
             .enumerate()
         {
             let middle = State(
-                crate::PixelDescriptor::new(
-                    depth,
-                    layout.layout(),
-                    layout.alpha(),
-                    layout.transfer(),
-                )
-                .with_primaries(layout.primaries)
-                .with_signal_range(layout.signal_range),
+                PixelDescriptor::new(depth, layout.layout(), layout.alpha(), layout.transfer())
+                    .with_primaries(layout.primaries)
+                    .with_signal_range(layout.signal_range),
             );
             if let (Some(before), Some(after)) = (edge(source, middle), edge(middle, target)) {
                 consider(before.then(after), i + 1);
@@ -726,7 +776,7 @@ fn exact_path(
     frontier.finish().or_else(|| excluded.finish())
 }
 
-fn fits_worker_limit(bound: ByteBound, limit: u64) -> bool {
+pub(crate) fn fits_worker_limit(bound: ByteBound, limit: u64) -> bool {
     matches!(bound, ByteBound::Exact(bytes) | ByteBound::AtMost(bytes) if bytes <= limit)
 }
 

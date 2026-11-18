@@ -1923,6 +1923,7 @@ fn linear_f32_to_pq_f32(
 /// HLG OETF: scene-linear `[0,1]` → encoded `[0,1]`.
 ///
 /// Uses `fast_log2f` from `linear-srgb` (no `libm` ln calls).
+#[cfg(test)]
 #[inline]
 pub(crate) fn hlg_oetf(v: f32) -> f32 {
     linear_srgb::tf::linear_to_hlg(v)
@@ -1931,6 +1932,7 @@ pub(crate) fn hlg_oetf(v: f32) -> f32 {
 /// HLG inverse OETF (EOTF): encoded `[0,1]` → scene-linear `[0,1]`.
 ///
 /// Uses `fast_pow2f` from `linear-srgb` (no `libm` exp calls).
+#[cfg(test)]
 #[inline]
 pub(crate) fn hlg_eotf(v: f32) -> f32 {
     linear_srgb::tf::hlg_to_linear(v)

@@ -134,7 +134,7 @@ mod tests {
             &ConversionSpec::preserve_samples(),
         )
         .unwrap();
-        let mut a = a.then(b).unwrap().into_worker();
+        let mut a = a.then(b).unwrap().prepare(1).unwrap();
         assert!(!a.is_identity());
         let mut direct = [0; 3];
         a.try_convert_row(&[1, 2, 3], &mut direct, 1).unwrap();
@@ -142,8 +142,16 @@ mod tests {
     }
     #[test]
     fn clone_refuses_to_discard_external_transform() {
-        let mut a = custom_plan().into_worker();
-        assert!(a.try_clone().is_err());
+        let plan = custom_plan();
+        assert!(matches!(
+            plan.try_clone().unwrap_err().error(),
+            zenpixels_convert::ConvertError::OwnedCmsConsumed
+        ));
+        let mut a = plan.prepare(1).unwrap();
+        assert!(matches!(
+            a.try_clone().unwrap_err().error(),
+            zenpixels_convert::ConvertError::OwnedCmsConsumed
+        ));
         let mut direct = [0; 3];
         a.try_convert_row(&[1, 2, 3], &mut direct, 1).unwrap();
         assert_eq!(direct, [42, 42, 42]);

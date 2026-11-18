@@ -13,7 +13,7 @@
 #   pub types (struct/enum/trait/alias)        39
 #   pub consts/statics                         31
 #   free functions                              4
-#   inherent methods                          206
+#   inherent methods                          208
 #   struct fields                              14
 #   enum variants                              90
 #   trait roster entries (type × trait)       270
@@ -25,10 +25,10 @@
 #   (root)                           40
 #   banded                            1
 #   buffer                           95
-#   plane                           220
+#   plane                           222
 #   sample                           29
 
-## items (381 lines)
+## items (383 lines)
 
 pub fn banded::BandedPixelBuffer::hash_with(&self, HashInclusions) -> u64
 pub fn buffer::PixelCow<'_, P>::hash_with(&self, HashInclusions) -> u64
@@ -220,6 +220,7 @@ pub fn plane::BandedPlanarBuffer::try_new(&plane::PlanarLayout, u32, u32, color:
 pub fn plane::BandedPlanarBuffer::hash_with(&self, HashInclusions) -> u64
 pub struct plane::BandedPlane<T: StorageSample>
 pub fn plane::BandedPlane<T>::band_layout(u32, u32, u64) -> core::result::Result<banded::BandLayout, plane::PlaneError>
+pub fn plane::BandedPlane<T>::band_layout_aligned(u32, u32, u64, RowAlign) -> core::result::Result<banded::BandLayout, plane::PlaneError>
 pub fn plane::BandedPlane<T>::bands(&self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = plane::PlaneRef<'_, T>> + '_
 pub fn plane::BandedPlane<T>::bands_mut(&mut self) -> impl core::iter::traits::exact_size::ExactSizeIterator<Item = plane::PlaneMut<'_, T>> + '_
 pub const fn plane::BandedPlane<T>::layout(&self) -> banded::BandLayout
@@ -228,6 +229,7 @@ pub fn plane::BandedPlane<T>::oriented_into(&self, orientation::Orientation, &mu
 pub fn plane::BandedPlane<T>::row(&self, u32) -> core::option::Option<&[T]>
 pub fn plane::BandedPlane<T>::row_mut(&mut self, u32) -> core::option::Option<&mut [T]>
 pub fn plane::BandedPlane<T>::try_new(u32, u32, u64) -> core::result::Result<Self, plane::PlaneError>
+pub fn plane::BandedPlane<T>::try_new_aligned(u32, u32, u64, RowAlign) -> core::result::Result<Self, plane::PlaneError>
 pub fn plane::BandedPlane<T>::hash_with(&self, HashInclusions) -> u64
 pub struct plane::FloatEncoding
 pub const plane::FloatEncoding::NOMINAL: Self

@@ -39,7 +39,8 @@ fn composition_preserves_final_samples_of_materialized_stages() {
         .unwrap()
         .then(crate::test_conversion::new_plan(u, f).unwrap())
         .unwrap()
-        .into_worker();
+        .prepare(1)
+        .unwrap();
     let src = [0.1234567f32; 3];
     let mut quantized = [0u8; 3];
     let mut separate = [0f32; 3];
@@ -61,9 +62,35 @@ fn composition_preserves_final_samples_of_materialized_stages() {
 }
 #[test]
 fn gamma22_scalar_matches_adobe_gamma() {
-    let linear = TransferFunction::Gamma22.linearize(0.5);
-    assert!((linear - 0.5f32.powf(563.0 / 256.0)).abs() < 1e-6);
-    assert!((TransferFunction::Gamma22.delinearize(linear) - 0.5).abs() < 1e-6);
+    let g22 = PixelDescriptor::new_full(
+        ChannelType::F32,
+        ChannelLayout::Rgb,
+        None,
+        TransferFunction::Gamma22,
+        ColorPrimaries::AdobeRgb,
+    );
+    let lin = g22.with_transfer(TransferFunction::Linear);
+    let mut to_lin = crate::test_conversion::new_worker(g22, lin).unwrap();
+    let mut to_g22 = crate::test_conversion::new_worker(lin, g22).unwrap();
+    let src = [0.5f32; 3];
+    let mut mid = [0.0f32; 3];
+    let mut back = [0.0f32; 3];
+    to_lin
+        .try_convert_row(
+            bytemuck::cast_slice(&src),
+            bytemuck::cast_slice_mut(&mut mid),
+            1,
+        )
+        .unwrap();
+    to_g22
+        .try_convert_row(
+            bytemuck::cast_slice(&mid),
+            bytemuck::cast_slice_mut(&mut back),
+            1,
+        )
+        .unwrap();
+    assert!((mid[0] - 0.5f32.powf(563.0 / 256.0)).abs() < 1e-6);
+    assert!((back[0] - 0.5).abs() < 1e-6);
 }
 #[test]
 fn f16_premultiply_rounds_below_midpoint_to_zero() {

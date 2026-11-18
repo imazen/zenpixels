@@ -339,6 +339,154 @@ pub(crate) fn apply_orientation_in_place(
     Ok(())
 }
 
+/// Apply `orientation` from banded `src` into pre-allocated banded `dst` with zero
+/// intermediate heap allocation, dispatching each `(src_band, dst_band)` intersection
+/// block through the cache-blocked SIMD transpose kernels.
+pub(crate) fn apply_orientation_banded_into(
+    src: &zenpixels::banded::BandedPixelBuffer,
+    orientation: Orientation,
+    dst: &mut zenpixels::banded::BandedPixelBuffer,
+) -> Result<(), ConvertError> {
+    let w = src.width();
+    let h = src.height();
+    let desc = src.descriptor();
+    let bpp = desc.bytes_per_pixel();
+    let (ow, oh) = orientation.output_dimensions(w, h);
+    let dst_desc = dst.descriptor();
+    let dst_bpp = dst_desc.bytes_per_pixel();
+    if dst.width() != ow || dst.height() != oh || dst_bpp != bpp {
+        return Err(ConvertError::BufferSize {
+            expected: (ow as usize)
+                .saturating_mul(oh as usize)
+                .saturating_mul(bpp),
+            actual: (dst.width() as usize)
+                .saturating_mul(dst.height() as usize)
+                .saturating_mul(dst_bpp),
+        });
+    }
+    if dst_desc.pixel_format() != desc.pixel_format() {
+        return Err(ConvertError::NoPath {
+            from: desc,
+            to: dst_desc,
+        });
+    }
+    if w > 0 && h > 0 && bpp > 0 {
+        match orientation {
+            Orientation::Identity => {
+                let mut oy = 0u32;
+                for mut slice in dst.bands_mut() {
+                    for ry in 0..slice.rows() {
+                        slice
+                            .row_mut(ry)
+                            .copy_from_slice(src.row(oy + ry).expect("row in bounds"));
+                    }
+                    oy += slice.rows();
+                }
+            }
+            Orientation::FlipV => {
+                let mut oy = 0u32;
+                for mut slice in dst.bands_mut() {
+                    for ry in 0..slice.rows() {
+                        slice
+                            .row_mut(ry)
+                            .copy_from_slice(src.row(h - 1 - (oy + ry)).expect("row in bounds"));
+                    }
+                    oy += slice.rows();
+                }
+            }
+            Orientation::FlipH => {
+                let mut oy = 0u32;
+                for mut slice in dst.bands_mut() {
+                    for ry in 0..slice.rows() {
+                        reverse_row(
+                            src.row(oy + ry).expect("row in bounds"),
+                            slice.row_mut(ry),
+                            w as usize,
+                            bpp,
+                        );
+                    }
+                    oy += slice.rows();
+                }
+            }
+            Orientation::Rotate180 => {
+                let mut oy = 0u32;
+                for mut slice in dst.bands_mut() {
+                    for ry in 0..slice.rows() {
+                        reverse_row(
+                            src.row(h - 1 - (oy + ry)).expect("row in bounds"),
+                            slice.row_mut(ry),
+                            w as usize,
+                            bpp,
+                        );
+                    }
+                    oy += slice.rows();
+                }
+            }
+            Orientation::Transpose
+            | Orientation::Rotate90
+            | Orientation::Rotate270
+            | Orientation::Transverse => {
+                let mut oy0 = 0u32;
+                for mut d_slice in dst.bands_mut() {
+                    let dh = d_slice.rows();
+                    let oy1 = oy0 + dh;
+                    let sx0 = match orientation {
+                        Orientation::Transpose | Orientation::Rotate90 => oy0,
+                        Orientation::Rotate270 | Orientation::Transverse => w - oy1,
+                        _ => unreachable!(),
+                    };
+                    let d_stride = d_slice.stride();
+                    let d_bytes = d_slice.as_strided_bytes_mut();
+                    let mut sy0 = 0u32;
+                    for s_slice in src.bands() {
+                        let sh = s_slice.rows();
+                        let sy1 = sy0 + sh;
+                        let ox0 = match orientation {
+                            Orientation::Transpose | Orientation::Rotate270 => sy0,
+                            Orientation::Rotate90 | Orientation::Transverse => h - sy1,
+                            _ => unreachable!(),
+                        };
+                        let s_stride = s_slice.stride();
+                        let s_bytes = s_slice.as_strided_bytes();
+                        let s_off = (sx0 as usize) * bpp;
+                        let d_off = (ox0 as usize) * bpp;
+                        let src_rect = PixelSlice::new(&s_bytes[s_off..], dh, sh, s_stride, desc)
+                            .map_err(|e| ConvertError::Buffer(*e.error()))?;
+                        let dst_rect =
+                            PixelSliceMut::new(&mut d_bytes[d_off..], sh, dh, d_stride, dst_desc)
+                                .map_err(|e| ConvertError::Buffer(*e.error()))?;
+                        apply_orientation_into(src_rect, orientation, dst_rect)?;
+                        sy0 = sy1;
+                    }
+                    oy0 = oy1;
+                }
+            }
+            _ => {
+                for sy in 0..h {
+                    let s_row = src.row(sy).expect("row in bounds");
+                    for sx in 0..w {
+                        let (ox, oy) = orientation.forward_map(sx, sy, w, h);
+                        let s_px = &s_row[sx as usize * bpp..(sx as usize + 1) * bpp];
+                        let d_row = dst.row_mut(oy).expect("row in bounds");
+                        d_row[ox as usize * bpp..(ox as usize + 1) * bpp].copy_from_slice(s_px);
+                    }
+                }
+            }
+        }
+    }
+    if dst.descriptor() == desc {
+        dst.set_color_context(src.color_context().cloned());
+        if let Some(exact) = src.exact_depth() {
+            let _ = dst.set_exact_depth(Some(exact));
+        } else {
+            let _ = dst.set_exact_depth(None);
+        }
+    } else {
+        let _ = dst.set_exact_depth(None);
+    }
+    Ok(())
+}
+
 /// The transform body behind [`PixelBufferConvertExt::into_oriented`](crate::ext::PixelBufferConvertExt::into_oriented): permute the
 /// bytes and return the re-described tight-stride view for
 /// [`PixelBuffer::transform_in_place`] to adopt.

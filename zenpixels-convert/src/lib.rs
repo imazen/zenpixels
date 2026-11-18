@@ -22,8 +22,9 @@
 //!   pixel data in one call, returning [`PixelCow::Borrowed`] when the input
 //!   already matches a supported format.
 //!
-//! - **Extension traits**: [`TransferFunctionExt`], [`ColorPrimariesExt`],
-//!   and `PixelBufferConvertExt` add conversion methods to interchange types.
+//! - **Extension traits**: [`PixelSliceConvertExt`], [`PixelBufferConvertExt`],
+//!   [`BandedPixelBufferConvertExt`], and [`ColorConvertExt`] add conversion
+//!   methods to interchange types.
 //!
 //! # Codec compliance guide
 //!
@@ -296,18 +297,16 @@ pub(crate) mod convert;
 // Only library-owned concrete types implement conversion/measurement extensions.
 mod sealed {
     pub trait Sealed {}
-    impl Sealed for zenpixels::TransferFunction {}
-    impl Sealed for zenpixels::ColorPrimaries {}
     impl Sealed for zenpixels::Color {}
     impl<P> Sealed for zenpixels::PixelBuffer<P> {}
     impl Sealed for zenpixels::PixelSlice<'_> {}
+    impl Sealed for zenpixels::banded::BandedPixelBuffer {}
     impl Sealed for zenpixels::hdr::ContentLightLevel {}
     #[cfg(feature = "planar")]
     impl<C> Sealed for zenpixels::plane::Plane<C> {}
 }
 pub mod error;
 pub(crate) mod f16_scalar;
-#[cfg(feature = "introspection")]
 mod negotiate;
 
 pub mod adapt;
@@ -414,13 +413,14 @@ pub use converter::RowConverter;
 #[doc(inline)]
 pub use error::ConvertError;
 #[cfg(feature = "introspection")]
-pub use negotiate::{ConversionCost, ConvertIntent, FormatOption, LossBucket, Provenance};
+pub use negotiate::{ConversionCost, LossBucket};
+pub use negotiate::{ConvertIntent, Provenance};
 pub use plan::{
-    AllocationRequirements, ByteBound, CandidateTarget, ConversionSpec, ConvertPlan, PlanError,
-    PrepareError, SelectedConversion, WorkExtent,
+    AllocationRequirements, ByteBound, CandidateTarget, ConversionSpec, ConvertPlan,
+    SelectedConversion, WorkExtent,
 };
 #[cfg(feature = "introspection")]
-pub use route::{AccuracyContract, KernelTier, PlannedStepInfo};
+pub use route::{AccuracyContract, KernelTier, PlannedStepInfo, SemanticEffects};
 
 // Re-export extension traits.
 #[cfg(feature = "rgb")]
@@ -431,8 +431,7 @@ pub use ext::PixelBufferHdrConvertExt;
 pub use ext::PlaneConvertExt;
 #[doc(inline)]
 pub use ext::{
-    ColorConvertExt, ColorPrimariesExt, PixelBufferConvertExt, PixelSliceConvertExt,
-    TransferFunctionExt,
+    BandedPixelBufferConvertExt, ColorConvertExt, PixelBufferConvertExt, PixelSliceConvertExt,
 };
 
 // Re-export gamut conversion utilities.

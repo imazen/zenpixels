@@ -9,9 +9,9 @@
 
 ## summary
 #
-#   inherent methods                           69
+#   inherent methods                           68
 #   enum variants                              14
-#   trait roster entries (type × trait)        76
+#   trait roster entries (type × trait)        75
 #
 # per-module pub lines:
 #   (root)                            9
@@ -25,11 +25,11 @@
 #   orientation                       1
 #   pixel_types                       2
 #   plane                             8
-#   policy                            6
+#   policy                            5
 #   precision                         5
 #   sample                            7
 
-## items (83 lines)
+## items (82 lines)
 
 pub fn HashInclusions::assert_fields_are_eq(&self)
 pub fn RowAlign::assert_fields_are_eq(&self)
@@ -86,7 +86,6 @@ pub fn policy::AlphaPolicy::assert_fields_are_eq(&self)
 pub fn policy::ConvertOptions::assert_fields_are_eq(&self)
 pub fn policy::DepthPolicy::assert_fields_are_eq(&self)
 pub fn policy::GamutPolicy::assert_fields_are_eq(&self)
-pub fn policy::GrayExpand::assert_fields_are_eq(&self)
 pub fn policy::LumaCoefficients::assert_fields_are_eq(&self)
 pub fn precision::AlphaContent::assert_fields_are_eq(&self)
 pub fn precision::ConversionEffect::assert_fields_are_eq(&self)
@@ -115,7 +114,7 @@ pub descriptor::ColorPrimaries::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::SignalRange::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::TransferFunction::__Reserved(descriptor::reserved::Reserved)
 
-## trait impls (76 types)
+## trait impls (75 types)
 
 HashInclusions: TrivialClone
 RowAlign: TrivialClone
@@ -178,7 +177,6 @@ policy::AlphaPolicy: TrivialClone
 policy::ConvertOptions: TrivialClone
 policy::DepthPolicy: TrivialClone
 policy::GamutPolicy: TrivialClone
-policy::GrayExpand: TrivialClone
 policy::LumaCoefficients: TrivialClone
 precision::AlphaContent: TrivialClone
 precision::ConversionEffect: TrivialClone

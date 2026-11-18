@@ -237,8 +237,7 @@ impl OutputPlan {
             source,
             PixelEncoding::new(target_desc_full, Some(&target_context)),
             spec,
-        )
-        .map_err(|e| e.map_error(|error| error.into_conversion(source_desc, target_desc_full)))?;
+        )?;
         let context = Arc::new(
             compiled
                 .output_encoding()

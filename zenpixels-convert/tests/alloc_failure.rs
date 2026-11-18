@@ -95,31 +95,72 @@ fn multi_op_plan() -> ConvertPlan {
 #[test]
 fn scratch_prepare_reports_allocation_failure() {
     let _g = lock();
-    let mut converter = crate::test_conversion::worker(multi_op_plan());
+    let plan = multi_op_plan();
     failing_above(4096, || {
-        let err = converter.prepare(2048).unwrap_err();
+        let err = plan.prepare_shared(2048).unwrap_err();
         assert_alloc_failed(&err);
     });
     // The allocator restored, the identical prepare succeeds.
-    converter.prepare(2048).unwrap();
+    let _converter = plan.prepare(2048).unwrap();
 }
 
 #[test]
 fn unprepared_row_conversion_reports_allocation_failure() {
+    use zenpixels::{Cicp, ColorOrigin, PixelFormat, PixelSliceMut};
+    use zenpixels_convert::OutputProfile;
+
     let _g = lock();
     let width = 2048u32;
-    let mut converter = crate::test_conversion::worker(multi_op_plan());
+    let mut plan = crate::test_conversion::output_plan(
+        PixelDescriptor::RGBA8_SRGB.encoding(),
+        &ColorOrigin::assumed(),
+        OutputProfile::Named(Cicp::new(9, 8, 0, true)),
+        PixelFormat::RgbF32,
+        &crate::test_conversion::legacy_options(),
+        None,
+    )
+    .unwrap();
     let src = vec![0x40u8; width as usize * 4];
-    let mut dst = vec![0u8; width as usize * 12];
+    let mut dst = vec![0f32; width as usize * 3];
     failing_above(4096, || {
-        let err = converter
-            .try_convert_row(&src, &mut dst, width)
-            .unwrap_err();
+        let src_view = PixelSlice::new(
+            &src,
+            width,
+            1,
+            width as usize * 4,
+            PixelDescriptor::RGBA8_SRGB,
+        )
+        .unwrap();
+        let dst_view = PixelSliceMut::new(
+            bytemuck::cast_slice_mut(&mut dst),
+            width,
+            1,
+            width as usize * 12,
+            plan.output_descriptor(),
+        )
+        .unwrap();
+        let err = plan.convert_rows(src_view, dst_view).unwrap_err();
         assert_alloc_failed(&err);
     });
     // After refusal, the same conversion succeeds — the scratch reserve left
     // no half-charged state.
-    converter.try_convert_row(&src, &mut dst, width).unwrap();
+    let src_view = PixelSlice::new(
+        &src,
+        width,
+        1,
+        width as usize * 4,
+        PixelDescriptor::RGBA8_SRGB,
+    )
+    .unwrap();
+    let dst_view = PixelSliceMut::new(
+        bytemuck::cast_slice_mut(&mut dst),
+        width,
+        1,
+        width as usize * 12,
+        plan.output_descriptor(),
+    )
+    .unwrap();
+    plan.convert_rows(src_view, dst_view).unwrap();
 }
 
 #[test]

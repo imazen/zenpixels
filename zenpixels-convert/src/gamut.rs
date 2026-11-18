@@ -40,6 +40,34 @@ impl GamutMatrix {
         &self.0
     }
 
+    /// Linear RGB in `primaries` → CIE XYZ (D65), or `None` for unknown primaries.
+    #[inline]
+    #[must_use]
+    pub const fn to_xyz(primaries: ColorPrimaries) -> Option<&'static Self> {
+        #[allow(unreachable_patterns)]
+        match primaries {
+            ColorPrimaries::Bt709 => Some(&BT709_TO_XYZ),
+            ColorPrimaries::DisplayP3 => Some(&DISPLAY_P3_TO_XYZ),
+            ColorPrimaries::Bt2020 => Some(&BT2020_TO_XYZ),
+            ColorPrimaries::AdobeRgb => Some(&ADOBE_RGB_TO_XYZ),
+            _ => None,
+        }
+    }
+
+    /// CIE XYZ (D65) → linear RGB in `primaries`, or `None` for unknown primaries.
+    #[inline]
+    #[must_use]
+    pub const fn from_xyz(primaries: ColorPrimaries) -> Option<&'static Self> {
+        #[allow(unreachable_patterns)]
+        match primaries {
+            ColorPrimaries::Bt709 => Some(&XYZ_TO_BT709),
+            ColorPrimaries::DisplayP3 => Some(&XYZ_TO_DISPLAY_P3),
+            ColorPrimaries::Bt2020 => Some(&XYZ_TO_BT2020),
+            ColorPrimaries::AdobeRgb => Some(&XYZ_TO_ADOBE_RGB),
+            _ => None,
+        }
+    }
+
     /// The matrix taking linear RGB in `from` to linear RGB in `to`.
     ///
     /// Equal primaries give the identity. `None` when either is

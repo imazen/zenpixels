@@ -41,7 +41,7 @@ fn check(layout: ChannelLayout, alpha: Option<AlphaMode>, tf: TransferFunction) 
     strided_src[..input.len()].copy_from_slice(&input);
     strided_src[src_stride..src_stride + input.len()].copy_from_slice(&input);
     let mut strided_dst = vec![0x59; dst_stride * 2];
-    conv.convert_rows(
+    conv.convert_raw_rows(
         &strided_src,
         src_stride,
         &mut strided_dst,

@@ -305,7 +305,7 @@ fn grayscale_reduction_preserves_unusable_icc_but_allows_exact_alpha_and_depth_r
                     assert_eq!(report.uses_alpha, Some(false));
                     assert_eq!(report.uses_low_bits, Some(false));
 
-                    let copied = buffer.as_slice().try_reduce_to_load_bearing_format();
+                    let copied = buffer.as_slice().reduce_to_load_bearing_format().unwrap();
                     if has_alpha || channel == ChannelType::U16 {
                         let copied = copied.unwrap();
                         assert_eq!(copied.descriptor(), PixelDescriptor::RGB8_SRGB);
