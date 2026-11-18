@@ -3,16 +3,6 @@
 //! Alpha removal, depth reduction, grayscale conversion and clipping have
 //! explicit permissions. These options do not prove sample-exact conversion.
 
-/// How to expand grayscale channels to RGB.
-///
-/// Used when converting from a grayscale layout to an RGB-family layout.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum GrayExpand {
-    /// Channel broadcast: `v → (v, v, v)`. Lossless.
-    Broadcast,
-}
-
 use crate::color::Color;
 use crate::hdr::DiffuseWhite;
 
@@ -156,8 +146,6 @@ pub enum GamutPolicy {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct ConvertOptions {
-    /// How to expand grayscale to RGB.
-    gray_expand: GrayExpand,
     /// How to handle alpha removal.
     alpha_policy: AlphaPolicy,
     /// How to handle depth reduction.
@@ -185,11 +173,9 @@ impl ConvertOptions {
     /// when an extended-range conversion is required.
     ///
     /// For reversible representation changes only, use
-    /// `zenpixels_convert::OutputPlan::new_preserving_samples` or
-    /// `zenpixels_convert::ConvertPlan::new_preserving_samples`.
+    /// `zenpixels_convert::ConversionSpec::preserve_samples`.
     pub const fn retain_channels() -> Self {
         Self {
-            gray_expand: GrayExpand::Broadcast,
             alpha_policy: AlphaPolicy::Forbid,
             depth_policy: DepthPolicy::Forbid,
             luma: None,
@@ -255,11 +241,6 @@ impl ConvertOptions {
         self
     }
 
-    /// How grayscale expands to RGB.
-    pub const fn gray_expand(&self) -> GrayExpand {
-        self.gray_expand
-    }
-
     /// How alpha removal is handled.
     pub const fn alpha_policy(&self) -> AlphaPolicy {
         self.alpha_policy
@@ -292,14 +273,6 @@ impl ConvertOptions {
         self
     }
 
-    /// Set the grayscale expansion method.
-    pub const fn with_gray_expand(mut self, expand: GrayExpand) -> Self {
-        self.gray_expand = expand;
-        self
-    }
-
-    /// Set whether f32 transfer conversions clamp to [0, 1] (`true`, default)
-    /// or preserve extended-range values via sign-preserving transfers
     /// Choose how to handle extended-range or out-of-gamut values.
     #[must_use]
     pub const fn with_gamut_policy(mut self, policy: GamutPolicy) -> Self {
@@ -327,19 +300,7 @@ mod tests {
         assert_eq!(options.alpha_policy, AlphaPolicy::Forbid);
         assert_eq!(options.depth_policy, DepthPolicy::Forbid);
         assert_eq!(options.luma, None);
-        assert_eq!(options.gray_expand, GrayExpand::Broadcast);
         assert_eq!(options.gamut_policy(), GamutPolicy::Clip);
-    }
-
-    #[test]
-    fn gray_expand_derive_traits() {
-        let a = GrayExpand::Broadcast;
-        let b = a;
-        #[allow(clippy::clone_on_copy)]
-        let c = a.clone();
-        assert_eq!(a, b);
-        assert_eq!(a, c);
-        let _ = format!("{a:?}");
     }
 
     #[test]
@@ -437,7 +398,6 @@ mod tests {
     #[test]
     fn convert_options_derive_traits() {
         let opts = ConvertOptions {
-            gray_expand: GrayExpand::Broadcast,
             alpha_policy: AlphaPolicy::DiscardUnchecked,
             depth_policy: DepthPolicy::Round,
             luma: Some(LumaCoefficients::Bt709),
@@ -476,7 +436,6 @@ mod tests {
     fn convert_options_hash() {
         use core::hash::{Hash, Hasher};
         let opts = ConvertOptions {
-            gray_expand: GrayExpand::Broadcast,
             alpha_policy: AlphaPolicy::Forbid,
             depth_policy: DepthPolicy::Forbid,
             luma: None,

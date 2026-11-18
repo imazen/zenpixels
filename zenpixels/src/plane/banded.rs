@@ -22,29 +22,66 @@ impl<T: PlaneSample> BandedPlane<T> {
         height: u32,
         max_band_bytes: u64,
     ) -> Result<BandLayout, PlaneError> {
-        let cap = max_band_bytes.min(isize::MAX as u64) / 64 * 64;
-        BandLayout::for_rows(
-            width,
-            height,
-            u64::from(width) * core::mem::size_of::<T>() as u64,
-            cap,
-            1,
-        )
-        .map_err(|_| PlaneError::GeometryOverflow)
+        Self::band_layout_aligned(width, height, max_band_bytes, RowAlign::Tight)
     }
 
-    /// Allocate a zeroed, banded plane.
+    /// Plan geometry for `align`-strided rows with a 64-byte-aligned allocation per band.
+    pub fn band_layout_aligned(
+        width: u32,
+        height: u32,
+        max_band_bytes: u64,
+        align: RowAlign,
+    ) -> Result<BandLayout, PlaneError> {
+        if width == 0 || height == 0 {
+            return Err(PlaneError::GeometryOverflow);
+        }
+        let sample_size = core::mem::size_of::<T>();
+        let row_bytes = match usize::try_from(width) {
+            Ok(w) => {
+                let (stride_samples, _) = super::aligned_plane_stride(w, 1, sample_size, align)?;
+                (stride_samples as u64)
+                    .checked_mul(sample_size as u64)
+                    .ok_or(PlaneError::GeometryOverflow)?
+            }
+            Err(_) => return Err(PlaneError::GeometryOverflow),
+        };
+        let cap = max_band_bytes.min(isize::MAX as u64) / 64 * 64;
+        BandLayout::for_rows(width, height, row_bytes, cap, 1)
+            .map_err(|_| PlaneError::GeometryOverflow)
+    }
+
+    /// Allocate a zeroed, tight-row banded plane.
     pub fn try_new(width: u32, height: u32, max_band_bytes: u64) -> Result<Self, PlaneError> {
-        let layout = Self::band_layout(width, height, max_band_bytes)?;
+        Self::try_new_aligned(width, height, max_band_bytes, RowAlign::Tight)
+    }
+
+    /// Allocate a zeroed banded plane with `align` row alignment and address-space preflight.
+    pub fn try_new_aligned(
+        width: u32,
+        height: u32,
+        max_band_bytes: u64,
+        align: RowAlign,
+    ) -> Result<Self, PlaneError> {
+        let layout = Self::band_layout_aligned(width, height, max_band_bytes, align)?;
+        let w_usize = usize::try_from(width).map_err(|_| PlaneError::GeometryOverflow)?;
+        let (stride_samples, _) =
+            super::aligned_plane_stride(w_usize, 1, core::mem::size_of::<T>(), align)?;
+        let total_owner_bytes = (stride_samples as u64)
+            .checked_mul(core::mem::size_of::<T>() as u64)
+            .and_then(|rb| rb.checked_mul(height as u64))
+            .ok_or(PlaneError::GeometryOverflow)?;
+        if total_owner_bytes > usize::MAX as u64 {
+            return Err(PlaneError::GeometryOverflow);
+        }
         let mut bands = Vec::new();
         bands
             .try_reserve_exact(layout.band_count() as usize)
             .map_err(|_| PlaneError::AllocationFailed)?;
         for range in layout.bands() {
             bands.push(AlignedPlane::alloc_aligned(
-                width as usize,
+                w_usize,
                 (range.end - range.start) as usize,
-                RowAlign::Tight,
+                align,
             )?);
         }
         Ok(Self { layout, bands })
@@ -259,6 +296,27 @@ impl BandedPlanarBuffer {
         max_band_bytes: u64,
     ) -> Result<Self, PlanarBandError> {
         let geometry = Self::band_layout(layout, width, height, max_band_bytes)?;
+        // Preflight aggregate bytes across all bands before allocating any plane.
+        let mut total_owner_bytes = 0u64;
+        for range in geometry.bands() {
+            let rows = range.end - range.start;
+            for (i, spec) in layout.planes().iter().enumerate() {
+                let (w, h) = layout
+                    .plane_size(i, width, rows)
+                    .ok_or(PlanarBandError::Geometry(BufferError::InvalidDimensions))?;
+                let plane_bytes = u64::from(w)
+                    .checked_mul(u64::from(h))
+                    .and_then(|v| v.checked_mul(spec.role().components() as u64))
+                    .and_then(|v| v.checked_mul(spec.encoding().channel_type().byte_size() as u64))
+                    .ok_or(PlanarBandError::Storage(PlaneError::GeometryOverflow))?;
+                total_owner_bytes = total_owner_bytes
+                    .checked_add(plane_bytes)
+                    .ok_or(PlanarBandError::Storage(PlaneError::GeometryOverflow))?;
+            }
+        }
+        if total_owner_bytes > usize::MAX as u64 {
+            return Err(PlanarBandError::Storage(PlaneError::GeometryOverflow));
+        }
         let mut bands = Vec::new();
         bands
             .try_reserve_exact(geometry.band_count() as usize)

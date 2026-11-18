@@ -284,3 +284,66 @@ fn planar_orientation_carries_chroma_lattice_across_band_boundaries() {
     ));
     assert_eq!(odd.plane_row(0, 0), Some(&[99; 5][..]));
 }
+
+#[test]
+fn adopted_buffer_context_authority_aligned_stride_and_exact_depth_preservation() {
+    use alloc::sync::Arc;
+    use zenpixels::sample::ExactDepth;
+    use zenpixels::{ColorContext, RowAlign, SignalRange};
+    extern crate alloc;
+
+    let desc = PixelDescriptor::RGB16_SRGB;
+    let ctx = Arc::new(ColorContext::from_icc(&b"authoritative-icc"[..]));
+    let mut contig = PixelBuffer::try_new(5, 4, desc)
+        .unwrap()
+        .with_color_context(ctx);
+    let exact8 = ExactDepth::new(desc.channel_type(), SignalRange::Full, 8, 1).unwrap();
+    contig.set_exact_depth(Some(exact8)).unwrap();
+
+    // Zero-copy adoption strips inner band context so `set_color_context(None)` clears borrowed views!
+    let mut banded = BandedPixelBuffer::from_contiguous(contig).unwrap();
+    assert_eq!(banded.exact_depth(), Some(exact8));
+    assert_eq!(
+        banded
+            .bands()
+            .next()
+            .unwrap()
+            .color_context()
+            .and_then(|c| c.icc()),
+        Some(&b"authoritative-icc"[..])
+    );
+    banded.set_color_context(None);
+    assert!(banded.bands().next().unwrap().color_context().is_none());
+
+    // ExactDepth survives geometric permutations (`orient_in_place` and `oriented_into`)
+    // and hashes identically under `HashInclusions::All`!
+    banded.orient_in_place(Orientation::Rotate180).unwrap();
+    assert_eq!(banded.exact_depth(), Some(exact8));
+
+    let mut dst_aligned =
+        BandedPixelBuffer::try_new_with_align(4, 5, desc, 256, RowAlign::Cache64).unwrap();
+    assert!(
+        dst_aligned
+            .bands()
+            .next()
+            .unwrap()
+            .stride()
+            .is_multiple_of(64)
+    );
+    banded
+        .oriented_into(Orientation::Rotate90, &mut dst_aligned)
+        .unwrap();
+    assert_eq!(dst_aligned.exact_depth(), Some(exact8));
+
+    #[cfg(feature = "hash")]
+    {
+        let rebuilt = dst_aligned.try_into_contiguous().unwrap();
+        assert_eq!(rebuilt.exact_depth(), Some(exact8));
+    }
+
+    // Mutating a row clears ExactDepth evidence.
+    let mut mutable = BandedPixelBuffer::try_new(4, 5, desc, 256).unwrap();
+    mutable.set_exact_depth(Some(exact8)).unwrap();
+    let _ = mutable.row_mut(0).unwrap();
+    assert_eq!(mutable.exact_depth(), None);
+}

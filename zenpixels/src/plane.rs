@@ -202,7 +202,7 @@ impl PlaneGeom {
     }
 }
 
-fn aligned_plane_stride(
+pub(super) fn aligned_plane_stride(
     width: usize,
     height: usize,
     size: usize,

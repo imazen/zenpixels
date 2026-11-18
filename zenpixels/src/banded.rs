@@ -4,13 +4,14 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::ops::Range;
 
+use crate::sample::{ExactDepth, ExactDepthError};
 use crate::{
     BufferError, ColorContext, Orientation, PixelBuffer, PixelDescriptor, PixelEncoding,
-    PixelSlice, PixelSliceMut,
+    PixelSlice, PixelSliceMut, RowAlign,
 };
 use whereat::At;
 
-/// Upper bound on the default band payload.
+/// Upper bound on the default band payload (`64 MiB`).
 pub const DEFAULT_MAX_BAND_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Partition of an image into bounded, independently addressable row ranges.
@@ -32,14 +33,30 @@ impl BandLayout {
         descriptor: PixelDescriptor,
         max_band_bytes: u64,
     ) -> Result<Self, BufferError> {
+        Self::with_align(width, height, descriptor, max_band_bytes, RowAlign::Tight)
+    }
+
+    /// Plan row-aligned bands for a packed format using exact per-row stride bytes.
+    pub fn with_align(
+        width: u32,
+        height: u32,
+        descriptor: PixelDescriptor,
+        max_band_bytes: u64,
+        align: RowAlign,
+    ) -> Result<Self, BufferError> {
         descriptor.validate()?;
-        Self::for_rows(
-            width,
-            height,
-            width as u64 * descriptor.bytes_per_pixel() as u64,
-            max_band_bytes,
-            1,
-        )
+        if width == 0 || height == 0 {
+            return Err(BufferError::InvalidDimensions);
+        }
+        let stride = match align {
+            RowAlign::Tight => (width as u64)
+                .checked_mul(descriptor.bytes_per_pixel() as u64)
+                .ok_or(BufferError::InvalidDimensions)?,
+            _ => descriptor
+                .try_aligned_stride(width, align)
+                .ok_or(BufferError::InvalidDimensions)? as u64,
+        };
+        Self::for_rows(width, height, stride, max_band_bytes, 1)
     }
 
     pub(crate) fn for_rows(
@@ -49,7 +66,7 @@ impl BandLayout {
         max_band_bytes: u64,
         row_multiple: u32,
     ) -> Result<Self, BufferError> {
-        if width == 0 || height == 0 || row_budget == 0 {
+        if width == 0 || height == 0 || row_budget == 0 || row_multiple == 0 {
             return Err(BufferError::InvalidDimensions);
         }
         let cap = max_band_bytes.min(isize::MAX as u64);
@@ -114,53 +131,165 @@ impl BandLayout {
     }
 }
 
-/// Packed pixels in independently allocated bands with one image interpretation.
+/// Packed pixels in independently allocated bands with one authoritative image interpretation.
 #[derive(Debug)]
 pub struct BandedPixelBuffer {
     layout: BandLayout,
     descriptor: PixelDescriptor,
     color: Option<Arc<ColorContext>>,
+    exact: Option<ExactDepth>,
     bands: Vec<PixelBuffer>,
 }
 
 impl BandedPixelBuffer {
-    /// Allocate a zeroed image using a cap on each band's sample bytes.
+    /// Allocate a zeroed image using a cap on each band's sample bytes (`RowAlign::Tight`).
+    #[track_caller]
     pub fn try_new(
         width: u32,
         height: u32,
         descriptor: PixelDescriptor,
         max_band_bytes: u64,
     ) -> Result<Self, At<BufferError>> {
-        let layout = BandLayout::new(width, height, descriptor, max_band_bytes)
+        Self::try_new_with_align(width, height, descriptor, max_band_bytes, RowAlign::Tight)
+    }
+
+    /// Allocate a zeroed row-aligned banded image with an up-front address-space preflight.
+    #[track_caller]
+    pub fn try_new_with_align(
+        width: u32,
+        height: u32,
+        descriptor: PixelDescriptor,
+        max_band_bytes: u64,
+        align: RowAlign,
+    ) -> Result<Self, At<BufferError>> {
+        let layout = BandLayout::with_align(width, height, descriptor, max_band_bytes, align)
             .map_err(|e| whereat::at!(e))?;
+        let stride = descriptor
+            .try_aligned_stride(width, align)
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        // Preflight aggregate owner bytes against addressable memory before allocating any band.
+        let total_owner_bytes = (stride as u64)
+            .checked_mul(height as u64)
+            .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+        if total_owner_bytes > usize::MAX as u64 {
+            return Err(whereat::at!(BufferError::InvalidDimensions));
+        }
+
         let mut bands = Vec::new();
         bands
             .try_reserve_exact(layout.band_count() as usize)
             .map_err(|_| whereat::at!(BufferError::AllocationFailed))?;
         for rows in layout.bands() {
-            bands.push(PixelBuffer::try_new(
-                width,
-                rows.end - rows.start,
-                descriptor,
-            )?);
+            let h = rows.end - rows.start;
+            let band = match align {
+                RowAlign::Tight => PixelBuffer::try_new(width, h, descriptor)?,
+                _ => PixelBuffer::try_new_with_align(width, h, descriptor, align)?,
+            };
+            bands.push(band);
         }
         Ok(Self {
             layout,
             descriptor,
             color: None,
+            exact: None,
             bands,
         })
     }
 
+    /// Adopt an owned contiguous [`PixelBuffer`] as a single-band `BandedPixelBuffer` without copying.
+    #[track_caller]
+    pub fn from_contiguous(mut buffer: PixelBuffer) -> Result<Self, At<BufferError>> {
+        let width = buffer.width();
+        let height = buffer.height();
+        let layout = BandLayout::for_rows(width, height, 1, u64::from(height), 1)
+            .map_err(|e| whereat::at!(e))?;
+        let descriptor = buffer.descriptor();
+        let color = buffer.color_context().cloned();
+        let exact = buffer.exact_depth();
+        // Strip inner per-band metadata so `self` is the single authoritative owner.
+        buffer.set_color_context(None);
+        let _ = buffer.set_exact_depth(None);
+        Ok(Self {
+            layout,
+            descriptor,
+            color,
+            exact,
+            bands: alloc::vec![buffer],
+        })
+    }
+
+    /// Convert into a contiguous [`PixelBuffer`] (zero-copy when stored as a single band).
+    #[track_caller]
+    pub fn try_into_contiguous(mut self) -> Result<PixelBuffer, At<BufferError>> {
+        if self.bands.len() == 1 {
+            let mut single = self.bands.pop().expect("single band");
+            single.set_color_context(self.color);
+            let _ = single.set_exact_depth(self.exact);
+            return Ok(single);
+        }
+        let mut out = PixelBuffer::try_new(self.layout.width, self.layout.height, self.descriptor)?;
+        {
+            let mut dst = out.as_slice_mut();
+            for y in 0..self.layout.height {
+                dst.row_mut(y)
+                    .copy_from_slice(self.row(y).expect("row in bounds"));
+            }
+        }
+        out.set_color_context(self.color);
+        let _ = out.set_exact_depth(self.exact);
+        Ok(out)
+    }
+
     /// Set current interpretation for every borrowed band.
+    #[must_use]
     pub fn with_color_context(mut self, color: Arc<ColorContext>) -> Self {
         self.color = Some(color);
         self
     }
 
+    /// Picture width in pixels.
+    #[inline]
+    pub const fn width(&self) -> u32 {
+        self.layout.width
+    }
+
+    /// Picture height in pixels.
+    #[inline]
+    pub const fn height(&self) -> u32 {
+        self.layout.height
+    }
+
+    /// Pixel format and color descriptor.
+    #[inline]
+    pub const fn descriptor(&self) -> PixelDescriptor {
+        self.descriptor
+    }
+
+    /// Attached extended [`ColorContext`], if any.
+    #[inline]
+    pub fn color_context(&self) -> Option<&Arc<ColorContext>> {
+        self.color.as_ref()
+    }
+
     /// Current interpretation shared by all bands.
+    #[inline]
     pub fn encoding(&self) -> PixelEncoding<'_> {
         PixelEncoding::new(self.descriptor, self.color.as_deref())
+    }
+
+    /// Declared exact-depth sample evidence, if any.
+    #[inline]
+    pub const fn exact_depth(&self) -> Option<ExactDepth> {
+        self.exact
+    }
+
+    /// Declare or clear exact-depth sample evidence across all bands.
+    pub fn set_exact_depth(&mut self, exact: Option<ExactDepth>) -> Result<(), ExactDepthError> {
+        if let Some(d) = exact {
+            crate::buffer::check_exact(self.descriptor, d)?;
+        }
+        self.exact = exact;
+        Ok(())
     }
 
     /// Band geometry and global row addressing.
@@ -175,25 +304,33 @@ impl BandedPixelBuffer {
 
     /// Borrow each band in image order.
     pub fn bands(&self) -> impl DoubleEndedIterator<Item = PixelSlice<'_>> + ExactSizeIterator {
-        self.bands.iter().map(|band| {
-            let view = band.as_slice();
-            match &self.color {
-                Some(color) => view.with_color_context(Arc::clone(color)),
-                None => view,
+        let color = self.color.as_ref();
+        let exact = self.exact;
+        self.bands.iter().map(move |band| {
+            let mut view = band.as_slice();
+            if let Some(c) = color {
+                view = view.with_color_context(Arc::clone(c));
             }
+            if let Some(e) = exact {
+                view = view.with_exact_depth(e).expect("validated exact depth");
+            }
+            view
         })
     }
 
-    /// Write the bands in image order. Each returned view inherits the image interpretation.
+    /// Write the bands in image order (clears exact-depth evidence).
+    /// Each returned view inherits the image interpretation.
     pub fn bands_mut(
         &mut self,
     ) -> impl DoubleEndedIterator<Item = PixelSliceMut<'_>> + ExactSizeIterator {
-        self.bands.iter_mut().map(|band| {
-            let view = band.as_slice_mut();
-            match &self.color {
-                Some(color) => view.with_color_context(Arc::clone(color)),
-                None => view,
+        self.exact = None;
+        let color = self.color.as_ref();
+        self.bands.iter_mut().map(move |band| {
+            let mut view = band.as_slice_mut();
+            if let Some(c) = color {
+                view = view.with_color_context(Arc::clone(c));
             }
+            view
         })
     }
 
@@ -208,6 +345,8 @@ impl BandedPixelBuffer {
         } else {
             rows.end.div_ceil(self.layout.band_rows) as usize
         };
+        let color = self.color.as_ref();
+        let exact = self.exact;
         Some(
             self.bands[start..end]
                 .iter()
@@ -216,11 +355,14 @@ impl BandedPixelBuffer {
                     let band_start = (start + i) as u32 * self.layout.band_rows;
                     let local_start = rows.start.saturating_sub(band_start);
                     let local_end = (rows.end - band_start).min(band.height());
-                    let view = band.rows(local_start, local_end - local_start);
-                    match &self.color {
-                        Some(color) => view.with_color_context(Arc::clone(color)),
-                        None => view,
+                    let mut view = band.rows(local_start, local_end - local_start);
+                    if let Some(c) = color {
+                        view = view.with_color_context(Arc::clone(c));
                     }
+                    if let Some(e) = exact {
+                        view = view.with_exact_depth(e).expect("validated exact depth");
+                    }
+                    view
                 }),
         )
     }
@@ -231,9 +373,10 @@ impl BandedPixelBuffer {
         Some(self.bands[band].rows(local_y, 1).as_strided_bytes())
     }
 
-    /// Write the active samples in global row `y`.
+    /// Write the active samples in global row `y` (clears exact-depth evidence).
     pub fn row_mut(&mut self, y: u32) -> Option<&mut [u8]> {
         let (band, local_y) = self.layout.locate(y)?;
+        self.exact = None;
         Some(self.bands[band].rows_mut(local_y, 1).into_bytes())
     }
 
@@ -241,13 +384,16 @@ impl BandedPixelBuffer {
     pub fn set_color_context(&mut self, color: Option<Arc<ColorContext>>) {
         self.color = color;
     }
+
     /// Apply a row-local or row-order orientation without allocating pixel storage.
     ///
-    /// Axis-swapping orientations require [Self::oriented_into].
+    /// Preserves [`exact_depth`](Self::exact_depth) because geometric permutation leaves
+    /// sample values unchanged. Axis-swapping orientations require [`Self::oriented_into`].
     pub fn orient_in_place(&mut self, orientation: Orientation) -> Result<(), BufferError> {
         if orientation.swaps_axes() {
             return Err(BufferError::InvalidDimensions);
         }
+        let saved_exact = self.exact;
         let height = self.layout.height;
         if matches!(orientation, Orientation::FlipV | Orientation::Rotate180) {
             for y in 0..height / 2 {
@@ -256,9 +402,11 @@ impl BandedPixelBuffer {
                 if a == b {
                     let mut band = self.bands[a].rows_mut(ay, by - ay + 1);
                     let row_bytes = band.stride();
+                    let active_bytes =
+                        (self.layout.width as usize) * self.descriptor.bytes_per_pixel();
                     let (first, rest) = band.as_strided_bytes_mut().split_at_mut(row_bytes);
                     let start = (by - ay - 1) as usize * row_bytes;
-                    first.swap_with_slice(&mut rest[start..start + row_bytes]);
+                    first[..active_bytes].swap_with_slice(&mut rest[start..start + active_bytes]);
                 } else {
                     let (front, back) = self.bands.split_at_mut(b);
                     let mut first = front[a].rows_mut(ay, 1);
@@ -274,6 +422,7 @@ impl BandedPixelBuffer {
                 reverse_pixel_row(row, bpp);
             }
         }
+        self.exact = saved_exact;
         Ok(())
     }
 
@@ -302,6 +451,7 @@ impl BandedPixelBuffer {
             }
         });
         dst.color = self.color.clone();
+        dst.exact = self.exact;
         Ok(())
     }
 }

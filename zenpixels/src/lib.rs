@@ -129,9 +129,7 @@ pub use color::{
 // Re-export f16 sample and GrayAlpha pixel types at crate root.
 pub use pixel_types::{F16Sample, GrayAlpha8, GrayAlpha16, GrayAlphaF16, GrayAlphaF32};
 
-pub use policy::{
-    AlphaPolicy, ConvertOptions, DepthPolicy, GamutPolicy, GrayExpand, LumaCoefficients,
-};
+pub use policy::{AlphaPolicy, ConvertOptions, DepthPolicy, GamutPolicy, LumaCoefficients};
 
 // Every fallible signature here names it.
 pub use whereat::At;

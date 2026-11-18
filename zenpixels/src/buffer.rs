@@ -1108,6 +1108,12 @@ impl<'a, P> PixelSlice<'a, P> {
         self
     }
 
+    /// Replace or clear the color context on this slice.
+    #[inline]
+    pub fn set_color_context(&mut self, color: Option<Arc<ColorContext>>) {
+        self.color = color;
+    }
+
     /// Relabel the source diffuse-white anchor — the cd/m² that relative-linear
     /// `1.0` represents. **Reinterpretation only:** pixels are untouched (use a
     /// converter to change pixel values). Clones any existing [`ColorContext`],
@@ -1729,6 +1735,12 @@ impl<'a, P> PixelSliceMut<'a, P> {
     pub fn with_color_context(mut self, ctx: Arc<ColorContext>) -> Self {
         self.color = Some(ctx);
         self
+    }
+
+    /// Replace or clear the color context on this slice.
+    #[inline]
+    pub fn set_color_context(&mut self, color: Option<Arc<ColorContext>>) {
+        self.color = color;
     }
 
     /// Relabel the source diffuse-white anchor — the cd/m² that relative-linear
@@ -3725,6 +3737,12 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
         self
     }
 
+    /// Replace or clear the color context on this buffer.
+    #[inline]
+    pub fn set_color_context(&mut self, color: Option<Arc<ColorContext>>) {
+        self.color = color;
+    }
+
     /// Relabel the source diffuse-white anchor — the cd/m² that relative-linear
     /// `1.0` represents. **Reinterpretation only:** pixels are untouched (use a
     /// converter to change pixel values). Clones any existing [`ColorContext`],
@@ -4164,7 +4182,10 @@ fn exact_survives(old: PixelDescriptor, new: PixelDescriptor) -> bool {
         && old.signal_range == new.signal_range
 }
 
-fn check_exact(descriptor: PixelDescriptor, exact: ExactDepth) -> Result<(), ExactDepthError> {
+pub(crate) fn check_exact(
+    descriptor: PixelDescriptor,
+    exact: ExactDepth,
+) -> Result<(), ExactDepthError> {
     if exact.storage() != descriptor.channel_type() || exact.range() != descriptor.signal_range {
         return Err(ExactDepthError::DescriptorMismatch);
     }

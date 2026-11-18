@@ -609,7 +609,7 @@ impl crate::banded::BandedPixelBuffer {
         packed_header(
             (geometry.width(), geometry.height()),
             self.encoding(),
-            None,
+            self.exact_depth(),
             inclusions,
             state,
         );
