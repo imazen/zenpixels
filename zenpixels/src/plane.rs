@@ -242,6 +242,7 @@ fn aligned_plane_stride(
     };
     let len = stride
         .checked_mul(height)
+        .filter(|&n| n <= (isize::MAX as usize) / size)
         .ok_or(PlaneError::GeometryOverflow)?;
     Ok((stride, len))
 }
@@ -2168,3 +2169,6 @@ impl<P> core::error::Error for PlanarFromPartsError<P> {
         Some(&self.error)
     }
 }
+
+mod banded;
+pub use banded::{BandedPlanarBuffer, BandedPlane, PlanarBandError};

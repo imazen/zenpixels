@@ -93,6 +93,7 @@ pub mod icc;
 pub mod pixel_types;
 pub(crate) mod registry;
 
+pub mod banded;
 pub mod buffer;
 
 // Re-export orientation type at crate root.

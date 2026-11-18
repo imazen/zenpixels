@@ -321,7 +321,8 @@ pub(crate) fn apply_orientation_in_place(
     let mut moved: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if transposing && dst.width() != dst.height() {
         moved = bytemuck::allocation::try_zeroed_vec::<u8>(
-            (dst.width() as usize * dst.height() as usize).div_ceil(8),
+            usize::try_from(dst.pixel_count().div_ceil(8))
+                .map_err(|_| ConvertError::AllocationFailed)?,
         )
         .map_err(|()| ConvertError::AllocationFailed)?;
     }

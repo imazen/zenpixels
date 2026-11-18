@@ -127,6 +127,7 @@ fn try_zeroed_chunks(len: usize, sample_size: usize) -> Result<Vec<Chunk>, Plane
         .checked_mul(sample_size)
         .ok_or(PlaneError::GeometryOverflow)?
         .div_ceil(core::mem::size_of::<Chunk>());
+    core::alloc::Layout::array::<Chunk>(chunk_count).map_err(|_| PlaneError::GeometryOverflow)?;
     bytemuck::allocation::try_zeroed_vec(chunk_count).map_err(|()| PlaneError::AllocationFailed)
 }
 

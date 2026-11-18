@@ -528,12 +528,12 @@ fn required_bytes(rows: u32, stride: usize, min_stride: usize) -> Result<usize, 
     if rows == 0 || min_stride == 0 {
         return Ok(0);
     }
-    let preceding = (rows as usize - 1)
-        .checked_mul(stride)
+    let extent = u64::from(rows - 1)
+        .checked_mul(stride as u64)
+        .and_then(|v| v.checked_add(min_stride as u64))
+        .filter(|&bytes| bytes <= isize::MAX as u64)
         .ok_or(BufferError::InvalidDimensions)?;
-    preceding
-        .checked_add(min_stride)
-        .ok_or(BufferError::InvalidDimensions)
+    Ok(extent as usize)
 }
 
 /// [`PixelBuffer::try_from_parts`]'s checks, on bytes so that they are compiled once
@@ -1071,6 +1071,11 @@ impl<'a, P> PixelSlice<'a, P> {
         self.rows
     }
 
+    /// Active image area, independent of the platform's address width.
+    pub fn pixel_count(&self) -> u64 {
+        u64::from(self.width) * u64::from(self.rows)
+    }
+
     /// Byte stride between row starts.
     #[inline]
     pub fn stride(&self) -> usize {
@@ -1561,6 +1566,10 @@ impl<'a> PixelSliceMut<'a> {
 }
 
 impl<'a, P> PixelSliceMut<'a, P> {
+    pub(crate) fn into_bytes(self) -> &'a mut [u8] {
+        self.data
+    }
+
     /// Erase the pixel type, returning a type-erased mutable slice.
     pub fn erase(self) -> PixelSliceMut<'a> {
         PixelSliceMut {
@@ -1683,6 +1692,11 @@ impl<'a, P> PixelSliceMut<'a, P> {
     #[inline]
     pub fn rows(&self) -> u32 {
         self.rows
+    }
+
+    /// Active image area, independent of the platform's address width.
+    pub fn pixel_count(&self) -> u64 {
+        u64::from(self.width) * u64::from(self.rows)
     }
 
     /// Byte stride between row starts.
@@ -3648,6 +3662,11 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
     #[inline]
     pub fn height(&self) -> u32 {
         self.height
+    }
+
+    /// Active image area, independent of the platform's address width.
+    pub fn pixel_count(&self) -> u64 {
+        u64::from(self.width) * u64::from(self.height)
     }
 
     /// Byte stride between row starts.

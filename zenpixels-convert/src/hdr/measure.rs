@@ -97,7 +97,7 @@ pub enum LightLevelMethod {
 #[non_exhaustive]
 #[doc(hidden)]
 pub struct LightLevelHistogram {
-    bins: Box<[u32]>,
+    bins: Box<[u64]>,
     total: u64,
     sum_nits: f64,
     literal_max_nits: f32,
@@ -188,7 +188,7 @@ impl LightLevelHistogram {
         let mut cum: u64 = 0;
         let inv_step = Self::inv_log2_step();
         for (i, &count) in self.bins.iter().enumerate() {
-            let count_u64 = count as u64;
+            let count_u64 = count;
             cum += count_u64;
             if cum >= threshold {
                 // Fraction of `count` pixels that fall ≤ threshold
@@ -230,7 +230,7 @@ impl LightLevelHistogram {
     /// `[BIN_MIN_NITS · 2^(i·log2_step), BIN_MIN_NITS · 2^((i+1)·log2_step))`.
     /// Useful for plotting or composing custom readouts (multi-percentile,
     /// mode, etc.).
-    pub fn bins(&self) -> &[u32] {
+    pub fn bins(&self) -> &[u64] {
         &self.bins
     }
 }
@@ -652,7 +652,7 @@ impl CllMeasure for ContentLightLevel {
 
         if w == 0 || h == 0 {
             return Some(LightLevelHistogram {
-                bins: bytemuck::allocation::try_zeroed_vec::<u32>(LightLevelHistogram::NUM_BINS)
+                bins: bytemuck::allocation::try_zeroed_vec::<u64>(LightLevelHistogram::NUM_BINS)
                     .ok()?
                     .into_boxed_slice(),
                 total: 0,
@@ -731,23 +731,23 @@ mod simd_kernel {
     /// keeps `#![forbid(unsafe_code)]` honoured (no array-shape
     /// transmute) while still giving each SIMD lane its own
     /// conflict-free histogram.
-    type SubHists = alloc::boxed::Box<[u32]>;
+    type SubHists = alloc::boxed::Box<[u64]>;
 
     fn zero_subhists() -> Option<SubHists> {
         Some(
-            bytemuck::allocation::try_zeroed_vec::<u32>(LANES * LightLevelHistogram::NUM_BINS)
+            bytemuck::allocation::try_zeroed_vec::<u64>(LANES * LightLevelHistogram::NUM_BINS)
                 .ok()?
                 .into_boxed_slice(),
         )
     }
 
     /// Reduce the per-lane sub-histograms into the final flat histogram.
-    fn merge_subhists(sub: &SubHists, out: &mut [u32]) {
+    fn merge_subhists(sub: &SubHists, out: &mut [u64]) {
         debug_assert_eq!(out.len(), LightLevelHistogram::NUM_BINS);
         for bin in 0..LightLevelHistogram::NUM_BINS {
-            let mut total: u32 = 0;
+            let mut total: u64 = 0;
             for lane in 0..LANES {
-                total = total.wrapping_add(sub[lane * LightLevelHistogram::NUM_BINS + bin]);
+                total += sub[lane * LightLevelHistogram::NUM_BINS + bin];
             }
             out[bin] = total;
         }
@@ -829,7 +829,7 @@ mod simd_kernel {
             }
         }
 
-        let mut bins = bytemuck::allocation::try_zeroed_vec::<u32>(LightLevelHistogram::NUM_BINS)
+        let mut bins = bytemuck::allocation::try_zeroed_vec::<u64>(LightLevelHistogram::NUM_BINS)
             .ok()?
             .into_boxed_slice();
         merge_subhists(&sub, &mut bins);
@@ -853,7 +853,7 @@ mod simd_kernel {
         token: Token,
         row: &[f32],
         white_nits: f32,
-        sub_hists: &mut [u32],
+        sub_hists: &mut [u64],
         sum_nits: &mut f64,
         literal_max_nits: &mut f32,
     ) {
@@ -976,7 +976,7 @@ mod simd_kernel {
         token: Token,
         row: &[f32],
         white_nits: f32,
-        sub_hists: &mut [u32],
+        sub_hists: &mut [u64],
         sum_nits: &mut f64,
         literal_max_nits: &mut f32,
     ) {
@@ -1644,7 +1644,7 @@ mod tests {
             LightLevelMethod::MaxRgb,
         )
         .unwrap();
-        let bin_total: u64 = h.bins().iter().map(|&c| c as u64).sum();
+        let bin_total: u64 = h.bins().iter().sum();
         assert_eq!(bin_total, h.total_pixels());
         assert_eq!(h.total_pixels(), 5);
         assert_eq!(h.method(), LightLevelMethod::MaxRgb);
