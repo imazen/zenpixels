@@ -1,7 +1,11 @@
 use archmage::ScalarToken;
 use magemath::powf::{Powf, PowfOptions};
 
-const MAGNITUDE_POWER: u128 = PowfOptions::new().highp().caller().bits();
+const MAGNITUDE_POWER: u128 = PowfOptions::new()
+    .reject_subnormals()
+    .highp()
+    .caller()
+    .bits();
 
 /// High-precision power on positive normal magnitudes. The existing libm path
 /// owns exceptional inputs and values outside the checked approximation range.
