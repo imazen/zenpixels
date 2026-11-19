@@ -5,7 +5,7 @@ use zenpixels::{Cicp, ColorProfileSource as Source, PixelFormat as F};
 use zenpixels_convert::cms::{PluggableCms, RowTransformMut};
 use zenpixels_convert::cms_moxcms::MoxCms;
 use zenpixels_convert::policy::ConvertOptions;
-use zenpixels_convert::{ConversionSpec, ConvertError, ConvertPlan};
+use zenpixels_convert::{ConversionSpec, ConvertPlan};
 
 #[path = "../../zenpixels-convert/tests/common/synthetic_icc.rs"]
 #[allow(dead_code)]

@@ -1707,7 +1707,7 @@ fn f32_to_f16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
 
 /// PQ EOTF: encoded `[0,1]` → linear light `[0,1]` (where 1.0 = 10000 cd/m²).
 ///
-/// Uses rational polynomial from `linear-srgb` (no `powf` calls).
+/// Uses the existing `linear-srgb` transfer curve.
 #[inline]
 pub(crate) fn pq_eotf(v: f32) -> f32 {
     linear_srgb::tf::pq_to_linear(v)
@@ -1715,7 +1715,7 @@ pub(crate) fn pq_eotf(v: f32) -> f32 {
 
 /// PQ inverse EOTF (OETF): linear light `[0,1]` → encoded `[0,1]`.
 ///
-/// Uses rational polynomial from `linear-srgb` (no `powf` calls).
+/// Uses the existing `linear-srgb` transfer curve.
 #[inline]
 pub(crate) fn pq_oetf(v: f32) -> f32 {
     linear_srgb::tf::linear_to_pq(v)
@@ -2108,7 +2108,7 @@ fn linear_f32_to_gamma22_f32(src: &[u8], dst: &mut [u8], width: usize, layout: C
 }
 
 // Keep the existing SIMD approximation for magnitudes in [0,1]. Only values
-// outside that calibrated domain use libm; reflect the result about zero.
+// outside that calibrated domain use a checked high-precision power; reflect the result about zero.
 // This changes neither the default clipped route nor positive in-range samples.
 fn gamma22_f32_extended(
     src: &[u8],
@@ -2135,7 +2135,7 @@ fn gamma22_f32_extended(
     };
     for (s, d) in source.iter().zip(output.iter_mut()) {
         if s.abs() > 1.0 || !s.is_finite() {
-            *d = libm::powf(s.abs(), exponent);
+            *d = crate::gamma_math::magnitude_pow(s.abs(), exponent);
         }
         *d = d.copysign(*s);
     }

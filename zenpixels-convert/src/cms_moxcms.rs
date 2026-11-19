@@ -355,7 +355,8 @@ impl TransformExecutor<f32> for PureGammaOutput {
         self.transform.transform(source, target)?;
         for pixel in target.chunks_exact_mut(self.target_channels) {
             for value in &mut pixel[..3] {
-                *value = libm::powf(value.abs(), self.exponent).copysign(*value);
+                *value =
+                    crate::gamma_math::magnitude_pow(value.abs(), self.exponent).copysign(*value);
             }
         }
         Ok(())
@@ -534,7 +535,7 @@ impl TransformExecutor<f32> for TableSourcePureGammaOutput {
         for pixel in target.chunks_exact_mut(self.target_channels) {
             for value in &mut pixel[..3] {
                 if *value < 0.0 {
-                    *value = -libm::powf(-*value, self.exponent);
+                    *value = -crate::gamma_math::magnitude_pow(-*value, self.exponent);
                 }
             }
         }

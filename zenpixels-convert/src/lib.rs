@@ -307,6 +307,7 @@ mod sealed {
 }
 pub mod error;
 pub(crate) mod f16_scalar;
+mod gamma_math;
 mod negotiate;
 
 pub mod adapt;

@@ -39,6 +39,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Use the checked Magemath power profile for extended gamma.
+
 ### Added
 
 - Add `BandedPixelBufferConvertExt` (`oriented_into` using cache-blocked SIMD
