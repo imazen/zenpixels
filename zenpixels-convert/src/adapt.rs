@@ -641,7 +641,7 @@ pub(crate) fn adapt_slice_for_encode<'a>(
     };
     let select = |options| {
         #[allow(unused_mut)]
-        let mut spec = ConversionSpec::new(options);
+        let mut spec = ConversionSpec::new(options).with_float_facts(source.float_facts());
         #[cfg(feature = "cms-moxcms")]
         if matches!(src_profile, crate::ColorProfileSource::Parametric(_)) {
             spec = spec.with_cms(&crate::MoxCms);
@@ -691,6 +691,7 @@ pub(crate) fn adapt_slice_for_encode<'a>(
             worker.try_convert_row(source.row(y), dst.row_mut(y), source.width())?;
         }
     }
+    let _ = output.set_float_facts(worker.output_float_facts());
     if let Some(context) = context {
         output = output.with_color_context(context);
     }

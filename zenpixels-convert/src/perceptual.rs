@@ -960,8 +960,8 @@ fn lab_f_inv(f: f64) -> f64 {
     }
 }
 
-#[inline]
-fn xyz_d65_to_lch([x, y, z]: [f64; 3]) -> [f32; 3] {
+#[inline(always)]
+fn xyz_d65_to_lch_spec<const FINITE_BOUNDED: bool>([x, y, z]: [f64; 3]) -> [f32; 3] {
     let xd = D65_TO_D50_BRADFORD[0][0] * x
         + D65_TO_D50_BRADFORD[0][1] * y
         + D65_TO_D50_BRADFORD[0][2] * z;
@@ -977,12 +977,12 @@ fn xyz_d65_to_lch([x, y, z]: [f64; 3]) -> [f32; 3] {
     let l = (116.0 * fy - 16.0) as f32;
     let a = (500.0 * (fx - fy)) as f32;
     let b = (200.0 * (fy - fz)) as f32;
-    cart_to_polar([l, a, b])
+    cart_to_polar_spec::<FINITE_BOUNDED>([l, a, b])
 }
 
-#[inline]
-fn lch_to_xyz_d65(lch: [f32; 3]) -> [f64; 3] {
-    let [l, a, b] = polar_to_cart(lch);
+#[inline(always)]
+fn lch_to_xyz_d65_spec<const FINITE: bool, const NONNEG: bool>(lch: [f32; 3]) -> [f64; 3] {
+    let [l, a, b] = polar_to_cart_spec::<FINITE, NONNEG>(lch);
     let fy = (f64::from(l) + 16.0) / 116.0;
     let fx = fy + f64::from(a) / 500.0;
     let fz = fy - f64::from(b) / 200.0;
@@ -1008,56 +1008,84 @@ fn lch_to_xyz_d65(lch: [f32; 3]) -> [f64; 3] {
 
 #[inline]
 fn wrap_degrees(deg: f32) -> f32 {
-    if !deg.is_finite() {
+    wrap_degrees_spec::<false>(deg)
+}
+
+#[inline(always)]
+fn wrap_degrees_spec<const FINITE: bool>(deg: f32) -> f32 {
+    if !FINITE && !deg.is_finite() {
         return 0.0;
     }
     let m = deg - 360.0 * libm::floorf(deg / 360.0);
     if m >= 360.0 || m < 0.0 { 0.0 } else { m }
 }
 
-#[inline]
-pub(crate) fn cart_to_polar([l, a, b]: [f32; 3]) -> [f32; 3] {
+#[inline(always)]
+pub(crate) fn cart_to_polar_spec<const FINITE_BOUNDED: bool>([l, a, b]: [f32; 3]) -> [f32; 3] {
     let c = libm::hypotf(a, b);
-    let h = if !c.is_finite() || c <= 1e-7 {
+    let h = if (!FINITE_BOUNDED && !c.is_finite()) || c <= 1e-7 {
         0.0
     } else {
-        wrap_degrees(libm::atan2f(b, a).to_degrees())
+        wrap_degrees_spec::<FINITE_BOUNDED>(libm::atan2f(b, a).to_degrees())
     };
     [l, c, h]
 }
 
-#[inline]
-pub(crate) fn polar_to_cart([l, c, h]: [f32; 3]) -> [f32; 3] {
-    let c_pos = if c.is_finite() && c > 0.0 { c } else { 0.0 };
-    if c_pos == 0.0 || !h.is_finite() {
+#[inline(always)]
+pub(crate) fn polar_to_cart_spec<const FINITE: bool, const NONNEG: bool>(
+    [l, c, h]: [f32; 3],
+) -> [f32; 3] {
+    let c_pos = if FINITE && NONNEG {
+        c
+    } else if FINITE {
+        if c > 0.0 { c } else { 0.0 }
+    } else if c.is_finite() && c > 0.0 {
+        c
+    } else {
+        0.0
+    };
+    if c_pos == 0.0 || (!FINITE && !h.is_finite()) {
         [l, 0.0, 0.0]
     } else {
-        let rad = wrap_degrees(h).to_radians();
+        let rad = wrap_degrees_spec::<FINITE>(h).to_radians();
         [l, c_pos * libm::cosf(rad), c_pos * libm::sinf(rad)]
     }
 }
 
-#[inline]
-pub(crate) fn rgb_to_hsl([r, g, b]: [f32; 3]) -> [f32; 3] {
+#[inline(always)]
+pub(crate) fn rgb_to_hsl_spec<const UNIT_NONNEG: bool, const FINITE_BOUNDED: bool>(
+    [r, g, b]: [f32; 3],
+) -> [f32; 3] {
     let max = r.max(g).max(b);
     let min = r.min(g).min(b);
     let d = max - min;
     let l = 0.5 * (max + min);
-    if !d.is_finite() || d <= 1e-7 {
+    if (!UNIT_NONNEG && !FINITE_BOUNDED && !d.is_finite()) || d <= 1e-7 {
         return [0.0, 0.0, l];
     }
     // W3C CSS Color 4 §7.2 / §19: signed denominator `min(L, 1 - L)`; out-of-gamut
     // colors with `L < 0` or `L > 1` yield negative `s`, normalized by rotating
     // hue by 180° and taking `|s|` so `hsl_to_rgb` inverts extended-range RGB.
     let half_span = l.min(1.0 - l);
+    if UNIT_NONNEG {
+        if half_span <= 1e-7 {
+            return [0.0, 0.0, l];
+        }
+        let s = (max - l) / half_span;
+        if s <= 1e-7 {
+            return [0.0, 0.0, l];
+        }
+        let h = rgb_hue_deg_spec::<true>(r, g, b, max, d);
+        return [h, s, l];
+    }
     if libm::fabsf(half_span) <= 1e-7 {
         return [0.0, 0.0, l];
     }
     let mut s = (max - l) / half_span;
-    let mut h = rgb_hue_deg(r, g, b, max, d);
+    let mut h = rgb_hue_deg_spec::<FINITE_BOUNDED>(r, g, b, max, d);
     if s < 0.0 {
         s = -s;
-        h = wrap_degrees(h + 180.0);
+        h = wrap_degrees_spec::<FINITE_BOUNDED>(h + 180.0);
     }
     if s <= 1e-7 {
         return [0.0, 0.0, l];
@@ -1065,13 +1093,13 @@ pub(crate) fn rgb_to_hsl([r, g, b]: [f32; 3]) -> [f32; 3] {
     [h, s, l]
 }
 
-#[inline]
-pub(crate) fn hsl_to_rgb([h, s, l]: [f32; 3]) -> [f32; 3] {
-    let s_clean = if s.is_finite() { s } else { 0.0 };
-    if libm::fabsf(s_clean) <= 1e-7 || !h.is_finite() {
+#[inline(always)]
+pub(crate) fn hsl_to_rgb_spec<const FINITE: bool>([h, s, l]: [f32; 3]) -> [f32; 3] {
+    let s_clean = if FINITE || s.is_finite() { s } else { 0.0 };
+    if libm::fabsf(s_clean) <= 1e-7 || (!FINITE && !h.is_finite()) {
         return [l, l, l];
     }
-    let h_deg = wrap_degrees(h);
+    let h_deg = wrap_degrees_spec::<FINITE>(h);
     let a = s_clean * l.min(1.0 - l);
     let f = |n: f32| -> f32 {
         let k_raw = n + h_deg / 30.0;
@@ -1082,27 +1110,37 @@ pub(crate) fn hsl_to_rgb([h, s, l]: [f32; 3]) -> [f32; 3] {
     [f(0.0), f(8.0), f(4.0)]
 }
 
-#[inline]
-pub(crate) fn rgb_to_hsv([r, g, b]: [f32; 3]) -> [f32; 3] {
+#[inline(always)]
+pub(crate) fn rgb_to_hsv_spec<const UNIT_NONNEG: bool, const FINITE_BOUNDED: bool>(
+    [r, g, b]: [f32; 3],
+) -> [f32; 3] {
     let max = r.max(g).max(b);
     let min = r.min(g).min(b);
     let d = max - min;
     let v = max;
-    if !d.is_finite() || d <= 1e-7 || libm::fabsf(max) <= 1e-7 {
+    if UNIT_NONNEG {
+        if d <= 1e-7 || max <= 1e-7 {
+            return [0.0, 0.0, v];
+        }
+        let s = d / max;
+        let h = rgb_hue_deg_spec::<true>(r, g, b, max, d);
+        return [h, s, v];
+    }
+    if (!FINITE_BOUNDED && !d.is_finite()) || d <= 1e-7 || libm::fabsf(max) <= 1e-7 {
         return [0.0, 0.0, v];
     }
     let s = d / max;
-    let h = rgb_hue_deg(r, g, b, max, d);
+    let h = rgb_hue_deg_spec::<FINITE_BOUNDED>(r, g, b, max, d);
     [h, s, v]
 }
 
-#[inline]
-pub(crate) fn hsv_to_rgb([h, s, v]: [f32; 3]) -> [f32; 3] {
-    let s_clean = if s.is_finite() { s } else { 0.0 };
-    if libm::fabsf(s_clean) <= 1e-7 || !h.is_finite() {
+#[inline(always)]
+pub(crate) fn hsv_to_rgb_spec<const FINITE: bool>([h, s, v]: [f32; 3]) -> [f32; 3] {
+    let s_clean = if FINITE || s.is_finite() { s } else { 0.0 };
+    if libm::fabsf(s_clean) <= 1e-7 || (!FINITE && !h.is_finite()) {
         return [v, v, v];
     }
-    let h6 = wrap_degrees(h) / 60.0;
+    let h6 = wrap_degrees_spec::<FINITE>(h) / 60.0;
     let sector = libm::floorf(h6) as i32;
     let frac = h6 - (sector as f32);
     let p = v * (1.0 - s_clean);
@@ -1118,8 +1156,8 @@ pub(crate) fn hsv_to_rgb([h, s, v]: [f32; 3]) -> [f32; 3] {
     }
 }
 
-#[inline]
-fn rgb_hue_deg(r: f32, g: f32, b: f32, max: f32, d: f32) -> f32 {
+#[inline(always)]
+fn rgb_hue_deg_spec<const FINITE: bool>(r: f32, g: f32, b: f32, max: f32, d: f32) -> f32 {
     let raw = if max == r {
         (g - b) / d
     } else if max == g {
@@ -1127,7 +1165,7 @@ fn rgb_hue_deg(r: f32, g: f32, b: f32, max: f32, d: f32) -> f32 {
     } else {
         (r - g) / d + 4.0
     };
-    wrap_degrees(raw * 60.0)
+    wrap_degrees_spec::<FINITE>(raw * 60.0)
 }
 
 // ---------------------------------------------------------------------------
@@ -1182,6 +1220,7 @@ const fn int_channel_scales(layout: ChannelLayout) -> ([f32; 3], [f32; 3], [bool
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_row(
     step: PerceptualStep,
     src: &[u8],
@@ -1190,13 +1229,46 @@ pub(crate) fn apply_row(
     from_primaries: ColorPrimaries,
     to_primaries: ColorPrimaries,
     pq_scale: f32,
+    in_trust: super::StepFloatTrust,
 ) {
+    use zenpixels::sample::FloatFacts;
+    let cf = in_trust.color_facts;
+    let finite = cf.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE);
+    let finite_bounded = finite && in_trust.color_bounded;
+    let unit_nonneg = cf.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE);
+    let nonneg = cf.contains(FloatFacts::NON_NEGATIVE);
+
     match step {
         PerceptualStep::CartesianToPolar { target_layout } => {
-            map_f32_3_or_4(src, dst, width, target_layout.has_alpha(), cart_to_polar);
+            if finite_bounded {
+                map_f32_3_or_4(
+                    src,
+                    dst,
+                    width,
+                    target_layout.has_alpha(),
+                    cart_to_polar_spec::<true>,
+                );
+            } else {
+                map_f32_3_or_4(
+                    src,
+                    dst,
+                    width,
+                    target_layout.has_alpha(),
+                    cart_to_polar_spec::<false>,
+                );
+            }
         }
         PerceptualStep::PolarToCartesian { target_layout } => {
-            map_f32_3_or_4(src, dst, width, target_layout.has_alpha(), polar_to_cart);
+            let ha = target_layout.has_alpha();
+            match (finite, nonneg) {
+                (true, true) => {
+                    map_f32_3_or_4(src, dst, width, ha, polar_to_cart_spec::<true, true>)
+                }
+                (true, false) => {
+                    map_f32_3_or_4(src, dst, width, ha, polar_to_cart_spec::<true, false>)
+                }
+                _ => map_f32_3_or_4(src, dst, width, ha, polar_to_cart_spec::<false, false>),
+            }
         }
         PerceptualStep::LinearRgbToJzazbz {
             has_alpha,
@@ -1291,25 +1363,34 @@ pub(crate) fn apply_row(
             let m = *primaries_to_xyz(from_primaries)
                 .expect("validated RGB->XYZ primaries")
                 .rows();
-            map_f32_3_or_4(src, dst, width, has_alpha, |[r, g, b]| {
-                let x = f64::from(m[0][0]) * f64::from(r)
-                    + f64::from(m[0][1]) * f64::from(g)
-                    + f64::from(m[0][2]) * f64::from(b);
-                let y = f64::from(m[1][0]) * f64::from(r)
-                    + f64::from(m[1][1]) * f64::from(g)
-                    + f64::from(m[1][2]) * f64::from(b);
-                let z = f64::from(m[2][0]) * f64::from(r)
-                    + f64::from(m[2][1]) * f64::from(g)
-                    + f64::from(m[2][2]) * f64::from(b);
-                xyz_d65_to_lch([x, y, z])
-            });
+            let to_xyz = |[r, g, b]: [f32; 3]| -> [f64; 3] {
+                [
+                    f64::from(m[0][0]) * f64::from(r)
+                        + f64::from(m[0][1]) * f64::from(g)
+                        + f64::from(m[0][2]) * f64::from(b),
+                    f64::from(m[1][0]) * f64::from(r)
+                        + f64::from(m[1][1]) * f64::from(g)
+                        + f64::from(m[1][2]) * f64::from(b),
+                    f64::from(m[2][0]) * f64::from(r)
+                        + f64::from(m[2][1]) * f64::from(g)
+                        + f64::from(m[2][2]) * f64::from(b),
+                ]
+            };
+            if finite_bounded {
+                map_f32_3_or_4(src, dst, width, has_alpha, |rgb| {
+                    xyz_d65_to_lch_spec::<true>(to_xyz(rgb))
+                });
+            } else {
+                map_f32_3_or_4(src, dst, width, has_alpha, |rgb| {
+                    xyz_d65_to_lch_spec::<false>(to_xyz(rgb))
+                });
+            }
         }
         PerceptualStep::LchToLinearRgb { has_alpha, .. } => {
             let m = *primaries_from_xyz(to_primaries)
                 .expect("validated XYZ->RGB primaries")
                 .rows();
-            map_f32_3_or_4(src, dst, width, has_alpha, |lch| {
-                let [x, y, z] = lch_to_xyz_d65(lch);
+            let from_xyz = |[x, y, z]: [f64; 3]| -> [f32; 3] {
                 [
                     (f64::from(m[0][0]) * x + f64::from(m[0][1]) * y + f64::from(m[0][2]) * z)
                         as f32,
@@ -1318,19 +1399,52 @@ pub(crate) fn apply_row(
                     (f64::from(m[2][0]) * x + f64::from(m[2][1]) * y + f64::from(m[2][2]) * z)
                         as f32,
                 ]
-            });
+            };
+            if finite && nonneg {
+                map_f32_3_or_4(src, dst, width, has_alpha, |lch| {
+                    from_xyz(lch_to_xyz_d65_spec::<true, true>(lch))
+                });
+            } else if finite {
+                map_f32_3_or_4(src, dst, width, has_alpha, |lch| {
+                    from_xyz(lch_to_xyz_d65_spec::<true, false>(lch))
+                });
+            } else {
+                map_f32_3_or_4(src, dst, width, has_alpha, |lch| {
+                    from_xyz(lch_to_xyz_d65_spec::<false, false>(lch))
+                });
+            }
         }
         PerceptualStep::RgbToHsl { has_alpha } => {
-            map_f32_3_or_4(src, dst, width, has_alpha, rgb_to_hsl);
+            if unit_nonneg {
+                map_f32_3_or_4(src, dst, width, has_alpha, rgb_to_hsl_spec::<true, true>);
+            } else if finite_bounded {
+                map_f32_3_or_4(src, dst, width, has_alpha, rgb_to_hsl_spec::<false, true>);
+            } else {
+                map_f32_3_or_4(src, dst, width, has_alpha, rgb_to_hsl_spec::<false, false>);
+            }
         }
         PerceptualStep::HslToRgb { has_alpha } => {
-            map_f32_3_or_4(src, dst, width, has_alpha, hsl_to_rgb);
+            if finite {
+                map_f32_3_or_4(src, dst, width, has_alpha, hsl_to_rgb_spec::<true>);
+            } else {
+                map_f32_3_or_4(src, dst, width, has_alpha, hsl_to_rgb_spec::<false>);
+            }
         }
         PerceptualStep::RgbToHsv { has_alpha } => {
-            map_f32_3_or_4(src, dst, width, has_alpha, rgb_to_hsv);
+            if unit_nonneg {
+                map_f32_3_or_4(src, dst, width, has_alpha, rgb_to_hsv_spec::<true, true>);
+            } else if finite_bounded {
+                map_f32_3_or_4(src, dst, width, has_alpha, rgb_to_hsv_spec::<false, true>);
+            } else {
+                map_f32_3_or_4(src, dst, width, has_alpha, rgb_to_hsv_spec::<false, false>);
+            }
         }
         PerceptualStep::HsvToRgb { has_alpha } => {
-            map_f32_3_or_4(src, dst, width, has_alpha, hsv_to_rgb);
+            if finite {
+                map_f32_3_or_4(src, dst, width, has_alpha, hsv_to_rgb_spec::<true>);
+            } else {
+                map_f32_3_or_4(src, dst, width, has_alpha, hsv_to_rgb_spec::<false>);
+            }
         }
         PerceptualStep::DecodeIntToF32 { from_type, layout } => {
             let ch = layout.channels();

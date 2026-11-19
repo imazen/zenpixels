@@ -4,6 +4,13 @@
 
 ### Added
 
+- Add `sample::{FloatFacts, FloatFactsError}` for tracking verified or trusted
+  floating-point sample invariants (`NO_NAN`, `NO_INFINITE`, `NO_SUBNORMALS`,
+  `NON_NEGATIVE`, `POSITIVE`, `AT_MOST_ONE`, with `NO_SUBNORMALS` orthogonal to
+  positivity and no combo presets) across `PixelSlice`, `PixelBuffer`, and
+  `BandedPixelBuffer`, sharing 2-byte internal `SampleEvidence` with
+  `ExactDepth` so `PixelBuffer` stays 64 bytes and `PixelSlice` stays 48 bytes.
+
 - Add bounded row-band allocations (`BandedPixelBuffer`, `BandedPlane`,
   `BandedPlanarBuffer`) for gigapixel (`> 10^9` px) packed and planar images with
   `u64` picture geometry, configurable `RowAlign`, `ExactDepth` preservation,
@@ -44,6 +51,12 @@
 - Use the checked Magemath power profile for extended gamma.
 
 ### Added
+
+- Add `ConversionSpec::with_float_facts`, `input_float_facts`/`output_float_facts`
+  on `ConvertPlan`, `RowConverter`, and `OutputPlan`,
+  `ConvertError::FloatFactsUnsatisfied`, automatic step-by-step floating-point
+  trust propagation, and bit-exact const-specialized Oklab, extended Gamma 2.2,
+  PQ, tone-map, matte, truncation, and perceptual kernels.
 
 - Add `BandedPixelBufferConvertExt` (`oriented_into` using cache-blocked SIMD
   transpose across band intersections, `scan_source_precision`, and

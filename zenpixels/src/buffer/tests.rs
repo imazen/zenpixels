@@ -146,7 +146,7 @@ fn into_contiguous_preserves_pixels_across_offsets_padding_and_empty_extents() {
                                     .unwrap(),
                                 descriptor,
                                 color: None,
-                                exact: None,
+                                evidence: crate::sample::SampleEvidence::NONE,
                                 _pixel: PhantomData,
                             };
                             let packed = buffer.into_contiguous();

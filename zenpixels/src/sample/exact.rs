@@ -312,6 +312,19 @@ impl ExactDepth {
             _ => 16,
         }
     }
+
+    #[inline]
+    pub(crate) const fn into_raw(self) -> (core::num::NonZeroU8, u8) {
+        (self.packed_color, self.alpha_minus_one)
+    }
+
+    #[inline]
+    pub(crate) const fn from_raw(packed_color: core::num::NonZeroU8, alpha_minus_one: u8) -> Self {
+        Self {
+            packed_color,
+            alpha_minus_one,
+        }
+    }
 }
 
 /// Whether the `base`-bit grid in `storage_bits` storage is a subset of the

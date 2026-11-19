@@ -121,11 +121,14 @@ pub(crate) fn apply_orientation(
     }
     // Whole pixels are moved, never changed: the samples keep their evidence.
     let exact = src.exact_depth();
+    let float_facts = src.float_facts();
     // The buffer is constructed to the exact output geometry + descriptor, so
     // the size/format check inside `apply_orientation_into` cannot fail.
     apply_orientation_into(src, orientation, out.as_slice_mut())
         .expect("apply_orientation: freshly allocated buffer matches output geometry");
     out.set_exact_depth(exact)
+        .expect("apply_orientation: output keeps the source descriptor");
+    out.set_float_facts(float_facts)
         .expect("apply_orientation: output keeps the source descriptor");
     Ok(out)
 }
@@ -333,8 +336,11 @@ pub(crate) fn apply_orientation_in_place(
     // The permutation keeps every sample value, so restore the evidence that
     // the in-place mutable access had to end.
     let exact = dst.exact_depth();
+    let float_facts = dst.float_facts();
     dst.transform_in_place(|px| orient_in_place_impl(px, orientation, moved));
     dst.set_exact_depth(exact)
+        .expect("apply_orientation_in_place: descriptor is unchanged");
+    dst.set_float_facts(float_facts)
         .expect("apply_orientation_in_place: descriptor is unchanged");
     Ok(())
 }
@@ -481,8 +487,10 @@ pub(crate) fn apply_orientation_banded_into(
         } else {
             let _ = dst.set_exact_depth(None);
         }
+        let _ = dst.set_float_facts(src.float_facts());
     } else {
         let _ = dst.set_exact_depth(None);
+        let _ = dst.set_float_facts(zenpixels::sample::FloatFacts::NONE);
     }
     Ok(())
 }

@@ -4,7 +4,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::ops::Range;
 
-use crate::sample::{ExactDepth, ExactDepthError};
+use crate::sample::{ExactDepth, ExactDepthError, FloatFacts, FloatFactsError, SampleEvidence};
 use crate::{
     BufferError, ColorContext, Orientation, PixelBuffer, PixelDescriptor, PixelEncoding,
     PixelSlice, PixelSliceMut, RowAlign,
@@ -137,7 +137,7 @@ pub struct BandedPixelBuffer {
     layout: BandLayout,
     descriptor: PixelDescriptor,
     color: Option<Arc<ColorContext>>,
-    exact: Option<ExactDepth>,
+    evidence: SampleEvidence,
     bands: Vec<PixelBuffer>,
 }
 
@@ -191,7 +191,7 @@ impl BandedPixelBuffer {
             layout,
             descriptor,
             color: None,
-            exact: None,
+            evidence: SampleEvidence::NONE,
             bands,
         })
     }
@@ -205,15 +205,15 @@ impl BandedPixelBuffer {
             .map_err(|e| whereat::at!(e))?;
         let descriptor = buffer.descriptor();
         let color = buffer.color_context().cloned();
-        let exact = buffer.exact_depth();
+        let evidence = buffer.evidence_raw();
         // Strip inner per-band metadata so `self` is the single authoritative owner.
         buffer.set_color_context(None);
-        let _ = buffer.set_exact_depth(None);
+        buffer.set_evidence_raw(SampleEvidence::NONE);
         Ok(Self {
             layout,
             descriptor,
             color,
-            exact,
+            evidence,
             bands: alloc::vec![buffer],
         })
     }
@@ -224,7 +224,7 @@ impl BandedPixelBuffer {
         if self.bands.len() == 1 {
             let mut single = self.bands.pop().expect("single band");
             single.set_color_context(self.color);
-            let _ = single.set_exact_depth(self.exact);
+            single.set_evidence_raw(self.evidence);
             return Ok(single);
         }
         let mut out = PixelBuffer::try_new(self.layout.width, self.layout.height, self.descriptor)?;
@@ -236,7 +236,7 @@ impl BandedPixelBuffer {
             }
         }
         out.set_color_context(self.color);
-        let _ = out.set_exact_depth(self.exact);
+        out.set_evidence_raw(self.evidence);
         Ok(out)
     }
 
@@ -280,15 +280,38 @@ impl BandedPixelBuffer {
     /// Declared exact-depth sample evidence, if any.
     #[inline]
     pub const fn exact_depth(&self) -> Option<ExactDepth> {
-        self.exact
+        self.evidence.exact_depth()
     }
 
     /// Declare or clear exact-depth sample evidence across all bands.
     pub fn set_exact_depth(&mut self, exact: Option<ExactDepth>) -> Result<(), ExactDepthError> {
         if let Some(d) = exact {
             crate::buffer::check_exact(self.descriptor, d)?;
+            self.evidence = SampleEvidence::from_exact(Some(d));
+        } else if !self.descriptor.channel_type().is_float() {
+            self.evidence = SampleEvidence::NONE;
         }
-        self.exact = exact;
+        Ok(())
+    }
+
+    /// Declared floating-point sample facts across all bands (`FloatFacts::NONE` when unstated).
+    #[inline]
+    pub const fn float_facts(&self) -> FloatFacts {
+        self.evidence.float_facts()
+    }
+
+    /// Attach floating-point sample facts across all bands.
+    pub fn with_float_facts(mut self, facts: FloatFacts) -> Result<Self, FloatFactsError> {
+        self.set_float_facts(facts)?;
+        Ok(self)
+    }
+
+    /// Declare or clear floating-point sample facts across all bands.
+    pub fn set_float_facts(&mut self, facts: FloatFacts) -> Result<(), FloatFactsError> {
+        crate::buffer::check_float_facts(self.descriptor, facts)?;
+        if self.descriptor.channel_type().is_float() {
+            self.evidence = SampleEvidence::from_float(facts);
+        }
         Ok(())
     }
 
@@ -305,25 +328,22 @@ impl BandedPixelBuffer {
     /// Borrow each band in image order.
     pub fn bands(&self) -> impl DoubleEndedIterator<Item = PixelSlice<'_>> + ExactSizeIterator {
         let color = self.color.as_ref();
-        let exact = self.exact;
+        let evidence = self.evidence;
         self.bands.iter().map(move |band| {
-            let mut view = band.as_slice();
+            let mut view = band.as_slice().with_evidence_raw(evidence);
             if let Some(c) = color {
                 view = view.with_color_context(Arc::clone(c));
-            }
-            if let Some(e) = exact {
-                view = view.with_exact_depth(e).expect("validated exact depth");
             }
             view
         })
     }
 
-    /// Write the bands in image order (clears exact-depth evidence).
+    /// Write the bands in image order (clears sample evidence).
     /// Each returned view inherits the image interpretation.
     pub fn bands_mut(
         &mut self,
     ) -> impl DoubleEndedIterator<Item = PixelSliceMut<'_>> + ExactSizeIterator {
-        self.exact = None;
+        self.evidence = SampleEvidence::NONE;
         let color = self.color.as_ref();
         self.bands.iter_mut().map(move |band| {
             let mut view = band.as_slice_mut();
@@ -346,7 +366,7 @@ impl BandedPixelBuffer {
             rows.end.div_ceil(self.layout.band_rows) as usize
         };
         let color = self.color.as_ref();
-        let exact = self.exact;
+        let evidence = self.evidence;
         Some(
             self.bands[start..end]
                 .iter()
@@ -355,12 +375,11 @@ impl BandedPixelBuffer {
                     let band_start = (start + i) as u32 * self.layout.band_rows;
                     let local_start = rows.start.saturating_sub(band_start);
                     let local_end = (rows.end - band_start).min(band.height());
-                    let mut view = band.rows(local_start, local_end - local_start);
+                    let mut view = band
+                        .rows(local_start, local_end - local_start)
+                        .with_evidence_raw(evidence);
                     if let Some(c) = color {
                         view = view.with_color_context(Arc::clone(c));
-                    }
-                    if let Some(e) = exact {
-                        view = view.with_exact_depth(e).expect("validated exact depth");
                     }
                     view
                 }),
@@ -373,10 +392,10 @@ impl BandedPixelBuffer {
         Some(self.bands[band].rows(local_y, 1).as_strided_bytes())
     }
 
-    /// Write the active samples in global row `y` (clears exact-depth evidence).
+    /// Write the active samples in global row `y` (clears sample evidence).
     pub fn row_mut(&mut self, y: u32) -> Option<&mut [u8]> {
         let (band, local_y) = self.layout.locate(y)?;
-        self.exact = None;
+        self.evidence = SampleEvidence::NONE;
         Some(self.bands[band].rows_mut(local_y, 1).into_bytes())
     }
 
@@ -387,13 +406,14 @@ impl BandedPixelBuffer {
 
     /// Apply a row-local or row-order orientation without allocating pixel storage.
     ///
-    /// Preserves [`exact_depth`](Self::exact_depth) because geometric permutation leaves
-    /// sample values unchanged. Axis-swapping orientations require [`Self::oriented_into`].
+    /// Preserves [`exact_depth`](Self::exact_depth) and [`float_facts`](Self::float_facts)
+    /// because geometric permutation leaves sample values unchanged. Axis-swapping
+    /// orientations require [`Self::oriented_into`].
     pub fn orient_in_place(&mut self, orientation: Orientation) -> Result<(), BufferError> {
         if orientation.swaps_axes() {
             return Err(BufferError::InvalidDimensions);
         }
-        let saved_exact = self.exact;
+        let saved_evidence = self.evidence;
         let height = self.layout.height;
         if matches!(orientation, Orientation::FlipV | Orientation::Rotate180) {
             for y in 0..height / 2 {
@@ -422,7 +442,7 @@ impl BandedPixelBuffer {
                 reverse_pixel_row(row, bpp);
             }
         }
-        self.exact = saved_exact;
+        self.evidence = saved_evidence;
         Ok(())
     }
 
@@ -451,7 +471,7 @@ impl BandedPixelBuffer {
             }
         });
         dst.color = self.color.clone();
-        dst.exact = self.exact;
+        dst.evidence = self.evidence;
         Ok(())
     }
 }

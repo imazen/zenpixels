@@ -216,6 +216,14 @@ pub enum ConvertError {
     /// Explicit HDR rendering combined with an unresolved/distinct ICC profile cannot be
     /// executed by the descriptor-only HDR planner without bypassing profile authority.
     HdrWithOpaqueProfileUnsupported,
+    /// Input view or intermediate stage does not declare the
+    /// [`FloatFacts`](zenpixels::sample::FloatFacts) required by a specialized plan.
+    FloatFactsUnsatisfied {
+        /// Floating-point invariants required by the plan.
+        required: zenpixels::sample::FloatFacts,
+        /// Floating-point invariants actually declared on the input view or upstream stage.
+        actual: zenpixels::sample::FloatFacts,
+    },
 }
 
 impl fmt::Display for ConvertError {
@@ -375,6 +383,12 @@ impl fmt::Display for ConvertError {
             }
             Self::HdrWithOpaqueProfileUnsupported => {
                 f.write_str("explicit HdrConfig cannot be combined with an unresolved ICC profile without bypassing profile authority")
+            }
+            Self::FloatFactsUnsatisfied { required, actual } => {
+                write!(
+                    f,
+                    "input float facts {actual:?} do not satisfy plan requirement {required:?}"
+                )
             }
         }
     }

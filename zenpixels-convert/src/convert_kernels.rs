@@ -66,6 +66,7 @@ pub(super) fn apply_step_u8(
     // Relative-linear → PQ-absolute scale (`diffuse_white / 10000`) carried by
     // the plan. Only the PQ kernels read it; `1.0` is a no-op for all steps.
     pq_scale: f32,
+    in_trust: super::StepFloatTrust,
     // Row-persistent scratch for the HDR tone-map kernels (unused when the
     // `hdr-experimental` feature is off).
     hdr_scratch: &mut HdrKernelScratch,
@@ -106,7 +107,7 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::MatteComposite { linear, clip } => {
-            matte_composite(src, dst, w, from, *linear, *clip);
+            matte_composite(src, dst, w, from, *linear, *clip, in_trust.facts);
         }
 
         ConvertStep::GrayToRgb => {
@@ -160,7 +161,7 @@ pub(super) fn apply_step_u8(
             naive_f32_to_u8(src, dst, w, from.layout().channels());
         }
         ConvertStep::NaiveF32ToU8Truncate => {
-            naive_f32_to_u8_truncate(src, dst, w, from.layout().channels());
+            naive_f32_to_u8_truncate(src, dst, w, from.layout().channels(), in_trust.facts);
         }
 
         ConvertStep::U16ToU8 => {
@@ -185,7 +186,7 @@ pub(super) fn apply_step_u8(
             f32_to_u16(src, dst, w, from.layout().channels());
         }
         ConvertStep::F32ToU16Truncate => {
-            f32_to_u16_truncate(src, dst, w, from.layout().channels());
+            f32_to_u16_truncate(src, dst, w, from.layout().channels(), in_trust.facts);
         }
 
         ConvertStep::F16ToF32 => {
@@ -205,11 +206,11 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::PqF32ToLinearF32 => {
-            pq_f32_to_linear_f32(src, dst, w, from.layout(), pq_scale);
+            pq_f32_to_linear_f32(src, dst, w, from.layout(), pq_scale, in_trust.facts);
         }
 
         ConvertStep::LinearF32ToPqF32 => {
-            linear_f32_to_pq_f32(src, dst, w, from.layout(), pq_scale);
+            linear_f32_to_pq_f32(src, dst, w, from.layout(), pq_scale, in_trust.facts);
         }
 
         ConvertStep::HlgU16ToLinearF32 => {
@@ -261,10 +262,10 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::Gamma22F32ToLinearF32Extended => {
-            gamma22_f32_extended(src, dst, w, from.layout(), false);
+            gamma22_f32_extended(src, dst, w, from.layout(), false, in_trust.facts);
         }
         ConvertStep::LinearF32ToGamma22F32Extended => {
-            gamma22_f32_extended(src, dst, w, from.layout(), true);
+            gamma22_f32_extended(src, dst, w, from.layout(), true, in_trust.facts);
         }
 
         ConvertStep::StraightToPremul => {
@@ -276,7 +277,7 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::LinearRgbToOklab => {
-            linear_rgb_to_oklab_f32(src, dst, w, from.primaries);
+            linear_rgb_to_oklab_f32(src, dst, w, from.primaries, in_trust);
         }
 
         ConvertStep::OklabToLinearRgb => {
@@ -284,7 +285,7 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::LinearRgbaToOklaba => {
-            linear_rgba_to_oklaba_f32(src, dst, w, from.primaries);
+            linear_rgba_to_oklaba_f32(src, dst, w, from.primaries, in_trust);
         }
 
         ConvertStep::OklabaToLinearRgba => {
@@ -360,7 +361,7 @@ pub(super) fn apply_step_u8(
 
         #[cfg(feature = "hdr-experimental")]
         ConvertStep::ToneMap(step) => {
-            tone_map_kernel(src, dst, w, from, step, hdr_scratch);
+            tone_map_kernel(src, dst, w, from, step, in_trust.color_facts, hdr_scratch);
         }
 
         ConvertStep::SoftCompressOklch(compressor) => {
@@ -368,7 +369,16 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::Perceptual(p) => {
-            super::perceptual::apply_row(*p, src, dst, w, from.primaries, _to.primaries, pq_scale);
+            super::perceptual::apply_row(
+                *p,
+                src,
+                dst,
+                w,
+                from.primaries,
+                _to.primaries,
+                pq_scale,
+                in_trust,
+            );
         }
     }
 }
@@ -397,8 +407,10 @@ fn tone_map_kernel(
     width: usize,
     from: PixelDescriptor,
     step: &super::ToneMapStep,
+    color_facts: zenpixels::sample::FloatFacts,
     scratch: &mut HdrKernelScratch,
 ) {
+    use zenpixels::sample::FloatFacts;
     let strip_mapper = step
         .prepared
         .get()
@@ -408,20 +420,33 @@ fn tone_map_kernel(
     let src_f32: &[f32] = bytemuck::cast_slice(src);
     let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(dst);
 
-    let rgb_in = &mut scratch.rgb_strip[..width];
     let rgb_out = &mut scratch.rgb_out[..width];
+    let trusted_finite_nonneg =
+        color_facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::NO_INFINITE);
 
-    // Mappers see finite, non-negative linear light.
-    let scrub = |v: f32| if v.is_finite() && v >= 0.0 { v } else { 0.0 };
-    for (p, px) in rgb_in.iter_mut().enumerate() {
-        let base = p * channels;
-        *px = [
-            scrub(src_f32[base]),
-            scrub(src_f32[base + 1]),
-            scrub(src_f32[base + 2]),
-        ];
+    if trusted_finite_nonneg && channels == 3 {
+        strip_mapper.map_strip(&src_f32[..width * 3], rgb_out.as_flattened_mut());
+    } else {
+        let rgb_in = &mut scratch.rgb_strip[..width];
+        if trusted_finite_nonneg {
+            for (p, px) in rgb_in.iter_mut().enumerate() {
+                let base = p * channels;
+                *px = [src_f32[base], src_f32[base + 1], src_f32[base + 2]];
+            }
+        } else {
+            // Mappers see finite, non-negative linear light.
+            let scrub = |v: f32| if v.is_finite() && v >= 0.0 { v } else { 0.0 };
+            for (p, px) in rgb_in.iter_mut().enumerate() {
+                let base = p * channels;
+                *px = [
+                    scrub(src_f32[base]),
+                    scrub(src_f32[base + 1]),
+                    scrub(src_f32[base + 2]),
+                ];
+            }
+        }
+        strip_mapper.map_strip(rgb_in.as_flattened(), rgb_out.as_flattened_mut());
     }
-    strip_mapper.map_strip(rgb_in.as_flattened(), rgb_out.as_flattened_mut());
     let settle = |v: f32| {
         if v.is_finite() {
             v.clamp(0.0, 1.0)
@@ -711,7 +736,9 @@ fn matte_composite(
     from: PixelDescriptor,
     matte: [f32; 3],
     clip: bool,
+    in_facts: zenpixels::sample::FloatFacts,
 ) {
+    use zenpixels::sample::FloatFacts;
     let ch_type = from.channel_type();
     if !matches!(
         ch_type,
@@ -724,6 +751,8 @@ fn matte_composite(
     let is_premul = from.alpha() == Some(zenpixels::AlphaMode::Premultiplied);
     let srgb_u8 = ch_type == ChannelType::U8 && tf == TransferFunction::Srgb && !is_premul;
     let clip_f32 = clip || ch_type != ChannelType::F32;
+    let trusted_unit_alpha = matches!(ch_type, ChannelType::U8 | ChannelType::U16)
+        || in_facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE);
 
     const PIXELS: usize = 128;
     let mut rgba = [0f32; PIXELS * 4];
@@ -748,7 +777,11 @@ fn matte_composite(
             ChannelType::F16 => f16_bits_to_f32_slice(bytemuck::cast_slice(s), rgba),
             _ => rgba.copy_from_slice(bytemuck::cast_slice(s)),
         }
-        matte_split(rgba, rgb, alpha);
+        if trusted_unit_alpha {
+            matte_split_trusted(rgba, rgb, alpha);
+        } else {
+            matte_split(rgba, rgb, alpha);
+        }
         if srgb_u8 {
             // The tables and this alpha scale define sRGB U8 matte output.
             for ((lane, byte), a) in rgb
@@ -804,6 +837,21 @@ fn matte_split(rgba: &[f32], rgb: &mut [f32], alpha: &mut [f32]) {
         } else {
             raw_a.clamp(0.0, 1.0)
         };
+    }
+}
+
+/// Fast path when alpha is already proven in `[+0.0, 1.0]` (no NaN, no clamp needed).
+#[attune(dispatch, -_neon, -_wasm128)]
+fn matte_split_trusted(rgba: &[f32], rgb: &mut [f32], alpha: &mut [f32]) {
+    for ((s, d), a) in rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(rgb.as_chunks_mut::<3>().0)
+        .zip(alpha)
+    {
+        *d = [s[0], s[1], s[2]];
+        *a = s[3];
     }
 }
 
@@ -1528,23 +1576,57 @@ fn u16_to_u8_truncate(src: &[u8], dst: &mut [u8], width: usize, channels: usize)
 }
 
 /// f32 → u8 floor truncation (`clamp(0, 1) * 255`, `DepthPolicy::Truncate`).
-fn naive_f32_to_u8_truncate(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+fn naive_f32_to_u8_truncate(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    channels: usize,
+    in_facts: zenpixels::sample::FloatFacts,
+) {
+    use zenpixels::sample::FloatFacts;
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
-    for (s, d) in srcf.iter().zip(dst[..count].iter_mut()) {
-        let v = if s.is_nan() { 0.0 } else { s.clamp(0.0, 1.0) };
-        *d = (v * 255.0) as u8;
+    if in_facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE) {
+        for (s, d) in srcf.iter().zip(dst[..count].iter_mut()) {
+            *d = (*s * 255.0) as u8;
+        }
+    } else if in_facts.contains(FloatFacts::NO_NAN) {
+        for (s, d) in srcf.iter().zip(dst[..count].iter_mut()) {
+            *d = (s.clamp(0.0, 1.0) * 255.0) as u8;
+        }
+    } else {
+        for (s, d) in srcf.iter().zip(dst[..count].iter_mut()) {
+            let v = if s.is_nan() { 0.0 } else { s.clamp(0.0, 1.0) };
+            *d = (v * 255.0) as u8;
+        }
     }
 }
 
 /// f32 → u16 floor truncation (`clamp(0, 1) * 65535`, `DepthPolicy::Truncate`).
-fn f32_to_u16_truncate(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+fn f32_to_u16_truncate(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    channels: usize,
+    in_facts: zenpixels::sample::FloatFacts,
+) {
+    use zenpixels::sample::FloatFacts;
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..count * 2]);
-    for (s, d) in srcf.iter().zip(dst16.iter_mut()) {
-        let v = if s.is_nan() { 0.0 } else { s.clamp(0.0, 1.0) };
-        *d = (v * 65535.0) as u16;
+    if in_facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE) {
+        for (s, d) in srcf.iter().zip(dst16.iter_mut()) {
+            *d = (*s * 65535.0) as u16;
+        }
+    } else if in_facts.contains(FloatFacts::NO_NAN) {
+        for (s, d) in srcf.iter().zip(dst16.iter_mut()) {
+            *d = (s.clamp(0.0, 1.0) * 65535.0) as u16;
+        }
+    } else {
+        for (s, d) in srcf.iter().zip(dst16.iter_mut()) {
+            let v = if s.is_nan() { 0.0 } else { s.clamp(0.0, 1.0) };
+            *d = (v * 65535.0) as u16;
+        }
     }
 }
 
@@ -1867,13 +1949,23 @@ fn pq_f32_to_linear_f32(
     width: usize,
     layout: ChannelLayout,
     scale: f32,
+    in_facts: zenpixels::sample::FloatFacts,
 ) {
+    use zenpixels::sample::FloatFacts;
     let channels = layout.channels();
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    for (d, &s) in dstf[..count].iter_mut().zip(&srcf[..count]) {
-        *d = if s.is_nan() { 0.0 } else { s.clamp(0.0, 1.0) };
+    if in_facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE) {
+        dstf[..count].copy_from_slice(&srcf[..count]);
+    } else if in_facts.contains(FloatFacts::NO_NAN) {
+        for (d, &s) in dstf[..count].iter_mut().zip(&srcf[..count]) {
+            *d = s.clamp(0.0, 1.0);
+        }
+    } else {
+        for (d, &s) in dstf[..count].iter_mut().zip(&srcf[..count]) {
+            *d = if s.is_nan() { 0.0 } else { s.clamp(0.0, 1.0) };
+        }
     }
     pq_eotf_slice(&mut dstf[..count]);
     multiply_color_channels(&mut dstf[..count], channels, 1.0 / scale);
@@ -1891,15 +1983,29 @@ fn linear_f32_to_pq_f32(
     width: usize,
     layout: ChannelLayout,
     scale: f32,
+    in_facts: zenpixels::sample::FloatFacts,
 ) {
+    use zenpixels::sample::FloatFacts;
     let channels = layout.channels();
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
     dstf[..count].copy_from_slice(&srcf[..count]);
     multiply_color_channels(&mut dstf[..count], channels, scale);
-    for d in &mut dstf[..count] {
-        *d = if d.is_nan() { 0.0 } else { d.clamp(0.0, 1.0) };
+    let scale_unit = (0.0..=1.0).contains(&scale);
+    if scale_unit && in_facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE) {
+        // Every lane is already in [+0.0, 1.0].
+    } else if scale.is_finite()
+        && scale >= 0.0
+        && in_facts.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE)
+    {
+        for d in &mut dstf[..count] {
+            *d = d.clamp(0.0, 1.0);
+        }
+    } else {
+        for d in &mut dstf[..count] {
+            *d = if d.is_nan() { 0.0 } else { d.clamp(0.0, 1.0) };
+        }
     }
     pq_oetf_slice(&mut dstf[..count]);
     restore_alpha_f32_f32(&srcf[..count], &mut dstf[..count], layout);
@@ -2116,10 +2222,47 @@ fn gamma22_f32_extended(
     width: usize,
     layout: ChannelLayout,
     inverse: bool,
+    in_facts: zenpixels::sample::FloatFacts,
 ) {
+    use zenpixels::sample::FloatFacts;
     let count = width * layout.channels();
     let source: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let output: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    let exponent = if inverse {
+        1.0 / ADOBE_GAMMA
+    } else {
+        ADOBE_GAMMA
+    };
+
+    if in_facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE) {
+        // Every lane is in [+0.0, 1.0]: no abs(), no out-of-unit fallback, no copysign().
+        output.copy_from_slice(source);
+        if inverse {
+            linear_srgb::default::linear_to_gamma_slice(output, ADOBE_GAMMA);
+        } else {
+            linear_srgb::default::gamma_to_linear_slice(output, ADOBE_GAMMA);
+        }
+        restore_alpha_f32_f32(source, output, layout);
+        return;
+    }
+
+    if in_facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::NO_INFINITE) {
+        // Finite non-negative HDR domain: no abs(), no !is_finite(), no copysign().
+        output.copy_from_slice(source);
+        if inverse {
+            linear_srgb::default::linear_to_gamma_slice(output, ADOBE_GAMMA);
+        } else {
+            linear_srgb::default::gamma_to_linear_slice(output, ADOBE_GAMMA);
+        }
+        for (&s, d) in source.iter().zip(output.iter_mut()) {
+            if s > 1.0 {
+                *d = crate::gamma_math::magnitude_pow(s, exponent);
+            }
+        }
+        restore_alpha_f32_f32(source, output, layout);
+        return;
+    }
+
     for (s, d) in source.iter().zip(output.iter_mut()) {
         *d = s.abs();
     }
@@ -2128,16 +2271,21 @@ fn gamma22_f32_extended(
     } else {
         linear_srgb::default::gamma_to_linear_slice(output, ADOBE_GAMMA);
     }
-    let exponent = if inverse {
-        1.0 / ADOBE_GAMMA
-    } else {
-        ADOBE_GAMMA
-    };
-    for (s, d) in source.iter().zip(output.iter_mut()) {
-        if s.abs() > 1.0 || !s.is_finite() {
-            *d = crate::gamma_math::magnitude_pow(s.abs(), exponent);
+    if in_facts.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE) {
+        for (s, d) in source.iter().zip(output.iter_mut()) {
+            let mag = s.abs();
+            if mag > 1.0 {
+                *d = crate::gamma_math::magnitude_pow(mag, exponent);
+            }
+            *d = d.copysign(*s);
         }
-        *d = d.copysign(*s);
+    } else {
+        for (s, d) in source.iter().zip(output.iter_mut()) {
+            if s.abs() > 1.0 || !s.is_finite() {
+                *d = crate::gamma_math::magnitude_pow(s.abs(), exponent);
+            }
+            *d = d.copysign(*s);
+        }
     }
     restore_alpha_f32_f32(source, output, layout);
 }
@@ -2626,20 +2774,189 @@ fn premul_to_straight(
 // Oklab conversion kernels
 // ---------------------------------------------------------------------------
 
-use crate::oklab::{lms_to_rgb_matrix, oklab_to_rgb, rgb_to_lms_matrix, rgb_to_oklab};
+use crate::oklab::{
+    lms_to_rgb_matrix, oklab_to_rgb, rgb_to_lms_matrix, rgb_to_oklab, rgb_to_oklab_spec,
+};
+
+#[derive(Clone, Copy)]
+enum OklabFwdSpec {
+    Untrusted,
+    Finite,
+    FiniteNonNeg,
+    FiniteNoSub,
+    FiniteNonNegNoSub,
+    FinitePosNoSub,
+}
+
+#[inline]
+fn select_oklab_fwd_spec(m1: &[[f32; 3]; 3], in_trust: super::StepFloatTrust) -> OklabFwdSpec {
+    use zenpixels::sample::FloatFacts;
+    let cf = in_trust.color_facts;
+    if !(cf.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE) && in_trust.color_bounded) {
+        return OklabFwdSpec::Untrusted;
+    }
+    let flat = m1.as_flattened();
+    let m1_positive = flat.iter().all(|&c| c >= (1.0 / 64.0));
+    let m1_min_abs = flat.iter().all(|&c| c.abs() >= (1.0 / 64.0));
+    let rgb_nonneg = cf.contains(FloatFacts::NON_NEGATIVE);
+    let rgb_pos = cf.contains(FloatFacts::POSITIVE);
+    let lms_nonneg = m1_positive && rgb_nonneg;
+    let lms_no_sub = rgb_nonneg
+        && match in_trust.color_min_exp {
+            Some(k) if m1_positive && k >= -120 => true,
+            Some(k) if m1_min_abs && k >= -74 => true,
+            _ => false,
+        };
+    if lms_nonneg && lms_no_sub && rgb_pos {
+        OklabFwdSpec::FinitePosNoSub
+    } else if lms_nonneg && lms_no_sub {
+        OklabFwdSpec::FiniteNonNegNoSub
+    } else if lms_no_sub {
+        OklabFwdSpec::FiniteNoSub
+    } else if lms_nonneg {
+        OklabFwdSpec::FiniteNonNeg
+    } else {
+        OklabFwdSpec::Finite
+    }
+}
+
+macro_rules! define_rgb_to_oklab_3ch {
+    ($fn_name:ident, $no_spec:expr, $no_sub:expr, $nonneg:expr, $pos:expr) => {
+        #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
+        fn $fn_name(src: &[f32], dst: &mut [f32], m1: &[[f32; 3]; 3]) {
+            for (s, d) in src
+                .as_chunks::<48>()
+                .0
+                .iter()
+                .zip(dst.as_chunks_mut::<48>().0)
+            {
+                for p in 0..16 {
+                    let i = p * 3;
+                    let [l, a, b] = rgb_to_oklab_spec::<$no_spec, $no_sub, $nonneg, $pos>(
+                        s[i],
+                        s[i + 1],
+                        s[i + 2],
+                        m1,
+                    );
+                    d[i] = l;
+                    d[i + 1] = a;
+                    d[i + 2] = b;
+                }
+            }
+            let rem_pixels = (src.len() / 3) % 16;
+            if rem_pixels > 0 {
+                let off = src.len() - rem_pixels * 3;
+                for p in 0..rem_pixels {
+                    let i = off + p * 3;
+                    let [l, a, b] = rgb_to_oklab_spec::<$no_spec, $no_sub, $nonneg, $pos>(
+                        src[i],
+                        src[i + 1],
+                        src[i + 2],
+                        m1,
+                    );
+                    dst[i] = l;
+                    dst[i + 1] = a;
+                    dst[i + 2] = b;
+                }
+            }
+        }
+    };
+}
+
+macro_rules! define_rgb_to_oklab_4ch {
+    ($fn_name:ident, $no_spec:expr, $no_sub:expr, $nonneg:expr, $pos:expr) => {
+        #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
+        fn $fn_name(src: &[f32], dst: &mut [f32], m1: &[[f32; 3]; 3]) {
+            for (s, d) in src
+                .as_chunks::<64>()
+                .0
+                .iter()
+                .zip(dst.as_chunks_mut::<64>().0)
+            {
+                for p in 0..16 {
+                    let i = p * 4;
+                    let [l, a, b] = rgb_to_oklab_spec::<$no_spec, $no_sub, $nonneg, $pos>(
+                        s[i],
+                        s[i + 1],
+                        s[i + 2],
+                        m1,
+                    );
+                    d[i] = l;
+                    d[i + 1] = a;
+                    d[i + 2] = b;
+                    d[i + 3] = s[i + 3];
+                }
+            }
+            let rem_pixels = (src.len() / 4) % 16;
+            if rem_pixels > 0 {
+                let off = src.len() - rem_pixels * 4;
+                for p in 0..rem_pixels {
+                    let i = off + p * 4;
+                    let [l, a, b] = rgb_to_oklab_spec::<$no_spec, $no_sub, $nonneg, $pos>(
+                        src[i],
+                        src[i + 1],
+                        src[i + 2],
+                        m1,
+                    );
+                    dst[i] = l;
+                    dst[i + 1] = a;
+                    dst[i + 2] = b;
+                    dst[i + 3] = src[i + 3];
+                }
+            }
+        }
+    };
+}
+
+define_rgb_to_oklab_3ch!(rgb_to_oklab_3ch_finite, true, false, false, false);
+define_rgb_to_oklab_3ch!(rgb_to_oklab_3ch_finite_nonneg, true, false, true, false);
+define_rgb_to_oklab_3ch!(rgb_to_oklab_3ch_finite_nosub, true, true, false, false);
+define_rgb_to_oklab_3ch!(
+    rgb_to_oklab_3ch_finite_nonneg_nosub,
+    true,
+    true,
+    true,
+    false
+);
+define_rgb_to_oklab_3ch!(rgb_to_oklab_3ch_finite_pos_nosub, true, true, true, true);
+
+define_rgb_to_oklab_4ch!(rgb_to_oklab_4ch_finite, true, false, false, false);
+define_rgb_to_oklab_4ch!(rgb_to_oklab_4ch_finite_nonneg, true, false, true, false);
+define_rgb_to_oklab_4ch!(rgb_to_oklab_4ch_finite_nosub, true, true, false, false);
+define_rgb_to_oklab_4ch!(
+    rgb_to_oklab_4ch_finite_nonneg_nosub,
+    true,
+    true,
+    true,
+    false
+);
+define_rgb_to_oklab_4ch!(rgb_to_oklab_4ch_finite_pos_nosub, true, true, true, true);
 
 /// Linear RGB f32 → Oklab f32 (3 channels).
 ///
 /// # Panics
 ///
 /// Panics if `primaries` is `Unknown`. The plan should have rejected this.
-fn linear_rgb_to_oklab_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: ColorPrimaries) {
+fn linear_rgb_to_oklab_f32(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    primaries: ColorPrimaries,
+    in_trust: super::StepFloatTrust,
+) {
     let m1 = rgb_to_lms_matrix(primaries)
         .expect("Oklab conversion requires known primaries (plan should have rejected Unknown)");
-
+    let rows = m1.rows();
     let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 12]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
-    rgb_to_oklab_3ch_inner(srcf, dstf, m1.rows());
+    match select_oklab_fwd_spec(rows, in_trust) {
+        OklabFwdSpec::Untrusted => rgb_to_oklab_3ch_inner(srcf, dstf, rows),
+        OklabFwdSpec::Finite => rgb_to_oklab_3ch_finite(srcf, dstf, rows),
+        OklabFwdSpec::FiniteNonNeg => rgb_to_oklab_3ch_finite_nonneg(srcf, dstf, rows),
+        OklabFwdSpec::FiniteNoSub => rgb_to_oklab_3ch_finite_nosub(srcf, dstf, rows),
+        OklabFwdSpec::FiniteNonNegNoSub => rgb_to_oklab_3ch_finite_nonneg_nosub(srcf, dstf, rows),
+        OklabFwdSpec::FinitePosNoSub => rgb_to_oklab_3ch_finite_pos_nosub(srcf, dstf, rows),
+    }
 }
 
 /// 3-channel RGB→Oklab inner loop (16 pixels = 48 f32s per chunk).
@@ -2714,13 +3031,26 @@ fn oklab_to_rgb_3ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) 
 }
 
 /// Linear RGBA f32 → Oklaba f32 (4 channels, alpha preserved).
-fn linear_rgba_to_oklaba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: ColorPrimaries) {
+fn linear_rgba_to_oklaba_f32(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    primaries: ColorPrimaries,
+    in_trust: super::StepFloatTrust,
+) {
     let m1 = rgb_to_lms_matrix(primaries)
         .expect("Oklab conversion requires known primaries (plan should have rejected Unknown)");
-
+    let rows = m1.rows();
     let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 16]);
-    rgb_to_oklab_4ch_inner(srcf, dstf, m1.rows());
+    match select_oklab_fwd_spec(rows, in_trust) {
+        OklabFwdSpec::Untrusted => rgb_to_oklab_4ch_inner(srcf, dstf, rows),
+        OklabFwdSpec::Finite => rgb_to_oklab_4ch_finite(srcf, dstf, rows),
+        OklabFwdSpec::FiniteNonNeg => rgb_to_oklab_4ch_finite_nonneg(srcf, dstf, rows),
+        OklabFwdSpec::FiniteNoSub => rgb_to_oklab_4ch_finite_nosub(srcf, dstf, rows),
+        OklabFwdSpec::FiniteNonNegNoSub => rgb_to_oklab_4ch_finite_nonneg_nosub(srcf, dstf, rows),
+        OklabFwdSpec::FinitePosNoSub => rgb_to_oklab_4ch_finite_pos_nosub(srcf, dstf, rows),
+    }
 }
 
 /// 4-channel RGBA→Oklaba inner loop (16 pixels = 64 f32s per chunk).

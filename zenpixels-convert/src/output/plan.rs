@@ -52,6 +52,8 @@ pub struct OutputPlan {
     metadata: OutputMetadata,
     converter: Option<RowConverter>,
     prepared_width: Option<u32>,
+    input_facts: zenpixels::sample::FloatFacts,
+    output_facts: zenpixels::sample::FloatFacts,
 }
 /// Target signaling and packed carrier for an output plan.
 #[derive(Clone, Debug)]
@@ -238,6 +240,8 @@ impl OutputPlan {
             PixelEncoding::new(target_desc_full, Some(&target_context)),
             spec,
         )?;
+        let input_facts = compiled.input_float_facts();
+        let output_facts = compiled.output_float_facts();
         let context = Arc::new(
             compiled
                 .output_encoding()
@@ -254,12 +258,24 @@ impl OutputPlan {
             metadata,
             converter,
             prepared_width: None,
+            input_facts,
+            output_facts,
         })
     }
 
     /// The descriptor the prepared transform produces, including color meaning.
     pub fn output_descriptor(&self) -> PixelDescriptor {
         self.target
+    }
+
+    /// Floating-point sample invariants required on input rows (`FloatFacts::NONE` when unstated).
+    pub const fn input_float_facts(&self) -> zenpixels::sample::FloatFacts {
+        self.input_facts
+    }
+
+    /// Floating-point sample invariants proven for output rows (`FloatFacts::NONE` on integer outputs).
+    pub const fn output_float_facts(&self) -> zenpixels::sample::FloatFacts {
+        self.output_facts
     }
 
     /// Color signaling matching the produced samples. This is a planned
@@ -332,6 +348,12 @@ impl OutputPlan {
         let expected = PixelEncoding::new(self.source, self.current.as_ref());
         if source.encoding() != expected {
             return Err(whereat::at!(ConvertError::SourceInterpretationChanged));
+        }
+        if !source.float_facts().contains(self.input_facts) {
+            return Err(whereat::at!(ConvertError::FloatFactsUnsatisfied {
+                required: self.input_facts,
+                actual: source.float_facts(),
+            }));
         }
         Ok(())
     }

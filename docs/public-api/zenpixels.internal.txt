@@ -9,9 +9,9 @@
 
 ## summary
 #
-#   inherent methods                           68
+#   inherent methods                           70
 #   enum variants                              14
-#   trait roster entries (type × trait)        75
+#   trait roster entries (type × trait)        77
 #
 # per-module pub lines:
 #   (root)                            9
@@ -27,9 +27,9 @@
 #   plane                             8
 #   policy                            5
 #   precision                         5
-#   sample                            7
+#   sample                            9
 
-## items (82 lines)
+## items (84 lines)
 
 pub fn HashInclusions::assert_fields_are_eq(&self)
 pub fn RowAlign::assert_fields_are_eq(&self)
@@ -97,6 +97,8 @@ pub fn sample::ChromaSubsampling::assert_fields_are_eq(&self)
 pub fn sample::CodePlaneError::assert_fields_are_eq(&self)
 pub fn sample::ExactDepth::assert_fields_are_eq(&self)
 pub fn sample::ExactDepthError::assert_fields_are_eq(&self)
+pub fn sample::FloatFacts::assert_fields_are_eq(&self)
+pub fn sample::FloatFactsError::assert_fields_are_eq(&self)
 pub fn sample::SampleEncoding::assert_fields_are_eq(&self)
 pub fn sample::SampleEncodingError::assert_fields_are_eq(&self)
 pub AlphaMode::__Reserved(descriptor::reserved::Reserved)
@@ -114,7 +116,7 @@ pub descriptor::ColorPrimaries::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::SignalRange::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::TransferFunction::__Reserved(descriptor::reserved::Reserved)
 
-## trait impls (75 types)
+## trait impls (77 types)
 
 HashInclusions: TrivialClone
 RowAlign: TrivialClone
@@ -189,5 +191,7 @@ sample::CodePlane<'a>: TrivialClone
 sample::CodePlaneError: TrivialClone
 sample::ExactDepth: TrivialClone
 sample::ExactDepthError: TrivialClone
+sample::FloatFacts: TrivialClone
+sample::FloatFactsError: TrivialClone
 sample::SampleEncoding: TrivialClone
 sample::SampleEncodingError: TrivialClone

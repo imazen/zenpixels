@@ -19,6 +19,7 @@ pub struct ConversionSpec<'a> {
     options: ConvertOptions,
     cms: Option<&'a dyn PluggableCms>,
     precision: Option<SourcePrecision>,
+    float_facts: zenpixels::sample::FloatFacts,
     choice: OutputChoice,
     intent: Option<ConvertIntent>,
     provenance: Option<Provenance>,
@@ -37,6 +38,7 @@ impl<'a> ConversionSpec<'a> {
             options,
             cms: None,
             precision: None,
+            float_facts: zenpixels::sample::FloatFacts::NONE,
             choice: OutputChoice::Hidden,
             intent: None,
             provenance: None,
@@ -66,6 +68,25 @@ impl<'a> ConversionSpec<'a> {
     pub const fn with_source_precision(mut self, precision: SourcePrecision) -> Self {
         self.precision = Some(precision);
         self
+    }
+
+    /// Declare verified or trusted [`FloatFacts`](zenpixels::sample::FloatFacts) for
+    /// floating-point input samples (`F16`, `F32`, `F64`).
+    ///
+    /// Plans compiled with non-empty facts specialize internal math kernels where sound,
+    /// propagate proven output facts to [`ConvertPlan::output_float_facts`], and enforce
+    /// `src.float_facts().contains(plan.input_float_facts())` in
+    /// [`RowConverter::convert_rows`] and [`RowConverter::convert_bands`].
+    /// Non-empty facts on integer sources fail compilation with
+    /// [`ConvertError::FloatFactsUnsatisfied`].
+    pub const fn with_float_facts(mut self, facts: zenpixels::sample::FloatFacts) -> Self {
+        self.float_facts = facts;
+        self
+    }
+
+    /// Declared floating-point input facts on this request.
+    pub const fn float_facts(&self) -> zenpixels::sample::FloatFacts {
+        self.float_facts
     }
 
     /// Identify who chose the final output.
@@ -314,6 +335,12 @@ impl ConvertPlan {
     ) -> Result<Self, At<ConvertError>> {
         let from = source.descriptor();
         let to = target.descriptor();
+        if !spec.float_facts.is_empty() && !from.channel_type().is_float() {
+            return Err(whereat::at!(ConvertError::FloatFactsUnsatisfied {
+                required: spec.float_facts,
+                actual: zenpixels::sample::FloatFacts::NONE,
+            }));
+        }
         let src_profile = crate::output::current_profile_for(source)?;
         let dst_profile = crate::output::current_profile_for(target)?;
         let same_profile = crate::output::profiles_match(&src_profile, &dst_profile)
@@ -372,6 +399,7 @@ impl ConvertPlan {
         // fields of a compact descriptor using attached profile evidence.
         recipe.from = from;
         recipe.to = to;
+        recipe.apply_input_facts(spec.float_facts);
         let worker_limit = spec.workspace_limit.map(|(_, limit)| limit);
         if let Some((width, limit)) = spec.workspace_limit {
             let bytes = recipe.requirements(width)?.worker_heap();
@@ -556,6 +584,16 @@ impl ConvertPlan {
         PixelEncoding::new(self.recipe.to, self.output.as_deref())
     }
 
+    /// Floating-point sample invariants required on input views (`FloatFacts::NONE` when unstated).
+    pub const fn input_float_facts(&self) -> zenpixels::sample::FloatFacts {
+        self.recipe.input_facts
+    }
+
+    /// Floating-point sample invariants proven for output views (`FloatFacts::NONE` on integer outputs).
+    pub const fn output_float_facts(&self) -> zenpixels::sample::FloatFacts {
+        self.recipe.output_facts
+    }
+
     /// Whether the operation leaves active sample bytes unchanged.
     pub fn is_identity(&self) -> bool {
         !self.recipe.needs_pixel_work()
@@ -566,14 +604,23 @@ impl ConvertPlan {
         if self.output_encoding() != next.source_encoding() {
             return Err(whereat::at!(ConvertError::IntermediateMismatch));
         }
+        if !self.output_float_facts().contains(next.input_float_facts()) {
+            return Err(whereat::at!(ConvertError::FloatFactsUnsatisfied {
+                required: next.input_float_facts(),
+                actual: self.output_float_facts(),
+            }));
+        }
         let worker_limit = match (self.worker_limit, next.worker_limit) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (Some(a), None) => Some(a),
             (None, Some(b)) => Some(b),
             (None, None) => None,
         };
+        let input_facts = self.recipe.input_facts;
+        let mut recipe = self.recipe.then(next.recipe);
+        recipe.apply_input_facts(input_facts);
         Ok(Self {
-            recipe: self.recipe.then(next.recipe),
+            recipe,
             input: self.input,
             output: next.output,
             worker_limit,

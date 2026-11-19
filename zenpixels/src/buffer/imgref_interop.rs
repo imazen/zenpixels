@@ -80,7 +80,7 @@ impl<P: Pixel> PixelBuffer<P> {
             stride_samples,
             descriptor,
             color: None,
-            exact: None,
+            evidence: crate::sample::SampleEvidence::NONE,
             _pixel: PhantomData,
         })
     }
@@ -175,7 +175,7 @@ impl<P: Pixel> TryFrom<PixelBuffer<P>> for ImgVec<P> {
             stride_samples,
             descriptor,
             color,
-            exact,
+            evidence,
             _pixel,
         } = buffer;
         if byte_len % size != 0 {
@@ -191,7 +191,7 @@ impl<P: Pixel> TryFrom<PixelBuffer<P>> for ImgVec<P> {
                 stride_samples,
                 descriptor,
                 color,
-                exact,
+                evidence,
                 _pixel,
             }),
         }
@@ -258,7 +258,7 @@ impl<P: Pixel, S: ByteStorageMut> PixelBuffer<P, S> {
             "ImgRef requires a stride in whole pixels"
         );
         // Mutable access can change any sample: end current-sample evidence.
-        self.exact = None;
+        self.evidence = crate::sample::SampleEvidence::NONE;
         let (width, height) = (self.width as usize, self.height as usize);
         let total_bytes = if height == 0 || width == 0 {
             0
@@ -428,7 +428,7 @@ impl<S: ByteStorageMut> PixelBuffer<(), S> {
             bytemuck::try_cast_slice_mut(data).ok()?
         };
         // Mutable access can change any sample: end current-sample evidence.
-        self.exact = None;
+        self.evidence = crate::sample::SampleEvidence::NONE;
         // imgref refuses a stride of 0 or < width, even for an empty image.
         let stride_px = (stride / pixel_size)
             .max(if height == 0 { width } else { 0 })
@@ -466,7 +466,7 @@ impl<S: ByteStorageMut> PixelBuffer<(), S> {
         } else {
             bytemuck::try_cast_slice_mut(data).ok()?
         };
-        self.exact = None;
+        self.evidence = crate::sample::SampleEvidence::NONE;
         let sample_stride = (stride / sample_size)
             .max(if height == 0 { sample_width } else { 0 })
             .max(1);
@@ -950,7 +950,7 @@ fn slice_from_imgref_raw<'a>(
         stride: byte_stride,
         descriptor,
         color: None,
-        exact: None,
+        evidence: crate::sample::SampleEvidence::NONE,
         _pixel: PhantomData,
     }
 }
@@ -976,7 +976,7 @@ macro_rules! impl_from_imgref {
                     stride: s.stride,
                     descriptor: s.descriptor,
                     color: s.color,
-                    exact: s.exact,
+                    evidence: s.evidence,
                     _pixel: PhantomData,
                 }
             }

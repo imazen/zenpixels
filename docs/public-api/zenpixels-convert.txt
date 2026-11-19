@@ -10,11 +10,11 @@
 #
 #   pub modules                                14
 #   pub types (struct/enum/trait/alias)        69
-#   pub consts/statics                         70
+#   pub consts/statics                         82
 #   free functions                              1
 #   inherent methods                          156
-#   struct fields                              81
-#   enum variants                             119
+#   struct fields                              85
+#   enum variants                             121
 #   re-exports                                  8
 #   trait roster entries (type × trait)       149
 #   conditional trait impls (verbatim)          1
@@ -22,12 +22,12 @@
 #   auto-trait exceptions                      10
 #
 # per-module pub lines:
-#   (root)                          245
+#   (root)                          260
 #   adapt                             1
 #   cms                              26
 #   codes                            20
 #   converter                        19
-#   error                            55
+#   error                            58
 #   ext                              22
 #   gamut                            11
 #   hdr                               2
@@ -37,7 +37,7 @@
 #   output                           24
 #   precision                        62
 
-## items (488 lines)
+## items (502 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -97,7 +97,9 @@ pub fn converter::RowConverter::convert_bands(&mut self, &zenpixels::banded::Ban
 pub fn converter::RowConverter::convert_raw_rows(&mut self, &[u8], usize, &mut [u8], usize, u32, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::convert_rows<'a>(&mut self, zenpixels::buffer::PixelSlice<'_>, zenpixels::buffer::PixelSliceMut<'a>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::from_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
+pub const fn converter::RowConverter::input_float_facts(&self) -> zenpixels::sample::float::FloatFacts [also: (root)]
 pub fn converter::RowConverter::is_identity(&self) -> bool
+pub const fn converter::RowConverter::output_float_facts(&self) -> zenpixels::sample::float::FloatFacts [also: (root)]
 pub fn converter::RowConverter::prepare(&mut self, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::to_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
 pub fn converter::RowConverter::try_clone(&self) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
@@ -117,6 +119,9 @@ pub error::ConvertError::CmsBackend(alloc::sync::Arc<cms::CmsPluginError>)
 pub error::ConvertError::CmsError(alloc::string::String)
 pub error::ConvertError::DepthReductionForbidden
 pub error::ConvertError::EmptyFormatList
+pub error::ConvertError::FloatFactsUnsatisfied
+pub error::ConvertError::FloatFactsUnsatisfied::actual: zenpixels::sample::float::FloatFacts
+pub error::ConvertError::FloatFactsUnsatisfied::required: zenpixels::sample::float::FloatFacts
 pub error::ConvertError::FullImageMapperNotSupported
 pub error::ConvertError::FullImageMapperNotSupported::mapper_name: &'static str
 pub error::ConvertError::HdrFeatureRequired
@@ -240,9 +245,11 @@ pub output::OutputMetadata::parametric: core::option::Option<zenpixels::color::P
 pub fn OutputPlan::borrow_rows<'a>(&self, zenpixels::buffer::PixelSlice<'a>) -> core::result::Result<core::option::Option<zenpixels::buffer::PixelSlice<'a>>, whereat::at::At<error::ConvertError>>
 pub fn OutputPlan::build(zenpixels::color::PixelEncoding<'_>, OutputTarget<'_>, &ConversionSpec<'_>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn OutputPlan::convert_rows<'a>(&mut self, zenpixels::buffer::PixelSlice<'_>, zenpixels::buffer::PixelSliceMut<'a>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, whereat::at::At<error::ConvertError>>
+pub const fn OutputPlan::input_float_facts(&self) -> zenpixels::sample::float::FloatFacts [also: (root)]
 pub fn OutputPlan::metadata(&self) -> &output::OutputMetadata
 pub fn OutputPlan::output_color_context(&self) -> &alloc::sync::Arc<zenpixels::color::ColorContext>
 pub fn OutputPlan::output_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
+pub const fn OutputPlan::output_float_facts(&self) -> zenpixels::sample::float::FloatFacts [also: (root)]
 pub fn OutputPlan::prepare(&mut self, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn OutputTarget<'a>::new(output::OutputProfile, zenpixels::descriptor::PixelFormat) -> Self
 pub fn OutputTarget<'a>::with_descriptor(self, zenpixels::descriptor::PixelDescriptor) -> Self
@@ -341,6 +348,9 @@ pub ConvertError::CmsBackend(alloc::sync::Arc<cms::CmsPluginError>)
 pub ConvertError::CmsError(alloc::string::String)
 pub ConvertError::DepthReductionForbidden
 pub ConvertError::EmptyFormatList
+pub ConvertError::FloatFactsUnsatisfied
+pub ConvertError::FloatFactsUnsatisfied::actual: zenpixels::sample::float::FloatFacts
+pub ConvertError::FloatFactsUnsatisfied::required: zenpixels::sample::float::FloatFacts
 pub ConvertError::FullImageMapperNotSupported
 pub ConvertError::FullImageMapperNotSupported::mapper_name: &'static str
 pub ConvertError::HdrFeatureRequired
@@ -411,9 +421,11 @@ pub fn cms::CmsRequest<'a>::new(zenpixels::color::ColorProfileSource<'a>, zenpix
 pub fn cms::CmsRequest<'a>::source(&self) -> zenpixels::color::ColorProfileSource<'a>
 pub fn cms::CmsRequest<'a>::target(&self) -> zenpixels::color::ColorProfileSource<'a>
 pub struct ConversionSpec<'a>
+pub const fn ConversionSpec<'a>::float_facts(&self) -> zenpixels::sample::float::FloatFacts
 pub const fn ConversionSpec<'a>::new(zenpixels::policy::ConvertOptions) -> Self
 pub const fn ConversionSpec<'a>::preserve_samples() -> Self
 pub const fn ConversionSpec<'a>::with_cms(self, &'a dyn cms::PluggableCms) -> Self
+pub const fn ConversionSpec<'a>::with_float_facts(self, zenpixels::sample::float::FloatFacts) -> Self
 pub const fn ConversionSpec<'a>::with_intent(self, ConvertIntent) -> Self
 pub const fn ConversionSpec<'a>::with_output_choice(self, zenpixels::precision::OutputChoice) -> Self
 pub const fn ConversionSpec<'a>::with_provenance(self, Provenance) -> Self
@@ -421,8 +433,10 @@ pub const fn ConversionSpec<'a>::with_source_precision(self, zenpixels::precisio
 pub const fn ConversionSpec<'a>::with_worker_limit(self, u32, u64) -> Self
 pub struct ConvertPlan
 pub fn ConvertPlan::build(zenpixels::color::PixelEncoding<'_>, zenpixels::color::PixelEncoding<'_>, &ConversionSpec<'_>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub const fn ConvertPlan::input_float_facts(&self) -> zenpixels::sample::float::FloatFacts
 pub fn ConvertPlan::is_identity(&self) -> bool
 pub fn ConvertPlan::output_encoding(&self) -> zenpixels::color::PixelEncoding<'_>
+pub const fn ConvertPlan::output_float_facts(&self) -> zenpixels::sample::float::FloatFacts
 pub fn ConvertPlan::prepare(self, u32) -> core::result::Result<converter::RowConverter, whereat::at::At<error::ConvertError>>
 pub fn ConvertPlan::prepare_shared(&self, u32) -> core::result::Result<converter::RowConverter, whereat::at::At<error::ConvertError>>
 pub fn ConvertPlan::relabel_transfer(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>

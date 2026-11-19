@@ -158,6 +158,96 @@ pub(crate) fn fast_cbrt(x: f32) -> f32 {
     sign * y * scale
 }
 
+/// Const-specialized [`fast_cbrt`] matching [`fast_cbrt`] bit-for-bit on its promised domain
+/// while eliminating data-dependent early-exit branches so outer row loops vectorize cleanly.
+#[inline(always)]
+pub(crate) fn fast_cbrt_spec<
+    const NO_SPECIAL: bool,
+    const NO_SUBNORMALS: bool,
+    const NON_NEGATIVE: bool,
+    const POSITIVE: bool,
+>(
+    x: f32,
+) -> f32 {
+    if !NO_SPECIAL {
+        return fast_cbrt(x);
+    }
+    if POSITIVE && NO_SUBNORMALS {
+        let y0 = f32::from_bits((x.to_bits() / 3) + 0x2a51_7d48);
+        let y1 = (2.0 * y0 + x / (y0 * y0)) / 3.0;
+        return (2.0 * y1 + x / (y1 * y1)) / 3.0;
+    }
+    if NON_NEGATIVE && NO_SUBNORMALS {
+        let y0 = f32::from_bits((x.to_bits() / 3) + 0x2a51_7d48);
+        let y1 = (2.0 * y0 + x / (y0 * y0)) / 3.0;
+        let y2 = (2.0 * y1 + x / (y1 * y1)) / 3.0;
+        return if x == 0.0 { 0.0 } else { y2 };
+    }
+    if NO_SUBNORMALS {
+        let ax = x.abs();
+        let y0 = f32::from_bits((ax.to_bits() / 3) + 0x2a51_7d48);
+        let y1 = (2.0 * y0 + ax / (y0 * y0)) / 3.0;
+        let y2 = (2.0 * y1 + ax / (y1 * y1)) / 3.0;
+        return if ax == 0.0 { x } else { y2.copysign(x) };
+    }
+    if NON_NEGATIVE {
+        let sub = x < f32::MIN_POSITIVE;
+        let xn = if sub { x * 16_777_216.0 } else { x };
+        let scale = if sub { 1.0 / 256.0 } else { 1.0 };
+        let y0 = f32::from_bits((xn.to_bits() / 3) + 0x2a51_7d48);
+        let y1 = (2.0 * y0 + xn / (y0 * y0)) / 3.0;
+        let y2 = (2.0 * y1 + xn / (y1 * y1)) / 3.0;
+        return if x == 0.0 { 0.0 } else { y2 * scale };
+    }
+    let ax = x.abs();
+    let sub = ax < f32::MIN_POSITIVE;
+    let xn = if sub { ax * 16_777_216.0 } else { ax };
+    let scale = if sub { 1.0 / 256.0 } else { 1.0 };
+    let y0 = f32::from_bits((xn.to_bits() / 3) + 0x2a51_7d48);
+    let y1 = (2.0 * y0 + xn / (y0 * y0)) / 3.0;
+    let y2 = (2.0 * y1 + xn / (y1 * y1)) / 3.0;
+    if ax == 0.0 {
+        x
+    } else {
+        (y2 * scale).copysign(x)
+    }
+}
+
+/// Const-specialized linear RGB → Oklab `[L, a, b]`, bit-identical to [`rgb_to_oklab`]
+/// whenever the `LMS` cone intermediates satisfy the enabled flags.
+#[inline(always)]
+pub(crate) fn rgb_to_oklab_spec<
+    const NO_SPECIAL: bool,
+    const LMS_NO_SUBNORMALS: bool,
+    const LMS_NON_NEGATIVE: bool,
+    const LMS_POSITIVE: bool,
+>(
+    r: f32,
+    g: f32,
+    b: f32,
+    m1: &[[f32; 3]; 3],
+) -> [f32; 3] {
+    let l = m1[0][0] * r + m1[0][1] * g + m1[0][2] * b;
+    let m = m1[1][0] * r + m1[1][1] * g + m1[1][2] * b;
+    let s = m1[2][0] * r + m1[2][1] * g + m1[2][2] * b;
+
+    let l_ = fast_cbrt_spec::<NO_SPECIAL, LMS_NO_SUBNORMALS, LMS_NON_NEGATIVE, LMS_POSITIVE>(l);
+    let m_ = fast_cbrt_spec::<NO_SPECIAL, LMS_NO_SUBNORMALS, LMS_NON_NEGATIVE, LMS_POSITIVE>(m);
+    let s_ = fast_cbrt_spec::<NO_SPECIAL, LMS_NO_SUBNORMALS, LMS_NON_NEGATIVE, LMS_POSITIVE>(s);
+
+    let ok_l = OKLAB_FROM_LMS_CBRT.0[0][0] * l_
+        + OKLAB_FROM_LMS_CBRT.0[0][1] * m_
+        + OKLAB_FROM_LMS_CBRT.0[0][2] * s_;
+    let ok_a = OKLAB_FROM_LMS_CBRT.0[1][0] * l_
+        + OKLAB_FROM_LMS_CBRT.0[1][1] * m_
+        + OKLAB_FROM_LMS_CBRT.0[1][2] * s_;
+    let ok_b = OKLAB_FROM_LMS_CBRT.0[2][0] * l_
+        + OKLAB_FROM_LMS_CBRT.0[2][1] * m_
+        + OKLAB_FROM_LMS_CBRT.0[2][2] * s_;
+
+    [ok_l, ok_a, ok_b]
+}
+
 // ---------------------------------------------------------------------------
 // Scalar reference conversions
 // ---------------------------------------------------------------------------
@@ -338,5 +428,82 @@ mod tests {
 
         assert!(lms_to_rgb_matrix(ColorPrimaries::Bt709).is_some());
         assert!(lms_to_rgb_matrix(ColorPrimaries::Unknown).is_none());
+    }
+
+    #[test]
+    fn fast_cbrt_spec_is_bit_identical_to_fast_cbrt_across_domains() {
+        let mut samples = alloc::vec![
+            0.0_f32,
+            -0.0_f32,
+            f32::from_bits(1),
+            -f32::from_bits(1),
+            f32::from_bits(0x007f_ffff),
+            -f32::from_bits(0x007f_ffff),
+            f32::MIN_POSITIVE,
+            -f32::MIN_POSITIVE,
+            1e-20,
+            -1e-20,
+            0.0031308,
+            0.5,
+            -0.5,
+            1.0,
+            -1.0,
+            100.0,
+            -100.0,
+            f32::MAX,
+            f32::MIN,
+        ];
+        // Sweep across subnormal and normal bit patterns.
+        let mut b = 1u32;
+        while b < 0x0080_0000 {
+            samples.push(f32::from_bits(b));
+            samples.push(-f32::from_bits(b));
+            b = b.saturating_add(65_521);
+        }
+        let mut b = 0x0080_0000u32;
+        while b < 0x7f80_0000 {
+            samples.push(f32::from_bits(b));
+            samples.push(-f32::from_bits(b));
+            b = b.saturating_add(524_287);
+        }
+
+        for x in samples {
+            let want = fast_cbrt(x).to_bits();
+            // All finite values satisfy NO_SPECIAL:
+            assert_eq!(
+                fast_cbrt_spec::<true, false, false, false>(x).to_bits(),
+                want,
+                "finite spec mismatch at {x:?} ({:#010x})",
+                x.to_bits()
+            );
+            if !x.is_sign_negative() {
+                assert_eq!(
+                    fast_cbrt_spec::<true, false, true, false>(x).to_bits(),
+                    want,
+                    "nonneg spec mismatch at {x:?}"
+                );
+            }
+            if !x.is_subnormal() {
+                assert_eq!(
+                    fast_cbrt_spec::<true, true, false, false>(x).to_bits(),
+                    want,
+                    "nosub spec mismatch at {x:?}"
+                );
+            }
+            if !x.is_sign_negative() && !x.is_subnormal() {
+                assert_eq!(
+                    fast_cbrt_spec::<true, true, true, false>(x).to_bits(),
+                    want,
+                    "nonneg+nosub spec mismatch at {x:?}"
+                );
+            }
+            if x > 0.0 && !x.is_subnormal() {
+                assert_eq!(
+                    fast_cbrt_spec::<true, true, true, true>(x).to_bits(),
+                    want,
+                    "pos+nosub spec mismatch at {x:?}"
+                );
+            }
+        }
     }
 }

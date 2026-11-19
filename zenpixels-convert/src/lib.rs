@@ -123,7 +123,8 @@
 //!   not what the pixels are. This is immutable and used only at encode time
 //!   for provenance decisions (e.g., "re-embed the original ICC profile").
 //!
-//! - [`ExactDepth`](zenpixels::sample::ExactDepth) is sample evidence.
+//! - [`ExactDepth`](zenpixels::sample::ExactDepth) and
+//!   [`FloatFacts`](zenpixels::sample::FloatFacts) are sample evidence.
 //!   [`SourcePrecision`](zenpixels::precision::SourcePrecision) describes capacity
 //!   and can constrain admission when the caller has not chosen the loss.
 //!

@@ -39,7 +39,7 @@ use crate::hdr::DiffuseWhite;
 #[cfg(feature = "rgb")]
 use crate::pixel_types::F16Sample;
 use crate::pixel_types::{GrayAlpha8, GrayAlpha16, GrayAlphaF16, GrayAlphaF32};
-use crate::sample::{ExactDepth, ExactDepthError};
+use crate::sample::{ExactDepth, ExactDepthError, FloatFacts, FloatFactsError, SampleEvidence};
 
 // ---------------------------------------------------------------------------
 // Padded pixel types (32-bit SIMD-friendly)
@@ -463,7 +463,7 @@ mod imgref_interop;
 mod tests;
 
 // The enum's tag costs 8 bytes; `offset` and `stride_samples` are stored as `u32`,
-// and paired with the 6-byte `PixelDescriptor` and 2-byte `Option<ExactDepth>` the
+// and paired with the 6-byte `PixelDescriptor` and 2-byte `SampleEvidence` the
 // default buffer fits in a single 64-byte cache line.
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(core::mem::size_of::<PixelBuffer>() == 64);
@@ -586,7 +586,7 @@ pub struct PixelSlice<'a, P = ()> {
     stride: usize,
     descriptor: PixelDescriptor,
     color: Option<Arc<ColorContext>>,
-    exact: Option<ExactDepth>,
+    evidence: SampleEvidence,
     _pixel: PhantomData<P>,
 }
 
@@ -599,7 +599,7 @@ impl<P> Clone for PixelSlice<'_, P> {
             stride: self.stride,
             descriptor: self.descriptor,
             color: self.color.clone(),
-            exact: self.exact,
+            evidence: self.evidence,
             _pixel: PhantomData,
         }
     }
@@ -683,7 +683,7 @@ impl<'a> PixelSlice<'a> {
             stride_samples,
             descriptor: self.descriptor,
             color: self.color.clone(),
-            exact: self.exact,
+            evidence: self.evidence,
             _pixel: PhantomData,
         })
     }
@@ -733,7 +733,7 @@ impl<'a> PixelSlice<'a> {
                 stride: self.stride,
                 descriptor: self.descriptor,
                 color: self.color,
-                exact: self.exact,
+                evidence: self.evidence,
                 _pixel: PhantomData,
             };
         }
@@ -747,7 +747,7 @@ impl<'a> PixelSlice<'a> {
             stride: self.stride,
             descriptor: self.descriptor,
             color: self.color,
-            exact: self.exact,
+            evidence: self.evidence,
             _pixel: PhantomData,
         }
     }
@@ -771,7 +771,7 @@ impl<'a> PixelSlice<'a> {
                 stride: self.stride,
                 descriptor: self.descriptor,
                 color: self.color,
-                exact: self.exact,
+                evidence: self.evidence,
                 _pixel: PhantomData,
             };
         }
@@ -785,7 +785,7 @@ impl<'a> PixelSlice<'a> {
             stride: self.stride,
             descriptor: self.descriptor,
             color: self.color,
-            exact: self.exact,
+            evidence: self.evidence,
             _pixel: PhantomData,
         }
     }
@@ -832,7 +832,7 @@ impl<'a> PixelSlice<'a> {
             stride: stride_bytes,
             descriptor,
             color: None,
-            exact: None,
+            evidence: SampleEvidence::NONE,
             _pixel: PhantomData,
         })
     }
@@ -883,7 +883,7 @@ impl<'a> PixelSlice<'a> {
             descriptor,
 
             color: None,
-            exact: None,
+            evidence: SampleEvidence::NONE,
             _pixel: PhantomData,
         })
     }
@@ -902,7 +902,7 @@ impl<'a, P> PixelSlice<'a, P> {
             descriptor: self.descriptor,
 
             color: self.color,
-            exact: self.exact,
+            evidence: self.evidence,
             _pixel: PhantomData,
         }
     }
@@ -928,7 +928,7 @@ impl<'a, P> PixelSlice<'a, P> {
                 descriptor: self.descriptor,
 
                 color: self.color,
-                exact: self.exact,
+                evidence: self.evidence,
                 _pixel: PhantomData,
             })
         } else {
@@ -962,9 +962,7 @@ impl<'a, P> PixelSlice<'a, P> {
             descriptor
         );
         descriptor.validate().expect("invalid pixel descriptor");
-        if !exact_survives(self.descriptor, descriptor) {
-            self.exact = None;
-        }
+        self.evidence = self.evidence.survives_relabel(self.descriptor, descriptor);
         self.descriptor = descriptor;
         self
     }
@@ -995,9 +993,7 @@ impl<'a, P> PixelSlice<'a, P> {
             &descriptor,
         )
         .map_err(|e| whereat::at!(e))?;
-        if !exact_survives(self.descriptor, descriptor) {
-            self.exact = None;
-        }
+        self.evidence = self.evidence.survives_relabel(self.descriptor, descriptor);
         self.descriptor = descriptor;
         Ok(self)
     }
@@ -1022,10 +1018,10 @@ impl<'a, P> PixelSlice<'a, P> {
     #[inline]
     #[must_use]
     pub fn with_signal_range(mut self, sr: SignalRange) -> Self {
-        if self.descriptor.signal_range != sr {
-            self.exact = None;
-        }
-        self.descriptor.signal_range = sr;
+        let mut descriptor = self.descriptor;
+        descriptor.signal_range = sr;
+        self.evidence = self.evidence.survives_relabel(self.descriptor, descriptor);
+        self.descriptor = descriptor;
         self
     }
 
@@ -1035,6 +1031,7 @@ impl<'a, P> PixelSlice<'a, P> {
     pub fn with_alpha_mode(mut self, am: Option<AlphaMode>) -> Self {
         let descriptor = self.descriptor.with_alpha(am);
         descriptor.validate().expect("invalid alpha declaration");
+        self.evidence = self.evidence.survives_relabel(self.descriptor, descriptor);
         self.descriptor = descriptor;
         self
     }
@@ -1042,10 +1039,11 @@ impl<'a, P> PixelSlice<'a, P> {
     /// Evidence that the current samples are exact lower-depth codes, if stated.
     ///
     /// Borrowed views and clones keep it; a descriptor change that alters storage,
-    /// layout or signal range drops it. See [`ExactDepth`].
+    /// layout, signal range, or promotes [`AlphaMode::Undefined`] padding drops it.
+    /// See [`ExactDepth`].
     #[inline]
     pub fn exact_depth(&self) -> Option<ExactDepth> {
-        self.exact
+        self.evidence.exact_depth()
     }
 
     /// Attach exact-depth evidence for these samples.
@@ -1055,8 +1053,36 @@ impl<'a, P> PixelSlice<'a, P> {
     /// by an exact widening, or after a scan.
     pub fn with_exact_depth(mut self, exact: ExactDepth) -> Result<Self, ExactDepthError> {
         check_exact(self.descriptor, exact)?;
-        self.exact = Some(exact);
+        self.evidence = SampleEvidence::from_exact(Some(exact));
         Ok(self)
+    }
+
+    /// Verified or asserted properties of active floating-point samples (`FloatFacts::NONE` when unstated).
+    ///
+    /// Borrowed views, crops, and clones keep it; descriptor changes that alter
+    /// [`ChannelType`] or promote [`AlphaMode::Undefined`] padding drop it. See [`FloatFacts`].
+    #[inline]
+    pub fn float_facts(&self) -> FloatFacts {
+        self.evidence.float_facts()
+    }
+
+    /// Attach floating-point sample facts for these samples.
+    ///
+    /// The statement is the caller's: only floating-point storage (`F16`, `F32`, `F64`)
+    /// is checked, without reading samples. State it where the samples were produced by
+    /// a known domain or after [`FloatFacts::measure`] / [`FloatFacts::holds_for`].
+    pub fn with_float_facts(mut self, facts: FloatFacts) -> Result<Self, FloatFactsError> {
+        check_float_facts(self.descriptor, facts)?;
+        if self.descriptor.channel_type().is_float() {
+            self.evidence = SampleEvidence::from_float(facts);
+        }
+        Ok(self)
+    }
+
+    #[inline]
+    pub(crate) const fn with_evidence_raw(mut self, evidence: SampleEvidence) -> Self {
+        self.evidence = evidence;
+        self
     }
 
     /// Image width in pixels.
@@ -1320,7 +1346,7 @@ impl<'a, P> PixelSlice<'a, P> {
             stride: self.stride,
             descriptor: self.descriptor,
             color: self.color.clone(),
-            exact: self.exact,
+            evidence: self.evidence,
             _pixel: PhantomData,
         }
     }
@@ -1334,7 +1360,7 @@ impl<'a, P> PixelSlice<'a, P> {
             stride: self.stride,
             descriptor: self.descriptor,
             color: None,
-            exact: self.exact,
+            evidence: self.evidence,
             _pixel: PhantomData,
         }
     }
@@ -1348,7 +1374,7 @@ impl<'a, P> PixelSlice<'a, P> {
             stride: self.stride,
             descriptor: self.descriptor,
             color: self.color.clone(),
-            exact: self.exact,
+            evidence: self.evidence,
             _pixel: PhantomData,
         }
     }
@@ -1362,7 +1388,7 @@ impl<'a, P> PixelSlice<'a, P> {
             stride: self.stride,
             descriptor: self.descriptor,
             color: self.color,
-            exact: self.exact,
+            evidence: self.evidence,
             _pixel: PhantomData,
         }
     }
@@ -1822,7 +1848,7 @@ impl<'a, P> PixelSliceMut<'a, P> {
             stride: self.stride,
             descriptor: self.descriptor,
             color: self.color.clone(),
-            exact: None,
+            evidence: SampleEvidence::NONE,
             _pixel: PhantomData,
         }
     }
@@ -2286,7 +2312,7 @@ pub struct PixelBuffer<P = (), S = PixelStorage> {
     descriptor: PixelDescriptor,
     color: Option<Arc<ColorContext>>,
     /// Current-sample evidence; cleared by every mutable access.
-    exact: Option<ExactDepth>,
+    evidence: SampleEvidence,
     _pixel: PhantomData<P>,
 }
 
@@ -2589,7 +2615,7 @@ impl<T: PlaneSample> PixelBuffer<(), AlignedSamples<T>> {
             stride_samples,
             descriptor,
             color: None,
-            exact: None,
+            evidence: SampleEvidence::NONE,
             _pixel: PhantomData,
         })
     }
@@ -2666,7 +2692,7 @@ impl<S: ByteStorage> PixelBuffer<(), S> {
             stride_samples,
             descriptor: parts.descriptor,
             color: parts.color_context,
-            exact: None,
+            evidence: SampleEvidence::NONE,
             _pixel: PhantomData,
         })
     }
@@ -2718,7 +2744,7 @@ impl PixelBuffer {
             descriptor,
 
             color: None,
-            exact: None,
+            evidence: SampleEvidence::NONE,
             _pixel: PhantomData,
         })
     }
@@ -2819,7 +2845,7 @@ impl PixelBuffer {
             descriptor,
 
             color: None,
-            exact: None,
+            evidence: SampleEvidence::NONE,
             _pixel: PhantomData,
         })
     }
@@ -2873,7 +2899,7 @@ impl PixelBuffer {
             descriptor,
 
             color: None,
-            exact: None,
+            evidence: SampleEvidence::NONE,
             _pixel: PhantomData,
         })
     }
@@ -2905,7 +2931,7 @@ impl PixelBuffer {
             stride_samples,
             descriptor,
             color: None,
-            exact: None,
+            evidence: SampleEvidence::NONE,
             _pixel: PhantomData,
         })
     }
@@ -2992,7 +3018,7 @@ impl PixelBuffer {
             stride_samples,
             descriptor,
             color,
-            exact,
+            evidence,
             _pixel,
         } = self;
         match data.try_into_vec::<u8>() {
@@ -3008,7 +3034,7 @@ impl PixelBuffer {
                 stride_samples,
                 descriptor,
                 color,
-                exact,
+                evidence,
                 _pixel,
             }),
         }
@@ -3085,7 +3111,7 @@ impl<P: Pixel> PixelBuffer<P> {
             stride_samples,
             descriptor,
             color: None,
-            exact: None,
+            evidence: SampleEvidence::NONE,
             _pixel: PhantomData,
         })
     }
@@ -3356,7 +3382,7 @@ impl PixelBuffer {
         F: for<'a> FnOnce(InPlacePixels<'a>) -> PixelSliceMut<'a>,
     {
         // The transform rewrites samples in place: end current-sample evidence.
-        self.exact = None;
+        self.evidence = SampleEvidence::NONE;
         let total = self.storage_span_len();
         let offset = self.offset as usize;
         let avail = self.data.as_bytes().len() - offset;
@@ -3414,7 +3440,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
             descriptor: self.descriptor,
 
             color: self.color,
-            exact: self.exact,
+            evidence: self.evidence,
             _pixel: PhantomData,
         }
     }
@@ -3442,7 +3468,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
                 descriptor: self.descriptor,
 
                 color: self.color,
-                exact: self.exact,
+                evidence: self.evidence,
                 _pixel: PhantomData,
             })
         } else {
@@ -3464,9 +3490,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
             descriptor
         );
         descriptor.validate().expect("invalid pixel descriptor");
-        if !exact_survives(self.descriptor, descriptor) {
-            self.exact = None;
-        }
+        self.evidence = self.evidence.survives_relabel(self.descriptor, descriptor);
         self.descriptor = descriptor;
         self
     }
@@ -3493,9 +3517,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
         .map_err(|e| whereat::at!(e))?;
         let stride_samples =
             checked_stride_samples(stride_bytes, &descriptor).map_err(|e| whereat::at!(e))?;
-        if !exact_survives(self.descriptor, descriptor) {
-            self.exact = None;
-        }
+        self.evidence = self.evidence.survives_relabel(self.descriptor, descriptor);
         self.stride_samples = stride_samples;
         self.descriptor = descriptor;
         Ok(self)
@@ -3521,10 +3543,10 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
     #[inline]
     #[must_use]
     pub fn with_signal_range(mut self, sr: SignalRange) -> Self {
-        if self.descriptor.signal_range != sr {
-            self.exact = None;
-        }
-        self.descriptor.signal_range = sr;
+        let mut descriptor = self.descriptor;
+        descriptor.signal_range = sr;
+        self.evidence = self.evidence.survives_relabel(self.descriptor, descriptor);
+        self.descriptor = descriptor;
         self
     }
 
@@ -3534,6 +3556,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
     pub fn with_alpha_mode(mut self, am: Option<AlphaMode>) -> Self {
         let descriptor = self.descriptor.with_alpha(am);
         descriptor.validate().expect("invalid alpha declaration");
+        self.evidence = self.evidence.survives_relabel(self.descriptor, descriptor);
         self.descriptor = descriptor;
         self
     }
@@ -3699,10 +3722,11 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
     /// Every mutable accessor ([`as_slice_mut`](Self::as_slice_mut),
     /// [`rows_mut`](Self::rows_mut), in-place transforms, typed mutable views)
     /// clears it before returning, as do descriptor changes that alter storage,
-    /// layout or signal range. Views, crops and compaction keep it.
+    /// layout, signal range, or promote [`AlphaMode::Undefined`] padding. Views,
+    /// crops and compaction keep it.
     #[inline]
     pub fn exact_depth(&self) -> Option<ExactDepth> {
-        self.exact
+        self.evidence.exact_depth()
     }
 
     /// State or clear exact-depth evidence for the current samples.
@@ -3712,8 +3736,38 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
     pub fn set_exact_depth(&mut self, exact: Option<ExactDepth>) -> Result<(), ExactDepthError> {
         if let Some(exact) = exact {
             check_exact(self.descriptor, exact)?;
+            self.evidence = SampleEvidence::from_exact(Some(exact));
+        } else if !self.descriptor.channel_type().is_float() {
+            self.evidence = SampleEvidence::NONE;
         }
-        self.exact = exact;
+        Ok(())
+    }
+
+    /// Verified or asserted properties of active floating-point samples (`FloatFacts::NONE` when unstated).
+    ///
+    /// Every mutable accessor clears it before returning, as do descriptor changes
+    /// that alter [`ChannelType`] or promote [`AlphaMode::Undefined`] padding. Views,
+    /// crops, and compaction keep it.
+    #[inline]
+    pub fn float_facts(&self) -> FloatFacts {
+        self.evidence.float_facts()
+    }
+
+    /// Attach floating-point sample facts on this buffer.
+    pub fn with_float_facts(mut self, facts: FloatFacts) -> Result<Self, FloatFactsError> {
+        self.set_float_facts(facts)?;
+        Ok(self)
+    }
+
+    /// State or clear floating-point sample facts for the current samples.
+    ///
+    /// Only floating-point storage (`F16`, `F32`, `F64`) is checked, without reading
+    /// samples. On error the facts are unchanged.
+    pub fn set_float_facts(&mut self, facts: FloatFacts) -> Result<(), FloatFactsError> {
+        check_float_facts(self.descriptor, facts)?;
+        if self.descriptor.channel_type().is_float() {
+            self.evidence = SampleEvidence::from_float(facts);
+        }
         Ok(())
     }
 
@@ -3805,7 +3859,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
             descriptor: self.descriptor,
 
             color: self.color.clone(),
-            exact: self.exact,
+            evidence: self.evidence,
             _pixel: PhantomData,
         }
     }
@@ -3821,7 +3875,7 @@ impl<P, S: ByteStorageMut> PixelBuffer<P, S> {
     /// the new description atomically.
     pub fn as_slice_mut(&mut self) -> PixelSliceMut<'_, P> {
         // Mutable access can change any sample: end current-sample evidence.
-        self.exact = None;
+        self.evidence = SampleEvidence::NONE;
         let total = self.storage_span_len();
         let offset = self.offset as usize;
         let stride = self.stride();
@@ -3929,7 +3983,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
                 descriptor: self.descriptor,
 
                 color: self.color.clone(),
-                exact: self.exact,
+                evidence: self.evidence,
                 _pixel: PhantomData,
             };
         }
@@ -3946,7 +4000,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
             descriptor: self.descriptor,
 
             color: self.color.clone(),
-            exact: self.exact,
+            evidence: self.evidence,
             _pixel: PhantomData,
         }
     }
@@ -3968,7 +4022,7 @@ impl<P, S: ByteStorageMut> PixelBuffer<P, S> {
     /// Panics if `y + count > height`.
     pub fn rows_mut(&mut self, y: u32, count: u32) -> PixelSliceMut<'_, P> {
         // Mutable access can change any sample: end current-sample evidence.
-        self.exact = None;
+        self.evidence = SampleEvidence::NONE;
         assert!(
             y.checked_add(count).is_some_and(|end| end <= self.height),
             "rows_mut({y}, {count}) out of bounds (height: {})",
@@ -4025,7 +4079,7 @@ impl<P, S: ByteStorageMut> PixelBuffer<P, S> {
     /// Panics if the crop region is out of bounds.
     pub fn crop_view_mut(&mut self, x: u32, y: u32, w: u32, h: u32) -> PixelSliceMut<'_, P> {
         // Mutable access can change any sample: end current-sample evidence.
-        self.exact = None;
+        self.evidence = SampleEvidence::NONE;
         assert!(
             x.checked_add(w).is_some_and(|end| end <= self.width),
             "crop x={x} w={w} exceeds width {}",
@@ -4094,7 +4148,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
                 descriptor: self.descriptor,
 
                 color: self.color.clone(),
-                exact: self.exact,
+                evidence: self.evidence,
                 _pixel: PhantomData,
             };
         }
@@ -4111,7 +4165,7 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
             descriptor: self.descriptor,
 
             color: self.color.clone(),
-            exact: self.exact,
+            evidence: self.evidence,
             _pixel: PhantomData,
         }
     }
@@ -4154,6 +4208,16 @@ impl<P, S> PixelBuffer<P, S> {
     }
 
     #[inline]
+    pub(crate) const fn evidence_raw(&self) -> SampleEvidence {
+        self.evidence
+    }
+
+    #[inline]
+    pub(crate) fn set_evidence_raw(&mut self, evidence: SampleEvidence) {
+        self.evidence = evidence;
+    }
+
+    #[inline]
     fn retype<Q>(self) -> PixelBuffer<Q, S> {
         PixelBuffer {
             data: self.data,
@@ -4163,7 +4227,7 @@ impl<P, S> PixelBuffer<P, S> {
             stride_samples: self.stride_samples,
             descriptor: self.descriptor,
             color: self.color,
-            exact: self.exact,
+            evidence: self.evidence,
             _pixel: PhantomData,
         }
     }
@@ -4175,19 +4239,22 @@ impl<P, S> fmt::Debug for PixelBuffer<P, S> {
     }
 }
 
-/// Whether exact-depth evidence still describes samples relabeled from `old` to `new`.
-fn exact_survives(old: PixelDescriptor, new: PixelDescriptor) -> bool {
-    old.channel_type() == new.channel_type()
-        && old.layout() == new.layout()
-        && old.signal_range == new.signal_range
-}
-
 pub(crate) fn check_exact(
     descriptor: PixelDescriptor,
     exact: ExactDepth,
 ) -> Result<(), ExactDepthError> {
     if exact.storage() != descriptor.channel_type() || exact.range() != descriptor.signal_range {
         return Err(ExactDepthError::DescriptorMismatch);
+    }
+    Ok(())
+}
+
+pub(crate) fn check_float_facts(
+    descriptor: PixelDescriptor,
+    facts: FloatFacts,
+) -> Result<(), FloatFactsError> {
+    if !facts.is_empty() && !descriptor.channel_type().is_float() {
+        return Err(FloatFactsError::UnsupportedStorage);
     }
     Ok(())
 }
@@ -4204,7 +4271,7 @@ fn pixel_slice_to_owned(slice: &PixelSlice<'_>) -> PixelBuffer {
         buffer = buffer.with_color_context(color.clone());
     }
     // An exact copy of the same values keeps their evidence.
-    buffer.exact = slice.exact_depth();
+    buffer.evidence = slice.evidence;
     buffer
 }
 
@@ -4220,7 +4287,7 @@ fn try_pixel_slice_to_owned(slice: &PixelSlice<'_>) -> Result<PixelBuffer, At<Bu
         buffer = buffer.with_color_context(color.clone());
     }
     // An exact copy of the same values keeps their evidence.
-    buffer.exact = slice.exact_depth();
+    buffer.evidence = slice.evidence;
     Ok(buffer)
 }
 
@@ -4260,7 +4327,7 @@ impl<'a, P> From<PixelSliceMut<'a, P>> for PixelSlice<'a, P> {
             stride: mut_slice.stride,
             descriptor: mut_slice.descriptor,
             color: mut_slice.color,
-            exact: None,
+            evidence: SampleEvidence::NONE,
             _pixel: PhantomData,
         }
     }

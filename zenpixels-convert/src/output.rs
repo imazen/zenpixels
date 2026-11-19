@@ -132,9 +132,12 @@ impl EncodeReady {
         source: PixelSlice<'_>,
         mut plan: OutputPlan,
     ) -> Result<Self, At<ConvertError>> {
-        let exact = plan
-            .borrow_rows(source.clone())?
-            .and_then(|view| view.exact_depth());
+        let borrowed = plan.borrow_rows(source.clone())?;
+        let exact = borrowed.as_ref().and_then(|view| view.exact_depth());
+        let float_facts = borrowed.as_ref().map_or_else(
+            || plan.output_float_facts(),
+            |view| view.float_facts().union(plan.output_float_facts()),
+        );
         let mut pixels =
             PixelBuffer::try_new(source.width(), source.rows(), plan.output_descriptor())
                 .map_err_at(ConvertError::from)?;
@@ -146,6 +149,7 @@ impl EncodeReady {
         pixels
             .set_exact_depth(exact)
             .expect("identity view validates the same representation");
+        let _ = pixels.set_float_facts(float_facts);
         Ok(Self {
             pixels: pixels.with_color_context(context),
             metadata: plan.into_metadata(),

@@ -20,7 +20,7 @@ pub enum HashInclusions {
     SamplesOnly,
     /// Samples, format/layout, encoding, alpha and all current color signaling.
     Pixels,
-    /// Everything in `Pixels`, plus declared exact-depth evidence where present.
+    /// Everything in `Pixels`, plus declared sample evidence (`ExactDepth` / `FloatFacts`) where present.
     #[default]
     All,
 }
@@ -141,6 +141,7 @@ fn packed<H: Hasher>(view: &PixelSlice<'_>, inclusions: HashInclusions, state: &
         (view.width(), view.rows()),
         view.encoding(),
         view.exact_depth(),
+        view.float_facts(),
         inclusions,
         state,
     );
@@ -151,6 +152,7 @@ fn packed_header(
     (width, height): (u32, u32),
     encoding: crate::PixelEncoding<'_>,
     exact: Option<crate::sample::ExactDepth>,
+    float_facts: crate::sample::FloatFacts,
     inclusions: HashInclusions,
     state: &mut impl Hasher,
 ) {
@@ -169,6 +171,9 @@ fn packed_header(
     }
     if inclusions == HashInclusions::All {
         exact.hash(&mut p);
+        if !float_facts.is_empty() {
+            float_facts.bits().hash(&mut p);
+        }
     }
 }
 
@@ -610,6 +615,7 @@ impl crate::banded::BandedPixelBuffer {
             (geometry.width(), geometry.height()),
             self.encoding(),
             self.exact_depth(),
+            self.float_facts(),
             inclusions,
             state,
         );

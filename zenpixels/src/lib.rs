@@ -34,7 +34,8 @@
 //! `plane::Plane` carries strided samples and `plane::PlanarSlice` combines
 //! validated plane roles and interpretation.
 //! [`sample::SampleEncoding`] describes native integer payloads, while
-//! [`sample::ExactDepth`] is evidence about the current canonical code grid.
+//! [`sample::ExactDepth`] and [`sample::FloatFacts`] record verified properties
+//! of the current integer or floating-point samples.
 //!
 //! # Allocation policy
 //!

@@ -217,6 +217,507 @@ pub(crate) fn is_hdr_to_sdr(from: TransferFunction, to: TransferFunction) -> boo
     src_is_hdr && dst_is_sdr_encoded
 }
 
+/// Internal floating-point sample trust propagated step-by-step across a [`NativePlan`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct StepFloatTrust {
+    /// Universal invariants across all active channels (`color` + active `alpha`).
+    pub(crate) facts: zenpixels::sample::FloatFacts,
+    /// Universal invariants across active color channels (`Gray` or `R, G, B`).
+    pub(crate) color_facts: zenpixels::sample::FloatFacts,
+    /// Guaranteed power-of-two floor `k` (`|x| >= 2^k`) for non-zero active color samples in `F32`.
+    pub(crate) color_min_exp: Option<i16>,
+    /// True when active color samples satisfy `|x| <= 1e30` (cannot overflow `3x3` matrices to `±Inf`).
+    pub(crate) color_bounded: bool,
+}
+
+impl StepFloatTrust {
+    fn from_input(desc: PixelDescriptor, facts: zenpixels::sample::FloatFacts) -> Self {
+        use zenpixels::sample::FloatFacts;
+        if !desc.channel_type().is_float() {
+            return Self::default();
+        }
+        let color_min_exp = match desc.channel_type() {
+            ChannelType::F32 if facts.contains(FloatFacts::NO_SUBNORMALS) => Some(-126),
+            ChannelType::F16 if facts.contains(FloatFacts::NO_SUBNORMALS) => Some(-14),
+            ChannelType::F16 => Some(-24),
+            _ => None,
+        };
+        let color_bounded = (desc.channel_type() == ChannelType::F16
+            && facts.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE))
+            || facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE);
+        Self {
+            facts,
+            color_facts: facts,
+            color_min_exp,
+            color_bounded,
+        }
+    }
+}
+
+fn combine_trust(
+    to: PixelDescriptor,
+    color_facts: zenpixels::sample::FloatFacts,
+    alpha_facts: zenpixels::sample::FloatFacts,
+    color_min_exp: Option<i16>,
+    color_bounded: bool,
+) -> StepFloatTrust {
+    let active_alpha = to.layout().has_alpha() && to.alpha() != Some(AlphaMode::Undefined);
+    let facts = if active_alpha {
+        color_facts.intersection(alpha_facts)
+    } else {
+        color_facts
+    };
+    StepFloatTrust {
+        facts,
+        color_facts,
+        color_min_exp,
+        color_bounded,
+    }
+}
+
+fn step_output_trust(
+    step: &ConvertStep,
+    from: PixelDescriptor,
+    to: PixelDescriptor,
+    pq_anchor_scale: f32,
+    in_trust: StepFloatTrust,
+) -> StepFloatTrust {
+    use zenpixels::sample::FloatFacts;
+    if !to.channel_type().is_float() {
+        return StepFloatTrust::default();
+    }
+    let unit_normal = FloatFacts::NO_NAN
+        | FloatFacts::NO_INFINITE
+        | FloatFacts::NO_SUBNORMALS
+        | FloatFacts::NON_NEGATIVE
+        | FloatFacts::AT_MOST_ONE;
+    let opaque_one = unit_normal | FloatFacts::POSITIVE;
+
+    match step {
+        ConvertStep::Identity | ConvertStep::SwizzleBgraRgba | ConvertStep::SwizzleBgrRgb => {
+            if from.alpha() == Some(AlphaMode::Undefined)
+                && to.alpha() != Some(AlphaMode::Undefined)
+            {
+                return StepFloatTrust::default();
+            }
+            combine_trust(
+                to,
+                in_trust.color_facts,
+                in_trust.facts,
+                in_trust.color_min_exp,
+                in_trust.color_bounded,
+            )
+        }
+        ConvertStep::AddAlpha
+        | ConvertStep::RgbToBgra
+        | ConvertStep::GrayToRgba
+        | ConvertStep::GrayToGrayAlpha => combine_trust(
+            to,
+            in_trust.color_facts,
+            opaque_one,
+            in_trust.color_min_exp,
+            in_trust.color_bounded,
+        ),
+        ConvertStep::DropAlpha | ConvertStep::GrayAlphaToRgb | ConvertStep::GrayAlphaToGray => {
+            StepFloatTrust {
+                facts: in_trust.color_facts,
+                color_facts: in_trust.color_facts,
+                color_min_exp: in_trust.color_min_exp,
+                color_bounded: in_trust.color_bounded,
+            }
+        }
+        ConvertStep::GrayToRgb | ConvertStep::GrayAlphaToRgba => combine_trust(
+            to,
+            in_trust.color_facts,
+            in_trust.facts,
+            in_trust.color_min_exp,
+            in_trust.color_bounded,
+        ),
+        ConvertStep::RgbToGray { .. }
+        | ConvertStep::RgbaToGray { .. }
+        | ConvertStep::RgbaToGrayAlpha { .. } => {
+            let cf = in_trust.color_facts;
+            let mut out_cf = FloatFacts::NONE;
+            let mut min_exp = None;
+            let mut bounded = false;
+            if cf.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE) && in_trust.color_bounded {
+                out_cf |= FloatFacts::NO_NAN | FloatFacts::NO_INFINITE;
+                bounded = true;
+            }
+            if cf.contains(FloatFacts::NON_NEGATIVE) {
+                out_cf |= FloatFacts::NON_NEGATIVE;
+                if cf.contains(FloatFacts::AT_MOST_ONE) {
+                    out_cf |= FloatFacts::AT_MOST_ONE;
+                }
+                if to.channel_type() == ChannelType::F32
+                    && let Some(k) = in_trust.color_min_exp
+                    && k - 4 >= -126
+                {
+                    out_cf |= FloatFacts::NO_SUBNORMALS;
+                    min_exp = Some(k - 4);
+                    if cf.contains(FloatFacts::POSITIVE) && out_cf.contains(FloatFacts::NO_INFINITE)
+                    {
+                        out_cf |= FloatFacts::POSITIVE;
+                    }
+                }
+            }
+            combine_trust(to, out_cf, in_trust.facts, min_exp, bounded)
+        }
+        ConvertStep::NaiveU8ToF32 | ConvertStep::SrgbU8ToLinearF32 => StepFloatTrust {
+            facts: unit_normal,
+            color_facts: unit_normal,
+            color_min_exp: Some(-12),
+            color_bounded: true,
+        },
+        ConvertStep::U16ToF32 | ConvertStep::HlgU16ToLinearF32 => StepFloatTrust {
+            facts: unit_normal,
+            color_facts: unit_normal,
+            color_min_exp: Some(-34),
+            color_bounded: true,
+        },
+        ConvertStep::PqU16ToLinearF32 => {
+            if pq_anchor_scale.is_finite() && pq_anchor_scale > 0.0 {
+                let inv = 1.0 / pq_anchor_scale;
+                if inv.is_finite() && (1.0 / 1_048_576.0..=1e20).contains(&inv) {
+                    let mut cf = FloatFacts::NO_NAN
+                        | FloatFacts::NO_INFINITE
+                        | FloatFacts::NO_SUBNORMALS
+                        | FloatFacts::NON_NEGATIVE;
+                    if pq_anchor_scale >= 1.0 {
+                        cf |= FloatFacts::AT_MOST_ONE;
+                    }
+                    return combine_trust(to, cf, unit_normal, Some(-64), true);
+                }
+            }
+            StepFloatTrust::default()
+        }
+        ConvertStep::F16ToF32 => {
+            let cf = in_trust.color_facts | FloatFacts::NO_SUBNORMALS;
+            let f = in_trust.facts | FloatFacts::NO_SUBNORMALS;
+            let min_exp = Some(
+                if in_trust.color_facts.contains(FloatFacts::NO_SUBNORMALS) {
+                    -14
+                } else {
+                    -24
+                },
+            );
+            let bounded = in_trust
+                .color_facts
+                .contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE);
+            StepFloatTrust {
+                facts: f,
+                color_facts: cf,
+                color_min_exp: min_exp,
+                color_bounded: bounded,
+            }
+        }
+        ConvertStep::F32ToF16 => {
+            let filter_f16 = |f: FloatFacts| {
+                let mut out = FloatFacts::NONE;
+                if f.contains(FloatFacts::NO_NAN) {
+                    out |= FloatFacts::NO_NAN;
+                }
+                if f.contains(FloatFacts::NON_NEGATIVE) {
+                    out |= FloatFacts::NON_NEGATIVE;
+                }
+                if f.contains(FloatFacts::AT_MOST_ONE) {
+                    out |= FloatFacts::AT_MOST_ONE;
+                }
+                out
+            };
+            StepFloatTrust {
+                facts: filter_f16(in_trust.facts),
+                color_facts: filter_f16(in_trust.color_facts),
+                color_min_exp: Some(-24),
+                color_bounded: in_trust
+                    .color_facts
+                    .contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE),
+            }
+        }
+        ConvertStep::PqF32ToLinearF32 => {
+            if pq_anchor_scale.is_finite() && pq_anchor_scale > 0.0 {
+                let inv = 1.0 / pq_anchor_scale;
+                if inv.is_finite() && inv <= 1e20 {
+                    let mut cf = FloatFacts::NO_NAN | FloatFacts::NO_INFINITE;
+                    if pq_anchor_scale >= 1.0 {
+                        cf |= FloatFacts::AT_MOST_ONE;
+                    }
+                    if in_trust.color_facts.contains(FloatFacts::NON_NEGATIVE) {
+                        cf |= FloatFacts::NON_NEGATIVE;
+                    }
+                    return combine_trust(to, cf, in_trust.facts, None, true);
+                }
+            }
+            StepFloatTrust::default()
+        }
+        ConvertStep::LinearF32ToPqF32 => {
+            if pq_anchor_scale.is_finite() && pq_anchor_scale >= 0.0 {
+                let mut cf = FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::AT_MOST_ONE;
+                if in_trust.color_facts.contains(FloatFacts::NON_NEGATIVE) {
+                    cf |= FloatFacts::NON_NEGATIVE;
+                }
+                return combine_trust(to, cf, in_trust.facts, None, true);
+            }
+            StepFloatTrust::default()
+        }
+        ConvertStep::SrgbF32ToLinearF32
+        | ConvertStep::LinearF32ToSrgbF32
+        | ConvertStep::Gamma22F32ToLinearF32
+        | ConvertStep::LinearF32ToGamma22F32 => {
+            let cf = in_trust.color_facts;
+            if !cf.contains(FloatFacts::NO_NAN) {
+                return StepFloatTrust::default();
+            }
+            let mut out_cf = FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::AT_MOST_ONE;
+            let mut min_exp = None;
+            if cf.contains(FloatFacts::NON_NEGATIVE) {
+                out_cf |= FloatFacts::NON_NEGATIVE;
+                if let Some(k) = in_trust.color_min_exp {
+                    let next_k = match step {
+                        ConvertStep::SrgbF32ToLinearF32 => k.saturating_sub(4),
+                        ConvertStep::Gamma22F32ToLinearF32 => (k.saturating_mul(9)) / 4 - 2,
+                        _ => k.min(0),
+                    };
+                    if next_k >= -126 {
+                        out_cf |= FloatFacts::NO_SUBNORMALS;
+                        min_exp = Some(next_k);
+                        if cf.contains(FloatFacts::POSITIVE) {
+                            out_cf |= FloatFacts::POSITIVE;
+                        }
+                    }
+                }
+            }
+            combine_trust(to, out_cf, in_trust.facts, min_exp, true)
+        }
+        ConvertStep::HlgF32ToLinearF32 | ConvertStep::LinearF32ToHlgF32 => {
+            // HLG kernels clamp negatives to 0.0, but values above 1.0 are NOT clamped
+            // (`hlg_to_linear(2.0) > 280`, `hlg_to_linear(17.0) == +Inf`, `linear_to_hlg(2.0) > 1.0`).
+            // Only unit-capped inputs prove bounded finite `[0, 1]` output.
+            let cf = in_trust.color_facts;
+            if !cf.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::AT_MOST_ONE)
+            {
+                return StepFloatTrust::default();
+            }
+            let mut out_cf = FloatFacts::NO_NAN
+                | FloatFacts::NO_INFINITE
+                | FloatFacts::NON_NEGATIVE
+                | FloatFacts::AT_MOST_ONE;
+            let mut min_exp = None;
+            if cf.contains(FloatFacts::NON_NEGATIVE)
+                && let Some(k) = in_trust.color_min_exp
+            {
+                let next_k = match step {
+                    ConvertStep::HlgF32ToLinearF32 => k.saturating_mul(2).saturating_sub(2),
+                    _ => k.min(0),
+                };
+                if next_k >= -126 {
+                    out_cf |= FloatFacts::NO_SUBNORMALS;
+                    min_exp = Some(next_k);
+                    if cf.contains(FloatFacts::POSITIVE) {
+                        out_cf |= FloatFacts::POSITIVE;
+                    }
+                }
+            }
+            combine_trust(to, out_cf, in_trust.facts, min_exp, true)
+        }
+        ConvertStep::Bt709F32ToLinearF32
+        | ConvertStep::LinearF32ToBt709F32
+        | ConvertStep::SrgbF32ToLinearF32Extended
+        | ConvertStep::LinearF32ToSrgbF32Extended
+        | ConvertStep::Gamma22F32ToLinearF32Extended
+        | ConvertStep::LinearF32ToGamma22F32Extended => {
+            let cf = in_trust.color_facts;
+            if cf.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE) {
+                let mut out_cf = FloatFacts::NO_NAN
+                    | FloatFacts::NO_INFINITE
+                    | FloatFacts::NON_NEGATIVE
+                    | FloatFacts::AT_MOST_ONE;
+                let mut min_exp = None;
+                if let Some(k) = in_trust.color_min_exp {
+                    let next_k = match step {
+                        ConvertStep::Bt709F32ToLinearF32 => k.saturating_sub(3),
+                        ConvertStep::SrgbF32ToLinearF32Extended => k.saturating_sub(4),
+                        ConvertStep::Gamma22F32ToLinearF32Extended => (k.saturating_mul(9)) / 4 - 2,
+                        _ => k.min(0),
+                    };
+                    if next_k >= -126 {
+                        out_cf |= FloatFacts::NO_SUBNORMALS;
+                        min_exp = Some(next_k);
+                        if cf.contains(FloatFacts::POSITIVE) {
+                            out_cf |= FloatFacts::POSITIVE;
+                        }
+                    }
+                }
+                return combine_trust(to, out_cf, in_trust.facts, min_exp, true);
+            }
+            // Outside `[0, 1]`, sRGB extended and BT.709 evaluate rational polynomials
+            // `P(|x|) / Q(|x|)` that overflow to `Inf / Inf = NaN` on large finite inputs
+            // (`|x| >= ~1e7..1e14`) and `±Inf`. Only checked `Gamma22*Extended` (Magemath)
+            // preserves `NO_NAN` / `NON_NEGATIVE` / `NO_INFINITE` on unbounded inputs.
+            if !matches!(
+                step,
+                ConvertStep::Gamma22F32ToLinearF32Extended
+                    | ConvertStep::LinearF32ToGamma22F32Extended
+            ) {
+                return StepFloatTrust::default();
+            }
+            let is_oetf = matches!(step, ConvertStep::LinearF32ToGamma22F32Extended);
+            let mut out_cf = FloatFacts::NONE;
+            if cf.contains(FloatFacts::NO_NAN) {
+                out_cf |= FloatFacts::NO_NAN;
+                if cf.contains(FloatFacts::NON_NEGATIVE) {
+                    out_cf |= FloatFacts::NON_NEGATIVE;
+                }
+                if is_oetf && cf.contains(FloatFacts::NO_INFINITE) {
+                    out_cf |= FloatFacts::NO_INFINITE;
+                }
+            }
+            let bounded =
+                is_oetf && in_trust.color_bounded && out_cf.contains(FloatFacts::NO_INFINITE);
+            combine_trust(to, out_cf, in_trust.facts, None, bounded)
+        }
+        ConvertStep::GamutMatrixRgbF32(matrix, _) | ConvertStep::GamutMatrixRgbaF32(matrix, _) => {
+            let cf = in_trust.color_facts;
+            if !cf.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE) {
+                return StepFloatTrust::default();
+            }
+            let mut out_cf = FloatFacts::NO_NAN;
+            let mut bounded = false;
+            if in_trust.color_bounded {
+                out_cf |= FloatFacts::NO_INFINITE;
+                bounded = true;
+            }
+            let mut min_exp = None;
+            if matrix.iter().all(|&c| c >= (1.0 / 64.0)) && cf.contains(FloatFacts::NON_NEGATIVE) {
+                out_cf |= FloatFacts::NON_NEGATIVE;
+                if let Some(k) = in_trust.color_min_exp
+                    && k - 6 >= -126
+                {
+                    out_cf |= FloatFacts::NO_SUBNORMALS;
+                    min_exp = Some(k - 6);
+                }
+            }
+            combine_trust(to, out_cf, in_trust.facts, min_exp, bounded)
+        }
+        ConvertStep::Fused {
+            kind: FusedKind::SrgbU8ToLinearF32Rgb,
+            ..
+        } => StepFloatTrust {
+            facts: FloatFacts::NO_NAN | FloatFacts::NO_INFINITE,
+            color_facts: FloatFacts::NO_NAN | FloatFacts::NO_INFINITE,
+            color_min_exp: None,
+            color_bounded: true,
+        },
+        ConvertStep::LinearRgbToOklab | ConvertStep::LinearRgbaToOklaba => {
+            if in_trust
+                .color_facts
+                .contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE)
+                && in_trust.color_bounded
+            {
+                let cf = FloatFacts::NO_NAN | FloatFacts::NO_INFINITE;
+                combine_trust(to, cf, in_trust.facts, None, true)
+            } else {
+                StepFloatTrust::default()
+            }
+        }
+        #[cfg(feature = "hdr-experimental")]
+        ConvertStep::ToneMap(_) => {
+            let cf = FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::AT_MOST_ONE;
+            combine_trust(to, cf, in_trust.facts, None, true)
+        }
+        ConvertStep::StraightToPremul => {
+            if in_trust
+                .facts
+                .contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE)
+            {
+                let f = FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE;
+                StepFloatTrust {
+                    facts: f,
+                    color_facts: f,
+                    color_min_exp: None,
+                    color_bounded: to.channel_type() == ChannelType::F32 || in_trust.color_bounded,
+                }
+            } else {
+                StepFloatTrust::default()
+            }
+        }
+        ConvertStep::Perceptual(p) => match p {
+            perceptual::PerceptualStep::DecodeIntToF32 { layout, .. } => {
+                let mut f =
+                    FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::NO_SUBNORMALS;
+                if !matches!(layout, ChannelLayout::Jzazbz | ChannelLayout::JzazbzAlpha) {
+                    f |= FloatFacts::NON_NEGATIVE;
+                }
+                StepFloatTrust {
+                    facts: f,
+                    color_facts: f,
+                    color_min_exp: None,
+                    color_bounded: true,
+                }
+            }
+            perceptual::PerceptualStep::RgbToHsl { .. }
+            | perceptual::PerceptualStep::RgbToHsv { .. } => {
+                if in_trust
+                    .color_facts
+                    .contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE)
+                {
+                    let cf =
+                        FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::NON_NEGATIVE;
+                    combine_trust(to, cf, in_trust.facts, None, true)
+                } else {
+                    StepFloatTrust::default()
+                }
+            }
+            perceptual::PerceptualStep::HslToRgb { .. }
+            | perceptual::PerceptualStep::HsvToRgb { .. }
+            | perceptual::PerceptualStep::CartesianToPolar { .. }
+            | perceptual::PerceptualStep::PolarToCartesian { .. } => {
+                if in_trust
+                    .color_facts
+                    .contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE)
+                    && in_trust.color_bounded
+                {
+                    let cf = FloatFacts::NO_NAN | FloatFacts::NO_INFINITE;
+                    combine_trust(to, cf, in_trust.facts, None, true)
+                } else {
+                    StepFloatTrust::default()
+                }
+            }
+            perceptual::PerceptualStep::LinearRgbToLch { .. } => {
+                if in_trust
+                    .color_facts
+                    .contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE)
+                    && in_trust.color_bounded
+                {
+                    let cf = FloatFacts::NO_NAN | FloatFacts::NO_INFINITE;
+                    // Output L*, C* can exceed 100 on HDR inputs, so cubing in a
+                    // subsequent LchToLinearRgb is only bounded when RGB was unit [0, 1].
+                    let bounded_for_cube = in_trust
+                        .color_facts
+                        .contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE);
+                    combine_trust(to, cf, in_trust.facts, None, bounded_for_cube)
+                } else {
+                    StepFloatTrust::default()
+                }
+            }
+            perceptual::PerceptualStep::LchToLinearRgb { .. } => {
+                if in_trust
+                    .color_facts
+                    .contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE)
+                    && in_trust.color_bounded
+                {
+                    let cf = FloatFacts::NO_NAN | FloatFacts::NO_INFINITE;
+                    combine_trust(to, cf, in_trust.facts, None, true)
+                } else {
+                    StepFloatTrust::default()
+                }
+            }
+            _ => StepFloatTrust::default(),
+        },
+        _ => StepFloatTrust::default(),
+    }
+}
+
 /// Pre-computed conversion plan.
 ///
 /// Stores the chain of steps needed to convert from one format to another.
@@ -226,6 +727,8 @@ pub(crate) struct NativePlan {
     pub(crate) from: PixelDescriptor,
     pub(crate) to: PixelDescriptor,
     operations: Vec<PlannedOperation>,
+    input_facts: zenpixels::sample::FloatFacts,
+    output_facts: zenpixels::sample::FloatFacts,
 }
 
 /// One executable operation and the complete meaning of its input/output.
@@ -236,6 +739,7 @@ struct PlannedOperation {
     from: PixelDescriptor,
     to: PixelDescriptor,
     pq_anchor_scale: f32,
+    in_trust: StepFloatTrust,
 }
 
 /// The linear value of SDR white in `transfer`, for a background composited into it.
@@ -790,16 +1294,21 @@ impl NativePlan {
                     from: current,
                     to: next,
                     pq_anchor_scale: 1.0,
+                    in_trust: StepFloatTrust::default(),
                 };
                 current = next;
                 operation
             })
             .collect();
-        Self {
+        let mut plan = Self {
             from,
             to,
             operations,
-        }
+            input_facts: zenpixels::sample::FloatFacts::NONE,
+            output_facts: zenpixels::sample::FloatFacts::NONE,
+        };
+        plan.recompute_float_trust();
+        plan
     }
 
     fn prepend(&mut self, from: PixelDescriptor, step: ConvertStep) {
@@ -810,9 +1319,14 @@ impl NativePlan {
                 from,
                 to: self.from,
                 pq_anchor_scale: 1.0,
+                in_trust: StepFloatTrust::default(),
             },
         );
         self.from = from;
+        if !from.channel_type().is_float() {
+            self.input_facts = zenpixels::sample::FloatFacts::NONE;
+        }
+        self.recompute_float_trust();
     }
 
     fn append(&mut self, to: PixelDescriptor, step: ConvertStep) {
@@ -821,8 +1335,45 @@ impl NativePlan {
             from: self.to,
             to,
             pq_anchor_scale: 1.0,
+            in_trust: StepFloatTrust::default(),
         });
         self.to = to;
+        self.recompute_float_trust();
+    }
+
+    #[inline]
+    pub(crate) const fn input_facts(&self) -> zenpixels::sample::FloatFacts {
+        self.input_facts
+    }
+
+    #[inline]
+    pub(crate) const fn output_facts(&self) -> zenpixels::sample::FloatFacts {
+        self.output_facts
+    }
+
+    pub(crate) fn propagate_float_facts(&mut self, initial: zenpixels::sample::FloatFacts) {
+        let initial = if self.from.channel_type().is_float() {
+            initial
+        } else {
+            zenpixels::sample::FloatFacts::NONE
+        };
+        self.input_facts = initial;
+        let mut cur = StepFloatTrust::from_input(self.from, initial);
+        for op in &mut self.operations {
+            op.in_trust = cur;
+            cur = step_output_trust(&op.step, op.from, op.to, op.pq_anchor_scale, cur);
+        }
+        self.output_facts = if self.to.channel_type().is_float() {
+            cur.facts
+        } else {
+            zenpixels::sample::FloatFacts::NONE
+        };
+    }
+
+    #[inline]
+    fn recompute_float_trust(&mut self) {
+        let initial = self.input_facts;
+        self.propagate_float_facts(initial);
     }
 
     /// Anchor this plan's **PQ** steps to an absolute-luminance white point —
@@ -853,6 +1404,7 @@ impl NativePlan {
                 *anchored = true;
             }
         }
+        self.recompute_float_trust();
         self
     }
 
@@ -884,8 +1436,10 @@ impl NativePlan {
                     from: boundary,
                     to: boundary,
                     pq_anchor_scale: 1.0,
+                    in_trust: StepFloatTrust::default(),
                 },
             );
+            self.recompute_float_trust();
         }
         self
     }
@@ -2268,6 +2822,7 @@ impl NativePlan {
                             from: operation.from,
                             to: straight,
                             pq_anchor_scale: operation.pq_anchor_scale,
+                            in_trust: StepFloatTrust::default(),
                         });
                         operation.from = straight;
                     }
@@ -2399,6 +2954,7 @@ impl NativePlan {
                 _ => {}
             }
         }
+        plan.recompute_float_trust();
 
         Ok(plan)
     }
@@ -2504,17 +3060,19 @@ impl NativePlan {
             }
         }
         if operations.is_empty() {
-            return Some(Self::build(
-                self.from,
-                other.to,
-                vec![ConvertStep::Identity],
-            ));
+            let mut identity = Self::build(self.from, other.to, vec![ConvertStep::Identity]);
+            identity.propagate_float_facts(self.input_facts);
+            return Some(identity);
         }
-        Some(Self {
+        let mut composed = Self {
             from: self.from,
             to: other.to,
             operations,
-        })
+            input_facts: self.input_facts,
+            output_facts: zenpixels::sample::FloatFacts::NONE,
+        };
+        composed.recompute_float_trust();
+        Some(composed)
     }
 
     /// True if conversion is a no-op.
@@ -3429,6 +3987,7 @@ impl ConvertScratch {
                 op.from,
                 op.to,
                 op.pq_anchor_scale,
+                StepFloatTrust::default(),
                 &mut self.hdr,
             );
         }
@@ -3505,7 +4064,12 @@ pub(crate) fn convert_row_prepared(
 
     if plan.operations.len() == 1 {
         let operation = &plan.operations[0];
-        let (from, to, scale) = (operation.from, operation.to, operation.pq_anchor_scale);
+        let (from, to, scale, trust) = (
+            operation.from,
+            operation.to,
+            operation.pq_anchor_scale,
+            operation.in_trust,
+        );
         apply_step_u8(
             &operation.step,
             src,
@@ -3514,6 +4078,7 @@ pub(crate) fn convert_row_prepared(
             from,
             to,
             scale,
+            trust,
             &mut scratch.hdr,
         );
         return;
@@ -3533,8 +4098,12 @@ pub(crate) fn convert_row_prepared(
     for (i, operation) in plan.operations.iter().enumerate() {
         let is_last = i == num_steps - 1;
         let step = &operation.step;
-        let (current_desc, next_desc, scale) =
-            (operation.from, operation.to, operation.pq_anchor_scale);
+        let (current_desc, next_desc, scale, trust) = (
+            operation.from,
+            operation.to,
+            operation.pq_anchor_scale,
+            operation.in_trust,
+        );
 
         let next_len = (width as usize) * next_desc.bytes_per_pixel();
         let curr_len = (width as usize) * current_desc.bytes_per_pixel();
@@ -3553,6 +4122,7 @@ pub(crate) fn convert_row_prepared(
                     current_desc,
                     next_desc,
                     scale,
+                    trust,
                     &mut *hdr,
                 );
             } else {
@@ -3564,6 +4134,7 @@ pub(crate) fn convert_row_prepared(
                     current_desc,
                     next_desc,
                     scale,
+                    trust,
                     &mut *hdr,
                 );
             }
@@ -3578,6 +4149,7 @@ pub(crate) fn convert_row_prepared(
                     current_desc,
                     next_desc,
                     scale,
+                    trust,
                     &mut *hdr,
                 );
             } else {
@@ -3589,6 +4161,7 @@ pub(crate) fn convert_row_prepared(
                     current_desc,
                     next_desc,
                     scale,
+                    trust,
                     &mut *hdr,
                 );
             }

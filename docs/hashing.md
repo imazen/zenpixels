@@ -43,7 +43,7 @@ not collapse the object to an intermediate 64-bit digest. `hash_with` returns a
 | Pixel format, interpretation, alpha mode, signal range | no | yes | yes |
 | Planar roles/order, encoding, chroma subsampling/siting | no | yes | yes |
 | Current ColorContext ICC bytes, CICP, diffuse white, HDR peak, presence/absence | no | yes | yes |
-| Declared current ExactDepth evidence | no | no | yes |
+| Declared current ExactDepth / FloatFacts evidence | no | no | yes |
 
 ColorContext and ColorOrigin also gain value-based Hash implementations.
 ColorOrigin is not carried by pixel views; their hashes cannot include absent

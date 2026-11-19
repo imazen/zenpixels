@@ -27,6 +27,8 @@ pub(crate) struct RowRecipe {
     stages: alloc::vec::Vec<Stage>,
     relabel_before: Option<(PixelDescriptor, PixelDescriptor)>,
     relabel_after: Option<(PixelDescriptor, PixelDescriptor)>,
+    pub(crate) input_facts: zenpixels::sample::FloatFacts,
+    pub(crate) output_facts: zenpixels::sample::FloatFacts,
 }
 
 #[derive(Debug)]
@@ -95,6 +97,8 @@ impl RowRecipe {
             stages: alloc::vec::Vec::new(),
             relabel_before: None,
             relabel_after: None,
+            input_facts: zenpixels::sample::FloatFacts::NONE,
+            output_facts: zenpixels::sample::FloatFacts::NONE,
         }
     }
 
@@ -105,12 +109,18 @@ impl RowRecipe {
             stages: alloc::vec::Vec::new(),
             relabel_before: Some((from, to)),
             relabel_after: None,
+            input_facts: zenpixels::sample::FloatFacts::NONE,
+            output_facts: zenpixels::sample::FloatFacts::NONE,
         }
     }
 
     pub(crate) fn native(plan: NativePlan) -> Self {
         let (from, to) = (plan.from(), plan.to());
-        Self::single(from, to, Operation::Native(plan))
+        let (in_facts, out_facts) = (plan.input_facts(), plan.output_facts());
+        let mut recipe = Self::single(from, to, Operation::Native(plan));
+        recipe.input_facts = in_facts;
+        recipe.output_facts = out_facts;
+        recipe
     }
 
     fn single(from: PixelDescriptor, to: PixelDescriptor, operation: Operation) -> Self {
@@ -124,11 +134,60 @@ impl RowRecipe {
             }],
             relabel_before: None,
             relabel_after: None,
+            input_facts: zenpixels::sample::FloatFacts::NONE,
+            output_facts: zenpixels::sample::FloatFacts::NONE,
         }
+    }
+
+    pub(crate) fn apply_input_facts(&mut self, initial: zenpixels::sample::FloatFacts) {
+        use zenpixels::{AlphaMode, sample::FloatFacts};
+        let initial = if self.from.channel_type().is_float() {
+            initial
+        } else {
+            FloatFacts::NONE
+        };
+        self.input_facts = initial;
+        let promotes_undefined = |(old, new): (PixelDescriptor, PixelDescriptor)| {
+            old.alpha() == Some(AlphaMode::Undefined) && new.alpha() != Some(AlphaMode::Undefined)
+        };
+        if self.stages.is_empty() {
+            let survives = self.from.channel_type() == self.to.channel_type()
+                && self.to.channel_type().is_float()
+                && !promotes_undefined((self.from, self.to))
+                && !self.relabel_before.is_some_and(promotes_undefined)
+                && !self.relabel_after.is_some_and(promotes_undefined);
+            self.output_facts = if survives { initial } else { FloatFacts::NONE };
+            return;
+        }
+        let mut cur = if self.relabel_before.is_some_and(promotes_undefined) {
+            FloatFacts::NONE
+        } else {
+            initial
+        };
+        for stage in &mut self.stages {
+            if promotes_undefined((stage.from, stage.to)) && stage.from == stage.to {
+                cur = FloatFacts::NONE;
+            }
+            match &mut stage.operation {
+                Operation::Native(plan) => {
+                    plan.propagate_float_facts(cur);
+                    cur = plan.output_facts();
+                }
+                Operation::Shared(_) | Operation::Owned(_) => {
+                    cur = FloatFacts::NONE;
+                }
+            }
+        }
+        if self.relabel_after.is_some_and(promotes_undefined) || !self.to.channel_type().is_float()
+        {
+            cur = FloatFacts::NONE;
+        }
+        self.output_facts = cur;
     }
 
     pub(crate) fn then(mut self, mut next: Self) -> Self {
         debug_assert_eq!(self.to.bytes_per_pixel(), next.from.bytes_per_pixel());
+        let initial = self.input_facts;
         let left_identity = self.is_identity_operation();
         self.to = next.to;
         if left_identity {
@@ -162,6 +221,7 @@ impl RowRecipe {
                 self.stages.append(&mut next.stages);
             }
         }
+        self.apply_input_facts(initial);
         self
     }
 
@@ -867,6 +927,8 @@ impl RowRecipe {
             stages,
             relabel_before: self.relabel_before,
             relabel_after: self.relabel_after,
+            input_facts: self.input_facts,
+            output_facts: self.output_facts,
         })
     }
 }
@@ -1166,6 +1228,12 @@ impl RowConverter {
         if src.encoding() != crate::PixelEncoding::new(self.recipe.from, self.source.as_deref()) {
             return Err(whereat::at!(ConvertError::SourceInterpretationChanged));
         }
+        if !src.float_facts().contains(self.recipe.input_facts) {
+            return Err(whereat::at!(ConvertError::FloatFactsUnsatisfied {
+                required: self.recipe.input_facts,
+                actual: src.float_facts(),
+            }));
+        }
         if dst.descriptor() != self.recipe.to {
             return Err(whereat::at!(ConvertError::NoPath {
                 from: self.recipe.from,
@@ -1272,6 +1340,16 @@ impl RowConverter {
         self.recipe.to
     }
 
+    /// Floating-point sample invariants required on input views (`FloatFacts::NONE` when unstated).
+    pub const fn input_float_facts(&self) -> zenpixels::sample::FloatFacts {
+        self.recipe.input_facts
+    }
+
+    /// Floating-point sample invariants proven for output views (`FloatFacts::NONE` on integer outputs).
+    pub const fn output_float_facts(&self) -> zenpixels::sample::FloatFacts {
+        self.recipe.output_facts
+    }
+
     /// Stream rows across [`BandedPixelBuffer`](crate::banded::BandedPixelBuffer)s with
     /// identical or mismatched band heights using an O(bands) band zipper.
     pub fn convert_bands(
@@ -1293,6 +1371,12 @@ impl RowConverter {
         }
         if src.encoding() != crate::PixelEncoding::new(self.recipe.from, self.source.as_deref()) {
             return Err(whereat::at!(ConvertError::SourceInterpretationChanged));
+        }
+        if !src.float_facts().contains(self.recipe.input_facts) {
+            return Err(whereat::at!(ConvertError::FloatFactsUnsatisfied {
+                required: self.recipe.input_facts,
+                actual: src.float_facts(),
+            }));
         }
         if dst.descriptor() != self.recipe.to {
             return Err(whereat::at!(ConvertError::NoPath {
@@ -1341,6 +1425,7 @@ impl RowConverter {
             }
         }
         dst.set_color_context(self.color.clone());
+        let _ = dst.set_float_facts(self.recipe.output_facts);
         Ok(())
     }
 }

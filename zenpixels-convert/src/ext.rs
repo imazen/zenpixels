@@ -176,7 +176,7 @@ fn converter_for(
         None
     };
     #[allow(unused_mut)]
-    let mut spec = crate::ConversionSpec::new(options);
+    let mut spec = crate::ConversionSpec::new(options).with_float_facts(source.float_facts());
     #[cfg(feature = "cms-moxcms")]
     if matches!(src_profile, crate::ColorProfileSource::Parametric(_)) {
         spec = spec.with_cms(&crate::MoxCms);
@@ -324,6 +324,8 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
             // The same samples under the same descriptor keep their evidence.
             buf.set_exact_depth(self.exact_depth())
                 .expect("identical descriptors accept the same evidence");
+            buf.set_float_facts(self.float_facts())
+                .expect("identical descriptors accept the same float facts");
             return Ok(buf);
         }
         let mut resolved = *options;
@@ -378,6 +380,7 @@ impl<'a> PixelSliceConvertExt<'a> for PixelSlice<'a> {
             buf.set_exact_depth(Some(exact))
                 .expect("transferred evidence names the target storage and range");
         }
+        let _ = buf.set_float_facts(converter.output_float_facts());
         Ok(buf)
     }
 
@@ -612,7 +615,9 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
         let source = self.as_slice();
         let options =
             crate::adapt::options_after_opacity_check(&source, target, &default_options())?;
-        let spec = crate::ConversionSpec::new(options).with_hdr(&hdr);
+        let spec = crate::ConversionSpec::new(options)
+            .with_hdr(&hdr)
+            .with_float_facts(source.float_facts());
         let plan = crate::ConvertPlan::build(source.encoding(), target.encoding(), &spec)?;
         let context = plan
             .output_encoding()
@@ -626,6 +631,7 @@ impl PixelBufferHdrConvertExt for PixelBuffer {
         for y in 0..source.rows() {
             converter.try_convert_row(source.row(y), destination.row_mut(y), source.width())?;
         }
+        let _ = output.set_float_facts(converter.output_float_facts());
         Ok(match context {
             Some(context) => output.with_color_context(context),
             None => output,
