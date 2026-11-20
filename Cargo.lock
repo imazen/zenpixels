@@ -371,12 +371,11 @@ dependencies = [
 [[package]]
 name = "garb"
 version = "0.2.9"
-source = "git+https://github.com/imazen/garb?rev=f22a8c5412de72255de80b5597a484c796f4e40d#f22a8c5412de72255de80b5597a484c796f4e40d"
+source = "git+https://github.com/imazen/garb?rev=a79c26e060a5aa7624ef64b93b5ad1785a1e2d5f#a79c26e060a5aa7624ef64b93b5ad1785a1e2d5f"
 dependencies = [
  "archmage",
  "bytemuck",
  "magetypes",
- "pastey",
 ]
 
 [[package]]

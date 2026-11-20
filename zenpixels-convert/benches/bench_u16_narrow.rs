@@ -28,7 +28,11 @@ const SIZES: &[(&str, usize)] = &[
 ];
 
 fn garb_inexact(src: &[u8], dst: &mut [u8]) {
-    garb::bytes::convert_u16_to_u8(src, dst).expect("sizes");
+    let (pairs, _) = src.as_chunks::<2>();
+    for (s, d) in pairs.iter().zip(dst.iter_mut()) {
+        let v = u32::from(u16::from_ne_bytes(*s));
+        *d = ((v * 255 + 32768) >> 16) as u8;
+    }
 }
 
 fn shift_u32(src: &[u8], dst: &mut [u8]) {

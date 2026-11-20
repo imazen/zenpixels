@@ -18,7 +18,7 @@ zenpixels-convert = { path = "../../zenpixels-convert", features = ["bt2446a", "
 [patch.crates-io]
 archmage = { git = "https://github.com/imazen/archmage", rev = "303341570757936368fca1ee7254a19075cbff08" }
 magetypes = { git = "https://github.com/imazen/archmage", rev = "303341570757936368fca1ee7254a19075cbff08" }
-garb = { git = "https://github.com/imazen/garb", rev = "f22a8c5412de72255de80b5597a484c796f4e40d" }
+garb = { git = "https://github.com/imazen/garb", rev = "a79c26e060a5aa7624ef64b93b5ad1785a1e2d5f" }
 linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "360fb968cda351b2e161d10e66b36414f4d3b9e7" }
 
 [profile.release]

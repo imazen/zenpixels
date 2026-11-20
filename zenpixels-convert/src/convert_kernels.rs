@@ -937,6 +937,17 @@ fn matte_from_linear(rgb: &mut [f32], tf: TransferFunction, clip: bool) {
 // -- gray_to_rgb (pure replicate — U16 and F16 share) ------------------------
 
 #[attune(dispatch, -_neon, -_wasm128)]
+fn gray_to_rgb_u8(src: &[u8], dst: &mut [u8], width: usize) {
+    for i in 0..width {
+        let g = src[i];
+        let d: &mut [u8; 3] = (&mut dst[i * 3..i * 3 + 3]).try_into().unwrap();
+        d[0] = g;
+        d[1] = g;
+        d[2] = g;
+    }
+}
+
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_rgb_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         let g = src[i];
@@ -961,10 +972,7 @@ fn gray_to_rgb_f32(src: &[f32], dst: &mut [f32], width: usize) {
 /// Gray → RGB (replicate).
 fn gray_to_rgb(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
     match ch_type {
-        ChannelType::U8 => {
-            garb::bytes::gray_to_rgb(&src[..width], &mut dst[..width * 3])
-                .expect("pre-validated row size");
-        }
+        ChannelType::U8 => gray_to_rgb_u8(&src[..width], &mut dst[..width * 3], width),
         ChannelType::U16 | ChannelType::F16 => gray_to_rgb_2bytes(
             bytemuck::cast_slice(&src[..width * 2]),
             bytemuck::cast_slice_mut(&mut dst[..width * 6]),
@@ -1167,6 +1175,32 @@ fn rgba_to_grayalpha(
     }
 }
 
+#[attune(dispatch, -_neon, -_wasm128)]
+fn rgb_to_gray_bt709_u8(src: &[u8], dst: &mut [u8], width: usize) {
+    for (px, d) in src[..width * 3]
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(dst[..width].iter_mut())
+    {
+        *d = ((u16::from(px[0]) * 54 + u16::from(px[1]) * 183 + u16::from(px[2]) * 19 + 128) >> 8)
+            as u8;
+    }
+}
+
+#[attune(dispatch, -_neon, -_wasm128)]
+fn rgba_to_gray_bt709_u8(src: &[u8], dst: &mut [u8], width: usize) {
+    for (px, d) in src[..width * 4]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(dst[..width].iter_mut())
+    {
+        *d = ((u16::from(px[0]) * 54 + u16::from(px[1]) * 183 + u16::from(px[2]) * 19 + 128) >> 8)
+            as u8;
+    }
+}
+
 /// RGB → Gray using user-specified luma coefficients. Y' (encoded) semantic.
 fn rgb_to_gray(
     src: &[u8],
@@ -1179,8 +1213,7 @@ fn rgb_to_gray(
     match ch_type {
         ChannelType::U8 => {
             if coefficients == LumaCoefficients::Bt709 {
-                garb::bytes::rgb_to_gray_bt709(&src[..width * 3], &mut dst[..width])
-                    .expect("pre-validated row size");
+                rgb_to_gray_bt709_u8(&src[..width * 3], &mut dst[..width], width);
             } else {
                 rgb_to_gray_u8_generic(&src[..width * 3], &mut dst[..width], width, w);
             }
@@ -1219,8 +1252,7 @@ fn rgba_to_gray(
     match ch_type {
         ChannelType::U8 => {
             if coefficients == LumaCoefficients::Bt709 {
-                garb::bytes::rgba_to_gray_bt709(&src[..width * 4], &mut dst[..width])
-                    .expect("pre-validated row size");
+                rgba_to_gray_bt709_u8(&src[..width * 4], &mut dst[..width], width);
             } else {
                 rgba_to_gray_u8_generic(&src[..width * 4], &mut dst[..width], width, w);
             }
@@ -1297,6 +1329,17 @@ fn gray_alpha_to_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: Channel
 // -- gray_alpha_to_rgb (replicate + drop alpha — U16 and F16 share) ---------
 
 #[attune(dispatch, -_neon, -_wasm128)]
+fn gray_alpha_to_rgb_u8(src: &[u8], dst: &mut [u8], width: usize) {
+    for i in 0..width {
+        let g = src[i * 2];
+        let d: &mut [u8; 3] = (&mut dst[i * 3..i * 3 + 3]).try_into().unwrap();
+        d[0] = g;
+        d[1] = g;
+        d[2] = g;
+    }
+}
+
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_rgb_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         let g = src[i * 2];
@@ -1321,10 +1364,7 @@ fn gray_alpha_to_rgb_f32(src: &[f32], dst: &mut [f32], width: usize) {
 /// GrayAlpha → RGB (replicate gray, drop alpha).
 fn gray_alpha_to_rgb(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
     match ch_type {
-        ChannelType::U8 => {
-            garb::bytes::gray_alpha_to_rgb(&src[..width * 2], &mut dst[..width * 3])
-                .expect("pre-validated row size");
-        }
+        ChannelType::U8 => gray_alpha_to_rgb_u8(&src[..width * 2], &mut dst[..width * 3], width),
         ChannelType::U16 | ChannelType::F16 => gray_alpha_to_rgb_2bytes(
             bytemuck::cast_slice(&src[..width * 4]),
             bytemuck::cast_slice_mut(&mut dst[..width * 6]),
@@ -1340,6 +1380,15 @@ fn gray_alpha_to_rgb(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelT
 }
 
 // -- gray_to_gray_alpha (inserts opaque alpha: differs per type) -------------
+
+#[attune(dispatch, -_neon, -_wasm128)]
+fn gray_to_gray_alpha_u8(src: &[u8], dst: &mut [u8], width: usize) {
+    for i in 0..width {
+        let d: &mut [u8; 2] = (&mut dst[i * 2..i * 2 + 2]).try_into().unwrap();
+        d[0] = src[i];
+        d[1] = 255;
+    }
+}
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_gray_alpha_2bytes(src: &[u16], dst: &mut [u16], width: usize, opaque: u16) {
@@ -1362,10 +1411,7 @@ fn gray_to_gray_alpha_f32(src: &[f32], dst: &mut [f32], width: usize) {
 /// Gray → GrayAlpha (add opaque alpha).
 fn gray_to_gray_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
     match ch_type {
-        ChannelType::U8 => {
-            garb::bytes::gray_to_gray_alpha(&src[..width], &mut dst[..width * 2])
-                .expect("pre-validated row size");
-        }
+        ChannelType::U8 => gray_to_gray_alpha_u8(&src[..width], &mut dst[..width * 2], width),
         ChannelType::U16 => gray_to_gray_alpha_2bytes(
             bytemuck::cast_slice(&src[..width * 2]),
             bytemuck::cast_slice_mut(&mut dst[..width * 4]),
@@ -1390,6 +1436,13 @@ fn gray_to_gray_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: Channel
 // -- gray_alpha_to_gray (drop alpha — U16 and F16 share) --------------------
 
 #[attune(dispatch, -_neon, -_wasm128)]
+fn gray_alpha_to_gray_u8(src: &[u8], dst: &mut [u8], width: usize) {
+    for i in 0..width {
+        dst[i] = src[i * 2];
+    }
+}
+
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_gray_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         dst[i] = src[i * 2];
@@ -1406,10 +1459,7 @@ fn gray_alpha_to_gray_f32(src: &[f32], dst: &mut [f32], width: usize) {
 /// GrayAlpha → Gray (drop alpha).
 fn gray_alpha_to_gray(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
     match ch_type {
-        ChannelType::U8 => {
-            garb::bytes::gray_alpha_to_gray(&src[..width * 2], &mut dst[..width])
-                .expect("pre-validated row size");
-        }
+        ChannelType::U8 => gray_alpha_to_gray_u8(&src[..width * 2], &mut dst[..width], width),
         ChannelType::U16 | ChannelType::F16 => gray_alpha_to_gray_2bytes(
             bytemuck::cast_slice(&src[..width * 4]),
             bytemuck::cast_slice_mut(&mut dst[..width * 2]),
@@ -1735,11 +1785,18 @@ fn sdr_u16_to_u8(
     }
 }
 
+#[attune(dispatch, -_neon, -_wasm128)]
+fn u8_to_u16_lanes(src: &[u8], dst: &mut [[u8; 2]]) {
+    for (&s, d) in src.iter().zip(dst.iter_mut()) {
+        *d = (u16::from(s) * 257).to_ne_bytes();
+    }
+}
+
 /// u8 → u16: v * 257.
 fn u8_to_u16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
-    garb::bytes::convert_u8_to_u16(&src[..count], &mut dst[..count * 2])
-        .expect("pre-validated row size");
+    let (pairs, _) = dst[..count * 2].as_chunks_mut::<2>();
+    u8_to_u16_lanes(&src[..count], pairs);
 }
 
 /// u16 → f32: v / 65535.0.
@@ -2304,6 +2361,28 @@ fn gamma22_f32_extended(
 
 // -- Straight → Premultiplied: per-(type, channels) kernels ------------------
 
+#[inline(always)]
+fn premul_u8_lane(c: u8, a: u8) -> u8 {
+    let t = u32::from(c) * u32::from(a) + 128;
+    ((t + (t >> 8)) >> 8) as u8
+}
+
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
+fn premul_u8_rgba(src: &[u8], dst: &mut [u8], width: usize) {
+    for (s, d) in src[..width * 4]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(dst[..width * 4].as_chunks_mut::<4>().0.iter_mut())
+    {
+        let a = s[3];
+        d[0] = premul_u8_lane(s[0], a);
+        d[1] = premul_u8_lane(s[1], a);
+        d[2] = premul_u8_lane(s[2], a);
+        d[3] = a;
+    }
+}
+
 #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn premul_u8_ga(src: &[u8], dst: &mut [u8], width: usize) {
     for i in 0..width {
@@ -2442,12 +2521,7 @@ fn straight_to_premul(
 ) {
     let channels = layout.channels();
     match (ch_type, channels) {
-        // Garb integer fast path (SIMD, RGBA 4-channel u8).
-        (ChannelType::U8, 4) => {
-            let n = width * 4;
-            garb::bytes::premultiply_alpha_rgba_u8_copy(&src[..n], &mut dst[..n])
-                .expect("pre-validated row size");
-        }
+        (ChannelType::U8, 4) => premul_u8_rgba(&src[..width * 4], &mut dst[..width * 4], width),
         (ChannelType::F32, 4) => {
             let n = width * 16;
             crate::float_simd::premul_rgba_f32_slice(

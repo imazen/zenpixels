@@ -67,8 +67,12 @@
   and `hdr::measure` `NaN`-clean SIMD loops, and vectorize `PureGammaOutput` RGB/RGBA
   transforms via 8-wide `magemath 0.1.0` `Powf` (`Execution::Upgrade`, canonical
   bit-exact `highp`).
+- Inline the 8 non-core `u8` layout, BT.709 fixed-point luma, `u8 -> u16` depth, and
+  `u8` RGBA premultiply helpers directly into `zenpixels-convert` under
+  `#[attune(dispatch)]` so `zenpixels-convert` depends only on core `garb::bytes`
+  byte swizzles (`default-features = false`, zero `experimental` items).
 - Sync `archmage 0.9.32`, `magetypes 0.9.32`, and `magemath 0.1.0` (`30334157`),
-  `garb 0.2.9` (`f22a8c54`), and `linear-srgb 0.6.13` (`360fb968`:
+  `garb 0.2.9` (`a79c26e0`), and `linear-srgb 0.6.13` (`360fb968`:
   `target_features::x8` tokenless SIMD entry points, unified PQ/sRGB transfer
   rails, and `x86_64-unknown-none` soft-float / `no_std` compatibility).
 - Use the checked Magemath power profile for extended gamma.
