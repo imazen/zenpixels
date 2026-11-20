@@ -1,5 +1,5 @@
 # zenpixels-convert public API — doc(hidden) items and excluded-feature surface
-# excluded features: __bench_orient,__bench_scan,__bench_u16_hybrids,__trace_ops
+# excluded features: __bench_float_depth,__bench_orient,__bench_scan,__bench_u16_hybrids,__trace_ops
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -9,17 +9,18 @@
 
 ## summary
 #
-#   pub modules                                 4
+#   pub modules                                 5
 #   pub types (struct/enum/trait/alias)         4
 #   pub consts/statics                          3
-#   free functions                             11
+#   free functions                             27
 #   inherent methods                           61
 #   struct fields                               4
 #   trait roster entries (type × trait)        52
 #   auto-trait-complete types                   2
 #
 # per-module pub lines:
-#   (root)                           14
+#   (root)                           15
+#   __bench_float_depth              16
 #   __bench_scan                     19
 #   __bench_u16_hybrids               4
 #   __trace_ops                       2
@@ -32,7 +33,7 @@
 #   ycbcr                             1
 #   zenpixels                         5
 
-## items (86 lines)
+## items (103 lines)
 
 #[non_exhaustive] pub struct hdr::LightLevelHistogram [also: hdr::measure]
 pub const hdr::measure::LightLevelHistogram::BIN_MAX_NITS: f32
@@ -53,6 +54,22 @@ pub fn PlannedStepInfo::assert_fields_are_eq(&self)
 pub fn Provenance::assert_fields_are_eq(&self)
 pub fn SemanticEffects::assert_fields_are_eq(&self)
 pub fn WorkExtent::assert_fields_are_eq(&self)
+pub fn __bench_float_depth::f32_to_u16_magic_fma_clamped(&[f32], &mut [u16])
+pub fn __bench_float_depth::f32_to_u16_magic_fma_unit_clean(&[f32], &mut [u16])
+pub fn __bench_float_depth::f32_to_u16_mul_rne_approx(&[f32], &mut [u16])
+pub fn __bench_float_depth::f32_to_u16_truncate_unit_clean(&[f32], &mut [u16])
+pub fn __bench_float_depth::f32_to_u8_magic_fma_clamped(&[f32], &mut [u8])
+pub fn __bench_float_depth::f32_to_u8_magic_fma_unit_clean(&[f32], &mut [u8])
+pub fn __bench_float_depth::f32_to_u8_mul_rne_approx(&[f32], &mut [u8])
+pub fn __bench_float_depth::f32_to_u8_truncate_unit_clean(&[f32], &mut [u8])
+pub fn __bench_float_depth::u16_to_f32_div_0ulp(&[u16], &mut [f32])
+pub fn __bench_float_depth::u16_to_f32_newton_0ulp(&[u16], &mut [f32])
+pub fn __bench_float_depth::u16_to_f32_recip_1ulp(&[u16], &mut [f32])
+pub fn __bench_float_depth::u16_to_f32_split_exact(&[u16], &mut [f32])
+pub fn __bench_float_depth::u8_to_f32_div_0ulp(&[u8], &mut [f32])
+pub fn __bench_float_depth::u8_to_f32_newton_0ulp(&[u8], &mut [f32])
+pub fn __bench_float_depth::u8_to_f32_recip_1ulp(&[u8], &mut [f32])
+pub fn __bench_float_depth::u8_to_f32_split_exact(&[u8], &mut [f32])
 pub fn __bench_scan::FusedRequest::assert_fields_are_eq(&self)
 pub fn __bench_scan::FusedRequest::clone(&self) -> __bench_scan::FusedRequest
 pub fn __bench_scan::FusedRequest::default() -> __bench_scan::FusedRequest
@@ -110,6 +127,7 @@ pub fn precision::ConversionRecord::assert_fields_are_eq(&self)
 pub fn precision::ConversionRefusal::assert_fields_are_eq(&self)
 pub fn precision::DecidedBy::assert_fields_are_eq(&self)
 pub fn ycbcr::YcbcrError::assert_fields_are_eq(&self)
+pub mod __bench_float_depth
 pub mod __bench_scan
 pub mod __bench_u16_hybrids
 pub mod __trace_ops

@@ -108,16 +108,19 @@ __bench_orient = []
 # Bench-only: exposes `pub mod __bench_scan` shims for
 # `bench_load_bearing`. Same convention as `__bench_u16_hybrids`.
 __bench_scan = []
+# Bench-only: exposes `pub mod __bench_float_depth` shims for
+# `bench_float_depth_and_bands`.
+__bench_float_depth = []
 
 [dependencies]
 enough = { version = "0.4.4", default-features = false }
 zenpixels = { workspace = true, default-features = false, features = ["icc"] }
-linear-srgb = { version = "0.6.12", default-features = false, features = ["transfer"] }
+linear-srgb = { version = "0.6.13", git = "https://github.com/imazen/linear-srgb", rev = "360fb968cda351b2e161d10e66b36414f4d3b9e7", default-features = false, features = ["transfer"] }
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8.53", default-features = false, features = ["bytemuck"], optional = true }
 garb = { version = "0.2.9", git = "https://github.com/imazen/garb", rev = "f22a8c5412de72255de80b5597a484c796f4e40d", default-features = false }
 # Unified macros require the stable 0.9.31 release. SIMD types stay internal.
-archmage = { version = "0.9.32", git = "https://github.com/imazen/archmage", rev = "a6be44993d8d3f8dba9a458f898d200fccba5b31", default-features = false }
+archmage = { version = "0.9.32", git = "https://github.com/imazen/archmage", rev = "303341570757936368fca1ee7254a19075cbff08", default-features = false }
 # Direct libm dep for the hdr-experimental Bt2446A / HdrToSdr scalar paths
 # (powf, logf, log2f, cosf, sinf). The crate is no_std and already pulled in
 # transitively by magetypes; we depend on it directly so the math calls don't
@@ -130,8 +133,8 @@ libm = { version = "0.2", default-features = false }
 # Deliberately no `w512`: the `scan` predicates use 256-bit types (native
 # on AVX2, 2×128 polyfill below), and the 512-bit type set isn't worth its
 # compile-time cost without a stronger AVX-512 use case in this crate.
-magetypes = { version = "0.9.32", git = "https://github.com/imazen/archmage", rev = "a6be44993d8d3f8dba9a458f898d200fccba5b31", default-features = false }
-magemath = { version = "0.1.0", git = "https://github.com/imazen/archmage", rev = "a6be44993d8d3f8dba9a458f898d200fccba5b31", default-features = false }
+magetypes = { version = "0.9.32", git = "https://github.com/imazen/archmage", rev = "303341570757936368fca1ee7254a19075cbff08", default-features = false }
+magemath = { version = "0.1.0", git = "https://github.com/imazen/archmage", rev = "303341570757936368fca1ee7254a19075cbff08", default-features = false }
 paste = { package = "pastey", version = "0.2.3" }
 once_cell = { version = "1.21.4", default-features = false, features = ["race", "alloc"] }
 # Pure-Rust LZ4 safe-decode for the bundled CICP->ICC profile blob. no_std
@@ -167,7 +170,7 @@ zenbench = { version = "0.1.11" }
 # DEV-only: lets benches/kernel_tiers.rs disable the baseline SIMD token (NEON
 # on aarch64) so the "scalar" arm is real. Feature unification applies this to
 # test/bench builds only, so consumers are unaffected.
-archmage = { version = "0.9.32", git = "https://github.com/imazen/archmage", rev = "a6be44993d8d3f8dba9a458f898d200fccba5b31", features = ["testable_dispatch"] }
+archmage = { version = "0.9.32", git = "https://github.com/imazen/archmage", rev = "303341570757936368fca1ee7254a19075cbff08", features = ["testable_dispatch"] }
 # Dev-only: cross-validate our local f16 impl (src/f16_scalar.rs) and drive
 # the perceptual-loss test suite, which uses half's f64 conversion paths.
 half = "2.7.1"
@@ -346,3 +349,9 @@ harness = false
 name = "kernel_tiers"
 harness = false
 required-features = ["__bench_scan"]
+
+[[bench]]
+name = "bench_float_depth_and_bands"
+path = "benches/bench_float_depth_and_bands.rs"
+harness = false
+required-features = ["__bench_float_depth"]

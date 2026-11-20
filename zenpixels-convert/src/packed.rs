@@ -107,14 +107,15 @@ pub(crate) mod private {
 
     #[derive(Default)]
     pub struct SinkStamp {
+        pub wants_stamp: bool,
         pub apply: bool,
         pub color: Option<Arc<ColorContext>>,
         pub exact_depth: Option<ExactDepth>,
         pub float_facts: FloatFacts,
     }
 
-    pub trait SealedSource {
-        fn source_view(&self) -> SourceView<'_>;
+    pub trait SealedSource: Sized {
+        fn with_source<R>(self, f: impl FnOnce(SourceView<'_>) -> R) -> R;
     }
 
     pub trait SealedSink: Sized {
@@ -139,32 +140,32 @@ pub trait PackedSink: private::SealedSink {}
 
 impl<P> private::SealedSource for PixelSlice<'_, P> {
     #[inline]
-    fn source_view(&self) -> private::SourceView<'_> {
-        private::SourceView::Single(self.clone().erase())
+    fn with_source<R>(self, f: impl FnOnce(private::SourceView<'_>) -> R) -> R {
+        f(private::SourceView::Single(self.erase()))
     }
 }
 impl<P> PackedSource for PixelSlice<'_, P> {}
 
 impl<P> private::SealedSource for &PixelSlice<'_, P> {
     #[inline]
-    fn source_view(&self) -> private::SourceView<'_> {
-        private::SourceView::Single((*self).clone().erase())
+    fn with_source<R>(self, f: impl FnOnce(private::SourceView<'_>) -> R) -> R {
+        f(private::SourceView::Single((*self).clone().erase()))
     }
 }
 impl<P> PackedSource for &PixelSlice<'_, P> {}
 
 impl<P, S: ByteStorage> private::SealedSource for &PixelBuffer<P, S> {
     #[inline]
-    fn source_view(&self) -> private::SourceView<'_> {
-        private::SourceView::Single(self.as_slice().erase())
+    fn with_source<R>(self, f: impl FnOnce(private::SourceView<'_>) -> R) -> R {
+        f(private::SourceView::Single(self.as_slice().erase()))
     }
 }
 impl<P, S: ByteStorage> PackedSource for &PixelBuffer<P, S> {}
 
 impl private::SealedSource for &BandedPixelBuffer {
     #[inline]
-    fn source_view(&self) -> private::SourceView<'_> {
-        private::SourceView::Banded(self)
+    fn with_source<R>(self, f: impl FnOnce(private::SourceView<'_>) -> R) -> R {
+        f(private::SourceView::Banded(self))
     }
 }
 impl PackedSource for &BandedPixelBuffer {}
@@ -197,7 +198,10 @@ impl<P> private::SealedSink for &mut PixelSliceMut<'_, P> {
         self,
         f: impl FnOnce(private::SinkView<'_>, &mut private::SinkStamp) -> R,
     ) -> R {
-        let mut stamp = private::SinkStamp::default();
+        let mut stamp = private::SinkStamp {
+            wants_stamp: true,
+            ..Default::default()
+        };
         let rows = self.rows();
         let out = {
             let sub = self.sub_rows_mut(0, rows).erase();
@@ -222,7 +226,10 @@ impl<P, S: ByteStorageMut> private::SealedSink for &mut PixelBuffer<P, S> {
         self,
         f: impl FnOnce(private::SinkView<'_>, &mut private::SinkStamp) -> R,
     ) -> R {
-        let mut stamp = private::SinkStamp::default();
+        let mut stamp = private::SinkStamp {
+            wants_stamp: true,
+            ..Default::default()
+        };
         let out = f(
             private::SinkView::Single(self.as_slice_mut().erase()),
             &mut stamp,
@@ -248,7 +255,10 @@ impl private::SealedSink for &mut BandedPixelBuffer {
         self,
         f: impl FnOnce(private::SinkView<'_>, &mut private::SinkStamp) -> R,
     ) -> R {
-        let mut stamp = private::SinkStamp::default();
+        let mut stamp = private::SinkStamp {
+            wants_stamp: true,
+            ..Default::default()
+        };
         let out = f(private::SinkView::Banded(self), &mut stamp);
         if stamp.apply {
             self.set_color_context(stamp.color);
@@ -271,10 +281,11 @@ pub(crate) fn convert_packed(
     src: impl PackedSource,
     dst: impl PackedSink,
 ) -> Result<(), At<ConvertError>> {
-    let src_view = src.source_view();
     let dst_meta = dst.sink_meta();
-    preflight_worker(worker, &src_view, dst_meta)?;
-    dst.with_sink(|dst_view, stamp| convert_packed_inner(worker, src_view, dst_view, stamp))
+    src.with_source(|src_view| {
+        preflight_worker(worker, &src_view, dst_meta)?;
+        dst.with_sink(|dst_view, stamp| convert_packed_inner(worker, src_view, dst_view, stamp))
+    })
 }
 
 #[track_caller]
@@ -418,10 +429,12 @@ fn convert_packed_inner(
         }
     }
 
-    stamp.apply = true;
-    stamp.color = worker.output_color_arc().cloned();
-    stamp.exact_depth = preserved_exact;
-    stamp.float_facts = worker.output_float_facts();
+    if stamp.wants_stamp {
+        stamp.apply = true;
+        stamp.color = worker.output_color_arc().cloned();
+        stamp.exact_depth = preserved_exact;
+        stamp.float_facts = worker.output_float_facts();
+    }
     Ok(())
 }
 
@@ -436,21 +449,22 @@ pub(crate) fn convert_output_packed(
     src: impl PackedSource,
     dst: impl PackedSink,
 ) -> Result<(), At<ConvertError>> {
-    let src_view = src.source_view();
     let (dst_w, dst_h, dst_desc) = dst.sink_meta();
-    plan.validate_source_view(&src_view)?;
-    if dst_desc != plan.output_descriptor() {
-        return Err(whereat::at!(ConvertError::NoPath {
-            from: plan.output_descriptor(),
-            to: dst_desc,
-        }));
-    }
-    if src_view.width() != dst_w || src_view.height() != dst_h {
-        return Err(whereat::at!(ConvertError::Buffer(
-            zenpixels::BufferError::InvalidDimensions
-        )));
-    }
-    dst.with_sink(|dst_view, stamp| convert_output_inner(plan, src_view, dst_view, stamp))
+    src.with_source(|src_view| {
+        plan.validate_source_view(&src_view)?;
+        if dst_desc != plan.output_descriptor() {
+            return Err(whereat::at!(ConvertError::NoPath {
+                from: plan.output_descriptor(),
+                to: dst_desc,
+            }));
+        }
+        if src_view.width() != dst_w || src_view.height() != dst_h {
+            return Err(whereat::at!(ConvertError::Buffer(
+                zenpixels::BufferError::InvalidDimensions
+            )));
+        }
+        dst.with_sink(|dst_view, stamp| convert_output_inner(plan, src_view, dst_view, stamp))
+    })
 }
 
 #[track_caller]
@@ -512,10 +526,12 @@ fn convert_output_inner(
         }
     }
 
-    stamp.apply = true;
-    stamp.color = Some(Arc::clone(plan.output_color_context()));
-    stamp.exact_depth = preserved_exact;
-    stamp.float_facts = plan.output_float_facts();
+    if stamp.wants_stamp {
+        stamp.apply = true;
+        stamp.color = Some(Arc::clone(plan.output_color_context()));
+        stamp.exact_depth = preserved_exact;
+        stamp.float_facts = plan.output_float_facts();
+    }
     Ok(())
 }
 
@@ -538,34 +554,35 @@ pub fn orient_into(
     orientation: Orientation,
     dst: impl PackedSink,
 ) -> Result<(), At<ConvertError>> {
-    let src_view = src.source_view();
     let (dst_w, dst_h, dst_desc) = dst.sink_meta();
-    let w = src_view.width();
-    let h = src_view.height();
-    let desc = src_view.descriptor();
-    let bpp = desc.bytes_per_pixel();
-    let dst_bpp = dst_desc.bytes_per_pixel();
-    let (ow, oh) = orientation.output_dimensions(w, h);
+    src.with_source(|src_view| {
+        let w = src_view.width();
+        let h = src_view.height();
+        let desc = src_view.descriptor();
+        let bpp = desc.bytes_per_pixel();
+        let dst_bpp = dst_desc.bytes_per_pixel();
+        let (ow, oh) = orientation.output_dimensions(w, h);
 
-    if dst_w != ow || dst_h != oh || dst_bpp != bpp {
-        return Err(whereat::at!(ConvertError::BufferSize {
-            expected: (ow as usize)
-                .saturating_mul(oh as usize)
-                .saturating_mul(bpp),
-            actual: (dst_w as usize)
-                .saturating_mul(dst_h as usize)
-                .saturating_mul(dst_bpp),
-        }));
-    }
-    if dst_desc.pixel_format() != desc.pixel_format() {
-        return Err(whereat::at!(ConvertError::NoPath {
-            from: desc,
-            to: dst_desc,
-        }));
-    }
+        if dst_w != ow || dst_h != oh || dst_bpp != bpp {
+            return Err(whereat::at!(ConvertError::BufferSize {
+                expected: (ow as usize)
+                    .saturating_mul(oh as usize)
+                    .saturating_mul(bpp),
+                actual: (dst_w as usize)
+                    .saturating_mul(dst_h as usize)
+                    .saturating_mul(dst_bpp),
+            }));
+        }
+        if dst_desc.pixel_format() != desc.pixel_format() {
+            return Err(whereat::at!(ConvertError::NoPath {
+                from: desc,
+                to: dst_desc,
+            }));
+        }
 
-    dst.with_sink(|dst_view, stamp| {
-        orient_packed_inner(src_view, orientation, dst_view, dst_desc, stamp)
+        dst.with_sink(|dst_view, stamp| {
+            orient_packed_inner(src_view, orientation, dst_view, dst_desc, stamp)
+        })
     })
 }
 
@@ -584,7 +601,11 @@ fn orient_packed_inner(
     let desc = src.descriptor();
     let bpp = desc.bytes_per_pixel();
     let same_desc = dst_desc == desc;
-    let src_color = src.color_context().cloned();
+    let src_color = if stamp.wants_stamp && same_desc {
+        src.color_context().cloned()
+    } else {
+        None
+    };
     let src_exact = src.exact_depth();
     let src_facts = src.float_facts();
 
@@ -605,15 +626,17 @@ fn orient_packed_inner(
         }
     }
 
-    stamp.apply = true;
-    if same_desc {
-        stamp.color = src_color;
-        stamp.exact_depth = src_exact;
-        stamp.float_facts = src_facts;
-    } else {
-        stamp.color = None;
-        stamp.exact_depth = None;
-        stamp.float_facts = FloatFacts::NONE;
+    if stamp.wants_stamp {
+        stamp.apply = true;
+        if same_desc {
+            stamp.color = src_color;
+            stamp.exact_depth = src_exact;
+            stamp.float_facts = src_facts;
+        } else {
+            stamp.color = None;
+            stamp.exact_depth = None;
+            stamp.float_facts = FloatFacts::NONE;
+        }
     }
     Ok(())
 }

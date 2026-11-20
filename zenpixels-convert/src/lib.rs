@@ -387,6 +387,13 @@ pub mod __bench_scan {
     pub use crate::fast_gamut::{convert_linear_rgb, convert_linear_rgba};
     pub use crate::scan::{FusedRequest, FusedResult, fused_predicates_rgba8_cg};
 }
+
+/// Bench-only shims for `benches/bench_float_depth_and_bands.rs`.
+#[cfg(feature = "__bench_float_depth")]
+#[doc(hidden)]
+pub mod __bench_float_depth {
+    pub use crate::float_simd::bench_shims::*;
+}
 pub mod gamut;
 pub mod hdr;
 pub mod icc_profiles;

@@ -162,7 +162,7 @@ fn orient_into_all_orientations_mixed_bands_aligned_stride_and_evidence() {
 
     for y in 0..h {
         let mut row = contig_src.rows_mut(y, 1);
-        for (x, chunk) in row.row_mut(0).chunks_exact_mut(6).enumerate() {
+        for (x, chunk) in row.row_mut(0).as_chunks_mut::<6>().0.iter_mut().enumerate() {
             let r = (((y * 13 + x as u32) & 0xFF) as u16 * 257).to_ne_bytes();
             let g = (((y * 7 + x as u32 * 3) & 0xFF) as u16 * 257).to_ne_bytes();
             let b = (((y + x as u32 * 11) & 0xFF) as u16 * 257).to_ne_bytes();

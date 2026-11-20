@@ -3317,7 +3317,7 @@ impl NativePlan {
                 | ConvertStep::SdrU16ToU8 { .. }
                 | ConvertStep::HlgRender(_) => KernelTier::Scalar,
                 ConvertStep::Fused { .. } => {
-                    #[cfg(target_arch = "x86_64")]
+                    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
                     {
                         use archmage::SimdToken;
                         if archmage::X64V3Token::summon().is_some() {
@@ -3326,7 +3326,7 @@ impl NativePlan {
                             KernelTier::Scalar
                         }
                     }
-                    #[cfg(not(target_arch = "x86_64"))]
+                    #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
                     {
                         KernelTier::Scalar
                     }

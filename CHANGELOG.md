@@ -60,6 +60,9 @@
   `FloatFacts` unclamped specialization, outer-loop WASM `relaxed-simd` sentinel
   FMA probe falling back to exact `f64x2` SIMD when unfused, SIMD `DepthPolicy::Truncate`,
   and 0-ULP RGBA `f32` premultiply/unpremultiply.
+- Sync `linear-srgb 0.6.13` (`target_features::x8` tokenless SIMD entry points,
+  unified PQ/sRGB transfer rails, and `x86_64-unknown-none` soft-float / `no_std`
+  compatibility).
 - Use the checked Magemath power profile for extended gamma.
 
 ### Added

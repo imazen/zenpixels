@@ -1654,14 +1654,14 @@ fn sdr_u16_to_u8(
                 if x <= 0.04045 {
                     x / 12.92
                 } else {
-                    ((x + 0.055) / 1.055).powf(2.4)
+                    libm::pow((x + 0.055) / 1.055, 2.4)
                 }
             }
             TransferFunction::Bt709 => {
                 if x < 4.5 * BT709_BETA {
                     x / 4.5
                 } else {
-                    ((x + BT709_ALPHA) / (1.0 + BT709_ALPHA)).powf(1.0 / 0.45)
+                    libm::pow((x + BT709_ALPHA) / (1.0 + BT709_ALPHA), 1.0 / 0.45)
                 }
             }
             _ => unreachable!("planner admits only Linear, sRGB and BT.709"),
@@ -1676,14 +1676,14 @@ fn sdr_u16_to_u8(
                 if x <= 0.0031308 {
                     x * 12.92
                 } else {
-                    1.055 * x.powf(1.0 / 2.4) - 0.055
+                    1.055 * libm::pow(x, 1.0 / 2.4) - 0.055
                 }
             }
             TransferFunction::Bt709 => {
                 if x < BT709_BETA {
                     x * 4.5
                 } else {
-                    (1.0 + BT709_ALPHA) * x.powf(0.45) - BT709_ALPHA
+                    (1.0 + BT709_ALPHA) * libm::pow(x, 0.45) - BT709_ALPHA
                 }
             }
             _ => unreachable!("planner admits only Linear, sRGB and BT.709"),
@@ -1706,7 +1706,7 @@ fn sdr_u16_to_u8(
             .expect("fixed-size SDR transfer table");
         for (code, output) in table.iter_mut().enumerate() {
             let encoded = encode(to, decode(from, code as f64 / 65535.0));
-            *output = (encoded.clamp(0.0, 1.0) * 255.0 + 0.5).floor() as u8;
+            *output = libm::floor(encoded.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
         }
         table
     });

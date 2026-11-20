@@ -27,9 +27,9 @@
 //! the linearize/encode functions are identical.
 
 use archmage::prelude::*;
-#[cfg(target_arch = "x86_64")]
-use linear_srgb::tokens::x8 as trc_x8;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+use linear_srgb::target_features::x8 as trc_x8;
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 use magetypes::simd::f32x8 as mt_f32x8;
 
 // =========================================================================
@@ -59,14 +59,24 @@ pub(crate) fn fused_row(m0: f32, m1: f32, m2: f32, r: f32, g: f32, b: f32) -> f3
     {
         m0 * r + (m1 * g + m2 * b)
     }
-    #[cfg(not(all(target_arch = "wasm32", not(feature = "precise-portable"))))]
+    #[cfg(all(
+        not(all(target_arch = "wasm32", not(feature = "precise-portable"))),
+        feature = "std"
+    ))]
     {
         m0.mul_add(r, m1.mul_add(g, m2 * b))
+    }
+    #[cfg(all(
+        not(all(target_arch = "wasm32", not(feature = "precise-portable"))),
+        not(feature = "std")
+    ))]
+    {
+        libm::fmaf(m0, r, libm::fmaf(m1, g, m2 * b))
     }
 }
 
 /// SIMD matrix multiply: 3 channels × 8 pixels via FMA.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[inline(always)]
 fn mat3x3_x8(
     token: X64V3Token,
@@ -111,7 +121,7 @@ macro_rules! stamp_trc_kernels {
         scalar_encode: $scalar_enc:path
     ) => {
         paste::paste! {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
             #[rite]
             fn [<fused_8px_rgb_ $name>](token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
                 let mut r = [0.0f32; 8];
@@ -122,13 +132,13 @@ macro_rules! stamp_trc_kernels {
                     g[i] = data[i * 3 + 1];
                     b[i] = data[i * 3 + 2];
                 }
-                let rl = mt_f32x8::from_array_t(token, $simd_lin(token, r));
-                let gl = mt_f32x8::from_array_t(token, $simd_lin(token, g));
-                let bl = mt_f32x8::from_array_t(token, $simd_lin(token, b));
+                let rl = mt_f32x8::from_array_t(token, $simd_lin(r));
+                let gl = mt_f32x8::from_array_t(token, $simd_lin(g));
+                let bl = mt_f32x8::from_array_t(token, $simd_lin(b));
                 let (or, og, ob) = mat3x3_x8(token, m, rl, gl, bl);
-                let ro = $simd_enc(token, or.to_array());
-                let go = $simd_enc(token, og.to_array());
-                let bo = $simd_enc(token, ob.to_array());
+                let ro = $simd_enc(or.to_array());
+                let go = $simd_enc(og.to_array());
+                let bo = $simd_enc(ob.to_array());
                 for i in 0..8 {
                     data[i * 3] = ro[i];
                     data[i * 3 + 1] = go[i];
@@ -136,7 +146,7 @@ macro_rules! stamp_trc_kernels {
                 }
             }
 
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
             #[rite]
             fn [<fused_8px_rgba_ $name>](token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
                 let mut r = [0.0f32; 8];
@@ -147,13 +157,13 @@ macro_rules! stamp_trc_kernels {
                     g[i] = data[i * 4 + 1];
                     b[i] = data[i * 4 + 2];
                 }
-                let rl = mt_f32x8::from_array_t(token, $simd_lin(token, r));
-                let gl = mt_f32x8::from_array_t(token, $simd_lin(token, g));
-                let bl = mt_f32x8::from_array_t(token, $simd_lin(token, b));
+                let rl = mt_f32x8::from_array_t(token, $simd_lin(r));
+                let gl = mt_f32x8::from_array_t(token, $simd_lin(g));
+                let bl = mt_f32x8::from_array_t(token, $simd_lin(b));
                 let (or, og, ob) = mat3x3_x8(token, m, rl, gl, bl);
-                let ro = $simd_enc(token, or.to_array());
-                let go = $simd_enc(token, og.to_array());
-                let bo = $simd_enc(token, ob.to_array());
+                let ro = $simd_enc(or.to_array());
+                let go = $simd_enc(og.to_array());
+                let bo = $simd_enc(ob.to_array());
                 for i in 0..8 {
                     data[i * 4] = ro[i];
                     data[i * 4 + 1] = go[i];
@@ -161,7 +171,7 @@ macro_rules! stamp_trc_kernels {
                 }
             }
 
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
             #[arcane]
             fn [<convert_rgb_ $name _v3>](token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
                 let bulk = (data.len() / 24) * 24;
@@ -179,7 +189,7 @@ macro_rules! stamp_trc_kernels {
                 }
             }
 
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
             #[arcane]
             fn [<convert_rgba_ $name _v3>](token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
                 let bulk = (data.len() / 32) * 32;
@@ -415,16 +425,16 @@ stamp_trc_kernels!(srgb_to_bt709,
 
 const ADOBE_GAMMA: f32 = 2.19921875; // Adobe RGB spec: 563/256
 
-#[cfg(target_arch = "x86_64")]
-#[rite]
-fn adobe_to_linear_x8(token: X64V3Token, v: [f32; 8]) -> [f32; 8] {
-    trc_x8::gamma_to_linear_v3(token, v, ADOBE_GAMMA)
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+#[archmage::attune(v3)]
+fn adobe_to_linear_x8(v: [f32; 8]) -> [f32; 8] {
+    trc_x8::gamma_to_linear_v3(v, ADOBE_GAMMA)
 }
 
-#[cfg(target_arch = "x86_64")]
-#[rite]
-fn adobe_from_linear_x8(token: X64V3Token, v: [f32; 8]) -> [f32; 8] {
-    trc_x8::linear_to_gamma_v3(token, v, ADOBE_GAMMA)
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+#[archmage::attune(v3)]
+fn adobe_from_linear_x8(v: [f32; 8]) -> [f32; 8] {
+    trc_x8::linear_to_gamma_v3(v, ADOBE_GAMMA)
 }
 
 #[inline(always)]
@@ -508,9 +518,9 @@ fn encode_srgb_extended(v: f32) -> f32 {
 #[inline(always)]
 fn linearize_gamma_extended(v: f32, gamma: f32) -> f32 {
     if v >= 0.0 {
-        v.powf(gamma)
+        libm::powf(v, gamma)
     } else {
-        -((-v).powf(gamma))
+        -libm::powf(-v, gamma)
     }
 }
 
@@ -518,9 +528,9 @@ fn linearize_gamma_extended(v: f32, gamma: f32) -> f32 {
 #[inline(always)]
 fn encode_gamma_extended(v: f32, inv_gamma: f32) -> f32 {
     if v >= 0.0 {
-        v.powf(inv_gamma)
+        libm::powf(v, inv_gamma)
     } else {
-        -((-v).powf(inv_gamma))
+        -libm::powf(-v, inv_gamma)
     }
 }
 
@@ -602,7 +612,7 @@ pub(crate) fn convert_f32_rgba_extended(
 // =========================================================================
 
 /// Whether a TRC has a SIMD x8 encode kernel available (x86_64 only).
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(crate) fn has_simd_encode(trc: TransferFunction) -> bool {
     matches!(
         trc,
@@ -614,21 +624,21 @@ pub(crate) fn has_simd_encode(trc: TransferFunction) -> bool {
     )
 }
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
 pub(crate) fn has_simd_encode(_trc: TransferFunction) -> bool {
     false
 }
 
 /// SIMD x8 encode dispatch — must be called from a #[rite]/#[arcane] context.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[rite]
-fn simd_encode_x8_dispatch(token: X64V3Token, trc: TransferFunction, v: [f32; 8]) -> [f32; 8] {
+fn simd_encode_x8_dispatch(_token: X64V3Token, trc: TransferFunction, v: [f32; 8]) -> [f32; 8] {
     match trc {
-        TransferFunction::Srgb => trc_x8::linear_to_srgb_v3(token, v),
-        TransferFunction::Bt709 => trc_x8::linear_to_bt709_v3(token, v),
-        TransferFunction::Pq => trc_x8::linear_to_pq_v3(token, v),
-        TransferFunction::Hlg => trc_x8::linear_to_hlg_v3(token, v),
-        TransferFunction::Gamma22 => adobe_from_linear_x8(token, v),
+        TransferFunction::Srgb => trc_x8::linear_to_srgb_v3(v),
+        TransferFunction::Bt709 => trc_x8::linear_to_bt709_v3(v),
+        TransferFunction::Pq => trc_x8::linear_to_pq_v3(v),
+        TransferFunction::Hlg => trc_x8::linear_to_hlg_v3(v),
+        TransferFunction::Gamma22 => adobe_from_linear_x8(v),
         _ => v,
     }
 }
@@ -680,7 +690,7 @@ pub(crate) fn convert_f32_rgb_dispatch(
     // SIMD fast path (x86_64 AVX2+FMA only). Each `incant!` does runtime
     // capability detection and falls through to a scalar implementation
     // when AVX2+FMA is unavailable.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     match (src_trc, dst_trc) {
         (Srgb, Srgb) => {
             incant!(convert_rgb_srgb(m, data), [-v4]);
@@ -765,7 +775,7 @@ pub(crate) fn convert_f32_rgba_dispatch(
         convert_linear_rgba(m, data);
         return true;
     }
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     match (src_trc, dst_trc) {
         (Srgb, Srgb) => {
             incant!(convert_rgba_srgb(m, data), [-v4]);
@@ -931,7 +941,7 @@ pub(crate) fn convert_u8_rgb_lut_lut(
 }
 
 /// Fused u8→u8 RGB: LUT linearize → SIMD (matrix + polynomial encode) → quantize.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[rite]
 fn convert_8px_u8_rgb_fused(
     token: X64V3Token,
@@ -968,7 +978,7 @@ fn convert_8px_u8_rgb_fused(
 /// 2-pixel kernel using safe magetypes APIs. Mirrors moxcms rgb_xyz_opt:
 /// each 128-bit lane holds one pixel's `[R,G,B,0]` after FMA. Clamp+scale+
 /// `to_i32_round` produces i32 indices; aligned store, scalar LUT gather.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[rite]
 fn convert_8px_u8_rgb_matlut(
     token: X64V3Token,
@@ -1168,7 +1178,7 @@ pub(crate) fn srgb_enc_lut_u16() -> &'static [u16; 65536] {
 }
 
 /// 2-pixel u16 sRGB kernel using safe magetypes APIs.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[rite]
 fn convert_8px_u16_rgb_matlut(
     token: X64V3Token,
@@ -1231,7 +1241,7 @@ fn convert_8px_u16_rgb_matlut(
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[arcane]
 fn convert_u16_rgb_matlut_v3(
     token: X64V3Token,
@@ -1297,12 +1307,12 @@ pub(crate) fn convert_u16_rgb_simd_matlut(
 ) {
     debug_assert_eq!(src.len() % 3, 0);
     debug_assert_eq!(src.len(), dst.len());
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
         incant!(convert_u16_rgb_matlut(m, src, dst, lin_lut, enc_lut), [-v4]);
         return;
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
     convert_u16_rgb_matlut_scalar(ScalarToken, m, src, dst, lin_lut, enc_lut);
 }
 
@@ -1320,7 +1330,7 @@ pub(crate) fn convert_u16_rgb_simd_matlut(
 mod hybrids {
     use super::*;
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     #[rite]
     fn convert_8px_u16_rgb_lutdec_polyenc(
         token: X64V3Token,
@@ -1341,9 +1351,9 @@ mod hybrids {
         let gl = mt_f32x8::from_array_t(token, gl_arr);
         let bl = mt_f32x8::from_array_t(token, bl_arr);
         let (or_v, og_v, ob_v) = mat3x3_x8(token, m, rl, gl, bl);
-        let ro = trc_x8::linear_to_srgb_u16_v3(token, or_v.to_array());
-        let go = trc_x8::linear_to_srgb_u16_v3(token, og_v.to_array());
-        let bo = trc_x8::linear_to_srgb_u16_v3(token, ob_v.to_array());
+        let ro = trc_x8::linear_to_srgb_u16_v3(or_v.to_array());
+        let go = trc_x8::linear_to_srgb_u16_v3(og_v.to_array());
+        let bo = trc_x8::linear_to_srgb_u16_v3(ob_v.to_array());
         for i in 0..8 {
             dst[i * 3] = ro[i];
             dst[i * 3 + 1] = go[i];
@@ -1351,7 +1361,7 @@ mod hybrids {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     #[rite]
     fn convert_8px_u16_rgb_polydec_lutenc(
         token: X64V3Token,
@@ -1368,9 +1378,9 @@ mod hybrids {
             g_u16[i] = src[i * 3 + 1];
             b_u16[i] = src[i * 3 + 2];
         }
-        let rl = mt_f32x8::from_array_t(token, trc_x8::srgb_u16_to_linear_v3(token, r_u16));
-        let gl = mt_f32x8::from_array_t(token, trc_x8::srgb_u16_to_linear_v3(token, g_u16));
-        let bl = mt_f32x8::from_array_t(token, trc_x8::srgb_u16_to_linear_v3(token, b_u16));
+        let rl = mt_f32x8::from_array_t(token, trc_x8::srgb_u16_to_linear_v3(r_u16));
+        let gl = mt_f32x8::from_array_t(token, trc_x8::srgb_u16_to_linear_v3(g_u16));
+        let bl = mt_f32x8::from_array_t(token, trc_x8::srgb_u16_to_linear_v3(b_u16));
         let (or_v, og_v, ob_v) = mat3x3_x8(token, m, rl, gl, bl);
         let scale = mt_f32x8::splat_t(token, 65535.0);
         let zero = mt_f32x8::zero_t(token);
@@ -1385,7 +1395,7 @@ mod hybrids {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     #[rite]
     fn convert_8px_u16_rgb_polydec_polyenc(
         token: X64V3Token,
@@ -1401,13 +1411,13 @@ mod hybrids {
             g_u16[i] = src[i * 3 + 1];
             b_u16[i] = src[i * 3 + 2];
         }
-        let rl = mt_f32x8::from_array_t(token, trc_x8::srgb_u16_to_linear_v3(token, r_u16));
-        let gl = mt_f32x8::from_array_t(token, trc_x8::srgb_u16_to_linear_v3(token, g_u16));
-        let bl = mt_f32x8::from_array_t(token, trc_x8::srgb_u16_to_linear_v3(token, b_u16));
+        let rl = mt_f32x8::from_array_t(token, trc_x8::srgb_u16_to_linear_v3(r_u16));
+        let gl = mt_f32x8::from_array_t(token, trc_x8::srgb_u16_to_linear_v3(g_u16));
+        let bl = mt_f32x8::from_array_t(token, trc_x8::srgb_u16_to_linear_v3(b_u16));
         let (or_v, og_v, ob_v) = mat3x3_x8(token, m, rl, gl, bl);
-        let ro = trc_x8::linear_to_srgb_u16_v3(token, or_v.to_array());
-        let go = trc_x8::linear_to_srgb_u16_v3(token, og_v.to_array());
-        let bo = trc_x8::linear_to_srgb_u16_v3(token, ob_v.to_array());
+        let ro = trc_x8::linear_to_srgb_u16_v3(or_v.to_array());
+        let go = trc_x8::linear_to_srgb_u16_v3(og_v.to_array());
+        let bo = trc_x8::linear_to_srgb_u16_v3(ob_v.to_array());
         for i in 0..8 {
             dst[i * 3] = ro[i];
             dst[i * 3 + 1] = go[i];
@@ -1415,7 +1425,7 @@ mod hybrids {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     #[arcane]
     fn convert_u16_rgb_lutdec_polyenc_v3(
         token: X64V3Token,
@@ -1442,7 +1452,7 @@ mod hybrids {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     #[arcane]
     fn convert_u16_rgb_polydec_lutenc_v3(
         token: X64V3Token,
@@ -1471,7 +1481,7 @@ mod hybrids {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     #[arcane]
     fn convert_u16_rgb_polydec_polyenc_v3(
         token: X64V3Token,
@@ -1575,12 +1585,12 @@ mod hybrids {
         dst: &mut [u16],
     ) {
         let lin_lut = srgb_lin_lut_u16();
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
         {
             incant!(convert_u16_rgb_lutdec_polyenc(m, src, dst, lin_lut), [-v4]);
             return;
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
         convert_u16_rgb_lutdec_polyenc_scalar(ScalarToken, m, src, dst, lin_lut);
     }
 
@@ -1609,12 +1619,12 @@ mod hybrids {
         dst: &mut [u16],
     ) {
         let enc_lut = srgb_enc_lut_u16();
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
         {
             incant!(convert_u16_rgb_polydec_lutenc(m, src, dst, enc_lut), [-v4]);
             return;
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
         convert_u16_rgb_polydec_lutenc_scalar(ScalarToken, m, src, dst, enc_lut);
     }
 
@@ -1624,12 +1634,12 @@ mod hybrids {
         src: &[u16],
         dst: &mut [u16],
     ) {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
         {
             incant!(convert_u16_rgb_polydec_polyenc(m, src, dst), [-v4]);
             return;
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
         convert_u16_rgb_polydec_polyenc_scalar(ScalarToken, m, src, dst);
     }
 } // end of hybrids module
@@ -1651,7 +1661,7 @@ pub(crate) use hybrids::{
 
 /// 2-pixel u8-sRGB → linear-f32 kernel. Output is linear (NOT sRGB-encoded);
 /// extended range flows through after the matrix.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[rite]
 fn convert_8px_u8_to_f32_lin(
     token: X64V3Token,
@@ -1701,7 +1711,7 @@ fn convert_8px_u8_to_f32_lin(
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[arcane]
 fn convert_u8_to_f32_lin_v3(
     token: X64V3Token,
@@ -1761,17 +1771,17 @@ pub(crate) fn convert_u8_to_f32_lin_simd(
 ) {
     debug_assert_eq!(src.len() % 3, 0);
     debug_assert_eq!(src.len(), dst.len());
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
         incant!(convert_u8_to_f32_lin(m, src, dst, lin_lut), [-v4]);
         return;
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
     convert_u8_to_f32_lin_scalar(ScalarToken, m, src, dst, lin_lut);
 }
 
 /// 2-pixel linear-f32 → u8-sRGB kernel with clamp + cvtps_epi32 + LUT gather.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[rite]
 fn convert_8px_f32_lin_to_u8(
     token: X64V3Token,
@@ -1856,7 +1866,7 @@ fn convert_8px_f32_lin_to_u8(
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[arcane]
 fn convert_f32_lin_to_u8_v3(
     token: X64V3Token,
@@ -1910,16 +1920,16 @@ pub(crate) fn convert_f32_lin_to_u8_simd(
 ) {
     debug_assert_eq!(src.len() % 3, 0);
     debug_assert_eq!(src.len(), dst.len());
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
         incant!(convert_f32_lin_to_u8(m, src, dst, enc), [-v4]);
         return;
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
     convert_f32_lin_to_u8_scalar(ScalarToken, m, src, dst, enc);
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[arcane]
 fn convert_u8_rgb_matlut_v3(
     token: X64V3Token,
@@ -1985,16 +1995,16 @@ pub(crate) fn convert_u8_rgb_simd_matlut(
 ) {
     debug_assert_eq!(src.len() % 3, 0);
     debug_assert_eq!(src.len(), dst.len());
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
         incant!(convert_u8_rgb_matlut(m, src, dst, lin_lut, enc_u8), [-v4]);
         return;
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
     convert_u8_rgb_matlut_scalar(ScalarToken, m, src, dst, lin_lut, enc_u8);
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[arcane]
 fn convert_u8_rgb_fused_v3(
     token: X64V3Token,
@@ -2060,7 +2070,7 @@ pub(crate) fn convert_u8_rgb_simd_fused(
 ) {
     debug_assert_eq!(src.len() % 3, 0);
     debug_assert_eq!(src.len(), dst.len());
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
         incant!(
             convert_u8_rgb_fused(m, src, dst, lin_lut, dst_trc, scalar_enc),
@@ -2068,12 +2078,12 @@ pub(crate) fn convert_u8_rgb_simd_fused(
         );
         return;
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
     convert_u8_rgb_fused_scalar(ScalarToken, m, src, dst, lin_lut, dst_trc, scalar_enc);
 }
 
 /// SIMD-batched u8 RGBA: LUT linearize 8 pixels → SIMD matrix → LUT encode. Alpha copied.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[rite]
 fn convert_8px_u8_rgba_simd(
     token: X64V3Token,
@@ -2106,7 +2116,7 @@ fn convert_8px_u8_rgba_simd(
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 #[arcane]
 fn convert_u8_rgba_lut_simd_v3(
     token: X64V3Token,
@@ -2175,7 +2185,7 @@ pub(crate) fn convert_u8_rgba_simd_lut(
 ) {
     debug_assert_eq!(src.len() % 4, 0);
     debug_assert_eq!(src.len(), dst.len());
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     {
         incant!(
             convert_u8_rgba_lut_simd(m, src, dst, lin_lut, enc_u8),
@@ -2183,7 +2193,7 @@ pub(crate) fn convert_u8_rgba_simd_lut(
         );
         return;
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
     convert_u8_rgba_lut_simd_scalar(ScalarToken, m, src, dst, lin_lut, enc_u8);
 }
 

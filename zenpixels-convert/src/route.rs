@@ -117,7 +117,10 @@ pub enum KernelTier {
     /// Ordinary scalar kernel.
     Scalar,
     /// x86-64 v3 matrix/LUT kernel.
-    #[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
+    #[cfg_attr(
+        not(all(target_arch = "x86_64", target_feature = "sse2")),
+        allow(dead_code)
+    )]
     X86V3,
     /// The operator dispatches when called (possibly through a dependency).
     RuntimeDispatch,
