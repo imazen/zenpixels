@@ -72,7 +72,7 @@
   `#[attune(dispatch)]` so `zenpixels-convert` depends only on core `garb::bytes`
   byte swizzles (`default-features = false`, zero `experimental` items).
 - Sync `archmage 0.9.32`, `magetypes 0.9.32`, and `magemath 0.1.0` (`30334157`),
-  `garb 0.2.9` (`2df916a0`), and `linear-srgb 0.6.13` (`360fb968`:
+  `garb 0.2.9` (`127c1f77`), and `linear-srgb 0.6.13` (`360fb968`:
   `target_features::x8` tokenless SIMD entry points, unified PQ/sRGB transfer
   rails, and `x86_64-unknown-none` soft-float / `no_std` compatibility).
 - Use the checked Magemath power profile for extended gamma.

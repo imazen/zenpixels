@@ -311,7 +311,7 @@ dependencies = [
 [[package]]
 name = "garb"
 version = "0.2.9"
-source = "git+https://github.com/imazen/garb?rev=2df916a08d156a5f938f3d96586ac7ff35fc9357#2df916a08d156a5f938f3d96586ac7ff35fc9357"
+source = "git+https://github.com/imazen/garb?rev=127c1f77e011c24b505b32ed572e694700789e0a#127c1f77e011c24b505b32ed572e694700789e0a"
 dependencies = [
  "archmage",
  "magetypes",
