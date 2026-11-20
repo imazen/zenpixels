@@ -24,7 +24,7 @@ categories = ["multimedia::images"]
 # Post-release garb numerical fixes and precise-portable kernels still require
 # these source revisions; the SIMD dependencies now resolve stable 0.9.31.
 [patch.crates-io]
-archmage = { git = "https://github.com/imazen/archmage", rev = "4effb0aacd6735eb594e712ece52a9e74a98f232" }
-magetypes = { git = "https://github.com/imazen/archmage", rev = "4effb0aacd6735eb594e712ece52a9e74a98f232" }
+archmage = { git = "https://github.com/imazen/archmage", rev = "98e6e12da7e2212dda10ec2b81b80263a515ee03" }
+magetypes = { git = "https://github.com/imazen/archmage", rev = "98e6e12da7e2212dda10ec2b81b80263a515ee03" }
 garb = { git = "https://github.com/imazen/garb", rev = "58ce9cad7b337418a7abe9b1f6e3e4bd1928b385" }
 linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24664315586bd60e5f048253b1f69052" }
