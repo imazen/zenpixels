@@ -15,6 +15,10 @@
   `BandedPlanarBuffer`) for gigapixel (`> 10^9` px) packed and planar images with
   `u64` picture geometry, configurable `RowAlign`, `ExactDepth` preservation,
   address-space preflight on 32-bit targets, and band-independent sample hashes.
+  Re-export `BandLayout`, `BandedPixelBuffer`, and `DEFAULT_MAX_BAND_BYTES` at
+  the `zenpixels` crate root; axis-swapping banded orientation lives in
+  `zenpixels-convert` (`orient_into` / `BandedPixelBufferConvertExt::oriented_into`)
+  so scalar fallback cannot shadow cache-blocked SIMD transpose.
 
 - Generalize planar ownership over `PlaneStorage` / `PlaneStorageMut`, preserving
   aligned, pooled and shared owners. Add recoverable planar parts transfer
@@ -48,9 +52,23 @@
 
 ### Changed
 
+- Replace `garb` floating-point depth and RGBA `f32` alpha kernels with `magetypes`
+  SIMD kernels (`garb 0.3.0` integer-only): 2-op 0-ULP binary geometric-series
+  split for `u8 -> f32` and `u16 -> f32` (0-ULP exact without hardware division or
+  FMA), 1-FMA magic-bias nearest half-up quantization (`12_582_912.0` / `0x4b40_0000`,
+  0 mismatches across all `1,065,353,217` `f32` values in `[0.0, 1.0]`) with
+  `FloatFacts` unclamped specialization, outer-loop WASM `relaxed-simd` sentinel
+  FMA probe falling back to exact `f64x2` SIMD when unfused, SIMD `DepthPolicy::Truncate`,
+  and 0-ULP RGBA `f32` premultiply/unpremultiply.
 - Use the checked Magemath power profile for extended gamma.
 
 ### Added
+
+- Add sealed `PackedSource` and `PackedSink` traits plus unified
+  `RowConverter::convert`, `OutputPlan::convert_into`, and `orient_into` at
+  `zenpixels_convert` root so `PixelSlice`, `PixelSliceMut`, `PixelBuffer`, and
+  `BandedPixelBuffer` work uniformly without extension-trait imports or
+  single-band overhead.
 
 - Add `ConversionSpec::with_float_facts`, `input_float_facts`/`output_float_facts`
   on `ConvertPlan`, `RowConverter`, and `OutputPlan`,

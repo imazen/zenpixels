@@ -716,7 +716,7 @@ pub fn __bench_apply_orientation_scalar(
 
 /// Copy one row, reversing the order of `bpp`-sized pixels (`FlipH` per row).
 #[inline]
-fn reverse_row(s: &[u8], d: &mut [u8], width: usize, bpp: usize) {
+pub(crate) fn reverse_row(s: &[u8], d: &mut [u8], width: usize, bpp: usize) {
     for x in 0..width {
         let si = (width - 1 - x) * bpp;
         let di = x * bpp;

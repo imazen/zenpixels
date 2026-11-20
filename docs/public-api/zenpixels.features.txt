@@ -13,7 +13,7 @@
 #   pub types (struct/enum/trait/alias)        39
 #   pub consts/statics                         31
 #   free functions                              4
-#   inherent methods                          208
+#   inherent methods                          209
 #   struct fields                              14
 #   enum variants                              90
 #   trait roster entries (type × trait)       270
@@ -23,12 +23,12 @@
 #
 # per-module pub lines:
 #   (root)                           40
-#   banded                            1
+#   banded                            2
 #   buffer                           95
 #   plane                           222
 #   sample                           29
 
-## items (383 lines)
+## items (384 lines)
 
 pub fn banded::BandedPixelBuffer::hash_with(&self, HashInclusions) -> u64
 pub fn buffer::PixelCow<'_, P>::hash_with(&self, HashInclusions) -> u64
@@ -367,6 +367,7 @@ pub HashInclusions::All
 pub HashInclusions::Pixels
 pub HashInclusions::SamplesOnly
 pub fn buffer::PixelCow<'_, P>::hash_with(&self, HashInclusions) -> u64
+pub fn banded::BandedPixelBuffer::hash_with(&self, HashInclusions) -> u64
 pub fn buffer::PixelBuffer::as_contiguous_pixels<P: buffer::Pixel>(&self) -> core::option::Option<&[P]>
 pub fn buffer::PixelBuffer::from_pixels_erased<P: buffer::Pixel>(alloc::vec::Vec<P>, u32, u32) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuffer::into_contiguous_pixels<P: buffer::Pixel>(self) -> core::option::Option<alloc::vec::Vec<P>>

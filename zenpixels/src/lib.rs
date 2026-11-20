@@ -107,7 +107,9 @@ pub use descriptor::{
     PixelDescriptor, PixelFormat, SignalRange, TransferFunction,
 };
 
-// Re-export buffer and alignment types at crate root.
+// Re-export buffer, banded, and alignment types at crate root.
+#[doc(inline)]
+pub use banded::{BandLayout, BandedPixelBuffer, DEFAULT_MAX_BAND_BYTES};
 #[doc(inline)]
 pub use buffer::{
     Bgrx, BufferError, ByteStorage, ByteStorageMut, FromPartsError, InPlacePixels, InteropTarget,

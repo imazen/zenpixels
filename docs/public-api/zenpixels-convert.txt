@@ -9,24 +9,24 @@
 ## summary
 #
 #   pub modules                                14
-#   pub types (struct/enum/trait/alias)        69
+#   pub types (struct/enum/trait/alias)        71
 #   pub consts/statics                         82
-#   free functions                              1
-#   inherent methods                          156
+#   free functions                              2
+#   inherent methods                          160
 #   struct fields                              85
 #   enum variants                             121
 #   re-exports                                  8
-#   trait roster entries (type × trait)       149
+#   trait roster entries (type × trait)       157
 #   conditional trait impls (verbatim)          1
 #   auto-trait-complete types                  27
 #   auto-trait exceptions                      10
 #
 # per-module pub lines:
-#   (root)                          260
+#   (root)                          265
 #   adapt                             1
 #   cms                              26
 #   codes                            20
-#   converter                        19
+#   converter                        21
 #   error                            58
 #   ext                              22
 #   gamut                            11
@@ -37,7 +37,7 @@
 #   output                           24
 #   precision                        62
 
-## items (502 lines)
+## items (509 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -93,6 +93,7 @@ pub const fn codes::CodeMap::word_i16(&self, i16) -> i16
 pub const fn codes::CodeMap::word_i32(&self, i32) -> i32
 pub const fn codes::CodeMap::word_u32(&self, u32) -> u32
 pub mod converter
+pub fn converter::RowConverter::convert(&mut self, impl PackedSource, impl PackedSink) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::convert_bands(&mut self, &zenpixels::banded::BandedPixelBuffer, &mut zenpixels::banded::BandedPixelBuffer) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::convert_raw_rows(&mut self, &[u8], usize, &mut [u8], usize, u32, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::convert_rows<'a>(&mut self, zenpixels::buffer::PixelSlice<'_>, zenpixels::buffer::PixelSliceMut<'a>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, whereat::at::At<error::ConvertError>>
@@ -244,6 +245,7 @@ pub output::OutputMetadata::icc: core::option::Option<alloc::sync::Arc<[u8]>>
 pub output::OutputMetadata::parametric: core::option::Option<zenpixels::color::ParametricColor>
 pub fn OutputPlan::borrow_rows<'a>(&self, zenpixels::buffer::PixelSlice<'a>) -> core::result::Result<core::option::Option<zenpixels::buffer::PixelSlice<'a>>, whereat::at::At<error::ConvertError>>
 pub fn OutputPlan::build(zenpixels::color::PixelEncoding<'_>, OutputTarget<'_>, &ConversionSpec<'_>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn OutputPlan::convert_into(&mut self, impl PackedSource, impl PackedSink) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn OutputPlan::convert_rows<'a>(&mut self, zenpixels::buffer::PixelSlice<'_>, zenpixels::buffer::PixelSliceMut<'a>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, whereat::at::At<error::ConvertError>>
 pub const fn OutputPlan::input_float_facts(&self) -> zenpixels::sample::float::FloatFacts [also: (root)]
 pub fn OutputPlan::metadata(&self) -> &output::OutputMetadata
@@ -470,6 +472,7 @@ pub OutputMetadata::parametric: core::option::Option<zenpixels::color::Parametri
 pub struct OutputPlan [also: output]
 pub fn OutputPlan::borrow_rows<'a>(&self, zenpixels::buffer::PixelSlice<'a>) -> core::result::Result<core::option::Option<zenpixels::buffer::PixelSlice<'a>>, whereat::at::At<error::ConvertError>>
 pub fn OutputPlan::build(zenpixels::color::PixelEncoding<'_>, OutputTarget<'_>, &ConversionSpec<'_>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn OutputPlan::convert_into(&mut self, impl PackedSource, impl PackedSink) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn OutputPlan::convert_rows<'a>(&mut self, zenpixels::buffer::PixelSlice<'_>, zenpixels::buffer::PixelSliceMut<'a>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, whereat::at::At<error::ConvertError>>
 pub fn OutputPlan::metadata(&self) -> &output::OutputMetadata
 pub fn OutputPlan::output_color_context(&self) -> &alloc::sync::Arc<zenpixels::color::ColorContext>
@@ -488,6 +491,7 @@ pub const fn Provenance::with_origin(zenpixels::descriptor::ChannelType, zenpixe
 pub const fn Provenance::with_origin_depth(zenpixels::descriptor::ChannelType) -> Self
 pub fn Provenance::with_origin_primaries(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::ColorPrimaries) -> Self
 pub struct RowConverter [also: converter]
+pub fn converter::RowConverter::convert(&mut self, impl PackedSource, impl PackedSink) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::convert_bands(&mut self, &zenpixels::banded::BandedPixelBuffer, &mut zenpixels::banded::BandedPixelBuffer) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::convert_raw_rows(&mut self, &[u8], usize, &mut [u8], usize, u32, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn converter::RowConverter::convert_rows<'a>(&mut self, zenpixels::buffer::PixelSlice<'_>, zenpixels::buffer::PixelSliceMut<'a>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, whereat::at::At<error::ConvertError>>
@@ -514,6 +518,8 @@ pub trait ColorConvertExt: sealed::Sealed + core::marker::Sized [also: ext]
 pub fn ColorConvertExt::map_to_gamut(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn ColorConvertExt::same_color(&self, &Self) -> bool
 pub fn ColorConvertExt::try_convert_to(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub trait PackedSink: packed::private::SealedSink
+pub trait PackedSource: packed::private::SealedSource
 pub trait PixelBufferConvertExt: sealed::Sealed + core::marker::Sized [also: ext]
 pub fn PixelBufferConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferConvertExt::convert_to_with_options(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
@@ -541,9 +547,16 @@ pub fn RowTransform::try_transform_row(&self, &[u8], &mut [u8], u32) -> core::re
 pub trait RowTransformMut: core::marker::Send + core::marker::Sync [also: cms]
 pub fn RowTransformMut::prepare(&mut self, u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
 pub fn RowTransformMut::try_transform_row(&mut self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
+pub fn orient_into(impl PackedSource, zenpixels::orientation::Orientation, impl PackedSink) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 
-## trait impls (41 types)
+## trait impls (48 types)
 
+&mut zenpixels::banded::BandedPixelBuffer: PackedSink
+&mut zenpixels::buffer::PixelBuffer<P, S>: PackedSink
+&mut zenpixels::buffer::PixelSliceMut<'_, P>: PackedSink
+&zenpixels::banded::BandedPixelBuffer: PackedSource
+&zenpixels::buffer::PixelBuffer<P, S>: PackedSource
+&zenpixels::buffer::PixelSlice<'_, P>: PackedSource
 AllocationRequirements: Clone, Copy, Debug
 ByteBound: Clone, Copy, Debug, Eq, PartialEq
 CandidateTarget<'a>: Clone, Copy, Debug, From<zenpixels::color::PixelEncoding<'a>>
@@ -582,8 +595,9 @@ precision::ConversionRefusal: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 precision::DecidedBy: Clone, Copy, Debug, Eq, Hash, PartialEq
 zenpixels::banded::BandedPixelBuffer: ext::BandedPixelBufferConvertExt
 zenpixels::buffer::PixelBuffer: ext::PixelBufferConvertExt, load_bearing::PixelBufferLoadBearingExt
-zenpixels::buffer::PixelSlice<'_, P>: load_bearing::PixelSliceLoadBearingExt
+zenpixels::buffer::PixelSlice<'_, P>: PackedSource, load_bearing::PixelSliceLoadBearingExt
 zenpixels::buffer::PixelSlice<'a>: ext::PixelSliceConvertExt<'a>
+zenpixels::buffer::PixelSliceMut<'_, P>: PackedSink
 zenpixels::color::Color: ext::ColorConvertExt
 impl<F, E> precision::ConversionResolver for F where F: core::ops::function::FnMut(precision::ConversionQuestion<'_>) -> core::result::Result<precision::ConversionDecision, whereat::at::At<E>>, E: core::error::Error + core::marker::Send + core::marker::Sync + 'static
 

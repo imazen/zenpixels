@@ -398,6 +398,7 @@ pub(crate) mod orient;
 #[doc(hidden)]
 pub mod orient;
 pub mod output;
+mod packed;
 #[cfg(feature = "planar")]
 pub mod ycbcr;
 // Crate-internal SIMD predicates backing `load_bearing` -- the module
@@ -454,9 +455,10 @@ pub use cms_lcms::Lcms;
 #[cfg(feature = "cms-moxcms")]
 pub use cms_moxcms::MoxCms;
 
-// Re-export output types.
+// Re-export output and band-generic packed execution types.
 pub use output::{EncodeReady, OutputMetadata, OutputProfile};
 pub use output::{OutputPlan, OutputTarget};
+pub use packed::{PackedSink, PackedSource, orient_into};
 
 #[cfg(test)]
 mod kernel_tests;

@@ -358,6 +358,54 @@ impl OutputPlan {
         Ok(())
     }
 
+    #[track_caller]
+    pub(crate) fn validate_source_view(
+        &self,
+        source: &crate::packed::private::SourceView<'_>,
+    ) -> Result<(), At<ConvertError>> {
+        if self
+            .prepared_width
+            .is_some_and(|width| source.width() > width)
+        {
+            return Err(whereat::at!(ConvertError::InvalidWidth(source.width())));
+        }
+        let expected = PixelEncoding::new(self.source, self.current.as_ref());
+        if source.encoding() != expected {
+            return Err(whereat::at!(ConvertError::SourceInterpretationChanged));
+        }
+        if !source.float_facts().contains(self.input_facts) {
+            return Err(whereat::at!(ConvertError::FloatFactsUnsatisfied {
+                required: self.input_facts,
+                actual: source.float_facts(),
+            }));
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub(crate) const fn has_converter(&self) -> bool {
+        self.converter.is_some()
+    }
+
+    #[inline]
+    pub(crate) fn converter_mut(&mut self) -> Option<&mut RowConverter> {
+        self.converter.as_mut()
+    }
+
+    /// Convert any [`PackedSource`](crate::PackedSource) (`PixelSlice`, `&PixelBuffer`, or
+    /// `&BandedPixelBuffer`) into any [`PackedSink`](crate::PackedSink) (`PixelSliceMut`,
+    /// `&mut PixelBuffer`, or `&mut BandedPixelBuffer`) and attach [`Self::output_color_context`]
+    /// and [`Self::output_float_facts`] to the destination.
+    #[track_caller]
+    #[inline]
+    pub fn convert_into(
+        &mut self,
+        source: impl crate::PackedSource,
+        destination: impl crate::PackedSink,
+    ) -> Result<(), At<ConvertError>> {
+        crate::packed::convert_output_packed(self, source, destination)
+    }
+
     /// Convert a strided batch and return its view with matching current color.
     /// Use the returned view when handing rows to the encoder: a view cannot
     /// update metadata on a separately owned backing buffer.

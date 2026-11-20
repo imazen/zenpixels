@@ -9,10 +9,10 @@
 ## summary
 #
 #   pub modules                                13
-#   pub types (struct/enum/trait/alias)       148
-#   pub consts/statics                        654
+#   pub types (struct/enum/trait/alias)       150
+#   pub consts/statics                        667
 #   free functions                              2
-#   inherent methods                          452
+#   inherent methods                          473
 #   struct fields                             124
 #   enum variants                             431
 #   re-exports                                  1
@@ -21,8 +21,8 @@
 #   auto-trait exceptions                       8
 #
 # per-module pub lines:
-#   (root)                          804
-#   banded                           26
+#   (root)                          819
+#   banded                           47
 #   buffer                          399
 #   cicp                             48
 #   color                           176
@@ -35,36 +35,33 @@
 #   precision                        20
 #   sample                           38
 
-## items (1559 lines)
+## items (1580 lines)
 
 pub mod zenpixels
 pub use At
 pub mod banded
-pub struct banded::BandLayout
 pub fn banded::BandLayout::band(self, u32) -> core::option::Option<core::ops::range::Range<u32>>
-pub const fn banded::BandLayout::band_count(self) -> u32
-pub const fn banded::BandLayout::band_rows(self) -> u32
+pub const fn banded::BandLayout::band_count(self) -> u32 [also: (root)]
+pub const fn banded::BandLayout::band_rows(self) -> u32 [also: (root)]
 pub fn banded::BandLayout::bands(self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = core::ops::range::Range<u32>> + core::iter::traits::exact_size::ExactSizeIterator
-pub const fn banded::BandLayout::height(self) -> u32
+pub const fn banded::BandLayout::height(self) -> u32 [also: (root)]
 pub fn banded::BandLayout::locate(self, u32) -> core::option::Option<(usize, u32)>
 pub fn banded::BandLayout::new(u32, u32, descriptor::PixelDescriptor, u64) -> core::result::Result<Self, buffer::BufferError>
-pub const fn banded::BandLayout::pixel_count(self) -> u64
-pub const fn banded::BandLayout::width(self) -> u32
+pub const fn banded::BandLayout::pixel_count(self) -> u64 [also: (root)]
+pub const fn banded::BandLayout::width(self) -> u32 [also: (root)]
 pub fn banded::BandLayout::with_align(u32, u32, descriptor::PixelDescriptor, u64, RowAlign) -> core::result::Result<Self, buffer::BufferError>
-pub struct banded::BandedPixelBuffer
 pub fn banded::BandedPixelBuffer::bands(&self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = buffer::PixelSlice<'_>> + core::iter::traits::exact_size::ExactSizeIterator
 pub fn banded::BandedPixelBuffer::bands_mut(&mut self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = buffer::PixelSliceMut<'_>> + core::iter::traits::exact_size::ExactSizeIterator
 pub fn banded::BandedPixelBuffer::color_context(&self) -> core::option::Option<&alloc::sync::Arc<color::ColorContext>>
-pub const fn banded::BandedPixelBuffer::descriptor(&self) -> descriptor::PixelDescriptor
+pub const fn banded::BandedPixelBuffer::descriptor(&self) -> descriptor::PixelDescriptor [also: (root)]
 pub fn banded::BandedPixelBuffer::encoding(&self) -> color::PixelEncoding<'_>
-pub const fn banded::BandedPixelBuffer::exact_depth(&self) -> core::option::Option<sample::ExactDepth>
-pub const fn banded::BandedPixelBuffer::float_facts(&self) -> sample::FloatFacts
+pub const fn banded::BandedPixelBuffer::exact_depth(&self) -> core::option::Option<sample::ExactDepth> [also: (root)]
+pub const fn banded::BandedPixelBuffer::float_facts(&self) -> sample::FloatFacts [also: (root)]
 pub fn banded::BandedPixelBuffer::from_contiguous(buffer::PixelBuffer) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub const fn banded::BandedPixelBuffer::height(&self) -> u32
-pub const fn banded::BandedPixelBuffer::layout(&self) -> banded::BandLayout
+pub const fn banded::BandedPixelBuffer::height(&self) -> u32 [also: (root)]
+pub const fn banded::BandedPixelBuffer::layout(&self) -> banded::BandLayout [also: (root)]
 pub fn banded::BandedPixelBuffer::orient_in_place(&mut self, orientation::Orientation) -> core::result::Result<(), buffer::BufferError>
-pub fn banded::BandedPixelBuffer::oriented_into(&self, orientation::Orientation, &mut Self) -> core::result::Result<(), buffer::BufferError>
-pub const fn banded::BandedPixelBuffer::pixel_count(&self) -> u64
+pub const fn banded::BandedPixelBuffer::pixel_count(&self) -> u64 [also: (root)]
 pub fn banded::BandedPixelBuffer::row(&self, u32) -> core::option::Option<&[u8]>
 pub fn banded::BandedPixelBuffer::row_mut(&mut self, u32) -> core::option::Option<&mut [u8]>
 pub fn banded::BandedPixelBuffer::set_color_context(&mut self, core::option::Option<alloc::sync::Arc<color::ColorContext>>)
@@ -74,10 +71,9 @@ pub fn banded::BandedPixelBuffer::sub_rows(&self, core::ops::range::Range<u32>) 
 pub fn banded::BandedPixelBuffer::try_into_contiguous(self) -> core::result::Result<buffer::PixelBuffer, whereat::at::At<buffer::BufferError>>
 pub fn banded::BandedPixelBuffer::try_new(u32, u32, descriptor::PixelDescriptor, u64) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn banded::BandedPixelBuffer::try_new_with_align(u32, u32, descriptor::PixelDescriptor, u64, RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub const fn banded::BandedPixelBuffer::width(&self) -> u32
+pub const fn banded::BandedPixelBuffer::width(&self) -> u32 [also: (root)]
 pub fn banded::BandedPixelBuffer::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
 pub fn banded::BandedPixelBuffer::with_float_facts(self, sample::FloatFacts) -> core::result::Result<Self, sample::FloatFactsError>
-pub const banded::DEFAULT_MAX_BAND_BYTES: u64
 pub mod buffer
 pub buffer::BufferError::AlignmentViolation
 pub buffer::BufferError::AllocationFailed
@@ -1257,6 +1253,30 @@ pub fn color::AnyColor::as_bytes(&self) -> &[u8]
 pub fn color::AnyColor::as_color(&self) -> core::option::Option<color::Color>
 pub fn color::AnyColor::descriptor(&self) -> descriptor::PixelDescriptor
 pub fn color::AnyColor::try_new(descriptor::PixelDescriptor, &[u8]) -> core::result::Result<Self, buffer::BufferError>
+pub struct BandLayout [also: banded]
+pub fn banded::BandLayout::band(self, u32) -> core::option::Option<core::ops::range::Range<u32>>
+pub fn banded::BandLayout::bands(self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = core::ops::range::Range<u32>> + core::iter::traits::exact_size::ExactSizeIterator
+pub fn banded::BandLayout::locate(self, u32) -> core::option::Option<(usize, u32)>
+pub fn banded::BandLayout::new(u32, u32, descriptor::PixelDescriptor, u64) -> core::result::Result<Self, buffer::BufferError>
+pub fn banded::BandLayout::with_align(u32, u32, descriptor::PixelDescriptor, u64, RowAlign) -> core::result::Result<Self, buffer::BufferError>
+pub struct BandedPixelBuffer [also: banded]
+pub fn banded::BandedPixelBuffer::bands(&self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = buffer::PixelSlice<'_>> + core::iter::traits::exact_size::ExactSizeIterator
+pub fn banded::BandedPixelBuffer::bands_mut(&mut self) -> impl core::iter::traits::double_ended::DoubleEndedIterator<Item = buffer::PixelSliceMut<'_>> + core::iter::traits::exact_size::ExactSizeIterator
+pub fn banded::BandedPixelBuffer::color_context(&self) -> core::option::Option<&alloc::sync::Arc<color::ColorContext>>
+pub fn banded::BandedPixelBuffer::encoding(&self) -> color::PixelEncoding<'_>
+pub fn banded::BandedPixelBuffer::from_contiguous(buffer::PixelBuffer) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn banded::BandedPixelBuffer::orient_in_place(&mut self, orientation::Orientation) -> core::result::Result<(), buffer::BufferError>
+pub fn banded::BandedPixelBuffer::row(&self, u32) -> core::option::Option<&[u8]>
+pub fn banded::BandedPixelBuffer::row_mut(&mut self, u32) -> core::option::Option<&mut [u8]>
+pub fn banded::BandedPixelBuffer::set_color_context(&mut self, core::option::Option<alloc::sync::Arc<color::ColorContext>>)
+pub fn banded::BandedPixelBuffer::set_exact_depth(&mut self, core::option::Option<sample::ExactDepth>) -> core::result::Result<(), sample::ExactDepthError>
+pub fn banded::BandedPixelBuffer::set_float_facts(&mut self, sample::FloatFacts) -> core::result::Result<(), sample::FloatFactsError>
+pub fn banded::BandedPixelBuffer::sub_rows(&self, core::ops::range::Range<u32>) -> core::option::Option<impl core::iter::traits::iterator::Iterator<Item = buffer::PixelSlice<'_>>>
+pub fn banded::BandedPixelBuffer::try_into_contiguous(self) -> core::result::Result<buffer::PixelBuffer, whereat::at::At<buffer::BufferError>>
+pub fn banded::BandedPixelBuffer::try_new(u32, u32, descriptor::PixelDescriptor, u64) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn banded::BandedPixelBuffer::try_new_with_align(u32, u32, descriptor::PixelDescriptor, u64, RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn banded::BandedPixelBuffer::with_color_context(self, alloc::sync::Arc<color::ColorContext>) -> Self
+pub fn banded::BandedPixelBuffer::with_float_facts(self, sample::FloatFacts) -> core::result::Result<Self, sample::FloatFactsError>
 #[repr(C)] pub struct Bgrx [also: buffer]
 pub Bgrx::b: u8
 pub Bgrx::g: u8
@@ -1588,6 +1608,7 @@ pub Rgbx::b: u8
 pub Rgbx::g: u8
 pub Rgbx::r: u8
 pub Rgbx::x: u8
+pub const DEFAULT_MAX_BAND_BYTES: u64 [also: banded]
 pub trait ByteStorage [also: buffer]
 pub fn ByteStorage::as_bytes(&self) -> &[u8]
 pub trait ByteStorageMut: ByteStorage [also: buffer]

@@ -290,17 +290,13 @@ fn buffer_and_banded_preserve_facts_across_views_and_clear_on_mutation()
     }
     banded.orient_in_place(Orientation::FlipH).unwrap();
     assert_eq!(banded.float_facts(), facts);
+    assert_eq!(FloatFacts::measure_banded(&banded).unwrap(), facts);
 
-    let mut dst = BandedPixelBuffer::try_new(4, 4, PixelDescriptor::RGBF32_LINEAR, 64)?;
-    banded
-        .oriented_into(Orientation::Rotate90, &mut dst)
-        .unwrap();
-    assert_eq!(dst.float_facts(), facts);
-    assert_eq!(FloatFacts::measure_banded(&dst).unwrap(), facts);
-
-    let rebuilt = dst.try_into_contiguous()?;
+    let rebuilt = banded.try_into_contiguous()?;
     assert_eq!(rebuilt.float_facts(), facts);
 
+    let mut banded = BandedPixelBuffer::from_contiguous(rebuilt)?;
+    assert_eq!(banded.float_facts(), facts);
     let _ = banded.row_mut(0);
     assert_eq!(banded.float_facts(), FloatFacts::NONE);
     Ok(())

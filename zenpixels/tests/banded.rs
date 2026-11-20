@@ -1,5 +1,7 @@
-use zenpixels::banded::{BandLayout, BandedPixelBuffer, DEFAULT_MAX_BAND_BYTES};
-use zenpixels::{BufferError, Orientation, PixelBuffer, PixelDescriptor};
+use zenpixels::{
+    BandLayout, BandedPixelBuffer, BufferError, DEFAULT_MAX_BAND_BYTES, Orientation, PixelBuffer,
+    PixelDescriptor,
+};
 
 #[test]
 fn gigapixel_streaming_geometry_and_contiguous_limits() {
@@ -49,9 +51,22 @@ fn packed_rows_orientation_and_hash_independent_of_band_height() {
         3
     );
     for orientation in Orientation::ALL {
-        let (w, h) = orientation.output_dimensions(7, 5);
-        let mut output = BandedPixelBuffer::try_new(w, h, desc, u64::from(w) * 3).unwrap();
-        input.oriented_into(orientation, &mut output).unwrap();
+        if orientation.swaps_axes() {
+            let mut probe = BandedPixelBuffer::try_new(7, 5, desc, 63).unwrap();
+            assert_eq!(
+                probe.orient_in_place(orientation),
+                Err(BufferError::InvalidDimensions)
+            );
+            continue;
+        }
+        let mut in_place = BandedPixelBuffer::try_new(7, 5, desc, 63).unwrap();
+        for y in 0..5 {
+            in_place
+                .row_mut(y)
+                .unwrap()
+                .copy_from_slice(input.row(y).unwrap());
+        }
+        in_place.orient_in_place(orientation).unwrap();
         for y in 0..5 {
             for x in 0..7 {
                 let (dx, dy) = orientation.forward_map(x, y, 7, 5);
@@ -59,35 +74,25 @@ fn packed_rows_orientation_and_hash_independent_of_band_height() {
                 let j = dx as usize * 3;
                 assert_eq!(
                     &input.row(y).unwrap()[i..i + 3],
-                    &output.row(dy).unwrap()[j..j + 3]
+                    &in_place.row(dy).unwrap()[j..j + 3]
                 );
             }
         }
         #[cfg(feature = "hash")]
         {
-            let bytes: Vec<u8> = (0..h)
-                .flat_map(|y| output.row(y).unwrap().iter().copied())
+            let bytes: Vec<u8> = (0..5)
+                .flat_map(|y| in_place.row(y).unwrap().iter().copied())
                 .collect();
-            let contiguous = PixelBuffer::from_vec(bytes, w, h, desc).unwrap();
+            let contiguous = PixelBuffer::from_vec(bytes, 7, 5, desc).unwrap();
             for inclusion in [
                 zenpixels::HashInclusions::SamplesOnly,
                 zenpixels::HashInclusions::Pixels,
                 zenpixels::HashInclusions::All,
             ] {
-                assert_eq!(output.hash_with(inclusion), contiguous.hash_with(inclusion));
-            }
-        }
-        if !orientation.swaps_axes() {
-            let mut in_place = BandedPixelBuffer::try_new(7, 5, desc, 63).unwrap();
-            for y in 0..5 {
-                in_place
-                    .row_mut(y)
-                    .unwrap()
-                    .copy_from_slice(input.row(y).unwrap());
-            }
-            in_place.orient_in_place(orientation).unwrap();
-            for y in 0..5 {
-                assert_eq!(in_place.row(y), output.row(y));
+                assert_eq!(
+                    in_place.hash_with(inclusion),
+                    contiguous.hash_with(inclusion)
+                );
             }
         }
     }
@@ -315,12 +320,11 @@ fn adopted_buffer_context_authority_aligned_stride_and_exact_depth_preservation(
     banded.set_color_context(None);
     assert!(banded.bands().next().unwrap().color_context().is_none());
 
-    // ExactDepth survives geometric permutations (`orient_in_place` and `oriented_into`)
-    // and hashes identically under `HashInclusions::All`!
+    // ExactDepth survives geometric permutations (`orient_in_place`) and round-trips through contiguous!
     banded.orient_in_place(Orientation::Rotate180).unwrap();
     assert_eq!(banded.exact_depth(), Some(exact8));
 
-    let mut dst_aligned =
+    let dst_aligned =
         BandedPixelBuffer::try_new_with_align(4, 5, desc, 256, RowAlign::Cache64).unwrap();
     assert!(
         dst_aligned
@@ -330,14 +334,10 @@ fn adopted_buffer_context_authority_aligned_stride_and_exact_depth_preservation(
             .stride()
             .is_multiple_of(64)
     );
-    banded
-        .oriented_into(Orientation::Rotate90, &mut dst_aligned)
-        .unwrap();
-    assert_eq!(dst_aligned.exact_depth(), Some(exact8));
 
     #[cfg(feature = "hash")]
     {
-        let rebuilt = dst_aligned.try_into_contiguous().unwrap();
+        let rebuilt = banded.try_into_contiguous().unwrap();
         assert_eq!(rebuilt.exact_depth(), Some(exact8));
     }
 

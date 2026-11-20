@@ -128,9 +128,7 @@ fn automatic_float_facts_propagation_and_orthogonal_subnormals() {
     );
 
     let mut rotated = BandedPixelBuffer::try_new(11, 19, RGBF32_LIN, 11 * 12 * 5).unwrap();
-    banded_dst
-        .oriented_into(Orientation::Rotate90, &mut rotated)
-        .unwrap();
+    zenpixels_convert::orient_into(&banded_dst, Orientation::Rotate90, &mut rotated).unwrap();
     assert_eq!(rotated.float_facts(), expected_u8_lin);
 
     // 4. Contiguous oriented and EncodeReady preserve/stamp FloatFacts.

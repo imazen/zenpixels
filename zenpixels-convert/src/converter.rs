@@ -1350,6 +1350,39 @@ impl RowConverter {
         self.recipe.output_facts
     }
 
+    #[inline]
+    pub(crate) fn expected_source_encoding(&self) -> crate::PixelEncoding<'_> {
+        crate::PixelEncoding::new(self.recipe.from, self.source.as_deref())
+    }
+
+    #[inline]
+    pub(crate) const fn prepared_capacity(&self) -> Option<u32> {
+        self.prepared_width
+    }
+
+    #[inline]
+    pub(crate) fn output_color_arc(&self) -> Option<&alloc::sync::Arc<crate::ColorContext>> {
+        self.color.as_ref()
+    }
+
+    /// Convert any [`PackedSource`](crate::PackedSource) (`PixelSlice`, `&PixelBuffer`, or
+    /// `&BandedPixelBuffer`) into any [`PackedSink`](crate::PackedSink) (`PixelSliceMut`,
+    /// `&mut PixelBuffer`, or `&mut BandedPixelBuffer`).
+    ///
+    /// Single-slice and single-buffer pairs compile down directly to the zero-overhead
+    /// contiguous row loop; banded and mixed pairs stream across band intersections and
+    /// stamp output [`ColorContext`](crate::ColorContext) and [`FloatFacts`](zenpixels::sample::FloatFacts)
+    /// onto owned destinations.
+    #[track_caller]
+    #[inline]
+    pub fn convert(
+        &mut self,
+        src: impl crate::PackedSource,
+        dst: impl crate::PackedSink,
+    ) -> Result<(), At<ConvertError>> {
+        crate::packed::convert_packed(self, src, dst)
+    }
+
     /// Stream rows across [`BandedPixelBuffer`](crate::banded::BandedPixelBuffer)s with
     /// identical or mismatched band heights using an O(bands) band zipper.
     pub fn convert_bands(

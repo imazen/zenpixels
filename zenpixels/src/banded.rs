@@ -408,7 +408,8 @@ impl BandedPixelBuffer {
     ///
     /// Preserves [`exact_depth`](Self::exact_depth) and [`float_facts`](Self::float_facts)
     /// because geometric permutation leaves sample values unchanged. Axis-swapping
-    /// orientations require [`Self::oriented_into`].
+    /// orientations require `zenpixels_convert::orient_into` or
+    /// `zenpixels_convert::BandedPixelBufferConvertExt::oriented_into`.
     pub fn orient_in_place(&mut self, orientation: Orientation) -> Result<(), BufferError> {
         if orientation.swaps_axes() {
             return Err(BufferError::InvalidDimensions);
@@ -445,35 +446,6 @@ impl BandedPixelBuffer {
         self.evidence = saved_evidence;
         Ok(())
     }
-
-    /// Orient into an independent banded destination, with arbitrary band heights.
-    /// Axis swaps visit bounded tiles and do not allocate temporary pixel storage.
-    pub fn oriented_into(
-        &self,
-        orientation: Orientation,
-        dst: &mut Self,
-    ) -> Result<(), BufferError> {
-        let (w, h) = (self.layout.width, self.layout.height);
-        if self.descriptor != dst.descriptor
-            || orientation.output_dimensions(w, h) != (dst.layout.width, dst.layout.height)
-        {
-            return Err(BufferError::InvalidDimensions);
-        }
-        let bpp = self.descriptor.bytes_per_pixel();
-        for_each_orientation_tile(w, h, |sy, columns| {
-            let s = self.row(sy).expect("row in bounds");
-            for sx in columns {
-                let (dx, dy) = orientation.forward_map(sx, sy, w, h);
-                let d = dst.row_mut(dy).expect("mapped row in bounds");
-                let source = sx as usize * bpp;
-                let target = dx as usize * bpp;
-                d[target..target + bpp].copy_from_slice(&s[source..source + bpp]);
-            }
-        });
-        dst.color = self.color.clone();
-        dst.evidence = self.evidence;
-        Ok(())
-    }
 }
 
 pub(crate) fn reverse_pixel_row(row: &mut [u8], bytes: usize) {
@@ -485,6 +457,7 @@ pub(crate) fn reverse_pixel_row(row: &mut [u8], bytes: usize) {
     }
 }
 
+#[cfg(feature = "planar")]
 pub(crate) fn for_each_orientation_tile(
     width: u32,
     height: u32,
