@@ -18,8 +18,8 @@ bytemuck = "1.21"
 archmage = "0.9.31"
 
 [patch.crates-io]
-archmage = { git = "https://github.com/imazen/archmage", rev = "98e6e12da7e2212dda10ec2b81b80263a515ee03" }
-magetypes = { git = "https://github.com/imazen/archmage", rev = "98e6e12da7e2212dda10ec2b81b80263a515ee03" }
+archmage = { git = "https://github.com/imazen/archmage", rev = "35eb67f60a014a4706c40fbd1ad1306d138296f3" }
+magetypes = { git = "https://github.com/imazen/archmage", rev = "35eb67f60a014a4706c40fbd1ad1306d138296f3" }
 garb = { git = "https://github.com/imazen/garb", rev = "8f9aa10d09f84bb0a1e3fdbd1773f610eec1b784" }
 linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24664315586bd60e5f048253b1f69052" }
 
