@@ -41,30 +41,35 @@
 
 ## 2. Float → Integer Quantization & `FloatFacts` Specialization (`f32 -> u8` and `f32 -> u16`, 3ch RGB)
 
-### Instruction-level trade-off
+### Instruction-level trade-off (`magetypes 0.9.32` `min_fast`/`max_fast`/`to_i32_fast`)
 
-1. **`magic_fma_clamped` (shipped default when `!UNIT_CLEAN`):** `y = x.max(0.0).min(1.0)` (sanitizes `NaN` and `-inf` via second-operand `0.0` in `vmaxps`/`fmax`, clamps `+inf` and `> 1.0` to `1.0`), followed by single-instruction magic-number FMA `fma(y, M, 1.5 * 2^23)` (`0x4b400000`), integer subtract/mask of `0x4b400000`, and narrow pack (`vpackusdw` + `vpackuswb` + `vpermq`). **0 mismatches across all `1,065,353,217` `f32` bit patterns in `[0.0, 1.0]`** matching `(x * M + 0.5).floor()` ties-away-from-zero!
-2. **`magic_fma_unit_clean` (shipped when `FloatFacts::UNIT_CLEAN` is proven):** elides both `max(0.0)` and `min(1.0)` vector clamps completely — straight `vfmadd` + bit-mask + pack.
-3. **`mul_rne_inexact` (`(y * M).round_ties_even()`):** `vmulps` + `vcvtps2dq` (2 serial rounding steps instead of 1 fused FMA into `2^23` integer grid; both **slower** than `magic_fma_clamped` AND disagrees with ties-away-from-zero `(x * M + 0.5).floor()` at half-integers).
-4. **`truncate_unit_clean` (`DepthPolicy::Truncate` + `FloatFacts::UNIT_CLEAN`):** `(x * M).to_i32_trunc()` + narrow pack.
+1. **`magic_fma_clamped` (shipped default when `!NO_NAN`):** `y = (x & x.simd_ge(0.0)).min_fast(1.0)` (3 vector instructions `vcmpgeps` + `vandps` + `vminps` — eliminating `magetypes 0.9.32`'s quiet-`NaN` blend in `.min()` since `NaN` was already flushed by `simd_ge(0.0)`), followed by single-instruction magic-number FMA `fma(y, M, 1.5 * 2^23)` (`0x4b400000`), integer subtract of `0x4b400000`, and narrow pack (`vpackusdw` + `vpackuswb` + `vpermq`). **0 mismatches across all `1,065,353,217` `f32` bit patterns in `[0.0, 1.0]`** matching `(x * M + 0.5).floor()` ties-away-from-zero!
+2. **`magic_fma_no_nan` (shipped when `FloatFacts::NO_NAN` is proven, e.g. out-of-gamut linear `f32` after a 3×3 primaries matrix):** `y = x.max_fast(0.0).min_fast(1.0)` (2 single instructions `vmaxps` + `vminps`), saving the `vcmpgeps + vandps` `NaN` mask while still clamping negative / `> 1.0` / `±Inf` samples bit-identically.
+3. **`magic_fma_unit_clean` (shipped when `FloatFacts::NO_NAN | NON_NEGATIVE | AT_MOST_ONE` is proven):** elides both `0.0` and `1.0` vector clamps completely — straight `vfmadd` + subtract + pack (0 clamp instructions).
+4. **`mul_rne_inexact` (`(y * M).to_i32_round()`):** `vmulps` + `vcvtps2dq` (2 serial rounding steps instead of 1 fused FMA into `2^23` integer grid; both **slower** than `magic_fma` AND disagrees with ties-away-from-zero `(x * M + 0.5).floor()` at half-code boundaries).
+5. **`truncate_unit_clean` (`DepthPolicy::Truncate` + `FloatFacts::UNIT_CLEAN`):** `(x * M).to_i32_fast()` (`magetypes 0.9.32` 1-instruction `vcvttps2dq` / WASM `i32x4.relaxed_trunc_f32x4_s` without `>= 2^31` saturation fixups) + narrow pack.
 
-### Measured throughput (`f32 -> u8`, 3ch RGB)
-
-| Arm | `64×64` (L1) | `256×256` (L2) | `1024×1024` (L3) | `4096×4096` (DRAM) |
-|---|---:|---:|---:|---:|
-| **`magic_fma_clamped` (shipped)** | `737 ±3 ns` (`77.7 GiB/s`) | `11.7 ±0.1 µs` (`78.1 GiB/s`) | `206.6 ±4.8 µs` (`70.9 GiB/s`) | `8.7 ±1.2 ms` (`27.0 GiB/s`) |
-| **`magic_fma_unit_clean` (`FloatFacts`)** | `400 ±3 ns` (`143 GiB/s`, **`-45.0%`**) | `8.0 ±0.1 µs` (`114 GiB/s`, **`-31.3%`**) | `149.0 ±4.6 µs` (`98.3 GiB/s`, **`-28.0%`**) | `8.3 ±1.2 ms` (`28.4 GiB/s`, **`-4.8%`**) |
-| `mul_rne_inexact` | `775 ±2 ns` (`73.8 GiB/s`, `+5.7%`) | `12.4 ±0.2 µs` (`73.7 GiB/s`, `+6.0%`) | `216.3 ±5.9 µs` (`67.7 GiB/s`, `+4.5%`) | `8.6 ±0.5 ms` (`27.4 GiB/s`, CI crosses 0) |
-| **`truncate_unit_clean` (`FloatFacts`)** | `368 ±4 ns` (`156 GiB/s`, **`-49.8%`**) | `7.5 ±0.1 µs` (`122 GiB/s`, **`-35.8%`**) | `144.0 ±3.5 µs` (`102 GiB/s`, **`-29.7%`**) | `8.0 ±1.3 ms` (`29.2 GiB/s`, **`-7.7%`**) |
-
-### Measured throughput (`f32 -> u16`, 3ch RGB)
+### Measured throughput (`f32 -> u8`, 3ch RGB; peak RSS `3.45 GiB`)
 
 | Arm | `64×64` (L1) | `256×256` (L2) | `1024×1024` (L3) | `4096×4096` (DRAM) |
 |---|---:|---:|---:|---:|
-| **`magic_fma_clamped` (shipped)** | `664 ±2 ns` (`103 GiB/s`) | `11.9 ±0.1 µs` (`92.0 GiB/s`) | `206.1 ±6.3 µs` (`85.3 GiB/s`) | `9.5 ±0.2 ms` (`29.5 GiB/s`) |
-| **`magic_fma_unit_clean` (`FloatFacts`)** | `449 ±3 ns` (`153 GiB/s`, **`-32.4%`**) | `9.8 ±0.1 µs` (`112 GiB/s`, **`-17.4%`**) | `186.3 ±4.0 µs` (`94.3 GiB/s`, **`-9.3%`**) | `9.2 ±0.2 ms` (`30.7 GiB/s`, **`-3.9%`**) |
-| `mul_rne_inexact` | `703 ±2 ns` (`97.6 GiB/s`, `+6.0%`) | `12.3 ±0.1 µs` (`89.7 GiB/s`, `+3.3%`) | `217.9 ±4.7 µs` (`80.7 GiB/s`, `+5.0%`) | `9.5 ±0.2 ms` (`29.6 GiB/s`, CI crosses 0) |
-| **`truncate_unit_clean` (`FloatFacts`)** | `448 ±4 ns` (`153 GiB/s`, **`-32.6%`**) | `9.6 ±0.1 µs` (`114 GiB/s`, **`-19.0%`**) | `184.0 ±5.1 µs` (`95.6 GiB/s`, **`-11.5%`**) | `9.0 ±0.1 ms` (`31.2 GiB/s`, **`-5.5%`**) |
+| **`magic_fma_clamped` (shipped)** | `659 ±3 ns` (`86.8 GiB/s`) | `10.4 ±0.1 µs` (`88.1 GiB/s`) | `181.3 ±2.6 µs` (`80.8 GiB/s`) | `7.7 ±0.1 ms` (`30.3 GiB/s`) |
+| **`magic_fma_no_nan` (`FloatFacts::NO_NAN`)** | `570 ±1 ns` (`100 GiB/s`, **`-13.5%`**) | `9.8 ±0.1 µs` (`93.8 GiB/s`, **`-6.1%`**) | `173.0 ±3.6 µs` (`84.7 GiB/s`, **`-5.9%`**) | `7.7 ±0.2 ms` (`30.4 GiB/s`, CI crosses 0) |
+| **`magic_fma_unit_clean` (`FloatFacts`)** | `435 ±1 ns` (`132 GiB/s`, **`-34.0%`**) | `7.9 ±0.1 µs` (`115 GiB/s`, **`-23.6%`**) | `146.4 ±4.4 µs` (`100 GiB/s`, **`-19.0%`**) | `7.5 ±0.2 ms` (`31.3 GiB/s`, **`-3.3%`**) |
+| `mul_rne_inexact` | `668 ±3 ns` (`85.6 GiB/s`, `+1.4%`) | `11.1 ±0.1 µs` (`82.2 GiB/s`, `+7.3%`) | `190.8 ±3.9 µs` (`76.8 GiB/s`, `+5.0%`) | `7.8 ±0.1 ms` (`30.2 GiB/s`, CI crosses 0) |
+| **`truncate_unit_clean` (`FloatFacts`)** | `391 ±2 ns` (`146 GiB/s`, **`-40.6%`**) | `7.4 ±0.1 µs` (`124 GiB/s`, **`-28.9%`**) | `135.8 ±4.6 µs` (`108 GiB/s`, **`-26.4%`**) | `7.2 ±0.1 ms` (`32.3 GiB/s`, **`-6.5%`**) |
+
+*(Note: switching `.min(one)` → `.min_fast(one)` after `NaN` flush sped up `magic_fma_clamped` itself by **10.6–12.2%** vs the pre-`min_fast` `737 ns / 11.7 µs / 206.6 µs / 8.7 ms` baseline on `r7900x`.)*
+
+### Measured throughput (`f32 -> u16`, 3ch RGB; peak RSS `3.45 GiB`)
+
+| Arm | `64×64` (L1) | `256×256` (L2) | `1024×1024` (L3) | `4096×4096` (DRAM) |
+|---|---:|---:|---:|---:|
+| **`magic_fma_clamped` (shipped)** | `626 ±2 ns` (`110 GiB/s`) | `10.8 ±0.1 µs` (`102 GiB/s`) | `193.3 ±2.3 µs` (`90.9 GiB/s`) | `9.4 ±0.2 ms` (`30.0 GiB/s`) |
+| **`magic_fma_no_nan` (`FloatFacts::NO_NAN`)** | `496 ±1 ns` (`138 GiB/s`, **`-20.8%`**) | `9.9 ±0.1 µs` (`111 GiB/s`, **`-8.3%`**) | `181.5 ±2.5 µs` (`96.8 GiB/s`, **`-6.6%`**) | `9.2 ±0.2 ms` (`30.4 GiB/s`, CI crosses 0) |
+| **`magic_fma_unit_clean` (`FloatFacts`)** | `467 ±2 ns` (`147 GiB/s`, **`-25.4%`**) | `9.5 ±0.1 µs` (`116 GiB/s`, **`-12.2%`**) | `191.3 ±3.2 µs` (`91.9 GiB/s`, CI crosses 0) | `9.0 ±0.1 ms` (`31.2 GiB/s`, **`-4.0%`**) |
+| `mul_rne_inexact` | `603 ±1 ns` (`114 GiB/s`, `-3.6%`) | `10.9 ±0.1 µs` (`101 GiB/s`, CI crosses 0) | `195.1 ±4.7 µs` (`90.1 GiB/s`, CI crosses 0) | `9.3 ±0.2 ms` (`30.1 GiB/s`, CI crosses 0) |
+| **`truncate_unit_clean` (`FloatFacts`)** | `452 ±1 ns` (`152 GiB/s`, **`-27.6%`**) | `9.1 ±0.1 µs` (`121 GiB/s`, **`-15.8%`**) | `182.4 ±4.8 µs` (`96.4 GiB/s`, **`-6.4%`**) | `8.9 ±0.1 ms` (`31.5 GiB/s`, **`-4.5%`**) |
 
 ### Context-awareness conclusion: does relaxing 0-ULP buy anything?
 

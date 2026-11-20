@@ -983,10 +983,10 @@ mod simd_kernel {
             let r = f32x8::blend(r.simd_gt(zero), r, zero);
             let g = f32x8::blend(g.simd_gt(zero), g, zero);
             let b = f32x8::blend(b.simd_gt(zero), b, zero);
-            let m_rel = r.max(g).max(b);
+            let m_rel = r.max_fast(g).max_fast(b);
             let m_nits = m_rel * wn;
 
-            local_max = local_max.max(m_nits);
+            local_max = local_max.max_fast(m_nits);
             local_sum += m_nits;
             chunks_since_flush += 1;
             if chunks_since_flush == SUM_FLUSH_CHUNKS {
@@ -997,7 +997,7 @@ mod simd_kernel {
 
             // SIMD log2 → bin index. Use `safe = max(m_nits, BIN_MIN_NITS)`
             // so log2(0) doesn't underflow into NaN/-inf.
-            let safe = m_nits.max(bin_min_nits);
+            let safe = m_nits.max_fast(bin_min_nits);
             let log2 = safe.log2_midp();
             // bin_f = ((log2 − log2_min) · inv_step), clamped to
             // `[0, NUM_BINS − 1]` in SIMD before the scalar bin write.
@@ -1104,7 +1104,7 @@ mod simd_kernel {
             let y_rel = kr * r + kg * g + kb * b;
             let y_nits = y_rel * wn;
 
-            local_max = local_max.max(y_nits);
+            local_max = local_max.max_fast(y_nits);
             local_sum += y_nits;
             chunks_since_flush += 1;
             if chunks_since_flush == SUM_FLUSH_CHUNKS {
@@ -1113,7 +1113,7 @@ mod simd_kernel {
                 chunks_since_flush = 0;
             }
 
-            let safe = y_nits.max(bin_min_nits);
+            let safe = y_nits.max_fast(bin_min_nits);
             let log2 = safe.log2_midp();
             let bin_f = ((log2 - log2_min) * inv_step)
                 .max(zero)
@@ -1288,8 +1288,8 @@ mod simd_kernel {
             let r = f32x8::blend(r.simd_gt(zero), r, zero);
             let g = f32x8::blend(g.simd_gt(zero), g, zero);
             let b = f32x8::blend(b.simd_gt(zero), b, zero);
-            let m = r.max(g).max(b);
-            local_max = local_max.max(m);
+            let m = r.max_fast(g).max_fast(b);
+            local_max = local_max.max_fast(m);
             local_sum += m;
             chunks_since_flush += 1;
             if chunks_since_flush == SUM_FLUSH_CHUNKS {
@@ -1351,7 +1351,7 @@ mod simd_kernel {
             let g = f32x8::blend(g.simd_gt(zero), g, zero);
             let b = f32x8::blend(b.simd_gt(zero), b, zero);
             let y = kr * r + kg * g + kb * b;
-            local_max = local_max.max(y);
+            local_max = local_max.max_fast(y);
             local_sum += y;
             chunks_since_flush += 1;
             if chunks_since_flush == SUM_FLUSH_CHUNKS {

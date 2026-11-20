@@ -1030,9 +1030,9 @@ fn convert_8px_u8_rgb_matlut(
         // v = r*m0 + g*m1 + b*m2 — each 128-bit lane ends up as [R', G', B', 0].
         let v = r * m0 + g * m1 + b * m2;
 
-        // Clamp `[0,1]`, scale, SIMD f32→i32 round, extract as array (in-register).
-        let clamped = v.max(zero).min(one);
-        let cell = (clamped * cells).to_i32().to_array();
+        // Clamp `[0,1]` (LUT + finite 3x3 matrix has no NaN), scale, fast SIMD f32→i32 trunc.
+        let clamped = v.max_fast(zero).min_fast(one);
+        let cell = (clamped * cells).to_i32_fast().to_array();
         let x = clamped.to_array();
 
         dst[off] = enc.encode_cell(x[0], cell[0]);
@@ -1227,7 +1227,7 @@ fn convert_8px_u16_rgb_matlut(
 
         let v = r * m0 + g * m1 + b * m2;
 
-        let clamped = v.max(zero).min(one);
+        let clamped = v.max_fast(zero).min_fast(one);
         let scaled = clamped * scale;
         let idx = scaled.to_i32_round();
         idx.store(&mut temp);
@@ -1385,9 +1385,15 @@ mod hybrids {
         let scale = mt_f32x8::splat_t(token, 65535.0);
         let zero = mt_f32x8::zero_t(token);
         let one = mt_f32x8::splat_t(token, 1.0);
-        let r_idx = (or_v.max(zero).min(one) * scale).to_i32_round().to_array();
-        let g_idx = (og_v.max(zero).min(one) * scale).to_i32_round().to_array();
-        let b_idx = (ob_v.max(zero).min(one) * scale).to_i32_round().to_array();
+        let r_idx = (or_v.max_fast(zero).min_fast(one) * scale)
+            .to_i32_round()
+            .to_array();
+        let g_idx = (og_v.max_fast(zero).min_fast(one) * scale)
+            .to_i32_round()
+            .to_array();
+        let b_idx = (ob_v.max_fast(zero).min_fast(one) * scale)
+            .to_i32_round()
+            .to_array();
         for i in 0..8 {
             dst[i * 3] = enc_lut[r_idx[i] as usize & 0xFFFF];
             dst[i * 3 + 1] = enc_lut[g_idx[i] as usize & 0xFFFF];
@@ -1854,8 +1860,8 @@ fn convert_8px_f32_lin_to_u8(
             ],
         );
         let v = r * m0 + g * m1 + b * m2;
-        let clamped = v.max(zero).min(one);
-        let cell = (clamped * cells).to_i32().to_array();
+        let clamped = (v & v.simd_ge(zero)).min_fast(one);
+        let cell = (clamped * cells).to_i32_fast().to_array();
         let x = clamped.to_array();
         dst[off] = enc.encode_cell(x[0], cell[0]);
         dst[off + 1] = enc.encode_cell(x[1], cell[1]);

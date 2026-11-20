@@ -117,10 +117,12 @@ fn bench_f32_to_u8_and_u16(suite: &mut Suite) {
         {
             let bytes = (lanes * 4 + lanes) as u64;
             let s1 = src.clone();
+            let s1b = src.clone();
             let s2 = src.clone();
             let s3 = src.clone();
             let s4 = src.clone();
             let mut d1 = vec![0u8; lanes];
+            let mut d1b = vec![0u8; lanes];
             let mut d2 = vec![0u8; lanes];
             let mut d3 = vec![0u8; lanes];
             let mut d4 = vec![0u8; lanes];
@@ -130,6 +132,11 @@ fn bench_f32_to_u8_and_u16(suite: &mut Suite) {
                 g.bench("magic_fma_clamped (shipped)", move |b| {
                     b.iter(|| {
                         shims::f32_to_u8_magic_fma_clamped(black_box(&s1), black_box(&mut d1));
+                    })
+                });
+                g.bench("magic_fma_no_nan (FloatFacts)", move |b| {
+                    b.iter(|| {
+                        shims::f32_to_u8_magic_fma_no_nan(black_box(&s1b), black_box(&mut d1b));
                     })
                 });
                 g.bench("magic_fma_unit_clean (FloatFacts)", move |b| {
@@ -154,10 +161,12 @@ fn bench_f32_to_u8_and_u16(suite: &mut Suite) {
         {
             let bytes = (lanes * 4 + lanes * 2) as u64;
             let s1 = src.clone();
+            let s1b = src.clone();
             let s2 = src.clone();
             let s3 = src.clone();
             let s4 = src;
             let mut d1 = vec![0u16; lanes];
+            let mut d1b = vec![0u16; lanes];
             let mut d2 = vec![0u16; lanes];
             let mut d3 = vec![0u16; lanes];
             let mut d4 = vec![0u16; lanes];
@@ -167,6 +176,11 @@ fn bench_f32_to_u8_and_u16(suite: &mut Suite) {
                 g.bench("magic_fma_clamped (shipped)", move |b| {
                     b.iter(|| {
                         shims::f32_to_u16_magic_fma_clamped(black_box(&s1), black_box(&mut d1));
+                    })
+                });
+                g.bench("magic_fma_no_nan (FloatFacts)", move |b| {
+                    b.iter(|| {
+                        shims::f32_to_u16_magic_fma_no_nan(black_box(&s1b), black_box(&mut d1b));
                     })
                 });
                 g.bench("magic_fma_unit_clean (FloatFacts)", move |b| {

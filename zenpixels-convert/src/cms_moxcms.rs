@@ -353,12 +353,7 @@ struct PureGammaOutput {
 impl TransformExecutor<f32> for PureGammaOutput {
     fn transform(&self, source: &[f32], target: &mut [f32]) -> Result<(), moxcms::CmsError> {
         self.transform.transform(source, target)?;
-        for pixel in target.chunks_exact_mut(self.target_channels) {
-            for value in &mut pixel[..3] {
-                *value =
-                    crate::gamma_math::magnitude_pow(value.abs(), self.exponent).copysign(*value);
-            }
-        }
+        crate::gamma_math::apply_signed_pow_rgb(target, self.target_channels, self.exponent);
         Ok(())
     }
 }

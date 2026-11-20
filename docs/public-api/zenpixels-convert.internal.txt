@@ -12,7 +12,7 @@
 #   pub modules                                 5
 #   pub types (struct/enum/trait/alias)         4
 #   pub consts/statics                          3
-#   free functions                             27
+#   free functions                             29
 #   inherent methods                           61
 #   struct fields                               4
 #   trait roster entries (type × trait)        52
@@ -20,7 +20,7 @@
 #
 # per-module pub lines:
 #   (root)                           15
-#   __bench_float_depth              16
+#   __bench_float_depth              18
 #   __bench_scan                     19
 #   __bench_u16_hybrids               4
 #   __trace_ops                       2
@@ -33,7 +33,7 @@
 #   ycbcr                             1
 #   zenpixels                         5
 
-## items (103 lines)
+## items (105 lines)
 
 #[non_exhaustive] pub struct hdr::LightLevelHistogram [also: hdr::measure]
 pub const hdr::measure::LightLevelHistogram::BIN_MAX_NITS: f32
@@ -55,10 +55,12 @@ pub fn Provenance::assert_fields_are_eq(&self)
 pub fn SemanticEffects::assert_fields_are_eq(&self)
 pub fn WorkExtent::assert_fields_are_eq(&self)
 pub fn __bench_float_depth::f32_to_u16_magic_fma_clamped(&[f32], &mut [u16])
+pub fn __bench_float_depth::f32_to_u16_magic_fma_no_nan(&[f32], &mut [u16])
 pub fn __bench_float_depth::f32_to_u16_magic_fma_unit_clean(&[f32], &mut [u16])
 pub fn __bench_float_depth::f32_to_u16_mul_rne_approx(&[f32], &mut [u16])
 pub fn __bench_float_depth::f32_to_u16_truncate_unit_clean(&[f32], &mut [u16])
 pub fn __bench_float_depth::f32_to_u8_magic_fma_clamped(&[f32], &mut [u8])
+pub fn __bench_float_depth::f32_to_u8_magic_fma_no_nan(&[f32], &mut [u8])
 pub fn __bench_float_depth::f32_to_u8_magic_fma_unit_clean(&[f32], &mut [u8])
 pub fn __bench_float_depth::f32_to_u8_mul_rne_approx(&[f32], &mut [u8])
 pub fn __bench_float_depth::f32_to_u8_truncate_unit_clean(&[f32], &mut [u8])

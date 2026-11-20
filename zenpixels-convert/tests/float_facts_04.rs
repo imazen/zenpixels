@@ -754,8 +754,8 @@ fn extended_gamma22_pq_truncate_matte_perceptual_and_tonemap_bit_exact_parity() 
         );
     }
 
-    // 6. ToneMap (hdr-experimental) bit-exact parity on 3ch and 4ch linear HDR float.
-    #[cfg(feature = "hdr-experimental")]
+    // 6. ToneMap (bt2446a) bit-exact parity on 3ch and 4ch linear HDR float.
+    #[cfg(feature = "bt2446a")]
     {
         let hdr = zenpixels_convert::HdrConfig::for_source_peak(1000.0);
         let hdr_facts = FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::NON_NEGATIVE;

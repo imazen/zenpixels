@@ -27,8 +27,9 @@
 //!   kernel runs instead; `scalar` uses `f64`.
 //!
 //! - **`FloatFacts` specialization**:
-//!   When `FloatFacts` proves `NO_NAN | NON_NEGATIVE | AT_MOST_ONE`, quantization skips both
-//!   the `NaN` flush and `[0.0, 1.0]` clamping.
+//!   - `NO_NAN | NON_NEGATIVE | AT_MOST_ONE` (`UNIT_CLEAN`): skips both `NaN` flush and `[0.0, 1.0]` clamping (0 instructions).
+//!   - `NO_NAN` (`!UNIT_CLEAN`): clamps via `v.max_fast(zero).min_fast(one)` (2 single instructions `vmaxps` + `vminps`).
+//!   - Untrusted (`!NO_NAN`): flushes `NaN` + negatives via `(v & v.simd_ge(zero)).min_fast(one)` (3 instructions `vcmpgeps` + `vandps` + `vminps`), and uses `.to_i32_fast()` for truncation.
 
 #![forbid(unsafe_code)]
 
@@ -220,9 +221,11 @@ pub(crate) fn convert_u16_to_f32_slice(src: &[u16], dst: &mut [f32]) {
 // ---------------------------------------------------------------------------
 
 #[inline(always)]
-fn scalar_quantize_u8<const UNIT_CLEAN: bool>(s: f32) -> u8 {
+fn scalar_quantize_u8<const UNIT_CLEAN: bool, const NO_NAN: bool>(s: f32) -> u8 {
     let c = if UNIT_CLEAN {
         s
+    } else if NO_NAN {
+        s.clamp(0.0, 1.0)
     } else if s.is_nan() {
         0.0
     } else {
@@ -232,9 +235,11 @@ fn scalar_quantize_u8<const UNIT_CLEAN: bool>(s: f32) -> u8 {
 }
 
 #[inline(always)]
-fn scalar_quantize_u16<const UNIT_CLEAN: bool>(s: f32) -> u16 {
+fn scalar_quantize_u16<const UNIT_CLEAN: bool, const NO_NAN: bool>(s: f32) -> u16 {
     let c = if UNIT_CLEAN {
         s
+    } else if NO_NAN {
+        s.clamp(0.0, 1.0)
     } else if s.is_nan() {
         0.0
     } else {
@@ -248,7 +253,11 @@ fn scalar_quantize_u16<const UNIT_CLEAN: bool>(s: f32) -> u16 {
 /// Sound ONLY on tiers whose `mul_add_relaxed` executes a single-rounding IEEE FMA:
 /// `v3`, `v4x`, `neon`, and `wasm128` when `wasm_fuses_relaxed_madd()` is true.
 #[attune(_*_t, -_scalar_t, _v4x_t(cfg(avx512)), define(f32x8, i32x8))]
-fn quantize_u8_magic_fma<const UNIT_CLEAN: bool>(token: Token, src: &[f32], dst: &mut [u8]) {
+fn quantize_u8_magic_fma<const UNIT_CLEAN: bool, const NO_NAN: bool>(
+    token: Token,
+    src: &[f32],
+    dst: &mut [u8],
+) {
     let n = src.len().min(dst.len());
     let (src, dst) = (&src[..n], &mut dst[..n]);
 
@@ -273,10 +282,17 @@ fn quantize_u8_magic_fma<const UNIT_CLEAN: bool>(token: Token, src: &[f32], dst:
         let mut v3 = f32x8::load_t(token, s3);
 
         if !UNIT_CLEAN {
-            v0 = (v0 & v0.simd_ge(zero)).min(one);
-            v1 = (v1 & v1.simd_ge(zero)).min(one);
-            v2 = (v2 & v2.simd_ge(zero)).min(one);
-            v3 = (v3 & v3.simd_ge(zero)).min(one);
+            if NO_NAN {
+                v0 = v0.max_fast(zero).min_fast(one);
+                v1 = v1.max_fast(zero).min_fast(one);
+                v2 = v2.max_fast(zero).min_fast(one);
+                v3 = v3.max_fast(zero).min_fast(one);
+            } else {
+                v0 = (v0 & v0.simd_ge(zero)).min_fast(one);
+                v1 = (v1 & v1.simd_ge(zero)).min_fast(one);
+                v2 = (v2 & v2.simd_ge(zero)).min_fast(one);
+                v3 = (v3 & v3.simd_ge(zero)).min_fast(one);
+            }
         }
 
         let c0 = v0.mul_add_relaxed(scale, magic).bitcast_to_i32() - magic_bits;
@@ -290,7 +306,7 @@ fn quantize_u8_magic_fma<const UNIT_CLEAN: bool>(token: Token, src: &[f32], dst:
     }
 
     for (&s, d) in s_tail.iter().zip(d_tail.iter_mut()) {
-        *d = scalar_quantize_u8::<UNIT_CLEAN>(s);
+        *d = scalar_quantize_u8::<UNIT_CLEAN, NO_NAN>(s);
     }
 }
 
@@ -299,7 +315,11 @@ fn quantize_u8_magic_fma<const UNIT_CLEAN: bool>(token: Token, src: &[f32], dst:
 /// Sound ONLY on tiers whose `mul_add_relaxed` executes a single-rounding IEEE FMA:
 /// `v3`, `v4x`, `neon`, and `wasm128` when `wasm_fuses_relaxed_madd()` is true.
 #[attune(_*_t, -_scalar_t, _v4x_t(cfg(avx512)), define(f32x8, i32x8))]
-fn quantize_u16_magic_fma<const UNIT_CLEAN: bool>(token: Token, src: &[f32], dst: &mut [u16]) {
+fn quantize_u16_magic_fma<const UNIT_CLEAN: bool, const NO_NAN: bool>(
+    token: Token,
+    src: &[f32],
+    dst: &mut [u16],
+) {
     let n = src.len().min(dst.len());
     let (src, dst) = (&src[..n], &mut dst[..n]);
 
@@ -320,8 +340,13 @@ fn quantize_u16_magic_fma<const UNIT_CLEAN: bool>(token: Token, src: &[f32], dst
         let mut v1 = f32x8::load_t(token, s1);
 
         if !UNIT_CLEAN {
-            v0 = (v0 & v0.simd_ge(zero)).min(one);
-            v1 = (v1 & v1.simd_ge(zero)).min(one);
+            if NO_NAN {
+                v0 = v0.max_fast(zero).min_fast(one);
+                v1 = v1.max_fast(zero).min_fast(one);
+            } else {
+                v0 = (v0 & v0.simd_ge(zero)).min_fast(one);
+                v1 = (v1 & v1.simd_ge(zero)).min_fast(one);
+            }
         }
 
         let c0 = v0.mul_add_relaxed(scale, magic).bitcast_to_i32() - magic_bits;
@@ -331,7 +356,7 @@ fn quantize_u16_magic_fma<const UNIT_CLEAN: bool>(token: Token, src: &[f32], dst
     }
 
     for (&s, d) in s_tail.iter().zip(d_tail.iter_mut()) {
-        *d = scalar_quantize_u16::<UNIT_CLEAN>(s);
+        *d = scalar_quantize_u16::<UNIT_CLEAN, NO_NAN>(s);
     }
 }
 
@@ -339,7 +364,7 @@ fn quantize_u16_magic_fma<const UNIT_CLEAN: bool>(token: Token, src: &[f32], dst
 /// engine does not fuse `f32x4_relaxed_madd`.
 #[cfg(target_arch = "wasm32")]
 #[attune]
-pub(crate) fn quantize_u8_wasm_f64_wasm128_t<const UNIT_CLEAN: bool>(
+pub(crate) fn quantize_u8_wasm_f64_wasm128_t<const UNIT_CLEAN: bool, const NO_NAN: bool>(
     token: archmage::Wasm128Token,
     src: &[f32],
     dst: &mut [u8],
@@ -357,10 +382,14 @@ pub(crate) fn quantize_u8_wasm_f64_wasm128_t<const UNIT_CLEAN: bool>(
 
     let quant4 = |mut v: w::v128| -> w::v128 {
         if !UNIT_CLEAN {
-            let ge0 = w::f32x4_ge(v, zero32);
-            let nonneg = w::v128_and(v, ge0);
-            // nonneg has no NaN lanes (`NaN >= 0` was false -> +0.0), so pmin/min agree.
-            v = w::f32x4_pmin(one32, nonneg);
+            if NO_NAN {
+                v = w::f32x4_pmin(one32, w::f32x4_pmax(zero32, v));
+            } else {
+                let ge0 = w::f32x4_ge(v, zero32);
+                let nonneg = w::v128_and(v, ge0);
+                // nonneg has no NaN lanes (`NaN >= 0` was false -> +0.0), so pmin/min agree.
+                v = w::f32x4_pmin(one32, nonneg);
+            }
         }
         let lo64 = w::f64x2_promote_low_f32x4(v);
         let hi64 = w::f64x2_promote_low_f32x4(w::i32x4_shuffle::<2, 3, 2, 3>(v, v));
@@ -388,14 +417,14 @@ pub(crate) fn quantize_u8_wasm_f64_wasm128_t<const UNIT_CLEAN: bool>(
     }
 
     for (&s, d) in s_tail.iter().zip(d_tail.iter_mut()) {
-        *d = scalar_quantize_u8::<UNIT_CLEAN>(s);
+        *d = scalar_quantize_u8::<UNIT_CLEAN, NO_NAN>(s);
     }
 }
 
 /// Exact `f64x2` SIMD fallback on `wasm32` for `f32 -> u16`.
 #[cfg(target_arch = "wasm32")]
 #[attune]
-pub(crate) fn quantize_u16_wasm_f64_wasm128_t<const UNIT_CLEAN: bool>(
+pub(crate) fn quantize_u16_wasm_f64_wasm128_t<const UNIT_CLEAN: bool, const NO_NAN: bool>(
     token: archmage::Wasm128Token,
     src: &[f32],
     dst: &mut [u16],
@@ -413,9 +442,13 @@ pub(crate) fn quantize_u16_wasm_f64_wasm128_t<const UNIT_CLEAN: bool>(
 
     let quant4 = |mut v: w::v128| -> w::v128 {
         if !UNIT_CLEAN {
-            let ge0 = w::f32x4_ge(v, zero32);
-            let nonneg = w::v128_and(v, ge0);
-            v = w::f32x4_pmin(one32, nonneg);
+            if NO_NAN {
+                v = w::f32x4_pmin(one32, w::f32x4_pmax(zero32, v));
+            } else {
+                let ge0 = w::f32x4_ge(v, zero32);
+                let nonneg = w::v128_and(v, ge0);
+                v = w::f32x4_pmin(one32, nonneg);
+            }
         }
         let lo64 = w::f64x2_promote_low_f32x4(v);
         let hi64 = w::f64x2_promote_low_f32x4(w::i32x4_shuffle::<2, 3, 2, 3>(v, v));
@@ -437,66 +470,72 @@ pub(crate) fn quantize_u16_wasm_f64_wasm128_t<const UNIT_CLEAN: bool>(
     }
 
     for (&s, d) in s_tail.iter().zip(d_tail.iter_mut()) {
-        *d = scalar_quantize_u16::<UNIT_CLEAN>(s);
+        *d = scalar_quantize_u16::<UNIT_CLEAN, NO_NAN>(s);
     }
 }
 
-pub(crate) fn convert_f32_to_u8_round_spec<const UNIT_CLEAN: bool>(src: &[f32], dst: &mut [u8]) {
+pub(crate) fn convert_f32_to_u8_round_spec<const UNIT_CLEAN: bool, const NO_NAN: bool>(
+    src: &[f32],
+    dst: &mut [u8],
+) {
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "avx512"))]
     if let Some(t) = archmage::X64V4xToken::summon() {
-        return quantize_u8_magic_fma_v4x_t::<UNIT_CLEAN>(t, src, dst);
+        return quantize_u8_magic_fma_v4x_t::<UNIT_CLEAN, NO_NAN>(t, src, dst);
     }
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     if let Some(t) = archmage::X64V3Token::summon() {
-        return quantize_u8_magic_fma_v3_t::<UNIT_CLEAN>(t, src, dst);
+        return quantize_u8_magic_fma_v3_t::<UNIT_CLEAN, NO_NAN>(t, src, dst);
     }
     #[cfg(target_arch = "aarch64")]
     if let Some(t) = archmage::NeonToken::summon() {
-        return quantize_u8_magic_fma_neon_t::<UNIT_CLEAN>(t, src, dst);
+        return quantize_u8_magic_fma_neon_t::<UNIT_CLEAN, NO_NAN>(t, src, dst);
     }
     #[cfg(target_arch = "wasm32")]
     if let Some(t) = archmage::Wasm128Token::summon() {
         #[cfg(target_feature = "relaxed-simd")]
         if wasm_fuses_relaxed_madd() {
-            return quantize_u8_magic_fma_wasm128_t::<UNIT_CLEAN>(t, src, dst);
+            return quantize_u8_magic_fma_wasm128_t::<UNIT_CLEAN, NO_NAN>(t, src, dst);
         }
-        return quantize_u8_wasm_f64_wasm128_t::<UNIT_CLEAN>(t, src, dst);
+        return quantize_u8_wasm_f64_wasm128_t::<UNIT_CLEAN, NO_NAN>(t, src, dst);
     }
     let n = src.len().min(dst.len());
     for (&s, d) in src[..n].iter().zip(dst[..n].iter_mut()) {
-        *d = scalar_quantize_u8::<UNIT_CLEAN>(s);
+        *d = scalar_quantize_u8::<UNIT_CLEAN, NO_NAN>(s);
     }
 }
 
-pub(crate) fn convert_f32_to_u16_round_spec<const UNIT_CLEAN: bool>(src: &[f32], dst: &mut [u16]) {
+pub(crate) fn convert_f32_to_u16_round_spec<const UNIT_CLEAN: bool, const NO_NAN: bool>(
+    src: &[f32],
+    dst: &mut [u16],
+) {
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "avx512"))]
     if let Some(t) = archmage::X64V4xToken::summon() {
-        return quantize_u16_magic_fma_v4x_t::<UNIT_CLEAN>(t, src, dst);
+        return quantize_u16_magic_fma_v4x_t::<UNIT_CLEAN, NO_NAN>(t, src, dst);
     }
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     if let Some(t) = archmage::X64V3Token::summon() {
-        return quantize_u16_magic_fma_v3_t::<UNIT_CLEAN>(t, src, dst);
+        return quantize_u16_magic_fma_v3_t::<UNIT_CLEAN, NO_NAN>(t, src, dst);
     }
     #[cfg(target_arch = "aarch64")]
     if let Some(t) = archmage::NeonToken::summon() {
-        return quantize_u16_magic_fma_neon_t::<UNIT_CLEAN>(t, src, dst);
+        return quantize_u16_magic_fma_neon_t::<UNIT_CLEAN, NO_NAN>(t, src, dst);
     }
     #[cfg(target_arch = "wasm32")]
     if let Some(t) = archmage::Wasm128Token::summon() {
         #[cfg(target_feature = "relaxed-simd")]
         if wasm_fuses_relaxed_madd() {
-            return quantize_u16_magic_fma_wasm128_t::<UNIT_CLEAN>(t, src, dst);
+            return quantize_u16_magic_fma_wasm128_t::<UNIT_CLEAN, NO_NAN>(t, src, dst);
         }
-        return quantize_u16_wasm_f64_wasm128_t::<UNIT_CLEAN>(t, src, dst);
+        return quantize_u16_wasm_f64_wasm128_t::<UNIT_CLEAN, NO_NAN>(t, src, dst);
     }
     let n = src.len().min(dst.len());
     for (&s, d) in src[..n].iter().zip(dst[..n].iter_mut()) {
-        *d = scalar_quantize_u16::<UNIT_CLEAN>(s);
+        *d = scalar_quantize_u16::<UNIT_CLEAN, NO_NAN>(s);
     }
 }
 
 #[attune(_*_t, _v4x_t(cfg(avx512)), define(f32x8))]
-pub(crate) fn convert_f32_to_u8_truncate_spec<const UNIT_CLEAN: bool>(
+pub(crate) fn convert_f32_to_u8_truncate_spec<const UNIT_CLEAN: bool, const NO_NAN: bool>(
     token: Token,
     src: &[f32],
     dst: &mut [u8],
@@ -523,16 +562,23 @@ pub(crate) fn convert_f32_to_u8_truncate_spec<const UNIT_CLEAN: bool>(
         let mut v3 = f32x8::load_t(token, s3);
 
         if !UNIT_CLEAN {
-            v0 = (v0 & v0.simd_ge(zero)).min(one);
-            v1 = (v1 & v1.simd_ge(zero)).min(one);
-            v2 = (v2 & v2.simd_ge(zero)).min(one);
-            v3 = (v3 & v3.simd_ge(zero)).min(one);
+            if NO_NAN {
+                v0 = v0.max_fast(zero).min_fast(one);
+                v1 = v1.max_fast(zero).min_fast(one);
+                v2 = v2.max_fast(zero).min_fast(one);
+                v3 = v3.max_fast(zero).min_fast(one);
+            } else {
+                v0 = (v0 & v0.simd_ge(zero)).min_fast(one);
+                v1 = (v1 & v1.simd_ge(zero)).min_fast(one);
+                v2 = (v2 & v2.simd_ge(zero)).min_fast(one);
+                v3 = (v3 & v3.simd_ge(zero)).min_fast(one);
+            }
         }
 
-        let c0 = (v0 * scale).to_i32();
-        let c1 = (v1 * scale).to_i32();
-        let c2 = (v2 * scale).to_i32();
-        let c3 = (v3 * scale).to_i32();
+        let c0 = (v0 * scale).to_i32_fast();
+        let c1 = (v1 * scale).to_i32_fast();
+        let c2 = (v2 * scale).to_i32_fast();
+        let c3 = (v3 * scale).to_i32_fast();
 
         let lo16 = c0.narrow_saturating_i16(c1);
         let hi16 = c2.narrow_saturating_i16(c3);
@@ -542,6 +588,8 @@ pub(crate) fn convert_f32_to_u8_truncate_spec<const UNIT_CLEAN: bool>(
     for (&s, d) in s_tail.iter().zip(d_tail.iter_mut()) {
         let c = if UNIT_CLEAN {
             s
+        } else if NO_NAN {
+            s.clamp(0.0, 1.0)
         } else if s.is_nan() {
             0.0
         } else {
@@ -552,7 +600,7 @@ pub(crate) fn convert_f32_to_u8_truncate_spec<const UNIT_CLEAN: bool>(
 }
 
 #[attune(_*_t, _v4x_t(cfg(avx512)), define(f32x8))]
-pub(crate) fn convert_f32_to_u16_truncate_spec<const UNIT_CLEAN: bool>(
+pub(crate) fn convert_f32_to_u16_truncate_spec<const UNIT_CLEAN: bool, const NO_NAN: bool>(
     token: Token,
     src: &[f32],
     dst: &mut [u16],
@@ -575,18 +623,25 @@ pub(crate) fn convert_f32_to_u16_truncate_spec<const UNIT_CLEAN: bool>(
         let mut v1 = f32x8::load_t(token, s1);
 
         if !UNIT_CLEAN {
-            v0 = (v0 & v0.simd_ge(zero)).min(one);
-            v1 = (v1 & v1.simd_ge(zero)).min(one);
+            if NO_NAN {
+                v0 = v0.max_fast(zero).min_fast(one);
+                v1 = v1.max_fast(zero).min_fast(one);
+            } else {
+                v0 = (v0 & v0.simd_ge(zero)).min_fast(one);
+                v1 = (v1 & v1.simd_ge(zero)).min_fast(one);
+            }
         }
 
-        let c0 = (v0 * scale).to_i32();
-        let c1 = (v1 * scale).to_i32();
+        let c0 = (v0 * scale).to_i32_fast();
+        let c1 = (v1 * scale).to_i32_fast();
         c0.narrow_saturating_u16(c1).store(dc);
     }
 
     for (&s, d) in s_tail.iter().zip(d_tail.iter_mut()) {
         let c = if UNIT_CLEAN {
             s
+        } else if NO_NAN {
+            s.clamp(0.0, 1.0)
         } else if s.is_nan() {
             0.0
         } else {
@@ -599,18 +654,22 @@ pub(crate) fn convert_f32_to_u16_truncate_spec<const UNIT_CLEAN: bool>(
 #[inline]
 pub(crate) fn convert_f32_to_u8_slice(src: &[f32], dst: &mut [u8], facts: FloatFacts) {
     if facts.contains(UNIT_CLEAN_FACTS) {
-        convert_f32_to_u8_round_spec::<true>(src, dst);
+        convert_f32_to_u8_round_spec::<true, true>(src, dst);
+    } else if facts.contains(FloatFacts::NO_NAN) {
+        convert_f32_to_u8_round_spec::<false, true>(src, dst);
     } else {
-        convert_f32_to_u8_round_spec::<false>(src, dst);
+        convert_f32_to_u8_round_spec::<false, false>(src, dst);
     }
 }
 
 #[inline]
 pub(crate) fn convert_f32_to_u16_slice(src: &[f32], dst: &mut [u16], facts: FloatFacts) {
     if facts.contains(UNIT_CLEAN_FACTS) {
-        convert_f32_to_u16_round_spec::<true>(src, dst);
+        convert_f32_to_u16_round_spec::<true, true>(src, dst);
+    } else if facts.contains(FloatFacts::NO_NAN) {
+        convert_f32_to_u16_round_spec::<false, true>(src, dst);
     } else {
-        convert_f32_to_u16_round_spec::<false>(src, dst);
+        convert_f32_to_u16_round_spec::<false, false>(src, dst);
     }
 }
 
@@ -618,12 +677,17 @@ pub(crate) fn convert_f32_to_u16_slice(src: &[f32], dst: &mut [u16], facts: Floa
 pub(crate) fn convert_f32_to_u8_truncate_slice(src: &[f32], dst: &mut [u8], facts: FloatFacts) {
     if facts.contains(UNIT_CLEAN_FACTS) {
         reattune!(
-            convert_f32_to_u8_truncate_spec::<true>(src, dst),
+            convert_f32_to_u8_truncate_spec::<true, true>(src, dst),
+            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+        );
+    } else if facts.contains(FloatFacts::NO_NAN) {
+        reattune!(
+            convert_f32_to_u8_truncate_spec::<false, true>(src, dst),
             [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
         );
     } else {
         reattune!(
-            convert_f32_to_u8_truncate_spec::<false>(src, dst),
+            convert_f32_to_u8_truncate_spec::<false, false>(src, dst),
             [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
         );
     }
@@ -633,12 +697,17 @@ pub(crate) fn convert_f32_to_u8_truncate_slice(src: &[f32], dst: &mut [u8], fact
 pub(crate) fn convert_f32_to_u16_truncate_slice(src: &[f32], dst: &mut [u16], facts: FloatFacts) {
     if facts.contains(UNIT_CLEAN_FACTS) {
         reattune!(
-            convert_f32_to_u16_truncate_spec::<true>(src, dst),
+            convert_f32_to_u16_truncate_spec::<true, true>(src, dst),
+            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+        );
+    } else if facts.contains(FloatFacts::NO_NAN) {
+        reattune!(
+            convert_f32_to_u16_truncate_spec::<false, true>(src, dst),
             [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
         );
     } else {
         reattune!(
-            convert_f32_to_u16_truncate_spec::<false>(src, dst),
+            convert_f32_to_u16_truncate_spec::<false, false>(src, dst),
             [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
         );
     }
@@ -935,11 +1004,15 @@ pub mod bench_shims {
     }
 
     pub fn f32_to_u8_magic_fma_clamped(src: &[f32], dst: &mut [u8]) {
-        convert_f32_to_u8_round_spec::<false>(src, dst);
+        convert_f32_to_u8_round_spec::<false, false>(src, dst);
+    }
+
+    pub fn f32_to_u8_magic_fma_no_nan(src: &[f32], dst: &mut [u8]) {
+        convert_f32_to_u8_round_spec::<false, true>(src, dst);
     }
 
     pub fn f32_to_u8_magic_fma_unit_clean(src: &[f32], dst: &mut [u8]) {
-        convert_f32_to_u8_round_spec::<true>(src, dst);
+        convert_f32_to_u8_round_spec::<true, true>(src, dst);
     }
 
     #[attune(_*_t, _v4x_t(cfg(avx512)), define(f32x8))]
@@ -960,16 +1033,16 @@ pub mod bench_shims {
             let v1 = f32x8::load_t(token, s1);
             let v2 = f32x8::load_t(token, s2);
             let v3 = f32x8::load_t(token, s3);
-            let c0 = ((v0 & v0.simd_ge(zero)).min(one) * scale).to_i32_round();
-            let c1 = ((v1 & v1.simd_ge(zero)).min(one) * scale).to_i32_round();
-            let c2 = ((v2 & v2.simd_ge(zero)).min(one) * scale).to_i32_round();
-            let c3 = ((v3 & v3.simd_ge(zero)).min(one) * scale).to_i32_round();
+            let c0 = ((v0 & v0.simd_ge(zero)).min_fast(one) * scale).to_i32_round();
+            let c1 = ((v1 & v1.simd_ge(zero)).min_fast(one) * scale).to_i32_round();
+            let c2 = ((v2 & v2.simd_ge(zero)).min_fast(one) * scale).to_i32_round();
+            let c3 = ((v3 & v3.simd_ge(zero)).min_fast(one) * scale).to_i32_round();
             c0.narrow_saturating_i16(c1)
                 .narrow_saturating_u8(c2.narrow_saturating_i16(c3))
                 .store(dc);
         }
         for (&s, d) in s_tail.iter().zip(d_tail.iter_mut()) {
-            *d = scalar_quantize_u8::<false>(s);
+            *d = scalar_quantize_u8::<false, false>(s);
         }
     }
 
@@ -985,11 +1058,15 @@ pub mod bench_shims {
     }
 
     pub fn f32_to_u16_magic_fma_clamped(src: &[f32], dst: &mut [u16]) {
-        convert_f32_to_u16_round_spec::<false>(src, dst);
+        convert_f32_to_u16_round_spec::<false, false>(src, dst);
+    }
+
+    pub fn f32_to_u16_magic_fma_no_nan(src: &[f32], dst: &mut [u16]) {
+        convert_f32_to_u16_round_spec::<false, true>(src, dst);
     }
 
     pub fn f32_to_u16_magic_fma_unit_clean(src: &[f32], dst: &mut [u16]) {
-        convert_f32_to_u16_round_spec::<true>(src, dst);
+        convert_f32_to_u16_round_spec::<true, true>(src, dst);
     }
 
     #[attune(_*_t, _v4x_t(cfg(avx512)), define(f32x8))]
@@ -1006,12 +1083,12 @@ pub mod bench_shims {
             let (s1, _) = rest.split_first_chunk::<8>().unwrap();
             let v0 = f32x8::load_t(token, s0);
             let v1 = f32x8::load_t(token, s1);
-            let c0 = ((v0 & v0.simd_ge(zero)).min(one) * scale).to_i32_round();
-            let c1 = ((v1 & v1.simd_ge(zero)).min(one) * scale).to_i32_round();
+            let c0 = ((v0 & v0.simd_ge(zero)).min_fast(one) * scale).to_i32_round();
+            let c1 = ((v1 & v1.simd_ge(zero)).min_fast(one) * scale).to_i32_round();
             c0.narrow_saturating_u16(c1).store(dc);
         }
         for (&s, d) in s_tail.iter().zip(d_tail.iter_mut()) {
-            *d = scalar_quantize_u16::<false>(s);
+            *d = scalar_quantize_u16::<false, false>(s);
         }
     }
 
@@ -1127,11 +1204,33 @@ mod tests {
 
         let ref_u8: alloc::vec::Vec<u8> = u8_witness
             .iter()
-            .map(|&s| scalar_quantize_u8::<false>(s))
+            .map(|&s| scalar_quantize_u8::<false, false>(s))
             .collect();
         let ref_u16: alloc::vec::Vec<u16> = u16_witness
             .iter()
-            .map(|&s| scalar_quantize_u16::<false>(s))
+            .map(|&s| scalar_quantize_u16::<false, false>(s))
+            .collect();
+
+        let no_nan_only: alloc::vec::Vec<f32> = u16_witness
+            .iter()
+            .copied()
+            .filter(|x| !x.is_nan())
+            .collect();
+        let ref_no_nan_u8: alloc::vec::Vec<u8> = no_nan_only
+            .iter()
+            .map(|&s| scalar_quantize_u8::<false, true>(s))
+            .collect();
+        let ref_no_nan_u16: alloc::vec::Vec<u16> = no_nan_only
+            .iter()
+            .map(|&s| scalar_quantize_u16::<false, true>(s))
+            .collect();
+        let ref_trunc_no_nan_u8: alloc::vec::Vec<u8> = no_nan_only
+            .iter()
+            .map(|&s| (s.clamp(0.0, 1.0) * 255.0) as u8)
+            .collect();
+        let ref_trunc_no_nan_u16: alloc::vec::Vec<u16> = no_nan_only
+            .iter()
+            .map(|&s| (s.clamp(0.0, 1.0) * 65535.0) as u16)
             .collect();
 
         let unit_only: alloc::vec::Vec<f32> = u16_witness
@@ -1141,11 +1240,11 @@ mod tests {
             .collect();
         let ref_unit_u8: alloc::vec::Vec<u8> = unit_only
             .iter()
-            .map(|&s| scalar_quantize_u8::<true>(s))
+            .map(|&s| scalar_quantize_u8::<true, true>(s))
             .collect();
         let ref_unit_u16: alloc::vec::Vec<u16> = unit_only
             .iter()
-            .map(|&s| scalar_quantize_u16::<true>(s))
+            .map(|&s| scalar_quantize_u16::<true, true>(s))
             .collect();
 
         let _ = archmage::testing::for_each_token_permutation(
@@ -1158,6 +1257,38 @@ mod tests {
                 let mut got_u16 = vec![0u16; u16_witness.len()];
                 convert_f32_to_u16_slice(&u16_witness, &mut got_u16, FloatFacts::NONE);
                 assert_eq!(got_u16, ref_u16, "f32->u16 clamped mismatch under {perm:?}");
+
+                let mut got_nn_u8 = vec![0u8; no_nan_only.len()];
+                convert_f32_to_u8_slice(&no_nan_only, &mut got_nn_u8, FloatFacts::NO_NAN);
+                assert_eq!(
+                    got_nn_u8, ref_no_nan_u8,
+                    "f32->u8 NO_NAN mismatch under {perm:?}"
+                );
+
+                let mut got_nn_u16 = vec![0u16; no_nan_only.len()];
+                convert_f32_to_u16_slice(&no_nan_only, &mut got_nn_u16, FloatFacts::NO_NAN);
+                assert_eq!(
+                    got_nn_u16, ref_no_nan_u16,
+                    "f32->u16 NO_NAN mismatch under {perm:?}"
+                );
+
+                let mut got_tr_u8 = vec![0u8; no_nan_only.len()];
+                convert_f32_to_u8_truncate_slice(&no_nan_only, &mut got_tr_u8, FloatFacts::NO_NAN);
+                assert_eq!(
+                    got_tr_u8, ref_trunc_no_nan_u8,
+                    "f32->u8 truncate NO_NAN mismatch under {perm:?}"
+                );
+
+                let mut got_tr_u16 = vec![0u16; no_nan_only.len()];
+                convert_f32_to_u16_truncate_slice(
+                    &no_nan_only,
+                    &mut got_tr_u16,
+                    FloatFacts::NO_NAN,
+                );
+                assert_eq!(
+                    got_tr_u16, ref_trunc_no_nan_u16,
+                    "f32->u16 truncate NO_NAN mismatch under {perm:?}"
+                );
 
                 let mut got_unit_u8 = vec![0u8; unit_only.len()];
                 convert_f32_to_u8_slice(&unit_only, &mut got_unit_u8, UNIT_CLEAN_FACTS);

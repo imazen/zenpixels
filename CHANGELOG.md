@@ -53,16 +53,24 @@
 ### Changed
 
 - Replace `garb` floating-point depth and RGBA `f32` alpha kernels with `magetypes`
-  SIMD kernels (`garb 0.3.0` integer-only): 2-op 0-ULP binary geometric-series
-  split for `u8 -> f32` and `u16 -> f32` (0-ULP exact without hardware division or
-  FMA), 1-FMA magic-bias nearest half-up quantization (`12_582_912.0` / `0x4b40_0000`,
-  0 mismatches across all `1,065,353,217` `f32` values in `[0.0, 1.0]`) with
-  `FloatFacts` unclamped specialization, outer-loop WASM `relaxed-simd` sentinel
-  FMA probe falling back to exact `f64x2` SIMD when unfused, SIMD `DepthPolicy::Truncate`,
-  and 0-ULP RGBA `f32` premultiply/unpremultiply.
-- Sync `linear-srgb 0.6.13` (`target_features::x8` tokenless SIMD entry points,
-  unified PQ/sRGB transfer rails, and `x86_64-unknown-none` soft-float / `no_std`
-  compatibility).
+  SIMD kernels (`garb 0.2.9`, `default-features = false`, no `experimental` or
+  `garb` float ops): 2-op 0-ULP binary geometric-series split for `u8 -> f32` and
+  `u16 -> f32` (0-ULP exact without hardware division or FMA), 1-FMA magic-bias
+  nearest half-up quantization (`12_582_912.0` / `0x4b40_0000`, 0 mismatches
+  across all `1,065,353,217` `f32` values in `[0.0, 1.0]`) with three-tier
+  `FloatFacts` clamp specialization (`UNIT_CLEAN` 0-op unclamped, `NO_NAN` 2-op
+  `max_fast`/`min_fast`, untrusted 3-op `simd_ge + and + min_fast`), outer-loop
+  WASM `relaxed-simd` sentinel FMA probe falling back to exact `f64x2` SIMD when
+  unfused, `to_i32_fast()` SIMD `DepthPolicy::Truncate`, and 0-ULP RGBA `f32`
+  premultiply/unpremultiply.
+- Adopt `magetypes 0.9.32` `min_fast`/`max_fast`/`to_i32_fast` across `fast_gamut`
+  and `hdr::measure` `NaN`-clean SIMD loops, and vectorize `PureGammaOutput` RGB/RGBA
+  transforms via 8-wide `magemath 0.1.0` `Powf` (`Execution::Upgrade`, canonical
+  bit-exact `highp`).
+- Sync `archmage 0.9.32`, `magetypes 0.9.32`, and `magemath 0.1.0` (`30334157`),
+  `garb 0.2.9` (`f22a8c54`), and `linear-srgb 0.6.13` (`360fb968`:
+  `target_features::x8` tokenless SIMD entry points, unified PQ/sRGB transfer
+  rails, and `x86_64-unknown-none` soft-float / `no_std` compatibility).
 - Use the checked Magemath power profile for extended gamma.
 
 ### Added
