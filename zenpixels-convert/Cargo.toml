@@ -115,7 +115,7 @@ zenpixels = { workspace = true, default-features = false, features = ["icc"] }
 linear-srgb = { version = "0.6.12", default-features = false, features = ["transfer"] }
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8.53", default-features = false, features = ["bytemuck"], optional = true }
-garb = { version = "0.2.8", default-features = false, features = ["experimental"] }
+garb = { version = "0.2.9", git = "https://github.com/imazen/garb", rev = "f22a8c5412de72255de80b5597a484c796f4e40d", default-features = false }
 # Unified macros require the stable 0.9.31 release. SIMD types stay internal.
 archmage = { version = "0.9.32", git = "https://github.com/imazen/archmage", rev = "a6be44993d8d3f8dba9a458f898d200fccba5b31", default-features = false }
 # Direct libm dep for the hdr-experimental Bt2446A / HdrToSdr scalar paths

@@ -158,7 +158,7 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::NaiveF32ToU8 => {
-            naive_f32_to_u8(src, dst, w, from.layout().channels());
+            naive_f32_to_u8(src, dst, w, from.layout().channels(), in_trust.facts);
         }
         ConvertStep::NaiveF32ToU8Truncate => {
             naive_f32_to_u8_truncate(src, dst, w, from.layout().channels(), in_trust.facts);
@@ -183,7 +183,7 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::F32ToU16 => {
-            f32_to_u16(src, dst, w, from.layout().channels());
+            f32_to_u16(src, dst, w, from.layout().channels(), in_trust.facts);
         }
         ConvertStep::F32ToU16Truncate => {
             f32_to_u16_truncate(src, dst, w, from.layout().channels(), in_trust.facts);
@@ -269,11 +269,25 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::StraightToPremul => {
-            straight_to_premul(src, dst, w, from.channel_type(), from.layout());
+            straight_to_premul(
+                src,
+                dst,
+                w,
+                from.channel_type(),
+                from.layout(),
+                in_trust.facts,
+            );
         }
 
         ConvertStep::PremulToStraight => {
-            premul_to_straight(src, dst, w, from.channel_type(), from.layout());
+            premul_to_straight(
+                src,
+                dst,
+                w,
+                from.channel_type(),
+                from.layout(),
+                in_trust.facts,
+            );
         }
 
         ConvertStep::LinearRgbToOklab => {
@@ -767,12 +781,10 @@ fn matte_composite(
         let (rgba, rgb, alpha) = (&mut rgba[..n * 4], &mut rgb[..n * 3], &mut alpha[..n]);
         match ch_type {
             ChannelType::U8 => {
-                garb::bytes::convert_u8_to_f32(s, bytemuck::cast_slice_mut(&mut *rgba))
-                    .expect("pre-validated row size");
+                crate::float_simd::convert_u8_to_f32_slice(s, rgba);
             }
             ChannelType::U16 => {
-                garb::bytes::convert_u16_to_f32(s, bytemuck::cast_slice_mut(&mut *rgba))
-                    .expect("pre-validated row size");
+                crate::float_simd::convert_u16_to_f32_slice(bytemuck::cast_slice(s), rgba);
             }
             ChannelType::F16 => f16_bits_to_f32_slice(bytemuck::cast_slice(s), rgba),
             _ => rgba.copy_from_slice(bytemuck::cast_slice(s)),
@@ -810,10 +822,16 @@ fn matte_composite(
         }
         matte_from_linear(rgb, tf, clip_f32);
         match ch_type {
-            ChannelType::U8 => garb::bytes::convert_f32_to_u8(bytemuck::cast_slice(&*rgb), d)
-                .expect("pre-validated row size"),
-            ChannelType::U16 => garb::bytes::convert_f32_to_u16(bytemuck::cast_slice(&*rgb), d)
-                .expect("pre-validated row size"),
+            ChannelType::U8 => {
+                crate::float_simd::convert_f32_to_u8_slice(rgb, d, FloatFacts::NONE);
+            }
+            ChannelType::U16 => {
+                crate::float_simd::convert_f32_to_u16_slice(
+                    rgb,
+                    bytemuck::cast_slice_mut(d),
+                    FloatFacts::NONE,
+                );
+            }
             ChannelType::F16 => f32_to_f16_bits_slice(rgb, bytemuck::cast_slice_mut(d)),
             _ => bytemuck::cast_slice_mut(d).copy_from_slice(rgb),
         }
@@ -1522,15 +1540,21 @@ fn linear_f32_to_srgb_u8(src: &[u8], dst: &mut [u8], width: usize, layout: Chann
 /// Naive u8 → f32 (v / 255.0, no transfer function).
 fn naive_u8_to_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
-    garb::bytes::convert_u8_to_f32(&src[..count], &mut dst[..count * 4])
-        .expect("pre-validated row size");
+    let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    crate::float_simd::convert_u8_to_f32_slice(&src[..count], dst_f32);
 }
 
 /// Naive f32 → u8 (clamp `[0,1]`, * 255 + 0.5).
-fn naive_f32_to_u8(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+fn naive_f32_to_u8(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    channels: usize,
+    in_facts: zenpixels::sample::FloatFacts,
+) {
     let count = width * channels;
-    garb::bytes::convert_f32_to_u8(&src[..count * 4], &mut dst[..count])
-        .expect("pre-validated row size");
+    let src_f32: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    crate::float_simd::convert_f32_to_u8_slice(src_f32, &mut dst[..count], in_facts);
 }
 
 /// u16 → u8, correctly rounded: `round(v / 257)` (65535 = 255 · 257, so
@@ -1583,23 +1607,9 @@ fn naive_f32_to_u8_truncate(
     channels: usize,
     in_facts: zenpixels::sample::FloatFacts,
 ) {
-    use zenpixels::sample::FloatFacts;
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
-    if in_facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE) {
-        for (s, d) in srcf.iter().zip(dst[..count].iter_mut()) {
-            *d = (*s * 255.0) as u8;
-        }
-    } else if in_facts.contains(FloatFacts::NO_NAN) {
-        for (s, d) in srcf.iter().zip(dst[..count].iter_mut()) {
-            *d = (s.clamp(0.0, 1.0) * 255.0) as u8;
-        }
-    } else {
-        for (s, d) in srcf.iter().zip(dst[..count].iter_mut()) {
-            let v = if s.is_nan() { 0.0 } else { s.clamp(0.0, 1.0) };
-            *d = (v * 255.0) as u8;
-        }
-    }
+    crate::float_simd::convert_f32_to_u8_truncate_slice(srcf, &mut dst[..count], in_facts);
 }
 
 /// f32 → u16 floor truncation (`clamp(0, 1) * 65535`, `DepthPolicy::Truncate`).
@@ -1610,24 +1620,10 @@ fn f32_to_u16_truncate(
     channels: usize,
     in_facts: zenpixels::sample::FloatFacts,
 ) {
-    use zenpixels::sample::FloatFacts;
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..count * 2]);
-    if in_facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE) {
-        for (s, d) in srcf.iter().zip(dst16.iter_mut()) {
-            *d = (*s * 65535.0) as u16;
-        }
-    } else if in_facts.contains(FloatFacts::NO_NAN) {
-        for (s, d) in srcf.iter().zip(dst16.iter_mut()) {
-            *d = (s.clamp(0.0, 1.0) * 65535.0) as u16;
-        }
-    } else {
-        for (s, d) in srcf.iter().zip(dst16.iter_mut()) {
-            let v = if s.is_nan() { 0.0 } else { s.clamp(0.0, 1.0) };
-            *d = (v * 65535.0) as u16;
-        }
-    }
+    crate::float_simd::convert_f32_to_u16_truncate_slice(srcf, dst16, in_facts);
 }
 
 /// Compose an actual SDR transfer change before the one final quantisation.
@@ -1749,15 +1745,23 @@ fn u8_to_u16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
 /// u16 → f32: v / 65535.0.
 fn u16_to_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
-    garb::bytes::convert_u16_to_f32(&src[..count * 2], &mut dst[..count * 4])
-        .expect("pre-validated row size");
+    let src_u16: &[u16] = bytemuck::cast_slice(&src[..count * 2]);
+    let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    crate::float_simd::convert_u16_to_f32_slice(src_u16, dst_f32);
 }
 
 /// f32 → u16: clamp `[0,1]`, * 65535 + 0.5.
-fn f32_to_u16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+fn f32_to_u16(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    channels: usize,
+    in_facts: zenpixels::sample::FloatFacts,
+) {
     let count = width * channels;
-    garb::bytes::convert_f32_to_u16(&src[..count * 4], &mut dst[..count * 2])
-        .expect("pre-validated row size");
+    let src_f32: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dst_u16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..count * 2]);
+    crate::float_simd::convert_f32_to_u16_slice(src_f32, dst_u16, in_facts);
 }
 
 /// f16 → f32: IEEE 754 half-precision unpack (no TF, no scale).
@@ -1888,12 +1892,11 @@ fn pq_u16_to_linear_f32(
 ) {
     let channels = layout.channels();
     let count = width * channels;
-    garb::bytes::convert_u16_to_f32(&src[..count * 2], &mut dst[..count * 4])
-        .expect("pre-validated row size");
+    let src16: &[u16] = bytemuck::cast_slice(&src[..count * 2]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    crate::float_simd::convert_u16_to_f32_slice(src16, &mut dstf[..count]);
     pq_eotf_slice(&mut dstf[..count]);
     multiply_color_channels(&mut dstf[..count], channels, 1.0 / scale);
-    let src16: &[u16] = bytemuck::cast_slice(&src[..count * 2]);
     restore_alpha_u16_f32(src16, &mut dstf[..count], layout);
 }
 
@@ -1902,7 +1905,7 @@ fn pq_u16_to_linear_f32(
 /// Anchors the RGB lanes (`× scale`, negatives → 0), applies the PQ
 /// OETF ([`pq_oetf_slice`]) in fixed stack-sized chunks (the U16 output is
 /// half-width, so it cannot host the in-place f32 transform), then narrows to U16
-/// (`garb` SIMD). For alpha-bearing layouts the alpha lane is overwritten with its
+/// (`float_simd`). For alpha-bearing layouts the alpha lane is overwritten with its
 /// linear → U16 value (never OETF'd or anchored). `scale == 1.0` is the identity.
 fn linear_f32_to_pq_u16(
     src: &[u8],
@@ -1926,12 +1929,8 @@ fn linear_f32_to_pq_u16(
         b.copy_from_slice(&srcf[off..off + n]);
         multiply_color_channels(b, channels, scale);
         pq_oetf_slice(b);
-        garb::bytes::convert_f32_to_u16(
-            bytemuck::cast_slice(&b[..]),
-            &mut dst[off * 2..(off + n) * 2],
-        )
-        .expect("pre-validated row size");
         let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[off * 2..(off + n) * 2]);
+        crate::float_simd::convert_f32_to_u16_slice(b, dst16, zenpixels::sample::FloatFacts::NONE);
         restore_alpha_f32_u16(&srcf[off..off + n], dst16, layout);
         off += n;
     }
@@ -2048,10 +2047,9 @@ pub(crate) fn hlg_eotf(v: f32) -> f32 {
 /// alpha-preserving (the alpha lane is carried linearly, `v / 65535`).
 fn hlg_u16_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, layout: ChannelLayout) {
     let count = width * layout.channels();
-    garb::bytes::convert_u16_to_f32(&src[..count * 2], &mut dst[..count * 4])
-        .expect("pre-validated row size");
     let src16: &[u16] = bytemuck::cast_slice(&src[..count * 2]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    crate::float_simd::convert_u16_to_f32_slice(src16, dstf);
     linear_srgb::default::hlg_to_linear_slice(dstf);
     restore_alpha_u16_f32(src16, dstf, layout);
 }
@@ -2070,8 +2068,11 @@ fn linear_f32_to_hlg_u16(src: &[u8], dst: &mut [u8], width: usize, layout: Chann
         let encoded = &mut lanes[..s.len()];
         encoded.copy_from_slice(s);
         linear_srgb::default::linear_to_hlg_slice(encoded);
-        garb::bytes::convert_f32_to_u16(bytemuck::cast_slice(&*encoded), d)
-            .expect("pre-validated row size");
+        crate::float_simd::convert_f32_to_u16_slice(
+            encoded,
+            bytemuck::cast_slice_mut(d),
+            zenpixels::sample::FloatFacts::NONE,
+        );
     }
     let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..count * 2]);
     restore_alpha_f32_u16(srcf, dst16, layout);
@@ -2437,10 +2438,11 @@ fn straight_to_premul(
     width: usize,
     ch_type: ChannelType,
     layout: ChannelLayout,
+    in_facts: zenpixels::sample::FloatFacts,
 ) {
     let channels = layout.channels();
     match (ch_type, channels) {
-        // Garb fast paths (SIMD, RGBA 4-channel).
+        // Garb integer fast path (SIMD, RGBA 4-channel u8).
         (ChannelType::U8, 4) => {
             let n = width * 4;
             garb::bytes::premultiply_alpha_rgba_u8_copy(&src[..n], &mut dst[..n])
@@ -2448,8 +2450,11 @@ fn straight_to_premul(
         }
         (ChannelType::F32, 4) => {
             let n = width * 16;
-            garb::bytes::premultiply_alpha_f32_copy(&src[..n], &mut dst[..n])
-                .expect("pre-validated row size");
+            crate::float_simd::premul_rgba_f32_slice(
+                bytemuck::cast_slice(&src[..n]),
+                bytemuck::cast_slice_mut(&mut dst[..n]),
+                in_facts,
+            );
         }
         // Per-type kernels for the remaining shapes.
         (ChannelType::U8, 2) => premul_u8_ga(&src[..width * 2], &mut dst[..width * 2], width),
@@ -2711,14 +2716,18 @@ fn premul_to_straight(
     width: usize,
     ch_type: ChannelType,
     layout: ChannelLayout,
+    in_facts: zenpixels::sample::FloatFacts,
 ) {
     let channels = layout.channels();
     match (ch_type, channels) {
-        // Garb fast path (SIMD, f32 RGBA).
+        // SIMD RGBA f32 fast path.
         (ChannelType::F32, 4) => {
             let n = width * 16;
-            garb::bytes::unpremultiply_alpha_f32_copy(&src[..n], &mut dst[..n])
-                .expect("pre-validated row size");
+            crate::float_simd::unpremul_rgba_f32_slice(
+                bytemuck::cast_slice(&src[..n]),
+                bytemuck::cast_slice_mut(&mut dst[..n]),
+                in_facts,
+            );
         }
         // Per-type kernels.
         (ChannelType::U8, 2) => unpremul_u8_ga(&src[..width * 2], &mut dst[..width * 2], width),

@@ -308,6 +308,7 @@ mod sealed {
 }
 pub mod error;
 pub(crate) mod f16_scalar;
+pub(crate) mod float_simd;
 mod gamma_math;
 mod negotiate;
 
