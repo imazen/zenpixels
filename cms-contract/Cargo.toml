@@ -20,7 +20,7 @@ archmage = "0.9.31"
 [patch.crates-io]
 archmage = { git = "https://github.com/imazen/archmage", rev = "303341570757936368fca1ee7254a19075cbff08" }
 magetypes = { git = "https://github.com/imazen/archmage", rev = "303341570757936368fca1ee7254a19075cbff08" }
-garb = { git = "https://github.com/imazen/garb", rev = "a79c26e060a5aa7624ef64b93b5ad1785a1e2d5f" }
+garb = { git = "https://github.com/imazen/garb", rev = "2df916a08d156a5f938f3d96586ac7ff35fc9357" }
 linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "360fb968cda351b2e161d10e66b36414f4d3b9e7" }
 
 [dev-dependencies]
