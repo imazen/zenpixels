@@ -49,7 +49,7 @@ introspection = []
 icc-db = ["dep:lz4_flex"]
 # CSS Color 4 string parser (`css` module and `ColorConvertExt::parse_css`).
 css = []
-std = ["zenpixels/std", "linear-srgb/std", "garb/std"]
+std = ["zenpixels/std", "linear-srgb/std", "garb/std", "archmage/std", "magetypes/std", "magemath/std"]
 # SIMD transpose kernels (x86-64 AVX2 + aarch64 NEON + WASM SIMD128) behind
 # apply_orientation*. Enabled by default; disable (`default-features = false`)
 # when portable scalar tiled/blocked transposes suffice. Output is bit-identical.
@@ -64,7 +64,7 @@ fast-transpose = []
 # kernels are hardwired 8-wide AVX2 — no clean 16-wide variant, so no `_v4` is
 # defined for them). x86 without this feature still gets 8-wide F16C; aarch64
 # gets NEON-fp16 regardless.
-avx512 = ["magetypes/avx512", "archmage/avx512", "linear-srgb/avx512"]
+avx512 = ["magetypes/avx512", "archmage/avx512", "magemath/avx512", "linear-srgb/avx512"]
 # The same bits as native tiers on strict WASM and engines that round relaxed madd twice, using
 # software FMA: up to about 18x slower there. No effect on native targets, which always match.
 precise-portable = ["linear-srgb/precise-portable"]
@@ -115,10 +115,10 @@ __bench_float_depth = []
 [dependencies]
 enough = { version = "0.4.4", default-features = false }
 zenpixels = { workspace = true, default-features = false, features = ["icc"] }
-linear-srgb = { version = "0.6.13", git = "https://github.com/imazen/linear-srgb", rev = "fd4c475a699bbb41cacaba6e53f24c63bffab67a", default-features = false, features = ["transfer"] }
+linear-srgb = { version = "0.6.13", git = "https://github.com/imazen/linear-srgb", rev = "abd98dd1af9e958d11912245d6d523b075b67ad1", default-features = false, features = ["transfer"] }
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8.53", default-features = false, features = ["bytemuck"], optional = true }
-garb = { version = "0.2.9", git = "https://github.com/imazen/garb", rev = "c6bdf1a311fd853e992f03084bdbb2b0792f0817", default-features = false }
+garb = { version = "0.2.9", git = "https://github.com/imazen/garb", rev = "aa685891a04028ce747e9bf1bd0024e31ab6c439", default-features = false }
 # Unified macros require the stable 0.9.32 release. SIMD types stay internal.
 archmage = { version = "0.9.32", default-features = false }
 # Direct libm dep for the hdr-experimental Bt2446A / HdrToSdr scalar paths

@@ -1,7 +1,7 @@
 //! HLG and BT.709 rows run the SIMD slices. They stay within rounding of per-sample math.
 use super::KernelConverter as RowConverter;
 use crate::ConvertOptions;
-use linear_srgb::tf;
+use linear_srgb::default as tf;
 use zenpixels::{
     ChannelLayout as L, ChannelType as T, PixelDescriptor as D, TransferFunction as Tf,
 };

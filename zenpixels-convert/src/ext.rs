@@ -1101,7 +1101,7 @@ mod tests {
             match self {
                 Self::Linear | Self::Unknown => v,
                 Self::Srgb => linear_srgb::precise::srgb_to_linear(v),
-                Self::Bt709 => linear_srgb::tf::bt709_to_linear(v),
+                Self::Bt709 => linear_srgb::default::bt709_to_linear(v),
                 Self::Gamma22 => linear_srgb::default::gamma_to_linear(v, 563.0 / 256.0),
                 Self::Pq => pq_eotf(v),
                 Self::Hlg => hlg_eotf(v),
@@ -1112,7 +1112,7 @@ mod tests {
             match self {
                 Self::Linear | Self::Unknown => v,
                 Self::Srgb => linear_srgb::precise::linear_to_srgb(v),
-                Self::Bt709 => linear_srgb::tf::linear_to_bt709(v),
+                Self::Bt709 => linear_srgb::default::linear_to_bt709(v),
                 Self::Gamma22 => linear_srgb::default::linear_to_gamma(v, 563.0 / 256.0),
                 Self::Pq => pq_oetf(v),
                 Self::Hlg => hlg_oetf(v),

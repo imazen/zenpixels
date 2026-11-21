@@ -1,4 +1,6 @@
 use archmage::ScalarToken;
+#[cfg(any(feature = "cms-moxcms", test))]
+use magemath::SimdMath;
 use magemath::powf::{Powf, PowfOptions};
 
 const MAGNITUDE_POWER: u128 = PowfOptions::new()
@@ -6,9 +8,6 @@ const MAGNITUDE_POWER: u128 = PowfOptions::new()
     .highp()
     .caller()
     .bits();
-
-#[cfg(any(feature = "cms-moxcms", test))]
-const MAGNITUDE_POWER_SIMD: u128 = PowfOptions::new().reject_subnormals().highp().bits();
 
 /// High-precision power on positive normal magnitudes. The existing libm path
 /// owns exceptional inputs and values outside the checked approximation range.
@@ -19,10 +18,17 @@ pub(crate) fn magnitude_pow(base: f32, exponent: f32) -> f32 {
 }
 
 /// Evaluates `|v|^exponent * sign(v)` across RGB (`channels == 3`) or RGBA (`channels == 4`)
-/// buffers using 8-wide SIMD `Powf` (`Execution::Upgrade`, canonical bit-exact `highp`),
-/// falling back per-lane to [`magnitude_pow`] on chunks containing subnormals or non-finites.
+/// buffers using 8-wide SIMD `Powf` (dispatched once per buffer via `attuned!`, canonical
+/// bit-exact `highp` with `.caller()`), falling back per-lane to [`magnitude_pow`] on
+/// chunks containing subnormals or non-finites.
 #[cfg(any(feature = "cms-moxcms", test))]
 pub(crate) fn apply_signed_pow_rgb(target: &mut [f32], channels: usize, exponent: f32) {
+    archmage::attuned!(apply_signed_pow_rgb_tier(target, channels, exponent));
+}
+
+#[cfg(any(feature = "cms-moxcms", test))]
+#[archmage::attune(_*_t, define(f32x8))]
+fn apply_signed_pow_rgb_tier(token: Token, target: &mut [f32], channels: usize, exponent: f32) {
     match channels {
         3 => {
             let usable = (target.len() / 3) * 3;
@@ -30,7 +36,10 @@ pub(crate) fn apply_signed_pow_rgb(target: &mut [f32], channels: usize, exponent
             for chunk in chunks {
                 let orig = *chunk;
                 let abs = orig.map(f32::abs);
-                if let Ok(out) = Powf::<MAGNITUDE_POWER_SIMD>::array::<8>(abs, exponent) {
+                if let Ok(out_vec) =
+                    f32x8::from_array_t(token, abs).try_powf_with::<MAGNITUDE_POWER>(exponent)
+                {
+                    let out = out_vec.to_array();
                     for i in 0..8 {
                         chunk[i] = out[i].copysign(orig[i]);
                     }
@@ -58,7 +67,10 @@ pub(crate) fn apply_signed_pow_rgb(target: &mut [f32], channels: usize, exponent
                     orig[6].abs(),
                     1.0,
                 ];
-                if let Ok(out) = Powf::<MAGNITUDE_POWER_SIMD>::array::<8>(abs, exponent) {
+                if let Ok(out_vec) =
+                    f32x8::from_array_t(token, abs).try_powf_with::<MAGNITUDE_POWER>(exponent)
+                {
+                    let out = out_vec.to_array();
                     pair[0] = out[0].copysign(orig[0]);
                     pair[1] = out[1].copysign(orig[1]);
                     pair[2] = out[2].copysign(orig[2]);

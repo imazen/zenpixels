@@ -367,7 +367,7 @@ fn pq_and_explicit_linear_anchor_describe_the_same_luminance() {
     let linear = PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::Bt2020);
     let pq = linear.with_transfer(TransferFunction::Pq);
     let peak = 1000.;
-    let code = linear_srgb::tf::linear_to_pq(peak / 10_000.);
+    let code = linear_srgb::default::linear_to_pq(peak / 10_000.);
     let pq_buffer =
         PixelBuffer::from_vec(bytemuck::cast_slice(&[code; 3]).to_vec(), 1, 1, pq).unwrap();
     let relative = PixelBuffer::from_vec(

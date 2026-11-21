@@ -112,7 +112,7 @@ fn gamma22_to_srgb_f32_via_linear() {
     for (s, d) in src.iter().zip(dst.iter()) {
         // Path: gamma22-encoded -> linear (gamma22 EOTF) -> sRGB-encoded (sRGB OETF).
         let lin = gamma22_to_linear(*s);
-        let expected = linear_srgb::tf::linear_to_srgb(lin);
+        let expected = linear_srgb::default::linear_to_srgb(lin);
         assert!(
             (d - expected).abs() < 2e-3,
             "gamma22->srgb via linear: {s} -> {d}, expected {expected}"
@@ -152,7 +152,7 @@ fn adobe_rgb_to_bt2020_pq_f32_preserves_neutral_gray() {
         .zip([0.25f32, 0.5, 0.75].iter())
     {
         let lin = gamma22_to_linear(sv);
-        let pq_expected = linear_srgb::tf::linear_to_pq(lin);
+        let pq_expected = linear_srgb::default::linear_to_pq(lin);
         for &d in chunk {
             assert!(
                 (d - pq_expected).abs() < 5e-3,

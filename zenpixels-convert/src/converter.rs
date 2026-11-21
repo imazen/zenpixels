@@ -2984,8 +2984,8 @@ let _options = request.options();
     fn bt709_linear_f32_roundtrip() {
         let values = [0.0f32, 0.1, 0.25, 0.5, 0.75, 1.0];
         for &v in &values {
-            let linear = linear_srgb::tf::bt709_to_linear(v);
-            let back = linear_srgb::tf::linear_to_bt709(linear);
+            let linear = linear_srgb::default::bt709_to_linear(v);
+            let back = linear_srgb::default::linear_to_bt709(linear);
             assert!(
                 (back - v).abs() < 1e-5,
                 "Bt709 roundtrip failed for {v}: linearize={linear}, delinearize={back}"

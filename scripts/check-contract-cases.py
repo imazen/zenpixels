@@ -28,10 +28,8 @@ imgref = "1.12"
 whereat = "0.1.5"
 [patch.crates-io]
 zenpixels = {{ path = {json.dumps(str(root / 'zenpixels'))} }}
-archmage = {{ git = "https://github.com/imazen/archmage", rev = "303341570757936368fca1ee7254a19075cbff08" }}
-magetypes = {{ git = "https://github.com/imazen/archmage", rev = "303341570757936368fca1ee7254a19075cbff08" }}
-garb = {{ git = "https://github.com/imazen/garb", rev = "127c1f77e011c24b505b32ed572e694700789e0a" }}
-linear-srgb = {{ git = "https://github.com/imazen/linear-srgb", rev = "360fb968cda351b2e161d10e66b36414f4d3b9e7" }}
+garb = {{ git = "https://github.com/imazen/garb", rev = "aa685891a04028ce747e9bf1bd0024e31ab6c439" }}
+linear-srgb = {{ git = "https://github.com/imazen/linear-srgb", rev = "abd98dd1af9e958d11912245d6d523b075b67ad1" }}
 """
     (project / "Cargo.toml").write_text(manifest)
     modules = []

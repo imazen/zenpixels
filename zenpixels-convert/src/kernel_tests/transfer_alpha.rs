@@ -121,7 +121,7 @@ fn assert_alpha_f32(dst: &[u8], channels: usize, alpha_idx: usize, expect: impl 
             want.to_bits(),
             "pixel {i}: alpha must be carried linearly, got {got} want {want} \
              (a transferred alpha would be ~{:.4})",
-            linear_srgb::tf::srgb_to_linear(want)
+            linear_srgb::default::srgb_to_linear(want)
         );
     }
 }

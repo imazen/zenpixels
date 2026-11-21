@@ -18,8 +18,8 @@ bytemuck = "1.21"
 archmage = "0.9.32"
 
 [patch.crates-io]
-garb = { git = "https://github.com/imazen/garb", rev = "c6bdf1a311fd853e992f03084bdbb2b0792f0817" }
-linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "fd4c475a699bbb41cacaba6e53f24c63bffab67a" }
+garb = { git = "https://github.com/imazen/garb", rev = "aa685891a04028ce747e9bf1bd0024e31ab6c439" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "abd98dd1af9e958d11912245d6d523b075b67ad1" }
 
 [dev-dependencies]
 zenbench = "0.1.11"

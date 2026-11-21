@@ -1,5 +1,6 @@
 //! The matte blend against the formula, sample by sample, at every depth and transfer.
-use linear_srgb::{default as ds, tf};
+use linear_srgb::default as ds;
+use linear_srgb::default as tf;
 use zenpixels::{
     AlphaMode, ChannelLayout as L, ChannelType as T, PixelDescriptor as D, TransferFunction as Tf,
 };

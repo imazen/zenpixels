@@ -1853,7 +1853,7 @@ fn f32_to_f16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
 /// Uses the existing `linear-srgb` transfer curve.
 #[inline]
 pub(crate) fn pq_eotf(v: f32) -> f32 {
-    linear_srgb::tf::pq_to_linear(v)
+    linear_srgb::default::pq_to_linear(v)
 }
 
 /// PQ inverse EOTF (OETF): linear light `[0,1]` → encoded `[0,1]`.
@@ -1861,7 +1861,7 @@ pub(crate) fn pq_eotf(v: f32) -> f32 {
 /// Uses the existing `linear-srgb` transfer curve.
 #[inline]
 pub(crate) fn pq_oetf(v: f32) -> f32 {
-    linear_srgb::tf::linear_to_pq(v)
+    linear_srgb::default::linear_to_pq(v)
 }
 
 /// Per-tier SIMD body for [`multiply_color_channels`]. `channels == 4` builds a
@@ -2088,7 +2088,7 @@ fn linear_f32_to_pq_f32(
 #[cfg(test)]
 #[inline]
 pub(crate) fn hlg_oetf(v: f32) -> f32 {
-    linear_srgb::tf::linear_to_hlg(v)
+    linear_srgb::default::linear_to_hlg(v)
 }
 
 /// HLG inverse OETF (EOTF): encoded `[0,1]` → scene-linear `[0,1]`.
@@ -2097,7 +2097,7 @@ pub(crate) fn hlg_oetf(v: f32) -> f32 {
 #[cfg(test)]
 #[inline]
 pub(crate) fn hlg_eotf(v: f32) -> f32 {
-    linear_srgb::tf::hlg_to_linear(v)
+    linear_srgb::default::hlg_to_linear(v)
 }
 
 /// HLG U16 → Linear F32 (EOTF applied during depth conversion),

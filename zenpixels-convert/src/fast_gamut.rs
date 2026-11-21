@@ -242,32 +242,32 @@ macro_rules! stamp_trc_kernels {
 stamp_trc_kernels!(srgb,
     simd_linearize: trc_x8::srgb_to_linear_v3,
     simd_encode: trc_x8::linear_to_srgb_v3,
-    scalar_linearize: linear_srgb::tf::srgb_to_linear,
-    scalar_encode: linear_srgb::tf::linear_to_srgb
+    scalar_linearize: linear_srgb::default::srgb_to_linear,
+    scalar_encode: linear_srgb::default::linear_to_srgb
 );
 
 // BT.709 TRC (BT.2020 SDR)
 stamp_trc_kernels!(bt709,
     simd_linearize: trc_x8::bt709_to_linear_v3,
     simd_encode: trc_x8::linear_to_bt709_v3,
-    scalar_linearize: linear_srgb::tf::bt709_to_linear,
-    scalar_encode: linear_srgb::tf::linear_to_bt709
+    scalar_linearize: linear_srgb::default::bt709_to_linear,
+    scalar_encode: linear_srgb::default::linear_to_bt709
 );
 
 // PQ TRC (BT.2020 PQ / HDR10)
 stamp_trc_kernels!(pq,
     simd_linearize: trc_x8::pq_to_linear_v3,
     simd_encode: trc_x8::linear_to_pq_v3,
-    scalar_linearize: linear_srgb::tf::pq_to_linear,
-    scalar_encode: linear_srgb::tf::linear_to_pq
+    scalar_linearize: linear_srgb::default::pq_to_linear,
+    scalar_encode: linear_srgb::default::linear_to_pq
 );
 
 // HLG TRC (BT.2020 HLG)
 stamp_trc_kernels!(hlg,
     simd_linearize: trc_x8::hlg_to_linear_v3,
     simd_encode: trc_x8::linear_to_hlg_v3,
-    scalar_linearize: linear_srgb::tf::hlg_to_linear,
-    scalar_encode: linear_srgb::tf::linear_to_hlg
+    scalar_linearize: linear_srgb::default::hlg_to_linear,
+    scalar_encode: linear_srgb::default::linear_to_hlg
 );
 
 // =========================================================================
@@ -383,40 +383,40 @@ pub(crate) fn convert_linear_rgba_neon(
 stamp_trc_kernels!(pq_to_srgb,
     simd_linearize: trc_x8::pq_to_linear_v3,
     simd_encode: trc_x8::linear_to_srgb_v3,
-    scalar_linearize: linear_srgb::tf::pq_to_linear,
-    scalar_encode: linear_srgb::tf::linear_to_srgb
+    scalar_linearize: linear_srgb::default::pq_to_linear,
+    scalar_encode: linear_srgb::default::linear_to_srgb
 );
 
 // HLG source → sRGB dest
 stamp_trc_kernels!(hlg_to_srgb,
     simd_linearize: trc_x8::hlg_to_linear_v3,
     simd_encode: trc_x8::linear_to_srgb_v3,
-    scalar_linearize: linear_srgb::tf::hlg_to_linear,
-    scalar_encode: linear_srgb::tf::linear_to_srgb
+    scalar_linearize: linear_srgb::default::hlg_to_linear,
+    scalar_encode: linear_srgb::default::linear_to_srgb
 );
 
 // sRGB source → PQ dest
 stamp_trc_kernels!(srgb_to_pq,
     simd_linearize: trc_x8::srgb_to_linear_v3,
     simd_encode: trc_x8::linear_to_pq_v3,
-    scalar_linearize: linear_srgb::tf::srgb_to_linear,
-    scalar_encode: linear_srgb::tf::linear_to_pq
+    scalar_linearize: linear_srgb::default::srgb_to_linear,
+    scalar_encode: linear_srgb::default::linear_to_pq
 );
 
 // BT.709 source → sRGB dest (BT.2020 SDR → sRGB)
 stamp_trc_kernels!(bt709_to_srgb,
     simd_linearize: trc_x8::bt709_to_linear_v3,
     simd_encode: trc_x8::linear_to_srgb_v3,
-    scalar_linearize: linear_srgb::tf::bt709_to_linear,
-    scalar_encode: linear_srgb::tf::linear_to_srgb
+    scalar_linearize: linear_srgb::default::bt709_to_linear,
+    scalar_encode: linear_srgb::default::linear_to_srgb
 );
 
 // sRGB source → BT.709 dest (sRGB → BT.2020 SDR)
 stamp_trc_kernels!(srgb_to_bt709,
     simd_linearize: trc_x8::srgb_to_linear_v3,
     simd_encode: trc_x8::linear_to_bt709_v3,
-    scalar_linearize: linear_srgb::tf::srgb_to_linear,
-    scalar_encode: linear_srgb::tf::linear_to_bt709
+    scalar_linearize: linear_srgb::default::srgb_to_linear,
+    scalar_encode: linear_srgb::default::linear_to_bt709
 );
 
 // =========================================================================
@@ -473,14 +473,14 @@ stamp_trc_kernels!(adobe_to_srgb,
     simd_linearize: adobe_to_linear_x8,
     simd_encode: trc_x8::linear_to_srgb_v3,
     scalar_linearize: adobe_to_linear_scalar,
-    scalar_encode: linear_srgb::tf::linear_to_srgb
+    scalar_encode: linear_srgb::default::linear_to_srgb
 );
 
 // sRGB source → Adobe RGB dest (sRGB linearize, gamma 2.2 encode)
 stamp_trc_kernels!(srgb_to_adobe,
     simd_linearize: trc_x8::srgb_to_linear_v3,
     simd_encode: adobe_from_linear_x8,
-    scalar_linearize: linear_srgb::tf::srgb_to_linear,
+    scalar_linearize: linear_srgb::default::srgb_to_linear,
     scalar_encode: adobe_from_linear_scalar
 );
 
@@ -646,10 +646,10 @@ fn simd_encode_x8_dispatch(_token: X64V3Token, trc: TransferFunction, v: [f32; 8
 /// Scalar linearization function for a given transfer function.
 pub(crate) fn scalar_linearize(trc: TransferFunction) -> Option<fn(f32) -> f32> {
     match trc {
-        TransferFunction::Srgb => Some(linear_srgb::tf::srgb_to_linear),
-        TransferFunction::Bt709 => Some(linear_srgb::tf::bt709_to_linear),
-        TransferFunction::Pq => Some(linear_srgb::tf::pq_to_linear),
-        TransferFunction::Hlg => Some(linear_srgb::tf::hlg_to_linear),
+        TransferFunction::Srgb => Some(linear_srgb::default::srgb_to_linear),
+        TransferFunction::Bt709 => Some(linear_srgb::default::bt709_to_linear),
+        TransferFunction::Pq => Some(linear_srgb::default::pq_to_linear),
+        TransferFunction::Hlg => Some(linear_srgb::default::hlg_to_linear),
         TransferFunction::Gamma22 => Some(adobe_to_linear_scalar),
         TransferFunction::Linear => Some(core::convert::identity),
         _ => None,
@@ -659,10 +659,10 @@ pub(crate) fn scalar_linearize(trc: TransferFunction) -> Option<fn(f32) -> f32> 
 /// Scalar encode function for a given transfer function.
 pub(crate) fn scalar_encode(trc: TransferFunction) -> Option<fn(f32) -> f32> {
     match trc {
-        TransferFunction::Srgb => Some(linear_srgb::tf::linear_to_srgb),
-        TransferFunction::Bt709 => Some(linear_srgb::tf::linear_to_bt709),
-        TransferFunction::Pq => Some(linear_srgb::tf::linear_to_pq),
-        TransferFunction::Hlg => Some(linear_srgb::tf::linear_to_hlg),
+        TransferFunction::Srgb => Some(linear_srgb::default::linear_to_srgb),
+        TransferFunction::Bt709 => Some(linear_srgb::default::linear_to_bt709),
+        TransferFunction::Pq => Some(linear_srgb::default::linear_to_pq),
+        TransferFunction::Hlg => Some(linear_srgb::default::linear_to_hlg),
         TransferFunction::Gamma22 => Some(adobe_from_linear_scalar),
         TransferFunction::Linear => Some(core::convert::identity),
         _ => None,
@@ -902,9 +902,11 @@ pub(crate) fn scalar_encode_u8(trc: TransferFunction) -> Option<fn(f32) -> u8> {
     }
     match trc {
         TransferFunction::Srgb => Some(srgb_u8),
-        TransferFunction::Bt709 => Some(|v| quantize_with(linear_srgb::tf::linear_to_bt709, v)),
-        TransferFunction::Pq => Some(|v| quantize_with(linear_srgb::tf::linear_to_pq, v)),
-        TransferFunction::Hlg => Some(|v| quantize_with(linear_srgb::tf::linear_to_hlg, v)),
+        TransferFunction::Bt709 => {
+            Some(|v| quantize_with(linear_srgb::default::linear_to_bt709, v))
+        }
+        TransferFunction::Pq => Some(|v| quantize_with(linear_srgb::default::linear_to_pq, v)),
+        TransferFunction::Hlg => Some(|v| quantize_with(linear_srgb::default::linear_to_hlg, v)),
         TransferFunction::Gamma22 => Some(|v| quantize_with(adobe_from_linear_scalar, v)),
         TransferFunction::Linear => Some(|v| (v * 255.0 + 0.5).clamp(0.0, 255.0) as u8),
         _ => None,
@@ -2414,16 +2416,16 @@ mod tests {
             &mat,
             &[255, 255, 255],
             &mut dst,
-            linear_srgb::tf::srgb_to_linear,
-            linear_srgb::tf::linear_to_srgb,
+            linear_srgb::default::srgb_to_linear,
+            linear_srgb::default::linear_to_srgb,
         );
         assert_eq!(dst, [255, 255, 255]);
         convert_u8_rgb(
             &mat,
             &[0, 0, 0],
             &mut dst,
-            linear_srgb::tf::srgb_to_linear,
-            linear_srgb::tf::linear_to_srgb,
+            linear_srgb::default::srgb_to_linear,
+            linear_srgb::default::linear_to_srgb,
         );
         assert_eq!(dst, [0, 0, 0]);
     }
@@ -2431,7 +2433,7 @@ mod tests {
     #[test]
     fn u8_lut_lut_matches_scalar() {
         let mat = m(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709);
-        let lut = build_linearize_lut(linear_srgb::tf::srgb_to_linear);
+        let lut = build_linearize_lut(linear_srgb::default::srgb_to_linear);
         let enc_u8 = scalar_encode_u8(TransferFunction::Srgb).unwrap();
         let src = [128u8, 64, 200];
         let mut dst_scalar = [0u8; 3];
@@ -2440,8 +2442,8 @@ mod tests {
             &mat,
             &src,
             &mut dst_scalar,
-            linear_srgb::tf::srgb_to_linear,
-            linear_srgb::tf::linear_to_srgb,
+            linear_srgb::default::srgb_to_linear,
+            linear_srgb::default::linear_to_srgb,
         );
         convert_u8_rgb_lut_lut(&mat, &src, &mut dst_lut, &lut, enc_u8);
         assert_eq!(
@@ -2458,8 +2460,8 @@ mod tests {
             &mat,
             &[128, 64, 32, 200],
             &mut dst,
-            linear_srgb::tf::srgb_to_linear,
-            linear_srgb::tf::linear_to_srgb,
+            linear_srgb::default::srgb_to_linear,
+            linear_srgb::default::linear_to_srgb,
         );
         assert_eq!(dst[3], 200);
     }
@@ -2472,16 +2474,16 @@ mod tests {
             &mat,
             &[65535, 65535, 65535],
             &mut dst,
-            linear_srgb::tf::srgb_to_linear,
-            linear_srgb::tf::linear_to_srgb,
+            linear_srgb::default::srgb_to_linear,
+            linear_srgb::default::linear_to_srgb,
         );
         assert_eq!(dst, [65535, 65535, 65535]);
         convert_u16_rgb(
             &mat,
             &[0, 0, 0],
             &mut dst,
-            linear_srgb::tf::srgb_to_linear,
-            linear_srgb::tf::linear_to_srgb,
+            linear_srgb::default::srgb_to_linear,
+            linear_srgb::default::linear_to_srgb,
         );
         assert_eq!(dst, [0, 0, 0]);
     }
