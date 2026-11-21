@@ -59,7 +59,7 @@ checksum = "877362cb7b70d1c617f0cd3c67708bd58d894a86af5104018e2c10ebaee3c02f"
 [[package]]
 name = "garb"
 version = "0.2.9"
-source = "git+https://github.com/imazen/garb?rev=aa685891a04028ce747e9bf1bd0024e31ab6c439#aa685891a04028ce747e9bf1bd0024e31ab6c439"
+source = "git+https://github.com/imazen/garb?rev=a21a9f701e09ad01acb661276f0143ddd1e9095a#a21a9f701e09ad01acb661276f0143ddd1e9095a"
 dependencies = [
  "archmage",
 ]
@@ -81,7 +81,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 [[package]]
 name = "linear-srgb"
 version = "0.6.13"
-source = "git+https://github.com/imazen/linear-srgb?rev=abd98dd1af9e958d11912245d6d523b075b67ad1#abd98dd1af9e958d11912245d6d523b075b67ad1"
+source = "git+https://github.com/imazen/linear-srgb?rev=9ccaccade9021aa13d7ecb98f53f1632986d21f0#9ccaccade9021aa13d7ecb98f53f1632986d21f0"
 dependencies = [
  "archmage",
  "bytemuck",
