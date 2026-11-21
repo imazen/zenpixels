@@ -1,5 +1,4 @@
 use zenpixels::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
-use zenpixels_convert::RowConverter;
 
 fn oracle(v: u16) -> u8 {
     ((u32::from(v) * 255 + 32767) / 65535) as u8
@@ -17,8 +16,9 @@ fn check(layout: ChannelLayout, alpha: Option<AlphaMode>, tf: TransferFunction) 
         }
     }
     let mut output = vec![0u8; width * channels];
-    let mut conv = RowConverter::new(src, dst).unwrap();
-    conv.convert_row(&input, &mut output, width as u32);
+    let mut conv = crate::test_conversion::new_worker(src, dst).unwrap();
+    conv.try_convert_row(&input, &mut output, width as u32)
+        .unwrap();
     let mut bad = 0usize;
     let mut first = None;
     for v in 0..=u16::MAX {
@@ -41,7 +41,7 @@ fn check(layout: ChannelLayout, alpha: Option<AlphaMode>, tf: TransferFunction) 
     strided_src[..input.len()].copy_from_slice(&input);
     strided_src[src_stride..src_stride + input.len()].copy_from_slice(&input);
     let mut strided_dst = vec![0x59; dst_stride * 2];
-    conv.convert_rows(
+    conv.convert_raw_rows(
         &strided_src,
         src_stride,
         &mut strided_dst,
@@ -56,13 +56,15 @@ fn check(layout: ChannelLayout, alpha: Option<AlphaMode>, tf: TransferFunction) 
 
     let mid = PixelDescriptor::new(ChannelType::F32, layout, alpha, tf);
     let mut via_f32 = vec![0u8; width * channels * 4];
-    RowConverter::new(src, mid)
+    crate::test_conversion::new_worker(src, mid)
         .unwrap()
-        .convert_row(&input, &mut via_f32, width as u32);
+        .try_convert_row(&input, &mut via_f32, width as u32)
+        .unwrap();
     let mut f32_output = vec![0u8; width * channels];
-    RowConverter::new(mid, dst)
+    crate::test_conversion::new_worker(mid, dst)
         .unwrap()
-        .convert_row(&via_f32, &mut f32_output, width as u32);
+        .try_convert_row(&via_f32, &mut f32_output, width as u32)
+        .unwrap();
     assert_eq!(
         f32_output, output,
         "{layout:?} {alpha:?} {tf:?}: f32 narrowing mismatch"
@@ -122,7 +124,7 @@ fn tagged_srgb_uses_integer_narrowing() {
 
     let src = PixelDescriptor::RGB16_SRGB;
     let dst = PixelDescriptor::RGB8_SRGB;
-    let mut conv = RowConverter::new(src, dst).unwrap();
+    let mut conv = crate::test_conversion::new_worker(src, dst).unwrap();
     let code = 33025u16;
     let mut input = Vec::new();
     for _ in 0..3 {
@@ -130,7 +132,7 @@ fn tagged_srgb_uses_integer_narrowing() {
     }
     let mut output = [0u8; 3];
     trace::start_recording();
-    conv.convert_row(&input, &mut output, 1);
+    conv.try_convert_row(&input, &mut output, 1).unwrap();
     let steps = trace::stop_recording();
     assert!(steps.contains(&"U16ToU8"), "unexpected plan: {steps:?}");
     assert_eq!(output, [129; 3]);
@@ -148,14 +150,14 @@ fn changed_sdr_transfer_uses_precise_composite_step() {
         TransferFunction::Bt709,
     );
     let to = PixelDescriptor::RGB8_SRGB;
-    let mut conv = RowConverter::new(from, to).unwrap();
+    let mut conv = crate::test_conversion::new_worker(from, to).unwrap();
     let mut input = Vec::new();
     for _ in 0..3 {
         input.extend_from_slice(&1035u16.to_ne_bytes());
     }
     let mut output = [0u8; 3];
     trace::start_recording();
-    conv.convert_row(&input, &mut output, 1);
+    conv.try_convert_row(&input, &mut output, 1).unwrap();
     let steps = trace::stop_recording();
     assert!(steps.contains(&"SdrU16ToU8"), "unexpected plan: {steps:?}");
     assert_eq!(output, [12; 3]);
@@ -231,9 +233,10 @@ fn audit_real_transfer_pair_quantisation() {
             let src = PixelDescriptor::new(ChannelType::U16, ChannelLayout::Rgb, None, src_tf);
             let dst = PixelDescriptor::new(ChannelType::U8, ChannelLayout::Rgb, None, dst_tf);
             let mut output = vec![0u8; width * 3];
-            RowConverter::new(src, dst)
+            crate::test_conversion::new_worker(src, dst)
                 .unwrap()
-                .convert_row(&input, &mut output, width as u32);
+                .try_convert_row(&input, &mut output, width as u32)
+                .unwrap();
             let mut bad = 0usize;
             let mut first = None;
             for v in 0..=u16::MAX {
@@ -281,9 +284,10 @@ fn real_transfer_rgba_keeps_alpha_linear() {
                 let to =
                     PixelDescriptor::new(ChannelType::U8, ChannelLayout::Rgba, Some(alpha), to_tf);
                 let mut output = vec![0u8; width * 4];
-                RowConverter::new(from, to)
+                crate::test_conversion::new_worker(from, to)
                     .unwrap()
-                    .convert_row(&input, &mut output, width as u32);
+                    .try_convert_row(&input, &mut output, width as u32)
+                    .unwrap();
                 for v in 0..=u16::MAX {
                     let encoded = encode_f64(to_tf, decode_f64(from_tf, f64::from(v) / 65535.0));
                     let want_color = if alpha == AlphaMode::Premultiplied {
@@ -308,3 +312,6 @@ fn real_transfer_rgba_keeps_alpha_linear() {
         }
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

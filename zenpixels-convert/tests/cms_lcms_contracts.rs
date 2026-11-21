@@ -1,6 +1,6 @@
 #![cfg(feature = "cms-lcms")]
 use zenpixels_convert::{
-    Cicp, ColorProfileSource as Source, ConvertOptions, Lcms, PixelFormat as F, PluggableCms,
+    Cicp, ColorProfileSource as Source, ConvertOptions, Lcms, PixelFormat as F,
 };
 
 #[path = "common/synthetic_icc.rs"]
@@ -13,9 +13,18 @@ fn build(
     from: F,
     to: F,
 ) -> Box<dyn zenpixels_convert::RowTransformMut> {
-    Lcms.build_source_transform(src, dst, from, to, &ConvertOptions::permissive())
-        .expect("accepted format")
-        .expect("valid profile")
+    Lcms.build_source_transform(
+        src,
+        dst,
+        from,
+        to,
+        &ConvertOptions::retain_channels()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
+    )
+    .expect("accepted format")
+    .expect("valid profile")
 }
 const SRGB: Source<'static> = Source::Cicp(Cicp::new(1, 13, 0, true));
 
@@ -44,7 +53,7 @@ fn preparation_bounds_and_short_rows_fail_before_writes() {
 #[test]
 fn prepared_float_ink_rows_allocate_nothing_and_preserve_padding() {
     let icc = synthetic_icc::synthetic_cmyk_icc();
-    let mut transform = build(Source::Icc(&icc), SRGB, F::CmykF32Inverted, F::RgbF32);
+    let mut transform = build(Source::Icc(&icc), SRGB, F::CMYKF32_INVERTED, F::RgbF32);
     transform.prepare(17).unwrap();
     let input = [1.0f32; 17 * 4];
     let mut output = [f32::from_bits(0x7fc01234); 17 * 3 + 3];
@@ -104,7 +113,7 @@ fn adding_alpha_makes_it_opaque_without_touching_later_pixels() {
 #[test]
 fn cmyk_u16_is_native_and_paper_white_keeps_alpha_opaque() {
     let icc = synthetic_icc::synthetic_cmyk_icc();
-    let mut transform = build(Source::Icc(&icc), SRGB, F::Cmyk16, F::Rgba16);
+    let mut transform = build(Source::Icc(&icc), SRGB, F::CMYK16, F::Rgba16);
     let mut output = [0u16; 4];
     transform
         .try_transform_row(
@@ -121,17 +130,44 @@ fn cmyk_u16_is_native_and_paper_white_keeps_alpha_opaque() {
 fn unsupported_and_device_dependent_descriptions_decline() {
     for format in [F::RgbF16, F::Rgbx8, F::OklabF32] {
         assert!(
-            Lcms.build_source_transform(SRGB, SRGB, format, F::Rgb8, &ConvertOptions::permissive())
-                .is_none()
+            Lcms.build_source_transform(
+                SRGB,
+                SRGB,
+                format,
+                F::Rgb8,
+                &ConvertOptions::retain_channels()
+                    .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                    .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                    .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+            )
+            .is_none()
         );
     }
     assert!(
-        Lcms.build_source_transform(SRGB, SRGB, F::Cmyk8, F::Rgb8, &ConvertOptions::permissive())
-            .is_none()
+        Lcms.build_source_transform(
+            SRGB,
+            SRGB,
+            F::CMYK8,
+            F::Rgb8,
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        )
+        .is_none()
     );
     assert!(
-        Lcms.build_source_transform(SRGB, SRGB, F::Rgb8, F::Rgb16, &ConvertOptions::permissive())
-            .is_none()
+        Lcms.build_source_transform(
+            SRGB,
+            SRGB,
+            F::Rgb8,
+            F::Rgb16,
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        )
+        .is_none()
     );
 }
 
@@ -144,7 +180,10 @@ fn unsupported_rgb_matrix_or_range_is_an_explicit_failure() {
                 SRGB,
                 F::Rgb8,
                 F::Rgb8,
-                &ConvertOptions::permissive()
+                &ConvertOptions::retain_channels()
+                    .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                    .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                    .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
             ),
             Some(Err(_))
         ));
@@ -254,7 +293,10 @@ fn native_integer_pq_layouts_match_analytic_quantization_and_keep_alpha() {
                         Source::Icc(target),
                         format,
                         format,
-                        &ConvertOptions::permissive(),
+                        &ConvertOptions::retain_channels()
+                            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
                     )
                     .is_none(),
                 "MoxCMS must decline the unsupported PQ float pipeline"
@@ -318,3 +360,8 @@ fn native_integer_pq_layouts_match_analytic_quantization_and_keep_alpha() {
         }
     }
 }
+
+#[path = "support/cms.rs"]
+mod test_cms;
+#[allow(unused_imports)]
+use test_cms::TestCmsExt as _;

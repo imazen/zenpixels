@@ -1,5 +1,5 @@
 # zenpixels-convert public API — additions from non-default features
-# features: avx512,bt2446a,cms-lcms,cms-moxcms,estimation-experimental,fast-transpose,hdr-experimental,icc-db,imgref,planar,precise-portable,rgb,serde,std
+# features: avx512,bt2446a,cms-lcms,cms-moxcms,css,fast-transpose,hdr-experimental,icc-db,imgref,introspection,planar,precise-portable,rgb,std
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -9,37 +9,76 @@
 
 ## summary
 #
-#   pub modules                                 3
-#   pub types (struct/enum/trait/alias)        21
-#   pub consts/statics                          3
-#   inherent methods                           36
-#   struct fields                               8
-#   enum variants                               5
-#   trait roster entries (type × trait)        44
-#   auto-trait-complete types                  10
+#   pub modules                                 5
+#   pub types (struct/enum/trait/alias)        33
+#   pub consts/statics                         31
+#   free functions                              1
+#   inherent methods                           51
+#   struct fields                              34
+#   enum variants                              35
+#   trait roster entries (type × trait)       106
+#   conditional trait impls (verbatim)          2
+#   auto-trait-complete types                  20
 #
 # per-module pub lines:
-#   (root)                           22
+#   (root)                           78
 #   cms_lcms                          1
 #   cms_moxcms                        2
-#   ext                               8
-#   hdr                              43
+#   codes                            23
+#   css                               3
+#   ext                              12
+#   hdr                              47
+#   ycbcr                            22
+#   zenpixels                         2
 
-## items (70 lines)
+## items (183 lines)
 
 pub mod cms_lcms
 pub mod cms_moxcms
 pub struct cms_moxcms::MoxCmsError(_)
+#[non_exhaustive] pub enum codes::CodesError
+pub codes::CodesError::ComponentCount
+pub codes::CodesError::ComponentCount::actual: usize
+pub codes::CodesError::ComponentCount::expected: usize
+pub codes::CodesError::Destination
+pub codes::CodesError::Destination::actual: zenpixels::descriptor::PixelDescriptor
+pub codes::CodesError::Extent
+pub codes::CodesError::Extent::component: usize
+pub codes::CodesError::Extent::extent: (usize, usize)
+pub codes::CodesError::Extent::origin: (usize, usize)
+pub codes::CodesError::Extent::plane: (usize, usize)
+pub codes::CodesError::Map
+pub codes::CodesError::Map::component: usize
+pub codes::CodesError::Map::error: codes::CodeMapError
+pub codes::CodesError::Narrowing
+pub codes::CodesError::Narrowing::bits: u8
+pub codes::CodesError::Narrowing::component: usize
+pub codes::CodesError::Narrowing::destination_bits: u8
+pub codes::CodesError::RangeMismatch
+pub codes::CodesError::RangeMismatch::destination: zenpixels::descriptor::SignalRange
+pub codes::CodesError::RangeMismatch::source: zenpixels::descriptor::SignalRange
+pub codes::CodesError::Read(zenpixels::sample::plane::CodePlaneError)
+pub fn codes::to_canonical<'b>(&[zenpixels::sample::plane::CodePlane<'_>], zenpixels::descriptor::SignalRange, usize, usize, zenpixels::buffer::PixelSliceMut<'b>) -> core::result::Result<(zenpixels::buffer::PixelSliceMut<'b>, zenpixels::sample::exact::ExactDepth), whereat::at::At<codes::CodesError>>
+pub mod css
+#[non_exhaustive] pub enum css::CssColorError
+pub css::CssColorError::Invalid
+pub css::CssColorError::Unsupported
+pub fn ext::ColorConvertExt::parse_css(&str) -> core::result::Result<Self, css::CssColorError>
+pub fn zenpixels::color::Color::parse_css(&str) -> core::result::Result<Self, css::CssColorError>
 pub fn ext::PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::bgra::Bgra<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_gray8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_rgb8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgb::Rgb<u8>>
 pub fn ext::PixelBufferConvertTypedExt::to_rgba8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::rgba::Rgba<u8>>
 pub fn ext::PixelBufferHdrConvertExt::convert_to_sdr_measuring_peak(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn ext::PixelBufferHdrConvertExt::convert_to_with_hdr_config(&self, zenpixels::descriptor::PixelDescriptor, HdrConfig) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub fn ext::PlaneConvertExt::oriented(&self, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::plane::AlignedPlane<T>, whereat::at::At<error::ConvertError>>
+pub fn ext::PlaneConvertExt::oriented_into(&self, zenpixels::orientation::Orientation, zenpixels::plane::PlaneMut<'_, T>) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub mod hdr::measure
 pub hdr::measure::LightLevelMethod::LuminanceBt2020
 pub hdr::measure::LightLevelMethod::MaxRgb
+pub fn hdr::measure::CllMeasure::measure_histogram_banded(&zenpixels::banded::BandedPixelBuffer, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<LightLevelHistogram>
 pub fn hdr::measure::CllMeasure::measure_max(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
+pub fn hdr::measure::CllMeasure::measure_max_banded(&zenpixels::banded::BandedPixelBuffer, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
 #[non_exhaustive] pub enum hdr::LightLevelMethod [also: hdr::measure]
 pub hdr::LightLevelMethod::LuminanceBt2020
 pub hdr::LightLevelMethod::MaxRgb
@@ -69,17 +108,69 @@ pub hdr::ToneMapContext::source_peak_nits: f32
 pub hdr::ToneMapContext::target_peak_nits: f32
 pub hdr::ToneMapContext::working_primaries: zenpixels::descriptor::ColorPrimaries
 pub trait hdr::CllMeasure: sealed::Sealed [also: hdr::measure]
+pub fn hdr::CllMeasure::measure_histogram_banded(&zenpixels::banded::BandedPixelBuffer, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<LightLevelHistogram>
 pub fn hdr::CllMeasure::measure_max(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
+pub fn hdr::CllMeasure::measure_max_banded(&zenpixels::banded::BandedPixelBuffer, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
 pub trait hdr::StripMapper: core::marker::Send + core::marker::Sync + core::panic::unwind_safe::UnwindSafe + core::panic::unwind_safe::RefUnwindSafe + core::fmt::Debug
 pub fn hdr::StripMapper::map_strip(&self, &[f32], &mut [f32])
 pub trait hdr::ToneMapper: core::marker::Send + core::marker::Sync + core::panic::unwind_safe::UnwindSafe + core::panic::unwind_safe::RefUnwindSafe + core::fmt::Debug
 pub fn hdr::ToneMapper::name(&self) -> &'static str
-pub fn hdr::ToneMapper::prepare(&self, &hdr::ToneMapContext) -> hdr::PreparedMapper
+pub fn hdr::ToneMapper::prepare(&self, &hdr::ToneMapContext) -> core::result::Result<hdr::PreparedMapper, whereat::at::At<error::ConvertError>>
 pub fn hdr::ToneMapper::requirements(&self) -> hdr::Requirements
 pub fn hdr::ToneMapper::working_primaries_for(&self, zenpixels::descriptor::ColorPrimaries) -> zenpixels::descriptor::ColorPrimaries
-pub fn ConvertPlan::new_with_hdr_config(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor, HdrConfig) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn ConvertPlan::new_with_hdr_peak(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor, f32) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn ConvertPlan::new_with_tone_mapper(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor, HdrConfig, alloc::sync::Arc<dyn hdr::ToneMapper>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub mod ycbcr
+#[non_exhaustive] pub enum ycbcr::YcbcrError
+pub ycbcr::YcbcrError::OutputDescriptor
+pub ycbcr::YcbcrError::OutputDescriptor::actual: zenpixels::descriptor::PixelDescriptor
+pub ycbcr::YcbcrError::OutputGeometry
+pub ycbcr::YcbcrError::OutputGeometry::extent: (usize, usize)
+pub ycbcr::YcbcrError::OutputGeometry::origin: (usize, usize)
+pub ycbcr::YcbcrError::OutputGeometry::source: (usize, usize)
+pub ycbcr::YcbcrError::SourceGeometry
+pub ycbcr::YcbcrError::SourceGeometry::actual: (usize, usize)
+pub ycbcr::YcbcrError::SourceGeometry::expected: core::option::Option<(usize, usize)>
+pub ycbcr::YcbcrError::SourceGeometry::plane: usize
+pub ycbcr::YcbcrError::UnsupportedChroma
+pub ycbcr::YcbcrError::UnsupportedChroma::siting: zenpixels::sample::plane::ChromaSiting
+pub ycbcr::YcbcrError::UnsupportedChroma::subsampling: zenpixels::sample::plane::ChromaSubsampling
+pub ycbcr::YcbcrError::UnsupportedColor
+pub ycbcr::YcbcrError::UnsupportedColor::actual: zenpixels::cicp::Cicp
+pub ycbcr::YcbcrError::UnsupportedEncoding
+pub ycbcr::YcbcrError::UnsupportedEncoding::actual: zenpixels::sample::SampleEncoding
+pub ycbcr::YcbcrError::UnsupportedEncoding::plane: usize
+pub struct ycbcr::YcbcrToRgbF32<'a>
+pub fn ycbcr::YcbcrToRgbF32<'a>::convert_rows<'b>(&self, usize, usize, zenpixels::buffer::PixelSliceMut<'b>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'b>, whereat::at::At<ycbcr::YcbcrError>>
+pub fn ycbcr::YcbcrToRgbF32<'a>::new([zenpixels::sample::plane::CodePlane<'a>; 3], zenpixels::sample::plane::ChromaSubsampling, zenpixels::sample::plane::ChromaSiting, zenpixels::cicp::Cicp) -> core::result::Result<Self, whereat::at::At<ycbcr::YcbcrError>>
+pub const fn ycbcr::YcbcrToRgbF32<'a>::output_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
+#[non_exhaustive] pub enum AccuracyContract
+pub AccuracyContract::BackendDefined = 5
+pub AccuracyContract::Computed = 2
+pub AccuracyContract::Exact = 0
+pub AccuracyContract::Lookup = 3
+pub AccuracyContract::Quantized = 1
+pub AccuracyContract::Rendered = 4
+#[non_exhaustive] pub enum KernelTier
+pub KernelTier::Backend
+pub KernelTier::RuntimeDispatch
+pub KernelTier::Scalar
+pub KernelTier::X86V3
+#[non_exhaustive] pub enum LossBucket
+pub LossBucket::Clear
+pub LossBucket::Imperceptible
+pub LossBucket::Minor
+pub LossBucket::Severe
+pub LossBucket::SideBySide
+#[non_exhaustive] pub struct ConversionCost
+pub const ConversionCost::ZERO: Self
+pub fn ConversionCost::between(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor) -> Self
+pub fn ConversionCost::between_with_provenance(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor, Provenance) -> Self
+pub const fn ConversionCost::effort(&self) -> u16
+pub const fn ConversionCost::loss(&self) -> u16
+pub const fn ConversionCost::loss_bucket(&self) -> LossBucket
+pub const fn ConversionCost::new(u16, u16) -> Self
+pub const fn ConversionSpec<'a>::with_hdr(self, &'a HdrConfig) -> Self
+pub const fn ConversionSpec<'a>::with_tone_mapper(self, &'a alloc::sync::Arc<dyn hdr::ToneMapper>) -> Self
+pub fn ConvertPlan::steps(&self) -> impl core::iter::traits::iterator::Iterator<Item = PlannedStepInfo> + '_
 #[non_exhaustive] pub struct HdrConfig
 pub HdrConfig::gamut_knee: f32
 pub HdrConfig::source_peak_nits: f32
@@ -89,6 +180,31 @@ pub fn HdrConfig::with_gamut_knee(self, f32) -> Self
 pub fn HdrConfig::with_target_peak_nits(self, f32) -> Self
 pub struct Lcms [also: cms_lcms]
 pub struct MoxCms [also: cms_moxcms]
+pub struct PlannedStepInfo
+pub const fn PlannedStepInfo::accuracy(&self) -> AccuracyContract
+pub const fn PlannedStepInfo::from(&self) -> zenpixels::descriptor::PixelDescriptor
+pub fn PlannedStepInfo::interface_bytes_per_pixel(&self) -> u32
+pub const fn PlannedStepInfo::operation(&self) -> &'static str
+pub const fn PlannedStepInfo::semantic_effects(&self) -> SemanticEffects
+pub const fn PlannedStepInfo::tier(&self) -> KernelTier
+pub const fn PlannedStepInfo::to(&self) -> zenpixels::descriptor::PixelDescriptor
+pub struct SemanticEffects(_)
+pub const SemanticEffects::ALPHA_DISCARDED: Self
+pub const SemanticEffects::ALPHA_REASSOCIATED: Self
+pub const SemanticEffects::CLAMPED: Self
+pub const SemanticEffects::DEPTH_NARROWED: Self
+pub const SemanticEffects::GAMUT_COMPRESSED: Self
+pub const SemanticEffects::LUMA_COLLAPSED: Self
+pub const SemanticEffects::MATTE_APPLIED: Self
+pub const SemanticEffects::NONE: Self
+pub const SemanticEffects::RELABELED_TRANSFER: Self
+pub const SemanticEffects::TONE_MAPPED: Self
+pub const fn SemanticEffects::contains(self, Self) -> bool
+pub const fn SemanticEffects::count(self) -> u32
+pub const fn SemanticEffects::is_empty(self) -> bool
+pub const fn SemanticEffects::union(self, Self) -> Self
+pub fn ColorConvertExt::parse_css(&str) -> core::result::Result<Self, css::CssColorError>
+pub fn zenpixels::color::Color::parse_css(&str) -> core::result::Result<Self, css::CssColorError>
 pub trait PixelBufferConvertTypedExt: ext::PixelBufferConvertExt [also: ext]
 pub fn PixelBufferConvertTypedExt::to_bgra8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::bgra::Bgra<u8>>
 pub fn PixelBufferConvertTypedExt::to_gray8(&self) -> zenpixels::buffer::PixelBuffer<rgb::formats::gray::Gray_v08<u8>>
@@ -97,18 +213,32 @@ pub fn PixelBufferConvertTypedExt::to_rgba8(&self) -> zenpixels::buffer::PixelBu
 pub trait PixelBufferHdrConvertExt: sealed::Sealed [also: ext]
 pub fn PixelBufferHdrConvertExt::convert_to_sdr_measuring_peak(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
 pub fn PixelBufferHdrConvertExt::convert_to_with_hdr_config(&self, zenpixels::descriptor::PixelDescriptor, HdrConfig) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
+pub trait PlaneConvertExt<T: zenpixels::buffer::pixel_storage::StorageSample>: sealed::Sealed [also: ext]
+pub fn PlaneConvertExt::oriented(&self, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::plane::AlignedPlane<T>, whereat::at::At<error::ConvertError>>
+pub fn PlaneConvertExt::oriented_into(&self, zenpixels::orientation::Orientation, zenpixels::plane::PlaneMut<'_, T>) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 
-## trait impls (12 types)
+## trait impls (21 types)
 
+AccuracyContract: Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd
+ConversionCost: Add, Clone, Copy, Debug, Default, Eq, PartialEq
 HdrConfig: Clone, Copy, Debug, Default, PartialEq
+KernelTier: Clone, Copy, Debug, Eq, Hash, PartialEq
+LossBucket: Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd
+PlannedStepInfo: Clone, Copy, Debug, Eq, PartialEq
+SemanticEffects: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 cms_lcms::Lcms: Clone, Copy, Debug, Default, cms::PluggableCms
 cms_moxcms::MoxCms: Clone, Copy, Debug, Default, cms::PluggableCms
 cms_moxcms::MoxCmsError: Clone, Debug, Display, Error
+codes::CodesError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
+css::CssColorError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 hdr::Bt2446A: Clone, Copy, Debug, hdr::ToneMapper
 hdr::PreparedMapper: Debug
 hdr::Requirements: Clone, Copy, Debug, Default, Eq, PartialEq
 hdr::SoftCompress: Clone, Debug, PartialEq
 hdr::ToneMapContext: Debug
 hdr::measure::LightLevelMethod: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+ycbcr::YcbcrError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 zenpixels::buffer::PixelBuffer: ext::PixelBufferConvertTypedExt, ext::PixelBufferHdrConvertExt
 zenpixels::hdr::ContentLightLevel: hdr::measure::CllMeasure
+impl<C> ext::PlaneConvertExt<<C as zenpixels::storage::SampleStorage>::Sample> for zenpixels::plane::Plane<C> where C: zenpixels::storage::SampleStorage
+impl<C> ext::PlaneConvertExt<<C as zenpixels::storage::SampleStorage>::Sample> for zenpixels::plane::Plane<C> where C: zenpixels::storage::SampleStorage

@@ -13,7 +13,6 @@ use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction,
     policy::{AlphaPolicy, ConvertOptions},
 };
-use zenpixels_convert::RowConverter;
 
 fn rgba_u8(alpha: AlphaMode) -> PixelDescriptor {
     PixelDescriptor::new(
@@ -34,18 +33,22 @@ fn rgb_u8() -> PixelDescriptor {
 }
 
 fn opts_with_bg(r: u8, g: u8, b: u8) -> ConvertOptions {
-    ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-        background: zenpixels::Color::srgb8(r, g, b),
-        reference_white: None,
-    })
+    ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_alpha_policy(AlphaPolicy::CompositeOnto {
+            background: zenpixels::Color::srgb8(r, g, b),
+            reference_white: None,
+        })
 }
 
 fn convert_one_pixel(src_desc: PixelDescriptor, src_pixel: [u8; 4], bg: (u8, u8, u8)) -> [u8; 3] {
     let dst_desc = rgb_u8();
     let opts = opts_with_bg(bg.0, bg.1, bg.2);
-    let mut c = RowConverter::new_explicit(src_desc, dst_desc, &opts).unwrap();
+    let mut c = crate::test_conversion::explicit_worker(src_desc, dst_desc, &opts).unwrap();
     let mut dst = [0u8; 3];
-    c.convert_row(&src_pixel, &mut dst, 1);
+    c.try_convert_row(&src_pixel, &mut dst, 1).unwrap();
     dst
 }
 
@@ -203,11 +206,12 @@ fn straight_full_red_at_25pct_over_white_unchanged() {
 // ── Plan-shape sanity ───────────────────────────────────────────────────
 
 #[test]
+#[cfg(feature = "introspection")]
 fn plan_inserts_premul_to_straight_only_for_premul_source() {
     // Straight source: plan has MatteComposite but no PremulToStraight.
     let plan_straight = format!(
         "{:?}",
-        zenpixels_convert::ConvertPlan::new_explicit(
+        crate::test_conversion::explicit_plan(
             rgba_u8(AlphaMode::Straight),
             rgb_u8(),
             &opts_with_bg(255, 255, 255),
@@ -223,7 +227,7 @@ fn plan_inserts_premul_to_straight_only_for_premul_source() {
     // Premul source: plan has both, in that order.
     let plan_premul = format!(
         "{:?}",
-        zenpixels_convert::ConvertPlan::new_explicit(
+        crate::test_conversion::explicit_plan(
             rgba_u8(AlphaMode::Premultiplied),
             rgb_u8(),
             &opts_with_bg(255, 255, 255),
@@ -239,3 +243,6 @@ fn plan_inserts_premul_to_straight_only_for_premul_source() {
         "PremulToStraight must precede MatteComposite: {plan_premul}"
     );
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

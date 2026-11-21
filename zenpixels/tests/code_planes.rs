@@ -212,3 +212,246 @@ fn bulk_codes_preserve_every_encoding_and_component_step() {
         }
     }
 }
+
+#[test]
+fn u32_code_planes_support_up_to_32_bits_and_guard_narrow_u16_reads() {
+    use zenpixels::ChannelType;
+    use zenpixels::plane::{AnyPlane, PlaneRef};
+    use zenpixels::sample::{CodePlane, CodePlaneError, SampleEncoding};
+
+    for &(bits, shift) in &[
+        (1u8, 0u8),
+        (1, 31),
+        (10, 6),
+        (16, 0),
+        (16, 16),
+        (24, 0),
+        (24, 8),
+        (31, 1),
+        (32, 0),
+    ] {
+        let encoding = SampleEncoding::new(ChannelType::U32, bits, shift).unwrap();
+        let mask = u32::MAX >> (32 - u32::from(bits));
+        for components in [1usize, 3] {
+            let width = 19usize;
+            let stride = width * components + 5;
+            let words: Vec<u32> = (0..stride * 3)
+                .map(|i| (i as u32).wrapping_mul(0x9e37_79b9) ^ 0xa5a5_5a5a)
+                .collect();
+            let plane =
+                AnyPlane::U32(PlaneRef::new(&words[..], width * components, 3, stride).unwrap());
+            for component in 0..components {
+                let cp = CodePlane::component(plane, components, component, encoding).unwrap();
+                for y in 0..3 {
+                    let mut actual_u32 = vec![0xdead_beefu32; width];
+                    cp.read_codes_u32(0, y, &mut actual_u32).unwrap();
+                    let expected_u32: Vec<u32> = (0..width)
+                        .map(|x| (words[y * stride + x * components + component] >> shift) & mask)
+                        .collect();
+                    assert_eq!(
+                        actual_u32, expected_u32,
+                        "bits={bits} shift={shift} c={component}"
+                    );
+                    for (x, &expected) in expected_u32.iter().enumerate() {
+                        assert_eq!(cp.code_u32(x, y), Some(expected));
+                    }
+                    assert_eq!(cp.code_u32(width, y), None);
+
+                    if bits <= 16 {
+                        let expected_u16: Vec<u16> =
+                            expected_u32.iter().map(|&v| v as u16).collect();
+                        let mut actual_u16 = vec![0xffffu16; width];
+                        cp.read_codes(0, y, &mut actual_u16).unwrap();
+                        assert_eq!(actual_u16, expected_u16);
+                        assert_eq!(cp.code(0, y), Some(expected_u16[0]));
+                    } else {
+                        assert_eq!(cp.code(0, y), None);
+                        let mut untouched = vec![0x1234u16; width];
+                        assert_eq!(
+                            cp.read_codes(0, y, &mut untouched),
+                            Err(CodePlaneError::NarrowDestination)
+                        );
+                        assert!(untouched.iter().all(|&v| v == 0x1234));
+                    }
+                    assert_eq!(cp.code_i32(0, y), None);
+                    assert_eq!(
+                        cp.read_codes_i32(0, y, &mut [0i32; 1]),
+                        Err(CodePlaneError::StorageMismatch)
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn signed_i8_i16_i32_code_planes_sign_extend_twos_complement() {
+    use zenpixels::ChannelType;
+    use zenpixels::plane::{AnyPlane, PlaneRef};
+    use zenpixels::sample::{CodePlane, CodePlaneError, SampleEncoding};
+
+    // I8: 8-bit full and 5-bit shifted two's complement.
+    let i8_vals: [i8; 6] = [-128, -1, 0, 1, 127, -42];
+    let enc_i8 = SampleEncoding::new(ChannelType::I8, 8, 0).unwrap();
+    assert!(enc_i8.is_signed());
+    let cp_i8 = CodePlane::new(
+        AnyPlane::I8(PlaneRef::new(&i8_vals[..], 3, 2, 3).unwrap()),
+        enc_i8,
+    )
+    .unwrap();
+    let mut row_i8 = [0i32; 3];
+    cp_i8.read_codes_i32(0, 0, &mut row_i8).unwrap();
+    assert_eq!(row_i8, [-128, -1, 0]);
+    assert_eq!(cp_i8.code_i32(2, 1), Some(-42));
+    assert_eq!(cp_i8.code(0, 0), None);
+    assert_eq!(cp_i8.code_u32(0, 0), None);
+    assert_eq!(
+        cp_i8.read_codes(0, 0, &mut [0u16; 1]),
+        Err(CodePlaneError::StorageMismatch)
+    );
+    assert_eq!(
+        cp_i8.read_codes_u32(0, 0, &mut [0u32; 1]),
+        Err(CodePlaneError::StorageMismatch)
+    );
+
+    // I16: 10-bit signed payloads shifted by 4 bits, with noisy high/low padding bits.
+    let enc_i16_10 = SampleEncoding::new(ChannelType::I16, 10, 4).unwrap();
+    let pack10 = |v: i16, pad_hi: u16, pad_lo: u16| -> i16 {
+        let raw10 = (v as u16) & 0x03ff;
+        ((pad_hi << 14) | (raw10 << 4) | (pad_lo & 0x0f)) as i16
+    };
+    let i16_words = [
+        pack10(-512, 0b11, 0b1010),
+        pack10(-1, 0b00, 0b0101),
+        pack10(0, 0b11, 0b1111),
+        pack10(511, 0b10, 0b1100),
+    ];
+    let cp_i16 = CodePlane::component(
+        AnyPlane::I16(PlaneRef::new(&i16_words[..], 4, 1, 4).unwrap()),
+        2,
+        0,
+        enc_i16_10,
+    )
+    .unwrap();
+    let cp_i16_odd = CodePlane::component(
+        AnyPlane::I16(PlaneRef::new(&i16_words[..], 4, 1, 4).unwrap()),
+        2,
+        1,
+        enc_i16_10,
+    )
+    .unwrap();
+    let mut even = [0i32; 2];
+    let mut odd = [0i32; 2];
+    cp_i16.read_codes_i32(0, 0, &mut even).unwrap();
+    cp_i16_odd.read_codes_i32(0, 0, &mut odd).unwrap();
+    assert_eq!(even, [-512, 0]);
+    assert_eq!(odd, [-1, 511]);
+
+    // I32: full 32-bit extremes + 24-bit shifted signed codes.
+    let i32_words = [i32::MIN, -1, 0, i32::MAX];
+    let enc_i32 = SampleEncoding::new(ChannelType::I32, 32, 0).unwrap();
+    let cp_i32 = CodePlane::new(
+        AnyPlane::I32(PlaneRef::new(&i32_words[..], 4, 1, 4).unwrap()),
+        enc_i32,
+    )
+    .unwrap();
+    let mut out_i32 = [0i32; 4];
+    cp_i32.read_codes_i32(0, 0, &mut out_i32).unwrap();
+    assert_eq!(out_i32, i32_words);
+    for (x, &want) in i32_words.iter().enumerate() {
+        assert_eq!(cp_i32.code_i32(x, 0), Some(want));
+    }
+}
+
+#[test]
+fn writable_code_plane_mut_packs_unsigned_signed_and_shared_bitfields() {
+    use zenpixels::ChannelType;
+    use zenpixels::plane::{AnyPlaneMut, PlaneMut};
+    use zenpixels::sample::{CodePlaneError, CodePlaneMut, SampleEncoding};
+
+    // 1. P010 interleaved Cb/Cr over dirty buffer: writes zero low padding bits on target component
+    //    while leaving sibling component and row padding untouched.
+    let p010 = SampleEncoding::new(ChannelType::U16, 10, 6).unwrap();
+    let mut uv = [0xFFFFu16; 10]; // 2 rows, width 4 samples (2 positions), stride 5
+    {
+        let plane = AnyPlaneMut::U16(PlaneMut::new(&mut uv[..], 4, 2, 5).unwrap());
+        let mut cb = CodePlaneMut::component(plane, 2, 0, p010).unwrap();
+        assert_eq!((cb.width(), cb.height()), (2, 2));
+        // Out-of-range write is rejected atomically without mutating any sample.
+        assert_eq!(
+            cb.write_codes(0, 0, &[512, 1024]),
+            Err(CodePlaneError::CodeOutOfRange)
+        );
+    }
+    assert!(uv.iter().all(|&w| w == 0xFFFF));
+    {
+        let plane = AnyPlaneMut::U16(PlaneMut::new(&mut uv[..], 4, 2, 5).unwrap());
+        let mut cb = CodePlaneMut::component(plane, 2, 0, p010).unwrap();
+        cb.write_codes(0, 0, &[512, 1023]).unwrap();
+        cb.set_code(1, 1, 7).unwrap();
+        assert_eq!(cb.code(0, 0), Some(512));
+        assert_eq!(cb.code(1, 0), Some(1023));
+        assert_eq!(cb.code(1, 1), Some(7));
+    }
+    assert_eq!(uv[0], 512 << 6); // low 6 padding bits cleared to 0
+    assert_eq!(uv[1], 0xFFFF); // Cr untouched
+    assert_eq!(uv[2], 1023 << 6);
+    assert_eq!(uv[4], 0xFFFF); // row stride padding untouched
+    assert_eq!(uv[7], 7 << 6);
+
+    // 2. Shared-word multi-bitfield packing (R10G10B10A2 in U32) via preserving_other_bits().
+    let r_enc = SampleEncoding::new(ChannelType::U32, 10, 0).unwrap();
+    let g_enc = SampleEncoding::new(ChannelType::U32, 10, 10).unwrap();
+    let b_enc = SampleEncoding::new(ChannelType::U32, 10, 20).unwrap();
+    let a_enc = SampleEncoding::new(ChannelType::U32, 2, 30).unwrap();
+    let mut word = [0u32; 2];
+    for (enc, vals) in [
+        (r_enc, &[100u16, 1023][..]),
+        (g_enc, &[200u16, 511][..]),
+        (b_enc, &[300u16, 0][..]),
+        (a_enc, &[3u16, 1][..]),
+    ] {
+        let p = AnyPlaneMut::U32(PlaneMut::new(&mut word[..], 2, 1, 2).unwrap());
+        let mut writer = CodePlaneMut::new(p, enc).unwrap().preserving_other_bits();
+        writer.write_codes(0, 0, vals).unwrap();
+    }
+    assert_eq!(word[0], 100 | (200 << 10) | (300 << 20) | (3 << 30));
+    assert_eq!(word[1], 1023 | (511 << 10) | (1 << 30));
+
+    // 3. 24-bit unsigned U32 and 12-bit signed I16 writes + error guards.
+    let u24 = SampleEncoding::new(ChannelType::U32, 24, 4).unwrap();
+    let mut buf32 = [0u32; 2];
+    {
+        let p = AnyPlaneMut::U32(PlaneMut::new(&mut buf32[..], 2, 1, 2).unwrap());
+        let mut w = CodePlaneMut::new(p, u24).unwrap();
+        assert_eq!(w.set_code(0, 0, 1), Err(CodePlaneError::NarrowDestination));
+        assert_eq!(
+            w.set_code_u32(0, 0, 1 << 24),
+            Err(CodePlaneError::CodeOutOfRange)
+        );
+        w.write_codes_u32(0, 0, &[0x00ab_cdef, 0x00ff_ffff])
+            .unwrap();
+        assert_eq!(w.code_u32(0, 0), Some(0x00ab_cdef));
+        assert_eq!(w.code_u32(1, 0), Some(0x00ff_ffff));
+    }
+
+    let i12 = SampleEncoding::new(ChannelType::I16, 12, 2).unwrap();
+    let mut buf16 = [0i16; 3];
+    {
+        let p = AnyPlaneMut::I16(PlaneMut::new(&mut buf16[..], 3, 1, 3).unwrap());
+        let mut w = CodePlaneMut::new(p, i12).unwrap();
+        assert_eq!(w.set_code(0, 0, 1), Err(CodePlaneError::StorageMismatch));
+        assert_eq!(
+            w.set_code_i32(0, 0, -2049),
+            Err(CodePlaneError::CodeOutOfRange)
+        );
+        assert_eq!(
+            w.set_code_i32(0, 0, 2048),
+            Err(CodePlaneError::CodeOutOfRange)
+        );
+        w.write_codes_i32(0, 0, &[-2048, -1, 2047]).unwrap();
+        assert_eq!(w.code_i32(0, 0), Some(-2048));
+        assert_eq!(w.code_i32(1, 0), Some(-1));
+        assert_eq!(w.code_i32(2, 0), Some(2047));
+    }
+}

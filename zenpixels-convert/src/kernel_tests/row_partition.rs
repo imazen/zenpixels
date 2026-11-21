@@ -34,7 +34,11 @@ fn source_bytes(d: D) -> Vec<u8> {
 }
 
 fn check(from: D, to: D, failures: &mut Vec<String>) {
-    let options = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(crate::DepthPolicy::Round)
+        .with_luma(Some(crate::LumaCoefficients::Bt709))
+        .with_alpha_policy(AlphaPolicy::DiscardUnchecked);
     let Ok(mut c) = RowConverter::new_explicit(from, to, &options) else {
         return;
     };
@@ -135,7 +139,11 @@ fn every_tier_gives_the_same_bytes() {
     let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
         let fill = first.is_empty();
         let mut record = |policy: usize, from: D, to: D| {
-            let options = ConvertOptions::permissive().with_alpha_policy(policies[policy]);
+            let options = ConvertOptions::retain_channels()
+                .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(crate::DepthPolicy::Round)
+                .with_luma(Some(crate::LumaCoefficients::Bt709))
+                .with_alpha_policy(policies[policy]);
             let Ok(mut c) = RowConverter::new_explicit(from, to, &options) else {
                 return;
             };
@@ -231,7 +239,11 @@ fn for_each_other_conversion(mut run: impl FnMut(D, D)) {
 /// the same bytes. A deliberate numerical change updates it; anything else is a bug.
 #[test]
 fn output_digest_matches_on_every_platform() {
-    let options = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(crate::DepthPolicy::Round)
+        .with_luma(Some(crate::LumaCoefficients::Bt709))
+        .with_alpha_policy(AlphaPolicy::DiscardUnchecked);
     let mut hash = 0xcbf2_9ce4_8422_2325u64;
     let mut run = |from: D, to: D| {
         let Ok(mut c) = RowConverter::new_explicit(from, to, &options) else {
@@ -250,13 +262,16 @@ fn output_digest_matches_on_every_platform() {
     assert_eq!(hash, EXPECTED_DIGEST, "output changed: {hash:#018x}");
 }
 
-const EXPECTED_DIGEST: u64 = 0x509de40f680b9c2e;
+const EXPECTED_DIGEST: u64 = 0x922a875a7231ea47;
 
 /// Rounding in f32 polynomials can reverse adjacent inputs, by at most one 16-bit code. Windows
 /// of consecutive floats at the top of each range and around every branch.
 #[test]
 fn adjacent_inputs_reverse_by_at_most_one_code() {
-    let options = ConvertOptions::permissive();
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(crate::DepthPolicy::Round)
+        .with_luma(Some(crate::LumaCoefficients::Bt709));
     let d = |t, tf| D::new(t, L::Gray, None, tf);
     let centers = [
         1.0f32,

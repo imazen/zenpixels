@@ -60,7 +60,8 @@ fn rgb565_bitfields_use_existing_component_readers() {
 fn wide_and_signed_carriage_does_not_grant_code_arithmetic() {
     use zenpixels_convert::codes::{CodeMap, CodeMapError, CodeRole};
     let canonical = SampleEncoding::new(T::U16, 16, 0).unwrap();
-    for storage in [T::I8, T::I16, T::U32, T::I32, T::U64, T::I64] {
+    // Mixed signedness (signed <-> unsigned U16) and 64-bit storages remain refused.
+    for storage in [T::I8, T::I16, T::I32, T::U64, T::I64] {
         let encoding = SampleEncoding::new(storage, 8, 0).unwrap();
         assert!(matches!(
             CodeMap::new(
@@ -81,4 +82,30 @@ fn wide_and_signed_carriage_does_not_grant_code_arithmetic() {
             Err(CodeMapError::UnsupportedStorage)
         ));
     }
+    for storage in [T::U64, T::I64] {
+        let encoding = SampleEncoding::new(storage, 8, 0).unwrap();
+        assert_eq!(
+            CodeMap::new(
+                encoding,
+                encoding,
+                CodeRole::Intensity,
+                zenpixels::SignalRange::Full
+            ),
+            Err(CodeMapError::UnsupportedStorage)
+        );
+    }
+    // U32 requires map_words_u32; the u16 slice helper refuses U32 storage.
+    let u32_enc = SampleEncoding::new(T::U32, 8, 0).unwrap();
+    let u32_map = CodeMap::new(
+        u32_enc,
+        canonical,
+        CodeRole::Intensity,
+        zenpixels::SignalRange::Full,
+    )
+    .unwrap();
+    let mut dst16 = [0u16; 1];
+    assert_eq!(
+        u32_map.map_words(&[255], &mut dst16),
+        Err(CodeMapError::UnsupportedStorage)
+    );
 }

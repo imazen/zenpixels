@@ -9,30 +9,34 @@
 
 ## summary
 #
-#   inherent methods                           59
+#   inherent methods                           70
 #   enum variants                              14
-#   trait roster entries (type × trait)        62
+#   trait roster entries (type × trait)        77
 #
 # per-module pub lines:
-#   (root)                            8
-#   buffer                            3
+#   (root)                            9
+#   banded                            1
+#   buffer                            4
 #   cicp                              2
-#   color                             8
+#   color                            14
 #   descriptor                       18
 #   hdr                               4
 #   icc                               2
 #   orientation                       1
 #   pixel_types                       2
-#   plane                             7
-#   policy                            6
+#   plane                             8
+#   policy                            5
 #   precision                         5
-#   sample                            7
+#   sample                            9
 
-## items (73 lines)
+## items (84 lines)
 
 pub fn HashInclusions::assert_fields_are_eq(&self)
+pub fn RowAlign::assert_fields_are_eq(&self)
+pub fn banded::BandLayout::assert_fields_are_eq(&self)
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
 pub fn buffer::BufferError::assert_fields_are_eq(&self)
+pub fn buffer::InteropTarget::assert_fields_are_eq(&self)
 pub fn buffer::Rgbx::assert_fields_are_eq(&self)
 pub fn cicp::Cicp::assert_fields_are_eq(&self)
 pub fn cicp::CicpDescriptorError::assert_fields_are_eq(&self)
@@ -44,6 +48,12 @@ pub fn color::ColorOrigin::assert_fields_are_eq(&self)
 pub fn color::ColorProfileSource<'a>::assert_fields_are_eq(&self)
 pub fn color::ColorProvenance::assert_fields_are_eq(&self)
 pub fn color::NamedProfile::assert_fields_are_eq(&self)
+pub fn color::ParametricColor::assert_fields_are_eq(&self)
+pub fn color::ParametricPrimaries::assert_fields_are_eq(&self)
+pub fn color::ParametricTransfer::assert_fields_are_eq(&self)
+pub fn color::PixelEncoding<'a>::assert_fields_are_eq(&self)
+pub fn color::RenderingIntent::assert_fields_are_eq(&self)
+pub fn color::WhitePoint::assert_fields_are_eq(&self)
 pub fn descriptor::AlphaMode::assert_fields_are_eq(&self)
 pub fn descriptor::ChannelLayout::assert_fields_are_eq(&self)
 pub fn descriptor::ChannelType::assert_fields_are_eq(&self)
@@ -66,6 +76,7 @@ pub fn pixel_types::GrayAlpha16::assert_fields_are_eq(&self)
 pub fn pixel_types::GrayAlpha8::assert_fields_are_eq(&self)
 pub fn plane::FloatEncodingError::assert_fields_are_eq(&self)
 pub fn plane::LayoutError::assert_fields_are_eq(&self)
+pub fn plane::PlanarBandError::assert_fields_are_eq(&self)
 pub fn plane::PlanarLayout::assert_fields_are_eq(&self)
 pub fn plane::PlaneEncoding::assert_fields_are_eq(&self)
 pub fn plane::PlaneError::assert_fields_are_eq(&self)
@@ -74,8 +85,7 @@ pub fn plane::PlaneSpec::assert_fields_are_eq(&self)
 pub fn policy::AlphaPolicy::assert_fields_are_eq(&self)
 pub fn policy::ConvertOptions::assert_fields_are_eq(&self)
 pub fn policy::DepthPolicy::assert_fields_are_eq(&self)
-pub fn policy::GamutMapping::assert_fields_are_eq(&self)
-pub fn policy::GrayExpand::assert_fields_are_eq(&self)
+pub fn policy::GamutPolicy::assert_fields_are_eq(&self)
 pub fn policy::LumaCoefficients::assert_fields_are_eq(&self)
 pub fn precision::AlphaContent::assert_fields_are_eq(&self)
 pub fn precision::ConversionEffect::assert_fields_are_eq(&self)
@@ -87,6 +97,8 @@ pub fn sample::ChromaSubsampling::assert_fields_are_eq(&self)
 pub fn sample::CodePlaneError::assert_fields_are_eq(&self)
 pub fn sample::ExactDepth::assert_fields_are_eq(&self)
 pub fn sample::ExactDepthError::assert_fields_are_eq(&self)
+pub fn sample::FloatFacts::assert_fields_are_eq(&self)
+pub fn sample::FloatFactsError::assert_fields_are_eq(&self)
 pub fn sample::SampleEncoding::assert_fields_are_eq(&self)
 pub fn sample::SampleEncodingError::assert_fields_are_eq(&self)
 pub AlphaMode::__Reserved(descriptor::reserved::Reserved)
@@ -104,18 +116,30 @@ pub descriptor::ColorPrimaries::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::SignalRange::__Reserved(descriptor::reserved::Reserved)
 pub descriptor::TransferFunction::__Reserved(descriptor::reserved::Reserved)
 
-## trait impls (62 types)
+## trait impls (77 types)
 
 HashInclusions: TrivialClone
+RowAlign: TrivialClone
+banded::BandLayout: TrivialClone
 buffer::Bgrx: TrivialClone
 buffer::BufferError: TrivialClone
+buffer::InteropTarget: TrivialClone
 buffer::Rgbx: TrivialClone
 cicp::Cicp: TrivialClone
 cicp::CicpDescriptorError: TrivialClone
+color::CieXy: TrivialClone
 color::Color: TrivialClone
 color::ColorAuthority: TrivialClone
 color::ColorProvenance: TrivialClone
+color::GammaCurve: TrivialClone
+color::IccParametricCurve: TrivialClone
 color::NamedProfile: TrivialClone
+color::ParametricColor: TrivialClone
+color::ParametricPrimaries: TrivialClone
+color::ParametricTransfer: TrivialClone
+color::PixelEncoding<'a>: TrivialClone
+color::RenderingIntent: TrivialClone
+color::WhitePoint: TrivialClone
 descriptor::AlphaMode: TrivialClone
 descriptor::ChannelLayout: TrivialClone
 descriptor::ChannelType: TrivialClone
@@ -137,8 +161,10 @@ hdr::St2086Codes: TrivialClone
 icc::IccIdentification: TrivialClone
 icc::IdentificationUse: TrivialClone
 orientation::Orientation: TrivialClone
+pixel_types::F16Sample: TrivialClone
 pixel_types::GrayAlpha16: TrivialClone
 pixel_types::GrayAlpha8: TrivialClone
+pixel_types::GrayAlphaF16: TrivialClone
 pixel_types::GrayAlphaF32: TrivialClone
 plane::AnyPlane<'a>: TrivialClone
 plane::FloatEncoding: TrivialClone
@@ -152,8 +178,7 @@ plane::PlaneSpec: TrivialClone
 policy::AlphaPolicy: TrivialClone
 policy::ConvertOptions: TrivialClone
 policy::DepthPolicy: TrivialClone
-policy::GamutMapping: TrivialClone
-policy::GrayExpand: TrivialClone
+policy::GamutPolicy: TrivialClone
 policy::LumaCoefficients: TrivialClone
 precision::AlphaContent: TrivialClone
 precision::ConversionEffect: TrivialClone
@@ -166,5 +191,7 @@ sample::CodePlane<'a>: TrivialClone
 sample::CodePlaneError: TrivialClone
 sample::ExactDepth: TrivialClone
 sample::ExactDepthError: TrivialClone
+sample::FloatFacts: TrivialClone
+sample::FloatFactsError: TrivialClone
 sample::SampleEncoding: TrivialClone
 sample::SampleEncodingError: TrivialClone

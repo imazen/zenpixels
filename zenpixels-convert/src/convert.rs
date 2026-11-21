@@ -8,7 +8,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::policy::{AlphaPolicy, ConvertOptions, DepthPolicy, GamutMapping, LumaCoefficients};
+use crate::policy::{AlphaPolicy, ConvertOptions, DepthPolicy, GamutPolicy, LumaCoefficients};
 use crate::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, ConvertError, PixelDescriptor,
     TransferFunction,
@@ -65,12 +65,22 @@ pub(crate) fn validate_descriptors(
     {
         return Err(whereat::at!(ConvertError::AlphaCheckRequired));
     }
-    if from.signal_range != to.signal_range
-        || (from.signal_range == zenpixels::SignalRange::Narrow
-            && (from.channel_type() != to.channel_type()
-                || from.transfer() != to.transfer()
-                || from.primaries != to.primaries))
-    {
+    let narrow_unsupported = from.signal_range == zenpixels::SignalRange::Narrow
+        && from != to
+        && (from.channel_type() != to.channel_type()
+            || from.transfer() != to.transfer()
+            || from.primaries != to.primaries
+            || from.alpha() == Some(AlphaMode::Premultiplied)
+            || to.alpha() == Some(AlphaMode::Premultiplied)
+            || !matches!(
+                from.color_model(),
+                crate::ColorModel::Rgb | crate::ColorModel::Gray
+            )
+            || !matches!(
+                to.color_model(),
+                crate::ColorModel::Rgb | crate::ColorModel::Gray
+            ));
+    if from.signal_range != to.signal_range || narrow_unsupported {
         return Err(whereat::at!(ConvertError::NoPath { from, to }));
     }
     Ok(())
@@ -93,7 +103,7 @@ pub(crate) fn validate_luma_policy(
 }
 
 /// HDR→SDR tone-mapping configuration for
-/// [`ConvertPlan::new_with_hdr_config`].
+/// [`ConversionSpec::with_hdr`](crate::ConversionSpec::with_hdr).
 ///
 /// Bundles the source-peak luminance (mandatory — the curve is
 /// parameterized by it), target-peak luminance (typically 100 cd/m² for
@@ -105,7 +115,7 @@ pub(crate) fn validate_luma_policy(
 /// existing fields stay `pub` for reading (and in-place mutation).
 ///
 /// Both peak fields must be **positive and finite**;
-/// [`ConvertPlan::new_with_hdr_config`] rejects anything else (including
+/// [`ConversionSpec::with_hdr`](crate::ConversionSpec::with_hdr) rejects anything else (including
 /// the unset `Default` value) with
 /// [`ConvertError::HdrSourceRequiresPeak`](crate::ConvertError::HdrSourceRequiresPeak)
 /// instead of silently tone-mapping through a degenerate curve.
@@ -140,7 +150,7 @@ impl Default for HdrConfig {
     /// and `gamut_knee = 0.96` (empirically calibrated against the
     /// imazen-26 gain-mapped HDR corpus, 2026-06-23). `source_peak_nits`
     /// has no default — it returns `0.0` ("unset"), which
-    /// [`ConvertPlan::new_with_hdr_config`] rejects with
+    /// [`ConversionSpec::with_hdr`](crate::ConversionSpec::with_hdr) rejects with
     /// [`ConvertError::HdrSourceRequiresPeak`](crate::ConvertError::HdrSourceRequiresPeak).
     /// Start from [`HdrConfig::for_source_peak`] instead.
     fn default() -> Self {
@@ -207,15 +217,518 @@ pub(crate) fn is_hdr_to_sdr(from: TransferFunction, to: TransferFunction) -> boo
     src_is_hdr && dst_is_sdr_encoded
 }
 
+/// Internal floating-point sample trust propagated step-by-step across a [`NativePlan`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct StepFloatTrust {
+    /// Universal invariants across all active channels (`color` + active `alpha`).
+    pub(crate) facts: zenpixels::sample::FloatFacts,
+    /// Universal invariants across active color channels (`Gray` or `R, G, B`).
+    pub(crate) color_facts: zenpixels::sample::FloatFacts,
+    /// Guaranteed power-of-two floor `k` (`|x| >= 2^k`) for non-zero active color samples in `F32`.
+    pub(crate) color_min_exp: Option<i16>,
+    /// True when active color samples satisfy `|x| <= 1e30` (cannot overflow `3x3` matrices to `±Inf`).
+    pub(crate) color_bounded: bool,
+}
+
+impl StepFloatTrust {
+    fn from_input(desc: PixelDescriptor, facts: zenpixels::sample::FloatFacts) -> Self {
+        use zenpixels::sample::FloatFacts;
+        if !desc.channel_type().is_float() {
+            return Self::default();
+        }
+        let color_min_exp = match desc.channel_type() {
+            ChannelType::F32 if facts.contains(FloatFacts::NO_SUBNORMALS) => Some(-126),
+            ChannelType::F16 if facts.contains(FloatFacts::NO_SUBNORMALS) => Some(-14),
+            ChannelType::F16 => Some(-24),
+            _ => None,
+        };
+        let color_bounded = (desc.channel_type() == ChannelType::F16
+            && facts.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE))
+            || facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE);
+        Self {
+            facts,
+            color_facts: facts,
+            color_min_exp,
+            color_bounded,
+        }
+    }
+}
+
+fn combine_trust(
+    to: PixelDescriptor,
+    color_facts: zenpixels::sample::FloatFacts,
+    alpha_facts: zenpixels::sample::FloatFacts,
+    color_min_exp: Option<i16>,
+    color_bounded: bool,
+) -> StepFloatTrust {
+    let active_alpha = to.layout().has_alpha() && to.alpha() != Some(AlphaMode::Undefined);
+    let facts = if active_alpha {
+        color_facts.intersection(alpha_facts)
+    } else {
+        color_facts
+    };
+    StepFloatTrust {
+        facts,
+        color_facts,
+        color_min_exp,
+        color_bounded,
+    }
+}
+
+fn step_output_trust(
+    step: &ConvertStep,
+    from: PixelDescriptor,
+    to: PixelDescriptor,
+    pq_anchor_scale: f32,
+    in_trust: StepFloatTrust,
+) -> StepFloatTrust {
+    use zenpixels::sample::FloatFacts;
+    if !to.channel_type().is_float() {
+        return StepFloatTrust::default();
+    }
+    let unit_normal = FloatFacts::NO_NAN
+        | FloatFacts::NO_INFINITE
+        | FloatFacts::NO_SUBNORMALS
+        | FloatFacts::NON_NEGATIVE
+        | FloatFacts::AT_MOST_ONE;
+    let opaque_one = unit_normal | FloatFacts::POSITIVE;
+
+    match step {
+        ConvertStep::Identity | ConvertStep::SwizzleBgraRgba | ConvertStep::SwizzleBgrRgb => {
+            if from.alpha() == Some(AlphaMode::Undefined)
+                && to.alpha() != Some(AlphaMode::Undefined)
+            {
+                return StepFloatTrust::default();
+            }
+            combine_trust(
+                to,
+                in_trust.color_facts,
+                in_trust.facts,
+                in_trust.color_min_exp,
+                in_trust.color_bounded,
+            )
+        }
+        ConvertStep::AddAlpha
+        | ConvertStep::RgbToBgra
+        | ConvertStep::GrayToRgba
+        | ConvertStep::GrayToGrayAlpha => combine_trust(
+            to,
+            in_trust.color_facts,
+            opaque_one,
+            in_trust.color_min_exp,
+            in_trust.color_bounded,
+        ),
+        ConvertStep::DropAlpha | ConvertStep::GrayAlphaToRgb | ConvertStep::GrayAlphaToGray => {
+            StepFloatTrust {
+                facts: in_trust.color_facts,
+                color_facts: in_trust.color_facts,
+                color_min_exp: in_trust.color_min_exp,
+                color_bounded: in_trust.color_bounded,
+            }
+        }
+        ConvertStep::GrayToRgb | ConvertStep::GrayAlphaToRgba => combine_trust(
+            to,
+            in_trust.color_facts,
+            in_trust.facts,
+            in_trust.color_min_exp,
+            in_trust.color_bounded,
+        ),
+        ConvertStep::RgbToGray { .. }
+        | ConvertStep::RgbaToGray { .. }
+        | ConvertStep::RgbaToGrayAlpha { .. } => {
+            let cf = in_trust.color_facts;
+            let mut out_cf = FloatFacts::NONE;
+            let mut min_exp = None;
+            let mut bounded = false;
+            if cf.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE) && in_trust.color_bounded {
+                out_cf |= FloatFacts::NO_NAN | FloatFacts::NO_INFINITE;
+                bounded = true;
+            }
+            if cf.contains(FloatFacts::NON_NEGATIVE) {
+                out_cf |= FloatFacts::NON_NEGATIVE;
+                if cf.contains(FloatFacts::AT_MOST_ONE) {
+                    out_cf |= FloatFacts::AT_MOST_ONE;
+                }
+                if to.channel_type() == ChannelType::F32
+                    && let Some(k) = in_trust.color_min_exp
+                    && k - 4 >= -126
+                {
+                    out_cf |= FloatFacts::NO_SUBNORMALS;
+                    min_exp = Some(k - 4);
+                    if cf.contains(FloatFacts::POSITIVE) && out_cf.contains(FloatFacts::NO_INFINITE)
+                    {
+                        out_cf |= FloatFacts::POSITIVE;
+                    }
+                }
+            }
+            combine_trust(to, out_cf, in_trust.facts, min_exp, bounded)
+        }
+        ConvertStep::NaiveU8ToF32 | ConvertStep::SrgbU8ToLinearF32 => StepFloatTrust {
+            facts: unit_normal,
+            color_facts: unit_normal,
+            color_min_exp: Some(-12),
+            color_bounded: true,
+        },
+        ConvertStep::U16ToF32 | ConvertStep::HlgU16ToLinearF32 => StepFloatTrust {
+            facts: unit_normal,
+            color_facts: unit_normal,
+            color_min_exp: Some(-34),
+            color_bounded: true,
+        },
+        ConvertStep::PqU16ToLinearF32 => {
+            if pq_anchor_scale.is_finite() && pq_anchor_scale > 0.0 {
+                let inv = 1.0 / pq_anchor_scale;
+                if inv.is_finite() && (1.0 / 1_048_576.0..=1e20).contains(&inv) {
+                    let mut cf = FloatFacts::NO_NAN
+                        | FloatFacts::NO_INFINITE
+                        | FloatFacts::NO_SUBNORMALS
+                        | FloatFacts::NON_NEGATIVE;
+                    if pq_anchor_scale >= 1.0 {
+                        cf |= FloatFacts::AT_MOST_ONE;
+                    }
+                    return combine_trust(to, cf, unit_normal, Some(-64), true);
+                }
+            }
+            StepFloatTrust::default()
+        }
+        ConvertStep::F16ToF32 => {
+            let cf = in_trust.color_facts | FloatFacts::NO_SUBNORMALS;
+            let f = in_trust.facts | FloatFacts::NO_SUBNORMALS;
+            let min_exp = Some(
+                if in_trust.color_facts.contains(FloatFacts::NO_SUBNORMALS) {
+                    -14
+                } else {
+                    -24
+                },
+            );
+            let bounded = in_trust
+                .color_facts
+                .contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE);
+            StepFloatTrust {
+                facts: f,
+                color_facts: cf,
+                color_min_exp: min_exp,
+                color_bounded: bounded,
+            }
+        }
+        ConvertStep::F32ToF16 => {
+            let filter_f16 = |f: FloatFacts| {
+                let mut out = FloatFacts::NONE;
+                if f.contains(FloatFacts::NO_NAN) {
+                    out |= FloatFacts::NO_NAN;
+                }
+                if f.contains(FloatFacts::NON_NEGATIVE) {
+                    out |= FloatFacts::NON_NEGATIVE;
+                }
+                if f.contains(FloatFacts::AT_MOST_ONE) {
+                    out |= FloatFacts::AT_MOST_ONE;
+                }
+                out
+            };
+            StepFloatTrust {
+                facts: filter_f16(in_trust.facts),
+                color_facts: filter_f16(in_trust.color_facts),
+                color_min_exp: Some(-24),
+                color_bounded: in_trust
+                    .color_facts
+                    .contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE),
+            }
+        }
+        ConvertStep::PqF32ToLinearF32 => {
+            if pq_anchor_scale.is_finite() && pq_anchor_scale > 0.0 {
+                let inv = 1.0 / pq_anchor_scale;
+                if inv.is_finite() && inv <= 1e20 {
+                    let mut cf = FloatFacts::NO_NAN | FloatFacts::NO_INFINITE;
+                    if pq_anchor_scale >= 1.0 {
+                        cf |= FloatFacts::AT_MOST_ONE;
+                    }
+                    if in_trust.color_facts.contains(FloatFacts::NON_NEGATIVE) {
+                        cf |= FloatFacts::NON_NEGATIVE;
+                    }
+                    return combine_trust(to, cf, in_trust.facts, None, true);
+                }
+            }
+            StepFloatTrust::default()
+        }
+        ConvertStep::LinearF32ToPqF32 => {
+            if pq_anchor_scale.is_finite() && pq_anchor_scale >= 0.0 {
+                let mut cf = FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::AT_MOST_ONE;
+                if in_trust.color_facts.contains(FloatFacts::NON_NEGATIVE) {
+                    cf |= FloatFacts::NON_NEGATIVE;
+                }
+                return combine_trust(to, cf, in_trust.facts, None, true);
+            }
+            StepFloatTrust::default()
+        }
+        ConvertStep::SrgbF32ToLinearF32
+        | ConvertStep::LinearF32ToSrgbF32
+        | ConvertStep::Gamma22F32ToLinearF32
+        | ConvertStep::LinearF32ToGamma22F32 => {
+            let cf = in_trust.color_facts;
+            if !cf.contains(FloatFacts::NO_NAN) {
+                return StepFloatTrust::default();
+            }
+            let mut out_cf = FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::AT_MOST_ONE;
+            let mut min_exp = None;
+            if cf.contains(FloatFacts::NON_NEGATIVE) {
+                out_cf |= FloatFacts::NON_NEGATIVE;
+                if let Some(k) = in_trust.color_min_exp {
+                    let next_k = match step {
+                        ConvertStep::SrgbF32ToLinearF32 => k.saturating_sub(4),
+                        ConvertStep::Gamma22F32ToLinearF32 => (k.saturating_mul(9)) / 4 - 2,
+                        _ => k.min(0),
+                    };
+                    if next_k >= -126 {
+                        out_cf |= FloatFacts::NO_SUBNORMALS;
+                        min_exp = Some(next_k);
+                        if cf.contains(FloatFacts::POSITIVE) {
+                            out_cf |= FloatFacts::POSITIVE;
+                        }
+                    }
+                }
+            }
+            combine_trust(to, out_cf, in_trust.facts, min_exp, true)
+        }
+        ConvertStep::HlgF32ToLinearF32 | ConvertStep::LinearF32ToHlgF32 => {
+            // HLG kernels clamp negatives to 0.0, but values above 1.0 are NOT clamped
+            // (`hlg_to_linear(2.0) > 280`, `hlg_to_linear(17.0) == +Inf`, `linear_to_hlg(2.0) > 1.0`).
+            // Only unit-capped inputs prove bounded finite `[0, 1]` output.
+            let cf = in_trust.color_facts;
+            if !cf.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::AT_MOST_ONE)
+            {
+                return StepFloatTrust::default();
+            }
+            let mut out_cf = FloatFacts::NO_NAN
+                | FloatFacts::NO_INFINITE
+                | FloatFacts::NON_NEGATIVE
+                | FloatFacts::AT_MOST_ONE;
+            let mut min_exp = None;
+            if cf.contains(FloatFacts::NON_NEGATIVE)
+                && let Some(k) = in_trust.color_min_exp
+            {
+                let next_k = match step {
+                    ConvertStep::HlgF32ToLinearF32 => k.saturating_mul(2).saturating_sub(2),
+                    _ => k.min(0),
+                };
+                if next_k >= -126 {
+                    out_cf |= FloatFacts::NO_SUBNORMALS;
+                    min_exp = Some(next_k);
+                    if cf.contains(FloatFacts::POSITIVE) {
+                        out_cf |= FloatFacts::POSITIVE;
+                    }
+                }
+            }
+            combine_trust(to, out_cf, in_trust.facts, min_exp, true)
+        }
+        ConvertStep::Bt709F32ToLinearF32
+        | ConvertStep::LinearF32ToBt709F32
+        | ConvertStep::SrgbF32ToLinearF32Extended
+        | ConvertStep::LinearF32ToSrgbF32Extended
+        | ConvertStep::Gamma22F32ToLinearF32Extended
+        | ConvertStep::LinearF32ToGamma22F32Extended => {
+            let cf = in_trust.color_facts;
+            if cf.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE) {
+                let mut out_cf = FloatFacts::NO_NAN
+                    | FloatFacts::NO_INFINITE
+                    | FloatFacts::NON_NEGATIVE
+                    | FloatFacts::AT_MOST_ONE;
+                let mut min_exp = None;
+                if let Some(k) = in_trust.color_min_exp {
+                    let next_k = match step {
+                        ConvertStep::Bt709F32ToLinearF32 => k.saturating_sub(3),
+                        ConvertStep::SrgbF32ToLinearF32Extended => k.saturating_sub(4),
+                        ConvertStep::Gamma22F32ToLinearF32Extended => (k.saturating_mul(9)) / 4 - 2,
+                        _ => k.min(0),
+                    };
+                    if next_k >= -126 {
+                        out_cf |= FloatFacts::NO_SUBNORMALS;
+                        min_exp = Some(next_k);
+                        if cf.contains(FloatFacts::POSITIVE) {
+                            out_cf |= FloatFacts::POSITIVE;
+                        }
+                    }
+                }
+                return combine_trust(to, out_cf, in_trust.facts, min_exp, true);
+            }
+            // Outside `[0, 1]`, sRGB extended and BT.709 evaluate rational polynomials
+            // `P(|x|) / Q(|x|)` that overflow to `Inf / Inf = NaN` on large finite inputs
+            // (`|x| >= ~1e7..1e14`) and `±Inf`. Only checked `Gamma22*Extended` (Magemath)
+            // preserves `NO_NAN` / `NON_NEGATIVE` / `NO_INFINITE` on unbounded inputs.
+            if !matches!(
+                step,
+                ConvertStep::Gamma22F32ToLinearF32Extended
+                    | ConvertStep::LinearF32ToGamma22F32Extended
+            ) {
+                return StepFloatTrust::default();
+            }
+            let is_oetf = matches!(step, ConvertStep::LinearF32ToGamma22F32Extended);
+            let mut out_cf = FloatFacts::NONE;
+            if cf.contains(FloatFacts::NO_NAN) {
+                out_cf |= FloatFacts::NO_NAN;
+                if cf.contains(FloatFacts::NON_NEGATIVE) {
+                    out_cf |= FloatFacts::NON_NEGATIVE;
+                }
+                if is_oetf && cf.contains(FloatFacts::NO_INFINITE) {
+                    out_cf |= FloatFacts::NO_INFINITE;
+                }
+            }
+            let bounded =
+                is_oetf && in_trust.color_bounded && out_cf.contains(FloatFacts::NO_INFINITE);
+            combine_trust(to, out_cf, in_trust.facts, None, bounded)
+        }
+        ConvertStep::GamutMatrixRgbF32(matrix, _) | ConvertStep::GamutMatrixRgbaF32(matrix, _) => {
+            let cf = in_trust.color_facts;
+            if !cf.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE) {
+                return StepFloatTrust::default();
+            }
+            let mut out_cf = FloatFacts::NO_NAN;
+            let mut bounded = false;
+            if in_trust.color_bounded {
+                out_cf |= FloatFacts::NO_INFINITE;
+                bounded = true;
+            }
+            let mut min_exp = None;
+            if matrix.iter().all(|&c| c >= (1.0 / 64.0)) && cf.contains(FloatFacts::NON_NEGATIVE) {
+                out_cf |= FloatFacts::NON_NEGATIVE;
+                if let Some(k) = in_trust.color_min_exp
+                    && k - 6 >= -126
+                {
+                    out_cf |= FloatFacts::NO_SUBNORMALS;
+                    min_exp = Some(k - 6);
+                }
+            }
+            combine_trust(to, out_cf, in_trust.facts, min_exp, bounded)
+        }
+        ConvertStep::Fused {
+            kind: FusedKind::SrgbU8ToLinearF32Rgb,
+            ..
+        } => StepFloatTrust {
+            facts: FloatFacts::NO_NAN | FloatFacts::NO_INFINITE,
+            color_facts: FloatFacts::NO_NAN | FloatFacts::NO_INFINITE,
+            color_min_exp: None,
+            color_bounded: true,
+        },
+        ConvertStep::LinearRgbToOklab | ConvertStep::LinearRgbaToOklaba => {
+            if in_trust
+                .color_facts
+                .contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE)
+                && in_trust.color_bounded
+            {
+                let cf = FloatFacts::NO_NAN | FloatFacts::NO_INFINITE;
+                combine_trust(to, cf, in_trust.facts, None, true)
+            } else {
+                StepFloatTrust::default()
+            }
+        }
+        #[cfg(feature = "hdr-experimental")]
+        ConvertStep::ToneMap(_) => {
+            let cf = FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::AT_MOST_ONE;
+            combine_trust(to, cf, in_trust.facts, None, true)
+        }
+        ConvertStep::StraightToPremul => {
+            if in_trust
+                .facts
+                .contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE)
+            {
+                let f = FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE;
+                StepFloatTrust {
+                    facts: f,
+                    color_facts: f,
+                    color_min_exp: None,
+                    color_bounded: to.channel_type() == ChannelType::F32 || in_trust.color_bounded,
+                }
+            } else {
+                StepFloatTrust::default()
+            }
+        }
+        ConvertStep::Perceptual(p) => match p {
+            perceptual::PerceptualStep::DecodeIntToF32 { layout, .. } => {
+                let mut f =
+                    FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::NO_SUBNORMALS;
+                if !matches!(layout, ChannelLayout::Jzazbz | ChannelLayout::JzazbzAlpha) {
+                    f |= FloatFacts::NON_NEGATIVE;
+                }
+                StepFloatTrust {
+                    facts: f,
+                    color_facts: f,
+                    color_min_exp: None,
+                    color_bounded: true,
+                }
+            }
+            perceptual::PerceptualStep::RgbToHsl { .. }
+            | perceptual::PerceptualStep::RgbToHsv { .. } => {
+                if in_trust
+                    .color_facts
+                    .contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE)
+                {
+                    let cf =
+                        FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::NON_NEGATIVE;
+                    combine_trust(to, cf, in_trust.facts, None, true)
+                } else {
+                    StepFloatTrust::default()
+                }
+            }
+            perceptual::PerceptualStep::HslToRgb { .. }
+            | perceptual::PerceptualStep::HsvToRgb { .. }
+            | perceptual::PerceptualStep::CartesianToPolar { .. }
+            | perceptual::PerceptualStep::PolarToCartesian { .. } => {
+                if in_trust
+                    .color_facts
+                    .contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE)
+                    && in_trust.color_bounded
+                {
+                    let cf = FloatFacts::NO_NAN | FloatFacts::NO_INFINITE;
+                    combine_trust(to, cf, in_trust.facts, None, true)
+                } else {
+                    StepFloatTrust::default()
+                }
+            }
+            perceptual::PerceptualStep::LinearRgbToLch { .. } => {
+                if in_trust
+                    .color_facts
+                    .contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE)
+                    && in_trust.color_bounded
+                {
+                    let cf = FloatFacts::NO_NAN | FloatFacts::NO_INFINITE;
+                    // Output L*, C* can exceed 100 on HDR inputs, so cubing in a
+                    // subsequent LchToLinearRgb is only bounded when RGB was unit [0, 1].
+                    let bounded_for_cube = in_trust
+                        .color_facts
+                        .contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE);
+                    combine_trust(to, cf, in_trust.facts, None, bounded_for_cube)
+                } else {
+                    StepFloatTrust::default()
+                }
+            }
+            perceptual::PerceptualStep::LchToLinearRgb { .. } => {
+                if in_trust
+                    .color_facts
+                    .contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE)
+                    && in_trust.color_bounded
+                {
+                    let cf = FloatFacts::NO_NAN | FloatFacts::NO_INFINITE;
+                    combine_trust(to, cf, in_trust.facts, None, true)
+                } else {
+                    StepFloatTrust::default()
+                }
+            }
+            _ => StepFloatTrust::default(),
+        },
+        _ => StepFloatTrust::default(),
+    }
+}
+
 /// Pre-computed conversion plan.
 ///
 /// Stores the chain of steps needed to convert from one format to another.
 /// Created once, applied to every row.
 #[derive(Clone, Debug)]
-pub struct ConvertPlan {
+pub(crate) struct NativePlan {
     pub(crate) from: PixelDescriptor,
     pub(crate) to: PixelDescriptor,
     operations: Vec<PlannedOperation>,
+    input_facts: zenpixels::sample::FloatFacts,
+    output_facts: zenpixels::sample::FloatFacts,
 }
 
 /// One executable operation and the complete meaning of its input/output.
@@ -226,6 +739,7 @@ struct PlannedOperation {
     from: PixelDescriptor,
     to: PixelDescriptor,
     pq_anchor_scale: f32,
+    in_trust: StepFloatTrust,
 }
 
 /// The linear value of SDR white in `transfer`, for a background composited into it.
@@ -271,13 +785,16 @@ fn matte_background(
         TransferFunction::Linear,
     )
     .with_primaries(primaries);
-    let options = ConvertOptions::permissive()
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(crate::DepthPolicy::Round)
+        .with_luma(Some(crate::LumaCoefficients::Bt709))
         .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
-        .with_clip_out_of_gamut(false)
+        .with_gamut_policy(crate::GamutPolicy::PreserveExtended)
         .with_sdr_white(zenpixels::hdr::DiffuseWhite::new(10_000.0));
     let mut linear = [0f32; 3];
     convert_row_buffered(
-        &ConvertPlan::new_explicit(from, to, &options)?,
+        &NativePlan::new_explicit(from, to, &options)?,
         background.as_bytes(),
         bytemuck::cast_slice_mut(&mut linear),
         1,
@@ -440,6 +957,7 @@ pub(crate) enum ConvertStep {
     /// planning so that rows only blend.
     MatteComposite {
         linear: [f32; 3],
+        clip: bool,
     },
     /// Gray → RGB (replicate gray to all 3 channels).
     GrayToRgb,
@@ -484,8 +1002,12 @@ pub(crate) enum ConvertStep {
     NaiveU8ToF32,
     /// Naive f32 → u8 (clamp * 255 + 0.5, no gamma).
     NaiveF32ToU8,
+    /// Naive f32 → u8 via floor truncation (`clamp * 255`, `DepthPolicy::Truncate`).
+    NaiveF32ToU8Truncate,
     /// Exact u16 → u8 round-to-nearest.
     U16ToU8,
+    /// u16 → u8 high-byte truncation (`v >> 8`, `DepthPolicy::Truncate`).
+    U16ToU8Truncate,
     /// Composite SDR transfer conversion and final u16 → u8 quantisation in f64.
     SdrU16ToU8 {
         to: TransferFunction,
@@ -496,6 +1018,8 @@ pub(crate) enum ConvertStep {
     U16ToF32,
     /// f32 → u16 (clamp * 65535 + 0.5).
     F32ToU16,
+    /// f32 → u16 via floor truncation (`clamp * 65535`, `DepthPolicy::Truncate`).
+    F32ToU16Truncate,
     /// f16 → f32 (IEEE 754 half-precision unpack, no TF).
     F16ToF32,
     /// f32 → f16 (round-to-nearest-even, no TF).
@@ -525,9 +1049,9 @@ pub(crate) enum ConvertStep {
     SrgbF32ToLinearF32Extended,
     /// Linear f32 → sRGB f32 (OETF, sign-preserving extended range).
     LinearF32ToSrgbF32Extended,
-    /// BT.709 f32 `[0,1]` → linear f32 (EOTF, no depth change).
+    /// BT.709 f32 → linear f32 (EOTF, same depth; continues linear `v / 4.5` segment below 0).
     Bt709F32ToLinearF32,
-    /// Linear f32 → BT.709 f32 `[0,1]` (OETF, no depth change).
+    /// Linear f32 → BT.709 f32 (OETF, same depth; continues linear `4.5 * v` segment below 0).
     LinearF32ToBt709F32,
     /// Gamma 2.2 (Adobe RGB 1998) f32 `[0,1]` → linear f32 (EOTF, no depth change).
     /// Uses the Adobe RGB 1998 canonical exponent 563/256 ≈ 2.19921875.
@@ -604,10 +1128,9 @@ pub(crate) enum ConvertStep {
     /// target unit cube using a hue-preserving rational knee curve.
     /// Skipped (no step emitted) when the target is BT.2020 — the
     /// wide-gamut output mode.
-    SoftCompressOklch {
-        primaries: ColorPrimaries,
-        knee: f32,
-    },
+    SoftCompressOklch(alloc::sync::Arc<crate::hdr::SoftCompress>),
+    /// Closed-form perceptual and polar/cylindrical step (`Oklch`, `Lch`, `Jzazbz`, `Jzczhz`, `Hsl`, `Hsv`).
+    Perceptual(perceptual::PerceptualStep),
 }
 
 impl ConvertStep {
@@ -640,11 +1163,14 @@ impl ConvertStep {
             Self::LinearF32ToSrgbU8 => "LinearF32ToSrgbU8",
             Self::NaiveU8ToF32 => "NaiveU8ToF32",
             Self::NaiveF32ToU8 => "NaiveF32ToU8",
+            Self::NaiveF32ToU8Truncate => "NaiveF32ToU8Truncate",
             Self::U16ToU8 => "U16ToU8",
+            Self::U16ToU8Truncate => "U16ToU8Truncate",
             Self::SdrU16ToU8 { .. } => "SdrU16ToU8",
             Self::U8ToU16 => "U8ToU16",
             Self::U16ToF32 => "U16ToF32",
             Self::F32ToU16 => "F32ToU16",
+            Self::F32ToU16Truncate => "F32ToU16Truncate",
             Self::F16ToF32 => "F16ToF32",
             Self::F32ToF16 => "F32ToF16",
             Self::PqU16ToLinearF32 => "PqU16ToLinearF32",
@@ -683,7 +1209,8 @@ impl ConvertStep {
             // updated to `"ToneMap"` in the same commit.
             #[cfg(feature = "hdr-experimental")]
             Self::ToneMap(_) => "ToneMap",
-            Self::SoftCompressOklch { .. } => "SoftCompressOklch",
+            Self::SoftCompressOklch(_) => "SoftCompressOklch",
+            Self::Perceptual(p) => p.variant_name(),
         }
     }
 }
@@ -691,30 +1218,32 @@ impl ConvertStep {
 /// Color models that zenpixels-convert's built-in kernels resolve natively.
 ///
 /// Anything outside this set is a device-dependent / CMS-only path —
-/// CMYK today, Lab / XYZ / spot inks if/when those land as
-/// [`crate::ColorModel`] variants. Used internally before planning.
+/// CMYK, CIE Lab (except direct `Lab <-> Lch` polar coordinate changes),
+/// and CIE XYZ. Used internally before planning.
 #[inline]
 fn native_color_model(m: crate::ColorModel) -> bool {
-    // `Gray`, `Rgb` and `Oklab` are the colorimetric spaces the built-in
-    // kernels handle end-to-end (gamut matrices, transfer LUTs, fused
-    // matluts, polyfit decoders, the OKLab gamut-compression path, …).
-    // `YCbCr` is also colorimetric-equivalent to RGB once the matrix has
-    // been applied, but no kernel here consumes raw `YCbCr` pixels: every
-    // entry point that touches YCbCr first lifts it into RGB via the
-    // decoder's own coefficient pair, so the planner never sees a
-    // `YCbCr` color model on either side. CMYK is the only non-native
-    // model that currently reaches the planner.
     matches!(
         m,
-        crate::ColorModel::Gray | crate::ColorModel::Rgb | crate::ColorModel::Oklab
+        crate::ColorModel::Gray
+            | crate::ColorModel::Rgb
+            | crate::ColorModel::Oklab
+            | crate::ColorModel::Oklch
+            | crate::ColorModel::Lch
+            | crate::ColorModel::Jzazbz
+            | crate::ColorModel::Jzczhz
+            | crate::ColorModel::Hsl
+            | crate::ColorModel::Hsv
     )
 }
 
 pub(crate) fn needs_cms_for_color_model(from: &PixelDescriptor, to: &PixelDescriptor) -> bool {
+    if perceptual::is_direct_lab_lch_pair(from, to) {
+        return false;
+    }
     !native_color_model(from.color_model()) || !native_color_model(to.color_model())
 }
 
-impl ConvertPlan {
+impl NativePlan {
     /// Assemble a plan with the default (no-anchor) PQ scale. The single place
     /// `pq_anchor_scale` is defaulted, so every construction path starts at the
     /// behavior-preserving `1.0`.
@@ -765,16 +1294,21 @@ impl ConvertPlan {
                     from: current,
                     to: next,
                     pq_anchor_scale: 1.0,
+                    in_trust: StepFloatTrust::default(),
                 };
                 current = next;
                 operation
             })
             .collect();
-        Self {
+        let mut plan = Self {
             from,
             to,
             operations,
-        }
+            input_facts: zenpixels::sample::FloatFacts::NONE,
+            output_facts: zenpixels::sample::FloatFacts::NONE,
+        };
+        plan.recompute_float_trust();
+        plan
     }
 
     fn prepend(&mut self, from: PixelDescriptor, step: ConvertStep) {
@@ -785,9 +1319,14 @@ impl ConvertPlan {
                 from,
                 to: self.from,
                 pq_anchor_scale: 1.0,
+                in_trust: StepFloatTrust::default(),
             },
         );
         self.from = from;
+        if !from.channel_type().is_float() {
+            self.input_facts = zenpixels::sample::FloatFacts::NONE;
+        }
+        self.recompute_float_trust();
     }
 
     fn append(&mut self, to: PixelDescriptor, step: ConvertStep) {
@@ -796,8 +1335,45 @@ impl ConvertPlan {
             from: self.to,
             to,
             pq_anchor_scale: 1.0,
+            in_trust: StepFloatTrust::default(),
         });
         self.to = to;
+        self.recompute_float_trust();
+    }
+
+    #[inline]
+    pub(crate) const fn input_facts(&self) -> zenpixels::sample::FloatFacts {
+        self.input_facts
+    }
+
+    #[inline]
+    pub(crate) const fn output_facts(&self) -> zenpixels::sample::FloatFacts {
+        self.output_facts
+    }
+
+    pub(crate) fn propagate_float_facts(&mut self, initial: zenpixels::sample::FloatFacts) {
+        let initial = if self.from.channel_type().is_float() {
+            initial
+        } else {
+            zenpixels::sample::FloatFacts::NONE
+        };
+        self.input_facts = initial;
+        let mut cur = StepFloatTrust::from_input(self.from, initial);
+        for op in &mut self.operations {
+            op.in_trust = cur;
+            cur = step_output_trust(&op.step, op.from, op.to, op.pq_anchor_scale, cur);
+        }
+        self.output_facts = if self.to.channel_type().is_float() {
+            cur.facts
+        } else {
+            zenpixels::sample::FloatFacts::NONE
+        };
+    }
+
+    #[inline]
+    fn recompute_float_trust(&mut self) {
+        let initial = self.input_facts;
+        self.propagate_float_facts(initial);
     }
 
     /// Anchor this plan's **PQ** steps to an absolute-luminance white point —
@@ -817,9 +1393,18 @@ impl ConvertPlan {
         // is the fraction of PQ's 10000 cd/m² peak that relative-linear 1.0 sits at.
         let diffuse_white_nits = f64::from(anchor.nits());
         const PQ_PEAK_NITS: f64 = 10_000.0;
+        let scale = (diffuse_white_nits / PQ_PEAK_NITS) as f32;
         for operation in &mut self.operations {
-            operation.pq_anchor_scale = (diffuse_white_nits / PQ_PEAK_NITS) as f32;
+            operation.pq_anchor_scale = scale;
+            if let ConvertStep::Perceptual(
+                perceptual::PerceptualStep::LinearRgbToJzazbz { anchored, .. }
+                | perceptual::PerceptualStep::JzazbzToLinearRgb { anchored, .. },
+            ) = &mut operation.step
+            {
+                *anchored = true;
+            }
         }
+        self.recompute_float_trust();
         self
     }
 
@@ -851,8 +1436,10 @@ impl ConvertPlan {
                     from: boundary,
                     to: boundary,
                     pq_anchor_scale: 1.0,
+                    in_trust: StepFloatTrust::default(),
                 },
             );
+            self.recompute_float_trust();
         }
         self
     }
@@ -869,16 +1456,20 @@ impl ConvertPlan {
     ///
     /// CMYK (and any other non-native color model) returns
     /// [`ConvertError::NeedsCms`] so the caller can re-issue via
-    /// [`RowConverter::new_explicit_with_cms`](crate::RowConverter::new_explicit_with_cms)
+    /// [`ConversionSpec::with_cms`](crate::ConversionSpec::with_cms)
     /// with a [`PluggableCms`](crate::cms::PluggableCms) backend attached.
-    /// `ConvertPlan` itself never dispatches through CMS — wire the call
+    /// `NativePlan` itself never dispatches through CMS — wire the call
     /// through `RowConverter` for that.
     #[track_caller]
     pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
         Self::new_explicit(
             from,
             to,
-            &ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::DiscardUnchecked),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(crate::DepthPolicy::Round)
+                .with_luma(Some(crate::LumaCoefficients::Bt709))
+                .with_alpha_policy(AlphaPolicy::DiscardUnchecked),
         )
     }
 
@@ -887,6 +1478,19 @@ impl ConvertPlan {
         to: PixelDescriptor,
     ) -> Result<Self, At<ConvertError>> {
         validate_descriptors(from, to)?;
+        if from == to && !needs_cms_for_color_model(&from, &to) {
+            return Ok(Self::build(from, to, vec![ConvertStep::Identity]));
+        }
+        if let Some(pivot) = perceptual::pivot(from, to) {
+            return Self::plan_native(from, pivot)?
+                .compose(&Self::plan_native(pivot, to)?)
+                .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
+        }
+        match perceptual::try_direct_step(from, to) {
+            Ok(Some(step)) => return Ok(Self::build(from, to, vec![step])),
+            Err(()) => return Err(whereat::at!(ConvertError::NoPath { from, to })),
+            Ok(None) => {}
+        }
         if let Some(pivot) = oklab_pivot(from, to) {
             return Self::plan_native(from, pivot)?
                 .compose(&Self::plan_native(pivot, to)?)
@@ -946,14 +1550,8 @@ impl ConvertPlan {
             }));
         }
 
-        // BGR kernels only swap bytes, at U8. Everything else happens as RGB in between.
+        // BGR kernels swap R↔B at the endpoint, with RGB intermediates in between.
         if from.layout() == ChannelLayout::Bgr || to.layout() == ChannelLayout::Bgr {
-            let eight_bit = |d: PixelDescriptor| {
-                d.layout() != ChannelLayout::Bgr || d.channel_type() == ChannelType::U8
-            };
-            if !eight_bit(from) || !eight_bit(to) {
-                return Err(whereat::at!(ConvertError::NoPath { from, to }));
-            }
             let canonical = |d: PixelDescriptor| {
                 if d.layout() == ChannelLayout::Bgr {
                     PixelDescriptor::new(d.channel_type(), ChannelLayout::Rgb, None, d.transfer())
@@ -1246,10 +1844,18 @@ impl ConvertPlan {
                 };
                 steps.insert(insert_pos, gamut_step);
             } else {
-                // No existing linear f32 step — we must add linearize → gamut → delinearize.
+                // No existing linear f32 step — we must add linearize → gamut → delinearize
+                // BEFORE any trailing StraightToPremul so gamut math runs on straight samples
+                // and premultiplication occurs in the destination encoding.
+                let trailing_premul = if matches!(steps.last(), Some(ConvertStep::StraightToPremul))
+                {
+                    steps.pop()
+                } else {
+                    None
+                };
                 // Determine layout for the gamut step.
                 let has_alpha = from.layout().has_alpha() || to.layout().has_alpha();
-                // Use the layout at the current point in the plan.
+                // Use the layout at the current point in the plan (before StraightToPremul).
                 let mut desc = from;
                 for step in &steps {
                     desc = intermediate_desc(desc, step);
@@ -1408,6 +2014,9 @@ impl ConvertPlan {
                 }
 
                 steps.extend(gamut_steps);
+                if let Some(alpha_step) = trailing_premul {
+                    steps.push(alpha_step);
+                }
             }
         }
 
@@ -1459,18 +2068,18 @@ impl ConvertPlan {
     /// Create an HDR→SDR conversion plan with the given source-peak
     /// luminance.
     ///
-    /// Equivalent to [`ConvertPlan::new_with_hdr_config`] called with
+    /// Equivalent to [`ConversionSpec::with_hdr`](crate::ConversionSpec::with_hdr) called with
     /// [`HdrConfig::for_source_peak(source_peak_nits)`](HdrConfig::for_source_peak)
     /// (`target_peak_nits = 100.0`, `gamut_knee = 0.96`).
     ///
     /// The plan inserts a [`Bt2446A`](crate::hdr::Bt2446A) tone-map step
     /// (and an OKLch soft-compress step for non-BT.2020 targets) into the
     /// usual transfer / depth / gamut chain. Non-HDR conversions go through
-    /// the same path as [`ConvertPlan::new`].
+    /// the same path as [`NativePlan::new`].
     ///
     /// # Errors
     ///
-    /// Same as [`ConvertPlan::new`] for non-HDR conversions.
+    /// Same as [`NativePlan::new`] for non-HDR conversions.
     /// [`HdrSourceRequiresPeak`] is raised only when `source_peak_nits`
     /// is not a positive, finite number — a supplied-but-degenerate peak
     /// would otherwise tone-map every pixel to black.
@@ -1479,9 +2088,10 @@ impl ConvertPlan {
     ///
     /// # Panics
     ///
-    /// Same panics as [`ConvertPlan::new`] (CMYK descriptors).
+    /// Same panics as [`NativePlan::new`] (CMYK descriptors).
     #[cfg(feature = "hdr-experimental")]
     #[track_caller]
+    #[cfg(test)]
     pub fn new_with_hdr_peak(
         from: PixelDescriptor,
         to: PixelDescriptor,
@@ -1497,22 +2107,22 @@ impl ConvertPlan {
     /// constructor) inserts:
     ///
     /// 1. HDR transfer decode (PQ → source-peak-relative linear) — same kernels as
-    ///    [`ConvertPlan::new`]. Skipped when the source is already
+    ///    [`NativePlan::new`]. Skipped when the source is already
     ///    `Linear`.
     /// 2. Source primaries → BT.2020 matrix (skipped when source is BT.2020).
     /// 3. `ToneMap` step — the in-crate BT.2446 Method A
     ///    [`Bt2446A`](crate::hdr::Bt2446A) reference curve when called
     ///    through this entry; swappable via
-    ///    [`ConvertPlan::new_with_tone_mapper`](Self::new_with_tone_mapper).
+    ///    [`NativePlan::new_with_tone_mapper`](Self::new_with_tone_mapper).
     /// 4. BT.2020 → target primaries matrix (skipped when target is BT.2020).
     /// 5. `SoftCompressOklch` step (skipped when target is BT.2020 —
     ///    wide-gamut output mode preserves chroma).
     /// 6. Linear → target transfer encode + any depth conversion (sRGB u8,
-    ///    BT.1886 f32, etc.) — same kernels as [`ConvertPlan::new`].
+    ///    BT.1886 f32, etc.) — same kernels as [`NativePlan::new`].
     ///
     /// For sources that are obviously SDR (`Srgb` / `Bt709` / `Gamma22`)
     /// the `hdr` argument is ignored and this returns the same plan
-    /// [`ConvertPlan::new`] would build — no tone-map gets injected into
+    /// [`NativePlan::new`] would build — no tone-map gets injected into
     /// a path that doesn't need one.
     ///
     // ToneMap / SoftCompressOklch are crate-internal `ConvertStep` variants
@@ -1521,7 +2131,7 @@ impl ConvertPlan {
     ///
     /// # Errors
     ///
-    /// Same as [`ConvertPlan::new`] for non-HDR conversions. For HDR
+    /// Same as [`NativePlan::new`] for non-HDR conversions. For HDR
     /// sources, [`HdrSourceRequiresPeak`] is raised when
     /// `hdr.source_peak_nits` or `hdr.target_peak_nits` is not a
     /// positive, finite number (including the unset
@@ -1538,7 +2148,7 @@ impl ConvertPlan {
     ///
     /// CMYK (and any other non-native color model) returns
     /// [`ConvertError::NeedsCms`] — same posture as
-    /// [`ConvertPlan::new`]. HDR tone-mapping is RGB-only; a CMS is the
+    /// [`NativePlan::new`]. HDR tone-mapping is RGB-only; a CMS is the
     /// right tool for CMYK↔RGB even on the HDR construction path.
     #[cfg(feature = "hdr-experimental")]
     #[track_caller]
@@ -1780,10 +2390,7 @@ impl ConvertPlan {
         // ---- (e) OKLch soft chroma compression (skip when target IS BT.2020;
         // wide-gamut output mode preserves chroma).
         if to.primaries != ColorPrimaries::Bt2020 && to.primaries != ColorPrimaries::Unknown {
-            steps.push(ConvertStep::SoftCompressOklch {
-                primaries: to.primaries,
-                knee: hdr.gamut_knee,
-            });
+            steps.push(soft_compress_step(to.primaries, hdr.gamut_knee));
         }
 
         // ---- (f) Layout conversion (e.g., RGBA→RGB DropAlpha), if any.
@@ -1855,8 +2462,8 @@ impl ConvertPlan {
         let inverse = to.transfer() == TransferFunction::Hlg;
         // Internal F32 storage must not masquerade as a caller-requested depth
         // reduction. Preserve the gate on the actual endpoints.
-        let endpoint_reduction = crate::negotiate::channel_bits(from.channel_type())
-            > crate::negotiate::channel_bits(to.channel_type());
+        let endpoint_reduction = crate::route::channel_bits(from.channel_type())
+            > crate::route::channel_bits(to.channel_type());
         if endpoint_reduction && options.depth_policy() == DepthPolicy::Forbid {
             return Err(whereat::at!(ConvertError::DepthReductionForbidden));
         }
@@ -1900,7 +2507,7 @@ impl ConvertPlan {
                     rendering,
                     inverse,
                     white.nits(),
-                    options.clip_out_of_gamut(),
+                    options.gamut_policy() == crate::GamutPolicy::Clip,
                 ))],
             )
         } else {
@@ -1911,7 +2518,7 @@ impl ConvertPlan {
                     rendering,
                     inverse,
                     white.nits(),
-                    options.clip_out_of_gamut(),
+                    options.gamut_policy() == crate::GamutPolicy::Clip,
                 ))],
             )
         };
@@ -1937,8 +2544,11 @@ impl ConvertPlan {
                     TransferFunction::Pq,
                 )
                 .with_primaries(ColorPrimaries::Bt2020);
-                let encode =
-                    Self::new_explicit(linear, pq, &options.with_clip_out_of_gamut(false))?;
+                let encode = Self::new_explicit(
+                    linear,
+                    pq,
+                    &options.with_gamut_policy(crate::GamutPolicy::PreserveExtended),
+                )?;
                 plan = plan
                     .compose_preserving(&encode)
                     .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }))?;
@@ -1963,7 +2573,7 @@ impl ConvertPlan {
                                 .nits()
                         };
                     for operation in &mut after.operations {
-                        if let ConvertStep::MatteComposite { linear } = &mut operation.step {
+                        if let ConvertStep::MatteComposite { linear, .. } = &mut operation.step {
                             for value in linear {
                                 *value *= background_white / white.nits();
                             }
@@ -1984,9 +2594,9 @@ impl ConvertPlan {
     ///
     /// CMYK (and any other non-native color model) returns
     /// [`ConvertError::NeedsCms`] — same posture as
-    /// [`ConvertPlan::new`]. To dispatch CMYK ↔ RGB through a CMS, build
+    /// [`NativePlan::new`]. To dispatch CMYK ↔ RGB through a CMS, build
     /// the converter via
-    /// [`RowConverter::new_explicit_with_cms`](crate::RowConverter::new_explicit_with_cms)
+    /// [`ConversionSpec::with_cms`](crate::ConversionSpec::with_cms)
     /// with a [`PluggableCms`](crate::cms::PluggableCms) plugin attached.
     #[track_caller]
     pub fn new_explicit(
@@ -2007,14 +2617,23 @@ impl ConvertPlan {
         if needs_cms_for_color_model(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
         }
+        let involves_jzazbz = matches!(
+            from.color_model(),
+            crate::ColorModel::Jzazbz | crate::ColorModel::Jzczhz
+        ) || matches!(
+            to.color_model(),
+            crate::ColorModel::Jzazbz | crate::ColorModel::Jzczhz
+        );
         let pq_boundary = from.transfer() != to.transfer()
-            && (from.transfer() == TransferFunction::Pq || to.transfer() == TransferFunction::Pq);
+            && (from.transfer() == TransferFunction::Pq || to.transfer() == TransferFunction::Pq)
+            && !involves_jzazbz;
         if pq_boundary
             && !is_hdr_to_sdr(from.transfer(), to.transfer())
             && options.sdr_white().is_none()
         {
             return Err(whereat::at!(ConvertError::SdrWhiteRequired));
         }
+        validate_descriptors(from, to)?;
         if let Some(pivot) = oklab_pivot(from, to) {
             return Self::new_explicit(from, pivot, options)?
                 .compose(&Self::new_explicit(pivot, to, options)?)
@@ -2022,6 +2641,12 @@ impl ConvertPlan {
         }
         // Check alpha removal policy.
         let drops_alpha = from.has_alpha() && !to.has_alpha();
+        if drops_alpha
+            && from.signal_range == zenpixels::SignalRange::Narrow
+            && matches!(options.alpha_policy(), AlphaPolicy::CompositeOnto { .. })
+        {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
         if drops_alpha && options.alpha_policy() == AlphaPolicy::DiscardIfOpaque {
             return Err(whereat::at!(ConvertError::AlphaCheckRequired));
         }
@@ -2033,8 +2658,8 @@ impl ConvertPlan {
         // size — F16 and U16 are both 2 bytes but F16 carries only ~11 bits of
         // precision vs U16's 16, so a U16→F16 hop IS a precision reduction and
         // must be policy-gated.
-        let reduces_depth = crate::negotiate::channel_bits(from.channel_type())
-            > crate::negotiate::channel_bits(to.channel_type());
+        let reduces_depth = crate::route::channel_bits(from.channel_type())
+            > crate::route::channel_bits(to.channel_type());
         if reduces_depth && options.depth_policy() == DepthPolicy::Forbid {
             return Err(whereat::at!(ConvertError::DepthReductionForbidden));
         }
@@ -2056,8 +2681,7 @@ impl ConvertPlan {
                 .expect("matching built-in endpoints"));
         }
 
-        if options.gamut_mapping() == GamutMapping::SoftCompress
-            && soft_compress_applies(&from, &to)
+        if options.gamut_policy() == GamutPolicy::SoftCompress && soft_compress_applies(&from, &to)
         {
             return Self::new_soft_compressed(from, to, options).map(|plan| {
                 if let Some(anchor) = options.sdr_white() {
@@ -2096,13 +2720,16 @@ impl ConvertPlan {
         } else {
             Self::plan_native(from, to).at()?
         };
-        if from.transfer() != to.transfer()
-            && (from.transfer() == TransferFunction::Pq || to.transfer() == TransferFunction::Pq)
-            && !is_hdr_to_sdr(from.transfer(), to.transfer())
-        {
+        if pq_boundary && !is_hdr_to_sdr(from.transfer(), to.transfer()) {
             let anchor = options
                 .sdr_white()
                 .ok_or_else(|| whereat::at!(ConvertError::SdrWhiteRequired))?;
+            plan = plan.with_pq_anchor(anchor);
+        } else if involves_jzazbz
+            && from.transfer() != TransferFunction::Pq
+            && to.transfer() != TransferFunction::Pq
+            && let Some(anchor) = options.sdr_white()
+        {
             plan = plan.with_pq_anchor(anchor);
         }
 
@@ -2176,28 +2803,121 @@ impl ConvertPlan {
             plan.operations = Vec::new();
             for mut operation in expanded {
                 if matches!(operation.step, ConvertStep::DropAlpha) {
-                    if operation.from.alpha() == Some(AlphaMode::Premultiplied) {
+                    // If `plan_native` already prepended `PremulToStraight` on a linear
+                    // premultiplied source, pop it so `MatteComposite` blends linear premul
+                    // directly (`cs + bg * (1 - a)`), preserving emissive `(rgb > 0, a == 0)` pixels.
+                    if plan.operations.last().is_some_and(|prev| {
+                        matches!(prev.step, ConvertStep::PremulToStraight)
+                            && prev.from.transfer() == TransferFunction::Linear
+                            && prev.to == operation.from
+                    }) {
+                        let prev = plan.operations.pop().expect("checked last");
+                        operation.from = prev.from;
+                    } else if operation.from.alpha() == Some(AlphaMode::Premultiplied)
+                        && operation.from.transfer() != TransferFunction::Linear
+                    {
                         let straight = operation.from.with_alpha(Some(AlphaMode::Straight));
                         plan.operations.push(PlannedOperation {
                             step: ConvertStep::PremulToStraight,
                             from: operation.from,
                             to: straight,
                             pq_anchor_scale: operation.pq_anchor_scale,
+                            in_trust: StepFloatTrust::default(),
                         });
                         operation.from = straight;
                     }
                     let matte = matte_background(background, reference_white, operation.from)?;
-                    operation.step = ConvertStep::MatteComposite { linear: matte };
+                    operation.step = ConvertStep::MatteComposite {
+                        linear: matte,
+                        clip: options.gamut_policy() == crate::GamutPolicy::Clip,
+                    };
                 }
                 plan.operations.push(operation);
             }
+        }
+
+        // Honor DepthPolicy::Truncate on integer narrowing steps.
+        if options.depth_policy() == DepthPolicy::Truncate {
+            let mut truncated_ops = Vec::with_capacity(plan.operations.len() + 2);
+            for mut operation in plan.operations {
+                match operation.step {
+                    ConvertStep::U16ToU8 => {
+                        operation.step = ConvertStep::U16ToU8Truncate;
+                        truncated_ops.push(operation);
+                    }
+                    ConvertStep::NaiveF32ToU8 => {
+                        operation.step = ConvertStep::NaiveF32ToU8Truncate;
+                        truncated_ops.push(operation);
+                    }
+                    ConvertStep::F32ToU16 => {
+                        operation.step = ConvertStep::F32ToU16Truncate;
+                        truncated_ops.push(operation);
+                    }
+                    ConvertStep::LinearF32ToSrgbU8 => {
+                        let mut repl = Self::build(
+                            operation.from,
+                            operation.to,
+                            vec![
+                                ConvertStep::LinearF32ToSrgbF32,
+                                ConvertStep::NaiveF32ToU8Truncate,
+                            ],
+                        );
+                        for op in &mut repl.operations {
+                            op.pq_anchor_scale = operation.pq_anchor_scale;
+                        }
+                        truncated_ops.extend(repl.operations);
+                    }
+                    ConvertStep::LinearF32ToPqU16 | ConvertStep::LinearF32ToHlgU16 => {
+                        let encode = f32_encode_step(operation.to.transfer())
+                            .expect("integer HDR destination has an OETF");
+                        let mut replacement = Self::build(
+                            operation.from,
+                            operation.to,
+                            vec![encode, ConvertStep::F32ToU16Truncate],
+                        );
+                        for part in &mut replacement.operations {
+                            part.pq_anchor_scale = operation.pq_anchor_scale;
+                        }
+                        truncated_ops.extend(replacement.operations);
+                    }
+                    ConvertStep::Fused {
+                        kind: FusedKind::LinearF32ToSrgbU8Rgb,
+                        matrix,
+                        primaries,
+                    } => {
+                        let replacement = Self::build(
+                            operation.from,
+                            operation.to,
+                            vec![
+                                ConvertStep::GamutMatrixRgbF32(matrix, primaries),
+                                ConvertStep::LinearF32ToSrgbF32,
+                                ConvertStep::NaiveF32ToU8Truncate,
+                            ],
+                        );
+                        truncated_ops.extend(replacement.operations);
+                    }
+                    ConvertStep::SdrU16ToU8 { to: dst_tf } => {
+                        let mut steps = Vec::with_capacity(4);
+                        steps.push(ConvertStep::U16ToF32);
+                        steps.extend(f32_tf_pair_steps(operation.from.transfer(), dst_tf));
+                        steps.push(ConvertStep::NaiveF32ToU8Truncate);
+                        let mut repl = Self::build(operation.from, operation.to, steps);
+                        for op in &mut repl.operations {
+                            op.pq_anchor_scale = operation.pq_anchor_scale;
+                        }
+                        truncated_ops.extend(repl.operations);
+                    }
+                    _ => truncated_ops.push(operation),
+                }
+            }
+            plan.operations = truncated_ops;
         }
 
         // When the caller opts out of clipping, swap qualified pure-f32 transfer
         // steps for their sign-preserving extended-range counterparts.
         // Fused u8/u16 matlut steps are unaffected (integer I/O can't
         // represent extended range anyway).
-        if !options.clip_out_of_gamut() {
+        if options.gamut_policy() != crate::GamutPolicy::Clip {
             for operation in &mut plan.operations {
                 let step = &mut operation.step;
                 match step {
@@ -2234,6 +2954,7 @@ impl ConvertPlan {
                 _ => {}
             }
         }
+        plan.recompute_float_trust();
 
         Ok(plan)
     }
@@ -2264,23 +2985,27 @@ impl ConvertPlan {
             TransferFunction::Linear,
         )
         .with_primaries(to.primaries);
-        let plain = options.with_gamut_mapping(GamutMapping::Clip);
+        let plain = options.with_gamut_policy(GamutPolicy::Clip);
         // Padding isn't alpha, and real alpha stays in `middle`, so nothing is dropped here.
         let into = Self::new_explicit(
             from,
             middle,
             &plain
-                .with_clip_out_of_gamut(false)
+                .with_gamut_policy(crate::GamutPolicy::PreserveExtended)
                 .with_alpha_policy(AlphaPolicy::DiscardUnchecked),
         )?;
-        let out = Self::new_explicit(middle, to, &plain.with_clip_out_of_gamut(true))?;
+        let out = Self::new_explicit(
+            middle,
+            to,
+            &plain.with_gamut_policy(crate::GamutPolicy::Clip),
+        )?;
         let compression = Self::build(
             middle,
             middle,
-            vec![ConvertStep::SoftCompressOklch {
-                primaries: to.primaries,
-                knee: crate::hdr::SoftCompress::DEFAULT_KNEE,
-            }],
+            vec![soft_compress_step(
+                to.primaries,
+                crate::hdr::SoftCompress::DEFAULT_KNEE,
+            )],
         );
         Ok(into
             .compose_preserving(&compression)
@@ -2294,10 +3019,6 @@ impl ConvertPlan {
     /// Used when an external CMS transform handles the conversion — the
     /// plan exists only for `from()`/`to()` metadata; the actual row
     /// work is driven by the external transform stored on `RowConverter`.
-    pub(crate) fn identity(from: PixelDescriptor, to: PixelDescriptor) -> Self {
-        Self::build(from, to, vec![ConvertStep::Identity])
-    }
-
     /// Compose two plans into one: apply `self` then `other`.
     ///
     /// The composed plan executes both conversions in a single `convert_row`
@@ -2339,17 +3060,19 @@ impl ConvertPlan {
             }
         }
         if operations.is_empty() {
-            return Some(Self::build(
-                self.from,
-                other.to,
-                vec![ConvertStep::Identity],
-            ));
+            let mut identity = Self::build(self.from, other.to, vec![ConvertStep::Identity]);
+            identity.propagate_float_facts(self.input_facts);
+            return Some(identity);
         }
-        Some(Self {
+        let mut composed = Self {
             from: self.from,
             to: other.to,
             operations,
-        })
+            input_facts: self.input_facts,
+            output_facts: zenpixels::sample::FloatFacts::NONE,
+        };
+        composed.recompute_float_trust();
+        Some(composed)
     }
 
     /// True if conversion is a no-op.
@@ -2357,34 +3080,309 @@ impl ConvertPlan {
     pub fn is_identity(&self) -> bool {
         self.operations.len() == 1 && matches!(self.operations[0].step, ConvertStep::Identity)
     }
+}
 
-    /// Maximum bytes-per-pixel across all intermediate formats in the plan.
-    ///
-    /// Used to pre-allocate scratch buffers for streaming conversion.
-    pub(crate) fn max_intermediate_bpp(&self) -> usize {
-        self.operations
-            .iter()
-            .map(|op| op.from.bytes_per_pixel().max(op.to.bytes_per_pixel()))
-            .max()
-            .unwrap_or(0)
+/// Deduplicating bitmask of process-wide lazy lookup tables referenced by native plans.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SharedLutMask(u16);
+
+impl SharedLutMask {
+    pub(crate) const NONE: Self = Self(0);
+    const SRGB_U16_DECODE_256K: Self = Self(1 << 0);
+    const SRGB_U16_ENCODE_128K: Self = Self(1 << 1);
+    const SRGB_U8_DECODE_1K: Self = Self(1 << 2);
+    const SRGB_U8_ENCODER: Self = Self(1 << 3);
+
+    const fn sdr_u16_to_u8(from: TransferFunction, to: TransferFunction) -> Self {
+        let f_idx = match from {
+            TransferFunction::Linear => 0,
+            TransferFunction::Bt709 => 1,
+            _ => 2,
+        };
+        let t_idx = match to {
+            TransferFunction::Linear => 0,
+            TransferFunction::Bt709 => 1,
+            _ => 2,
+        };
+        Self(1 << (4 + f_idx * 3 + t_idx))
     }
 
-    /// Whether any step uses the HDR kernel scratch (RGB strips for the
-    /// tone-map and soft-compress kernels). Lets the scratch reserve those
-    /// strips only when a plan actually runs them.
-    pub(crate) fn needs_hdr_scratch(&self) -> bool {
-        self.operations.iter().any(|op| {
-            matches!(op.step, ConvertStep::SoftCompressOklch { .. }) || {
+    #[inline]
+    pub(crate) const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    pub(crate) const fn total_bytes(self) -> u64 {
+        let mut total = 0u64;
+        if (self.0 & Self::SRGB_U16_DECODE_256K.0) != 0 {
+            total += 65_536 * 4;
+        }
+        if (self.0 & Self::SRGB_U16_ENCODE_128K.0) != 0 {
+            total += 65_536 * 2;
+        }
+        if (self.0 & Self::SRGB_U8_DECODE_1K.0) != 0 {
+            total += 256 * 4;
+        }
+        if (self.0 & Self::SRGB_U8_ENCODER.0) != 0 {
+            total += core::mem::size_of::<crate::fast_gamut::SrgbU8Encoder>() as u64;
+        }
+        let mut bit = 4;
+        while bit < 13 {
+            if (self.0 & (1 << bit)) != 0 {
+                total += 65_536;
+            }
+            bit += 1;
+        }
+        total
+    }
+}
+
+impl NativePlan {
+    pub(crate) fn has_mapper(&self) -> bool {
+        #[cfg(feature = "hdr-experimental")]
+        {
+            self.operations
+                .iter()
+                .any(|op| matches!(op.step, ConvertStep::ToneMap(_)))
+        }
+        #[cfg(not(feature = "hdr-experimental"))]
+        {
+            false
+        }
+    }
+
+    pub(crate) fn plan_allocations(&self) -> (u64, Option<SharedLutMask>) {
+        let mut heap =
+            (self.operations.capacity() * core::mem::size_of::<PlannedOperation>()) as u64;
+        let mut cold = Some(SharedLutMask::NONE);
+        for op in &self.operations {
+            let mask = match &op.step {
+                ConvertStep::SoftCompressOklch(_) => {
+                    heap += (core::mem::size_of::<crate::hdr::SoftCompress>()
+                        + 2 * core::mem::size_of::<usize>()) as u64;
+                    SharedLutMask::NONE
+                }
+                ConvertStep::SdrU16ToU8 { to } => {
+                    SharedLutMask::sdr_u16_to_u8(op.from.transfer(), *to)
+                }
+                ConvertStep::Fused {
+                    kind: FusedKind::SrgbU16GamutRgb,
+                    ..
+                } => SharedLutMask::SRGB_U16_DECODE_256K.union(SharedLutMask::SRGB_U16_ENCODE_128K),
+                ConvertStep::Fused {
+                    kind: FusedKind::SrgbU8GamutRgb | FusedKind::SrgbU8GamutRgba,
+                    ..
+                } => SharedLutMask::SRGB_U8_DECODE_1K.union(SharedLutMask::SRGB_U8_ENCODER),
+                ConvertStep::Fused {
+                    kind: FusedKind::SrgbU8ToLinearF32Rgb,
+                    ..
+                } => SharedLutMask::SRGB_U8_DECODE_1K,
+                ConvertStep::Fused {
+                    kind: FusedKind::LinearF32ToSrgbU8Rgb,
+                    ..
+                } => SharedLutMask::SRGB_U8_ENCODER,
                 #[cfg(feature = "hdr-experimental")]
-                {
-                    matches!(op.step, ConvertStep::ToneMap(_))
+                ConvertStep::ToneMap(_) => {
+                    cold = None;
+                    SharedLutMask::NONE
                 }
-                #[cfg(not(feature = "hdr-experimental"))]
-                {
-                    false
+                // The transfer provider owns any tables behind these kernels.
+                ConvertStep::SrgbU8ToLinearF32
+                | ConvertStep::LinearF32ToSrgbU8
+                | ConvertStep::PqU16ToLinearF32
+                | ConvertStep::LinearF32ToPqU16 => {
+                    cold = None;
+                    SharedLutMask::NONE
                 }
+                _ => SharedLutMask::NONE,
+            };
+            cold = cold.map(|m| m.union(mask));
+        }
+        (heap, cold)
+    }
+
+    pub(crate) fn steps(&self) -> impl Iterator<Item = crate::route::PlannedStepInfo> + '_ {
+        use crate::route::{
+            AccuracyContract as A, KernelTier, PlannedStepInfo, SemanticEffects as S,
+        };
+        let stage_src_bits = crate::route::channel_bits(self.from.channel_type());
+        self.operations.iter().map(move |op| {
+            let accuracy = match op.step {
+                ConvertStep::Identity
+                | ConvertStep::SwizzleBgraRgba
+                | ConvertStep::SwizzleBgrRgb
+                | ConvertStep::AddAlpha
+                | ConvertStep::RgbToBgra
+                | ConvertStep::GrayToRgb
+                | ConvertStep::GrayToRgba
+                | ConvertStep::GrayToGrayAlpha
+                | ConvertStep::GrayAlphaToRgba
+                | ConvertStep::U8ToU16 => A::Exact,
+                ConvertStep::SdrU16ToU8 { .. }
+                | ConvertStep::Fused { .. }
+                | ConvertStep::SrgbU8ToLinearF32
+                | ConvertStep::LinearF32ToSrgbU8
+                | ConvertStep::PqU16ToLinearF32
+                | ConvertStep::LinearF32ToPqU16 => A::Lookup,
+                ConvertStep::MatteComposite { .. }
+                | ConvertStep::DropAlpha
+                | ConvertStep::SoftCompressOklch(_)
+                | ConvertStep::HlgRender(_) => A::Rendered,
+                #[cfg(feature = "hdr-experimental")]
+                ConvertStep::ToneMap(_) => A::Rendered,
+                _ if op.from.has_alpha() && !op.to.has_alpha() => A::Rendered,
+                ConvertStep::NaiveF32ToU8
+                | ConvertStep::NaiveF32ToU8Truncate
+                | ConvertStep::U16ToU8
+                | ConvertStep::U16ToU8Truncate
+                | ConvertStep::F32ToU16
+                | ConvertStep::F32ToU16Truncate
+                | ConvertStep::F32ToF16 => A::Quantized,
+                _ => A::Computed,
+            };
+            let mut semantic = S::NONE;
+            let op_from_bits = crate::route::channel_bits(op.from.channel_type());
+            let op_to_bits = crate::route::channel_bits(op.to.channel_type());
+            if op_from_bits > op_to_bits && op_to_bits < stage_src_bits {
+                semantic = semantic.union(S::DEPTH_NARROWED);
+            }
+            match &op.step {
+                ConvertStep::DropAlpha
+                | ConvertStep::RgbaToGray { .. }
+                | ConvertStep::GrayAlphaToRgb
+                | ConvertStep::GrayAlphaToGray => {
+                    semantic = semantic.union(S::ALPHA_DISCARDED);
+                }
+                ConvertStep::MatteComposite { clip, .. } => {
+                    semantic = semantic.union(S::MATTE_APPLIED);
+                    if *clip {
+                        semantic = semantic.union(S::CLAMPED);
+                    }
+                }
+                _ => {}
+            }
+            if matches!(
+                op.step,
+                ConvertStep::RgbToGray { .. }
+                    | ConvertStep::RgbaToGray { .. }
+                    | ConvertStep::RgbaToGrayAlpha { .. }
+            ) {
+                semantic = semantic.union(S::LUMA_COLLAPSED);
+            }
+            if matches!(op.step, ConvertStep::SoftCompressOklch(_)) {
+                semantic = semantic.union(S::GAMUT_COMPRESSED);
+            }
+            #[cfg(feature = "hdr-experimental")]
+            if matches!(op.step, ConvertStep::ToneMap(_)) {
+                semantic = semantic.union(S::TONE_MAPPED);
+            }
+            if matches!(op.step, ConvertStep::HlgRender(_))
+                && !matches!(
+                    op.to.transfer(),
+                    TransferFunction::Linear | TransferFunction::Pq | TransferFunction::Hlg
+                )
+            {
+                semantic = semantic.union(S::TONE_MAPPED);
+            }
+            if matches!(
+                op.step,
+                ConvertStep::StraightToPremul | ConvertStep::PremulToStraight
+            ) {
+                semantic = semantic.union(S::ALPHA_REASSOCIATED);
+            }
+            if (op.from.channel_type().is_float() && !op.to.channel_type().is_float())
+                || matches!(
+                    op.step,
+                    ConvertStep::SrgbF32ToLinearF32
+                        | ConvertStep::LinearF32ToSrgbF32
+                        | ConvertStep::Gamma22F32ToLinearF32
+                        | ConvertStep::LinearF32ToGamma22F32
+                        | ConvertStep::PqF32ToLinearF32
+                        | ConvertStep::LinearF32ToPqF32
+                        | ConvertStep::HlgF32ToLinearF32
+                        | ConvertStep::LinearF32ToHlgF32
+                        | ConvertStep::Fused {
+                            kind: FusedKind::SrgbU8GamutRgb
+                                | FusedKind::SrgbU8GamutRgba
+                                | FusedKind::SrgbU16GamutRgb
+                                | FusedKind::LinearF32ToSrgbU8Rgb,
+                            ..
+                        }
+                )
+            {
+                semantic = semantic.union(S::CLAMPED);
+            }
+            let tier = match op.step {
+                ConvertStep::Identity
+                | ConvertStep::SdrU16ToU8 { .. }
+                | ConvertStep::HlgRender(_) => KernelTier::Scalar,
+                ConvertStep::Fused { .. } => {
+                    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+                    {
+                        use archmage::SimdToken;
+                        if archmage::X64V3Token::summon().is_some() {
+                            KernelTier::X86V3
+                        } else {
+                            KernelTier::Scalar
+                        }
+                    }
+                    #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
+                    {
+                        KernelTier::Scalar
+                    }
+                }
+                _ => KernelTier::RuntimeDispatch,
+            };
+            PlannedStepInfo {
+                operation: op.step.variant_name(),
+                from: op.from,
+                to: op.to,
+                tier,
+                accuracy,
+                semantic,
             }
         })
+    }
+
+    #[cfg(feature = "hdr-experimental")]
+    fn prepare_mappers(&self) -> Result<(), At<ConvertError>> {
+        for operation in &self.operations {
+            if let ConvertStep::ToneMap(step) = &operation.step
+                && step.prepared.get().is_none()
+            {
+                let ctx = crate::hdr::ToneMapContext {
+                    source_peak_nits: step.source_peak_nits,
+                    target_peak_nits: step.target_peak_nits,
+                    working_primaries: step.working_primaries,
+                };
+                let crate::hdr::PreparedMapper::Streaming(worker) = step.mapper.prepare(&ctx)?;
+                let _ = step
+                    .prepared
+                    .set(alloc::boxed::Box::new(alloc::sync::Arc::from(worker)));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn workspace(&self, width: u32) -> Result<NativeWorkspace, At<ConvertError>> {
+        let mut layout = NativeWorkspace::default();
+        for (i, op) in self.operations.iter().enumerate() {
+            if i + 1 < self.operations.len() {
+                let bytes = row_bytes(op.to, width)?;
+                let slot = &mut layout.words[i % 2];
+                *slot = (*slot).max(bytes.div_ceil(4));
+            }
+            match &op.step {
+                #[cfg(feature = "hdr-experimental")]
+                ConvertStep::ToneMap(_) => layout.hdr_rows = [width as usize; 2],
+                ConvertStep::SoftCompressOklch(_) if op.from.layout().has_alpha() => {
+                    layout.hdr_rows[0] = width as usize;
+                }
+                _ => {}
+            }
+        }
+        layout.validate(width)?;
+        Ok(layout)
     }
 
     /// Source descriptor.
@@ -2884,81 +3882,125 @@ fn depth_steps(
 // Row conversion kernels
 // ---------------------------------------------------------------------------
 
-/// Pre-allocated scratch buffer for multi-step row conversions.
-///
-/// Eliminates per-row heap allocation by reusing two ping-pong halves
-/// of a single buffer across calls. Create once per [`ConvertPlan`],
-/// then pass to `convert_row_buffered` for each row.
+/// Allocator layouts used by native execution, in native element units.
+#[derive(Clone, Copy, Default, Debug)]
+pub(crate) struct NativeWorkspace {
+    words: [usize; 2],
+    hdr_rows: [usize; 2],
+}
+
+pub(crate) fn row_bytes(desc: PixelDescriptor, width: u32) -> Result<usize, At<ConvertError>> {
+    let bytes = u64::from(width) * desc.bytes_per_pixel() as u64;
+    if bytes > isize::MAX as u64 {
+        return Err(whereat::at!(ConvertError::InvalidWidth(width)));
+    }
+    Ok(bytes as usize)
+}
+
+impl NativeWorkspace {
+    fn validate(self, width: u32) -> Result<(), At<ConvertError>> {
+        let words = self.words[0] + self.words[1];
+        if core::alloc::Layout::array::<u32>(words).is_err()
+            || self
+                .hdr_rows
+                .iter()
+                .any(|&len| core::alloc::Layout::array::<[f32; 3]>(len).is_err())
+        {
+            return Err(whereat::at!(ConvertError::InvalidWidth(width)));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn merge(&mut self, other: Self) {
+        for (a, b) in self.words.iter_mut().zip(other.words) {
+            *a = (*a).max(b);
+        }
+        for (a, b) in self.hdr_rows.iter_mut().zip(other.hdr_rows) {
+            *a = (*a).max(b);
+        }
+    }
+
+    pub(crate) fn bytes(self) -> u64 {
+        (self.words[0] as u64 + self.words[1] as u64) * 4
+            + (self.hdr_rows[0] as u64 + self.hdr_rows[1] as u64) * 12
+    }
+}
+
 pub(crate) struct ConvertScratch {
-    /// Single allocation split into two halves via `split_at_mut`.
-    /// Stored as `Vec<u32>` to guarantee 4-byte alignment, which lets
-    /// garb and bytemuck use fast aligned paths instead of unaligned fallbacks.
     buf: Vec<u32>,
-    /// Row-persistent RGB strip for the kernels that peel alpha off.
     hdr: convert_kernels::HdrKernelScratch,
+    allocated: NativeWorkspace,
 }
 
 impl ConvertScratch {
-    /// Create empty scratch (buffer grows on first use).
     pub(crate) fn new() -> Self {
         Self {
             buf: Vec::new(),
             hdr: convert_kernels::HdrKernelScratch::default(),
+            allocated: NativeWorkspace::default(),
         }
+    }
+
+    pub(crate) fn reserve(
+        &mut self,
+        layout: NativeWorkspace,
+        width: u32,
+    ) -> Result<(), At<ConvertError>> {
+        let mut allocated = self.allocated;
+        allocated.merge(layout);
+        allocated.validate(width)?;
+        let words = allocated.words[0] + allocated.words[1];
+        if self.buf.len() < words {
+            self.buf = bytemuck::allocation::try_zeroed_vec::<u32>(words)
+                .map_err(|()| whereat::at!(ConvertError::AllocationFailed))?;
+        }
+        self.hdr.reserve(allocated.hdr_rows)?;
+        self.allocated = allocated;
+        Ok(())
     }
 
     pub(crate) fn prepare(
         &mut self,
-        plan: &ConvertPlan,
+        plan: &NativePlan,
         width: u32,
     ) -> Result<(), At<ConvertError>> {
-        self.try_ensure_capacity(plan, width)?;
-        if plan.needs_hdr_scratch() {
-            self.hdr.prepare(width)?;
+        self.reserve(plan.workspace(width)?, width)?;
+        if width == 0 || plan.is_identity() {
+            return Ok(());
         }
-        // Warm only the selected kernels/LUTs using one synthetic aligned pixel.
-        // No source image is inspected and no full-image preflight is hidden here.
-        let words = plan.max_intermediate_bpp().div_ceil(4);
-        let src: alloc::vec::Vec<u32> = bytemuck::allocation::try_zeroed_vec(words)
-            .map_err(|()| whereat::at!(ConvertError::AllocationFailed))?;
-        let mut dst: alloc::vec::Vec<u32> = bytemuck::allocation::try_zeroed_vec(words)
-            .map_err(|()| whereat::at!(ConvertError::AllocationFailed))?;
-        convert_row_buffered(
-            plan,
-            &bytemuck::cast_slice::<u32, u8>(&src)[..plan.from().bytes_per_pixel()],
-            &mut bytemuck::cast_slice_mut::<u32, u8>(&mut dst)[..plan.to().bytes_per_pixel()],
-            1,
-            self,
-        )?;
-        Ok(())
-    }
-
-    /// Ensure the buffer is large enough for two halves of the max
-    /// intermediate format at the given width, reporting a failed reserve.
-    fn try_ensure_capacity(
-        &mut self,
-        plan: &ConvertPlan,
-        width: u32,
-    ) -> Result<(), At<ConvertError>> {
-        // An even count of u32 puts both halves on a u32 boundary, as F32 rows need.
-        let half_bytes = (width as usize)
-            .checked_mul(plan.max_intermediate_bpp())
-            .ok_or_else(|| whereat::at!(ConvertError::InvalidWidth(width)))?;
-        let total_u32 = half_bytes.div_ceil(4) * 2;
-        if self.buf.len() < total_u32 {
-            self.buf = bytemuck::allocation::try_zeroed_vec::<u32>(total_u32)
-                .map_err(|()| whereat::at!(ConvertError::AllocationFailed))?;
+        #[cfg(feature = "hdr-experimental")]
+        plan.prepare_mappers()?;
+        // Warm any lazy LUTs per operation without feeding synthetic dummy pixels
+        // into user-supplied ToneMapper::map_strip implementations.
+        let src = [0u64; 256];
+        let mut dst = [0u64; 256];
+        for op in &plan.operations {
+            #[cfg(feature = "hdr-experimental")]
+            if matches!(op.step, ConvertStep::ToneMap(_)) {
+                continue;
+            }
+            apply_step_u8(
+                &op.step,
+                &bytemuck::cast_slice::<u64, u8>(&src)[..op.from.bytes_per_pixel()],
+                &mut bytemuck::cast_slice_mut::<u64, u8>(&mut dst)[..op.to.bytes_per_pixel()],
+                1,
+                op.from,
+                op.to,
+                op.pq_anchor_scale,
+                StepFloatTrust::default(),
+                &mut self.hdr,
+            );
         }
         Ok(())
     }
 }
 
-impl core::fmt::Debug for ConvertScratch {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("ConvertScratch")
-            .field("capacity", &self.buf.capacity())
-            .finish()
-    }
+fn soft_compress_step(primaries: ColorPrimaries, knee: f32) -> ConvertStep {
+    let space = crate::oklab::OklabSpace::for_primaries(primaries)
+        .expect("target primaries have defined LMS matrices");
+    ConvertStep::SoftCompressOklch(alloc::sync::Arc::new(crate::hdr::SoftCompress::new(
+        &space, knee,
+    )))
 }
 
 /// Whether primaries narrow between RGB-family layouts, so that colors can leave
@@ -2976,7 +4018,7 @@ pub(crate) fn soft_compress_applies(from: &PixelDescriptor, to: &PixelDescriptor
 
 /// One row with fresh scratch, for tests that run a plan directly.
 #[cfg(test)]
-fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
+fn convert_row(plan: &NativePlan, src: &[u8], dst: &mut [u8], width: u32) {
     convert_row_buffered(plan, src, dst, width, &mut ConvertScratch::new())
         .expect("test row conversion");
 }
@@ -2992,25 +4034,42 @@ fn convert_row(plan: &ConvertPlan, src: &[u8], dst: &mut [u8], width: u32) {
 /// prepared capacity (a `width` larger than [`ConvertScratch::prepare`]
 /// covered, or no `prepare` call at all) and the reserve fails.
 pub(crate) fn convert_row_buffered(
-    plan: &ConvertPlan,
+    plan: &NativePlan,
     src: &[u8],
     dst: &mut [u8],
     width: u32,
     scratch: &mut ConvertScratch,
 ) -> Result<(), At<ConvertError>> {
+    if !plan.is_identity() {
+        scratch.reserve(plan.workspace(width)?, width)?;
+        #[cfg(feature = "hdr-experimental")]
+        plan.prepare_mappers()?;
+    }
+    convert_row_prepared(plan, src, dst, width, scratch);
+    Ok(())
+}
+
+pub(crate) fn convert_row_prepared(
+    plan: &NativePlan,
+    src: &[u8],
+    dst: &mut [u8],
+    width: u32,
+    scratch: &mut ConvertScratch,
+) {
     if plan.is_identity() {
         let len = width as usize * plan.to.bytes_per_pixel();
         dst[..len].copy_from_slice(&src[..len]);
-        return Ok(());
-    }
-
-    if plan.needs_hdr_scratch() {
-        scratch.hdr.prepare(width)?;
+        return;
     }
 
     if plan.operations.len() == 1 {
         let operation = &plan.operations[0];
-        let (from, to, scale) = (operation.from, operation.to, operation.pq_anchor_scale);
+        let (from, to, scale, trust) = (
+            operation.from,
+            operation.to,
+            operation.pq_anchor_scale,
+            operation.in_trust,
+        );
         apply_step_u8(
             &operation.step,
             src,
@@ -3019,26 +4078,32 @@ pub(crate) fn convert_row_buffered(
             from,
             to,
             scale,
+            trust,
             &mut scratch.hdr,
         );
-        return Ok(());
+        return;
     }
-
-    scratch.try_ensure_capacity(plan, width)?;
 
     // Destructure so the ping-pong halves and the HDR kernel scratch are
     // disjoint mutable borrows across the step loop.
-    let ConvertScratch { buf, hdr } = scratch;
+    let ConvertScratch {
+        buf,
+        hdr,
+        allocated,
+    } = scratch;
     let buf_bytes: &mut [u8] = bytemuck::cast_slice_mut(buf.as_mut_slice());
-    let half = buf_bytes.len() / 2;
-    let (buf_a, buf_b) = buf_bytes.split_at_mut(half);
+    let (buf_a, buf_b) = buf_bytes.split_at_mut(allocated.words[0] * 4);
 
     let num_steps = plan.operations.len();
     for (i, operation) in plan.operations.iter().enumerate() {
         let is_last = i == num_steps - 1;
         let step = &operation.step;
-        let (current_desc, next_desc, scale) =
-            (operation.from, operation.to, operation.pq_anchor_scale);
+        let (current_desc, next_desc, scale, trust) = (
+            operation.from,
+            operation.to,
+            operation.pq_anchor_scale,
+            operation.in_trust,
+        );
 
         let next_len = (width as usize) * next_desc.bytes_per_pixel();
         let curr_len = (width as usize) * current_desc.bytes_per_pixel();
@@ -3057,6 +4122,7 @@ pub(crate) fn convert_row_buffered(
                     current_desc,
                     next_desc,
                     scale,
+                    trust,
                     &mut *hdr,
                 );
             } else {
@@ -3068,6 +4134,7 @@ pub(crate) fn convert_row_buffered(
                     current_desc,
                     next_desc,
                     scale,
+                    trust,
                     &mut *hdr,
                 );
             }
@@ -3082,6 +4149,7 @@ pub(crate) fn convert_row_buffered(
                     current_desc,
                     next_desc,
                     scale,
+                    trust,
                     &mut *hdr,
                 );
             } else {
@@ -3093,12 +4161,12 @@ pub(crate) fn convert_row_buffered(
                     current_desc,
                     next_desc,
                     scale,
+                    trust,
                     &mut *hdr,
                 );
             }
         }
     }
-    Ok(())
 }
 
 /// Check if two steps are inverses that cancel each other.
@@ -3180,10 +4248,12 @@ fn are_inverse(a: &ConvertStep, b: &ConvertStep) -> bool {
         | (ConvertStep::LinearF32ToPqU16, ConvertStep::PqU16ToLinearF32)
         | (ConvertStep::HlgU16ToLinearF32, ConvertStep::LinearF32ToHlgU16)
         | (ConvertStep::LinearF32ToHlgU16, ConvertStep::HlgU16ToLinearF32)
-        // Extended-range sRGB f32 pairs
+        // Extended-range SDR f32 pairs
         | (ConvertStep::SrgbF32ToLinearF32Extended, ConvertStep::LinearF32ToSrgbF32Extended)
         | (ConvertStep::LinearF32ToSrgbF32Extended, ConvertStep::SrgbF32ToLinearF32Extended)
-    )
+        | (ConvertStep::Gamma22F32ToLinearF32Extended, ConvertStep::LinearF32ToGamma22F32Extended)
+        | (ConvertStep::LinearF32ToGamma22F32Extended, ConvertStep::Gamma22F32ToLinearF32Extended)
+    ) || matches!((a, b), (ConvertStep::Perceptual(pa), ConvertStep::Perceptual(pb)) if pa.is_inverse_of(pb))
 }
 
 /// Compute the descriptor after applying one step.
@@ -3303,7 +4373,10 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             current.alpha(),
             TransferFunction::Linear,
         ),
-        ConvertStep::NaiveF32ToU8 | ConvertStep::U16ToU8 => PixelDescriptor::new(
+        ConvertStep::NaiveF32ToU8
+        | ConvertStep::NaiveF32ToU8Truncate
+        | ConvertStep::U16ToU8
+        | ConvertStep::U16ToU8Truncate => PixelDescriptor::new(
             ChannelType::U8,
             current.layout(),
             current.alpha(),
@@ -3324,7 +4397,10 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             current.alpha(),
             current.transfer(),
         ),
-        ConvertStep::F32ToU16 | ConvertStep::LinearF32ToPqU16 | ConvertStep::LinearF32ToHlgU16 => {
+        ConvertStep::F32ToU16
+        | ConvertStep::F32ToU16Truncate
+        | ConvertStep::LinearF32ToPqU16
+        | ConvertStep::LinearF32ToHlgU16 => {
             let tf = match step {
                 ConvertStep::LinearF32ToPqU16 => TransferFunction::Pq,
                 ConvertStep::LinearF32ToHlgU16 => TransferFunction::Hlg,
@@ -3465,12 +4541,14 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
                 TransferFunction::Linear
             },
         ),
-        ConvertStep::SoftCompressOklch { .. } => current,
+        ConvertStep::SoftCompressOklch(_) => current,
+        ConvertStep::Perceptual(p) => p.output_descriptor(current),
     };
     next.primaries = match step {
         ConvertStep::GamutMatrixRgbF32(_, primaries)
         | ConvertStep::GamutMatrixRgbaF32(_, primaries)
         | ConvertStep::Fused { primaries, .. } => *primaries,
+        ConvertStep::Perceptual(_) => next.primaries,
         _ => current.primaries,
     };
     next.signal_range = current.signal_range;
@@ -3480,13 +4558,17 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
 #[path = "convert_kernels.rs"]
 mod convert_kernels;
 #[path = "hlg_render.rs"]
-mod hlg_render;
+pub(crate) mod hlg_render;
+#[path = "perceptual.rs"]
+mod perceptual;
 use convert_kernels::apply_step_u8;
-pub(crate) use convert_kernels::{hlg_eotf, hlg_oetf, pq_eotf, pq_oetf};
+#[cfg(test)]
+pub(crate) use convert_kernels::{hlg_eotf, hlg_oetf};
+pub(crate) use convert_kernels::{pq_eotf, pq_oetf};
 
 #[cfg(all(test, feature = "bt2446a"))]
 mod hdr_plan_tests {
-    //! Unit tests pinning the HDR-aware `ConvertPlan` against the same math
+    //! Unit tests pinning the HDR-aware `NativePlan` against the same math
     //! the deleted `HdrToSdr::apply_strip` ran. Keeps the e2e ΔE2000 budget
     //! grounded in per-pixel parity rather than only the imazen-26 sample.
     use super::*;
@@ -3597,7 +4679,7 @@ mod hdr_plan_tests {
             ColorPrimaries::Bt709,
         );
         let hdr = HdrConfig::for_source_peak(1000.0);
-        let plan = ConvertPlan::new_with_hdr_config(src, to, hdr).expect("plan");
+        let plan = NativePlan::new_with_hdr_config(src, to, hdr).expect("plan");
         let inputs = [
             [0.0_f32, 0.0, 0.0],
             [0.18, 0.18, 0.18],
@@ -3632,17 +4714,25 @@ mod composition_anchor_contract {
     fn unequal_pq_anchors_are_not_cancelled_and_each_stage_keeps_its_units() {
         let linear = PixelDescriptor::RGBF32_LINEAR;
         let pq = linear.with_transfer(TransferFunction::Pq);
-        let a = ConvertPlan::new_explicit(
+        let a = NativePlan::new_explicit(
             linear,
             pq,
-            &ConvertOptions::permissive().with_sdr_white(zenpixels::hdr::DiffuseWhite::new(100.)),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(crate::DepthPolicy::Round)
+                .with_luma(Some(crate::LumaCoefficients::Bt709))
+                .with_sdr_white(zenpixels::hdr::DiffuseWhite::new(100.)),
         )
         .unwrap()
         .with_pq_anchor(zenpixels::hdr::DiffuseWhite::new(100.));
-        let b = ConvertPlan::new_explicit(
+        let b = NativePlan::new_explicit(
             pq,
             linear,
-            &ConvertOptions::permissive().with_sdr_white(zenpixels::hdr::DiffuseWhite::new(200.)),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(crate::DepthPolicy::Round)
+                .with_luma(Some(crate::LumaCoefficients::Bt709))
+                .with_sdr_white(zenpixels::hdr::DiffuseWhite::new(200.)),
         )
         .unwrap()
         .with_pq_anchor(zenpixels::hdr::DiffuseWhite::new(200.));

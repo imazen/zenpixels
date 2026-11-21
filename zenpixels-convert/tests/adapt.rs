@@ -37,7 +37,10 @@ fn adapt_exact_match_is_borrowed() {
         rows,
         stride,
         supported,
-        &zenpixels_convert::ConvertOptions::permissive()
+        &zenpixels_convert::ConvertOptions::retain_channels()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
             .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
     )
     .unwrap();
@@ -58,7 +61,10 @@ fn pixel_cow_preserves_valid_source_stride() {
         2,
         6,
         &[PixelDescriptor::RGB8_SRGB],
-        &zenpixels_convert::ConvertOptions::permissive()
+        &zenpixels_convert::ConvertOptions::retain_channels()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
             .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
     )
     .unwrap();
@@ -91,7 +97,10 @@ fn adapt_converts_when_needed() {
         rows,
         stride,
         supported,
-        &zenpixels_convert::ConvertOptions::permissive()
+        &zenpixels_convert::ConvertOptions::retain_channels()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
             .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
     )
     .unwrap();
@@ -121,38 +130,45 @@ fn adapt_empty_list_errors() {
         1,
         3,
         &[],
-        &zenpixels_convert::ConvertOptions::permissive()
+        &zenpixels_convert::ConvertOptions::retain_channels()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
             .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
     );
     assert!(result.is_err());
 }
 
-/// Transfer-agnostic match: source has Unknown transfer, target has Srgb,
-/// but otherwise identical — should be zero-copy.
+/// An encoder that accepts untagged samples can borrow an unknown-transfer input.
 #[test]
-fn adapt_transfer_agnostic_match() {
-    let width = 2u32;
-    let rows = 1u32;
-    let data = vec![100u8; 6]; // 2 RGB pixels
-    let desc = PixelDescriptor::RGB8; // Unknown transfer
-    let supported = &[PixelDescriptor::RGB8_SRGB];
-
+fn adapt_preserves_unknown_transfer() {
+    let bytes = [100; 6];
+    let source = PixelDescriptor::RGB8;
+    let options = zenpixels_convert::ConvertOptions::retain_channels();
+    assert!(
+        adapt_raw_rows_for_encode(
+            &bytes,
+            source,
+            2,
+            1,
+            6,
+            &[PixelDescriptor::RGB8_SRGB],
+            &options,
+        )
+        .is_err()
+    );
     let result = adapt_raw_rows_for_encode(
-        &data,
-        desc,
-        width,
-        rows,
+        &bytes,
+        source,
+        2,
+        1,
         6,
-        supported,
-        &zenpixels_convert::ConvertOptions::permissive()
-            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
+        &[PixelDescriptor::RGB8_SRGB, source],
+        &options,
     )
     .unwrap();
-    assert_eq!(result.as_slice().descriptor(), PixelDescriptor::RGB8_SRGB);
-    assert!(
-        matches!(result, zenpixels::PixelCow::Borrowed(_)),
-        "transfer-only diff should be zero-copy"
-    );
+    assert_eq!(result.as_slice().descriptor(), source);
+    assert!(matches!(result, zenpixels::PixelCow::Borrowed(_)));
 }
 
 /// Packed conversion with identity should just copy.

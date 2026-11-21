@@ -148,13 +148,12 @@ retains the native allocation for recovery through `FromPartsError`.
 
 The raw JXL consumer in zencodec's `perf/spatial-validation/src/jxl_layers.rs`
 needs four native F32 components. CMY plus separate black cannot be labeled RGB.
-`PixelFormat::CmykF32` is conventional ICC device polarity (zero means no ink).
-`PixelFormat::CmykF32Inverted` is the reversed polarity emitted by native JPEG XL
+`PixelFormat::CMYKF32` (`PixelFormat::Generic(GenericFormat)` with `ChannelLayout::Cmyk`) is conventional ICC device polarity (zero means no ink).
+`PixelFormat::CMYKF32_INVERTED` (`ChannelLayout::CmykInverted`) is the reversed polarity emitted by native JPEG XL
 (one means no ink), as specified by
 [libjxl's CMS interface](https://github.com/libjxl/libjxl/blob/v0.11.1/lib/include/jxl/cms_interface.h#L119).
-They share channel layout and size, but are distinct formats
-at every dispatch boundary. Physical `from_parts(F32, Cmyk, None)` selects the
-conventional format; the JXL adapter must select the inverted variant explicitly.
+They have distinct `ChannelLayout` variants (`Cmyk` vs `CmykInverted`, and 5-channel `CmykAlpha` vs `CmykInvertedAlpha`)
+and round-trip losslessly through `PixelFormat::from_parts` while keeping `GenericFormat` and `PixelFormat` at 2 bytes.
 
 This is deliberately carried in the format passed to converters, not in an
 optional provenance extension that a converter can overlook. A general scale
@@ -200,3 +199,17 @@ SMPTE 170M alias use 4.5; its breakpoint and nonlinear coefficients also
 differ. Returning `Bt709` silently selected incorrect math. Raw `Cicp` retains
 7 so a supporting CMS/media implementation can interpret it explicitly.
 See [ITU-T H.273 (July 2024), table 3](https://www.itu.int/rec/dologin_pub.asp?id=T-REC-H.273-202407-I%21%21PDF-E&lang=e&type=items).
+
+## Perceptual and polar/cylindrical layouts
+
+`ChannelLayout` and `ColorModel` carry `Oklch`, `Lch` (CIE 1976 D50 L\*C\*h°), `Jzazbz` and `Jzczhz`
+(Safdar et al. 2017 HDR perceptual space), and RGB-relative `Hsl` and `Hsv` (plus `*Alpha` variants)
+via `PixelFormat::Generic(GenericFormat)`:
+
+- **Floating-point (`F32`, `F16`, `F64`) canonical domains**:
+  - `Oklch`: `L ∈ [0, 1]`, `C ≥ 0`, `h ∈ [0, 360)` degrees (`0.0` / powerless at `C == 0`).
+  - `Lch` (CIE 1976 D50, Bradford-adapted from D65 RGB primaries): `L* ∈ [0, 100]`, `C* ≥ 0`, `h° ∈ [0, 360)`.
+  - `Jzazbz` / `Jzczhz`: `Jz ∈ [0, 1]` over `[0, 10_000]` cd/m² (anchored to `DiffuseWhite`, defaulting to ITU-R BT.2408 `203` cd/m² for relative-linear SDR and direct `0..10_000` cd/m² for ST 2084 PQ), signed `az, bz`, or polar `Cz ≥ 0, hz° ∈ [0, 360)`.
+  - `Hsl` / `Hsv`: `H ∈ [0, 360)` degrees, `S, L, V ∈ [0, 1]` in the descriptor's `(primaries, transfer)` RGB cube.
+- **Unsigned integer (`U8`, `U16`) normalization**: cyclic hue angles map `[0, 360)` onto `[0, 1]` over `0..=MAX` (wrapping `360° -> 0°`), `Oklch`/`Jzczhz` chroma scales `[0, 0.5]`, `Lch` scales `L* ∈ [0, 100]` and `C* ∈ [0, 150]`, and `Jzazbz` shifts `az, bz` by `+0.5` (`[-0.5, +0.5] -> [0, 1]`).
+- **Alpha invariant**: `PixelDescriptor::validate()` rejects `AlphaMode::Premultiplied` on all polar hue layouts (`OklchAlpha`, `LchAlpha`, `JzczhzAlpha`, `HslAlpha`, `HsvAlpha`), because cyclic hue angles cannot be premultiplied by alpha.

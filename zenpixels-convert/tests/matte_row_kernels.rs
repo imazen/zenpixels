@@ -1,5 +1,6 @@
 //! The matte blend against the formula, sample by sample, at every depth and transfer.
-use linear_srgb::{default as ds, tf};
+use linear_srgb::default as ds;
+use linear_srgb::default as tf;
 use zenpixels::{
     AlphaMode, ChannelLayout as L, ChannelType as T, PixelDescriptor as D, TransferFunction as Tf,
 };
@@ -57,7 +58,11 @@ fn converter(t: T, transfer: Tf) -> RowConverter {
         background: zenpixels::Color::srgb8(MATTE.0, MATTE.1, MATTE.2),
         reference_white: None,
     };
-    let mut options = ConvertOptions::permissive().with_alpha_policy(policy);
+    let mut options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_alpha_policy(policy);
     if transfer == Tf::Hlg {
         let background = [MATTE.0, MATTE.1, MATTE.2].map(ds::srgb_u8_to_linear);
         options = options
@@ -72,7 +77,7 @@ fn converter(t: T, transfer: Tf) -> RowConverter {
                 reference_white: Some(zenpixels::hdr::DiffuseWhite::new(203.0)),
             });
     }
-    RowConverter::new_explicit(from, to, &options).unwrap()
+    crate::test_conversion::explicit_worker(from, to, &options).unwrap()
 }
 
 // Independent display-light oracle for the explicitly selected HLG reference
@@ -140,7 +145,9 @@ fn srgb_u8_matches_its_tables_exactly() {
     let m = matte(Tf::Srgb);
     let src: Vec<u8> = samples(255).iter().map(|v| *v as u8).collect();
     let mut out = vec![0u8; WIDTH * 3];
-    converter(T::U8, Tf::Srgb).convert_row(&src, &mut out, WIDTH as u32);
+    converter(T::U8, Tf::Srgb)
+        .try_convert_row(&src, &mut out, WIDTH as u32)
+        .unwrap();
     for (i, p) in src.as_chunks::<4>().0.iter().enumerate() {
         let a = f32::from(p[3]) * (1.0 / 255.0);
         for k in 0..3 {
@@ -159,19 +166,24 @@ fn srgb_u8_gray_matches_its_tables_exhaustively() {
         .collect();
     let mut out = vec![0u8; 65536 * 3];
     let opts = |m: u8| {
-        ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-            background: zenpixels::Color::srgb8(m, m, m),
-            reference_white: None,
-        })
+        ConvertOptions::retain_channels()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+            .with_alpha_policy(AlphaPolicy::CompositeOnto {
+                background: zenpixels::Color::srgb8(m, m, m),
+                reference_white: None,
+            })
     };
     let (from, to) = (
         D::new(T::U8, L::Rgba, Some(AlphaMode::Straight), Tf::Srgb),
         D::new(T::U8, L::Rgb, None, Tf::Srgb),
     );
     for m in 0..=255u8 {
-        RowConverter::new_explicit(from, to, &opts(m))
+        crate::test_conversion::explicit_worker(from, to, &opts(m))
             .unwrap()
-            .convert_row(&src, &mut out, 65536);
+            .try_convert_row(&src, &mut out, 65536)
+            .unwrap();
         let matte = ds::srgb_u8_to_linear(m);
         for (p, o) in src.as_chunks::<4>().0.iter().zip(out.as_chunks::<3>().0) {
             let a = f32::from(p[3]) * (1.0 / 255.0);
@@ -188,7 +200,9 @@ fn integer_output_stays_within_one_code() {
         if transfer != Tf::Srgb {
             let src: Vec<u8> = samples(255).iter().map(|v| *v as u8).collect();
             let mut out = vec![0u8; WIDTH * 3];
-            converter(T::U8, transfer).convert_row(&src, &mut out, WIDTH as u32);
+            converter(T::U8, transfer)
+                .try_convert_row(&src, &mut out, WIDTH as u32)
+                .unwrap();
             for (i, p) in src.as_chunks::<4>().0.iter().enumerate() {
                 for k in 0..3 {
                     let want = expected(transfer, p.map(|v| f32::from(v) * (1.0 / 255.0)), m)[k]
@@ -204,11 +218,13 @@ fn integer_output_stays_within_one_code() {
         }
         let src: Vec<u16> = samples(65535).iter().map(|v| *v as u16).collect();
         let mut out = vec![0u16; WIDTH * 3];
-        converter(T::U16, transfer).convert_row(
-            bytemuck::cast_slice(&src),
-            bytemuck::cast_slice_mut(&mut out),
-            WIDTH as u32,
-        );
+        converter(T::U16, transfer)
+            .try_convert_row(
+                bytemuck::cast_slice(&src),
+                bytemuck::cast_slice_mut(&mut out),
+                WIDTH as u32,
+            )
+            .unwrap();
         for (i, p) in src.as_chunks::<4>().0.iter().enumerate() {
             for k in 0..3 {
                 let want = expected(transfer, p.map(|v| f32::from(v) * (1.0 / 65535.0)), m)[k]
@@ -233,11 +249,13 @@ fn float_output_stays_within_rounding() {
             .map(|v| *v as f32 / (1 << 24) as f32)
             .collect();
         let mut out = vec![0f32; WIDTH * 3];
-        converter(T::F32, transfer).convert_row(
-            bytemuck::cast_slice(&src),
-            bytemuck::cast_slice_mut(&mut out),
-            WIDTH as u32,
-        );
+        converter(T::F32, transfer)
+            .try_convert_row(
+                bytemuck::cast_slice(&src),
+                bytemuck::cast_slice_mut(&mut out),
+                WIDTH as u32,
+            )
+            .unwrap();
         for (i, p) in src.as_chunks::<4>().0.iter().enumerate() {
             for k in 0..3 {
                 let want = expected(transfer, *p, m)[k];
@@ -260,11 +278,13 @@ fn half_float_output_stays_within_one_step() {
             .map(|v| half::f16::from_f32(*v as f32 / (1 << 24) as f32).to_bits())
             .collect();
         let mut out = vec![0u16; WIDTH * 3];
-        converter(T::F16, transfer).convert_row(
-            bytemuck::cast_slice(&src),
-            bytemuck::cast_slice_mut(&mut out),
-            WIDTH as u32,
-        );
+        converter(T::F16, transfer)
+            .try_convert_row(
+                bytemuck::cast_slice(&src),
+                bytemuck::cast_slice_mut(&mut out),
+                WIDTH as u32,
+            )
+            .unwrap();
         for (i, p) in src.as_chunks::<4>().0.iter().enumerate() {
             for k in 0..3 {
                 let want = half::f16::from_f32(
@@ -294,11 +314,13 @@ fn out_of_range_float_samples_follow_the_formula() {
         }
         let n = src.len() / 4;
         let mut out = vec![0f32; n * 3];
-        converter(T::F32, transfer).convert_row(
-            bytemuck::cast_slice(&src),
-            bytemuck::cast_slice_mut(&mut out),
-            n as u32,
-        );
+        converter(T::F32, transfer)
+            .try_convert_row(
+                bytemuck::cast_slice(&src),
+                bytemuck::cast_slice_mut(&mut out),
+                n as u32,
+            )
+            .unwrap();
         for (i, p) in src.as_chunks::<4>().0.iter().enumerate() {
             let want = expected(transfer, *p, m)[0];
             let got = out[i * 3];
@@ -332,7 +354,10 @@ mod reference_white {
             background: zenpixels::Color::srgb8(255, 255, 255),
             reference_white,
         };
-        let options = ConvertOptions::permissive()
+        let options = ConvertOptions::retain_channels()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
             .with_alpha_policy(policy)
             .with_hlg_rendering(zenpixels::hdr::HlgRendering::REFERENCE_1000_NIT)
             .with_sdr_white(DiffuseWhite::new(1000.0));
@@ -343,13 +368,14 @@ mod reference_white {
             to.primaries = zenpixels::ColorPrimaries::Bt2020;
         }
         let mut out = [0f32; 3];
-        RowConverter::new_explicit(from, to, &options)
+        crate::test_conversion::explicit_worker(from, to, &options)
             .unwrap()
-            .convert_row(
+            .try_convert_row(
                 bytemuck::cast_slice(&pixel),
                 bytemuck::cast_slice_mut(&mut out),
                 1,
-            );
+            )
+            .unwrap();
         out[0]
     }
 
@@ -409,3 +435,6 @@ mod reference_white {
         }
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

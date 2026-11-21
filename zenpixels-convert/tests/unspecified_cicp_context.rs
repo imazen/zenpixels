@@ -36,11 +36,15 @@ fn layout_changes_run_and_keep_the_context() {
     ] {
         let src = buffer(unknown(from));
         let out = src
-            .convert_to(unknown(to))
+            .convert_to_with_options(
+                unknown(to),
+                &zenpixels_convert::ConvertOptions::retain_channels()
+                    .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
+            )
             .unwrap_or_else(|e| panic!("{from:?} -> {to:?}: {e:?}"));
         assert_eq!(out.descriptor().pixel_format(), to.pixel_format());
         assert_eq!(
-            out.as_slice().color_context().and_then(|c| c.cicp),
+            out.as_slice().color_context().and_then(|c| c.cicp()),
             Some(Cicp::new(2, 2, 0, true)),
             "the unspecified claim travels with the pixels"
         );

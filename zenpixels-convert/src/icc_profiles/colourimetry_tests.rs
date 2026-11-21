@@ -449,7 +449,8 @@ fn exported_pq_declares_absolute_scale_and_both_pipeline_directions() {
 #[cfg(feature = "cms-lcms")]
 #[test]
 fn exported_pq_dense_neutral_roundtrip_has_no_black_plateau() {
-    use crate::{ColorProfileSource, ConvertOptions, PixelFormat, PluggableCms, cms_lcms::Lcms};
+    use crate::cms::TestCmsExt as _;
+    use crate::{ColorProfileSource, ConvertOptions, PixelFormat, cms_lcms::Lcms};
     for gray in [false, true] {
         let synth = if gray {
             synthesize_gray_icc_for_cicp
@@ -492,7 +493,11 @@ fn exported_pq_dense_neutral_roundtrip_has_no_black_plateau() {
                     ColorProfileSource::Icc(dst),
                     format,
                     format,
-                    &ConvertOptions::permissive().with_clip_out_of_gamut(false),
+                    &ConvertOptions::retain_channels()
+                        .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                        .with_depth_policy(crate::DepthPolicy::Round)
+                        .with_luma(Some(crate::LumaCoefficients::Bt709))
+                        .with_gamut_policy(crate::GamutPolicy::PreserveExtended),
                 )
                 .expect("qualified LCMS path")
                 .expect("build transform");

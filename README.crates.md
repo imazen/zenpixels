@@ -10,7 +10,7 @@ It goes from owning an image to borrowing a subimage, then covers color,
 conversion and native samples. The [interactive explorer](https://imazen.github.io/zenpixels/)
 shows the bytes and runs the real converter.
 
-This is the **unpublished 0.3.1 candidate**. The guide follows this source;
+This is the **unpublished 0.4.0 candidate**. The guide follows this source;
 [docs.rs](https://docs.rs/zenpixels) describes the published crate. Publication
 still requires release approval.
 
@@ -79,6 +79,11 @@ Use `as_contiguous_bytes()` when you specifically require packed rows; it
 returns `None` for a strided view. Use `try_contiguous_bytes()` to borrow when
 packed or make a fallible packed copy otherwise.
 
+For separate Y/Cb/Cr or RGB planes, `plane::PlanarBuffer` adopts existing
+allocations and lends `PlanarSlice` / `PlanarSliceMut` without copying pixels or
+allocating descriptors. Each plane keeps its own stride and sample encoding;
+see [planar storage](docs/planar-types.md).
+
 ## Type system
 
 A `PixelFormat` describes storage and layout. A `PixelDescriptor` adds transfer
@@ -98,12 +103,13 @@ general signed/wide numerical conversion remains unsupported. See the
 
 ## Color and native samples
 
-- `ColorContext` describes the **current** samples, including an attached ICC
-  or CICP and luminance anchors. An attached ICC is authoritative even if a
-  companion disagrees or the ICC is unusable; unsupported operations refuse or
-  preserve the original interpretation.
-- `ColorOrigin` keeps original file declarations separately. Converted samples
-  must be emitted with matching current metadata.
+- `ColorContext` describes the **current** samples with at most one `ColorProfile`
+  (`Cicp` or `Icc`) plus luminance anchors, and `PixelEncoding` borrows a
+  descriptor and optional context together.
+- `ColorOrigin` keeps original file declarations separately (including dual
+  ICC + CICP container claims; an attached ICC is authoritative even if a
+  companion disagrees or the ICC is unusable). Converted samples must be emitted
+  with matching current metadata.
 - `SampleEncoding` describes native integer code depth and bit placement.
   `CodePlane` reads U8/U16 component codes from typed planes. Ten-bit white 1023
   is not ordinary full-range U16 white 65535: canonicalization is explicit.
@@ -126,17 +132,18 @@ assert_eq!(linear.descriptor(), PixelDescriptor::RGBF32_LINEAR);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Use `RowConverter` for rows and prepared scratch, or `OutputPlan` for
-caller-supplied output rows and matching encoder metadata. `EncodeReady::finalize`
-creates independent owned output. Known descriptor-only conversions need no
-CMS; arbitrary ICC transforms need a selected backend. HDR rendering requires
-explicit luminance/rendering inputs.
+Build a `ConvertPlan` from source and target encodings. Prepare it for the
+maximum row width, or use `OutputPlan` to derive the conversion and encoder
+metadata together. `EncodeReady::from_owned` can reuse the source allocation
+for identity output. Known descriptor-based conversions use the native
+kernels. Arbitrary ICC transforms need a selected backend and HDR
+rendering needs explicit luminance and rendering conditions.
 
-Loss policies are explicit with `ConvertOptions`. `retain_channels` prevents
-alpha/depth loss but still defaults to gamut clipping; it is not a general
-lossless guarantee. `RowConverter::new` has legacy permissive defaults, including
-unchecked alpha discard. Use explicit options or `new_preserving_samples` when
-preservation is required.
+Choose permitted sample changes with `ConvertOptions` or use
+`ConversionSpec::preserve_samples()` to require exact representation changes.
+For large images, `banded::BandedPixelBuffer` and the optional plane carriers
+cap individual allocations while retaining 64-bit frame geometry. Prepared
+converters can read and write packed bands with different heights.
 
 [Conversion guide](https://github.com/imazen/zenpixels/blob/main/zenpixels-convert/README.md) ·
 [Design contracts](https://github.com/imazen/zenpixels/blob/main/docs/design-reference.md)
@@ -163,11 +170,10 @@ Reusing pixel storage is not a promise that every operation allocates nothing.
 | `image` | image 0.25 interop; requires Rust 1.88 |
 | `hash` | Pixel `Hash` and configurable inclusions via zenhash; requires Rust 1.89 |
 | `allocator_api` | Allocator-parameterized storage on supported compilers |
-| `planar`, `serde` | Retained compatibility spellings; no API |
+| `planar` | Multi-plane buffers (`PlanarBuffer`, `PlanarSlice`), `Plane`, and N-bit `CodePlane` |
 
 The converter's [feature list](https://github.com/imazen/zenpixels/blob/main/zenpixels-convert/README.md#features)
-covers the ICC database, CMS backends, interop and HDR options. Resource-estimation
-APIs are retired; their compatibility feature does not restore them.
+covers the ICC database, CSS parser, CMS backends, interop and HDR options.
 
 ## MSRV
 

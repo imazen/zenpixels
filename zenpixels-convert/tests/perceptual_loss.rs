@@ -1,3 +1,5 @@
+#![cfg(feature = "introspection")]
+
 //! Brute-force perceptual loss test harness.
 //!
 //! Measures actual CIEDE2000 ΔE for every conversion and operation scenario,
@@ -2468,34 +2470,35 @@ fn overshoot(pixels: &[[f64; 3]]) -> f64 {
 
 /// Linear F32 with these samples, through the crate's own kernels, in sRGB and back.
 fn through_srgb_f32(pixels: &[[f64; 3]], options: &zenpixels_convert::ConvertOptions) -> Vec<f32> {
-    use zenpixels_convert::RowConverter;
     let linear = PixelDescriptor::RGBF32_LINEAR;
     let srgb = linear.with_transfer(TransferFunction::Srgb);
     let input: Vec<f32> = pixels.iter().flatten().map(|&v| v as f32).collect();
     let mut encoded = vec![0f32; input.len()];
     let mut back = vec![0f32; input.len()];
     let width = pixels.len() as u32;
-    RowConverter::new_explicit(linear, srgb, options)
+    crate::test_conversion::explicit_worker(linear, srgb, options)
         .unwrap()
-        .convert_row(
+        .try_convert_row(
             bytemuck::cast_slice(&input),
             bytemuck::cast_slice_mut(&mut encoded),
             width,
-        );
-    RowConverter::new_explicit(srgb, linear, options)
+        )
+        .unwrap();
+    crate::test_conversion::explicit_worker(srgb, linear, options)
         .unwrap()
-        .convert_row(
+        .try_convert_row(
             bytemuck::cast_slice(&encoded),
             bytemuck::cast_slice_mut(&mut back),
             width,
-        );
+        )
+        .unwrap();
     back
 }
 
 #[test]
 fn gamut_clamping_scenarios() {
     use Kernel::{CatmullRom, Lanczos, Mitchell, Robidoux};
-    use zenpixels_convert::{ConvertIntent, ConvertOptions, RowConverter};
+    use zenpixels_convert::{ConvertIntent, ConvertOptions};
 
     // What `negotiate.rs` charges a gamma-encoded format for a resize, whatever the kernel:
     // `linear_light_suitability`. It has no kernel input.
@@ -2569,7 +2572,11 @@ fn gamut_clamping_scenarios() {
         // the lobes through an sRGB round trip, and the default clips them, as U8 output does.
         let kept = through_srgb_f32(
             &reference,
-            &ConvertOptions::permissive().with_clip_out_of_gamut(false),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+                .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended),
         );
         for (got, want) in kept.iter().zip(reference.iter().flatten()) {
             assert!(
@@ -2577,16 +2584,26 @@ fn gamut_clamping_scenarios() {
                 "{kernel:?}: unclipped round trip {got} from {want}"
             );
         }
-        let cut = through_srgb_f32(&reference, &ConvertOptions::permissive());
+        let cut = through_srgb_f32(
+            &reference,
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
+        );
         assert!(
             cut.iter().all(|v| (0.0..=1.0).contains(v)),
             "{kernel:?}: clipped output left 0..=1"
         );
         let input: Vec<f32> = reference.iter().flatten().map(|&v| v as f32).collect();
         let mut codes = vec![0u8; input.len()];
-        RowConverter::new(PixelDescriptor::RGBF32_LINEAR, PixelDescriptor::RGB8_SRGB)
-            .unwrap()
-            .convert_row(bytemuck::cast_slice(&input), &mut codes, out as u32);
+        crate::test_conversion::new_worker(
+            PixelDescriptor::RGBF32_LINEAR,
+            PixelDescriptor::RGB8_SRGB,
+        )
+        .unwrap()
+        .try_convert_row(bytemuck::cast_slice(&input), &mut codes, out as u32)
+        .unwrap();
         for (got, want) in codes.iter().zip(to_u8_srgb_packed(&reference)) {
             assert!(
                 got.abs_diff(want) <= 1,
@@ -2630,12 +2647,21 @@ fn gamut_clamping_scenarios() {
     }
 
     // The decision this all feeds: a resize picks linear F32 over U8 sRGB.
+    let selected = zenpixels_convert::ConvertPlan::select(
+        PixelDescriptor::RGB8_SRGB.encoding(),
+        &[
+            zenpixels_convert::CandidateTarget::from(PixelDescriptor::RGB8_SRGB),
+            zenpixels_convert::CandidateTarget::from(PixelDescriptor::RGBF32_LINEAR),
+        ],
+        &zenpixels_convert::ConversionSpec::new(
+            zenpixels_convert::ConvertOptions::retain_channels(),
+        )
+        .with_intent(ConvertIntent::LinearLight),
+    )
+    .unwrap();
     assert_eq!(
-        ConvertIntent::LinearLight.best_match(
-            PixelDescriptor::RGB8_SRGB,
-            &[PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBF32_LINEAR]
-        ),
-        Some(PixelDescriptor::RGBF32_LINEAR)
+        selected.plan().output_encoding().descriptor(),
+        PixelDescriptor::RGBF32_LINEAR
     );
 }
 
@@ -2808,3 +2834,6 @@ fn cost_model_ranking_correlates() {
         rho
     );
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

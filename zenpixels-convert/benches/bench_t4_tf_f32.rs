@@ -11,7 +11,6 @@
 
 use zenbench::prelude::*;
 use zenpixels::{ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
-use zenpixels_convert::RowConverter;
 
 const SIZES: &[(&str, usize)] = &[
     ("  256px", 256),
@@ -64,12 +63,12 @@ fn bench_tf_to_linear(suite: &mut Suite) {
                 for &tf in tfs {
                     let src_desc = rgb_f32(tf);
                     let dst_desc = rgb_f32(TransferFunction::Linear);
-                    let mut conv = RowConverter::new(src_desc, dst_desc).unwrap();
+                    let mut conv = crate::test_conversion::new_worker(src_desc, dst_desc).unwrap();
                     let src = make_f32_row(width, channels);
                     let mut dst = vec![0u8; width * channels * 4];
                     g.bench(tf_label(tf), move |b| {
                         b.iter(|| {
-                            conv.convert_row(&src, &mut dst, width as u32);
+                            conv.try_convert_row(&src, &mut dst, width as u32).unwrap();
                             black_box(());
                         })
                     });
@@ -96,12 +95,12 @@ fn bench_linear_to_tf(suite: &mut Suite) {
             for &tf in tfs {
                 let src_desc = rgb_f32(TransferFunction::Linear);
                 let dst_desc = rgb_f32(tf);
-                let mut conv = RowConverter::new(src_desc, dst_desc).unwrap();
+                let mut conv = crate::test_conversion::new_worker(src_desc, dst_desc).unwrap();
                 let src = make_f32_row(width, channels);
                 let mut dst = vec![0u8; width * channels * 4];
                 g.bench(tf_label(tf), move |b| {
                     b.iter(|| {
-                        conv.convert_row(&src, &mut dst, width as u32);
+                        conv.try_convert_row(&src, &mut dst, width as u32).unwrap();
                         black_box(());
                     })
                 });
@@ -116,3 +115,6 @@ fn main() {
         bench_linear_to_tf(suite);
     });
 }
+
+#[path = "../tests/support/conversion.rs"]
+mod test_conversion;

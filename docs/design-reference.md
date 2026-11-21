@@ -1,7 +1,6 @@
 # Pixel and conversion design reference
 
-This is the reference for the authorized 0.3 breaking-release consolidation.
-Status below distinguishes the intended design from completed implementation.
+This reference records current contracts and the historical foundation verification.
 
 Start with the [pixel types guide](guide.md) for everyday ownership, subimages,
 stride and conversion. This document records the detailed contracts and limits.
@@ -24,6 +23,60 @@ stride and conversion. This document records the detailed contracts and limits.
    metadata or explicit choices for conversions needing known color.
 5. **Untouched components stay untouched.** Alpha payloads and row padding are
    preserved bitwise when the operation does not change them.
+
+## Conversion planning and row bands
+
+`ConvertPlan::build` takes two `PixelEncoding` values and a `ConversionSpec`.
+It validates interpretation and loss permissions before lowering native,
+CMS and HDR operations. `select` searches admitted routes, keeps comparable
+accuracy effects ordered by inclusion, and uses execution traffic, tier,
+scratch and caller preference to compare equivalent effects. The native
+representation search considers the direct edge and both depth/layout
+orders. The color compiler supplies existing qualified numeric and CMS
+routes. `then` retains the stored samples at the intermediate encoding,
+including its alpha interpretation and luminance.
+
+`workspace` and preparation lower the same type-aligned row layout.
+Independent worker scratch, retained recipe allocations and cold shared
+assets have separate lifetimes. Worker bounds include opaque backend state
+only when it can be quantified. The optional worker cap applies at the
+request width. A one-operation plan needs no intermediate row, while two
+operations use one slot. Wider scratch is reused across rows and bands.
+The optional `introspection` feature exposes operator descriptors, dispatch
+category, and accuracy category.
+
+`BandLayout` checks the maximum size of an individual allocation and keeps
+full-picture area in u64. Packed and single-plane orientations reuse storage
+for flips and half-turns and visit bounded tiles when writing an axis-swapped
+output. Planar bands start at chroma-aligned luma rows, and orientation checks
+that the destination can express every transformed plane lattice. Hashes serialize
+the whole extent and active samples in image order, independent of band
+boundaries. Packed row conversion, load-bearing scans and light-level
+measurement operate across bands without assembling a contiguous frame.
+
+### Feature boundaries
+
+| Feature set | Public contract |
+|---|---|
+| Core without defaults | Packed buffers, views and bands, descriptors, sample storage, color context, and shared policy enums |
+| Core defaults | The same carriers plus ICC identification and standard-library integration |
+| Converter without defaults | Executable conversion plans, negotiated candidate selection, prepared workers, CMS traits, output signaling and scalar orientation fallback |
+| Converter defaults | Standard-library support and runtime-dispatched fast transpose |
+| `planar` | Typed and planar native carriers, sample code views, YCbCr adapters and banded planar orientation where the output lattice is representable |
+| `icc`, `icc-db` | Core ICC identification and optional bundled converter synthesis |
+| `cms-moxcms`, `cms-lcms` | Explicit CMS backend implementations under a shared fallible plugin contract |
+| `rgb`, `imgref`, `image` | Optional external pixel/buffer adapters, retaining the base storage layouts |
+| `hash` | Optional portable fingerprints with band and contiguous parity |
+| `css` | CSS color parsing |
+| `hdr-experimental`, `bt2446a` | Light-level analysis and injected HDR rendering, with BT.2446A separately selectable |
+| `introspection` | Step and kernel diagnostics and the optional legacy heuristic scores |
+| `fast-transpose`, `avx512` | Faster kernel dispatch with the same representation contract |
+
+The core crate owns storage and interpretation, and the converter re-exports
+the same types for a single-crate dependency. Numerical steps and scratch
+layouts stay private. There is one public row-recipe constructor and one CMS
+construction method. The remaining heuristic format scores are optional
+diagnostics. Codec admission uses the selected executable recipe.
 
 ## Internal invariants
 
@@ -93,8 +146,8 @@ of global bit-exact substitution. Do not cite it as one.
   the displayed reason.
 - Invalid descriptor alpha/layout combinations now fail consistently in fallible
   constructors and panic consistently in infallible constructors.
-- No new feature flags or public planning types are needed. `PlannedOperation`
-  and output-interpretation resolution are private implementation details.
+- Build rows through `ConvertPlan::build` and `prepare`. Replace constructor-specific
+  options with `ConversionSpec`; use `introspection` when a caller needs step details.
 
 ## Regression commands
 
@@ -223,3 +276,18 @@ what the existing planner actually computes; it does not add those models.
 The separate [allocation audit](allocation-audit.md) records the merged #151
 allocation fixes, failure-injection controls and named infallible exceptions.
 Fallible allocation does not provide a whole-operation admission budget.
+
+## Owned and writable planar storage
+
+`PlanarBuffer<P>` retains concrete plane owners, including aligned, pooled and
+shared storage, with their layout and current color interpretation. Default
+`AnyPlaneBuf` ownership uses typed vectors. Typed, aligned and runtime-selected
+storage share the same ten native sample types. Read-only owners need not offer
+mutable access. `try_from_parts` retains rejected owners and metadata for recovery;
+`into_parts` moves a complete picture without cloning. `PlanarSlice` and
+`PlanarSliceMut` borrow descriptors from the owner without allocation or pixel
+copies. Mutable access reborrows samples and cannot replace the validated
+storage descriptors. Caller-owned writable plane lists use the same checks.
+See [planar types](planar-types.md#plane-views-picture-views-and-allocator-ownership--pr144)
+for the iterator accessor migration and custom-owner limits. Timing, frame
+presentation and shared-frame copy-on-write policy stay outside zenpixels.

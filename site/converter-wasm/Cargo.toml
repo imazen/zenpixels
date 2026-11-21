@@ -12,12 +12,12 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 wasm-bindgen = "=0.2.130"
 serde_json = "=1.0.154"
-zenpixels = { path = "../../zenpixels" }
-zenpixels-convert = { path = "../../zenpixels-convert", features = ["bt2446a"] }
+zenpixels = { path = "../../zenpixels", features = ["planar"] }
+zenpixels-convert = { path = "../../zenpixels-convert", features = ["bt2446a", "planar"] }
 
 [patch.crates-io]
-garb = { git = "https://github.com/imazen/garb", rev = "58ce9cad7b337418a7abe9b1f6e3e4bd1928b385" }
-linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24664315586bd60e5f048253b1f69052" }
+garb = { git = "https://github.com/imazen/garb", rev = "a21a9f701e09ad01acb661276f0143ddd1e9095a" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "9ccaccade9021aa13d7ecb98f53f1632986d21f0" }
 
 [profile.release]
 lto = "thin"

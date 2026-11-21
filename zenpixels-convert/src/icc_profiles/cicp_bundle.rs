@@ -155,16 +155,54 @@ mod tests {
 
     #[test]
     fn every_profile_slice_is_in_bounds_and_is_a_valid_icc() {
+        fn has_mluc_tag(icc: &[u8], sig: &[u8; 4]) -> bool {
+            let count = u32::from_be_bytes(icc[128..132].try_into().unwrap()) as usize;
+            for i in 0..count {
+                let entry = &icc[132 + 12 * i..144 + 12 * i];
+                if &entry[..4] == sig {
+                    let off = u32::from_be_bytes(entry[4..8].try_into().unwrap()) as usize;
+                    let len = u32::from_be_bytes(entry[8..12].try_into().unwrap()) as usize;
+                    return len >= 16
+                        && off.checked_add(len).is_some_and(|end| end <= icc.len())
+                        && &icc[off..off + 4] == b"mluc";
+                }
+            }
+            false
+        }
+
         for p in &BUNDLE_PROFILES {
             let got = bundled_profile_for_cicp(p.primaries, p.transfer)
                 .expect("indexed profile must resolve");
             assert_eq!(got.len(), p.len, "profile length mismatch");
-            // Minimal ICC structural sanity: 'acsp' signature at byte 36.
-            assert!(got.len() >= 40, "profile too short to be an ICC");
+            // Minimal ICC structural sanity: 'acsp' signature at byte 36, plus
+            // ICC.1:2022-05 §8.2 required 'desc' and 'cprt' mluc tags.
+            assert!(got.len() >= 132, "profile too short to be an ICC");
             assert_eq!(
                 &got[36..40],
                 b"acsp",
                 "({}, {}) is not a valid ICC profile (missing 'acsp')",
+                p.primaries,
+                p.transfer
+            );
+            assert!(
+                has_mluc_tag(&got, b"desc"),
+                "RGB ({}, {}) missing required ICC.1 §8.2 'desc' mluc tag",
+                p.primaries,
+                p.transfer
+            );
+            assert!(
+                has_mluc_tag(&got, b"cprt"),
+                "RGB ({}, {}) missing required ICC.1 §8.2 'cprt' mluc tag",
+                p.primaries,
+                p.transfer
+            );
+        }
+        for p in &GRAY_BUNDLE_PROFILES {
+            let got = bundled_gray_profile_for_cicp(p.primaries, p.transfer)
+                .expect("indexed gray profile must resolve");
+            assert!(
+                has_mluc_tag(&got, b"desc") && has_mluc_tag(&got, b"cprt"),
+                "GRAY ({}, {}) missing required ICC.1 §8.2 'desc'/'cprt' mluc tag",
                 p.primaries,
                 p.transfer
             );
@@ -386,7 +424,7 @@ mod tests {
     #[test]
     fn golden_blob_sha256_is_pinned() {
         use sha2::{Digest, Sha256};
-        const EXPECTED: &str = "67c3122da4cb5cd969a38c7fa0eb0f3ed0c5d4a99f2dac4cacd49500e8e1e509";
+        const EXPECTED: &str = "c6d797411cc4604069f6cc478aca65eeaeeb76df19f97c0ca4a24106d3cc4d4f";
         let digest = Sha256::digest(CICP_BUNDLE_LZ4);
         let hex: alloc::string::String = digest.iter().map(|b| alloc::format!("{b:02x}")).collect();
         assert_eq!(

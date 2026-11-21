@@ -38,13 +38,16 @@ pub(super) struct HdrKernelScratch {
 }
 
 impl HdrKernelScratch {
-    pub(super) fn prepare(&mut self, _width: u32) -> Result<(), whereat::At<crate::ConvertError>> {
-        if self.rgb_strip.len() < _width as usize {
-            self.rgb_strip = bytemuck::allocation::try_zeroed_vec::<[f32; 3]>(_width as usize)
+    pub(super) fn reserve(
+        &mut self,
+        lengths: [usize; 2],
+    ) -> Result<(), whereat::At<crate::ConvertError>> {
+        if self.rgb_strip.len() < lengths[0] {
+            self.rgb_strip = bytemuck::allocation::try_zeroed_vec::<[f32; 3]>(lengths[0])
                 .map_err(|()| whereat::at!(crate::ConvertError::AllocationFailed))?;
         }
-        if self.rgb_out.len() < _width as usize {
-            self.rgb_out = bytemuck::allocation::try_zeroed_vec::<[f32; 3]>(_width as usize)
+        if self.rgb_out.len() < lengths[1] {
+            self.rgb_out = bytemuck::allocation::try_zeroed_vec::<[f32; 3]>(lengths[1])
                 .map_err(|()| whereat::at!(crate::ConvertError::AllocationFailed))?;
         }
         Ok(())
@@ -63,6 +66,7 @@ pub(super) fn apply_step_u8(
     // Relative-linear → PQ-absolute scale (`diffuse_white / 10000`) carried by
     // the plan. Only the PQ kernels read it; `1.0` is a no-op for all steps.
     pq_scale: f32,
+    in_trust: super::StepFloatTrust,
     // Row-persistent scratch for the HDR tone-map kernels (unused when the
     // `hdr-experimental` feature is off).
     hdr_scratch: &mut HdrKernelScratch,
@@ -87,14 +91,7 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::SwizzleBgrRgb => {
-            for (out, px) in dst[..w * 3]
-                .as_chunks_mut::<3>()
-                .0
-                .iter_mut()
-                .zip(src[..w * 3].as_chunks::<3>().0)
-            {
-                *out = [px[2], px[1], px[0]];
-            }
+            swizzle_bgr_rgb(src, dst, w, from.channel_type());
         }
 
         ConvertStep::AddAlpha => {
@@ -109,8 +106,8 @@ pub(super) fn apply_step_u8(
             drop_alpha(src, dst, w, from.channel_type());
         }
 
-        ConvertStep::MatteComposite { linear } => {
-            matte_composite(src, dst, w, from, *linear);
+        ConvertStep::MatteComposite { linear, clip } => {
+            matte_composite(src, dst, w, from, *linear, *clip, in_trust.facts);
         }
 
         ConvertStep::GrayToRgb => {
@@ -161,11 +158,17 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::NaiveF32ToU8 => {
-            naive_f32_to_u8(src, dst, w, from.layout().channels());
+            naive_f32_to_u8(src, dst, w, from.layout().channels(), in_trust.facts);
+        }
+        ConvertStep::NaiveF32ToU8Truncate => {
+            naive_f32_to_u8_truncate(src, dst, w, from.layout().channels(), in_trust.facts);
         }
 
         ConvertStep::U16ToU8 => {
             u16_to_u8(src, dst, w, from.layout().channels());
+        }
+        ConvertStep::U16ToU8Truncate => {
+            u16_to_u8_truncate(src, dst, w, from.layout().channels());
         }
         ConvertStep::SdrU16ToU8 { to } => {
             sdr_u16_to_u8(src, dst, w, from.layout(), from.transfer(), *to);
@@ -180,7 +183,10 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::F32ToU16 => {
-            f32_to_u16(src, dst, w, from.layout().channels());
+            f32_to_u16(src, dst, w, from.layout().channels(), in_trust.facts);
+        }
+        ConvertStep::F32ToU16Truncate => {
+            f32_to_u16_truncate(src, dst, w, from.layout().channels(), in_trust.facts);
         }
 
         ConvertStep::F16ToF32 => {
@@ -200,11 +206,11 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::PqF32ToLinearF32 => {
-            pq_f32_to_linear_f32(src, dst, w, from.layout(), pq_scale);
+            pq_f32_to_linear_f32(src, dst, w, from.layout(), pq_scale, in_trust.facts);
         }
 
         ConvertStep::LinearF32ToPqF32 => {
-            linear_f32_to_pq_f32(src, dst, w, from.layout(), pq_scale);
+            linear_f32_to_pq_f32(src, dst, w, from.layout(), pq_scale, in_trust.facts);
         }
 
         ConvertStep::HlgU16ToLinearF32 => {
@@ -256,22 +262,36 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::Gamma22F32ToLinearF32Extended => {
-            gamma22_f32_extended(src, dst, w, from.layout(), false);
+            gamma22_f32_extended(src, dst, w, from.layout(), false, in_trust.facts);
         }
         ConvertStep::LinearF32ToGamma22F32Extended => {
-            gamma22_f32_extended(src, dst, w, from.layout(), true);
+            gamma22_f32_extended(src, dst, w, from.layout(), true, in_trust.facts);
         }
 
         ConvertStep::StraightToPremul => {
-            straight_to_premul(src, dst, w, from.channel_type(), from.layout());
+            straight_to_premul(
+                src,
+                dst,
+                w,
+                from.channel_type(),
+                from.layout(),
+                in_trust.facts,
+            );
         }
 
         ConvertStep::PremulToStraight => {
-            premul_to_straight(src, dst, w, from.channel_type(), from.layout());
+            premul_to_straight(
+                src,
+                dst,
+                w,
+                from.channel_type(),
+                from.layout(),
+                in_trust.facts,
+            );
         }
 
         ConvertStep::LinearRgbToOklab => {
-            linear_rgb_to_oklab_f32(src, dst, w, from.primaries);
+            linear_rgb_to_oklab_f32(src, dst, w, from.primaries, in_trust);
         }
 
         ConvertStep::OklabToLinearRgb => {
@@ -279,7 +299,7 @@ pub(super) fn apply_step_u8(
         }
 
         ConvertStep::LinearRgbaToOklaba => {
-            linear_rgba_to_oklaba_f32(src, dst, w, from.primaries);
+            linear_rgba_to_oklaba_f32(src, dst, w, from.primaries, in_trust);
         }
 
         ConvertStep::OklabaToLinearRgba => {
@@ -355,11 +375,24 @@ pub(super) fn apply_step_u8(
 
         #[cfg(feature = "hdr-experimental")]
         ConvertStep::ToneMap(step) => {
-            tone_map_kernel(src, dst, w, from, step, hdr_scratch);
+            tone_map_kernel(src, dst, w, from, step, in_trust.color_facts, hdr_scratch);
         }
 
-        ConvertStep::SoftCompressOklch { primaries, knee } => {
-            soft_compress_oklch_kernel(src, dst, w, from, *primaries, *knee, hdr_scratch);
+        ConvertStep::SoftCompressOklch(compressor) => {
+            soft_compress_oklch_kernel(src, dst, w, from, compressor, hdr_scratch);
+        }
+
+        ConvertStep::Perceptual(p) => {
+            super::perceptual::apply_row(
+                *p,
+                src,
+                dst,
+                w,
+                from.primaries,
+                _to.primaries,
+                pq_scale,
+                in_trust,
+            );
         }
     }
 }
@@ -388,49 +421,46 @@ fn tone_map_kernel(
     width: usize,
     from: PixelDescriptor,
     step: &super::ToneMapStep,
+    color_facts: zenpixels::sample::FloatFacts,
     scratch: &mut HdrKernelScratch,
 ) {
-    // Compile the strip executor on the first row through this step. The `Arc<OnceBox>` is
-    // shared across plan clones, so `prepare` runs at most once.
-    let strip_mapper: &alloc::sync::Arc<dyn crate::hdr::StripMapper> =
-        step.prepared.get_or_init(|| {
-            let ctx = crate::hdr::ToneMapContext {
-                source_peak_nits: step.source_peak_nits,
-                target_peak_nits: step.target_peak_nits,
-                working_primaries: step.working_primaries,
-            };
-            match step.mapper.prepare(&ctx) {
-                crate::hdr::PreparedMapper::Streaming(boxed) => {
-                    alloc::boxed::Box::new(alloc::sync::Arc::from(boxed))
-                }
-            }
-        });
+    use zenpixels::sample::FloatFacts;
+    let strip_mapper = step
+        .prepared
+        .get()
+        .expect("mapper prepared before execution");
 
     let channels = if from.layout().has_alpha() { 4 } else { 3 };
     let src_f32: &[f32] = bytemuck::cast_slice(src);
     let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(dst);
 
-    // Grow-only scratch, sliced to the row, so no row allocates.
-    if scratch.rgb_strip.len() < width {
-        scratch.rgb_strip.resize(width, [0.0; 3]);
-    }
-    if scratch.rgb_out.len() < width {
-        scratch.rgb_out.resize(width, [0.0; 3]);
-    }
-    let rgb_in = &mut scratch.rgb_strip[..width];
     let rgb_out = &mut scratch.rgb_out[..width];
+    let trusted_finite_nonneg =
+        color_facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::NO_INFINITE);
 
-    // Mappers see finite, non-negative linear light.
-    let scrub = |v: f32| if v.is_finite() && v >= 0.0 { v } else { 0.0 };
-    for (p, px) in rgb_in.iter_mut().enumerate() {
-        let base = p * channels;
-        *px = [
-            scrub(src_f32[base]),
-            scrub(src_f32[base + 1]),
-            scrub(src_f32[base + 2]),
-        ];
+    if trusted_finite_nonneg && channels == 3 {
+        strip_mapper.map_strip(&src_f32[..width * 3], rgb_out.as_flattened_mut());
+    } else {
+        let rgb_in = &mut scratch.rgb_strip[..width];
+        if trusted_finite_nonneg {
+            for (p, px) in rgb_in.iter_mut().enumerate() {
+                let base = p * channels;
+                *px = [src_f32[base], src_f32[base + 1], src_f32[base + 2]];
+            }
+        } else {
+            // Mappers see finite, non-negative linear light.
+            let scrub = |v: f32| if v.is_finite() && v >= 0.0 { v } else { 0.0 };
+            for (p, px) in rgb_in.iter_mut().enumerate() {
+                let base = p * channels;
+                *px = [
+                    scrub(src_f32[base]),
+                    scrub(src_f32[base + 1]),
+                    scrub(src_f32[base + 2]),
+                ];
+            }
+        }
+        strip_mapper.map_strip(rgb_in.as_flattened(), rgb_out.as_flattened_mut());
     }
-    strip_mapper.map_strip(rgb_in.as_flattened(), rgb_out.as_flattened_mut());
     let settle = |v: f32| {
         if v.is_finite() {
             v.clamp(0.0, 1.0)
@@ -460,14 +490,9 @@ fn soft_compress_oklch_kernel(
     dst: &mut [u8],
     width: usize,
     from: PixelDescriptor,
-    primaries: ColorPrimaries,
-    knee: f32,
+    compressor: &crate::hdr::SoftCompress,
     scratch: &mut HdrKernelScratch,
 ) {
-    let space = crate::oklab::OklabSpace::for_primaries(primaries)
-        .expect("target primaries have defined LMS matrices");
-    let compressor = crate::hdr::SoftCompress::new(&space, knee);
-
     let has_alpha = from.layout().has_alpha();
     let channels = if has_alpha { 4 } else { 3 };
     let src_f32: &[f32] = bytemuck::cast_slice(src);
@@ -475,9 +500,6 @@ fn soft_compress_oklch_kernel(
 
     if has_alpha {
         // Row-persistent RGB strip; see `tone_map_bt2446a_kernel`.
-        if scratch.rgb_strip.len() < width {
-            scratch.rgb_strip.resize(width, [0.0; 3]);
-        }
         let rgb_strip = &mut scratch.rgb_strip[..width];
         for p in 0..width {
             let base = p * channels;
@@ -517,17 +539,100 @@ fn soft_compress_oklch_kernel(
 // ----------------------------------------------------------------------------
 
 /// BGRA ↔ RGBA swizzle. BGRA exists only as 8-bit formats.
-fn swizzle_bgra_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
-    assert_eq!(ch_type, ChannelType::U8, "BGRA is an 8-bit format");
-    let n = width * 4;
-    garb::bytes::rgba_to_bgra(&src[..n], &mut dst[..n]).expect("pre-validated row size");
+fn swizzle_bgr_rgb(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
+    match ch_type {
+        ChannelType::U8 => {
+            for (out, px) in dst[..width * 3]
+                .as_chunks_mut::<3>()
+                .0
+                .iter_mut()
+                .zip(src[..width * 3].as_chunks::<3>().0)
+            {
+                *out = [px[2], px[1], px[0]];
+            }
+        }
+        ChannelType::U16 | ChannelType::F16 => {
+            for (out, px) in dst[..width * 6]
+                .as_chunks_mut::<6>()
+                .0
+                .iter_mut()
+                .zip(src[..width * 6].as_chunks::<6>().0)
+            {
+                *out = [px[4], px[5], px[2], px[3], px[0], px[1]];
+            }
+        }
+        ChannelType::F32 => {
+            for (out, px) in dst[..width * 12]
+                .as_chunks_mut::<12>()
+                .0
+                .iter_mut()
+                .zip(src[..width * 12].as_chunks::<12>().0)
+            {
+                out[0..4].copy_from_slice(&px[8..12]);
+                out[4..8].copy_from_slice(&px[4..8]);
+                out[8..12].copy_from_slice(&px[0..4]);
+            }
+        }
+        other => unreachable!("unsupported channel type {other:?}"),
+    }
 }
 
-/// Fused RGB → BGRA: byte-swap R↔B and add opaque alpha in one SIMD pass.
+fn swizzle_bgra_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
+    match ch_type {
+        ChannelType::U8 => {
+            let n = width * 4;
+            garb::bytes::rgba_to_bgra(&src[..n], &mut dst[..n]).expect("pre-validated row size");
+        }
+        ChannelType::U16 | ChannelType::F16 => {
+            for (out, px) in dst[..width * 8]
+                .as_chunks_mut::<8>()
+                .0
+                .iter_mut()
+                .zip(src[..width * 8].as_chunks::<8>().0)
+            {
+                *out = [px[4], px[5], px[2], px[3], px[0], px[1], px[6], px[7]];
+            }
+        }
+        ChannelType::F32 => {
+            for (out, px) in dst[..width * 16]
+                .as_chunks_mut::<16>()
+                .0
+                .iter_mut()
+                .zip(src[..width * 16].as_chunks::<16>().0)
+            {
+                out[0..4].copy_from_slice(&px[8..12]);
+                out[4..8].copy_from_slice(&px[4..8]);
+                out[8..12].copy_from_slice(&px[0..4]);
+                out[12..16].copy_from_slice(&px[12..16]);
+            }
+        }
+        other => unreachable!("unsupported channel type {other:?}"),
+    }
+}
+
+/// Fused RGB → BGRA: swap R↔B and add opaque alpha.
 fn rgb_to_bgra(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
-    assert_eq!(ch_type, ChannelType::U8, "BGRA is an 8-bit format");
-    garb::bytes::rgb_to_bgra(&src[..width * 3], &mut dst[..width * 4])
-        .expect("pre-validated row size");
+    match ch_type {
+        ChannelType::U8 => {
+            garb::bytes::rgb_to_bgra(&src[..width * 3], &mut dst[..width * 4])
+                .expect("pre-validated row size");
+        }
+        ChannelType::U16 | ChannelType::F16 => {
+            add_alpha(src, dst, width, ch_type);
+            for px in dst[..width * 8].as_chunks_mut::<8>().0 {
+                px.swap(0, 4);
+                px.swap(1, 5);
+            }
+        }
+        ChannelType::F32 => {
+            add_alpha(src, dst, width, ch_type);
+            for px in dst[..width * 16].as_chunks_mut::<16>().0 {
+                let (head, tail) = px.split_at_mut(8);
+                head[0..4].swap_with_slice(&mut tail[0..4]);
+            }
+        }
+        other => unreachable!("unsupported channel type {other:?}"),
+    }
 }
 
 // -- add_alpha (inserts opaque alpha: differs per type) ----------------------
@@ -644,7 +749,10 @@ fn matte_composite(
     width: usize,
     from: PixelDescriptor,
     matte: [f32; 3],
+    clip: bool,
+    in_facts: zenpixels::sample::FloatFacts,
 ) {
+    use zenpixels::sample::FloatFacts;
     let ch_type = from.channel_type();
     if !matches!(
         ch_type,
@@ -654,7 +762,11 @@ fn matte_composite(
         return;
     }
     let tf = from.transfer();
-    let srgb_u8 = ch_type == ChannelType::U8 && tf == TransferFunction::Srgb;
+    let is_premul = from.alpha() == Some(zenpixels::AlphaMode::Premultiplied);
+    let srgb_u8 = ch_type == ChannelType::U8 && tf == TransferFunction::Srgb && !is_premul;
+    let clip_f32 = clip || ch_type != ChannelType::F32;
+    let trusted_unit_alpha = matches!(ch_type, ChannelType::U8 | ChannelType::U16)
+        || in_facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE);
 
     const PIXELS: usize = 128;
     let mut rgba = [0f32; PIXELS * 4];
@@ -669,17 +781,19 @@ fn matte_composite(
         let (rgba, rgb, alpha) = (&mut rgba[..n * 4], &mut rgb[..n * 3], &mut alpha[..n]);
         match ch_type {
             ChannelType::U8 => {
-                garb::bytes::convert_u8_to_f32(s, bytemuck::cast_slice_mut(&mut *rgba))
-                    .expect("pre-validated row size");
+                crate::float_simd::convert_u8_to_f32_slice(s, rgba);
             }
             ChannelType::U16 => {
-                garb::bytes::convert_u16_to_f32(s, bytemuck::cast_slice_mut(&mut *rgba))
-                    .expect("pre-validated row size");
+                crate::float_simd::convert_u16_to_f32_slice(bytemuck::cast_slice(s), rgba);
             }
             ChannelType::F16 => f16_bits_to_f32_slice(bytemuck::cast_slice(s), rgba),
             _ => rgba.copy_from_slice(bytemuck::cast_slice(s)),
         }
-        matte_split(rgba, rgb, alpha);
+        if trusted_unit_alpha {
+            matte_split_trusted(rgba, rgb, alpha);
+        } else {
+            matte_split(rgba, rgb, alpha);
+        }
         if srgb_u8 {
             // The tables and this alpha scale define sRGB U8 matte output.
             for ((lane, byte), a) in rgb
@@ -695,26 +809,36 @@ fn matte_composite(
                 *a = f32::from(byte[3]) * (1.0 / 255.0);
             }
         } else {
-            matte_to_linear(rgb, tf);
+            matte_to_linear(rgb, tf, clip_f32);
         }
-        matte_blend(rgb, alpha, matte);
+        if is_premul {
+            matte_blend_premul(rgb, alpha, matte);
+        } else {
+            matte_blend(rgb, alpha, matte);
+        }
         if srgb_u8 {
             linear_srgb::default::linear_to_srgb_u8_slice(rgb, d);
             continue;
         }
-        matte_from_linear(rgb, tf);
+        matte_from_linear(rgb, tf, clip_f32);
         match ch_type {
-            ChannelType::U8 => garb::bytes::convert_f32_to_u8(bytemuck::cast_slice(&*rgb), d)
-                .expect("pre-validated row size"),
-            ChannelType::U16 => garb::bytes::convert_f32_to_u16(bytemuck::cast_slice(&*rgb), d)
-                .expect("pre-validated row size"),
+            ChannelType::U8 => {
+                crate::float_simd::convert_f32_to_u8_slice(rgb, d, FloatFacts::NONE);
+            }
+            ChannelType::U16 => {
+                crate::float_simd::convert_f32_to_u16_slice(
+                    rgb,
+                    bytemuck::cast_slice_mut(d),
+                    FloatFacts::NONE,
+                );
+            }
             ChannelType::F16 => f32_to_f16_bits_slice(rgb, bytemuck::cast_slice_mut(d)),
             _ => bytemuck::cast_slice_mut(d).copy_from_slice(rgb),
         }
     }
 }
 
-/// RGBA samples to separate RGB and clamped alpha.
+/// RGBA samples to separate RGB and clamped alpha (scrubbing NaN alpha to 0.0).
 #[attune(dispatch, -_neon, -_wasm128)]
 fn matte_split(rgba: &[f32], rgb: &mut [f32], alpha: &mut [f32]) {
     for ((s, d), a) in rgba
@@ -725,11 +849,31 @@ fn matte_split(rgba: &[f32], rgb: &mut [f32], alpha: &mut [f32]) {
         .zip(alpha)
     {
         *d = [s[0], s[1], s[2]];
-        *a = s[3].clamp(0.0, 1.0);
+        let raw_a = s[3];
+        *a = if raw_a.is_nan() {
+            0.0
+        } else {
+            raw_a.clamp(0.0, 1.0)
+        };
     }
 }
 
-/// `rgb * alpha + matte * (1 - alpha)`, in linear light.
+/// Fast path when alpha is already proven in `[+0.0, 1.0]` (no NaN, no clamp needed).
+#[attune(dispatch, -_neon, -_wasm128)]
+fn matte_split_trusted(rgba: &[f32], rgb: &mut [f32], alpha: &mut [f32]) {
+    for ((s, d), a) in rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(rgb.as_chunks_mut::<3>().0)
+        .zip(alpha)
+    {
+        *d = [s[0], s[1], s[2]];
+        *a = s[3];
+    }
+}
+
+/// `rgb * alpha + matte * (1 - alpha)`, in linear light (straight alpha).
 #[attune(dispatch, -_neon, -_wasm128)]
 fn matte_blend(rgb: &mut [f32], alpha: &[f32], matte: [f32; 3]) {
     for (p, a) in rgb.as_chunks_mut::<3>().0.iter_mut().zip(alpha) {
@@ -740,35 +884,68 @@ fn matte_blend(rgb: &mut [f32], alpha: &[f32], matte: [f32; 3]) {
     }
 }
 
+/// `rgb + matte * (1 - alpha)`, in linear light (premultiplied alpha, W3C Compositing-1 §5.1).
+fn matte_blend_premul(rgb: &mut [f32], alpha: &[f32], matte: [f32; 3]) {
+    for (p, a) in rgb.as_chunks_mut::<3>().0.iter_mut().zip(alpha) {
+        let inv = 1.0 - a;
+        p[0] += matte[0] * inv;
+        p[1] += matte[1] * inv;
+        p[2] += matte[2] * inv;
+    }
+}
+
 /// Decodes samples to linear in place. Anything without a curve here passes through.
-fn matte_to_linear(rgb: &mut [f32], tf: TransferFunction) {
+fn matte_to_linear(rgb: &mut [f32], tf: TransferFunction, clip: bool) {
     match tf {
-        TransferFunction::Srgb => linear_srgb::default::srgb_to_linear_slice(rgb),
+        TransferFunction::Srgb if clip => linear_srgb::default::srgb_to_linear_slice(rgb),
+        TransferFunction::Srgb => linear_srgb::default::srgb_to_linear_extended_slice(rgb),
         TransferFunction::Bt709 => linear_srgb::default::bt709_to_linear_slice(rgb),
         TransferFunction::Pq => pq_eotf_slice(rgb),
         TransferFunction::Hlg => linear_srgb::default::hlg_to_linear_slice(rgb),
-        TransferFunction::Gamma22 => {
+        TransferFunction::Gamma22 if clip => {
             linear_srgb::default::gamma_to_linear_slice(rgb, ADOBE_GAMMA);
+        }
+        TransferFunction::Gamma22 => {
+            for v in &mut *rgb {
+                *v = libm::powf(v.abs(), ADOBE_GAMMA).copysign(*v);
+            }
         }
         _ => {}
     }
 }
 
 /// Encodes linear samples in place. The inverse of [`matte_to_linear`].
-fn matte_from_linear(rgb: &mut [f32], tf: TransferFunction) {
+fn matte_from_linear(rgb: &mut [f32], tf: TransferFunction, clip: bool) {
     match tf {
-        TransferFunction::Srgb => linear_srgb::default::linear_to_srgb_slice(rgb),
+        TransferFunction::Srgb if clip => linear_srgb::default::linear_to_srgb_slice(rgb),
+        TransferFunction::Srgb => linear_srgb::default::linear_to_srgb_extended_slice(rgb),
         TransferFunction::Bt709 => linear_srgb::default::linear_to_bt709_slice(rgb),
         TransferFunction::Pq => pq_oetf_slice(rgb),
         TransferFunction::Hlg => linear_srgb::default::linear_to_hlg_slice(rgb),
-        TransferFunction::Gamma22 => {
+        TransferFunction::Gamma22 if clip => {
             linear_srgb::default::linear_to_gamma_slice(rgb, ADOBE_GAMMA);
+        }
+        TransferFunction::Gamma22 => {
+            for v in &mut *rgb {
+                *v = libm::powf(v.abs(), 1.0 / ADOBE_GAMMA).copysign(*v);
+            }
         }
         _ => {}
     }
 }
 
 // -- gray_to_rgb (pure replicate — U16 and F16 share) ------------------------
+
+#[attune(dispatch, -_neon, -_wasm128)]
+fn gray_to_rgb_u8(src: &[u8], dst: &mut [u8], width: usize) {
+    for i in 0..width {
+        let g = src[i];
+        let d: &mut [u8; 3] = (&mut dst[i * 3..i * 3 + 3]).try_into().unwrap();
+        d[0] = g;
+        d[1] = g;
+        d[2] = g;
+    }
+}
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_rgb_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
@@ -795,10 +972,7 @@ fn gray_to_rgb_f32(src: &[f32], dst: &mut [f32], width: usize) {
 /// Gray → RGB (replicate).
 fn gray_to_rgb(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
     match ch_type {
-        ChannelType::U8 => {
-            garb::bytes::gray_to_rgb(&src[..width], &mut dst[..width * 3])
-                .expect("pre-validated row size");
-        }
+        ChannelType::U8 => gray_to_rgb_u8(&src[..width], &mut dst[..width * 3], width),
         ChannelType::U16 | ChannelType::F16 => gray_to_rgb_2bytes(
             bytemuck::cast_slice(&src[..width * 2]),
             bytemuck::cast_slice_mut(&mut dst[..width * 6]),
@@ -1001,6 +1175,32 @@ fn rgba_to_grayalpha(
     }
 }
 
+#[attune(dispatch, -_neon, -_wasm128)]
+fn rgb_to_gray_bt709_u8(src: &[u8], dst: &mut [u8], width: usize) {
+    for (px, d) in src[..width * 3]
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(dst[..width].iter_mut())
+    {
+        *d = ((u16::from(px[0]) * 54 + u16::from(px[1]) * 183 + u16::from(px[2]) * 19 + 128) >> 8)
+            as u8;
+    }
+}
+
+#[attune(dispatch, -_neon, -_wasm128)]
+fn rgba_to_gray_bt709_u8(src: &[u8], dst: &mut [u8], width: usize) {
+    for (px, d) in src[..width * 4]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(dst[..width].iter_mut())
+    {
+        *d = ((u16::from(px[0]) * 54 + u16::from(px[1]) * 183 + u16::from(px[2]) * 19 + 128) >> 8)
+            as u8;
+    }
+}
+
 /// RGB → Gray using user-specified luma coefficients. Y' (encoded) semantic.
 fn rgb_to_gray(
     src: &[u8],
@@ -1013,8 +1213,7 @@ fn rgb_to_gray(
     match ch_type {
         ChannelType::U8 => {
             if coefficients == LumaCoefficients::Bt709 {
-                garb::bytes::rgb_to_gray_bt709(&src[..width * 3], &mut dst[..width])
-                    .expect("pre-validated row size");
+                rgb_to_gray_bt709_u8(&src[..width * 3], &mut dst[..width], width);
             } else {
                 rgb_to_gray_u8_generic(&src[..width * 3], &mut dst[..width], width, w);
             }
@@ -1053,8 +1252,7 @@ fn rgba_to_gray(
     match ch_type {
         ChannelType::U8 => {
             if coefficients == LumaCoefficients::Bt709 {
-                garb::bytes::rgba_to_gray_bt709(&src[..width * 4], &mut dst[..width])
-                    .expect("pre-validated row size");
+                rgba_to_gray_bt709_u8(&src[..width * 4], &mut dst[..width], width);
             } else {
                 rgba_to_gray_u8_generic(&src[..width * 4], &mut dst[..width], width, w);
             }
@@ -1131,6 +1329,17 @@ fn gray_alpha_to_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: Channel
 // -- gray_alpha_to_rgb (replicate + drop alpha — U16 and F16 share) ---------
 
 #[attune(dispatch, -_neon, -_wasm128)]
+fn gray_alpha_to_rgb_u8(src: &[u8], dst: &mut [u8], width: usize) {
+    for i in 0..width {
+        let g = src[i * 2];
+        let d: &mut [u8; 3] = (&mut dst[i * 3..i * 3 + 3]).try_into().unwrap();
+        d[0] = g;
+        d[1] = g;
+        d[2] = g;
+    }
+}
+
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_rgb_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         let g = src[i * 2];
@@ -1155,10 +1364,7 @@ fn gray_alpha_to_rgb_f32(src: &[f32], dst: &mut [f32], width: usize) {
 /// GrayAlpha → RGB (replicate gray, drop alpha).
 fn gray_alpha_to_rgb(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
     match ch_type {
-        ChannelType::U8 => {
-            garb::bytes::gray_alpha_to_rgb(&src[..width * 2], &mut dst[..width * 3])
-                .expect("pre-validated row size");
-        }
+        ChannelType::U8 => gray_alpha_to_rgb_u8(&src[..width * 2], &mut dst[..width * 3], width),
         ChannelType::U16 | ChannelType::F16 => gray_alpha_to_rgb_2bytes(
             bytemuck::cast_slice(&src[..width * 4]),
             bytemuck::cast_slice_mut(&mut dst[..width * 6]),
@@ -1174,6 +1380,15 @@ fn gray_alpha_to_rgb(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelT
 }
 
 // -- gray_to_gray_alpha (inserts opaque alpha: differs per type) -------------
+
+#[attune(dispatch, -_neon, -_wasm128)]
+fn gray_to_gray_alpha_u8(src: &[u8], dst: &mut [u8], width: usize) {
+    for i in 0..width {
+        let d: &mut [u8; 2] = (&mut dst[i * 2..i * 2 + 2]).try_into().unwrap();
+        d[0] = src[i];
+        d[1] = 255;
+    }
+}
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_gray_alpha_2bytes(src: &[u16], dst: &mut [u16], width: usize, opaque: u16) {
@@ -1196,10 +1411,7 @@ fn gray_to_gray_alpha_f32(src: &[f32], dst: &mut [f32], width: usize) {
 /// Gray → GrayAlpha (add opaque alpha).
 fn gray_to_gray_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
     match ch_type {
-        ChannelType::U8 => {
-            garb::bytes::gray_to_gray_alpha(&src[..width], &mut dst[..width * 2])
-                .expect("pre-validated row size");
-        }
+        ChannelType::U8 => gray_to_gray_alpha_u8(&src[..width], &mut dst[..width * 2], width),
         ChannelType::U16 => gray_to_gray_alpha_2bytes(
             bytemuck::cast_slice(&src[..width * 2]),
             bytemuck::cast_slice_mut(&mut dst[..width * 4]),
@@ -1224,6 +1436,13 @@ fn gray_to_gray_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: Channel
 // -- gray_alpha_to_gray (drop alpha — U16 and F16 share) --------------------
 
 #[attune(dispatch, -_neon, -_wasm128)]
+fn gray_alpha_to_gray_u8(src: &[u8], dst: &mut [u8], width: usize) {
+    for i in 0..width {
+        dst[i] = src[i * 2];
+    }
+}
+
+#[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_gray_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
     for i in 0..width {
         dst[i] = src[i * 2];
@@ -1240,10 +1459,7 @@ fn gray_alpha_to_gray_f32(src: &[f32], dst: &mut [f32], width: usize) {
 /// GrayAlpha → Gray (drop alpha).
 fn gray_alpha_to_gray(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
     match ch_type {
-        ChannelType::U8 => {
-            garb::bytes::gray_alpha_to_gray(&src[..width * 2], &mut dst[..width])
-                .expect("pre-validated row size");
-        }
+        ChannelType::U8 => gray_alpha_to_gray_u8(&src[..width * 2], &mut dst[..width], width),
         ChannelType::U16 | ChannelType::F16 => gray_alpha_to_gray_2bytes(
             bytemuck::cast_slice(&src[..width * 4]),
             bytemuck::cast_slice_mut(&mut dst[..width * 2]),
@@ -1374,15 +1590,21 @@ fn linear_f32_to_srgb_u8(src: &[u8], dst: &mut [u8], width: usize, layout: Chann
 /// Naive u8 → f32 (v / 255.0, no transfer function).
 fn naive_u8_to_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
-    garb::bytes::convert_u8_to_f32(&src[..count], &mut dst[..count * 4])
-        .expect("pre-validated row size");
+    let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    crate::float_simd::convert_u8_to_f32_slice(&src[..count], dst_f32);
 }
 
 /// Naive f32 → u8 (clamp `[0,1]`, * 255 + 0.5).
-fn naive_f32_to_u8(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+fn naive_f32_to_u8(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    channels: usize,
+    in_facts: zenpixels::sample::FloatFacts,
+) {
     let count = width * channels;
-    garb::bytes::convert_f32_to_u8(&src[..count * 4], &mut dst[..count])
-        .expect("pre-validated row size");
+    let src_f32: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    crate::float_simd::convert_f32_to_u8_slice(src_f32, &mut dst[..count], in_facts);
 }
 
 /// u16 → u8, correctly rounded: `round(v / 257)` (65535 = 255 · 257, so
@@ -1418,6 +1640,42 @@ fn u16_to_u8(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     }
 }
 
+/// u16 → u8 high-byte truncation (`v >> 8`, `DepthPolicy::Truncate`).
+fn u16_to_u8_truncate(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+    let count = width * channels;
+    let (pairs, _) = src[..count * 2].as_chunks::<2>();
+    for (s, d) in pairs.iter().zip(dst[..count].iter_mut()) {
+        *d = (u16::from_ne_bytes(*s) >> 8) as u8;
+    }
+}
+
+/// f32 → u8 floor truncation (`clamp(0, 1) * 255`, `DepthPolicy::Truncate`).
+fn naive_f32_to_u8_truncate(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    channels: usize,
+    in_facts: zenpixels::sample::FloatFacts,
+) {
+    let count = width * channels;
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    crate::float_simd::convert_f32_to_u8_truncate_slice(srcf, &mut dst[..count], in_facts);
+}
+
+/// f32 → u16 floor truncation (`clamp(0, 1) * 65535`, `DepthPolicy::Truncate`).
+fn f32_to_u16_truncate(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    channels: usize,
+    in_facts: zenpixels::sample::FloatFacts,
+) {
+    let count = width * channels;
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..count * 2]);
+    crate::float_simd::convert_f32_to_u16_truncate_slice(srcf, dst16, in_facts);
+}
+
 /// Compose an actual SDR transfer change before the one final quantisation.
 /// Alpha is always linear and only narrows; color channels use f64 so the
 /// f32 transfer approximations cannot flip values close to u8 midpoints.
@@ -1446,14 +1704,14 @@ fn sdr_u16_to_u8(
                 if x <= 0.04045 {
                     x / 12.92
                 } else {
-                    ((x + 0.055) / 1.055).powf(2.4)
+                    libm::pow((x + 0.055) / 1.055, 2.4)
                 }
             }
             TransferFunction::Bt709 => {
                 if x < 4.5 * BT709_BETA {
                     x / 4.5
                 } else {
-                    ((x + BT709_ALPHA) / (1.0 + BT709_ALPHA)).powf(1.0 / 0.45)
+                    libm::pow((x + BT709_ALPHA) / (1.0 + BT709_ALPHA), 1.0 / 0.45)
                 }
             }
             _ => unreachable!("planner admits only Linear, sRGB and BT.709"),
@@ -1468,14 +1726,14 @@ fn sdr_u16_to_u8(
                 if x <= 0.0031308 {
                     x * 12.92
                 } else {
-                    1.055 * x.powf(1.0 / 2.4) - 0.055
+                    1.055 * libm::pow(x, 1.0 / 2.4) - 0.055
                 }
             }
             TransferFunction::Bt709 => {
                 if x < BT709_BETA {
                     x * 4.5
                 } else {
-                    (1.0 + BT709_ALPHA) * x.powf(0.45) - BT709_ALPHA
+                    (1.0 + BT709_ALPHA) * libm::pow(x, 0.45) - BT709_ALPHA
                 }
             }
             _ => unreachable!("planner admits only Linear, sRGB and BT.709"),
@@ -1498,7 +1756,7 @@ fn sdr_u16_to_u8(
             .expect("fixed-size SDR transfer table");
         for (code, output) in table.iter_mut().enumerate() {
             let encoded = encode(to, decode(from, code as f64 / 65535.0));
-            *output = (encoded.clamp(0.0, 1.0) * 255.0 + 0.5).floor() as u8;
+            *output = libm::floor(encoded.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
         }
         table
     });
@@ -1527,25 +1785,40 @@ fn sdr_u16_to_u8(
     }
 }
 
+#[attune(dispatch, -_neon, -_wasm128)]
+fn u8_to_u16_lanes(src: &[u8], dst: &mut [[u8; 2]]) {
+    for (&s, d) in src.iter().zip(dst.iter_mut()) {
+        *d = (u16::from(s) * 257).to_ne_bytes();
+    }
+}
+
 /// u8 → u16: v * 257.
 fn u8_to_u16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
-    garb::bytes::convert_u8_to_u16(&src[..count], &mut dst[..count * 2])
-        .expect("pre-validated row size");
+    let (pairs, _) = dst[..count * 2].as_chunks_mut::<2>();
+    u8_to_u16_lanes(&src[..count], pairs);
 }
 
 /// u16 → f32: v / 65535.0.
 fn u16_to_f32(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
     let count = width * channels;
-    garb::bytes::convert_u16_to_f32(&src[..count * 2], &mut dst[..count * 4])
-        .expect("pre-validated row size");
+    let src_u16: &[u16] = bytemuck::cast_slice(&src[..count * 2]);
+    let dst_f32: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    crate::float_simd::convert_u16_to_f32_slice(src_u16, dst_f32);
 }
 
 /// f32 → u16: clamp `[0,1]`, * 65535 + 0.5.
-fn f32_to_u16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
+fn f32_to_u16(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    channels: usize,
+    in_facts: zenpixels::sample::FloatFacts,
+) {
     let count = width * channels;
-    garb::bytes::convert_f32_to_u16(&src[..count * 4], &mut dst[..count * 2])
-        .expect("pre-validated row size");
+    let src_f32: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dst_u16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..count * 2]);
+    crate::float_simd::convert_f32_to_u16_slice(src_f32, dst_u16, in_facts);
 }
 
 /// f16 → f32: IEEE 754 half-precision unpack (no TF, no scale).
@@ -1577,18 +1850,18 @@ fn f32_to_f16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
 
 /// PQ EOTF: encoded `[0,1]` → linear light `[0,1]` (where 1.0 = 10000 cd/m²).
 ///
-/// Uses rational polynomial from `linear-srgb` (no `powf` calls).
+/// Uses the existing `linear-srgb` transfer curve.
 #[inline]
 pub(crate) fn pq_eotf(v: f32) -> f32 {
-    linear_srgb::tf::pq_to_linear(v)
+    linear_srgb::default::pq_to_linear(v)
 }
 
 /// PQ inverse EOTF (OETF): linear light `[0,1]` → encoded `[0,1]`.
 ///
-/// Uses rational polynomial from `linear-srgb` (no `powf` calls).
+/// Uses the existing `linear-srgb` transfer curve.
 #[inline]
 pub(crate) fn pq_oetf(v: f32) -> f32 {
-    linear_srgb::tf::linear_to_pq(v)
+    linear_srgb::default::linear_to_pq(v)
 }
 
 /// Per-tier SIMD body for [`multiply_color_channels`]. `channels == 4` builds a
@@ -1676,12 +1949,11 @@ fn pq_u16_to_linear_f32(
 ) {
     let channels = layout.channels();
     let count = width * channels;
-    garb::bytes::convert_u16_to_f32(&src[..count * 2], &mut dst[..count * 4])
-        .expect("pre-validated row size");
+    let src16: &[u16] = bytemuck::cast_slice(&src[..count * 2]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    crate::float_simd::convert_u16_to_f32_slice(src16, &mut dstf[..count]);
     pq_eotf_slice(&mut dstf[..count]);
     multiply_color_channels(&mut dstf[..count], channels, 1.0 / scale);
-    let src16: &[u16] = bytemuck::cast_slice(&src[..count * 2]);
     restore_alpha_u16_f32(src16, &mut dstf[..count], layout);
 }
 
@@ -1690,7 +1962,7 @@ fn pq_u16_to_linear_f32(
 /// Anchors the RGB lanes (`× scale`, negatives → 0), applies the PQ
 /// OETF ([`pq_oetf_slice`]) in fixed stack-sized chunks (the U16 output is
 /// half-width, so it cannot host the in-place f32 transform), then narrows to U16
-/// (`garb` SIMD). For alpha-bearing layouts the alpha lane is overwritten with its
+/// (`float_simd`). For alpha-bearing layouts the alpha lane is overwritten with its
 /// linear → U16 value (never OETF'd or anchored). `scale == 1.0` is the identity.
 fn linear_f32_to_pq_u16(
     src: &[u8],
@@ -1714,12 +1986,8 @@ fn linear_f32_to_pq_u16(
         b.copy_from_slice(&srcf[off..off + n]);
         multiply_color_channels(b, channels, scale);
         pq_oetf_slice(b);
-        garb::bytes::convert_f32_to_u16(
-            bytemuck::cast_slice(&b[..]),
-            &mut dst[off * 2..(off + n) * 2],
-        )
-        .expect("pre-validated row size");
         let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[off * 2..(off + n) * 2]);
+        crate::float_simd::convert_f32_to_u16_slice(b, dst16, zenpixels::sample::FloatFacts::NONE);
         restore_alpha_f32_u16(&srcf[off..off + n], dst16, layout);
         off += n;
     }
@@ -1737,12 +2005,24 @@ fn pq_f32_to_linear_f32(
     width: usize,
     layout: ChannelLayout,
     scale: f32,
+    in_facts: zenpixels::sample::FloatFacts,
 ) {
+    use zenpixels::sample::FloatFacts;
     let channels = layout.channels();
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    dstf[..count].copy_from_slice(&srcf[..count]);
+    if in_facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE) {
+        dstf[..count].copy_from_slice(&srcf[..count]);
+    } else if in_facts.contains(FloatFacts::NO_NAN) {
+        for (d, &s) in dstf[..count].iter_mut().zip(&srcf[..count]) {
+            *d = s.clamp(0.0, 1.0);
+        }
+    } else {
+        for (d, &s) in dstf[..count].iter_mut().zip(&srcf[..count]) {
+            *d = if s.is_nan() { 0.0 } else { s.clamp(0.0, 1.0) };
+        }
+    }
     pq_eotf_slice(&mut dstf[..count]);
     multiply_color_channels(&mut dstf[..count], channels, 1.0 / scale);
     restore_alpha_f32_f32(&srcf[..count], &mut dstf[..count], layout);
@@ -1759,13 +2039,30 @@ fn linear_f32_to_pq_f32(
     width: usize,
     layout: ChannelLayout,
     scale: f32,
+    in_facts: zenpixels::sample::FloatFacts,
 ) {
+    use zenpixels::sample::FloatFacts;
     let channels = layout.channels();
     let count = width * channels;
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
     dstf[..count].copy_from_slice(&srcf[..count]);
     multiply_color_channels(&mut dstf[..count], channels, scale);
+    let scale_unit = (0.0..=1.0).contains(&scale);
+    if scale_unit && in_facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE) {
+        // Every lane is already in [+0.0, 1.0].
+    } else if scale.is_finite()
+        && scale >= 0.0
+        && in_facts.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE)
+    {
+        for d in &mut dstf[..count] {
+            *d = d.clamp(0.0, 1.0);
+        }
+    } else {
+        for d in &mut dstf[..count] {
+            *d = if d.is_nan() { 0.0 } else { d.clamp(0.0, 1.0) };
+        }
+    }
     pq_oetf_slice(&mut dstf[..count]);
     restore_alpha_f32_f32(&srcf[..count], &mut dstf[..count], layout);
 }
@@ -1788,27 +2085,28 @@ fn linear_f32_to_pq_f32(
 /// HLG OETF: scene-linear `[0,1]` → encoded `[0,1]`.
 ///
 /// Uses `fast_log2f` from `linear-srgb` (no `libm` ln calls).
+#[cfg(test)]
 #[inline]
 pub(crate) fn hlg_oetf(v: f32) -> f32 {
-    linear_srgb::tf::linear_to_hlg(v)
+    linear_srgb::default::linear_to_hlg(v)
 }
 
 /// HLG inverse OETF (EOTF): encoded `[0,1]` → scene-linear `[0,1]`.
 ///
 /// Uses `fast_pow2f` from `linear-srgb` (no `libm` exp calls).
+#[cfg(test)]
 #[inline]
 pub(crate) fn hlg_eotf(v: f32) -> f32 {
-    linear_srgb::tf::hlg_to_linear(v)
+    linear_srgb::default::hlg_to_linear(v)
 }
 
 /// HLG U16 → Linear F32 (EOTF applied during depth conversion),
 /// alpha-preserving (the alpha lane is carried linearly, `v / 65535`).
 fn hlg_u16_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, layout: ChannelLayout) {
     let count = width * layout.channels();
-    garb::bytes::convert_u16_to_f32(&src[..count * 2], &mut dst[..count * 4])
-        .expect("pre-validated row size");
     let src16: &[u16] = bytemuck::cast_slice(&src[..count * 2]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    crate::float_simd::convert_u16_to_f32_slice(src16, dstf);
     linear_srgb::default::hlg_to_linear_slice(dstf);
     restore_alpha_u16_f32(src16, dstf, layout);
 }
@@ -1827,8 +2125,11 @@ fn linear_f32_to_hlg_u16(src: &[u8], dst: &mut [u8], width: usize, layout: Chann
         let encoded = &mut lanes[..s.len()];
         encoded.copy_from_slice(s);
         linear_srgb::default::linear_to_hlg_slice(encoded);
-        garb::bytes::convert_f32_to_u16(bytemuck::cast_slice(&*encoded), d)
-            .expect("pre-validated row size");
+        crate::float_simd::convert_f32_to_u16_slice(
+            encoded,
+            bytemuck::cast_slice_mut(d),
+            zenpixels::sample::FloatFacts::NONE,
+        );
     }
     let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..count * 2]);
     restore_alpha_f32_u16(srcf, dst16, layout);
@@ -1971,7 +2272,7 @@ fn linear_f32_to_gamma22_f32(src: &[u8], dst: &mut [u8], width: usize, layout: C
 }
 
 // Keep the existing SIMD approximation for magnitudes in [0,1]. Only values
-// outside that calibrated domain use libm; reflect the result about zero.
+// outside that calibrated domain use a checked high-precision power; reflect the result about zero.
 // This changes neither the default clipped route nor positive in-range samples.
 fn gamma22_f32_extended(
     src: &[u8],
@@ -1979,10 +2280,47 @@ fn gamma22_f32_extended(
     width: usize,
     layout: ChannelLayout,
     inverse: bool,
+    in_facts: zenpixels::sample::FloatFacts,
 ) {
+    use zenpixels::sample::FloatFacts;
     let count = width * layout.channels();
     let source: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let output: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    let exponent = if inverse {
+        1.0 / ADOBE_GAMMA
+    } else {
+        ADOBE_GAMMA
+    };
+
+    if in_facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE) {
+        // Every lane is in [+0.0, 1.0]: no abs(), no out-of-unit fallback, no copysign().
+        output.copy_from_slice(source);
+        if inverse {
+            linear_srgb::default::linear_to_gamma_slice(output, ADOBE_GAMMA);
+        } else {
+            linear_srgb::default::gamma_to_linear_slice(output, ADOBE_GAMMA);
+        }
+        restore_alpha_f32_f32(source, output, layout);
+        return;
+    }
+
+    if in_facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::NO_INFINITE) {
+        // Finite non-negative HDR domain: no abs(), no !is_finite(), no copysign().
+        output.copy_from_slice(source);
+        if inverse {
+            linear_srgb::default::linear_to_gamma_slice(output, ADOBE_GAMMA);
+        } else {
+            linear_srgb::default::gamma_to_linear_slice(output, ADOBE_GAMMA);
+        }
+        for (&s, d) in source.iter().zip(output.iter_mut()) {
+            if s > 1.0 {
+                *d = crate::gamma_math::magnitude_pow(s, exponent);
+            }
+        }
+        restore_alpha_f32_f32(source, output, layout);
+        return;
+    }
+
     for (s, d) in source.iter().zip(output.iter_mut()) {
         *d = s.abs();
     }
@@ -1991,16 +2329,21 @@ fn gamma22_f32_extended(
     } else {
         linear_srgb::default::gamma_to_linear_slice(output, ADOBE_GAMMA);
     }
-    let exponent = if inverse {
-        1.0 / ADOBE_GAMMA
-    } else {
-        ADOBE_GAMMA
-    };
-    for (s, d) in source.iter().zip(output.iter_mut()) {
-        if s.abs() > 1.0 || !s.is_finite() {
-            *d = libm::powf(s.abs(), exponent);
+    if in_facts.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE) {
+        for (s, d) in source.iter().zip(output.iter_mut()) {
+            let mag = s.abs();
+            if mag > 1.0 {
+                *d = crate::gamma_math::magnitude_pow(mag, exponent);
+            }
+            *d = d.copysign(*s);
         }
-        *d = d.copysign(*s);
+    } else {
+        for (s, d) in source.iter().zip(output.iter_mut()) {
+            if s.abs() > 1.0 || !s.is_finite() {
+                *d = crate::gamma_math::magnitude_pow(s.abs(), exponent);
+            }
+            *d = d.copysign(*s);
+        }
     }
     restore_alpha_f32_f32(source, output, layout);
 }
@@ -2018,6 +2361,28 @@ fn gamma22_f32_extended(
 
 // -- Straight → Premultiplied: per-(type, channels) kernels ------------------
 
+#[inline(always)]
+fn premul_u8_lane(c: u8, a: u8) -> u8 {
+    let t = u32::from(c) * u32::from(a) + 128;
+    ((t + (t >> 8)) >> 8) as u8
+}
+
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
+fn premul_u8_rgba(src: &[u8], dst: &mut [u8], width: usize) {
+    for (s, d) in src[..width * 4]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(dst[..width * 4].as_chunks_mut::<4>().0.iter_mut())
+    {
+        let a = s[3];
+        d[0] = premul_u8_lane(s[0], a);
+        d[1] = premul_u8_lane(s[1], a);
+        d[2] = premul_u8_lane(s[2], a);
+        d[3] = a;
+    }
+}
+
 #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn premul_u8_ga(src: &[u8], dst: &mut [u8], width: usize) {
     for i in 0..width {
@@ -2025,7 +2390,7 @@ fn premul_u8_ga(src: &[u8], dst: &mut [u8], width: usize) {
         let s: &[u8; 2] = (&src[base..base + 2]).try_into().unwrap();
         let d: &mut [u8; 2] = (&mut dst[base..base + 2]).try_into().unwrap();
         let a = s[1] as u32;
-        d[0] = ((s[0] as u32 * a + 128) / 255) as u8;
+        d[0] = ((s[0] as u32 * a + 127) / 255) as u8;
         d[1] = s[1];
     }
 }
@@ -2037,7 +2402,7 @@ fn premul_u16_ga(src: &[u16], dst: &mut [u16], width: usize) {
         let s: &[u16; 2] = (&src[base..base + 2]).try_into().unwrap();
         let d: &mut [u16; 2] = (&mut dst[base..base + 2]).try_into().unwrap();
         let a = s[1] as u32;
-        d[0] = ((s[0] as u32 * a + 32768) / 65535) as u16;
+        d[0] = ((s[0] as u32 * a + 32767) / 65535) as u16;
         d[1] = s[1];
     }
 }
@@ -2049,9 +2414,9 @@ fn premul_u16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
         let s: &[u16; 4] = (&src[base..base + 4]).try_into().unwrap();
         let d: &mut [u16; 4] = (&mut dst[base..base + 4]).try_into().unwrap();
         let a = s[3] as u32;
-        d[0] = ((s[0] as u32 * a + 32768) / 65535) as u16;
-        d[1] = ((s[1] as u32 * a + 32768) / 65535) as u16;
-        d[2] = ((s[2] as u32 * a + 32768) / 65535) as u16;
+        d[0] = ((s[0] as u32 * a + 32767) / 65535) as u16;
+        d[1] = ((s[1] as u32 * a + 32767) / 65535) as u16;
+        d[2] = ((s[2] as u32 * a + 32767) / 65535) as u16;
         d[3] = s[3];
     }
 }
@@ -2152,19 +2517,18 @@ fn straight_to_premul(
     width: usize,
     ch_type: ChannelType,
     layout: ChannelLayout,
+    in_facts: zenpixels::sample::FloatFacts,
 ) {
     let channels = layout.channels();
     match (ch_type, channels) {
-        // Garb fast paths (SIMD, RGBA 4-channel).
-        (ChannelType::U8, 4) => {
-            let n = width * 4;
-            garb::bytes::premultiply_alpha_rgba_u8_copy(&src[..n], &mut dst[..n])
-                .expect("pre-validated row size");
-        }
+        (ChannelType::U8, 4) => premul_u8_rgba(&src[..width * 4], &mut dst[..width * 4], width),
         (ChannelType::F32, 4) => {
             let n = width * 16;
-            garb::bytes::premultiply_alpha_f32_copy(&src[..n], &mut dst[..n])
-                .expect("pre-validated row size");
+            crate::float_simd::premul_rgba_f32_slice(
+                bytemuck::cast_slice(&src[..n]),
+                bytemuck::cast_slice_mut(&mut dst[..n]),
+                in_facts,
+            );
         }
         // Per-type kernels for the remaining shapes.
         (ChannelType::U8, 2) => premul_u8_ga(&src[..width * 2], &mut dst[..width * 2], width),
@@ -2426,14 +2790,18 @@ fn premul_to_straight(
     width: usize,
     ch_type: ChannelType,
     layout: ChannelLayout,
+    in_facts: zenpixels::sample::FloatFacts,
 ) {
     let channels = layout.channels();
     match (ch_type, channels) {
-        // Garb fast path (SIMD, f32 RGBA).
+        // SIMD RGBA f32 fast path.
         (ChannelType::F32, 4) => {
             let n = width * 16;
-            garb::bytes::unpremultiply_alpha_f32_copy(&src[..n], &mut dst[..n])
-                .expect("pre-validated row size");
+            crate::float_simd::unpremul_rgba_f32_slice(
+                bytemuck::cast_slice(&src[..n]),
+                bytemuck::cast_slice_mut(&mut dst[..n]),
+                in_facts,
+            );
         }
         // Per-type kernels.
         (ChannelType::U8, 2) => unpremul_u8_ga(&src[..width * 2], &mut dst[..width * 2], width),
@@ -2489,20 +2857,189 @@ fn premul_to_straight(
 // Oklab conversion kernels
 // ---------------------------------------------------------------------------
 
-use crate::oklab::{lms_to_rgb_matrix, oklab_to_rgb, rgb_to_lms_matrix, rgb_to_oklab};
+use crate::oklab::{
+    lms_to_rgb_matrix, oklab_to_rgb, rgb_to_lms_matrix, rgb_to_oklab, rgb_to_oklab_spec,
+};
+
+#[derive(Clone, Copy)]
+enum OklabFwdSpec {
+    Untrusted,
+    Finite,
+    FiniteNonNeg,
+    FiniteNoSub,
+    FiniteNonNegNoSub,
+    FinitePosNoSub,
+}
+
+#[inline]
+fn select_oklab_fwd_spec(m1: &[[f32; 3]; 3], in_trust: super::StepFloatTrust) -> OklabFwdSpec {
+    use zenpixels::sample::FloatFacts;
+    let cf = in_trust.color_facts;
+    if !(cf.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE) && in_trust.color_bounded) {
+        return OklabFwdSpec::Untrusted;
+    }
+    let flat = m1.as_flattened();
+    let m1_positive = flat.iter().all(|&c| c >= (1.0 / 64.0));
+    let m1_min_abs = flat.iter().all(|&c| c.abs() >= (1.0 / 64.0));
+    let rgb_nonneg = cf.contains(FloatFacts::NON_NEGATIVE);
+    let rgb_pos = cf.contains(FloatFacts::POSITIVE);
+    let lms_nonneg = m1_positive && rgb_nonneg;
+    let lms_no_sub = rgb_nonneg
+        && match in_trust.color_min_exp {
+            Some(k) if m1_positive && k >= -120 => true,
+            Some(k) if m1_min_abs && k >= -74 => true,
+            _ => false,
+        };
+    if lms_nonneg && lms_no_sub && rgb_pos {
+        OklabFwdSpec::FinitePosNoSub
+    } else if lms_nonneg && lms_no_sub {
+        OklabFwdSpec::FiniteNonNegNoSub
+    } else if lms_no_sub {
+        OklabFwdSpec::FiniteNoSub
+    } else if lms_nonneg {
+        OklabFwdSpec::FiniteNonNeg
+    } else {
+        OklabFwdSpec::Finite
+    }
+}
+
+macro_rules! define_rgb_to_oklab_3ch {
+    ($fn_name:ident, $no_spec:expr, $no_sub:expr, $nonneg:expr, $pos:expr) => {
+        #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
+        fn $fn_name(src: &[f32], dst: &mut [f32], m1: &[[f32; 3]; 3]) {
+            for (s, d) in src
+                .as_chunks::<48>()
+                .0
+                .iter()
+                .zip(dst.as_chunks_mut::<48>().0)
+            {
+                for p in 0..16 {
+                    let i = p * 3;
+                    let [l, a, b] = rgb_to_oklab_spec::<$no_spec, $no_sub, $nonneg, $pos>(
+                        s[i],
+                        s[i + 1],
+                        s[i + 2],
+                        m1,
+                    );
+                    d[i] = l;
+                    d[i + 1] = a;
+                    d[i + 2] = b;
+                }
+            }
+            let rem_pixels = (src.len() / 3) % 16;
+            if rem_pixels > 0 {
+                let off = src.len() - rem_pixels * 3;
+                for p in 0..rem_pixels {
+                    let i = off + p * 3;
+                    let [l, a, b] = rgb_to_oklab_spec::<$no_spec, $no_sub, $nonneg, $pos>(
+                        src[i],
+                        src[i + 1],
+                        src[i + 2],
+                        m1,
+                    );
+                    dst[i] = l;
+                    dst[i + 1] = a;
+                    dst[i + 2] = b;
+                }
+            }
+        }
+    };
+}
+
+macro_rules! define_rgb_to_oklab_4ch {
+    ($fn_name:ident, $no_spec:expr, $no_sub:expr, $nonneg:expr, $pos:expr) => {
+        #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
+        fn $fn_name(src: &[f32], dst: &mut [f32], m1: &[[f32; 3]; 3]) {
+            for (s, d) in src
+                .as_chunks::<64>()
+                .0
+                .iter()
+                .zip(dst.as_chunks_mut::<64>().0)
+            {
+                for p in 0..16 {
+                    let i = p * 4;
+                    let [l, a, b] = rgb_to_oklab_spec::<$no_spec, $no_sub, $nonneg, $pos>(
+                        s[i],
+                        s[i + 1],
+                        s[i + 2],
+                        m1,
+                    );
+                    d[i] = l;
+                    d[i + 1] = a;
+                    d[i + 2] = b;
+                    d[i + 3] = s[i + 3];
+                }
+            }
+            let rem_pixels = (src.len() / 4) % 16;
+            if rem_pixels > 0 {
+                let off = src.len() - rem_pixels * 4;
+                for p in 0..rem_pixels {
+                    let i = off + p * 4;
+                    let [l, a, b] = rgb_to_oklab_spec::<$no_spec, $no_sub, $nonneg, $pos>(
+                        src[i],
+                        src[i + 1],
+                        src[i + 2],
+                        m1,
+                    );
+                    dst[i] = l;
+                    dst[i + 1] = a;
+                    dst[i + 2] = b;
+                    dst[i + 3] = src[i + 3];
+                }
+            }
+        }
+    };
+}
+
+define_rgb_to_oklab_3ch!(rgb_to_oklab_3ch_finite, true, false, false, false);
+define_rgb_to_oklab_3ch!(rgb_to_oklab_3ch_finite_nonneg, true, false, true, false);
+define_rgb_to_oklab_3ch!(rgb_to_oklab_3ch_finite_nosub, true, true, false, false);
+define_rgb_to_oklab_3ch!(
+    rgb_to_oklab_3ch_finite_nonneg_nosub,
+    true,
+    true,
+    true,
+    false
+);
+define_rgb_to_oklab_3ch!(rgb_to_oklab_3ch_finite_pos_nosub, true, true, true, true);
+
+define_rgb_to_oklab_4ch!(rgb_to_oklab_4ch_finite, true, false, false, false);
+define_rgb_to_oklab_4ch!(rgb_to_oklab_4ch_finite_nonneg, true, false, true, false);
+define_rgb_to_oklab_4ch!(rgb_to_oklab_4ch_finite_nosub, true, true, false, false);
+define_rgb_to_oklab_4ch!(
+    rgb_to_oklab_4ch_finite_nonneg_nosub,
+    true,
+    true,
+    true,
+    false
+);
+define_rgb_to_oklab_4ch!(rgb_to_oklab_4ch_finite_pos_nosub, true, true, true, true);
 
 /// Linear RGB f32 → Oklab f32 (3 channels).
 ///
 /// # Panics
 ///
 /// Panics if `primaries` is `Unknown`. The plan should have rejected this.
-fn linear_rgb_to_oklab_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: ColorPrimaries) {
+fn linear_rgb_to_oklab_f32(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    primaries: ColorPrimaries,
+    in_trust: super::StepFloatTrust,
+) {
     let m1 = rgb_to_lms_matrix(primaries)
         .expect("Oklab conversion requires known primaries (plan should have rejected Unknown)");
-
+    let rows = m1.rows();
     let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 12]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
-    rgb_to_oklab_3ch_inner(srcf, dstf, m1.rows());
+    match select_oklab_fwd_spec(rows, in_trust) {
+        OklabFwdSpec::Untrusted => rgb_to_oklab_3ch_inner(srcf, dstf, rows),
+        OklabFwdSpec::Finite => rgb_to_oklab_3ch_finite(srcf, dstf, rows),
+        OklabFwdSpec::FiniteNonNeg => rgb_to_oklab_3ch_finite_nonneg(srcf, dstf, rows),
+        OklabFwdSpec::FiniteNoSub => rgb_to_oklab_3ch_finite_nosub(srcf, dstf, rows),
+        OklabFwdSpec::FiniteNonNegNoSub => rgb_to_oklab_3ch_finite_nonneg_nosub(srcf, dstf, rows),
+        OklabFwdSpec::FinitePosNoSub => rgb_to_oklab_3ch_finite_pos_nosub(srcf, dstf, rows),
+    }
 }
 
 /// 3-channel RGB→Oklab inner loop (16 pixels = 48 f32s per chunk).
@@ -2577,13 +3114,26 @@ fn oklab_to_rgb_3ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) 
 }
 
 /// Linear RGBA f32 → Oklaba f32 (4 channels, alpha preserved).
-fn linear_rgba_to_oklaba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: ColorPrimaries) {
+fn linear_rgba_to_oklaba_f32(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    primaries: ColorPrimaries,
+    in_trust: super::StepFloatTrust,
+) {
     let m1 = rgb_to_lms_matrix(primaries)
         .expect("Oklab conversion requires known primaries (plan should have rejected Unknown)");
-
+    let rows = m1.rows();
     let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 16]);
-    rgb_to_oklab_4ch_inner(srcf, dstf, m1.rows());
+    match select_oklab_fwd_spec(rows, in_trust) {
+        OklabFwdSpec::Untrusted => rgb_to_oklab_4ch_inner(srcf, dstf, rows),
+        OklabFwdSpec::Finite => rgb_to_oklab_4ch_finite(srcf, dstf, rows),
+        OklabFwdSpec::FiniteNonNeg => rgb_to_oklab_4ch_finite_nonneg(srcf, dstf, rows),
+        OklabFwdSpec::FiniteNoSub => rgb_to_oklab_4ch_finite_nosub(srcf, dstf, rows),
+        OklabFwdSpec::FiniteNonNegNoSub => rgb_to_oklab_4ch_finite_nonneg_nosub(srcf, dstf, rows),
+        OklabFwdSpec::FinitePosNoSub => rgb_to_oklab_4ch_finite_pos_nosub(srcf, dstf, rows),
+    }
 }
 
 /// 4-channel RGBA→Oklaba inner loop (16 pixels = 64 f32s per chunk).

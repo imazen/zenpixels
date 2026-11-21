@@ -44,7 +44,10 @@ fn strided_buffer_exact_match_strips_padding() {
         2,
         8,
         &[desc],
-        &zenpixels_convert::ConvertOptions::permissive()
+        &zenpixels_convert::ConvertOptions::retain_channels()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
             .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
     )
     .unwrap();
@@ -79,7 +82,10 @@ fn strided_buffer_packed_is_zero_copy() {
         1,
         6,
         &[desc],
-        &zenpixels_convert::ConvertOptions::permissive()
+        &zenpixels_convert::ConvertOptions::retain_channels()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
             .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
     )
     .unwrap();
@@ -104,7 +110,10 @@ fn strided_buffer_conversion_strips_padding() {
         1,
         8,
         &[dst_desc],
-        &zenpixels_convert::ConvertOptions::permissive()
+        &zenpixels_convert::ConvertOptions::retain_channels()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
             .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
     )
     .unwrap();
@@ -182,7 +191,11 @@ fn explicit_discard_if_opaque_succeeds_when_opaque() {
     // Fully opaque RGBA8 → RGB8 with DiscardIfOpaque should succeed.
     let data = vec![100, 150, 200, 255, 50, 100, 150, 255];
 
-    let options = ConvertOptions::permissive().with_luma(None);
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_luma(None);
 
     let result = adapt_raw_rows_for_encode(
         &data,
@@ -208,7 +221,11 @@ fn explicit_discard_if_opaque_fails_when_semitransparent() {
     // Semi-transparent RGBA8 → RGB8 with DiscardIfOpaque should fail.
     let data = vec![100, 150, 200, 128]; // alpha = 128
 
-    let options = ConvertOptions::permissive().with_luma(None);
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_luma(None);
 
     let result = adapt_raw_rows_for_encode(
         &data,
@@ -298,7 +315,10 @@ fn adapt_empty_supported_returns_error() {
         1,
         3,
         &[],
-        &zenpixels_convert::ConvertOptions::permissive()
+        &zenpixels_convert::ConvertOptions::retain_channels()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
             .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardUnchecked),
     );
 
@@ -312,7 +332,10 @@ fn adapt_empty_supported_returns_error() {
 #[test]
 fn adapt_explicit_empty_supported_returns_error() {
     let data = vec![100, 150, 200];
-    let options = ConvertOptions::permissive();
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709));
 
     let result =
         adapt_raw_rows_for_encode(&data, PixelDescriptor::RGB8_SRGB, 1, 1, 3, &[], &options);

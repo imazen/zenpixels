@@ -209,6 +209,7 @@ fn main() {
             w,
             H,
             PixelDescriptor::RGB16_SRGB,
+            zenpixels::RowAlign::PixelCache64,
         )
         .unwrap()
     });

@@ -6,7 +6,7 @@ Compared with the editor's drafts of [CSS Color 4](https://drafts.csswg.org/css-
 
 - `Color` can hold every CSS color once a parser resolves it. Spaces we don't name convert at parse time to linear BT.2020 `f32`, which keeps out-of-gamut values.
 - sRGB, Display P3, Adobe RGB, BT.2020 primaries and the 203 cd/m² HDR anchors match to rounding.
-- Five real differences, in [Differences](#differences).
+- Three real differences, in [Differences](#differences).
 
 `ColorConvertExt::parse_css` parses hex, named colors and the functional forms below, and agrees with Color.js 0.7.1 within 4.71e-6 on 64 colors (`tests/css_color_oracle.rs`). zenpipe still has its own hex and named-color parser in `src/bridge/parse.rs`, until it moves to this API.
 
@@ -21,7 +21,7 @@ Compared with the editor's drafts of [CSS Color 4](https://drafts.csswg.org/css-
 | `color(a98-rgb …)` | F32 `Gamma22`, `AdobeRgb` | Direct: same 563/256 exponent |
 | `color(rec2100-pq …)`, `rec2100-hlg` | F32 `Pq` or `Hlg`, `Bt2020` | Direct |
 | `oklab()`, `oklch()` | Linear `Bt2020`, converted at parse | Hue is gone once chroma is 0 |
-| `color(rec2100-linear …)` | F32 `Linear`, `Bt2020` | **Anchor differs**: below |
+| `color(rec2100-linear …)` | F32 `Linear`, `Bt2020` | Direct: `1.0` = media white (CSS Color HDR 1 §4.1) |
 | `color(rec2020 …)` | Linear `Bt2020`, decoded at parse | Gamma 2.4 has no `TransferFunction`; `Bt709` isn't it |
 | `color(prophoto-rgb …)`, `xyz`, `xyz-d50`, `xyz-d65`, `lab()`, `lch()` | Linear `Bt2020`, converted at parse | No named space; D50 needs Bradford at parse |
 | `ictcp()`, `jzazbz()`, `jzczhz()` | Not parsed | Returns `Unsupported`; no consumer yet |
@@ -60,11 +60,9 @@ Parsing to linear loses the original space, so a color can't be serialized back 
 
 ## Differences
 
-**1. `rec2100-linear` means something else.** CSS puts 1.0 at 203 cd/m². Our linear puts 1.0 at PQ's peak, 10,000 cd/m². `color(rec2100-linear 1 1 1)` needs scaling by 203/10,000 at parse.
+**1. SDR doesn't convert straight to PQ or HLG.** `Color::srgb8(255, 255, 255).try_convert_to(pq)` is refused, where CSS gives 0.58. `CompositeOnto` places white through `reference_white`. `RowConverter::new` still puts it at the peak, 10,000 cd/m².
 
-**2. SDR doesn't convert straight to PQ or HLG.** `Color::srgb8(255, 255, 255).try_convert_to(pq)` is refused, where CSS gives 0.58. `CompositeOnto` places white through `reference_white`. `RowConverter::new` still puts it at the peak, 10,000 cd/m².
-
-**3. Clipping shifts hue.** To sRGB `u8`, against the spec's binary search implemented here. Hue and ΔEOK are measured before rounding, with the rounded result beside them. [The gamut survey](gamut-mapping-survey.md) adds other methods and a tolerance-free search:
+**2. Clipping shifts hue.** To sRGB `u8`, against the spec's binary search implemented here. Hue and ΔEOK are measured before rounding, with the rounded result beside them. [The gamut survey](gamut-mapping-survey.md) adds other methods and a tolerance-free search:
 
 | Source | Ours | Hue shift | CSS mapping | Hue shift |
 |---|---|---:|---|---:|
@@ -77,7 +75,7 @@ Parsing to linear loses the original space, so a color can't be serialized back 
 
 CSS applies this to individually specified colors, not images. Clipping is closer in ΔEOK in every case but blue P3, where they tie, and CSS gives up that distance to hold hue.
 
-**4. Mattes blend in linear light, on purpose.** 50% red on white is green 187 here and 127 on encoded values, which is what browsers are reported to do.
+**3. Mattes blend in linear light, on purpose.** 50% red on white is green 187 here and 127 on encoded values, which is what browsers are reported to do.
 
 ### HDR intent candidate (2026-11-06, PR 120)
 

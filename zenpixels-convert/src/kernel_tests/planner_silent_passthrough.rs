@@ -245,13 +245,13 @@ fn u8_same_depth_pq_to_srgb_diverges_wildly() {
     let dst_d = rgb(ChannelType::U8, TransferFunction::Srgb);
     #[cfg(feature = "bt2446a")]
     {
-        use crate::{ConvertError, ConvertPlan};
+        use crate::{ConvertError, NativePlan};
         let err = RowConverter::new(src_d, dst_d).expect_err("must refuse");
         assert!(matches!(
             *err.error(),
             ConvertError::HdrSourceRequiresPeak { .. }
         ));
-        let plan = ConvertPlan::new_with_hdr_peak(src_d, dst_d, 1000.0).unwrap();
+        let plan = NativePlan::new_with_hdr_peak(src_d, dst_d, 1000.0).unwrap();
         let mut c = RowConverter::from_plan(plan);
         let src: Vec<u8> = (0..=255u8).flat_map(|value| [value; 3]).collect();
         let mut dst = vec![0u8; src.len()];
@@ -544,13 +544,13 @@ fn u16_pq_to_u8_srgb_fused_path() {
     let dst_d = rgb(ChannelType::U8, TransferFunction::Srgb);
     #[cfg(feature = "bt2446a")]
     {
-        use crate::{ConvertError, ConvertPlan};
+        use crate::{ConvertError, NativePlan};
         let err = RowConverter::new(src_d, dst_d).expect_err("must refuse");
         assert!(matches!(
             *err.error(),
             ConvertError::HdrSourceRequiresPeak { .. }
         ));
-        let plan = ConvertPlan::new_with_hdr_peak(src_d, dst_d, 1000.0).unwrap();
+        let plan = NativePlan::new_with_hdr_peak(src_d, dst_d, 1000.0).unwrap();
         let mut c = RowConverter::from_plan(plan);
         let src = [32768u16; 3];
         let mut dst = [0u8; 3];
@@ -657,7 +657,7 @@ fn hlg_to_pq_f32_via_linear() {
 // =========================================================================
 //
 // Only sRGB has extended-range step substitution today (see
-// `ConvertPlan::new` options loop). Verify that the substitution still
+// `NativePlan::new` options loop). Verify that the substitution still
 // engages after the planner refactor AND that default (clipping) behavior
 // is unchanged.
 
@@ -690,7 +690,11 @@ fn srgb_f32_linear_clips_by_default() {
 fn srgb_f32_linear_extended_preserves_oog() {
     let src_d = rgb(ChannelType::F32, TransferFunction::Srgb);
     let dst_d = rgb(ChannelType::F32, TransferFunction::Linear);
-    let opts = ConvertOptions::permissive().with_clip_out_of_gamut(false);
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(crate::DepthPolicy::Round)
+        .with_luma(Some(crate::LumaCoefficients::Bt709))
+        .with_gamut_policy(crate::GamutPolicy::PreserveExtended);
     let mut c = RowConverter::new_explicit(src_d, dst_d, &opts).unwrap();
     let src = [-0.1f32, 0.5, 1.2];
     let mut dst = [0f32; 3];
@@ -719,7 +723,11 @@ fn srgb_f32_linear_extended_preserves_oog() {
 fn linear_f32_srgb_extended_preserves_oog() {
     let src_d = rgb(ChannelType::F32, TransferFunction::Linear);
     let dst_d = rgb(ChannelType::F32, TransferFunction::Srgb);
-    let opts = ConvertOptions::permissive().with_clip_out_of_gamut(false);
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(crate::DepthPolicy::Round)
+        .with_luma(Some(crate::LumaCoefficients::Bt709))
+        .with_gamut_policy(crate::GamutPolicy::PreserveExtended);
     let mut c = RowConverter::new_explicit(src_d, dst_d, &opts).unwrap();
     let src = [-0.05f32, 0.217, 1.5];
     let mut dst = [0f32; 3];

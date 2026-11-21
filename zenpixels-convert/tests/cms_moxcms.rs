@@ -12,9 +12,9 @@ use alloc::sync::Arc;
 
 #[path = "common/icc_transforms.rs"]
 mod icc_transforms;
-use icc_transforms::IccTransforms;
+use icc_transforms::{IccTransforms, TestCmsExt as _};
 use zenpixels_convert::cms_moxcms::MoxCms;
-use zenpixels_convert::output::{EncodeReady, OutputProfile};
+use zenpixels_convert::output::OutputProfile;
 use zenpixels_convert::{
     Cicp, ColorContext, ColorOrigin, PixelBuffer, PixelDescriptor, PixelFormat,
 };
@@ -221,7 +221,7 @@ fn build_transform_srgb_to_p3() {
     // Transform a red pixel: sRGB (255, 0, 0) → Display P3
     let src_row = [255u8, 0, 0];
     let mut dst_row = [0u8; 3];
-    xform.transform_row(&src_row, &mut dst_row, 1);
+    xform.try_transform_row(&src_row, &mut dst_row, 1).unwrap();
 
     // sRGB red in P3 should have lower R and slightly positive G/B
     assert!(
@@ -248,7 +248,7 @@ fn build_transform_for_format_rgba() {
     // Alpha should be preserved through the transform
     let src_row = [128u8, 200, 64, 42];
     let mut dst_row = [0u8; 4];
-    xform.transform_row(&src_row, &mut dst_row, 1);
+    xform.try_transform_row(&src_row, &mut dst_row, 1).unwrap();
 
     assert_eq!(dst_row[3], 42, "alpha must be preserved");
 }
@@ -266,7 +266,9 @@ fn build_transform_for_format_f32() {
     // White should be approximately preserved (neutral axis)
     let src_bytes: [u8; 12] = bytemuck::cast([1.0f32, 1.0, 1.0]);
     let mut dst_bytes = [0u8; 12];
-    xform.transform_row(&src_bytes, &mut dst_bytes, 1);
+    xform
+        .try_transform_row(&src_bytes, &mut dst_bytes, 1)
+        .unwrap();
 
     let dst_f32: [f32; 3] = bytemuck::cast(dst_bytes);
     for (ch, &v) in ["R", "G", "B"].iter().zip(&dst_f32) {
@@ -302,14 +304,18 @@ fn float_plugin(
     format: PixelFormat,
     clip: bool,
 ) -> Box<dyn zenpixels_convert::cms::RowTransformMut> {
-    use zenpixels_convert::{ColorProfileSource, ConvertOptions, cms::PluggableCms};
+    use zenpixels_convert::{ColorProfileSource, ConvertOptions};
     MoxCms
         .build_source_transform(
             ColorProfileSource::Icc(source),
             ColorProfileSource::Icc(target),
             format,
             format,
-            &ConvertOptions::retain_channels().with_clip_out_of_gamut(clip),
+            &ConvertOptions::retain_channels().with_gamut_policy(if clip {
+                zenpixels_convert::GamutPolicy::Clip
+            } else {
+                zenpixels_convert::GamutPolicy::PreserveExtended
+            }),
         )
         .unwrap()
         .unwrap()
@@ -408,7 +414,7 @@ fn float_explicit_icc_uses_its_curve_despite_conflicting_cicp() {
 /// A CICP tag inside an explicitly requested ICC profile changes nothing, on any depth or route.
 #[test]
 fn integer_explicit_icc_uses_its_curve_despite_conflicting_cicp() {
-    use zenpixels_convert::{ColorProfileSource, ConvertOptions, cms::PluggableCms};
+    use zenpixels_convert::{ColorProfileSource, ConvertOptions};
     let run = |conflict: bool, from: PixelFormat, to: PixelFormat, input: &[u8], out: &mut [u8]| {
         let source = diagonal_profile([1.0; 3], [256; 3], conflict);
         let target = diagonal_profile([0.5, 1.0, 2.0], [256; 3], conflict);
@@ -456,7 +462,7 @@ fn integer_explicit_icc_uses_its_curve_despite_conflicting_cicp() {
 
 #[test]
 fn float_profile_conversion_adds_opaque_alpha_across_staging_boundary() {
-    use zenpixels_convert::{ColorProfileSource, ConvertOptions, cms::PluggableCms};
+    use zenpixels_convert::{ColorProfileSource, ConvertOptions};
     let source = diagonal_profile([1.0; 3], [256; 3], false);
     let target = diagonal_profile([0.5, 1.0, 2.0], [256; 3], false);
     for clip in [false, true] {
@@ -466,7 +472,11 @@ fn float_profile_conversion_adds_opaque_alpha_across_staging_boundary() {
                 ColorProfileSource::Icc(&target),
                 PixelFormat::RgbF32,
                 PixelFormat::RgbaF32,
-                &ConvertOptions::retain_channels().with_clip_out_of_gamut(clip),
+                &ConvertOptions::retain_channels().with_gamut_policy(if clip {
+                    zenpixels_convert::GamutPolicy::Clip
+                } else {
+                    zenpixels_convert::GamutPolicy::PreserveExtended
+                }),
             )
             .unwrap()
             .unwrap();
@@ -498,7 +508,7 @@ fn float_profile_conversion_adds_opaque_alpha_across_staging_boundary() {
 
 #[test]
 fn unequal_shared_channel_curves_refuse_instead_of_using_the_wrong_curve() {
-    use zenpixels_convert::{ColorProfileSource, ConvertOptions, cms::PluggableCms};
+    use zenpixels_convert::{ColorProfileSource, ConvertOptions};
     // The new independent curve control found gamma 2 on blue being treated
     // as gamma 1: 0.2499466 instead of 0.0625. The backend cannot currently
     // honor these profiles; both entry points must refuse before pixel work.
@@ -524,7 +534,11 @@ fn unequal_shared_channel_curves_refuse_instead_of_using_the_wrong_curve() {
                             ColorProfileSource::Icc(target),
                             format,
                             format,
-                            &ConvertOptions::retain_channels().with_clip_out_of_gamut(clip),
+                            &ConvertOptions::retain_channels().with_gamut_policy(if clip {
+                                zenpixels_convert::GamutPolicy::Clip
+                            } else {
+                                zenpixels_convert::GamutPolicy::PreserveExtended
+                            }),
                         )
                         .expect("recognized profiles must fail, not decline")
                         .err()
@@ -553,7 +567,7 @@ fn gray_neutral_preserved() {
     // Mid-gray should be approximately preserved (neutral axis)
     let src_row = [128u8, 128, 128];
     let mut dst_row = [0u8; 3];
-    xform.transform_row(&src_row, &mut dst_row, 1);
+    xform.try_transform_row(&src_row, &mut dst_row, 1).unwrap();
 
     for (ch, &val) in dst_row.iter().enumerate() {
         let err = (val as i32 - 128).abs();
@@ -591,8 +605,8 @@ fn srgb_p3_roundtrip_accuracy() {
                 let mut mid = [0u8; 3];
                 let mut back = [0u8; 3];
 
-                forward.transform_row(&src, &mut mid, 1);
-                inverse.transform_row(&mid, &mut back, 1);
+                forward.try_transform_row(&src, &mut mid, 1).unwrap();
+                inverse.try_transform_row(&mid, &mut back, 1).unwrap();
 
                 for ch in 0..3 {
                     let err = (back[ch] as i32 - src[ch] as i32).abs();
@@ -633,7 +647,7 @@ fn multi_pixel_row_transform() {
         128, 128, 128, // gray
     ];
     let mut dst_row = [0u8; 12];
-    xform.transform_row(&src_row, &mut dst_row, 4);
+    xform.try_transform_row(&src_row, &mut dst_row, 4).unwrap();
 
     // Each pixel should be different from the next (sanity check)
     // Gray should be approximately preserved
@@ -649,7 +663,7 @@ fn multi_pixel_row_transform() {
 }
 
 // ---------------------------------------------------------------------------
-// Integration with EncodeReady::finalize
+// Integration with crate::test_conversion::copy_output
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -667,7 +681,7 @@ fn finalize_with_moxcms_icc_transform() {
 
     let dst_icc: Arc<[u8]> = display_p3_icc().into();
 
-    let ready = EncodeReady::finalize(
+    let ready = crate::test_conversion::copy_output(
         &buf,
         &origin,
         OutputProfile::Icc(dst_icc.clone()),
@@ -698,7 +712,7 @@ fn finalize_named_profile_bypasses_cms() {
 
     let origin = ColorOrigin::assumed();
 
-    let ready = EncodeReady::finalize(
+    let ready = crate::test_conversion::copy_output(
         &buf,
         &origin,
         OutputProfile::Named(Cicp::SRGB),
@@ -730,7 +744,7 @@ fn cms_srgb_to_srgb_is_identity() {
             for b in (0..=255).step_by(17) {
                 let src = [r as u8, g as u8, b as u8];
                 let mut dst = [0u8; 3];
-                xform.transform_row(&src, &mut dst, 1);
+                xform.try_transform_row(&src, &mut dst, 1).unwrap();
 
                 for ch in 0..3 {
                     let err = (dst[ch] as i32 - src[ch] as i32).abs();
@@ -756,7 +770,7 @@ fn cms_white_preserved_across_profiles() {
         let mut xform = cms.build_transform(&srgb_icc(), &dst_icc).unwrap();
         let src = [255u8, 255, 255];
         let mut dst = [0u8; 3];
-        xform.transform_row(&src, &mut dst, 1);
+        xform.try_transform_row(&src, &mut dst, 1).unwrap();
 
         for (ch, &val) in dst.iter().enumerate() {
             assert!(
@@ -775,10 +789,13 @@ fn cms_black_preserved_across_profiles() {
         let mut xform = cms.build_transform(&srgb_icc(), &dst_icc).unwrap();
         let src = [0u8, 0, 0];
         let mut dst = [0u8; 3];
-        xform.transform_row(&src, &mut dst, 1);
+        xform.try_transform_row(&src, &mut dst, 1).unwrap();
 
         for (ch, &val) in dst.iter().enumerate() {
             assert!(val <= 5, "black ch{ch} in {name}: expected ~0, got {val}",);
         }
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

@@ -4,9 +4,7 @@
 //! Primaries conversion is handled separately via `GamutMatrix::between`
 //! + `GamutMatrix::apply_row_rgb`. This tests both paths.
 
-use zenpixels_convert::{
-    ColorPrimaries, PixelDescriptor, RowConverter, ext::ColorPrimariesExt, gamut::GamutMatrix,
-};
+use zenpixels_convert::{ColorPrimaries, PixelDescriptor, gamut::GamutMatrix};
 
 /// Make an f32 RGB descriptor with specific primaries.
 fn f32_linear(primaries: ColorPrimaries) -> PixelDescriptor {
@@ -23,7 +21,7 @@ fn row_converter_applies_gamut_matrix_for_primaries_difference() {
     let src = f32_linear(ColorPrimaries::Bt709);
     let dst = f32_linear(ColorPrimaries::Bt2020);
 
-    let mut conv = RowConverter::new(src, dst).unwrap();
+    let mut conv = crate::test_conversion::new_worker(src, dst).unwrap();
     assert!(
         !conv.is_identity(),
         "RowConverter should apply gamut matrix when primaries differ"
@@ -32,11 +30,12 @@ fn row_converter_applies_gamut_matrix_for_primaries_difference() {
     // Verify that pure white maps to white (white point preservation).
     let mut src_row = [1.0f32, 1.0, 1.0];
     let mut dst_row = [0.0f32; 3];
-    conv.convert_row(
+    conv.try_convert_row(
         bytemuck::cast_slice(&src_row),
         bytemuck::cast_slice_mut(&mut dst_row),
         1,
-    );
+    )
+    .unwrap();
     for (c, &val) in dst_row.iter().enumerate() {
         assert!(
             (val - 1.0).abs() < 1e-3,
@@ -46,11 +45,12 @@ fn row_converter_applies_gamut_matrix_for_primaries_difference() {
 
     // Verify a non-white color actually changes.
     src_row = [0.5, 0.3, 0.8];
-    conv.convert_row(
+    conv.try_convert_row(
         bytemuck::cast_slice(&src_row),
         bytemuck::cast_slice_mut(&mut dst_row),
         1,
-    );
+    )
+    .unwrap();
     let changed = (0..3).any(|c| (dst_row[c] - src_row[c]).abs() > 0.01);
     assert!(changed, "Gamut matrix should change non-neutral colors");
 }
@@ -69,11 +69,13 @@ fn manual_gamut_pipeline_bt709_to_bt2020() {
     // Step 1: sRGB u8 → linear f32
     let src_desc = PixelDescriptor::RGB8_SRGB;
     let linear_desc = PixelDescriptor::RGBF32_LINEAR;
-    let mut to_linear = RowConverter::new(src_desc, linear_desc).unwrap();
+    let mut to_linear = crate::test_conversion::new_worker(src_desc, linear_desc).unwrap();
 
     let src_bytes = [128u8, 200, 64]; // one pixel
     let mut linear_bytes = [0u8; 12];
-    to_linear.convert_row(&src_bytes, &mut linear_bytes, 1);
+    to_linear
+        .try_convert_row(&src_bytes, &mut linear_bytes, 1)
+        .unwrap();
 
     // Step 2: Apply BT.709 → BT.2020 gamut matrix
     let m = GamutMatrix::between(ColorPrimaries::Bt709, ColorPrimaries::Bt2020).unwrap();
@@ -214,8 +216,8 @@ fn xyz_matrices_invert_correctly() {
         ColorPrimaries::DisplayP3,
         ColorPrimaries::Bt2020,
     ] {
-        let to_xyz = primaries.to_xyz_matrix().unwrap();
-        let from_xyz = primaries.from_xyz_matrix().unwrap();
+        let to_xyz = GamutMatrix::to_xyz(primaries).unwrap();
+        let from_xyz = GamutMatrix::from_xyz(primaries).unwrap();
 
         let original = [0.6f32, 0.3, 0.7];
         let mut v = original;
@@ -260,6 +262,9 @@ fn convert_to_preserves_color_context() {
         "color context should be preserved after conversion"
     );
     let out_ctx = out.color_context().unwrap();
-    assert!(out_ctx.icc.is_some());
-    assert_eq!(out_ctx.icc.as_ref().unwrap().len(), 32);
+    assert!(out_ctx.icc().is_some());
+    assert_eq!(out_ctx.icc().unwrap().len(), 32);
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

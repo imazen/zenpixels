@@ -48,10 +48,10 @@ test:
 
 # Native borrowed code-plane conversion, default and freestanding compilation.
 ycbcr-check:
-    cargo test -p zenpixels --test code_planes
-    cargo test -p zenpixels-convert --test ycbcr_borrowed
-    cargo test -p zenpixels-convert --no-default-features --test ycbcr_borrowed
-    cargo clippy -p zenpixels -p zenpixels-convert --lib --test code_planes --test ycbcr_borrowed -- -D warnings
+    cargo test -p zenpixels --features planar --test code_planes
+    cargo test -p zenpixels-convert --features planar --test ycbcr_borrowed
+    cargo test -p zenpixels-convert --no-default-features --features planar --test ycbcr_borrowed
+    cargo clippy -p zenpixels -p zenpixels-convert --features zenpixels/planar,zenpixels-convert/planar --lib --test code_planes --test ycbcr_borrowed -- -D warnings
     cargo check -p zenpixels -p zenpixels-convert --no-default-features --target wasm32-unknown-unknown
 
 # Structural size_of/align_of of pixel views at BASE vs this tree (not heap or RSS).
@@ -799,3 +799,15 @@ hash-regression-summarize INPUT OUTPUT:
 allocation-failure-check:
     cargo test --locked -p zenpixels --features hash,rgb --test alloc_failure --test alloc_failure_typed -- --test-threads=16
     cargo clippy --locked -p zenpixels --features hash,rgb --test alloc_failure --test alloc_failure_typed -- -D warnings
+
+# Owned and borrowed planar boundaries, including allocation refusal controls.
+planar-storage-check:
+    cargo test --locked -p zenpixels --all-features
+    cargo clippy --locked -p zenpixels --all-features --all-targets -- -D warnings
+    cargo check --locked -p zenpixels --no-default-features
+    cargo test --locked --manifest-path zenpsy-api/Cargo.toml
+
+# Check all converter/generator users of the unified core storage contract.
+planar-storage-integration-check:
+    cargo check --locked --workspace --all-targets --all-features
+    just api-doc

@@ -12,7 +12,6 @@ use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction,
     policy::{AlphaPolicy, ConvertOptions},
 };
-use zenpixels_convert::RowConverter;
 
 fn rgba_f32(tf: TransferFunction) -> PixelDescriptor {
     PixelDescriptor::new(
@@ -41,10 +40,14 @@ fn rgb_f16(tf: TransferFunction) -> PixelDescriptor {
 }
 
 fn opts_with_bg(r: u8, g: u8, b: u8) -> ConvertOptions {
-    ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-        background: zenpixels::Color::srgb8(r, g, b),
-        reference_white: None,
-    })
+    ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_alpha_policy(AlphaPolicy::CompositeOnto {
+            background: zenpixels::Color::srgb8(r, g, b),
+            reference_white: None,
+        })
 }
 
 /// Reference sRGB EOTF for a single channel (piecewise polynomial per IEC 61966-2-1).
@@ -97,6 +100,7 @@ fn reference_srgb_composite(pixel: [f32; 4], matte_u8: (u8, u8, u8)) -> [f32; 3]
 /// then the result re-encoded. Tolerance 0.005 = 0.5% in normalized units;
 /// pre-fix the error on this case was ~5-8%.
 #[test]
+#[cfg(feature = "introspection")]
 fn f32_srgb_composite_matches_linear_light_reference() {
     // Mid-grey pixel at 50% alpha, blended onto black matte.
     // Under the buggy path (sRGB-encoded pixel blended as if linear),
@@ -108,11 +112,11 @@ fn f32_srgb_composite_matches_linear_light_reference() {
     let dst_desc = rgb_f32(TransferFunction::Srgb);
     let opts = opts_with_bg(matte.0, matte.1, matte.2);
 
-    let mut conv = RowConverter::new_explicit(src_desc, dst_desc, &opts).unwrap();
+    let mut conv = crate::test_conversion::explicit_worker(src_desc, dst_desc, &opts).unwrap();
     let mut dst = [0.0f32; 3];
     let src_bytes: [u8; 16] = bytemuck::cast(pixel);
     let mut dst_bytes = [0u8; 12];
-    conv.convert_row(&src_bytes, &mut dst_bytes, 1);
+    conv.try_convert_row(&src_bytes, &mut dst_bytes, 1).unwrap();
     dst.copy_from_slice(bytemuck::cast_slice(&dst_bytes));
 
     let expected = reference_srgb_composite(pixel, matte);
@@ -136,7 +140,7 @@ fn f16_srgb_composite_matches_linear_light_reference() {
     let dst_desc = rgb_f16(TransferFunction::Srgb);
     let opts = opts_with_bg(matte.0, matte.1, matte.2);
 
-    let mut conv = RowConverter::new_explicit(src_desc, dst_desc, &opts).unwrap();
+    let mut conv = crate::test_conversion::explicit_worker(src_desc, dst_desc, &opts).unwrap();
 
     let src_bits: Vec<u16> = pixel
         .iter()
@@ -144,7 +148,7 @@ fn f16_srgb_composite_matches_linear_light_reference() {
         .collect();
     let src_bytes: Vec<u8> = src_bits.iter().flat_map(|b| b.to_le_bytes()).collect();
     let mut dst_bytes = vec![0u8; 6];
-    conv.convert_row(&src_bytes, &mut dst_bytes, 1);
+    conv.try_convert_row(&src_bytes, &mut dst_bytes, 1).unwrap();
 
     let dst: Vec<f32> = dst_bytes
         .as_chunks::<2>()
@@ -166,6 +170,7 @@ fn f16_srgb_composite_matches_linear_light_reference() {
 
 /// Non-trivial matte + non-trivial pixel, F32 sRGB.
 #[test]
+#[cfg(feature = "introspection")]
 fn f32_srgb_composite_red_over_blue_matte() {
     // Red-ish pixel at 40% alpha over a deep-blue matte.
     let pixel: [f32; 4] = [0.9, 0.1, 0.1, 0.4];
@@ -175,10 +180,10 @@ fn f32_srgb_composite_red_over_blue_matte() {
     let dst_desc = rgb_f32(TransferFunction::Srgb);
     let opts = opts_with_bg(matte.0, matte.1, matte.2);
 
-    let mut conv = RowConverter::new_explicit(src_desc, dst_desc, &opts).unwrap();
+    let mut conv = crate::test_conversion::explicit_worker(src_desc, dst_desc, &opts).unwrap();
     let src_bytes: [u8; 16] = bytemuck::cast(pixel);
     let mut dst_bytes = [0u8; 12];
-    conv.convert_row(&src_bytes, &mut dst_bytes, 1);
+    conv.try_convert_row(&src_bytes, &mut dst_bytes, 1).unwrap();
     let dst: [f32; 3] = bytemuck::cast(dst_bytes);
 
     let expected = reference_srgb_composite(pixel, matte);
@@ -194,14 +199,13 @@ fn f32_srgb_composite_red_over_blue_matte() {
 /// Linear F32 path must NOT be wrapped (the wrap would be a no-op but
 /// adds plan steps). Verify plan stays at a single MatteComposite step.
 #[test]
+#[cfg(feature = "introspection")]
 fn f32_linear_composite_is_single_step() {
-    use zenpixels_convert::ConvertPlan;
-
     let src_desc = rgba_f32(TransferFunction::Linear);
     let dst_desc = rgb_f32(TransferFunction::Linear);
     let opts = opts_with_bg(0, 0, 0);
 
-    let plan = ConvertPlan::new_explicit(src_desc, dst_desc, &opts).unwrap();
+    let plan = crate::test_conversion::explicit_plan(src_desc, dst_desc, &opts).unwrap();
     let debug = format!("{:?}", plan);
     // One MatteComposite, no linearize/delinearize wrap.
     let composite_count = debug.matches("MatteComposite").count();
@@ -214,13 +218,11 @@ fn f32_linear_composite_is_single_step() {
 /// know the correct TF math (same convention as depth_steps).
 #[test]
 fn f32_unknown_tf_composite_is_single_step() {
-    use zenpixels_convert::ConvertPlan;
-
     let src_desc = rgba_f32(TransferFunction::Unknown);
     let dst_desc = rgb_f32(TransferFunction::Unknown);
     let opts = opts_with_bg(0, 0, 0);
 
-    let plan = ConvertPlan::new_explicit(src_desc, dst_desc, &opts).unwrap();
+    let plan = crate::test_conversion::explicit_plan(src_desc, dst_desc, &opts).unwrap();
     let debug = format!("{:?}", plan);
     let linearize_count = debug.matches("SrgbF32ToLinearF32").count();
     assert_eq!(linearize_count, 0, "Unknown TF: no wrap. plan: {debug}");
@@ -311,9 +313,9 @@ fn u8_srgb_composite_matches_linear_light_reference() {
     let src_desc = rgba_u8(TransferFunction::Srgb);
     let dst_desc = rgb_u8(TransferFunction::Srgb);
     let opts = opts_with_bg(matte.0, matte.1, matte.2);
-    let mut conv = RowConverter::new_explicit(src_desc, dst_desc, &opts).unwrap();
+    let mut conv = crate::test_conversion::explicit_worker(src_desc, dst_desc, &opts).unwrap();
     let mut dst = [0u8; 3];
-    conv.convert_row(&pixel, &mut dst, 1);
+    conv.try_convert_row(&pixel, &mut dst, 1).unwrap();
 
     let pixel_norm = [
         pixel[0] as f32 / 255.0,
@@ -344,9 +346,9 @@ fn u8_linear_composite_matches_linear_light_reference() {
     let src_desc = rgba_u8(TransferFunction::Linear);
     let dst_desc = rgb_u8(TransferFunction::Linear);
     let opts = opts_with_bg(matte.0, matte.1, matte.2);
-    let mut conv = RowConverter::new_explicit(src_desc, dst_desc, &opts).unwrap();
+    let mut conv = crate::test_conversion::explicit_worker(src_desc, dst_desc, &opts).unwrap();
     let mut dst = [0u8; 3];
-    conv.convert_row(&pixel, &mut dst, 1);
+    conv.try_convert_row(&pixel, &mut dst, 1).unwrap();
 
     let pixel_norm = [
         pixel[0] as f32 / 255.0,
@@ -381,9 +383,9 @@ fn u8_bt709_composite_matches_linear_light_reference() {
     let src_desc = rgba_u8(TransferFunction::Bt709);
     let dst_desc = rgb_u8(TransferFunction::Bt709);
     let opts = opts_with_bg(matte.0, matte.1, matte.2);
-    let mut conv = RowConverter::new_explicit(src_desc, dst_desc, &opts).unwrap();
+    let mut conv = crate::test_conversion::explicit_worker(src_desc, dst_desc, &opts).unwrap();
     let mut dst = [0u8; 3];
-    conv.convert_row(&pixel, &mut dst, 1);
+    conv.try_convert_row(&pixel, &mut dst, 1).unwrap();
 
     let pixel_norm = [
         pixel[0] as f32 / 255.0,
@@ -411,10 +413,10 @@ fn u16_linear_composite_matches_linear_light_reference() {
     let src_desc = rgba_u16(TransferFunction::Linear);
     let dst_desc = rgb_u16(TransferFunction::Linear);
     let opts = opts_with_bg(matte.0, matte.1, matte.2);
-    let mut conv = RowConverter::new_explicit(src_desc, dst_desc, &opts).unwrap();
+    let mut conv = crate::test_conversion::explicit_worker(src_desc, dst_desc, &opts).unwrap();
     let src_bytes: [u8; 8] = bytemuck::cast(pixel);
     let mut dst_bytes = [0u8; 6];
-    conv.convert_row(&src_bytes, &mut dst_bytes, 1);
+    conv.try_convert_row(&src_bytes, &mut dst_bytes, 1).unwrap();
     let dst: [u16; 3] = bytemuck::cast(dst_bytes);
 
     let pixel_norm = [
@@ -443,10 +445,10 @@ fn u16_bt709_composite_matches_linear_light_reference() {
     let src_desc = rgba_u16(TransferFunction::Bt709);
     let dst_desc = rgb_u16(TransferFunction::Bt709);
     let opts = opts_with_bg(matte.0, matte.1, matte.2);
-    let mut conv = RowConverter::new_explicit(src_desc, dst_desc, &opts).unwrap();
+    let mut conv = crate::test_conversion::explicit_worker(src_desc, dst_desc, &opts).unwrap();
     let src_bytes: [u8; 8] = bytemuck::cast(pixel);
     let mut dst_bytes = [0u8; 6];
-    conv.convert_row(&src_bytes, &mut dst_bytes, 1);
+    conv.try_convert_row(&src_bytes, &mut dst_bytes, 1).unwrap();
     let dst: [u16; 3] = bytemuck::cast(dst_bytes);
 
     let pixel_norm = [
@@ -480,10 +482,10 @@ fn u16_srgb_composite_matches_linear_light_reference() {
     let src_desc = rgba_u16(TransferFunction::Srgb);
     let dst_desc = rgb_u16(TransferFunction::Srgb);
     let opts = opts_with_bg(matte.0, matte.1, matte.2);
-    let mut conv = RowConverter::new_explicit(src_desc, dst_desc, &opts).unwrap();
+    let mut conv = crate::test_conversion::explicit_worker(src_desc, dst_desc, &opts).unwrap();
     let src_bytes: [u8; 8] = bytemuck::cast(pixel);
     let mut dst_bytes = [0u8; 6];
-    conv.convert_row(&src_bytes, &mut dst_bytes, 1);
+    conv.try_convert_row(&src_bytes, &mut dst_bytes, 1).unwrap();
     let dst: [u16; 3] = bytemuck::cast(dst_bytes);
 
     let pixel_norm = [
@@ -502,3 +504,6 @@ fn u16_srgb_composite_matches_linear_light_reference() {
         );
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

@@ -3,7 +3,6 @@
 //! Verifies that sRGB ↔ linear conversions produce correct results
 //! and that naive (no-gamma) paths are used when transfer is Unknown.
 
-use zenpixels_convert::RowConverter;
 use zenpixels_convert::{AlphaMode, ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
 
 /// sRGB u8 → linear f32 should apply the EOTF.
@@ -16,7 +15,7 @@ fn srgb_u8_to_linear_f32_accuracy() {
         None,
         TransferFunction::Linear,
     );
-    let mut conv = RowConverter::new(from, to).unwrap();
+    let mut conv = crate::test_conversion::new_worker(from, to).unwrap();
 
     // Test known sRGB values.
     // sRGB 0 → linear 0.0
@@ -30,7 +29,7 @@ fn srgb_u8_to_linear_f32_accuracy() {
     ];
     let mut dst = vec![0u8; width as usize * 3 * 4]; // 3 channels × 4 bytes per f32
 
-    conv.convert_row(&src, &mut dst, width);
+    conv.try_convert_row(&src, &mut dst, width).unwrap();
 
     let f32_vals: &[f32] = bytemuck::cast_slice(&dst);
 
@@ -59,7 +58,7 @@ fn linear_f32_to_srgb_u8_accuracy() {
         TransferFunction::Linear,
     );
     let to = PixelDescriptor::RGB8_SRGB;
-    let mut conv = RowConverter::new(from, to).unwrap();
+    let mut conv = crate::test_conversion::new_worker(from, to).unwrap();
 
     let width = 3u32;
     // Known linear values: 0.0, 0.2158 (→ ~sRGB 128), 1.0.
@@ -71,7 +70,7 @@ fn linear_f32_to_srgb_u8_accuracy() {
     let src: Vec<u8> = bytemuck::cast_slice(&src_f32).to_vec();
     let mut dst = vec![0u8; width as usize * 3];
 
-    conv.convert_row(&src, &mut dst, width);
+    conv.try_convert_row(&src, &mut dst, width).unwrap();
 
     // Black → 0.
     assert_eq!(dst[0], 0, "black");
@@ -96,8 +95,8 @@ fn srgb_roundtrip_accuracy() {
         TransferFunction::Linear,
     );
 
-    let mut to_linear = RowConverter::new(srgb_u8, linear_f32).unwrap();
-    let mut to_srgb = RowConverter::new(linear_f32, srgb_u8).unwrap();
+    let mut to_linear = crate::test_conversion::new_worker(srgb_u8, linear_f32).unwrap();
+    let mut to_srgb = crate::test_conversion::new_worker(linear_f32, srgb_u8).unwrap();
 
     let width = 256u32;
     // All possible u8 values for R channel (0..=255), G=128, B=64.
@@ -111,8 +110,10 @@ fn srgb_roundtrip_accuracy() {
     let mut f32_buf = vec![0u8; width as usize * 3 * 4];
     let mut back = vec![0u8; width as usize * 3];
 
-    to_linear.convert_row(&src, &mut f32_buf, width);
-    to_srgb.convert_row(&f32_buf, &mut back, width);
+    to_linear
+        .try_convert_row(&src, &mut f32_buf, width)
+        .unwrap();
+    to_srgb.try_convert_row(&f32_buf, &mut back, width).unwrap();
 
     let mut max_drift = 0i32;
     for i in 0..src.len() {
@@ -141,13 +142,13 @@ fn unknown_transfer_uses_naive() {
         None,
         TransferFunction::Unknown,
     );
-    let mut conv = RowConverter::new(from, to).unwrap();
+    let mut conv = crate::test_conversion::new_worker(from, to).unwrap();
 
     let width = 1u32;
     let src: Vec<u8> = vec![128, 128, 128];
     let mut dst = vec![0u8; 3 * 4];
 
-    conv.convert_row(&src, &mut dst, width);
+    conv.try_convert_row(&src, &mut dst, width).unwrap();
 
     let f32_vals: &[f32] = bytemuck::cast_slice(&dst);
 
@@ -176,14 +177,14 @@ fn srgb_rgba_to_linear_preserves_alpha_semantics() {
         Some(AlphaMode::Straight),
         TransferFunction::Linear,
     );
-    let mut conv = RowConverter::new(from, to).unwrap();
+    let mut conv = crate::test_conversion::new_worker(from, to).unwrap();
 
     let width = 1u32;
     // R=128, G=128, B=128, A=128
     let src: Vec<u8> = vec![128, 128, 128, 128];
     let mut dst = vec![0u8; 4 * 4];
 
-    conv.convert_row(&src, &mut dst, width);
+    conv.try_convert_row(&src, &mut dst, width).unwrap();
 
     let f32_vals: &[f32] = bytemuck::cast_slice(&dst);
 
@@ -208,3 +209,6 @@ fn srgb_rgba_to_linear_preserves_alpha_semantics() {
     // including the layouts and non-vector-multiple widths this single
     // opaque-free pixel can't reach — lives in `tests/transfer_alpha.rs`.
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

@@ -19,6 +19,12 @@ fn slice_forms_agree_in_bounds_and_refuse_out_of_bounds() {
     assert_eq!(s.try_row(2), None);
     assert_eq!(s.try_row_with_stride(0), Some(s.row_with_stride(0)));
     assert_eq!(s.try_row_with_stride(2), None);
+    let cropped = s.crop_view(0, 0, 2, 2);
+    assert_eq!(
+        cropped.try_row_with_stride(0),
+        Some(cropped.row_with_stride(0))
+    );
+    assert_eq!(cropped.try_row_with_stride(1), None);
     assert_eq!(
         s.try_sub_rows(1, 1).unwrap().row(0),
         s.sub_rows(1, 1).row(0)
@@ -48,6 +54,13 @@ fn slice_mut_forms_agree_and_refuse() {
     assert!(m.try_row_mut(2).is_none());
     assert_eq!(m.try_sub_rows_mut(1, 1).unwrap().row(0)[0], 7);
     assert!(m.try_sub_rows_mut(1, 2).is_none());
+    {
+        let mut sub = m.try_crop_view_mut(1, 1, 2, 1).unwrap();
+        sub.row_mut(0).copy_from_slice(&[11, 12, 13, 14, 15, 16]);
+    }
+    assert_eq!(&m.row(1)[3..9], &[11, 12, 13, 14, 15, 16]);
+    assert!(m.try_crop_view_mut(2, 0, 2, 1).is_none());
+    assert!(m.try_crop_view_mut(0, 0, 1, u32::MAX).is_none());
 }
 
 #[test]
@@ -61,6 +74,15 @@ fn buffer_forms_agree_and_refuse() {
     assert!(b.try_rows_mut(1, 2).is_none());
     assert_eq!(b.try_crop_view(1, 1, 1, 1).unwrap().row(0), &[4, 5, 6]);
     assert!(b.try_crop_view(3, 0, 1, 1).is_none());
+    assert!(b.try_crop_view_mut(3, 0, 1, 1).is_none());
+    {
+        let mut sub = b.try_crop_view_mut(1, 1, 1, 1).unwrap();
+        sub.row_mut(0).copy_from_slice(&[40, 50, 60]);
+    }
+    assert_eq!(b.try_crop_view(1, 1, 1, 1).unwrap().row(0), &[40, 50, 60]);
+    b.crop_view_mut(1, 1, 1, 1)
+        .row_mut(0)
+        .copy_from_slice(&[4, 5, 6]);
     assert_eq!(
         b.try_copy_to_contiguous_bytes().unwrap(),
         b.copy_to_contiguous_bytes()
@@ -124,6 +146,15 @@ fn constructors() {
             ChannelLayout::Bgra,
             Some(AlphaMode::Straight),
             TransferFunction::Srgb
+        )
+        .is_ok()
+    );
+    assert!(
+        PixelDescriptor::try_new(
+            ChannelType::U16,
+            ChannelLayout::OklabA,
+            Some(AlphaMode::Straight),
+            TransferFunction::Linear
         )
         .is_err()
     );

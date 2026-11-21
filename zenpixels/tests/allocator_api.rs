@@ -4,7 +4,10 @@
 
 #[rustversion::since(1.100)]
 mod with_allocator {
-    use std::alloc::{Global, System};
+    #[cfg(feature = "planar")]
+    use std::alloc::Global;
+    use std::alloc::System;
+    #[cfg(feature = "planar")]
     use zenpixels::plane::{Plane, PlaneMut, PlaneRef};
     use zenpixels::{ByteStorage, PixelBuffer, PixelBufferParts, PixelDescriptor};
 
@@ -14,6 +17,7 @@ mod with_allocator {
         v
     }
 
+    #[cfg(feature = "planar")]
     #[test]
     fn plain_vec_still_works_because_global_is_an_allocator() {
         let v: Vec<u8, Global> = vec![1; 12];
@@ -22,6 +26,7 @@ mod with_allocator {
         assert_eq!(back.len(), 12);
     }
 
+    #[cfg(feature = "planar")]
     #[test]
     fn planes_own_vecs_from_any_allocator() {
         let mut v = in_system::<u16>(12);
@@ -35,6 +40,7 @@ mod with_allocator {
         assert_eq!((back.as_ptr(), back[8]), (ptr, 7));
     }
 
+    #[cfg(feature = "planar")]
     #[test]
     fn boxes_from_any_allocator_are_storage() {
         let boxed: Box<[f32], System> = in_system::<f32>(6).into_boxed_slice();
@@ -59,14 +65,18 @@ mod with_allocator {
         let mut v = in_system::<u16>(4);
         v[0] = 0x0102;
         assert_eq!(ByteStorage::as_bytes(&v).len(), 8);
-        assert_eq!(
-            PlaneRef::new(&v[..], 2, 2, 2).unwrap().row(0).unwrap()[0],
-            0x0102
-        );
-        let mut m = PlaneMut::new(&mut v[..], 2, 2, 2).unwrap();
-        m.row_mut(1).unwrap()[1] = 5;
-        assert_eq!(v[3], 5);
+        #[cfg(feature = "planar")]
+        {
+            assert_eq!(
+                PlaneRef::new(&v[..], 2, 2, 2).unwrap().row(0).unwrap()[0],
+                0x0102
+            );
+            let mut m = PlaneMut::new(&mut v[..], 2, 2, 2).unwrap();
+            m.row_mut(1).unwrap()[1] = 5;
+            assert_eq!(v[3], 5);
+        }
     }
+    #[cfg(feature = "planar")]
     #[test]
     fn mutable_plane_and_picture_borrows_preserve_the_allocator_owner() {
         use zenpixels::plane::{
@@ -98,7 +108,7 @@ mod with_allocator {
             let borrowed: PlaneRef<'_, u16> = owner.view();
             let planes = [AnyPlane::U16(borrowed)];
             let picture = PlanarSlice::new(&planes, &layout, 5, 3, &context, None).unwrap();
-            let AnyPlane::U16(plane) = picture.planes()[0] else {
+            let AnyPlane::U16(plane) = picture.plane(0).unwrap() else {
                 panic!("u16")
             };
             assert_eq!(plane.strided_samples().as_ptr(), ptr);

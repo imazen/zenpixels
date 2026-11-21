@@ -40,6 +40,34 @@ impl GamutMatrix {
         &self.0
     }
 
+    /// Linear RGB in `primaries` → CIE XYZ (D65), or `None` for unknown primaries.
+    #[inline]
+    #[must_use]
+    pub const fn to_xyz(primaries: ColorPrimaries) -> Option<&'static Self> {
+        #[allow(unreachable_patterns)]
+        match primaries {
+            ColorPrimaries::Bt709 => Some(&BT709_TO_XYZ),
+            ColorPrimaries::DisplayP3 => Some(&DISPLAY_P3_TO_XYZ),
+            ColorPrimaries::Bt2020 => Some(&BT2020_TO_XYZ),
+            ColorPrimaries::AdobeRgb => Some(&ADOBE_RGB_TO_XYZ),
+            _ => None,
+        }
+    }
+
+    /// CIE XYZ (D65) → linear RGB in `primaries`, or `None` for unknown primaries.
+    #[inline]
+    #[must_use]
+    pub const fn from_xyz(primaries: ColorPrimaries) -> Option<&'static Self> {
+        #[allow(unreachable_patterns)]
+        match primaries {
+            ColorPrimaries::Bt709 => Some(&XYZ_TO_BT709),
+            ColorPrimaries::DisplayP3 => Some(&XYZ_TO_DISPLAY_P3),
+            ColorPrimaries::Bt2020 => Some(&XYZ_TO_BT2020),
+            ColorPrimaries::AdobeRgb => Some(&XYZ_TO_ADOBE_RGB),
+            _ => None,
+        }
+    }
+
     /// The matrix taking linear RGB in `from` to linear RGB in `to`.
     ///
     /// Equal primaries give the identity. `None` when either is
@@ -163,6 +191,20 @@ pub(crate) const XYZ_TO_BT2020: GamutMatrix = GamutMatrix([
     [1.7166511880, -0.3556707838, -0.2533662814],
     [-0.6666843518, 1.6164812366, 0.0157685458],
     [0.0176398574, -0.0427706133, 0.9421031212],
+]);
+
+/// Adobe RGB (1998) → CIE XYZ (D65). Derived from exact CIE 1931 xy chromaticities.
+pub(crate) const ADOBE_RGB_TO_XYZ: GamutMatrix = GamutMatrix([
+    [0.5766690429, 0.1855582379, 0.1882286462],
+    [0.2973449753, 0.6273635663, 0.0752914585],
+    [0.0270313614, 0.0706888525, 0.9913375368],
+]);
+
+/// CIE XYZ (D65) → Adobe RGB (1998).
+pub(crate) const XYZ_TO_ADOBE_RGB: GamutMatrix = GamutMatrix([
+    [2.0415879038, -0.5650069743, -0.3447313508],
+    [-0.9692436363, 1.8759675015, 0.0415550574],
+    [0.0134442806, -0.1183623922, 1.0151749944],
 ]);
 
 /// [`GamutMatrix::between`], except that equal primaries give `None`: the plan

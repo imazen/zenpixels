@@ -1,7 +1,7 @@
 //! Existing JXL CMYK regression samples through the pinned Rust LCMS adapter.
 use cms_contract::LcmsPort;
 use zenpixels::{Cicp, ColorProfileSource, PixelFormat};
-use zenpixels_convert::{cms::PluggableCms, policy::ConvertOptions};
+use zenpixels_convert::policy::ConvertOptions;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
@@ -27,9 +27,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_source_transform(
             ColorProfileSource::Icc(&icc),
             ColorProfileSource::Cicp(Cicp::new(1, 13, 0, true)),
-            PixelFormat::CmykF32Inverted,
+            PixelFormat::CMYKF32_INVERTED,
             PixelFormat::RgbF32,
-            &ConvertOptions::permissive().with_clip_out_of_gamut(false),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+                .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended),
         )
         .ok_or("backend declined")?
         .map_err(|e| format!("{e:?}"))?;
@@ -61,3 +65,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
+
+#[path = "../../zenpixels-convert/tests/support/cms.rs"]
+mod test_cms;
+#[allow(unused_imports)]
+use test_cms::TestCmsExt as _;

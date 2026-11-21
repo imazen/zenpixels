@@ -1,3 +1,116 @@
+# zenpixels
+
+## [Unreleased]
+
+### Added
+
+- Add `sample::{FloatFacts, FloatFactsError}` for tracking verified or trusted
+  floating-point sample invariants (`NO_NAN`, `NO_INFINITE`, `NO_SUBNORMALS`,
+  `NON_NEGATIVE`, `POSITIVE`, `AT_MOST_ONE`, with `NO_SUBNORMALS` orthogonal to
+  positivity and no combo presets) across `PixelSlice`, `PixelBuffer`, and
+  `BandedPixelBuffer`, sharing 2-byte internal `SampleEvidence` with
+  `ExactDepth` so `PixelBuffer` stays 64 bytes and `PixelSlice` stays 48 bytes.
+
+- Add bounded row-band allocations (`BandedPixelBuffer`, `BandedPlane`,
+  `BandedPlanarBuffer`) for gigapixel (`> 10^9` px) packed and planar images with
+  `u64` picture geometry, configurable `RowAlign`, `ExactDepth` preservation,
+  address-space preflight on 32-bit targets, and band-independent sample hashes.
+  Re-export `BandLayout`, `BandedPixelBuffer`, and `DEFAULT_MAX_BAND_BYTES` at
+  the `zenpixels` crate root; axis-swapping banded orientation lives in
+  `zenpixels-convert` (`orient_into` / `BandedPixelBufferConvertExt::oriented_into`)
+  so scalar fallback cannot shadow cache-blocked SIMD transpose.
+
+- Generalize planar ownership over `PlaneStorage` / `PlaneStorageMut`, preserving
+  aligned, pooled and shared owners. Add recoverable planar parts transfer
+  (`2ce00f93`).
+- Unify `StorageSample` and `PlaneSample`: typed/aligned and runtime plane storage
+  carry all ten native sample types, including signed/wide integers and F64.
+  Numerical CodePlane support remains U8/U16. Wide/signed planar hashes mask
+  unused payload bits while retaining existing portable goldens (`2ce00f93`).
+
+- Owned `PlanarBuffer` / `AnyPlaneBuf` and writable `PlanarSliceMut` /
+  `AnyPlaneMut` adopt or borrow independently strided planes. Shared layout,
+  geometry and alpha checks; no allocation when adopting existing owners or
+  borrowing views. Layout remains Vec-backed (`c8949ec2`).
+
+### QUEUED BREAKING CHANGES
+
+- `PlanarBuffer<P>` and `PlanarSliceMut<'a, P>` carry concrete plane owner types;
+  the latter replaces the initial two-lifetime-only review signature. Explicit
+  empty owner lists need a sample/owner type annotation. `PlaneSample` becomes
+  an alias of the shared `StorageSample` trait; plane enums gain native variants
+  (`2ce00f93`).
+
+- `PlanarSlice::planes()` returns an exact-size iterator of borrowed plane
+  values instead of a descriptor slice, allowing allocation-free views of
+  owned and writable storage. Use `plane(index)` for checked indexed access.
+  Existing constructor and interpretation accessors are unchanged (`c8949ec2`).
+
+# zenpixels-convert
+
+## [Unreleased]
+
+### Changed
+
+- Replace `garb` floating-point depth and RGBA `f32` alpha kernels with `magetypes`
+  SIMD kernels (`garb 0.2.9`, `default-features = false`, no `experimental` or
+  `garb` float ops): 2-op 0-ULP binary geometric-series split for `u8 -> f32` and
+  `u16 -> f32` (0-ULP exact without hardware division or FMA), 1-FMA magic-bias
+  nearest half-up quantization (`12_582_912.0` / `0x4b40_0000`, 0 mismatches
+  across all `1,065,353,217` `f32` values in `[0.0, 1.0]`) with three-tier
+  `FloatFacts` clamp specialization (`UNIT_CLEAN` 0-op unclamped, `NO_NAN` 2-op
+  `max_fast`/`min_fast`, untrusted 3-op `simd_ge + and + min_fast`), outer-loop
+  WASM `relaxed-simd` sentinel FMA probe falling back to exact `f64x2` SIMD when
+  unfused, `to_i32_fast()` SIMD `DepthPolicy::Truncate`, and 0-ULP RGBA `f32`
+  premultiply/unpremultiply.
+- Adopt `magetypes 0.9.32` `min_fast`/`max_fast`/`to_i32_fast` across `fast_gamut`
+  and `hdr::measure` `NaN`-clean SIMD loops, and vectorize `PureGammaOutput` RGB/RGBA
+  transforms via 8-wide `magemath 0.1.0` `Powf` dispatched once per buffer under
+  `#[attune(dispatch)]` (`.caller()`, canonical bit-exact `highp`).
+- Inline the 8 non-core `u8` layout, BT.709 fixed-point luma, `u8 -> u16` depth, and
+  `u8` RGBA premultiply helpers directly into `zenpixels-convert` under
+  `#[attune(dispatch)]` so `zenpixels-convert` depends only on core `garb::bytes`
+  byte swizzles (`default-features = false`, zero `experimental` items).
+- Depend on published crates.io `archmage 0.9.32`, `magetypes 0.9.32`, and
+  `magemath 0.1.0` (forwarding `std` and `avx512` to `archmage`/`magetypes`/`magemath`),
+  sync `garb 0.2.9` (`aa685891`) and `linear-srgb 0.6.13` (`abd98dd1`), and migrate
+  all `linear_srgb::tf` callers to `linear_srgb::default`.
+- Use the checked Magemath power profile for extended gamma.
+
+### Added
+
+- Add sealed `PackedSource` and `PackedSink` traits plus unified
+  `RowConverter::convert`, `OutputPlan::convert_into`, and `orient_into` at
+  `zenpixels_convert` root so `PixelSlice`, `PixelSliceMut`, `PixelBuffer`, and
+  `BandedPixelBuffer` work uniformly without extension-trait imports or
+  single-band overhead.
+
+- Add `ConversionSpec::with_float_facts`, `input_float_facts`/`output_float_facts`
+  on `ConvertPlan`, `RowConverter`, and `OutputPlan`,
+  `ConvertError::FloatFactsUnsatisfied`, automatic step-by-step floating-point
+  trust propagation, and bit-exact const-specialized Oklab, extended Gamma 2.2,
+  PQ, tone-map, matte, truncation, and perceptual kernels.
+
+- Add `BandedPixelBufferConvertExt` (`oriented_into` using cache-blocked SIMD
+  transpose across band intersections, `scan_source_precision`, and
+  `check_opaque`), `RowConverter::convert_bands` band zipper, typed
+  `RowConverter::convert_rows` alongside `convert_raw_rows`, and fallible
+  `LightLevelHistogram::try_merge`.
+
+### QUEUED BREAKING CHANGES
+
+- Compile validated encodings with `ConvertPlan::build` or `select` (returning
+  unified `At<ConvertError>`), steer selection with optional `ConvertIntent` and
+  `Provenance`, prepare row workers via `ConvertPlan::prepare` or
+  `prepare_shared`, and compose materialized boundaries with `then`.
+- Use a fallible `PluggableCms` builder and row transform. Finalize through
+  `OutputPlan::build` and `EncodeReady::copy_from` or `from_owned`.
+- Choose a `GamutPolicy` and explicit permissions for unchecked alpha removal;
+  unverified `Unknown` ↔ known transfer changes require an authoritative
+  `ColorContext` or explicit `ConvertPlan::relabel_transfer`. Enable
+  `introspection` for `PlannedStepInfo`, `AccuracyContract`, `SemanticEffects`,
+  `KernelTier`, `ConversionCost`, and `LossBucket` diagnostics.
+
 # zenpsy-api
 
 ## [Unreleased]

@@ -409,6 +409,7 @@ fn main() {
             w,
             h,
             PixelDescriptor::RGB16_SRGB,
+            zenpixels::RowAlign::PixelCache64,
         )
         .unwrap();
         let sl = aligned.as_slice();

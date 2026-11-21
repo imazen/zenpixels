@@ -9,7 +9,6 @@ use zenbench::prelude::*;
 use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
 };
-use zenpixels_convert::RowConverter;
 
 const SIZES: &[(&str, usize)] = &[
     ("  256px", 256),
@@ -69,14 +68,15 @@ fn bench_convert(
         let src_data = make_f32_row(width, channels);
         let mut dst_data = vec![0u8; dst_bytes];
         let bytes = (src_data.len() + dst_bytes) as u64;
-        let mut conv = RowConverter::new(src, dst).unwrap();
+        let mut conv = crate::test_conversion::new_worker(src, dst).unwrap();
         let _ = src_bytes_per_px; // silence unused
 
         suite.group(format!("{name}  {label}"), move |g| {
             g.throughput(Throughput::Bytes(bytes));
             g.bench("F32", move |b| {
                 b.iter(|| {
-                    conv.convert_row(&src_data, &mut dst_data, width as u32);
+                    conv.try_convert_row(&src_data, &mut dst_data, width as u32)
+                        .unwrap();
                     black_box(());
                 })
             });
@@ -116,3 +116,6 @@ fn main() {
         );
     });
 }
+
+#[path = "../tests/support/conversion.rs"]
+mod test_conversion;

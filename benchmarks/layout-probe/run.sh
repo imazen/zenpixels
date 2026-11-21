@@ -10,7 +10,7 @@ work="${TMPDIR:-$HOME/tmp}/zp-layout-probe"
 case "$work" in */zp-layout-probe) rm -rf -- "$work" ;; *) exit 2 ;; esac
 mkdir -p "$work/base" "$work/probe-base/src" "$work/probe-head/src"
 git -C "$repo" archive "$base_rev" | tar -x -C "$work/base"
-manifest() { # probe dir, zenpixels crate path
+manifest() { # probe dir, zenpixels crate path, extra features
   cat > "$work/$1/Cargo.toml" <<TOML
 [package]
 name = "zp-layout-$1"
@@ -19,13 +19,13 @@ edition = "2024"
 publish = false
 
 [dependencies]
-zenpixels = { path = "$2" }
+zenpixels = { path = "$2"$3 }
 
 [workspace]
 TOML
 }
-manifest probe-base "$work/base/zenpixels"
-manifest probe-head "$repo/zenpixels"
+manifest probe-base "$work/base/zenpixels" ""
+manifest probe-head "$repo/zenpixels" ', features = ["planar"]'
 cp "$repo/benchmarks/layout-probe/base.rs" "$work/probe-base/src/main.rs"
 cp "$repo/benchmarks/layout-probe/head.rs" "$work/probe-head/src/main.rs"
 cp "$work/base/Cargo.lock" "$work/probe-base/Cargo.lock"

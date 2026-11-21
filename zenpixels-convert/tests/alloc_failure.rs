@@ -12,9 +12,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use zenpixels::{BufferError, PixelBuffer, PixelDescriptor, PixelSlice};
-use zenpixels_convert::{
-    ConvertError, ConvertPlan, PixelBufferConvertExt, PixelSliceConvertExt, RowConverter,
-};
+use zenpixels_convert::{ConvertError, ConvertPlan, PixelBufferConvertExt, PixelSliceConvertExt};
 
 /// Allocations larger than this many bytes fail; `usize::MAX` means never.
 static THRESHOLD: AtomicUsize = AtomicUsize::new(usize::MAX);
@@ -90,38 +88,79 @@ fn assert_alloc_failed(err: &whereat::At<ConvertError>) {
 /// A multi-step plan: RGBA8 → linear F32 RGB emits `DropAlpha` followed by
 /// `SrgbU8ToLinearF32`, so row conversion needs the ping-pong scratch.
 fn multi_op_plan() -> ConvertPlan {
-    ConvertPlan::new(PixelDescriptor::RGBA8_SRGB, PixelDescriptor::RGBF32_LINEAR)
+    crate::test_conversion::new_plan(PixelDescriptor::RGBA8_SRGB, PixelDescriptor::RGBF32_LINEAR)
         .expect("plan RGBA8 -> RGBF32_LINEAR")
 }
 
 #[test]
 fn scratch_prepare_reports_allocation_failure() {
     let _g = lock();
-    let mut converter = RowConverter::from_plan(multi_op_plan());
+    let plan = multi_op_plan();
     failing_above(4096, || {
-        let err = converter.prepare(512).unwrap_err();
+        let err = plan.prepare_shared(2048).unwrap_err();
         assert_alloc_failed(&err);
     });
     // The allocator restored, the identical prepare succeeds.
-    converter.prepare(512).unwrap();
+    let _converter = plan.prepare(2048).unwrap();
 }
 
 #[test]
 fn unprepared_row_conversion_reports_allocation_failure() {
+    use zenpixels::{Cicp, ColorOrigin, PixelFormat, PixelSliceMut};
+    use zenpixels_convert::OutputProfile;
+
     let _g = lock();
-    let width = 256u32;
-    let mut converter = RowConverter::from_plan(multi_op_plan());
+    let width = 2048u32;
+    let mut plan = crate::test_conversion::output_plan(
+        PixelDescriptor::RGBA8_SRGB.encoding(),
+        &ColorOrigin::assumed(),
+        OutputProfile::Named(Cicp::new(9, 8, 0, true)),
+        PixelFormat::RgbF32,
+        &crate::test_conversion::legacy_options(),
+        None,
+    )
+    .unwrap();
     let src = vec![0x40u8; width as usize * 4];
-    let mut dst = vec![0u8; width as usize * 12];
+    let mut dst = vec![0f32; width as usize * 3];
     failing_above(4096, || {
-        let err = converter
-            .try_convert_row(&src, &mut dst, width)
-            .unwrap_err();
+        let src_view = PixelSlice::new(
+            &src,
+            width,
+            1,
+            width as usize * 4,
+            PixelDescriptor::RGBA8_SRGB,
+        )
+        .unwrap();
+        let dst_view = PixelSliceMut::new(
+            bytemuck::cast_slice_mut(&mut dst),
+            width,
+            1,
+            width as usize * 12,
+            plan.output_descriptor(),
+        )
+        .unwrap();
+        let err = plan.convert_rows(src_view, dst_view).unwrap_err();
         assert_alloc_failed(&err);
     });
     // After refusal, the same conversion succeeds — the scratch reserve left
     // no half-charged state.
-    converter.try_convert_row(&src, &mut dst, width).unwrap();
+    let src_view = PixelSlice::new(
+        &src,
+        width,
+        1,
+        width as usize * 4,
+        PixelDescriptor::RGBA8_SRGB,
+    )
+    .unwrap();
+    let dst_view = PixelSliceMut::new(
+        bytemuck::cast_slice_mut(&mut dst),
+        width,
+        1,
+        width as usize * 12,
+        plan.output_descriptor(),
+    )
+    .unwrap();
+    plan.convert_rows(src_view, dst_view).unwrap();
 }
 
 #[test]
@@ -183,3 +222,6 @@ fn square_in_place_transpose_needs_no_scratch() {
     });
     assert_eq!((out.width(), out.height()), (200, 200));
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

@@ -89,7 +89,7 @@ impl PreparePlanarReference for MetricFactory {
     }
 }
 fn sum(p: &PlanarSlice<'_>) -> f64 {
-    let AnyPlane::F32(red) = p.planes()[0] else {
+    let AnyPlane::F32(red) = p.plane(0).unwrap() else {
         panic!("f32")
     };
     red.rows().flatten().map(|v| f64::from(*v)).sum()
@@ -232,7 +232,7 @@ fn borrowed_picture_checks_geometry_and_alpha_without_inspecting_padding() {
     assert!(PlanarSlice::new(&planes, &l, 3, 2, &c, None).is_err());
     assert!(PlanarSlice::new(&planes, &l, 2, 2, &c, Some(AlphaMode::Straight)).is_err());
     let p = PlanarSlice::new(&planes, &l, 2, 2, &c, None).unwrap();
-    let AnyPlane::F32(r) = p.planes()[0] else {
+    let AnyPlane::F32(r) = p.plane(0).unwrap() else {
         panic!("f32")
     };
     assert_eq!(r.strided_samples().as_ptr(), data.as_ptr());
@@ -292,12 +292,9 @@ fn prepared_interpretation_retains_authority_and_missing_hdr_conditions() {
     // The synthetic scorer tests carriage only, not HLG/color conversion.
     // No wrapper may infer a white or display rendering from a raw tag.
     let mut prepared = prepare_planar_reference(&mut metric, &image, EvalOpts::new()).unwrap();
-    assert!(image.color_context().diffuse_white.is_none());
-    assert!(image.color_context().hdr_peak.is_none());
-    assert!(Arc::ptr_eq(
-        image.color_context().icc.as_ref().unwrap(),
-        &icc
-    ));
+    assert!(image.color_context().diffuse_white().is_none());
+    assert!(image.color_context().hdr_peak().is_none());
+    assert!(Arc::ptr_eq(image.color_context().icc_arc().unwrap(), &icc));
     let independently_padded = [1.0, 2.0, f32::NAN, f32::NAN, 3.0, 4.0];
     let q = [AnyPlane::F32(PlaneRef::new(&independently_padded[..], 2, 2, 4).unwrap()); 3];
     let equal_context = c.clone();

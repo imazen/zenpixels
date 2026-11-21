@@ -120,6 +120,11 @@ See also: `CHANGELOG.md` — the 0.3.0 queue section accumulates non-tolerated b
 
 ## Known Bugs
 
+- Fixed in the owned-planar review: tying the writable picture borrow to the
+  backing sample lifetime prevented reusing a caller-owned descriptor list.
+  `PlanarSliceMut` now separates those lifetimes; the sequential-pass regression
+  failed to compile before the fix and passes afterwards.
+
 - Fixed (2026-11-10): allocation-failure injection used a process-wide gate,
   allowing unrelated harness allocations to abort even while fixtures held the
   mutex. The shared test allocator now scopes the same cutoff to the calling
