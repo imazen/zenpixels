@@ -77,6 +77,17 @@ pub enum ConvertError {
     SdrPeakRequired,
     /// The requested HDR conversion needs a Cargo feature that is not enabled.
     HdrFeatureRequired,
+    /// The requested conversion needs a Cargo feature on `zenpixels-convert` that
+    /// is not enabled in this build (such as `"perceptual"`, `"oklab"`, or
+    /// `"hdr-transfers"`).
+    FeatureRequired {
+        /// Cargo feature name to enable on `zenpixels-convert`.
+        feature: &'static str,
+        /// Source pixel descriptor.
+        from: PixelDescriptor,
+        /// Destination pixel descriptor.
+        to: PixelDescriptor,
+    },
     /// HLG rendering needs explicit conditions supplied through
     /// [`zenpixels::ConvertOptions::with_hlg_rendering`].
     HlgRenderingRequired,
@@ -328,6 +339,10 @@ impl fmt::Display for ConvertError {
             Self::HdrPeakRequired => f.write_str("HDR peak is missing; buffer conversion measures it, or use ConvertOptions::with_hdr_peak(HdrPeak::Nits(...))"),
             Self::SdrPeakRequired => f.write_str("SDR target peak is missing; use ConvertOptions::with_sdr_peak"),
             Self::HdrFeatureRequired => f.write_str("HDR tone mapping requires the bt2446a Cargo feature"),
+            Self::FeatureRequired { feature, from, to } => write!(
+                f,
+                "conversion from {from} to {to} requires the `{feature}` Cargo feature on zenpixels-convert"
+            ),
             Self::HlgRenderingRequired => f.write_str("HLG rendering requires explicit supported display conditions"),
             Self::HdrSourceRequiresPeak { from, to } => write!(
                 f,

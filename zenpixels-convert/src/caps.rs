@@ -3,7 +3,7 @@
 //!
 //! [`ConverterProfile`] binds kernel function pointers at plan-build time under
 //! a `const CAPS: u64` bitmask from this module and returns an ordinary
-//! non-generic [`ConvertPlan`](crate::ConvertPlan) (which prepares into an
+//! non-generic [`ConvertPlan`] (which prepares into an
 //! ordinary [`RowConverter`](crate::RowConverter)).
 //!
 //! Because `CAPS` is a compile-time constant, LLVM constant-folds disabled arms

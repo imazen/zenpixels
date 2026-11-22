@@ -1,5 +1,5 @@
 # zenpixels public API — additions from non-default features
-# features: allocator_api,hash,icc,image,imgref,planar,rgb,std
+# features: allocator_api,hash,icc,image,imgref,perceptual,planar,rgb,std
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -15,20 +15,21 @@
 #   free functions                              4
 #   inherent methods                          209
 #   struct fields                              14
-#   enum variants                              90
+#   enum variants                             126
 #   trait roster entries (type × trait)       270
 #   conditional trait impls (verbatim)         98
 #   auto-trait-complete types                  15
 #   auto-trait exceptions                      10
 #
 # per-module pub lines:
-#   (root)                           40
+#   (root)                           58
 #   banded                            2
 #   buffer                           95
+#   descriptor                       18
 #   plane                           222
 #   sample                           29
 
-## items (384 lines)
+## items (420 lines)
 
 pub fn banded::BandedPixelBuffer::hash_with(&self, HashInclusions) -> u64
 pub fn buffer::PixelCow<'_, P>::hash_with(&self, HashInclusions) -> u64
@@ -82,6 +83,24 @@ pub fn buffer::PixelSliceMut<'_, P>::hash_with(&self, HashInclusions) -> u64
 pub type &mut S::Sample = <S as plane::SampleStorage>::Sample [also: (root)]
 pub fn &mut S::samples(&self) -> &[<S as plane::SampleStorage>::Sample] [also: (root)]
 pub fn &mut S::samples_mut(&mut self) -> &mut [<S as plane::SampleStorage>::Sample] [also: (root)]
+pub descriptor::ChannelLayout::Hsl
+pub descriptor::ChannelLayout::HslAlpha
+pub descriptor::ChannelLayout::Hsv
+pub descriptor::ChannelLayout::HsvAlpha
+pub descriptor::ChannelLayout::Jzazbz
+pub descriptor::ChannelLayout::JzazbzAlpha
+pub descriptor::ChannelLayout::Jzczhz
+pub descriptor::ChannelLayout::JzczhzAlpha
+pub descriptor::ChannelLayout::Lch
+pub descriptor::ChannelLayout::LchAlpha
+pub descriptor::ChannelLayout::Oklch
+pub descriptor::ChannelLayout::OklchAlpha
+pub descriptor::ColorModel::Hsl
+pub descriptor::ColorModel::Hsv
+pub descriptor::ColorModel::Jzazbz
+pub descriptor::ColorModel::Jzczhz
+pub descriptor::ColorModel::Lch
+pub descriptor::ColorModel::Oklch
 pub mod plane
 #[non_exhaustive] pub enum plane::AnyPlane<'a>
 pub plane::AnyPlane::F16(plane::PlaneRef<'a, pixel_types::F16Sample>)
@@ -362,6 +381,24 @@ pub const fn sample::CodePlaneMut<'a>::width(&self) -> usize
 pub fn sample::CodePlaneMut<'a>::write_codes(&mut self, usize, usize, &[u16]) -> core::result::Result<(), sample::CodePlaneError>
 pub fn sample::CodePlaneMut<'a>::write_codes_i32(&mut self, usize, usize, &[i32]) -> core::result::Result<(), sample::CodePlaneError>
 pub fn sample::CodePlaneMut<'a>::write_codes_u32(&mut self, usize, usize, &[u32]) -> core::result::Result<(), sample::CodePlaneError>
+pub ChannelLayout::Hsl
+pub ChannelLayout::HslAlpha
+pub ChannelLayout::Hsv
+pub ChannelLayout::HsvAlpha
+pub ChannelLayout::Jzazbz
+pub ChannelLayout::JzazbzAlpha
+pub ChannelLayout::Jzczhz
+pub ChannelLayout::JzczhzAlpha
+pub ChannelLayout::Lch
+pub ChannelLayout::LchAlpha
+pub ChannelLayout::Oklch
+pub ChannelLayout::OklchAlpha
+pub ColorModel::Hsl
+pub ColorModel::Hsv
+pub ColorModel::Jzazbz
+pub ColorModel::Jzczhz
+pub ColorModel::Lch
+pub ColorModel::Oklch
 #[non_exhaustive] pub enum HashInclusions
 pub HashInclusions::All
 pub HashInclusions::Pixels

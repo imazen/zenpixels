@@ -14,19 +14,19 @@
 #   free functions                              2
 #   inherent methods                          473
 #   struct fields                             124
-#   enum variants                             431
+#   enum variants                             395
 #   re-exports                                  1
 #   trait roster entries (type × trait)       532
 #   auto-trait-complete types                  74
 #   auto-trait exceptions                       8
 #
 # per-module pub lines:
-#   (root)                          819
+#   (root)                          801
 #   banded                           47
 #   buffer                          399
 #   cicp                             48
 #   color                           176
-#   descriptor                      201
+#   descriptor                      183
 #   hdr                              21
 #   icc                              11
 #   orientation                      11
@@ -35,7 +35,7 @@
 #   precision                        20
 #   sample                           38
 
-## items (1580 lines)
+## items (1544 lines)
 
 pub mod zenpixels
 pub use At
@@ -544,22 +544,10 @@ pub descriptor::ChannelLayout::CmykInverted
 pub descriptor::ChannelLayout::CmykInvertedAlpha
 pub descriptor::ChannelLayout::Gray
 pub descriptor::ChannelLayout::GrayAlpha
-pub descriptor::ChannelLayout::Hsl
-pub descriptor::ChannelLayout::HslAlpha
-pub descriptor::ChannelLayout::Hsv
-pub descriptor::ChannelLayout::HsvAlpha
-pub descriptor::ChannelLayout::Jzazbz
-pub descriptor::ChannelLayout::JzazbzAlpha
-pub descriptor::ChannelLayout::Jzczhz
-pub descriptor::ChannelLayout::JzczhzAlpha
 pub descriptor::ChannelLayout::Lab
 pub descriptor::ChannelLayout::LabAlpha
-pub descriptor::ChannelLayout::Lch
-pub descriptor::ChannelLayout::LchAlpha
 pub descriptor::ChannelLayout::Oklab
 pub descriptor::ChannelLayout::OklabA
-pub descriptor::ChannelLayout::Oklch
-pub descriptor::ChannelLayout::OklchAlpha
 pub descriptor::ChannelLayout::Rgb
 pub descriptor::ChannelLayout::Rgba
 pub descriptor::ChannelLayout::Xyz
@@ -588,14 +576,8 @@ pub const fn descriptor::ChannelType::is_u16(self) -> bool [also: (root)]
 pub const fn descriptor::ChannelType::is_u8(self) -> bool [also: (root)]
 pub descriptor::ColorModel::Cmyk
 pub descriptor::ColorModel::Gray
-pub descriptor::ColorModel::Hsl
-pub descriptor::ColorModel::Hsv
-pub descriptor::ColorModel::Jzazbz
-pub descriptor::ColorModel::Jzczhz
 pub descriptor::ColorModel::Lab
-pub descriptor::ColorModel::Lch
 pub descriptor::ColorModel::Oklab
-pub descriptor::ColorModel::Oklch
 pub descriptor::ColorModel::Rgb
 pub descriptor::ColorModel::Xyz
 pub descriptor::ColorModel::YCbCr
@@ -1025,22 +1007,10 @@ pub ChannelLayout::CmykInverted
 pub ChannelLayout::CmykInvertedAlpha
 pub ChannelLayout::Gray
 pub ChannelLayout::GrayAlpha
-pub ChannelLayout::Hsl
-pub ChannelLayout::HslAlpha
-pub ChannelLayout::Hsv
-pub ChannelLayout::HsvAlpha
-pub ChannelLayout::Jzazbz
-pub ChannelLayout::JzazbzAlpha
-pub ChannelLayout::Jzczhz
-pub ChannelLayout::JzczhzAlpha
 pub ChannelLayout::Lab
 pub ChannelLayout::LabAlpha
-pub ChannelLayout::Lch
-pub ChannelLayout::LchAlpha
 pub ChannelLayout::Oklab
 pub ChannelLayout::OklabA
-pub ChannelLayout::Oklch
-pub ChannelLayout::OklchAlpha
 pub ChannelLayout::Rgb
 pub ChannelLayout::Rgba
 pub ChannelLayout::Xyz
@@ -1064,14 +1034,8 @@ pub fn color::ColorAuthority::select<T>(self, core::option::Option<T>, core::opt
 #[non_exhaustive] pub enum ColorModel [also: descriptor]
 pub ColorModel::Cmyk
 pub ColorModel::Gray
-pub ColorModel::Hsl
-pub ColorModel::Hsv
-pub ColorModel::Jzazbz
-pub ColorModel::Jzczhz
 pub ColorModel::Lab
-pub ColorModel::Lch
 pub ColorModel::Oklab
-pub ColorModel::Oklch
 pub ColorModel::Rgb
 pub ColorModel::Xyz
 pub ColorModel::YCbCr

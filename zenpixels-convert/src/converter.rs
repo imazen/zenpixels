@@ -87,9 +87,7 @@ fn dispatch_cms_chain(
         options,
         hooks,
     ) {
-        return whereat::at_crate!(result)
-            .map(|c| Some(Operation::Native(c)))
-            .map_err(map_error);
+        return whereat::at_crate!(result).map(|c| Some(Operation::Native(c)));
     }
     Ok(None)
 }

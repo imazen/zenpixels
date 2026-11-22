@@ -10,11 +10,11 @@
 #
 #   pub modules                                15
 #   pub types (struct/enum/trait/alias)        73
-#   pub consts/statics                        116
+#   pub consts/statics                        117
 #   free functions                              2
 #   inherent methods                          164
-#   struct fields                              85
-#   enum variants                             121
+#   struct fields                              91
+#   enum variants                             123
 #   re-exports                                  8
 #   trait roster entries (type × trait)       161
 #   conditional trait impls (verbatim)          1
@@ -22,13 +22,13 @@
 #   auto-trait exceptions                      10
 #
 # per-module pub lines:
-#   (root)                          267
+#   (root)                          271
 #   adapt                             1
-#   caps                             39
+#   caps                             40
 #   cms                              26
 #   codes                            20
 #   converter                        21
-#   error                            58
+#   error                            62
 #   ext                              22
 #   gamut                            11
 #   hdr                               2
@@ -38,7 +38,7 @@
 #   output                           24
 #   precision                        62
 
-## items (549 lines)
+## items (558 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -69,6 +69,7 @@ pub const caps::PERCEPTUAL_JZAZBZ: u64
 pub const caps::PERCEPTUAL_LCH: u64
 pub const caps::PERCEPTUAL_POLAR: u64
 pub const caps::PREMUL: u64
+pub const caps::PROFILES: u64
 pub const caps::SDR_ALL: u64
 pub const caps::SDR_WEB: u64
 pub const caps::SOFT_COMPRESS: u64
@@ -158,6 +159,10 @@ pub error::ConvertError::CmsBackend(alloc::sync::Arc<cms::CmsPluginError>)
 pub error::ConvertError::CmsError(alloc::string::String)
 pub error::ConvertError::DepthReductionForbidden
 pub error::ConvertError::EmptyFormatList
+pub error::ConvertError::FeatureRequired
+pub error::ConvertError::FeatureRequired::feature: &'static str
+pub error::ConvertError::FeatureRequired::from: zenpixels::descriptor::PixelDescriptor
+pub error::ConvertError::FeatureRequired::to: zenpixels::descriptor::PixelDescriptor
 pub error::ConvertError::FloatFactsUnsatisfied
 pub error::ConvertError::FloatFactsUnsatisfied::actual: zenpixels::sample::float::FloatFacts
 pub error::ConvertError::FloatFactsUnsatisfied::required: zenpixels::sample::float::FloatFacts
@@ -388,6 +393,10 @@ pub ConvertError::CmsBackend(alloc::sync::Arc<cms::CmsPluginError>)
 pub ConvertError::CmsError(alloc::string::String)
 pub ConvertError::DepthReductionForbidden
 pub ConvertError::EmptyFormatList
+pub ConvertError::FeatureRequired
+pub ConvertError::FeatureRequired::feature: &'static str
+pub ConvertError::FeatureRequired::from: zenpixels::descriptor::PixelDescriptor
+pub ConvertError::FeatureRequired::to: zenpixels::descriptor::PixelDescriptor
 pub ConvertError::FloatFactsUnsatisfied
 pub ConvertError::FloatFactsUnsatisfied::actual: zenpixels::sample::float::FloatFacts
 pub ConvertError::FloatFactsUnsatisfied::required: zenpixels::sample::float::FloatFacts

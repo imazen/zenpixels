@@ -206,6 +206,14 @@ pub(super) fn resolve_and_bind_op<const CAPS: u64>(
                             return Err(super::err_no_path(from, to));
                         }
                     }
+                    #[cfg(not(feature = "hdr-transfers"))]
+                    TransferFunction::Pq | TransferFunction::Hlg => {
+                        return Err(whereat::at!(crate::ConvertError::FeatureRequired {
+                            feature: "hdr-transfers",
+                            from,
+                            to,
+                        }));
+                    }
                     TransferFunction::Gamma22 if clip_f32 => {
                         if (CAPS & caps::TF_GAMMA22) == caps::TF_GAMMA22 {
                             (tf_gamma22_to_lin, tf_lin_to_gamma22)

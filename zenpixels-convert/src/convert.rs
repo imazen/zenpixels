@@ -1481,6 +1481,42 @@ impl ConvertStep {
     }
 }
 
+/// Whether `m` is one of the opt-in perceptual / cylindrical color models
+/// (`Oklch`, `Lch`, `Jzazbz`, `Jzczhz`, `Hsl`, `Hsv`).
+///
+/// When `zenpixels-convert/perceptual` is disabled, Cargo feature unification
+/// across a workspace can still enable `zenpixels/perceptual`. Matching by
+/// exclusion of the unconditional `ColorModel` variants compiles in both
+/// builds and still classifies unified perceptual models accurately.
+#[inline]
+fn is_perceptual_model(m: crate::ColorModel) -> bool {
+    #[cfg(feature = "perceptual")]
+    {
+        matches!(
+            m,
+            crate::ColorModel::Oklch
+                | crate::ColorModel::Lch
+                | crate::ColorModel::Jzazbz
+                | crate::ColorModel::Jzczhz
+                | crate::ColorModel::Hsl
+                | crate::ColorModel::Hsv
+        )
+    }
+    #[cfg(not(feature = "perceptual"))]
+    {
+        !matches!(
+            m,
+            crate::ColorModel::Gray
+                | crate::ColorModel::Rgb
+                | crate::ColorModel::YCbCr
+                | crate::ColorModel::Oklab
+                | crate::ColorModel::Cmyk
+                | crate::ColorModel::Lab
+                | crate::ColorModel::Xyz
+        )
+    }
+}
+
 /// Color models that zenpixels-convert's built-in kernels resolve natively.
 ///
 /// Anything outside this set is a device-dependent / CMS-only path —
@@ -1490,16 +1526,8 @@ impl ConvertStep {
 fn native_color_model(m: crate::ColorModel) -> bool {
     matches!(
         m,
-        crate::ColorModel::Gray
-            | crate::ColorModel::Rgb
-            | crate::ColorModel::Oklab
-            | crate::ColorModel::Oklch
-            | crate::ColorModel::Lch
-            | crate::ColorModel::Jzazbz
-            | crate::ColorModel::Jzczhz
-            | crate::ColorModel::Hsl
-            | crate::ColorModel::Hsv
-    )
+        crate::ColorModel::Gray | crate::ColorModel::Rgb | crate::ColorModel::Oklab
+    ) || is_perceptual_model(m)
 }
 
 pub(crate) fn needs_cms_for_color_model(from: &PixelDescriptor, to: &PixelDescriptor) -> bool {
@@ -1807,44 +1835,16 @@ impl NativePlan {
             if let Some(plan) = plan_perceptual(from, to, hooks)? {
                 return Ok(plan);
             }
-        } else if matches!(
-            from.color_model(),
-            crate::ColorModel::Oklch
-                | crate::ColorModel::Lch
-                | crate::ColorModel::Jzazbz
-                | crate::ColorModel::Jzczhz
-                | crate::ColorModel::Hsl
-                | crate::ColorModel::Hsv
-        ) || matches!(
-            to.color_model(),
-            crate::ColorModel::Oklch
-                | crate::ColorModel::Lch
-                | crate::ColorModel::Jzazbz
-                | crate::ColorModel::Jzczhz
-                | crate::ColorModel::Hsl
-                | crate::ColorModel::Hsv
-        ) {
+        } else if is_perceptual_model(from.color_model()) || is_perceptual_model(to.color_model()) {
             return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
         #[cfg(not(feature = "perceptual"))]
-        if matches!(
-            from.color_model(),
-            crate::ColorModel::Oklch
-                | crate::ColorModel::Lch
-                | crate::ColorModel::Jzazbz
-                | crate::ColorModel::Jzczhz
-                | crate::ColorModel::Hsl
-                | crate::ColorModel::Hsv
-        ) || matches!(
-            to.color_model(),
-            crate::ColorModel::Oklch
-                | crate::ColorModel::Lch
-                | crate::ColorModel::Jzazbz
-                | crate::ColorModel::Jzczhz
-                | crate::ColorModel::Hsl
-                | crate::ColorModel::Hsv
-        ) {
-            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        if is_perceptual_model(from.color_model()) || is_perceptual_model(to.color_model()) {
+            return Err(whereat::at!(ConvertError::FeatureRequired {
+                feature: "perceptual",
+                from,
+                to,
+            }));
         }
         #[cfg(feature = "oklab")]
         if let Some(oklab_pivot) = hooks.oklab_pivot {
@@ -1862,7 +1862,11 @@ impl NativePlan {
         if matches!(from.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA)
             || matches!(to.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA)
         {
-            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+            return Err(whereat::at!(ConvertError::FeatureRequired {
+                feature: "oklab",
+                from,
+                to,
+            }));
         }
         if needs_cms_for_color_model(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
@@ -1924,7 +1928,11 @@ impl NativePlan {
                 TransferFunction::Pq | TransferFunction::Hlg
             ) || matches!(to.transfer(), TransferFunction::Pq | TransferFunction::Hlg))
         {
-            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+            return Err(whereat::at!(ConvertError::FeatureRequired {
+                feature: "hdr-transfers",
+                from,
+                to,
+            }));
         }
 
         // BGR kernels swap R↔B at the endpoint, with RGB intermediates in between.
@@ -3212,13 +3220,31 @@ impl NativePlan {
             && matches!(options.alpha_policy(), AlphaPolicy::CompositeOnto { .. });
         if hlg_boundary || hlg_composite {
             let Some(plan_hlg) = hooks.hlg_render else {
+                #[cfg(not(feature = "hdr-transfers"))]
+                return Err(whereat::at!(ConvertError::FeatureRequired {
+                    feature: "hdr-transfers",
+                    from,
+                    to,
+                }));
+                #[cfg(feature = "hdr-transfers")]
                 return Err(whereat::at!(ConvertError::NoPath { from, to }));
             };
             return plan_hlg(from, to, options, hooks);
         }
+        #[cfg(not(feature = "perceptual"))]
+        if from != to
+            && (is_perceptual_model(from.color_model()) || is_perceptual_model(to.color_model()))
+        {
+            return Err(whereat::at!(ConvertError::FeatureRequired {
+                feature: "perceptual",
+                from,
+                to,
+            }));
+        }
         if needs_cms_for_color_model(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
         }
+        #[cfg(feature = "perceptual")]
         let involves_jzazbz = matches!(
             from.color_model(),
             crate::ColorModel::Jzazbz | crate::ColorModel::Jzczhz
@@ -3226,12 +3252,18 @@ impl NativePlan {
             to.color_model(),
             crate::ColorModel::Jzazbz | crate::ColorModel::Jzczhz
         );
+        #[cfg(not(feature = "perceptual"))]
+        let involves_jzazbz = false;
         let pq_boundary = from.transfer() != to.transfer()
             && (from.transfer() == TransferFunction::Pq || to.transfer() == TransferFunction::Pq)
             && !involves_jzazbz;
         #[cfg(not(feature = "hdr-transfers"))]
         if pq_boundary {
-            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+            return Err(whereat::at!(ConvertError::FeatureRequired {
+                feature: "hdr-transfers",
+                from,
+                to,
+            }));
         }
         if pq_boundary
             && !is_hdr_to_sdr(from.transfer(), to.transfer())
@@ -3247,6 +3279,17 @@ impl NativePlan {
             return Self::new_explicit_core(from, pivot, options, hooks)?
                 .compose(&Self::new_explicit_core(pivot, to, options, hooks)?)
                 .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
+        }
+        #[cfg(not(feature = "oklab"))]
+        if from != to
+            && (matches!(from.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA)
+                || matches!(to.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA))
+        {
+            return Err(whereat::at!(ConvertError::FeatureRequired {
+                feature: "oklab",
+                from,
+                to,
+            }));
         }
         // Check alpha removal policy.
         let drops_alpha = from.has_alpha() && !to.has_alpha();
@@ -3312,7 +3355,11 @@ impl NativePlan {
                 });
             }
             #[cfg(not(feature = "oklab"))]
-            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+            return Err(whereat::at!(ConvertError::FeatureRequired {
+                feature: "oklab",
+                from,
+                to,
+            }));
         }
 
         let mut plan = if is_hdr_to_sdr(from.transfer(), to.transfer()) {

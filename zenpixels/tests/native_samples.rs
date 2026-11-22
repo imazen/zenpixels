@@ -246,7 +246,7 @@ fn native_combinations_have_one_generic_representation() {
         }
         // Generic layouts (including Bgr/Bgra, inverted CMYK, CIE Lab/XYZ, and perceptual/polar spaces)
         // are carried across all non-named ChannelTypes.
-        for layout in [
+        let layouts: &[ChannelLayout] = &[
             ChannelLayout::Bgr,
             ChannelLayout::Bgra,
             ChannelLayout::Cmyk,
@@ -257,19 +257,32 @@ fn native_combinations_have_one_generic_representation() {
             ChannelLayout::LabAlpha,
             ChannelLayout::Xyz,
             ChannelLayout::XyzAlpha,
+            #[cfg(feature = "perceptual")]
             ChannelLayout::Oklch,
+            #[cfg(feature = "perceptual")]
             ChannelLayout::OklchAlpha,
+            #[cfg(feature = "perceptual")]
             ChannelLayout::Lch,
+            #[cfg(feature = "perceptual")]
             ChannelLayout::LchAlpha,
+            #[cfg(feature = "perceptual")]
             ChannelLayout::Jzazbz,
+            #[cfg(feature = "perceptual")]
             ChannelLayout::JzazbzAlpha,
+            #[cfg(feature = "perceptual")]
             ChannelLayout::Jzczhz,
+            #[cfg(feature = "perceptual")]
             ChannelLayout::JzczhzAlpha,
+            #[cfg(feature = "perceptual")]
             ChannelLayout::Hsl,
+            #[cfg(feature = "perceptual")]
             ChannelLayout::HslAlpha,
+            #[cfg(feature = "perceptual")]
             ChannelLayout::Hsv,
+            #[cfg(feature = "perceptual")]
             ChannelLayout::HsvAlpha,
-        ] {
+        ];
+        for &layout in layouts {
             let fmt = PixelFormat::from_parts(channel, layout, None).unwrap();
             assert!(matches!(fmt, PixelFormat::Generic(_)));
             assert_eq!(fmt.channel_type(), channel);

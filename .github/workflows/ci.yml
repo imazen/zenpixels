@@ -107,6 +107,9 @@ jobs:
       - name: Check no_std (zenpixels-convert)
         run: cargo check -p zenpixels-convert --no-default-features
 
+      - name: Check split-brain perceptual unification (zenpixels/perceptual on, zenpixels-convert/perceptual off)
+        run: cargo check -p zenpixels-convert --no-default-features --features zenpixels/perceptual
+
       # hdr-experimental adds transcendental math (Bt2446A / SoftCompress /
       # gamut compression). It must stay no_std-clean (libm, not the std f32
       # inherents) — this combination was previously never built in CI, so a

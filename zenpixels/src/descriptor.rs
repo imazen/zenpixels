@@ -244,28 +244,40 @@ pub enum ChannelLayout {
     /// (`0 = transparent`, max = opaque).
     CmykInvertedAlpha,
     /// Polar Oklab: L, C, h° (`h` in `[0, 360)` for float, `[0, 1)` normalized for unsigned integer).
+    #[cfg(feature = "perceptual")]
     Oklch,
     /// Polar Oklab with alpha: L, C, h°, alpha.
+    #[cfg(feature = "perceptual")]
     OklchAlpha,
     /// Polar CIE 1976 L*C*h°: L*, C*, h° (`h` in `[0, 360)` for float, `[0, 1)` normalized for unsigned integer).
+    #[cfg(feature = "perceptual")]
     Lch,
     /// Polar CIE 1976 L*C*h° with alpha: L*, C*, h°, alpha.
+    #[cfg(feature = "perceptual")]
     LchAlpha,
     /// Safdar et al. (2017) HDR perceptual opponent space: Jz, az, bz.
+    #[cfg(feature = "perceptual")]
     Jzazbz,
     /// Safdar et al. (2017) HDR perceptual opponent space with alpha: Jz, az, bz, alpha.
+    #[cfg(feature = "perceptual")]
     JzazbzAlpha,
     /// Polar Jzazbz: Jz, Cz, hz° (`hz` in `[0, 360)` for float, `[0, 1)` normalized for unsigned integer).
+    #[cfg(feature = "perceptual")]
     Jzczhz,
     /// Polar Jzazbz with alpha: Jz, Cz, hz°, alpha.
+    #[cfg(feature = "perceptual")]
     JzczhzAlpha,
     /// RGB-relative cylindrical Hue, Saturation, Lightness: H°, S, L.
+    #[cfg(feature = "perceptual")]
     Hsl,
     /// RGB-relative cylindrical Hue, Saturation, Lightness with alpha: H°, S, L, alpha.
+    #[cfg(feature = "perceptual")]
     HslAlpha,
     /// RGB-relative cylindrical Hue, Saturation, Value: H°, S, V.
+    #[cfg(feature = "perceptual")]
     Hsv,
     /// RGB-relative cylindrical Hue, Saturation, Value with alpha: H°, S, V, alpha.
+    #[cfg(feature = "perceptual")]
     HsvAlpha,
     #[doc(hidden)]
     __Reserved(reserved::Reserved),
@@ -279,25 +291,18 @@ impl ChannelLayout {
         match self {
             Self::Gray => 1,
             Self::GrayAlpha => 2,
-            Self::Rgb
-            | Self::Bgr
-            | Self::Oklab
-            | Self::Lab
-            | Self::Xyz
-            | Self::Oklch
-            | Self::Lch
-            | Self::Jzazbz
-            | Self::Jzczhz
-            | Self::Hsl
-            | Self::Hsv => 3,
+            Self::Rgb | Self::Bgr | Self::Oklab | Self::Lab | Self::Xyz => 3,
+            #[cfg(feature = "perceptual")]
+            Self::Oklch | Self::Lch | Self::Jzazbz | Self::Jzczhz | Self::Hsl | Self::Hsv => 3,
             Self::Rgba
             | Self::Bgra
             | Self::OklabA
             | Self::Cmyk
             | Self::CmykInverted
             | Self::LabAlpha
-            | Self::XyzAlpha
-            | Self::OklchAlpha
+            | Self::XyzAlpha => 4,
+            #[cfg(feature = "perceptual")]
+            Self::OklchAlpha
             | Self::LchAlpha
             | Self::JzazbzAlpha
             | Self::JzczhzAlpha
@@ -312,23 +317,24 @@ impl ChannelLayout {
     #[inline]
     #[allow(unreachable_patterns)]
     pub const fn has_alpha(self) -> bool {
-        matches!(
-            self,
+        match self {
             Self::GrayAlpha
-                | Self::Rgba
-                | Self::Bgra
-                | Self::OklabA
-                | Self::CmykAlpha
-                | Self::CmykInvertedAlpha
-                | Self::LabAlpha
-                | Self::XyzAlpha
-                | Self::OklchAlpha
-                | Self::LchAlpha
-                | Self::JzazbzAlpha
-                | Self::JzczhzAlpha
-                | Self::HslAlpha
-                | Self::HsvAlpha
-        )
+            | Self::Rgba
+            | Self::Bgra
+            | Self::OklabA
+            | Self::CmykAlpha
+            | Self::CmykInvertedAlpha
+            | Self::LabAlpha
+            | Self::XyzAlpha => true,
+            #[cfg(feature = "perceptual")]
+            Self::OklchAlpha
+            | Self::LchAlpha
+            | Self::JzazbzAlpha
+            | Self::JzczhzAlpha
+            | Self::HslAlpha
+            | Self::HsvAlpha => true,
+            _ => false,
+        }
     }
 
     /// Whether this layout stores CMYK ink with reversed polarity (`0 = full ink`, max = no ink).
@@ -340,55 +346,64 @@ impl ChannelLayout {
     /// Whether this layout has a cyclic polar hue angle channel (which cannot be premultiplied by alpha).
     #[inline]
     pub const fn is_polar(self) -> bool {
-        matches!(
-            self,
-            Self::Oklch
-                | Self::OklchAlpha
-                | Self::Lch
-                | Self::LchAlpha
-                | Self::Jzczhz
-                | Self::JzczhzAlpha
-                | Self::Hsl
-                | Self::HslAlpha
-                | Self::Hsv
-                | Self::HsvAlpha
-        )
+        #[cfg(feature = "perceptual")]
+        {
+            matches!(
+                self,
+                Self::Oklch
+                    | Self::OklchAlpha
+                    | Self::Lch
+                    | Self::LchAlpha
+                    | Self::Jzczhz
+                    | Self::JzczhzAlpha
+                    | Self::Hsl
+                    | Self::HslAlpha
+                    | Self::Hsv
+                    | Self::HsvAlpha
+            )
+        }
+        #[cfg(not(feature = "perceptual"))]
+        {
+            let _ = self;
+            false
+        }
     }
 
     /// Const equality; `PartialEq` is not callable in const contexts.
     #[allow(unreachable_patterns)]
     pub(crate) const fn same(self, other: Self) -> bool {
-        matches!(
-            (self, other),
+        match (self, other) {
             (Self::Gray, Self::Gray)
-                | (Self::GrayAlpha, Self::GrayAlpha)
-                | (Self::Rgb, Self::Rgb)
-                | (Self::Rgba, Self::Rgba)
-                | (Self::Bgra, Self::Bgra)
-                | (Self::Oklab, Self::Oklab)
-                | (Self::OklabA, Self::OklabA)
-                | (Self::Cmyk, Self::Cmyk)
-                | (Self::Bgr, Self::Bgr)
-                | (Self::CmykAlpha, Self::CmykAlpha)
-                | (Self::Lab, Self::Lab)
-                | (Self::LabAlpha, Self::LabAlpha)
-                | (Self::Xyz, Self::Xyz)
-                | (Self::XyzAlpha, Self::XyzAlpha)
-                | (Self::CmykInverted, Self::CmykInverted)
-                | (Self::CmykInvertedAlpha, Self::CmykInvertedAlpha)
-                | (Self::Oklch, Self::Oklch)
-                | (Self::OklchAlpha, Self::OklchAlpha)
-                | (Self::Lch, Self::Lch)
-                | (Self::LchAlpha, Self::LchAlpha)
-                | (Self::Jzazbz, Self::Jzazbz)
-                | (Self::JzazbzAlpha, Self::JzazbzAlpha)
-                | (Self::Jzczhz, Self::Jzczhz)
-                | (Self::JzczhzAlpha, Self::JzczhzAlpha)
-                | (Self::Hsl, Self::Hsl)
-                | (Self::HslAlpha, Self::HslAlpha)
-                | (Self::Hsv, Self::Hsv)
-                | (Self::HsvAlpha, Self::HsvAlpha)
-        )
+            | (Self::GrayAlpha, Self::GrayAlpha)
+            | (Self::Rgb, Self::Rgb)
+            | (Self::Rgba, Self::Rgba)
+            | (Self::Bgra, Self::Bgra)
+            | (Self::Oklab, Self::Oklab)
+            | (Self::OklabA, Self::OklabA)
+            | (Self::Cmyk, Self::Cmyk)
+            | (Self::Bgr, Self::Bgr)
+            | (Self::CmykAlpha, Self::CmykAlpha)
+            | (Self::Lab, Self::Lab)
+            | (Self::LabAlpha, Self::LabAlpha)
+            | (Self::Xyz, Self::Xyz)
+            | (Self::XyzAlpha, Self::XyzAlpha)
+            | (Self::CmykInverted, Self::CmykInverted)
+            | (Self::CmykInvertedAlpha, Self::CmykInvertedAlpha) => true,
+            #[cfg(feature = "perceptual")]
+            (Self::Oklch, Self::Oklch)
+            | (Self::OklchAlpha, Self::OklchAlpha)
+            | (Self::Lch, Self::Lch)
+            | (Self::LchAlpha, Self::LchAlpha)
+            | (Self::Jzazbz, Self::Jzazbz)
+            | (Self::JzazbzAlpha, Self::JzazbzAlpha)
+            | (Self::Jzczhz, Self::Jzczhz)
+            | (Self::JzczhzAlpha, Self::JzczhzAlpha)
+            | (Self::Hsl, Self::Hsl)
+            | (Self::HslAlpha, Self::HslAlpha)
+            | (Self::Hsv, Self::Hsv)
+            | (Self::HsvAlpha, Self::HsvAlpha) => true,
+            _ => false,
+        }
     }
 }
 
@@ -412,17 +427,29 @@ impl fmt::Display for ChannelLayout {
             Self::XyzAlpha => f.write_str("XYZA"),
             Self::CmykInverted => f.write_str("CmykInverted"),
             Self::CmykInvertedAlpha => f.write_str("CmykInvertedAlpha"),
+            #[cfg(feature = "perceptual")]
             Self::Oklch => f.write_str("Oklch"),
+            #[cfg(feature = "perceptual")]
             Self::OklchAlpha => f.write_str("OklchA"),
+            #[cfg(feature = "perceptual")]
             Self::Lch => f.write_str("LCh"),
+            #[cfg(feature = "perceptual")]
             Self::LchAlpha => f.write_str("LChA"),
+            #[cfg(feature = "perceptual")]
             Self::Jzazbz => f.write_str("Jzazbz"),
+            #[cfg(feature = "perceptual")]
             Self::JzazbzAlpha => f.write_str("JzazbzA"),
+            #[cfg(feature = "perceptual")]
             Self::Jzczhz => f.write_str("Jzczhz"),
+            #[cfg(feature = "perceptual")]
             Self::JzczhzAlpha => f.write_str("JzczhzA"),
+            #[cfg(feature = "perceptual")]
             Self::Hsl => f.write_str("HSL"),
+            #[cfg(feature = "perceptual")]
             Self::HslAlpha => f.write_str("HSLA"),
+            #[cfg(feature = "perceptual")]
             Self::Hsv => f.write_str("HSV"),
+            #[cfg(feature = "perceptual")]
             Self::HsvAlpha => f.write_str("HSVA"),
             Self::__Reserved(never) => match *never {},
         }
@@ -1859,16 +1886,22 @@ pub enum ColorModel {
     /// CIE 1931 XYZ tristimulus color space.
     Xyz,
     /// Polar Oklab perceptual color space (`L, C, h°`).
+    #[cfg(feature = "perceptual")]
     Oklch,
     /// Polar CIE 1976 L*C*h° perceptual color space (`L*, C*, h°`).
+    #[cfg(feature = "perceptual")]
     Lch,
     /// Safdar et al. (2017) HDR perceptual opponent color space (`Jz, az, bz`).
+    #[cfg(feature = "perceptual")]
     Jzazbz,
     /// Polar Jzazbz HDR perceptual color space (`Jz, Cz, hz°`).
+    #[cfg(feature = "perceptual")]
     Jzczhz,
     /// RGB-relative cylindrical Hue, Saturation, Lightness (`H°, S, L`).
+    #[cfg(feature = "perceptual")]
     Hsl,
     /// RGB-relative cylindrical Hue, Saturation, Value (`H°, S, V`).
+    #[cfg(feature = "perceptual")]
     Hsv,
     #[doc(hidden)]
     __Reserved(reserved::Reserved),
@@ -1889,10 +1922,18 @@ impl ColorModel {
     /// Whether this color model includes a cyclic polar hue angle channel.
     #[inline]
     pub const fn is_polar(self) -> bool {
-        matches!(
-            self,
-            Self::Oklch | Self::Lch | Self::Jzczhz | Self::Hsl | Self::Hsv
-        )
+        #[cfg(feature = "perceptual")]
+        {
+            matches!(
+                self,
+                Self::Oklch | Self::Lch | Self::Jzczhz | Self::Hsl | Self::Hsv
+            )
+        }
+        #[cfg(not(feature = "perceptual"))]
+        {
+            let _ = self;
+            false
+        }
     }
 }
 
@@ -1907,11 +1948,17 @@ impl fmt::Display for ColorModel {
             Self::Cmyk => f.write_str("CMYK"),
             Self::Lab => f.write_str("Lab"),
             Self::Xyz => f.write_str("XYZ"),
+            #[cfg(feature = "perceptual")]
             Self::Oklch => f.write_str("Oklch"),
+            #[cfg(feature = "perceptual")]
             Self::Lch => f.write_str("LCh"),
+            #[cfg(feature = "perceptual")]
             Self::Jzazbz => f.write_str("Jzazbz"),
+            #[cfg(feature = "perceptual")]
             Self::Jzczhz => f.write_str("Jzczhz"),
+            #[cfg(feature = "perceptual")]
             Self::Hsl => f.write_str("HSL"),
+            #[cfg(feature = "perceptual")]
             Self::Hsv => f.write_str("HSV"),
             Self::__Reserved(never) => match *never {},
         }
@@ -2018,29 +2065,30 @@ impl GenericFormat {
     /// The combination when it is representable and has no named variant.
     #[allow(unreachable_patterns)]
     const fn create_if_unnamed(channel_type: ChannelType, layout: ChannelLayout) -> Option<Self> {
-        let always_generic_layout = matches!(
-            layout,
+        let always_generic_layout = match layout {
             ChannelLayout::Cmyk
-                | ChannelLayout::CmykInverted
-                | ChannelLayout::CmykAlpha
-                | ChannelLayout::CmykInvertedAlpha
-                | ChannelLayout::Lab
-                | ChannelLayout::LabAlpha
-                | ChannelLayout::Xyz
-                | ChannelLayout::XyzAlpha
-                | ChannelLayout::Oklch
-                | ChannelLayout::OklchAlpha
-                | ChannelLayout::Lch
-                | ChannelLayout::LchAlpha
-                | ChannelLayout::Jzazbz
-                | ChannelLayout::JzazbzAlpha
-                | ChannelLayout::Jzczhz
-                | ChannelLayout::JzczhzAlpha
-                | ChannelLayout::Hsl
-                | ChannelLayout::HslAlpha
-                | ChannelLayout::Hsv
-                | ChannelLayout::HsvAlpha
-        );
+            | ChannelLayout::CmykInverted
+            | ChannelLayout::CmykAlpha
+            | ChannelLayout::CmykInvertedAlpha
+            | ChannelLayout::Lab
+            | ChannelLayout::LabAlpha
+            | ChannelLayout::Xyz
+            | ChannelLayout::XyzAlpha => true,
+            #[cfg(feature = "perceptual")]
+            ChannelLayout::Oklch
+            | ChannelLayout::OklchAlpha
+            | ChannelLayout::Lch
+            | ChannelLayout::LchAlpha
+            | ChannelLayout::Jzazbz
+            | ChannelLayout::JzazbzAlpha
+            | ChannelLayout::Jzczhz
+            | ChannelLayout::JzczhzAlpha
+            | ChannelLayout::Hsl
+            | ChannelLayout::HslAlpha
+            | ChannelLayout::Hsv
+            | ChannelLayout::HsvAlpha => true,
+            _ => false,
+        };
         let generic_type = matches!(
             channel_type,
             ChannelType::I8
@@ -2075,7 +2123,7 @@ impl GenericFormat {
     /// Static display name, matching historical CMYK and native-sample names.
     #[allow(unreachable_patterns)]
     const fn name(self) -> &'static str {
-        const NAMES: [[&str; 26]; 11] = [
+        const NAMES: [[&str; 14]; 11] = [
             [
                 "Generic",
                 "Generic",
@@ -2091,18 +2139,6 @@ impl GenericFormat {
                 "LabA8",
                 "XYZ8",
                 "XYZA8",
-                "Oklch8",
-                "OklchA8",
-                "Lch8",
-                "LchA8",
-                "Jzazbz8",
-                "JzazbzA8",
-                "Jzczhz8",
-                "JzczhzA8",
-                "HSL8",
-                "HSLA8",
-                "HSV8",
-                "HSVA8",
             ],
             [
                 "Generic",
@@ -2119,18 +2155,6 @@ impl GenericFormat {
                 "LabA16",
                 "XYZ16",
                 "XYZA16",
-                "Oklch16",
-                "OklchA16",
-                "Lch16",
-                "LchA16",
-                "Jzazbz16",
-                "JzazbzA16",
-                "Jzczhz16",
-                "JzczhzA16",
-                "HSL16",
-                "HSLA16",
-                "HSV16",
-                "HSVA16",
             ],
             [
                 "Generic",
@@ -2147,18 +2171,6 @@ impl GenericFormat {
                 "LabAF16",
                 "XyzF16",
                 "XyzaF16",
-                "OklchF16",
-                "OklchAF16",
-                "LchF16",
-                "LchAF16",
-                "JzazbzF16",
-                "JzazbzAF16",
-                "JzczhzF16",
-                "JzczhzAF16",
-                "HslF16",
-                "HslaF16",
-                "HsvF16",
-                "HsvaF16",
             ],
             [
                 "Generic",
@@ -2175,18 +2187,6 @@ impl GenericFormat {
                 "LabAF32",
                 "XyzF32",
                 "XyzaF32",
-                "OklchF32",
-                "OklchAF32",
-                "LchF32",
-                "LchAF32",
-                "JzazbzF32",
-                "JzazbzAF32",
-                "JzczhzF32",
-                "JzczhzAF32",
-                "HslF32",
-                "HslaF32",
-                "HsvF32",
-                "HsvaF32",
             ],
             [
                 "GrayI8",
@@ -2203,18 +2203,6 @@ impl GenericFormat {
                 "LabAI8",
                 "XyzI8",
                 "XyzaI8",
-                "OklchI8",
-                "OklchAI8",
-                "LchI8",
-                "LchAI8",
-                "JzazbzI8",
-                "JzazbzAI8",
-                "JzczhzI8",
-                "JzczhzAI8",
-                "HslI8",
-                "HslaI8",
-                "HsvI8",
-                "HsvaI8",
             ],
             [
                 "GrayI16",
@@ -2231,18 +2219,6 @@ impl GenericFormat {
                 "LabAI16",
                 "XyzI16",
                 "XyzaI16",
-                "OklchI16",
-                "OklchAI16",
-                "LchI16",
-                "LchAI16",
-                "JzazbzI16",
-                "JzazbzAI16",
-                "JzczhzI16",
-                "JzczhzAI16",
-                "HslI16",
-                "HslaI16",
-                "HsvI16",
-                "HsvaI16",
             ],
             [
                 "GrayU32",
@@ -2259,18 +2235,6 @@ impl GenericFormat {
                 "LabAU32",
                 "XyzU32",
                 "XyzaU32",
-                "OklchU32",
-                "OklchAU32",
-                "LchU32",
-                "LchAU32",
-                "JzazbzU32",
-                "JzazbzAU32",
-                "JzczhzU32",
-                "JzczhzAU32",
-                "HslU32",
-                "HslaU32",
-                "HsvU32",
-                "HsvaU32",
             ],
             [
                 "GrayI32",
@@ -2287,18 +2251,6 @@ impl GenericFormat {
                 "LabAI32",
                 "XyzI32",
                 "XyzaI32",
-                "OklchI32",
-                "OklchAI32",
-                "LchI32",
-                "LchAI32",
-                "JzazbzI32",
-                "JzazbzAI32",
-                "JzczhzI32",
-                "JzczhzAI32",
-                "HslI32",
-                "HslaI32",
-                "HsvI32",
-                "HsvaI32",
             ],
             [
                 "GrayU64",
@@ -2315,18 +2267,6 @@ impl GenericFormat {
                 "LabAU64",
                 "XyzU64",
                 "XyzaU64",
-                "OklchU64",
-                "OklchAU64",
-                "LchU64",
-                "LchAU64",
-                "JzazbzU64",
-                "JzazbzAU64",
-                "JzczhzU64",
-                "JzczhzAU64",
-                "HslU64",
-                "HslaU64",
-                "HsvU64",
-                "HsvaU64",
             ],
             [
                 "GrayI64",
@@ -2343,18 +2283,6 @@ impl GenericFormat {
                 "LabAI64",
                 "XyzI64",
                 "XyzaI64",
-                "OklchI64",
-                "OklchAI64",
-                "LchI64",
-                "LchAI64",
-                "JzazbzI64",
-                "JzazbzAI64",
-                "JzczhzI64",
-                "JzczhzAI64",
-                "HslI64",
-                "HslaI64",
-                "HsvI64",
-                "HsvaI64",
             ],
             [
                 "GrayF64",
@@ -2371,6 +2299,141 @@ impl GenericFormat {
                 "LabAF64",
                 "XyzF64",
                 "XyzaF64",
+            ],
+        ];
+        #[cfg(feature = "perceptual")]
+        const PERCEPTUAL_NAMES: [[&str; 12]; 11] = [
+            [
+                "Oklch8", "OklchA8", "Lch8", "LchA8", "Jzazbz8", "JzazbzA8", "Jzczhz8", "JzczhzA8",
+                "HSL8", "HSLA8", "HSV8", "HSVA8",
+            ],
+            [
+                "Oklch16",
+                "OklchA16",
+                "Lch16",
+                "LchA16",
+                "Jzazbz16",
+                "JzazbzA16",
+                "Jzczhz16",
+                "JzczhzA16",
+                "HSL16",
+                "HSLA16",
+                "HSV16",
+                "HSVA16",
+            ],
+            [
+                "OklchF16",
+                "OklchAF16",
+                "LchF16",
+                "LchAF16",
+                "JzazbzF16",
+                "JzazbzAF16",
+                "JzczhzF16",
+                "JzczhzAF16",
+                "HslF16",
+                "HslaF16",
+                "HsvF16",
+                "HsvaF16",
+            ],
+            [
+                "OklchF32",
+                "OklchAF32",
+                "LchF32",
+                "LchAF32",
+                "JzazbzF32",
+                "JzazbzAF32",
+                "JzczhzF32",
+                "JzczhzAF32",
+                "HslF32",
+                "HslaF32",
+                "HsvF32",
+                "HsvaF32",
+            ],
+            [
+                "OklchI8",
+                "OklchAI8",
+                "LchI8",
+                "LchAI8",
+                "JzazbzI8",
+                "JzazbzAI8",
+                "JzczhzI8",
+                "JzczhzAI8",
+                "HslI8",
+                "HslaI8",
+                "HsvI8",
+                "HsvaI8",
+            ],
+            [
+                "OklchI16",
+                "OklchAI16",
+                "LchI16",
+                "LchAI16",
+                "JzazbzI16",
+                "JzazbzAI16",
+                "JzczhzI16",
+                "JzczhzAI16",
+                "HslI16",
+                "HslaI16",
+                "HsvI16",
+                "HsvaI16",
+            ],
+            [
+                "OklchU32",
+                "OklchAU32",
+                "LchU32",
+                "LchAU32",
+                "JzazbzU32",
+                "JzazbzAU32",
+                "JzczhzU32",
+                "JzczhzAU32",
+                "HslU32",
+                "HslaU32",
+                "HsvU32",
+                "HsvaU32",
+            ],
+            [
+                "OklchI32",
+                "OklchAI32",
+                "LchI32",
+                "LchAI32",
+                "JzazbzI32",
+                "JzazbzAI32",
+                "JzczhzI32",
+                "JzczhzAI32",
+                "HslI32",
+                "HslaI32",
+                "HsvI32",
+                "HsvaI32",
+            ],
+            [
+                "OklchU64",
+                "OklchAU64",
+                "LchU64",
+                "LchAU64",
+                "JzazbzU64",
+                "JzazbzAU64",
+                "JzczhzU64",
+                "JzczhzAU64",
+                "HslU64",
+                "HslaU64",
+                "HsvU64",
+                "HsvaU64",
+            ],
+            [
+                "OklchI64",
+                "OklchAI64",
+                "LchI64",
+                "LchAI64",
+                "JzazbzI64",
+                "JzazbzAI64",
+                "JzczhzI64",
+                "JzczhzAI64",
+                "HslI64",
+                "HslaI64",
+                "HsvI64",
+                "HsvaI64",
+            ],
+            [
                 "OklchF64",
                 "OklchAF64",
                 "LchF64",
@@ -2414,18 +2477,30 @@ impl GenericFormat {
             ChannelLayout::LabAlpha => 11,
             ChannelLayout::Xyz => 12,
             ChannelLayout::XyzAlpha => 13,
-            ChannelLayout::Oklch => 14,
-            ChannelLayout::OklchAlpha => 15,
-            ChannelLayout::Lch => 16,
-            ChannelLayout::LchAlpha => 17,
-            ChannelLayout::Jzazbz => 18,
-            ChannelLayout::JzazbzAlpha => 19,
-            ChannelLayout::Jzczhz => 20,
-            ChannelLayout::JzczhzAlpha => 21,
-            ChannelLayout::Hsl => 22,
-            ChannelLayout::HslAlpha => 23,
-            ChannelLayout::Hsv => 24,
-            ChannelLayout::HsvAlpha => 25,
+            #[cfg(feature = "perceptual")]
+            ChannelLayout::Oklch => return PERCEPTUAL_NAMES[ty_idx][0],
+            #[cfg(feature = "perceptual")]
+            ChannelLayout::OklchAlpha => return PERCEPTUAL_NAMES[ty_idx][1],
+            #[cfg(feature = "perceptual")]
+            ChannelLayout::Lch => return PERCEPTUAL_NAMES[ty_idx][2],
+            #[cfg(feature = "perceptual")]
+            ChannelLayout::LchAlpha => return PERCEPTUAL_NAMES[ty_idx][3],
+            #[cfg(feature = "perceptual")]
+            ChannelLayout::Jzazbz => return PERCEPTUAL_NAMES[ty_idx][4],
+            #[cfg(feature = "perceptual")]
+            ChannelLayout::JzazbzAlpha => return PERCEPTUAL_NAMES[ty_idx][5],
+            #[cfg(feature = "perceptual")]
+            ChannelLayout::Jzczhz => return PERCEPTUAL_NAMES[ty_idx][6],
+            #[cfg(feature = "perceptual")]
+            ChannelLayout::JzczhzAlpha => return PERCEPTUAL_NAMES[ty_idx][7],
+            #[cfg(feature = "perceptual")]
+            ChannelLayout::Hsl => return PERCEPTUAL_NAMES[ty_idx][8],
+            #[cfg(feature = "perceptual")]
+            ChannelLayout::HslAlpha => return PERCEPTUAL_NAMES[ty_idx][9],
+            #[cfg(feature = "perceptual")]
+            ChannelLayout::Hsv => return PERCEPTUAL_NAMES[ty_idx][10],
+            #[cfg(feature = "perceptual")]
+            ChannelLayout::HsvAlpha => return PERCEPTUAL_NAMES[ty_idx][11],
             _ => return "Generic",
         };
         NAMES[ty_idx][layout_idx]
@@ -2557,11 +2632,17 @@ impl PixelFormat {
                 | ChannelLayout::CmykInvertedAlpha => ColorModel::Cmyk,
                 ChannelLayout::Lab | ChannelLayout::LabAlpha => ColorModel::Lab,
                 ChannelLayout::Xyz | ChannelLayout::XyzAlpha => ColorModel::Xyz,
+                #[cfg(feature = "perceptual")]
                 ChannelLayout::Oklch | ChannelLayout::OklchAlpha => ColorModel::Oklch,
+                #[cfg(feature = "perceptual")]
                 ChannelLayout::Lch | ChannelLayout::LchAlpha => ColorModel::Lch,
+                #[cfg(feature = "perceptual")]
                 ChannelLayout::Jzazbz | ChannelLayout::JzazbzAlpha => ColorModel::Jzazbz,
+                #[cfg(feature = "perceptual")]
                 ChannelLayout::Jzczhz | ChannelLayout::JzczhzAlpha => ColorModel::Jzczhz,
+                #[cfg(feature = "perceptual")]
                 ChannelLayout::Hsl | ChannelLayout::HslAlpha => ColorModel::Hsl,
+                #[cfg(feature = "perceptual")]
                 ChannelLayout::Hsv | ChannelLayout::HsvAlpha => ColorModel::Hsv,
                 _ => ColorModel::Rgb,
             },
@@ -3487,16 +3568,22 @@ mod tests {
             assert_eq!(cmyka_inv.default_alpha(), Some(AlphaMode::Straight));
             assert!(cmyka_inv.is_inverted_cmyk());
 
-            for (layout, model, ch, has_a, is_polar) in [
+            let cases: &[(ChannelLayout, ColorModel, usize, bool, bool)] = &[
                 (ChannelLayout::Lab, ColorModel::Lab, 3, false, false),
                 (ChannelLayout::LabAlpha, ColorModel::Lab, 4, true, false),
                 (ChannelLayout::Xyz, ColorModel::Xyz, 3, false, false),
                 (ChannelLayout::XyzAlpha, ColorModel::Xyz, 4, true, false),
+                #[cfg(feature = "perceptual")]
                 (ChannelLayout::Oklch, ColorModel::Oklch, 3, false, true),
+                #[cfg(feature = "perceptual")]
                 (ChannelLayout::OklchAlpha, ColorModel::Oklch, 4, true, true),
+                #[cfg(feature = "perceptual")]
                 (ChannelLayout::Lch, ColorModel::Lch, 3, false, true),
+                #[cfg(feature = "perceptual")]
                 (ChannelLayout::LchAlpha, ColorModel::Lch, 4, true, true),
+                #[cfg(feature = "perceptual")]
                 (ChannelLayout::Jzazbz, ColorModel::Jzazbz, 3, false, false),
+                #[cfg(feature = "perceptual")]
                 (
                     ChannelLayout::JzazbzAlpha,
                     ColorModel::Jzazbz,
@@ -3504,7 +3591,9 @@ mod tests {
                     true,
                     false,
                 ),
+                #[cfg(feature = "perceptual")]
                 (ChannelLayout::Jzczhz, ColorModel::Jzczhz, 3, false, true),
+                #[cfg(feature = "perceptual")]
                 (
                     ChannelLayout::JzczhzAlpha,
                     ColorModel::Jzczhz,
@@ -3512,11 +3601,16 @@ mod tests {
                     true,
                     true,
                 ),
+                #[cfg(feature = "perceptual")]
                 (ChannelLayout::Hsl, ColorModel::Hsl, 3, false, true),
+                #[cfg(feature = "perceptual")]
                 (ChannelLayout::HslAlpha, ColorModel::Hsl, 4, true, true),
+                #[cfg(feature = "perceptual")]
                 (ChannelLayout::Hsv, ColorModel::Hsv, 3, false, true),
+                #[cfg(feature = "perceptual")]
                 (ChannelLayout::HsvAlpha, ColorModel::Hsv, 4, true, true),
-            ] {
+            ];
+            for &(layout, model, ch, has_a, is_polar) in cases {
                 assert_eq!(layout.is_polar(), is_polar);
                 assert_eq!(model.is_polar(), is_polar);
                 let alpha = has_a.then_some(AlphaMode::Straight);

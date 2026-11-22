@@ -58,6 +58,7 @@
 //! | `std` | Default; omit for `no_std + alloc` |
 //! | `icc` | Default; paired-fingerprint ICC recognition with scoped use permission |
 //! | `planar` | Opt-in; `plane` module (`Plane`, `PlanarLayout`, `PlanarSlice`, `PlanarBuffer`) and `sample::CodePlane` |
+//! | `perceptual` | Opt-in; perceptual/cylindrical `ChannelLayout` and `ColorModel` variants (`Oklch`, `Lch`, `Jzazbz`, `Jzczhz`, `Hsl`, `Hsv`) |
 //! | `rgb` | Concrete `rgb` pixel types |
 //! | `imgref` | imgref adapters; enables `rgb` |
 //! | `image` | image 0.25 interop (Rust 1.88+) |

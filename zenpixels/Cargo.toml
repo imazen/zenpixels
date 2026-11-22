@@ -26,6 +26,10 @@ hash = ["dep:zenhash", "zenhash/murmur3"]
 # Multi-plane layouts, native planes (`zenpixels::plane`), and bit-packed integer
 # code views (`CodePlane`, `CodePlaneMut`); off by default for faster packed-only builds.
 planar = []
+# Perceptual and cylindrical color-space descriptors (`Oklch`, `Lch`,
+# `Jzazbz`, `Jzczhz`, `Hsl`, `Hsv` on `ChannelLayout` and `ColorModel`).
+# Off by default; `zenpixels-convert`'s `perceptual` feature enables this automatically.
+perceptual = []
 icc = []
 rgb = ["dep:rgb"]
 imgref = ["dep:imgref", "rgb"]

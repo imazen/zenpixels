@@ -4,6 +4,11 @@
 
 ### Added
 
+- Gate opt-in perceptual/cylindrical descriptor variants (`Oklch`, `OklchAlpha`,
+  `Lch`, `LchAlpha`, `Jzazbz`, `JzazbzAlpha`, `Jzczhz`, `JzczhzAlpha`, `Hsl`,
+  `HslAlpha`, `Hsv`, `HsvAlpha` on `ChannelLayout`, and `Oklch`, `Lch`, `Jzazbz`,
+  `Jzczhz`, `Hsl`, `Hsv` on `ColorModel`) behind the default-off `perceptual`
+  Cargo feature (automatically forwarded by `zenpixels-convert/perceptual`).
 - Add `sample::{FloatFacts, FloatFactsError}` for tracking verified or trusted
   floating-point sample invariants (`NO_NAN`, `NO_INFINITE`, `NO_SUBNORMALS`,
   `NON_NEGATIVE`, `POSITIVE`, `AT_MOST_ONE`, with `NO_SUBNORMALS` orthogonal to
@@ -60,10 +65,16 @@
   `Bt2446A`) so LLVM dead-code-eliminates every unused row kernel — even when multiple
   codecs unify Cargo features (`-51%` to `-76%` stripped binary size on `SDR_WEB`/`LAYOUT_U8`,
   verified across x86_64 and wasm32; `benchmarks/codegen_shrink_2026-11-22.md`).
+- Add `ConvertError::FeatureRequired { feature, from, to }` so builds with
+  `perceptual`, `oklab`, or `hdr-transfers` disabled report the exact Cargo
+  feature to enable (including cross-crate `zenpixels/perceptual` unification
+  and same-transfer PQ/HLG gamut or matte compositing), and preserve typed
+  `ConvertError` through `ZenCmsLite::build_plan_with_hooks` instead of wrapping
+  it as an opaque `CmsBackend` string.
 - Add granular Cargo features (`oklab` default-on, `hdr-transfers` default-on, `perceptual`
-  default-off, with `hdr-experimental` implying `oklab` + `hdr-transfers` and `css` implying
-  `perceptual`) so SDR-only or custom-feature builds compile out unused color models and HDR
-  transfer kernels (`0a238b57`).
+  default-off forwarding `zenpixels/perceptual`, with `hdr-experimental` implying
+  `oklab` + `hdr-transfers`) so SDR-only or custom-feature builds compile out unused
+  color models and HDR transfer kernels (`0a238b57`).
 - Add 129-path 4K UHD (`3840 × 2160`) conversion regression benchmark suite
   (`benches/bench_4k_paths.rs`) and baseline (`benchmarks/baseline_4k_2026-11-21.md`,
   `da787b7f`).

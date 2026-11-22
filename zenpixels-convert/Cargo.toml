@@ -52,8 +52,8 @@ oklab = []
 hdr-transfers = []
 # Closed-form perceptual and cylindrical color conversions: Oklch, CIE Lch,
 # Jzazbz / Jzczhz, HSL, and HSV. Default-off; opt in with
-# `features = ["perceptual"]`.
-perceptual = ["oklab", "hdr-transfers"]
+# `features = ["perceptual"]` (automatically enables `zenpixels/perceptual`).
+perceptual = ["zenpixels/perceptual", "oklab", "hdr-transfers"]
 introspection = []
 # The committed CICP->ICC profile database: the LZ4-compressed bundle
 # (93,377-byte asset) + lazy decode machinery: 149 RGB / 164 gray mappings

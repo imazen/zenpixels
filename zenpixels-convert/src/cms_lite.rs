@@ -122,6 +122,12 @@ impl ZenCmsLite {
             options,
             &crate::caps::PlannerHooks::ALL_HOOKS,
         )
+        .map(|res| {
+            res.map_err(|e| {
+                let msg = alloc::format!("ZenCmsLite plan construction failed: {e:?}");
+                e.map_error(|_| crate::cms::CmsPluginError::msg(msg))
+            })
+        })
     }
 
     pub(crate) fn build_plan_with_hooks(
@@ -131,7 +137,7 @@ impl ZenCmsLite {
         dst_format: PixelFormat,
         options: &crate::policy::ConvertOptions,
         hooks: &crate::caps::PlannerHooks,
-    ) -> Option<Result<crate::NativePlan, whereat::At<crate::cms::CmsPluginError>>> {
+    ) -> Option<Result<crate::NativePlan, whereat::At<crate::ConvertError>>> {
         use zenpixels::PixelDescriptor;
 
         // ZenCmsLite implements D65 media-relative matrix+TRC math only. Decline
@@ -171,15 +177,11 @@ impl ZenCmsLite {
 
         // Build directly from a plan to avoid recursing through the
         // RowConverter CMS chain. Plan construction failing here IS a
-        // failure (we recognized the pair) — surface it instead of
-        // declining.
-        match crate::convert::NativePlan::new_explicit_core(from, to, options, hooks) {
-            Ok(plan) => Some(Ok(plan)),
-            Err(e) => {
-                let msg = alloc::format!("ZenCmsLite plan construction failed: {e:?}");
-                Some(Err(e.map_error(|_| crate::cms::CmsPluginError::msg(msg))))
-            }
-        }
+        // failure (we recognized the pair) — surface the typed ConvertError
+        // directly instead of erasing it into an opaque CMS string.
+        Some(crate::convert::NativePlan::new_explicit_core(
+            from, to, options, hooks,
+        ))
     }
 }
 
