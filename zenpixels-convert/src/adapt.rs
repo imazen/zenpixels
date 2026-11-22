@@ -45,7 +45,6 @@ use alloc::vec::Vec;
 
 #[cfg(test)]
 use crate::ColorModel;
-use crate::convert::NativePlan;
 use crate::converter::RowConverter;
 use crate::policy::{AlphaPolicy, ConvertOptions};
 use crate::{
@@ -339,18 +338,12 @@ pub(crate) fn convert_into_with_anchor(
 
     // `from == to` yields an Identity plan, whose row step copies src → dst — so
     // the strided loop handles it too (no packed-only special case needed).
-    let plan = NativePlan::new_explicit(
-        from,
-        to,
-        &zenpixels::ConvertOptions::retain_channels()
-            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
-            .with_depth_policy(crate::DepthPolicy::Round)
-            .with_luma(Some(crate::LumaCoefficients::Bt709))
-            .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked)
-            .with_sdr_white(anchor),
-    )
-    .at()?;
-    let mut converter = RowConverter::from_plan(plan);
+    let opts = zenpixels::ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels::AlphaPolicy::DiscardUnchecked)
+        .with_depth_policy(crate::DepthPolicy::Round)
+        .with_luma(Some(crate::LumaCoefficients::Bt709))
+        .with_sdr_white(anchor);
+    let mut converter = RowConverter::new_explicit(from, to, &opts).at()?;
     let src_row = (width as usize) * from.bytes_per_pixel();
 
     for y in 0..rows as usize {

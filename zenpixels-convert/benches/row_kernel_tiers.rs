@@ -316,6 +316,7 @@ fn cases() -> Vec<(String, Option<D>, Option<D>)> {
 }
 
 fn main() {
+    zenpixels_convert::accel::enable_all();
     zenbench::run(|suite| {
         for (name, from, to) in cases() {
             let (Some(from), Some(to)) = (from, to) else {

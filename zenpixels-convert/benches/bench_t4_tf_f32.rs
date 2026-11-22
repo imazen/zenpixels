@@ -110,6 +110,7 @@ fn bench_linear_to_tf(suite: &mut Suite) {
 }
 
 fn main() {
+    zenpixels_convert::accel::enable_all();
     zenbench::run(|suite| {
         bench_tf_to_linear(suite);
         bench_linear_to_tf(suite);

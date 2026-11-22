@@ -55,6 +55,7 @@ fn matrix_in_place_rgb_f32(buf: &mut [f32], m: &[[f32; 3]; 3]) {
 }
 
 fn main() {
+    zenpixels_convert::accel::enable_all();
     zenbench::run(|suite| {
         // -----------------------------------------------------------------
         // u8 sRGB P3 → sRGB BT.709, 3-channel

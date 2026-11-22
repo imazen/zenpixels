@@ -363,6 +363,7 @@ fn bench_band_generic_overhead(suite: &mut Suite) {
 }
 
 fn main() {
+    zenpixels_convert::accel::enable_all();
     zenbench::run(|suite| {
         bench_u8_to_f32(suite);
         bench_u16_to_f32(suite);

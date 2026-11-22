@@ -57,19 +57,27 @@
 
 ### Added
 
-- Add compile-time capability bitmasking (`caps` module + `ConverterProfile<const CAPS: u64>`)
-  with curated presets (`ALL`, `LAYOUT_U8`, `SDR_WEB`, `CODEC_JPEG`, `CODEC_PNG`, `SDR_ALL`,
-  `HDR`, `PERCEPTUAL`). Planning stays non-generic and shared across profiles while
-  `resolve_and_bind_op::<CAPS>` binds capability-grouped `StepFn` executors and lazily
-  materializes heavy step payloads (`MatteState`, `HlgRenderState`, `SoftCompressState`,
-  `Bt2446A`) so LLVM dead-code-eliminates every unused row kernel — even when multiple
-  codecs unify Cargo features (`-51%` to `-76%` stripped binary size on `SDR_WEB`/`LAYOUT_U8`,
-  verified across x86_64 and wasm32; `benchmarks/codegen_shrink_2026-11-22.md`).
+- Replace compile-time `caps` / `ConverterProfile<const CAPS: u64>` with a hybrid
+  universal fast-FMA scalar core + opt-in SIMD accelerator architecture (`accel` module,
+  `Accelerators` const struct, `ConversionSpec::fast`, `ConversionSpec::with_accelerators`,
+  and opt-in default-off `fast` Cargo feature):
+  - Every valid native pixel pair executes via a single-pass, zero-scratch fast-FMA
+    scalar engine (`universal.rs`) that matches the x86-64/AArch64 SIMD kernels
+    bit-for-bit (0-bit parity across the 1,000+ `row_partition` digest matrix; `+402 B`
+    on `wasm32 -Oz +simd128` for `precise-portable`).
+  - Unused SIMD kernels dead-strip cleanly (`0` SIMD conversion kernels linked by default;
+    `-64%` on x86-64 `-Os`, `-65%` on x86-64 `-O3`, `-61%` on `wasm32 -Oz +simd128`
+    compared to `enable_all()`).
+  - Top-level binaries can enable full SIMD in one line via `accel::enable_all()`,
+    `accel::enable_web_sdr()`, `ConversionSpec::fast(opts)`, or `features = ["fast"]`
+    (kept default-off so library crates never pull SIMD bloat via feature unification).
+- Bump `archmage` / `magetypes` to `0.9.33` and `magemath` to `0.1.1` (single-lane
+  `ScalarToken` `Powf`/`Expf`/`Logf` with `Portability::BitExact`).
 - Add `ConvertError::FeatureRequired { feature, from, to }` so builds with
   `perceptual`, `oklab`, or `hdr-transfers` disabled report the exact Cargo
   feature to enable (including cross-crate `zenpixels/perceptual` unification
   and same-transfer PQ/HLG gamut or matte compositing), and preserve typed
-  `ConvertError` through `ZenCmsLite::build_plan_with_hooks` instead of wrapping
+  `ConvertError` through `ZenCmsLite` instead of wrapping
   it as an opaque `CmsBackend` string.
 - Add granular Cargo features (`oklab` default-on, `hdr-transfers` default-on, `perceptual`
   default-off forwarding `zenpixels/perceptual`, with `hdr-experimental` implying

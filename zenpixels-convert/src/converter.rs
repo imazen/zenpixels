@@ -8,7 +8,7 @@ use alloc::boxed::Box;
 
 use crate::convert::{ConvertScratch, NativePlan, convert_row_buffered, convert_row_prepared};
 use crate::{ChannelLayout, ConvertError, PixelDescriptor};
-use whereat::{At, ResultAtExt};
+use whereat::At;
 
 /// Prepared row converter with independent writable workspace.
 pub struct RowConverter {
@@ -39,23 +39,11 @@ struct Stage {
 }
 
 enum Operation {
+    Universal(crate::universal::UniversalPlan),
     Native(NativePlan),
     Shared(alloc::sync::Arc<dyn crate::cms::RowTransform>),
     Owned(Box<dyn crate::cms::RowTransformMut>),
 }
-
-pub(crate) type HdrPivotFn = fn(
-    PixelDescriptor,
-    PixelDescriptor,
-    TransferFunction,
-    TransferFunction,
-    crate::ColorProfileSource<'_>,
-    crate::ColorProfileSource<'_>,
-    bool,
-    &crate::policy::ConvertOptions,
-    Option<&dyn crate::cms::PluggableCms>,
-    &crate::caps::PlannerHooks,
-) -> Result<RowRecipe, At<ConvertError>>;
 
 #[track_caller]
 fn dispatch_cms_chain(
@@ -65,8 +53,8 @@ fn dispatch_cms_chain(
     to: PixelDescriptor,
     options: &crate::policy::ConvertOptions,
     cms: Option<&dyn crate::cms::PluggableCms>,
-    hooks: &crate::caps::PlannerHooks,
-) -> Result<Option<Operation>, At<ConvertError>> {
+    accels: &crate::accel::Accelerators,
+) -> Result<Option<RowRecipe>, At<ConvertError>> {
     let map_error = |e: At<crate::cms::CmsPluginError>| {
         e.map_error(|error| ConvertError::CmsBackend(alloc::sync::Arc::new(error)))
     };
@@ -74,20 +62,31 @@ fn dispatch_cms_chain(
     if let Some(plugin) = cms {
         let request = CmsRequest::new(source.clone(), target.clone(), from, to, *options);
         match plugin.build(&request).map_err(map_error)? {
-            CmsSupport::Shared(t) => return Ok(Some(Operation::Shared(t))),
-            CmsSupport::Owned(t) => return Ok(Some(Operation::Owned(t))),
+            CmsSupport::Shared(t) => {
+                return Ok(Some(RowRecipe::single(from, to, Operation::Shared(t))));
+            }
+            CmsSupport::Owned(t) => {
+                return Ok(Some(RowRecipe::single(from, to, Operation::Owned(t))));
+            }
             CmsSupport::Declined => {}
         }
     }
-    if let Some(result) = crate::cms_lite::ZenCmsLite::build_plan_with_hooks(
+    if let Some((rf, rt)) = crate::cms_lite::ZenCmsLite::resolve_pair(
         source,
         target,
         from.pixel_format(),
         to.pixel_format(),
         options,
-        hooks,
     ) {
-        return whereat::at_crate!(result).map(|c| Some(Operation::Native(c)));
+        return whereat::at_crate!(RowRecipe::compile_native(
+            rf,
+            rt,
+            options,
+            false,
+            zenpixels::sample::FloatFacts::NONE,
+            accels,
+        ))
+        .map(Some);
     }
     Ok(None)
 }
@@ -95,6 +94,7 @@ fn dispatch_cms_chain(
 impl core::fmt::Debug for Operation {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::Universal(plan) => core::fmt::Debug::fmt(plan, f),
             Self::Native(plan) => core::fmt::Debug::fmt(plan, f),
             Self::Shared(_) => f.write_str("SharedCms"),
             Self::Owned(_) => f.write_str("OwnedCms"),
@@ -125,6 +125,15 @@ impl RowRecipe {
             input_facts: zenpixels::sample::FloatFacts::NONE,
             output_facts: zenpixels::sample::FloatFacts::NONE,
         }
+    }
+
+    pub(crate) fn universal(plan: crate::universal::UniversalPlan) -> Self {
+        let (from, to) = (plan.from(), plan.to());
+        let (in_facts, out_facts) = (plan.input_facts(), plan.output_facts());
+        let mut recipe = Self::single(from, to, Operation::Universal(plan));
+        recipe.input_facts = in_facts;
+        recipe.output_facts = out_facts;
+        recipe
     }
 
     pub(crate) fn native(plan: NativePlan) -> Self {
@@ -182,6 +191,10 @@ impl RowRecipe {
                 cur = FloatFacts::NONE;
             }
             match &mut stage.operation {
+                Operation::Universal(plan) => {
+                    plan.propagate_float_facts(cur);
+                    cur = plan.output_facts();
+                }
                 Operation::Native(plan) => {
                     plan.propagate_float_facts(cur);
                     cur = plan.output_facts();
@@ -241,16 +254,316 @@ impl RowRecipe {
     fn is_identity_operation(&self) -> bool {
         self.stages.is_empty()
             || matches!(self.stages.as_slice(), [Stage { operation: Operation::Native(p), .. }] if p.is_identity())
+            || matches!(self.stages.as_slice(), [Stage { operation: Operation::Universal(p), .. }] if p.is_identity())
     }
 
-    #[inline(always)]
-    pub(crate) fn bind<const CAPS: u64>(&mut self) -> Result<(), At<ConvertError>> {
+    #[cfg(feature = "hdr-transfers")]
+    fn scale_matte_bg(&mut self, factor: f32) {
         for stage in &mut self.stages {
-            if let Operation::Native(plan) = &mut stage.operation {
-                plan.bind::<CAPS>()?;
+            match &mut stage.operation {
+                Operation::Universal(plan) => plan.scale_matte_bg(factor),
+                Operation::Native(plan) => plan.scale_matte_bg(factor),
+                _ => {}
             }
         }
-        Ok(())
+    }
+
+    /// Compile any native `(from, to, options)` conversion using the active [`Accelerators`],
+    /// falling back cleanly to [`UniversalPlan`](crate::universal::UniversalPlan) when no
+    /// accelerator slot covers the route.
+    #[track_caller]
+    pub(crate) fn compile_native(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        options: &crate::policy::ConvertOptions,
+        exact: bool,
+        input_facts: zenpixels::sample::FloatFacts,
+        accels: &crate::accel::Accelerators,
+    ) -> Result<Self, At<ConvertError>> {
+        // 1. Try installed SIMD accelerator(s) first (zero slowdown when enabled).
+        if let Some(res) = accels.try_accelerate(from, to, options, exact, input_facts) {
+            return res.map(Self::native);
+        }
+
+        // 2. Special non-universal routes (HLG display rendering, OKLch soft compress,
+        //    default-off perceptual / BT.2446A) — legs recurse via `compile_native` so
+        //    the multi-step SIMD planner stays dead-stripped when unaccelerated.
+        #[cfg(feature = "hdr-transfers")]
+        {
+            let hlg_boundary = from.transfer() != to.transfer()
+                && (from.transfer() == TransferFunction::Hlg
+                    || to.transfer() == TransferFunction::Hlg);
+            let hlg_composite = from.transfer() == TransferFunction::Hlg
+                && to.transfer() == TransferFunction::Hlg
+                && from.has_alpha()
+                && !to.has_alpha()
+                && matches!(
+                    options.alpha_policy(),
+                    crate::AlphaPolicy::CompositeOnto { .. }
+                );
+            if !exact && (hlg_boundary || hlg_composite) && options.hlg_rendering().is_some() {
+                return Self::compile_hlg_rendering(from, to, options, input_facts, accels);
+            }
+        }
+
+        #[cfg(feature = "perceptual")]
+        if !exact
+            && from != to
+            && (crate::convert::is_perceptual_model(from.color_model())
+                || crate::convert::is_perceptual_model(to.color_model()))
+        {
+            let mut plan =
+                NativePlan::new_explicit_core(from, to, options, &crate::accel::PlannerHooks::ALL)?;
+            plan.propagate_float_facts(input_facts);
+            plan.bind::<{ crate::accel::kernel_caps::ALL }>()?;
+            return Ok(Self::native(plan));
+        }
+
+        #[cfg(feature = "oklab")]
+        if !exact
+            && options.gamut_policy() == crate::GamutPolicy::SoftCompress
+            && crate::convert::soft_compress_applies(&from, &to)
+        {
+            return Self::compile_soft_compress(from, to, options, input_facts, accels);
+        }
+
+        #[cfg(feature = "bt2446a")]
+        if !exact && crate::convert::is_hdr_to_sdr(from.transfer(), to.transfer()) {
+            let mut plan =
+                NativePlan::new_explicit_core(from, to, options, &crate::accel::PlannerHooks::ALL)?;
+            plan.propagate_float_facts(input_facts);
+            plan.bind::<{ crate::accel::kernel_caps::ALL }>()?;
+            return Ok(Self::native(plan));
+        }
+
+        // 3. Compact 0-bit fast-FMA universal scalar fallback (handles every valid native pair).
+        let mut plan = crate::universal::UniversalPlan::try_build(from, to, options, exact)?;
+        plan.propagate_float_facts(input_facts);
+        Ok(Self::universal(plan))
+    }
+
+    #[cfg(feature = "hdr-transfers")]
+    #[track_caller]
+    fn compile_hlg_rendering(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        options: &crate::policy::ConvertOptions,
+        input_facts: zenpixels::sample::FloatFacts,
+        accels: &crate::accel::Accelerators,
+    ) -> Result<Self, At<ConvertError>> {
+        use crate::convert::{ConvertStep, HlgRenderState};
+        use zenpixels::{AlphaMode, AlphaPolicy, ChannelType, ColorPrimaries, DepthPolicy};
+        let rendering = options
+            .hlg_rendering()
+            .ok_or_else(|| whereat::at!(ConvertError::HlgRenderingRequired))?;
+        let white = options
+            .sdr_white()
+            .ok_or_else(|| whereat::at!(ConvertError::SdrWhiteRequired))?;
+        let inverse = to.transfer() == TransferFunction::Hlg;
+        let endpoint_reduction = crate::route::channel_bits(from.channel_type())
+            > crate::route::channel_bits(to.channel_type());
+        if endpoint_reduction && options.depth_policy() == DepthPolicy::Forbid {
+            return Err(whereat::at!(ConvertError::DepthReductionForbidden));
+        }
+        let internal_options =
+            if !endpoint_reduction && options.depth_policy() == DepthPolicy::Forbid {
+                options.with_depth_policy(DepthPolicy::Round)
+            } else {
+                *options
+            };
+        let options = &internal_options;
+        let hlg = if inverse { to } else { from };
+        if hlg.primaries != ColorPrimaries::Bt2020
+            || hlg.signal_range != crate::SignalRange::Full
+            || !matches!(hlg.layout(), ChannelLayout::Rgb | ChannelLayout::Rgba)
+            || !matches!(
+                hlg.channel_type(),
+                ChannelType::U8 | ChannelType::U16 | ChannelType::F16 | ChannelType::F32
+            )
+        {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
+        let encoded = PixelDescriptor::new(
+            ChannelType::F32,
+            hlg.layout(),
+            hlg.alpha().map(|_| AlphaMode::Straight),
+            TransferFunction::Hlg,
+        )
+        .with_primaries(ColorPrimaries::Bt2020);
+        let linear = PixelDescriptor::new(
+            ChannelType::F32,
+            hlg.layout(),
+            encoded.alpha(),
+            TransferFunction::Linear,
+        )
+        .with_primaries(ColorPrimaries::Bt2020);
+        let hlg_step = ConvertStep::HlgRender(Box::new(HlgRenderState {
+            rendering,
+            inverse,
+            white_nits: white.nits(),
+            clip: options.gamut_policy() == crate::GamutPolicy::Clip,
+            prepared: None,
+        }));
+        let mut bridge_plan = if inverse {
+            NativePlan::build(linear, encoded, alloc::vec![hlg_step])
+        } else {
+            NativePlan::build(encoded, linear, alloc::vec![hlg_step])
+        };
+        bridge_plan
+            .bind::<{ crate::accel::kernel_caps::F32 | crate::accel::kernel_caps::TF_HLG }>()?;
+        let bridge = Self::native(bridge_plan);
+        let mut recipe = if inverse {
+            let before = Self::compile_native(from, linear, options, false, input_facts, accels)?;
+            let after = Self::compile_native(
+                encoded,
+                to,
+                options,
+                false,
+                zenpixels::sample::FloatFacts::NONE,
+                accels,
+            )?;
+            before.then(bridge).then(after)
+        } else {
+            let before = Self::compile_native(from, encoded, options, false, input_facts, accels)?;
+            let mut plan = before.then(bridge);
+            if crate::convert::is_hdr_to_sdr(from.transfer(), to.transfer()) {
+                let pq = PixelDescriptor::new(
+                    ChannelType::F32,
+                    linear.layout(),
+                    linear.alpha(),
+                    TransferFunction::Pq,
+                )
+                .with_primaries(ColorPrimaries::Bt2020);
+                let encode = Self::compile_native(
+                    linear,
+                    pq,
+                    &options.with_gamut_policy(crate::GamutPolicy::PreserveExtended),
+                    false,
+                    zenpixels::sample::FloatFacts::NONE,
+                    accels,
+                )?;
+                let after = Self::compile_native(
+                    pq,
+                    to,
+                    options,
+                    false,
+                    zenpixels::sample::FloatFacts::NONE,
+                    accels,
+                )?;
+                plan = plan.then(encode).then(after);
+            } else {
+                let mut after = Self::compile_native(
+                    linear,
+                    to,
+                    options,
+                    false,
+                    zenpixels::sample::FloatFacts::NONE,
+                    accels,
+                )?;
+                if let AlphaPolicy::CompositeOnto {
+                    background,
+                    reference_white,
+                } = options.alpha_policy()
+                {
+                    let background_white =
+                        if background.descriptor().transfer() == TransferFunction::Pq {
+                            10_000.0
+                        } else {
+                            reference_white
+                                .unwrap_or(zenpixels::hdr::DiffuseWhite::BT2408)
+                                .nits()
+                        };
+                    after.scale_matte_bg(background_white / white.nits());
+                }
+                plan = plan.then(after);
+            }
+            plan
+        };
+        recipe.apply_input_facts(input_facts);
+        Ok(recipe)
+    }
+
+    #[cfg(feature = "oklab")]
+    #[track_caller]
+    fn compile_soft_compress(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        options: &crate::policy::ConvertOptions,
+        input_facts: zenpixels::sample::FloatFacts,
+        accels: &crate::accel::Accelerators,
+    ) -> Result<Self, At<ConvertError>> {
+        use zenpixels::{AlphaMode, AlphaPolicy, ChannelType, DepthPolicy, GamutPolicy};
+        crate::convert::validate_descriptors(from, to)?;
+        crate::convert::validate_luma_policy(from, to, options)?;
+        let drops_alpha = from.has_alpha() && !to.has_alpha();
+        if drops_alpha && options.alpha_policy() == AlphaPolicy::DiscardIfOpaque {
+            return Err(whereat::at!(ConvertError::AlphaCheckRequired));
+        }
+        if drops_alpha && options.alpha_policy() == AlphaPolicy::Forbid {
+            return Err(whereat::at!(ConvertError::AlphaRemovalForbidden));
+        }
+        let reduces_depth = crate::route::channel_bits(from.channel_type())
+            > crate::route::channel_bits(to.channel_type());
+        if reduces_depth && options.depth_policy() == DepthPolicy::Forbid {
+            return Err(whereat::at!(ConvertError::DepthReductionForbidden));
+        }
+        let sdr = |t: TransferFunction| !matches!(t, TransferFunction::Pq | TransferFunction::Hlg);
+        if !sdr(from.transfer()) || !sdr(to.transfer()) {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
+        if crate::oklab::OklabSpace::for_primaries(to.primaries).is_none() {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
+        let keeps_alpha = from.has_alpha() && from.alpha() != Some(AlphaMode::Undefined);
+        let middle = PixelDescriptor::new(
+            ChannelType::F32,
+            if keeps_alpha {
+                ChannelLayout::Rgba
+            } else {
+                ChannelLayout::Rgb
+            },
+            keeps_alpha.then_some(AlphaMode::Straight),
+            TransferFunction::Linear,
+        )
+        .with_primaries(to.primaries);
+        let plain = options.with_gamut_policy(GamutPolicy::Clip);
+        let into = Self::compile_native(
+            from,
+            middle,
+            &plain
+                .with_gamut_policy(GamutPolicy::PreserveExtended)
+                .with_alpha_policy(AlphaPolicy::DiscardUnchecked),
+            false,
+            input_facts,
+            accels,
+        )?;
+        let mut comp_plan = NativePlan::build(
+            middle,
+            middle,
+            alloc::vec![crate::convert::soft_compress_step(
+                to.primaries,
+                crate::hdr::SoftCompress::DEFAULT_KNEE,
+            )],
+        );
+        comp_plan
+            .bind::<{ crate::accel::kernel_caps::F32 | crate::accel::kernel_caps::SOFT_COMPRESS }>(
+            )?;
+        let out_opts = if !reduces_depth && plain.depth_policy() == DepthPolicy::Forbid {
+            plain.with_depth_policy(DepthPolicy::Round)
+        } else {
+            plain
+        };
+        let out = Self::compile_native(
+            middle,
+            to,
+            &out_opts,
+            false,
+            zenpixels::sample::FloatFacts::NONE,
+            accels,
+        )?;
+        let mut recipe = into.then(Self::native(comp_plan)).then(out);
+        recipe.apply_input_facts(input_facts);
+        Ok(recipe)
     }
 
     pub(crate) fn needs_pixel_work(&self) -> bool {
@@ -284,49 +597,25 @@ impl RowRecipe {
         )
     }
 
-    /// Create a converter with explicit policy options.
-    ///
-    /// Like [`new`](Self::new) but validates [`ConvertOptions`] policies
-    /// (alpha removal, depth reduction, RGB→Gray). Cross-profile
-    /// conversions go through the default CMS dispatch chain.
-    ///
-    /// [`ConvertOptions`]: crate::policy::ConvertOptions
     #[track_caller]
     pub(crate) fn new_explicit(
         from: PixelDescriptor,
         to: PixelDescriptor,
         options: &crate::policy::ConvertOptions,
     ) -> Result<Self, At<ConvertError>> {
-        Self::new_explicit_with_cms_hooks(
-            from,
-            to,
-            options,
-            None,
-            &crate::caps::PlannerHooks::ALL_HOOKS,
-        )
+        let accels = crate::accel::enabled();
+        Self::new_explicit_with_cms_accel(from, to, options, None, &accels)
     }
 
-    pub(crate) fn new_explicit_hooks(
+    pub(crate) fn new_explicit_accel(
         from: PixelDescriptor,
         to: PixelDescriptor,
         options: &crate::policy::ConvertOptions,
-        hooks: &crate::caps::PlannerHooks,
+        accels: &crate::accel::Accelerators,
     ) -> Result<Self, At<ConvertError>> {
-        Self::new_explicit_with_cms_hooks(from, to, options, None, hooks)
+        Self::new_explicit_with_cms_accel(from, to, options, None, accels)
     }
 
-    /// Create a converter that may delegate the color conversion to a
-    /// [`PluggableCms`].
-    ///
-    /// When `cms` is `Some` and the source and destination have different
-    /// primaries or transfer functions, the plugin is asked to supply a
-    /// row transform for the full `(from, to)` pair. If it accepts, the
-    /// plan becomes a single external-transform step; the built-in gamut
-    /// matrix and matlut fast paths are bypassed for that conversion.
-    /// If the plugin declines or there is no color work to do, behavior
-    /// matches [`new_explicit`](Self::new_explicit).
-    ///
-    /// [`PluggableCms`]: crate::cms::PluggableCms
     #[track_caller]
     pub(crate) fn new_explicit_with_cms(
         from: PixelDescriptor,
@@ -334,21 +623,16 @@ impl RowRecipe {
         options: &crate::policy::ConvertOptions,
         cms: Option<&dyn crate::cms::PluggableCms>,
     ) -> Result<Self, At<ConvertError>> {
-        Self::new_explicit_with_cms_hooks(
-            from,
-            to,
-            options,
-            cms,
-            &crate::caps::PlannerHooks::ALL_HOOKS,
-        )
+        let accels = crate::accel::enabled();
+        Self::new_explicit_with_cms_accel(from, to, options, cms, &accels)
     }
 
-    pub(crate) fn new_explicit_with_cms_hooks(
+    pub(crate) fn new_explicit_with_cms_accel(
         from: PixelDescriptor,
         to: PixelDescriptor,
         options: &crate::policy::ConvertOptions,
         cms: Option<&dyn crate::cms::PluggableCms>,
-        hooks: &crate::caps::PlannerHooks,
+        accels: &crate::accel::Accelerators,
     ) -> Result<Self, At<ConvertError>> {
         use crate::policy::{AlphaPolicy, DepthPolicy};
 
@@ -365,9 +649,14 @@ impl RowRecipe {
         {
             // The CMS interface has no luminance-intent parameter. Native HDR
             // plans must retain the explicit anchor and peak policy.
-            return Ok(Self::native(NativePlan::new_explicit_core(
-                from, to, options, hooks,
-            )?));
+            return Self::compile_native(
+                from,
+                to,
+                options,
+                false,
+                zenpixels::sample::FloatFacts::NONE,
+                accels,
+            );
         }
 
         if from.has_alpha()
@@ -381,33 +670,16 @@ impl RowRecipe {
         if options.gamut_policy() == crate::policy::GamutPolicy::SoftCompress
             && crate::convert::soft_compress_applies(&from, &to)
         {
-            return Ok(Self::native(NativePlan::new_explicit_core(
-                from, to, options, hooks,
-            )?));
+            return Self::compile_native(
+                from,
+                to,
+                options,
+                false,
+                zenpixels::sample::FloatFacts::NONE,
+                accels,
+            );
         }
 
-        // CMS dispatch chain. Fires when:
-        //   - primaries differ (cross-gamut RGB↔RGB, where ZenCmsLite or
-        //     moxcms supplies a matlut / 3x3+TF transform), OR
-        //   - the (from, to) pair needs a CMS by `requires_cms`
-        //     (CMYK / Lab / XYZ / future non-native models). Without this
-        //     second arm the built-in plan path would error out with
-        //     `NeedsCms` before any plugin was consulted, even when one
-        //     was attached — the regression the 0.2.16 fix targets.
-        //
-        // Transfer-only changes inside the native RGB family stay on the
-        // built-in plan path so `compose` can peephole them and options
-        // like `clip_out_of_gamut` propagate through.
-        //
-        //   1. user-supplied plugin (if Some)
-        //   2. ZenCmsLite (default) — named-profile matlut fast path
-        //
-        // Per-plugin semantics:
-        //   - None → declined, try next plugin
-        //   - Some(Ok(t)) → accepted, stop the chain
-        //   - Some(Err(e)) → tried-and-failed, propagate the error and stop.
-        //     Falling through to another backend could silently produce
-        //     different output — surface the failure instead.
         let primaries_differ = from.primaries != to.primaries;
         let needs_cms_dispatch = crate::convert::needs_cms_for_color_model(&from, &to);
         // A plugin can only drop alpha. The built-in plan composites and applies the other policies.
@@ -426,7 +698,7 @@ impl RowRecipe {
                 to,
                 options,
                 cms,
-                hooks,
+                accels,
             )?
         {
             // Precision bits, not byte size — see convert.rs for rationale.
@@ -436,24 +708,30 @@ impl RowRecipe {
                 return Err(whereat::at!(ConvertError::DepthReductionForbidden));
             }
 
-            return Ok(Self::single(from, to, external));
+            return Ok(external);
         }
 
         // Same profiles, or CMS chain declined — built-in plan.
-        let plan = NativePlan::new_explicit_core(from, to, options, hooks).at()?;
-        Ok(Self::native(plan))
+        Self::compile_native(
+            from,
+            to,
+            options,
+            false,
+            zenpixels::sample::FloatFacts::NONE,
+            accels,
+        )
     }
 
     /// Create a converter from borrowed [`PixelEncoding`](crate::PixelEncoding)
     /// pairs (`descriptor` + optional `ColorContext`), honoring authoritative
     /// ICC profiles, CICP agreement checks, and diffuse-white / HDR-peak anchors
     /// on `from`.
-    pub(crate) fn new_with_encoding_hooks(
+    pub(crate) fn new_with_encoding_accel(
         from: crate::PixelEncoding<'_>,
         to: crate::PixelEncoding<'_>,
         options: &crate::policy::ConvertOptions,
         cms: Option<&dyn crate::cms::PluggableCms>,
-        hooks: &crate::caps::PlannerHooks,
+        accels: &crate::accel::Accelerators,
     ) -> Result<Self, At<ConvertError>> {
         let resolved = crate::interpretation::resolve_options(from.color_context(), options);
         let options = &resolved;
@@ -476,17 +754,17 @@ impl RowRecipe {
                 crate::ColorProfileSource::Icc(_) | crate::ColorProfileSource::Parametric(_)
             ));
         if needs_profiles {
-            Self::new_with_sources_hooks(
+            Self::new_with_sources_accel(
                 from_desc,
                 to_desc,
                 source_profile,
                 target_profile,
                 options,
                 cms,
-                hooks,
+                accels,
             )
         } else {
-            Self::new_explicit_with_cms_hooks(from_desc, to_desc, options, cms, hooks)
+            Self::new_explicit_with_cms_accel(from_desc, to_desc, options, cms, accels)
         }
     }
 
@@ -500,25 +778,18 @@ impl RowRecipe {
         options: &crate::policy::ConvertOptions,
         cms: Option<&dyn crate::cms::PluggableCms>,
     ) -> Result<Self, At<ConvertError>> {
-        Self::new_with_sources_hooks(
-            from,
-            to,
-            source,
-            target,
-            options,
-            cms,
-            &crate::caps::PlannerHooks::ALL_HOOKS,
-        )
+        let accels = crate::accel::enabled();
+        Self::new_with_sources_accel(from, to, source, target, options, cms, &accels)
     }
 
-    pub(crate) fn new_with_sources_hooks(
+    pub(crate) fn new_with_sources_accel(
         from: PixelDescriptor,
         to: PixelDescriptor,
         source: crate::ColorProfileSource<'_>,
         target: crate::ColorProfileSource<'_>,
         options: &crate::policy::ConvertOptions,
         cms: Option<&dyn crate::cms::PluggableCms>,
-        hooks: &crate::caps::PlannerHooks,
+        accels: &crate::accel::Accelerators,
     ) -> Result<Self, At<ConvertError>> {
         let from = source
             .resolve()
@@ -554,7 +825,7 @@ impl RowRecipe {
             && (matches!(src_tf, TransferFunction::Pq | TransferFunction::Hlg)
                 || matches!(dst_tf, TransferFunction::Pq | TransferFunction::Hlg));
         if hdr_crossing && source.resolve().is_some() && target.resolve().is_some() {
-            return Self::new_explicit_hooks(from, to, options, hooks);
+            return Self::new_explicit_accel(from, to, options, accels);
         }
 
         // No ICC transform here can honor a mapping, and clipping silently would be wrong.
@@ -586,11 +857,8 @@ impl RowRecipe {
         }
 
         if hdr_crossing {
-            let Some(pivot) = hooks.hdr_pivot else {
-                return Err(whereat::at!(ConvertError::NoPath { from, to }));
-            };
-            return pivot(
-                from, to, src_tf, dst_tf, source, target, composites, options, cms, hooks,
+            return Self::new_with_sources_hdr_pivot_accel(
+                from, to, src_tf, dst_tf, source, target, composites, options, cms, accels,
             );
         }
         // A plugin takes one depth, straight alpha and no layout change that loses channels, so the
@@ -642,17 +910,17 @@ impl RowRecipe {
             } else {
                 *options
             };
-            let before = Self::new_explicit_hooks(from, straight_from, options, hooks)?;
-            let color = Self::new_with_sources_hooks(
+            let before = Self::new_explicit_accel(from, straight_from, options, accels)?;
+            let color = Self::new_with_sources_accel(
                 straight_from,
                 straight_to,
                 source,
                 target,
                 options,
                 cms,
-                hooks,
+                accels,
             )?;
-            let after = Self::new_explicit_hooks(straight_to, to, &final_options, hooks)?;
+            let after = Self::new_explicit_accel(straight_to, to, &final_options, accels)?;
             return Ok(before.then(color).then(after));
         }
         if let Some(external) = dispatch_cms_chain(
@@ -662,15 +930,15 @@ impl RowRecipe {
             to,
             options,
             cms,
-            hooks,
+            accels,
         )? {
-            return Ok(Self::single(from, to, external));
+            return Ok(external);
         }
         // An unresolved ICC must never fall through to descriptor-only work.
         if source.resolve().is_none() || target.resolve().is_none() {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
         }
-        Self::new_explicit_hooks(from, to, options, hooks)
+        Self::new_explicit_accel(from, to, options, accels)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -683,10 +951,11 @@ impl RowRecipe {
         cms: Option<&dyn crate::cms::PluggableCms>,
         err_from: PixelDescriptor,
         err_to: PixelDescriptor,
-        hooks: &crate::caps::PlannerHooks,
+        accels: &crate::accel::Accelerators,
     ) -> Result<Self, At<ConvertError>> {
-        if let Some(external) = dispatch_cms_chain(source, target, from, to, options, cms, hooks)? {
-            return Ok(Self::single(from, to, external));
+        if let Some(external) = dispatch_cms_chain(source, target, from, to, options, cms, accels)?
+        {
+            return Ok(external);
         }
         Err(whereat::at!(ConvertError::NeedsCms {
             from: err_from,
@@ -695,7 +964,7 @@ impl RowRecipe {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new_with_sources_hdr_pivot_hooks(
+    fn new_with_sources_hdr_pivot_accel(
         from: PixelDescriptor,
         to: PixelDescriptor,
         src_tf: TransferFunction,
@@ -705,7 +974,7 @@ impl RowRecipe {
         composites: bool,
         options: &crate::policy::ConvertOptions,
         cms: Option<&dyn crate::cms::PluggableCms>,
-        hooks: &crate::caps::PlannerHooks,
+        accels: &crate::accel::Accelerators,
     ) -> Result<Self, At<ConvertError>> {
         let endpoint_reduction = crate::route::channel_bits(from.channel_type())
             > crate::route::channel_bits(to.channel_type());
@@ -767,7 +1036,6 @@ impl RowRecipe {
             );
 
         if source.resolve().is_some() {
-            // Resolved source -> BT.2020 F32 handoff -> unresolved target via CMS -> `to`.
             let keep_alpha = if composites { false } else { to.has_alpha() };
             let handoff_fmt = if keep_alpha {
                 crate::PixelFormat::RgbaF32
@@ -799,11 +1067,11 @@ impl RowRecipe {
                 ChannelLayout::Rgb
             };
             let straight_to = straight_float(dst_f32_layout, to)?;
-            let before = Self::new_explicit_hooks(
+            let before = Self::new_explicit_accel(
                 from,
                 handoff_desc,
                 &leg_opts.with_gamut_policy(crate::GamutPolicy::PreserveExtended),
-                hooks,
+                accels,
             )?;
             let cms_opts = if to.channel_type() == crate::ChannelType::F32 {
                 leg_opts
@@ -819,13 +1087,12 @@ impl RowRecipe {
                 cms,
                 from,
                 to,
-                hooks,
+                accels,
             )?;
-            let after = Self::new_explicit_hooks(straight_to, to, &leg_opts, hooks)?;
+            let after = Self::new_explicit_accel(straight_to, to, &leg_opts, accels)?;
             return Ok(before.then(color).then(after));
         }
 
-        // Unresolved source -> BT.2020 F32 handoff via CMS -> `target`.
         let straight_from = straight_float(from.layout(), from)?;
         let handoff_fmt = if from.has_alpha() {
             crate::PixelFormat::RgbaF32
@@ -844,7 +1111,7 @@ impl RowRecipe {
             .with_primaries(crate::ColorPrimaries::Bt2020)
             .with_transfer(handoff_tf);
         let unclipped = leg_opts.with_gamut_policy(crate::GamutPolicy::PreserveExtended);
-        let before = Self::new_explicit_hooks(from, straight_from, &unclipped, hooks)?;
+        let before = Self::new_explicit_accel(from, straight_from, &unclipped, accels)?;
         let color = Self::build_cms_only(
             straight_from,
             handoff_desc,
@@ -854,19 +1121,19 @@ impl RowRecipe {
             cms,
             from,
             to,
-            hooks,
+            accels,
         )?;
         let after = if target.resolve().is_some() {
-            Self::new_explicit_hooks(handoff_desc, to, &leg_opts, hooks)?
+            Self::new_explicit_accel(handoff_desc, to, &leg_opts, accels)?
         } else {
-            Self::new_with_sources_hooks(
+            Self::new_with_sources_accel(
                 handoff_desc,
                 to,
                 crate::ColorProfileSource::Cicp(handoff_cicp),
                 target,
                 &leg_opts,
                 cms,
-                hooks,
+                accels,
             )?
         };
         Ok(before.then(color).then(after))
@@ -896,6 +1163,7 @@ impl RowRecipe {
                 *slot = (*slot).max(crate::convert::row_bytes(stage.to, width)?.div_ceil(8));
             }
             match &stage.operation {
+                Operation::Universal(_) => {}
                 Operation::Native(plan) => layout.native.merge(plan.workspace(width)?),
                 Operation::Shared(_) | Operation::Owned(_) => layout.opaque = true,
             }
@@ -964,7 +1232,8 @@ impl RowRecipe {
         let before = self.relabel_before.map(relabel_step);
         let after = self.relabel_after.map(relabel_step);
         let stage_steps = self.stages.iter().flat_map(|stage| {
-            let (native, backend) = match &stage.operation {
+            let (native, single) = match &stage.operation {
+                Operation::Universal(plan) => (None, Some(plan.step_info())),
                 Operation::Native(plan) => (Some(plan.steps()), None),
                 Operation::Shared(_) | Operation::Owned(_) => {
                     let mut semantic = SemanticEffects::NONE;
@@ -992,7 +1261,7 @@ impl RowRecipe {
                     )
                 }
             };
-            native.into_iter().flatten().chain(backend)
+            native.into_iter().flatten().chain(single)
         });
         before.into_iter().chain(stage_steps).chain(after)
     }
@@ -1012,6 +1281,7 @@ impl RowRecipe {
             .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
         for stage in &self.stages {
             let operation = match &stage.operation {
+                Operation::Universal(plan) => Operation::Universal(*plan),
                 Operation::Native(plan) => Operation::Native(plan.clone()),
                 Operation::Shared(t) => Operation::Shared(t.clone()),
                 Operation::Owned(_) => {
@@ -1088,6 +1358,10 @@ impl Stage {
         prepared: bool,
     ) -> Result<(), At<ConvertError>> {
         match &mut self.operation {
+            Operation::Universal(plan) => {
+                plan.execute(src, dst, width);
+                Ok(())
+            }
             Operation::Native(plan) if prepared => {
                 convert_row_prepared(plan, src, dst, width, scratch);
                 Ok(())
@@ -1125,6 +1399,7 @@ impl RowConverter {
         self.worker_limit = limit;
     }
 
+    #[allow(dead_code)]
     pub(crate) fn from_plan(mut plan: NativePlan) -> Self {
         plan.bind_if_unbound_all()
             .expect("ZenCmsLite / NativePlan step binding under caps::ALL");
@@ -1135,8 +1410,7 @@ impl RowConverter {
         from: PixelDescriptor,
         to: PixelDescriptor,
     ) -> Result<Self, At<ConvertError>> {
-        let mut recipe = RowRecipe::new(from, to)?;
-        recipe.bind::<{ crate::caps::ALL }>()?;
+        let recipe = RowRecipe::new(from, to)?;
         Ok(recipe.into_worker(None))
     }
 
@@ -1145,8 +1419,7 @@ impl RowConverter {
         to: PixelDescriptor,
         options: &crate::ConvertOptions,
     ) -> Result<Self, At<ConvertError>> {
-        let mut recipe = RowRecipe::new_explicit(from, to, options)?;
-        recipe.bind::<{ crate::caps::ALL }>()?;
+        let recipe = RowRecipe::new_explicit(from, to, options)?;
         Ok(recipe.into_worker(None))
     }
 
@@ -1157,8 +1430,7 @@ impl RowConverter {
         options: &crate::ConvertOptions,
         cms: Option<&dyn crate::PluggableCms>,
     ) -> Result<Self, At<ConvertError>> {
-        let mut recipe = RowRecipe::new_explicit_with_cms(from, to, options, cms)?;
-        recipe.bind::<{ crate::caps::ALL }>()?;
+        let recipe = RowRecipe::new_explicit_with_cms(from, to, options, cms)?;
         Ok(recipe.into_worker(None))
     }
 
@@ -1171,8 +1443,7 @@ impl RowConverter {
         options: &crate::ConvertOptions,
         cms: Option<&dyn crate::PluggableCms>,
     ) -> Result<Self, At<ConvertError>> {
-        let mut recipe = RowRecipe::new_with_sources(from, to, src, dst, options, cms)?;
-        recipe.bind::<{ crate::caps::ALL }>()?;
+        let recipe = RowRecipe::new_with_sources(from, to, src, dst, options, cms)?;
         Ok(recipe.into_worker(None))
     }
 
@@ -1199,6 +1470,7 @@ impl RowConverter {
         self.workspace.reserve(&layout, max_width)?;
         for stage in &mut self.recipe.stages {
             match &mut stage.operation {
+                Operation::Universal(_) => {}
                 Operation::Native(plan) => self.workspace.native.prepare(plan, max_width)?,
                 Operation::Shared(t) => t.prepare(max_width).map_err(cms_error)?,
                 Operation::Owned(t) => t.prepare(max_width).map_err(cms_error)?,

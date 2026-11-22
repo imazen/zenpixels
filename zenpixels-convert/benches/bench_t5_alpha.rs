@@ -97,6 +97,7 @@ fn bench_alpha_dir(
 }
 
 fn main() {
+    zenpixels_convert::accel::enable_all();
     zenbench::run(|suite| {
         bench_alpha_dir(
             suite,

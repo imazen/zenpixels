@@ -10,21 +10,21 @@
 #
 #   pub modules                                15
 #   pub types (struct/enum/trait/alias)        73
-#   pub consts/statics                        117
-#   free functions                              2
-#   inherent methods                          164
+#   pub consts/statics                        125
+#   free functions                             12
+#   inherent methods                          160
 #   struct fields                              91
 #   enum variants                             123
 #   re-exports                                  8
-#   trait roster entries (type × trait)       161
+#   trait roster entries (type × trait)       163
 #   conditional trait impls (verbatim)          1
 #   auto-trait-complete types                  28
 #   auto-trait exceptions                      10
 #
 # per-module pub lines:
-#   (root)                          271
+#   (root)                          306
+#   accel                            19
 #   adapt                             1
-#   caps                             40
 #   cms                              26
 #   codes                            20
 #   converter                        21
@@ -38,50 +38,43 @@
 #   output                           24
 #   precision                        62
 
-## items (558 lines)
+## items (556 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
+pub mod accel
+pub const accel::Accelerators::ALL: Self
+pub const accel::Accelerators::LAYOUT: Self
+pub const accel::Accelerators::SCALAR: Self
+pub const accel::Accelerators::WEB_SDR: Self
+pub const fn accel::Accelerators::has_float(&self) -> bool [also: (root)]
+pub const fn accel::Accelerators::has_gamut(&self) -> bool [also: (root)]
+pub const fn accel::Accelerators::has_hdr(&self) -> bool [also: (root)]
+pub const fn accel::Accelerators::has_layout(&self) -> bool [also: (root)]
+pub const fn accel::Accelerators::has_oklab(&self) -> bool [also: (root)]
+pub const fn accel::Accelerators::has_srgb(&self) -> bool [also: (root)]
+pub const fn accel::Accelerators::is_all(&self) -> bool [also: (root)]
+pub const fn accel::Accelerators::is_scalar(&self) -> bool [also: (root)]
+pub const fn accel::Accelerators::new() -> Self [also: (root)]
+pub const fn accel::Accelerators::union(self, Self) -> Self [also: (root)]
+pub const fn accel::Accelerators::with_float(self) -> Self [also: (root)]
+pub const fn accel::Accelerators::with_gamut(self) -> Self [also: (root)]
+pub const fn accel::Accelerators::with_hdr(self) -> Self [also: (root)]
+pub const fn accel::Accelerators::with_layout(self) -> Self [also: (root)]
+pub const fn accel::Accelerators::with_oklab(self) -> Self [also: (root)]
+pub const fn accel::Accelerators::with_srgb(self) -> Self [also: (root)]
+pub fn accel::enable(accel::Accelerators)
+pub fn accel::enable_all()
+pub fn accel::enable_float()
+pub fn accel::enable_gamut()
+pub fn accel::enable_hdr()
+pub fn accel::enable_layout()
+pub fn accel::enable_oklab()
+pub fn accel::enable_srgb()
+pub fn accel::enable_web_sdr()
+pub fn accel::enabled() -> accel::Accelerators
 pub mod adapt
 pub fn adapt::adapt_raw_rows_for_encode<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor], &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels::buffer::PixelCow<'a>, whereat::at::At<error::ConvertError>>
-pub mod caps
-pub fn caps::ConverterProfile<CAPS>::build(zenpixels::color::PixelEncoding<'_>, zenpixels::color::PixelEncoding<'_>, &ConversionSpec<'_>) -> core::result::Result<ConvertPlan, whereat::at::At<error::ConvertError>>
-pub fn caps::ConverterProfile<CAPS>::select(zenpixels::color::PixelEncoding<'_>, &[CandidateTarget<'_>], &ConversionSpec<'_>) -> core::result::Result<SelectedConversion, whereat::at::At<error::ConvertError>>
-pub const caps::ALL: u64
-pub const caps::CODEC_JPEG: u64
-pub const caps::CODEC_PNG: u64
-pub const caps::DEPTH_TRUNCATE: u64
-pub const caps::F16: u64
-pub const caps::F32: u64
-pub const caps::FLOAT_FACTS_SPEC: u64
-pub const caps::GAMUT_FUSED: u64
-pub const caps::GAMUT_MATRIX: u64
-pub const caps::GRAY: u64
-pub const caps::HDR: u64
-pub const caps::LAYOUT: u64
-pub const caps::LAYOUT_U8: u64
-pub const caps::MATTE: u64
-pub const caps::OKLAB: u64
-pub const caps::PERCEPTUAL: u64
-pub const caps::PERCEPTUAL_HSL_HSV: u64
-pub const caps::PERCEPTUAL_INT: u64
-pub const caps::PERCEPTUAL_JZAZBZ: u64
-pub const caps::PERCEPTUAL_LCH: u64
-pub const caps::PERCEPTUAL_POLAR: u64
-pub const caps::PREMUL: u64
-pub const caps::PROFILES: u64
-pub const caps::SDR_ALL: u64
-pub const caps::SDR_WEB: u64
-pub const caps::SOFT_COMPRESS: u64
-pub const caps::TF_BT709: u64
-pub const caps::TF_EXTENDED: u64
-pub const caps::TF_GAMMA22: u64
-pub const caps::TF_HLG: u64
-pub const caps::TF_PQ: u64
-pub const caps::TF_SRGB: u64
-pub const caps::TONE_MAP: u64
-pub const caps::U16: u64
-pub const caps::U8: u64
 pub mod cms
 pub cms::CmsSupport::Declined
 pub cms::CmsSupport::Owned(alloc::boxed::Box<dyn cms::RowTransformMut>)
@@ -451,6 +444,11 @@ pub OutputProfile::Named(zenpixels::cicp::Cicp)
 pub OutputProfile::Parametric(zenpixels::color::ParametricColor)
 pub OutputProfile::SameAsOrigin
 pub fn output::OutputProfile::normalize_known_icc(self) -> Self
+pub struct Accelerators [also: accel]
+pub const accel::Accelerators::ALL: Self
+pub const accel::Accelerators::LAYOUT: Self
+pub const accel::Accelerators::SCALAR: Self
+pub const accel::Accelerators::WEB_SDR: Self
 pub struct AllocationRequirements
 pub const fn AllocationRequirements::native_worker(&self) -> u64
 pub const fn AllocationRequirements::resident_heap(&self) -> ByteBound
@@ -470,9 +468,12 @@ pub fn cms::CmsRequest<'a>::new(zenpixels::color::ColorProfileSource<'a>, zenpix
 pub fn cms::CmsRequest<'a>::source(&self) -> zenpixels::color::ColorProfileSource<'a>
 pub fn cms::CmsRequest<'a>::target(&self) -> zenpixels::color::ColorProfileSource<'a>
 pub struct ConversionSpec<'a>
+pub const fn ConversionSpec<'a>::accelerators(&self) -> core::option::Option<&'a accel::Accelerators>
+pub const fn ConversionSpec<'a>::fast(zenpixels::policy::ConvertOptions) -> Self
 pub const fn ConversionSpec<'a>::float_facts(&self) -> zenpixels::sample::float::FloatFacts
 pub const fn ConversionSpec<'a>::new(zenpixels::policy::ConvertOptions) -> Self
 pub const fn ConversionSpec<'a>::preserve_samples() -> Self
+pub const fn ConversionSpec<'a>::with_accelerators(self, &'a accel::Accelerators) -> Self
 pub const fn ConversionSpec<'a>::with_cms(self, &'a dyn cms::PluggableCms) -> Self
 pub const fn ConversionSpec<'a>::with_float_facts(self, zenpixels::sample::float::FloatFacts) -> Self
 pub const fn ConversionSpec<'a>::with_intent(self, ConvertIntent) -> Self
@@ -494,9 +495,6 @@ pub fn ConvertPlan::source_encoding(&self) -> zenpixels::color::PixelEncoding<'_
 pub fn ConvertPlan::then(self, Self) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn ConvertPlan::try_clone(&self) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn ConvertPlan::workspace(&self, WorkExtent) -> core::result::Result<AllocationRequirements, whereat::at::At<error::ConvertError>>
-pub struct ConverterProfile<const CAPS: u64> [also: caps]
-pub fn caps::ConverterProfile<CAPS>::build(zenpixels::color::PixelEncoding<'_>, zenpixels::color::PixelEncoding<'_>, &ConversionSpec<'_>) -> core::result::Result<ConvertPlan, whereat::at::At<error::ConvertError>>
-pub fn caps::ConverterProfile<CAPS>::select(zenpixels::color::PixelEncoding<'_>, &[CandidateTarget<'_>], &ConversionSpec<'_>) -> core::result::Result<SelectedConversion, whereat::at::At<error::ConvertError>>
 #[non_exhaustive] pub struct EncodeReady [also: output]
 pub fn output::EncodeReady::copy_from(zenpixels::buffer::PixelSlice<'_>, OutputPlan) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn output::EncodeReady::from_owned(zenpixels::buffer::PixelBuffer, OutputPlan) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
@@ -619,7 +617,7 @@ OutputTarget<'a>: Clone, Debug
 Provenance: Clone, Copy, Debug, Eq, PartialEq
 SelectedConversion: Debug
 WorkExtent: Clone, Copy, Debug, Eq, PartialEq
-caps::ConverterProfile<CAPS>: Clone, Copy, Debug, Default
+accel::Accelerators: Clone, Copy, Debug, Default, Eq, PartialEq
 cms::CmsPluginError: Debug, Display, Error, PartialEq
 cms::CmsRequest<'a>: Clone, Debug
 codes::CodeMap: Clone, Copy, Debug, Eq, PartialEq

@@ -169,11 +169,17 @@
 //!   returns specific errors like [`ConvertError::AlphaNotOpaque`] or
 //!   [`ConvertError::DepthReductionForbidden`].
 //!
-//! - The conversion system handles three tiers internally:
-//!   (a) Direct SIMD kernels for common pairs (byte swizzle, depth shift,
-//!   transfer LUTs).
-//!   (b) Composed multi-step plans for less common pairs.
-//!   Unsupported routes fail during setup; there is no universal fallback.
+//! - The conversion system pairs a compact universal fast-FMA scalar core with
+//!   opt-in SIMD accelerators:
+//!   (a) Every valid native pixel pair always succeeds via the zero-scratch
+//!   universal fast-FMA scalar engine, matching the x86-64/AArch64 SIMD kernels
+//!   bit-for-bit without linking unused SIMD codegen.
+//!   (b) Enable SIMD acceleration process-wide at startup with
+//!   [`accel::enable_all()`] (or granular presets such as
+//!   [`accel::enable_web_sdr()`] / [`accel::enable_layout()`]), per-plan with
+//!   [`ConversionSpec::fast`] or [`ConversionSpec::with_accelerators`], or for a
+//!   top-level binary via the opt-in `fast` Cargo feature. Only the accelerator
+//!   families your binary actually references are linked.
 //!
 //! - **Signal range never converts — it refuses.** There are no
 //!   Narrow↔Full (limited↔full / studio↔full swing) conversion kernels, so
@@ -312,8 +318,9 @@ pub(crate) mod float_simd;
 mod gamma_math;
 mod negotiate;
 
+pub mod accel;
 pub mod adapt;
-pub mod caps;
+mod universal;
 // Internal only — zero consumers today. Kept for a future caller;
 // see zenpixels CLAUDE.md YAGNI section.
 /// Internal: runtime op tracer for in-repo tests. Gated on
@@ -419,7 +426,7 @@ mod scan;
 pub(crate) use convert::NativePlan;
 mod plan;
 mod route;
-pub use caps::ConverterProfile;
+pub use accel::Accelerators;
 #[cfg(feature = "hdr-experimental")]
 pub use convert::HdrConfig;
 #[doc(inline)]

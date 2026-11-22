@@ -79,7 +79,6 @@ pub(crate) fn f16_bits_to_f32(h: u16) -> f32 {
 ///   underflow to ±0.
 /// - NaN is preserved as NaN; payload is packed into the high mantissa bits
 ///   with a guaranteed non-zero stored mantissa (quiet NaN).
-#[cfg(test)]
 #[inline]
 pub(crate) fn f32_to_f16_bits(v: f32) -> u16 {
     let bits = v.to_bits();

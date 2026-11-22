@@ -62,6 +62,7 @@ fn bench_primaries_pair(
 }
 
 fn main() {
+    zenpixels_convert::accel::enable_all();
     zenbench::run(|suite| {
         // Standalone GamutMatrixRgbF32 — same depth, same TF (Linear), just primaries.
         bench_primaries_pair(

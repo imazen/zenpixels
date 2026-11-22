@@ -88,6 +88,9 @@ fn assert_alloc_failed(err: &whereat::At<ConvertError>) {
 /// A multi-step plan: RGBA8 → linear F32 RGB emits `DropAlpha` followed by
 /// `SrgbU8ToLinearF32`, so row conversion needs the ping-pong scratch.
 fn multi_op_plan() -> ConvertPlan {
+    // Enable multi-step SIMD pipeline so this binary tests scratch-buffer OOM
+    // handling (the universal scalar fallback uses zero scratch).
+    zenpixels_convert::accel::enable_all();
     crate::test_conversion::new_plan(PixelDescriptor::RGBA8_SRGB, PixelDescriptor::RGBF32_LINEAR)
         .expect("plan RGBA8 -> RGBF32_LINEAR")
 }
@@ -110,6 +113,7 @@ fn unprepared_row_conversion_reports_allocation_failure() {
     use zenpixels_convert::OutputProfile;
 
     let _g = lock();
+    zenpixels_convert::accel::enable_all();
     let width = 2048u32;
     let mut plan = crate::test_conversion::output_plan(
         PixelDescriptor::RGBA8_SRGB.encoding(),

@@ -1201,6 +1201,7 @@ fn orient_cases() -> Vec<(&'static str, D)> {
 }
 
 fn main() {
+    zenpixels_convert::accel::enable_all();
     let tiers = active_tiers();
     let rounds: usize = std::env::var("BENCH_4K_ROUNDS")
         .ok()

@@ -82,6 +82,7 @@ fn check_exact(name: &str, mut f: impl FnMut(&[u8], &mut [u8])) -> bool {
 }
 
 fn main() {
+    zenpixels_convert::accel::enable_all();
     let exact_shift = check_exact("shift u32", shift_u32);
     let exact_sat = check_exact("sat u16", sat_u16);
     let exact_bytes = check_exact("byte lanes", byte_lanes);

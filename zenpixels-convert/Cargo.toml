@@ -107,13 +107,20 @@ cms-lcms = ["std", "dep:lcms"]
 # `bench_u16_hybrids`. Not intended for non-bench use; the production u16
 # RGB gamut path uses `convert_u16_rgb_simd_lutdec_polyenc` directly.
 __bench_u16_hybrids = []
+# Enable full SIMD acceleration by default for all ConvertPlan / RowConverter
+# and extension-trait conversions without needing `accel::enable_all()` at
+# startup. Default-off so library crates (codecs, pipelines) stay small and
+# never bloat WASM/lean consumers via Cargo feature unification; top-level
+# binaries, CLIs, servers, and benchmarks can enable `features = ["fast"]`
+# (or call `zenpixels_convert::accel::enable_all()` once at startup).
+fast = []
 # Internal: enables runtime op tracing for in-repo tests. ConvertSteps
 # executed during convert_row are recorded to a thread-local buffer.
 # Off by default; the recording function compiles to an empty body when
 # disabled, keeping production builds zero-overhead. Requires `std`.
 # `__` prefix follows the same internal-API convention as
 # `__bench_u16_hybrids`. Not part of the stable public surface.
-__trace_ops = ["std"]
+__trace_ops = ["std", "fast"]
 # Bench-only: exposes the `orient::__bench_apply_orientation_*` shims so
 # `bench_orient` can A/B `apply_orientation` against the scalar `forward_map`
 # oracle. Decoupled from `fast-transpose` so the bench measures BOTH paths:

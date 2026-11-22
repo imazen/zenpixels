@@ -61,6 +61,7 @@ fn bench_quantize(
 }
 
 fn main() {
+    zenpixels_convert::accel::enable_all();
     zenbench::run(|suite| {
         // RGB f32 linear → RGB16 PQ — the common anchored encode (default 203).
         bench_quantize(

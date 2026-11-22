@@ -302,6 +302,7 @@ fn bench_matte_composite(suite: &mut Suite) {
 }
 
 fn main() {
+    zenpixels_convert::accel::enable_all();
     zenbench::run(|suite| {
         bench_swizzle_bgra_rgba(suite);
         bench_add_alpha(suite);

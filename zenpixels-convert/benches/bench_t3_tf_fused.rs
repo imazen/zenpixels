@@ -53,6 +53,7 @@ fn bench_pair(
 }
 
 fn main() {
+    zenpixels_convert::accel::enable_all();
     zenbench::run(|suite| {
         // sRGB U8 ↔ Linear F32 — the most common pipeline conversion
         bench_pair(

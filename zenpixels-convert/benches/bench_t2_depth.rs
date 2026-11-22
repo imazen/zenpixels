@@ -62,6 +62,7 @@ fn bench_depth_pair(suite: &mut Suite, from_ct: ChannelType, to_ct: ChannelType)
 }
 
 fn main() {
+    zenpixels_convert::accel::enable_all();
     zenbench::run(|suite| {
         let pairs: &[(ChannelType, ChannelType)] = &[
             (ChannelType::U8, ChannelType::U16),

@@ -17,6 +17,7 @@ fn desc(channel: ChannelType, transfer: TransferFunction) -> PixelDescriptor {
 }
 
 fn main() {
+    zenpixels_convert::accel::enable_all();
     zenbench::run(|suite| {
         for &(pair_name, from) in &[
             ("BT.709→sRGB", TransferFunction::Bt709),

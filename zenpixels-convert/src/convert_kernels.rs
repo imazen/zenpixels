@@ -16,7 +16,7 @@ use crate::{ChannelLayout, ChannelType};
 
 use super::{ConvertStep, PlannedOperation};
 use crate::TransferFunction;
-use crate::caps;
+use crate::accel::kernel_caps as caps;
 use crate::f16_scalar::{f16_bits_to_f32_slice, f32_to_f16_bits_slice};
 
 /// IEEE 754 half-precision encoding of 1.0: sign=0, exponent=01111 (bias 15),

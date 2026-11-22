@@ -18,6 +18,7 @@ use whereat::At;
 pub struct ConversionSpec<'a> {
     options: ConvertOptions,
     cms: Option<&'a dyn PluggableCms>,
+    accelerators: Option<&'a crate::accel::Accelerators>,
     precision: Option<SourcePrecision>,
     float_facts: zenpixels::sample::FloatFacts,
     choice: OutputChoice,
@@ -33,10 +34,16 @@ pub struct ConversionSpec<'a> {
 
 impl<'a> ConversionSpec<'a> {
     /// Select explicit permissions. Discovery is side-effect free with respect to samples.
+    ///
+    /// Uses whichever SIMD accelerators are registered process-wide via
+    /// [`crate::accel`] (or [`Accelerators::ALL`](crate::Accelerators::ALL) when the
+    /// `fast` Cargo feature is enabled), falling back to the 0-bit-identical universal
+    /// fast-FMA scalar core for any unregistered kernel.
     pub const fn new(options: ConvertOptions) -> Self {
         Self {
             options,
             cms: None,
+            accelerators: None,
             precision: None,
             float_facts: zenpixels::sample::FloatFacts::NONE,
             choice: OutputChoice::Hidden,
@@ -51,11 +58,42 @@ impl<'a> ConversionSpec<'a> {
         }
     }
 
+    /// Select explicit permissions with all SIMD accelerators enabled for this conversion.
+    ///
+    /// Shorthand for `ConversionSpec::new(options).with_accelerators(&Accelerators::ALL)`.
+    /// Does not require [`crate::accel::enable_all`] or the `fast` Cargo feature.
+    pub const fn fast(options: ConvertOptions) -> Self {
+        Self::new(options).with_accelerators(&crate::accel::Accelerators::ALL)
+    }
+
     /// Request only reversible sample representation changes.
     pub const fn preserve_samples() -> Self {
         let mut spec = Self::new(ConvertOptions::retain_channels());
         spec.preserves_samples = true;
         spec
+    }
+
+    /// Override the process-wide [`crate::accel`] registry for this conversion.
+    ///
+    /// Pass `&Accelerators::ALL` or `&Accelerators::WEB_SDR` for scoped compile-time
+    /// SIMD without global state, or `&Accelerators::SCALAR` to force universal scalar
+    /// execution (e.g. for hermetic 0-bit parity tests even after `accel::enable_all()`).
+    pub const fn with_accelerators(mut self, accelerators: &'a crate::accel::Accelerators) -> Self {
+        self.accelerators = Some(accelerators);
+        self
+    }
+
+    /// Explicit accelerator override on this request, if set.
+    pub const fn accelerators(&self) -> Option<&'a crate::accel::Accelerators> {
+        self.accelerators
+    }
+
+    #[inline]
+    pub(crate) fn resolve_accelerators(&self) -> crate::accel::Accelerators {
+        match self.accelerators {
+            Some(a) => *a,
+            None => crate::accel::enabled(),
+        }
     }
 
     /// Provide a backend for profile-aware conversions.
@@ -351,64 +389,13 @@ impl ResolvedProfiles {
 
 type PrepareProfilesFn =
     fn(PixelEncoding<'_>, PixelEncoding<'_>) -> Result<ResolvedProfiles, At<ConvertError>>;
-type CompileExplicitFn = fn(
-    PixelDescriptor,
-    PixelDescriptor,
-    &ConvertOptions,
-    &crate::caps::PlannerHooks,
-) -> Result<RowRecipe, At<ConvertError>>;
 type CompileEncodingFn = fn(
     PixelEncoding<'_>,
     PixelEncoding<'_>,
     &ConvertOptions,
     Option<&dyn PluggableCms>,
-    &crate::caps::PlannerHooks,
+    &crate::accel::Accelerators,
 ) -> Result<RowRecipe, At<ConvertError>>;
-
-#[derive(Clone, Copy)]
-pub(crate) struct ProfileHooks {
-    prepare: Option<PrepareProfilesFn>,
-    compile_explicit: CompileExplicitFn,
-    compile_encoding: CompileEncodingFn,
-}
-
-pub(crate) const PROFILE_HOOKS: ProfileHooks = ProfileHooks {
-    prepare: Some(prepare_with_profiles),
-    compile_explicit: RowRecipe::new_explicit_hooks,
-    compile_encoding: RowRecipe::new_with_encoding_hooks,
-};
-
-fn compile_descriptors_with_cms(
-    source: PixelEncoding<'_>,
-    target: PixelEncoding<'_>,
-    options: &ConvertOptions,
-    cms: Option<&dyn PluggableCms>,
-    hooks: &crate::caps::PlannerHooks,
-) -> Result<RowRecipe, At<ConvertError>> {
-    RowRecipe::new_explicit_with_cms_hooks(
-        source.descriptor(),
-        target.descriptor(),
-        options,
-        cms,
-        hooks,
-    )
-}
-
-pub(crate) const DESCRIPTOR_CMS_HOOKS: ProfileHooks = ProfileHooks {
-    prepare: None,
-    compile_explicit: RowRecipe::new_explicit_hooks,
-    compile_encoding: compile_descriptors_with_cms,
-};
-
-#[cfg(feature = "hdr-experimental")]
-pub(crate) type ExplicitHdrFn = fn(
-    PixelEncoding<'_>,
-    PixelEncoding<'_>,
-    bool,
-    &ConvertOptions,
-    &ConversionSpec<'_>,
-    &crate::caps::PlannerHooks,
-) -> Result<(RowRecipe, bool), At<ConvertError>>;
 
 fn prepare_with_profiles(
     source: PixelEncoding<'_>,
@@ -445,16 +432,16 @@ fn prepare_with_profiles(
 }
 
 #[cfg(feature = "hdr-experimental")]
-pub(crate) fn compile_explicit_hdr(
+fn compile_explicit_hdr(
     source: PixelEncoding<'_>,
     target: PixelEncoding<'_>,
     same_profile: bool,
     options: &ConvertOptions,
     spec: &ConversionSpec<'_>,
-    hooks: &crate::caps::PlannerHooks,
+    has_profiles: bool,
 ) -> Result<(RowRecipe, bool), At<ConvertError>> {
     let hdr = spec.hdr.expect("compile_explicit_hdr called with spec.hdr");
-    let (from, to, effective_src_tf) = if hooks.profiles.is_some() {
+    let (from, to, effective_src_tf) = if has_profiles {
         let src_profile = crate::output::current_profile_for(source)?;
         let dst_profile = crate::output::current_profile_for(target)?;
         if !same_profile && (src_profile.resolve().is_none() || dst_profile.resolve().is_none()) {
@@ -498,19 +485,18 @@ pub(crate) fn compile_explicit_hdr(
     {
         return Err(whereat::at!(ConvertError::DepthReductionForbidden));
     }
-    let native = match spec.tone_mapper {
+    let mut native = match spec.tone_mapper {
         Some(mapper) => {
             crate::NativePlan::new_with_tone_mapper_unbound(from, to, *hdr, Arc::clone(mapper))?
         }
         None => crate::NativePlan::new_with_hdr_config_unbound(from, to, *hdr)?,
     };
-    let native = if let Some(white) = source.color_context().and_then(ColorContext::diffuse_white)
+    if let Some(white) = source.color_context().and_then(ColorContext::diffuse_white)
         && from.transfer() == TransferFunction::Linear
     {
-        native.with_linear_input_white(white, hdr.source_peak_nits)
-    } else {
-        native
-    };
+        native = native.with_linear_input_white(white, hdr.source_peak_nits);
+    }
+    native.bind::<{ crate::accel::kernel_caps::ALL }>()?;
     let set_hdr_output_luminance = matches!(
         effective_src_tf,
         TransferFunction::Linear | TransferFunction::Pq
@@ -520,54 +506,42 @@ pub(crate) fn compile_explicit_hdr(
 
 impl ConvertPlan {
     /// Check authority and policy and compile the actual route.
+    ///
+    /// Executes via installed SIMD accelerators from [`crate::accel`] (or
+    /// [`ConversionSpec::with_accelerators`] / Cargo feature `fast`), seamlessly falling
+    /// back to the 0-bit-identical universal fast-FMA scalar core for any unregistered path.
+    /// Descriptor-only calls (`PixelEncoding::from(PixelDescriptor)`) dead-strip ICC
+    /// fingerprint tables automatically.
+    #[inline]
     #[track_caller]
     pub fn build(
         source: PixelEncoding<'_>,
         target: PixelEncoding<'_>,
         spec: &ConversionSpec<'_>,
     ) -> Result<Self, At<ConvertError>> {
-        Self::build_with_caps::<{ crate::caps::ALL }>(source, target, spec)
-    }
-
-    /// Compile a route and bind only the kernel steps permitted by `CAPS`.
-    ///
-    /// Core planning is non-generic and shared across capability masks (via
-    /// compile-time [`PlannerHooks`](crate::caps::PlannerHooks)); pure
-    /// single-depth integer layout masks route through a dedicated minimal
-    /// layout planner so depth/transfer/gamut/ICC planners dead-strip cleanly.
-    #[inline(always)]
-    #[track_caller]
-    pub(crate) fn build_with_caps<const CAPS: u64>(
-        source: PixelEncoding<'_>,
-        target: PixelEncoding<'_>,
-        spec: &ConversionSpec<'_>,
-    ) -> Result<Self, At<ConvertError>> {
-        let mut plan = if const { crate::caps::is_layout_only(CAPS) } {
-            Self::build_layout_only(source, target, spec)?
-        } else if source.color_context().is_none() && target.color_context().is_none() {
-            Self::build_general(
-                source,
-                target,
-                spec,
-                &const { crate::caps::PlannerHooks::for_caps_descriptors::<CAPS>() },
-            )?
+        let accels = spec.resolve_accelerators();
+        if source.color_context().is_none() && target.color_context().is_none() {
+            Self::build_inner(source, target, spec, &accels, None, None)
         } else {
-            Self::build_general(
+            Self::build_inner(
                 source,
                 target,
                 spec,
-                &const { crate::caps::PlannerHooks::for_caps::<CAPS>() },
-            )?
-        };
-        plan.recipe.bind::<CAPS>()?;
-        Ok(plan)
+                &accels,
+                Some(prepare_with_profiles),
+                Some(RowRecipe::new_with_encoding_accel),
+            )
+        }
     }
 
     #[track_caller]
-    fn build_layout_only(
+    fn build_inner(
         source: PixelEncoding<'_>,
         target: PixelEncoding<'_>,
         spec: &ConversionSpec<'_>,
+        accels: &crate::accel::Accelerators,
+        prepare_profiles: Option<PrepareProfilesFn>,
+        compile_encoding: Option<CompileEncodingFn>,
     ) -> Result<Self, At<ConvertError>> {
         let from = source.descriptor();
         let to = target.descriptor();
@@ -577,141 +551,10 @@ impl ConvertPlan {
                 actual: zenpixels::sample::FloatFacts::NONE,
             }));
         }
-        // Without `caps::PROFILES`, reject any attached ICC/CICP/parametric profile
-        // (unless the entire PixelEncoding is an identical native-model identity).
-        let src_has_profile = source
-            .color_context()
-            .is_some_and(|c| c.as_profile_source().is_some());
-        let dst_has_profile = target
-            .color_context()
-            .is_some_and(|c| c.as_profile_source().is_some());
-        let exact_same_encoding = from == to && source.color_context() == target.color_context();
-        if (src_has_profile || dst_has_profile) && !exact_same_encoding {
-            return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
-        }
-        let same_profile = exact_same_encoding
-            || (from.primaries == to.primaries && from.transfer() == to.transfer());
-
-        let mut options =
-            crate::interpretation::resolve_options(source.color_context(), spec.options());
-        if options.alpha_policy() == AlphaPolicy::DiscardIfOpaque
-            && from.has_alpha()
-            && !to.has_alpha()
-        {
-            if from.alpha() == Some(AlphaMode::Opaque)
-                || spec
-                    .precision
-                    .is_some_and(|p| p.alpha() == AlphaContent::Opaque)
-            {
-                options = options.with_alpha_policy(AlphaPolicy::DiscardUnchecked);
-            } else if spec
-                .precision
-                .is_some_and(|p| p.alpha() == AlphaContent::Translucent)
-            {
-                return Err(whereat::at!(ConvertError::AlphaNotOpaque));
-            }
-        }
-
-        let src_unverified_tf = matches!(from.color_model(), ColorModel::Rgb | ColorModel::Gray)
-            && from.transfer() == TransferFunction::Unknown;
-        let dst_unverified_tf = matches!(to.color_model(), ColorModel::Rgb | ColorModel::Gray)
-            && to.transfer() == TransferFunction::Unknown;
-        if src_unverified_tf != dst_unverified_tf {
-            return Err(whereat::at!(
-                ConvertError::UnknownTransferRelabelForbidden { from, to }
-            ));
-        }
-
-        if let Some(precision) = spec.precision {
-            if from.alpha() == Some(AlphaMode::Opaque)
-                && precision.alpha() == AlphaContent::Translucent
-            {
-                return Err(whereat::at!(ConvertError::NoPath { from, to }));
-            }
-            let mut offer = ConversionOffer::new(to);
-            if matches!(options.alpha_policy(), AlphaPolicy::CompositeOnto { .. }) {
-                offer = offer.with_matte();
-            }
-            let effect = ConversionEffect::of(&precision, &offer);
-            if spec.choice == OutputChoice::Hidden && !effect.preserves_modeled_capacity() {
-                return Err(whereat::at!(ConvertError::CapacityLoss(effect)));
-            }
-        }
-
-        #[cfg(feature = "hdr-experimental")]
-        if spec.hdr.is_some() {
-            return Err(whereat::at!(ConvertError::NoPath { from, to }));
-        }
-
-        crate::convert::validate_descriptors(from, to)?;
-        if crate::convert::needs_cms_for_color_model(&from, &to) {
-            return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
-        }
-        let recipe = if from == to {
-            RowRecipe::identity(from, to)
-        } else {
-            let plan = crate::NativePlan::plan_layout_only(from, to, &options, spec.exact())?;
-            RowRecipe::native(plan)
-        };
-        let worker_limit = spec.workspace_limit.map(|(_, limit)| limit);
-        if let Some((width, limit)) = spec.workspace_limit {
-            let bytes = recipe.requirements(width)?.worker_heap();
-            if !fits_worker_limit(bytes, limit) {
-                return Err(whereat::at!(ConvertError::WorkerBudgetExceeded {
-                    bytes,
-                    limit
-                }));
-            }
-        }
-        let output = resolve_output(source, target, same_profile, &options);
-        if let Some(requested) = target.color_context()
-            && (requested.diffuse_white().is_some_and(|white| {
-                output.as_ref().and_then(ColorContext::diffuse_white) != Some(white)
-            }) || requested
-                .hdr_peak()
-                .is_some_and(|peak| output.as_ref().and_then(ColorContext::hdr_peak) != Some(peak)))
-        {
-            return Err(whereat::at!(ConvertError::TargetLuminanceMismatch));
-        }
-        Ok(Self {
-            recipe,
-            input: source.color_context().cloned().map(Arc::new),
-            output: output.map(Arc::new),
-            worker_limit,
-        })
-    }
-
-    #[track_caller]
-    fn build_general(
-        source: PixelEncoding<'_>,
-        target: PixelEncoding<'_>,
-        spec: &ConversionSpec<'_>,
-        hooks: &crate::caps::PlannerHooks,
-    ) -> Result<Self, At<ConvertError>> {
-        let from = source.descriptor();
-        let to = target.descriptor();
-        if !spec.float_facts.is_empty() && !from.channel_type().is_float() {
-            return Err(whereat::at!(ConvertError::FloatFactsUnsatisfied {
-                required: spec.float_facts,
-                actual: zenpixels::sample::FloatFacts::NONE,
-            }));
-        }
-        let prof = if let Some(prepare) = hooks.profiles.and_then(|p| p.prepare) {
+        let prof = if let Some(prepare) = prepare_profiles {
             prepare(source, target)?
         } else {
-            let src_has_profile = source
-                .color_context()
-                .is_some_and(|c| c.as_profile_source().is_some());
-            let dst_has_profile = target
-                .color_context()
-                .is_some_and(|c| c.as_profile_source().is_some());
-            let exact_same = from == to && source.color_context() == target.color_context();
-            if (src_has_profile || dst_has_profile) && !exact_same {
-                return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
-            }
-            let mut rp = ResolvedProfiles::from_descriptors(from, to);
-            rp.same_profile = rp.same_profile || exact_same;
-            rp
+            ResolvedProfiles::from_descriptors(from, to)
         };
         let same_profile = prof.same_profile;
 
@@ -757,8 +600,15 @@ impl ConvertPlan {
             }
         }
 
-        let (mut recipe, hdr_output_luminance) =
-            compile(source, target, &prof, &options, spec, hooks)?;
+        let (mut recipe, hdr_output_luminance) = compile(
+            source,
+            target,
+            &prof,
+            &options,
+            spec,
+            accels,
+            compile_encoding,
+        )?;
         // The row endpoints use the caller's carriers even if the kernel resolved
         // fields of a compact descriptor using attached profile evidence.
         recipe.from = from;
@@ -850,30 +700,6 @@ impl ConvertPlan {
         targets: &[CandidateTarget<'_>],
         spec: &ConversionSpec<'_>,
     ) -> Result<SelectedConversion, At<ConvertError>> {
-        Self::select_with_caps::<{ crate::caps::ALL }>(source, targets, spec)
-    }
-
-    #[inline(always)]
-    #[track_caller]
-    pub(crate) fn select_with_caps<const CAPS: u64>(
-        source: PixelEncoding<'_>,
-        targets: &[CandidateTarget<'_>],
-        spec: &ConversionSpec<'_>,
-    ) -> Result<SelectedConversion, At<ConvertError>> {
-        Self::select_with_fn(source, targets, spec, Self::build_with_caps::<CAPS>)
-    }
-
-    #[track_caller]
-    fn select_with_fn(
-        source: PixelEncoding<'_>,
-        targets: &[CandidateTarget<'_>],
-        spec: &ConversionSpec<'_>,
-        build_fn: fn(
-            PixelEncoding<'_>,
-            PixelEncoding<'_>,
-            &ConversionSpec<'_>,
-        ) -> Result<Self, At<ConvertError>>,
-    ) -> Result<SelectedConversion, At<ConvertError>> {
         if targets.is_empty() {
             return Err(whereat::at!(ConvertError::EmptyFormatList));
         }
@@ -885,7 +711,7 @@ impl ConvertPlan {
             .unwrap_or_else(|| Provenance::from_source(source.descriptor()));
 
         for (index, candidate) in targets.iter().enumerate() {
-            match build_fn(source, candidate.target, spec) {
+            match Self::build(source, candidate.target, spec) {
                 Ok(plan) => {
                     let scratch = spec
                         .workspace_limit
@@ -1054,7 +880,8 @@ fn compile(
     prof: &ResolvedProfiles,
     options: &ConvertOptions,
     spec: &ConversionSpec<'_>,
-    hooks: &crate::caps::PlannerHooks,
+    accels: &crate::accel::Accelerators,
+    compile_encoding: Option<CompileEncodingFn>,
 ) -> Result<(RowRecipe, bool), At<ConvertError>> {
     let (mut from, to) = (source.descriptor(), target.descriptor());
     let same_profile = prof.same_profile;
@@ -1084,7 +911,7 @@ fn compile(
         && (spec.exact()
             || (from.channel_type() == crate::ChannelType::U8
                 && to.channel_type() == crate::ChannelType::U16))
-        && let Some(recipe) = exact_path(from, to, spec.workspace_limit, hooks)
+        && let Some(recipe) = exact_path(from, to, spec.workspace_limit, accels)
     {
         return Ok((recipe, false));
     }
@@ -1093,40 +920,34 @@ fn compile(
     }
     #[cfg(feature = "hdr-experimental")]
     if spec.hdr.is_some() {
-        let Some(hdr_fn) = hooks.explicit_hdr else {
-            return Err(whereat::at!(ConvertError::NoPath { from, to }));
-        };
-        return hdr_fn(source, target, same_profile, options, spec, hooks);
+        return compile_explicit_hdr(
+            source,
+            target,
+            same_profile,
+            options,
+            spec,
+            compile_encoding.is_some(),
+        );
     }
     if same_profile && from.transfer() == to.transfer() && from.primaries == to.primaries {
-        let recipe = if let Some(p) = hooks.profiles {
-            (p.compile_explicit)(from, to, options, hooks)?
-        } else {
-            crate::convert::validate_descriptors(from, to)?;
-            crate::convert::validate_luma_policy(from, to, options)?;
-            RowRecipe::native(crate::NativePlan::new_explicit_core(
-                from, to, options, hooks,
-            )?)
-        };
+        let recipe = RowRecipe::compile_native(from, to, options, false, spec.float_facts, accels)?;
         return Ok((recipe, false));
     }
-    if let Some(p) = hooks.profiles {
+    if let Some(compile_enc) = compile_encoding {
         return Ok((
-            (p.compile_encoding)(source, target, options, spec.cms(), hooks)?,
+            compile_enc(source, target, options, spec.cms(), accels)?,
             false,
         ));
     }
-    // No `caps::PROFILES`: descriptor-only path (still supports native gamut
-    // matrices, fused matlut, and SDR/HDR transfers without ICC/CMS dispatch).
-    if spec.cms().is_some() && crate::convert::needs_cms_for_color_model(&from, &to) {
-        return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
+    // Descriptor-only path (no ColorContext on either endpoint).
+    if spec.cms().is_some() {
+        return Ok((
+            RowRecipe::new_explicit_with_cms_accel(from, to, options, spec.cms(), accels)?,
+            false,
+        ));
     }
-    crate::convert::validate_descriptors(from, to)?;
-    crate::convert::validate_luma_policy(from, to, options)?;
     Ok((
-        RowRecipe::native(crate::NativePlan::new_explicit_core(
-            from, to, options, hooks,
-        )?),
+        RowRecipe::compile_native(from, to, options, false, spec.float_facts, accels)?,
         false,
     ))
 }
@@ -1137,15 +958,21 @@ fn exact_path(
     from: PixelDescriptor,
     to: PixelDescriptor,
     limit: Option<(u32, u64)>,
-    hooks: &crate::caps::PlannerHooks,
+    accels: &crate::accel::Accelerators,
 ) -> Option<RowRecipe> {
     #[derive(Clone, Copy)]
     struct State(PixelDescriptor);
 
     let edge = |from: State, to: State| -> Option<RowRecipe> {
-        crate::NativePlan::new_preserving_samples_core(from.0, to.0, hooks)
-            .ok()
-            .map(RowRecipe::native)
+        RowRecipe::compile_native(
+            from.0,
+            to.0,
+            &ConvertOptions::retain_channels(),
+            true,
+            zenpixels::sample::FloatFacts::NONE,
+            accels,
+        )
+        .ok()
     };
 
     let (source, target) = (State(from), State(to));

@@ -4,8 +4,8 @@ use zenpixels_convert::{AlphaPolicy, ConversionSpec, ConvertOptions, ConvertPlan
 fn main() {
     let opts = ConvertOptions::retain_channels().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
     let mut c = ConvertPlan::build(
-        D::RGBA8_SRGB.into(),
-        D::RGB8_SRGB.into(),
+        bb(D::RGBA8_SRGB).into(),
+        bb(D::RGB8_SRGB).into(),
         &ConversionSpec::new(opts),
     )
     .unwrap()

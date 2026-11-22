@@ -1,11 +1,12 @@
 use std::hint::black_box as bb;
 use zenpixels::PixelDescriptor as D;
-use zenpixels_convert::{AlphaPolicy, ConversionSpec, ConvertOptions, ConverterProfile, caps};
+use zenpixels_convert::{AlphaPolicy, ConversionSpec, ConvertOptions, ConvertPlan, accel};
 fn main() {
+    accel::enable_layout();
     let opts = ConvertOptions::retain_channels().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
-    let mut c = ConverterProfile::<{ caps::SDR_WEB }>::build(
-        D::RGBA8_SRGB.into(),
-        D::RGB8_SRGB.into(),
+    let mut c = ConvertPlan::build(
+        bb(D::RGBA8_SRGB).into(),
+        bb(D::RGB8_SRGB).into(),
         &ConversionSpec::new(opts),
     )
     .unwrap()

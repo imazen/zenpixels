@@ -85,6 +85,7 @@ fn bench_convert(
 }
 
 fn main() {
+    zenpixels_convert::accel::enable_all();
     zenbench::run(|suite| {
         bench_convert(
             suite,

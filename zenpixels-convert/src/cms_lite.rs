@@ -114,30 +114,30 @@ impl ZenCmsLite {
         dst_format: PixelFormat,
         options: &crate::policy::ConvertOptions,
     ) -> Option<Result<crate::NativePlan, whereat::At<crate::cms::CmsPluginError>>> {
-        Self::build_plan_with_hooks(
-            src,
-            dst,
-            src_format,
-            dst_format,
-            options,
-            &crate::caps::PlannerHooks::ALL_HOOKS,
-        )
-        .map(|res| {
-            res.map_err(|e| {
+        let (from, to) = Self::resolve_pair(src, dst, src_format, dst_format, options)?;
+        Some(
+            crate::convert::NativePlan::new_explicit_core(
+                from,
+                to,
+                options,
+                &crate::accel::PlannerHooks::ALL,
+            )
+            .map_err(|e| {
                 let msg = alloc::format!("ZenCmsLite plan construction failed: {e:?}");
                 e.map_error(|_| crate::cms::CmsPluginError::msg(msg))
-            })
-        })
+            }),
+        )
     }
 
-    pub(crate) fn build_plan_with_hooks(
+    /// Resolve a known profile pair to concrete `(from, to)` descriptors if `ZenCmsLite`
+    /// recognizes both endpoints and can handle the conversion natively.
+    pub(crate) fn resolve_pair(
         src: crate::ColorProfileSource<'_>,
         dst: crate::ColorProfileSource<'_>,
         src_format: PixelFormat,
         dst_format: PixelFormat,
         options: &crate::policy::ConvertOptions,
-        hooks: &crate::caps::PlannerHooks,
-    ) -> Option<Result<crate::NativePlan, whereat::At<crate::ConvertError>>> {
+    ) -> Option<(zenpixels::PixelDescriptor, zenpixels::PixelDescriptor)> {
         use zenpixels::PixelDescriptor;
 
         // ZenCmsLite implements D65 media-relative matrix+TRC math only. Decline
@@ -175,13 +175,7 @@ impl ZenCmsLite {
             return None;
         }
 
-        // Build directly from a plan to avoid recursing through the
-        // RowConverter CMS chain. Plan construction failing here IS a
-        // failure (we recognized the pair) — surface the typed ConvertError
-        // directly instead of erasing it into an opaque CMS string.
-        Some(crate::convert::NativePlan::new_explicit_core(
-            from, to, options, hooks,
-        ))
+        Some((from, to))
     }
 }
 

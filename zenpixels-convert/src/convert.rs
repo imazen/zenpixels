@@ -55,7 +55,7 @@ pub(crate) fn oklab_pivot_pub(
 pub(crate) fn plan_perceptual_core(
     from: PixelDescriptor,
     to: PixelDescriptor,
-    hooks: &crate::caps::PlannerHooks,
+    hooks: &crate::accel::PlannerHooks,
 ) -> Result<Option<NativePlan>, At<ConvertError>> {
     if let Some(pivot) = perceptual::pivot(from, to) {
         return NativePlan::plan_native_core(from, pivot, hooks)?
@@ -825,7 +825,7 @@ pub(crate) fn matte_background_scalar<const CAPS: u64>(
     reference_white: Option<zenpixels::hdr::DiffuseWhite>,
     source: PixelDescriptor,
 ) -> Result<[f32; 3], At<ConvertError>> {
-    use crate::caps;
+    use crate::accel::kernel_caps as caps;
     if source.transfer() == TransferFunction::Hlg {
         return Err(whereat::at!(ConvertError::HlgRenderingRequired));
     }
@@ -1489,7 +1489,7 @@ impl ConvertStep {
 /// exclusion of the unconditional `ColorModel` variants compiles in both
 /// builds and still classifies unified perceptual models accurately.
 #[inline]
-fn is_perceptual_model(m: crate::ColorModel) -> bool {
+pub(crate) fn is_perceptual_model(m: crate::ColorModel) -> bool {
     #[cfg(feature = "perceptual")]
     {
         matches!(
@@ -1556,7 +1556,7 @@ impl NativePlan {
         to: PixelDescriptor,
         canonical: impl Fn(PixelDescriptor) -> PixelDescriptor,
         swizzle: ConvertStep,
-        hooks: &crate::caps::PlannerHooks,
+        hooks: &crate::accel::PlannerHooks,
     ) -> Result<Self, At<ConvertError>> {
         let (first, last) = (canonical(from), canonical(to));
         let mut plan = Self::plan_native_core(first, last, hooks)?;
@@ -1573,7 +1573,11 @@ impl NativePlan {
         Ok(plan)
     }
 
-    fn build(from: PixelDescriptor, to: PixelDescriptor, steps: Vec<ConvertStep>) -> Self {
+    pub(crate) fn build(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        steps: Vec<ConvertStep>,
+    ) -> Self {
         let count = steps.len();
         let mut current = from;
         let operations = steps
@@ -1658,12 +1662,25 @@ impl NativePlan {
         Ok(())
     }
 
+    #[allow(dead_code)]
     #[track_caller]
     pub(crate) fn bind_if_unbound_all(&mut self) -> Result<(), At<ConvertError>> {
         if !self.bound {
-            self.bind::<{ crate::caps::ALL }>()?;
+            self.bind::<{ crate::accel::kernel_caps::ALL }>()?;
         }
         Ok(())
+    }
+
+    #[cfg(feature = "hdr-transfers")]
+    pub(crate) fn scale_matte_bg(&mut self, factor: f32) {
+        for operation in &mut self.operations {
+            if let ConvertStep::MatteComposite(state) = &mut operation.step {
+                state.scale *= factor;
+                for v in &mut state.linear {
+                    *v *= factor;
+                }
+            }
+        }
     }
 
     #[inline]
@@ -1809,7 +1826,7 @@ impl NativePlan {
         to: PixelDescriptor,
     ) -> Result<Self, At<ConvertError>> {
         let mut plan = Self::plan_native_unbound(from, to)?;
-        plan.bind::<{ crate::caps::ALL }>()?;
+        plan.bind::<{ crate::accel::kernel_caps::ALL }>()?;
         Ok(plan)
     }
 
@@ -1818,13 +1835,13 @@ impl NativePlan {
         from: PixelDescriptor,
         to: PixelDescriptor,
     ) -> Result<Self, At<ConvertError>> {
-        Self::plan_native_core(from, to, &crate::caps::PlannerHooks::ALL_HOOKS)
+        Self::plan_native_core(from, to, &crate::accel::PlannerHooks::ALL)
     }
 
     pub(crate) fn plan_native_core(
         from: PixelDescriptor,
         to: PixelDescriptor,
-        hooks: &crate::caps::PlannerHooks,
+        hooks: &crate::accel::PlannerHooks,
     ) -> Result<Self, At<ConvertError>> {
         validate_descriptors(from, to)?;
         if from == to && !needs_cms_for_color_model(&from, &to) {
@@ -2438,13 +2455,13 @@ impl NativePlan {
         from: PixelDescriptor,
         to: PixelDescriptor,
     ) -> Result<Self, At<ConvertError>> {
-        Self::new_preserving_samples_core(from, to, &crate::caps::PlannerHooks::ALL_HOOKS)
+        Self::new_preserving_samples_core(from, to, &crate::accel::PlannerHooks::ALL)
     }
 
     pub(crate) fn new_preserving_samples_core(
         from: PixelDescriptor,
         to: PixelDescriptor,
-        hooks: &crate::caps::PlannerHooks,
+        hooks: &crate::accel::PlannerHooks,
     ) -> Result<Self, At<ConvertError>> {
         let plan = Self::plan_native_core(from, to, hooks)?;
         if from.transfer() != to.transfer()
@@ -2740,7 +2757,7 @@ impl NativePlan {
         hdr: HdrConfig,
     ) -> Result<Self, At<ConvertError>> {
         let mut plan = Self::new_with_hdr_config_unbound(from, to, hdr)?;
-        plan.bind::<{ crate::caps::ALL }>()?;
+        plan.bind::<{ crate::accel::kernel_caps::ALL }>()?;
         Ok(plan)
     }
 
@@ -3049,7 +3066,7 @@ impl NativePlan {
         from: PixelDescriptor,
         to: PixelDescriptor,
         options: &ConvertOptions,
-        hooks: &crate::caps::PlannerHooks,
+        hooks: &crate::accel::PlannerHooks,
     ) -> Result<Self, At<ConvertError>> {
         let rendering = options
             .hlg_rendering()
@@ -3184,6 +3201,7 @@ impl NativePlan {
     /// the converter via
     /// [`ConversionSpec::with_cms`](crate::ConversionSpec::with_cms)
     /// with a [`PluggableCms`](crate::cms::PluggableCms) plugin attached.
+    #[allow(dead_code)]
     #[track_caller]
     pub fn new_explicit(
         from: PixelDescriptor,
@@ -3191,17 +3209,18 @@ impl NativePlan {
         options: &ConvertOptions,
     ) -> Result<Self, At<ConvertError>> {
         let mut plan = Self::new_explicit_unbound(from, to, options)?;
-        plan.bind::<{ crate::caps::ALL }>()?;
+        plan.bind::<{ crate::accel::kernel_caps::ALL }>()?;
         Ok(plan)
     }
 
+    #[allow(dead_code)]
     #[track_caller]
     pub(crate) fn new_explicit_unbound(
         from: PixelDescriptor,
         to: PixelDescriptor,
         options: &ConvertOptions,
     ) -> Result<Self, At<ConvertError>> {
-        Self::new_explicit_core(from, to, options, &crate::caps::PlannerHooks::ALL_HOOKS)
+        Self::new_explicit_core(from, to, options, &crate::accel::PlannerHooks::ALL)
     }
 
     #[track_caller]
@@ -3209,7 +3228,7 @@ impl NativePlan {
         from: PixelDescriptor,
         to: PixelDescriptor,
         options: &ConvertOptions,
-        hooks: &crate::caps::PlannerHooks,
+        hooks: &crate::accel::PlannerHooks,
     ) -> Result<Self, At<ConvertError>> {
         let hlg_boundary = from.transfer() != to.transfer()
             && (from.transfer() == TransferFunction::Hlg || to.transfer() == TransferFunction::Hlg);
@@ -3646,7 +3665,7 @@ impl NativePlan {
         from: PixelDescriptor,
         to: PixelDescriptor,
         options: &ConvertOptions,
-        hooks: &crate::caps::PlannerHooks,
+        hooks: &crate::accel::PlannerHooks,
     ) -> Result<Self, At<ConvertError>> {
         let sdr = |t: TransferFunction| !matches!(t, TransferFunction::Pq | TransferFunction::Hlg);
         if !sdr(from.transfer()) || !sdr(to.transfer()) {
@@ -4747,7 +4766,7 @@ impl ConvertScratch {
 }
 
 #[cfg(feature = "oklab")]
-fn soft_compress_step(primaries: ColorPrimaries, knee: f32) -> ConvertStep {
+pub(crate) fn soft_compress_step(primaries: ColorPrimaries, knee: f32) -> ConvertStep {
     ConvertStep::SoftCompressOklch(SoftCompressState {
         primaries,
         knee,

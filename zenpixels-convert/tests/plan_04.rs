@@ -87,11 +87,37 @@ fn bidirectional_unknown_transfer_refusal_and_explicit_relabel_composition() {
 
 #[test]
 fn workspace_reports_exact_scratch_across_zero_one_two_and_three_operations() {
+    use zenpixels_convert::Accelerators;
+
     let rgb16 = PixelDescriptor::RGB16_SRGB;
     let rgba16 = PixelDescriptor::RGBA16_SRGB;
+    // Universal scalar executes every native path in a single pass with zero scratch.
+    for (from, to) in [(RGB, RGB), (RGB, rgb16), (RGB, rgba16)] {
+        let scalar_plan = ConvertPlan::build(
+            from.into(),
+            to.into(),
+            &ConversionSpec::preserve_samples().with_accelerators(&Accelerators::SCALAR),
+        )
+        .unwrap();
+        assert_eq!(
+            scalar_plan
+                .workspace(WorkExtent::new(5, u32::MAX))
+                .unwrap()
+                .worker_heap(),
+            ByteBound::Exact(0)
+        );
+        let mut worker = None;
+        let count = allocation_counter::measure(|| {
+            worker = Some(scalar_plan.prepare(5).unwrap());
+        });
+        assert_eq!(count.bytes_total, 0);
+        drop(worker);
+    }
+
+    // Multi-step SIMD pipeline reports exact scratch across 0, 1, 2, and 3 operations.
+    let fast_exact = ConversionSpec::preserve_samples().with_accelerators(&Accelerators::ALL);
     for (from, to, expected) in [(RGB, RGB, 0), (RGB, rgb16, 0), (RGB, rgba16, 20)] {
-        let plan = ConvertPlan::build(from.into(), to.into(), &ConversionSpec::preserve_samples())
-            .unwrap();
+        let plan = ConvertPlan::build(from.into(), to.into(), &fast_exact).unwrap();
         let needed = plan.workspace(WorkExtent::new(5, u32::MAX)).unwrap();
         assert_eq!(needed.worker_heap(), ByteBound::Exact(expected));
         let mut worker = None;
@@ -107,7 +133,7 @@ fn workspace_reports_exact_scratch_across_zero_one_two_and_three_operations() {
         .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
         .with_depth_policy(DepthPolicy::Round)
         .with_gamut_policy(GamutPolicy::Clip);
-    let spec = ConversionSpec::new(opts);
+    let spec = ConversionSpec::fast(opts);
     let p3_u8 = RGB.with_primaries(ColorPrimaries::DisplayP3);
     let lut_plan = ConvertPlan::build(p3_u8.into(), RGB.into(), &spec).unwrap();
     let _warm = lut_plan.prepare_shared(1).unwrap();
@@ -689,10 +715,14 @@ fn hdr_config_refuses_unresolved_opaque_profile_and_histogram_merges_checked() {
 
 #[test]
 fn worker_budget_prunes_routes_and_enforces_limit_across_prepare_and_composition() {
+    use zenpixels_convert::Accelerators;
+
     let source = RGB.encoding();
     let wide = PixelDescriptor::RGBA16_SRGB.encoding();
     let narrow = PixelDescriptor::RGB16_SRGB.encoding();
-    let spec = ConversionSpec::preserve_samples().with_worker_limit(5, 0);
+    let spec = ConversionSpec::preserve_samples()
+        .with_accelerators(&Accelerators::ALL)
+        .with_worker_limit(5, 0);
     let rejected = ConvertPlan::build(source, wide, &spec).unwrap_err();
     assert!(matches!(
         rejected.error(),
@@ -714,7 +744,9 @@ fn worker_budget_prunes_routes_and_enforces_limit_across_prepare_and_composition
     );
 
     // Admitted at width 5 under a 20-byte limit MUST refuse prepare(6) (which requires 24 bytes)!
-    let spec_20 = ConversionSpec::preserve_samples().with_worker_limit(5, 20);
+    let spec_20 = ConversionSpec::preserve_samples()
+        .with_accelerators(&Accelerators::ALL)
+        .with_worker_limit(5, 20);
     let plan_20 = ConvertPlan::build(source, wide, &spec_20).unwrap();
     let mut worker_5 = plan_20.prepare_shared(5).unwrap();
     assert!(matches!(
