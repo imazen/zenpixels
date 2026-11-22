@@ -106,12 +106,31 @@ impl crate::cms::RowTransformMut for LiteTransformMut {
 }
 
 impl ZenCmsLite {
+    #[cfg(test)]
     pub(crate) fn build_plan(
         src: crate::ColorProfileSource<'_>,
         dst: crate::ColorProfileSource<'_>,
         src_format: PixelFormat,
         dst_format: PixelFormat,
         options: &crate::policy::ConvertOptions,
+    ) -> Option<Result<crate::NativePlan, whereat::At<crate::cms::CmsPluginError>>> {
+        Self::build_plan_with_hooks(
+            src,
+            dst,
+            src_format,
+            dst_format,
+            options,
+            &crate::caps::PlannerHooks::ALL_HOOKS,
+        )
+    }
+
+    pub(crate) fn build_plan_with_hooks(
+        src: crate::ColorProfileSource<'_>,
+        dst: crate::ColorProfileSource<'_>,
+        src_format: PixelFormat,
+        dst_format: PixelFormat,
+        options: &crate::policy::ConvertOptions,
+        hooks: &crate::caps::PlannerHooks,
     ) -> Option<Result<crate::NativePlan, whereat::At<crate::cms::CmsPluginError>>> {
         use zenpixels::PixelDescriptor;
 
@@ -154,7 +173,7 @@ impl ZenCmsLite {
         // RowConverter CMS chain. Plan construction failing here IS a
         // failure (we recognized the pair) — surface it instead of
         // declining.
-        match crate::convert::NativePlan::new_explicit_unbound(from, to, options) {
+        match crate::convert::NativePlan::new_explicit_core(from, to, options, hooks) {
             Ok(plan) => Some(Ok(plan)),
             Err(e) => {
                 let msg = alloc::format!("ZenCmsLite plan construction failed: {e:?}");

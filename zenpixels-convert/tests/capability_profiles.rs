@@ -367,3 +367,145 @@ fn custom_capability_mask_combines_cleanly() {
     assert_profile_rejects::<SRGB_DEPTH_ONLY>(D::RGBA8_SRGB, D::RGB8_SRGB, opts);
     assert_profile_rejects::<SRGB_DEPTH_ONLY>(D::GRAY8_SRGB, D::RGB8_SRGB, opts);
 }
+
+#[test]
+fn profiles_capability_gates_attached_icc_and_cicp_contexts() {
+    use zenpixels::{Cicp, ColorContext, PixelEncoding};
+    const SDR_WEB_DESC_ONLY: u64 = caps::SDR_WEB & !caps::PROFILES;
+
+    let opts = permissive_opts();
+    let spec = ConversionSpec::new(opts);
+
+    // Descriptor-only Display P3 -> sRGB still works identically without `PROFILES`
+    // (native gamut matrix / fused matlut kernels do not require ICC/CMS).
+    let p3_rgb8 = [255u8, 0, 0, 0, 255, 0, 0, 0, 255, 128, 128, 128];
+    assert_profile_matches_full::<SDR_WEB_DESC_ONLY>(
+        D::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3),
+        D::RGB8_SRGB,
+        opts,
+        &p3_rgb8,
+        4,
+    );
+
+    // Attached CICP/ICC ColorContext requires `caps::PROFILES`.
+    let ctx = ColorContext::from_cicp(Cicp::SRGB);
+    let src_with_ctx = PixelEncoding::new(D::RGBA8_SRGB, Some(&ctx));
+    let dst_plain: PixelEncoding<'_> = D::RGB8_SRGB.into();
+
+    // Cleared `PROFILES` refuses attached profiles with `NeedsCms`.
+    let err_layout =
+        ConverterProfile::<{ caps::LAYOUT_U8 }>::build(src_with_ctx, dst_plain, &spec).unwrap_err();
+    assert!(
+        matches!(err_layout.error(), ConvertError::NeedsCms { .. }),
+        "expected NeedsCms on LAYOUT_U8 with attached profile, got {:?}",
+        err_layout.error()
+    );
+    let err_sdr_desc =
+        ConverterProfile::<SDR_WEB_DESC_ONLY>::build(src_with_ctx, dst_plain, &spec).unwrap_err();
+    assert!(
+        matches!(err_sdr_desc.error(), ConvertError::NeedsCms { .. }),
+        "expected NeedsCms on SDR_WEB & !PROFILES with attached profile, got {:?}",
+        err_sdr_desc.error()
+    );
+
+    // `SDR_WEB` (which includes `PROFILES`) accepts the same attached profile.
+    let plan = ConverterProfile::<{ caps::SDR_WEB }>::build(src_with_ctx, dst_plain, &spec)
+        .expect("SDR_WEB includes PROFILES and should accept CICP context");
+    let mut worker = plan.prepare(2).unwrap();
+    let src = [10u8, 20, 30, 255, 40, 50, 60, 255];
+    let mut dst = [0u8; 6];
+    worker.try_convert_row(&src, &mut dst, 2).unwrap();
+    assert_eq!(dst, [10, 20, 30, 40, 50, 60]);
+}
+
+#[test]
+fn layout_only_fast_planner_matches_full_across_u8_matrix() {
+    const LAYOUT_GRAY_PREMUL_U8: u64 = caps::U8 | caps::LAYOUT | caps::GRAY | caps::PREMUL;
+
+    let formats = [
+        D::RGB8_SRGB,
+        D::RGBA8_SRGB,
+        D::BGRA8_SRGB,
+        D::new(
+            ChannelType::U8,
+            ChannelLayout::Bgr,
+            None,
+            TransferFunction::Srgb,
+        ),
+        D::RGBX8_SRGB,
+        D::BGRX8_SRGB,
+        D::GRAY8_SRGB,
+        D::GRAYA8_SRGB,
+        D::RGBA8_SRGB.with_alpha(Some(AlphaMode::Premultiplied)),
+        D::BGRA8_SRGB.with_alpha(Some(AlphaMode::Premultiplied)),
+        D::RGBA8_SRGB.with_alpha(Some(AlphaMode::Opaque)),
+    ];
+    let opts = permissive_opts();
+
+    for &from in &formats {
+        for &to in &formats {
+            let full = ConvertPlan::build(from.into(), to.into(), &ConversionSpec::new(opts));
+            let fast = ConverterProfile::<LAYOUT_GRAY_PREMUL_U8>::build(
+                from.into(),
+                to.into(),
+                &ConversionSpec::new(opts),
+            );
+            assert_eq!(
+                full.is_ok(),
+                fast.is_ok(),
+                "admission mismatch for {from:?} -> {to:?}: full={full:?} fast={fast:?}"
+            );
+            if full.is_ok() {
+                let src: Vec<u8> = (0..(4 * from.bytes_per_pixel()))
+                    .map(|i| ((i * 37 + 13) % 256) as u8)
+                    .collect();
+                assert_profile_matches_full::<LAYOUT_GRAY_PREMUL_U8>(from, to, opts, &src, 4);
+            }
+
+            // Also verify `preserve_samples` admission parity.
+            let full_exact =
+                ConvertPlan::build(from.into(), to.into(), &ConversionSpec::preserve_samples());
+            let fast_exact = ConverterProfile::<LAYOUT_GRAY_PREMUL_U8>::build(
+                from.into(),
+                to.into(),
+                &ConversionSpec::preserve_samples(),
+            );
+            assert_eq!(
+                full_exact.is_ok(),
+                fast_exact.is_ok(),
+                "preserve_samples mismatch for {from:?} -> {to:?}: full={full_exact:?} fast={fast_exact:?}"
+            );
+        }
+    }
+
+    // Policy error parity on layout-only path.
+    let err = ConverterProfile::<{ caps::LAYOUT_U8 }>::build(
+        D::RGBA8_SRGB.into(),
+        D::RGB8_SRGB.into(),
+        &ConversionSpec::new(ConvertOptions::retain_channels()),
+    )
+    .unwrap_err();
+    assert!(matches!(err.error(), ConvertError::AlphaRemovalForbidden));
+
+    let err_tf = ConverterProfile::<{ caps::LAYOUT_U8 }>::build(
+        D::RGB8_SRGB.with_transfer(TransferFunction::Unknown).into(),
+        D::RGB8_SRGB.into(),
+        &ConversionSpec::new(opts),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err_tf.error(),
+        ConvertError::UnknownTransferRelabelForbidden { .. }
+    ));
+
+    let err_facts = ConverterProfile::<{ caps::LAYOUT_U8 }>::build(
+        D::RGBA8_SRGB.into(),
+        D::RGB8_SRGB.into(),
+        &ConversionSpec::new(opts).with_float_facts(zenpixels::sample::FloatFacts::NO_NAN),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err_facts.error(),
+        ConvertError::FloatFactsUnsatisfied { .. }
+    ));
+}

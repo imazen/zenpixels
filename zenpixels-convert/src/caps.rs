@@ -90,27 +90,53 @@ pub const PERCEPTUAL_INT: u64 = 1 << 24;
 /// emitting multiple SIMD monomorphizations per kernel.
 pub const FLOAT_FACTS_SPEC: u64 = 1 << 25;
 
+// ── Profile & CMS resolution ─────────────────────────────────────────────────
+
+/// `ColorContext` / ICC / CICP profile resolution and `PluggableCms` /
+/// `ZenCmsLite` dispatch.
+///
+/// When cleared, [`ConverterProfile`] operates strictly on
+/// [`PixelDescriptor`](zenpixels::PixelDescriptor) values (refusing attached
+/// ICC / CICP / parametric profiles or CMS dispatch with
+/// [`ConvertError::NeedsCms`]), allowing LLVM to dead-strip ICC fingerprint
+/// hash tables, `ColorProfileSource::resolve`, and CMS routing.
+pub const PROFILES: u64 = 1 << 26;
+
 // ── Curated presets ──────────────────────────────────────────────────────────
 
 /// All conversion capabilities enabled (matches [`ConvertPlan::build`]).
 pub const ALL: u64 = !0u64;
 
-/// Minimal U8 layout-only profile: RGB / RGBA / BGR / BGRA swizzle and alpha add/drop.
+/// Minimal U8 layout-only profile: RGB / RGBA / BGR / BGRA swizzle and alpha
+/// add/drop on plain [`PixelDescriptor`](zenpixels::PixelDescriptor) values
+/// (no ICC/CMS profile resolution, depth/transfer/gamut, or float planners).
 pub const LAYOUT_U8: u64 = U8 | LAYOUT;
 
 /// Web SDR image pipeline: U8 + F32, layout, gray, premul, matte, clamped sRGB
-/// transfer, and fused/matrix gamut conversion (no U16, F16, BT.709, Gamma 2.2,
-/// PQ/HLG, Oklab, soft-compress, or perceptual).
+/// transfer, fused/matrix gamut conversion, and ICC/CICP profile resolution
+/// (no U16, F16, BT.709, Gamma 2.2, PQ/HLG, Oklab, soft-compress, or perceptual).
+///
+/// Clear [`PROFILES`] (`SDR_WEB & !PROFILES`) for descriptor-only builds that
+/// do not need ICC profile identification or CMS plugins.
 pub const SDR_WEB: u64 =
-    U8 | F32 | LAYOUT | GRAY | PREMUL | MATTE | TF_SRGB | GAMUT_MATRIX | GAMUT_FUSED;
+    U8 | F32 | LAYOUT | GRAY | PREMUL | MATTE | TF_SRGB | GAMUT_MATRIX | GAMUT_FUSED | PROFILES;
 
 /// Typical JPEG codec profile: U8 + F32, layout, gray, sRGB / BT.709 / Gamma 2.2,
-/// and gamut conversion.
-pub const CODEC_JPEG: u64 =
-    U8 | F32 | LAYOUT | GRAY | TF_SRGB | TF_BT709 | TF_GAMMA22 | GAMUT_MATRIX | GAMUT_FUSED;
+/// gamut conversion, and ICC/CICP profile resolution.
+pub const CODEC_JPEG: u64 = U8
+    | F32
+    | LAYOUT
+    | GRAY
+    | TF_SRGB
+    | TF_BT709
+    | TF_GAMMA22
+    | GAMUT_MATRIX
+    | GAMUT_FUSED
+    | PROFILES;
 
 /// Typical PNG codec profile: U8 + U16 + F32, layout, gray, premul, matte,
-/// sRGB / BT.709 / PQ / HLG transfers, and gamut conversion.
+/// sRGB / BT.709 / PQ / HLG transfers, gamut conversion, and ICC/CICP profile
+/// resolution.
 pub const CODEC_PNG: u64 = U8
     | U16
     | F32
@@ -123,11 +149,13 @@ pub const CODEC_PNG: u64 = U8
     | TF_PQ
     | TF_HLG
     | GAMUT_MATRIX
-    | GAMUT_FUSED;
+    | GAMUT_FUSED
+    | PROFILES;
 
 /// Full SDR profile across all channel depths (`U8`/`U16`/`F16`/`F32`) and SDR
-/// transfers (including extended-range and `FloatFacts` specialization), without
-/// HDR transfers, Oklab, tone mapping, or closed-form perceptual spaces.
+/// transfers (including extended-range, `FloatFacts` specialization, and
+/// ICC/CICP profile resolution), without HDR transfers, Oklab, tone mapping,
+/// or closed-form perceptual spaces.
 pub const SDR_ALL: u64 = U8
     | U16
     | F16
@@ -143,7 +171,8 @@ pub const SDR_ALL: u64 = U8
     | TF_GAMMA22
     | GAMUT_MATRIX
     | GAMUT_FUSED
-    | FLOAT_FACTS_SPEC;
+    | FLOAT_FACTS_SPEC
+    | PROFILES;
 
 /// Full HDR + Oklab profile (everything except closed-form perceptual polar /
 /// HSL / HSV / Lch / Jzazbz spaces).
@@ -153,6 +182,164 @@ pub const HDR: u64 = SDR_ALL | TF_PQ | TF_HLG | OKLAB | SOFT_COMPRESS | TONE_MAP
 /// `Jzczhz`, `HSL`, `HSV`, including integer encoding/decoding).
 pub const PERCEPTUAL: u64 =
     PERCEPTUAL_POLAR | PERCEPTUAL_HSL_HSV | PERCEPTUAL_LCH | PERCEPTUAL_JZAZBZ | PERCEPTUAL_INT;
+
+/// Whether `CAPS` can only ever execute same-depth, integer-only, same-color
+/// layout/gray/premul conversions without profiles, transfers, gamut, or matte.
+pub(crate) const fn is_layout_only(caps: u64) -> bool {
+    const NON_LAYOUT: u64 = PROFILES
+        | MATTE
+        | DEPTH_TRUNCATE
+        | TF_SRGB
+        | TF_EXTENDED
+        | TF_BT709
+        | TF_GAMMA22
+        | TF_PQ
+        | TF_HLG
+        | GAMUT_MATRIX
+        | GAMUT_FUSED
+        | OKLAB
+        | SOFT_COMPRESS
+        | TONE_MAP
+        | PERCEPTUAL
+        | FLOAT_FACTS_SPEC
+        | F16
+        | F32;
+    const INT_DEPTHS: u64 = U8 | U16;
+    (caps & NON_LAYOUT) == 0 && (caps & INT_DEPTHS).count_ones() <= 1
+}
+
+/// Non-generic function-pointer table of optional planner sub-trees.
+///
+/// Built at compile time by [`PlannerHooks::for_caps`]. Passing a `&PlannerHooks`
+/// into the shared non-generic planner core avoids duplicating core planner
+/// code across multiple [`ConverterProfile`] instantiations in a multi-codec
+/// binary while still eliminating symbol references to every disabled
+/// sub-planner (ICC/CMS, HLG rendering, HDR pivot, tone mapping, Oklab,
+/// soft-compress, perceptual) at const-eval time.
+type PlanWithOptsFn = fn(
+    zenpixels::PixelDescriptor,
+    zenpixels::PixelDescriptor,
+    &crate::ConvertOptions,
+    &PlannerHooks,
+) -> Result<crate::NativePlan, At<ConvertError>>;
+
+#[cfg(feature = "bt2446a")]
+type Bt2446AFn = fn(
+    zenpixels::PixelDescriptor,
+    zenpixels::PixelDescriptor,
+    crate::HdrConfig,
+) -> Result<crate::NativePlan, At<ConvertError>>;
+
+#[cfg(feature = "oklab")]
+type OklabPivotFn = fn(
+    zenpixels::PixelDescriptor,
+    zenpixels::PixelDescriptor,
+) -> Option<zenpixels::PixelDescriptor>;
+
+#[cfg(feature = "perceptual")]
+type PerceptualPlanFn = fn(
+    zenpixels::PixelDescriptor,
+    zenpixels::PixelDescriptor,
+    &PlannerHooks,
+) -> Result<Option<crate::NativePlan>, At<ConvertError>>;
+
+#[derive(Clone, Copy)]
+pub(crate) struct PlannerHooks {
+    pub(crate) profiles: Option<crate::plan::ProfileHooks>,
+    pub(crate) hdr_pivot: Option<crate::converter::HdrPivotFn>,
+    pub(crate) hlg_render: Option<PlanWithOptsFn>,
+    #[cfg(feature = "bt2446a")]
+    pub(crate) bt2446a: Option<Bt2446AFn>,
+    #[cfg(feature = "hdr-experimental")]
+    pub(crate) explicit_hdr: Option<crate::plan::ExplicitHdrFn>,
+    #[cfg(feature = "oklab")]
+    pub(crate) soft_compress: Option<PlanWithOptsFn>,
+    #[cfg(feature = "oklab")]
+    pub(crate) oklab_pivot: Option<OklabPivotFn>,
+    #[cfg(feature = "perceptual")]
+    pub(crate) perceptual: Option<PerceptualPlanFn>,
+}
+
+impl PlannerHooks {
+    pub(crate) const ALL_HOOKS: Self = Self::for_caps::<ALL>();
+
+    pub(crate) const fn for_caps<const CAPS: u64>() -> Self {
+        Self::for_caps_inner::<CAPS>(true)
+    }
+
+    /// Variant used when both endpoints are proven at the callsite to carry no
+    /// `ColorContext` (`PixelEncoding::from(PixelDescriptor)`): keeps CMS
+    /// dispatch when `PROFILES` is set, but omits `ColorContext`/ICC/HDR-pivot
+    /// source-resolution hooks so descriptor-only callers dead-strip them even
+    /// under `caps::ALL`.
+    pub(crate) const fn for_caps_descriptors<const CAPS: u64>() -> Self {
+        Self::for_caps_inner::<CAPS>(false)
+    }
+
+    const fn for_caps_inner<const CAPS: u64>(with_contexts: bool) -> Self {
+        Self {
+            profiles: if (CAPS & PROFILES) != 0 {
+                if with_contexts {
+                    Some(crate::plan::PROFILE_HOOKS)
+                } else {
+                    Some(crate::plan::DESCRIPTOR_CMS_HOOKS)
+                }
+            } else {
+                None
+            },
+            hdr_pivot: if with_contexts && (CAPS & PROFILES) != 0 && (CAPS & (TF_PQ | TF_HLG)) != 0
+            {
+                Some(crate::converter::RowRecipe::new_with_sources_hdr_pivot_hooks)
+            } else {
+                None
+            },
+            hlg_render: {
+                #[cfg(feature = "hdr-transfers")]
+                {
+                    if (CAPS & TF_HLG) != 0 {
+                        Some(crate::NativePlan::plan_hlg_rendering_core)
+                    } else {
+                        None
+                    }
+                }
+                #[cfg(not(feature = "hdr-transfers"))]
+                {
+                    None
+                }
+            },
+            #[cfg(feature = "bt2446a")]
+            bt2446a: if (CAPS & TONE_MAP) != 0 {
+                Some(crate::NativePlan::new_with_hdr_config_unbound)
+            } else {
+                None
+            },
+            #[cfg(feature = "hdr-experimental")]
+            explicit_hdr: if (CAPS & TONE_MAP) != 0 {
+                Some(crate::plan::compile_explicit_hdr)
+            } else {
+                None
+            },
+            #[cfg(feature = "oklab")]
+            soft_compress: if (CAPS & SOFT_COMPRESS) != 0 {
+                Some(crate::NativePlan::new_soft_compressed_core)
+            } else {
+                None
+            },
+            #[cfg(feature = "oklab")]
+            oklab_pivot: if (CAPS & OKLAB) != 0 {
+                Some(crate::convert::oklab_pivot_pub)
+            } else {
+                None
+            },
+            #[cfg(feature = "perceptual")]
+            perceptual: if (CAPS & PERCEPTUAL) != 0 {
+                Some(crate::convert::plan_perceptual_core)
+            } else {
+                None
+            },
+        }
+    }
+}
 
 /// Compile-time capability-masked planner producing an ordinary [`ConvertPlan`].
 ///

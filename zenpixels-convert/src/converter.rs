@@ -44,6 +44,19 @@ enum Operation {
     Owned(Box<dyn crate::cms::RowTransformMut>),
 }
 
+pub(crate) type HdrPivotFn = fn(
+    PixelDescriptor,
+    PixelDescriptor,
+    TransferFunction,
+    TransferFunction,
+    crate::ColorProfileSource<'_>,
+    crate::ColorProfileSource<'_>,
+    bool,
+    &crate::policy::ConvertOptions,
+    Option<&dyn crate::cms::PluggableCms>,
+    &crate::caps::PlannerHooks,
+) -> Result<RowRecipe, At<ConvertError>>;
+
 #[track_caller]
 fn dispatch_cms_chain(
     source: crate::ColorProfileSource<'_>,
@@ -52,6 +65,7 @@ fn dispatch_cms_chain(
     to: PixelDescriptor,
     options: &crate::policy::ConvertOptions,
     cms: Option<&dyn crate::cms::PluggableCms>,
+    hooks: &crate::caps::PlannerHooks,
 ) -> Result<Option<Operation>, At<ConvertError>> {
     let map_error = |e: At<crate::cms::CmsPluginError>| {
         e.map_error(|error| ConvertError::CmsBackend(alloc::sync::Arc::new(error)))
@@ -65,12 +79,13 @@ fn dispatch_cms_chain(
             CmsSupport::Declined => {}
         }
     }
-    if let Some(result) = crate::cms_lite::ZenCmsLite::build_plan(
+    if let Some(result) = crate::cms_lite::ZenCmsLite::build_plan_with_hooks(
         source,
         target,
         from.pixel_format(),
         to.pixel_format(),
         options,
+        hooks,
     ) {
         return whereat::at_crate!(result)
             .map(|c| Some(Operation::Native(c)))
@@ -284,7 +299,22 @@ impl RowRecipe {
         to: PixelDescriptor,
         options: &crate::policy::ConvertOptions,
     ) -> Result<Self, At<ConvertError>> {
-        Self::new_explicit_with_cms(from, to, options, None)
+        Self::new_explicit_with_cms_hooks(
+            from,
+            to,
+            options,
+            None,
+            &crate::caps::PlannerHooks::ALL_HOOKS,
+        )
+    }
+
+    pub(crate) fn new_explicit_hooks(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        options: &crate::policy::ConvertOptions,
+        hooks: &crate::caps::PlannerHooks,
+    ) -> Result<Self, At<ConvertError>> {
+        Self::new_explicit_with_cms_hooks(from, to, options, None, hooks)
     }
 
     /// Create a converter that may delegate the color conversion to a
@@ -306,6 +336,22 @@ impl RowRecipe {
         options: &crate::policy::ConvertOptions,
         cms: Option<&dyn crate::cms::PluggableCms>,
     ) -> Result<Self, At<ConvertError>> {
+        Self::new_explicit_with_cms_hooks(
+            from,
+            to,
+            options,
+            cms,
+            &crate::caps::PlannerHooks::ALL_HOOKS,
+        )
+    }
+
+    pub(crate) fn new_explicit_with_cms_hooks(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        options: &crate::policy::ConvertOptions,
+        cms: Option<&dyn crate::cms::PluggableCms>,
+        hooks: &crate::caps::PlannerHooks,
+    ) -> Result<Self, At<ConvertError>> {
         use crate::policy::{AlphaPolicy, DepthPolicy};
 
         // Check before CMS setup: its profile/format interface cannot express
@@ -321,8 +367,8 @@ impl RowRecipe {
         {
             // The CMS interface has no luminance-intent parameter. Native HDR
             // plans must retain the explicit anchor and peak policy.
-            return Ok(Self::native(NativePlan::new_explicit_unbound(
-                from, to, options,
+            return Ok(Self::native(NativePlan::new_explicit_core(
+                from, to, options, hooks,
             )?));
         }
 
@@ -337,8 +383,8 @@ impl RowRecipe {
         if options.gamut_policy() == crate::policy::GamutPolicy::SoftCompress
             && crate::convert::soft_compress_applies(&from, &to)
         {
-            return Ok(Self::native(NativePlan::new_explicit_unbound(
-                from, to, options,
+            return Ok(Self::native(NativePlan::new_explicit_core(
+                from, to, options, hooks,
             )?));
         }
 
@@ -382,6 +428,7 @@ impl RowRecipe {
                 to,
                 options,
                 cms,
+                hooks,
             )?
         {
             // Precision bits, not byte size — see convert.rs for rationale.
@@ -395,7 +442,7 @@ impl RowRecipe {
         }
 
         // Same profiles, or CMS chain declined — built-in plan.
-        let plan = NativePlan::new_explicit_unbound(from, to, options).at()?;
+        let plan = NativePlan::new_explicit_core(from, to, options, hooks).at()?;
         Ok(Self::native(plan))
     }
 
@@ -403,12 +450,12 @@ impl RowRecipe {
     /// pairs (`descriptor` + optional `ColorContext`), honoring authoritative
     /// ICC profiles, CICP agreement checks, and diffuse-white / HDR-peak anchors
     /// on `from`.
-    #[track_caller]
-    pub(crate) fn new_with_encoding(
+    pub(crate) fn new_with_encoding_hooks(
         from: crate::PixelEncoding<'_>,
         to: crate::PixelEncoding<'_>,
         options: &crate::policy::ConvertOptions,
         cms: Option<&dyn crate::cms::PluggableCms>,
+        hooks: &crate::caps::PlannerHooks,
     ) -> Result<Self, At<ConvertError>> {
         let resolved = crate::interpretation::resolve_options(from.color_context(), options);
         let options = &resolved;
@@ -431,20 +478,22 @@ impl RowRecipe {
                 crate::ColorProfileSource::Icc(_) | crate::ColorProfileSource::Parametric(_)
             ));
         if needs_profiles {
-            Self::new_with_sources(
+            Self::new_with_sources_hooks(
                 from_desc,
                 to_desc,
                 source_profile,
                 target_profile,
                 options,
                 cms,
+                hooks,
             )
         } else {
-            Self::new_explicit_with_cms(from_desc, to_desc, options, cms)
+            Self::new_explicit_with_cms_hooks(from_desc, to_desc, options, cms, hooks)
         }
     }
 
     /// Build from actual current/target profiles, including opaque ICC bytes.
+    #[cfg(test)]
     pub(crate) fn new_with_sources(
         from: PixelDescriptor,
         to: PixelDescriptor,
@@ -452,6 +501,26 @@ impl RowRecipe {
         target: crate::ColorProfileSource<'_>,
         options: &crate::policy::ConvertOptions,
         cms: Option<&dyn crate::cms::PluggableCms>,
+    ) -> Result<Self, At<ConvertError>> {
+        Self::new_with_sources_hooks(
+            from,
+            to,
+            source,
+            target,
+            options,
+            cms,
+            &crate::caps::PlannerHooks::ALL_HOOKS,
+        )
+    }
+
+    pub(crate) fn new_with_sources_hooks(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        source: crate::ColorProfileSource<'_>,
+        target: crate::ColorProfileSource<'_>,
+        options: &crate::policy::ConvertOptions,
+        cms: Option<&dyn crate::cms::PluggableCms>,
+        hooks: &crate::caps::PlannerHooks,
     ) -> Result<Self, At<ConvertError>> {
         let from = source
             .resolve()
@@ -487,7 +556,7 @@ impl RowRecipe {
             && (matches!(src_tf, TransferFunction::Pq | TransferFunction::Hlg)
                 || matches!(dst_tf, TransferFunction::Pq | TransferFunction::Hlg));
         if hdr_crossing && source.resolve().is_some() && target.resolve().is_some() {
-            return Self::new_explicit(from, to, options);
+            return Self::new_explicit_hooks(from, to, options, hooks);
         }
 
         // No ICC transform here can honor a mapping, and clipping silently would be wrong.
@@ -519,8 +588,11 @@ impl RowRecipe {
         }
 
         if hdr_crossing {
-            return Self::new_with_sources_hdr_pivot(
-                from, to, src_tf, dst_tf, source, target, composites, options, cms,
+            let Some(pivot) = hooks.hdr_pivot else {
+                return Err(whereat::at!(ConvertError::NoPath { from, to }));
+            };
+            return pivot(
+                from, to, src_tf, dst_tf, source, target, composites, options, cms, hooks,
             );
         }
         // A plugin takes one depth, straight alpha and no layout change that loses channels, so the
@@ -572,22 +644,35 @@ impl RowRecipe {
             } else {
                 *options
             };
-            let before = Self::new_explicit(from, straight_from, options)?;
-            let color =
-                Self::new_with_sources(straight_from, straight_to, source, target, options, cms)?;
-            let after = Self::new_explicit(straight_to, to, &final_options)?;
+            let before = Self::new_explicit_hooks(from, straight_from, options, hooks)?;
+            let color = Self::new_with_sources_hooks(
+                straight_from,
+                straight_to,
+                source,
+                target,
+                options,
+                cms,
+                hooks,
+            )?;
+            let after = Self::new_explicit_hooks(straight_to, to, &final_options, hooks)?;
             return Ok(before.then(color).then(after));
         }
-        if let Some(external) =
-            dispatch_cms_chain(source.clone(), target.clone(), from, to, options, cms)?
-        {
+        if let Some(external) = dispatch_cms_chain(
+            source.clone(),
+            target.clone(),
+            from,
+            to,
+            options,
+            cms,
+            hooks,
+        )? {
             return Ok(Self::single(from, to, external));
         }
         // An unresolved ICC must never fall through to descriptor-only work.
         if source.resolve().is_none() || target.resolve().is_none() {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
         }
-        Self::new_explicit(from, to, options)
+        Self::new_explicit_hooks(from, to, options, hooks)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -600,8 +685,9 @@ impl RowRecipe {
         cms: Option<&dyn crate::cms::PluggableCms>,
         err_from: PixelDescriptor,
         err_to: PixelDescriptor,
+        hooks: &crate::caps::PlannerHooks,
     ) -> Result<Self, At<ConvertError>> {
-        if let Some(external) = dispatch_cms_chain(source, target, from, to, options, cms)? {
+        if let Some(external) = dispatch_cms_chain(source, target, from, to, options, cms, hooks)? {
             return Ok(Self::single(from, to, external));
         }
         Err(whereat::at!(ConvertError::NeedsCms {
@@ -611,7 +697,7 @@ impl RowRecipe {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn new_with_sources_hdr_pivot(
+    pub(crate) fn new_with_sources_hdr_pivot_hooks(
         from: PixelDescriptor,
         to: PixelDescriptor,
         src_tf: TransferFunction,
@@ -621,6 +707,7 @@ impl RowRecipe {
         composites: bool,
         options: &crate::policy::ConvertOptions,
         cms: Option<&dyn crate::cms::PluggableCms>,
+        hooks: &crate::caps::PlannerHooks,
     ) -> Result<Self, At<ConvertError>> {
         let endpoint_reduction = crate::route::channel_bits(from.channel_type())
             > crate::route::channel_bits(to.channel_type());
@@ -714,10 +801,11 @@ impl RowRecipe {
                 ChannelLayout::Rgb
             };
             let straight_to = straight_float(dst_f32_layout, to)?;
-            let before = Self::new_explicit(
+            let before = Self::new_explicit_hooks(
                 from,
                 handoff_desc,
                 &leg_opts.with_gamut_policy(crate::GamutPolicy::PreserveExtended),
+                hooks,
             )?;
             let cms_opts = if to.channel_type() == crate::ChannelType::F32 {
                 leg_opts
@@ -733,8 +821,9 @@ impl RowRecipe {
                 cms,
                 from,
                 to,
+                hooks,
             )?;
-            let after = Self::new_explicit(straight_to, to, &leg_opts)?;
+            let after = Self::new_explicit_hooks(straight_to, to, &leg_opts, hooks)?;
             return Ok(before.then(color).then(after));
         }
 
@@ -757,7 +846,7 @@ impl RowRecipe {
             .with_primaries(crate::ColorPrimaries::Bt2020)
             .with_transfer(handoff_tf);
         let unclipped = leg_opts.with_gamut_policy(crate::GamutPolicy::PreserveExtended);
-        let before = Self::new_explicit(from, straight_from, &unclipped)?;
+        let before = Self::new_explicit_hooks(from, straight_from, &unclipped, hooks)?;
         let color = Self::build_cms_only(
             straight_from,
             handoff_desc,
@@ -767,17 +856,19 @@ impl RowRecipe {
             cms,
             from,
             to,
+            hooks,
         )?;
         let after = if target.resolve().is_some() {
-            Self::new_explicit(handoff_desc, to, &leg_opts)?
+            Self::new_explicit_hooks(handoff_desc, to, &leg_opts, hooks)?
         } else {
-            Self::new_with_sources(
+            Self::new_with_sources_hooks(
                 handoff_desc,
                 to,
                 crate::ColorProfileSource::Cicp(handoff_cicp),
                 target,
                 &leg_opts,
                 cms,
+                hooks,
             )?
         };
         Ok(before.then(color).then(after))

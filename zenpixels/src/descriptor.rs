@@ -1064,6 +1064,13 @@ impl PixelDescriptor {
     ///
     /// Panics if the `(channel_type, layout, alpha)` combination has no
     /// corresponding [`PixelFormat`] variant (e.g. `(U16, Bgra, _)`).
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    const fn panic_invalid_descriptor(reason: &'static str) -> ! {
+        panic!("{}", reason)
+    }
+
     #[inline]
     #[track_caller]
     pub const fn new(
@@ -1074,7 +1081,7 @@ impl PixelDescriptor {
     ) -> Self {
         match Self::try_new(channel_type, layout, alpha, transfer) {
             Ok(descriptor) => descriptor,
-            Err(error) => panic!("{}", error.reason),
+            Err(error) => Self::panic_invalid_descriptor(error.reason),
         }
     }
 
@@ -1103,7 +1110,7 @@ impl PixelDescriptor {
     ) -> Self {
         match Self::try_new_full(channel_type, layout, alpha, transfer, primaries) {
             Ok(descriptor) => descriptor,
-            Err(error) => panic!("{}", error.reason),
+            Err(error) => Self::panic_invalid_descriptor(error.reason),
         }
     }
 

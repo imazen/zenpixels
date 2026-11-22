@@ -1154,8 +1154,26 @@ impl<'a> ColorProfileSource<'a> {
     /// (YCbCr matrix coefficients, narrow signal range, custom chromaticities,
     /// non-D65 white point, or arbitrary gamma).
     #[cfg(feature = "icc")]
+    #[inline]
     #[allow(unreachable_patterns)]
     pub fn resolve(&self) -> Option<(ColorPrimaries, TransferFunction)> {
+        match self {
+            // Only use the identification if matrix+TRC substitution is
+            // safe — profiles with LUTs, non-Bradford chad, or Lab PCS
+            // return MetadataOnly and need a full CMS.
+            // An embedded CICP tag does not prove the profile's TRCs,
+            // LUTs or adaptation can be replaced. Preserve ICC authority;
+            // callers choosing CICP explicitly pass ColorProfileSource::Cicp.
+            Self::Icc(icc_bytes) => {
+                crate::icc::identify_substitutable(icc_bytes).map(|id| (id.primaries, id.transfer))
+            }
+            other => other.resolve_non_icc(),
+        }
+    }
+
+    #[cfg(feature = "icc")]
+    #[allow(unreachable_patterns)]
+    fn resolve_non_icc(&self) -> Option<(ColorPrimaries, TransferFunction)> {
         match self {
             Self::PrimariesTransferPair {
                 primaries,
@@ -1177,20 +1195,6 @@ impl<'a> ColorProfileSource<'a> {
                 Some((p, t))
             }
             Self::Parametric(p) => p.to_primaries_transfer(),
-            Self::Icc(icc_bytes) => {
-                // Only use the identification if matrix+TRC substitution is
-                // safe — profiles with LUTs, non-Bradford chad, or Lab PCS
-                // return MetadataOnly and need a full CMS.
-                if let Some(id) = crate::icc::identify_common(icc_bytes) {
-                    if id.valid_use == crate::icc::IdentificationUse::MatrixTrcSubstitution {
-                        return Some((id.primaries, id.transfer));
-                    }
-                }
-                // An embedded CICP tag does not prove the profile's TRCs,
-                // LUTs or adaptation can be replaced. Preserve ICC authority;
-                // callers choosing CICP explicitly pass ColorProfileSource::Cicp.
-                None
-            }
             _ => None,
         }
     }

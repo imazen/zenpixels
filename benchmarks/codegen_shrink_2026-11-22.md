@@ -6,33 +6,63 @@
   - `linear-srgb` PQ row-bailout fix: `ae83f194` (`fix/transfer-rails-magemath`)
   - Phase 2 (zero-functionality-loss padded-chunk tail elimination + cold scalar trim): `01cf0bed`
   - Phase 3 (Option B Cargo features: `oklab` default-on, `hdr-transfers` default-on, `perceptual` default-off): `0a238b57`
-  - Phase 4 (const-generic capability bitmasking `caps` + `ConverterProfile<const CAPS: u64>`): this commit
-- **Size harness:** `benchmarks/converter-size/` (`base`, `conv`, `conv_sdr_web`, `conv_layout_u8`; stripped, fat LTO, CGU=1, `panic=abort`, `run-heavy` peak RSS `0.78 GiB`)
+  - Phase 4 (const-generic capability bitmasking `caps` + `ConverterProfile<const CAPS: u64>`): `90ac13d8`
+  - Phase 5 (compact split SoA ICC hash tables, single-constructor `intermediate_desc`, `caps::PROFILES`, `PlannerHooks` + `plan_layout_only`): this commit
+- **Size harness:** `benchmarks/converter-size/` (`base`, `conv`, `conv_sdr_web`, `conv_sdr_web_desc`, `conv_layout_u8`; stripped, fat LTO, CGU=1, `panic=abort`, `run-heavy` peak RSS `0.77 GiB`)
+- **Reference baselines (same profile, stripped):**
+  - Empty `fn main() {}`: `285,264 B` (`x86_64 -O3`), `278,224 B` (`x86_64 -Os`), `16,544 B` (`wasm32 -O3 +simd128`), `15,171 B` (`wasm32 -Oz +simd128`)
+  - Crates.io `zenpixels-convert 0.2.16` (`RowConverter::new`, `default-features = false, features = ["rgb"]`, `bin - base_0216`; const desc / `black_box` dyn desc): `+436,040 / +490,976 B` (`x86_64 -O3`), `+365,512 / +391,352 B` (`x86_64 -Os`), `+453,512 / +508,496 B` (`x86_64 -O3 +avx512`), `+206,136 / +239,757 B` (`wasm32 -O3 +simd128`), `+187,656 / +208,423 B` (`wasm32 -Oz +simd128`)
 - **4K UHD benchmark:** `cargo bench -p zenpixels-convert --all-features --bench bench_4k_paths` (`3840 × 2160` = `8,294,400` px/frame, `v3` tier, `run-heavy` peak RSS `0.35 GiB`)
 
 ## Stripped Binary Size Added (`bin - base`, bytes)
 
-### Progression across Phases 1–4 (Option B Default & Lean SDR)
+### Progression across Phases 1–5 (Option B Default & Lean SDR)
 
-| Target | Baseline (`da787b7f`) | Phase 2 (`01cf0bed`) | Phase 3 Default (`+oklab,+hdr-tf`) | Phase 3 Lean SDR | Phase 4 `ALL` Default | Phase 4 `SDR_WEB` Default | Phase 4 `LAYOUT_U8` Default | Phase 4 `LAYOUT_U8` Lean |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `x86_64 -O3` | `615,880` | `541,992` (-12.0%) | `466,840` (-24.2%) | `365,360` (-40.7%) | `512,176` (-16.8%) | `289,232` (-53.0%) | `189,648` (-69.2%) | `173,520` (-71.8%) |
-| `x86_64 -Os` | `546,128` | `430,816` (-21.1%) | `378,520` (-30.7%) | `314,496` (-42.4%) | `383,936` (-29.7%) | `201,720` (-63.1%) | `134,432` (-75.4%) | `128,320` (-76.5%) |
-| `x86_64 -O3 +avx512` | `725,016` | `630,488` (-13.0%) | `556,136` (-23.3%) | `419,744` (-42.1%) | `611,104` (-15.7%) | `305,504` (-57.9%) | `189,648` (-73.8%) | `173,536` (-76.1%) |
-| `wasm32 -O3 +simd128` | `434,473` | `394,028` (-9.3%) | `336,926` (-22.5%) | `270,076` (-37.8%) | `371,090` (-14.6%) | `228,222` (-47.5%) | `167,642` (-61.4%) | `160,429` (-63.1%) |
-| `wasm32 -Oz +simd128` | `337,495` | `296,676` (-12.1%) | `263,950` (-21.8%) | `213,422` (-36.8%) | `270,664` (-19.8%) | `164,336` (-51.3%) | `118,058` (-65.0%) | `104,609` (-69.0%) |
+| Target | `0.2.16` crates.io | Baseline (`da787b7f`) | Phase 4 `ALL` Default | Phase 5 `ALL` Default | Phase 5 `ALL` Lean | Phase 5 `SDR_WEB` Default | Phase 5 `SDR_WEB & !PROFILES` Default | Phase 5 `LAYOUT_U8` Default | Phase 5 `LAYOUT_U8` Lean |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `x86_64 -O3` | `436,040` | `615,880` | `512,176` | `512,032` (-16.9%) | `406,200` (-34.0%) | `242,384` (-60.6%) | `220,192` (-64.2%) | `60,352` (-90.2%) | `58,912` (-90.4%) |
+| `x86_64 -Os` | `365,512` | `546,128` | `383,936` | `382,448` (-30.0%) | `308,400` (-43.5%) | `175,504` (-67.9%) | `162,968` (-70.2%) | `35,096` (-93.6%) | `34,264` (-93.7%) |
+| `x86_64 -O3 +avx512` | `453,512` | `725,016` | `611,104` | `611,056` (-15.7%) | `470,008` (-35.2%) | `258,640` (-64.3%) | `236,512` (-67.4%) | `60,336` (-91.7%) | `58,912` (-91.9%) |
+| `wasm32 -O3 +simd128` | `206,136` | `434,473` | `371,090` | `374,369` (-13.8%) | `311,245` (-28.4%) | `188,820` (-56.5%) | `163,616` (-62.3%) | `56,806` (-86.9%) | `55,600` (-87.2%) |
+| `wasm32 -Oz +simd128` | `187,656` | `337,495` | `270,664` | `255,942` (-24.2%) | `205,809` (-39.0%) | `135,602` (-59.8%) | `124,514` (-63.1%) | `33,702` (-90.0%) | `32,498` (-90.4%) |
 
 ### Multi-Codec Feature Union Resilience (All 4 Heavy Features Enabled: `+oklab,+hdr-transfers,+perceptual,+bt2446a`)
 
-| Target | Unmasked `ALL` (`conv`) | `ConverterProfile::<SDR_WEB>` | `ConverterProfile::<LAYOUT_U8>` |
-|---|---:|---:|---:|
-| `x86_64 -O3` | `663,360 B` | `311,496 B` (-53.0%) | `212,152 B` (-68.0%) |
-| `x86_64 -Os` | `528,144 B` | `220,256 B` (-58.3%) | `153,144 B` (-71.0%) |
-| `x86_64 -O3 +avx512` | `766,128 B` | `327,864 B` (-57.2%) | `212,136 B` (-72.3%) |
-| `wasm32 -O3 +simd128` | `502,810 B` | `256,445 B` (-49.0%) | `196,324 B` (-61.0%) |
-| `wasm32 -Oz +simd128` | `362,561 B` | `177,597 B` (-51.0%) | `131,402 B` (-63.8%) |
+| Target | Unmasked `ALL` (`conv`) | `ConverterProfile::<SDR_WEB>` | `SDR_WEB & !PROFILES` | `ConverterProfile::<LAYOUT_U8>` |
+|---|---:|---:|---:|---:|
+| `x86_64 -O3` | `691,672 B` | `244,864 B` (-64.6%) | `220,632 B` (-68.1%) | `62,560 B` (-91.0%) |
+| `x86_64 -Os` | `552,328 B` | `187,328 B` (-66.1%) | `172,984 B` (-68.7%) | `37,560 B` (-93.2%) |
+| `x86_64 -O3 +avx512` | `794,488 B` | `261,184 B` (-67.1%) | `237,000 B` (-70.2%) | `62,544 B` (-92.1%) |
+| `wasm32 -O3 +simd128` | `503,008 B` | `197,458 B` (-60.7%) | `172,110 B` (-65.8%) | `59,659 B` (-88.1%) |
+| `wasm32 -Oz +simd128` | `363,235 B` | `140,284 B` (-61.4%) | `128,901 B` (-64.5%) | `35,604 B` (-90.2%) |
 
-Unstripped `nm -C` audit on `conv_sdr_web` and `conv_layout_u8` with all 4 heavy features enabled confirmed zero row-kernel leakage for PQ, HLG, Oklab, `SoftCompress`, `Bt2446A`, perceptual spaces (`Jzazbz`, `Lch`, `Hsl`, `Hsv`, polar), U16, or F16.
+### Dynamic ICC Context & Multi-Codec Union (Option B Default, `bin - base`)
+
+| Target | `SDR_WEB` + runtime ICC `ColorContext` | `LAYOUT_U8` + `CODEC_JPEG` + `CODEC_PNG` (1 binary, with ICC) | `ALL` (for comparison) |
+|---|---:|---:|---:|
+| `x86_64 -O3` | `+291,152 B` | `+475,984 B` | `+512,032 B` |
+| `x86_64 -Os` | `+201,832 B` | `+359,992 B` | `+382,448 B` |
+| `wasm32 -O3 +simd128` | `+236,059 B` | `+332,522 B` | `+374,369 B` |
+| `wasm32 -Oz +simd128` | `+151,298 B` | `+244,344 B` | `+255,942 B` |
+
+### `imazen/archmage` PR #203 (`ea5d86e0`, `magemath` scalar & highp codegen) A/B on Phase 5 `ALL`
+
+Measured with `[patch.crates-io]` overriding `archmage`/`magetypes`/`magemath` to PR #203 `ea5d86e0` (unmerged; not committed to `Cargo.toml`; `run-heavy` peak RSS `0.83 GiB`):
+
+| Target | `ALL` Lean (before → PR #203) | `ALL` Default `+oklab,+hdr` (before → PR #203) | `ALL` All-4-Features (before → PR #203) |
+|---|---:|---:|---:|
+| `x86_64 -O3` | `+406,200 → +382,184 B` (**-24.0 KB**) | `+512,032 → +486,400 B` (**-25.6 KB**) | `+691,672 → +651,032 B` (**-40.6 KB**) |
+| `x86_64 -Os` | `+308,400 → +272,080 B` (**-36.3 KB**) | `+382,448 → +341,296 B` (**-41.2 KB**) | `+552,328 → +501,208 B` (**-51.1 KB**) |
+| `x86_64 -O3 +avx512` | `+470,008 → +441,832 B` (**-28.2 KB**) | `+611,056 → +581,072 B` (**-30.0 KB**) | `+794,488 → +749,560 B` (**-44.9 KB**) |
+| `wasm32 -O3 +simd128` | `+311,245 → +298,116 B` (**-13.1 KB**) | `+374,369 → +360,883 B` (**-13.5 KB**) | `+503,008 → +489,272 B` (**-13.7 KB**) |
+| `wasm32 -Oz +simd128` | `+205,809 → +189,796 B` (**-16.0 KB**) | `+255,942 → +235,757 B` (**-20.2 KB**) | `+363,235 → +343,010 B` (**-20.2 KB**) |
+
+`SDR_WEB`, `SDR_WEB & !PROFILES`, and `LAYOUT_U8` changed by `<0.4 KB` under PR #203, independently confirming they already link zero `magemath` transcendental kernels.
+
+Unstripped `nm -C` audit confirmed:
+- Compact split SoA ICC tables (`SUBSTITUTABLE_{FNV64,MURMUR32,META}`): `2,870 B` (`205 × 14 B`, down from `10,584 B` = `-72.9%`) when ICC resolution is reachable, `0 B` in `conv_layout_u8` and `conv_sdr_web_desc`; `METADATA_ONLY_*` (`236 × 14 B = 3,304 B`) dead-strips unless `IccIdentification::from_icc` is called.
+- `intermediate_desc`: `1,095 B` `.text` on `x86_64 -Os` (down from `10,398 B` `.text` + `5,700 B` `.rodata`), `0 B` in `conv_layout_u8`.
+- Zero row-kernel or planner leakage for PQ, HLG, Oklab, `SoftCompress`, `Bt2446A`, perceptual spaces, U16, or F16 in `conv_sdr_web` / `conv_layout_u8`.
 
 ## 4K UHD (`3840 × 2160`) Throughput Verification (`v3` tier, Zen 4 `r7900x`)
 

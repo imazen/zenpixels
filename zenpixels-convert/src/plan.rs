@@ -326,6 +326,198 @@ fn profile_defines_transfer(profile: &crate::ColorProfileSource<'_>) -> bool {
     }
 }
 
+pub(crate) struct ResolvedProfiles {
+    same_profile: bool,
+    src_unverified_tf: bool,
+    dst_unverified_tf: bool,
+    src_is_icc: bool,
+    resolved_src: Option<(crate::ColorPrimaries, TransferFunction)>,
+}
+
+impl ResolvedProfiles {
+    #[inline]
+    fn from_descriptors(from: PixelDescriptor, to: PixelDescriptor) -> Self {
+        Self {
+            same_profile: from.primaries == to.primaries && from.transfer() == to.transfer(),
+            src_unverified_tf: matches!(from.color_model(), ColorModel::Rgb | ColorModel::Gray)
+                && from.transfer() == TransferFunction::Unknown,
+            dst_unverified_tf: matches!(to.color_model(), ColorModel::Rgb | ColorModel::Gray)
+                && to.transfer() == TransferFunction::Unknown,
+            src_is_icc: false,
+            resolved_src: None,
+        }
+    }
+}
+
+type PrepareProfilesFn =
+    fn(PixelEncoding<'_>, PixelEncoding<'_>) -> Result<ResolvedProfiles, At<ConvertError>>;
+type CompileExplicitFn = fn(
+    PixelDescriptor,
+    PixelDescriptor,
+    &ConvertOptions,
+    &crate::caps::PlannerHooks,
+) -> Result<RowRecipe, At<ConvertError>>;
+type CompileEncodingFn = fn(
+    PixelEncoding<'_>,
+    PixelEncoding<'_>,
+    &ConvertOptions,
+    Option<&dyn PluggableCms>,
+    &crate::caps::PlannerHooks,
+) -> Result<RowRecipe, At<ConvertError>>;
+
+#[derive(Clone, Copy)]
+pub(crate) struct ProfileHooks {
+    prepare: Option<PrepareProfilesFn>,
+    compile_explicit: CompileExplicitFn,
+    compile_encoding: CompileEncodingFn,
+}
+
+pub(crate) const PROFILE_HOOKS: ProfileHooks = ProfileHooks {
+    prepare: Some(prepare_with_profiles),
+    compile_explicit: RowRecipe::new_explicit_hooks,
+    compile_encoding: RowRecipe::new_with_encoding_hooks,
+};
+
+fn compile_descriptors_with_cms(
+    source: PixelEncoding<'_>,
+    target: PixelEncoding<'_>,
+    options: &ConvertOptions,
+    cms: Option<&dyn PluggableCms>,
+    hooks: &crate::caps::PlannerHooks,
+) -> Result<RowRecipe, At<ConvertError>> {
+    RowRecipe::new_explicit_with_cms_hooks(
+        source.descriptor(),
+        target.descriptor(),
+        options,
+        cms,
+        hooks,
+    )
+}
+
+pub(crate) const DESCRIPTOR_CMS_HOOKS: ProfileHooks = ProfileHooks {
+    prepare: None,
+    compile_explicit: RowRecipe::new_explicit_hooks,
+    compile_encoding: compile_descriptors_with_cms,
+};
+
+#[cfg(feature = "hdr-experimental")]
+pub(crate) type ExplicitHdrFn = fn(
+    PixelEncoding<'_>,
+    PixelEncoding<'_>,
+    bool,
+    &ConvertOptions,
+    &ConversionSpec<'_>,
+    &crate::caps::PlannerHooks,
+) -> Result<(RowRecipe, bool), At<ConvertError>>;
+
+fn prepare_with_profiles(
+    source: PixelEncoding<'_>,
+    target: PixelEncoding<'_>,
+) -> Result<ResolvedProfiles, At<ConvertError>> {
+    let from = source.descriptor();
+    let to = target.descriptor();
+    let src_profile = crate::output::current_profile_for(source)?;
+    let dst_profile = crate::output::current_profile_for(target)?;
+    let same_profile = crate::output::profiles_match(&src_profile, &dst_profile)
+        || (from == to && source.color_context() == target.color_context());
+    let src_unverified_tf = matches!(from.color_model(), ColorModel::Rgb | ColorModel::Gray)
+        && from.transfer() == TransferFunction::Unknown
+        && !profile_defines_transfer(&src_profile);
+    let dst_unverified_tf = matches!(to.color_model(), ColorModel::Rgb | ColorModel::Gray)
+        && to.transfer() == TransferFunction::Unknown
+        && !profile_defines_transfer(&dst_profile);
+    let src_is_icc = matches!(src_profile, crate::ColorProfileSource::Icc(_));
+    let resolved_src = if same_profile
+        && (from.primaries == crate::ColorPrimaries::Unknown
+            || from.transfer() == TransferFunction::Unknown)
+    {
+        src_profile.resolve()
+    } else {
+        None
+    };
+    Ok(ResolvedProfiles {
+        same_profile,
+        src_unverified_tf,
+        dst_unverified_tf,
+        src_is_icc,
+        resolved_src,
+    })
+}
+
+#[cfg(feature = "hdr-experimental")]
+pub(crate) fn compile_explicit_hdr(
+    source: PixelEncoding<'_>,
+    target: PixelEncoding<'_>,
+    same_profile: bool,
+    options: &ConvertOptions,
+    spec: &ConversionSpec<'_>,
+    hooks: &crate::caps::PlannerHooks,
+) -> Result<(RowRecipe, bool), At<ConvertError>> {
+    let hdr = spec.hdr.expect("compile_explicit_hdr called with spec.hdr");
+    let (from, to, effective_src_tf) = if hooks.profiles.is_some() {
+        let src_profile = crate::output::current_profile_for(source)?;
+        let dst_profile = crate::output::current_profile_for(target)?;
+        if !same_profile && (src_profile.resolve().is_none() || dst_profile.resolve().is_none()) {
+            return Err(whereat::at!(ConvertError::HdrWithOpaqueProfileUnsupported));
+        }
+        let from = src_profile
+            .resolve()
+            .map(|(p, t)| source.descriptor().with_primaries(p).with_transfer(t))
+            .unwrap_or_else(|| source.descriptor());
+        let to = dst_profile
+            .resolve()
+            .map(|(p, t)| target.descriptor().with_primaries(p).with_transfer(t))
+            .unwrap_or_else(|| target.descriptor());
+        let eff_tf = src_profile
+            .resolve()
+            .map_or(source.descriptor().transfer(), |(_, tf)| tf);
+        (from, to, eff_tf)
+    } else {
+        let from = source.descriptor();
+        let to = target.descriptor();
+        (from, to, from.transfer())
+    };
+    crate::convert::validate_descriptors(from, to)?;
+    crate::convert::validate_luma_policy(from, to, options)?;
+    // The special linear-HDR entry still applies the endpoint permissions.
+    if from.has_alpha()
+        && !to.has_alpha()
+        && options.alpha_policy() != AlphaPolicy::DiscardUnchecked
+    {
+        return Err(whereat::at!(
+            if options.alpha_policy() == AlphaPolicy::DiscardIfOpaque {
+                ConvertError::AlphaCheckRequired
+            } else {
+                ConvertError::AlphaRemovalForbidden
+            }
+        ));
+    }
+    if options.depth_policy() == crate::DepthPolicy::Forbid
+        && crate::route::channel_bits(from.channel_type())
+            > crate::route::channel_bits(to.channel_type())
+    {
+        return Err(whereat::at!(ConvertError::DepthReductionForbidden));
+    }
+    let native = match spec.tone_mapper {
+        Some(mapper) => {
+            crate::NativePlan::new_with_tone_mapper_unbound(from, to, *hdr, Arc::clone(mapper))?
+        }
+        None => crate::NativePlan::new_with_hdr_config_unbound(from, to, *hdr)?,
+    };
+    let native = if let Some(white) = source.color_context().and_then(ColorContext::diffuse_white)
+        && from.transfer() == TransferFunction::Linear
+    {
+        native.with_linear_input_white(white, hdr.source_peak_nits)
+    } else {
+        native
+    };
+    let set_hdr_output_luminance = matches!(
+        effective_src_tf,
+        TransferFunction::Linear | TransferFunction::Pq
+    );
+    Ok((RowRecipe::native(native), set_hdr_output_luminance))
+}
+
 impl ConvertPlan {
     /// Check authority and policy and compile the actual route.
     #[track_caller]
@@ -339,9 +531,10 @@ impl ConvertPlan {
 
     /// Compile a route and bind only the kernel steps permitted by `CAPS`.
     ///
-    /// Planning is non-generic and shared across all capability masks; only
-    /// step binding is monomorphized over `CAPS` so disabled kernels are
-    /// dead-code-eliminated.
+    /// Core planning is non-generic and shared across capability masks (via
+    /// compile-time [`PlannerHooks`](crate::caps::PlannerHooks)); pure
+    /// single-depth integer layout masks route through a dedicated minimal
+    /// layout planner so depth/transfer/gamut/ICC planners dead-strip cleanly.
     #[inline(always)]
     #[track_caller]
     pub(crate) fn build_with_caps<const CAPS: u64>(
@@ -349,18 +542,32 @@ impl ConvertPlan {
         target: PixelEncoding<'_>,
         spec: &ConversionSpec<'_>,
     ) -> Result<Self, At<ConvertError>> {
-        let mut plan =
-            Self::build_unbound(source, target, spec, (CAPS & crate::caps::TONE_MAP) != 0)?;
+        let mut plan = if const { crate::caps::is_layout_only(CAPS) } {
+            Self::build_layout_only(source, target, spec)?
+        } else if source.color_context().is_none() && target.color_context().is_none() {
+            Self::build_general(
+                source,
+                target,
+                spec,
+                &const { crate::caps::PlannerHooks::for_caps_descriptors::<CAPS>() },
+            )?
+        } else {
+            Self::build_general(
+                source,
+                target,
+                spec,
+                &const { crate::caps::PlannerHooks::for_caps::<CAPS>() },
+            )?
+        };
         plan.recipe.bind::<CAPS>()?;
         Ok(plan)
     }
 
     #[track_caller]
-    fn build_unbound(
+    fn build_layout_only(
         source: PixelEncoding<'_>,
         target: PixelEncoding<'_>,
         spec: &ConversionSpec<'_>,
-        allow_hdr: bool,
     ) -> Result<Self, At<ConvertError>> {
         let from = source.descriptor();
         let to = target.descriptor();
@@ -370,10 +577,20 @@ impl ConvertPlan {
                 actual: zenpixels::sample::FloatFacts::NONE,
             }));
         }
-        let src_profile = crate::output::current_profile_for(source)?;
-        let dst_profile = crate::output::current_profile_for(target)?;
-        let same_profile = crate::output::profiles_match(&src_profile, &dst_profile)
-            || (from == to && source.color_context() == target.color_context());
+        // Without `caps::PROFILES`, reject any attached ICC/CICP/parametric profile
+        // (unless the entire PixelEncoding is an identical native-model identity).
+        let src_has_profile = source
+            .color_context()
+            .is_some_and(|c| c.as_profile_source().is_some());
+        let dst_has_profile = target
+            .color_context()
+            .is_some_and(|c| c.as_profile_source().is_some());
+        let exact_same_encoding = from == to && source.color_context() == target.color_context();
+        if (src_has_profile || dst_has_profile) && !exact_same_encoding {
+            return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
+        }
+        let same_profile = exact_same_encoding
+            || (from.primaries == to.primaries && from.transfer() == to.transfer());
 
         let mut options =
             crate::interpretation::resolve_options(source.color_context(), spec.options());
@@ -396,11 +613,9 @@ impl ConvertPlan {
         }
 
         let src_unverified_tf = matches!(from.color_model(), ColorModel::Rgb | ColorModel::Gray)
-            && from.transfer() == TransferFunction::Unknown
-            && !profile_defines_transfer(&src_profile);
+            && from.transfer() == TransferFunction::Unknown;
         let dst_unverified_tf = matches!(to.color_model(), ColorModel::Rgb | ColorModel::Gray)
-            && to.transfer() == TransferFunction::Unknown
-            && !profile_defines_transfer(&dst_profile);
+            && to.transfer() == TransferFunction::Unknown;
         if src_unverified_tf != dst_unverified_tf {
             return Err(whereat::at!(
                 ConvertError::UnknownTransferRelabelForbidden { from, to }
@@ -423,7 +638,127 @@ impl ConvertPlan {
             }
         }
 
-        let mut recipe = compile(source, target, same_profile, &options, spec, allow_hdr)?;
+        #[cfg(feature = "hdr-experimental")]
+        if spec.hdr.is_some() {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
+
+        crate::convert::validate_descriptors(from, to)?;
+        if crate::convert::needs_cms_for_color_model(&from, &to) {
+            return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
+        }
+        let recipe = if from == to {
+            RowRecipe::identity(from, to)
+        } else {
+            let plan = crate::NativePlan::plan_layout_only(from, to, &options, spec.exact())?;
+            RowRecipe::native(plan)
+        };
+        let worker_limit = spec.workspace_limit.map(|(_, limit)| limit);
+        if let Some((width, limit)) = spec.workspace_limit {
+            let bytes = recipe.requirements(width)?.worker_heap();
+            if !fits_worker_limit(bytes, limit) {
+                return Err(whereat::at!(ConvertError::WorkerBudgetExceeded {
+                    bytes,
+                    limit
+                }));
+            }
+        }
+        let output = resolve_output(source, target, same_profile, &options);
+        if let Some(requested) = target.color_context()
+            && (requested.diffuse_white().is_some_and(|white| {
+                output.as_ref().and_then(ColorContext::diffuse_white) != Some(white)
+            }) || requested
+                .hdr_peak()
+                .is_some_and(|peak| output.as_ref().and_then(ColorContext::hdr_peak) != Some(peak)))
+        {
+            return Err(whereat::at!(ConvertError::TargetLuminanceMismatch));
+        }
+        Ok(Self {
+            recipe,
+            input: source.color_context().cloned().map(Arc::new),
+            output: output.map(Arc::new),
+            worker_limit,
+        })
+    }
+
+    #[track_caller]
+    fn build_general(
+        source: PixelEncoding<'_>,
+        target: PixelEncoding<'_>,
+        spec: &ConversionSpec<'_>,
+        hooks: &crate::caps::PlannerHooks,
+    ) -> Result<Self, At<ConvertError>> {
+        let from = source.descriptor();
+        let to = target.descriptor();
+        if !spec.float_facts.is_empty() && !from.channel_type().is_float() {
+            return Err(whereat::at!(ConvertError::FloatFactsUnsatisfied {
+                required: spec.float_facts,
+                actual: zenpixels::sample::FloatFacts::NONE,
+            }));
+        }
+        let prof = if let Some(prepare) = hooks.profiles.and_then(|p| p.prepare) {
+            prepare(source, target)?
+        } else {
+            let src_has_profile = source
+                .color_context()
+                .is_some_and(|c| c.as_profile_source().is_some());
+            let dst_has_profile = target
+                .color_context()
+                .is_some_and(|c| c.as_profile_source().is_some());
+            let exact_same = from == to && source.color_context() == target.color_context();
+            if (src_has_profile || dst_has_profile) && !exact_same {
+                return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
+            }
+            let mut rp = ResolvedProfiles::from_descriptors(from, to);
+            rp.same_profile = rp.same_profile || exact_same;
+            rp
+        };
+        let same_profile = prof.same_profile;
+
+        let mut options =
+            crate::interpretation::resolve_options(source.color_context(), spec.options());
+        if options.alpha_policy() == AlphaPolicy::DiscardIfOpaque
+            && from.has_alpha()
+            && !to.has_alpha()
+        {
+            if from.alpha() == Some(AlphaMode::Opaque)
+                || spec
+                    .precision
+                    .is_some_and(|p| p.alpha() == AlphaContent::Opaque)
+            {
+                options = options.with_alpha_policy(AlphaPolicy::DiscardUnchecked);
+            } else if spec
+                .precision
+                .is_some_and(|p| p.alpha() == AlphaContent::Translucent)
+            {
+                return Err(whereat::at!(ConvertError::AlphaNotOpaque));
+            }
+        }
+
+        if prof.src_unverified_tf != prof.dst_unverified_tf {
+            return Err(whereat::at!(
+                ConvertError::UnknownTransferRelabelForbidden { from, to }
+            ));
+        }
+
+        if let Some(precision) = spec.precision {
+            if from.alpha() == Some(AlphaMode::Opaque)
+                && precision.alpha() == AlphaContent::Translucent
+            {
+                return Err(whereat::at!(ConvertError::NoPath { from, to }));
+            }
+            let mut offer = ConversionOffer::new(to);
+            if matches!(options.alpha_policy(), AlphaPolicy::CompositeOnto { .. }) {
+                offer = offer.with_matte();
+            }
+            let effect = ConversionEffect::of(&precision, &offer);
+            if spec.choice == OutputChoice::Hidden && !effect.preserves_modeled_capacity() {
+                return Err(whereat::at!(ConvertError::CapacityLoss(effect)));
+            }
+        }
+
+        let (mut recipe, hdr_output_luminance) =
+            compile(source, target, &prof, &options, spec, hooks)?;
         // The row endpoints use the caller's carriers even if the kernel resolved
         // fields of a compact descriptor using attached profile evidence.
         recipe.from = from;
@@ -440,24 +775,18 @@ impl ConvertPlan {
             }
         }
         let output = resolve_output(source, target, same_profile, &options);
+        #[cfg(not(feature = "hdr-experimental"))]
+        let _ = hdr_output_luminance;
         #[cfg(feature = "hdr-experimental")]
-        let output = {
-            let effective_src_tf = src_profile.resolve().map_or(from.transfer(), |(_, tf)| tf);
-            if let Some(hdr) = spec.hdr
-                && matches!(
-                    effective_src_tf,
-                    TransferFunction::Linear | TransferFunction::Pq
-                )
-            {
-                Some(
-                    output
-                        .unwrap_or_default()
-                        .with_diffuse_white(zenpixels::hdr::DiffuseWhite::new(hdr.target_peak_nits))
-                        .with_hdr_peak(zenpixels::hdr::Nits::new(hdr.target_peak_nits)),
-                )
-            } else {
+        let output = if hdr_output_luminance && let Some(hdr) = spec.hdr {
+            Some(
                 output
-            }
+                    .unwrap_or_default()
+                    .with_diffuse_white(zenpixels::hdr::DiffuseWhite::new(hdr.target_peak_nits))
+                    .with_hdr_peak(zenpixels::hdr::Nits::new(hdr.target_peak_nits)),
+            )
+        } else {
+            output
         };
         if let Some(requested) = target.color_context()
             && (requested.diffuse_white().is_some_and(|white| {
@@ -722,31 +1051,24 @@ impl ConvertPlan {
 fn compile(
     source: PixelEncoding<'_>,
     target: PixelEncoding<'_>,
-    same_profile: bool,
+    prof: &ResolvedProfiles,
     options: &ConvertOptions,
     spec: &ConversionSpec<'_>,
-    allow_hdr: bool,
-) -> Result<RowRecipe, At<ConvertError>> {
-    #[cfg(not(feature = "hdr-experimental"))]
-    let _ = allow_hdr;
+    hooks: &crate::caps::PlannerHooks,
+) -> Result<(RowRecipe, bool), At<ConvertError>> {
     let (mut from, to) = (source.descriptor(), target.descriptor());
+    let same_profile = prof.same_profile;
     let hdr_requested = false;
     #[cfg(feature = "hdr-experimental")]
     let hdr_requested = hdr_requested || spec.hdr.is_some();
     let allow_identity = from == to
         && same_profile
-        && (!crate::convert::needs_cms_for_color_model(&from, &to)
-            || matches!(
-                crate::output::current_profile_for(source)?,
-                crate::ColorProfileSource::Icc(_)
-            ));
+        && (!crate::convert::needs_cms_for_color_model(&from, &to) || prof.src_is_icc);
     if allow_identity && !hdr_requested {
         crate::convert::validate_descriptors(from, to)?;
-        return Ok(RowRecipe::identity(from, to));
+        return Ok((RowRecipe::identity(from, to), false));
     }
-    if same_profile
-        && let Some((primaries, transfer)) = crate::output::current_profile_for(source)?.resolve()
-    {
+    if let Some((primaries, transfer)) = prof.resolved_src {
         if from.primaries == crate::ColorPrimaries::Unknown {
             from.primaries = primaries;
         }
@@ -762,72 +1084,51 @@ fn compile(
         && (spec.exact()
             || (from.channel_type() == crate::ChannelType::U8
                 && to.channel_type() == crate::ChannelType::U16))
-        && let Some(recipe) = exact_path(from, to, spec.workspace_limit)
+        && let Some(recipe) = exact_path(from, to, spec.workspace_limit, hooks)
     {
-        return Ok(recipe);
+        return Ok((recipe, false));
     }
     if spec.exact() {
         return Err(whereat::at!(ConvertError::NoPath { from, to }));
     }
     #[cfg(feature = "hdr-experimental")]
-    if let Some(hdr) = spec.hdr {
-        if !allow_hdr {
+    if spec.hdr.is_some() {
+        let Some(hdr_fn) = hooks.explicit_hdr else {
             return Err(whereat::at!(ConvertError::NoPath { from, to }));
-        }
-        let src_profile = crate::output::current_profile_for(source)?;
-        let dst_profile = crate::output::current_profile_for(target)?;
-        if !same_profile && (src_profile.resolve().is_none() || dst_profile.resolve().is_none()) {
-            return Err(whereat::at!(ConvertError::HdrWithOpaqueProfileUnsupported));
-        }
-        let from = src_profile
-            .resolve()
-            .map(|(p, t)| from.with_primaries(p).with_transfer(t))
-            .unwrap_or(from);
-        let to = dst_profile
-            .resolve()
-            .map(|(p, t)| to.with_primaries(p).with_transfer(t))
-            .unwrap_or(to);
-        crate::convert::validate_descriptors(from, to)?;
-        crate::convert::validate_luma_policy(from, to, options)?;
-        // The special linear-HDR entry still applies the endpoint permissions.
-        if from.has_alpha()
-            && !to.has_alpha()
-            && options.alpha_policy() != AlphaPolicy::DiscardUnchecked
-        {
-            return Err(whereat::at!(
-                if options.alpha_policy() == AlphaPolicy::DiscardIfOpaque {
-                    ConvertError::AlphaCheckRequired
-                } else {
-                    ConvertError::AlphaRemovalForbidden
-                }
-            ));
-        }
-        if options.depth_policy() == crate::DepthPolicy::Forbid
-            && crate::route::channel_bits(from.channel_type())
-                > crate::route::channel_bits(to.channel_type())
-        {
-            return Err(whereat::at!(ConvertError::DepthReductionForbidden));
-        }
-        let native = match spec.tone_mapper {
-            Some(mapper) => {
-                crate::NativePlan::new_with_tone_mapper_unbound(from, to, *hdr, Arc::clone(mapper))?
-            }
-            None => crate::NativePlan::new_with_hdr_config_unbound(from, to, *hdr)?,
         };
-        let native = if let Some(white) =
-            source.color_context().and_then(ColorContext::diffuse_white)
-            && from.transfer() == TransferFunction::Linear
-        {
-            native.with_linear_input_white(white, hdr.source_peak_nits)
-        } else {
-            native
-        };
-        return Ok(RowRecipe::native(native));
+        return hdr_fn(source, target, same_profile, options, spec, hooks);
     }
     if same_profile && from.transfer() == to.transfer() && from.primaries == to.primaries {
-        return RowRecipe::new_explicit(from, to, options);
+        let recipe = if let Some(p) = hooks.profiles {
+            (p.compile_explicit)(from, to, options, hooks)?
+        } else {
+            crate::convert::validate_descriptors(from, to)?;
+            crate::convert::validate_luma_policy(from, to, options)?;
+            RowRecipe::native(crate::NativePlan::new_explicit_core(
+                from, to, options, hooks,
+            )?)
+        };
+        return Ok((recipe, false));
     }
-    RowRecipe::new_with_encoding(source, target, options, spec.cms())
+    if let Some(p) = hooks.profiles {
+        return Ok((
+            (p.compile_encoding)(source, target, options, spec.cms(), hooks)?,
+            false,
+        ));
+    }
+    // No `caps::PROFILES`: descriptor-only path (still supports native gamut
+    // matrices, fused matlut, and SDR/HDR transfers without ICC/CMS dispatch).
+    if spec.cms().is_some() && crate::convert::needs_cms_for_color_model(&from, &to) {
+        return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
+    }
+    crate::convert::validate_descriptors(from, to)?;
+    crate::convert::validate_luma_policy(from, to, options)?;
+    Ok((
+        RowRecipe::native(crate::NativePlan::new_explicit_core(
+            from, to, options, hooks,
+        )?),
+        false,
+    ))
 }
 
 // The finite exact subgraph comprises the endpoints and the endpoint
@@ -836,15 +1137,16 @@ fn exact_path(
     from: PixelDescriptor,
     to: PixelDescriptor,
     limit: Option<(u32, u64)>,
+    hooks: &crate::caps::PlannerHooks,
 ) -> Option<RowRecipe> {
     #[derive(Clone, Copy)]
     struct State(PixelDescriptor);
 
-    fn edge(from: State, to: State) -> Option<RowRecipe> {
-        crate::NativePlan::new_preserving_samples_unbound(from.0, to.0)
+    let edge = |from: State, to: State| -> Option<RowRecipe> {
+        crate::NativePlan::new_preserving_samples_core(from.0, to.0, hooks)
             .ok()
             .map(RowRecipe::native)
-    }
+    };
 
     let (source, target) = (State(from), State(to));
     let mut frontier = crate::route::RouteFrontier::new();
