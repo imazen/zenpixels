@@ -115,7 +115,7 @@ __bench_float_depth = []
 [dependencies]
 enough = { version = "0.4.4", default-features = false }
 zenpixels = { workspace = true, default-features = false, features = ["icc"] }
-linear-srgb = { version = "0.6.13", git = "https://github.com/imazen/linear-srgb", rev = "9ccaccade9021aa13d7ecb98f53f1632986d21f0", default-features = false, features = ["transfer"] }
+linear-srgb = { version = "0.6.13", git = "https://github.com/imazen/linear-srgb", rev = "2b3a993b5d55c290c08f62718ccf3d4c3f522d30", default-features = false, features = ["transfer"] }
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8.53", default-features = false, features = ["bytemuck"], optional = true }
 garb = { version = "0.2.9", git = "https://github.com/imazen/garb", rev = "a21a9f701e09ad01acb661276f0143ddd1e9095a", default-features = false }

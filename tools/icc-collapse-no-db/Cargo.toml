@@ -12,4 +12,4 @@ zenpixels-convert = { path = "../../zenpixels-convert", default-features = false
 
 [patch.crates-io]
 garb = { git = "https://github.com/imazen/garb", rev = "a21a9f701e09ad01acb661276f0143ddd1e9095a" }
-linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "9ccaccade9021aa13d7ecb98f53f1632986d21f0" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "2b3a993b5d55c290c08f62718ccf3d4c3f522d30" }

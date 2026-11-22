@@ -81,7 +81,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 [[package]]
 name = "linear-srgb"
 version = "0.6.13"
-source = "git+https://github.com/imazen/linear-srgb?rev=9ccaccade9021aa13d7ecb98f53f1632986d21f0#9ccaccade9021aa13d7ecb98f53f1632986d21f0"
+source = "git+https://github.com/imazen/linear-srgb?rev=2b3a993b5d55c290c08f62718ccf3d4c3f522d30#2b3a993b5d55c290c08f62718ccf3d4c3f522d30"
 dependencies = [
  "archmage",
  "bytemuck",
