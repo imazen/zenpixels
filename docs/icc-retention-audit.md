@@ -124,17 +124,27 @@ fingerprint coverage, not the still-separate historical tolerance requalificatio
 
 ## Private consolidated witness archive
 
-All 598 selected originals are copied to the private artifact archive at
-`output/zenpixels/icc-originals-2026-11-09/`, totaling 1,657,355 profile bytes.
-Each object is named `profiles/<full-file-sha256>.icc`. Its portable manifest
-retains active/deferred state, both normalized fingerprints, full-file identity
-and original source provenance. Paths resolve relative to the manifest, so
-future revalidation does not depend on the audit host's scattered caches.
+All 598 selected originals are archived in durable private storage, totaling
+1,657,355 profile bytes across `profiles/<full-file-sha256>.icc` plus
+`manifest.json` (SHA-256
+`6c9dfa82a4730d86cb73e260419ae5d0ac43584454cfc3a74c3f42d84fb143d0`) and the
+supporting receipts under `receipts/`:
 
-The manifest SHA-256 is
-`6c9dfa82a4730d86cb73e260419ae5d0ac43584454cfc3a74c3f42d84fb143d0`.
-Verification on the private archive passed for every object after transfer.
-This retention change commits no original profile bytes to the public repository.
+- **Cloudflare R2 (private bucket, no public domain or `r2.dev`):**
+  - Unpacked tree: `s3://zenpixels-private/icc-originals-2026-11-09/`
+  - Single-file tarball: `s3://zenpixels-private/icc-originals-2026-11-09.tar.gz`
+    (835 KiB, SHA-256 `ea8e7b667bf96d1b4248b5cd4d83b8178620fd790287f613323180ba9d5f9163`,
+    checksum file alongside at `.tar.gz.sha256`)
+- **Tower permanent input store:**
+  - `input/zenpixels/icc-originals-2026-11-09/` (plus `.tar.gz` and `.tar.gz.sha256`),
+    superseding the earlier ephemeral `output/zenpixels/icc-originals-2026-11-09/` copy.
+
+The portable manifest retains active/deferred state, both normalized
+fingerprints, full-file identity and original source provenance. Paths resolve
+relative to the manifest, so future revalidation does not depend on the audit
+host's scattered caches. Both the R2 tarball round-trip and the `tower` copy
+were verified against all 598 objects (size + SHA-256) on 2026-11-22. This
+retention change commits no original profile bytes to the public repository.
 
 Use `just icc-retain-originals <receipt.json> <private-directory>` to construct
 an archive, or omit the destination to verify its manifest. The tool checks
