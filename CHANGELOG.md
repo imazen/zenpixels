@@ -146,6 +146,12 @@ See `docs/finalization-release-contract.md` for semantics and release gates.
 
 ## [Unreleased]
 
+- Upgrade `archmage` and `magetypes` to `0.9.33` across workspace crates and
+  active tools/benchmarks; migrate `tools/jzazbz-bench` `mul_add` calls to
+  `mul_add_relaxed`. Remove banned Intel macOS runner from `icc-profiles`
+  workflow and set `CROSS_CONTAINER_OPTS: --security-opt seccomp=unconfined`
+  on `i686` `cross` jobs.
+
 - Add explicit HLG display rendering with validated peak, black and system gamma,
   an opt-in reference preset, coupled OOTF/inverse and shared row/buffer planning.
   HLG compositing now requires rendering conditions and a white anchor.

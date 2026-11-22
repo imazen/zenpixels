@@ -56,6 +56,8 @@ jobs:
     name: CMS (i686)
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      CROSS_CONTAINER_OPTS: --security-opt seccomp=unconfined
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable

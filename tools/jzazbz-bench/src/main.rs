@@ -351,9 +351,9 @@ type V<T> = magetypes::simd::generic::f32x8<T>;
 #[attune(_*, define(f32x8))]
 fn madd3(m: &[f32; 3], r: V<Token>, g: V<Token>, b: V<Token>, add: V<Token>) -> V<Token> {
     let t = Token::from_context();
-    f32x8::splat_t(t, m[0]).mul_add(
+    f32x8::splat_t(t, m[0]).mul_add_relaxed(
         r,
-        f32x8::splat_t(t, m[1]).mul_add(g, f32x8::splat_t(t, m[2]).mul_add(b, add)),
+        f32x8::splat_t(t, m[1]).mul_add_relaxed(g, f32x8::splat_t(t, m[2]).mul_add_relaxed(b, add)),
     )
 }
 
@@ -375,14 +375,14 @@ fn cbrt_add_libjxl(x: V<Token>, add: V<Token>) -> V<Token> {
     let mut i = 0;
     while i < 3 {
         let r2 = r * r;
-        r = (-xa_3).mul_add(r2 * r2, k4_3 * r);
+        r = (-xa_3).mul_add_relaxed(r2 * r2, k4_3 * r);
         i += 1;
     }
     // Final step: MulAdd(k1_3, NegMulAdd(x, r^4, r), r); then MulAdd(r², x, add).
     let r2 = r * r;
-    r = k1_3.mul_add((-x).mul_add(r2 * r2, r), r);
+    r = k1_3.mul_add_relaxed((-x).mul_add_relaxed(r2 * r2, r), r);
     let r2 = r * r;
-    r2.mul_add(x, add)
+    r2.mul_add_relaxed(x, add)
 }
 
 /// libjxl `base/fast_math-inl.h` `FastLog2f`: (2,2) rational on the mantissa
@@ -409,11 +409,11 @@ fn fast_log2f(x: V<Token>) -> V<Token> {
     let exp_val = exp_shifted.to_f32x8();
     let m = mantissa - f32x8::splat_t(t, 1.0);
     let yp = f32x8::splat_t(t, P[2])
-        .mul_add(m, f32x8::splat_t(t, P[1]))
-        .mul_add(m, f32x8::splat_t(t, P[0]));
+        .mul_add_relaxed(m, f32x8::splat_t(t, P[1]))
+        .mul_add_relaxed(m, f32x8::splat_t(t, P[0]));
     let yq = f32x8::splat_t(t, Q[2])
-        .mul_add(m, f32x8::splat_t(t, Q[1]))
-        .mul_add(m, f32x8::splat_t(t, Q[0]));
+        .mul_add_relaxed(m, f32x8::splat_t(t, Q[1]))
+        .mul_add_relaxed(m, f32x8::splat_t(t, Q[0]));
     yp / yq + exp_val
 }
 
@@ -424,7 +424,7 @@ fn ba_gamma(v: V<Token>) -> V<Token> {
     let v = v.max(f32x8::zero_t(t));
     let biased = v + f32x8::splat_t(t, BA_GAMMA_BIAS);
     let log = attuned!(fast_log2f(biased));
-    f32x8::splat_t(t, BA_GAMMA_MUL).mul_add(log, f32x8::splat_t(t, BA_GAMMA_ADD))
+    f32x8::splat_t(t, BA_GAMMA_MUL).mul_add_relaxed(log, f32x8::splat_t(t, BA_GAMMA_ADD))
 }
 
 /// libjxl `butteraugli.cc` `OpsinAbsorbance`, all three rows.
@@ -460,14 +460,14 @@ macro_rules! pq_fit {
             let mut i = $p.len() - 1;
             while i > 0 {
                 i -= 1;
-                yp = yp.mul_add(a, f32x8::splat_t(t, $p[i]));
+                yp = yp.mul_add_relaxed(a, f32x8::splat_t(t, $p[i]));
             }
             // Monic Q: skip the leading multiply.
             let mut yq = a + f32x8::splat_t(t, $q[$q.len() - 2]);
             let mut i = $q.len() - 2;
             while i > 0 {
                 i -= 1;
-                yq = yq.mul_add(a, f32x8::splat_t(t, $q[i]));
+                yq = yq.mul_add_relaxed(a, f32x8::splat_t(t, $q[i]));
             }
             yp / yq
         }
@@ -487,11 +487,11 @@ fn pq_pow_midp(x: V<Token>) -> V<Token> {
     let tn = x
         .max(f32x8::splat_t(t, f32::MIN_POSITIVE))
         .pow_midp_unchecked(PQ_N as f32);
-    let num = tn.mul_add(
+    let num = tn.mul_add_relaxed(
         f32x8::splat_t(t, PQ_C2 as f32),
         f32x8::splat_t(t, PQ_C1 as f32),
     );
-    let den = tn.mul_add(f32x8::splat_t(t, PQ_C3 as f32), f32x8::splat_t(t, 1.0));
+    let den = tn.mul_add_relaxed(f32x8::splat_t(t, PQ_C3 as f32), f32x8::splat_t(t, 1.0));
     (num / den).pow_midp_unchecked(JZ_P as f32)
 }
 
@@ -513,15 +513,15 @@ fn jz_finish(l: V<Token>, mm: V<Token>, s: V<Token>) -> [V<Token>; 3] {
     let t = Token::from_context();
     let iz = (l + mm) * f32x8::splat_t(t, 0.5);
     let jz = iz * f32x8::splat_t(t, 0.44)
-        / iz.mul_add(f32x8::splat_t(t, -0.56), f32x8::splat_t(t, 1.0))
+        / iz.mul_add_relaxed(f32x8::splat_t(t, -0.56), f32x8::splat_t(t, 1.0))
         - f32x8::splat_t(t, JZ_D0 as f32);
-    let az = s.mul_add(
+    let az = s.mul_add_relaxed(
         f32x8::splat_t(t, 0.542708),
-        mm.mul_add(f32x8::splat_t(t, -4.066708), l * f32x8::splat_t(t, 3.524)),
+        mm.mul_add_relaxed(f32x8::splat_t(t, -4.066708), l * f32x8::splat_t(t, 3.524)),
     );
-    let bz = s.mul_add(
+    let bz = s.mul_add_relaxed(
         f32x8::splat_t(t, -1.295875),
-        mm.mul_add(f32x8::splat_t(t, 1.096799), l * f32x8::splat_t(t, 0.199076)),
+        mm.mul_add_relaxed(f32x8::splat_t(t, 1.096799), l * f32x8::splat_t(t, 0.199076)),
     );
     [jz, az, bz]
 }

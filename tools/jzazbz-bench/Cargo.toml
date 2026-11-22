@@ -11,8 +11,8 @@ publish = false
 [workspace]
 
 [dependencies]
-archmage = "0.9.31"
-magetypes = "0.9.31"
+archmage = "0.9.33"
+magetypes = "0.9.33"
 zenbench = "0.1.2"
 
 [profile.release]

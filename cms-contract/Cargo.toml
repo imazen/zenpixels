@@ -15,7 +15,7 @@ lcms = { git = "https://github.com/imazen/lcms", rev = "55b59476cf64920345e9ca32
 moxcms = "0.9.2"
 whereat = "0.1"
 bytemuck = "1.21"
-archmage = "0.9.31"
+archmage = "0.9.33"
 
 [patch.crates-io]
 garb = { git = "https://github.com/imazen/garb", rev = "8f9aa10d09f84bb0a1e3fdbd1773f610eec1b784" }
