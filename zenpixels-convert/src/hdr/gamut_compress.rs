@@ -16,9 +16,30 @@
 //! harness is `benchmarks/gamut-compress`.
 
 use archmage::prelude::*;
+use magemath::SimdMath;
+use magemath::cbrtf::{Cbrtf, CbrtfDomain, CbrtfOptions};
 use zenpixels::ColorPrimaries;
 
 use crate::oklab::{LMS_CBRT_FROM_OKLAB, OKLAB_FROM_LMS_CBRT, OklabSpace};
+
+const MATH_PORTABILITY: magemath::Portability = if cfg!(all(
+    target_arch = "wasm32",
+    not(feature = "precise-portable")
+)) {
+    magemath::Portability::BackendDependent
+} else {
+    magemath::Portability::BitExact
+};
+
+/// Division-free `magemath` cube root for soft gamut compression (`<= 1.47 ULP`,
+/// exact on signed zeros, subnormals, infinities, and NaN, bit-identical between
+/// SIMD and scalar callers).
+const SOFT_COMPRESS_CBRT: u128 = CbrtfOptions::new()
+    .domain(CbrtfDomain::AllFloats)
+    .midp()
+    .portability(MATH_PORTABILITY)
+    .caller()
+    .bits();
 
 /// Newton steps on the boundary. At 3, the largest difference from bisection on a
 /// BT.2020 grid was 0.000002 in OKLab, and 2 left 0.00098.
@@ -228,19 +249,6 @@ fn dot_scalar(row: &[f32; 3], a: f32, b: f32, c: f32) -> f32 {
     row[0] * a + row[1] * b + row[2] * c
 }
 
-/// Exact scalar mirror of `f32x8::cbrt_midp` (same bit-hack constant and 2 Halley steps).
-#[inline(always)]
-fn cbrt_midp_scalar(x: f32) -> f32 {
-    const MAGIC: u32 = 0x2a50_8c2d;
-    let abs_x = x.abs();
-    let mut y = f32::from_bits((abs_x.to_bits() / 3) + MAGIC);
-    for _ in 0..2 {
-        let y3 = y * y * y;
-        y *= (y3 + 2.0 * abs_x) / (2.0 * y3 + abs_x);
-    }
-    if x == 0.0 { x } else { y.copysign(x) }
-}
-
 /// Scalar 1-pixel mirror of `chroma_scale!` — avoids 8-wide unrolled `f32x8<ScalarToken>`
 /// codegen while matching the SIMD tiers bit-for-bit.
 #[inline(always)]
@@ -334,9 +342,9 @@ fn apply_strip_impl_scalar_t(
         if mn > mx * ratio && mx < GATE_TOP {
             continue;
         }
-        let lc = cbrt_midp_scalar(dot_scalar(&m1[0], r0, g0, b0));
-        let mc = cbrt_midp_scalar(dot_scalar(&m1[1], r0, g0, b0));
-        let sc2 = cbrt_midp_scalar(dot_scalar(&m1[2], r0, g0, b0));
+        let lc = Cbrtf::<SOFT_COMPRESS_CBRT>::scalar_infallible(dot_scalar(&m1[0], r0, g0, b0));
+        let mc = Cbrtf::<SOFT_COMPRESS_CBRT>::scalar_infallible(dot_scalar(&m1[1], r0, g0, b0));
+        let sc2 = Cbrtf::<SOFT_COMPRESS_CBRT>::scalar_infallible(dot_scalar(&m1[2], r0, g0, b0));
         let ll = dot_scalar(&ok, lc, mc, sc2);
         let (dl, dm, ds) = (lc - ll, mc - ll, sc2 - ll);
         let (scaled, active) = chroma_scale_scalar(sc, ll, dl, dm, ds, r0, g0, b0);
@@ -400,9 +408,9 @@ fn apply_strip_impl(token: Token, sc: &SoftCompress, rgb: &mut [[f32; 3]]) {
         let r0 = f32x8::from_array_t(token, core::array::from_fn(|i| px[i][0]));
         let g0 = f32x8::from_array_t(token, core::array::from_fn(|i| px[i][1]));
         let b0 = f32x8::from_array_t(token, core::array::from_fn(|i| px[i][2]));
-        let lc = dot(&m1[0], r0, g0, b0).cbrt_midp();
-        let mc = dot(&m1[1], r0, g0, b0).cbrt_midp();
-        let sc2 = dot(&m1[2], r0, g0, b0).cbrt_midp();
+        let lc = dot(&m1[0], r0, g0, b0).cbrt::<SOFT_COMPRESS_CBRT>();
+        let mc = dot(&m1[1], r0, g0, b0).cbrt::<SOFT_COMPRESS_CBRT>();
+        let sc2 = dot(&m1[2], r0, g0, b0).cbrt::<SOFT_COMPRESS_CBRT>();
         let ll = dot(&ok, lc, mc, sc2);
         let (dl, dm, ds) = (lc - ll, mc - ll, sc2 - ll);
         let (scaled, active) = chroma_scale!(splat, dot, sc, ll, dl, dm, ds, r0, g0, b0);

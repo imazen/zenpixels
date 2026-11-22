@@ -3,7 +3,7 @@ use archmage::ScalarToken;
 #[cfg(any(feature = "cms-moxcms", test))]
 use magemath::SimdMath;
 #[cfg(any(feature = "cms-moxcms", test))]
-use magemath::powf::{Powf, PowfOptions};
+use magemath::powf::{Powf, PowfDomain, PowfOptions};
 
 #[cfg(any(feature = "cms-moxcms", test))]
 const MAGNITUDE_POWER: u128 = PowfOptions::new()
@@ -12,11 +12,27 @@ const MAGNITUDE_POWER: u128 = PowfOptions::new()
     .caller()
     .bits();
 
+/// Elided `Highp` gamma profile for positive normal bases in `[2^-16, 2^16]`
+/// and exponents in `[0.0, 4.0]` (`|n * log2(x)| <= 64 <= 125`), eliding both
+/// per-lane input/output normal checks in `magemath`'s packed binary64 path.
+#[cfg(any(feature = "cms-moxcms", test))]
+const MAGNITUDE_POWER_GAMMA: u128 = PowfOptions::new()
+    .domain(PowfDomain::PositiveGamma)
+    .reject_subnormals()
+    .highp()
+    .assume_in_bounds()
+    .caller()
+    .bits();
+
 /// High-precision power on positive normal magnitudes. The existing libm path
 /// owns exceptional inputs and values outside the checked approximation range.
 #[cfg(any(feature = "cms-moxcms", test))]
 #[inline]
 pub(crate) fn magnitude_pow(base: f32, exponent: f32) -> f32 {
+    if (1.0 / 65_536.0..=65_536.0).contains(&base) && (0.0..=4.0).contains(&exponent) {
+        return Powf::<MAGNITUDE_POWER_GAMMA>::scalar_with_token(ScalarToken, base, exponent)
+            .unwrap_or_else(|_| libm::powf(base, exponent));
+    }
     Powf::<MAGNITUDE_POWER>::scalar_with_token(ScalarToken, base, exponent)
         .unwrap_or_else(|_| libm::powf(base, exponent))
 }
@@ -27,12 +43,29 @@ pub(crate) fn magnitude_pow(base: f32, exponent: f32) -> f32 {
 /// chunks containing subnormals or non-finites.
 #[cfg(any(feature = "cms-moxcms", test))]
 pub(crate) fn apply_signed_pow_rgb(target: &mut [f32], channels: usize, exponent: f32) {
-    archmage::attuned!(apply_signed_pow_rgb_tier(target, channels, exponent));
+    archmage::attuned!(
+        apply_signed_pow_rgb_tier(target, channels, exponent),
+        [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+    );
 }
 
 #[cfg(any(feature = "cms-moxcms", test))]
-#[archmage::attune(_*_t, define(f32x8))]
+#[archmage::attune(_*_t, _v4x_t(cfg(avx512)), define(f32x8))]
 fn apply_signed_pow_rgb_tier(token: Token, target: &mut [f32], channels: usize, exponent: f32) {
+    let gamma_exp = (0.0..=4.0).contains(&exponent);
+    let lo_g = f32x8::splat_t(token, 1.0 / 65_536.0);
+    let hi_g = f32x8::splat_t(token, 65_536.0);
+    let eval_vec = |v: f32x8| -> Option<f32x8> {
+        if gamma_exp
+            && (v.simd_ge(lo_g) & v.simd_le(hi_g))
+                .bitcast_to_i32()
+                .all_true()
+        {
+            Some(v.powf::<MAGNITUDE_POWER_GAMMA>(exponent))
+        } else {
+            v.try_powf_with::<MAGNITUDE_POWER>(exponent).ok()
+        }
+    };
     match channels {
         3 => {
             let usable = (target.len() / 3) * 3;
@@ -40,9 +73,7 @@ fn apply_signed_pow_rgb_tier(token: Token, target: &mut [f32], channels: usize, 
             for chunk in chunks {
                 let orig = *chunk;
                 let abs = orig.map(f32::abs);
-                if let Ok(out_vec) =
-                    f32x8::from_array_t(token, abs).try_powf_with::<MAGNITUDE_POWER>(exponent)
-                {
+                if let Some(out_vec) = eval_vec(f32x8::from_array_t(token, abs)) {
                     let out = out_vec.to_array();
                     for i in 0..8 {
                         chunk[i] = out[i].copysign(orig[i]);
@@ -71,9 +102,7 @@ fn apply_signed_pow_rgb_tier(token: Token, target: &mut [f32], channels: usize, 
                     orig[6].abs(),
                     1.0,
                 ];
-                if let Ok(out_vec) =
-                    f32x8::from_array_t(token, abs).try_powf_with::<MAGNITUDE_POWER>(exponent)
-                {
+                if let Some(out_vec) = eval_vec(f32x8::from_array_t(token, abs)) {
                     let out = out_vec.to_array();
                     pair[0] = out[0].copysign(orig[0]);
                     pair[1] = out[1].copysign(orig[1]);

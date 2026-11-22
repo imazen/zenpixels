@@ -1,6 +1,13 @@
 //! BT.2100-3 Table 5 display rendering, resolved by the plan or CMS adapter.
 //! OOTF structure follows zentone f32e091c's hlg module (same ownership).
-//! F64 evaluation and analytic curves avoid a second approximation error budget.
+//! SIMD fast path uses const-configured `magemath` (`Expf`/`Logf` `Midp` +
+//! `Powf` `Highp` packed binary64 for the luminance OOTF), falling back
+//! per-lane to exact f64 scalar on non-finite, extreme-range, or exotic-gamma inputs.
+use magemath::SimdMath;
+use magemath::expf::{ExpfDomain, ExpfOptions};
+use magemath::logf::{LogfDomain, LogfOptions};
+use magemath::powf::{PowfDomain, PowfOptions};
+
 use crate::ChannelLayout;
 #[cfg(any(feature = "cms-moxcms", feature = "cms-lcms"))]
 use crate::{ChannelType, ColorProfileSource, PixelFormat};
@@ -13,6 +20,53 @@ use whereat::At;
 use zenpixels::hdr::HlgRendering;
 
 pub(crate) const BT2020_LUMA: [f64; 3] = [0.2627, 0.6780, 0.0593];
+
+const HLG_A_F32: f32 = 0.17883277;
+const HLG_B_F32: f32 = 0.28466892; // 1 - 4 * A
+#[allow(clippy::excessive_precision)]
+const HLG_C_F32: f32 = 0.55991073; // 0.5 - A * ln(4 * A)
+const HLG_A_LN2_F32: f32 = HLG_A_F32 * core::f32::consts::LN_2;
+const HLG_INV_A_LOG2E_F32: f32 = core::f32::consts::LOG2_E / HLG_A_F32;
+
+const MATH_PORTABILITY: magemath::Portability = if cfg!(all(
+    target_arch = "wasm32",
+    not(feature = "precise-portable")
+)) {
+    magemath::Portability::BackendDependent
+} else {
+    magemath::Portability::BitExact
+};
+
+const HLG_EXP_FAST: u128 = ExpfOptions::new()
+    .domain(ExpfDomain::NormalOutput)
+    .portability(MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+
+const HLG_LOG_FAST: u128 = LogfOptions::new()
+    .domain(LogfDomain::PositiveNormals)
+    .reject_subnormals()
+    .portability(MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+
+/// Packed binary64 (`Highp`, <= 0.5 ULP) luminance OOTF power for `|Y| in [2^-24, 2^16]`
+/// and system-gamma exponent in `[-1.0, 2.0]` (`|-24 * 2.0| = 48 <= 125`, eliding all
+/// per-lane range checks).
+const HLG_OOTF_LO: f32 = 1.0 / 16_777_216.0;
+const HLG_OOTF_HI: f32 = 65_536.0;
+const HLG_OOTF_HIGHP: u128 = PowfOptions::new()
+    .domain(PowfDomain::PositiveGamma)
+    .base_range(HLG_OOTF_LO, HLG_OOTF_HI)
+    .exponent_range(-1.0, 2.0)
+    .reject_subnormals()
+    .highp()
+    .portability(MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
 
 fn decode(v: f64) -> f64 {
     let a = 0.17883277;
@@ -93,6 +147,15 @@ pub(crate) struct PreparedHlg {
     beta: f64,
     scale: f64,
     luma: [f64; 3],
+    gamma_m1_f32: f32,
+    inv_ootf_exp_f32: f32,
+    beta_f32: f32,
+    one_minus_beta_f32: f32,
+    inv_one_minus_beta_f32: f32,
+    scale_f32: f32,
+    inv_scale_f32: f32,
+    luma_f32: [f32; 3],
+    simd_fast_eligible: bool,
     pub(super) inverse: bool,
     clip: bool,
 }
@@ -112,15 +175,591 @@ impl PreparedHlg {
         let peak = f64::from(rendering.peak().nits());
         let beta =
             libm::sqrt(3.0 * libm::pow(f64::from(rendering.black_nits()) / peak, 1.0 / gamma));
+        let scale = peak / f64::from(white);
+        let gamma_m1_f32 = (gamma - 1.0) as f32;
+        let inv_ootf_exp_f32 = ((1.0 - gamma) / gamma) as f32;
+        let beta_f32 = beta as f32;
+        let one_minus_beta_f32 = (1.0 - beta) as f32;
+        let inv_one_minus_beta_f32 = (1.0 / (1.0 - beta)) as f32;
+        let scale_f32 = scale as f32;
+        let inv_scale_f32 = (1.0 / scale) as f32;
+        let luma_f32 = [luma[0] as f32, luma[1] as f32, luma[2] as f32];
+        let active_exp = if inverse {
+            inv_ootf_exp_f32
+        } else {
+            gamma_m1_f32
+        };
+        let simd_fast_eligible = (-1.0..=2.0).contains(&active_exp)
+            && beta_f32.is_finite()
+            && one_minus_beta_f32.is_finite()
+            && inv_one_minus_beta_f32.is_finite()
+            && scale_f32.is_finite()
+            && scale_f32 > 0.0
+            && inv_scale_f32.is_finite()
+            && inv_scale_f32 > 0.0
+            && luma_f32.iter().all(|v| v.is_finite());
         Self {
             gamma,
             beta,
-            scale: peak / f64::from(white),
+            scale,
             luma,
+            gamma_m1_f32,
+            inv_ootf_exp_f32,
+            beta_f32,
+            one_minus_beta_f32,
+            inv_one_minus_beta_f32,
+            scale_f32,
+            inv_scale_f32,
+            luma_f32,
+            simd_fast_eligible,
             inverse,
             clip,
         }
     }
+}
+
+#[cold]
+#[inline(never)]
+fn hlg_pixel_f64(rgb_in: [f32; 3], prepared: &PreparedHlg) -> [f32; 3] {
+    let PreparedHlg {
+        gamma,
+        beta,
+        scale,
+        luma,
+        inverse,
+        clip,
+        ..
+    } = *prepared;
+    let mut rgb = [
+        f64::from(rgb_in[0]),
+        f64::from(rgb_in[1]),
+        f64::from(rgb_in[2]),
+    ];
+    if rgb.iter().any(|v| !v.is_finite()) {
+        rgb = [f64::NAN; 3];
+    } else if inverse {
+        for v in &mut rgb {
+            *v /= scale;
+        }
+        let y = luma[0] * rgb[0] + luma[1] * rgb[1] + luma[2] * rgb[2];
+        let gain = if y == 0.0 {
+            0.0
+        } else {
+            libm::pow(y.abs(), (1.0 - gamma) / gamma)
+        };
+        for v in &mut rgb {
+            *v = (encode(*v * gain) - beta) / (1.0 - beta);
+            if clip {
+                *v = v.clamp(0.0, 1.0);
+            }
+        }
+    } else {
+        for v in &mut rgb {
+            if clip {
+                // ITU-R BT.2100-3 Table 5 Note 5h: clamp super-white at 1.0,
+                // apply black-level lift first so PLUGE sub-blacks in
+                // [-beta / (1 - beta), 0) decode smoothly to [0, L_B], and
+                // clamp below display black at 0.0.
+                let v_clamped = v.min(1.0);
+                *v = decode(((1.0 - beta) * v_clamped + beta).max(0.0));
+            } else {
+                *v = decode((1.0 - beta) * *v + beta);
+            }
+        }
+        let y = luma[0] * rgb[0] + luma[1] * rgb[1] + luma[2] * rgb[2];
+        let gain = if y == 0.0 {
+            0.0
+        } else {
+            scale * libm::pow(y.abs(), gamma - 1.0)
+        };
+        for v in &mut rgb {
+            *v *= gain;
+        }
+    }
+    [rgb[0] as f32, rgb[1] as f32, rgb[2] as f32]
+}
+
+#[cold]
+#[inline(never)]
+fn hlg_row_f64_fallback(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    channels: usize,
+    prepared: &PreparedHlg,
+) {
+    for (s, d) in src[..width * channels * 4]
+        .chunks_exact(channels * 4)
+        .zip(dst[..width * channels * 4].chunks_exact_mut(channels * 4))
+    {
+        if channels == 4 {
+            d[12..16].copy_from_slice(&s[12..16]);
+        }
+        let rgb_in = [
+            f32::from_ne_bytes(s[0..4].try_into().unwrap()),
+            f32::from_ne_bytes(s[4..8].try_into().unwrap()),
+            f32::from_ne_bytes(s[8..12].try_into().unwrap()),
+        ];
+        let rgb_out = hlg_pixel_f64(rgb_in, prepared);
+        for i in 0..3 {
+            d[i * 4..i * 4 + 4].copy_from_slice(&rgb_out[i].to_ne_bytes());
+        }
+    }
+}
+
+macro_rules! hlg_eval_chunk {
+    ($vec:ident, $lanes:literal, $token:ident, $prepared:ident, $inverse:expr, $clip:expr, $ra:ident, $ga:ident, $ba:ident,
+     $zero:ident, $one:ident, $half:ident, $neg_zero:ident, $inv_3:ident, $three:ident, $twelve:ident, $inv_12:ident,
+     $b_const:ident, $c_const:ident, $a_ln2:ident, $inv_a_log2e:ident, $exp_max:ident, $ootf_lo:ident, $ootf_hi:ident,
+     $lr:ident, $lg:ident, $lb:ident, $beta_v:ident, $one_minus_beta_v:ident, $inv_one_minus_beta_v:ident,
+     $scale_v:ident, $inv_scale_v:ident, $gamma_m1:ident, $inv_ootf_exp:ident) => {{
+        let r_in = $vec::from_array_t($token, $ra);
+        let g_in = $vec::from_array_t($token, $ga);
+        let b_in = $vec::from_array_t($token, $ba);
+        let finite_in = (r_in * $zero).simd_eq($zero)
+            & (g_in * $zero).simd_eq($zero)
+            & (b_in * $zero).simd_eq($zero);
+
+        let (mut ro, mut go, mut bo, ok) = if !$inverse {
+            let decode_ch = |c: $vec| -> ($vec, $vec) {
+                let lifted = if $clip {
+                    ($one_minus_beta_v * c.min_fast($one) + $beta_v).max_fast($zero)
+                } else {
+                    $one_minus_beta_v * c + $beta_v
+                };
+                let abs_c = lifted.abs();
+                let sign_c = lifted & $neg_zero;
+                let lo = (abs_c * abs_c) * $inv_3;
+                let exp_arg = (abs_c - $c_const) * $inv_a_log2e;
+                let le_half = abs_c.simd_le($half);
+                let hi_branch = abs_c.simd_gt($half);
+                let exp_ok = exp_arg.simd_le($exp_max);
+                let ch_ok = le_half | exp_ok;
+                let safe_arg = $vec::blend(hi_branch & exp_ok, exp_arg, $zero);
+                let hi = (safe_arg.exp2::<HLG_EXP_FAST>() + $b_const) * $inv_12;
+                let mag = $vec::blend(hi_branch, hi, lo);
+                (mag | sign_c, ch_ok)
+            };
+            let (dr, ok_r) = decode_ch(r_in);
+            let (dg, ok_g) = decode_ch(g_in);
+            let (db, ok_b) = decode_ch(b_in);
+            let y = $lr * dr + $lg * dg + $lb * db;
+            let y_abs = y.abs();
+            let y_zero = y.simd_eq($zero);
+            let y_in_range = y_abs.simd_ge($ootf_lo) & y_abs.simd_le($ootf_hi);
+            let y_ok = y_zero | y_in_range;
+            let y_safe = $vec::blend(y_in_range, y_abs, $one);
+            let gain = $vec::blend(
+                y_zero,
+                $zero,
+                $scale_v * y_safe.powf::<HLG_OOTF_HIGHP>($gamma_m1),
+            );
+            let ok = finite_in & y_ok & ok_r & ok_g & ok_b;
+            (
+                (dr * gain).to_array(),
+                (dg * gain).to_array(),
+                (db * gain).to_array(),
+                ok,
+            )
+        } else {
+            let rs = r_in * $inv_scale_v;
+            let gs = g_in * $inv_scale_v;
+            let bs = b_in * $inv_scale_v;
+            let y = $lr * rs + $lg * gs + $lb * bs;
+            let y_abs = y.abs();
+            let y_zero = y.simd_eq($zero);
+            let y_in_range = y_abs.simd_ge($ootf_lo) & y_abs.simd_le($ootf_hi);
+            let y_ok = y_zero | y_in_range;
+            let y_safe = $vec::blend(y_in_range, y_abs, $one);
+            let gain = $vec::blend(y_zero, $zero, y_safe.powf::<HLG_OOTF_HIGHP>($inv_ootf_exp));
+
+            let encode_ch = |c: $vec| -> ($vec, $vec) {
+                let abs_c = c.abs();
+                let sign_c = c & $neg_zero;
+                let lo = ($three * abs_c).sqrt();
+                let log_arg = $twelve * abs_c - $b_const;
+                let le_inv12 = abs_c.simd_le($inv_12);
+                let hi_branch = abs_c.simd_gt($inv_12);
+                let log_ok = (log_arg * $zero).simd_eq($zero);
+                let ch_ok = le_inv12 | log_ok;
+                let safe_arg = $vec::blend(hi_branch & log_ok, log_arg, $one);
+                let hi = $a_ln2 * safe_arg.log2::<HLG_LOG_FAST>() + $c_const;
+                let mag = $vec::blend(hi_branch, hi, lo);
+                let unlifted = ((mag | sign_c) - $beta_v) * $inv_one_minus_beta_v;
+                let out = if $clip {
+                    unlifted.max_fast($zero).min_fast($one)
+                } else {
+                    unlifted
+                };
+                (out, ch_ok)
+            };
+            let (er, ok_r) = encode_ch(rs * gain);
+            let (eg, ok_g) = encode_ch(gs * gain);
+            let (eb, ok_b) = encode_ch(bs * gain);
+            let ok = finite_in & y_ok & ok_r & ok_g & ok_b;
+            (er.to_array(), eg.to_array(), eb.to_array(), ok)
+        };
+
+        // Per-lane fallback preserves exact single-pixel vs whole-row partition parity:
+        // valid neighbor lanes always keep their SIMD outputs unchanged.
+        if !ok.bitcast_to_i32().all_true() {
+            let ok_arr = ok.to_array();
+            for i in 0..$lanes {
+                if ok_arr[i].to_bits() == 0 {
+                    let exact = hlg_pixel_f64([$ra[i], $ga[i], $ba[i]], $prepared);
+                    ro[i] = exact[0];
+                    go[i] = exact[1];
+                    bo[i] = exact[2];
+                }
+            }
+        }
+        (ro, go, bo)
+    }};
+}
+
+macro_rules! hlg_row_loop {
+    ($vec:ident, $lanes:literal, $rgb_words:literal, $rgba_words:literal,
+     $token:ident, $src_u32:ident, $dst_u32:ident, $width:ident, $is_rgba:ident,
+     $prepared:ident, $inverse:expr, $clip:expr) => {{
+        let zero = $vec::zero_t($token);
+        let one = $vec::splat_t($token, 1.0);
+        let half = $vec::splat_t($token, 0.5);
+        let neg_zero = $vec::splat_t($token, -0.0);
+        let inv_3 = $vec::splat_t($token, 1.0 / 3.0);
+        let three = $vec::splat_t($token, 3.0);
+        let twelve = $vec::splat_t($token, 12.0);
+        let inv_12 = $vec::splat_t($token, 1.0 / 12.0);
+        let b_const = $vec::splat_t($token, HLG_B_F32);
+        let c_const = $vec::splat_t($token, HLG_C_F32);
+        let a_ln2 = $vec::splat_t($token, HLG_A_LN2_F32);
+        let inv_a_log2e = $vec::splat_t($token, HLG_INV_A_LOG2E_F32);
+        let exp_max = $vec::splat_t($token, 127.0);
+        let ootf_lo = $vec::splat_t($token, HLG_OOTF_LO);
+        let ootf_hi = $vec::splat_t($token, HLG_OOTF_HI);
+
+        let lr = $vec::splat_t($token, $prepared.luma_f32[0]);
+        let lg = $vec::splat_t($token, $prepared.luma_f32[1]);
+        let lb = $vec::splat_t($token, $prepared.luma_f32[2]);
+        let beta_v = $vec::splat_t($token, $prepared.beta_f32);
+        let one_minus_beta_v = $vec::splat_t($token, $prepared.one_minus_beta_f32);
+        let inv_one_minus_beta_v = $vec::splat_t($token, $prepared.inv_one_minus_beta_f32);
+        let scale_v = $vec::splat_t($token, $prepared.scale_f32);
+        let inv_scale_v = $vec::splat_t($token, $prepared.inv_scale_f32);
+        let gamma_m1 = $prepared.gamma_m1_f32;
+        let inv_ootf_exp = $prepared.inv_ootf_exp_f32;
+
+        if $is_rgba {
+            let total = $width * 4;
+            let (s_chunks, s_rem) = $src_u32[..total].as_chunks::<$rgba_words>();
+            let (d_chunks, d_rem) = $dst_u32[..total].as_chunks_mut::<$rgba_words>();
+            for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
+                let mut ra = [0.0f32; $lanes];
+                let mut ga = [0.0f32; $lanes];
+                let mut ba = [0.0f32; $lanes];
+                for i in 0..$lanes {
+                    ra[i] = f32::from_bits(sc[i * 4]);
+                    ga[i] = f32::from_bits(sc[i * 4 + 1]);
+                    ba[i] = f32::from_bits(sc[i * 4 + 2]);
+                }
+                let (ro, go, bo) = hlg_eval_chunk!(
+                    $vec,
+                    $lanes,
+                    $token,
+                    $prepared,
+                    $inverse,
+                    $clip,
+                    ra,
+                    ga,
+                    ba,
+                    zero,
+                    one,
+                    half,
+                    neg_zero,
+                    inv_3,
+                    three,
+                    twelve,
+                    inv_12,
+                    b_const,
+                    c_const,
+                    a_ln2,
+                    inv_a_log2e,
+                    exp_max,
+                    ootf_lo,
+                    ootf_hi,
+                    lr,
+                    lg,
+                    lb,
+                    beta_v,
+                    one_minus_beta_v,
+                    inv_one_minus_beta_v,
+                    scale_v,
+                    inv_scale_v,
+                    gamma_m1,
+                    inv_ootf_exp
+                );
+                for i in 0..$lanes {
+                    dc[i * 4] = ro[i].to_bits();
+                    dc[i * 4 + 1] = go[i].to_bits();
+                    dc[i * 4 + 2] = bo[i].to_bits();
+                    dc[i * 4 + 3] = sc[i * 4 + 3]; // bit-for-bit alpha copy (NaN payload safe)
+                }
+            }
+            let rem_px = s_rem.len() / 4;
+            if rem_px > 0 {
+                let mut ra = [0.5f32; $lanes];
+                let mut ga = [0.5f32; $lanes];
+                let mut ba = [0.5f32; $lanes];
+                for i in 0..rem_px {
+                    ra[i] = f32::from_bits(s_rem[i * 4]);
+                    ga[i] = f32::from_bits(s_rem[i * 4 + 1]);
+                    ba[i] = f32::from_bits(s_rem[i * 4 + 2]);
+                }
+                let (ro, go, bo) = hlg_eval_chunk!(
+                    $vec,
+                    $lanes,
+                    $token,
+                    $prepared,
+                    $inverse,
+                    $clip,
+                    ra,
+                    ga,
+                    ba,
+                    zero,
+                    one,
+                    half,
+                    neg_zero,
+                    inv_3,
+                    three,
+                    twelve,
+                    inv_12,
+                    b_const,
+                    c_const,
+                    a_ln2,
+                    inv_a_log2e,
+                    exp_max,
+                    ootf_lo,
+                    ootf_hi,
+                    lr,
+                    lg,
+                    lb,
+                    beta_v,
+                    one_minus_beta_v,
+                    inv_one_minus_beta_v,
+                    scale_v,
+                    inv_scale_v,
+                    gamma_m1,
+                    inv_ootf_exp
+                );
+                for i in 0..rem_px {
+                    d_rem[i * 4] = ro[i].to_bits();
+                    d_rem[i * 4 + 1] = go[i].to_bits();
+                    d_rem[i * 4 + 2] = bo[i].to_bits();
+                    d_rem[i * 4 + 3] = s_rem[i * 4 + 3];
+                }
+            }
+        } else {
+            let total = $width * 3;
+            let (s_chunks, s_rem) = $src_u32[..total].as_chunks::<$rgb_words>();
+            let (d_chunks, d_rem) = $dst_u32[..total].as_chunks_mut::<$rgb_words>();
+            for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
+                let mut ra = [0.0f32; $lanes];
+                let mut ga = [0.0f32; $lanes];
+                let mut ba = [0.0f32; $lanes];
+                for i in 0..$lanes {
+                    ra[i] = f32::from_bits(sc[i * 3]);
+                    ga[i] = f32::from_bits(sc[i * 3 + 1]);
+                    ba[i] = f32::from_bits(sc[i * 3 + 2]);
+                }
+                let (ro, go, bo) = hlg_eval_chunk!(
+                    $vec,
+                    $lanes,
+                    $token,
+                    $prepared,
+                    $inverse,
+                    $clip,
+                    ra,
+                    ga,
+                    ba,
+                    zero,
+                    one,
+                    half,
+                    neg_zero,
+                    inv_3,
+                    three,
+                    twelve,
+                    inv_12,
+                    b_const,
+                    c_const,
+                    a_ln2,
+                    inv_a_log2e,
+                    exp_max,
+                    ootf_lo,
+                    ootf_hi,
+                    lr,
+                    lg,
+                    lb,
+                    beta_v,
+                    one_minus_beta_v,
+                    inv_one_minus_beta_v,
+                    scale_v,
+                    inv_scale_v,
+                    gamma_m1,
+                    inv_ootf_exp
+                );
+                for i in 0..$lanes {
+                    dc[i * 3] = ro[i].to_bits();
+                    dc[i * 3 + 1] = go[i].to_bits();
+                    dc[i * 3 + 2] = bo[i].to_bits();
+                }
+            }
+            let rem_px = s_rem.len() / 3;
+            if rem_px > 0 {
+                let mut ra = [0.5f32; $lanes];
+                let mut ga = [0.5f32; $lanes];
+                let mut ba = [0.5f32; $lanes];
+                for i in 0..rem_px {
+                    ra[i] = f32::from_bits(s_rem[i * 3]);
+                    ga[i] = f32::from_bits(s_rem[i * 3 + 1]);
+                    ba[i] = f32::from_bits(s_rem[i * 3 + 2]);
+                }
+                let (ro, go, bo) = hlg_eval_chunk!(
+                    $vec,
+                    $lanes,
+                    $token,
+                    $prepared,
+                    $inverse,
+                    $clip,
+                    ra,
+                    ga,
+                    ba,
+                    zero,
+                    one,
+                    half,
+                    neg_zero,
+                    inv_3,
+                    three,
+                    twelve,
+                    inv_12,
+                    b_const,
+                    c_const,
+                    a_ln2,
+                    inv_a_log2e,
+                    exp_max,
+                    ootf_lo,
+                    ootf_hi,
+                    lr,
+                    lg,
+                    lb,
+                    beta_v,
+                    one_minus_beta_v,
+                    inv_one_minus_beta_v,
+                    scale_v,
+                    inv_scale_v,
+                    gamma_m1,
+                    inv_ootf_exp
+                );
+                for i in 0..rem_px {
+                    d_rem[i * 3] = ro[i].to_bits();
+                    d_rem[i * 3 + 1] = go[i].to_bits();
+                    d_rem[i * 3 + 2] = bo[i].to_bits();
+                }
+            }
+        }
+    }};
+}
+
+macro_rules! hlg_row_dispatch {
+    ($vec:ident, $lanes:literal, $rgb_words:literal, $rgba_words:literal,
+     $token:ident, $src_u32:ident, $dst_u32:ident, $width:ident, $is_rgba:ident, $prepared:ident) => {{
+        match ($prepared.inverse, $prepared.clip) {
+            (false, false) => hlg_row_loop!(
+                $vec,
+                $lanes,
+                $rgb_words,
+                $rgba_words,
+                $token,
+                $src_u32,
+                $dst_u32,
+                $width,
+                $is_rgba,
+                $prepared,
+                false,
+                false
+            ),
+            (false, true) => hlg_row_loop!(
+                $vec,
+                $lanes,
+                $rgb_words,
+                $rgba_words,
+                $token,
+                $src_u32,
+                $dst_u32,
+                $width,
+                $is_rgba,
+                $prepared,
+                false,
+                true
+            ),
+            (true, false) => hlg_row_loop!(
+                $vec,
+                $lanes,
+                $rgb_words,
+                $rgba_words,
+                $token,
+                $src_u32,
+                $dst_u32,
+                $width,
+                $is_rgba,
+                $prepared,
+                true,
+                false
+            ),
+            (true, true) => hlg_row_loop!(
+                $vec,
+                $lanes,
+                $rgb_words,
+                $rgba_words,
+                $token,
+                $src_u32,
+                $dst_u32,
+                $width,
+                $is_rgba,
+                $prepared,
+                true,
+                true
+            ),
+        }
+    }};
+}
+
+#[archmage::attune(_*_t, define(f32x8))]
+fn hlg_row_tier(
+    token: Token,
+    src_u32: &[u32],
+    dst_u32: &mut [u32],
+    width: usize,
+    is_rgba: bool,
+    prepared: &PreparedHlg,
+) {
+    hlg_row_dispatch!(
+        f32x8, 8, 24, 32, token, src_u32, dst_u32, width, is_rgba, prepared
+    );
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[archmage::arcane]
+fn hlg_row_tier_v4x_t(
+    token: archmage::X64V4xToken,
+    src_u32: &[u32],
+    dst_u32: &mut [u32],
+    width: usize,
+    is_rgba: bool,
+    prepared: &PreparedHlg,
+) {
+    type Vec16 = magetypes::simd::generic::f32x16<archmage::X64V4xToken>;
+    hlg_row_dispatch!(
+        Vec16, 16, 48, 64, token, src_u32, dst_u32, width, is_rgba, prepared
+    );
 }
 
 pub(super) fn row(
@@ -130,69 +769,22 @@ pub(super) fn row(
     layout: ChannelLayout,
     prepared: &PreparedHlg,
 ) {
-    let channels = if layout == ChannelLayout::Rgba { 4 } else { 3 };
-    let PreparedHlg {
-        gamma,
-        beta,
-        scale,
-        luma,
-        inverse,
-        clip,
-    } = *prepared;
-    for (s, d) in src[..width * channels * 4]
-        .chunks_exact(channels * 4)
-        .zip(dst[..width * channels * 4].chunks_exact_mut(channels * 4))
-    {
-        d.copy_from_slice(s);
-        let mut rgb = [0.0; 3];
-        for (i, v) in rgb.iter_mut().enumerate() {
-            *v = f64::from(f32::from_ne_bytes(s[i * 4..i * 4 + 4].try_into().unwrap()));
-        }
-        if rgb.iter().any(|v| !v.is_finite()) {
-            rgb = [f64::NAN; 3];
-        } else if inverse {
-            for v in &mut rgb {
-                *v /= scale;
-            }
-            let y = luma[0] * rgb[0] + luma[1] * rgb[1] + luma[2] * rgb[2];
-            let gain = if y == 0.0 {
-                0.0
-            } else {
-                libm::pow(y.abs(), (1.0 - gamma) / gamma)
-            };
-            for v in &mut rgb {
-                *v = (encode(*v * gain) - beta) / (1.0 - beta);
-                if clip {
-                    *v = v.clamp(0.0, 1.0);
-                }
-            }
-        } else {
-            for v in &mut rgb {
-                if clip {
-                    // ITU-R BT.2100-3 Table 5 Note 5h: clamp super-white at 1.0,
-                    // apply black-level lift first so PLUGE sub-blacks in
-                    // [-beta / (1 - beta), 0) decode smoothly to [0, L_B], and
-                    // clamp below display black at 0.0.
-                    let v_clamped = v.min(1.0);
-                    *v = decode(((1.0 - beta) * v_clamped + beta).max(0.0));
-                } else {
-                    *v = decode((1.0 - beta) * *v + beta);
-                }
-            }
-            let y = luma[0] * rgb[0] + luma[1] * rgb[1] + luma[2] * rgb[2];
-            let gain = if y == 0.0 {
-                0.0
-            } else {
-                scale * libm::pow(y.abs(), gamma - 1.0)
-            };
-            for v in &mut rgb {
-                *v *= gain;
-            }
-        }
-        for (i, v) in rgb.iter().enumerate() {
-            d[i * 4..i * 4 + 4].copy_from_slice(&(*v as f32).to_ne_bytes());
-        }
+    let is_rgba = layout == ChannelLayout::Rgba;
+    let channels = if is_rgba { 4 } else { 3 };
+    if width == 0 {
+        return;
     }
+    if !prepared.simd_fast_eligible {
+        hlg_row_f64_fallback(src, dst, width, channels, prepared);
+        return;
+    }
+    let byte_len = width * channels * 4;
+    let src_u32: &[u32] = bytemuck::cast_slice(&src[..byte_len]);
+    let dst_u32: &mut [u32] = bytemuck::cast_slice_mut(&mut dst[..byte_len]);
+    archmage::attuned!(
+        hlg_row_tier(src_u32, dst_u32, width, is_rgba, prepared),
+        [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+    );
 }
 
 #[cfg(any(feature = "cms-moxcms", feature = "cms-lcms"))]

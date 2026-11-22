@@ -1020,10 +1020,22 @@ fn step_tf_bt709_f32(
 ) {
     match op.step {
         ConvertStep::Bt709F32ToLinearF32 => {
-            bt709_f32_to_linear_f32(src, dst, width as usize, op.from.layout());
+            bt709_f32_to_linear_f32(
+                src,
+                dst,
+                width as usize,
+                op.from.layout(),
+                op.in_trust.facts,
+            );
         }
         ConvertStep::LinearF32ToBt709F32 => {
-            linear_f32_to_bt709_f32(src, dst, width as usize, op.from.layout());
+            linear_f32_to_bt709_f32(
+                src,
+                dst,
+                width as usize,
+                op.from.layout(),
+                op.in_trust.facts,
+            );
         }
         _ => {}
     }
@@ -1038,10 +1050,22 @@ fn step_tf_gamma22_f32(
 ) {
     match op.step {
         ConvertStep::Gamma22F32ToLinearF32 => {
-            gamma22_f32_to_linear_f32(src, dst, width as usize, op.from.layout());
+            gamma22_f32_to_linear_f32(
+                src,
+                dst,
+                width as usize,
+                op.from.layout(),
+                op.in_trust.facts,
+            );
         }
         ConvertStep::LinearF32ToGamma22F32 => {
-            linear_f32_to_gamma22_f32(src, dst, width as usize, op.from.layout());
+            linear_f32_to_gamma22_f32(
+                src,
+                dst,
+                width as usize,
+                op.from.layout(),
+                op.in_trust.facts,
+            );
         }
         _ => {}
     }
@@ -2012,10 +2036,10 @@ fn tf_lin_to_srgb_ext(rgb: &mut [f32]) {
     linear_srgb::default::linear_to_srgb_extended_slice(rgb);
 }
 fn tf_bt709_to_lin(rgb: &mut [f32]) {
-    linear_srgb::default::bt709_to_linear_slice(rgb);
+    bt709_slice_in_place(rgb, false);
 }
 fn tf_lin_to_bt709(rgb: &mut [f32]) {
-    linear_srgb::default::linear_to_bt709_slice(rgb);
+    bt709_slice_in_place(rgb, true);
 }
 #[cfg(feature = "hdr-transfers")]
 fn tf_hlg_to_lin(rgb: &mut [f32]) {
@@ -2026,20 +2050,16 @@ fn tf_lin_to_hlg(rgb: &mut [f32]) {
     linear_srgb::default::linear_to_hlg_slice(rgb);
 }
 fn tf_gamma22_to_lin(rgb: &mut [f32]) {
-    linear_srgb::default::gamma_to_linear_slice(rgb, ADOBE_GAMMA);
+    gamma22_slice_in_place(rgb, false);
 }
 fn tf_lin_to_gamma22(rgb: &mut [f32]) {
-    linear_srgb::default::linear_to_gamma_slice(rgb, ADOBE_GAMMA);
+    gamma22_slice_in_place(rgb, true);
 }
 fn tf_gamma22_ext_to_lin(rgb: &mut [f32]) {
-    for v in rgb {
-        *v = libm::powf(v.abs(), ADOBE_GAMMA).copysign(*v);
-    }
+    gamma22_ext_slice_in_place(rgb, false);
 }
 fn tf_lin_to_gamma22_ext(rgb: &mut [f32]) {
-    for v in rgb {
-        *v = libm::powf(v.abs(), 1.0 / ADOBE_GAMMA).copysign(*v);
-    }
+    gamma22_ext_slice_in_place(rgb, true);
 }
 
 // -- gray_to_rgb (pure replicate — U16 and F16 share) ------------------------
@@ -3404,65 +3424,789 @@ fn linear_f32_to_srgb_f32_extended(
     restore_alpha_f32_f32(&srcf[..count], &mut dstf[..count], layout);
 }
 
-/// BT.709 F32 → Linear F32 (EOTF, same depth). Alpha-preserving.
-fn bt709_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, layout: ChannelLayout) {
-    let count = width * layout.channels();
-    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
-    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    dstf[..count].copy_from_slice(&srcf[..count]);
-    linear_srgb::default::bt709_to_linear_slice(&mut dstf[..count]);
-    restore_alpha_f32_f32(&srcf[..count], &mut dstf[..count], layout);
+// ---------------------------------------------------------------------------
+// Const-configured magemath 0.1.1 transfer kernels (BT.709 & Gamma 2.2)
+// ---------------------------------------------------------------------------
+//
+// Out-of-place SIMD kernels (`src -> dst`) with in-register alpha masking,
+// compile-time `const_exponent` + range-elided `PowfOptions`, `FloatFacts`
+// specialization, and padded tails for exact single-pixel vs whole-row parity.
+// Avoids both the pre-copy + `restore_alpha` pass and LLVM's in-place
+// `vmaskmovps` store pattern on x86-64 AVX2.
+
+const TF_MATH_PORTABILITY: magemath::Portability = if cfg!(all(
+    target_arch = "wasm32",
+    not(feature = "precise-portable")
+)) {
+    magemath::Portability::BackendDependent
+} else {
+    magemath::Portability::BitExact
+};
+
+/// Adobe RGB 1998 canonical exponent (`563 / 256`). Exact in f32.
+#[allow(clippy::excessive_precision)]
+const ADOBE_GAMMA: f32 = 2.19921875;
+const INV_ADOBE_GAMMA: f32 = 1.0 / ADOBE_GAMMA;
+
+#[allow(clippy::excessive_precision)]
+const BT709_ALPHA: f32 = 0.09929682680944;
+#[allow(clippy::excessive_precision)]
+const BT709_BETA: f32 = 0.018053968510807;
+const BT709_DECODE_MIN: f32 = (4.5 * BT709_BETA) * (1.0 / 4.5);
+
+/// Lower bound of the elided Gamma 2.2 EOTF domain (`|log2(1e-16) * 2.19921875| = 116.9 <= 125`).
+const GAMMA22_EOTF_ELIDE_LO: f32 = 1.0e-16;
+
+const GAMMA22_EOTF_ELIDE: u128 = magemath::powf::PowfOptions::new()
+    .domain(magemath::powf::PowfDomain::PositiveUnit)
+    .base_range(GAMMA22_EOTF_ELIDE_LO, 1.0)
+    .const_exponent(ADOBE_GAMMA)
+    .reject_subnormals()
+    .portability(TF_MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+
+const GAMMA22_EOTF_CLAMP: u128 = magemath::powf::PowfOptions::new()
+    .domain(magemath::powf::PowfDomain::Unit)
+    .const_exponent(ADOBE_GAMMA)
+    .clamp_finite()
+    .portability(TF_MATH_PORTABILITY)
+    .caller()
+    .bits();
+
+const GAMMA22_OETF_ELIDE: u128 = magemath::powf::PowfOptions::new()
+    .domain(magemath::powf::PowfDomain::PositiveUnit)
+    .const_exponent(INV_ADOBE_GAMMA)
+    .reject_subnormals()
+    .portability(TF_MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+
+const GAMMA22_OETF_CLAMP: u128 = magemath::powf::PowfOptions::new()
+    .domain(magemath::powf::PowfDomain::Unit)
+    .const_exponent(INV_ADOBE_GAMMA)
+    .clamp_finite()
+    .portability(TF_MATH_PORTABILITY)
+    .caller()
+    .bits();
+
+const GAMMA22_EXT_EOTF_HDR: u128 = magemath::powf::PowfOptions::new()
+    .domain(magemath::powf::PowfDomain::PositiveGamma)
+    .base_range(GAMMA22_EOTF_ELIDE_LO, 65_536.0)
+    .const_exponent(ADOBE_GAMMA)
+    .reject_subnormals()
+    .portability(TF_MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+
+const GAMMA22_EXT_OETF_HDR: u128 = magemath::powf::PowfOptions::new()
+    .domain(magemath::powf::PowfDomain::PositiveGamma)
+    .base_range(f32::MIN_POSITIVE, 65_536.0)
+    .const_exponent(INV_ADOBE_GAMMA)
+    .reject_subnormals()
+    .portability(TF_MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+
+const BT709_DECODE_FAST: u128 = magemath::powf::PowfOptions::new()
+    .positive_gamma()
+    .reject_subnormals()
+    .const_exponent(1.0 / 0.45)
+    .portability(TF_MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+
+const BT709_ENCODE_FAST: u128 = magemath::powf::PowfOptions::new()
+    .positive_gamma()
+    .reject_subnormals()
+    .const_exponent(0.45)
+    .portability(TF_MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+
+#[inline(always)]
+fn tf_alpha_period(layout: ChannelLayout) -> u8 {
+    match (layout.has_alpha(), layout.channels()) {
+        (true, 4) => 4,
+        (true, 2) => 2,
+        _ => 0,
+    }
 }
 
-/// Linear F32 → BT.709 F32 (OETF, same depth). Alpha-preserving.
-fn linear_f32_to_bt709_f32(src: &[u8], dst: &mut [u8], width: usize, layout: ChannelLayout) {
+#[cold]
+#[inline(never)]
+fn bt709_decode_fallback_lane(v: f32) -> f32 {
+    if v.is_nan() {
+        return v;
+    }
+    if v < 4.5 * BT709_BETA {
+        return v * (1.0 / 4.5);
+    }
+    let norm = (v + BT709_ALPHA) / (1.0 + BT709_ALPHA);
+    let p = if norm <= 65_536.0 {
+        magemath::powf::Powf::<BT709_DECODE_FAST>::scalar_const_with_token(
+            archmage::ScalarToken,
+            norm,
+        )
+        .unwrap_or_else(|_| libm::pow(f64::from(norm), 1.0 / 0.45) as f32)
+    } else {
+        libm::pow(f64::from(norm), 1.0 / 0.45) as f32
+    };
+    p.max(BT709_DECODE_MIN)
+}
+
+#[cold]
+#[inline(never)]
+fn bt709_encode_fallback_lane(v: f32) -> f32 {
+    if v.is_nan() {
+        return v;
+    }
+    if v < BT709_BETA {
+        return 4.5 * v;
+    }
+    let p = if v <= 65_536.0 {
+        magemath::powf::Powf::<BT709_ENCODE_FAST>::scalar_const_with_token(archmage::ScalarToken, v)
+            .unwrap_or_else(|_| libm::pow(f64::from(v), 0.45) as f32)
+    } else {
+        libm::pow(f64::from(v), 0.45) as f32
+    };
+    #[cfg(all(target_arch = "wasm32", not(feature = "precise-portable")))]
+    {
+        (1.0 + BT709_ALPHA) * p - BT709_ALPHA
+    }
+    #[cfg(not(all(target_arch = "wasm32", not(feature = "precise-portable"))))]
+    {
+        libm::fmaf(1.0 + BT709_ALPHA, p, -BT709_ALPHA)
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn gamma22_ext_fallback_lane(v: f32, inverse: bool) -> f32 {
+    let a = v.abs();
+    let y = if a < f32::MIN_POSITIVE {
+        0.0
+    } else if !inverse && a < GAMMA22_EOTF_ELIDE_LO {
+        magemath::powf::Powf::<GAMMA22_EOTF_CLAMP>::scalar_const_with_token(
+            archmage::ScalarToken,
+            a,
+        )
+        .unwrap_or(0.0)
+    } else if a <= 65_536.0 {
+        if inverse {
+            magemath::powf::Powf::<GAMMA22_EXT_OETF_HDR>::scalar_const_with_token(
+                archmage::ScalarToken,
+                a,
+            )
+            .unwrap_or_else(|_| libm::powf(a, INV_ADOBE_GAMMA))
+        } else {
+            magemath::powf::Powf::<GAMMA22_EXT_EOTF_HDR>::scalar_const_with_token(
+                archmage::ScalarToken,
+                a,
+            )
+            .unwrap_or_else(|_| libm::powf(a, ADOBE_GAMMA))
+        }
+    } else if inverse {
+        libm::powf(a, INV_ADOBE_GAMMA)
+    } else {
+        libm::powf(a, ADOBE_GAMMA)
+    };
+    y.copysign(v)
+}
+
+macro_rules! make_alpha_mask {
+    ($vec:ident, $lanes:literal, $token:ident, $zero:ident, $period:expr) => {{
+        let mut arr = [0.0f32; $lanes];
+        if $period == 4 {
+            let mut i = 3;
+            while i < $lanes {
+                arr[i] = 1.0;
+                i += 4;
+            }
+        } else if $period == 2 {
+            let mut i = 1;
+            while i < $lanes {
+                arr[i] = 1.0;
+                i += 2;
+            }
+        }
+        $vec::from_array_t($token, arr).simd_ne($zero)
+    }};
+}
+
+macro_rules! map_f32_out_of_place {
+    ($vec:ident, $lanes:literal, $token:ident, $src:ident, $dst:ident, $alpha_period:ident, $eval:expr) => {{
+        let zero = $vec::zero_t($token);
+        let one = $vec::splat_t($token, 1.0);
+        let eval = $eval;
+        let (s_chunks, s_rem) = $src.as_chunks::<$lanes>();
+        let (d_chunks, d_rem) = $dst.as_chunks_mut::<$lanes>();
+        if $alpha_period == 0 {
+            for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
+                let v = $vec::load_t($token, sc);
+                eval(v).store(dc);
+            }
+            if !s_rem.is_empty() {
+                let mut pad = [1.0f32; $lanes];
+                pad[..s_rem.len()].copy_from_slice(s_rem);
+                let out = eval($vec::load_t($token, &pad)).to_array();
+                d_rem.copy_from_slice(&out[..d_rem.len()]);
+            }
+        } else {
+            let alpha_mask = make_alpha_mask!($vec, $lanes, $token, zero, $alpha_period);
+            for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
+                let v = $vec::load_t($token, sc);
+                let v_work = $vec::blend(alpha_mask, one, v);
+                let out = $vec::blend(alpha_mask, v, eval(v_work));
+                out.store(dc);
+            }
+            if !s_rem.is_empty() {
+                let mut pad = [1.0f32; $lanes];
+                pad[..s_rem.len()].copy_from_slice(s_rem);
+                let v = $vec::load_t($token, &pad);
+                let v_work = $vec::blend(alpha_mask, one, v);
+                let out = $vec::blend(alpha_mask, v, eval(v_work)).to_array();
+                d_rem.copy_from_slice(&out[..d_rem.len()]);
+            }
+        }
+    }};
+}
+
+macro_rules! map_f32_in_place {
+    ($vec:ident, $lanes:literal, $token:ident, $buf:ident, $eval:expr) => {{
+        let eval = $eval;
+        let (chunks, rem) = $buf.as_chunks_mut::<$lanes>();
+        for c in chunks {
+            let v = $vec::load_t($token, c);
+            eval(v).store(c);
+        }
+        if !rem.is_empty() {
+            let mut pad = [1.0f32; $lanes];
+            pad[..rem.len()].copy_from_slice(rem);
+            let out = eval($vec::load_t($token, &pad)).to_array();
+            rem.copy_from_slice(&out[..rem.len()]);
+        }
+    }};
+}
+
+macro_rules! bt709_decode_eval {
+    ($vec:ident, $token:ident, $bounded_at_most_one:ident) => {{
+        use magemath::SimdMath;
+        let threshold = $vec::splat_t($token, 4.5 * BT709_BETA);
+        let inv_4_5 = $vec::splat_t($token, 1.0 / 4.5);
+        let alpha = $vec::splat_t($token, BT709_ALPHA);
+        let one_plus_alpha = $vec::splat_t($token, 1.0 + BT709_ALPHA);
+        let one = $vec::splat_t($token, 1.0);
+        let hi = $vec::splat_t($token, 65_536.0);
+        let dec_min = $vec::splat_t($token, BT709_DECODE_MIN);
+        move |v: $vec| -> $vec {
+            let linear = v * inv_4_5;
+            let normalized = (v + alpha) / one_plus_alpha;
+            let mask = v.simd_lt(threshold);
+            let input = $vec::blend(mask, one, normalized);
+            if $bounded_at_most_one || input.simd_le(hi).bitcast_to_i32().all_true() {
+                let power = input.powf_const::<BT709_DECODE_FAST>().max_fast(dec_min);
+                $vec::blend(mask, linear, power)
+            } else {
+                $vec::from_array_t($token, v.to_array().map(bt709_decode_fallback_lane))
+            }
+        }
+    }};
+}
+
+macro_rules! bt709_encode_eval {
+    ($vec:ident, $token:ident, $bounded_at_most_one:ident) => {{
+        use magemath::SimdMath;
+        let threshold = $vec::splat_t($token, BT709_BETA);
+        let scale_4_5 = $vec::splat_t($token, 4.5);
+        let one_plus_alpha = $vec::splat_t($token, 1.0 + BT709_ALPHA);
+        #[cfg(all(target_arch = "wasm32", not(feature = "precise-portable")))]
+        let alpha = $vec::splat_t($token, BT709_ALPHA);
+        #[cfg(not(all(target_arch = "wasm32", not(feature = "precise-portable"))))]
+        let neg_alpha = $vec::splat_t($token, -BT709_ALPHA);
+        let one = $vec::splat_t($token, 1.0);
+        let hi = $vec::splat_t($token, 65_536.0);
+        move |v: $vec| -> $vec {
+            let linear = v * scale_4_5;
+            let mask = v.simd_lt(threshold);
+            let input = $vec::blend(mask, one, v);
+            if $bounded_at_most_one || input.simd_le(hi).bitcast_to_i32().all_true() {
+                let power = input.powf_const::<BT709_ENCODE_FAST>();
+                #[cfg(all(target_arch = "wasm32", not(feature = "precise-portable")))]
+                let curve = one_plus_alpha * power - alpha;
+                #[cfg(not(all(target_arch = "wasm32", not(feature = "precise-portable"))))]
+                let curve = one_plus_alpha.mul_add_fused(power, neg_alpha);
+                $vec::blend(mask, linear, curve)
+            } else {
+                $vec::from_array_t($token, v.to_array().map(bt709_encode_fallback_lane))
+            }
+        }
+    }};
+}
+
+macro_rules! gamma22_eotf_eval {
+    ($vec:ident, $token:ident, $unit_bounded:ident, $no_nan:ident) => {{
+        use magemath::SimdMath;
+        let lo = $vec::splat_t($token, GAMMA22_EOTF_ELIDE_LO);
+        let one = $vec::splat_t($token, 1.0);
+        move |v: $vec| -> $vec {
+            let fast = if $unit_bounded {
+                v.simd_ge(lo)
+            } else {
+                v.simd_ge(lo) & v.simd_le(one)
+            };
+            if fast.bitcast_to_i32().all_true() {
+                v.powf_const::<GAMMA22_EOTF_ELIDE>()
+            } else {
+                let out = v.powf_const::<GAMMA22_EOTF_CLAMP>();
+                if $no_nan {
+                    out
+                } else {
+                    $vec::blend(v.simd_ne(v), v, out)
+                }
+            }
+        }
+    }};
+}
+
+macro_rules! gamma22_oetf_eval {
+    ($vec:ident, $token:ident, $strict_pos_unit:ident, $unit_bounded:ident, $no_nan:ident) => {{
+        use magemath::SimdMath;
+        let min_pos = $vec::splat_t($token, f32::MIN_POSITIVE);
+        let one = $vec::splat_t($token, 1.0);
+        move |v: $vec| -> $vec {
+            if $strict_pos_unit {
+                return v.powf_const::<GAMMA22_OETF_ELIDE>();
+            }
+            let fast = if $unit_bounded {
+                v.simd_ge(min_pos)
+            } else {
+                v.simd_ge(min_pos) & v.simd_le(one)
+            };
+            if fast.bitcast_to_i32().all_true() {
+                v.powf_const::<GAMMA22_OETF_ELIDE>()
+            } else {
+                let out = v.powf_const::<GAMMA22_OETF_CLAMP>();
+                if $no_nan {
+                    out
+                } else {
+                    $vec::blend(v.simd_ne(v), v, out)
+                }
+            }
+        }
+    }};
+}
+
+macro_rules! gamma22_ext_eval {
+    ($vec:ident, $token:ident, $inverse:ident, $non_negative:ident) => {{
+        use magemath::SimdMath;
+        let zero = $vec::zero_t($token);
+        let one = $vec::splat_t($token, 1.0);
+        let neg_zero = $vec::splat_t($token, -0.0);
+        let min_pos = $vec::splat_t($token, f32::MIN_POSITIVE);
+        let lo_hdr = $vec::splat_t(
+            $token,
+            if $inverse {
+                f32::MIN_POSITIVE
+            } else {
+                GAMMA22_EOTF_ELIDE_LO
+            },
+        );
+        let hi_hdr = $vec::splat_t($token, 65_536.0);
+        move |v: $vec| -> $vec {
+            let abs_v = if $non_negative { v } else { v.abs() };
+            let in_hdr = abs_v.simd_ge(lo_hdr) & abs_v.simd_le(hi_hdr);
+            if in_hdr.bitcast_to_i32().all_true() {
+                let mag = if $inverse {
+                    abs_v.powf_const::<GAMMA22_EXT_OETF_HDR>()
+                } else {
+                    abs_v.powf_const::<GAMMA22_EXT_EOTF_HDR>()
+                };
+                if $non_negative {
+                    mag
+                } else {
+                    mag | (v & neg_zero)
+                }
+            } else {
+                let is_zero_or_sub = abs_v.simd_lt(min_pos);
+                if (is_zero_or_sub | in_hdr).bitcast_to_i32().all_true() {
+                    let safe = $vec::blend(in_hdr, abs_v, one);
+                    let raw = if $inverse {
+                        safe.powf_const::<GAMMA22_EXT_OETF_HDR>()
+                    } else {
+                        safe.powf_const::<GAMMA22_EXT_EOTF_HDR>()
+                    };
+                    let mag = $vec::blend(is_zero_or_sub, zero, raw);
+                    if $non_negative {
+                        mag
+                    } else {
+                        mag | (v & neg_zero)
+                    }
+                } else {
+                    $vec::from_array_t(
+                        $token,
+                        v.to_array().map(|x| gamma22_ext_fallback_lane(x, $inverse)),
+                    )
+                }
+            }
+        }
+    }};
+}
+
+#[archmage::attune(_*_t, define(f32x8))]
+fn bt709_decode_tier(
+    token: Token,
+    src: &[f32],
+    dst: &mut [f32],
+    alpha_period: u8,
+    bounded_at_most_one: bool,
+) {
+    let eval = bt709_decode_eval!(f32x8, token, bounded_at_most_one);
+    map_f32_out_of_place!(f32x8, 8, token, src, dst, alpha_period, eval);
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[archmage::arcane]
+fn bt709_decode_tier_v4x_t(
+    token: archmage::X64V4xToken,
+    src: &[f32],
+    dst: &mut [f32],
+    alpha_period: u8,
+    bounded_at_most_one: bool,
+) {
+    type Vec16 = magetypes::simd::generic::f32x16<archmage::X64V4xToken>;
+    let eval = bt709_decode_eval!(Vec16, token, bounded_at_most_one);
+    map_f32_out_of_place!(Vec16, 16, token, src, dst, alpha_period, eval);
+}
+
+#[archmage::attune(_*_t, define(f32x8))]
+fn bt709_encode_tier(
+    token: Token,
+    src: &[f32],
+    dst: &mut [f32],
+    alpha_period: u8,
+    bounded_at_most_one: bool,
+) {
+    let eval = bt709_encode_eval!(f32x8, token, bounded_at_most_one);
+    map_f32_out_of_place!(f32x8, 8, token, src, dst, alpha_period, eval);
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[archmage::arcane]
+fn bt709_encode_tier_v4x_t(
+    token: archmage::X64V4xToken,
+    src: &[f32],
+    dst: &mut [f32],
+    alpha_period: u8,
+    bounded_at_most_one: bool,
+) {
+    type Vec16 = magetypes::simd::generic::f32x16<archmage::X64V4xToken>;
+    let eval = bt709_encode_eval!(Vec16, token, bounded_at_most_one);
+    map_f32_out_of_place!(Vec16, 16, token, src, dst, alpha_period, eval);
+}
+
+#[archmage::attune(_*_t, define(f32x8))]
+fn bt709_in_place_tier(token: Token, buf: &mut [f32], inverse: bool) {
+    let bounded = false;
+    if inverse {
+        let eval = bt709_encode_eval!(f32x8, token, bounded);
+        map_f32_in_place!(f32x8, 8, token, buf, eval);
+    } else {
+        let eval = bt709_decode_eval!(f32x8, token, bounded);
+        map_f32_in_place!(f32x8, 8, token, buf, eval);
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[archmage::arcane]
+fn bt709_in_place_tier_v4x_t(token: archmage::X64V4xToken, buf: &mut [f32], inverse: bool) {
+    type Vec16 = magetypes::simd::generic::f32x16<archmage::X64V4xToken>;
+    let bounded = false;
+    if inverse {
+        let eval = bt709_encode_eval!(Vec16, token, bounded);
+        map_f32_in_place!(Vec16, 16, token, buf, eval);
+    } else {
+        let eval = bt709_decode_eval!(Vec16, token, bounded);
+        map_f32_in_place!(Vec16, 16, token, buf, eval);
+    }
+}
+
+fn bt709_slice_in_place(buf: &mut [f32], inverse: bool) {
+    archmage::attuned!(
+        bt709_in_place_tier(buf, inverse),
+        [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+    );
+}
+
+/// BT.709 F32 → Linear F32 (EOTF, same depth). Out-of-place, alpha-preserving.
+fn bt709_f32_to_linear_f32(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    layout: ChannelLayout,
+    in_facts: zenpixels::sample::FloatFacts,
+) {
+    use zenpixels::sample::FloatFacts;
     let count = width * layout.channels();
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    dstf[..count].copy_from_slice(&srcf[..count]);
-    linear_srgb::default::linear_to_bt709_slice(&mut dstf[..count]);
-    restore_alpha_f32_f32(&srcf[..count], &mut dstf[..count], layout);
+    let alpha_period = tf_alpha_period(layout);
+    let bounded =
+        in_facts.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::AT_MOST_ONE);
+    archmage::attuned!(
+        bt709_decode_tier(srcf, dstf, alpha_period, bounded),
+        [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+    );
+    if layout.has_alpha() && alpha_period == 0 {
+        restore_alpha_f32_f32(srcf, dstf, layout);
+    }
+}
+
+/// Linear F32 → BT.709 F32 (OETF, same depth). Out-of-place, alpha-preserving.
+fn linear_f32_to_bt709_f32(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    layout: ChannelLayout,
+    in_facts: zenpixels::sample::FloatFacts,
+) {
+    use zenpixels::sample::FloatFacts;
+    let count = width * layout.channels();
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    let alpha_period = tf_alpha_period(layout);
+    let bounded =
+        in_facts.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::AT_MOST_ONE);
+    archmage::attuned!(
+        bt709_encode_tier(srcf, dstf, alpha_period, bounded),
+        [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+    );
+    if layout.has_alpha() && alpha_period == 0 {
+        restore_alpha_f32_f32(srcf, dstf, layout);
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Gamma 2.2 (Adobe RGB 1998) F32 ↔ Linear F32
 // ---------------------------------------------------------------------------
 
-/// Adobe RGB 1998 canonical exponent (563/256). Matches ~85% of real-world
-/// Adobe RGB ICC profiles (Adobe CS4, Windows ClayRGB1998, macOS AdobeRGB1998,
-/// Linux `AdobeRGB1998`, Nikon). Parametric-curve variants with a linear toe
-/// are routed through full CMS instead.
-///
-/// `2.19921875 = 563/256` is exact in f32; the allow suppresses clippy's
-/// decimal-digit heuristic.
-#[allow(clippy::excessive_precision)]
-const ADOBE_GAMMA: f32 = 2.19921875;
+#[archmage::attune(_*_t, define(f32x8))]
+fn gamma22_eotf_tier(
+    token: Token,
+    src: &[f32],
+    dst: &mut [f32],
+    alpha_period: u8,
+    unit_bounded: bool,
+    no_nan: bool,
+) {
+    let eval = gamma22_eotf_eval!(f32x8, token, unit_bounded, no_nan);
+    map_f32_out_of_place!(f32x8, 8, token, src, dst, alpha_period, eval);
+}
 
-/// Gamma 2.2 F32 → Linear F32 (EOTF, same depth). SIMD-dispatched via
-/// `linear_srgb::default::gamma_to_linear_slice`. Alpha-preserving.
-fn gamma22_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, layout: ChannelLayout) {
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[archmage::arcane]
+fn gamma22_eotf_tier_v4x_t(
+    token: archmage::X64V4xToken,
+    src: &[f32],
+    dst: &mut [f32],
+    alpha_period: u8,
+    unit_bounded: bool,
+    no_nan: bool,
+) {
+    type Vec16 = magetypes::simd::generic::f32x16<archmage::X64V4xToken>;
+    let eval = gamma22_eotf_eval!(Vec16, token, unit_bounded, no_nan);
+    map_f32_out_of_place!(Vec16, 16, token, src, dst, alpha_period, eval);
+}
+
+#[archmage::attune(_*_t, define(f32x8))]
+fn gamma22_oetf_tier(
+    token: Token,
+    src: &[f32],
+    dst: &mut [f32],
+    alpha_period: u8,
+    strict_pos_unit: bool,
+    unit_bounded: bool,
+    no_nan: bool,
+) {
+    let eval = gamma22_oetf_eval!(f32x8, token, strict_pos_unit, unit_bounded, no_nan);
+    map_f32_out_of_place!(f32x8, 8, token, src, dst, alpha_period, eval);
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[archmage::arcane]
+fn gamma22_oetf_tier_v4x_t(
+    token: archmage::X64V4xToken,
+    src: &[f32],
+    dst: &mut [f32],
+    alpha_period: u8,
+    strict_pos_unit: bool,
+    unit_bounded: bool,
+    no_nan: bool,
+) {
+    type Vec16 = magetypes::simd::generic::f32x16<archmage::X64V4xToken>;
+    let eval = gamma22_oetf_eval!(Vec16, token, strict_pos_unit, unit_bounded, no_nan);
+    map_f32_out_of_place!(Vec16, 16, token, src, dst, alpha_period, eval);
+}
+
+#[archmage::attune(_*_t, define(f32x8))]
+fn gamma22_in_place_tier(token: Token, buf: &mut [f32], inverse: bool) {
+    let (strict_pos, unit_bounded, no_nan) = (false, false, false);
+    if inverse {
+        let eval = gamma22_oetf_eval!(f32x8, token, strict_pos, unit_bounded, no_nan);
+        map_f32_in_place!(f32x8, 8, token, buf, eval);
+    } else {
+        let eval = gamma22_eotf_eval!(f32x8, token, unit_bounded, no_nan);
+        map_f32_in_place!(f32x8, 8, token, buf, eval);
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[archmage::arcane]
+fn gamma22_in_place_tier_v4x_t(token: archmage::X64V4xToken, buf: &mut [f32], inverse: bool) {
+    type Vec16 = magetypes::simd::generic::f32x16<archmage::X64V4xToken>;
+    let (strict_pos, unit_bounded, no_nan) = (false, false, false);
+    if inverse {
+        let eval = gamma22_oetf_eval!(Vec16, token, strict_pos, unit_bounded, no_nan);
+        map_f32_in_place!(Vec16, 16, token, buf, eval);
+    } else {
+        let eval = gamma22_eotf_eval!(Vec16, token, unit_bounded, no_nan);
+        map_f32_in_place!(Vec16, 16, token, buf, eval);
+    }
+}
+
+fn gamma22_slice_in_place(buf: &mut [f32], inverse: bool) {
+    archmage::attuned!(
+        gamma22_in_place_tier(buf, inverse),
+        [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+    );
+}
+
+#[archmage::attune(_*_t, define(f32x8))]
+fn gamma22_ext_tier(
+    token: Token,
+    src: &[f32],
+    dst: &mut [f32],
+    alpha_period: u8,
+    inverse: bool,
+    non_negative: bool,
+) {
+    let eval = gamma22_ext_eval!(f32x8, token, inverse, non_negative);
+    map_f32_out_of_place!(f32x8, 8, token, src, dst, alpha_period, eval);
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[archmage::arcane]
+fn gamma22_ext_tier_v4x_t(
+    token: archmage::X64V4xToken,
+    src: &[f32],
+    dst: &mut [f32],
+    alpha_period: u8,
+    inverse: bool,
+    non_negative: bool,
+) {
+    type Vec16 = magetypes::simd::generic::f32x16<archmage::X64V4xToken>;
+    let eval = gamma22_ext_eval!(Vec16, token, inverse, non_negative);
+    map_f32_out_of_place!(Vec16, 16, token, src, dst, alpha_period, eval);
+}
+
+#[archmage::attune(_*_t, define(f32x8))]
+fn gamma22_ext_in_place_tier(token: Token, buf: &mut [f32], inverse: bool) {
+    let non_negative = false;
+    let eval = gamma22_ext_eval!(f32x8, token, inverse, non_negative);
+    map_f32_in_place!(f32x8, 8, token, buf, eval);
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[archmage::arcane]
+fn gamma22_ext_in_place_tier_v4x_t(token: archmage::X64V4xToken, buf: &mut [f32], inverse: bool) {
+    type Vec16 = magetypes::simd::generic::f32x16<archmage::X64V4xToken>;
+    let non_negative = false;
+    let eval = gamma22_ext_eval!(Vec16, token, inverse, non_negative);
+    map_f32_in_place!(Vec16, 16, token, buf, eval);
+}
+
+fn gamma22_ext_slice_in_place(buf: &mut [f32], inverse: bool) {
+    archmage::attuned!(
+        gamma22_ext_in_place_tier(buf, inverse),
+        [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+    );
+}
+
+/// Gamma 2.2 F32 → Linear F32 (EOTF, same depth). Out-of-place, alpha-preserving.
+fn gamma22_f32_to_linear_f32(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    layout: ChannelLayout,
+    in_facts: zenpixels::sample::FloatFacts,
+) {
+    use zenpixels::sample::FloatFacts;
     let count = width * layout.channels();
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    dstf[..count].copy_from_slice(&srcf[..count]);
-    linear_srgb::default::gamma_to_linear_slice(&mut dstf[..count], ADOBE_GAMMA);
-    restore_alpha_f32_f32(&srcf[..count], &mut dstf[..count], layout);
+    let alpha_period = tf_alpha_period(layout);
+    let no_nan = in_facts.contains(FloatFacts::NO_NAN);
+    let unit_bounded = in_facts.contains(
+        FloatFacts::NO_NAN
+            | FloatFacts::NO_INFINITE
+            | FloatFacts::NON_NEGATIVE
+            | FloatFacts::AT_MOST_ONE,
+    );
+    archmage::attuned!(
+        gamma22_eotf_tier(srcf, dstf, alpha_period, unit_bounded, no_nan),
+        [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+    );
+    if layout.has_alpha() && alpha_period == 0 {
+        restore_alpha_f32_f32(srcf, dstf, layout);
+    }
 }
 
-/// Linear F32 → Gamma 2.2 F32 (OETF, same depth). SIMD-dispatched.
-/// Alpha-preserving.
-fn linear_f32_to_gamma22_f32(src: &[u8], dst: &mut [u8], width: usize, layout: ChannelLayout) {
+/// Linear F32 → Gamma 2.2 F32 (OETF, same depth). Out-of-place, alpha-preserving.
+fn linear_f32_to_gamma22_f32(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    layout: ChannelLayout,
+    in_facts: zenpixels::sample::FloatFacts,
+) {
+    use zenpixels::sample::FloatFacts;
     let count = width * layout.channels();
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    dstf[..count].copy_from_slice(&srcf[..count]);
-    linear_srgb::default::linear_to_gamma_slice(&mut dstf[..count], ADOBE_GAMMA);
-    restore_alpha_f32_f32(&srcf[..count], &mut dstf[..count], layout);
+    let alpha_period = tf_alpha_period(layout);
+    let no_nan = in_facts.contains(FloatFacts::NO_NAN);
+    let unit_bounded = in_facts.contains(
+        FloatFacts::NO_NAN
+            | FloatFacts::NO_INFINITE
+            | FloatFacts::NON_NEGATIVE
+            | FloatFacts::AT_MOST_ONE,
+    );
+    let strict_pos_unit =
+        unit_bounded && in_facts.contains(FloatFacts::POSITIVE | FloatFacts::NO_SUBNORMALS);
+    archmage::attuned!(
+        gamma22_oetf_tier(
+            srcf,
+            dstf,
+            alpha_period,
+            strict_pos_unit,
+            unit_bounded,
+            no_nan,
+        ),
+        [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+    );
+    if layout.has_alpha() && alpha_period == 0 {
+        restore_alpha_f32_f32(srcf, dstf, layout);
+    }
 }
 
-// Keep the existing SIMD approximation for magnitudes in [0,1]. Only values
-// outside that calibrated domain use a checked high-precision power; reflect the result about zero.
-// This changes neither the default clipped route nor positive in-range samples.
+/// Sign-reflecting extended-range Gamma 2.2 EOTF/OETF (`|v| <= 65536` in SIMD `magemath`,
+/// `libm::powf` fallback above 65536 or on `NaN`, exact 0-bit continuous with clipped `[0, 1]`).
 fn gamma22_f32_extended(
     src: &[u8],
     dst: &mut [u8],
@@ -3472,43 +4216,31 @@ fn gamma22_f32_extended(
     in_facts: zenpixels::sample::FloatFacts,
 ) {
     use zenpixels::sample::FloatFacts;
-    let count = width * layout.channels();
-    let source: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
-    let output: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-
-    if in_facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE) {
-        // Every lane is in [+0.0, 1.0]: no abs(), no out-of-unit fallback, no copysign().
-        output.copy_from_slice(source);
+    if in_facts.contains(
+        FloatFacts::NO_NAN
+            | FloatFacts::NO_INFINITE
+            | FloatFacts::NON_NEGATIVE
+            | FloatFacts::AT_MOST_ONE,
+    ) {
         if inverse {
-            linear_srgb::default::linear_to_gamma_slice(output, ADOBE_GAMMA);
+            linear_f32_to_gamma22_f32(src, dst, width, layout, in_facts);
         } else {
-            linear_srgb::default::gamma_to_linear_slice(output, ADOBE_GAMMA);
+            gamma22_f32_to_linear_f32(src, dst, width, layout, in_facts);
         }
-        restore_alpha_f32_f32(source, output, layout);
         return;
     }
-
-    let exponent = if inverse {
-        1.0 / ADOBE_GAMMA
-    } else {
-        ADOBE_GAMMA
-    };
-    for (s, d) in source.iter().zip(output.iter_mut()) {
-        *d = s.abs();
+    let count = width * layout.channels();
+    let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
+    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
+    let alpha_period = tf_alpha_period(layout);
+    let non_negative = in_facts.contains(FloatFacts::NON_NEGATIVE);
+    archmage::attuned!(
+        gamma22_ext_tier(srcf, dstf, alpha_period, inverse, non_negative),
+        [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+    );
+    if layout.has_alpha() && alpha_period == 0 {
+        restore_alpha_f32_f32(srcf, dstf, layout);
     }
-    if inverse {
-        linear_srgb::default::linear_to_gamma_slice(output, ADOBE_GAMMA);
-    } else {
-        linear_srgb::default::gamma_to_linear_slice(output, ADOBE_GAMMA);
-    }
-    for (s, d) in source.iter().zip(output.iter_mut()) {
-        let mag = s.abs();
-        if mag > 1.0 || mag.is_nan() {
-            *d = libm::powf(mag, exponent);
-        }
-        *d = d.copysign(*s);
-    }
-    restore_alpha_f32_f32(source, output, layout);
 }
 
 // ---------------------------------------------------------------------------

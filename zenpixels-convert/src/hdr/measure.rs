@@ -926,6 +926,23 @@ mod simd_kernel {
         })
     }
 
+    const HIST_LOG2_PORTABILITY: magemath::Portability = if cfg!(all(
+        target_arch = "wasm32",
+        not(feature = "precise-portable")
+    )) {
+        magemath::Portability::BackendDependent
+    } else {
+        magemath::Portability::BitExact
+    };
+
+    const HIST_LOG2: u128 = magemath::logf::LogfOptions::new()
+        .domain(magemath::logf::LogfDomain::PositiveNormals)
+        .reject_subnormals()
+        .portability(HIST_LOG2_PORTABILITY)
+        .assume_in_bounds()
+        .caller()
+        .bits();
+
     /// Tiered SIMD kernel for the `MaxRgb` reduction. Processes one
     /// row of `N`-channel f32 pixels into the per-lane sub-histograms,
     /// the running max, and the running f64 sum. The `N` channel-count
@@ -940,11 +957,13 @@ mod simd_kernel {
         sum_nits: &mut f64,
         literal_max_nits: &mut f32,
     ) {
+        use magemath::SimdMath;
         let zero = f32x8::zero_t(token);
         let wn = f32x8::splat_t(token, white_nits);
         let log2_min = f32x8::splat_t(token, LightLevelHistogram::LOG2_MIN);
         let inv_step = f32x8::splat_t(token, LightLevelHistogram::inv_log2_step());
         let bin_min_nits = f32x8::splat_t(token, LightLevelHistogram::BIN_MIN_NITS);
+        let bin_max_nits = f32x8::splat_t(token, LightLevelHistogram::BIN_MAX_NITS);
         let num_bins_minus_1 = f32x8::splat_t(token, (LightLevelHistogram::NUM_BINS - 1) as f32);
 
         let mut local_max = zero;
@@ -995,10 +1014,10 @@ mod simd_kernel {
                 chunks_since_flush = 0;
             }
 
-            // SIMD log2 → bin index. Use `safe = max(m_nits, BIN_MIN_NITS)`
-            // so log2(0) doesn't underflow into NaN/-inf.
-            let safe = m_nits.max_fast(bin_min_nits);
-            let log2 = safe.log2_midp();
+            // SIMD log2 → bin index. Clamp to `[BIN_MIN_NITS, BIN_MAX_NITS]`
+            // so `HIST_LOG2` always sees strictly positive finite normals.
+            let safe = m_nits.max_fast(bin_min_nits).min_fast(bin_max_nits);
+            let log2 = safe.log2::<HIST_LOG2>();
             // bin_f = ((log2 − log2_min) · inv_step), clamped to
             // `[0, NUM_BINS − 1]` in SIMD before the scalar bin write.
             let bin_f = ((log2 - log2_min) * inv_step)
@@ -1043,8 +1062,10 @@ mod simd_kernel {
             // tail "lives" in.
             // Use the same vector primitive and arithmetic as a complete block.
             // A separate scalar log approximation changes histogram boundaries.
-            let safe = f32x8::splat_t(token, m_nits).max(bin_min_nits);
-            let bin_f = ((safe.log2_midp() - log2_min) * inv_step)
+            let safe = f32x8::splat_t(token, m_nits)
+                .max_fast(bin_min_nits)
+                .min_fast(bin_max_nits);
+            let bin_f = ((safe.log2::<HIST_LOG2>() - log2_min) * inv_step)
                 .max(zero)
                 .min(num_bins_minus_1)
                 .to_array()[0];
@@ -1063,6 +1084,7 @@ mod simd_kernel {
         sum_nits: &mut f64,
         literal_max_nits: &mut f32,
     ) {
+        use magemath::SimdMath;
         let zero = f32x8::zero_t(token);
         let wn = f32x8::splat_t(token, white_nits);
         let kr = f32x8::splat_t(token, KR);
@@ -1071,6 +1093,7 @@ mod simd_kernel {
         let log2_min = f32x8::splat_t(token, LightLevelHistogram::LOG2_MIN);
         let inv_step = f32x8::splat_t(token, LightLevelHistogram::inv_log2_step());
         let bin_min_nits = f32x8::splat_t(token, LightLevelHistogram::BIN_MIN_NITS);
+        let bin_max_nits = f32x8::splat_t(token, LightLevelHistogram::BIN_MAX_NITS);
         let num_bins_minus_1 = f32x8::splat_t(token, (LightLevelHistogram::NUM_BINS - 1) as f32);
 
         let mut local_max = zero;
@@ -1113,8 +1136,8 @@ mod simd_kernel {
                 chunks_since_flush = 0;
             }
 
-            let safe = y_nits.max_fast(bin_min_nits);
-            let log2 = safe.log2_midp();
+            let safe = y_nits.max_fast(bin_min_nits).min_fast(bin_max_nits);
+            let log2 = safe.log2::<HIST_LOG2>();
             let bin_f = ((log2 - log2_min) * inv_step)
                 .max(zero)
                 .min(num_bins_minus_1);
@@ -1146,8 +1169,10 @@ mod simd_kernel {
             *sum_nits += f64::from(y_nits);
             // Use the same vector primitive and arithmetic as a complete block.
             // A separate scalar log approximation changes histogram boundaries.
-            let safe = f32x8::splat_t(token, y_nits).max(bin_min_nits);
-            let bin_f = ((safe.log2_midp() - log2_min) * inv_step)
+            let safe = f32x8::splat_t(token, y_nits)
+                .max_fast(bin_min_nits)
+                .min_fast(bin_max_nits);
+            let bin_f = ((safe.log2::<HIST_LOG2>() - log2_min) * inv_step)
                 .max(zero)
                 .min(num_bins_minus_1)
                 .to_array()[0];

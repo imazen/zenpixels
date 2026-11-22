@@ -171,27 +171,60 @@ const EXT_L2S_Q: [f32; 7] = [
 ];
 
 const ADOBE_GAMMA: f32 = 563.0 / 256.0;
+const INV_ADOBE_GAMMA: f32 = 1.0 / ADOBE_GAMMA;
 const BT709_ALPHA: f32 = 0.09929682680944;
 const BT709_BETA: f32 = 0.018053968510807;
 const BT709_DECODE_MIN: f32 = (4.5 * BT709_BETA) * (1.0 / 4.5);
 
-const GAMMA_POW: u128 = PowfOptions::new()
-    .domain(PowfDomain::Unit)
-    .exponent_range(0.0, 4.0)
-    .clamp_finite()
+const GAMMA_DECODE_POW: u128 = PowfOptions::new()
+    .domain(PowfDomain::PositiveUnit)
+    .const_exponent(ADOBE_GAMMA)
+    .reject_subnormals()
+    .saturate_output()
     .portability(MATH_PORTABILITY)
+    .assume_in_bounds()
     .caller()
     .bits();
-const BT709_DECODE_POWER: u128 = PowfOptions::new()
+const GAMMA_ENCODE_POW: u128 = PowfOptions::new()
+    .domain(PowfDomain::PositiveUnit)
+    .const_exponent(INV_ADOBE_GAMMA)
+    .reject_subnormals()
+    .portability(MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+const GAMMA_EXT_DECODE_HDR: u128 = PowfOptions::new()
+    .domain(PowfDomain::PositiveGamma)
+    .base_range(1.0e-16, 65_536.0)
+    .const_exponent(ADOBE_GAMMA)
+    .reject_subnormals()
+    .portability(MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+const GAMMA_EXT_ENCODE_HDR: u128 = PowfOptions::new()
+    .domain(PowfDomain::PositiveGamma)
+    .base_range(f32::MIN_POSITIVE, 65_536.0)
+    .const_exponent(INV_ADOBE_GAMMA)
+    .reject_subnormals()
+    .portability(MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+const BT709_DECODE_FAST: u128 = PowfOptions::new()
     .positive_gamma()
+    .reject_subnormals()
     .const_exponent(1.0 / 0.45)
     .portability(MATH_PORTABILITY)
+    .assume_in_bounds()
     .caller()
     .bits();
-const BT709_ENCODE_POWER: u128 = PowfOptions::new()
+const BT709_ENCODE_FAST: u128 = PowfOptions::new()
     .positive_gamma()
+    .reject_subnormals()
     .const_exponent(0.45)
     .portability(MATH_PORTABILITY)
+    .assume_in_bounds()
     .caller()
     .bits();
 
@@ -260,9 +293,21 @@ mod hdr_consts {
         .portability(MATH_PORTABILITY)
         .caller()
         .bits();
+    pub(super) const HLG_EXP_FAST: u128 = ExpfOptions::new()
+        .unclamped_exp2_range()
+        .portability(MATH_PORTABILITY)
+        .assume_in_bounds()
+        .caller()
+        .bits();
     pub(super) const HLG_LOG: u128 = LogfOptions::new()
         .full_domain()
         .portability(MATH_PORTABILITY)
+        .caller()
+        .bits();
+    pub(super) const HLG_LOG_FAST: u128 = LogfOptions::new()
+        .reject_subnormals()
+        .portability(MATH_PORTABILITY)
+        .assume_in_bounds()
         .caller()
         .bits();
 
@@ -305,9 +350,20 @@ mod hdr_consts {
     }
 }
 
-#[inline(never)]
-fn gamma_pow_unit(v: f32, exp: f32) -> f32 {
-    Powf::<GAMMA_POW>::scalar_with_token(ScalarToken, v, exp).unwrap_or(0.0)
+#[inline(always)]
+fn gamma_decode_unit(v: f32) -> f32 {
+    if v < f32::MIN_POSITIVE {
+        return 0.0;
+    }
+    Powf::<GAMMA_DECODE_POW>::scalar_const_with_token(ScalarToken, v).unwrap_or(0.0)
+}
+
+#[inline(always)]
+fn gamma_encode_unit(v: f32) -> f32 {
+    if v < f32::MIN_POSITIVE {
+        return 0.0;
+    }
+    Powf::<GAMMA_ENCODE_POW>::scalar_const_with_token(ScalarToken, v).unwrap_or(0.0)
 }
 
 #[cold]
@@ -352,9 +408,13 @@ pub(crate) fn scalar_eotf(tf: TransferFunction, v: f32, clip: bool) -> f32 {
                 v * (1.0 / 4.5)
             } else {
                 let norm = (v + BT709_ALPHA) / (1.0 + BT709_ALPHA);
-                Powf::<BT709_DECODE_POWER>::scalar_const_with_token(ScalarToken, norm)
-                    .unwrap_or_else(|_| fallback_pow_f32(norm, 1.0 / 0.45))
-                    .max(BT709_DECODE_MIN)
+                let p = if norm <= 65_536.0 {
+                    Powf::<BT709_DECODE_FAST>::scalar_const_with_token(ScalarToken, norm)
+                        .unwrap_or_else(|_| fallback_pow_f32(norm, 1.0 / 0.45))
+                } else {
+                    fallback_pow_f32(norm, 1.0 / 0.45)
+                };
+                p.max(BT709_DECODE_MIN)
             }
         }
         TransferFunction::Gamma22 => {
@@ -368,13 +428,16 @@ pub(crate) fn scalar_eotf(tf: TransferFunction, v: f32, clip: bool) -> f32 {
                 if v >= 1.0 {
                     return 1.0;
                 }
-                gamma_pow_unit(v, ADOBE_GAMMA)
+                gamma_decode_unit(v)
             } else {
                 let a = v.abs();
-                let y = if a == 0.0 {
+                let y = if a < f32::MIN_POSITIVE {
                     0.0
-                } else if a <= 1.0 {
-                    gamma_pow_unit(a, ADOBE_GAMMA)
+                } else if a < 1.0e-16 {
+                    gamma_decode_unit(a)
+                } else if a <= 65_536.0 {
+                    Powf::<GAMMA_EXT_DECODE_HDR>::scalar_const_with_token(ScalarToken, a)
+                        .unwrap_or_else(|_| libm::powf(a, ADOBE_GAMMA))
                 } else {
                     libm::powf(a, ADOBE_GAMMA)
                 };
@@ -402,9 +465,12 @@ pub(crate) fn scalar_eotf(tf: TransferFunction, v: f32, clip: bool) -> f32 {
             } else if v <= 0.5 {
                 (v * v) * (1.0 / 3.0)
             } else {
-                let e =
-                    Expf::<HLG_EXP>::exp2_with_token(ScalarToken, (v - HLG_C) * HLG_INV_A_LOG2E)
-                        .unwrap_or(0.0);
+                let arg = (v - HLG_C) * HLG_INV_A_LOG2E;
+                let e = if arg <= 127.0 {
+                    Expf::<HLG_EXP_FAST>::exp2_with_token(ScalarToken, arg).unwrap_or(0.0)
+                } else {
+                    Expf::<HLG_EXP>::exp2_with_token(ScalarToken, arg).unwrap_or(0.0)
+                };
                 (e + HLG_B) * (1.0 / 12.0)
             }
         }
@@ -447,8 +513,12 @@ pub(crate) fn scalar_oetf(tf: TransferFunction, v: f32, clip: bool) -> f32 {
             } else if v < BT709_BETA {
                 4.5 * v
             } else {
-                let p = Powf::<BT709_ENCODE_POWER>::scalar_const_with_token(ScalarToken, v)
-                    .unwrap_or_else(|_| fallback_pow_f32(v, 0.45));
+                let p = if v <= 65_536.0 {
+                    Powf::<BT709_ENCODE_FAST>::scalar_const_with_token(ScalarToken, v)
+                        .unwrap_or_else(|_| fallback_pow_f32(v, 0.45))
+                } else {
+                    fallback_pow_f32(v, 0.45)
+                };
                 fma_f32(1.0 + BT709_ALPHA, p, -BT709_ALPHA)
             }
         }
@@ -463,15 +533,16 @@ pub(crate) fn scalar_oetf(tf: TransferFunction, v: f32, clip: bool) -> f32 {
                 if v >= 1.0 {
                     return 1.0;
                 }
-                gamma_pow_unit(v, 1.0 / ADOBE_GAMMA)
+                gamma_encode_unit(v)
             } else {
                 let a = v.abs();
-                let y = if a == 0.0 {
+                let y = if a < f32::MIN_POSITIVE {
                     0.0
-                } else if a <= 1.0 {
-                    gamma_pow_unit(a, 1.0 / ADOBE_GAMMA)
+                } else if a <= 65_536.0 {
+                    Powf::<GAMMA_EXT_ENCODE_HDR>::scalar_const_with_token(ScalarToken, a)
+                        .unwrap_or_else(|_| libm::powf(a, INV_ADOBE_GAMMA))
                 } else {
-                    libm::powf(a, 1.0 / ADOBE_GAMMA)
+                    libm::powf(a, INV_ADOBE_GAMMA)
                 };
                 y.copysign(v)
             }
@@ -497,8 +568,12 @@ pub(crate) fn scalar_oetf(tf: TransferFunction, v: f32, clip: bool) -> f32 {
             } else if v <= 1.0 / 12.0 {
                 magetypes::scalar::sqrt_f32(3.0 * v)
             } else {
-                let l =
-                    Logf::<HLG_LOG>::log2_with_token(ScalarToken, 12.0 * v - HLG_B).unwrap_or(0.0);
+                let arg = 12.0 * v - HLG_B;
+                let l = if arg.is_finite() {
+                    Logf::<HLG_LOG_FAST>::log2_with_token(ScalarToken, arg).unwrap_or(0.0)
+                } else {
+                    Logf::<HLG_LOG>::log2_with_token(ScalarToken, arg).unwrap_or(0.0)
+                };
                 fma_f32(HLG_A_INV_LOG2E, l, HLG_C).max(0.5)
             }
         }

@@ -28,10 +28,74 @@
 //! 1–15 pixels of a row run the same lanes, padded.
 
 use libm::powf;
+use magemath::SimdMath;
+use magemath::expf::ExpfOptions;
+use magemath::logf::{LogfDomain, LogfOptions};
+use magemath::powf::{PowfDomain, PowfOptions};
 
 // BT.2020 luma weights (BT.2446 uses BT.2020, not BT.709) — shared with
 // `measure` via the parent module's `BT2020_L*` constants.
 use super::{BT2020_LB as LB, BT2020_LG as LG, BT2020_LR as LR};
+
+const MATH_PORTABILITY: magemath::Portability = if cfg!(all(
+    target_arch = "wasm32",
+    not(feature = "precise-portable")
+)) {
+    magemath::Portability::BackendDependent
+} else {
+    magemath::Portability::BitExact
+};
+
+/// `v^(1/2.4)` on `[f32::MIN_POSITIVE, 1.0]`: `|-126 / 2.4| = 52.5 <= 125`, eliding all range checks.
+const BT2446_INV24: u128 = PowfOptions::new()
+    .domain(PowfDomain::PositiveUnit)
+    .const_exponent(1.0 / 2.4)
+    .reject_subnormals()
+    .portability(MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+
+/// `log2(arg)` on finite positive normals `[f32::MIN_POSITIVE, f32::MAX]`.
+const BT2446_LOG2: u128 = LogfOptions::new()
+    .domain(LogfDomain::PositiveNormals)
+    .reject_subnormals()
+    .portability(MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+
+/// `exp2(x)` on clamped `[-126.0, 127.0]`, eliding overflow/underflow checks.
+const BT2446_EXP2: u128 = ExpfOptions::new()
+    .unclamped_exp2_range()
+    .portability(MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+
+/// BT.1886 `v^2.4` fast path on `[1e-15, 1.0]`: `|log2(1e-15) * 2.4| = 119.6 <= 125`,
+/// eliding output saturation on all normal display-visible pixels.
+const BT2446_EOTF24_LO: f32 = 1.0e-15;
+const BT2446_EOTF24_ELIDE: u128 = PowfOptions::new()
+    .domain(PowfDomain::PositiveUnit)
+    .base_range(BT2446_EOTF24_LO, 1.0)
+    .const_exponent(2.4)
+    .reject_subnormals()
+    .portability(MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+
+/// BT.1886 `v^2.4` saturating path for chunks containing near-zero / zero channels in `[0.0, 1.0]`.
+const BT2446_EOTF24_SAT: u128 = PowfOptions::new()
+    .domain(PowfDomain::PositiveUnit)
+    .const_exponent(2.4)
+    .reject_subnormals()
+    .saturate_output()
+    .portability(MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
 
 /// BT.2446 Method A tonemapper.
 ///
@@ -210,7 +274,7 @@ impl Bt2446A {
             "Bt2446A::map_strip_simd called on a pipeline-managed descriptor; \
              obtain a compiled executor through ToneMapper::prepare first"
         );
-        archmage::incant!(
+        archmage::attuned!(
             bt2446a_tier(
                 strip,
                 self.rho_hdr,
@@ -218,7 +282,7 @@ impl Bt2446A {
                 self.rho_sdr,
                 self.inv_rho_sdr_minus_1,
             ),
-            [v4(cfg(avx512)), v3, neon, wasm128, scalar]
+            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
         );
     }
 }
@@ -264,7 +328,7 @@ impl Bt2446AExecutor {
     /// Apply the compiled curve to an interleaved RGB strip in place
     /// (BT.2020 working space).
     fn apply_strip(&self, strip: &mut [[f32; 3]]) {
-        archmage::incant!(
+        archmage::attuned!(
             bt2446a_tier(
                 strip,
                 self.rho_hdr,
@@ -272,7 +336,7 @@ impl Bt2446AExecutor {
                 self.rho_sdr,
                 self.inv_rho_sdr_minus_1,
             ),
-            [v4(cfg(avx512)), v3, neon, wasm128, scalar]
+            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
         );
     }
 }
@@ -340,17 +404,145 @@ impl crate::hdr::ToneMapper for Bt2446A {
     }
 }
 
-/// 16-wide BT.2446-A SIMD kernel. Polyfills per tier: AVX-512 (V4) → one
-/// `f32x16` op per stage; AVX2 (V3) / NEON / WASM128 → 2× native width;
-/// scalar → polyfill loop.
-///
-/// Key optimizations vs a naive scalar port: (1) f32x16 chunking; (2)
-/// `pow/log2/exp2_midp_unchecked` (inputs pre-clamped to `[pos_eps, ∞)`, so
-/// the checked paths are not needed); (3) single `pos_eps` clamp
-/// absorbing `max(zero)` + `max(pos_eps)`. Both gamma steps use
-/// `pow_midp_unchecked`. A degree-7 polynomial for the EOTF saved 6.5% of the time on long
-/// rows, but put black at 5.88e-5 and erred by 49.8 16-bit codes in the darks.
-#[archmage::magetypes(define(f32x16), v4(cfg(avx512)), v3, neon, wasm128, scalar)]
+macro_rules! bt2446a_body {
+    ($vec:ident, $lanes:literal, $token:ident, $row:ident, $rho_hdr:ident, $inv_log_rho_hdr:ident, $rho_sdr:ident, $inv_rho_sdr_minus_1:ident) => {{
+        let zero = $vec::zero_t($token);
+        let one = $vec::splat_t($token, 1.0);
+        let lr = $vec::splat_t($token, LR);
+        let lg = $vec::splat_t($token, LG);
+        let lb = $vec::splat_t($token, LB);
+        let rho_hdr_minus_1 = $vec::splat_t($token, $rho_hdr - 1.0);
+        let inv_log_rho_hdr_v = $vec::splat_t($token, $inv_log_rho_hdr);
+        let inv_rho_sdr_m1_v = $vec::splat_t($token, $inv_rho_sdr_minus_1);
+        let log2_rho_sdr = $vec::splat_t($token, libm::log2f($rho_sdr));
+        let pos_eps = $vec::splat_t($token, f32::MIN_POSITIVE);
+        let eotf_lo = $vec::splat_t($token, BT2446_EOTF24_LO);
+        let exp_lo = $vec::splat_t($token, -126.0);
+        let exp_hi = $vec::splat_t($token, 127.0);
+        let ln2 = $vec::splat_t($token, core::f32::consts::LN_2);
+
+        let t1 = $vec::splat_t($token, 0.7399);
+        let t2 = $vec::splat_t($token, 0.9909);
+        let a1 = $vec::splat_t($token, 1.0770);
+        let a2_a = $vec::splat_t($token, -1.1510);
+        let a2_b = $vec::splat_t($token, 2.7811);
+        let a2_c = $vec::splat_t($token, -0.6302);
+        let a3_a = $vec::splat_t($token, 0.5);
+        let a3_b = $vec::splat_t($token, 0.5);
+        let one_p_one = $vec::splat_t($token, 1.1);
+        let inv_1_8814 = $vec::splat_t($token, 1.0 / 1.8814);
+        let inv_1_4746 = $vec::splat_t($token, 1.0 / 1.4746);
+        // 0.16455 = 2·Kb·(1-Kb)/Kg, 0.57135 = 2·Kr·(1-Kr)/Kg for BT.2020 (already
+        // divided by Kg; do NOT divide again — that was the pre-fix bug).
+        let mat_g_b = $vec::splat_t($token, 0.16455);
+        let mat_g_r = $vec::splat_t($token, 0.57135);
+        let mat_r_cr = $vec::splat_t($token, 1.4746);
+        let mat_b_cb = $vec::splat_t($token, 1.8814);
+        let zero_one = $vec::splat_t($token, 0.1);
+
+        let (chunks, remainder) = $row.as_chunks_mut::<$lanes>();
+        macro_rules! run_chunk {
+            ($chunk:expr) => {{
+                let chunk: &mut [[f32; 3]; $lanes] = $chunk;
+                let mut ra = [0.0_f32; $lanes];
+                let mut ga = [0.0_f32; $lanes];
+                let mut ba = [0.0_f32; $lanes];
+                for (i, px) in chunk.iter().enumerate() {
+                    ra[i] = px[0];
+                    ga[i] = px[1];
+                    ba[i] = px[2];
+                }
+                // ITU-R BT.2446-1 §4.1 Table 2 specifies normalized [0, 1] HDR RGB inputs.
+                // Record `valid` from the raw positive mask before clamping to `[pos_eps, 1.0]`
+                // so every downstream `assume_in_bounds` transcendental sees finite positive normals
+                // while originally zero/non-positive pixels still snap to exact 0.0 on store.
+                let raw_r = $vec::load_t($token, &ra);
+                let raw_g = $vec::load_t($token, &ga);
+                let raw_b = $vec::load_t($token, &ba);
+                let valid = raw_r.simd_gt(zero) | raw_g.simd_gt(zero) | raw_b.simd_gt(zero);
+                let r = raw_r.min(one).max(pos_eps);
+                let g = raw_g.min(one).max(pos_eps);
+                let b = raw_b.min(one).max(pos_eps);
+
+                let r_p = r.powf_const::<BT2446_INV24>();
+                let g_p = g.powf_const::<BT2446_INV24>();
+                let b_p = b.powf_const::<BT2446_INV24>();
+
+                let y_p = lr * r_p + lg * g_p + lb * b_p;
+
+                let arg = (one + rho_hdr_minus_1 * y_p).max(pos_eps);
+                let ln_arg = arg.log2::<BT2446_LOG2>() * ln2;
+                let y_p_lin = ln_arg * inv_log_rho_hdr_v;
+
+                let lo_branch = a1 * y_p_lin;
+                let mid_branch = a2_a * y_p_lin * y_p_lin + a2_b * y_p_lin + a2_c;
+                let hi_branch = a3_a * y_p_lin + a3_b;
+                let in_lo = y_p_lin.simd_le(t1);
+                let in_hi = y_p_lin.simd_ge(t2);
+                let mid_or_hi = $vec::blend(in_hi, hi_branch, mid_branch);
+                let y_c = $vec::blend(in_lo, lo_branch, mid_or_hi);
+
+                let exp_arg = (y_c * log2_rho_sdr).max_fast(exp_lo).min_fast(exp_hi);
+                let y_sdr = (exp_arg.exp2::<BT2446_EXP2>() - one) * inv_rho_sdr_m1_v;
+
+                let f = y_sdr / (one_p_one * y_p);
+                let cb = f * (b_p - y_p) * inv_1_8814;
+                let cr = f * (r_p - y_p) * inv_1_4746;
+                let cr_pos = cr.max(zero);
+                let y_tmo = y_sdr - zero_one * cr_pos;
+
+                // Clamp into `[0, 1]`, the domain of the BT.1886 EOTF.
+                let r_prime_out = (y_tmo + mat_r_cr * cr).max(zero).min(one);
+                let g_prime_out = (y_tmo - mat_g_b * cb - mat_g_r * cr).max(zero).min(one);
+                let b_prime_out = (y_tmo + mat_b_cb * cb).max(zero).min(one);
+
+                // BT.1886 EOTF (`^2.4`): fast elided path when all lanes >= 1e-15,
+                // saturating SIMD path otherwise (with 0 staying exact 0.0).
+                let eotf = |v: $vec| {
+                    if v.simd_ge(eotf_lo).bitcast_to_i32().all_true() {
+                        v.powf_const::<BT2446_EOTF24_ELIDE>()
+                    } else {
+                        $vec::blend(
+                            v.simd_gt(zero),
+                            v.max(pos_eps).powf_const::<BT2446_EOTF24_SAT>(),
+                            zero,
+                        )
+                    }
+                };
+                let r_out = eotf(r_prime_out);
+                let g_out = eotf(g_prime_out);
+                let b_out = eotf(b_prime_out);
+
+                // Pre-clamp turns originally-zero pixels into `pos_eps`; the
+                // `valid` mask computed from the raw inputs snaps them back to true black on store.
+                let or_arr = $vec::blend(valid, r_out, zero).to_array();
+                let og_arr = $vec::blend(valid, g_out, zero).to_array();
+                let ob_arr = $vec::blend(valid, b_out, zero).to_array();
+                for (i, px) in chunk.iter_mut().enumerate() {
+                    px[0] = or_arr[i];
+                    px[1] = og_arr[i];
+                    px[2] = ob_arr[i];
+                }
+            }};
+        }
+        for chunk in chunks {
+            run_chunk!(chunk);
+        }
+
+        // The same lanes for the tail, padded, so that where a row ends or splits can't show in its
+        // output. A second implementation here once did, by up to 5.88e-5 of polynomial error.
+        if !remainder.is_empty() {
+            let mut tail = [[0.0_f32; 3]; $lanes];
+            tail[..remainder.len()].copy_from_slice(remainder);
+            run_chunk!(&mut tail);
+            remainder.copy_from_slice(&tail[..remainder.len()]);
+        }
+    }};
+}
+
+/// Const-configured `magemath` BT.2446-A SIMD kernel: 8-wide on V3/NEON/WASM128/scalar
+/// and 16-wide native AVX-512 when compiled with `--features avx512`.
+#[archmage::attune(_*_t, define(f32x8))]
 pub(crate) fn bt2446a_tier(
     token: Token,
     row: &mut [[f32; 3]],
@@ -359,128 +551,40 @@ pub(crate) fn bt2446a_tier(
     rho_sdr: f32,
     inv_rho_sdr_minus_1: f32,
 ) {
-    let zero = f32x16::zero_t(token);
-    let one = f32x16::splat_t(token, 1.0);
-    let lr = f32x16::splat_t(token, LR);
-    let lg = f32x16::splat_t(token, LG);
-    let lb = f32x16::splat_t(token, LB);
-    let inv_24 = 1.0_f32 / 2.4;
-    let rho_hdr_minus_1 = f32x16::splat_t(token, rho_hdr - 1.0);
-    let inv_log_rho_hdr_v = f32x16::splat_t(token, inv_log_rho_hdr);
-    let inv_rho_sdr_m1_v = f32x16::splat_t(token, inv_rho_sdr_minus_1);
-    let log2_rho_sdr = f32x16::splat_t(token, libm::log2f(rho_sdr));
-    let pos_eps = f32x16::splat_t(token, f32::MIN_POSITIVE);
-    let ln2 = f32x16::splat_t(token, core::f32::consts::LN_2);
+    bt2446a_body!(
+        f32x8,
+        8,
+        token,
+        row,
+        rho_hdr,
+        inv_log_rho_hdr,
+        rho_sdr,
+        inv_rho_sdr_minus_1
+    );
+}
 
-    let t1 = f32x16::splat_t(token, 0.7399);
-    let t2 = f32x16::splat_t(token, 0.9909);
-    let a1 = f32x16::splat_t(token, 1.0770);
-    let a2_a = f32x16::splat_t(token, -1.1510);
-    let a2_b = f32x16::splat_t(token, 2.7811);
-    let a2_c = f32x16::splat_t(token, -0.6302);
-    let a3_a = f32x16::splat_t(token, 0.5);
-    let a3_b = f32x16::splat_t(token, 0.5);
-    let one_p_one = f32x16::splat_t(token, 1.1);
-    let inv_1_8814 = f32x16::splat_t(token, 1.0 / 1.8814);
-    let inv_1_4746 = f32x16::splat_t(token, 1.0 / 1.4746);
-    // 0.16455 = 2·Kb·(1-Kb)/Kg, 0.57135 = 2·Kr·(1-Kr)/Kg for BT.2020 (already
-    // divided by Kg; do NOT divide again — that was the pre-fix bug).
-    let mat_g_b = f32x16::splat_t(token, 0.16455);
-    let mat_g_r = f32x16::splat_t(token, 0.57135);
-    let mat_r_cr = f32x16::splat_t(token, 1.4746);
-    let mat_b_cb = f32x16::splat_t(token, 1.8814);
-    let zero_one = f32x16::splat_t(token, 0.1);
-
-    let (chunks, remainder) = row.as_chunks_mut::<16>();
-    let run = |chunk: &mut [[f32; 3]; 16]| {
-        let mut ra = [0.0_f32; 16];
-        let mut ga = [0.0_f32; 16];
-        let mut ba = [0.0_f32; 16];
-        for (i, px) in chunk.iter().enumerate() {
-            ra[i] = px[0];
-            ga[i] = px[1];
-            ba[i] = px[2];
-        }
-        // ITU-R BT.2446-1 §4.1 Table 2 specifies normalized [0, 1] HDR RGB inputs.
-        // Record `valid` from the raw positive mask before clamping to `[pos_eps, 1.0]`
-        // so every downstream `*_unchecked` transcendental sees finite positive inputs
-        // while originally zero/non-positive pixels still snap to exact 0.0 on store.
-        let raw_r = f32x16::load_t(token, &ra);
-        let raw_g = f32x16::load_t(token, &ga);
-        let raw_b = f32x16::load_t(token, &ba);
-        let valid = raw_r.simd_gt(zero) | raw_g.simd_gt(zero) | raw_b.simd_gt(zero);
-        let r = raw_r.min(one).max(pos_eps);
-        let g = raw_g.min(one).max(pos_eps);
-        let b = raw_b.min(one).max(pos_eps);
-
-        let r_p = r.pow_midp_unchecked(inv_24);
-        let g_p = g.pow_midp_unchecked(inv_24);
-        let b_p = b.pow_midp_unchecked(inv_24);
-
-        let y_p = lr * r_p + lg * g_p + lb * b_p;
-
-        let arg = (one + rho_hdr_minus_1 * y_p).max(pos_eps);
-        let ln_arg = arg.log2_midp_unchecked() * ln2;
-        let y_p_lin = ln_arg * inv_log_rho_hdr_v;
-
-        let lo_branch = a1 * y_p_lin;
-        let mid_branch = a2_a * y_p_lin * y_p_lin + a2_b * y_p_lin + a2_c;
-        let hi_branch = a3_a * y_p_lin + a3_b;
-        let in_lo = y_p_lin.simd_le(t1);
-        let in_hi = y_p_lin.simd_ge(t2);
-        let mid_or_hi = f32x16::blend(in_hi, hi_branch, mid_branch);
-        let y_c = f32x16::blend(in_lo, lo_branch, mid_or_hi);
-
-        let y_sdr = ((y_c * log2_rho_sdr).exp2_midp_unchecked() - one) * inv_rho_sdr_m1_v;
-
-        let f = y_sdr / (one_p_one * y_p);
-        let cb = f * (b_p - y_p) * inv_1_8814;
-        let cr = f * (r_p - y_p) * inv_1_4746;
-        let cr_pos = cr.max(zero);
-        let y_tmo = y_sdr - zero_one * cr_pos;
-
-        // Clamp into `[0, 1]`, the domain of the BT.1886 EOTF.
-        // this domain. The final `valid` mask still zeroes pixels the spec
-        // would emit as black.
-        let r_prime_out = (y_tmo + mat_r_cr * cr).max(zero).min(one);
-        let g_prime_out = (y_tmo - mat_g_b * cb - mat_g_r * cr).max(zero).min(one);
-        let b_prime_out = (y_tmo + mat_b_cb * cb).max(zero).min(one);
-
-        // BT.1886 EOTF. `pos_eps` keeps the logarithm defined, and 0 stays exactly 0.
-        let eotf = |v: f32x16| {
-            f32x16::blend(
-                v.simd_gt(zero),
-                v.max(pos_eps).pow_midp_unchecked(2.4),
-                zero,
-            )
-        };
-        let r_out = eotf(r_prime_out);
-        let g_out = eotf(g_prime_out);
-        let b_out = eotf(b_prime_out);
-
-        // Pre-clamp turns originally-zero pixels into `pos_eps`; the
-        // `valid` mask computed from the raw inputs snaps them back to true black on store.
-        let or_arr = f32x16::blend(valid, r_out, zero).to_array();
-        let og_arr = f32x16::blend(valid, g_out, zero).to_array();
-        let ob_arr = f32x16::blend(valid, b_out, zero).to_array();
-        for (i, px) in chunk.iter_mut().enumerate() {
-            px[0] = or_arr[i];
-            px[1] = og_arr[i];
-            px[2] = ob_arr[i];
-        }
-    };
-    for chunk in chunks {
-        run(chunk);
-    }
-
-    // The same lanes for the tail, padded, so that where a row ends or splits can't show in its
-    // output. A second implementation here once did, by up to 5.88e-5 of polynomial error.
-    if !remainder.is_empty() {
-        let mut tail = [[0.0_f32; 3]; 16];
-        tail[..remainder.len()].copy_from_slice(remainder);
-        run(&mut tail);
-        remainder.copy_from_slice(&tail[..remainder.len()]);
-    }
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[archmage::arcane]
+pub(crate) fn bt2446a_tier_v4x_t(
+    token: archmage::X64V4xToken,
+    row: &mut [[f32; 3]],
+    rho_hdr: f32,
+    inv_log_rho_hdr: f32,
+    rho_sdr: f32,
+    inv_rho_sdr_minus_1: f32,
+) {
+    use magetypes::simd::generic::f32x16;
+    type Vec16 = f32x16<archmage::X64V4xToken>;
+    bt2446a_body!(
+        Vec16,
+        16,
+        token,
+        row,
+        rho_hdr,
+        inv_log_rho_hdr,
+        rho_sdr,
+        inv_rho_sdr_minus_1
+    );
 }
 
 #[cfg(test)]
