@@ -3,19 +3,26 @@
 #![cfg(feature = "hdr-experimental")]
 use zenpixels_convert::hdr::SoftCompress;
 use zenpixels_convert::oklab::OklabSpace;
-use zenpixels_convert::policy::{AlphaPolicy, ConvertOptions, GamutMapping};
+use zenpixels_convert::policy::{AlphaPolicy, ConvertOptions, GamutPolicy};
 use zenpixels_convert::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries as P, ConvertError, PixelDescriptor as D,
-    RowConverter, TransferFunction as Tf,
+    TransferFunction as Tf,
 };
 
 fn soft() -> ConvertOptions {
-    ConvertOptions::permissive()
+    ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
         .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
-        .with_gamut_mapping(GamutMapping::SoftCompress)
+        .with_gamut_policy(GamutPolicy::SoftCompress)
 }
 fn clip() -> ConvertOptions {
-    ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::DiscardUnchecked)
+    ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
 }
 
 fn p3_rgb8() -> D {
@@ -37,23 +44,27 @@ fn grid() -> Vec<u8> {
 
 fn convert(from: D, to: D, options: &ConvertOptions, src: &[u8]) -> Vec<u8> {
     let w = src.len() / from.bytes_per_pixel();
-    let mut c = RowConverter::new_explicit(from, to, options).unwrap();
+    let mut c = crate::test_conversion::explicit_worker(from, to, options).unwrap();
     let mut out = vec![0u8; w * to.bytes_per_pixel()];
-    c.convert_row(src, &mut out, w as u32);
+    c.try_convert_row(src, &mut out, w as u32).unwrap();
     out
 }
 
 #[test]
 fn default_is_clip_and_identical_to_no_option() {
     assert_eq!(
-        ConvertOptions::permissive().gamut_mapping(),
-        GamutMapping::Clip
+        ConvertOptions::retain_channels()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+            .gamut_policy(),
+        GamutPolicy::Clip
     );
     let src = grid();
     let w = (src.len() / 3) as u32;
-    let mut a = RowConverter::new(p3_rgb8(), D::RGB8_SRGB).unwrap();
+    let mut a = crate::test_conversion::new_worker(p3_rgb8(), D::RGB8_SRGB).unwrap();
     let mut x = vec![0u8; src.len()];
-    a.convert_row(&src, &mut x, w);
+    a.try_convert_row(&src, &mut x, w).unwrap();
     assert_eq!(x, convert(p3_rgb8(), D::RGB8_SRGB, &clip(), &src));
 }
 
@@ -63,10 +74,11 @@ fn compression_matches_the_kernel_it_wraps() {
     let out = convert(p3_rgb8(), D::RGB8_SRGB, &soft(), &src);
 
     let lin_p3 = D::RGBF32_LINEAR.with_primaries(P::DisplayP3);
-    let mut up = RowConverter::new_explicit(p3_rgb8(), lin_p3, &clip()).unwrap();
+    let mut up = crate::test_conversion::explicit_worker(p3_rgb8(), lin_p3, &clip()).unwrap();
     let w = src.len() / 3;
     let mut linear = vec![[0f32; 3]; w];
-    up.convert_row(&src, bytemuck::cast_slice_mut(&mut linear), w as u32);
+    up.try_convert_row(&src, bytemuck::cast_slice_mut(&mut linear), w as u32)
+        .unwrap();
     let m = zenpixels_convert::gamut::GamutMatrix::between(P::DisplayP3, P::Bt709).unwrap();
     m.apply_row_rgb(&mut linear);
     let space = OklabSpace::for_primaries(P::Bt709).unwrap();
@@ -135,10 +147,10 @@ fn alpha_is_untouched_and_rows_can_be_split() {
     for (a, b) in whole.as_chunks::<4>().0.iter().zip(src.as_chunks::<4>().0) {
         assert_eq!(a[3], b[3]);
     }
-    let mut c = RowConverter::new_explicit(from, to, &soft()).unwrap();
+    let mut c = crate::test_conversion::explicit_worker(from, to, &soft()).unwrap();
     let mut parts = vec![0u8; src.len()];
     for (s, d) in src.chunks(4 * 17).zip(parts.chunks_mut(4 * 17)) {
-        c.convert_row(s, d, (s.len() / 4) as u32);
+        c.try_convert_row(s, d, (s.len() / 4) as u32).unwrap();
     }
     assert_eq!(parts, whole);
 }
@@ -164,10 +176,23 @@ fn every_source_depth_stays_in_range_and_near_clip_inside_the_gamut() {
 
 #[test]
 fn unavailable_mapping_refuses_rather_than_clips() {
-    let adobe_target = D::RGB8_SRGB.with_primaries(P::AdobeRgb);
-    let from = D::RGB8_SRGB.with_primaries(P::Bt2020);
-    let e = RowConverter::new_explicit(from, adobe_target, &soft())
+    // PQ->PQ gamut narrowing succeeds under Clip, so SoftCompress must refuse rather than fall back to clipping.
+    let from_pq = D::RGB16_SRGB
+        .with_transfer(Tf::Pq)
+        .with_primaries(P::Bt2020);
+    let to_pq = D::RGB16_SRGB.with_transfer(Tf::Pq).with_primaries(P::Bt709);
+    assert!(crate::test_conversion::explicit_worker(from_pq, to_pq, &clip()).is_ok());
+    let e = crate::test_conversion::explicit_worker(from_pq, to_pq, &soft())
         .err()
         .unwrap();
     assert!(matches!(*e.error(), ConvertError::NoPath { .. }), "{e:?}");
+
+    // Adobe RGB now has exact XYZ/Oklab matrices and succeeds with SoftCompress.
+    let from = D::RGB8_SRGB.with_primaries(P::Bt2020);
+    let adobe_target = D::RGB8_SRGB.with_primaries(P::AdobeRgb);
+    let out = convert(from, adobe_target, &soft(), &[0, 255, 0]);
+    assert_eq!(out.len(), 3);
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

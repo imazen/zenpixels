@@ -10,7 +10,7 @@ fn native_matrix_cannot_be_erased_by_descriptor_projection() {
             Err(CicpDescriptorError::NonIdentityMatrix(matrix))
         );
         // Failure to project must not prevent inspection or transport.
-        assert_eq!(ColorContext::from_cicp(raw).cicp, Some(raw));
+        assert_eq!(ColorContext::from_cicp(raw).cicp(), Some(raw));
     }
 }
 
@@ -51,7 +51,7 @@ fn unrepresentable_codes_are_reported_without_replacing_them() {
             raw.try_to_descriptor(PixelFormat::Rgb8),
             Err(CicpDescriptorError::UnmappedPrimaries(code))
         );
-        assert_eq!(ColorContext::from_cicp(raw).cicp, Some(raw));
+        assert_eq!(ColorContext::from_cicp(raw).cicp(), Some(raw));
     }
     // SMPTE 240M must not silently become BT.709.
     for code in [0, 2, 7, 200] {
@@ -66,8 +66,16 @@ fn unrepresentable_codes_are_reported_without_replacing_them() {
 #[test]
 fn rgb_color_does_not_make_cmyk_or_oklab_samples_rgb() {
     for (format, layout) in [
-        (PixelFormat::Cmyk8, ChannelLayout::Cmyk),
+        (PixelFormat::CMYK8, ChannelLayout::Cmyk),
         (PixelFormat::OklabF32, ChannelLayout::Oklab),
+        (
+            PixelFormat::from_parts(zenpixels::ChannelType::U16, ChannelLayout::Lab, None).unwrap(),
+            ChannelLayout::Lab,
+        ),
+        (
+            PixelFormat::from_parts(zenpixels::ChannelType::F32, ChannelLayout::Xyz, None).unwrap(),
+            ChannelLayout::Xyz,
+        ),
     ] {
         assert_eq!(
             Cicp::SRGB.try_to_descriptor(format),

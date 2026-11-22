@@ -635,44 +635,49 @@ fn planar_picture_reuses_native_code_components_and_preserves_interpretation() {
     let image =
         PlanarSlice::new(&planes, &layout, 5, 3, &context, Some(AlphaMode::Straight)).unwrap();
     assert!(core::ptr::eq(image.color_context(), &context));
-    assert!(image.color_context().diffuse_white.is_none());
-    assert!(image.color_context().hdr_peak.is_none());
+    assert!(image.color_context().diffuse_white().is_none());
+    assert!(image.color_context().hdr_peak().is_none());
     assert_eq!(image.layout().siting(), ChromaSiting::Left);
     assert_eq!(image.alpha_mode(), Some(AlphaMode::Straight));
     let cr = CodePlane::component(
-        image.planes()[1],
+        image.plane(1).unwrap(),
         2,
         0,
         SampleEncoding::new(ChannelType::U16, 10, 6).unwrap(),
     )
     .unwrap();
-    let cb = CodePlane::component(image.planes()[1], 2, 1, cr.encoding()).unwrap();
+    let cb = CodePlane::component(image.plane(1).unwrap(), 2, 1, cr.encoding()).unwrap();
     assert_eq!(cr.code(2, 1), Some(313));
     assert_eq!(cb.code(2, 1), Some(314));
     let a = CodePlane::new(
-        image.planes()[2],
+        image.plane(2).unwrap(),
         SampleEncoding::new(ChannelType::U8, 1, 0).unwrap(),
     )
     .unwrap();
     assert_eq!(a.code(4, 2), Some(0));
-    let AnyPlane::U16(luma) = image.planes()[0] else {
+    let AnyPlane::U16(luma) = image.plane(0).unwrap() else {
         panic!("U16")
     };
     assert_eq!(luma.strided_samples().as_ptr(), y.as_ptr());
     assert_eq!(luma.row(2).unwrap(), &y[14..19]);
     assert_eq!(y[5], (69 << 6) | 63); // Padding and low payload padding are untouched.
 
-    // Raw unknown signaling and opaque ICC bytes remain transportable. The
-    // enclosing context's existing authority rule decides which source is used.
+    // Raw unknown signaling and opaque ICC bytes remain transportable;
+    // ColorContext holds a single active profile authority at a time.
+    let raw_cicp = ColorContext::from_cicp(Cicp::new(200, 201, 202, false));
+    let image =
+        PlanarSlice::new(&planes, &layout, 5, 3, &raw_cicp, Some(AlphaMode::Straight)).unwrap();
+    assert_eq!(
+        image.color_context().cicp(),
+        Some(Cicp::new(200, 201, 202, false))
+    );
+
     let icc: Arc<[u8]> = Arc::from([1, 2, 3, 4]);
-    let declared = ColorContext::from_cicp(Cicp::new(200, 201, 202, false)).with_icc(icc.clone());
+    let declared = raw_cicp.with_icc(icc.clone());
     let image =
         PlanarSlice::new(&planes, &layout, 5, 3, &declared, Some(AlphaMode::Straight)).unwrap();
-    assert_eq!(image.color_context().cicp, declared.cicp);
-    assert!(Arc::ptr_eq(
-        image.color_context().icc.as_ref().unwrap(),
-        &icc
-    ));
+    assert_eq!(image.color_context().cicp(), None);
+    assert!(Arc::ptr_eq(image.color_context().icc_arc().unwrap(), &icc));
     assert_eq!(
         image.color_context().as_profile_source(),
         Some(ColorProfileSource::Icc(icc.as_ref()))
@@ -702,4 +707,142 @@ fn signed_and_wide_encoding_descriptions_do_not_relabel_plane_storage() {
         );
     }
     assert_eq!(data, [0xffff]);
+}
+
+#[test]
+fn planar_cmyk_and_extra_roles_validate_and_size_correctly() {
+    use ChromaSubsampling::*;
+    use PlaneRole::*;
+    use zenpixels::{AlphaMode, ColorContext};
+
+    let u8c = codes(ChannelType::U8, 8, 0);
+    let u16c = codes(ChannelType::U16, 16, 0);
+    let f32n = PlaneEncoding::Float(FloatEncoding::NOMINAL);
+    let spec = PlaneSpec::new;
+
+    for r in [Cyan, Magenta, Yellow, Black] {
+        assert!(r.is_color());
+        assert!(r.is_cmyk());
+        assert!(!r.is_alpha());
+        assert!(!r.is_extra());
+        assert_eq!(r.components(), 1);
+    }
+    assert!(Alpha.is_alpha());
+    assert!(Alpha.is_extra());
+    for r in [
+        Depth,
+        SelectionMask,
+        Thermal,
+        SpotColor(0),
+        SpotColor(1),
+        Cfa(0),
+        Auxiliary(2),
+    ] {
+        assert!(!r.is_color());
+        assert!(!r.is_cmyk());
+        assert!(!r.is_alpha());
+        assert!(r.is_extra());
+        assert_eq!(r.components(), 1);
+    }
+    assert_eq!(Yuv440.chroma_size(5, 3), Some((5, 2)));
+    let l440 = PlanarLayout::new(
+        vec![spec(Luma, u8c), spec(Cb, u8c), spec(Cr, u8c)],
+        Yuv440,
+        ChromaSiting::Center,
+    )
+    .unwrap();
+    assert!(!l440.is_inverted_cmyk());
+    assert_eq!(l440.plane_size(0, 5, 3), Some((5, 3)));
+    assert_eq!(l440.plane_size(1, 5, 3), Some((5, 2)));
+
+    // Full planar CMYK + Alpha + JXL extra channels at 4:4:4.
+    let cmyk_extra = PlanarLayout::new(
+        vec![
+            spec(Cyan, u16c),
+            spec(Magenta, u16c),
+            spec(Yellow, u16c),
+            spec(Black, u16c),
+            spec(Alpha, u16c),
+            spec(Depth, f32n),
+            spec(SpotColor(0), u16c),
+            spec(SpotColor(1), u16c),
+            spec(SelectionMask, u8c),
+        ],
+        Yuv444,
+        ChromaSiting::Unknown,
+    )
+    .unwrap();
+    for i in 0..9 {
+        assert_eq!(cmyk_extra.plane_size(i, 7, 5), Some((7, 5)));
+    }
+
+    let c_buf = [1000u16; 35];
+    let m_buf = [2000u16; 35];
+    let y_buf = [3000u16; 35];
+    let k_buf = [4000u16; 35];
+    let a_buf = [65535u16; 35];
+    let d_buf = [0.5f32; 35];
+    let s0_buf = [100u16; 35];
+    let s1_buf = [200u16; 35];
+    let mask_buf = [255u8; 35];
+    let planes = [
+        AnyPlane::U16(PlaneRef::new(&c_buf[..], 7, 5, 7).unwrap()),
+        AnyPlane::U16(PlaneRef::new(&m_buf[..], 7, 5, 7).unwrap()),
+        AnyPlane::U16(PlaneRef::new(&y_buf[..], 7, 5, 7).unwrap()),
+        AnyPlane::U16(PlaneRef::new(&k_buf[..], 7, 5, 7).unwrap()),
+        AnyPlane::U16(PlaneRef::new(&a_buf[..], 7, 5, 7).unwrap()),
+        AnyPlane::F32(PlaneRef::new(&d_buf[..], 7, 5, 7).unwrap()),
+        AnyPlane::U16(PlaneRef::new(&s0_buf[..], 7, 5, 7).unwrap()),
+        AnyPlane::U16(PlaneRef::new(&s1_buf[..], 7, 5, 7).unwrap()),
+        AnyPlane::U8(PlaneRef::new(&mask_buf[..], 7, 5, 7).unwrap()),
+    ];
+    let context = ColorContext::default();
+    let slice = PlanarSlice::new(
+        &planes,
+        &cmyk_extra,
+        7,
+        5,
+        &context,
+        Some(AlphaMode::Straight),
+    )
+    .unwrap();
+    assert_eq!(slice.planes().count(), 9);
+
+    // Standalone extra channels require Mono subsampling.
+    let depth_only =
+        PlanarLayout::new(vec![spec(Depth, f32n)], Mono, ChromaSiting::Unknown).unwrap();
+    assert_eq!(depth_only.plane_size(0, 11, 9), Some((11, 9)));
+
+    let err = |roles: &[PlaneRole], s| {
+        let specs = roles.iter().map(|&r| spec(r, u8c)).collect();
+        PlanarLayout::new(specs, s, ChromaSiting::Unknown).unwrap_err()
+    };
+    assert_eq!(
+        err(&[Cyan, Magenta, Yellow], Yuv444),
+        LayoutError::MissingRole(Black)
+    );
+    assert_eq!(
+        err(&[Cyan, Magenta, Yellow, Black], Yuv420),
+        LayoutError::Subsampling
+    );
+    assert_eq!(
+        err(&[Cyan, Magenta, Yellow, Black], Mono),
+        LayoutError::Subsampling
+    );
+    assert_eq!(err(&[Depth], Yuv444), LayoutError::Subsampling);
+    assert_eq!(
+        err(&[Red, Green, Blue, Black], Yuv444),
+        LayoutError::MixedFamilies
+    );
+    assert_eq!(
+        err(&[Luma, Cyan, Magenta, Yellow, Black], Yuv444),
+        LayoutError::MixedFamilies
+    );
+    assert_eq!(
+        err(
+            &[Cyan, Magenta, Yellow, Black, SpotColor(0), SpotColor(0)],
+            Yuv444
+        ),
+        LayoutError::DuplicateRole(SpotColor(0))
+    );
 }

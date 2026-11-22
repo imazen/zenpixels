@@ -10,16 +10,16 @@ description = "Runs every PluggableCms backend through one behavioral contract a
 
 [dependencies]
 zenpixels = { path = "../zenpixels" }
-zenpixels-convert = { path = "../zenpixels-convert", features = ["cms-moxcms", "cms-lcms"] }
+zenpixels-convert = { path = "../zenpixels-convert", features = ["icc-db", "cms-moxcms", "cms-lcms"] }
 lcms = { git = "https://github.com/imazen/lcms", rev = "55b59476cf64920345e9ca32eb3a4678bf0bbece" }
 moxcms = "0.9.2"
 whereat = "0.1"
 bytemuck = "1.21"
-archmage = "0.9.31"
+archmage = "0.9.32"
 
 [patch.crates-io]
-garb = { git = "https://github.com/imazen/garb", rev = "8f9aa10d09f84bb0a1e3fdbd1773f610eec1b784" }
-linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "52896f4b24664315586bd60e5f048253b1f69052" }
+garb = { git = "https://github.com/imazen/garb", rev = "457ff8b9153e9d675a39dc098052b2ffeb6206fa" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "ae83f19426737635fee3dd16f228681019f52585" }
 
 [dev-dependencies]
 zenbench = "0.1.11"

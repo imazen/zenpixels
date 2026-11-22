@@ -40,14 +40,19 @@ fn bench_quantize(
 ) {
     for &(label, width, height) in SIZES {
         let data = linear_f32(width, height, channels);
-        let buf = PixelBuffer::from_vec(data, width, height, src_desc).unwrap();
+        let buf = PixelBuffer::from_vec(data, width, height, src_desc)
+            .unwrap()
+            .with_color_context(std::sync::Arc::new(
+                zenpixels::ColorContext::default()
+                    .with_diffuse_white(zenpixels::hdr::DiffuseWhite::BT2408),
+            ));
         let input_bytes = (width as usize * height as usize * channels * 4) as u64;
         let group_name = format!("{name}  {label}");
         suite.group(group_name, move |g| {
             g.throughput(Throughput::Bytes(input_bytes));
-            g.bench("quantize_to", move |b| {
+            g.bench("convert_to_pq", move |b| {
                 b.iter(|| {
-                    let out = buf.as_slice().quantize_to(target).unwrap();
+                    let out = buf.as_slice().convert_to(target).unwrap();
                     black_box(out);
                 })
             });

@@ -352,7 +352,7 @@ fn white_preservation_corpus() {
 
         let src = [255u8, 255, 255];
         let mut dst = [0u8; 3];
-        xform.transform_row(&src, &mut dst, 1);
+        xform.try_transform_row(&src, &mut dst, 1).unwrap();
 
         for &val in &dst {
             let err = 255 - val;
@@ -398,7 +398,7 @@ fn black_preservation_corpus() {
 
         let src = [0u8, 0, 0];
         let mut dst = [0u8; 3];
-        xform.transform_row(&src, &mut dst, 1);
+        xform.try_transform_row(&src, &mut dst, 1).unwrap();
 
         for &val in &dst {
             if val > max_err {
@@ -491,7 +491,7 @@ fn rgba_alpha_preserved_corpus() {
             for alpha in [0u8, 42, 128, 200, 255] {
                 let src = [100, 150, 200, alpha];
                 let mut dst = [0u8; 4];
-                xform.transform_row(&src, &mut dst, 1);
+                xform.try_transform_row(&src, &mut dst, 1).unwrap();
                 assert_eq!(
                     dst[3], alpha,
                     "alpha not preserved for {src_name} → {dst_name} with alpha={alpha}"
@@ -542,7 +542,7 @@ fn monitor_profile_transforms() {
         // Mid-gray should map to approximately mid-gray
         let src = [128u8, 128, 128];
         let mut dst = [0u8; 3];
-        xform.transform_row(&src, &mut dst, 1);
+        xform.try_transform_row(&src, &mut dst, 1).unwrap();
 
         for (ch, &val) in dst.iter().enumerate() {
             let err = (val as i32 - 128).abs();
@@ -627,7 +627,7 @@ fn camera_profiles_transform_correctly() {
 
         for (src, color_name) in &test_colors {
             let mut dst = [0u8; 3];
-            xform.transform_row(src, &mut dst, 1);
+            xform.try_transform_row(src, &mut dst, 1).unwrap();
             eprintln!(
                 "  {name}: {color_name} [{},{},{}] → [{},{},{}]",
                 src[0], src[1], src[2], dst[0], dst[1], dst[2]
@@ -665,7 +665,7 @@ fn self_transform_near_identity() {
                 for b in (0..=255).step_by(51) {
                     let src = [r as u8, g as u8, b as u8];
                     let mut dst = [0u8; 3];
-                    xform.transform_row(&src, &mut dst, 1);
+                    xform.try_transform_row(&src, &mut dst, 1).unwrap();
 
                     for ch in 0..3 {
                         let err = (dst[ch] as i32 - src[ch] as i32).abs();
@@ -737,7 +737,7 @@ fn adobe_rgb_variant_consistency() {
         .iter()
         .map(|src| {
             let mut dst = [0u8; 3];
-            ref_xform.transform_row(src, &mut dst, 1);
+            ref_xform.try_transform_row(src, &mut dst, 1).unwrap();
             dst
         })
         .collect();
@@ -751,7 +751,7 @@ fn adobe_rgb_variant_consistency() {
         let mut max_diff = 0i32;
         for (src, ref_dst) in test_pixels.iter().zip(ref_results.iter()) {
             let mut dst = [0u8; 3];
-            xform.transform_row(src, &mut dst, 1);
+            xform.try_transform_row(src, &mut dst, 1).unwrap();
 
             for ch in 0..3 {
                 let diff = (dst[ch] as i32 - ref_dst[ch] as i32).abs();

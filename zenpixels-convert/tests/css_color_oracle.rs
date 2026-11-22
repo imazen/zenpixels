@@ -4,8 +4,8 @@ use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, Color, ColorPrimaries as P, ConvertOptions,
     PixelDescriptor as D, TransferFunction as Tf,
 };
+use zenpixels_convert::ColorConvertExt;
 use zenpixels_convert::css::CssColorError;
-use zenpixels_convert::{ColorConvertExt, RowConverter};
 
 /// Linear BT.2020 RGBA, unclipped, and straight alpha.
 fn to_reference_space(color: &Color) -> [f32; 4] {
@@ -16,11 +16,16 @@ fn to_reference_space(color: &Color) -> [f32; 4] {
         Tf::Linear,
     )
     .with_primaries(P::Bt2020);
-    let options = ConvertOptions::permissive().with_clip_out_of_gamut(false);
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended);
     let mut out = [0f32; 4];
-    RowConverter::new_explicit(color.descriptor(), to, &options)
+    crate::test_conversion::explicit_worker(color.descriptor(), to, &options)
         .unwrap()
-        .convert_row(color.as_bytes(), bytemuck::cast_slice_mut(&mut out), 1);
+        .try_convert_row(color.as_bytes(), bytemuck::cast_slice_mut(&mut out), 1)
+        .unwrap();
     out
 }
 
@@ -91,10 +96,12 @@ fn named_spaces_keep_their_descriptor() {
         (pq.descriptor().primaries, pq.descriptor().transfer()),
         (P::Bt2020, Tf::Pq)
     );
-    // CSS puts 1.0 at 203 cd/m², and our linear puts it at PQ's 10,000.
+    // W3C CSS Color HDR 1 §4.1: `color(rec2100-linear 1 1 1)` is media white (`1.0`),
+    // matching sRGB white `#ffffff`.
     let linear = Color::parse_css("color(rec2100-linear 1 1 1)").unwrap();
     let samples: &[f32] = bytemuck::cast_slice(linear.as_bytes());
-    assert!((samples[0] - 0.0203).abs() < 1e-6, "{samples:?}");
+    assert_eq!(samples, &[1.0, 1.0, 1.0]);
+    assert!(linear.same_color(&Color::srgb8(255, 255, 255)));
 }
 
 #[test]
@@ -151,3 +158,6 @@ fn refuses_what_is_not_a_color() {
         );
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

@@ -14,7 +14,6 @@
 
 use zenbench::prelude::*;
 use zenpixels::{ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction};
-use zenpixels_convert::RowConverter;
 
 const SIZES: &[(&str, usize)] = &[
     ("  256px", 256),
@@ -75,7 +74,7 @@ fn main() {
             let dst = vec![0u8; width * 3];
             let mut scratch = vec![0.0f32; width * 3];
             let bytes = (src.len() + dst.len()) as u64;
-            let mut conv = RowConverter::new(src_desc, dst_desc).unwrap();
+            let mut conv = crate::test_conversion::new_worker(src_desc, dst_desc).unwrap();
 
             suite.group(format!("u8 P3→709  {label}"), move |g| {
                 g.throughput(Throughput::Bytes(bytes));
@@ -84,7 +83,8 @@ fn main() {
                 let mut dst_a = dst.clone();
                 g.bench("matlut", move |b| {
                     b.iter(|| {
-                        conv.convert_row(&src_a, &mut dst_a, width as u32);
+                        conv.try_convert_row(&src_a, &mut dst_a, width as u32)
+                            .unwrap();
                         black_box(());
                     })
                 });
@@ -121,7 +121,7 @@ fn main() {
             let dst_bytes = vec![0u8; width * 3 * 2];
             let mut scratch = vec![0.0f32; width * 3];
             let bytes = (src_bytes.len() + dst_bytes.len()) as u64;
-            let mut conv = RowConverter::new(src_desc, dst_desc).unwrap();
+            let mut conv = crate::test_conversion::new_worker(src_desc, dst_desc).unwrap();
 
             suite.group(format!("u16 P3→709  {label}"), move |g| {
                 g.throughput(Throughput::Bytes(bytes));
@@ -130,7 +130,8 @@ fn main() {
                 let mut dst_a = dst_bytes.clone();
                 g.bench("matlut", move |b| {
                     b.iter(|| {
-                        conv.convert_row(&src_a, &mut dst_a, width as u32);
+                        conv.try_convert_row(&src_a, &mut dst_a, width as u32)
+                            .unwrap();
                         black_box(());
                     })
                 });
@@ -149,3 +150,6 @@ fn main() {
         }
     });
 }
+
+#[path = "../tests/support/conversion.rs"]
+mod test_conversion;

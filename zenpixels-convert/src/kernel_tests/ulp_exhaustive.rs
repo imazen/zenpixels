@@ -2,13 +2,13 @@
 //!
 //! These tests prove that specific conversion round-trips are lossless (or
 //! quantify their exact error bound) by testing **every possible input value**
-//! through the actual zenpixels `ConvertPlan`/`convert_row` implementations.
+//! through the actual zenpixels `NativePlan`/`convert_row` implementations.
 //!
 //! This replaces statistical sampling with exhaustive numerical proof:
 //! "u8 sRGB → f32 linear → u8 sRGB is lossless (max error = 0 for all 256 values)".
 
 #[cfg(feature = "bt2446a")]
-use crate::ConvertPlan;
+use crate::NativePlan;
 use crate::PixelDescriptor;
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -20,8 +20,8 @@ use crate::PixelDescriptor;
 /// Returns the max error in u8 units (0 = perfectly lossless).
 fn measure_u8_roundtrip_max_error(intermediate: PixelDescriptor) -> u8 {
     let src_desc = PixelDescriptor::RGB8_SRGB;
-    let plan_fwd = crate::ConvertPlan::plan_native(src_desc, intermediate).expect("forward plan");
-    let plan_back = crate::ConvertPlan::plan_native(intermediate, src_desc).expect("backward plan");
+    let plan_fwd = crate::NativePlan::plan_native(src_desc, intermediate).expect("forward plan");
+    let plan_back = crate::NativePlan::plan_native(intermediate, src_desc).expect("backward plan");
 
     let inter_bpp = intermediate.bytes_per_pixel();
     let mut max_err: u8 = 0;
@@ -53,8 +53,8 @@ fn measure_u8_roundtrip_max_error(intermediate: PixelDescriptor) -> u8 {
 /// This is slower (~16M evaluations) but proves correctness for every value.
 fn measure_u8_roundtrip_full_cube(intermediate: PixelDescriptor) -> u8 {
     let src_desc = PixelDescriptor::RGB8_SRGB;
-    let plan_fwd = crate::ConvertPlan::plan_native(src_desc, intermediate).expect("forward plan");
-    let plan_back = crate::ConvertPlan::plan_native(intermediate, src_desc).expect("backward plan");
+    let plan_fwd = crate::NativePlan::plan_native(src_desc, intermediate).expect("forward plan");
+    let plan_back = crate::NativePlan::plan_native(intermediate, src_desc).expect("backward plan");
 
     let inter_bpp = intermediate.bytes_per_pixel();
     let mut max_err: u8 = 0;
@@ -121,8 +121,8 @@ fn ulp_u8_u16_roundtrip() {
         TransferFunction::Srgb,
     );
 
-    let plan_fwd = crate::ConvertPlan::plan_native(src, mid_desc).expect("u8→u16 plan");
-    let plan_back = crate::ConvertPlan::plan_native(mid_desc, src).expect("u16→u8 plan");
+    let plan_fwd = crate::NativePlan::plan_native(src, mid_desc).expect("u8→u16 plan");
+    let plan_back = crate::NativePlan::plan_native(mid_desc, src).expect("u16→u8 plan");
 
     let mut max_err: u8 = 0;
     for v in 0u8..=255 {
@@ -157,7 +157,7 @@ fn ulp_u16_to_u8_max_error() {
         TransferFunction::Srgb,
     );
     let dst = PixelDescriptor::RGB8_SRGB;
-    let plan = crate::ConvertPlan::plan_native(src, dst).expect("u16→u8 plan");
+    let plan = crate::NativePlan::plan_native(src, dst).expect("u16→u8 plan");
 
     let mut max_err: u16 = 0;
     // Test all 65536 values for one channel.
@@ -207,9 +207,9 @@ fn ulp_u16_to_u8_integer_and_f32_routes_agree() {
         TransferFunction::Srgb,
     );
     let dst = PixelDescriptor::RGB8_SRGB;
-    let plan_int = crate::ConvertPlan::plan_native(src, dst).expect("u16→u8 plan");
-    let plan_f32_a = crate::ConvertPlan::plan_native(src, mid).expect("u16→f32 plan");
-    let plan_f32_b = crate::ConvertPlan::plan_native(mid, dst).expect("f32→u8 plan");
+    let plan_int = crate::NativePlan::plan_native(src, dst).expect("u16→u8 plan");
+    let plan_f32_a = crate::NativePlan::plan_native(src, mid).expect("u16→f32 plan");
+    let plan_f32_b = crate::NativePlan::plan_native(mid, dst).expect("f32→u8 plan");
 
     let mut mismatches = 0u32;
     let mut first: Option<(u32, u8, u8)> = None;
@@ -250,7 +250,7 @@ fn ulp_u8_to_u16_exact() {
         None,
         TransferFunction::Srgb,
     );
-    let plan = crate::ConvertPlan::plan_native(src, dst).expect("u8→u16 plan");
+    let plan = crate::NativePlan::plan_native(src, dst).expect("u8→u16 plan");
 
     for v in 0u8..=255 {
         let input = [v, v, v];
@@ -275,8 +275,8 @@ fn ulp_u8_to_u16_exact() {
 fn ulp_bgra_rgba_swizzle_roundtrip() {
     let rgba = PixelDescriptor::RGBA8_SRGB;
     let bgra = PixelDescriptor::BGRA8_SRGB;
-    let plan_fwd = crate::ConvertPlan::plan_native(rgba, bgra).expect("rgba→bgra plan");
-    let plan_back = crate::ConvertPlan::plan_native(bgra, rgba).expect("bgra→rgba plan");
+    let plan_fwd = crate::NativePlan::plan_native(rgba, bgra).expect("rgba→bgra plan");
+    let plan_back = crate::NativePlan::plan_native(bgra, rgba).expect("bgra→rgba plan");
 
     // Test 1M random-ish values (sampled from a grid).
     let mut error_count = 0u32;
@@ -317,7 +317,7 @@ fn ulp_srgb_eotf_monotonic() {
     // Verify sRGB EOTF (u8→f32 linear) produces monotonically increasing values.
     let src = PixelDescriptor::RGB8_SRGB;
     let dst = PixelDescriptor::RGBF32_LINEAR;
-    let plan = crate::ConvertPlan::plan_native(src, dst).expect("sRGB→linear plan");
+    let plan = crate::NativePlan::plan_native(src, dst).expect("sRGB→linear plan");
 
     let mut prev: f32 = -1.0;
     for v in 0u8..=255 {
@@ -361,11 +361,11 @@ fn ulp_srgb_eotf_monotonic() {
 fn ulp_srgb_oetf_boundary_values() {
     let src = PixelDescriptor::RGBF32_LINEAR;
     let dst = PixelDescriptor::RGB8_SRGB;
-    let plan = crate::ConvertPlan::plan_native(src, dst).expect("linear→sRGB plan");
+    let plan = crate::NativePlan::plan_native(src, dst).expect("linear→sRGB plan");
 
     // Test that the exact f32 values corresponding to each u8 step
     // round-trip correctly.
-    let eotf_plan = crate::ConvertPlan::plan_native(dst, src).expect("sRGB→linear plan");
+    let eotf_plan = crate::NativePlan::plan_native(dst, src).expect("sRGB→linear plan");
 
     for v in 0u8..=255 {
         // Get the f32 value for this u8.
@@ -406,8 +406,8 @@ fn ulp_naive_u8_f32_roundtrip() {
         TransferFunction::Unknown,
     );
 
-    let plan_fwd = crate::ConvertPlan::plan_native(u8_desc, f32_desc).expect("u8→f32 naive plan");
-    let plan_back = crate::ConvertPlan::plan_native(f32_desc, u8_desc).expect("f32→u8 naive plan");
+    let plan_fwd = crate::NativePlan::plan_native(u8_desc, f32_desc).expect("u8→f32 naive plan");
+    let plan_back = crate::NativePlan::plan_native(f32_desc, u8_desc).expect("f32→u8 naive plan");
 
     let mut max_err: u8 = 0;
     for v in 0u8..=255 {
@@ -450,8 +450,8 @@ fn ulp_u16_f32_roundtrip_exhaustive() {
         TransferFunction::Srgb,
     );
 
-    let plan_fwd = crate::ConvertPlan::plan_native(u16_desc, f32_desc).expect("u16→f32 plan");
-    let plan_back = crate::ConvertPlan::plan_native(f32_desc, u16_desc).expect("f32→u16 plan");
+    let plan_fwd = crate::NativePlan::plan_native(u16_desc, f32_desc).expect("u16→f32 plan");
+    let plan_back = crate::NativePlan::plan_native(f32_desc, u16_desc).expect("f32→u16 plan");
 
     let mut max_err: u16 = 0;
     for v in 0u32..=65535 {
@@ -496,9 +496,9 @@ fn ulp_premul_roundtrip_u8_exhaustive() {
     );
 
     let plan_to_premul =
-        crate::ConvertPlan::plan_native(straight, premul).expect("straight→premul plan");
+        crate::NativePlan::plan_native(straight, premul).expect("straight→premul plan");
     let plan_to_straight =
-        crate::ConvertPlan::plan_native(premul, straight).expect("premul→straight plan");
+        crate::NativePlan::plan_native(premul, straight).expect("premul→straight plan");
 
     let mut max_err: u8 = 0;
     let mut error_count = 0u32;
@@ -569,9 +569,9 @@ fn ulp_premul_roundtrip_f32() {
     );
 
     let plan_to_premul =
-        crate::ConvertPlan::plan_native(straight, premul).expect("f32 straight→premul plan");
+        crate::NativePlan::plan_native(straight, premul).expect("f32 straight→premul plan");
     let plan_to_straight =
-        crate::ConvertPlan::plan_native(premul, straight).expect("f32 premul→straight plan");
+        crate::NativePlan::plan_native(premul, straight).expect("f32 premul→straight plan");
 
     let mut max_ulp_err: u32 = 0;
     let test_values: Vec<f32> = (0..=255).map(|v| v as f32 / 255.0).collect();
@@ -617,8 +617,8 @@ fn ulp_gray_rgb_gray_roundtrip() {
     let gray = PixelDescriptor::GRAY8_SRGB;
     let rgb = PixelDescriptor::RGB8_SRGB;
 
-    let plan_to_rgb = crate::ConvertPlan::plan_native(gray, rgb).expect("gray→rgb plan");
-    let plan_to_gray = crate::ConvertPlan::plan_native(rgb, gray).expect("rgb→gray plan");
+    let plan_to_rgb = crate::NativePlan::plan_native(gray, rgb).expect("gray→rgb plan");
+    let plan_to_gray = crate::NativePlan::plan_native(rgb, gray).expect("rgb→gray plan");
 
     let mut max_err: u8 = 0;
     for v in 0u8..=255 {
@@ -651,8 +651,8 @@ fn ulp_add_drop_alpha_roundtrip() {
     let rgb = PixelDescriptor::RGB8_SRGB;
     let rgba = PixelDescriptor::RGBA8_SRGB;
 
-    let plan_add = crate::ConvertPlan::plan_native(rgb, rgba).expect("rgb→rgba plan");
-    let plan_drop = crate::ConvertPlan::plan_native(rgba, rgb).expect("rgba→rgb plan");
+    let plan_add = crate::NativePlan::plan_native(rgb, rgba).expect("rgb→rgba plan");
+    let plan_drop = crate::NativePlan::plan_native(rgba, rgb).expect("rgba→rgb plan");
 
     let mut max_err: u8 = 0;
     for r in (0u8..=255).step_by(1) {
@@ -694,7 +694,7 @@ fn ulp_gray_alpha_rgba_roundtrip() {
     );
     let rgba = PixelDescriptor::RGBA8_SRGB;
 
-    let plan_to_rgba = crate::ConvertPlan::plan_native(ga, rgba).expect("ga→rgba plan");
+    let plan_to_rgba = crate::NativePlan::plan_native(ga, rgba).expect("ga→rgba plan");
     // RGBA → GrayAlpha isn't a direct path (would need RGBA→Gray + keep alpha).
     // Instead test GrayAlpha → RGBA preserves values.
 
@@ -738,7 +738,7 @@ fn ulp_pq_eotf_boundary_values() {
     );
 
     let plan =
-        crate::ConvertPlan::plan_native(pq_u16, linear_f32).expect("PQ U16 → Linear F32 plan");
+        crate::NativePlan::plan_native(pq_u16, linear_f32).expect("PQ U16 → Linear F32 plan");
 
     // PQ code 0 → linear 0.0
     let input_0: [u8; 2] = 0u16.to_ne_bytes();
@@ -786,10 +786,9 @@ fn ulp_pq_roundtrip_u16() {
         TransferFunction::Linear,
     );
 
-    let plan_fwd =
-        crate::ConvertPlan::plan_native(pq_u16, linear_f32).expect("PQ U16 → Linear F32");
+    let plan_fwd = crate::NativePlan::plan_native(pq_u16, linear_f32).expect("PQ U16 → Linear F32");
     let plan_back =
-        crate::ConvertPlan::plan_native(linear_f32, pq_u16).expect("Linear F32 → PQ U16");
+        crate::NativePlan::plan_native(linear_f32, pq_u16).expect("Linear F32 → PQ U16");
 
     let mut max_err: u16 = 0;
     // Test representative values across the range.
@@ -833,10 +832,9 @@ fn ulp_pq_f32_roundtrip() {
         TransferFunction::Linear,
     );
 
-    let plan_fwd =
-        crate::ConvertPlan::plan_native(pq_f32, linear_f32).expect("PQ F32 → Linear F32");
+    let plan_fwd = crate::NativePlan::plan_native(pq_f32, linear_f32).expect("PQ F32 → Linear F32");
     let plan_back =
-        crate::ConvertPlan::plan_native(linear_f32, pq_f32).expect("Linear F32 → PQ F32");
+        crate::NativePlan::plan_native(linear_f32, pq_f32).expect("Linear F32 → PQ F32");
 
     let mut max_rel_err: f64 = 0.0;
     // Test values across [0, 1] in PQ domain.
@@ -880,7 +878,7 @@ fn ulp_pq_eotf_monotonic() {
         TransferFunction::Linear,
     );
 
-    let plan = crate::ConvertPlan::plan_native(pq_u16, linear_f32).expect("PQ EOTF plan");
+    let plan = crate::NativePlan::plan_native(pq_u16, linear_f32).expect("PQ EOTF plan");
     let mut prev: f32 = -1.0;
 
     for v in 0u32..=65535 {
@@ -919,7 +917,7 @@ fn ulp_hlg_boundary_values() {
     );
 
     let plan =
-        crate::ConvertPlan::plan_native(hlg_u16, linear_f32).expect("HLG U16 → Linear F32 plan");
+        crate::NativePlan::plan_native(hlg_u16, linear_f32).expect("HLG U16 → Linear F32 plan");
 
     // HLG code 0 → linear 0.0
     let input_0: [u8; 2] = 0u16.to_ne_bytes();
@@ -957,9 +955,9 @@ fn ulp_hlg_roundtrip_u16() {
     );
 
     let plan_fwd =
-        crate::ConvertPlan::plan_native(hlg_u16, linear_f32).expect("HLG U16 → Linear F32");
+        crate::NativePlan::plan_native(hlg_u16, linear_f32).expect("HLG U16 → Linear F32");
     let plan_back =
-        crate::ConvertPlan::plan_native(linear_f32, hlg_u16).expect("Linear F32 → HLG U16");
+        crate::NativePlan::plan_native(linear_f32, hlg_u16).expect("Linear F32 → HLG U16");
 
     let mut max_err: u16 = 0;
     for v in 0u32..=65535 {
@@ -1000,7 +998,7 @@ fn ulp_hlg_eotf_monotonic() {
         TransferFunction::Linear,
     );
 
-    let plan = crate::ConvertPlan::plan_native(hlg_u16, linear_f32).expect("HLG EOTF plan");
+    let plan = crate::NativePlan::plan_native(hlg_u16, linear_f32).expect("HLG EOTF plan");
     let mut prev: f32 = -1.0;
 
     for v in 0u32..=65535 {
@@ -1039,10 +1037,10 @@ fn ulp_pq_to_srgb_basic() {
         TransferFunction::Srgb,
     );
 
-    // Plain `ConvertPlan::new` refuses HDR→SDR (no source peak); the
+    // Plain `NativePlan::new` refuses HDR→SDR (no source peak); the
     // HDR-aware constructor builds a tone-mapped plan instead.
     let plan =
-        ConvertPlan::new_with_hdr_peak(pq_u16, srgb_u8, 1000.0).expect("PQ U16 → sRGB U8 HDR plan");
+        NativePlan::new_with_hdr_peak(pq_u16, srgb_u8, 1000.0).expect("PQ U16 → sRGB U8 HDR plan");
 
     // PQ code 0 → sRGB 0
     let input_0: [u8; 6] = [0; 6]; // 3 × u16(0)

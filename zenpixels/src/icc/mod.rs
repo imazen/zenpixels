@@ -117,6 +117,14 @@ pub(crate) fn extract_cicp(data: &[u8]) -> Option<Cicp> {
     if data.get(ICC_SIGNATURE_OFFSET..ICC_SIGNATURE_OFFSET + 4)? != b"acsp" {
         return None;
     }
+    // ICC.1 §9.2.17: `cicpTag` exists only in v4+ Input, Display, or ColorSpace profiles.
+    let version = u32::from_be_bytes(data.get(8..12)?.try_into().ok()?);
+    if version < 0x0400_0000 {
+        return None;
+    }
+    if !matches!(data.get(12..16)?, b"scnr" | b"mntr" | b"spac") {
+        return None;
+    }
 
     let tag_count = u32::from_be_bytes(
         data[ICC_TAG_COUNT_OFFSET..ICC_TAG_COUNT_OFFSET + 4]
@@ -140,19 +148,19 @@ pub(crate) fn extract_cicp(data: &[u8]) -> Option<Cicp> {
             return None;
         }
 
-        let tag_data = data.get(data_offset..data_offset + 12)?;
+        let tag_span = data.get(data_offset..data_offset.checked_add(data_size)?)?;
+        let tag_data = &tag_span[..12];
 
-        // Tag data starts with type signature (should also be "cicp").
-        if tag_data[..4] != *b"cicp" {
+        // Tag data starts with type signature "cicp" + 4 zero reserved bytes (ICC.1 §10.4).
+        if tag_data[..4] != *b"cicp" || tag_data[4..8] != [0; 4] || tag_data[11] > 1 {
             return None;
         }
-        // Bytes 4..8 are reserved (should be zero).
         // Bytes 8..12 are the four CICP fields.
         return Some(Cicp::new(
             tag_data[8],
             tag_data[9],
             tag_data[10],
-            tag_data[11] != 0,
+            tag_data[11] == 1,
         ));
     }
 
@@ -189,6 +197,8 @@ pub(crate) struct ProfileFeatures {
     pub(crate) has_b2a1: bool,
     /// Has `B2A2` LUT (saturation PCS→device).
     pub(crate) has_b2a2: bool,
+    /// Has `D2B0..3` or `B2D0..3` float multi-processing element tags (ICC.1:2022 §8.10.2).
+    pub(crate) has_mpe_lut: bool,
     /// Has matrix-shaper tags (rXYZ + gXYZ + bXYZ + rTRC + gTRC + bTRC).
     pub(crate) has_matrix_shaper: bool,
 }
@@ -209,6 +219,7 @@ impl ProfileFeatures {
             && !self.has_b2a0
             && !self.has_b2a1
             && !self.has_b2a2
+            && !self.has_mpe_lut
             && (!self.has_chad || self.chad_is_bradford)
     }
 }
@@ -258,13 +269,14 @@ pub(crate) fn inspect_profile(data: &[u8]) -> Option<ProfileFeatures> {
     let mut has_rtrc = false;
     let mut has_gtrc = false;
     let mut has_btrc = false;
-    let mut chad_off = None;
+    let mut chad_span: Option<(usize, usize)> = None;
 
     for i in 0..tag_count {
         let entry_offset = ICC_TAG_TABLE_OFFSET + i * ICC_TAG_ENTRY_SIZE;
         let entry = data.get(entry_offset..entry_offset + ICC_TAG_ENTRY_SIZE)?;
         let sig = &entry[..4];
         let d_off = u32::from_be_bytes(entry[4..8].try_into().ok()?) as usize;
+        let d_size = u32::from_be_bytes(entry[8..12].try_into().ok()?) as usize;
         match sig {
             b"rXYZ" => has_rxyz = true,
             b"gXYZ" => has_gxyz = true,
@@ -278,7 +290,10 @@ pub(crate) fn inspect_profile(data: &[u8]) -> Option<ProfileFeatures> {
             b"B2A0" => feat.has_b2a0 = true,
             b"B2A1" => feat.has_b2a1 = true,
             b"B2A2" => feat.has_b2a2 = true,
-            b"chad" => chad_off = Some(d_off),
+            b"D2B0" | b"D2B1" | b"D2B2" | b"D2B3" | b"B2D0" | b"B2D1" | b"B2D2" | b"B2D3" => {
+                feat.has_mpe_lut = true;
+            }
+            b"chad" => chad_span = Some((d_off, d_size)),
             _ => {}
         }
     }
@@ -286,10 +301,13 @@ pub(crate) fn inspect_profile(data: &[u8]) -> Option<ProfileFeatures> {
     feat.has_matrix_shaper = has_rxyz && has_gxyz && has_bxyz && has_rtrc && has_gtrc && has_btrc;
 
     // Parse chad matrix if present
-    if let Some(off) = chad_off {
+    if let Some((off, d_size)) = chad_span {
         feat.has_chad = true;
-        // chad tag: "sf32" (signature) + 4 reserved + 9 × s15Fixed16 (f64 values)
-        if data.get(off..off + 8)? == b"sf32\0\0\0\0" && data.len() >= off + 8 + 36 {
+        // chad tag: "sf32" (signature) + 4 reserved + 9 × s15Fixed16 (44 bytes minimum)
+        if d_size >= 44
+            && off.checked_add(d_size).is_some_and(|end| end <= data.len())
+            && data.get(off..off + 8)? == b"sf32\0\0\0\0"
+        {
             let mut m = [0.0f64; 9];
             let mut ok = true;
             for (i, slot) in m.iter_mut().enumerate() {
@@ -374,9 +392,7 @@ impl IccIdentification {
     #[inline]
     #[must_use]
     pub fn is_common_srgb(icc_bytes: &[u8]) -> bool {
-        identify_common(icc_bytes).is_some_and(|id| {
-            id.is_srgb() && id.valid_use == IdentificationUse::MatrixTrcSubstitution
-        })
+        identify_substitutable(icc_bytes).is_some_and(|id| id.is_srgb())
     }
 
     /// Create a new identification result.
@@ -521,30 +537,41 @@ pub(crate) fn identify_common(icc_bytes: &[u8]) -> Option<IccIdentification> {
     identify_common_at(icc_bytes, Tolerance::Intent)
 }
 
+/// Identify a well-known ICC profile that is safe for unconditional
+/// matrix+TRC substitution (`IdentificationUse::MatrixTrcSubstitution`).
+///
+/// Only consults the compact substitutable profile table (`SUBSTITUTABLE_*`),
+/// allowing callers that never use `MetadataOnly` entries (such as
+/// [`ColorProfileSource::resolve`](crate::ColorProfileSource::resolve) and
+/// [`IccIdentification::is_common_srgb`]) to dead-strip the metadata-only table.
+#[inline(never)]
+pub(crate) fn identify_substitutable(icc_bytes: &[u8]) -> Option<IccIdentification> {
+    let hash = normalized_hash(icc_bytes);
+    let meta = lookup_substitutable_hash(hash)?;
+    if unpack_err(meta) <= Tolerance::Intent as u8 && unpack_mask(meta) == Safe::AnyIntent {
+        Some(IccIdentification::new(
+            unpack_cp(meta),
+            unpack_tf(meta),
+            IdentificationUse::MatrixTrcSubstitution,
+        ))
+    } else {
+        None
+    }
+}
+
 /// Internal identification with configurable tolerance.
 fn identify_common_at(icc_bytes: &[u8], tolerance: Tolerance) -> Option<IccIdentification> {
     let hash = normalized_hash(icc_bytes);
-    if let Ok(idx) = KNOWN_RGB_PROFILES.binary_search_by_key(&hash, |e| e.0) {
-        let entry = &KNOWN_RGB_PROFILES[idx];
-        if entry.3 <= tolerance as u8 {
-            return Some(IccIdentification::new(
-                entry.1,
-                entry.2,
-                use_from_mask(entry.4),
-            ));
-        }
+    let meta = lookup_substitutable_hash(hash).or_else(|| lookup_metadata_only_hash(hash))?;
+    if unpack_err(meta) <= tolerance as u8 {
+        Some(IccIdentification::new(
+            unpack_cp(meta),
+            unpack_tf(meta),
+            use_from_mask(unpack_mask(meta)),
+        ))
+    } else {
+        None
     }
-    if let Ok(idx) = KNOWN_GRAY_PROFILES.binary_search_by_key(&hash, |e| e.0) {
-        let entry = &KNOWN_GRAY_PROFILES[idx];
-        if entry.2 <= tolerance as u8 {
-            return Some(IccIdentification::new(
-                ColorPrimaries::Bt709,
-                entry.1,
-                use_from_mask(entry.3),
-            ));
-        }
-    }
-    None
 }
 
 /// Map an intent-safety mask to an [`IdentificationUse`].
@@ -579,31 +606,23 @@ pub(crate) fn identify_common_for(
     tolerance: Tolerance,
     use_for: CoalesceForUse,
 ) -> Option<IccIdentification> {
+    // All table entries are D65 profiles; ICC-Absolute colorimetric (ICC.1 §6.3.2.3)
+    // undoes D65->D50 adaptation in PCS, so D50-adapted relative matrix math is never equivalent.
+    if matches!(use_for, CoalesceForUse::AbsoluteColorimetric) {
+        return None;
+    }
     let hash = normalized_hash(icc_bytes);
     let required = use_for.required_mask();
 
-    // Try RGB table first.
-    if let Ok(idx) = KNOWN_RGB_PROFILES.binary_search_by_key(&hash, |e| e.0) {
-        let entry = &KNOWN_RGB_PROFILES[idx];
-        if entry.3 <= tolerance as u8 && (entry.4 & required) == required {
-            return Some(IccIdentification::new(
-                entry.1,
-                entry.2,
-                IdentificationUse::MatrixTrcSubstitution,
-            ));
-        }
-    }
-
-    // Try grayscale table.
-    if let Ok(idx) = KNOWN_GRAY_PROFILES.binary_search_by_key(&hash, |e| e.0) {
-        let entry = &KNOWN_GRAY_PROFILES[idx];
-        if entry.2 <= tolerance as u8 && (entry.3 & required) == required {
-            return Some(IccIdentification::new(
-                ColorPrimaries::Bt709,
-                entry.1,
-                IdentificationUse::MatrixTrcSubstitution,
-            ));
-        }
+    // Metadata-only entries have intent_mask == 0 and can never satisfy a
+    // non-zero `required` mask, so only the substitutable table is searched.
+    let meta = lookup_substitutable_hash(hash)?;
+    if unpack_err(meta) <= tolerance as u8 && (unpack_mask(meta) & required) == required {
+        return Some(IccIdentification::new(
+            unpack_cp(meta),
+            unpack_tf(meta),
+            IdentificationUse::MatrixTrcSubstitution,
+        ));
     }
 
     None
@@ -622,6 +641,8 @@ pub(crate) fn profile_color_space(icc_bytes: &[u8]) -> Option<crate::ColorModel>
         b"RGB " => Some(crate::ColorModel::Rgb),
         b"GRAY" => Some(crate::ColorModel::Gray),
         b"CMYK" => Some(crate::ColorModel::Cmyk),
+        b"Lab " => Some(crate::ColorModel::Lab),
+        b"XYZ " => Some(crate::ColorModel::Xyz),
         _ => None,
     }
 }
@@ -796,6 +817,215 @@ const KNOWN_RGB_PROFILES: &[(ProfileHash, CP, TF, u8, u8)] =
 const KNOWN_GRAY_PROFILES: &[(ProfileHash, TF, u8, u8)] =
     include!("icc_table_gray.inc");
 
+// ── Compact split SoA runtime tables ─────────────────────────────────────
+//
+// `KNOWN_RGB_PROFILES` and `KNOWN_GRAY_PROFILES` are compile-time inputs only
+// (never referenced at runtime, so they emit 0 bytes into `.rodata`).
+//
+// Storing `((u64, u32), CP, TF, u8, u8)` directly wastes 8–9 bytes of struct
+// alignment padding per entry (24 B/entry × 441 = 10,584 B) and forces callers
+// that only need substitutable profiles (`ColorProfileSource::resolve`,
+// `is_common_srgb`) to carry all 236 `Safe::IdOnly` metadata-only entries.
+//
+// Packing into parallel arrays `(fnv64: [u64; N], murmur32: [u32; N], meta: [u16; N])`
+// takes 14 B/entry losslessly (full 96-bit fingerprint + exact primaries,
+// transfer, 3-bit intent mask, and 6-bit max_u16_err), splits substitutable
+// (~2.9 KB) from metadata-only (~3.3 KB) so the latter dead-strips when unused,
+// and collapses RGB + gray into a single cache-friendly `u64` binary search.
+
+const fn pack_cp(cp: CP) -> u16 {
+    match cp {
+        CP::Bt709 => 0,
+        CP::DisplayP3 => 1,
+        CP::Bt2020 => 2,
+        CP::AdobeRgb => 3,
+        _ => panic!("unsupported ColorPrimaries in ICC hash table"),
+    }
+}
+
+const fn unpack_cp(meta: u16) -> CP {
+    match meta & 0x7 {
+        0 => CP::Bt709,
+        1 => CP::DisplayP3,
+        2 => CP::Bt2020,
+        3 => CP::AdobeRgb,
+        _ => CP::Unknown,
+    }
+}
+
+const fn pack_tf(tf: TF) -> u16 {
+    match tf {
+        TF::Linear => 0,
+        TF::Srgb => 1,
+        TF::Bt709 => 2,
+        TF::Gamma22 => 3,
+        TF::Pq => 4,
+        TF::Hlg => 5,
+        _ => panic!("unsupported TransferFunction in ICC hash table"),
+    }
+}
+
+const fn unpack_tf(meta: u16) -> TF {
+    match (meta >> 3) & 0x7 {
+        0 => TF::Linear,
+        1 => TF::Srgb,
+        2 => TF::Bt709,
+        3 => TF::Gamma22,
+        4 => TF::Pq,
+        5 => TF::Hlg,
+        _ => TF::Unknown,
+    }
+}
+
+const fn pack_meta(cp: CP, tf: TF, err: u8, mask: u8) -> u16 {
+    assert!(
+        err <= 63,
+        "ICC table max_u16_err exceeds 6-bit packed limit"
+    );
+    assert!(
+        mask <= 7,
+        "ICC table intent_mask exceeds 3-bit packed limit"
+    );
+    pack_cp(cp) | (pack_tf(tf) << 3) | ((mask as u16) << 6) | ((err as u16) << 9)
+}
+
+#[inline]
+const fn unpack_mask(meta: u16) -> u8 {
+    ((meta >> 6) & 0x7) as u8
+}
+
+#[inline]
+const fn unpack_err(meta: u16) -> u8 {
+    ((meta >> 9) & 0x3f) as u8
+}
+
+const fn count_compact(substitutable: bool) -> usize {
+    let mut n = 0;
+    let mut i = 0;
+    while i < KNOWN_RGB_PROFILES.len() {
+        if (KNOWN_RGB_PROFILES[i].4 != Safe::IdOnly) == substitutable {
+            n += 1;
+        }
+        i += 1;
+    }
+    let mut j = 0;
+    while j < KNOWN_GRAY_PROFILES.len() {
+        if (KNOWN_GRAY_PROFILES[j].3 != Safe::IdOnly) == substitutable {
+            n += 1;
+        }
+        j += 1;
+    }
+    n
+}
+
+struct CompactProfileTable<const N: usize> {
+    fnv64: [u64; N],
+    murmur32: [u32; N],
+    meta: [u16; N],
+}
+
+const fn build_compact_table<const N: usize>(substitutable: bool) -> CompactProfileTable<N> {
+    let mut fnv64 = [0u64; N];
+    let mut murmur32 = [0u32; N];
+    let mut meta = [0u16; N];
+
+    let mut ri = 0;
+    let mut gi = 0;
+    let mut out = 0;
+
+    while out < N {
+        while ri < KNOWN_RGB_PROFILES.len()
+            && (KNOWN_RGB_PROFILES[ri].4 != Safe::IdOnly) != substitutable
+        {
+            ri += 1;
+        }
+        while gi < KNOWN_GRAY_PROFILES.len()
+            && (KNOWN_GRAY_PROFILES[gi].3 != Safe::IdOnly) != substitutable
+        {
+            gi += 1;
+        }
+
+        let take_rgb = if ri < KNOWN_RGB_PROFILES.len() && gi < KNOWN_GRAY_PROFILES.len() {
+            let rh = KNOWN_RGB_PROFILES[ri].0;
+            let gh = KNOWN_GRAY_PROFILES[gi].0;
+            rh.0 < gh.0 || (rh.0 == gh.0 && rh.1 < gh.1)
+        } else {
+            ri < KNOWN_RGB_PROFILES.len()
+        };
+
+        let (h, m) = if take_rgb {
+            let e = KNOWN_RGB_PROFILES[ri];
+            ri += 1;
+            (e.0, pack_meta(e.1, e.2, e.3, e.4))
+        } else {
+            let e = KNOWN_GRAY_PROFILES[gi];
+            gi += 1;
+            (e.0, pack_meta(CP::Bt709, e.1, e.2, e.3))
+        };
+
+        if out > 0 {
+            // Binary search indexes by `fnv64` directly; assert strict uniqueness.
+            assert!(
+                fnv64[out - 1] < h.0,
+                "duplicate or unsorted fnv64 hash in compact ICC table"
+            );
+        }
+        fnv64[out] = h.0;
+        murmur32[out] = h.1;
+        meta[out] = m;
+        out += 1;
+    }
+
+    CompactProfileTable {
+        fnv64,
+        murmur32,
+        meta,
+    }
+}
+
+const SUBSTITUTABLE_LEN: usize = count_compact(true);
+const METADATA_ONLY_LEN: usize = count_compact(false);
+
+const SUBSTITUTABLE_TABLE: CompactProfileTable<SUBSTITUTABLE_LEN> = build_compact_table(true);
+const METADATA_ONLY_TABLE: CompactProfileTable<METADATA_ONLY_LEN> = build_compact_table(false);
+
+static SUBSTITUTABLE_FNV64: [u64; SUBSTITUTABLE_LEN] = SUBSTITUTABLE_TABLE.fnv64;
+static SUBSTITUTABLE_MURMUR32: [u32; SUBSTITUTABLE_LEN] = SUBSTITUTABLE_TABLE.murmur32;
+static SUBSTITUTABLE_META: [u16; SUBSTITUTABLE_LEN] = SUBSTITUTABLE_TABLE.meta;
+
+static METADATA_ONLY_FNV64: [u64; METADATA_ONLY_LEN] = METADATA_ONLY_TABLE.fnv64;
+static METADATA_ONLY_MURMUR32: [u32; METADATA_ONLY_LEN] = METADATA_ONLY_TABLE.murmur32;
+static METADATA_ONLY_META: [u16; METADATA_ONLY_LEN] = METADATA_ONLY_TABLE.meta;
+
+fn lookup_compact(fnv64: &[u64], murmur32: &[u32], meta: &[u16], hash: ProfileHash) -> Option<u16> {
+    let idx = fnv64.binary_search(&hash.0).ok()?;
+    if murmur32[idx] == hash.1 {
+        Some(meta[idx])
+    } else {
+        None
+    }
+}
+
+#[inline]
+fn lookup_substitutable_hash(hash: ProfileHash) -> Option<u16> {
+    lookup_compact(
+        &SUBSTITUTABLE_FNV64,
+        &SUBSTITUTABLE_MURMUR32,
+        &SUBSTITUTABLE_META,
+        hash,
+    )
+}
+
+#[inline]
+fn lookup_metadata_only_hash(hash: ProfileHash) -> Option<u16> {
+    lookup_compact(
+        &METADATA_ONLY_FNV64,
+        &METADATA_ONLY_MURMUR32,
+        &METADATA_ONLY_META,
+        hash,
+    )
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -877,6 +1107,108 @@ mod tests {
                 "gray {h:?} has reserved bits set: 0x{mask:02x}"
             );
         }
+    }
+
+    #[test]
+    fn compact_tables_match_raw_tables_bit_exact() {
+        let tolerances = [
+            Tolerance::Exact,
+            Tolerance::Precise,
+            Tolerance::Approximate,
+            Tolerance::Intent,
+        ];
+        let uses = [
+            CoalesceForUse::AnyIntent,
+            CoalesceForUse::RelativeColorimetric,
+            CoalesceForUse::AbsoluteColorimetric,
+            CoalesceForUse::Perceptual,
+            CoalesceForUse::Saturation,
+        ];
+
+        assert_eq!(
+            SUBSTITUTABLE_LEN + METADATA_ONLY_LEN,
+            KNOWN_RGB_PROFILES.len() + KNOWN_GRAY_PROFILES.len(),
+            "compact split tables must cover every raw entry"
+        );
+        // Verify compact table size is strictly 14 B/entry (u64 + u32 + u16).
+        assert_eq!(
+            core::mem::size_of_val(&SUBSTITUTABLE_FNV64)
+                + core::mem::size_of_val(&SUBSTITUTABLE_MURMUR32)
+                + core::mem::size_of_val(&SUBSTITUTABLE_META),
+            SUBSTITUTABLE_LEN * 14
+        );
+
+        let verify_entry = |hash: ProfileHash, cp: CP, tf: TF, err: u8, mask: u8| {
+            let meta = lookup_substitutable_hash(hash)
+                .or_else(|| lookup_metadata_only_hash(hash))
+                .expect("every raw entry must exist in compact tables");
+            assert_eq!(unpack_cp(meta), cp);
+            assert_eq!(unpack_tf(meta), tf);
+            assert_eq!(unpack_err(meta), err);
+            assert_eq!(unpack_mask(meta), mask);
+
+            // Partition invariant: substitutable iff mask != 0.
+            assert_eq!(
+                lookup_substitutable_hash(hash).is_some(),
+                mask != Safe::IdOnly
+            );
+            assert_eq!(
+                lookup_metadata_only_hash(hash).is_some(),
+                mask == Safe::IdOnly
+            );
+
+            // Check every tolerance and intent predicate.
+            for tol in tolerances {
+                let expected =
+                    (err <= tol as u8).then(|| IccIdentification::new(cp, tf, use_from_mask(mask)));
+                let actual = (unpack_err(meta) <= tol as u8).then(|| {
+                    IccIdentification::new(
+                        unpack_cp(meta),
+                        unpack_tf(meta),
+                        use_from_mask(unpack_mask(meta)),
+                    )
+                });
+                assert_eq!(actual, expected);
+
+                for use_for in uses {
+                    let req = use_for.required_mask();
+                    let expected_for = (!matches!(use_for, CoalesceForUse::AbsoluteColorimetric)
+                        && err <= tol as u8
+                        && (mask & req) == req)
+                        .then(|| {
+                            IccIdentification::new(cp, tf, IdentificationUse::MatrixTrcSubstitution)
+                        });
+                    let actual_for = if matches!(use_for, CoalesceForUse::AbsoluteColorimetric) {
+                        None
+                    } else {
+                        lookup_substitutable_hash(hash).and_then(|m| {
+                            (unpack_err(m) <= tol as u8 && (unpack_mask(m) & req) == req).then(
+                                || {
+                                    IccIdentification::new(
+                                        unpack_cp(m),
+                                        unpack_tf(m),
+                                        IdentificationUse::MatrixTrcSubstitution,
+                                    )
+                                },
+                            )
+                        })
+                    };
+                    assert_eq!(actual_for, expected_for);
+                }
+            }
+        };
+
+        for &(h, cp, tf, err, mask) in KNOWN_RGB_PROFILES {
+            verify_entry(h, cp, tf, err, mask);
+        }
+        for &(h, tf, err, mask) in KNOWN_GRAY_PROFILES {
+            verify_entry(h, CP::Bt709, tf, err, mask);
+        }
+
+        // Wrong murmur32 with valid fnv64 must never match.
+        let (fnv, murmur) = KNOWN_RGB_PROFILES[0].0;
+        assert!(lookup_substitutable_hash((fnv, murmur ^ 1)).is_none());
+        assert!(lookup_metadata_only_hash((fnv, murmur ^ 1)).is_none());
     }
 
     #[test]
@@ -1019,10 +1351,14 @@ mod tests {
 
     // ── extract_cicp tests ───────────────────────────────────────────
 
-    /// Helper: build a minimal ICC profile with a cicp tag.
+    /// Helper: build a minimal ICC v4.4 Display profile with a cicp tag.
     fn build_icc_with_cicp(cp: u8, tc: u8, mc: u8, fr: bool) -> alloc::vec::Vec<u8> {
         let mut data = alloc::vec![0u8; 256];
         data[0..4].copy_from_slice(&256u32.to_be_bytes());
+        data[8..12].copy_from_slice(&[4, 0x40, 0, 0]);
+        data[12..16].copy_from_slice(b"mntr");
+        data[16..20].copy_from_slice(b"RGB ");
+        data[20..24].copy_from_slice(b"XYZ ");
         data[36..40].copy_from_slice(b"acsp");
         data[128..132].copy_from_slice(&1u32.to_be_bytes());
         data[132..136].copy_from_slice(b"cicp");
@@ -1076,13 +1412,8 @@ mod tests {
 
     #[test]
     fn extract_cicp_no_tag() {
-        let mut data = alloc::vec![0u8; 256];
-        data[0..4].copy_from_slice(&256u32.to_be_bytes());
-        data[36..40].copy_from_slice(b"acsp");
-        data[128..132].copy_from_slice(&1u32.to_be_bytes());
+        let mut data = build_icc_with_cicp(1, 13, 0, true);
         data[132..136].copy_from_slice(b"desc"); // not cicp
-        data[136..140].copy_from_slice(&144u32.to_be_bytes());
-        data[140..144].copy_from_slice(&12u32.to_be_bytes());
         assert!(extract_cicp(&data).is_none());
     }
 
@@ -1102,12 +1433,39 @@ mod tests {
 
     #[test]
     fn extract_cicp_malicious_tag_count() {
-        let mut data = alloc::vec![0u8; 256];
-        data[0..4].copy_from_slice(&256u32.to_be_bytes());
-        data[36..40].copy_from_slice(b"acsp");
+        let mut data = build_icc_with_cicp(1, 13, 0, true);
+        data[132..136].copy_from_slice(b"desc");
         // Absurd tag count — capped to 200
         data[128..132].copy_from_slice(&u32::MAX.to_be_bytes());
         assert!(extract_cicp(&data).is_none());
+    }
+
+    #[test]
+    fn extract_cicp_rejects_v2_link_reserved_truncation_and_bad_range() {
+        // ICC v2.4 header -> rejected per ICC.1 §9.2.17
+        let mut v2 = build_icc_with_cicp(1, 13, 0, true);
+        v2[8..12].copy_from_slice(&[2, 0x40, 0, 0]);
+        assert!(extract_cicp(&v2).is_none());
+
+        // DeviceLink ('link') class -> rejected per ICC.1 §9.2.17
+        let mut link = build_icc_with_cicp(1, 13, 0, true);
+        link[12..16].copy_from_slice(b"link");
+        assert!(extract_cicp(&link).is_none());
+
+        // Non-zero reserved bytes 4..8 -> rejected per ICC.1 §10.4
+        let mut reserved = build_icc_with_cicp(1, 13, 0, true);
+        reserved[148] = 1;
+        assert!(extract_cicp(&reserved).is_none());
+
+        // Declared data_size extends past end of buffer -> rejected
+        let mut truncated = build_icc_with_cicp(1, 13, 0, true);
+        truncated[140..144].copy_from_slice(&500u32.to_be_bytes());
+        assert!(extract_cicp(&truncated).is_none());
+
+        // Invalid full_range byte (> 1) -> rejected per ICC.1 §10.4
+        let mut bad_fr = build_icc_with_cicp(1, 13, 0, true);
+        bad_fr[155] = 2;
+        assert!(extract_cicp(&bad_fr).is_none());
     }
 
     /// Survey profile features across the local ICC cache.
@@ -1186,6 +1544,12 @@ mod tests {
 
         header[16..20].copy_from_slice(b"GRAY");
         assert_eq!(profile_color_space(&header), Some(crate::ColorModel::Gray));
+
+        header[16..20].copy_from_slice(b"Lab ");
+        assert_eq!(profile_color_space(&header), Some(crate::ColorModel::Lab));
+
+        header[16..20].copy_from_slice(b"XYZ ");
+        assert_eq!(profile_color_space(&header), Some(crate::ColorModel::Xyz));
     }
 
     #[test]
@@ -1197,7 +1561,7 @@ mod tests {
     #[test]
     fn profile_color_space_unknown() {
         let mut header = vec![0u8; 128];
-        header[16..20].copy_from_slice(b"Lab ");
+        header[16..20].copy_from_slice(b"5CLR");
         assert_eq!(profile_color_space(&header), None);
     }
 }

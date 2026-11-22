@@ -60,7 +60,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Source::Icc(&linear),
             PixelFormat::RgbF32,
             PixelFormat::RgbF32,
-            &ConvertOptions::permissive().with_clip_out_of_gamut(false),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+                .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended),
         );
         let Some(result) = result else {
             println!("{name}\tdeclined");
@@ -84,3 +88,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
+
+#[path = "../../zenpixels-convert/tests/support/cms.rs"]
+mod test_cms;
+#[allow(unused_imports)]
+use test_cms::TestCmsExt as _;

@@ -13,7 +13,7 @@ use moxcms::{
 use std::sync::Arc;
 use zenbench::prelude::*;
 use zenpixels::{Cicp, ColorProfileSource as Source, PixelFormat as F};
-use zenpixels_convert::cms::{PluggableCms, RowTransformMut};
+use zenpixels_convert::cms::RowTransformMut;
 use zenpixels_convert::cms_moxcms::MoxCms;
 use zenpixels_convert::policy::ConvertOptions;
 
@@ -31,7 +31,10 @@ fn transform(icc: &[u8], from: F, to: F) -> Box<dyn RowTransformMut> {
             SRGB,
             from,
             to,
-            &ConvertOptions::permissive(),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
         )
         .expect("declined")
         .expect("refused")
@@ -82,7 +85,7 @@ fn main() {
             suite.group(format!("{name} CMYK to sRGB, 4096 pixels"), move |g| {
                 g.throughput(Throughput::Elements(WIDTH as u64));
                 {
-                    let mut t = transform(&icc, F::Cmyk8, F::Rgb8);
+                    let mut t = transform(&icc, F::CMYK8, F::Rgb8);
                     let (src, mut dst) = (ink.clone(), vec![0u8; WIDTH * 3]);
                     g.bench("Cmyk8 to Rgb8", move |b| {
                         b.iter(|| {
@@ -92,7 +95,7 @@ fn main() {
                     });
                 }
                 {
-                    let mut t = transform(&icc, F::CmykF32, F::RgbF32);
+                    let mut t = transform(&icc, F::CMYKF32, F::RgbF32);
                     let src = ink_f32.clone();
                     let mut dst = vec![0f32; WIDTH * 3];
                     g.bench("CmykF32 to RgbF32", move |b| {
@@ -126,3 +129,8 @@ fn main() {
         }
     });
 }
+
+#[path = "../tests/support/cms.rs"]
+mod test_cms;
+#[allow(unused_imports)]
+use test_cms::TestCmsExt as _;

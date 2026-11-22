@@ -77,24 +77,35 @@ pub enum ConvertError {
     SdrPeakRequired,
     /// The requested HDR conversion needs a Cargo feature that is not enabled.
     HdrFeatureRequired,
+    /// The requested conversion needs a Cargo feature on `zenpixels-convert` that
+    /// is not enabled in this build (such as `"perceptual"`, `"oklab"`, or
+    /// `"hdr-transfers"`).
+    FeatureRequired {
+        /// Cargo feature name to enable on `zenpixels-convert`.
+        feature: &'static str,
+        /// Source pixel descriptor.
+        from: PixelDescriptor,
+        /// Destination pixel descriptor.
+        to: PixelDescriptor,
+    },
     /// HLG rendering needs explicit conditions supplied through
     /// [`zenpixels::ConvertOptions::with_hlg_rendering`].
     HlgRenderingRequired,
     /// The conversion is HDR (`Pq` / `Hlg`) → SDR but no usable peak
     /// luminance was supplied. Raised both when no peak was given at all
-    /// (the plain [`ConvertPlan::new`](crate::ConvertPlan::new) entry
+    /// (the plain [`ConvertPlan::build`](crate::ConvertPlan::build) entry
     /// point doesn't take one) and when a supplied `HdrConfig` carries a
     /// non-finite or non-positive `source_peak_nits` / `target_peak_nits`
     /// (including the unset `HdrConfig::default()` value `0.0`) — a
     /// degenerate peak would tone-map every pixel to black. Build the
-    /// plan via `ConvertPlan::new_with_hdr_peak` (or
-    /// `ConvertPlan::new_with_hdr_config` for full knob control), and
+    /// plan via `NativePlan::new_with_hdr_peak` (or
+    /// `NativePlan::new_with_hdr_config` for full knob control), and
     /// pass the source's MaxCLL — e.g. from
     /// `hdr::measure::CllMeasure::measure_max`. All three live behind
     /// the `hdr-experimental` Cargo feature (plain code spans here, not
     /// intra-doc links, so this page renders link-clean without it).
     ///
-    /// Pre-0.2.16 the plain `ConvertPlan::new` silently routed HDR→SDR
+    /// Pre-0.2.16 the plain `NativePlan::new` silently routed HDR→SDR
     /// through the linear intermediate with no tone-mapping, producing
     /// semantically wrong pixels. This variant replaces that with a
     /// loud refusal.
@@ -121,11 +132,11 @@ pub enum ConvertError {
     /// from
     #[cfg_attr(
         feature = "hdr-experimental",
-        doc = "[`ConvertPlan::new_with_tone_mapper`](crate::ConvertPlan::new_with_tone_mapper),"
+        doc = "[`ConversionSpec::with_tone_mapper`](crate::ConversionSpec::with_tone_mapper),"
     )]
     #[cfg_attr(
         not(feature = "hdr-experimental"),
-        doc = "`ConvertPlan::new_with_tone_mapper`,"
+        doc = "`NativePlan::new_with_tone_mapper`,"
     )]
     /// but this pipeline does not yet support full-image local
     /// operators (Mantiuk gradient processing, Fattal, bilateral, …).
@@ -173,7 +184,7 @@ pub enum ConvertError {
     /// Lab, XYZ, spot inks, or any future device-dependent space — that
     /// `zenpixels-convert` cannot resolve with its built-in kernels. Attach
     /// a plugin via
-    /// [`RowConverter::new_explicit_with_cms`](crate::RowConverter::new_explicit_with_cms)
+    /// [`ConversionSpec::with_cms`](crate::ConversionSpec::with_cms)
     /// (e.g. `Some(&MoxCms)` under the `cms-moxcms` feature) and the plan
     /// will dispatch the full row work to it.
     ///
@@ -189,15 +200,41 @@ pub enum ConvertError {
         from: PixelDescriptor,
         to: PixelDescriptor,
     },
-    // CMYK rejection used to be folded into `NoPath { from, to }`. Pre-0.2.16
-    // the public-API entry points panicked via `assert_not_cmyk` BEFORE the CMS
-    // chain was consulted, so the documented escape hatch ("attach moxcms for
-    // CMYK↔RGB") was unreachable. 0.2.16 introduces `NeedsCms { from, to }`:
-    // the panic becomes a typed `Err`, callers can match the variant and
-    // re-issue with a plugin, and the moxcms backend dispatches CMYK→RGB
-    // end-to-end. `NoPath` is retained for genuinely impossible conversions
-    // (signal-range crossings without a kernel; HLG↔PQ until OOTF threading
-    // lands). `ConvertError` is `#[non_exhaustive]` so this is additive.
+    /// Implicit relabeling between [`TransferFunction::Unknown`] and a resolved
+    /// transfer function is forbidden; supply an authoritative [`zenpixels::ColorContext`]
+    /// or call [`ConvertPlan::relabel_transfer`](crate::ConvertPlan::relabel_transfer).
+    UnknownTransferRelabelForbidden {
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+    },
+    /// Composed [`ConvertPlan::then`](crate::ConvertPlan::then) boundary encodings do not match.
+    IntermediateMismatch,
+    /// Conversion loses modeled source capacity disallowed by hidden-choice policy.
+    CapacityLoss(crate::precision::ConversionEffect),
+    /// Requested destination luminance anchor/peak disagrees with the compiled output context.
+    TargetLuminanceMismatch,
+    /// Per-worker scratch exceeds [`ConversionSpec::with_worker_limit`](crate::ConversionSpec::with_worker_limit)
+    /// (or uses an opaque backend whose worker bytes are [`ByteBound::Unknown`](crate::ByteBound::Unknown)).
+    WorkerBudgetExceeded { bytes: crate::ByteBound, limit: u64 },
+    /// None of the offered [`CandidateTarget`](crate::CandidateTarget)s could be admitted.
+    NoCandidate {
+        index: usize,
+        cause: alloc::boxed::Box<ConvertError>,
+    },
+    /// Attempted to clone a [`ConvertPlan`](crate::ConvertPlan) or [`RowConverter`](crate::RowConverter)
+    /// that owns a stateful `RowTransformMut` worker.
+    OwnedCmsConsumed,
+    /// Explicit HDR rendering combined with an unresolved/distinct ICC profile cannot be
+    /// executed by the descriptor-only HDR planner without bypassing profile authority.
+    HdrWithOpaqueProfileUnsupported,
+    /// Input view or intermediate stage does not declare the
+    /// [`FloatFacts`](zenpixels::sample::FloatFacts) required by a specialized plan.
+    FloatFactsUnsatisfied {
+        /// Floating-point invariants required by the plan.
+        required: zenpixels::sample::FloatFacts,
+        /// Floating-point invariants actually declared on the input view or upstream stage.
+        actual: zenpixels::sample::FloatFacts,
+    },
 }
 
 impl fmt::Display for ConvertError {
@@ -243,6 +280,14 @@ impl fmt::Display for ConvertError {
                          zenpixels-convert reinterpreting C/M/Y/K as R/G/B/A would \
                          silently corrupt both colour and transparency. Use a CMS \
                          such as moxcms for CMYK↔RGB)"
+                    )?;
+                }
+                let pcs_blocked = matches!(from.color_model(), ColorModel::Lab | ColorModel::Xyz)
+                    || matches!(to.color_model(), ColorModel::Lab | ColorModel::Xyz);
+                if pcs_blocked {
+                    write!(
+                        f,
+                        " (CIE Lab/XYZ conversion requires a CMS backend such as Lcms or MoxCms)"
                     )?;
                 }
                 if from.signal_range != to.signal_range {
@@ -294,11 +339,15 @@ impl fmt::Display for ConvertError {
             Self::HdrPeakRequired => f.write_str("HDR peak is missing; buffer conversion measures it, or use ConvertOptions::with_hdr_peak(HdrPeak::Nits(...))"),
             Self::SdrPeakRequired => f.write_str("SDR target peak is missing; use ConvertOptions::with_sdr_peak"),
             Self::HdrFeatureRequired => f.write_str("HDR tone mapping requires the bt2446a Cargo feature"),
+            Self::FeatureRequired { feature, from, to } => write!(
+                f,
+                "conversion from {from} to {to} requires the `{feature}` Cargo feature on zenpixels-convert"
+            ),
             Self::HlgRenderingRequired => f.write_str("HLG rendering requires explicit supported display conditions"),
             Self::HdrSourceRequiresPeak { from, to } => write!(
                 f,
                 "HDR→SDR conversion ({:?} → {:?}) requires positive, finite peak \
-                 luminances; build the plan via ConvertPlan::new_with_hdr_peak (or \
+                 luminances; build the plan via NativePlan::new_with_hdr_peak (or \
                  new_with_hdr_config) and pass the source's MaxCLL (e.g. \
                  CllMeasure::measure_max)",
                 from.transfer(),
@@ -307,19 +356,55 @@ impl fmt::Display for ConvertError {
             Self::FullImageMapperNotSupported { mapper_name } => write!(
                 f,
                 "tone mapper '{mapper_name}' requires full-image buffering \
-                 (Requirements::full_image == true); ConvertPlan only \
+                 (Requirements::full_image == true); NativePlan only \
                  supports streaming mappers. Pick a pointwise curve (Bt2446A, ACES, \
                  FilmicSpline, …) — local-operator support is reserved capacity",
             ),
             Self::NeedsCms { from, to } => write!(
                 f,
                 "conversion from {} to {} requires a color management plugin: \
-                 call RowConverter::new_explicit_with_cms(_, _, _, Some(&MoxCms)) \
-                 (or another PluggableCms backend) to dispatch the row work \
-                 to a CMS",
+                 pass ConversionSpec::with_cms(&MoxCms) (or another PluggableCms \
+                 backend) to dispatch the row work to a CMS",
                 from.color_model(),
                 to.color_model(),
             ),
+            Self::UnknownTransferRelabelForbidden { from, to } => write!(
+                f,
+                "implicit Unknown <-> Known transfer conversion ({:?} -> {:?}) is forbidden; \
+                 attach an authoritative ColorContext or call ConvertPlan::relabel_transfer",
+                from.transfer(),
+                to.transfer(),
+            ),
+            Self::IntermediateMismatch => {
+                f.write_str("the materialized intermediate PixelEncoding differs between composed plans")
+            }
+            Self::CapacityLoss(effect) => {
+                write!(f, "the requested output loses modeled source capacity: {effect:?}")
+            }
+            Self::TargetLuminanceMismatch => {
+                f.write_str("the effective output luminance metadata disagrees with the requested target")
+            }
+            Self::WorkerBudgetExceeded { bytes, limit } => {
+                write!(
+                    f,
+                    "worker requires {bytes:?} scratch bytes, exceeding the {limit}-byte limit"
+                )
+            }
+            Self::NoCandidate { index, cause } => {
+                write!(f, "candidate {index} was refused: {cause}")
+            }
+            Self::OwnedCmsConsumed => {
+                f.write_str("cannot clone a plan or worker that owns a stateful RowTransformMut backend")
+            }
+            Self::HdrWithOpaqueProfileUnsupported => {
+                f.write_str("explicit HdrConfig cannot be combined with an unresolved ICC profile without bypassing profile authority")
+            }
+            Self::FloatFactsUnsatisfied { required, actual } => {
+                write!(
+                    f,
+                    "input float facts {actual:?} do not satisfy plan requirement {required:?}"
+                )
+            }
         }
     }
 }
@@ -339,6 +424,7 @@ impl core::error::Error for ConvertError {
             Self::CmsBackend(error) => Some(error.as_ref()),
             Self::Buffer(error) => Some(error),
             Self::CicpDescriptor(error) => Some(error),
+            Self::NoCandidate { cause, .. } => Some(cause.as_ref()),
             _ => None,
         }
     }

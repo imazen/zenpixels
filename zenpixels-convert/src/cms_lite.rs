@@ -23,21 +23,10 @@
 //! primaries sets have known chromaticities. ICC profile sources are not
 //! supported unless identified: an unknown one is declined.
 //!
-//! # Example
-//!
-//! ```rust,ignore
-//! use zenpixels_convert::cms_lite::ZenCmsLite;
-//! use zenpixels_convert::output::{EncodeReady, OutputProfile};
-//! use zenpixels_convert::Cicp;
-//!
-//! let ready = EncodeReady::finalize(
-//!     &buffer, &origin,
-//!     OutputProfile::Named(Cicp::SRGB),
-//!     PixelFormat::Rgb8,
-//!     Some(&ZenCmsLite),
-//! )?;
-//! ```
+//! Descriptor-based conversions can use this backend internally through
+//! `ConvertPlan::build`.
 
+#[cfg(test)]
 use alloc::boxed::Box;
 
 use crate::PixelFormat;
@@ -49,8 +38,8 @@ use crate::TransferFunction;
 /// Handles conversions between any color spaces that can be described by
 /// a (primaries, transfer) pair. This includes:
 ///
-/// - **ICC profiles**: identified via 132-profile hash table (~100ns) and
-///   CICP-in-ICC extraction. Covers sRGB, Display P3, BT.2020, Adobe RGB,
+/// - **ICC profiles**: identified via normalized profile fingerprint table (~100ns)
+///   and CICP-in-ICC extraction. Covers sRGB, Display P3, BT.2020, Adobe RGB,
 ///   and their variants across ICC v2–v5.
 /// - **CICP codes**: mapped directly to primaries + transfer.
 /// - **Named profiles**: decomposed to primaries + transfer.
@@ -65,7 +54,7 @@ use crate::TransferFunction;
 /// [`ConvertOptions`], which clamps f32 sRGB transfers to \[0, 1\]. To
 /// preserve out-of-gamut values (negatives, >1.0) for HDR or cross-gamut
 /// workflows, build the converter directly with
-/// `ConvertOptions::permissive().with_clip_out_of_gamut(false)` instead of
+/// `ConvertOptions::retain_channels().with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque).with_depth_policy(crate::DepthPolicy::Round).with_luma(Some(crate::LumaCoefficients::Bt709)).with_gamut_policy(crate::GamutPolicy::PreserveExtended)` instead of
 /// routing through `ZenCmsLite`.
 ///
 /// [`RowConverter`]: crate::RowConverter
@@ -92,14 +81,13 @@ impl core::fmt::Display for ZenCmsLiteError {
 /// `RowTransformMut` wrapper for the [`PluggableCms`](crate::cms::PluggableCms) path.
 ///
 /// Owns a `RowConverter` directly, since `RowTransformMut::transform_row` takes `&mut self`.
+#[cfg(test)]
 struct LiteTransformMut {
     inner: crate::converter::RowConverter,
 }
 
+#[cfg(test)]
 impl crate::cms::RowTransformMut for LiteTransformMut {
-    fn transform_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
-        self.inner.convert_row(src, dst, width);
-    }
     fn try_transform_row(
         &mut self,
         src: &[u8],
@@ -117,17 +105,51 @@ impl crate::cms::RowTransformMut for LiteTransformMut {
     }
 }
 
-impl crate::cms::PluggableCms for ZenCmsLite {
-    fn build_source_transform(
-        &self,
+impl ZenCmsLite {
+    #[cfg(test)]
+    pub(crate) fn build_plan(
         src: crate::ColorProfileSource<'_>,
         dst: crate::ColorProfileSource<'_>,
         src_format: PixelFormat,
         dst_format: PixelFormat,
         options: &crate::policy::ConvertOptions,
-    ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, whereat::At<crate::cms::CmsPluginError>>>
-    {
+    ) -> Option<Result<crate::NativePlan, whereat::At<crate::cms::CmsPluginError>>> {
+        Self::build_plan_with_hooks(
+            src,
+            dst,
+            src_format,
+            dst_format,
+            options,
+            &crate::caps::PlannerHooks::ALL_HOOKS,
+        )
+        .map(|res| {
+            res.map_err(|e| {
+                let msg = alloc::format!("ZenCmsLite plan construction failed: {e:?}");
+                e.map_error(|_| crate::cms::CmsPluginError::msg(msg))
+            })
+        })
+    }
+
+    pub(crate) fn build_plan_with_hooks(
+        src: crate::ColorProfileSource<'_>,
+        dst: crate::ColorProfileSource<'_>,
+        src_format: PixelFormat,
+        dst_format: PixelFormat,
+        options: &crate::policy::ConvertOptions,
+        hooks: &crate::caps::PlannerHooks,
+    ) -> Option<Result<crate::NativePlan, whereat::At<crate::ConvertError>>> {
         use zenpixels::PixelDescriptor;
+
+        // ZenCmsLite implements D65 media-relative matrix+TRC math only. Decline
+        // ICC-Absolute colorimetric requests so a capable backend (such as Lcms)
+        // in the plugin chain can evaluate unadapted PCS white points.
+        let explicit_intent = options.rendering_intent().or(match &src {
+            crate::ColorProfileSource::Parametric(p) => Some(p.rendering_intent),
+            _ => None,
+        });
+        if explicit_intent == Some(zenpixels::RenderingIntent::AbsoluteColorimetric) {
+            return None;
+        }
 
         // Decline when either source can't be resolved to (primaries, transfer)
         // — custom ICC, narrow-range CICP, YCbCr matrix. Not an error;
@@ -135,14 +157,6 @@ impl crate::cms::PluggableCms for ZenCmsLite {
         let (src_p, src_t) = src.resolve()?;
         let (dst_p, dst_t) = dst.resolve()?;
 
-        // Build the descriptors first so we can run the native-model check
-        // against them. Pre-0.2.16 we built these AFTER the same-space
-        // shortcut and called straight into `ConvertPlan::new_explicit`,
-        // which now answers `NeedsCms` for CMYK / Lab / XYZ etc. instead of
-        // panicking. Surfacing that as `Some(Err(...))` would stop the
-        // dispatch chain — but ZenCmsLite recognizes only native RGB-family
-        // gamut/transfer work, so the right answer is `None` (decline) so
-        // the next plugin (e.g. MoxCms) gets a chance.
         let from = PixelDescriptor::from_pixel_format(src_format)
             .with_primaries(src_p)
             .with_transfer(src_t);
@@ -150,9 +164,7 @@ impl crate::cms::PluggableCms for ZenCmsLite {
             .with_primaries(dst_p)
             .with_transfer(dst_t);
 
-        // Decline non-native color models (CMYK today; Lab / XYZ / spot inks
-        // when they land). We have no kernels for them — let MoxCms or the
-        // user-supplied plugin handle it.
+        // Decline non-native color models (CMYK, Lab, XYZ, etc.).
         if crate::convert::needs_cms_for_color_model(&from, &to) {
             return None;
         }
@@ -165,22 +177,36 @@ impl crate::cms::PluggableCms for ZenCmsLite {
 
         // Build directly from a plan to avoid recursing through the
         // RowConverter CMS chain. Plan construction failing here IS a
-        // failure (we recognized the pair) — surface it instead of
-        // declining.
-        match crate::convert::ConvertPlan::new_explicit(from, to, options) {
-            Ok(plan) => {
-                let inner = crate::converter::RowConverter::from_plan(plan);
-                Some(Ok(Box::new(LiteTransformMut { inner })))
-            }
-            // Render the inner At<ConvertError> (which carries its own trace
-            // frames) into the message, then `map_error` so those frames carry
-            // through to At<CmsPluginError> instead of being dropped by a fresh
-            // `at!` frame.
-            Err(e) => {
-                let msg = alloc::format!("ZenCmsLite plan construction failed: {e:?}");
-                Some(Err(e.map_error(|_| crate::cms::CmsPluginError::msg(msg))))
-            }
-        }
+        // failure (we recognized the pair) — surface the typed ConvertError
+        // directly instead of erasing it into an opaque CMS string.
+        Some(crate::convert::NativePlan::new_explicit_core(
+            from, to, options, hooks,
+        ))
+    }
+}
+
+#[cfg(test)]
+impl crate::cms::PluggableCms for ZenCmsLite {
+    fn build(
+        &self,
+        request: &crate::cms::CmsRequest<'_>,
+    ) -> Result<crate::cms::CmsSupport, whereat::At<crate::cms::CmsPluginError>> {
+        use crate::cms::CmsSupport;
+        Self::build_plan(
+            request.source(),
+            request.target(),
+            request.from().pixel_format(),
+            request.to().pixel_format(),
+            request.options(),
+        )
+        .transpose()
+        .map(|p| {
+            p.map_or(CmsSupport::Declined, |p| {
+                CmsSupport::Owned(Box::new(LiteTransformMut {
+                    inner: crate::converter::RowConverter::from_plan(p),
+                }))
+            })
+        })
     }
 }
 
@@ -188,7 +214,7 @@ impl crate::cms::PluggableCms for ZenCmsLite {
 #[allow(clippy::needless_range_loop)]
 mod tests {
     use super::*;
-    use crate::cms::PluggableCms;
+
     use crate::policy::ConvertOptions;
     use crate::{Cicp, ColorPrimaries, ColorProfileSource, NamedProfile, PixelFormat};
 
@@ -202,7 +228,10 @@ mod tests {
             dst,
             PixelFormat::RgbF32,
             PixelFormat::RgbF32,
-            &ConvertOptions::permissive(),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(crate::DepthPolicy::Round)
+                .with_luma(Some(crate::LumaCoefficients::Bt709)),
         );
         assert!(result.is_some(), "should support P3→sRGB");
         let mut transform = result.unwrap().expect("should not error");
@@ -210,11 +239,13 @@ mod tests {
         // White should map to white
         let src_px: [f32; 3] = [1.0, 1.0, 1.0];
         let mut dst_px = [0.0f32; 3];
-        transform.transform_row(
-            bytemuck::cast_slice(&src_px),
-            bytemuck::cast_slice_mut(&mut dst_px),
-            1,
-        );
+        transform
+            .try_transform_row(
+                bytemuck::cast_slice(&src_px),
+                bytemuck::cast_slice_mut(&mut dst_px),
+                1,
+            )
+            .unwrap();
         for ch in 0..3 {
             assert!(
                 (dst_px[ch] - 1.0).abs() < 1e-4,
@@ -234,7 +265,10 @@ mod tests {
             dst,
             PixelFormat::Rgb8,
             PixelFormat::Rgb8,
-            &ConvertOptions::permissive(),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(crate::DepthPolicy::Round)
+                .with_luma(Some(crate::LumaCoefficients::Bt709)),
         );
         assert!(result.is_some());
         let mut transform = result.unwrap().expect("should not error");
@@ -242,13 +276,17 @@ mod tests {
         // White (255,255,255) should map to (255,255,255)
         let src_px = [255u8, 255, 255];
         let mut dst_px = [0u8; 3];
-        transform.transform_row(&src_px, &mut dst_px, 1);
+        transform
+            .try_transform_row(&src_px, &mut dst_px, 1)
+            .unwrap();
         assert_eq!(dst_px, [255, 255, 255]);
 
         // Black should map to black
         let src_px = [0u8, 0, 0];
         let mut dst_px = [0u8; 3];
-        transform.transform_row(&src_px, &mut dst_px, 1);
+        transform
+            .try_transform_row(&src_px, &mut dst_px, 1)
+            .unwrap();
         assert_eq!(dst_px, [0, 0, 0]);
     }
 
@@ -263,7 +301,10 @@ mod tests {
                 dst,
                 PixelFormat::Rgb8,
                 PixelFormat::Rgb8,
-                &ConvertOptions::permissive()
+                &ConvertOptions::retain_channels()
+                    .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                    .with_depth_policy(crate::DepthPolicy::Round)
+                    .with_luma(Some(crate::LumaCoefficients::Bt709))
             )
             .is_none(),
             "same color space should return None (no transform needed)"
@@ -280,7 +321,10 @@ mod tests {
             dst,
             PixelFormat::RgbF32,
             PixelFormat::RgbF32,
-            &ConvertOptions::permissive(),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(crate::DepthPolicy::Round)
+                .with_luma(Some(crate::LumaCoefficients::Bt709)),
         );
         assert!(result.is_some(), "CICP source should be supported");
         assert!(result.unwrap().is_ok());
@@ -302,7 +346,10 @@ mod tests {
             dst,
             PixelFormat::RgbF32,
             PixelFormat::RgbF32,
-            &ConvertOptions::permissive(),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(crate::DepthPolicy::Round)
+                .with_luma(Some(crate::LumaCoefficients::Bt709)),
         );
         assert!(result.is_some());
         assert!(result.unwrap().is_ok());
@@ -321,7 +368,10 @@ mod tests {
             dst,
             PixelFormat::RgbF32,
             PixelFormat::RgbF32,
-            &ConvertOptions::permissive(),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(crate::DepthPolicy::Round)
+                .with_luma(Some(crate::LumaCoefficients::Bt709)),
         );
         assert!(result.is_some());
         let mut transform = result.unwrap().expect("should not error");
@@ -329,11 +379,13 @@ mod tests {
         // Black should still map to black
         let src_px = [0.0f32, 0.0, 0.0];
         let mut dst_px = [0.0f32; 3];
-        transform.transform_row(
-            bytemuck::cast_slice(&src_px),
-            bytemuck::cast_slice_mut(&mut dst_px),
-            1,
-        );
+        transform
+            .try_transform_row(
+                bytemuck::cast_slice(&src_px),
+                bytemuck::cast_slice_mut(&mut dst_px),
+                1,
+            )
+            .unwrap();
         for ch in 0..3 {
             assert!(dst_px[ch].abs() < 1e-5, "black ch{ch}: {}", dst_px[ch]);
         }
@@ -354,7 +406,10 @@ mod tests {
             dst,
             PixelFormat::RgbF32,
             PixelFormat::RgbF32,
-            &ConvertOptions::permissive(),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(crate::DepthPolicy::Round)
+                .with_luma(Some(crate::LumaCoefficients::Bt709)),
         );
         assert!(
             result.is_some(),
@@ -378,18 +433,23 @@ mod tests {
                 dst,
                 PixelFormat::RgbF32,
                 PixelFormat::RgbF32,
-                &ConvertOptions::permissive(),
+                &ConvertOptions::retain_channels()
+                    .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                    .with_depth_policy(crate::DepthPolicy::Round)
+                    .with_luma(Some(crate::LumaCoefficients::Bt709)),
             )
             .unwrap()
             .unwrap();
 
         let src_px: [f32; 3] = [0.0, 1.0, 0.0];
         let mut dst_px = [0.0f32; 3];
-        transform.transform_row(
-            bytemuck::cast_slice(&src_px),
-            bytemuck::cast_slice_mut(&mut dst_px),
-            1,
-        );
+        transform
+            .try_transform_row(
+                bytemuck::cast_slice(&src_px),
+                bytemuck::cast_slice_mut(&mut dst_px),
+                1,
+            )
+            .unwrap();
         assert!(
             dst_px[0] >= 0.0,
             "clamped path should not produce negatives: {}",
@@ -414,7 +474,7 @@ mod tests {
 #[allow(clippy::type_complexity)]
 mod accuracy_ground_truth_tests {
     use super::*;
-    use crate::cms::PluggableCms;
+
     use crate::{ColorProfileSource, NamedProfile, PixelFormat};
     use moxcms::{
         BarycentricWeightScale, ColorProfile, InterpolationMethod, Layout, RenderingIntent,
@@ -679,14 +739,17 @@ mod accuracy_ground_truth_tests {
                 dst_profile,
                 PixelFormat::Rgb8,
                 PixelFormat::Rgb8,
-                &crate::policy::ConvertOptions::permissive(),
+                &crate::policy::ConvertOptions::retain_channels()
+                    .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                    .with_depth_policy(crate::DepthPolicy::Round)
+                    .with_luma(Some(crate::LumaCoefficients::Bt709)),
             )
             .unwrap()
             .unwrap();
         let xf = core::cell::RefCell::new(xf);
         alloc::boxed::Box::new(move |src: &[u8], dst: &mut [u8]| {
             let width = (src.len() / 3) as u32;
-            xf.borrow_mut().transform_row(src, dst, width);
+            xf.borrow_mut().try_transform_row(src, dst, width).unwrap();
         })
     }
 
@@ -781,7 +844,7 @@ mod accuracy_ground_truth_tests {
 )]
 mod gamut_reduction_compare_tests {
     use super::*;
-    use crate::cms::PluggableCms;
+
     use crate::{ColorProfileSource, NamedProfile, PixelFormat};
     use moxcms::{
         BarycentricWeightScale, ColorProfile, InterpolationMethod, Layout, RenderingIntent,
@@ -810,14 +873,17 @@ mod gamut_reduction_compare_tests {
                 dst_profile,
                 PixelFormat::Rgb8,
                 PixelFormat::Rgb8,
-                &crate::policy::ConvertOptions::permissive(),
+                &crate::policy::ConvertOptions::retain_channels()
+                    .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                    .with_depth_policy(crate::DepthPolicy::Round)
+                    .with_luma(Some(crate::LumaCoefficients::Bt709)),
             )
             .unwrap()
             .unwrap();
         let xf = core::cell::RefCell::new(xf);
         alloc::boxed::Box::new(move |src: &[u8], dst: &mut [u8]| {
             let width = (src.len() / 3) as u32;
-            xf.borrow_mut().transform_row(src, dst, width);
+            xf.borrow_mut().try_transform_row(src, dst, width).unwrap();
         })
     }
 
@@ -833,7 +899,10 @@ mod gamut_reduction_compare_tests {
                 dst_profile,
                 PixelFormat::RgbF32,
                 PixelFormat::RgbF32,
-                &crate::policy::ConvertOptions::permissive(),
+                &crate::policy::ConvertOptions::retain_channels()
+                    .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                    .with_depth_policy(crate::DepthPolicy::Round)
+                    .with_luma(Some(crate::LumaCoefficients::Bt709)),
             )
             .unwrap()
             .unwrap();
@@ -844,7 +913,9 @@ mod gamut_reduction_compare_tests {
             // transform_row needs separate src/dst; copy src first.
             let src_copy = bytes.to_vec();
             let dst_bytes: &mut [u8] = bytemuck::cast_slice_mut(data);
-            xf.borrow_mut().transform_row(&src_copy, dst_bytes, width);
+            xf.borrow_mut()
+                .try_transform_row(&src_copy, dst_bytes, width)
+                .unwrap();
         })
     }
 
@@ -1086,7 +1157,6 @@ mod gamut_reduction_compare_tests {
 #[cfg(test)]
 #[test]
 fn missing_hlg_rendering_cannot_be_bypassed_through_lite_cms() {
-    use crate::cms::PluggableCms;
     let source = crate::ColorProfileSource::Cicp(crate::Cicp::new(9, 18, 0, true));
     let target = crate::ColorProfileSource::Cicp(crate::Cicp::new(9, 8, 0, true));
     let result = ZenCmsLite.build_source_transform(
@@ -1094,7 +1164,52 @@ fn missing_hlg_rendering_cannot_be_bypassed_through_lite_cms() {
         target,
         PixelFormat::RgbF32,
         PixelFormat::RgbF32,
-        &crate::ConvertOptions::permissive(),
+        &crate::ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709)),
     );
     assert!(!matches!(result, Some(Ok(_))));
 }
+
+#[cfg(test)]
+#[test]
+fn absolute_colorimetric_intent_declines_so_capable_cms_handles_pcs_white() {
+    let src = crate::ColorProfileSource::Named(zenpixels::NamedProfile::DisplayP3);
+    let dst = crate::ColorProfileSource::Named(zenpixels::NamedProfile::Srgb);
+    let abs_opts = crate::ConvertOptions::retain_channels()
+        .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(crate::DepthPolicy::Round)
+        .with_luma(Some(crate::LumaCoefficients::Bt709))
+        .with_rendering_intent(zenpixels::RenderingIntent::AbsoluteColorimetric);
+    assert!(
+        ZenCmsLite
+            .build_source_transform(
+                src,
+                dst.clone(),
+                PixelFormat::Rgb8,
+                PixelFormat::Rgb8,
+                &abs_opts
+            )
+            .is_none()
+    );
+    let mut param = zenpixels::ParametricColor::from_cicp(crate::Cicp::DISPLAY_P3).unwrap();
+    param.rendering_intent = zenpixels::RenderingIntent::AbsoluteColorimetric;
+    assert!(
+        ZenCmsLite
+            .build_source_transform(
+                crate::ColorProfileSource::Parametric(param),
+                dst,
+                PixelFormat::Rgb8,
+                PixelFormat::Rgb8,
+                &crate::ConvertOptions::retain_channels()
+                    .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                    .with_depth_policy(crate::DepthPolicy::Round)
+                    .with_luma(Some(crate::LumaCoefficients::Bt709)),
+            )
+            .is_none()
+    );
+}
+
+#[cfg(test)]
+use crate::cms::TestCmsExt as _;

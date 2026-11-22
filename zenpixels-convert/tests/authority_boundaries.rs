@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use zenpixels::*;
 use zenpixels_convert::icc_profiles::SynthesizedIcc;
-use zenpixels_convert::{ConvertOptions, EncodeReady, OutputPlan, OutputProfile};
+use zenpixels_convert::{ConvertOptions, OutputProfile};
 
 #[test]
 fn origin_authority_table_at_both_output_boundaries() {
@@ -20,17 +20,19 @@ fn origin_authority_table_at_both_output_boundaries() {
                 let buffer =
                     PixelBuffer::from_vec(vec![17, 51, 193], 1, 1, PixelDescriptor::RGB8_SRGB)
                         .unwrap();
-                let plan = OutputPlan::new(
-                    buffer.descriptor(),
-                    None,
+                let plan = crate::test_conversion::output_plan(
+                    buffer.encoding(),
                     &origin,
                     OutputProfile::SameAsOrigin,
                     PixelFormat::Rgb8,
-                    &ConvertOptions::permissive(),
+                    &ConvertOptions::retain_channels()
+                        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
                     None,
                 )
                 .unwrap();
-                let ready = EncodeReady::finalize(
+                let ready = crate::test_conversion::copy_output(
                     &buffer,
                     &origin,
                     OutputProfile::SameAsOrigin,
@@ -54,8 +56,8 @@ fn origin_authority_table_at_both_output_boundaries() {
                 );
                 assert_eq!(plan.output_descriptor(), ready.pixels().descriptor());
                 let context = ready.pixels().color_context().unwrap().clone();
-                assert_eq!(context.icc, ready.metadata().icc);
-                assert_eq!(context.cicp, ready.metadata().cicp);
+                assert_eq!(context.icc_arc().cloned(), ready.metadata().icc);
+                assert_eq!(context.cicp(), ready.metadata().cicp);
                 if !selected_icc {
                     assert_eq!(ready.pixels().row(0), [17, 51, 193]);
                 }
@@ -100,19 +102,21 @@ fn unsupported_authoritative_origin_never_falls_back_to_icc() {
         let origin = ColorOrigin::from_icc_and_cicp(vec![1, 2, 3], bad)
             .with_color_authority(ColorAuthority::Cicp);
         assert!(
-            OutputPlan::new(
-                descriptor,
-                None,
+            crate::test_conversion::output_plan(
+                descriptor.encoding(),
                 &origin,
                 OutputProfile::SameAsOrigin,
                 PixelFormat::Rgb8,
-                &ConvertOptions::permissive(),
+                &ConvertOptions::retain_channels()
+                    .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                    .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                    .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
                 None
             )
             .is_err()
         );
         assert!(
-            EncodeReady::finalize(
+            crate::test_conversion::copy_output(
                 &buffer,
                 &origin,
                 OutputProfile::SameAsOrigin,
@@ -128,24 +132,34 @@ fn unsupported_authoritative_origin_never_falls_back_to_icc() {
 #[derive(Default)]
 struct RoutingSpy(std::sync::Mutex<Vec<bool>>);
 impl zenpixels_convert::cms::PluggableCms for RoutingSpy {
-    fn build_source_transform(
+    fn build(
         &self,
-        _: ColorProfileSource<'_>,
-        target: ColorProfileSource<'_>,
-        _: PixelFormat,
-        _: PixelFormat,
-        _: &ConvertOptions,
-    ) -> Option<
+        request: &zenpixels_convert::cms::CmsRequest<'_>,
+    ) -> Result<zenpixels_convert::cms::CmsSupport, whereat::At<zenpixels_convert::CmsPluginError>>
+    {
+        let build = || -> Option<
         Result<
             Box<dyn zenpixels_convert::cms::RowTransformMut>,
             whereat::At<zenpixels_convert::cms::CmsPluginError>,
         >,
     > {
+let _ = request.source();
+let target = request.target();
+let _ = request.from().pixel_format();
+let _ = request.to().pixel_format();
+let _ = request.options();
+
         self.0
             .lock()
             .unwrap()
             .push(matches!(target, ColorProfileSource::Icc(_)));
         None
+
+};
+        if let Some(worker) = build() {
+            return worker.map(zenpixels_convert::cms::CmsSupport::Owned);
+        }
+        Ok(zenpixels_convert::cms::CmsSupport::Declined)
     }
 }
 #[test]
@@ -155,7 +169,7 @@ fn unknown_authoritative_icc_reaches_cms_and_cannot_be_replaced_by_cicp() {
         .with_color_authority(ColorAuthority::Icc);
     let source = PixelBuffer::from_vec(vec![10, 20, 30], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
     assert!(
-        EncodeReady::finalize(
+        crate::test_conversion::copy_output(
             &source,
             &origin,
             OutputProfile::SameAsOrigin,
@@ -194,16 +208,18 @@ fn opaque_and_metadata_only_icc_authority_table_reaches_both_boundaries() {
                         PixelBuffer::from_vec(vec![17, 51, 193], 1, 1, PixelDescriptor::RGB8_SRGB)
                             .unwrap();
                     let spy = RoutingSpy::default();
-                    let plan = OutputPlan::new(
-                        source.descriptor(),
-                        None,
+                    let plan = crate::test_conversion::output_plan(
+                        source.encoding(),
                         &origin,
                         OutputProfile::SameAsOrigin,
                         PixelFormat::Rgb8,
-                        &ConvertOptions::permissive(),
+                        &ConvertOptions::retain_channels()
+                            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709)),
                         Some(&spy),
                     );
-                    let ready = EncodeReady::finalize(
+                    let ready = crate::test_conversion::copy_output(
                         &source,
                         &origin,
                         OutputProfile::SameAsOrigin,
@@ -240,91 +256,91 @@ fn grayscale_reduction_preserves_unusable_icc_but_allows_exact_alpha_and_depth_r
         for has_alpha in [false, true] {
             for force_alpha in [false, true] {
                 for icc_len in [0, 8, 128] {
-                    for cicp in [Cicp::SRGB, Cicp::DISPLAY_P3] {
-                        let context =
-                            Arc::new(ColorContext::from_icc(vec![0; icc_len]).with_cicp(cicp));
-                        let descriptor = PixelDescriptor::new(
-                            channel,
-                            if has_alpha {
-                                ChannelLayout::Rgba
-                            } else {
-                                ChannelLayout::Rgb
-                            },
-                            has_alpha.then_some(AlphaMode::Straight),
-                            TransferFunction::Srgb,
-                        )
-                        .with_primaries(ColorPrimaries::Bt709);
-                        let row_len = 2 * descriptor.bytes_per_pixel();
-                        // Sample-aligned partial-pixel padding, absent on the final row.
-                        let stride = row_len + 3 * channel.byte_size();
-                        let mut bytes = vec![0xa5; stride + row_len];
-                        let mut rgb = Vec::new();
-                        let mut rgba = Vec::new();
-                        for (pixel, value) in [64u8, 128, 17, 51].into_iter().enumerate() {
-                            rgb.extend_from_slice(&[value; 3]);
-                            rgba.extend_from_slice(&[value, value, value, 255]);
-                            for c in 0..descriptor.channels() {
-                                let sample = if c == 3 { 255 } else { value };
-                                let index = (pixel / 2) * stride
-                                    + (pixel % 2) * descriptor.bytes_per_pixel()
-                                    + c * channel.byte_size();
-                                match channel {
-                                    ChannelType::U8 => bytes[index] = sample,
-                                    ChannelType::U16 => bytes[index..index + 2]
-                                        .copy_from_slice(&(u16::from(sample) * 257).to_ne_bytes()),
-                                    _ => unreachable!(),
-                                }
+                    let context = Arc::new(ColorContext::from_icc(vec![0; icc_len]));
+                    let descriptor = PixelDescriptor::new(
+                        channel,
+                        if has_alpha {
+                            ChannelLayout::Rgba
+                        } else {
+                            ChannelLayout::Rgb
+                        },
+                        has_alpha.then_some(AlphaMode::Straight),
+                        TransferFunction::Srgb,
+                    )
+                    .with_primaries(ColorPrimaries::Bt709);
+                    let row_len = 2 * descriptor.bytes_per_pixel();
+                    // Sample-aligned partial-pixel padding, absent on the final row.
+                    let stride = row_len + 3 * channel.byte_size();
+                    let mut bytes = vec![0xa5; stride + row_len];
+                    let mut rgb = Vec::new();
+                    let mut rgba = Vec::new();
+                    for (pixel, value) in [64u8, 128, 17, 51].into_iter().enumerate() {
+                        rgb.extend_from_slice(&[value; 3]);
+                        rgba.extend_from_slice(&[value, value, value, 255]);
+                        for c in 0..descriptor.channels() {
+                            let sample = if c == 3 { 255 } else { value };
+                            let index = (pixel / 2) * stride
+                                + (pixel % 2) * descriptor.bytes_per_pixel()
+                                + c * channel.byte_size();
+                            match channel {
+                                ChannelType::U8 => bytes[index] = sample,
+                                ChannelType::U16 => bytes[index..index + 2]
+                                    .copy_from_slice(&(u16::from(sample) * 257).to_ne_bytes()),
+                                _ => unreachable!(),
                             }
                         }
-                        let original = bytes.clone();
-                        let mut buffer = PixelBuffer::try_from_parts(PixelBufferParts::new(
-                            bytes.into(),
-                            2,
-                            2,
-                            stride,
-                            descriptor,
-                        ))
-                        .unwrap()
-                        .with_color_context(context.clone());
-                        let report = buffer.as_slice().determine_load_bearing();
-                        assert_eq!(report.uses_chroma, Some(false));
-                        assert_eq!(report.uses_alpha, Some(false));
-                        assert_eq!(report.uses_low_bits, Some(false));
+                    }
+                    let original = bytes.clone();
+                    let mut buffer = PixelBuffer::try_from_parts(PixelBufferParts::new(
+                        bytes.into(),
+                        2,
+                        2,
+                        stride,
+                        descriptor,
+                    ))
+                    .unwrap()
+                    .with_color_context(context.clone());
+                    let report = buffer.as_slice().determine_load_bearing();
+                    assert_eq!(report.uses_chroma, Some(false));
+                    assert_eq!(report.uses_alpha, Some(false));
+                    assert_eq!(report.uses_low_bits, Some(false));
 
-                        let copied = buffer.as_slice().try_reduce_to_load_bearing_format();
-                        if has_alpha || channel == ChannelType::U16 {
-                            let copied = copied.unwrap();
-                            assert_eq!(copied.descriptor(), PixelDescriptor::RGB8_SRGB);
-                            assert_eq!(copied.as_contiguous_bytes().unwrap(), rgb);
-                            assert!(Arc::ptr_eq(
-                                copied.as_slice().color_context().unwrap(),
-                                &context
-                            ));
-                        } else {
-                            assert!(copied.is_none(), "already RGB8; no safe reduction remains");
-                        }
-                        assert_eq!(buffer.as_slice().as_strided_bytes(), original);
-
-                        buffer.reduce_to_load_bearing_format_in_place(force_alpha);
-                        let retain_alpha = has_alpha && !force_alpha;
-                        let expected = if retain_alpha {
-                            PixelDescriptor::RGBA8_SRGB.with_alpha(Some(AlphaMode::Opaque))
-                        } else {
-                            PixelDescriptor::RGB8_SRGB
-                        };
-                        assert_eq!(buffer.descriptor(), expected);
-                        let expected_pixels = if retain_alpha { &rgba } else { &rgb };
-                        let row = expected_pixels.len() / 2;
-                        for (y, expected_row) in expected_pixels.chunks_exact(row).enumerate() {
-                            assert_eq!(buffer.as_slice().row(y as u32), expected_row);
-                        }
+                    let copied = buffer.as_slice().reduce_to_load_bearing_format().unwrap();
+                    if has_alpha || channel == ChannelType::U16 {
+                        let copied = copied.unwrap();
+                        assert_eq!(copied.descriptor(), PixelDescriptor::RGB8_SRGB);
+                        assert_eq!(copied.as_contiguous_bytes().unwrap(), rgb);
                         assert!(Arc::ptr_eq(
-                            buffer.as_slice().color_context().unwrap(),
+                            copied.as_slice().color_context().unwrap(),
                             &context
                         ));
+                    } else {
+                        assert!(copied.is_none(), "already RGB8; no safe reduction remains");
                     }
+                    assert_eq!(buffer.as_slice().as_strided_bytes(), original);
+
+                    buffer.reduce_to_load_bearing_format_in_place(force_alpha);
+                    let retain_alpha = has_alpha && !force_alpha;
+                    let expected = if retain_alpha {
+                        PixelDescriptor::RGBA8_SRGB.with_alpha(Some(AlphaMode::Opaque))
+                    } else {
+                        PixelDescriptor::RGB8_SRGB
+                    };
+                    assert_eq!(buffer.descriptor(), expected);
+                    let expected_pixels = if retain_alpha { &rgba } else { &rgb };
+                    let row = expected_pixels.len() / 2;
+                    for (y, expected_row) in expected_pixels.chunks_exact(row).enumerate() {
+                        assert_eq!(buffer.as_slice().row(y as u32), expected_row);
+                    }
+                    assert!(Arc::ptr_eq(
+                        buffer.as_slice().color_context().unwrap(),
+                        &context
+                    ));
                 }
             }
         }
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

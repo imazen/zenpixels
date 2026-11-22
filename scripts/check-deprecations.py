@@ -14,9 +14,13 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 PLAN = """
-use zenpixels_convert::{ConvertPlan, PixelDescriptor};
+use zenpixels_convert::{ConversionSpec, ConvertPlan, PixelDescriptor};
 fn plan() -> ConvertPlan {
-    ConvertPlan::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap()
+    ConvertPlan::build(
+        PixelDescriptor::RGB8_SRGB.encoding(),
+        PixelDescriptor::RGBA8_SRGB.encoding(),
+        &ConversionSpec::preserve_samples(),
+    ).unwrap()
 }
 """
 PROBES = {
@@ -78,7 +82,7 @@ fn main() { let _ = legacy_provider().as_pixel_slice(); }
         """
 fn main() {
     let d = zenpixels_convert::PixelDescriptor::RGB8_SRGB;
-    let result = zenpixels_convert::adapt::adapt_raw_rows_for_encode(&[0, 0, 0], d, 1, 1, 3, &[d], &zenpixels_convert::ConvertOptions::permissive()).unwrap();
+    let result = zenpixels_convert::adapt::adapt_raw_rows_for_encode(&[0, 0, 0], d, 1, 1, 3, &[d], &zenpixels_convert::ConvertOptions::retain_channels()).unwrap();
     let _ = result.as_slice();
 }
 """,
@@ -142,26 +146,51 @@ PROBES["hdr_percentile"] = (
 PROBES["hdr_bundle"] = (
     "fn accepts(_: zenpixels_convert::hdr::HdrMetadata) {} fn main() {}", "HdrMetadata", False,
 )
-PROBES["sealed_transfer_extension"] = (
-    "struct External; impl zenpixels_convert::TransferFunctionExt for External {"
-    " fn linearize(&self, v: f32) -> f32 { v }"
-    " fn delinearize(&self, v: f32) -> f32 { v } } fn main() {}", "Sealed", False,
+PROBES["sealed_slice_extension"] = (
+    "struct External; impl zenpixels_convert::PixelBufferConvertExt for External {"
+    " fn convert_to(&self, _: zenpixels::PixelDescriptor) -> Result<zenpixels::PixelBuffer, whereat::At<zenpixels_convert::ConvertError>> { unreachable!() }"
+    " fn convert_to_with_options(&self, _: zenpixels::PixelDescriptor, _: &zenpixels::ConvertOptions) -> Result<zenpixels::PixelBuffer, whereat::At<zenpixels_convert::ConvertError>> { unreachable!() }"
+    " fn try_adapt_in_place(&mut self, _: zenpixels::PixelDescriptor) -> Result<(), whereat::At<zenpixels_convert::ConvertError>> { unreachable!() }"
+    " fn into_oriented(self, _: zenpixels::Orientation) -> Result<zenpixels::PixelBuffer, whereat::At<zenpixels_convert::ConvertError>> { unreachable!() } } fn main() {}", "Sealed", False,
 )
 
 PROBES["extended_gamma_estimate"] = (
     """
 use zenpixels::{PixelDescriptor, TransferFunction};
-use zenpixels_convert::{ConvertPlan, ConvertOptions};
+use zenpixels_convert::{ConversionSpec, ConvertPlan, ConvertOptions, GamutPolicy};
 fn main() {
     let from = PixelDescriptor::RGBF32_LINEAR;
-    let plan = ConvertPlan::new_explicit(
-        from, from.with_transfer(TransferFunction::Gamma22),
-        &ConvertOptions::retain_channels().with_clip_out_of_gamut(false),
+    let plan = ConvertPlan::build(
+        from.encoding(), from.with_transfer(TransferFunction::Gamma22).encoding(),
+        &ConversionSpec::new(ConvertOptions::retain_channels().with_gamut_policy(GamutPolicy::PreserveExtended)),
     ).unwrap();
     let _ = plan.estimate(5, 3);
 }
 """, "estimate", True,
 )
+
+PROBES["compiled_recipe"] = (
+    PLAN + "fn main() { let _ = plan().prepare(1).unwrap(); }", None, False,
+)
+PROBES["introspection_default_off"] = (
+    PLAN + "fn main() { let _ = plan().steps(); }", "steps", False,
+)
+for name, expression in {
+    "permissive_options": ("zenpixels::ConvertOptions::permissive()", "permissive"),
+    "row_from_plan": ("zenpixels_convert::RowConverter::from_plan", "from_plan"),
+    "row_plan": ("plan().prepare(1).unwrap().plan()", "plan"),
+    "row_panicking": ("plan().prepare(1).unwrap().convert_row(&[0; 3], &mut [0; 4], 1)", "convert_row"),
+    "finalize": ("zenpixels_convert::EncodeReady::finalize", "finalize"),
+}.items():
+    snippet, removed = expression
+    PROBES[name] = (PLAN + f"fn main() {{ let _ = {snippet}; }}", removed, False)
+
+PROBES["css_default_off"] = (
+    "use zenpixels_convert::ColorConvertExt; fn main() { let _ = zenpixels::Color::parse_css(\"#000\"); }",
+    "parse_css",
+    False,
+)
+
 
 def workspace_patches() -> str:
     """The workspace's own crates.io patches, which an outside probe doesn't inherit."""
@@ -186,7 +215,6 @@ version = "0.0.0"
 edition = "2021"
 [features]
 default = ["zenpixels-convert/default"]
-estimation-experimental = ["zenpixels-convert/estimation-experimental"]
 [dependencies]
 zenpixels = {{ path = {json.dumps(str(ROOT / "zenpixels"))}, default-features = false }}
 zenpixels-convert = {{ path = {json.dumps(str(ROOT / 'zenpixels-convert'))}, default-features = false }}
@@ -199,35 +227,32 @@ zenpixels = {{ path = {json.dumps(str(ROOT / 'zenpixels'))} }}
         env = dict(os.environ, CARGO_TARGET_DIR=str(Path(os.environ.get("CARGO_TARGET_DIR", Path(tempfile.gettempdir()) / "zenpixels-validation")) / "deprecation-ui"))
         count = 0
         for defaults in (True, False):
-            for opted_in in (False, True):
-                for name, (_, expected, estimation) in PROBES.items():
-                    command = ["cargo", "check", "--offline", "--message-format=json", "--bin", name]
-                    if name.startswith("planar_"):
-                        command.extend(["--features", "zenpixels/planar,zenpixels-convert/planar"])
-                    if not defaults:
-                        command.append("--no-default-features")
-                    if opted_in:
-                        command.extend(["--features", "estimation-experimental"])
-                    result = subprocess.run(command, cwd=project, env=env, capture_output=True, text=True)
-                    errors = []
-                    for line in result.stdout.splitlines():
-                        item = json.loads(line)
-                        if item.get("reason") == "compiler-message" and item["message"]["level"] == "error":
-                            errors.append(item["message"])
-                    should_warn = expected is not None
-                    if should_warn:
-                        ok = result.returncode != 0 and bool(errors) and all(
-                            (error.get("code") or {}).get("code") in {"E0432", "E0433", "E0425", "E0412", "E0599", "E0422", "E0277"} for error in errors
-                        ) and any(expected in error["message"] for error in errors)
-                    else:
-                        ok = result.returncode == 0
-                    if not ok:
-                        raise AssertionError(
-                            f"{name}: default={defaults}, opt_in={opted_in}, expected_warning={should_warn}\n"
-                            + result.stderr + "\n" + "\n".join(e.get("rendered", e["message"]) for e in errors)
-                        )
-                    count += 1
-        print(f"Passed {count} downstream legacy-removal checks (default/no-default, opt-in/off).")
+            for name, (_, expected, _estimation) in PROBES.items():
+                command = ["cargo", "check", "--offline", "--message-format=json", "--bin", name]
+                if name.startswith("planar_"):
+                    command.extend(["--features", "zenpixels/planar,zenpixels-convert/planar"])
+                if not defaults:
+                    command.append("--no-default-features")
+                result = subprocess.run(command, cwd=project, env=env, capture_output=True, text=True)
+                errors = []
+                for line in result.stdout.splitlines():
+                    item = json.loads(line)
+                    if item.get("reason") == "compiler-message" and item["message"]["level"] == "error":
+                        errors.append(item["message"])
+                should_warn = expected is not None
+                if should_warn:
+                    ok = result.returncode != 0 and bool(errors) and all(
+                        (error.get("code") or {}).get("code") in {"E0432", "E0433", "E0425", "E0412", "E0599", "E0624", "E0422", "E0277"} for error in errors
+                    ) and any(expected in error["message"] for error in errors)
+                else:
+                    ok = result.returncode == 0
+                if not ok:
+                    raise AssertionError(
+                        f"{name}: default={defaults}, expected_warning={should_warn}\n"
+                        + result.stderr + "\n" + "\n".join(e.get("rendered", e["message"]) for e in errors)
+                    )
+                count += 1
+        print(f"Passed {count} downstream legacy-removal checks (default/no-default).")
 
 
 if __name__ == "__main__":

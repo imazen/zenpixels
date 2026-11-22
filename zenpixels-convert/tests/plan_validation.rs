@@ -15,7 +15,7 @@ use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, TransferFunction,
     policy::{AlphaPolicy, ConvertOptions, LumaCoefficients},
 };
-use zenpixels_convert::{__trace_ops as tracer, RowConverter};
+use zenpixels_convert::__trace_ops as tracer;
 
 fn rgba_u8(tf: TransferFunction) -> PixelDescriptor {
     PixelDescriptor::new(
@@ -54,10 +54,10 @@ fn run_and_trace(
     dst_len: usize,
     width: u32,
 ) -> (Vec<u8>, Vec<&'static str>) {
-    let mut conv = RowConverter::new_explicit(src_desc, dst_desc, &opts).unwrap();
+    let mut conv = crate::test_conversion::explicit_worker(src_desc, dst_desc, &opts).unwrap();
     let mut dst = vec![0u8; dst_len];
     tracer::start_recording();
-    conv.convert_row(src_bytes, &mut dst, width);
+    conv.try_convert_row(src_bytes, &mut dst, width).unwrap();
     let trace = tracer::stop_recording();
     (dst, trace)
 }
@@ -67,7 +67,10 @@ fn run_and_trace(
 #[test]
 fn identical_descriptor_is_zero_or_identity() {
     let src = rgb_u8(TransferFunction::Srgb);
-    let opts = ConvertOptions::permissive();
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709));
     let pixel = [10u8, 20, 30];
     let (_, trace) = run_and_trace(src, src, opts, &pixel, 3, 1);
     // Either no steps (pure passthrough) or a single Identity. Anything
@@ -84,7 +87,10 @@ fn identical_descriptor_is_zero_or_identity() {
 fn u8_srgb_to_u8_linear_round_trips_through_linear() {
     let src = rgb_u8(TransferFunction::Srgb);
     let dst = rgb_u8(TransferFunction::Linear);
-    let opts = ConvertOptions::permissive();
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709));
     let pixel = [128u8, 128, 128];
     let (_, trace) = run_and_trace(src, dst, opts, &pixel, 3, 1);
     // Should at least linearize the source. Any plan that doesn't
@@ -101,7 +107,10 @@ fn u8_srgb_to_u8_linear_round_trips_through_linear() {
 fn u8_bt709_to_u8_srgb_changes_tf() {
     let src = rgb_u8(TransferFunction::Bt709);
     let dst = rgb_u8(TransferFunction::Srgb);
-    let opts = ConvertOptions::permissive();
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709));
     let pixel = [128u8, 128, 128];
     let (_, trace) = run_and_trace(src, dst, opts, &pixel, 3, 1);
     let touches_bt709 = trace.iter().any(|s| s.contains("Bt709"));
@@ -118,7 +127,10 @@ fn u8_bt709_to_u8_srgb_changes_tf() {
 fn rgb_to_gray_same_tf_is_one_step() {
     let src = rgb_u8(TransferFunction::Srgb);
     let dst = gray_u8(TransferFunction::Srgb);
-    let opts = ConvertOptions::permissive();
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709));
     let pixel = [200u8, 100, 50];
     let (_, trace) = run_and_trace(src, dst, opts, &pixel, 1, 1);
     // Exactly one RgbToGray, no TF round-trip.
@@ -129,7 +141,11 @@ fn rgb_to_gray_same_tf_is_one_step() {
 fn rgba_to_gray_same_tf_is_one_step() {
     let src = rgba_u8(TransferFunction::Srgb);
     let dst = gray_u8(TransferFunction::Srgb);
-    let opts = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_alpha_policy(AlphaPolicy::DiscardUnchecked);
     let pixel = [200u8, 100, 50, 255];
     let (_, trace) = run_and_trace(src, dst, opts, &pixel, 1, 1);
     assert_eq!(trace, vec!["RgbaToGray"], "got {trace:?}");
@@ -149,10 +165,14 @@ fn matte_composite_uses_required_rendering_steps() {
     ] {
         let mut src = rgba_u16(tf);
         let mut dst = rgb_u16(tf);
-        let mut opts = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-            background: zenpixels::Color::srgb8(0, 0, 0),
-            reference_white: None,
-        });
+        let mut opts = ConvertOptions::retain_channels()
+            .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+            .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+            .with_alpha_policy(AlphaPolicy::CompositeOnto {
+                background: zenpixels::Color::srgb8(0, 0, 0),
+                reference_white: None,
+            });
         if tf == TransferFunction::Hlg {
             src = src.with_primaries(ColorPrimaries::Bt2020);
             dst = dst.with_primaries(ColorPrimaries::Bt2020);
@@ -160,12 +180,12 @@ fn matte_composite_uses_required_rendering_steps() {
                 .with_sdr_white(zenpixels::hdr::DiffuseWhite::new(1000.0))
                 .with_hlg_rendering(zenpixels::hdr::HlgRendering::REFERENCE_1000_NIT);
         }
-        let mut conv = RowConverter::new_explicit(src, dst, &opts).unwrap();
+        let mut conv = crate::test_conversion::explicit_worker(src, dst, &opts).unwrap();
         let pixel: [u16; 4] = [32768, 32768, 32768, 32768];
         let src_bytes: [u8; 8] = bytemuck::cast(pixel);
         let mut dst_bytes = [0u8; 6];
         tracer::start_recording();
-        conv.convert_row(&src_bytes, &mut dst_bytes, 1);
+        conv.try_convert_row(&src_bytes, &mut dst_bytes, 1).unwrap();
         let trace = tracer::stop_recording();
         assert_eq!(
             trace,
@@ -191,7 +211,10 @@ fn matte_composite_uses_required_rendering_steps() {
 fn u16_to_u8_includes_depth_step() {
     let src = rgb_u16(TransferFunction::Srgb);
     let dst = rgb_u8(TransferFunction::Srgb);
-    let opts = ConvertOptions::permissive();
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709));
     let pixel: [u16; 3] = [32768, 32768, 32768];
     let src_bytes: [u8; 6] = bytemuck::cast(pixel);
     let (_, trace) = run_and_trace(src, dst, opts, &src_bytes, 3, 1);
@@ -209,7 +232,10 @@ fn u16_to_u8_includes_depth_step() {
 fn srgb_u8_p3_to_srgb_u8_bt709_uses_fused_matlut() {
     let src = rgb_u8_p(TransferFunction::Srgb, ColorPrimaries::DisplayP3);
     let dst = rgb_u8_p(TransferFunction::Srgb, ColorPrimaries::Bt709);
-    let opts = ConvertOptions::permissive();
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709));
     let pixel = [200u8, 100, 50];
     let (_, trace) = run_and_trace(src, dst, opts, &pixel, 3, 1);
     // The fused path replaces [SrgbU8ToLinearF32, GamutMatrixRgbF32, LinearF32ToSrgbU8]
@@ -244,16 +270,20 @@ fn matte_composite_does_not_double_linearize_floats() {
         None,
         TransferFunction::Srgb,
     );
-    let opts = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-        background: zenpixels::Color::srgb8(0, 0, 0),
-        reference_white: None,
-    });
-    let mut conv = RowConverter::new_explicit(src, dst, &opts).unwrap();
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_alpha_policy(AlphaPolicy::CompositeOnto {
+            background: zenpixels::Color::srgb8(0, 0, 0),
+            reference_white: None,
+        });
+    let mut conv = crate::test_conversion::explicit_worker(src, dst, &opts).unwrap();
     let pixel: [f32; 4] = [0.5, 0.5, 0.5, 0.5];
     let src_bytes: [u8; 16] = bytemuck::cast(pixel);
     let mut dst_bytes = [0u8; 12];
     tracer::start_recording();
-    conv.convert_row(&src_bytes, &mut dst_bytes, 1);
+    conv.try_convert_row(&src_bytes, &mut dst_bytes, 1).unwrap();
     let trace = tracer::stop_recording();
 
     let saw_linearize = trace
@@ -279,16 +309,20 @@ fn linear_u16_matte_composite_has_only_one_kernel() {
     // step before MatteComposite for Linear data.
     let src = rgba_u16(TransferFunction::Linear);
     let dst = rgb_u16(TransferFunction::Linear);
-    let opts = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::CompositeOnto {
-        background: zenpixels::Color::srgb8(0, 0, 0),
-        reference_white: None,
-    });
-    let mut conv = RowConverter::new_explicit(src, dst, &opts).unwrap();
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_alpha_policy(AlphaPolicy::CompositeOnto {
+            background: zenpixels::Color::srgb8(0, 0, 0),
+            reference_white: None,
+        });
+    let mut conv = crate::test_conversion::explicit_worker(src, dst, &opts).unwrap();
     let pixel: [u16; 4] = [32768; 4];
     let src_bytes: [u8; 8] = bytemuck::cast(pixel);
     let mut dst_bytes = [0u8; 6];
     tracer::start_recording();
-    conv.convert_row(&src_bytes, &mut dst_bytes, 1);
+    conv.try_convert_row(&src_bytes, &mut dst_bytes, 1).unwrap();
     let trace = tracer::stop_recording();
     assert_eq!(
         trace,
@@ -300,19 +334,22 @@ fn linear_u16_matte_composite_has_only_one_kernel() {
 // ── Bug 2(a) lockdown: gray plan honors luma — verify via plan ──────────
 
 #[test]
+#[cfg(feature = "introspection")]
 fn rgb_to_gray_plan_records_resolved_luma() {
-    use zenpixels_convert::ConvertPlan;
-
     for &coeffs in &[
         LumaCoefficients::Bt709,
         LumaCoefficients::Bt601,
         LumaCoefficients::Bt2020,
         LumaCoefficients::DisplayP3,
     ] {
-        let plan = ConvertPlan::new_explicit(
+        let plan = crate::test_conversion::explicit_plan(
             rgb_u8(TransferFunction::Srgb),
             gray_u8(TransferFunction::Srgb),
-            &ConvertOptions::permissive().with_luma(Some(coeffs)),
+            &ConvertOptions::retain_channels()
+                .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+                .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+                .with_luma(Some(coeffs)),
         )
         .unwrap();
         let debug = format!("{:?}", plan);
@@ -323,3 +360,6 @@ fn rgb_to_gray_plan_records_resolved_luma() {
         );
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

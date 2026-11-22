@@ -80,15 +80,13 @@ use zenpixels::{InPlacePixels, Orientation, PixelBuffer, PixelSlice, PixelSliceM
 
 use crate::error::ConvertError;
 
-// Cross-arch SIMD: the `#[magetypes(...)]` codegen attribute + `incant!`
-// runtime dispatch from the archmage prelude, and the token-parameterized
-// generic `f32x4` from magetypes — whose `transpose_4x4` lowers to SSE
-// `_MM_TRANSPOSE4_PS` on x86, the NEON `zip`/`trn` cascade on aarch64, and the
-// `i32x4.shuffle` cascade on wasm128.
+// Cross-arch SIMD: `#[attune(dispatch, ...)]` from the archmage prelude
+// generates the 4×4 register transpose (`f32x4::transpose_4x4`, lowering to
+// the `i32x4.shuffle` cascade on wasm128 with scalar fallback elsewhere) while
+// natively excluding `_v3` and `_neon`, which use the dedicated per-width
+// kernels in `pxn_x86` / `rgb3_x86` / `pxn_neon`.
 #[cfg(feature = "fast-transpose")]
 use archmage::prelude::*;
-#[cfg(feature = "fast-transpose")]
-use magetypes::simd::generic::f32x4 as GenericF32x4;
 
 /// Side length of the cache-blocking tile for transposing orientations, in
 /// pixels. At `bpp = 4` a 32×32 tile touches 4 KiB of source and 4 KiB of
@@ -123,11 +121,14 @@ pub(crate) fn apply_orientation(
     }
     // Whole pixels are moved, never changed: the samples keep their evidence.
     let exact = src.exact_depth();
+    let float_facts = src.float_facts();
     // The buffer is constructed to the exact output geometry + descriptor, so
     // the size/format check inside `apply_orientation_into` cannot fail.
     apply_orientation_into(src, orientation, out.as_slice_mut())
         .expect("apply_orientation: freshly allocated buffer matches output geometry");
     out.set_exact_depth(exact)
+        .expect("apply_orientation: output keeps the source descriptor");
+    out.set_float_facts(float_facts)
         .expect("apply_orientation: output keeps the source descriptor");
     Ok(out)
 }
@@ -153,8 +154,12 @@ pub(crate) fn apply_orientation_into(
     let dst_bpp = dst.descriptor().bytes_per_pixel();
     if dst.width() != ow || dst.rows() != oh || dst_bpp != bpp {
         return Err(ConvertError::BufferSize {
-            expected: ow as usize * oh as usize * bpp,
-            actual: dst.width() as usize * dst.rows() as usize * dst_bpp,
+            expected: (ow as usize)
+                .saturating_mul(oh as usize)
+                .saturating_mul(bpp),
+            actual: (dst.width() as usize)
+                .saturating_mul(dst.rows() as usize)
+                .saturating_mul(dst_bpp),
         });
     }
     // Orientation moves pixels; it can't change what their bytes mean.
@@ -205,6 +210,63 @@ pub(crate) fn apply_orientation_into(
         }
     }
     Ok(())
+}
+
+/// Apply `orientation` to a single sample-strided plane represented as native-endian bytes.
+#[cfg(feature = "planar")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_plane_orientation_bytes(
+    src_bytes: &[u8],
+    w: usize,
+    h: usize,
+    src_stride_samples: usize,
+    dst_bytes: &mut [u8],
+    dw: usize,
+    dh: usize,
+    dst_stride_samples: usize,
+    channel_type: zenpixels::ChannelType,
+    orientation: Orientation,
+) -> Result<(), ConvertError> {
+    let bpp = channel_type.byte_size();
+    let w32 = u32::try_from(w)
+        .map_err(|_| ConvertError::Buffer(zenpixels::BufferError::InvalidDimensions))?;
+    let h32 = u32::try_from(h)
+        .map_err(|_| ConvertError::Buffer(zenpixels::BufferError::InvalidDimensions))?;
+    let dw32 = u32::try_from(dw)
+        .map_err(|_| ConvertError::Buffer(zenpixels::BufferError::InvalidDimensions))?;
+    let dh32 = u32::try_from(dh)
+        .map_err(|_| ConvertError::Buffer(zenpixels::BufferError::InvalidDimensions))?;
+    let (ow, oh) = orientation.output_dimensions(w32, h32);
+    if dw32 != ow || dh32 != oh {
+        return Err(ConvertError::BufferSize {
+            expected: (ow as usize)
+                .saturating_mul(oh as usize)
+                .saturating_mul(bpp),
+            actual: dw.saturating_mul(dh).saturating_mul(bpp),
+        });
+    }
+    if w == 0 || h == 0 {
+        return Ok(());
+    }
+    let desc =
+        zenpixels::PixelFormat::from_parts(channel_type, zenpixels::ChannelLayout::Gray, None)
+            .ok_or_else(|| ConvertError::Buffer(zenpixels::BufferError::InvalidDimensions))?
+            .descriptor();
+    let src_stride_bytes = src_stride_samples
+        .checked_mul(bpp)
+        .ok_or(ConvertError::Buffer(
+            zenpixels::BufferError::InvalidDimensions,
+        ))?;
+    let dst_stride_bytes = dst_stride_samples
+        .checked_mul(bpp)
+        .ok_or(ConvertError::Buffer(
+            zenpixels::BufferError::InvalidDimensions,
+        ))?;
+    let src_slice = PixelSlice::new(src_bytes, w32, h32, src_stride_bytes, desc)
+        .map_err(|e| ConvertError::Buffer(*e.error()))?;
+    let dst_slice = PixelSliceMut::new(dst_bytes, dw32, dh32, dst_stride_bytes, desc)
+        .map_err(|e| ConvertError::Buffer(*e.error()))?;
+    apply_orientation_into(src_slice, orientation, dst_slice)
 }
 
 /// Largest bytes-per-pixel the in-place path's per-element temp supports — covers
@@ -266,16 +328,170 @@ pub(crate) fn apply_orientation_in_place(
     let mut moved: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if transposing && dst.width() != dst.height() {
         moved = bytemuck::allocation::try_zeroed_vec::<u8>(
-            (dst.width() as usize * dst.height() as usize).div_ceil(8),
+            usize::try_from(dst.pixel_count().div_ceil(8))
+                .map_err(|_| ConvertError::AllocationFailed)?,
         )
         .map_err(|()| ConvertError::AllocationFailed)?;
     }
     // The permutation keeps every sample value, so restore the evidence that
     // the in-place mutable access had to end.
     let exact = dst.exact_depth();
+    let float_facts = dst.float_facts();
     dst.transform_in_place(|px| orient_in_place_impl(px, orientation, moved));
     dst.set_exact_depth(exact)
         .expect("apply_orientation_in_place: descriptor is unchanged");
+    dst.set_float_facts(float_facts)
+        .expect("apply_orientation_in_place: descriptor is unchanged");
+    Ok(())
+}
+
+/// Apply `orientation` from banded `src` into pre-allocated banded `dst` with zero
+/// intermediate heap allocation, dispatching each `(src_band, dst_band)` intersection
+/// block through the cache-blocked SIMD transpose kernels.
+pub(crate) fn apply_orientation_banded_into(
+    src: &zenpixels::banded::BandedPixelBuffer,
+    orientation: Orientation,
+    dst: &mut zenpixels::banded::BandedPixelBuffer,
+) -> Result<(), ConvertError> {
+    let w = src.width();
+    let h = src.height();
+    let desc = src.descriptor();
+    let bpp = desc.bytes_per_pixel();
+    let (ow, oh) = orientation.output_dimensions(w, h);
+    let dst_desc = dst.descriptor();
+    let dst_bpp = dst_desc.bytes_per_pixel();
+    if dst.width() != ow || dst.height() != oh || dst_bpp != bpp {
+        return Err(ConvertError::BufferSize {
+            expected: (ow as usize)
+                .saturating_mul(oh as usize)
+                .saturating_mul(bpp),
+            actual: (dst.width() as usize)
+                .saturating_mul(dst.height() as usize)
+                .saturating_mul(dst_bpp),
+        });
+    }
+    if dst_desc.pixel_format() != desc.pixel_format() {
+        return Err(ConvertError::NoPath {
+            from: desc,
+            to: dst_desc,
+        });
+    }
+    if w > 0 && h > 0 && bpp > 0 {
+        match orientation {
+            Orientation::Identity => {
+                let mut oy = 0u32;
+                for mut slice in dst.bands_mut() {
+                    for ry in 0..slice.rows() {
+                        slice
+                            .row_mut(ry)
+                            .copy_from_slice(src.row(oy + ry).expect("row in bounds"));
+                    }
+                    oy += slice.rows();
+                }
+            }
+            Orientation::FlipV => {
+                let mut oy = 0u32;
+                for mut slice in dst.bands_mut() {
+                    for ry in 0..slice.rows() {
+                        slice
+                            .row_mut(ry)
+                            .copy_from_slice(src.row(h - 1 - (oy + ry)).expect("row in bounds"));
+                    }
+                    oy += slice.rows();
+                }
+            }
+            Orientation::FlipH => {
+                let mut oy = 0u32;
+                for mut slice in dst.bands_mut() {
+                    for ry in 0..slice.rows() {
+                        reverse_row(
+                            src.row(oy + ry).expect("row in bounds"),
+                            slice.row_mut(ry),
+                            w as usize,
+                            bpp,
+                        );
+                    }
+                    oy += slice.rows();
+                }
+            }
+            Orientation::Rotate180 => {
+                let mut oy = 0u32;
+                for mut slice in dst.bands_mut() {
+                    for ry in 0..slice.rows() {
+                        reverse_row(
+                            src.row(h - 1 - (oy + ry)).expect("row in bounds"),
+                            slice.row_mut(ry),
+                            w as usize,
+                            bpp,
+                        );
+                    }
+                    oy += slice.rows();
+                }
+            }
+            Orientation::Transpose
+            | Orientation::Rotate90
+            | Orientation::Rotate270
+            | Orientation::Transverse => {
+                let mut oy0 = 0u32;
+                for mut d_slice in dst.bands_mut() {
+                    let dh = d_slice.rows();
+                    let oy1 = oy0 + dh;
+                    let sx0 = match orientation {
+                        Orientation::Transpose | Orientation::Rotate90 => oy0,
+                        Orientation::Rotate270 | Orientation::Transverse => w - oy1,
+                        _ => unreachable!(),
+                    };
+                    let d_stride = d_slice.stride();
+                    let d_bytes = d_slice.as_strided_bytes_mut();
+                    let mut sy0 = 0u32;
+                    for s_slice in src.bands() {
+                        let sh = s_slice.rows();
+                        let sy1 = sy0 + sh;
+                        let ox0 = match orientation {
+                            Orientation::Transpose | Orientation::Rotate270 => sy0,
+                            Orientation::Rotate90 | Orientation::Transverse => h - sy1,
+                            _ => unreachable!(),
+                        };
+                        let s_stride = s_slice.stride();
+                        let s_bytes = s_slice.as_strided_bytes();
+                        let s_off = (sx0 as usize) * bpp;
+                        let d_off = (ox0 as usize) * bpp;
+                        let src_rect = PixelSlice::new(&s_bytes[s_off..], dh, sh, s_stride, desc)
+                            .map_err(|e| ConvertError::Buffer(*e.error()))?;
+                        let dst_rect =
+                            PixelSliceMut::new(&mut d_bytes[d_off..], sh, dh, d_stride, dst_desc)
+                                .map_err(|e| ConvertError::Buffer(*e.error()))?;
+                        apply_orientation_into(src_rect, orientation, dst_rect)?;
+                        sy0 = sy1;
+                    }
+                    oy0 = oy1;
+                }
+            }
+            _ => {
+                for sy in 0..h {
+                    let s_row = src.row(sy).expect("row in bounds");
+                    for sx in 0..w {
+                        let (ox, oy) = orientation.forward_map(sx, sy, w, h);
+                        let s_px = &s_row[sx as usize * bpp..(sx as usize + 1) * bpp];
+                        let d_row = dst.row_mut(oy).expect("row in bounds");
+                        d_row[ox as usize * bpp..(ox as usize + 1) * bpp].copy_from_slice(s_px);
+                    }
+                }
+            }
+        }
+    }
+    if dst.descriptor() == desc {
+        dst.set_color_context(src.color_context().cloned());
+        if let Some(exact) = src.exact_depth() {
+            let _ = dst.set_exact_depth(Some(exact));
+        } else {
+            let _ = dst.set_exact_depth(None);
+        }
+        let _ = dst.set_float_facts(src.float_facts());
+    } else {
+        let _ = dst.set_exact_depth(None);
+        let _ = dst.set_float_facts(zenpixels::sample::FloatFacts::NONE);
+    }
     Ok(())
 }
 
@@ -500,7 +716,7 @@ pub fn __bench_apply_orientation_scalar(
 
 /// Copy one row, reversing the order of `bpp`-sized pixels (`FlipH` per row).
 #[inline]
-fn reverse_row(s: &[u8], d: &mut [u8], width: usize, bpp: usize) {
+pub(crate) fn reverse_row(s: &[u8], d: &mut [u8], width: usize, bpp: usize) {
     for x in 0..width {
         let si = (width - 1 - x) * bpp;
         let di = x * bpp;
@@ -606,16 +822,13 @@ fn do_transpose(
         }
         #[cfg(feature = "fast-transpose")]
         if bpp == 4 {
-            // Non-x86 tiers (NEON / WASM SIMD128 / scalar) via the magetypes
-            // 4×4 register transpose. Explicit tier list matching its
-            // `#[magetypes(v3, neon, wasm128, scalar)]` attribute: a bare
-            // `incant!` expands the full cascade and references a `_v4`
-            // variant that was never generated, breaking `--features avx512`
-            // builds (caught by the feature-powerset CI job).
-            incant!(
-                transpose4_simd(src, dst, orientation, w, h),
-                [v3, neon, wasm128, scalar]
-            );
+            // Non-x86_64/aarch64 tiers (WASM SIMD128, plus scalar fallback on
+            // pre-AVX2 x86 or 32-bit targets) via the magetypes 4×4 register
+            // transpose. `_v3` and `_neon` are natively excluded on
+            // `transpose4_simd` via `#[attune(dispatch, -_v3, -_neon, ...)]`
+            // because x86_64 and aarch64 already take the dedicated per-width
+            // kernels above.
+            transpose4_simd(src, dst, orientation, w, h);
             return;
         }
         // Monomorphised per pixel size so the inner copy is a fixed-size
@@ -670,6 +883,14 @@ fn inverse_flips(orientation: Orientation) -> Option<(bool, bool)> {
 /// store-friendly direction. This is what makes 3 bpp (and the other non-SIMD
 /// widths) competitive; zenjpeg#150 measured the `forward_map`-per-element
 /// path losing to a naive linear-write gather.
+#[cfg_attr(
+    all(
+        feature = "fast-transpose",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ),
+    cold
+)]
+#[inline(never)]
 fn transpose_tiled<const BPP: usize>(
     src: &PixelSlice<'_>,
     dst: &mut PixelSliceMut<'_>,
@@ -718,6 +939,14 @@ fn transpose_tiled<const BPP: usize>(
 /// encodes transpose + whatever reflection the orientation adds; tiling keeps
 /// each block's scattered destination writes inside the cache. This is the
 /// portable path and the parity oracle for the SIMD kernel.
+#[cfg_attr(
+    all(
+        feature = "fast-transpose",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ),
+    cold
+)]
+#[inline(never)]
 fn transpose_blocked(
     src: &PixelSlice<'_>,
     dst: &mut PixelSliceMut<'_>,
@@ -885,8 +1114,12 @@ pub fn __bench_apply_orientation_staged(
     let (ow, oh) = orientation.output_dimensions(w, h);
     if dst.width() != ow || dst.rows() != oh || dst.descriptor().bytes_per_pixel() != bpp {
         return Err(ConvertError::BufferSize {
-            expected: ow as usize * oh as usize * bpp,
-            actual: dst.width() as usize * dst.rows() as usize * dst.descriptor().bytes_per_pixel(),
+            expected: (ow as usize)
+                .saturating_mul(oh as usize)
+                .saturating_mul(bpp),
+            actual: (dst.width() as usize)
+                .saturating_mul(dst.rows() as usize)
+                .saturating_mul(dst.descriptor().bytes_per_pixel()),
         });
     }
     if w == 0 || h == 0 || bpp == 0 {
@@ -957,26 +1190,24 @@ fn tile_dest(
 }
 
 /// SIMD path: transpose full 4×4 tiles via `f32x4::transpose_4x4` (the classic
-/// `_MM_TRANSPOSE4_PS`-shaped shuffle cascade), scalar for the edges. The
-/// `#[magetypes]` attribute generates one variant per SIMD tier from this single
-/// body; `incant!` in [`do_transpose`] picks the best at runtime.
+/// `_MM_TRANSPOSE4_PS`-shaped shuffle cascade), scalar for the edges.
+/// `#[attune(dispatch, -_v3, -_neon, define(f32x4))]` generates the WASM SIMD128
+/// and scalar variants plus a tokenless dispatcher while natively excluding `_v3`
+/// and `_neon` (handled by `pxn_x86` / `pxn_neon` in [`do_transpose`]).
 ///
 /// Each 4-byte pixel rides as one f32 lane. The transpose only *shuffles whole
 /// 32-bit lanes* (no float arithmetic), so the reinterpret is bit-exact for any
 /// 4-byte pixel format, including bit patterns that happen to be NaN.
 #[cfg(feature = "fast-transpose")]
-#[magetypes(v3, neon, wasm128, scalar)]
+#[attune(dispatch, -_v3, -_neon, define(f32x4))]
 fn transpose4_simd(
-    token: Token,
     src: &PixelSlice<'_>,
     dst: &mut PixelSliceMut<'_>,
     orientation: Orientation,
     w: u32,
     h: u32,
 ) {
-    #[allow(non_camel_case_types)]
-    type f32x4 = GenericF32x4<Token>;
-
+    let token = Token::from_context();
     let full_w = w & !3; // largest multiple of 4 ≤ w
     let full_h = h & !3;
 

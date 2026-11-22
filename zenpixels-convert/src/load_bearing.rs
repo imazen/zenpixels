@@ -11,8 +11,8 @@
 //! The entry points:
 //!   * [`PixelSliceLoadBearingExt::determine_load_bearing`] -- analysis,
 //!     no buffer modification
-//!   * [`PixelSliceLoadBearingExt::try_reduce_to_load_bearing_format`]
-//!     -- analysis + buffer rewrite into a fresh allocation, `None` when
+//!   * [`PixelSliceLoadBearingExt::reduce_to_load_bearing_format`]
+//!     -- analysis + buffer rewrite into a fresh allocation, `Ok(None)` when
 //!     no narrowing is possible
 //!   * [`PixelBufferLoadBearingExt::reduce_to_load_bearing_format_in_place`]
 //!     -- analysis + buffer rewrite into the buffer's own bytes (no
@@ -84,6 +84,28 @@ pub struct LoadBearingReport {
 }
 
 impl LoadBearingReport {
+    /// Scan all packed bands, keeping an unsupported predicate unknown.
+    pub fn scan_bands(pixels: &zenpixels::banded::BandedPixelBuffer) -> Self {
+        fn merge(a: Option<bool>, b: Option<bool>) -> Option<bool> {
+            match (a, b) {
+                (Some(true), _) | (_, Some(true)) => Some(true),
+                (Some(false), Some(false)) => Some(false),
+                _ => None,
+            }
+        }
+        let mut bands = pixels.bands();
+        let mut result = bands
+            .next()
+            .map_or_else(Self::default, |band| band.determine_load_bearing());
+        for band in bands {
+            let current = band.determine_load_bearing();
+            result.uses_alpha = merge(result.uses_alpha, current.uses_alpha);
+            result.uses_chroma = merge(result.uses_chroma, current.uses_chroma);
+            result.uses_low_bits = merge(result.uses_low_bits, current.uses_low_bits);
+        }
+        result
+    }
+
     /// True if the analysis returned at least one non-`None` field --
     /// i.e. some predicate ran (or answered structurally). Codecs that
     /// need a quick "is there anything actionable here" check before
@@ -111,7 +133,7 @@ impl LoadBearingReport {
     ///
     /// Alpha drop from `Bgra` narrows to `Rgb` -- there is no `Bgr`
     /// layout, so the buffer rewrite in
-    /// [`PixelSliceLoadBearingExt::try_reduce_to_load_bearing_format`]
+    /// [`PixelSliceLoadBearingExt::reduce_to_load_bearing_format`]
     /// reorders channels (B,G,R,A → R,G,B). Callers applying this
     /// descriptor with their own rewrite must do the same reorder.
     ///
@@ -192,12 +214,13 @@ pub trait PixelSliceLoadBearingExt: sealed::Sealed {
     ///
     /// Use [`LoadBearingReport::apply_to`] on the slice's descriptor to
     /// see what the buffer could become; use
-    /// [`Self::try_reduce_to_load_bearing_format`] to actually build it.
+    /// [`Self::reduce_to_load_bearing_format`] to actually build it.
     fn determine_load_bearing(&self) -> LoadBearingReport;
 
     /// Run analysis and return the rewritten buffer if any reduction is
-    /// available; `None` if the buffer is already at its load-bearing
-    /// minimum, the predicates couldn't run, or allocation failed.
+    /// available; `Ok(None)` if the buffer is already at its load-bearing
+    /// minimum or the predicates couldn't run; `Err` reports the failed
+    /// output allocation (`ConvertError::Buffer(AllocationFailed)`).
     ///
     /// The returned [`PixelBuffer`] carries the narrowed descriptor and
     /// the buffer's standard SIMD-aligned row stride (it is not
@@ -208,18 +231,6 @@ pub trait PixelSliceLoadBearingExt: sealed::Sealed {
     /// declaration. RGB-to-gray rewriting requires qualified replacement of
     /// that ICC and agreement from any companion CICP. Otherwise RGB is kept;
     /// exact alpha/depth reductions remain available with the original context.
-    ///
-    /// `None` collapses two distinct causes; use
-    /// [`Self::reduce_to_load_bearing_format`] to distinguish
-    /// "no reduction" from an allocation failure.
-    fn try_reduce_to_load_bearing_format(&self) -> Option<PixelBuffer>;
-
-    /// [`Self::try_reduce_to_load_bearing_format`] with the
-    /// allocation-failure cause preserved.
-    ///
-    /// `Ok(None)` means the buffer is already at its load-bearing
-    /// minimum or the predicates couldn't run; `Err` reports the
-    /// failed output allocation (`ConvertError::Buffer(AllocationFailed)`).
     fn reduce_to_load_bearing_format(
         &self,
     ) -> Result<Option<PixelBuffer>, whereat::At<crate::ConvertError>>;
@@ -390,10 +401,6 @@ impl<P> PixelSliceLoadBearingExt for PixelSlice<'_, P> {
         }
     }
 
-    fn try_reduce_to_load_bearing_format(&self) -> Option<PixelBuffer> {
-        self.reduce_to_load_bearing_format().ok().flatten()
-    }
-
     fn reduce_to_load_bearing_format(
         &self,
     ) -> Result<Option<PixelBuffer>, whereat::At<crate::ConvertError>> {
@@ -484,33 +491,28 @@ fn plan_chroma_collapse_signaling(ctx: Option<&Arc<ColorContext>>) -> GraySignal
     let Some(ctx) = ctx else {
         return GraySignalPlan::Carry;
     };
-    let Some(icc) = ctx.icc.as_deref() else {
+    let Some(icc) = ctx.icc() else {
         return GraySignalPlan::Carry;
     };
 
     // Select from the current ICC itself, just as the other color boundaries do.
-    // A malformed declaration is not permission to use a secondary signal.
     let cicp = zenpixels::icc::IccIdentification::from_icc(icc)
         .filter(|id| id.valid_use == zenpixels::icc::IdentificationUse::MatrixTrcSubstitution)
         .and_then(|id| id.to_cicp());
     let Some(cicp) = cicp else {
         return GraySignalPlan::Suppress;
     };
-    if ctx.cicp.is_some_and(|hint| hint != cicp) {
-        return GraySignalPlan::Suppress;
-    }
 
     match synthesize_gray_icc_for_cicp(cicp) {
         SynthesizedIcc::Profile(bytes) => {
-            let mut swapped = ColorContext::from_icc(bytes.into_owned());
-            swapped.cicp = ctx.cicp;
+            let swapped = (**ctx).clone().with_icc(bytes.into_owned());
             GraySignalPlan::Swap(Some(Arc::new(swapped)))
         }
         // Assumed sRGB default: gray output needs no ICC (descriptor /
-        // container-level signaling suffices); keep the CICP if the
-        // source context carried one.
+        // container-level signaling suffices); preserve any luminance anchors.
         SynthesizedIcc::NotNeeded => {
-            GraySignalPlan::Swap(ctx.cicp.map(|c| Arc::new(ColorContext::from_cicp(c))))
+            let swapped = (**ctx).clone().with_profile(None);
+            GraySignalPlan::Swap((!swapped.is_empty()).then(|| Arc::new(swapped)))
         }
         // Off-grid code points / future variants: nothing derivable.
         _ => GraySignalPlan::Suppress,
@@ -543,7 +545,7 @@ pub trait PixelBufferLoadBearingExt: sealed::Sealed {
     /// [`PixelBuffer::descriptor`] before/after to detect it.
     ///
     /// Every rewrite is the same bit-exact byte selection
-    /// [`PixelSliceLoadBearingExt::try_reduce_to_load_bearing_format`]
+    /// [`PixelSliceLoadBearingExt::reduce_to_load_bearing_format`]
     /// performs; only the destination is the buffer itself. Rows are
     /// compacted front-to-back (narrowing means every write lands at or
     /// before the bytes it just consumed), so strided input works and
@@ -981,6 +983,14 @@ fn select_row_u16_to_u8(row_in: &[u8], row_out: &mut [u8], in_ch: usize, map: &[
 
 #[cfg(test)]
 mod tests {
+    trait TestTryReduce {
+        fn try_reduce_to_load_bearing_format(&self) -> Option<super::PixelBuffer>;
+    }
+    impl<P> TestTryReduce for super::PixelSlice<'_, P> {
+        fn try_reduce_to_load_bearing_format(&self) -> Option<super::PixelBuffer> {
+            super::PixelSliceLoadBearingExt::reduce_to_load_bearing_format(self).unwrap()
+        }
+    }
     use super::*;
     use zenpixels::{Cicp, ColorPrimaries, PixelSlice, TransferFunction};
 
@@ -1739,7 +1749,7 @@ mod tests {
             PixelFormat::GrayAF16,
             PixelFormat::OklabF32,
             PixelFormat::OklabaF32,
-            PixelFormat::Cmyk8,
+            PixelFormat::CMYK8,
         ] {
             let bytes = dummy_bytes_for(fmt);
             let s = make_slice(&bytes, 1, 1, fmt);
@@ -2250,7 +2260,10 @@ mod tests {
             .with_color_context(context.clone());
         let output = pixels.try_reduce_to_load_bearing_format().unwrap();
         assert_eq!(output.descriptor().format, PixelFormat::Rgb8);
-        assert_eq!(output.as_slice().color_context().unwrap().icc, context.icc);
+        assert_eq!(
+            output.as_slice().color_context().unwrap().icc(),
+            context.icc()
+        );
         assert!(Arc::ptr_eq(
             output.as_slice().color_context().unwrap(),
             &context
@@ -2262,7 +2275,10 @@ mod tests {
             lb_buf(&row.repeat(2), 2, 2, PixelFormat::Rgba8).with_color_context(context.clone());
         buffer.reduce_to_load_bearing_format_in_place(true);
         assert_eq!(buffer.descriptor().format, PixelFormat::Rgb8);
-        assert_eq!(buffer.as_slice().color_context().unwrap().icc, context.icc);
+        assert_eq!(
+            buffer.as_slice().color_context().unwrap().icc(),
+            context.icc()
+        );
         assert!(Arc::ptr_eq(
             buffer.as_slice().color_context().unwrap(),
             &context
@@ -2273,18 +2289,15 @@ mod tests {
     }
 
     #[test]
-    fn unusable_icc_never_uses_companion_cicp_to_authorize_gray_replacement() {
+    fn unusable_icc_never_authorizes_gray_replacement() {
         for len in [0, 1, 8, 127, 128, 129] {
-            for companion in [None, Some(Cicp::SRGB), Some(Cicp::DISPLAY_P3)] {
-                let mut context = ColorContext::from_icc(alloc::vec![0; len]);
-                context.cicp = companion;
-                assert!(matches!(
-                    context.as_profile_source(),
-                    Some(zenpixels::ColorProfileSource::Icc(_))
-                ));
-                assert_eq!(context.transfer_function(), TransferFunction::Unknown);
-                assert_unqualified_icc_survives_gray_content(Arc::new(context));
-            }
+            let context = ColorContext::from_icc(alloc::vec![0; len]);
+            assert!(matches!(
+                context.as_profile_source(),
+                Some(zenpixels::ColorProfileSource::Icc(_))
+            ));
+            assert_eq!(context.transfer_function(), TransferFunction::Unknown);
+            assert_unqualified_icc_survives_gray_content(Arc::new(context));
         }
     }
 
@@ -2302,17 +2315,7 @@ mod tests {
                 .valid_use,
             zenpixels::icc::IdentificationUse::MetadataOnly,
         );
-        let mut context = ColorContext::from_icc(profile.into_owned());
-        context.cicp = Some(cicp);
-        let context = Arc::new(context);
-        assert_unqualified_icc_survives_gray_content(context);
-    }
-
-    #[test]
-    fn contradictory_cicp_cannot_replace_an_authoritative_rgb_icc() {
-        let mut context = ColorContext::from_icc(crate::icc_profiles::DISPLAY_P3_V4);
-        context.cicp = Some(Cicp::new(12, 4, 0, true));
-        let context = Arc::new(context);
+        let context = Arc::new(ColorContext::from_icc(profile.into_owned()));
         assert_unqualified_icc_survives_gray_content(context);
     }
 
@@ -2323,8 +2326,8 @@ mod tests {
     fn assert_gray_class_icc(ctx: Option<&Arc<ColorContext>>) -> Arc<[u8]> {
         let icc = ctx
             .expect("reduced buffer must carry a context")
-            .icc
-            .clone()
+            .icc_arc()
+            .cloned()
             .expect("swapped context must hold ICC bytes");
         assert_eq!(&icc[16..20], b"GRAY", "swapped profile must be GRAY-class");
         assert_eq!(&icc[36..40], b"acsp", "swapped profile must be a valid ICC");
@@ -2333,12 +2336,11 @@ mod tests {
 
     #[cfg(feature = "icc-db")]
     #[test]
-    fn icc_with_cicp_swaps_to_gray_class_profile_on_collapse() {
-        // A qualified RGB profile with an agreeing companion can swap to
-        // its gray-class synthesis. The companion alone grants no permission.
-        let mut both = ColorContext::from_icc(crate::icc_profiles::DISPLAY_P3_V4);
-        both.cicp = Some(Cicp::DISPLAY_P3);
-        let ctx = Arc::new(both);
+    fn icc_with_anchor_swaps_to_gray_class_profile_and_preserves_anchor_on_collapse() {
+        let ctx = Arc::new(
+            ColorContext::from_icc(crate::icc_profiles::DISPLAY_P3_V4)
+                .with_diffuse_white(zenpixels::hdr::DiffuseWhite::new(160.0)),
+        );
         let bytes: Vec<u8> = (0..4).flat_map(|i| [i * 30, i * 30, i * 30, 255]).collect();
 
         let slice = make_slice(&bytes, 4, 1, PixelFormat::Rgba8).with_color_context(ctx.clone());
@@ -2347,10 +2349,11 @@ mod tests {
             .expect("gray collapse available via gray-ICC swap");
         assert_eq!(out.descriptor().format, PixelFormat::Gray8);
         let swapped = assert_gray_class_icc(out.as_slice().color_context());
+        assert_eq!(out.as_slice().color_context().unwrap().cicp(), None);
         assert_eq!(
-            out.as_slice().color_context().unwrap().cicp,
-            Some(Cicp::DISPLAY_P3),
-            "source cicp must ride along"
+            out.as_slice().color_context().unwrap().diffuse_white(),
+            Some(zenpixels::hdr::DiffuseWhite::new(160.0)),
+            "diffuse_white anchor must ride along"
         );
 
         // The buffer entry point produces the same signaling.
@@ -2360,6 +2363,10 @@ mod tests {
         let view = buf.as_slice();
         let swapped_in_place = assert_gray_class_icc(view.color_context());
         assert_eq!(swapped_in_place.as_ref(), swapped.as_ref());
+        assert_eq!(
+            view.color_context().unwrap().diffuse_white(),
+            Some(zenpixels::hdr::DiffuseWhite::new(160.0))
+        );
     }
 
     #[cfg(feature = "icc-db")]
@@ -2379,18 +2386,10 @@ mod tests {
         assert_eq!(out.descriptor().format, PixelFormat::Gray8);
         assert_gray_class_icc(out.as_slice().color_context());
         assert_eq!(
-            out.as_slice().color_context().unwrap().cicp,
+            out.as_slice().color_context().unwrap().cicp(),
             None,
             "no cicp on the source context, none invented"
         );
-    }
-
-    #[test]
-    fn srgb_companion_does_not_repair_unusable_icc_on_collapse() {
-        // Even the assumed sRGB default cannot override a selected ICC.
-        let mut both = ColorContext::from_icc(alloc::vec![0u8; 8]);
-        both.cicp = Some(Cicp::SRGB);
-        assert_unqualified_icc_survives_gray_content(Arc::new(both));
     }
 
     #[test]
@@ -2423,9 +2422,7 @@ mod tests {
         // A swappable context on a buffer whose chroma IS load-bearing:
         // no collapse happens, so no swap applies -- the original
         // context carries through the alpha drop untouched.
-        let mut both = ColorContext::from_icc(crate::icc_profiles::DISPLAY_P3_V4);
-        both.cicp = Some(Cicp::DISPLAY_P3);
-        let ctx = Arc::new(both);
+        let ctx = Arc::new(ColorContext::from_icc(crate::icc_profiles::DISPLAY_P3_V4));
         let bytes: Vec<u8> = (0..4i32)
             .flat_map(|i| {
                 [

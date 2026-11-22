@@ -396,15 +396,15 @@ fn hlg_f32_linear_f32_roundtrip() {
 
 /// PQ U16 → sRGB U8 cross-TF conversion (HDR to SDR tone mapping path).
 ///
-/// Post-0.2.16 the plain `ConvertPlan::new` refuses this combination
+/// Post-0.2.16 the plain `NativePlan::new` refuses this combination
 /// (`HdrSourceRequiresPeak`) — the historic silent pass-through saturated
 /// every above-diffuse-white PQ sample to sRGB 255. The HDR-aware
-/// constructor `ConvertPlan::new_with_hdr_peak` accepts a source peak
+/// constructor `NativePlan::new_with_hdr_peak` accepts a source peak
 /// and inserts the BT.2446-A tone curve; that path is tested here.
 #[test]
 #[cfg(feature = "bt2446a")]
 fn pq_u16_to_srgb_u8() {
-    use crate::ConvertPlan;
+    use crate::NativePlan;
     let width = 4u32;
     let pq_u16 = PixelDescriptor::new(
         ChannelType::U16,
@@ -414,7 +414,7 @@ fn pq_u16_to_srgb_u8() {
     );
     let srgb_u8 = PixelDescriptor::RGB8_SRGB;
 
-    let plan = ConvertPlan::new_with_hdr_peak(pq_u16, srgb_u8, 1000.0).unwrap();
+    let plan = NativePlan::new_with_hdr_peak(pq_u16, srgb_u8, 1000.0).unwrap();
     let mut conv = RowConverter::from_plan(plan);
 
     let mut src = vec![0u8; 4 * 6];
@@ -498,7 +498,7 @@ fn different_primaries_same_depth_applies_gamut() {
     )
     .with_primaries(ColorPrimaries::Bt2020);
 
-    // ConvertPlan now applies gamut matrices for known primaries.
+    // NativePlan now applies gamut matrices for known primaries.
     let mut conv = RowConverter::new(bt709, bt2020).unwrap();
     assert!(
         !conv.is_identity(),
@@ -735,7 +735,11 @@ fn u16_to_f16_triggers_depth_reduction_policy() {
         TransferFunction::Linear,
     );
 
-    let opts = ConvertOptions::permissive().with_depth_policy(DepthPolicy::Forbid);
+    let opts = ConvertOptions::retain_channels()
+        .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(crate::DepthPolicy::Round)
+        .with_luma(Some(crate::LumaCoefficients::Bt709))
+        .with_depth_policy(DepthPolicy::Forbid);
 
     let result = RowConverter::new_explicit(from, to, &opts);
     match result {

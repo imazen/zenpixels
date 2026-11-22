@@ -837,8 +837,8 @@ fn an_edit_log_misses_unlogged_mutation_and_grows_with_composition() {
         tree = vec![Edit::Composite(tree.clone(), tree)];
     }
     assert_eq!(log_entries(&tree), 1023 + 1024 * 2, "a 1024-tile mosaic");
-    // ExactDepth for the same 1024-tile selection is still 4 bytes of state.
-    assert_eq!(core::mem::size_of::<Option<ExactDepth>>(), 4);
+    // ExactDepth for the same 1024-tile selection is still 2 bytes of state.
+    assert_eq!(core::mem::size_of::<Option<ExactDepth>>(), 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -972,7 +972,7 @@ fn orientation_moves_pixels_and_keeps_evidence() {
 
 #[test]
 fn narrow_depth_changes_refuse_and_never_carry_full_scale_evidence() {
-    use zenpixels_convert::{ConvertError, ConvertPlan};
+    use zenpixels_convert::ConvertError;
     // Narrow U8 to U16 must scale anchors by 2^8 (16 -> 4096, 235 -> 60160);
     // the existing depth kernel multiplies by 257 (16 -> 4112). Planning and
     // convert_to refuse the crossing, so the full-scale carry rule never sees
@@ -996,7 +996,7 @@ fn narrow_depth_changes_refuse_and_never_carry_full_scale_evidence() {
     ] {
         assert!(
             matches!(
-                *ConvertPlan::new_preserving_samples(rgb8, target)
+                *crate::test_conversion::exact_plan(rgb8, target)
                     .unwrap_err()
                     .error(),
                 ConvertError::NoPath { .. }
@@ -1007,7 +1007,7 @@ fn narrow_depth_changes_refuse_and_never_carry_full_scale_evidence() {
     }
     // Full-range samples cannot enter narrow storage either.
     assert!(
-        ConvertPlan::new_preserving_samples(
+        crate::test_conversion::exact_plan(
             PixelDescriptor::RGB8_SRGB,
             narrow(PixelDescriptor::RGB16_SRGB)
         )
@@ -1027,3 +1027,6 @@ fn narrow_depth_changes_refuse_and_never_carry_full_scale_evidence() {
     );
     assert_eq!(carried, ExactDepth::measure(&rgba.as_slice()).unwrap());
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

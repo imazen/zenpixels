@@ -4,7 +4,6 @@
 use std::time::Duration;
 use zenbench::prelude::*;
 use zenpixels::{ChannelLayout, ChannelType, PixelDescriptor, TransferFunction};
-use zenpixels_convert::RowConverter;
 
 const SIZES: &[(&str, usize)] = &[
     ("64²", 64 * 64),
@@ -29,20 +28,31 @@ fn main() {
                     .flat_map(|i| ((i * 7919 % 65536) as u16).to_ne_bytes())
                     .collect();
                 let target = desc(ChannelType::U8, TransferFunction::Srgb);
-                let mut old_decode =
-                    RowConverter::new(desc(ChannelType::U16, from), desc(ChannelType::F32, from))
-                        .unwrap();
+                let mut old_decode = crate::test_conversion::new_worker(
+                    desc(ChannelType::U16, from),
+                    desc(ChannelType::F32, from),
+                )
+                .unwrap();
                 let mut old_encode =
-                    RowConverter::new(desc(ChannelType::F32, from), target).unwrap();
-                let mut direct = RowConverter::new(desc(ChannelType::U16, from), target).unwrap();
+                    crate::test_conversion::new_worker(desc(ChannelType::F32, from), target)
+                        .unwrap();
+                let mut direct =
+                    crate::test_conversion::new_worker(desc(ChannelType::U16, from), target)
+                        .unwrap();
                 let mut intermediate = vec![0u8; count * 4];
                 let mut old_dst = vec![0u8; count];
                 let mut new_dst = vec![0u8; count];
 
                 // Trigger the lazy table before timing steady-state conversions.
-                direct.convert_row(&src, &mut new_dst, width as u32);
-                old_decode.convert_row(&src, &mut intermediate, width as u32);
-                old_encode.convert_row(&intermediate, &mut old_dst, width as u32);
+                direct
+                    .try_convert_row(&src, &mut new_dst, width as u32)
+                    .unwrap();
+                old_decode
+                    .try_convert_row(&src, &mut intermediate, width as u32)
+                    .unwrap();
+                old_encode
+                    .try_convert_row(&intermediate, &mut old_dst, width as u32)
+                    .unwrap();
 
                 suite.group(format!("{pair_name} {size_name}"), move |g| {
                     g.throughput(Throughput::Bytes((count * 2) as u64));
@@ -51,8 +61,12 @@ fn main() {
                         .max_wall_time(Duration::from_secs(30));
                     g.bench("old f32 pipeline", move |b| {
                         b.iter(|| {
-                            old_decode.convert_row(&src, &mut intermediate, width as u32);
-                            old_encode.convert_row(&intermediate, &mut old_dst, width as u32);
+                            old_decode
+                                .try_convert_row(&src, &mut intermediate, width as u32)
+                                .unwrap();
+                            old_encode
+                                .try_convert_row(&intermediate, &mut old_dst, width as u32)
+                                .unwrap();
                             black_box(());
                         })
                     });
@@ -61,7 +75,9 @@ fn main() {
                         .collect();
                     g.bench("new LUT step", move |b| {
                         b.iter(|| {
-                            direct.convert_row(&src, &mut new_dst, width as u32);
+                            direct
+                                .try_convert_row(&src, &mut new_dst, width as u32)
+                                .unwrap();
                             black_box(());
                         })
                     });
@@ -70,3 +86,6 @@ fn main() {
         }
     });
 }
+
+#[path = "../tests/support/conversion.rs"]
+mod test_conversion;

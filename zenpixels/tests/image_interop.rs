@@ -8,9 +8,9 @@ use image::{
     ColorType, DynamicImage, ExtendedColorType, GenericImage, GenericImageView, ImageBuffer, Luma,
     LumaA, Pixel, Rgb, Rgba,
 };
-use zenpixels::plane::{
-    AlignedPlane, AlignedSamples, Plane, PlaneBuf, PlaneMut, PlaneRef, SampleStorage,
-};
+use zenpixels::buffer::{AlignedSamples, SampleStorage};
+#[cfg(feature = "planar")]
+use zenpixels::plane::{AlignedPlane, Plane, PlaneBuf, PlaneMut, PlaneRef};
 use zenpixels::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelBuffer, PixelBufferParts,
     PixelDescriptor, PixelFormat, PixelSlice, PixelSliceMut, SignalRange, TransferFunction,
@@ -280,7 +280,7 @@ fn color_zenpixels_cannot_name_is_kept_and_blocks_the_return_trip() {
     let buffer: PixelBuffer = PixelBuffer::try_from(img).unwrap();
     assert_eq!(buffer.descriptor().primaries, ColorPrimaries::Unknown);
     assert_eq!(buffer.descriptor().transfer, TransferFunction::Unknown);
-    let cicp = buffer.color_context().unwrap().cicp.unwrap();
+    let cicp = buffer.color_context().unwrap().cicp().unwrap();
     assert_eq!(
         (cicp.color_primaries, cicp.transfer_characteristics),
         (7, 7)
@@ -405,14 +405,20 @@ fn flat_views_refuse_what_image_cannot_read() {
     let raw = fill_u8(32);
     let slice = PixelSlice::new(&raw, 4, 2, 16, bgra).unwrap();
     assert!(FlatSamples::<&[u8]>::try_from(slice).is_err());
-    let rgb16 = PixelBuffer::try_new_aligned(4, 2, PixelDescriptor::RGB16_SRGB)
-        .map(|b: PixelBuffer<(), AlignedSamples<u8>>| b)
-        .unwrap();
+    let rgb16 = PixelBuffer::try_new_aligned(
+        4,
+        2,
+        PixelDescriptor::RGB16_SRGB,
+        zenpixels::RowAlign::Cache64,
+    )
+    .map(|b: PixelBuffer<(), AlignedSamples<u8>>| b)
+    .unwrap();
     assert!(FlatSamples::<&[u8]>::try_from(rgb16.as_slice()).is_err());
     assert!(FlatSamples::<&[f32]>::try_from(rgb16.as_slice()).is_err());
     assert!(FlatSamples::<&[u16]>::try_from(rgb16.as_slice()).is_ok());
 }
 
+#[cfg(feature = "planar")]
 macro_rules! gray_planes {
     ($($name:ident: $sample:ty, $fill:ident;)*) => {$(
         mod $name {
@@ -507,11 +513,13 @@ macro_rules! gray_planes {
     )*};
 }
 
+#[cfg(feature = "planar")]
 gray_planes! {
     plane8: u8, fill_u8;
     plane16: u16, fill_u16;
 }
 
+#[cfg(feature = "planar")]
 mod planef {
     use super::*;
 
@@ -641,10 +649,10 @@ fn extended_color_types_map_or_refuse_explicitly() {
         (E::Rgba16, PixelFormat::Rgba16),
         (E::Bgra8, PixelFormat::Bgra8),
         (E::Bgr8, PixelFormat::Bgr8),
-        (E::Cmyk16, PixelFormat::Cmyk16),
+        (E::Cmyk16, PixelFormat::CMYK16),
         (E::Rgb32F, PixelFormat::RgbF32),
         (E::Rgba32F, PixelFormat::RgbaF32),
-        (E::Cmyk8, PixelFormat::Cmyk8),
+        (E::Cmyk8, PixelFormat::CMYK8),
     ];
     for (color, format) in mapped {
         assert_eq!(PixelFormat::try_from(color).unwrap(), format);
@@ -672,4 +680,221 @@ fn extended_color_types_map_or_refuse_explicitly() {
     }
     assert!(ColorType::try_from(PixelFormat::GrayF32).is_err());
     assert!(ColorType::try_from(PixelFormat::Bgra8).is_err());
+}
+
+#[test]
+fn orientation_bijection_matches_exif_and_dynamic_image_pixel_mapping() {
+    use image::metadata::Orientation as ImageOrientation;
+    use zenpixels::Orientation;
+
+    let (w, h) = (3u32, 2u32);
+    let mut base = ImageBuffer::<Rgb<u8>, Vec<u8>>::new(w, h);
+    for sy in 0..h {
+        for sx in 0..w {
+            base.put_pixel(sx, sy, Rgb([(sx * 10 + 1) as u8, (sy * 100 + 2) as u8, 42]));
+        }
+    }
+
+    for exif in 1..=8u8 {
+        let zen_o = Orientation::from_exif(exif).unwrap();
+        let img_o = ImageOrientation::from_exif(exif).unwrap();
+        assert_eq!(Orientation::from(img_o), zen_o, "EXIF {exif}");
+        assert_eq!(ImageOrientation::from(zen_o), img_o, "EXIF {exif}");
+        assert_eq!(zen_o.to_exif(), img_o.to_exif(), "EXIF {exif}");
+
+        let mut dyn_img = DynamicImage::ImageRgb8(base.clone());
+        dyn_img.apply_orientation(img_o);
+        let (ow, oh) = zen_o.output_dimensions(w, h);
+        assert_eq!(dyn_img.dimensions(), (ow, oh), "EXIF {exif} dims");
+        for sy in 0..h {
+            for sx in 0..w {
+                let (dx, dy) = zen_o.forward_map(sx, sy, w, h);
+                assert_eq!(
+                    dyn_img.get_pixel(dx, dy).0[..3],
+                    base.get_pixel(sx, sy).0,
+                    "EXIF {exif} ({sx},{sy}) -> ({dx},{dy})"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn cicp_metadata_roundtrips_with_image_metadata_cicp() {
+    use image::metadata::{
+        Cicp as ImageCicp, CicpColorPrimaries, CicpMatrixCoefficients, CicpTransferCharacteristics,
+        CicpVideoFullRangeFlag,
+    };
+    use zenpixels::{BufferError, Cicp};
+
+    let cases = [
+        Cicp::SRGB,
+        Cicp::DISPLAY_P3,
+        Cicp::BT2100_PQ,
+        Cicp::BT2100_HLG,
+        Cicp::new(2, 2, 2, true),
+        Cicp::new(9, 16, 14, false),
+        Cicp::new(1, 13, 16, true),
+    ];
+    for c in cases {
+        let img_c = ImageCicp::try_from(c).unwrap();
+        assert_eq!(Cicp::from(img_c), c, "{c:?}");
+    }
+
+    let img_narrow = ImageCicp {
+        primaries: CicpColorPrimaries::SmpteRp431,
+        transfer: CicpTransferCharacteristics::Bt470M,
+        matrix: CicpMatrixCoefficients::IptPqC2,
+        full_range: CicpVideoFullRangeFlag::NarrowRange,
+    };
+    let zen_c = Cicp::from(img_narrow);
+    assert_eq!(zen_c, Cicp::new(11, 4, 15, false));
+    assert_eq!(ImageCicp::try_from(zen_c).unwrap(), img_narrow);
+
+    // Reserved unmapped codes fail explicitly with IncompatibleDescriptor.
+    assert_eq!(
+        ImageCicp::try_from(Cicp::new(99, 13, 0, true)).unwrap_err(),
+        BufferError::IncompatibleDescriptor
+    );
+    assert_eq!(
+        ImageCicp::try_from(Cicp::new(1, 99, 0, true)).unwrap_err(),
+        BufferError::IncompatibleDescriptor
+    );
+    assert_eq!(
+        ImageCicp::try_from(Cicp::new(1, 13, 99, true)).unwrap_err(),
+        BufferError::IncompatibleDescriptor
+    );
+}
+
+#[test]
+fn bidirectional_flat_samples_cover_mutable_owned_simd_padded_and_f16() {
+    use image::flat::SampleLayout;
+    use zenpixels::{F16Sample, InteropTarget, RowAlign};
+
+    // 1. 64-byte SIMD-padded 3-channel RGB8 (stride = 64 B -> not pixel-aligned for 3 B RGB,
+    //    but sample-aligned for FlatSamples<Vec<u8>>!).
+    let mut buf =
+        PixelBuffer::try_new_with_align(5, 3, PixelDescriptor::RGB8_SRGB, RowAlign::Cache64)
+            .unwrap();
+    assert_eq!(buf.stride(), 64);
+    buf.as_slice_mut().row_mut(2)[12..15].copy_from_slice(&[11, 22, 33]);
+    let orig_ptr = buf.as_slice().as_strided_bytes().as_ptr();
+
+    let mut flat = FlatSamples::<Vec<u8>>::try_from(buf).unwrap();
+    assert_eq!(
+        flat.samples.as_ptr(),
+        orig_ptr,
+        "zero-copy buffer -> FlatSamples"
+    );
+    assert_eq!(flat.color_hint, Some(ColorType::Rgb8));
+    assert_eq!(flat.layout.height_stride, 64);
+    assert_eq!(flat.layout.width_stride, 3);
+    assert_eq!(
+        flat.as_view::<Rgb<u8>>().unwrap().get_pixel(4, 2),
+        Rgb([11, 22, 33])
+    );
+
+    // Mutate through FlatSamples<&mut [u8]> <-> PixelSliceMut, then move FlatSamples<Vec<u8>> back!
+    {
+        let flat_mut = FlatSamples {
+            samples: flat.samples.as_mut_slice(),
+            layout: flat.layout,
+            color_hint: flat.color_hint,
+        };
+        let mut slice_mut = PixelSliceMut::try_from(flat_mut).unwrap();
+        assert_eq!(slice_mut.descriptor().primaries, ColorPrimaries::Unknown);
+        assert_eq!(slice_mut.descriptor().transfer, TransferFunction::Unknown);
+        slice_mut.row_mut(0)[0..3].copy_from_slice(&[77, 88, 99]);
+        let mut back_flat_mut = FlatSamples::<&mut [u8]>::try_from(slice_mut).unwrap();
+        back_flat_mut
+            .as_view_mut::<Rgb<u8>>()
+            .unwrap()
+            .put_pixel(1, 0, Rgb([4, 5, 6]));
+    }
+
+    let recovered = PixelBuffer::try_from(flat).unwrap();
+    assert_eq!(
+        recovered.as_slice().as_strided_bytes().as_ptr(),
+        orig_ptr,
+        "zero-copy FlatSamples -> PixelBuffer"
+    );
+    assert_eq!(recovered.descriptor().primaries, ColorPrimaries::Unknown);
+    assert_eq!(recovered.descriptor().transfer, TransferFunction::Unknown);
+    assert_eq!(&recovered.as_slice().row(0)[0..6], &[77, 88, 99, 4, 5, 6]);
+    assert_eq!(&recovered.as_slice().row(2)[12..15], &[11, 22, 33]);
+
+    // 2. 64-byte SIMD-padded 3-channel RGBF16 (6 B/px, 64 B stride = 32 F16Samples/row).
+    let mut f16_buf =
+        PixelBuffer::try_new_with_align(5, 2, PixelDescriptor::RGBF16_LINEAR, RowAlign::Cache64)
+            .unwrap();
+    assert_eq!(f16_buf.stride(), 64);
+    let f16_px = [
+        F16Sample::from_f32(0.25),
+        F16Sample::from_f32(0.5),
+        F16Sample::from_f32(1.0),
+    ];
+    f16_buf.as_slice_mut().row_mut(1)[24..30].copy_from_slice(bytemuck::cast_slice(&f16_px));
+    let f16_ptr = f16_buf.as_slice().as_strided_bytes().as_ptr();
+    let f16_flat = FlatSamples::<Vec<F16Sample>>::try_from(f16_buf).unwrap();
+    assert_eq!(f16_flat.samples.as_ptr().cast::<u8>(), f16_ptr);
+    assert_eq!(f16_flat.layout.height_stride, 32);
+    assert!(f16_flat.color_hint.is_none());
+    let f16_slice = PixelSlice::try_from(FlatSamples {
+        samples: f16_flat.samples.as_slice(),
+        layout: f16_flat.layout,
+        color_hint: None,
+    })
+    .unwrap();
+    assert_eq!(
+        bytemuck::cast_slice::<u8, F16Sample>(&f16_slice.row(1)[24..30]),
+        &f16_px
+    );
+    let f16_back = PixelBuffer::try_from(f16_flat).unwrap();
+    assert_eq!(f16_back.as_slice().as_strided_bytes().as_ptr(), f16_ptr);
+
+    // 3. Planar or conflicting-hint FlatSamples<Vec<u8>> are refused and return the Vec intact.
+    let planar = FlatSamples {
+        samples: vec![1u8; 24],
+        layout: SampleLayout {
+            channels: 3,
+            channel_stride: 8,
+            width: 4,
+            width_stride: 1,
+            height: 2,
+            height_stride: 4,
+        },
+        color_hint: None,
+    };
+    let planar_ptr = planar.samples.as_ptr();
+    let refused = PixelBuffer::try_from(planar).unwrap_err();
+    assert_eq!(refused.samples.as_ptr(), planar_ptr);
+
+    // 4. InteropTarget end-to-end zero-copy moves into FlatSamples, ImageBuffer, and DynamicImage.
+    let ib_buf = PixelBuffer::new_for(
+        7,
+        3,
+        PixelDescriptor::RGB16_BT2100_PQ,
+        InteropTarget::ImageBuffer,
+    );
+    let ib_ptr = ib_buf.as_slice().as_strided_bytes().as_ptr();
+    let ib = ImageBuffer::<Rgb<u16>, Vec<u16>>::try_from(ib_buf).unwrap();
+    assert_eq!(ib.as_raw().as_ptr().cast::<u8>(), ib_ptr);
+    assert_eq!(ib.color_space().primaries, P::Rgb2020);
+    assert_eq!(ib.color_space().transfer, Tf::Smpte2084);
+
+    let dyn_buf = PixelBuffer::new_for(
+        7,
+        3,
+        PixelDescriptor::RGBAF32_LINEAR,
+        InteropTarget::DynamicImage,
+    );
+    let dyn_ptr = dyn_buf.as_slice().as_strided_bytes().as_ptr();
+    let dyn_out = DynamicImage::try_from(dyn_buf).unwrap();
+    match dyn_out {
+        DynamicImage::ImageRgba32F(inner) => {
+            assert_eq!(inner.as_raw().as_ptr().cast::<u8>(), dyn_ptr);
+            assert_eq!(inner.color_space().transfer, Tf::Linear);
+        }
+        other => panic!("unexpected DynamicImage variant: {:?}", other.color()),
+    }
 }

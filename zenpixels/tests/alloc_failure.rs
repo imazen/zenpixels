@@ -11,7 +11,7 @@
 mod fail_allocator;
 use fail_allocator::{failing_above, lock};
 
-use zenpixels::plane::{AlignedSamples, PlaneError};
+use zenpixels::buffer::{AlignedSamples, PlaneError};
 use zenpixels::{BufferError, PixelBuffer, PixelDescriptor, PixelSlice};
 
 fn assert_alloc_failed(err: &whereat::At<BufferError>) {
@@ -51,6 +51,7 @@ fn try_new_aligned_reports_allocation_failure() {
             64,
             64,
             PixelDescriptor::RGB16_SRGB,
+            zenpixels::RowAlign::Cache64,
         )
         .unwrap_err();
         assert_alloc_failed(&err);

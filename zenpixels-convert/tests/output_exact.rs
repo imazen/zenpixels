@@ -1,17 +1,16 @@
 //! Exact output is a proof obligation, independent of color conversion presets.
 use std::sync::Arc;
 use zenpixels_convert::{
-    AlphaMode, Cicp, ColorContext, ColorOrigin, ConvertError, OutputPlan, OutputProfile,
-    PixelDescriptor, PixelSlice, PixelSliceMut, TransferFunction,
+    AlphaMode, Cicp, ColorContext, ColorOrigin, ConvertError, OutputProfile, PixelDescriptor,
+    PixelEncoding, PixelSlice, PixelSliceMut, TransferFunction,
 };
 
 #[test]
 fn exact_output_widens_strided_samples_and_keeps_padding() {
     let from = PixelDescriptor::RGB8_SRGB;
     let to = PixelDescriptor::RGB16_SRGB;
-    let mut plan = OutputPlan::new_preserving_samples(
-        from,
-        None,
+    let mut plan = crate::test_conversion::exact_output_plan(
+        from.encoding(),
         &ColorOrigin::assumed(),
         OutputProfile::Named(Cicp::SRGB),
         to,
@@ -26,7 +25,7 @@ fn exact_output_widens_strided_samples_and_keeps_padding() {
             PixelSliceMut::new(bytemuck::cast_slice_mut(&mut target), 2, 2, 18, to).unwrap(),
         )
         .unwrap();
-    assert_eq!(rows.color_context().unwrap().cicp, Some(Cicp::SRGB));
+    assert_eq!(rows.color_context().unwrap().cicp(), Some(Cicp::SRGB));
     for y in 0..2 {
         for x in 0..6 {
             assert_eq!(target[y * 9 + x], u16::from(source[y * 9 + x]) * 257);
@@ -46,9 +45,8 @@ fn opaque_icc_identity_and_alpha_expansion_preserve_float_payloads() {
     let source = PixelSlice::new(bytemuck::cast_slice(&samples), 1, 1, 12, from)
         .unwrap()
         .with_color_context(context.clone());
-    let mut identity = OutputPlan::new_preserving_samples(
-        from,
-        Some(context.clone()),
+    let mut identity = crate::test_conversion::exact_output_plan(
+        source.encoding(),
         &ColorOrigin::assumed(),
         OutputProfile::Icc(icc.clone()),
         from,
@@ -61,9 +59,8 @@ fn opaque_icc_identity_and_alpha_expansion_preserve_float_payloads() {
     let to = PixelDescriptor::RGBAF32_LINEAR
         .with_primaries(from.primaries)
         .with_transfer(from.transfer());
-    let mut plan = OutputPlan::new_preserving_samples(
-        from,
-        Some(context),
+    let mut plan = crate::test_conversion::exact_output_plan(
+        source.encoding(),
         &ColorOrigin::assumed(),
         OutputProfile::Icc(icc),
         to,
@@ -110,9 +107,8 @@ fn exact_output_refuses_color_math_depth_loss_and_reassociation() {
     ];
     for (from, to, color) in cases {
         assert!(
-            OutputPlan::new_preserving_samples(
-                from,
-                None,
+            crate::test_conversion::exact_output_plan(
+                from.encoding(),
                 &ColorOrigin::assumed(),
                 OutputProfile::Named(color),
                 to
@@ -124,11 +120,9 @@ fn exact_output_refuses_color_math_depth_loss_and_reassociation() {
     let descriptor = PixelDescriptor::RGBF32_LINEAR
         .with_primaries(zenpixels_convert::ColorPrimaries::Unknown)
         .with_transfer(TransferFunction::Unknown);
-    let error = OutputPlan::new_preserving_samples(
-        descriptor,
-        Some(Arc::new(ColorContext::from_icc(Arc::<[u8]>::from(
-            &b"first"[..],
-        )))),
+    let first = ColorContext::from_icc(Arc::<[u8]>::from(&b"first"[..]));
+    let error = crate::test_conversion::exact_output_plan(
+        PixelEncoding::new(descriptor, Some(&first)),
         &ColorOrigin::assumed(),
         OutputProfile::Icc(Arc::from(&b"second"[..])),
         descriptor,
@@ -168,7 +162,7 @@ fn premultiplied_icc_samples_keep_every_bit_without_a_cms() {
         .with_color_context(context.clone());
     for profile in [OutputProfile::SameAsOrigin, OutputProfile::Icc(icc.clone())] {
         let mut plan =
-            OutputPlan::new_preserving_samples(from, Some(context.clone()), &origin, profile, from)
+            crate::test_conversion::exact_output_plan(source.encoding(), &origin, profile, from)
                 .unwrap();
         plan.prepare(1).unwrap();
         assert_eq!(plan.output_descriptor(), from);
@@ -178,7 +172,7 @@ fn premultiplied_icc_samples_keep_every_bit_without_a_cms() {
         assert_eq!(view.row(0).as_ptr(), source.row(0).as_ptr());
         assert_eq!(view.stride(), 32);
         assert_eq!(view.descriptor(), from);
-        assert_eq!(view.color_context().unwrap().icc.as_deref(), Some(&*icc));
+        assert_eq!(view.color_context().unwrap().icc(), Some(&*icc));
 
         // Copied into a strided destination: exact bits, and its padding untouched.
         let mut target = [f32::from_bits(0x1234_5678); 16];
@@ -189,7 +183,7 @@ fn premultiplied_icc_samples_keep_every_bit_without_a_cms() {
             )
             .unwrap();
         assert_eq!(rows.descriptor(), from);
-        assert_eq!(rows.color_context().unwrap().icc.as_deref(), Some(&*icc));
+        assert_eq!(rows.color_context().unwrap().icc(), Some(&*icc));
         let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
         assert_eq!(bits(&target[..4]), bits(&samples[..4]));
         assert_eq!(bits(&target[4..12]), [0x1234_5678; 8]);
@@ -197,9 +191,8 @@ fn premultiplied_icc_samples_keep_every_bit_without_a_cms() {
     }
 
     // The format-only constructor still can't express this, and refuses rather than relabeling.
-    let error = OutputPlan::new(
-        from,
-        Some(context),
+    let error = crate::test_conversion::output_plan(
+        source.encoding(),
         &origin,
         OutputProfile::SameAsOrigin,
         from.pixel_format(),
@@ -212,3 +205,6 @@ fn premultiplied_icc_samples_keep_every_bit_without_a_cms() {
         "{error}"
     );
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

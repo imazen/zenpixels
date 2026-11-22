@@ -3,14 +3,18 @@ use zenpixels::{
     AlphaMode, AlphaPolicy, ChannelLayout as L, ChannelType as T, Color, ColorPrimaries as P,
     PixelDescriptor as D, TransferFunction as Tf,
 };
-use zenpixels_convert::{ColorConvertExt, ConvertError, ConvertOptions, RowConverter};
+use zenpixels_convert::{ColorConvertExt, ConvertError, ConvertOptions};
 
 fn f32_color(descriptor: D, samples: &[f32]) -> Color {
     Color::try_new(descriptor, bytemuck::cast_slice(samples)).unwrap()
 }
 
 fn lossless() -> ConvertOptions {
-    ConvertOptions::permissive().with_clip_out_of_gamut(false)
+    ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_gamut_policy(zenpixels_convert::GamutPolicy::PreserveExtended)
 }
 
 #[test]
@@ -91,14 +95,20 @@ fn background_of(source: D, background: Color) -> Result<[f32; 3], String> {
         background,
         reference_white: None,
     };
-    let options = ConvertOptions::permissive().with_alpha_policy(policy);
-    let mut c = RowConverter::new_explicit(from, to, &options).map_err(|e| format!("{e}"))?;
+    let options = ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
+        .with_alpha_policy(policy);
+    let mut c =
+        crate::test_conversion::explicit_worker(from, to, &options).map_err(|e| format!("{e}"))?;
     let mut out = [0f32; 3];
-    c.convert_row(
+    c.try_convert_row(
         bytemuck::cast_slice(&[0f32; 4]),
         bytemuck::cast_slice_mut(&mut out),
         1,
-    );
+    )
+    .unwrap();
     Ok(out)
 }
 
@@ -227,3 +237,6 @@ fn linear_reaches_pq_with_explicit_units_and_hlg_requires_ootf() {
         ConvertError::HlgRenderingRequired
     ));
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

@@ -3,18 +3,24 @@
 //! is poisoned so a kernel that reads it changes the answer.
 
 use whereat::At;
+#[cfg(feature = "planar")]
+use zenpixels::SignalRange;
+#[cfg(feature = "planar")]
 use zenpixels::plane::{AnyPlane, PlaneRef};
+#[cfg(feature = "planar")]
 use zenpixels::sample::{ChromaSiting, ChromaSubsampling, CodePlane, SampleEncoding};
 use zenpixels::{
     AlphaMode, ChannelType, Cicp, ColorOrigin, Orientation, PixelBuffer, PixelBufferParts,
-    PixelDescriptor as D, PixelFormat, PixelSlice, PixelSliceMut, SignalRange, TransferFunction,
+    PixelDescriptor as D, PixelFormat, PixelSlice, PixelSliceMut, TransferFunction,
 };
 use zenpixels_convert::adapt::adapt_raw_rows_for_encode;
+#[cfg(feature = "planar")]
 use zenpixels_convert::codes::to_canonical;
+#[cfg(feature = "planar")]
 use zenpixels_convert::ycbcr::YcbcrToRgbF32;
 use zenpixels_convert::{
-    ConvertError, ConvertOptions, OutputPlan, OutputProfile, PixelBufferConvertExt,
-    PixelBufferLoadBearingExt, PixelSliceConvertExt, PixelSliceLoadBearingExt, RowConverter,
+    ConvertError, ConvertOptions, OutputProfile, PixelBufferConvertExt, PixelBufferLoadBearingExt,
+    PixelSliceConvertExt, PixelSliceLoadBearingExt,
 };
 
 const PAD: u8 = 0xEE;
@@ -137,7 +143,10 @@ fn targets(d: D) -> Vec<D> {
 }
 
 fn options() -> ConvertOptions {
-    ConvertOptions::permissive()
+    ConvertOptions::retain_channels()
+        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
+        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
+        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
 }
 
 #[test]
@@ -235,13 +244,14 @@ fn row_converter_rows_match_packed() {
             (D::RGB8_SRGB, 3 * w as usize + 1),
             (D::RGBF32_LINEAR, 12 * w as usize + 4),
         ] {
-            let mut converter = RowConverter::new_explicit(d, target, &options()).unwrap();
+            let mut converter =
+                crate::test_conversion::explicit_worker(d, target, &options()).unwrap();
             let out_row = w as usize * target.bytes_per_pixel();
             let total = (h as usize - 1) * dst_stride + out_row;
             let mut got = vec![u32::from_ne_bytes([PAD; 4]); total.div_ceil(4)];
             let got_bytes = bytemuck::cast_slice_mut::<u32, u8>(&mut got);
             converter
-                .convert_rows(
+                .convert_raw_rows(
                     &bytemuck::cast_slice::<u32, u8>(&padded)[..(h as usize - 1) * stride + row],
                     stride,
                     &mut got_bytes[..total],
@@ -251,9 +261,10 @@ fn row_converter_rows_match_packed() {
                 )
                 .unwrap();
             let mut want = vec![0u32; (out_row * h as usize).div_ceil(4)];
-            let mut converter = RowConverter::new_explicit(d, target, &options()).unwrap();
+            let mut converter =
+                crate::test_conversion::explicit_worker(d, target, &options()).unwrap();
             converter
-                .convert_rows(
+                .convert_raw_rows(
                     bytemuck::cast_slice(&packed),
                     row,
                     bytemuck::cast_slice_mut(&mut want),
@@ -340,23 +351,54 @@ fn owned_conversions_match_packed() {
         let row = w as usize * d.bytes_per_pixel();
         let a = owned(packed, d, w, h, row);
         let b = owned(padded, d, w, h, stride);
+        let alpha_target = {
+            let layout = match d.layout() {
+                zenpixels::ChannelLayout::Gray => zenpixels::ChannelLayout::GrayAlpha,
+                zenpixels::ChannelLayout::Rgb => zenpixels::ChannelLayout::Rgba,
+                other => other,
+            };
+            let alpha = if layout.has_alpha() && d.alpha().is_none() {
+                Some(zenpixels::AlphaMode::Straight)
+            } else {
+                d.alpha()
+            };
+            D::new(d.channel_type(), layout, alpha, d.transfer())
+                .with_primaries(d.primaries)
+                .with_signal_range(d.signal_range)
+        };
+        let u16_target = D::new(ChannelType::U16, d.layout(), d.alpha(), d.transfer())
+            .with_primaries(d.primaries)
+            .with_signal_range(d.signal_range);
+        let u8_target = D::new(ChannelType::U8, d.layout(), d.alpha(), d.transfer())
+            .with_primaries(d.primaries)
+            .with_signal_range(d.signal_range);
+        let lin_target = D::new_full(
+            ChannelType::F32,
+            d.layout(),
+            d.alpha(),
+            TransferFunction::Linear,
+            d.primaries,
+        );
         assert_eq!(
-            result_bytes(b.try_add_alpha()),
-            result_bytes(a.try_add_alpha()),
+            result_bytes(b.convert_to(alpha_target)),
+            result_bytes(a.convert_to(alpha_target)),
             "{d:?}"
         );
         assert_eq!(
-            result_bytes(b.try_widen_to_u16()),
-            result_bytes(a.try_widen_to_u16())
+            result_bytes(b.convert_to(u16_target)),
+            result_bytes(a.convert_to(u16_target))
         );
         assert_eq!(
-            result_bytes(b.try_narrow_to_u8()),
-            result_bytes(a.try_narrow_to_u8())
+            result_bytes(b.convert_to_with_options(u8_target, &options())),
+            result_bytes(a.convert_to_with_options(u8_target, &options()))
         );
-        assert_eq!(result_bytes(b.linearize()), result_bytes(a.linearize()));
         assert_eq!(
-            result_bytes(b.delinearize(TransferFunction::Srgb)),
-            result_bytes(a.delinearize(TransferFunction::Srgb))
+            result_bytes(b.convert_to(lin_target)),
+            result_bytes(a.convert_to(lin_target))
+        );
+        assert_eq!(
+            result_bytes(b.convert_to(d.with_transfer(TransferFunction::Srgb))),
+            result_bytes(a.convert_to(d.with_transfer(TransferFunction::Srgb)))
         );
         assert_eq!(
             result_bytes(b.convert_to(D::RGBA8_SRGB)),
@@ -387,7 +429,7 @@ fn scans_ignore_padding() {
         let report = opaque.determine_load_bearing();
         assert_eq!(report.uses_alpha, Some(false), "stride {stride}");
         assert_eq!(report.uses_chroma, Some(false), "stride {stride}");
-        let reduced = opaque.try_reduce_to_load_bearing_format().unwrap();
+        let reduced = opaque.reduce_to_load_bearing_format().unwrap().unwrap();
         assert_eq!(reduced.descriptor().layout(), D::GRAY8_SRGB.layout());
         for y in 0..h {
             assert_eq!(reduced.as_slice().row(y), &[9u8; 4]);
@@ -444,8 +486,8 @@ fn rgb_scans_and_reductions_match_packed() {
                 got.uses_low_bits, want.uses_low_bits,
                 "{d:?} {w}x{h} {stride}"
             );
-            let want = a.try_reduce_to_load_bearing_format();
-            let got = b.try_reduce_to_load_bearing_format();
+            let want = a.reduce_to_load_bearing_format().unwrap();
+            let got = b.reduce_to_load_bearing_format().unwrap();
             assert_eq!(got.is_some(), want.is_some(), "{d:?} {w}x{h} {stride}");
             if let (Some(got), Some(want)) = (got, want) {
                 assert_eq!(got.descriptor(), want.descriptor());
@@ -475,7 +517,8 @@ fn in_place_reduction_matches_the_allocating_path() {
             }
         }
         let want = view(&words, D::RGBA8_SRGB, w, h, stride)
-            .try_reduce_to_load_bearing_format()
+            .reduce_to_load_bearing_format()
+            .unwrap()
             .unwrap();
         let mut buffer = owned(words, D::RGBA8_SRGB, w, h, stride);
         buffer.reduce_to_load_bearing_format_in_place(true);
@@ -626,9 +669,8 @@ fn output_plan_rows_match_packed() {
             ChannelType::U16 => PixelFormat::Rgba16,
             _ => PixelFormat::RgbaF32,
         };
-        let mut plan = OutputPlan::new(
-            source,
-            None,
+        let mut plan = crate::test_conversion::output_plan(
+            source.encoding(),
             &ColorOrigin::assumed(),
             profile.clone(),
             format,
@@ -670,9 +712,8 @@ fn output_plan_rows_match_packed() {
         }
 
         // An identity plan hands the rows straight back, padding and all.
-        let plan = OutputPlan::new_with_descriptor(
-            source,
-            None,
+        let plan = crate::test_conversion::output_descriptor_plan(
+            source.encoding(),
             &ColorOrigin::assumed(),
             profile.clone(),
             source,
@@ -690,6 +731,7 @@ fn output_plan_rows_match_packed() {
 }
 
 /// Native components widen into a destination whose rows aren't whole pixels.
+#[cfg(feature = "planar")]
 #[test]
 fn to_canonical_writes_samples_and_leaves_padding() {
     let (w, h) = (5usize, 3usize);
@@ -753,6 +795,7 @@ fn to_canonical_writes_samples_and_leaves_padding() {
 }
 
 /// YCbCr writes into a destination with the native JXL shape: f32 RGB with 16 bytes of padding.
+#[cfg(feature = "planar")]
 #[test]
 fn ycbcr_writes_samples_and_leaves_padding() {
     let (w, h) = (5usize, 3usize);
@@ -868,3 +911,6 @@ mod hdr {
         }
     }
 }
+
+#[path = "support/conversion.rs"]
+mod test_conversion;

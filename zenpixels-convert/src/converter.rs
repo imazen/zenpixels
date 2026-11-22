@@ -1,175 +1,262 @@
 //! Pre-computed row converter.
 //!
-//! [`RowConverter`] wraps a [`ConvertPlan`] with pre-allocated scratch
+//! [`RowConverter`] wraps a [`crate::ConvertPlan`] with preallocated scratch
 //! buffers for zero-allocation-per-row streaming conversion.
 
 use crate::TransferFunction;
 use alloc::boxed::Box;
 
-use crate::convert::{ConvertPlan, ConvertScratch, convert_row_buffered};
+use crate::convert::{ConvertScratch, NativePlan, convert_row_buffered, convert_row_prepared};
 use crate::{ChannelLayout, ConvertError, PixelDescriptor};
 use whereat::{At, ResultAtExt};
 
-/// Pre-computed pixel format converter with pre-allocated scratch buffers.
-///
-/// Create once, then call [`convert_row`](Self::convert_row) for each row.
-/// Multi-step conversions reuse internal scratch buffers, eliminating
-/// per-row heap allocation.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use zenpixels::{RowConverter, PixelDescriptor};
-///
-/// let mut conv = RowConverter::new(
-///     PixelDescriptor::RGB8_SRGB,
-///     PixelDescriptor::RGBA8_SRGB,
-/// )?;
-///
-/// for y in 0..height {
-///     conv.convert_row(&src_row, &mut dst_row, width);
-/// }
-/// ```
+/// Prepared row converter with independent writable workspace.
 pub struct RowConverter {
-    plan: ConvertPlan,
-    scratch: ConvertScratch,
+    recipe: RowRecipe,
+    workspace: WorkerSpace,
     prepared_width: Option<u32>,
-    /// External CMS transform that bypasses the plan entirely.
-    /// Set by `new_explicit_with_cms` when a plugin accepts the conversion.
-    external: Option<ExternalTransform>,
+    worker_limit: Option<u64>,
+    color: Option<alloc::sync::Arc<crate::ColorContext>>,
+    source: Option<alloc::sync::Arc<crate::ColorContext>>,
 }
 
-/// External CMS transform variant.
-enum ExternalTransform {
-    /// Stateless, shareable. Supports cheap clone and parallel use.
+#[derive(Debug)]
+pub(crate) struct RowRecipe {
+    pub(crate) from: PixelDescriptor,
+    pub(crate) to: PixelDescriptor,
+    stages: alloc::vec::Vec<Stage>,
+    relabel_before: Option<(PixelDescriptor, PixelDescriptor)>,
+    relabel_after: Option<(PixelDescriptor, PixelDescriptor)>,
+    pub(crate) input_facts: zenpixels::sample::FloatFacts,
+    pub(crate) output_facts: zenpixels::sample::FloatFacts,
+}
+
+#[derive(Debug)]
+struct Stage {
+    from: PixelDescriptor,
+    to: PixelDescriptor,
+    operation: Operation,
+}
+
+enum Operation {
+    Native(NativePlan),
     Shared(alloc::sync::Arc<dyn crate::cms::RowTransform>),
-    /// Owned, stateful. Shares the same backing `RowTransformMut` across
-    /// clones via `Arc<Mutex<_>>` (std-only — `RowTransformMut::transform_row`
-    /// is `&mut self`, so two `RowConverter`s holding the same impl serialize
-    /// transforms through the mutex).
-    ///
-    /// Pre-0.2.16 this was a `Box<dyn RowTransformMut>` and Clone silently
-    /// dropped the transform — see the audit `T4` note + the
-    /// `pluggable_cms_owned_path_survives_clone` test for the regression
-    /// gate that caught the drop.
-    #[cfg(feature = "std")]
-    Owned(alloc::sync::Arc<std::sync::Mutex<Box<dyn crate::cms::RowTransformMut>>>),
-    /// A prepared worker owns its state without locking or cross-worker sharing.
-    Independent(IndependentWorker),
-    Alpha(Box<AlphaPipeline>),
+    Owned(Box<dyn crate::cms::RowTransformMut>),
 }
 
-// Alpha is associated in the source encoding, never inside an ICC transform.
-// Floating point intermediates avoid an extra integer quantization at each stage.
-struct AlphaPipeline {
-    before: RowConverter,
-    color: RowConverter,
-    after: RowConverter,
-    source: alloc::vec::Vec<f32>,
-    target: alloc::vec::Vec<f32>,
+pub(crate) type HdrPivotFn = fn(
+    PixelDescriptor,
+    PixelDescriptor,
+    TransferFunction,
+    TransferFunction,
+    crate::ColorProfileSource<'_>,
+    crate::ColorProfileSource<'_>,
+    bool,
+    &crate::policy::ConvertOptions,
+    Option<&dyn crate::cms::PluggableCms>,
+    &crate::caps::PlannerHooks,
+) -> Result<RowRecipe, At<ConvertError>>;
+
+#[track_caller]
+fn dispatch_cms_chain(
+    source: crate::ColorProfileSource<'_>,
+    target: crate::ColorProfileSource<'_>,
+    from: PixelDescriptor,
+    to: PixelDescriptor,
+    options: &crate::policy::ConvertOptions,
+    cms: Option<&dyn crate::cms::PluggableCms>,
+    hooks: &crate::caps::PlannerHooks,
+) -> Result<Option<Operation>, At<ConvertError>> {
+    let map_error = |e: At<crate::cms::CmsPluginError>| {
+        e.map_error(|error| ConvertError::CmsBackend(alloc::sync::Arc::new(error)))
+    };
+    use crate::cms::{CmsRequest, CmsSupport};
+    if let Some(plugin) = cms {
+        let request = CmsRequest::new(source.clone(), target.clone(), from, to, *options);
+        match plugin.build(&request).map_err(map_error)? {
+            CmsSupport::Shared(t) => return Ok(Some(Operation::Shared(t))),
+            CmsSupport::Owned(t) => return Ok(Some(Operation::Owned(t))),
+            CmsSupport::Declined => {}
+        }
+    }
+    if let Some(result) = crate::cms_lite::ZenCmsLite::build_plan_with_hooks(
+        source,
+        target,
+        from.pixel_format(),
+        to.pixel_format(),
+        options,
+        hooks,
+    ) {
+        return whereat::at_crate!(result).map(|c| Some(Operation::Native(c)));
+    }
+    Ok(None)
 }
-impl AlphaPipeline {
-    fn reserve(&mut self, width: u32) -> Result<(), At<ConvertError>> {
-        for (buffer, desc) in [
-            (&mut self.source, self.before.to_descriptor()),
-            (&mut self.target, self.after.from_descriptor()),
-        ] {
-            let len = (width as usize)
-                .checked_mul(desc.bytes_per_pixel() / 4)
-                .ok_or_else(|| whereat::at!(ConvertError::InvalidWidth(width)))?;
-            if len > buffer.len() {
-                buffer
-                    .try_reserve(len - buffer.len())
-                    .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
-                buffer.resize(len, 0.0);
+
+impl core::fmt::Debug for Operation {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Native(plan) => core::fmt::Debug::fmt(plan, f),
+            Self::Shared(_) => f.write_str("SharedCms"),
+            Self::Owned(_) => f.write_str("OwnedCms"),
+        }
+    }
+}
+
+impl RowRecipe {
+    pub(crate) fn identity(from: PixelDescriptor, to: PixelDescriptor) -> Self {
+        Self {
+            from,
+            to,
+            stages: alloc::vec::Vec::new(),
+            relabel_before: None,
+            relabel_after: None,
+            input_facts: zenpixels::sample::FloatFacts::NONE,
+            output_facts: zenpixels::sample::FloatFacts::NONE,
+        }
+    }
+
+    pub(crate) fn relabel_transfer(from: PixelDescriptor, to: PixelDescriptor) -> Self {
+        Self {
+            from,
+            to,
+            stages: alloc::vec::Vec::new(),
+            relabel_before: Some((from, to)),
+            relabel_after: None,
+            input_facts: zenpixels::sample::FloatFacts::NONE,
+            output_facts: zenpixels::sample::FloatFacts::NONE,
+        }
+    }
+
+    pub(crate) fn native(plan: NativePlan) -> Self {
+        let (from, to) = (plan.from(), plan.to());
+        let (in_facts, out_facts) = (plan.input_facts(), plan.output_facts());
+        let mut recipe = Self::single(from, to, Operation::Native(plan));
+        recipe.input_facts = in_facts;
+        recipe.output_facts = out_facts;
+        recipe
+    }
+
+    fn single(from: PixelDescriptor, to: PixelDescriptor, operation: Operation) -> Self {
+        Self {
+            from,
+            to,
+            stages: alloc::vec![Stage {
+                from,
+                to,
+                operation
+            }],
+            relabel_before: None,
+            relabel_after: None,
+            input_facts: zenpixels::sample::FloatFacts::NONE,
+            output_facts: zenpixels::sample::FloatFacts::NONE,
+        }
+    }
+
+    pub(crate) fn apply_input_facts(&mut self, initial: zenpixels::sample::FloatFacts) {
+        use zenpixels::{AlphaMode, sample::FloatFacts};
+        let initial = if self.from.channel_type().is_float() {
+            initial
+        } else {
+            FloatFacts::NONE
+        };
+        self.input_facts = initial;
+        let promotes_undefined = |(old, new): (PixelDescriptor, PixelDescriptor)| {
+            old.alpha() == Some(AlphaMode::Undefined) && new.alpha() != Some(AlphaMode::Undefined)
+        };
+        if self.stages.is_empty() {
+            let survives = self.from.channel_type() == self.to.channel_type()
+                && self.to.channel_type().is_float()
+                && !promotes_undefined((self.from, self.to))
+                && !self.relabel_before.is_some_and(promotes_undefined)
+                && !self.relabel_after.is_some_and(promotes_undefined);
+            self.output_facts = if survives { initial } else { FloatFacts::NONE };
+            return;
+        }
+        let mut cur = if self.relabel_before.is_some_and(promotes_undefined) {
+            FloatFacts::NONE
+        } else {
+            initial
+        };
+        for stage in &mut self.stages {
+            if promotes_undefined((stage.from, stage.to)) && stage.from == stage.to {
+                cur = FloatFacts::NONE;
+            }
+            match &mut stage.operation {
+                Operation::Native(plan) => {
+                    plan.propagate_float_facts(cur);
+                    cur = plan.output_facts();
+                }
+                Operation::Shared(_) | Operation::Owned(_) => {
+                    cur = FloatFacts::NONE;
+                }
+            }
+        }
+        if self.relabel_after.is_some_and(promotes_undefined) || !self.to.channel_type().is_float()
+        {
+            cur = FloatFacts::NONE;
+        }
+        self.output_facts = cur;
+    }
+
+    pub(crate) fn then(mut self, mut next: Self) -> Self {
+        debug_assert_eq!(self.to.bytes_per_pixel(), next.from.bytes_per_pixel());
+        let initial = self.input_facts;
+        let left_identity = self.is_identity_operation();
+        self.to = next.to;
+        if left_identity {
+            self.stages.clear();
+            if self.relabel_before.is_none() {
+                self.relabel_before = next.relabel_before;
+                self.relabel_after = next.relabel_after;
+            } else {
+                self.relabel_after = next
+                    .relabel_after
+                    .or(next.relabel_before)
+                    .or(self.relabel_after);
+            }
+        } else {
+            self.relabel_after = next
+                .relabel_after
+                .or(next.relabel_before)
+                .or(self.relabel_after);
+        }
+        if !next.is_identity_operation() {
+            if let Some(left) = self.stages.last_mut()
+                && let Some(right) = next.stages.first()
+                && let (Operation::Native(a), Operation::Native(b)) =
+                    (&left.operation, &right.operation)
+                && let Some(joined) = a.compose_preserving(b)
+            {
+                left.operation = Operation::Native(joined);
+                left.to = right.to;
+                self.stages.extend(next.stages.into_iter().skip(1));
+            } else {
+                self.stages.append(&mut next.stages);
+            }
+        }
+        self.apply_input_facts(initial);
+        self
+    }
+
+    fn is_identity_operation(&self) -> bool {
+        self.stages.is_empty()
+            || matches!(self.stages.as_slice(), [Stage { operation: Operation::Native(p), .. }] if p.is_identity())
+    }
+
+    #[inline(always)]
+    pub(crate) fn bind<const CAPS: u64>(&mut self) -> Result<(), At<ConvertError>> {
+        for stage in &mut self.stages {
+            if let Operation::Native(plan) = &mut stage.operation {
+                plan.bind::<CAPS>()?;
             }
         }
         Ok(())
     }
-    fn prepare(&mut self, width: u32) -> Result<(), At<ConvertError>> {
-        self.reserve(width)?;
-        self.before.prepare(width)?;
-        self.color.prepare(width)?;
-        self.after.prepare(width)
-    }
-    fn convert(&mut self, src: &[u8], dst: &mut [u8], width: u32) -> Result<(), At<ConvertError>> {
-        self.reserve(width)?;
-        let source = bytemuck::cast_slice_mut(&mut self.source);
-        let target = bytemuck::cast_slice_mut(&mut self.target);
-        self.before.try_convert_row(src, source, width)?;
-        self.color.try_convert_row(source, target, width)?;
-        self.after.try_convert_row(target, dst, width)
-    }
-    fn try_clone(&self) -> Result<Self, At<ConvertError>> {
-        Ok(Self {
-            before: self.before.try_clone()?,
-            color: self.color.try_clone()?,
-            after: self.after.try_clone()?,
-            source: alloc::vec::Vec::new(),
-            target: alloc::vec::Vec::new(),
-        })
-    }
-}
 
-// Keep the published std Sync auto-trait without any execution-time locking.
-// A Mutex<T> can expose T through get_mut when the owner has exclusive access.
-// No reference to this private container is shared and it is never locked.
-struct IndependentWorker {
-    #[cfg(feature = "std")]
-    inner: std::sync::Mutex<Box<dyn crate::cms::RowTransformMut>>,
-    #[cfg(not(feature = "std"))]
-    inner: Box<dyn crate::cms::RowTransformMut>,
-}
-impl IndependentWorker {
-    fn new(worker: Box<dyn crate::cms::RowTransformMut>) -> Self {
-        Self {
-            #[cfg(feature = "std")]
-            inner: std::sync::Mutex::new(worker),
-            #[cfg(not(feature = "std"))]
-            inner: worker,
-        }
+    pub(crate) fn needs_pixel_work(&self) -> bool {
+        !self.is_identity_operation()
     }
-    fn get_mut(&mut self) -> &mut dyn crate::cms::RowTransformMut {
-        #[cfg(feature = "std")]
-        {
-            self.inner
-                .get_mut()
-                .expect("private worker is never locked")
-                .as_mut()
-        }
-        #[cfg(not(feature = "std"))]
-        {
-            self.inner.as_mut()
-        }
-    }
-}
 
-/// Wrap a freshly-built `Box<dyn RowTransformMut>` into the
-/// `ExternalTransform::Owned` carrier — `Arc<Mutex<_>>` when std is on
-/// (share-on-clone), independent `Box` when not (clone refuses).
-#[inline]
-fn owned_external(t: Box<dyn crate::cms::RowTransformMut>) -> ExternalTransform {
-    #[cfg(feature = "std")]
-    {
-        ExternalTransform::Owned(alloc::sync::Arc::new(std::sync::Mutex::new(t)))
-    }
-    #[cfg(not(feature = "std"))]
-    {
-        ExternalTransform::Independent(IndependentWorker::new(t))
-    }
-}
-
-impl core::fmt::Debug for RowConverter {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("RowConverter")
-            .field("plan", &self.plan)
-            .field("prepared_width", &self.prepared_width)
-            .field("external", &self.external.is_some())
-            .finish_non_exhaustive()
-    }
-}
-
-impl RowConverter {
     /// Create a converter from `from` to `to`.
     ///
     /// Alpha removal is unconditional, preserving the legacy constructor's
@@ -181,11 +268,17 @@ impl RowConverter {
     /// [`new_explicit_with_cms`](Self::new_explicit_with_cms) for details.
     /// Returns `Err` if no conversion path exists between the formats.
     #[track_caller]
-    pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
+    pub(crate) fn new(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+    ) -> Result<Self, At<ConvertError>> {
         Self::new_explicit_with_cms(
             from,
             to,
-            &crate::policy::ConvertOptions::permissive()
+            &crate::policy::ConvertOptions::retain_channels()
+                .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(crate::DepthPolicy::Round)
+                .with_luma(Some(crate::LumaCoefficients::Bt709))
                 .with_alpha_policy(crate::policy::AlphaPolicy::DiscardUnchecked),
             None,
         )
@@ -199,12 +292,27 @@ impl RowConverter {
     ///
     /// [`ConvertOptions`]: crate::policy::ConvertOptions
     #[track_caller]
-    pub fn new_explicit(
+    pub(crate) fn new_explicit(
         from: PixelDescriptor,
         to: PixelDescriptor,
         options: &crate::policy::ConvertOptions,
     ) -> Result<Self, At<ConvertError>> {
-        Self::new_explicit_with_cms(from, to, options, None)
+        Self::new_explicit_with_cms_hooks(
+            from,
+            to,
+            options,
+            None,
+            &crate::caps::PlannerHooks::ALL_HOOKS,
+        )
+    }
+
+    pub(crate) fn new_explicit_hooks(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        options: &crate::policy::ConvertOptions,
+        hooks: &crate::caps::PlannerHooks,
+    ) -> Result<Self, At<ConvertError>> {
+        Self::new_explicit_with_cms_hooks(from, to, options, None, hooks)
     }
 
     /// Create a converter that may delegate the color conversion to a
@@ -220,11 +328,27 @@ impl RowConverter {
     ///
     /// [`PluggableCms`]: crate::cms::PluggableCms
     #[track_caller]
-    pub fn new_explicit_with_cms(
+    pub(crate) fn new_explicit_with_cms(
         from: PixelDescriptor,
         to: PixelDescriptor,
         options: &crate::policy::ConvertOptions,
         cms: Option<&dyn crate::cms::PluggableCms>,
+    ) -> Result<Self, At<ConvertError>> {
+        Self::new_explicit_with_cms_hooks(
+            from,
+            to,
+            options,
+            cms,
+            &crate::caps::PlannerHooks::ALL_HOOKS,
+        )
+    }
+
+    pub(crate) fn new_explicit_with_cms_hooks(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        options: &crate::policy::ConvertOptions,
+        cms: Option<&dyn crate::cms::PluggableCms>,
+        hooks: &crate::caps::PlannerHooks,
     ) -> Result<Self, At<ConvertError>> {
         use crate::policy::{AlphaPolicy, DepthPolicy};
 
@@ -241,8 +365,8 @@ impl RowConverter {
         {
             // The CMS interface has no luminance-intent parameter. Native HDR
             // plans must retain the explicit anchor and peak policy.
-            return Ok(Self::from_plan(ConvertPlan::new_explicit(
-                from, to, options,
+            return Ok(Self::native(NativePlan::new_explicit_core(
+                from, to, options, hooks,
             )?));
         }
 
@@ -254,11 +378,11 @@ impl RowConverter {
         }
 
         // Gamut mapping runs on the built-in plan. A plugin's transform would clip.
-        if options.gamut_mapping() == crate::policy::GamutMapping::SoftCompress
+        if options.gamut_policy() == crate::policy::GamutPolicy::SoftCompress
             && crate::convert::soft_compress_applies(&from, &to)
         {
-            return Ok(Self::from_plan(ConvertPlan::new_explicit(
-                from, to, options,
+            return Ok(Self::native(NativePlan::new_explicit_core(
+                from, to, options, hooks,
             )?));
         }
 
@@ -295,99 +419,79 @@ impl RowConverter {
             && to.alpha() != Some(crate::AlphaMode::Premultiplied)
             && from.alpha() != Some(crate::AlphaMode::Undefined)
             && to.alpha() != Some(crate::AlphaMode::Undefined)
+            && let Some(external) = dispatch_cms_chain(
+                from.color_profile_source(),
+                to.color_profile_source(),
+                from,
+                to,
+                options,
+                cms,
+                hooks,
+            )?
         {
-            let src_src = from.color_profile_source();
-            let dst_src = to.color_profile_source();
-            let src_fmt = from.pixel_format();
-            let dst_fmt = to.pixel_format();
-
-            // Helper: ask one plugin for a transform, preferring shared.
-            // Returns:
-            //   Ok(Some(t)) → plugin accepted
-            //   Ok(None)    → plugin declined
-            //   Err(e)      → plugin tried and failed (At<CmsPluginError>
-            //                 carries the plugin's internal failure point
-            //                 plus a zenpixels-convert crate boundary stamp
-            //                 added via `whereat::at_crate!`).
-            let try_cms = |plugin: &dyn crate::cms::PluggableCms| -> Result<
-                Option<ExternalTransform>,
-                whereat::At<crate::cms::CmsPluginError>,
-            > {
-                if let Some(result) = plugin.build_shared_source_transform(
-                    src_src.clone(),
-                    dst_src.clone(),
-                    src_fmt,
-                    dst_fmt,
-                    options,
-                ) {
-                    return whereat::at_crate!(result).map(|t| Some(ExternalTransform::Shared(t)));
-                }
-                if let Some(result) = plugin.build_source_transform(
-                    src_src.clone(),
-                    dst_src.clone(),
-                    src_fmt,
-                    dst_fmt,
-                    options,
-                ) {
-                    return whereat::at_crate!(result).map(|t| Some(owned_external(t)));
-                }
-                Ok(None)
-            };
-
-            // Convert a plugin failure into ConvertError::CmsError. The
-            // `At<CmsPluginError>` Display impl already renders the full
-            // frame trace + crate info (plugin + crate boundary). Render that
-            // into the message first, then `map_error` so the accumulated
-            // At<_> trace frames carry through to At<ConvertError> instead of
-            // being dropped by a fresh `at!` frame.
-            let plugin_err = |e: whereat::At<crate::cms::CmsPluginError>| {
-                e.map_error(|error| ConvertError::CmsBackend(alloc::sync::Arc::new(error)))
-            };
-
-            let mut external: Option<ExternalTransform> = None;
-            if let Some(plugin) = cms {
-                match try_cms(plugin) {
-                    Ok(Some(t)) => external = Some(t),
-                    Ok(None) => {}
-                    Err(e) => return Err(plugin_err(e)),
-                }
-            }
-            if external.is_none() {
-                match try_cms(&crate::cms_lite::ZenCmsLite) {
-                    Ok(Some(t)) => external = Some(t),
-                    Ok(None) => {}
-                    Err(e) => return Err(plugin_err(e)),
-                }
+            // Precision bits, not byte size — see convert.rs for rationale.
+            let reduces_depth = crate::route::channel_bits(from.channel_type())
+                > crate::route::channel_bits(to.channel_type());
+            if reduces_depth && options.depth_policy() == DepthPolicy::Forbid {
+                return Err(whereat::at!(ConvertError::DepthReductionForbidden));
             }
 
-            if let Some(external) = external {
-                // Precision bits, not byte size — see convert.rs for rationale.
-                let reduces_depth = crate::negotiate::channel_bits(from.channel_type())
-                    > crate::negotiate::channel_bits(to.channel_type());
-                if reduces_depth && options.depth_policy() == DepthPolicy::Forbid {
-                    return Err(whereat::at!(ConvertError::DepthReductionForbidden));
-                }
-
-                return Ok(Self {
-                    plan: ConvertPlan::identity(from, to),
-                    scratch: ConvertScratch::new(),
-                    prepared_width: None,
-                    external: Some(external),
-                });
-            }
+            return Ok(Self::single(from, to, external));
         }
 
         // Same profiles, or CMS chain declined — built-in plan.
-        let plan = ConvertPlan::new_explicit(from, to, options).at()?;
-        Ok(Self {
-            plan,
-            scratch: ConvertScratch::new(),
-            prepared_width: None,
-            external: None,
-        })
+        let plan = NativePlan::new_explicit_core(from, to, options, hooks).at()?;
+        Ok(Self::native(plan))
+    }
+
+    /// Create a converter from borrowed [`PixelEncoding`](crate::PixelEncoding)
+    /// pairs (`descriptor` + optional `ColorContext`), honoring authoritative
+    /// ICC profiles, CICP agreement checks, and diffuse-white / HDR-peak anchors
+    /// on `from`.
+    pub(crate) fn new_with_encoding_hooks(
+        from: crate::PixelEncoding<'_>,
+        to: crate::PixelEncoding<'_>,
+        options: &crate::policy::ConvertOptions,
+        cms: Option<&dyn crate::cms::PluggableCms>,
+        hooks: &crate::caps::PlannerHooks,
+    ) -> Result<Self, At<ConvertError>> {
+        let resolved = crate::interpretation::resolve_options(from.color_context(), options);
+        let options = &resolved;
+        let source_profile = crate::output::current_profile_for(from)?;
+        let target_profile = crate::output::current_profile_for(to)?;
+        let from_desc = from.descriptor();
+        let to_desc = to.descriptor();
+        if crate::route::channel_bits(from_desc.channel_type())
+            > crate::route::channel_bits(to_desc.channel_type())
+            && options.depth_policy() == crate::policy::DepthPolicy::Forbid
+        {
+            return Err(whereat::at!(ConvertError::DepthReductionForbidden));
+        }
+        let needs_profiles = !crate::output::profiles_match(&source_profile, &target_profile)
+            && (matches!(
+                source_profile,
+                crate::ColorProfileSource::Icc(_) | crate::ColorProfileSource::Parametric(_)
+            ) || matches!(
+                target_profile,
+                crate::ColorProfileSource::Icc(_) | crate::ColorProfileSource::Parametric(_)
+            ));
+        if needs_profiles {
+            Self::new_with_sources_hooks(
+                from_desc,
+                to_desc,
+                source_profile,
+                target_profile,
+                options,
+                cms,
+                hooks,
+            )
+        } else {
+            Self::new_explicit_with_cms_hooks(from_desc, to_desc, options, cms, hooks)
+        }
     }
 
     /// Build from actual current/target profiles, including opaque ICC bytes.
+    #[cfg(test)]
     pub(crate) fn new_with_sources(
         from: PixelDescriptor,
         to: PixelDescriptor,
@@ -395,6 +499,26 @@ impl RowConverter {
         target: crate::ColorProfileSource<'_>,
         options: &crate::policy::ConvertOptions,
         cms: Option<&dyn crate::cms::PluggableCms>,
+    ) -> Result<Self, At<ConvertError>> {
+        Self::new_with_sources_hooks(
+            from,
+            to,
+            source,
+            target,
+            options,
+            cms,
+            &crate::caps::PlannerHooks::ALL_HOOKS,
+        )
+    }
+
+    pub(crate) fn new_with_sources_hooks(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        source: crate::ColorProfileSource<'_>,
+        target: crate::ColorProfileSource<'_>,
+        options: &crate::policy::ConvertOptions,
+        cms: Option<&dyn crate::cms::PluggableCms>,
+        hooks: &crate::caps::PlannerHooks,
     ) -> Result<Self, At<ConvertError>> {
         let from = source
             .resolve()
@@ -406,18 +530,35 @@ impl RowConverter {
             .unwrap_or(to);
         crate::convert::validate_descriptors(from, to)?;
         crate::convert::validate_luma_policy(from, to, options)?;
-        if from.transfer() != to.transfer()
-            && matches!(
-                (from.transfer(), to.transfer()),
-                (TransferFunction::Pq | TransferFunction::Hlg, _)
-                    | (_, TransferFunction::Pq | TransferFunction::Hlg)
-            )
-        {
-            // Profile-only transforms cannot express the luminance intent.
-            return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
+
+        let profile_tf = |desc_tf: TransferFunction, p: &crate::ColorProfileSource<'_>| {
+            if let crate::ColorProfileSource::Parametric(param) = p {
+                match param.transfer {
+                    zenpixels::ParametricTransfer::Linear => TransferFunction::Linear,
+                    zenpixels::ParametricTransfer::Srgb => TransferFunction::Srgb,
+                    zenpixels::ParametricTransfer::Bt709 => TransferFunction::Bt709,
+                    zenpixels::ParametricTransfer::Pq => TransferFunction::Pq,
+                    zenpixels::ParametricTransfer::Hlg => TransferFunction::Hlg,
+                    zenpixels::ParametricTransfer::Dci
+                    | zenpixels::ParametricTransfer::Gamma(_)
+                    | zenpixels::ParametricTransfer::IccParametric(_) => TransferFunction::Gamma22,
+                    _ => desc_tf,
+                }
+            } else {
+                desc_tf
+            }
+        };
+        let src_tf = profile_tf(from.transfer(), &source);
+        let dst_tf = profile_tf(to.transfer(), &target);
+        let hdr_crossing = !crate::output::profiles_match(&source, &target)
+            && (matches!(src_tf, TransferFunction::Pq | TransferFunction::Hlg)
+                || matches!(dst_tf, TransferFunction::Pq | TransferFunction::Hlg));
+        if hdr_crossing && source.resolve().is_some() && target.resolve().is_some() {
+            return Self::new_explicit_hooks(from, to, options, hooks);
         }
+
         // No ICC transform here can honor a mapping, and clipping silently would be wrong.
-        if options.gamut_mapping() != crate::policy::GamutMapping::Clip {
+        if options.gamut_policy() == crate::policy::GamutPolicy::SoftCompress {
             return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
         // Plugins accept PixelFormat, which cannot express association or range.
@@ -443,6 +584,15 @@ impl RowConverter {
                 _ => return Err(whereat::at!(ConvertError::AlphaRemovalForbidden)),
             }
         }
+
+        if hdr_crossing {
+            let Some(pivot) = hooks.hdr_pivot else {
+                return Err(whereat::at!(ConvertError::NoPath { from, to }));
+            };
+            return pivot(
+                from, to, src_tf, dst_tf, source, target, composites, options, cms, hooks,
+            );
+        }
         // A plugin takes one depth, straight alpha and no layout change that loses channels, so the
         // color change runs in straight F32 and the plan handles the rest on either side of it.
         let to_gray = matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha)
@@ -455,6 +605,8 @@ impl RowConverter {
             || from.channel_type() != to.channel_type()
             || composites
             || to_gray
+            || (options.depth_policy() == crate::DepthPolicy::Truncate
+                && !to.channel_type().is_float())
         {
             let straight_float = |layout: ChannelLayout, color: PixelDescriptor| {
                 let format = match layout {
@@ -480,134 +632,577 @@ impl RowConverter {
             if straight_from == from && straight_to == to {
                 return Err(whereat::at!(ConvertError::NoPath { from, to }));
             }
-            let pipeline = AlphaPipeline {
-                before: Self::new_explicit(from, straight_from, options)?,
-                color: Self::new_with_sources(
-                    straight_from,
-                    straight_to,
-                    source,
-                    target,
-                    options,
-                    cms,
-                )?,
-                after: Self::new_explicit(straight_to, to, options)?,
-                source: alloc::vec::Vec::new(),
-                target: alloc::vec::Vec::new(),
-            };
-            return Ok(Self {
-                plan: ConvertPlan::identity(from, to),
-                scratch: ConvertScratch::new(),
-                prepared_width: None,
-                external: Some(ExternalTransform::Alpha(Box::new(pipeline))),
-            });
-        }
-        for plugin in cms.into_iter().chain(core::iter::once(
-            &crate::cms_lite::ZenCmsLite as &dyn crate::cms::PluggableCms,
-        )) {
-            let map_error = |e: At<crate::cms::CmsPluginError>| {
-                e.map_error(|error| ConvertError::CmsBackend(alloc::sync::Arc::new(error)))
-            };
-            let external = if let Some(result) = plugin.build_shared_source_transform(
-                source.clone(),
-                target.clone(),
-                from.pixel_format(),
-                to.pixel_format(),
-                options,
-            ) {
-                Some(ExternalTransform::Shared(result.map_err(map_error)?))
-            } else if let Some(result) = plugin.build_source_transform(
-                source.clone(),
-                target.clone(),
-                from.pixel_format(),
-                to.pixel_format(),
-                options,
-            ) {
-                Some(owned_external(result.map_err(map_error)?))
+            let final_options = if options.depth_policy() == crate::DepthPolicy::Forbid {
+                if crate::route::channel_bits(from.channel_type())
+                    > crate::route::channel_bits(to.channel_type())
+                {
+                    return Err(whereat::at!(ConvertError::DepthReductionForbidden));
+                }
+                options.with_depth_policy(crate::DepthPolicy::Round)
             } else {
-                None
+                *options
             };
-            if let Some(external) = external {
-                return Ok(Self {
-                    plan: ConvertPlan::identity(from, to),
-                    scratch: ConvertScratch::new(),
-                    prepared_width: None,
-                    external: Some(external),
-                });
-            }
+            let before = Self::new_explicit_hooks(from, straight_from, options, hooks)?;
+            let color = Self::new_with_sources_hooks(
+                straight_from,
+                straight_to,
+                source,
+                target,
+                options,
+                cms,
+                hooks,
+            )?;
+            let after = Self::new_explicit_hooks(straight_to, to, &final_options, hooks)?;
+            return Ok(before.then(color).then(after));
+        }
+        if let Some(external) = dispatch_cms_chain(
+            source.clone(),
+            target.clone(),
+            from,
+            to,
+            options,
+            cms,
+            hooks,
+        )? {
+            return Ok(Self::single(from, to, external));
         }
         // An unresolved ICC must never fall through to descriptor-only work.
         if source.resolve().is_none() || target.resolve().is_none() {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
         }
-        Self::new_explicit(from, to, options)
+        Self::new_explicit_hooks(from, to, options, hooks)
     }
 
-    /// Create a converter from a pre-computed plan.
-    pub fn from_plan(plan: ConvertPlan) -> Self {
-        Self {
-            plan,
-            scratch: ConvertScratch::new(),
-            prepared_width: None,
-            external: None,
+    #[allow(clippy::too_many_arguments)]
+    fn build_cms_only(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        source: crate::ColorProfileSource<'_>,
+        target: crate::ColorProfileSource<'_>,
+        options: &crate::policy::ConvertOptions,
+        cms: Option<&dyn crate::cms::PluggableCms>,
+        err_from: PixelDescriptor,
+        err_to: PixelDescriptor,
+        hooks: &crate::caps::PlannerHooks,
+    ) -> Result<Self, At<ConvertError>> {
+        if let Some(external) = dispatch_cms_chain(source, target, from, to, options, cms, hooks)? {
+            return Ok(Self::single(from, to, external));
         }
+        Err(whereat::at!(ConvertError::NeedsCms {
+            from: err_from,
+            to: err_to,
+        }))
     }
 
-    /// Convert one row of `width` pixels.
-    ///
-    /// `src` must contain at least `width * from.bytes_per_pixel()` bytes.
-    /// `dst` must contain at least `width * to.bytes_per_pixel()` bytes.
-    ///
-    /// Multi-step conversions reuse internal scratch buffers — no heap
-    /// allocation after the first call at a given width.
-    #[inline]
-    pub fn convert_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
-        self.try_convert_row(src, dst, width)
-            .expect("row conversion failed");
-    }
-
-    /// Allocate scratch and initialize selected LUTs/backend state up front.
-    /// Subsequent execution refuses widths exceeding this capacity. Built-in
-    /// kernels allocate no scratch/LUTs while executing within capacity.
-    /// Stateful CMS clones that share a worker are refused: construct each
-    /// worker independently, then prepare it.
-    pub fn prepare(&mut self, max_width: u32) -> Result<(), At<ConvertError>> {
-        #[cfg(feature = "std")]
-        if let Some(ExternalTransform::Owned(arc)) = &self.external {
-            if alloc::sync::Arc::strong_count(arc) != 1 {
-                return Err(whereat::at!(ConvertError::CmsError(
-                    "prepare requires an independent CMS worker; build a converter per worker"
-                        .into()
-                )));
-            }
-            if let Some(ExternalTransform::Owned(arc)) = self.external.take() {
-                let mutex = alloc::sync::Arc::try_unwrap(arc)
-                    .unwrap_or_else(|_| unreachable!("unique owned worker"));
-                let (worker, poisoned) = match mutex.into_inner() {
-                    Ok(worker) => (worker, false),
-                    Err(error) => (error.into_inner(), true),
-                };
-                self.external = Some(ExternalTransform::Independent(IndependentWorker::new(
-                    worker,
-                )));
-                if poisoned {
-                    return Err(whereat::at!(ConvertError::CmsError(
-                        "CMS worker was poisoned".into()
-                    )));
-                }
-            }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_sources_hdr_pivot_hooks(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        src_tf: TransferFunction,
+        dst_tf: TransferFunction,
+        source: crate::ColorProfileSource<'_>,
+        target: crate::ColorProfileSource<'_>,
+        composites: bool,
+        options: &crate::policy::ConvertOptions,
+        cms: Option<&dyn crate::cms::PluggableCms>,
+        hooks: &crate::caps::PlannerHooks,
+    ) -> Result<Self, At<ConvertError>> {
+        let endpoint_reduction = crate::route::channel_bits(from.channel_type())
+            > crate::route::channel_bits(to.channel_type());
+        if endpoint_reduction && options.depth_policy() == crate::policy::DepthPolicy::Forbid {
+            return Err(whereat::at!(ConvertError::DepthReductionForbidden));
         }
-        let map_error = |e: At<crate::cms::CmsPluginError>| {
-            e.map_error(|error| ConvertError::CmsBackend(alloc::sync::Arc::new(error)))
+
+        let involves_hlg = src_tf == TransferFunction::Hlg || dst_tf == TransferFunction::Hlg;
+        if involves_hlg && options.hlg_rendering().is_none() {
+            return Err(whereat::at!(ConvertError::HlgRenderingRequired));
+        }
+        let dst_is_sdr = matches!(src_tf, TransferFunction::Pq | TransferFunction::Hlg)
+            && !matches!(
+                dst_tf,
+                TransferFunction::Linear | TransferFunction::Pq | TransferFunction::Hlg
+            );
+        if dst_is_sdr {
+            if src_tf == TransferFunction::Hlg && options.sdr_white().is_none() {
+                return Err(whereat::at!(ConvertError::SdrWhiteRequired));
+            }
+            if !matches!(options.hdr_peak(), zenpixels::hdr::HdrPeak::Nits(_)) {
+                return Err(whereat::at!(ConvertError::HdrPeakRequired));
+            }
+            if options.sdr_peak().is_none() {
+                return Err(whereat::at!(ConvertError::SdrPeakRequired));
+            }
+            #[cfg(not(feature = "bt2446a"))]
+            {
+                return Err(whereat::at!(ConvertError::HdrFeatureRequired));
+            }
+        } else if options.sdr_white().is_none() {
+            return Err(whereat::at!(ConvertError::SdrWhiteRequired));
+        }
+
+        let leg_opts = if !endpoint_reduction
+            && options.depth_policy() == crate::policy::DepthPolicy::Forbid
+        {
+            options.with_depth_policy(crate::policy::DepthPolicy::Round)
+        } else {
+            *options
         };
-        match &mut self.external {
-            Some(ExternalTransform::Shared(t)) => t.prepare(max_width).map_err(map_error)?,
-            Some(ExternalTransform::Independent(t)) => {
-                t.get_mut().prepare(max_width).map_err(map_error)?
+        let straight_float = |layout: ChannelLayout, color: PixelDescriptor| {
+            let format = match layout {
+                ChannelLayout::Rgb => crate::PixelFormat::RgbF32,
+                ChannelLayout::Rgba | ChannelLayout::Bgra => crate::PixelFormat::RgbaF32,
+                ChannelLayout::Gray => crate::PixelFormat::GrayF32,
+                ChannelLayout::GrayAlpha => crate::PixelFormat::GrayAF32,
+                _ => return Err(whereat::at!(ConvertError::NoPath { from, to })),
+            };
+            Ok(format
+                .descriptor()
+                .with_primaries(color.primaries)
+                .with_transfer(color.transfer()))
+        };
+        let to_gray = matches!(to.layout(), ChannelLayout::Gray | ChannelLayout::GrayAlpha)
+            && !matches!(
+                from.layout(),
+                ChannelLayout::Gray | ChannelLayout::GrayAlpha
+            );
+
+        if source.resolve().is_some() {
+            // Resolved source -> BT.2020 F32 handoff -> unresolved target via CMS -> `to`.
+            let keep_alpha = if composites { false } else { to.has_alpha() };
+            let handoff_fmt = if keep_alpha {
+                crate::PixelFormat::RgbaF32
+            } else {
+                crate::PixelFormat::RgbF32
+            };
+            let (handoff_tf, handoff_cicp) = if dst_tf == TransferFunction::Pq {
+                (TransferFunction::Pq, crate::Cicp::new(9, 16, 0, true))
+            } else if matches!(dst_tf, TransferFunction::Linear | TransferFunction::Hlg) {
+                (TransferFunction::Linear, crate::Cicp::new(9, 8, 0, true))
+            } else {
+                (TransferFunction::Bt709, crate::Cicp::new(9, 1, 0, true))
+            };
+            let handoff_desc = handoff_fmt
+                .descriptor()
+                .with_primaries(crate::ColorPrimaries::Bt2020)
+                .with_transfer(handoff_tf);
+            let dst_f32_layout = if to_gray {
+                if keep_alpha {
+                    ChannelLayout::Rgba
+                } else {
+                    ChannelLayout::Rgb
+                }
+            } else if keep_alpha {
+                ChannelLayout::Rgba
+            } else if matches!(to.layout(), ChannelLayout::Gray) {
+                ChannelLayout::Gray
+            } else {
+                ChannelLayout::Rgb
+            };
+            let straight_to = straight_float(dst_f32_layout, to)?;
+            let before = Self::new_explicit_hooks(
+                from,
+                handoff_desc,
+                &leg_opts.with_gamut_policy(crate::GamutPolicy::PreserveExtended),
+                hooks,
+            )?;
+            let cms_opts = if to.channel_type() == crate::ChannelType::F32 {
+                leg_opts
+            } else {
+                leg_opts.with_gamut_policy(crate::GamutPolicy::Clip)
+            };
+            let color = Self::build_cms_only(
+                handoff_desc,
+                straight_to,
+                crate::ColorProfileSource::Cicp(handoff_cicp),
+                target,
+                &cms_opts,
+                cms,
+                from,
+                to,
+                hooks,
+            )?;
+            let after = Self::new_explicit_hooks(straight_to, to, &leg_opts, hooks)?;
+            return Ok(before.then(color).then(after));
+        }
+
+        // Unresolved source -> BT.2020 F32 handoff via CMS -> `target`.
+        let straight_from = straight_float(from.layout(), from)?;
+        let handoff_fmt = if from.has_alpha() {
+            crate::PixelFormat::RgbaF32
+        } else {
+            crate::PixelFormat::RgbF32
+        };
+        let (handoff_tf, handoff_cicp) = if src_tf == TransferFunction::Pq {
+            (TransferFunction::Pq, crate::Cicp::new(9, 16, 0, true))
+        } else if src_tf == TransferFunction::Hlg && dst_is_sdr {
+            (TransferFunction::Bt709, crate::Cicp::new(9, 1, 0, true))
+        } else {
+            (TransferFunction::Linear, crate::Cicp::new(9, 8, 0, true))
+        };
+        let handoff_desc = handoff_fmt
+            .descriptor()
+            .with_primaries(crate::ColorPrimaries::Bt2020)
+            .with_transfer(handoff_tf);
+        let unclipped = leg_opts.with_gamut_policy(crate::GamutPolicy::PreserveExtended);
+        let before = Self::new_explicit_hooks(from, straight_from, &unclipped, hooks)?;
+        let color = Self::build_cms_only(
+            straight_from,
+            handoff_desc,
+            source,
+            crate::ColorProfileSource::Cicp(handoff_cicp),
+            &unclipped,
+            cms,
+            from,
+            to,
+            hooks,
+        )?;
+        let after = if target.resolve().is_some() {
+            Self::new_explicit_hooks(handoff_desc, to, &leg_opts, hooks)?
+        } else {
+            Self::new_with_sources_hooks(
+                handoff_desc,
+                to,
+                crate::ColorProfileSource::Cicp(handoff_cicp),
+                target,
+                &leg_opts,
+                cms,
+                hooks,
+            )?
+        };
+        Ok(before.then(color).then(after))
+    }
+
+    pub(crate) fn into_worker(
+        self,
+        color: Option<alloc::sync::Arc<crate::ColorContext>>,
+    ) -> RowConverter {
+        RowConverter {
+            recipe: self,
+            workspace: WorkerSpace::default(),
+            prepared_width: None,
+            worker_limit: None,
+            color,
+            source: None,
+        }
+    }
+
+    pub(crate) fn workspace(&self, width: u32) -> Result<WorkspaceLayout, At<ConvertError>> {
+        let mut layout = WorkspaceLayout::default();
+        crate::convert::row_bytes(self.from, width)?;
+        crate::convert::row_bytes(self.to, width)?;
+        for (i, stage) in self.stages.iter().enumerate() {
+            if i + 1 < self.stages.len() {
+                let slot = &mut layout.staging_words[i % 2];
+                *slot = (*slot).max(crate::convert::row_bytes(stage.to, width)?.div_ceil(8));
             }
-            #[cfg(feature = "std")]
-            Some(ExternalTransform::Owned(_)) => unreachable!("moved to independent worker above"),
-            Some(ExternalTransform::Alpha(p)) => p.prepare(max_width)?,
-            None => self.scratch.prepare(&self.plan, max_width)?,
+            match &stage.operation {
+                Operation::Native(plan) => layout.native.merge(plan.workspace(width)?),
+                Operation::Shared(_) | Operation::Owned(_) => layout.opaque = true,
+            }
+        }
+        core::alloc::Layout::array::<u64>(layout.staging_words[0] + layout.staging_words[1])
+            .map_err(|_| whereat::at!(ConvertError::InvalidWidth(width)))?;
+        Ok(layout)
+    }
+
+    pub(crate) fn requirements(
+        &self,
+        width: u32,
+    ) -> Result<crate::AllocationRequirements, At<ConvertError>> {
+        use crate::ByteBound;
+        use crate::convert::SharedLutMask;
+        let layout = self.workspace(width)?;
+        let native_worker = layout.bytes();
+        let mut resident = (self.stages.capacity() * core::mem::size_of::<Stage>()) as u64;
+        let mut shared = SharedLutMask::NONE;
+        let mut opaque_resident = layout.opaque;
+        let mut opaque_setup = layout.opaque;
+        for stage in &self.stages {
+            if let Operation::Native(native) = &stage.operation {
+                let (heap, cold) = native.plan_allocations();
+                resident += heap;
+                match cold {
+                    Some(mask) => shared = shared.union(mask),
+                    None => opaque_setup = true,
+                }
+                opaque_resident |= native.has_mapper();
+            }
+        }
+        let shared_bytes = shared.total_bytes();
+        Ok(crate::AllocationRequirements {
+            native_worker,
+            worker_heap: if layout.opaque {
+                ByteBound::Unknown
+            } else {
+                ByteBound::Exact(native_worker)
+            },
+            resident_heap: if opaque_resident {
+                ByteBound::Unknown
+            } else {
+                ByteBound::Exact(resident)
+            },
+            shared_cold_setup: if opaque_setup {
+                ByteBound::Unknown
+            } else if shared_bytes == 0 {
+                ByteBound::Exact(0)
+            } else {
+                ByteBound::AtMost(shared_bytes)
+            },
+        })
+    }
+
+    pub(crate) fn steps(&self) -> impl Iterator<Item = crate::route::PlannedStepInfo> + '_ {
+        use crate::route::{AccuracyContract, KernelTier, PlannedStepInfo, SemanticEffects};
+        let relabel_step = |(rf, rt)| PlannedStepInfo {
+            operation: "RelabelTransfer",
+            from: rf,
+            to: rt,
+            tier: KernelTier::Scalar,
+            accuracy: AccuracyContract::Exact,
+            semantic: SemanticEffects::RELABELED_TRANSFER,
+        };
+        let before = self.relabel_before.map(relabel_step);
+        let after = self.relabel_after.map(relabel_step);
+        let stage_steps = self.stages.iter().flat_map(|stage| {
+            let (native, backend) = match &stage.operation {
+                Operation::Native(plan) => (Some(plan.steps()), None),
+                Operation::Shared(_) | Operation::Owned(_) => {
+                    let mut semantic = SemanticEffects::NONE;
+                    if stage.from.has_alpha() && !stage.to.has_alpha() {
+                        semantic = semantic.union(SemanticEffects::ALPHA_DISCARDED);
+                    }
+                    if crate::route::channel_bits(stage.from.channel_type())
+                        > crate::route::channel_bits(stage.to.channel_type())
+                    {
+                        semantic = semantic.union(SemanticEffects::DEPTH_NARROWED);
+                    }
+                    if !stage.to.channel_type().is_float() {
+                        semantic = semantic.union(SemanticEffects::CLAMPED);
+                    }
+                    (
+                        None,
+                        Some(PlannedStepInfo {
+                            operation: "Cms",
+                            from: stage.from,
+                            to: stage.to,
+                            tier: KernelTier::Backend,
+                            accuracy: AccuracyContract::BackendDefined,
+                            semantic,
+                        }),
+                    )
+                }
+            };
+            native.into_iter().flatten().chain(backend)
+        });
+        before.into_iter().chain(stage_steps).chain(after)
+    }
+
+    pub(crate) fn rank(&self) -> crate::route::RouteRank {
+        let mut rank = crate::route::RouteRank::default();
+        for step in self.steps() {
+            rank.add(step);
+        }
+        rank
+    }
+
+    pub(crate) fn clone_for_worker(&self) -> Result<Self, At<ConvertError>> {
+        let mut stages = alloc::vec::Vec::new();
+        stages
+            .try_reserve_exact(self.stages.len())
+            .map_err(|_| whereat::at!(ConvertError::AllocationFailed))?;
+        for stage in &self.stages {
+            let operation = match &stage.operation {
+                Operation::Native(plan) => Operation::Native(plan.clone()),
+                Operation::Shared(t) => Operation::Shared(t.clone()),
+                Operation::Owned(_) => {
+                    return Err(whereat::at!(ConvertError::OwnedCmsConsumed));
+                }
+            };
+            stages.push(Stage {
+                operation,
+                from: stage.from,
+                to: stage.to,
+            });
+        }
+        Ok(Self {
+            from: self.from,
+            to: self.to,
+            stages,
+            relabel_before: self.relabel_before,
+            relabel_after: self.relabel_after,
+            input_facts: self.input_facts,
+            output_facts: self.output_facts,
+        })
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct WorkspaceLayout {
+    staging_words: [usize; 2],
+    native: crate::convert::NativeWorkspace,
+    pub(crate) opaque: bool,
+}
+
+impl WorkspaceLayout {
+    pub(crate) fn bytes(&self) -> u64 {
+        (self.staging_words[0] as u64 + self.staging_words[1] as u64) * 8 + self.native.bytes()
+    }
+}
+
+struct WorkerSpace {
+    native: ConvertScratch,
+    staging: alloc::vec::Vec<u64>,
+    front_words: usize,
+}
+
+impl Default for WorkerSpace {
+    fn default() -> Self {
+        Self {
+            native: ConvertScratch::new(),
+            staging: alloc::vec::Vec::new(),
+            front_words: 0,
+        }
+    }
+}
+
+impl WorkerSpace {
+    fn reserve(&mut self, layout: &WorkspaceLayout, width: u32) -> Result<(), At<ConvertError>> {
+        let words = layout.staging_words[0] + layout.staging_words[1];
+        if self.staging.len() < words {
+            self.staging = bytemuck::allocation::try_zeroed_vec(words)
+                .map_err(|()| whereat::at!(ConvertError::AllocationFailed))?;
+        }
+        self.native.reserve(layout.native, width)?;
+        self.front_words = layout.staging_words[0];
+        Ok(())
+    }
+}
+
+impl Stage {
+    fn apply(
+        &mut self,
+        src: &[u8],
+        dst: &mut [u8],
+        width: u32,
+        scratch: &mut ConvertScratch,
+        prepared: bool,
+    ) -> Result<(), At<ConvertError>> {
+        match &mut self.operation {
+            Operation::Native(plan) if prepared => {
+                convert_row_prepared(plan, src, dst, width, scratch);
+                Ok(())
+            }
+            Operation::Native(plan) => convert_row_buffered(plan, src, dst, width, scratch),
+            Operation::Shared(t) => t.try_transform_row(src, dst, width).map_err(cms_error),
+            Operation::Owned(t) => t.try_transform_row(src, dst, width).map_err(cms_error),
+        }
+    }
+}
+
+fn cms_error(e: At<crate::cms::CmsPluginError>) -> At<ConvertError> {
+    e.map_error(|error| ConvertError::CmsBackend(alloc::sync::Arc::new(error)))
+}
+
+impl core::fmt::Debug for RowConverter {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RowConverter")
+            .field("from", &self.recipe.from)
+            .field("to", &self.recipe.to)
+            .field("prepared_width", &self.prepared_width)
+            .finish_non_exhaustive()
+    }
+}
+
+impl RowConverter {
+    pub(crate) fn set_source_context(
+        &mut self,
+        source: Option<alloc::sync::Arc<crate::ColorContext>>,
+    ) {
+        self.source = source;
+    }
+
+    pub(crate) fn set_worker_limit(&mut self, limit: Option<u64>) {
+        self.worker_limit = limit;
+    }
+
+    pub(crate) fn from_plan(mut plan: NativePlan) -> Self {
+        plan.bind_if_unbound_all()
+            .expect("ZenCmsLite / NativePlan step binding under caps::ALL");
+        RowRecipe::native(plan).into_worker(None)
+    }
+
+    pub(crate) fn new(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+    ) -> Result<Self, At<ConvertError>> {
+        let mut recipe = RowRecipe::new(from, to)?;
+        recipe.bind::<{ crate::caps::ALL }>()?;
+        Ok(recipe.into_worker(None))
+    }
+
+    pub(crate) fn new_explicit(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        options: &crate::ConvertOptions,
+    ) -> Result<Self, At<ConvertError>> {
+        let mut recipe = RowRecipe::new_explicit(from, to, options)?;
+        recipe.bind::<{ crate::caps::ALL }>()?;
+        Ok(recipe.into_worker(None))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_explicit_with_cms(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        options: &crate::ConvertOptions,
+        cms: Option<&dyn crate::PluggableCms>,
+    ) -> Result<Self, At<ConvertError>> {
+        let mut recipe = RowRecipe::new_explicit_with_cms(from, to, options, cms)?;
+        recipe.bind::<{ crate::caps::ALL }>()?;
+        Ok(recipe.into_worker(None))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_sources(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        src: crate::ColorProfileSource<'_>,
+        dst: crate::ColorProfileSource<'_>,
+        options: &crate::ConvertOptions,
+        cms: Option<&dyn crate::PluggableCms>,
+    ) -> Result<Self, At<ConvertError>> {
+        let mut recipe = RowRecipe::new_with_sources(from, to, src, dst, options, cms)?;
+        recipe.bind::<{ crate::caps::ALL }>()?;
+        Ok(recipe.into_worker(None))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn convert_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
+        self.try_convert_row(src, dst, width)
+            .expect("test conversion failed");
+    }
+
+    /// Reserve the compiled workspace and initialize supported backend state.
+    pub fn prepare(&mut self, max_width: u32) -> Result<(), At<ConvertError>> {
+        // A failed preparer can partially change backend capacity.
+        self.prepared_width = None;
+        if let Some(limit) = self.worker_limit {
+            let bytes = self.recipe.requirements(max_width)?.worker_heap();
+            if !crate::plan::fits_worker_limit(bytes, limit) {
+                return Err(whereat::at!(ConvertError::WorkerBudgetExceeded {
+                    bytes,
+                    limit
+                }));
+            }
+        }
+        let layout = self.recipe.workspace(max_width)?;
+        self.workspace.reserve(&layout, max_width)?;
+        for stage in &mut self.recipe.stages {
+            match &mut stage.operation {
+                Operation::Native(plan) => self.workspace.native.prepare(plan, max_width)?,
+                Operation::Shared(t) => t.prepare(max_width).map_err(cms_error)?,
+                Operation::Owned(t) => t.prepare(max_width).map_err(cms_error)?,
+            }
         }
         self.prepared_width = Some(max_width);
         Ok(())
@@ -645,66 +1240,144 @@ impl RowConverter {
             }
             Ok(expected)
         };
-        let slen = extent(self.plan.from(), src.len(), src.as_ptr())?;
-        let dlen = extent(self.plan.to(), dst.len(), dst.as_ptr())?;
+        let slen = extent(self.recipe.from, src.len(), src.as_ptr())?;
+        let dlen = extent(self.recipe.to, dst.len(), dst.as_ptr())?;
+        self.execute(&src[..slen], &mut dst[..dlen], width)
+    }
+
+    fn execute(&mut self, src: &[u8], dst: &mut [u8], width: u32) -> Result<(), At<ConvertError>> {
         if width == 0 {
             return Ok(());
         }
-        let src = &src[..slen];
-        let dst = &mut dst[..dlen];
-        let result = match &mut self.external {
-            Some(ExternalTransform::Alpha(p)) => return p.convert(src, dst, width),
-            Some(ExternalTransform::Shared(t)) => t.try_transform_row(src, dst, width),
-            #[cfg(feature = "std")]
-            Some(ExternalTransform::Owned(t)) => t
-                .lock()
-                .map_err(|_| {
-                    whereat::at!(ConvertError::CmsError("CMS worker was poisoned".into()))
-                })?
-                .try_transform_row(src, dst, width),
-            Some(ExternalTransform::Independent(t)) => {
-                t.get_mut().try_transform_row(src, dst, width)
+        if self.recipe.stages.is_empty() {
+            dst.copy_from_slice(src);
+            return Ok(());
+        }
+        if self.prepared_width.is_none() {
+            if let Some(limit) = self.worker_limit {
+                let bytes = self.recipe.requirements(width)?.worker_heap();
+                if !crate::plan::fits_worker_limit(bytes, limit) {
+                    return Err(whereat::at!(ConvertError::WorkerBudgetExceeded {
+                        bytes,
+                        limit
+                    }));
+                }
             }
-            None => {
-                return convert_row_buffered(&self.plan, src, dst, width, &mut self.scratch);
+            if self.recipe.stages.len() > 1 {
+                let layout = self.recipe.workspace(width)?;
+                self.workspace.reserve(&layout, width)?;
             }
-        };
-        result.map_err(|e| {
-            e.map_error(|error| ConvertError::CmsBackend(alloc::sync::Arc::new(error)))
-        })
+        }
+        let stage_count = self.recipe.stages.len();
+        let (front, back) = self
+            .workspace
+            .staging
+            .split_at_mut(self.workspace.front_words);
+        let a: &mut [u8] = bytemuck::cast_slice_mut(front);
+        let b: &mut [u8] = bytemuck::cast_slice_mut(back);
+        for (i, stage) in self.recipe.stages.iter_mut().enumerate() {
+            let last = i + 1 == stage_count;
+            let active_in = width as usize * stage.from.bytes_per_pixel();
+            let active_out = width as usize * stage.to.bytes_per_pixel();
+            let (input, output): (&[u8], &mut [u8]) = if i % 2 == 0 {
+                let input = if i == 0 { src } else { &b[..active_in] };
+                (
+                    input,
+                    if last {
+                        &mut *dst
+                    } else {
+                        &mut a[..active_out]
+                    },
+                )
+            } else {
+                (
+                    &a[..active_in],
+                    if last {
+                        &mut *dst
+                    } else {
+                        &mut b[..active_out]
+                    },
+                )
+            };
+            stage.apply(
+                input,
+                output,
+                width,
+                &mut self.workspace.native,
+                self.prepared_width.is_some(),
+            )?;
+        }
+        Ok(())
     }
 
-    /// Fallible clone. Shared transforms and legacy std mutex workers may be
-    /// shared; an independently owned stateful worker cannot be duplicated.
-    /// Construct another converter from the backend to obtain a parallel worker.
+    /// Clone the recipe for a fresh, independently prepared worker.
     pub fn try_clone(&self) -> Result<Self, At<ConvertError>> {
-        let external = match &self.external {
-            Some(ExternalTransform::Alpha(p)) => {
-                Some(ExternalTransform::Alpha(Box::new(p.try_clone()?)))
-            }
-            Some(ExternalTransform::Shared(t)) => Some(ExternalTransform::Shared(t.clone())),
-            #[cfg(feature = "std")]
-            Some(ExternalTransform::Owned(t)) => Some(ExternalTransform::Owned(t.clone())),
-            Some(ExternalTransform::Independent(_)) => {
-                return Err(whereat::at!(ConvertError::CmsError(
-                    "stateful worker cannot be cloned; construct another converter".into()
-                )));
-            }
-            None => None,
-        };
-        Ok(Self {
-            plan: self.plan.clone(),
-            scratch: ConvertScratch::new(),
-            prepared_width: None,
-            external,
-        })
+        let mut clone = self
+            .recipe
+            .clone_for_worker()?
+            .into_worker(self.color.clone());
+        clone.source = self.source.clone();
+        clone.worker_limit = self.worker_limit;
+        Ok(clone)
     }
 
-    /// Convert multiple rows from a strided source buffer to a strided destination.
+    /// Convert typed strided [`PixelSlice`](zenpixels::PixelSlice) rows into `dst` and
+    /// write the plan's output [`ColorContext`](crate::ColorContext) onto `dst`.
     ///
-    /// The source and destination can have different strides.
+    /// Clears any stale [`ColorContext`](crate::ColorContext) on `dst` when the compiled
+    /// output interpretation carries no profile or luminance context.
     #[track_caller]
-    pub fn convert_rows(
+    pub fn convert_rows<'a>(
+        &mut self,
+        src: zenpixels::PixelSlice<'_>,
+        mut dst: zenpixels::PixelSliceMut<'a>,
+    ) -> Result<zenpixels::PixelSliceMut<'a>, At<ConvertError>> {
+        if src.descriptor() != self.recipe.from {
+            return Err(whereat::at!(ConvertError::NoPath {
+                from: src.descriptor(),
+                to: self.recipe.to,
+            }));
+        }
+        if src.encoding() != crate::PixelEncoding::new(self.recipe.from, self.source.as_deref()) {
+            return Err(whereat::at!(ConvertError::SourceInterpretationChanged));
+        }
+        if !src.float_facts().contains(self.recipe.input_facts) {
+            return Err(whereat::at!(ConvertError::FloatFactsUnsatisfied {
+                required: self.recipe.input_facts,
+                actual: src.float_facts(),
+            }));
+        }
+        if dst.descriptor() != self.recipe.to {
+            return Err(whereat::at!(ConvertError::NoPath {
+                from: self.recipe.from,
+                to: dst.descriptor(),
+            }));
+        }
+        if src.width() != dst.width() || src.rows() != dst.rows() {
+            return Err(whereat::at!(ConvertError::Buffer(
+                zenpixels::BufferError::InvalidDimensions
+            )));
+        }
+        let dst_stride = dst.stride();
+        self.convert_raw_rows(
+            src.as_strided_bytes(),
+            src.stride(),
+            dst.as_strided_bytes_mut(),
+            dst_stride,
+            src.width(),
+            src.rows(),
+        )?;
+        dst.set_color_context(self.color.clone());
+        Ok(dst)
+    }
+
+    /// Convert multiple rows from a raw strided byte buffer to a raw strided destination.
+    ///
+    /// Prefer [`convert_rows`](Self::convert_rows) when [`PixelSlice`](zenpixels::PixelSlice)
+    /// carriers are available so endpoint encodings and output [`ColorContext`](crate::ColorContext)
+    /// are verified and propagated automatically.
+    #[track_caller]
+    pub fn convert_raw_rows(
         &mut self,
         src: &[u8],
         src_stride: usize,
@@ -746,22 +1419,17 @@ impl RowConverter {
                 )));
             }
         }
-        for y in 0..rows {
-            let src_start = y as usize * src_stride;
-            let src_end = src_start + (width as usize * self.plan.from().bytes_per_pixel());
-            let dst_start = y as usize * dst_stride;
-            let dst_end = dst_start + (width as usize * self.plan.to().bytes_per_pixel());
-
-            if src_end > src.len() || dst_end > dst.len() {
-                return Err(whereat::at!(ConvertError::BufferSize {
-                    expected: dst_end,
-                    actual: dst.len(),
-                }));
-            }
-
-            self.try_convert_row(
-                &src[src_start..src_end],
-                &mut dst[dst_start..dst_end],
+        if self.prepared_width.is_some_and(|capacity| width > capacity) {
+            return Err(whereat::at!(ConvertError::InvalidWidth(width)));
+        }
+        let src_bytes = width as usize * self.recipe.from.bytes_per_pixel();
+        let dst_bytes = width as usize * self.recipe.to.bytes_per_pixel();
+        for y in 0..rows as usize {
+            let src_start = y * src_stride;
+            let dst_start = y * dst_stride;
+            self.execute(
+                &src[src_start..src_start + src_bytes],
+                &mut dst[dst_start..dst_start + dst_bytes],
                 width,
             )?;
         }
@@ -772,55 +1440,139 @@ impl RowConverter {
     #[inline]
     #[must_use]
     pub fn is_identity(&self) -> bool {
-        // External transforms (CMS plugins, named-profile matlut) shadow
-        // the plan with real conversion work — only identity when no
-        // external is set and the plan itself is identity.
-        self.external.is_none() && self.plan.is_identity()
+        !self.recipe.needs_pixel_work()
     }
 
-    /// Source pixel format.
-    #[inline]
+    /// Source pixel descriptor.
     pub fn from_descriptor(&self) -> PixelDescriptor {
-        self.plan.from()
+        self.recipe.from
     }
 
-    /// Target pixel format.
-    #[inline]
+    /// Effective destination pixel descriptor.
     pub fn to_descriptor(&self) -> PixelDescriptor {
-        self.plan.to()
+        self.recipe.to
     }
 
-    /// Compose two converters: apply `self` then `other` in a single pass.
+    /// Floating-point sample invariants required on input views (`FloatFacts::NONE` when unstated).
+    pub const fn input_float_facts(&self) -> zenpixels::sample::FloatFacts {
+        self.recipe.input_facts
+    }
+
+    /// Floating-point sample invariants proven for output views (`FloatFacts::NONE` on integer outputs).
+    pub const fn output_float_facts(&self) -> zenpixels::sample::FloatFacts {
+        self.recipe.output_facts
+    }
+
+    #[inline]
+    pub(crate) fn expected_source_encoding(&self) -> crate::PixelEncoding<'_> {
+        crate::PixelEncoding::new(self.recipe.from, self.source.as_deref())
+    }
+
+    #[inline]
+    pub(crate) const fn prepared_capacity(&self) -> Option<u32> {
+        self.prepared_width
+    }
+
+    #[inline]
+    pub(crate) fn output_color_arc(&self) -> Option<&alloc::sync::Arc<crate::ColorContext>> {
+        self.color.as_ref()
+    }
+
+    /// Convert any [`PackedSource`](crate::PackedSource) (`PixelSlice`, `&PixelBuffer`, or
+    /// `&BandedPixelBuffer`) into any [`PackedSink`](crate::PackedSink) (`PixelSliceMut`,
+    /// `&mut PixelBuffer`, or `&mut BandedPixelBuffer`).
     ///
-    /// Adjacent inverse steps cancel (e.g., sRGB→linear then linear→sRGB
-    /// becomes identity). This eliminates intermediate buffers in zenpipe's
-    /// TransformSource when chaining format conversions.
-    ///
-    /// Returns `None` if the converters are incompatible or either uses an
-    /// external CMS transform that cannot be represented by its descriptor plan.
-    pub fn compose(&self, other: &Self) -> Option<Self> {
-        // A shell descriptor plan does not contain the external CMS operation.
-        // Refuse composition rather than silently drop that transform.
-        if self.external.is_some() || other.external.is_some() {
-            return None;
-        }
-        self.plan.compose(&other.plan).map(Self::from_plan)
+    /// Single-slice and single-buffer pairs compile down directly to the zero-overhead
+    /// contiguous row loop; banded and mixed pairs stream across band intersections and
+    /// stamp output [`ColorContext`](crate::ColorContext) and [`FloatFacts`](zenpixels::sample::FloatFacts)
+    /// onto owned destinations.
+    #[track_caller]
+    #[inline]
+    pub fn convert(
+        &mut self,
+        src: impl crate::PackedSource,
+        dst: impl crate::PackedSink,
+    ) -> Result<(), At<ConvertError>> {
+        crate::packed::convert_packed(self, src, dst)
     }
 
-    /// Compose with intentional intermediate quantization and stage semantics.
-    /// External CMS transforms still require separate converter executions.
-    pub fn compose_preserving(&self, other: &Self) -> Option<Self> {
-        if self.external.is_some() || other.external.is_some() {
-            return None;
+    /// Stream rows across [`BandedPixelBuffer`](crate::banded::BandedPixelBuffer)s with
+    /// identical or mismatched band heights using an O(bands) band zipper.
+    pub fn convert_bands(
+        &mut self,
+        src: &crate::banded::BandedPixelBuffer,
+        dst: &mut crate::banded::BandedPixelBuffer,
+    ) -> Result<(), At<ConvertError>> {
+        let extent = src.layout();
+        if extent.width() != dst.layout().width() || extent.height() != dst.layout().height() {
+            return Err(whereat::at!(ConvertError::Buffer(
+                crate::BufferError::InvalidDimensions
+            )));
         }
-        self.plan
-            .compose_preserving(&other.plan)
-            .map(Self::from_plan)
-    }
-
-    /// Access the underlying conversion plan.
-    pub fn plan(&self) -> &ConvertPlan {
-        &self.plan
+        if src.descriptor() != self.recipe.from {
+            return Err(whereat::at!(ConvertError::NoPath {
+                from: src.descriptor(),
+                to: self.recipe.to,
+            }));
+        }
+        if src.encoding() != crate::PixelEncoding::new(self.recipe.from, self.source.as_deref()) {
+            return Err(whereat::at!(ConvertError::SourceInterpretationChanged));
+        }
+        if !src.float_facts().contains(self.recipe.input_facts) {
+            return Err(whereat::at!(ConvertError::FloatFactsUnsatisfied {
+                required: self.recipe.input_facts,
+                actual: src.float_facts(),
+            }));
+        }
+        if dst.descriptor() != self.recipe.to {
+            return Err(whereat::at!(ConvertError::NoPath {
+                from: self.recipe.from,
+                to: dst.descriptor(),
+            }));
+        }
+        let width = extent.width();
+        if self.prepared_width.is_some_and(|cap| width > cap) {
+            return Err(whereat::at!(ConvertError::InvalidWidth(width)));
+        }
+        if width > 0 && extent.height() > 0 {
+            let mut src_iter = src.bands();
+            let mut dst_iter = dst.bands_mut();
+            let mut cur_src = src_iter.next().map(|b| (b, 0u32));
+            let mut cur_dst = dst_iter.next().map(|b| (b, 0u32));
+            let mut y = 0u32;
+            while y < extent.height() {
+                let (sb, sy) = cur_src.as_ref().expect("source bands cover height");
+                let (db, dy) = cur_dst.as_mut().expect("destination bands cover height");
+                let rem_s = sb.rows() - *sy;
+                let rem_d = db.rows() - *dy;
+                let chunk = rem_s.min(rem_d);
+                let s_sub = sb.sub_rows(*sy, chunk);
+                let mut d_sub = db.sub_rows_mut(*dy, chunk);
+                let d_stride = d_sub.stride();
+                self.convert_raw_rows(
+                    s_sub.as_strided_bytes(),
+                    s_sub.stride(),
+                    d_sub.as_strided_bytes_mut(),
+                    d_stride,
+                    width,
+                    chunk,
+                )?;
+                y += chunk;
+                if *sy + chunk == sb.rows() {
+                    cur_src = src_iter.next().map(|b| (b, 0));
+                } else {
+                    cur_src.as_mut().unwrap().1 += chunk;
+                }
+                if *dy + chunk == db.rows() {
+                    cur_dst = dst_iter.next().map(|b| (b, 0));
+                } else {
+                    *dy += chunk;
+                }
+            }
+        }
+        dst.set_color_context(self.color.clone());
+        let _ = dst.set_float_facts(self.recipe.output_facts);
+        Ok(())
     }
 }
 
@@ -829,7 +1581,7 @@ mod tests {
     use alloc::vec;
 
     use super::*;
-    use crate::convert::ConvertPlan;
+    use crate::convert::NativePlan;
     use crate::policy::{AlphaPolicy, ConvertOptions, DepthPolicy};
     use crate::{AlphaMode, ChannelLayout, ChannelType, ConvertError, TransferFunction};
 
@@ -841,12 +1593,15 @@ mod tests {
     ) -> alloc::vec::Vec<u8> {
         let mut conv =
             if from.transfer() == TransferFunction::Hlg || to.transfer() == TransferFunction::Hlg {
-                RowConverter::from_plan(ConvertPlan::plan_native(from, to).unwrap())
+                RowConverter::from_plan(NativePlan::plan_native(from, to).unwrap())
             } else {
                 RowConverter::new_explicit(
                     from,
                     to,
-                    &ConvertOptions::permissive()
+                    &ConvertOptions::retain_channels()
+                        .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                        .with_depth_policy(crate::DepthPolicy::Round)
+                        .with_luma(Some(crate::LumaCoefficients::Bt709))
                         .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
                         .with_sdr_white(zenpixels::hdr::DiffuseWhite::new(10000.)),
                 )
@@ -1398,7 +2153,7 @@ mod tests {
 
         // The HDR-aware constructor accepts a source peak and produces a
         // valid sRGB pixel (BT.2446-A tone-map step inserted).
-        let plan = ConvertPlan::new_with_hdr_peak(pq_u16, PixelDescriptor::RGB8_SRGB, 1000.0)
+        let plan = NativePlan::new_with_hdr_peak(pq_u16, PixelDescriptor::RGB8_SRGB, 1000.0)
             .expect("HDR-aware plan should build");
         let mut conv = RowConverter::from_plan(plan);
         let src16: [u16; 3] = [32768, 32768, 32768];
@@ -1425,7 +2180,7 @@ mod tests {
         assert!(matches!(err, ConvertError::HlgRenderingRequired));
 
         assert!(
-            ConvertPlan::new_with_hdr_peak(hlg_u16, PixelDescriptor::RGB8_SRGB, 1000.0).is_err(),
+            NativePlan::new_with_hdr_peak(hlg_u16, PixelDescriptor::RGB8_SRGB, 1000.0).is_err(),
             "a peak alone does not provide HLG's display OOTF"
         );
     }
@@ -1599,7 +2354,7 @@ mod tests {
         let mut dst = [0u8; 8]; // 2 rows × 4 bytes
         let dst_stride = 4;
 
-        conv.convert_rows(&src, src_stride, &mut dst, dst_stride, 1, 2)
+        conv.convert_raw_rows(&src, src_stride, &mut dst, dst_stride, 1, 2)
             .unwrap();
         assert_eq!(&dst[0..4], &[10, 20, 30, 255]);
         assert_eq!(&dst[4..8], &[40, 50, 60, 255]);
@@ -1612,12 +2367,14 @@ mod tests {
 
         let src = [10u8, 20, 30];
         let mut dst = [0u8; 4];
-        let err = conv.convert_rows(&src, 3, &mut dst, 4, 1, 2).unwrap_err();
+        let err = conv
+            .convert_raw_rows(&src, 3, &mut dst, 4, 1, 2)
+            .unwrap_err();
         assert!(matches!(*err.error(), ConvertError::BufferSize { .. }));
     }
 
     // -----------------------------------------------------------------------
-    // ConvertPlan::new_explicit policy checks
+    // NativePlan::new_explicit policy checks
     // -----------------------------------------------------------------------
 
     #[test]
@@ -1625,7 +2382,7 @@ mod tests {
         let from = PixelDescriptor::RGBA8_SRGB;
         let to = PixelDescriptor::RGB8_SRGB;
         let opts = ConvertOptions::retain_channels().with_depth_policy(DepthPolicy::Round);
-        let err = ConvertPlan::new_explicit(from, to, &opts).unwrap_err();
+        let err = NativePlan::new_explicit(from, to, &opts).unwrap_err();
         assert_eq!(*err.error(), ConvertError::AlphaRemovalForbidden);
     }
 
@@ -1640,7 +2397,7 @@ mod tests {
         let full = PixelDescriptor::RGB8_SRGB;
         let narrow = PixelDescriptor::RGB8_SRGB.with_signal_range(SignalRange::Narrow);
 
-        let err = ConvertPlan::new(narrow, full).unwrap_err();
+        let err = NativePlan::new(narrow, full).unwrap_err();
         assert!(matches!(*err.error(), ConvertError::NoPath { .. }));
         // The message must name the real blocker, not just print two
         // identical channel-type/layout pairs.
@@ -1650,12 +2407,12 @@ mod tests {
             err.error()
         );
 
-        let err = ConvertPlan::new(full, narrow).unwrap_err();
+        let err = NativePlan::new(full, narrow).unwrap_err();
         assert!(matches!(*err.error(), ConvertError::NoPath { .. }));
 
         // Same-range narrow→narrow (layout-only change) still plans.
         let narrow_rgba = PixelDescriptor::RGBA8_SRGB.with_signal_range(SignalRange::Narrow);
-        ConvertPlan::new(narrow, narrow_rgba).expect("same-range narrow plan must succeed");
+        NativePlan::new(narrow, narrow_rgba).expect("same-range narrow plan must succeed");
     }
 
     #[test]
@@ -1669,7 +2426,7 @@ mod tests {
         let to = PixelDescriptor::RGB8_SRGB;
         let opts =
             ConvertOptions::retain_channels().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
-        let err = ConvertPlan::new_explicit(from, to, &opts).unwrap_err();
+        let err = NativePlan::new_explicit(from, to, &opts).unwrap_err();
         assert_eq!(*err.error(), ConvertError::DepthReductionForbidden);
     }
 
@@ -1678,7 +2435,7 @@ mod tests {
         let opts = ConvertOptions::retain_channels()
             .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
             .with_depth_policy(DepthPolicy::Round);
-        let err = ConvertPlan::new_explicit(
+        let err = NativePlan::new_explicit(
             PixelDescriptor::RGB8_SRGB,
             PixelDescriptor::GRAY8_SRGB,
             &opts,
@@ -1689,8 +2446,12 @@ mod tests {
 
     #[test]
     fn new_explicit_allows_when_policies_permit() {
-        let opts = ConvertOptions::permissive().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
-        let plan = ConvertPlan::new_explicit(
+        let opts = ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709))
+            .with_alpha_policy(AlphaPolicy::DiscardUnchecked);
+        let plan = NativePlan::new_explicit(
             PixelDescriptor::RGBA8_SRGB,
             PixelDescriptor::GRAY8_SRGB,
             &opts,
@@ -1718,7 +2479,11 @@ mod tests {
             TransferFunction::Srgb,
         );
 
-        let opts = ConvertOptions::permissive().with_clip_out_of_gamut(false);
+        let opts = ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709))
+            .with_gamut_policy(crate::GamutPolicy::PreserveExtended);
         let mut conv = crate::RowConverter::new_explicit(p3, srgb, &opts).unwrap();
 
         let src: [f32; 3] = [0.0, 1.0, 0.0];
@@ -1752,8 +2517,11 @@ mod tests {
             TransferFunction::Srgb,
         );
 
-        let opts = ConvertOptions::permissive();
-        assert!(opts.clip_out_of_gamut());
+        let opts = ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709));
+        assert!(opts.gamut_policy() == crate::GamutPolicy::Clip);
         let mut conv = crate::RowConverter::new_explicit(p3, srgb, &opts).unwrap();
 
         let src: [f32; 3] = [0.0, 1.0, 0.0];
@@ -1783,57 +2551,62 @@ mod tests {
     struct PaintRedTransform;
 
     impl crate::cms::RowTransformMut for PaintRedTransform {
-        fn transform_row(&mut self, _src: &[u8], dst: &mut [u8], width: u32) {
+        fn try_transform_row(
+            &mut self,
+            _src: &[u8],
+            dst: &mut [u8],
+            width: u32,
+        ) -> Result<(), whereat::At<crate::CmsPluginError>> {
             for px in dst.as_chunks_mut::<3>().0.iter_mut().take(width as usize) {
                 px[0] = 255;
                 px[1] = 0;
                 px[2] = 0;
             }
+            Ok(())
         }
     }
 
     impl crate::cms::PluggableCms for PaintRedCms {
-        fn build_source_transform(
+        fn build(
             &self,
-            _src: zenpixels::ColorProfileSource<'_>,
-            _dst: zenpixels::ColorProfileSource<'_>,
-            _src_format: zenpixels::PixelFormat,
-            _dst_format: zenpixels::PixelFormat,
-            _options: &crate::policy::ConvertOptions,
-        ) -> Option<
+            request: &crate::cms::CmsRequest<'_>,
+        ) -> Result<crate::cms::CmsSupport, whereat::At<crate::CmsPluginError>> {
+            let build = || -> Option<
             Result<Box<dyn crate::cms::RowTransformMut>, whereat::At<crate::cms::CmsPluginError>>,
         > {
+let _src = request.source();
+let _dst = request.target();
+let _src_format = request.from().pixel_format();
+let _dst_format = request.to().pixel_format();
+let _options = request.options();
+
             self.accepted
                 .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             Some(Ok(Box::new(PaintRedTransform)))
+
+};
+            if let Some(worker) = build() {
+                return worker.map(crate::cms::CmsSupport::Owned);
+            }
+            Ok(crate::cms::CmsSupport::Declined)
         }
     }
 
     #[test]
-    fn composition_refuses_external_cms_in_either_operand() {
+    fn composition_preserves_external_cms() {
         let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(zenpixels::ColorPrimaries::DisplayP3);
         let srgb = PixelDescriptor::RGB8_SRGB;
         let cms = PaintRedCms {
             accepted: core::sync::atomic::AtomicUsize::new(0),
         };
-        let external = RowConverter::new_explicit_with_cms(
-            p3,
-            srgb,
-            &ConvertOptions::permissive(),
-            Some(&cms),
-        )
-        .unwrap();
-        assert!(
-            external
-                .compose(&RowConverter::new(srgb, srgb).unwrap())
-                .is_none()
-        );
-        assert!(
-            RowConverter::new(p3, p3)
-                .unwrap()
-                .compose(&external)
-                .is_none()
-        );
+        let spec = crate::ConversionSpec::new(ConvertOptions::retain_channels()).with_cms(&cms);
+        let first = crate::ConvertPlan::build(p3.into(), srgb.into(), &spec).unwrap();
+        let second =
+            crate::ConvertPlan::build(first.output_encoding(), srgb.into(), &spec).unwrap();
+        let mut worker = first.then(second).unwrap().into_worker();
+        let mut output = [0; 3];
+        worker.try_convert_row(&[1, 2, 3], &mut output, 1).unwrap();
+        assert_eq!(output, [255, 0, 0]);
     }
 
     #[test]
@@ -1846,7 +2619,10 @@ mod tests {
         let cms = PaintRedCms {
             accepted: core::sync::atomic::AtomicUsize::new(0),
         };
-        let opts = ConvertOptions::permissive();
+        let opts = ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709));
         let mut conv =
             crate::RowConverter::new_explicit_with_cms(p3, srgb, &opts, Some(&cms)).unwrap();
 
@@ -1865,7 +2641,10 @@ mod tests {
         let cms = PaintRedCms {
             accepted: core::sync::atomic::AtomicUsize::new(0),
         };
-        let opts = ConvertOptions::permissive();
+        let opts = ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709));
         let conv = crate::RowConverter::new_explicit_with_cms(
             PixelDescriptor::RGB8_SRGB,
             PixelDescriptor::RGB8_SRGB,
@@ -1885,52 +2664,72 @@ mod tests {
         struct PaintBlueShared;
 
         impl crate::cms::RowTransform for PaintBlueShared {
-            fn transform_row(&self, _src: &[u8], dst: &mut [u8], width: u32) {
+            fn try_transform_row(
+                &self,
+                _src: &[u8],
+                dst: &mut [u8],
+                width: u32,
+            ) -> Result<(), whereat::At<crate::CmsPluginError>> {
                 for px in dst.as_chunks_mut::<3>().0.iter_mut().take(width as usize) {
                     px[0] = 0;
                     px[1] = 0;
                     px[2] = 255;
                 }
+                Ok(())
             }
         }
 
         impl crate::cms::PluggableCms for SharedPaintBlueCms {
-            fn build_source_transform(
+            fn build(
                 &self,
-                _src: zenpixels::ColorProfileSource<'_>,
-                _dst: zenpixels::ColorProfileSource<'_>,
-                _src_format: zenpixels::PixelFormat,
-                _dst_format: zenpixels::PixelFormat,
-                _options: &crate::policy::ConvertOptions,
-            ) -> Option<
-                Result<
-                    Box<dyn crate::cms::RowTransformMut>,
-                    whereat::At<crate::cms::CmsPluginError>,
-                >,
-            > {
-                panic!("owned path must not be used when shared is offered");
-            }
-
-            fn build_shared_source_transform(
-                &self,
-                _src: zenpixels::ColorProfileSource<'_>,
-                _dst: zenpixels::ColorProfileSource<'_>,
-                _src_format: zenpixels::PixelFormat,
-                _dst_format: zenpixels::PixelFormat,
-                _options: &crate::policy::ConvertOptions,
-            ) -> Option<
+                request: &crate::cms::CmsRequest<'_>,
+            ) -> Result<crate::cms::CmsSupport, whereat::At<crate::CmsPluginError>> {
+                let build = || -> Option<
                 Result<
                     alloc::sync::Arc<dyn crate::cms::RowTransform>,
                     whereat::At<crate::cms::CmsPluginError>,
                 >,
             > {
+let _src = request.source();
+let _dst = request.target();
+let _src_format = request.from().pixel_format();
+let _dst_format = request.to().pixel_format();
+let _options = request.options();
+
                 Some(Ok(alloc::sync::Arc::new(PaintBlueShared)))
+
+};
+                if let Some(worker) = build() {
+                    return worker.map(crate::cms::CmsSupport::Shared);
+                }
+                let build = || -> Option<
+                Result<
+                    Box<dyn crate::cms::RowTransformMut>,
+                    whereat::At<crate::cms::CmsPluginError>,
+                >,
+            > {
+let _src = request.source();
+let _dst = request.target();
+let _src_format = request.from().pixel_format();
+let _dst_format = request.to().pixel_format();
+let _options = request.options();
+
+                panic!("owned path must not be used when shared is offered");
+
+};
+                if let Some(worker) = build() {
+                    return worker.map(crate::cms::CmsSupport::Owned);
+                }
+                Ok(crate::cms::CmsSupport::Declined)
             }
         }
 
         let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(zenpixels::ColorPrimaries::DisplayP3);
         let srgb = PixelDescriptor::RGB8_SRGB;
-        let opts = ConvertOptions::permissive();
+        let opts = ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709));
         let conv =
             crate::RowConverter::new_explicit_with_cms(p3, srgb, &opts, Some(&SharedPaintBlueCms))
                 .unwrap();
@@ -1946,23 +2745,27 @@ mod tests {
         );
     }
 
-    /// Audit `T4` regression gate: the `ExternalTransform::Owned` path
-    /// (when a `PluggableCms` returns a `RowTransformMut`) used to be
-    /// silently dropped on Clone, so a cloned converter would fall
-    /// through to the built-in plan and produce different bytes. The
-    /// `Arc<Mutex<dyn RowTransformMut>>` carrier now keeps the same
-    /// backing impl alive across clones; this test pins that shape.
-    #[cfg(feature = "std")]
+    /// Audit `T4` regression gate: a stateful `RowTransformMut`-only plugin
+    /// must NEVER be silently dropped on `try_clone` (falling back to the
+    /// built-in plan) — `try_clone` refuses honestly while keeping the
+    /// original converter intact. Stateless plugins share via `RowTransform`.
     #[test]
-    fn pluggable_cms_owned_path_survives_clone() {
+    fn pluggable_cms_owned_path_refuses_clone() {
+        const fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<crate::RowConverter>();
+        assert_send_sync::<crate::OutputPlan>();
+
         // P3 → sRGB so the plugin is consulted; PaintRedCms only offers
-        // the `Owned` (RowTransformMut) path — no `build_shared_*`.
+        // the stateful `RowTransformMut` path — no `build_shared_*`.
         let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(zenpixels::ColorPrimaries::DisplayP3);
         let srgb = PixelDescriptor::RGB8_SRGB;
         let cms = PaintRedCms {
             accepted: core::sync::atomic::AtomicUsize::new(0),
         };
-        let opts = ConvertOptions::permissive();
+        let opts = ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709));
         let mut conv =
             crate::RowConverter::new_explicit_with_cms(p3, srgb, &opts, Some(&cms)).unwrap();
 
@@ -1971,22 +2774,14 @@ mod tests {
         conv.convert_row(&[10, 20, 30, 40, 50, 60], &mut dst, 2);
         assert_eq!(dst, [255, 0, 0, 255, 0, 0]);
 
-        // The clone MUST carry the same RowTransformMut behind an
-        // Arc<Mutex<_>>. Pre-fix this silently dropped, fell back to
-        // the built-in P3→sRGB plan, and produced non-red output —
-        // which is exactly the regression we're gating against.
-        let mut conv_cloned = conv.try_clone().unwrap();
+        // Stateful worker refuses `try_clone` instead of silently dropping
+        // the plugin or serializing threads behind a hidden mutex.
+        assert!(conv.try_clone().is_err());
+
+        // Original converter still runs the plugin cleanly.
         let mut dst2 = [0u8; 6];
-        conv_cloned.convert_row(&[10, 20, 30, 40, 50, 60], &mut dst2, 2);
-        assert_eq!(
-            dst, dst2,
-            "cloned RowConverter must run the same RowTransformMut as the source"
-        );
-        assert_eq!(
-            dst2,
-            [255, 0, 0, 255, 0, 0],
-            "cloned converter should still paint red, not fall through to built-in plan"
-        );
+        conv.convert_row(&[10, 20, 30, 40, 50, 60], &mut dst2, 2);
+        assert_eq!(dst2, [255, 0, 0, 255, 0, 0]);
     }
 
     #[test]
@@ -1994,26 +2789,38 @@ mod tests {
         // Plugin returns None — must fall back to the built-in gamut path.
         struct DeclineCms;
         impl crate::cms::PluggableCms for DeclineCms {
-            fn build_source_transform(
+            fn build(
                 &self,
-                _src: zenpixels::ColorProfileSource<'_>,
-                _dst: zenpixels::ColorProfileSource<'_>,
-                _src_format: zenpixels::PixelFormat,
-                _dst_format: zenpixels::PixelFormat,
-                _options: &crate::policy::ConvertOptions,
-            ) -> Option<
+                request: &crate::cms::CmsRequest<'_>,
+            ) -> Result<crate::cms::CmsSupport, whereat::At<crate::CmsPluginError>> {
+                let build = || -> Option<
                 Result<
                     Box<dyn crate::cms::RowTransformMut>,
                     whereat::At<crate::cms::CmsPluginError>,
                 >,
             > {
+let _src = request.source();
+let _dst = request.target();
+let _src_format = request.from().pixel_format();
+let _dst_format = request.to().pixel_format();
+let _options = request.options();
+
                 None
+
+};
+                if let Some(worker) = build() {
+                    return worker.map(crate::cms::CmsSupport::Owned);
+                }
+                Ok(crate::cms::CmsSupport::Declined)
             }
         }
 
         let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(zenpixels::ColorPrimaries::DisplayP3);
         let srgb = PixelDescriptor::RGB8_SRGB;
-        let opts = ConvertOptions::permissive();
+        let opts = ConvertOptions::retain_channels()
+            .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+            .with_depth_policy(crate::DepthPolicy::Round)
+            .with_luma(Some(crate::LumaCoefficients::Bt709));
         let mut conv =
             crate::RowConverter::new_explicit_with_cms(p3, srgb, &opts, Some(&DeclineCms)).unwrap();
 
@@ -2035,16 +2842,15 @@ mod tests {
         let from = PixelDescriptor::RGB8_SRGB;
         let to = PixelDescriptor::RGBA8_SRGB;
         let conv = RowConverter::new(from, to).unwrap();
-        let plan = conv.plan();
-        assert_eq!(plan.from(), from);
-        assert_eq!(plan.to(), to);
-        assert!(!plan.is_identity());
+        assert_eq!(conv.from_descriptor(), from);
+        assert_eq!(conv.to_descriptor(), to);
+        assert!(!conv.is_identity());
     }
 
     #[test]
     fn from_plan() {
         let plan =
-            ConvertPlan::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
+            NativePlan::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
         let conv = RowConverter::from_plan(plan);
         assert!(!conv.is_identity());
     }
@@ -2289,12 +3095,10 @@ mod tests {
 
     #[test]
     fn bt709_linear_f32_roundtrip() {
-        use crate::TransferFunctionExt;
-        let tf = TransferFunction::Bt709;
         let values = [0.0f32, 0.1, 0.25, 0.5, 0.75, 1.0];
         for &v in &values {
-            let linear = tf.linearize(v);
-            let back = tf.delinearize(linear);
+            let linear = linear_srgb::default::bt709_to_linear(v);
+            let back = linear_srgb::default::linear_to_bt709(linear);
             assert!(
                 (back - v).abs() < 1e-5,
                 "Bt709 roundtrip failed for {v}: linearize={linear}, delinearize={back}"
@@ -2304,21 +3108,10 @@ mod tests {
 
     #[test]
     fn unknown_transfer_roundtrip() {
-        use crate::TransferFunctionExt;
-        let tf = TransferFunction::Unknown;
-        let values = [0.0f32, 0.1, 0.5, 0.99, 1.0];
-        for &v in &values {
-            let linear = tf.linearize(v);
-            assert!(
-                (linear - v).abs() < 1e-7,
-                "Unknown linearize should be identity: {v} -> {linear}"
-            );
-            let back = tf.delinearize(linear);
-            assert!(
-                (back - v).abs() < 1e-7,
-                "Unknown delinearize should be identity: {linear} -> {back}"
-            );
-        }
+        let unknown = PixelDescriptor::RGB8.with_primaries(zenpixels::ColorPrimaries::Bt709);
+        let plan = crate::ConvertPlan::relabel_transfer(unknown, PixelDescriptor::RGB8_SRGB)
+            .expect("explicit unknown transfer relabel");
+        assert!(plan.is_identity());
     }
 
     #[test]
@@ -2348,10 +3141,10 @@ mod tests {
 
     #[test]
     fn compose_roundtrip_cancels_to_identity() {
-        let a = RowConverter::new(PixelDescriptor::RGBA8_SRGB, PixelDescriptor::RGBAF32_LINEAR)
-            .unwrap();
-        let b = RowConverter::new(PixelDescriptor::RGBAF32_LINEAR, PixelDescriptor::RGBA8_SRGB)
-            .unwrap();
+        let a =
+            NativePlan::new(PixelDescriptor::RGBA8_SRGB, PixelDescriptor::RGBAF32_LINEAR).unwrap();
+        let b =
+            NativePlan::new(PixelDescriptor::RGBAF32_LINEAR, PixelDescriptor::RGBA8_SRGB).unwrap();
         let composed = a.compose(&b).unwrap();
         assert!(composed.is_identity(), "sRGB→linear→sRGB should cancel");
     }
@@ -2363,26 +3156,26 @@ mod tests {
         // The sRGB→linear step from plan A and linear→sRGB from plan B
         // should NOT cancel (different depth target), but composing avoids
         // an intermediate allocation.
-        let a = RowConverter::new(PixelDescriptor::RGBA8_SRGB, PixelDescriptor::RGBAF32_LINEAR)
-            .unwrap();
+        let a =
+            NativePlan::new(PixelDescriptor::RGBA8_SRGB, PixelDescriptor::RGBAF32_LINEAR).unwrap();
         let srgb_f32 = PixelDescriptor::new(
             ChannelType::F32,
             ChannelLayout::Rgba,
             Some(AlphaMode::Straight),
             TransferFunction::Srgb,
         );
-        let b = RowConverter::new(PixelDescriptor::RGBAF32_LINEAR, srgb_f32).unwrap();
+        let b = NativePlan::new(PixelDescriptor::RGBAF32_LINEAR, srgb_f32).unwrap();
         let composed = a.compose(&b).unwrap();
         assert!(!composed.is_identity());
-        assert_eq!(composed.from_descriptor(), PixelDescriptor::RGBA8_SRGB);
-        assert_eq!(composed.to_descriptor(), srgb_f32);
+        assert_eq!(composed.from(), PixelDescriptor::RGBA8_SRGB);
+        assert_eq!(composed.to(), srgb_f32);
     }
 
     #[test]
     fn compose_incompatible_returns_none() {
-        let a = RowConverter::new(PixelDescriptor::RGBA8_SRGB, PixelDescriptor::RGBAF32_LINEAR)
-            .unwrap();
-        let b = RowConverter::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
+        let a =
+            NativePlan::new(PixelDescriptor::RGBA8_SRGB, PixelDescriptor::RGBAF32_LINEAR).unwrap();
+        let b = NativePlan::new(PixelDescriptor::RGB8_SRGB, PixelDescriptor::RGBA8_SRGB).unwrap();
         assert!(a.compose(&b).is_none(), "RGBAF32_LINEAR != RGB8_SRGB");
     }
 
@@ -2394,8 +3187,8 @@ mod tests {
             Some(AlphaMode::Premultiplied),
             TransferFunction::Linear,
         );
-        let a = RowConverter::new(PixelDescriptor::RGBAF32_LINEAR, premul).unwrap();
-        let b = RowConverter::new(premul, PixelDescriptor::RGBAF32_LINEAR).unwrap();
+        let a = NativePlan::new(PixelDescriptor::RGBAF32_LINEAR, premul).unwrap();
+        let b = NativePlan::new(premul, PixelDescriptor::RGBAF32_LINEAR).unwrap();
         let composed = a.compose(&b).unwrap();
         assert!(
             composed.is_identity(),
@@ -2432,8 +3225,14 @@ mod alpha_pipeline_contracts {
     use alloc::sync::Arc;
     struct Copy;
     impl RowTransform for Copy {
-        fn transform_row(&self, src: &[u8], dst: &mut [u8], _: u32) {
+        fn try_transform_row(
+            &self,
+            src: &[u8],
+            dst: &mut [u8],
+            _: u32,
+        ) -> Result<(), whereat::At<crate::CmsPluginError>> {
             dst.copy_from_slice(src);
+            Ok(())
         }
         fn prepare(&self, _: u32) -> Result<(), At<CmsPluginError>> {
             Ok(())
@@ -2441,27 +3240,38 @@ mod alpha_pipeline_contracts {
     }
     struct Cms;
     impl PluggableCms for Cms {
-        fn build_source_transform(
+        fn build(
             &self,
-            _: ColorProfileSource<'_>,
-            _: ColorProfileSource<'_>,
-            _: PixelFormat,
-            _: PixelFormat,
-            _: &crate::ConvertOptions,
-        ) -> Option<Result<Box<dyn crate::cms::RowTransformMut>, At<CmsPluginError>>> {
-            None
-        }
-        fn build_shared_source_transform(
-            &self,
-            _: ColorProfileSource<'_>,
-            _: ColorProfileSource<'_>,
-            from: PixelFormat,
-            to: PixelFormat,
-            _: &crate::ConvertOptions,
-        ) -> Option<Result<Arc<dyn RowTransform>, At<CmsPluginError>>> {
-            assert_eq!(from, PixelFormat::RgbaF32);
-            assert_eq!(to, PixelFormat::RgbaF32);
-            Some(Ok(Arc::new(Copy)))
+            request: &crate::cms::CmsRequest<'_>,
+        ) -> Result<crate::cms::CmsSupport, whereat::At<crate::CmsPluginError>> {
+            let build = || -> Option<Result<Arc<dyn RowTransform>, At<CmsPluginError>>> {
+                let _ = request.source();
+                let _ = request.target();
+                let from = request.from().pixel_format();
+                let to = request.to().pixel_format();
+                let _ = request.options();
+
+                assert_eq!(from, PixelFormat::RgbaF32);
+                assert_eq!(to, PixelFormat::RgbaF32);
+                Some(Ok(Arc::new(Copy)))
+            };
+            if let Some(worker) = build() {
+                return worker.map(crate::cms::CmsSupport::Shared);
+            }
+            let build =
+                || -> Option<Result<Box<dyn crate::cms::RowTransformMut>, At<CmsPluginError>>> {
+                    let _ = request.source();
+                    let _ = request.target();
+                    let _ = request.from().pixel_format();
+                    let _ = request.to().pixel_format();
+                    let _ = request.options();
+
+                    None
+                };
+            if let Some(worker) = build() {
+                return worker.map(crate::cms::CmsSupport::Owned);
+            }
+            Ok(crate::cms::CmsSupport::Declined)
         }
     }
     #[test]
@@ -2473,7 +3283,10 @@ mod alpha_pipeline_contracts {
             to,
             ColorProfileSource::Icc(crate::icc_profiles::ADOBE_RGB),
             ColorProfileSource::Icc(crate::icc_profiles::ADOBE_RGB),
-            &crate::ConvertOptions::permissive(),
+            &crate::ConvertOptions::retain_channels()
+                .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(crate::DepthPolicy::Round)
+                .with_luma(Some(crate::LumaCoefficients::Bt709)),
             Some(&Cms),
         )
         .unwrap();

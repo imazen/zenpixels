@@ -6,16 +6,17 @@
 //! sRGB.
 
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::ops::{Deref, DerefMut};
 
+#[cfg(feature = "planar")]
+use image::Primitive;
 use image::flat::{FlatSamples, SampleLayout};
 use image::metadata::{
     Cicp as ImageCicp, CicpColorPrimaries, CicpMatrixCoefficients, CicpTransferCharacteristics,
-    CicpVideoFullRangeFlag,
+    CicpVideoFullRangeFlag, Orientation as ImageOrientation,
 };
-use image::{
-    ColorType, DynamicImage, ExtendedColorType, ImageBuffer, Luma, LumaA, Primitive, Rgb, Rgba,
-};
+use image::{ColorType, DynamicImage, ExtendedColorType, ImageBuffer, Luma, LumaA, Rgb, Rgba};
 use whereat::{At, at};
 
 use crate::buffer::{
@@ -28,8 +29,13 @@ use crate::descriptor::{
     AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor, PixelFormat,
     SignalRange, TransferFunction,
 };
-use crate::plane::{Plane, PlaneError, PlaneMut, PlaneRef, PlaneSample, SampleStorage};
+use crate::orientation::Orientation;
+use crate::pixel_types::F16Sample;
+#[cfg(feature = "planar")]
+use crate::plane::{Plane, PlaneError, PlaneMut, PlaneRef, PlaneSample};
+use crate::storage::SampleStorage;
 
+#[cfg(feature = "planar")]
 fn u32_dim(n: usize) -> Result<u32, PlaneError> {
     u32::try_from(n).map_err(|_| PlaneError::GeometryOverflow)
 }
@@ -37,6 +43,7 @@ fn u32_dim(n: usize) -> Result<u32, PlaneError> {
 // ---- Planes: `Luma` images and strided views ------------------------------
 
 /// Move a gray image's container into a plane.
+#[cfg(feature = "planar")]
 impl<T, C> TryFrom<ImageBuffer<Luma<T>, C>> for Plane<C>
 where
     T: PlaneSample + Primitive,
@@ -55,6 +62,7 @@ where
 }
 
 /// Borrow a gray image as a plane.
+#[cfg(feature = "planar")]
 impl<'a, T, C> TryFrom<&'a ImageBuffer<Luma<T>, C>> for PlaneRef<'a, T>
 where
     T: PlaneSample + Primitive,
@@ -68,6 +76,7 @@ where
 }
 
 /// Borrow a gray image as a mutable plane.
+#[cfg(feature = "planar")]
 impl<'a, T, C> TryFrom<&'a mut ImageBuffer<Luma<T>, C>> for PlaneMut<'a, T>
 where
     T: PlaneSample + Primitive,
@@ -91,6 +100,7 @@ where
 /// so the error is the plane, unchanged, unless row 0 is at index 0 and the rows
 /// are tight. Use `FlatSamples` for a strided plane. The image is labeled sRGB,
 /// `image`'s default: a plane carries no color, so set it on the result.
+#[cfg(feature = "planar")]
 impl<T, C> TryFrom<Plane<C>> for ImageBuffer<Luma<T>, C>
 where
     T: PlaneSample + Primitive,
@@ -110,6 +120,7 @@ where
     }
 }
 
+#[cfg(feature = "planar")]
 fn gray_layout(width: usize, height: usize, stride: usize) -> Result<SampleLayout, PlaneError> {
     Ok(SampleLayout {
         channels: 1,
@@ -122,6 +133,7 @@ fn gray_layout(width: usize, height: usize, stride: usize) -> Result<SampleLayou
 }
 
 /// View a plane, strided or not, through `image`'s strided type.
+#[cfg(feature = "planar")]
 impl<'a, T: PlaneSample> TryFrom<PlaneRef<'a, T>> for FlatSamples<&'a [T]> {
     type Error = PlaneError;
     fn try_from(plane: PlaneRef<'a, T>) -> Result<Self, PlaneError> {
@@ -135,6 +147,7 @@ impl<'a, T: PlaneSample> TryFrom<PlaneRef<'a, T>> for FlatSamples<&'a [T]> {
 }
 
 /// View a mutable plane, strided or not, through `image`'s strided type.
+#[cfg(feature = "planar")]
 impl<'a, T: PlaneSample> TryFrom<PlaneMut<'a, T>> for FlatSamples<&'a mut [T]> {
     type Error = PlaneError;
     fn try_from(plane: PlaneMut<'a, T>) -> Result<Self, PlaneError> {
@@ -147,11 +160,133 @@ impl<'a, T: PlaneSample> TryFrom<PlaneMut<'a, T>> for FlatSamples<&'a mut [T]> {
     }
 }
 
+// ---- Metadata: Orientation & CICP -----------------------------------------
+
+/// Exact 1:1 EXIF orientation bijection (`1..=8`) from `image` to `zenpixels`.
+impl From<ImageOrientation> for Orientation {
+    fn from(o: ImageOrientation) -> Self {
+        match o {
+            ImageOrientation::NoTransforms => Self::Identity,
+            ImageOrientation::FlipHorizontal => Self::FlipH,
+            ImageOrientation::Rotate180 => Self::Rotate180,
+            ImageOrientation::FlipVertical => Self::FlipV,
+            ImageOrientation::Rotate90FlipH => Self::Transpose,
+            ImageOrientation::Rotate90 => Self::Rotate90,
+            ImageOrientation::Rotate270FlipH => Self::Transverse,
+            ImageOrientation::Rotate270 => Self::Rotate270,
+        }
+    }
+}
+
+/// Exact 1:1 EXIF orientation bijection (`1..=8`) from `zenpixels` to `image`.
+impl From<Orientation> for ImageOrientation {
+    fn from(o: Orientation) -> Self {
+        match o {
+            Orientation::Identity => Self::NoTransforms,
+            Orientation::FlipH => Self::FlipHorizontal,
+            Orientation::Rotate180 => Self::Rotate180,
+            Orientation::FlipV => Self::FlipVertical,
+            Orientation::Transpose => Self::Rotate90FlipH,
+            Orientation::Rotate90 => Self::Rotate90,
+            Orientation::Transverse => Self::Rotate270FlipH,
+            Orientation::Rotate270 => Self::Rotate270,
+        }
+    }
+}
+
+/// Convert an `image::metadata::Cicp` tag to `zenpixels::Cicp`.
+impl From<ImageCicp> for Cicp {
+    fn from(c: ImageCicp) -> Self {
+        Self::new(
+            primaries_code(c.primaries),
+            transfer_code(c.transfer),
+            matrix_code(c.matrix),
+            matches!(c.full_range, CicpVideoFullRangeFlag::FullRange),
+        )
+    }
+}
+
+/// Convert a `zenpixels::Cicp` tag to `image::metadata::Cicp`, returning
+/// [`BufferError::IncompatibleDescriptor`] if a reserved ITU-T H.273 code point
+/// has no variant in `image::metadata`.
+impl TryFrom<Cicp> for ImageCicp {
+    type Error = BufferError;
+    fn try_from(c: Cicp) -> Result<Self, BufferError> {
+        let primaries = match c.color_primaries {
+            1 => CicpColorPrimaries::SRgb,
+            2 => CicpColorPrimaries::Unspecified,
+            4 => CicpColorPrimaries::RgbM,
+            5 => CicpColorPrimaries::RgbB,
+            6 => CicpColorPrimaries::Bt601,
+            7 => CicpColorPrimaries::Rgb240m,
+            8 => CicpColorPrimaries::GenericFilm,
+            9 => CicpColorPrimaries::Rgb2020,
+            10 => CicpColorPrimaries::Xyz,
+            11 => CicpColorPrimaries::SmpteRp431,
+            12 => CicpColorPrimaries::SmpteRp432,
+            22 => CicpColorPrimaries::Industry22,
+            _ => return Err(BufferError::IncompatibleDescriptor),
+        };
+        let transfer = match c.transfer_characteristics {
+            1 => CicpTransferCharacteristics::Bt709,
+            2 => CicpTransferCharacteristics::Unspecified,
+            4 => CicpTransferCharacteristics::Bt470M,
+            5 => CicpTransferCharacteristics::Bt470BG,
+            6 => CicpTransferCharacteristics::Bt601,
+            7 => CicpTransferCharacteristics::Smpte240m,
+            8 => CicpTransferCharacteristics::Linear,
+            9 => CicpTransferCharacteristics::Log100,
+            10 => CicpTransferCharacteristics::LogSqrt,
+            11 => CicpTransferCharacteristics::Iec61966_2_4,
+            12 => CicpTransferCharacteristics::Bt1361,
+            13 => CicpTransferCharacteristics::SRgb,
+            14 => CicpTransferCharacteristics::Bt2020_10bit,
+            15 => CicpTransferCharacteristics::Bt2020_12bit,
+            16 => CicpTransferCharacteristics::Smpte2084,
+            17 => CicpTransferCharacteristics::Smpte428,
+            18 => CicpTransferCharacteristics::Bt2100Hlg,
+            _ => return Err(BufferError::IncompatibleDescriptor),
+        };
+        let matrix = match c.matrix_coefficients {
+            0 => CicpMatrixCoefficients::Identity,
+            1 => CicpMatrixCoefficients::Bt709,
+            2 => CicpMatrixCoefficients::Unspecified,
+            4 => CicpMatrixCoefficients::UsFCC,
+            5 => CicpMatrixCoefficients::Bt470BG,
+            6 => CicpMatrixCoefficients::Smpte170m,
+            7 => CicpMatrixCoefficients::Smpte240m,
+            8 => CicpMatrixCoefficients::YCgCo,
+            9 => CicpMatrixCoefficients::Bt2020NonConstant,
+            10 => CicpMatrixCoefficients::Bt2020Constant,
+            11 => CicpMatrixCoefficients::Smpte2085,
+            12 => CicpMatrixCoefficients::ChromaticityDerivedNonConstant,
+            13 => CicpMatrixCoefficients::ChromaticityDerivedConstant,
+            14 => CicpMatrixCoefficients::Bt2100,
+            15 => CicpMatrixCoefficients::IptPqC2,
+            16 => CicpMatrixCoefficients::YCgCoRe,
+            17 => CicpMatrixCoefficients::YCgCoRo,
+            _ => return Err(BufferError::IncompatibleDescriptor),
+        };
+        let full_range = if c.full_range {
+            CicpVideoFullRangeFlag::FullRange
+        } else {
+            CicpVideoFullRangeFlag::NarrowRange
+        };
+        Ok(Self {
+            primaries,
+            transfer,
+            matrix,
+            full_range,
+        })
+    }
+}
+
 // ---- Color ----------------------------------------------------------------
 
 fn primaries_code(p: CicpColorPrimaries) -> u8 {
     match p {
         CicpColorPrimaries::SRgb => 1,
+        CicpColorPrimaries::Unspecified => 2,
         CicpColorPrimaries::RgbM => 4,
         CicpColorPrimaries::RgbB => 5,
         CicpColorPrimaries::Bt601 => 6,
@@ -169,6 +304,7 @@ fn primaries_code(p: CicpColorPrimaries) -> u8 {
 fn transfer_code(t: CicpTransferCharacteristics) -> u8 {
     match t {
         CicpTransferCharacteristics::Bt709 => 1,
+        CicpTransferCharacteristics::Unspecified => 2,
         CicpTransferCharacteristics::Bt470M => 4,
         CicpTransferCharacteristics::Bt470BG => 5,
         CicpTransferCharacteristics::Bt601 => 6,
@@ -192,6 +328,7 @@ fn matrix_code(m: CicpMatrixCoefficients) -> u8 {
     match m {
         CicpMatrixCoefficients::Identity => 0,
         CicpMatrixCoefficients::Bt709 => 1,
+        CicpMatrixCoefficients::Unspecified => 2,
         CicpMatrixCoefficients::UsFCC => 4,
         CicpMatrixCoefficients::Bt470BG => 5,
         CicpMatrixCoefficients::Smpte170m => 6,
@@ -268,17 +405,24 @@ fn image_color(
     let primaries = image_primaries(descriptor.primaries)?;
     let transfer = image_transfer(descriptor.transfer)?;
     if let Some(context) = context {
-        if context.icc.is_some() {
+        if context
+            .rendering_intent()
+            .is_some_and(|i| i != crate::RenderingIntent::RelativeColorimetric)
+        {
             return None;
         }
-        if let Some(cicp) = context.cicp {
-            let matches = Some(cicp.color_primaries) == descriptor.primaries.to_cicp()
-                && Some(cicp.transfer_characteristics) == descriptor.transfer.to_cicp()
-                && cicp.matrix_coefficients == 0
-                && cicp.full_range;
-            if !matches {
-                return None;
+        match context.profile() {
+            Some(crate::ColorProfile::Icc(_) | crate::ColorProfile::Parametric(_)) => return None,
+            Some(crate::ColorProfile::Cicp(cicp)) => {
+                let matches = Some(cicp.color_primaries) == descriptor.primaries.to_cicp()
+                    && Some(cicp.transfer_characteristics) == descriptor.transfer.to_cicp()
+                    && cicp.matrix_coefficients == 0
+                    && cicp.full_range;
+                if !matches {
+                    return None;
+                }
             }
+            None => {}
         }
     }
     Some((primaries, transfer))
@@ -289,13 +433,17 @@ fn image_color(
 /// The `image` labels when this buffer can move into an `ImageBuffer` of this format:
 /// same format, straight alpha, tight rows, first pixel at index 0, color `image` can
 /// state exactly.
-fn movable<S: ByteStorage>(
-    buffer: &PixelBuffer<(), S>,
+#[allow(clippy::too_many_arguments)]
+fn movable_erased(
+    descriptor: PixelDescriptor,
+    width: u32,
+    stride: usize,
+    offset_bytes: usize,
+    color_context: Option<&Arc<ColorContext>>,
     channel: ChannelType,
     layout: ChannelLayout,
     alpha: Option<AlphaMode>,
 ) -> Option<(CicpColorPrimaries, CicpTransferCharacteristics)> {
-    let descriptor = buffer.descriptor();
     let alpha_ok = match alpha {
         None => descriptor.alpha().is_none(),
         Some(_) => matches!(
@@ -303,16 +451,94 @@ fn movable<S: ByteStorage>(
             Some(AlphaMode::Straight | AlphaMode::Opaque)
         ),
     };
-    let tight = buffer.stride() == buffer.width() as usize * descriptor.bytes_per_pixel();
+    let tight = stride == width as usize * descriptor.bytes_per_pixel();
     if descriptor.channel_type() != channel
         || descriptor.layout() != layout
         || !alpha_ok
         || !tight
-        || buffer.offset_bytes() != 0
+        || offset_bytes != 0
     {
         return None;
     }
-    image_color(descriptor, buffer.color_context())
+    image_color(descriptor, color_context)
+}
+
+#[inline]
+fn movable<S: ByteStorage>(
+    buffer: &PixelBuffer<(), S>,
+    channel: ChannelType,
+    layout: ChannelLayout,
+    alpha: Option<AlphaMode>,
+) -> Option<(CicpColorPrimaries, CicpTransferCharacteristics)> {
+    movable_erased(
+        buffer.descriptor(),
+        buffer.width(),
+        buffer.stride(),
+        buffer.offset_bytes(),
+        buffer.color_context(),
+        channel,
+        layout,
+        alpha,
+    )
+}
+
+fn adopt_image_storage<S: ByteStorage>(
+    data: S,
+    width: u32,
+    height: u32,
+    channel: ChannelType,
+    layout: ChannelLayout,
+    alpha: Option<AlphaMode>,
+    color: ImageCicp,
+) -> Result<PixelBuffer<(), S>, FromPartsError<S>> {
+    let (descriptor, cicp) = describe(channel, layout, alpha, color);
+    let stride = (width as usize).saturating_mul(descriptor.bytes_per_pixel());
+    let parts = PixelBufferParts::new(data, width, height, stride, descriptor);
+    let buffer = PixelBuffer::try_from_parts(parts)?;
+    Ok(match cicp {
+        Some(cicp) => buffer.with_cicp(cicp),
+        None => buffer,
+    })
+}
+
+fn slice_from_image_bytes(
+    bytes: &[u8],
+    width: u32,
+    height: u32,
+    channel: ChannelType,
+    layout: ChannelLayout,
+    alpha: Option<AlphaMode>,
+    color: ImageCicp,
+) -> Result<PixelSlice<'_>, At<BufferError>> {
+    let (descriptor, cicp) = describe(channel, layout, alpha, color);
+    let stride = (width as usize)
+        .checked_mul(descriptor.bytes_per_pixel())
+        .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+    let slice = PixelSlice::new(bytes, width, height, stride, descriptor)?;
+    Ok(match cicp {
+        Some(cicp) => slice.with_cicp(cicp),
+        None => slice,
+    })
+}
+
+fn slice_mut_from_image_bytes(
+    bytes: &mut [u8],
+    width: u32,
+    height: u32,
+    channel: ChannelType,
+    layout: ChannelLayout,
+    alpha: Option<AlphaMode>,
+    color: ImageCicp,
+) -> Result<PixelSliceMut<'_>, At<BufferError>> {
+    let (descriptor, cicp) = describe(channel, layout, alpha, color);
+    let stride = (width as usize)
+        .checked_mul(descriptor.bytes_per_pixel())
+        .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
+    let slice = PixelSliceMut::new(bytes, width, height, stride, descriptor)?;
+    Ok(match cicp {
+        Some(cicp) => slice.with_cicp(cicp),
+        None => slice,
+    })
 }
 
 macro_rules! packed_conversions {
@@ -323,34 +549,38 @@ macro_rules! packed_conversions {
             C: SampleStorage<Sample = $sample> + Deref<Target = [$sample]>,
         {
             type Error = FromPartsError<C>;
+            #[inline]
             fn try_from(image: ImageBuffer<$pixel<$sample>, C>) -> Result<Self, FromPartsError<C>> {
-                let (descriptor, cicp) =
-                    describe(ChannelType::$channel, ChannelLayout::$layout, $alpha, image.color_space());
+                let color = image.color_space();
                 let (width, height) = image.dimensions();
-                let stride = width as usize * descriptor.bytes_per_pixel();
-                let parts = PixelBufferParts::new(image.into_raw(), width, height, stride, descriptor);
-                let buffer = PixelBuffer::try_from_parts(parts)?;
-                Ok(match cicp {
-                    Some(cicp) => buffer.with_cicp(cicp),
-                    None => buffer,
-                })
+                adopt_image_storage(
+                    image.into_raw(),
+                    width,
+                    height,
+                    ChannelType::$channel,
+                    ChannelLayout::$layout,
+                    $alpha,
+                    color,
+                )
             }
         }
 
         /// Move an image's `Vec` into a default [`PixelBuffer`], with its color.
         impl TryFrom<ImageBuffer<$pixel<$sample>, Vec<$sample>>> for PixelBuffer {
             type Error = FromPartsError;
+            #[inline]
             fn try_from(image: ImageBuffer<$pixel<$sample>, Vec<$sample>>) -> Result<Self, FromPartsError> {
-                let (descriptor, cicp) =
-                    describe(ChannelType::$channel, ChannelLayout::$layout, $alpha, image.color_space());
+                let color = image.color_space();
                 let (width, height) = image.dimensions();
-                let stride = width as usize * descriptor.bytes_per_pixel();
-                let parts = PixelBufferParts::new(PixelStorage::from(image.into_raw()), width, height, stride, descriptor);
-                let buffer = PixelBuffer::try_from_parts(parts)?;
-                Ok(match cicp {
-                    Some(cicp) => buffer.with_cicp(cicp),
-                    None => buffer,
-                })
+                adopt_image_storage(
+                    PixelStorage::from(image.into_raw()),
+                    width,
+                    height,
+                    ChannelType::$channel,
+                    ChannelLayout::$layout,
+                    $alpha,
+                    color,
+                )
             }
         }
 
@@ -389,16 +619,18 @@ macro_rules! packed_conversions {
             C: Deref<Target = [$sample]>,
         {
             type Error = At<BufferError>;
+            #[inline]
             fn try_from(image: &'a ImageBuffer<$pixel<$sample>, C>) -> Result<Self, At<BufferError>> {
-                let (descriptor, cicp) =
-                    describe(ChannelType::$channel, ChannelLayout::$layout, $alpha, image.color_space());
                 let (width, height) = image.dimensions();
-                let stride = width as usize * descriptor.bytes_per_pixel();
-                let slice = PixelSlice::new(bytemuck::cast_slice(&**image), width, height, stride, descriptor)?;
-                Ok(match cicp {
-                    Some(cicp) => slice.with_cicp(cicp),
-                    None => slice,
-                })
+                slice_from_image_bytes(
+                    bytemuck::cast_slice(&**image),
+                    width,
+                    height,
+                    ChannelType::$channel,
+                    ChannelLayout::$layout,
+                    $alpha,
+                    image.color_space(),
+                )
             }
         }
 
@@ -408,16 +640,19 @@ macro_rules! packed_conversions {
             C: DerefMut<Target = [$sample]>,
         {
             type Error = At<BufferError>;
+            #[inline]
             fn try_from(image: &'a mut ImageBuffer<$pixel<$sample>, C>) -> Result<Self, At<BufferError>> {
-                let (descriptor, cicp) =
-                    describe(ChannelType::$channel, ChannelLayout::$layout, $alpha, image.color_space());
+                let color = image.color_space();
                 let (width, height) = image.dimensions();
-                let stride = width as usize * descriptor.bytes_per_pixel();
-                let slice = PixelSliceMut::new(bytemuck::cast_slice_mut(&mut **image), width, height, stride, descriptor)?;
-                Ok(match cicp {
-                    Some(cicp) => slice.with_cicp(cicp),
-                    None => slice,
-                })
+                slice_mut_from_image_bytes(
+                    bytemuck::cast_slice_mut(&mut **image),
+                    width,
+                    height,
+                    ChannelType::$channel,
+                    ChannelLayout::$layout,
+                    $alpha,
+                    color,
+                )
             }
         }
 
@@ -427,7 +662,9 @@ macro_rules! packed_conversions {
         /// are not tight, the first pixel is past index 0, or `image` cannot state
         /// the color exactly. Relabel with `with_transfer` and `with_primaries`
         /// when the color is known and only the label is missing. Premultiplied
-        /// and undefined alpha are refused because `image` means straight alpha.
+        /// and undefined alpha are refused because `image` means straight alpha
+        /// (`AlphaMode::Opaque` is accepted because all-`1.0` alpha samples are
+        /// numerically identical under straight alpha, and reads back as `Straight`).
         impl<C> TryFrom<PixelBuffer<(), C>> for ImageBuffer<$pixel<$sample>, C>
         where
             C: SampleStorage<Sample = $sample> + Deref<Target = [$sample]>,
@@ -466,40 +703,282 @@ packed_conversions! {
     Rgba<f32> => F32, Rgba, Some(AlphaMode::Straight);
 }
 
+fn flat_channels(descriptor: PixelDescriptor, expected: ChannelType) -> Result<u8, BufferError> {
+    if descriptor.channel_type() != expected {
+        return Err(BufferError::IncompatibleDescriptor);
+    }
+    match descriptor.layout() {
+        ChannelLayout::Gray => Ok(1),
+        ChannelLayout::GrayAlpha => Ok(2),
+        ChannelLayout::Rgb => Ok(3),
+        ChannelLayout::Rgba => Ok(4),
+        _ => Err(BufferError::IncompatibleDescriptor),
+    }
+}
+
+fn flat_descriptor_and_stride(
+    layout: &SampleLayout,
+    color_hint: Option<ColorType>,
+    channel: ChannelType,
+    sample_size: usize,
+) -> Result<(PixelDescriptor, usize), BufferError> {
+    if layout.channel_stride != 1 {
+        return Err(BufferError::IncompatibleDescriptor);
+    }
+    let ch_layout = match layout.channels {
+        1 => ChannelLayout::Gray,
+        2 => ChannelLayout::GrayAlpha,
+        3 => ChannelLayout::Rgb,
+        4 => ChannelLayout::Rgba,
+        _ => return Err(BufferError::IncompatibleDescriptor),
+    };
+    if layout.width_stride != usize::from(layout.channels) {
+        return Err(BufferError::IncompatibleDescriptor);
+    }
+    if let Some(hint) = color_hint {
+        let Ok(hint_fmt) = PixelFormat::try_from(hint) else {
+            return Err(BufferError::IncompatibleDescriptor);
+        };
+        if hint_fmt.channel_type() != channel || hint_fmt.layout() != ch_layout {
+            return Err(BufferError::IncompatibleDescriptor);
+        }
+    }
+    let stride_bytes = layout
+        .height_stride
+        .checked_mul(sample_size)
+        .ok_or(BufferError::InvalidDimensions)?;
+    // FlatSamples carries no primaries or transfer function; declare both Unknown
+    // so downstream converters never silently treat untagged FFI samples as sRGB/BT.709.
+    let descriptor = PixelDescriptor::new_full(
+        channel,
+        ch_layout,
+        ch_layout.has_alpha().then_some(AlphaMode::Straight),
+        TransferFunction::Unknown,
+        ColorPrimaries::Unknown,
+    );
+    Ok((descriptor, stride_bytes))
+}
+
+fn flat_layout_from_geom(
+    descriptor: PixelDescriptor,
+    width: u32,
+    height: u32,
+    stride: usize,
+    channel: ChannelType,
+    sample_size: usize,
+) -> Result<(SampleLayout, Option<ColorType>), At<BufferError>> {
+    let channels = flat_channels(descriptor, channel).map_err(|e| at!(e))?;
+    if stride % sample_size != 0 {
+        return Err(at!(BufferError::AlignmentViolation));
+    }
+    Ok((
+        SampleLayout {
+            channels,
+            channel_stride: 1,
+            width,
+            width_stride: usize::from(channels),
+            height,
+            height_stride: stride / sample_size,
+        },
+        ColorType::try_from(descriptor.format).ok(),
+    ))
+}
+
+fn slice_from_flat_bytes<'a>(
+    bytes: &'a [u8],
+    layout: &SampleLayout,
+    color_hint: Option<ColorType>,
+    channel: ChannelType,
+    sample_size: usize,
+) -> Result<PixelSlice<'a>, At<BufferError>> {
+    let (descriptor, stride_bytes) =
+        flat_descriptor_and_stride(layout, color_hint, channel, sample_size).map_err(|e| at!(e))?;
+    PixelSlice::new(bytes, layout.width, layout.height, stride_bytes, descriptor)
+}
+
+fn slice_mut_from_flat_bytes<'a>(
+    bytes: &'a mut [u8],
+    layout: &SampleLayout,
+    color_hint: Option<ColorType>,
+    channel: ChannelType,
+    sample_size: usize,
+) -> Result<PixelSliceMut<'a>, At<BufferError>> {
+    let (descriptor, stride_bytes) =
+        flat_descriptor_and_stride(layout, color_hint, channel, sample_size).map_err(|e| at!(e))?;
+    PixelSliceMut::new(bytes, layout.width, layout.height, stride_bytes, descriptor)
+}
+
 macro_rules! flat_views {
     ($($sample:ty => $channel:ident;)*) => {$(
-        /// View a slice, strided or not, through `image`'s strided type.
+        /// View a slice, strided or not, through `image`'s strided [`FlatSamples`].
         ///
-        /// `FlatSamples` carries no color, so read it from the slice first. Only
-        /// gray, gray-alpha, RGB and RGBA have an `image` pixel type to read with.
+        /// `FlatSamples` carries no color profile, so read color metadata from the
+        /// slice first. Only gray, gray-alpha, RGB and RGBA layouts are accepted.
         impl<'a> TryFrom<PixelSlice<'a>> for FlatSamples<&'a [$sample]> {
             type Error = At<BufferError>;
             fn try_from(slice: PixelSlice<'a>) -> Result<Self, At<BufferError>> {
-                let descriptor = slice.descriptor();
-                if descriptor.channel_type() != ChannelType::$channel {
-                    return Err(at!(BufferError::IncompatibleDescriptor));
-                }
-                let channels = match descriptor.layout() {
-                    ChannelLayout::Gray => 1u8,
-                    ChannelLayout::GrayAlpha => 2,
-                    ChannelLayout::Rgb => 3,
-                    ChannelLayout::Rgba => 4,
-                    _ => return Err(at!(BufferError::IncompatibleDescriptor)),
+                let (layout, color_hint) = flat_layout_from_geom(
+                    slice.descriptor(),
+                    slice.width(),
+                    slice.rows(),
+                    slice.stride(),
+                    ChannelType::$channel,
+                    core::mem::size_of::<$sample>(),
+                )?;
+                let samples: &'a [$sample] = if slice.width() == 0 || slice.rows() == 0 {
+                    &[]
+                } else {
+                    bytemuck::try_cast_slice(slice.as_strided_bytes())
+                        .map_err(|_| at!(BufferError::AlignmentViolation))?
                 };
-                let samples: &'a [$sample] = bytemuck::try_cast_slice(slice.as_strided_bytes())
-                    .map_err(|_| at!(BufferError::AlignmentViolation))?;
                 Ok(FlatSamples {
                     samples,
-                    layout: SampleLayout {
-                        channels,
-                        channel_stride: 1,
-                        width: slice.width(),
-                        width_stride: usize::from(channels),
-                        height: slice.rows(),
-                        height_stride: slice.stride() / core::mem::size_of::<$sample>(),
-                    },
-                    color_hint: None,
+                    layout,
+                    color_hint,
                 })
+            }
+        }
+
+        /// View a mutable slice, strided or not, through `image`'s strided [`FlatSamples`].
+        impl<'a> TryFrom<PixelSliceMut<'a>> for FlatSamples<&'a mut [$sample]> {
+            type Error = At<BufferError>;
+            fn try_from(slice: PixelSliceMut<'a>) -> Result<Self, At<BufferError>> {
+                let (layout, color_hint) = flat_layout_from_geom(
+                    slice.descriptor(),
+                    slice.width(),
+                    slice.rows(),
+                    slice.stride(),
+                    ChannelType::$channel,
+                    core::mem::size_of::<$sample>(),
+                )?;
+                let raw = slice.into_strided_bytes_mut();
+                let samples: &'a mut [$sample] = if raw.is_empty() {
+                    &mut []
+                } else {
+                    bytemuck::try_cast_slice_mut(raw)
+                        .map_err(|_| at!(BufferError::AlignmentViolation))?
+                };
+                Ok(FlatSamples {
+                    samples,
+                    layout,
+                    color_hint,
+                })
+            }
+        }
+
+        /// Move a [`PixelBuffer`]'s sample `Vec` (strided or packed, including 64-byte
+        /// SIMD-padded 3-channel buffers) into `FlatSamples<Vec<S>>` without copying.
+        ///
+        /// Returns `Err(buffer)` unchanged when the format isn't `Gray`/`GrayAlpha`/`Rgb`/`Rgba`,
+        /// `offset != 0`, `stride` isn't sample-aligned, or storage holds another sample type.
+        impl TryFrom<PixelBuffer> for FlatSamples<Vec<$sample>> {
+            type Error = PixelBuffer;
+            fn try_from(buffer: PixelBuffer) -> Result<Self, PixelBuffer> {
+                if buffer.offset_bytes() != 0 || !buffer.storage_holds::<$sample>() {
+                    return Err(buffer);
+                }
+                let Ok((layout, color_hint)) = flat_layout_from_geom(
+                    buffer.descriptor(),
+                    buffer.width(),
+                    buffer.height(),
+                    buffer.stride(),
+                    ChannelType::$channel,
+                    core::mem::size_of::<$sample>(),
+                ) else {
+                    return Err(buffer);
+                };
+                let samples = buffer
+                    .into_parts()
+                    .data
+                    .try_into_vec::<$sample>()
+                    .ok()
+                    .expect("checked above");
+                Ok(FlatSamples {
+                    samples,
+                    layout,
+                    color_hint,
+                })
+            }
+        }
+
+        /// Borrow an interleaved row-major [`FlatSamples`] slice as a [`PixelSlice`].
+        ///
+        /// Because `FlatSamples` carries no CICP or ICC color signaling, the returned
+        /// slice has `ColorPrimaries::Unknown` and `TransferFunction::Unknown`.
+        impl<'a> TryFrom<FlatSamples<&'a [$sample]>> for PixelSlice<'a> {
+            type Error = At<BufferError>;
+            #[inline]
+            fn try_from(flat: FlatSamples<&'a [$sample]>) -> Result<Self, At<BufferError>> {
+                slice_from_flat_bytes(
+                    bytemuck::cast_slice(flat.samples),
+                    &flat.layout,
+                    flat.color_hint,
+                    ChannelType::$channel,
+                    core::mem::size_of::<$sample>(),
+                )
+            }
+        }
+
+        /// Borrow a mutable interleaved row-major [`FlatSamples`] slice as a [`PixelSliceMut`].
+        ///
+        /// Stamps `ColorPrimaries::Unknown` and `TransferFunction::Unknown`; relabel with
+        /// `with_primaries` / `with_transfer` when the color space is known.
+        impl<'a> TryFrom<FlatSamples<&'a mut [$sample]>> for PixelSliceMut<'a> {
+            type Error = At<BufferError>;
+            #[inline]
+            fn try_from(flat: FlatSamples<&'a mut [$sample]>) -> Result<Self, At<BufferError>> {
+                slice_mut_from_flat_bytes(
+                    bytemuck::cast_slice_mut(flat.samples),
+                    &flat.layout,
+                    flat.color_hint,
+                    ChannelType::$channel,
+                    core::mem::size_of::<$sample>(),
+                )
+            }
+        }
+
+        /// Move an owned interleaved row-major `FlatSamples<Vec<S>>` into a [`PixelBuffer`]
+        /// without copying, returning `Err(flat)` unchanged if the layout is non-interleaved,
+        /// unsupported, or undersized.
+        impl TryFrom<FlatSamples<Vec<$sample>>> for PixelBuffer {
+            type Error = FlatSamples<Vec<$sample>>;
+            fn try_from(flat: FlatSamples<Vec<$sample>>) -> Result<Self, FlatSamples<Vec<$sample>>> {
+                let Ok((descriptor, stride_bytes)) = flat_descriptor_and_stride(
+                    &flat.layout,
+                    flat.color_hint,
+                    ChannelType::$channel,
+                    core::mem::size_of::<$sample>(),
+                ) else {
+                    return Err(flat);
+                };
+                let FlatSamples {
+                    samples,
+                    layout,
+                    color_hint,
+                } = flat;
+                let parts = PixelBufferParts::new(
+                    PixelStorage::from(samples),
+                    layout.width,
+                    layout.height,
+                    stride_bytes,
+                    descriptor,
+                );
+                match PixelBuffer::try_from_parts(parts) {
+                    Ok(buffer) => Ok(buffer),
+                    Err(mut err) => {
+                        let parts = err.take_parts().expect("parts retained");
+                        let samples = parts
+                            .data
+                            .try_into_vec::<$sample>()
+                            .ok()
+                            .expect("same sample type");
+                        Err(FlatSamples {
+                            samples,
+                            layout,
+                            color_hint,
+                        })
+                    }
+                }
             }
         }
     )*};
@@ -508,6 +987,7 @@ macro_rules! flat_views {
 flat_views! {
     u8 => U8;
     u16 => U16;
+    F16Sample => F16;
     f32 => F32;
 }
 
@@ -627,8 +1107,8 @@ impl TryFrom<PixelFormat> for ColorType {
 
 /// The format of an `image` extended color type, for the ones with byte-addressable
 /// samples and a packed format. The rest are refused: sub-byte layouts, `Rgb5x1` and
-/// `Unknown` have no samples to address, and `A8` isn't a packed format: it is a [`Plane`]
-/// with [`PlaneRole::Alpha`](crate::plane::PlaneRole::Alpha).
+/// `Unknown` have no samples to address, and `A8` isn't a packed format: it is a
+/// `plane::Plane` with `plane::PlaneRole::Alpha`.
 impl TryFrom<ExtendedColorType> for PixelFormat {
     type Error = BufferError;
     fn try_from(color: ExtendedColorType) -> Result<Self, BufferError> {
@@ -644,8 +1124,8 @@ impl TryFrom<ExtendedColorType> for PixelFormat {
             ExtendedColorType::Bgra8 => Self::Bgra8,
             ExtendedColorType::Rgb32F => Self::RgbF32,
             ExtendedColorType::Rgba32F => Self::RgbaF32,
-            ExtendedColorType::Cmyk8 => Self::Cmyk8,
-            ExtendedColorType::Cmyk16 => Self::Cmyk16,
+            ExtendedColorType::Cmyk8 => Self::CMYK8,
+            ExtendedColorType::Cmyk16 => Self::CMYK16,
             ExtendedColorType::Bgr8 => Self::Bgr8,
             _ => return Err(BufferError::IncompatibleDescriptor),
         })
@@ -668,8 +1148,8 @@ impl TryFrom<PixelFormat> for ExtendedColorType {
             PixelFormat::Bgra8 => Self::Bgra8,
             PixelFormat::RgbF32 => Self::Rgb32F,
             PixelFormat::RgbaF32 => Self::Rgba32F,
-            PixelFormat::Cmyk8 => Self::Cmyk8,
-            PixelFormat::Cmyk16 => Self::Cmyk16,
+            PixelFormat::CMYK8 => Self::Cmyk8,
+            PixelFormat::CMYK16 => Self::Cmyk16,
             PixelFormat::Bgr8 => Self::Bgr8,
             _ => return Err(BufferError::IncompatibleDescriptor),
         })
