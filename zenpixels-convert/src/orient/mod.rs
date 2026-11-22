@@ -883,6 +883,14 @@ fn inverse_flips(orientation: Orientation) -> Option<(bool, bool)> {
 /// store-friendly direction. This is what makes 3 bpp (and the other non-SIMD
 /// widths) competitive; zenjpeg#150 measured the `forward_map`-per-element
 /// path losing to a naive linear-write gather.
+#[cfg_attr(
+    all(
+        feature = "fast-transpose",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ),
+    cold
+)]
+#[inline(never)]
 fn transpose_tiled<const BPP: usize>(
     src: &PixelSlice<'_>,
     dst: &mut PixelSliceMut<'_>,
@@ -931,6 +939,14 @@ fn transpose_tiled<const BPP: usize>(
 /// encodes transpose + whatever reflection the orientation adds; tiling keeps
 /// each block's scattered destination writes inside the cache. This is the
 /// portable path and the parity oracle for the SIMD kernel.
+#[cfg_attr(
+    all(
+        feature = "fast-transpose",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ),
+    cold
+)]
+#[inline(never)]
 fn transpose_blocked(
     src: &PixelSlice<'_>,
     dst: &mut PixelSliceMut<'_>,

@@ -12,9 +12,7 @@ use crate::{ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor};
 
 use super::ConvertStep;
 use crate::TransferFunction;
-use crate::f16_scalar::{
-    f16_bits_to_f32, f16_bits_to_f32_slice, f32_to_f16_bits, f32_to_f16_bits_slice,
-};
+use crate::f16_scalar::{f16_bits_to_f32_slice, f32_to_f16_bits_slice};
 
 /// IEEE 754 half-precision encoding of 1.0: sign=0, exponent=01111 (bias 15),
 /// mantissa=0000000000 → bits 0b0_01111_0000000000 = 0x3C00.
@@ -767,8 +765,7 @@ fn matte_composite(
     let is_premul = from.alpha() == Some(zenpixels::AlphaMode::Premultiplied);
     let srgb_u8 = ch_type == ChannelType::U8 && tf == TransferFunction::Srgb && !is_premul;
     let clip_f32 = clip || ch_type != ChannelType::F32;
-    let trusted_unit_alpha = matches!(ch_type, ChannelType::U8 | ChannelType::U16)
-        || in_facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE);
+    let _ = in_facts;
 
     const PIXELS: usize = 128;
     let mut rgba = [0f32; PIXELS * 4];
@@ -791,11 +788,7 @@ fn matte_composite(
             ChannelType::F16 => f16_bits_to_f32_slice(bytemuck::cast_slice(s), rgba),
             _ => rgba.copy_from_slice(bytemuck::cast_slice(s)),
         }
-        if trusted_unit_alpha {
-            matte_split_trusted(rgba, rgb, alpha);
-        } else {
-            matte_split(rgba, rgb, alpha);
-        }
+        matte_split(rgba, rgb, alpha);
         if srgb_u8 {
             // The tables and this alpha scale define sRGB U8 matte output.
             for ((lane, byte), a) in rgb
@@ -852,26 +845,7 @@ fn matte_split(rgba: &[f32], rgb: &mut [f32], alpha: &mut [f32]) {
     {
         *d = [s[0], s[1], s[2]];
         let raw_a = s[3];
-        *a = if raw_a.is_nan() {
-            0.0
-        } else {
-            raw_a.clamp(0.0, 1.0)
-        };
-    }
-}
-
-/// Fast path when alpha is already proven in `[+0.0, 1.0]` (no NaN, no clamp needed).
-#[attune(dispatch, -_neon, -_wasm128)]
-fn matte_split_trusted(rgba: &[f32], rgb: &mut [f32], alpha: &mut [f32]) {
-    for ((s, d), a) in rgba
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .zip(rgb.as_chunks_mut::<3>().0)
-        .zip(alpha)
-    {
-        *d = [s[0], s[1], s[2]];
-        *a = s[3];
+        *a = if raw_a >= 0.0 { raw_a.min(1.0) } else { 0.0 };
     }
 }
 
@@ -1077,29 +1051,48 @@ fn rgba_to_gray_u8_generic(src: &[u8], dst: &mut [u8], width: usize, w: [f32; 3]
 }
 
 #[attune(dispatch, -_neon, -_wasm128)]
-fn rgb_to_gray_u16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
-    for (s, d) in src[..width * 3]
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .zip(dst[..width].iter_mut())
-    {
-        let y = (s[0] as f32) * w[0] + (s[1] as f32) * w[1] + (s[2] as f32) * w[2];
-        *d = (y + 0.5).clamp(0.0, 65535.0) as u16;
+fn widen_u16_to_f32_slice(src: &[u16], dst: &mut [f32]) {
+    for (&v, f) in src.iter().zip(dst.iter_mut()) {
+        *f = f32::from(v);
     }
 }
 
-#[attune(dispatch, -_v3, -_neon, -_wasm128, +v4x(cfg(avx512)))]
-fn rgba_to_gray_u16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
-    for (s, d) in src[..width * 4]
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .zip(dst[..width].iter_mut())
-    {
-        let y = (s[0] as f32) * w[0] + (s[1] as f32) * w[1] + (s[2] as f32) * w[2];
-        *d = (y + 0.5).clamp(0.0, 65535.0) as u16;
+#[attune(dispatch, -_neon, -_wasm128)]
+fn narrow_luma_f32_to_u16_slice(src: &[f32], dst: &mut [u16]) {
+    for (&y, out) in src.iter().zip(dst.iter_mut()) {
+        *out = (y + 0.5).clamp(0.0, 65535.0) as u16;
     }
+}
+
+/// U16 luma through the `f32` kernel in stack-sized chunks (`u16 -> f32` is lossless),
+/// reusing the `v3`/`v4x` `rgb_to_gray_f32` / `rgba_to_gray_f32` kernels while eliminating
+/// dedicated U16 luma tiers and speeding up 4K U16→Gray 2–3×.
+fn gray_u16_via_f32<const N: usize>(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
+    const PIXELS: usize = 128;
+    let mut wide = [[0f32; 4]; PIXELS];
+    let mut luma = [0f32; PIXELS];
+    for (s, d) in src[..width * N]
+        .chunks(PIXELS * N)
+        .zip(dst[..width].chunks_mut(PIXELS))
+    {
+        let n = d.len();
+        let flat = &mut bytemuck::cast_slice_mut::<[f32; 4], f32>(&mut wide)[..n * N];
+        widen_u16_to_f32_slice(s, flat);
+        if N == 3 {
+            rgb_to_gray_f32(flat, &mut luma[..n], n, w);
+        } else {
+            rgba_to_gray_f32(flat, &mut luma[..n], n, w);
+        }
+        narrow_luma_f32_to_u16_slice(&luma[..n], d);
+    }
+}
+
+fn rgb_to_gray_u16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
+    gray_u16_via_f32::<3>(src, dst, width, w);
+}
+
+fn rgba_to_gray_u16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
+    gray_u16_via_f32::<4>(src, dst, width, w);
 }
 
 #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
@@ -1156,7 +1149,8 @@ fn rgba_to_gray_f16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
     gray_f16_via_f32::<4>(src, dst, width, w);
 }
 
-/// One row pass: encoded luma plus a byte-exact alpha copy.
+/// One row pass: encoded luma plus a byte-exact alpha copy, chunked through the
+/// typed SIMD `rgba_to_gray_*` kernels so `match depth` stays outside the hot loop.
 fn rgba_to_grayalpha(
     src: &[u8],
     dst: &mut [u8],
@@ -1164,33 +1158,63 @@ fn rgba_to_grayalpha(
     depth: ChannelType,
     coefficients: LumaCoefficients,
 ) {
-    let weights = coefficients.coefficients();
-    let sample = depth.byte_size();
-    for (s, d) in src[..width * 4 * sample]
-        .chunks_exact(4 * sample)
-        .zip(dst[..width * 2 * sample].chunks_exact_mut(2 * sample))
-    {
-        let read = |i: usize| -> f32 {
-            let b = &s[i * sample..(i + 1) * sample];
-            match depth {
-                ChannelType::U8 => b[0] as f32,
-                ChannelType::U16 => u16::from_ne_bytes(b.try_into().unwrap()) as f32,
-                ChannelType::F16 => f16_bits_to_f32(u16::from_ne_bytes(b.try_into().unwrap())),
-                ChannelType::F32 => f32::from_ne_bytes(b.try_into().unwrap()),
-                _ => unreachable!(),
+    const PIXELS: usize = 128;
+    let w = coefficients.coefficients();
+    match depth {
+        ChannelType::U8 => {
+            let mut luma = [0u8; PIXELS];
+            for (s, d) in src[..width * 4]
+                .chunks(PIXELS * 4)
+                .zip(dst[..width * 2].chunks_mut(PIXELS * 2))
+            {
+                let n = s.len() / 4;
+                rgba_to_gray_u8_generic(s, &mut luma[..n], n, w);
+                for ((&y, sp), dp) in luma[..n]
+                    .iter()
+                    .zip(s.as_chunks::<4>().0)
+                    .zip(d.as_chunks_mut::<2>().0)
+                {
+                    *dp = [y, sp[3]];
+                }
             }
-        };
-        let y = read(0) * weights[0] + read(1) * weights[1] + read(2) * weights[2];
-        match depth {
-            ChannelType::U8 => d[0] = (y + 0.5).clamp(0., 255.) as u8,
-            ChannelType::U16 => {
-                d[..2].copy_from_slice(&((y + 0.5).clamp(0., 65535.) as u16).to_ne_bytes())
-            }
-            ChannelType::F16 => d[..2].copy_from_slice(&f32_to_f16_bits(y).to_ne_bytes()),
-            ChannelType::F32 => d[..4].copy_from_slice(&y.to_ne_bytes()),
-            _ => unreachable!(),
         }
-        d[sample..].copy_from_slice(&s[3 * sample..]);
+        ChannelType::U16 | ChannelType::F16 => {
+            let src16: &[u16] = bytemuck::cast_slice(&src[..width * 8]);
+            let dst16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * 4]);
+            let mut luma = [0u16; PIXELS];
+            for (s, d) in src16.chunks(PIXELS * 4).zip(dst16.chunks_mut(PIXELS * 2)) {
+                let n = s.len() / 4;
+                if depth == ChannelType::U16 {
+                    rgba_to_gray_u16(s, &mut luma[..n], n, w);
+                } else {
+                    rgba_to_gray_f16(s, &mut luma[..n], n, w);
+                }
+                for ((&y, sp), dp) in luma[..n]
+                    .iter()
+                    .zip(s.as_chunks::<4>().0)
+                    .zip(d.as_chunks_mut::<2>().0)
+                {
+                    *dp = [y, sp[3]];
+                }
+            }
+        }
+        ChannelType::F32 => {
+            let src32: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
+            let dst32: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 8]);
+            let mut luma = [0f32; PIXELS];
+            for (s, d) in src32.chunks(PIXELS * 4).zip(dst32.chunks_mut(PIXELS * 2)) {
+                let n = s.len() / 4;
+                rgba_to_gray_f32(s, &mut luma[..n], n, w);
+                for ((&y, sp), dp) in luma[..n]
+                    .iter()
+                    .zip(s.as_chunks::<4>().0)
+                    .zip(d.as_chunks_mut::<2>().0)
+                {
+                    *dp = [y, sp[3]];
+                }
+            }
+        }
+        _ => unreachable!(),
     }
 }
 
@@ -1894,11 +1918,9 @@ pub(crate) fn pq_oetf(v: f32) -> f32 {
 
 /// Per-tier SIMD body for [`multiply_color_channels`]. `channels == 4` builds a
 /// `[f, f, f, 1]`-repeating multiplier so the alpha lane (every 4th) is left
-/// **untouched**; any other channel count scales every lane uniformly. The
-/// 16-lane chunk is exactly 4 RGBA pixels, so the pattern stays pixel-aligned
-/// across the whole row, and `count` being a multiple of `channels` keeps the
-/// remainder pixel-aligned too.
-#[archmage::magetypes(define(f32x16), v4(cfg(avx512)), v3, neon, wasm128, scalar)]
+/// **untouched**; any other channel count scales every lane uniformly. Any `< 16`
+/// remainder runs through a zero-padded stack chunk via the same SIMD body.
+#[attune(_*_t, -_scalar_t, _v4_t(cfg(avx512)), define(f32x16))]
 fn multiply_color_channels_tier(token: Token, buf: &mut [f32], channels: usize, factor: f32) {
     let mul = if channels == 4 {
         f32x16::from_array_t(
@@ -1916,14 +1938,30 @@ fn multiply_color_channels_tier(token: Token, buf: &mut [f32], channels: usize, 
         let v = f32x16::from_array_t(token, *chunk);
         *chunk = (v * mul).to_array();
     }
+    if !remainder.is_empty() {
+        let mut pad = [0.0f32; 16];
+        pad[..remainder.len()].copy_from_slice(remainder);
+        let out = (f32x16::from_array_t(token, pad) * mul).to_array();
+        remainder.copy_from_slice(&out[..remainder.len()]);
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn multiply_color_channels_tier_scalar_t(
+    _token: archmage::ScalarToken,
+    buf: &mut [f32],
+    channels: usize,
+    factor: f32,
+) {
     if channels == 4 {
-        for px in remainder.as_chunks_mut::<4>().0 {
+        for px in buf.as_chunks_mut::<4>().0 {
             px[0] *= factor;
             px[1] *= factor;
             px[2] *= factor;
         }
     } else {
-        for v in remainder {
+        for v in buf {
             *v *= factor;
         }
     }
@@ -1941,9 +1979,9 @@ pub(crate) fn multiply_color_channels(buf: &mut [f32], channels: usize, factor: 
     if factor == 1.0 {
         return;
     }
-    incant!(
+    reattune!(
         multiply_color_channels_tier(buf, channels, factor),
-        [v4, v3, neon, wasm128, scalar]
+        [_v4(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
     );
 }
 
@@ -2314,11 +2352,6 @@ fn gamma22_f32_extended(
     let count = width * layout.channels();
     let source: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
     let output: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..count * 4]);
-    let exponent = if inverse {
-        1.0 / ADOBE_GAMMA
-    } else {
-        ADOBE_GAMMA
-    };
 
     if in_facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE) {
         // Every lane is in [+0.0, 1.0]: no abs(), no out-of-unit fallback, no copysign().
@@ -2332,23 +2365,11 @@ fn gamma22_f32_extended(
         return;
     }
 
-    if in_facts.contains(FloatFacts::NON_NEGATIVE | FloatFacts::NO_INFINITE) {
-        // Finite non-negative HDR domain: no abs(), no !is_finite(), no copysign().
-        output.copy_from_slice(source);
-        if inverse {
-            linear_srgb::default::linear_to_gamma_slice(output, ADOBE_GAMMA);
-        } else {
-            linear_srgb::default::gamma_to_linear_slice(output, ADOBE_GAMMA);
-        }
-        for (&s, d) in source.iter().zip(output.iter_mut()) {
-            if s > 1.0 {
-                *d = crate::gamma_math::magnitude_pow(s, exponent);
-            }
-        }
-        restore_alpha_f32_f32(source, output, layout);
-        return;
-    }
-
+    let exponent = if inverse {
+        1.0 / ADOBE_GAMMA
+    } else {
+        ADOBE_GAMMA
+    };
     for (s, d) in source.iter().zip(output.iter_mut()) {
         *d = s.abs();
     }
@@ -2357,21 +2378,12 @@ fn gamma22_f32_extended(
     } else {
         linear_srgb::default::gamma_to_linear_slice(output, ADOBE_GAMMA);
     }
-    if in_facts.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE) {
-        for (s, d) in source.iter().zip(output.iter_mut()) {
-            let mag = s.abs();
-            if mag > 1.0 {
-                *d = crate::gamma_math::magnitude_pow(mag, exponent);
-            }
-            *d = d.copysign(*s);
+    for (s, d) in source.iter().zip(output.iter_mut()) {
+        let mag = s.abs();
+        if mag > 1.0 || mag.is_nan() {
+            *d = libm::powf(mag, exponent);
         }
-    } else {
-        for (s, d) in source.iter().zip(output.iter_mut()) {
-            if s.abs() > 1.0 || !s.is_finite() {
-                *d = crate::gamma_math::magnitude_pow(s.abs(), exponent);
-            }
-            *d = d.copysign(*s);
-        }
+        *d = d.copysign(*s);
     }
     restore_alpha_f32_f32(source, output, layout);
 }
@@ -2468,88 +2480,103 @@ fn premul_f32_ga(src: &[f32], dst: &mut [f32], width: usize) {
     }
 }
 
-/// F16 premul via 3-pass scratch: f16→f32 slice (F16C SIMD) → scalar math
-/// (LLVM autovec) → f32→f16 slice (F16C SIMD). Beats per-pixel scalar
-/// `f16_bits_to_f32` because the conversion cost dominates.
-fn premul_f16_ga(src: &[u16], dst: &mut [u16], width: usize) {
-    const CHUNK_PIXELS: usize = 16;
-    const CHUNK_LANES: usize = CHUNK_PIXELS * 2;
-
-    let mut scratch_src = [0.0f32; CHUNK_LANES];
-    let mut scratch_dst = [0.0f32; CHUNK_LANES];
-
-    let (s_chunks, s_rem) = src[..width * 2].as_chunks::<CHUNK_LANES>();
-    let (d_chunks, d_rem) = dst[..width * 2].as_chunks_mut::<CHUNK_LANES>();
-    for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
-        f16_bits_to_f32_slice(sc, &mut scratch_src);
-
-        for i in 0..CHUNK_PIXELS {
+#[inline(always)]
+fn f16_alpha_block<const CHANNELS: usize, const UNPREMUL: bool>(
+    sc: &[u16; 32],
+    dc: &mut [u16; 32],
+    scratch_src: &mut [f32; 32],
+    scratch_dst: &mut [f32; 32],
+) {
+    f16_bits_to_f32_slice(sc, scratch_src);
+    if CHANNELS == 2 {
+        for i in 0..16 {
             let base = i * 2;
             let a = scratch_src[base + 1];
-            scratch_dst[base] = scratch_src[base] * a;
-            scratch_dst[base + 1] = a;
+            if UNPREMUL {
+                if a == 0.0 {
+                    scratch_dst[base] = 0.0;
+                    scratch_dst[base + 1] = 0.0;
+                } else {
+                    let inv_a = 1.0 / a;
+                    scratch_dst[base] = scratch_src[base] * inv_a;
+                    scratch_dst[base + 1] = a;
+                }
+            } else {
+                scratch_dst[base] = scratch_src[base] * a;
+                scratch_dst[base + 1] = a;
+            }
         }
-
-        f32_to_f16_bits_slice(&scratch_dst, dc);
-        // Alpha is a payload, not an arithmetic output. Preserve NaN bits and signed zero.
-        for lane in (1..CHUNK_LANES).step_by(2) {
-            dc[lane] = sc[lane];
+    } else {
+        for i in 0..8 {
+            let base = i * 4;
+            let a = scratch_src[base + 3];
+            if UNPREMUL {
+                if a == 0.0 {
+                    scratch_dst[base] = 0.0;
+                    scratch_dst[base + 1] = 0.0;
+                    scratch_dst[base + 2] = 0.0;
+                    scratch_dst[base + 3] = 0.0;
+                } else {
+                    let inv_a = 1.0 / a;
+                    scratch_dst[base] = scratch_src[base] * inv_a;
+                    scratch_dst[base + 1] = scratch_src[base + 1] * inv_a;
+                    scratch_dst[base + 2] = scratch_src[base + 2] * inv_a;
+                    scratch_dst[base + 3] = a;
+                }
+            } else {
+                scratch_dst[base] = scratch_src[base] * a;
+                scratch_dst[base + 1] = scratch_src[base + 1] * a;
+                scratch_dst[base + 2] = scratch_src[base + 2] * a;
+                scratch_dst[base + 3] = a;
+            }
         }
     }
-
-    for (s, d) in s_rem
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .zip(d_rem.as_chunks_mut::<2>().0.iter_mut())
-    {
-        let a = f16_bits_to_f32(s[1]);
-        *d = [f32_to_f16_bits(f16_bits_to_f32(s[0]) * a), s[1]];
+    f32_to_f16_bits_slice(scratch_dst, dc);
+    // Alpha is a payload, not an arithmetic output. Preserve NaN bits and signed zero.
+    for lane in (CHANNELS - 1..32).step_by(CHANNELS) {
+        dc[lane] = sc[lane];
     }
 }
 
-fn premul_f16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
-    const CHUNK_PIXELS: usize = 8;
-    const CHUNK_LANES: usize = CHUNK_PIXELS * 4;
+/// Unified F16 premul / unpremul via 32-lane F16C/NEON-fp16 scratch with padded
+/// remainder block (zero scalar `f16_bits_to_f32` tail codegen).
+fn f16_alpha_chunked<const CHANNELS: usize, const UNPREMUL: bool>(
+    src: &[u16],
+    dst: &mut [u16],
+    width: usize,
+) {
+    const { assert!(CHANNELS == 2 || CHANNELS == 4) };
+    const CHUNK_LANES: usize = 32;
 
     let mut scratch_src = [0.0f32; CHUNK_LANES];
     let mut scratch_dst = [0.0f32; CHUNK_LANES];
 
-    let (s_chunks, s_rem) = src[..width * 4].as_chunks::<CHUNK_LANES>();
-    let (d_chunks, d_rem) = dst[..width * 4].as_chunks_mut::<CHUNK_LANES>();
+    let n = width * CHANNELS;
+    let (s_chunks, s_rem) = src[..n].as_chunks::<CHUNK_LANES>();
+    let (d_chunks, d_rem) = dst[..n].as_chunks_mut::<CHUNK_LANES>();
     for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
-        f16_bits_to_f32_slice(sc, &mut scratch_src);
-
-        for i in 0..CHUNK_PIXELS {
-            let base = i * 4;
-            let a = scratch_src[base + 3];
-            scratch_dst[base] = scratch_src[base] * a;
-            scratch_dst[base + 1] = scratch_src[base + 1] * a;
-            scratch_dst[base + 2] = scratch_src[base + 2] * a;
-            scratch_dst[base + 3] = a;
-        }
-
-        f32_to_f16_bits_slice(&scratch_dst, dc);
-        // Alpha is a payload, not an arithmetic output. Preserve NaN bits and signed zero.
-        for lane in (3..CHUNK_LANES).step_by(4) {
-            dc[lane] = sc[lane];
-        }
+        f16_alpha_block::<CHANNELS, UNPREMUL>(sc, dc, &mut scratch_src, &mut scratch_dst);
     }
-
-    for (s, d) in s_rem
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .zip(d_rem.as_chunks_mut::<4>().0.iter_mut())
-    {
-        let a = f16_bits_to_f32(s[3]);
-        *d = [
-            f32_to_f16_bits(f16_bits_to_f32(s[0]) * a),
-            f32_to_f16_bits(f16_bits_to_f32(s[1]) * a),
-            f32_to_f16_bits(f16_bits_to_f32(s[2]) * a),
-            s[3],
-        ];
+    if !s_rem.is_empty() {
+        let mut pad_in = [0u16; CHUNK_LANES];
+        let mut pad_out = [0u16; CHUNK_LANES];
+        pad_in[..s_rem.len()].copy_from_slice(s_rem);
+        f16_alpha_block::<CHANNELS, UNPREMUL>(
+            &pad_in,
+            &mut pad_out,
+            &mut scratch_src,
+            &mut scratch_dst,
+        );
+        d_rem.copy_from_slice(&pad_out[..d_rem.len()]);
     }
+}
+
+fn premul_f16_ga(src: &[u16], dst: &mut [u16], width: usize) {
+    f16_alpha_chunked::<2, false>(src, dst, width);
+}
+
+fn premul_f16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
+    f16_alpha_chunked::<4, false>(src, dst, width);
 }
 
 /// Straight → Premultiplied alpha (copy from src to dst).
@@ -2723,111 +2750,12 @@ fn unpremul_f32_ga(src: &[f32], dst: &mut [f32], width: usize) {
     }
 }
 
-/// F16 unpremul via 3-pass scratch. `a == 0` branch preserved — produces
-/// all-zero pixels for that case, otherwise divides RGB by alpha.
 fn unpremul_f16_ga(src: &[u16], dst: &mut [u16], width: usize) {
-    const CHUNK_PIXELS: usize = 16;
-    const CHUNK_LANES: usize = CHUNK_PIXELS * 2;
-
-    let mut scratch_src = [0.0f32; CHUNK_LANES];
-    let mut scratch_dst = [0.0f32; CHUNK_LANES];
-
-    let (s_chunks, s_rem) = src[..width * 2].as_chunks::<CHUNK_LANES>();
-    let (d_chunks, d_rem) = dst[..width * 2].as_chunks_mut::<CHUNK_LANES>();
-    for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
-        f16_bits_to_f32_slice(sc, &mut scratch_src);
-
-        for i in 0..CHUNK_PIXELS {
-            let base = i * 2;
-            let a = scratch_src[base + 1];
-            if a == 0.0 {
-                scratch_dst[base] = 0.0;
-                scratch_dst[base + 1] = 0.0;
-            } else {
-                let inv_a = 1.0 / a;
-                scratch_dst[base] = scratch_src[base] * inv_a;
-                scratch_dst[base + 1] = a;
-            }
-        }
-
-        f32_to_f16_bits_slice(&scratch_dst, dc);
-        // Alpha is a payload, not an arithmetic output. Preserve NaN bits and signed zero.
-        for lane in (1..CHUNK_LANES).step_by(2) {
-            dc[lane] = sc[lane];
-        }
-    }
-
-    for (s, d) in s_rem
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .zip(d_rem.as_chunks_mut::<2>().0.iter_mut())
-    {
-        let a = f16_bits_to_f32(s[1]);
-        if a == 0.0 {
-            *d = [0, s[1]];
-        } else {
-            let inv_a = 1.0 / a;
-            *d = [f32_to_f16_bits(f16_bits_to_f32(s[0]) * inv_a), s[1]];
-        }
-    }
+    f16_alpha_chunked::<2, true>(src, dst, width);
 }
 
 fn unpremul_f16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
-    const CHUNK_PIXELS: usize = 8;
-    const CHUNK_LANES: usize = CHUNK_PIXELS * 4;
-
-    let mut scratch_src = [0.0f32; CHUNK_LANES];
-    let mut scratch_dst = [0.0f32; CHUNK_LANES];
-
-    let (s_chunks, s_rem) = src[..width * 4].as_chunks::<CHUNK_LANES>();
-    let (d_chunks, d_rem) = dst[..width * 4].as_chunks_mut::<CHUNK_LANES>();
-    for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
-        f16_bits_to_f32_slice(sc, &mut scratch_src);
-
-        for i in 0..CHUNK_PIXELS {
-            let base = i * 4;
-            let a = scratch_src[base + 3];
-            if a == 0.0 {
-                scratch_dst[base] = 0.0;
-                scratch_dst[base + 1] = 0.0;
-                scratch_dst[base + 2] = 0.0;
-                scratch_dst[base + 3] = 0.0;
-            } else {
-                let inv_a = 1.0 / a;
-                scratch_dst[base] = scratch_src[base] * inv_a;
-                scratch_dst[base + 1] = scratch_src[base + 1] * inv_a;
-                scratch_dst[base + 2] = scratch_src[base + 2] * inv_a;
-                scratch_dst[base + 3] = a;
-            }
-        }
-
-        f32_to_f16_bits_slice(&scratch_dst, dc);
-        // Alpha is a payload, not an arithmetic output. Preserve NaN bits and signed zero.
-        for lane in (3..CHUNK_LANES).step_by(4) {
-            dc[lane] = sc[lane];
-        }
-    }
-
-    for (s, d) in s_rem
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .zip(d_rem.as_chunks_mut::<4>().0.iter_mut())
-    {
-        let a = f16_bits_to_f32(s[3]);
-        if a == 0.0 {
-            *d = [0, 0, 0, s[3]];
-        } else {
-            let inv_a = 1.0 / a;
-            *d = [
-                f32_to_f16_bits(f16_bits_to_f32(s[0]) * inv_a),
-                f32_to_f16_bits(f16_bits_to_f32(s[1]) * inv_a),
-                f32_to_f16_bits(f16_bits_to_f32(s[2]) * inv_a),
-                s[3],
-            ];
-        }
-    }
+    f16_alpha_chunked::<4, true>(src, dst, width);
 }
 
 /// Premultiplied → Straight alpha.
@@ -2908,159 +2836,93 @@ use crate::oklab::{
     lms_to_rgb_matrix, oklab_to_rgb, rgb_to_lms_matrix, rgb_to_oklab, rgb_to_oklab_spec,
 };
 
-#[derive(Clone, Copy)]
-enum OklabFwdSpec {
-    Untrusted,
-    Finite,
-    FiniteNonNeg,
-    FiniteNoSub,
-    FiniteNonNegNoSub,
-    FinitePosNoSub,
-}
-
 #[inline]
-fn select_oklab_fwd_spec(m1: &[[f32; 3]; 3], in_trust: super::StepFloatTrust) -> OklabFwdSpec {
+fn oklab_is_finite_nonneg(m1: &[[f32; 3]; 3], in_trust: super::StepFloatTrust) -> bool {
     use zenpixels::sample::FloatFacts;
     let cf = in_trust.color_facts;
-    if !(cf.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE) && in_trust.color_bounded) {
-        return OklabFwdSpec::Untrusted;
+    cf.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::NON_NEGATIVE)
+        && in_trust.color_bounded
+        && m1.as_flattened().iter().all(|&c| c >= (1.0 / 64.0))
+}
+
+type OklabChunksFn<const N: usize> = fn(&[[f32; N]], &mut [[f32; N]], &[[f32; 3]; 3]);
+
+/// Shared padded-chunk driver for Oklab 16-pixel (`N = 48` or `64`) slice kernels.
+/// Runs full chunks directly and pads any `< N` remainder with `0.0` through the
+/// exact same chunk kernel so no SIMD tier emits scalar tail math.
+#[inline(always)]
+fn run_oklab_chunked<const N: usize>(
+    src: &[f32],
+    dst: &mut [f32],
+    m: &[[f32; 3]; 3],
+    chunks_fn: OklabChunksFn<N>,
+) {
+    let len = src.len().min(dst.len());
+    let (s_chunks, s_rem) = src[..len].as_chunks::<N>();
+    let (d_chunks, d_rem) = dst[..len].as_chunks_mut::<N>();
+    if !s_chunks.is_empty() {
+        chunks_fn(s_chunks, d_chunks, m);
     }
-    let flat = m1.as_flattened();
-    let m1_positive = flat.iter().all(|&c| c >= (1.0 / 64.0));
-    let m1_min_abs = flat.iter().all(|&c| c.abs() >= (1.0 / 64.0));
-    let rgb_nonneg = cf.contains(FloatFacts::NON_NEGATIVE);
-    let rgb_pos = cf.contains(FloatFacts::POSITIVE);
-    let lms_nonneg = m1_positive && rgb_nonneg;
-    let lms_no_sub = rgb_nonneg
-        && match in_trust.color_min_exp {
-            Some(k) if m1_positive && k >= -120 => true,
-            Some(k) if m1_min_abs && k >= -74 => true,
-            _ => false,
-        };
-    if lms_nonneg && lms_no_sub && rgb_pos {
-        OklabFwdSpec::FinitePosNoSub
-    } else if lms_nonneg && lms_no_sub {
-        OklabFwdSpec::FiniteNonNegNoSub
-    } else if lms_no_sub {
-        OklabFwdSpec::FiniteNoSub
-    } else if lms_nonneg {
-        OklabFwdSpec::FiniteNonNeg
-    } else {
-        OklabFwdSpec::Finite
+    if !s_rem.is_empty() {
+        finish_oklab_tail(s_rem, d_rem, m, chunks_fn);
     }
 }
 
-macro_rules! define_rgb_to_oklab_3ch {
-    ($fn_name:ident, $no_spec:expr, $no_sub:expr, $nonneg:expr, $pos:expr) => {
-        #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
-        fn $fn_name(src: &[f32], dst: &mut [f32], m1: &[[f32; 3]; 3]) {
-            for (s, d) in src
-                .as_chunks::<48>()
-                .0
-                .iter()
-                .zip(dst.as_chunks_mut::<48>().0)
-            {
-                for p in 0..16 {
-                    let i = p * 3;
-                    let [l, a, b] = rgb_to_oklab_spec::<$no_spec, $no_sub, $nonneg, $pos>(
-                        s[i],
-                        s[i + 1],
-                        s[i + 2],
-                        m1,
-                    );
-                    d[i] = l;
-                    d[i + 1] = a;
-                    d[i + 2] = b;
-                }
-            }
-            let rem_pixels = (src.len() / 3) % 16;
-            if rem_pixels > 0 {
-                let off = src.len() - rem_pixels * 3;
-                for p in 0..rem_pixels {
-                    let i = off + p * 3;
-                    let [l, a, b] = rgb_to_oklab_spec::<$no_spec, $no_sub, $nonneg, $pos>(
-                        src[i],
-                        src[i + 1],
-                        src[i + 2],
-                        m1,
-                    );
-                    dst[i] = l;
-                    dst[i + 1] = a;
-                    dst[i + 2] = b;
-                }
-            }
-        }
-    };
+#[cold]
+#[inline(never)]
+fn finish_oklab_tail<const N: usize>(
+    s_rem: &[f32],
+    d_rem: &mut [f32],
+    m: &[[f32; 3]; 3],
+    chunks_fn: OklabChunksFn<N>,
+) {
+    let mut sin = [0.0f32; N];
+    let mut dout = [0.0f32; N];
+    sin[..s_rem.len()].copy_from_slice(s_rem);
+    chunks_fn(
+        core::slice::from_ref(&sin),
+        core::slice::from_mut(&mut dout),
+        m,
+    );
+    d_rem.copy_from_slice(&dout[..d_rem.len()]);
 }
 
-macro_rules! define_rgb_to_oklab_4ch {
-    ($fn_name:ident, $no_spec:expr, $no_sub:expr, $nonneg:expr, $pos:expr) => {
-        #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
-        fn $fn_name(src: &[f32], dst: &mut [f32], m1: &[[f32; 3]; 3]) {
-            for (s, d) in src
-                .as_chunks::<64>()
-                .0
-                .iter()
-                .zip(dst.as_chunks_mut::<64>().0)
-            {
-                for p in 0..16 {
-                    let i = p * 4;
-                    let [l, a, b] = rgb_to_oklab_spec::<$no_spec, $no_sub, $nonneg, $pos>(
-                        s[i],
-                        s[i + 1],
-                        s[i + 2],
-                        m1,
-                    );
-                    d[i] = l;
-                    d[i + 1] = a;
-                    d[i + 2] = b;
-                    d[i + 3] = s[i + 3];
-                }
-            }
-            let rem_pixels = (src.len() / 4) % 16;
-            if rem_pixels > 0 {
-                let off = src.len() - rem_pixels * 4;
-                for p in 0..rem_pixels {
-                    let i = off + p * 4;
-                    let [l, a, b] = rgb_to_oklab_spec::<$no_spec, $no_sub, $nonneg, $pos>(
-                        src[i],
-                        src[i + 1],
-                        src[i + 2],
-                        m1,
-                    );
-                    dst[i] = l;
-                    dst[i + 1] = a;
-                    dst[i + 2] = b;
-                    dst[i + 3] = src[i + 3];
-                }
-            }
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
+fn rgb_to_oklab_3ch_finite_nonneg_chunks(
+    src: &[[f32; 48]],
+    dst: &mut [[f32; 48]],
+    m1: &[[f32; 3]; 3],
+) {
+    for (s, d) in src.iter().zip(dst.iter_mut()) {
+        for p in 0..16 {
+            let i = p * 3;
+            let [l, a, b] =
+                rgb_to_oklab_spec::<true, false, true, false>(s[i], s[i + 1], s[i + 2], m1);
+            d[i] = l;
+            d[i + 1] = a;
+            d[i + 2] = b;
         }
-    };
+    }
 }
 
-define_rgb_to_oklab_3ch!(rgb_to_oklab_3ch_finite, true, false, false, false);
-define_rgb_to_oklab_3ch!(rgb_to_oklab_3ch_finite_nonneg, true, false, true, false);
-define_rgb_to_oklab_3ch!(rgb_to_oklab_3ch_finite_nosub, true, true, false, false);
-define_rgb_to_oklab_3ch!(
-    rgb_to_oklab_3ch_finite_nonneg_nosub,
-    true,
-    true,
-    true,
-    false
-);
-define_rgb_to_oklab_3ch!(rgb_to_oklab_3ch_finite_pos_nosub, true, true, true, true);
-
-define_rgb_to_oklab_4ch!(rgb_to_oklab_4ch_finite, true, false, false, false);
-define_rgb_to_oklab_4ch!(rgb_to_oklab_4ch_finite_nonneg, true, false, true, false);
-define_rgb_to_oklab_4ch!(rgb_to_oklab_4ch_finite_nosub, true, true, false, false);
-define_rgb_to_oklab_4ch!(
-    rgb_to_oklab_4ch_finite_nonneg_nosub,
-    true,
-    true,
-    true,
-    false
-);
-define_rgb_to_oklab_4ch!(rgb_to_oklab_4ch_finite_pos_nosub, true, true, true, true);
+#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
+fn rgb_to_oklab_4ch_finite_nonneg_chunks(
+    src: &[[f32; 64]],
+    dst: &mut [[f32; 64]],
+    m1: &[[f32; 3]; 3],
+) {
+    for (s, d) in src.iter().zip(dst.iter_mut()) {
+        for p in 0..16 {
+            let i = p * 4;
+            let [l, a, b] =
+                rgb_to_oklab_spec::<true, false, true, false>(s[i], s[i + 1], s[i + 2], m1);
+            d[i] = l;
+            d[i + 1] = a;
+            d[i + 2] = b;
+            d[i + 3] = s[i + 3];
+        }
+    }
+}
 
 /// Linear RGB f32 → Oklab f32 (3 channels).
 ///
@@ -3079,24 +2941,17 @@ fn linear_rgb_to_oklab_f32(
     let rows = m1.rows();
     let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 12]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
-    match select_oklab_fwd_spec(rows, in_trust) {
-        OklabFwdSpec::Untrusted => rgb_to_oklab_3ch_inner(srcf, dstf, rows),
-        OklabFwdSpec::Finite => rgb_to_oklab_3ch_finite(srcf, dstf, rows),
-        OklabFwdSpec::FiniteNonNeg => rgb_to_oklab_3ch_finite_nonneg(srcf, dstf, rows),
-        OklabFwdSpec::FiniteNoSub => rgb_to_oklab_3ch_finite_nosub(srcf, dstf, rows),
-        OklabFwdSpec::FiniteNonNegNoSub => rgb_to_oklab_3ch_finite_nonneg_nosub(srcf, dstf, rows),
-        OklabFwdSpec::FinitePosNoSub => rgb_to_oklab_3ch_finite_pos_nosub(srcf, dstf, rows),
+    if oklab_is_finite_nonneg(rows, in_trust) {
+        run_oklab_chunked::<48>(srcf, dstf, rows, rgb_to_oklab_3ch_finite_nonneg_chunks);
+    } else {
+        run_oklab_chunked::<48>(srcf, dstf, rows, rgb_to_oklab_3ch_chunks);
     }
 }
 
 /// 3-channel RGB→Oklab inner loop (16 pixels = 48 f32s per chunk).
 #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
-fn rgb_to_oklab_3ch_inner(src: &[f32], dst: &mut [f32], m1: &[[f32; 3]; 3]) {
-    // 16 pixels × 3 channels = 48 f32s = 192 bytes
-    let n = src.len().min(dst.len());
-    let (s_chunks, s_rem) = src[..n].as_chunks::<48>();
-    let (d_chunks, d_rem) = dst[..n].as_chunks_mut::<48>();
-    for (s, d) in s_chunks.iter().zip(d_chunks.iter_mut()) {
+fn rgb_to_oklab_3ch_chunks(src: &[[f32; 48]], dst: &mut [[f32; 48]], m1: &[[f32; 3]; 3]) {
+    for (s, d) in src.iter().zip(dst.iter_mut()) {
         for p in 0..16 {
             let i = p * 3;
             let [l, a, b] = rgb_to_oklab(s[i], s[i + 1], s[i + 2], m1);
@@ -3104,14 +2959,6 @@ fn rgb_to_oklab_3ch_inner(src: &[f32], dst: &mut [f32], m1: &[[f32; 3]; 3]) {
             d[i + 1] = a;
             d[i + 2] = b;
         }
-    }
-    for (s, d) in s_rem
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .zip(d_rem.as_chunks_mut::<3>().0.iter_mut())
-    {
-        *d = rgb_to_oklab(s[0], s[1], s[2], m1);
     }
 }
 
@@ -3122,16 +2969,13 @@ fn oklab_to_linear_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: 
 
     let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 12]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
-    oklab_to_rgb_3ch_inner(srcf, dstf, m1_inv.rows());
+    run_oklab_chunked::<48>(srcf, dstf, m1_inv.rows(), oklab_to_rgb_3ch_chunks);
 }
 
 /// 3-channel Oklab→RGB inner loop (16 pixels = 48 f32s per chunk).
 #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
-fn oklab_to_rgb_3ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) {
-    let n = src.len().min(dst.len());
-    let (s_chunks, s_rem) = src[..n].as_chunks::<48>();
-    let (d_chunks, d_rem) = dst[..n].as_chunks_mut::<48>();
-    for (s, d) in s_chunks.iter().zip(d_chunks.iter_mut()) {
+fn oklab_to_rgb_3ch_chunks(src: &[[f32; 48]], dst: &mut [[f32; 48]], m1_inv: &[[f32; 3]; 3]) {
+    for (s, d) in src.iter().zip(dst.iter_mut()) {
         for p in 0..16 {
             let i = p * 3;
             let [r, g, b] = oklab_to_rgb(s[i], s[i + 1], s[i + 2], m1_inv);
@@ -3139,14 +2983,6 @@ fn oklab_to_rgb_3ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) 
             d[i + 1] = g;
             d[i + 2] = b;
         }
-    }
-    for (s, d) in s_rem
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .zip(d_rem.as_chunks_mut::<3>().0.iter_mut())
-    {
-        *d = oklab_to_rgb(s[0], s[1], s[2], m1_inv);
     }
 }
 
@@ -3163,23 +2999,17 @@ fn linear_rgba_to_oklaba_f32(
     let rows = m1.rows();
     let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 16]);
-    match select_oklab_fwd_spec(rows, in_trust) {
-        OklabFwdSpec::Untrusted => rgb_to_oklab_4ch_inner(srcf, dstf, rows),
-        OklabFwdSpec::Finite => rgb_to_oklab_4ch_finite(srcf, dstf, rows),
-        OklabFwdSpec::FiniteNonNeg => rgb_to_oklab_4ch_finite_nonneg(srcf, dstf, rows),
-        OklabFwdSpec::FiniteNoSub => rgb_to_oklab_4ch_finite_nosub(srcf, dstf, rows),
-        OklabFwdSpec::FiniteNonNegNoSub => rgb_to_oklab_4ch_finite_nonneg_nosub(srcf, dstf, rows),
-        OklabFwdSpec::FinitePosNoSub => rgb_to_oklab_4ch_finite_pos_nosub(srcf, dstf, rows),
+    if oklab_is_finite_nonneg(rows, in_trust) {
+        run_oklab_chunked::<64>(srcf, dstf, rows, rgb_to_oklab_4ch_finite_nonneg_chunks);
+    } else {
+        run_oklab_chunked::<64>(srcf, dstf, rows, rgb_to_oklab_4ch_chunks);
     }
 }
 
 /// 4-channel RGBA→Oklaba inner loop (16 pixels = 64 f32s per chunk).
 #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
-fn rgb_to_oklab_4ch_inner(src: &[f32], dst: &mut [f32], m1: &[[f32; 3]; 3]) {
-    let n = src.len().min(dst.len());
-    let (s_chunks, s_rem) = src[..n].as_chunks::<64>();
-    let (d_chunks, d_rem) = dst[..n].as_chunks_mut::<64>();
-    for (s, d) in s_chunks.iter().zip(d_chunks.iter_mut()) {
+fn rgb_to_oklab_4ch_chunks(src: &[[f32; 64]], dst: &mut [[f32; 64]], m1: &[[f32; 3]; 3]) {
+    for (s, d) in src.iter().zip(dst.iter_mut()) {
         for p in 0..16 {
             let i = p * 4;
             let [l, a, b] = rgb_to_oklab(s[i], s[i + 1], s[i + 2], m1);
@@ -3188,15 +3018,6 @@ fn rgb_to_oklab_4ch_inner(src: &[f32], dst: &mut [f32], m1: &[[f32; 3]; 3]) {
             d[i + 2] = b;
             d[i + 3] = s[i + 3]; // alpha unchanged
         }
-    }
-    for (s, d) in s_rem
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .zip(d_rem.as_chunks_mut::<4>().0.iter_mut())
-    {
-        let [l, a, b] = rgb_to_oklab(s[0], s[1], s[2], m1);
-        *d = [l, a, b, s[3]];
     }
 }
 
@@ -3207,16 +3028,13 @@ fn oklaba_to_linear_rgba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries
 
     let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
     let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 16]);
-    oklab_to_rgb_4ch_inner(srcf, dstf, m1_inv.rows());
+    run_oklab_chunked::<64>(srcf, dstf, m1_inv.rows(), oklab_to_rgb_4ch_chunks);
 }
 
 /// 4-channel Oklaba→RGBA inner loop (16 pixels = 64 f32s per chunk).
 #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
-fn oklab_to_rgb_4ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) {
-    let n = src.len().min(dst.len());
-    let (s_chunks, s_rem) = src[..n].as_chunks::<64>();
-    let (d_chunks, d_rem) = dst[..n].as_chunks_mut::<64>();
-    for (s, d) in s_chunks.iter().zip(d_chunks.iter_mut()) {
+fn oklab_to_rgb_4ch_chunks(src: &[[f32; 64]], dst: &mut [[f32; 64]], m1_inv: &[[f32; 3]; 3]) {
+    for (s, d) in src.iter().zip(dst.iter_mut()) {
         for p in 0..16 {
             let i = p * 4;
             let [r, g, b] = oklab_to_rgb(s[i], s[i + 1], s[i + 2], m1_inv);
@@ -3225,15 +3043,6 @@ fn oklab_to_rgb_4ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) 
             d[i + 2] = b;
             d[i + 3] = s[i + 3]; // alpha unchanged
         }
-    }
-    for (s, d) in s_rem
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .zip(d_rem.as_chunks_mut::<4>().0.iter_mut())
-    {
-        let [r, g, b] = oklab_to_rgb(s[0], s[1], s[2], m1_inv);
-        *d = [r, g, b, s[3]];
     }
 }
 
@@ -3280,7 +3089,7 @@ fn fused_mul_add<T: magetypes::simd::backends::F32x8Backend>(
     }
 }
 
-#[archmage::magetypes(define(f32x8), v4(cfg(avx512)), v3, neon, wasm128, scalar)]
+#[attune(_*_t, -_scalar_t, _v4_t(cfg(avx512)), define(f32x8))]
 fn gamut_matrix_f32_tier<const CHANNELS: usize>(
     token: Token,
     src: &[f32],
@@ -3338,8 +3147,49 @@ fn gamut_matrix_f32_tier<const CHANNELS: usize>(
         }
     }
 
-    // Scalar tail (0..LANES pixels).
-    for (sp, dp) in s_tail.iter().zip(d_tail.iter_mut()) {
+    // Zero-padded final SIMD block (zero scalar fused_row tail codegen).
+    if !s_tail.is_empty() {
+        r = [0.0; LANES];
+        g = [0.0; LANES];
+        b = [0.0; LANES];
+        for (i, sp) in s_tail.iter().enumerate() {
+            r[i] = sp[0];
+            g[i] = sp[1];
+            b[i] = sp[2];
+        }
+        let rl = f32x8::from_array_t(token, r);
+        let gl = f32x8::from_array_t(token, g);
+        let bl = f32x8::from_array_t(token, b);
+
+        let ro = fused_mul_add(m00, rl, fused_mul_add(m01, gl, m02 * bl)).to_array();
+        let go = fused_mul_add(m10, rl, fused_mul_add(m11, gl, m12 * bl)).to_array();
+        let bo = fused_mul_add(m20, rl, fused_mul_add(m21, gl, m22 * bl)).to_array();
+
+        for (i, (sp, dp)) in s_tail.iter().zip(d_tail.iter_mut()).enumerate() {
+            dp[0] = ro[i];
+            dp[1] = go[i];
+            dp[2] = bo[i];
+            if CHANNELS == 4 {
+                dp[3] = sp[3];
+            }
+        }
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn gamut_matrix_f32_tier_scalar_t<const CHANNELS: usize>(
+    _token: archmage::ScalarToken,
+    src: &[f32],
+    dst: &mut [f32],
+    width: usize,
+    matrix: &[f32; 9],
+) {
+    const { assert!(CHANNELS == 3 || CHANNELS == 4) };
+    let m = matrix;
+    let (s_px, _) = src[..width * CHANNELS].as_chunks::<CHANNELS>();
+    let (d_px, _) = dst[..width * CHANNELS].as_chunks_mut::<CHANNELS>();
+    for (sp, dp) in s_px.iter().zip(d_px.iter_mut()) {
         let (rv, gv, bv) = (sp[0], sp[1], sp[2]);
         let row = |i: usize| crate::fast_gamut::fused_row(m[i], m[i + 1], m[i + 2], rv, gv, bv);
         dp[0] = row(0);
@@ -3352,31 +3202,32 @@ fn gamut_matrix_f32_tier<const CHANNELS: usize>(
 }
 
 /// Apply a 3×3 gamut matrix to a row of linear RGB f32 pixels. SIMD-dispatched
-/// (AVX-512 / AVX2 / NEON / WASM-SIMD128 / Scalar) via `archmage::incant!`.
+/// (AVX-512 / AVX2 / NEON / WASM-SIMD128 / Scalar) via `archmage::reattune!`.
 fn gamut_matrix_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, matrix: &[f32; 9]) {
     let s: &[f32] = bytemuck::cast_slice(src);
     let d: &mut [f32] = bytemuck::cast_slice_mut(dst);
-    incant!(
+    reattune!(
         gamut_matrix_f32_tier::<3>(s, d, width, matrix),
-        [v4, v3, neon, wasm128, scalar]
+        [_v4(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
     );
 }
 
 /// Apply a 3×3 gamut matrix to a row of linear RGBA f32 pixels (alpha
-/// passthrough). SIMD-dispatched via `archmage::incant!` — same kernel as
+/// passthrough). SIMD-dispatched via `archmage::reattune!` — same kernel as
 /// the RGB variant, parameterised on `CHANNELS == 4`.
 fn gamut_matrix_rgba_f32(src: &[u8], dst: &mut [u8], width: usize, matrix: &[f32; 9]) {
     let s: &[f32] = bytemuck::cast_slice(src);
     let d: &mut [f32] = bytemuck::cast_slice_mut(dst);
-    incant!(
+    reattune!(
         gamut_matrix_f32_tier::<4>(s, d, width, matrix),
-        [v4, v3, neon, wasm128, scalar]
+        [_v4(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
     );
 }
 
 #[cfg(test)]
 mod gray_f16_exact {
     use super::*;
+    use crate::f16_scalar::{f16_bits_to_f32, f32_to_f16_bits};
     use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
 
     const WEIGHTS: [[f32; 3]; 3] = [

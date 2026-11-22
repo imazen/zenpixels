@@ -25,4 +25,4 @@ categories = ["multimedia::images"]
 # archmage 0.9.32, magetypes 0.9.32, and magemath 0.1.0 resolve from crates.io.
 [patch.crates-io]
 garb = { git = "https://github.com/imazen/garb", rev = "457ff8b9153e9d675a39dc098052b2ffeb6206fa" }
-linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "f2430c90e1f2627bcf553e3a5d32349cf94faeb2" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "ae83f19426737635fee3dd16f228681019f52585" }

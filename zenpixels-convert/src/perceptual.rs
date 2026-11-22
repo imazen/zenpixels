@@ -1172,7 +1172,7 @@ fn rgb_hue_deg_spec<const FINITE: bool>(r: f32, g: f32, b: f32, max: f32, d: f32
 // Row kernel execution
 // ---------------------------------------------------------------------------
 
-#[inline]
+#[inline(never)]
 fn map_f32_3_or_4(
     src: &[u8],
     dst: &mut [u8],
@@ -1180,18 +1180,16 @@ fn map_f32_3_or_4(
     has_alpha: bool,
     mut f: impl FnMut([f32; 3]) -> [f32; 3],
 ) {
-    if has_alpha {
-        let src_f: &[[f32; 4]] = bytemuck::cast_slice(&src[..width * 16]);
-        let dst_f: &mut [[f32; 4]] = bytemuck::cast_slice_mut(&mut dst[..width * 16]);
-        for (out, &[c0, c1, c2, a]) in dst_f.iter_mut().zip(src_f) {
-            let [d0, d1, d2] = f([c0, c1, c2]);
-            *out = [d0, d1, d2, a];
-        }
-    } else {
-        let src_f: &[[f32; 3]] = bytemuck::cast_slice(&src[..width * 12]);
-        let dst_f: &mut [[f32; 3]] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
-        for (out, &px) in dst_f.iter_mut().zip(src_f) {
-            *out = f(px);
+    let ch = if has_alpha { 4 } else { 3 };
+    let src_f: &[f32] = bytemuck::cast_slice(&src[..width * ch * 4]);
+    let dst_f: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * ch * 4]);
+    for (out_px, in_px) in dst_f.chunks_exact_mut(ch).zip(src_f.chunks_exact(ch)) {
+        let [d0, d1, d2] = f([in_px[0], in_px[1], in_px[2]]);
+        out_px[0] = d0;
+        out_px[1] = d1;
+        out_px[2] = d2;
+        if ch == 4 {
+            out_px[3] = in_px[3];
         }
     }
 }
@@ -1229,46 +1227,26 @@ pub(crate) fn apply_row(
     from_primaries: ColorPrimaries,
     to_primaries: ColorPrimaries,
     pq_scale: f32,
-    in_trust: super::StepFloatTrust,
+    _in_trust: super::StepFloatTrust,
 ) {
-    use zenpixels::sample::FloatFacts;
-    let cf = in_trust.color_facts;
-    let finite = cf.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE);
-    let finite_bounded = finite && in_trust.color_bounded;
-    let unit_nonneg = cf.contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE);
-    let nonneg = cf.contains(FloatFacts::NON_NEGATIVE);
-
     match step {
         PerceptualStep::CartesianToPolar { target_layout } => {
-            if finite_bounded {
-                map_f32_3_or_4(
-                    src,
-                    dst,
-                    width,
-                    target_layout.has_alpha(),
-                    cart_to_polar_spec::<true>,
-                );
-            } else {
-                map_f32_3_or_4(
-                    src,
-                    dst,
-                    width,
-                    target_layout.has_alpha(),
-                    cart_to_polar_spec::<false>,
-                );
-            }
+            map_f32_3_or_4(
+                src,
+                dst,
+                width,
+                target_layout.has_alpha(),
+                cart_to_polar_spec::<false>,
+            );
         }
         PerceptualStep::PolarToCartesian { target_layout } => {
-            let ha = target_layout.has_alpha();
-            match (finite, nonneg) {
-                (true, true) => {
-                    map_f32_3_or_4(src, dst, width, ha, polar_to_cart_spec::<true, true>)
-                }
-                (true, false) => {
-                    map_f32_3_or_4(src, dst, width, ha, polar_to_cart_spec::<true, false>)
-                }
-                _ => map_f32_3_or_4(src, dst, width, ha, polar_to_cart_spec::<false, false>),
-            }
+            map_f32_3_or_4(
+                src,
+                dst,
+                width,
+                target_layout.has_alpha(),
+                polar_to_cart_spec::<false, false>,
+            );
         }
         PerceptualStep::LinearRgbToJzazbz {
             has_alpha,
@@ -1363,8 +1341,8 @@ pub(crate) fn apply_row(
             let m = *primaries_to_xyz(from_primaries)
                 .expect("validated RGB->XYZ primaries")
                 .rows();
-            let to_xyz = |[r, g, b]: [f32; 3]| -> [f64; 3] {
-                [
+            map_f32_3_or_4(src, dst, width, has_alpha, |[r, g, b]| {
+                xyz_d65_to_lch_spec::<false>([
                     f64::from(m[0][0]) * f64::from(r)
                         + f64::from(m[0][1]) * f64::from(g)
                         + f64::from(m[0][2]) * f64::from(b),
@@ -1374,23 +1352,15 @@ pub(crate) fn apply_row(
                     f64::from(m[2][0]) * f64::from(r)
                         + f64::from(m[2][1]) * f64::from(g)
                         + f64::from(m[2][2]) * f64::from(b),
-                ]
-            };
-            if finite_bounded {
-                map_f32_3_or_4(src, dst, width, has_alpha, |rgb| {
-                    xyz_d65_to_lch_spec::<true>(to_xyz(rgb))
-                });
-            } else {
-                map_f32_3_or_4(src, dst, width, has_alpha, |rgb| {
-                    xyz_d65_to_lch_spec::<false>(to_xyz(rgb))
-                });
-            }
+                ])
+            });
         }
         PerceptualStep::LchToLinearRgb { has_alpha, .. } => {
             let m = *primaries_from_xyz(to_primaries)
                 .expect("validated XYZ->RGB primaries")
                 .rows();
-            let from_xyz = |[x, y, z]: [f64; 3]| -> [f32; 3] {
+            map_f32_3_or_4(src, dst, width, has_alpha, |lch| {
+                let [x, y, z] = lch_to_xyz_d65_spec::<false, false>(lch);
                 [
                     (f64::from(m[0][0]) * x + f64::from(m[0][1]) * y + f64::from(m[0][2]) * z)
                         as f32,
@@ -1399,52 +1369,19 @@ pub(crate) fn apply_row(
                     (f64::from(m[2][0]) * x + f64::from(m[2][1]) * y + f64::from(m[2][2]) * z)
                         as f32,
                 ]
-            };
-            if finite && nonneg {
-                map_f32_3_or_4(src, dst, width, has_alpha, |lch| {
-                    from_xyz(lch_to_xyz_d65_spec::<true, true>(lch))
-                });
-            } else if finite {
-                map_f32_3_or_4(src, dst, width, has_alpha, |lch| {
-                    from_xyz(lch_to_xyz_d65_spec::<true, false>(lch))
-                });
-            } else {
-                map_f32_3_or_4(src, dst, width, has_alpha, |lch| {
-                    from_xyz(lch_to_xyz_d65_spec::<false, false>(lch))
-                });
-            }
+            });
         }
         PerceptualStep::RgbToHsl { has_alpha } => {
-            if unit_nonneg {
-                map_f32_3_or_4(src, dst, width, has_alpha, rgb_to_hsl_spec::<true, true>);
-            } else if finite_bounded {
-                map_f32_3_or_4(src, dst, width, has_alpha, rgb_to_hsl_spec::<false, true>);
-            } else {
-                map_f32_3_or_4(src, dst, width, has_alpha, rgb_to_hsl_spec::<false, false>);
-            }
+            map_f32_3_or_4(src, dst, width, has_alpha, rgb_to_hsl_spec::<false, false>);
         }
         PerceptualStep::HslToRgb { has_alpha } => {
-            if finite {
-                map_f32_3_or_4(src, dst, width, has_alpha, hsl_to_rgb_spec::<true>);
-            } else {
-                map_f32_3_or_4(src, dst, width, has_alpha, hsl_to_rgb_spec::<false>);
-            }
+            map_f32_3_or_4(src, dst, width, has_alpha, hsl_to_rgb_spec::<false>);
         }
         PerceptualStep::RgbToHsv { has_alpha } => {
-            if unit_nonneg {
-                map_f32_3_or_4(src, dst, width, has_alpha, rgb_to_hsv_spec::<true, true>);
-            } else if finite_bounded {
-                map_f32_3_or_4(src, dst, width, has_alpha, rgb_to_hsv_spec::<false, true>);
-            } else {
-                map_f32_3_or_4(src, dst, width, has_alpha, rgb_to_hsv_spec::<false, false>);
-            }
+            map_f32_3_or_4(src, dst, width, has_alpha, rgb_to_hsv_spec::<false, false>);
         }
         PerceptualStep::HsvToRgb { has_alpha } => {
-            if finite {
-                map_f32_3_or_4(src, dst, width, has_alpha, hsv_to_rgb_spec::<true>);
-            } else {
-                map_f32_3_or_4(src, dst, width, has_alpha, hsv_to_rgb_spec::<false>);
-            }
+            map_f32_3_or_4(src, dst, width, has_alpha, hsv_to_rgb_spec::<false>);
         }
         PerceptualStep::DecodeIntToF32 { from_type, layout } => {
             let ch = layout.channels();

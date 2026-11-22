@@ -107,7 +107,7 @@ impl SoftCompress {
     /// Interior pixels stay bit-identical. Non-finite channels, and magnitudes above
     /// about 1e38, pass through unchanged.
     pub fn apply_strip(&self, rgb: &mut [[f32; 3]]) {
-        incant!(apply_strip_impl(self, rgb), [v3, neon, wasm128, scalar])
+        reattune!(apply_strip_impl(self, rgb), [_v3, _neon, _wasm128, _scalar])
     }
 
     /// Compress OKLab planes in place, leaving `l` as is. For pipelines that already
@@ -131,9 +131,9 @@ impl SoftCompress {
                 actual: if a.len() != n { a.len() } else { b.len() },
             }));
         }
-        incant!(
+        reattune!(
             compress_planes_impl(self, l, a, b),
-            [v3, neon, wasm128, scalar]
+            [_v3, _neon, _wasm128, _scalar]
         );
         Ok(())
     }
@@ -213,7 +213,180 @@ macro_rules! chroma_scale {
     }};
 }
 
-#[magetypes(define(f32x8), v3, neon, wasm128, scalar)]
+#[inline(always)]
+fn simd_min_f32(a: f32, b: f32) -> f32 {
+    if a < b { a } else { b }
+}
+
+#[inline(always)]
+fn simd_max_f32(a: f32, b: f32) -> f32 {
+    if a > b { a } else { b }
+}
+
+#[inline(always)]
+fn dot_scalar(row: &[f32; 3], a: f32, b: f32, c: f32) -> f32 {
+    row[0] * a + row[1] * b + row[2] * c
+}
+
+/// Exact scalar mirror of `f32x8::cbrt_midp` (same bit-hack constant and 2 Halley steps).
+#[inline(always)]
+fn cbrt_midp_scalar(x: f32) -> f32 {
+    const MAGIC: u32 = 0x2a50_8c2d;
+    let abs_x = x.abs();
+    let mut y = f32::from_bits((abs_x.to_bits() / 3) + MAGIC);
+    for _ in 0..2 {
+        let y3 = y * y * y;
+        y *= (y3 + 2.0 * abs_x) / (2.0 * y3 + abs_x);
+    }
+    if x == 0.0 { x } else { y.copysign(x) }
+}
+
+/// Scalar 1-pixel mirror of `chroma_scale!` — avoids 8-wide unrolled `f32x8<ScalarToken>`
+/// codegen while matching the SIMD tiers bit-for-bit.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn chroma_scale_scalar(
+    sc: &SoftCompress,
+    ll: f32,
+    dl: f32,
+    dm: f32,
+    ds: f32,
+    r0: f32,
+    g0: f32,
+    b0: f32,
+) -> (f32, bool) {
+    let inv = sc.space.lms_to_rgb().rows();
+    let cap = sc.scale_cap;
+    let gray = ll * ll * ll;
+    let chord = |v: f32| -> f32 {
+        let over = (1.0 - gray) / (v - gray);
+        let under = gray / (gray - v);
+        if v < 0.0 {
+            under
+        } else if v > 1.0 {
+            over
+        } else {
+            cap
+        }
+    };
+    let mut s = simd_min_f32(
+        simd_max_f32(
+            simd_min_f32(simd_min_f32(chord(r0), chord(g0)), chord(b0)),
+            0.0,
+        ),
+        1.0,
+    );
+
+    for _ in 0..SOLVE_STEPS {
+        let (xl, xm, xs) = (ll + s * dl, ll + s * dm, ll + s * ds);
+        let (l2, m2, s2) = (xl * xl, xm * xm, xs * xs);
+        let (l3, m3, s3) = (l2 * xl, m2 * xm, s2 * xs);
+        let (gl, gm, gs) = (l2 * dl, m2 * dm, s2 * ds);
+        let toward = |row: &[f32; 3]| -> f32 {
+            let v = dot_scalar(row, l3, m3, s3);
+            let grad = 3.0 * dot_scalar(row, gl, gm, gs);
+            let face = if grad > 0.0 { 1.0 } else { 0.0 };
+            if grad.abs() < 1e-12 {
+                cap
+            } else {
+                s + (face - v) / grad
+            }
+        };
+        s = simd_min_f32(
+            simd_max_f32(
+                simd_min_f32(
+                    simd_min_f32(toward(&inv[0]), toward(&inv[1])),
+                    toward(&inv[2]),
+                ),
+                0.0,
+            ),
+            cap,
+        );
+    }
+
+    let knee_s = sc.knee * s;
+    let excess = 1.0 - knee_s;
+    let range = s - knee_s;
+    let scaled = knee_s + range * excess / (excess + range);
+    let dead = ll <= 0.0 || ll >= 1.0;
+    let finite = (r0 * 0.0 == 0.0) && (g0 * 0.0 == 0.0) && (b0 * 0.0 == 0.0);
+    (
+        if dead { 0.0 } else { scaled },
+        (excess > 0.0 || dead) && finite,
+    )
+}
+
+#[cold]
+#[inline(never)]
+fn apply_strip_impl_scalar_t(
+    _token: archmage::ScalarToken,
+    sc: &SoftCompress,
+    rgb: &mut [[f32; 3]],
+) {
+    let (m1, inv) = (sc.space.rgb_to_lms().rows(), sc.space.lms_to_rgb().rows());
+    let ok = OKLAB_FROM_LMS_CBRT.rows()[0];
+    let ratio = sc.gate_ratio;
+
+    for px in rgb.iter_mut() {
+        let [r0, g0, b0] = *px;
+        let mx = simd_max_f32(simd_max_f32(r0, g0), b0);
+        let mn = simd_min_f32(simd_min_f32(r0, g0), b0);
+        if mn > mx * ratio && mx < GATE_TOP {
+            continue;
+        }
+        let lc = cbrt_midp_scalar(dot_scalar(&m1[0], r0, g0, b0));
+        let mc = cbrt_midp_scalar(dot_scalar(&m1[1], r0, g0, b0));
+        let sc2 = cbrt_midp_scalar(dot_scalar(&m1[2], r0, g0, b0));
+        let ll = dot_scalar(&ok, lc, mc, sc2);
+        let (dl, dm, ds) = (lc - ll, mc - ll, sc2 - ll);
+        let (scaled, active) = chroma_scale_scalar(sc, ll, dl, dm, ds, r0, g0, b0);
+        if active {
+            let (xl, xm, xs) = (ll + scaled * dl, ll + scaled * dm, ll + scaled * ds);
+            let (l3, m3, s3) = (xl * xl * xl, xm * xm * xm, xs * xs * xs);
+            *px = [
+                dot_scalar(&inv[0], l3, m3, s3),
+                dot_scalar(&inv[1], l3, m3, s3),
+                dot_scalar(&inv[2], l3, m3, s3),
+            ];
+        }
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn compress_planes_impl_scalar_t(
+    _token: archmage::ScalarToken,
+    sc: &SoftCompress,
+    l: &[f32],
+    a: &mut [f32],
+    b: &mut [f32],
+) {
+    let inv = sc.space.lms_to_rgb().rows();
+    let [row_l, row_m, row_s] = *LMS_CBRT_FROM_OKLAB.rows();
+    for ((&ll, av), bv) in l.iter().zip(a.iter_mut()).zip(b.iter_mut()) {
+        let (a0, b0_in) = (*av, *bv);
+        let dl = dot_scalar(&row_l, 0.0, a0, b0_in);
+        let dm = dot_scalar(&row_m, 0.0, a0, b0_in);
+        let ds = dot_scalar(&row_s, 0.0, a0, b0_in);
+        let (xl, xm, xs) = (ll + dl, ll + dm, ll + ds);
+        let (l3, m3, s3) = (xl * xl * xl, xm * xm * xm, xs * xs * xs);
+        let r0 = dot_scalar(&inv[0], l3, m3, s3);
+        let g0 = dot_scalar(&inv[1], l3, m3, s3);
+        let b0 = dot_scalar(&inv[2], l3, m3, s3);
+        let mx = simd_max_f32(simd_max_f32(r0, g0), b0);
+        let mn = simd_min_f32(simd_min_f32(r0, g0), b0);
+        if mn > mx * sc.gate_ratio && mx < GATE_TOP {
+            continue;
+        }
+        let (scaled, active) = chroma_scale_scalar(sc, ll, dl, dm, ds, r0, g0, b0);
+        if active {
+            *av = a0 * scaled;
+            *bv = b0_in * scaled;
+        }
+    }
+}
+
+#[attune(_*_t, -_scalar_t, define(f32x8))]
 fn apply_strip_impl(token: Token, sc: &SoftCompress, rgb: &mut [[f32; 3]]) {
     let splat = |v: f32| f32x8::splat_t(token, v);
     let dot = |row: &[f32; 3], a: f32x8, b: f32x8, c: f32x8| -> f32x8 {
@@ -296,7 +469,7 @@ fn apply_strip_impl(token: Token, sc: &SoftCompress, rgb: &mut [[f32; 3]]) {
     }
 }
 
-#[magetypes(define(f32x8), v3, neon, wasm128, scalar)]
+#[attune(_*_t, -_scalar_t, define(f32x8))]
 fn compress_planes_impl(token: Token, sc: &SoftCompress, l: &[f32], a: &mut [f32], b: &mut [f32]) {
     let splat = |v: f32| f32x8::splat_t(token, v);
     let dot = |row: &[f32; 3], x: f32x8, y: f32x8, z: f32x8| -> f32x8 {

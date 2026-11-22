@@ -94,24 +94,71 @@ pub(crate) fn probe_wasm_relaxed_madd_uncached() -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Shared padded-chunk tail driver (zero scalar tail math in SIMD tiers)
+// ---------------------------------------------------------------------------
+
+type ChunkKernelFn<T, S, D, const N: usize> = fn(T, &[[S; N]], &mut [[D; N]]);
+
+/// Runs a full-chunk SIMD kernel over `src`/`dst`, routing any `< N` remainder
+/// through a single padded stack chunk into the exact same SIMD kernel.
+///
+/// Guarantees bit-exact body/tail parity and eliminates all scalar tail math
+/// codegen from every SIMD tier (`v4x`, `v3`, `neon`, `wasm128`).
+#[inline(always)]
+fn run_chunked_padded<T: Copy, S: Copy, D: Copy, const N: usize>(
+    token: T,
+    src: &[S],
+    dst: &mut [D],
+    pad_s: S,
+    pad_d: D,
+    chunks_fn: ChunkKernelFn<T, S, D, N>,
+) {
+    let n = src.len().min(dst.len());
+    let (s_chunks, s_tail) = src[..n].as_chunks::<N>();
+    let (d_chunks, d_tail) = dst[..n].as_chunks_mut::<N>();
+    if !s_chunks.is_empty() {
+        chunks_fn(token, s_chunks, d_chunks);
+    }
+    if !s_tail.is_empty() {
+        finish_padded_tail(token, s_tail, d_tail, pad_s, pad_d, chunks_fn);
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn finish_padded_tail<T: Copy, S: Copy, D: Copy, const N: usize>(
+    token: T,
+    s_tail: &[S],
+    d_tail: &mut [D],
+    pad_s: S,
+    pad_d: D,
+    chunks_fn: ChunkKernelFn<T, S, D, N>,
+) {
+    let len = s_tail.len();
+    let mut sin = [pad_s; N];
+    let mut dout = [pad_d; N];
+    sin[..len].copy_from_slice(s_tail);
+    chunks_fn(
+        token,
+        core::slice::from_ref(&sin),
+        core::slice::from_mut(&mut dout),
+    );
+    d_tail.copy_from_slice(&dout[..len]);
+}
+
+// ---------------------------------------------------------------------------
 // u8 -> f32 and u16 -> f32 (0-ULP split vs 1-ULP reciprocal)
 // ---------------------------------------------------------------------------
 
-#[attune(_*_t, _v4x_t(cfg(avx512)), define(f32x8, u8x32))]
-pub(crate) fn convert_u8_to_f32_spec<const EXACT_DIV: bool>(
+#[attune(_*_t, -_scalar_t, _v4x_t(cfg(avx512)), define(f32x8, u8x32))]
+fn convert_u8_to_f32_chunks<const EXACT_DIV: bool>(
     token: Token,
-    src: &[u8],
-    dst: &mut [f32],
+    s_chunks: &[[u8; 32]],
+    d_chunks: &mut [[f32; 32]],
 ) {
-    let n = src.len().min(dst.len());
-    let (src, dst) = (&src[..n], &mut dst[..n]);
-
     let v_hi = f32x8::splat_t(token, U8_INV_HI);
     let v_lo = f32x8::splat_t(token, U8_INV_LO);
     let v_rcp = f32x8::splat_t(token, 1.0 / 255.0);
-
-    let (s_chunks, s_tail) = src.as_chunks::<32>();
-    let (d_chunks, d_tail) = dst.as_chunks_mut::<32>();
 
     for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
         let bytes = u8x32::load_t(token, sc);
@@ -143,8 +190,13 @@ pub(crate) fn convert_u8_to_f32_spec<const EXACT_DIV: bool>(
         o2.store(d2);
         o3.store(d3);
     }
+}
 
-    for (&b, d) in s_tail.iter().zip(d_tail.iter_mut()) {
+#[cold]
+#[inline(never)]
+fn convert_u8_to_f32_scalar<const EXACT_DIV: bool>(src: &[u8], dst: &mut [f32]) {
+    let n = src.len().min(dst.len());
+    for (&b, d) in src[..n].iter().zip(dst[..n].iter_mut()) {
         let vf = f32::from(b);
         *d = if EXACT_DIV {
             vf * U8_INV_HI + vf * U8_INV_LO
@@ -154,29 +206,68 @@ pub(crate) fn convert_u8_to_f32_spec<const EXACT_DIV: bool>(
     }
 }
 
-#[inline]
-pub(crate) fn convert_u8_to_f32_slice(src: &[u8], dst: &mut [f32]) {
-    reattune!(
-        convert_u8_to_f32_spec::<true>(src, dst),
-        [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
-    );
+pub(crate) fn convert_u8_to_f32_dispatch<const EXACT_DIV: bool>(src: &[u8], dst: &mut [f32]) {
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "avx512"))]
+    if let Some(t) = archmage::X64V4xToken::summon() {
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0u8,
+            0.0f32,
+            convert_u8_to_f32_chunks_v4x_t::<EXACT_DIV>,
+        );
+    }
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    if let Some(t) = archmage::X64V3Token::summon() {
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0u8,
+            0.0f32,
+            convert_u8_to_f32_chunks_v3_t::<EXACT_DIV>,
+        );
+    }
+    #[cfg(target_arch = "aarch64")]
+    if let Some(t) = archmage::NeonToken::summon() {
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0u8,
+            0.0f32,
+            convert_u8_to_f32_chunks_neon_t::<EXACT_DIV>,
+        );
+    }
+    #[cfg(target_arch = "wasm32")]
+    if let Some(t) = archmage::Wasm128Token::summon() {
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0u8,
+            0.0f32,
+            convert_u8_to_f32_chunks_wasm128_t::<EXACT_DIV>,
+        );
+    }
+    convert_u8_to_f32_scalar::<EXACT_DIV>(src, dst);
 }
 
-#[attune(_*_t, _v4x_t(cfg(avx512)), define(f32x8, u16x16))]
-pub(crate) fn convert_u16_to_f32_spec<const EXACT_DIV: bool>(
-    token: Token,
-    src: &[u16],
-    dst: &mut [f32],
-) {
-    let n = src.len().min(dst.len());
-    let (src, dst) = (&src[..n], &mut dst[..n]);
+#[inline]
+pub(crate) fn convert_u8_to_f32_slice(src: &[u8], dst: &mut [f32]) {
+    convert_u8_to_f32_dispatch::<true>(src, dst);
+}
 
+#[attune(_*_t, -_scalar_t, _v4x_t(cfg(avx512)), define(f32x8, u16x16))]
+fn convert_u16_to_f32_chunks<const EXACT_DIV: bool>(
+    token: Token,
+    s_chunks: &[[u16; 16]],
+    d_chunks: &mut [[f32; 16]],
+) {
     let v_hi = f32x8::splat_t(token, U16_INV_HI);
     let v_lo = f32x8::splat_t(token, U16_INV_LO);
     let v_rcp = f32x8::splat_t(token, 1.0 / 65535.0);
-
-    let (s_chunks, s_tail) = src.as_chunks::<16>();
-    let (d_chunks, d_tail) = dst.as_chunks_mut::<16>();
 
     for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
         let words = u16x16::load_t(token, sc);
@@ -197,8 +288,13 @@ pub(crate) fn convert_u16_to_f32_spec<const EXACT_DIV: bool>(
         o0.store(d0);
         o1.store(d1);
     }
+}
 
-    for (&w, d) in s_tail.iter().zip(d_tail.iter_mut()) {
+#[cold]
+#[inline(never)]
+fn convert_u16_to_f32_scalar<const EXACT_DIV: bool>(src: &[u16], dst: &mut [f32]) {
+    let n = src.len().min(dst.len());
+    for (&w, d) in src[..n].iter().zip(dst[..n].iter_mut()) {
         let vf = f32::from(w);
         *d = if EXACT_DIV {
             vf * U16_INV_HI + vf * U16_INV_LO
@@ -208,12 +304,57 @@ pub(crate) fn convert_u16_to_f32_spec<const EXACT_DIV: bool>(
     }
 }
 
+pub(crate) fn convert_u16_to_f32_dispatch<const EXACT_DIV: bool>(src: &[u16], dst: &mut [f32]) {
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "avx512"))]
+    if let Some(t) = archmage::X64V4xToken::summon() {
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0u16,
+            0.0f32,
+            convert_u16_to_f32_chunks_v4x_t::<EXACT_DIV>,
+        );
+    }
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    if let Some(t) = archmage::X64V3Token::summon() {
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0u16,
+            0.0f32,
+            convert_u16_to_f32_chunks_v3_t::<EXACT_DIV>,
+        );
+    }
+    #[cfg(target_arch = "aarch64")]
+    if let Some(t) = archmage::NeonToken::summon() {
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0u16,
+            0.0f32,
+            convert_u16_to_f32_chunks_neon_t::<EXACT_DIV>,
+        );
+    }
+    #[cfg(target_arch = "wasm32")]
+    if let Some(t) = archmage::Wasm128Token::summon() {
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0u16,
+            0.0f32,
+            convert_u16_to_f32_chunks_wasm128_t::<EXACT_DIV>,
+        );
+    }
+    convert_u16_to_f32_scalar::<EXACT_DIV>(src, dst);
+}
+
 #[inline]
 pub(crate) fn convert_u16_to_f32_slice(src: &[u16], dst: &mut [f32]) {
-    reattune!(
-        convert_u16_to_f32_spec::<true>(src, dst),
-        [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
-    );
+    convert_u16_to_f32_dispatch::<true>(src, dst);
 }
 
 // ---------------------------------------------------------------------------
@@ -221,54 +362,50 @@ pub(crate) fn convert_u16_to_f32_slice(src: &[u16], dst: &mut [f32]) {
 // ---------------------------------------------------------------------------
 
 #[inline(always)]
-fn scalar_quantize_u8<const UNIT_CLEAN: bool, const NO_NAN: bool>(s: f32) -> u8 {
-    let c = if UNIT_CLEAN {
-        s
-    } else if NO_NAN {
-        s.clamp(0.0, 1.0)
-    } else if s.is_nan() {
-        0.0
-    } else {
-        s.clamp(0.0, 1.0)
-    };
+fn scalar_quantize_u8(s: f32) -> u8 {
+    let c = if s.is_nan() { 0.0 } else { s.clamp(0.0, 1.0) };
     (f64::from(c) * 255.0 + 0.5) as u8
 }
 
 #[inline(always)]
-fn scalar_quantize_u16<const UNIT_CLEAN: bool, const NO_NAN: bool>(s: f32) -> u16 {
-    let c = if UNIT_CLEAN {
-        s
-    } else if NO_NAN {
-        s.clamp(0.0, 1.0)
-    } else if s.is_nan() {
-        0.0
-    } else {
-        s.clamp(0.0, 1.0)
-    };
+fn scalar_quantize_u16(s: f32) -> u16 {
+    let c = if s.is_nan() { 0.0 } else { s.clamp(0.0, 1.0) };
     (f64::from(c) * 65535.0 + 0.5) as u16
 }
 
-/// Fused single-FMA nearest-half-up `f32 -> u8` body.
+#[cold]
+#[inline(never)]
+fn scalar_quantize_u8_slice(src: &[f32], dst: &mut [u8]) {
+    let n = src.len().min(dst.len());
+    for (&s, d) in src[..n].iter().zip(dst[..n].iter_mut()) {
+        *d = scalar_quantize_u8(s);
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn scalar_quantize_u16_slice(src: &[f32], dst: &mut [u16]) {
+    let n = src.len().min(dst.len());
+    for (&s, d) in src[..n].iter().zip(dst[..n].iter_mut()) {
+        *d = scalar_quantize_u16(s);
+    }
+}
+
+/// Fused single-FMA nearest-half-up `f32 -> u8` full-chunk body.
 ///
 /// Sound ONLY on tiers whose `mul_add_relaxed` executes a single-rounding IEEE FMA:
 /// `v3`, `v4x`, `neon`, and `wasm128` when `wasm_fuses_relaxed_madd()` is true.
 #[attune(_*_t, -_scalar_t, _v4x_t(cfg(avx512)), define(f32x8, i32x8))]
-fn quantize_u8_magic_fma<const UNIT_CLEAN: bool, const NO_NAN: bool>(
+fn quantize_u8_magic_fma_chunks<const UNIT_CLEAN: bool, const NO_NAN: bool>(
     token: Token,
-    src: &[f32],
-    dst: &mut [u8],
+    s_chunks: &[[f32; 32]],
+    d_chunks: &mut [[u8; 32]],
 ) {
-    let n = src.len().min(dst.len());
-    let (src, dst) = (&src[..n], &mut dst[..n]);
-
     let zero = f32x8::splat_t(token, 0.0);
     let one = f32x8::splat_t(token, 1.0);
     let scale = f32x8::splat_t(token, 255.0);
     let magic = f32x8::splat_t(token, MAGIC_F32);
     let magic_bits = i32x8::splat_t(token, MAGIC_BITS);
-
-    let (s_chunks, s_tail) = src.as_chunks::<32>();
-    let (d_chunks, d_tail) = dst.as_chunks_mut::<32>();
 
     for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
         let (s0, rest) = sc.split_first_chunk::<8>().unwrap();
@@ -304,33 +441,23 @@ fn quantize_u8_magic_fma<const UNIT_CLEAN: bool, const NO_NAN: bool>(
         let hi16 = c2.narrow_saturating_i16(c3);
         lo16.narrow_saturating_u8(hi16).store(dc);
     }
-
-    for (&s, d) in s_tail.iter().zip(d_tail.iter_mut()) {
-        *d = scalar_quantize_u8::<UNIT_CLEAN, NO_NAN>(s);
-    }
 }
 
-/// Fused single-FMA nearest-half-up `f32 -> u16` body.
+/// Fused single-FMA nearest-half-up `f32 -> u16` full-chunk body.
 ///
 /// Sound ONLY on tiers whose `mul_add_relaxed` executes a single-rounding IEEE FMA:
 /// `v3`, `v4x`, `neon`, and `wasm128` when `wasm_fuses_relaxed_madd()` is true.
 #[attune(_*_t, -_scalar_t, _v4x_t(cfg(avx512)), define(f32x8, i32x8))]
-fn quantize_u16_magic_fma<const UNIT_CLEAN: bool, const NO_NAN: bool>(
+fn quantize_u16_magic_fma_chunks<const UNIT_CLEAN: bool>(
     token: Token,
-    src: &[f32],
-    dst: &mut [u16],
+    s_chunks: &[[f32; 16]],
+    d_chunks: &mut [[u16; 16]],
 ) {
-    let n = src.len().min(dst.len());
-    let (src, dst) = (&src[..n], &mut dst[..n]);
-
     let zero = f32x8::splat_t(token, 0.0);
     let one = f32x8::splat_t(token, 1.0);
     let scale = f32x8::splat_t(token, 65535.0);
     let magic = f32x8::splat_t(token, MAGIC_F32);
     let magic_bits = i32x8::splat_t(token, MAGIC_BITS);
-
-    let (s_chunks, s_tail) = src.as_chunks::<16>();
-    let (d_chunks, d_tail) = dst.as_chunks_mut::<16>();
 
     for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
         let (s0, rest) = sc.split_first_chunk::<8>().unwrap();
@@ -340,13 +467,8 @@ fn quantize_u16_magic_fma<const UNIT_CLEAN: bool, const NO_NAN: bool>(
         let mut v1 = f32x8::load_t(token, s1);
 
         if !UNIT_CLEAN {
-            if NO_NAN {
-                v0 = v0.max_fast(zero).min_fast(one);
-                v1 = v1.max_fast(zero).min_fast(one);
-            } else {
-                v0 = (v0 & v0.simd_ge(zero)).min_fast(one);
-                v1 = (v1 & v1.simd_ge(zero)).min_fast(one);
-            }
+            v0 = (v0 & v0.simd_ge(zero)).min_fast(one);
+            v1 = (v1 & v1.simd_ge(zero)).min_fast(one);
         }
 
         let c0 = v0.mul_add_relaxed(scale, magic).bitcast_to_i32() - magic_bits;
@@ -354,26 +476,19 @@ fn quantize_u16_magic_fma<const UNIT_CLEAN: bool, const NO_NAN: bool>(
 
         c0.narrow_saturating_u16(c1).store(dc);
     }
-
-    for (&s, d) in s_tail.iter().zip(d_tail.iter_mut()) {
-        *d = scalar_quantize_u16::<UNIT_CLEAN, NO_NAN>(s);
-    }
 }
 
 /// Exact `f64x2` SIMD fallback on `wasm32` when `relaxed-simd` is absent or the runtime
 /// engine does not fuse `f32x4_relaxed_madd`.
 #[cfg(target_arch = "wasm32")]
 #[attune]
-pub(crate) fn quantize_u8_wasm_f64_wasm128_t<const UNIT_CLEAN: bool, const NO_NAN: bool>(
+fn quantize_u8_wasm_f64_chunks_wasm128_t<const UNIT_CLEAN: bool, const NO_NAN: bool>(
     token: archmage::Wasm128Token,
-    src: &[f32],
-    dst: &mut [u8],
+    s_chunks: &[[f32; 16]],
+    d_chunks: &mut [[u8; 16]],
 ) {
     use core::arch::wasm32 as w;
     use magetypes::simd::generic::{f32x4, u8x16};
-
-    let n = src.len().min(dst.len());
-    let (src, dst) = (&src[..n], &mut dst[..n]);
 
     let zero32 = w::f32x4_splat(0.0);
     let one32 = w::f32x4_splat(1.0);
@@ -398,9 +513,6 @@ pub(crate) fn quantize_u8_wasm_f64_wasm128_t<const UNIT_CLEAN: bool, const NO_NA
         w::i32x4_shuffle::<0, 1, 4, 5>(lo_i, hi_i)
     };
 
-    let (s_chunks, s_tail) = src.as_chunks::<16>();
-    let (d_chunks, d_tail) = dst.as_chunks_mut::<16>();
-
     for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
         let (s0, rest) = sc.split_first_chunk::<4>().unwrap();
         let (s1, rest) = rest.split_first_chunk::<4>().unwrap();
@@ -415,25 +527,18 @@ pub(crate) fn quantize_u8_wasm_f64_wasm128_t<const UNIT_CLEAN: bool, const NO_NA
         let bytes = w::u8x16_narrow_i16x8(p01, p23);
         u8x16::from_raw_t(token, bytes).store(dc);
     }
-
-    for (&s, d) in s_tail.iter().zip(d_tail.iter_mut()) {
-        *d = scalar_quantize_u8::<UNIT_CLEAN, NO_NAN>(s);
-    }
 }
 
 /// Exact `f64x2` SIMD fallback on `wasm32` for `f32 -> u16`.
 #[cfg(target_arch = "wasm32")]
 #[attune]
-pub(crate) fn quantize_u16_wasm_f64_wasm128_t<const UNIT_CLEAN: bool, const NO_NAN: bool>(
+fn quantize_u16_wasm_f64_chunks_wasm128_t<const UNIT_CLEAN: bool>(
     token: archmage::Wasm128Token,
-    src: &[f32],
-    dst: &mut [u16],
+    s_chunks: &[[f32; 8]],
+    d_chunks: &mut [[u16; 8]],
 ) {
     use core::arch::wasm32 as w;
     use magetypes::simd::generic::{f32x4, u16x8};
-
-    let n = src.len().min(dst.len());
-    let (src, dst) = (&src[..n], &mut dst[..n]);
 
     let zero32 = w::f32x4_splat(0.0);
     let one32 = w::f32x4_splat(1.0);
@@ -442,13 +547,9 @@ pub(crate) fn quantize_u16_wasm_f64_wasm128_t<const UNIT_CLEAN: bool, const NO_N
 
     let quant4 = |mut v: w::v128| -> w::v128 {
         if !UNIT_CLEAN {
-            if NO_NAN {
-                v = w::f32x4_pmin(one32, w::f32x4_pmax(zero32, v));
-            } else {
-                let ge0 = w::f32x4_ge(v, zero32);
-                let nonneg = w::v128_and(v, ge0);
-                v = w::f32x4_pmin(one32, nonneg);
-            }
+            let ge0 = w::f32x4_ge(v, zero32);
+            let nonneg = w::v128_and(v, ge0);
+            v = w::f32x4_pmin(one32, nonneg);
         }
         let lo64 = w::f64x2_promote_low_f32x4(v);
         let hi64 = w::f64x2_promote_low_f32x4(w::i32x4_shuffle::<2, 3, 2, 3>(v, v));
@@ -456,9 +557,6 @@ pub(crate) fn quantize_u16_wasm_f64_wasm128_t<const UNIT_CLEAN: bool, const NO_N
         let hi_i = w::i32x4_trunc_sat_f64x2_zero(w::f64x2_add(w::f64x2_mul(hi64, scale64), half64));
         w::i32x4_shuffle::<0, 1, 4, 5>(lo_i, hi_i)
     };
-
-    let (s_chunks, s_tail) = src.as_chunks::<8>();
-    let (d_chunks, d_tail) = dst.as_chunks_mut::<8>();
 
     for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
         let (s0, rest) = sc.split_first_chunk::<4>().unwrap();
@@ -468,10 +566,6 @@ pub(crate) fn quantize_u16_wasm_f64_wasm128_t<const UNIT_CLEAN: bool, const NO_N
         let words = w::u16x8_narrow_i32x4(c0, c1);
         u16x8::from_raw_t(token, words).store(dc);
     }
-
-    for (&s, d) in s_tail.iter().zip(d_tail.iter_mut()) {
-        *d = scalar_quantize_u16::<UNIT_CLEAN, NO_NAN>(s);
-    }
 }
 
 pub(crate) fn convert_f32_to_u8_round_spec<const UNIT_CLEAN: bool, const NO_NAN: bool>(
@@ -480,75 +574,130 @@ pub(crate) fn convert_f32_to_u8_round_spec<const UNIT_CLEAN: bool, const NO_NAN:
 ) {
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "avx512"))]
     if let Some(t) = archmage::X64V4xToken::summon() {
-        return quantize_u8_magic_fma_v4x_t::<UNIT_CLEAN, NO_NAN>(t, src, dst);
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0.0f32,
+            0u8,
+            quantize_u8_magic_fma_chunks_v4x_t::<UNIT_CLEAN, NO_NAN>,
+        );
     }
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     if let Some(t) = archmage::X64V3Token::summon() {
-        return quantize_u8_magic_fma_v3_t::<UNIT_CLEAN, NO_NAN>(t, src, dst);
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0.0f32,
+            0u8,
+            quantize_u8_magic_fma_chunks_v3_t::<UNIT_CLEAN, NO_NAN>,
+        );
     }
     #[cfg(target_arch = "aarch64")]
     if let Some(t) = archmage::NeonToken::summon() {
-        return quantize_u8_magic_fma_neon_t::<UNIT_CLEAN, NO_NAN>(t, src, dst);
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0.0f32,
+            0u8,
+            quantize_u8_magic_fma_chunks_neon_t::<UNIT_CLEAN, NO_NAN>,
+        );
     }
     #[cfg(target_arch = "wasm32")]
     if let Some(t) = archmage::Wasm128Token::summon() {
         #[cfg(target_feature = "relaxed-simd")]
         if wasm_fuses_relaxed_madd() {
-            return quantize_u8_magic_fma_wasm128_t::<UNIT_CLEAN, NO_NAN>(t, src, dst);
+            return run_chunked_padded(
+                t,
+                src,
+                dst,
+                0.0f32,
+                0u8,
+                quantize_u8_magic_fma_chunks_wasm128_t::<UNIT_CLEAN, NO_NAN>,
+            );
         }
-        return quantize_u8_wasm_f64_wasm128_t::<UNIT_CLEAN, NO_NAN>(t, src, dst);
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0.0f32,
+            0u8,
+            quantize_u8_wasm_f64_chunks_wasm128_t::<UNIT_CLEAN, NO_NAN>,
+        );
     }
-    let n = src.len().min(dst.len());
-    for (&s, d) in src[..n].iter().zip(dst[..n].iter_mut()) {
-        *d = scalar_quantize_u8::<UNIT_CLEAN, NO_NAN>(s);
-    }
+    scalar_quantize_u8_slice(src, dst);
 }
 
-pub(crate) fn convert_f32_to_u16_round_spec<const UNIT_CLEAN: bool, const NO_NAN: bool>(
-    src: &[f32],
-    dst: &mut [u16],
-) {
+pub(crate) fn convert_f32_to_u16_round_spec<const UNIT_CLEAN: bool>(src: &[f32], dst: &mut [u16]) {
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "avx512"))]
     if let Some(t) = archmage::X64V4xToken::summon() {
-        return quantize_u16_magic_fma_v4x_t::<UNIT_CLEAN, NO_NAN>(t, src, dst);
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0.0f32,
+            0u16,
+            quantize_u16_magic_fma_chunks_v4x_t::<UNIT_CLEAN>,
+        );
     }
     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
     if let Some(t) = archmage::X64V3Token::summon() {
-        return quantize_u16_magic_fma_v3_t::<UNIT_CLEAN, NO_NAN>(t, src, dst);
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0.0f32,
+            0u16,
+            quantize_u16_magic_fma_chunks_v3_t::<UNIT_CLEAN>,
+        );
     }
     #[cfg(target_arch = "aarch64")]
     if let Some(t) = archmage::NeonToken::summon() {
-        return quantize_u16_magic_fma_neon_t::<UNIT_CLEAN, NO_NAN>(t, src, dst);
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0.0f32,
+            0u16,
+            quantize_u16_magic_fma_chunks_neon_t::<UNIT_CLEAN>,
+        );
     }
     #[cfg(target_arch = "wasm32")]
     if let Some(t) = archmage::Wasm128Token::summon() {
         #[cfg(target_feature = "relaxed-simd")]
         if wasm_fuses_relaxed_madd() {
-            return quantize_u16_magic_fma_wasm128_t::<UNIT_CLEAN, NO_NAN>(t, src, dst);
+            return run_chunked_padded(
+                t,
+                src,
+                dst,
+                0.0f32,
+                0u16,
+                quantize_u16_magic_fma_chunks_wasm128_t::<UNIT_CLEAN>,
+            );
         }
-        return quantize_u16_wasm_f64_wasm128_t::<UNIT_CLEAN, NO_NAN>(t, src, dst);
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0.0f32,
+            0u16,
+            quantize_u16_wasm_f64_chunks_wasm128_t::<UNIT_CLEAN>,
+        );
     }
-    let n = src.len().min(dst.len());
-    for (&s, d) in src[..n].iter().zip(dst[..n].iter_mut()) {
-        *d = scalar_quantize_u16::<UNIT_CLEAN, NO_NAN>(s);
-    }
+    scalar_quantize_u16_slice(src, dst);
 }
 
-#[attune(_*_t, _v4x_t(cfg(avx512)), define(f32x8))]
-pub(crate) fn convert_f32_to_u8_truncate_spec<const UNIT_CLEAN: bool, const NO_NAN: bool>(
+#[attune(_*_t, -_scalar_t, _v4x_t(cfg(avx512)), define(f32x8))]
+fn convert_f32_to_u8_truncate_chunks(
     token: Token,
-    src: &[f32],
-    dst: &mut [u8],
+    s_chunks: &[[f32; 32]],
+    d_chunks: &mut [[u8; 32]],
 ) {
-    let n = src.len().min(dst.len());
-    let (src, dst) = (&src[..n], &mut dst[..n]);
-
     let zero = f32x8::splat_t(token, 0.0);
     let one = f32x8::splat_t(token, 1.0);
     let scale = f32x8::splat_t(token, 255.0);
-
-    let (s_chunks, s_tail) = src.as_chunks::<32>();
-    let (d_chunks, d_tail) = dst.as_chunks_mut::<32>();
 
     for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
         let (s0, rest) = sc.split_first_chunk::<8>().unwrap();
@@ -556,24 +705,15 @@ pub(crate) fn convert_f32_to_u8_truncate_spec<const UNIT_CLEAN: bool, const NO_N
         let (s2, rest) = rest.split_first_chunk::<8>().unwrap();
         let (s3, _) = rest.split_first_chunk::<8>().unwrap();
 
-        let mut v0 = f32x8::load_t(token, s0);
-        let mut v1 = f32x8::load_t(token, s1);
-        let mut v2 = f32x8::load_t(token, s2);
-        let mut v3 = f32x8::load_t(token, s3);
+        let v0 = f32x8::load_t(token, s0);
+        let v1 = f32x8::load_t(token, s1);
+        let v2 = f32x8::load_t(token, s2);
+        let v3 = f32x8::load_t(token, s3);
 
-        if !UNIT_CLEAN {
-            if NO_NAN {
-                v0 = v0.max_fast(zero).min_fast(one);
-                v1 = v1.max_fast(zero).min_fast(one);
-                v2 = v2.max_fast(zero).min_fast(one);
-                v3 = v3.max_fast(zero).min_fast(one);
-            } else {
-                v0 = (v0 & v0.simd_ge(zero)).min_fast(one);
-                v1 = (v1 & v1.simd_ge(zero)).min_fast(one);
-                v2 = (v2 & v2.simd_ge(zero)).min_fast(one);
-                v3 = (v3 & v3.simd_ge(zero)).min_fast(one);
-            }
-        }
+        let v0 = (v0 & v0.simd_ge(zero)).min_fast(one);
+        let v1 = (v1 & v1.simd_ge(zero)).min_fast(one);
+        let v2 = (v2 & v2.simd_ge(zero)).min_fast(one);
+        let v3 = (v3 & v3.simd_ge(zero)).min_fast(one);
 
         let c0 = (v0 * scale).to_i32_fast();
         let c1 = (v1 * scale).to_i32_fast();
@@ -584,69 +724,50 @@ pub(crate) fn convert_f32_to_u8_truncate_spec<const UNIT_CLEAN: bool, const NO_N
         let hi16 = c2.narrow_saturating_i16(c3);
         lo16.narrow_saturating_u8(hi16).store(dc);
     }
+}
 
-    for (&s, d) in s_tail.iter().zip(d_tail.iter_mut()) {
-        let c = if UNIT_CLEAN {
-            s
-        } else if NO_NAN {
-            s.clamp(0.0, 1.0)
-        } else if s.is_nan() {
-            0.0
-        } else {
-            s.clamp(0.0, 1.0)
-        };
+#[cold]
+#[inline(never)]
+fn convert_f32_to_u8_truncate_scalar(src: &[f32], dst: &mut [u8]) {
+    let n = src.len().min(dst.len());
+    for (&s, d) in src[..n].iter().zip(dst[..n].iter_mut()) {
+        let c = if s.is_nan() { 0.0 } else { s.clamp(0.0, 1.0) };
         *d = (c * 255.0) as u8;
     }
 }
 
-#[attune(_*_t, _v4x_t(cfg(avx512)), define(f32x8))]
-pub(crate) fn convert_f32_to_u16_truncate_spec<const UNIT_CLEAN: bool, const NO_NAN: bool>(
+#[attune(_*_t, -_scalar_t, _v4x_t(cfg(avx512)), define(f32x8))]
+fn convert_f32_to_u16_truncate_chunks(
     token: Token,
-    src: &[f32],
-    dst: &mut [u16],
+    s_chunks: &[[f32; 16]],
+    d_chunks: &mut [[u16; 16]],
 ) {
-    let n = src.len().min(dst.len());
-    let (src, dst) = (&src[..n], &mut dst[..n]);
-
     let zero = f32x8::splat_t(token, 0.0);
     let one = f32x8::splat_t(token, 1.0);
     let scale = f32x8::splat_t(token, 65535.0);
-
-    let (s_chunks, s_tail) = src.as_chunks::<16>();
-    let (d_chunks, d_tail) = dst.as_chunks_mut::<16>();
 
     for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
         let (s0, rest) = sc.split_first_chunk::<8>().unwrap();
         let (s1, _) = rest.split_first_chunk::<8>().unwrap();
 
-        let mut v0 = f32x8::load_t(token, s0);
-        let mut v1 = f32x8::load_t(token, s1);
+        let v0 = f32x8::load_t(token, s0);
+        let v1 = f32x8::load_t(token, s1);
 
-        if !UNIT_CLEAN {
-            if NO_NAN {
-                v0 = v0.max_fast(zero).min_fast(one);
-                v1 = v1.max_fast(zero).min_fast(one);
-            } else {
-                v0 = (v0 & v0.simd_ge(zero)).min_fast(one);
-                v1 = (v1 & v1.simd_ge(zero)).min_fast(one);
-            }
-        }
+        let v0 = (v0 & v0.simd_ge(zero)).min_fast(one);
+        let v1 = (v1 & v1.simd_ge(zero)).min_fast(one);
 
         let c0 = (v0 * scale).to_i32_fast();
         let c1 = (v1 * scale).to_i32_fast();
         c0.narrow_saturating_u16(c1).store(dc);
     }
+}
 
-    for (&s, d) in s_tail.iter().zip(d_tail.iter_mut()) {
-        let c = if UNIT_CLEAN {
-            s
-        } else if NO_NAN {
-            s.clamp(0.0, 1.0)
-        } else if s.is_nan() {
-            0.0
-        } else {
-            s.clamp(0.0, 1.0)
-        };
+#[cold]
+#[inline(never)]
+fn convert_f32_to_u16_truncate_scalar(src: &[f32], dst: &mut [u16]) {
+    let n = src.len().min(dst.len());
+    for (&s, d) in src[..n].iter().zip(dst[..n].iter_mut()) {
+        let c = if s.is_nan() { 0.0 } else { s.clamp(0.0, 1.0) };
         *d = (c * 65535.0) as u16;
     }
 }
@@ -665,72 +786,116 @@ pub(crate) fn convert_f32_to_u8_slice(src: &[f32], dst: &mut [u8], facts: FloatF
 #[inline]
 pub(crate) fn convert_f32_to_u16_slice(src: &[f32], dst: &mut [u16], facts: FloatFacts) {
     if facts.contains(UNIT_CLEAN_FACTS) {
-        convert_f32_to_u16_round_spec::<true, true>(src, dst);
-    } else if facts.contains(FloatFacts::NO_NAN) {
-        convert_f32_to_u16_round_spec::<false, true>(src, dst);
+        convert_f32_to_u16_round_spec::<true>(src, dst);
     } else {
-        convert_f32_to_u16_round_spec::<false, false>(src, dst);
+        convert_f32_to_u16_round_spec::<false>(src, dst);
     }
 }
 
-#[inline]
-pub(crate) fn convert_f32_to_u8_truncate_slice(src: &[f32], dst: &mut [u8], facts: FloatFacts) {
-    if facts.contains(UNIT_CLEAN_FACTS) {
-        reattune!(
-            convert_f32_to_u8_truncate_spec::<true, true>(src, dst),
-            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
-        );
-    } else if facts.contains(FloatFacts::NO_NAN) {
-        reattune!(
-            convert_f32_to_u8_truncate_spec::<false, true>(src, dst),
-            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
-        );
-    } else {
-        reattune!(
-            convert_f32_to_u8_truncate_spec::<false, false>(src, dst),
-            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+pub(crate) fn convert_f32_to_u8_truncate_slice(src: &[f32], dst: &mut [u8], _facts: FloatFacts) {
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "avx512"))]
+    if let Some(t) = archmage::X64V4xToken::summon() {
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0.0f32,
+            0u8,
+            convert_f32_to_u8_truncate_chunks_v4x_t,
         );
     }
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    if let Some(t) = archmage::X64V3Token::summon() {
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0.0f32,
+            0u8,
+            convert_f32_to_u8_truncate_chunks_v3_t,
+        );
+    }
+    #[cfg(target_arch = "aarch64")]
+    if let Some(t) = archmage::NeonToken::summon() {
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0.0f32,
+            0u8,
+            convert_f32_to_u8_truncate_chunks_neon_t,
+        );
+    }
+    #[cfg(target_arch = "wasm32")]
+    if let Some(t) = archmage::Wasm128Token::summon() {
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0.0f32,
+            0u8,
+            convert_f32_to_u8_truncate_chunks_wasm128_t,
+        );
+    }
+    convert_f32_to_u8_truncate_scalar(src, dst);
 }
 
-#[inline]
-pub(crate) fn convert_f32_to_u16_truncate_slice(src: &[f32], dst: &mut [u16], facts: FloatFacts) {
-    if facts.contains(UNIT_CLEAN_FACTS) {
-        reattune!(
-            convert_f32_to_u16_truncate_spec::<true, true>(src, dst),
-            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
-        );
-    } else if facts.contains(FloatFacts::NO_NAN) {
-        reattune!(
-            convert_f32_to_u16_truncate_spec::<false, true>(src, dst),
-            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
-        );
-    } else {
-        reattune!(
-            convert_f32_to_u16_truncate_spec::<false, false>(src, dst),
-            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+pub(crate) fn convert_f32_to_u16_truncate_slice(src: &[f32], dst: &mut [u16], _facts: FloatFacts) {
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "avx512"))]
+    if let Some(t) = archmage::X64V4xToken::summon() {
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0.0f32,
+            0u16,
+            convert_f32_to_u16_truncate_chunks_v4x_t,
         );
     }
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    if let Some(t) = archmage::X64V3Token::summon() {
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0.0f32,
+            0u16,
+            convert_f32_to_u16_truncate_chunks_v3_t,
+        );
+    }
+    #[cfg(target_arch = "aarch64")]
+    if let Some(t) = archmage::NeonToken::summon() {
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0.0f32,
+            0u16,
+            convert_f32_to_u16_truncate_chunks_neon_t,
+        );
+    }
+    #[cfg(target_arch = "wasm32")]
+    if let Some(t) = archmage::Wasm128Token::summon() {
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0.0f32,
+            0u16,
+            convert_f32_to_u16_truncate_chunks_wasm128_t,
+        );
+    }
+    convert_f32_to_u16_truncate_scalar(src, dst);
 }
 
 // ---------------------------------------------------------------------------
 // RGBA f32 premultiply / unpremultiply
 // ---------------------------------------------------------------------------
 
-#[attune(_*_t, _v4x_t(cfg(avx512)), define(f32x8, i32x8))]
-pub(crate) fn premul_rgba_f32_spec<const FINITE_NONNEG: bool>(
-    token: Token,
-    src: &[f32],
-    dst: &mut [f32],
-) {
-    let n = (src.len().min(dst.len()) / 4) * 4;
-    let (src, dst) = (&src[..n], &mut dst[..n]);
-
+#[attune(_*_t, -_scalar_t, _v4x_t(cfg(avx512)), define(f32x8, i32x8))]
+fn premul_rgba_f32_chunks(token: Token, s_chunks: &[[f32; 8]], d_chunks: &mut [[f32; 8]]) {
     let zero = f32x8::splat_t(token, 0.0);
     let alpha_lane_mask = i32x8::from_array_t(token, [0, 0, 0, -1, 0, 0, 0, -1]).bitcast_to_f32();
-
-    let (s_chunks, s_tail) = src.as_chunks::<8>();
-    let (d_chunks, d_tail) = dst.as_chunks_mut::<8>();
 
     for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
         let v = f32x8::load_t(token, sc);
@@ -743,23 +908,20 @@ pub(crate) fn premul_rgba_f32_spec<const FINITE_NONNEG: bool>(
         );
         let prod = v * alpha;
         let with_a = f32x8::blend(alpha_lane_mask, v, prod);
-        let out = if FINITE_NONNEG {
-            // Finite non-negative lanes have no `Inf * 0 = NaN` and no `-x * 0 = -0.0`;
-            // handle `-0.0` alpha cleanly via zero blend or keep straight `with_a` when `a != -0.0`.
-            let zero_a = alpha.simd_eq(zero);
-            f32x8::blend(zero_a, zero, with_a)
-        } else {
-            let zero_a = alpha.simd_eq(zero);
-            f32x8::blend(zero_a, zero, with_a)
-        };
+        let zero_a = alpha.simd_eq(zero);
+        let out = f32x8::blend(zero_a, zero, with_a);
         out.store(dc);
     }
+}
 
-    for (sp, dp) in s_tail
+#[cold]
+#[inline(never)]
+fn premul_rgba_f32_scalar(src: &[f32], dst: &mut [f32]) {
+    for (sp, dp) in src
         .as_chunks::<4>()
         .0
         .iter()
-        .zip(d_tail.as_chunks_mut::<4>().0)
+        .zip(dst.as_chunks_mut::<4>().0)
     {
         let a = sp[3];
         if a == 0.0 {
@@ -770,17 +932,11 @@ pub(crate) fn premul_rgba_f32_spec<const FINITE_NONNEG: bool>(
     }
 }
 
-#[attune(_*_t, _v4x_t(cfg(avx512)), define(f32x8, i32x8))]
-pub(crate) fn unpremul_rgba_f32_spec(token: Token, src: &[f32], dst: &mut [f32]) {
-    let n = (src.len().min(dst.len()) / 4) * 4;
-    let (src, dst) = (&src[..n], &mut dst[..n]);
-
+#[attune(_*_t, -_scalar_t, _v4x_t(cfg(avx512)), define(f32x8, i32x8))]
+fn unpremul_rgba_f32_chunks(token: Token, s_chunks: &[[f32; 8]], d_chunks: &mut [[f32; 8]]) {
     let zero = f32x8::splat_t(token, 0.0);
     let one = f32x8::splat_t(token, 1.0);
     let alpha_lane_mask = i32x8::from_array_t(token, [0, 0, 0, -1, 0, 0, 0, -1]).bitcast_to_f32();
-
-    let (s_chunks, s_tail) = src.as_chunks::<8>();
-    let (d_chunks, d_tail) = dst.as_chunks_mut::<8>();
 
     for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
         let v = f32x8::load_t(token, sc);
@@ -798,12 +954,16 @@ pub(crate) fn unpremul_rgba_f32_spec(token: Token, src: &[f32], dst: &mut [f32])
         let out = f32x8::blend(zero_a, zero, with_a);
         out.store(dc);
     }
+}
 
-    for (sp, dp) in s_tail
+#[cold]
+#[inline(never)]
+fn unpremul_rgba_f32_scalar(src: &[f32], dst: &mut [f32]) {
+    for (sp, dp) in src
         .as_chunks::<4>()
         .0
         .iter()
-        .zip(d_tail.as_chunks_mut::<4>().0)
+        .zip(dst.as_chunks_mut::<4>().0)
     {
         let a = sp[3];
         if a == 0.0 {
@@ -814,27 +974,62 @@ pub(crate) fn unpremul_rgba_f32_spec(token: Token, src: &[f32], dst: &mut [f32])
     }
 }
 
-#[inline]
-pub(crate) fn premul_rgba_f32_slice(src: &[f32], dst: &mut [f32], facts: FloatFacts) {
-    if facts.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::NON_NEGATIVE) {
-        reattune!(
-            premul_rgba_f32_spec::<true>(src, dst),
-            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
-        );
-    } else {
-        reattune!(
-            premul_rgba_f32_spec::<false>(src, dst),
-            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+pub(crate) fn premul_rgba_f32_slice(src: &[f32], dst: &mut [f32], _facts: FloatFacts) {
+    let n = (src.len().min(dst.len()) / 4) * 4;
+    let (src, dst) = (&src[..n], &mut dst[..n]);
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "avx512"))]
+    if let Some(t) = archmage::X64V4xToken::summon() {
+        return run_chunked_padded(t, src, dst, 0.0f32, 0.0f32, premul_rgba_f32_chunks_v4x_t);
+    }
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    if let Some(t) = archmage::X64V3Token::summon() {
+        return run_chunked_padded(t, src, dst, 0.0f32, 0.0f32, premul_rgba_f32_chunks_v3_t);
+    }
+    #[cfg(target_arch = "aarch64")]
+    if let Some(t) = archmage::NeonToken::summon() {
+        return run_chunked_padded(t, src, dst, 0.0f32, 0.0f32, premul_rgba_f32_chunks_neon_t);
+    }
+    #[cfg(target_arch = "wasm32")]
+    if let Some(t) = archmage::Wasm128Token::summon() {
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0.0f32,
+            0.0f32,
+            premul_rgba_f32_chunks_wasm128_t,
         );
     }
+    premul_rgba_f32_scalar(src, dst);
 }
 
-#[inline]
 pub(crate) fn unpremul_rgba_f32_slice(src: &[f32], dst: &mut [f32], _facts: FloatFacts) {
-    reattune!(
-        unpremul_rgba_f32_spec(src, dst),
-        [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
-    );
+    let n = (src.len().min(dst.len()) / 4) * 4;
+    let (src, dst) = (&src[..n], &mut dst[..n]);
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2", feature = "avx512"))]
+    if let Some(t) = archmage::X64V4xToken::summon() {
+        return run_chunked_padded(t, src, dst, 0.0f32, 0.0f32, unpremul_rgba_f32_chunks_v4x_t);
+    }
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
+    if let Some(t) = archmage::X64V3Token::summon() {
+        return run_chunked_padded(t, src, dst, 0.0f32, 0.0f32, unpremul_rgba_f32_chunks_v3_t);
+    }
+    #[cfg(target_arch = "aarch64")]
+    if let Some(t) = archmage::NeonToken::summon() {
+        return run_chunked_padded(t, src, dst, 0.0f32, 0.0f32, unpremul_rgba_f32_chunks_neon_t);
+    }
+    #[cfg(target_arch = "wasm32")]
+    if let Some(t) = archmage::Wasm128Token::summon() {
+        return run_chunked_padded(
+            t,
+            src,
+            dst,
+            0.0f32,
+            0.0f32,
+            unpremul_rgba_f32_chunks_wasm128_t,
+        );
+    }
+    unpremul_rgba_f32_scalar(src, dst);
 }
 
 #[cfg(feature = "__bench_float_depth")]
@@ -846,10 +1041,7 @@ pub mod bench_shims {
     }
 
     pub fn u8_to_f32_recip_1ulp(src: &[u8], dst: &mut [f32]) {
-        reattune!(
-            convert_u8_to_f32_spec::<false>(src, dst),
-            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
-        );
+        convert_u8_to_f32_dispatch::<false>(src, dst);
     }
 
     #[attune(_*_t, _v4x_t(cfg(avx512)), define(f32x8, u8x32))]
@@ -935,10 +1127,7 @@ pub mod bench_shims {
     }
 
     pub fn u16_to_f32_recip_1ulp(src: &[u16], dst: &mut [f32]) {
-        reattune!(
-            convert_u16_to_f32_spec::<false>(src, dst),
-            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
-        );
+        convert_u16_to_f32_dispatch::<false>(src, dst);
     }
 
     #[attune(_*_t, _v4x_t(cfg(avx512)), define(f32x8, u16x16))]
@@ -1042,7 +1231,7 @@ pub mod bench_shims {
                 .store(dc);
         }
         for (&s, d) in s_tail.iter().zip(d_tail.iter_mut()) {
-            *d = scalar_quantize_u8::<false, false>(s);
+            *d = scalar_quantize_u8(s);
         }
     }
 
@@ -1058,15 +1247,15 @@ pub mod bench_shims {
     }
 
     pub fn f32_to_u16_magic_fma_clamped(src: &[f32], dst: &mut [u16]) {
-        convert_f32_to_u16_round_spec::<false, false>(src, dst);
+        convert_f32_to_u16_round_spec::<false>(src, dst);
     }
 
     pub fn f32_to_u16_magic_fma_no_nan(src: &[f32], dst: &mut [u16]) {
-        convert_f32_to_u16_round_spec::<false, true>(src, dst);
+        convert_f32_to_u16_round_spec::<false>(src, dst);
     }
 
     pub fn f32_to_u16_magic_fma_unit_clean(src: &[f32], dst: &mut [u16]) {
-        convert_f32_to_u16_round_spec::<true, true>(src, dst);
+        convert_f32_to_u16_round_spec::<true>(src, dst);
     }
 
     #[attune(_*_t, _v4x_t(cfg(avx512)), define(f32x8))]
@@ -1088,7 +1277,7 @@ pub mod bench_shims {
             c0.narrow_saturating_u16(c1).store(dc);
         }
         for (&s, d) in s_tail.iter().zip(d_tail.iter_mut()) {
-            *d = scalar_quantize_u16::<false, false>(s);
+            *d = scalar_quantize_u16(s);
         }
     }
 
@@ -1202,13 +1391,11 @@ mod tests {
             u16_witness.push(f32::from_bits(f.to_bits() + 1));
         }
 
-        let ref_u8: alloc::vec::Vec<u8> = u8_witness
-            .iter()
-            .map(|&s| scalar_quantize_u8::<false, false>(s))
-            .collect();
+        let ref_u8: alloc::vec::Vec<u8> =
+            u8_witness.iter().map(|&s| scalar_quantize_u8(s)).collect();
         let ref_u16: alloc::vec::Vec<u16> = u16_witness
             .iter()
-            .map(|&s| scalar_quantize_u16::<false, false>(s))
+            .map(|&s| scalar_quantize_u16(s))
             .collect();
 
         let no_nan_only: alloc::vec::Vec<f32> = u16_witness
@@ -1216,13 +1403,11 @@ mod tests {
             .copied()
             .filter(|x| !x.is_nan())
             .collect();
-        let ref_no_nan_u8: alloc::vec::Vec<u8> = no_nan_only
-            .iter()
-            .map(|&s| scalar_quantize_u8::<false, true>(s))
-            .collect();
+        let ref_no_nan_u8: alloc::vec::Vec<u8> =
+            no_nan_only.iter().map(|&s| scalar_quantize_u8(s)).collect();
         let ref_no_nan_u16: alloc::vec::Vec<u16> = no_nan_only
             .iter()
-            .map(|&s| scalar_quantize_u16::<false, true>(s))
+            .map(|&s| scalar_quantize_u16(s))
             .collect();
         let ref_trunc_no_nan_u8: alloc::vec::Vec<u8> = no_nan_only
             .iter()
@@ -1238,14 +1423,10 @@ mod tests {
             .copied()
             .filter(|x| !x.is_nan() && *x >= 0.0 && *x <= 1.0)
             .collect();
-        let ref_unit_u8: alloc::vec::Vec<u8> = unit_only
-            .iter()
-            .map(|&s| scalar_quantize_u8::<true, true>(s))
-            .collect();
-        let ref_unit_u16: alloc::vec::Vec<u16> = unit_only
-            .iter()
-            .map(|&s| scalar_quantize_u16::<true, true>(s))
-            .collect();
+        let ref_unit_u8: alloc::vec::Vec<u8> =
+            unit_only.iter().map(|&s| scalar_quantize_u8(s)).collect();
+        let ref_unit_u16: alloc::vec::Vec<u16> =
+            unit_only.iter().map(|&s| scalar_quantize_u16(s)).collect();
 
         let _ = archmage::testing::for_each_token_permutation(
             archmage::testing::CompileTimePolicy::Warn,

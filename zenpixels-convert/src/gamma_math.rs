@@ -1,8 +1,11 @@
+#[cfg(any(feature = "cms-moxcms", test))]
 use archmage::ScalarToken;
 #[cfg(any(feature = "cms-moxcms", test))]
 use magemath::SimdMath;
+#[cfg(any(feature = "cms-moxcms", test))]
 use magemath::powf::{Powf, PowfOptions};
 
+#[cfg(any(feature = "cms-moxcms", test))]
 const MAGNITUDE_POWER: u128 = PowfOptions::new()
     .reject_subnormals()
     .highp()
@@ -11,6 +14,7 @@ const MAGNITUDE_POWER: u128 = PowfOptions::new()
 
 /// High-precision power on positive normal magnitudes. The existing libm path
 /// owns exceptional inputs and values outside the checked approximation range.
+#[cfg(any(feature = "cms-moxcms", test))]
 #[inline]
 pub(crate) fn magnitude_pow(base: f32, exponent: f32) -> f32 {
     Powf::<MAGNITUDE_POWER>::scalar_with_token(ScalarToken, base, exponent)

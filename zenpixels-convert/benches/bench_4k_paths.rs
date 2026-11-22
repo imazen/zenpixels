@@ -44,9 +44,9 @@ const UNIT_CLEAN: FloatFacts = FloatFacts::NO_NAN
     .union(FloatFacts::NON_NEGATIVE)
     .union(FloatFacts::AT_MOST_ONE);
 const FINITE: FloatFacts = FloatFacts::NO_NAN.union(FloatFacts::NO_INFINITE);
-const FINITE_NONNEG: FloatFacts = FINITE.union(FloatFacts::NON_NEGATIVE);
-const FINITE_NONNEG_NOSUB: FloatFacts = FINITE_NONNEG.union(FloatFacts::NO_SUBNORMALS);
-const FINITE_POS_NOSUB: FloatFacts = FINITE_NONNEG_NOSUB.union(FloatFacts::POSITIVE);
+const UNIT_FINITE: FloatFacts = UNIT_CLEAN.union(FloatFacts::NO_INFINITE);
+const UNIT_FINITE_NOSUB: FloatFacts = UNIT_FINITE.union(FloatFacts::NO_SUBNORMALS);
+const UNIT_FINITE_POS_NOSUB: FloatFacts = UNIT_FINITE_NOSUB.union(FloatFacts::POSITIVE);
 
 struct FrameScratch {
     src_buf: Vec<u8>,
@@ -1034,7 +1034,7 @@ fn all_cases() -> Vec<Case> {
         .fill(FillKind::PositiveNoSub),
         Case::new(
             "oklab",
-            "rgb_to_oklab_finite",
+            "rgb_to_oklab_finite_unbounded",
             desc(T::F32, L::Rgb, n, Tf::Linear, bt709),
             desc(T::F32, L::Oklab, n, Tf::Unknown, bt709),
         )
@@ -1042,27 +1042,27 @@ fn all_cases() -> Vec<Case> {
         .fill(FillKind::PositiveNoSub),
         Case::new(
             "oklab",
-            "rgb_to_oklab_finite_nonneg",
+            "rgb_to_oklab_unit_finite",
             desc(T::F32, L::Rgb, n, Tf::Linear, bt709),
             desc(T::F32, L::Oklab, n, Tf::Unknown, bt709),
         )
-        .facts(FINITE_NONNEG)
+        .facts(UNIT_FINITE)
         .fill(FillKind::PositiveNoSub),
         Case::new(
             "oklab",
-            "rgb_to_oklab_finite_nonneg_nosub",
+            "rgb_to_oklab_unit_nosub",
             desc(T::F32, L::Rgb, n, Tf::Linear, bt709),
             desc(T::F32, L::Oklab, n, Tf::Unknown, bt709),
         )
-        .facts(FINITE_NONNEG_NOSUB)
+        .facts(UNIT_FINITE_NOSUB)
         .fill(FillKind::PositiveNoSub),
         Case::new(
             "oklab",
-            "rgb_to_oklab_finite_pos_nosub",
+            "rgb_to_oklab_unit_pos_nosub",
             desc(T::F32, L::Rgb, n, Tf::Linear, bt709),
             desc(T::F32, L::Oklab, n, Tf::Unknown, bt709),
         )
-        .facts(FINITE_POS_NOSUB)
+        .facts(UNIT_FINITE_POS_NOSUB)
         .fill(FillKind::PositiveNoSub),
         Case::new(
             "oklab",
@@ -1073,11 +1073,11 @@ fn all_cases() -> Vec<Case> {
         .fill(FillKind::PositiveNoSub),
         Case::new(
             "oklab",
-            "rgba_to_oklaba_finite_nonneg_nosub",
+            "rgba_to_oklaba_unit_nosub",
             desc(T::F32, L::Rgba, s, Tf::Linear, bt709),
             desc(T::F32, L::OklabA, s, Tf::Unknown, bt709),
         )
-        .facts(FINITE_NONNEG_NOSUB)
+        .facts(UNIT_FINITE_NOSUB)
         .fill(FillKind::PositiveNoSub),
         Case::new(
             "oklab",
