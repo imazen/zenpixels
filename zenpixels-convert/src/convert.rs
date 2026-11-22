@@ -28,6 +28,7 @@ fn has_numeric_kernels(channel: ChannelType) -> bool {
 /// The linear RGB form an Oklab conversion must pass through, when `from` and `to` aren't already next to
 /// each other. The Oklab kernels take and give linear RGB, so every transfer, depth and gamut change
 /// happens on the RGB side.
+#[cfg(feature = "oklab")]
 fn oklab_pivot(from: PixelDescriptor, to: PixelDescriptor) -> Option<PixelDescriptor> {
     let is_oklab =
         |d: PixelDescriptor| matches!(d.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA);
@@ -283,6 +284,8 @@ fn step_output_trust(
     in_trust: StepFloatTrust,
 ) -> StepFloatTrust {
     use zenpixels::sample::FloatFacts;
+    #[cfg(not(feature = "hdr-transfers"))]
+    let _ = pq_anchor_scale;
     if !to.channel_type().is_float() {
         return StepFloatTrust::default();
     }
@@ -369,12 +372,20 @@ fn step_output_trust(
             color_min_exp: Some(-12),
             color_bounded: true,
         },
-        ConvertStep::U16ToF32 | ConvertStep::HlgU16ToLinearF32 => StepFloatTrust {
+        ConvertStep::U16ToF32 => StepFloatTrust {
             facts: unit_normal,
             color_facts: unit_normal,
             color_min_exp: Some(-34),
             color_bounded: true,
         },
+        #[cfg(feature = "hdr-transfers")]
+        ConvertStep::HlgU16ToLinearF32 => StepFloatTrust {
+            facts: unit_normal,
+            color_facts: unit_normal,
+            color_min_exp: Some(-34),
+            color_bounded: true,
+        },
+        #[cfg(feature = "hdr-transfers")]
         ConvertStep::PqU16ToLinearF32 => {
             if pq_anchor_scale.is_finite() && pq_anchor_scale > 0.0 {
                 let inv = 1.0 / pq_anchor_scale;
@@ -434,6 +445,7 @@ fn step_output_trust(
                     .contains(FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE),
             }
         }
+        #[cfg(feature = "hdr-transfers")]
         ConvertStep::PqF32ToLinearF32 => {
             if pq_anchor_scale.is_finite() && pq_anchor_scale > 0.0 {
                 let inv = 1.0 / pq_anchor_scale;
@@ -450,6 +462,7 @@ fn step_output_trust(
             }
             StepFloatTrust::default()
         }
+        #[cfg(feature = "hdr-transfers")]
         ConvertStep::LinearF32ToPqF32 => {
             if pq_anchor_scale.is_finite() && pq_anchor_scale >= 0.0 {
                 let mut cf = FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::AT_MOST_ONE;
@@ -489,6 +502,7 @@ fn step_output_trust(
             }
             combine_trust(to, out_cf, in_trust.facts, min_exp, true)
         }
+        #[cfg(feature = "hdr-transfers")]
         ConvertStep::HlgF32ToLinearF32 | ConvertStep::LinearF32ToHlgF32 => {
             // HLG kernels clamp negatives to 0.0, but values above 1.0 are NOT clamped
             // (`hlg_to_linear(2.0) > 280`, `hlg_to_linear(17.0) == +Inf`, `linear_to_hlg(2.0) > 1.0`).
@@ -608,6 +622,7 @@ fn step_output_trust(
             color_min_exp: None,
             color_bounded: true,
         },
+        #[cfg(feature = "oklab")]
         ConvertStep::LinearRgbToOklab | ConvertStep::LinearRgbaToOklaba => {
             if in_trust
                 .color_facts
@@ -641,6 +656,7 @@ fn step_output_trust(
                 StepFloatTrust::default()
             }
         }
+        #[cfg(feature = "perceptual")]
         ConvertStep::Perceptual(p) => match p {
             perceptual::PerceptualStep::DecodeIntToF32 { layout, .. } => {
                 let mut f =
@@ -770,6 +786,15 @@ fn matte_background(
     // An HDR background's linear is only comparable to a source with the same transfer.
     if (from.has_alpha() && from.alpha() != Some(AlphaMode::Opaque))
         || (hdr && from.transfer() != source.transfer())
+    {
+        return Err(whereat::at!(ConvertError::NoPath { from, to: source }));
+    }
+    #[cfg(not(feature = "hdr-transfers"))]
+    if hdr
+        || matches!(
+            source.transfer(),
+            TransferFunction::Pq | TransferFunction::Hlg
+        )
     {
         return Err(whereat::at!(ConvertError::NoPath { from, to: source }));
     }
@@ -934,6 +959,7 @@ impl core::fmt::Debug for ToneMapStep {
 pub(crate) enum ConvertStep {
     /// No-op (identity).
     Identity,
+    #[cfg(feature = "hdr-transfers")]
     HlgRender(hlg_render::PreparedHlg),
     /// BGRA → RGBA byte swizzle (or vice versa).
     SwizzleBgraRgba,
@@ -955,10 +981,7 @@ pub(crate) enum ConvertStep {
     /// treated as linear regardless of color-channel TF. The matte
     /// `linear` is the background in the source's primaries and linear light, resolved once at
     /// planning so that rows only blend.
-    MatteComposite {
-        linear: [f32; 3],
-        clip: bool,
-    },
+    MatteComposite { linear: [f32; 3], clip: bool },
     /// Gray → RGB (replicate gray to all 3 channels).
     GrayToRgb,
     /// Gray → RGBA (replicate + opaque alpha).
@@ -974,18 +997,12 @@ pub(crate) enum ConvertStep {
     /// Coefficients are resolved from `ConvertOptions::luma` at plan build
     /// time (`new_explicit`). Default for plans built via `Self::new`
     /// without options is `LumaCoefficients::Bt709`.
-    RgbToGray {
-        coefficients: LumaCoefficients,
-    },
+    RgbToGray { coefficients: LumaCoefficients },
     /// RGBA → Gray, drop alpha. See [`RgbToGray`](Self::RgbToGray) for
     /// semantic and coefficient resolution.
-    RgbaToGray {
-        coefficients: LumaCoefficients,
-    },
+    RgbaToGray { coefficients: LumaCoefficients },
     /// RGBA → GrayAlpha, preserving alpha and using encoded luma coefficients.
-    RgbaToGrayAlpha {
-        coefficients: LumaCoefficients,
-    },
+    RgbaToGrayAlpha { coefficients: LumaCoefficients },
     /// GrayAlpha → RGBA (replicate gray, keep alpha).
     GrayAlphaToRgba,
     /// GrayAlpha → RGB (replicate gray, drop alpha).
@@ -1009,9 +1026,7 @@ pub(crate) enum ConvertStep {
     /// u16 → u8 high-byte truncation (`v >> 8`, `DepthPolicy::Truncate`).
     U16ToU8Truncate,
     /// Composite SDR transfer conversion and final u16 → u8 quantisation in f64.
-    SdrU16ToU8 {
-        to: TransferFunction,
-    },
+    SdrU16ToU8 { to: TransferFunction },
     /// u8 → u16 (v * 257).
     U8ToU16,
     /// u16 → f32 (v / 65535.0).
@@ -1025,20 +1040,28 @@ pub(crate) enum ConvertStep {
     /// f32 → f16 (round-to-nearest-even, no TF).
     F32ToF16,
     /// PQ (SMPTE ST 2084) u16 → linear f32 (EOTF).
+    #[cfg(feature = "hdr-transfers")]
     PqU16ToLinearF32,
     /// Linear f32 → PQ u16 (inverse EOTF / OETF).
+    #[cfg(feature = "hdr-transfers")]
     LinearF32ToPqU16,
     /// PQ f32 `[0,1]` → linear f32 (EOTF, no depth change).
+    #[cfg(feature = "hdr-transfers")]
     PqF32ToLinearF32,
     /// Linear f32 → PQ f32 `[0,1]` (OETF, no depth change).
+    #[cfg(feature = "hdr-transfers")]
     LinearF32ToPqF32,
     /// HLG (ARIB STD-B67) u16 → linear f32 (EOTF).
+    #[cfg(feature = "hdr-transfers")]
     HlgU16ToLinearF32,
     /// Linear f32 → HLG u16 (OETF).
+    #[cfg(feature = "hdr-transfers")]
     LinearF32ToHlgU16,
     /// HLG f32 `[0,1]` → linear f32 (EOTF, no depth change).
+    #[cfg(feature = "hdr-transfers")]
     HlgF32ToLinearF32,
     /// Linear f32 → HLG f32 `[0,1]` (OETF, no depth change).
+    #[cfg(feature = "hdr-transfers")]
     LinearF32ToHlgF32,
     /// sRGB f32 `[0,1]` → linear f32 (EOTF, no depth change). Clamps input.
     SrgbF32ToLinearF32,
@@ -1067,12 +1090,16 @@ pub(crate) enum ConvertStep {
     /// Premultiplied → Straight alpha.
     PremulToStraight,
     /// Linear RGB f32 → Oklab f32 (3-channel color model change).
+    #[cfg(feature = "oklab")]
     LinearRgbToOklab,
     /// Oklab f32 → Linear RGB f32 (3-channel color model change).
+    #[cfg(feature = "oklab")]
     OklabToLinearRgb,
     /// Linear RGBA f32 → Oklaba f32 (4-channel, alpha preserved).
+    #[cfg(feature = "oklab")]
     LinearRgbaToOklaba,
     /// Oklaba f32 → Linear RGBA f32 (4-channel, alpha preserved).
+    #[cfg(feature = "oklab")]
     OklabaToLinearRgba,
     /// Apply a 3×3 gamut matrix to linear RGB f32 (3 channels per pixel).
     ///
@@ -1128,8 +1155,10 @@ pub(crate) enum ConvertStep {
     /// target unit cube using a hue-preserving rational knee curve.
     /// Skipped (no step emitted) when the target is BT.2020 — the
     /// wide-gamut output mode.
+    #[cfg(feature = "oklab")]
     SoftCompressOklch(alloc::sync::Arc<crate::hdr::SoftCompress>),
     /// Closed-form perceptual and polar/cylindrical step (`Oklch`, `Lch`, `Jzazbz`, `Jzczhz`, `Hsl`, `Hsv`).
+    #[cfg(feature = "perceptual")]
     Perceptual(perceptual::PerceptualStep),
 }
 
@@ -1143,6 +1172,7 @@ impl ConvertStep {
     pub(crate) const fn variant_name(&self) -> &'static str {
         match self {
             Self::Identity => "Identity",
+            #[cfg(feature = "hdr-transfers")]
             Self::HlgRender(_) => "HlgRender",
             Self::SwizzleBgraRgba => "SwizzleBgraRgba",
             Self::SwizzleBgrRgb => "SwizzleBgrRgb",
@@ -1173,13 +1203,21 @@ impl ConvertStep {
             Self::F32ToU16Truncate => "F32ToU16Truncate",
             Self::F16ToF32 => "F16ToF32",
             Self::F32ToF16 => "F32ToF16",
+            #[cfg(feature = "hdr-transfers")]
             Self::PqU16ToLinearF32 => "PqU16ToLinearF32",
+            #[cfg(feature = "hdr-transfers")]
             Self::LinearF32ToPqU16 => "LinearF32ToPqU16",
+            #[cfg(feature = "hdr-transfers")]
             Self::PqF32ToLinearF32 => "PqF32ToLinearF32",
+            #[cfg(feature = "hdr-transfers")]
             Self::LinearF32ToPqF32 => "LinearF32ToPqF32",
+            #[cfg(feature = "hdr-transfers")]
             Self::HlgU16ToLinearF32 => "HlgU16ToLinearF32",
+            #[cfg(feature = "hdr-transfers")]
             Self::LinearF32ToHlgU16 => "LinearF32ToHlgU16",
+            #[cfg(feature = "hdr-transfers")]
             Self::HlgF32ToLinearF32 => "HlgF32ToLinearF32",
+            #[cfg(feature = "hdr-transfers")]
             Self::LinearF32ToHlgF32 => "LinearF32ToHlgF32",
             Self::SrgbF32ToLinearF32 => "SrgbF32ToLinearF32",
             Self::LinearF32ToSrgbF32 => "LinearF32ToSrgbF32",
@@ -1193,9 +1231,13 @@ impl ConvertStep {
             Self::LinearF32ToGamma22F32Extended => "LinearF32ToGamma22F32Extended",
             Self::StraightToPremul => "StraightToPremul",
             Self::PremulToStraight => "PremulToStraight",
+            #[cfg(feature = "oklab")]
             Self::LinearRgbToOklab => "LinearRgbToOklab",
+            #[cfg(feature = "oklab")]
             Self::OklabToLinearRgb => "OklabToLinearRgb",
+            #[cfg(feature = "oklab")]
             Self::LinearRgbaToOklaba => "LinearRgbaToOklaba",
+            #[cfg(feature = "oklab")]
             Self::OklabaToLinearRgba => "OklabaToLinearRgba",
             Self::GamutMatrixRgbF32(..) => "GamutMatrixRgbF32",
             Self::GamutMatrixRgbaF32(..) => "GamutMatrixRgbaF32",
@@ -1207,9 +1249,10 @@ impl ConvertStep {
             // wants to differentiate Bt2446-A vs FilmicSpline vs custom.
             // Tests that pinned the historical `"ToneMapBt2446A"` were
             // updated to `"ToneMap"` in the same commit.
-            #[cfg(feature = "hdr-experimental")]
             Self::ToneMap(_) => "ToneMap",
+            #[cfg(feature = "oklab")]
             Self::SoftCompressOklch(_) => "SoftCompressOklch",
+            #[cfg(feature = "perceptual")]
             Self::Perceptual(p) => p.variant_name(),
         }
     }
@@ -1237,6 +1280,7 @@ fn native_color_model(m: crate::ColorModel) -> bool {
 }
 
 pub(crate) fn needs_cms_for_color_model(from: &PixelDescriptor, to: &PixelDescriptor) -> bool {
+    #[cfg(feature = "perceptual")]
     if perceptual::is_direct_lab_lch_pair(from, to) {
         return false;
     }
@@ -1396,6 +1440,7 @@ impl NativePlan {
         let scale = (diffuse_white_nits / PQ_PEAK_NITS) as f32;
         for operation in &mut self.operations {
             operation.pq_anchor_scale = scale;
+            #[cfg(feature = "perceptual")]
             if let ConvertStep::Perceptual(
                 perceptual::PerceptualStep::LinearRgbToJzazbz { anchored, .. }
                 | perceptual::PerceptualStep::JzazbzToLinearRgb { anchored, .. },
@@ -1481,20 +1526,50 @@ impl NativePlan {
         if from == to && !needs_cms_for_color_model(&from, &to) {
             return Ok(Self::build(from, to, vec![ConvertStep::Identity]));
         }
-        if let Some(pivot) = perceptual::pivot(from, to) {
-            return Self::plan_native(from, pivot)?
-                .compose(&Self::plan_native(pivot, to)?)
-                .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
+        #[cfg(feature = "perceptual")]
+        {
+            if let Some(pivot) = perceptual::pivot(from, to) {
+                return Self::plan_native(from, pivot)?
+                    .compose(&Self::plan_native(pivot, to)?)
+                    .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
+            }
+            match perceptual::try_direct_step(from, to) {
+                Ok(Some(step)) => return Ok(Self::build(from, to, vec![step])),
+                Err(()) => return Err(whereat::at!(ConvertError::NoPath { from, to })),
+                Ok(None) => {}
+            }
         }
-        match perceptual::try_direct_step(from, to) {
-            Ok(Some(step)) => return Ok(Self::build(from, to, vec![step])),
-            Err(()) => return Err(whereat::at!(ConvertError::NoPath { from, to })),
-            Ok(None) => {}
+        #[cfg(not(feature = "perceptual"))]
+        if matches!(
+            from.color_model(),
+            crate::ColorModel::Oklch
+                | crate::ColorModel::Lch
+                | crate::ColorModel::Jzazbz
+                | crate::ColorModel::Jzczhz
+                | crate::ColorModel::Hsl
+                | crate::ColorModel::Hsv
+        ) || matches!(
+            to.color_model(),
+            crate::ColorModel::Oklch
+                | crate::ColorModel::Lch
+                | crate::ColorModel::Jzazbz
+                | crate::ColorModel::Jzczhz
+                | crate::ColorModel::Hsl
+                | crate::ColorModel::Hsv
+        ) {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
+        #[cfg(feature = "oklab")]
         if let Some(pivot) = oklab_pivot(from, to) {
             return Self::plan_native(from, pivot)?
                 .compose(&Self::plan_native(pivot, to)?)
                 .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
+        }
+        #[cfg(not(feature = "oklab"))]
+        if matches!(from.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA)
+            || matches!(to.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA)
+        {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
         if needs_cms_for_color_model(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
@@ -1548,6 +1623,15 @@ impl NativePlan {
                 from,
                 to,
             }));
+        }
+        #[cfg(not(feature = "hdr-transfers"))]
+        if (from.transfer() != to.transfer() || Self::primaries_differ(from, to))
+            && (matches!(
+                from.transfer(),
+                TransferFunction::Pq | TransferFunction::Hlg
+            ) || matches!(to.transfer(), TransferFunction::Pq | TransferFunction::Hlg))
+        {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
 
         // BGR kernels swap R↔B at the endpoint, with RGB intermediates in between.
@@ -1718,6 +1802,7 @@ impl NativePlan {
                     || matches!(to.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA);
 
             // Oklab conversion requires known primaries for the RGB→LMS matrix.
+            #[cfg(feature = "oklab")]
             if involves_oklab && crate::oklab::rgb_to_lms_matrix(from.primaries).is_none() {
                 return Err(whereat::at!(ConvertError::NoPath { from, to }));
             }
@@ -1871,7 +1956,9 @@ impl NativePlan {
                 let linearize = match desc.transfer() {
                     TransferFunction::Srgb => ConvertStep::SrgbF32ToLinearF32,
                     TransferFunction::Bt709 => ConvertStep::Bt709F32ToLinearF32,
+                    #[cfg(feature = "hdr-transfers")]
                     TransferFunction::Pq => ConvertStep::PqF32ToLinearF32,
+                    #[cfg(feature = "hdr-transfers")]
                     TransferFunction::Hlg => ConvertStep::HlgF32ToLinearF32,
                     TransferFunction::Gamma22 => ConvertStep::Gamma22F32ToLinearF32,
                     TransferFunction::Linear => ConvertStep::Identity,
@@ -1880,7 +1967,9 @@ impl NativePlan {
                 let to_target_tf = match to.transfer() {
                     TransferFunction::Srgb => ConvertStep::LinearF32ToSrgbF32,
                     TransferFunction::Bt709 => ConvertStep::LinearF32ToBt709F32,
+                    #[cfg(feature = "hdr-transfers")]
                     TransferFunction::Pq => ConvertStep::LinearF32ToPqF32,
+                    #[cfg(feature = "hdr-transfers")]
                     TransferFunction::Hlg => ConvertStep::LinearF32ToHlgF32,
                     TransferFunction::Gamma22 => ConvertStep::LinearF32ToGamma22F32,
                     TransferFunction::Linear => ConvertStep::Identity,
@@ -1973,18 +2062,23 @@ impl NativePlan {
                             }
                             gamut_steps.push(ConvertStep::NaiveF32ToU8);
                         }
-                    } else if desc.channel_type() == ChannelType::U16
-                        && desc.transfer() == TransferFunction::Pq
+                    } else if cfg!(feature = "hdr-transfers")
+                        && desc.channel_type() == ChannelType::U16
+                        && matches!(
+                            desc.transfer(),
+                            TransferFunction::Pq | TransferFunction::Hlg
+                        )
                     {
-                        gamut_steps.push(ConvertStep::PqU16ToLinearF32);
-                        gamut_steps.push(gamut_step);
-                        gamut_steps.push(ConvertStep::LinearF32ToPqU16);
-                    } else if desc.channel_type() == ChannelType::U16
-                        && desc.transfer() == TransferFunction::Hlg
-                    {
-                        gamut_steps.push(ConvertStep::HlgU16ToLinearF32);
-                        gamut_steps.push(gamut_step);
-                        gamut_steps.push(ConvertStep::LinearF32ToHlgU16);
+                        #[cfg(feature = "hdr-transfers")]
+                        if desc.transfer() == TransferFunction::Pq {
+                            gamut_steps.push(ConvertStep::PqU16ToLinearF32);
+                            gamut_steps.push(gamut_step);
+                            gamut_steps.push(ConvertStep::LinearF32ToPqU16);
+                        } else {
+                            gamut_steps.push(ConvertStep::HlgU16ToLinearF32);
+                            gamut_steps.push(gamut_step);
+                            gamut_steps.push(ConvertStep::LinearF32ToHlgU16);
+                        }
                     } else {
                         // Generic: to f32, linearize, gamut, delinearize, back to the depth.
                         let (widen, narrow) = match desc.channel_type() {
@@ -2448,6 +2542,7 @@ impl NativePlan {
 
     // HLG rendering uses straight F32 BT.2020 RGB(A); the ordinary planner
     // handles storage, association, gamut and tone mapping around that boundary.
+    #[cfg(feature = "hdr-transfers")]
     fn plan_hlg_rendering(
         from: PixelDescriptor,
         to: PixelDescriptor,
@@ -2612,7 +2707,10 @@ impl NativePlan {
             && !to.has_alpha()
             && matches!(options.alpha_policy(), AlphaPolicy::CompositeOnto { .. });
         if hlg_boundary || hlg_composite {
+            #[cfg(feature = "hdr-transfers")]
             return Self::plan_hlg_rendering(from, to, options);
+            #[cfg(not(feature = "hdr-transfers"))]
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
         if needs_cms_for_color_model(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
@@ -2627,6 +2725,10 @@ impl NativePlan {
         let pq_boundary = from.transfer() != to.transfer()
             && (from.transfer() == TransferFunction::Pq || to.transfer() == TransferFunction::Pq)
             && !involves_jzazbz;
+        #[cfg(not(feature = "hdr-transfers"))]
+        if pq_boundary {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
         if pq_boundary
             && !is_hdr_to_sdr(from.transfer(), to.transfer())
             && options.sdr_white().is_none()
@@ -2634,6 +2736,7 @@ impl NativePlan {
             return Err(whereat::at!(ConvertError::SdrWhiteRequired));
         }
         validate_descriptors(from, to)?;
+        #[cfg(feature = "oklab")]
         if let Some(pivot) = oklab_pivot(from, to) {
             return Self::new_explicit(from, pivot, options)?
                 .compose(&Self::new_explicit(pivot, to, options)?)
@@ -2683,6 +2786,7 @@ impl NativePlan {
 
         if options.gamut_policy() == GamutPolicy::SoftCompress && soft_compress_applies(&from, &to)
         {
+            #[cfg(feature = "oklab")]
             return Self::new_soft_compressed(from, to, options).map(|plan| {
                 if let Some(anchor) = options.sdr_white() {
                     plan.with_pq_anchor(anchor)
@@ -2690,6 +2794,8 @@ impl NativePlan {
                     plan
                 }
             });
+            #[cfg(not(feature = "oklab"))]
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
 
         let mut plan = if is_hdr_to_sdr(from.transfer(), to.transfer()) {
@@ -2867,6 +2973,7 @@ impl NativePlan {
                         }
                         truncated_ops.extend(repl.operations);
                     }
+                    #[cfg(feature = "hdr-transfers")]
                     ConvertStep::LinearF32ToPqU16 | ConvertStep::LinearF32ToHlgU16 => {
                         let encode = f32_encode_step(operation.to.transfer())
                             .expect("integer HDR destination has an OETF");
@@ -2961,6 +3068,7 @@ impl NativePlan {
 
     /// Source to linear `f32` in the target's primaries with out-of-gamut values
     /// kept, then compression, then linear to target.
+    #[cfg(feature = "oklab")]
     fn new_soft_compressed(
         from: PixelDescriptor,
         to: PixelDescriptor,
@@ -3154,9 +3262,12 @@ impl NativePlan {
     pub(crate) fn plan_allocations(&self) -> (u64, Option<SharedLutMask>) {
         let mut heap =
             (self.operations.capacity() * core::mem::size_of::<PlannedOperation>()) as u64;
+        #[cfg(not(feature = "oklab"))]
+        let _ = &mut heap;
         let mut cold = Some(SharedLutMask::NONE);
         for op in &self.operations {
             let mask = match &op.step {
+                #[cfg(feature = "oklab")]
                 ConvertStep::SoftCompressOklch(_) => {
                     heap += (core::mem::size_of::<crate::hdr::SoftCompress>()
                         + 2 * core::mem::size_of::<usize>()) as u64;
@@ -3187,10 +3298,12 @@ impl NativePlan {
                     SharedLutMask::NONE
                 }
                 // The transfer provider owns any tables behind these kernels.
-                ConvertStep::SrgbU8ToLinearF32
-                | ConvertStep::LinearF32ToSrgbU8
-                | ConvertStep::PqU16ToLinearF32
-                | ConvertStep::LinearF32ToPqU16 => {
+                ConvertStep::SrgbU8ToLinearF32 | ConvertStep::LinearF32ToSrgbU8 => {
+                    cold = None;
+                    SharedLutMask::NONE
+                }
+                #[cfg(feature = "hdr-transfers")]
+                ConvertStep::PqU16ToLinearF32 | ConvertStep::LinearF32ToPqU16 => {
                     cold = None;
                     SharedLutMask::NONE
                 }
@@ -3221,13 +3334,14 @@ impl NativePlan {
                 ConvertStep::SdrU16ToU8 { .. }
                 | ConvertStep::Fused { .. }
                 | ConvertStep::SrgbU8ToLinearF32
-                | ConvertStep::LinearF32ToSrgbU8
-                | ConvertStep::PqU16ToLinearF32
-                | ConvertStep::LinearF32ToPqU16 => A::Lookup,
-                ConvertStep::MatteComposite { .. }
-                | ConvertStep::DropAlpha
-                | ConvertStep::SoftCompressOklch(_)
-                | ConvertStep::HlgRender(_) => A::Rendered,
+                | ConvertStep::LinearF32ToSrgbU8 => A::Lookup,
+                #[cfg(feature = "hdr-transfers")]
+                ConvertStep::PqU16ToLinearF32 | ConvertStep::LinearF32ToPqU16 => A::Lookup,
+                ConvertStep::MatteComposite { .. } | ConvertStep::DropAlpha => A::Rendered,
+                #[cfg(feature = "oklab")]
+                ConvertStep::SoftCompressOklch(_) => A::Rendered,
+                #[cfg(feature = "hdr-transfers")]
+                ConvertStep::HlgRender(_) => A::Rendered,
                 #[cfg(feature = "hdr-experimental")]
                 ConvertStep::ToneMap(_) => A::Rendered,
                 _ if op.from.has_alpha() && !op.to.has_alpha() => A::Rendered,
@@ -3269,6 +3383,7 @@ impl NativePlan {
             ) {
                 semantic = semantic.union(S::LUMA_COLLAPSED);
             }
+            #[cfg(feature = "oklab")]
             if matches!(op.step, ConvertStep::SoftCompressOklch(_)) {
                 semantic = semantic.union(S::GAMUT_COMPRESSED);
             }
@@ -3276,6 +3391,7 @@ impl NativePlan {
             if matches!(op.step, ConvertStep::ToneMap(_)) {
                 semantic = semantic.union(S::TONE_MAPPED);
             }
+            #[cfg(feature = "hdr-transfers")]
             if matches!(op.step, ConvertStep::HlgRender(_))
                 && !matches!(
                     op.to.transfer(),
@@ -3290,32 +3406,38 @@ impl NativePlan {
             ) {
                 semantic = semantic.union(S::ALPHA_REASSOCIATED);
             }
-            if (op.from.channel_type().is_float() && !op.to.channel_type().is_float())
+            let is_clamped_step = matches!(
+                op.step,
+                ConvertStep::SrgbF32ToLinearF32
+                    | ConvertStep::LinearF32ToSrgbF32
+                    | ConvertStep::Gamma22F32ToLinearF32
+                    | ConvertStep::LinearF32ToGamma22F32
+                    | ConvertStep::Fused {
+                        kind: FusedKind::SrgbU8GamutRgb
+                            | FusedKind::SrgbU8GamutRgba
+                            | FusedKind::SrgbU16GamutRgb
+                            | FusedKind::LinearF32ToSrgbU8Rgb,
+                        ..
+                    }
+            );
+            #[cfg(feature = "hdr-transfers")]
+            let is_clamped_step = is_clamped_step
                 || matches!(
                     op.step,
-                    ConvertStep::SrgbF32ToLinearF32
-                        | ConvertStep::LinearF32ToSrgbF32
-                        | ConvertStep::Gamma22F32ToLinearF32
-                        | ConvertStep::LinearF32ToGamma22F32
-                        | ConvertStep::PqF32ToLinearF32
+                    ConvertStep::PqF32ToLinearF32
                         | ConvertStep::LinearF32ToPqF32
                         | ConvertStep::HlgF32ToLinearF32
                         | ConvertStep::LinearF32ToHlgF32
-                        | ConvertStep::Fused {
-                            kind: FusedKind::SrgbU8GamutRgb
-                                | FusedKind::SrgbU8GamutRgba
-                                | FusedKind::SrgbU16GamutRgb
-                                | FusedKind::LinearF32ToSrgbU8Rgb,
-                            ..
-                        }
-                )
+                );
+            if (op.from.channel_type().is_float() && !op.to.channel_type().is_float())
+                || is_clamped_step
             {
                 semantic = semantic.union(S::CLAMPED);
             }
             let tier = match op.step {
-                ConvertStep::Identity
-                | ConvertStep::SdrU16ToU8 { .. }
-                | ConvertStep::HlgRender(_) => KernelTier::Scalar,
+                ConvertStep::Identity | ConvertStep::SdrU16ToU8 { .. } => KernelTier::Scalar,
+                #[cfg(feature = "hdr-transfers")]
+                ConvertStep::HlgRender(_) => KernelTier::Scalar,
                 ConvertStep::Fused { .. } => {
                     #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
                     {
@@ -3375,6 +3497,7 @@ impl NativePlan {
             match &op.step {
                 #[cfg(feature = "hdr-experimental")]
                 ConvertStep::ToneMap(_) => layout.hdr_rows = [width as usize; 2],
+                #[cfg(feature = "oklab")]
                 ConvertStep::SoftCompressOklch(_) if op.from.layout().has_alpha() => {
                     layout.hdr_rows[0] = width as usize;
                 }
@@ -3465,38 +3588,49 @@ fn layout_steps(from: ChannelLayout, to: ChannelLayout) -> Vec<ConvertStep> {
         (ChannelLayout::GrayAlpha, ChannelLayout::Gray) => vec![ConvertStep::GrayAlphaToGray],
 
         // Oklab ↔ RGB conversions (via linear RGB).
+        #[cfg(feature = "oklab")]
         (ChannelLayout::Rgb, ChannelLayout::Oklab) => vec![ConvertStep::LinearRgbToOklab],
+        #[cfg(feature = "oklab")]
         (ChannelLayout::Oklab, ChannelLayout::Rgb) => vec![ConvertStep::OklabToLinearRgb],
+        #[cfg(feature = "oklab")]
         (ChannelLayout::Rgba, ChannelLayout::OklabA) => vec![ConvertStep::LinearRgbaToOklaba],
+        #[cfg(feature = "oklab")]
         (ChannelLayout::OklabA, ChannelLayout::Rgba) => vec![ConvertStep::OklabaToLinearRgba],
 
         // Oklab ↔ RGB with alpha add/drop.
+        #[cfg(feature = "oklab")]
         (ChannelLayout::Rgb, ChannelLayout::OklabA) => {
             vec![ConvertStep::AddAlpha, ConvertStep::LinearRgbaToOklaba]
         }
+        #[cfg(feature = "oklab")]
         (ChannelLayout::OklabA, ChannelLayout::Rgb) => {
             vec![ConvertStep::OklabaToLinearRgba, ConvertStep::DropAlpha]
         }
+        #[cfg(feature = "oklab")]
         (ChannelLayout::Oklab, ChannelLayout::Rgba) => {
             vec![ConvertStep::OklabToLinearRgb, ConvertStep::AddAlpha]
         }
+        #[cfg(feature = "oklab")]
         (ChannelLayout::Rgba, ChannelLayout::Oklab) => {
             vec![ConvertStep::DropAlpha, ConvertStep::LinearRgbToOklab]
         }
 
         // Oklab ↔ BGRA (swizzle to/from RGBA, then Oklab).
+        #[cfg(feature = "oklab")]
         (ChannelLayout::Bgra, ChannelLayout::OklabA) => {
             vec![
                 ConvertStep::SwizzleBgraRgba,
                 ConvertStep::LinearRgbaToOklaba,
             ]
         }
+        #[cfg(feature = "oklab")]
         (ChannelLayout::OklabA, ChannelLayout::Bgra) => {
             vec![
                 ConvertStep::OklabaToLinearRgba,
                 ConvertStep::SwizzleBgraRgba,
             ]
         }
+        #[cfg(feature = "oklab")]
         (ChannelLayout::Bgra, ChannelLayout::Oklab) => {
             vec![
                 ConvertStep::SwizzleBgraRgba,
@@ -3504,6 +3638,7 @@ fn layout_steps(from: ChannelLayout, to: ChannelLayout) -> Vec<ConvertStep> {
                 ConvertStep::LinearRgbToOklab,
             ]
         }
+        #[cfg(feature = "oklab")]
         (ChannelLayout::Oklab, ChannelLayout::Bgra) => {
             vec![
                 ConvertStep::OklabToLinearRgb,
@@ -3513,9 +3648,11 @@ fn layout_steps(from: ChannelLayout, to: ChannelLayout) -> Vec<ConvertStep> {
         }
 
         // Gray ↔ Oklab (expand gray to RGB first).
+        #[cfg(feature = "oklab")]
         (ChannelLayout::Gray, ChannelLayout::Oklab) => {
             vec![ConvertStep::GrayToRgb, ConvertStep::LinearRgbToOklab]
         }
+        #[cfg(feature = "oklab")]
         (ChannelLayout::Oklab, ChannelLayout::Gray) => {
             vec![
                 ConvertStep::OklabToLinearRgb,
@@ -3524,9 +3661,11 @@ fn layout_steps(from: ChannelLayout, to: ChannelLayout) -> Vec<ConvertStep> {
                 },
             ]
         }
+        #[cfg(feature = "oklab")]
         (ChannelLayout::Gray, ChannelLayout::OklabA) => {
             vec![ConvertStep::GrayToRgba, ConvertStep::LinearRgbaToOklaba]
         }
+        #[cfg(feature = "oklab")]
         (ChannelLayout::OklabA, ChannelLayout::Gray) => {
             vec![
                 ConvertStep::OklabaToLinearRgba,
@@ -3535,21 +3674,25 @@ fn layout_steps(from: ChannelLayout, to: ChannelLayout) -> Vec<ConvertStep> {
                 },
             ]
         }
+        #[cfg(feature = "oklab")]
         (ChannelLayout::GrayAlpha, ChannelLayout::OklabA) => {
             vec![
                 ConvertStep::GrayAlphaToRgba,
                 ConvertStep::LinearRgbaToOklaba,
             ]
         }
+        #[cfg(feature = "oklab")]
         (ChannelLayout::OklabA, ChannelLayout::GrayAlpha) => vec![
             ConvertStep::OklabaToLinearRgba,
             ConvertStep::RgbaToGrayAlpha {
                 coefficients: LumaCoefficients::Bt709,
             },
         ],
+        #[cfg(feature = "oklab")]
         (ChannelLayout::GrayAlpha, ChannelLayout::Oklab) => {
             vec![ConvertStep::GrayAlphaToRgb, ConvertStep::LinearRgbToOklab]
         }
+        #[cfg(feature = "oklab")]
         (ChannelLayout::Oklab, ChannelLayout::GrayAlpha) => {
             vec![
                 ConvertStep::OklabToLinearRgb,
@@ -3561,7 +3704,9 @@ fn layout_steps(from: ChannelLayout, to: ChannelLayout) -> Vec<ConvertStep> {
         }
 
         // Oklab ↔ alpha variants.
+        #[cfg(feature = "oklab")]
         (ChannelLayout::Oklab, ChannelLayout::OklabA) => vec![ConvertStep::AddAlpha],
+        #[cfg(feature = "oklab")]
         (ChannelLayout::OklabA, ChannelLayout::Oklab) => vec![ConvertStep::DropAlpha],
 
         _ => Vec::new(), // Unsupported layout conversion.
@@ -3575,7 +3720,9 @@ fn f32_linearize_step(tf: TransferFunction) -> Option<ConvertStep> {
         TransferFunction::Linear => None,
         TransferFunction::Srgb => Some(ConvertStep::SrgbF32ToLinearF32),
         TransferFunction::Bt709 => Some(ConvertStep::Bt709F32ToLinearF32),
+        #[cfg(feature = "hdr-transfers")]
         TransferFunction::Pq => Some(ConvertStep::PqF32ToLinearF32),
+        #[cfg(feature = "hdr-transfers")]
         TransferFunction::Hlg => Some(ConvertStep::HlgF32ToLinearF32),
         TransferFunction::Gamma22 => Some(ConvertStep::Gamma22F32ToLinearF32),
         TransferFunction::Unknown => None,
@@ -3590,7 +3737,9 @@ fn f32_encode_step(tf: TransferFunction) -> Option<ConvertStep> {
         TransferFunction::Linear => None,
         TransferFunction::Srgb => Some(ConvertStep::LinearF32ToSrgbF32),
         TransferFunction::Bt709 => Some(ConvertStep::LinearF32ToBt709F32),
+        #[cfg(feature = "hdr-transfers")]
         TransferFunction::Pq => Some(ConvertStep::LinearF32ToPqF32),
+        #[cfg(feature = "hdr-transfers")]
         TransferFunction::Hlg => Some(ConvertStep::LinearF32ToHlgF32),
         TransferFunction::Gamma22 => Some(ConvertStep::LinearF32ToGamma22F32),
         TransferFunction::Unknown => None,
@@ -3719,9 +3868,11 @@ fn depth_steps(
         (ChannelType::U16, ChannelType::F32) => {
             // PQ/HLG U16 → Linear F32: apply EOTF during conversion.
             match (from_tf, to_tf) {
+                #[cfg(feature = "hdr-transfers")]
                 (TransferFunction::Pq, TransferFunction::Linear) => {
                     Ok(vec![ConvertStep::PqU16ToLinearF32])
                 }
+                #[cfg(feature = "hdr-transfers")]
                 (TransferFunction::Hlg, TransferFunction::Linear) => {
                     Ok(vec![ConvertStep::HlgU16ToLinearF32])
                 }
@@ -3737,9 +3888,11 @@ fn depth_steps(
         (ChannelType::F32, ChannelType::U16) => {
             // Linear F32 → PQ/HLG U16: apply OETF during conversion.
             match (from_tf, to_tf) {
+                #[cfg(feature = "hdr-transfers")]
                 (TransferFunction::Linear, TransferFunction::Pq) => {
                     Ok(vec![ConvertStep::LinearF32ToPqU16])
                 }
+                #[cfg(feature = "hdr-transfers")]
                 (TransferFunction::Linear, TransferFunction::Hlg) => {
                     Ok(vec![ConvertStep::LinearF32ToHlgU16])
                 }
@@ -3753,17 +3906,21 @@ fn depth_steps(
         }
         (ChannelType::U16, ChannelType::U8) => {
             // HDR U16 → SDR U8: go through linear F32 with proper EOTF → OETF.
+            #[cfg(feature = "hdr-transfers")]
             if from_tf == TransferFunction::Pq && to_tf == TransferFunction::Srgb {
-                Ok(vec![
+                return Ok(vec![
                     ConvertStep::PqU16ToLinearF32,
                     ConvertStep::LinearF32ToSrgbU8,
-                ])
-            } else if from_tf == TransferFunction::Hlg && to_tf == TransferFunction::Srgb {
-                Ok(vec![
+                ]);
+            }
+            #[cfg(feature = "hdr-transfers")]
+            if from_tf == TransferFunction::Hlg && to_tf == TransferFunction::Srgb {
+                return Ok(vec![
                     ConvertStep::HlgU16ToLinearF32,
                     ConvertStep::LinearF32ToSrgbU8,
-                ])
-            } else if from_tf == to_tf {
+                ]);
+            }
+            if from_tf == to_tf {
                 Ok(vec![ConvertStep::U16ToU8])
             } else if same_primaries
                 && matches!(
@@ -3844,11 +4001,15 @@ fn depth_steps(
         (ChannelType::F16, ChannelType::U16) => {
             let mut steps = Vec::with_capacity(4);
             steps.push(ConvertStep::F16ToF32);
+            #[cfg(feature = "hdr-transfers")]
             if from_tf == TransferFunction::Linear && to_tf == TransferFunction::Pq {
                 steps.push(ConvertStep::LinearF32ToPqU16);
+                return Ok(steps);
             } else if from_tf == TransferFunction::Linear && to_tf == TransferFunction::Hlg {
                 steps.push(ConvertStep::LinearF32ToHlgU16);
-            } else if from_tf == to_tf {
+                return Ok(steps);
+            }
+            if from_tf == to_tf {
                 steps.push(ConvertStep::F32ToU16);
             } else {
                 steps.extend(f32_tf_pair_steps(from_tf, to_tf));
@@ -3858,11 +4019,17 @@ fn depth_steps(
         }
         (ChannelType::U16, ChannelType::F16) => {
             let mut steps = Vec::with_capacity(4);
+            #[cfg(feature = "hdr-transfers")]
             if from_tf == TransferFunction::Pq && to_tf == TransferFunction::Linear {
                 steps.push(ConvertStep::PqU16ToLinearF32);
+                steps.push(ConvertStep::F32ToF16);
+                return Ok(steps);
             } else if from_tf == TransferFunction::Hlg && to_tf == TransferFunction::Linear {
                 steps.push(ConvertStep::HlgU16ToLinearF32);
-            } else if from_tf == to_tf {
+                steps.push(ConvertStep::F32ToF16);
+                return Ok(steps);
+            }
+            if from_tf == to_tf {
                 steps.push(ConvertStep::U16ToF32);
             } else {
                 steps.push(ConvertStep::U16ToF32);
@@ -3995,6 +4162,7 @@ impl ConvertScratch {
     }
 }
 
+#[cfg(feature = "oklab")]
 fn soft_compress_step(primaries: ColorPrimaries, knee: f32) -> ConvertStep {
     let space = crate::oklab::OklabSpace::for_primaries(primaries)
         .expect("target primaries have defined LMS matrices");
@@ -4206,7 +4374,7 @@ fn fuse_matlut_patterns(steps: &mut Vec<ConvertStep>) {
 }
 
 fn are_inverse(a: &ConvertStep, b: &ConvertStep) -> bool {
-    matches!(
+    let base = matches!(
         (a, b),
         // Self-inverse
         (ConvertStep::SwizzleBgraRgba, ConvertStep::SwizzleBgraRgba)
@@ -4216,10 +4384,6 @@ fn are_inverse(a: &ConvertStep, b: &ConvertStep) -> bool {
         // Transfer function f32↔f32 (exact inverses in float)
         | (ConvertStep::SrgbF32ToLinearF32, ConvertStep::LinearF32ToSrgbF32)
         | (ConvertStep::LinearF32ToSrgbF32, ConvertStep::SrgbF32ToLinearF32)
-        | (ConvertStep::PqF32ToLinearF32, ConvertStep::LinearF32ToPqF32)
-        | (ConvertStep::LinearF32ToPqF32, ConvertStep::PqF32ToLinearF32)
-        | (ConvertStep::HlgF32ToLinearF32, ConvertStep::LinearF32ToHlgF32)
-        | (ConvertStep::LinearF32ToHlgF32, ConvertStep::HlgF32ToLinearF32)
         | (ConvertStep::Bt709F32ToLinearF32, ConvertStep::LinearF32ToBt709F32)
         | (ConvertStep::LinearF32ToBt709F32, ConvertStep::Bt709F32ToLinearF32)
         | (ConvertStep::Gamma22F32ToLinearF32, ConvertStep::LinearF32ToGamma22F32)
@@ -4227,11 +4391,6 @@ fn are_inverse(a: &ConvertStep, b: &ConvertStep) -> bool {
         // Alpha mode (exact inverses in float)
         | (ConvertStep::StraightToPremul, ConvertStep::PremulToStraight)
         | (ConvertStep::PremulToStraight, ConvertStep::StraightToPremul)
-        // Color model (exact inverses in float)
-        | (ConvertStep::LinearRgbToOklab, ConvertStep::OklabToLinearRgb)
-        | (ConvertStep::OklabToLinearRgb, ConvertStep::LinearRgbToOklab)
-        | (ConvertStep::LinearRgbaToOklaba, ConvertStep::OklabaToLinearRgba)
-        | (ConvertStep::OklabaToLinearRgba, ConvertStep::LinearRgbaToOklaba)
         // Cross-depth pairs (near-lossless for same depth class)
         | (ConvertStep::NaiveU8ToF32, ConvertStep::NaiveF32ToU8)
         | (ConvertStep::NaiveF32ToU8, ConvertStep::NaiveU8ToF32)
@@ -4244,16 +4403,59 @@ fn are_inverse(a: &ConvertStep, b: &ConvertStep) -> bool {
         // Cross-depth with transfer (near-lossless roundtrip)
         | (ConvertStep::SrgbU8ToLinearF32, ConvertStep::LinearF32ToSrgbU8)
         | (ConvertStep::LinearF32ToSrgbU8, ConvertStep::SrgbU8ToLinearF32)
-        | (ConvertStep::PqU16ToLinearF32, ConvertStep::LinearF32ToPqU16)
-        | (ConvertStep::LinearF32ToPqU16, ConvertStep::PqU16ToLinearF32)
-        | (ConvertStep::HlgU16ToLinearF32, ConvertStep::LinearF32ToHlgU16)
-        | (ConvertStep::LinearF32ToHlgU16, ConvertStep::HlgU16ToLinearF32)
         // Extended-range SDR f32 pairs
         | (ConvertStep::SrgbF32ToLinearF32Extended, ConvertStep::LinearF32ToSrgbF32Extended)
         | (ConvertStep::LinearF32ToSrgbF32Extended, ConvertStep::SrgbF32ToLinearF32Extended)
         | (ConvertStep::Gamma22F32ToLinearF32Extended, ConvertStep::LinearF32ToGamma22F32Extended)
         | (ConvertStep::LinearF32ToGamma22F32Extended, ConvertStep::Gamma22F32ToLinearF32Extended)
-    ) || matches!((a, b), (ConvertStep::Perceptual(pa), ConvertStep::Perceptual(pb)) if pa.is_inverse_of(pb))
+    );
+    #[cfg(feature = "hdr-transfers")]
+    let base = base
+        || matches!(
+            (a, b),
+            (ConvertStep::PqF32ToLinearF32, ConvertStep::LinearF32ToPqF32)
+                | (ConvertStep::LinearF32ToPqF32, ConvertStep::PqF32ToLinearF32)
+                | (
+                    ConvertStep::HlgF32ToLinearF32,
+                    ConvertStep::LinearF32ToHlgF32
+                )
+                | (
+                    ConvertStep::LinearF32ToHlgF32,
+                    ConvertStep::HlgF32ToLinearF32
+                )
+                | (ConvertStep::PqU16ToLinearF32, ConvertStep::LinearF32ToPqU16)
+                | (ConvertStep::LinearF32ToPqU16, ConvertStep::PqU16ToLinearF32)
+                | (
+                    ConvertStep::HlgU16ToLinearF32,
+                    ConvertStep::LinearF32ToHlgU16
+                )
+                | (
+                    ConvertStep::LinearF32ToHlgU16,
+                    ConvertStep::HlgU16ToLinearF32
+                )
+        );
+    #[cfg(feature = "oklab")]
+    let base = base
+        || matches!(
+            (a, b),
+            (ConvertStep::LinearRgbToOklab, ConvertStep::OklabToLinearRgb)
+                | (ConvertStep::OklabToLinearRgb, ConvertStep::LinearRgbToOklab)
+                | (
+                    ConvertStep::LinearRgbaToOklaba,
+                    ConvertStep::OklabaToLinearRgba
+                )
+                | (
+                    ConvertStep::OklabaToLinearRgba,
+                    ConvertStep::LinearRgbaToOklaba
+                )
+        );
+    #[cfg(feature = "perceptual")]
+    let base = base
+        || matches!(
+            (a, b),
+            (ConvertStep::Perceptual(pa), ConvertStep::Perceptual(pb)) if pa.is_inverse_of(pb)
+        );
+    base
 }
 
 /// Compute the descriptor after applying one step.
@@ -4359,15 +4561,21 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             current.transfer(),
         ),
         ConvertStep::SrgbU8ToLinearF32
-        | ConvertStep::PqU16ToLinearF32
-        | ConvertStep::HlgU16ToLinearF32
-        | ConvertStep::PqF32ToLinearF32
-        | ConvertStep::HlgF32ToLinearF32
         | ConvertStep::SrgbF32ToLinearF32
         | ConvertStep::SrgbF32ToLinearF32Extended
         | ConvertStep::Bt709F32ToLinearF32
         | ConvertStep::Gamma22F32ToLinearF32
         | ConvertStep::Gamma22F32ToLinearF32Extended => PixelDescriptor::new(
+            ChannelType::F32,
+            current.layout(),
+            current.alpha(),
+            TransferFunction::Linear,
+        ),
+        #[cfg(feature = "hdr-transfers")]
+        ConvertStep::PqU16ToLinearF32
+        | ConvertStep::HlgU16ToLinearF32
+        | ConvertStep::PqF32ToLinearF32
+        | ConvertStep::HlgF32ToLinearF32 => PixelDescriptor::new(
             ChannelType::F32,
             current.layout(),
             current.alpha(),
@@ -4397,23 +4605,34 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             current.alpha(),
             current.transfer(),
         ),
-        ConvertStep::F32ToU16
-        | ConvertStep::F32ToU16Truncate
-        | ConvertStep::LinearF32ToPqU16
-        | ConvertStep::LinearF32ToHlgU16 => {
-            let tf = match step {
-                ConvertStep::LinearF32ToPqU16 => TransferFunction::Pq,
-                ConvertStep::LinearF32ToHlgU16 => TransferFunction::Hlg,
-                _ => current.transfer(),
-            };
-            PixelDescriptor::new(ChannelType::U16, current.layout(), current.alpha(), tf)
-        }
+        ConvertStep::F32ToU16 | ConvertStep::F32ToU16Truncate => PixelDescriptor::new(
+            ChannelType::U16,
+            current.layout(),
+            current.alpha(),
+            current.transfer(),
+        ),
+        #[cfg(feature = "hdr-transfers")]
+        ConvertStep::LinearF32ToPqU16 => PixelDescriptor::new(
+            ChannelType::U16,
+            current.layout(),
+            current.alpha(),
+            TransferFunction::Pq,
+        ),
+        #[cfg(feature = "hdr-transfers")]
+        ConvertStep::LinearF32ToHlgU16 => PixelDescriptor::new(
+            ChannelType::U16,
+            current.layout(),
+            current.alpha(),
+            TransferFunction::Hlg,
+        ),
+        #[cfg(feature = "hdr-transfers")]
         ConvertStep::LinearF32ToPqF32 => PixelDescriptor::new(
             ChannelType::F32,
             current.layout(),
             current.alpha(),
             TransferFunction::Pq,
         ),
+        #[cfg(feature = "hdr-transfers")]
         ConvertStep::LinearF32ToHlgF32 => PixelDescriptor::new(
             ChannelType::F32,
             current.layout(),
@@ -4454,6 +4673,7 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             Some(AlphaMode::Straight),
             current.transfer(),
         ),
+        #[cfg(feature = "oklab")]
         ConvertStep::LinearRgbToOklab => PixelDescriptor::new(
             ChannelType::F32,
             ChannelLayout::Oklab,
@@ -4461,6 +4681,7 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             TransferFunction::Unknown,
         )
         .with_primaries(current.primaries),
+        #[cfg(feature = "oklab")]
         ConvertStep::OklabToLinearRgb => PixelDescriptor::new(
             ChannelType::F32,
             ChannelLayout::Rgb,
@@ -4468,6 +4689,7 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             TransferFunction::Linear,
         )
         .with_primaries(current.primaries),
+        #[cfg(feature = "oklab")]
         ConvertStep::LinearRgbaToOklaba => PixelDescriptor::new(
             ChannelType::F32,
             ChannelLayout::OklabA,
@@ -4475,6 +4697,7 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             TransferFunction::Unknown,
         )
         .with_primaries(current.primaries),
+        #[cfg(feature = "oklab")]
         ConvertStep::OklabaToLinearRgba => PixelDescriptor::new(
             ChannelType::F32,
             ChannelLayout::Rgba,
@@ -4531,6 +4754,7 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
         // shape — they only update pixel values.
         #[cfg(feature = "hdr-experimental")]
         ConvertStep::ToneMap(_) => current,
+        #[cfg(feature = "hdr-transfers")]
         ConvertStep::HlgRender(prepared) => PixelDescriptor::new(
             ChannelType::F32,
             current.layout(),
@@ -4541,13 +4765,16 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
                 TransferFunction::Linear
             },
         ),
+        #[cfg(feature = "oklab")]
         ConvertStep::SoftCompressOklch(_) => current,
+        #[cfg(feature = "perceptual")]
         ConvertStep::Perceptual(p) => p.output_descriptor(current),
     };
     next.primaries = match step {
         ConvertStep::GamutMatrixRgbF32(_, primaries)
         | ConvertStep::GamutMatrixRgbaF32(_, primaries)
         | ConvertStep::Fused { primaries, .. } => *primaries,
+        #[cfg(feature = "perceptual")]
         ConvertStep::Perceptual(_) => next.primaries,
         _ => current.primaries,
     };
@@ -4557,13 +4784,16 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
 
 #[path = "convert_kernels.rs"]
 mod convert_kernels;
+#[cfg(feature = "hdr-transfers")]
 #[path = "hlg_render.rs"]
 pub(crate) mod hlg_render;
+#[cfg(feature = "perceptual")]
 #[path = "perceptual.rs"]
 mod perceptual;
 use convert_kernels::apply_step_u8;
-#[cfg(test)]
+#[cfg(all(test, feature = "hdr-transfers"))]
 pub(crate) use convert_kernels::{hlg_eotf, hlg_oetf};
+#[cfg(any(feature = "perceptual", all(test, feature = "hdr-transfers")))]
 pub(crate) use convert_kernels::{pq_eotf, pq_oetf};
 
 #[cfg(all(test, feature = "bt2446a"))]
@@ -4707,7 +4937,7 @@ mod hdr_plan_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "hdr-transfers"))]
 mod composition_anchor_contract {
     use super::*;
     #[test]

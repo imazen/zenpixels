@@ -751,7 +751,14 @@ pub trait ColorConvertExt: crate::sealed::Sealed + Sized {
     /// `lch()`, `oklab()` or `oklch()`. Case doesn't matter.
     ///
     /// Spaces with no descriptor, such as `lab()`, resolve to linear BT.2020 `f32`, which
-    /// keeps out-of-gamut values. See [`map_to_gamut`](Self::map_to_gamut) for output.
+    #[cfg_attr(
+        feature = "oklab",
+        doc = "keeps out-of-gamut values. See [`map_to_gamut`](Self::map_to_gamut) for output."
+    )]
+    #[cfg_attr(
+        not(feature = "oklab"),
+        doc = "keeps out-of-gamut values. Enable the `oklab` feature for `map_to_gamut`."
+    )]
     ///
     /// ```
     /// use zenpixels::Color;
@@ -789,6 +796,7 @@ pub trait ColorConvertExt: crate::sealed::Sealed + Sized {
     ///
     /// [`ConvertError::NoPath`](crate::ConvertError::NoPath) for HDR transfers, unknown
     /// primaries, non-RGB targets, or primaries with no OKLab matrices here.
+    #[cfg(feature = "oklab")]
     fn map_to_gamut(
         &self,
         target: PixelDescriptor,
@@ -821,6 +829,7 @@ pub trait ColorConvertExt: crate::sealed::Sealed + Sized {
 ///
 /// Clipping encoded or linear channels to `0..=1` gives the same color, since transfer
 /// functions are monotonic and fix both ends, so this stays in linear light.
+#[cfg(feature = "oklab")]
 fn css_gamut_map(space: &crate::oklab::OklabSpace, rgb: [f32; 3]) -> [f32; 3] {
     const JND: f32 = 0.02;
     const EPSILON: f32 = 0.0001;
@@ -924,6 +933,7 @@ impl ColorConvertExt for zenpixels::Color {
         a.iter().zip(&b).all(|(x, y)| (x - y).abs() <= TOLERANCE)
     }
 
+    #[cfg(feature = "oklab")]
     fn map_to_gamut(
         &self,
         target: PixelDescriptor,
@@ -1088,6 +1098,7 @@ pub(crate) use self::tests::{TestBufExt, TestTfExt};
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "hdr-transfers")]
     use crate::convert::{hlg_eotf, hlg_oetf, pq_eotf, pq_oetf};
     use crate::gamut::GamutMatrix;
     use zenpixels::descriptor::ChannelLayout;
@@ -1103,7 +1114,9 @@ mod tests {
                 Self::Srgb => linear_srgb::precise::srgb_to_linear(v),
                 Self::Bt709 => linear_srgb::default::bt709_to_linear(v),
                 Self::Gamma22 => linear_srgb::default::gamma_to_linear(v, 563.0 / 256.0),
+                #[cfg(feature = "hdr-transfers")]
                 Self::Pq => pq_eotf(v),
+                #[cfg(feature = "hdr-transfers")]
                 Self::Hlg => hlg_eotf(v),
                 _ => v,
             }
@@ -1114,7 +1127,9 @@ mod tests {
                 Self::Srgb => linear_srgb::precise::linear_to_srgb(v),
                 Self::Bt709 => linear_srgb::default::linear_to_bt709(v),
                 Self::Gamma22 => linear_srgb::default::linear_to_gamma(v, 563.0 / 256.0),
+                #[cfg(feature = "hdr-transfers")]
                 Self::Pq => pq_oetf(v),
+                #[cfg(feature = "hdr-transfers")]
                 Self::Hlg => hlg_oetf(v),
                 _ => v,
             }

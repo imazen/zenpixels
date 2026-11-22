@@ -23,6 +23,9 @@ include = [
 # documented and their intra-doc links resolve. Bench-only `__*` features stay out.
 [package.metadata.docs.rs]
 features = [
+    "oklab",
+    "hdr-transfers",
+    "perceptual",
     "icc-db",
     "introspection",
     "css",
@@ -37,7 +40,20 @@ features = [
 ]
 
 [features]
-default = ["std", "fast-transpose"]
+default = ["std", "fast-transpose", "oklab", "hdr-transfers"]
+# Oklab color-space module (`oklab`), row kernels (`OklabF32`/`OklabaF32`),
+# `ColorConvertExt::map_to_gamut`, and OKLch soft gamut compression
+# (`GamutPolicy::SoftCompress`). Enabled by default; disable via
+# `default-features = false` for lean SDR/layout builds.
+oklab = []
+# PQ (SMPTE ST 2084) and HLG (ARIB STD-B67 + BT.2100 display rendering)
+# transfer kernels. Enabled by default; disable via `default-features = false`
+# when only SDR transfers (sRGB, BT.709, Gamma22, Linear) are needed.
+hdr-transfers = []
+# Closed-form perceptual and cylindrical color conversions: Oklch, CIE Lch,
+# Jzazbz / Jzczhz, HSL, and HSV. Default-off; opt in with
+# `features = ["perceptual"]`.
+perceptual = ["oklab", "hdr-transfers"]
 introspection = []
 # The committed CICP->ICC profile database: the LZ4-compressed bundle
 # (93,377-byte asset) + lazy decode machinery: 149 RGB / 164 gray mappings
@@ -80,7 +96,7 @@ planar = ["zenpixels/planar"]
 # vs-free-fn restructuring). Default-off; opt in with
 # `features = ["hdr-experimental"]` to access measurement until the API
 # locks at 0.3.0.
-hdr-experimental = []
+hdr-experimental = ["oklab", "hdr-transfers"]
 # The BT.2446 Method A curve, 63,696 B of the HDR surface's 88,616 B at opt-level 3. Without it, tone mapping
 # takes an injected `ToneMapper`, and planning without one returns `NoPath`.
 bt2446a = ["hdr-experimental"]
@@ -165,7 +181,7 @@ zenpixels = { workspace = true, features = ["imgref"] }
 # lets `--no-default-features` exercise the scalar transpose tiers without
 # `fast-transpose`; genuine normal-dependency `icc-db` isolation is checked by
 # tools/icc-collapse-no-db.
-zenpixels-convert = { path = ".", default-features = false, features = ["imgref", "cms-moxcms", "icc-db", "css"] }
+zenpixels-convert = { path = ".", default-features = false, features = ["imgref", "cms-moxcms", "icc-db", "css", "perceptual"] }
 zenbench = { version = "0.1.11" }
 # DEV-only: lets benches/kernel_tiers.rs disable the baseline SIMD token (NEON
 # on aarch64) so the "scalar" arm is real. Feature unification applies this to

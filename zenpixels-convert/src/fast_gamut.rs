@@ -255,6 +255,7 @@ stamp_trc_kernels!(bt709,
 );
 
 // PQ TRC (BT.2020 PQ / HDR10)
+#[cfg(feature = "hdr-transfers")]
 stamp_trc_kernels!(pq,
     simd_linearize: trc_x8::pq_to_linear_v3,
     simd_encode: trc_x8::linear_to_pq_v3,
@@ -263,6 +264,7 @@ stamp_trc_kernels!(pq,
 );
 
 // HLG TRC (BT.2020 HLG)
+#[cfg(feature = "hdr-transfers")]
 stamp_trc_kernels!(hlg,
     simd_linearize: trc_x8::hlg_to_linear_v3,
     simd_encode: trc_x8::linear_to_hlg_v3,
@@ -380,6 +382,7 @@ pub(crate) fn convert_linear_rgba_neon(
 // =========================================================================
 
 // PQ source → sRGB dest (BT.2020 PQ → sRGB: PQ linearize, sRGB encode)
+#[cfg(feature = "hdr-transfers")]
 stamp_trc_kernels!(pq_to_srgb,
     simd_linearize: trc_x8::pq_to_linear_v3,
     simd_encode: trc_x8::linear_to_srgb_v3,
@@ -388,6 +391,7 @@ stamp_trc_kernels!(pq_to_srgb,
 );
 
 // HLG source → sRGB dest
+#[cfg(feature = "hdr-transfers")]
 stamp_trc_kernels!(hlg_to_srgb,
     simd_linearize: trc_x8::hlg_to_linear_v3,
     simd_encode: trc_x8::linear_to_srgb_v3,
@@ -396,6 +400,7 @@ stamp_trc_kernels!(hlg_to_srgb,
 );
 
 // sRGB source → PQ dest
+#[cfg(feature = "hdr-transfers")]
 stamp_trc_kernels!(srgb_to_pq,
     simd_linearize: trc_x8::srgb_to_linear_v3,
     simd_encode: trc_x8::linear_to_pq_v3,
@@ -614,14 +619,12 @@ pub(crate) fn convert_f32_rgba_extended(
 /// Whether a TRC has a SIMD x8 encode kernel available (x86_64 only).
 #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
 pub(crate) fn has_simd_encode(trc: TransferFunction) -> bool {
-    matches!(
-        trc,
-        TransferFunction::Srgb
-            | TransferFunction::Bt709
-            | TransferFunction::Pq
-            | TransferFunction::Hlg
-            | TransferFunction::Gamma22
-    )
+    match trc {
+        TransferFunction::Srgb | TransferFunction::Bt709 | TransferFunction::Gamma22 => true,
+        #[cfg(feature = "hdr-transfers")]
+        TransferFunction::Pq | TransferFunction::Hlg => true,
+        _ => false,
+    }
 }
 
 #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
@@ -636,7 +639,9 @@ fn simd_encode_x8_dispatch(_token: X64V3Token, trc: TransferFunction, v: [f32; 8
     match trc {
         TransferFunction::Srgb => trc_x8::linear_to_srgb_v3(v),
         TransferFunction::Bt709 => trc_x8::linear_to_bt709_v3(v),
+        #[cfg(feature = "hdr-transfers")]
         TransferFunction::Pq => trc_x8::linear_to_pq_v3(v),
+        #[cfg(feature = "hdr-transfers")]
         TransferFunction::Hlg => trc_x8::linear_to_hlg_v3(v),
         TransferFunction::Gamma22 => adobe_from_linear_x8(v),
         _ => v,
@@ -648,7 +653,9 @@ pub(crate) fn scalar_linearize(trc: TransferFunction) -> Option<fn(f32) -> f32> 
     match trc {
         TransferFunction::Srgb => Some(linear_srgb::default::srgb_to_linear),
         TransferFunction::Bt709 => Some(linear_srgb::default::bt709_to_linear),
+        #[cfg(feature = "hdr-transfers")]
         TransferFunction::Pq => Some(linear_srgb::default::pq_to_linear),
+        #[cfg(feature = "hdr-transfers")]
         TransferFunction::Hlg => Some(linear_srgb::default::hlg_to_linear),
         TransferFunction::Gamma22 => Some(adobe_to_linear_scalar),
         TransferFunction::Linear => Some(core::convert::identity),
@@ -661,7 +668,9 @@ pub(crate) fn scalar_encode(trc: TransferFunction) -> Option<fn(f32) -> f32> {
     match trc {
         TransferFunction::Srgb => Some(linear_srgb::default::linear_to_srgb),
         TransferFunction::Bt709 => Some(linear_srgb::default::linear_to_bt709),
+        #[cfg(feature = "hdr-transfers")]
         TransferFunction::Pq => Some(linear_srgb::default::linear_to_pq),
+        #[cfg(feature = "hdr-transfers")]
         TransferFunction::Hlg => Some(linear_srgb::default::linear_to_hlg),
         TransferFunction::Gamma22 => Some(adobe_from_linear_scalar),
         TransferFunction::Linear => Some(core::convert::identity),
@@ -700,10 +709,12 @@ pub(crate) fn convert_f32_rgb_dispatch(
             incant!(convert_rgb_bt709(m, data), [-v4]);
             return true;
         }
+        #[cfg(feature = "hdr-transfers")]
         (Pq, Pq) => {
             incant!(convert_rgb_pq(m, data), [-v4]);
             return true;
         }
+        #[cfg(feature = "hdr-transfers")]
         (Hlg, Hlg) => {
             incant!(convert_rgb_hlg(m, data), [-v4]);
             return true;
@@ -712,14 +723,17 @@ pub(crate) fn convert_f32_rgb_dispatch(
             incant!(convert_rgb_adobe(m, data), [-v4]);
             return true;
         }
+        #[cfg(feature = "hdr-transfers")]
         (Pq, Srgb) => {
             incant!(convert_rgb_pq_to_srgb(m, data), [-v4]);
             return true;
         }
+        #[cfg(feature = "hdr-transfers")]
         (Hlg, Srgb) => {
             incant!(convert_rgb_hlg_to_srgb(m, data), [-v4]);
             return true;
         }
+        #[cfg(feature = "hdr-transfers")]
         (Srgb, Pq) => {
             incant!(convert_rgb_srgb_to_pq(m, data), [-v4]);
             return true;
@@ -785,10 +799,12 @@ pub(crate) fn convert_f32_rgba_dispatch(
             incant!(convert_rgba_bt709(m, data), [-v4]);
             return true;
         }
+        #[cfg(feature = "hdr-transfers")]
         (Pq, Pq) => {
             incant!(convert_rgba_pq(m, data), [-v4]);
             return true;
         }
+        #[cfg(feature = "hdr-transfers")]
         (Hlg, Hlg) => {
             incant!(convert_rgba_hlg(m, data), [-v4]);
             return true;
@@ -797,14 +813,17 @@ pub(crate) fn convert_f32_rgba_dispatch(
             incant!(convert_rgba_adobe(m, data), [-v4]);
             return true;
         }
+        #[cfg(feature = "hdr-transfers")]
         (Pq, Srgb) => {
             incant!(convert_rgba_pq_to_srgb(m, data), [-v4]);
             return true;
         }
+        #[cfg(feature = "hdr-transfers")]
         (Hlg, Srgb) => {
             incant!(convert_rgba_hlg_to_srgb(m, data), [-v4]);
             return true;
         }
+        #[cfg(feature = "hdr-transfers")]
         (Srgb, Pq) => {
             incant!(convert_rgba_srgb_to_pq(m, data), [-v4]);
             return true;
@@ -905,7 +924,9 @@ pub(crate) fn scalar_encode_u8(trc: TransferFunction) -> Option<fn(f32) -> u8> {
         TransferFunction::Bt709 => {
             Some(|v| quantize_with(linear_srgb::default::linear_to_bt709, v))
         }
+        #[cfg(feature = "hdr-transfers")]
         TransferFunction::Pq => Some(|v| quantize_with(linear_srgb::default::linear_to_pq, v)),
+        #[cfg(feature = "hdr-transfers")]
         TransferFunction::Hlg => Some(|v| quantize_with(linear_srgb::default::linear_to_hlg, v)),
         TransferFunction::Gamma22 => Some(|v| quantize_with(adobe_from_linear_scalar, v)),
         TransferFunction::Linear => Some(|v| (v * 255.0 + 0.5).clamp(0.0, 255.0) as u8),

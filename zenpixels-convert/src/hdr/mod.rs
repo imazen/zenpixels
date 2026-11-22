@@ -4,8 +4,9 @@
 //! `zenpixels::hdr` module. Provides explicit measurement, tone mapping
 //! and anchor-aware quantization.
 //!
-//! The core PQ/HLG EOTF/OETF math is always available through the main
-//! conversion pipeline in [`ConvertPlan`](crate::ConvertPlan).
+//! The core PQ/HLG EOTF/OETF math is available through the main
+//! conversion pipeline in [`ConvertPlan`](crate::ConvertPlan) when the
+//! `hdr-transfers` feature is enabled (on by default).
 //!
 //! # Experimental: `measure` — content-light-level measurement
 //!
@@ -48,7 +49,8 @@ pub mod measure;
 mod bt2446a;
 
 /// Soft chroma compression in OKLch with a precomputed gamut boundary LUT.
-/// Gated behind `hdr-experimental`.
+/// Gated behind `oklab` (`hdr-experimental` implies `oklab` and re-exports it publicly).
+#[cfg(feature = "oklab")]
 #[cfg_attr(not(feature = "hdr-experimental"), allow(dead_code))]
 mod gamut_compress;
 
@@ -78,7 +80,7 @@ pub use measure::{CllMeasure, LightLevelHistogram, LightLevelMethod};
 pub use bt2446a::Bt2446A;
 #[cfg(feature = "hdr-experimental")]
 pub use gamut_compress::SoftCompress;
-#[cfg(not(feature = "hdr-experimental"))]
+#[cfg(all(feature = "oklab", not(feature = "hdr-experimental")))]
 pub(crate) use gamut_compress::SoftCompress;
 // Two-phase tone-mapping surface: the pluggable curve trait and the strip executor
 // that `ToneMapper::prepare` produces.

@@ -7,8 +7,10 @@ use core::cmp::min;
 
 use archmage::prelude::*;
 
+#[cfg(feature = "oklab")]
+use crate::ColorPrimaries;
 use crate::policy::LumaCoefficients;
-use crate::{ChannelLayout, ChannelType, ColorPrimaries, PixelDescriptor};
+use crate::{ChannelLayout, ChannelType, PixelDescriptor};
 
 use super::ConvertStep;
 use crate::TransferFunction;
@@ -69,12 +71,15 @@ pub(super) fn apply_step_u8(
     // `hdr-experimental` feature is off).
     hdr_scratch: &mut HdrKernelScratch,
 ) {
-    #[cfg(not(feature = "hdr-experimental"))]
+    #[cfg(not(any(feature = "hdr-experimental", feature = "oklab")))]
     let _ = hdr_scratch;
+    #[cfg(not(any(feature = "hdr-transfers", feature = "perceptual")))]
+    let _ = pq_scale;
     crate::__trace_ops::record_step(step);
     let w = width as usize;
 
     match step {
+        #[cfg(feature = "hdr-transfers")]
         ConvertStep::HlgRender(prepared) => {
             super::hlg_render::row(src, dst, w, from.layout(), prepared);
         }
@@ -195,34 +200,42 @@ pub(super) fn apply_step_u8(
             f32_to_f16(src, dst, w, from.layout().channels());
         }
 
+        #[cfg(feature = "hdr-transfers")]
         ConvertStep::PqU16ToLinearF32 => {
             pq_u16_to_linear_f32(src, dst, w, from.layout(), pq_scale);
         }
 
+        #[cfg(feature = "hdr-transfers")]
         ConvertStep::LinearF32ToPqU16 => {
             linear_f32_to_pq_u16(src, dst, w, from.layout(), pq_scale);
         }
 
+        #[cfg(feature = "hdr-transfers")]
         ConvertStep::PqF32ToLinearF32 => {
             pq_f32_to_linear_f32(src, dst, w, from.layout(), pq_scale, in_trust.facts);
         }
 
+        #[cfg(feature = "hdr-transfers")]
         ConvertStep::LinearF32ToPqF32 => {
             linear_f32_to_pq_f32(src, dst, w, from.layout(), pq_scale, in_trust.facts);
         }
 
+        #[cfg(feature = "hdr-transfers")]
         ConvertStep::HlgU16ToLinearF32 => {
             hlg_u16_to_linear_f32(src, dst, w, from.layout());
         }
 
+        #[cfg(feature = "hdr-transfers")]
         ConvertStep::LinearF32ToHlgU16 => {
             linear_f32_to_hlg_u16(src, dst, w, from.layout());
         }
 
+        #[cfg(feature = "hdr-transfers")]
         ConvertStep::HlgF32ToLinearF32 => {
             hlg_f32_to_linear_f32(src, dst, w, from.layout());
         }
 
+        #[cfg(feature = "hdr-transfers")]
         ConvertStep::LinearF32ToHlgF32 => {
             linear_f32_to_hlg_f32(src, dst, w, from.layout());
         }
@@ -288,18 +301,22 @@ pub(super) fn apply_step_u8(
             );
         }
 
+        #[cfg(feature = "oklab")]
         ConvertStep::LinearRgbToOklab => {
             linear_rgb_to_oklab_f32(src, dst, w, from.primaries, in_trust);
         }
 
+        #[cfg(feature = "oklab")]
         ConvertStep::OklabToLinearRgb => {
             oklab_to_linear_rgb_f32(src, dst, w, from.primaries);
         }
 
+        #[cfg(feature = "oklab")]
         ConvertStep::LinearRgbaToOklaba => {
             linear_rgba_to_oklaba_f32(src, dst, w, from.primaries, in_trust);
         }
 
+        #[cfg(feature = "oklab")]
         ConvertStep::OklabaToLinearRgba => {
             oklaba_to_linear_rgba_f32(src, dst, w, from.primaries);
         }
@@ -376,10 +393,12 @@ pub(super) fn apply_step_u8(
             tone_map_kernel(src, dst, w, from, step, in_trust.color_facts, hdr_scratch);
         }
 
+        #[cfg(feature = "oklab")]
         ConvertStep::SoftCompressOklch(compressor) => {
             soft_compress_oklch_kernel(src, dst, w, from, compressor, hdr_scratch);
         }
 
+        #[cfg(feature = "perceptual")]
         ConvertStep::Perceptual(p) => {
             super::perceptual::apply_row(
                 *p,
@@ -482,6 +501,7 @@ fn tone_map_kernel(
 //
 // Same justification for `needless_range_loop` as in
 // `tone_map_bt2446a_kernel`.
+#[cfg(feature = "oklab")]
 #[allow(clippy::needless_range_loop)]
 fn soft_compress_oklch_kernel(
     src: &[u8],
@@ -876,7 +896,9 @@ fn matte_to_linear(rgb: &mut [f32], tf: TransferFunction, clip: bool) {
         TransferFunction::Srgb if clip => linear_srgb::default::srgb_to_linear_slice(rgb),
         TransferFunction::Srgb => linear_srgb::default::srgb_to_linear_extended_slice(rgb),
         TransferFunction::Bt709 => linear_srgb::default::bt709_to_linear_slice(rgb),
+        #[cfg(feature = "hdr-transfers")]
         TransferFunction::Pq => pq_eotf_slice(rgb),
+        #[cfg(feature = "hdr-transfers")]
         TransferFunction::Hlg => linear_srgb::default::hlg_to_linear_slice(rgb),
         TransferFunction::Gamma22 if clip => {
             linear_srgb::default::gamma_to_linear_slice(rgb, ADOBE_GAMMA);
@@ -896,7 +918,9 @@ fn matte_from_linear(rgb: &mut [f32], tf: TransferFunction, clip: bool) {
         TransferFunction::Srgb if clip => linear_srgb::default::linear_to_srgb_slice(rgb),
         TransferFunction::Srgb => linear_srgb::default::linear_to_srgb_extended_slice(rgb),
         TransferFunction::Bt709 => linear_srgb::default::linear_to_bt709_slice(rgb),
+        #[cfg(feature = "hdr-transfers")]
         TransferFunction::Pq => pq_oetf_slice(rgb),
+        #[cfg(feature = "hdr-transfers")]
         TransferFunction::Hlg => linear_srgb::default::linear_to_hlg_slice(rgb),
         TransferFunction::Gamma22 if clip => {
             linear_srgb::default::linear_to_gamma_slice(rgb, ADOBE_GAMMA);
@@ -1586,6 +1610,7 @@ fn restore_alpha_u8_f32(src: &[u8], dst: &mut [f32], layout: ChannelLayout) {
 }
 
 /// Restore the alpha lane of an f32 row from a u16 source row (`v / 65535`).
+#[cfg(feature = "hdr-transfers")]
 #[inline]
 fn restore_alpha_u16_f32(src: &[u16], dst: &mut [f32], layout: ChannelLayout) {
     let Some(ai) = alpha_lane(layout) else { return };
@@ -1608,6 +1633,7 @@ fn restore_alpha_f32_u8(src: &[f32], dst: &mut [u8], layout: ChannelLayout) {
 
 /// Restore the alpha lane of a u16 row from an f32 source row
 /// (`clamp(v) * 65535 + 0.5`).
+#[cfg(feature = "hdr-transfers")]
 #[inline]
 fn restore_alpha_f32_u16(src: &[f32], dst: &mut [u16], layout: ChannelLayout) {
     let Some(ai) = alpha_lane(layout) else { return };
@@ -1903,6 +1929,7 @@ fn f32_to_f16(src: &[u8], dst: &mut [u8], width: usize, channels: usize) {
 /// PQ EOTF: encoded `[0,1]` → linear light `[0,1]` (where 1.0 = 10000 cd/m²).
 ///
 /// Uses the existing `linear-srgb` transfer curve.
+#[cfg(any(feature = "perceptual", all(test, feature = "hdr-transfers")))]
 #[inline]
 pub(crate) fn pq_eotf(v: f32) -> f32 {
     linear_srgb::default::pq_to_linear(v)
@@ -1911,6 +1938,7 @@ pub(crate) fn pq_eotf(v: f32) -> f32 {
 /// PQ inverse EOTF (OETF): linear light `[0,1]` → encoded `[0,1]`.
 ///
 /// Uses the existing `linear-srgb` transfer curve.
+#[cfg(any(feature = "perceptual", all(test, feature = "hdr-transfers")))]
 #[inline]
 pub(crate) fn pq_oetf(v: f32) -> f32 {
     linear_srgb::default::linear_to_pq(v)
@@ -1920,6 +1948,7 @@ pub(crate) fn pq_oetf(v: f32) -> f32 {
 /// `[f, f, f, 1]`-repeating multiplier so the alpha lane (every 4th) is left
 /// **untouched**; any other channel count scales every lane uniformly. Any `< 16`
 /// remainder runs through a zero-padded stack chunk via the same SIMD body.
+#[cfg(feature = "hdr-transfers")]
 #[attune(_*_t, -_scalar_t, _v4_t(cfg(avx512)), define(f32x16))]
 fn multiply_color_channels_tier(token: Token, buf: &mut [f32], channels: usize, factor: f32) {
     let mul = if channels == 4 {
@@ -1946,6 +1975,7 @@ fn multiply_color_channels_tier(token: Token, buf: &mut [f32], channels: usize, 
     }
 }
 
+#[cfg(feature = "hdr-transfers")]
 #[cold]
 #[inline(never)]
 fn multiply_color_channels_tier_scalar_t(
@@ -1975,6 +2005,7 @@ fn multiply_color_channels_tier_scalar_t(
 /// never applies to it. **Without alpha** (any other `channels`): every lane is
 /// a color channel and is scaled uniformly. `factor == 1.0` is an early-out
 /// (`x * 1.0 == x`), so the un-anchored path is bit-for-bit the plain result.
+#[cfg(feature = "hdr-transfers")]
 pub(crate) fn multiply_color_channels(buf: &mut [f32], channels: usize, factor: f32) {
     if factor == 1.0 {
         return;
@@ -1990,11 +2021,13 @@ pub(crate) fn multiply_color_channels(buf: &mut [f32], channels: usize, factor: 
 // ---------------------------------------------------------------------------
 
 /// PQ EOTF over an interleaved f32 slice, every lane.
+#[cfg(feature = "hdr-transfers")]
 pub(crate) fn pq_eotf_slice(buf: &mut [f32]) {
     linear_srgb::default::pq_to_linear_slice(buf);
 }
 
 /// PQ OETF over an interleaved f32 slice, every lane.
+#[cfg(feature = "hdr-transfers")]
 pub(crate) fn pq_oetf_slice(buf: &mut [f32]) {
     linear_srgb::default::linear_to_pq_slice(buf);
 }
@@ -2006,6 +2039,7 @@ pub(crate) fn pq_oetf_slice(buf: &mut [f32]) {
 /// (`diffuse_white / 10000`). The EOTF runs over every lane; for alpha-bearing
 /// layouts the alpha lane is then overwritten with its (un-transformed,
 /// un-anchored) linear value. `scale == 1.0` is the identity anchor.
+#[cfg(feature = "hdr-transfers")]
 fn pq_u16_to_linear_f32(
     src: &[u8],
     dst: &mut [u8],
@@ -2030,6 +2064,7 @@ fn pq_u16_to_linear_f32(
 /// half-width, so it cannot host the in-place f32 transform), then narrows to U16
 /// (`float_simd`). For alpha-bearing layouts the alpha lane is overwritten with its
 /// linear → U16 value (never OETF'd or anchored). `scale == 1.0` is the identity.
+#[cfg(feature = "hdr-transfers")]
 fn linear_f32_to_pq_u16(
     src: &[u8],
     dst: &mut [u8],
@@ -2065,6 +2100,7 @@ fn linear_f32_to_pq_u16(
 /// the RGB lanes are divided by it after the EOTF and, for alpha-bearing layouts,
 /// the alpha lane is restored to its (un-transformed) input. `scale == 1.0` is a
 /// no-op so the un-anchored result depends only on [`pq_eotf_slice`].
+#[cfg(feature = "hdr-transfers")]
 fn pq_f32_to_linear_f32(
     src: &[u8],
     dst: &mut [u8],
@@ -2099,6 +2135,7 @@ fn pq_f32_to_linear_f32(
 /// `scale` is the `diffuse_white / 10000` anchor (see [`linear_f32_to_pq_u16`]);
 /// the RGB lanes are multiplied by it before the OETF and, for alpha-bearing
 /// layouts, the alpha lane is restored to its (un-transformed) linear input.
+#[cfg(feature = "hdr-transfers")]
 fn linear_f32_to_pq_f32(
     src: &[u8],
     dst: &mut [u8],
@@ -2151,7 +2188,7 @@ fn linear_f32_to_pq_f32(
 /// HLG OETF: scene-linear `[0,1]` → encoded `[0,1]`.
 ///
 /// Uses `fast_log2f` from `linear-srgb` (no `libm` ln calls).
-#[cfg(test)]
+#[cfg(all(test, feature = "hdr-transfers"))]
 #[inline]
 pub(crate) fn hlg_oetf(v: f32) -> f32 {
     linear_srgb::default::linear_to_hlg(v)
@@ -2160,7 +2197,7 @@ pub(crate) fn hlg_oetf(v: f32) -> f32 {
 /// HLG inverse OETF (EOTF): encoded `[0,1]` → scene-linear `[0,1]`.
 ///
 /// Uses `fast_pow2f` from `linear-srgb` (no `libm` exp calls).
-#[cfg(test)]
+#[cfg(all(test, feature = "hdr-transfers"))]
 #[inline]
 pub(crate) fn hlg_eotf(v: f32) -> f32 {
     linear_srgb::default::hlg_to_linear(v)
@@ -2168,6 +2205,7 @@ pub(crate) fn hlg_eotf(v: f32) -> f32 {
 
 /// HLG U16 → Linear F32 (EOTF applied during depth conversion),
 /// alpha-preserving (the alpha lane is carried linearly, `v / 65535`).
+#[cfg(feature = "hdr-transfers")]
 fn hlg_u16_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, layout: ChannelLayout) {
     let count = width * layout.channels();
     let src16: &[u16] = bytemuck::cast_slice(&src[..count * 2]);
@@ -2179,6 +2217,7 @@ fn hlg_u16_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, layout: Chann
 
 /// Linear F32 → HLG U16 (OETF applied during depth conversion),
 /// alpha-preserving (the alpha lane is scaled linearly, never HLG-encoded).
+#[cfg(feature = "hdr-transfers")]
 fn linear_f32_to_hlg_u16(src: &[u8], dst: &mut [u8], width: usize, layout: ChannelLayout) {
     const LANES: usize = 256;
     let count = width * layout.channels();
@@ -2203,6 +2242,7 @@ fn linear_f32_to_hlg_u16(src: &[u8], dst: &mut [u8], width: usize, layout: Chann
 
 /// HLG F32 → Linear F32 (EOTF, same depth). SIMD-dispatched,
 /// alpha-preserving.
+#[cfg(feature = "hdr-transfers")]
 fn hlg_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, layout: ChannelLayout) {
     let count = width * layout.channels();
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
@@ -2214,6 +2254,7 @@ fn hlg_f32_to_linear_f32(src: &[u8], dst: &mut [u8], width: usize, layout: Chann
 
 /// Linear F32 → HLG F32 (OETF, same depth). SIMD-dispatched,
 /// alpha-preserving.
+#[cfg(feature = "hdr-transfers")]
 fn linear_f32_to_hlg_f32(src: &[u8], dst: &mut [u8], width: usize, layout: ChannelLayout) {
     let count = width * layout.channels();
     let srcf: &[f32] = bytemuck::cast_slice(&src[..count * 4]);
@@ -2832,219 +2873,243 @@ fn premul_to_straight(
 // Oklab conversion kernels
 // ---------------------------------------------------------------------------
 
-use crate::oklab::{
-    lms_to_rgb_matrix, oklab_to_rgb, rgb_to_lms_matrix, rgb_to_oklab, rgb_to_oklab_spec,
+#[cfg(feature = "oklab")]
+mod oklab_kernels {
+    use super::*;
+    use crate::oklab::{
+        lms_to_rgb_matrix, oklab_to_rgb, rgb_to_lms_matrix, rgb_to_oklab, rgb_to_oklab_spec,
+    };
+
+    #[inline]
+    fn oklab_is_finite_nonneg(m1: &[[f32; 3]; 3], in_trust: super::super::StepFloatTrust) -> bool {
+        use zenpixels::sample::FloatFacts;
+        let cf = in_trust.color_facts;
+        cf.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::NON_NEGATIVE)
+            && in_trust.color_bounded
+            && m1.as_flattened().iter().all(|&c| c >= (1.0 / 64.0))
+    }
+
+    type OklabChunksFn<const N: usize> = fn(&[[f32; N]], &mut [[f32; N]], &[[f32; 3]; 3]);
+
+    /// Shared padded-chunk driver for Oklab 16-pixel (`N = 48` or `64`) slice kernels.
+    /// Runs full chunks directly and pads any `< N` remainder with `0.0` through the
+    /// exact same chunk kernel so no SIMD tier emits scalar tail math.
+    #[inline(always)]
+    fn run_oklab_chunked<const N: usize>(
+        src: &[f32],
+        dst: &mut [f32],
+        m: &[[f32; 3]; 3],
+        chunks_fn: OklabChunksFn<N>,
+    ) {
+        let len = src.len().min(dst.len());
+        let (s_chunks, s_rem) = src[..len].as_chunks::<N>();
+        let (d_chunks, d_rem) = dst[..len].as_chunks_mut::<N>();
+        if !s_chunks.is_empty() {
+            chunks_fn(s_chunks, d_chunks, m);
+        }
+        if !s_rem.is_empty() {
+            finish_oklab_tail(s_rem, d_rem, m, chunks_fn);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn finish_oklab_tail<const N: usize>(
+        s_rem: &[f32],
+        d_rem: &mut [f32],
+        m: &[[f32; 3]; 3],
+        chunks_fn: OklabChunksFn<N>,
+    ) {
+        let mut sin = [0.0f32; N];
+        let mut dout = [0.0f32; N];
+        sin[..s_rem.len()].copy_from_slice(s_rem);
+        chunks_fn(
+            core::slice::from_ref(&sin),
+            core::slice::from_mut(&mut dout),
+            m,
+        );
+        d_rem.copy_from_slice(&dout[..d_rem.len()]);
+    }
+
+    #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
+    fn rgb_to_oklab_3ch_finite_nonneg_chunks(
+        src: &[[f32; 48]],
+        dst: &mut [[f32; 48]],
+        m1: &[[f32; 3]; 3],
+    ) {
+        for (s, d) in src.iter().zip(dst.iter_mut()) {
+            for p in 0..16 {
+                let i = p * 3;
+                let [l, a, b] =
+                    rgb_to_oklab_spec::<true, false, true, false>(s[i], s[i + 1], s[i + 2], m1);
+                d[i] = l;
+                d[i + 1] = a;
+                d[i + 2] = b;
+            }
+        }
+    }
+
+    #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
+    fn rgb_to_oklab_4ch_finite_nonneg_chunks(
+        src: &[[f32; 64]],
+        dst: &mut [[f32; 64]],
+        m1: &[[f32; 3]; 3],
+    ) {
+        for (s, d) in src.iter().zip(dst.iter_mut()) {
+            for p in 0..16 {
+                let i = p * 4;
+                let [l, a, b] =
+                    rgb_to_oklab_spec::<true, false, true, false>(s[i], s[i + 1], s[i + 2], m1);
+                d[i] = l;
+                d[i + 1] = a;
+                d[i + 2] = b;
+                d[i + 3] = s[i + 3];
+            }
+        }
+    }
+
+    /// Linear RGB f32 → Oklab f32 (3 channels).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `primaries` is `Unknown`. The plan should have rejected this.
+    pub(super) fn linear_rgb_to_oklab_f32(
+        src: &[u8],
+        dst: &mut [u8],
+        width: usize,
+        primaries: ColorPrimaries,
+        in_trust: super::super::StepFloatTrust,
+    ) {
+        let m1 = rgb_to_lms_matrix(primaries).expect(
+            "Oklab conversion requires known primaries (plan should have rejected Unknown)",
+        );
+        let rows = m1.rows();
+        let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 12]);
+        let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
+        if oklab_is_finite_nonneg(rows, in_trust) {
+            run_oklab_chunked::<48>(srcf, dstf, rows, rgb_to_oklab_3ch_finite_nonneg_chunks);
+        } else {
+            run_oklab_chunked::<48>(srcf, dstf, rows, rgb_to_oklab_3ch_chunks);
+        }
+    }
+
+    /// 3-channel RGB→Oklab inner loop (16 pixels = 48 f32s per chunk).
+    #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
+    fn rgb_to_oklab_3ch_chunks(src: &[[f32; 48]], dst: &mut [[f32; 48]], m1: &[[f32; 3]; 3]) {
+        for (s, d) in src.iter().zip(dst.iter_mut()) {
+            for p in 0..16 {
+                let i = p * 3;
+                let [l, a, b] = rgb_to_oklab(s[i], s[i + 1], s[i + 2], m1);
+                d[i] = l;
+                d[i + 1] = a;
+                d[i + 2] = b;
+            }
+        }
+    }
+
+    /// Oklab f32 → Linear RGB f32 (3 channels).
+    pub(super) fn oklab_to_linear_rgb_f32(
+        src: &[u8],
+        dst: &mut [u8],
+        width: usize,
+        primaries: ColorPrimaries,
+    ) {
+        let m1_inv = lms_to_rgb_matrix(primaries).expect(
+            "Oklab conversion requires known primaries (plan should have rejected Unknown)",
+        );
+
+        let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 12]);
+        let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
+        run_oklab_chunked::<48>(srcf, dstf, m1_inv.rows(), oklab_to_rgb_3ch_chunks);
+    }
+
+    /// 3-channel Oklab→RGB inner loop (16 pixels = 48 f32s per chunk).
+    #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
+    fn oklab_to_rgb_3ch_chunks(src: &[[f32; 48]], dst: &mut [[f32; 48]], m1_inv: &[[f32; 3]; 3]) {
+        for (s, d) in src.iter().zip(dst.iter_mut()) {
+            for p in 0..16 {
+                let i = p * 3;
+                let [r, g, b] = oklab_to_rgb(s[i], s[i + 1], s[i + 2], m1_inv);
+                d[i] = r;
+                d[i + 1] = g;
+                d[i + 2] = b;
+            }
+        }
+    }
+
+    /// Linear RGBA f32 → Oklaba f32 (4 channels, alpha preserved).
+    pub(super) fn linear_rgba_to_oklaba_f32(
+        src: &[u8],
+        dst: &mut [u8],
+        width: usize,
+        primaries: ColorPrimaries,
+        in_trust: super::super::StepFloatTrust,
+    ) {
+        let m1 = rgb_to_lms_matrix(primaries).expect(
+            "Oklab conversion requires known primaries (plan should have rejected Unknown)",
+        );
+        let rows = m1.rows();
+        let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
+        let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 16]);
+        if oklab_is_finite_nonneg(rows, in_trust) {
+            run_oklab_chunked::<64>(srcf, dstf, rows, rgb_to_oklab_4ch_finite_nonneg_chunks);
+        } else {
+            run_oklab_chunked::<64>(srcf, dstf, rows, rgb_to_oklab_4ch_chunks);
+        }
+    }
+
+    /// 4-channel RGBA→Oklaba inner loop (16 pixels = 64 f32s per chunk).
+    #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
+    fn rgb_to_oklab_4ch_chunks(src: &[[f32; 64]], dst: &mut [[f32; 64]], m1: &[[f32; 3]; 3]) {
+        for (s, d) in src.iter().zip(dst.iter_mut()) {
+            for p in 0..16 {
+                let i = p * 4;
+                let [l, a, b] = rgb_to_oklab(s[i], s[i + 1], s[i + 2], m1);
+                d[i] = l;
+                d[i + 1] = a;
+                d[i + 2] = b;
+                d[i + 3] = s[i + 3]; // alpha unchanged
+            }
+        }
+    }
+
+    /// Oklaba f32 → Linear RGBA f32 (4 channels, alpha preserved).
+    pub(super) fn oklaba_to_linear_rgba_f32(
+        src: &[u8],
+        dst: &mut [u8],
+        width: usize,
+        primaries: ColorPrimaries,
+    ) {
+        let m1_inv = lms_to_rgb_matrix(primaries).expect(
+            "Oklab conversion requires known primaries (plan should have rejected Unknown)",
+        );
+
+        let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
+        let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 16]);
+        run_oklab_chunked::<64>(srcf, dstf, m1_inv.rows(), oklab_to_rgb_4ch_chunks);
+    }
+
+    /// 4-channel Oklaba→RGBA inner loop (16 pixels = 64 f32s per chunk).
+    #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
+    fn oklab_to_rgb_4ch_chunks(src: &[[f32; 64]], dst: &mut [[f32; 64]], m1_inv: &[[f32; 3]; 3]) {
+        for (s, d) in src.iter().zip(dst.iter_mut()) {
+            for p in 0..16 {
+                let i = p * 4;
+                let [r, g, b] = oklab_to_rgb(s[i], s[i + 1], s[i + 2], m1_inv);
+                d[i] = r;
+                d[i + 1] = g;
+                d[i + 2] = b;
+                d[i + 3] = s[i + 3]; // alpha unchanged
+            }
+        }
+    }
+}
+
+#[cfg(feature = "oklab")]
+use oklab_kernels::{
+    linear_rgb_to_oklab_f32, linear_rgba_to_oklaba_f32, oklab_to_linear_rgb_f32,
+    oklaba_to_linear_rgba_f32,
 };
-
-#[inline]
-fn oklab_is_finite_nonneg(m1: &[[f32; 3]; 3], in_trust: super::StepFloatTrust) -> bool {
-    use zenpixels::sample::FloatFacts;
-    let cf = in_trust.color_facts;
-    cf.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::NON_NEGATIVE)
-        && in_trust.color_bounded
-        && m1.as_flattened().iter().all(|&c| c >= (1.0 / 64.0))
-}
-
-type OklabChunksFn<const N: usize> = fn(&[[f32; N]], &mut [[f32; N]], &[[f32; 3]; 3]);
-
-/// Shared padded-chunk driver for Oklab 16-pixel (`N = 48` or `64`) slice kernels.
-/// Runs full chunks directly and pads any `< N` remainder with `0.0` through the
-/// exact same chunk kernel so no SIMD tier emits scalar tail math.
-#[inline(always)]
-fn run_oklab_chunked<const N: usize>(
-    src: &[f32],
-    dst: &mut [f32],
-    m: &[[f32; 3]; 3],
-    chunks_fn: OklabChunksFn<N>,
-) {
-    let len = src.len().min(dst.len());
-    let (s_chunks, s_rem) = src[..len].as_chunks::<N>();
-    let (d_chunks, d_rem) = dst[..len].as_chunks_mut::<N>();
-    if !s_chunks.is_empty() {
-        chunks_fn(s_chunks, d_chunks, m);
-    }
-    if !s_rem.is_empty() {
-        finish_oklab_tail(s_rem, d_rem, m, chunks_fn);
-    }
-}
-
-#[cold]
-#[inline(never)]
-fn finish_oklab_tail<const N: usize>(
-    s_rem: &[f32],
-    d_rem: &mut [f32],
-    m: &[[f32; 3]; 3],
-    chunks_fn: OklabChunksFn<N>,
-) {
-    let mut sin = [0.0f32; N];
-    let mut dout = [0.0f32; N];
-    sin[..s_rem.len()].copy_from_slice(s_rem);
-    chunks_fn(
-        core::slice::from_ref(&sin),
-        core::slice::from_mut(&mut dout),
-        m,
-    );
-    d_rem.copy_from_slice(&dout[..d_rem.len()]);
-}
-
-#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
-fn rgb_to_oklab_3ch_finite_nonneg_chunks(
-    src: &[[f32; 48]],
-    dst: &mut [[f32; 48]],
-    m1: &[[f32; 3]; 3],
-) {
-    for (s, d) in src.iter().zip(dst.iter_mut()) {
-        for p in 0..16 {
-            let i = p * 3;
-            let [l, a, b] =
-                rgb_to_oklab_spec::<true, false, true, false>(s[i], s[i + 1], s[i + 2], m1);
-            d[i] = l;
-            d[i + 1] = a;
-            d[i + 2] = b;
-        }
-    }
-}
-
-#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
-fn rgb_to_oklab_4ch_finite_nonneg_chunks(
-    src: &[[f32; 64]],
-    dst: &mut [[f32; 64]],
-    m1: &[[f32; 3]; 3],
-) {
-    for (s, d) in src.iter().zip(dst.iter_mut()) {
-        for p in 0..16 {
-            let i = p * 4;
-            let [l, a, b] =
-                rgb_to_oklab_spec::<true, false, true, false>(s[i], s[i + 1], s[i + 2], m1);
-            d[i] = l;
-            d[i + 1] = a;
-            d[i + 2] = b;
-            d[i + 3] = s[i + 3];
-        }
-    }
-}
-
-/// Linear RGB f32 → Oklab f32 (3 channels).
-///
-/// # Panics
-///
-/// Panics if `primaries` is `Unknown`. The plan should have rejected this.
-fn linear_rgb_to_oklab_f32(
-    src: &[u8],
-    dst: &mut [u8],
-    width: usize,
-    primaries: ColorPrimaries,
-    in_trust: super::StepFloatTrust,
-) {
-    let m1 = rgb_to_lms_matrix(primaries)
-        .expect("Oklab conversion requires known primaries (plan should have rejected Unknown)");
-    let rows = m1.rows();
-    let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 12]);
-    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
-    if oklab_is_finite_nonneg(rows, in_trust) {
-        run_oklab_chunked::<48>(srcf, dstf, rows, rgb_to_oklab_3ch_finite_nonneg_chunks);
-    } else {
-        run_oklab_chunked::<48>(srcf, dstf, rows, rgb_to_oklab_3ch_chunks);
-    }
-}
-
-/// 3-channel RGB→Oklab inner loop (16 pixels = 48 f32s per chunk).
-#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
-fn rgb_to_oklab_3ch_chunks(src: &[[f32; 48]], dst: &mut [[f32; 48]], m1: &[[f32; 3]; 3]) {
-    for (s, d) in src.iter().zip(dst.iter_mut()) {
-        for p in 0..16 {
-            let i = p * 3;
-            let [l, a, b] = rgb_to_oklab(s[i], s[i + 1], s[i + 2], m1);
-            d[i] = l;
-            d[i + 1] = a;
-            d[i + 2] = b;
-        }
-    }
-}
-
-/// Oklab f32 → Linear RGB f32 (3 channels).
-fn oklab_to_linear_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: ColorPrimaries) {
-    let m1_inv = lms_to_rgb_matrix(primaries)
-        .expect("Oklab conversion requires known primaries (plan should have rejected Unknown)");
-
-    let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 12]);
-    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
-    run_oklab_chunked::<48>(srcf, dstf, m1_inv.rows(), oklab_to_rgb_3ch_chunks);
-}
-
-/// 3-channel Oklab→RGB inner loop (16 pixels = 48 f32s per chunk).
-#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
-fn oklab_to_rgb_3ch_chunks(src: &[[f32; 48]], dst: &mut [[f32; 48]], m1_inv: &[[f32; 3]; 3]) {
-    for (s, d) in src.iter().zip(dst.iter_mut()) {
-        for p in 0..16 {
-            let i = p * 3;
-            let [r, g, b] = oklab_to_rgb(s[i], s[i + 1], s[i + 2], m1_inv);
-            d[i] = r;
-            d[i + 1] = g;
-            d[i + 2] = b;
-        }
-    }
-}
-
-/// Linear RGBA f32 → Oklaba f32 (4 channels, alpha preserved).
-fn linear_rgba_to_oklaba_f32(
-    src: &[u8],
-    dst: &mut [u8],
-    width: usize,
-    primaries: ColorPrimaries,
-    in_trust: super::StepFloatTrust,
-) {
-    let m1 = rgb_to_lms_matrix(primaries)
-        .expect("Oklab conversion requires known primaries (plan should have rejected Unknown)");
-    let rows = m1.rows();
-    let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
-    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 16]);
-    if oklab_is_finite_nonneg(rows, in_trust) {
-        run_oklab_chunked::<64>(srcf, dstf, rows, rgb_to_oklab_4ch_finite_nonneg_chunks);
-    } else {
-        run_oklab_chunked::<64>(srcf, dstf, rows, rgb_to_oklab_4ch_chunks);
-    }
-}
-
-/// 4-channel RGBA→Oklaba inner loop (16 pixels = 64 f32s per chunk).
-#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
-fn rgb_to_oklab_4ch_chunks(src: &[[f32; 64]], dst: &mut [[f32; 64]], m1: &[[f32; 3]; 3]) {
-    for (s, d) in src.iter().zip(dst.iter_mut()) {
-        for p in 0..16 {
-            let i = p * 4;
-            let [l, a, b] = rgb_to_oklab(s[i], s[i + 1], s[i + 2], m1);
-            d[i] = l;
-            d[i + 1] = a;
-            d[i + 2] = b;
-            d[i + 3] = s[i + 3]; // alpha unchanged
-        }
-    }
-}
-
-/// Oklaba f32 → Linear RGBA f32 (4 channels, alpha preserved).
-fn oklaba_to_linear_rgba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: ColorPrimaries) {
-    let m1_inv = lms_to_rgb_matrix(primaries)
-        .expect("Oklab conversion requires known primaries (plan should have rejected Unknown)");
-
-    let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
-    let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 16]);
-    run_oklab_chunked::<64>(srcf, dstf, m1_inv.rows(), oklab_to_rgb_4ch_chunks);
-}
-
-/// 4-channel Oklaba→RGBA inner loop (16 pixels = 64 f32s per chunk).
-#[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
-fn oklab_to_rgb_4ch_chunks(src: &[[f32; 64]], dst: &mut [[f32; 64]], m1_inv: &[[f32; 3]; 3]) {
-    for (s, d) in src.iter().zip(dst.iter_mut()) {
-        for p in 0..16 {
-            let i = p * 4;
-            let [r, g, b] = oklab_to_rgb(s[i], s[i + 1], s[i + 2], m1_inv);
-            d[i] = r;
-            d[i + 1] = g;
-            d[i + 2] = b;
-            d[i + 3] = s[i + 3]; // alpha unchanged
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Gamut matrix kernels

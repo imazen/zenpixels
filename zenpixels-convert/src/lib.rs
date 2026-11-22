@@ -398,6 +398,7 @@ pub mod gamut;
 pub mod hdr;
 pub mod icc_profiles;
 pub mod load_bearing;
+#[cfg(feature = "oklab")]
 pub mod oklab;
 #[cfg(not(feature = "__bench_orient"))]
 pub(crate) mod orient;
