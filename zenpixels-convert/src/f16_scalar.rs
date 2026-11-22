@@ -28,7 +28,6 @@
 //! stabilized in Rust 1.94, but our MSRV is 1.89.
 
 /// Convert raw f16 bits to an f32 value. Lossless.
-#[cfg(test)]
 #[inline]
 pub(crate) fn f16_bits_to_f32(h: u16) -> f32 {
     // f32 layout:  sign(1) | exp(8) | mantissa(23)

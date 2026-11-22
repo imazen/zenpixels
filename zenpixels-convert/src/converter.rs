@@ -230,6 +230,16 @@ impl RowRecipe {
             || matches!(self.stages.as_slice(), [Stage { operation: Operation::Native(p), .. }] if p.is_identity())
     }
 
+    #[inline(always)]
+    pub(crate) fn bind<const CAPS: u64>(&mut self) -> Result<(), At<ConvertError>> {
+        for stage in &mut self.stages {
+            if let Operation::Native(plan) = &mut stage.operation {
+                plan.bind::<CAPS>()?;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn needs_pixel_work(&self) -> bool {
         !self.is_identity_operation()
     }
@@ -311,7 +321,9 @@ impl RowRecipe {
         {
             // The CMS interface has no luminance-intent parameter. Native HDR
             // plans must retain the explicit anchor and peak policy.
-            return Ok(Self::native(NativePlan::new_explicit(from, to, options)?));
+            return Ok(Self::native(NativePlan::new_explicit_unbound(
+                from, to, options,
+            )?));
         }
 
         if from.has_alpha()
@@ -325,7 +337,9 @@ impl RowRecipe {
         if options.gamut_policy() == crate::policy::GamutPolicy::SoftCompress
             && crate::convert::soft_compress_applies(&from, &to)
         {
-            return Ok(Self::native(NativePlan::new_explicit(from, to, options)?));
+            return Ok(Self::native(NativePlan::new_explicit_unbound(
+                from, to, options,
+            )?));
         }
 
         // CMS dispatch chain. Fires when:
@@ -381,7 +395,7 @@ impl RowRecipe {
         }
 
         // Same profiles, or CMS chain declined — built-in plan.
-        let plan = NativePlan::new_explicit(from, to, options).at()?;
+        let plan = NativePlan::new_explicit_unbound(from, to, options).at()?;
         Ok(Self::native(plan))
     }
 
@@ -1022,7 +1036,9 @@ impl RowConverter {
         self.worker_limit = limit;
     }
 
-    pub(crate) fn from_plan(plan: NativePlan) -> Self {
+    pub(crate) fn from_plan(mut plan: NativePlan) -> Self {
+        plan.bind_if_unbound_all()
+            .expect("ZenCmsLite / NativePlan step binding under caps::ALL");
         RowRecipe::native(plan).into_worker(None)
     }
 
@@ -1030,7 +1046,9 @@ impl RowConverter {
         from: PixelDescriptor,
         to: PixelDescriptor,
     ) -> Result<Self, At<ConvertError>> {
-        Ok(RowRecipe::new(from, to)?.into_worker(None))
+        let mut recipe = RowRecipe::new(from, to)?;
+        recipe.bind::<{ crate::caps::ALL }>()?;
+        Ok(recipe.into_worker(None))
     }
 
     pub(crate) fn new_explicit(
@@ -1038,7 +1056,9 @@ impl RowConverter {
         to: PixelDescriptor,
         options: &crate::ConvertOptions,
     ) -> Result<Self, At<ConvertError>> {
-        Ok(RowRecipe::new_explicit(from, to, options)?.into_worker(None))
+        let mut recipe = RowRecipe::new_explicit(from, to, options)?;
+        recipe.bind::<{ crate::caps::ALL }>()?;
+        Ok(recipe.into_worker(None))
     }
 
     #[cfg(test)]
@@ -1048,7 +1068,9 @@ impl RowConverter {
         options: &crate::ConvertOptions,
         cms: Option<&dyn crate::PluggableCms>,
     ) -> Result<Self, At<ConvertError>> {
-        Ok(RowRecipe::new_explicit_with_cms(from, to, options, cms)?.into_worker(None))
+        let mut recipe = RowRecipe::new_explicit_with_cms(from, to, options, cms)?;
+        recipe.bind::<{ crate::caps::ALL }>()?;
+        Ok(recipe.into_worker(None))
     }
 
     #[cfg(test)]
@@ -1060,7 +1082,9 @@ impl RowConverter {
         options: &crate::ConvertOptions,
         cms: Option<&dyn crate::PluggableCms>,
     ) -> Result<Self, At<ConvertError>> {
-        Ok(RowRecipe::new_with_sources(from, to, src, dst, options, cms)?.into_worker(None))
+        let mut recipe = RowRecipe::new_with_sources(from, to, src, dst, options, cms)?;
+        recipe.bind::<{ crate::caps::ALL }>()?;
+        Ok(recipe.into_worker(None))
     }
 
     #[cfg(test)]

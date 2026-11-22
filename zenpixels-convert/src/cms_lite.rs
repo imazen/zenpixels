@@ -154,7 +154,7 @@ impl ZenCmsLite {
         // RowConverter CMS chain. Plan construction failing here IS a
         // failure (we recognized the pair) — surface it instead of
         // declining.
-        match crate::convert::NativePlan::new_explicit(from, to, options) {
+        match crate::convert::NativePlan::new_explicit_unbound(from, to, options) {
             Ok(plan) => Some(Ok(plan)),
             Err(e) => {
                 let msg = alloc::format!("ZenCmsLite plan construction failed: {e:?}");

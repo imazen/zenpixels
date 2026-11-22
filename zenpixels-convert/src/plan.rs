@@ -328,10 +328,39 @@ fn profile_defines_transfer(profile: &crate::ColorProfileSource<'_>) -> bool {
 
 impl ConvertPlan {
     /// Check authority and policy and compile the actual route.
+    #[track_caller]
     pub fn build(
         source: PixelEncoding<'_>,
         target: PixelEncoding<'_>,
         spec: &ConversionSpec<'_>,
+    ) -> Result<Self, At<ConvertError>> {
+        Self::build_with_caps::<{ crate::caps::ALL }>(source, target, spec)
+    }
+
+    /// Compile a route and bind only the kernel steps permitted by `CAPS`.
+    ///
+    /// Planning is non-generic and shared across all capability masks; only
+    /// step binding is monomorphized over `CAPS` so disabled kernels are
+    /// dead-code-eliminated.
+    #[inline(always)]
+    #[track_caller]
+    pub(crate) fn build_with_caps<const CAPS: u64>(
+        source: PixelEncoding<'_>,
+        target: PixelEncoding<'_>,
+        spec: &ConversionSpec<'_>,
+    ) -> Result<Self, At<ConvertError>> {
+        let mut plan =
+            Self::build_unbound(source, target, spec, (CAPS & crate::caps::TONE_MAP) != 0)?;
+        plan.recipe.bind::<CAPS>()?;
+        Ok(plan)
+    }
+
+    #[track_caller]
+    fn build_unbound(
+        source: PixelEncoding<'_>,
+        target: PixelEncoding<'_>,
+        spec: &ConversionSpec<'_>,
+        allow_hdr: bool,
     ) -> Result<Self, At<ConvertError>> {
         let from = source.descriptor();
         let to = target.descriptor();
@@ -394,7 +423,7 @@ impl ConvertPlan {
             }
         }
 
-        let mut recipe = compile(source, target, same_profile, &options, spec)?;
+        let mut recipe = compile(source, target, same_profile, &options, spec, allow_hdr)?;
         // The row endpoints use the caller's carriers even if the kernel resolved
         // fields of a compact descriptor using attached profile evidence.
         recipe.from = from;
@@ -486,10 +515,35 @@ impl ConvertPlan {
     }
 
     /// Select an admitted route and return its executable plan.
+    #[track_caller]
     pub fn select(
         source: PixelEncoding<'_>,
         targets: &[CandidateTarget<'_>],
         spec: &ConversionSpec<'_>,
+    ) -> Result<SelectedConversion, At<ConvertError>> {
+        Self::select_with_caps::<{ crate::caps::ALL }>(source, targets, spec)
+    }
+
+    #[inline(always)]
+    #[track_caller]
+    pub(crate) fn select_with_caps<const CAPS: u64>(
+        source: PixelEncoding<'_>,
+        targets: &[CandidateTarget<'_>],
+        spec: &ConversionSpec<'_>,
+    ) -> Result<SelectedConversion, At<ConvertError>> {
+        Self::select_with_fn(source, targets, spec, Self::build_with_caps::<CAPS>)
+    }
+
+    #[track_caller]
+    fn select_with_fn(
+        source: PixelEncoding<'_>,
+        targets: &[CandidateTarget<'_>],
+        spec: &ConversionSpec<'_>,
+        build_fn: fn(
+            PixelEncoding<'_>,
+            PixelEncoding<'_>,
+            &ConversionSpec<'_>,
+        ) -> Result<Self, At<ConvertError>>,
     ) -> Result<SelectedConversion, At<ConvertError>> {
         if targets.is_empty() {
             return Err(whereat::at!(ConvertError::EmptyFormatList));
@@ -502,7 +556,7 @@ impl ConvertPlan {
             .unwrap_or_else(|| Provenance::from_source(source.descriptor()));
 
         for (index, candidate) in targets.iter().enumerate() {
-            match Self::build(source, candidate.target, spec) {
+            match build_fn(source, candidate.target, spec) {
                 Ok(plan) => {
                     let scratch = spec
                         .workspace_limit
@@ -671,7 +725,10 @@ fn compile(
     same_profile: bool,
     options: &ConvertOptions,
     spec: &ConversionSpec<'_>,
+    allow_hdr: bool,
 ) -> Result<RowRecipe, At<ConvertError>> {
+    #[cfg(not(feature = "hdr-experimental"))]
+    let _ = allow_hdr;
     let (mut from, to) = (source.descriptor(), target.descriptor());
     let hdr_requested = false;
     #[cfg(feature = "hdr-experimental")]
@@ -714,6 +771,9 @@ fn compile(
     }
     #[cfg(feature = "hdr-experimental")]
     if let Some(hdr) = spec.hdr {
+        if !allow_hdr {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
         let src_profile = crate::output::current_profile_for(source)?;
         let dst_profile = crate::output::current_profile_for(target)?;
         if !same_profile && (src_profile.resolve().is_none() || dst_profile.resolve().is_none()) {
@@ -750,9 +810,9 @@ fn compile(
         }
         let native = match spec.tone_mapper {
             Some(mapper) => {
-                crate::NativePlan::new_with_tone_mapper(from, to, *hdr, Arc::clone(mapper))?
+                crate::NativePlan::new_with_tone_mapper_unbound(from, to, *hdr, Arc::clone(mapper))?
             }
-            None => crate::NativePlan::new_with_hdr_config(from, to, *hdr)?,
+            None => crate::NativePlan::new_with_hdr_config_unbound(from, to, *hdr)?,
         };
         let native = if let Some(white) =
             source.color_context().and_then(ColorContext::diffuse_white)
@@ -781,7 +841,7 @@ fn exact_path(
     struct State(PixelDescriptor);
 
     fn edge(from: State, to: State) -> Option<RowRecipe> {
-        crate::NativePlan::new_preserving_samples(from.0, to.0)
+        crate::NativePlan::new_preserving_samples_unbound(from.0, to.0)
             .ok()
             .map(RowRecipe::native)
     }

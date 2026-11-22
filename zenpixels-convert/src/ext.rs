@@ -137,7 +137,7 @@ fn exact_after_preserving(
     {
         return None;
     }
-    if crate::NativePlan::new_preserving_samples(from, to).is_err() {
+    if crate::NativePlan::new_preserving_samples_unbound(from, to).is_err() {
         return None;
     }
     let carry = |bits: u8| match (from.channel_type(), to.channel_type()) {

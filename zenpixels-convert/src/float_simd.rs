@@ -784,12 +784,22 @@ pub(crate) fn convert_f32_to_u8_slice(src: &[f32], dst: &mut [u8], facts: FloatF
 }
 
 #[inline]
+pub(crate) fn convert_f32_to_u8_slice_untrusted(src: &[f32], dst: &mut [u8]) {
+    convert_f32_to_u8_round_spec::<false, false>(src, dst);
+}
+
+#[inline]
 pub(crate) fn convert_f32_to_u16_slice(src: &[f32], dst: &mut [u16], facts: FloatFacts) {
     if facts.contains(UNIT_CLEAN_FACTS) {
         convert_f32_to_u16_round_spec::<true>(src, dst);
     } else {
         convert_f32_to_u16_round_spec::<false>(src, dst);
     }
+}
+
+#[inline]
+pub(crate) fn convert_f32_to_u16_slice_untrusted(src: &[f32], dst: &mut [u16]) {
+    convert_f32_to_u16_round_spec::<false>(src, dst);
 }
 
 pub(crate) fn convert_f32_to_u8_truncate_slice(src: &[f32], dst: &mut [u8], _facts: FloatFacts) {

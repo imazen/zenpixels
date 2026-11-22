@@ -50,8 +50,32 @@
 
 ## [Unreleased]
 
+### Added
+
+- Add compile-time capability bitmasking (`caps` module + `ConverterProfile<const CAPS: u64>`)
+  with curated presets (`ALL`, `LAYOUT_U8`, `SDR_WEB`, `CODEC_JPEG`, `CODEC_PNG`, `SDR_ALL`,
+  `HDR`, `PERCEPTUAL`). Planning stays non-generic and shared across profiles while
+  `resolve_and_bind_op::<CAPS>` binds capability-grouped `StepFn` executors and lazily
+  materializes heavy step payloads (`MatteState`, `HlgRenderState`, `SoftCompressState`,
+  `Bt2446A`) so LLVM dead-code-eliminates every unused row kernel — even when multiple
+  codecs unify Cargo features (`-51%` to `-76%` stripped binary size on `SDR_WEB`/`LAYOUT_U8`,
+  verified across x86_64 and wasm32; `benchmarks/codegen_shrink_2026-11-22.md`).
+- Add granular Cargo features (`oklab` default-on, `hdr-transfers` default-on, `perceptual`
+  default-off, with `hdr-experimental` implying `oklab` + `hdr-transfers` and `css` implying
+  `perceptual`) so SDR-only or custom-feature builds compile out unused color models and HDR
+  transfer kernels (`0a238b57`).
+- Add 129-path 4K UHD (`3840 × 2160`) conversion regression benchmark suite
+  (`benches/bench_4k_paths.rs`) and baseline (`benchmarks/baseline_4k_2026-11-21.md`,
+  `da787b7f`).
+
 ### Changed
 
+- Eliminate scalar SIMD tail codegen via shared padded-chunk remainders across `float_simd`,
+  Oklab, `gamut_matrix_f32_tier`, `multiply_color_channels_tier`, and `f16_alpha_chunked`,
+  route `u16` luma through chunked `f32` SIMD (`7.3×` faster 4K `rgba8_to_graya8`), move
+  scalar fallback tiers `#[cold] #[inline(never)]`, optimize `step_matte_srgb_u8` /
+  `step_matte_f32` (`+13%` / `+75%` faster at 4K), and sync `linear-srgb` `ae83f194`
+  (`5.8×` faster 4K PQ decode; `01cf0bed`).
 - Replace `garb` floating-point depth and RGBA `f32` alpha kernels with `magetypes`
   SIMD kernels (`garb 0.2.9`, `default-features = false`, no `experimental` or
   `garb` float ops): 2-op 0-ULP binary geometric-series split for `u8 -> f32` and

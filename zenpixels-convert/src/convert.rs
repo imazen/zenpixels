@@ -745,36 +745,65 @@ pub(crate) struct NativePlan {
     operations: Vec<PlannedOperation>,
     input_facts: zenpixels::sample::FloatFacts,
     output_facts: zenpixels::sample::FloatFacts,
+    bound: bool,
 }
 
 /// One executable operation and the complete meaning of its input/output.
 /// Rewrites replace whole operations, so composition cannot desynchronize metadata.
-#[derive(Clone, Debug)]
-struct PlannedOperation {
-    step: ConvertStep,
-    from: PixelDescriptor,
-    to: PixelDescriptor,
-    pq_anchor_scale: f32,
-    in_trust: StepFloatTrust,
+#[derive(Clone)]
+pub(crate) struct PlannedOperation {
+    pub(crate) step: ConvertStep,
+    pub(crate) from: PixelDescriptor,
+    pub(crate) to: PixelDescriptor,
+    pub(crate) pq_anchor_scale: f32,
+    pub(crate) in_trust: StepFloatTrust,
+    exec: convert_kernels::StepFn,
+}
+
+impl core::fmt::Debug for PlannedOperation {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PlannedOperation")
+            .field("step", &self.step)
+            .field("from", &self.from)
+            .field("to", &self.to)
+            .field("pq_anchor_scale", &self.pq_anchor_scale)
+            .field("in_trust", &self.in_trust)
+            .finish()
+    }
 }
 
 /// The linear value of SDR white in `transfer`, for a background composited into it.
 ///
 /// PQ's linear is absolute, with 1.0 at 10000 cd/m². HLG compositing is
 /// prepared separately in display-linear space with explicit conditions.
-fn matte_white(transfer: TransferFunction, white: zenpixels::hdr::DiffuseWhite) -> f32 {
+pub(crate) fn matte_white(transfer: TransferFunction, white: zenpixels::hdr::DiffuseWhite) -> f32 {
     match transfer {
         TransferFunction::Pq => white.nits() / 10_000.0,
         _ => 1.0,
     }
 }
 
-/// A background in `source`'s primaries and linear light.
-fn matte_background(
+#[cold]
+#[inline(never)]
+#[track_caller]
+pub(crate) fn err_no_path(from: PixelDescriptor, to: PixelDescriptor) -> At<ConvertError> {
+    whereat::at!(ConvertError::NoPath { from, to })
+}
+
+/// Direct 1-pixel scalar background resolver for `ConvertStep::MatteComposite`.
+///
+/// Bound inside `NativePlan::bind::<CAPS>` so callers without `caps::MATTE`
+/// (or without specific transfer/depth/color-model capabilities) dead-code-eliminate
+/// unused matte resolution paths completely, with zero dependency on `NativePlan`
+/// row execution or SIMD slice kernels.
+#[inline(never)]
+#[track_caller]
+pub(crate) fn matte_background_scalar<const CAPS: u64>(
     background: zenpixels::Color,
     reference_white: Option<zenpixels::hdr::DiffuseWhite>,
     source: PixelDescriptor,
 ) -> Result<[f32; 3], At<ConvertError>> {
+    use crate::caps;
     if source.transfer() == TransferFunction::Hlg {
         return Err(whereat::at!(ConvertError::HlgRenderingRequired));
     }
@@ -787,7 +816,7 @@ fn matte_background(
     if (from.has_alpha() && from.alpha() != Some(AlphaMode::Opaque))
         || (hdr && from.transfer() != source.transfer())
     {
-        return Err(whereat::at!(ConvertError::NoPath { from, to: source }));
+        return Err(err_no_path(from, source));
     }
     #[cfg(not(feature = "hdr-transfers"))]
     if hdr
@@ -796,7 +825,7 @@ fn matte_background(
             TransferFunction::Pq | TransferFunction::Hlg
         )
     {
-        return Err(whereat::at!(ConvertError::NoPath { from, to: source }));
+        return Err(err_no_path(from, source));
     }
     let primaries = if source.primaries == ColorPrimaries::Unknown {
         from.primaries
@@ -810,21 +839,154 @@ fn matte_background(
         TransferFunction::Linear,
     )
     .with_primaries(primaries);
-    let options = ConvertOptions::retain_channels()
-        .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
-        .with_depth_policy(crate::DepthPolicy::Round)
-        .with_luma(Some(crate::LumaCoefficients::Bt709))
-        .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
-        .with_gamut_policy(crate::GamutPolicy::PreserveExtended)
-        .with_sdr_white(zenpixels::hdr::DiffuseWhite::new(10_000.0));
-    let mut linear = [0f32; 3];
-    convert_row_buffered(
-        &NativePlan::new_explicit(from, to, &options)?,
-        background.as_bytes(),
-        bytemuck::cast_slice_mut(&mut linear),
-        1,
-        &mut ConvertScratch::new(),
-    )?;
+    validate_descriptors(from, to)?;
+    if needs_cms_for_color_model(&from, &to) {
+        return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
+    }
+    if !has_numeric_kernels(from.channel_type()) {
+        return Err(err_no_path(from, to));
+    }
+
+    let bytes = background.as_bytes();
+    let mut linear = match from.layout() {
+        ChannelLayout::Rgb
+        | ChannelLayout::Rgba
+        | ChannelLayout::Bgr
+        | ChannelLayout::Bgra
+        | ChannelLayout::Gray
+        | ChannelLayout::GrayAlpha => {
+            let is_gray = matches!(
+                from.layout(),
+                ChannelLayout::Gray | ChannelLayout::GrayAlpha
+            );
+            let is_bgr = matches!(from.layout(), ChannelLayout::Bgr | ChannelLayout::Bgra);
+            let srgb_u8 =
+                from.channel_type() == ChannelType::U8 && from.transfer() == TransferFunction::Srgb;
+            if srgb_u8 {
+                if (CAPS & caps::TF_SRGB) == 0 {
+                    return Err(err_no_path(from, to));
+                }
+                let raw = if is_gray {
+                    [bytes[0], bytes[0], bytes[0]]
+                } else if is_bgr {
+                    [bytes[2], bytes[1], bytes[0]]
+                } else {
+                    [bytes[0], bytes[1], bytes[2]]
+                };
+                let mut out = [0.0f32; 3];
+                for i in 0..3 {
+                    out[i] = linear_srgb::default::srgb_u8_to_linear(raw[i]);
+                }
+                out
+            } else {
+                let sample = |idx: usize| -> Result<f32, At<ConvertError>> {
+                    match from.channel_type() {
+                        ChannelType::U8 => Ok(f32::from(bytes[idx]) / 255.0),
+                        ChannelType::U16 => {
+                            let off = idx * 2;
+                            Ok(f32::from(u16::from_ne_bytes([bytes[off], bytes[off + 1]]))
+                                / 65535.0)
+                        }
+                        ChannelType::F16 => {
+                            if (CAPS & caps::F16) == 0 {
+                                return Err(err_no_path(from, to));
+                            }
+                            let off = idx * 2;
+                            Ok(crate::f16_scalar::f16_bits_to_f32(u16::from_ne_bytes([
+                                bytes[off],
+                                bytes[off + 1],
+                            ])))
+                        }
+                        ChannelType::F32 => {
+                            let off = idx * 4;
+                            Ok(f32::from_ne_bytes([
+                                bytes[off],
+                                bytes[off + 1],
+                                bytes[off + 2],
+                                bytes[off + 3],
+                            ]))
+                        }
+                        _ => Err(err_no_path(from, to)),
+                    }
+                };
+                let mut encoded = if is_gray {
+                    let y = sample(0)?;
+                    [y, y, y]
+                } else if is_bgr {
+                    [sample(2)?, sample(1)?, sample(0)?]
+                } else {
+                    [sample(0)?, sample(1)?, sample(2)?]
+                };
+                match from.transfer() {
+                    TransferFunction::Linear | TransferFunction::Unknown => {}
+                    TransferFunction::Srgb => {
+                        if (CAPS & caps::TF_SRGB) == 0 {
+                            return Err(err_no_path(from, to));
+                        }
+                        for v in &mut encoded {
+                            let a = v.abs();
+                            *v = if a <= 0.04045 {
+                                *v / 12.92
+                            } else {
+                                libm::powf((a + 0.055) / 1.055, 2.4).copysign(*v)
+                            };
+                        }
+                    }
+                    TransferFunction::Bt709 => {
+                        if (CAPS & caps::TF_BT709) == 0 {
+                            return Err(err_no_path(from, to));
+                        }
+                        linear_srgb::default::bt709_to_linear_slice(&mut encoded);
+                    }
+                    TransferFunction::Gamma22 => {
+                        if (CAPS & caps::TF_GAMMA22) == 0 {
+                            return Err(err_no_path(from, to));
+                        }
+                        for v in &mut encoded {
+                            *v = libm::powf(v.abs(), 563.0 / 256.0).copysign(*v);
+                        }
+                    }
+                    #[cfg(feature = "hdr-transfers")]
+                    TransferFunction::Pq => {
+                        if (CAPS & caps::TF_PQ) == 0 {
+                            return Err(err_no_path(from, to));
+                        }
+                        for v in &mut encoded {
+                            *v = if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) };
+                        }
+                        linear_srgb::default::pq_to_linear_slice(&mut encoded);
+                    }
+                    _ => return Err(err_no_path(from, to)),
+                }
+                encoded
+            }
+        }
+        #[cfg(feature = "oklab")]
+        ChannelLayout::Oklab | ChannelLayout::OklabA => {
+            if (CAPS & caps::OKLAB) == 0 || from.channel_type() != ChannelType::F32 {
+                return Err(err_no_path(from, to));
+            }
+            let Some(space) = crate::oklab::OklabSpace::for_primaries(from.primaries) else {
+                return Err(err_no_path(from, to));
+            };
+            let f: &[f32] = bytemuck::cast_slice(&bytes[..12]);
+            space.to_rgb([f[0], f[1], f[2]])
+        }
+        _ => return Err(err_no_path(from, to)),
+    };
+
+    if NativePlan::primaries_differ(from, to)
+        && !matches!(
+            from.layout(),
+            ChannelLayout::Gray | ChannelLayout::GrayAlpha
+        )
+    {
+        let Some(matrix) = crate::gamut::conversion_matrix(from.primaries, to.primaries) else {
+            return Err(err_no_path(from, to));
+        };
+        linear = matrix.apply(linear);
+    }
+
     if hdr {
         return Ok(linear);
     }
@@ -832,7 +994,10 @@ fn matte_background(
         source.transfer(),
         reference_white.unwrap_or(zenpixels::hdr::DiffuseWhite::BT2408),
     );
-    Ok(linear.map(|c| c * white))
+    for c in &mut linear {
+        *c *= white;
+    }
+    Ok(linear)
 }
 
 /// Selects which fused TF + matrix + TF kernel a [`ConvertStep::Fused`]
@@ -887,11 +1052,10 @@ impl FusedKind {
 #[cfg(feature = "hdr-experimental")]
 #[derive(Clone)]
 pub(crate) struct ToneMapStep {
-    /// The user-supplied mapper. Consulted via `mapper.requirements()`
-    /// once at plan-build time; the result is cached in
-    /// [`requirements`](Self::requirements) for hot-path branchless
-    /// dispatch.
-    pub(crate) mapper: alloc::sync::Arc<dyn crate::hdr::ToneMapper>,
+    /// The user-supplied mapper, or `None` for the default in-crate BT.2446-A
+    /// curve (materialized lazily during `bind::<CAPS>()` so builds without
+    /// `caps::TONE_MAP` never link `Bt2446A`).
+    pub(crate) mapper: Option<alloc::sync::Arc<dyn crate::hdr::ToneMapper>>,
     /// Analysis requirements captured at plan-build time. Kept here
     /// so neither the kernel dispatcher nor the estimate walker has to
     /// re-virtualize a method call per row.
@@ -939,8 +1103,9 @@ impl core::fmt::Debug for ToneMapStep {
         // struct shape, which is verbose and not useful for plan
         // debugging. The `name()` + the `OnceCell` populated-state
         // are the load-bearing facts.
+        let mapper_name = self.mapper.as_ref().map_or("bt2446a", |m| m.name());
         f.debug_struct("ToneMapStep")
-            .field("mapper", &self.mapper.name())
+            .field("mapper", &mapper_name)
             .field("requirements", &self.requirements)
             .field("source_peak_nits", &self.source_peak_nits)
             .field("target_peak_nits", &self.target_peak_nits)
@@ -948,6 +1113,43 @@ impl core::fmt::Debug for ToneMapStep {
             .field("prepared_cached", &self.prepared.get().is_some())
             .finish()
     }
+}
+
+/// Deferred HLG display-rendering step payload; [`hlg_render::PreparedHlg`] is
+/// constructed lazily during `NativePlan::bind::<CAPS>()` so profiles without
+/// `caps::TF_HLG` dead-code-eliminate the entire `hlg_render` module.
+#[cfg(feature = "hdr-transfers")]
+#[derive(Clone, Debug)]
+pub(crate) struct HlgRenderState {
+    pub(crate) rendering: zenpixels::hdr::HlgRendering,
+    pub(crate) inverse: bool,
+    pub(crate) white_nits: f32,
+    pub(crate) clip: bool,
+    pub(crate) prepared: Option<hlg_render::PreparedHlg>,
+}
+
+/// Deferred OKLch soft-compression step payload; [`crate::hdr::SoftCompress`]
+/// is constructed lazily during `NativePlan::bind::<CAPS>()` so profiles
+/// without `caps::SOFT_COMPRESS` never link the LUT builder or strip kernel.
+#[cfg(feature = "oklab")]
+#[derive(Clone, Debug)]
+pub(crate) struct SoftCompressState {
+    pub(crate) primaries: ColorPrimaries,
+    pub(crate) knee: f32,
+    pub(crate) prepared: Option<alloc::sync::Arc<crate::hdr::SoftCompress>>,
+}
+
+/// Deferred matte-composite payload boxed inside [`ConvertStep::MatteComposite`]
+/// so the rare matte variant never bloats `size_of::<ConvertStep>()`.
+#[derive(Clone, Debug)]
+pub(crate) struct MatteState {
+    pub(crate) background: zenpixels::Color,
+    pub(crate) reference_white: Option<zenpixels::hdr::DiffuseWhite>,
+    pub(crate) scale: f32,
+    pub(crate) linear: [f32; 3],
+    pub(crate) clip: bool,
+    pub(crate) to_linear: fn(&mut [f32]),
+    pub(crate) from_linear: fn(&mut [f32]),
 }
 
 /// A single conversion step.
@@ -960,7 +1162,7 @@ pub(crate) enum ConvertStep {
     /// No-op (identity).
     Identity,
     #[cfg(feature = "hdr-transfers")]
-    HlgRender(hlg_render::PreparedHlg),
+    HlgRender(alloc::boxed::Box<HlgRenderState>),
     /// BGRA → RGBA byte swizzle (or vice versa).
     SwizzleBgraRgba,
     /// BGR → RGB byte swizzle (or vice versa), at 8 bits.
@@ -978,10 +1180,9 @@ pub(crate) enum ConvertStep {
     /// Blends in linear light using the source descriptor's transfer
     /// function: pixel RGB is EOTF'd per source TF, alpha-blended against
     /// the pre-linearized matte, then OETF'd back to source TF. Alpha is
-    /// treated as linear regardless of color-channel TF. The matte
-    /// `linear` is the background in the source's primaries and linear light, resolved once at
-    /// planning so that rows only blend.
-    MatteComposite { linear: [f32; 3], clip: bool },
+    /// treated as linear regardless of color-channel TF. `linear`, `to_linear`,
+    /// and `from_linear` are populated during `NativePlan::bind::<CAPS>()`.
+    MatteComposite(alloc::boxed::Box<MatteState>),
     /// Gray → RGB (replicate gray to all 3 channels).
     GrayToRgb,
     /// Gray → RGBA (replicate + opaque alpha).
@@ -1149,14 +1350,14 @@ pub(crate) enum ConvertStep {
     ///
     /// Gated behind `hdr-experimental` at the kernel side.
     #[cfg(feature = "hdr-experimental")]
-    ToneMap(ToneMapStep),
+    ToneMap(alloc::boxed::Box<ToneMapStep>),
     /// OKLch soft chroma compression on linear-light f32 RGB in
     /// `primaries`. Pulls residual out-of-gamut excursions back into the
     /// target unit cube using a hue-preserving rational knee curve.
     /// Skipped (no step emitted) when the target is BT.2020 — the
     /// wide-gamut output mode.
     #[cfg(feature = "oklab")]
-    SoftCompressOklch(alloc::sync::Arc<crate::hdr::SoftCompress>),
+    SoftCompressOklch(SoftCompressState),
     /// Closed-form perceptual and polar/cylindrical step (`Oklch`, `Lch`, `Jzazbz`, `Jzczhz`, `Hsl`, `Hsv`).
     #[cfg(feature = "perceptual")]
     Perceptual(perceptual::PerceptualStep),
@@ -1179,7 +1380,7 @@ impl ConvertStep {
             Self::RgbToBgra => "RgbToBgra",
             Self::AddAlpha => "AddAlpha",
             Self::DropAlpha => "DropAlpha",
-            Self::MatteComposite { .. } => "MatteComposite",
+            Self::MatteComposite(_) => "MatteComposite",
             Self::GrayToRgb => "GrayToRgb",
             Self::GrayToRgba => "GrayToRgba",
             Self::RgbToGray { .. } => "RgbToGray",
@@ -1307,7 +1508,7 @@ impl NativePlan {
         swizzle: ConvertStep,
     ) -> Result<Self, At<ConvertError>> {
         let (first, last) = (canonical(from), canonical(to));
-        let mut plan = Self::plan_native(first, last)?;
+        let mut plan = Self::plan_native_unbound(first, last)?;
         if from != first {
             plan = Self::build(from, first, vec![swizzle.clone()])
                 .compose(&plan)
@@ -1339,6 +1540,7 @@ impl NativePlan {
                     to: next,
                     pq_anchor_scale: 1.0,
                     in_trust: StepFloatTrust::default(),
+                    exec: convert_kernels::step_unbound,
                 };
                 current = next;
                 operation
@@ -1350,6 +1552,7 @@ impl NativePlan {
             operations,
             input_facts: zenpixels::sample::FloatFacts::NONE,
             output_facts: zenpixels::sample::FloatFacts::NONE,
+            bound: false,
         };
         plan.recompute_float_trust();
         plan
@@ -1364,9 +1567,11 @@ impl NativePlan {
                 to: self.from,
                 pq_anchor_scale: 1.0,
                 in_trust: StepFloatTrust::default(),
+                exec: convert_kernels::step_unbound,
             },
         );
         self.from = from;
+        self.bound = false;
         if !from.channel_type().is_float() {
             self.input_facts = zenpixels::sample::FloatFacts::NONE;
         }
@@ -1380,9 +1585,34 @@ impl NativePlan {
             to,
             pq_anchor_scale: 1.0,
             in_trust: StepFloatTrust::default(),
+            exec: convert_kernels::step_unbound,
         });
         self.to = to;
+        self.bound = false;
         self.recompute_float_trust();
+    }
+
+    /// Bind executable kernel function pointers for every planned step under `CAPS`.
+    ///
+    /// Constant-folds disabled capability arms out so unreferenced leaf kernels
+    /// are dead-code-eliminated. Returns `ConvertError::NoPath` if any planned
+    /// step requires a capability bit cleared in `CAPS`.
+    #[inline(never)]
+    #[track_caller]
+    pub(crate) fn bind<const CAPS: u64>(&mut self) -> Result<(), At<ConvertError>> {
+        for op in &mut self.operations {
+            convert_kernels::resolve_and_bind_op::<CAPS>(op)?;
+        }
+        self.bound = true;
+        Ok(())
+    }
+
+    #[track_caller]
+    pub(crate) fn bind_if_unbound_all(&mut self) -> Result<(), At<ConvertError>> {
+        if !self.bound {
+            self.bind::<{ crate::caps::ALL }>()?;
+        }
+        Ok(())
     }
 
     #[inline]
@@ -1482,8 +1712,10 @@ impl NativePlan {
                     to: boundary,
                     pq_anchor_scale: 1.0,
                     in_trust: StepFloatTrust::default(),
+                    exec: convert_kernels::step_unbound,
                 },
             );
+            self.bound = false;
             self.recompute_float_trust();
         }
         self
@@ -1505,6 +1737,7 @@ impl NativePlan {
     /// with a [`PluggableCms`](crate::cms::PluggableCms) backend attached.
     /// `NativePlan` itself never dispatches through CMS — wire the call
     /// through `RowConverter` for that.
+    #[cfg(test)]
     #[track_caller]
     pub fn new(from: PixelDescriptor, to: PixelDescriptor) -> Result<Self, At<ConvertError>> {
         Self::new_explicit(
@@ -1518,7 +1751,18 @@ impl NativePlan {
         )
     }
 
+    #[cfg(test)]
+    #[track_caller]
     pub(crate) fn plan_native(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+    ) -> Result<Self, At<ConvertError>> {
+        let mut plan = Self::plan_native_unbound(from, to)?;
+        plan.bind::<{ crate::caps::ALL }>()?;
+        Ok(plan)
+    }
+
+    pub(crate) fn plan_native_unbound(
         from: PixelDescriptor,
         to: PixelDescriptor,
     ) -> Result<Self, At<ConvertError>> {
@@ -1529,8 +1773,8 @@ impl NativePlan {
         #[cfg(feature = "perceptual")]
         {
             if let Some(pivot) = perceptual::pivot(from, to) {
-                return Self::plan_native(from, pivot)?
-                    .compose(&Self::plan_native(pivot, to)?)
+                return Self::plan_native_unbound(from, pivot)?
+                    .compose(&Self::plan_native_unbound(pivot, to)?)
                     .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
             }
             match perceptual::try_direct_step(from, to) {
@@ -1561,8 +1805,8 @@ impl NativePlan {
         }
         #[cfg(feature = "oklab")]
         if let Some(pivot) = oklab_pivot(from, to) {
-            return Self::plan_native(from, pivot)?
-                .compose(&Self::plan_native(pivot, to)?)
+            return Self::plan_native_unbound(from, pivot)?
+                .compose(&Self::plan_native_unbound(pivot, to)?)
                 .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
         }
         #[cfg(not(feature = "oklab"))]
@@ -1710,8 +1954,8 @@ impl NativePlan {
                 let middle = PixelDescriptor::new(depth, from.layout(), from.alpha(), transfer)
                     .with_primaries(to.primaries)
                     .with_signal_range(from.signal_range);
-                return Self::plan_native(from, middle)?
-                    .compose(&Self::plan_native(middle, to)?)
+                return Self::plan_native_unbound(from, middle)?
+                    .compose(&Self::plan_native_unbound(middle, to)?)
                     .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
             }
         }
@@ -1727,7 +1971,7 @@ impl NativePlan {
             )
             .with_primaries(from.primaries)
             .with_signal_range(from.signal_range);
-            let mut plan = Self::plan_native(rgb, to)?;
+            let mut plan = Self::plan_native_unbound(rgb, to)?;
             plan.prepend(from, ConvertStep::DropAlpha);
             return Ok(plan);
         }
@@ -1747,7 +1991,7 @@ impl NativePlan {
             } else {
                 to
             };
-            let mut plan = Self::plan_native(straight_from, straight_to)?;
+            let mut plan = Self::plan_native_unbound(straight_from, straight_to)?;
             plan.prepend(from, ConvertStep::PremulToStraight);
             if to.alpha() == Some(AlphaMode::Premultiplied) {
                 plan.append(to, ConvertStep::StraightToPremul);
@@ -2130,11 +2374,11 @@ impl NativePlan {
     /// Refuses transfer/gamut changes, rounding, clipping and unchecked sample
     /// removal. No pixel scan is performed. Exact U8→U16 widening and reversible
     /// channel reorder/expansion are supported; no claim is inferred from origin.
-    pub fn new_preserving_samples(
+    pub fn new_preserving_samples_unbound(
         from: PixelDescriptor,
         to: PixelDescriptor,
     ) -> Result<Self, At<ConvertError>> {
-        let plan = Self::plan_native(from, to)?;
+        let plan = Self::plan_native_unbound(from, to)?;
         if from.transfer() != to.transfer()
             || from.primaries != to.primaries
             || (from.has_alpha() && from.alpha() != to.alpha())
@@ -2244,16 +2488,28 @@ impl NativePlan {
     /// [`ConvertError::NeedsCms`] — same posture as
     /// [`NativePlan::new`]. HDR tone-mapping is RGB-only; a CMS is the
     /// right tool for CMYK↔RGB even on the HDR construction path.
-    #[cfg(feature = "hdr-experimental")]
+    #[cfg(all(test, feature = "hdr-experimental"))]
     #[track_caller]
     pub fn new_with_hdr_config(
         from: PixelDescriptor,
         to: PixelDescriptor,
         hdr: HdrConfig,
     ) -> Result<Self, At<ConvertError>> {
-        // Default mapper: the ITU-R BT.2446-1 §4 reference curve, with
-        // peaks baked from the supplied `HdrConfig`.
-        Self::plan_hdr(from, to, hdr, None)
+        let mut plan = Self::new_with_hdr_config_unbound(from, to, hdr)?;
+        plan.bind::<{ crate::caps::ALL }>()?;
+        Ok(plan)
+    }
+
+    #[cfg(feature = "hdr-experimental")]
+    #[track_caller]
+    pub(crate) fn new_with_hdr_config_unbound(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        hdr: HdrConfig,
+    ) -> Result<Self, At<ConvertError>> {
+        // Default mapper: the ITU-R BT.2446-1 §4 reference curve, materialized
+        // lazily during `bind::<CAPS>()` so non-HDR profiles never link `Bt2446A`.
+        Self::plan_hdr_unbound(from, to, hdr, None)
     }
 
     /// [`Self::new_with_hdr_config`] with another algorithm in place of
@@ -2265,7 +2521,7 @@ impl NativePlan {
     /// [`ConvertError::FullImageMapperNotSupported`] when the mapper needs the whole image.
     #[cfg(feature = "hdr-experimental")]
     #[track_caller]
-    pub fn new_with_tone_mapper(
+    pub(crate) fn new_with_tone_mapper_unbound(
         from: PixelDescriptor,
         to: PixelDescriptor,
         hdr: HdrConfig,
@@ -2276,21 +2532,14 @@ impl NativePlan {
                 mapper_name: mapper.name(),
             }));
         }
-        Self::plan_hdr(from, to, hdr, Some(mapper))
+        Self::plan_hdr_unbound(from, to, hdr, Some(mapper))
     }
 
-    /// Internal HDR planner behind [`Self::new_with_hdr_config`] and
-    /// [`Self::new_with_tone_mapper`].
-    ///
-    /// When `mapper_override` is `None` the planner constructs the
-    /// in-crate [`Bt2446A`](crate::hdr::Bt2446A) from `hdr`. When
-    /// `Some`, the supplied mapper rides into the
-    /// [`ConvertStep::ToneMap`] step verbatim (any peaks come from
-    /// `hdr`; the mapper's own `requirements()` is consulted to
-    /// determine the working primaries and analysis scope).
+    /// Internal HDR planner behind [`Self::new_with_hdr_config_unbound`] and
+    /// [`Self::new_with_tone_mapper_unbound`].
     #[cfg(feature = "hdr-experimental")]
     #[track_caller]
-    pub(crate) fn plan_hdr(
+    pub(crate) fn plan_hdr_unbound(
         from: PixelDescriptor,
         to: PixelDescriptor,
         hdr: HdrConfig,
@@ -2310,7 +2559,15 @@ impl NativePlan {
             TransferFunction::Srgb | TransferFunction::Bt709 | TransferFunction::Gamma22
         );
         if src_is_sdr_encoded {
-            return Self::new(from, to);
+            return Self::new_explicit_unbound(
+                from,
+                to,
+                &ConvertOptions::retain_channels()
+                    .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                    .with_depth_policy(crate::DepthPolicy::Round)
+                    .with_luma(Some(crate::LumaCoefficients::Bt709))
+                    .with_alpha_policy(AlphaPolicy::DiscardUnchecked),
+            );
         }
         if from.transfer() == TransferFunction::Hlg || to.transfer() == TransferFunction::Hlg {
             return Err(whereat::at!(ConvertError::HlgRenderingRequired));
@@ -2375,7 +2632,8 @@ impl NativePlan {
             } else {
                 to
             };
-            let mut plan = Self::plan_hdr(straight_from, straight_to, hdr, mapper_override)?;
+            let mut plan =
+                Self::plan_hdr_unbound(straight_from, straight_to, hdr, mapper_override)?;
             plan.prepend(from, ConvertStep::PremulToStraight);
             if to.alpha() == Some(AlphaMode::Premultiplied) {
                 plan.append(to, ConvertStep::StraightToPremul);
@@ -2414,29 +2672,29 @@ impl NativePlan {
             .map_err(|e| whereat::at!(e))?,
         );
 
-        // ---- The mapper is either the caller-supplied one (via `new_with_tone_mapper`) or the in-crate
-        // BT.2446-A reference curve, constructed from the supplied `HdrConfig`. Its working primaries
-        // decide the matrices on both sides of it. An unknown target keeps the source's.
-        #[cfg(feature = "bt2446a")]
-        let mapper: alloc::sync::Arc<dyn crate::hdr::ToneMapper> =
-            mapper_override.unwrap_or_else(|| {
-                alloc::sync::Arc::new(crate::hdr::Bt2446A::new(
-                    hdr.source_peak_nits,
-                    hdr.target_peak_nits,
-                ))
-            });
-        #[cfg(not(feature = "bt2446a"))]
-        let mapper: alloc::sync::Arc<dyn crate::hdr::ToneMapper> = match mapper_override {
-            Some(mapper) => mapper,
-            None => return Err(whereat::at!(ConvertError::NoPath { from, to })),
+        // ---- The mapper is either the caller-supplied one (via `new_with_tone_mapper_unbound`)
+        // or the in-crate BT.2446-A reference curve (materialized lazily during `bind::<CAPS>()`).
+        let (requirements, working_primaries) = match &mapper_override {
+            Some(mapper) => {
+                let req = mapper.requirements();
+                if req.full_image {
+                    return Err(whereat::at!(ConvertError::FullImageMapperNotSupported {
+                        mapper_name: mapper.name(),
+                    }));
+                }
+                (req, mapper.working_primaries_for(to.primaries))
+            }
+            None => {
+                #[cfg(feature = "bt2446a")]
+                {
+                    (crate::hdr::Requirements::NONE, ColorPrimaries::Bt2020)
+                }
+                #[cfg(not(feature = "bt2446a"))]
+                {
+                    return Err(whereat::at!(ConvertError::NoPath { from, to }));
+                }
+            }
         };
-        let requirements = mapper.requirements();
-        if requirements.full_image {
-            return Err(whereat::at!(ConvertError::FullImageMapperNotSupported {
-                mapper_name: mapper.name(),
-            }));
-        }
-        let working_primaries = mapper.working_primaries_for(to.primaries);
         let gamut_step = |a: ColorPrimaries, b: ColorPrimaries| {
             if a == b {
                 return Ok(None);
@@ -2467,14 +2725,14 @@ impl NativePlan {
 
         // ---- (c) Tone-map step. The shared `OnceBox` is freshly allocated so plan clones
         // reuse the same lazy cache.
-        steps.push(ConvertStep::ToneMap(ToneMapStep {
-            mapper,
+        steps.push(ConvertStep::ToneMap(alloc::boxed::Box::new(ToneMapStep {
+            mapper: mapper_override,
             requirements,
             source_peak_nits: hdr.source_peak_nits,
             target_peak_nits: hdr.target_peak_nits,
             working_primaries,
             prepared: alloc::sync::Arc::new(once_cell::race::OnceBox::new()),
-        }));
+        })));
 
         // ---- (d) Working primaries → target primaries.
         if to.primaries != ColorPrimaries::Unknown {
@@ -2543,7 +2801,7 @@ impl NativePlan {
     // HLG rendering uses straight F32 BT.2020 RGB(A); the ordinary planner
     // handles storage, association, gamut and tone mapping around that boundary.
     #[cfg(feature = "hdr-transfers")]
-    fn plan_hlg_rendering(
+    fn plan_hlg_rendering_unbound(
         from: PixelDescriptor,
         to: PixelDescriptor,
         options: &ConvertOptions,
@@ -2594,38 +2852,27 @@ impl NativePlan {
             TransferFunction::Linear,
         )
         .with_primaries(ColorPrimaries::Bt2020);
+        let hlg_step = ConvertStep::HlgRender(alloc::boxed::Box::new(HlgRenderState {
+            rendering,
+            inverse,
+            white_nits: white.nits(),
+            clip: options.gamut_policy() == crate::GamutPolicy::Clip,
+            prepared: None,
+        }));
         let bridge = if inverse {
-            Self::build(
-                linear,
-                encoded,
-                vec![ConvertStep::HlgRender(hlg_render::PreparedHlg::new(
-                    rendering,
-                    inverse,
-                    white.nits(),
-                    options.gamut_policy() == crate::GamutPolicy::Clip,
-                ))],
-            )
+            Self::build(linear, encoded, vec![hlg_step])
         } else {
-            Self::build(
-                encoded,
-                linear,
-                vec![ConvertStep::HlgRender(hlg_render::PreparedHlg::new(
-                    rendering,
-                    inverse,
-                    white.nits(),
-                    options.gamut_policy() == crate::GamutPolicy::Clip,
-                ))],
-            )
+            Self::build(encoded, linear, vec![hlg_step])
         };
         if inverse {
-            let before = Self::new_explicit(from, linear, options)?;
-            let after = Self::new_explicit(encoded, to, options)?;
+            let before = Self::new_explicit_unbound(from, linear, options)?;
+            let after = Self::new_explicit_unbound(encoded, to, options)?;
             before
                 .compose_preserving(&bridge)
                 .and_then(|p| p.compose_preserving(&after))
                 .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }))
         } else {
-            let before = Self::new_explicit(from, encoded, options)?;
+            let before = Self::new_explicit_unbound(from, encoded, options)?;
             let mut plan = before
                 .compose_preserving(&bridge)
                 .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }))?;
@@ -2639,7 +2886,7 @@ impl NativePlan {
                     TransferFunction::Pq,
                 )
                 .with_primaries(ColorPrimaries::Bt2020);
-                let encode = Self::new_explicit(
+                let encode = Self::new_explicit_unbound(
                     linear,
                     pq,
                     &options.with_gamut_policy(crate::GamutPolicy::PreserveExtended),
@@ -2647,11 +2894,11 @@ impl NativePlan {
                 plan = plan
                     .compose_preserving(&encode)
                     .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }))?;
-                let after = Self::new_explicit(pq, to, options)?;
+                let after = Self::new_explicit_unbound(pq, to, options)?;
                 plan.compose_preserving(&after)
                     .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }))
             } else {
-                let mut after = Self::new_explicit(linear, to, options)?;
+                let mut after = Self::new_explicit_unbound(linear, to, options)?;
                 // This intermediate is display-linear relative to `white`, not
                 // ordinary SDR linear. Preserve the matte's separate anchor.
                 if let AlphaPolicy::CompositeOnto {
@@ -2668,10 +2915,8 @@ impl NativePlan {
                                 .nits()
                         };
                     for operation in &mut after.operations {
-                        if let ConvertStep::MatteComposite { linear, .. } = &mut operation.step {
-                            for value in linear {
-                                *value *= background_white / white.nits();
-                            }
+                        if let ConvertStep::MatteComposite(state) = &mut operation.step {
+                            state.scale *= background_white / white.nits();
                         }
                     }
                 }
@@ -2699,6 +2944,17 @@ impl NativePlan {
         to: PixelDescriptor,
         options: &ConvertOptions,
     ) -> Result<Self, At<ConvertError>> {
+        let mut plan = Self::new_explicit_unbound(from, to, options)?;
+        plan.bind::<{ crate::caps::ALL }>()?;
+        Ok(plan)
+    }
+
+    #[track_caller]
+    pub(crate) fn new_explicit_unbound(
+        from: PixelDescriptor,
+        to: PixelDescriptor,
+        options: &ConvertOptions,
+    ) -> Result<Self, At<ConvertError>> {
         let hlg_boundary = from.transfer() != to.transfer()
             && (from.transfer() == TransferFunction::Hlg || to.transfer() == TransferFunction::Hlg);
         let hlg_composite = from.transfer() == TransferFunction::Hlg
@@ -2708,7 +2964,7 @@ impl NativePlan {
             && matches!(options.alpha_policy(), AlphaPolicy::CompositeOnto { .. });
         if hlg_boundary || hlg_composite {
             #[cfg(feature = "hdr-transfers")]
-            return Self::plan_hlg_rendering(from, to, options);
+            return Self::plan_hlg_rendering_unbound(from, to, options);
             #[cfg(not(feature = "hdr-transfers"))]
             return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
@@ -2738,8 +2994,8 @@ impl NativePlan {
         validate_descriptors(from, to)?;
         #[cfg(feature = "oklab")]
         if let Some(pivot) = oklab_pivot(from, to) {
-            return Self::new_explicit(from, pivot, options)?
-                .compose(&Self::new_explicit(pivot, to, options)?)
+            return Self::new_explicit_unbound(from, pivot, options)?
+                .compose(&Self::new_explicit_unbound(pivot, to, options)?)
                 .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
         }
         // Check alpha removal policy.
@@ -2778,16 +3034,22 @@ impl NativePlan {
                 PixelDescriptor::new(to.channel_type(), ChannelLayout::Rgb, None, to.transfer())
                     .with_primaries(to.primaries)
                     .with_signal_range(to.signal_range);
-            let matte = Self::new_explicit(from, rgb, options)?;
+            let matte = Self::new_explicit_unbound(from, rgb, options)?;
+            let pad_opts = ConvertOptions::retain_channels()
+                .with_alpha_policy(crate::AlphaPolicy::DiscardIfOpaque)
+                .with_depth_policy(crate::DepthPolicy::Round)
+                .with_luma(Some(crate::LumaCoefficients::Bt709))
+                .with_alpha_policy(AlphaPolicy::DiscardUnchecked);
+            let pad = Self::new_explicit_unbound(rgb, to, &pad_opts)?;
             return Ok(matte
-                .compose_preserving(&Self::new(rgb, to)?)
+                .compose_preserving(&pad)
                 .expect("matching built-in endpoints"));
         }
 
         if options.gamut_policy() == GamutPolicy::SoftCompress && soft_compress_applies(&from, &to)
         {
             #[cfg(feature = "oklab")]
-            return Self::new_soft_compressed(from, to, options).map(|plan| {
+            return Self::new_soft_compressed_unbound(from, to, options).map(|plan| {
                 if let Some(anchor) = options.sdr_white() {
                     plan.with_pq_anchor(anchor)
                 } else {
@@ -2808,7 +3070,7 @@ impl NativePlan {
                 .ok_or_else(|| whereat::at!(ConvertError::SdrPeakRequired))?;
             #[cfg(feature = "bt2446a")]
             {
-                Self::new_with_hdr_config(
+                Self::new_with_hdr_config_unbound(
                     from,
                     to,
                     HdrConfig {
@@ -2824,7 +3086,7 @@ impl NativePlan {
                 return Err(whereat::at!(ConvertError::HdrFeatureRequired));
             }
         } else {
-            Self::plan_native(from, to).at()?
+            Self::plan_native_unbound(from, to).at()?
         };
         if pq_boundary && !is_hdr_to_sdr(from.transfer(), to.transfer()) {
             let anchor = options
@@ -2929,14 +3191,20 @@ impl NativePlan {
                             to: straight,
                             pq_anchor_scale: operation.pq_anchor_scale,
                             in_trust: StepFloatTrust::default(),
+                            exec: convert_kernels::step_unbound,
                         });
                         operation.from = straight;
                     }
-                    let matte = matte_background(background, reference_white, operation.from)?;
-                    operation.step = ConvertStep::MatteComposite {
-                        linear: matte,
-                        clip: options.gamut_policy() == crate::GamutPolicy::Clip,
-                    };
+                    operation.step =
+                        ConvertStep::MatteComposite(alloc::boxed::Box::new(MatteState {
+                            background,
+                            reference_white,
+                            scale: 1.0,
+                            linear: [0.0; 3],
+                            clip: options.gamut_policy() == crate::GamutPolicy::Clip,
+                            to_linear: convert_kernels::noop_f32_slice,
+                            from_linear: convert_kernels::noop_f32_slice,
+                        }));
                 }
                 plan.operations.push(operation);
             }
@@ -3069,7 +3337,7 @@ impl NativePlan {
     /// Source to linear `f32` in the target's primaries with out-of-gamut values
     /// kept, then compression, then linear to target.
     #[cfg(feature = "oklab")]
-    fn new_soft_compressed(
+    fn new_soft_compressed_unbound(
         from: PixelDescriptor,
         to: PixelDescriptor,
         options: &ConvertOptions,
@@ -3095,14 +3363,14 @@ impl NativePlan {
         .with_primaries(to.primaries);
         let plain = options.with_gamut_policy(GamutPolicy::Clip);
         // Padding isn't alpha, and real alpha stays in `middle`, so nothing is dropped here.
-        let into = Self::new_explicit(
+        let into = Self::new_explicit_unbound(
             from,
             middle,
             &plain
                 .with_gamut_policy(crate::GamutPolicy::PreserveExtended)
                 .with_alpha_policy(AlphaPolicy::DiscardUnchecked),
         )?;
-        let out = Self::new_explicit(
+        let out = Self::new_explicit_unbound(
             middle,
             to,
             &plain.with_gamut_policy(crate::GamutPolicy::Clip),
@@ -3167,8 +3435,13 @@ impl NativePlan {
                 operations.push(operation);
             }
         }
+        let both_bound = self.bound && other.bound;
         if operations.is_empty() {
             let mut identity = Self::build(self.from, other.to, vec![ConvertStep::Identity]);
+            if both_bound {
+                identity.operations[0].exec = convert_kernels::step_identity;
+                identity.bound = true;
+            }
             identity.propagate_float_facts(self.input_facts);
             return Some(identity);
         }
@@ -3178,6 +3451,7 @@ impl NativePlan {
             operations,
             input_facts: self.input_facts,
             output_facts: zenpixels::sample::FloatFacts::NONE,
+            bound: both_bound,
         };
         composed.recompute_float_trust();
         Some(composed)
@@ -3337,7 +3611,7 @@ impl NativePlan {
                 | ConvertStep::LinearF32ToSrgbU8 => A::Lookup,
                 #[cfg(feature = "hdr-transfers")]
                 ConvertStep::PqU16ToLinearF32 | ConvertStep::LinearF32ToPqU16 => A::Lookup,
-                ConvertStep::MatteComposite { .. } | ConvertStep::DropAlpha => A::Rendered,
+                ConvertStep::MatteComposite(_) | ConvertStep::DropAlpha => A::Rendered,
                 #[cfg(feature = "oklab")]
                 ConvertStep::SoftCompressOklch(_) => A::Rendered,
                 #[cfg(feature = "hdr-transfers")]
@@ -3367,9 +3641,9 @@ impl NativePlan {
                 | ConvertStep::GrayAlphaToGray => {
                     semantic = semantic.union(S::ALPHA_DISCARDED);
                 }
-                ConvertStep::MatteComposite { clip, .. } => {
+                ConvertStep::MatteComposite(state) => {
                     semantic = semantic.union(S::MATTE_APPLIED);
-                    if *clip {
+                    if state.clip {
                         semantic = semantic.union(S::CLAMPED);
                     }
                 }
@@ -3477,7 +3751,11 @@ impl NativePlan {
                     target_peak_nits: step.target_peak_nits,
                     working_primaries: step.working_primaries,
                 };
-                let crate::hdr::PreparedMapper::Streaming(worker) = step.mapper.prepare(&ctx)?;
+                let crate::hdr::PreparedMapper::Streaming(worker) = step
+                    .mapper
+                    .as_ref()
+                    .expect("ToneMapStep bound before prepare")
+                    .prepare(&ctx)?;
                 let _ = step
                     .prepared
                     .set(alloc::boxed::Box::new(alloc::sync::Arc::from(worker)));
@@ -4146,15 +4424,13 @@ impl ConvertScratch {
             if matches!(op.step, ConvertStep::ToneMap(_)) {
                 continue;
             }
-            apply_step_u8(
-                &op.step,
+            let mut warm_op = op.clone();
+            warm_op.in_trust = StepFloatTrust::default();
+            run_op(
+                &warm_op,
                 &bytemuck::cast_slice::<u64, u8>(&src)[..op.from.bytes_per_pixel()],
                 &mut bytemuck::cast_slice_mut::<u64, u8>(&mut dst)[..op.to.bytes_per_pixel()],
                 1,
-                op.from,
-                op.to,
-                op.pq_anchor_scale,
-                StepFloatTrust::default(),
                 &mut self.hdr,
             );
         }
@@ -4164,11 +4440,11 @@ impl ConvertScratch {
 
 #[cfg(feature = "oklab")]
 fn soft_compress_step(primaries: ColorPrimaries, knee: f32) -> ConvertStep {
-    let space = crate::oklab::OklabSpace::for_primaries(primaries)
-        .expect("target primaries have defined LMS matrices");
-    ConvertStep::SoftCompressOklch(alloc::sync::Arc::new(crate::hdr::SoftCompress::new(
-        &space, knee,
-    )))
+    ConvertStep::SoftCompressOklch(SoftCompressState {
+        primaries,
+        knee,
+        prepared: None,
+    })
 }
 
 /// Whether primaries narrow between RGB-family layouts, so that colors can leave
@@ -4182,6 +4458,18 @@ pub(crate) fn soft_compress_applies(from: &PixelDescriptor, to: &PixelDescriptor
             from.layout(),
             ChannelLayout::Rgb | ChannelLayout::Rgba | ChannelLayout::Bgra
         )
+}
+
+#[inline(always)]
+fn run_op(
+    op: &PlannedOperation,
+    src: &[u8],
+    dst: &mut [u8],
+    width: u32,
+    hdr: &mut convert_kernels::HdrKernelScratch,
+) {
+    crate::__trace_ops::record_step(&op.step);
+    (op.exec)(op, src, dst, width, hdr);
 }
 
 /// One row with fresh scratch, for tests that run a plan directly.
@@ -4232,23 +4520,7 @@ pub(crate) fn convert_row_prepared(
 
     if plan.operations.len() == 1 {
         let operation = &plan.operations[0];
-        let (from, to, scale, trust) = (
-            operation.from,
-            operation.to,
-            operation.pq_anchor_scale,
-            operation.in_trust,
-        );
-        apply_step_u8(
-            &operation.step,
-            src,
-            dst,
-            width,
-            from,
-            to,
-            scale,
-            trust,
-            &mut scratch.hdr,
-        );
+        run_op(operation, src, dst, width, &mut scratch.hdr);
         return;
     }
 
@@ -4265,16 +4537,8 @@ pub(crate) fn convert_row_prepared(
     let num_steps = plan.operations.len();
     for (i, operation) in plan.operations.iter().enumerate() {
         let is_last = i == num_steps - 1;
-        let step = &operation.step;
-        let (current_desc, next_desc, scale, trust) = (
-            operation.from,
-            operation.to,
-            operation.pq_anchor_scale,
-            operation.in_trust,
-        );
-
-        let next_len = (width as usize) * next_desc.bytes_per_pixel();
-        let curr_len = (width as usize) * current_desc.bytes_per_pixel();
+        let next_len = (width as usize) * operation.to.bytes_per_pixel();
+        let curr_len = (width as usize) * operation.from.bytes_per_pixel();
 
         // Ping-pong: even steps read src/buf_b and write buf_a;
         // odd steps read buf_a and write buf_b. Each branch only
@@ -4282,56 +4546,16 @@ pub(crate) fn convert_row_prepared(
         if i % 2 == 0 {
             let input = if i == 0 { src } else { &buf_b[..curr_len] };
             if is_last {
-                apply_step_u8(
-                    step,
-                    input,
-                    dst,
-                    width,
-                    current_desc,
-                    next_desc,
-                    scale,
-                    trust,
-                    &mut *hdr,
-                );
+                run_op(operation, input, dst, width, &mut *hdr);
             } else {
-                apply_step_u8(
-                    step,
-                    input,
-                    &mut buf_a[..next_len],
-                    width,
-                    current_desc,
-                    next_desc,
-                    scale,
-                    trust,
-                    &mut *hdr,
-                );
+                run_op(operation, input, &mut buf_a[..next_len], width, &mut *hdr);
             }
         } else {
             let input = &buf_a[..curr_len];
             if is_last {
-                apply_step_u8(
-                    step,
-                    input,
-                    dst,
-                    width,
-                    current_desc,
-                    next_desc,
-                    scale,
-                    trust,
-                    &mut *hdr,
-                );
+                run_op(operation, input, dst, width, &mut *hdr);
             } else {
-                apply_step_u8(
-                    step,
-                    input,
-                    &mut buf_b[..next_len],
-                    width,
-                    current_desc,
-                    next_desc,
-                    scale,
-                    trust,
-                    &mut *hdr,
-                );
+                run_op(operation, input, &mut buf_b[..next_len], width, &mut *hdr);
             }
         }
     }
@@ -4497,7 +4721,7 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             Some(AlphaMode::Straight),
             current.transfer(),
         ),
-        ConvertStep::DropAlpha | ConvertStep::MatteComposite { .. } => PixelDescriptor::new(
+        ConvertStep::DropAlpha | ConvertStep::MatteComposite(_) => PixelDescriptor::new(
             current.channel_type(),
             ChannelLayout::Rgb,
             None,
@@ -4790,7 +5014,6 @@ pub(crate) mod hlg_render;
 #[cfg(feature = "perceptual")]
 #[path = "perceptual.rs"]
 mod perceptual;
-use convert_kernels::apply_step_u8;
 #[cfg(all(test, feature = "hdr-transfers"))]
 pub(crate) use convert_kernels::{hlg_eotf, hlg_oetf};
 #[cfg(any(feature = "perceptual", all(test, feature = "hdr-transfers")))]

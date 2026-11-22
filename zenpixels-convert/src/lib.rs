@@ -313,6 +313,7 @@ mod gamma_math;
 mod negotiate;
 
 pub mod adapt;
+pub mod caps;
 // Internal only — zero consumers today. Kept for a future caller;
 // see zenpixels CLAUDE.md YAGNI section.
 /// Internal: runtime op tracer for in-repo tests. Gated on
@@ -418,6 +419,7 @@ mod scan;
 pub(crate) use convert::NativePlan;
 mod plan;
 mod route;
+pub use caps::ConverterProfile;
 #[cfg(feature = "hdr-experimental")]
 pub use convert::HdrConfig;
 #[doc(inline)]

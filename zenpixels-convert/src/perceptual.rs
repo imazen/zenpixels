@@ -1218,252 +1218,275 @@ const fn int_channel_scales(layout: ChannelLayout) -> ([f32; 3], [f32; 3], [bool
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn apply_row(
-    step: PerceptualStep,
+pub(super) fn apply_cart_to_polar(src: &[u8], dst: &mut [u8], width: usize, has_alpha: bool) {
+    map_f32_3_or_4(src, dst, width, has_alpha, cart_to_polar_spec::<false>);
+}
+
+pub(super) fn apply_polar_to_cart(src: &[u8], dst: &mut [u8], width: usize, has_alpha: bool) {
+    map_f32_3_or_4(
+        src,
+        dst,
+        width,
+        has_alpha,
+        polar_to_cart_spec::<false, false>,
+    );
+}
+
+pub(super) fn apply_linear_rgb_to_jzazbz(
     src: &[u8],
     dst: &mut [u8],
     width: usize,
-    from_primaries: ColorPrimaries,
-    to_primaries: ColorPrimaries,
+    has_alpha: bool,
+    anchored: bool,
     pq_scale: f32,
-    _in_trust: super::StepFloatTrust,
+    from_primaries: ColorPrimaries,
 ) {
-    match step {
-        PerceptualStep::CartesianToPolar { target_layout } => {
-            map_f32_3_or_4(
-                src,
-                dst,
-                width,
-                target_layout.has_alpha(),
-                cart_to_polar_spec::<false>,
-            );
+    let sdr_nits = if anchored {
+        f64::from(pq_scale) * 10_000.0
+    } else {
+        203.0_f64
+    };
+    let m = *primaries_to_xyz(from_primaries)
+        .expect("validated RGB->XYZ primaries")
+        .rows();
+    map_f32_3_or_4(src, dst, width, has_alpha, |[r, g, b]| {
+        let x = (f64::from(m[0][0]) * f64::from(r)
+            + f64::from(m[0][1]) * f64::from(g)
+            + f64::from(m[0][2]) * f64::from(b))
+            * sdr_nits;
+        let y = (f64::from(m[1][0]) * f64::from(r)
+            + f64::from(m[1][1]) * f64::from(g)
+            + f64::from(m[1][2]) * f64::from(b))
+            * sdr_nits;
+        let z = (f64::from(m[2][0]) * f64::from(r)
+            + f64::from(m[2][1]) * f64::from(g)
+            + f64::from(m[2][2]) * f64::from(b))
+            * sdr_nits;
+        xyz_d65_nits_to_jzazbz([x, y, z])
+    });
+}
+
+pub(super) fn apply_jzazbz_to_linear_rgb(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    has_alpha: bool,
+    anchored: bool,
+    pq_scale: f32,
+    to_primaries: ColorPrimaries,
+) {
+    let sdr_nits = if anchored {
+        f64::from(pq_scale) * 10_000.0
+    } else {
+        203.0_f64
+    };
+    let m = *primaries_from_xyz(to_primaries)
+        .expect("validated XYZ->RGB primaries")
+        .rows();
+    let inv_nits = 1.0 / sdr_nits.max(1e-30);
+    map_f32_3_or_4(src, dst, width, has_alpha, |jab| {
+        let [x_nits, y_nits, z_nits] = jzazbz_to_xyz_d65_nits(jab);
+        let (x, y, z) = (x_nits * inv_nits, y_nits * inv_nits, z_nits * inv_nits);
+        [
+            (f64::from(m[0][0]) * x + f64::from(m[0][1]) * y + f64::from(m[0][2]) * z) as f32,
+            (f64::from(m[1][0]) * x + f64::from(m[1][1]) * y + f64::from(m[1][2]) * z) as f32,
+            (f64::from(m[2][0]) * x + f64::from(m[2][1]) * y + f64::from(m[2][2]) * z) as f32,
+        ]
+    });
+}
+
+pub(super) fn apply_pq_rgb_to_jzazbz(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    has_alpha: bool,
+    from_primaries: ColorPrimaries,
+) {
+    let m = *primaries_to_xyz(from_primaries)
+        .expect("validated RGB->XYZ primaries")
+        .rows();
+    map_f32_3_or_4(src, dst, width, has_alpha, |[pr, pg, pb]| {
+        let r = f64::from(super::pq_eotf(pr.clamp(0.0, 1.0))) * 10_000.0;
+        let g = f64::from(super::pq_eotf(pg.clamp(0.0, 1.0))) * 10_000.0;
+        let b = f64::from(super::pq_eotf(pb.clamp(0.0, 1.0))) * 10_000.0;
+        let x = f64::from(m[0][0]) * r + f64::from(m[0][1]) * g + f64::from(m[0][2]) * b;
+        let y = f64::from(m[1][0]) * r + f64::from(m[1][1]) * g + f64::from(m[1][2]) * b;
+        let z = f64::from(m[2][0]) * r + f64::from(m[2][1]) * g + f64::from(m[2][2]) * b;
+        xyz_d65_nits_to_jzazbz([x, y, z])
+    });
+}
+
+pub(super) fn apply_jzazbz_to_pq_rgb(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    has_alpha: bool,
+    to_primaries: ColorPrimaries,
+) {
+    let m = *primaries_from_xyz(to_primaries)
+        .expect("validated XYZ->RGB primaries")
+        .rows();
+    map_f32_3_or_4(src, dst, width, has_alpha, |jab| {
+        let [x_nits, y_nits, z_nits] = jzazbz_to_xyz_d65_nits(jab);
+        let (x, y, z) = (x_nits / 10_000.0, y_nits / 10_000.0, z_nits / 10_000.0);
+        let r = (f64::from(m[0][0]) * x + f64::from(m[0][1]) * y + f64::from(m[0][2]) * z) as f32;
+        let g = (f64::from(m[1][0]) * x + f64::from(m[1][1]) * y + f64::from(m[1][2]) * z) as f32;
+        let b = (f64::from(m[2][0]) * x + f64::from(m[2][1]) * y + f64::from(m[2][2]) * z) as f32;
+        [
+            super::pq_oetf(r.clamp(0.0, 1.0)),
+            super::pq_oetf(g.clamp(0.0, 1.0)),
+            super::pq_oetf(b.clamp(0.0, 1.0)),
+        ]
+    });
+}
+
+pub(super) fn apply_linear_rgb_to_lch(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    has_alpha: bool,
+    from_primaries: ColorPrimaries,
+) {
+    let m = *primaries_to_xyz(from_primaries)
+        .expect("validated RGB->XYZ primaries")
+        .rows();
+    map_f32_3_or_4(src, dst, width, has_alpha, |[r, g, b]| {
+        xyz_d65_to_lch_spec::<false>([
+            f64::from(m[0][0]) * f64::from(r)
+                + f64::from(m[0][1]) * f64::from(g)
+                + f64::from(m[0][2]) * f64::from(b),
+            f64::from(m[1][0]) * f64::from(r)
+                + f64::from(m[1][1]) * f64::from(g)
+                + f64::from(m[1][2]) * f64::from(b),
+            f64::from(m[2][0]) * f64::from(r)
+                + f64::from(m[2][1]) * f64::from(g)
+                + f64::from(m[2][2]) * f64::from(b),
+        ])
+    });
+}
+
+pub(super) fn apply_lch_to_linear_rgb(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    has_alpha: bool,
+    to_primaries: ColorPrimaries,
+) {
+    let m = *primaries_from_xyz(to_primaries)
+        .expect("validated XYZ->RGB primaries")
+        .rows();
+    map_f32_3_or_4(src, dst, width, has_alpha, |lch| {
+        let [x, y, z] = lch_to_xyz_d65_spec::<false, false>(lch);
+        [
+            (f64::from(m[0][0]) * x + f64::from(m[0][1]) * y + f64::from(m[0][2]) * z) as f32,
+            (f64::from(m[1][0]) * x + f64::from(m[1][1]) * y + f64::from(m[1][2]) * z) as f32,
+            (f64::from(m[2][0]) * x + f64::from(m[2][1]) * y + f64::from(m[2][2]) * z) as f32,
+        ]
+    });
+}
+
+pub(super) fn apply_rgb_to_hsl(src: &[u8], dst: &mut [u8], width: usize, has_alpha: bool) {
+    map_f32_3_or_4(src, dst, width, has_alpha, rgb_to_hsl_spec::<false, false>);
+}
+
+pub(super) fn apply_hsl_to_rgb(src: &[u8], dst: &mut [u8], width: usize, has_alpha: bool) {
+    map_f32_3_or_4(src, dst, width, has_alpha, hsl_to_rgb_spec::<false>);
+}
+
+pub(super) fn apply_rgb_to_hsv(src: &[u8], dst: &mut [u8], width: usize, has_alpha: bool) {
+    map_f32_3_or_4(src, dst, width, has_alpha, rgb_to_hsv_spec::<false, false>);
+}
+
+pub(super) fn apply_hsv_to_rgb(src: &[u8], dst: &mut [u8], width: usize, has_alpha: bool) {
+    map_f32_3_or_4(src, dst, width, has_alpha, hsv_to_rgb_spec::<false>);
+}
+
+pub(super) fn apply_decode_int_u8(src: &[u8], dst: &mut [u8], width: usize, layout: ChannelLayout) {
+    let ch = layout.channels();
+    let (scales, offsets, cyclic) = int_channel_scales(layout);
+    let dst_f: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * ch * 4]);
+    for (out_px, in_px) in dst_f
+        .chunks_exact_mut(ch)
+        .zip(src[..width * ch].chunks_exact(ch))
+    {
+        for i in 0..3 {
+            let norm = f32::from(in_px[i]) / 255.0;
+            let v = norm * scales[i] + offsets[i];
+            out_px[i] = if cyclic[i] { wrap_degrees(v) } else { v };
         }
-        PerceptualStep::PolarToCartesian { target_layout } => {
-            map_f32_3_or_4(
-                src,
-                dst,
-                width,
-                target_layout.has_alpha(),
-                polar_to_cart_spec::<false, false>,
-            );
+        if ch == 4 {
+            out_px[3] = f32::from(in_px[3]) / 255.0;
         }
-        PerceptualStep::LinearRgbToJzazbz {
-            has_alpha,
-            anchored,
-        } => {
-            let sdr_nits = if anchored {
-                f64::from(pq_scale) * 10_000.0
+    }
+}
+
+pub(super) fn apply_decode_int_u16(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    layout: ChannelLayout,
+) {
+    let ch = layout.channels();
+    let (scales, offsets, cyclic) = int_channel_scales(layout);
+    let dst_f: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * ch * 4]);
+    let src_u16: &[u16] = bytemuck::cast_slice(&src[..width * ch * 2]);
+    for (out_px, in_px) in dst_f.chunks_exact_mut(ch).zip(src_u16.chunks_exact(ch)) {
+        for i in 0..3 {
+            let norm = f32::from(in_px[i]) / 65535.0;
+            let v = norm * scales[i] + offsets[i];
+            out_px[i] = if cyclic[i] { wrap_degrees(v) } else { v };
+        }
+        if ch == 4 {
+            out_px[3] = f32::from(in_px[3]) / 65535.0;
+        }
+    }
+}
+
+pub(super) fn apply_encode_int_u8(src: &[u8], dst: &mut [u8], width: usize, layout: ChannelLayout) {
+    let ch = layout.channels();
+    let (scales, offsets, cyclic) = int_channel_scales(layout);
+    let src_f: &[f32] = bytemuck::cast_slice(&src[..width * ch * 4]);
+    for (out_px, in_px) in dst[..width * ch]
+        .chunks_exact_mut(ch)
+        .zip(src_f.chunks_exact(ch))
+    {
+        for i in 0..3 {
+            let raw = if cyclic[i] {
+                wrap_degrees(in_px[i])
             } else {
-                203.0_f64
+                in_px[i]
             };
-            let m = *primaries_to_xyz(from_primaries)
-                .expect("validated RGB->XYZ primaries")
-                .rows();
-            map_f32_3_or_4(src, dst, width, has_alpha, |[r, g, b]| {
-                let x = (f64::from(m[0][0]) * f64::from(r)
-                    + f64::from(m[0][1]) * f64::from(g)
-                    + f64::from(m[0][2]) * f64::from(b))
-                    * sdr_nits;
-                let y = (f64::from(m[1][0]) * f64::from(r)
-                    + f64::from(m[1][1]) * f64::from(g)
-                    + f64::from(m[1][2]) * f64::from(b))
-                    * sdr_nits;
-                let z = (f64::from(m[2][0]) * f64::from(r)
-                    + f64::from(m[2][1]) * f64::from(g)
-                    + f64::from(m[2][2]) * f64::from(b))
-                    * sdr_nits;
-                xyz_d65_nits_to_jzazbz([x, y, z])
-            });
+            let norm = ((raw - offsets[i]) / scales[i]).clamp(0.0, 1.0);
+            out_px[i] = libm::roundf(norm * 255.0) as u8;
         }
-        PerceptualStep::JzazbzToLinearRgb {
-            has_alpha,
-            anchored,
-            ..
-        } => {
-            let sdr_nits = if anchored {
-                f64::from(pq_scale) * 10_000.0
+        if ch == 4 {
+            out_px[3] = libm::roundf(in_px[3].clamp(0.0, 1.0) * 255.0) as u8;
+        }
+    }
+}
+
+pub(super) fn apply_encode_int_u16(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    layout: ChannelLayout,
+) {
+    let ch = layout.channels();
+    let (scales, offsets, cyclic) = int_channel_scales(layout);
+    let src_f: &[f32] = bytemuck::cast_slice(&src[..width * ch * 4]);
+    let dst_u16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * ch * 2]);
+    for (out_px, in_px) in dst_u16.chunks_exact_mut(ch).zip(src_f.chunks_exact(ch)) {
+        for i in 0..3 {
+            let raw = if cyclic[i] {
+                wrap_degrees(in_px[i])
             } else {
-                203.0_f64
+                in_px[i]
             };
-            let m = *primaries_from_xyz(to_primaries)
-                .expect("validated XYZ->RGB primaries")
-                .rows();
-            let inv_nits = 1.0 / sdr_nits.max(1e-30);
-            map_f32_3_or_4(src, dst, width, has_alpha, |jab| {
-                let [x_nits, y_nits, z_nits] = jzazbz_to_xyz_d65_nits(jab);
-                let (x, y, z) = (x_nits * inv_nits, y_nits * inv_nits, z_nits * inv_nits);
-                [
-                    (f64::from(m[0][0]) * x + f64::from(m[0][1]) * y + f64::from(m[0][2]) * z)
-                        as f32,
-                    (f64::from(m[1][0]) * x + f64::from(m[1][1]) * y + f64::from(m[1][2]) * z)
-                        as f32,
-                    (f64::from(m[2][0]) * x + f64::from(m[2][1]) * y + f64::from(m[2][2]) * z)
-                        as f32,
-                ]
-            });
+            let norm = ((raw - offsets[i]) / scales[i]).clamp(0.0, 1.0);
+            out_px[i] = libm::roundf(norm * 65535.0) as u16;
         }
-        PerceptualStep::PqRgbToJzazbz { has_alpha } => {
-            let m = *primaries_to_xyz(from_primaries)
-                .expect("validated RGB->XYZ primaries")
-                .rows();
-            map_f32_3_or_4(src, dst, width, has_alpha, |[pr, pg, pb]| {
-                let r = f64::from(super::pq_eotf(pr.clamp(0.0, 1.0))) * 10_000.0;
-                let g = f64::from(super::pq_eotf(pg.clamp(0.0, 1.0))) * 10_000.0;
-                let b = f64::from(super::pq_eotf(pb.clamp(0.0, 1.0))) * 10_000.0;
-                let x = f64::from(m[0][0]) * r + f64::from(m[0][1]) * g + f64::from(m[0][2]) * b;
-                let y = f64::from(m[1][0]) * r + f64::from(m[1][1]) * g + f64::from(m[1][2]) * b;
-                let z = f64::from(m[2][0]) * r + f64::from(m[2][1]) * g + f64::from(m[2][2]) * b;
-                xyz_d65_nits_to_jzazbz([x, y, z])
-            });
-        }
-        PerceptualStep::JzazbzToPqRgb { has_alpha, .. } => {
-            let m = *primaries_from_xyz(to_primaries)
-                .expect("validated XYZ->RGB primaries")
-                .rows();
-            map_f32_3_or_4(src, dst, width, has_alpha, |jab| {
-                let [x_nits, y_nits, z_nits] = jzazbz_to_xyz_d65_nits(jab);
-                let (x, y, z) = (x_nits / 10_000.0, y_nits / 10_000.0, z_nits / 10_000.0);
-                let r = (f64::from(m[0][0]) * x + f64::from(m[0][1]) * y + f64::from(m[0][2]) * z)
-                    as f32;
-                let g = (f64::from(m[1][0]) * x + f64::from(m[1][1]) * y + f64::from(m[1][2]) * z)
-                    as f32;
-                let b = (f64::from(m[2][0]) * x + f64::from(m[2][1]) * y + f64::from(m[2][2]) * z)
-                    as f32;
-                [
-                    super::pq_oetf(r.clamp(0.0, 1.0)),
-                    super::pq_oetf(g.clamp(0.0, 1.0)),
-                    super::pq_oetf(b.clamp(0.0, 1.0)),
-                ]
-            });
-        }
-        PerceptualStep::LinearRgbToLch { has_alpha } => {
-            let m = *primaries_to_xyz(from_primaries)
-                .expect("validated RGB->XYZ primaries")
-                .rows();
-            map_f32_3_or_4(src, dst, width, has_alpha, |[r, g, b]| {
-                xyz_d65_to_lch_spec::<false>([
-                    f64::from(m[0][0]) * f64::from(r)
-                        + f64::from(m[0][1]) * f64::from(g)
-                        + f64::from(m[0][2]) * f64::from(b),
-                    f64::from(m[1][0]) * f64::from(r)
-                        + f64::from(m[1][1]) * f64::from(g)
-                        + f64::from(m[1][2]) * f64::from(b),
-                    f64::from(m[2][0]) * f64::from(r)
-                        + f64::from(m[2][1]) * f64::from(g)
-                        + f64::from(m[2][2]) * f64::from(b),
-                ])
-            });
-        }
-        PerceptualStep::LchToLinearRgb { has_alpha, .. } => {
-            let m = *primaries_from_xyz(to_primaries)
-                .expect("validated XYZ->RGB primaries")
-                .rows();
-            map_f32_3_or_4(src, dst, width, has_alpha, |lch| {
-                let [x, y, z] = lch_to_xyz_d65_spec::<false, false>(lch);
-                [
-                    (f64::from(m[0][0]) * x + f64::from(m[0][1]) * y + f64::from(m[0][2]) * z)
-                        as f32,
-                    (f64::from(m[1][0]) * x + f64::from(m[1][1]) * y + f64::from(m[1][2]) * z)
-                        as f32,
-                    (f64::from(m[2][0]) * x + f64::from(m[2][1]) * y + f64::from(m[2][2]) * z)
-                        as f32,
-                ]
-            });
-        }
-        PerceptualStep::RgbToHsl { has_alpha } => {
-            map_f32_3_or_4(src, dst, width, has_alpha, rgb_to_hsl_spec::<false, false>);
-        }
-        PerceptualStep::HslToRgb { has_alpha } => {
-            map_f32_3_or_4(src, dst, width, has_alpha, hsl_to_rgb_spec::<false>);
-        }
-        PerceptualStep::RgbToHsv { has_alpha } => {
-            map_f32_3_or_4(src, dst, width, has_alpha, rgb_to_hsv_spec::<false, false>);
-        }
-        PerceptualStep::HsvToRgb { has_alpha } => {
-            map_f32_3_or_4(src, dst, width, has_alpha, hsv_to_rgb_spec::<false>);
-        }
-        PerceptualStep::DecodeIntToF32 { from_type, layout } => {
-            let ch = layout.channels();
-            let (scales, offsets, cyclic) = int_channel_scales(layout);
-            let dst_f: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * ch * 4]);
-            match from_type {
-                ChannelType::U8 => {
-                    for (out_px, in_px) in dst_f
-                        .chunks_exact_mut(ch)
-                        .zip(src[..width * ch].chunks_exact(ch))
-                    {
-                        for i in 0..3 {
-                            let norm = f32::from(in_px[i]) / 255.0;
-                            let v = norm * scales[i] + offsets[i];
-                            out_px[i] = if cyclic[i] { wrap_degrees(v) } else { v };
-                        }
-                        if ch == 4 {
-                            out_px[3] = f32::from(in_px[3]) / 255.0;
-                        }
-                    }
-                }
-                ChannelType::U16 => {
-                    let src_u16: &[u16] = bytemuck::cast_slice(&src[..width * ch * 2]);
-                    for (out_px, in_px) in dst_f.chunks_exact_mut(ch).zip(src_u16.chunks_exact(ch))
-                    {
-                        for i in 0..3 {
-                            let norm = f32::from(in_px[i]) / 65535.0;
-                            let v = norm * scales[i] + offsets[i];
-                            out_px[i] = if cyclic[i] { wrap_degrees(v) } else { v };
-                        }
-                        if ch == 4 {
-                            out_px[3] = f32::from(in_px[3]) / 65535.0;
-                        }
-                    }
-                }
-                _ => unreachable!("DecodeIntToF32 only accepts U8 or U16"),
-            }
-        }
-        PerceptualStep::EncodeF32ToInt { to_type, layout } => {
-            let ch = layout.channels();
-            let (scales, offsets, cyclic) = int_channel_scales(layout);
-            let src_f: &[f32] = bytemuck::cast_slice(&src[..width * ch * 4]);
-            match to_type {
-                ChannelType::U8 => {
-                    for (out_px, in_px) in dst[..width * ch]
-                        .chunks_exact_mut(ch)
-                        .zip(src_f.chunks_exact(ch))
-                    {
-                        for i in 0..3 {
-                            let raw = if cyclic[i] {
-                                wrap_degrees(in_px[i])
-                            } else {
-                                in_px[i]
-                            };
-                            let norm = ((raw - offsets[i]) / scales[i]).clamp(0.0, 1.0);
-                            out_px[i] = libm::roundf(norm * 255.0) as u8;
-                        }
-                        if ch == 4 {
-                            out_px[3] = libm::roundf(in_px[3].clamp(0.0, 1.0) * 255.0) as u8;
-                        }
-                    }
-                }
-                ChannelType::U16 => {
-                    let dst_u16: &mut [u16] = bytemuck::cast_slice_mut(&mut dst[..width * ch * 2]);
-                    for (out_px, in_px) in dst_u16.chunks_exact_mut(ch).zip(src_f.chunks_exact(ch))
-                    {
-                        for i in 0..3 {
-                            let raw = if cyclic[i] {
-                                wrap_degrees(in_px[i])
-                            } else {
-                                in_px[i]
-                            };
-                            let norm = ((raw - offsets[i]) / scales[i]).clamp(0.0, 1.0);
-                            out_px[i] = libm::roundf(norm * 65535.0) as u16;
-                        }
-                        if ch == 4 {
-                            out_px[3] = libm::roundf(in_px[3].clamp(0.0, 1.0) * 65535.0) as u16;
-                        }
-                    }
-                }
-                _ => unreachable!("EncodeF32ToInt only accepts U8 or U16"),
-            }
+        if ch == 4 {
+            out_px[3] = libm::roundf(in_px[3].clamp(0.0, 1.0) * 65535.0) as u16;
         }
     }
 }
