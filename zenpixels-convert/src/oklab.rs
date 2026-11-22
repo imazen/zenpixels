@@ -5,7 +5,52 @@
 //! scalar conversions. The constants are CSS Color 4's, for Björn Ottosson's Oklab.
 
 use crate::gamut::GamutMatrix;
+use magemath::cbrtf::{Cbrtf, CbrtfDomain, CbrtfOptions};
 use zenpixels::ColorPrimaries;
+
+const OKLAB_MATH_PORTABILITY: magemath::Portability = if cfg!(all(
+    target_arch = "wasm32",
+    not(feature = "precise-portable")
+)) {
+    magemath::Portability::BackendDependent
+} else {
+    magemath::Portability::BitExact
+};
+
+/// Division-free `magemath` cube root for untrusted / arbitrary `f32` inputs
+/// (`<= 1.47 ULP`, exact on `±0.0`, subnormals, `±inf`, and `NaN`, bit-identical
+/// between scalar and all SIMD tiers).
+pub(crate) const OKLAB_CBRT_ALL: u128 = CbrtfOptions::new()
+    .domain(CbrtfDomain::AllFloats)
+    .midp()
+    .portability(OKLAB_MATH_PORTABILITY)
+    .caller()
+    .bits();
+
+/// Division-free `magemath` cube root for verified finite bounded LMS inputs
+/// (`|x| < f32::MAX / 3`, admitting signed zeros and subnormals because
+/// `m1[r][c] * f32::MIN_POSITIVE` can be subnormal even when RGB has
+/// `FloatFacts::NO_SUBNORMALS | POSITIVE`). Bit-identical to [`OKLAB_CBRT_ALL`]
+/// across the full finite bounded domain.
+pub(crate) const OKLAB_CBRT_FINITE: u128 = CbrtfOptions::new()
+    .domain(CbrtfDomain::Bounded)
+    .midp()
+    .admit_subnormals()
+    .portability(OKLAB_MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+
+/// Division-free `magemath` cube root for strictly positive normal inputs
+/// (`[f32::MIN_POSITIVE, f32::MAX / 3)`). Bit-identical to [`OKLAB_CBRT_ALL`].
+const OKLAB_CBRT_POS_NORMAL: u128 = CbrtfOptions::new()
+    .domain(CbrtfDomain::PositiveNormals)
+    .midp()
+    .reject_subnormals()
+    .portability(OKLAB_MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
 
 // ---------------------------------------------------------------------------
 // Oklab matrices: CSS Color 4's conversions.js, which recomputes Björn Ottosson's
@@ -126,41 +171,18 @@ pub(crate) fn lms_to_rgb_matrix(primaries: ColorPrimaries) -> Option<GamutMatrix
 // Fast cube root
 // ---------------------------------------------------------------------------
 
-/// Fast approximate cube root with ~22 bits of precision.
+/// Division-free cube root (`<= 1.47 ULP`) via const-configured `magemath::Cbrtf<Midp>`.
 ///
-/// Uses bit-manipulation for an initial estimate followed by two
-/// Newton-Raphson iterations. Handles negative inputs and zero correctly.
+/// Exact on signed zeros, subnormals, negatives, infinities, and `NaN`, and
+/// bit-identical between scalar and all SIMD tiers.
 #[inline]
 pub(crate) fn fast_cbrt(x: f32) -> f32 {
-    if x == 0.0 || !x.is_finite() {
-        return x;
-    }
-    let sign = x.signum();
-    let mut x = x.abs();
-    let mut scale = 1.0_f32;
-    if x < f32::MIN_POSITIVE {
-        // Normalize subnormals by 2^24 (`cbrt(2^24) = 256`) so the IEEE 754
-        // biased-exponent bit estimate stays accurate across the subnormal range.
-        x *= 16_777_216.0;
-        scale = 1.0 / 256.0;
-    }
-
-    // Initial estimate via IEEE 754 bit trick: cbrt(x) ≈ 2^(log2(x)/3)
-    let bits = x.to_bits();
-    let estimate = f32::from_bits((bits / 3) + (0x2a51_7d48)); // magic constant
-
-    // Two Newton-Raphson iterations for cbrt: y = y - (y³ - x) / (3y²)
-    // Rearranged: y = (2y + x/y²) / 3
-    let mut y = estimate;
-    y = (2.0 * y + x / (y * y)) / 3.0;
-    y = (2.0 * y + x / (y * y)) / 3.0;
-
-    sign * y * scale
+    Cbrtf::<OKLAB_CBRT_ALL>::scalar_infallible(x)
 }
 
-/// Const-specialized [`fast_cbrt`] matching [`fast_cbrt`] bit-for-bit on its promised domain
-/// while eliminating data-dependent early-exit branches so outer row loops vectorize cleanly.
+/// Const-specialized [`fast_cbrt`] matching [`fast_cbrt`] bit-for-bit on its promised domain.
 #[inline(always)]
+#[allow(dead_code)]
 pub(crate) fn fast_cbrt_spec<
     const NO_SPECIAL: bool,
     const NO_SUBNORMALS: bool,
@@ -170,52 +192,18 @@ pub(crate) fn fast_cbrt_spec<
     x: f32,
 ) -> f32 {
     if !NO_SPECIAL {
-        return fast_cbrt(x);
+        return Cbrtf::<OKLAB_CBRT_ALL>::scalar_infallible(x);
     }
     if POSITIVE && NO_SUBNORMALS {
-        let y0 = f32::from_bits((x.to_bits() / 3) + 0x2a51_7d48);
-        let y1 = (2.0 * y0 + x / (y0 * y0)) / 3.0;
-        return (2.0 * y1 + x / (y1 * y1)) / 3.0;
+        return Cbrtf::<OKLAB_CBRT_POS_NORMAL>::scalar_infallible(x);
     }
-    if NON_NEGATIVE && NO_SUBNORMALS {
-        let y0 = f32::from_bits((x.to_bits() / 3) + 0x2a51_7d48);
-        let y1 = (2.0 * y0 + x / (y0 * y0)) / 3.0;
-        let y2 = (2.0 * y1 + x / (y1 * y1)) / 3.0;
-        return if x == 0.0 { 0.0 } else { y2 };
-    }
-    if NO_SUBNORMALS {
-        let ax = x.abs();
-        let y0 = f32::from_bits((ax.to_bits() / 3) + 0x2a51_7d48);
-        let y1 = (2.0 * y0 + ax / (y0 * y0)) / 3.0;
-        let y2 = (2.0 * y1 + ax / (y1 * y1)) / 3.0;
-        return if ax == 0.0 { x } else { y2.copysign(x) };
-    }
-    if NON_NEGATIVE {
-        let sub = x < f32::MIN_POSITIVE;
-        let xn = if sub { x * 16_777_216.0 } else { x };
-        let scale = if sub { 1.0 / 256.0 } else { 1.0 };
-        let y0 = f32::from_bits((xn.to_bits() / 3) + 0x2a51_7d48);
-        let y1 = (2.0 * y0 + xn / (y0 * y0)) / 3.0;
-        let y2 = (2.0 * y1 + xn / (y1 * y1)) / 3.0;
-        return if x == 0.0 { 0.0 } else { y2 * scale };
-    }
-    let ax = x.abs();
-    let sub = ax < f32::MIN_POSITIVE;
-    let xn = if sub { ax * 16_777_216.0 } else { ax };
-    let scale = if sub { 1.0 / 256.0 } else { 1.0 };
-    let y0 = f32::from_bits((xn.to_bits() / 3) + 0x2a51_7d48);
-    let y1 = (2.0 * y0 + xn / (y0 * y0)) / 3.0;
-    let y2 = (2.0 * y1 + xn / (y1 * y1)) / 3.0;
-    if ax == 0.0 {
-        x
-    } else {
-        (y2 * scale).copysign(x)
-    }
+    Cbrtf::<OKLAB_CBRT_FINITE>::scalar_infallible(x)
 }
 
 /// Const-specialized linear RGB → Oklab `[L, a, b]`, bit-identical to [`rgb_to_oklab`]
 /// whenever the `LMS` cone intermediates satisfy the enabled flags.
 #[inline(always)]
+#[allow(dead_code)]
 pub(crate) fn rgb_to_oklab_spec<
     const NO_SPECIAL: bool,
     const LMS_NO_SUBNORMALS: bool,

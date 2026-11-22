@@ -3,8 +3,8 @@
 - **Host:** `r7900x` (AMD Ryzen 9 7900X, Zen 4, 24T, 30.0 GiB RAM, AVX2+FMA & AVX-512; **not measured on Zen 5**)
 - **Baseline:** `051921c8` (`feat/0.4-float-facts`), built without `-C target-cpu=native`
 - **Harness:** `bench_4k_paths` (4K UHD `3840 × 2160`, 8.29M px), `examples/measure_histogram_throughput`, `perf stat` / `perf record -F 999 -g --call-graph dwarf` / `perf report` / `perf annotate`
-- **Resource envelope (`run-heavy --mem 16G`):** peak RSS `0.99 GiB` (benchmarks/perf), `2.68 GiB` (full test + clippy + `no_std` + `wasm32` matrix)
-- **Determinism gate:** `kernel_tests::row_partition::EXPECTED_DIGEST = 0x922a875a7231ea47`, `every_tier_gives_the_same_bytes`, and `single_pixel_rows_match_a_whole_row` all preserved bit-for-bit (`0` digest change).
+- **Resource envelope (`run-heavy --mem 16G`):** peak RSS `0.99 GiB` (Phase 1 benchmarks/perf), `2.68 GiB` (Phase 1 full test + clippy + `no_std` + `wasm32` matrix), `1.10 GiB` (Oklab verification + `v3`/`v4x` 4K benchmarks)
+- **Determinism gate:** Phase 1 preserved `kernel_tests::row_partition::EXPECTED_DIGEST = 0x922a875a7231ea47` bit-for-bit (`0` digest change). Phase 2 (Oklab `magemath::Cbrtf<Midp>`) updated `EXPECTED_DIGEST` to `0xf3ef1c3234f80225`, verified identical across scalar, `--features fast` (`v3`), and `--all-features` (`v4x`), with `every_tier_gives_the_same_bytes` and `single_pixel_rows_match_a_whole_row` passing.
 
 ## 1. Before / After 4K UHD `zenbench` Results (`r7900x`, Zen 4)
 
@@ -63,17 +63,18 @@
    - **PQ (`rgbf32_pq_to_lin_uniform`, 105.9 ms v3; near-black 1.16 s):** `18.14% pq_to_linear_slice_x8_cfg::slow` + `6.74% libm __ieee754_pow_fma` + `4.64%` non-inlined `blend` (2% of uniform `[0,1]` samples `< 0.02` trigger 8× scalar `f64` fallback on ~15% of 8-lane vectors).
    - **sRGB (`rgbf32_srgb_to_lin_clip`, 9.5 ms v3):** `7.19% __memmove` exceeds `5.16% srgb_v3` compute (out-of-place slice API in `linear-srgb` would eliminate the copy).
 
-## 3. Pending Decision: Oklab `fast_cbrt` → `magemath::Cbrtf<Midp>` (Not Landed)
+## 3. Landed: Oklab `fast_cbrt` → `magemath::Cbrtf<Midp>` + SIMD Deinterleave/Interleave
 
-Measured in scratch A/B harness (`v3`, 4K RGB→Oklab, `r7900x`; accuracy swept across `[1e-6, 2.0]`):
+Switched `oklab.rs` (`OKLAB_CBRT_ALL` = `AllFloats`, `OKLAB_CBRT_FINITE` = `Bounded + admit_subnormals + assume_in_bounds`) and `convert_kernels.rs` (`mod oklab_kernels`, explicit `f32x8`/`f32x16` SIMD loops using `magetypes`'s `deinterleave_{3,4}ch` / `interleave_{3,4}ch`). Max error dropped from ~14 ULP to `<= 1.47 ULP` (division-free `Midp` Estrin polynomial) with `0` bit diffs between `OKLAB_CBRT_ALL` and `OKLAB_CBRT_FINITE` across all bounded finite inputs (`row_partition::EXPECTED_DIGEST = 0xf3ef1c3234f80225`).
 
-| Variant | 4K Time (`v3`) | Throughput | Speedup vs untrusted | Max ULP |
-|---|---:|---:|---:|---:|
-| Current `fast_cbrt` (untrusted) | 22.7 ms | 8.16 GiB/s | 1.00× | 14 ULP |
-| Current `fast_cbrt` (`unit_finite`) | 18.3 ms | 10.1 GiB/s | 1.24× | 14 ULP |
-| `magemath::Cbrtf<AllFloats, Midp>` | **15.4 ms** | **12.1 GiB/s** | **1.47×** | **1 ULP** |
-| `magemath::Cbrtf<Unit, admit_subnormals, assume_in_bounds, Midp>` | **14.6 ms** | **12.7 GiB/s** | **1.55×** | **1 ULP** |
-| `magemath::Cbrtf<PositiveNormals, Midp>` | **13.2 ms** | **14.0 GiB/s** | **1.72×** | **1 ULP** |
-| `magemath::Cbrtf<PositiveNormals, Lowp>` | 12.2 ms | 15.2 GiB/s | 1.86× | 179 ULP |
+### 4K UHD `bench_4k_paths --group=oklab/` (`r7900x`, Zen 4; not measured on Zen 5)
 
-*Soundness note:* `FloatFacts::NO_SUBNORMALS | POSITIVE` on linear RGB does **not** imply subnormal-free LMS (`m1[0][2] * f32::MIN_POSITIVE ≈ 0.0514 * MIN_POSITIVE` is subnormal), so `admit_subnormals()` is required for soundness on unit-clean RGB. Switching Oklab requires updating `row_partition::EXPECTED_DIGEST` and `fast_cbrt_spec` bit-identity tests, so it is held pending user confirmation.
+| Benchmark (4K UHD) | `v3` Before | `v3` After | `v3` Speedup | `v4x` Before | `v4x` After | `v4x` Speedup |
+|---|---:|---:|---:|---:|---:|---:|
+| `oklab/rgb_to_oklab_untrusted` | 20.8 ms | **13.8 ms (13.5 GiB/s)** | **1.51×** | 12.8 ms | **10.5 ms (17.6 GiB/s)** | **1.22×** |
+| `oklab/rgb_to_oklab_unit_finite` | 16.3 ms | **12.8 ms (14.5 GiB/s)** | **1.27×** | 11.3 ms | **10.8 ms (17.1 GiB/s)** | **1.05×** |
+| `oklab/rgb_to_oklab_unit_nosub` | 16.2 ms | **12.9 ms (14.3 GiB/s)** | **1.26×** | 11.3 ms | **10.7 ms (17.4 GiB/s)** | **1.06×** |
+| `oklab/rgba_to_oklaba_untrusted` | 23.2 ms | **18.3 ms (13.5 GiB/s)** | **1.27×** | 14.9 ms | **11.7 ms (21.1 GiB/s)** | **1.27×** |
+| `oklab/rgba_to_oklaba_unit_nosub` | 19.6 ms | **17.8 ms (13.9 GiB/s)** | **1.10×** | 12.8 ms | **11.6 ms (21.2 GiB/s)** | **1.10×** |
+
+*Soundness note:* `FloatFacts::NO_SUBNORMALS | POSITIVE` on linear RGB does **not** imply subnormal-free LMS (`m1[0][2] * f32::MIN_POSITIVE ≈ 0.0514 * MIN_POSITIVE` is subnormal), and wide-gamut white yields `L ≈ 1.00005 > 1.0`. Using `CbrtfDomain::Bounded` (`|x| < f32::MAX / 3`) + `admit_subnormals()` + `assume_in_bounds()` is sound for all finite bounded RGB inputs while eliding `Inf`/`NaN` guards.

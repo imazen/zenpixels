@@ -78,8 +78,7 @@ fn srgb_transfer_exhaustive_u8() {
 /// (pre-multiplied from XYZ->LMS * RGB->XYZ in f32), while palette goes
 /// through an intermediate XYZ step. The f32 matrix multiplication
 /// accumulates rounding differences up to ~1e-4 near saturated primaries.
-/// Our fast_cbrt (~22-bit precision) adds a small additional error vs.
-/// palette's f32 cbrt.
+/// Our `magemath::Cbrtf<Midp>` (`<= 1.47 ULP`) matches f32 cbrt closely.
 #[test]
 fn oklab_crossval() {
     let space = OklabSpace::for_primaries(ColorPrimaries::Bt709).unwrap();

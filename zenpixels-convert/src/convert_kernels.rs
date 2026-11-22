@@ -4719,23 +4719,26 @@ fn step_premul_f32(
 mod oklab_kernels {
     use super::*;
     use crate::oklab::{
-        lms_to_rgb_matrix, oklab_to_rgb, rgb_to_lms_matrix, rgb_to_oklab, rgb_to_oklab_spec,
+        OKLAB_CBRT_ALL, OKLAB_CBRT_FINITE, OKLAB_FROM_LMS_CBRT, lms_to_rgb_matrix, oklab_to_rgb,
+        rgb_to_lms_matrix,
     };
 
+    /// Sound condition for [`OKLAB_CBRT_FINITE`] (`CbrtfDomain::Bounded`, `admit_subnormals()`,
+    /// `assume_in_bounds()`): finite bounded color channels (`|RGB| <= 1.0` ⇒ `|LMS| <= 2.0 << f32::MAX / 3`).
+    /// Subnormals are admitted because `m1[r][c] * f32::MIN_POSITIVE` can be subnormal even when
+    /// RGB has `FloatFacts::NO_SUBNORMALS | POSITIVE`.
     #[inline]
-    fn oklab_is_finite_nonneg(m1: &[[f32; 3]; 3], in_trust: super::super::StepFloatTrust) -> bool {
+    fn oklab_is_finite_bounded(in_trust: super::super::StepFloatTrust) -> bool {
         use zenpixels::sample::FloatFacts;
-        let cf = in_trust.color_facts;
-        cf.contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE | FloatFacts::NON_NEGATIVE)
+        in_trust
+            .color_facts
+            .contains(FloatFacts::NO_NAN | FloatFacts::NO_INFINITE)
             && in_trust.color_bounded
-            && m1.as_flattened().iter().all(|&c| c >= (1.0 / 64.0))
     }
 
     type OklabChunksFn<const N: usize> = fn(&[[f32; N]], &mut [[f32; N]], &[[f32; 3]; 3]);
 
-    /// Shared padded-chunk driver for Oklab 16-pixel (`N = 48` or `64`) slice kernels.
-    /// Runs full chunks directly and pads any `< N` remainder with `0.0` through the
-    /// exact same chunk kernel so no SIMD tier emits scalar tail math.
+    /// Shared padded-chunk driver for inverse Oklab→RGB 16-pixel (`N = 48` or `64`) slice kernels.
     #[inline(always)]
     fn run_oklab_chunked<const N: usize>(
         src: &[f32],
@@ -4773,40 +4776,158 @@ mod oklab_kernels {
         d_rem.copy_from_slice(&dout[..d_rem.len()]);
     }
 
-    #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
-    fn rgb_to_oklab_3ch_finite_nonneg_chunks(
-        src: &[[f32; 48]],
-        dst: &mut [[f32; 48]],
-        m1: &[[f32; 3]; 3],
-    ) {
-        for (s, d) in src.iter().zip(dst.iter_mut()) {
-            for p in 0..16 {
-                let i = p * 3;
-                let [l, a, b] =
-                    rgb_to_oklab_spec::<true, false, true, false>(s[i], s[i + 1], s[i + 2], m1);
-                d[i] = l;
-                d[i + 1] = a;
-                d[i + 2] = b;
+    macro_rules! oklab_fwd_planes {
+        ($vec:ident, $token:ident, $cbrt_cfg:ident, $r:ident, $g:ident, $b:ident, $m1:ident) => {{
+            use magemath::SimdMath;
+            let l = ($vec::splat_t($token, $m1[0][0]) * $r + $vec::splat_t($token, $m1[0][1]) * $g)
+                + $vec::splat_t($token, $m1[0][2]) * $b;
+            let m = ($vec::splat_t($token, $m1[1][0]) * $r + $vec::splat_t($token, $m1[1][1]) * $g)
+                + $vec::splat_t($token, $m1[1][2]) * $b;
+            let s = ($vec::splat_t($token, $m1[2][0]) * $r + $vec::splat_t($token, $m1[2][1]) * $g)
+                + $vec::splat_t($token, $m1[2][2]) * $b;
+            let l_ = l.cbrt::<$cbrt_cfg>();
+            let m_ = m.cbrt::<$cbrt_cfg>();
+            let s_ = s.cbrt::<$cbrt_cfg>();
+            let k = OKLAB_FROM_LMS_CBRT.rows();
+            let ok_l = ($vec::splat_t($token, k[0][0]) * l_ + $vec::splat_t($token, k[0][1]) * m_)
+                + $vec::splat_t($token, k[0][2]) * s_;
+            let ok_a = ($vec::splat_t($token, k[1][0]) * l_ + $vec::splat_t($token, k[1][1]) * m_)
+                + $vec::splat_t($token, k[1][2]) * s_;
+            let ok_b = ($vec::splat_t($token, k[2][0]) * l_ + $vec::splat_t($token, k[2][1]) * m_)
+                + $vec::splat_t($token, k[2][2]) * s_;
+            [ok_l, ok_a, ok_b]
+        }};
+    }
+
+    macro_rules! oklab_fwd_3ch_chunk {
+        ($vec:ident, $lanes:literal, $token:ident, $sc:expr, $dc:expr, $m1:ident, $cbrt_cfg:ident) => {{
+            let (sv, _) = ($sc).as_chunks::<$lanes>();
+            let v0 = $vec::load_t($token, &sv[0]);
+            let v1 = $vec::load_t($token, &sv[1]);
+            let v2 = $vec::load_t($token, &sv[2]);
+            let [r, g, b] = $vec::deinterleave_3ch([v0, v1, v2]);
+            let [ok_l, ok_a, ok_b] = oklab_fwd_planes!($vec, $token, $cbrt_cfg, r, g, b, $m1);
+            let [o0, o1, o2] = $vec::interleave_3ch([ok_l, ok_a, ok_b]);
+            let (dv, _) = ($dc).as_chunks_mut::<$lanes>();
+            o0.store(&mut dv[0]);
+            o1.store(&mut dv[1]);
+            o2.store(&mut dv[2]);
+        }};
+    }
+
+    macro_rules! oklab_fwd_3ch_loop {
+        ($vec:ident, $lanes:literal, $words:literal, $token:ident, $src:ident, $dst:ident, $m1:ident, $cbrt_cfg:ident) => {{
+            let (s_chunks, s_rem) = $src.as_chunks::<$words>();
+            let (d_chunks, d_rem) = $dst.as_chunks_mut::<$words>();
+            for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
+                oklab_fwd_3ch_chunk!($vec, $lanes, $token, sc, dc, $m1, $cbrt_cfg);
             }
+            if !s_rem.is_empty() {
+                let mut sin = [0.0f32; $words];
+                let mut dout = [0.0f32; $words];
+                sin[..s_rem.len()].copy_from_slice(s_rem);
+                oklab_fwd_3ch_chunk!($vec, $lanes, $token, &sin, &mut dout, $m1, $cbrt_cfg);
+                d_rem.copy_from_slice(&dout[..d_rem.len()]);
+            }
+        }};
+    }
+
+    macro_rules! oklab_fwd_4ch_chunk {
+        ($vec:ident, $lanes:literal, $token:ident, $sc:expr, $dc:expr, $m1:ident, $cbrt_cfg:ident) => {{
+            let (sv, _) = ($sc).as_chunks::<$lanes>();
+            let v0 = $vec::load_t($token, &sv[0]);
+            let v1 = $vec::load_t($token, &sv[1]);
+            let v2 = $vec::load_t($token, &sv[2]);
+            let v3 = $vec::load_t($token, &sv[3]);
+            let [r, g, b, a] = $vec::deinterleave_4ch([v0, v1, v2, v3]);
+            let [ok_l, ok_a, ok_b] = oklab_fwd_planes!($vec, $token, $cbrt_cfg, r, g, b, $m1);
+            let [o0, o1, o2, o3] = $vec::interleave_4ch([ok_l, ok_a, ok_b, a]);
+            let (dv, _) = ($dc).as_chunks_mut::<$lanes>();
+            o0.store(&mut dv[0]);
+            o1.store(&mut dv[1]);
+            o2.store(&mut dv[2]);
+            o3.store(&mut dv[3]);
+        }};
+    }
+
+    macro_rules! oklab_fwd_4ch_loop {
+        ($vec:ident, $lanes:literal, $words:literal, $token:ident, $src:ident, $dst:ident, $m1:ident, $cbrt_cfg:ident) => {{
+            let (s_chunks, s_rem) = $src.as_chunks::<$words>();
+            let (d_chunks, d_rem) = $dst.as_chunks_mut::<$words>();
+            for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
+                oklab_fwd_4ch_chunk!($vec, $lanes, $token, sc, dc, $m1, $cbrt_cfg);
+            }
+            if !s_rem.is_empty() {
+                let mut sin = [0.0f32; $words];
+                let mut dout = [0.0f32; $words];
+                sin[..s_rem.len()].copy_from_slice(s_rem);
+                oklab_fwd_4ch_chunk!($vec, $lanes, $token, &sin, &mut dout, $m1, $cbrt_cfg);
+                d_rem.copy_from_slice(&dout[..d_rem.len()]);
+            }
+        }};
+    }
+
+    #[archmage::attune(_*_t, define(f32x8))]
+    fn rgb_to_oklab_3ch_tier(
+        token: Token,
+        src: &[f32],
+        dst: &mut [f32],
+        m1: &[[f32; 3]; 3],
+        finite_bounded: bool,
+    ) {
+        if finite_bounded {
+            oklab_fwd_3ch_loop!(f32x8, 8, 24, token, src, dst, m1, OKLAB_CBRT_FINITE);
+        } else {
+            oklab_fwd_3ch_loop!(f32x8, 8, 24, token, src, dst, m1, OKLAB_CBRT_ALL);
         }
     }
 
-    #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
-    fn rgb_to_oklab_4ch_finite_nonneg_chunks(
-        src: &[[f32; 64]],
-        dst: &mut [[f32; 64]],
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+    #[archmage::arcane]
+    fn rgb_to_oklab_3ch_tier_v4x_t(
+        token: archmage::X64V4xToken,
+        src: &[f32],
+        dst: &mut [f32],
         m1: &[[f32; 3]; 3],
+        finite_bounded: bool,
     ) {
-        for (s, d) in src.iter().zip(dst.iter_mut()) {
-            for p in 0..16 {
-                let i = p * 4;
-                let [l, a, b] =
-                    rgb_to_oklab_spec::<true, false, true, false>(s[i], s[i + 1], s[i + 2], m1);
-                d[i] = l;
-                d[i + 1] = a;
-                d[i + 2] = b;
-                d[i + 3] = s[i + 3];
-            }
+        type Vec16 = magetypes::simd::generic::f32x16<archmage::X64V4xToken>;
+        if finite_bounded {
+            oklab_fwd_3ch_loop!(Vec16, 16, 48, token, src, dst, m1, OKLAB_CBRT_FINITE);
+        } else {
+            oklab_fwd_3ch_loop!(Vec16, 16, 48, token, src, dst, m1, OKLAB_CBRT_ALL);
+        }
+    }
+
+    #[archmage::attune(_*_t, define(f32x8))]
+    fn rgb_to_oklab_4ch_tier(
+        token: Token,
+        src: &[f32],
+        dst: &mut [f32],
+        m1: &[[f32; 3]; 3],
+        finite_bounded: bool,
+    ) {
+        if finite_bounded {
+            oklab_fwd_4ch_loop!(f32x8, 8, 32, token, src, dst, m1, OKLAB_CBRT_FINITE);
+        } else {
+            oklab_fwd_4ch_loop!(f32x8, 8, 32, token, src, dst, m1, OKLAB_CBRT_ALL);
+        }
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+    #[archmage::arcane]
+    fn rgb_to_oklab_4ch_tier_v4x_t(
+        token: archmage::X64V4xToken,
+        src: &[f32],
+        dst: &mut [f32],
+        m1: &[[f32; 3]; 3],
+        finite_bounded: bool,
+    ) {
+        type Vec16 = magetypes::simd::generic::f32x16<archmage::X64V4xToken>;
+        if finite_bounded {
+            oklab_fwd_4ch_loop!(Vec16, 16, 64, token, src, dst, m1, OKLAB_CBRT_FINITE);
+        } else {
+            oklab_fwd_4ch_loop!(Vec16, 16, 64, token, src, dst, m1, OKLAB_CBRT_ALL);
         }
     }
 
@@ -4825,14 +4946,13 @@ mod oklab_kernels {
         let m1 = rgb_to_lms_matrix(primaries).expect(
             "Oklab conversion requires known primaries (plan should have rejected Unknown)",
         );
-        let rows = m1.rows();
         let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 12]);
         let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
-        if oklab_is_finite_nonneg(rows, in_trust) {
-            run_oklab_chunked::<48>(srcf, dstf, rows, rgb_to_oklab_3ch_finite_nonneg_chunks);
-        } else {
-            run_oklab_chunked::<48>(srcf, dstf, rows, rgb_to_oklab_3ch_chunks);
-        }
+        let finite_bounded = oklab_is_finite_bounded(in_trust);
+        archmage::attuned!(
+            rgb_to_oklab_3ch_tier(srcf, dstf, m1.rows(), finite_bounded),
+            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+        );
     }
 
     pub(super) fn linear_rgb_to_oklab_f32_untrusted(
@@ -4846,21 +4966,10 @@ mod oklab_kernels {
         );
         let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 12]);
         let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 12]);
-        run_oklab_chunked::<48>(srcf, dstf, m1.rows(), rgb_to_oklab_3ch_chunks);
-    }
-
-    /// 3-channel RGB→Oklab inner loop (16 pixels = 48 f32s per chunk).
-    #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
-    fn rgb_to_oklab_3ch_chunks(src: &[[f32; 48]], dst: &mut [[f32; 48]], m1: &[[f32; 3]; 3]) {
-        for (s, d) in src.iter().zip(dst.iter_mut()) {
-            for p in 0..16 {
-                let i = p * 3;
-                let [l, a, b] = rgb_to_oklab(s[i], s[i + 1], s[i + 2], m1);
-                d[i] = l;
-                d[i + 1] = a;
-                d[i + 2] = b;
-            }
-        }
+        archmage::attuned!(
+            rgb_to_oklab_3ch_tier(srcf, dstf, m1.rows(), false),
+            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+        );
     }
 
     /// Oklab f32 → Linear RGB f32 (3 channels).
@@ -4904,14 +5013,13 @@ mod oklab_kernels {
         let m1 = rgb_to_lms_matrix(primaries).expect(
             "Oklab conversion requires known primaries (plan should have rejected Unknown)",
         );
-        let rows = m1.rows();
         let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
         let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 16]);
-        if oklab_is_finite_nonneg(rows, in_trust) {
-            run_oklab_chunked::<64>(srcf, dstf, rows, rgb_to_oklab_4ch_finite_nonneg_chunks);
-        } else {
-            run_oklab_chunked::<64>(srcf, dstf, rows, rgb_to_oklab_4ch_chunks);
-        }
+        let finite_bounded = oklab_is_finite_bounded(in_trust);
+        archmage::attuned!(
+            rgb_to_oklab_4ch_tier(srcf, dstf, m1.rows(), finite_bounded),
+            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+        );
     }
 
     pub(super) fn linear_rgba_to_oklaba_f32_untrusted(
@@ -4925,22 +5033,10 @@ mod oklab_kernels {
         );
         let srcf: &[f32] = bytemuck::cast_slice(&src[..width * 16]);
         let dstf: &mut [f32] = bytemuck::cast_slice_mut(&mut dst[..width * 16]);
-        run_oklab_chunked::<64>(srcf, dstf, m1.rows(), rgb_to_oklab_4ch_chunks);
-    }
-
-    /// 4-channel RGBA→Oklaba inner loop (16 pixels = 64 f32s per chunk).
-    #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
-    fn rgb_to_oklab_4ch_chunks(src: &[[f32; 64]], dst: &mut [[f32; 64]], m1: &[[f32; 3]; 3]) {
-        for (s, d) in src.iter().zip(dst.iter_mut()) {
-            for p in 0..16 {
-                let i = p * 4;
-                let [l, a, b] = rgb_to_oklab(s[i], s[i + 1], s[i + 2], m1);
-                d[i] = l;
-                d[i + 1] = a;
-                d[i + 2] = b;
-                d[i + 3] = s[i + 3]; // alpha unchanged
-            }
-        }
+        archmage::attuned!(
+            rgb_to_oklab_4ch_tier(srcf, dstf, m1.rows(), false),
+            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+        );
     }
 
     /// Oklaba f32 → Linear RGBA f32 (4 channels, alpha preserved).
