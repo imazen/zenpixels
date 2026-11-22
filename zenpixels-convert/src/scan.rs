@@ -141,9 +141,9 @@ fn is_grayscale_rgba8_impl(token: Token, rgba: &[u8]) -> bool {
     // The shifted-load pattern (chunk i, chunk i+1) doesn't fit
     // `partition_slice`'s non-overlapping chunks; manual stride here.
     let mut i = 0;
-    while i + 33 <= rgba.len() {
-        let chunk0: &[u8; 32] = (&rgba[i..i + 32]).try_into().unwrap();
-        let chunk1: &[u8; 32] = (&rgba[i + 1..i + 33]).try_into().unwrap();
+    while let Some(win) = rgba.get(i..).and_then(|r| r.first_chunk::<33>()) {
+        let chunk0 = win.first_chunk::<32>().unwrap();
+        let chunk1 = win.last_chunk::<32>().unwrap();
         let v0 = u8x32::load_t(token, chunk0);
         let v1 = u8x32::load_t(token, chunk1);
         // simd_ne yields 0xFF where bytes differ; mask keeps only the
@@ -154,7 +154,7 @@ fn is_grayscale_rgba8_impl(token: Token, rgba: &[u8]) -> bool {
         }
         i += 32;
     }
-    for px in rgba[i..].as_chunks::<4>().0 {
+    for px in rgba.get(i..).unwrap_or(&[]).as_chunks::<4>().0 {
         if px[0] != px[1] || px[1] != px[2] {
             return false;
         }
@@ -182,11 +182,26 @@ fn is_grayscale_rgb8_impl(token: Token, rgb: &[u8]) -> bool {
     let m2 = u8x32::from_array_t(token, rgb8_phase_mask(1));
 
     let mut i = 0;
-    // Need 193 bytes per super-chunk (64+64+64 plus the final +1 shifted load).
-    while i + 97 <= rgb.len() {
-        for (off, mask) in [(0usize, m0), (32, m1), (64, m2)] {
-            let c0: &[u8; 32] = (&rgb[i + off..i + off + 32]).try_into().unwrap();
-            let c1: &[u8; 32] = (&rgb[i + off + 1..i + off + 33]).try_into().unwrap();
+    // Need 97 bytes per super-chunk (32+32+32 plus the final +1 shifted load).
+    while let Some(win) = rgb.get(i..).and_then(|r| r.first_chunk::<97>()) {
+        let pairs: [(&[u8; 32], &[u8; 32], _); 3] = [
+            (
+                win[0..32].try_into().unwrap(),
+                win[1..33].try_into().unwrap(),
+                m0,
+            ),
+            (
+                win[32..64].try_into().unwrap(),
+                win[33..65].try_into().unwrap(),
+                m1,
+            ),
+            (
+                win[64..96].try_into().unwrap(),
+                win[65..97].try_into().unwrap(),
+                m2,
+            ),
+        ];
+        for (c0, c1, mask) in pairs {
             let v0 = u8x32::load_t(token, c0);
             let v1 = u8x32::load_t(token, c1);
             let masked = v0.simd_ne(v1) & mask;
@@ -196,7 +211,7 @@ fn is_grayscale_rgb8_impl(token: Token, rgb: &[u8]) -> bool {
         }
         i += 96;
     }
-    for px in rgb[i..].as_chunks::<3>().0 {
+    for px in rgb.get(i..).unwrap_or(&[]).as_chunks::<3>().0 {
         if px[0] != px[1] || px[1] != px[2] {
             return false;
         }
@@ -361,9 +376,9 @@ fn is_grayscale_rgba16_impl(token: Token, rgba: &[u16]) -> bool {
     let mask = u16x16::from_array_t(token, RGB_DELTA_MASK_RGBA16);
     // Shifted-load pattern (chunk i, chunk i+1) — manual indexing.
     let mut i = 0;
-    while i + 17 <= rgba.len() {
-        let c0: &[u16; 16] = (&rgba[i..i + 16]).try_into().unwrap();
-        let c1: &[u16; 16] = (&rgba[i + 1..i + 17]).try_into().unwrap();
+    while let Some(win) = rgba.get(i..).and_then(|r| r.first_chunk::<17>()) {
+        let c0 = win.first_chunk::<16>().unwrap();
+        let c1 = win.last_chunk::<16>().unwrap();
         let v0 = u16x16::load_t(token, c0);
         let v1 = u16x16::load_t(token, c1);
         let masked = v0.simd_ne(v1) & mask;
@@ -372,7 +387,7 @@ fn is_grayscale_rgba16_impl(token: Token, rgba: &[u16]) -> bool {
         }
         i += 16;
     }
-    for px in rgba[i..].as_chunks::<4>().0 {
+    for px in rgba.get(i..).unwrap_or(&[]).as_chunks::<4>().0 {
         if px[0] != px[1] || px[1] != px[2] {
             return false;
         }
@@ -396,10 +411,25 @@ fn is_grayscale_rgb16_impl(token: Token, rgb: &[u16]) -> bool {
     let m2 = u16x16::from_array_t(token, rgb16_phase_mask(2));
 
     let mut i = 0;
-    while i + 49 <= rgb.len() {
-        for (off, mask) in [(0usize, m0), (16, m1), (32, m2)] {
-            let c0: &[u16; 16] = (&rgb[i + off..i + off + 16]).try_into().unwrap();
-            let c1: &[u16; 16] = (&rgb[i + off + 1..i + off + 17]).try_into().unwrap();
+    while let Some(win) = rgb.get(i..).and_then(|r| r.first_chunk::<49>()) {
+        let pairs: [(&[u16; 16], &[u16; 16], _); 3] = [
+            (
+                win[0..16].try_into().unwrap(),
+                win[1..17].try_into().unwrap(),
+                m0,
+            ),
+            (
+                win[16..32].try_into().unwrap(),
+                win[17..33].try_into().unwrap(),
+                m1,
+            ),
+            (
+                win[32..48].try_into().unwrap(),
+                win[33..49].try_into().unwrap(),
+                m2,
+            ),
+        ];
+        for (c0, c1, mask) in pairs {
             let v0 = u16x16::load_t(token, c0);
             let v1 = u16x16::load_t(token, c1);
             let masked = v0.simd_ne(v1) & mask;
@@ -409,7 +439,7 @@ fn is_grayscale_rgb16_impl(token: Token, rgb: &[u16]) -> bool {
         }
         i += 48;
     }
-    for px in rgb[i..].as_chunks::<3>().0 {
+    for px in rgb.get(i..).unwrap_or(&[]).as_chunks::<3>().0 {
         if px[0] != px[1] || px[1] != px[2] {
             return false;
         }
@@ -579,9 +609,9 @@ fn is_grayscale_rgba_f32_impl(token: Token, rgba: &[f32]) -> bool {
     let mask = i32x8::from_array_t(token, RGB_DELTA_MASK_RGBA_I32);
     // Shifted-load: load at i and at i+1 (one f32 element offset).
     let mut i = 0;
-    while i + 9 <= rgba.len() {
-        let c0: &[f32; 8] = (&rgba[i..i + 8]).try_into().unwrap();
-        let c1: &[f32; 8] = (&rgba[i + 1..i + 9]).try_into().unwrap();
+    while let Some(win) = rgba.get(i..).and_then(|r| r.first_chunk::<9>()) {
+        let c0 = win.first_chunk::<8>().unwrap();
+        let c1 = win.last_chunk::<8>().unwrap();
         let v0 = f32x8::load_t(token, c0);
         let v1 = f32x8::load_t(token, c1);
         let masked = v0.simd_ne(v1).bitcast_to_i32() & mask;
@@ -590,7 +620,7 @@ fn is_grayscale_rgba_f32_impl(token: Token, rgba: &[f32]) -> bool {
         }
         i += 8;
     }
-    for px in rgba[i..].as_chunks::<4>().0 {
+    for px in rgba.get(i..).unwrap_or(&[]).as_chunks::<4>().0 {
         if px[0] != px[1] || px[1] != px[2] {
             return false;
         }
@@ -614,10 +644,25 @@ fn is_grayscale_rgb_f32_impl(token: Token, rgb: &[f32]) -> bool {
     let m2 = i32x8::from_array_t(token, rgb_phase_mask_i32(1));
 
     let mut i = 0;
-    while i + 25 <= rgb.len() {
-        for (off, mask) in [(0usize, m0), (8, m1), (16, m2)] {
-            let c0: &[f32; 8] = (&rgb[i + off..i + off + 8]).try_into().unwrap();
-            let c1: &[f32; 8] = (&rgb[i + off + 1..i + off + 9]).try_into().unwrap();
+    while let Some(win) = rgb.get(i..).and_then(|r| r.first_chunk::<25>()) {
+        let pairs: [(&[f32; 8], &[f32; 8], _); 3] = [
+            (
+                win[0..8].try_into().unwrap(),
+                win[1..9].try_into().unwrap(),
+                m0,
+            ),
+            (
+                win[8..16].try_into().unwrap(),
+                win[9..17].try_into().unwrap(),
+                m1,
+            ),
+            (
+                win[16..24].try_into().unwrap(),
+                win[17..25].try_into().unwrap(),
+                m2,
+            ),
+        ];
+        for (c0, c1, mask) in pairs {
             let v0 = f32x8::load_t(token, c0);
             let v1 = f32x8::load_t(token, c1);
             let masked = v0.simd_ne(v1).bitcast_to_i32() & mask;
@@ -627,7 +672,7 @@ fn is_grayscale_rgb_f32_impl(token: Token, rgb: &[f32]) -> bool {
         }
         i += 24;
     }
-    for px in rgb[i..].as_chunks::<3>().0 {
+    for px in rgb.get(i..).unwrap_or(&[]).as_chunks::<3>().0 {
         if px[0] != px[1] || px[1] != px[2] {
             return false;
         }
@@ -873,19 +918,27 @@ fn fused_cg_impl<const A: bool, const B: bool>(token: Token, rgba: &[u8]) -> Fus
     while i < chunkable {
         let block_end = (i + BLOCK_BYTES).min(chunkable);
         let mut acc = u8x32::splat_t(token, 0);
-        let mut j = i;
-        while j < block_end {
-            let chunk0: &[u8; 32] = (&rgba[j..j + 32]).try_into().unwrap();
-            let v0 = u8x32::load_t(token, chunk0);
-            if A {
-                acc |= v0.simd_ne(opaque) & alpha_mask;
-            }
-            if B {
-                let chunk1: &[u8; 32] = (&rgba[j + 1..j + 33]).try_into().unwrap();
+        if B {
+            for (chunk0, chunk1) in rgba[i..block_end]
+                .as_chunks::<32>()
+                .0
+                .iter()
+                .zip(rgba[i + 1..block_end + 1].as_chunks::<32>().0.iter())
+            {
+                let v0 = u8x32::load_t(token, chunk0);
+                if A {
+                    acc |= v0.simd_ne(opaque) & alpha_mask;
+                }
                 let v1 = u8x32::load_t(token, chunk1);
                 acc |= v0.simd_ne(v1) & rgb_delta_mask;
             }
-            j += 32;
+        } else {
+            for chunk0 in rgba[i..block_end].as_chunks::<32>().0 {
+                let v0 = u8x32::load_t(token, chunk0);
+                if A {
+                    acc |= v0.simd_ne(opaque) & alpha_mask;
+                }
+            }
         }
         if acc.any_true() {
             // Rare path: some alive check broke inside this block.
@@ -2190,19 +2243,37 @@ fn fused_u16_impl(
     let complete = |v: [bool; 3]| (!scan_alpha || v[0]) && (!scan_chroma || v[1]) && v[2];
     let mut i = 0;
     // 48 samples is a whole number of pixels for every supported layout.
-    while i + 49 <= samples.len() && !complete(known) {
+    while !complete(known) {
+        let Some(win) = samples.get(i..).and_then(|s| s.first_chunk::<49>()) else {
+            break;
+        };
         let mut alpha_bad = u16x16::splat_t(token, 0);
         let mut chroma_bad = u16x16::splat_t(token, 0);
         let mut precision_bad = u16x16::splat_t(token, 0);
-        for n in 0..3 {
-            let at = i + n * 16;
-            let v = u16x16::load_t(token, (&samples[at..at + 16]).try_into().unwrap());
+        let subwindows: [(usize, &[u16; 16], &[u16; 16]); 3] = [
+            (
+                0,
+                win[0..16].try_into().unwrap(),
+                win[1..17].try_into().unwrap(),
+            ),
+            (
+                1,
+                win[16..32].try_into().unwrap(),
+                win[17..33].try_into().unwrap(),
+            ),
+            (
+                2,
+                win[32..48].try_into().unwrap(),
+                win[33..49].try_into().unwrap(),
+            ),
+        ];
+        for (n, c0, c1) in subwindows {
+            let v = u16x16::load_t(token, c0);
             if scan_alpha && !known[0] {
                 alpha_bad |= v.simd_ne(ones) & alpha_masks[n];
             }
             if scan_chroma && !known[1] {
-                let shifted =
-                    u16x16::load_t(token, (&samples[at + 1..at + 17]).try_into().unwrap());
+                let shifted = u16x16::load_t(token, c1);
                 chroma_bad |= v.simd_ne(shifted) & chroma_masks[n];
             }
             if !known[2] {

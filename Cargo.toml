@@ -24,5 +24,5 @@ categories = ["multimedia::images"]
 # Intermediate garb 0.2.9 and linear-srgb 0.6.13 source revisions until published;
 # archmage 0.9.32, magetypes 0.9.32, and magemath 0.1.0 resolve from crates.io.
 [patch.crates-io]
-garb = { git = "https://github.com/imazen/garb", rev = "a21a9f701e09ad01acb661276f0143ddd1e9095a" }
-linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "2b3a993b5d55c290c08f62718ccf3d4c3f522d30" }
+garb = { git = "https://github.com/imazen/garb", rev = "457ff8b9153e9d675a39dc098052b2ffeb6206fa" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "f2430c90e1f2627bcf553e3a5d32349cf94faeb2" }

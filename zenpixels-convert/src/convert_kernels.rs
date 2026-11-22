@@ -639,25 +639,25 @@ fn rgb_to_bgra(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
 
 #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn add_alpha_2bytes(src: &[u16], dst: &mut [u16], width: usize, opaque: u16) {
-    for i in 0..width {
-        let s: &[u16; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
-        let d: &mut [u16; 4] = (&mut dst[i * 4..i * 4 + 4]).try_into().unwrap();
-        d[0] = s[0];
-        d[1] = s[1];
-        d[2] = s[2];
-        d[3] = opaque;
+    for (s, d) in src[..width * 3]
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(dst[..width * 4].as_chunks_mut::<4>().0)
+    {
+        *d = [s[0], s[1], s[2], opaque];
     }
 }
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn add_alpha_f32(src: &[f32], dst: &mut [f32], width: usize) {
-    for i in 0..width {
-        let s: &[f32; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
-        let d: &mut [f32; 4] = (&mut dst[i * 4..i * 4 + 4]).try_into().unwrap();
-        d[0] = s[0];
-        d[1] = s[1];
-        d[2] = s[2];
-        d[3] = 1.0;
+    for (s, d) in src[..width * 3]
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(dst[..width * 4].as_chunks_mut::<4>().0)
+    {
+        *d = [s[0], s[1], s[2], 1.0];
     }
 }
 
@@ -693,23 +693,25 @@ fn add_alpha(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
 
 #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn drop_alpha_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
-    for i in 0..width {
-        let s: &[u16; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
-        let d: &mut [u16; 3] = (&mut dst[i * 3..i * 3 + 3]).try_into().unwrap();
-        d[0] = s[0];
-        d[1] = s[1];
-        d[2] = s[2];
+    for (s, d) in src[..width * 4]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(dst[..width * 3].as_chunks_mut::<3>().0)
+    {
+        *d = [s[0], s[1], s[2]];
     }
 }
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn drop_alpha_f32(src: &[f32], dst: &mut [f32], width: usize) {
-    for i in 0..width {
-        let s: &[f32; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
-        let d: &mut [f32; 3] = (&mut dst[i * 3..i * 3 + 3]).try_into().unwrap();
-        d[0] = s[0];
-        d[1] = s[1];
-        d[2] = s[2];
+    for (s, d) in src[..width * 4]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(dst[..width * 3].as_chunks_mut::<3>().0)
+    {
+        *d = [s[0], s[1], s[2]];
     }
 }
 
@@ -938,34 +940,31 @@ fn matte_from_linear(rgb: &mut [f32], tf: TransferFunction, clip: bool) {
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_rgb_u8(src: &[u8], dst: &mut [u8], width: usize) {
-    for i in 0..width {
-        let g = src[i];
-        let d: &mut [u8; 3] = (&mut dst[i * 3..i * 3 + 3]).try_into().unwrap();
-        d[0] = g;
-        d[1] = g;
-        d[2] = g;
+    for (&g, d) in src[..width]
+        .iter()
+        .zip(dst[..width * 3].as_chunks_mut::<3>().0)
+    {
+        *d = [g, g, g];
     }
 }
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_rgb_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
-    for i in 0..width {
-        let g = src[i];
-        let d: &mut [u16; 3] = (&mut dst[i * 3..i * 3 + 3]).try_into().unwrap();
-        d[0] = g;
-        d[1] = g;
-        d[2] = g;
+    for (&g, d) in src[..width]
+        .iter()
+        .zip(dst[..width * 3].as_chunks_mut::<3>().0)
+    {
+        *d = [g, g, g];
     }
 }
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_rgb_f32(src: &[f32], dst: &mut [f32], width: usize) {
-    for i in 0..width {
-        let g = src[i];
-        let d: &mut [f32; 3] = (&mut dst[i * 3..i * 3 + 3]).try_into().unwrap();
-        d[0] = g;
-        d[1] = g;
-        d[2] = g;
+    for (&g, d) in src[..width]
+        .iter()
+        .zip(dst[..width * 3].as_chunks_mut::<3>().0)
+    {
+        *d = [g, g, g];
     }
 }
 
@@ -991,25 +990,21 @@ fn gray_to_rgb(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) {
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_rgba_2bytes(src: &[u16], dst: &mut [u16], width: usize, opaque: u16) {
-    for i in 0..width {
-        let g = src[i];
-        let d: &mut [u16; 4] = (&mut dst[i * 4..i * 4 + 4]).try_into().unwrap();
-        d[0] = g;
-        d[1] = g;
-        d[2] = g;
-        d[3] = opaque;
+    for (&g, d) in src[..width]
+        .iter()
+        .zip(dst[..width * 4].as_chunks_mut::<4>().0)
+    {
+        *d = [g, g, g, opaque];
     }
 }
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_rgba_f32(src: &[f32], dst: &mut [f32], width: usize) {
-    for i in 0..width {
-        let g = src[i];
-        let d: &mut [f32; 4] = (&mut dst[i * 4..i * 4 + 4]).try_into().unwrap();
-        d[0] = g;
-        d[1] = g;
-        d[2] = g;
-        d[3] = 1.0;
+    for (&g, d) in src[..width]
+        .iter()
+        .zip(dst[..width * 4].as_chunks_mut::<4>().0)
+    {
+        *d = [g, g, g, 1.0];
     }
 }
 
@@ -1057,53 +1052,77 @@ fn gray_to_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelType) 
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn rgb_to_gray_u8_generic(src: &[u8], dst: &mut [u8], width: usize, w: [f32; 3]) {
-    for i in 0..width {
-        let s: &[u8; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
+    for (s, d) in src[..width * 3]
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(dst[..width].iter_mut())
+    {
         let y = (s[0] as f32) * w[0] + (s[1] as f32) * w[1] + (s[2] as f32) * w[2];
-        dst[i] = (y + 0.5).clamp(0.0, 255.0) as u8;
+        *d = (y + 0.5).clamp(0.0, 255.0) as u8;
     }
 }
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn rgba_to_gray_u8_generic(src: &[u8], dst: &mut [u8], width: usize, w: [f32; 3]) {
-    for i in 0..width {
-        let s: &[u8; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
+    for (s, d) in src[..width * 4]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(dst[..width].iter_mut())
+    {
         let y = (s[0] as f32) * w[0] + (s[1] as f32) * w[1] + (s[2] as f32) * w[2];
-        dst[i] = (y + 0.5).clamp(0.0, 255.0) as u8;
+        *d = (y + 0.5).clamp(0.0, 255.0) as u8;
     }
 }
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn rgb_to_gray_u16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
-    for i in 0..width {
-        let s: &[u16; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
+    for (s, d) in src[..width * 3]
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(dst[..width].iter_mut())
+    {
         let y = (s[0] as f32) * w[0] + (s[1] as f32) * w[1] + (s[2] as f32) * w[2];
-        dst[i] = (y + 0.5).clamp(0.0, 65535.0) as u16;
+        *d = (y + 0.5).clamp(0.0, 65535.0) as u16;
     }
 }
 
 #[attune(dispatch, -_v3, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn rgba_to_gray_u16(src: &[u16], dst: &mut [u16], width: usize, w: [f32; 3]) {
-    for i in 0..width {
-        let s: &[u16; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
+    for (s, d) in src[..width * 4]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(dst[..width].iter_mut())
+    {
         let y = (s[0] as f32) * w[0] + (s[1] as f32) * w[1] + (s[2] as f32) * w[2];
-        dst[i] = (y + 0.5).clamp(0.0, 65535.0) as u16;
+        *d = (y + 0.5).clamp(0.0, 65535.0) as u16;
     }
 }
 
 #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn rgb_to_gray_f32(src: &[f32], dst: &mut [f32], width: usize, w: [f32; 3]) {
-    for i in 0..width {
-        let s: &[f32; 3] = (&src[i * 3..i * 3 + 3]).try_into().unwrap();
-        dst[i] = s[0] * w[0] + s[1] * w[1] + s[2] * w[2];
+    for (s, d) in src[..width * 3]
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(dst[..width].iter_mut())
+    {
+        *d = s[0] * w[0] + s[1] * w[1] + s[2] * w[2];
     }
 }
 
 #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn rgba_to_gray_f32(src: &[f32], dst: &mut [f32], width: usize, w: [f32; 3]) {
-    for i in 0..width {
-        let s: &[f32; 4] = (&src[i * 4..i * 4 + 4]).try_into().unwrap();
-        dst[i] = s[0] * w[0] + s[1] * w[1] + s[2] * w[2];
+    for (s, d) in src[..width * 4]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(dst[..width].iter_mut())
+    {
+        *d = s[0] * w[0] + s[1] * w[1] + s[2] * w[2];
     }
 }
 
@@ -1283,25 +1302,25 @@ fn rgba_to_gray(
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_rgba_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
-    for i in 0..width {
-        let s: &[u16; 2] = (&src[i * 2..i * 2 + 2]).try_into().unwrap();
-        let d: &mut [u16; 4] = (&mut dst[i * 4..i * 4 + 4]).try_into().unwrap();
-        d[0] = s[0];
-        d[1] = s[0];
-        d[2] = s[0];
-        d[3] = s[1];
+    for (s, d) in src[..width * 2]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(dst[..width * 4].as_chunks_mut::<4>().0)
+    {
+        *d = [s[0], s[0], s[0], s[1]];
     }
 }
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_rgba_f32(src: &[f32], dst: &mut [f32], width: usize) {
-    for i in 0..width {
-        let s: &[f32; 2] = (&src[i * 2..i * 2 + 2]).try_into().unwrap();
-        let d: &mut [f32; 4] = (&mut dst[i * 4..i * 4 + 4]).try_into().unwrap();
-        d[0] = s[0];
-        d[1] = s[0];
-        d[2] = s[0];
-        d[3] = s[1];
+    for (s, d) in src[..width * 2]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(dst[..width * 4].as_chunks_mut::<4>().0)
+    {
+        *d = [s[0], s[0], s[0], s[1]];
     }
 }
 
@@ -1330,34 +1349,40 @@ fn gray_alpha_to_rgba(src: &[u8], dst: &mut [u8], width: usize, ch_type: Channel
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_rgb_u8(src: &[u8], dst: &mut [u8], width: usize) {
-    for i in 0..width {
-        let g = src[i * 2];
-        let d: &mut [u8; 3] = (&mut dst[i * 3..i * 3 + 3]).try_into().unwrap();
-        d[0] = g;
-        d[1] = g;
-        d[2] = g;
+    for (s, d) in src[..width * 2]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(dst[..width * 3].as_chunks_mut::<3>().0)
+    {
+        let g = s[0];
+        *d = [g, g, g];
     }
 }
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_rgb_2bytes(src: &[u16], dst: &mut [u16], width: usize) {
-    for i in 0..width {
-        let g = src[i * 2];
-        let d: &mut [u16; 3] = (&mut dst[i * 3..i * 3 + 3]).try_into().unwrap();
-        d[0] = g;
-        d[1] = g;
-        d[2] = g;
+    for (s, d) in src[..width * 2]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(dst[..width * 3].as_chunks_mut::<3>().0)
+    {
+        let g = s[0];
+        *d = [g, g, g];
     }
 }
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn gray_alpha_to_rgb_f32(src: &[f32], dst: &mut [f32], width: usize) {
-    for i in 0..width {
-        let g = src[i * 2];
-        let d: &mut [f32; 3] = (&mut dst[i * 3..i * 3 + 3]).try_into().unwrap();
-        d[0] = g;
-        d[1] = g;
-        d[2] = g;
+    for (s, d) in src[..width * 2]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(dst[..width * 3].as_chunks_mut::<3>().0)
+    {
+        let g = s[0];
+        *d = [g, g, g];
     }
 }
 
@@ -1383,28 +1408,31 @@ fn gray_alpha_to_rgb(src: &[u8], dst: &mut [u8], width: usize, ch_type: ChannelT
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_gray_alpha_u8(src: &[u8], dst: &mut [u8], width: usize) {
-    for i in 0..width {
-        let d: &mut [u8; 2] = (&mut dst[i * 2..i * 2 + 2]).try_into().unwrap();
-        d[0] = src[i];
-        d[1] = 255;
+    for (&g, d) in src[..width]
+        .iter()
+        .zip(dst[..width * 2].as_chunks_mut::<2>().0)
+    {
+        *d = [g, 255];
     }
 }
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_gray_alpha_2bytes(src: &[u16], dst: &mut [u16], width: usize, opaque: u16) {
-    for i in 0..width {
-        let d: &mut [u16; 2] = (&mut dst[i * 2..i * 2 + 2]).try_into().unwrap();
-        d[0] = src[i];
-        d[1] = opaque;
+    for (&g, d) in src[..width]
+        .iter()
+        .zip(dst[..width * 2].as_chunks_mut::<2>().0)
+    {
+        *d = [g, opaque];
     }
 }
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn gray_to_gray_alpha_f32(src: &[f32], dst: &mut [f32], width: usize) {
-    for i in 0..width {
-        let d: &mut [f32; 2] = (&mut dst[i * 2..i * 2 + 2]).try_into().unwrap();
-        d[0] = src[i];
-        d[1] = 1.0;
+    for (&g, d) in src[..width]
+        .iter()
+        .zip(dst[..width * 2].as_chunks_mut::<2>().0)
+    {
+        *d = [g, 1.0];
     }
 }
 
@@ -2385,51 +2413,58 @@ fn premul_u8_rgba(src: &[u8], dst: &mut [u8], width: usize) {
 
 #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn premul_u8_ga(src: &[u8], dst: &mut [u8], width: usize) {
-    for i in 0..width {
-        let base = i * 2;
-        let s: &[u8; 2] = (&src[base..base + 2]).try_into().unwrap();
-        let d: &mut [u8; 2] = (&mut dst[base..base + 2]).try_into().unwrap();
+    for (s, d) in src[..width * 2]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(dst[..width * 2].as_chunks_mut::<2>().0)
+    {
         let a = s[1] as u32;
-        d[0] = ((s[0] as u32 * a + 127) / 255) as u8;
-        d[1] = s[1];
+        *d = [((s[0] as u32 * a + 127) / 255) as u8, s[1]];
     }
 }
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn premul_u16_ga(src: &[u16], dst: &mut [u16], width: usize) {
-    for i in 0..width {
-        let base = i * 2;
-        let s: &[u16; 2] = (&src[base..base + 2]).try_into().unwrap();
-        let d: &mut [u16; 2] = (&mut dst[base..base + 2]).try_into().unwrap();
+    for (s, d) in src[..width * 2]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(dst[..width * 2].as_chunks_mut::<2>().0)
+    {
         let a = s[1] as u32;
-        d[0] = ((s[0] as u32 * a + 32767) / 65535) as u16;
-        d[1] = s[1];
+        *d = [((s[0] as u32 * a + 32767) / 65535) as u16, s[1]];
     }
 }
 
 #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn premul_u16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
-    for i in 0..width {
-        let base = i * 4;
-        let s: &[u16; 4] = (&src[base..base + 4]).try_into().unwrap();
-        let d: &mut [u16; 4] = (&mut dst[base..base + 4]).try_into().unwrap();
+    for (s, d) in src[..width * 4]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(dst[..width * 4].as_chunks_mut::<4>().0)
+    {
         let a = s[3] as u32;
-        d[0] = ((s[0] as u32 * a + 32767) / 65535) as u16;
-        d[1] = ((s[1] as u32 * a + 32767) / 65535) as u16;
-        d[2] = ((s[2] as u32 * a + 32767) / 65535) as u16;
-        d[3] = s[3];
+        *d = [
+            ((s[0] as u32 * a + 32767) / 65535) as u16,
+            ((s[1] as u32 * a + 32767) / 65535) as u16,
+            ((s[2] as u32 * a + 32767) / 65535) as u16,
+            s[3],
+        ];
     }
 }
 
 #[attune(dispatch, -_neon, -_wasm128)]
 fn premul_f32_ga(src: &[f32], dst: &mut [f32], width: usize) {
-    for i in 0..width {
-        let base = i * 2;
-        let s: &[f32; 2] = (&src[base..base + 2]).try_into().unwrap();
-        let d: &mut [f32; 2] = (&mut dst[base..base + 2]).try_into().unwrap();
+    for (s, d) in src[..width * 2]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(dst[..width * 2].as_chunks_mut::<2>().0)
+    {
         let a = s[1];
-        d[0] = s[0] * a;
-        d[1] = a;
+        *d = [s[0] * a, a];
     }
 }
 
@@ -2443,10 +2478,10 @@ fn premul_f16_ga(src: &[u16], dst: &mut [u16], width: usize) {
     let mut scratch_src = [0.0f32; CHUNK_LANES];
     let mut scratch_dst = [0.0f32; CHUNK_LANES];
 
-    let whole = width / CHUNK_PIXELS;
-    for c in 0..whole {
-        let start = c * CHUNK_LANES;
-        f16_bits_to_f32_slice(&src[start..start + CHUNK_LANES], &mut scratch_src);
+    let (s_chunks, s_rem) = src[..width * 2].as_chunks::<CHUNK_LANES>();
+    let (d_chunks, d_rem) = dst[..width * 2].as_chunks_mut::<CHUNK_LANES>();
+    for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
+        f16_bits_to_f32_slice(sc, &mut scratch_src);
 
         for i in 0..CHUNK_PIXELS {
             let base = i * 2;
@@ -2455,19 +2490,21 @@ fn premul_f16_ga(src: &[u16], dst: &mut [u16], width: usize) {
             scratch_dst[base + 1] = a;
         }
 
-        f32_to_f16_bits_slice(&scratch_dst, &mut dst[start..start + CHUNK_LANES]);
+        f32_to_f16_bits_slice(&scratch_dst, dc);
         // Alpha is a payload, not an arithmetic output. Preserve NaN bits and signed zero.
         for lane in (1..CHUNK_LANES).step_by(2) {
-            dst[start + lane] = src[start + lane];
+            dc[lane] = sc[lane];
         }
     }
 
-    let tail_start = whole * CHUNK_PIXELS;
-    for i in tail_start..width {
-        let base = i * 2;
-        let a = f16_bits_to_f32(src[base + 1]);
-        dst[base] = f32_to_f16_bits(f16_bits_to_f32(src[base]) * a);
-        dst[base + 1] = src[base + 1];
+    for (s, d) in s_rem
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(d_rem.as_chunks_mut::<2>().0.iter_mut())
+    {
+        let a = f16_bits_to_f32(s[1]);
+        *d = [f32_to_f16_bits(f16_bits_to_f32(s[0]) * a), s[1]];
     }
 }
 
@@ -2478,10 +2515,10 @@ fn premul_f16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
     let mut scratch_src = [0.0f32; CHUNK_LANES];
     let mut scratch_dst = [0.0f32; CHUNK_LANES];
 
-    let whole = width / CHUNK_PIXELS;
-    for c in 0..whole {
-        let start = c * CHUNK_LANES;
-        f16_bits_to_f32_slice(&src[start..start + CHUNK_LANES], &mut scratch_src);
+    let (s_chunks, s_rem) = src[..width * 4].as_chunks::<CHUNK_LANES>();
+    let (d_chunks, d_rem) = dst[..width * 4].as_chunks_mut::<CHUNK_LANES>();
+    for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
+        f16_bits_to_f32_slice(sc, &mut scratch_src);
 
         for i in 0..CHUNK_PIXELS {
             let base = i * 4;
@@ -2492,21 +2529,26 @@ fn premul_f16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
             scratch_dst[base + 3] = a;
         }
 
-        f32_to_f16_bits_slice(&scratch_dst, &mut dst[start..start + CHUNK_LANES]);
+        f32_to_f16_bits_slice(&scratch_dst, dc);
         // Alpha is a payload, not an arithmetic output. Preserve NaN bits and signed zero.
         for lane in (3..CHUNK_LANES).step_by(4) {
-            dst[start + lane] = src[start + lane];
+            dc[lane] = sc[lane];
         }
     }
 
-    let tail_start = whole * CHUNK_PIXELS;
-    for i in tail_start..width {
-        let base = i * 4;
-        let a = f16_bits_to_f32(src[base + 3]);
-        dst[base] = f32_to_f16_bits(f16_bits_to_f32(src[base]) * a);
-        dst[base + 1] = f32_to_f16_bits(f16_bits_to_f32(src[base + 1]) * a);
-        dst[base + 2] = f32_to_f16_bits(f16_bits_to_f32(src[base + 2]) * a);
-        dst[base + 3] = src[base + 3];
+    for (s, d) in s_rem
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(d_rem.as_chunks_mut::<4>().0.iter_mut())
+    {
+        let a = f16_bits_to_f32(s[3]);
+        *d = [
+            f32_to_f16_bits(f16_bits_to_f32(s[0]) * a),
+            f32_to_f16_bits(f16_bits_to_f32(s[1]) * a),
+            f32_to_f16_bits(f16_bits_to_f32(s[2]) * a),
+            s[3],
+        ];
     }
 }
 
@@ -2587,94 +2629,96 @@ fn straight_to_premul(
 // channels are already zero, but we defensively zero anyway).
 
 fn unpremul_u8_ga(src: &[u8], dst: &mut [u8], width: usize) {
-    for i in 0..width {
-        let base = i * 2;
-        let s: &[u8; 2] = (&src[base..base + 2]).try_into().unwrap();
-        let d: &mut [u8; 2] = (&mut dst[base..base + 2]).try_into().unwrap();
+    for (s, d) in src[..width * 2]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(dst[..width * 2].as_chunks_mut::<2>().0)
+    {
         let a = s[1];
         if a == 0 {
-            d[0] = 0;
-            d[1] = 0;
+            *d = [0, 0];
         } else {
             let a32 = a as u32;
-            d[0] = ((s[0] as u32 * 255 + a32 / 2) / a32).min(255) as u8;
-            d[1] = a;
+            *d = [((s[0] as u32 * 255 + a32 / 2) / a32).min(255) as u8, a];
         }
     }
 }
 
 fn unpremul_u8_rgba(src: &[u8], dst: &mut [u8], width: usize) {
-    for i in 0..width {
-        let base = i * 4;
-        let s: &[u8; 4] = (&src[base..base + 4]).try_into().unwrap();
-        let d: &mut [u8; 4] = (&mut dst[base..base + 4]).try_into().unwrap();
+    for (s, d) in src[..width * 4]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(dst[..width * 4].as_chunks_mut::<4>().0)
+    {
         let a = s[3];
         if a == 0 {
-            d[0] = 0;
-            d[1] = 0;
-            d[2] = 0;
-            d[3] = 0;
+            *d = [0, 0, 0, 0];
         } else {
             let a32 = a as u32;
-            d[0] = ((s[0] as u32 * 255 + a32 / 2) / a32).min(255) as u8;
-            d[1] = ((s[1] as u32 * 255 + a32 / 2) / a32).min(255) as u8;
-            d[2] = ((s[2] as u32 * 255 + a32 / 2) / a32).min(255) as u8;
-            d[3] = a;
+            *d = [
+                ((s[0] as u32 * 255 + a32 / 2) / a32).min(255) as u8,
+                ((s[1] as u32 * 255 + a32 / 2) / a32).min(255) as u8,
+                ((s[2] as u32 * 255 + a32 / 2) / a32).min(255) as u8,
+                a,
+            ];
         }
     }
 }
 
 fn unpremul_u16_ga(src: &[u16], dst: &mut [u16], width: usize) {
-    for i in 0..width {
-        let base = i * 2;
-        let s: &[u16; 2] = (&src[base..base + 2]).try_into().unwrap();
-        let d: &mut [u16; 2] = (&mut dst[base..base + 2]).try_into().unwrap();
+    for (s, d) in src[..width * 2]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(dst[..width * 2].as_chunks_mut::<2>().0)
+    {
         let a = s[1];
         if a == 0 {
-            d[0] = 0;
-            d[1] = 0;
+            *d = [0, 0];
         } else {
             let a32 = a as u32;
-            d[0] = ((s[0] as u32 * 65535 + a32 / 2) / a32).min(65535) as u16;
-            d[1] = a;
+            *d = [((s[0] as u32 * 65535 + a32 / 2) / a32).min(65535) as u16, a];
         }
     }
 }
 
 fn unpremul_u16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
-    for i in 0..width {
-        let base = i * 4;
-        let s: &[u16; 4] = (&src[base..base + 4]).try_into().unwrap();
-        let d: &mut [u16; 4] = (&mut dst[base..base + 4]).try_into().unwrap();
+    for (s, d) in src[..width * 4]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(dst[..width * 4].as_chunks_mut::<4>().0)
+    {
         let a = s[3];
         if a == 0 {
-            d[0] = 0;
-            d[1] = 0;
-            d[2] = 0;
-            d[3] = 0;
+            *d = [0, 0, 0, 0];
         } else {
             let a32 = a as u32;
-            d[0] = ((s[0] as u32 * 65535 + a32 / 2) / a32).min(65535) as u16;
-            d[1] = ((s[1] as u32 * 65535 + a32 / 2) / a32).min(65535) as u16;
-            d[2] = ((s[2] as u32 * 65535 + a32 / 2) / a32).min(65535) as u16;
-            d[3] = a;
+            *d = [
+                ((s[0] as u32 * 65535 + a32 / 2) / a32).min(65535) as u16,
+                ((s[1] as u32 * 65535 + a32 / 2) / a32).min(65535) as u16,
+                ((s[2] as u32 * 65535 + a32 / 2) / a32).min(65535) as u16,
+                a,
+            ];
         }
     }
 }
 
 #[attune(dispatch, -_v3, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn unpremul_f32_ga(src: &[f32], dst: &mut [f32], width: usize) {
-    for i in 0..width {
-        let base = i * 2;
-        let s: &[f32; 2] = (&src[base..base + 2]).try_into().unwrap();
-        let d: &mut [f32; 2] = (&mut dst[base..base + 2]).try_into().unwrap();
+    for (s, d) in src[..width * 2]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(dst[..width * 2].as_chunks_mut::<2>().0)
+    {
         let a = s[1];
         if a == 0.0 {
-            d[0] = 0.0;
-            d[1] = 0.0;
+            *d = [0.0, 0.0];
         } else {
-            d[0] = s[0] / a;
-            d[1] = a;
+            *d = [s[0] / a, a];
         }
     }
 }
@@ -2688,10 +2732,10 @@ fn unpremul_f16_ga(src: &[u16], dst: &mut [u16], width: usize) {
     let mut scratch_src = [0.0f32; CHUNK_LANES];
     let mut scratch_dst = [0.0f32; CHUNK_LANES];
 
-    let whole = width / CHUNK_PIXELS;
-    for c in 0..whole {
-        let start = c * CHUNK_LANES;
-        f16_bits_to_f32_slice(&src[start..start + CHUNK_LANES], &mut scratch_src);
+    let (s_chunks, s_rem) = src[..width * 2].as_chunks::<CHUNK_LANES>();
+    let (d_chunks, d_rem) = dst[..width * 2].as_chunks_mut::<CHUNK_LANES>();
+    for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
+        f16_bits_to_f32_slice(sc, &mut scratch_src);
 
         for i in 0..CHUNK_PIXELS {
             let base = i * 2;
@@ -2706,24 +2750,25 @@ fn unpremul_f16_ga(src: &[u16], dst: &mut [u16], width: usize) {
             }
         }
 
-        f32_to_f16_bits_slice(&scratch_dst, &mut dst[start..start + CHUNK_LANES]);
+        f32_to_f16_bits_slice(&scratch_dst, dc);
         // Alpha is a payload, not an arithmetic output. Preserve NaN bits and signed zero.
         for lane in (1..CHUNK_LANES).step_by(2) {
-            dst[start + lane] = src[start + lane];
+            dc[lane] = sc[lane];
         }
     }
 
-    let tail_start = whole * CHUNK_PIXELS;
-    for i in tail_start..width {
-        let base = i * 2;
-        let a = f16_bits_to_f32(src[base + 1]);
+    for (s, d) in s_rem
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(d_rem.as_chunks_mut::<2>().0.iter_mut())
+    {
+        let a = f16_bits_to_f32(s[1]);
         if a == 0.0 {
-            dst[base] = 0;
-            dst[base + 1] = src[base + 1];
+            *d = [0, s[1]];
         } else {
             let inv_a = 1.0 / a;
-            dst[base] = f32_to_f16_bits(f16_bits_to_f32(src[base]) * inv_a);
-            dst[base + 1] = src[base + 1];
+            *d = [f32_to_f16_bits(f16_bits_to_f32(s[0]) * inv_a), s[1]];
         }
     }
 }
@@ -2735,10 +2780,10 @@ fn unpremul_f16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
     let mut scratch_src = [0.0f32; CHUNK_LANES];
     let mut scratch_dst = [0.0f32; CHUNK_LANES];
 
-    let whole = width / CHUNK_PIXELS;
-    for c in 0..whole {
-        let start = c * CHUNK_LANES;
-        f16_bits_to_f32_slice(&src[start..start + CHUNK_LANES], &mut scratch_src);
+    let (s_chunks, s_rem) = src[..width * 4].as_chunks::<CHUNK_LANES>();
+    let (d_chunks, d_rem) = dst[..width * 4].as_chunks_mut::<CHUNK_LANES>();
+    for (sc, dc) in s_chunks.iter().zip(d_chunks.iter_mut()) {
+        f16_bits_to_f32_slice(sc, &mut scratch_src);
 
         for i in 0..CHUNK_PIXELS {
             let base = i * 4;
@@ -2757,28 +2802,30 @@ fn unpremul_f16_rgba(src: &[u16], dst: &mut [u16], width: usize) {
             }
         }
 
-        f32_to_f16_bits_slice(&scratch_dst, &mut dst[start..start + CHUNK_LANES]);
+        f32_to_f16_bits_slice(&scratch_dst, dc);
         // Alpha is a payload, not an arithmetic output. Preserve NaN bits and signed zero.
         for lane in (3..CHUNK_LANES).step_by(4) {
-            dst[start + lane] = src[start + lane];
+            dc[lane] = sc[lane];
         }
     }
 
-    let tail_start = whole * CHUNK_PIXELS;
-    for i in tail_start..width {
-        let base = i * 4;
-        let a = f16_bits_to_f32(src[base + 3]);
+    for (s, d) in s_rem
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(d_rem.as_chunks_mut::<4>().0.iter_mut())
+    {
+        let a = f16_bits_to_f32(s[3]);
         if a == 0.0 {
-            dst[base] = 0;
-            dst[base + 1] = 0;
-            dst[base + 2] = 0;
-            dst[base + 3] = src[base + 3];
+            *d = [0, 0, 0, s[3]];
         } else {
             let inv_a = 1.0 / a;
-            dst[base] = f32_to_f16_bits(f16_bits_to_f32(src[base]) * inv_a);
-            dst[base + 1] = f32_to_f16_bits(f16_bits_to_f32(src[base + 1]) * inv_a);
-            dst[base + 2] = f32_to_f16_bits(f16_bits_to_f32(src[base + 2]) * inv_a);
-            dst[base + 3] = src[base + 3];
+            *d = [
+                f32_to_f16_bits(f16_bits_to_f32(s[0]) * inv_a),
+                f32_to_f16_bits(f16_bits_to_f32(s[1]) * inv_a),
+                f32_to_f16_bits(f16_bits_to_f32(s[2]) * inv_a),
+                s[3],
+            ];
         }
     }
 }
@@ -3046,12 +3093,10 @@ fn linear_rgb_to_oklab_f32(
 #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn rgb_to_oklab_3ch_inner(src: &[f32], dst: &mut [f32], m1: &[[f32; 3]; 3]) {
     // 16 pixels × 3 channels = 48 f32s = 192 bytes
-    for (s, d) in src
-        .as_chunks::<48>()
-        .0
-        .iter()
-        .zip(dst.as_chunks_mut::<48>().0)
-    {
+    let n = src.len().min(dst.len());
+    let (s_chunks, s_rem) = src[..n].as_chunks::<48>();
+    let (d_chunks, d_rem) = dst[..n].as_chunks_mut::<48>();
+    for (s, d) in s_chunks.iter().zip(d_chunks.iter_mut()) {
         for p in 0..16 {
             let i = p * 3;
             let [l, a, b] = rgb_to_oklab(s[i], s[i + 1], s[i + 2], m1);
@@ -3060,16 +3105,13 @@ fn rgb_to_oklab_3ch_inner(src: &[f32], dst: &mut [f32], m1: &[[f32; 3]; 3]) {
             d[i + 2] = b;
         }
     }
-    let rem_pixels = (src.len() / 3) % 16;
-    if rem_pixels > 0 {
-        let off = src.len() - rem_pixels * 3;
-        for p in 0..rem_pixels {
-            let i = off + p * 3;
-            let [l, a, b] = rgb_to_oklab(src[i], src[i + 1], src[i + 2], m1);
-            dst[i] = l;
-            dst[i + 1] = a;
-            dst[i + 2] = b;
-        }
+    for (s, d) in s_rem
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(d_rem.as_chunks_mut::<3>().0.iter_mut())
+    {
+        *d = rgb_to_oklab(s[0], s[1], s[2], m1);
     }
 }
 
@@ -3086,12 +3128,10 @@ fn oklab_to_linear_rgb_f32(src: &[u8], dst: &mut [u8], width: usize, primaries: 
 /// 3-channel Oklab→RGB inner loop (16 pixels = 48 f32s per chunk).
 #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn oklab_to_rgb_3ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) {
-    for (s, d) in src
-        .as_chunks::<48>()
-        .0
-        .iter()
-        .zip(dst.as_chunks_mut::<48>().0)
-    {
+    let n = src.len().min(dst.len());
+    let (s_chunks, s_rem) = src[..n].as_chunks::<48>();
+    let (d_chunks, d_rem) = dst[..n].as_chunks_mut::<48>();
+    for (s, d) in s_chunks.iter().zip(d_chunks.iter_mut()) {
         for p in 0..16 {
             let i = p * 3;
             let [r, g, b] = oklab_to_rgb(s[i], s[i + 1], s[i + 2], m1_inv);
@@ -3100,16 +3140,13 @@ fn oklab_to_rgb_3ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) 
             d[i + 2] = b;
         }
     }
-    let rem_pixels = (src.len() / 3) % 16;
-    if rem_pixels > 0 {
-        let off = src.len() - rem_pixels * 3;
-        for p in 0..rem_pixels {
-            let i = off + p * 3;
-            let [r, g, b] = oklab_to_rgb(src[i], src[i + 1], src[i + 2], m1_inv);
-            dst[i] = r;
-            dst[i + 1] = g;
-            dst[i + 2] = b;
-        }
+    for (s, d) in s_rem
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(d_rem.as_chunks_mut::<3>().0.iter_mut())
+    {
+        *d = oklab_to_rgb(s[0], s[1], s[2], m1_inv);
     }
 }
 
@@ -3139,12 +3176,10 @@ fn linear_rgba_to_oklaba_f32(
 /// 4-channel RGBA→Oklaba inner loop (16 pixels = 64 f32s per chunk).
 #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn rgb_to_oklab_4ch_inner(src: &[f32], dst: &mut [f32], m1: &[[f32; 3]; 3]) {
-    for (s, d) in src
-        .as_chunks::<64>()
-        .0
-        .iter()
-        .zip(dst.as_chunks_mut::<64>().0)
-    {
+    let n = src.len().min(dst.len());
+    let (s_chunks, s_rem) = src[..n].as_chunks::<64>();
+    let (d_chunks, d_rem) = dst[..n].as_chunks_mut::<64>();
+    for (s, d) in s_chunks.iter().zip(d_chunks.iter_mut()) {
         for p in 0..16 {
             let i = p * 4;
             let [l, a, b] = rgb_to_oklab(s[i], s[i + 1], s[i + 2], m1);
@@ -3154,17 +3189,14 @@ fn rgb_to_oklab_4ch_inner(src: &[f32], dst: &mut [f32], m1: &[[f32; 3]; 3]) {
             d[i + 3] = s[i + 3]; // alpha unchanged
         }
     }
-    let rem_pixels = (src.len() / 4) % 16;
-    if rem_pixels > 0 {
-        let off = src.len() - rem_pixels * 4;
-        for p in 0..rem_pixels {
-            let i = off + p * 4;
-            let [l, a, b] = rgb_to_oklab(src[i], src[i + 1], src[i + 2], m1);
-            dst[i] = l;
-            dst[i + 1] = a;
-            dst[i + 2] = b;
-            dst[i + 3] = src[i + 3];
-        }
+    for (s, d) in s_rem
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(d_rem.as_chunks_mut::<4>().0.iter_mut())
+    {
+        let [l, a, b] = rgb_to_oklab(s[0], s[1], s[2], m1);
+        *d = [l, a, b, s[3]];
     }
 }
 
@@ -3181,12 +3213,10 @@ fn oklaba_to_linear_rgba_f32(src: &[u8], dst: &mut [u8], width: usize, primaries
 /// 4-channel Oklaba→RGBA inner loop (16 pixels = 64 f32s per chunk).
 #[attune(dispatch, -_neon, -_wasm128, +v4x(cfg(avx512)))]
 fn oklab_to_rgb_4ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) {
-    for (s, d) in src
-        .as_chunks::<64>()
-        .0
-        .iter()
-        .zip(dst.as_chunks_mut::<64>().0)
-    {
+    let n = src.len().min(dst.len());
+    let (s_chunks, s_rem) = src[..n].as_chunks::<64>();
+    let (d_chunks, d_rem) = dst[..n].as_chunks_mut::<64>();
+    for (s, d) in s_chunks.iter().zip(d_chunks.iter_mut()) {
         for p in 0..16 {
             let i = p * 4;
             let [r, g, b] = oklab_to_rgb(s[i], s[i + 1], s[i + 2], m1_inv);
@@ -3196,17 +3226,14 @@ fn oklab_to_rgb_4ch_inner(src: &[f32], dst: &mut [f32], m1_inv: &[[f32; 3]; 3]) 
             d[i + 3] = s[i + 3]; // alpha unchanged
         }
     }
-    let rem_pixels = (src.len() / 4) % 16;
-    if rem_pixels > 0 {
-        let off = src.len() - rem_pixels * 4;
-        for p in 0..rem_pixels {
-            let i = off + p * 4;
-            let [r, g, b] = oklab_to_rgb(src[i], src[i + 1], src[i + 2], m1_inv);
-            dst[i] = r;
-            dst[i + 1] = g;
-            dst[i + 2] = b;
-            dst[i + 3] = src[i + 3];
-        }
+    for (s, d) in s_rem
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(d_rem.as_chunks_mut::<4>().0.iter_mut())
+    {
+        let [r, g, b] = oklab_to_rgb(s[0], s[1], s[2], m1_inv);
+        *d = [r, g, b, s[3]];
     }
 }
 
@@ -3261,6 +3288,7 @@ fn gamut_matrix_f32_tier<const CHANNELS: usize>(
     width: usize,
     matrix: &[f32; 9],
 ) {
+    const { assert!(CHANNELS == 3 || CHANNELS == 4) };
     const LANES: usize = 8;
     let m = matrix;
     let m00 = f32x8::splat_t(token, m[0]);
@@ -3273,27 +3301,25 @@ fn gamut_matrix_f32_tier<const CHANNELS: usize>(
     let m21 = f32x8::splat_t(token, m[7]);
     let m22 = f32x8::splat_t(token, m[8]);
 
-    let whole = width / LANES;
+    let (s_px, _) = src[..width * CHANNELS].as_chunks::<CHANNELS>();
+    let (d_px, _) = dst[..width * CHANNELS].as_chunks_mut::<CHANNELS>();
+    let (s_blocks, s_tail) = s_px.as_chunks::<LANES>();
+    let (d_blocks, d_tail) = d_px.as_chunks_mut::<LANES>();
+
     let mut r = [0.0f32; LANES];
     let mut g = [0.0f32; LANES];
     let mut b = [0.0f32; LANES];
 
-    for c in 0..whole {
-        let base = c * LANES * CHANNELS;
-        // Deinterleave 8 RGB/RGBA pixels.
+    for (sb, db) in s_blocks.iter().zip(d_blocks.iter_mut()) {
         for i in 0..LANES {
-            let p = base + i * CHANNELS;
-            r[i] = src[p];
-            g[i] = src[p + 1];
-            b[i] = src[p + 2];
+            r[i] = sb[i][0];
+            g[i] = sb[i][1];
+            b[i] = sb[i][2];
         }
         let rl = f32x8::from_array_t(token, r);
         let gl = f32x8::from_array_t(token, g);
         let bl = f32x8::from_array_t(token, b);
 
-        // 3×3 matmul as fused-multiply-adds — same shape as
-        // fast_gamut::mat3x3_x8 but typed against the generic
-        // magetypes `f32x8`.
         let or = fused_mul_add(m00, rl, fused_mul_add(m01, gl, m02 * bl));
         let og = fused_mul_add(m10, rl, fused_mul_add(m11, gl, m12 * bl));
         let ob = fused_mul_add(m20, rl, fused_mul_add(m21, gl, m22 * bl));
@@ -3302,31 +3328,25 @@ fn gamut_matrix_f32_tier<const CHANNELS: usize>(
         let go = og.to_array();
         let bo = ob.to_array();
 
-        // Re-interleave; for RGBA, copy the alpha lane through.
         for i in 0..LANES {
-            let p = base + i * CHANNELS;
-            dst[p] = ro[i];
-            dst[p + 1] = go[i];
-            dst[p + 2] = bo[i];
+            db[i][0] = ro[i];
+            db[i][1] = go[i];
+            db[i][2] = bo[i];
             if CHANNELS == 4 {
-                dst[p + 3] = src[p + 3];
+                db[i][3] = sb[i][3];
             }
         }
     }
 
-    // Scalar tail (1..LANES pixels).
-    for p in (whole * LANES)..width {
-        let base = p * CHANNELS;
-        let rv = src[base];
-        let gv = src[base + 1];
-        let bv = src[base + 2];
-        // The same operations as the lanes above, or a row's split would show in its output.
+    // Scalar tail (0..LANES pixels).
+    for (sp, dp) in s_tail.iter().zip(d_tail.iter_mut()) {
+        let (rv, gv, bv) = (sp[0], sp[1], sp[2]);
         let row = |i: usize| crate::fast_gamut::fused_row(m[i], m[i + 1], m[i + 2], rv, gv, bv);
-        dst[base] = row(0);
-        dst[base + 1] = row(3);
-        dst[base + 2] = row(6);
+        dp[0] = row(0);
+        dp[1] = row(3);
+        dp[2] = row(6);
         if CHANNELS == 4 {
-            dst[base + 3] = src[base + 3];
+            dp[3] = sp[3];
         }
     }
 }

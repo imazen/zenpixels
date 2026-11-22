@@ -71,9 +71,16 @@
   `u8` RGBA premultiply helpers directly into `zenpixels-convert` under
   `#[attune(dispatch)]` so `zenpixels-convert` depends only on core `garb::bytes`
   byte swizzles (`default-features = false`, zero `experimental` items).
+- Eliminate `-4,749` instructions (`135,518 -> 130,769` on `x86-64-v3`) and `-254`
+  `panic_bounds_check` / `-22` `slice_index_fail` sites across `fast_gamut`,
+  `convert_kernels`, and `scan` via fixed-array `&mut [f32; 24]` / `&mut [f32; 32]` /
+  `&[u8; 32]` `#[rite]` boundaries, nested `as_chunks::<CHANNELS>()` + `as_chunks::<8>()`
+  `gamut_matrix_f32_tier` deinterleave/re-interleave, pre-sliced `as_chunks` layout/luma/
+  alpha/Oklab loops, and fixed-window `first_chunk::<97>()` / `<49>()` / `<25>()` +
+  chunk-zipped `512 B` block predicates in `scan`.
 - Depend on published crates.io `archmage 0.9.32`, `magetypes 0.9.32`, and
   `magemath 0.1.0` (forwarding `std` and `avx512` to `archmage`/`magetypes`/`magemath`),
-  sync `garb 0.2.9` (`aa685891`) and `linear-srgb 0.6.13` (`abd98dd1`), and migrate
+  sync `garb 0.2.9` (`457ff8b9`) and `linear-srgb 0.6.13` (`f2430c90`), and migrate
   all `linear_srgb::tf` callers to `linear_srgb::default`.
 - Use the checked Magemath power profile for extended gamma.
 

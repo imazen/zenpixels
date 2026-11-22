@@ -123,7 +123,7 @@ macro_rules! stamp_trc_kernels {
         paste::paste! {
             #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
             #[rite]
-            fn [<fused_8px_rgb_ $name>](token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
+            fn [<fused_8px_rgb_ $name>](token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32; 24]) {
                 let mut r = [0.0f32; 8];
                 let mut g = [0.0f32; 8];
                 let mut b = [0.0f32; 8];
@@ -148,7 +148,7 @@ macro_rules! stamp_trc_kernels {
 
             #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
             #[rite]
-            fn [<fused_8px_rgba_ $name>](token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
+            fn [<fused_8px_rgba_ $name>](token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32; 32]) {
                 let mut r = [0.0f32; 8];
                 let mut g = [0.0f32; 8];
                 let mut b = [0.0f32; 8];
@@ -174,11 +174,11 @@ macro_rules! stamp_trc_kernels {
             #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
             #[arcane]
             fn [<convert_rgb_ $name _v3>](token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
-                let bulk = (data.len() / 24) * 24;
-                for off in (0..bulk).step_by(24) {
-                    [<fused_8px_rgb_ $name>](token, m, &mut data[off..off + 24]);
+                let (chunks, tail) = data.as_chunks_mut::<24>();
+                for chunk in chunks {
+                    [<fused_8px_rgb_ $name>](token, m, chunk);
                 }
-                for pixel in data[bulk..].chunks_exact_mut(3) {
+                for pixel in tail.as_chunks_mut::<3>().0 {
                     let r = $scalar_lin(pixel[0]);
                     let g = $scalar_lin(pixel[1]);
                     let b = $scalar_lin(pixel[2]);
@@ -192,11 +192,11 @@ macro_rules! stamp_trc_kernels {
             #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
             #[arcane]
             fn [<convert_rgba_ $name _v3>](token: X64V3Token, m: &[[f32; 3]; 3], data: &mut [f32]) {
-                let bulk = (data.len() / 32) * 32;
-                for off in (0..bulk).step_by(32) {
-                    [<fused_8px_rgba_ $name>](token, m, &mut data[off..off + 32]);
+                let (chunks, tail) = data.as_chunks_mut::<32>();
+                for chunk in chunks {
+                    [<fused_8px_rgba_ $name>](token, m, chunk);
                 }
-                for pixel in data[bulk..].chunks_exact_mut(4) {
+                for pixel in tail.as_chunks_mut::<4>().0 {
                     let r = $scalar_lin(pixel[0]);
                     let g = $scalar_lin(pixel[1]);
                     let b = $scalar_lin(pixel[2]);
@@ -208,7 +208,7 @@ macro_rules! stamp_trc_kernels {
             }
 
             fn [<convert_rgb_ $name _scalar>](_token: ScalarToken, m: &[[f32; 3]; 3], data: &mut [f32]) {
-                for pixel in data.chunks_exact_mut(3) {
+                for pixel in data.as_chunks_mut::<3>().0 {
                     let r = $scalar_lin(pixel[0]);
                     let g = $scalar_lin(pixel[1]);
                     let b = $scalar_lin(pixel[2]);
@@ -220,7 +220,7 @@ macro_rules! stamp_trc_kernels {
             }
 
             fn [<convert_rgba_ $name _scalar>](_token: ScalarToken, m: &[[f32; 3]; 3], data: &mut [f32]) {
-                for pixel in data.chunks_exact_mut(4) {
+                for pixel in data.as_chunks_mut::<4>().0 {
                     let r = $scalar_lin(pixel[0]);
                     let g = $scalar_lin(pixel[1]);
                     let b = $scalar_lin(pixel[2]);
@@ -1253,24 +1253,26 @@ fn convert_u16_rgb_matlut_v3(
     lin_lut: &[f32; 65536],
     enc_lut: &[u16; 65536],
 ) {
-    let pixel_count = src.len() / 3;
-    let bulk = (pixel_count / 8) * 8;
-    let bulk_chans = bulk * 3;
-    for off in (0..bulk_chans).step_by(24) {
-        let s: &[u16; 24] = src[off..off + 24].try_into().unwrap();
-        let d: &mut [u16; 24] = (&mut dst[off..off + 24]).try_into().unwrap();
+    let n = src.len().min(dst.len());
+    let (s_chunks, s_rem) = src[..n].as_chunks::<24>();
+    let (d_chunks, d_rem) = dst[..n].as_chunks_mut::<24>();
+    for (s, d) in s_chunks.iter().zip(d_chunks.iter_mut()) {
         convert_8px_u16_rgb_matlut(token, m, s, d, lin_lut, enc_lut);
     }
     // Scalar remainder.
-    for i in bulk..pixel_count {
-        let base = i * 3;
-        let r = lin_lut[src[base] as usize];
-        let g = lin_lut[src[base + 1] as usize];
-        let b = lin_lut[src[base + 2] as usize];
+    for (s, d) in s_rem
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(d_rem.as_chunks_mut::<3>().0.iter_mut())
+    {
+        let r = lin_lut[s[0] as usize];
+        let g = lin_lut[s[1] as usize];
+        let b = lin_lut[s[2] as usize];
         let (nr, ng, nb) = mat3x3(m, r, g, b);
-        dst[base] = enc_lut[(nr.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
-        dst[base + 1] = enc_lut[(ng.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
-        dst[base + 2] = enc_lut[(nb.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
+        d[0] = enc_lut[(nr.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
+        d[1] = enc_lut[(ng.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
+        d[2] = enc_lut[(nb.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
     }
 }
 
@@ -1442,21 +1444,23 @@ mod hybrids {
         dst: &mut [u16],
         lin_lut: &[f32; 65536],
     ) {
-        let pixel_count = src.len() / 3;
-        let bulk = (pixel_count / 8) * 8;
-        let bulk_chans = bulk * 3;
-        for off in (0..bulk_chans).step_by(24) {
-            let s: &[u16; 24] = src[off..off + 24].try_into().unwrap();
-            let d: &mut [u16; 24] = (&mut dst[off..off + 24]).try_into().unwrap();
+        let n = src.len().min(dst.len());
+        let (s_chunks, s_rem) = src[..n].as_chunks::<24>();
+        let (d_chunks, d_rem) = dst[..n].as_chunks_mut::<24>();
+        for (s, d) in s_chunks.iter().zip(d_chunks.iter_mut()) {
             convert_8px_u16_rgb_lutdec_polyenc(token, m, s, d, lin_lut);
         }
-        for i in bulk..pixel_count {
-            let base = i * 3;
-            let r = lin_lut[src[base] as usize];
-            let g = lin_lut[src[base + 1] as usize];
-            let b = lin_lut[src[base + 2] as usize];
+        for (s, d) in s_rem
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(d_rem.as_chunks_mut::<3>().0.iter_mut())
+        {
+            let r = lin_lut[s[0] as usize];
+            let g = lin_lut[s[1] as usize];
+            let b = lin_lut[s[2] as usize];
             let (nr, ng, nb) = mat3x3(m, r, g, b);
-            linear_srgb::default::linear_to_srgb_u16_slice(&[nr, ng, nb], &mut dst[base..base + 3]);
+            linear_srgb::default::linear_to_srgb_u16_slice(&[nr, ng, nb], d);
         }
     }
 
@@ -1469,23 +1473,25 @@ mod hybrids {
         dst: &mut [u16],
         enc_lut: &[u16; 65536],
     ) {
-        let pixel_count = src.len() / 3;
-        let bulk = (pixel_count / 8) * 8;
-        let bulk_chans = bulk * 3;
-        for off in (0..bulk_chans).step_by(24) {
-            let s: &[u16; 24] = src[off..off + 24].try_into().unwrap();
-            let d: &mut [u16; 24] = (&mut dst[off..off + 24]).try_into().unwrap();
+        let n = src.len().min(dst.len());
+        let (s_chunks, s_rem) = src[..n].as_chunks::<24>();
+        let (d_chunks, d_rem) = dst[..n].as_chunks_mut::<24>();
+        for (s, d) in s_chunks.iter().zip(d_chunks.iter_mut()) {
             convert_8px_u16_rgb_polydec_lutenc(token, m, s, d, enc_lut);
         }
-        for i in bulk..pixel_count {
-            let base = i * 3;
-            let r = linear_srgb::default::srgb_u16_to_linear(src[base]);
-            let g = linear_srgb::default::srgb_u16_to_linear(src[base + 1]);
-            let b = linear_srgb::default::srgb_u16_to_linear(src[base + 2]);
+        for (s, d) in s_rem
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(d_rem.as_chunks_mut::<3>().0.iter_mut())
+        {
+            let r = linear_srgb::default::srgb_u16_to_linear(s[0]);
+            let g = linear_srgb::default::srgb_u16_to_linear(s[1]);
+            let b = linear_srgb::default::srgb_u16_to_linear(s[2]);
             let (nr, ng, nb) = mat3x3(m, r, g, b);
-            dst[base] = enc_lut[(nr.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
-            dst[base + 1] = enc_lut[(ng.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
-            dst[base + 2] = enc_lut[(nb.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
+            d[0] = enc_lut[(nr.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
+            d[1] = enc_lut[(ng.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
+            d[2] = enc_lut[(nb.clamp(0.0, 1.0) * 65535.0 + 0.5) as usize & 0xFFFF];
         }
     }
 
@@ -1497,21 +1503,23 @@ mod hybrids {
         src: &[u16],
         dst: &mut [u16],
     ) {
-        let pixel_count = src.len() / 3;
-        let bulk = (pixel_count / 8) * 8;
-        let bulk_chans = bulk * 3;
-        for off in (0..bulk_chans).step_by(24) {
-            let s: &[u16; 24] = src[off..off + 24].try_into().unwrap();
-            let d: &mut [u16; 24] = (&mut dst[off..off + 24]).try_into().unwrap();
+        let n = src.len().min(dst.len());
+        let (s_chunks, s_rem) = src[..n].as_chunks::<24>();
+        let (d_chunks, d_rem) = dst[..n].as_chunks_mut::<24>();
+        for (s, d) in s_chunks.iter().zip(d_chunks.iter_mut()) {
             convert_8px_u16_rgb_polydec_polyenc(token, m, s, d);
         }
-        for i in bulk..pixel_count {
-            let base = i * 3;
-            let r = linear_srgb::default::srgb_u16_to_linear(src[base]);
-            let g = linear_srgb::default::srgb_u16_to_linear(src[base + 1]);
-            let b = linear_srgb::default::srgb_u16_to_linear(src[base + 2]);
+        for (s, d) in s_rem
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(d_rem.as_chunks_mut::<3>().0.iter_mut())
+        {
+            let r = linear_srgb::default::srgb_u16_to_linear(s[0]);
+            let g = linear_srgb::default::srgb_u16_to_linear(s[1]);
+            let b = linear_srgb::default::srgb_u16_to_linear(s[2]);
             let (nr, ng, nb) = mat3x3(m, r, g, b);
-            linear_srgb::default::linear_to_srgb_u16_slice(&[nr, ng, nb], &mut dst[base..base + 3]);
+            linear_srgb::default::linear_to_srgb_u16_slice(&[nr, ng, nb], d);
         }
     }
 
@@ -1728,22 +1736,25 @@ fn convert_u8_to_f32_lin_v3(
     dst: &mut [f32],
     lin_lut: &[f32; 256],
 ) {
-    let pixel_count = src.len() / 3;
-    let bulk = (pixel_count / 8) * 8;
-    for off in (0..bulk).step_by(8) {
-        let s: &[u8; 24] = src[off * 3..off * 3 + 24].try_into().unwrap();
-        let d: &mut [f32; 24] = (&mut dst[off * 3..off * 3 + 24]).try_into().unwrap();
+    let n = src.len().min(dst.len());
+    let (s_chunks, s_rem) = src[..n].as_chunks::<24>();
+    let (d_chunks, d_rem) = dst[..n].as_chunks_mut::<24>();
+    for (s, d) in s_chunks.iter().zip(d_chunks.iter_mut()) {
         convert_8px_u8_to_f32_lin(token, m, s, d, lin_lut);
     }
-    for i in bulk..pixel_count {
-        let base = i * 3;
-        let r = lin_lut[src[base] as usize];
-        let g = lin_lut[src[base + 1] as usize];
-        let b = lin_lut[src[base + 2] as usize];
+    for (s, d) in s_rem
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(d_rem.as_chunks_mut::<3>().0.iter_mut())
+    {
+        let r = lin_lut[s[0] as usize];
+        let g = lin_lut[s[1] as usize];
+        let b = lin_lut[s[2] as usize];
         let (nr, ng, nb) = mat3x3(m, r, g, b);
-        dst[base] = nr;
-        dst[base + 1] = ng;
-        dst[base + 2] = nb;
+        d[0] = nr;
+        d[1] = ng;
+        d[2] = nb;
     }
 }
 
@@ -1883,19 +1894,22 @@ fn convert_f32_lin_to_u8_v3(
     dst: &mut [u8],
     enc: &SrgbU8Encoder,
 ) {
-    let pixel_count = src.len() / 3;
-    let bulk = (pixel_count / 8) * 8;
-    for off in (0..bulk).step_by(8) {
-        let s: &[f32; 24] = src[off * 3..off * 3 + 24].try_into().unwrap();
-        let d: &mut [u8; 24] = (&mut dst[off * 3..off * 3 + 24]).try_into().unwrap();
+    let n = src.len().min(dst.len());
+    let (s_chunks, s_rem) = src[..n].as_chunks::<24>();
+    let (d_chunks, d_rem) = dst[..n].as_chunks_mut::<24>();
+    for (s, d) in s_chunks.iter().zip(d_chunks.iter_mut()) {
         convert_8px_f32_lin_to_u8(token, m, s, d, enc);
     }
-    for i in bulk..pixel_count {
-        let base = i * 3;
-        let (nr, ng, nb) = mat3x3(m, src[base], src[base + 1], src[base + 2]);
-        dst[base] = enc.encode(nr);
-        dst[base + 1] = enc.encode(ng);
-        dst[base + 2] = enc.encode(nb);
+    for (s, d) in s_rem
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(d_rem.as_chunks_mut::<3>().0.iter_mut())
+    {
+        let (nr, ng, nb) = mat3x3(m, s[0], s[1], s[2]);
+        d[0] = enc.encode(nr);
+        d[1] = enc.encode(ng);
+        d[2] = enc.encode(nb);
     }
 }
 
@@ -1947,23 +1961,21 @@ fn convert_u8_rgb_matlut_v3(
     lin_lut: &[f32; 256],
     _enc_u8: fn(f32) -> u8,
 ) {
-    let pixel_count = src.len() / 3;
-    let bulk = (pixel_count / 8) * 8;
-    let bulk_bytes = bulk * 3;
+    let n = (src.len() / 3).min(dst.len() / 3) * 3;
+    let (s_chunks, s_tail) = src[..n].as_chunks::<24>();
+    let (d_chunks, d_tail) = dst[..n].as_chunks_mut::<24>();
     let enc = srgb_u8_encoder();
-    for off in (0..bulk_bytes).step_by(24) {
-        let s: &[u8; 24] = src[off..off + 24].try_into().unwrap();
-        let d: &mut [u8; 24] = (&mut dst[off..off + 24]).try_into().unwrap();
+    for (s, d) in s_chunks.iter().zip(d_chunks.iter_mut()) {
         convert_8px_u8_rgb_matlut(token, m, s, d, lin_lut, enc);
     }
     // The tail takes the same kernel, so a pixel's result doesn't depend on where it sits in the row.
-    let tail = &src[bulk_bytes..pixel_count * 3];
-    if !tail.is_empty() {
+    if !s_tail.is_empty() {
+        let tl = s_tail.len().min(24);
         let mut s = [0u8; 24];
         let mut d = [0u8; 24];
-        s[..tail.len()].copy_from_slice(tail);
+        s[..tl].copy_from_slice(&s_tail[..tl]);
         convert_8px_u8_rgb_matlut(token, m, &s, &mut d, lin_lut, enc);
-        dst[bulk_bytes..pixel_count * 3].copy_from_slice(&d[..tail.len()]);
+        d_tail[..tl].copy_from_slice(&d[..tl]);
     }
 }
 
@@ -2023,22 +2035,20 @@ fn convert_u8_rgb_fused_v3(
     dst_trc: TransferFunction,
     _scalar_enc: fn(f32) -> f32,
 ) {
-    let pixel_count = src.len() / 3;
-    let bulk = (pixel_count / 8) * 8;
-    let bulk_bytes = bulk * 3;
-    for off in (0..bulk_bytes).step_by(24) {
-        let s: &[u8; 24] = src[off..off + 24].try_into().unwrap();
-        let d: &mut [u8; 24] = (&mut dst[off..off + 24]).try_into().unwrap();
+    let n = (src.len() / 3).min(dst.len() / 3) * 3;
+    let (s_chunks, s_tail) = src[..n].as_chunks::<24>();
+    let (d_chunks, d_tail) = dst[..n].as_chunks_mut::<24>();
+    for (s, d) in s_chunks.iter().zip(d_chunks.iter_mut()) {
         convert_8px_u8_rgb_fused(token, m, s, d, lin_lut, dst_trc);
     }
     // The tail takes the same kernel, so a pixel's result doesn't depend on where it sits in the row.
-    let tail = &src[bulk_bytes..pixel_count * 3];
-    if !tail.is_empty() {
+    if !s_tail.is_empty() {
+        let tl = s_tail.len().min(24);
         let mut s = [0u8; 24];
         let mut d = [0u8; 24];
-        s[..tail.len()].copy_from_slice(tail);
+        s[..tl].copy_from_slice(&s_tail[..tl]);
         convert_8px_u8_rgb_fused(token, m, &s, &mut d, lin_lut, dst_trc);
-        dst[bulk_bytes..pixel_count * 3].copy_from_slice(&d[..tail.len()]);
+        d_tail[..tl].copy_from_slice(&d[..tl]);
     }
 }
 
@@ -2096,8 +2106,8 @@ pub(crate) fn convert_u8_rgb_simd_fused(
 fn convert_8px_u8_rgba_simd(
     token: X64V3Token,
     m: &[[f32; 3]; 3],
-    src: &[u8],
-    dst: &mut [u8],
+    src: &[u8; 32],
+    dst: &mut [u8; 32],
     lin_lut: &[f32; 256],
     enc_u8: fn(f32) -> u8,
 ) {
@@ -2134,27 +2144,20 @@ fn convert_u8_rgba_lut_simd_v3(
     lin_lut: &[f32; 256],
     enc_u8: fn(f32) -> u8,
 ) {
-    let pixel_count = src.len() / 4;
-    let bulk = (pixel_count / 8) * 8;
-    let bulk_bytes = bulk * 4;
-    for off in (0..bulk_bytes).step_by(32) {
-        convert_8px_u8_rgba_simd(
-            token,
-            m,
-            &src[off..off + 32],
-            &mut dst[off..off + 32],
-            lin_lut,
-            enc_u8,
-        );
+    let n = (src.len() / 4).min(dst.len() / 4) * 4;
+    let (s_chunks, s_tail) = src[..n].as_chunks::<32>();
+    let (d_chunks, d_tail) = dst[..n].as_chunks_mut::<32>();
+    for (s, d) in s_chunks.iter().zip(d_chunks.iter_mut()) {
+        convert_8px_u8_rgba_simd(token, m, s, d, lin_lut, enc_u8);
     }
     // The tail takes the same kernel, so a pixel's result doesn't depend on where it sits in the row.
-    let tail = &src[bulk_bytes..pixel_count * 4];
-    if !tail.is_empty() {
+    if !s_tail.is_empty() {
+        let tl = s_tail.len() & 31;
         let mut s = [0u8; 32];
         let mut d = [0u8; 32];
-        s[..tail.len()].copy_from_slice(tail);
+        s[..tl].copy_from_slice(&s_tail[..tl]);
         convert_8px_u8_rgba_simd(token, m, &s, &mut d, lin_lut, enc_u8);
-        dst[bulk_bytes..pixel_count * 4].copy_from_slice(&d[..tail.len()]);
+        d_tail[..tl].copy_from_slice(&d[..tl]);
     }
 }
 
