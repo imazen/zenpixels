@@ -811,3 +811,12 @@ planar-storage-check:
 planar-storage-integration-check:
     cargo check --locked --workspace --all-targets --all-features
     just api-doc
+
+# Run full-frame 4K UHD (3840x2160) conversion/orientation regression benchmarks.
+# Filter with e.g. `just bench-4k --group='^oklab/'`; set `BENCH_4K_TIER=baseline|v3|v4x|all`.
+bench-4k *ARGS:
+    cargo bench -p zenpixels-convert --bench bench_4k_paths -- {{ARGS}}
+
+# Measure stripped binary size added by RowConverter across x86-64 and wasm32.
+converter-size:
+    bash benchmarks/converter-size/measure.sh

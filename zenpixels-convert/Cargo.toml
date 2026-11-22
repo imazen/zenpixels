@@ -355,3 +355,8 @@ name = "bench_float_depth_and_bands"
 path = "benches/bench_float_depth_and_bands.rs"
 harness = false
 required-features = ["__bench_float_depth"]
+
+[[bench]]
+name = "bench_4k_paths"
+path = "benches/bench_4k_paths.rs"
+harness = false
