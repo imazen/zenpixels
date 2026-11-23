@@ -52,6 +52,18 @@ const HLG_LOG_FAST: u128 = LogfOptions::new()
     .caller()
     .bits();
 
+/// `Highp + BackendDependent` in `magemath` delegates to `std` `f32::powf`, so
+/// `no_std` `wasm32` builds fall back to `BitExact` packed binary64.
+const HLG_OOTF_PORTABILITY: magemath::Portability = if cfg!(all(
+    target_arch = "wasm32",
+    feature = "std",
+    not(feature = "precise-portable")
+)) {
+    magemath::Portability::BackendDependent
+} else {
+    magemath::Portability::BitExact
+};
+
 /// Packed binary64 (`Highp`, <= 0.5 ULP) luminance OOTF power for `|Y| in [2^-24, 2^16]`
 /// and system-gamma exponent in `[-1.0, 2.0]` (`|-24 * 2.0| = 48 <= 125`, eliding all
 /// per-lane range checks).
@@ -63,7 +75,7 @@ const HLG_OOTF_HIGHP: u128 = PowfOptions::new()
     .exponent_range(-1.0, 2.0)
     .reject_subnormals()
     .highp()
-    .portability(MATH_PORTABILITY)
+    .portability(HLG_OOTF_PORTABILITY)
     .assume_in_bounds()
     .caller()
     .bits();
