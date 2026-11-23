@@ -1,307 +1,236 @@
-//! Color Management System (CMS) traits.
+//! Clean Color Management System (`CmsBackend`) trait + optional `MoxCms` / `Lcms` adapters.
 //!
-//! Defines the interface for ICC profile-based color transforms. When a CMS
-//! feature is enabled (`cms-moxcms`), the implementation
-//! provides ICC-to-ICC transforms. Named profile conversions (sRGB, P3,
-//! BT.2020) use hardcoded matrices and don't require a CMS.
-//!
-//! # When codecs need a CMS
-//!
-//! Most codecs don't need to interact with the CMS directly.
-//! [`OutputPlan::build`](super::OutputPlan::build) handles CMS transforms
-//! internally when the [`OutputProfile`](super::OutputProfile) requires one.
-//!
-//! A codec needs CMS awareness only when:
-//!
-//! - **Decoding** an image with an embedded ICC profile that doesn't match
-//!   any known CICP combination. The decoder extracts the ICC bytes and
-//!   stores them on [`ColorContext`](crate::ColorContext). The CMS is used
-//!   later (at encode or processing time), not during decode.
-//!
-//! - **Encoding** with `OutputProfile::Icc(custom_profile)`. The CMS builds
-//!   a source→destination transform for the row worker.
-//!
-//! # Implementing a CMS backend
-//!
-//! Implement [`PluggableCms`]. A backend must:
-//!
-//! - Return [`CmsSupport::Declined`] for an unsupported request. Return an error
-//!   when construction of a supported transform fails.
-//! - Never accept an ICC profile it couldn't read.
-//! - Treat `width` as the row's extent. Slices may be longer, and bytes past the row stay untouched.
-//!   A slice shorter than the row is an error from `try_transform_row`.
-//! - Keep no state between rows: any split of a row gives the same samples.
-//! - Carry alpha exactly, at every depth.
-//! - Round 8-bit samples to nearest, and keep white at white.
-//!
-//! `cms-contract/` in this repository tests all of this on `MoxCms` and on the lcms port.
+//! Only invoked when converting arbitrary [`ColorSpace::Icc`](zenpixels::ColorSpace::Icc)
+//! profiles (that don't match a safe matrix+TRC fingerprint) or [`ColorSpace::Cmyk`](zenpixels::ColorSpace::Cmyk).
 
-#[cfg(any(test, feature = "cms-moxcms", feature = "cms-lcms"))]
-use crate::PixelFormat;
-use alloc::boxed::Box;
+use alloc::sync::Arc;
+use core::fmt::Debug;
+use whereat::At;
+use zenpixels::ImageSpec;
 
-/// Shareable, stateless row-level color transform.
-///
-/// Takes `&self` — the same instance can be held behind `Arc<dyn RowTransform>`
-/// and reused across threads, converters, or cached for batch workloads.
-/// Appropriate when the transform carries no per-call mutable state: pure
-/// matrix/LUT math, moxcms `TransformExecutor` (whose `transform(&self, ...)`
-/// is already `&self`), or any stateless formula-based conversion.
-///
-/// When the transform needs scratch buffers or per-call state, use
-/// [`RowTransformMut`] instead.
-pub trait RowTransform: Send + Sync {
-    /// Execute one checked row. A failure may leave partial output.
-    fn try_transform_row(
+use crate::error::ConvertError;
+
+/// Shareable, stateless row-level CMS transform executor (`Send + Sync`).
+pub trait CmsTransform: Send + Sync {
+    /// Transform one row of `width` pixels from `src` bytes to `dst` bytes.
+    fn transform_row(&self, src: &[u8], dst: &mut [u8], width: u32)
+    -> Result<(), At<ConvertError>>;
+}
+
+/// Pluggable ICC / CMYK Color Management System backend.
+pub trait CmsBackend: Send + Sync + Debug {
+    /// Build a row transform from `src` to `dst`.
+    fn build_transform(
         &self,
-        src: &[u8],
-        dst: &mut [u8],
-        width: u32,
-    ) -> Result<(), whereat::At<CmsPluginError>>;
-
-    /// Perform backend setup for bounded-width execution (`<= max_width`).
-    ///
-    /// Defaults to `Ok(())` for stateless transforms that need no width-dependent
-    /// setup. Override if bounded-width pre-initialization can fail or allocate.
-    fn prepare(&self, _max_width: u32) -> Result<(), whereat::At<CmsPluginError>> {
-        Ok(())
-    }
+        src: &ImageSpec,
+        dst: &ImageSpec,
+    ) -> Result<Arc<dyn CmsTransform>, At<ConvertError>>;
 }
 
-/// Owned, stateful row-level color transform.
-///
-/// Takes `&mut self` — each [`RowConverter`] owns its own `Box<dyn
-/// RowTransformMut>`, so implementations can reuse scratch buffers and
-/// update internal state per call without interior mutability.
-///
-/// Requires `Send + Sync` so an owning [`RowConverter`] or [`OutputPlan`](crate::OutputPlan)
-/// remains `Sync` (for scoped thread fan-out and `&self` borrows across async
-/// `.await` points). Every method on this trait takes `&mut self`, so ordinary
-/// Rust scratch fields (`Vec<f32>`, `Box<...>`, etc.) satisfy `Sync`
-/// automatically. To wrap a `Send + !Sync` C-FFI handle (such as a cached
-/// `lcms2::Transform<..., AllowCache>`), either construct it without cache
-/// (`Flags::NO_CACHE`), or hold it in `sync_wrapper::SyncWrapper<T>` /
-/// `std::sync::Mutex<T>` and access it via `.get_mut()` inside `try_transform_row`
-/// (which compiles to a zero-locking pointer access because `&mut self` proves
-/// exclusive ownership).
-///
-/// When the transform is stateless and could be shared, use
-/// [`RowTransform`] instead. [`PluggableCms::build`] returns the supported ownership.
-///
-/// [`RowConverter`]: crate::RowConverter
-pub trait RowTransformMut: Send + Sync {
-    /// Execute one checked row. A failure may leave partial output.
-    fn try_transform_row(
-        &mut self,
-        src: &[u8],
-        dst: &mut [u8],
-        width: u32,
-    ) -> Result<(), whereat::At<CmsPluginError>>;
+#[cfg(feature = "cms-moxcms")]
+mod moxcms_impl {
+    use super::*;
+    use crate::error::err_at;
+    use zenpixels::{ChannelOrder, ColorSpace, Primaries, RenderingIntent, SampleType, Transfer};
 
-    /// Allocate backend scratch for bounded-width execution (`<= max_width`) before reading pixels.
-    ///
-    /// Defaults to `Ok(())` for stateful transforms that need no width-dependent
-    /// buffer pre-allocation. Backends with row-proportional scratch buffers
-    /// must reserve capacity here so `try_transform_row` executes allocation-free.
-    fn prepare(&mut self, _max_width: u32) -> Result<(), whereat::At<CmsPluginError>> {
-        Ok(())
-    }
-}
+    /// Pure-Rust `moxcms` ICC CMS backend.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct MoxCms;
 
-/// Dispatch a color transform for the supplied stage contracts.
-pub trait PluggableCms: Send + Sync {
-    /// An unsupported request returns [CmsSupport::Declined]. A backend error
-    /// terminates dispatch and preserves its source error.
-    fn build(&self, request: &CmsRequest<'_>) -> Result<CmsSupport, whereat::At<CmsPluginError>>;
-}
-
-/// Profiles, carriers and policy for one CMS stage.
-#[derive(Clone, Debug)]
-pub struct CmsRequest<'a> {
-    src: crate::ColorProfileSource<'a>,
-    dst: crate::ColorProfileSource<'a>,
-    from: crate::PixelDescriptor,
-    to: crate::PixelDescriptor,
-    options: crate::ConvertOptions,
-}
-
-impl<'a> CmsRequest<'a> {
-    /// Specify the interpreted endpoints of a CMS operation.
-    pub fn new(
-        src: crate::ColorProfileSource<'a>,
-        dst: crate::ColorProfileSource<'a>,
-        from: crate::PixelDescriptor,
-        to: crate::PixelDescriptor,
-        options: crate::ConvertOptions,
-    ) -> Self {
-        Self {
-            src,
-            dst,
-            from,
-            to,
-            options,
+    fn to_mox_intent(intent: RenderingIntent) -> moxcms::RenderingIntent {
+        match intent {
+            RenderingIntent::Perceptual => moxcms::RenderingIntent::Perceptual,
+            RenderingIntent::RelativeColorimetric => moxcms::RenderingIntent::RelativeColorimetric,
+            RenderingIntent::Saturation => moxcms::RenderingIntent::Saturation,
+            RenderingIntent::AbsoluteColorimetric => moxcms::RenderingIntent::AbsoluteColorimetric,
+            _ => moxcms::RenderingIntent::Perceptual,
         }
     }
 
-    /// Source profile.
-    pub fn source(&self) -> crate::ColorProfileSource<'a> {
-        self.src.clone()
+    fn to_mox_layout(order: ChannelOrder) -> Option<moxcms::Layout> {
+        match order {
+            ChannelOrder::Gray => Some(moxcms::Layout::Gray),
+            ChannelOrder::GrayAlpha => Some(moxcms::Layout::GrayAlpha),
+            ChannelOrder::Rgb => Some(moxcms::Layout::Rgb),
+            ChannelOrder::Rgba => Some(moxcms::Layout::Rgba),
+            ChannelOrder::Cmyk | ChannelOrder::CmykInverted => Some(moxcms::Layout::Rgba),
+            _ => None,
+        }
     }
 
-    /// Target profile.
-    pub fn target(&self) -> crate::ColorProfileSource<'a> {
-        self.dst.clone()
+    fn profile_from_color_space(
+        cs: &ColorSpace,
+    ) -> Result<(moxcms::ColorProfile, RenderingIntent), At<ConvertError>> {
+        match cs {
+            ColorSpace::Icc {
+                profile, intent, ..
+            } => {
+                let p = moxcms::ColorProfile::new_from_slice(profile)
+                    .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
+                Ok((p, *intent))
+            }
+            ColorSpace::Cmyk { icc, .. } => {
+                let bytes = icc
+                    .as_ref()
+                    .ok_or_else(|| err_at(ConvertError::CmsRequired))?;
+                let p = moxcms::ColorProfile::new_from_slice(bytes)
+                    .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
+                Ok((p, RenderingIntent::Perceptual))
+            }
+            ColorSpace::Rgb {
+                primaries,
+                transfer,
+                ..
+            } => {
+                let p = match (primaries, transfer) {
+                    (Primaries::Bt709, Transfer::Srgb) => moxcms::ColorProfile::new_srgb(),
+                    (Primaries::DisplayP3, Transfer::Srgb) => {
+                        moxcms::ColorProfile::new_display_p3()
+                    }
+                    (Primaries::AdobeRgb, Transfer::Gamma22) => {
+                        moxcms::ColorProfile::new_adobe_rgb()
+                    }
+                    (Primaries::Bt2020, Transfer::Bt709) => moxcms::ColorProfile::new_bt2020(),
+                    (Primaries::Bt2020, Transfer::Pq) => moxcms::ColorProfile::new_bt2020_pq(),
+                    (Primaries::Bt2020, Transfer::Hlg(_)) => moxcms::ColorProfile::new_bt2020_hlg(),
+                    _ => return Err(err_at(ConvertError::UnsupportedRoute)),
+                };
+                Ok((p, RenderingIntent::RelativeColorimetric))
+            }
+            ColorSpace::Gray { transfer, .. } => {
+                let p = match transfer {
+                    Transfer::Srgb => moxcms::ColorProfile::new_gray_with_gamma(2.2),
+                    Transfer::Linear => moxcms::ColorProfile::new_gray_with_gamma(1.0),
+                    _ => return Err(err_at(ConvertError::UnsupportedRoute)),
+                };
+                Ok((p, RenderingIntent::RelativeColorimetric))
+            }
+            _ => Err(err_at(ConvertError::UnsupportedRoute)),
+        }
     }
 
-    /// Source descriptor, including association and range.
-    pub const fn from(&self) -> crate::PixelDescriptor {
-        self.from
+    enum MoxExec {
+        U8(Arc<dyn moxcms::TransformExecutor<u8> + Send + Sync>),
+        U16(Arc<dyn moxcms::TransformExecutor<u16> + Send + Sync>),
+        F32(Arc<dyn moxcms::TransformExecutor<f32> + Send + Sync>),
     }
 
-    /// Target descriptor, including association and range.
-    pub const fn to(&self) -> crate::PixelDescriptor {
-        self.to
+    struct MoxRowTransform {
+        exec: MoxExec,
+        src_bpp: usize,
+        dst_bpp: usize,
+        src_cmyk_inverted: bool,
+        dst_cmyk_inverted: bool,
     }
 
-    /// Requested number and rendering policies.
-    pub const fn options(&self) -> &crate::ConvertOptions {
-        &self.options
-    }
-}
-
-/// Operations accepted by a backend and their ownership.
-pub enum CmsSupport {
-    /// Another backend may handle this request.
-    Declined,
-    /// Stateless transform shareable between workers.
-    Shared(alloc::sync::Arc<dyn RowTransform>),
-    /// Exclusive transform with per-worker state.
-    Owned(Box<dyn RowTransformMut>),
-}
-
-#[cfg(any(test, feature = "cms-moxcms", feature = "cms-lcms"))]
-pub(crate) fn build_owned(
-    backend: &dyn PluggableCms,
-    src: crate::ColorProfileSource<'_>,
-    dst: crate::ColorProfileSource<'_>,
-    from: PixelFormat,
-    to: PixelFormat,
-    options: &crate::ConvertOptions,
-) -> Option<Result<Box<dyn RowTransformMut>, whereat::At<CmsPluginError>>> {
-    struct SharedWorker(alloc::sync::Arc<dyn RowTransform>);
-    impl RowTransformMut for SharedWorker {
-        fn try_transform_row(
-            &mut self,
+    impl CmsTransform for MoxRowTransform {
+        fn transform_row(
+            &self,
             src: &[u8],
             dst: &mut [u8],
             width: u32,
-        ) -> Result<(), whereat::At<CmsPluginError>> {
-            self.0.try_transform_row(src, dst, width)
-        }
-        fn prepare(&mut self, width: u32) -> Result<(), whereat::At<CmsPluginError>> {
-            self.0.prepare(width)
-        }
-    }
-    match backend.build(&CmsRequest::new(
-        src,
-        dst,
-        from.descriptor(),
-        to.descriptor(),
-        *options,
-    )) {
-        Ok(CmsSupport::Declined) => None,
-        Ok(CmsSupport::Owned(worker)) => Some(Ok(worker)),
-        Ok(CmsSupport::Shared(worker)) => Some(Ok(Box::new(SharedWorker(worker)))),
-        Err(e) => Some(Err(e)),
-    }
-}
-
-/// Error produced by a [`PluggableCms`] when a plugin recognized a
-/// conversion pair but failed to build a transform.
-///
-/// Type-erased wrapper over any `core::error::Error + Send + Sync`. Use
-/// [`CmsPluginError::new`] or [`From`] to construct.
-pub struct CmsPluginError(Box<dyn core::error::Error + Send + Sync + 'static>);
-
-// Opaque backend errors have no value-equality contract. Shared errors retain
-// identity through ConvertError clones without imposing Eq on plugin errors.
-impl PartialEq for CmsPluginError {
-    fn eq(&self, other: &Self) -> bool {
-        core::ptr::eq(self, other)
-    }
-}
-
-impl CmsPluginError {
-    /// Construct from any error that implements `core::error::Error`.
-    pub fn new<E>(err: E) -> Self
-    where
-        E: core::error::Error + Send + Sync + 'static,
-    {
-        Self(Box::new(err))
-    }
-
-    /// Construct from a message string.
-    pub fn msg(s: impl Into<alloc::string::String>) -> Self {
-        struct Msg(alloc::string::String);
-        impl core::fmt::Debug for Msg {
-            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                f.write_str(&self.0)
+        ) -> Result<(), At<ConvertError>> {
+            let w = width as usize;
+            let s_len = w * self.src_bpp;
+            let d_len = w * self.dst_bpp;
+            let s = &src[..s_len];
+            let d = &mut dst[..d_len];
+            match &self.exec {
+                MoxExec::U8(ex) => {
+                    if self.src_cmyk_inverted {
+                        let inv: alloc::vec::Vec<u8> = s.iter().map(|&b| 255 - b).collect();
+                        ex.transform(&inv, d)
+                            .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
+                    } else {
+                        ex.transform(s, d)
+                            .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
+                    }
+                    if self.dst_cmyk_inverted {
+                        for b in d.iter_mut() {
+                            *b = 255 - *b;
+                        }
+                    }
+                }
+                MoxExec::U16(ex) => {
+                    let s16: alloc::vec::Vec<u16> = s
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|&c| u16::from_ne_bytes(c))
+                        .collect();
+                    let mut d16 = alloc::vec![0u16; d_len / 2];
+                    ex.transform(&s16, &mut d16)
+                        .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
+                    for (i, &v) in d16.iter().enumerate() {
+                        d[i * 2..i * 2 + 2].copy_from_slice(&v.to_ne_bytes());
+                    }
+                }
+                MoxExec::F32(ex) => {
+                    let sf: alloc::vec::Vec<f32> = s
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|&c| f32::from_ne_bytes(c))
+                        .collect();
+                    let mut df = alloc::vec![0.0f32; d_len / 4];
+                    ex.transform(&sf, &mut df)
+                        .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
+                    for (i, &v) in df.iter().enumerate() {
+                        d[i * 4..i * 4 + 4].copy_from_slice(&v.to_ne_bytes());
+                    }
+                }
             }
+            Ok(())
         }
-        impl core::fmt::Display for Msg {
-            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                f.write_str(&self.0)
+    }
+
+    impl CmsBackend for MoxCms {
+        fn build_transform(
+            &self,
+            src: &ImageSpec,
+            dst: &ImageSpec,
+        ) -> Result<Arc<dyn CmsTransform>, At<ConvertError>> {
+            if src.layout.sample != dst.layout.sample {
+                return Err(err_at(ConvertError::UnsupportedRoute));
             }
+            let (src_p, src_intent) = profile_from_color_space(&src.color)?;
+            let (dst_p, _) = profile_from_color_space(&dst.color)?;
+            let src_l = to_mox_layout(src.layout.order)
+                .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
+            let dst_l = to_mox_layout(dst.layout.order)
+                .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
+            let opts = moxcms::TransformOptions {
+                rendering_intent: to_mox_intent(src_intent),
+                ..Default::default()
+            };
+            let exec = match src.layout.sample {
+                SampleType::U8 => MoxExec::U8(
+                    src_p
+                        .create_transform_8bit(src_l, &dst_p, dst_l, opts)
+                        .map_err(|_| err_at(ConvertError::CmsBackendFailed))?,
+                ),
+                SampleType::U16 => MoxExec::U16(
+                    src_p
+                        .create_transform_16bit(src_l, &dst_p, dst_l, opts)
+                        .map_err(|_| err_at(ConvertError::CmsBackendFailed))?,
+                ),
+                SampleType::F32 => MoxExec::F32(
+                    src_p
+                        .create_transform_f32(src_l, &dst_p, dst_l, opts)
+                        .map_err(|_| err_at(ConvertError::CmsBackendFailed))?,
+                ),
+                _ => return Err(err_at(ConvertError::UnsupportedRoute)),
+            };
+            Ok(Arc::new(MoxRowTransform {
+                exec,
+                src_bpp: src.layout.bytes_per_pixel(),
+                dst_bpp: dst.layout.bytes_per_pixel(),
+                src_cmyk_inverted: matches!(src.color, ColorSpace::Cmyk { inverted: true, .. }),
+                dst_cmyk_inverted: matches!(dst.color, ColorSpace::Cmyk { inverted: true, .. }),
+            }))
         }
-        impl core::error::Error for Msg {}
-        Self(Box::new(Msg(s.into())))
-    }
-
-    /// Borrow the inner error.
-    pub fn as_inner(&self) -> &(dyn core::error::Error + Send + Sync + 'static) {
-        &*self.0
     }
 }
 
-impl core::fmt::Debug for CmsPluginError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_tuple("CmsPluginError").field(&self.0).finish()
-    }
-}
-
-impl core::fmt::Display for CmsPluginError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Display::fmt(&self.0, f)
-    }
-}
-
-impl core::error::Error for CmsPluginError {
-    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
-        Some(self.0.as_ref())
-    }
-}
-
-#[cfg(test)]
-pub(crate) trait TestCmsExt {
-    fn build_source_transform(
-        &self,
-        src: crate::ColorProfileSource<'_>,
-        dst: crate::ColorProfileSource<'_>,
-        from: PixelFormat,
-        to: PixelFormat,
-        options: &crate::ConvertOptions,
-    ) -> Option<Result<Box<dyn RowTransformMut>, whereat::At<CmsPluginError>>>;
-}
-#[cfg(test)]
-impl<T: PluggableCms> TestCmsExt for T {
-    fn build_source_transform(
-        &self,
-        src: crate::ColorProfileSource<'_>,
-        dst: crate::ColorProfileSource<'_>,
-        from: PixelFormat,
-        to: PixelFormat,
-        options: &crate::ConvertOptions,
-    ) -> Option<Result<Box<dyn RowTransformMut>, whereat::At<CmsPluginError>>> {
-        build_owned(self, src, dst, from, to, options)
-    }
-}
+#[cfg(feature = "cms-moxcms")]
+pub use moxcms_impl::MoxCms;

@@ -1,570 +1,131 @@
-//! Error types for pixel format conversion.
+//! Structured conversion errors wrapped in [`whereat::At`] for source-site traces.
 
-use crate::{ColorModel, PixelDescriptor, TransferFunction};
 use core::fmt;
+use whereat::At;
+use zenpixels::{BufferError, ColorError, LayoutError};
 
-/// Errors that can occur during pixel format negotiation or conversion.
-//
-// `#[non_exhaustive]` (added 0.2.14): cargo-copter confirmed sealing it broke
-// zero of zpc's published reverse-dependents — nobody matches `ConvertError`
-// exhaustively — so it shipped as a tolerated 0.2.x break instead of waiting for
-// 0.3.0. That in turn let the `Buffer(BufferError)` variant land in the same
-// patch (adding a variant to an already-`#[non_exhaustive]` enum is not a
-// break). `Buffer` preserves the real `zenpixels::BufferError` cause
-// (`StrideTooSmall` / `InvalidDimensions` / …) instead of collapsing every
-// buffer-construction failure into `AllocationFailed` (an out-of-memory label);
-// the construction sites map via `map_err_at(ConvertError::from)`, which keeps
-// both the cause and the `At` location trace.
-#[derive(Debug, Clone, PartialEq)]
+/// Error returned when planning or executing a pixel conversion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConvertError {
-    /// Current descriptor or color context changed after output preparation.
-    SourceInterpretationChanged,
-    /// A required output descriptor disagrees with the selected profile.
-    OutputInterpretationMismatch {
-        /// The caller's exact output requirement, never silently substituted.
-        requested: PixelDescriptor,
-        /// Descriptor resolved from the profile with the requested association.
-        profile: PixelDescriptor,
-    },
-    /// No supported format could be found for the source descriptor.
-    NoMatch { source: PixelDescriptor },
-    /// No conversion path exists between the two formats.
-    NoPath {
-        from: PixelDescriptor,
-        to: PixelDescriptor,
-    },
-    /// CICP cannot describe the requested RGB/gray samples without losing meaning.
-    CicpDescriptor(zenpixels::cicp::CicpDescriptorError),
-    /// Source and destination buffer sizes don't match the expected dimensions.
-    BufferSize { expected: usize, actual: usize },
-    /// Width is zero or would overflow stride calculations.
-    InvalidWidth(u32),
-    /// The supported format list was empty.
-    EmptyFormatList,
-    /// Conversion between these transfer functions is not yet supported.
-    UnsupportedTransfer {
-        from: TransferFunction,
-        to: TransferFunction,
-    },
-    /// Alpha channel is not fully opaque and [`AlphaPolicy::DiscardIfOpaque`](crate::AlphaPolicy::DiscardIfOpaque) was set.
-    AlphaNotOpaque,
-    /// A conditional alpha policy needs explicit `adapt::check_opaque` preflight.
-    /// After successful preflight, use `AlphaPolicy::DiscardUnchecked`.
-    AlphaCheckRequired,
-    /// Depth reduction was requested but [`DepthPolicy::Forbid`](crate::DepthPolicy::Forbid) was set.
-    DepthReductionForbidden,
-    /// Alpha removal was requested but [`AlphaPolicy::Forbid`](crate::AlphaPolicy::Forbid) was set.
-    AlphaRemovalForbidden,
-    /// RGB-to-grayscale conversion requires explicit luma coefficients.
-    RgbToGray,
-    /// Buffer allocation failed.
-    AllocationFailed,
-    /// A pixel buffer or slice could not be constructed: carries the real
-    /// [`zenpixels::BufferError`] cause (`StrideTooSmall`, `InvalidDimensions`,
-    /// …) instead of collapsing it into [`AllocationFailed`](Self::AllocationFailed).
-    Buffer(zenpixels::BufferError),
-    /// CMS transform could not be built (invalid ICC profile, unsupported color space, etc.).
-    CmsError(alloc::string::String),
-    /// Original CMS build/row failure, retaining its concrete error chain.
-    /// Clones share the error; equality compares error identity.
-    CmsBackend(alloc::sync::Arc<crate::cms::CmsPluginError>),
-    /// Relative/absolute light conversion needs an explicit SDR-white anchor.
-    SdrWhiteRequired,
-    /// Tone mapping needs a declared or explicit source peak; rows cannot measure a buffer.
-    HdrPeakRequired,
-    /// Tone mapping needs an explicit destination SDR peak.
-    SdrPeakRequired,
-    /// The requested HDR conversion needs a Cargo feature that is not enabled.
-    HdrFeatureRequired,
-    /// The requested conversion needs a Cargo feature on `zenpixels-convert` that
-    /// is not enabled in this build (such as `"perceptual"`, `"oklab"`, or
-    /// `"hdr-transfers"`).
-    FeatureRequired {
-        /// Cargo feature name to enable on `zenpixels-convert`.
-        feature: &'static str,
-        /// Source pixel descriptor.
-        from: PixelDescriptor,
-        /// Destination pixel descriptor.
-        to: PixelDescriptor,
-    },
-    /// HLG rendering needs explicit conditions supplied through
-    /// [`zenpixels::ConvertOptions::with_hlg_rendering`].
+    /// Underlying [`ImageSpec`](zenpixels::ImageSpec) validation error.
+    InvalidSpec(ColorError),
+    /// Underlying [`SampleLayout`](zenpixels::SampleLayout) validation error.
+    InvalidLayout(LayoutError),
+    /// Underlying pixel buffer geometry, alignment, or allocation error.
+    Buffer(BufferError),
+    /// Conversion crosses absolute PQ luminance ↔ relative linear light without a [`DiffuseWhite`](zenpixels::DiffuseWhite) anchor.
+    MissingHdrAnchor,
+    /// Conversion renders HLG into linear/SDR/PQ without explicit [`HlgRendering`](zenpixels::HlgRendering) conditions.
     HlgRenderingRequired,
-    /// The conversion is HDR (`Pq` / `Hlg`) → SDR but no usable peak
-    /// luminance was supplied. Raised both when no peak was given at all
-    /// (the plain [`ConvertPlan::build`](crate::ConvertPlan::build) entry
-    /// point doesn't take one) and when a supplied `HdrConfig` carries a
-    /// non-finite or non-positive `source_peak_nits` / `target_peak_nits`
-    /// (including the unset `HdrConfig::default()` value `0.0`) — a
-    /// degenerate peak would tone-map every pixel to black. Build the
-    /// plan via `NativePlan::new_with_hdr_peak` (or
-    /// `NativePlan::new_with_hdr_config` for full knob control), and
-    /// pass the source's MaxCLL — e.g. from
-    /// `hdr::measure::CllMeasure::measure_max`. All three live behind
-    /// the `hdr-experimental` Cargo feature (plain code spans here, not
-    /// intra-doc links, so this page renders link-clean without it).
-    ///
-    /// Pre-0.2.16 the plain `NativePlan::new` silently routed HDR→SDR
-    /// through the linear intermediate with no tone-mapping, producing
-    /// semantically wrong pixels. This variant replaces that with a
-    /// loud refusal.
-    HdrSourceRequiresPeak {
-        from: PixelDescriptor,
-        to: PixelDescriptor,
-    },
-    #[cfg_attr(
-        feature = "hdr-experimental",
-        doc = "The injected [`ToneMapper`](crate::hdr::ToneMapper) declared"
-    )]
-    #[cfg_attr(
-        not(feature = "hdr-experimental"),
-        doc = "The injected `ToneMapper` declared"
-    )]
-    #[cfg_attr(
-        feature = "hdr-experimental",
-        doc = "[`Requirements::full_image == true`](crate::hdr::Requirements::full_image)"
-    )]
-    #[cfg_attr(
-        not(feature = "hdr-experimental"),
-        doc = "`Requirements::full_image == true`"
-    )]
-    /// from
-    #[cfg_attr(
-        feature = "hdr-experimental",
-        doc = "[`ConversionSpec::with_tone_mapper`](crate::ConversionSpec::with_tone_mapper),"
-    )]
-    #[cfg_attr(
-        not(feature = "hdr-experimental"),
-        doc = "`NativePlan::new_with_tone_mapper`,"
-    )]
-    /// but this pipeline does not yet support full-image local
-    /// operators (Mantiuk gradient processing, Fattal, bilateral, …).
-    ///
-    /// The capacity is reserved in the public types
-    #[cfg_attr(
-        feature = "hdr-experimental",
-        doc = "([`Requirements::full_image`](crate::hdr::Requirements::full_image)"
-    )]
-    #[cfg_attr(not(feature = "hdr-experimental"), doc = "(`Requirements::full_image`")]
-    #[cfg_attr(
-        feature = "hdr-experimental",
-        doc = "and [`PreparedMapper::Buffered`](crate::hdr::PreparedMapper))"
-    )]
-    #[cfg_attr(
-        not(feature = "hdr-experimental"),
-        doc = "and `PreparedMapper::Buffered`)"
-    )]
-    /// under `#[non_exhaustive]` so the variant can be activated in a
-    /// patch release without semver impact. Pick a streaming mapper
-    /// (any pointwise curve — BT.2446-A, ACES, FilmicSpline, the
-    /// adaptive family in zentone, …) until that lands.
-    ///
-    #[cfg_attr(
-        feature = "hdr-experimental",
-        doc = "`mapper_name` is the [`ToneMapper::name`](crate::hdr::ToneMapper::name)"
-    )]
-    #[cfg_attr(
-        not(feature = "hdr-experimental"),
-        doc = "`mapper_name` is the `ToneMapper::name`"
-    )]
-    /// of the offending mapper, captured for diagnostics.
-    FullImageMapperNotSupported {
-        /// The kebab-case identifier returned by
-        #[cfg_attr(
-            feature = "hdr-experimental",
-            doc = "[`ToneMapper::name`](crate::hdr::ToneMapper::name)."
-        )]
-        #[cfg_attr(not(feature = "hdr-experimental"), doc = "`ToneMapper::name`.")]
-        mapper_name: &'static str,
-    },
-    /// The conversion requires a color management plugin but none was provided.
-    ///
-    /// Returned when one (or both) sides use a non-native color model — CMYK,
-    /// Lab, XYZ, spot inks, or any future device-dependent space — that
-    /// `zenpixels-convert` cannot resolve with its built-in kernels. Attach
-    /// a plugin via
-    /// [`ConversionSpec::with_cms`](crate::ConversionSpec::with_cms)
-    /// (e.g. `Some(&MoxCms)` under the `cms-moxcms` feature) and the plan
-    /// will dispatch the full row work to it.
-    ///
-    /// Distinct from [`NoPath`](Self::NoPath): `NeedsCms` says "a path
-    /// exists, but requires CMS dispatch"; `NoPath` says "no architecturally
-    /// possible conversion." Callers that want to route to a CMS should
-    /// match on `NeedsCms` and re-issue the call with a plugin attached.
-    ///
-    /// **Pre-0.2.16:** the same descriptors caused a process-aborting
-    /// `assert_not_cmyk` panic — replaced by this typed variant so the
-    /// documented `Some(&MoxCms)` escape hatch is actually reachable.
-    NeedsCms {
-        from: PixelDescriptor,
-        to: PixelDescriptor,
-    },
-    /// Implicit relabeling between [`TransferFunction::Unknown`] and a resolved
-    /// transfer function is forbidden; supply an authoritative [`zenpixels::ColorContext`]
-    /// or call [`ConvertPlan::relabel_transfer`](crate::ConvertPlan::relabel_transfer).
-    UnknownTransferRelabelForbidden {
-        from: PixelDescriptor,
-        to: PixelDescriptor,
-    },
-    /// Composed [`ConvertPlan::then`](crate::ConvertPlan::then) boundary encodings do not match.
-    IntermediateMismatch,
-    /// Conversion loses modeled source capacity disallowed by hidden-choice policy.
-    CapacityLoss(crate::precision::ConversionEffect),
-    /// Requested destination luminance anchor/peak disagrees with the compiled output context.
-    TargetLuminanceMismatch,
-    /// Per-worker scratch exceeds [`ConversionSpec::with_worker_limit`](crate::ConversionSpec::with_worker_limit)
-    /// (or uses an opaque backend whose worker bytes are [`ByteBound::Unknown`](crate::ByteBound::Unknown)).
-    WorkerBudgetExceeded { bytes: crate::ByteBound, limit: u64 },
-    /// None of the offered [`CandidateTarget`](crate::CandidateTarget)s could be admitted.
-    NoCandidate {
-        index: usize,
-        cause: alloc::boxed::Box<ConvertError>,
-    },
-    /// Attempted to clone a [`ConvertPlan`](crate::ConvertPlan) or [`RowConverter`](crate::RowConverter)
-    /// that owns a stateful `RowTransformMut` worker.
-    OwnedCmsConsumed,
-    /// Explicit HDR rendering combined with an unresolved/distinct ICC profile cannot be
-    /// executed by the descriptor-only HDR planner without bypassing profile authority.
-    HdrWithOpaqueProfileUnsupported,
-    /// Input view or intermediate stage does not declare the
-    /// [`FloatFacts`](zenpixels::sample::FloatFacts) required by a specialized plan.
-    FloatFactsUnsatisfied {
-        /// Floating-point invariants required by the plan.
-        required: zenpixels::sample::FloatFacts,
-        /// Floating-point invariants actually declared on the input view or upstream stage.
-        actual: zenpixels::sample::FloatFacts,
-    },
+    /// HDR tone mapping requested [`PeakSource::Declared`](zenpixels::PeakSource::Declared) but no MaxCLL or ST 2086 mastering peak was present.
+    MissingDeclaredPeak,
+    /// HDR transfer (`Pq` / `Hlg`) requires enabling the `hdr-transfers` Cargo feature.
+    HdrFeatureRequired,
+    /// Requested color space or operator requires an optional Cargo feature (`oklab`, `perceptual`, `bt2446a`, etc.).
+    FeatureRequired(&'static str),
+    /// Conversion involves an arbitrary ICC profile or CMYK ink space and requires a [`CmsBackend`](crate::cms::CmsBackend).
+    CmsRequired,
+    /// Destination has lower precision than source while `DepthPolicy::Forbid` is active.
+    DepthReductionForbidden,
+    /// Conversion drops non-opaque alpha while `AlphaPolicy::Forbid` or `DiscardIfOpaque` (unproven) is active.
+    AlphaLossForbidden,
+    /// Conversion changes `Full ↔ Narrow` signal range while `RangePolicy::Forbid` is active.
+    RangeConversionForbidden,
+    /// Conversion narrows gamut or clips extended values while `GamutPolicy::Forbid` is active.
+    GamutLossForbidden,
+    /// Conversion route is not supported (e.g., unknown primaries across a gamut change, or non-standard sample type).
+    UnsupportedRoute,
+    /// Source and destination dimensions or row byte lengths disagree.
+    DimensionMismatch,
+    /// Custom [`ToneMapper`](crate::tonemap::ToneMapper) declared `full_image = true`, which is not supported in streaming plans.
+    FullImageMapperNotSupported,
+    /// Custom [`ToneMapper`](crate::tonemap::ToneMapper) failed to prepare for this image context.
+    ToneMapperFailed,
+    /// CMS backend rejected or failed to execute the transform.
+    CmsBackendFailed,
+    /// Heap allocation failed.
+    AllocationFailed,
+}
+
+impl From<ColorError> for ConvertError {
+    fn from(e: ColorError) -> Self {
+        Self::InvalidSpec(e)
+    }
+}
+
+impl From<LayoutError> for ConvertError {
+    fn from(e: LayoutError) -> Self {
+        Self::InvalidLayout(e)
+    }
+}
+
+impl From<BufferError> for ConvertError {
+    fn from(e: BufferError) -> Self {
+        match e {
+            BufferError::AllocationFailed => Self::AllocationFailed,
+            other => Self::Buffer(other),
+        }
+    }
 }
 
 impl fmt::Display for ConvertError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::SourceInterpretationChanged => {
-                f.write_str("source interpretation changed after output preparation")
-            }
-            Self::OutputInterpretationMismatch { requested, profile } => {
-                write!(
-                    f,
-                    "required output {requested:?} disagrees with selected profile {profile:?}"
-                )
-            }
-            Self::NoMatch { source } => {
-                write!(
-                    f,
-                    "no supported format matches source {:?}/{:?}",
-                    source.channel_type(),
-                    source.layout()
-                )
-            }
-            Self::NoPath { from, to } => {
-                write!(
-                    f,
-                    "no conversion path from {:?}/{:?} to {:?}/{:?}",
-                    from.channel_type(),
-                    from.layout(),
-                    to.channel_type(),
-                    to.layout()
-                )?;
-                // CMYK or signal-range crossings would otherwise print two
-                // identical-looking descriptors with no hint why the conversion
-                // failed. Name the actual blocker so the caller can route
-                // intelligently (CMYK → moxcms/CMS pipeline; range crossing →
-                // explicit rescale stage).
-                let cmyk_blocked =
-                    from.color_model() == ColorModel::Cmyk || to.color_model() == ColorModel::Cmyk;
-                if cmyk_blocked {
-                    write!(
-                        f,
-                        " (CMYK is device-dependent and requires an ICC profile; \
-                         zenpixels-convert reinterpreting C/M/Y/K as R/G/B/A would \
-                         silently corrupt both colour and transparency. Use a CMS \
-                         such as moxcms for CMYK↔RGB)"
-                    )?;
-                }
-                let pcs_blocked = matches!(from.color_model(), ColorModel::Lab | ColorModel::Xyz)
-                    || matches!(to.color_model(), ColorModel::Lab | ColorModel::Xyz);
-                if pcs_blocked {
-                    write!(
-                        f,
-                        " (CIE Lab/XYZ conversion requires a CMS backend such as Lcms or MoxCms)"
-                    )?;
-                }
-                if from.signal_range != to.signal_range {
-                    write!(
-                        f,
-                        " (signal range {} -> {}: no narrow<->full conversion kernels exist; \
-                         relabeling without rescaling would corrupt pixel values)",
-                        from.signal_range, to.signal_range
-                    )?;
-                }
-                if from.signal_range == crate::SignalRange::Narrow
-                    && to.signal_range == crate::SignalRange::Narrow
-                    && from.channel_type() != to.channel_type()
-                {
-                    write!(
-                        f,
-                        " (narrow signal range depth conversion is unsupported; full-range scaling would change the signal)"
-                    )?;
-                }
-                Ok(())
-            }
-            Self::BufferSize { expected, actual } => {
-                write!(
-                    f,
-                    "buffer size mismatch: expected {expected} bytes, got {actual}"
-                )
-            }
-            Self::InvalidWidth(w) => write!(f, "invalid width: {w}"),
-            Self::EmptyFormatList => write!(f, "supported format list is empty"),
-            Self::UnsupportedTransfer { from, to } => {
-                write!(f, "unsupported transfer conversion: {from:?} → {to:?}")
-            }
-            Self::AlphaCheckRequired => write!(
-                f,
-                "DiscardIfOpaque requires explicit adapt::check_opaque preflight; then use DiscardUnchecked"
+            Self::InvalidSpec(e) => e.fmt(f),
+            Self::InvalidLayout(e) => e.fmt(f),
+            Self::Buffer(e) => e.fmt(f),
+            Self::MissingHdrAnchor => f.write_str(
+                "conversion between absolute PQ and relative light requires a DiffuseWhite anchor",
             ),
-            Self::AlphaNotOpaque => write!(f, "alpha channel is not fully opaque"),
-            Self::DepthReductionForbidden => write!(f, "depth reduction forbidden by policy"),
-            Self::AlphaRemovalForbidden => write!(f, "alpha removal forbidden by policy"),
-            Self::RgbToGray => {
-                write!(f, "RGB-to-grayscale requires explicit luma coefficients")
-            }
-            Self::AllocationFailed => write!(f, "buffer allocation failed"),
-            Self::Buffer(e) => write!(f, "buffer construction failed: {e}"),
-            Self::CicpDescriptor(e) => write!(f, "color declaration failed: {e}"),
-            Self::CmsBackend(error) => write!(f, "CMS failure: {error}"),
-            Self::CmsError(msg) => write!(f, "CMS transform failed: {msg}"),
-            Self::SdrWhiteRequired => f.write_str("SDR white is missing; use ConvertOptions::with_sdr_white or ColorContext::with_diffuse_white"),
-            Self::HdrPeakRequired => f.write_str("HDR peak is missing; buffer conversion resolves HdrPeak::Measured, while ConvertPlan::build / RowConverter require explicit ConvertOptions::with_hdr_peak(HdrPeak::Nits(...)) (HlgRendering display peak is not reused as content peak)"),
-            Self::SdrPeakRequired => f.write_str("SDR target peak is missing; use ConvertOptions::with_sdr_peak"),
-            Self::HdrFeatureRequired => f.write_str("HDR tone mapping requires the bt2446a Cargo feature"),
-            Self::FeatureRequired { feature, from, to } => write!(
-                f,
-                "conversion from {from} to {to} requires the `{feature}` Cargo feature on zenpixels-convert"
+            Self::HlgRenderingRequired => f.write_str(
+                "converting scene-referred HLG requires explicit HlgRendering conditions",
             ),
-            Self::HlgRenderingRequired => f.write_str("HLG rendering requires explicit supported display conditions"),
-            Self::HdrSourceRequiresPeak { from, to } => write!(
-                f,
-                "HDR→SDR conversion ({:?} → {:?}) requires positive, finite peak \
-                 luminances; supply ConvertOptions::with_hdr_peak / with_sdr_peak \
-                 (or measure MaxCLL via CllMeasure::measure_max) and build with ConvertPlan::build",
-                from.transfer(),
-                to.transfer(),
+            Self::MissingDeclaredPeak => f.write_str(
+                "PeakSource::Declared requested, but neither MaxCLL nor ST 2086 mastering peak is set",
             ),
-            Self::FullImageMapperNotSupported { mapper_name } => write!(
-                f,
-                "tone mapper '{mapper_name}' requires full-image buffering \
-                 (Requirements::full_image == true); ConvertPlan / RowConverter only \
-                 supports streaming mappers. Pick a pointwise curve (Bt2446A, ACES, \
-                 FilmicSpline, …) — local-operator support is reserved capacity",
-            ),
-            Self::NeedsCms { from, to } => write!(
-                f,
-                "conversion from {} to {} requires a color management plugin: \
-                 pass ConversionSpec::with_cms(&MoxCms) (or another PluggableCms \
-                 backend) to dispatch the row work to a CMS",
-                from.color_model(),
-                to.color_model(),
-            ),
-            Self::UnknownTransferRelabelForbidden { from, to } => write!(
-                f,
-                "implicit Unknown <-> Known transfer conversion ({:?} -> {:?}) is forbidden; \
-                 attach an authoritative ColorContext or call ConvertPlan::relabel_transfer",
-                from.transfer(),
-                to.transfer(),
-            ),
-            Self::IntermediateMismatch => {
-                f.write_str("the materialized intermediate PixelEncoding differs between composed plans")
+            Self::HdrFeatureRequired => {
+                f.write_str("PQ/HLG conversions require the `hdr-transfers` feature")
             }
-            Self::CapacityLoss(effect) => {
-                write!(f, "the requested output loses modeled source capacity: {effect:?}")
+            Self::FeatureRequired(feat) => {
+                write!(f, "requested conversion requires Cargo feature `{feat}`")
             }
-            Self::TargetLuminanceMismatch => {
-                f.write_str("the effective output luminance metadata disagrees with the requested target")
+            Self::CmsRequired => {
+                f.write_str("ICC or CMYK conversion requires a configured CmsBackend")
             }
-            Self::WorkerBudgetExceeded { bytes, limit } => {
-                write!(
-                    f,
-                    "worker requires {bytes:?} scratch bytes, exceeding the {limit}-byte limit"
-                )
+            Self::DepthReductionForbidden => {
+                f.write_str("bit-depth or precision reduction forbidden by DepthPolicy::Forbid")
             }
-            Self::NoCandidate { index, cause } => {
-                write!(f, "candidate {index} was refused: {cause}")
+            Self::AlphaLossForbidden => {
+                f.write_str("dropping non-opaque alpha forbidden by AlphaPolicy")
             }
-            Self::OwnedCmsConsumed => {
-                f.write_str("cannot clone a plan or worker that owns a stateful RowTransformMut backend")
+            Self::RangeConversionForbidden => {
+                f.write_str("Full<->Narrow signal range change forbidden by RangePolicy::Forbid")
             }
-            Self::HdrWithOpaqueProfileUnsupported => {
-                f.write_str("explicit HdrConfig cannot be combined with an unresolved ICC profile without bypassing profile authority")
+            Self::GamutLossForbidden => {
+                f.write_str("gamut clipping or narrowing forbidden by GamutPolicy::Forbid")
             }
-            Self::FloatFactsUnsatisfied { required, actual } => {
-                write!(
-                    f,
-                    "input float facts {actual:?} do not satisfy plan requirement {required:?}"
-                )
+            Self::UnsupportedRoute => {
+                f.write_str("unsupported color or layout conversion route")
             }
+            Self::DimensionMismatch => {
+                f.write_str("source and destination image dimensions or row lengths do not match")
+            }
+            Self::FullImageMapperNotSupported => {
+                f.write_str("full-image buffering ToneMapper is not supported in streaming plans")
+            }
+            Self::ToneMapperFailed => f.write_str("tone mapper failed to prepare"),
+            Self::CmsBackendFailed => f.write_str("CMS backend failed to build or run transform"),
+            Self::AllocationFailed => f.write_str("allocation failed during pixel conversion"),
         }
     }
 }
 
-impl From<zenpixels::BufferError> for ConvertError {
-    /// Wrap a buffer-construction failure's real cause into
-    /// [`ConvertError::Buffer`]. Pair with `map_err_at` at the call sites so the
-    /// `At` location trace is preserved alongside the classified cause.
-    fn from(err: zenpixels::BufferError) -> Self {
-        Self::Buffer(err)
-    }
-}
+impl core::error::Error for ConvertError {}
 
-impl core::error::Error for ConvertError {
-    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
-        match self {
-            Self::CmsBackend(error) => Some(error.as_ref()),
-            Self::Buffer(error) => Some(error),
-            Self::CicpDescriptor(error) => Some(error),
-            Self::NoCandidate { cause, .. } => Some(cause.as_ref()),
-            _ => None,
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use alloc::format;
-
-    #[test]
-    fn display_no_match() {
-        let e = ConvertError::NoMatch {
-            source: PixelDescriptor::RGB8_SRGB,
-        };
-        let s = format!("{e}");
-        assert!(s.contains("no supported format"));
-        assert!(s.contains("U8"));
-        assert!(s.contains("Rgb"));
-    }
-
-    #[test]
-    fn display_no_path() {
-        let e = ConvertError::NoPath {
-            from: PixelDescriptor::RGB8_SRGB,
-            to: PixelDescriptor::GRAY8_SRGB,
-        };
-        let s = format!("{e}");
-        assert!(s.contains("no conversion path"));
-    }
-
-    #[test]
-    fn display_buffer_size() {
-        let e = ConvertError::BufferSize {
-            expected: 1024,
-            actual: 512,
-        };
-        let s = format!("{e}");
-        assert!(s.contains("1024"));
-        assert!(s.contains("512"));
-    }
-
-    #[test]
-    fn display_invalid_width() {
-        let e = ConvertError::InvalidWidth(0);
-        assert!(format!("{e}").contains("0"));
-    }
-
-    #[test]
-    fn display_empty_format_list() {
-        let s = format!("{}", ConvertError::EmptyFormatList);
-        assert!(s.contains("empty"));
-    }
-
-    #[test]
-    fn display_unsupported_transfer() {
-        let e = ConvertError::UnsupportedTransfer {
-            from: TransferFunction::Pq,
-            to: TransferFunction::Hlg,
-        };
-        let s = format!("{e}");
-        assert!(s.contains("Pq"));
-        assert!(s.contains("Hlg"));
-    }
-
-    #[test]
-    fn display_alpha_not_opaque() {
-        assert!(format!("{}", ConvertError::AlphaNotOpaque).contains("opaque"));
-    }
-
-    #[test]
-    fn display_depth_reduction_forbidden() {
-        assert!(format!("{}", ConvertError::DepthReductionForbidden).contains("forbidden"));
-    }
-
-    #[test]
-    fn display_alpha_removal_forbidden() {
-        assert!(format!("{}", ConvertError::AlphaRemovalForbidden).contains("forbidden"));
-    }
-
-    #[test]
-    fn display_rgb_to_gray() {
-        assert!(format!("{}", ConvertError::RgbToGray).contains("luma"));
-    }
-
-    #[test]
-    fn display_allocation_failed() {
-        assert!(format!("{}", ConvertError::AllocationFailed).contains("allocation"));
-    }
-
-    #[test]
-    fn display_cms_error() {
-        let e = ConvertError::CmsError(alloc::string::String::from("profile mismatch"));
-        let s = format!("{e}");
-        assert!(s.contains("CMS transform failed"));
-        assert!(s.contains("profile mismatch"));
-    }
-
-    #[test]
-    fn display_needs_cms() {
-        let e = ConvertError::NeedsCms {
-            from: PixelDescriptor::CMYK8,
-            to: PixelDescriptor::RGB8_SRGB,
-        };
-        let s = format!("{e}");
-        assert!(s.contains("color management plugin"), "{s}");
-        assert!(s.contains("CMYK"), "{s}");
-        assert!(s.contains("RGB"), "{s}");
-    }
-
-    #[test]
-    fn error_eq() {
-        assert_eq!(ConvertError::AlphaNotOpaque, ConvertError::AlphaNotOpaque);
-        assert_ne!(ConvertError::AlphaNotOpaque, ConvertError::RgbToGray);
-    }
-
-    #[test]
-    fn error_debug() {
-        let e = ConvertError::AllocationFailed;
-        let s = format!("{e:?}");
-        assert!(s.contains("AllocationFailed"));
-    }
-
-    #[test]
-    fn error_clone() {
-        let e = ConvertError::BufferSize {
-            expected: 100,
-            actual: 50,
-        };
-        let e2 = e.clone();
-        assert_eq!(e, e2);
-    }
-
-    #[test]
-    fn display_full_image_mapper_not_supported() {
-        let e = ConvertError::FullImageMapperNotSupported {
-            mapper_name: "mantiuk08",
-        };
-        let s = format!("{e}");
-        assert!(s.contains("mantiuk08"), "{s}");
-        assert!(s.contains("full-image"), "{s}");
-        assert!(s.contains("streaming"), "{s}");
-    }
+#[cold]
+#[inline(never)]
+#[track_caller]
+pub(crate) fn err_at(e: ConvertError) -> At<ConvertError> {
+    whereat::at!(e)
 }

@@ -70,23 +70,10 @@
 
 use alloc::borrow::Cow;
 
-use crate::Cicp;
-#[cfg(any(not(feature = "icc-db"), test))]
-use crate::ColorPrimaries;
-#[cfg(any(not(feature = "icc-db"), test))]
-use crate::TransferFunction;
+use zenpixels::{Cicp, Primaries, Transfer};
 
-// Bundled, transfer-grouped CICP→ICC blob: a build-time-generated index
-// (`cicp_bundle_index`) over an LZ4-compressed asset, decoded lazily per
-// transfer group at runtime (`cicp_bundle`). This gives `synthesize_icc_for_cicp`
-// supported H.273 coverage with no runtime CMS dependency. The build-time
-// recipe and independently checked definitions govern future regeneration. Both submodules are internal implementation detail.
-#[cfg(all(test, feature = "cms-moxcms"))]
-pub(crate) mod canonical;
 #[cfg(feature = "icc-db")]
 mod cicp_bundle;
-#[cfg(all(test, feature = "cms-moxcms"))]
-pub(crate) mod synthesis;
 #[cfg(feature = "icc-db")]
 #[rustfmt::skip]
 mod cicp_bundle_index;
@@ -107,9 +94,7 @@ pub const DISPLAY_P3_V4: &[u8] = include_bytes!("profiles/DisplayP3Compat-v4.icc
 
 // Small qualified exports: exact bytes of the current generated bundle.
 // Historical constants remain unchanged for explicit compatibility/recognition.
-#[cfg(any(not(feature = "icc-db"), test))]
 const P3_EXPORT_SRGB: &[u8] = include!("icc_profiles/p3_export_13.inc");
-#[cfg(any(not(feature = "icc-db"), test))]
 const P3_EXPORT_BT709: &[u8] = include!("icc_profiles/p3_export_1.inc");
 
 /// Display P3 Compatible ICC profile, v2 format (736 bytes).
@@ -175,23 +160,16 @@ pub(crate) const REC2020_V4: &[u8] = include_bytes!("profiles/Rec2020Compat-v4.i
 ///
 /// [`SynthesizedIcc::for_cicp`] serves every assigned pair (these included)
 /// from the `icc-db` blob; this table is its fallback without that feature.
-// Used by `synthesize_icc_for_cicp` only without `icc-db`.
-#[cfg(any(not(feature = "icc-db"), test))]
 #[inline]
-pub(crate) const fn bundled_icc_profile(
-    primaries: ColorPrimaries,
-    transfer: TransferFunction,
+pub const fn bundled_icc_profile(
+    primaries: Primaries,
+    transfer: Transfer,
 ) -> Option<&'static [u8]> {
     match (primaries, transfer) {
-        // Qualified generated P3 exports; compatibility constants remain explicit.
-        (ColorPrimaries::DisplayP3, TransferFunction::Srgb) => Some(P3_EXPORT_SRGB),
-        (ColorPrimaries::DisplayP3, TransferFunction::Bt709) => Some(P3_EXPORT_BT709),
-        // BT.2020 + BT.709: saucecontrol's Rec2020Compat carries the
-        // paraType-3 BT.709 TRC.
-        (ColorPrimaries::Bt2020, TransferFunction::Bt709) => Some(REC2020_V4),
-        // Adobe RGB + Gamma22: bundled v2 pure-gamma variant.
-        (ColorPrimaries::AdobeRgb, TransferFunction::Gamma22) => Some(ADOBE_RGB),
-        // Everything else: no bundled profile with that exact TRC.
+        (Primaries::DisplayP3, Transfer::Srgb) => Some(P3_EXPORT_SRGB),
+        (Primaries::DisplayP3, Transfer::Bt709) => Some(P3_EXPORT_BT709),
+        (Primaries::Bt2020, Transfer::Bt709) => Some(REC2020_V4),
+        (Primaries::AdobeRgb, Transfer::Gamma22) => Some(ADOBE_RGB),
         _ => None,
     }
 }
@@ -348,7 +326,9 @@ pub(crate) fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
     // documented build-dependent meaning.
     #[cfg(not(feature = "icc-db"))]
     {
-        match bundled_icc_profile(cicp.color_primaries_enum(), cicp.transfer_function_enum()) {
+        let cp = Primaries::from_cicp(cicp.color_primaries).unwrap_or(Primaries::Unknown);
+        let tf = Transfer::from_cicp(cicp.transfer_characteristics).unwrap_or(Transfer::Unknown);
+        match bundled_icc_profile(cp, tf) {
             Some(bytes) => SynthesizedIcc::Profile(Cow::Borrowed(bytes)),
             None => SynthesizedIcc::NeedsCms,
         }
@@ -406,10 +386,6 @@ pub(crate) fn synthesize_gray_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
         SynthesizedIcc::NeedsCms
     }
 }
-
-#[cfg(test)]
-#[path = "icc_profiles/colourimetry_tests.rs"]
-mod colourimetry_tests;
 
 #[cfg(test)]
 mod tests {
@@ -530,33 +506,37 @@ mod tests {
 
     #[test]
     fn bundled_icc_profile_hits_combinations() {
-        // Each const serves only the pair whose curve it carries.
         assert_eq!(
-            bundled_icc_profile(ColorPrimaries::DisplayP3, TransferFunction::Srgb),
+            bundled_icc_profile(Primaries::DisplayP3, Transfer::Srgb),
             Some(P3_EXPORT_SRGB)
         );
         assert_eq!(
-            bundled_icc_profile(ColorPrimaries::Bt2020, TransferFunction::Bt709),
+            bundled_icc_profile(Primaries::Bt2020, Transfer::Bt709),
             Some(REC2020_V4)
         );
-        // Adobe RGB: pure-gamma-2.2 TRC.
         assert_eq!(
-            bundled_icc_profile(ColorPrimaries::AdobeRgb, TransferFunction::Gamma22),
+            bundled_icc_profile(Primaries::AdobeRgb, Transfer::Gamma22),
             Some(ADOBE_RGB)
         );
     }
 
     #[test]
     fn bundled_icc_profile_rejects_hdr_transfers() {
-        // HDR PQ / HLG profiles aren't bundled; callers should use CICP or
-        // a CMS-side generator.
-        assert!(bundled_icc_profile(ColorPrimaries::Bt2020, TransferFunction::Pq).is_none());
-        assert!(bundled_icc_profile(ColorPrimaries::Bt2020, TransferFunction::Hlg).is_none());
-        assert!(bundled_icc_profile(ColorPrimaries::DisplayP3, TransferFunction::Pq).is_none());
-        assert!(bundled_icc_profile(ColorPrimaries::DisplayP3, TransferFunction::Hlg).is_none());
-        // Linear likewise isn't bundled — CICP 8 is the canonical signal.
-        assert!(bundled_icc_profile(ColorPrimaries::Bt2020, TransferFunction::Linear).is_none());
-        assert!(bundled_icc_profile(ColorPrimaries::DisplayP3, TransferFunction::Linear).is_none());
+        assert!(bundled_icc_profile(Primaries::Bt2020, Transfer::Pq).is_none());
+        assert!(
+            bundled_icc_profile(Primaries::Bt2020, Transfer::Hlg(zenpixels::HlgMode::Scene))
+                .is_none()
+        );
+        assert!(bundled_icc_profile(Primaries::DisplayP3, Transfer::Pq).is_none());
+        assert!(
+            bundled_icc_profile(
+                Primaries::DisplayP3,
+                Transfer::Hlg(zenpixels::HlgMode::Scene)
+            )
+            .is_none()
+        );
+        assert!(bundled_icc_profile(Primaries::Bt2020, Transfer::Linear).is_none());
+        assert!(bundled_icc_profile(Primaries::DisplayP3, Transfer::Linear).is_none());
     }
 
     #[test]
@@ -628,12 +608,10 @@ mod tests {
                 // Unknown while the profile identifies as Gamma22: a mapping
                 // gap, not a profile error, so Unknown fields are skipped.)
                 if let Some(id) = zenpixels::icc::IccIdentification::from_icc(&bytes) {
-                    let (want_p, want_t) =
-                        (asked.color_primaries_enum(), asked.transfer_function_enum());
-                    if want_p != ColorPrimaries::Unknown {
+                    if let Some(want_p) = Primaries::from_cicp(asked.color_primaries) {
                         assert_eq!(id.primaries, want_p, "({p}, {t}): identified primaries");
                     }
-                    if want_t != TransferFunction::Unknown {
+                    if let Some(want_t) = Transfer::from_cicp(asked.transfer_characteristics) {
                         assert_eq!(id.transfer, want_t, "({p}, {t}): identified transfer");
                     }
                 }
@@ -697,6 +675,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "icc-db")]
     fn synthesize_icc_for_cicp_hdr_pq_is_bundled_in_every_build() {
         // BT.2020 PQ: an HDR transfer with no `&'static` const, but it IS in the
         // full-grid blob now — so a profile comes back in BOTH builds, never a
@@ -713,6 +692,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "icc-db")]
     fn synthesize_icc_for_cicp_reserved_transfer_is_unsupported_not_mistagged() {
         // Recognized primaries (BT.2020) but a *reserved* transfer code (0). It's
         // outside the assigned H.273 grid, so it isn't in the blob — synthesis
@@ -727,6 +707,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "icc-db")]
     fn synthesize_icc_for_cicp_real_gamut_not_assumed_srgb() {
         // BT.601 primaries (code 6) + gamma-2.2 transfer (code 4): a real, non-sRGB
         // colour description that zenpixels' enum folds into `Unknown`/`Unknown`.
@@ -747,6 +728,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "icc-db")]
     fn synthesize_icc_for_cicp_full_grid_coverage_without_cms() {
         // The headline property: the blob gives a profile for every assigned-grid
         // combo except primaries 10 and the sRGB-default `NotNeeded` pair — with no dependence

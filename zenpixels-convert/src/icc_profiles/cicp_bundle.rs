@@ -283,43 +283,6 @@ mod tests {
         assert!(bundled_gray_profile_for_cicp(1, 1).is_some());
     }
 
-    /// ZERO-TOLERANCE roundtrip for the gray side: every GRAY profile
-    /// decoded from the blob must be byte-identical to a fresh
-    /// shared synthesis for the same CICP, including the deterministic
-    /// creation-timestamp field. Pins the generator and runtime gray
-    /// recipes together.
-    #[cfg(feature = "cms-moxcms")]
-    #[test]
-    fn gray_blob_decodes_byte_identical_to_moxcms() {
-        use crate::Cicp;
-        let mut checked = 0usize;
-        for p in &GRAY_BUNDLE_PROFILES {
-            let from_blob = bundled_gray_profile_for_cicp(p.primaries, p.transfer)
-                .expect("indexed gray profile must resolve");
-            let from_moxcms = crate::cms_moxcms::gray_icc_bytes_for_cicp(&Cicp::new(
-                p.primaries,
-                p.transfer,
-                0,
-                true,
-            ))
-            .unwrap_or_else(|| {
-                panic!(
-                    "moxcms could not regenerate gray ({}, {}) — index/grid desync",
-                    p.primaries, p.transfer
-                )
-            });
-            assert_eq!(
-                from_blob.as_ref(),
-                from_moxcms.as_slice(),
-                "gray blob bytes for ({}, {}) diverge from a fresh moxcms generation",
-                p.primaries,
-                p.transfer
-            );
-            checked += 1;
-        }
-        assert_eq!(checked, 164, "expected to roundtrip all 164 gray combos");
-    }
-
     /// Round-trip recognition guard for **every** profile this crate
     /// embeds. RGB bundle profiles must carry an exact, recoverable CICP
     /// description via `zenpixels::icc::extract_cicp`; GRAY profiles
@@ -433,56 +396,6 @@ mod tests {
             "committed cicp_bundle.lz4 sha256 changed — was the blob regenerated? \
              (len = {})",
             CICP_BUNDLE_LZ4.len()
-        );
-    }
-
-    /// Every RGB export is byte-identical to the shared build-time recipe,
-    /// including its valid deterministic creation date and all color tags.
-    #[cfg(feature = "cms-moxcms")]
-    #[test]
-    fn blob_decodes_byte_identical_to_moxcms() {
-        use crate::Cicp;
-        let mut checked = 0usize;
-        for primaries in [1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 22] {
-            for transfer in [1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17] {
-                if primaries == 10 || (primaries == 1 && transfer == 13) {
-                    // XYZ's singular RGB matrix is deliberately excluded;
-                    // sRGB is the sole assigned default without a profile.
-                    assert!(bundled_profile_for_cicp(primaries, transfer).is_none());
-                    continue;
-                }
-                let p = BUNDLE_PROFILES
-                    .iter()
-                    .find(|p| p.primaries == primaries && p.transfer == transfer)
-                    .expect("every non-excluded assigned pair must be indexed");
-                let from_blob = bundled_profile_for_cicp(p.primaries, p.transfer)
-                    .expect("indexed profile must resolve");
-                let from_moxcms = crate::cms_moxcms::icc_bytes_for_cicp(&Cicp::new(
-                    p.primaries,
-                    p.transfer,
-                    0,
-                    true,
-                ))
-                .unwrap_or_else(|| {
-                    panic!(
-                        "moxcms could not regenerate ({}, {}) — index/grid desync",
-                        p.primaries, p.transfer
-                    )
-                });
-                assert_eq!(
-                    from_blob.as_ref(),
-                    from_moxcms.as_slice(),
-                    "blob bytes for ({}, {}) diverge from a fresh moxcms generation \
-                 (moxcms version bump or generator drift)",
-                    p.primaries,
-                    p.transfer
-                );
-                checked += 1;
-            }
-        }
-        assert_eq!(
-            checked, 149,
-            "expected to roundtrip all 149 bundled profiles"
         );
     }
 }

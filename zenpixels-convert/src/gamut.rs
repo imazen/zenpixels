@@ -7,7 +7,7 @@
 //!
 //! These are exact, standards-derived values (not fitted or approximated).
 
-use crate::ColorPrimaries;
+use zenpixels::Primaries;
 
 /// A 3×3 row-major matrix between linear-light tristimulus spaces, in `f32`.
 ///
@@ -15,9 +15,9 @@ use crate::ColorPrimaries;
 /// through [`rows`](Self::rows).
 ///
 /// ```
-/// use zenpixels_convert::{ColorPrimaries, gamut::GamutMatrix};
+/// use zenpixels_convert::{Primaries, gamut::GamutMatrix};
 ///
-/// let to_srgb = GamutMatrix::between(ColorPrimaries::DisplayP3, ColorPrimaries::Bt709).unwrap();
+/// let to_srgb = GamutMatrix::between(Primaries::DisplayP3, Primaries::Bt709).unwrap();
 /// let mut row = [[1.0_f32, 1.0, 1.0], [0.5, 0.5, 0.5]];
 /// to_srgb.apply_row_rgb(&mut row);
 /// assert!((row[1][0] - 0.5).abs() < 1e-4, "gray stays gray");
@@ -43,13 +43,13 @@ impl GamutMatrix {
     /// Linear RGB in `primaries` → CIE XYZ (D65), or `None` for unknown primaries.
     #[inline]
     #[must_use]
-    pub const fn to_xyz(primaries: ColorPrimaries) -> Option<&'static Self> {
+    pub const fn to_xyz(primaries: Primaries) -> Option<&'static Self> {
         #[allow(unreachable_patterns)]
         match primaries {
-            ColorPrimaries::Bt709 => Some(&BT709_TO_XYZ),
-            ColorPrimaries::DisplayP3 => Some(&DISPLAY_P3_TO_XYZ),
-            ColorPrimaries::Bt2020 => Some(&BT2020_TO_XYZ),
-            ColorPrimaries::AdobeRgb => Some(&ADOBE_RGB_TO_XYZ),
+            Primaries::Bt709 => Some(&BT709_TO_XYZ),
+            Primaries::DisplayP3 => Some(&DISPLAY_P3_TO_XYZ),
+            Primaries::Bt2020 => Some(&BT2020_TO_XYZ),
+            Primaries::AdobeRgb => Some(&ADOBE_RGB_TO_XYZ),
             _ => None,
         }
     }
@@ -57,13 +57,13 @@ impl GamutMatrix {
     /// CIE XYZ (D65) → linear RGB in `primaries`, or `None` for unknown primaries.
     #[inline]
     #[must_use]
-    pub const fn from_xyz(primaries: ColorPrimaries) -> Option<&'static Self> {
+    pub const fn from_xyz(primaries: Primaries) -> Option<&'static Self> {
         #[allow(unreachable_patterns)]
         match primaries {
-            ColorPrimaries::Bt709 => Some(&XYZ_TO_BT709),
-            ColorPrimaries::DisplayP3 => Some(&XYZ_TO_DISPLAY_P3),
-            ColorPrimaries::Bt2020 => Some(&XYZ_TO_BT2020),
-            ColorPrimaries::AdobeRgb => Some(&XYZ_TO_ADOBE_RGB),
+            Primaries::Bt709 => Some(&XYZ_TO_BT709),
+            Primaries::DisplayP3 => Some(&XYZ_TO_DISPLAY_P3),
+            Primaries::Bt2020 => Some(&XYZ_TO_BT2020),
+            Primaries::AdobeRgb => Some(&XYZ_TO_ADOBE_RGB),
             _ => None,
         }
     }
@@ -71,10 +71,9 @@ impl GamutMatrix {
     /// The matrix taking linear RGB in `from` to linear RGB in `to`.
     ///
     /// Equal primaries give the identity. `None` when either is
-    /// [`Unknown`](ColorPrimaries::Unknown). Computed from chromaticities, with
-    /// Bradford chromatic adaptation between different white points.
+    /// [`Unknown`](Primaries::Unknown).
     #[must_use]
-    pub const fn between(from: ColorPrimaries, to: ColorPrimaries) -> Option<Self> {
+    pub const fn between(from: Primaries, to: Primaries) -> Option<Self> {
         match from.gamut_matrix_to(to) {
             Some(rows) => Some(Self(rows)),
             None => None,
@@ -131,19 +130,22 @@ impl GamutMatrix {
     }
 
     /// Apply in place to a row of RGB pixels in linear light.
-    ///
-    /// For conversions that also change transfer or depth, or that aren't in
-    /// place, use [`RowConverter`](crate::RowConverter), whose fused kernels are
-    /// faster than this followed by a separate transfer step.
     #[inline]
     pub fn apply_row_rgb(&self, row: &mut [[f32; 3]]) {
-        crate::fast_gamut::convert_linear_rgb(&self.0, row.as_flattened_mut());
+        for px in row {
+            *px = self.apply(*px);
+        }
     }
 
     /// Apply in place to a row of RGBA pixels in linear light. Alpha is unchanged.
     #[inline]
     pub fn apply_row_rgba(&self, row: &mut [[f32; 4]]) {
-        crate::fast_gamut::convert_linear_rgba(&self.0, row.as_flattened_mut());
+        for px in row {
+            let [r, g, b] = self.apply([px[0], px[1], px[2]]);
+            px[0] = r;
+            px[1] = g;
+            px[2] = b;
+        }
     }
 }
 
@@ -209,7 +211,8 @@ pub(crate) const XYZ_TO_ADOBE_RGB: GamutMatrix = GamutMatrix([
 
 /// [`GamutMatrix::between`], except that equal primaries give `None`: the plan
 /// builders use it to decide whether a matrix step exists at all.
-pub(crate) fn conversion_matrix(from: ColorPrimaries, to: ColorPrimaries) -> Option<GamutMatrix> {
+#[allow(dead_code)]
+pub(crate) fn conversion_matrix(from: Primaries, to: Primaries) -> Option<GamutMatrix> {
     if from == to {
         return None;
     }
@@ -220,7 +223,7 @@ pub(crate) fn conversion_matrix(from: ColorPrimaries, to: ColorPrimaries) -> Opt
 mod tests {
     use super::*;
 
-    use crate::ColorPrimaries;
+    use zenpixels::Primaries as ColorPrimaries;
 
     /// Verify that forward × inverse ≈ identity for BT.709 ↔ BT.2020.
     #[test]

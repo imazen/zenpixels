@@ -1,309 +1,179 @@
-//! Borrowed native component conversion, independent of codec ownership and I/O.
-//!
-//! The first qualified route is centered BT.709-matrix/sRGB, 8/10/12-bit,
-//! full or limited range. It preserves excursions in RGB F32 and leaves the
-//! transfer unchanged. It is neither a lossless transform nor HDR rendering.
-use alloc::sync::Arc;
-use core::fmt;
+//! Native multi-plane YCbCr (`PlanarView` / `PlanarBuf`, including 8/10/12-bit
+//! `BitPacking::P010` and `U10_LSB`, 4:4:4 / 4:2:2 / 4:2:0) → interleaved RGB F32.
+
 use whereat::At;
 use zenpixels::{
-    Cicp, ColorContext, PixelDescriptor, PixelSliceMut, TransferFunction,
-    sample::{ChromaSiting, ChromaSubsampling, CodePlane, SampleEncoding},
+    AlphaMode, ColorSpace, ImageSpec, PixelBuf, PlanarView, PlaneRole, Primaries, SampleLayout,
+    SampleType, SignalRange, Transfer,
 };
 
-/// A prepared native component route cannot honor its interpretation or output.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+use crate::error::{ConvertError, err_at};
+
+/// YCbCr luma/chroma matrix standard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum YcbcrError {
-    /// Primaries, transfer or matrix is outside the implemented route.
-    UnsupportedColor { actual: Cicp },
-    /// Bit depth or per-plane sample encodings disagree or are unsupported.
-    UnsupportedEncoding {
-        plane: usize,
-        actual: SampleEncoding,
-    },
-    /// Chroma sampling/location has no qualified kernel. Unknown is not Center.
-    UnsupportedChroma {
-        subsampling: ChromaSubsampling,
-        siting: ChromaSiting,
-    },
-    /// Source planes do not describe a nonempty full coded image.
-    SourceGeometry {
-        plane: usize,
-        actual: (usize, usize),
-        expected: Option<(usize, usize)>,
-    },
-    /// Requested output rows/columns extend beyond the complete source image.
-    OutputGeometry {
-        origin: (usize, usize),
-        extent: (usize, usize),
-        source: (usize, usize),
-    },
-    /// Destination does not have the exact promised output descriptor.
-    OutputDescriptor { actual: PixelDescriptor },
+pub enum YcbcrMatrix {
+    /// ITU-R BT.601 (`Kr = 0.299, Kb = 0.114`).
+    Bt601,
+    /// ITU-R BT.709 (`Kr = 0.2126, Kb = 0.0722`).
+    Bt709,
+    /// ITU-R BT.2020 NCL (`Kr = 0.2627, Kb = 0.0593`).
+    Bt2020,
 }
-impl fmt::Display for YcbcrError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+
+impl YcbcrMatrix {
+    #[inline]
+    const fn kr_kb(self) -> (f32, f32) {
         match self {
-            Self::UnsupportedColor { actual } => write!(
-                f,
-                "unsupported YCbCr color {actual:?}; requires BT.709 matrix and sRGB"
-            ),
-            Self::UnsupportedEncoding { plane, actual } => write!(
-                f,
-                "unsupported YCbCr plane {plane} encoding {actual:?}; requires matching 8/10/12-bit codes"
-            ),
-            Self::UnsupportedChroma {
-                subsampling,
-                siting,
-            } => write!(f, "unsupported YCbCr chroma {subsampling:?} at {siting:?}"),
-            Self::SourceGeometry {
-                plane,
-                actual,
-                expected,
-            } => write!(
-                f,
-                "YCbCr plane {plane} extent {actual:?}, expected {expected:?} (None requires nonempty luma)"
-            ),
-            Self::OutputGeometry {
-                origin,
-                extent,
-                source,
-            } => write!(
-                f,
-                "YCbCr output {extent:?} at {origin:?} exceeds source {source:?}"
-            ),
-            Self::OutputDescriptor { actual } => {
-                write!(f, "YCbCr output {actual:?} must be full-range sRGB RGB F32")
-            }
+            Self::Bt601 => (0.299, 0.114),
+            Self::Bt709 => (0.2126, 0.0722),
+            Self::Bt2020 => (0.2627, 0.0593),
         }
     }
 }
-impl core::error::Error for YcbcrError {}
 
-/// Retain validated, borrowed Y/Cb/Cr planes and their selected RGB F32 recipe.
+/// Reconstruct a full-range `RGBF32` [`PixelBuf`] from a 3-plane (`Y`, `Cb`, `Cr`)
+/// or 2-plane semi-planar (`Y`, `CbCr` / `CrCb`, e.g. NV12 / P010) [`PlanarView`].
 ///
-/// The plan keeps the original coded-coordinate system: crop origins and row
-/// partitions cannot reset chroma phase. Input storage stays borrowed, never
-/// copied. Construction allocates one shared output color context; execution
-/// allocates no payload or scratch and does not publish to a downstream sink.
-/// Callers supply destination storage and can check cancellation between batches.
-///
-/// Pixel equality across crop/batch partitions is exact. Numerical agreement
-/// with another implementation is a separate qualification, not bit preservation
-/// through an irreversible chroma reconstruction or matrix conversion.
-pub struct YcbcrToRgbF32<'a> {
-    planes: [CodePlane<'a>; 3],
-    sub: ChromaSubsampling,
-    y_offset: f32,
-    y_scale: f32,
-    uv_center: f32,
-    uv_scale: f32,
-    vr: f32,
-    ug: f32,
-    vg: f32,
-    ub: f32,
-    context: Arc<ColorContext>,
-}
-impl<'a> YcbcrToRgbF32<'a> {
-    /// Prepare the exact held source in Y, Cb, Cr order.
-    ///
-    /// Accepts BT.709 primaries, sRGB transfer and BT.709 matrix, at 8/10/12 bits.
-    /// Both declared ranges and valid word placements are supported. Chroma
-    /// extents round up at odd edges. Subsampled sources require explicit Center;
-    /// 4:4:4 does not use chroma siting. Resolve unknown source facts before this
-    /// call; this constructor never invents a policy or inspects format metadata.
-    pub fn new(
-        planes: [CodePlane<'a>; 3],
-        sub: ChromaSubsampling,
-        siting: ChromaSiting,
-        color: Cicp,
-    ) -> Result<Self, At<YcbcrError>> {
-        if color.color_primaries != 1
-            || color.transfer_characteristics != 13
-            || color.matrix_coefficients != 1
-        {
-            return Err(whereat::at!(YcbcrError::UnsupportedColor { actual: color }));
-        }
-        let encoding = planes[0].encoding();
-        let bits = encoding.code_bits();
-        for (plane, p) in planes.iter().enumerate() {
-            if encoding.is_signed() || !matches!(bits, 8 | 10 | 12) || p.encoding() != encoding {
-                return Err(whereat::at!(YcbcrError::UnsupportedEncoding {
-                    plane,
-                    actual: p.encoding()
-                }));
-            }
-        }
-        let (w, h) = (planes[0].width(), planes[0].height());
-        let (cw, ch) = match sub {
-            ChromaSubsampling::Yuv444 => (w, h),
-            ChromaSubsampling::Yuv422 => (w.div_ceil(2), h),
-            ChromaSubsampling::Yuv420 => (w.div_ceil(2), h.div_ceil(2)),
-            ChromaSubsampling::Yuv440 => (w, h.div_ceil(2)),
-            _ => {
-                return Err(whereat::at!(YcbcrError::UnsupportedChroma {
-                    subsampling: sub,
-                    siting
-                }));
-            }
-        };
-        if sub != ChromaSubsampling::Yuv444 && siting != ChromaSiting::Center {
-            return Err(whereat::at!(YcbcrError::UnsupportedChroma {
-                subsampling: sub,
-                siting
-            }));
-        }
-        if w == 0 || h == 0 {
-            return Err(whereat::at!(YcbcrError::SourceGeometry {
-                plane: 0,
-                actual: (w, h),
-                expected: None
-            }));
-        }
-        for (plane, p) in planes.iter().enumerate().skip(1) {
-            let actual = (p.width(), p.height());
-            if actual != (cw, ch) {
-                return Err(whereat::at!(YcbcrError::SourceGeometry {
-                    plane,
-                    actual,
-                    expected: Some((cw, ch))
-                }));
-            }
-        }
-        // Recipe from imazen/zenavif feadc4c94b19 src/yuv_convert.rs, qualified
-        // without integer saturation in zencodec c7e76b23. Keep its arithmetic.
-        let shift = u32::from(bits) - 8;
-        let max = ((1u32 << bits) - 1) as f32;
-        let (kr, kb) = (0.2126f32, 0.0722f32);
-        let kg = 1.0 - kr - kb;
-        Ok(Self {
-            planes,
-            sub,
-            y_offset: if color.full_range {
-                0.0
-            } else {
-                (16u32 << shift) as f32
-            },
-            y_scale: 1.0
-                / if color.full_range {
-                    max
-                } else {
-                    (219u32 << shift) as f32
-                },
-            uv_center: (128u32 << shift) as f32,
-            uv_scale: 1.0
-                / if color.full_range {
-                    max
-                } else {
-                    (224u32 << shift) as f32
-                },
-            vr: 2.0 * (1.0 - kr),
-            ug: -2.0 * kb * (1.0 - kb) / kg,
-            vg: -2.0 * kr * (1.0 - kr) / kg,
-            ub: 2.0 * (1.0 - kb),
-            context: Arc::new(ColorContext::from_cicp(Cicp::SRGB)),
-        })
+/// Honors each plane's [`BitPacking`](zenpixels::BitPacking) (`Full`, `U10_LSB`,
+/// `U12_LSB`, `P010` MSB) and subsampling divisors (`4:4:4`, `4:2:2`, `4:2:0`).
+pub fn ycbcr_to_rgb_f32(
+    src: &PlanarView<'_>,
+    matrix: YcbcrMatrix,
+    range: SignalRange,
+    primaries: Primaries,
+    transfer: Transfer,
+) -> Result<PixelBuf, At<ConvertError>> {
+    let w = src.width;
+    let h = src.height;
+    if w == 0 || h == 0 || src.planes.len() < 2 {
+        return Err(err_at(ConvertError::DimensionMismatch));
     }
+    let y_plane = src
+        .planes
+        .iter()
+        .find(|p| p.spec.role == PlaneRole::Y)
+        .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
 
-    /// Actual output meaning: full-range RGB F32 with unchanged sRGB transfer.
-    pub const fn output_descriptor(&self) -> PixelDescriptor {
-        PixelDescriptor::RGBF32_LINEAR.with_transfer(TransferFunction::Srgb)
-    }
-
-    /// Convert a strided region starting at coded coordinates (x, y).
-    ///
-    /// All extent/descriptor checks precede writes. Output row padding stays
-    /// untouched. Returned color context matches the output; any previous context
-    /// on the supplied destination view is replaced. No transfer/gamut conversion,
-    /// integer quantization, nominal-range clipping or source-role inference occurs.
-    pub fn convert_rows<'b>(
-        &self,
-        x: usize,
-        y: usize,
-        mut destination: PixelSliceMut<'b>,
-    ) -> Result<PixelSliceMut<'b>, At<YcbcrError>> {
-        if destination.descriptor() != self.output_descriptor() {
-            return Err(whereat::at!(YcbcrError::OutputDescriptor {
-                actual: destination.descriptor()
-            }));
-        }
-        let width = destination.width() as usize;
-        let height = destination.rows() as usize;
-        if x.checked_add(width)
-            .is_none_or(|v| v > self.planes[0].width())
-            || y.checked_add(height)
-                .is_none_or(|v| v > self.planes[0].height())
-        {
-            return Err(whereat::at!(YcbcrError::OutputGeometry {
-                origin: (x, y),
-                extent: (width, height),
-                source: (self.planes[0].width(), self.planes[0].height())
-            }));
-        }
-        for row in 0..height {
-            for (i, dst) in destination
-                .row_mut(row as u32)
-                .as_chunks_mut::<12>()
-                .0
-                .iter_mut()
-                .enumerate()
-            {
-                let luma = (f32::from(self.planes[0].code(x + i, y + row).unwrap())
-                    - self.y_offset)
-                    * self.y_scale;
-                let u = (self.chroma(1, x + i, y + row) - self.uv_center) * self.uv_scale;
-                let v = (self.chroma(2, x + i, y + row) - self.uv_center) * self.uv_scale;
-                let rgb = [
-                    fma(v, self.vr, luma),
-                    fma(v, self.vg, fma(u, self.ug, luma)),
-                    fma(u, self.ub, luma),
-                ];
-                for (bytes, value) in dst.as_chunks_mut::<4>().0.iter_mut().zip(rgb) {
-                    bytes.copy_from_slice(&value.to_ne_bytes());
-                }
-            }
-        }
-        Ok(destination.with_color_context(self.context.clone()))
-    }
-
-    fn chroma(&self, index: usize, x: usize, y: usize) -> f32 {
-        let p = self.planes[index];
-        let (h_sub, v_sub) = match self.sub {
-            ChromaSubsampling::Yuv444 => (false, false),
-            ChromaSubsampling::Yuv422 => (true, false),
-            ChromaSubsampling::Yuv420 => (true, true),
-            ChromaSubsampling::Yuv440 => (false, true),
-            _ => unreachable!("unsupported subsampling rejected in YcbcrToRgbF32::new"),
-        };
-        let (x0, x1, wx) = axis(x, p.width(), h_sub);
-        let (y0, y1, wy) = axis(y, p.height(), v_sub);
-        let sample = |x, y| u32::from(p.code(x, y).unwrap());
-        let top = (4 - wx) * sample(x0, y0) + wx * sample(x1, y0);
-        let bottom = (4 - wx) * sample(x0, y1) + wx * sample(x1, y1);
-        ((4 - wy) * top + wy * bottom) as f32 * (1.0 / 16.0)
-    }
-}
-fn axis(position: usize, length: usize, subsampled: bool) -> (usize, usize, u32) {
-    if !subsampled {
-        return (position, position, 0);
-    }
-    let cell = position / 2;
-    if position.is_multiple_of(2) {
-        (cell.saturating_sub(1), cell, 3)
+    let (semi, cb_plane, cr_plane) = if let Some(cbcr) = src
+        .planes
+        .iter()
+        .find(|p| matches!(p.spec.role, PlaneRole::CbCr | PlaneRole::CrCb))
+    {
+        (true, cbcr, cbcr)
     } else {
-        (cell, (cell + 1).min(length - 1), 1)
+        let cb = src
+            .planes
+            .iter()
+            .find(|p| p.spec.role == PlaneRole::Cb)
+            .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
+        let cr = src
+            .planes
+            .iter()
+            .find(|p| p.spec.role == PlaneRole::Cr)
+            .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
+        (false, cb, cr)
+    };
+
+    let dst_spec = ImageSpec::new(
+        SampleLayout::RGBF32,
+        ColorSpace::Rgb {
+            primaries,
+            transfer,
+            range: SignalRange::Full,
+            alpha: AlphaMode::None,
+            white: None,
+        },
+    );
+    let mut out = PixelBuf::new(w, h, dst_spec).map_err(|e| err_at((*e.error()).into()))?;
+
+    let (kr, kb) = matrix.kr_kb();
+    let kg = 1.0 - kr - kb;
+    let cr_to_r = 2.0 * (1.0 - kr);
+    let cb_to_b = 2.0 * (1.0 - kb);
+    let cr_to_g = -2.0 * kr * (1.0 - kr) / kg;
+    let cb_to_g = -2.0 * kb * (1.0 - kb) / kg;
+
+    let y_max = y_plane.spec.packing.max_code(y_plane.spec.sample, 0) as f32;
+    let c_max = cb_plane.spec.packing.max_code(cb_plane.spec.sample, 0) as f32;
+    let y_bits = (32 - (y_max as u32).leading_zeros()) as i32;
+    let c_bits = (32 - (c_max as u32).leading_zeros()) as i32;
+
+    let (y_off, y_scale) = match range {
+        SignalRange::Full => (0.0, 1.0 / y_max.max(1.0)),
+        SignalRange::Narrow => {
+            let shift = (y_bits - 8).max(0);
+            let lo = (16u32 << shift) as f32;
+            let span = (219u32 << shift) as f32;
+            (lo, 1.0 / span)
+        }
+    };
+    let (c_mid, c_scale) = match range {
+        SignalRange::Full => {
+            let mid = (1u32 << (c_bits - 1).max(0)) as f32;
+            (mid, 1.0 / c_max.max(1.0))
+        }
+        SignalRange::Narrow => {
+            let shift = (c_bits - 8).max(0);
+            let mid = (128u32 << shift) as f32;
+            let span = (224u32 << shift) as f32;
+            (mid, 1.0 / span)
+        }
+    };
+
+    let (chx, cvy) = (
+        cb_plane.spec.subsampling.0.max(1) as u32,
+        cb_plane.spec.subsampling.1.max(1) as u32,
+    );
+    let swapped = semi && cb_plane.spec.role == PlaneRole::CrCb;
+
+    let mut out_view = out.as_view_mut();
+    for y in 0..h {
+        let y_row = y_plane.row(y);
+        let cy = (y / cvy).min(cb_plane.height - 1);
+        let cb_row = cb_plane.row(cy);
+        let cr_row = cr_plane.row(cy);
+        let dst_f32: &mut [f32] = out_view
+            .row_as_mut::<f32>(y)
+            .map_err(|e| err_at((*e.error()).into()))?;
+
+        for x in 0..w {
+            let y_code = read_plane_code(y_plane.spec, y_row, x as usize, 0) as f32;
+            let cx = ((x / chx).min(cb_plane.width - 1)) as usize;
+            let (cb_code, cr_code) = if semi {
+                let c0 = read_plane_code(cb_plane.spec, cb_row, cx, 0) as f32;
+                let c1 = read_plane_code(cb_plane.spec, cb_row, cx, 1) as f32;
+                if swapped { (c1, c0) } else { (c0, c1) }
+            } else {
+                (
+                    read_plane_code(cb_plane.spec, cb_row, cx, 0) as f32,
+                    read_plane_code(cr_plane.spec, cr_row, cx, 0) as f32,
+                )
+            };
+
+            let yn = (y_code - y_off) * y_scale;
+            let cb = (cb_code - c_mid) * c_scale;
+            let cr = (cr_code - c_mid) * c_scale;
+
+            let o = (x as usize) * 3;
+            dst_f32[o] = yn + cr_to_r * cr;
+            dst_f32[o + 1] = yn + cr_to_g * cr + cb_to_g * cb;
+            dst_f32[o + 2] = yn + cb_to_b * cb;
+        }
     }
+    Ok(out)
 }
-fn fma(a: f32, b: f32, c: f32) -> f32 {
-    #[cfg(feature = "std")]
-    {
-        #[cfg(not(test))]
-        extern crate std;
-        a.mul_add(b, c)
-    }
-    #[cfg(not(feature = "std"))]
-    {
-        libm::fmaf(a, b, c)
-    }
+
+#[inline(always)]
+fn read_plane_code(spec: zenpixels::PlaneSpec, row: &[u8], x: usize, comp: usize) -> u32 {
+    let sz = spec.sample.byte_size();
+    let elem = spec.bytes_per_element();
+    let off = x * elem + comp * sz;
+    let w = match spec.sample {
+        SampleType::U8 => u32::from(row[off]),
+        SampleType::U16 => u32::from(u16::from_ne_bytes([row[off], row[off + 1]])),
+        SampleType::U32 => u32::from_ne_bytes([row[off], row[off + 1], row[off + 2], row[off + 3]]),
+        _ => 0,
+    };
+    spec.packing.extract_code(spec.sample, w, comp)
 }

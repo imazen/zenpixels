@@ -1,0 +1,686 @@
+//! BT.2446 Method A tone mapper — the ITU's reference for graded
+//! HDR↔SDR conversion with psychophysically verified round-trip fidelity.
+//!
+//! ITU-R BT.2446-1 §4. TMO: 1000 cd/m² HDR → 100 cd/m² SDR.
+//!
+//! Psychophysical evaluation (Annex 1): 12 participants, 115 images,
+//! 2AFC on Sony BVM-X300 — imperceptible degradation after full
+//! round-trip (p = 0.167 HDR, p = 0.196 SDR).
+//!
+//! The method operates in a perceptually linearized log-luminance domain
+//! with a piecewise polynomial knee, Hunt-effect color correction in
+//! Y'Cb'Cr', and BT.2020 luma weights.
+//!
+//! Reference: ITU-R BT.2446-1 (03/2021) §4 + Annex 1.
+//!
+//! # Provenance
+//!
+//! Extracted from `zentone::Bt2446A` (zentone commit `2a7c86b1`). The
+//! algorithm is byte-identical; the only difference is that this
+//! crate's copy is the canonical home, and the `ToneMap` trait integration
+//! is dropped (the trait lives in `zentone` and is not used here — the
+//! `HdrToSdr` wrapper drives the curve directly through its inherent
+//! methods).
+//!
+//! The kernel is a magetypes-defined `f32x16` strip that resolves to
+//! AVX-512 on V4, 2× AVX2 on V3, NEON on aarch64, WASM-SIMD on wasm32, and
+//! the polyfill scalar on everything else. [`Bt2446A::map_rgb`] and the last
+//! 1–15 pixels of a row run the same lanes, padded.
+
+use libm::powf;
+use magemath::SimdMath;
+use magemath::expf::ExpfOptions;
+use magemath::logf::{LogfDomain, LogfOptions};
+use magemath::powf::{PowfDomain, PowfOptions};
+
+// BT.2020 luma weights (BT.2446 uses BT.2020, not BT.709) — shared with
+// `measure` via the parent module's `BT2020_L*` constants.
+use super::{BT2020_LB as LB, BT2020_LG as LG, BT2020_LR as LR};
+
+const MATH_PORTABILITY: magemath::Portability = if cfg!(all(
+    target_arch = "wasm32",
+    not(feature = "precise-portable")
+)) {
+    magemath::Portability::BackendDependent
+} else {
+    magemath::Portability::BitExact
+};
+
+/// `v^(1/2.4)` on `[f32::MIN_POSITIVE, 1.0]`: `|-126 / 2.4| = 52.5 <= 125`, eliding all range checks.
+const BT2446_INV24: u128 = PowfOptions::new()
+    .domain(PowfDomain::PositiveUnit)
+    .const_exponent(1.0 / 2.4)
+    .reject_subnormals()
+    .portability(MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+
+/// `log2(arg)` on finite positive normals `[f32::MIN_POSITIVE, f32::MAX]`.
+const BT2446_LOG2: u128 = LogfOptions::new()
+    .domain(LogfDomain::PositiveNormals)
+    .reject_subnormals()
+    .portability(MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+
+/// `exp2(x)` on clamped `[-126.0, 127.0]`, eliding overflow/underflow checks.
+const BT2446_EXP2: u128 = ExpfOptions::new()
+    .unclamped_exp2_range()
+    .portability(MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+
+/// BT.1886 `v^2.4` fast path on `[1e-15, 1.0]`: `|log2(1e-15) * 2.4| = 119.6 <= 125`,
+/// eliding output saturation on all normal display-visible pixels.
+const BT2446_EOTF24_LO: f32 = 1.0e-15;
+const BT2446_EOTF24_ELIDE: u128 = PowfOptions::new()
+    .domain(PowfDomain::PositiveUnit)
+    .base_range(BT2446_EOTF24_LO, 1.0)
+    .const_exponent(2.4)
+    .reject_subnormals()
+    .portability(MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+
+/// BT.1886 `v^2.4` saturating path for chunks containing near-zero / zero channels in `[0.0, 1.0]`.
+const BT2446_EOTF24_SAT: u128 = PowfOptions::new()
+    .domain(PowfDomain::PositiveUnit)
+    .const_exponent(2.4)
+    .reject_subnormals()
+    .saturate_output()
+    .portability(MATH_PORTABILITY)
+    .assume_in_bounds()
+    .caller()
+    .bits();
+
+/// BT.2446 Method A tonemapper.
+///
+/// Construct with `new()`, then apply via [`map_rgb`](Self::map_rgb) or
+/// [`map_strip_simd`](Self::map_strip_simd). Input is linear-light
+/// BT.2020 RGB normalized so `1.0 = hdr_peak_nits`. Output is linear-light
+/// BT.2020 RGB normalized so `1.0 = sdr_peak_nits` — the BT.2446-1 §4
+/// pipeline natively emits gamma-encoded `R'_TMO` `G'_TMO` `B'_TMO`
+/// (BT.1886 1/2.4); we apply the BT.1886 EOTF (`^2.4`) at the output to
+/// deliver a linear-light contract (matching libplacebo's own `bt2446a`
+/// which ends with `bt1886_eotf`).
+///
+/// # When to pick this
+///
+/// The most rigorously validated HDR → SDR curve published — the only one
+/// with a peer-reviewed psychophysical study showing imperceptible
+/// degradation after a full HDR → SDR → HDR round-trip on graded content.
+/// Pick when broadcast-grade fidelity matters.
+///
+/// Reference: ITU-R BT.2446-1 (03/2021) §4 + Annex 1 (12 participants,
+/// 115 images, Sony BVM-X300, 2AFC, p ≈ 0.17 indistinguishability).
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "bt2446a")]
+/// # {
+/// use zenpixels_convert::tonemap::Bt2446A;
+///
+/// let curve = Bt2446A::new(1000.0, 100.0);
+/// let sdr = curve.map_rgb([0.6, 0.4, 0.2]);
+/// assert!(sdr.iter().all(|&c| (0.0..=1.0).contains(&c)));
+/// # }
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct Bt2446A {
+    /// Source peak luminance in cd/m² as constructed. `0.0` signals
+    /// "pipeline-managed" — the curve's coefficients are deferred until
+    /// the pipeline supplies the peak via [`ToneMapContext`](crate::hdr::ToneMapContext) at
+    /// `prepare()` time. See
+    /// [`Bt2446A::pipeline_managed`](Self::pipeline_managed) and
+    /// [`Bt2446A::peaks_baked`](Self::peaks_baked).
+    pub(crate) source_peak_nits: f32,
+    /// Target peak luminance in cd/m² as constructed. `0.0` signals
+    /// "pipeline-managed" alongside `source_peak_nits`.
+    pub(crate) target_peak_nits: f32,
+    /// Precomputed `ρ_H = 1 + 32 · (L_HDR / 10000)^(1/2.4)`. Valid only
+    /// when [`peaks_baked`](Self::peaks_baked) returns `true`; otherwise
+    /// the kernel must read peaks from a [`ToneMapContext`](crate::hdr::ToneMapContext) instead.
+    pub(crate) rho_hdr: f32,
+    pub(crate) inv_log_rho_hdr: f32,
+    pub(crate) rho_sdr: f32,
+    pub(crate) inv_rho_sdr_minus_1: f32,
+}
+
+impl Bt2446A {
+    /// Create a new BT.2446 Method A tonemapper with peaks baked in.
+    ///
+    /// `hdr_peak_nits`: peak luminance of HDR content (typically 1000).
+    /// `sdr_peak_nits`: peak luminance of SDR target (typically 100).
+    ///
+    /// Use this when the source peak is already known at construction
+    /// time. For pipeline-orchestrated measurement (the pipeline reads
+    /// [`HdrConfig::source_peak_nits`](crate::HdrConfig::source_peak_nits)
+    /// or measures via [`CllMeasure`](crate::hdr::CllMeasure) at
+    /// `prepare()` time), use
+    /// [`pipeline_managed`](Self::pipeline_managed) instead.
+    #[must_use]
+    pub fn new(hdr_peak_nits: f32, sdr_peak_nits: f32) -> Self {
+        // ρ_H = 1 + 32 · (L_HDR / 10 000)^(1/2.4) per ITU-R BT.2446-1 §4.
+        // The exponent is the BT.1886 gamma reciprocal, not γ itself — the
+        // pre-2025 zentone used `2.4` here, which collapsed ρ_H from 13.4
+        // toward 1.13 at 1000 nits and turned the log compression into a
+        // near-identity. Fixed against the libplacebo reference; matches
+        // the well-known "ρ_H ≈ 13.2 at 1000 nit, 33 at 10 000 nit"
+        // quoted in ITU-R BT.2446-1.
+        let inv_gamma = 1.0_f32 / 2.4;
+        let rho_hdr = 1.0 + 32.0 * powf(hdr_peak_nits / 10000.0, inv_gamma);
+        let log_rho_hdr = libm::logf(rho_hdr);
+        let rho_sdr = 1.0 + 32.0 * powf(sdr_peak_nits / 10000.0, inv_gamma);
+        Self {
+            source_peak_nits: hdr_peak_nits,
+            target_peak_nits: sdr_peak_nits,
+            rho_hdr,
+            inv_log_rho_hdr: 1.0 / log_rho_hdr,
+            rho_sdr,
+            inv_rho_sdr_minus_1: 1.0 / (rho_sdr - 1.0),
+        }
+    }
+
+    /// Construct a BT.2446-A descriptor whose peaks are supplied by the
+    /// pipeline at [`ToneMapper::prepare`](crate::hdr::ToneMapper::prepare)
+    /// time.
+    ///
+    /// Use this when you don't know the source peak nits at the
+    /// builder-construction site and want the pipeline to measure them
+    /// via [`CllMeasure`](crate::hdr::CllMeasure) (when
+    /// [`HdrConfig::source_peak_nits`](crate::HdrConfig::source_peak_nits)
+    /// is `0.0`) or to forward the caller-supplied value otherwise.
+    ///
+    /// The returned descriptor stores no coefficients — the compiled
+    /// strip executor is produced from the resolved peaks inside
+    /// [`ToneMapper::prepare`](crate::hdr::ToneMapper::prepare).
+    /// [`peaks_baked`](Self::peaks_baked) returns `false`;
+    /// [`requirements`](crate::hdr::ToneMapper::requirements) returns
+    /// [`Requirements::SOURCE_PEAK_ONLY`](crate::hdr::Requirements::SOURCE_PEAK_ONLY).
+    #[must_use]
+    pub fn pipeline_managed() -> Self {
+        Self {
+            source_peak_nits: 0.0,
+            target_peak_nits: 0.0,
+            rho_hdr: 0.0,
+            inv_log_rho_hdr: 0.0,
+            rho_sdr: 0.0,
+            inv_rho_sdr_minus_1: 0.0,
+        }
+    }
+
+    /// `true` when this descriptor was constructed via
+    /// [`new`](Self::new) with explicit peaks — its coefficients are
+    /// already compiled. `false` after
+    /// [`pipeline_managed`](Self::pipeline_managed); the pipeline must
+    /// supply peaks via [`ToneMapContext`](crate::hdr::ToneMapContext)
+    /// at `prepare()` time.
+    #[must_use]
+    pub fn peaks_baked(&self) -> bool {
+        self.source_peak_nits > 0.0 && self.target_peak_nits > 0.0
+    }
+
+    /// HDR source peak luminance in cd/m², as constructed via
+    /// [`new`](Self::new). Returns `0.0` for
+    /// [`pipeline_managed`](Self::pipeline_managed) descriptors —
+    /// peaks live on the [`ToneMapContext`](crate::hdr::ToneMapContext) in that mode.
+    #[must_use]
+    pub fn source_peak_nits(&self) -> f32 {
+        self.source_peak_nits
+    }
+
+    /// SDR target peak luminance in cd/m², as constructed. Returns `0.0`
+    /// for [`pipeline_managed`](Self::pipeline_managed) descriptors.
+    #[must_use]
+    pub fn target_peak_nits(&self) -> f32 {
+        self.target_peak_nits
+    }
+
+    /// Map a single HDR pixel (linear-light BT.2020 RGB, source-normalized)
+    /// to an SDR pixel (linear-light BT.2020 RGB, target-normalized).
+    ///
+    /// Input must be finite; `NaN`/negative channels are not scrubbed here
+    /// (see [`Self::map_strip_simd`]).
+    ///
+    /// Implemented as a 1-element strip through [`Self::map_strip_simd`].
+    /// A single pixel runs the same lanes as a row, padded.
+    #[must_use]
+    pub fn map_rgb(&self, rgb: [f32; 3]) -> [f32; 3] {
+        let mut buf = [rgb];
+        self.map_strip_simd(&mut buf);
+        buf[0]
+    }
+
+    /// Apply the curve to a strip of HDR pixels in place, dispatching to
+    /// the widest available SIMD tier.
+    /// # Input contract
+    ///
+    /// Expects **finite** linear-light BT.2020 RGB. Non-finite input is
+    /// not scrubbed, and `NaN`/`inf` can reach the output. The conversion pipeline
+    /// (`NativePlan` tone-map step) scrubs non-finite values *before*
+    /// calling this; direct callers own that themselves.
+    ///
+    /// **Panics** if called on a
+    /// [`pipeline_managed`](Self::pipeline_managed) descriptor, for the same
+    /// reason as [`map_rgb`](Self::map_rgb).
+    pub fn map_strip_simd(&self, strip: &mut [[f32; 3]]) {
+        assert!(
+            self.peaks_baked(),
+            "Bt2446A::map_strip_simd called on a pipeline-managed descriptor; \
+             obtain a compiled executor through ToneMapper::prepare first"
+        );
+        archmage::attuned!(
+            bt2446a_tier(
+                strip,
+                self.rho_hdr,
+                self.inv_log_rho_hdr,
+                self.rho_sdr,
+                self.inv_rho_sdr_minus_1,
+            ),
+            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+        );
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Two-phase ToneMapper integration
+// ----------------------------------------------------------------------------
+
+/// Compiled-for-this-image BT.2446-A strip executor.
+///
+/// Holds the `(rho_hdr, inv_log_rho_hdr, rho_sdr, inv_rho_sdr_minus_1)`
+/// quadruple precomputed from a resolved
+/// [`ToneMapContext`](crate::hdr::ToneMapContext). Produced by
+/// [`<Bt2446A as ToneMapper>::prepare`](crate::hdr::ToneMapper::prepare)
+/// and stashed in the plan's
+/// [`OnceCell<Arc<dyn StripMapper>>`](once_cell::sync::OnceCell) so
+/// subsequent strip dispatches reuse the same compiled kernel.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Bt2446AExecutor {
+    pub(crate) rho_hdr: f32,
+    pub(crate) inv_log_rho_hdr: f32,
+    pub(crate) rho_sdr: f32,
+    pub(crate) inv_rho_sdr_minus_1: f32,
+}
+
+impl Bt2446AExecutor {
+    /// Compile from a resolved `(source_peak_nits, target_peak_nits)`
+    /// pair. Mirrors the math in [`Bt2446A::new`].
+    #[must_use]
+    pub(crate) fn compile(source_peak_nits: f32, target_peak_nits: f32) -> Self {
+        let inv_gamma = 1.0_f32 / 2.4;
+        let rho_hdr = 1.0 + 32.0 * powf(source_peak_nits / 10000.0, inv_gamma);
+        let log_rho_hdr = libm::logf(rho_hdr);
+        let rho_sdr = 1.0 + 32.0 * powf(target_peak_nits / 10000.0, inv_gamma);
+        Self {
+            rho_hdr,
+            inv_log_rho_hdr: 1.0 / log_rho_hdr,
+            rho_sdr,
+            inv_rho_sdr_minus_1: 1.0 / (rho_sdr - 1.0),
+        }
+    }
+
+    /// Apply the compiled curve to an interleaved RGB strip in place
+    /// (BT.2020 working space).
+    fn apply_strip(&self, strip: &mut [[f32; 3]]) {
+        archmage::attuned!(
+            bt2446a_tier(
+                strip,
+                self.rho_hdr,
+                self.inv_log_rho_hdr,
+                self.rho_sdr,
+                self.inv_rho_sdr_minus_1,
+            ),
+            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+        );
+    }
+}
+
+impl crate::tonemap::StripMapper for Bt2446AExecutor {
+    fn map_strip(&self, input: &[f32], output: &mut [f32]) {
+        debug_assert_eq!(
+            input.len(),
+            output.len(),
+            "StripMapper::map_strip: slice length mismatch"
+        );
+        debug_assert!(
+            input.len().is_multiple_of(3),
+            "StripMapper::map_strip: input not RGB-triple-aligned"
+        );
+        if !core::ptr::eq(input.as_ptr(), output.as_ptr()) {
+            output.copy_from_slice(input);
+        }
+        let triples = output.len() / 3;
+        let strip: &mut [[f32; 3]] = bytemuck::cast_slice_mut(&mut output[..triples * 3]);
+        self.apply_strip(strip);
+    }
+}
+
+impl crate::tonemap::ToneMapper for Bt2446A {
+    fn requirements(&self) -> crate::tonemap::Requirements {
+        if self.peaks_baked() {
+            crate::tonemap::Requirements::NONE
+        } else {
+            crate::tonemap::Requirements::SOURCE_PEAK_ONLY
+        }
+    }
+
+    fn prepare(
+        &self,
+        ctx: &crate::tonemap::ToneMapContext,
+    ) -> Result<crate::tonemap::PreparedMapper, whereat::At<crate::ConvertError>> {
+        let (src, dst) = if self.peaks_baked() {
+            (self.source_peak_nits, self.target_peak_nits)
+        } else {
+            (ctx.source_peak_nits, ctx.target_peak_nits)
+        };
+        let exec = Bt2446AExecutor::compile(src, dst);
+        Ok(crate::tonemap::PreparedMapper::Streaming(
+            alloc::boxed::Box::new(exec),
+        ))
+    }
+
+    fn name(&self) -> &'static str {
+        "bt2446a"
+    }
+
+    fn working_primaries_for(&self, _target: zenpixels::Primaries) -> zenpixels::Primaries {
+        zenpixels::Primaries::Bt2020
+    }
+}
+
+macro_rules! bt2446a_body {
+    ($vec:ident, $lanes:literal, $token:ident, $row:ident, $rho_hdr:ident, $inv_log_rho_hdr:ident, $rho_sdr:ident, $inv_rho_sdr_minus_1:ident) => {{
+        let zero = $vec::zero_t($token);
+        let one = $vec::splat_t($token, 1.0);
+        let lr = $vec::splat_t($token, LR);
+        let lg = $vec::splat_t($token, LG);
+        let lb = $vec::splat_t($token, LB);
+        let rho_hdr_minus_1 = $vec::splat_t($token, $rho_hdr - 1.0);
+        let inv_log_rho_hdr_v = $vec::splat_t($token, $inv_log_rho_hdr);
+        let inv_rho_sdr_m1_v = $vec::splat_t($token, $inv_rho_sdr_minus_1);
+        let log2_rho_sdr = $vec::splat_t($token, libm::log2f($rho_sdr));
+        let pos_eps = $vec::splat_t($token, f32::MIN_POSITIVE);
+        let eotf_lo = $vec::splat_t($token, BT2446_EOTF24_LO);
+        let exp_lo = $vec::splat_t($token, -126.0);
+        let exp_hi = $vec::splat_t($token, 127.0);
+        let ln2 = $vec::splat_t($token, core::f32::consts::LN_2);
+
+        let t1 = $vec::splat_t($token, 0.7399);
+        let t2 = $vec::splat_t($token, 0.9909);
+        let a1 = $vec::splat_t($token, 1.0770);
+        let a2_a = $vec::splat_t($token, -1.1510);
+        let a2_b = $vec::splat_t($token, 2.7811);
+        let a2_c = $vec::splat_t($token, -0.6302);
+        let a3_a = $vec::splat_t($token, 0.5);
+        let a3_b = $vec::splat_t($token, 0.5);
+        let one_p_one = $vec::splat_t($token, 1.1);
+        let inv_1_8814 = $vec::splat_t($token, 1.0 / 1.8814);
+        let inv_1_4746 = $vec::splat_t($token, 1.0 / 1.4746);
+        // 0.16455 = 2·Kb·(1-Kb)/Kg, 0.57135 = 2·Kr·(1-Kr)/Kg for BT.2020 (already
+        // divided by Kg; do NOT divide again — that was the pre-fix bug).
+        let mat_g_b = $vec::splat_t($token, 0.16455);
+        let mat_g_r = $vec::splat_t($token, 0.57135);
+        let mat_r_cr = $vec::splat_t($token, 1.4746);
+        let mat_b_cb = $vec::splat_t($token, 1.8814);
+        let zero_one = $vec::splat_t($token, 0.1);
+
+        let (chunks, remainder) = $row.as_chunks_mut::<$lanes>();
+        macro_rules! run_chunk {
+            ($chunk:expr) => {{
+                let chunk: &mut [[f32; 3]; $lanes] = $chunk;
+                let mut ra = [0.0_f32; $lanes];
+                let mut ga = [0.0_f32; $lanes];
+                let mut ba = [0.0_f32; $lanes];
+                for (i, px) in chunk.iter().enumerate() {
+                    ra[i] = px[0];
+                    ga[i] = px[1];
+                    ba[i] = px[2];
+                }
+                // ITU-R BT.2446-1 §4.1 Table 2 specifies normalized [0, 1] HDR RGB inputs.
+                // Record `valid` from the raw positive mask before clamping to `[pos_eps, 1.0]`
+                // so every downstream `assume_in_bounds` transcendental sees finite positive normals
+                // while originally zero/non-positive pixels still snap to exact 0.0 on store.
+                let raw_r = $vec::load_t($token, &ra);
+                let raw_g = $vec::load_t($token, &ga);
+                let raw_b = $vec::load_t($token, &ba);
+                let valid = raw_r.simd_gt(zero) | raw_g.simd_gt(zero) | raw_b.simd_gt(zero);
+                let r = raw_r.min(one).max(pos_eps);
+                let g = raw_g.min(one).max(pos_eps);
+                let b = raw_b.min(one).max(pos_eps);
+
+                let r_p = r.powf_const::<BT2446_INV24>();
+                let g_p = g.powf_const::<BT2446_INV24>();
+                let b_p = b.powf_const::<BT2446_INV24>();
+
+                let y_p = lr * r_p + lg * g_p + lb * b_p;
+
+                let arg = (one + rho_hdr_minus_1 * y_p).max(pos_eps);
+                let ln_arg = arg.log2::<BT2446_LOG2>() * ln2;
+                let y_p_lin = ln_arg * inv_log_rho_hdr_v;
+
+                let lo_branch = a1 * y_p_lin;
+                let mid_branch = a2_a * y_p_lin * y_p_lin + a2_b * y_p_lin + a2_c;
+                let hi_branch = a3_a * y_p_lin + a3_b;
+                let in_lo = y_p_lin.simd_le(t1);
+                let in_hi = y_p_lin.simd_ge(t2);
+                let mid_or_hi = $vec::blend(in_hi, hi_branch, mid_branch);
+                let y_c = $vec::blend(in_lo, lo_branch, mid_or_hi);
+
+                let exp_arg = (y_c * log2_rho_sdr).max_fast(exp_lo).min_fast(exp_hi);
+                let y_sdr = (exp_arg.exp2::<BT2446_EXP2>() - one) * inv_rho_sdr_m1_v;
+
+                let f = y_sdr / (one_p_one * y_p);
+                let cb = f * (b_p - y_p) * inv_1_8814;
+                let cr = f * (r_p - y_p) * inv_1_4746;
+                let cr_pos = cr.max(zero);
+                let y_tmo = y_sdr - zero_one * cr_pos;
+
+                // Clamp into `[0, 1]`, the domain of the BT.1886 EOTF.
+                let r_prime_out = (y_tmo + mat_r_cr * cr).max(zero).min(one);
+                let g_prime_out = (y_tmo - mat_g_b * cb - mat_g_r * cr).max(zero).min(one);
+                let b_prime_out = (y_tmo + mat_b_cb * cb).max(zero).min(one);
+
+                // BT.1886 EOTF (`^2.4`): fast elided path when all lanes >= 1e-15,
+                // saturating SIMD path otherwise (with 0 staying exact 0.0).
+                let eotf = |v: $vec| {
+                    if v.simd_ge(eotf_lo).bitcast_to_i32().all_true() {
+                        v.powf_const::<BT2446_EOTF24_ELIDE>()
+                    } else {
+                        $vec::blend(
+                            v.simd_gt(zero),
+                            v.max(pos_eps).powf_const::<BT2446_EOTF24_SAT>(),
+                            zero,
+                        )
+                    }
+                };
+                let r_out = eotf(r_prime_out);
+                let g_out = eotf(g_prime_out);
+                let b_out = eotf(b_prime_out);
+
+                // Pre-clamp turns originally-zero pixels into `pos_eps`; the
+                // `valid` mask computed from the raw inputs snaps them back to true black on store.
+                let or_arr = $vec::blend(valid, r_out, zero).to_array();
+                let og_arr = $vec::blend(valid, g_out, zero).to_array();
+                let ob_arr = $vec::blend(valid, b_out, zero).to_array();
+                for (i, px) in chunk.iter_mut().enumerate() {
+                    px[0] = or_arr[i];
+                    px[1] = og_arr[i];
+                    px[2] = ob_arr[i];
+                }
+            }};
+        }
+        for chunk in chunks {
+            run_chunk!(chunk);
+        }
+
+        // The same lanes for the tail, padded, so that where a row ends or splits can't show in its
+        // output. A second implementation here once did, by up to 5.88e-5 of polynomial error.
+        if !remainder.is_empty() {
+            let mut tail = [[0.0_f32; 3]; $lanes];
+            tail[..remainder.len()].copy_from_slice(remainder);
+            run_chunk!(&mut tail);
+            remainder.copy_from_slice(&tail[..remainder.len()]);
+        }
+    }};
+}
+
+/// Const-configured `magemath` BT.2446-A SIMD kernel: 8-wide on V3/NEON/WASM128/scalar
+/// and 16-wide native AVX-512 when compiled with `--features avx512`.
+#[archmage::attune(_*_t, define(f32x8))]
+pub(crate) fn bt2446a_tier(
+    token: Token,
+    row: &mut [[f32; 3]],
+    rho_hdr: f32,
+    inv_log_rho_hdr: f32,
+    rho_sdr: f32,
+    inv_rho_sdr_minus_1: f32,
+) {
+    bt2446a_body!(
+        f32x8,
+        8,
+        token,
+        row,
+        rho_hdr,
+        inv_log_rho_hdr,
+        rho_sdr,
+        inv_rho_sdr_minus_1
+    );
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[archmage::arcane]
+pub(crate) fn bt2446a_tier_v4x_t(
+    token: archmage::X64V4xToken,
+    row: &mut [[f32; 3]],
+    rho_hdr: f32,
+    inv_log_rho_hdr: f32,
+    rho_sdr: f32,
+    inv_rho_sdr_minus_1: f32,
+) {
+    use magetypes::simd::generic::f32x16;
+    type Vec16 = f32x16<archmage::X64V4xToken>;
+    bt2446a_body!(
+        Vec16,
+        16,
+        token,
+        row,
+        rho_hdr,
+        inv_log_rho_hdr,
+        rho_sdr,
+        inv_rho_sdr_minus_1
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rho_hdr_matches_itu_reference_values() {
+        // ITU-R BT.2446-1 §4 cites ρ_H ≈ 13.2 at 1000 nits and 33 at
+        // 10 000 nits. The pre-fix code used `(L/10000)^2.4` which gave
+        // ρ_H ≈ 1.127 — essentially identity — breaking the entire
+        // compression curve. Pin ρ to the spec values so the bug can't
+        // return.
+        let tm1k = Bt2446A::new(1000.0, 100.0);
+        assert!(
+            (tm1k.rho_hdr - 13.260).abs() < 0.02,
+            "ρ_H at 1000 nits ≈ 13.26, got {}",
+            tm1k.rho_hdr
+        );
+        let tm10k = Bt2446A::new(10_000.0, 100.0);
+        assert!(
+            (tm10k.rho_hdr - 33.0).abs() < 0.05,
+            "ρ_H at 10 000 nits = 33.0, got {}",
+            tm10k.rho_hdr
+        );
+        // Bound far enough below the correct value that any regression to
+        // the pre-fix `^2.4` formula is immediately visible.
+        assert!(
+            tm1k.rho_hdr > 5.0,
+            "ρ_H regressed toward the pre-fix value (~1.13); got {}",
+            tm1k.rho_hdr
+        );
+    }
+
+    #[test]
+    fn libplacebo_parity_end_to_end_on_gray_ramp() {
+        // End-to-end parity check against the published libplacebo
+        // BT.2446-A formula (haasn/libplacebo, src/tone_mapping.c). Drives
+        // the curve through `map_rgb` on a gray ramp (R=G=B=x): the Hunt
+        // correction term (Cb, Cr) is zero for neutral input, so the
+        // channel value reduces to the per-channel EETF + BT.1886 EOTF
+        // chain. Must be bit-close (<1e-4) to libplacebo's numerics.
+        fn libplacebo_eetf_then_eotf(x: f32, hdr_peak: f32, sdr_peak: f32) -> f32 {
+            let x = x.clamp(0.0, 1.0);
+            let p_hdr = 1.0 + 32.0 * powf(hdr_peak / 10000.0, 1.0 / 2.4);
+            let p_sdr = 1.0 + 32.0 * powf(sdr_peak / 10000.0, 1.0 / 2.4);
+            let x_p = powf(x, 1.0 / 2.4);
+            let mut y = libm::logf(1.0 + (p_hdr - 1.0) * x_p) / libm::logf(p_hdr);
+            y = if y <= 0.7399 {
+                1.0770 * y
+            } else if y < 0.9909 {
+                -1.1510 * y * y + 2.7811 * y - 0.6302
+            } else {
+                0.5 * y + 0.5
+            };
+            let y_sdr_prime = (powf(p_sdr, y) - 1.0) / (p_sdr - 1.0);
+            powf(y_sdr_prime, 2.4)
+        }
+
+        for &(hdr, sdr) in &[(1000.0_f32, 100.0_f32), (4000.0, 100.0), (10_000.0, 100.0)] {
+            let tm = Bt2446A::new(hdr, sdr);
+            for &x in &[0.05_f32, 0.18, 0.3, 0.5, 0.7, 0.85, 0.95, 1.0] {
+                let got = tm.map_rgb([x, x, x])[0];
+                let want = libplacebo_eetf_then_eotf(x, hdr, sdr);
+                assert!(
+                    (got - want).abs() < 1e-4,
+                    "libplacebo parity at (hdr={hdr}, sdr={sdr}, x={x}): got {got}, want {want}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn output_is_linear_light_not_gamma_encoded() {
+        // The contract is "linear-light HDR in, linear-light SDR out". The
+        // BT.2446-1 spec's pipeline emits gamma-encoded SDR; we MUST apply
+        // the BT.1886 EOTF (`^2.4`) at the output (matching libplacebo's
+        // `bt1886_eotf` close). Pre-fix returned gamma-encoded values,
+        // which the consumer then double-gamma-encoded — every pixel came
+        // out far too bright (median ΔE2000 ≈ 23 on the shootout corpus).
+        let tm = Bt2446A::new(1000.0, 100.0);
+
+        let black = tm.map_rgb([0.0, 0.0, 0.0]);
+        assert_eq!(black, [0.0, 0.0, 0.0]);
+
+        let peak = tm.map_rgb([1.0, 1.0, 1.0]);
+        for c in peak {
+            assert!(
+                (c - 1.0).abs() < 1e-4,
+                "HDR peak should round-trip to SDR peak: {c}"
+            );
+        }
+
+        // Mid-grey trace: 0.18 HDR → 0.660 gamma → 0.370 linear via ^2.4.
+        // Pre-fix returned ≈0.660 (gamma-encoded); post-fix returns ≈0.370.
+        let mid = tm.map_rgb([0.18, 0.18, 0.18]);
+        for c in mid {
+            assert!(
+                (c - 0.370).abs() < 0.02,
+                "mid-grey HDR 0.18 should map to linear-light SDR ≈ 0.37, got {c}"
+            );
+        }
+        assert!(
+            mid[0] < 0.55,
+            "mid-grey output regressed toward the pre-fix gamma-encoded value (~0.66); got {}",
+            mid[0]
+        );
+    }
+}

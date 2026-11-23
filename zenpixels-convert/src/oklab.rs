@@ -6,7 +6,7 @@
 
 use crate::gamut::GamutMatrix;
 use magemath::cbrtf::{Cbrtf, CbrtfDomain, CbrtfOptions};
-use zenpixels::ColorPrimaries;
+use zenpixels::Primaries;
 
 const OKLAB_MATH_PORTABILITY: magemath::Portability = if cfg!(all(
     target_arch = "wasm32",
@@ -96,15 +96,15 @@ pub const LMS_CBRT_FROM_OKLAB: GamutMatrix = GamutMatrix::from_rows([
 /// or [`lms_to_rgb`](Self::lms_to_rgb) directly.
 ///
 /// ```
-/// use zenpixels_convert::{ColorPrimaries, oklab::OklabSpace};
+/// use zenpixels_convert::{Primaries, oklab::OklabSpace};
 ///
-/// let space = OklabSpace::for_primaries(ColorPrimaries::Bt709).unwrap();
+/// let space = OklabSpace::for_primaries(Primaries::Bt709).unwrap();
 /// let [l, a, b] = space.from_rgb([1.0, 1.0, 1.0]);
 /// assert!((l - 1.0).abs() < 1e-3 && a.abs() < 1e-3 && b.abs() < 1e-3);
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OklabSpace {
-    primaries: ColorPrimaries,
+    primaries: Primaries,
     rgb_to_lms: GamutMatrix,
     lms_to_rgb: GamutMatrix,
 }
@@ -112,7 +112,7 @@ pub struct OklabSpace {
 impl OklabSpace {
     /// The space for `primaries`, or `None` when they have no XYZ matrix here.
     #[must_use]
-    pub fn for_primaries(primaries: ColorPrimaries) -> Option<Self> {
+    pub fn for_primaries(primaries: Primaries) -> Option<Self> {
         Some(Self {
             primaries,
             rgb_to_lms: rgb_to_lms_matrix(primaries)?,
@@ -123,7 +123,7 @@ impl OklabSpace {
     /// The primaries this space is relative to.
     #[inline]
     #[must_use]
-    pub const fn primaries(&self) -> ColorPrimaries {
+    pub const fn primaries(&self) -> Primaries {
         self.primaries
     }
 
@@ -158,12 +158,12 @@ impl OklabSpace {
 }
 
 /// `LMS_FROM_XYZ × RGB_TO_XYZ`.
-pub(crate) fn rgb_to_lms_matrix(primaries: ColorPrimaries) -> Option<GamutMatrix> {
+pub(crate) fn rgb_to_lms_matrix(primaries: Primaries) -> Option<GamutMatrix> {
     Some(GamutMatrix::to_xyz(primaries)?.then(&LMS_FROM_XYZ))
 }
 
 /// `XYZ_TO_RGB × XYZ_FROM_LMS`.
-pub(crate) fn lms_to_rgb_matrix(primaries: ColorPrimaries) -> Option<GamutMatrix> {
+pub(crate) fn lms_to_rgb_matrix(primaries: Primaries) -> Option<GamutMatrix> {
     Some(XYZ_FROM_LMS.then(GamutMatrix::from_xyz(primaries)?))
 }
 
@@ -300,12 +300,9 @@ pub(crate) fn oklab_to_rgb(l: f32, a: f32, b: f32, m1_inv: &[[f32; 3]; 3]) -> [f
 }
 
 #[cfg(test)]
-#[path = "oklab_cbrt_compare.rs"]
-mod cbrt_compare;
-
-#[cfg(test)]
 mod tests {
     use super::*;
+    use zenpixels::Primaries as ColorPrimaries;
 
     #[test]
     fn fast_cbrt_accuracy() {

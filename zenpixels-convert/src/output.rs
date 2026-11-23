@@ -1,322 +1,212 @@
-//! Compile pixel conversion and matching encoder signaling.
+//! Atomic encode-ready output planning: converted pixels + matching CICP / ICC metadata.
 //!
-//! [`OutputPlan::build`] selects the executable conversion, output descriptor
-//! and metadata. `ColorContext` describes current samples. `ColorOrigin`
-//! describes their origin and is consulted for [`OutputProfile::SameAsOrigin`].
-//! Attached ICC bytes retain their authority when converting to a named target.
-//!
-//! [`EncodeReady::from_owned`] consumes the input and reuses its storage for
-//! identity output. [`EncodeReady::copy_from`] creates independently owned output
-//! from a borrowed view. `OutputPlan` also supports borrowing unchanged rows
-//! and writing into caller-provided storage. Alpha removal follows the
-//! supplied policy.
+//! [`OutputPlan`] bundles pixel conversion with container color signaling so an
+//! encoder can never accidentally write sRGB pixels alongside a stale Display P3
+//! ICC profile. On identity (`src == dst`), [`OutputPlan::execute_buf`] reuses
+//! the caller's [`PixelBuf`] **zero-copy**!
 
+use alloc::borrow::Cow;
 use alloc::sync::Arc;
+use whereat::At;
+use zenpixels::{
+    Cicp, ColorOrigin, ColorSpace, HdrMetadata, ImageSpec, PeakSource, PixelBuf, PixelCow,
+    PixelView, Primaries, Transfer,
+};
 
 use crate::error::ConvertError;
-use crate::{
-    Cicp, ColorOrigin, ColorPrimaries, PixelBuffer, PixelDescriptor, PixelFormat, PixelSlice,
-    TransferFunction,
-};
-use whereat::{At, ResultAtExt};
+use crate::plan::ImagePlan;
+use crate::policy::ConvertPolicy;
 
-mod plan;
-pub use plan::{OutputPlan, OutputTarget};
-
-/// Target output color profile.
-#[derive(Clone, Debug)]
+/// Requested container color signaling for an encoder.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum OutputProfile {
-    /// Re-encode in the original color space. For decoded RGB, CICP matrix
-    /// and range are emitted as identity/full; original YUV packing is provenance.
+    /// Emit CICP when standardized (`sRGB`, `DisplayP3`, `BT.2100 PQ/HLG`), and fall back to bundled ICC otherwise (e.g. Adobe RGB).
+    #[default]
+    Auto,
+    /// Preserve the original file's [`ColorOrigin`] signaling when compatible.
     SameAsOrigin,
-    /// Use a well-known CICP-described profile.
-    Named(Cicp),
-    /// Use specific ICC profile bytes.
-    Icc(Arc<[u8]>),
-    /// Use a non-ICC parametric color description (e.g. JPEG XL `ColorEncoding`, PNG `gAMA`+`cHRM`).
-    Parametric(crate::ParametricColor),
+    /// Emit explicit CICP codes only.
+    CicpOnly,
+    /// Embed an ICC profile (synthesized/bundled for known spaces, or original ICC).
+    EmbedIcc,
+    /// Embed an explicit caller-provided ICC profile.
+    CustomIcc(Arc<[u8]>),
+    /// Strip color metadata (assume sRGB / untagged).
+    Strip,
 }
 
-impl OutputProfile {
-    /// Replace an exactly recognized ICC with its bundled canonical profile.
-    ///
-    /// Uses the same normalized hash as `zenpixels::icc` identification, but
-    /// requires normalized byte equality after filtering bundled fingerprints,
-    /// never approximate color-space matches or a fingerprint match alone.
-    /// Header CMM, timestamp, platform, device, creator and ID differences are
-    /// ignored. Tags, rendering intent and color transforms are not ignored.
-    /// This is explicit metadata normalization, not ICC sanitization or a CMS
-    /// conversion. Unknown profiles and non-ICC targets remain unchanged.
-    ///
-    /// Cost: one fingerprint pass plus comparison with a matching candidate;
-    /// a recognized profile allocates
-    /// a small canonical `Arc`. No pixel access, scan, or image allocation.
-    #[must_use]
-    pub fn normalize_known_icc(self) -> Self {
-        use crate::icc_profiles::{ADOBE_RGB, DISPLAY_P3_V2, DISPLAY_P3_V4, REC2020_V4};
-        use zenpixels::icc::{normalized_eq, normalized_hash};
-        const KNOWN: &[((u64, u32), &[u8])] = &[
-            (normalized_hash(DISPLAY_P3_V4), DISPLAY_P3_V4),
-            (normalized_hash(DISPLAY_P3_V2), DISPLAY_P3_V2),
-            (normalized_hash(ADOBE_RGB), ADOBE_RGB),
-            (normalized_hash(REC2020_V4), REC2020_V4),
-        ];
-        if let Self::Icc(ref profile) = self {
-            let hash = normalized_hash(profile);
-            if let Some((_, canonical)) = KNOWN
-                .iter()
-                .find(|(key, bytes)| *key == hash && normalized_eq(profile, bytes))
-            {
-                return Self::Icc(Arc::from(*canonical));
-            }
-        }
-        self
-    }
-}
-
-/// Metadata that the encoder should embed alongside the pixel data.
-///
-/// Generated atomically by [`EncodeReady::from_owned`] to guarantee that
-/// the metadata matches the pixel values.
-///
-/// # Not the same as `ColorContext` / `ColorOrigin`
-///
-/// Three carriers touch color and overlap on `icc` / `cicp`, but each answers
-/// a different question and lives at a different point in the pipeline:
-///
-/// - [`ColorOrigin`] — *how the source file described its color* (provenance +
-///   which field is authoritative). Immutable, set once at decode, consulted
-///   for re-encode decisions.
-/// - [`ColorContext`](zenpixels::ColorContext) — *what the working pixels are
-///   right now* (the profile needed to interpret their values: `icc` / `cicp`
-///   / `diffuse_white`). Rides on the `PixelSlice` via `Arc` and is rewritten
-///   as conversions change the pixels. It deliberately carries **no** content
-///   light level / mastering display — those don't change how a value is
-///   interpreted, only how a display should present it.
-/// - `OutputMetadata` (this type) — *the color blocks the encoder writes into
-///   the container* (`icc` / `cicp`). It is the lowering target of a codec's
-///   color plan (`zencodec::ColorEmitPlan` is itself just `{ cicp, icc }`) and
-///   mirrors that shape. Its reason to exist as a distinct type is the
-///   [`EncodeReady`] atomicity guarantee: the converted bytes and the embedded
-///   color are produced together and cannot drift apart — which a re-used
-///   `ColorContext` would not give. HDR content descriptors (content light
-///   level, mastering display, `diffuse_white`) are deliberately **not** here:
-///   they are not color-profile data and ride the codec-boundary metadata
-///   carrier (`zencodec::Metadata`, which already holds all three) instead.
+/// Atomic output handed to an image encoder: pixels + guaranteed-matching CICP/ICC/HDR metadata.
 #[derive(Clone, Debug)]
-#[non_exhaustive]
-pub struct OutputMetadata {
-    /// ICC profile bytes to embed, if any.
-    pub icc: Option<Arc<[u8]>>,
-    /// CICP code points to embed, if any.
+pub struct EncodeReady<'a> {
+    /// Pixels ready for encoding (zero-copy borrowed or moved when identity!).
+    pub pixels: PixelCow<'a>,
+    /// Authoritative CICP tuple matching `pixels`, if applicable.
     pub cicp: Option<Cicp>,
-    /// Non-ICC parametric color description to embed, if any.
-    pub parametric: Option<crate::ParametricColor>,
+    /// Authoritative ICC profile bytes matching `pixels`, if applicable.
+    pub icc: Option<Cow<'static, [u8]>>,
+    /// HDR container metadata matching `pixels` (cleared automatically if converted to SDR).
+    pub hdr: HdrMetadata,
 }
 
-/// Pixel data bundled with matching metadata, ready for encoding.
-///
-/// Build an `EncodeReady` through [`EncodeReady::from_owned`] or
-/// [`EncodeReady::copy_from`]. Use [`Self::into_parts`] to separate the
-/// owned buffer from its metadata.
-#[non_exhaustive]
-pub struct EncodeReady {
-    pixels: PixelBuffer,
-    metadata: OutputMetadata,
+/// Atomic encoder preparation plan combining [`ImagePlan`] with [`OutputProfile`] signaling.
+#[derive(Clone, Debug)]
+pub struct OutputPlan {
+    src: ImageSpec,
+    dst: ImageSpec,
+    profile: OutputProfile,
+    image_plan: ImagePlan,
+    is_identity: bool,
 }
 
-impl EncodeReady {
-    /// Finalize into independently owned pixels using a previously accepted plan.
-    pub fn copy_from(
-        source: PixelSlice<'_>,
-        mut plan: OutputPlan,
+impl OutputPlan {
+    /// Build an encode-ready output plan.
+    pub fn build(
+        src: ImageSpec,
+        dst: ImageSpec,
+        policy: ConvertPolicy,
+        peak: PeakSource,
+        profile: OutputProfile,
     ) -> Result<Self, At<ConvertError>> {
-        let borrowed = plan.borrow_rows(source.clone())?;
-        let exact = borrowed.as_ref().and_then(|view| view.exact_depth());
-        let float_facts = borrowed.as_ref().map_or_else(
-            || plan.output_float_facts(),
-            |view| view.float_facts().union(plan.output_float_facts()),
-        );
-        let mut pixels =
-            PixelBuffer::try_new(source.width(), source.rows(), plan.output_descriptor())
-                .map_err_at(ConvertError::from)?;
-        let output = plan.convert_rows(source, pixels.as_slice_mut())?;
-        let context = output
-            .color_context()
-            .cloned()
-            .unwrap_or_else(|| plan.output_color_context().clone());
-        pixels
-            .set_exact_depth(exact)
-            .expect("identity view validates the same representation");
-        let _ = pixels.set_float_facts(float_facts);
+        let is_identity = src == dst;
+        let image_plan = ImagePlan::build(src.clone(), dst.clone(), policy, peak)?;
         Ok(Self {
-            pixels: pixels.with_color_context(context),
-            metadata: plan.into_metadata(),
+            src,
+            dst,
+            profile,
+            image_plan,
+            is_identity,
         })
     }
 
-    /// Take ownership and reuse the allocation when sample bytes already match.
-    pub fn from_owned(source: PixelBuffer, plan: OutputPlan) -> Result<Self, At<ConvertError>> {
-        if plan.borrow_rows(source.as_slice())?.is_some() {
-            let pixels = source
-                .with_descriptor(plan.output_descriptor())
-                .with_color_context(plan.output_color_context().clone());
-            return Ok(Self {
-                pixels,
-                metadata: plan.into_metadata(),
+    /// Whether pixel bytes require no conversion (`src == dst`).
+    #[inline]
+    #[must_use]
+    pub const fn is_identity(&self) -> bool {
+        self.is_identity
+    }
+
+    /// Execute on a borrowed [`PixelView<'a>`], returning zero-copy [`PixelCow::Borrowed`] on identity.
+    pub fn execute_view<'a>(
+        &self,
+        view: PixelView<'a>,
+        origin: &ColorOrigin,
+    ) -> Result<EncodeReady<'a>, At<ConvertError>> {
+        let hdr = if self.dst.color.is_hdr() {
+            view.hdr()
+        } else {
+            HdrMetadata::default()
+        };
+        let (cicp, icc) = resolve_output_signaling(&self.dst.color, &self.profile, origin);
+        if self.is_identity {
+            return Ok(EncodeReady {
+                pixels: PixelCow::Borrowed(view),
+                cicp,
+                icc,
+                hdr,
             });
         }
-        Self::copy_from(source.as_slice(), plan)
+        let converted = self.image_plan.execute(&view)?;
+        Ok(EncodeReady {
+            pixels: PixelCow::Owned(converted),
+            cicp,
+            icc,
+            hdr,
+        })
     }
 
-    /// Borrow the pixel data.
-    pub fn pixels(&self) -> PixelSlice<'_> {
-        self.pixels.as_slice()
+    /// Execute on an owned [`PixelBuf`], moving `buf` **zero-copy** on identity!
+    pub fn execute_buf(&self, buf: PixelBuf) -> Result<EncodeReady<'static>, At<ConvertError>> {
+        let hdr = if self.dst.color.is_hdr() {
+            buf.hdr()
+        } else {
+            HdrMetadata::default()
+        };
+        let (cicp, icc) = resolve_output_signaling(&self.dst.color, &self.profile, buf.origin());
+        if self.is_identity {
+            return Ok(EncodeReady {
+                pixels: PixelCow::Owned(buf),
+                cicp,
+                icc,
+                hdr,
+            });
+        }
+        let converted = self.image_plan.execute(&buf)?;
+        Ok(EncodeReady {
+            pixels: PixelCow::Owned(converted),
+            cicp,
+            icc,
+            hdr,
+        })
     }
 
-    /// Borrow the output metadata.
-    pub fn metadata(&self) -> &OutputMetadata {
-        &self.metadata
+    /// Source spec.
+    #[inline]
+    #[must_use]
+    pub fn src_spec(&self) -> &ImageSpec {
+        &self.src
     }
 
-    /// Consume and split into pixel buffer and metadata.
-    pub fn into_parts(self) -> (PixelBuffer, OutputMetadata) {
-        (self.pixels, self.metadata)
+    /// Destination spec.
+    #[inline]
+    #[must_use]
+    pub fn dst_spec(&self) -> &ImageSpec {
+        &self.dst
     }
 }
 
-/// Resolve current color once; provenance never overrides working pixels.
-#[cfg(feature = "hdr-experimental")]
-pub(crate) fn current_profile(
-    buffer: &PixelBuffer,
-) -> Result<crate::ColorProfileSource<'_>, At<ConvertError>> {
-    current_profile_for(buffer.encoding())
-}
-
-pub(crate) fn current_profile_for(
-    encoding: crate::PixelEncoding<'_>,
-) -> Result<crate::ColorProfileSource<'_>, At<ConvertError>> {
-    let desc = encoding.descriptor();
-    if let Some(context) = encoding.color_context() {
-        if let Some(cicp) = context.cicp() {
-            // A claim that leaves primaries or transfer unresolved (H.273
-            // code 2, unspecified, or a code zenpixels does not model)
-            // describes no colour space for those fields. It agrees with a
-            // descriptor that says `Unknown` there and matches the rest, and
-            // then offers no profile: the pixels convert as their descriptor
-            // says (layout, depth), and anything that needs the colour still
-            // fails on the Unknown descriptor (`NeedsCms`). A descriptor that
-            // claims more than the context is still a mislabel.
-            let primaries = ColorPrimaries::from_cicp(cicp.color_primaries);
-            let transfer = TransferFunction::from_cicp(cicp.transfer_characteristics);
-            if primaries.is_none() || transfer.is_none() {
-                let range = if cicp.full_range {
-                    crate::SignalRange::Full
+fn resolve_output_signaling(
+    dst_color: &ColorSpace,
+    profile: &OutputProfile,
+    origin: &ColorOrigin,
+) -> (Option<Cicp>, Option<Cow<'static, [u8]>>) {
+    match profile {
+        OutputProfile::Strip => (None, None),
+        OutputProfile::CustomIcc(bytes) => (dst_color.to_cicp(), Some(Cow::Owned(bytes.to_vec()))),
+        OutputProfile::CicpOnly => (dst_color.to_cicp(), None),
+        OutputProfile::SameAsOrigin => {
+            let icc = origin.icc.as_ref().map(|b| Cow::Owned(b.to_vec()));
+            let cicp = origin.cicp.or_else(|| dst_color.to_cicp());
+            (cicp, icc)
+        }
+        OutputProfile::EmbedIcc => {
+            let cicp = dst_color.to_cicp();
+            let icc = match dst_color {
+                ColorSpace::Icc { profile, .. } => Some(Cow::Owned(profile.to_vec())),
+                ColorSpace::Cmyk { icc: Some(b), .. } => Some(Cow::Owned(b.to_vec())),
+                ColorSpace::Rgb {
+                    primaries,
+                    transfer,
+                    ..
+                } => bundled_icc_for(*primaries, *transfer),
+                _ => None,
+            };
+            (cicp, icc)
+        }
+        OutputProfile::Auto => match dst_color {
+            ColorSpace::Icc { profile, .. } => (None, Some(Cow::Owned(profile.to_vec()))),
+            ColorSpace::Cmyk { icc, .. } => (None, icc.as_ref().map(|b| Cow::Owned(b.to_vec()))),
+            ColorSpace::Rgb {
+                primaries,
+                transfer,
+                ..
+            } => {
+                let cicp = dst_color.to_cicp();
+                let icc = if cicp.is_some()
+                    && *primaries == Primaries::Bt709
+                    && *transfer == Transfer::Srgb
+                {
+                    None
                 } else {
-                    crate::SignalRange::Narrow
+                    bundled_icc_for(*primaries, *transfer)
                 };
-                let agrees = primaries.unwrap_or(ColorPrimaries::Unknown) == desc.primaries
-                    && transfer.unwrap_or(TransferFunction::Unknown) == desc.transfer()
-                    && cicp.matrix_coefficients == 0
-                    && range == desc.signal_range;
-                if agrees {
-                    return Ok(desc.color_profile_source());
-                }
+                (cicp, icc)
             }
-            let signaled = descriptor_for_profile(
-                desc.pixel_format(),
-                &crate::ColorProfileSource::Cicp(cicp),
-            )?;
-            let primaries_conflict =
-                desc.primaries != ColorPrimaries::Unknown && signaled.primaries != desc.primaries;
-            let transfer_conflict = desc.transfer() != TransferFunction::Unknown
-                && signaled.transfer() != desc.transfer();
-            if primaries_conflict || transfer_conflict || signaled.signal_range != desc.signal_range
-            {
-                return Err(whereat::at!(ConvertError::NoPath {
-                    from: desc,
-                    to: signaled
-                }));
-            }
-        }
-        if let Some(param) = context.parametric()
-            && let Some((primaries, transfer)) = param.to_primaries_transfer()
-        {
-            let primaries_conflict =
-                desc.primaries != ColorPrimaries::Unknown && desc.primaries != primaries;
-            let transfer_conflict =
-                desc.transfer() != TransferFunction::Unknown && desc.transfer() != transfer;
-            if primaries_conflict || transfer_conflict {
-                let signaled = desc.with_primaries(primaries).with_transfer(transfer);
-                return Err(whereat::at!(ConvertError::NoPath {
-                    from: desc,
-                    to: signaled,
-                }));
-            }
-        }
-        if let Some(profile) = context.as_profile_source() {
-            return Ok(profile);
-        }
+            _ => (dst_color.to_cicp(), None),
+        },
     }
-    Ok(desc.color_profile_source())
 }
 
-fn origin_profile(origin: &ColorOrigin) -> Option<crate::ColorProfileSource<'_>> {
-    let icc = origin.icc.as_deref().map(crate::ColorProfileSource::Icc);
-    let non_icc = origin
-        .parametric
-        .map(crate::ColorProfileSource::Parametric)
-        .or_else(|| {
-            origin.cicp.map(|c| {
-                crate::ColorProfileSource::Cicp(Cicp::new(
-                    c.color_primaries,
-                    c.transfer_characteristics,
-                    0,
-                    true,
-                ))
-            })
-        });
-    origin.color_authority.select(icc, non_icc)
-}
-
-fn descriptor_for_profile(
-    format: PixelFormat,
-    profile: &crate::ColorProfileSource<'_>,
-) -> Result<PixelDescriptor, At<ConvertError>> {
-    if let crate::ColorProfileSource::Cicp(cicp) = profile {
-        return cicp
-            .try_to_descriptor(format)
-            .map_err(|error| whereat::at!(ConvertError::CicpDescriptor(error)));
-    }
-    let (primaries, transfer) = profile
-        .resolve()
-        .unwrap_or((ColorPrimaries::Unknown, TransferFunction::Unknown));
-    Ok(format
-        .descriptor()
-        .with_primaries(primaries)
-        .with_transfer(transfer))
-}
-
-pub(crate) fn profiles_match(
-    a: &crate::ColorProfileSource<'_>,
-    b: &crate::ColorProfileSource<'_>,
-) -> bool {
-    match (a, b) {
-        (crate::ColorProfileSource::Icc(a), crate::ColorProfileSource::Icc(b)) => a == b,
-        (crate::ColorProfileSource::Cicp(a), crate::ColorProfileSource::Cicp(b)) => {
-            a == b
-                || (a.full_range
-                    && b.full_range
-                    && a.matrix_coefficients == 0
-                    && b.matrix_coefficients == 0
-                    && a.color_primaries == b.color_primaries
-                    && a.transfer_characteristics == b.transfer_characteristics)
-        }
-        (crate::ColorProfileSource::Icc(_), _) | (_, crate::ColorProfileSource::Icc(_)) => false,
-        (crate::ColorProfileSource::Parametric(a), crate::ColorProfileSource::Parametric(b)) => {
-            a == b
-        }
-        _ => a.resolve().is_some() && a.resolve() == b.resolve(),
-    }
+fn bundled_icc_for(primaries: Primaries, transfer: Transfer) -> Option<Cow<'static, [u8]>> {
+    crate::icc_profiles::bundled_icc_profile(primaries, transfer).map(Cow::Borrowed)
 }

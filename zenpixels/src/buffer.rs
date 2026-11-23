@@ -557,6 +557,12 @@ impl<'a> PixelViewMut<'a> {
         })
     }
 
+    /// Mutable raw strided byte backing starting at `(0, 0)` (includes inter-row padding).
+    #[inline]
+    pub fn as_strided_bytes_mut(&mut self) -> &mut [u8] {
+        self.data
+    }
+
     /// Mutable contiguous bytes if rows are tightly packed.
     #[inline]
     pub fn as_contiguous_bytes_mut(&mut self) -> Option<&mut [u8]> {

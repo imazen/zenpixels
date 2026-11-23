@@ -1,484 +1,85 @@
-//! Transfer-function-aware pixel conversion for zenpixels.
-//!
-//! This crate provides all the conversion logic that was split out of the
-//! `zenpixels` interchange crate: row-level format conversion, gamut mapping,
-//! codec format negotiation, and HDR tone mapping.
-//!
-//! # Re-exports
-//!
-//! All interchange types from `zenpixels` are re-exported at the crate root,
-//! so downstream code can depend on `zenpixels-convert` alone.
-//!
-//! # Core concepts
-//!
-//! - **Format negotiation**: [`ConvertPlan::select`] returns an admitted target
-//!   and its executable recipe.
-//!
-//! - **Row conversion**: [`ConvertPlan::prepare`] moves scratch and table setup
-//!   out of the row loop. [`RowConverter::try_convert_row`]
-//!   executes within that capacity, using SIMD where available.
-//!
-//! - **Codec helpers**: [`PixelSliceConvertExt::adapt_for_encode`] negotiates format and converts
-//!   pixel data in one call, returning [`PixelCow::Borrowed`] when the input
-//!   already matches a supported format.
-//!
-//! - **Extension traits**: [`PixelSliceConvertExt`], [`PixelBufferConvertExt`],
-//!   [`BandedPixelBufferConvertExt`], and [`ColorConvertExt`] add conversion
-//!   methods to interchange types.
-//!
-//! # Codec compliance guide
-//!
-//! This section describes how to write a codec that integrates correctly with
-//! the zenpixels ecosystem. A "codec" here means any decoder or encoder crate
-//! that produces or consumes pixel data.
-//!
-//! ## Design principles
-//!
-//! 1. **Codecs own I/O; zenpixels-convert owns pixel math.** A codec reads
-//!    and writes its container format. All pixel format conversion, transfer
-//!    function application, gamut mapping, and alpha handling is done by
-//!    `zenpixels-convert`. Codecs should not re-implement conversion logic.
-//!
-//! 2. **`PixelFormat` is byte layout; `PixelDescriptor` is full meaning.**
-//!    `PixelFormat` describes the physical byte arrangement (channel count,
-//!    order, depth). `PixelDescriptor` adds color interpretation: transfer
-//!    function, primaries, alpha mode, signal range. Codecs register
-//!    `PixelDescriptor` values because negotiation needs the full picture.
-//!
-//! 3. **No silent lossy conversions.** Every operation that destroys
-//!    information (alpha removal, depth reduction, gamut clipping) requires
-//!    an explicit policy via [`ConvertOptions`]. Codecs must not silently
-//!    clamp, truncate, or discard data.
-//!
-//! 4. **Pixels and metadata travel together.** [`ColorContext`] rides on
-//!    [`PixelBuffer`] via `Arc` so ICC/CICP metadata follows pixel data
-//!    through the pipeline. [`EncodeReady::from_owned`] couples converted pixels
-//!    with matching encoder metadata atomically.
-//!
-//! 5. **Provenance informs negotiation, not exactness.** Origin precision is
-//!    a cost-model hint. Edits can create new values; use
-//!    [`ConversionSpec::preserve_samples`] for a metadata-proven exact path
-//!    or an explicitly requested content analysis.
-//!
-//! ## The pixel lifecycle
-//!
-//! Every image processing pipeline follows this flow:
-//!
-//! ```text
-//! ┌──────────┐    ┌───────────┐    ┌───────────┐    ┌──────────┐
-//! │  Decode   │───>│ Negotiate │───>│  Convert  │───>│  Encode  │
-//! │          │    │           │    │           │    │          │
-//! │ Produces: │    │ Picks:    │    │ Uses:     │    │ Consumes:│
-//! │ PixelBuf  │    │ best fmt  │    │ RowConv.  │    │ EncReady │
-//! │ ColorCtx  │    │ from list │    │ per-row   │    │ metadata │
-//! │ ColorOrig │    │           │    │           │    │          │
-//! └──────────┘    └───────────┘    └───────────┘    └──────────┘
-//! ```
-//!
-//! ### Step 1: Decode
-//!
-//! The decoder produces pixel data in one of its natively supported formats,
-//! wraps it in a [`PixelBuffer`], and extracts color metadata from the file.
-//!
-//! ```rust,ignore
-//! // Decode raw pixels
-//! let pixels: Vec<u8> = my_codec_decode(&file_bytes)?;
-//! let desc = PixelDescriptor::RGB8_SRGB;
-//! let buffer = PixelBuffer::from_vec(pixels, width, height, desc)?;
-//!
-//! // Extract color metadata for CMS integration
-//! let color_ctx = match (icc_chunk, cicp_chunk) {
-//!     // This decoder's container gives ICC precedence. Containers with
-//!     // CICP precedence select from_cicp here instead.
-//!     (Some(icc), Some(_)) =>
-//!         Some(Arc::new(ColorContext::from_icc(icc))),
-//!     (Some(icc), None) =>
-//!         Some(Arc::new(ColorContext::from_icc(icc))),
-//!     (None, Some(cicp)) =>
-//!         Some(Arc::new(ColorContext::from_cicp(cicp))),
-//!     (None, None) => None,
-//! };
-//!
-//! // Track provenance for re-encoding decisions
-//! let origin = ColorOrigin::from_icc_and_cicp(icc, cicp);
-//! // or: ColorOrigin::from_icc(icc)
-//! // or: ColorOrigin::from_cicp(cicp)
-//! // or: ColorOrigin::from_gama_chrm()  // PNG gAMA+cHRM
-//! // or: ColorOrigin::assumed()         // no color metadata in file
-//! ```
-//!
-//! **Rules for decoders:**
-//!
-//! - Register only formats the decoder natively produces. Do not list formats
-//!   that require internal conversion — let the caller convert via
-//!   [`RowConverter`]. If your JPEG decoder outputs u8 sRGB only, register
-//!   `RGB8_SRGB`, not `RGBF32_LINEAR`.
-//!
-//! - Extract all available color metadata. Both ICC and CICP can coexist in a
-//!   file (AVIF/HEIF/PNG containers carry both): select the single active
-//!   authority for [`ColorContext`] according to the container's precedence
-//!   rules, and record all file-level carriers on [`ColorOrigin`].
-//!
-//! - Build a [`ColorOrigin`] that records *how* the file described its color,
-//!   not what the pixels are. This is immutable and used only at encode time
-//!   for provenance decisions (e.g., "re-embed the original ICC profile").
-//!
-//! - [`ExactDepth`](zenpixels::sample::ExactDepth) and
-//!   [`FloatFacts`](zenpixels::sample::FloatFacts) are sample evidence.
-//!   [`SourcePrecision`](zenpixels::precision::SourcePrecision) describes capacity
-//!   and can constrain admission when the caller has not chosen the loss.
-//!
-//! ### Step 2: Negotiate
-//!
-//! Offer the encoder's native targets as [`CandidateTarget`] values. Use
-//! [`ConvertPlan::select`] to choose an admitted target with the supplied
-//! [`ConversionSpec`]. Use [`ConvertPlan::build`] for a specific target.
-//!
-//! Choose a linear-light target before resizing or filtering. For blending,
-//! choose a linear-light target with premultiplied alpha.
-//!
-//! ### Step 3: Convert
-//!
-//! Once a target format is chosen, convert pixel data row-by-row.
-//!
-//! ```rust,ignore
-//! let plan = ConvertPlan::build(source.encoding(), target_encoding, &spec)?;
-//! let mut converter = plan.prepare(width)?;
-//! for y in 0..height {
-//!     converter.try_convert_row(src_row, dst_row, width)?;
-//! }
-//! ```
-//!
-//! Or use the convenience function that combines negotiation and conversion:
-//!
-//! ```rust,ignore
-//! let adapted = pixels.adapt_for_encode(&encoder_supported, &options)?;
-//! // adapted is PixelCow::Borrowed on equivalent interpretation.
-//! ```
-//!
-//! **Rules for conversion:**
-//!
-//! - Use [`RowConverter`], not hand-rolled conversion. It handles transfer
-//!   functions, gamut matrices, alpha mode changes, depth scaling, Oklab,
-//!   and byte swizzle correctly. It pre-computes the plan so there is
-//!   checked row boundaries and no scratch/table allocation within prepared capacity.
-//!
-//! - For policy-sensitive conversions (when you need to control what lossy
-//!   operations are allowed), use [`PixelSliceConvertExt::adapt_for_encode`] with
-//!   [`ConvertOptions`]. This validates policies *before* doing work and
-//!   returns specific errors like [`ConvertError::AlphaNotOpaque`] or
-//!   [`ConvertError::DepthReductionForbidden`].
-//!
-//! - The conversion system pairs a compact universal fast-FMA scalar core with
-//!   opt-in SIMD accelerators:
-//!   (a) Every valid native pixel pair always succeeds via the zero-scratch
-//!   universal fast-FMA scalar engine, matching the x86-64/AArch64 SIMD kernels
-//!   bit-for-bit without linking unused SIMD codegen.
-//!   (b) Enable SIMD acceleration process-wide at startup with
-//!   [`accel::enable_all()`] (or granular presets such as
-//!   [`accel::enable_web_sdr()`] / [`accel::enable_layout()`]), per-plan with
-//!   [`ConversionSpec::fast`] or [`ConversionSpec::with_accelerators`], or for a
-//!   top-level binary via the opt-in `fast` Cargo feature. Only the accelerator
-//!   families your binary actually references are linked.
-//!
-//! - **Signal range never converts — it refuses.** There are no
-//!   Narrow↔Full (limited↔full / studio↔full swing) conversion kernels, so
-//!   any plan whose endpoints differ in [`SignalRange`] fails with
-//!   [`ConvertError::NoPath`] instead of relabeling unscaled values
-//!   (which would lift or crush blacks). Narrow-range channel-type changes
-//!   (including U8↔U16) also refuse because existing depth kernels scale the
-//!   full range instead of preserving narrow anchors. These checks run before
-//!   CMS setup too. Same-depth identity and value-preserving layout changes
-//!   remain supported. Use a same-range, same-depth target or explicitly
-//!   convert the signal upstream with a range-aware implementation.
-//!
-//! ### Step 4: Encode
-//!
-//! The encoder receives pixel data in a format it natively supports and
-//! must embed correct color metadata.
-//!
-//! For the atomic path (recommended), use [`EncodeReady::from_owned`]:
-//!
-//! ```rust,ignore
-//! let destination = OutputTarget::new(OutputProfile::SameAsOrigin, target_format)
-//!     .with_origin(&color_origin);
-//! let plan = OutputPlan::build(buffer.encoding(), destination, &spec.with_cms(&cms))?;
-//! let ready = EncodeReady::from_owned(buffer, plan)?;
-//!
-//! // Pixels and metadata are guaranteed to match
-//! encoder.write_pixels(ready.pixels())?;
-//! encoder.write_icc(ready.metadata().icc.as_deref())?;
-//! encoder.write_cicp(ready.metadata().cicp)?;
-//! ```
-//!
-//! **Rules for encoders:**
-//!
-//! - Register only formats the encoder natively accepts. If your JPEG encoder
-//!   takes u8 sRGB, register `RGB8_SRGB`. Don't also list `RGBA8_SRGB`
-//!   unless you actually handle RGBA natively (not just by stripping alpha
-//!   internally). Let the conversion system handle format changes.
-//!
-//! - Offer a format if the encoder can consume it directly, including fused
-//!   conversion paths such as an f32 input to a JPEG transform.
-//!
-//! - Use [`EncodeReady::from_owned`] to bundle pixels and metadata atomically.
-//!   This prevents the most common color management bug: pixel values that
-//!   don't match the embedded ICC/CICP.
-//!
-//! - Always embed color metadata when the format supports it. Omitting color metadata causes browsers and OS viewers
-//!   to assume sRGB, which corrupts Display P3 and HDR content.
-//!
-//! - The [`OutputProfile`] enum controls what gets embedded:
-//!   - [`OutputProfile::SameAsOrigin`]: Re-embed the original ICC/CICP from
-//!     the source file. Used for transcoding without color changes.
-//!   - [`OutputProfile::Named`]: Use a well-known CICP profile (sRGB, P3,
-//!     BT.2020). Uses hardcoded gamut matrices, no CMS needed.
-//!   - [`OutputProfile::Icc`]: Use specific ICC profile bytes. Requires a
-//!     [`PluggableCms`] implementation.
-//!
-//! ## Workspace and diagnostics
-//!
-//! [`ConvertPlan::workspace`] reports allocator requests by lifetime.
-//! Enable `introspection` to inspect the lowered operators and their accuracy.
-//!
-//! ## CMS integration
-//!
-//! Named profile conversions (sRGB ↔ Display P3 ↔ BT.2020) use hardcoded
-//! 3×3 gamut matrices and need no CMS backend. ICC-to-ICC transforms
-//! require a [`PluggableCms`] implementation, which is a compile-time
-//! feature (e.g., `cms-moxcms`) or a caller-supplied plugin.
-//!
-//! Codecs that handle ICC profiles must:
-//! 1. Extract ICC bytes on decode and store them on [`ColorContext`].
-//! 2. Record provenance on [`ColorOrigin`].
-//! 3. On encode, let [`EncodeReady::from_owned`] handle the ICC transform
-//!    (if the target profile differs from the source) or pass-through
-//!    (if `SameAsOrigin`).
-//!
-//! ## Error handling
-//!
-//! [`ConvertError`] provides specific variants so codecs can handle each
-//! failure mode:
-//!
-//! - [`ConvertError::NoMatch`] — no supported format works for this source.
-//!   The codec's format list may be too restrictive.
-//! - [`ConvertError::NoPath`] — no conversion kernel exists between formats.
-//!   Unusual; most pairs are covered.
-//! - [`ConvertError::AlphaNotOpaque`] — `DiscardIfOpaque` policy was set
-//!   but the data has semi-transparent pixels.
-//! - [`ConvertError::DepthReductionForbidden`] — `Forbid` policy prevents
-//!   narrowing (e.g., f32→u8).
-//! - [`ConvertError::AllocationFailed`] — buffer allocation failed (OOM).
-//! - [`ConvertError::CmsBackend`] — CMS transform failed (invalid ICC profile,
-//!   unsupported color space, etc.).
-//!
-//! Codecs should match on specific variants and return actionable errors
-//! to callers. Do not flatten `ConvertError` into a generic string.
-//!
-//! ## Checklist
-//!
-//! - [ ] Decode: extract ICC + CICP → [`ColorContext`]
-//! - [ ] Decode: record provenance → [`ColorOrigin`]
-//! - [ ] Encode: negotiate via [`ConvertPlan::select`] or [`PixelSliceConvertExt::adapt_for_encode`]
-//! - [ ] Encode: convert via [`RowConverter`] (not hand-rolled)
-//! - [ ] Encode: embed metadata via [`EncodeReady::from_owned`]
-//! - [ ] Encode: embed ICC/CICP when the format supports it
-//! - [ ] Handle [`ConvertError`] variants specifically
-//! - [ ] Test round-trip: native format → encode → decode = lossless
-//! - [ ] Test negotiation: `ConvertPlan::select(source, targets, &spec)` picks identity
+//! # zenpixels-convert 0.5 — Greenfield Pixel Conversion Engine
+//!
+//! Composable, `no_std + alloc`, `#![forbid(unsafe_code)]` pixel conversion,
+//! HDR tone mapping, gamut compression, ICC/CMS routing, gain-map reconstruction,
+//! EXIF orientation transpose, and codec format negotiation for [`zenpixels`].
+//!
+//! ## Collision-Free Namespace Design
+//!
+//! This crate re-exports the entire [`zenpixels`] core surface (`pub use zenpixels::*;`)
+//! without shadowing a single module name (`zenpixels::hdr` remains pure metadata;
+//! tone mapping and gamut compression live in [`tonemap`], content light measurement
+//! lives in [`measure`], gain maps live in [`gainmap`]).
+//!
+//! ## Key Architecture Highlights
+//!
+//! - **64-pixel stack-allocated SoA L1-strip execution engine:** zero heap scratch
+//!   allocation per row, composable micro-kernels covering full & bit-packed
+//!   (`P010`, `RGB565`, `RGB10A2`) layouts, Narrow↔Full studio range, Bayer 4×4
+//!   ordered dithering, exact linear-light gamut matrices, CIE XYZ D65 Oklab,
+//!   BT.2100-3 HLG display rendering, ST 2084 PQ, and BT.2446A tone mapping.
+//! - **Compile-time safe [`RowPlan`] vs [`ImagePlan`]:** `RowPlan::build` accepts
+//!   only `Option<Nits>` (impossible to pass `PeakSource::Measured` to a single-row
+//!   converter); `ImagePlan::build` accepts [`PeakSource`] and streams peak
+//!   measurement in O(1) row memory across [`PixelView`], [`PixelBuf`], and [`BandedBuf`].
+//! - **Dead-stripping `const` [`Accelerators`]:** link only the SIMD kernels you
+//!   use (`SCALAR`, `LAYOUT`, `WEB_SDR`, `HDR`, `OKLAB`, `ALL`), with verified
+//!   0-bit parity between `SCALAR` and `ALL`.
 
 #![cfg_attr(not(test), no_std)]
 #![forbid(unsafe_code)]
 
 extern crate alloc;
-#[cfg(all(not(test), feature = "__trace_ops"))]
-extern crate std;
 
 whereat::define_at_crate_info!(path = "zenpixels-convert/");
 
-// Re-export all interchange types from zenpixels.
+/// Full re-export of [`zenpixels`] core types (zero module name collisions!).
 pub use zenpixels::*;
 
-// Conversion modules.
-pub(crate) mod convert;
-// Only library-owned concrete types implement conversion/measurement extensions.
-mod sealed {
-    pub trait Sealed {}
-    impl Sealed for zenpixels::Color {}
-    impl<P> Sealed for zenpixels::PixelBuffer<P> {}
-    impl Sealed for zenpixels::PixelSlice<'_> {}
-    impl Sealed for zenpixels::banded::BandedPixelBuffer {}
-    impl Sealed for zenpixels::hdr::ContentLightLevel {}
-    #[cfg(feature = "planar")]
-    impl<C> Sealed for zenpixels::plane::Plane<C> {}
-}
+pub mod accel;
+pub mod cms;
 pub mod error;
 pub(crate) mod f16_scalar;
-pub(crate) mod float_simd;
-mod gamma_math;
-mod negotiate;
-
-pub mod accel;
-pub mod adapt;
-mod universal;
-// Internal only — zero consumers today. Kept for a future caller;
-// see zenpixels CLAUDE.md YAGNI section.
-/// Internal: runtime op tracer for in-repo tests. Gated on
-/// `feature = "__trace_ops"`. The `__` prefix and `#[doc(hidden)]`
-/// signal that this is unstable internal surface — see module docs.
-#[doc(hidden)]
-#[path = "__trace_ops.rs"]
-#[cfg(feature = "__trace_ops")]
-pub mod __trace_ops;
-#[path = "__trace_ops.rs"]
-#[cfg(not(feature = "__trace_ops"))]
-#[allow(dead_code, unused_imports)]
-pub(crate) mod __trace_ops;
-pub mod cms;
-#[cfg(feature = "cms-lcms")]
-pub mod cms_lcms;
-#[allow(
-    dead_code,
-    unused_variables,
-    clippy::needless_return,
-    clippy::excessive_precision,
-    clippy::derivable_impls
-)]
-pub(crate) mod cms_lite;
-#[cfg(feature = "cms-moxcms")]
-pub mod cms_moxcms;
-pub mod codes;
-pub mod converter;
-#[cfg(feature = "css")]
-pub mod css;
-pub mod ext;
-#[allow(
-    dead_code,
-    unexpected_cfgs,
-    unused_variables,
-    clippy::needless_return,
-    clippy::excessive_precision,
-    clippy::derivable_impls
-)]
-pub(crate) mod fast_gamut;
-mod interpretation;
-
-/// Bench-only shims for u16 RGB gamut hybrid kernels — comparative
-/// benchmarks for {LUT, poly} × {LUT, poly} decode/encode combinations.
-/// Gated behind `__bench_u16_hybrids` so the surface stays out of
-/// non-bench builds. Not public API in any sense beyond the bench file.
-#[cfg(feature = "__bench_u16_hybrids")]
-#[doc(hidden)]
-pub mod __bench_u16_hybrids {
-    pub fn lut_lut(m: &[[f32; 3]; 3], src: &[u16], dst: &mut [u16]) {
-        crate::fast_gamut::__bench_u16_lut_decode_lut_encode(m, src, dst)
-    }
-    pub fn lut_poly(m: &[[f32; 3]; 3], src: &[u16], dst: &mut [u16]) {
-        crate::fast_gamut::__bench_u16_lut_decode_poly_encode(m, src, dst)
-    }
-    pub fn poly_lut(m: &[[f32; 3]; 3], src: &[u16], dst: &mut [u16]) {
-        crate::fast_gamut::__bench_u16_poly_decode_lut_encode(m, src, dst)
-    }
-    pub fn poly_poly(m: &[[f32; 3]; 3], src: &[u16], dst: &mut [u16]) {
-        crate::fast_gamut::__bench_u16_poly_decode_poly_encode(m, src, dst)
-    }
-}
-
-/// Bench-only shims exposing the crate-private `scan` fused kernel to
-/// `benches/bench_load_bearing.rs` for pass-structure comparison.
-/// Gated behind `__bench_scan`; not public API in any sense beyond the
-/// bench file.
-#[cfg(feature = "__bench_scan")]
-#[doc(hidden)]
-pub mod __bench_scan {
-    /// The identity-TRC gamut path — no dispatch today, hence measured.
-    pub use crate::fast_gamut::{convert_linear_rgb, convert_linear_rgba};
-    pub use crate::scan::{FusedRequest, FusedResult, fused_predicates_rgba8_cg};
-}
-
-/// Bench-only shims for `benches/bench_float_depth_and_bands.rs`.
-#[cfg(feature = "__bench_float_depth")]
-#[doc(hidden)]
-pub mod __bench_float_depth {
-    pub use crate::float_simd::bench_shims::*;
-}
+pub mod gainmap;
 pub mod gamut;
-pub mod hdr;
+#[cfg(feature = "hdr-transfers")]
+pub(crate) mod hlg_render;
 pub mod icc_profiles;
-pub mod load_bearing;
+pub mod measure;
+pub mod negotiate;
 #[cfg(feature = "oklab")]
 pub mod oklab;
-#[cfg(not(feature = "__bench_orient"))]
-pub(crate) mod orient;
-#[cfg(feature = "__bench_orient")]
-#[doc(hidden)]
 pub mod orient;
 pub mod output;
-mod packed;
-#[cfg(feature = "planar")]
+#[cfg(feature = "perceptual")]
+pub mod perceptual;
+pub mod plan;
+pub mod policy;
+pub mod scan;
+pub mod strip;
+pub mod tonemap;
 pub mod ycbcr;
-// Crate-internal SIMD predicates backing `load_bearing` -- the module
-// stays private so the per-(layout × channel-type) kernel set never
-// becomes public API surface. Consume via `PixelSliceLoadBearingExt`.
-mod scan;
 
-// Re-export key conversion types at crate root.
-pub(crate) use convert::NativePlan;
-mod plan;
-mod route;
+// Ergonomic top-level re-exports.
 pub use accel::Accelerators;
-#[cfg(feature = "hdr-experimental")]
-pub use convert::HdrConfig;
-#[doc(inline)]
-pub use converter::RowConverter;
-#[doc(inline)]
-pub use error::ConvertError;
-#[cfg(feature = "introspection")]
-pub use negotiate::{ConversionCost, LossBucket};
-pub use negotiate::{ConvertIntent, Provenance};
-pub use plan::{
-    AllocationRequirements, ByteBound, CandidateTarget, ConversionSpec, ConvertPlan,
-    SelectedConversion, WorkExtent,
-};
-#[cfg(feature = "introspection")]
-pub use route::{AccuracyContract, KernelTier, PlannedStepInfo, SemanticEffects};
-
-// Re-export extension traits.
-#[cfg(feature = "rgb")]
-pub use ext::PixelBufferConvertTypedExt;
-#[cfg(feature = "hdr-experimental")]
-pub use ext::PixelBufferHdrConvertExt;
-#[cfg(feature = "planar")]
-pub use ext::PlaneConvertExt;
-#[doc(inline)]
-pub use ext::{
-    BandedPixelBufferConvertExt, ColorConvertExt, PixelBufferConvertExt, PixelSliceConvertExt,
-};
-
-// Re-export gamut conversion utilities.
-pub use gamut::GamutMatrix;
-
-// Re-export the load-bearing analysis surface: one trait, one report.
-// The scan-level predicates stay crate-internal.
-pub use load_bearing::{LoadBearingReport, PixelBufferLoadBearingExt, PixelSliceLoadBearingExt};
-
-// Re-export CMS traits, enums, and implementations.
-pub use cms::{
-    CmsPluginError, CmsRequest, CmsSupport, PluggableCms, RowTransform, RowTransformMut,
-};
-// TODO: pub use cms_lite::ZenCmsLite once benchmarked on aarch64.
-#[cfg(feature = "cms-lcms")]
-pub use cms_lcms::Lcms;
 #[cfg(feature = "cms-moxcms")]
-pub use cms_moxcms::MoxCms;
-
-// Re-export output and band-generic packed execution types.
-pub use output::{EncodeReady, OutputMetadata, OutputProfile};
-pub use output::{OutputPlan, OutputTarget};
-pub use packed::{PackedSink, PackedSource, orient_into};
-
-#[cfg(test)]
-mod kernel_tests;
-
-/// Precision-aware format selection and conversion policy.
-pub mod precision;
+pub use cms::MoxCms;
+pub use cms::{CmsBackend, CmsTransform};
+pub use error::ConvertError;
+pub use gainmap::{apply_gain_map, extract_gain_map};
+pub use gamut::GamutMatrix;
+pub use measure::{LightLevelHistogram, LightLevelMethod, measure_cll, measure_histogram};
+pub use negotiate::{FormatCost, LossKind, Negotiate, NegotiatedFormat};
+pub use orient::{apply_orientation, apply_orientation_into};
+pub use output::{EncodeReady, OutputPlan, OutputProfile};
+pub use plan::{ImagePlan, RowPlan, convert_buf, convert_into};
+pub use policy::{
+    AlphaPolicy, ConvertPolicy, DepthPolicy, GamutPolicy, LumaCoefficients, RangePolicy,
+};
+pub use scan::scan_facts;
+#[cfg(feature = "bt2446a")]
+pub use tonemap::Bt2446A;
+#[cfg(feature = "oklab")]
+pub use tonemap::SoftCompress;
+pub use tonemap::{PreparedMapper, Requirements, StripMapper, ToneMapContext, ToneMapper};
+pub use ycbcr::{YcbcrMatrix, ycbcr_to_rgb_f32};

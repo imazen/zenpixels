@@ -1,0 +1,301 @@
+//! Streaming HDR content-light-level (MaxCLL / MaxFALL) measurement in O(1) row memory.
+//!
+//! Operates directly over any [`PixelSource`] (`PixelView`, `PixelBuf`, `BandedBuf`)
+//! using a stack-resident 64-pixel tile — **zero full-image F32 temporary buffer**.
+
+use alloc::boxed::Box;
+use whereat::At;
+use zenpixels::{
+    ColorSpace, ContentLightLevel, DiffuseWhite, HlgMode, HlgRendering, ImageSpec, PixelSource,
+    SampleType, Transfer,
+};
+
+use crate::accel::Accelerators;
+use crate::error::ConvertError;
+use crate::policy::{ConvertPolicy, DepthPolicy, GamutPolicy};
+use crate::tonemap::{BT2020_LB, BT2020_LG, BT2020_LR};
+
+/// Per-pixel reduction method for content-light-level measurement.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum LightLevelMethod {
+    /// `max(R, G, B)` per pixel — CTA-861.3 / HDR10 default.
+    #[default]
+    MaxRgb,
+    /// BT.2020 NCL luminance (`0.2627·R + 0.6780·G + 0.0593·B`).
+    LuminanceBt2020,
+}
+
+/// 1024-bin log2 histogram of per-pixel luminance in cd/m² over `[0.005, 10_000]` nits.
+#[derive(Clone, Debug)]
+pub struct LightLevelHistogram {
+    bins: Box<[u64]>,
+    total: u64,
+    sum_nits: f64,
+    literal_max_nits: f32,
+    method: LightLevelMethod,
+}
+
+impl LightLevelHistogram {
+    /// Lower bin edge in cd/m².
+    pub const BIN_MIN_NITS: f32 = 0.005;
+    /// Upper bin edge in cd/m² (ST 2084 PQ peak).
+    pub const BIN_MAX_NITS: f32 = 10_000.0;
+    /// Number of log2-spaced bins (~0.02 stops per bin).
+    pub const NUM_BINS: usize = 1024;
+
+    const LOG2_MIN: f32 = -7.643_856;
+    const LOG2_MAX: f32 = 13.287_712;
+    const INV_SPAN: f32 = (Self::NUM_BINS - 1) as f32 / (Self::LOG2_MAX - Self::LOG2_MIN);
+
+    /// Construct an empty histogram.
+    #[must_use]
+    pub fn new(method: LightLevelMethod) -> Self {
+        Self {
+            bins: alloc::vec![0u64; Self::NUM_BINS].into_boxed_slice(),
+            total: 0,
+            sum_nits: 0.0,
+            literal_max_nits: 0.0,
+            method,
+        }
+    }
+
+    /// Record a single pixel's light level in cd/m².
+    #[inline]
+    pub fn record(&mut self, nits: f32) {
+        if !nits.is_finite() || nits <= 0.0 {
+            self.bins[0] += 1;
+            self.total += 1;
+            return;
+        }
+        if nits > self.literal_max_nits {
+            self.literal_max_nits = nits;
+        }
+        self.sum_nits += f64::from(nits);
+        self.total += 1;
+        let idx = if nits <= Self::BIN_MIN_NITS {
+            0
+        } else if nits >= Self::BIN_MAX_NITS {
+            Self::NUM_BINS - 1
+        } else {
+            let l2 = libm::log2f(nits);
+            (((l2 - Self::LOG2_MIN) * Self::INV_SPAN) as usize).min(Self::NUM_BINS - 1)
+        };
+        self.bins[idx] += 1;
+    }
+
+    /// Reduction method used to build this histogram.
+    #[inline]
+    #[must_use]
+    pub const fn method(&self) -> LightLevelMethod {
+        self.method
+    }
+
+    /// Total pixels recorded.
+    #[inline]
+    #[must_use]
+    pub const fn total_pixels(&self) -> u64 {
+        self.total
+    }
+
+    /// Exact literal maximum luminance observed in cd/m².
+    #[inline]
+    #[must_use]
+    pub const fn max_nits(&self) -> f32 {
+        self.literal_max_nits
+    }
+
+    /// Arithmetic mean luminance (MaxFALL) in cd/m².
+    #[inline]
+    #[must_use]
+    pub fn mean_nits(&self) -> f32 {
+        if self.total == 0 {
+            0.0
+        } else {
+            (self.sum_nits / self.total as f64) as f32
+        }
+    }
+
+    /// Percentile readout (`p` in `0.0..=1.0`, e.g. `0.9999` for outlier-resistant peak).
+    #[must_use]
+    pub fn percentile_nits(&self, p: f32) -> f32 {
+        if self.total == 0 {
+            return 0.0;
+        }
+        if p >= 1.0 {
+            return self.literal_max_nits;
+        }
+        let target = ((self.total as f64) * f64::from(p.clamp(0.0, 1.0))) as u64;
+        let mut acc = 0u64;
+        for (i, &count) in self.bins.iter().enumerate() {
+            acc += count;
+            if acc >= target.max(1) {
+                if i == 0 {
+                    return Self::BIN_MIN_NITS.min(self.literal_max_nits);
+                }
+                let l2 = Self::LOG2_MIN + (i as f32) / Self::INV_SPAN;
+                return libm::exp2f(l2).min(self.literal_max_nits);
+            }
+        }
+        self.literal_max_nits
+    }
+
+    /// Convert literal max + mean into [`ContentLightLevel`].
+    #[must_use]
+    pub fn to_content_light_level(&self) -> ContentLightLevel {
+        ContentLightLevel::new(
+            (f64::from(self.max_nits()) + 0.5) as u16,
+            (f64::from(self.mean_nits()) + 0.5) as u16,
+        )
+    }
+
+    /// Convert percentile peak + mean into [`ContentLightLevel`].
+    #[must_use]
+    pub fn to_robust_cll(&self, percentile: f32) -> ContentLightLevel {
+        ContentLightLevel::new(
+            (f64::from(self.percentile_nits(percentile)) + 0.5) as u16,
+            (f64::from(self.mean_nits()) + 0.5) as u16,
+        )
+    }
+}
+
+/// Measure a full [`LightLevelHistogram`] over any [`PixelSource`] in O(1) row scratch memory.
+pub fn measure_histogram<S: PixelSource + ?Sized>(
+    src: &S,
+    white: DiffuseWhite,
+    hlg_rendering: Option<HlgRendering>,
+    method: LightLevelMethod,
+) -> Result<LightLevelHistogram, At<ConvertError>> {
+    let spec = src.source_spec();
+    let w = src.source_width();
+    let h = src.source_height();
+    let mut hist = LightLevelHistogram::new(method);
+    if w == 0 || h == 0 {
+        return Ok(hist);
+    }
+
+    let linear_spec = ImageSpec::new(
+        zenpixels::SampleLayout::RGBF32,
+        ColorSpace::Rgb {
+            primaries: zenpixels::Primaries::Bt2020,
+            transfer: Transfer::Linear,
+            range: zenpixels::SignalRange::Full,
+            alpha: zenpixels::AlphaMode::None,
+            white: Some(white),
+        },
+    );
+    let mut policy = ConvertPolicy::working_linear()
+        .with_sdr_white(white)
+        .with_depth(DepthPolicy::Round)
+        .with_gamut(GamutPolicy::PreserveExtended)
+        .with_alpha(crate::policy::AlphaPolicy::DiscardUnchecked)
+        .with_accelerators(Accelerators::default());
+    if let Some(r) = hlg_rendering {
+        policy = policy.with_hlg_rendering(r);
+    }
+    let row_plan = crate::plan::RowPlan::build(spec.clone(), linear_spec, &policy, None)?;
+
+    // Single reusable scratch row (O(width) = a few KiB, NEVER O(width * height)!).
+    let mut scratch = alloc::vec![0u8; (w as usize) * 12];
+    let white_nits = white.nits();
+    for y in 0..h {
+        row_plan.convert_row(src.source_row(y), &mut scratch, w, y)?;
+        let floats: &[f32] = bytemuck::cast_slice(&scratch);
+        for px in floats.as_chunks::<3>().0 {
+            let v = match method {
+                LightLevelMethod::MaxRgb => px[0].max(px[1]).max(px[2]),
+                LightLevelMethod::LuminanceBt2020 => {
+                    BT2020_LR * px[0] + BT2020_LG * px[1] + BT2020_LB * px[2]
+                }
+            };
+            hist.record(v * white_nits);
+        }
+    }
+    Ok(hist)
+}
+
+/// Measure [`ContentLightLevel`] (literal MaxCLL + MaxFALL) over any [`PixelSource`] in O(1) row memory.
+pub fn measure_cll<S: PixelSource + ?Sized>(
+    src: &S,
+    white: DiffuseWhite,
+    hlg_rendering: Option<HlgRendering>,
+    method: LightLevelMethod,
+) -> Result<ContentLightLevel, At<ConvertError>> {
+    Ok(measure_histogram(src, white, hlg_rendering, method)?.to_content_light_level())
+}
+
+/// Fast zero-histogram streaming max-luminance peak scan in cd/m² (O(1) stack scratch).
+///
+/// Used by [`ImagePlan`](crate::ImagePlan) when `PeakSource::Measured` is active —
+/// allocates at most **one single row** (or zero bytes on direct linear F32 / PQ U16).
+pub(crate) fn measure_max_nits_streaming<S: PixelSource + ?Sized>(
+    src: &S,
+    white: DiffuseWhite,
+    hlg_rendering: Option<HlgRendering>,
+) -> Result<f32, At<ConvertError>> {
+    let spec = src.source_spec();
+    let w = src.source_width();
+    let h = src.source_height();
+    if w == 0 || h == 0 {
+        return Ok(0.0);
+    }
+
+    // Zero-allocation fast paths for the two dominant HDR formats: Linear F32 and PQ U16!
+    if spec.layout.packing.is_full() {
+        if let ColorSpace::Rgb {
+            transfer: Transfer::Linear,
+            ..
+        } = spec.color
+            && spec.layout.sample == SampleType::F32
+        {
+            let ch = spec.layout.channels();
+            let mut max_v = 0.0f32;
+            for y in 0..h {
+                let row = src.source_row(y);
+                for px in row.chunks_exact(ch * 4) {
+                    for c in 0..3 {
+                        let v = f32::from_ne_bytes(px[c * 4..c * 4 + 4].try_into().unwrap());
+                        if v.is_finite() && v > max_v {
+                            max_v = v;
+                        }
+                    }
+                }
+            }
+            return Ok(max_v * white.nits());
+        }
+        if let ColorSpace::Rgb {
+            transfer: Transfer::Pq,
+            range: zenpixels::SignalRange::Full,
+            ..
+        } = spec.color
+            && spec.layout.sample == SampleType::U16
+        {
+            let ch = spec.layout.channels();
+            let mut max_code = 0u16;
+            for y in 0..h {
+                let row = src.source_row(y);
+                for px in row.chunks_exact(ch * 2) {
+                    for c in 0..3 {
+                        let v = u16::from_ne_bytes([px[c * 2], px[c * 2 + 1]]);
+                        if v > max_code {
+                            max_code = v;
+                        }
+                    }
+                }
+            }
+            let nits = crate::strip::pq_eotf_scalar(f32::from(max_code) / 65535.0) * 10_000.0;
+            return Ok(nits);
+        }
+    }
+
+    // General streaming fallback: 1 single row scratch via RowPlan!
+    let eff_hlg = match spec.color {
+        ColorSpace::Rgb {
+            transfer: Transfer::Hlg(HlgMode::Display(r)),
+            ..
+        } => Some(r),
+        _ => hlg_rendering,
+    };
+    let hist = measure_histogram(src, white, eff_hlg, LightLevelMethod::MaxRgb)?;
+    Ok(hist.max_nits())
+}
