@@ -89,6 +89,12 @@ pre { margin: 0; padding: 16px; background: var(--night); border: 1px solid var(
 .hlg-cell { background: var(--night); border: 1px solid var(--line); border-top: 3px solid var(--c, var(--c-hlgd)); border-radius: 12px; padding: 12px; display: grid; gap: 6px; font-size: .85rem; }
 .hlg-cell .mono { font-family: var(--font-mono); font-size: .74rem; color: var(--muted); }
 .hlg-cell b { color: var(--text); }
+.rules-panel { background: var(--night-2); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; display: grid; gap: 10px; }
+.rules-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.rule-chk { display: inline-flex; align-items: center; gap: 7px; font: 500 .8rem var(--font-body); padding: 5px 11px; border-radius: 10px; border: 1px solid var(--line); background: var(--night); color: var(--text); cursor: pointer; }
+.rule-chk:has(input:checked) { border-color: color-mix(in srgb, var(--gold) 55%, var(--line)); background: color-mix(in srgb, var(--gold) 9%, var(--night)); }
+.rule-chk input { accent-color: var(--gold); margin: 0; }
+.rule-chk small { color: var(--muted); font-family: var(--font-mono); font-size: .68rem; }
 footer { color: var(--muted); font-size: .82rem; padding-top: 26px; display: grid; gap: 6px; }
 </style>
 </head>
@@ -111,24 +117,50 @@ footer { color: var(--muted); font-size: .82rem; padding-top: 26px; display: gri
 <main class="story">
   <section class="sec" aria-labelledby="h-charts">
     <div class="sec-head"><span class="num">01</span><h2 id="h-charts">Interactive EOTF, OETF &amp; bit-allocation charts</h2></div>
-    <p class="sub">EOTF turns stored signal into linear light; OETF encodes linear light back into stored signal. Notice that transfer curves do <strong>not</strong> stop at SDR white (<code>203 nits</code> / <code>1.0</code>): PQ climbs to <code>10,000 nits</code> (49× white), HLG Display climbs to <code>1,000 nits</code> (4.9× white), and extended-range floats (<code>GamutPolicy::PreserveExtended</code>) extend smoothly below <code>0.0</code> and above <code>1.0</code>.</p>
+    <p class="sub">Nothing is hidden or silently clamped. Flip between <strong>EOTF</strong> (encoded value → light) and <strong>OETF</strong> (light → encoded value), and toggle every rule explicitly below — including unclamped floats above <code>1.0</code> (so <strong>Linear</strong>, <strong>sRGB</strong>, <strong>BT.709</strong>, and <strong>Gamma 2.2</strong> climb right past SDR white to <code>10,000 nits</code>), negative out-of-gamut floats, odd mirroring, narrow TV range, log/linear axes, and HLG display rendering.</p>
 
     <div class="ctl-row">
       <div class="field" style="flex:0 1 auto">
-        <label id="mode-lbl">Chart domain</label>
-        <div class="seg" role="group" aria-labelledby="mode-lbl">
-          <button type="button" class="mode-btn" data-mode="hdr" aria-pressed="true">HDR + SDR (log nits)</button>
-          <button type="button" class="mode-btn" data-mode="sdr" aria-pressed="false">Linear Y (0–5× white)</button>
-          <button type="button" class="mode-btn" data-mode="ext" aria-pressed="false">Extended [-0.5, 2.0]</button>
+        <label id="dir-lbl">Direction</label>
+        <div class="seg" role="group" aria-labelledby="dir-lbl">
+          <button type="button" class="dir-btn" data-dir="eotf" aria-pressed="true">EOTF (value → light)</button>
+          <button type="button" class="dir-btn" data-dir="oetf" aria-pressed="false">OETF (light → value)</button>
         </div>
       </div>
       <div class="field" style="flex:1 1 170px">
-        <label for="pq-white">PQ / SDR white anchor: <b id="pq-white-val">203</b> nits</label>
+        <label for="pq-white">SDR white (<code>DiffuseWhite</code>): <b id="pq-white-val">203</b> nits</label>
         <input type="range" id="pq-white" min="80" max="1000" step="1" value="203">
       </div>
+      <div class="field" style="flex:0 1 140px">
+        <label for="bit-depth">Quantizer depth</label>
+        <select id="bit-depth">
+          <option value="8">8-bit (U8 · 256)</option>
+          <option value="10" selected>10-bit (U10 · 1024)</option>
+          <option value="12">12-bit (U12 · 4096)</option>
+          <option value="16">16-bit (U16 · 65536)</option>
+        </select>
+      </div>
       <div class="field" style="flex:0 1 160px">
-        <label for="probe-x">Probe signal: <b id="probe-x-val">0.50</b></label>
-        <input type="range" id="probe-x" min="0" max="1" step="0.01" value="0.50">
+        <label for="probe-x">Probe <span id="probe-kind">value</span>: <b id="probe-x-val">0.75</b></label>
+        <input type="range" id="probe-x" min="0" max="1" step="0.005" value="0.535">
+      </div>
+    </div>
+
+    <div class="rules-panel" aria-label="Transfer function & axis rules">
+      <div class="copyrow">
+        <strong style="font-size:.86rem;color:var(--gold)">Rules (toggle any assumption explicitly)</strong>
+        <small id="rules-summary" style="font-family:var(--font-mono);font-size:.72rem;color:var(--muted)"></small>
+      </div>
+      <div class="rules-grid">
+        <label class="rule-chk"><input type="checkbox" id="rule-over1" checked> Allow &gt; 1.0 <small>unclamped f32 HDR headroom</small></label>
+        <label class="rule-chk"><input type="checkbox" id="rule-neg"> Allow &lt; 0 <small>out-of-gamut negatives</small></label>
+        <label class="rule-chk"><input type="checkbox" id="rule-mirror" checked> Odd-mirror negatives <small>f(-x)=-f(x)</small></label>
+        <label class="rule-chk"><input type="checkbox" id="rule-narrow"> Narrow / TV range <small>16–235 / 64–940</small></label>
+        <label class="rule-chk"><input type="checkbox" id="rule-nits" checked> Light in nits <small>off = × SDR white</small></label>
+        <label class="rule-chk"><input type="checkbox" id="rule-log-light" checked> Log light axis</label>
+        <label class="rule-chk"><input type="checkbox" id="rule-log-val" checked> Log value axis</label>
+        <label class="rule-chk"><input type="checkbox" id="rule-hlg-ootf" checked> HLG display OOTF <small>off = scene γ=1</small></label>
+        <label class="rule-chk"><input type="checkbox" id="rule-dens-nits" checked> Chart 2 X = brightness <small>off = code [0,1]</small></label>
       </div>
     </div>
 
@@ -171,7 +203,7 @@ footer { color: var(--muted); font-size: .82rem; padding-top: 26px; display: gri
     </div>
 
     <div class="readout" id="probe-readout" aria-live="polite"></div>
-    <p class="note"><strong>Look at signal = 0.50 (code 128/255) &amp; 0.75 (BT.2408 HLG white):</strong> In <strong>Linear</strong>, 0.50 is 50% light; in <strong>sRGB</strong>, 0.50 is <strong>21.4%</strong> light; in <strong>PQ</strong>, 0.50 is <strong>92.2 nits</strong> out of 10,000. In <strong>HLG Display</strong>, signal <strong>0.75</strong> lands right on <strong>203 nits</strong> at the 1000-nit BT.2100 reference — click the <em>SDR laptop (300 nit)</em> or <em>HDR TV (2000 nit)</em> presets above to see how HLG adapts to every screen.</p>
+    <p class="note"><strong>Try toggling the rules above:</strong> With <strong>Allow &gt; 1.0</strong> checked (floating-point <code>F32</code>), <strong>Linear</strong> climbs smoothly right past <code>1.0</code> (203 nits) all the way to <code>49.3</code> (10,000 nits), and <strong>sRGB</strong> climbs to <code>5.12</code> — uncheck <strong>Allow &gt; 1.0</strong> to see integer <code>U8/U16</code> clip at SDR white while <strong>PQ</strong> &amp; <strong>HLG</strong> keep HDR inside <code>[0, 1]</code>. Flip to <strong>OETF (light → value)</strong> to put every curve on the same physical luminance axis, or toggle <strong>Narrow / TV range</strong> to see 16–235 studio swing.</p>
   </section>
 
   <section class="sec" id="h-hlg-web" aria-labelledby="h-hlg-title">
@@ -297,83 +329,127 @@ const HLG_A = 0.17883277;
 const HLG_B = 1 - 4 * HLG_A;
 const HLG_C = 0.5 - HLG_A * Math.log(4 * HLG_A);
 const ADOBE_G = 563 / 256;
-
-const srgbEotf = (v, ext) => {
-  if (!ext) v = Math.min(1, Math.max(0, v));
-  const s = v < 0 ? -1 : 1, a = Math.abs(v);
-  return s * (a <= 0.04045 ? a / 12.92 : Math.pow((a + 0.055) / 1.055, 2.4));
-};
 const BT709_ALPHA = 0.09929682680944;
-const BT709_CUT = 4.5 * 0.018053968510807;
-const bt709Eotf = (v, ext) => {
-  if (!ext) v = Math.min(1, Math.max(0, v));
-  const s = v < 0 ? -1 : 1, a = Math.abs(v);
-  return s * (a < BT709_CUT ? a / 4.5 : Math.pow((a + BT709_ALPHA) / (1 + BT709_ALPHA), 1 / 0.45));
+const BT709_BETA = 0.018053968510807;
+const BT709_CUT = 4.5 * BT709_BETA;
+const NARROW_LO = 16 / 255;
+const NARROW_HI = 235 / 255;
+const NARROW_SPAN = 219 / 255;
+
+const applySignRule = (v, fn, mirror) => {
+  if (v < 0) return mirror ? -fn(-v) : 0;
+  return fn(v);
 };
-const gamma22Eotf = (v, ext) => {
-  if (!ext) v = Math.min(1, Math.max(0, v));
-  const s = v < 0 ? -1 : 1;
-  return s * Math.pow(Math.abs(v), ADOBE_G);
-};
+const srgbEotfPos = a => a <= 0.04045 ? a / 12.92 : Math.pow((a + 0.055) / 1.055, 2.4);
+const srgbOetfPos = a => a <= 0.0031308 ? 12.92 * a : 1.055 * Math.pow(a, 1 / 2.4) - 0.055;
+const bt709EotfPos = a => a < BT709_CUT ? a / 4.5 : Math.pow((a + BT709_ALPHA) / (1 + BT709_ALPHA), 1 / 0.45);
+const bt709OetfPos = a => a < BT709_BETA ? 4.5 * a : (1 + BT709_ALPHA) * Math.pow(a, 0.45) - BT709_ALPHA;
+const gamma22EotfPos = a => Math.pow(a, ADOBE_G);
+const gamma22OetfPos = a => Math.pow(a, 1 / ADOBE_G);
+
 const pqEotfNorm = v => {
-  v = Math.min(1, Math.max(0, v));
   if (v <= 0) return 0;
+  if (v >= 1) return 1;
   const vp = Math.pow(v, 1 / PQ_M2);
   return Math.pow(Math.max(0, vp - PQ_C1) / (PQ_C2 - PQ_C3 * vp), 1 / PQ_M1);
 };
-const hlgInvOetf = v => {
-  v = Math.min(1, Math.max(0, v));
-  return v <= 0.5 ? (v * v) / 3 : (Math.exp((v - HLG_C) / HLG_A) + HLG_B) / 12;
+const pqOetfNorm = y => {
+  if (y <= 0) return 0;
+  if (y >= 1) return 1;
+  const p = Math.pow(y, PQ_M1);
+  return Math.pow((PQ_C1 + PQ_C2 * p) / (1 + PQ_C3 * p), PQ_M2);
 };
+const hlgInvOetfPos = a => a <= 0.5 ? (a * a) / 3 : (Math.exp((a - HLG_C) / HLG_A) + HLG_B) / 12;
+const hlgOetfPos = a => a <= 1 / 12 ? Math.sqrt(3 * a) : HLG_A * Math.log(12 * a - HLG_B) + HLG_C;
+const hlgInvOetf = (v, mirror = false) => applySignRule(v, hlgInvOetfPos, mirror);
+const hlgOetf = (s, mirror = false) => applySignRule(s, hlgOetfPos, mirror);
+
 // Exact ITU-R BT.2100-3 Table 5 & Note 5f display rendering (matches hlg_render.rs)
 const hlgAutoGamma = lw => lw >= 400
   ? 1.2 + 0.42 * Math.log10(lw / 1000)
   : 1.2 * Math.pow(1.111, Math.log2(lw / 1000));
 const hlgBeta = (lw, lb, gamma) => lb <= 0 ? 0 : Math.sqrt(3 * Math.pow(lb / lw, 1 / gamma));
-const hlgDisplayRgbNits = (rgb, lw, lb, gamma) => {
+const hlgDisplayRgbNits = (rgb, lw, lb, gamma, mirror = false) => {
   const beta = hlgBeta(lw, lb, gamma);
-  const s = rgb.map(v => hlgInvOetf(Math.max(0, (1 - beta) * Math.min(1, v) + beta)));
+  const s = rgb.map(v => {
+    const lifted = (1 - beta) * Math.min(1, v) + beta;
+    return hlgInvOetf(lifted, mirror);
+  });
   const ys = 0.2627 * s[0] + 0.6780 * s[1] + 0.0593 * s[2];
-  const gain = ys <= 0 ? 0 : lw * Math.pow(ys, gamma - 1);
+  const gain = ys === 0 ? 0 : lw * Math.pow(Math.abs(ys), gamma - 1);
   return s.map(c => c * gain);
 };
+const hlgDisplayInv = (nits, lw, lb, gamma, mirror = false) => {
+  const beta = hlgBeta(lw, lb, gamma);
+  const y = nits / lw;
+  const s = applySignRule(y, a => Math.pow(a, 1 / gamma), mirror);
+  return (hlgOetf(s, mirror) - beta) / (1 - beta);
+};
 
+// Map raw stored code <-> full-range normalized value when Narrow / TV range is enabled
+const toNominalVal = (c, st) => st.narrow ? (c - NARROW_LO) / NARROW_SPAN : c;
+const fromNominalVal = (v, st) => st.narrow ? NARROW_LO + NARROW_SPAN * v : v;
+
+// Each curve implements:
+// - eotfNits(v_nominal, st) -> nits or null (if outside curve's defined domain)
+// - oetfVal(nits, st)       -> nominal value or null
 const CURVES = [
   {
-    id: 'linear', name: 'Linear', cicp: 'TC = 8', color: '#9ba5c9', on: true,
-    eotf: (v, st) => st.mode === 'hdr' ? Math.max(0, v) * st.pqWhite : (st.mode === 'ext' ? v : Math.min(1, Math.max(0, v))),
-    formula: 'L = v',
-    role: 'Working space for math (resizing, blending, gamut matrices, Oklab)',
+    id: 'linear', name: 'Linear', cicp: 'TC = 8', color: '#9ba5c9', on: true, bounded01: false,
+    eotfNits: (v, st) => {
+      if (!st.over1 && v > 1) return null;
+      const l = v < 0 ? (st.mirror ? v : 0) : v;
+      return l * st.pqWhite;
+    },
+    oetfVal: (nits, st) => {
+      let v = nits / st.pqWhite;
+      if (v < 0) v = st.mirror ? v : 0;
+      return st.over1 ? v : Math.min(1, v);
+    },
+    formula: 'L = v   (unclamped f32: 4.93 = 1,000 nit, 49.3 = 10,000 nit @ 203)',
+    role: 'Working space for math (resizing, blending, gamut matrices, Oklab, scRGB/EXR)',
     depth: 'F32 / F16 / U16 (never U8 — severe dark banding!)',
-    note: 'Light values are proportional to photon count. Always linearize before resizing, alpha compositing, or applying a 3×3 gamut matrix.'
+    note: 'Proportional to photon count. In floating-point (RGBF32_LINEAR / scRGB), values are NOT capped at 1.0 — highlights extend cleanly into HDR headroom.'
   },
   {
-    id: 'srgb', name: 'sRGB', cicp: 'TC = 13', color: '#f6c85f', on: true,
-    eotf: (v, st) => {
-      const l = srgbEotf(v, st.mode === 'ext');
-      return st.mode === 'hdr' ? Math.max(0, l) * st.pqWhite : l;
+    id: 'srgb', name: 'sRGB', cicp: 'TC = 13', color: '#f6c85f', on: true, bounded01: false,
+    eotfNits: (v, st) => {
+      if (!st.over1 && v > 1) return null;
+      return applySignRule(v, srgbEotfPos, st.mirror) * st.pqWhite;
+    },
+    oetfVal: (nits, st) => {
+      const v = applySignRule(nits / st.pqWhite, srgbOetfPos, st.mirror);
+      return st.over1 ? v : Math.min(1, v);
     },
     formula: 'v ≤ 0.04045 ? v/12.92 : ((v + 0.055)/1.055)^2.4',
-    role: 'Web, PNG, JPEG, WebP, CSS default SDR',
-    depth: 'U8, U16, F32 (extended F32 reflects through 0)',
-    note: 'Linear toe avoids infinite slope at black. Uses 256-entry LUT for U8→F32 and C0-continuous SIMD polynomial for F32 in linear-srgb.'
+    role: 'Web, PNG, JPEG, WebP, CSS default SDR (and Apple/CSS extended sRGB in f32)',
+    depth: 'U8, U16, F32 (extended F32 goes < 0 and > 1.0)',
+    note: 'Linear toe avoids infinite slope at black. Unclamped extended sRGB reaches 10,000 nits at v ≈ 5.12 and reflects oddly through 0 for wide-gamut colors.'
   },
   {
-    id: 'bt709', name: 'BT.709', cicp: 'TC = 1', color: '#35d893', on: true,
-    eotf: (v, st) => {
-      const l = bt709Eotf(v, st.mode === 'ext');
-      return st.mode === 'hdr' ? Math.max(0, l) * st.pqWhite : l;
+    id: 'bt709', name: 'BT.709', cicp: 'TC = 1', color: '#35d893', on: true, bounded01: false,
+    eotfNits: (v, st) => {
+      if (!st.over1 && v > 1) return null;
+      return applySignRule(v, bt709EotfPos, st.mirror) * st.pqWhite;
     },
-    formula: 'v < 0.081 ? v/4.5 : ((v + 0.099)/1.099)^(1/0.45)',
+    oetfVal: (nits, st) => {
+      const v = applySignRule(nits / st.pqWhite, bt709OetfPos, st.mirror);
+      return st.over1 ? v : Math.min(1, v);
+    },
+    formula: 'v < 0.0812 ? v/4.5 : ((v + 0.0993)/1.0993)^(1/0.45)',
     role: 'HD broadcast video (Rec. 709 / Rec. 601 / Rec. 2020 SDR)',
     depth: 'U8, U10/U12 (in U16), F32',
-    note: 'Camera OETF (effective ~1/0.45 = 2.222 power with 4.5× toe). Slightly darker midtones than sRGB if decoded with the wrong curve.'
+    note: 'Camera OETF (effective ~2.222 power with 4.5× toe). Slightly darker midtones than sRGB if decoded with the wrong curve.'
   },
   {
-    id: 'gamma22', name: 'Gamma 2.2 (Adobe)', cicp: 'TC = 4 (approx)', color: '#ff8c5a', on: false,
-    eotf: (v, st) => {
-      const l = gamma22Eotf(v, st.mode === 'ext');
-      return st.mode === 'hdr' ? Math.max(0, l) * st.pqWhite : l;
+    id: 'gamma22', name: 'Gamma 2.2 (Adobe)', cicp: 'TC = 4 (approx)', color: '#ff8c5a', on: false, bounded01: false,
+    eotfNits: (v, st) => {
+      if (!st.over1 && v > 1) return null;
+      return applySignRule(v, gamma22EotfPos, st.mirror) * st.pqWhite;
+    },
+    oetfVal: (nits, st) => {
+      const v = applySignRule(nits / st.pqWhite, gamma22OetfPos, st.mirror);
+      return st.over1 ? v : Math.min(1, v);
     },
     formula: 'sign(v) · |v|^(563/256)   (563/256 ≈ 2.19921875)',
     role: 'Adobe RGB (1998) wide-gamut photography',
@@ -381,41 +457,60 @@ const CURVES = [
     note: 'Pure power curve with no linear toe. Out-of-place magemath Powf with compile-time const_exponent hits 14.8–22.9 GiB/s at 4K.'
   },
   {
-    id: 'pq', name: 'PQ (ST 2084)', cicp: 'TC = 16', color: '#ff5a9c', on: true,
-    eotf: (v, st) => {
-      const nits = pqEotfNorm(v) * 10000;
-      return st.mode === 'hdr' ? nits : nits / st.pqWhite;
+    id: 'pq', name: 'PQ (ST 2084)', cicp: 'TC = 16', color: '#ff5a9c', on: true, bounded01: true,
+    eotfNits: (v, st) => {
+      if (v > 1) return null;
+      if (v < 0) return st.mirror ? -pqEotfNorm(-v) * 10000 : 0;
+      return pqEotfNorm(v) * 10000;
+    },
+    oetfVal: (nits, st) => {
+      if (nits > 10000) return null;
+      if (nits < 0) return st.mirror ? -pqOetfNorm(-nits / 10000) : 0;
+      return pqOetfNorm(nits / 10000);
     },
     formula: 'Y = 10000 · (max(v^(1/m2) − c1, 0) / (c2 − c3·v^(1/m2)))^(1/m1)',
     role: 'HDR10, Dolby Vision, AVIF/JXL/PNG HDR (absolute display light)',
-    depth: 'U10 / U12 / U16 / F32 (never U8)',
-    note: 'Absolute cd/m² up to 10,000 nits. Converting between PQ and SDR linear ALWAYS needs an explicit DiffuseWhite anchor (e.g. 203 nits) so linear 1.0 has a known brightness.'
+    depth: 'U10 / U12 / U16 / F32 (never U8 — bands above 1% JND)',
+    note: 'Absolute cd/m² bounded to [0, 10,000 nits] inside [0, 1] codes. Crossing PQ ↔ relative linear ALWAYS requires an explicit DiffuseWhite anchor.'
   },
   {
-    id: 'hlg', name: 'HLG scene (no OOTF, γ=1)', cicp: 'TC = 18 (scene)', color: '#5b8dff', on: false,
-    eotf: (v, st) => {
-      const s = hlgInvOetf(v);
-      return st.mode === 'hdr' ? s * st.hlgPeak : (s * st.hlgPeak) / st.pqWhite;
+    id: 'hlg_disp', name: 'HLG (BT.2100-3)', cicp: 'TC = 18', color: '#c27bff', on: true, bounded01: true,
+    eotfNits: (v, st) => {
+      if (v > 1) return null;
+      if (!st.hlgOotf) return hlgInvOetf(v, st.mirror) * st.hlgPeak;
+      return hlgDisplayRgbNits([v, v, v], st.hlgPeak, st.hlgBlack, st.hlgGamma, st.mirror)[0];
     },
-    formula: 'v ≤ 0.5 ? v²/3 : (exp((v − c)/a) + b)/12',
-    role: 'Broadcast camera scene light [0, 1] before display OOTF',
-    depth: 'U10 / U16 / F32',
-    note: 'Raw inverse OETF produces scene-relative light (γ = 1.0, scaled by Lw here only for visual comparison). Toggle on to compare against the BT.2100-3 display OOTF.'
-  },
-  {
-    id: 'hlg_disp', name: 'HLG Display (OOTF)', cicp: 'TC = 18 + BT.2100-3', color: '#c27bff', on: true,
-    eotf: (v, st) => {
-      const nits = hlgDisplayRgbNits([v, v, v], st.hlgPeak, st.hlgBlack, st.hlgGamma)[0];
-      return st.mode === 'hdr' ? nits : nits / st.pqWhite;
+    oetfVal: (nits, st) => {
+      if (nits > st.hlgPeak) return null;
+      if (!st.hlgOotf) return hlgOetf(nits / st.hlgPeak, st.mirror);
+      return hlgDisplayInv(nits, st.hlgPeak, st.hlgBlack, st.hlgGamma, st.mirror);
     },
     formula: 'β = √(3·(Lb/Lw)^(1/γ));  Y_d = Lw · Y_s^(γ−1) · RGB_s',
-    role: 'Display-adaptive HDR rendering (TV, web browsers, compositing, HDR→SDR)',
+    role: 'Broadcast & web display-adaptive HDR (TV, Chrome/Safari EDR, compositing)',
     depth: 'Full-range BT.2020 RGB/RGBA (U8/U16/F16/F32) → F32 linear',
-    note: 'Turning HLG into display light requires explicit HlgRendering (peak Lw, black Lb, system gamma γ) — zenpixels never invents a monitor behind your back.'
+    note: 'Toggle "HLG display OOTF" above to compare BT.2100-3 display light (Lw, Lb, γ) against raw scene-referred HLG (γ = 1.0). Requires explicit HlgRendering in zenpixels.'
   },
 ];
 
-const state = { mode: 'hdr', pqWhite: 203, hlgPeak: 1000, hlgBlack: 0, hlgGamma: 1.2, hlgAutoG: true, probeX: 0.50 };
+const state = {
+  dir: 'eotf',
+  pqWhite: 203,
+  bits: 10,
+  over1: true,
+  neg: false,
+  mirror: true,
+  narrow: false,
+  nits: true,
+  logLight: true,
+  logVal: true,
+  hlgOotf: true,
+  densNits: true,
+  hlgPeak: 1000,
+  hlgBlack: 0,
+  hlgGamma: 1.2,
+  hlgAutoG: true,
+  probeT: 0.535,
+};
 
 function renderCards() {
   $('tf-cards').innerHTML = CURVES.map(c => `
@@ -442,141 +537,277 @@ function renderToggles() {
   });
 }
 
+function makeAxis(isLog, min, max, ticks, fmt, pix0, pix1) {
+  if (isLog) {
+    const l0 = Math.log10(min), l1 = Math.log10(max);
+    return {
+      isLog: true, min, max, ticks, fmt,
+      toPix: v => pix0 + ((Math.log10(Math.max(min * 0.1, v)) - l0) / (l1 - l0)) * (pix1 - pix0),
+      fromT: t => Math.pow(10, l0 + t * (l1 - l0)),
+    };
+  }
+  return {
+    isLog: false, min, max, ticks, fmt,
+    toPix: v => pix0 + ((v - min) / (max - min)) * (pix1 - pix0),
+    fromT: t => min + t * (max - min),
+  };
+}
+
+function fmtNum(v) {
+  const a = Math.abs(v);
+  if (a >= 1000) return (v / 1000).toFixed(a % 1000 === 0 ? 0 : 1) + 'k';
+  if (a >= 10) return v.toFixed(0);
+  if (a >= 1) return v.toFixed(a % 1 === 0 ? 0 : 1);
+  if (a >= 0.01) return v.toFixed(2);
+  return v.toFixed(3);
+}
+
 function drawCharts() {
   const W = 520, H = 310, P = { l: 54, r: 18, t: 18, b: 36 };
   const iw = W - P.l - P.r, ih = H - P.t - P.b;
-  const xMin = state.mode === 'ext' ? -0.5 : 0;
-  const xMax = state.mode === 'ext' ? 2.0 : 1.0;
-  const toX = x => P.l + ((x - xMin) / (xMax - xMin)) * iw;
+  const isEotf = state.dir === 'eotf';
+  const lightScale = state.nits ? 1 : (1 / state.pqWhite);
+  const lightUnit = state.nits ? 'nit' : '×';
 
-  let toY, yTicks, yFmt, refY = null, refLabel = '';
-  if (state.mode === 'hdr') {
-    const logMin = -2, logMax = 4; // 0.01 to 10,000 nits
-    toY = y => {
-      const ly = Math.log10(Math.max(1e-4, y));
-      return P.t + ih * (1 - (ly - logMin) / (logMax - logMin));
-    };
-    yTicks = [0.01, 0.1, 1, 10, 100, 1000, 10000];
-    yFmt = v => v >= 1000 ? (v / 1000) + 'k' : String(v);
-    refY = state.pqWhite;
-    refLabel = `SDR white (${state.pqWhite} nit)`;
-    $('eotf-title').textContent = 'EOTF: signal → absolute display luminance (nits)';
-    $('eotf-axis').textContent = 'x = signal [0, 1], y = cd/m² (log10, 0.01–10k nits)';
-  } else if (state.mode === 'ext') {
-    const yMin = -0.6, yMax = 5.2;
-    toY = y => P.t + ih * (1 - (y - yMin) / (yMax - yMin));
-    yTicks = [-0.5, 0, 1.0, 2.0, 3.0, 4.0, 5.0];
-    yFmt = v => v.toFixed(1) + '×';
-    refY = 1.0;
-    refLabel = 'SDR white (1.0×)';
-    $('eotf-title').textContent = 'Extended-range EOTF: negative & super-white floats';
-    $('eotf-axis').textContent = 'x = encoded [-0.5, 2.0], y = relative linear light';
-  } else {
-    const yMin = 0, yMax = 5.2;
-    toY = y => P.t + ih * (1 - (y - yMin) / (yMax - yMin));
-    yTicks = [0, 1.0, 2.0, 3.0, 4.0, 5.0];
-    yFmt = v => v.toFixed(1) + '×';
-    refY = 1.0;
-    refLabel = `SDR white (1.0× = ${state.pqWhite} nit)`;
-    $('eotf-title').textContent = 'EOTF: signal → relative linear light (with HDR headroom)';
-    $('eotf-axis').textContent = 'x = signal [0, 1], y = multiples of SDR white (unclipped)';
-  }
+  // Light axis range
+  const lightMin = state.logLight ? (state.nits ? 0.01 : 0.0001) : (state.neg ? (state.nits ? -150 : -0.6) : 0);
+  const lightMax = state.logLight ? (state.nits ? 10000 : 60) : (state.over1 ? (state.nits ? 1200 : 6.0) : (state.nits ? Math.max(1100, state.pqWhite * 1.15) : 5.2));
+  const lightTicks = state.logLight
+    ? (state.nits ? [0.01, 0.1, 1, 10, 100, 1000, 10000] : [0.0001, 0.001, 0.01, 0.1, 1, 10, 50])
+    : (state.neg
+      ? (state.nits ? [0, 200, 400, 600, 800, 1000, 1200] : [-0.5, 0, 1, 2, 3, 4, 5, 6])
+      : (state.nits ? [0, 200, 400, 600, 800, 1000, 1200] : [0, 1, 2, 3, 4, 5]));
+  const lightFmt = v => state.nits ? fmtNum(v) : (v < 0.01 && v > 0 ? v.toExponential(0) : fmtNum(v) + '×');
 
-  const xTicks = state.mode === 'ext' ? [-0.5, 0, 0.5, 1.0, 1.5, 2.0] : [0, 0.25, 0.5, 0.75, 1.0];
+  // Encoded value axis range
+  const valMin = state.logVal ? 0.005 : (state.neg ? -0.5 : 0);
+  const valMax = state.logVal ? (state.over1 ? 55 : 1.05) : (state.over1 ? 6.0 : 1.0);
+  const valTicks = state.logVal
+    ? (state.over1 ? [0.005, 0.02, 0.1, 0.5, 1, 5, 20, 50] : [0.005, 0.02, 0.05, 0.1, 0.25, 0.5, 1])
+    : (state.over1 ? (state.neg ? [-0.5, 0, 1, 2, 3, 4, 5, 6] : [0, 1, 2, 3, 4, 5, 6]) : (state.neg ? [-0.5, 0, 0.25, 0.5, 0.75, 1] : [0, 0.25, 0.5, 0.75, 1]));
+  const valFmt = v => fmtNum(v);
+
+  const axX = isEotf
+    ? makeAxis(state.logVal, valMin, valMax, valTicks, valFmt, P.l, W - P.r)
+    : makeAxis(state.logLight, lightMin, lightMax, lightTicks, lightFmt, P.l, W - P.r);
+  const axY = isEotf
+    ? makeAxis(state.logLight, lightMin, lightMax, lightTicks, lightFmt, H - P.b, P.t)
+    : makeAxis(state.logVal, valMin, valMax, valTicks, valFmt, H - P.b, P.t);
+
+  $('eotf-title').textContent = isEotf
+    ? `EOTF: encoded value → ${state.nits ? 'luminance (nits)' : 'relative light (× white)'}`
+    : `OETF: ${state.nits ? 'luminance (nits)' : 'relative light (× white)'} → encoded value`;
+  $('eotf-axis').textContent = isEotf
+    ? `x = value (${state.logVal ? 'log' : 'lin'}${state.narrow ? ', narrow 16–235' : ''}), y = ${state.nits ? 'cd/m²' : '× white'} (${state.logLight ? 'log' : 'lin'})`
+    : `x = ${state.nits ? 'cd/m²' : '× white'} (${state.logLight ? 'log' : 'lin'}), y = value (${state.logVal ? 'log' : 'lin'}${state.narrow ? ', narrow' : ''})`;
+  $('probe-kind').textContent = isEotf ? 'value' : (state.nits ? 'nits' : '× white');
+  $('rules-summary').textContent = [
+    state.over1 ? 'f32 >1.0 open' : 'clamped ≤1.0 (int)',
+    state.neg ? (state.mirror ? '<0 odd-mirrored' : '<0 clipped to 0') : '≥0 only',
+    state.narrow ? 'narrow 16–235' : 'full range',
+    state.hlgOotf ? `HLG OOTF γ=${state.hlgGamma.toFixed(2)}` : 'HLG scene γ=1',
+  ].join(' · ');
+
   let g = `<defs><clipPath id="eotf-clip"><rect x="${P.l}" y="${P.t}" width="${iw}" height="${ih}"/></clipPath></defs>`;
-  for (const yt of yTicks) {
-    const py = toY(yt);
+
+  // Narrow-range footroom & headroom shading on the code axis
+  if (state.narrow) {
+    g += '<g clip-path="url(#eotf-clip)">';
+    if (isEotf) {
+      const x0 = axX.toPix(Math.max(axX.min, 0)), xLo = axX.toPix(NARROW_LO), xHi = axX.toPix(NARROW_HI), x1 = axX.toPix(1.0);
+      if (xLo > P.l) g += `<rect x="${Math.max(P.l, x0).toFixed(1)}" y="${P.t}" width="${Math.max(0, xLo - Math.max(P.l, x0)).toFixed(1)}" height="${ih}" fill="#ff5a64" fill-opacity="0.11"/>`;
+      if (x1 > xHi) g += `<rect x="${xHi.toFixed(1)}" y="${P.t}" width="${Math.max(0, x1 - xHi).toFixed(1)}" height="${ih}" fill="#ff8c5a" fill-opacity="0.11"/>`;
+    } else {
+      const y0 = axY.toPix(Math.max(axY.min, 0)), yLo = axY.toPix(NARROW_LO), yHi = axY.toPix(NARROW_HI), y1 = axY.toPix(1.0);
+      g += `<rect x="${P.l}" y="${yLo.toFixed(1)}" width="${iw}" height="${Math.max(0, Math.min(H - P.b, y0) - yLo).toFixed(1)}" fill="#ff5a64" fill-opacity="0.11"/>`;
+      g += `<rect x="${P.l}" y="${y1.toFixed(1)}" width="${iw}" height="${Math.max(0, yHi - y1).toFixed(1)}" fill="#ff8c5a" fill-opacity="0.11"/>`;
+    }
+    g += '</g>';
+  }
+
+  // Grid lines & ticks
+  for (const yt of axY.ticks) {
+    const py = axY.toPix(yt);
+    if (py < P.t - 2 || py > H - P.b + 2) continue;
     g += `<line x1="${P.l}" y1="${py.toFixed(1)}" x2="${W - P.r}" y2="${py.toFixed(1)}" stroke="${yt === 0 ? '#364072' : '#252c54'}" stroke-width="1"/>`;
-    g += `<text x="${P.l - 7}" y="${(py + 4).toFixed(1)}" text-anchor="end" fill="#8d96b8" font-family="var(--font-mono)" font-size="10">${yFmt(yt)}</text>`;
+    g += `<text x="${P.l - 7}" y="${(py + 4).toFixed(1)}" text-anchor="end" fill="#8d96b8" font-family="var(--font-mono)" font-size="9.5">${axY.fmt(yt)}</text>`;
   }
-  if (refY !== null) {
-    const rpy = toY(refY);
-    g += `<line x1="${P.l}" y1="${rpy.toFixed(1)}" x2="${W - P.r}" y2="${rpy.toFixed(1)}" stroke="#f6c85f" stroke-dasharray="4 4" stroke-width="1.2"/>`;
-    g += `<text x="${W - P.r - 4}" y="${(rpy - 5).toFixed(1)}" text-anchor="end" fill="#f6c85f" font-family="var(--font-mono)" font-size="9.5">${refLabel}</text>`;
-  }
-  for (const xt of xTicks) {
-    const px = toX(xt);
+  for (const xt of axX.ticks) {
+    const px = axX.toPix(xt);
+    if (px < P.l - 2 || px > W - P.r + 2) continue;
     g += `<line x1="${px.toFixed(1)}" y1="${P.t}" x2="${px.toFixed(1)}" y2="${H - P.b}" stroke="${xt === 0 || xt === 1 ? '#364072' : '#1e2446'}" stroke-width="1"/>`;
-    g += `<text x="${px.toFixed(1)}" y="${H - P.b + 16}" text-anchor="middle" fill="#8d96b8" font-family="var(--font-mono)" font-size="10">${xt.toFixed(2)}</text>`;
+    g += `<text x="${px.toFixed(1)}" y="${H - P.b + 16}" text-anchor="middle" fill="#8d96b8" font-family="var(--font-mono)" font-size="9.5">${axX.fmt(xt)}</text>`;
   }
-  if (state.mode !== 'ext' && CURVES.find(c => c.id === 'hlg_disp').on) {
-    const x75 = toX(0.75);
-    const n75 = hlgDisplayRgbNits([0.75, 0.75, 0.75], state.hlgPeak, state.hlgBlack, state.hlgGamma)[0];
-    g += `<line x1="${x75.toFixed(1)}" y1="${P.t}" x2="${x75.toFixed(1)}" y2="${H - P.b}" stroke="#c27bff" stroke-opacity="0.5" stroke-dasharray="3 3" stroke-width="1"/>`;
-    g += `<text x="${(x75 - 4).toFixed(1)}" y="${P.t + 12}" text-anchor="end" fill="#c27bff" font-family="var(--font-mono)" font-size="9">HLG 75% → ${n75.toFixed(0)} nit</text>`;
+
+  // Reference lines: SDR white (DiffuseWhite) on light axis, and code = 1.0 (U8/U16 max) on value axis
+  const sdrLightVal = state.nits ? state.pqWhite : 1.0;
+  const codeOneVal = state.narrow ? NARROW_HI : 1.0;
+  if (isEotf) {
+    const rpy = axY.toPix(sdrLightVal);
+    if (rpy >= P.t && rpy <= H - P.b) {
+      g += `<line x1="${P.l}" y1="${rpy.toFixed(1)}" x2="${W - P.r}" y2="${rpy.toFixed(1)}" stroke="#f6c85f" stroke-dasharray="4 4" stroke-width="1.2"/>`;
+      g += `<text x="${W - P.r - 4}" y="${(rpy - 5).toFixed(1)}" text-anchor="end" fill="#f6c85f" font-family="var(--font-mono)" font-size="9">SDR white (${state.pqWhite} nit)</text>`;
+    }
+    const cpx = axX.toPix(codeOneVal);
+    if (cpx > P.l + 10 && cpx < W - P.r - 10) {
+      g += `<line x1="${cpx.toFixed(1)}" y1="${P.t}" x2="${cpx.toFixed(1)}" y2="${H - P.b}" stroke="#5b8dff" stroke-opacity="0.7" stroke-dasharray="4 4" stroke-width="1.2"/>`;
+      g += `<text x="${(cpx + 4).toFixed(1)}" y="${P.t + 12}" text-anchor="start" fill="#8bb0ff" font-family="var(--font-mono)" font-size="9">${state.narrow ? '235/255' : '1.0'} (int max → f32 &gt;1)</text>`;
+    }
+  } else {
+    const rpx = axX.toPix(sdrLightVal);
+    if (rpx > P.l + 8 && rpx < W - P.r - 8) {
+      g += `<line x1="${rpx.toFixed(1)}" y1="${P.t}" x2="${rpx.toFixed(1)}" y2="${H - P.b}" stroke="#f6c85f" stroke-dasharray="4 4" stroke-width="1.2"/>`;
+      g += `<text x="${(rpx - 4).toFixed(1)}" y="${P.t + 12}" text-anchor="end" fill="#f6c85f" font-family="var(--font-mono)" font-size="9">SDR white (${state.pqWhite} nit)</text>`;
+    }
+    const cpy = axY.toPix(codeOneVal);
+    if (cpy >= P.t && cpy <= H - P.b) {
+      g += `<line x1="${P.l}" y1="${cpy.toFixed(1)}" x2="${W - P.r}" y2="${cpy.toFixed(1)}" stroke="#5b8dff" stroke-opacity="0.7" stroke-dasharray="4 4" stroke-width="1.2"/>`;
+      g += `<text x="${W - P.r - 4}" y="${(cpy - 5).toFixed(1)}" text-anchor="end" fill="#8bb0ff" font-family="var(--font-mono)" font-size="9">${state.narrow ? '235/255 (narrow white)' : '1.0 (U8/U16 ceiling — f32 goes higher!)'}</text>`;
+    }
   }
-  const N = 200;
+
+  // Curves
+  const N = 220;
   g += '<g clip-path="url(#eotf-clip)">';
   for (const c of CURVES) {
     if (!c.on) continue;
-    if (state.mode === 'ext' && (c.id === 'pq' || c.id === 'hlg' || c.id === 'hlg_disp')) continue;
     const pts = [];
+    let lastPt = null;
     for (let i = 0; i <= N; i++) {
-      const x = xMin + (i / N) * (xMax - xMin);
-      const y = c.eotf(x, state);
-      const py = toY(y);
-      pts.push(`${toX(x).toFixed(1)},${Math.max(P.t - 40, Math.min(H - P.b + 40, py)).toFixed(1)}`);
+      const t = i / N;
+      const xv = axX.fromT(t);
+      let yv;
+      if (isEotf) {
+        const nom = toNominalVal(xv, state);
+        const nits = c.eotfNits(nom, state);
+        if (nits === null) continue;
+        yv = nits * lightScale;
+      } else {
+        const nits = xv / lightScale;
+        const nom = c.oetfVal(nits, state);
+        if (nom === null) continue;
+        yv = fromNominalVal(nom, state);
+      }
+      if (axY.isLog && yv <= axY.min * 0.2) continue;
+      const px = axX.toPix(xv);
+      const py = axY.toPix(yv);
+      const cy = Math.max(P.t - 50, Math.min(H - P.b + 50, py));
+      pts.push(`${px.toFixed(1)},${cy.toFixed(1)}`);
+      lastPt = [px, py];
     }
-    g += `<polyline fill="none" stroke="${c.color}" stroke-width="2.4" points="${pts.join(' ')}"/>`;
+    if (pts.length >= 2) {
+      g += `<polyline fill="none" stroke="${c.color}" stroke-width="2.4" points="${pts.join(' ')}"/>`;
+      if (c.bounded01 && lastPt && lastPt[0] >= P.l && lastPt[0] <= W - P.r && lastPt[1] >= P.t && lastPt[1] <= H - P.b) {
+        g += `<circle cx="${lastPt[0].toFixed(1)}" cy="${lastPt[1].toFixed(1)}" r="3.5" fill="${c.color}" stroke="#0d1020" stroke-width="1.2"/>`;
+      }
+    }
   }
   g += '</g>';
-  // Probe line
-  const pxVal = state.mode === 'ext' ? (xMin + state.probeX * (xMax - xMin)) : state.probeX;
-  const probePx = toX(pxVal);
-  $('probe-x-val').textContent = pxVal.toFixed(2);
+
+  // Probe line & live readout
+  const pxVal = axX.fromT(state.probeT);
+  const probePx = axX.toPix(pxVal);
+  $('probe-x-val').textContent = isEotf ? pxVal.toFixed(pxVal >= 10 ? 1 : 2) : (state.nits ? `${pxVal < 10 ? pxVal.toFixed(2) : pxVal.toFixed(0)} nit` : `${pxVal.toFixed(2)}×`);
   g += `<line x1="${probePx.toFixed(1)}" y1="${P.t}" x2="${probePx.toFixed(1)}" y2="${H - P.b}" stroke="#f6c85f" stroke-dasharray="3 3" stroke-width="1.3"/>`;
-  const readItems = [`<span style="--c:#eef0f8">signal=${pxVal.toFixed(2)}${pxVal >= 0 && pxVal <= 1 ? ` (u8≈${Math.round(pxVal * 255)}, u10≈${Math.round(pxVal * 1023)})` : ' (extended f32)'}</span>`];
+
+  const maxCode = (1 << state.bits) - 1;
+  const headerTxt = isEotf
+    ? `val=${pxVal.toFixed(pxVal >= 10 ? 1 : 3)}${pxVal >= 0 && pxVal <= 1 ? ` (u${state.bits}≈${Math.round(pxVal * maxCode)})` : ' (extended f32)'}`
+    : `light=${state.nits ? `${pxVal < 10 ? pxVal.toFixed(2) : pxVal.toFixed(1)} nit (${(pxVal / state.pqWhite).toFixed(2)}×)` : `${pxVal.toFixed(3)}× (${(pxVal * state.pqWhite).toFixed(1)} nit)`}`;
+  const readItems = [`<span style="--c:#eef0f8">${headerTxt}</span>`];
+
   for (const c of CURVES) {
     if (!c.on) continue;
-    if (state.mode === 'ext' && (c.id === 'pq' || c.id === 'hlg' || c.id === 'hlg_disp')) continue;
-    const y = c.eotf(pxVal, state);
-    const py = toY(y);
-    if (py >= P.t - 1 && py <= H - P.b + 1) {
-      g += `<circle cx="${probePx.toFixed(1)}" cy="${py.toFixed(1)}" r="4" fill="${c.color}" stroke="#0d1020" stroke-width="1.5"/>`;
+    if (isEotf) {
+      const nom = toNominalVal(pxVal, state);
+      const nits = c.eotfNits(nom, state);
+      if (nits === null) {
+        readItems.push(`<span style="--c:${c.color}">${c.name}: outside ${c.bounded01 ? '[0,1] domain' : '≤1 int cap'}</span>`);
+        continue;
+      }
+      const yv = nits * lightScale;
+      const py = axY.toPix(yv);
+      if ((!axY.isLog || yv >= axY.min) && py >= P.t - 1 && py <= H - P.b + 1) {
+        g += `<circle cx="${probePx.toFixed(1)}" cy="${py.toFixed(1)}" r="4" fill="${c.color}" stroke="#0d1020" stroke-width="1.5"/>`;
+      }
+      const txt = state.nits
+        ? `${Math.abs(nits) < 10 ? nits.toFixed(2) : nits.toFixed(1)} nit (${(nits / state.pqWhite).toFixed(2)}×)`
+        : `${(nits / state.pqWhite).toFixed(3)}× (${nits.toFixed(1)} nit)`;
+      readItems.push(`<span style="--c:${c.color}">${c.name}: ${txt}</span>`);
+    } else {
+      const nits = pxVal / lightScale;
+      const nom = c.oetfVal(nits, state);
+      if (nom === null) {
+        readItems.push(`<span style="--c:${c.color}">${c.name}: above peak (${c.id === 'pq' ? '10k' : state.hlgPeak} nit)</span>`);
+        continue;
+      }
+      const stored = fromNominalVal(nom, state);
+      const py = axY.toPix(stored);
+      if ((!axY.isLog || stored >= axY.min) && py >= P.t - 1 && py <= H - P.b + 1) {
+        g += `<circle cx="${probePx.toFixed(1)}" cy="${py.toFixed(1)}" r="4" fill="${c.color}" stroke="#0d1020" stroke-width="1.5"/>`;
+      }
+      const codeInfo = stored >= 0 && stored <= 1 ? ` (u${state.bits}≈${Math.round(stored * maxCode)})` : (stored < 0 ? ' (f32 <0)' : ' (f32 >1)');
+      readItems.push(`<span style="--c:${c.color}">${c.name}: ${stored.toFixed(stored >= 10 ? 2 : 3)}${codeInfo}</span>`);
     }
-    const unit = state.mode === 'hdr'
-      ? `${y < 10 ? y.toFixed(2) : y.toFixed(1)} nits (${(y / state.pqWhite).toFixed(2)}×)`
-      : `${y.toFixed(3)}× (${(y * state.pqWhite).toFixed(1)} nit)`;
-    readItems.push(`<span style="--c:${c.color}">${c.name}: ${unit}</span>`);
   }
   $('svg-eotf').innerHTML = g;
   $('probe-readout').innerHTML = readItems.join('');
 
-  // Second chart: stops per 8-bit/10-bit code step (log2(L(v+dv)/L(v))) across signal [0.04, 0.98]
-  const dMin = 0, dMax = 0.25;
-  const toDY = s => P.t + ih * (1 - (s - dMin) / (dMax - dMin));
-  const toDX = x => P.l + x * iw;
+  // Second chart: Perceptual step size (stops per quantizer code step)
+  const effSteps = state.narrow ? Math.round(((1 << state.bits) - 1) * NARROW_SPAN) : ((1 << state.bits) - 1);
+  const dv = 1 / effSteps;
+  const dMax = state.bits <= 8 ? 0.25 : (state.bits <= 10 ? 0.08 : 0.02);
+  const dTicks = state.bits <= 8 ? [0, 0.05, 0.10, 0.15, 0.20, 0.25] : (state.bits <= 10 ? [0, 0.02, 0.04, 0.06, 0.08] : [0, 0.005, 0.01, 0.015, 0.02]);
+  const toDY = s => P.t + ih * (1 - s / dMax);
+
+  const densAxX = state.densNits
+    ? makeAxis(true, 0.05, 10000, [0.1, 1, 10, 100, 1000, 10000], fmtNum, P.l, W - P.r)
+    : makeAxis(false, 0, 1, [0, 0.25, 0.5, 0.75, 1], v => v.toFixed(2), P.l, W - P.r);
+
+  $('density-title').textContent = `Perceptual step size (stops per ${state.bits}-bit${state.narrow ? ' narrow' : ''} code)`;
+  $('density-axis').textContent = state.densNits
+    ? `x = brightness (nits, log10) · ${effSteps} active steps (lower = less banding)`
+    : `x = normalized code [0, 1] · ${effSteps} active steps (lower = less banding)`;
+
   let dg = `<defs><clipPath id="dens-clip"><rect x="${P.l}" y="${P.t}" width="${iw}" height="${ih}"/></clipPath></defs>`;
-  for (const yt of [0, 0.05, 0.10, 0.15, 0.20, 0.25]) {
+  for (const yt of dTicks) {
     const py = toDY(yt);
     dg += `<line x1="${P.l}" y1="${py.toFixed(1)}" x2="${W - P.r}" y2="${py.toFixed(1)}" stroke="#252c54" stroke-width="1"/>`;
-    dg += `<text x="${P.l - 7}" y="${(py + 4).toFixed(1)}" text-anchor="end" fill="#8d96b8" font-family="var(--font-mono)" font-size="10">${yt.toFixed(2)}</text>`;
+    dg += `<text x="${P.l - 7}" y="${(py + 4).toFixed(1)}" text-anchor="end" fill="#8d96b8" font-family="var(--font-mono)" font-size="9.5">${yt.toFixed(state.bits >= 12 ? 3 : 2)}</text>`;
   }
   // 1% Weber contrast ~ 0.0144 stops reference line
   const webY = toDY(0.0144);
-  dg += `<line x1="${P.l}" y1="${webY.toFixed(1)}" x2="${W - P.r}" y2="${webY.toFixed(1)}" stroke="#35d893" stroke-dasharray="4 4" stroke-width="1.2"/>`;
-  dg += `<text x="${W - P.r - 4}" y="${(webY - 5).toFixed(1)}" text-anchor="end" fill="#35d893" font-family="var(--font-mono)" font-size="9.5">≈1% JND (banding threshold)</text>`;
-  for (const xt of [0, 0.25, 0.5, 0.75, 1.0]) {
-    const px = toDX(xt);
-    dg += `<line x1="${px.toFixed(1)}" y1="${P.t}" x2="${px.toFixed(1)}" y2="${H - P.b}" stroke="#1e2446" stroke-width="1"/>`;
-    dg += `<text x="${px.toFixed(1)}" y="${H - P.b + 16}" text-anchor="middle" fill="#8d96b8" font-family="var(--font-mono)" font-size="10">${xt.toFixed(2)}</text>`;
+  if (webY >= P.t && webY <= H - P.b) {
+    dg += `<line x1="${P.l}" y1="${webY.toFixed(1)}" x2="${W - P.r}" y2="${webY.toFixed(1)}" stroke="#35d893" stroke-dasharray="4 4" stroke-width="1.2"/>`;
+    dg += `<text x="${W - P.r - 4}" y="${(webY - 5).toFixed(1)}" text-anchor="end" fill="#35d893" font-family="var(--font-mono)" font-size="9.5">≈1% JND (banding threshold)</text>`;
   }
-  const bits = state.mode === 'hdr' ? 10 : 8;
-  const dv = 1 / ((1 << bits) - 1);
-  $('density-title').textContent = `Perceptual step size (stops per ${bits}-bit code)`;
-  $('density-axis').textContent = `lower = smoother gradients (${bits}-bit step = 1/${(1 << bits) - 1})`;
+  for (const xt of densAxX.ticks) {
+    const px = densAxX.toPix(xt);
+    dg += `<line x1="${px.toFixed(1)}" y1="${P.t}" x2="${px.toFixed(1)}" y2="${H - P.b}" stroke="#1e2446" stroke-width="1"/>`;
+    dg += `<text x="${px.toFixed(1)}" y="${H - P.b + 16}" text-anchor="middle" fill="#8d96b8" font-family="var(--font-mono)" font-size="9.5">${densAxX.fmt(xt)}</text>`;
+  }
+  if (state.densNits) {
+    const swx = densAxX.toPix(state.pqWhite);
+    dg += `<line x1="${swx.toFixed(1)}" y1="${P.t}" x2="${swx.toFixed(1)}" y2="${H - P.b}" stroke="#f6c85f" stroke-opacity="0.65" stroke-dasharray="3 3" stroke-width="1"/>`;
+    dg += `<text x="${(swx - 4).toFixed(1)}" y="${P.t + 12}" text-anchor="end" fill="#f6c85f" font-family="var(--font-mono)" font-size="9">SDR ${state.pqWhite} nit</text>`;
+  }
+
   dg += '<g clip-path="url(#dens-clip)">';
+  const intState = { ...state, over1: false, mirror: false };
   for (const c of CURVES) {
     if (!c.on) continue;
     const pts = [];
-    for (let i = 3; i <= 140; i++) {
-      const x = (i / 145);
-      const y1 = Math.max(1e-7, c.eotf(x, { ...state, mode: state.mode === 'hdr' ? 'hdr' : 'sdr' }));
-      const y2 = Math.max(1e-7, c.eotf(Math.min(1, x + dv), { ...state, mode: state.mode === 'hdr' ? 'hdr' : 'sdr' }));
-      const stops = Math.max(0, Math.log2(y2 / y1));
-      pts.push(`${toDX(x).toFixed(1)},${Math.max(P.t - 40, Math.min(H - P.b + 40, toDY(stops))).toFixed(1)}`);
+    for (let i = 2; i <= 180; i++) {
+      const code = i / 184;
+      const y1 = c.eotfNits(code, intState);
+      const y2 = c.eotfNits(Math.min(1, code + dv), intState);
+      if (y1 === null || y2 === null || y1 <= 1e-4 || y2 <= y1) continue;
+      const stops = Math.log2(y2 / y1);
+      const xPos = state.densNits ? y1 : code;
+      if (state.densNits && xPos < 0.05) continue;
+      pts.push(`${densAxX.toPix(xPos).toFixed(1)},${Math.max(P.t - 40, Math.min(H - P.b + 40, toDY(stops))).toFixed(1)}`);
     }
-    dg += `<polyline fill="none" stroke="${c.color}" stroke-width="2.2" points="${pts.join(' ')}"/>`;
+    if (pts.length >= 2) dg += `<polyline fill="none" stroke="${c.color}" stroke-width="2.2" points="${pts.join(' ')}"/>`;
   }
   dg += '</g>';
   $('svg-density').innerHTML = dg;
@@ -614,22 +845,61 @@ function updateHlgPanel() {
   }).join('');
 }
 
-// Interactive hover/drag on EOTF chart
+// Interactive hover/drag on EOTF/OETF chart
 $('svg-eotf').addEventListener('pointermove', e => {
   const r = $('svg-eotf').getBoundingClientRect();
   const rel = ((e.clientX - r.left) / r.width * 520 - 54) / (520 - 54 - 18);
-  state.probeX = Math.max(0, Math.min(1, rel));
-  $('probe-x').value = state.probeX.toFixed(2);
+  state.probeT = Math.max(0, Math.min(1, rel));
+  $('probe-x').value = state.probeT.toFixed(3);
   drawCharts();
 });
 
-document.querySelectorAll('.mode-btn').forEach(btn => {
+document.querySelectorAll('.dir-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    state.mode = btn.dataset.mode;
-    document.querySelectorAll('.mode-btn').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+    state.dir = btn.dataset.dir;
+    document.querySelectorAll('.dir-btn').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
     drawCharts();
   });
 });
+$('bit-depth').addEventListener('change', e => {
+  state.bits = Number(e.target.value);
+  drawCharts();
+});
+function syncRuleCheckboxes() {
+  $('rule-over1').checked = state.over1;
+  $('rule-neg').checked = state.neg;
+  $('rule-mirror').checked = state.mirror;
+  $('rule-narrow').checked = state.narrow;
+  $('rule-nits').checked = state.nits;
+  $('rule-log-light').checked = state.logLight;
+  $('rule-log-val').checked = state.logVal;
+  $('rule-hlg-ootf').checked = state.hlgOotf;
+  $('rule-dens-nits').checked = state.densNits;
+}
+$('rule-over1').addEventListener('change', e => { state.over1 = e.target.checked; drawCharts(); });
+$('rule-neg').addEventListener('change', e => {
+  state.neg = e.target.checked;
+  if (state.neg) { state.logLight = false; state.logVal = false; }
+  syncRuleCheckboxes();
+  drawCharts();
+});
+$('rule-mirror').addEventListener('change', e => { state.mirror = e.target.checked; drawCharts(); });
+$('rule-narrow').addEventListener('change', e => { state.narrow = e.target.checked; drawCharts(); });
+$('rule-nits').addEventListener('change', e => { state.nits = e.target.checked; drawCharts(); });
+$('rule-log-light').addEventListener('change', e => {
+  state.logLight = e.target.checked;
+  if (state.logLight) state.neg = false;
+  syncRuleCheckboxes();
+  drawCharts();
+});
+$('rule-log-val').addEventListener('change', e => {
+  state.logVal = e.target.checked;
+  if (state.logVal) state.neg = false;
+  syncRuleCheckboxes();
+  drawCharts();
+});
+$('rule-hlg-ootf').addEventListener('change', e => { state.hlgOotf = e.target.checked; drawCharts(); });
+$('rule-dens-nits').addEventListener('change', e => { state.densNits = e.target.checked; drawCharts(); });
 $('pq-white').addEventListener('input', e => {
   state.pqWhite = Number(e.target.value);
   $('pq-white-val').textContent = state.pqWhite;
@@ -689,7 +959,7 @@ $('hlg-black').addEventListener('input', e => {
   updateCodegen();
 });
 $('probe-x').addEventListener('input', e => {
-  state.probeX = Number(e.target.value);
+  state.probeT = Number(e.target.value);
   drawCharts();
 });
 

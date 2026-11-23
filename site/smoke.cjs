@@ -162,11 +162,35 @@ if (!url) throw new Error('Pass the served site URL');
         assert((await teaching.locator('#svg-eotf polyline').count()) >= 5, 'transfers.html EOTF polylines missing');
         assert((await teaching.locator('#svg-density polyline').count()) >= 5, 'transfers.html density polylines missing');
         assert.equal(await teaching.locator('#hlg-coupled-grid .hlg-cell').count(), 4, 'transfers.html HLG coupled grid missing');
-        for (const mode of ['hdr', 'ext', 'sdr']) {
-          await teaching.locator(`.mode-btn[data-mode="${mode}"]`).click();
-          const minCurves = mode === 'ext' ? 3 : 5;
-          assert((await teaching.locator('#svg-eotf polyline').count()) >= minCurves, `transfers.html mode=${mode}`);
+        // Verify Linear actually goes over 1.0 (e.g. probe near upper right -> >1000 nits)
+        await teaching.locator('#probe-x').fill('0.85');
+        await teaching.locator('#probe-x').dispatchEvent('input');
+        assert.match(await teaching.locator('#probe-readout').innerText(), /Linear:\s*[1-9]\d{2,3}\./, 'Linear should exceed SDR white (>1.0) when unclamped');
+        // Test OETF direction + rule checkboxes (allow >1, allow <0, odd-mirror, narrow range, log/lin, nits/relative, HLG OOTF, Chart 2 X axis)
+        for (const dir of ['oetf', 'eotf']) {
+          await teaching.locator(`.dir-btn[data-dir="${dir}"]`).click();
+          assert((await teaching.locator('#svg-eotf polyline').count()) >= 5, `transfers.html dir=${dir}`);
         }
+        await teaching.locator('#rule-neg').check();
+        assert((await teaching.locator('#svg-eotf polyline').count()) >= 5, 'transfers.html allow <0');
+        await teaching.locator('#rule-mirror').uncheck();
+        await teaching.locator('#rule-mirror').check();
+        await teaching.locator('#rule-narrow').check();
+        assert((await teaching.locator('#svg-eotf rect').count()) >= 1, 'transfers.html narrow shading');
+        await teaching.locator('#rule-narrow').uncheck();
+        await teaching.locator('#rule-over1').uncheck();
+        assert((await teaching.locator('#svg-eotf polyline').count()) >= 5, 'transfers.html clamped <=1');
+        await teaching.locator('#rule-over1').check();
+        await teaching.locator('#rule-log-light').check();
+        await teaching.locator('#rule-log-val').check();
+        await teaching.locator('#rule-nits').uncheck();
+        await teaching.locator('#rule-nits').check();
+        await teaching.locator('#rule-hlg-ootf').uncheck();
+        await teaching.locator('#rule-hlg-ootf').check();
+        await teaching.locator('#rule-dens-nits').uncheck();
+        await teaching.locator('#rule-dens-nits').check();
+        await teaching.selectOption('#bit-depth', '8');
+        await teaching.selectOption('#bit-depth', '10');
         await teaching.locator('.hlg-pbtn[data-lw="2000"]').click();
         assert.equal(await teaching.locator('#hlg-peak-val').innerText(), '2000');
         await teaching.locator('.hlg-pbtn[data-lw="1000"]').click();
