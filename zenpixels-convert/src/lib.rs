@@ -57,7 +57,9 @@ pub mod plan;
 pub mod policy;
 pub mod scan;
 pub mod strip;
+pub(crate) mod strip_simd;
 pub mod tonemap;
+pub(crate) mod transfers;
 pub mod ycbcr;
 
 // Ergonomic top-level re-exports.

@@ -1,9 +1,12 @@
-//! 64-pixel stack-allocated SoA L1-strip execution engine + `garb` byte-only fast paths.
+//! 64-pixel stack-allocated SoA L1-strip execution engine + byte-only & direct row fast paths.
 //!
-//! Every color/transfer/gamut/HDR/depth conversion runs on a fixed 1 KiB
-//! stack-allocated [`StripBuf`] (`[f32; 64]` × 4 channels), keeping all active
-//! lanes hot in L1 registers with **zero heap scratch allocation** during
-//! row conversion.
+//! - Byte-only & wide integer/float layout changes run directly on rows with
+//!   zero floating-point conversion (`ByteFastPath`).
+//! - Single-stage contiguous depth & transfer routes run directly on rows
+//!   without AoS↔SoA bouncing (`FastRow`).
+//! - All arbitrary multi-stage pipelines run on a fixed 1 KiB stack-allocated
+//!   [`StripBuf`] (`[f32; 64]` × 4 channels) with **zero heap scratch
+//!   allocation** during row conversion.
 
 #![allow(
     clippy::chunks_exact_to_as_chunks,
@@ -15,7 +18,8 @@ use alloc::sync::Arc;
 #[cfg(feature = "perceptual")]
 use zenpixels::PerceptualSpace;
 use zenpixels::{
-    AlphaMode, ChannelOrder, HlgMode, ImageSpec, Primaries, SampleLayout, SampleType, Transfer,
+    AlphaMode, ChannelOrder, ColorSpace, HlgMode, ImageSpec, Primaries, SampleLayout, SampleType,
+    SignalRange, Transfer,
 };
 
 use crate::accel::Accelerators;
@@ -58,8 +62,19 @@ const BAYER_4X4: [[f32; 4]; 4] = [
     [0.4375, -0.0625, 0.3125, -0.1875],
 ];
 
-/// Direct byte-only fast path that bypasses the `f32` SoA pipeline completely
-/// when no color/transfer/gamut/range math is needed.
+/// Precomputed exact fixed-point reciprocal table `ceil((255 << 16) / a)` for
+/// `a in 1..=255` (`0` at index `0`) for `RGBA8`/`BGRA8` premul → straight.
+const UNPREMUL_U8_SCALE: [u32; 256] = {
+    let mut t = [0u32; 256];
+    let mut a = 1u32;
+    while a < 256 {
+        t[a as usize] = (255u32 << 16).div_ceil(a);
+        a += 1;
+    }
+    t
+};
+
+/// Direct zero-float byte/integer/wide-layout fast path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ByteFastPath {
     /// Identical layout and color space: direct `copy_from_slice`.
@@ -86,11 +101,95 @@ pub(crate) enum ByteFastPath {
     Gray8ToRgba8,
     /// `U8 → U16` lossless exact bit-replication (`v * 257`) with identical channel order.
     U8ToU16Exact,
+    /// `U16 → U8` exact integer round (`((v * 255 + 32895) >> 16) as u8`).
+    U16ToU8Round,
+    /// `U16 → U8` exact integer truncate (`((v * 255 + 255) >> 16) as u8`).
+    U16ToU8Trunc,
+    /// `RGBA8` / `BGRA8` straight → premultiplied (exact integer `round(c * a / 255)`).
+    Rgba8StraightToPremul,
+    /// `RGBA8` / `BGRA8` premultiplied → straight (exact 256-entry fixed-point LUT).
+    Rgba8PremulToStraight,
+    /// 2-byte/channel (`U16` / `F16`): `4ch → 3ch` drop alpha (`RGBA16→RGB16`, `RGBAF16→RGBF16`).
+    DropAlpha4To3B2,
+    /// 2-byte/channel (`U16` / `F16`): `4ch → 3ch` drop alpha + swap R/B (`BGRA16→RGB16`).
+    SwapDropAlpha4To3B2,
+    /// 2-byte/channel (`U16` / `F16`): `3ch → 4ch` append opaque alpha (`opaque_bits`: `0xFFFF` for U16, `0x3C00` for F16).
+    AddAlpha3To4B2(u16),
+    /// 2-byte/channel (`U16` / `F16`): `3ch → 4ch` swap R/B + append opaque alpha.
+    SwapAddAlpha3To4B2(u16),
+    /// 2-byte/channel (`U16` / `F16`): `3ch ↔ 3ch` swap R/B.
+    SwapRb3B2,
+    /// 2-byte/channel (`U16` / `F16`): `4ch ↔ 4ch` swap R/B.
+    SwapRb4B2,
+    /// 2-byte/channel (`U16` / `F16`): `Gray → RGB`.
+    GrayToRgbB2,
+    /// 2-byte/channel (`U16` / `F16`): `Gray → RGBA` (`opaque_bits`).
+    GrayToRgbaB2(u16),
+    /// 4-byte/channel (`F32`): `4ch → 3ch` drop alpha (`RGBAF32→RGBF32`).
+    DropAlpha4To3B4,
+    /// 4-byte/channel (`F32`): `4ch → 3ch` drop alpha + swap R/B (`BGRAF32→RGBF32`).
+    SwapDropAlpha4To3B4,
+    /// 4-byte/channel (`F32`): `3ch → 4ch` append opaque `1.0f32`.
+    AddAlpha3To4B4,
+    /// 4-byte/channel (`F32`): `3ch → 4ch` swap R/B + append opaque `1.0f32`.
+    SwapAddAlpha3To4B4,
+    /// 4-byte/channel (`F32`): `3ch ↔ 3ch` swap R/B.
+    SwapRb3B4,
+    /// 4-byte/channel (`F32`): `4ch ↔ 4ch` swap R/B.
+    SwapRb4B4,
+    /// 4-byte/channel (`F32`): `Gray → RGB`.
+    GrayToRgbB4,
+    /// 4-byte/channel (`F32`): `Gray → RGBA` (`1.0f32`).
+    GrayToRgbaB4,
+}
+
+/// Dead-strippable `garb` SIMD dispatcher referenced ONLY by `Accelerators::with_byte_layout()`.
+pub(crate) fn exec_garb_byte_fast_path(
+    path: ByteFastPath,
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+) -> bool {
+    match path {
+        ByteFastPath::Rgb8ToRgba8 => {
+            garb::bytes::rgb_to_rgba(&src[..width * 3], &mut dst[..width * 4]).is_ok()
+        }
+        ByteFastPath::Rgb8ToBgra8 => {
+            garb::bytes::rgb_to_bgra(&src[..width * 3], &mut dst[..width * 4]).is_ok()
+        }
+        ByteFastPath::Rgba8ToRgb8 => {
+            garb::bytes::rgba_to_rgb(&src[..width * 4], &mut dst[..width * 3]).is_ok()
+        }
+        ByteFastPath::Bgra8ToRgb8 => {
+            garb::bytes::bgra_to_rgb(&src[..width * 4], &mut dst[..width * 3]).is_ok()
+        }
+        ByteFastPath::SwapRb3U8 => {
+            garb::bytes::rgb_to_bgr(&src[..width * 3], &mut dst[..width * 3]).is_ok()
+        }
+        ByteFastPath::SwapRb4U8 => {
+            garb::bytes::rgba_to_bgra(&src[..width * 4], &mut dst[..width * 4]).is_ok()
+        }
+        ByteFastPath::FillAlpha4U8 => {
+            let s = &src[..width * 4];
+            let d = &mut dst[..width * 4];
+            d.copy_from_slice(s);
+            garb::bytes::fill_alpha_rgba(d).is_ok()
+        }
+        ByteFastPath::Gray8ToRgba8 => {
+            garb::bytes::gray_to_rgba(&src[..width], &mut dst[..width * 4]).is_ok()
+        }
+        _ => false,
+    }
 }
 
 impl ByteFastPath {
     /// Execute this byte-only fast path on one row (`width` pixels).
-    pub(crate) fn exec(self, src: &[u8], dst: &mut [u8], width: usize, use_garb: bool) {
+    pub(crate) fn exec(self, src: &[u8], dst: &mut [u8], width: usize, accel: &Accelerators) {
+        if let Some(garb_fn) = accel.byte_layout_exec
+            && garb_fn(self, src, dst, width)
+        {
+            return;
+        }
         match self {
             Self::Memcpy => {
                 let len = src.len().min(dst.len());
@@ -99,9 +198,6 @@ impl ByteFastPath {
             Self::Rgb8ToRgba8 => {
                 let s = &src[..width * 3];
                 let d = &mut dst[..width * 4];
-                if use_garb && garb::bytes::rgb_to_rgba(s, d).is_ok() {
-                    return;
-                }
                 for (sp, dp) in s.chunks_exact(3).zip(d.chunks_exact_mut(4)) {
                     dp[0] = sp[0];
                     dp[1] = sp[1];
@@ -112,9 +208,6 @@ impl ByteFastPath {
             Self::Rgb8ToBgra8 => {
                 let s = &src[..width * 3];
                 let d = &mut dst[..width * 4];
-                if use_garb && garb::bytes::rgb_to_bgra(s, d).is_ok() {
-                    return;
-                }
                 for (sp, dp) in s.chunks_exact(3).zip(d.chunks_exact_mut(4)) {
                     dp[0] = sp[2];
                     dp[1] = sp[1];
@@ -125,9 +218,6 @@ impl ByteFastPath {
             Self::Rgba8ToRgb8 => {
                 let s = &src[..width * 4];
                 let d = &mut dst[..width * 3];
-                if use_garb && garb::bytes::rgba_to_rgb(s, d).is_ok() {
-                    return;
-                }
                 for (sp, dp) in s.chunks_exact(4).zip(d.chunks_exact_mut(3)) {
                     dp[0] = sp[0];
                     dp[1] = sp[1];
@@ -137,9 +227,6 @@ impl ByteFastPath {
             Self::Bgra8ToRgb8 => {
                 let s = &src[..width * 4];
                 let d = &mut dst[..width * 3];
-                if use_garb && garb::bytes::bgra_to_rgb(s, d).is_ok() {
-                    return;
-                }
                 for (sp, dp) in s.chunks_exact(4).zip(d.chunks_exact_mut(3)) {
                     dp[0] = sp[2];
                     dp[1] = sp[1];
@@ -149,9 +236,6 @@ impl ByteFastPath {
             Self::SwapRb3U8 => {
                 let s = &src[..width * 3];
                 let d = &mut dst[..width * 3];
-                if use_garb && garb::bytes::rgb_to_bgr(s, d).is_ok() {
-                    return;
-                }
                 for (sp, dp) in s.chunks_exact(3).zip(d.chunks_exact_mut(3)) {
                     dp[0] = sp[2];
                     dp[1] = sp[1];
@@ -161,9 +245,6 @@ impl ByteFastPath {
             Self::SwapRb4U8 => {
                 let s = &src[..width * 4];
                 let d = &mut dst[..width * 4];
-                if use_garb && garb::bytes::rgba_to_bgra(s, d).is_ok() {
-                    return;
-                }
                 for (sp, dp) in s.chunks_exact(4).zip(d.chunks_exact_mut(4)) {
                     dp[0] = sp[2];
                     dp[1] = sp[1];
@@ -174,12 +255,6 @@ impl ByteFastPath {
             Self::FillAlpha4U8 => {
                 let s = &src[..width * 4];
                 let d = &mut dst[..width * 4];
-                if use_garb {
-                    d.copy_from_slice(s);
-                    if garb::bytes::fill_alpha_rgba(d).is_ok() {
-                        return;
-                    }
-                }
                 for (sp, dp) in s.chunks_exact(4).zip(d.chunks_exact_mut(4)) {
                     dp[0] = sp[0];
                     dp[1] = sp[1];
@@ -209,9 +284,6 @@ impl ByteFastPath {
             Self::Gray8ToRgba8 => {
                 let s = &src[..width];
                 let d = &mut dst[..width * 4];
-                if use_garb && garb::bytes::gray_to_rgba(s, d).is_ok() {
-                    return;
-                }
                 for (&y, dp) in s.iter().zip(d.chunks_exact_mut(4)) {
                     dp[0] = y;
                     dp[1] = y;
@@ -221,9 +293,936 @@ impl ByteFastPath {
             }
             Self::U8ToU16Exact => {
                 let n = src.len().min(dst.len() / 2);
-                for (i, &b) in src[..n].iter().enumerate() {
-                    let v = u16::from(b) * 257;
-                    dst[i * 2..i * 2 + 2].copy_from_slice(&v.to_ne_bytes());
+                if let Ok(d16) = bytemuck::try_cast_slice_mut::<u8, u16>(&mut dst[..n * 2]) {
+                    for (&b, out) in src[..n].iter().zip(d16.iter_mut()) {
+                        *out = u16::from(b) * 257;
+                    }
+                } else {
+                    for (&b, dp) in src[..n].iter().zip(dst[..n * 2].chunks_exact_mut(2)) {
+                        let v = u16::from(b) * 257;
+                        dp.copy_from_slice(&v.to_ne_bytes());
+                    }
+                }
+            }
+            Self::U16ToU8Round => {
+                let n = (src.len() / 2).min(dst.len());
+                if let Ok(s16) = bytemuck::try_cast_slice::<u8, u16>(&src[..n * 2]) {
+                    for (&v, out) in s16.iter().zip(dst[..n].iter_mut()) {
+                        *out = ((u32::from(v) * 255 + 32895) >> 16) as u8;
+                    }
+                } else {
+                    for (sp, out) in src[..n * 2].chunks_exact(2).zip(dst[..n].iter_mut()) {
+                        let v = u16::from_ne_bytes([sp[0], sp[1]]);
+                        *out = ((u32::from(v) * 255 + 32895) >> 16) as u8;
+                    }
+                }
+            }
+            Self::U16ToU8Trunc => {
+                let n = (src.len() / 2).min(dst.len());
+                if let Ok(s16) = bytemuck::try_cast_slice::<u8, u16>(&src[..n * 2]) {
+                    for (&v, out) in s16.iter().zip(dst[..n].iter_mut()) {
+                        *out = ((u32::from(v) * 255 + 255) >> 16) as u8;
+                    }
+                } else {
+                    for (sp, out) in src[..n * 2].chunks_exact(2).zip(dst[..n].iter_mut()) {
+                        let v = u16::from_ne_bytes([sp[0], sp[1]]);
+                        *out = ((u32::from(v) * 255 + 255) >> 16) as u8;
+                    }
+                }
+            }
+            Self::Rgba8StraightToPremul => {
+                let s = &src[..width * 4];
+                let d = &mut dst[..width * 4];
+                for (sp, dp) in s.chunks_exact(4).zip(d.chunks_exact_mut(4)) {
+                    let a = u32::from(sp[3]);
+                    dp[0] = (((u32::from(sp[0]) * a + 128) * 257) >> 16) as u8;
+                    dp[1] = (((u32::from(sp[1]) * a + 128) * 257) >> 16) as u8;
+                    dp[2] = (((u32::from(sp[2]) * a + 128) * 257) >> 16) as u8;
+                    dp[3] = sp[3];
+                }
+            }
+            Self::Rgba8PremulToStraight => {
+                let s = &src[..width * 4];
+                let d = &mut dst[..width * 4];
+                for (sp, dp) in s.chunks_exact(4).zip(d.chunks_exact_mut(4)) {
+                    let a = sp[3];
+                    if a == 0 {
+                        dp[0] = 0;
+                        dp[1] = 0;
+                        dp[2] = 0;
+                        dp[3] = 0;
+                    } else if a == 255 {
+                        dp[0] = sp[0];
+                        dp[1] = sp[1];
+                        dp[2] = sp[2];
+                        dp[3] = 255;
+                    } else {
+                        let scale = UNPREMUL_U8_SCALE[usize::from(a)];
+                        dp[0] = if sp[0] >= a {
+                            255
+                        } else {
+                            ((u32::from(sp[0]) * scale + 32768) >> 16) as u8
+                        };
+                        dp[1] = if sp[1] >= a {
+                            255
+                        } else {
+                            ((u32::from(sp[1]) * scale + 32768) >> 16) as u8
+                        };
+                        dp[2] = if sp[2] >= a {
+                            255
+                        } else {
+                            ((u32::from(sp[2]) * scale + 32768) >> 16) as u8
+                        };
+                        dp[3] = a;
+                    }
+                }
+            }
+            Self::DropAlpha4To3B2 => {
+                let s = &src[..width * 8];
+                let d = &mut dst[..width * 6];
+                if let (Ok(s16), Ok(d16)) = (
+                    bytemuck::try_cast_slice::<u8, [u16; 4]>(s),
+                    bytemuck::try_cast_slice_mut::<u8, [u16; 3]>(d),
+                ) {
+                    for (sp, dp) in s16.iter().zip(d16.iter_mut()) {
+                        *dp = [sp[0], sp[1], sp[2]];
+                    }
+                } else {
+                    for (sp, dp) in s.chunks_exact(8).zip(d.chunks_exact_mut(6)) {
+                        dp.copy_from_slice(&sp[..6]);
+                    }
+                }
+            }
+            Self::SwapDropAlpha4To3B2 => {
+                let s = &src[..width * 8];
+                let d = &mut dst[..width * 6];
+                if let (Ok(s16), Ok(d16)) = (
+                    bytemuck::try_cast_slice::<u8, [u16; 4]>(s),
+                    bytemuck::try_cast_slice_mut::<u8, [u16; 3]>(d),
+                ) {
+                    for (sp, dp) in s16.iter().zip(d16.iter_mut()) {
+                        *dp = [sp[2], sp[1], sp[0]];
+                    }
+                } else {
+                    for (sp, dp) in s.chunks_exact(8).zip(d.chunks_exact_mut(6)) {
+                        dp[0..2].copy_from_slice(&sp[4..6]);
+                        dp[2..4].copy_from_slice(&sp[2..4]);
+                        dp[4..6].copy_from_slice(&sp[0..2]);
+                    }
+                }
+            }
+            Self::AddAlpha3To4B2(alpha) => {
+                let s = &src[..width * 6];
+                let d = &mut dst[..width * 8];
+                if let (Ok(s16), Ok(d16)) = (
+                    bytemuck::try_cast_slice::<u8, [u16; 3]>(s),
+                    bytemuck::try_cast_slice_mut::<u8, [u16; 4]>(d),
+                ) {
+                    for (sp, dp) in s16.iter().zip(d16.iter_mut()) {
+                        *dp = [sp[0], sp[1], sp[2], alpha];
+                    }
+                } else {
+                    let ab = alpha.to_ne_bytes();
+                    for (sp, dp) in s.chunks_exact(6).zip(d.chunks_exact_mut(8)) {
+                        dp[0..6].copy_from_slice(sp);
+                        dp[6..8].copy_from_slice(&ab);
+                    }
+                }
+            }
+            Self::SwapAddAlpha3To4B2(alpha) => {
+                let s = &src[..width * 6];
+                let d = &mut dst[..width * 8];
+                if let (Ok(s16), Ok(d16)) = (
+                    bytemuck::try_cast_slice::<u8, [u16; 3]>(s),
+                    bytemuck::try_cast_slice_mut::<u8, [u16; 4]>(d),
+                ) {
+                    for (sp, dp) in s16.iter().zip(d16.iter_mut()) {
+                        *dp = [sp[2], sp[1], sp[0], alpha];
+                    }
+                } else {
+                    let ab = alpha.to_ne_bytes();
+                    for (sp, dp) in s.chunks_exact(6).zip(d.chunks_exact_mut(8)) {
+                        dp[0..2].copy_from_slice(&sp[4..6]);
+                        dp[2..4].copy_from_slice(&sp[2..4]);
+                        dp[4..6].copy_from_slice(&sp[0..2]);
+                        dp[6..8].copy_from_slice(&ab);
+                    }
+                }
+            }
+            Self::SwapRb3B2 => {
+                let s = &src[..width * 6];
+                let d = &mut dst[..width * 6];
+                if let (Ok(s16), Ok(d16)) = (
+                    bytemuck::try_cast_slice::<u8, [u16; 3]>(s),
+                    bytemuck::try_cast_slice_mut::<u8, [u16; 3]>(d),
+                ) {
+                    for (sp, dp) in s16.iter().zip(d16.iter_mut()) {
+                        *dp = [sp[2], sp[1], sp[0]];
+                    }
+                } else {
+                    for (sp, dp) in s.chunks_exact(6).zip(d.chunks_exact_mut(6)) {
+                        dp[0..2].copy_from_slice(&sp[4..6]);
+                        dp[2..4].copy_from_slice(&sp[2..4]);
+                        dp[4..6].copy_from_slice(&sp[0..2]);
+                    }
+                }
+            }
+            Self::SwapRb4B2 => {
+                let s = &src[..width * 8];
+                let d = &mut dst[..width * 8];
+                if let (Ok(s16), Ok(d16)) = (
+                    bytemuck::try_cast_slice::<u8, [u16; 4]>(s),
+                    bytemuck::try_cast_slice_mut::<u8, [u16; 4]>(d),
+                ) {
+                    for (sp, dp) in s16.iter().zip(d16.iter_mut()) {
+                        *dp = [sp[2], sp[1], sp[0], sp[3]];
+                    }
+                } else {
+                    for (sp, dp) in s.chunks_exact(8).zip(d.chunks_exact_mut(8)) {
+                        dp[0..2].copy_from_slice(&sp[4..6]);
+                        dp[2..4].copy_from_slice(&sp[2..4]);
+                        dp[4..6].copy_from_slice(&sp[0..2]);
+                        dp[6..8].copy_from_slice(&sp[6..8]);
+                    }
+                }
+            }
+            Self::GrayToRgbB2 => {
+                let s = &src[..width * 2];
+                let d = &mut dst[..width * 6];
+                for (sp, dp) in s.chunks_exact(2).zip(d.chunks_exact_mut(6)) {
+                    dp[0..2].copy_from_slice(sp);
+                    dp[2..4].copy_from_slice(sp);
+                    dp[4..6].copy_from_slice(sp);
+                }
+            }
+            Self::GrayToRgbaB2(alpha) => {
+                let s = &src[..width * 2];
+                let d = &mut dst[..width * 8];
+                let ab = alpha.to_ne_bytes();
+                for (sp, dp) in s.chunks_exact(2).zip(d.chunks_exact_mut(8)) {
+                    dp[0..2].copy_from_slice(sp);
+                    dp[2..4].copy_from_slice(sp);
+                    dp[4..6].copy_from_slice(sp);
+                    dp[6..8].copy_from_slice(&ab);
+                }
+            }
+            Self::DropAlpha4To3B4 => {
+                let s = &src[..width * 16];
+                let d = &mut dst[..width * 12];
+                if let (Ok(sf), Ok(df)) = (
+                    bytemuck::try_cast_slice::<u8, [u32; 4]>(s),
+                    bytemuck::try_cast_slice_mut::<u8, [u32; 3]>(d),
+                ) {
+                    for (sp, dp) in sf.iter().zip(df.iter_mut()) {
+                        *dp = [sp[0], sp[1], sp[2]];
+                    }
+                } else {
+                    for (sp, dp) in s.chunks_exact(16).zip(d.chunks_exact_mut(12)) {
+                        dp.copy_from_slice(&sp[..12]);
+                    }
+                }
+            }
+            Self::SwapDropAlpha4To3B4 => {
+                let s = &src[..width * 16];
+                let d = &mut dst[..width * 12];
+                if let (Ok(sf), Ok(df)) = (
+                    bytemuck::try_cast_slice::<u8, [u32; 4]>(s),
+                    bytemuck::try_cast_slice_mut::<u8, [u32; 3]>(d),
+                ) {
+                    for (sp, dp) in sf.iter().zip(df.iter_mut()) {
+                        *dp = [sp[2], sp[1], sp[0]];
+                    }
+                } else {
+                    for (sp, dp) in s.chunks_exact(16).zip(d.chunks_exact_mut(12)) {
+                        dp[0..4].copy_from_slice(&sp[8..12]);
+                        dp[4..8].copy_from_slice(&sp[4..8]);
+                        dp[8..12].copy_from_slice(&sp[0..4]);
+                    }
+                }
+            }
+            Self::AddAlpha3To4B4 => {
+                let s = &src[..width * 12];
+                let d = &mut dst[..width * 16];
+                let one = 1.0_f32.to_bits();
+                if let (Ok(sf), Ok(df)) = (
+                    bytemuck::try_cast_slice::<u8, [u32; 3]>(s),
+                    bytemuck::try_cast_slice_mut::<u8, [u32; 4]>(d),
+                ) {
+                    for (sp, dp) in sf.iter().zip(df.iter_mut()) {
+                        *dp = [sp[0], sp[1], sp[2], one];
+                    }
+                } else {
+                    let ob = one.to_ne_bytes();
+                    for (sp, dp) in s.chunks_exact(12).zip(d.chunks_exact_mut(16)) {
+                        dp[0..12].copy_from_slice(sp);
+                        dp[12..16].copy_from_slice(&ob);
+                    }
+                }
+            }
+            Self::SwapAddAlpha3To4B4 => {
+                let s = &src[..width * 12];
+                let d = &mut dst[..width * 16];
+                let one = 1.0_f32.to_bits();
+                if let (Ok(sf), Ok(df)) = (
+                    bytemuck::try_cast_slice::<u8, [u32; 3]>(s),
+                    bytemuck::try_cast_slice_mut::<u8, [u32; 4]>(d),
+                ) {
+                    for (sp, dp) in sf.iter().zip(df.iter_mut()) {
+                        *dp = [sp[2], sp[1], sp[0], one];
+                    }
+                } else {
+                    let ob = one.to_ne_bytes();
+                    for (sp, dp) in s.chunks_exact(12).zip(d.chunks_exact_mut(16)) {
+                        dp[0..4].copy_from_slice(&sp[8..12]);
+                        dp[4..8].copy_from_slice(&sp[4..8]);
+                        dp[8..12].copy_from_slice(&sp[0..4]);
+                        dp[12..16].copy_from_slice(&ob);
+                    }
+                }
+            }
+            Self::SwapRb3B4 => {
+                let s = &src[..width * 12];
+                let d = &mut dst[..width * 12];
+                if let (Ok(sf), Ok(df)) = (
+                    bytemuck::try_cast_slice::<u8, [u32; 3]>(s),
+                    bytemuck::try_cast_slice_mut::<u8, [u32; 3]>(d),
+                ) {
+                    for (sp, dp) in sf.iter().zip(df.iter_mut()) {
+                        *dp = [sp[2], sp[1], sp[0]];
+                    }
+                } else {
+                    for (sp, dp) in s.chunks_exact(12).zip(d.chunks_exact_mut(12)) {
+                        dp[0..4].copy_from_slice(&sp[8..12]);
+                        dp[4..8].copy_from_slice(&sp[4..8]);
+                        dp[8..12].copy_from_slice(&sp[0..4]);
+                    }
+                }
+            }
+            Self::SwapRb4B4 => {
+                let s = &src[..width * 16];
+                let d = &mut dst[..width * 16];
+                if let (Ok(sf), Ok(df)) = (
+                    bytemuck::try_cast_slice::<u8, [u32; 4]>(s),
+                    bytemuck::try_cast_slice_mut::<u8, [u32; 4]>(d),
+                ) {
+                    for (sp, dp) in sf.iter().zip(df.iter_mut()) {
+                        *dp = [sp[2], sp[1], sp[0], sp[3]];
+                    }
+                } else {
+                    for (sp, dp) in s.chunks_exact(16).zip(d.chunks_exact_mut(16)) {
+                        dp[0..4].copy_from_slice(&sp[8..12]);
+                        dp[4..8].copy_from_slice(&sp[4..8]);
+                        dp[8..12].copy_from_slice(&sp[0..4]);
+                        dp[12..16].copy_from_slice(&sp[12..16]);
+                    }
+                }
+            }
+            Self::GrayToRgbB4 => {
+                let s = &src[..width * 4];
+                let d = &mut dst[..width * 12];
+                for (sp, dp) in s.chunks_exact(4).zip(d.chunks_exact_mut(12)) {
+                    dp[0..4].copy_from_slice(sp);
+                    dp[4..8].copy_from_slice(sp);
+                    dp[8..12].copy_from_slice(sp);
+                }
+            }
+            Self::GrayToRgbaB4 => {
+                let s = &src[..width * 4];
+                let d = &mut dst[..width * 16];
+                let ob = 1.0_f32.to_ne_bytes();
+                for (sp, dp) in s.chunks_exact(4).zip(d.chunks_exact_mut(16)) {
+                    dp[0..4].copy_from_slice(sp);
+                    dp[4..8].copy_from_slice(sp);
+                    dp[8..12].copy_from_slice(sp);
+                    dp[12..16].copy_from_slice(&ob);
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Direct contiguous single-stage row fast paths (zero AoS↔SoA overhead!)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum FastRow {
+    F16ToF32 {
+        channels: usize,
+    },
+    F32ToF16 {
+        channels: usize,
+    },
+    U8ToF32 {
+        channels: usize,
+    },
+    F32ToU8 {
+        channels: usize,
+        round: bool,
+    },
+    U16ToF32 {
+        channels: usize,
+    },
+    F32ToU16 {
+        channels: usize,
+        round: bool,
+    },
+    SrgbU8ToLinF32 {
+        channels: usize,
+        is_rgba: bool,
+    },
+    LinF32ToSrgbU8 {
+        channels: usize,
+        is_rgba: bool,
+        round: bool,
+    },
+    TransferF32 {
+        channels: usize,
+        transfer: Transfer,
+        is_eotf: bool,
+        is_rgba: bool,
+        pq_scale: f32,
+        preserve_extended: bool,
+    },
+}
+
+/// Detect a direct contiguous single-stage row fast path (same channel order,
+/// full packing, no gamut matrix / matte / narrow range / alpha mode change).
+pub(crate) fn detect_fast_row(
+    src: &ImageSpec,
+    dst: &ImageSpec,
+    policy_depth: DepthPolicy,
+    matte_active: bool,
+    preserve_extended: bool,
+    white_nits: f32,
+) -> Option<FastRow> {
+    if matte_active
+        || !src.layout.packing.is_full()
+        || !dst.layout.packing.is_full()
+        || src.layout.order != dst.layout.order
+    {
+        return None;
+    }
+    let ch = src.layout.channels();
+    let is_rgba = matches!(src.layout.order, ChannelOrder::Rgba | ChannelOrder::Bgra);
+    let is_plain_color = matches!(
+        src.layout.order,
+        ChannelOrder::Rgb
+            | ChannelOrder::Bgr
+            | ChannelOrder::Gray
+            | ChannelOrder::Rgba
+            | ChannelOrder::Bgra
+    );
+    if !is_plain_color {
+        return None;
+    }
+    let round = match policy_depth {
+        DepthPolicy::Round | DepthPolicy::Forbid => true,
+        DepthPolicy::Truncate => false,
+        DepthPolicy::OrderedDither => return None,
+    };
+
+    // Extract matching primaries / range / alpha / white.
+    let (st, dt) = match (&src.color, &dst.color) {
+        (
+            ColorSpace::Rgb {
+                primaries: sp,
+                transfer: st,
+                range: sr,
+                alpha: sa,
+                white: sw,
+            },
+            ColorSpace::Rgb {
+                primaries: dp,
+                transfer: dt,
+                range: dr,
+                alpha: da,
+                white: dw,
+            },
+        ) => {
+            if sp != dp
+                || sr != dr
+                || *sr != SignalRange::Full
+                || sa != da
+                || (*sa == AlphaMode::Premultiplied && st != dt)
+            {
+                return None;
+            }
+            if *st == *dt && sw != dw {
+                return None;
+            }
+            (*st, *dt)
+        }
+        (
+            ColorSpace::Gray {
+                transfer: st,
+                range: sr,
+                alpha: sa,
+                white: sw,
+            },
+            ColorSpace::Gray {
+                transfer: dt,
+                range: dr,
+                alpha: da,
+                white: dw,
+            },
+        ) => {
+            if sr != dr
+                || *sr != SignalRange::Full
+                || sa != da
+                || (*sa == AlphaMode::Premultiplied && st != dt)
+            {
+                return None;
+            }
+            if *st == *dt && sw != dw {
+                return None;
+            }
+            (*st, *dt)
+        }
+        _ => return None,
+    };
+
+    use SampleType as S;
+    if st == dt {
+        return match (src.layout.sample, dst.layout.sample) {
+            (S::F16, S::F32) => Some(FastRow::F16ToF32 { channels: ch }),
+            (S::F32, S::F16) => Some(FastRow::F32ToF16 { channels: ch }),
+            (S::U8, S::F32) => Some(FastRow::U8ToF32 { channels: ch }),
+            (S::F32, S::U8) => Some(FastRow::F32ToU8 {
+                channels: ch,
+                round,
+            }),
+            (S::U16, S::F32) => Some(FastRow::U16ToF32 { channels: ch }),
+            (S::F32, S::U16) => Some(FastRow::F32ToU16 {
+                channels: ch,
+                round,
+            }),
+            _ => None,
+        };
+    }
+
+    // sRGB U8 <-> Linear F32 direct fast paths.
+    if src.layout.sample == S::U8
+        && dst.layout.sample == S::F32
+        && st == Transfer::Srgb
+        && dt == Transfer::Linear
+    {
+        return Some(FastRow::SrgbU8ToLinF32 {
+            channels: ch,
+            is_rgba,
+        });
+    }
+    if src.layout.sample == S::F32
+        && dst.layout.sample == S::U8
+        && st == Transfer::Linear
+        && dt == Transfer::Srgb
+    {
+        return Some(FastRow::LinF32ToSrgbU8 {
+            channels: ch,
+            is_rgba,
+            round,
+        });
+    }
+
+    // F32 <-> F32 single transfer (Linear <-> Srgb / Bt709 / Gamma22 / Pq / Hlg(Scene)).
+    if src.layout.sample == S::F32 && dst.layout.sample == S::F32 {
+        let supported = |t: Transfer| {
+            matches!(
+                t,
+                Transfer::Srgb
+                    | Transfer::Bt709
+                    | Transfer::Gamma22
+                    | Transfer::Pq
+                    | Transfer::Hlg(HlgMode::Scene)
+            )
+        };
+        if dt == Transfer::Linear && supported(st) {
+            let pq_scale = if st == Transfer::Pq {
+                10_000.0 / white_nits
+            } else {
+                1.0
+            };
+            return Some(FastRow::TransferF32 {
+                channels: ch,
+                transfer: st,
+                is_eotf: true,
+                is_rgba,
+                pq_scale,
+                preserve_extended,
+            });
+        }
+        if st == Transfer::Linear && supported(dt) {
+            let pq_scale = if dt == Transfer::Pq {
+                white_nits / 10_000.0
+            } else {
+                1.0
+            };
+            return Some(FastRow::TransferF32 {
+                channels: ch,
+                transfer: dt,
+                is_eotf: false,
+                is_rgba,
+                pq_scale,
+                preserve_extended,
+            });
+        }
+    }
+    None
+}
+
+/// Execute a direct contiguous row fast path with zero heap allocation.
+#[inline(never)]
+pub(crate) fn exec_fast_row(
+    fast: FastRow,
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    accel: &Accelerators,
+) {
+    match fast {
+        FastRow::F16ToF32 { channels } => {
+            let count = width * channels;
+            if let (Ok(s16), Ok(df)) = (
+                bytemuck::try_cast_slice::<u8, u16>(&src[..count * 2]),
+                bytemuck::try_cast_slice_mut::<u8, f32>(&mut dst[..count * 4]),
+            ) {
+                if let Some(f) = accel.f16_decode {
+                    f(s16, df);
+                } else {
+                    for (&b, o) in s16.iter().zip(df.iter_mut()) {
+                        *o = crate::f16_scalar::f16_bits_to_f32(b);
+                    }
+                }
+            } else {
+                let mut sb = [0u16; 256];
+                let mut db = [0.0f32; 256];
+                let mut i = 0;
+                while i < count {
+                    let n = (count - i).min(256);
+                    for k in 0..n {
+                        let o = (i + k) * 2;
+                        sb[k] = u16::from_ne_bytes([src[o], src[o + 1]]);
+                    }
+                    if let Some(f) = accel.f16_decode {
+                        f(&sb[..n], &mut db[..n]);
+                    } else {
+                        for k in 0..n {
+                            db[k] = crate::f16_scalar::f16_bits_to_f32(sb[k]);
+                        }
+                    }
+                    for k in 0..n {
+                        let o = (i + k) * 4;
+                        dst[o..o + 4].copy_from_slice(&db[k].to_ne_bytes());
+                    }
+                    i += n;
+                }
+            }
+        }
+        FastRow::F32ToF16 { channels } => {
+            let count = width * channels;
+            if let (Ok(sf), Ok(d16)) = (
+                bytemuck::try_cast_slice::<u8, f32>(&src[..count * 4]),
+                bytemuck::try_cast_slice_mut::<u8, u16>(&mut dst[..count * 2]),
+            ) {
+                if let Some(f) = accel.f16_encode {
+                    f(sf, d16);
+                } else {
+                    for (&v, o) in sf.iter().zip(d16.iter_mut()) {
+                        *o = crate::f16_scalar::f32_to_f16_bits(v);
+                    }
+                }
+            } else {
+                let mut sb = [0.0f32; 256];
+                let mut db = [0u16; 256];
+                let mut i = 0;
+                while i < count {
+                    let n = (count - i).min(256);
+                    for k in 0..n {
+                        let o = (i + k) * 4;
+                        sb[k] = f32::from_ne_bytes([src[o], src[o + 1], src[o + 2], src[o + 3]]);
+                    }
+                    if let Some(f) = accel.f16_encode {
+                        f(&sb[..n], &mut db[..n]);
+                    } else {
+                        for k in 0..n {
+                            db[k] = crate::f16_scalar::f32_to_f16_bits(sb[k]);
+                        }
+                    }
+                    for k in 0..n {
+                        let o = (i + k) * 2;
+                        dst[o..o + 2].copy_from_slice(&db[k].to_ne_bytes());
+                    }
+                    i += n;
+                }
+            }
+        }
+        FastRow::U8ToF32 { channels } => {
+            let count = width * channels;
+            if let Ok(df) = bytemuck::try_cast_slice_mut::<u8, f32>(&mut dst[..count * 4]) {
+                if let Some(f) = accel.u8_to_f32 {
+                    f(&src[..count], df);
+                } else {
+                    const INV: f32 = 1.0 / 255.0;
+                    for (&b, o) in src[..count].iter().zip(df.iter_mut()) {
+                        *o = f32::from(b) * INV;
+                    }
+                }
+            } else {
+                const INV: f32 = 1.0 / 255.0;
+                for (i, &b) in src[..count].iter().enumerate() {
+                    dst[i * 4..i * 4 + 4].copy_from_slice(&(f32::from(b) * INV).to_ne_bytes());
+                }
+            }
+        }
+        FastRow::F32ToU8 { channels, round } => {
+            let count = width * channels;
+            let bias = if round { 0.5_f32 } else { 0.0_f32 };
+            if let Ok(sf) = bytemuck::try_cast_slice::<u8, f32>(&src[..count * 4]) {
+                if let Some(f) = accel.f32_to_u8 {
+                    f(sf, &mut dst[..count], round);
+                } else {
+                    for (&v, o) in sf.iter().zip(dst[..count].iter_mut()) {
+                        *o = if v.is_nan() || v <= 0.0 {
+                            0
+                        } else {
+                            ((v.min(1.0) * 255.0 + bias) as u32).min(255) as u8
+                        };
+                    }
+                }
+            } else {
+                for (i, out) in dst[..count].iter_mut().enumerate() {
+                    let o = i * 4;
+                    let v = f32::from_ne_bytes([src[o], src[o + 1], src[o + 2], src[o + 3]]);
+                    *out = if v.is_nan() || v <= 0.0 {
+                        0
+                    } else {
+                        ((v.min(1.0) * 255.0 + bias) as u32).min(255) as u8
+                    };
+                }
+            }
+        }
+        FastRow::U16ToF32 { channels } => {
+            let count = width * channels;
+            if let (Ok(s16), Ok(df)) = (
+                bytemuck::try_cast_slice::<u8, u16>(&src[..count * 2]),
+                bytemuck::try_cast_slice_mut::<u8, f32>(&mut dst[..count * 4]),
+            ) {
+                if let Some(f) = accel.u16_to_f32 {
+                    f(s16, df);
+                } else {
+                    const INV: f32 = 1.0 / 65535.0;
+                    for (&w, o) in s16.iter().zip(df.iter_mut()) {
+                        *o = f32::from(w) * INV;
+                    }
+                }
+            } else {
+                const INV: f32 = 1.0 / 65535.0;
+                for i in 0..count {
+                    let w = u16::from_ne_bytes([src[i * 2], src[i * 2 + 1]]);
+                    dst[i * 4..i * 4 + 4].copy_from_slice(&(f32::from(w) * INV).to_ne_bytes());
+                }
+            }
+        }
+        FastRow::F32ToU16 { channels, round } => {
+            let count = width * channels;
+            let bias = if round { 0.5_f32 } else { 0.0_f32 };
+            if let (Ok(sf), Ok(d16)) = (
+                bytemuck::try_cast_slice::<u8, f32>(&src[..count * 4]),
+                bytemuck::try_cast_slice_mut::<u8, u16>(&mut dst[..count * 2]),
+            ) {
+                if let Some(f) = accel.f32_to_u16 {
+                    f(sf, d16, round);
+                } else {
+                    for (&v, o) in sf.iter().zip(d16.iter_mut()) {
+                        *o = if v.is_nan() || v <= 0.0 {
+                            0
+                        } else {
+                            ((v.min(1.0) * 65535.0 + bias) as u32).min(65535) as u16
+                        };
+                    }
+                }
+            } else {
+                for i in 0..count {
+                    let o = i * 4;
+                    let v = f32::from_ne_bytes([src[o], src[o + 1], src[o + 2], src[o + 3]]);
+                    let q = if v.is_nan() || v <= 0.0 {
+                        0u16
+                    } else {
+                        ((v.min(1.0) * 65535.0 + bias) as u32).min(65535) as u16
+                    };
+                    dst[i * 2..i * 2 + 2].copy_from_slice(&q.to_ne_bytes());
+                }
+            }
+        }
+        FastRow::SrgbU8ToLinF32 { channels, is_rgba } => {
+            let count = width * channels;
+            if let Ok(df) = bytemuck::try_cast_slice_mut::<u8, f32>(&mut dst[..count * 4]) {
+                if is_rgba {
+                    if let Some(f) = accel.srgb_u8_to_lin_rgba {
+                        f(&src[..count], df);
+                    } else {
+                        for (sp, dp) in src[..count].chunks_exact(4).zip(df.chunks_exact_mut(4)) {
+                            dp[0] = linear_srgb::default::srgb_u8_to_linear(sp[0]);
+                            dp[1] = linear_srgb::default::srgb_u8_to_linear(sp[1]);
+                            dp[2] = linear_srgb::default::srgb_u8_to_linear(sp[2]);
+                            dp[3] = sp[3] as f32 / 255.0;
+                        }
+                    }
+                } else if let Some(f) = accel.srgb_u8_to_lin {
+                    f(&src[..count], df);
+                } else {
+                    for (&b, o) in src[..count].iter().zip(df.iter_mut()) {
+                        *o = linear_srgb::default::srgb_u8_to_linear(b);
+                    }
+                }
+            } else {
+                for i in 0..width {
+                    for c in 0..channels {
+                        let b = src[i * channels + c];
+                        let v = if is_rgba && c == 3 {
+                            b as f32 / 255.0
+                        } else {
+                            linear_srgb::default::srgb_u8_to_linear(b)
+                        };
+                        let o = (i * channels + c) * 4;
+                        dst[o..o + 4].copy_from_slice(&v.to_ne_bytes());
+                    }
+                }
+            }
+        }
+        FastRow::LinF32ToSrgbU8 {
+            channels,
+            is_rgba,
+            round,
+        } => {
+            let count = width * channels;
+            let bias = if round { 0.5_f32 } else { 0.0_f32 };
+            let mut buf = [0.0f32; 256];
+            let mut saved_a = [0.0f32; 64];
+            let aligned = bytemuck::try_cast_slice::<u8, f32>(&src[..count * 4]).ok();
+            let mut i = 0usize;
+            while i < count {
+                // Keep chunks pixel-aligned (multiple of 4 for RGBA).
+                let n = if is_rgba {
+                    ((count - i).min(256)) & !3
+                } else {
+                    (count - i).min(256)
+                };
+                if let Some(sf) = aligned {
+                    buf[..n].copy_from_slice(&sf[i..i + n]);
+                } else {
+                    for k in 0..n {
+                        let o = (i + k) * 4;
+                        buf[k] = f32::from_ne_bytes([src[o], src[o + 1], src[o + 2], src[o + 3]]);
+                    }
+                }
+                if is_rgba {
+                    let px = n / 4;
+                    for p in 0..px {
+                        saved_a[p] = buf[p * 4 + 3];
+                    }
+                }
+                for v in &mut buf[..n] {
+                    *v = if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) };
+                }
+                if let Some(f) = accel.srgb_oetf {
+                    f(&mut buf[..n]);
+                } else {
+                    srgb_oetf_scalar_slice(&mut buf[..n]);
+                }
+                if is_rgba {
+                    let px = n / 4;
+                    for p in 0..px {
+                        buf[p * 4 + 3] = saved_a[p];
+                    }
+                }
+                if let Some(f) = accel.f32_to_u8 {
+                    f(&buf[..n], &mut dst[i..i + n], round);
+                } else {
+                    for k in 0..n {
+                        let v = buf[k];
+                        dst[i + k] = if v.is_nan() || v <= 0.0 {
+                            0
+                        } else {
+                            ((v.min(1.0) * 255.0 + bias) as u32).min(255) as u8
+                        };
+                    }
+                }
+                i += n;
+            }
+        }
+        FastRow::TransferF32 {
+            channels,
+            transfer,
+            is_eotf,
+            is_rgba,
+            pq_scale,
+            preserve_extended,
+        } => {
+            let count = width * channels;
+            let byte_len = count * 4;
+            dst[..byte_len].copy_from_slice(&src[..byte_len]);
+            if let Ok(df) = bytemuck::try_cast_slice_mut::<u8, f32>(&mut dst[..byte_len]) {
+                if !is_rgba {
+                    apply_transfer_slice(transfer, is_eotf, pq_scale, preserve_extended, df, accel);
+                } else {
+                    let mut saved_a = [0.0f32; 64];
+                    let mut p = 0usize;
+                    while p < width {
+                        let n = (width - p).min(64);
+                        let sub = &mut df[p * 4..(p + n) * 4];
+                        for k in 0..n {
+                            saved_a[k] = sub[k * 4 + 3];
+                        }
+                        apply_transfer_slice(
+                            transfer,
+                            is_eotf,
+                            pq_scale,
+                            preserve_extended,
+                            sub,
+                            accel,
+                        );
+                        for k in 0..n {
+                            sub[k * 4 + 3] = saved_a[k];
+                        }
+                        p += n;
+                    }
+                }
+            } else {
+                let mut buf = [0.0f32; 256];
+                let mut saved_a = [0.0f32; 64];
+                let mut p = 0usize;
+                let step = if is_rgba { 64 } else { 256 / channels };
+                while p < width {
+                    let n = (width - p).min(step);
+                    let floats = n * channels;
+                    for k in 0..floats {
+                        let o = (p * channels + k) * 4;
+                        buf[k] = f32::from_ne_bytes([dst[o], dst[o + 1], dst[o + 2], dst[o + 3]]);
+                    }
+                    if is_rgba {
+                        for k in 0..n {
+                            saved_a[k] = buf[k * 4 + 3];
+                        }
+                    }
+                    apply_transfer_slice(
+                        transfer,
+                        is_eotf,
+                        pq_scale,
+                        preserve_extended,
+                        &mut buf[..floats],
+                        accel,
+                    );
+                    if is_rgba {
+                        for k in 0..n {
+                            buf[k * 4 + 3] = saved_a[k];
+                        }
+                    }
+                    for k in 0..floats {
+                        let o = (p * channels + k) * 4;
+                        dst[o..o + 4].copy_from_slice(&buf[k].to_ne_bytes());
+                    }
+                    p += n;
                 }
             }
         }
@@ -260,6 +1259,8 @@ pub(crate) enum MicroOp {
         #[cfg(feature = "hdr-transfers")]
         hlg: Option<PreparedHlg>,
         preserve_extended: bool,
+        /// When `true` (destination is Gray/GrayAlpha), only encode `strip.r`.
+        gray_only: bool,
     },
     /// Linear 3×3 gamut matrix multiply (`r, g, b`).
     Gamut3x3([[f32; 3]; 3]),
@@ -335,6 +1336,7 @@ impl core::fmt::Debug for MicroOp {
 }
 
 /// Execute a compiled micro-op sequence over one row using the 1 KiB stack [`StripBuf`].
+#[inline(never)]
 pub(crate) fn exec_strip_row(
     src_layout: SampleLayout,
     dst_layout: SampleLayout,
@@ -349,38 +1351,139 @@ pub(crate) fn exec_strip_row(
     let mut strip = StripBuf::new();
     let src_bpp = src_layout.bytes_per_pixel();
     let dst_bpp = dst_layout.bytes_per_pixel();
+
+    // Fuse full-packing U8 unpack + leading sRGB EOTF directly through the
+    // exact 256-entry sRGB LUT (0-bit identical between SCALAR & ALL!).
+    let fuse_u8_srgb = src_layout.sample == SampleType::U8
+        && src_layout.packing.is_full()
+        && matches!(
+            ops.first(),
+            Some(MicroOp::Eotf {
+                transfer: Transfer::Srgb,
+                ..
+            })
+        );
+    let active_ops = if fuse_u8_srgb { &ops[1..] } else { ops };
+
     let mut x = 0usize;
     while x < width {
         let len = (width - x).min(STRIP_LEN);
-        unpack_strip(
-            src_layout,
-            &src_row[x * src_bpp..(x + len) * src_bpp],
-            &mut strip,
-            len,
-            accel,
-        );
-        for op in ops {
+        let s_slice = &src_row[x * src_bpp..(x + len) * src_bpp];
+        if fuse_u8_srgb {
+            unpack_strip_u8_srgb_lut(src_layout.order, s_slice, &mut strip, len);
+        } else if let Some(unpack_simd) = accel.strip_unpack
+            && unpack_simd(src_layout, s_slice, &mut strip, len)
+        {
+        } else {
+            unpack_strip_scalar(src_layout, s_slice, &mut strip, len, accel);
+        }
+
+        for op in active_ops {
             apply_micro_op(op, &mut strip, len, accel);
         }
-        pack_strip(
-            dst_layout,
-            &strip,
-            &mut dst_row[x * dst_bpp..(x + len) * dst_bpp],
-            len,
-            x,
-            row_y,
-            depth_policy,
-            accel,
-        );
+
+        let d_slice = &mut dst_row[x * dst_bpp..(x + len) * dst_bpp];
+        if let Some(pack_simd) = accel.strip_pack
+            && pack_simd(dst_layout, &strip, d_slice, len, depth_policy)
+        {
+        } else {
+            pack_strip_scalar(
+                dst_layout,
+                &strip,
+                d_slice,
+                len,
+                x,
+                row_y,
+                depth_policy,
+                accel,
+            );
+        }
         x += len;
     }
 }
 
+/// Fused U8 sRGB unpack + EOTF via exact 256-entry const LUT (alpha stays linear).
+#[inline(never)]
+fn unpack_strip_u8_srgb_lut(order: ChannelOrder, src: &[u8], strip: &mut StripBuf, len: usize) {
+    const INV: f32 = 1.0 / 255.0;
+    use linear_srgb::default::srgb_u8_to_linear as lut;
+    match order {
+        ChannelOrder::Rgb => {
+            for i in 0..len {
+                strip.r[i] = lut(src[i * 3]);
+                strip.g[i] = lut(src[i * 3 + 1]);
+                strip.b[i] = lut(src[i * 3 + 2]);
+            }
+            strip.a[..len].fill(1.0);
+        }
+        ChannelOrder::Bgr => {
+            for i in 0..len {
+                strip.b[i] = lut(src[i * 3]);
+                strip.g[i] = lut(src[i * 3 + 1]);
+                strip.r[i] = lut(src[i * 3 + 2]);
+            }
+            strip.a[..len].fill(1.0);
+        }
+        ChannelOrder::Rgba => {
+            for i in 0..len {
+                strip.r[i] = lut(src[i * 4]);
+                strip.g[i] = lut(src[i * 4 + 1]);
+                strip.b[i] = lut(src[i * 4 + 2]);
+                strip.a[i] = f32::from(src[i * 4 + 3]) * INV;
+            }
+        }
+        ChannelOrder::Bgra => {
+            for i in 0..len {
+                strip.b[i] = lut(src[i * 4]);
+                strip.g[i] = lut(src[i * 4 + 1]);
+                strip.r[i] = lut(src[i * 4 + 2]);
+                strip.a[i] = f32::from(src[i * 4 + 3]) * INV;
+            }
+        }
+        ChannelOrder::Rgbx => {
+            for i in 0..len {
+                strip.r[i] = lut(src[i * 4]);
+                strip.g[i] = lut(src[i * 4 + 1]);
+                strip.b[i] = lut(src[i * 4 + 2]);
+            }
+            strip.a[..len].fill(1.0);
+        }
+        ChannelOrder::Bgrx => {
+            for i in 0..len {
+                strip.b[i] = lut(src[i * 4]);
+                strip.g[i] = lut(src[i * 4 + 1]);
+                strip.r[i] = lut(src[i * 4 + 2]);
+            }
+            strip.a[..len].fill(1.0);
+        }
+        ChannelOrder::Gray => {
+            for i in 0..len {
+                let y = lut(src[i]);
+                strip.r[i] = y;
+                strip.g[i] = y;
+                strip.b[i] = y;
+            }
+            strip.a[..len].fill(1.0);
+        }
+        ChannelOrder::GrayAlpha => {
+            for i in 0..len {
+                let y = lut(src[i * 2]);
+                strip.r[i] = y;
+                strip.g[i] = y;
+                strip.b[i] = y;
+                strip.a[i] = f32::from(src[i * 2 + 1]) * INV;
+            }
+        }
+        _ => {}
+    }
+}
+
 // ---------------------------------------------------------------------------
-// Unpack: interleaved bytes → 64-px SoA f32 strip
+// Unpack: interleaved bytes → 64-px SoA f32 strip (universal scalar)
 // ---------------------------------------------------------------------------
 
-fn unpack_strip(
+#[inline(never)]
+fn unpack_strip_scalar(
     layout: SampleLayout,
     src: &[u8],
     strip: &mut StripBuf,
@@ -390,9 +1493,9 @@ fn unpack_strip(
     // Handle BitPacking::Bitfields (RGB565 / RGB10A2) first.
     if layout.packing.is_packed_word() {
         let bpp = layout.bytes_per_pixel();
+        let ch = layout.channels();
         for i in 0..len {
             let word = read_word_u32(layout.sample, &src[i * bpp..]);
-            let ch = layout.channels();
             let mut vals = [0.0f32; 4];
             vals[3] = 1.0;
             for c in 0..ch {
@@ -426,84 +1529,21 @@ fn unpack_strip(
         return;
     }
 
-    match (layout.sample, layout.order) {
-        (SampleType::U8, ChannelOrder::Rgb) => {
+    let ch = layout.channels();
+    match layout.sample {
+        SampleType::U8 => {
             const INV: f32 = 1.0 / 255.0;
             for i in 0..len {
-                strip.r[i] = f32::from(src[i * 3]) * INV;
-                strip.g[i] = f32::from(src[i * 3 + 1]) * INV;
-                strip.b[i] = f32::from(src[i * 3 + 2]) * INV;
-                strip.a[i] = 1.0;
+                let mut vals = [0.0f32; 4];
+                vals[3] = 1.0;
+                for c in 0..ch {
+                    vals[c] = f32::from(src[i * ch + c]) * INV;
+                }
+                store_ordered(layout.order, vals, strip, i);
             }
         }
-        (SampleType::U8, ChannelOrder::Bgr) => {
-            const INV: f32 = 1.0 / 255.0;
-            for i in 0..len {
-                strip.b[i] = f32::from(src[i * 3]) * INV;
-                strip.g[i] = f32::from(src[i * 3 + 1]) * INV;
-                strip.r[i] = f32::from(src[i * 3 + 2]) * INV;
-                strip.a[i] = 1.0;
-            }
-        }
-        (SampleType::U8, ChannelOrder::Rgba) => {
-            const INV: f32 = 1.0 / 255.0;
-            for i in 0..len {
-                strip.r[i] = f32::from(src[i * 4]) * INV;
-                strip.g[i] = f32::from(src[i * 4 + 1]) * INV;
-                strip.b[i] = f32::from(src[i * 4 + 2]) * INV;
-                strip.a[i] = f32::from(src[i * 4 + 3]) * INV;
-            }
-        }
-        (SampleType::U8, ChannelOrder::Bgra) => {
-            const INV: f32 = 1.0 / 255.0;
-            for i in 0..len {
-                strip.b[i] = f32::from(src[i * 4]) * INV;
-                strip.g[i] = f32::from(src[i * 4 + 1]) * INV;
-                strip.r[i] = f32::from(src[i * 4 + 2]) * INV;
-                strip.a[i] = f32::from(src[i * 4 + 3]) * INV;
-            }
-        }
-        (SampleType::U8, ChannelOrder::Rgbx) => {
-            const INV: f32 = 1.0 / 255.0;
-            for i in 0..len {
-                strip.r[i] = f32::from(src[i * 4]) * INV;
-                strip.g[i] = f32::from(src[i * 4 + 1]) * INV;
-                strip.b[i] = f32::from(src[i * 4 + 2]) * INV;
-                strip.a[i] = 1.0;
-            }
-        }
-        (SampleType::U8, ChannelOrder::Bgrx) => {
-            const INV: f32 = 1.0 / 255.0;
-            for i in 0..len {
-                strip.b[i] = f32::from(src[i * 4]) * INV;
-                strip.g[i] = f32::from(src[i * 4 + 1]) * INV;
-                strip.r[i] = f32::from(src[i * 4 + 2]) * INV;
-                strip.a[i] = 1.0;
-            }
-        }
-        (SampleType::U8, ChannelOrder::Gray) => {
-            const INV: f32 = 1.0 / 255.0;
-            for i in 0..len {
-                let y = f32::from(src[i]) * INV;
-                strip.r[i] = y;
-                strip.g[i] = y;
-                strip.b[i] = y;
-                strip.a[i] = 1.0;
-            }
-        }
-        (SampleType::U8, ChannelOrder::GrayAlpha) => {
-            const INV: f32 = 1.0 / 255.0;
-            for i in 0..len {
-                let y = f32::from(src[i * 2]) * INV;
-                strip.r[i] = y;
-                strip.g[i] = y;
-                strip.b[i] = y;
-                strip.a[i] = f32::from(src[i * 2 + 1]) * INV;
-            }
-        }
-        (SampleType::U16, _) => {
+        SampleType::U16 => {
             const INV: f32 = 1.0 / 65535.0;
-            let ch = layout.channels();
             for i in 0..len {
                 let mut vals = [0.0f32; 4];
                 vals[3] = 1.0;
@@ -514,8 +1554,7 @@ fn unpack_strip(
                 store_ordered(layout.order, vals, strip, i);
             }
         }
-        (SampleType::F16, _) => {
-            let ch = layout.channels();
+        SampleType::F16 => {
             let count = len * ch;
             let mut bits = [0u16; STRIP_LEN * 4];
             let mut decoded = [0.0f32; STRIP_LEN * 4];
@@ -538,8 +1577,7 @@ fn unpack_strip(
                 store_ordered(layout.order, vals, strip, i);
             }
         }
-        (SampleType::F32, _) => {
-            let ch = layout.channels();
+        SampleType::F32 => {
             for i in 0..len {
                 let mut vals = [0.0f32; 4];
                 vals[3] = 1.0;
@@ -638,6 +1676,7 @@ fn write_word_u32(sample: SampleType, dst: &mut [u8], word: u32) {
 // Micro-op execution on StripBuf
 // ---------------------------------------------------------------------------
 
+#[inline(never)]
 fn apply_micro_op(op: &MicroOp, strip: &mut StripBuf, len: usize, accel: &Accelerators) {
     match op {
         MicroOp::ExpandNarrow { sample } => {
@@ -717,6 +1756,7 @@ fn apply_micro_op(op: &MicroOp, strip: &mut StripBuf, len: usize, accel: &Accele
             #[cfg(feature = "hdr-transfers")]
             hlg,
             preserve_extended,
+            gray_only,
         } => {
             apply_oetf(
                 *transfer,
@@ -724,6 +1764,7 @@ fn apply_micro_op(op: &MicroOp, strip: &mut StripBuf, len: usize, accel: &Accele
                 #[cfg(feature = "hdr-transfers")]
                 hlg.as_ref(),
                 *preserve_extended,
+                *gray_only,
                 strip,
                 len,
                 accel,
@@ -845,7 +1886,11 @@ fn apply_micro_op(op: &MicroOp, strip: &mut StripBuf, len: usize, accel: &Accele
             for i in 0..len {
                 pixels[i] = [strip.r[i], strip.g[i], strip.b[i]];
             }
-            sc.apply_strip(&mut pixels[..len]);
+            if let Some(f) = accel.soft_compress {
+                f(sc, &mut pixels[..len]);
+            } else {
+                sc.apply_strip_scalar(&mut pixels[..len]);
+            }
             for i in 0..len {
                 strip.r[i] = pixels[i][0];
                 strip.g[i] = pixels[i][1];
@@ -898,6 +1943,129 @@ fn apply_micro_op(op: &MicroOp, strip: &mut StripBuf, len: usize, accel: &Accele
 // Transfer functions (EOTF / OETF) — bit-exact between scalar & SIMD!
 // ---------------------------------------------------------------------------
 
+#[inline]
+fn clamp_slice_unit(ch: &mut [f32]) {
+    for v in ch.iter_mut() {
+        *v = if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) };
+    }
+}
+
+/// Apply a single-channel transfer function to a contiguous `f32` slice.
+#[inline(never)]
+fn apply_transfer_slice(
+    transfer: Transfer,
+    is_eotf: bool,
+    pq_scale: f32,
+    preserve_extended: bool,
+    ch: &mut [f32],
+    accel: &Accelerators,
+) {
+    let _ = pq_scale;
+    match (transfer, is_eotf) {
+        (Transfer::Linear | Transfer::Unknown, _) => {}
+        (Transfer::Srgb, true) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            if let Some(f) = accel.srgb_eotf {
+                f(ch);
+            } else {
+                srgb_eotf_scalar_slice(ch);
+            }
+        }
+        (Transfer::Srgb, false) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            if let Some(f) = accel.srgb_oetf {
+                f(ch);
+            } else {
+                srgb_oetf_scalar_slice(ch);
+            }
+        }
+        (Transfer::Bt709, true) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            if let Some(f) = accel.bt709_eotf {
+                f(ch);
+            } else {
+                crate::transfers::bt709_eotf_scalar_slice(ch);
+            }
+        }
+        (Transfer::Bt709, false) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            if let Some(f) = accel.bt709_oetf {
+                f(ch);
+            } else {
+                crate::transfers::bt709_oetf_scalar_slice(ch);
+            }
+        }
+        (Transfer::Gamma22, true) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            if let Some(f) = accel.gamma22_eotf {
+                f(ch);
+            } else {
+                crate::transfers::gamma22_eotf_scalar_slice(ch);
+            }
+        }
+        (Transfer::Gamma22, false) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            if let Some(f) = accel.gamma22_oetf {
+                f(ch);
+            } else {
+                crate::transfers::gamma22_oetf_scalar_slice(ch);
+            }
+        }
+        #[cfg(feature = "hdr-transfers")]
+        (Transfer::Pq, true) => {
+            if let Some(f) = accel.pq_eotf {
+                f(ch, pq_scale);
+            } else {
+                crate::transfers::hdr::pq_eotf_scalar_slice(ch, pq_scale);
+            }
+        }
+        #[cfg(feature = "hdr-transfers")]
+        (Transfer::Pq, false) => {
+            if let Some(f) = accel.pq_oetf {
+                f(ch, pq_scale);
+            } else {
+                crate::transfers::hdr::pq_oetf_scalar_slice(ch, pq_scale);
+            }
+        }
+        #[cfg(feature = "hdr-transfers")]
+        (Transfer::Hlg(HlgMode::Scene), true) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            if let Some(f) = accel.hlg_scene_eotf {
+                f(ch);
+            } else {
+                crate::transfers::hdr::hlg_scene_eotf_scalar_slice(ch);
+            }
+        }
+        #[cfg(feature = "hdr-transfers")]
+        (Transfer::Hlg(HlgMode::Scene), false) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            if let Some(f) = accel.hlg_scene_oetf {
+                f(ch);
+            } else {
+                crate::transfers::hdr::hlg_scene_oetf_scalar_slice(ch);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[inline(never)]
 fn apply_eotf(
     transfer: Transfer,
     pq_scale: f32,
@@ -909,207 +2077,106 @@ fn apply_eotf(
 ) {
     match transfer {
         Transfer::Linear | Transfer::Unknown => {}
-        Transfer::Srgb => {
-            for ch in [
-                &mut strip.r[..len],
-                &mut strip.g[..len],
-                &mut strip.b[..len],
-            ] {
-                if !preserve_extended {
-                    for v in ch.iter_mut() {
-                        *v = if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) };
-                    }
-                }
-                if let Some(f) = accel.srgb_eotf {
-                    f(ch);
-                } else {
-                    srgb_eotf_scalar_slice(ch);
-                }
-            }
-        }
-        Transfer::Bt709 => {
-            for ch in [
-                &mut strip.r[..len],
-                &mut strip.g[..len],
-                &mut strip.b[..len],
-            ] {
-                for v in ch.iter_mut() {
-                    let x = if preserve_extended {
-                        *v
-                    } else {
-                        v.clamp(0.0, 1.0)
-                    };
-                    *v = bt709_eotf_scalar(x);
-                }
-            }
-        }
-        Transfer::Gamma22 => {
-            for ch in [
-                &mut strip.r[..len],
-                &mut strip.g[..len],
-                &mut strip.b[..len],
-            ] {
-                for v in ch.iter_mut() {
-                    let x = if preserve_extended {
-                        *v
-                    } else {
-                        v.clamp(0.0, 1.0)
-                    };
-                    *v = gamma22_eotf_scalar(x);
-                }
-            }
-        }
-        Transfer::Pq => {
-            // PQ flushes RGB NaN to 0.0 while leaving alpha untouched.
-            for ch in [
-                &mut strip.r[..len],
-                &mut strip.g[..len],
-                &mut strip.b[..len],
-            ] {
-                for v in ch.iter_mut() {
-                    *v = pq_eotf_scalar(*v) * pq_scale;
-                }
-            }
-        }
-        Transfer::Hlg(HlgMode::Scene) => {
-            for ch in [
-                &mut strip.r[..len],
-                &mut strip.g[..len],
-                &mut strip.b[..len],
-            ] {
-                for v in ch.iter_mut() {
-                    let x = if preserve_extended {
-                        *v
-                    } else {
-                        v.clamp(0.0, 1.0)
-                    };
-                    *v = hlg_scene_eotf_scalar(x);
-                }
-            }
-        }
         Transfer::Hlg(HlgMode::Display(_)) =>
         {
             #[cfg(feature = "hdr-transfers")]
             if let Some(prepared) = hlg {
-                prepared.apply_soa(
-                    &mut strip.r[..len],
-                    &mut strip.g[..len],
-                    &mut strip.b[..len],
-                    len,
-                    accel.hlg_simd,
-                );
+                if let Some(f) = accel.hlg_display_soa {
+                    f(
+                        prepared,
+                        &mut strip.r[..len],
+                        &mut strip.g[..len],
+                        &mut strip.b[..len],
+                        len,
+                    );
+                } else {
+                    prepared.apply_soa_scalar(
+                        &mut strip.r[..len],
+                        &mut strip.g[..len],
+                        &mut strip.b[..len],
+                        len,
+                    );
+                }
             }
         }
-        _ => {}
+        _ => {
+            for ch in [
+                &mut strip.r[..len],
+                &mut strip.g[..len],
+                &mut strip.b[..len],
+            ] {
+                apply_transfer_slice(transfer, true, pq_scale, preserve_extended, ch, accel);
+            }
+        }
     }
 }
 
+#[inline(never)]
 fn apply_oetf(
     transfer: Transfer,
     pq_inv_scale: f32,
     #[cfg(feature = "hdr-transfers")] hlg: Option<&PreparedHlg>,
     preserve_extended: bool,
+    gray_only: bool,
     strip: &mut StripBuf,
     len: usize,
     accel: &Accelerators,
 ) {
     match transfer {
         Transfer::Linear | Transfer::Unknown => {}
-        Transfer::Srgb => {
-            for ch in [
-                &mut strip.r[..len],
-                &mut strip.g[..len],
-                &mut strip.b[..len],
-            ] {
-                if !preserve_extended {
-                    for v in ch.iter_mut() {
-                        *v = if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) };
-                    }
-                }
-                if let Some(f) = accel.srgb_oetf {
-                    f(ch);
-                } else {
-                    srgb_oetf_scalar_slice(ch);
-                }
-            }
-        }
-        Transfer::Bt709 => {
-            for ch in [
-                &mut strip.r[..len],
-                &mut strip.g[..len],
-                &mut strip.b[..len],
-            ] {
-                for v in ch.iter_mut() {
-                    let x = if preserve_extended {
-                        *v
-                    } else {
-                        v.clamp(0.0, 1.0)
-                    };
-                    *v = bt709_oetf_scalar(x);
-                }
-            }
-        }
-        Transfer::Gamma22 => {
-            for ch in [
-                &mut strip.r[..len],
-                &mut strip.g[..len],
-                &mut strip.b[..len],
-            ] {
-                for v in ch.iter_mut() {
-                    let x = if preserve_extended {
-                        *v
-                    } else {
-                        v.clamp(0.0, 1.0)
-                    };
-                    *v = gamma22_oetf_scalar(x);
-                }
-            }
-        }
-        Transfer::Pq => {
-            for ch in [
-                &mut strip.r[..len],
-                &mut strip.g[..len],
-                &mut strip.b[..len],
-            ] {
-                for v in ch.iter_mut() {
-                    *v = pq_oetf_scalar(*v * pq_inv_scale);
-                }
-            }
-        }
-        Transfer::Hlg(HlgMode::Scene) => {
-            for ch in [
-                &mut strip.r[..len],
-                &mut strip.g[..len],
-                &mut strip.b[..len],
-            ] {
-                for v in ch.iter_mut() {
-                    let x = if preserve_extended {
-                        *v
-                    } else {
-                        v.clamp(0.0, 1.0)
-                    };
-                    *v = hlg_scene_oetf_scalar(x);
-                }
-            }
-        }
         Transfer::Hlg(HlgMode::Display(_)) =>
         {
             #[cfg(feature = "hdr-transfers")]
             if let Some(prepared) = hlg {
-                prepared.apply_soa(
+                if let Some(f) = accel.hlg_display_soa {
+                    f(
+                        prepared,
+                        &mut strip.r[..len],
+                        &mut strip.g[..len],
+                        &mut strip.b[..len],
+                        len,
+                    );
+                } else {
+                    prepared.apply_soa_scalar(
+                        &mut strip.r[..len],
+                        &mut strip.g[..len],
+                        &mut strip.b[..len],
+                        len,
+                    );
+                }
+            }
+        }
+        _ => {
+            if gray_only {
+                apply_transfer_slice(
+                    transfer,
+                    false,
+                    pq_inv_scale,
+                    preserve_extended,
+                    &mut strip.r[..len],
+                    accel,
+                );
+            } else {
+                for ch in [
                     &mut strip.r[..len],
                     &mut strip.g[..len],
                     &mut strip.b[..len],
-                    len,
-                    accel.hlg_simd,
-                );
+                ] {
+                    apply_transfer_slice(
+                        transfer,
+                        false,
+                        pq_inv_scale,
+                        preserve_extended,
+                        ch,
+                        accel,
+                    );
+                }
             }
         }
-        _ => {}
     }
 }
 
-#[inline]
+#[inline(never)]
 fn srgb_eotf_scalar_slice(vals: &mut [f32]) {
     let (chunks, rem) = vals.as_chunks_mut::<4>();
     for c in chunks {
@@ -1123,7 +2190,7 @@ fn srgb_eotf_scalar_slice(vals: &mut [f32]) {
     }
 }
 
-#[inline]
+#[inline(never)]
 fn srgb_oetf_scalar_slice(vals: &mut [f32]) {
     let (chunks, rem) = vals.as_chunks_mut::<4>();
     for c in chunks {
@@ -1135,62 +2202,6 @@ fn srgb_oetf_scalar_slice(vals: &mut [f32]) {
         let out = linear_srgb::target_features::x4::linear_to_srgb_extended_scalar(buf);
         rem.copy_from_slice(&out[..rem.len()]);
     }
-}
-
-/// Exact ITU-R BT.709 EOTF (odd-symmetric for negative extended values).
-#[inline]
-pub(crate) fn bt709_eotf_scalar(v: f32) -> f32 {
-    const ALPHA: f64 = 1.099_296_826_809_44;
-    const BETA_LIN: f64 = 0.081_242_858_298_631_5; // 4.5 * 0.018053968510807
-    if !v.is_finite() {
-        return v;
-    }
-    let a = f64::from(v.abs());
-    let out = if a < BETA_LIN {
-        a / 4.5
-    } else {
-        libm::pow((a + (ALPHA - 1.0)) / ALPHA, 1.0 / 0.45)
-    };
-    (out as f32).copysign(v)
-}
-
-/// Exact ITU-R BT.709 OETF (odd-symmetric for negative extended values).
-#[inline]
-pub(crate) fn bt709_oetf_scalar(v: f32) -> f32 {
-    const ALPHA: f64 = 1.099_296_826_809_44;
-    const BETA: f64 = 0.018_053_968_510_807;
-    if !v.is_finite() {
-        return v;
-    }
-    let a = f64::from(v.abs());
-    let out = if a < BETA {
-        4.5 * a
-    } else {
-        ALPHA * libm::pow(a, 0.45) - (ALPHA - 1.0)
-    };
-    (out as f32).copysign(v)
-}
-
-/// Exact Adobe RGB (1998) pure gamma EOTF (`|v|^(563/256)`).
-#[inline]
-pub(crate) fn gamma22_eotf_scalar(v: f32) -> f32 {
-    const EXP: f64 = 563.0 / 256.0;
-    if !v.is_finite() {
-        return v;
-    }
-    let out = libm::pow(f64::from(v.abs()), EXP);
-    (out as f32).copysign(v)
-}
-
-/// Exact Adobe RGB (1998) pure gamma OETF (`|v|^(256/563)`).
-#[inline]
-pub(crate) fn gamma22_oetf_scalar(v: f32) -> f32 {
-    const INV_EXP: f64 = 256.0 / 563.0;
-    if !v.is_finite() {
-        return v;
-    }
-    let out = libm::pow(f64::from(v.abs()), INV_EXP);
-    (out as f32).copysign(v)
 }
 
 /// Exact SMPTE ST 2084 PQ EOTF (`[0, 1] → [0, 1]` where `1.0 = 10,000 cd/m²`; NaN → 0.0).
@@ -1214,60 +2225,8 @@ pub(crate) fn pq_eotf_scalar(v: f32) -> f32 {
     libm::pow(num / den, 1.0 / M1) as f32
 }
 
-/// Exact SMPTE ST 2084 PQ OETF (`[0, 1]` where `1.0 = 10,000 cd/m²` → `[0, 1]`; NaN → 0.0).
-#[inline]
-pub(crate) fn pq_oetf_scalar(v: f32) -> f32 {
-    const M1: f64 = 1305.0 / 8192.0;
-    const M2: f64 = 2523.0 / 32.0;
-    const C1: f64 = 107.0 / 128.0;
-    const C2: f64 = 2413.0 / 128.0;
-    const C3: f64 = 2392.0 / 128.0;
-    if v.is_nan() || v <= 0.0 {
-        return 0.0;
-    }
-    let y = f64::from(v.min(1.0));
-    let ym = libm::pow(y, M1);
-    libm::pow((C1 + C2 * ym) / (1.0 + C3 * ym), M2) as f32
-}
-
-/// ARIB STD-B67 / BT.2100 HLG scene-referred inverse OETF (`[0, 1] → [0, 1]` scene light).
-#[inline]
-pub(crate) fn hlg_scene_eotf_scalar(v: f32) -> f32 {
-    const A: f64 = 0.178_832_77;
-    const B: f64 = 1.0 - 4.0 * A;
-    let c: f64 = 0.5 - A * libm::log(4.0 * A);
-    if !v.is_finite() {
-        return v;
-    }
-    let a = f64::from(v.abs());
-    let out = if a <= 0.5 {
-        (a * a) / 3.0
-    } else {
-        (libm::exp((a - c) / A) + B) / 12.0
-    };
-    (out as f32).copysign(v)
-}
-
-/// ARIB STD-B67 / BT.2100 HLG scene-referred OETF (`[0, 1]` scene light → `[0, 1]`).
-#[inline]
-pub(crate) fn hlg_scene_oetf_scalar(v: f32) -> f32 {
-    const A: f64 = 0.178_832_77;
-    const B: f64 = 1.0 - 4.0 * A;
-    let c: f64 = 0.5 - A * libm::log(4.0 * A);
-    if !v.is_finite() {
-        return v;
-    }
-    let a = f64::from(v.abs());
-    let out = if a <= 1.0 / 12.0 {
-        libm::sqrt(3.0 * a)
-    } else {
-        A * libm::log(12.0 * a - B) + c
-    };
-    (out as f32).copysign(v)
-}
-
 // ---------------------------------------------------------------------------
-// Pack: 64-px SoA f32 strip → interleaved destination bytes
+// Pack: 64-px SoA f32 strip → interleaved destination bytes (universal scalar)
 // ---------------------------------------------------------------------------
 
 #[inline(always)]
@@ -1288,8 +2247,9 @@ fn quantize_to_u32(v: f32, max_code: u32, policy: DepthPolicy, x: usize, y: u32)
     (q as u32).min(max_code)
 }
 
+#[inline(never)]
 #[allow(clippy::too_many_arguments)]
-fn pack_strip(
+fn pack_strip_scalar(
     layout: SampleLayout,
     strip: &StripBuf,
     dst: &mut [u8],
@@ -1334,9 +2294,9 @@ fn pack_strip(
         return;
     }
 
-    match (layout.sample, layout.order) {
-        (SampleType::U8, _) => {
-            let ch = layout.channels();
+    let ch = layout.channels();
+    match layout.sample {
+        SampleType::U8 => {
             for i in 0..len {
                 let ordered = load_ordered(layout.order, strip, i);
                 for c in 0..ch {
@@ -1345,8 +2305,7 @@ fn pack_strip(
                 }
             }
         }
-        (SampleType::U16, _) => {
-            let ch = layout.channels();
+        SampleType::U16 => {
             for i in 0..len {
                 let ordered = load_ordered(layout.order, strip, i);
                 for c in 0..ch {
@@ -1357,8 +2316,7 @@ fn pack_strip(
                 }
             }
         }
-        (SampleType::F16, _) => {
-            let ch = layout.channels();
+        SampleType::F16 => {
             let count = len * ch;
             let mut flat = [0.0f32; STRIP_LEN * 4];
             let mut bits = [0u16; STRIP_LEN * 4];
@@ -1379,8 +2337,7 @@ fn pack_strip(
                 dst[k * 2..k * 2 + 2].copy_from_slice(&bits[k].to_ne_bytes());
             }
         }
-        (SampleType::F32, _) => {
-            let ch = layout.channels();
+        SampleType::F32 => {
             for i in 0..len {
                 let ordered = load_ordered(layout.order, strip, i);
                 for c in 0..ch {
@@ -1441,17 +2398,53 @@ pub(crate) fn detect_byte_fast_path(
     if src == dst {
         return Some(ByteFastPath::Memcpy);
     }
-    // Check that color meaning agrees (ignoring alpha presence changes handled by layout).
-    let colors_agree = match (&src.color, &dst.color) {
-        (
-            zenpixels::ColorSpace::Rgb {
+
+    // Check direct RGBA8 / BGRA8 straight <-> premultiplied (same transfer/primaries/range/order).
+    if src.layout.sample == SampleType::U8
+        && dst.layout.sample == SampleType::U8
+        && src.layout.order == dst.layout.order
+        && matches!(src.layout.order, ChannelOrder::Rgba | ChannelOrder::Bgra)
+        && let (
+            ColorSpace::Rgb {
                 primaries: sp,
                 transfer: st,
                 range: sr,
                 alpha: sa,
                 white: sw,
             },
-            zenpixels::ColorSpace::Rgb {
+            ColorSpace::Rgb {
+                primaries: dp,
+                transfer: dt,
+                range: dr,
+                alpha: da,
+                white: dw,
+            },
+        ) = (&src.color, &dst.color)
+        && sp == dp
+        && st == dt
+        && sr == dr
+        && *sr == SignalRange::Full
+        && sw == dw
+    {
+        if *sa == AlphaMode::Straight && *da == AlphaMode::Premultiplied {
+            return Some(ByteFastPath::Rgba8StraightToPremul);
+        }
+        if *sa == AlphaMode::Premultiplied && *da == AlphaMode::Straight {
+            return Some(ByteFastPath::Rgba8PremulToStraight);
+        }
+    }
+
+    // Check that color meaning agrees (ignoring alpha presence changes handled by layout).
+    let colors_agree = match (&src.color, &dst.color) {
+        (
+            ColorSpace::Rgb {
+                primaries: sp,
+                transfer: st,
+                range: sr,
+                alpha: sa,
+                white: sw,
+            },
+            ColorSpace::Rgb {
                 primaries: dp,
                 transfer: dt,
                 range: dr,
@@ -1483,13 +2476,13 @@ pub(crate) fn detect_byte_fast_path(
                     ))
         }
         (
-            zenpixels::ColorSpace::Gray {
+            ColorSpace::Gray {
                 transfer: st,
                 range: sr,
                 alpha: sa,
                 white: sw,
             },
-            zenpixels::ColorSpace::Rgb {
+            ColorSpace::Rgb {
                 transfer: dt,
                 range: dr,
                 alpha: da,
@@ -1510,13 +2503,13 @@ pub(crate) fn detect_byte_fast_path(
                 )
         }
         (
-            zenpixels::ColorSpace::Gray {
+            ColorSpace::Gray {
                 transfer: st,
                 range: sr,
                 alpha: sa,
                 white: sw,
             },
-            zenpixels::ColorSpace::Gray {
+            ColorSpace::Gray {
                 transfer: dt,
                 range: dr,
                 alpha: da,
@@ -1529,7 +2522,6 @@ pub(crate) fn detect_byte_fast_path(
         return None;
     }
 
-    let _ = policy_depth;
     use ChannelOrder as O;
     use SampleType as S;
     match (
@@ -1538,6 +2530,7 @@ pub(crate) fn detect_byte_fast_path(
         dst.layout.sample,
         dst.layout.order,
     ) {
+        // U8 byte layouts
         (S::U8, O::Rgb, S::U8, O::Rgba) => Some(ByteFastPath::Rgb8ToRgba8),
         (S::U8, O::Rgb, S::U8, O::Bgra) => Some(ByteFastPath::Rgb8ToBgra8),
         (S::U8, O::Rgba, S::U8, O::Rgb) | (S::U8, O::Rgbx, S::U8, O::Rgb) => {
@@ -1561,7 +2554,105 @@ pub(crate) fn detect_byte_fast_path(
         }
         (S::U8, O::Gray, S::U8, O::Rgb) => Some(ByteFastPath::Gray8ToRgb8),
         (S::U8, O::Gray, S::U8, O::Rgba) => Some(ByteFastPath::Gray8ToRgba8),
+
+        // Pure integer U8 <-> U16 depth changes (same channel order)
         (S::U8, so, S::U16, do_) if so == do_ => Some(ByteFastPath::U8ToU16Exact),
+        (S::U16, so, S::U8, do_) if so == do_ => match policy_depth {
+            DepthPolicy::Round | DepthPolicy::Forbid => Some(ByteFastPath::U16ToU8Round),
+            DepthPolicy::Truncate => Some(ByteFastPath::U16ToU8Trunc),
+            DepthPolicy::OrderedDither => None,
+        },
+
+        // Wide 2-byte/channel layouts (U16 & F16)
+        (S::U16, O::Rgba, S::U16, O::Rgb)
+        | (S::U16, O::Rgbx, S::U16, O::Rgb)
+        | (S::F16, O::Rgba, S::F16, O::Rgb)
+        | (S::F16, O::Rgbx, S::F16, O::Rgb) => Some(ByteFastPath::DropAlpha4To3B2),
+        (S::U16, O::Bgra, S::U16, O::Rgb)
+        | (S::U16, O::Bgrx, S::U16, O::Rgb)
+        | (S::F16, O::Bgra, S::F16, O::Rgb)
+        | (S::F16, O::Bgrx, S::F16, O::Rgb) => Some(ByteFastPath::SwapDropAlpha4To3B2),
+        (S::U16, O::Rgb, S::U16, O::Rgba) => Some(ByteFastPath::AddAlpha3To4B2(0xFFFF)),
+        (S::F16, O::Rgb, S::F16, O::Rgba) => Some(ByteFastPath::AddAlpha3To4B2(0x3C00)),
+        (S::U16, O::Rgb, S::U16, O::Bgra) => Some(ByteFastPath::SwapAddAlpha3To4B2(0xFFFF)),
+        (S::F16, O::Rgb, S::F16, O::Bgra) => Some(ByteFastPath::SwapAddAlpha3To4B2(0x3C00)),
+        (S::U16, O::Rgb, S::U16, O::Bgr)
+        | (S::U16, O::Bgr, S::U16, O::Rgb)
+        | (S::F16, O::Rgb, S::F16, O::Bgr)
+        | (S::F16, O::Bgr, S::F16, O::Rgb) => Some(ByteFastPath::SwapRb3B2),
+        (S::U16, O::Rgba, S::U16, O::Bgra)
+        | (S::U16, O::Bgra, S::U16, O::Rgba)
+        | (S::F16, O::Rgba, S::F16, O::Bgra)
+        | (S::F16, O::Bgra, S::F16, O::Rgba) => Some(ByteFastPath::SwapRb4B2),
+        (S::U16, O::Gray, S::U16, O::Rgb) | (S::F16, O::Gray, S::F16, O::Rgb) => {
+            Some(ByteFastPath::GrayToRgbB2)
+        }
+        (S::U16, O::Gray, S::U16, O::Rgba) => Some(ByteFastPath::GrayToRgbaB2(0xFFFF)),
+        (S::F16, O::Gray, S::F16, O::Rgba) => Some(ByteFastPath::GrayToRgbaB2(0x3C00)),
+
+        // Wide 4-byte/channel layouts (F32)
+        (S::F32, O::Rgba, S::F32, O::Rgb) | (S::F32, O::Rgbx, S::F32, O::Rgb) => {
+            Some(ByteFastPath::DropAlpha4To3B4)
+        }
+        (S::F32, O::Bgra, S::F32, O::Rgb) | (S::F32, O::Bgrx, S::F32, O::Rgb) => {
+            Some(ByteFastPath::SwapDropAlpha4To3B4)
+        }
+        (S::F32, O::Rgb, S::F32, O::Rgba) => Some(ByteFastPath::AddAlpha3To4B4),
+        (S::F32, O::Rgb, S::F32, O::Bgra) => Some(ByteFastPath::SwapAddAlpha3To4B4),
+        (S::F32, O::Rgb, S::F32, O::Bgr) | (S::F32, O::Bgr, S::F32, O::Rgb) => {
+            Some(ByteFastPath::SwapRb3B4)
+        }
+        (S::F32, O::Rgba, S::F32, O::Bgra) | (S::F32, O::Bgra, S::F32, O::Rgba) => {
+            Some(ByteFastPath::SwapRb4B4)
+        }
+        (S::F32, O::Gray, S::F32, O::Rgb) => Some(ByteFastPath::GrayToRgbB4),
+        (S::F32, O::Gray, S::F32, O::Rgba) => Some(ByteFastPath::GrayToRgbaB4),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exhaustive_u16_to_u8_round_and_trunc_match_float_oracle() {
+        for v in 0u16..=65535 {
+            let f = f32::from(v) * (1.0 / 65535.0);
+            let want_round = ((f * 255.0 + 0.5) as u32).min(255) as u8;
+            let got_round = ((u32::from(v) * 255 + 32895) >> 16) as u8;
+            assert_eq!(got_round, want_round, "u16->u8 round mismatch at v={v}");
+
+            let want_trunc = (u32::from(v) * 255 / 65535) as u8;
+            let got_trunc = ((u32::from(v) * 255 + 255) >> 16) as u8;
+            assert_eq!(got_trunc, want_trunc, "u16->u8 trunc mismatch at v={v}");
+        }
+    }
+
+    #[test]
+    fn exhaustive_rgba8_premul_and_unpremul_match_exact_round() {
+        for a in 0u8..=255 {
+            for c in 0u8..=255 {
+                let want_pre = ((u32::from(c) * u32::from(a) + 127) / 255) as u8;
+                let got_pre = (((u32::from(c) * u32::from(a) + 128) * 257) >> 16) as u8;
+                assert_eq!(got_pre, want_pre, "premul mismatch at c={c}, a={a}");
+
+                let want_un = if a == 0 {
+                    0u8
+                } else if c >= a {
+                    255u8
+                } else {
+                    ((u32::from(c) * 255 + u32::from(a) / 2) / u32::from(a)) as u8
+                };
+                let got_un = if a == 0 {
+                    0u8
+                } else if c >= a {
+                    255u8
+                } else {
+                    ((u32::from(c) * UNPREMUL_U8_SCALE[usize::from(a)] + 32768) >> 16) as u8
+                };
+                assert_eq!(got_un, want_un, "unpremul mismatch at c={c}, a={a}");
+            }
+        }
     }
 }

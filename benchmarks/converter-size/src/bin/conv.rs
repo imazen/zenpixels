@@ -1,18 +1,17 @@
 use std::hint::black_box as bb;
-use zenpixels::PixelDescriptor as D;
-use zenpixels_convert::{AlphaPolicy, ConversionSpec, ConvertOptions, ConvertPlan};
+use zenpixels::ImageSpec;
+use zenpixels_convert::{AlphaPolicy, ConvertPolicy, RowPlan};
 fn main() {
-    let opts = ConvertOptions::retain_channels().with_alpha_policy(AlphaPolicy::DiscardUnchecked);
-    let mut c = ConvertPlan::build(
-        bb(D::RGBA8_SRGB).into(),
-        bb(D::RGB8_SRGB).into(),
-        &ConversionSpec::new(opts),
+    let policy = ConvertPolicy::lossless().with_alpha(AlphaPolicy::DiscardUnchecked);
+    let plan = RowPlan::build(
+        bb(ImageSpec::rgba8_srgb()),
+        bb(ImageSpec::rgb8_srgb()),
+        &policy,
+        None,
     )
-    .unwrap()
-    .prepare(2)
     .unwrap();
     let src = [1u8, 2, 3, 255, 4, 5, 6, 255];
     let mut dst = [0u8; 6];
-    c.try_convert_row(bb(&src), &mut dst, 2).unwrap();
+    plan.convert_row(bb(&src), &mut dst, 2, 0).unwrap();
     println!("{dst:?}");
 }

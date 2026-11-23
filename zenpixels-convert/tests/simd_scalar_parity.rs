@@ -409,3 +409,365 @@ fn parity_hlg_pq_narrow_matte_and_bitpacking() {
         None,
     );
 }
+
+#[test]
+fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
+    let width = 73u32; // crosses 64-px strip + SIMD widths + prime tail!
+    let rgb8: Vec<u8> = (0..width as usize * 3)
+        .map(|i| ((i * 43 + 5) % 256) as u8)
+        .collect();
+    let rgba8: Vec<u8> = (0..width as usize * 4)
+        .map(|i| ((i * 59 + 13) % 256) as u8)
+        .collect();
+    let rgb16: Vec<u16> = (0..width as usize * 3)
+        .map(|i| ((i * 1973 + 17) % 65536) as u16)
+        .collect();
+    let rgba16: Vec<u16> = (0..width as usize * 4)
+        .map(|i| ((i * 2503 + 29) % 65536) as u16)
+        .collect();
+    let mut f32_rgb = Vec::with_capacity(width as usize * 3);
+    for i in 0..width as usize {
+        let t = (i as f32) / (width as f32 - 1.0);
+        // Includes negative, dark toe (< 0.02), midtones, super-white (> 1.0), and 0.0
+        f32_rgb.push(if i == 0 { 0.0 } else { -0.2 + 1.5 * t });
+        f32_rgb.push((i as f32 * 0.003).min(1.0));
+        f32_rgb.push(if i == 1 { f32::NAN } else { 1.2 - 1.3 * t });
+    }
+    let mut f32_rgba = Vec::with_capacity(width as usize * 4);
+    for i in 0..width as usize {
+        f32_rgba.push(f32_rgb[i * 3]);
+        f32_rgba.push(f32_rgb[i * 3 + 1]);
+        f32_rgba.push(f32_rgb[i * 3 + 2]);
+        f32_rgba.push((i as f32) / (width as f32 - 1.0));
+    }
+
+    let rgb16_bytes: &[u8] = bytemuck::cast_slice(&rgb16);
+    let rgba16_bytes: &[u8] = bytemuck::cast_slice(&rgba16);
+    let f32_rgb_bytes: &[u8] = bytemuck::cast_slice(&f32_rgb);
+    let f32_rgba_bytes: &[u8] = bytemuck::cast_slice(&f32_rgba);
+
+    let pol = ConvertPolicy::permissive();
+    let pol_trunc = ConvertPolicy::permissive().with_depth(DepthPolicy::Truncate);
+    let pol_ext = ConvertPolicy::working_linear().with_gamut(GamutPolicy::PreserveExtended);
+
+    // Wide layouts & integer depth
+    assert_scalar_simd_bit_exact(
+        "RGBA16->RGB16",
+        ImageSpec::rgba16_srgb(),
+        ImageSpec::rgb16_srgb(),
+        pol.clone(),
+        rgba16_bytes,
+        width,
+        0,
+        None,
+    );
+    assert_scalar_simd_bit_exact(
+        "RGB16->RGBA16",
+        ImageSpec::rgb16_srgb(),
+        ImageSpec::rgba16_srgb(),
+        pol.clone(),
+        rgb16_bytes,
+        width,
+        0,
+        None,
+    );
+    assert_scalar_simd_bit_exact(
+        "RGBAF32->RGBF32",
+        ImageSpec::rgbaf32_linear(),
+        ImageSpec::rgbf32_linear(),
+        pol.clone(),
+        f32_rgba_bytes,
+        width,
+        0,
+        None,
+    );
+    assert_scalar_simd_bit_exact(
+        "RGB16->RGB8(Round)",
+        ImageSpec::rgb16_srgb(),
+        ImageSpec::rgb8_srgb(),
+        pol.clone(),
+        rgb16_bytes,
+        width,
+        0,
+        None,
+    );
+    assert_scalar_simd_bit_exact(
+        "RGB16->RGB8(Trunc)",
+        ImageSpec::rgb16_srgb(),
+        ImageSpec::rgb8_srgb(),
+        pol_trunc.clone(),
+        rgb16_bytes,
+        width,
+        0,
+        None,
+    );
+
+    // Premul U8 fast paths
+    let rgba8_premul = ImageSpec::new(
+        SampleLayout::RGBA8,
+        ColorSpace::SRGB_ALPHA.with_alpha(AlphaMode::Premultiplied),
+    );
+    assert_scalar_simd_bit_exact(
+        "RGBA8_Straight->Premul",
+        ImageSpec::rgba8_srgb(),
+        rgba8_premul.clone(),
+        pol.clone(),
+        &rgba8,
+        width,
+        0,
+        None,
+    );
+    assert_scalar_simd_bit_exact(
+        "RGBA8_Premul->Straight",
+        rgba8_premul,
+        ImageSpec::rgba8_srgb(),
+        pol.clone(),
+        &rgba8,
+        width,
+        0,
+        None,
+    );
+
+    // Direct sRGB U8 <-> Linear F32 & F32 <-> U8/U16 depth
+    let rgbf32_srgb = ImageSpec::new(SampleLayout::RGBF32, ColorSpace::SRGB);
+    let rgbaf32_srgb = ImageSpec::new(SampleLayout::RGBAF32, ColorSpace::SRGB_ALPHA);
+    assert_scalar_simd_bit_exact(
+        "RGB8_sRGB->RGBF32_Lin",
+        ImageSpec::rgb8_srgb(),
+        ImageSpec::rgbf32_linear(),
+        pol.clone(),
+        &rgb8,
+        width,
+        0,
+        None,
+    );
+    assert_scalar_simd_bit_exact(
+        "RGBA8_sRGB->RGBAF32_Lin",
+        ImageSpec::rgba8_srgb(),
+        ImageSpec::rgbaf32_linear(),
+        pol.clone(),
+        &rgba8,
+        width,
+        0,
+        None,
+    );
+    assert_scalar_simd_bit_exact(
+        "RGBF32_Lin->RGB8_sRGB",
+        ImageSpec::rgbf32_linear(),
+        ImageSpec::rgb8_srgb(),
+        pol.clone(),
+        f32_rgb_bytes,
+        width,
+        0,
+        None,
+    );
+    assert_scalar_simd_bit_exact(
+        "RGBAF32_Lin->RGBA8_sRGB",
+        ImageSpec::rgbaf32_linear(),
+        ImageSpec::rgba8_srgb(),
+        pol.clone(),
+        f32_rgba_bytes,
+        width,
+        0,
+        None,
+    );
+    assert_scalar_simd_bit_exact(
+        "RGBF32_sRGB->RGB8_sRGB(Round)",
+        rgbf32_srgb.clone(),
+        ImageSpec::rgb8_srgb(),
+        pol.clone(),
+        f32_rgb_bytes,
+        width,
+        0,
+        None,
+    );
+    assert_scalar_simd_bit_exact(
+        "RGBF32_sRGB->RGB8_sRGB(Trunc)",
+        rgbf32_srgb.clone(),
+        ImageSpec::rgb8_srgb(),
+        pol_trunc,
+        f32_rgb_bytes,
+        width,
+        0,
+        None,
+    );
+    assert_scalar_simd_bit_exact(
+        "RGBAF32_sRGB->RGBAF32_Lin",
+        rgbaf32_srgb,
+        ImageSpec::rgbaf32_linear(),
+        pol.clone(),
+        f32_rgba_bytes,
+        width,
+        0,
+        None,
+    );
+
+    // BT.709 & Gamma 2.2 (clamped & extended)
+    let rgbf32_bt709 = rgbf32_srgb.clone().with_transfer(Transfer::Bt709);
+    let rgbf32_g22 = rgbf32_srgb.clone().with_transfer(Transfer::Gamma22);
+    assert_scalar_simd_bit_exact(
+        "BT709_F32->Lin(Clamped)",
+        rgbf32_bt709.clone(),
+        ImageSpec::rgbf32_linear(),
+        pol.clone(),
+        f32_rgb_bytes,
+        width,
+        0,
+        None,
+    );
+    assert_scalar_simd_bit_exact(
+        "BT709_F32->Lin(Extended)",
+        rgbf32_bt709.clone(),
+        ImageSpec::rgbf32_linear(),
+        pol_ext.clone(),
+        f32_rgb_bytes,
+        width,
+        0,
+        None,
+    );
+    assert_scalar_simd_bit_exact(
+        "Lin->BT709_F32(Extended)",
+        ImageSpec::rgbf32_linear(),
+        rgbf32_bt709,
+        pol_ext.clone(),
+        f32_rgb_bytes,
+        width,
+        0,
+        None,
+    );
+    assert_scalar_simd_bit_exact(
+        "Gamma22_F32->Lin(Clamped)",
+        rgbf32_g22.clone(),
+        ImageSpec::rgbf32_linear(),
+        pol.clone(),
+        f32_rgb_bytes,
+        width,
+        0,
+        None,
+    );
+    assert_scalar_simd_bit_exact(
+        "Gamma22_F32->Lin(Extended)",
+        rgbf32_g22.clone(),
+        ImageSpec::rgbf32_linear(),
+        pol_ext.clone(),
+        f32_rgb_bytes,
+        width,
+        0,
+        None,
+    );
+    assert_scalar_simd_bit_exact(
+        "Lin->Gamma22_F32(Extended)",
+        ImageSpec::rgbf32_linear(),
+        rgbf32_g22,
+        pol_ext.clone(),
+        f32_rgb_bytes,
+        width,
+        0,
+        None,
+    );
+
+    // Strip SIMD unpack/pack + gamut + gray
+    let p3_f32_lin = ImageSpec::rgbf32_linear().with_primaries(Primaries::DisplayP3);
+    assert_scalar_simd_bit_exact(
+        "P3_LinF32->sRGB_LinF32",
+        p3_f32_lin,
+        ImageSpec::rgbf32_linear(),
+        pol.clone(),
+        f32_rgb_bytes,
+        width,
+        0,
+        None,
+    );
+    assert_scalar_simd_bit_exact(
+        "P3_U16->sRGB_U16",
+        ImageSpec::rgb16_srgb().with_primaries(Primaries::DisplayP3),
+        ImageSpec::rgb16_srgb(),
+        pol.clone(),
+        rgb16_bytes,
+        width,
+        0,
+        None,
+    );
+    assert_scalar_simd_bit_exact(
+        "RGB8_sRGB->Gray8_sRGB",
+        ImageSpec::rgb8_srgb(),
+        ImageSpec::gray8_srgb(),
+        pol.clone(),
+        &rgb8,
+        width,
+        0,
+        None,
+    );
+
+    // PQ & HLG Scene SIMD parity
+    #[cfg(feature = "hdr-transfers")]
+    {
+        let lin_2020 = ImageSpec::rgbf32_linear()
+            .with_primaries(Primaries::Bt2020)
+            .with_white(DiffuseWhite::BT2408);
+        let pq_f32 = lin_2020.clone().with_transfer(Transfer::Pq);
+        let hlg_scene_f32 = lin_2020
+            .clone()
+            .with_transfer(Transfer::Hlg(HlgMode::Scene));
+        assert_scalar_simd_bit_exact(
+            "PQ_U16->Lin2020_F32",
+            ImageSpec::rgb16_bt2100_pq(),
+            lin_2020.clone(),
+            ConvertPolicy::working_linear(),
+            rgb16_bytes,
+            width,
+            0,
+            None,
+        );
+        assert_scalar_simd_bit_exact(
+            "Lin2020_F32->PQ_U16",
+            lin_2020.clone(),
+            ImageSpec::rgb16_bt2100_pq(),
+            ConvertPolicy::working_linear(),
+            f32_rgb_bytes,
+            width,
+            0,
+            None,
+        );
+        assert_scalar_simd_bit_exact(
+            "PQ_F32->Lin2020_F32",
+            pq_f32.clone(),
+            lin_2020.clone(),
+            ConvertPolicy::working_linear(),
+            f32_rgb_bytes,
+            width,
+            0,
+            None,
+        );
+        assert_scalar_simd_bit_exact(
+            "Lin2020_F32->PQ_F32",
+            lin_2020.clone(),
+            pq_f32,
+            ConvertPolicy::working_linear(),
+            f32_rgb_bytes,
+            width,
+            0,
+            None,
+        );
+        assert_scalar_simd_bit_exact(
+            "HLGScene_F32->Lin2020_F32",
+            hlg_scene_f32.clone(),
+            lin_2020.clone(),
+            pol_ext.clone(),
+            f32_rgb_bytes,
+            width,
+            0,
+            None,
+        );
+        assert_scalar_simd_bit_exact(
+            "Lin2020_F32->HLGScene_F32",
+            lin_2020,
+            hlg_scene_f32,
+            pol_ext,
+            f32_rgb_bytes,
+            width,
+            0,
+            None,
+        );
+    }
+}

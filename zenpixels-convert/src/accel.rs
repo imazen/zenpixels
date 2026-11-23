@@ -1,8 +1,9 @@
 //! Dead-stripping SIMD accelerator table (`Accelerators`) and process-wide registry.
 //!
-//! Each accelerator slot holds a plain function pointer (`Option<fn(...)>`).
+//! Every accelerator slot holds a plain function pointer (`Option<fn(...)>`).
 //! Any slot left `None` is never referenced by a binary, so the linker
-//! dead-strips unused SIMD transfer, Oklab, HLG, and layout code completely.
+//! dead-strips unused `garb`, SIMD strip codecs, sRGB, BT.709, Gamma 2.2,
+//! F16C, PQ, HLG, and Oklab code completely.
 //!
 //! Every SIMD accelerator is required to produce **0-bit identical output** to
 //! the universal scalar core (`Accelerators::SCALAR`)!
@@ -10,14 +11,31 @@
 use alloc::boxed::Box;
 use core::fmt;
 use once_cell::race::OnceBox;
+use zenpixels::SampleLayout;
 
-/// Strip-level SIMD function pointer signatures operating on 64-pixel SoA lanes.
+use crate::policy::DepthPolicy;
+use crate::strip::{ByteFastPath, StripBuf};
+
+/// Strip-level & row-level SIMD function pointer signatures.
 pub type ByteLayoutFn = fn(&[u8], &mut [u8], usize) -> bool;
+pub(crate) type ByteLayoutDispatchFn = fn(ByteFastPath, &[u8], &mut [u8], usize) -> bool;
+pub(crate) type StripUnpackFn = fn(SampleLayout, &[u8], &mut StripBuf, usize) -> bool;
+pub(crate) type StripPackFn = fn(SampleLayout, &StripBuf, &mut [u8], usize, DepthPolicy) -> bool;
+pub(crate) type F32ToU8SliceFn = fn(&[f32], &mut [u8], bool);
+pub(crate) type U8ToF32SliceFn = fn(&[u8], &mut [f32]);
+pub(crate) type F32ToU16SliceFn = fn(&[f32], &mut [u16], bool);
+pub(crate) type U16ToF32SliceFn = fn(&[u16], &mut [f32]);
 pub type TransferSliceFn = fn(&mut [f32]);
+pub type ScaledTransferSliceFn = fn(&mut [f32], f32);
 pub type GamutSoaFn = fn(&[[f32; 3]; 3], &mut [f32], &mut [f32], &mut [f32]);
 pub type F16DecodeFn = fn(&[u16], &mut [f32]);
 pub type F16EncodeFn = fn(&[f32], &mut [u16]);
 pub type OklabSoaFn = fn(&[[f32; 3]; 3], &mut [f32], &mut [f32], &mut [f32]);
+#[cfg(feature = "oklab")]
+pub(crate) type SoftCompressFn = fn(&crate::tonemap::SoftCompress, &mut [[f32; 3]]);
+#[cfg(feature = "hdr-transfers")]
+pub(crate) type HlgDisplaySoaFn =
+    fn(&crate::hlg_render::PreparedHlg, &mut [f32], &mut [f32], &mut [f32], usize);
 
 /// Dead-stripping bundle of optional SIMD accelerators.
 ///
@@ -25,12 +43,36 @@ pub type OklabSoaFn = fn(&[[f32; 3]; 3], &mut [f32], &mut [f32], &mut [f32]);
 /// `LAYOUT`, `WEB_SDR`, `HDR`, `OKLAB`, `ALL`, `.with_*()`, `.union()`).
 #[derive(Clone, Copy)]
 pub struct Accelerators {
-    /// Enable `garb` SIMD byte-only layout fast paths (`RGBA↔BGRA`, `RGB↔RGBA`, `U8↔U16`, premul).
-    pub byte_layout: bool,
-    /// SIMD sRGB EOTF (`srgb_to_linear`) on SoA `f32` lanes.
+    /// `garb` SIMD U8 byte-only layout fast paths (`RGBA↔BGRA`, `RGB↔RGBA`, `Gray→RGBA`).
+    pub(crate) byte_layout_exec: Option<ByteLayoutDispatchFn>,
+    /// Native-width SIMD AoS → SoA strip unpack (`U8`/`U16`/`F32` 3ch/4ch).
+    pub(crate) strip_unpack: Option<StripUnpackFn>,
+    /// Native-width SIMD SoA → AoS strip pack (`U8`/`U16`/`F32` 3ch/4ch).
+    pub(crate) strip_pack: Option<StripPackFn>,
+    /// Direct contiguous `f32 → u8` depth quantization.
+    pub(crate) f32_to_u8: Option<F32ToU8SliceFn>,
+    /// Direct contiguous `u8 → f32` depth promotion.
+    pub(crate) u8_to_f32: Option<U8ToF32SliceFn>,
+    /// Direct contiguous `f32 → u16` depth quantization.
+    pub(crate) f32_to_u16: Option<F32ToU16SliceFn>,
+    /// Direct contiguous `u16 → f32` depth promotion.
+    pub(crate) u16_to_f32: Option<U16ToF32SliceFn>,
+    /// SIMD sRGB EOTF (`srgb_to_linear_extended`) on `f32` slices.
     pub srgb_eotf: Option<TransferSliceFn>,
-    /// SIMD sRGB OETF (`linear_to_srgb`) on SoA `f32` lanes.
+    /// SIMD sRGB OETF (`linear_to_srgb_extended`) on `f32` slices.
     pub srgb_oetf: Option<TransferSliceFn>,
+    /// SIMD sRGB `u8 → linear f32` direct slice LUT (`RGB`/`Gray`).
+    pub(crate) srgb_u8_to_lin: Option<U8ToF32SliceFn>,
+    /// SIMD sRGB `RGBA u8 → linear RGBA f32` direct slice LUT.
+    pub(crate) srgb_u8_to_lin_rgba: Option<U8ToF32SliceFn>,
+    /// SIMD BT.709 EOTF on `f32` slices.
+    pub bt709_eotf: Option<TransferSliceFn>,
+    /// SIMD BT.709 OETF on `f32` slices.
+    pub bt709_oetf: Option<TransferSliceFn>,
+    /// SIMD Adobe Gamma 2.2 (`563/256`) EOTF on `f32` slices.
+    pub gamma22_eotf: Option<TransferSliceFn>,
+    /// SIMD Adobe Gamma 2.2 (`256/563`) OETF on `f32` slices.
+    pub gamma22_oetf: Option<TransferSliceFn>,
     /// SIMD 3×3 linear gamut multiply on SoA `r/g/b` slices.
     pub gamut_3x3: Option<GamutSoaFn>,
     /// SIMD `f16 → f32` decode (`F16C` / `NEON-fp16`).
@@ -41,41 +83,69 @@ pub struct Accelerators {
     pub rgb_to_oklab: Option<OklabSoaFn>,
     /// SIMD Oklab → linear RGB on SoA `l/a/b` slices.
     pub oklab_to_rgb: Option<OklabSoaFn>,
-    /// Enable SIMD path inside `PreparedHlg` BT.2100-3 display rendering.
-    pub hlg_simd: bool,
-    /// Enable SIMD path inside `Bt2446A` tone mapping and `SoftCompress`.
-    pub hdr_simd: bool,
+    /// SIMD OKLch `SoftCompress` gamut compression.
+    #[cfg(feature = "oklab")]
+    pub(crate) soft_compress: Option<SoftCompressFn>,
+    /// SIMD ST 2084 PQ EOTF on `f32` slices.
+    #[cfg(feature = "hdr-transfers")]
+    pub pq_eotf: Option<ScaledTransferSliceFn>,
+    /// SIMD ST 2084 PQ OETF on `f32` slices.
+    #[cfg(feature = "hdr-transfers")]
+    pub pq_oetf: Option<ScaledTransferSliceFn>,
+    /// SIMD ARIB STD-B67 HLG scene EOTF on `f32` slices.
+    #[cfg(feature = "hdr-transfers")]
+    pub hlg_scene_eotf: Option<TransferSliceFn>,
+    /// SIMD ARIB STD-B67 HLG scene OETF on `f32` slices.
+    #[cfg(feature = "hdr-transfers")]
+    pub hlg_scene_oetf: Option<TransferSliceFn>,
+    /// SIMD BT.2100-3 display HLG rendering on SoA `r/g/b` slices.
+    #[cfg(feature = "hdr-transfers")]
+    pub(crate) hlg_display_soa: Option<HlgDisplaySoaFn>,
 }
 
 impl fmt::Debug for Accelerators {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Accelerators")
-            .field("byte_layout", &self.byte_layout)
+        let mut ds = f.debug_struct("Accelerators");
+        ds.field("byte_layout", &self.byte_layout_exec.is_some())
+            .field("strip_simd", &self.strip_unpack.is_some())
             .field("srgb_eotf", &self.srgb_eotf.is_some())
             .field("srgb_oetf", &self.srgb_oetf.is_some())
+            .field("bt709", &self.bt709_eotf.is_some())
+            .field("gamma22", &self.gamma22_eotf.is_some())
             .field("gamut_3x3", &self.gamut_3x3.is_some())
             .field("f16_decode", &self.f16_decode.is_some())
             .field("f16_encode", &self.f16_encode.is_some())
             .field("rgb_to_oklab", &self.rgb_to_oklab.is_some())
-            .field("oklab_to_rgb", &self.oklab_to_rgb.is_some())
-            .field("hlg_simd", &self.hlg_simd)
-            .field("hdr_simd", &self.hdr_simd)
-            .finish()
+            .field("oklab_to_rgb", &self.oklab_to_rgb.is_some());
+        #[cfg(feature = "hdr-transfers")]
+        ds.field("hdr_simd", &self.pq_eotf.is_some());
+        ds.finish()
     }
 }
 
 impl PartialEq for Accelerators {
     fn eq(&self, other: &Self) -> bool {
-        self.byte_layout == other.byte_layout
+        let base = self.byte_layout_exec.is_some() == other.byte_layout_exec.is_some()
+            && self.strip_unpack.is_some() == other.strip_unpack.is_some()
+            && self.strip_pack.is_some() == other.strip_pack.is_some()
             && self.srgb_eotf.is_some() == other.srgb_eotf.is_some()
             && self.srgb_oetf.is_some() == other.srgb_oetf.is_some()
+            && self.bt709_eotf.is_some() == other.bt709_eotf.is_some()
+            && self.bt709_oetf.is_some() == other.bt709_oetf.is_some()
+            && self.gamma22_eotf.is_some() == other.gamma22_eotf.is_some()
+            && self.gamma22_oetf.is_some() == other.gamma22_oetf.is_some()
             && self.gamut_3x3.is_some() == other.gamut_3x3.is_some()
             && self.f16_decode.is_some() == other.f16_decode.is_some()
             && self.f16_encode.is_some() == other.f16_encode.is_some()
             && self.rgb_to_oklab.is_some() == other.rgb_to_oklab.is_some()
-            && self.oklab_to_rgb.is_some() == other.oklab_to_rgb.is_some()
-            && self.hlg_simd == other.hlg_simd
-            && self.hdr_simd == other.hdr_simd
+            && self.oklab_to_rgb.is_some() == other.oklab_to_rgb.is_some();
+        #[cfg(feature = "hdr-transfers")]
+        let base = base
+            && self.pq_eotf.is_some() == other.pq_eotf.is_some()
+            && self.pq_oetf.is_some() == other.pq_oetf.is_some()
+            && self.hlg_scene_eotf.is_some() == other.hlg_scene_eotf.is_some()
+            && self.hlg_display_soa.is_some() == other.hlg_display_soa.is_some();
+        base
     }
 }
 
@@ -97,34 +167,66 @@ impl Default for Accelerators {
 impl Accelerators {
     /// Pure scalar baseline — zero SIMD code linked, exact parity oracle.
     pub const SCALAR: Self = Self {
-        byte_layout: false,
+        byte_layout_exec: None,
+        strip_unpack: None,
+        strip_pack: None,
+        f32_to_u8: None,
+        u8_to_f32: None,
+        f32_to_u16: None,
+        u16_to_f32: None,
         srgb_eotf: None,
         srgb_oetf: None,
+        srgb_u8_to_lin: None,
+        srgb_u8_to_lin_rgba: None,
+        bt709_eotf: None,
+        bt709_oetf: None,
+        gamma22_eotf: None,
+        gamma22_oetf: None,
         gamut_3x3: None,
         f16_decode: None,
         f16_encode: None,
         rgb_to_oklab: None,
         oklab_to_rgb: None,
-        hlg_simd: false,
-        hdr_simd: false,
+        #[cfg(feature = "oklab")]
+        soft_compress: None,
+        #[cfg(feature = "hdr-transfers")]
+        pq_eotf: None,
+        #[cfg(feature = "hdr-transfers")]
+        pq_oetf: None,
+        #[cfg(feature = "hdr-transfers")]
+        hlg_scene_eotf: None,
+        #[cfg(feature = "hdr-transfers")]
+        hlg_scene_oetf: None,
+        #[cfg(feature = "hdr-transfers")]
+        hlg_display_soa: None,
     };
 
-    /// Byte-only layout swizzles & integer depth (`garb`).
+    /// Byte-only layout swizzles (`garb` U8 layouts).
     pub const LAYOUT: Self = Self::SCALAR.with_byte_layout();
 
-    /// Common web SDR workload: byte layouts + sRGB SIMD + 3×3 gamut SIMD.
-    pub const WEB_SDR: Self = Self::SCALAR.with_byte_layout().with_srgb().with_gamut_3x3();
+    /// Common web SDR workload: byte layouts + SIMD strip codec + sRGB + 3×3 gamut.
+    ///
+    /// Links zero BT.709, Gamma 2.2, F16, PQ, HLG, or Oklab SIMD code.
+    pub const WEB_SDR: Self = Self::SCALAR
+        .with_byte_layout()
+        .with_strip_simd()
+        .with_srgb()
+        .with_gamut_3x3();
 
-    /// HDR & half-float workload: F16C/NEON-fp16 + HLG/BT.2446A SIMD + 3×3 gamut.
-    pub const HDR: Self = Self::SCALAR.with_gamut_3x3().with_f16().with_hdr_simd();
+    /// HDR & half-float workload: SIMD strip codec + F16C/NEON-fp16 + PQ/HLG + 3×3 gamut.
+    pub const HDR: Self = Self::SCALAR
+        .with_strip_simd()
+        .with_gamut_3x3()
+        .with_f16()
+        .with_hdr_simd();
 
-    /// Oklab perceptual SIMD.
+    /// Oklab perceptual SIMD + strip codec.
     #[cfg(feature = "oklab")]
-    pub const OKLAB: Self = Self::SCALAR.with_oklab();
+    pub const OKLAB: Self = Self::SCALAR.with_strip_simd().with_oklab();
 
     /// Every enabled SIMD accelerator in this build.
     pub const ALL: Self = {
-        let base = Self::WEB_SDR.union(Self::HDR);
+        let base = Self::WEB_SDR.union(Self::HDR).with_bt709().with_gamma22();
         #[cfg(feature = "oklab")]
         {
             base.with_oklab()
@@ -135,11 +237,38 @@ impl Accelerators {
         }
     };
 
+    /// Whether `garb` SIMD byte-layout fast paths are enabled.
+    #[inline]
+    #[must_use]
+    pub const fn has_byte_layout(&self) -> bool {
+        self.byte_layout_exec.is_some()
+    }
+
+    /// Whether native-width SIMD strip unpack/pack and depth codecs are enabled.
+    #[inline]
+    #[must_use]
+    pub const fn has_strip_simd(&self) -> bool {
+        self.strip_unpack.is_some()
+    }
+
     /// Enable `garb` byte-only layout fast paths.
     #[inline]
     #[must_use]
     pub const fn with_byte_layout(mut self) -> Self {
-        self.byte_layout = true;
+        self.byte_layout_exec = Some(crate::strip::exec_garb_byte_fast_path);
+        self
+    }
+
+    /// Enable native-width SIMD AoS↔SoA strip unpack/pack and contiguous depth codecs.
+    #[inline]
+    #[must_use]
+    pub const fn with_strip_simd(mut self) -> Self {
+        self.strip_unpack = Some(crate::strip_simd::simd_unpack_strip);
+        self.strip_pack = Some(crate::strip_simd::simd_pack_strip);
+        self.f32_to_u8 = Some(crate::strip_simd::simd_f32_to_u8_slice);
+        self.u8_to_f32 = Some(crate::strip_simd::simd_u8_to_f32_slice);
+        self.f32_to_u16 = Some(crate::strip_simd::simd_f32_to_u16_slice);
+        self.u16_to_f32 = Some(crate::strip_simd::simd_u16_to_f32_slice);
         self
     }
 
@@ -149,6 +278,26 @@ impl Accelerators {
     pub const fn with_srgb(mut self) -> Self {
         self.srgb_eotf = Some(simd_srgb_eotf_slice);
         self.srgb_oetf = Some(simd_srgb_oetf_slice);
+        self.srgb_u8_to_lin = Some(simd_srgb_u8_to_lin_slice);
+        self.srgb_u8_to_lin_rgba = Some(simd_srgb_u8_to_lin_rgba_slice);
+        self
+    }
+
+    /// Enable SIMD BT.709 EOTF & OETF (`magemath::Powf`).
+    #[inline]
+    #[must_use]
+    pub const fn with_bt709(mut self) -> Self {
+        self.bt709_eotf = Some(crate::transfers::bt709_eotf_simd_slice);
+        self.bt709_oetf = Some(crate::transfers::bt709_oetf_simd_slice);
+        self
+    }
+
+    /// Enable SIMD Adobe Gamma 2.2 (`563/256`) EOTF & OETF (`magemath::Powf`).
+    #[inline]
+    #[must_use]
+    pub const fn with_gamma22(mut self) -> Self {
+        self.gamma22_eotf = Some(crate::transfers::gamma22_eotf_simd_slice);
+        self.gamma22_oetf = Some(crate::transfers::gamma22_oetf_simd_slice);
         self
     }
 
@@ -169,22 +318,30 @@ impl Accelerators {
         self
     }
 
-    /// Enable SIMD Oklab conversions (`magemath::Cbrtf`).
+    /// Enable SIMD Oklab conversions (`magemath::Cbrtf`) & `SoftCompress`.
     #[cfg(feature = "oklab")]
     #[inline]
     #[must_use]
     pub const fn with_oklab(mut self) -> Self {
         self.rgb_to_oklab = Some(simd_rgb_to_oklab_soa);
         self.oklab_to_rgb = Some(simd_oklab_to_rgb_soa);
+        self.soft_compress = Some(simd_soft_compress_strip);
         self
     }
 
-    /// Enable SIMD inside HLG BT.2100-3 display rendering and BT.2446A / SoftCompress.
+    /// Enable SIMD PQ, HLG Scene, and BT.2100-3 HLG display rendering.
     #[inline]
     #[must_use]
+    #[allow(unused_mut)]
     pub const fn with_hdr_simd(mut self) -> Self {
-        self.hlg_simd = true;
-        self.hdr_simd = true;
+        #[cfg(feature = "hdr-transfers")]
+        {
+            self.pq_eotf = Some(crate::transfers::hdr::pq_eotf_simd_slice);
+            self.pq_oetf = Some(crate::transfers::hdr::pq_oetf_simd_slice);
+            self.hlg_scene_eotf = Some(crate::transfers::hdr::hlg_scene_eotf_simd_slice);
+            self.hlg_scene_oetf = Some(crate::transfers::hdr::hlg_scene_oetf_simd_slice);
+            self.hlg_display_soa = Some(simd_hlg_display_soa);
+        }
         self
     }
 
@@ -192,45 +349,48 @@ impl Accelerators {
     #[inline]
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
+        macro_rules! pick {
+            ($field:ident) => {
+                if self.$field.is_some() {
+                    self.$field
+                } else {
+                    other.$field
+                }
+            };
+        }
         Self {
-            byte_layout: self.byte_layout || other.byte_layout,
-            srgb_eotf: if self.srgb_eotf.is_some() {
-                self.srgb_eotf
-            } else {
-                other.srgb_eotf
-            },
-            srgb_oetf: if self.srgb_oetf.is_some() {
-                self.srgb_oetf
-            } else {
-                other.srgb_oetf
-            },
-            gamut_3x3: if self.gamut_3x3.is_some() {
-                self.gamut_3x3
-            } else {
-                other.gamut_3x3
-            },
-            f16_decode: if self.f16_decode.is_some() {
-                self.f16_decode
-            } else {
-                other.f16_decode
-            },
-            f16_encode: if self.f16_encode.is_some() {
-                self.f16_encode
-            } else {
-                other.f16_encode
-            },
-            rgb_to_oklab: if self.rgb_to_oklab.is_some() {
-                self.rgb_to_oklab
-            } else {
-                other.rgb_to_oklab
-            },
-            oklab_to_rgb: if self.oklab_to_rgb.is_some() {
-                self.oklab_to_rgb
-            } else {
-                other.oklab_to_rgb
-            },
-            hlg_simd: self.hlg_simd || other.hlg_simd,
-            hdr_simd: self.hdr_simd || other.hdr_simd,
+            byte_layout_exec: pick!(byte_layout_exec),
+            strip_unpack: pick!(strip_unpack),
+            strip_pack: pick!(strip_pack),
+            f32_to_u8: pick!(f32_to_u8),
+            u8_to_f32: pick!(u8_to_f32),
+            f32_to_u16: pick!(f32_to_u16),
+            u16_to_f32: pick!(u16_to_f32),
+            srgb_eotf: pick!(srgb_eotf),
+            srgb_oetf: pick!(srgb_oetf),
+            srgb_u8_to_lin: pick!(srgb_u8_to_lin),
+            srgb_u8_to_lin_rgba: pick!(srgb_u8_to_lin_rgba),
+            bt709_eotf: pick!(bt709_eotf),
+            bt709_oetf: pick!(bt709_oetf),
+            gamma22_eotf: pick!(gamma22_eotf),
+            gamma22_oetf: pick!(gamma22_oetf),
+            gamut_3x3: pick!(gamut_3x3),
+            f16_decode: pick!(f16_decode),
+            f16_encode: pick!(f16_encode),
+            rgb_to_oklab: pick!(rgb_to_oklab),
+            oklab_to_rgb: pick!(oklab_to_rgb),
+            #[cfg(feature = "oklab")]
+            soft_compress: pick!(soft_compress),
+            #[cfg(feature = "hdr-transfers")]
+            pq_eotf: pick!(pq_eotf),
+            #[cfg(feature = "hdr-transfers")]
+            pq_oetf: pick!(pq_oetf),
+            #[cfg(feature = "hdr-transfers")]
+            hlg_scene_eotf: pick!(hlg_scene_eotf),
+            #[cfg(feature = "hdr-transfers")]
+            hlg_scene_oetf: pick!(hlg_scene_oetf),
+            #[cfg(feature = "hdr-transfers")]
+            hlg_display_soa: pick!(hlg_display_soa),
         }
     }
 }
@@ -253,7 +413,7 @@ pub fn enable_all() -> bool {
     install(Accelerators::ALL)
 }
 
-/// Enable common web SDR accelerators (`garb` layouts + sRGB + 3×3 gamut) process-wide.
+/// Enable common web SDR accelerators (`garb` layouts + strip SIMD + sRGB + 3×3 gamut) process-wide.
 pub fn enable_web_sdr() -> bool {
     install(Accelerators::WEB_SDR)
 }
@@ -272,7 +432,7 @@ pub fn resolve(override_accel: Option<Accelerators>) -> Accelerators {
 }
 
 // ---------------------------------------------------------------------------
-// Concrete SIMD SoA micro-kernels (referenced ONLY when the caller builds
+// Concrete SIMD micro-kernels (referenced ONLY when the caller builds
 // a bundle containing them -> dead-stripped otherwise!)
 // ---------------------------------------------------------------------------
 
@@ -284,12 +444,36 @@ fn simd_srgb_oetf_slice(vals: &mut [f32]) {
     linear_srgb::default::linear_to_srgb_extended_slice(vals);
 }
 
+fn simd_srgb_u8_to_lin_slice(src: &[u8], dst: &mut [f32]) {
+    linear_srgb::default::srgb_u8_to_linear_slice(src, dst);
+}
+
+fn simd_srgb_u8_to_lin_rgba_slice(src: &[u8], dst: &mut [f32]) {
+    linear_srgb::default::srgb_u8_to_linear_rgba_slice(src, dst);
+}
+
 fn simd_f16_to_f32_slice(src: &[u16], dst: &mut [f32]) {
     crate::f16_scalar::f16_bits_to_f32_slice(src, dst);
 }
 
 fn simd_f32_to_f16_slice(src: &[f32], dst: &mut [u16]) {
     crate::f16_scalar::f32_to_f16_bits_slice(src, dst);
+}
+
+#[cfg(feature = "oklab")]
+fn simd_soft_compress_strip(sc: &crate::tonemap::SoftCompress, pixels: &mut [[f32; 3]]) {
+    sc.apply_strip(pixels);
+}
+
+#[cfg(feature = "hdr-transfers")]
+fn simd_hlg_display_soa(
+    prepared: &crate::hlg_render::PreparedHlg,
+    r: &mut [f32],
+    g: &mut [f32],
+    b: &mut [f32],
+    len: usize,
+) {
+    prepared.apply_soa_simd(r, g, b, len);
 }
 
 /// SIMD 3×3 linear gamut multiply on SoA `r, g, b` strips (bit-identical to scalar `r*m00 + g*m01 + b*m02`!).

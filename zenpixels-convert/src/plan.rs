@@ -22,7 +22,7 @@ use crate::accel::{self, Accelerators};
 use crate::cms::CmsTransform;
 use crate::error::{ConvertError, err_at};
 use crate::policy::{AlphaPolicy, ConvertPolicy, DepthPolicy, GamutPolicy, RangePolicy};
-use crate::strip::{self, ByteFastPath, MicroOp};
+use crate::strip::{self, ByteFastPath, FastRow, MicroOp};
 use crate::tonemap::{PreparedMapper, StripMapper, ToneMapContext};
 
 #[cfg(feature = "hdr-transfers")]
@@ -35,8 +35,10 @@ use crate::tonemap::SoftCompress;
 /// Execution strategy compiled inside a [`RowPlan`].
 #[derive(Clone)]
 enum RowExec {
-    /// Zero-float byte-only fast path (memcpy / `garb` swizzles / exact U8→U16).
+    /// Zero-float byte/integer/wide-layout fast path.
     Byte(ByteFastPath),
+    /// Direct contiguous single-stage row fast path (zero AoS↔SoA bounce).
+    FastRow(FastRow),
     /// Composable micro-op pipeline running on 64-pixel stack SoA strips.
     Strip(Vec<MicroOp>),
     /// External CMS row transform (`ColorSpace::Icc` / `ColorSpace::Cmyk`).
@@ -208,6 +210,37 @@ impl RowPlan {
             white_anchor.unwrap_or(DiffuseWhite::BT2408).nits()
         };
 
+        // 4b. Direct contiguous single-stage row fast path (zero AoS↔SoA bounce)
+        // when no tone mapping, soft gamut compression, matte, or gamut matrix applies.
+        let is_hdr_to_sdr = src_tf.is_hdr()
+            && !dst_tf.is_hdr()
+            && matches!(dst.color, ColorSpace::Rgb { .. } | ColorSpace::Gray { .. });
+        let hdr_forbid_int =
+            policy.gamut == GamutPolicy::Forbid && is_hdr_to_sdr && !dst.layout.sample.is_float();
+        if !(is_hdr_to_sdr && policy.tone_map_hdr_to_sdr)
+            && !hdr_forbid_int
+            && policy.gamut != GamutPolicy::SoftCompress
+            && let Some(fr) = strip::detect_fast_row(
+                &src,
+                &dst,
+                policy.depth,
+                matte_color.is_some(),
+                preserve_extended,
+                white_nits,
+            )
+        {
+            let clamped_output = !preserve_extended && !dst_tf.is_hdr();
+            let output_facts = derive_output_facts(&dst, policy.source_facts, clamped_output);
+            return Ok(Self {
+                src,
+                dst,
+                exec: RowExec::FastRow(fr),
+                depth_policy: policy.depth,
+                accel,
+                output_facts,
+            });
+        }
+
         // Resolve HLG display rendering when crossing HLG <-> non-HLG.
         #[allow(unused_variables)]
         let (src_hlg_tf, src_prepared_hlg) = resolve_hlg(
@@ -304,9 +337,6 @@ impl RowPlan {
         }
 
         // 5e. HDR -> SDR Tone Mapping (in linear light, in mapper's working primaries!).
-        let is_hdr_to_sdr = src_tf.is_hdr()
-            && !dst_tf.is_hdr()
-            && matches!(dst.color, ColorSpace::Rgb { .. } | ColorSpace::Gray { .. });
         if is_hdr_to_sdr && policy.tone_map_hdr_to_sdr {
             let mapper_arc = resolve_tone_mapper(policy)?;
             let work_primaries = mapper_arc.working_primaries_for(dst_primaries);
@@ -454,6 +484,7 @@ impl RowPlan {
                         #[cfg(feature = "hdr-transfers")]
                         hlg: dst_prepared_hlg,
                         preserve_extended,
+                        gray_only: matches!(dst.color, ColorSpace::Gray { .. }),
                     });
                 }
             }
@@ -582,7 +613,17 @@ impl RowPlan {
                     &src_row[..need_src],
                     &mut dst_row[..need_dst],
                     w,
-                    self.accel.byte_layout,
+                    &self.accel,
+                );
+                Ok(())
+            }
+            RowExec::FastRow(fr) => {
+                strip::exec_fast_row(
+                    *fr,
+                    &src_row[..need_src],
+                    &mut dst_row[..need_dst],
+                    w,
+                    &self.accel,
                 );
                 Ok(())
             }

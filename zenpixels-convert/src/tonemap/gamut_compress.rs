@@ -131,6 +131,12 @@ impl SoftCompress {
         reattune!(apply_strip_impl(self, rgb), [_v3, _neon, _wasm128, _scalar])
     }
 
+    /// Pure scalar counterpart of [`Self::apply_strip`] (0-bit identical; keeps
+    /// SIMD dead-stripped in [`Accelerators::SCALAR`](crate::Accelerators::SCALAR)).
+    pub(crate) fn apply_strip_scalar(&self, rgb: &mut [[f32; 3]]) {
+        apply_strip_impl_scalar_t(archmage::ScalarToken, self, rgb);
+    }
+
     /// Compress OKLab planes in place, leaving `l` as is. For pipelines that already
     /// hold planar OKLab. Equivalent to converting to RGB and using
     /// [`apply_strip`](Self::apply_strip), up to rounding.

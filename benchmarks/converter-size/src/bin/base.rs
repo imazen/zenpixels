@@ -1,5 +1,5 @@
-use zenpixels::{PixelBuffer, PixelDescriptor as D};
+use zenpixels::{ImageSpec, PixelBuf};
 fn main() {
-    let b = PixelBuffer::new(std::hint::black_box(4), 1, D::RGB8_SRGB);
-    println!("{}", b.as_slice().row(0)[0]);
+    let b = PixelBuf::new(std::hint::black_box(4), 1, ImageSpec::rgb8_srgb()).unwrap();
+    println!("{}", b.as_view().row(0)[0]);
 }

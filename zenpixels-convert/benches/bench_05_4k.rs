@@ -586,9 +586,26 @@ fn main() {
                     .min_rounds(6)
                     .max_rounds(6)
                     .max_time(Duration::from_millis(900));
+                let mut src = PixelBuf::new(W, H, spec.clone()).unwrap();
+                {
+                    let mut sv = src.as_view_mut();
+                    for y in 0..H {
+                        sv.row_mut(y).fill(0x5A);
+                    }
+                }
+                let mut dst = PixelBuf::new(H, W, spec.clone()).unwrap();
+                // Pre-fault all pages once so timing measures transpose, not Linux demand-zero faults.
+                {
+                    let mut dv = dst.as_view_mut();
+                    for y in 0..W {
+                        dv.row_mut(y).fill(0);
+                    }
+                }
+                let src = Arc::new(src);
+                let dst = Arc::new(Mutex::new(dst));
                 g.bench("ALL", move |b| {
-                    let src = PixelBuf::new(W, H, spec.clone()).unwrap();
-                    let mut dst = PixelBuf::new(H, W, spec.clone()).unwrap();
+                    let src = Arc::clone(&src);
+                    let mut dst = dst.lock().unwrap();
                     b.iter(|| {
                         apply_orientation_into(
                             &src.as_view(),

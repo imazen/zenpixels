@@ -519,18 +519,11 @@ fn hlg_soa_tier_v4x_t(
 }
 
 impl PreparedHlg {
-    /// Apply BT.2100-3 display HLG EOTF or inverse EOTF directly on SoA `r, g, b` slices.
-    ///
-    /// When `simd == false`, runs the exact `ScalarToken` tier of the same `magemath`
-    /// math so `Accelerators::SCALAR` and `Accelerators::ALL` match 0-bit identically.
-    pub(crate) fn apply_soa(
-        &self,
-        r: &mut [f32],
-        g: &mut [f32],
-        b: &mut [f32],
-        len: usize,
-        simd: bool,
-    ) {
+    /// Apply BT.2100-3 display HLG EOTF or inverse EOTF using the pure scalar
+    /// `ScalarToken` tier (zero SIMD code linked when called without `Accelerators::HDR`).
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn apply_soa_scalar(&self, r: &mut [f32], g: &mut [f32], b: &mut [f32], len: usize) {
         if len == 0 {
             return;
         }
@@ -543,13 +536,27 @@ impl PreparedHlg {
             }
             return;
         }
-        if simd {
-            archmage::attuned!(
-                hlg_soa_tier(r, g, b, len, self),
-                [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
-            );
-        } else {
-            hlg_soa_tier_scalar_t(archmage::ScalarToken, r, g, b, len, self);
+        hlg_soa_tier_scalar_t(archmage::ScalarToken, r, g, b, len, self);
+    }
+
+    /// Apply BT.2100-3 display HLG EOTF or inverse EOTF using the widest SIMD tier
+    /// (0-bit identical to [`Self::apply_soa_scalar`]).
+    pub(crate) fn apply_soa_simd(&self, r: &mut [f32], g: &mut [f32], b: &mut [f32], len: usize) {
+        if len == 0 {
+            return;
         }
+        if !self.simd_fast_eligible {
+            for i in 0..len {
+                let out = hlg_pixel_f64([r[i], g[i], b[i]], self);
+                r[i] = out[0];
+                g[i] = out[1];
+                b[i] = out[2];
+            }
+            return;
+        }
+        archmage::attuned!(
+            hlg_soa_tier(r, g, b, len, self),
+            [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
+        );
     }
 }
