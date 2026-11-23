@@ -13,8 +13,6 @@ fn c_golden_pairs_and_every_split() {
         let expected = u32::from_str_radix(parts[2], 16).unwrap();
         let data: Vec<u8> = (0..len).map(|i| (i * 37 + 11) as u8).collect();
         assert_eq!(murmur3_32(&data, seed), expected, "len={len} seed={seed}");
-        #[cfg(feature = "hash")]
-        assert_eq!(zenhash::murmur3_32(&data, seed), expected);
         // All short splits, every tail position at both ends of long inputs.
         for split in (0..=len.min(68)).chain(len.saturating_sub(68)..=len) {
             let mut h = Murmur3_32::with_seed(seed);

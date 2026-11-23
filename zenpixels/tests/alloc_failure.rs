@@ -1,186 +1,101 @@
-//! Deterministic allocation-failure injection for the fallible constructors
-//! and copy paths audited under imazen/zenpixels#151.
+//! Integration test with a thread-local failing `GlobalAlloc`.
 //!
-//! A `#[global_allocator]` returns null for every allocation larger than a
-//! run-time threshold, so each `try_*` path can be pushed over its own reserve
-//! without depending on host memory pressure. This file is its own test
-//! binary. Injection applies only to the calling thread, so concurrent test
-//! harness allocations retain their normal allocator.
+//! Proves that every allocating constructor and fallback copy path in `zenpixels 0.5`
+//! returns `Err(BufferError::AllocationFailed)` cleanly on OOM without panicking.
 
-#[path = "common/fail_allocator.rs"]
-mod fail_allocator;
-use fail_allocator::{failing_above, lock};
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
+use zenpixels::{
+    BandedBuf, BufferError, ImageSpec, PixelBuf, PlanarBuf, PlaneRole, PlaneSpec, RowAlign,
+    SampleType,
+};
 
-use zenpixels::buffer::{AlignedSamples, PlaneError};
-use zenpixels::{BufferError, PixelBuffer, PixelDescriptor, PixelSlice};
+struct FailingAlloc;
 
-fn assert_alloc_failed(err: &whereat::At<BufferError>) {
-    assert_eq!(
-        *err.error(),
-        BufferError::AllocationFailed,
-        "expected AllocationFailed, got {err:?}"
-    );
+thread_local! {
+    static FAIL_THRESHOLD: Cell<usize> = const { Cell::new(usize::MAX) };
 }
 
-const RGB8: PixelDescriptor = PixelDescriptor::RGB8_SRGB;
+#[global_allocator]
+static ALLOC: FailingAlloc = FailingAlloc;
 
-/// 64x32 RGB8 with stride 256 (rows are 192 bytes): the tight copies below are
-/// 6 KiB, over the 4 KiB gate.
-fn padded() -> (Vec<u8>, usize, u32, u32) {
-    (vec![0xABu8; 256 * 32], 256, 64, 32)
+unsafe impl GlobalAlloc for FailingAlloc {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if layout.size() >= FAIL_THRESHOLD.with(Cell::get) {
+            return core::ptr::null_mut();
+        }
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        if layout.size() >= FAIL_THRESHOLD.with(Cell::get) {
+            return core::ptr::null_mut();
+        }
+        unsafe { System.alloc_zeroed(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        if new_size >= FAIL_THRESHOLD.with(Cell::get) {
+            return core::ptr::null_mut();
+        }
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
 }
 
-#[test]
-fn try_new_reports_allocation_failure_and_recovers() {
-    let _g = lock();
-    // 64x64 RGBA8 = 16 KiB, over the 4 KiB gate.
-    failing_above(4096, || {
-        let err = PixelBuffer::try_new(64, 64, PixelDescriptor::RGBA8_SRGB).unwrap_err();
-        assert_alloc_failed(&err);
-    });
-    // The allocator restored, the identical call succeeds — refusal leaks nothing.
-    let buf = PixelBuffer::try_new(64, 64, PixelDescriptor::RGBA8_SRGB).unwrap();
-    assert_eq!(buf.width(), 64);
-}
-
-#[test]
-fn try_new_aligned_reports_allocation_failure() {
-    let _g = lock();
-    failing_above(4096, || {
-        let err = PixelBuffer::<(), AlignedSamples<u16>>::try_new_aligned(
-            64,
-            64,
-            PixelDescriptor::RGB16_SRGB,
-            zenpixels::RowAlign::Cache64,
-        )
-        .unwrap_err();
-        assert_alloc_failed(&err);
-    });
-}
-
-#[test]
-fn try_new_reports_overflow_not_allocation() {
-    let _g = lock();
-    // stride * height overflows usize on every target — a dimension error,
-    // not an allocation the host may or may not satisfy.
-    let err = PixelBuffer::try_new(u32::MAX, u32::MAX, RGB8).unwrap_err();
-    assert_eq!(*err.error(), BufferError::InvalidDimensions);
+fn with_oom_above<T>(threshold: usize, f: impl FnOnce() -> T) -> T {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            FAIL_THRESHOLD.with(|c| c.set(usize::MAX));
+        }
+    }
+    FAIL_THRESHOLD.with(|c| c.set(threshold));
+    let _guard = Reset;
+    f()
 }
 
 #[test]
-fn zero_extents_allocate_nothing() {
-    let _g = lock();
-    // Even with every allocation above 4 KiB refused, empty buffers succeed.
-    let buf = failing_above(4096, || PixelBuffer::try_new(0, 0, RGB8).unwrap());
-    assert_eq!(buf.width(), 0);
-}
+fn constructors_and_copies_return_allocation_failed_on_oom() {
+    // PixelBuf::new (tight)
+    let err = with_oom_above(4096, || PixelBuf::new(64, 64, ImageSpec::rgba8_srgb())).unwrap_err();
+    assert_eq!(*err.error(), BufferError::AllocationFailed);
 
-#[test]
-fn try_to_tight_buffer_reports_allocation_failure() {
-    let _g = lock();
-    let (data, stride, w, h) = padded();
-    let slice = PixelSlice::new(&data, w, h, stride, RGB8).unwrap();
-    failing_above(4096, || {
-        let err = slice.try_to_tight_buffer().unwrap_err();
-        assert_alloc_failed(&err);
-    });
-    // Borrowed input is untouched: the same call succeeds after refusal.
-    let tight = slice.try_to_tight_buffer().unwrap();
-    assert_eq!(tight.as_slice().row(3), &data[3 * 256..3 * 256 + 192]);
-}
+    // PixelBuf::new_aligned (Cache64 / AlignedSamples)
+    let err = with_oom_above(4096, || {
+        PixelBuf::new_aligned(64, 64, ImageSpec::rgbf32_linear(), RowAlign::Cache64)
+    })
+    .unwrap_err();
+    assert_eq!(*err.error(), BufferError::AllocationFailed);
 
-#[test]
-fn try_to_tight_buffer_on_short_final_row() {
-    let _g = lock();
-    // A view whose backing slice ends inside the last stride's padding:
-    // 64x32 RGB8, stride 256, data covering (32-1)*256 + 192 = 8128 bytes.
-    let data = vec![7u8; 31 * 256 + 192];
-    let slice = PixelSlice::new(&data, 64, 32, 256, RGB8).unwrap();
-    failing_above(4096, || {
-        let err = slice.try_to_tight_buffer().unwrap_err();
-        assert_alloc_failed(&err);
-    });
-    let tight = slice.try_to_tight_buffer().unwrap();
-    assert_eq!(tight.as_slice().row(31), &data[31 * 256..31 * 256 + 192]);
-}
+    // BandedBuf::new
+    let err = with_oom_above(4096, || {
+        BandedBuf::new(64, 64, ImageSpec::rgba8_srgb(), 8192)
+    })
+    .unwrap_err();
+    assert_eq!(*err.error(), BufferError::AllocationFailed);
 
-#[test]
-fn try_contiguous_bytes_reports_allocation_failure() {
-    let _g = lock();
-    let (data, stride, w, h) = padded();
-    let slice = PixelSlice::new(&data, w, h, stride, RGB8).unwrap();
-    failing_above(4096, || {
-        let err = slice.try_contiguous_bytes().unwrap_err();
-        assert_alloc_failed(&err);
-    });
-    assert!(slice.try_contiguous_bytes().is_ok());
-}
+    // PlanarBuf::new
+    let specs = [
+        PlaneSpec::new(PlaneRole::Y, SampleType::U8),
+        PlaneSpec::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2),
+        PlaneSpec::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2),
+    ];
+    let err = with_oom_above(4096, || PlanarBuf::new(128, 128, &specs)).unwrap_err();
+    assert_eq!(*err.error(), BufferError::AllocationFailed);
 
-#[test]
-fn try_contiguous_bytes_stays_borrowed_when_tight() {
-    let _g = lock();
-    let data = vec![0x55u8; 64 * 3 * 4];
-    let slice = PixelSlice::new(&data, 64, 4, 64 * 3, RGB8).unwrap();
-    // Tight rows borrow — no allocation happens even with every big one refused.
-    let cow = failing_above(4096, || slice.try_contiguous_bytes().unwrap());
-    assert!(matches!(cow, std::borrow::Cow::Borrowed(_)));
-}
+    // View fallback copy paths: try_to_tight_buf, try_contiguous_bytes
+    let padded = PixelBuf::new_aligned(33, 64, ImageSpec::rgb8_srgb(), RowAlign::Cache64).unwrap();
+    let err = with_oom_above(2048, || padded.as_view().try_to_tight_buf()).unwrap_err();
+    assert_eq!(*err.error(), BufferError::AllocationFailed);
 
-#[test]
-fn try_copy_to_contiguous_bytes_reports_allocation_failure() {
-    let _g = lock();
-    let buf = PixelBuffer::try_new(64, 64, RGB8).unwrap();
-    failing_above(4096, || {
-        let err = buf.try_copy_to_contiguous_bytes().unwrap_err();
-        assert_alloc_failed(&err);
-    });
-    assert_eq!(
-        buf.try_copy_to_contiguous_bytes().unwrap().len(),
-        64 * 64 * 3
-    );
-}
+    let err = with_oom_above(2048, || padded.as_view().try_contiguous_bytes()).unwrap_err();
+    assert_eq!(*err.error(), BufferError::AllocationFailed);
 
-#[test]
-fn crop_copy_reports_allocation_failure() {
-    let _g = lock();
-    let buf = PixelBuffer::try_new(96, 96, RGB8).unwrap();
-    failing_above(4096, || {
-        let err = buf.crop_copy(0, 0, 64, 64).unwrap_err();
-        assert_alloc_failed(&err);
-    });
-    assert_eq!(buf.crop_copy(0, 0, 64, 64).unwrap().width(), 64);
-}
-
-#[test]
-fn aligned_samples_try_zeroed_reports_allocation_failure() {
-    let _g = lock();
-    failing_above(4096, || {
-        let err = AlignedSamples::<u16>::try_zeroed(64 * 64 * 3).unwrap_err();
-        assert_eq!(err, PlaneError::AllocationFailed);
-    });
-    assert!(AlignedSamples::<u16>::try_zeroed(64 * 64 * 3).is_ok());
-}
-
-#[test]
-fn failure_scope_leaves_other_threads_allocations_available() {
-    use std::sync::{Arc, Barrier};
-    let _g = lock();
-    let barrier = Arc::new(Barrier::new(2));
-    let worker_barrier = barrier.clone();
-    let worker = std::thread::spawn(move || {
-        worker_barrier.wait();
-        let allowed = Vec::<u8>::new().try_reserve_exact(8192).is_ok();
-        worker_barrier.wait();
-        allowed
-    });
-    failing_above(4096, || {
-        barrier.wait();
-        let refused = Vec::<u8>::new().try_reserve_exact(8192).is_err();
-        barrier.wait();
-        assert!(refused, "the injected operation must still fail");
-    });
-    assert!(
-        worker.join().unwrap(),
-        "unrelated thread must retain its allocator"
-    );
+    // try_into_vec fallback copy path (Aligned64 cannot zero-copy to Vec<u8>)
+    let err = with_oom_above(2048, || padded.try_into_vec::<u8>()).unwrap_err();
+    assert_eq!(*err.error(), BufferError::AllocationFailed);
 }

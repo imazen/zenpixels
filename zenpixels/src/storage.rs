@@ -1,300 +1,535 @@
-//! Unconditional sample-owner traits, 64-byte aligned owner, and row-stride alignment policy.
+//! Alignment-exact, `#![forbid(unsafe_code)]` owned pixel storage.
 //!
-//! Shared by packed [`crate::PixelBuffer`] (always available) and planar
-//! `zenpixels::plane` (when `feature = "planar"` is enabled).
+//! # Allocation / deallocation alignment rules (`bytemuck` & `GlobalAlloc`)
+//!
+//! Rust's [`core::alloc::GlobalAlloc::dealloc`] requires every allocation to be
+//! freed with the **exact same `Layout` (byte capacity and alignment)** that
+//! allocated it. Therefore:
+//!
+//! - A `Vec<u8>` (`align = 1`) can **never** become a `Vec<u16>` (`align = 2`)
+//!   or `Vec<Rgb<u16>>` (`align = 2`) without copying, even if glibc happens to
+//!   return an even pointer.
+//! - Conversely, `Vec<Rgb<u16>>` (`align = 2, size = 6`) **can** move zero-copy
+//!   to and from `Vec<u16>` (`align = 2, size = 2`) via
+//!   [`bytemuck::allocation::try_cast_vec`] whenever both length and capacity in
+//!   bytes are multiples of `size_of::<Rgb<u16>>()` (`6`).
+//! - [`AlignedSamples`] allocates `Vec<Chunk>` with `#[repr(C, align(64))]`, so
+//!   its base address is always 64-byte aligned (divisible by `1, 2, 4, 8, 16,
+//!   32, 64` for zero-copy slice borrowing via `bytemuck::cast_slice`), and it
+//!   always deallocates with `align = 64` (never UB-cast to `Vec<u8>`).
+//! - On 32-bit targets where `align_of::<u64>()` may differ from
+//!   `align_of::<f64>()`, `F64` checks exact alignment equality before casting.
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::vec::Vec;
 use core::fmt;
 
-/// The shared native storage sample contract. This is the same sealed trait
-/// used by [`crate::buffer::PixelStorage`], not a separate plane-only roster.
-pub use crate::buffer::StorageSample as PlaneSample;
+use crate::layout::SampleType;
+use crate::pixel_types::F16Sample;
 
-/// Read access to the samples of a buffer or plane owner.
+/// 64-byte aligned allocation unit for [`AlignedSamples`].
 ///
-/// Implement this for an owner type (for example accounted shared storage) to
-/// use it as `PixelBuffer<(), YourOwner>` or `Plane<YourOwner>`. `samples` must
-/// return the same slice on every call: geometry is checked once, at construction.
-///
-/// Slices, references, boxes and `Vec` implement it, and the trait stays
-/// dyn-compatible.
-pub trait SampleStorage {
-    /// The sample type.
-    type Sample: PlaneSample;
-    /// The samples, including any padding.
-    fn samples(&self) -> &[Self::Sample];
-}
-
-/// Write access to the samples of a buffer or plane owner.
-pub trait SampleStorageMut: SampleStorage {
-    /// The samples, including any padding.
-    fn samples_mut(&mut self) -> &mut [Self::Sample];
-}
-
-impl<T: PlaneSample> SampleStorage for [T] {
-    type Sample = T;
-    #[inline]
-    fn samples(&self) -> &[T] {
-        self
-    }
-}
-impl<T: PlaneSample> SampleStorageMut for [T] {
-    #[inline]
-    fn samples_mut(&mut self) -> &mut [T] {
-        self
-    }
-}
-impl<S: SampleStorage + ?Sized> SampleStorage for &S {
-    type Sample = S::Sample;
-    #[inline]
-    fn samples(&self) -> &[S::Sample] {
-        (**self).samples()
-    }
-}
-impl<S: SampleStorage + ?Sized> SampleStorage for &mut S {
-    type Sample = S::Sample;
-    #[inline]
-    fn samples(&self) -> &[S::Sample] {
-        (**self).samples()
-    }
-}
-impl<S: SampleStorageMut + ?Sized> SampleStorageMut for &mut S {
-    #[inline]
-    fn samples_mut(&mut self) -> &mut [S::Sample] {
-        (**self).samples_mut()
-    }
-}
-
-// `Vec` and `Box` storage. With the `allocator_api` feature on Rust 1.100 or newer
-// these cover every allocator, which includes the global one, so existing uses
-// keep compiling; before 1.100 the feature changes nothing.
-macro_rules! owned_storage {
-    ($($alloc:ident)?) => {
-        impl<S: SampleStorage + ?Sized $(, $alloc: core::alloc::Allocator)?> SampleStorage
-            for Box<S $(, $alloc)?>
-        {
-            type Sample = S::Sample;
-            #[inline]
-            fn samples(&self) -> &[S::Sample] {
-                (**self).samples()
-            }
-        }
-        impl<S: SampleStorageMut + ?Sized $(, $alloc: core::alloc::Allocator)?> SampleStorageMut
-            for Box<S $(, $alloc)?>
-        {
-            #[inline]
-            fn samples_mut(&mut self) -> &mut [S::Sample] {
-                (**self).samples_mut()
-            }
-        }
-        impl<T: PlaneSample $(, $alloc: core::alloc::Allocator)?> SampleStorage
-            for Vec<T $(, $alloc)?>
-        {
-            type Sample = T;
-            #[inline]
-            fn samples(&self) -> &[T] {
-                self
-            }
-        }
-        impl<T: PlaneSample $(, $alloc: core::alloc::Allocator)?> SampleStorageMut
-            for Vec<T $(, $alloc)?>
-        {
-            #[inline]
-            fn samples_mut(&mut self) -> &mut [T] {
-                self
-            }
-        }
-    };
-}
-#[cfg(not(feature = "allocator_api"))]
-owned_storage!();
-#[cfg(feature = "allocator_api")]
-#[rustversion::before(1.100)]
-owned_storage!();
-#[cfg(feature = "allocator_api")]
-#[rustversion::since(1.100)]
-owned_storage!(A);
-
-/// One allocation unit of [`AlignedSamples`]. Its alignment is what keeps the
-/// buffer aligned without an offset, a custom allocator, or `unsafe`: `Vec`
-/// allocates and frees it with this layout.
+/// Using `Vec<Chunk>` guarantees 64-byte base alignment and matching 64-byte
+/// deallocation layout under `#![forbid(unsafe_code)]`.
 #[derive(Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
 #[repr(C, align(64))]
-pub(crate) struct Chunk([u8; 64]);
+struct Chunk([u8; 64]);
 
-fn try_zeroed_chunks(len: usize, sample_size: usize) -> Result<Vec<Chunk>, PlaneError> {
-    let chunk_count = len
-        .checked_mul(sample_size)
-        .ok_or(PlaneError::GeometryOverflow)?
-        .div_ceil(core::mem::size_of::<Chunk>());
-    core::alloc::Layout::array::<Chunk>(chunk_count).map_err(|_| PlaneError::AllocationFailed)?;
-    bytemuck::allocation::try_zeroed_vec(chunk_count).map_err(|()| PlaneError::AllocationFailed)
-}
-
-/// Owned samples whose first element is on a 64-byte boundary, on any allocator.
+/// Owned byte storage whose first byte is guaranteed 64-byte aligned on every allocator.
 ///
-/// 64 bytes covers every interleaved pixel type, so the samples can always be
-/// viewed as `&[Rgb<u16>]`, `&[Rgba<f32>]` and the like with `bytemuck`, and index
-/// 0 is always the first sample. Clones stay aligned. It derefs to `[T]`, so it
-/// also serves as an `image::ImageBuffer` container.
-///
-/// The price is that it cannot become a `Vec<T>` without a copy: a `Vec` has to
-/// free memory with the layout it allocated. Adopt a `Vec<T>` directly when the
-/// next owner needs one.
+/// Zero-copy slice borrowing works for every sample and pixel type (`&[u8]`,
+/// `&[u16]`, `&[f32]`, `&[f64]`, `&[Rgb<u16>]`, `&[Rgba<f32>]`, …) because 64
+/// is a multiple of every natural alignment. Cannot convert to `Vec<T>` without
+/// copying because its deallocation alignment is 64.
 #[derive(Clone)]
-pub struct AlignedSamples<T> {
+pub struct AlignedSamples {
     chunks: Vec<Chunk>,
-    len: usize,
-    _sample: core::marker::PhantomData<T>,
+    byte_len: usize,
 }
 
-impl<T: PlaneSample> AlignedSamples<T> {
-    /// Allocate `len` zeroed samples, fallibly.
-    ///
-    /// # Errors
-    ///
-    /// [`PlaneError::GeometryOverflow`] when the size overflows,
-    /// [`PlaneError::AllocationFailed`] when the allocator refuses.
+impl AlignedSamples {
+    /// Fallibly allocate `byte_len` zeroed bytes on a 64-byte boundary.
+    pub fn try_zeroed_bytes(byte_len: usize) -> Result<Self, StorageError> {
+        if byte_len > isize::MAX as usize {
+            return Err(StorageError::AllocationFailed);
+        }
+        let count = byte_len.div_ceil(core::mem::size_of::<Chunk>());
+        core::alloc::Layout::array::<Chunk>(count).map_err(|_| StorageError::AllocationFailed)?;
+        let chunks = bytemuck::allocation::try_zeroed_vec(count)
+            .map_err(|()| StorageError::AllocationFailed)?;
+        Ok(Self { chunks, byte_len })
+    }
+
+    /// Immutable byte view (guaranteed 64-byte aligned base pointer).
     #[inline]
-    pub fn try_zeroed(len: usize) -> Result<Self, PlaneError> {
-        let chunks = try_zeroed_chunks(len, core::mem::size_of::<T>())?;
-        Ok(Self {
-            chunks,
-            len,
-            _sample: core::marker::PhantomData,
-        })
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &bytemuck::cast_slice(&self.chunks)[..self.byte_len]
+    }
+
+    /// Mutable byte view (guaranteed 64-byte aligned base pointer).
+    #[inline]
+    #[must_use]
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        &mut bytemuck::cast_slice_mut(&mut self.chunks)[..self.byte_len]
+    }
+
+    /// Active byte length.
+    #[inline]
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.byte_len
+    }
+
+    /// Whether the buffer is empty.
+    #[inline]
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.byte_len == 0
+    }
+
+    /// Truncate active byte length without reallocating.
+    #[inline]
+    pub fn truncate(&mut self, byte_len: usize) {
+        if byte_len < self.byte_len {
+            self.byte_len = byte_len;
+        }
     }
 }
 
-impl<T: PlaneSample> core::ops::Deref for AlignedSamples<T> {
-    type Target = [T];
-    #[inline]
-    fn deref(&self) -> &[T] {
-        &bytemuck::cast_slice(&self.chunks)[..self.len]
-    }
-}
-
-impl<T: PlaneSample> core::ops::DerefMut for AlignedSamples<T> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut [T] {
-        &mut bytemuck::cast_slice_mut(&mut self.chunks)[..self.len]
-    }
-}
-
-impl<T> fmt::Debug for AlignedSamples<T> {
+impl fmt::Debug for AlignedSamples {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "AlignedSamples(len: {})", self.len)
+        write!(f, "AlignedSamples({} bytes, align=64)", self.byte_len)
     }
 }
 
-impl<T: PlaneSample> SampleStorage for AlignedSamples<T> {
-    type Sample = T;
-    #[inline]
-    fn samples(&self) -> &[T] {
-        self
-    }
-}
-
-impl<T: PlaneSample> SampleStorageMut for AlignedSamples<T> {
-    #[inline]
-    fn samples_mut(&mut self) -> &mut [T] {
-        self
-    }
-}
-
-/// A plane or aligned-owner geometry does not fit its storage, or a request leaves the bounds.
+/// Low-level storage allocation error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum PlaneError {
-    /// A nonempty plane's stride is shorter than its row.
-    ShortStride,
-    /// Storage ends before the last active sample.
-    ShortBuffer,
-    /// Computing the plane's extent overflows addressable storage.
-    GeometryOverflow,
-    /// A requested rectangle or row extends beyond the plane.
-    OutsidePlane,
-    /// Allocating plane storage failed.
+pub enum StorageError {
+    /// Allocator refused or byte length exceeded `isize::MAX`.
     AllocationFailed,
 }
 
-impl fmt::Display for PlaneError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::ShortStride => "plane stride is shorter than its row",
-            Self::ShortBuffer => "plane storage ends before the last active sample",
-            Self::GeometryOverflow => "plane geometry overflows addressable storage",
-            Self::OutsidePlane => "request extends beyond the plane",
-            Self::AllocationFailed => "plane allocation failed",
-        })
+/// Read access to native-endian pixel bytes without copying.
+pub trait ByteStorage {
+    /// Underlying bytes in native endianness.
+    fn as_bytes(&self) -> &[u8];
+}
+
+/// Mutable access to native-endian pixel bytes without copying.
+pub trait ByteStorageMut: ByteStorage {
+    /// Mutable underlying bytes in native endianness.
+    fn as_bytes_mut(&mut self) -> &mut [u8];
+}
+
+impl ByteStorage for AlignedSamples {
+    #[inline]
+    fn as_bytes(&self) -> &[u8] {
+        self.as_bytes()
     }
 }
-impl core::error::Error for PlaneError {}
 
-/// Row starts on 64 bytes, the widest SIMD vector and the x86/Neoverse line.
-#[cfg(feature = "planar")]
-pub(crate) const ROW_ALIGN: usize = 64;
+impl ByteStorageMut for AlignedSamples {
+    #[inline]
+    fn as_bytes_mut(&mut self) -> &mut [u8] {
+        self.as_bytes_mut()
+    }
+}
 
-/// Row-start alignment policy for [`crate::PixelBuffer::try_new_aligned`],
-/// [`crate::PixelBuffer::try_new_with_align`], and `Plane::alloc_aligned`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+mod sealed {
+    use super::*;
+    pub trait Sealed: Sized {
+        fn into_storage(v: Vec<Self>) -> PixelStorage;
+        fn from_storage(s: PixelStorage) -> Result<Vec<Self>, PixelStorage>;
+    }
+}
+
+/// Sealed trait implemented by the 11 native sample types stored in [`PixelStorage`].
+pub trait StorageSample:
+    sealed::Sealed + bytemuck::Pod + Default + PartialEq + fmt::Debug + Send + Sync + 'static
+{
+    /// Corresponding [`SampleType`] variant.
+    const SAMPLE_TYPE: SampleType;
+}
+
+/// Alignment-exact owned pixel backing storage.
+///
+/// Stores the true sample-typed `Vec<T>` (or 64-byte [`AlignedSamples`]) so
+/// `Vec<u16>`, `Vec<Rgb<u16>>`, `Vec<f32>`, `Vec<Rgba<f32>>`, etc. cross
+/// type-erased [`PixelBuf`](crate::PixelBuf) boundaries **zero-copy** while
+/// strictly preserving Rust's allocation/deallocation alignment contract.
 #[non_exhaustive]
-pub enum RowAlign {
-    /// Tightly packed rows (`stride == width` samples, or `width * bytes_per_pixel` bytes).
-    #[default]
-    Tight,
-    /// 64-byte row alignment (widest SIMD vector and x86/ARM cache line), plus
-    /// a 64-byte anti-aliasing bump when the aligned row is a non-zero multiple
-    /// of 4096 bytes (`benchmarks/stride_aliasing_2026-11-01.md`).
-    ///
-    /// For 3-channel packed formats such as `RGB8` (3 B/px) or `RGB16` (6 B/px),
-    /// byte stride is a multiple of 64 (and of `size_of::<T>()`), not necessarily
-    /// a multiple of `bytes_per_pixel`.
-    Cache64,
-    /// Whole-pixel 64-byte row alignment (`lcm(bytes_per_pixel, 64)`), plus one
-    /// alignment step when the aligned row is a non-zero multiple of 4096 bytes.
-    ///
-    /// Every row starts on both a 64-byte boundary and a whole-pixel boundary,
-    /// satisfying whole-pixel stride consumers such as `imgref`. On a single-sample
-    /// plane, this equals [`Self::Cache64`].
-    PixelCache64,
-    /// Align row stride to a multiple of `N` samples (`0` is treated as `1`,
-    /// i.e. tight), with no 4096-byte bump.
-    ///
-    /// Use [`Self::from_bytes`] or [`Self::try_from_bytes`] to translate a
-    /// hardware byte-pitch requirement (such as `wgpu`'s 256-byte row alignment).
-    Samples(u16),
+pub enum PixelStorage {
+    /// `u8` backing (`align = 1`).
+    U8(Vec<u8>),
+    /// `i8` backing (`align = 1`).
+    I8(Vec<i8>),
+    /// `u16` backing (`align = 2`).
+    U16(Vec<u16>),
+    /// `i16` backing (`align = 2`).
+    I16(Vec<i16>),
+    /// `F16Sample` backing (`align = 2`).
+    F16(Vec<F16Sample>),
+    /// `u32` backing (`align = 4`).
+    U32(Vec<u32>),
+    /// `i32` backing (`align = 4`).
+    I32(Vec<i32>),
+    /// `f32` backing (`align = 4`).
+    F32(Vec<f32>),
+    /// `u64` backing (`align = align_of::<u64>()`).
+    U64(Vec<u64>),
+    /// `i64` backing (`align = align_of::<i64>()`).
+    I64(Vec<i64>),
+    /// `f64` backing (`align = align_of::<f64>()`).
+    F64(Vec<f64>),
+    /// 64-byte SIMD-aligned backing (`align = 64`).
+    Aligned64(AlignedSamples),
 }
 
-const _: () = assert!(core::mem::size_of::<RowAlign>() == 4);
+macro_rules! impl_storage_samples {
+    ($($ty:ty => $var:ident),* $(,)?) => {$(
+        impl sealed::Sealed for $ty {
+            #[inline]
+            fn into_storage(v: Vec<Self>) -> PixelStorage {
+                PixelStorage::$var(v)
+            }
+            #[inline]
+            fn from_storage(s: PixelStorage) -> Result<Vec<Self>, PixelStorage> {
+                match s {
+                    PixelStorage::$var(v) => Ok(v),
+                    other => Err(other),
+                }
+            }
+        }
+        impl StorageSample for $ty {
+            const SAMPLE_TYPE: SampleType = SampleType::$var;
+        }
+        impl From<Vec<$ty>> for PixelStorage {
+            #[inline]
+            fn from(v: Vec<$ty>) -> Self {
+                PixelStorage::$var(v)
+            }
+        }
+    )*};
+}
 
-impl RowAlign {
-    /// Convert a hardware byte-pitch requirement into a sample-count alignment
-    /// for sample type `T`.
-    ///
-    /// # Panics
-    ///
-    /// Panics (at compile time in `const` context) if `bytes == 0` or `bytes`
-    /// is not a multiple of `size_of::<T>()`.
-    #[inline]
-    pub const fn from_bytes<T: PlaneSample>(bytes: u16) -> Self {
-        match Self::try_from_bytes(bytes, core::mem::size_of::<T>()) {
-            Some(align) => align,
-            None => panic!("RowAlign::from_bytes requires a non-zero multiple of size_of::<T>()"),
+impl_storage_samples! {
+    u8 => U8, i8 => I8,
+    u16 => U16, i16 => I16, F16Sample => F16,
+    u32 => U32, i32 => I32, f32 => F32,
+    u64 => U64, i64 => I64, f64 => F64,
+}
+
+#[inline]
+fn cast_same_layout<A: bytemuck::NoUninit, B: bytemuck::AnyBitPattern>(v: Vec<A>) -> Vec<B> {
+    match bytemuck::allocation::try_cast_vec(v) {
+        Ok(out) => out,
+        Err(_) => panic!("same-size same-alignment Vec cast failed"),
+    }
+}
+
+fn zeroed_vec<T: bytemuck::Zeroable + bytemuck::Pod>(bytes: usize) -> Result<Vec<T>, StorageError> {
+    let sz = core::mem::size_of::<T>();
+    let count = bytes.div_ceil(sz);
+    core::alloc::Layout::array::<T>(count).map_err(|_| StorageError::AllocationFailed)?;
+    bytemuck::allocation::try_zeroed_vec(count).map_err(|()| StorageError::AllocationFailed)
+}
+
+fn gather_typed<T: bytemuck::Pod>(
+    total_bytes: usize,
+    rows: &mut dyn Iterator<Item = &[u8]>,
+) -> Result<Vec<T>, StorageError> {
+    let sz = core::mem::size_of::<T>();
+    let count = total_bytes.div_ceil(sz);
+    let mut out: Vec<T> = Vec::new();
+    out.try_reserve_exact(count)
+        .map_err(|_| StorageError::AllocationFailed)?;
+    for row in rows {
+        if (row.as_ptr() as usize) % core::mem::align_of::<T>() == 0 && row.len() % sz == 0 {
+            out.extend_from_slice(bytemuck::cast_slice(row));
+        } else {
+            // Safe unaligned copy path (e.g., copying from an odd-aligned byte slice into typed storage).
+            let mut chunks = row.chunks_exact(sz);
+            for c in &mut chunks {
+                out.push(bytemuck::pod_read_unaligned(c));
+            }
+        }
+    }
+    Ok(out)
+}
+
+impl PixelStorage {
+    /// Allocate zeroed storage with exact alignment for `sample`, holding at least `bytes` bytes.
+    pub fn try_zeroed(sample: SampleType, bytes: usize) -> Result<Self, StorageError> {
+        if bytes > isize::MAX as usize {
+            return Err(StorageError::AllocationFailed);
+        }
+        match sample {
+            SampleType::U8 => Ok(Self::U8(zeroed_vec(bytes)?)),
+            SampleType::I8 => Ok(Self::I8(cast_same_layout(zeroed_vec::<u8>(bytes)?))),
+            SampleType::U16 => Ok(Self::U16(zeroed_vec(bytes)?)),
+            SampleType::I16 => Ok(Self::I16(cast_same_layout(zeroed_vec::<u16>(bytes)?))),
+            SampleType::F16 => Ok(Self::F16(cast_same_layout(zeroed_vec::<u16>(bytes)?))),
+            SampleType::U32 => Ok(Self::U32(zeroed_vec(bytes)?)),
+            SampleType::I32 => Ok(Self::I32(cast_same_layout(zeroed_vec::<u32>(bytes)?))),
+            SampleType::F32 => Ok(Self::F32(cast_same_layout(zeroed_vec::<u32>(bytes)?))),
+            SampleType::U64 => Ok(Self::U64(zeroed_vec(bytes)?)),
+            SampleType::I64 => Ok(Self::I64(cast_same_layout(zeroed_vec::<u64>(bytes)?))),
+            SampleType::F64 => {
+                if core::mem::align_of::<u64>() == core::mem::align_of::<f64>() {
+                    Ok(Self::F64(cast_same_layout(zeroed_vec::<u64>(bytes)?)))
+                } else {
+                    Ok(Self::F64(zeroed_vec(bytes)?))
+                }
+            }
         }
     }
 
-    /// Fallibly convert a byte-pitch alignment into `RowAlign::Samples` for a
-    /// given `sample_bytes` width (`1`, `2`, `4`, or `8`).
-    ///
-    /// Returns `None` if `bytes == 0`, `sample_bytes == 0`, or `bytes` is not
-    /// divisible by `sample_bytes`.
+    /// Allocate 64-byte SIMD-aligned zeroed storage.
     #[inline]
-    pub const fn try_from_bytes(bytes: u16, sample_bytes: usize) -> Option<Self> {
-        if bytes == 0 || sample_bytes == 0 || (bytes as usize) % sample_bytes != 0 {
-            None
-        } else {
-            Some(Self::Samples((bytes as usize / sample_bytes) as u16))
+    pub fn try_zeroed_aligned64(bytes: usize) -> Result<Self, StorageError> {
+        Ok(Self::Aligned64(AlignedSamples::try_zeroed_bytes(bytes)?))
+    }
+
+    /// Gather row slices into fresh tightly packed storage of `sample`'s native alignment.
+    pub fn try_from_rows<'r>(
+        sample: SampleType,
+        total_bytes: usize,
+        mut rows: impl Iterator<Item = &'r [u8]>,
+    ) -> Result<Self, StorageError> {
+        Self::try_from_rows_dyn(sample, total_bytes, &mut rows)
+    }
+
+    fn try_from_rows_dyn(
+        sample: SampleType,
+        total_bytes: usize,
+        rows: &mut dyn Iterator<Item = &[u8]>,
+    ) -> Result<Self, StorageError> {
+        match sample {
+            SampleType::U8 => Ok(Self::U8(gather_typed(total_bytes, rows)?)),
+            SampleType::I8 => Ok(Self::I8(cast_same_layout(gather_typed::<u8>(
+                total_bytes,
+                rows,
+            )?))),
+            SampleType::U16 => Ok(Self::U16(gather_typed(total_bytes, rows)?)),
+            SampleType::I16 => Ok(Self::I16(cast_same_layout(gather_typed::<u16>(
+                total_bytes,
+                rows,
+            )?))),
+            SampleType::F16 => Ok(Self::F16(cast_same_layout(gather_typed::<u16>(
+                total_bytes,
+                rows,
+            )?))),
+            SampleType::U32 => Ok(Self::U32(gather_typed(total_bytes, rows)?)),
+            SampleType::I32 => Ok(Self::I32(cast_same_layout(gather_typed::<u32>(
+                total_bytes,
+                rows,
+            )?))),
+            SampleType::F32 => Ok(Self::F32(cast_same_layout(gather_typed::<u32>(
+                total_bytes,
+                rows,
+            )?))),
+            SampleType::U64 => Ok(Self::U64(gather_typed(total_bytes, rows)?)),
+            SampleType::I64 => Ok(Self::I64(cast_same_layout(gather_typed::<u64>(
+                total_bytes,
+                rows,
+            )?))),
+            SampleType::F64 => {
+                if core::mem::align_of::<u64>() == core::mem::align_of::<f64>() {
+                    Ok(Self::F64(cast_same_layout(gather_typed::<u64>(
+                        total_bytes,
+                        rows,
+                    )?)))
+                } else {
+                    Ok(Self::F64(gather_typed(total_bytes, rows)?))
+                }
+            }
         }
+    }
+
+    /// Move a typed `Vec<P>` into native [`PixelStorage`] **zero-copy** when
+    /// `align_of::<P>()` and capacity match `sample`'s backing layout.
+    ///
+    /// On mismatch (e.g., an over-aligned pixel type), returns `Err(pixels)`
+    /// untouched without allocating.
+    pub fn try_adopt_vec<P: bytemuck::Pod>(
+        pixels: Vec<P>,
+        sample: SampleType,
+    ) -> Result<Self, Vec<P>> {
+        use bytemuck::allocation::try_cast_vec;
+        match sample {
+            SampleType::U8 => try_cast_vec::<P, u8>(pixels)
+                .map(Self::U8)
+                .map_err(|(_, v)| v),
+            SampleType::I8 => try_cast_vec::<P, i8>(pixels)
+                .map(Self::I8)
+                .map_err(|(_, v)| v),
+            SampleType::U16 => try_cast_vec::<P, u16>(pixels)
+                .map(Self::U16)
+                .map_err(|(_, v)| v),
+            SampleType::I16 => try_cast_vec::<P, i16>(pixels)
+                .map(Self::I16)
+                .map_err(|(_, v)| v),
+            SampleType::F16 => try_cast_vec::<P, F16Sample>(pixels)
+                .map(Self::F16)
+                .map_err(|(_, v)| v),
+            SampleType::U32 => try_cast_vec::<P, u32>(pixels)
+                .map(Self::U32)
+                .map_err(|(_, v)| v),
+            SampleType::I32 => try_cast_vec::<P, i32>(pixels)
+                .map(Self::I32)
+                .map_err(|(_, v)| v),
+            SampleType::F32 => try_cast_vec::<P, f32>(pixels)
+                .map(Self::F32)
+                .map_err(|(_, v)| v),
+            SampleType::U64 => try_cast_vec::<P, u64>(pixels)
+                .map(Self::U64)
+                .map_err(|(_, v)| v),
+            SampleType::I64 => try_cast_vec::<P, i64>(pixels)
+                .map(Self::I64)
+                .map_err(|(_, v)| v),
+            SampleType::F64 => try_cast_vec::<P, f64>(pixels)
+                .map(Self::F64)
+                .map_err(|(_, v)| v),
+        }
+    }
+
+    /// Move this storage into `Vec<P>` **zero-copy** when `align_of::<P>()`
+    /// matches the backing allocation's exact alignment AND both active byte
+    /// length and byte capacity are exact multiples of `size_of::<P>()`.
+    ///
+    /// Returns `Err(self)` untouched otherwise (never UB, never copies).
+    pub fn try_cast_into_vec<P: bytemuck::Pod>(self) -> Result<Vec<P>, Self> {
+        use bytemuck::allocation::try_cast_vec;
+        match self {
+            Self::U8(v) => try_cast_vec(v).map_err(|(_, v)| Self::U8(v)),
+            Self::I8(v) => try_cast_vec(v).map_err(|(_, v)| Self::I8(v)),
+            Self::U16(v) => try_cast_vec(v).map_err(|(_, v)| Self::U16(v)),
+            Self::I16(v) => try_cast_vec(v).map_err(|(_, v)| Self::I16(v)),
+            Self::F16(v) => try_cast_vec(v).map_err(|(_, v)| Self::F16(v)),
+            Self::U32(v) => try_cast_vec(v).map_err(|(_, v)| Self::U32(v)),
+            Self::I32(v) => try_cast_vec(v).map_err(|(_, v)| Self::I32(v)),
+            Self::F32(v) => try_cast_vec(v).map_err(|(_, v)| Self::F32(v)),
+            Self::U64(v) => try_cast_vec(v).map_err(|(_, v)| Self::U64(v)),
+            Self::I64(v) => try_cast_vec(v).map_err(|(_, v)| Self::I64(v)),
+            Self::F64(v) => try_cast_vec(v).map_err(|(_, v)| Self::F64(v)),
+            // Aligned64 has deallocation alignment 64; cannot become Vec<P> zero-copy unless align_of::<P>() == 64.
+            Self::Aligned64(a) => Err(Self::Aligned64(a)),
+        }
+    }
+
+    /// Extract the exact sample-typed `Vec<T>` zero-copy when the variant matches.
+    #[inline]
+    pub fn try_into_sample_vec<T: StorageSample>(self) -> Result<Vec<T>, Self> {
+        T::from_storage(self)
+    }
+
+    /// Element alignment of the underlying heap allocation.
+    #[inline]
+    #[must_use]
+    pub const fn alloc_alignment(&self) -> usize {
+        match self {
+            Self::U8(_) | Self::I8(_) => core::mem::align_of::<u8>(),
+            Self::U16(_) | Self::I16(_) | Self::F16(_) => core::mem::align_of::<u16>(),
+            Self::U32(_) | Self::I32(_) => core::mem::align_of::<u32>(),
+            Self::F32(_) => core::mem::align_of::<f32>(),
+            Self::U64(_) | Self::I64(_) => core::mem::align_of::<u64>(),
+            Self::F64(_) => core::mem::align_of::<f64>(),
+            Self::Aligned64(_) => 64,
+        }
+    }
+
+    /// Byte length of the stored allocation.
+    #[inline]
+    #[must_use]
+    pub fn byte_len(&self) -> usize {
+        self.as_bytes().len()
+    }
+
+    /// Truncate active byte count in place (rounded up to whole sample units).
+    pub fn truncate_bytes(&mut self, bytes: usize) {
+        match self {
+            Self::U8(v) => v.truncate(bytes),
+            Self::I8(v) => v.truncate(bytes),
+            Self::U16(v) => v.truncate(bytes.div_ceil(2)),
+            Self::I16(v) => v.truncate(bytes.div_ceil(2)),
+            Self::F16(v) => v.truncate(bytes.div_ceil(2)),
+            Self::U32(v) => v.truncate(bytes.div_ceil(4)),
+            Self::I32(v) => v.truncate(bytes.div_ceil(4)),
+            Self::F32(v) => v.truncate(bytes.div_ceil(4)),
+            Self::U64(v) => v.truncate(bytes.div_ceil(8)),
+            Self::I64(v) => v.truncate(bytes.div_ceil(8)),
+            Self::F64(v) => v.truncate(bytes.div_ceil(8)),
+            Self::Aligned64(a) => a.truncate(bytes),
+        }
+    }
+}
+
+impl Clone for PixelStorage {
+    fn clone(&self) -> Self {
+        match self {
+            Self::U8(v) => Self::U8(v.clone()),
+            Self::I8(v) => Self::I8(v.clone()),
+            Self::U16(v) => Self::U16(v.clone()),
+            Self::I16(v) => Self::I16(v.clone()),
+            Self::F16(v) => Self::F16(v.clone()),
+            Self::U32(v) => Self::U32(v.clone()),
+            Self::I32(v) => Self::I32(v.clone()),
+            Self::F32(v) => Self::F32(v.clone()),
+            Self::U64(v) => Self::U64(v.clone()),
+            Self::I64(v) => Self::I64(v.clone()),
+            Self::F64(v) => Self::F64(v.clone()),
+            Self::Aligned64(a) => Self::Aligned64(a.clone()),
+        }
+    }
+}
+
+impl ByteStorage for PixelStorage {
+    #[inline]
+    fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::U8(v) => v,
+            Self::I8(v) => bytemuck::cast_slice(v),
+            Self::U16(v) => bytemuck::cast_slice(v),
+            Self::I16(v) => bytemuck::cast_slice(v),
+            Self::F16(v) => bytemuck::cast_slice(v),
+            Self::U32(v) => bytemuck::cast_slice(v),
+            Self::I32(v) => bytemuck::cast_slice(v),
+            Self::F32(v) => bytemuck::cast_slice(v),
+            Self::U64(v) => bytemuck::cast_slice(v),
+            Self::I64(v) => bytemuck::cast_slice(v),
+            Self::F64(v) => bytemuck::cast_slice(v),
+            Self::Aligned64(a) => a.as_bytes(),
+        }
+    }
+}
+
+impl ByteStorageMut for PixelStorage {
+    #[inline]
+    fn as_bytes_mut(&mut self) -> &mut [u8] {
+        match self {
+            Self::U8(v) => v,
+            Self::I8(v) => bytemuck::cast_slice_mut(v),
+            Self::U16(v) => bytemuck::cast_slice_mut(v),
+            Self::I16(v) => bytemuck::cast_slice_mut(v),
+            Self::F16(v) => bytemuck::cast_slice_mut(v),
+            Self::U32(v) => bytemuck::cast_slice_mut(v),
+            Self::I32(v) => bytemuck::cast_slice_mut(v),
+            Self::F32(v) => bytemuck::cast_slice_mut(v),
+            Self::U64(v) => bytemuck::cast_slice_mut(v),
+            Self::I64(v) => bytemuck::cast_slice_mut(v),
+            Self::F64(v) => bytemuck::cast_slice_mut(v),
+            Self::Aligned64(a) => a.as_bytes_mut(),
+        }
+    }
+}
+
+impl fmt::Debug for PixelStorage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "PixelStorage({} bytes, align={})",
+            self.byte_len(),
+            self.alloc_alignment()
+        )
     }
 }

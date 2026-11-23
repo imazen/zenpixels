@@ -33,7 +33,7 @@
 //! }
 //! ```
 
-use crate::{Cicp, ColorPrimaries, TransferFunction};
+use crate::{Cicp, HlgMode, IccColorSpace, Primaries, Transfer};
 
 impl Cicp {
     /// Read the `cicp` tag of an ICC profile (ICC v4.4+), or `None` when absent.
@@ -43,9 +43,9 @@ impl Cicp {
     }
 }
 
-impl crate::ColorModel {
+impl IccColorSpace {
     /// The data color space from an ICC profile's header (bytes 16 to 19), or
-    /// `None` when the profile is too short or has a signature with no model here.
+    /// `None` when the profile is too short or has an unrecognized signature.
     #[must_use]
     pub fn from_icc(icc_bytes: &[u8]) -> Option<Self> {
         profile_color_space(icc_bytes)
@@ -340,7 +340,7 @@ pub(crate) fn inspect_profile(data: &[u8]) -> Option<ProfileFeatures> {
 /// Result of identifying a well-known ICC profile.
 ///
 /// Carries the recognized color primaries and transfer function.
-/// These may or may not have CICP equivalents — [`AdobeRgb`](ColorPrimaries::AdobeRgb)
+/// These may or may not have CICP equivalents — [`AdobeRgb`](Primaries::AdobeRgb)
 /// does not.
 ///
 /// Use [`to_cicp`](Self::to_cicp) to convert to CICP codes when available.
@@ -349,9 +349,9 @@ pub(crate) fn inspect_profile(data: &[u8]) -> Option<ProfileFeatures> {
 #[non_exhaustive]
 pub struct IccIdentification {
     /// Recognized color primaries.
-    pub primaries: ColorPrimaries,
+    pub primaries: Primaries,
     /// Recognized transfer function.
-    pub transfer: TransferFunction,
+    pub transfer: Transfer,
     /// What this identification can be used for.
     pub valid_use: IdentificationUse,
 }
@@ -386,6 +386,16 @@ impl IccIdentification {
         identify_common(icc_bytes)
     }
 
+    /// Recognize `icc_bytes` only when it is safe for matrix+TRC substitution
+    /// across all rendering intents (`IdentificationUse::MatrixTrcSubstitution`).
+    ///
+    /// Consults only the compact substitutable table so callers that never need
+    /// `MetadataOnly` entries dead-strip that table.
+    #[must_use]
+    pub fn from_icc_substitutable(icc_bytes: &[u8]) -> Option<Self> {
+        identify_substitutable(icc_bytes)
+    }
+
     /// Whether `icc_bytes` is a well-known sRGB profile, for skipping a CMS.
     ///
     /// `false` means not recognized, which doesn't mean it isn't sRGB.
@@ -398,8 +408,8 @@ impl IccIdentification {
     /// Create a new identification result.
     #[inline]
     pub(crate) fn new(
-        primaries: ColorPrimaries,
-        transfer: TransferFunction,
+        primaries: Primaries,
+        transfer: Transfer,
         valid_use: IdentificationUse,
     ) -> Self {
         Self {
@@ -422,8 +432,7 @@ impl IccIdentification {
     /// Whether this represents sRGB (BT.709 primaries + sRGB transfer).
     #[inline]
     pub fn is_srgb(&self) -> bool {
-        matches!(self.primaries, ColorPrimaries::Bt709)
-            && matches!(self.transfer, TransferFunction::Srgb)
+        matches!(self.primaries, Primaries::Bt709) && matches!(self.transfer, Transfer::Srgb)
     }
 }
 
@@ -528,7 +537,7 @@ impl CoalesceForUse {
 /// unknown ones. Check [`IccIdentification::valid_use`] before deciding
 /// whether to skip a CMS — a recognized profile may still require one.
 ///
-/// Grayscale profiles return [`Bt709`](ColorPrimaries::Bt709) primaries
+/// Grayscale profiles return [`Bt709`](Primaries::Bt709) primaries
 /// (grayscale has no gamut, but D65 white point is assumed).
 ///
 /// ~100ns. For the long tail of vendor/monitor profiles, use structural
@@ -542,7 +551,7 @@ pub(crate) fn identify_common(icc_bytes: &[u8]) -> Option<IccIdentification> {
 ///
 /// Only consults the compact substitutable profile table (`SUBSTITUTABLE_*`),
 /// allowing callers that never use `MetadataOnly` entries (such as
-/// [`ColorProfileSource::resolve`](crate::ColorProfileSource::resolve) and
+/// [`IccIdentification::from_icc_substitutable`] and
 /// [`IccIdentification::is_common_srgb`]) to dead-strip the metadata-only table.
 #[inline(never)]
 pub(crate) fn identify_substitutable(icc_bytes: &[u8]) -> Option<IccIdentification> {
@@ -630,29 +639,25 @@ pub(crate) fn identify_common_for(
 
 /// Read the ICC profile's data color space from the header (bytes 16–19).
 ///
-/// Returns the [`ColorModel`](crate::ColorModel) corresponding to the four-byte signature
+/// Returns the [`IccColorSpace`] corresponding to the four-byte signature
 /// at offset 16 in the ICC header, or `None` if the profile is too short
 /// or uses an unrecognized color space.
-pub(crate) fn profile_color_space(icc_bytes: &[u8]) -> Option<crate::ColorModel> {
+pub(crate) fn profile_color_space(icc_bytes: &[u8]) -> Option<IccColorSpace> {
     if icc_bytes.len() < 20 {
         return None;
     }
     match &icc_bytes[16..20] {
-        b"RGB " => Some(crate::ColorModel::Rgb),
-        b"GRAY" => Some(crate::ColorModel::Gray),
-        b"CMYK" => Some(crate::ColorModel::Cmyk),
-        b"Lab " => Some(crate::ColorModel::Lab),
-        b"XYZ " => Some(crate::ColorModel::Xyz),
+        b"RGB " => Some(IccColorSpace::Rgb),
+        b"GRAY" => Some(IccColorSpace::Gray),
+        b"CMYK" => Some(IccColorSpace::Cmyk),
+        b"Lab " => Some(IccColorSpace::Lab),
+        b"XYZ " => Some(IccColorSpace::Xyz),
         _ => None,
     }
 }
 
-#[cfg(any(not(feature = "hash"), test))]
 mod murmur3;
-#[cfg(not(feature = "hash"))]
 use self::murmur3 as murmur;
-#[cfg(feature = "hash")]
-use zenhash as murmur;
 #[cfg(test)]
 mod murmur3_tests;
 
@@ -754,8 +759,8 @@ pub const fn normalized_eq(left: &[u8], right: &[u8]) -> bool {
 // Tables store enum variants directly — no code-to-enum mapping needed.
 // Shorthand aliases keep the .inc files readable.
 
-use ColorPrimaries as CP;
-use TransferFunction as TF;
+use Primaries as CP;
+use Transfer as TF;
 
 type ProfileHash = (u64, u32);
 
@@ -860,8 +865,8 @@ const fn pack_tf(tf: TF) -> u16 {
         TF::Bt709 => 2,
         TF::Gamma22 => 3,
         TF::Pq => 4,
-        TF::Hlg => 5,
-        _ => panic!("unsupported TransferFunction in ICC hash table"),
+        TF::Hlg(_) => 5,
+        _ => panic!("unsupported Transfer in ICC hash table"),
     }
 }
 
@@ -872,7 +877,7 @@ const fn unpack_tf(meta: u16) -> TF {
         2 => TF::Bt709,
         3 => TF::Gamma22,
         4 => TF::Pq,
-        5 => TF::Hlg,
+        5 => TF::Hlg(HlgMode::Scene),
         _ => TF::Unknown,
     }
 }
@@ -1080,11 +1085,11 @@ mod tests {
     #[test]
     fn no_unknown_variants_in_tables() {
         for &(h, cp, tc, _, _) in KNOWN_RGB_PROFILES {
-            assert_ne!(cp, ColorPrimaries::Unknown, "RGB {h:?}");
-            assert_ne!(tc, TransferFunction::Unknown, "RGB {h:?}");
+            assert_ne!(cp, Primaries::Unknown, "RGB {h:?}");
+            assert_ne!(tc, Transfer::Unknown, "RGB {h:?}");
         }
         for &(h, tc, _, _) in KNOWN_GRAY_PROFILES {
-            assert_ne!(tc, TransferFunction::Unknown, "gray {h:?}");
+            assert_ne!(tc, Transfer::Unknown, "gray {h:?}");
         }
     }
 
@@ -1213,7 +1218,7 @@ mod tests {
 
     #[test]
     fn table_coverage() {
-        let rgb_count = |cp: ColorPrimaries, tc: TransferFunction| {
+        let rgb_count = |cp: Primaries, tc: Transfer| {
             KNOWN_RGB_PROFILES
                 .iter()
                 .filter(|e| e.1 == cp && e.2 == tc)
@@ -1346,7 +1351,7 @@ mod tests {
         assert!(id.is_srgb());
         assert_eq!(id.valid_use, IdentificationUse::MetadataOnly);
         assert!(!IccIdentification::is_common_srgb(&bytes));
-        assert!(crate::ColorProfileSource::Icc(&bytes).resolve().is_none());
+        assert!(IccIdentification::from_icc_substitutable(&bytes).is_none());
     }
 
     // ── extract_cicp tests ───────────────────────────────────────────
@@ -1376,7 +1381,7 @@ mod tests {
     fn embedded_cicp_does_not_prove_icc_matrix_trc_substitution() {
         let icc = build_icc_with_cicp(1, 13, 0, true);
         assert!(extract_cicp(&icc).is_some());
-        assert!(crate::ColorProfileSource::Icc(&icc).resolve().is_none());
+        assert!(IccIdentification::from_icc_substitutable(&icc).is_none());
     }
 
     #[test]
@@ -1537,19 +1542,19 @@ mod tests {
         // Minimal valid ICC header with CMYK color space at bytes 16-19
         let mut header = vec![0u8; 128];
         header[16..20].copy_from_slice(b"CMYK");
-        assert_eq!(profile_color_space(&header), Some(crate::ColorModel::Cmyk));
+        assert_eq!(profile_color_space(&header), Some(IccColorSpace::Cmyk));
 
         header[16..20].copy_from_slice(b"RGB ");
-        assert_eq!(profile_color_space(&header), Some(crate::ColorModel::Rgb));
+        assert_eq!(profile_color_space(&header), Some(IccColorSpace::Rgb));
 
         header[16..20].copy_from_slice(b"GRAY");
-        assert_eq!(profile_color_space(&header), Some(crate::ColorModel::Gray));
+        assert_eq!(profile_color_space(&header), Some(IccColorSpace::Gray));
 
         header[16..20].copy_from_slice(b"Lab ");
-        assert_eq!(profile_color_space(&header), Some(crate::ColorModel::Lab));
+        assert_eq!(profile_color_space(&header), Some(IccColorSpace::Lab));
 
         header[16..20].copy_from_slice(b"XYZ ");
-        assert_eq!(profile_color_space(&header), Some(crate::ColorModel::Xyz));
+        assert_eq!(profile_color_space(&header), Some(IccColorSpace::Xyz));
     }
 
     #[test]

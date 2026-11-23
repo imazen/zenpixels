@@ -1,139 +1,62 @@
 [package]
 name = "zenpixels-convert"
-version = "0.4.0"
+version = "0.5.0"
 edition.workspace = true
 rust-version = "1.89"
 license.workspace = true
 readme = "README.crates.md"
 repository.workspace = true
 categories.workspace = true
-description = "Transfer-function-aware pixel conversion, gamut mapping, and codec format negotiation for zenpixels"
-keywords = ["image", "pixel", "conversion", "srgb", "codec"]
+description = "Greenfield 0.5 transfer-function-aware pixel conversion, HDR tone mapping, gamut mapping, and codec negotiation for zenpixels"
+keywords = ["image", "pixel", "conversion", "srgb", "hdr"]
 include = [
     "/LICENSE-MIT",
     "/LICENSE-APACHE",
     "/src/**",
-    "/benches/*.rs",
     "/README.crates.md",
 ]
 
-# docs.rs builds with the public opt-in features enabled so the gated
-# surfaces (hdr::measure / CllMeasure, the HDR ConvertPlan constructors,
-# icc-db, css, cms-moxcms, rgb/imgref/planar interop, fast-transpose) are
-# documented and their intra-doc links resolve. Bench-only `__*` features stay out.
 [package.metadata.docs.rs]
 features = [
     "oklab",
     "hdr-transfers",
     "perceptual",
     "icc-db",
-    "introspection",
-    "css",
-    "hdr-experimental",
     "bt2446a",
     "cms-moxcms",
     "cms-lcms",
     "rgb",
     "imgref",
-    "planar",
     "fast-transpose",
 ]
 
 [features]
 default = ["std", "fast-transpose", "oklab", "hdr-transfers"]
-# Oklab color-space module (`oklab`), row kernels (`OklabF32`/`OklabaF32`),
-# `ColorConvertExt::map_to_gamut`, and OKLch soft gamut compression
-# (`GamutPolicy::SoftCompress`). Enabled by default; disable via
-# `default-features = false` for lean SDR/layout builds.
+# Oklab color-space conversions and OKLch soft gamut compression.
 oklab = []
-# PQ (SMPTE ST 2084) and HLG (ARIB STD-B67 + BT.2100 display rendering)
-# transfer kernels. Enabled by default; disable via `default-features = false`
-# when only SDR transfers (sRGB, BT.709, Gamma22, Linear) are needed.
+# PQ (SMPTE ST 2084) and HLG (ARIB STD-B67 + BT.2100 display rendering) transfers.
 hdr-transfers = []
-# Closed-form perceptual and cylindrical color conversions: Oklch, CIE Lch,
-# Jzazbz / Jzczhz, HSL, and HSV. Default-off; opt in with
-# `features = ["perceptual"]` (automatically enables `zenpixels/perceptual`).
-perceptual = ["zenpixels/perceptual", "oklab", "hdr-transfers"]
-introspection = []
-# The committed CICP->ICC profile database: the LZ4-compressed bundle
-# (93,377-byte asset) + lazy decode machinery: 149 RGB / 164 gray mappings
-# without a runtime CMS. HLG requires a rendering target and is refused.
-# Opt-in (`features = ["icc-db"]`): without it, synthesis retains the qualified
-# compact P3 exports and supported compact constants, and otherwise reports its
-# explicit refusal. The load-bearing gray ICC swap suppresses collapse where a
-# replacement profile is unavailable.
+# Perceptual / cylindrical color spaces (Oklch, CIE Lab/Lch, Jzazbz/Jzczhz, HSL, HSV).
+perceptual = ["oklab", "hdr-transfers"]
+# Committed CICP->ICC profile database (LZ4-compressed bundle).
 icc-db = ["dep:lz4_flex"]
-# CSS Color 4 string parser (`css` module and `ColorConvertExt::parse_css`).
-css = []
 std = ["zenpixels/std", "linear-srgb/std", "garb/std", "archmage/std", "magetypes/std", "magemath/std"]
-# SIMD transpose kernels (x86-64 AVX2 + aarch64 NEON + WASM SIMD128) behind
-# apply_orientation*. Enabled by default; disable (`default-features = false`)
-# when portable scalar tiled/blocked transposes suffice. Output is bit-identical.
+# SIMD transpose kernels behind orient::apply_orientation*.
 fast-transpose = []
-# Adds a v4x tier to the row kernels that measured at least 1.2x faster than v3 on Zen 4
-# (benchmarks/row_kernel_tiers_2026-11-04.md), which default builds leave out for size. Also
-# unlocks the f16 16-wide AVX-512F summon-up inside the V3 `F16Convert` slice
-# entry (magetypes' `avx512` kernels are cfg-gated on this; it transitively
-# brings `archmage/avx512` for the V4 token tier). The f16 forwarders in
-# f16_scalar.rs carry `v4(cfg(avx512))` to pick up the wider path; every other
-# `incant!` site in fast_gamut.rs explicitly drops v4 with `[-v4]` (those
-# kernels are hardwired 8-wide AVX2 — no clean 16-wide variant, so no `_v4` is
-# defined for them). x86 without this feature still gets 8-wide F16C; aarch64
-# gets NEON-fp16 regardless.
+# AVX-512F F16C & vector tiers.
 avx512 = ["magetypes/avx512", "archmage/avx512", "magemath/avx512", "linear-srgb/avx512"]
-# The same bits as native tiers on strict WASM and engines that round relaxed madd twice, using
-# software FMA: up to about 18x slower there. No effect on native targets, which always match.
+# Portable bit-exact FMA on strict WASM.
 precise-portable = ["linear-srgb/precise-portable"]
 rgb = ["zenpixels/rgb", "dep:rgb"]
 imgref = ["zenpixels/imgref", "rgb"]
-planar = ["zenpixels/planar"]
-# Experimental HDR analysis surface (gates `hdr::measure` — the `CllMeasure`
-# extension trait + `LightLevelHistogram` / `LightLevelMethod` + the SIMD
-# CLL scan kernel). The underlying scan + accuracy contracts are stable —
-# the gate covers expected pre-0.3.0 shape churn (the queued
-# `measure_robust` → `measure` rename when `zenpixels::ContentLightLevel`'s
-# deprecated 2-arg `measure` ships its 0.3.0 removal, plus potential trait-
-# vs-free-fn restructuring). Default-off; opt in with
-# `features = ["hdr-experimental"]` to access measurement until the API
-# locks at 0.3.0.
-hdr-experimental = ["oklab", "hdr-transfers"]
-# The BT.2446 Method A curve, 63,696 B of the HDR surface's 88,616 B at opt-level 3. Without it, tone mapping
-# takes an injected `ToneMapper`, and planning without one returns `NoPath`.
-bt2446a = ["hdr-experimental"]
+# Built-in ITU-R BT.2446 Method A HDR->SDR tone mapper.
+bt2446a = ["oklab", "hdr-transfers"]
+# Pure-Rust moxcms ICC CMS backend.
 cms-moxcms = ["std", "dep:moxcms"]
-# Pure-Rust Little CMS backend. The port is pinned while awaiting its release.
+# Pure-Rust lcms ICC CMS backend.
 cms-lcms = ["std", "dep:lcms"]
-# Bench-only: exposes `pub mod __bench_u16_hybrids` shims for
-# `bench_u16_hybrids`. Not intended for non-bench use; the production u16
-# RGB gamut path uses `convert_u16_rgb_simd_lutdec_polyenc` directly.
-__bench_u16_hybrids = []
-# Enable full SIMD acceleration by default for all ConvertPlan / RowConverter
-# and extension-trait conversions without needing `accel::enable_all()` at
-# startup. Default-off so library crates (codecs, pipelines) stay small and
-# never bloat WASM/lean consumers via Cargo feature unification; top-level
-# binaries, CLIs, servers, and benchmarks can enable `features = ["fast"]`
-# (or call `zenpixels_convert::accel::enable_all()` once at startup).
+# Enable full SIMD acceleration by default (default-off so library crates dead-strip unused SIMD).
 fast = []
-# Internal: enables runtime op tracing for in-repo tests. ConvertSteps
-# executed during convert_row are recorded to a thread-local buffer.
-# Off by default; the recording function compiles to an empty body when
-# disabled, keeping production builds zero-overhead. Requires `std`.
-# `__` prefix follows the same internal-API convention as
-# `__bench_u16_hybrids`. Not part of the stable public surface.
-__trace_ops = ["std", "fast"]
-# Bench-only: exposes the `orient::__bench_apply_orientation_*` shims so
-# `bench_orient` can A/B `apply_orientation` against the scalar `forward_map`
-# oracle. Decoupled from `fast-transpose` so the bench measures BOTH paths:
-# `--features __bench_orient` → scalar tiled gather; add `,fast-transpose` → SIMD
-# kernels. The staged shim + its parity test require both features. `__` prefix
-# keeps it out of the public-API snapshot.
-__bench_orient = []
-# Bench-only: exposes `pub mod __bench_scan` shims for
-# `bench_load_bearing`. Same convention as `__bench_u16_hybrids`.
-__bench_scan = []
-# Bench-only: exposes `pub mod __bench_float_depth` shims for
-# `bench_float_depth_and_bands`.
-__bench_float_depth = []
 
 [dependencies]
 enough = { version = "0.4.4", default-features = false }
@@ -142,244 +65,21 @@ linear-srgb = { version = "0.6.13", git = "https://github.com/imazen/linear-srgb
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
 rgb = { version = "0.8.53", default-features = false, features = ["bytemuck"], optional = true }
 garb = { version = "0.2.9", git = "https://github.com/imazen/garb", rev = "457ff8b9153e9d675a39dc098052b2ffeb6206fa", default-features = false }
-# Unified macros require the stable 0.9.33 release. SIMD types stay internal.
 archmage = { version = "0.9.33", default-features = false }
-# Direct libm dep for the hdr-experimental Bt2446A / HdrToSdr scalar paths
-# (powf, logf, log2f, cosf, sinf). The crate is no_std and already pulled in
-# transitively by magetypes; we depend on it directly so the math calls don't
-# reach across an unstable boundary.
 libm = { version = "0.2", default-features = false }
-# 0.9.25 adds the F16Convert trait: hardware f16<->f32 slice converters with
-# native F16C (x86-64-v3) AND NEON-fp16 (aarch64, rustversion-gated, MSRV-safe)
-# backends + a branchless software fallback — replacing this crate's bespoke
-# x86-only F16C dispatch (which fell back to scalar on aarch64).
-# Deliberately no `w512`: the `scan` predicates use 256-bit types (native
-# on AVX2, 2×128 polyfill below), and the 512-bit type set isn't worth its
-# compile-time cost without a stronger AVX-512 use case in this crate.
 magetypes = { version = "0.9.33", default-features = false }
 magemath = { version = "0.1.1", default-features = false }
 paste = { package = "pastey", version = "0.2.3" }
 once_cell = { version = "1.21.4", default-features = false, features = ["race", "alloc"] }
-# Pure-Rust LZ4 safe-decode for the bundled CICP->ICC profile blob. no_std
-# (block format only); decodes the standard LZ4 blocks emitted by the icc-gen
-# `cicp_bundle_gen` build tool. The `safe-decode` feature keeps us inside
-# `#![forbid(unsafe_code)]`.
 lz4_flex = { version = "0.14.0", default-features = false, features = ["safe-decode"], optional = true }
 whereat = { version = "0.1.5", default-features = false }
-# Require the released integer-rounding, ICC writing and LUT fixes.
-# Extended pure-gamma evaluation still needs the adapter range/sign guards.
 moxcms = { version = "0.9.2", optional = true, features = ["options", "extended_range"] }
 lcms = { version = "0.0.0", git = "https://github.com/imazen/lcms", rev = "55b59476cf64920345e9ca32eb3a4678bf0bbece", optional = true }
 
 [dev-dependencies]
-# Build-time ICC recipe writer, shared with the standalone generator. This
-# does not enable the optional production backend for consumers.
-lcms = { version = "0.0.0", git = "https://github.com/imazen/lcms", rev = "55b59476cf64920345e9ca32eb3a4678bf0bbece" }
-zenpixels = { workspace = true, features = ["imgref"] }
-# Self dev-dependency: these features unify into every test/bench build of
-# this crate, so plain `cargo test -p zenpixels-convert` (default features)
-# already compiles the lib WITH `cms-moxcms` and runs the `#[cfg(feature =
-# "cms-moxcms")]` unit tests — including the byte-identical gray-ICC gate
-# `icc_profiles::cicp_bundle::tests::gray_blob_decodes_byte_identical_to_moxcms`
-# (verified: it appears in `cargo test --lib -- --list` under default
-# features, imazen/zenpixels#40). Dropping `cms-moxcms` here would silently
-# remove those gates from CI.
-# Unit tests intentionally include the dev defaults. `default-features = false`
-# lets `--no-default-features` exercise the scalar transpose tiers without
-# `fast-transpose`; genuine normal-dependency `icc-db` isolation is checked by
-# tools/icc-collapse-no-db.
-zenpixels-convert = { path = ".", default-features = false, features = ["imgref", "cms-moxcms", "icc-db", "css", "perceptual"] }
+zenpixels = { workspace = true, features = ["imgref", "image"] }
 zenbench = { version = "0.1.11" }
-# DEV-only: lets benches/kernel_tiers.rs disable the baseline SIMD token (NEON
-# on aarch64) so the "scalar" arm is real. Feature unification applies this to
-# test/bench builds only, so consumers are unaffected.
 archmage = { version = "0.9.33", features = ["testable_dispatch"] }
-# Dev-only: cross-validate our local f16 impl (src/f16_scalar.rs) and drive
-# the perceptual-loss test suite, which uses half's f64 conversion paths.
 half = "2.7.1"
-palette = { version = "0.7", default-features = false, features = ["std", "approx"] }
-# Dev-only: pin the committed CICP bundle blob's sha256 (golden test) so an
-# accidental regen is caught. Not part of the shipped crate.
-sha2 = "0.11.0"
-# Dev-only: counts allocations for the HDR→SDR intermediate-buffer regression
-# gate (tests/hdr_sdr_alloc.rs, imazen/zenpixels#69). Only that test binary
-# references the crate, so only it gets the counting global allocator.
 allocation-counter = "0.8.1"
-
-# Allocation gate for `convert_to_sdr_measuring_peak`: the peak measurement must stream
-# through a scratch row, never a full-image F32 intermediate (#69). The trait
-# is behind `hdr-experimental`; CI runs it via the dedicated feature step.
-[[test]]
-name = "hdr_sdr_alloc"
-path = "tests/hdr_sdr_alloc.rs"
-required-features = ["bt2446a"]
-
-[[test]]
-name = "ycbcr_borrowed"
-path = "tests/ycbcr_borrowed.rs"
-required-features = ["planar"]
-
-[[test]]
-name = "native_canonical"
-path = "tests/native_canonical.rs"
-required-features = ["planar"]
-
-[[test]]
-name = "codes_alloc"
-path = "tests/codes_alloc.rs"
-required-features = ["planar"]
-
-[[test]]
-name = "precision_evidence"
-path = "tests/precision_evidence.rs"
-required-features = ["planar"]
-
-[[bench]]
-name = "bench_cms"
-path = "benches/bench_cms.rs"
-harness = false
-required-features = ["cms-moxcms"]
-
-[[bench]]
-name = "bench_cmyk8"
-path = "benches/bench_cmyk8.rs"
-harness = false
-required-features = ["cms-moxcms"]
-
-[[bench]]
-name = "bench_premul_u16"
-path = "benches/bench_premul_u16.rs"
-harness = false
-
-[[bench]]
-name = "bench_row_alignment"
-path = "benches/bench_row_alignment.rs"
-harness = false
-
-[[bench]]
-name = "bench_stride_aliasing"
-path = "benches/bench_stride_aliasing.rs"
-harness = false
-
-[[bench]]
-name = "bench_t1_layout"
-path = "benches/bench_t1_layout.rs"
-harness = false
-
-[[bench]]
-name = "bench_t2_depth"
-path = "benches/bench_t2_depth.rs"
-harness = false
-
-[[bench]]
-name = "bench_t3_tf_fused"
-path = "benches/bench_t3_tf_fused.rs"
-harness = false
-
-[[bench]]
-name = "bench_t4_tf_f32"
-path = "benches/bench_t4_tf_f32.rs"
-harness = false
-
-[[bench]]
-name = "bench_t5_alpha"
-path = "benches/bench_t5_alpha.rs"
-harness = false
-
-[[bench]]
-name = "bench_t6_oklab"
-path = "benches/bench_t6_oklab.rs"
-harness = false
-
-[[bench]]
-name = "bench_t7_gamut"
-path = "benches/bench_t7_gamut.rs"
-harness = false
-
-[[bench]]
-name = "bench_load_bearing"
-path = "benches/bench_load_bearing.rs"
-harness = false
-required-features = ["__bench_scan"]
-
-[[bench]]
-name = "bench_matlut_vs_poly"
-path = "benches/bench_matlut_vs_poly.rs"
-harness = false
-
-[[bench]]
-name = "bench_hlg_regress"
-path = "benches/bench_hlg_regress.rs"
-harness = false
-
-[[bench]]
-name = "bench_pq_anchor"
-path = "benches/bench_pq_anchor.rs"
-harness = false
-
-[[bench]]
-name = "bench_u16_encode"
-path = "benches/bench_u16_encode.rs"
-harness = false
-
-[[bench]]
-name = "bench_u16_hybrids"
-path = "benches/bench_u16_hybrids.rs"
-harness = false
-required-features = ["__bench_u16_hybrids"]
-
-# u16→u8 narrowing kernel shootout (#72): garb's inexact kernel vs the
-# exact local candidates, every arm exhaustively cross-checked first.
-[[bench]]
-name = "bench_u16_narrow"
-path = "benches/bench_u16_narrow.rs"
-harness = false
-
-[[bench]]
-name = "bench_codes"
-path = "benches/bench_codes.rs"
-harness = false
-required-features = ["planar"]
-
-[[bench]]
-name = "bench_sdr_u16_lut"
-path = "benches/bench_sdr_u16_lut.rs"
-harness = false
-
-[[bench]]
-name = "bench_orient"
-path = "benches/bench_orient.rs"
-harness = false
-required-features = ["__bench_orient"]
-
-# TODO: restore when ZenCmsLite is public
-# [[bench]]
-# name = "bench_fast_p3"
-# path = "benches/bench_fast_p3.rs"
-# harness = false
-# required-features = ["cms-moxcms"]
-
-[[example]]
-name = "measure_histogram_throughput"
-path = "examples/measure_histogram_throughput.rs"
-required-features = ["bt2446a"]
-
-[[bench]]
-name = "row_kernel_tiers"
-harness = false
-
-[[bench]]
-name = "kernel_tiers"
-harness = false
-required-features = ["__bench_scan"]
-
-[[bench]]
-name = "bench_float_depth_and_bands"
-path = "benches/bench_float_depth_and_bands.rs"
-harness = false
-required-features = ["__bench_float_depth"]
-
-[[bench]]
-name = "bench_4k_paths"
-path = "benches/bench_4k_paths.rs"
-harness = false
+sha2 = "0.11.0"

@@ -1,14 +1,10 @@
-//! HDR metadata types.
+//! HDR metadata and luminance anchor types.
 //!
-//! Pure data types for HDR content description. These travel with pixel
-//! data alongside [`Cicp`](crate::Cicp) and [`ColorContext`](crate::ColorContext).
+//! Pure data types for HDR content description, diffuse white anchors,
+//! explicit HLG display rendering conditions, and peak luminance sources.
 //!
-//! For tone mapping and HDR processing functions, see
-//! [`zenpixels-convert::hdr`](https://docs.rs/zenpixels-convert/latest/zenpixels_convert/hdr/).
-//!
-//! For SOTA content-light-level measurement (MaxCLL / MaxFALL — histogram-
-//! based, percentile-aware, SIMD-accelerated), see the `measure` module
-//! and the `CllMeasure` extension trait in `zenpixels-convert`.
+//! For tone mapping, gamut compression, and content light-level measurement,
+//! see `zenpixels_convert::tonemap` and `zenpixels_convert::measure`.
 
 /// The absolute luminance, in cd/m² (nits), that a relative-linear sample
 /// value of `1.0` represents — the "diffuse white" (a.k.a. nominal diffuse
@@ -131,17 +127,21 @@ impl core::hash::Hash for Nits {
     }
 }
 
-/// How to obtain the source peak for HDR tone mapping.
+/// How an image-level conversion obtains the source peak for HDR tone mapping.
+///
+/// Row-only plans accept an explicit `Option<Nits>` instead of `PeakSource`,
+/// making it a compile-time error to request [`PeakSource::Measured`] on a
+/// single-row converter.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum HdrPeak {
-    /// Measure the current buffer's peak. Row plans need an explicit measurement.
+pub enum PeakSource {
+    /// Streamingly measure the image's peak luminance in O(1) row memory.
     #[default]
     Measured,
-    /// Use the source peak declared in its color context; refuse if absent.
+    /// Use the source peak declared in [`HdrMetadata`](crate::HdrMetadata); refuse if absent.
     Declared,
-    /// Use this explicit peak instead of measuring or consulting metadata.
-    Nits(Nits),
+    /// Use this explicit peak instead of measuring or consulting container metadata.
+    Fixed(Nits),
 }
 
 /// HDR content light level metadata (CEA-861.3 / CTA-861-H / ITU-T H.274 §8.10).

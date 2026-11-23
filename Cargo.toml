@@ -1,19 +1,21 @@
 [workspace]
-members = ["zenpixels", "zenpixels-convert", "scripts/icc-gen"]
-# `apidoc/` is the CI-free public-API snapshot runner: excluded so plain
-# `cargo test` and CI never compile its zenutils-apidoc dependency tree.
-# Regenerate snapshots via `just api-doc`.
-# `benchmarks/transpose-shootout/` is dev-box-only measurement equipment
-# (external transpose crates + optional C++ Simd FFI) — never built by CI/tests.
-# `cms-contract/` compares the production CMS backends; `just cms-contract`.
-exclude = ["benchmarks/pixel-hash", "zenpsy-api", "benchmarks/moxcms-gamma", "site/converter-wasm", "apidoc", "benchmarks/transpose-shootout", "cms-contract", "tools/icc-collapse-no-db"]
+members = ["zenpixels", "zenpixels-convert"]
+exclude = [
+    "scripts/icc-gen",
+    "benchmarks/pixel-hash",
+    "zenpsy-api",
+    "benchmarks/moxcms-gamma",
+    "site/converter-wasm",
+    "apidoc",
+    "benchmarks/transpose-shootout",
+    "cms-contract",
+    "tools/icc-collapse-no-db",
+]
 resolver = "2"
 
 [workspace.dependencies]
-zenpixels = { path = "zenpixels", version = "0.4.0", default-features = false }
+zenpixels = { path = "zenpixels", version = "0.5.0", default-features = false }
 
-# NOTE: no shared `version` here on purpose — each member declares its own
-# version (they release independently), so a workspace-level one only rots.
 [workspace.package]
 edition = "2024"
 rust-version = "1.85"
@@ -21,8 +23,6 @@ license = "Apache-2.0 OR MIT"
 repository = "https://github.com/imazen/zenpixels"
 categories = ["multimedia::images"]
 
-# Intermediate garb 0.2.9 and linear-srgb 0.6.13 source revisions until published;
-# archmage 0.9.33, magetypes 0.9.33, and magemath 0.1.1 resolve from crates.io.
 [patch.crates-io]
 garb = { git = "https://github.com/imazen/garb", rev = "457ff8b9153e9d675a39dc098052b2ffeb6206fa" }
 linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "ae83f19426737635fee3dd16f228681019f52585" }
