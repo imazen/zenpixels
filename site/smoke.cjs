@@ -161,11 +161,15 @@ if (!url) throw new Error('Pass the served site URL');
       if (teachingPath === 'transfers.html') {
         assert((await teaching.locator('#svg-eotf polyline').count()) >= 5, 'transfers.html EOTF polylines missing');
         assert((await teaching.locator('#svg-density polyline').count()) >= 5, 'transfers.html density polylines missing');
+        assert.equal(await teaching.locator('#hlg-coupled-grid .hlg-cell').count(), 4, 'transfers.html HLG coupled grid missing');
         for (const mode of ['hdr', 'ext', 'sdr']) {
           await teaching.locator(`.mode-btn[data-mode="${mode}"]`).click();
-          const minCurves = mode === 'ext' ? 3 : 6;
+          const minCurves = mode === 'ext' ? 3 : 5;
           assert((await teaching.locator('#svg-eotf polyline').count()) >= minCurves, `transfers.html mode=${mode}`);
         }
+        await teaching.locator('.hlg-pbtn[data-lw="2000"]').click();
+        assert.equal(await teaching.locator('#hlg-peak-val').innerText(), '2000');
+        await teaching.locator('.hlg-pbtn[data-lw="1000"]').click();
         const combos = [
           { sf: 'RGB8', stf: 'Srgb', sp: 'Bt709', df: 'RGBF32', dtf: 'Linear', dp: 'Bt709', gp: 'Clip', dpol: 'Round', ap: 'web_sdr' },
           { sf: 'RGB8', stf: 'Srgb', sp: 'DisplayP3', df: 'OKLABF32', dtf: 'Linear', dp: 'Bt709', gp: 'Clip', dpol: 'Round', ap: 'custom' },
@@ -184,6 +188,18 @@ if (!url) throw new Error('Pass the served site URL');
           await teaching.selectOption('#accel-pol', c.ap);
           extraRustExamples.push(await teaching.evaluate(() => window.getTransferRustCode()));
         }
+        // Also verify custom HlgRendering (2000 nit HDR TV) + HLG -> PQ codegen compiles and runs!
+        await teaching.locator('.hlg-pbtn[data-lw="2000"]').click();
+        await teaching.selectOption('#src-fmt', 'RGB16');
+        await teaching.selectOption('#src-tf', 'Hlg');
+        await teaching.selectOption('#dst-fmt', 'RGB16');
+        await teaching.selectOption('#dst-tf', 'Pq');
+        await teaching.selectOption('#dst-prim', 'Bt2020');
+        await teaching.selectOption('#gamut-pol', 'Clip');
+        await teaching.selectOption('#depth-pol', 'Round');
+        const hlgPqCode = await teaching.evaluate(() => window.getTransferRustCode());
+        assert.match(hlgPqCode, /HlgRendering::new\(Nits::new\(2000\.0\)/);
+        extraRustExamples.push(hlgPqCode);
       }
       if (teachingPath === 'color-hdr.html') {
         assert((await teaching.locator('#svg-cie polygon').count()) >= 5, 'color-hdr.html CIE polygons missing');

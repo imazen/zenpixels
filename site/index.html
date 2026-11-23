@@ -417,7 +417,7 @@ footer { color: var(--muted); font-size: .82rem; padding: 10px 0 40px; display: 
         <div class="field"><label for="hlg-black">Display black (nits)</label><input id="hlg-black" type="number" value="0" min="0" step="any"></div>
         <div class="field"><label for="hlg-gamma">Effective system gamma</label><input id="hlg-gamma" type="number" value="1.2" min="0.5" max="3" step="any"></div>
       </div>
-      <p>Checking the box explicitly selects the displayed conditions. Gamma includes the caller’s surround assumption. HLG ICC synthesis remains unavailable.</p>
+      <p>Checking the box explicitly selects the displayed conditions. Gamma includes the caller’s surround assumption. HLG ICC synthesis remains unavailable. <a href="transfers.html#h-hlg-web">Explore HLG display presets, black lift &amp; coupled OOTF →</a></p>
     </fieldset>
     <p>WASM uses native little-endian samples. The source's displayed byte order is a viewing choice. PQ conversion requires an explicit white anchor. This row converter also needs source and target peaks for tone mapping; whole-buffer conversion can measure the source peak. HLG rendering requires explicit display peak, black, effective gamma and SDR white; supported endpoints use full-range BT.2020 RGB/RGBA. Enable it below. The model uses the PQ anchor selected above. CMYK needs an ICC profile, which this simulator does not supply. General signed/wide numerical conversions are refused; exact code reading is shown in the storage examples.</p>
     <div id="wasm-status" class="note" role="status">Loading optional WASM converter…</div>

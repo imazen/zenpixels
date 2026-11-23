@@ -183,7 +183,7 @@ footer { color: var(--muted); font-size: .82rem; padding-top: 26px; display: gri
         </article>
         <article class="card" style="--c:var(--c-hlg)">
           <h3><code>HlgRendering</code> (BT.2100-3 display OOTF)</h3>
-          <p>HLG is scene-referred. Rendering HLG to display light needs explicit <code>peak</code> (Lw), <code>black</code> (Lb), and system <code>gamma</code> (e.g. <code>HlgRendering::REFERENCE_1000_NIT</code>). Display peak is <em>not</em> reused as content peak — HLG→SDR still takes explicit <code>with_hdr_peak</code>.</p>
+          <p>HLG is display-adaptive and <strong>channel-coupled</strong> (<code>Y<sub>s</sub><sup>γ−1</sup>·RGB<sub>s</sub></code>), so browsers and monitors render it differently by screen peak <code>L<sub>w</sub></code>, black <code>L<sub>b</sub></code>, and gamma <code>γ</code>. Pass explicit <code>HlgRendering</code> (e.g. <code>REFERENCE_1000_NIT</code>, where 75% signal = 203 nits); display peak is <em>not</em> reused as content peak, and HLG ICC synthesis is refused. <a href="transfers.html#h-hlg-web">Explore HLG display presets &amp; coupled OOTF →</a></p>
         </article>
       </div>
     </div>
