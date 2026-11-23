@@ -65,6 +65,8 @@ pub use accel::Accelerators;
 #[cfg(feature = "cms-moxcms")]
 pub use cms::MoxCms;
 pub use cms::{CmsBackend, CmsTransform};
+#[cfg(feature = "cms-lcms")]
+pub use cms::{Lcms, LcmsUnoptimized};
 pub use error::ConvertError;
 pub use gainmap::{apply_gain_map, extract_gain_map};
 pub use gamut::GamutMatrix;
