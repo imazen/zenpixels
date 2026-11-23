@@ -3,9 +3,14 @@
 The [published explorer](https://imazen.github.io/zenpixels/) lets you inspect
 samples, channels, byte order, row stride and actual conversion routes.
 The [pixel types guide](https://imazen.github.io/zenpixels/guide.html) starts with
-an owned image, a borrowed image/subimage view and a descriptor. Its canonical
-source is [docs/guide.md](../docs/guide.md); rustdoc renders the HTML, so examples
-and the published guide share one source.
+an owned image, a borrowed image/subimage view and a descriptor. It links to
+[balancing speed and light compilation](https://imazen.github.io/zenpixels/speed-and-size.html)
+and the [plain-English ELI5 mental model](https://imazen.github.io/zenpixels/eli5.html).
+Their canonical sources are [docs/guide.md](../docs/guide.md),
+[docs/speed-and-size.md](../docs/speed-and-size.md), and
+[docs/eli5.md](../docs/eli5.md); rustdoc renders the HTML and
+`scripts/check-guide.py` compiles and runs their Rust examples against the local
+crates.
 
 ## Build
 

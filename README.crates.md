@@ -5,12 +5,14 @@
 Pixel types for Rust image code. Keep samples, dimensions, stride and color
 meaning together.
 
-**Start with the [pixel types guide](https://imazen.github.io/zenpixels/guide.html).**
-It goes from owning an image to borrowing a subimage, then covers color,
-conversion and native samples. The [interactive explorer](https://imazen.github.io/zenpixels/)
-shows the bytes and runs the real converter.
+**New here? Pick your entry point:**
 
-This is the **unpublished 0.4.0 candidate**. The guide follows this source;
+- **[Pixel types guide](https://imazen.github.io/zenpixels/guide.html)** — own an image, borrow a cropped subimage, and convert pixels in 5 minutes.
+- **[Balance speed and light compilation](https://imazen.github.io/zenpixels/speed-and-size.html)** — keep library and Wasm builds light with the universal scalar core, then opt into SIMD with `accel` and `const Accelerators`.
+- **[Plain-English ELI5 mental model](https://imazen.github.io/zenpixels/eli5.html)** — how `garb`, `linear-srgb`, `zenpixels`, and `zenpixels-convert` fit together, plus real-world gotchas.
+- **[Interactive byte explorer](https://imazen.github.io/zenpixels/)** — inspect bytes, strides, and live conversion plans in your browser.
+
+This is the **unpublished 0.4.0 candidate**. The guides follow this source;
 [docs.rs](https://docs.rs/zenpixels) describes the published crate. Publication
 still requires release approval.
 
@@ -24,8 +26,7 @@ use zenpixels::{PixelBuffer, PixelDescriptor};
 
 let decoded = vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
 let image = PixelBuffer::from_vec(decoded, 2, 2, PixelDescriptor::RGB8_SRGB)?;
-let view = image.as_slice();
-let right_column = view.crop_view(1, 0, 1, 2);
+let right_column = image.crop_view(1, 0, 1, 2);
 
 assert_eq!(right_column.width(), 1);
 assert_eq!(right_column.stride(), image.stride()); // Parent stride: six bytes.
@@ -33,22 +34,25 @@ assert_eq!(right_column.row(0), &[0, 255, 0]);      // Only the cropped pixel.
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-No pixels are copied when you borrow or crop. For a fresh zero-filled image,
-use `PixelBuffer::try_new(width, height, descriptor)`.
+No pixels are copied when you borrow or crop. Take crops directly from the
+buffer (`image.crop_view(...)`) or bind `let view = image.as_slice();` first
+(`slice.crop_view(...)` borrows the slice, not the buffer). For a fresh
+zero-filled image, use `PixelBuffer::try_new(width, height, descriptor)`.
 
 ## Two crates
 
 ```toml
-# Storage, views and descriptions
-zenpixels = "0.3.1"
+# Storage, views and descriptions (lightweight — use in codecs and libraries)
+zenpixels = "0.4.0"
 
-# Conversion; also re-exports the core types
-zenpixels-convert = "0.3.1"
+# Conversion; re-exports zenpixels::* (apps usually depend on this one crate;
+# also add `zenpixels` directly if you import `zenpixels::hdr::*` anchor types)
+zenpixels-convert = "0.4.0"
 ```
 
-zenpixels describes and carries samples. zenpixels-convert changes sample
-values: transfer curves, gamut, depth, layout, alpha and explicit HDR rendering.
-Both support `no_std + alloc` and forbid unsafe code.
+`zenpixels` describes and carries samples. `zenpixels-convert` changes sample
+values: transfer curves, gamut, depth, layout, alpha, Oklab, and explicit HDR
+rendering. Both support `no_std + alloc` and forbid unsafe code.
 
 ## Pixel buffers and views
 
@@ -58,7 +62,7 @@ Both support `no_std + alloc` and forbid unsafe code.
 | Allocate a zero-filled image | `PixelBuffer::try_new` |
 | Allocate aligned storage with padded rows | `PixelBuffer::<(), AlignedSamples<u8>>::try_new_aligned` |
 | Borrow someone else's storage | `PixelSlice::new` |
-| Borrow a rectangular subimage | `crop_view` |
+| Borrow a rectangular subimage | `buffer.crop_view` (or `slice.crop_view` on a bound slice) |
 | Borrow full-width rows | `sub_rows` on a view; `rows` on a buffer |
 | Write pixels | `as_slice_mut().row_mut(y)` |
 | Copy a view into packed owned storage | `try_to_tight_buffer` |
@@ -82,7 +86,7 @@ packed or make a fallible packed copy otherwise.
 For separate Y/Cb/Cr or RGB planes, `plane::PlanarBuffer` adopts existing
 allocations and lends `PlanarSlice` / `PlanarSliceMut` without copying pixels or
 allocating descriptors. Each plane keeps its own stride and sample encoding;
-see [planar storage](docs/planar-types.md).
+see [planar storage](https://github.com/imazen/zenpixels/blob/main/docs/planar-types.md).
 
 ## Type system
 
@@ -113,15 +117,19 @@ general signed/wide numerical conversion remains unsupported. See the
 - `SampleEncoding` describes native integer code depth and bit placement.
   `CodePlane` reads U8/U16 component codes from typed planes. Ten-bit white 1023
   is not ordinary full-range U16 white 65535: canonicalization is explicit.
-- `ExactDepth` is evidence about the **current** U8/U16 code grid. Mutable
-  access invalidates it. Original source depth is not a lossless-output proof.
+- `ExactDepth` is evidence about the **current** U8/U16 code grid; `sample::FloatFacts`
+  tracks 6 orthogonal `f32` invariants (`NO_NAN`, `NO_INFINITE`, `NO_SUBNORMALS`,
+  `NON_NEGATIVE`, `POSITIVE`, `AT_MOST_ONE`) measured via `FloatFacts::measure(&slice)`
+  and attached with `with_float_facts(...)`. Mutable access invalidates cached evidence.
+  Original source depth is not a lossless-output proof.
 
 `plane::Plane` carries a strided sample plane. `PlanarLayout` / `PlanarSlice`
 combine validated roles, geometry and interpretation. The old `planar` module
-is removed; its feature spelling remains a no-op. Native code extraction is
-separate from chroma reconstruction, range expansion and color conversion.
+is removed; its feature spelling enables the new `plane` module and `CodePlane`.
+Native code extraction is separate from chroma reconstruction, range expansion
+and color conversion.
 
-## Conversion
+## Conversion & light-build SIMD opt-in
 
 ```rust
 use zenpixels_convert::{PixelBuffer, PixelDescriptor, PixelSliceConvertExt};
@@ -132,21 +140,39 @@ assert_eq!(linear.descriptor(), PixelDescriptor::RGBF32_LINEAR);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Build a `ConvertPlan` from source and target encodings. Prepare it for the
-maximum row width, or use `OutputPlan` to derive the conversion and encoder
-metadata together. `EncodeReady::from_owned` can reuse the source allocation
-for identity output. Known descriptor-based conversions use the native
-kernels. Arbitrary ICC transforms need a selected backend and HDR
-rendering needs explicit luminance and rendering conditions.
+By default, `zenpixels-convert` runs every valid native pair through a compact,
+zero-scratch universal fast-FMA scalar core (bit-for-bit identical to native
+SIMD) so libraries and Wasm stay lean. Applications turn on SIMD with one call
+(`zenpixels_convert::accel::enable_all()`) or selectively with `const Accelerators`
+helpers (`Accelerators::WEB_SDR`, `Accelerators::LAYOUT`, `.with_*()`). See
+**[Balancing speed and light compilation](https://imazen.github.io/zenpixels/speed-and-size.html)**
+for binary sizes and recipes.
 
-Choose permitted sample changes with `ConvertOptions` or use
-`ConversionSpec::preserve_samples()` to require exact representation changes.
-For large images, `banded::BandedPixelBuffer` and the optional plane carriers
-cap individual allocations while retaining 64-bit frame geometry. Prepared
-converters can read and write packed bands with different heights.
+Build a `ConvertPlan` from source and target encodings, prepare it once for
+the max row width, and run rows or whole buffers/views/bands via
+`converter.convert(&src, &mut dst)`. Use `OutputPlan` + `EncodeReady::from_owned`
+to derive conversion and matching encoder metadata together (reusing the source
+allocation on identity).
 
 [Conversion guide](https://github.com/imazen/zenpixels/blob/main/zenpixels-convert/README.md) ·
+[Speed & light builds](https://imazen.github.io/zenpixels/speed-and-size.html) ·
+[Plain-English ELI5](https://imazen.github.io/zenpixels/eli5.html) ·
 [Design contracts](https://github.com/imazen/zenpixels/blob/main/docs/design-reference.md)
+
+## Upgrading from 0.2.x to 0.4.0
+
+- **Conversion entry points:** `RowConverter::new` / `new_explicit` are replaced by
+  `ConvertPlan::build(src.encoding(), dst.encoding(), &spec)?.prepare(max_width)?`
+  (or `ConvertPlan::select` for codec negotiation).
+- **Opt-in SIMD:** Call `zenpixels_convert::accel::enable_all()` once at startup
+  in apps/CLIs/servers (or pass `ConversionSpec::with_accelerators(&...)` using
+  `const Accelerators` helpers) so codecs stay light without losing SIMD speed.
+- **Explicit HDR & ICC:** Arbitrary ICC transforms require `.with_cms(&MoxCms)` /
+  `.with_cms(&Lcms)`. HDR→SDR tone mapping requires explicit anchors
+  (`zenpixels::hdr::{Nits, DiffuseWhite, HdrPeak, HlgRendering}`) and
+  `features = ["bt2446a"]`.
+- **Perceptual formats:** Cylindrical/perceptual spaces (`Oklch`, `Lch`, `Jzazbz`,
+  `Jzczhz`, `Hsl`, `Hsv`) are now behind the opt-in `perceptual` feature.
 
 ## Allocation and ownership
 
@@ -171,6 +197,7 @@ Reusing pixel storage is not a promise that every operation allocates nothing.
 | `hash` | Pixel `Hash` and configurable inclusions via zenhash; requires Rust 1.89 |
 | `allocator_api` | Allocator-parameterized storage on supported compilers |
 | `planar` | Multi-plane buffers (`PlanarBuffer`, `PlanarSlice`), `Plane`, and N-bit `CodePlane` |
+| `perceptual` | Default-off; enables perceptual/cylindrical variants (`Oklch`, `Lch`, `Jzazbz`, `Jzczhz`, `Hsl`, `Hsv`) |
 
 The converter's [feature list](https://github.com/imazen/zenpixels/blob/main/zenpixels-convert/README.md#features)
 covers the ICC database, CSS parser, CMS backends, interop and HDR options.

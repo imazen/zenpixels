@@ -10,10 +10,11 @@
 //!   overhead and zero per-carrier monomorphization of row kernels.
 //! - Multi-band and mixed `(Single <-> Banded)` calls stream across band intersections
 //!   with zero whole-frame intermediate allocation.
-//! - Owned destinations (`&mut PixelBuffer`, `&mut BandedPixelBuffer`) and borrowed
-//!   mutable views (`&mut PixelSliceMut`) receive updated [`ColorContext`](zenpixels::ColorContext)
-//!   and sample evidence (`ExactDepth`, `FloatFacts`) on success, and remain untouched
-//!   when preflight validation fails.
+//! - Owned destinations (`&mut PixelBuffer`, `&mut BandedPixelBuffer`) receive updated
+//!   [`ColorContext`](zenpixels::ColorContext) and sample evidence (`ExactDepth`,
+//!   `FloatFacts`) on success. Borrowed mutable views (`&mut PixelSliceMut`) receive
+//!   updated [`ColorContext`](zenpixels::ColorContext) only (sample evidence lives on
+//!   owned buffers). Both remain untouched when preflight validation fails.
 
 use alloc::sync::Arc;
 use whereat::At;

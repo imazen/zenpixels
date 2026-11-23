@@ -1,12 +1,15 @@
 # zenpixels-convert [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenpixels/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenpixels/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/zenpixels-convert?style=flat-square)](https://crates.io/crates/zenpixels-convert) [![lib.rs](https://img.shields.io/crates/v/zenpixels-convert?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/zenpixels-convert) [![docs.rs](https://img.shields.io/docsrs/zenpixels-convert?style=flat-square)](https://docs.rs/zenpixels-convert) [![MSRV](https://img.shields.io/badge/MSRV-1.89-blue?style=flat-square)](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field) [![license](https://img.shields.io/crates/l/zenpixels-convert?style=flat-square)](#license)
 
 Convert pixel samples while keeping their description and output metadata in
-agreement. This crate re-exports zenpixels, so most applications need just this
-one dependency.
+agreement. This crate re-exports `zenpixels::*`, so most applications need just
+this one dependency.
 
-New to the types? Start with the [image and subimage guide](https://imazen.github.io/zenpixels/guide.html).
-Use the [interactive explorer](https://imazen.github.io/zenpixels/) to inspect
-bytes and try actual conversion routes.
+**Start with the guides:**
+
+- **[Pixel types guide](https://imazen.github.io/zenpixels/guide.html)** — own buffers, borrow crops, and convert rows.
+- **[Balance speed and light compilation](https://imazen.github.io/zenpixels/speed-and-size.html)** — how `accel` and `const Accelerators` keep builds light while unlocking full SIMD.
+- **[Plain-English ELI5 mental model](https://imazen.github.io/zenpixels/eli5.html)** — core concepts and real-world gotchas.
+- **[Interactive byte explorer](https://imazen.github.io/zenpixels/)** — inspect bytes and run live converter plans in your browser.
 
 ## Install
 
@@ -15,6 +18,11 @@ These examples follow the **unpublished 0.4.0 candidate**. The
 
 ```toml
 zenpixels-convert = "0.4.0"
+
+# Also add `zenpixels` directly if you import HDR anchor types
+# (`zenpixels::hdr::{Nits, DiffuseWhite, HdrPeak, HlgRendering}` —
+# `zenpixels_convert::hdr` is a separate module that shadows `zenpixels::hdr`):
+# zenpixels = "0.4.0"
 ```
 
 ## Quick start
@@ -38,7 +46,7 @@ assert_eq!(linear.descriptor(), PixelDescriptor::RGBF32_LINEAR);
 The crop borrows the parent's storage and stride. The conversion creates a new
 output buffer. Changing a descriptor alone would not perform this conversion.
 
-## Convert rows with explicit options
+## Convert rows, views, buffers, or bands with explicit options
 
 Build the converter once. `prepare` reserves built-in scratch and initializes
 selected tables before the loop. Rows may come from a crop or padded storage:
@@ -69,7 +77,45 @@ for y in 0..source.height() {
 Within prepared capacity, built-in row execution needs no new scratch
 allocation. CMS backends have their own preparation contract. Execution validates
 row extents/alignment before writes; a backend failure may leave partial output.
-Use `try_clone()` for a fallible independent converter worker.
+Use `try_clone()` for a fallible independent converter worker, or pass whole
+views/buffers/bands directly to `converter.convert(&src, &mut dst)` (`PackedSource`
+/ `PackedSink`: `&PixelSlice`, `&PixelBuffer`, `&BandedPixelBuffer` → `&mut PixelSliceMut`,
+`&mut PixelBuffer`, `&mut BandedPixelBuffer`). Owned sinks receive updated
+`ColorContext` and sample evidence (`ExactDepth`/`FloatFacts`); `&mut PixelSliceMut`
+receives updated `ColorContext` only.
+
+## Balance speed and light compilation (`accel` & `const Accelerators`)
+
+By default, every native conversion runs through a compact, zero-scratch
+**universal fast-FMA scalar core** that is bit-for-bit identical to the
+x86-64/AArch64 SIMD kernels, so libraries and Wasm builds never pay for unused
+SIMD tables. Opt into SIMD at whichever granularity fits your crate:
+
+```rust
+use zenpixels_convert::{Accelerators, ConversionSpec, ConvertOptions};
+
+// 1. One-liner for apps, CLIs, servers, and benchmarks (process-wide):
+zenpixels_convert::accel::enable_all();
+
+// 2. Selective opt-in (unused SIMD kernels dead-strip to 0 B):
+zenpixels_convert::accel::enable_web_sdr(); // or enable_layout/srgb/float/gamut/hdr/oklab
+
+// 3. Per-spec const helper (zero global state; ignores global registry):
+const SDR_AND_OKLAB: Accelerators = Accelerators::WEB_SDR.with_oklab();
+let fast   = ConversionSpec::fast(ConvertOptions::retain_channels());
+let scoped = ConversionSpec::new(ConvertOptions::retain_channels())
+    .with_accelerators(&SDR_AND_OKLAB);
+let scalar = ConversionSpec::new(ConvertOptions::retain_channels())
+    .with_accelerators(&Accelerators::SCALAR); // hermetic parity testing
+# let _ = (fast, scoped, scalar);
+```
+
+Top-level binaries can alternatively enable the default-off Cargo feature `fast`
+(library crates should never enable `fast`). Attach measured or proven float
+bounds via `ConversionSpec::with_float_facts(FloatFacts::measure(&slice)?)` and
+inspect propagated guarantees with `plan.output_float_facts()`. Read the
+**[Speed and light compilation guide](https://imazen.github.io/zenpixels/speed-and-size.html)**
+for measured binary sizes, feature budgets, and workload recipes.
 
 ## Choose what may change
 
@@ -78,6 +124,11 @@ Use `try_clone()` for a fallible independent converter worker.
 - `ConversionSpec::preserve_samples()` admits proven reversible representation
   changes. Provide source interpretation for unknown transfer or request a
   relabel when you know the actual interpretation.
+- **Wide-gamut Oklab roundtrips:** `PixelDescriptor::OKLABF32` defaults to
+  BT.709 primaries (with `transfer: Unknown`). When roundtripping Display P3 or
+  BT.2020 through Oklab, set matching primaries on the Oklab descriptor
+  (`PixelDescriptor::OKLABF32.with_primaries(ColorPrimaries::DisplayP3)`) so
+  saturated colors stay bit-exact instead of clipping to BT.709.
 - `ConvertPlan::select` returns a candidate index and an executable plan.
   `ConvertPlan::then` preserves the samples and interpretation at a materialized
   boundary, including intermediate quantization.
@@ -101,7 +152,8 @@ let plan = OutputPlan::build(
     &ConversionSpec::preserve_samples(),
 )?;
 let ready = EncodeReady::from_owned(source, plan)?;
-assert_eq!(ready.pixels().descriptor().pixel_format(), PixelFormat::Rgb16);
+let view = ready.pixels();
+assert_eq!(view.descriptor().pixel_format(), PixelFormat::Rgb16);
 assert_eq!(ready.metadata().cicp, Some(Cicp::SRGB));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
@@ -123,11 +175,23 @@ for you. Metadata-only ICC recognition does not authorize substitution.
 YCbCr matrices or expand limited-range codes. Unsupported synthesis reports
 its refusal. HLG ICC synthesis remains unsupported.
 
-Relative/absolute light conversions need an explicit white anchor. Display HLG
-rendering needs explicit display peak, black and effective gamma; an opt-in
-named reference preset is available. Tone mapping also needs an explicit
-rendering policy and appropriate peak inputs. Source metadata does not silently
-select a display. [HDR contract](https://github.com/imazen/zenpixels/blob/main/docs/hdr-anchor-api-design.md).
+Explicit HDR rules:
+
+- **Import path:** `Nits`, `DiffuseWhite`, `HdrPeak`, and `HlgRendering` live in
+  `zenpixels::hdr` (depend on `zenpixels` directly; `zenpixels_convert::hdr`
+  shadows that module name).
+- **Feature gate:** Built-in HDR→SDR tone mapping requires
+  `features = ["bt2446a"]` (or an injected feature-gated `ToneMapper`); without
+  it, explicit HDR→SDR plans fail with `ConvertError::HdrFeatureRequired`.
+- **Plan vs. buffer peaks:** `ConvertPlan::build` / `RowConverter` see encodings
+  only and require concrete `HdrPeak::Nits(...)` (`HdrPeak::Measured` /
+  `Declared` resolve only on buffer-level entry points that see pixel data).
+- **HLG→SDR:** `with_hlg_rendering(HlgRendering::REFERENCE_1000_NIT)` supplies
+  the OOTF shape only; you must still set `with_sdr_white(...)`,
+  `with_hdr_peak(HdrPeak::Nits(...))`, and `with_sdr_peak(...)`
+  (`HlgRendering.peak()` is not reused as the content peak).
+- Source metadata never silently selects a display.
+  [HDR contract](https://github.com/imazen/zenpixels/blob/main/docs/hdr-anchor-api-design.md).
 
 Native integer code extraction is separate from color conversion.
 `codes::to_canonical` handles supported component encodings; generic signed/wide
@@ -139,6 +203,11 @@ storage does not grant numerical conversion support.
 |---|---|
 | `std` | Default; omit for `no_std + alloc` |
 | `fast-transpose` | Default; runtime-dispatched SIMD orientation kernels |
+| `oklab` | Default; Oklab conversions and soft gamut compression |
+| `hdr-transfers` | Default; PQ/HLG transfer curves and HLG display rendering |
+| `perceptual` | Default-off; closed-form `Oklch`, `Lch`, `Jzazbz`, `Jzczhz`, `Hsl`, `Hsv` (forwards to `zenpixels/perceptual`) |
+| `fast` | Default-off (binaries only); defaults plans to `Accelerators::ALL` without calling `accel::enable_all()` |
+| `precise-portable` | Default-off; single-rounding software FMA on non-fusing WASM engines |
 | `icc-db` | Qualified CICP-to-ICC recipes with lazy group decoding |
 | `css` | CSS Color 4 string parser (`css` module and `ColorConvertExt::parse_css`) |
 | `planar` | Planar YCbCr conversion, N-bit code extraction, and plane orientation |
@@ -146,10 +215,14 @@ storage does not grant numerical conversion support.
 | `rgb`, `imgref` | Core typed-pixel and imgref interop |
 | `introspection` | Opt-in compiled step, accuracy and dispatch diagnostics |
 | `avx512` | Opt-in wider row-kernel tiers |
-| `hdr-experimental`, `bt2446a` | HDR measurement/rendering and BT.2446A |
+| `hdr-experimental`, `bt2446a` | HDR measurement/rendering and BT.2446A tone mapping |
 
-Without `icc-db`, synthesis retains supported compact exports and explicit
-refusal elsewhere; it does not restore the legacy P3 fallback.
+Converting across a compiled-out feature (`oklab`, `hdr-transfers`, or
+`perceptual` when `zenpixels/perceptual` is unified on) returns
+`ConvertError::FeatureRequired { feature, from, to }` instead of silently
+dropping transforms (`ChannelLayout::Lab` returns `NeedsCms`). Without
+`icc-db`, synthesis retains supported compact exports and explicit refusal
+elsewhere; it does not restore the legacy P3 fallback.
 
 ## MSRV
 
@@ -158,6 +231,8 @@ Rust 1.89, edition 2024. `no_std + alloc`; unsafe code is forbidden.
 ## See also
 
 [Pixel types guide](https://imazen.github.io/zenpixels/guide.html) ·
+[Speed & light builds](https://imazen.github.io/zenpixels/speed-and-size.html) ·
+[Plain-English ELI5](https://imazen.github.io/zenpixels/eli5.html) ·
 [Core types](https://github.com/imazen/zenpixels) ·
 [API reference](https://docs.rs/zenpixels-convert) ·
 [Design contracts](https://github.com/imazen/zenpixels/blob/main/docs/design-reference.md)

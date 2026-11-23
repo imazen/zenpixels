@@ -36,7 +36,13 @@ def main():
     externs = []
     for name in names:
         externs.extend(["--extern", f"{name}={libraries[name]}"])
-    documents = [root / "docs/guide.md", root / "README.md", root / "zenpixels-convert/README.md"]
+    documents = [
+        root / "docs/guide.md",
+        root / "docs/speed-and-size.md",
+        root / "docs/eli5.md",
+        root / "README.md",
+        root / "zenpixels-convert/README.md",
+    ]
     if args.examples:
         documents.append(args.examples.resolve(strict=True))
     for document in documents:

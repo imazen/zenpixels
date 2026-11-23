@@ -143,12 +143,21 @@ if (!url) throw new Error('Pass the served site URL');
     const build = await page.request.get(new URL('build-info.json', url.endsWith('/') ? url : url + '/').href);
     assert.match((await build.json()).revision, /^[a-f0-9]{40}$/);
     // Every linked teaching page must be readable without document overflow.
-    for (const teachingPath of ['guide.html', 'color-explorer/', 'review.html', 'format_browser.html']) {
+    for (const teachingPath of ['guide.html', 'speed-and-size.html', 'eli5.html', 'color-explorer/', 'review.html', 'format_browser.html']) {
       const teaching = await browser.newPage();
       await teaching.goto(new URL(teachingPath, url.endsWith('/') ? url : url + '/').href);
       if (teachingPath === 'guide.html') {
         assert.match(await teaching.locator('body').innerText(), /Borrow the part you need/);
         assert.match(await teaching.locator('body').innerText(), /parent stride/);
+        assert.match(await teaching.locator('body').innerText(), /Balance speed and light compilation/);
+      }
+      if (teachingPath === 'speed-and-size.html') {
+        assert.match(await teaching.locator('body').innerText(), /Accelerators::WEB_SDR/);
+        assert.match(await teaching.locator('body').innerText(), /enable_all/);
+      }
+      if (teachingPath === 'eli5.html') {
+        assert.match(await teaching.locator('body').innerText(), /Plain-English Mental Model/);
+        assert.match(await teaching.locator('body').innerText(), /FloatFacts/);
       }
       for (const width of [320, 390, 768, 1440]) {
         await teaching.setViewportSize({ width, height: 900 });

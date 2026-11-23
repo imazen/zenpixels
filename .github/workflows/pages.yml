@@ -2,9 +2,9 @@ name: Pixel Format Explorer
 on:
   push:
     branches: [main]
-    paths: ['site/**', 'zenpixels/**', 'zenpixels-convert/**', 'docs/guide.md', 'docs/color-explorer/**', 'docs/format_browser.html', 'README.md', 'scripts/check-guide.py', 'Cargo.toml', '.github/workflows/pages.yml']
+    paths: ['site/**', 'zenpixels/**', 'zenpixels-convert/**', 'docs/guide.md', 'docs/speed-and-size.md', 'docs/eli5.md', 'docs/color-explorer/**', 'docs/format_browser.html', 'README.md', 'scripts/check-guide.py', 'Cargo.toml', '.github/workflows/pages.yml']
   pull_request:
-    paths: ['site/**', 'zenpixels/**', 'zenpixels-convert/**', 'docs/guide.md', 'docs/color-explorer/**', 'docs/format_browser.html', 'README.md', 'scripts/check-guide.py', 'Cargo.toml', '.github/workflows/pages.yml']
+    paths: ['site/**', 'zenpixels/**', 'zenpixels-convert/**', 'docs/guide.md', 'docs/speed-and-size.md', 'docs/eli5.md', 'docs/color-explorer/**', 'docs/format_browser.html', 'README.md', 'scripts/check-guide.py', 'Cargo.toml', '.github/workflows/pages.yml']
   workflow_dispatch:
 permissions:
   contents: read

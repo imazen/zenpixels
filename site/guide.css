@@ -18,7 +18,7 @@ pre code { font-size:inherit; }
 table { width:100%; border-collapse:collapse; margin:24px 0; font-size:.94rem; table-layout:fixed; }
 th,td { text-align:left; vertical-align:top; border-bottom:1px solid var(--line); padding:12px 14px; }
 th { color:var(--muted); font-weight:600; }
-th:first-child,td:first-child { width:48%; }
+th:first-child:nth-last-child(2),td:first-child:nth-last-child(2) { width:48%; }
 .guide-nav { display:flex; flex-wrap:wrap; gap:10px 24px; margin-bottom:32px; font-size:.86rem; }
 .doc-anchor { font-size:.65em; margin-right:.6em; color:var(--muted); text-decoration:none; }
 @media(max-width:600px) { body { padding:24px 16px 56px; font-size:16px; } pre { padding:14px; } th,td { padding:10px 8px; } }

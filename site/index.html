@@ -225,7 +225,7 @@ footer { color: var(--muted); font-size: .82rem; padding: 10px 0 40px; display: 
 </head>
 <body>
 <div class="wrap">
-<nav class="site-nav" aria-label="Documentation"><a href="guide.html">Start here: pixel types in Rust</a><a href="#h-mem">Explore bytes</a><a href="color-explorer/">Color decisions</a></nav>
+<nav class="site-nav" aria-label="Documentation"><a href="guide.html">Start here: pixel types</a><a href="speed-and-size.html">Speed &amp; light builds</a><a href="eli5.html">Plain-English ELI5</a><a href="#h-mem">Explore bytes</a><a href="color-explorer/">Color decisions</a></nav>
 <header class="hero">
   <div class="stack">
     <p class="eyebrow">zenpixels · pixel format explorer</p>
@@ -399,7 +399,7 @@ footer { color: var(--muted); font-size: .82rem; padding: 10px 0 40px; display: 
 
   <section class="sec" aria-labelledby="h-converter">
     <div class="sec-head"><span class="num">07</span><h2 id="h-converter">Converter simulator</h2></div>
-    <p class="sub">Convert the current stored pixels with the real zenpixels-convert WASM build. Source controls are above; destination controls are below. Alpha discard and depth reduction are allowed; the selected luma weights apply. Unsupported routes return the crate's error.</p>
+    <p class="sub">Convert the current stored pixels with the real zenpixels-convert WASM build. Source controls are above; destination controls are below. Alpha discard and depth reduction are allowed; the selected luma weights apply. Unsupported routes return the crate's error. Want fast native SIMD without bloating library or Wasm builds? <a href="speed-and-size.html">Balance speed and light compilation with const helpers</a>.</p>
     <div class="memctl">
       <div class="field"><label for="to-format">Destination format</label><select id="to-format"></select></div>
       <div class="field"><label for="to-transfer">Destination transfer</label><select id="to-transfer"></select></div>
@@ -453,7 +453,7 @@ footer { color: var(--muted); font-size: .82rem; padding: 10px 0 40px; display: 
 
 <footer>
   <p id="build-identity">No build stamp loaded.</p>
-  <p><a href="guide.html">Pixel types in Rust</a> · <a href="color-explorer/">Color and sample decisions</a> · <a href="format_browser.html">Format recommendations</a> · <a href="https://github.com/imazen/zenpixels">Source and documentation</a> · <a href="review.html">Design review and outstanding issues</a></p>
+  <p><a href="guide.html">Pixel types in Rust</a> · <a href="speed-and-size.html">Speed &amp; light builds</a> · <a href="eli5.html">Plain-English ELI5</a> · <a href="color-explorer/">Color and sample decisions</a> · <a href="format_browser.html">Format recommendations</a> · <a href="https://github.com/imazen/zenpixels">Source and documentation</a> · <a href="review.html">Design review and outstanding issues</a></p>
   <p>The build stamp identifies the source revision compiled into this explorer. The JavaScript color model is an illustration, not a converter correctness oracle. It uses double-precision sRGB, BT.709, Adobe gamma, PQ, scene-transfer HLG and Oklab formulas. The converter panel runs that build of zenpixels-convert on the actual stored samples and reports byte differences without treating the illustration as ground truth.</p>
   <p>The big swatch is drawn with CSS <code>color(srgb-linear …)</code>, so a wide-gamut screen shows colors outside sRGB. Brightness above white is not shown.</p>
 </footer>
