@@ -336,7 +336,7 @@ impl fmt::Display for ConvertError {
             Self::CmsBackend(error) => write!(f, "CMS failure: {error}"),
             Self::CmsError(msg) => write!(f, "CMS transform failed: {msg}"),
             Self::SdrWhiteRequired => f.write_str("SDR white is missing; use ConvertOptions::with_sdr_white or ColorContext::with_diffuse_white"),
-            Self::HdrPeakRequired => f.write_str("HDR peak is missing; buffer conversion measures it, or use ConvertOptions::with_hdr_peak(HdrPeak::Nits(...))"),
+            Self::HdrPeakRequired => f.write_str("HDR peak is missing; buffer conversion resolves HdrPeak::Measured, while ConvertPlan::build / RowConverter require explicit ConvertOptions::with_hdr_peak(HdrPeak::Nits(...)) (HlgRendering display peak is not reused as content peak)"),
             Self::SdrPeakRequired => f.write_str("SDR target peak is missing; use ConvertOptions::with_sdr_peak"),
             Self::HdrFeatureRequired => f.write_str("HDR tone mapping requires the bt2446a Cargo feature"),
             Self::FeatureRequired { feature, from, to } => write!(
@@ -347,16 +347,15 @@ impl fmt::Display for ConvertError {
             Self::HdrSourceRequiresPeak { from, to } => write!(
                 f,
                 "HDR→SDR conversion ({:?} → {:?}) requires positive, finite peak \
-                 luminances; build the plan via NativePlan::new_with_hdr_peak (or \
-                 new_with_hdr_config) and pass the source's MaxCLL (e.g. \
-                 CllMeasure::measure_max)",
+                 luminances; supply ConvertOptions::with_hdr_peak / with_sdr_peak \
+                 (or measure MaxCLL via CllMeasure::measure_max) and build with ConvertPlan::build",
                 from.transfer(),
                 to.transfer(),
             ),
             Self::FullImageMapperNotSupported { mapper_name } => write!(
                 f,
                 "tone mapper '{mapper_name}' requires full-image buffering \
-                 (Requirements::full_image == true); NativePlan only \
+                 (Requirements::full_image == true); ConvertPlan / RowConverter only \
                  supports streaming mappers. Pick a pointwise curve (Bt2446A, ACES, \
                  FilmicSpline, …) — local-operator support is reserved capacity",
             ),

@@ -15,7 +15,7 @@
 #   inherent methods                          160
 #   struct fields                              91
 #   enum variants                             123
-#   re-exports                                  8
+#   re-exports                                  7
 #   trait roster entries (type × trait)       163
 #   conditional trait impls (verbatim)          1
 #   auto-trait-complete types                  28
@@ -31,14 +31,14 @@
 #   error                            62
 #   ext                              22
 #   gamut                            11
-#   hdr                               2
+#   hdr                               1
 #   icc_profiles                     10
 #   load_bearing                     13
 #   oklab                             8
 #   output                           24
 #   precision                        62
 
-## items (556 lines)
+## items (555 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -230,8 +230,7 @@ pub const fn gamut::GamutMatrix::rows(&self) -> &[[f32; 3]; 3] [also: (root)]
 pub fn gamut::GamutMatrix::then(&self, &Self) -> Self
 pub const fn gamut::GamutMatrix::to_xyz(zenpixels::descriptor::ColorPrimaries) -> core::option::Option<&'static Self> [also: (root)]
 pub mod hdr
-pub use hdr::ContentLightLevel
-pub use hdr::MasteringDisplay
+pub use hdr::<<zenpixels::hdr::*>>
 pub mod icc_profiles
 #[non_exhaustive] pub enum icc_profiles::SynthesizedIcc
 pub icc_profiles::SynthesizedIcc::CmsUnsupported

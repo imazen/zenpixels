@@ -1,10 +1,11 @@
 //! Opt-in SIMD accelerator registry and compile-time [`Accelerators`] overrides.
 //!
 //! By default, [`ConvertPlan::build`](crate::ConvertPlan::build) executes every valid
-//! native conversion through a compact universal fast-FMA scalar core (`~22–35 KB`, zero
-//! scratch allocation, **0-bit identical** to the x86-64/AArch64 SIMD kernels), so codecs
-//! and library crates never bloat binaries with unused SIMD tables and never fail with
-//! `NoPath` for missing capability flags.
+//! native conversion through a compact universal fast-FMA scalar core (`+87 KB` lean
+//! Wasm / `+159 KB` lean x86-64 stripped delta; zero scratch allocation, **0-bit
+//! identical** to the x86-64/AArch64 SIMD kernels), so codecs and library crates never
+//! bloat binaries with unused SIMD tables and never fail with `NoPath` for missing
+//! capability flags.
 //!
 //! # Enabling fast mode
 //!
@@ -272,14 +273,14 @@ impl Accelerators {
     /// premultiplication, and `U8 ↔ U16` depth conversion (`garb` SIMD).
     pub const LAYOUT: Self = Self::SCALAR.with_layout();
 
-    /// Web SDR preset: layout, sRGB transfers, float normalization/quantization,
-    /// fused SDR gamut conversion, and composed multi-step SDR SIMD pipelines
-    /// (excludes `BT.709`, `Gamma 2.2`, `PQ`/`HLG`, `U16`/`F16`, and `Oklab` SIMD,
+    /// Web SDR preset: layout, sRGB transfers, `U8 ↔ F32` float normalization/quantization
+    /// and `F32` premul, fused SDR gamut conversion, and composed multi-step SDR SIMD pipelines
+    /// (excludes `BT.709`, `Gamma 2.2`, `PQ`/`HLG`, `U16`/`F16` float, and `Oklab` SIMD,
     /// which remain available via universal scalar).
     pub const WEB_SDR: Self = Self::SCALAR
         .with_layout()
         .with_srgb()
-        .with_float()
+        .with_float_web_sdr()
         .with_gamut()
         .with_web_pipeline();
 
@@ -319,6 +320,13 @@ impl Accelerators {
     #[inline]
     pub const fn with_float(mut self) -> Self {
         self.float = Some(accel_float);
+        self
+    }
+
+    /// Internal `U8 ↔ F32` + `F32` premul float slot for [`Self::WEB_SDR`] (excludes `U16`/`F16` SIMD).
+    #[inline]
+    const fn with_float_web_sdr(mut self) -> Self {
+        self.float = Some(accel_float_web_sdr);
         self
     }
 
@@ -585,7 +593,7 @@ pub fn enable_oklab() {
 pub fn enable_web_sdr() {
     enable_layout();
     enable_srgb();
-    enable_float();
+    install_slot(&SLOT_FLOAT, accel_float_web_sdr);
     enable_gamut();
     install_slot(&SLOT_WEB_PIPELINE, accel_pipeline_web_sdr);
 }
@@ -842,6 +850,11 @@ fn accel_srgb(
             if options.depth_policy() == DepthPolicy::Forbid {
                 return Some(Err(whereat::at!(ConvertError::DepthReductionForbidden)));
             }
+            if options.depth_policy() == DepthPolicy::Truncate {
+                // Truncation splits into `[LinearF32ToSrgbF32, NaiveF32ToU8Truncate]`
+                // in the pipeline / universal path instead of rounded `LinearF32ToSrgbU8`.
+                return None;
+            }
             ConvertStep::LinearF32ToSrgbU8
         }
         (ChannelType::F32, TransferFunction::Srgb, ChannelType::F32, TransferFunction::Linear) => {
@@ -947,6 +960,83 @@ fn accel_float(
         _ => return None,
     };
     bind_single(from, to, step, input_facts, NativePlan::bind::<FLOAT_CAPS>)
+}
+
+/// Slot 3 (Web SDR): `U8 ↔ F32` float normalization/quantization and `F32` premul only
+/// (leaves `U16`/`F16` SIMD dead-stripped; universal scalar handles them identically).
+fn accel_float_web_sdr(
+    from: PixelDescriptor,
+    to: PixelDescriptor,
+    options: &ConvertOptions,
+    exact: bool,
+    input_facts: FloatFacts,
+) -> Option<Result<NativePlan, At<ConvertError>>> {
+    if exact
+        || from.primaries != to.primaries
+        || from.transfer() != to.transfer()
+        || from.signal_range != SignalRange::Full
+        || to.signal_range != SignalRange::Full
+        || from.layout() != to.layout()
+        || !matches!(from.color_model(), ColorModel::Rgb | ColorModel::Gray)
+    {
+        return None;
+    }
+    const FLOAT_WEB_CAPS: u64 = kernel_caps::U8
+        | kernel_caps::F32
+        | kernel_caps::PREMUL
+        | kernel_caps::DEPTH_TRUNCATE
+        | kernel_caps::FLOAT_FACTS_SPEC;
+
+    if from.channel_type() == ChannelType::F32
+        && to.channel_type() == ChannelType::F32
+        && from.has_alpha()
+        && to.has_alpha()
+        && from.alpha() != to.alpha()
+    {
+        let step = match (from.alpha(), to.alpha()) {
+            (Some(AlphaMode::Straight | AlphaMode::Opaque), Some(AlphaMode::Premultiplied)) => {
+                ConvertStep::StraightToPremul
+            }
+            (Some(AlphaMode::Premultiplied), Some(AlphaMode::Straight)) => {
+                ConvertStep::PremulToStraight
+            }
+            _ => return None,
+        };
+        return bind_single(
+            from,
+            to,
+            step,
+            input_facts,
+            NativePlan::bind::<FLOAT_WEB_CAPS>,
+        );
+    }
+
+    if from.alpha() != to.alpha() {
+        return None;
+    }
+    let trunc = options.depth_policy() == DepthPolicy::Truncate;
+    let forbid_narrow = options.depth_policy() == DepthPolicy::Forbid;
+    let step = match (from.channel_type(), to.channel_type()) {
+        (ChannelType::U8, ChannelType::F32) => ConvertStep::NaiveU8ToF32,
+        (ChannelType::F32, ChannelType::U8) => {
+            if forbid_narrow {
+                return Some(Err(whereat::at!(ConvertError::DepthReductionForbidden)));
+            }
+            if trunc {
+                ConvertStep::NaiveF32ToU8Truncate
+            } else {
+                ConvertStep::NaiveF32ToU8
+            }
+        }
+        _ => return None,
+    };
+    bind_single(
+        from,
+        to,
+        step,
+        input_facts,
+        NativePlan::bind::<FLOAT_WEB_CAPS>,
+    )
 }
 
 /// Slot 4: `fast_gamut` SIMD 3×3 matrix and fused sRGB `U8`/`U16`/`F32` gamut kernels.
@@ -1140,6 +1230,9 @@ fn accel_hdr(
             if options.depth_policy() == DepthPolicy::Forbid {
                 return Some(Err(whereat::at!(ConvertError::DepthReductionForbidden)));
             }
+            if options.depth_policy() == DepthPolicy::Truncate {
+                return None;
+            }
             ConvertStep::LinearF32ToPqU16
         }
         #[cfg(feature = "hdr-transfers")]
@@ -1181,22 +1274,27 @@ fn accel_oklab(
     if exact
         || from.channel_type() != ChannelType::F32
         || to.channel_type() != ChannelType::F32
-        || from.primaries != to.primaries
-        || from.transfer() != TransferFunction::Linear
-        || to.transfer() != TransferFunction::Linear
         || from.alpha() != to.alpha()
         || from.alpha() == Some(AlphaMode::Premultiplied)
     {
         return None;
     }
-    let _ = crate::oklab::OklabSpace::for_primaries(from.primaries)?;
-    let step = match (from.layout(), to.layout()) {
-        (ChannelLayout::Rgb, ChannelLayout::Oklab) => ConvertStep::LinearRgbToOklab,
-        (ChannelLayout::Oklab, ChannelLayout::Rgb) => ConvertStep::OklabToLinearRgb,
-        (ChannelLayout::Rgba, ChannelLayout::OklabA) => ConvertStep::LinearRgbaToOklaba,
-        (ChannelLayout::OklabA, ChannelLayout::Rgba) => ConvertStep::OklabaToLinearRgba,
+    let (step, rgb_side, oklab_side) = match (from.layout(), to.layout()) {
+        (ChannelLayout::Rgb, ChannelLayout::Oklab) => (ConvertStep::LinearRgbToOklab, from, to),
+        (ChannelLayout::Oklab, ChannelLayout::Rgb) => (ConvertStep::OklabToLinearRgb, to, from),
+        (ChannelLayout::Rgba, ChannelLayout::OklabA) => (ConvertStep::LinearRgbaToOklaba, from, to),
+        (ChannelLayout::OklabA, ChannelLayout::Rgba) => (ConvertStep::OklabaToLinearRgba, to, from),
         _ => return None,
     };
+    if rgb_side.transfer() != TransferFunction::Linear
+        || !matches!(
+            oklab_side.transfer(),
+            TransferFunction::Unknown | TransferFunction::Linear
+        )
+    {
+        return None;
+    }
+    let _ = crate::oklab::OklabSpace::for_primaries(rgb_side.primaries)?;
     const OKLAB_CAPS: u64 = kernel_caps::F32 | kernel_caps::OKLAB | kernel_caps::FLOAT_FACTS_SPEC;
     bind_single(from, to, step, input_facts, NativePlan::bind::<OKLAB_CAPS>)
 }

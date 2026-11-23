@@ -1280,7 +1280,7 @@ impl<'a, P> PixelSlice<'a, P> {
     ///
     /// Panics if `y >= rows`.
     #[inline]
-    pub fn row(&self, y: u32) -> &[u8] {
+    pub fn row(&self, y: u32) -> &'a [u8] {
         assert!(
             y < self.rows,
             "row index {y} out of bounds (rows: {})",
@@ -1302,7 +1302,7 @@ impl<'a, P> PixelSlice<'a, P> {
     /// a full stride for this row (can happen on the last row of a
     /// cropped view).
     #[inline]
-    pub fn row_with_stride(&self, y: u32) -> &[u8] {
+    pub fn row_with_stride(&self, y: u32) -> &'a [u8] {
         assert!(
             y < self.rows,
             "row index {y} out of bounds (rows: {})",
@@ -1318,10 +1318,8 @@ impl<'a, P> PixelSlice<'a, P> {
     ///
     /// Panics if `y + count > rows`.
     #[inline]
-    pub fn sub_rows(&self, y: u32, count: u32) -> PixelSlice<'_, P> {
-        self.reborrow_erased_short()
-            .sub_rows_erased(y, count)
-            .retype()
+    pub fn sub_rows(&self, y: u32, count: u32) -> PixelSlice<'a, P> {
+        self.reborrow_erased().sub_rows_erased(y, count).retype()
     }
 
     /// Zero-copy crop view. Adjusts the data pointer and width; stride
@@ -1331,10 +1329,8 @@ impl<'a, P> PixelSlice<'a, P> {
     ///
     /// Panics if the crop region is out of bounds.
     #[inline]
-    pub fn crop_view(&self, x: u32, y: u32, w: u32, h: u32) -> PixelSlice<'_, P> {
-        self.reborrow_erased_short()
-            .crop_view_erased(x, y, w, h)
-            .retype()
+    pub fn crop_view(&self, x: u32, y: u32, w: u32, h: u32) -> PixelSlice<'a, P> {
+        self.reborrow_erased().crop_view_erased(x, y, w, h).retype()
     }
 
     #[inline]
@@ -1360,20 +1356,6 @@ impl<'a, P> PixelSlice<'a, P> {
             stride: self.stride,
             descriptor: self.descriptor,
             color: None,
-            evidence: self.evidence,
-            _pixel: PhantomData,
-        }
-    }
-
-    #[inline]
-    fn reborrow_erased_short(&self) -> PixelSlice<'_> {
-        PixelSlice {
-            data: self.data,
-            width: self.width,
-            rows: self.rows,
-            stride: self.stride,
-            descriptor: self.descriptor,
-            color: self.color.clone(),
             evidence: self.evidence,
             _pixel: PhantomData,
         }

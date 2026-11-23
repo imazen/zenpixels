@@ -26,8 +26,8 @@ fn has_numeric_kernels(channel: ChannelType) -> bool {
 }
 
 /// The linear RGB form an Oklab conversion must pass through, when `from` and `to` aren't already next to
-/// each other. The Oklab kernels take and give linear RGB, so every transfer, depth and gamut change
-/// happens on the RGB side.
+/// each other. Oklab is CIE XYZ D65-anchored (primaries-independent), so the RGB↔LMS matrix always uses
+/// the **RGB endpoint's** primaries directly — avoiding any intermediate BT.709 gamut clip or extra matrix.
 #[cfg(feature = "oklab")]
 pub(crate) fn oklab_pivot_pub(
     from: PixelDescriptor,
@@ -35,18 +35,28 @@ pub(crate) fn oklab_pivot_pub(
 ) -> Option<PixelDescriptor> {
     let is_oklab =
         |d: PixelDescriptor| matches!(d.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA);
-    let linear_rgb = |oklab: PixelDescriptor| {
+    let rgb_primaries = |rgb_side: PixelDescriptor| {
+        if matches!(
+            rgb_side.layout(),
+            ChannelLayout::Gray | ChannelLayout::GrayAlpha
+        ) && rgb_side.primaries == ColorPrimaries::Unknown
+        {
+            ColorPrimaries::Bt709
+        } else {
+            rgb_side.primaries
+        }
+    };
+    let linear_rgb = |oklab: PixelDescriptor, primaries: ColorPrimaries| {
         let base = if oklab.layout() == ChannelLayout::OklabA {
             PixelDescriptor::RGBAF32_LINEAR.with_alpha(oklab.alpha())
         } else {
             PixelDescriptor::RGBF32_LINEAR
         };
-        base.with_primaries(oklab.primaries)
+        base.with_primaries(primaries)
     };
     match (is_oklab(from), is_oklab(to)) {
-        (false, true) => Some(linear_rgb(to)).filter(|p| *p != from),
-        (true, false) => Some(linear_rgb(from)).filter(|p| *p != to),
-        (true, true) if from.primaries != to.primaries => Some(linear_rgb(from)),
+        (false, true) => Some(linear_rgb(to, rgb_primaries(from))).filter(|p| *p != from),
+        (true, false) => Some(linear_rgb(from, rgb_primaries(to))).filter(|p| *p != to),
         _ => None,
     }
 }
@@ -988,7 +998,12 @@ pub(crate) fn matte_background_scalar<const CAPS: u64>(
             if (CAPS & caps::OKLAB) == 0 || from.channel_type() != ChannelType::F32 {
                 return Err(err_no_path(from, to));
             }
-            let Some(space) = crate::oklab::OklabSpace::for_primaries(from.primaries) else {
+            let target_prim = if to.primaries == ColorPrimaries::Unknown {
+                ColorPrimaries::Bt709
+            } else {
+                to.primaries
+            };
+            let Some(space) = crate::oklab::OklabSpace::for_primaries(target_prim) else {
                 return Err(err_no_path(from, to));
             };
             let f: &[f32] = bytemuck::cast_slice(&bytes[..12]);
@@ -1544,6 +1559,11 @@ impl NativePlan {
     /// behavior-preserving `1.0`.
     /// Both primaries are known, and differ.
     fn primaries_differ(from: PixelDescriptor, to: PixelDescriptor) -> bool {
+        if matches!(from.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA)
+            || matches!(to.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA)
+        {
+            return false;
+        }
         from.primaries != to.primaries
             && from.primaries != ColorPrimaries::Unknown
             && to.primaries != ColorPrimaries::Unknown
@@ -2077,9 +2097,7 @@ impl NativePlan {
         if from.layout() != to.layout() && layout_steps(from.layout(), to.layout()).is_empty() {
             return Err(whereat::at!(ConvertError::NoPath { from, to }));
         }
-        if from.primaries != to.primaries
-            && from.primaries != ColorPrimaries::Unknown
-            && to.primaries != ColorPrimaries::Unknown
+        if Self::primaries_differ(from, to)
             && crate::gamut::conversion_matrix(from.primaries, to.primaries).is_none()
         {
             return Err(whereat::at!(ConvertError::NoPath { from, to }));
@@ -2119,13 +2137,29 @@ impl NativePlan {
                 matches!(from.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA)
                     || matches!(to.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA);
 
-            // Oklab conversion requires known primaries for the RGB→LMS matrix.
+            // Oklab conversion requires known primaries on the RGB side for the RGB↔LMS matrix.
             #[cfg(feature = "oklab")]
-            if involves_oklab
-                && (hooks.oklab_pivot.is_none()
-                    || crate::oklab::rgb_to_lms_matrix(from.primaries).is_none())
-            {
-                return Err(whereat::at!(ConvertError::NoPath { from, to }));
+            if involves_oklab {
+                let from_ok = matches!(from.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA);
+                let to_ok = matches!(to.layout(), ChannelLayout::Oklab | ChannelLayout::OklabA);
+                if hooks.oklab_pivot.is_none() {
+                    return Err(whereat::at!(ConvertError::NoPath { from, to }));
+                }
+                if from_ok != to_ok {
+                    let rgb_side = if from_ok { to } else { from };
+                    let rgb_prim = if matches!(
+                        rgb_side.layout(),
+                        ChannelLayout::Gray | ChannelLayout::GrayAlpha
+                    ) && rgb_side.primaries == ColorPrimaries::Unknown
+                    {
+                        ColorPrimaries::Bt709
+                    } else {
+                        rgb_side.primaries
+                    };
+                    if crate::oklab::rgb_to_lms_matrix(rgb_prim).is_none() {
+                        return Err(whereat::at!(ConvertError::NoPath { from, to }));
+                    }
+                }
             }
 
             let depth_first = need_depth_or_tf
@@ -2214,9 +2248,11 @@ impl NativePlan {
             ];
 
             // The gamut matrix must be applied in linear f32 space.
-            // Check if the existing steps already go through linear f32.
-            let mut goes_through_linear = false;
-            {
+            // Check if `from` itself is already linear f32 or an existing step produces it.
+            let from_is_linear_f32 = from.channel_type() == ChannelType::F32
+                && from.transfer() == TransferFunction::Linear;
+            let mut goes_through_linear = from_is_linear_f32;
+            if !goes_through_linear {
                 let mut desc = from;
                 for step in &steps {
                     desc = intermediate_desc(desc, step);
@@ -2229,18 +2265,19 @@ impl NativePlan {
             }
 
             if goes_through_linear {
-                // Insert the gamut matrix right after the first step that
-                // produces linear f32. All subsequent steps encode to the
-                // target format.
+                // Insert the gamut matrix at the first linear f32 position
+                // (`0` when `from` is already linear f32, before any encoding or clamping).
                 let mut insert_pos = 0;
                 let mut desc = from;
-                for (i, step) in steps.iter().enumerate() {
-                    desc = intermediate_desc(desc, step);
-                    if desc.channel_type() == ChannelType::F32
-                        && desc.transfer() == TransferFunction::Linear
-                    {
-                        insert_pos = i + 1;
-                        break;
+                if !from_is_linear_f32 {
+                    for (i, step) in steps.iter().enumerate() {
+                        desc = intermediate_desc(desc, step);
+                        if desc.channel_type() == ChannelType::F32
+                            && desc.transfer() == TransferFunction::Linear
+                        {
+                            insert_pos = i + 1;
+                            break;
+                        }
                     }
                 }
                 let gamut_step = if desc.layout().has_alpha() {

@@ -1102,13 +1102,11 @@ fn step_oklab_spec(
         ConvertStep::LinearRgbToOklab => {
             linear_rgb_to_oklab_f32(src, dst, w, op.from.primaries, op.in_trust);
         }
-        ConvertStep::OklabToLinearRgb => oklab_to_linear_rgb_f32(src, dst, w, op.from.primaries),
+        ConvertStep::OklabToLinearRgb => oklab_to_linear_rgb_f32(src, dst, w, op.to.primaries),
         ConvertStep::LinearRgbaToOklaba => {
             linear_rgba_to_oklaba_f32(src, dst, w, op.from.primaries, op.in_trust);
         }
-        ConvertStep::OklabaToLinearRgba => {
-            oklaba_to_linear_rgba_f32(src, dst, w, op.from.primaries)
-        }
+        ConvertStep::OklabaToLinearRgba => oklaba_to_linear_rgba_f32(src, dst, w, op.to.primaries),
         _ => {}
     }
 }
@@ -1126,13 +1124,11 @@ fn step_oklab_untrusted(
         ConvertStep::LinearRgbToOklab => {
             linear_rgb_to_oklab_f32_untrusted(src, dst, w, op.from.primaries);
         }
-        ConvertStep::OklabToLinearRgb => oklab_to_linear_rgb_f32(src, dst, w, op.from.primaries),
+        ConvertStep::OklabToLinearRgb => oklab_to_linear_rgb_f32(src, dst, w, op.to.primaries),
         ConvertStep::LinearRgbaToOklaba => {
             linear_rgba_to_oklaba_f32_untrusted(src, dst, w, op.from.primaries);
         }
-        ConvertStep::OklabaToLinearRgba => {
-            oklaba_to_linear_rgba_f32(src, dst, w, op.from.primaries)
-        }
+        ConvertStep::OklabaToLinearRgba => oklaba_to_linear_rgba_f32(src, dst, w, op.to.primaries),
         _ => {}
     }
 }

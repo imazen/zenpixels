@@ -1,8 +1,11 @@
 //! HDR processing utilities.
 //!
-//! Re-exports [`ContentLightLevel`] and [`MasteringDisplay`] from the
-//! `zenpixels::hdr` module. Provides explicit measurement, tone mapping
-//! and anchor-aware quantization.
+//! Re-exports all core HDR metadata and anchor types from [`zenpixels::hdr`]
+//! ([`DiffuseWhite`], [`Nits`], [`HdrPeak`], [`HlgRendering`],
+//! [`ContentLightLevel`], [`MasteringDisplay`], [`St2086Codes`]), so
+//! applications depending on `zenpixels-convert` alone can import them
+//! directly from `zenpixels_convert::hdr`. Also provides explicit measurement,
+//! tone mapping, and anchor-aware quantization.
 //!
 //! The core PQ/HLG EOTF/OETF math is available through the main
 //! conversion pipeline in [`ConvertPlan`](crate::ConvertPlan) when the
@@ -94,12 +97,9 @@ use alloc::sync::Arc;
 use whereat::At;
 use zenpixels::{Cicp, ColorContext};
 
-// Re-export metadata types from the core crate.
-pub use zenpixels::hdr::{ContentLightLevel, MasteringDisplay};
-// `quantize_to` reads the anchor from the source's `ColorContext`; the
-// canonical public home for the type is `zenpixels::hdr::DiffuseWhite`
-// (reachable through the core crate — not re-exported here).
-use zenpixels::hdr::DiffuseWhite;
+// Re-export all core HDR metadata and anchor types so `zenpixels_convert::hdr`
+// never hides `zenpixels::hdr::{DiffuseWhite, Nits, HdrPeak, HlgRendering, ...}`.
+pub use zenpixels::hdr::*;
 
 // HDR quantization (relative-linear f32 → a PQ HDR descriptor)
 // ---------------------------------------------------------------------------

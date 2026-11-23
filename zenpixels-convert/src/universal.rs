@@ -314,10 +314,7 @@ mod hdr_consts {
     #[cold]
     #[inline(never)]
     pub(super) fn pq_to_linear_precise(v: f32) -> f32 {
-        if v.is_nan() {
-            return v;
-        }
-        if v <= 0.0 {
+        if v.is_nan() || v <= 0.0 {
             return 0.0;
         }
         if v >= 1.0 {
@@ -333,10 +330,7 @@ mod hdr_consts {
     #[cold]
     #[inline(never)]
     pub(super) fn linear_to_pq_precise(v: f32) -> f32 {
-        if v.is_nan() {
-            return v;
-        }
-        if v <= 0.0 {
+        if v.is_nan() || v <= 0.0 {
             return 0.0;
         }
         if v >= 1.0 {
@@ -1095,7 +1089,9 @@ impl UniversalPlan {
 
         // Unknown-primaries gamut change: only named primaries have built-in matrices.
         // Gray has no chromaticity, so gray sources skip gamut conversion.
-        let primaries_differ = from.primaries != to.primaries
+        let primaries_differ = !from_oklab
+            && !to_oklab
+            && from.primaries != to.primaries
             && from.primaries != ColorPrimaries::Unknown
             && to.primaries != ColorPrimaries::Unknown
             && !matches!(
@@ -1130,11 +1126,28 @@ impl UniversalPlan {
             }));
         }
 
-        // Resolve Oklab matrices if Oklab is involved.
+        // Oklab is CIE XYZ D65-anchored: Oklab↔Oklab needs no color transform,
+        // and RGB↔Oklab always resolves its RGB↔LMS matrix from the RGB endpoint.
+        let (from_oklab, to_oklab) = if from_oklab && to_oklab {
+            (false, false)
+        } else {
+            (from_oklab, to_oklab)
+        };
         #[cfg(feature = "oklab")]
         let (oklab_in_matrix, oklab_out_matrix) = {
+            let rgb_primaries = |rgb_side: PixelDescriptor| {
+                if matches!(
+                    rgb_side.layout(),
+                    ChannelLayout::Gray | ChannelLayout::GrayAlpha
+                ) && rgb_side.primaries == ColorPrimaries::Unknown
+                {
+                    ColorPrimaries::Bt709
+                } else {
+                    rgb_side.primaries
+                }
+            };
             let in_m = if from_oklab {
-                let Some(sp) = crate::oklab::OklabSpace::for_primaries(from.primaries) else {
+                let Some(sp) = crate::oklab::OklabSpace::for_primaries(rgb_primaries(to)) else {
                     return Err(whereat::at!(ConvertError::NoPath { from, to }));
                 };
                 *sp.lms_to_rgb().rows()
@@ -1142,7 +1155,7 @@ impl UniversalPlan {
                 [[0.0; 3]; 3]
             };
             let out_m = if to_oklab {
-                let Some(sp) = crate::oklab::OklabSpace::for_primaries(to.primaries) else {
+                let Some(sp) = crate::oklab::OklabSpace::for_primaries(rgb_primaries(from)) else {
                     return Err(whereat::at!(ConvertError::NoPath { from, to }));
                 };
                 *sp.rgb_to_lms().rows()
@@ -2402,6 +2415,7 @@ impl UniversalPlan {
             && job.to.transfer() == TransferFunction::Srgb
             && !to_premul
             && !job.to_oklab
+            && !job.truncate
             && job.gamut_matrix.is_none()
             && ((job.from.channel_type().is_float()
                 && job.from.transfer() == TransferFunction::Linear

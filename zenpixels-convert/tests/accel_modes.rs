@@ -536,3 +536,195 @@ fn process_wide_registry_enables_cleanly_and_scalar_override_stays_hermetic() {
     assert_eq!(baseline, after_enable_all);
     assert_eq!(baseline, forced_scalar);
 }
+
+#[test]
+fn doc_issue_regressions_hdr_reexport_slice_lifetimes_oklab_truncate_pq_nan() {
+    use zenpixels_convert::hdr::{DiffuseWhite, HdrPeak, HlgRendering, Nits};
+    use zenpixels_convert::{
+        DepthPolicy, EncodeReady, OutputPlan, OutputProfile, OutputTarget, PixelBuffer, PixelFormat,
+    };
+
+    // 1. S1: zenpixels_convert::hdr re-exports all core HDR anchor types.
+    let _ = (
+        DiffuseWhite::BT2408,
+        HdrPeak::Nits(Nits::new(1000.0)),
+        HlgRendering::REFERENCE_1000_NIT,
+    );
+
+    // 2. S2: PixelSlice<'a>::crop_view / sub_rows / row borrow the underlying buffer lifetime.
+    let img = PixelBuffer::from_vec(vec![10, 20, 30, 40, 50, 60], 2, 1, D::RGB8_SRGB).unwrap();
+    let crop = img.as_slice().crop_view(1, 0, 1, 1);
+    assert_eq!(crop.row(0), &[40, 50, 60]);
+    let strip = img.as_slice().sub_rows(0, 1);
+    assert_eq!(strip.row(0), &[10, 20, 30, 40, 50, 60]);
+    let out_plan = OutputPlan::build(
+        img.encoding(),
+        OutputTarget::new(OutputProfile::Named(Cicp::SRGB), PixelFormat::Rgb8),
+        &ConversionSpec::preserve_samples(),
+    )
+    .unwrap();
+    let ready = EncodeReady::from_owned(img, out_plan).unwrap();
+    assert_eq!(ready.pixels().row(0), &[10, 20, 30, 40, 50, 60]);
+
+    // 3. S3 + LinearF32->SrgbU8 cross-primaries: Display P3 -> OKLABF32 (default!) -> Display P3
+    //    must round-trip bit-exact without clipping saturated P3 greens to BT.709.
+    #[cfg(feature = "oklab")]
+    {
+        let p3_srgb = D::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
+        let p3_px = [10u8, 20, 30, 200, 100, 50, 0, 255, 128];
+        let opts = perm_opts();
+        let ok_only = Accelerators::new().with_oklab();
+        for acc in [&Accelerators::SCALAR, &Accelerators::ALL, &ok_only] {
+            let spec = ConversionSpec::new(opts).with_accelerators(acc);
+            let lab = run_with(p3_srgb.into(), D::OKLABF32.into(), &spec, &p3_px, 3);
+            let back = run_with(D::OKLABF32.into(), p3_srgb.into(), &spec, &lab, 3);
+            assert_eq!(
+                back, p3_px,
+                "P3 -> OKLABF32 -> P3 clipped under {acc:?}: got {back:?}"
+            );
+        }
+        // Also verify LinearF32(Bt709) negative red -> RGB8_SRGB(DisplayP3) preserves full P3 green.
+        let bt709_lin_bytes = run_with(
+            p3_srgb.into(),
+            D::RGBF32_LINEAR.into(),
+            &ConversionSpec::new(opts).with_accelerators(&Accelerators::ALL),
+            &[0u8, 255, 128],
+            1,
+        );
+        let bt709_f: &[f32] = bytemuck::cast_slice(&bt709_lin_bytes);
+        assert!(
+            bt709_f[0] < -0.2,
+            "expected negative BT.709 linear R, got {bt709_f:?}"
+        );
+        for acc in [
+            &Accelerators::SCALAR,
+            &Accelerators::WEB_SDR,
+            &Accelerators::ALL,
+        ] {
+            let spec = ConversionSpec::new(opts).with_accelerators(acc);
+            let out = run_with(
+                D::RGBF32_LINEAR.into(),
+                p3_srgb.into(),
+                &spec,
+                &bt709_lin_bytes,
+                1,
+            );
+            assert_eq!(
+                out,
+                [0, 255, 128],
+                "Linear Bt709 -> P3 U8 clipped under {acc:?}"
+            );
+        }
+    }
+
+    // 4. DepthPolicy::Truncate parity across SCALAR, WEB_SDR, ALL, and single slots.
+    let trunc_opts = ConvertOptions::retain_channels().with_depth_policy(DepthPolicy::Truncate);
+    // Linear values whose sRGB * 255 lands near x.6..x.9 (round != truncate).
+    let lin_probe: Vec<f32> = (0..32)
+        .map(|i| (i as f32 + 0.73) / 32.0)
+        .flat_map(|v| [v, v * 0.5, v * 0.25])
+        .collect();
+    let srgb_slot = Accelerators::new().with_srgb();
+    let ref_trunc = run_with(
+        D::RGBF32_LINEAR.into(),
+        D::RGB8_SRGB.into(),
+        &ConversionSpec::new(trunc_opts).with_accelerators(&Accelerators::ALL),
+        bytemuck::cast_slice(&lin_probe),
+        32,
+    );
+    let ref_round = run_with(
+        D::RGBF32_LINEAR.into(),
+        D::RGB8_SRGB.into(),
+        &ConversionSpec::new(perm_opts()).with_accelerators(&Accelerators::ALL),
+        bytemuck::cast_slice(&lin_probe),
+        32,
+    );
+    assert_ne!(
+        ref_trunc, ref_round,
+        "probe must distinguish Truncate vs Round"
+    );
+    for acc in [&Accelerators::SCALAR, &Accelerators::WEB_SDR, &srgb_slot] {
+        let got = run_with(
+            D::RGBF32_LINEAR.into(),
+            D::RGB8_SRGB.into(),
+            &ConversionSpec::new(trunc_opts).with_accelerators(acc),
+            bytemuck::cast_slice(&lin_probe),
+            32,
+        );
+        assert_eq!(
+            got, ref_trunc,
+            "F32->sRGB U8 Truncate mismatch under {acc:?}"
+        );
+    }
+
+    // 5. PQ Truncate + universal PQ NaN flush matching native SIMD & NO_NAN certification.
+    #[cfg(feature = "hdr-transfers")]
+    {
+        let pq_opts = trunc_opts.with_sdr_white(DiffuseWhite::BT2408);
+        let pq_u16_target = D::RGB16_BT2100_PQ.with_primaries(ColorPrimaries::Bt709);
+        let hdr_slot = Accelerators::new().with_hdr();
+        let ref_pq = run_with(
+            D::RGBF32_LINEAR.into(),
+            pq_u16_target.into(),
+            &ConversionSpec::new(pq_opts).with_accelerators(&Accelerators::ALL),
+            bytemuck::cast_slice(&lin_probe),
+            32,
+        );
+        for acc in [&Accelerators::SCALAR, &hdr_slot] {
+            let got = run_with(
+                D::RGBF32_LINEAR.into(),
+                pq_u16_target.into(),
+                &ConversionSpec::new(pq_opts).with_accelerators(acc),
+                bytemuck::cast_slice(&lin_probe),
+                32,
+            );
+            assert_eq!(got, ref_pq, "F32->PQ U16 Truncate mismatch under {acc:?}");
+        }
+
+        // NaN color channels must flush to 0.0 (matching NO_NAN output facts), alpha preserved.
+        let pq_f32 = D::RGBAF32_LINEAR
+            .with_transfer(TransferFunction::Pq)
+            .with_primaries(ColorPrimaries::Bt2020);
+        let lin_f32 = D::RGBAF32_LINEAR.with_primaries(ColorPrimaries::Bt2020);
+        let nan_px: [f32; 8] = [f32::NAN, 0.5, -1.0, 0.75, 0.25, f32::NAN, 2.0, f32::NAN];
+        let pq_round_opts = perm_opts().with_sdr_white(DiffuseWhite::BT2408);
+        for (src_d, dst_d) in [(pq_f32, lin_f32), (lin_f32, pq_f32)] {
+            let sc_spec =
+                ConversionSpec::new(pq_round_opts).with_accelerators(&Accelerators::SCALAR);
+            let fa_spec = ConversionSpec::new(pq_round_opts).with_accelerators(&Accelerators::ALL);
+            let sc_plan = ConvertPlan::build(src_d.into(), dst_d.into(), &sc_spec).unwrap();
+            let fa_plan = ConvertPlan::build(src_d.into(), dst_d.into(), &fa_spec).unwrap();
+            assert_eq!(sc_plan.output_float_facts(), fa_plan.output_float_facts());
+            let sc_out = run_with(
+                src_d.into(),
+                dst_d.into(),
+                &sc_spec,
+                bytemuck::cast_slice(&nan_px),
+                2,
+            );
+            let fa_out = run_with(
+                src_d.into(),
+                dst_d.into(),
+                &fa_spec,
+                bytemuck::cast_slice(&nan_px),
+                2,
+            );
+            let sc_f: &[f32] = bytemuck::cast_slice(&sc_out);
+            let fa_f: &[f32] = bytemuck::cast_slice(&fa_out);
+            assert_eq!(sc_f[0], 0.0);
+            assert_eq!(sc_f[5], 0.0);
+            assert_eq!(sc_f[3], 0.75);
+            assert!(sc_f[7].is_nan(), "alpha NaN must be preserved");
+            for i in 0..8 {
+                if sc_f[i].is_nan() && fa_f[i].is_nan() {
+                    continue;
+                }
+                assert_eq!(
+                    sc_f[i].to_bits(),
+                    fa_f[i].to_bits(),
+                    "PQ NaN lane {i} disagreed between SCALAR and ALL"
+                );
+            }
+        }
+    }
+}
