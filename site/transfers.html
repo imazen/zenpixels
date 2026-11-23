@@ -102,15 +102,15 @@ footer { color: var(--muted); font-size: .82rem; padding-top: 26px; display: gri
 <main class="story">
   <section class="sec" aria-labelledby="h-charts">
     <div class="sec-head"><span class="num">01</span><h2 id="h-charts">Interactive EOTF, OETF &amp; bit-allocation charts</h2></div>
-    <p class="sub">EOTF turns stored signal into linear light; OETF encodes linear light back into stored signal. Switch between SDR <code>[0, 1]</code>, HDR <code>0–10,000 nits</code> (log Y), and extended range <code>[-0.5, 1.5]</code> to see why wide-gamut floats need <code>GamutPolicy::PreserveExtended</code>.</p>
+    <p class="sub">EOTF turns stored signal into linear light; OETF encodes linear light back into stored signal. Notice that transfer curves do <strong>not</strong> stop at SDR white (<code>203 nits</code> / <code>1.0</code>): PQ climbs to <code>10,000 nits</code> (49× white), HLG Display climbs to <code>1,000 nits</code> (4.9× white), and extended-range floats (<code>GamutPolicy::PreserveExtended</code>) extend smoothly below <code>0.0</code> and above <code>1.0</code>.</p>
 
     <div class="ctl-row">
       <div class="field" style="flex:0 1 auto">
         <label id="mode-lbl">Chart domain</label>
         <div class="seg" role="group" aria-labelledby="mode-lbl">
-          <button type="button" class="mode-btn" data-mode="sdr" aria-pressed="true">SDR [0, 1]</button>
-          <button type="button" class="mode-btn" data-mode="hdr" aria-pressed="false">HDR nits (log Y)</button>
-          <button type="button" class="mode-btn" data-mode="ext" aria-pressed="false">Extended [-0.5, 1.5]</button>
+          <button type="button" class="mode-btn" data-mode="hdr" aria-pressed="true">HDR + SDR (log nits)</button>
+          <button type="button" class="mode-btn" data-mode="sdr" aria-pressed="false">Linear Y (0–5× white)</button>
+          <button type="button" class="mode-btn" data-mode="ext" aria-pressed="false">Extended [-0.5, 2.0]</button>
         </div>
       </div>
       <div class="field" style="flex:1 1 170px">
@@ -272,10 +272,12 @@ const srgbEotf = (v, ext) => {
   const s = v < 0 ? -1 : 1, a = Math.abs(v);
   return s * (a <= 0.04045 ? a / 12.92 : Math.pow((a + 0.055) / 1.055, 2.4));
 };
+const BT709_ALPHA = 0.09929682680944;
+const BT709_CUT = 4.5 * 0.018053968510807;
 const bt709Eotf = (v, ext) => {
   if (!ext) v = Math.min(1, Math.max(0, v));
-  if (v < 0.081) return v / 4.5;
-  return Math.pow((v + 0.099) / 1.099, 1 / 0.45);
+  const s = v < 0 ? -1 : 1, a = Math.abs(v);
+  return s * (a < BT709_CUT ? a / 4.5 : Math.pow((a + BT709_ALPHA) / (1 + BT709_ALPHA), 1 / 0.45));
 };
 const gamma22Eotf = (v, ext) => {
   if (!ext) v = Math.min(1, Math.max(0, v));
@@ -350,7 +352,7 @@ const CURVES = [
     id: 'hlg', name: 'HLG (scene OETF)', cicp: 'TC = 18', color: '#5b8dff', on: true,
     eotf: (v, st) => {
       const s = hlgInvOetf(v);
-      return st.mode === 'hdr' ? s * 1000 : s;
+      return st.mode === 'hdr' ? s * 1000 : (s * 1000) / st.pqWhite;
     },
     formula: 'v ≤ 0.5 ? v²/3 : (exp((v − c)/a) + b)/12',
     role: 'Broadcast HDR (BBC/NHK, iPhone Dolby Vision HLG base)',
@@ -371,7 +373,7 @@ const CURVES = [
   },
 ];
 
-const state = { mode: 'sdr', pqWhite: 203, hlgGamma: 1.2, probeX: 0.50 };
+const state = { mode: 'hdr', pqWhite: 203, hlgGamma: 1.2, probeX: 0.50 };
 
 function renderCards() {
   $('tf-cards').innerHTML = CURVES.map(c => `
@@ -402,50 +404,61 @@ function drawCharts() {
   const W = 520, H = 310, P = { l: 54, r: 18, t: 18, b: 36 };
   const iw = W - P.l - P.r, ih = H - P.t - P.b;
   const xMin = state.mode === 'ext' ? -0.5 : 0;
-  const xMax = state.mode === 'ext' ? 1.5 : 1.0;
+  const xMax = state.mode === 'ext' ? 2.0 : 1.0;
   const toX = x => P.l + ((x - xMin) / (xMax - xMin)) * iw;
 
-  let toY, yTicks, yFmt;
+  let toY, yTicks, yFmt, refY = null, refLabel = '';
   if (state.mode === 'hdr') {
     const logMin = -2, logMax = 4; // 0.01 to 10,000 nits
     toY = y => {
-      const ly = Math.log10(Math.max(0.01, Math.min(10000, y)));
+      const ly = Math.log10(Math.max(1e-4, y));
       return P.t + ih * (1 - (ly - logMin) / (logMax - logMin));
     };
-    yTicks = [0.01, 0.1, 1, 10, 100, 203, 1000, 10000];
+    yTicks = [0.01, 0.1, 1, 10, 100, 1000, 10000];
     yFmt = v => v >= 1000 ? (v / 1000) + 'k' : String(v);
+    refY = state.pqWhite;
+    refLabel = `SDR white (${state.pqWhite} nit)`;
     $('eotf-title').textContent = 'EOTF: signal → absolute display luminance (nits)';
-    $('eotf-axis').textContent = 'x = signal [0, 1], y = cd/m² (log10)';
+    $('eotf-axis').textContent = 'x = signal [0, 1], y = cd/m² (log10, 0.01–10k nits)';
   } else if (state.mode === 'ext') {
-    const yMin = -0.6, yMax = 2.6;
-    toY = y => P.t + ih * (1 - (Math.max(yMin, Math.min(yMax, y)) - yMin) / (yMax - yMin));
-    yTicks = [-0.5, 0, 0.5, 1.0, 1.5, 2.0, 2.5];
-    yFmt = v => v.toFixed(1);
-    $('eotf-title').textContent = 'Extended-range EOTF: negative & >1.0 floats';
-    $('eotf-axis').textContent = 'x = encoded [-0.5, 1.5], y = linear light';
+    const yMin = -0.6, yMax = 5.2;
+    toY = y => P.t + ih * (1 - (y - yMin) / (yMax - yMin));
+    yTicks = [-0.5, 0, 1.0, 2.0, 3.0, 4.0, 5.0];
+    yFmt = v => v.toFixed(1) + '×';
+    refY = 1.0;
+    refLabel = 'SDR white (1.0×)';
+    $('eotf-title').textContent = 'Extended-range EOTF: negative & super-white floats';
+    $('eotf-axis').textContent = 'x = encoded [-0.5, 2.0], y = relative linear light';
   } else {
-    const yMin = 0, yMax = 1.05;
-    toY = y => P.t + ih * (1 - Math.max(0, Math.min(yMax, y)) / yMax);
-    yTicks = [0, 0.25, 0.5, 0.75, 1.0];
-    yFmt = v => v.toFixed(2);
-    $('eotf-title').textContent = 'EOTF: encoded signal → relative linear light';
-    $('eotf-axis').textContent = 'x = signal [0, 1], y = linear (1.0 = SDR white)';
+    const yMin = 0, yMax = 5.2;
+    toY = y => P.t + ih * (1 - (y - yMin) / (yMax - yMin));
+    yTicks = [0, 1.0, 2.0, 3.0, 4.0, 5.0];
+    yFmt = v => v.toFixed(1) + '×';
+    refY = 1.0;
+    refLabel = `SDR white (1.0× = ${state.pqWhite} nit)`;
+    $('eotf-title').textContent = 'EOTF: signal → relative linear light (with HDR headroom)';
+    $('eotf-axis').textContent = 'x = signal [0, 1], y = multiples of SDR white (unclipped)';
   }
 
-  const xTicks = state.mode === 'ext' ? [-0.5, 0, 0.5, 1.0, 1.5] : [0, 0.25, 0.5, 0.75, 1.0];
-  let g = '';
+  const xTicks = state.mode === 'ext' ? [-0.5, 0, 0.5, 1.0, 1.5, 2.0] : [0, 0.25, 0.5, 0.75, 1.0];
+  let g = `<defs><clipPath id="eotf-clip"><rect x="${P.l}" y="${P.t}" width="${iw}" height="${ih}"/></clipPath></defs>`;
   for (const yt of yTicks) {
     const py = toY(yt);
-    const isRef = state.mode === 'hdr' && yt === 203;
-    g += `<line x1="${P.l}" y1="${py.toFixed(1)}" x2="${W - P.r}" y2="${py.toFixed(1)}" stroke="${isRef ? '#f6c85f' : '#252c54'}" stroke-dasharray="${isRef ? '4 4' : ''}" stroke-width="1"/>`;
-    g += `<text x="${P.l - 7}" y="${(py + 4).toFixed(1)}" text-anchor="end" fill="${isRef ? '#f6c85f' : '#8d96b8'}" font-family="var(--font-mono)" font-size="10">${yFmt(yt)}</text>`;
+    g += `<line x1="${P.l}" y1="${py.toFixed(1)}" x2="${W - P.r}" y2="${py.toFixed(1)}" stroke="${yt === 0 ? '#364072' : '#252c54'}" stroke-width="1"/>`;
+    g += `<text x="${P.l - 7}" y="${(py + 4).toFixed(1)}" text-anchor="end" fill="#8d96b8" font-family="var(--font-mono)" font-size="10">${yFmt(yt)}</text>`;
+  }
+  if (refY !== null) {
+    const rpy = toY(refY);
+    g += `<line x1="${P.l}" y1="${rpy.toFixed(1)}" x2="${W - P.r}" y2="${rpy.toFixed(1)}" stroke="#f6c85f" stroke-dasharray="4 4" stroke-width="1.2"/>`;
+    g += `<text x="${W - P.r - 4}" y="${(rpy - 5).toFixed(1)}" text-anchor="end" fill="#f6c85f" font-family="var(--font-mono)" font-size="9.5">${refLabel}</text>`;
   }
   for (const xt of xTicks) {
     const px = toX(xt);
     g += `<line x1="${px.toFixed(1)}" y1="${P.t}" x2="${px.toFixed(1)}" y2="${H - P.b}" stroke="${xt === 0 || xt === 1 ? '#364072' : '#1e2446'}" stroke-width="1"/>`;
     g += `<text x="${px.toFixed(1)}" y="${H - P.b + 16}" text-anchor="middle" fill="#8d96b8" font-family="var(--font-mono)" font-size="10">${xt.toFixed(2)}</text>`;
   }
-  const N = 160;
+  const N = 200;
+  g += '<g clip-path="url(#eotf-clip)">';
   for (const c of CURVES) {
     if (!c.on) continue;
     if (state.mode === 'ext' && (c.id === 'pq' || c.id === 'hlg' || c.id === 'hlg_disp')) continue;
@@ -453,31 +466,39 @@ function drawCharts() {
     for (let i = 0; i <= N; i++) {
       const x = xMin + (i / N) * (xMax - xMin);
       const y = c.eotf(x, state);
-      pts.push(`${toX(x).toFixed(1)},${toY(y).toFixed(1)}`);
+      const py = toY(y);
+      pts.push(`${toX(x).toFixed(1)},${Math.max(P.t - 40, Math.min(H - P.b + 40, py)).toFixed(1)}`);
     }
     g += `<polyline fill="none" stroke="${c.color}" stroke-width="2.4" points="${pts.join(' ')}"/>`;
   }
+  g += '</g>';
   // Probe line
   const pxVal = state.mode === 'ext' ? (xMin + state.probeX * (xMax - xMin)) : state.probeX;
   const probePx = toX(pxVal);
+  $('probe-x-val').textContent = pxVal.toFixed(2);
   g += `<line x1="${probePx.toFixed(1)}" y1="${P.t}" x2="${probePx.toFixed(1)}" y2="${H - P.b}" stroke="#f6c85f" stroke-dasharray="3 3" stroke-width="1.3"/>`;
-  const readItems = [`<span style="--c:#eef0f8">signal=${pxVal.toFixed(2)} (u8≈${Math.round(Math.max(0, Math.min(1, pxVal)) * 255)}, u10≈${Math.round(Math.max(0, Math.min(1, pxVal)) * 1023)})</span>`];
+  const readItems = [`<span style="--c:#eef0f8">signal=${pxVal.toFixed(2)}${pxVal >= 0 && pxVal <= 1 ? ` (u8≈${Math.round(pxVal * 255)}, u10≈${Math.round(pxVal * 1023)})` : ' (extended f32)'}</span>`];
   for (const c of CURVES) {
     if (!c.on) continue;
     if (state.mode === 'ext' && (c.id === 'pq' || c.id === 'hlg' || c.id === 'hlg_disp')) continue;
     const y = c.eotf(pxVal, state);
-    g += `<circle cx="${probePx.toFixed(1)}" cy="${toY(y).toFixed(1)}" r="4" fill="${c.color}" stroke="#0d1020" stroke-width="1.5"/>`;
-    const unit = state.mode === 'hdr' ? `${y < 10 ? y.toFixed(2) : y.toFixed(1)} nits` : `${y.toFixed(4)} lin`;
+    const py = toY(y);
+    if (py >= P.t - 1 && py <= H - P.b + 1) {
+      g += `<circle cx="${probePx.toFixed(1)}" cy="${py.toFixed(1)}" r="4" fill="${c.color}" stroke="#0d1020" stroke-width="1.5"/>`;
+    }
+    const unit = state.mode === 'hdr'
+      ? `${y < 10 ? y.toFixed(2) : y.toFixed(1)} nits (${(y / state.pqWhite).toFixed(2)}×)`
+      : `${y.toFixed(3)}× (${(y * state.pqWhite).toFixed(1)} nit)`;
     readItems.push(`<span style="--c:${c.color}">${c.name}: ${unit}</span>`);
   }
   $('svg-eotf').innerHTML = g;
   $('probe-readout').innerHTML = readItems.join('');
 
-  // Second chart: stops per 8-bit code step (log2(L(v+dv)/L(v))) across signal [0.04, 0.98]
+  // Second chart: stops per 8-bit/10-bit code step (log2(L(v+dv)/L(v))) across signal [0.04, 0.98]
   const dMin = 0, dMax = 0.25;
-  const toDY = s => P.t + ih * (1 - Math.min(dMax, Math.max(0, s)) / dMax);
+  const toDY = s => P.t + ih * (1 - (s - dMin) / (dMax - dMin));
   const toDX = x => P.l + x * iw;
-  let dg = '';
+  let dg = `<defs><clipPath id="dens-clip"><rect x="${P.l}" y="${P.t}" width="${iw}" height="${ih}"/></clipPath></defs>`;
   for (const yt of [0, 0.05, 0.10, 0.15, 0.20, 0.25]) {
     const py = toDY(yt);
     dg += `<line x1="${P.l}" y1="${py.toFixed(1)}" x2="${W - P.r}" y2="${py.toFixed(1)}" stroke="#252c54" stroke-width="1"/>`;
@@ -496,6 +517,7 @@ function drawCharts() {
   const dv = 1 / ((1 << bits) - 1);
   $('density-title').textContent = `Perceptual step size (stops per ${bits}-bit code)`;
   $('density-axis').textContent = `lower = smoother gradients (${bits}-bit step = 1/${(1 << bits) - 1})`;
+  dg += '<g clip-path="url(#dens-clip)">';
   for (const c of CURVES) {
     if (!c.on) continue;
     const pts = [];
@@ -504,10 +526,11 @@ function drawCharts() {
       const y1 = Math.max(1e-7, c.eotf(x, { ...state, mode: state.mode === 'hdr' ? 'hdr' : 'sdr' }));
       const y2 = Math.max(1e-7, c.eotf(Math.min(1, x + dv), { ...state, mode: state.mode === 'hdr' ? 'hdr' : 'sdr' }));
       const stops = Math.max(0, Math.log2(y2 / y1));
-      pts.push(`${toDX(x).toFixed(1)},${toDY(stops).toFixed(1)}`);
+      pts.push(`${toDX(x).toFixed(1)},${Math.max(P.t - 40, Math.min(H - P.b + 40, toDY(stops))).toFixed(1)}`);
     }
     dg += `<polyline fill="none" stroke="${c.color}" stroke-width="2.2" points="${pts.join(' ')}"/>`;
   }
+  dg += '</g>';
   $('svg-density').innerHTML = dg;
 }
 
