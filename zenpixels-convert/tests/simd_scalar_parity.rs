@@ -749,11 +749,14 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
             0,
             None,
         );
+        let pol_hlg = pol_ext
+            .clone()
+            .with_hlg_rendering(HlgRendering::REFERENCE_1000_NIT);
         assert_scalar_simd_bit_exact(
             "HLGScene_F32->Lin2020_F32",
             hlg_scene_f32.clone(),
             lin_2020.clone(),
-            pol_ext.clone(),
+            pol_hlg.clone(),
             f32_rgb_bytes,
             width,
             0,
@@ -763,7 +766,7 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
             "Lin2020_F32->HLGScene_F32",
             lin_2020,
             hlg_scene_f32,
-            pol_ext,
+            pol_hlg,
             f32_rgb_bytes,
             width,
             0,

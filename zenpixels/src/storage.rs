@@ -234,25 +234,25 @@ fn zeroed_vec<T: bytemuck::Zeroable + bytemuck::Pod>(bytes: usize) -> Result<Vec
     bytemuck::allocation::try_zeroed_vec(count).map_err(|()| StorageError::AllocationFailed)
 }
 
-fn gather_typed<T: bytemuck::Pod>(
+fn gather_typed<T: bytemuck::Zeroable + bytemuck::Pod>(
     total_bytes: usize,
     rows: &mut dyn Iterator<Item = &[u8]>,
 ) -> Result<Vec<T>, StorageError> {
-    let sz = core::mem::size_of::<T>();
-    let count = total_bytes.div_ceil(sz);
-    let mut out: Vec<T> = Vec::new();
-    out.try_reserve_exact(count)
-        .map_err(|_| StorageError::AllocationFailed)?;
+    if total_bytes > isize::MAX as usize {
+        return Err(StorageError::AllocationFailed);
+    }
+    let mut out = zeroed_vec::<T>(total_bytes)?;
+    let dst = bytemuck::cast_slice_mut::<T, u8>(&mut out);
+    let mut pos = 0usize;
     for row in rows {
-        if (row.as_ptr() as usize) % core::mem::align_of::<T>() == 0 && row.len() % sz == 0 {
-            out.extend_from_slice(bytemuck::cast_slice(row));
-        } else {
-            // Safe unaligned copy path (e.g., copying from an odd-aligned byte slice into typed storage).
-            let mut chunks = row.chunks_exact(sz);
-            for c in &mut chunks {
-                out.push(bytemuck::pod_read_unaligned(c));
-            }
+        let end = pos
+            .checked_add(row.len())
+            .ok_or(StorageError::AllocationFailed)?;
+        if end > total_bytes || end > dst.len() {
+            return Err(StorageError::AllocationFailed);
         }
+        dst[pos..end].copy_from_slice(row);
+        pos = end;
     }
     Ok(out)
 }
@@ -436,6 +436,53 @@ impl PixelStorage {
             Self::F64(_) => core::mem::align_of::<f64>(),
             Self::Aligned64(_) => 64,
         }
+    }
+
+    /// Byte capacity of the underlying allocation.
+    #[inline]
+    #[must_use]
+    pub fn byte_capacity(&self) -> usize {
+        match self {
+            Self::U8(v) => v.capacity(),
+            Self::I8(v) => v.capacity(),
+            Self::U16(v) => v.capacity() * 2,
+            Self::I16(v) => v.capacity() * 2,
+            Self::F16(v) => v.capacity() * 2,
+            Self::U32(v) => v.capacity() * 4,
+            Self::I32(v) => v.capacity() * 4,
+            Self::F32(v) => v.capacity() * 4,
+            Self::U64(v) => v.capacity() * 8,
+            Self::I64(v) => v.capacity() * 8,
+            Self::F64(v) => v.capacity() * 8,
+            Self::Aligned64(a) => a.byte_len,
+        }
+    }
+
+    /// Whether truncating to `target_bytes` and calling `try_cast_into_vec::<P>`
+    /// will succeed zero-copy without violating deallocation alignment or capacity.
+    #[inline]
+    #[must_use]
+    pub fn can_cast_into_vec<P: bytemuck::Pod>(&self, target_bytes: usize) -> bool {
+        let p_size = core::mem::size_of::<P>();
+        let p_align = core::mem::align_of::<P>();
+        if p_size == 0
+            || matches!(self, Self::Aligned64(_))
+            || self.alloc_alignment() != p_align
+            || target_bytes > self.byte_len()
+            || target_bytes % p_size != 0
+            || self.byte_capacity() % p_size != 0
+        {
+            return false;
+        }
+        // `truncate_bytes` rounds up to sample unit boundaries, so `target_bytes` must be sample-aligned.
+        let unit = match self {
+            Self::U8(_) | Self::I8(_) => 1,
+            Self::U16(_) | Self::I16(_) | Self::F16(_) => 2,
+            Self::U32(_) | Self::I32(_) | Self::F32(_) => 4,
+            Self::U64(_) | Self::I64(_) | Self::F64(_) => 8,
+            Self::Aligned64(_) => 64,
+        };
+        target_bytes % unit == 0
     }
 
     /// Byte length of the stored allocation.

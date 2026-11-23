@@ -16,21 +16,24 @@ use zenpixels::SampleLayout;
 use crate::policy::DepthPolicy;
 use crate::strip::{ByteFastPath, StripBuf};
 
-/// Strip-level & row-level SIMD function pointer signatures.
-pub type ByteLayoutFn = fn(&[u8], &mut [u8], usize) -> bool;
+/// Strip-level & row-level SIMD function pointer signatures (crate-internal).
 pub(crate) type ByteLayoutDispatchFn = fn(ByteFastPath, &[u8], &mut [u8], usize) -> bool;
+pub(crate) type Rgba8PremulFn = fn(&[u8], &mut [u8], usize, bool);
 pub(crate) type StripUnpackFn = fn(SampleLayout, &[u8], &mut StripBuf, usize) -> bool;
 pub(crate) type StripPackFn = fn(SampleLayout, &StripBuf, &mut [u8], usize, DepthPolicy) -> bool;
 pub(crate) type F32ToU8SliceFn = fn(&[f32], &mut [u8], bool);
 pub(crate) type U8ToF32SliceFn = fn(&[u8], &mut [f32]);
 pub(crate) type F32ToU16SliceFn = fn(&[f32], &mut [u16], bool);
 pub(crate) type U16ToF32SliceFn = fn(&[u16], &mut [f32]);
-pub type TransferSliceFn = fn(&mut [f32]);
-pub type ScaledTransferSliceFn = fn(&mut [f32], f32);
-pub type GamutSoaFn = fn(&[[f32; 3]; 3], &mut [f32], &mut [f32], &mut [f32]);
-pub type F16DecodeFn = fn(&[u16], &mut [f32]);
-pub type F16EncodeFn = fn(&[f32], &mut [u16]);
-pub type OklabSoaFn = fn(&[[f32; 3]; 3], &mut [f32], &mut [f32], &mut [f32]);
+pub(crate) type LinF32ToSrgbU8Fn = fn(&[f32], &mut [u8], bool, bool);
+pub(crate) type TransferSliceFn = fn(&mut [f32]);
+#[cfg(feature = "hdr-transfers")]
+pub(crate) type ScaledTransferSliceFn = fn(&mut [f32], f32);
+pub(crate) type GamutSoaFn = fn(&[[f32; 3]; 3], &mut [f32], &mut [f32], &mut [f32]);
+pub(crate) type F16DecodeFn = fn(&[u16], &mut [f32]);
+pub(crate) type F16EncodeFn = fn(&[f32], &mut [u16]);
+#[cfg(feature = "oklab")]
+pub(crate) type OklabSoaFn = fn(&[[f32; 3]; 3], &mut [f32], &mut [f32], &mut [f32]);
 #[cfg(feature = "oklab")]
 pub(crate) type SoftCompressFn = fn(&crate::tonemap::SoftCompress, &mut [[f32; 3]]);
 #[cfg(feature = "hdr-transfers")]
@@ -45,6 +48,8 @@ pub(crate) type HlgDisplaySoaFn =
 pub struct Accelerators {
     /// `garb` SIMD U8 byte-only layout fast paths (`RGBA↔BGRA`, `RGB↔RGBA`, `Gray→RGBA`).
     pub(crate) byte_layout_exec: Option<ByteLayoutDispatchFn>,
+    /// SIMD `RGBA8` / `BGRA8` straight → premultiplied (`round` / `trunc`).
+    pub(crate) rgba8_straight_to_premul: Option<Rgba8PremulFn>,
     /// Native-width SIMD AoS → SoA strip unpack (`U8`/`U16`/`F32` 3ch/4ch).
     pub(crate) strip_unpack: Option<StripUnpackFn>,
     /// Native-width SIMD SoA → AoS strip pack (`U8`/`U16`/`F32` 3ch/4ch).
@@ -58,46 +63,48 @@ pub struct Accelerators {
     /// Direct contiguous `u16 → f32` depth promotion.
     pub(crate) u16_to_f32: Option<U16ToF32SliceFn>,
     /// SIMD sRGB EOTF (`srgb_to_linear_extended`) on `f32` slices.
-    pub srgb_eotf: Option<TransferSliceFn>,
+    pub(crate) srgb_eotf: Option<TransferSliceFn>,
     /// SIMD sRGB OETF (`linear_to_srgb_extended`) on `f32` slices.
-    pub srgb_oetf: Option<TransferSliceFn>,
+    pub(crate) srgb_oetf: Option<TransferSliceFn>,
     /// SIMD sRGB `u8 → linear f32` direct slice LUT (`RGB`/`Gray`).
     pub(crate) srgb_u8_to_lin: Option<U8ToF32SliceFn>,
-    /// SIMD sRGB `RGBA u8 → linear RGBA f32` direct slice LUT.
-    pub(crate) srgb_u8_to_lin_rgba: Option<U8ToF32SliceFn>,
+    /// Fused SIMD linear `f32 → sRGB u8` exact polynomial + quantization.
+    pub(crate) lin_f32_to_srgb_u8: Option<LinF32ToSrgbU8Fn>,
     /// SIMD BT.709 EOTF on `f32` slices.
-    pub bt709_eotf: Option<TransferSliceFn>,
+    pub(crate) bt709_eotf: Option<TransferSliceFn>,
     /// SIMD BT.709 OETF on `f32` slices.
-    pub bt709_oetf: Option<TransferSliceFn>,
+    pub(crate) bt709_oetf: Option<TransferSliceFn>,
     /// SIMD Adobe Gamma 2.2 (`563/256`) EOTF on `f32` slices.
-    pub gamma22_eotf: Option<TransferSliceFn>,
+    pub(crate) gamma22_eotf: Option<TransferSliceFn>,
     /// SIMD Adobe Gamma 2.2 (`256/563`) OETF on `f32` slices.
-    pub gamma22_oetf: Option<TransferSliceFn>,
+    pub(crate) gamma22_oetf: Option<TransferSliceFn>,
     /// SIMD 3×3 linear gamut multiply on SoA `r/g/b` slices.
-    pub gamut_3x3: Option<GamutSoaFn>,
+    pub(crate) gamut_3x3: Option<GamutSoaFn>,
     /// SIMD `f16 → f32` decode (`F16C` / `NEON-fp16`).
-    pub f16_decode: Option<F16DecodeFn>,
+    pub(crate) f16_decode: Option<F16DecodeFn>,
     /// SIMD `f32 → f16` encode (`F16C` / `NEON-fp16`).
-    pub f16_encode: Option<F16EncodeFn>,
+    pub(crate) f16_encode: Option<F16EncodeFn>,
     /// SIMD linear RGB → Oklab on SoA `r/g/b` slices.
-    pub rgb_to_oklab: Option<OklabSoaFn>,
+    #[cfg(feature = "oklab")]
+    pub(crate) rgb_to_oklab: Option<OklabSoaFn>,
     /// SIMD Oklab → linear RGB on SoA `l/a/b` slices.
-    pub oklab_to_rgb: Option<OklabSoaFn>,
+    #[cfg(feature = "oklab")]
+    pub(crate) oklab_to_rgb: Option<OklabSoaFn>,
     /// SIMD OKLch `SoftCompress` gamut compression.
     #[cfg(feature = "oklab")]
     pub(crate) soft_compress: Option<SoftCompressFn>,
     /// SIMD ST 2084 PQ EOTF on `f32` slices.
     #[cfg(feature = "hdr-transfers")]
-    pub pq_eotf: Option<ScaledTransferSliceFn>,
+    pub(crate) pq_eotf: Option<ScaledTransferSliceFn>,
     /// SIMD ST 2084 PQ OETF on `f32` slices.
     #[cfg(feature = "hdr-transfers")]
-    pub pq_oetf: Option<ScaledTransferSliceFn>,
+    pub(crate) pq_oetf: Option<ScaledTransferSliceFn>,
     /// SIMD ARIB STD-B67 HLG scene EOTF on `f32` slices.
     #[cfg(feature = "hdr-transfers")]
-    pub hlg_scene_eotf: Option<TransferSliceFn>,
+    pub(crate) hlg_scene_eotf: Option<TransferSliceFn>,
     /// SIMD ARIB STD-B67 HLG scene OETF on `f32` slices.
     #[cfg(feature = "hdr-transfers")]
-    pub hlg_scene_oetf: Option<TransferSliceFn>,
+    pub(crate) hlg_scene_oetf: Option<TransferSliceFn>,
     /// SIMD BT.2100-3 display HLG rendering on SoA `r/g/b` slices.
     #[cfg(feature = "hdr-transfers")]
     pub(crate) hlg_display_soa: Option<HlgDisplaySoaFn>,
@@ -107,16 +114,19 @@ impl fmt::Debug for Accelerators {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut ds = f.debug_struct("Accelerators");
         ds.field("byte_layout", &self.byte_layout_exec.is_some())
+            .field("premul_u8", &self.rgba8_straight_to_premul.is_some())
             .field("strip_simd", &self.strip_unpack.is_some())
             .field("srgb_eotf", &self.srgb_eotf.is_some())
             .field("srgb_oetf", &self.srgb_oetf.is_some())
+            .field("lin_f32_to_srgb_u8", &self.lin_f32_to_srgb_u8.is_some())
             .field("bt709", &self.bt709_eotf.is_some())
             .field("gamma22", &self.gamma22_eotf.is_some())
             .field("gamut_3x3", &self.gamut_3x3.is_some())
             .field("f16_decode", &self.f16_decode.is_some())
-            .field("f16_encode", &self.f16_encode.is_some())
-            .field("rgb_to_oklab", &self.rgb_to_oklab.is_some())
-            .field("oklab_to_rgb", &self.oklab_to_rgb.is_some());
+            .field("f16_encode", &self.f16_encode.is_some());
+        #[cfg(feature = "oklab")]
+        ds.field("oklab", &self.rgb_to_oklab.is_some())
+            .field("soft_compress", &self.soft_compress.is_some());
         #[cfg(feature = "hdr-transfers")]
         ds.field("hdr_simd", &self.pq_eotf.is_some());
         ds.finish()
@@ -126,24 +136,35 @@ impl fmt::Debug for Accelerators {
 impl PartialEq for Accelerators {
     fn eq(&self, other: &Self) -> bool {
         let base = self.byte_layout_exec.is_some() == other.byte_layout_exec.is_some()
+            && self.rgba8_straight_to_premul.is_some() == other.rgba8_straight_to_premul.is_some()
             && self.strip_unpack.is_some() == other.strip_unpack.is_some()
             && self.strip_pack.is_some() == other.strip_pack.is_some()
+            && self.f32_to_u8.is_some() == other.f32_to_u8.is_some()
+            && self.u8_to_f32.is_some() == other.u8_to_f32.is_some()
+            && self.f32_to_u16.is_some() == other.f32_to_u16.is_some()
+            && self.u16_to_f32.is_some() == other.u16_to_f32.is_some()
             && self.srgb_eotf.is_some() == other.srgb_eotf.is_some()
             && self.srgb_oetf.is_some() == other.srgb_oetf.is_some()
+            && self.srgb_u8_to_lin.is_some() == other.srgb_u8_to_lin.is_some()
+            && self.lin_f32_to_srgb_u8.is_some() == other.lin_f32_to_srgb_u8.is_some()
             && self.bt709_eotf.is_some() == other.bt709_eotf.is_some()
             && self.bt709_oetf.is_some() == other.bt709_oetf.is_some()
             && self.gamma22_eotf.is_some() == other.gamma22_eotf.is_some()
             && self.gamma22_oetf.is_some() == other.gamma22_oetf.is_some()
             && self.gamut_3x3.is_some() == other.gamut_3x3.is_some()
             && self.f16_decode.is_some() == other.f16_decode.is_some()
-            && self.f16_encode.is_some() == other.f16_encode.is_some()
+            && self.f16_encode.is_some() == other.f16_encode.is_some();
+        #[cfg(feature = "oklab")]
+        let base = base
             && self.rgb_to_oklab.is_some() == other.rgb_to_oklab.is_some()
-            && self.oklab_to_rgb.is_some() == other.oklab_to_rgb.is_some();
+            && self.oklab_to_rgb.is_some() == other.oklab_to_rgb.is_some()
+            && self.soft_compress.is_some() == other.soft_compress.is_some();
         #[cfg(feature = "hdr-transfers")]
         let base = base
             && self.pq_eotf.is_some() == other.pq_eotf.is_some()
             && self.pq_oetf.is_some() == other.pq_oetf.is_some()
             && self.hlg_scene_eotf.is_some() == other.hlg_scene_eotf.is_some()
+            && self.hlg_scene_oetf.is_some() == other.hlg_scene_oetf.is_some()
             && self.hlg_display_soa.is_some() == other.hlg_display_soa.is_some();
         base
     }
@@ -168,6 +189,7 @@ impl Accelerators {
     /// Pure scalar baseline — zero SIMD code linked, exact parity oracle.
     pub const SCALAR: Self = Self {
         byte_layout_exec: None,
+        rgba8_straight_to_premul: None,
         strip_unpack: None,
         strip_pack: None,
         f32_to_u8: None,
@@ -177,7 +199,7 @@ impl Accelerators {
         srgb_eotf: None,
         srgb_oetf: None,
         srgb_u8_to_lin: None,
-        srgb_u8_to_lin_rgba: None,
+        lin_f32_to_srgb_u8: None,
         bt709_eotf: None,
         bt709_oetf: None,
         gamma22_eotf: None,
@@ -185,7 +207,9 @@ impl Accelerators {
         gamut_3x3: None,
         f16_decode: None,
         f16_encode: None,
+        #[cfg(feature = "oklab")]
         rgb_to_oklab: None,
+        #[cfg(feature = "oklab")]
         oklab_to_rgb: None,
         #[cfg(feature = "oklab")]
         soft_compress: None,
@@ -251,11 +275,12 @@ impl Accelerators {
         self.strip_unpack.is_some()
     }
 
-    /// Enable `garb` byte-only layout fast paths.
+    /// Enable `garb` byte-only layout fast paths & SIMD U8 premultiplication.
     #[inline]
     #[must_use]
     pub const fn with_byte_layout(mut self) -> Self {
         self.byte_layout_exec = Some(crate::strip::exec_garb_byte_fast_path);
+        self.rgba8_straight_to_premul = Some(crate::strip_simd::simd_rgba8_straight_to_premul);
         self
     }
 
@@ -272,14 +297,14 @@ impl Accelerators {
         self
     }
 
-    /// Enable SIMD sRGB EOTF & OETF (`linear-srgb`).
+    /// Enable SIMD sRGB EOTF & OETF (`linear-srgb`) + fused linear F32 → sRGB U8.
     #[inline]
     #[must_use]
     pub const fn with_srgb(mut self) -> Self {
         self.srgb_eotf = Some(simd_srgb_eotf_slice);
         self.srgb_oetf = Some(simd_srgb_oetf_slice);
         self.srgb_u8_to_lin = Some(simd_srgb_u8_to_lin_slice);
-        self.srgb_u8_to_lin_rgba = Some(simd_srgb_u8_to_lin_rgba_slice);
+        self.lin_f32_to_srgb_u8 = Some(crate::strip_simd::simd_lin_f32_to_srgb_u8);
         self
     }
 
@@ -360,6 +385,7 @@ impl Accelerators {
         }
         Self {
             byte_layout_exec: pick!(byte_layout_exec),
+            rgba8_straight_to_premul: pick!(rgba8_straight_to_premul),
             strip_unpack: pick!(strip_unpack),
             strip_pack: pick!(strip_pack),
             f32_to_u8: pick!(f32_to_u8),
@@ -369,7 +395,7 @@ impl Accelerators {
             srgb_eotf: pick!(srgb_eotf),
             srgb_oetf: pick!(srgb_oetf),
             srgb_u8_to_lin: pick!(srgb_u8_to_lin),
-            srgb_u8_to_lin_rgba: pick!(srgb_u8_to_lin_rgba),
+            lin_f32_to_srgb_u8: pick!(lin_f32_to_srgb_u8),
             bt709_eotf: pick!(bt709_eotf),
             bt709_oetf: pick!(bt709_oetf),
             gamma22_eotf: pick!(gamma22_eotf),
@@ -377,7 +403,9 @@ impl Accelerators {
             gamut_3x3: pick!(gamut_3x3),
             f16_decode: pick!(f16_decode),
             f16_encode: pick!(f16_encode),
+            #[cfg(feature = "oklab")]
             rgb_to_oklab: pick!(rgb_to_oklab),
+            #[cfg(feature = "oklab")]
             oklab_to_rgb: pick!(oklab_to_rgb),
             #[cfg(feature = "oklab")]
             soft_compress: pick!(soft_compress),
@@ -446,10 +474,6 @@ fn simd_srgb_oetf_slice(vals: &mut [f32]) {
 
 fn simd_srgb_u8_to_lin_slice(src: &[u8], dst: &mut [f32]) {
     linear_srgb::default::srgb_u8_to_linear_slice(src, dst);
-}
-
-fn simd_srgb_u8_to_lin_rgba_slice(src: &[u8], dst: &mut [f32]) {
-    linear_srgb::default::srgb_u8_to_linear_rgba_slice(src, dst);
 }
 
 fn simd_f16_to_f32_slice(src: &[u16], dst: &mut [f32]) {

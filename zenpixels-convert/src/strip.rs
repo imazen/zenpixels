@@ -105,8 +105,8 @@ pub(crate) enum ByteFastPath {
     U16ToU8Round,
     /// `U16 → U8` exact integer truncate (`((v * 255 + 255) >> 16) as u8`).
     U16ToU8Trunc,
-    /// `RGBA8` / `BGRA8` straight → premultiplied (exact integer `round(c * a / 255)`).
-    Rgba8StraightToPremul,
+    /// `RGBA8` / `BGRA8` straight → premultiplied (exact integer `round` or `trunc`).
+    Rgba8StraightToPremul { round: bool },
     /// `RGBA8` / `BGRA8` premultiplied → straight (exact 256-entry fixed-point LUT).
     Rgba8PremulToStraight,
     /// 2-byte/channel (`U16` / `F16`): `4ch → 3ch` drop alpha (`RGBA16→RGB16`, `RGBAF16→RGBF16`).
@@ -330,14 +330,19 @@ impl ByteFastPath {
                     }
                 }
             }
-            Self::Rgba8StraightToPremul => {
+            Self::Rgba8StraightToPremul { round } => {
+                if let Some(f) = accel.rgba8_straight_to_premul {
+                    f(src, dst, width, round);
+                    return;
+                }
                 let s = &src[..width * 4];
                 let d = &mut dst[..width * 4];
+                let bias: u32 = if round { 128 } else { 1 };
                 for (sp, dp) in s.chunks_exact(4).zip(d.chunks_exact_mut(4)) {
                     let a = u32::from(sp[3]);
-                    dp[0] = (((u32::from(sp[0]) * a + 128) * 257) >> 16) as u8;
-                    dp[1] = (((u32::from(sp[1]) * a + 128) * 257) >> 16) as u8;
-                    dp[2] = (((u32::from(sp[2]) * a + 128) * 257) >> 16) as u8;
+                    dp[0] = (((u32::from(sp[0]) * a + bias) * 257) >> 16) as u8;
+                    dp[1] = (((u32::from(sp[1]) * a + bias) * 257) >> 16) as u8;
+                    dp[2] = (((u32::from(sp[2]) * a + bias) * 257) >> 16) as u8;
                     dp[3] = sp[3];
                 }
             }
@@ -744,6 +749,7 @@ pub(crate) fn detect_fast_row(
                 || sr != dr
                 || *sr != SignalRange::Full
                 || sa != da
+                || (*sa == AlphaMode::Opaque && is_rgba)
                 || (*sa == AlphaMode::Premultiplied && st != dt)
             {
                 return None;
@@ -770,6 +776,7 @@ pub(crate) fn detect_fast_row(
             if sr != dr
                 || *sr != SignalRange::Full
                 || sa != da
+                || (*sa == AlphaMode::Opaque && src.layout.order.has_alpha_slot())
                 || (*sa == AlphaMode::Premultiplied && st != dt)
             {
                 return None;
@@ -781,6 +788,10 @@ pub(crate) fn detect_fast_row(
         }
         _ => return None,
     };
+
+    if st != dt && (st == Transfer::Unknown || dt == Transfer::Unknown) {
+        return None;
+    }
 
     use SampleType as S;
     if st == dt {
@@ -824,16 +835,13 @@ pub(crate) fn detect_fast_row(
         });
     }
 
-    // F32 <-> F32 single transfer (Linear <-> Srgb / Bt709 / Gamma22 / Pq / Hlg(Scene)).
+    // F32 <-> F32 single transfer (Linear <-> Srgb / Bt709 / Gamma22 / Pq).
+    // HLG <-> Linear always resolves through `resolve_hlg` into the BT.2100-3 display strip path.
     if src.layout.sample == S::F32 && dst.layout.sample == S::F32 {
         let supported = |t: Transfer| {
             matches!(
                 t,
-                Transfer::Srgb
-                    | Transfer::Bt709
-                    | Transfer::Gamma22
-                    | Transfer::Pq
-                    | Transfer::Hlg(HlgMode::Scene)
+                Transfer::Srgb | Transfer::Bt709 | Transfer::Gamma22 | Transfer::Pq
             )
         };
         if dt == Transfer::Linear && supported(st) {
@@ -1055,18 +1063,17 @@ pub(crate) fn exec_fast_row(
             }
         }
         FastRow::SrgbU8ToLinF32 { channels, is_rgba } => {
+            const INV_255: f32 = 1.0 / 255.0;
             let count = width * channels;
             if let Ok(df) = bytemuck::try_cast_slice_mut::<u8, f32>(&mut dst[..count * 4]) {
                 if is_rgba {
-                    if let Some(f) = accel.srgb_u8_to_lin_rgba {
-                        f(&src[..count], df);
-                    } else {
-                        for (sp, dp) in src[..count].chunks_exact(4).zip(df.chunks_exact_mut(4)) {
-                            dp[0] = linear_srgb::default::srgb_u8_to_linear(sp[0]);
-                            dp[1] = linear_srgb::default::srgb_u8_to_linear(sp[1]);
-                            dp[2] = linear_srgb::default::srgb_u8_to_linear(sp[2]);
-                            dp[3] = sp[3] as f32 / 255.0;
-                        }
+                    // Canonical alpha formula `f32::from(a) * (1.0 / 255.0)` matches
+                    // `unpack_strip_u8_srgb_lut` and `strip_simd` bit-for-bit across all 256 codes.
+                    for (sp, dp) in src[..count].chunks_exact(4).zip(df.chunks_exact_mut(4)) {
+                        dp[0] = linear_srgb::default::srgb_u8_to_linear(sp[0]);
+                        dp[1] = linear_srgb::default::srgb_u8_to_linear(sp[1]);
+                        dp[2] = linear_srgb::default::srgb_u8_to_linear(sp[2]);
+                        dp[3] = f32::from(sp[3]) * INV_255;
                     }
                 } else if let Some(f) = accel.srgb_u8_to_lin {
                     f(&src[..count], df);
@@ -1080,7 +1087,7 @@ pub(crate) fn exec_fast_row(
                     for c in 0..channels {
                         let b = src[i * channels + c];
                         let v = if is_rgba && c == 3 {
-                            b as f32 / 255.0
+                            f32::from(b) * INV_255
                         } else {
                             linear_srgb::default::srgb_u8_to_linear(b)
                         };
@@ -1096,10 +1103,14 @@ pub(crate) fn exec_fast_row(
             round,
         } => {
             let count = width * channels;
+            let aligned = bytemuck::try_cast_slice::<u8, f32>(&src[..count * 4]).ok();
+            if let (Some(sf), Some(fused)) = (aligned, accel.lin_f32_to_srgb_u8) {
+                fused(sf, &mut dst[..count], is_rgba, round);
+                return;
+            }
             let bias = if round { 0.5_f32 } else { 0.0_f32 };
             let mut buf = [0.0f32; 256];
             let mut saved_a = [0.0f32; 64];
-            let aligned = bytemuck::try_cast_slice::<u8, f32>(&src[..count * 4]).ok();
             let mut i = 0usize;
             while i < count {
                 // Keep chunks pixel-aligned (multiple of 4 for RGBA).
@@ -1232,11 +1243,13 @@ pub(crate) fn exec_fast_row(
 /// Composable micro-op executed in-place on a 64-pixel [`StripBuf`].
 #[derive(Clone)]
 pub(crate) enum MicroOp {
-    /// Expand narrow studio integer range to full `[0.0, 1.0]` on color channels (alpha untouched).
-    ExpandNarrow { sample: SampleType },
-    /// Compress full `[0.0, 1.0]` color channels to narrow studio range (alpha untouched).
-    CompressNarrow { sample: SampleType },
-    /// Unpremultiply RGB/Gray by alpha (`a == 0 → 0`).
+    /// Expand narrow studio integer range for effective bit depth `bits` (`8..=16`) to full `[0.0, 1.0]` on color channels (alpha untouched).
+    ExpandNarrow { bits: u8 },
+    /// Compress full `[0.0, 1.0]` color channels to narrow studio range for effective bit depth `bits` (`8..=16`, alpha untouched).
+    CompressNarrow { bits: u8 },
+    /// Scale linear RGB/Gray light by a constant factor (relative diffuse white rescaling).
+    ScaleLinear(f32),
+    /// Unpremultiply RGB/Gray by alpha (`a <= 0 → 0`).
     Unpremul,
     /// Premultiply RGB/Gray by alpha.
     Premul,
@@ -1308,8 +1321,9 @@ pub(crate) enum MicroOp {
 impl core::fmt::Debug for MicroOp {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::ExpandNarrow { sample } => write!(f, "ExpandNarrow({sample:?})"),
-            Self::CompressNarrow { sample } => write!(f, "CompressNarrow({sample:?})"),
+            Self::ExpandNarrow { bits } => write!(f, "ExpandNarrow({bits}b)"),
+            Self::CompressNarrow { bits } => write!(f, "CompressNarrow({bits}b)"),
+            Self::ScaleLinear(s) => write!(f, "ScaleLinear({s})"),
             Self::Unpremul => f.write_str("Unpremul"),
             Self::Premul => f.write_str("Premul"),
             Self::Eotf { transfer, .. } => write!(f, "Eotf({transfer:?})"),
@@ -1342,6 +1356,7 @@ pub(crate) fn exec_strip_row(
     dst_layout: SampleLayout,
     ops: &[MicroOp],
     depth_policy: DepthPolicy,
+    src_opaque_alpha: bool,
     accel: &Accelerators,
     src_row: &[u8],
     dst_row: &mut [u8],
@@ -1376,6 +1391,9 @@ pub(crate) fn exec_strip_row(
         {
         } else {
             unpack_strip_scalar(src_layout, s_slice, &mut strip, len, accel);
+        }
+        if src_opaque_alpha {
+            strip.a[..len].fill(1.0);
         }
 
         for op in active_ops {
@@ -1676,47 +1694,66 @@ fn write_word_u32(sample: SampleType, dst: &mut [u8], word: u32) {
 // Micro-op execution on StripBuf
 // ---------------------------------------------------------------------------
 
+#[inline(always)]
+fn narrow_params(bits: u8) -> (f32, f32, f32) {
+    // ITU-R BT.2100-3 Table 9: for bit depth n >= 8, black = 16 << (n - 8), span = 219 << (n - 8),
+    // max_code = (1 << n) - 1.
+    let n = bits.clamp(8, 16);
+    let shift = u32::from(n - 8);
+    let max_code = ((1u32 << n) - 1) as f32;
+    let lo = (16u32 << shift) as f32;
+    let span = (219u32 << shift) as f32;
+    (lo / max_code, max_code / span, span / max_code)
+}
+
 #[inline(never)]
 fn apply_micro_op(op: &MicroOp, strip: &mut StripBuf, len: usize, accel: &Accelerators) {
     match op {
-        MicroOp::ExpandNarrow { sample } => {
-            let (offset, scale) = match sample {
-                SampleType::U8 => (16.0 / 255.0, 255.0 / 219.0),
-                _ => (4096.0 / 65535.0, 65535.0 / 56064.0),
-            };
+        MicroOp::ExpandNarrow { bits } => {
+            let (offset, expand_scale, _) = narrow_params(*bits);
             for ch in [
                 &mut strip.r[..len],
                 &mut strip.g[..len],
                 &mut strip.b[..len],
             ] {
                 for v in ch {
-                    *v = (*v - offset) * scale;
+                    *v = (*v - offset) * expand_scale;
                 }
             }
         }
-        MicroOp::CompressNarrow { sample } => {
-            let (offset, scale) = match sample {
-                SampleType::U8 => (16.0 / 255.0, 219.0 / 255.0),
-                _ => (4096.0 / 65535.0, 56064.0 / 65535.0),
-            };
+        MicroOp::CompressNarrow { bits } => {
+            let (offset, _, compress_scale) = narrow_params(*bits);
             for ch in [
                 &mut strip.r[..len],
                 &mut strip.g[..len],
                 &mut strip.b[..len],
             ] {
                 for v in ch {
-                    *v = offset + (*v).clamp(0.0, 1.0) * scale;
+                    *v = offset + (*v).clamp(0.0, 1.0) * compress_scale;
+                }
+            }
+        }
+        MicroOp::ScaleLinear(factor) => {
+            let f = *factor;
+            for ch in [
+                &mut strip.r[..len],
+                &mut strip.g[..len],
+                &mut strip.b[..len],
+            ] {
+                for v in ch {
+                    *v *= f;
                 }
             }
         }
         MicroOp::Unpremul => {
             for i in 0..len {
                 let a = strip.a[i];
+                // Direct division avoids `1.0 / a = inf` overflow on positive subnormals
+                // (so `0.0 / subnormal = 0.0`, never `0.0 * inf = NaN`).
                 if a > 0.0 {
-                    let inv = 1.0 / a;
-                    strip.r[i] *= inv;
-                    strip.g[i] *= inv;
-                    strip.b[i] *= inv;
+                    strip.r[i] /= a;
+                    strip.g[i] /= a;
+                    strip.b[i] /= a;
                 } else {
                     strip.r[i] = 0.0;
                     strip.g[i] = 0.0;
@@ -2205,6 +2242,7 @@ fn srgb_oetf_scalar_slice(vals: &mut [f32]) {
 }
 
 /// Exact SMPTE ST 2084 PQ EOTF (`[0, 1] → [0, 1]` where `1.0 = 10,000 cd/m²`; NaN → 0.0).
+#[cfg(not(feature = "hdr-transfers"))]
 #[inline]
 pub(crate) fn pq_eotf_scalar(v: f32) -> f32 {
     const M1: f64 = 1305.0 / 8192.0;
@@ -2427,12 +2465,43 @@ pub(crate) fn detect_byte_fast_path(
         && sw == dw
     {
         if *sa == AlphaMode::Straight && *da == AlphaMode::Premultiplied {
-            return Some(ByteFastPath::Rgba8StraightToPremul);
+            return match policy_depth {
+                DepthPolicy::Round | DepthPolicy::Forbid => {
+                    Some(ByteFastPath::Rgba8StraightToPremul { round: true })
+                }
+                DepthPolicy::Truncate => Some(ByteFastPath::Rgba8StraightToPremul { round: false }),
+                DepthPolicy::OrderedDither => None,
+            };
         }
         if *sa == AlphaMode::Premultiplied && *da == AlphaMode::Straight {
-            return Some(ByteFastPath::Rgba8PremulToStraight);
+            return match policy_depth {
+                DepthPolicy::Round | DepthPolicy::Forbid => {
+                    Some(ByteFastPath::Rgba8PremulToStraight)
+                }
+                DepthPolicy::Truncate | DepthPolicy::OrderedDither => None,
+            };
         }
     }
+
+    // Determine whether 4-channel alpha must be forced to opaque (canonicalizing AlphaMode::Opaque
+    // on either source or destination so unverified alpha bytes never leak!).
+    let needs_opaque_fill = (src.color.alpha() == AlphaMode::Opaque
+        || dst.color.alpha() == AlphaMode::Opaque)
+        && dst.layout.order.has_alpha_slot()
+        && !(src.color.alpha() == AlphaMode::Opaque
+            && dst.color.alpha() == AlphaMode::Opaque
+            && src.layout.sample == dst.layout.sample
+            && src.layout.order == dst.layout.order);
+    let src_is_narrow = matches!(
+        src.color,
+        ColorSpace::Rgb {
+            range: SignalRange::Narrow,
+            ..
+        } | ColorSpace::Gray {
+            range: SignalRange::Narrow,
+            ..
+        }
+    );
 
     // Check that color meaning agrees (ignoring alpha presence changes handled by layout).
     let colors_agree = match (&src.color, &dst.color) {
@@ -2472,7 +2541,7 @@ pub(crate) fn detect_byte_fast_path(
                                 | AlphaMode::Undefined
                                 | AlphaMode::Opaque
                                 | AlphaMode::Straight
-                        )
+                        ) | (AlphaMode::Opaque, AlphaMode::Premultiplied)
                     ))
         }
         (
@@ -2524,6 +2593,25 @@ pub(crate) fn detect_byte_fast_path(
 
     use ChannelOrder as O;
     use SampleType as S;
+    if needs_opaque_fill {
+        return match (
+            src.layout.sample,
+            src.layout.order,
+            dst.layout.sample,
+            dst.layout.order,
+        ) {
+            (S::U8, O::Rgba, S::U8, O::Rgba)
+            | (S::U8, O::Bgra, S::U8, O::Bgra)
+            | (S::U8, O::Rgbx, S::U8, O::Rgba)
+            | (S::U8, O::Bgrx, S::U8, O::Bgra) => Some(ByteFastPath::FillAlpha4U8),
+            (S::U8, O::Rgba, S::U8, O::Bgra)
+            | (S::U8, O::Bgra, S::U8, O::Rgba)
+            | (S::U8, O::Rgbx, S::U8, O::Bgra)
+            | (S::U8, O::Bgrx, S::U8, O::Rgba) => Some(ByteFastPath::SwapRbFillAlpha4U8),
+            _ => None,
+        };
+    }
+
     match (
         src.layout.sample,
         src.layout.order,
@@ -2555,9 +2643,9 @@ pub(crate) fn detect_byte_fast_path(
         (S::U8, O::Gray, S::U8, O::Rgb) => Some(ByteFastPath::Gray8ToRgb8),
         (S::U8, O::Gray, S::U8, O::Rgba) => Some(ByteFastPath::Gray8ToRgba8),
 
-        // Pure integer U8 <-> U16 depth changes (same channel order)
-        (S::U8, so, S::U16, do_) if so == do_ => Some(ByteFastPath::U8ToU16Exact),
-        (S::U16, so, S::U8, do_) if so == do_ => match policy_depth {
+        // Pure integer full-range U8 <-> U16 depth changes (narrow range uses BT.2100-3 shift in strip!)
+        (S::U8, so, S::U16, do_) if so == do_ && !src_is_narrow => Some(ByteFastPath::U8ToU16Exact),
+        (S::U16, so, S::U8, do_) if so == do_ && !src_is_narrow => match policy_depth {
             DepthPolicy::Round | DepthPolicy::Forbid => Some(ByteFastPath::U16ToU8Round),
             DepthPolicy::Truncate => Some(ByteFastPath::U16ToU8Trunc),
             DepthPolicy::OrderedDither => None,

@@ -6,7 +6,7 @@ use core::panic::{RefUnwindSafe, UnwindSafe};
 
 use zenpixels::Primaries;
 
-/// Pluggable HDR→SDR tone mapper for [`ConvertPlan`](crate::ConvertPlan).
+/// Pluggable HDR→SDR tone mapper for [`RowPlan`](crate::RowPlan) and [`ImagePlan`](crate::ImagePlan).
 ///
 /// Implementations declare their analysis needs via
 /// [`requirements`](Self::requirements), then receive the gathered
@@ -14,7 +14,7 @@ use zenpixels::Primaries;
 /// [`PreparedMapper`] — typically a [`StripMapper`] with image-specific
 /// coefficients precomputed.
 ///
-/// The trait is **object-safe**: [`ConvertPlan`](crate::ConvertPlan)
+/// The trait is **object-safe**: [`ConvertPolicy`](crate::ConvertPolicy)
 /// stores `Arc<dyn ToneMapper>` internally, so the dispatch table never
 /// has to know the concrete mapper type.
 ///
@@ -91,6 +91,15 @@ pub trait ToneMapper: Send + Sync + UnwindSafe + RefUnwindSafe + Debug {
     fn working_primaries_for(&self, _target: Primaries) -> Primaries {
         Primaries::Bt2020
     }
+
+    /// Pre-baked `(source_peak_nits, target_peak_nits)` when this mapper ignores
+    /// pipeline-supplied peaks (e.g., `Bt2446A::new(4000.0, 100.0)`).
+    ///
+    /// When `Some((src_peak, dst_peak))`, the pipeline normalizes input/output
+    /// strips to those exact peaks and skips redundant peak scanning.
+    fn baked_peaks(&self) -> Option<(f32, f32)> {
+        None
+    }
 }
 
 /// Per-image strip executor produced by [`ToneMapper::prepare`].
@@ -157,28 +166,25 @@ pub trait StripMapper: Send + Sync + UnwindSafe + RefUnwindSafe + Debug {
 /// The pipeline reads this **before** building the execution plan and
 /// inserts analysis steps for whichever fields are `true`:
 ///
-/// - [`source_peak_nits`](Self::source_peak_nits) — pipeline measures via
-///   the in-crate [`CllMeasure`](crate::hdr::CllMeasure) at the
-///   buffer-level entry when
-///   [`HdrConfig::source_peak_nits`](crate::HdrConfig::source_peak_nits)
-///   is `0.0` (the sentinel for "not provided"); otherwise the value
-///   from `HdrConfig` is forwarded into [`ToneMapContext`].
+/// - [`source_peak_nits`](Self::source_peak_nits) — pipeline resolves via
+///   [`PeakSource`](zenpixels::PeakSource) (including streaming measurement via
+///   [`measure_cll`](crate::measure_cll)) and forwards it into [`ToneMapContext`].
 /// - [`full_image`](Self::full_image) — pipeline buffers the entire
 ///   source image before calling `prepare`. **Reserved for a future
-///   release.** Setting `true` in v0.2.16 returns
+///   release.** Setting `true` returns
 ///   [`FullImageMapperNotSupported`](crate::ConvertError::FullImageMapperNotSupported)
 ///   from the builder.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Requirements {
-    /// The mapper reads [`ToneMapContext::source_peak_nits`], which the plan forwards from
-    /// [`HdrConfig`](crate::HdrConfig).
+    /// The mapper reads [`ToneMapContext::source_peak_nits`], resolved from
+    /// [`PeakSource`](zenpixels::PeakSource) or `RowPlan::build`'s `hdr_peak`.
     pub source_peak_nits: bool,
     /// The pipeline must buffer the entire source image before calling
     /// `prepare`. **Reserved for a future release.** Setting `true` returns
     /// [`FullImageMapperNotSupported`](crate::ConvertError::FullImageMapperNotSupported)
-    /// from
-    /// [`ConversionSpec::with_tone_mapper`](crate::ConversionSpec::with_tone_mapper).
+    /// when configured via
+    /// [`ConvertPolicy::with_tone_mapper`](crate::ConvertPolicy::with_tone_mapper).
     pub full_image: bool,
 }
 
@@ -192,7 +198,7 @@ impl Requirements {
 
     /// Only source peak is needed — the common case for any pointwise
     /// tone curve that wants the pipeline to measure or supply the
-    /// peak (e.g., [`Bt2446A::pipeline_managed`](crate::hdr::Bt2446A::pipeline_managed)).
+    /// peak (e.g., `Bt2446A::pipeline_managed`).
     pub const SOURCE_PEAK_ONLY: Self = Self {
         source_peak_nits: true,
         full_image: false,
@@ -213,10 +219,8 @@ impl Requirements {
 #[non_exhaustive]
 #[derive(Debug)]
 pub struct ToneMapContext {
-    /// Resolved source peak luminance in cd/m². Either supplied via
-    /// [`HdrConfig::source_peak_nits`](crate::HdrConfig::source_peak_nits)
-    /// or measured by the pipeline using
-    /// [`CllMeasure::measure_max`](crate::hdr::CllMeasure::measure_max).
+    /// Resolved source peak luminance in cd/m², supplied via `RowPlan::build`
+    /// or [`PeakSource`](zenpixels::PeakSource) (`Fixed`, `Declared`, or `Measured`).
     pub source_peak_nits: f32,
     /// Target peak luminance in cd/m².
     pub target_peak_nits: f32,

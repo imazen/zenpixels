@@ -134,7 +134,7 @@ const BT2446_EOTF24_SAT: u128 = PowfOptions::new()
 pub struct Bt2446A {
     /// Source peak luminance in cd/m² as constructed. `0.0` signals
     /// "pipeline-managed" — the curve's coefficients are deferred until
-    /// the pipeline supplies the peak via [`ToneMapContext`](crate::hdr::ToneMapContext) at
+    /// the pipeline supplies the peak via [`ToneMapContext`](crate::tonemap::ToneMapContext) at
     /// `prepare()` time. See
     /// [`Bt2446A::pipeline_managed`](Self::pipeline_managed) and
     /// [`Bt2446A::peaks_baked`](Self::peaks_baked).
@@ -144,7 +144,7 @@ pub struct Bt2446A {
     pub(crate) target_peak_nits: f32,
     /// Precomputed `ρ_H = 1 + 32 · (L_HDR / 10000)^(1/2.4)`. Valid only
     /// when [`peaks_baked`](Self::peaks_baked) returns `true`; otherwise
-    /// the kernel must read peaks from a [`ToneMapContext`](crate::hdr::ToneMapContext) instead.
+    /// the kernel must read peaks from a [`ToneMapContext`](crate::tonemap::ToneMapContext) instead.
     pub(crate) rho_hdr: f32,
     pub(crate) inv_log_rho_hdr: f32,
     pub(crate) rho_sdr: f32,
@@ -158,50 +158,37 @@ impl Bt2446A {
     /// `sdr_peak_nits`: peak luminance of SDR target (typically 100).
     ///
     /// Use this when the source peak is already known at construction
-    /// time. For pipeline-orchestrated measurement (the pipeline reads
-    /// [`HdrConfig::source_peak_nits`](crate::HdrConfig::source_peak_nits)
-    /// or measures via [`CllMeasure`](crate::hdr::CllMeasure) at
-    /// `prepare()` time), use
-    /// [`pipeline_managed`](Self::pipeline_managed) instead.
+    /// time. For pipeline-orchestrated peak resolution via
+    /// [`PeakSource`](zenpixels::PeakSource) (`Measured`, `Declared`, or `Fixed`)
+    /// at `prepare()` time, use [`pipeline_managed`](Self::pipeline_managed) instead.
     #[must_use]
     pub fn new(hdr_peak_nits: f32, sdr_peak_nits: f32) -> Self {
-        // ρ_H = 1 + 32 · (L_HDR / 10 000)^(1/2.4) per ITU-R BT.2446-1 §4.
-        // The exponent is the BT.1886 gamma reciprocal, not γ itself — the
-        // pre-2025 zentone used `2.4` here, which collapsed ρ_H from 13.4
-        // toward 1.13 at 1000 nits and turned the log compression into a
-        // near-identity. Fixed against the libplacebo reference; matches
-        // the well-known "ρ_H ≈ 13.2 at 1000 nit, 33 at 10 000 nit"
-        // quoted in ITU-R BT.2446-1.
-        let inv_gamma = 1.0_f32 / 2.4;
-        let rho_hdr = 1.0 + 32.0 * powf(hdr_peak_nits / 10000.0, inv_gamma);
-        let log_rho_hdr = libm::logf(rho_hdr);
-        let rho_sdr = 1.0 + 32.0 * powf(sdr_peak_nits / 10000.0, inv_gamma);
+        let compiled = Bt2446AExecutor::compile(hdr_peak_nits, sdr_peak_nits);
         Self {
             source_peak_nits: hdr_peak_nits,
             target_peak_nits: sdr_peak_nits,
-            rho_hdr,
-            inv_log_rho_hdr: 1.0 / log_rho_hdr,
-            rho_sdr,
-            inv_rho_sdr_minus_1: 1.0 / (rho_sdr - 1.0),
+            rho_hdr: compiled.rho_hdr,
+            inv_log_rho_hdr: compiled.inv_log_rho_hdr,
+            rho_sdr: compiled.rho_sdr,
+            inv_rho_sdr_minus_1: compiled.inv_rho_sdr_minus_1,
         }
     }
 
     /// Construct a BT.2446-A descriptor whose peaks are supplied by the
-    /// pipeline at [`ToneMapper::prepare`](crate::hdr::ToneMapper::prepare)
+    /// pipeline at [`ToneMapper::prepare`](crate::tonemap::ToneMapper::prepare)
     /// time.
     ///
     /// Use this when you don't know the source peak nits at the
-    /// builder-construction site and want the pipeline to measure them
-    /// via [`CllMeasure`](crate::hdr::CllMeasure) (when
-    /// [`HdrConfig::source_peak_nits`](crate::HdrConfig::source_peak_nits)
-    /// is `0.0`) or to forward the caller-supplied value otherwise.
+    /// builder-construction site and want [`ImagePlan`](crate::ImagePlan) to
+    /// resolve peaks via [`PeakSource`](zenpixels::PeakSource) or
+    /// [`measure_cll`](crate::measure_cll).
     ///
     /// The returned descriptor stores no coefficients — the compiled
     /// strip executor is produced from the resolved peaks inside
-    /// [`ToneMapper::prepare`](crate::hdr::ToneMapper::prepare).
+    /// [`ToneMapper::prepare`](crate::tonemap::ToneMapper::prepare).
     /// [`peaks_baked`](Self::peaks_baked) returns `false`;
-    /// [`requirements`](crate::hdr::ToneMapper::requirements) returns
-    /// [`Requirements::SOURCE_PEAK_ONLY`](crate::hdr::Requirements::SOURCE_PEAK_ONLY).
+    /// [`requirements`](crate::tonemap::ToneMapper::requirements) returns
+    /// [`Requirements::SOURCE_PEAK_ONLY`](crate::tonemap::Requirements::SOURCE_PEAK_ONLY).
     #[must_use]
     pub fn pipeline_managed() -> Self {
         Self {
@@ -218,7 +205,7 @@ impl Bt2446A {
     /// [`new`](Self::new) with explicit peaks — its coefficients are
     /// already compiled. `false` after
     /// [`pipeline_managed`](Self::pipeline_managed); the pipeline must
-    /// supply peaks via [`ToneMapContext`](crate::hdr::ToneMapContext)
+    /// supply peaks via [`ToneMapContext`](crate::tonemap::ToneMapContext)
     /// at `prepare()` time.
     #[must_use]
     pub fn peaks_baked(&self) -> bool {
@@ -228,7 +215,7 @@ impl Bt2446A {
     /// HDR source peak luminance in cd/m², as constructed via
     /// [`new`](Self::new). Returns `0.0` for
     /// [`pipeline_managed`](Self::pipeline_managed) descriptors —
-    /// peaks live on the [`ToneMapContext`](crate::hdr::ToneMapContext) in that mode.
+    /// peaks live on the [`ToneMapContext`](crate::tonemap::ToneMapContext) in that mode.
     #[must_use]
     pub fn source_peak_nits(&self) -> f32 {
         self.source_peak_nits
@@ -379,7 +366,17 @@ impl crate::tonemap::ToneMapper for Bt2446A {
         } else {
             (ctx.source_peak_nits, ctx.target_peak_nits)
         };
+        if !src.is_finite() || !dst.is_finite() || src < 1e-3 || dst < 1e-3 {
+            return Err(crate::error::err_at(crate::ConvertError::ToneMapperFailed));
+        }
         let exec = Bt2446AExecutor::compile(src, dst);
+        if !exec.rho_hdr.is_finite()
+            || !exec.inv_log_rho_hdr.is_finite()
+            || !exec.rho_sdr.is_finite()
+            || !exec.inv_rho_sdr_minus_1.is_finite()
+        {
+            return Err(crate::error::err_at(crate::ConvertError::ToneMapperFailed));
+        }
         Ok(crate::tonemap::PreparedMapper::Streaming(
             alloc::boxed::Box::new(exec),
         ))
@@ -391,6 +388,14 @@ impl crate::tonemap::ToneMapper for Bt2446A {
 
     fn working_primaries_for(&self, _target: zenpixels::Primaries) -> zenpixels::Primaries {
         zenpixels::Primaries::Bt2020
+    }
+
+    fn baked_peaks(&self) -> Option<(f32, f32)> {
+        if self.peaks_baked() {
+            Some((self.source_peak_nits, self.target_peak_nits))
+        } else {
+            None
+        }
     }
 }
 

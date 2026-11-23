@@ -182,17 +182,18 @@ fn ycbcr_p010_and_8bit_420_to_rgb_f32() {
     let y_packed = BitPacking::P010.pack_code(SampleType::U16, 0, 940) as u16;
     let c_packed = BitPacking::P010.pack_code(SampleType::U16, 0, 512) as u16;
     for y in 0..6 {
+        let mut pv = planar.plane_view_mut(0).unwrap();
+        let r = pv.row_mut(y);
         for x in 0..8 {
-            planar.planes_mut()[0].row_mut(y)[x * 2..x * 2 + 2]
-                .copy_from_slice(&y_packed.to_ne_bytes());
+            r[x * 2..x * 2 + 2].copy_from_slice(&y_packed.to_ne_bytes());
         }
     }
     for y in 0..3 {
+        let mut pv = planar.plane_view_mut(1).unwrap();
+        let r = pv.row_mut(y);
         for x in 0..4 {
-            planar.planes_mut()[1].row_mut(y)[x * 4..x * 4 + 2]
-                .copy_from_slice(&c_packed.to_ne_bytes());
-            planar.planes_mut()[1].row_mut(y)[x * 4 + 2..x * 4 + 4]
-                .copy_from_slice(&c_packed.to_ne_bytes());
+            r[x * 4..x * 4 + 2].copy_from_slice(&c_packed.to_ne_bytes());
+            r[x * 4 + 2..x * 4 + 4].copy_from_slice(&c_packed.to_ne_bytes());
         }
     }
 

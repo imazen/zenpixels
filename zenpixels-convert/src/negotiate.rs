@@ -1,8 +1,8 @@
 //! Codec format negotiation: select the lowest-loss, lowest-effort supported [`ImageSpec`].
 
-use zenpixels::{AlphaMode, ColorSpace, ImageSpec, Primaries, SampleType};
+use zenpixels::{ColorSpace, ImageSpec};
 
-use crate::plan::RowPlan;
+use crate::plan::{preflight_and_classify, same_color_meaning};
 use crate::policy::ConvertPolicy;
 
 /// Category of information lost when converting `src` to a candidate format.
@@ -11,13 +11,13 @@ use crate::policy::ConvertPolicy;
 pub enum LossKind {
     /// Zero information loss (exact or lossless widening/swizzle).
     None,
-    /// Quantization or bit-depth narrowing (`F32 → U16 → U8`).
+    /// Quantization or bit-depth narrowing (`F32 → U16 → U8`, `RGBA8 → RGB10A2`).
     Depth,
-    /// Gamut narrowing or HDR → SDR compression.
+    /// Gamut narrowing, signal-range scaling, or HDR → SDR compression.
     Gamut,
     /// Dropping color into grayscale (`RGB → Gray`).
     Chroma,
-    /// Dropping non-opaque alpha.
+    /// Dropping unproven non-opaque alpha.
     Alpha,
 }
 
@@ -26,7 +26,9 @@ pub enum LossKind {
 pub struct FormatCost {
     /// Highest severity information loss (lower is better; `0` = lossless).
     pub loss_rank: u8,
-    /// Conversion effort (`0` = identity zero-copy, `1` = byte swizzle, `2` = transfer/gamut math).
+    /// Secondary bitmask of all active loss axes (breaks ties when two candidates share `loss_rank`).
+    pub loss_mask: u8,
+    /// Conversion effort (`0` = identity zero-copy, `1` = byte/layout swizzle, `2` = color/transfer math).
     pub effort: u8,
     /// Bytes per pixel tiebreaker (smaller preferred when loss & effort match).
     pub bytes_per_pixel: u8,
@@ -34,6 +36,7 @@ pub struct FormatCost {
 
 /// Selected negotiation candidate with its cost breakdown.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct NegotiatedFormat {
     /// Index into the caller's `supported` slice.
     pub index: usize,
@@ -51,9 +54,9 @@ pub struct Negotiate;
 impl Negotiate {
     /// Select the best candidate from `supported` that satisfies `policy`.
     ///
-    /// Every candidate is validated against [`RowPlan::build`] so policy-forbidden
-    /// candidates (e.g., alpha drop under `AlphaPolicy::Forbid` or depth reduction
-    /// under `DepthPolicy::Forbid`) are never returned.
+    /// Uses the planner's shared preflight classifier so policy-forbidden
+    /// candidates (depth, alpha, range, gamut, missing CMS) are rejected
+    /// consistently without invoking expensive CMS/mapper builders per candidate.
     #[must_use]
     pub fn select(
         src: &ImageSpec,
@@ -62,32 +65,78 @@ impl Negotiate {
     ) -> Option<NegotiatedFormat> {
         let mut best: Option<NegotiatedFormat> = None;
         for (index, cand) in supported.iter().enumerate() {
-            let plan = match RowPlan::build(
-                src.clone(),
-                cand.clone(),
-                policy,
-                Some(zenpixels::Nits::new(1000.0)),
-            ) {
+            let pre = match preflight_and_classify(src, cand, policy) {
                 Ok(p) => p,
                 Err(_) => continue,
             };
-            let loss = classify_loss(src, cand);
-            let loss_rank = match loss {
-                LossKind::None => 0,
-                LossKind::Depth => 1,
-                LossKind::Gamut => 2,
-                LossKind::Chroma => 3,
-                LossKind::Alpha => 4,
+            // Check HLG / HDR / feature-gate feasibility cheaply without building CMS/mappers.
+            if !pre.is_identity && !pre.uses_cms {
+                let st = crate::plan::color_transfer(&src.color);
+                let dt = crate::plan::color_transfer(&cand.color);
+                if (st.is_hdr() || dt.is_hdr()) && !cfg!(feature = "hdr-transfers") {
+                    continue;
+                }
+                if (st == zenpixels::Transfer::Unknown || dt == zenpixels::Transfer::Unknown)
+                    && st != dt
+                {
+                    continue;
+                }
+                if matches!(st, zenpixels::Transfer::Hlg(zenpixels::HlgMode::Scene))
+                    && !matches!(dt, zenpixels::Transfer::Hlg(zenpixels::HlgMode::Scene))
+                    && policy.hlg_rendering.is_none()
+                {
+                    continue;
+                }
+                if matches!(cand.color, ColorSpace::Oklab { .. }) && !cfg!(feature = "oklab") {
+                    continue;
+                }
+                if matches!(cand.color, ColorSpace::Perceptual { .. })
+                    && !cfg!(feature = "perceptual")
+                {
+                    continue;
+                }
+            }
+
+            let mut loss_mask = 0u8;
+            if pre.depth_reduces {
+                loss_mask |= 1 << 0;
+            }
+            if pre.gamut_narrows || pre.is_hdr_to_sdr || pre.range_change {
+                loss_mask |= 1 << 1;
+            }
+            if pre.drops_chroma && !pre.chroma_proven_gray {
+                loss_mask |= 1 << 2;
+            }
+            if pre.drops_alpha && !pre.alpha_proven_opaque {
+                loss_mask |= 1 << 3;
+            }
+
+            let (loss, loss_rank) = if (loss_mask & (1 << 3)) != 0 {
+                (LossKind::Alpha, 4)
+            } else if (loss_mask & (1 << 2)) != 0 {
+                (LossKind::Chroma, 3)
+            } else if (loss_mask & (1 << 1)) != 0 {
+                (LossKind::Gamut, 2)
+            } else if (loss_mask & (1 << 0)) != 0 {
+                (LossKind::Depth, 1)
+            } else {
+                (LossKind::None, 0)
             };
-            let effort = if plan.is_identity() {
+
+            let effort = if pre.is_identity {
                 0
-            } else if src.color == cand.color {
+            } else if same_color_meaning(&src.color, &cand.color)
+                && !pre.range_change
+                && src.color.alpha() == cand.color.alpha()
+            {
                 1
             } else {
                 2
             };
+
             let cost = FormatCost {
                 loss_rank,
+                loss_mask,
                 effort,
                 bytes_per_pixel: cand.layout.bytes_per_pixel().min(255) as u8,
             };
@@ -106,53 +155,4 @@ impl Negotiate {
         }
         best
     }
-}
-
-fn sample_bits(s: SampleType) -> u8 {
-    match s {
-        SampleType::U8 | SampleType::I8 => 8,
-        SampleType::U16 | SampleType::I16 => 16,
-        SampleType::F16 => 24,
-        SampleType::F32 | SampleType::U32 | SampleType::I32 => 32,
-        SampleType::F64 | SampleType::U64 | SampleType::I64 => 64,
-        _ => 32,
-    }
-}
-
-fn classify_loss(src: &ImageSpec, dst: &ImageSpec) -> LossKind {
-    let drops_alpha = matches!(
-        src.color.alpha(),
-        AlphaMode::Straight | AlphaMode::Premultiplied
-    ) && matches!(
-        dst.color.alpha(),
-        AlphaMode::None | AlphaMode::Undefined | AlphaMode::Opaque
-    );
-    if drops_alpha {
-        return LossKind::Alpha;
-    }
-    if !matches!(src.color, ColorSpace::Gray { .. }) && matches!(dst.color, ColorSpace::Gray { .. })
-    {
-        return LossKind::Chroma;
-    }
-    if src.color.is_hdr() && !dst.color.is_hdr() {
-        return LossKind::Gamut;
-    }
-    if let (ColorSpace::Rgb { primaries: sp, .. }, ColorSpace::Rgb { primaries: dp, .. }) =
-        (&src.color, &dst.color)
-        && sp != dp
-        && matches!(
-            (*sp, *dp),
-            (
-                Primaries::Bt2020,
-                Primaries::DisplayP3 | Primaries::Bt709 | Primaries::AdobeRgb
-            ) | (Primaries::DisplayP3, Primaries::Bt709 | Primaries::AdobeRgb)
-                | (Primaries::AdobeRgb, Primaries::Bt709 | Primaries::DisplayP3)
-        )
-    {
-        return LossKind::Gamut;
-    }
-    if sample_bits(dst.layout.sample) < sample_bits(src.layout.sample) {
-        return LossKind::Depth;
-    }
-    LossKind::None
 }

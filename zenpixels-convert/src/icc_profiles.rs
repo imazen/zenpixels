@@ -139,19 +139,19 @@ pub(crate) const REC2020_V4: &[u8] = include_bytes!("profiles/Rec2020Compat-v4.i
 ///
 /// | Primaries | Transfer | Returned profile |
 /// |-----------|----------|------------------|
-/// | [`Bt709`](ColorPrimaries::Bt709) | [`Srgb`](crate::TransferFunction::Srgb) | `None` — sRGB is the assumed default |
-/// | [`DisplayP3`](ColorPrimaries::DisplayP3) | [`Srgb`](crate::TransferFunction::Srgb) or [`Bt709`](crate::TransferFunction::Bt709) | compact generated export |
-/// | [`Bt2020`](ColorPrimaries::Bt2020) | [`Bt709`](crate::TransferFunction::Bt709) | `REC2020_V4` |
-/// | [`AdobeRgb`](ColorPrimaries::AdobeRgb) | [`Gamma22`](crate::TransferFunction::Gamma22) | [`ADOBE_RGB`] |
+/// | [`Primaries::Bt709`] | [`Transfer::Srgb`] | `None` — sRGB is the assumed default |
+/// | [`Primaries::DisplayP3`] | [`Transfer::Srgb`] or [`Transfer::Bt709`] | compact generated export |
+/// | [`Primaries::Bt2020`] | [`Transfer::Bt709`] | `REC2020_V4` |
+/// | [`Primaries::AdobeRgb`] | [`Transfer::Gamma22`] | [`ADOBE_RGB`] |
 ///
 /// # Not bundled (returns `None`)
 ///
-/// - HDR transfers ([`Pq`](crate::TransferFunction::Pq), [`Hlg`](crate::TransferFunction::Hlg))
+/// - HDR transfers ([`Transfer::Pq`], [`Transfer::Hlg`])
 ///   on any primaries. Ultra HDR / HDR10 / HLG broadcast workflows that need
 ///   a PQ- or HLG-tagged profile should either generate one via a CMS crate
 ///   (e.g., `moxcms::ColorProfile::new_bt2020_pq().encode()`) or signal color
 ///   via CICP instead of ICC.
-/// - [`Linear`](crate::TransferFunction::Linear) on any primaries. Linear-light
+/// - [`Transfer::Linear`] on any primaries. Linear-light
 ///   working spaces are typically expressed with CICP transfer code 8
 ///   rather than an ICC profile.
 /// - Adobe RGB with any transfer other than `Gamma22`.

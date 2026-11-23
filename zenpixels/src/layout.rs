@@ -185,11 +185,27 @@ impl BitPacking {
                 if channels == 0 || channels > 4 {
                     return Err(LayoutError::InvalidChannelCount);
                 }
+                let mut used_mask: u32 = 0;
                 let mut i = 0;
                 while i < channels {
                     let b = bits[i];
                     let s = shifts[i];
                     if b == 0 || (b as u16) + (s as u16) > (word_bits as u16) {
+                        return Err(LayoutError::InvalidBitDepth);
+                    }
+                    let field_mask = if b >= 32 {
+                        u32::MAX
+                    } else {
+                        ((1u32 << b) - 1) << s
+                    };
+                    if (used_mask & field_mask) != 0 {
+                        return Err(LayoutError::UnsupportedBitPacking);
+                    }
+                    used_mask |= field_mask;
+                    i += 1;
+                }
+                while i < 4 {
+                    if bits[i] != 0 || shifts[i] != 0 {
                         return Err(LayoutError::InvalidBitDepth);
                     }
                     i += 1;
@@ -206,6 +222,9 @@ impl BitPacking {
         match self {
             Self::Full => word,
             Self::Lsb { bits } => {
+                if bits == 0 {
+                    return 0;
+                }
                 let mask = if bits >= 32 {
                     u32::MAX
                 } else {
@@ -214,7 +233,13 @@ impl BitPacking {
                 word & mask
             }
             Self::Msb { bits } => {
+                if bits == 0 {
+                    return 0;
+                }
                 let shift = sample.bits().saturating_sub(bits);
+                if shift >= 32 {
+                    return 0;
+                }
                 let mask = if bits >= 32 {
                     u32::MAX
                 } else {
@@ -228,6 +253,9 @@ impl BitPacking {
                 }
                 let b = bits[component];
                 let s = shifts[component];
+                if b == 0 || s >= 32 {
+                    return 0;
+                }
                 let mask = if b >= 32 { u32::MAX } else { (1u32 << b) - 1 };
                 (word >> s) & mask
             }
@@ -246,10 +274,10 @@ impl BitPacking {
             Self::Full | Self::Lsb { .. } => clamped,
             Self::Msb { bits } => {
                 let shift = sample.bits().saturating_sub(bits);
-                clamped << shift
+                if shift >= 32 { 0 } else { clamped << shift }
             }
             Self::Bitfields { shifts, .. } => {
-                if component >= 4 {
+                if component >= 4 || shifts[component] >= 32 {
                     0
                 } else {
                     clamped << shifts[component]
@@ -398,6 +426,7 @@ impl ChannelOrder {
 
 /// Complete interleaved storage description for a single plane of pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct SampleLayout {
     /// Underlying numeric sample storage type.
     pub sample: SampleType,
@@ -665,7 +694,7 @@ pub enum Subsampling {
 }
 
 impl Subsampling {
-    /// Horizontal and vertical shift factors `(sx, sy)` where chroma divides by `(1 << sx, 1 << sy)`.
+    /// Horizontal and vertical subsampling divisors `(fx, fy)` (e.g. `(2, 2)` for 4:2:0).
     #[inline]
     #[must_use]
     pub const fn factors(self) -> (u8, u8) {
@@ -689,6 +718,7 @@ impl Subsampling {
 
 /// Storage specification for one plane in a multi-plane image.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct PlaneSpec {
     /// Semantic role of this plane.
     pub role: PlaneRole,

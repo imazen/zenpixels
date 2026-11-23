@@ -954,3 +954,229 @@ fn u16_to_f32_scalar_t(_token: ScalarToken, src: &[u16], dst: &mut [f32]) {
 pub(crate) fn simd_u16_to_f32_slice(src: &[u16], dst: &mut [f32]) {
     archmage::attuned!(u16_to_f32(src, dst), [_v3, _neon, _wasm128, _scalar]);
 }
+
+// ---------------------------------------------------------------------------
+// 4. SIMD RGBA8 / BGRA8 straight -> premultiplied (0-bit exact round & trunc)
+// ---------------------------------------------------------------------------
+
+macro_rules! rgba8_premul_body {
+    ($src:ident, $dst:ident, $bias:expr) => {{
+        let (sc, _) = $src.as_chunks::<4>();
+        let (dc, _) = $dst.as_chunks_mut::<4>();
+        let bias: u16 = $bias;
+        for (sp, dp) in sc.iter().zip(dc.iter_mut()) {
+            let a = u16::from(sp[3]);
+            let t0 = u16::from(sp[0]) * a + bias;
+            let t1 = u16::from(sp[1]) * a + bias;
+            let t2 = u16::from(sp[2]) * a + bias;
+            dp[0] = ((t0 + (t0 >> 8)) >> 8) as u8;
+            dp[1] = ((t1 + (t1 >> 8)) >> 8) as u8;
+            dp[2] = ((t2 + (t2 >> 8)) >> 8) as u8;
+            dp[3] = sp[3];
+        }
+    }};
+}
+
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+fn rgba8_premul_v3_t(_token: archmage::X64V3Token, src: &[u8], dst: &mut [u8], round: bool) {
+    if round {
+        rgba8_premul_body!(src, dst, 128);
+    } else {
+        rgba8_premul_body!(src, dst, 1);
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
+fn rgba8_premul_neon_t(_token: archmage::NeonToken, src: &[u8], dst: &mut [u8], round: bool) {
+    if round {
+        rgba8_premul_body!(src, dst, 128);
+    } else {
+        rgba8_premul_body!(src, dst, 1);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[archmage::arcane]
+fn rgba8_premul_wasm128_t(_token: archmage::Wasm128Token, src: &[u8], dst: &mut [u8], round: bool) {
+    if round {
+        rgba8_premul_body!(src, dst, 128);
+    } else {
+        rgba8_premul_body!(src, dst, 1);
+    }
+}
+
+fn rgba8_premul_scalar_t(_token: ScalarToken, src: &[u8], dst: &mut [u8], round: bool) {
+    if round {
+        rgba8_premul_body!(src, dst, 128);
+    } else {
+        rgba8_premul_body!(src, dst, 1);
+    }
+}
+
+/// Attuned SIMD `RGBA8`/`BGRA8` straight → premultiplied (0-bit identical to scalar!).
+pub(crate) fn simd_rgba8_straight_to_premul(src: &[u8], dst: &mut [u8], width: usize, round: bool) {
+    let bytes = width * 4;
+    let s = &src[..bytes];
+    let d = &mut dst[..bytes];
+    archmage::attuned!(rgba8_premul(s, d, round), [_v3, _neon, _wasm128, _scalar]);
+}
+
+// ---------------------------------------------------------------------------
+// 5. Fused single-pass linear F32 -> sRGB U8 (exact polynomial + quantize!)
+// ---------------------------------------------------------------------------
+
+#[inline(always)]
+fn lin_f32_to_srgb_u8_tail(src: &[f32], dst: &mut [u8], is_rgba: bool, round: bool) {
+    let bias = if round { 0.5_f32 } else { 0.0_f32 };
+    let mut i = 0usize;
+    while i < src.len() {
+        let n = (src.len() - i).min(4);
+        let mut raw = [0.0f32; 4];
+        for k in 0..n {
+            let v = src[i + k];
+            raw[k] = if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) };
+        }
+        let mut enc = linear_srgb::target_features::x4::linear_to_srgb_extended_scalar(raw);
+        if is_rgba && n == 4 {
+            enc[3] = raw[3];
+        }
+        for k in 0..n {
+            dst[i + k] = quant_scalar_u8(enc[k], bias);
+        }
+        i += n;
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+fn lin_f32_to_srgb_u8_v3_t(
+    token: archmage::X64V3Token,
+    src: &[f32],
+    dst: &mut [u8],
+    is_rgba: bool,
+    round: bool,
+) {
+    type V = magetypes::simd::generic::f32x8<archmage::X64V3Token>;
+    let zero = V::zero_t(token);
+    let one = V::splat_t(token, 1.0);
+    let scale = V::splat_t(token, 255.0);
+    let bias_v = V::splat_t(token, if round { 0.5_f32 } else { 0.0_f32 });
+    let alpha_mask = V::from_array_t(token, [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]).simd_gt(zero);
+
+    let (in_chunks, in_rem) = src.as_chunks::<8>();
+    let (out_chunks, out_rem) = dst.as_chunks_mut::<8>();
+    for (inp, out) in in_chunks.iter().zip(out_chunks.iter_mut()) {
+        let raw = V::load_t(token, inp);
+        let clamped = V::blend(raw.simd_gt(zero), raw.min_fast(one), zero);
+        let enc = V::from_array_t(
+            token,
+            linear_srgb::target_features::x8::linear_to_srgb_extended_v3(clamped.to_array()),
+        );
+        let vals = if is_rgba {
+            V::blend(alpha_mask, clamped, enc)
+        } else {
+            enc
+        };
+        let q = V::blend(vals.simd_gt(zero), vals.min_fast(one), zero) * scale + bias_v;
+        *out = q.to_u8_with::<TRUNC_NONNEG>();
+    }
+    if !in_rem.is_empty() {
+        lin_f32_to_srgb_u8_tail(in_rem, out_rem, is_rgba, round);
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
+fn lin_f32_to_srgb_u8_neon_t(
+    token: archmage::NeonToken,
+    src: &[f32],
+    dst: &mut [u8],
+    is_rgba: bool,
+    round: bool,
+) {
+    type V = magetypes::simd::generic::f32x4<archmage::NeonToken>;
+    let zero = V::zero_t(token);
+    let one = V::splat_t(token, 1.0);
+    let scale = V::splat_t(token, 255.0);
+    let bias_v = V::splat_t(token, if round { 0.5_f32 } else { 0.0_f32 });
+    let alpha_mask = V::from_array_t(token, [0.0, 0.0, 0.0, 1.0]).simd_gt(zero);
+
+    let (in_chunks, in_rem) = src.as_chunks::<4>();
+    let (out_chunks, out_rem) = dst.as_chunks_mut::<4>();
+    for (inp, out) in in_chunks.iter().zip(out_chunks.iter_mut()) {
+        let raw = V::load_t(token, inp);
+        let clamped = V::blend(raw.simd_gt(zero), raw.min_fast(one), zero);
+        let enc = V::from_array_t(
+            token,
+            linear_srgb::target_features::x4::linear_to_srgb_extended_neon(clamped.to_array()),
+        );
+        let vals = if is_rgba {
+            V::blend(alpha_mask, clamped, enc)
+        } else {
+            enc
+        };
+        let q = V::blend(vals.simd_gt(zero), vals.min_fast(one), zero) * scale + bias_v;
+        *out = q.to_u8_with::<TRUNC_NONNEG>();
+    }
+    if !in_rem.is_empty() {
+        lin_f32_to_srgb_u8_tail(in_rem, out_rem, is_rgba, round);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[archmage::arcane]
+fn lin_f32_to_srgb_u8_wasm128_t(
+    token: archmage::Wasm128Token,
+    src: &[f32],
+    dst: &mut [u8],
+    is_rgba: bool,
+    round: bool,
+) {
+    type V = magetypes::simd::generic::f32x4<archmage::Wasm128Token>;
+    let zero = V::zero_t(token);
+    let one = V::splat_t(token, 1.0);
+    let scale = V::splat_t(token, 255.0);
+    let bias_v = V::splat_t(token, if round { 0.5_f32 } else { 0.0_f32 });
+    let alpha_mask = V::from_array_t(token, [0.0, 0.0, 0.0, 1.0]).simd_gt(zero);
+
+    let (in_chunks, in_rem) = src.as_chunks::<4>();
+    let (out_chunks, out_rem) = dst.as_chunks_mut::<4>();
+    for (inp, out) in in_chunks.iter().zip(out_chunks.iter_mut()) {
+        let raw = V::load_t(token, inp);
+        let clamped = V::blend(raw.simd_gt(zero), raw.min_fast(one), zero);
+        let enc = V::from_array_t(
+            token,
+            linear_srgb::target_features::x4::linear_to_srgb_extended_wasm128(clamped.to_array()),
+        );
+        let vals = if is_rgba {
+            V::blend(alpha_mask, clamped, enc)
+        } else {
+            enc
+        };
+        let q = V::blend(vals.simd_gt(zero), vals.min_fast(one), zero) * scale + bias_v;
+        *out = q.to_u8_with::<TRUNC_NONNEG>();
+    }
+    if !in_rem.is_empty() {
+        lin_f32_to_srgb_u8_tail(in_rem, out_rem, is_rgba, round);
+    }
+}
+
+fn lin_f32_to_srgb_u8_scalar_t(
+    _token: ScalarToken,
+    src: &[f32],
+    dst: &mut [u8],
+    is_rgba: bool,
+    round: bool,
+) {
+    lin_f32_to_srgb_u8_tail(src, dst, is_rgba, round);
+}
+
+/// Fused single-pass SIMD linear F32 → sRGB U8 (exact polynomial + quantization, 0-bit parity!).
+pub(crate) fn simd_lin_f32_to_srgb_u8(src: &[f32], dst: &mut [u8], is_rgba: bool, round: bool) {
+    archmage::attuned!(
+        lin_f32_to_srgb_u8(src, dst, is_rgba, round),
+        [_v3, _neon, _wasm128, _scalar]
+    );
+}

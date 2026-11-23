@@ -396,6 +396,34 @@ impl IccIdentification {
         identify_substitutable(icc_bytes)
     }
 
+    /// Recognize `icc_bytes` when matrix+TRC substitution is safe for the
+    /// requested [`RenderingIntent`](crate::RenderingIntent).
+    ///
+    /// Always returns `None` for
+    /// [`RenderingIntent::AbsoluteColorimetric`](crate::RenderingIntent::AbsoluteColorimetric)
+    /// because D50-adapted relative matrix math cannot undo D65→D50 adaptation.
+    /// When `exact_only` is `true`, only entries within ±1 u16 TRC tolerance
+    /// (parametric v4 profiles) match.
+    #[must_use]
+    pub fn from_icc_for_intent(
+        icc_bytes: &[u8],
+        intent: crate::RenderingIntent,
+        exact_only: bool,
+    ) -> Option<Self> {
+        let use_for = match intent {
+            crate::RenderingIntent::Perceptual => CoalesceForUse::Perceptual,
+            crate::RenderingIntent::RelativeColorimetric => CoalesceForUse::RelativeColorimetric,
+            crate::RenderingIntent::Saturation => CoalesceForUse::Saturation,
+            crate::RenderingIntent::AbsoluteColorimetric => CoalesceForUse::AbsoluteColorimetric,
+        };
+        let tol = if exact_only {
+            Tolerance::Exact
+        } else {
+            Tolerance::Intent
+        };
+        identify_common_for(icc_bytes, tol, use_for)
+    }
+
     /// Whether `icc_bytes` is a well-known sRGB profile, for skipping a CMS.
     ///
     /// `false` means not recognized, which doesn't mean it isn't sRGB.
@@ -642,7 +670,8 @@ pub(crate) fn identify_common_for(
 /// Returns the [`IccColorSpace`] corresponding to the four-byte signature
 /// at offset 16 in the ICC header, or `None` if the profile is too short
 /// or uses an unrecognized color space.
-pub(crate) fn profile_color_space(icc_bytes: &[u8]) -> Option<IccColorSpace> {
+#[must_use]
+pub fn profile_color_space(icc_bytes: &[u8]) -> Option<IccColorSpace> {
     if icc_bytes.len() < 20 {
         return None;
     }

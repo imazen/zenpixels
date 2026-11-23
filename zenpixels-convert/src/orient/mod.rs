@@ -56,6 +56,9 @@ pub fn apply_orientation_into(
     {
         return Err(err_at(ConvertError::DimensionMismatch));
     }
+    if dst.spec().color != src.spec().color {
+        return Err(err_at(ConvertError::UnsupportedRoute));
+    }
     if w == 0 || h == 0 || bpp == 0 {
         return Ok(());
     }
@@ -252,34 +255,37 @@ fn transpose_tiled<const BPP: usize>(
     h: u32,
 ) {
     let sbytes = src.as_strided_bytes();
-    let sstride = src.stride();
-    let sstep: isize = if flip_sy {
-        -(sstride as isize)
-    } else {
-        sstride as isize
-    };
+    // For a 1-row image, `stride` is unused (and may even exceed `isize::MAX`); normalize to 0.
+    let sstride = if h <= 1 { 0 } else { src.stride() };
     let (ow, oh) = (h, w);
 
-    let mut ty = 0;
+    let mut ty = 0u32;
     while ty < oh {
-        let ty_end = min(ty + TILE, oh);
-        let mut tx = 0;
+        let ty_end = min(ty.saturating_add(TILE), oh);
+        let mut tx = 0u32;
         while tx < ow {
-            let tx_end = min(tx + TILE, ow);
+            let tx_end = min(tx.saturating_add(TILE), ow);
             let sy0 = (if flip_sy { h - 1 - tx } else { tx }) as usize;
             for dy in ty..ty_end {
                 let sx = (if flip_sx { w - 1 - dy } else { dy }) as usize;
-                let mut soff = (sy0 * sstride + sx * BPP) as isize;
+                let mut soff = sy0 * sstride + sx * BPP;
                 let drow = &mut dst.row_mut(dy)[tx as usize * BPP..tx_end as usize * BPP];
-                for dpx in drow.as_chunks_mut::<BPP>().0 {
-                    let s = soff as usize;
-                    *dpx = sbytes[s..s + BPP].try_into().unwrap();
-                    soff += sstep;
+                let chunks = drow.as_chunks_mut::<BPP>().0;
+                let n = chunks.len();
+                for (i, dpx) in chunks.iter_mut().enumerate() {
+                    *dpx = sbytes[soff..soff + BPP].try_into().unwrap();
+                    if i + 1 < n {
+                        soff = if flip_sy {
+                            soff - sstride
+                        } else {
+                            soff + sstride
+                        };
+                    }
                 }
             }
-            tx += TILE;
+            tx = tx_end;
         }
-        ty += TILE;
+        ty = ty_end;
     }
 }
 
@@ -299,21 +305,21 @@ fn transpose_blocked(
     h: u32,
     bpp: usize,
 ) {
-    let mut tile_y = 0;
+    let mut tile_y = 0u32;
     while tile_y < h {
-        let y_end = min(tile_y + TILE, h);
-        let mut tile_x = 0;
+        let y_end = min(tile_y.saturating_add(TILE), h);
+        let mut tile_x = 0u32;
         while tile_x < w {
-            let x_end = min(tile_x + TILE, w);
+            let x_end = min(tile_x.saturating_add(TILE), w);
             for sy in tile_y..y_end {
                 let s = src.row(sy);
                 for sx in tile_x..x_end {
                     scatter_pixel(s, dst, orientation, sx, sy, w, h, bpp);
                 }
             }
-            tile_x += TILE;
+            tile_x = x_end;
         }
-        tile_y += TILE;
+        tile_y = y_end;
     }
 }
 

@@ -104,8 +104,7 @@ impl SoftCompress {
     /// Production default knee: the fraction of the largest in-gamut chroma where
     /// the rolloff begins. From a sweep of 76 imazen-26 gain-mapped HDR images on
     /// 2026-06-23, the largest value whose corpus-p90 share of pre-clamp
-    /// out-of-gamut pixels stayed under 0.1 %. Matches
-    /// [`crate::HdrConfig::default`]'s `gamut_knee`.
+    /// out-of-gamut pixels stayed under 0.1 %.
     pub const DEFAULT_KNEE: f32 = 0.96;
 
     /// A compressor for `space`. `knee` is in `0.0..=1.0`, and 1.0 maps to the

@@ -9,8 +9,10 @@ use alloc::vec::Vec;
 #[cfg(any(feature = "imgref", feature = "image"))]
 use whereat::At;
 
+#[cfg(feature = "imgref")]
+use crate::buffer::PixelView;
 #[cfg(any(feature = "imgref", feature = "image"))]
-use crate::buffer::{BufferError, PixelBuf, PixelView, err_at};
+use crate::buffer::{BufferError, PixelBuf, err_at};
 #[cfg(feature = "imgref")]
 use crate::color::ImageSpec as ImgrefImageSpec;
 #[cfg(feature = "image")]
@@ -23,7 +25,7 @@ use crate::storage::StorageSample;
 /// Compile-time pixel type marker for zero-copy `imgref` / typed helpers.
 #[cfg(feature = "rgb")]
 pub trait PixelType: bytemuck::Pod {
-    /// Expected [`SampleLayout`](crate::SampleLayout) for this Rust pixel struct.
+    /// Expected [`SampleLayout`] for this Rust pixel struct.
     const LAYOUT: crate::SampleLayout;
 }
 
@@ -124,10 +126,10 @@ mod rgb_impls {
 impl<'a> PixelView<'a> {
     /// Borrow as a zero-copy [`imgref::ImgRef<'a, P>`] when layout, alignment, and pixel-whole stride match.
     pub fn try_as_imgref<P: PixelType>(&self) -> Result<imgref::ImgRef<'a, P>, At<BufferError>> {
-        if self.spec().layout != P::LAYOUT {
+        let bpp = core::mem::size_of::<P>();
+        if bpp == 0 || bpp != P::LAYOUT.bytes_per_pixel() || self.spec().layout != P::LAYOUT {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
-        let bpp = core::mem::size_of::<P>();
         if self.stride() % bpp != 0 {
             return Err(err_at(BufferError::StrideNotPixelAligned));
         }
@@ -155,6 +157,10 @@ impl PixelBuf {
         img: imgref::ImgVec<P>,
         color: crate::ColorSpace,
     ) -> Result<Self, At<BufferError>> {
+        let bpp = core::mem::size_of::<P>();
+        if bpp == 0 || bpp != P::LAYOUT.bytes_per_pixel() {
+            return Err(err_at(BufferError::IncompatibleLayout));
+        }
         let w = u32::try_from(img.width()).map_err(|_| err_at(BufferError::InvalidDimensions))?;
         let h = u32::try_from(img.height()).map_err(|_| err_at(BufferError::InvalidDimensions))?;
         let spec = ImgrefImageSpec::new(P::LAYOUT, color);
@@ -164,7 +170,8 @@ impl PixelBuf {
 
     /// Move into an [`imgref::ImgVec<P>`], zero-copy when allocation alignment & capacity match.
     pub fn try_into_imgvec<P: PixelType>(self) -> Result<imgref::ImgVec<P>, At<BufferError>> {
-        if self.spec().layout != P::LAYOUT {
+        let bpp = core::mem::size_of::<P>();
+        if bpp == 0 || bpp != P::LAYOUT.bytes_per_pixel() || self.spec().layout != P::LAYOUT {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
         let w = self.width() as usize;
@@ -175,35 +182,151 @@ impl PixelBuf {
 }
 
 #[cfg(feature = "image")]
+fn color_space_to_image_cicp(cs: &ColorSpace) -> Option<image::metadata::Cicp> {
+    use image::metadata::{
+        Cicp as ImgCicp, CicpColorPrimaries as ImgP, CicpMatrixCoefficients as ImgM,
+        CicpTransferCharacteristics as ImgT, CicpVideoFullRangeFlag as ImgR,
+    };
+    let map_primaries = |p: Primaries| match p {
+        Primaries::Bt709 => Some(ImgP::SRgb),
+        Primaries::DisplayP3 => Some(ImgP::SmpteRp432),
+        Primaries::Bt2020 => Some(ImgP::Rgb2020),
+        _ => None,
+    };
+    let map_transfer = |t: Transfer| match t {
+        Transfer::Srgb => Some(ImgT::SRgb),
+        Transfer::Linear => Some(ImgT::Linear),
+        Transfer::Bt709 => Some(ImgT::Bt709),
+        Transfer::Pq => Some(ImgT::Smpte2084),
+        Transfer::Hlg(_) => Some(ImgT::Bt2100Hlg),
+        _ => None,
+    };
+    match cs {
+        ColorSpace::Rgb {
+            primaries,
+            transfer,
+            range: SignalRange::Full,
+            ..
+        } => Some(ImgCicp {
+            primaries: map_primaries(*primaries)?,
+            transfer: map_transfer(*transfer)?,
+            matrix: ImgM::Identity,
+            full_range: ImgR::FullRange,
+        }),
+        ColorSpace::Gray {
+            transfer,
+            range: SignalRange::Full,
+            ..
+        } => Some(ImgCicp {
+            primaries: ImgP::SRgb,
+            transfer: map_transfer(*transfer)?,
+            matrix: ImgM::Identity,
+            full_range: ImgR::FullRange,
+        }),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "image")]
 impl PixelBuf {
-    /// Move into an `image::ImageBuffer<P, Vec<P::Subpixel>>` zero-copy when layout and color match.
+    /// Move into an `image::ImageBuffer<P, Vec<P::Subpixel>>` zero-copy when layout and color match,
+    /// propagating CICP color-space metadata onto the resulting `ImageBuffer`.
     pub fn try_into_image_buffer<P>(
         self,
     ) -> Result<image::ImageBuffer<P, alloc::vec::Vec<P::Subpixel>>, At<BufferError>>
     where
-        P: image::Pixel + 'static,
+        P: image::Pixel + image::PixelWithColorType + 'static,
         P::Subpixel: crate::storage::StorageSample,
     {
         if !self.spec().supports_interop(InteropTarget::ImageBuffer) {
             return Err(err_at(BufferError::InteropUnsupported));
         }
-        if self.spec().layout.sample != P::Subpixel::SAMPLE_TYPE
-            || self.spec().layout.channels() != P::CHANNEL_COUNT as usize
-        {
+        let img_cicp = color_space_to_image_cicp(&self.spec().color)
+            .ok_or_else(|| err_at(BufferError::InteropUnsupported))?;
+        let order_matches = matches!(
+            (self.spec().layout.order, P::COLOR_TYPE),
+            (
+                ChannelOrder::Gray,
+                image::ExtendedColorType::L8 | image::ExtendedColorType::L16
+            ) | (
+                ChannelOrder::GrayAlpha,
+                image::ExtendedColorType::La8 | image::ExtendedColorType::La16
+            ) | (
+                ChannelOrder::Rgb,
+                image::ExtendedColorType::Rgb8
+                    | image::ExtendedColorType::Rgb16
+                    | image::ExtendedColorType::Rgb32F
+            ) | (
+                ChannelOrder::Rgba,
+                image::ExtendedColorType::Rgba8
+                    | image::ExtendedColorType::Rgba16
+                    | image::ExtendedColorType::Rgba32F
+            )
+        );
+        if !order_matches || self.spec().layout.sample != P::Subpixel::SAMPLE_TYPE {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
         let w = self.width();
         let h = self.height();
         let samples = self.try_into_vec::<P::Subpixel>()?;
-        image::ImageBuffer::from_raw(w, h, samples)
-            .ok_or_else(|| err_at(BufferError::InsufficientData))
+        let mut img = image::ImageBuffer::from_raw(w, h, samples)
+            .ok_or_else(|| err_at(BufferError::InsufficientData))?;
+        img.set_color_space(img_cicp)
+            .map_err(|_| err_at(BufferError::InteropUnsupported))?;
+        Ok(img)
     }
+}
 
-    /// Adopt an `image::ImageBuffer<image::Rgb<u8>, Vec<u8>>` zero-copy as sRGB.
-    pub fn from_rgb8_image_buffer(
-        img: image::RgbImage,
-        color: ColorSpace,
-    ) -> Result<Self, At<BufferError>> {
+#[cfg(feature = "image")]
+fn image_cicp_to_color_space(
+    cicp: image::metadata::Cicp,
+    alpha: AlphaMode,
+    is_gray: bool,
+) -> Option<ColorSpace> {
+    use image::metadata::{
+        CicpColorPrimaries as ImgP, CicpMatrixCoefficients as ImgM,
+        CicpTransferCharacteristics as ImgT, CicpVideoFullRangeFlag as ImgR,
+    };
+    if cicp.matrix != ImgM::Identity || cicp.full_range != ImgR::FullRange {
+        return None;
+    }
+    let transfer = match cicp.transfer {
+        ImgT::SRgb => Transfer::Srgb,
+        ImgT::Linear => Transfer::Linear,
+        ImgT::Bt709 => Transfer::Bt709,
+        ImgT::Smpte2084 => Transfer::Pq,
+        ImgT::Bt2100Hlg => Transfer::Hlg(crate::HlgMode::Scene),
+        _ => return None,
+    };
+    if is_gray {
+        return Some(ColorSpace::Gray {
+            transfer,
+            range: SignalRange::Full,
+            alpha,
+            white: None,
+        });
+    }
+    let primaries = match cicp.primaries {
+        ImgP::SRgb => Primaries::Bt709,
+        ImgP::SmpteRp432 => Primaries::DisplayP3,
+        ImgP::Rgb2020 => Primaries::Bt2020,
+        _ => return None,
+    };
+    Some(ColorSpace::Rgb {
+        primaries,
+        transfer,
+        range: SignalRange::Full,
+        alpha,
+        white: None,
+    })
+}
+
+#[cfg(feature = "image")]
+impl PixelBuf {
+    /// Adopt an `image::RgbImage` zero-copy, reading its declared `image::metadata::Cicp` color space.
+    pub fn from_rgb8_image(img: image::RgbImage) -> Result<Self, At<BufferError>> {
+        let color = image_cicp_to_color_space(img.color_space(), AlphaMode::None, false)
+            .ok_or_else(|| err_at(BufferError::InteropUnsupported))?;
         let (w, h) = img.dimensions();
         Self::from_bytes(
             img.into_raw(),
@@ -213,11 +336,58 @@ impl PixelBuf {
         )
     }
 
-    /// Adopt an `image::ImageBuffer<image::Rgba<u8>, Vec<u8>>` zero-copy.
+    /// Adopt an `image::RgbaImage` zero-copy, reading its declared `image::metadata::Cicp` color space.
+    pub fn from_rgba8_image(img: image::RgbaImage) -> Result<Self, At<BufferError>> {
+        let color = image_cicp_to_color_space(img.color_space(), AlphaMode::Straight, false)
+            .ok_or_else(|| err_at(BufferError::InteropUnsupported))?;
+        let (w, h) = img.dimensions();
+        Self::from_bytes(
+            img.into_raw(),
+            w,
+            h,
+            ImageSpec::new(SampleLayout::RGBA8, color),
+        )
+    }
+
+    /// Adopt an `image::ImageBuffer<image::Rgb<u8>, Vec<u8>>` zero-copy with explicit `color`.
+    ///
+    /// Rejects contradictory color spaces when `img` declares a non-default CICP space
+    /// that disagrees with `color` (use [`from_rgb8_image`](Self::from_rgb8_image) to
+    /// preserve `img`'s own declared CICP automatically).
+    pub fn from_rgb8_image_buffer(
+        img: image::RgbImage,
+        color: ColorSpace,
+    ) -> Result<Self, At<BufferError>> {
+        let declared = img.color_space();
+        if declared != image::metadata::Cicp::SRGB
+            && color_space_to_image_cicp(&color) != Some(declared)
+        {
+            return Err(err_at(BufferError::InteropUnsupported));
+        }
+        let (w, h) = img.dimensions();
+        Self::from_bytes(
+            img.into_raw(),
+            w,
+            h,
+            ImageSpec::new(SampleLayout::RGB8, color),
+        )
+    }
+
+    /// Adopt an `image::ImageBuffer<image::Rgba<u8>, Vec<u8>>` zero-copy with explicit `color`.
+    ///
+    /// Rejects contradictory color spaces when `img` declares a non-default CICP space
+    /// that disagrees with `color` (use [`from_rgba8_image`](Self::from_rgba8_image) to
+    /// preserve `img`'s own declared CICP automatically).
     pub fn from_rgba8_image_buffer(
         img: image::RgbaImage,
         color: ColorSpace,
     ) -> Result<Self, At<BufferError>> {
+        let declared = img.color_space();
+        if declared != image::metadata::Cicp::SRGB
+            && color_space_to_image_cicp(&color) != Some(declared)
+        {
+            return Err(err_at(BufferError::InteropUnsupported));
+        }
         let (w, h) = img.dimensions();
         Self::from_bytes(
             img.into_raw(),

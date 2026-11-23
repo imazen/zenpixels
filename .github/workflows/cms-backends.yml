@@ -1,7 +1,5 @@
 name: CMS backend qualification
 
-# Focused replay for backend/profile and ICC-authority changes, including
-# actual native integer layouts and genuinely isolated consumer features.
 on:
   workflow_dispatch:
   push:
@@ -11,13 +9,11 @@ on:
       - Cargo.toml
       - Cargo.lock
       - zenpixels-convert/Cargo.toml
-      - zenpixels-convert/tests/cms_lcms_contracts.rs
-      - zenpixels-convert/src/cms_lcms.rs
-      - zenpixels-convert/src/cms_moxcms.rs
-      - zenpixels-convert/src/load_bearing.rs
+      - zenpixels-convert/tests/cms_lcms.rs
+      - zenpixels-convert/tests/audit_05_regressions.rs
+      - zenpixels-convert/src/cms.rs
+      - zenpixels-convert/src/icc_profiles.rs
       - zenpixels-convert/src/profiles/cicp_bundle.lz4
-      - cms-contract/**
-      - tools/icc-collapse-no-db/**
 
 concurrency:
   group: cms-backends-${{ github.ref }}
@@ -40,17 +36,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Production LCMS layouts and PQ precision
-        run: cargo test --locked -p zenpixels-convert --features cms-lcms --test cms_lcms_contracts -- --nocapture
-      - name: Shared MoxCMS and LCMS contract
-        run: cargo test --locked --manifest-path cms-contract/Cargo.toml
-      - name: ICC authority during grayscale collapse
-        run: "cargo test --locked -p zenpixels-convert --lib load_bearing::"
-      - name: Grayscale collapse without an ICC database
-        run: cargo test --locked --manifest-path tools/icc-collapse-no-db/Cargo.toml
-      - name: Strict converter Clippy
+      - name: LCMS and MoxCMS integration tests
+        run: cargo test -p zenpixels-convert --features cms-lcms,cms-moxcms,icc-db --test cms_lcms --test audit_05_regressions -- --nocapture
+      - name: Strict converter Clippy (CMS backends)
         if: matrix.os == 'ubuntu-latest'
-        run: cargo clippy --locked -p zenpixels-convert --all-targets -- -D warnings
+        run: cargo clippy -p zenpixels-convert --features cms-lcms,cms-moxcms,icc-db --all-targets -- -D warnings
 
   i686:
     name: CMS (i686)
@@ -67,11 +57,5 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: cms-cross-i686
-      - name: Production LCMS layouts and PQ precision
-        run: cross test --locked -p zenpixels-convert --features cms-lcms --test cms_lcms_contracts --target i686-unknown-linux-gnu -- --nocapture
-      - name: Shared MoxCMS and LCMS contract
-        run: cross test --locked --manifest-path cms-contract/Cargo.toml --target i686-unknown-linux-gnu
-      - name: ICC authority during grayscale collapse
-        run: "cross test --locked -p zenpixels-convert --lib --target i686-unknown-linux-gnu load_bearing::"
-      - name: Grayscale collapse without an ICC database
-        run: cross test --locked --manifest-path tools/icc-collapse-no-db/Cargo.toml --target i686-unknown-linux-gnu
+      - name: LCMS and MoxCMS integration tests (i686/QEMU)
+        run: cross test -p zenpixels-convert --features cms-lcms,cms-moxcms,icc-db --test cms_lcms --test audit_05_regressions --target i686-unknown-linux-gnu -- --nocapture

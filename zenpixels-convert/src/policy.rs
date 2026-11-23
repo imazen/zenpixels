@@ -84,6 +84,7 @@ pub enum LumaCoefficients {
 /// Cohesive conversion policy controlling precision, alpha, gamut, signal range,
 /// HDR anchors, tone mapping, CMS fallback, and SIMD acceleration.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct ConvertPolicy {
     /// Depth/quantization behavior.
     pub depth: DepthPolicy,
@@ -111,6 +112,11 @@ pub struct ConvertPolicy {
     pub source_facts: SampleFacts,
     /// Whether to apply tone mapping when converting HDR → SDR (`true` in `display_sdr()`, `false` in `lossless()`/`working_linear()`).
     pub tone_map_hdr_to_sdr: bool,
+    /// Whether recognized matrix+TRC ICC profiles may substitute directly into native math
+    /// (for non-absolute intents) instead of requiring a CMS backend.
+    ///
+    /// Default is `true` in `permissive()`/`working_linear()`/`display_sdr()`, and `false` in `lossless()`.
+    pub allow_icc_substitution: bool,
 }
 
 impl Default for ConvertPolicy {
@@ -140,6 +146,7 @@ impl ConvertPolicy {
             accelerators: None,
             source_facts: SampleFacts::NONE,
             tone_map_hdr_to_sdr: false,
+            allow_icc_substitution: false,
         }
     }
 
@@ -160,6 +167,7 @@ impl ConvertPolicy {
             accelerators: None,
             source_facts: SampleFacts::NONE,
             tone_map_hdr_to_sdr: false,
+            allow_icc_substitution: true,
         }
     }
 
@@ -180,10 +188,11 @@ impl ConvertPolicy {
             accelerators: None,
             source_facts: SampleFacts::NONE,
             tone_map_hdr_to_sdr: true,
+            allow_icc_substitution: true,
         }
     }
 
-    /// Permissive general-purpose policy (rounds depth, clips gamut, converts narrow range, forbids silent alpha drop unless configured).
+    /// Permissive general-purpose policy (rounds depth, clips gamut, converts narrow range, discards alpha unchecked unless configured).
     #[must_use]
     pub fn permissive() -> Self {
         Self {
@@ -200,6 +209,7 @@ impl ConvertPolicy {
             accelerators: None,
             source_facts: SampleFacts::NONE,
             tone_map_hdr_to_sdr: false,
+            allow_icc_substitution: true,
         }
     }
 
@@ -305,6 +315,14 @@ impl ConvertPolicy {
     #[must_use]
     pub fn with_facts(mut self, facts: SampleFacts) -> Self {
         self.source_facts = facts;
+        self
+    }
+
+    /// Control whether recognized matrix+TRC ICC profiles may substitute into native math.
+    #[inline]
+    #[must_use]
+    pub fn with_icc_substitution(mut self, allow: bool) -> Self {
+        self.allow_icc_substitution = allow;
         self
     }
 }

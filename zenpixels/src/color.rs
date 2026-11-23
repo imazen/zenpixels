@@ -276,6 +276,7 @@ impl Transfer {
 
 /// Signal quantization range for integer samples.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum SignalRange {
     /// Full range (`0..=255` in `U8`, `0..=65535` in `U16`).
     #[default]
@@ -286,6 +287,7 @@ pub enum SignalRange {
 
 /// Interpretation of an image's alpha (or padding) channel.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum AlphaMode {
     /// No alpha channel is present in the layout.
     #[default]
@@ -645,6 +647,7 @@ impl ColorSpace {
 
 /// Complete, validated description of an interleaved image: physical [`SampleLayout`] + algebraic [`ColorSpace`].
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct ImageSpec {
     /// Physical byte/bit layout.
     pub layout: SampleLayout,
@@ -930,7 +933,9 @@ impl ImageSpec {
                     return Err(whereat::at!(ColorError::HlgDisplayRequiresBt2020Full));
                 }
             }
-            ColorSpace::Gray { range, .. } => {
+            ColorSpace::Gray {
+                transfer, range, ..
+            } => {
                 if !order.is_gray_family() {
                     return Err(whereat::at!(ColorError::ColorLayoutMismatch));
                 }
@@ -938,6 +943,9 @@ impl ImageSpec {
                     && !matches!(sample, SampleType::U8 | SampleType::U16)
                 {
                     return Err(whereat::at!(ColorError::NarrowRangeRequiresInteger));
+                }
+                if matches!(transfer, Transfer::Hlg(HlgMode::Display(_))) {
+                    return Err(whereat::at!(ColorError::HlgDisplayRequiresBt2020Full));
                 }
             }
             ColorSpace::Oklab { .. } => {
@@ -962,12 +970,31 @@ impl ImageSpec {
                     return Err(whereat::at!(ColorError::ColorLayoutMismatch));
                 }
             }
-            ColorSpace::Icc { channels, .. } => {
+            ColorSpace::Icc {
+                profile, channels, ..
+            } => {
                 let expected = (*channels as usize)
                     + usize::from(order.has_alpha_slot() || order.has_padding_slot());
                 if order.channels() != expected {
                     return Err(whereat::at!(ColorError::ColorLayoutMismatch));
                 }
+                #[cfg(feature = "icc")]
+                if profile.len() >= 20 {
+                    if let Some(sig) = crate::icc::profile_color_space(profile) {
+                        let sig_ok = match sig {
+                            IccColorSpace::Gray => *channels == 1,
+                            IccColorSpace::Rgb | IccColorSpace::Lab | IccColorSpace::Xyz => {
+                                *channels == 3
+                            }
+                            IccColorSpace::Cmyk => *channels == 4,
+                        };
+                        if !sig_ok {
+                            return Err(whereat::at!(ColorError::ColorLayoutMismatch));
+                        }
+                    }
+                }
+                #[cfg(not(feature = "icc"))]
+                let _ = profile;
             }
             ColorSpace::Untagged { channels, .. } => {
                 if order.channels() != *channels as usize {
@@ -1107,6 +1134,7 @@ pub enum OriginKind {
 /// can guide encoder re-embedding (`SameAsOrigin`) without ever overriding
 /// converted pixel values.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ColorOrigin {
     /// Kind of original file signaling.
     pub kind: OriginKind,

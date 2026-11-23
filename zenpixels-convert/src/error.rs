@@ -44,6 +44,10 @@ pub enum ConvertError {
     ToneMapperFailed,
     /// CMS backend rejected or failed to execute the transform.
     CmsBackendFailed,
+    /// Requested container color signaling (`CicpOnly` / `EmbedIcc`) is not available for the destination color space.
+    OutputSignalingUnavailable,
+    /// Requested container color signaling (`SameAsOrigin` / `CustomIcc`) contradicts the destination pixels.
+    OutputSignalingMismatch,
     /// Heap allocation failed.
     AllocationFailed,
 }
@@ -116,6 +120,12 @@ impl fmt::Display for ConvertError {
             }
             Self::ToneMapperFailed => f.write_str("tone mapper failed to prepare"),
             Self::CmsBackendFailed => f.write_str("CMS backend failed to build or run transform"),
+            Self::OutputSignalingUnavailable => {
+                f.write_str("requested container CICP or ICC signaling is unavailable for destination color space")
+            }
+            Self::OutputSignalingMismatch => {
+                f.write_str("requested container color signaling contradicts the converted destination pixels")
+            }
             Self::AllocationFailed => f.write_str("allocation failed during pixel conversion"),
         }
     }

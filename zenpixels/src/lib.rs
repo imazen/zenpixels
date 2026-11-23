@@ -41,7 +41,7 @@ pub mod storage;
 pub use buffer::{
     BandedBuf, Bgrx, BufferError, DEFAULT_MAX_BAND_BYTES, DualLayerHdr, OwnedPlane, PixelBuf,
     PixelBufParts, PixelCow, PixelSink, PixelSource, PixelView, PixelViewMut, PlanarBuf,
-    PlanarView, PlaneView, Rgbx,
+    PlanarView, PlaneView, PlaneViewMut, Rgbx,
 };
 pub use cicp::{Cicp, CicpError};
 pub use color::{

@@ -3,11 +3,11 @@
 //! - [`RowPlan::build`] accepts **`hdr_peak: Option<Nits>`** — a compile-time
 //!   known peak luminance. Passing `PeakSource::Measured` to a single-row
 //!   converter is impossible at compile time. Executing a `RowPlan` allocates
-//!   **zero heap scratch** (uses the 1 KiB stack [`StripBuf`](crate::strip::StripBuf)).
+//!   **zero heap scratch** (uses a 1 KiB stack 64-pixel SoA tile).
 //! - [`ImagePlan::build`] accepts **`peak: PeakSource`** (`Measured`, `Declared`,
 //!   or `Fixed(Nits)`), streams HDR peak measurement in O(1) row memory, runs
 //!   uniformly over any [`PixelSource`] → [`PixelSink`] (`PixelView`, `PixelBuf`,
-//!   `BandedBuf`), and propagates proven [`SampleFacts`].
+//!   `BandedBuf`), caches invariant row plans, and propagates proven [`SampleFacts`].
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -40,18 +40,27 @@ enum RowExec {
     /// Direct contiguous single-stage row fast path (zero AoS↔SoA bounce).
     FastRow(FastRow),
     /// Composable micro-op pipeline running on 64-pixel stack SoA strips.
-    Strip(Vec<MicroOp>),
-    /// External CMS row transform (`ColorSpace::Icc` / `ColorSpace::Cmyk`).
-    Cms {
-        transform: Arc<dyn CmsTransform>,
-        /// Optional pre-stage (e.g., unpack to CMS carrier).
-        pre: Option<alloc::boxed::Box<RowPlan>>,
-        /// Optional post-stage (e.g., pack from CMS carrier).
-        post: Option<alloc::boxed::Box<RowPlan>>,
-        /// Intermediate carrier spec for pre/post staging.
-        cms_src_spec: ImageSpec,
-        cms_dst_spec: ImageSpec,
+    Strip {
+        ops: Vec<MicroOp>,
+        src_opaque_alpha: bool,
     },
+    /// External CMS row transform (`ColorSpace::Icc` / `ColorSpace::Cmyk`).
+    Cms { transform: Arc<dyn CmsTransform> },
+}
+
+/// Shared preflight result used by both [`RowPlan::build`] and [`Negotiate`](crate::Negotiate).
+pub(crate) struct PreflightOutcome {
+    pub matte_color: Option<zenpixels::Color>,
+    pub range_change: bool,
+    pub uses_cms: bool,
+    pub is_identity: bool,
+    pub drops_alpha: bool,
+    pub alpha_proven_opaque: bool,
+    pub drops_chroma: bool,
+    pub chroma_proven_gray: bool,
+    pub gamut_narrows: bool,
+    pub is_hdr_to_sdr: bool,
+    pub depth_reduces: bool,
 }
 
 /// Compiled, reusable, thread-safe single-row pixel converter.
@@ -92,13 +101,11 @@ impl RowPlan {
         policy: &ConvertPolicy,
         hdr_peak: Option<Nits>,
     ) -> Result<Self, At<ConvertError>> {
-        src.validate().map_err(|e| err_at((*e.error()).into()))?;
-        dst.validate().map_err(|e| err_at((*e.error()).into()))?;
-
+        let pre = preflight_and_classify(&src, &dst, policy)?;
         let accel = accel::resolve(policy.accelerators);
 
-        // 1. Validate sample types (byte-exact identity supports all 11 sample types).
-        if src == dst {
+        // 1. Byte-exact identity (supports all 11 sample types).
+        if pre.is_identity {
             return Ok(Self {
                 output_facts: policy.source_facts,
                 src,
@@ -109,46 +116,28 @@ impl RowPlan {
             });
         }
 
-        // 2. ICC / CMYK routing (try safe matrix+TRC substitution for known RGB ICC profiles first!).
-        if matches!(
-            (&src.color, &dst.color),
-            (ColorSpace::Icc { .. } | ColorSpace::Cmyk { .. }, _)
-                | (_, ColorSpace::Icc { .. } | ColorSpace::Cmyk { .. })
-        ) {
-            if let (Some(sub_src), Some(sub_dst)) =
-                (try_substitute_icc(&src), try_substitute_icc(&dst))
-            {
+        // 2. ICC / CMYK routing (policy checks have ALREADY passed in `preflight_and_classify`!).
+        if pre.uses_cms {
+            if let (Some(sub_src), Some(sub_dst)) = (
+                try_substitute_icc(&src, policy),
+                try_substitute_icc(&dst, policy),
+            ) {
                 let mut inner = Self::build(sub_src, sub_dst, policy, hdr_peak)?;
                 inner.src = src;
                 inner.dst = dst;
                 return Ok(inner);
             }
-            return Self::build_cms(src, dst, policy, accel);
+            return Self::build_cms(src, dst, policy, pre.matte_color.is_some(), accel);
         }
 
-        if !src.layout.sample.is_standard_color() && !src.layout.packing.is_packed_word() {
-            return Err(err_at(ConvertError::UnsupportedRoute));
-        }
-        if !dst.layout.sample.is_standard_color() && !dst.layout.packing.is_packed_word() {
-            return Err(err_at(ConvertError::UnsupportedRoute));
-        }
-        if matches!(
-            (&src.color, &dst.color),
-            (ColorSpace::Untagged { .. }, _) | (_, ColorSpace::Untagged { .. })
-        ) {
-            return Err(err_at(ConvertError::UnsupportedRoute));
-        }
+        let matte_color = pre.matte_color;
+        let range_change = pre.range_change;
 
-        // 3. Policy checks: depth, alpha, range, feature gates.
-        check_depth_policy(&src, &dst, policy)?;
-        let matte_color = check_alpha_policy(&src, &dst, policy)?;
-        let range_change = check_range_policy(&src, &dst, policy)?;
-
-        // 4. Fast byte-only path when no color math, tone mapping, or matte compositing is needed.
+        // 3. Fast byte-only path when no color math, tone mapping, or matte compositing is needed.
         if let Some(bp) =
             strip::detect_byte_fast_path(&src, &dst, policy.depth, matte_color.is_some())
         {
-            let output_facts = derive_output_facts(&dst, policy.source_facts, false);
+            let output_facts = derive_output_facts_byte(&src, &dst, policy.source_facts, bp);
             return Ok(Self {
                 src,
                 dst,
@@ -159,66 +148,103 @@ impl RowPlan {
             });
         }
 
-        // 5. Compile composable micro-op sequence on 64-px stack SoA StripBuf.
-        let mut ops: Vec<MicroOp> = Vec::with_capacity(12);
-        let preserve_extended =
-            policy.gamut == GamutPolicy::PreserveExtended && dst.layout.sample.is_float();
-
-        // 5a. Source narrow range expansion (before unpremul/EOTF!).
-        let src_range = color_range(&src.color);
-        let dst_range = color_range(&dst.color);
-        if src_range == SignalRange::Narrow
-            && (range_change || !color_transfer(&src.color).is_linear())
-        {
-            ops.push(MicroOp::ExpandNarrow {
-                sample: src.layout.sample,
-            });
-        }
-
-        // 5b. Unpremultiply source if premultiplied (when transfer/gamut/matte/alpha changes).
-        let src_premul = src.color.alpha() == AlphaMode::Premultiplied;
-        let dst_premul = dst.color.alpha() == AlphaMode::Premultiplied;
-        let need_linear_space =
-            needs_linear_domain(&src.color, &dst.color, matte_color.is_some(), policy);
-
-        if src_premul && (need_linear_space || !dst_premul) {
-            ops.push(MicroOp::Unpremul);
-        }
-
-        // 5c. Resolve HDR anchors and HLG display rendering conditions.
+        // 4. Resolve photometry, transfers, HDR white anchors, and HLG BEFORE FastRow or Strip!
         let src_tf = color_transfer(&src.color);
         let dst_tf = color_transfer(&dst.color);
+        let src_range = color_range(&src.color);
+        let dst_range = color_range(&dst.color);
+        let src_bits = effective_color_bits(&src);
+        let dst_bits = effective_color_bits(&dst);
+
+        let src_is_pq = matches!(src_tf, Transfer::Pq);
+        let dst_is_pq = matches!(dst_tf, Transfer::Pq);
+
+        let relative_white_scale = if !src_is_pq && !dst_is_pq {
+            match (src.color.white(), dst.color.white()) {
+                (Some(sw), Some(dw)) if (sw.nits() - dw.nits()).abs() > 1e-4 => {
+                    sw.nits() / dw.nits()
+                }
+                _ => 1.0,
+            }
+        } else {
+            1.0
+        };
+        let has_relative_white_rescale = (relative_white_scale - 1.0).abs() > 1e-6;
+
+        let need_linear_space = needs_linear_domain(
+            &src.color,
+            &dst.color,
+            matte_color.is_some(),
+            has_relative_white_rescale,
+            policy,
+        );
+
+        // Reject `Transfer::Unknown` whenever transfer changes or linear-domain math is required.
+        if (src_tf == Transfer::Unknown || dst_tf == Transfer::Unknown)
+            && (src_tf != dst_tf || need_linear_space)
+        {
+            return Err(err_at(ConvertError::UnsupportedRoute));
+        }
+
         let crosses_hdr_feature = src_tf.is_hdr() || dst_tf.is_hdr();
         if crosses_hdr_feature && !cfg!(feature = "hdr-transfers") {
             return Err(err_at(ConvertError::HdrFeatureRequired));
         }
 
-        let src_is_pq = matches!(src_tf, Transfer::Pq);
-        let dst_is_pq = matches!(dst_tf, Transfer::Pq);
-        let white_anchor = src
-            .color
-            .white()
-            .or_else(|| dst.color.white())
-            .or(policy.sdr_white);
-
-        let crosses_pq_relative = (src_is_pq && !dst_is_pq) || (!src_is_pq && dst_is_pq);
-        let white_nits = if crosses_pq_relative {
-            white_anchor
+        let white_nits = if src_is_pq && !dst_is_pq {
+            dst.color
+                .white()
+                .or(policy.sdr_white)
+                .ok_or_else(|| err_at(ConvertError::MissingHdrAnchor))?
+                .nits()
+        } else if !src_is_pq && dst_is_pq {
+            src.color
+                .white()
+                .or(policy.sdr_white)
                 .ok_or_else(|| err_at(ConvertError::MissingHdrAnchor))?
                 .nits()
         } else {
-            white_anchor.unwrap_or(DiffuseWhite::BT2408).nits()
+            src.color
+                .white()
+                .or_else(|| dst.color.white())
+                .or(policy.sdr_white)
+                .unwrap_or(DiffuseWhite::BT2408)
+                .nits()
         };
 
-        // 4b. Direct contiguous single-stage row fast path (zero AoS↔SoA bounce)
-        // when no tone mapping, soft gamut compression, matte, or gamut matrix applies.
-        let is_hdr_to_sdr = src_tf.is_hdr()
-            && !dst_tf.is_hdr()
-            && matches!(dst.color, ColorSpace::Rgb { .. } | ColorSpace::Gray { .. });
-        let hdr_forbid_int =
-            policy.gamut == GamutPolicy::Forbid && is_hdr_to_sdr && !dst.layout.sample.is_float();
+        let preserve_extended =
+            policy.gamut == GamutPolicy::PreserveExtended && dst.layout.sample.is_float();
+
+        // Resolve HLG display rendering BEFORE FastRow detection so identical semantics apply
+        // regardless of channel order / layout!
+        #[allow(unused_variables)]
+        let (src_hlg_tf, src_prepared_hlg) = resolve_hlg(
+            &src.color,
+            src_tf,
+            dst_tf,
+            policy.hlg_rendering,
+            false,
+            white_nits,
+            !preserve_extended,
+        )?;
+        #[allow(unused_variables)]
+        let (dst_hlg_tf, dst_prepared_hlg) = resolve_hlg(
+            &dst.color,
+            dst_tf,
+            src_tf,
+            policy.hlg_rendering,
+            true,
+            white_nits,
+            !preserve_extended,
+        )?;
+
+        // 5. Direct contiguous single-stage row fast path (zero AoS↔SoA bounce)
+        // ONLY after policy, Transfer::Unknown, relative-white, and HLG are resolved!
+        let is_hdr_to_sdr = pre.is_hdr_to_sdr;
         if !(is_hdr_to_sdr && policy.tone_map_hdr_to_sdr)
-            && !hdr_forbid_int
+            && !has_relative_white_rescale
+            && src_prepared_hlg.is_none()
+            && dst_prepared_hlg.is_none()
             && policy.gamut != GamutPolicy::SoftCompress
             && let Some(fr) = strip::detect_fast_row(
                 &src,
@@ -229,8 +255,24 @@ impl RowPlan {
                 white_nits,
             )
         {
-            let clamped_output = !preserve_extended && !dst_tf.is_hdr();
-            let output_facts = derive_output_facts(&dst, policy.source_facts, clamped_output);
+            let clamped_color = !preserve_extended
+                && !dst_tf.is_hdr()
+                && matches!(
+                    fr,
+                    FastRow::SrgbU8ToLinF32 { .. }
+                        | FastRow::U8ToF32 { .. }
+                        | FastRow::U16ToF32 { .. }
+                        | FastRow::TransferF32 { .. }
+                );
+            let output_facts = derive_output_facts_math(
+                &src,
+                &dst,
+                policy.source_facts,
+                clamped_color,
+                false,
+                false,
+                matches!(fr, FastRow::F32ToF16 { .. } | FastRow::F16ToF32 { .. }),
+            );
             return Ok(Self {
                 src,
                 dst,
@@ -241,27 +283,27 @@ impl RowPlan {
             });
         }
 
-        // Resolve HLG display rendering when crossing HLG <-> non-HLG.
-        #[allow(unused_variables)]
-        let (src_hlg_tf, src_prepared_hlg) = resolve_hlg(
-            src_tf,
-            dst_tf,
-            policy.hlg_rendering,
-            false,
-            white_nits,
-            !preserve_extended,
-        )?;
-        #[allow(unused_variables)]
-        let (dst_hlg_tf, dst_prepared_hlg) = resolve_hlg(
-            dst_tf,
-            src_tf,
-            policy.hlg_rendering,
-            true,
-            white_nits,
-            !preserve_extended,
-        )?;
+        // 6. Compile composable micro-op sequence on 64-px stack SoA StripBuf.
+        let mut ops: Vec<MicroOp> = Vec::with_capacity(14);
+        let narrow_depth_change = src_range == SignalRange::Narrow
+            && dst_range == SignalRange::Narrow
+            && src_bits != dst_bits;
 
-        // 5d. Source EOTF (into linear light) or Oklab/Perceptual decode into linear RGB.
+        // 6a. Source narrow range expansion (before unpremul/EOTF!).
+        if src_range == SignalRange::Narrow
+            && (range_change || need_linear_space || !src_tf.is_linear() || narrow_depth_change)
+        {
+            ops.push(MicroOp::ExpandNarrow { bits: src_bits });
+        }
+
+        // 6b. Unpremultiply source if premultiplied (when transfer/gamut/matte/alpha changes).
+        let src_premul = src.color.alpha() == AlphaMode::Premultiplied;
+        let dst_premul = dst.color.alpha() == AlphaMode::Premultiplied;
+        if src_premul && (need_linear_space || !dst_premul) {
+            ops.push(MicroOp::Unpremul);
+        }
+
+        // 6c. Source EOTF (into linear light) or Oklab/Perceptual decode into linear RGB.
         let mut cur_primaries = color_primaries(&src.color);
         let dst_primaries = color_primaries(&dst.color);
         let mut cur_is_gray = matches!(src.color, ColorSpace::Gray { .. });
@@ -272,8 +314,6 @@ impl RowPlan {
                 return Err(err_at(ConvertError::FeatureRequired("oklab")));
                 #[cfg(feature = "oklab")]
                 {
-                    // Decode Oklab directly into destination primaries (CIE XYZ D65 anchor!)
-                    // when destination has known primaries, else BT.709.
                     let target_p = if dst_primaries != Primaries::Unknown {
                         dst_primaries
                     } else {
@@ -336,7 +376,26 @@ impl RowPlan {
             };
         }
 
-        // 5e. HDR -> SDR Tone Mapping (in linear light, in mapper's working primaries!).
+        // 6d. Relative-to-relative diffuse white rescale (in linear light).
+        if has_relative_white_rescale {
+            ops.push(MicroOp::ScaleLinear(relative_white_scale));
+        }
+
+        // 6e. Linear-light alpha matte compositing BEFORE tone mapping & gamut clipping!
+        // Both pixel RGB and matte color are in diffuse-white-relative linear light here.
+        if let Some(matte) = matte_color {
+            let matte_primaries = if cur_primaries == Primaries::Unknown {
+                Primaries::Bt709
+            } else {
+                cur_primaries
+            };
+            let matte_rgb = matte
+                .to_primaries(matte_primaries)
+                .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
+            ops.push(MicroOp::CompositeMatte(matte_rgb));
+        }
+
+        // 6f. HDR -> SDR Tone Mapping (in linear light, in mapper's working primaries!).
         if is_hdr_to_sdr && policy.tone_map_hdr_to_sdr {
             let mapper_arc = resolve_tone_mapper(policy)?;
             let work_primaries = mapper_arc.working_primaries_for(dst_primaries);
@@ -351,39 +410,45 @@ impl RowPlan {
             if req.full_image {
                 return Err(err_at(ConvertError::FullImageMapperNotSupported));
             }
-            let src_peak_nits = if let Some(p) = hdr_peak {
-                p.nits()
-            } else if !req.source_peak_nits {
-                1000.0
-            } else if let Transfer::Hlg(HlgMode::Display(r)) = src_hlg_tf {
-                r.peak().nits()
+            let (src_peak_nits, target_peak_nits) = if let Some((bs, bd)) = mapper_arc.baked_peaks()
+            {
+                (bs, bd)
             } else {
-                return Err(err_at(ConvertError::MissingDeclaredPeak));
+                let s_peak = if let Some(p) = hdr_peak {
+                    p.nits()
+                } else if !req.source_peak_nits {
+                    1000.0
+                } else if let Transfer::Hlg(HlgMode::Display(r)) = src_hlg_tf {
+                    r.peak().nits()
+                } else {
+                    return Err(err_at(ConvertError::MissingDeclaredPeak));
+                };
+                (s_peak, policy.sdr_peak.nits())
             };
             let ctx = ToneMapContext {
                 source_peak_nits: src_peak_nits,
-                target_peak_nits: policy.sdr_peak.nits(),
+                target_peak_nits,
                 working_primaries: work_primaries,
             };
             let PreparedMapper::Streaming(strip_mapper) = mapper_arc.prepare(&ctx)?;
             let mapper_shared: Arc<dyn StripMapper> = Arc::from(strip_mapper);
-            // Input strip is relative-linear (`1.0 = white_nits`); ToneMapper expects `1.0 = source_peak_nits`.
-            // Output of ToneMapper is `1.0 = target_peak_nits`, mapped to SDR `[0, 1]`.
+            // Input strip is relative-linear (`1.0 = white_nits`); ToneMapper expects `1.0 = src_peak_nits`.
+            // Output of ToneMapper is `1.0 = target_peak_nits`. If destination declares a different
+            // SDR diffuse white than `target_peak_nits`, rescale cleanly.
+            let out_scale = match dst.color.white() {
+                Some(dw) if (dw.nits() - target_peak_nits).abs() > 1e-4 => {
+                    target_peak_nits / dw.nits()
+                }
+                _ => 1.0,
+            };
             ops.push(MicroOp::ToneMap {
-                in_scale: white_nits / src_peak_nits.max(1.0),
-                out_scale: 1.0,
+                in_scale: white_nits / src_peak_nits.max(1e-3),
+                out_scale,
                 mapper: mapper_shared,
             });
         }
 
-        // 5f. Linear-light 3×3 Gamut Matrix (ALWAYS BEFORE encoding or clamping!).
-        let gamut_narrows = is_gamut_narrowing(cur_primaries, dst_primaries);
-        if policy.gamut == GamutPolicy::Forbid
-            && (gamut_narrows || (is_hdr_to_sdr && !dst.layout.sample.is_float()))
-        {
-            return Err(err_at(ConvertError::GamutLossForbidden));
-        }
-
+        // 6g. Linear-light 3×3 Gamut Matrix (ALWAYS BEFORE encoding or clamping!).
         if !cur_is_gray
             && matches!(dst.color, ColorSpace::Rgb { .. })
             && cur_primaries != dst_primaries
@@ -395,7 +460,8 @@ impl RowPlan {
             cur_primaries = dst_primaries;
         }
 
-        // 5g. Gamut mapping (`SoftCompress` or `ClampUnit` in linear light before OETF!).
+        // 6h. Gamut mapping (`SoftCompress` or `ClampUnit` in linear light before OETF!).
+        let mut clamped_color = false;
         if !cur_is_gray && matches!(dst.color, ColorSpace::Rgb { .. }) {
             match policy.gamut {
                 GamutPolicy::SoftCompress => {
@@ -403,48 +469,37 @@ impl RowPlan {
                     return Err(err_at(ConvertError::FeatureRequired("oklab")));
                     #[cfg(feature = "oklab")]
                     {
-                        if let Some(space) = crate::oklab::OklabSpace::for_primaries(cur_primaries)
-                        {
-                            ops.push(MicroOp::SoftCompress(SoftCompress::new(
-                                &space,
-                                SoftCompress::DEFAULT_KNEE,
-                            )));
-                        }
+                        let space = crate::oklab::OklabSpace::for_primaries(cur_primaries)
+                            .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
+                        ops.push(MicroOp::SoftCompress(SoftCompress::new(
+                            &space,
+                            SoftCompress::DEFAULT_KNEE,
+                        )));
                         if !preserve_extended {
                             ops.push(MicroOp::ClampUnit);
+                            clamped_color = true;
                         }
                     }
                 }
                 GamutPolicy::Clip => {
                     if !dst_tf.is_hdr()
-                        && (gamut_narrows || is_hdr_to_sdr || !dst.layout.sample.is_float())
+                        && (pre.gamut_narrows || is_hdr_to_sdr || !dst.layout.sample.is_float())
                     {
                         ops.push(MicroOp::ClampUnit);
+                        clamped_color = true;
                     }
                 }
                 GamutPolicy::PreserveExtended | GamutPolicy::Forbid => {}
             }
         }
 
-        // 5h. Alpha matte compositing in linear light (before RGB→Gray and before OETF!).
-        if let Some(matte) = matte_color {
-            let matte_rgb = matte
-                .to_primaries(if cur_primaries == Primaries::Unknown {
-                    Primaries::Bt709
-                } else {
-                    cur_primaries
-                })
-                .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
-            ops.push(MicroOp::CompositeMatte(matte_rgb));
-        }
-
-        // 5i. RGB -> Gray in linear light.
+        // 6i. RGB -> Gray in linear light.
         if !cur_is_gray && matches!(dst.color, ColorSpace::Gray { .. }) {
             let weights = strip::resolve_luma_weights(policy.luma, cur_primaries);
             ops.push(MicroOp::RgbToGray(weights));
         }
 
-        // 5j. Encode to destination color model (`Oklab`, `Perceptual`, or `Oetf`).
+        // 6j. Encode to destination color model (`Oklab`, `Perceptual`, or `Oetf`).
         match &dst.color {
             ColorSpace::Oklab { .. } => {
                 #[cfg(not(feature = "oklab"))]
@@ -454,6 +509,7 @@ impl RowPlan {
                     let space = crate::oklab::OklabSpace::for_primaries(cur_primaries)
                         .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
                     ops.push(MicroOp::RgbToOklab(*space.rgb_to_lms().rows()));
+                    clamped_color = false;
                 }
             }
             ColorSpace::Perceptual { space, .. } => {
@@ -469,6 +525,7 @@ impl RowPlan {
                         primaries: cur_primaries,
                         white_nits,
                     });
+                    clamped_color = false;
                 }
             }
             ColorSpace::Rgb { .. } | ColorSpace::Gray { .. } => {
@@ -486,38 +543,51 @@ impl RowPlan {
                         preserve_extended,
                         gray_only: matches!(dst.color, ColorSpace::Gray { .. }),
                     });
+                    if !preserve_extended && !dst_hlg_tf.is_hdr() {
+                        clamped_color = true;
+                    }
                 }
             }
             _ => return Err(err_at(ConvertError::UnsupportedRoute)),
         }
 
-        // 5k. Destination alpha normalization / premultiplication.
-        if matches!(dst.color.alpha(), AlphaMode::Opaque)
-            && !matches!(
-                src.color.alpha(),
-                AlphaMode::Opaque | AlphaMode::None | AlphaMode::Undefined
-            )
-        {
+        // 6k. Destination alpha normalization / premultiplication.
+        let mut alpha_filled_opaque = matte_color.is_some()
+            || !src.layout.order.has_alpha_slot()
+            || src.color.alpha() == AlphaMode::Opaque;
+        if matches!(dst.color.alpha(), AlphaMode::Opaque) {
             ops.push(MicroOp::FillOpaqueAlpha);
+            alpha_filled_opaque = true;
         }
         if dst_premul && (need_linear_space || !src_premul) {
             ops.push(MicroOp::Premul);
         }
 
-        // 5l. Destination narrow range compression.
-        if dst_range == SignalRange::Narrow && (range_change || !dst_hlg_tf.is_linear()) {
-            ops.push(MicroOp::CompressNarrow {
-                sample: dst.layout.sample,
-            });
+        // 6l. Destination narrow range compression.
+        if dst_range == SignalRange::Narrow
+            && (range_change || need_linear_space || !dst_hlg_tf.is_linear() || narrow_depth_change)
+        {
+            ops.push(MicroOp::CompressNarrow { bits: dst_bits });
         }
 
-        let clamped_output = !preserve_extended && !dst_tf.is_hdr();
-        let output_facts = derive_output_facts(&dst, policy.source_facts, clamped_output);
+        let src_opaque_alpha = src.color.alpha() == AlphaMode::Opaque;
+        let output_facts = derive_output_facts_math(
+            &src,
+            &dst,
+            policy.source_facts,
+            clamped_color,
+            alpha_filled_opaque,
+            matte_color.is_some(),
+            false,
+        );
 
         Ok(Self {
             src,
             dst,
-            exec: RowExec::Strip(ops),
+            exec: RowExec::Strip {
+                ops,
+                src_opaque_alpha,
+            },
             depth_policy: policy.depth,
             accel,
             output_facts,
@@ -528,28 +598,43 @@ impl RowPlan {
         src: ImageSpec,
         dst: ImageSpec,
         policy: &ConvertPolicy,
+        matte_active: bool,
         accel: Accelerators,
     ) -> Result<Self, At<ConvertError>> {
+        // CMS backends do not composite linear mattes or convert premultiplied alpha.
+        if matte_active
+            || src.color.alpha() == AlphaMode::Premultiplied
+            || dst.color.alpha() == AlphaMode::Premultiplied
+        {
+            return Err(err_at(ConvertError::UnsupportedRoute));
+        }
         let cms = policy
             .cms
             .as_ref()
             .ok_or_else(|| err_at(ConvertError::CmsRequired))?;
         let transform = cms.build_transform(&src, &dst)?;
-        Ok(Self {
-            output_facts: derive_output_facts(
-                &dst,
-                SampleFacts::NONE,
-                !dst.layout.sample.is_float(),
-            ),
-            src: src.clone(),
-            dst: dst.clone(),
-            exec: RowExec::Cms {
-                transform,
-                pre: None,
-                post: None,
-                cms_src_spec: src,
-                cms_dst_spec: dst,
+        let output_facts = SampleFacts {
+            float: FloatFacts::NONE,
+            exact: zenpixels::ExactDepth {
+                effective_bits: if dst.layout.sample == SampleType::U8
+                    && dst.layout.packing.is_full()
+                {
+                    8
+                } else {
+                    0
+                },
+                all_opaque: matches!(
+                    dst.color.alpha(),
+                    AlphaMode::None | AlphaMode::Opaque | AlphaMode::Undefined
+                ),
+                all_grayscale: matches!(dst.color, ColorSpace::Gray { .. }),
             },
+        };
+        Ok(Self {
+            output_facts,
+            src,
+            dst,
+            exec: RowExec::Cms { transform },
             depth_policy: policy.depth,
             accel,
         })
@@ -627,12 +712,16 @@ impl RowPlan {
                 );
                 Ok(())
             }
-            RowExec::Strip(ops) => {
+            RowExec::Strip {
+                ops,
+                src_opaque_alpha,
+            } => {
                 strip::exec_strip_row(
                     self.src.layout,
                     self.dst.layout,
                     ops,
                     self.depth_policy,
+                    *src_opaque_alpha,
                     &self.accel,
                     &src_row[..need_src],
                     &mut dst_row[..need_dst],
@@ -641,14 +730,7 @@ impl RowPlan {
                 );
                 Ok(())
             }
-            RowExec::Cms {
-                transform,
-                pre,
-                post,
-                cms_src_spec,
-                cms_dst_spec,
-            } => {
-                let _ = (pre, post, cms_src_spec, cms_dst_spec);
+            RowExec::Cms { transform } => {
                 transform.transform_row(&src_row[..need_src], &mut dst_row[..need_dst], width)
             }
         }
@@ -664,15 +746,17 @@ pub struct ImagePlan {
     dst: ImageSpec,
     policy: ConvertPolicy,
     peak: PeakSource,
+    /// Cached compiled [`RowPlan`] when the route does not depend on per-image
+    /// measured/declared HDR peaks or runtime buffer [`SampleFacts`].
+    cached_row_plan: Option<RowPlan>,
 }
 
 impl ImagePlan {
     /// Validate and construct an image-level conversion plan.
     ///
-    /// Note: facts-dependent checks (`AlphaPolicy::DiscardIfOpaque`,
-    /// `DepthPolicy::Forbid` on U16→U8) are re-checked with the actual merged
-    /// `src.source_facts()` at [`execute`](Self::execute) / [`execute_into`](Self::execute_into)
-    /// time so one `ImagePlan` can inspect each input buffer's proven facts.
+    /// When the route does not require per-image HDR peak resolution or runtime
+    /// buffer facts (`DiscardIfOpaque` / `Forbid` on U16→U8 or float→int), the
+    /// compiled [`RowPlan`] is built **once** and reused across every `execute` call.
     pub fn build(
         src: ImageSpec,
         dst: ImageSpec,
@@ -681,11 +765,53 @@ impl ImagePlan {
     ) -> Result<Self, At<ConvertError>> {
         src.validate().map_err(|e| err_at((*e.error()).into()))?;
         dst.validate().map_err(|e| err_at((*e.error()).into()))?;
-        // Validate non-peak-dependent and non-buffer-fact-dependent parts eagerly.
-        let test_peak = match peak {
-            PeakSource::Fixed(n) => Some(n),
-            PeakSource::Measured | PeakSource::Declared | _ => Some(Nits::new(1000.0)),
-        };
+
+        let needs_runtime_facts = (policy.alpha == AlphaPolicy::DiscardIfOpaque
+            && matches!(
+                src.color.alpha(),
+                AlphaMode::Straight | AlphaMode::Premultiplied
+            )
+            && matches!(
+                dst.color.alpha(),
+                AlphaMode::None | AlphaMode::Undefined | AlphaMode::Opaque
+            )
+            && !policy.source_facts.exact.all_opaque)
+            || (policy.depth == DepthPolicy::Forbid
+                && src.layout.sample == SampleType::U16
+                && dst.layout.sample == SampleType::U8
+                && policy.source_facts.exact.effective_bits != 8)
+            || (policy.gamut == GamutPolicy::Forbid
+                && src.layout.sample.is_float()
+                && !dst.layout.sample.is_float()
+                && !policy.source_facts.float.is_unit_interval());
+
+        let is_hdr_tonemap = color_transfer(&src.color).is_hdr()
+            && !color_transfer(&dst.color).is_hdr()
+            && matches!(dst.color, ColorSpace::Rgb { .. } | ColorSpace::Gray { .. })
+            && policy.tone_map_hdr_to_sdr;
+
+        let mapper_needs_runtime_peak = is_hdr_tonemap
+            && !matches!(peak, PeakSource::Fixed(_))
+            && resolve_tone_mapper(&policy)
+                .map(|m| m.requirements().source_peak_nits && m.baked_peaks().is_none())
+                .unwrap_or(true);
+
+        if !needs_runtime_facts && !mapper_needs_runtime_peak {
+            let fixed_peak = match peak {
+                PeakSource::Fixed(n) => Some(n),
+                _ => None,
+            };
+            let compiled = RowPlan::build(src.clone(), dst.clone(), &policy, fixed_peak)?;
+            return Ok(Self {
+                src,
+                dst,
+                policy,
+                peak,
+                cached_row_plan: Some(compiled),
+            });
+        }
+
+        // Validate structural/policy compatibility without needlessly invoking CMS/mapper twice.
         let mut probe_policy = policy.clone();
         if probe_policy.alpha == AlphaPolicy::DiscardIfOpaque {
             probe_policy.source_facts.exact.all_opaque = true;
@@ -696,12 +822,26 @@ impl ImagePlan {
         {
             probe_policy.source_facts.exact.effective_bits = 8;
         }
-        let _ = RowPlan::build(src.clone(), dst.clone(), &probe_policy, test_peak)?;
+        if probe_policy.gamut == GamutPolicy::Forbid
+            && src.layout.sample.is_float()
+            && !dst.layout.sample.is_float()
+        {
+            probe_policy.source_facts.float = FloatFacts::UNIT_INTERVAL;
+        }
+        let pre = preflight_and_classify(&src, &dst, &probe_policy)?;
+        if !pre.uses_cms {
+            let test_peak = match peak {
+                PeakSource::Fixed(n) => Some(n),
+                _ => Some(Nits::new(1000.0)),
+            };
+            let _ = RowPlan::build(src.clone(), dst.clone(), &probe_policy, test_peak)?;
+        }
         Ok(Self {
             src,
             dst,
             policy,
             peak,
+            cached_row_plan: None,
         })
     }
 
@@ -720,43 +860,42 @@ impl ImagePlan {
         if src.source_spec() != &self.src || dst.sink_spec() != &self.dst {
             return Err(err_at(ConvertError::UnsupportedRoute));
         }
-        let mut eff_policy = self.policy.clone();
-        eff_policy.source_facts = SampleFacts {
-            float: eff_policy.source_facts.float | src.source_facts().float,
-            exact: zenpixels::ExactDepth {
-                effective_bits: eff_policy
-                    .source_facts
-                    .exact
-                    .effective_bits
-                    .max(src.source_facts().exact.effective_bits),
-                all_opaque: eff_policy.source_facts.exact.all_opaque
-                    || src.source_facts().exact.all_opaque,
-                all_grayscale: eff_policy.source_facts.exact.all_grayscale
-                    || src.source_facts().exact.all_grayscale,
-            },
+
+        let built_plan: RowPlan;
+        let row_plan: &RowPlan = if let Some(cached) = &self.cached_row_plan {
+            cached
+        } else {
+            let mut eff_policy = self.policy.clone();
+            eff_policy.source_facts = merge_facts(eff_policy.source_facts, src.source_facts());
+            let resolved_peak = self.resolve_peak(src, &eff_policy)?;
+            built_plan = RowPlan::build(
+                self.src.clone(),
+                self.dst.clone(),
+                &eff_policy,
+                resolved_peak,
+            )?;
+            &built_plan
         };
 
-        let resolved_peak = self.resolve_peak(src, &eff_policy)?;
-        let row_plan = RowPlan::build(
-            self.src.clone(),
-            self.dst.clone(),
-            &eff_policy,
-            resolved_peak,
-        )?;
         for y in 0..h {
             row_plan.convert_row(src.source_row(y), dst.sink_row_mut(y), w, y)?;
         }
-        let out_hdr = if self.dst.color.is_hdr() {
-            src.source_hdr()
-        } else {
-            HdrMetadata::default()
-        };
+        let out_hdr =
+            if self.dst.color.is_hdr() && same_photometry(&self.src.color, &self.dst.color) {
+                src.source_hdr()
+            } else {
+                HdrMetadata::default()
+            };
         dst.sink_finish(row_plan.output_facts(), out_hdr);
         Ok(())
     }
 
     /// Execute into a freshly allocated tightly packed [`PixelBuf`].
     pub fn execute<S: PixelSource + ?Sized>(&self, src: &S) -> Result<PixelBuf, At<ConvertError>> {
+        // Validate source spec BEFORE allocating destination memory!
+        if src.source_spec() != &self.src {
+            return Err(err_at(ConvertError::UnsupportedRoute));
+        }
         let mut out = PixelBuf::new(src.source_width(), src.source_height(), self.dst.clone())
             .map_err(|e| err_at((*e.error()).into()))?;
         self.execute_into(src, &mut out)?;
@@ -768,7 +907,15 @@ impl ImagePlan {
         src: &S,
         policy: &ConvertPolicy,
     ) -> Result<Option<Nits>, At<ConvertError>> {
-        if !self.src.color.is_hdr() || self.dst.color.is_hdr() || !policy.tone_map_hdr_to_sdr {
+        if !color_transfer(&self.src.color).is_hdr()
+            || color_transfer(&self.dst.color).is_hdr()
+            || !policy.tone_map_hdr_to_sdr
+        {
+            return Ok(None);
+        }
+        if let Ok(mapper) = resolve_tone_mapper(policy)
+            && (!mapper.requirements().source_peak_nits || mapper.baked_peaks().is_some())
+        {
             return Ok(None);
         }
         match self.peak {
@@ -792,6 +939,7 @@ impl ImagePlan {
                     .src
                     .color
                     .white()
+                    .or_else(|| self.dst.color.white())
                     .or(policy.sdr_white)
                     .unwrap_or(DiffuseWhite::BT2408);
                 let measured =
@@ -831,19 +979,303 @@ pub fn convert_into<S: PixelSource + ?Sized, D: PixelSink + ?Sized>(
 }
 
 // ---------------------------------------------------------------------------
-// Internal validation & planning helpers
+// Internal validation, preflight, and planning helpers
 // ---------------------------------------------------------------------------
 
-fn try_substitute_icc(spec: &ImageSpec) -> Option<ImageSpec> {
+/// Shared policy & feasibility preflight invoked BEFORE CMS, ByteFastPath, FastRow, or Strip.
+pub(crate) fn preflight_and_classify(
+    src: &ImageSpec,
+    dst: &ImageSpec,
+    policy: &ConvertPolicy,
+) -> Result<PreflightOutcome, At<ConvertError>> {
+    src.validate().map_err(|e| err_at((*e.error()).into()))?;
+    dst.validate().map_err(|e| err_at((*e.error()).into()))?;
+
+    if src == dst {
+        return Ok(PreflightOutcome {
+            matte_color: None,
+            range_change: false,
+            uses_cms: false,
+            is_identity: true,
+            drops_alpha: false,
+            alpha_proven_opaque: true,
+            drops_chroma: false,
+            chroma_proven_gray: true,
+            gamut_narrows: false,
+            is_hdr_to_sdr: false,
+            depth_reduces: false,
+        });
+    }
+
+    let uses_cms = matches!(
+        (&src.color, &dst.color),
+        (ColorSpace::Icc { .. } | ColorSpace::Cmyk { .. }, _)
+            | (_, ColorSpace::Icc { .. } | ColorSpace::Cmyk { .. })
+    );
+
+    if matches!(
+        (&src.color, &dst.color),
+        (ColorSpace::Untagged { .. }, _) | (_, ColorSpace::Untagged { .. })
+    ) {
+        return Err(err_at(ConvertError::UnsupportedRoute));
+    }
+
+    if !uses_cms {
+        if !src.layout.sample.is_standard_color() && !src.layout.packing.is_packed_word() {
+            return Err(err_at(ConvertError::UnsupportedRoute));
+        }
+        if !dst.layout.sample.is_standard_color() && !dst.layout.packing.is_packed_word() {
+            return Err(err_at(ConvertError::UnsupportedRoute));
+        }
+    }
+
+    // Policy checks apply UNIFORMLY to native AND CMS routes!
+    let depth_reduces = is_depth_reducing(src, dst, policy.source_facts);
+    if depth_reduces && policy.depth == DepthPolicy::Forbid {
+        return Err(err_at(ConvertError::DepthReductionForbidden));
+    }
+
+    let src_has_meaningful_alpha = matches!(
+        src.color.alpha(),
+        AlphaMode::Straight | AlphaMode::Premultiplied
+    );
+    let dst_drops_alpha = matches!(
+        dst.color.alpha(),
+        AlphaMode::None | AlphaMode::Undefined | AlphaMode::Opaque
+    );
+    let drops_alpha = src_has_meaningful_alpha && dst_drops_alpha;
+    let alpha_proven_opaque = !drops_alpha || policy.source_facts.exact.all_opaque;
+    let matte_color = if drops_alpha {
+        match policy.alpha {
+            AlphaPolicy::Forbid => return Err(err_at(ConvertError::AlphaLossForbidden)),
+            AlphaPolicy::DiscardIfOpaque => {
+                if policy.source_facts.exact.all_opaque {
+                    None
+                } else {
+                    return Err(err_at(ConvertError::AlphaLossForbidden));
+                }
+            }
+            AlphaPolicy::DiscardUnchecked => None,
+            AlphaPolicy::CompositeOnto(c) => Some(c),
+        }
+    } else {
+        None
+    };
+
+    let range_change = check_range_policy(src, dst, policy)?;
+
+    let drops_chroma = !matches!(src.color, ColorSpace::Gray { .. })
+        && matches!(dst.color, ColorSpace::Gray { .. });
+    let chroma_proven_gray = !drops_chroma || policy.source_facts.exact.all_grayscale;
+    if drops_chroma
+        && !chroma_proven_gray
+        && (policy.depth == DepthPolicy::Forbid || policy.gamut == GamutPolicy::Forbid)
+    {
+        return Err(err_at(ConvertError::GamutLossForbidden));
+    }
+
+    let src_tf = color_transfer(&src.color);
+    let dst_tf = color_transfer(&dst.color);
+    let is_hdr_to_sdr = src_tf.is_hdr()
+        && !dst_tf.is_hdr()
+        && matches!(dst.color, ColorSpace::Rgb { .. } | ColorSpace::Gray { .. });
+
+    let gamut_narrows =
+        is_gamut_narrowing(color_primaries(&src.color), color_primaries(&dst.color));
+    let unproven_float_to_int = src.layout.sample.is_float()
+        && !dst.layout.sample.is_float()
+        && !policy.source_facts.float.is_unit_interval();
+    if policy.gamut == GamutPolicy::Forbid
+        && (gamut_narrows
+            || (is_hdr_to_sdr && !dst.layout.sample.is_float())
+            || unproven_float_to_int)
+    {
+        return Err(err_at(ConvertError::GamutLossForbidden));
+    }
+
+    // If CMS will be used (no substitution), verify CMS is configured and not blocked by matte/premul.
+    if uses_cms
+        && (try_substitute_icc(src, policy).is_none() || try_substitute_icc(dst, policy).is_none())
+    {
+        if policy.cms.is_none() {
+            return Err(err_at(ConvertError::CmsRequired));
+        }
+        if matte_color.is_some()
+            || src.color.alpha() == AlphaMode::Premultiplied
+            || dst.color.alpha() == AlphaMode::Premultiplied
+        {
+            return Err(err_at(ConvertError::UnsupportedRoute));
+        }
+    }
+
+    Ok(PreflightOutcome {
+        matte_color,
+        range_change,
+        uses_cms,
+        is_identity: false,
+        drops_alpha,
+        alpha_proven_opaque,
+        drops_chroma,
+        chroma_proven_gray,
+        gamut_narrows,
+        is_hdr_to_sdr,
+        depth_reduces,
+    })
+}
+
+pub(crate) fn same_color_meaning(a: &ColorSpace, b: &ColorSpace) -> bool {
+    match (a, b) {
+        (
+            ColorSpace::Rgb {
+                primaries: pa,
+                transfer: ta,
+                range: ra,
+                white: wa,
+                ..
+            },
+            ColorSpace::Rgb {
+                primaries: pb,
+                transfer: tb,
+                range: rb,
+                white: wb,
+                ..
+            },
+        ) => pa == pb && ta == tb && ra == rb && wa == wb,
+        (
+            ColorSpace::Gray {
+                transfer: ta,
+                range: ra,
+                white: wa,
+                ..
+            },
+            ColorSpace::Gray {
+                transfer: tb,
+                range: rb,
+                white: wb,
+                ..
+            },
+        ) => ta == tb && ra == rb && wa == wb,
+        (ColorSpace::Oklab { .. }, ColorSpace::Oklab { .. }) => true,
+        (ColorSpace::Perceptual { space: sa, .. }, ColorSpace::Perceptual { space: sb, .. }) => {
+            sa == sb
+        }
+        (
+            ColorSpace::Cmyk {
+                icc: ia,
+                inverted: inva,
+                ..
+            },
+            ColorSpace::Cmyk {
+                icc: ib,
+                inverted: invb,
+                ..
+            },
+        ) => {
+            inva == invb
+                && match (ia, ib) {
+                    (Some(x), Some(y)) => zenpixels::icc::normalized_eq(x, y),
+                    (None, None) => true,
+                    _ => false,
+                }
+        }
+        (
+            ColorSpace::Icc {
+                profile: pa,
+                channels: ca,
+                intent: ia,
+                ..
+            },
+            ColorSpace::Icc {
+                profile: pb,
+                channels: cb,
+                intent: ib,
+                ..
+            },
+        ) => ca == cb && ia == ib && zenpixels::icc::normalized_eq(pa, pb),
+        (ColorSpace::Untagged { channels: ca, .. }, ColorSpace::Untagged { channels: cb, .. }) => {
+            ca == cb
+        }
+        _ => false,
+    }
+}
+
+pub(crate) fn same_photometry(a: &ColorSpace, b: &ColorSpace) -> bool {
+    match (a, b) {
+        (
+            ColorSpace::Rgb {
+                primaries: pa,
+                transfer: ta,
+                white: wa,
+                ..
+            },
+            ColorSpace::Rgb {
+                primaries: pb,
+                transfer: tb,
+                white: wb,
+                ..
+            },
+        ) => pa == pb && ta == tb && wa == wb,
+        (
+            ColorSpace::Gray {
+                transfer: ta,
+                white: wa,
+                ..
+            },
+            ColorSpace::Gray {
+                transfer: tb,
+                white: wb,
+                ..
+            },
+        ) => ta == tb && wa == wb,
+        _ => same_color_meaning(a, b),
+    }
+}
+
+fn merge_facts(policy_facts: SampleFacts, buf_facts: SampleFacts) -> SampleFacts {
+    let effective_bits = match (
+        policy_facts.exact.effective_bits,
+        buf_facts.exact.effective_bits,
+    ) {
+        (0, b) => b,
+        (a, 0) => a,
+        (a, b) => a.min(b),
+    };
+    SampleFacts {
+        float: policy_facts.float | buf_facts.float,
+        exact: zenpixels::ExactDepth {
+            effective_bits,
+            all_opaque: policy_facts.exact.all_opaque || buf_facts.exact.all_opaque,
+            all_grayscale: policy_facts.exact.all_grayscale || buf_facts.exact.all_grayscale,
+        },
+    }
+}
+
+fn try_substitute_icc(spec: &ImageSpec, policy: &ConvertPolicy) -> Option<ImageSpec> {
+    if !policy.allow_icc_substitution {
+        return None;
+    }
     match &spec.color {
         ColorSpace::Cmyk { .. } => None,
         ColorSpace::Icc {
             profile,
             channels,
             alpha,
-            ..
+            intent,
         } => {
-            let id = zenpixels::icc::IccIdentification::from_icc_substitutable(profile)?;
+            // Check ICC header color-space signature matches carrier channel count.
+            let sig = zenpixels::icc::profile_color_space(profile)?;
+            if (*channels == 1 && sig != zenpixels::IccColorSpace::Gray)
+                || (*channels == 3 && sig != zenpixels::IccColorSpace::Rgb)
+            {
+                return None;
+            }
+            // Intent-aware lookup: refuses AbsoluteColorimetric and honors per-intent safety mask.
+            // When a CMS backend is configured, require Exact (±1 u16) tolerance so approximate LUT
+            // profiles use the real CMS instead of silently bypassing it.
+            let exact_only = policy.cms.is_some();
+            let id = zenpixels::icc::IccIdentification::from_icc_for_intent(
+                profile, *intent, exact_only,
+            )?;
             let color = if *channels == 1 {
                 ColorSpace::Gray {
                     transfer: id.transfer,
@@ -870,17 +1302,18 @@ fn try_substitute_icc(spec: &ImageSpec) -> Option<ImageSpec> {
     }
 }
 
-fn effective_precision_rank(spec: &ImageSpec, facts: SampleFacts) -> u8 {
+fn effective_color_bits(spec: &ImageSpec) -> u8 {
     if !spec.layout.packing.is_full() {
-        let mut max_b = 0u8;
-        for c in 0..spec.layout.channels() {
-            let mc = spec.layout.packing.max_code(spec.layout.sample, c);
-            let b = (32 - mc.leading_zeros()) as u8;
-            if b > max_b {
-                max_b = b;
-            }
-        }
-        return max_b;
+        let mc = spec.layout.packing.max_code(spec.layout.sample, 0);
+        return (32 - mc.leading_zeros()) as u8;
+    }
+    spec.layout.sample.bits()
+}
+
+fn channel_bits(spec: &ImageSpec, channel: usize, facts: SampleFacts) -> u8 {
+    if !spec.layout.packing.is_full() {
+        let mc = spec.layout.packing.max_code(spec.layout.sample, channel);
+        return (32 - mc.leading_zeros()) as u8;
     }
     match spec.layout.sample {
         SampleType::U8 | SampleType::I8 => 8,
@@ -891,57 +1324,69 @@ fn effective_precision_rank(spec: &ImageSpec, facts: SampleFacts) -> u8 {
                 16
             }
         }
-        SampleType::F16 => 24,
-        SampleType::F32 | SampleType::U32 | SampleType::I32 => 32,
-        SampleType::F64 | SampleType::U64 | SampleType::I64 => 64,
+        SampleType::F16 => 11, // IEEE binary16 significand precision (11 bits)
+        SampleType::F32 => 24, // IEEE binary32 significand precision (24 bits)
+        SampleType::U32 | SampleType::I32 => 32,
+        SampleType::F64 => 53,
+        SampleType::U64 | SampleType::I64 => 64,
         _ => 32,
     }
 }
 
-fn check_depth_policy(
-    src: &ImageSpec,
-    dst: &ImageSpec,
-    policy: &ConvertPolicy,
-) -> Result<(), At<ConvertError>> {
-    if policy.depth != DepthPolicy::Forbid {
-        return Ok(());
-    }
-    let src_rank = effective_precision_rank(src, policy.source_facts);
-    let dst_rank = effective_precision_rank(dst, SampleFacts::NONE);
-    if dst_rank < src_rank {
-        return Err(err_at(ConvertError::DepthReductionForbidden));
-    }
-    Ok(())
-}
+/// Per-channel lossless precision check: checks color channels AND alpha channel independently
+/// (so `RGBA8 -> RGB10A2` catches alpha 8b → 2b loss, and `U16 -> F16` catches 16b → 11b loss!).
+fn is_depth_reducing(src: &ImageSpec, dst: &ImageSpec, facts: SampleFacts) -> bool {
+    let src_is_float = src.layout.sample.is_float();
+    let dst_is_float = dst.layout.sample.is_float();
 
-fn check_alpha_policy(
-    src: &ImageSpec,
-    dst: &ImageSpec,
-    policy: &ConvertPolicy,
-) -> Result<Option<zenpixels::Color>, At<ConvertError>> {
-    let src_has_meaningful_alpha = matches!(
-        src.color.alpha(),
-        AlphaMode::Straight | AlphaMode::Premultiplied
-    );
-    let dst_drops_alpha = matches!(
-        dst.color.alpha(),
-        AlphaMode::None | AlphaMode::Undefined | AlphaMode::Opaque
-    );
-    if !src_has_meaningful_alpha || !dst_drops_alpha {
-        return Ok(None);
+    // Floating-point -> integer is always precision-reducing (loses extended range & sub-LSB precision).
+    if src_is_float && !dst_is_float {
+        return true;
     }
-    match policy.alpha {
-        AlphaPolicy::Forbid => Err(err_at(ConvertError::AlphaLossForbidden)),
-        AlphaPolicy::DiscardIfOpaque => {
-            if policy.source_facts.exact.all_opaque {
-                Ok(None)
-            } else {
-                Err(err_at(ConvertError::AlphaLossForbidden))
-            }
+
+    let src_ch = src.layout.channels();
+    let dst_ch = dst.layout.channels();
+    let src_has_alpha = src.layout.order.has_alpha_slot();
+    let dst_has_alpha = dst.layout.order.has_alpha_slot();
+    let src_color_ch = src_ch.saturating_sub(usize::from(
+        src_has_alpha || src.layout.order.has_padding_slot(),
+    ));
+    let dst_color_ch = dst_ch.saturating_sub(usize::from(
+        dst_has_alpha || dst.layout.order.has_padding_slot(),
+    ));
+
+    let mut src_max_color_bits = 0u8;
+    for c in 0..src_color_ch {
+        src_max_color_bits = src_max_color_bits.max(channel_bits(src, c, facts));
+    }
+    let mut dst_min_color_bits = u8::MAX;
+    for c in 0..dst_color_ch {
+        dst_min_color_bits = dst_min_color_bits.min(channel_bits(dst, c, SampleFacts::NONE));
+    }
+    if dst_min_color_bits < src_max_color_bits {
+        return true;
+    }
+
+    // Check alpha channel precision independently when both carry meaningful alpha.
+    if src_has_alpha
+        && dst_has_alpha
+        && matches!(
+            src.color.alpha(),
+            AlphaMode::Straight | AlphaMode::Premultiplied
+        )
+        && matches!(
+            dst.color.alpha(),
+            AlphaMode::Straight | AlphaMode::Premultiplied
+        )
+    {
+        let sa_bits = channel_bits(src, src_ch - 1, facts);
+        let da_bits = channel_bits(dst, dst_ch - 1, SampleFacts::NONE);
+        if da_bits < sa_bits {
+            return true;
         }
-        AlphaPolicy::DiscardUnchecked => Ok(None),
-        AlphaPolicy::CompositeOnto(c) => Ok(Some(c)),
     }
+
+    false
 }
 
 fn check_range_policy(
@@ -960,21 +1405,21 @@ fn check_range_policy(
     Ok(false)
 }
 
-fn color_range(cs: &ColorSpace) -> SignalRange {
+pub(crate) fn color_range(cs: &ColorSpace) -> SignalRange {
     match *cs {
         ColorSpace::Rgb { range, .. } | ColorSpace::Gray { range, .. } => range,
         _ => SignalRange::Full,
     }
 }
 
-fn color_transfer(cs: &ColorSpace) -> Transfer {
+pub(crate) fn color_transfer(cs: &ColorSpace) -> Transfer {
     match *cs {
         ColorSpace::Rgb { transfer, .. } | ColorSpace::Gray { transfer, .. } => transfer,
         _ => Transfer::Linear,
     }
 }
 
-fn color_primaries(cs: &ColorSpace) -> Primaries {
+pub(crate) fn color_primaries(cs: &ColorSpace) -> Primaries {
     match *cs {
         ColorSpace::Rgb { primaries, .. } => primaries,
         ColorSpace::Gray { .. } => Primaries::Bt709,
@@ -986,9 +1431,10 @@ fn needs_linear_domain(
     src: &ColorSpace,
     dst: &ColorSpace,
     matte_active: bool,
+    white_rescale: bool,
     policy: &ConvertPolicy,
 ) -> bool {
-    if matte_active {
+    if matte_active || white_rescale {
         return true;
     }
     if matches!(
@@ -1011,7 +1457,6 @@ fn needs_linear_domain(
     {
         return true;
     }
-    // RGB -> Gray computes linear luminance!
     if matches!(src, ColorSpace::Rgb { .. }) && matches!(dst, ColorSpace::Gray { .. }) {
         return true;
     }
@@ -1022,6 +1467,7 @@ fn needs_linear_domain(
 }
 
 fn resolve_hlg(
+    cs: &ColorSpace,
     tf: Transfer,
     other_tf: Transfer,
     override_rendering: Option<HlgRendering>,
@@ -1049,6 +1495,20 @@ fn resolve_hlg(
                 return Ok((Transfer::Hlg(HlgMode::Scene), None));
             }
             if let Some(r) = override_rendering {
+                // Display HLG OOTF is defined over BT.2020 full-range RGB only.
+                let is_bt2020_rgb_full = matches!(
+                    cs,
+                    ColorSpace::Rgb {
+                        primaries: Primaries::Bt2020,
+                        range: SignalRange::Full,
+                        ..
+                    }
+                );
+                if !is_bt2020_rgb_full {
+                    return Err(err_at(ConvertError::InvalidSpec(
+                        zenpixels::ColorError::HlgDisplayRequiresBt2020Full,
+                    )));
+                }
                 #[cfg(feature = "hdr-transfers")]
                 {
                     Ok((
@@ -1085,11 +1545,10 @@ fn resolve_tone_mapper(
     }
 }
 
-fn is_gamut_narrowing(src: Primaries, dst: Primaries) -> bool {
+pub(crate) fn is_gamut_narrowing(src: Primaries, dst: Primaries) -> bool {
     if src == dst || src == Primaries::Unknown || dst == Primaries::Unknown {
         return false;
     }
-    // Wide -> narrower pairs (BT.2020 contains all; P3 and AdobeRGB both extend past BT.709 and each other).
     matches!(
         (src, dst),
         (
@@ -1100,27 +1559,101 @@ fn is_gamut_narrowing(src: Primaries, dst: Primaries) -> bool {
     )
 }
 
-fn derive_output_facts(dst: &ImageSpec, src_facts: SampleFacts, clamped_unit: bool) -> SampleFacts {
+fn derive_output_facts_byte(
+    src: &ImageSpec,
+    dst: &ImageSpec,
+    src_facts: SampleFacts,
+    bp: ByteFastPath,
+) -> SampleFacts {
     let float = if dst.layout.sample.is_float() {
-        if clamped_unit {
-            FloatFacts::UNIT_INTERVAL
-        } else if src_facts.float.is_finite() {
-            FloatFacts::FINITE
+        src_facts.float
+    } else {
+        FloatFacts::NONE
+    };
+    let effective_bits = match dst.layout.sample {
+        SampleType::U8 if dst.layout.packing.is_full() => 8,
+        SampleType::U16 if dst.layout.packing.is_full() => match bp {
+            ByteFastPath::U8ToU16Exact => 8,
+            _ if src.layout.sample == SampleType::U16 => src_facts.exact.effective_bits,
+            _ => 0,
+        },
+        _ => 0,
+    };
+    let all_opaque = matches!(
+        dst.color.alpha(),
+        AlphaMode::None | AlphaMode::Opaque | AlphaMode::Undefined
+    ) || !src.layout.order.has_alpha_slot()
+        || src.color.alpha() == AlphaMode::Opaque
+        || src_facts.exact.all_opaque;
+    let all_grayscale = matches!(dst.color, ColorSpace::Gray { .. })
+        || matches!(src.color, ColorSpace::Gray { .. })
+        || src_facts.exact.all_grayscale;
+    SampleFacts {
+        float,
+        exact: zenpixels::ExactDepth {
+            effective_bits,
+            all_opaque,
+            all_grayscale,
+        },
+    }
+}
+
+fn derive_output_facts_math(
+    src: &ImageSpec,
+    dst: &ImageSpec,
+    src_facts: SampleFacts,
+    clamped_color: bool,
+    alpha_filled_opaque: bool,
+    matte_applied: bool,
+    is_f16_cast_only: bool,
+) -> SampleFacts {
+    let dst_is_rgb_or_gray = matches!(dst.color, ColorSpace::Rgb { .. } | ColorSpace::Gray { .. });
+    let float = if dst.layout.sample.is_float() && dst_is_rgb_or_gray {
+        if is_f16_cast_only {
+            // F32 -> F16 overflows > 65504 to +/-inf and preserves NaN/Inf; only UNIT_INTERVAL
+            // survives safely as FINITE + NON_NEGATIVE + AT_MOST_ONE (subnormals can arise in F16!).
+            if src_facts.float.is_unit_interval() {
+                FloatFacts::FINITE | FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE
+            } else {
+                FloatFacts::NONE
+            }
+        } else if clamped_color {
+            let alpha_unit = !dst.layout.order.has_alpha_slot()
+                || alpha_filled_opaque
+                || !src.layout.sample.is_float()
+                || src_facts.float.is_unit_interval();
+            if alpha_unit {
+                let no_subnormals = !src.layout.sample.is_float()
+                    && dst.layout.sample == SampleType::F32
+                    && matches!(src.layout.sample, SampleType::U8 | SampleType::U16);
+                if no_subnormals {
+                    FloatFacts::UNIT_INTERVAL
+                } else {
+                    // Clamping guarantees [0, 1] finite, NOT absence of subnormals!
+                    FloatFacts::FINITE | FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE
+                }
+            } else {
+                FloatFacts::NONE
+            }
         } else {
             FloatFacts::NONE
         }
     } else {
         FloatFacts::NONE
     };
-    let effective_bits = match dst.layout.sample {
-        SampleType::U8 => 8,
-        SampleType::U16 => src_facts.exact.effective_bits,
-        _ => 0,
+
+    // Never propagate U8 exactness into U16 after transfer/gamut/narrow/premul math!
+    let effective_bits = if dst.layout.sample == SampleType::U8 && dst.layout.packing.is_full() {
+        8
+    } else {
+        0
     };
     let all_opaque = matches!(
         dst.color.alpha(),
         AlphaMode::None | AlphaMode::Opaque | AlphaMode::Undefined
-    );
+    ) || matte_applied
+        || alpha_filled_opaque
+        || src_facts.exact.all_opaque;
     let all_grayscale = matches!(dst.color, ColorSpace::Gray { .. });
     SampleFacts {
         float,

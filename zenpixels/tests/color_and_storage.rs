@@ -239,13 +239,13 @@ fn banded_buf_planar_buf_and_dual_layer_hdr() {
             .with_subsampling(2, 2),
     ];
     let mut planar = PlanarBuf::new(16, 12, &p010).unwrap();
-    assert_eq!(planar.planes()[0].width, 16);
-    assert_eq!(planar.planes()[0].height, 12);
-    assert_eq!(planar.planes()[1].width, 8);
-    assert_eq!(planar.planes()[1].height, 6);
+    assert_eq!(planar.planes()[0].width(), 16);
+    assert_eq!(planar.planes()[0].height(), 12);
+    assert_eq!(planar.planes()[1].width(), 8);
+    assert_eq!(planar.planes()[1].height(), 6);
 
     let y_val = BitPacking::P010.pack_code(SampleType::U16, 0, 940) as u16;
-    planar.planes_mut()[0].row_mut(2)[6..8].copy_from_slice(&y_val.to_ne_bytes());
+    planar.plane_view_mut(0).unwrap().row_mut(2)[6..8].copy_from_slice(&y_val.to_ne_bytes());
     assert_eq!(planar.planes()[0].code_u32(3, 2, 0), Some(940));
 
     // DualLayerHdr (ISO 21496-1 / UltraHDR)
@@ -253,9 +253,9 @@ fn banded_buf_planar_buf_and_dual_layer_hdr() {
     let gain = PixelBuf::new(8, 8, ImageSpec::gray8_srgb()).unwrap();
     let meta = GainMapMetadata::symmetric(2.3);
     let dual = DualLayerHdr::new(base, gain, meta).unwrap();
-    assert_eq!(dual.base.width(), 16);
-    assert_eq!(dual.gain_map.width(), 8);
-    assert_eq!(dual.metadata.alternate_hdr_headroom, 2.3);
+    assert_eq!(dual.base().width(), 16);
+    assert_eq!(dual.gain_map().width(), 8);
+    assert_eq!(dual.metadata().alternate_hdr_headroom, 2.3);
 
     // InteropTarget checks
     assert!(ImageSpec::rgb8_srgb().supports_interop(InteropTarget::DynamicImage));

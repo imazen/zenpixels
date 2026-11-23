@@ -1169,7 +1169,6 @@ dependencies = [
  "image",
  "imgref",
  "rgb",
- "rustversion",
  "whereat",
  "zenpixels",
 ]

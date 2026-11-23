@@ -56,7 +56,7 @@ pub mod perceptual;
 pub mod plan;
 pub mod policy;
 pub mod scan;
-pub mod strip;
+pub(crate) mod strip;
 pub(crate) mod strip_simd;
 pub mod tonemap;
 pub(crate) mod transfers;

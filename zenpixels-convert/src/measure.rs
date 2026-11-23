@@ -195,13 +195,21 @@ pub fn measure_histogram<S: PixelSource + ?Sized>(
     }
     let row_plan = crate::plan::RowPlan::build(spec.clone(), linear_spec, &policy, None)?;
 
-    // Single reusable scratch row (O(width) = a few KiB, NEVER O(width * height)!).
-    let mut scratch = alloc::vec![0u8; (w as usize) * 12];
+    // Single reusable fallibly-allocated, 4-byte-aligned f32 scratch row
+    // (O(width) = a few KiB, NEVER O(width * height), safe on odd allocators!).
+    let num_floats = (w as usize)
+        .checked_mul(3)
+        .ok_or_else(|| crate::error::err_at(ConvertError::DimensionMismatch))?;
+    let mut scratch_f32: alloc::vec::Vec<f32> = alloc::vec::Vec::new();
+    scratch_f32
+        .try_reserve_exact(num_floats)
+        .map_err(|_| crate::error::err_at(ConvertError::AllocationFailed))?;
+    scratch_f32.resize(num_floats, 0.0f32);
     let white_nits = white.nits();
     for y in 0..h {
-        row_plan.convert_row(src.source_row(y), &mut scratch, w, y)?;
-        let floats: &[f32] = bytemuck::cast_slice(&scratch);
-        for px in floats.as_chunks::<3>().0 {
+        let scratch_bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut scratch_f32);
+        row_plan.convert_row(src.source_row(y), scratch_bytes, w, y)?;
+        for px in scratch_f32.as_chunks::<3>().0 {
             let v = match method {
                 LightLevelMethod::MaxRgb => px[0].max(px[1]).max(px[2]),
                 LightLevelMethod::LuminanceBt2020 => {
@@ -224,10 +232,11 @@ pub fn measure_cll<S: PixelSource + ?Sized>(
     Ok(measure_histogram(src, white, hlg_rendering, method)?.to_content_light_level())
 }
 
-/// Fast zero-histogram streaming max-luminance peak scan in cd/m² (O(1) stack scratch).
+/// Fast zero-histogram streaming max-luminance peak scan in cd/m² (O(1) row scratch).
 ///
 /// Used by [`ImagePlan`](crate::ImagePlan) when `PeakSource::Measured` is active —
-/// allocates at most **one single row** (or zero bytes on direct linear F32 / PQ U16).
+/// never builds a log histogram and allocates at most one fallibly-reserved `f32`
+/// row (or zero bytes on unpremultiplied BT.2020 Linear F32 / Full PQ U16).
 pub(crate) fn measure_max_nits_streaming<S: PixelSource + ?Sized>(
     src: &S,
     white: DiffuseWhite,
@@ -240,15 +249,21 @@ pub(crate) fn measure_max_nits_streaming<S: PixelSource + ?Sized>(
         return Ok(0.0);
     }
 
-    // Zero-allocation fast paths for the two dominant HDR formats: Linear F32 and PQ U16!
+    // Zero-allocation fast paths ONLY when source is already BT.2020 RGB and NOT premultiplied
+    // (so peak matches the decoded BT.2020 working-space definition identically!).
     if spec.layout.packing.is_full() {
         if let ColorSpace::Rgb {
+            primaries: zenpixels::Primaries::Bt2020,
             transfer: Transfer::Linear,
-            ..
+            range: zenpixels::SignalRange::Full,
+            alpha,
+            white: src_white,
         } = spec.color
+            && alpha != zenpixels::AlphaMode::Premultiplied
             && spec.layout.sample == SampleType::F32
         {
             let ch = spec.layout.channels();
+            let eff_white = src_white.unwrap_or(white).nits();
             let mut max_v = 0.0f32;
             for y in 0..h {
                 let row = src.source_row(y);
@@ -261,13 +276,16 @@ pub(crate) fn measure_max_nits_streaming<S: PixelSource + ?Sized>(
                     }
                 }
             }
-            return Ok(max_v * white.nits());
+            return Ok(max_v * eff_white);
         }
         if let ColorSpace::Rgb {
+            primaries: zenpixels::Primaries::Bt2020,
             transfer: Transfer::Pq,
             range: zenpixels::SignalRange::Full,
+            alpha,
             ..
         } = spec.color
+            && alpha != zenpixels::AlphaMode::Premultiplied
             && spec.layout.sample == SampleType::U16
         {
             let ch = spec.layout.channels();
@@ -283,12 +301,19 @@ pub(crate) fn measure_max_nits_streaming<S: PixelSource + ?Sized>(
                     }
                 }
             }
-            let nits = crate::strip::pq_eotf_scalar(f32::from(max_code) / 65535.0) * 10_000.0;
-            return Ok(nits);
+            // Use the exact same PQ EOTF as the row pipeline for 100% consistent peak definition.
+            let mut norm = [f32::from(max_code) * (1.0 / 65535.0)];
+            #[cfg(feature = "hdr-transfers")]
+            crate::transfers::hdr::pq_eotf_scalar_slice(&mut norm, 10_000.0);
+            #[cfg(not(feature = "hdr-transfers"))]
+            {
+                norm[0] = crate::strip::pq_eotf_scalar(norm[0]) * 10_000.0;
+            }
+            return Ok(norm[0]);
         }
     }
 
-    // General streaming fallback: 1 single row scratch via RowPlan!
+    // General zero-histogram streaming max reducer: 1 fallibly-allocated f32 row via RowPlan!
     let eff_hlg = match spec.color {
         ColorSpace::Rgb {
             transfer: Transfer::Hlg(HlgMode::Display(r)),
@@ -296,6 +321,46 @@ pub(crate) fn measure_max_nits_streaming<S: PixelSource + ?Sized>(
         } => Some(r),
         _ => hlg_rendering,
     };
-    let hist = measure_histogram(src, white, eff_hlg, LightLevelMethod::MaxRgb)?;
-    Ok(hist.max_nits())
+    let linear_spec = ImageSpec::new(
+        zenpixels::SampleLayout::RGBF32,
+        ColorSpace::Rgb {
+            primaries: zenpixels::Primaries::Bt2020,
+            transfer: Transfer::Linear,
+            range: zenpixels::SignalRange::Full,
+            alpha: zenpixels::AlphaMode::None,
+            white: Some(white),
+        },
+    );
+    let mut policy = ConvertPolicy::working_linear()
+        .with_sdr_white(white)
+        .with_depth(DepthPolicy::Round)
+        .with_gamut(GamutPolicy::PreserveExtended)
+        .with_alpha(crate::policy::AlphaPolicy::DiscardUnchecked)
+        .with_accelerators(Accelerators::default());
+    if let Some(r) = eff_hlg {
+        policy = policy.with_hlg_rendering(r);
+    }
+    let row_plan = crate::plan::RowPlan::build(spec.clone(), linear_spec, &policy, None)?;
+
+    let num_floats = (w as usize)
+        .checked_mul(3)
+        .ok_or_else(|| crate::error::err_at(ConvertError::DimensionMismatch))?;
+    let mut scratch_f32: alloc::vec::Vec<f32> = alloc::vec::Vec::new();
+    scratch_f32
+        .try_reserve_exact(num_floats)
+        .map_err(|_| crate::error::err_at(ConvertError::AllocationFailed))?;
+    scratch_f32.resize(num_floats, 0.0f32);
+
+    let white_nits = white.nits();
+    let mut max_v = 0.0f32;
+    for y in 0..h {
+        let scratch_bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut scratch_f32);
+        row_plan.convert_row(src.source_row(y), scratch_bytes, w, y)?;
+        for &v in &scratch_f32 {
+            if v.is_finite() && v > max_v {
+                max_v = v;
+            }
+        }
+    }
+    Ok(max_v * white_nits)
 }

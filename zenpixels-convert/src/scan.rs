@@ -11,6 +11,8 @@ pub fn scan_facts(view: &PixelView<'_>) -> SampleFacts {
     let alpha_mode = view.spec().color.alpha();
     let float = if layout.sample == SampleType::F32 {
         view.measure_float_facts()
+    } else if layout.sample == SampleType::F16 && layout.packing.is_full() {
+        measure_f16_float_facts(view)
     } else {
         FloatFacts::NONE
     };
@@ -83,6 +85,28 @@ pub fn scan_facts(view: &PixelView<'_>) -> SampleFacts {
                     }
                 }
             }
+            SampleType::F16 => {
+                exact_8bit = false;
+                for px in row.chunks_exact(ch * 2) {
+                    if check_alpha {
+                        let a_bits = u16::from_ne_bytes([px[(ch - 1) * 2], px[(ch - 1) * 2 + 1]]);
+                        if crate::f16_scalar::f16_bits_to_f32(a_bits) != 1.0 {
+                            all_opaque = false;
+                        }
+                    }
+                    if check_gray {
+                        let s0 =
+                            crate::f16_scalar::f16_bits_to_f32(u16::from_ne_bytes([px[0], px[1]]));
+                        let s1 =
+                            crate::f16_scalar::f16_bits_to_f32(u16::from_ne_bytes([px[2], px[3]]));
+                        let s2 =
+                            crate::f16_scalar::f16_bits_to_f32(u16::from_ne_bytes([px[4], px[5]]));
+                        if !(s0 == s1 && s1 == s2) {
+                            all_grayscale = false;
+                        }
+                    }
+                }
+            }
             SampleType::F32 => {
                 exact_8bit = false;
                 for px in row.chunks_exact(ch * 4) {
@@ -104,6 +128,12 @@ pub fn scan_facts(view: &PixelView<'_>) -> SampleFacts {
             }
             _ => {
                 exact_8bit = false;
+                if check_alpha {
+                    all_opaque = false;
+                }
+                if check_gray {
+                    all_grayscale = false;
+                }
             }
         }
     }
@@ -116,4 +146,63 @@ pub fn scan_facts(view: &PixelView<'_>) -> SampleFacts {
             all_grayscale,
         },
     }
+}
+
+fn measure_f16_float_facts(view: &PixelView<'_>) -> FloatFacts {
+    let mut no_nan = true;
+    let mut no_inf = true;
+    let mut no_sub = true;
+    let mut non_neg = true;
+    let mut positive = true;
+    let mut at_most_one = true;
+    for y in 0..view.rows() {
+        for &chunk in view.row(y).as_chunks::<2>().0 {
+            let bits = u16::from_ne_bytes(chunk);
+            let exp = (bits >> 10) & 0x1f;
+            let mant = bits & 0x3ff;
+            if exp == 0 && mant != 0 {
+                no_sub = false;
+            }
+            let v = crate::f16_scalar::f16_bits_to_f32(bits);
+            if v.is_nan() {
+                no_nan = false;
+                non_neg = false;
+                positive = false;
+                at_most_one = false;
+                continue;
+            }
+            if v.is_infinite() {
+                no_inf = false;
+            }
+            if v < 0.0 {
+                non_neg = false;
+                positive = false;
+            } else if v == 0.0 {
+                positive = false;
+            }
+            if v > 1.0 {
+                at_most_one = false;
+            }
+        }
+    }
+    let mut out = FloatFacts::NONE;
+    if no_nan {
+        out = out | FloatFacts::NO_NAN;
+    }
+    if no_inf {
+        out = out | FloatFacts::NO_INFINITE;
+    }
+    if no_sub {
+        out = out | FloatFacts::NO_SUBNORMALS;
+    }
+    if non_neg {
+        out = out | FloatFacts::NON_NEGATIVE;
+    }
+    if positive {
+        out = out | FloatFacts::POSITIVE;
+    }
+    if at_most_one {
+        out = out | FloatFacts::AT_MOST_ONE;
+    }
+    out
 }

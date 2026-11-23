@@ -50,7 +50,10 @@ pub(crate) fn f16_bits_to_f32(h: u16) -> f32 {
 
     if exp == 0x1f {
         // Infinity or NaN: f32 exp becomes 0xff, mantissa shifted into f32 position.
-        return f32::from_bits(sign | 0x7f80_0000 | (mant << 13));
+        // Quiet signaling NaNs (bit 22 = 0x0040_0000) to match IEEE 754-2008 / F16C / NEON-fp16
+        // so SCALAR and SIMD tiers are 0-bit identical across all 65,536 f16 bit patterns.
+        let qbit = if mant != 0 { 0x0040_0000 } else { 0 };
+        return f32::from_bits(sign | 0x7f80_0000 | qbit | (mant << 13));
     }
 
     if exp == 0 {

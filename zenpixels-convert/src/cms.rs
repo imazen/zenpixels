@@ -31,7 +31,10 @@ pub trait CmsBackend: Send + Sync + Debug {
 mod moxcms_impl {
     use super::*;
     use crate::error::err_at;
-    use zenpixels::{ChannelOrder, ColorSpace, Primaries, RenderingIntent, SampleType, Transfer};
+    use zenpixels::{
+        AlphaMode, ChannelOrder, ColorSpace, Primaries, RenderingIntent, SampleType, SignalRange,
+        Transfer,
+    };
 
     const CHUNK_PX: usize = 64;
 
@@ -62,14 +65,14 @@ mod moxcms_impl {
 
     fn profile_from_color_space(
         cs: &ColorSpace,
-    ) -> Result<(moxcms::ColorProfile, RenderingIntent), At<ConvertError>> {
+    ) -> Result<(moxcms::ColorProfile, Option<RenderingIntent>), At<ConvertError>> {
         match cs {
             ColorSpace::Icc {
                 profile, intent, ..
             } => {
                 let p = moxcms::ColorProfile::new_from_slice(profile)
                     .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
-                Ok((p, *intent))
+                Ok((p, Some(*intent)))
             }
             ColorSpace::Cmyk { icc, .. } => {
                 let bytes = icc
@@ -77,13 +80,17 @@ mod moxcms_impl {
                     .ok_or_else(|| err_at(ConvertError::CmsRequired))?;
                 let p = moxcms::ColorProfile::new_from_slice(bytes)
                     .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
-                Ok((p, RenderingIntent::RelativeColorimetric))
+                Ok((p, Some(RenderingIntent::RelativeColorimetric)))
             }
             ColorSpace::Rgb {
                 primaries,
                 transfer,
+                range,
                 ..
             } => {
+                if *range != SignalRange::Full {
+                    return Err(err_at(ConvertError::UnsupportedRoute));
+                }
                 let p = match (primaries, transfer) {
                     (Primaries::Bt709, Transfer::Srgb) => moxcms::ColorProfile::new_srgb(),
                     (Primaries::DisplayP3, Transfer::Srgb) => {
@@ -94,18 +101,28 @@ mod moxcms_impl {
                     }
                     (Primaries::Bt2020, Transfer::Bt709) => moxcms::ColorProfile::new_bt2020(),
                     (Primaries::Bt2020, Transfer::Pq) => moxcms::ColorProfile::new_bt2020_pq(),
-                    (Primaries::Bt2020, Transfer::Hlg(_)) => moxcms::ColorProfile::new_bt2020_hlg(),
+                    // HLG requires BT.2100-3 display OOTF which ICC profiles cannot carry faithfully.
                     _ => return Err(err_at(ConvertError::UnsupportedRoute)),
                 };
-                Ok((p, RenderingIntent::RelativeColorimetric))
+                Ok((p, None))
             }
-            ColorSpace::Gray { transfer, .. } => {
+            ColorSpace::Gray {
+                transfer, range, ..
+            } => {
+                if *range != SignalRange::Full {
+                    return Err(err_at(ConvertError::UnsupportedRoute));
+                }
                 let p = match transfer {
-                    Transfer::Srgb => moxcms::ColorProfile::new_gray_with_gamma(2.2),
+                    Transfer::Srgb => {
+                        let mut p = moxcms::ColorProfile::new_gray_with_gamma(1.0);
+                        p.gray_trc = moxcms::ColorProfile::new_srgb().red_trc;
+                        p
+                    }
                     Transfer::Linear => moxcms::ColorProfile::new_gray_with_gamma(1.0),
+                    Transfer::Gamma22 => moxcms::ColorProfile::new_gray_with_gamma(563.0 / 256.0),
                     _ => return Err(err_at(ConvertError::UnsupportedRoute)),
                 };
-                Ok((p, RenderingIntent::RelativeColorimetric))
+                Ok((p, None))
             }
             _ => Err(err_at(ConvertError::UnsupportedRoute)),
         }
@@ -123,8 +140,10 @@ mod moxcms_impl {
         dst_bpp: usize,
         src_ch: usize,
         dst_ch: usize,
+        dst_sample: SampleType,
         src_cmyk_inverted: bool,
         dst_cmyk_inverted: bool,
+        fill_opaque_alpha: bool,
     }
 
     impl CmsTransform for MoxRowTransform {
@@ -186,28 +205,29 @@ mod moxcms_impl {
                     {
                         ex.transform(s16, d16)
                             .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
-                        return Ok(());
-                    }
-                    let mut s_buf = [0u16; CHUNK_PX * 4];
-                    let mut d_buf = [0u16; CHUNK_PX * 4];
-                    let mut pos = 0;
-                    while pos < w {
-                        let n = (w - pos).min(CHUNK_PX);
-                        let sc = n * self.src_ch;
-                        let dc = n * self.dst_ch;
-                        let sb = &s[pos * self.src_bpp..(pos + n) * self.src_bpp];
-                        for (dst_s, chunk) in s_buf[..sc].iter_mut().zip(sb.as_chunks::<2>().0) {
-                            let v = u16::from_ne_bytes(*chunk);
-                            *dst_s = if self.src_cmyk_inverted { !v } else { v };
+                    } else {
+                        let mut s_buf = [0u16; CHUNK_PX * 4];
+                        let mut d_buf = [0u16; CHUNK_PX * 4];
+                        let mut pos = 0;
+                        while pos < w {
+                            let n = (w - pos).min(CHUNK_PX);
+                            let sc = n * self.src_ch;
+                            let dc = n * self.dst_ch;
+                            let sb = &s[pos * self.src_bpp..(pos + n) * self.src_bpp];
+                            for (dst_s, chunk) in s_buf[..sc].iter_mut().zip(sb.as_chunks::<2>().0)
+                            {
+                                let v = u16::from_ne_bytes(*chunk);
+                                *dst_s = if self.src_cmyk_inverted { !v } else { v };
+                            }
+                            ex.transform(&s_buf[..sc], &mut d_buf[..dc])
+                                .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
+                            let db = &mut d[pos * self.dst_bpp..(pos + n) * self.dst_bpp];
+                            for (&v, chunk) in d_buf[..dc].iter().zip(db.as_chunks_mut::<2>().0) {
+                                let out = if self.dst_cmyk_inverted { !v } else { v };
+                                *chunk = out.to_ne_bytes();
+                            }
+                            pos += n;
                         }
-                        ex.transform(&s_buf[..sc], &mut d_buf[..dc])
-                            .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
-                        let db = &mut d[pos * self.dst_bpp..(pos + n) * self.dst_bpp];
-                        for (&v, chunk) in d_buf[..dc].iter().zip(db.as_chunks_mut::<2>().0) {
-                            let out = if self.dst_cmyk_inverted { !v } else { v };
-                            *chunk = out.to_ne_bytes();
-                        }
-                        pos += n;
                     }
                 }
                 MoxExec::F32(ex) => {
@@ -220,29 +240,42 @@ mod moxcms_impl {
                     {
                         ex.transform(sf, df)
                             .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
-                        return Ok(());
-                    }
-                    let mut s_buf = [0.0f32; CHUNK_PX * 4];
-                    let mut d_buf = [0.0f32; CHUNK_PX * 4];
-                    let mut pos = 0;
-                    while pos < w {
-                        let n = (w - pos).min(CHUNK_PX);
-                        let sc = n * self.src_ch;
-                        let dc = n * self.dst_ch;
-                        let sb = &s[pos * self.src_bpp..(pos + n) * self.src_bpp];
-                        for (dst_s, chunk) in s_buf[..sc].iter_mut().zip(sb.as_chunks::<4>().0) {
-                            let v = f32::from_ne_bytes(*chunk);
-                            *dst_s = if self.src_cmyk_inverted { 1.0 - v } else { v };
+                    } else {
+                        let mut s_buf = [0.0f32; CHUNK_PX * 4];
+                        let mut d_buf = [0.0f32; CHUNK_PX * 4];
+                        let mut pos = 0;
+                        while pos < w {
+                            let n = (w - pos).min(CHUNK_PX);
+                            let sc = n * self.src_ch;
+                            let dc = n * self.dst_ch;
+                            let sb = &s[pos * self.src_bpp..(pos + n) * self.src_bpp];
+                            for (dst_s, chunk) in s_buf[..sc].iter_mut().zip(sb.as_chunks::<4>().0)
+                            {
+                                let v = f32::from_ne_bytes(*chunk);
+                                *dst_s = if self.src_cmyk_inverted { 1.0 - v } else { v };
+                            }
+                            ex.transform(&s_buf[..sc], &mut d_buf[..dc])
+                                .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
+                            let db = &mut d[pos * self.dst_bpp..(pos + n) * self.dst_bpp];
+                            for (&v, chunk) in d_buf[..dc].iter().zip(db.as_chunks_mut::<4>().0) {
+                                let out = if self.dst_cmyk_inverted { 1.0 - v } else { v };
+                                *chunk = out.to_ne_bytes();
+                            }
+                            pos += n;
                         }
-                        ex.transform(&s_buf[..sc], &mut d_buf[..dc])
-                            .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
-                        let db = &mut d[pos * self.dst_bpp..(pos + n) * self.dst_bpp];
-                        for (&v, chunk) in d_buf[..dc].iter().zip(db.as_chunks_mut::<4>().0) {
-                            let out = if self.dst_cmyk_inverted { 1.0 - v } else { v };
-                            *chunk = out.to_ne_bytes();
-                        }
-                        pos += n;
                     }
+                }
+            }
+            if self.fill_opaque_alpha {
+                let sz = self.dst_sample.byte_size();
+                let opaque: &[u8] = match self.dst_sample {
+                    SampleType::U8 => &[255],
+                    SampleType::U16 => &[255, 255],
+                    SampleType::F32 => &1.0f32.to_ne_bytes(),
+                    _ => return Err(err_at(ConvertError::UnsupportedRoute)),
+                };
+                for px in d.chunks_exact_mut(self.dst_bpp) {
+                    px[self.dst_bpp - sz..].copy_from_slice(opaque);
                 }
             }
             Ok(())
@@ -258,17 +291,22 @@ mod moxcms_impl {
             if src.layout.sample != dst.layout.sample
                 || !src.layout.packing.is_full()
                 || !dst.layout.packing.is_full()
+                || src.color.alpha() == AlphaMode::Premultiplied
+                || dst.color.alpha() == AlphaMode::Premultiplied
             {
                 return Err(err_at(ConvertError::UnsupportedRoute));
             }
             let (src_p, src_intent) = profile_from_color_space(&src.color)?;
-            let (dst_p, _) = profile_from_color_space(&dst.color)?;
+            let (dst_p, dst_intent) = profile_from_color_space(&dst.color)?;
+            let eff_intent = src_intent
+                .or(dst_intent)
+                .unwrap_or(RenderingIntent::RelativeColorimetric);
             let src_l = to_mox_layout(src.layout.order)
                 .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
             let dst_l = to_mox_layout(dst.layout.order)
                 .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
             let opts = moxcms::TransformOptions {
-                rendering_intent: to_mox_intent(src_intent),
+                rendering_intent: to_mox_intent(eff_intent),
                 ..Default::default()
             };
             let exec = match src.layout.sample {
@@ -289,16 +327,22 @@ mod moxcms_impl {
                 ),
                 _ => return Err(err_at(ConvertError::UnsupportedRoute)),
             };
+            let fill_opaque_alpha = dst.layout.order.has_alpha_slot()
+                && (dst.color.alpha() == AlphaMode::Opaque
+                    || !src.layout.order.has_alpha_slot()
+                    || src.color.alpha() == AlphaMode::Opaque);
             Ok(Arc::new(MoxRowTransform {
                 exec,
                 src_bpp: src.layout.bytes_per_pixel(),
                 dst_bpp: dst.layout.bytes_per_pixel(),
                 src_ch: src.layout.channels(),
                 dst_ch: dst.layout.channels(),
+                dst_sample: dst.layout.sample,
                 src_cmyk_inverted: matches!(src.color, ColorSpace::Cmyk { inverted: true, .. })
                     || src.layout.order == ChannelOrder::CmykInverted,
                 dst_cmyk_inverted: matches!(dst.color, ColorSpace::Cmyk { inverted: true, .. })
                     || dst.layout.order == ChannelOrder::CmykInverted,
+                fill_opaque_alpha,
             }))
         }
     }
@@ -316,8 +360,8 @@ mod lcms_impl {
         CiexyY, CiexyYTriple, D65, Format, Intent, Plan, PlanOptions, Profile, ToneCurve, flags,
     };
     use zenpixels::{
-        ChannelOrder, Cicp, ColorSpace, Primaries, RenderingIntent, SampleLayout, SampleType,
-        Transfer,
+        AlphaMode, ChannelOrder, Cicp, ColorSpace, Primaries, RenderingIntent, SampleLayout,
+        SampleType, SignalRange, Transfer,
     };
 
     const CHUNK_PX: usize = 64;
@@ -481,34 +525,38 @@ mod lcms_impl {
 
     fn profile_from_color_space(
         cs: &ColorSpace,
-    ) -> Result<(Profile, RenderingIntent), At<ConvertError>> {
+    ) -> Result<(Profile, Option<RenderingIntent>), At<ConvertError>> {
         match cs {
             ColorSpace::Icc {
                 profile, intent, ..
             } => {
                 let p =
                     Profile::open(profile).map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
-                Ok((p, *intent))
+                Ok((p, Some(*intent)))
             }
             ColorSpace::Cmyk { icc, .. } => {
                 let bytes = icc
                     .as_ref()
                     .ok_or_else(|| err_at(ConvertError::CmsRequired))?;
                 let p = Profile::open(bytes).map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
-                Ok((p, RenderingIntent::RelativeColorimetric))
+                Ok((p, Some(RenderingIntent::RelativeColorimetric)))
             }
             ColorSpace::Rgb {
                 primaries,
                 transfer,
+                range,
                 ..
             } => {
+                if *range != SignalRange::Full || matches!(transfer, Transfer::Hlg(_)) {
+                    return Err(err_at(ConvertError::UnsupportedRoute));
+                }
                 if *primaries == Primaries::Bt709 && *transfer == Transfer::Srgb {
-                    return Ok((Profile::srgb(), RenderingIntent::RelativeColorimetric));
+                    return Ok((Profile::srgb(), None));
                 }
                 if *primaries == Primaries::AdobeRgb && *transfer == Transfer::Gamma22 {
                     let p = Profile::open(crate::icc_profiles::ADOBE_RGB)
                         .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
-                    return Ok((p, RenderingIntent::RelativeColorimetric));
+                    return Ok((p, None));
                 }
                 if let (Some(triple), Some(curve)) = (
                     primaries_triple(*primaries),
@@ -516,7 +564,7 @@ mod lcms_impl {
                 ) {
                     let p = Profile::rgb(&D65, &triple, [&curve, &curve, &curve])
                         .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
-                    return Ok((p, RenderingIntent::RelativeColorimetric));
+                    return Ok((p, None));
                 }
                 if let (Some(p_code), Some(t_code)) = (primaries.to_cicp(), transfer.to_cicp())
                     && let SynthesizedIcc::Profile(bytes) =
@@ -524,15 +572,20 @@ mod lcms_impl {
                 {
                     let p = Profile::open(&bytes)
                         .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
-                    return Ok((p, RenderingIntent::RelativeColorimetric));
+                    return Ok((p, None));
                 }
                 Err(err_at(ConvertError::UnsupportedRoute))
             }
-            ColorSpace::Gray { transfer, .. } => {
+            ColorSpace::Gray {
+                transfer, range, ..
+            } => {
+                if *range != SignalRange::Full || matches!(transfer, Transfer::Hlg(_)) {
+                    return Err(err_at(ConvertError::UnsupportedRoute));
+                }
                 if let Some(curve) = tone_curve_for_transfer(*transfer)? {
                     let p = Profile::gray_curve(&D65, &curve)
                         .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
-                    return Ok((p, RenderingIntent::RelativeColorimetric));
+                    return Ok((p, None));
                 }
                 if let Some(t_code) = transfer.to_cicp()
                     && let SynthesizedIcc::Profile(bytes) =
@@ -540,7 +593,7 @@ mod lcms_impl {
                 {
                     let p = Profile::open(&bytes)
                         .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
-                    return Ok((p, RenderingIntent::RelativeColorimetric));
+                    return Ok((p, None));
                 }
                 Err(err_at(ConvertError::UnsupportedRoute))
             }
@@ -552,6 +605,8 @@ mod lcms_impl {
         plan: Plan,
         src: LcmsFormatInfo,
         dst: LcmsFormatInfo,
+        /// Write canonical opaque alpha (1.0 / max code) to dst alpha slot.
+        fill_opaque_alpha: bool,
         /// Guard for float RGBA CLUT fast paths in `lcms` that zero the 4th f32 lane
         /// after `handle_extra_channels` has already copied alpha.
         copy_f32_alpha_after: bool,
@@ -562,22 +617,35 @@ mod lcms_impl {
         dst: &ImageSpec,
         no_optimize: bool,
     ) -> Result<Arc<dyn CmsTransform>, At<ConvertError>> {
+        if src.color.alpha() == AlphaMode::Premultiplied
+            || dst.color.alpha() == AlphaMode::Premultiplied
+        {
+            return Err(err_at(ConvertError::UnsupportedRoute));
+        }
         let from = describe_layout(src.layout, &src.color)
             .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
         let to = describe_layout(dst.layout, &dst.color)
             .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
 
         let (src_profile, src_intent) = profile_from_color_space(&src.color)?;
-        let (dst_profile, _) = profile_from_color_space(&dst.color)?;
+        let (dst_profile, dst_intent) = profile_from_color_space(&dst.color)?;
+        let eff_intent = src_intent
+            .or(dst_intent)
+            .unwrap_or(RenderingIntent::RelativeColorimetric);
 
-        let lcms_intent = to_lcms_intent(src_intent);
+        let lcms_intent = to_lcms_intent(eff_intent);
         let bpc = matches!(src.color, ColorSpace::Cmyk { .. })
-            && src_intent == RenderingIntent::RelativeColorimetric;
-        let adaptation = if src_intent == RenderingIntent::AbsoluteColorimetric {
+            && eff_intent == RenderingIntent::RelativeColorimetric;
+        let adaptation = if eff_intent == RenderingIntent::AbsoluteColorimetric {
             0.0
         } else {
             1.0
         };
+
+        let fill_opaque_alpha = to.has_alpha
+            && (dst.color.alpha() == AlphaMode::Opaque
+                || !from.has_alpha
+                || src.color.alpha() == AlphaMode::Opaque);
 
         // `NO_CACHE` enables lcms's fused AVX2/SIMD loops (Prelin8, Clut8/16,
         // MatShaper) and keeps per-row execution cache-independent.
@@ -585,7 +653,7 @@ mod lcms_impl {
         if no_optimize {
             transform_flags |= flags::NO_OPTIMIZE;
         }
-        if from.has_alpha && to.has_alpha {
+        if from.has_alpha && to.has_alpha && !fill_opaque_alpha {
             transform_flags |= flags::COPY_ALPHA;
         }
         if bpc {
@@ -602,6 +670,7 @@ mod lcms_impl {
 
         let copy_f32_alpha_after = from.has_alpha
             && to.has_alpha
+            && !fill_opaque_alpha
             && from.sample == SampleType::F32
             && to.sample == SampleType::F32
             && from.bpp == 16
@@ -611,6 +680,7 @@ mod lcms_impl {
             plan,
             src: from,
             dst: to,
+            fill_opaque_alpha,
             copy_f32_alpha_after,
         }))
     }
@@ -703,8 +773,8 @@ mod lcms_impl {
                 }
             }
 
-            // Fill opaque alpha when adding an alpha channel (Little CMS leaves extra channel untouched/zero).
-            if self.dst.has_alpha && !self.src.has_alpha {
+            // Fill opaque alpha when adding an alpha channel or canonicalizing Opaque alpha.
+            if self.fill_opaque_alpha {
                 let sz = self.dst.sample.byte_size();
                 let opaque: &[u8] = match self.dst.sample {
                     SampleType::U8 => &[255],
