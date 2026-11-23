@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Primaries, HDR, Signaling &amp; CICP vs ICC · zenpixels</title>
+<meta name="description" content="Interactive CIE 1931 xy / 1976 u'v' gamut primaries diagram, gamut rendering comparisons, HDR luminance ruler (DiffuseWhite, MaxCLL, MaxFALL, ST.2086, HlgRendering, BT.2446A), Narrow vs Full signaling, CICP vs ICC, and live Rust conversion code.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Martian+Mono:wght@400;600&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --night: #0d1020; --night-2: #131733; --panel: #181d3a; --line: #2b3260;
+  --text: #eef0f8; --muted: #a9b1cf; --gold: #f6c85f; --gold-ink: #1a1405;
+  --c-709: #f6c85f; --c-p3: #35d893; --c-adobe: #ff8c5a; --c-2020: #5b8dff;
+  --c-hdr: #ff5a9c; --c-hlg: #c27bff;
+  --font-display: "Unbounded", "Arial Black", system-ui, sans-serif;
+  --font-body: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Martian Mono", ui-monospace, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--night); color: var(--text); font: 16px/1.6 var(--font-body); }
+body {
+  background:
+    radial-gradient(1000px 520px at 85% -10%, rgba(53,216,147,.14), transparent 70%),
+    radial-gradient(900px 500px at -10% 35%, rgba(255,90,156,.11), transparent 70%),
+    var(--night);
+}
+.wrap { max-width: 1240px; margin: 0 auto; padding: 0 28px 64px; }
+@media (max-width: 700px) { .wrap { padding: 0 16px 48px; } }
+.site-nav { display: flex; flex-wrap: wrap; gap: 10px 20px; padding: 22px 0 8px; font-size: .88rem; }
+a { color: var(--gold); text-underline-offset: 3px; }
+a:hover { color: #fff; }
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; border-radius: 4px; }
+h1, h2, h3 { font-family: var(--font-display); margin: 0; text-wrap: balance; letter-spacing: -.015em; }
+.eyebrow { font-family: var(--font-mono); font-size: .74rem; letter-spacing: .14em; text-transform: uppercase; color: var(--gold); margin: 18px 0 10px; }
+h1 { font-size: clamp(1.8rem, 4.4vw, 3.15rem); line-height: 1.08; margin-bottom: 14px; }
+h2 { font-size: clamp(1.25rem, 2.2vw, 1.7rem); }
+h3 { font-size: .96rem; }
+p { margin: 0; max-width: 74ch; }
+.lede { color: var(--muted); font-size: 1.04rem; margin-bottom: 24px; }
+code, pre { font-family: var(--font-mono); font-size: .82rem; }
+p code, li code, td code { color: #add9ff; overflow-wrap: anywhere; }
+.story { display: grid; gap: 22px; }
+.sec { background: color-mix(in srgb, var(--panel) 84%, transparent); border: 1px solid var(--line); border-radius: 20px; padding: 24px; display: grid; gap: 16px; min-width: 0; }
+@media (max-width: 700px) { .sec { padding: 16px; } }
+.sec > *, .grid2 > *, .swatches > *, .cards > *, .ctl-row > * { min-width: 0; }
+.sec-head { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: baseline; }
+.num { font-family: var(--font-mono); font-size: .78rem; color: var(--gold); }
+.sub { color: var(--muted); }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+@media (max-width: 880px) { .grid2 { grid-template-columns: 1fr; } }
+.box { background: var(--night); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: grid; gap: 12px; min-width: 0; }
+.box svg { width: 100%; height: auto; display: block; cursor: crosshair; touch-action: none; }
+.ctl-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+.field { display: grid; gap: 5px; flex: 1 1 160px; min-width: 0; }
+.field label { font-family: var(--font-mono); font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+select, input[type="number"] { background: var(--night); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; width: 100%; min-width: 0; }
+input[type="range"] { width: 100%; accent-color: var(--gold); }
+.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--night); }
+.seg button { font: 500 .82rem var(--font-body); background: transparent; color: var(--text); border: 0; padding: 8px 12px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--gold); color: var(--gold-ink); font-weight: 600; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chipbtn { font: 500 .83rem var(--font-body); color: var(--text); background: var(--night-2); border: 1px solid var(--line); padding: 6px 12px; border-radius: 999px; cursor: pointer; }
+.chipbtn:hover { border-color: var(--gold); }
+.chipbtn[aria-pressed="true"] { background: var(--gold); color: var(--gold-ink); border-color: var(--gold); }
+.swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr)); gap: 10px; }
+.swcard { background: var(--night-2); border: 1px solid var(--line); border-radius: 12px; padding: 10px; display: grid; gap: 7px; }
+.swbox { height: 58px; border-radius: 8px; border: 1px solid rgba(255,255,255,.12); }
+.swcard b { font-size: .84rem; }
+.swcard small { font-family: var(--font-mono); font-size: .72rem; color: var(--muted); overflow-wrap: anywhere; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 12px; }
+.card { background: var(--night); border: 1px solid var(--line); border-left: 3px solid var(--c, var(--gold)); border-radius: 12px; padding: 14px; display: grid; gap: 6px; align-content: start; }
+.card p { font-size: .88rem; color: var(--muted); }
+.tablewrap { overflow-x: auto; max-width: 100%; }
+table { width: 100%; border-collapse: collapse; font-size: .86rem; }
+th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--font-mono); font-size: .68rem; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); }
+.bar-range { display: grid; grid-template-columns: 1fr; gap: 8px; }
+.rtrack { height: 28px; border-radius: 8px; background: var(--night-2); border: 1px solid var(--line); position: relative; overflow: hidden; }
+.rfill { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: .72rem; color: #0d1020; font-weight: 600; }
+.rpad { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(135deg, #323a68 0 5px, #131733 5px 10px); display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: .66rem; color: var(--muted); }
+.note { font-size: .86rem; padding: 10px 13px; border-radius: 10px; border-left: 3px solid var(--gold); background: color-mix(in srgb, var(--gold) 10%, var(--night)); }
+.copyrow { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.btn { font: 600 .82rem var(--font-body); border: 1px solid var(--gold); color: var(--gold); background: transparent; padding: 7px 14px; border-radius: 999px; cursor: pointer; }
+.btn:hover { background: var(--gold); color: var(--gold-ink); }
+pre { margin: 0; padding: 16px; background: var(--night); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; line-height: 1.56; max-width: 100%; }
+footer { color: var(--muted); font-size: .82rem; padding-top: 26px; display: grid; gap: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="site-nav" aria-label="Documentation">
+  <a href="index.html">Explore bytes</a>
+  <a href="guide.html">Guide</a>
+  <a href="transfers.html">Transfer functions</a>
+  <a href="color-hdr.html" aria-current="page">Primaries, HDR &amp; CICP/ICC</a>
+  <a href="kernels.html">Kernel browser</a>
+  <a href="speed-and-size.html">Speed &amp; light builds</a>
+  <a href="eli5.html">ELI5</a>
+</nav>
+
+<p class="eyebrow">zenpixels · primaries, hdr &amp; metadata signaling</p>
+<h1>Primaries, HDR headroom, CLL &amp; CICP vs ICC</h1>
+<p class="lede">Bytes only become a real color once you know <strong>which primaries</strong> they mix, <strong>how bright 1.0 is</strong>, whether values use <strong>full or narrow range</strong>, and whether <strong>CICP or ICC</strong> is the active authority. Explore each layer visually and copy exact 0.4 Rust code below.</p>
+
+<main class="story">
+  <!-- 01: PRIMARIES & GAMUT -->
+  <section class="sec" aria-labelledby="h-primaries">
+    <div class="sec-head"><span class="num">01</span><h2 id="h-primaries">Color primaries &amp; out-of-gamut renderings</h2></div>
+    <p class="sub">Click anywhere inside the CIE spectral horseshoe (or pick a test color) to compare how <strong>BT.709 / sRGB</strong>, <strong>Display P3</strong>, <strong>Adobe RGB</strong>, and <strong>BT.2020</strong> encode the exact same physical chromaticity — and what happens when wide-gamut colors clip vs soft-compress.</p>
+
+    <div class="ctl-row">
+      <div class="field" style="flex:0 1 auto">
+        <label id="diag-lbl">Chromaticity projection</label>
+        <div class="seg" role="group" aria-labelledby="diag-lbl">
+          <button type="button" class="diag-btn" data-proj="xy" aria-pressed="true">CIE 1931 xy</button>
+          <button type="button" class="diag-btn" data-proj="uv" aria-pressed="false">CIE 1976 u′v′ (uniform)</button>
+        </div>
+      </div>
+      <div class="field" style="flex:2 1 280px">
+        <label>Sample color presets</label>
+        <div class="chips" id="color-presets"></div>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="box">
+        <div class="copyrow"><h3 id="cie-title">CIE 1931 xy Chromaticity Diagram</h3><code id="cie-coords"></code></div>
+        <svg id="svg-cie" viewBox="0 0 460 420" role="img" aria-label="CIE chromaticity diagram showing BT.709, Display P3, Adobe RGB, and BT.2020 triangles"></svg>
+        <div class="chips" style="font-family:var(--font-mono);font-size:.73rem">
+          <span style="color:var(--c-709)">■ BT.709 / sRGB (35.9% CIE)</span>
+          <span style="color:var(--c-p3)">■ Display P3 (+25% wider)</span>
+          <span style="color:var(--c-adobe)">■ Adobe RGB (wide cyan-green)</span>
+          <span style="color:var(--c-2020)">■ BT.2020 (75.8% spectral)</span>
+        </div>
+      </div>
+
+      <div class="box">
+        <h3>Same physical color rendered across gamuts &amp; policies</h3>
+        <p class="sub" style="font-size:.86rem">Wide-gamut swatches use CSS <code>color(display-p3 ...)</code> / <code>color(rec2020 ...)</code> so P3 displays show true saturation. Notice negative linear RGB channels whenever a color falls outside a smaller triangle.</p>
+        <div class="swatches" id="gamut-swatches"></div>
+        <div class="note" id="gamut-explain"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 02: ALL THE HDR THINGS -->
+  <section class="sec" aria-labelledby="h-hdr">
+    <div class="sec-head"><span class="num">02</span><h2 id="h-hdr">All the HDR things: DiffuseWhite, CLL, ST.2086, HLG &amp; BT.2446A</h2></div>
+    <p class="sub">HDR pipelines break when people confuse five different luminance numbers. Drag the sliders to see where each value sits on the log-luminance ruler and how <strong>BT.2446A</strong> rolls HDR highlights smoothly into SDR.</p>
+
+    <div class="ctl-row">
+      <div class="field"><label for="sl-white">DiffuseWhite (SDR 1.0): <b id="v-white">203</b> nits</label><input type="range" id="sl-white" min="80" max="400" step="1" value="203"></div>
+      <div class="field"><label for="sl-cll">MaxCLL (content peak): <b id="v-cll">1000</b> nits</label><input type="range" id="sl-cll" min="200" max="10000" step="50" value="1000"></div>
+      <div class="field"><label for="sl-fall">MaxFALL (frame avg): <b id="v-fall">320</b> nits</label><input type="range" id="sl-fall" min="50" max="2000" step="10" value="320"></div>
+      <div class="field"><label for="sl-sdrp">Target SDR peak: <b id="v-sdrp">100</b> nits</label><input type="range" id="sl-sdrp" min="80" max="300" step="5" value="100"></div>
+    </div>
+
+    <div class="box">
+      <div class="copyrow"><h3>Absolute Luminance Ruler (0.01 → 10,000 cd/m², log scale)</h3><code id="hdr-headroom"></code></div>
+      <svg id="svg-ruler" viewBox="0 0 920 138" role="img" aria-label="Logarithmic HDR luminance ruler from 0.01 to 10,000 nits"></svg>
+    </div>
+
+    <div class="grid2">
+      <div class="box">
+        <div class="copyrow"><h3>BT.2446A HDR → SDR roll-off vs naive hard clip</h3><small style="color:var(--muted);font-family:var(--font-mono);font-size:.72rem">x = HDR nits, y = SDR signal</small></div>
+        <svg id="svg-tm" viewBox="0 0 460 265" role="img" aria-label="BT.2446A tone mapping curve compared to naive hard clip"></svg>
+      </div>
+      <div class="cards" style="grid-template-columns:1fr">
+        <article class="card" style="--c:var(--gold)">
+          <h3><code>DiffuseWhite</code> (white anchor)</h3>
+          <p>Defines what relative linear <code>1.0</code> means in nits when crossing SDR ↔ PQ. ITU BT.2408 = <strong>203 nits</strong>; Windows scRGB = <strong>80 nits</strong>. Never guessed silently — pass <code>with_sdr_white(...)</code> or attach to <code>ColorContext</code>.</p>
+        </article>
+        <article class="card" style="--c:var(--c-hdr)">
+          <h3><code>ContentLightLevel</code> (MaxCLL &amp; MaxFALL)</h3>
+          <p><strong>MaxCLL</strong> = brightest single pixel in the image/stream; <strong>MaxFALL</strong> = brightest frame-average luminance. Often missing or inflated in real files — buffer converts can measure pixels with <code>HdrPeak::Measured</code>, while row plans require explicit <code>HdrPeak::Nits(...)</code>.</p>
+        </article>
+        <article class="card" style="--c:var(--c-2020)">
+          <h3><code>MasteringDisplay</code> (SMPTE ST 2086 / <code>mDCV</code>)</h3>
+          <p>Describes the <strong>grading monitor</strong> (primaries, white point, min/max nits like 0.0001–4000 nits) — <em>not</em> the content's actual peak. A 1000-nit movie graded on a 4000-nit Sony BVM still has MaxCLL = 1000.</p>
+        </article>
+        <article class="card" style="--c:var(--c-hlg)">
+          <h3><code>HlgRendering</code> (BT.2100-3 display OOTF)</h3>
+          <p>HLG is scene-referred. Rendering HLG to display light needs explicit <code>peak</code> (Lw), <code>black</code> (Lb), and system <code>gamma</code> (e.g. <code>HlgRendering::REFERENCE_1000_NIT</code>). Display peak is <em>not</em> reused as content peak — HLG→SDR still takes explicit <code>with_hdr_peak</code>.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- 03: SIGNALING & CICP VS ICC -->
+  <section class="sec" aria-labelledby="h-signaling">
+    <div class="sec-head"><span class="num">03</span><h2 id="h-signaling">Signaling: Narrow vs Full range, and CICP vs ICC</h2></div>
+    <p class="sub">Color signaling travels in container chunks before a single pixel is touched. Getting <strong>range</strong> or <strong>CICP vs ICC precedence</strong> wrong silently lifts blacks or double-applies profiles.</p>
+
+    <div class="grid2">
+      <div class="box">
+        <h3>Signal range: Full vs Narrow (TV / studio swing)</h3>
+        <p style="font-size:.88rem;color:var(--muted)">Narrow range reserves headroom and footroom for broadcast SDI/HDMI. <code>zenpixels-convert</code> <strong>refuses</strong> silent Narrow↔Full conversions with <code>ConvertError::NoPath</code> instead of relabeling unscaled bytes (which would turn black <code>16</code> into dark gray!).</p>
+        <div class="bar-range">
+          <div>
+            <small style="font-family:var(--font-mono);color:var(--muted)">Full range (U8: 0..=255, U16: 0..=65535)</small>
+            <div class="rtrack"><div class="rfill" style="left:0;width:100%;background:linear-gradient(90deg,#445,#9ce0bd,#eef0f8)">0 (black) —————————— 255 (white)</div></div>
+          </div>
+          <div>
+            <small style="font-family:var(--font-mono);color:var(--muted)">Narrow range (U8: 16..=235, U16: 4096..=60160)</small>
+            <div class="rtrack">
+              <div class="rpad" style="left:0;width:6.3%">0–15</div>
+              <div class="rfill" style="left:6.3%;width:85.9%;background:linear-gradient(90deg,#445,#f6c85f,#eef0f8)">16 (black) ————— 235 (white)</div>
+              <div class="rpad" style="left:92.2%;width:7.8%">236+</div>
+            </div>
+          </div>
+        </div>
+
+        <h3 style="margin-top:8px">Interactive CICP 4-byte tuple inspector (ITU-T H.273)</h3>
+        <div class="field">
+          <label for="cicp-preset">Common zenpixels Cicp constants</label>
+          <select id="cicp-preset">
+            <option value="SRGB">Cicp::SRGB — (1, 13, 0, true)</option>
+            <option value="DISPLAY_P3">Cicp::DISPLAY_P3 — (12, 13, 0, true)</option>
+            <option value="LINEAR_SRGB">Cicp::LINEAR_SRGB — (1, 8, 0, true)</option>
+            <option value="BT709_RGB">Cicp::BT709_RGB — (1, 1, 0, true)</option>
+            <option value="BT2100_PQ_RGB">Cicp::BT2100_PQ_RGB — (9, 16, 0, true) [RGB]</option>
+            <option value="BT2100_PQ">Cicp::BT2100_PQ — (9, 16, 9, true) [YCbCr!]</option>
+            <option value="BT2100_HLG_RGB">Cicp::BT2100_HLG_RGB — (9, 18, 0, true) [RGB]</option>
+          </select>
+        </div>
+        <div class="note" id="cicp-detail"></div>
+      </div>
+
+      <div class="box">
+        <h3>CICP vs ICC profiles — when to use each</h3>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Dimension</th><th>CICP (ITU-T H.273)</th><th>ICC Profile</th></tr></thead>
+            <tbody>
+              <tr><td><b>Payload size</b></td><td><strong>4 bytes</strong> <code>(CP, TC, MC, full)</code></td><td><strong>400 B – 2 MB</strong> (matrix/TRC or 3D CLUT)</td></tr>
+              <tr><td><b>What it expresses</b></td><td>Standardized RGB/YCbCr (sRGB, P3, BT.2020, PQ, HLG)</td><td>Arbitrary device spaces (CMYK, printers, custom LUTs, monitors)</td></tr>
+              <tr><td><b>Converter path</b></td><td><strong>Built-in SIMD matrices</strong> (no CMS needed)</td><td>Requires explicit <code>.with_cms(&amp;MoxCms)</code> or <code>&amp;Lcms</code> (or qualified ICC fingerprint match)</td></tr>
+              <tr><td><b>Container precedence</b></td><td>PNG 3rd ed: <code>cICP &gt; iCCP &gt; sRGB &gt; gAMA+cHRM</code>; AVIF: <code>nclx</code> vs <code>prof</code></td><td>JPEG/TIFF: ICC primary; in <code>ColorContext</code>, an attached ICC stays authoritative (unusable ICC refuses rather than falling back)</td></tr>
+              <tr><td><b>Synthesis</b></td><td>Always emit CICP where container supports it</td><td><code>SynthesizedIcc::for_cicp</code> exports qualified RGB ICC (HLG ICC synthesis refused)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note"><strong><code>ColorContext</code> vs <code>ColorOrigin</code>:</strong> <code>ColorContext</code> is the single active authority describing the <em>current</em> pixels in memory. <code>ColorOrigin</code> remembers what the original file claimed (even dual CICP + ICC chunks) for transcoding provenance — and never overrides converted pixels.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 04: LIVE RUST CODE SAMPLES -->
+  <section class="sec" aria-labelledby="h-hdr-code">
+    <div class="copyrow">
+      <div class="sec-head"><span class="num">04</span><h2 id="h-hdr-code">Live Rust code: primaries, HDR &amp; atomic CICP/ICC output</h2></div>
+      <button type="button" class="btn" id="copy-hdr-code">Copy Rust</button>
+    </div>
+    <div class="ctl-row">
+      <div class="field">
+        <label for="hdr-scenario">Choose scenario</label>
+        <select id="hdr-scenario">
+          <option value="p3_soft" selected>Display P3 → sRGB with SoftCompress (OKLch knee)</option>
+          <option value="p3_oklab">Display P3 → Oklab → Display P3 (bit-exact, zero clip)</option>
+          <option value="lin_pq">Linear BT.2020 → PQ U16 with DiffuseWhite (203 nits)</option>
+          <option value="pq_sdr">PQ HDR → sRGB U8 with BT.2446A + explicit peaks</option>
+          <option value="hlg_sdr">HLG HDR → sRGB U8 with HlgRendering + explicit peaks</option>
+          <option value="output_plan">OutputPlan + EncodeReady (atomic pixels + CICP metadata)</option>
+        </select>
+      </div>
+    </div>
+    <pre id="hdr-rust-code"></pre>
+  </section>
+</main>
+
+<footer>
+  <p><a href="index.html">Pixel explorer</a> · <a href="guide.html">Guide</a> · <a href="transfers.html">Transfer functions</a> · <a href="kernels.html">Kernel browser</a> · <a href="speed-and-size.html">Speed &amp; light builds</a> · <a href="eli5.html">ELI5</a></p>
+  <p>Gamut matrices match <code>zenpixels-convert/src/gamut.rs</code> exactly (CIE 1931 D65). Wide-gamut swatches render via CSS Color 4 <code>color(display-p3 …)</code> and <code>color(rec2020 …)</code> where supported.</p>
+</footer>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+// Exact CIE 1931 xy primaries matching zenpixels-convert/src/gamut.rs (D65 white point)
+const D65 = [0.3127, 0.3290];
+const GAMUTS = [
+  { id: 'Bt709', name: 'BT.709 / sRGB', color: '#f6c85f',
+    pts: [[0.64, 0.33], [0.30, 0.60], [0.15, 0.06]],
+    toXyz: [[0.4123907993,0.3575843394,0.1804807884],[0.2126390059,0.7151686788,0.0721923154],[0.0193308187,0.1191947798,0.9505321522]],
+    fromXyz: [[3.2409699419,-1.5373831776,-0.4986107603],[-0.9692436363,1.8759675015,0.0415550574],[0.0556300797,-0.2039769589,1.0569715142]] },
+  { id: 'DisplayP3', name: 'Display P3', color: '#35d893',
+    pts: [[0.68, 0.32], [0.265, 0.69], [0.15, 0.06]],
+    toXyz: [[0.4865709486,0.2656676932,0.1982172852],[0.2289745641,0.6917385218,0.0792869141],[0.0,0.0451133819,1.0439443689]],
+    fromXyz: [[2.4934969119,-0.9313836179,-0.4027107845],[-0.8294889696,1.7626640603,0.0236246858],[0.0358458302,-0.0761723893,0.9568845240]] },
+  { id: 'AdobeRgb', name: 'Adobe RGB (1998)', color: '#ff8c5a',
+    pts: [[0.64, 0.33], [0.21, 0.71], [0.15, 0.06]],
+    toXyz: [[0.5766690429,0.1855582379,0.1882286462],[0.2973449753,0.6273635663,0.0752914585],[0.0270313614,0.0706888525,0.9913375368]],
+    fromXyz: [[2.0415879038,-0.5650069743,-0.3447313508],[-0.9692436363,1.8759675015,0.0415550574],[0.0134442806,-0.1183623922,1.0151749944]] },
+  { id: 'Bt2020', name: 'BT.2020', color: '#5b8dff',
+    pts: [[0.708, 0.292], [0.170, 0.797], [0.131, 0.046]],
+    toXyz: [[0.6369580484,0.1446169036,0.1688809752],[0.2627002120,0.6779980715,0.0593017165],[0.0,0.0280726930,1.0609850578]],
+    fromXyz: [[1.7166511880,-0.3556707838,-0.2533662814],[-0.6666843518,1.6164812366,0.0157685458],[0.0176398574,-0.0427706133,0.9421031212]] },
+];
+
+// CIE 1931 2-degree spectral locus (380nm..700nm, coarse clean polygon)
+const LOCUS = [
+  [0.1741,0.0050],[0.1738,0.0049],[0.1714,0.0051],[0.1644,0.0109],[0.1566,0.0177],
+  [0.1440,0.0297],[0.1241,0.0578],[0.0913,0.1327],[0.0454,0.2950],[0.0082,0.5384],
+  [0.0139,0.7502],[0.0743,0.8338],[0.1547,0.8059],[0.2296,0.7543],[0.3016,0.6923],
+  [0.3731,0.6245],[0.4441,0.5547],[0.5125,0.4866],[0.5752,0.4242],[0.6270,0.3725],
+  [0.6658,0.3340],[0.6915,0.3083],[0.7140,0.2859],[0.7347,0.2653]
+];
+
+const PRESETS = [
+  { name: 'P3 neon green', x: 0.250, y: 0.610, Y: 0.50 },
+  { name: 'sRGB red', x: 0.640, y: 0.330, Y: 0.2126 },
+  { name: 'P3 vivid red', x: 0.680, y: 0.320, Y: 0.2290 },
+  { name: 'Adobe cyan-green', x: 0.195, y: 0.560, Y: 0.45 },
+  { name: 'BT.2020 laser green', x: 0.170, y: 0.797, Y: 0.60 },
+  { name: 'D65 white', x: 0.3127, y: 0.3290, Y: 0.75 },
+];
+
+const xyToUv = (x, y) => {
+  const d = -2 * x + 12 * y + 3;
+  return [(4 * x) / d, (9 * y) / d];
+};
+const uvToXy = (u, v) => {
+  const d = 6 * u - 16 * v + 12;
+  return [(9 * u) / d, (4 * v) / d];
+};
+const mul3 = (m, v) => [
+  m[0][0]*v[0] + m[0][1]*v[1] + m[0][2]*v[2],
+  m[1][0]*v[0] + m[1][1]*v[1] + m[1][2]*v[2],
+  m[2][0]*v[0] + m[2][1]*v[1] + m[2][2]*v[2],
+];
+const srgbEnc = v => {
+  const c = Math.min(1, Math.max(0, v));
+  return c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1/2.4) - 0.055;
+};
+
+const cieState = { proj: 'xy', x: 0.250, y: 0.610, Y: 0.50, activePreset: 0 };
+
+function renderPresets() {
+  $('color-presets').innerHTML = PRESETS.map((p, i) =>
+    `<button type="button" class="chipbtn" data-p="${i}" aria-pressed="${i === cieState.activePreset}">${p.name}</button>`
+  ).join('');
+  $('color-presets').querySelectorAll('button').forEach(b => {
+    b.addEventListener('click', () => {
+      const idx = Number(b.dataset.p);
+      cieState.activePreset = idx;
+      cieState.x = PRESETS[idx].x; cieState.y = PRESETS[idx].y; cieState.Y = PRESETS[idx].Y;
+      renderPresets(); drawCie();
+    });
+  });
+}
+
+function drawCie() {
+  const W = 460, H = 420, P = { l: 44, r: 16, t: 16, b: 36 };
+  const iw = W - P.l - P.r, ih = H - P.t - P.b;
+  const maxX = cieState.proj === 'xy' ? 0.80 : 0.65;
+  const maxY = cieState.proj === 'xy' ? 0.90 : 0.62;
+  const mapPt = (x, y) => {
+    const [u, v] = cieState.proj === 'xy' ? [x, y] : xyToUv(x, y);
+    return [P.l + (u / maxX) * iw, P.t + ih * (1 - v / maxY)];
+  };
+  const [cu, cv] = cieState.proj === 'xy' ? [cieState.x, cieState.y] : xyToUv(cieState.x, cieState.y);
+  $('cie-title').textContent = cieState.proj === 'xy' ? 'CIE 1931 xy Chromaticity Diagram' : 'CIE 1976 u′v′ Uniform Chromaticity';
+  $('cie-coords').textContent = cieState.proj === 'xy'
+    ? `x=${cieState.x.toFixed(3)} y=${cieState.y.toFixed(3)}`
+    : `u′=${cu.toFixed(3)} v′=${cv.toFixed(3)}`;
+
+  let g = '';
+  const step = cieState.proj === 'xy' ? 0.1 : 0.1;
+  for (let t = 0; t <= maxX + 1e-6; t += step) {
+    const px = P.l + (t / maxX) * iw;
+    g += `<line x1="${px.toFixed(1)}" y1="${P.t}" x2="${px.toFixed(1)}" y2="${H - P.b}" stroke="#1c2244" stroke-width="1"/>`;
+    g += `<text x="${px.toFixed(1)}" y="${H - P.b + 16}" text-anchor="middle" fill="#8d96b8" font-family="var(--font-mono)" font-size="9.5">${t.toFixed(1)}</text>`;
+  }
+  for (let t = 0; t <= maxY + 1e-6; t += step) {
+    const py = P.t + ih * (1 - t / maxY);
+    g += `<line x1="${P.l}" y1="${py.toFixed(1)}" x2="${W - P.r}" y2="${py.toFixed(1)}" stroke="#1c2244" stroke-width="1"/>`;
+    g += `<text x="${P.l - 6}" y="${(py + 3.5).toFixed(1)}" text-anchor="end" fill="#8d96b8" font-family="var(--font-mono)" font-size="9.5">${t.toFixed(1)}</text>`;
+  }
+  // Spectral locus horseshoe
+  const locusPts = LOCUS.map(([x, y]) => mapPt(x, y).map(n => n.toFixed(1)).join(',')).join(' ');
+  g += `<polygon points="${locusPts}" fill="rgba(160,175,230,0.08)" stroke="#626d99" stroke-width="1.6"/>`;
+
+  // Draw gamut triangles largest to smallest
+  for (const gm of [...GAMUTS].reverse()) {
+    const pts = gm.pts.map(([x, y]) => mapPt(x, y).map(n => n.toFixed(1)).join(',')).join(' ');
+    g += `<polygon points="${pts}" fill="${gm.color}" fill-opacity="0.06" stroke="${gm.color}" stroke-width="2"/>`;
+  }
+  // D65 white point
+  const [wx, wy] = mapPt(D65[0], D65[1]);
+  g += `<circle cx="${wx.toFixed(1)}" cy="${wy.toFixed(1)}" r="4" fill="#fff" stroke="#0d1020" stroke-width="1.5"/>`;
+  g += `<text x="${(wx + 7).toFixed(1)}" y="${(wy + 3).toFixed(1)}" fill="#eef0f8" font-family="var(--font-mono)" font-size="9.5">D65</text>`;
+
+  // Selected sample point
+  const [sx, sy] = mapPt(cieState.x, cieState.y);
+  g += `<circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="7" fill="none" stroke="#fff" stroke-width="2"/>`;
+  g += `<circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="3" fill="#f6c85f"/>`;
+  $('svg-cie').innerHTML = g;
+
+  // Compute XYZ from (x, y, Y)
+  const Y = cieState.Y;
+  const X = (cieState.x / Math.max(0.01, cieState.y)) * Y;
+  const Z = ((1 - cieState.x - cieState.y) / Math.max(0.01, cieState.y)) * Y;
+  const xyz = [X, Y, Z];
+
+  // Normalize so max linear channel across BT.2020 is <= 1 for display comparability
+  const rgb2020 = mul3(GAMUTS[3].fromXyz, xyz);
+  const scale = Math.max(1, ...rgb2020);
+  const xyzN = xyz.map(v => v / scale);
+
+  const srgbLin = mul3(GAMUTS[0].fromXyz, xyzN);
+  const p3Lin = mul3(GAMUTS[1].fromXyz, xyzN);
+  const b2020Lin = mul3(GAMUTS[3].fromXyz, xyzN);
+
+  const inGamut = rgb => rgb.every(v => v >= -1e-4 && v <= 1.0001);
+  const fmtRgb = rgb => `[${rgb.map(v => v.toFixed(2)).join(', ')}]`;
+  const cssSrgb = rgb => `rgb(${rgb.map(v => Math.round(srgbEnc(v) * 255)).join(' ')})`;
+  const cssP3 = rgb => `color(display-p3 ${rgb.map(v => srgbEnc(v).toFixed(3)).join(' ')})`;
+  // Approximate hue-preserving soft chroma rolloff toward achromatic Y
+  const softSrgb = (() => {
+    if (inGamut(srgbLin)) return srgbLin;
+    const luma = 0.2126*srgbLin[0] + 0.7152*srgbLin[1] + 0.0722*srgbLin[2];
+    const minC = Math.min(...srgbLin), maxC = Math.max(...srgbLin);
+    let t = 1;
+    if (minC < 0) t = Math.min(t, luma / (luma - minC + 1e-6));
+    if (maxC > 1) t = Math.min(t, (1 - luma) / (maxC - luma + 1e-6));
+    const softT = t * 0.96;
+    return srgbLin.map(v => luma + (v - luma) * softT);
+  })();
+  // "Misread P3 bytes as sRGB": take P3-encoded values and display them as sRGB
+  const misreadCss = `rgb(${p3Lin.map(v => Math.round(srgbEnc(v) * 255)).join(' ')})`;
+
+  $('gamut-swatches').innerHTML = `
+    <div class="swcard">
+      <div class="swbox" style="background:${cssP3(p3Lin)}"></div>
+      <b>True color (P3 view)</b>
+      <small>P3 lin: ${fmtRgb(p3Lin)} ${inGamut(p3Lin) ? '(in P3)' : '(out of P3)'}</small>
+    </div>
+    <div class="swcard">
+      <div class="swbox" style="background:${cssSrgb(srgbLin)}"></div>
+      <b>sRGB: GamutPolicy::Clip</b>
+      <small>sRGB lin: ${fmtRgb(srgbLin)} → ${inGamut(srgbLin) ? 'exact' : 'CLIPPED'}</small>
+    </div>
+    <div class="swcard">
+      <div class="swbox" style="background:${cssSrgb(softSrgb)}"></div>
+      <b>sRGB: SoftCompress (OKLch)</b>
+      <small>soft lin: ${fmtRgb(softSrgb)} (hue kept)</small>
+    </div>
+    <div class="swcard">
+      <div class="swbox" style="background:${misreadCss}"></div>
+      <b>P3 bytes misread as sRGB</b>
+      <small>Dropped ICC/CICP: visibly desaturated!</small>
+    </div>`;
+
+  const status = [];
+  for (const gm of GAMUTS) {
+    const rgb = mul3(gm.fromXyz, xyzN);
+    status.push(`${gm.id}: ${inGamut(rgb) ? 'in gamut' : 'OUT (' + fmtRgb(rgb) + ')'}`);
+  }
+  $('gamut-explain').textContent = status.join(' · ') + '. Use GamutPolicy::PreserveExtended on F32 buffers to retain negative/out-of-gamut channels without clipping, or SoftCompress when targeting U8/U16 sRGB.';
+}
+
+$('svg-cie').addEventListener('pointerdown', e => {
+  const r = $('svg-cie').getBoundingClientRect();
+  const maxX = cieState.proj === 'xy' ? 0.80 : 0.65;
+  const maxY = cieState.proj === 'xy' ? 0.90 : 0.62;
+  const u = Math.max(0.02, Math.min(maxX - 0.02, ((e.clientX - r.left) / r.width * 460 - 44) / (460 - 60) * maxX));
+  const v = Math.max(0.02, Math.min(maxY - 0.02, (1 - ((e.clientY - r.top) / r.height * 420 - 16) / (420 - 52)) * maxY));
+  const [x, y] = cieState.proj === 'xy' ? [u, v] : uvToXy(u, v);
+  cieState.x = x; cieState.y = y; cieState.activePreset = -1;
+  renderPresets(); drawCie();
+});
+
+document.querySelectorAll('.diag-btn').forEach(b => {
+  b.addEventListener('click', () => {
+    cieState.proj = b.dataset.proj;
+    document.querySelectorAll('.diag-btn').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    drawCie();
+  });
+});
+
+// 02: HDR Luminance Ruler & BT.2446A approximation curve
+function drawHdr() {
+  const white = Number($('sl-white').value);
+  const cll = Number($('sl-cll').value);
+  const fall = Number($('sl-fall').value);
+  const sdrPeak = Number($('sl-sdrp').value);
+  $('v-white').textContent = white; $('v-cll').textContent = cll;
+  $('v-fall').textContent = fall; $('v-sdrp').textContent = sdrPeak;
+
+  const stops = Math.log2(cll / white);
+  $('hdr-headroom').textContent = `HDR headroom = ${stops.toFixed(2)} stops (${(cll / white).toFixed(1)}× diffuse white)`;
+
+  // Ruler SVG
+  const W = 920, H = 138, L = 36, R = 884;
+  const toX = nits => L + ((Math.log10(Math.max(0.01, nits)) - (-2)) / 6) * (R - L);
+  let g = `<defs><linearGradient id="lumg" x1="0" x2="1"><stop offset="0%" stop-color="#141830"/><stop offset="50%" stop-color="#4e5888"/><stop offset="72%" stop-color="#f6c85f"/><stop offset="100%" stop-color="#ff5a9c"/></linearGradient></defs>`;
+  g += `<rect x="${L}" y="58" width="${R - L}" height="20" rx="10" fill="url(#lumg)" stroke="#2b3260"/>`;
+  for (const t of [0.01, 0.1, 1, 10, 100, 1000, 10000]) {
+    const x = toX(t);
+    g += `<line x1="${x.toFixed(1)}" y1="54" x2="${x.toFixed(1)}" y2="82" stroke="#eef0f8" stroke-opacity="0.45"/>`;
+    g += `<text x="${x.toFixed(1)}" y="100" text-anchor="middle" fill="#a9b1cf" font-family="var(--font-mono)" font-size="11">${t >= 1000 ? (t/1000)+'k' : t} nit</text>`;
+  }
+  const pins = [
+    { nits: sdrPeak, label: `SDR peak (${sdrPeak})`, color: '#35d893', y: 20 },
+    { nits: white, label: `DiffuseWhite (${white})`, color: '#f6c85f', y: 42 },
+    { nits: fall, label: `MaxFALL (${fall})`, color: '#5b8dff', y: 124 },
+    { nits: cll, label: `MaxCLL (${cll})`, color: '#ff5a9c', y: 20 },
+  ];
+  for (const p of pins) {
+    const x = toX(p.nits);
+    const down = p.y > 70;
+    g += `<line x1="${x.toFixed(1)}" y1="${down ? 78 : 58}" x2="${x.toFixed(1)}" y2="${down ? p.y - 12 : p.y + 5}" stroke="${p.color}" stroke-width="2"/>`;
+    g += `<circle cx="${x.toFixed(1)}" cy="${down ? 78 : 58}" r="4" fill="${p.color}"/>`;
+    const anchor = x > 760 ? 'end' : (x < 140 ? 'start' : 'middle');
+    g += `<text x="${x.toFixed(1)}" y="${p.y}" text-anchor="${anchor}" fill="${p.color}" font-family="var(--font-mono)" font-size="11" font-weight="600">${p.label}</text>`;
+  }
+  $('svg-ruler').innerHTML = g;
+
+  // BT.2446 Method A curve (exact ITU-R BT.2446-1 §4.1.1 knee equation on luma)
+  const TW = 460, TH = 265, TP = { l: 48, r: 16, t: 16, b: 36 };
+  const tiw = TW - TP.l - TP.r, tih = TH - TP.t - TP.b;
+  const maxN = Math.max(cll, 1000);
+  const tx = n => TP.l + (n / maxN) * tiw;
+  const ty = y => TP.t + tih * (1 - Math.min(1.05, Math.max(0, y)) / 1.05);
+
+  const rhoH = 1 + 32 * Math.pow(cll / 10000, 1 / 2.4);
+  const rhoS = 1 + 32 * Math.pow(sdrPeak / 10000, 1 / 2.4);
+  const bt2446a = nits => {
+    const yNorm = Math.max(0, Math.min(1, nits / cll));
+    const yp = Math.pow(yNorm, 1 / 2.4);
+    const y1 = Math.log(1 + (rhoH - 1) * yp) / Math.log(rhoH);
+    let y2;
+    if (y1 <= 0.7399) y2 = 1.0770 * y1;
+    else if (y1 < 0.9909) y2 = -1.1510 * y1 * y1 + 2.7811 * y1 - 0.6302;
+    else y2 = 0.5000 * y1 + 0.5000;
+    const ys = (Math.pow(rhoS, y2) - 1) / (rhoS - 1);
+    return Math.min(1, Math.max(0, ys));
+  };
+
+  let tg = '';
+  for (const yt of [0, 0.25, 0.5, 0.75, 1.0]) {
+    const py = ty(yt);
+    tg += `<line x1="${TP.l}" y1="${py.toFixed(1)}" x2="${TW - TP.r}" y2="${py.toFixed(1)}" stroke="#22284e"/>`;
+    tg += `<text x="${TP.l - 6}" y="${(py + 3.5).toFixed(1)}" text-anchor="end" fill="#8d96b8" font-family="var(--font-mono)" font-size="9.5">${yt.toFixed(2)}</text>`;
+  }
+  for (let i = 0; i <= 4; i++) {
+    const n = (maxN * i) / 4;
+    const px = tx(n);
+    tg += `<line x1="${px.toFixed(1)}" y1="${TP.t}" x2="${px.toFixed(1)}" y2="${TH - TP.b}" stroke="#1c2244"/>`;
+    tg += `<text x="${px.toFixed(1)}" y="${TH - TP.b + 15}" text-anchor="middle" fill="#8d96b8" font-family="var(--font-mono)" font-size="9.5">${Math.round(n)}</text>`;
+  }
+  const clipPts = [], tmPts = [];
+  for (let i = 0; i <= 120; i++) {
+    const n = (maxN * i) / 120;
+    clipPts.push(`${tx(n).toFixed(1)},${ty(srgbEnc(n / white)).toFixed(1)}`);
+    tmPts.push(`${tx(n).toFixed(1)},${ty(bt2446a(n)).toFixed(1)}`);
+  }
+  tg += `<polyline fill="none" stroke="#ff8c5a" stroke-dasharray="5 4" stroke-width="2" points="${clipPts.join(' ')}"/>`;
+  tg += `<polyline fill="none" stroke="#35d893" stroke-width="2.6" points="${tmPts.join(' ')}"/>`;
+  tg += `<text x="${TW - TP.r - 4}" y="${TP.t + 14}" text-anchor="end" fill="#35d893" font-family="var(--font-mono)" font-size="10">BT.2446A (rolls highlights)</text>`;
+  tg += `<text x="${TW - TP.r - 4}" y="${TP.t + 28}" text-anchor="end" fill="#ff8c5a" font-family="var(--font-mono)" font-size="10">Naive clip at DiffuseWhite (${white} nit)</text>`;
+  $('svg-tm').innerHTML = tg;
+}
+
+['sl-white','sl-cll','sl-fall','sl-sdrp'].forEach(id => $(id).addEventListener('input', drawHdr));
+
+// 03: CICP inspector
+const CICP_INFO = {
+  SRGB: 'Primaries 1 (BT.709), Transfer 13 (sRGB), Matrix 0 (Identity/RGB), Full range. Direct match for RGB/RGBA buffers; no CMS required.',
+  DISPLAY_P3: 'Primaries 12 (Display P3), Transfer 13 (sRGB), Matrix 0 (Identity/RGB), Full range. Wide-gamut Apple/web standard; built-in 3×3 matrix.',
+  LINEAR_SRGB: 'Primaries 1 (BT.709), Transfer 8 (Linear), Matrix 0 (Identity/RGB), Full range. Working linear light.',
+  BT709_RGB: 'Primaries 1 (BT.709), Transfer 1 (BT.709), Matrix 0 (Identity/RGB), Full range. HD video RGB.',
+  BT2100_PQ_RGB: 'Primaries 9 (BT.2020), Transfer 16 (PQ / ST 2084), Matrix 0 (Identity/RGB), Full range. Maps directly via Cicp::try_to_descriptor().',
+  BT2100_PQ: 'Primaries 9 (BT.2020), Transfer 16 (PQ), Matrix 9 (BT.2020 YCbCr!), Full range. Non-zero MC=9 refuses direct RGB projection (NonIdentityMatrix(9)) until YCbCr→RGB reconstruction runs!',
+  BT2100_HLG_RGB: 'Primaries 9 (BT.2020), Transfer 18 (HLG / ARIB STD-B67), Matrix 0 (Identity/RGB), Full range. Scene-referred until HlgRendering is supplied.',
+};
+function updateCicp() { $('cicp-detail').textContent = CICP_INFO[$('cicp-preset').value]; }
+$('cicp-preset').addEventListener('change', updateCicp);
+
+// 04: Live Rust scenarios
+const HDR_SCENARIOS = {
+  p3_soft: `use zenpixels_convert::{
+    Accelerators, ColorPrimaries, ConversionSpec, ConvertOptions, ConvertPlan,
+    DepthPolicy, GamutPolicy, PixelBuffer, PixelDescriptor,
+};
+
+let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
+let src = PixelBuffer::from_vec(vec![0, 255, 128], 1, 1, p3)?;
+let mut dst = PixelBuffer::try_new(1, 1, PixelDescriptor::RGB8_SRGB)?;
+
+// SoftCompress compresses out-of-sRGB chroma smoothly in OKLch instead of hard-clipping:
+let opts = ConvertOptions::retain_channels()
+    .with_depth_policy(DepthPolicy::Round)
+    .with_gamut_policy(GamutPolicy::SoftCompress);
+let spec = ConversionSpec::new(opts).with_accelerators(&Accelerators::ALL);
+ConvertPlan::build(src.encoding(), dst.encoding(), &spec)?
+    .prepare(src.width())?
+    .convert(&src, &mut dst)?;`,
+
+  p3_oklab: `use zenpixels_convert::{
+    ColorPrimaries, ConversionSpec, ConvertOptions, ConvertPlan, DepthPolicy,
+    PixelBuffer, PixelDescriptor,
+};
+
+let p3 = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
+let src = PixelBuffer::from_vec(vec![0, 255, 128], 1, 1, p3)?;
+let mut lab = PixelBuffer::try_new(1, 1, PixelDescriptor::OKLABF32)?;
+let mut back = PixelBuffer::try_new(1, 1, p3)?;
+
+// Oklab is CIE XYZ D65-anchored: P3 -> OKLABF32 -> P3 uses P3's RGB<->LMS matrix directly (bit-exact):
+let opts = ConvertOptions::retain_channels().with_depth_policy(DepthPolicy::Round);
+let spec = ConversionSpec::new(opts);
+ConvertPlan::build(src.encoding(), lab.encoding(), &spec)?.prepare(1)?.convert(&src, &mut lab)?;
+ConvertPlan::build(lab.encoding(), back.encoding(), &spec)?.prepare(1)?.convert(&lab, &mut back)?;
+assert_eq!(back.as_slice().row(0), &[0, 255, 128]);`,
+
+  lin_pq: `use zenpixels_convert::hdr::DiffuseWhite;
+use zenpixels_convert::{
+    ColorPrimaries, ConversionSpec, ConvertOptions, ConvertPlan, DepthPolicy,
+    PixelBuffer, PixelDescriptor,
+};
+
+let lin_2020 = PixelDescriptor::RGBF32_LINEAR.with_primaries(ColorPrimaries::Bt2020);
+let src = PixelBuffer::try_new(4, 1, lin_2020)?;
+let mut dst = PixelBuffer::try_new(4, 1, PixelDescriptor::RGB16_BT2100_PQ)?;
+
+// Explicit DiffuseWhite anchor defines what linear 1.0 means in absolute PQ nits (BT.2408 = 203):
+let opts = ConvertOptions::retain_channels()
+    .with_depth_policy(DepthPolicy::Round)
+    .with_sdr_white(DiffuseWhite::BT2408);
+ConvertPlan::build(src.encoding(), dst.encoding(), &ConversionSpec::new(opts))?
+    .prepare(src.width())?
+    .convert(&src, &mut dst)?;`,
+
+  pq_sdr: `// Requires Cargo feature: zenpixels-convert = { version = "0.4.0", features = ["bt2446a"] }
+use zenpixels_convert::hdr::{DiffuseWhite, HdrPeak, Nits};
+use zenpixels_convert::{
+    ConversionSpec, ConvertOptions, ConvertPlan, DepthPolicy, PixelBuffer, PixelDescriptor,
+};
+
+let src = PixelBuffer::try_new(4, 1, PixelDescriptor::RGB16_BT2100_PQ)?;
+let mut dst = PixelBuffer::try_new(4, 1, PixelDescriptor::RGB8_SRGB)?;
+
+let opts = ConvertOptions::retain_channels()
+    .with_depth_policy(DepthPolicy::Round)
+    .with_sdr_white(DiffuseWhite::BT2408)
+    .with_hdr_peak(HdrPeak::Nits(Nits::new(1000.0)))
+    .with_sdr_peak(Nits::new(100.0));
+ConvertPlan::build(src.encoding(), dst.encoding(), &ConversionSpec::fast(opts))?
+    .prepare(src.width())?
+    .convert(&src, &mut dst)?;`,
+
+  hlg_sdr: `// Requires Cargo feature: zenpixels-convert = { version = "0.4.0", features = ["bt2446a"] }
+use zenpixels_convert::hdr::{DiffuseWhite, HdrPeak, HlgRendering, Nits};
+use zenpixels_convert::{
+    ConversionSpec, ConvertOptions, ConvertPlan, DepthPolicy, PixelBuffer, PixelDescriptor,
+};
+
+let src = PixelBuffer::try_new(4, 1, PixelDescriptor::RGB16_BT2100_HLG)?;
+let mut dst = PixelBuffer::try_new(4, 1, PixelDescriptor::RGB8_SRGB)?;
+
+// HlgRendering sets display OOTF (Lw, Lb, gamma); HdrPeak separately sets content peak for BT.2446A:
+let opts = ConvertOptions::retain_channels()
+    .with_depth_policy(DepthPolicy::Round)
+    .with_hlg_rendering(HlgRendering::REFERENCE_1000_NIT)
+    .with_sdr_white(DiffuseWhite::BT2408)
+    .with_hdr_peak(HdrPeak::Nits(Nits::new(1000.0)))
+    .with_sdr_peak(Nits::new(100.0));
+ConvertPlan::build(src.encoding(), dst.encoding(), &ConversionSpec::fast(opts))?
+    .prepare(src.width())?
+    .convert(&src, &mut dst)?;`,
+
+  output_plan: `use zenpixels_convert::{
+    Cicp, ConversionSpec, EncodeReady, OutputPlan, OutputProfile, OutputTarget,
+    PixelBuffer, PixelDescriptor, PixelFormat,
+};
+
+let src = PixelBuffer::from_vec(vec![64, 128, 192], 1, 1, PixelDescriptor::RGB8_SRGB)?;
+let target = OutputTarget::new(OutputProfile::Named(Cicp::SRGB), PixelFormat::Rgb16);
+let plan = OutputPlan::build(src.encoding(), target, &ConversionSpec::preserve_samples())?;
+let ready = EncodeReady::from_owned(src, plan)?;
+
+// Pixels and metadata are guaranteed to match atomically:
+assert_eq!(ready.pixels().descriptor().pixel_format(), PixelFormat::Rgb16);
+assert_eq!(ready.metadata().cicp, Some(Cicp::SRGB));`,
+};
+
+function updateHdrCode() { $('hdr-rust-code').textContent = HDR_SCENARIOS[$('hdr-scenario').value]; }
+$('hdr-scenario').addEventListener('change', updateHdrCode);
+$('copy-hdr-code').addEventListener('click', () => {
+  navigator.clipboard?.writeText($('hdr-rust-code').textContent);
+  $('copy-hdr-code').textContent = 'Copied';
+  setTimeout(() => { $('copy-hdr-code').textContent = 'Copy Rust'; }, 1200);
+});
+
+window.HDR_SCENARIOS = HDR_SCENARIOS;
+renderPresets();
+drawCie();
+drawHdr();
+updateCicp();
+updateHdrCode();
+</script>
+</body>
+</html>

@@ -44,10 +44,6 @@ if (!url) throw new Error('Pass the served site URL');
     await select('format', 'RgbaI16'); await select('alphamode', 'Opaque');
     assert.match(await page.locator('#code').innerText(), /with_alpha\(Some\(AlphaMode::Opaque\)\)/);
     rustExamples.push(await page.locator('#code').innerText());
-    if (process.env.EXPLORER_RUST_EXAMPLES) {
-      fs.writeFileSync(process.env.EXPLORER_RUST_EXAMPLES,
-        rustExamples.map((s, i) => `## Explorer example ${i}\n\n\`\`\`rust\n# fn main() -> Result<(), Box<dyn std::error::Error>> {\n${s}\n# Ok(())\n# }\n\`\`\`\n`).join('\n'));
-    }
     // Exercise every source/destination route through the actual WASM boundary.
     const matrix = await page.evaluate(() => {
       const counts = { converted: 0, refused: 0 };
@@ -143,8 +139,11 @@ if (!url) throw new Error('Pass the served site URL');
     const build = await page.request.get(new URL('build-info.json', url.endsWith('/') ? url : url + '/').href);
     assert.match((await build.json()).revision, /^[a-f0-9]{40}$/);
     // Every linked teaching page must be readable without document overflow.
-    for (const teachingPath of ['guide.html', 'speed-and-size.html', 'eli5.html', 'color-explorer/', 'review.html', 'format_browser.html']) {
+    const extraRustExamples = [];
+    for (const teachingPath of ['guide.html', 'speed-and-size.html', 'eli5.html', 'transfers.html', 'color-hdr.html', 'kernels.html', 'color-explorer/', 'review.html', 'format_browser.html']) {
       const teaching = await browser.newPage();
+      const pageErrors = [];
+      teaching.on('pageerror', e => pageErrors.push(e.message));
       await teaching.goto(new URL(teachingPath, url.endsWith('/') ? url : url + '/').href);
       if (teachingPath === 'guide.html') {
         assert.match(await teaching.locator('body').innerText(), /Borrow the part you need/);
@@ -159,6 +158,57 @@ if (!url) throw new Error('Pass the served site URL');
         assert.match(await teaching.locator('body').innerText(), /Plain-English Mental Model/);
         assert.match(await teaching.locator('body').innerText(), /FloatFacts/);
       }
+      if (teachingPath === 'transfers.html') {
+        assert((await teaching.locator('#svg-eotf polyline').count()) >= 5, 'transfers.html EOTF polylines missing');
+        assert((await teaching.locator('#svg-density polyline').count()) >= 5, 'transfers.html density polylines missing');
+        for (const mode of ['hdr', 'ext', 'sdr']) {
+          await teaching.locator(`.mode-btn[data-mode="${mode}"]`).click();
+          const minCurves = mode === 'ext' ? 3 : 6;
+          assert((await teaching.locator('#svg-eotf polyline').count()) >= minCurves, `transfers.html mode=${mode}`);
+        }
+        const combos = [
+          { sf: 'RGB8', stf: 'Srgb', sp: 'Bt709', df: 'RGBF32', dtf: 'Linear', dp: 'Bt709', gp: 'Clip', dpol: 'Round', ap: 'web_sdr' },
+          { sf: 'RGB8', stf: 'Srgb', sp: 'DisplayP3', df: 'OKLABF32', dtf: 'Linear', dp: 'Bt709', gp: 'Clip', dpol: 'Round', ap: 'custom' },
+          { sf: 'RGBF32', stf: 'Linear', sp: 'Bt2020', df: 'RGB16', dtf: 'Pq', dp: 'Bt2020', gp: 'Clip', dpol: 'Round', ap: 'default' },
+          { sf: 'RGB16', stf: 'Pq', sp: 'Bt2020', df: 'RGB8', dtf: 'Srgb', dp: 'Bt709', gp: 'Clip', dpol: 'Round', ap: 'all' },
+          { sf: 'RGB16', stf: 'Hlg', sp: 'Bt2020', df: 'RGB8', dtf: 'Srgb', dp: 'Bt709', gp: 'Clip', dpol: 'Round', ap: 'enable_all' },
+          { sf: 'RGBA8', stf: 'Gamma22', sp: 'AdobeRgb', df: 'RGB8', dtf: 'Srgb', dp: 'Bt709', gp: 'SoftCompress', dpol: 'Truncate', ap: 'web_sdr' },
+        ];
+        for (const c of combos) {
+          await teaching.selectOption('#src-fmt', c.sf);
+          if (c.sf !== 'OKLABF32') { await teaching.selectOption('#src-tf', c.stf); await teaching.selectOption('#src-prim', c.sp); }
+          await teaching.selectOption('#dst-fmt', c.df);
+          if (c.df !== 'OKLABF32') { await teaching.selectOption('#dst-tf', c.dtf); await teaching.selectOption('#dst-prim', c.dp); }
+          await teaching.selectOption('#gamut-pol', c.gp);
+          await teaching.selectOption('#depth-pol', c.dpol);
+          await teaching.selectOption('#accel-pol', c.ap);
+          extraRustExamples.push(await teaching.evaluate(() => window.getTransferRustCode()));
+        }
+      }
+      if (teachingPath === 'color-hdr.html') {
+        assert((await teaching.locator('#svg-cie polygon').count()) >= 5, 'color-hdr.html CIE polygons missing');
+        assert((await teaching.locator('#svg-ruler rect').count()) >= 1, 'color-hdr.html HDR ruler missing');
+        assert((await teaching.locator('#svg-tm polyline').count()) >= 2, 'color-hdr.html BT.2446A curve missing');
+        await teaching.locator('.diag-btn[data-proj="uv"]').click();
+        assert((await teaching.locator('#svg-cie polygon').count()) >= 5);
+        await teaching.selectOption('#cicp-preset', 'BT2100_PQ');
+        assert.match(await teaching.locator('#cicp-detail').innerText(), /NonIdentityMatrix/);
+        const scenarios = await teaching.evaluate(() => Object.values(window.HDR_SCENARIOS));
+        assert(scenarios.length >= 6);
+        extraRustExamples.push(...scenarios);
+      }
+      if (teachingPath === 'kernels.html') {
+        const allCount = await teaching.locator('#klist details.kitem').count();
+        assert(allCount >= 150, `kernels.html expected >=150 extracted kernels, got ${allCount}`);
+        await teaching.locator('.pbtn[data-preset="WEB_SDR"]').click();
+        const webCount = await teaching.locator('#klist details.kitem').count();
+        assert(webCount > 10 && webCount < allCount, `WEB_SDR filter expected 10 < ${webCount} < ${allCount}`);
+        await teaching.locator('.pbtn[data-preset="SCALAR"]').click();
+        const scalarCount = await teaching.locator('#klist details.kitem').count();
+        assert(scalarCount >= 1 && scalarCount < webCount, `SCALAR filter expected 1 <= ${scalarCount} < ${webCount}`);
+        await teaching.locator('.pbtn[data-preset="any"]').click();
+      }
+      assert.deepEqual(pageErrors, [], teachingPath + ' page errors: ' + pageErrors.join('; '));
       for (const width of [320, 390, 768, 1440]) {
         await teaching.setViewportSize({ width, height: 900 });
         const extent = await teaching.evaluate(() => ({page: document.documentElement.scrollWidth, viewport: innerWidth}));
@@ -174,6 +224,11 @@ if (!url) throw new Error('Pass the served site URL');
         await teaching.screenshot({ path: path.join(screenshots, 'guide-crop.png') });
       }
       await teaching.close();
+    }
+    if (process.env.EXPLORER_RUST_EXAMPLES) {
+      const allExamples = [...rustExamples, ...extraRustExamples];
+      fs.writeFileSync(process.env.EXPLORER_RUST_EXAMPLES,
+        allExamples.map((s, i) => `## Explorer example ${i}\n\n\`\`\`rust\n# fn main() -> Result<(), Box<dyn std::error::Error>> {\n${s}\n# Ok(())\n# }\n\`\`\`\n`).join('\n'));
     }
     // Offline/asset-free operation remains functional.
     await page.route('**/wasm/**', route => route.fulfill({ status: 404, body: '' }));

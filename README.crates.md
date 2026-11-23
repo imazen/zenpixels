@@ -8,6 +8,9 @@ meaning together.
 **New here? Pick your entry point:**
 
 - **[Pixel types guide](https://imazen.github.io/zenpixels/guide.html)** — own an image, borrow a cropped subimage, and convert pixels in 5 minutes.
+- **[Transfer functions & live Rust codegen](https://imazen.github.io/zenpixels/transfers.html)** — interactive EOTF/OETF & bit-allocation charts for sRGB, BT.709, Gamma 2.2, PQ, and HLG with live code samples.
+- **[Primaries, HDR headroom, CLL & CICP vs ICC](https://imazen.github.io/zenpixels/color-hdr.html)** — CIE `xy`/`u'v'` gamut renderings, `DiffuseWhite`/`MaxCLL`/`ST.2086`/BT.2446A charts, signaling range, and CICP vs ICC.
+- **[Conversion kernel browser](https://imazen.github.io/zenpixels/kernels.html)** — browse all 181 live-extracted steps & SIMD kernels and see what each `const Accelerators` preset links.
 - **[Balance speed and light compilation](https://imazen.github.io/zenpixels/speed-and-size.html)** — keep library and Wasm builds light with the universal scalar core, then opt into SIMD with `accel` and `const Accelerators`.
 - **[Plain-English ELI5 mental model](https://imazen.github.io/zenpixels/eli5.html)** — how `garb`, `linear-srgb`, `zenpixels`, and `zenpixels-convert` fit together, plus real-world gotchas.
 - **[Interactive byte explorer](https://imazen.github.io/zenpixels/)** — inspect bytes, strides, and live conversion plans in your browser.
@@ -34,10 +37,10 @@ assert_eq!(right_column.row(0), &[0, 255, 0]);      // Only the cropped pixel.
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-No pixels are copied when you borrow or crop. Take crops directly from the
-buffer (`image.crop_view(...)`) or bind `let view = image.as_slice();` first
-(`slice.crop_view(...)` borrows the slice, not the buffer). For a fresh
-zero-filled image, use `PixelBuffer::try_new(width, height, descriptor)`.
+No pixels are copied when you borrow or crop. Both `image.crop_view(...)` and
+chained `image.as_slice().crop_view(...)` / `sub_rows(...)` keep the underlying
+buffer's `'a` lifetime. For a fresh zero-filled image, use
+`PixelBuffer::try_new(width, height, descriptor)`.
 
 ## Two crates
 
@@ -45,8 +48,7 @@ zero-filled image, use `PixelBuffer::try_new(width, height, descriptor)`.
 # Storage, views and descriptions (lightweight — use in codecs and libraries)
 zenpixels = "0.4.0"
 
-# Conversion; re-exports zenpixels::* (apps usually depend on this one crate;
-# also add `zenpixels` directly if you import `zenpixels::hdr::*` anchor types)
+# Conversion; re-exports zenpixels::* (including zenpixels_convert::hdr::*)
 zenpixels-convert = "0.4.0"
 ```
 
@@ -169,7 +171,7 @@ allocation on identity).
   `const Accelerators` helpers) so codecs stay light without losing SIMD speed.
 - **Explicit HDR & ICC:** Arbitrary ICC transforms require `.with_cms(&MoxCms)` /
   `.with_cms(&Lcms)`. HDR→SDR tone mapping requires explicit anchors
-  (`zenpixels::hdr::{Nits, DiffuseWhite, HdrPeak, HlgRendering}`) and
+  (`zenpixels_convert::hdr::{Nits, DiffuseWhite, HdrPeak, HlgRendering}`) and
   `features = ["bt2446a"]`.
 - **Perceptual formats:** Cylindrical/perceptual spaces (`Oklch`, `Lch`, `Jzazbz`,
   `Jzczhz`, `Hsl`, `Hsv`) are now behind the opt-in `perceptual` feature.

@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transfer Functions &amp; Live Conversion Code · zenpixels</title>
+<meta name="description" content="Interactive EOTF/OETF transfer function charts, perceptual bit-allocation curves, plain-English explanations for sRGB, BT.709, Gamma 2.2, PQ, and HLG, and a live Rust zenpixels-convert code generator.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Martian+Mono:wght@400;600&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --night: #0d1020; --night-2: #131733; --panel: #181d3a; --line: #2b3260;
+  --text: #eef0f8; --muted: #a9b1cf; --gold: #f6c85f; --gold-ink: #1a1405;
+  --c-lin: #9ba5c9; --c-srgb: #f6c85f; --c-709: #35d893; --c-g22: #ff8c5a;
+  --c-pq: #ff5a9c; --c-hlg: #5b8dff; --c-hlgd: #c27bff;
+  --font-display: "Unbounded", "Arial Black", system-ui, sans-serif;
+  --font-body: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Martian Mono", ui-monospace, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--night); color: var(--text); font: 16px/1.6 var(--font-body); }
+body {
+  background:
+    radial-gradient(1000px 520px at 90% -10%, rgba(91,141,255,.15), transparent 70%),
+    radial-gradient(900px 480px at -10% 20%, rgba(246,200,95,.10), transparent 70%),
+    var(--night);
+}
+.wrap { max-width: 1240px; margin: 0 auto; padding: 0 28px 64px; }
+@media (max-width: 700px) { .wrap { padding: 0 16px 48px; } }
+.site-nav { display: flex; flex-wrap: wrap; gap: 10px 20px; padding: 22px 0 8px; font-size: .88rem; }
+a { color: var(--gold); text-underline-offset: 3px; }
+a:hover { color: #fff; }
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; border-radius: 4px; }
+h1, h2, h3 { font-family: var(--font-display); margin: 0; text-wrap: balance; letter-spacing: -.015em; }
+.eyebrow { font-family: var(--font-mono); font-size: .74rem; letter-spacing: .14em; text-transform: uppercase; color: var(--gold); margin: 18px 0 10px; }
+h1 { font-size: clamp(1.8rem, 4.4vw, 3.2rem); line-height: 1.08; margin-bottom: 14px; }
+h2 { font-size: clamp(1.25rem, 2.2vw, 1.7rem); }
+h3 { font-size: .98rem; }
+p { margin: 0; max-width: 72ch; }
+.lede { color: var(--muted); font-size: 1.04rem; margin-bottom: 24px; }
+code, pre { font-family: var(--font-mono); font-size: .82rem; }
+p code, li code { color: #add9ff; overflow-wrap: anywhere; }
+.story { display: grid; gap: 22px; }
+.sec { background: color-mix(in srgb, var(--panel) 84%, transparent); border: 1px solid var(--line); border-radius: 20px; padding: 24px; display: grid; gap: 16px; min-width: 0; }
+@media (max-width: 700px) { .sec { padding: 16px; } }
+.sec > *, .grid2 > *, .cards > *, .ctl-row > * { min-width: 0; }
+.sec-head { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: baseline; }
+.num { font-family: var(--font-mono); font-size: .78rem; color: var(--gold); }
+.sub { color: var(--muted); }
+.ctl-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+.field { display: grid; gap: 5px; flex: 1 1 155px; min-width: 0; }
+.field label { font-family: var(--font-mono); font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+select, input[type="number"] { background: var(--night); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; width: 100%; min-width: 0; }
+input[type="range"] { width: 100%; accent-color: var(--gold); }
+.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--night); }
+.seg button { font: 500 .82rem var(--font-body); background: transparent; color: var(--text); border: 0; padding: 8px 13px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--gold); color: var(--gold-ink); font-weight: 600; }
+.toggles { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 7px; font: 500 .84rem var(--font-body); padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--night); color: var(--text); cursor: pointer; }
+.chip input { accent-color: var(--gold); margin: 0; }
+.sw { width: 10px; height: 10px; border-radius: 99px; display: inline-block; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+.chartbox { background: var(--night); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: grid; gap: 10px; min-width: 0; }
+.chartbox svg { width: 100%; height: auto; display: block; overflow: visible; touch-action: none; }
+.chart-title { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+.chart-title small { font-family: var(--font-mono); font-size: .72rem; color: var(--muted); }
+.readout { display: flex; flex-wrap: wrap; gap: 8px; font-family: var(--font-mono); font-size: .74rem; padding: 10px 12px; background: var(--night-2); border: 1px solid var(--line); border-radius: 10px; }
+.readout span { padding: 2px 8px; border-radius: 6px; background: var(--night); border-left: 3px solid var(--c, var(--gold)); }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 14px; }
+.card { background: var(--night); border: 1px solid var(--line); border-top: 3px solid var(--c, var(--gold)); border-radius: 14px; padding: 16px; display: grid; gap: 8px; align-content: start; }
+.card .meta { font-family: var(--font-mono); font-size: .72rem; color: var(--muted); }
+.card .formula { font-family: var(--font-mono); font-size: .75rem; background: var(--night-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; overflow-x: auto; color: #c7e2ff; }
+.card p { font-size: .9rem; color: var(--muted); }
+.card b { color: var(--text); }
+.copyrow { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.btn { font: 600 .82rem var(--font-body); border: 1px solid var(--gold); color: var(--gold); background: transparent; padding: 7px 14px; border-radius: 999px; cursor: pointer; }
+.btn:hover { background: var(--gold); color: var(--gold-ink); }
+pre { margin: 0; padding: 16px; background: var(--night); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; line-height: 1.58; max-width: 100%; }
+.note { font-size: .86rem; padding: 10px 13px; border-radius: 10px; border-left: 3px solid var(--gold); background: color-mix(in srgb, var(--gold) 10%, var(--night)); color: var(--text); }
+footer { color: var(--muted); font-size: .82rem; padding-top: 26px; display: grid; gap: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="site-nav" aria-label="Documentation">
+  <a href="index.html">Explore bytes</a>
+  <a href="guide.html">Guide</a>
+  <a href="transfers.html" aria-current="page">Transfer functions</a>
+  <a href="color-hdr.html">Primaries, HDR &amp; CICP/ICC</a>
+  <a href="kernels.html">Kernel browser</a>
+  <a href="speed-and-size.html">Speed &amp; light builds</a>
+  <a href="eli5.html">ELI5</a>
+</nav>
+
+<p class="eyebrow">zenpixels · transfer functions &amp; codegen</p>
+<h1>Why pixel codes are curved, not linear</h1>
+<p class="lede">Human eyes see brightness roughly logarithmically: a tiny step near black looks as big as a huge jump near white. Transfer functions bend stored codes to match human vision (and HDR headroom). Hover the charts to inspect exact EOTF/OETF values, compare bit allocation, and generate live <code>zenpixels-convert</code> Rust code below.</p>
+
+<main class="story">
+  <section class="sec" aria-labelledby="h-charts">
+    <div class="sec-head"><span class="num">01</span><h2 id="h-charts">Interactive EOTF, OETF &amp; bit-allocation charts</h2></div>
+    <p class="sub">EOTF turns stored signal into linear light; OETF encodes linear light back into stored signal. Switch between SDR <code>[0, 1]</code>, HDR <code>0–10,000 nits</code> (log Y), and extended range <code>[-0.5, 1.5]</code> to see why wide-gamut floats need <code>GamutPolicy::PreserveExtended</code>.</p>
+
+    <div class="ctl-row">
+      <div class="field" style="flex:0 1 auto">
+        <label id="mode-lbl">Chart domain</label>
+        <div class="seg" role="group" aria-labelledby="mode-lbl">
+          <button type="button" class="mode-btn" data-mode="sdr" aria-pressed="true">SDR [0, 1]</button>
+          <button type="button" class="mode-btn" data-mode="hdr" aria-pressed="false">HDR nits (log Y)</button>
+          <button type="button" class="mode-btn" data-mode="ext" aria-pressed="false">Extended [-0.5, 1.5]</button>
+        </div>
+      </div>
+      <div class="field" style="flex:1 1 170px">
+        <label for="pq-white">PQ SDR white anchor: <b id="pq-white-val">203</b> nits</label>
+        <input type="range" id="pq-white" min="80" max="1000" step="1" value="203">
+      </div>
+      <div class="field" style="flex:1 1 170px">
+        <label for="hlg-gamma">HLG display γ: <b id="hlg-gamma-val">1.20</b> (at 1000 nits)</label>
+        <input type="range" id="hlg-gamma" min="1.0" max="1.5" step="0.05" value="1.2">
+      </div>
+      <div class="field" style="flex:0 1 140px">
+        <label for="probe-x">Probe signal: <b id="probe-x-val">0.50</b></label>
+        <input type="range" id="probe-x" min="0" max="1" step="0.01" value="0.50">
+      </div>
+    </div>
+
+    <div class="toggles" id="curve-toggles" aria-label="Toggle transfer curves"></div>
+
+    <div class="grid2">
+      <div class="chartbox">
+        <div class="chart-title">
+          <h3 id="eotf-title">EOTF: encoded signal → linear light</h3>
+          <small id="eotf-axis">x = signal, y = linear light</small>
+        </div>
+        <svg id="svg-eotf" viewBox="0 0 520 310" role="img" aria-label="Transfer function EOTF curve chart"></svg>
+      </div>
+      <div class="chartbox">
+        <div class="chart-title">
+          <h3 id="density-title">Perceptual bit allocation (stops per code step)</h3>
+          <small id="density-axis">lower = finer dark/midtone steps (less banding)</small>
+        </div>
+        <svg id="svg-density" viewBox="0 0 520 310" role="img" aria-label="Bit allocation stops per code chart"></svg>
+      </div>
+    </div>
+
+    <div class="readout" id="probe-readout" aria-live="polite"></div>
+    <p class="note"><strong>Look at signal = 0.50 (code 128/255):</strong> In <strong>Linear</strong>, 0.50 is 50% light (already bright gray). In <strong>sRGB</strong>, 0.50 is <strong>21.4%</strong> light — spending half of all 8-bit codes on darks below 21%. In <strong>PQ</strong>, 0.50 is <strong>92.2 nits</strong> out of 10,000 (just 0.92% of peak!) — spending over half its codes below SDR white so shadows never band.</p>
+  </section>
+
+  <section class="sec" aria-labelledby="h-explain">
+    <div class="sec-head"><span class="num">02</span><h2 id="h-explain">Every transfer function in zenpixels, explained</h2></div>
+    <p class="sub">Each curve encodes a different physical assumption. Mixing up scene-referred and display-referred curves (or applying sRGB curves to alpha) is the #1 source of washed-out or crushed colors.</p>
+    <div class="cards" id="tf-cards"></div>
+  </section>
+
+  <section class="sec" aria-labelledby="h-codegen">
+    <div class="copyrow">
+      <div class="sec-head"><span class="num">03</span><h2 id="h-codegen">Live Rust conversion code</h2></div>
+      <button type="button" class="btn" id="copy-code">Copy Rust</button>
+    </div>
+    <p class="sub">Pick source, destination, policies, and SIMD accelerator budget. The Rust code updates live using the real <code>zenpixels-convert</code> 0.4 API (including <code>const Accelerators</code> helpers for light builds).</p>
+
+    <div class="ctl-row">
+      <div class="field"><label for="src-fmt">Source format</label>
+        <select id="src-fmt">
+          <option value="RGB8">Rgb8 (u8)</option>
+          <option value="RGBA8">Rgba8 (u8)</option>
+          <option value="RGB16">Rgb16 (u16)</option>
+          <option value="RGBF32">RgbF32 (f32)</option>
+          <option value="RGBAF32">RgbaF32 (f32)</option>
+          <option value="OKLABF32">OklabF32 (f32)</option>
+        </select></div>
+      <div class="field"><label for="src-tf">Source transfer</label>
+        <select id="src-tf">
+          <option value="Srgb" selected>sRGB</option>
+          <option value="Linear">Linear</option>
+          <option value="Bt709">BT.709</option>
+          <option value="Gamma22">Gamma 2.2 (Adobe)</option>
+          <option value="Pq">PQ (HDR10)</option>
+          <option value="Hlg">HLG (BT.2100)</option>
+        </select></div>
+      <div class="field"><label for="src-prim">Source primaries</label>
+        <select id="src-prim">
+          <option value="Bt709" selected>BT.709 / sRGB</option>
+          <option value="DisplayP3">Display P3</option>
+          <option value="AdobeRgb">Adobe RGB</option>
+          <option value="Bt2020">BT.2020</option>
+        </select></div>
+    </div>
+
+    <div class="ctl-row">
+      <div class="field"><label for="dst-fmt">Destination format</label>
+        <select id="dst-fmt">
+          <option value="RGBF32" selected>RgbF32 (f32)</option>
+          <option value="RGBAF32">RgbaF32 (f32)</option>
+          <option value="RGB8">Rgb8 (u8)</option>
+          <option value="RGBA8">Rgba8 (u8)</option>
+          <option value="RGB16">Rgb16 (u16)</option>
+          <option value="OKLABF32">OklabF32 (f32)</option>
+        </select></div>
+      <div class="field"><label for="dst-tf">Destination transfer</label>
+        <select id="dst-tf">
+          <option value="Linear" selected>Linear</option>
+          <option value="Srgb">sRGB</option>
+          <option value="Bt709">BT.709</option>
+          <option value="Gamma22">Gamma 2.2 (Adobe)</option>
+          <option value="Pq">PQ (HDR10)</option>
+          <option value="Hlg">HLG (BT.2100)</option>
+        </select></div>
+      <div class="field"><label for="dst-prim">Destination primaries</label>
+        <select id="dst-prim">
+          <option value="Bt709" selected>BT.709 / sRGB</option>
+          <option value="DisplayP3">Display P3</option>
+          <option value="AdobeRgb">Adobe RGB</option>
+          <option value="Bt2020">BT.2020</option>
+        </select></div>
+    </div>
+
+    <div class="ctl-row">
+      <div class="field"><label for="gamut-pol">Gamut policy</label>
+        <select id="gamut-pol">
+          <option value="Clip" selected>Clip (default)</option>
+          <option value="PreserveExtended">PreserveExtended (unclipped f32)</option>
+          <option value="SoftCompress">SoftCompress (OKLch knee)</option>
+        </select></div>
+      <div class="field"><label for="depth-pol">Depth policy</label>
+        <select id="depth-pol">
+          <option value="Round" selected>Round (nearest)</option>
+          <option value="Truncate">Truncate (floor)</option>
+          <option value="Forbid">Forbid (lossless only)</option>
+        </select></div>
+      <div class="field"><label for="accel-pol">SIMD / light-build budget</label>
+        <select id="accel-pol">
+          <option value="default">Default (universal scalar, smallest)</option>
+          <option value="web_sdr" selected>const Accelerators::WEB_SDR</option>
+          <option value="custom">Custom const (.with_layout().with_srgb())</option>
+          <option value="all">ConversionSpec::fast (full SIMD)</option>
+          <option value="enable_all">accel::enable_all() (process-wide)</option>
+        </select></div>
+    </div>
+
+    <div class="note" id="codegen-note"></div>
+    <pre id="rust-code"></pre>
+  </section>
+</main>
+
+<footer>
+  <p><a href="index.html">Pixel explorer</a> · <a href="guide.html">Guide</a> · <a href="color-hdr.html">Primaries, HDR &amp; CICP/ICC</a> · <a href="kernels.html">Kernel browser</a> · <a href="speed-and-size.html">Speed &amp; light builds</a> · <a href="eli5.html">ELI5</a></p>
+  <p>Transfer curves are computed directly in browser JS using exact IEC 61966-2-1, ITU-R BT.709, Adobe RGB 1998 (563/256), SMPTE ST 2084 (PQ), and ITU-R BT.2100-3 (HLG) formulas. Code samples are compiled and tested against this checkout by <code>scripts/check-guide.py</code>.</p>
+</footer>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+// Exact transfer function math (matching zenpixels-convert & linear-srgb).
+const PQ_M1 = 2610 / 16384;
+const PQ_M2 = 2523 / 32;
+const PQ_C1 = 3424 / 4096;
+const PQ_C2 = 2413 / 128;
+const PQ_C3 = 2392 / 128;
+const HLG_A = 0.17883277;
+const HLG_B = 1 - 4 * HLG_A;
+const HLG_C = 0.5 - HLG_A * Math.log(4 * HLG_A);
+const ADOBE_G = 563 / 256;
+
+const srgbEotf = (v, ext) => {
+  if (!ext) v = Math.min(1, Math.max(0, v));
+  const s = v < 0 ? -1 : 1, a = Math.abs(v);
+  return s * (a <= 0.04045 ? a / 12.92 : Math.pow((a + 0.055) / 1.055, 2.4));
+};
+const bt709Eotf = (v, ext) => {
+  if (!ext) v = Math.min(1, Math.max(0, v));
+  if (v < 0.081) return v / 4.5;
+  return Math.pow((v + 0.099) / 1.099, 1 / 0.45);
+};
+const gamma22Eotf = (v, ext) => {
+  if (!ext) v = Math.min(1, Math.max(0, v));
+  const s = v < 0 ? -1 : 1;
+  return s * Math.pow(Math.abs(v), ADOBE_G);
+};
+const pqEotfNorm = v => {
+  v = Math.min(1, Math.max(0, v));
+  if (v <= 0) return 0;
+  const vp = Math.pow(v, 1 / PQ_M2);
+  return Math.pow(Math.max(0, vp - PQ_C1) / (PQ_C2 - PQ_C3 * vp), 1 / PQ_M1);
+};
+const hlgInvOetf = v => {
+  v = Math.min(1, Math.max(0, v));
+  return v <= 0.5 ? (v * v) / 3 : (Math.exp((v - HLG_C) / HLG_A) + HLG_B) / 12;
+};
+
+const CURVES = [
+  {
+    id: 'linear', name: 'Linear', cicp: 'TC = 8', color: '#9ba5c9', on: true,
+    eotf: (v, st) => st.mode === 'hdr' ? Math.max(0, v) * st.pqWhite : (st.mode === 'ext' ? v : Math.min(1, Math.max(0, v))),
+    formula: 'L = v',
+    role: 'Working space for math (resizing, blending, gamut matrices, Oklab)',
+    depth: 'F32 / F16 / U16 (never U8 — severe dark banding!)',
+    note: 'Light values are proportional to photon count. Always linearize before resizing, alpha compositing, or applying a 3×3 gamut matrix.'
+  },
+  {
+    id: 'srgb', name: 'sRGB', cicp: 'TC = 13', color: '#f6c85f', on: true,
+    eotf: (v, st) => {
+      const l = srgbEotf(v, st.mode === 'ext');
+      return st.mode === 'hdr' ? Math.max(0, l) * st.pqWhite : l;
+    },
+    formula: 'v ≤ 0.04045 ? v/12.92 : ((v + 0.055)/1.055)^2.4',
+    role: 'Web, PNG, JPEG, WebP, CSS default SDR',
+    depth: 'U8, U16, F32 (extended F32 reflects through 0)',
+    note: 'Linear toe avoids infinite slope at black. Uses 256-entry LUT for U8→F32 and C0-continuous SIMD polynomial for F32 in linear-srgb.'
+  },
+  {
+    id: 'bt709', name: 'BT.709', cicp: 'TC = 1', color: '#35d893', on: true,
+    eotf: (v, st) => {
+      const l = bt709Eotf(v, st.mode === 'ext');
+      return st.mode === 'hdr' ? Math.max(0, l) * st.pqWhite : l;
+    },
+    formula: 'v < 0.081 ? v/4.5 : ((v + 0.099)/1.099)^(1/0.45)',
+    role: 'HD broadcast video (Rec. 709 / Rec. 601 / Rec. 2020 SDR)',
+    depth: 'U8, U10/U12 (in U16), F32',
+    note: 'Camera OETF (effective ~1/0.45 = 2.222 power with 4.5× toe). Slightly darker midtones than sRGB if decoded with the wrong curve.'
+  },
+  {
+    id: 'gamma22', name: 'Gamma 2.2 (Adobe)', cicp: 'TC = 4 (approx)', color: '#ff8c5a', on: false,
+    eotf: (v, st) => {
+      const l = gamma22Eotf(v, st.mode === 'ext');
+      return st.mode === 'hdr' ? Math.max(0, l) * st.pqWhite : l;
+    },
+    formula: 'sign(v) · |v|^(563/256)   (563/256 ≈ 2.19921875)',
+    role: 'Adobe RGB (1998) wide-gamut photography',
+    depth: 'U16 / F32 (U8 works for delivery)',
+    note: 'Pure power curve with no linear toe. Out-of-place magemath Powf with compile-time const_exponent hits 14.8–22.9 GiB/s at 4K.'
+  },
+  {
+    id: 'pq', name: 'PQ (ST 2084)', cicp: 'TC = 16', color: '#ff5a9c', on: true,
+    eotf: (v, st) => {
+      const nits = pqEotfNorm(v) * 10000;
+      return st.mode === 'hdr' ? nits : nits / st.pqWhite;
+    },
+    formula: 'Y = 10000 · (max(v^(1/m2) − c1, 0) / (c2 − c3·v^(1/m2)))^(1/m1)',
+    role: 'HDR10, Dolby Vision, AVIF/JXL/PNG HDR (absolute display light)',
+    depth: 'U10 / U12 / U16 / F32 (never U8)',
+    note: 'Absolute cd/m² up to 10,000 nits. Converting between PQ and SDR linear ALWAYS needs an explicit DiffuseWhite anchor (e.g. 203 nits) so linear 1.0 has a known brightness.'
+  },
+  {
+    id: 'hlg', name: 'HLG (scene OETF)', cicp: 'TC = 18', color: '#5b8dff', on: true,
+    eotf: (v, st) => {
+      const s = hlgInvOetf(v);
+      return st.mode === 'hdr' ? s * 1000 : s;
+    },
+    formula: 'v ≤ 0.5 ? v²/3 : (exp((v − c)/a) + b)/12',
+    role: 'Broadcast HDR (BBC/NHK, iPhone Dolby Vision HLG base)',
+    depth: 'U10 / U16 / F32',
+    note: 'Scene-referred [0, 1] relative light — lower half is gamma 2.0 (SDR backward-compatible), upper half is logarithmic highlight headroom.'
+  },
+  {
+    id: 'hlg_disp', name: 'HLG Display (OOTF)', cicp: 'TC = 18 + BT.2100-3', color: '#c27bff', on: true,
+    eotf: (v, st) => {
+      const s = hlgInvOetf(v);
+      const disp = Math.pow(Math.max(1e-12, s), st.hlgGamma);
+      return st.mode === 'hdr' ? disp * 1000 : (disp * 1000) / st.pqWhite;
+    },
+    formula: 'Y_display = Lw · Y_scene^(γ − 1) · RGB_scene   (γ ≈ 1.2 @ 1000 nits)',
+    role: 'Rendered display light for compositing or HDR→SDR tone mapping',
+    depth: 'F32 linear',
+    note: 'Turning HLG into display light requires explicit HlgRendering (peak Lw, black Lb, system gamma γ) — zenpixels never invents a monitor behind your back.'
+  },
+];
+
+const state = { mode: 'sdr', pqWhite: 203, hlgGamma: 1.2, probeX: 0.50 };
+
+function renderCards() {
+  $('tf-cards').innerHTML = CURVES.map(c => `
+    <article class="card" style="--c:${c.color}">
+      <div class="copyrow"><h3>${c.name}</h3><span class="meta">${c.cicp}</span></div>
+      <div class="formula">${c.formula}</div>
+      <p><b>Used for:</b> ${c.role}</p>
+      <p><b>Bit depth:</b> ${c.depth}</p>
+      <p>${c.note}</p>
+    </article>`).join('');
+}
+
+function renderToggles() {
+  $('curve-toggles').innerHTML = CURVES.map(c => `
+    <label class="chip">
+      <input type="checkbox" data-curve="${c.id}" ${c.on ? 'checked' : ''}>
+      <span class="sw" style="background:${c.color}"></span>${c.name}
+    </label>`).join('');
+  $('curve-toggles').querySelectorAll('input').forEach(inp => {
+    inp.addEventListener('change', () => {
+      CURVES.find(c => c.id === inp.dataset.curve).on = inp.checked;
+      drawCharts();
+    });
+  });
+}
+
+function drawCharts() {
+  const W = 520, H = 310, P = { l: 54, r: 18, t: 18, b: 36 };
+  const iw = W - P.l - P.r, ih = H - P.t - P.b;
+  const xMin = state.mode === 'ext' ? -0.5 : 0;
+  const xMax = state.mode === 'ext' ? 1.5 : 1.0;
+  const toX = x => P.l + ((x - xMin) / (xMax - xMin)) * iw;
+
+  let toY, yTicks, yFmt;
+  if (state.mode === 'hdr') {
+    const logMin = -2, logMax = 4; // 0.01 to 10,000 nits
+    toY = y => {
+      const ly = Math.log10(Math.max(0.01, Math.min(10000, y)));
+      return P.t + ih * (1 - (ly - logMin) / (logMax - logMin));
+    };
+    yTicks = [0.01, 0.1, 1, 10, 100, 203, 1000, 10000];
+    yFmt = v => v >= 1000 ? (v / 1000) + 'k' : String(v);
+    $('eotf-title').textContent = 'EOTF: signal → absolute display luminance (nits)';
+    $('eotf-axis').textContent = 'x = signal [0, 1], y = cd/m² (log10)';
+  } else if (state.mode === 'ext') {
+    const yMin = -0.6, yMax = 2.6;
+    toY = y => P.t + ih * (1 - (Math.max(yMin, Math.min(yMax, y)) - yMin) / (yMax - yMin));
+    yTicks = [-0.5, 0, 0.5, 1.0, 1.5, 2.0, 2.5];
+    yFmt = v => v.toFixed(1);
+    $('eotf-title').textContent = 'Extended-range EOTF: negative & >1.0 floats';
+    $('eotf-axis').textContent = 'x = encoded [-0.5, 1.5], y = linear light';
+  } else {
+    const yMin = 0, yMax = 1.05;
+    toY = y => P.t + ih * (1 - Math.max(0, Math.min(yMax, y)) / yMax);
+    yTicks = [0, 0.25, 0.5, 0.75, 1.0];
+    yFmt = v => v.toFixed(2);
+    $('eotf-title').textContent = 'EOTF: encoded signal → relative linear light';
+    $('eotf-axis').textContent = 'x = signal [0, 1], y = linear (1.0 = SDR white)';
+  }
+
+  const xTicks = state.mode === 'ext' ? [-0.5, 0, 0.5, 1.0, 1.5] : [0, 0.25, 0.5, 0.75, 1.0];
+  let g = '';
+  for (const yt of yTicks) {
+    const py = toY(yt);
+    const isRef = state.mode === 'hdr' && yt === 203;
+    g += `<line x1="${P.l}" y1="${py.toFixed(1)}" x2="${W - P.r}" y2="${py.toFixed(1)}" stroke="${isRef ? '#f6c85f' : '#252c54'}" stroke-dasharray="${isRef ? '4 4' : ''}" stroke-width="1"/>`;
+    g += `<text x="${P.l - 7}" y="${(py + 4).toFixed(1)}" text-anchor="end" fill="${isRef ? '#f6c85f' : '#8d96b8'}" font-family="var(--font-mono)" font-size="10">${yFmt(yt)}</text>`;
+  }
+  for (const xt of xTicks) {
+    const px = toX(xt);
+    g += `<line x1="${px.toFixed(1)}" y1="${P.t}" x2="${px.toFixed(1)}" y2="${H - P.b}" stroke="${xt === 0 || xt === 1 ? '#364072' : '#1e2446'}" stroke-width="1"/>`;
+    g += `<text x="${px.toFixed(1)}" y="${H - P.b + 16}" text-anchor="middle" fill="#8d96b8" font-family="var(--font-mono)" font-size="10">${xt.toFixed(2)}</text>`;
+  }
+  const N = 160;
+  for (const c of CURVES) {
+    if (!c.on) continue;
+    if (state.mode === 'ext' && (c.id === 'pq' || c.id === 'hlg' || c.id === 'hlg_disp')) continue;
+    const pts = [];
+    for (let i = 0; i <= N; i++) {
+      const x = xMin + (i / N) * (xMax - xMin);
+      const y = c.eotf(x, state);
+      pts.push(`${toX(x).toFixed(1)},${toY(y).toFixed(1)}`);
+    }
+    g += `<polyline fill="none" stroke="${c.color}" stroke-width="2.4" points="${pts.join(' ')}"/>`;
+  }
+  // Probe line
+  const pxVal = state.mode === 'ext' ? (xMin + state.probeX * (xMax - xMin)) : state.probeX;
+  const probePx = toX(pxVal);
+  g += `<line x1="${probePx.toFixed(1)}" y1="${P.t}" x2="${probePx.toFixed(1)}" y2="${H - P.b}" stroke="#f6c85f" stroke-dasharray="3 3" stroke-width="1.3"/>`;
+  const readItems = [`<span style="--c:#eef0f8">signal=${pxVal.toFixed(2)} (u8≈${Math.round(Math.max(0, Math.min(1, pxVal)) * 255)}, u10≈${Math.round(Math.max(0, Math.min(1, pxVal)) * 1023)})</span>`];
+  for (const c of CURVES) {
+    if (!c.on) continue;
+    if (state.mode === 'ext' && (c.id === 'pq' || c.id === 'hlg' || c.id === 'hlg_disp')) continue;
+    const y = c.eotf(pxVal, state);
+    g += `<circle cx="${probePx.toFixed(1)}" cy="${toY(y).toFixed(1)}" r="4" fill="${c.color}" stroke="#0d1020" stroke-width="1.5"/>`;
+    const unit = state.mode === 'hdr' ? `${y < 10 ? y.toFixed(2) : y.toFixed(1)} nits` : `${y.toFixed(4)} lin`;
+    readItems.push(`<span style="--c:${c.color}">${c.name}: ${unit}</span>`);
+  }
+  $('svg-eotf').innerHTML = g;
+  $('probe-readout').innerHTML = readItems.join('');
+
+  // Second chart: stops per 8-bit code step (log2(L(v+dv)/L(v))) across signal [0.04, 0.98]
+  const dMin = 0, dMax = 0.25;
+  const toDY = s => P.t + ih * (1 - Math.min(dMax, Math.max(0, s)) / dMax);
+  const toDX = x => P.l + x * iw;
+  let dg = '';
+  for (const yt of [0, 0.05, 0.10, 0.15, 0.20, 0.25]) {
+    const py = toDY(yt);
+    dg += `<line x1="${P.l}" y1="${py.toFixed(1)}" x2="${W - P.r}" y2="${py.toFixed(1)}" stroke="#252c54" stroke-width="1"/>`;
+    dg += `<text x="${P.l - 7}" y="${(py + 4).toFixed(1)}" text-anchor="end" fill="#8d96b8" font-family="var(--font-mono)" font-size="10">${yt.toFixed(2)}</text>`;
+  }
+  // 1% Weber contrast ~ 0.0144 stops reference line
+  const webY = toDY(0.0144);
+  dg += `<line x1="${P.l}" y1="${webY.toFixed(1)}" x2="${W - P.r}" y2="${webY.toFixed(1)}" stroke="#35d893" stroke-dasharray="4 4" stroke-width="1.2"/>`;
+  dg += `<text x="${W - P.r - 4}" y="${(webY - 5).toFixed(1)}" text-anchor="end" fill="#35d893" font-family="var(--font-mono)" font-size="9.5">≈1% JND (banding threshold)</text>`;
+  for (const xt of [0, 0.25, 0.5, 0.75, 1.0]) {
+    const px = toDX(xt);
+    dg += `<line x1="${px.toFixed(1)}" y1="${P.t}" x2="${px.toFixed(1)}" y2="${H - P.b}" stroke="#1e2446" stroke-width="1"/>`;
+    dg += `<text x="${px.toFixed(1)}" y="${H - P.b + 16}" text-anchor="middle" fill="#8d96b8" font-family="var(--font-mono)" font-size="10">${xt.toFixed(2)}</text>`;
+  }
+  const bits = state.mode === 'hdr' ? 10 : 8;
+  const dv = 1 / ((1 << bits) - 1);
+  $('density-title').textContent = `Perceptual step size (stops per ${bits}-bit code)`;
+  $('density-axis').textContent = `lower = smoother gradients (${bits}-bit step = 1/${(1 << bits) - 1})`;
+  for (const c of CURVES) {
+    if (!c.on) continue;
+    const pts = [];
+    for (let i = 3; i <= 140; i++) {
+      const x = (i / 145);
+      const y1 = Math.max(1e-7, c.eotf(x, { ...state, mode: state.mode === 'hdr' ? 'hdr' : 'sdr' }));
+      const y2 = Math.max(1e-7, c.eotf(Math.min(1, x + dv), { ...state, mode: state.mode === 'hdr' ? 'hdr' : 'sdr' }));
+      const stops = Math.max(0, Math.log2(y2 / y1));
+      pts.push(`${toDX(x).toFixed(1)},${toDY(stops).toFixed(1)}`);
+    }
+    dg += `<polyline fill="none" stroke="${c.color}" stroke-width="2.2" points="${pts.join(' ')}"/>`;
+  }
+  $('svg-density').innerHTML = dg;
+}
+
+// Interactive hover/drag on EOTF chart
+$('svg-eotf').addEventListener('pointermove', e => {
+  const r = $('svg-eotf').getBoundingClientRect();
+  const rel = ((e.clientX - r.left) / r.width * 520 - 54) / (520 - 54 - 18);
+  state.probeX = Math.max(0, Math.min(1, rel));
+  $('probe-x').value = state.probeX.toFixed(2);
+  $('probe-x-val').textContent = state.probeX.toFixed(2);
+  drawCharts();
+});
+
+document.querySelectorAll('.mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    state.mode = btn.dataset.mode;
+    document.querySelectorAll('.mode-btn').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+    drawCharts();
+  });
+});
+$('pq-white').addEventListener('input', e => {
+  state.pqWhite = Number(e.target.value);
+  $('pq-white-val').textContent = state.pqWhite;
+  drawCharts();
+});
+$('hlg-gamma').addEventListener('input', e => {
+  state.hlgGamma = Number(e.target.value);
+  $('hlg-gamma-val').textContent = state.hlgGamma.toFixed(2);
+  drawCharts();
+});
+$('probe-x').addEventListener('input', e => {
+  state.probeX = Number(e.target.value);
+  $('probe-x-val').textContent = state.probeX.toFixed(2);
+  drawCharts();
+});
+
+// Live Rust code generator
+function descriptorExpr(fmt, tf, prim) {
+  if (fmt === 'OKLABF32') return 'PixelDescriptor::OKLABF32';
+  const baseMap = {
+    RGB8: 'PixelDescriptor::RGB8_SRGB',
+    RGBA8: 'PixelDescriptor::RGBA8_SRGB',
+    RGB16: 'PixelDescriptor::RGB16_SRGB',
+    RGBF32: 'PixelDescriptor::RGBF32_LINEAR',
+    RGBAF32: 'PixelDescriptor::RGBAF32_LINEAR',
+  };
+  const defTf = fmt.includes('F32') ? 'Linear' : 'Srgb';
+  let expr = baseMap[fmt];
+  if (tf !== defTf) expr += `.with_transfer(TransferFunction::${tf})`;
+  if (prim !== 'Bt709') expr += `.with_primaries(ColorPrimaries::${prim})`;
+  return expr;
+}
+
+function updateCodegen() {
+  const sf = $('src-fmt').value, stf = $('src-tf').value, sp = $('src-prim').value;
+  const df = $('dst-fmt').value, dtf = $('dst-tf').value, dp = $('dst-prim').value;
+  const gp = $('gamut-pol').value, dpol = $('depth-pol').value, ap = $('accel-pol').value;
+
+  const isSrcOklab = sf === 'OKLABF32', isDstOklab = df === 'OKLABF32';
+  $('src-tf').disabled = isSrcOklab; $('src-prim').disabled = isSrcOklab;
+  $('dst-tf').disabled = isDstOklab; $('dst-prim').disabled = isDstOklab;
+
+  const effStf = isSrcOklab ? 'Unknown' : stf;
+  const effDtf = isDstOklab ? 'Unknown' : dtf;
+  const isSrcHdr = effStf === 'Pq' || effStf === 'Hlg';
+  const isDstHdr = effDtf === 'Pq' || effDtf === 'Hlg';
+  const isHdrToSdr = isSrcHdr && !isDstHdr && !isDstOklab && effDtf !== 'Linear';
+  const needsPqWhite = (effStf === 'Pq') !== (effDtf === 'Pq');
+  const needsHlgRender = (effStf === 'Hlg') !== (effDtf === 'Hlg');
+  const dropsAlpha = sf.includes('RGBA') && !df.includes('RGBA');
+
+  const imports = new Set(['ConversionSpec', 'ConvertOptions', 'ConvertPlan', 'PixelBuffer', 'PixelDescriptor']);
+  if ((effStf !== (sf.includes('F32') ? 'Linear' : 'Srgb') && !isSrcOklab) || (effDtf !== (df.includes('F32') ? 'Linear' : 'Srgb') && !isDstOklab)) {
+    imports.add('TransferFunction');
+  }
+  if ((!isSrcOklab && sp !== 'Bt709') || (!isDstOklab && dp !== 'Bt709')) imports.add('ColorPrimaries');
+  if (gp !== 'Clip') imports.add('GamutPolicy');
+  if (dpol !== 'Forbid') imports.add('DepthPolicy');
+  if (dropsAlpha) imports.add('AlphaPolicy');
+  if (ap === 'web_sdr' || ap === 'custom') imports.add('Accelerators');
+  if (ap === 'enable_all') imports.add('accel');
+
+  const hdrImports = new Set();
+  if (needsPqWhite || isHdrToSdr || needsHlgRender) hdrImports.add('DiffuseWhite');
+  if (isHdrToSdr) { hdrImports.add('HdrPeak'); hdrImports.add('Nits'); }
+  if (needsHlgRender) hdrImports.add('HlgRendering');
+
+  const notes = [];
+  if (isSrcOklab || isDstOklab) notes.push('Oklab is CIE XYZ D65-anchored: Display P3 and BT.2020 convert directly through their own RGB↔LMS matrices with zero BT.709 clipping.');
+  if (isHdrToSdr) notes.push('HDR→SDR tone mapping requires enabling features = ["bt2446a"] on zenpixels-convert plus explicit HdrPeak::Nits and sdr_peak.');
+  if (needsHlgRender) notes.push('HLG display rendering requires explicit HlgRendering (display peak is separate from content peak).');
+  if (effStf === 'Pq' && effDtf === 'Hlg' || effStf === 'Hlg' && effDtf === 'Pq') {
+    notes.push('Direct PQ↔HLG is refused unless HLG display rendering converts HLG into display light first.');
+  }
+  if (!notes.length) notes.push('Single-dependency zenpixels-convert 0.4 code — swap the Accelerators line to trade SIMD speed against stripped binary size.');
+  $('codegen-note').textContent = notes.join(' ');
+
+  const lines = [];
+  lines.push(`use zenpixels_convert::{${[...imports].sort().join(', ')}};`);
+  if (hdrImports.size) {
+    lines.push(`use zenpixels_convert::hdr::{${[...hdrImports].sort().join(', ')}};`);
+  }
+  lines.push('');
+  if (ap === 'enable_all') {
+    lines.push('// Call once at application startup for full SIMD everywhere:');
+    lines.push('accel::enable_all();');
+    lines.push('');
+  }
+  if (ap === 'custom') {
+    lines.push('// Compile-time const helper — unused SIMD families dead-strip to 0 B:');
+    lines.push('const MY_SIMD: Accelerators = Accelerators::new().with_layout().with_srgb();');
+    lines.push('');
+  }
+  lines.push(`let src_desc = ${descriptorExpr(sf, stf, sp)};`);
+  lines.push(`let dst_desc = ${descriptorExpr(df, dtf, dp)};`);
+  lines.push('let src = PixelBuffer::try_new(16, 4, src_desc)?;');
+  lines.push('let mut dst = PixelBuffer::try_new(16, 4, dst_desc)?;');
+  lines.push('');
+  const optChain = ['ConvertOptions::retain_channels()'];
+  if (dpol !== 'Forbid') optChain.push(`    .with_depth_policy(DepthPolicy::${dpol})`);
+  if (gp !== 'Clip') optChain.push(`    .with_gamut_policy(GamutPolicy::${gp})`);
+  if (dropsAlpha) optChain.push('    .with_alpha_policy(AlphaPolicy::DiscardUnchecked)');
+  if (needsPqWhite || isHdrToSdr || needsHlgRender) optChain.push('    .with_sdr_white(DiffuseWhite::BT2408)');
+  if (needsHlgRender) optChain.push('    .with_hlg_rendering(HlgRendering::REFERENCE_1000_NIT)');
+  if (isHdrToSdr) {
+    optChain.push('    .with_hdr_peak(HdrPeak::Nits(Nits::new(1000.0)))');
+    optChain.push('    .with_sdr_peak(Nits::new(100.0))');
+  }
+  lines.push(`let opts = ${optChain.join('\n')};`);
+
+  let specExpr;
+  if (ap === 'all') specExpr = 'ConversionSpec::fast(opts)';
+  else if (ap === 'web_sdr') specExpr = 'ConversionSpec::new(opts).with_accelerators(&Accelerators::WEB_SDR)';
+  else if (ap === 'custom') specExpr = 'ConversionSpec::new(opts).with_accelerators(&MY_SIMD)';
+  else specExpr = 'ConversionSpec::new(opts)';
+  lines.push(`let spec = ${specExpr};`);
+  lines.push('');
+  lines.push('let plan = ConvertPlan::build(src.encoding(), dst.encoding(), &spec)?;');
+  lines.push('let mut conv = plan.prepare(src.width())?;');
+  lines.push('conv.convert(&src, &mut dst)?;');
+  $('rust-code').textContent = lines.join('\n');
+}
+
+['src-fmt','src-tf','src-prim','dst-fmt','dst-tf','dst-prim','gamut-pol','depth-pol','accel-pol'].forEach(id => {
+  $(id).addEventListener('change', updateCodegen);
+});
+$('copy-code').addEventListener('click', () => {
+  navigator.clipboard?.writeText($('rust-code').textContent);
+  $('copy-code').textContent = 'Copied';
+  setTimeout(() => { $('copy-code').textContent = 'Copy Rust'; }, 1200);
+});
+
+window.getTransferRustCode = () => $('rust-code').textContent;
+renderCards();
+renderToggles();
+drawCharts();
+updateCodegen();
+</script>
+</body>
+</html>

@@ -12,7 +12,10 @@ the SIMD families your binary actually needs — using one-line startup presets
 or compile-time `const Accelerators` helpers.
 
 New to the core buffer and slice types? Start with the [pixel types guide](guide.md)
-or the [plain-English ELI5 mental model](eli5.md).
+or the [plain-English ELI5 mental model](eli5.md). Curious why `zenpixels-convert`
+has over 100 specialized steps and SIMD kernels? Explore every one in the
+**[live conversion kernel browser](kernels.html)** (plus
+[transfer function charts](transfers.html) and [primaries/HDR](color-hdr.html)).
 
 ## Pick your recipe
 
@@ -140,11 +143,13 @@ crate graph, LLVM never emits or links the SIMD dispatch functions behind it.
 You can also register any `const` set process-wide with
 `accel::enable(THUMBNAIL_SIMD)`.
 
-**What `WEB_SDR` covers:** `Accelerators::WEB_SDR` bundles `with_layout()`,
-`with_srgb()`, `with_float()`, `with_gamut()`, and composed SDR pipelines.
-Because `with_float()` covers `U8`/`U16`/`F16 ↔ F32` float conversions too,
-`WEB_SDR` accelerates those float steps while leaving BT.709, Gamma 2.2, PQ,
-HLG, and Oklab SIMD dead-stripped (they still execute via universal scalar).
+**What `WEB_SDR` covers:** `Accelerators::WEB_SDR` bundles layout, sRGB,
+web-SDR float (`U8 ↔ F32` + `F32` premul), SDR gamut, and composed SDR
+pipelines (`WEB_SDR.has_float()` is `true`). `U16`/`F16` float SIMD, BT.709,
+Gamma 2.2, PQ, HLG, and Oklab SIMD all stay dead-stripped (and still execute
+via the 0-bit-identical universal scalar core). Add `.with_float()` if you also
+want `U16`/`F16 ↔ F32` SIMD, or inspect exact per-preset coverage in the
+[conversion kernel browser](kernels.html).
 
 **Hermetic override:** passing `.with_accelerators(&...)` completely bypasses
 the global registry — so `&Accelerators::SCALAR` always runs universal scalar
@@ -269,6 +274,9 @@ planning, the two lower-level crates in the stack keep builds even smaller:
   out-of-place `*_slice_into` functions that avoid copy+modify overhead.
 
 [Pixel types guide](guide.md) ·
+[Kernel browser](kernels.html) ·
+[Transfer functions](transfers.html) ·
+[Primaries, HDR & CICP/ICC](color-hdr.html) ·
 [Plain-English ELI5](eli5.md) ·
 [Explore one pixel](index.html) ·
 [Converter README](https://github.com/imazen/zenpixels/blob/main/zenpixels-convert/README.md)

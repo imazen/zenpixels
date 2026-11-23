@@ -9,6 +9,9 @@ this one dependency.
 **Start with the guides:**
 
 - **[Pixel types guide](https://imazen.github.io/zenpixels/guide.html)** — own buffers, borrow crops, and convert rows.
+- **[Transfer functions & live Rust codegen](https://imazen.github.io/zenpixels/transfers.html)** — interactive EOTF/OETF & bit-allocation charts with live conversion snippets.
+- **[Primaries, HDR headroom, CLL & CICP vs ICC](https://imazen.github.io/zenpixels/color-hdr.html)** — CIE `xy`/`u'v'` gamut renderings, HDR headroom/BT.2446A charts, signaling range, and CICP vs ICC.
+- **[Conversion kernel browser](https://imazen.github.io/zenpixels/kernels.html)** — inspect all 181 live-extracted steps & SIMD kernels by `const Accelerators` preset.
 - **[Balance speed and light compilation](https://imazen.github.io/zenpixels/speed-and-size.html)** — how `accel` and `const Accelerators` keep builds light while unlocking full SIMD.
 - **[Plain-English ELI5 mental model](https://imazen.github.io/zenpixels/eli5.html)** — core concepts and real-world gotchas.
 - **[Interactive byte explorer](https://imazen.github.io/zenpixels/)** — inspect bytes and run live converter plans in your browser.
@@ -20,11 +23,6 @@ These examples follow the **unpublished 0.4.0 candidate**. The
 
 ```toml
 zenpixels-convert = "0.4.0"
-
-# Also add `zenpixels` directly if you import HDR anchor types
-# (`zenpixels::hdr::{Nits, DiffuseWhite, HdrPeak, HlgRendering}` —
-# `zenpixels_convert::hdr` is a separate module that shadows `zenpixels::hdr`):
-# zenpixels = "0.4.0"
 ```
 
 ## Quick start
@@ -126,11 +124,10 @@ for measured binary sizes, feature budgets, and workload recipes.
 - `ConversionSpec::preserve_samples()` admits proven reversible representation
   changes. Provide source interpretation for unknown transfer or request a
   relabel when you know the actual interpretation.
-- **Wide-gamut Oklab roundtrips:** `PixelDescriptor::OKLABF32` defaults to
-  BT.709 primaries (with `transfer: Unknown`). When roundtripping Display P3 or
-  BT.2020 through Oklab, set matching primaries on the Oklab descriptor
-  (`PixelDescriptor::OKLABF32.with_primaries(ColorPrimaries::DisplayP3)`) so
-  saturated colors stay bit-exact instead of clipping to BT.709.
+- **Wide-gamut Oklab works directly:** `PixelDescriptor::OKLABF32` is
+  CIE XYZ D65-anchored, so roundtripping Display P3 or BT.2020 through
+  `OKLABF32` uses that gamut's own `RGB ↔ LMS` matrix directly — bit-exact
+  with zero BT.709 clipping and no extra `.with_primaries(...)` call.
 - `ConvertPlan::select` returns a candidate index and an executable plan.
   `ConvertPlan::then` preserves the samples and interpretation at a materialized
   boundary, including intermediate quantization.
@@ -179,9 +176,10 @@ its refusal. HLG ICC synthesis remains unsupported.
 
 Explicit HDR rules:
 
-- **Import path:** `Nits`, `DiffuseWhite`, `HdrPeak`, and `HlgRendering` live in
-  `zenpixels::hdr` (depend on `zenpixels` directly; `zenpixels_convert::hdr`
-  shadows that module name).
+- **Import path:** `zenpixels_convert::hdr` re-exports all core HDR anchor
+  types (`Nits`, `DiffuseWhite`, `HdrPeak`, `HlgRendering`,
+  `ContentLightLevel`, `MasteringDisplay`, `St2086Codes`) from
+  `zenpixels::hdr`, so apps only need `zenpixels-convert`.
 - **Feature gate:** Built-in HDR→SDR tone mapping requires
   `features = ["bt2446a"]` (or an injected feature-gated `ToneMapper`); without
   it, explicit HDR→SDR plans fail with `ConvertError::HdrFeatureRequired`.
@@ -233,6 +231,9 @@ Rust 1.89, edition 2024. `no_std + alloc`; unsafe code is forbidden.
 ## See also
 
 [Pixel types guide](https://imazen.github.io/zenpixels/guide.html) ·
+[Transfer functions](https://imazen.github.io/zenpixels/transfers.html) ·
+[Primaries, HDR & CICP/ICC](https://imazen.github.io/zenpixels/color-hdr.html) ·
+[Kernel browser](https://imazen.github.io/zenpixels/kernels.html) ·
 [Speed & light builds](https://imazen.github.io/zenpixels/speed-and-size.html) ·
 [Plain-English ELI5](https://imazen.github.io/zenpixels/eli5.html) ·
 [Core types](https://github.com/imazen/zenpixels) ·

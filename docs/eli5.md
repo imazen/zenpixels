@@ -5,6 +5,9 @@ New to the `zenpixels` 0.4 stack? This page explains how **`garb`**,
 what every type actually means, and the real-world gotchas to avoid on day one.
 
 Looking for copy-paste storage basics? Start with the [pixel types guide](guide.md).
+Want interactive charts? Try [transfer functions & codegen](transfers.html),
+[primaries, HDR & CICP/ICC](color-hdr.html), or the
+[conversion kernel browser](kernels.html).
 Tuning throughput vs. binary size and compile time? See
 [balancing speed and light compilation](speed-and-size.md).
 
@@ -15,7 +18,7 @@ Tuning throughput vs. binary size and compile time? See
 | Swap, expand, or strip raw `u8` channels (`RGBA↔BGRA`, `RGB→RGBA`, strided rows) with zero color math | **`garb`** (`garb::bytes`) | Tiny, `no_std`, zero-panic `Result<(), SizeError>`, pure byte layout |
 | Apply a transfer curve (`sRGB`, gamma, `PQ`, `HLG`, `BT.709`) to `f32`/`u8`/`u16` slices | **`linear-srgb`** (`linear_srgb::default`) | Pure transfer math, SIMD slices (`*_slice` / `*_slice_into`), no buffer types |
 | Carry images, row stride, and color meaning (`PixelBuffer`, `PixelSlice`, `ColorContext`, `ColorOrigin`) | **`zenpixels`** | Lightweight interchange types for codecs and image pipelines |
-| Convert images, rows, or bands across formats, transfers, gamuts, alpha, orientation, HDR, or ICC | **`zenpixels-convert`** | Full planner + executor (re-exports `zenpixels::*`, except `hdr` — see §6) |
+| Convert images, rows, or bands across formats, transfers, gamuts, alpha, orientation, HDR, or ICC | **`zenpixels-convert`** | Full planner + executor (re-exports `zenpixels::*`, including `zenpixels_convert::hdr::*`) |
 
 ## 2. The 5 nouns in `zenpixels`
 
@@ -41,12 +44,10 @@ Think of a shipping box:
    - `PixelBuffer` owns one contiguous (possibly row-padded) image allocation.
    - `PixelSlice` / `PixelSliceMut` is a zero-copy borrowed view or rectangular
      crop. **Width and height count pixels; `stride()` counts bytes.** Crops
-     keep the parent stride, so read active pixels with `row(y)`.
-   - **Borrow gotcha:** Prefer `buffer.crop_view(x, y, w, h)` directly on the
-     buffer, or bind `let slice = buffer.as_slice();` before calling
-     `slice.crop_view(...)`. `PixelSlice::crop_view` borrows the `PixelSlice`
-     temporary, not the underlying buffer (`ready.pixels().row(0)` hits the
-     same temporary-borrow rule — bind `let view = ready.pixels();` first).
+     keep the parent stride, so read active pixels with `row(y)`. Views carry
+     the underlying buffer's `'a` lifetime, so `buffer.crop_view(...)`,
+     `buffer.as_slice().crop_view(...)`, and `ready.pixels().row(0)` all work
+     directly.
    - `BandedPixelBuffer` owns a gigapixel-safe image split into capped-size
      horizontal bands with 64-bit frame geometry.
 
@@ -106,9 +107,9 @@ Instead, `zenpixels-convert` 0.4 separates **correctness** from **SIMD codegen**
   - Compile-time `const Accelerators` presets and builders
     (`Accelerators::SCALAR`, `LAYOUT`, `WEB_SDR`, `ALL`, `.with_*()`,
     `.union()`) passed to `ConversionSpec::with_accelerators(&...)` with zero
-    global state. Note that `WEB_SDR` includes `with_float()` (which also
-    accelerates U16/F16 float conversions), while HDR/BT.709/Gamma 2.2/Oklab
-    SIMD stay dead-stripped and still run via the universal scalar core.
+    global state. `WEB_SDR` accelerates layout, sRGB, `U8 ↔ F32` float/premul,
+    and SDR gamut while leaving `U16`/`F16`, HDR, BT.709, Gamma 2.2, and Oklab
+    SIMD dead-stripped (they still execute via the universal scalar core).
   - Top-level binary Cargo feature `fast` (never enable in libraries — it
     unifies across Cargo's dependency graph, though per-spec
     `&Accelerators::SCALAR` still overrides it hermetically).
@@ -178,13 +179,11 @@ returned.
 
 Every item below came straight out of docs-only user testing:
 
-- **Wide-gamut Oklab roundtrips need `.with_primaries(...)`:**
-  Oklab conversions are expressed relative to the Oklab descriptor's
-  `primaries`, and `PixelDescriptor::OKLABF32` defaults to **BT.709** (with
-  `transfer: TransferFunction::Unknown`). Converting Display P3 → `OKLABF32` →
-  Display P3 clips saturated P3 colors to BT.709 even if you set
-  `GamutPolicy::PreserveExtended`. Set matching primaries on the Oklab target
-  for a bit-exact roundtrip:
+- **Wide-gamut Oklab is CIE XYZ D65-anchored (zero clipping):**
+  `PixelDescriptor::OKLABF32` represents perceptual color in CIE XYZ D65, not
+  just BT.709. Converting Display P3 or BT.2020 → `PixelDescriptor::OKLABF32` →
+  Display P3 uses that gamut's own `RGB ↔ LMS` matrix directly — bit-exact
+  with zero BT.709 clipping and no extra `.with_primaries(...)` call:
 
   ```rust
   use zenpixels_convert::{
@@ -193,22 +192,19 @@ Every item below came straight out of docs-only user testing:
   };
 
   let p3_srgb = PixelDescriptor::RGB8_SRGB.with_primaries(ColorPrimaries::DisplayP3);
-  let p3_oklab = PixelDescriptor::OKLABF32.with_primaries(ColorPrimaries::DisplayP3);
-
   let src = PixelBuffer::from_vec(vec![0, 255, 128], 1, 1, p3_srgb)?;
   let opts = ConvertOptions::retain_channels().with_depth_policy(DepthPolicy::Round);
-  let oklab = src.as_slice().convert_to_with_options(p3_oklab, &opts)?;
+  let oklab = src.as_slice().convert_to_with_options(PixelDescriptor::OKLABF32, &opts)?;
   let back = oklab.as_slice().convert_to_with_options(p3_srgb, &opts)?;
   assert_eq!(back.as_slice().row(0), &[0, 255, 128]);
-  # let _ = (ConversionSpec::new(opts), ConvertPlan::build(src.encoding(), p3_oklab.into(), &ConversionSpec::new(opts))?);
+  # let _ = (ConversionSpec::new(opts), ConvertPlan::build(src.encoding(), PixelDescriptor::OKLABF32.into(), &ConversionSpec::new(opts))?);
   # Ok::<(), Box<dyn std::error::Error>>(())
   ```
 
-- **HDR anchor types live in `zenpixels::hdr`, not `zenpixels_convert::hdr`:**
-  `zenpixels_convert` defines its own `hdr` module (`ContentLightLevel`,
-  `MasteringDisplay`, experimental measurement/tone-mapping), which shadows the
-  `zenpixels::hdr` glob re-export. Add `zenpixels` as a direct dependency when
-  importing `zenpixels::hdr::{Nits, DiffuseWhite, HdrPeak, HlgRendering}`.
+- **Single-crate HDR imports:** `zenpixels_convert::hdr` re-exports all core
+  anchor types (`Nits`, `DiffuseWhite`, `HdrPeak`, `HlgRendering`,
+  `ContentLightLevel`, `MasteringDisplay`, `St2086Codes`) alongside converter
+  HDR helpers — no separate `zenpixels` dependency required.
 - **HDR→SDR needs `features = ["bt2446a"]` and explicit peaks:**
   - Under default features, an explicitly configured PQ→SDR or HLG→SDR plan
     returns `ConvertError::HdrFeatureRequired` until you enable
@@ -240,6 +236,9 @@ Every item below came straight out of docs-only user testing:
   so `{err:?}` includes the raising source location alongside the error variant.
 
 [Pixel types guide](guide.md) ·
+[Transfer functions](transfers.html) ·
+[Primaries, HDR & CICP/ICC](color-hdr.html) ·
+[Kernel browser](kernels.html) ·
 [Speed & light builds](speed-and-size.md) ·
 [Explore one pixel](index.html) ·
 [Core API](https://docs.rs/zenpixels)

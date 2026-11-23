@@ -318,7 +318,7 @@ let plan = ConvertPlan::new_explicit(from, to, &opts)?;
 
 ### Shipped 0.4 usage notes
 
-- **Import path:** `Nits`, `DiffuseWhite`, `HdrPeak`, and `HlgRendering` live in `zenpixels::hdr` (add `zenpixels` as a direct dependency when configuring HDR options — `zenpixels_convert::hdr` is a separate module that shadows the glob re-export).
+- **Import path:** `zenpixels_convert::hdr` re-exports all core HDR anchor types (`Nits`, `DiffuseWhite`, `HdrPeak`, `HlgRendering`, `ContentLightLevel`, `MasteringDisplay`, `St2086Codes`) from `zenpixels::hdr`, so apps only need `zenpixels-convert`.
 - **Plan vs. buffer peak resolution:** `HdrPeak::Measured` and `HdrPeak::Declared` resolve only on buffer-level entry points that can inspect pixel data or buffer metadata. `ConvertPlan::build` and `RowConverter` see encodings only and require an explicit `HdrPeak::Nits(...)` (passing `Measured` at plan time returns `ConvertError::HdrPeakRequired`).
 - **HDR→SDR feature gate:** Built-in explicit HDR→SDR tone mapping requires enabling `features = ["bt2446a"]` on `zenpixels-convert` (or injecting a feature-gated `ToneMapper`). With default features only, an otherwise-configured HDR→SDR plan returns `ConvertError::HdrFeatureRequired`.
 - **HLG→SDR requires both rendering and peaks:** `with_hlg_rendering(HlgRendering::REFERENCE_1000_NIT)` supplies the OOTF shape only; HLG→SDR still requires explicit `with_hdr_peak(HdrPeak::Nits(...))`, `with_sdr_peak(...)`, and `with_sdr_white(...)` — `HlgRendering.peak()` is not reused as the content peak.

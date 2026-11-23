@@ -4,13 +4,18 @@ The [published explorer](https://imazen.github.io/zenpixels/) lets you inspect
 samples, channels, byte order, row stride and actual conversion routes.
 The [pixel types guide](https://imazen.github.io/zenpixels/guide.html) starts with
 an owned image, a borrowed image/subimage view and a descriptor. It links to
-[balancing speed and light compilation](https://imazen.github.io/zenpixels/speed-and-size.html)
+[interactive transfer-function charts & live Rust codegen](https://imazen.github.io/zenpixels/transfers.html),
+[primaries, HDR headroom, CLL & CICP vs ICC](https://imazen.github.io/zenpixels/color-hdr.html),
+[the live-extracted conversion kernel browser](https://imazen.github.io/zenpixels/kernels.html)
+(generated at build time by `scripts/gen-kernel-catalog.py`),
+[balancing speed and light compilation](https://imazen.github.io/zenpixels/speed-and-size.html),
 and the [plain-English ELI5 mental model](https://imazen.github.io/zenpixels/eli5.html).
 Their canonical sources are [docs/guide.md](../docs/guide.md),
 [docs/speed-and-size.md](../docs/speed-and-size.md), and
 [docs/eli5.md](../docs/eli5.md); rustdoc renders the HTML and
-`scripts/check-guide.py` compiles and runs their Rust examples against the local
-crates.
+`scripts/check-guide.py` compiles and runs their Rust examples (plus generated
+Rust snippets exported from the explorer, transfer page, and HDR page) against
+the local crates.
 
 ## Build
 

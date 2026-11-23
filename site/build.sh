@@ -6,7 +6,8 @@ cargo build --manifest-path site/converter-wasm/Cargo.toml --locked --release --
 wasm-bindgen --version | grep -Fx 'wasm-bindgen 0.2.130'
 wasm-bindgen "${CARGO_TARGET_DIR:-site/converter-wasm/target}/wasm32-unknown-unknown/release/pixel_explorer_converter.wasm" --target web --out-dir site/wasm --out-name converter
 mkdir -p site/dist/color-explorer
-cp site/index.html site/review.html site/converter.js site/dist/
+cp site/index.html site/review.html site/converter.js site/transfers.html site/color-hdr.html site/kernels.html site/dist/
+python3 scripts/gen-kernel-catalog.py site/dist/kernels-data.js
 for doc in docs/guide.md docs/speed-and-size.md docs/eli5.md; do
   rustdoc --edition=2024 "$doc" -o site/dist --markdown-no-toc --markdown-css guide.css --html-in-header site/guide-head.html --html-before-content site/guide-nav.html
 done

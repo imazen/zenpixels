@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conversion Kernel Browser · zenpixels</title>
+<meta name="description" content="Explore all 100+ real conversion steps, fused peepholes, perceptual transforms, SIMD kernels, orientation transposes, and scan predicates in zenpixels-convert — and see which const Accelerators presets link each one.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Martian+Mono:wght@400;600&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --night: #0d1020; --night-2: #131733; --panel: #181d3a; --line: #2b3260;
+  --text: #eef0f8; --muted: #a9b1cf; --gold: #f6c85f; --gold-ink: #1a1405;
+  --accent-g: #35d893; --accent-b: #5b8dff; --accent-p: #ff5a9c;
+  --font-display: "Unbounded", "Arial Black", system-ui, sans-serif;
+  --font-body: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Martian Mono", ui-monospace, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--night); color: var(--text); font: 16px/1.6 var(--font-body); }
+body {
+  background:
+    radial-gradient(1000px 520px at 85% -10%, rgba(246,200,95,.12), transparent 70%),
+    radial-gradient(900px 500px at -10% 35%, rgba(91,141,255,.12), transparent 70%),
+    var(--night);
+}
+.wrap { max-width: 1260px; margin: 0 auto; padding: 0 28px 64px; }
+@media (max-width: 700px) { .wrap { padding: 0 16px 48px; } }
+.site-nav { display: flex; flex-wrap: wrap; gap: 10px 20px; padding: 22px 0 8px; font-size: .88rem; }
+a { color: var(--gold); text-underline-offset: 3px; }
+a:hover { color: #fff; }
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; border-radius: 4px; }
+h1, h2, h3 { font-family: var(--font-display); margin: 0; text-wrap: balance; letter-spacing: -.015em; }
+.eyebrow { font-family: var(--font-mono); font-size: .74rem; letter-spacing: .14em; text-transform: uppercase; color: var(--gold); margin: 18px 0 10px; }
+h1 { font-size: clamp(1.8rem, 4.4vw, 3.15rem); line-height: 1.08; margin-bottom: 14px; }
+h2 { font-size: clamp(1.25rem, 2.2vw, 1.7rem); }
+h3 { font-size: .95rem; }
+p { margin: 0; max-width: 74ch; }
+.lede { color: var(--muted); font-size: 1.04rem; margin-bottom: 24px; }
+code, pre { font-family: var(--font-mono); font-size: .8rem; }
+p code, li code, td code { color: #add9ff; overflow-wrap: anywhere; }
+.story { display: grid; gap: 22px; }
+.sec { background: color-mix(in srgb, var(--panel) 84%, transparent); border: 1px solid var(--line); border-radius: 20px; padding: 24px; display: grid; gap: 16px; min-width: 0; }
+@media (max-width: 700px) { .sec { padding: 16px; } }
+.sec > *, .kpis > *, .axes > *, .ctl-row > * { min-width: 0; }
+.sec-head { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: baseline; }
+.num { font-family: var(--font-mono); font-size: .78rem; color: var(--gold); }
+.sub { color: var(--muted); }
+.kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 175px), 1fr)); gap: 10px; }
+.kpi { background: var(--night); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: grid; gap: 3px; }
+.kpi span { font-family: var(--font-mono); font-size: .68rem; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); }
+.kpi b { font-family: var(--font-display); font-size: 1.45rem; color: var(--gold); }
+.kpi small { font-size: .78rem; color: var(--muted); }
+.axes { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 12px; }
+.axis { background: var(--night); border: 1px solid var(--line); border-top: 3px solid var(--c, var(--gold)); border-radius: 12px; padding: 14px; display: grid; gap: 6px; align-content: start; }
+.axis p { font-size: .86rem; color: var(--muted); }
+.bars { display: grid; gap: 8px; }
+.barrow { display: grid; grid-template-columns: minmax(120px, 210px) minmax(0, 1fr) 44px; gap: 10px; align-items: center; font-size: .84rem; cursor: pointer; }
+@media (max-width: 560px) { .barrow { grid-template-columns: 1fr 40px; } .barrow .btrack { grid-column: 1 / -1; } }
+.barrow:hover .bname { color: var(--gold); }
+.btrack { height: 14px; background: var(--night); border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.bfill { height: 100%; background: linear-gradient(90deg, var(--gold), var(--accent-g)); border-radius: 999px; }
+.ctl-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+.field { display: grid; gap: 5px; flex: 1 1 170px; min-width: 0; }
+.field label { font-family: var(--font-mono); font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+select, input[type="search"] { background: var(--night); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; width: 100%; min-width: 0; }
+.preset-strip { display: flex; flex-wrap: wrap; gap: 8px; }
+.pbtn { font: 500 .82rem var(--font-body); background: var(--night); color: var(--text); border: 1px solid var(--line); border-radius: 999px; padding: 6px 13px; cursor: pointer; }
+.pbtn:hover { border-color: var(--gold); }
+.pbtn[aria-pressed="true"] { background: var(--gold); color: var(--gold-ink); border-color: var(--gold); font-weight: 600; }
+.klist { display: grid; gap: 8px; }
+details.kitem { background: var(--night); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+details.kitem summary { cursor: pointer; padding: 11px 14px; list-style: none; display: grid; grid-template-columns: minmax(0, 1.4fr) auto auto; gap: 8px 14px; align-items: center; }
+@media (max-width: 680px) { details.kitem summary { grid-template-columns: 1fr; } }
+details.kitem summary::-webkit-details-marker { display: none; }
+details.kitem[open] { border-color: var(--gold); }
+.kname { font-family: var(--font-mono); font-weight: 600; font-size: .84rem; color: #eef0f8; overflow-wrap: anywhere; }
+.kbadges { display: flex; flex-wrap: wrap; gap: 6px; }
+.badge { font-family: var(--font-mono); font-size: .68rem; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--night-2); color: var(--muted); }
+.badge.kind { border-color: rgba(246,200,95,.45); color: var(--gold); }
+.badge.accel { border-color: rgba(53,216,147,.45); color: var(--accent-g); }
+.badge.feat { border-color: rgba(91,141,255,.45); color: #9fc0ff; }
+.kbody { padding: 0 14px 14px; border-top: 1px solid var(--line); display: grid; gap: 8px; font-size: .88rem; color: var(--muted); }
+.kbody b { color: var(--text); }
+.kmeta { display: flex; flex-wrap: wrap; gap: 10px 18px; font-family: var(--font-mono); font-size: .74rem; padding-top: 10px; }
+.note { font-size: .86rem; padding: 10px 13px; border-radius: 10px; border-left: 3px solid var(--gold); background: color-mix(in srgb, var(--gold) 10%, var(--night)); }
+footer { color: var(--muted); font-size: .82rem; padding-top: 26px; display: grid; gap: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="site-nav" aria-label="Documentation">
+  <a href="index.html">Explore bytes</a>
+  <a href="guide.html">Guide</a>
+  <a href="transfers.html">Transfer functions</a>
+  <a href="color-hdr.html">Primaries, HDR &amp; CICP/ICC</a>
+  <a href="kernels.html" aria-current="page">Kernel browser</a>
+  <a href="speed-and-size.html">Speed &amp; light builds</a>
+  <a href="eli5.html">ELI5</a>
+</nav>
+
+<p class="eyebrow">zenpixels-convert · live-extracted architecture</p>
+<h1>Conversion kernel browser: why we have over 100</h1>
+<p class="lede">Every valid native pixel pair already runs in <strong>one</strong> compact universal scalar loop (<code>UniversalPlan</code>). So why does <code>zenpixels-convert</code> ship over 100 specialized steps and SIMD kernels? Browse every real kernel extracted directly from this checkout — and see how <code>const Accelerators</code> lets you dead-strip the ones you don't need.</p>
+
+<main class="story">
+  <section class="sec" aria-labelledby="h-why">
+    <div class="sec-head"><span class="num">01</span><h2 id="h-why">The 5 reasons kernel count multiplies</h2></div>
+    <div class="kpis" id="kpis"></div>
+    <div class="axes">
+      <article class="axis" style="--c:#f6c85f">
+        <h3>1. Byte layout × lane width</h3>
+        <p>3bpp (<code>RGB</code>), 4bpp (<code>RGBA/BGRA</code>), 2bpp (<code>GrayAlpha</code>), and 1/2/4-byte samples each require completely different SIMD shuffle/deinterleave masks — and splitting per-type avoids cross-product codegen bloat.</p>
+      </article>
+      <article class="axis" style="--c:#35d893">
+        <h3>2. Peephole fusion (1 RAM pass vs 3)</h3>
+        <p>Converting <code>P3 RGB8 → sRGB RGB8</code> step-by-step touches RAM 3× (decode → 3×3 matrix → encode). Fused <code>FusedKind</code> kernels keep intermediates in registers — 3–7× faster.</p>
+      </article>
+      <article class="axis" style="--c:#5b8dff">
+        <h3>3. Transfer × Clip vs Extended × Truncate</h3>
+        <p>Clamped <code>[0,1]</code> sRGB/Gamma22, sign-reflected <code>PreserveExtended</code>, <code>DepthPolicy::Round</code> vs <code>Truncate</code>, and alpha-preserving RGBA all differ at boundary bits — zero tolerance for 1-bit drift.</p>
+      </article>
+      <article class="axis" style="--c:#ff5a9c">
+        <h3>4. FloatFacts &amp; const magemath</h3>
+        <p>Clean unit-bounded floats elide per-pixel NaN/Inf/subnormal branches in Oklab, BT.709, Gamma 2.2, and float quantization — gaining 1.3–15× without breaking untrusted inputs.</p>
+      </article>
+      <article class="axis" style="--c:#c27bff">
+        <h3>5. Fast transposes &amp; fused scans</h3>
+        <p>In-register 8×8 / 16×16 transposes for 1/2/3/4/6/8/12/16-byte pixels (EXIF orientation) plus read-only SIMD scans (opaque / grayscale / U16 bit-replication) for lossless codec negotiation.</p>
+      </article>
+    </div>
+
+    <h3>Live breakdown by family (click a bar to filter below)</h3>
+    <div class="bars" id="family-bars"></div>
+    <p class="note"><strong>You never pay for kernels you don't opt into:</strong> by default, all SIMD slots are unlinked (<code>+87 KB</code> lean Wasm / <code>+159 KB</code> lean x86-64). Calling <code>accel::enable_web_sdr()</code> or passing <code>&amp;Accelerators::WEB_SDR</code> links only the SDR subset; HDR, U16/F16 float, and Oklab SIMD dead-strip to <code>0 B</code>. <a href="speed-and-size.html">See measured binary sizes →</a></p>
+  </section>
+
+  <section class="sec" aria-labelledby="h-browse">
+    <div class="sec-head"><span class="num">02</span><h2 id="h-browse">Explore every kernel in this checkout</h2></div>
+    <p class="sub">Filter by <code>Accelerators</code> preset to see which kernels are linked under <code>SCALAR</code>, <code>LAYOUT</code>, <code>WEB_SDR</code>, or <code>ALL</code> — or search by name, file, or backend.</p>
+
+    <div class="preset-strip" id="preset-strip" aria-label="Filter by Accelerators preset">
+      <button type="button" class="pbtn" data-preset="any" aria-pressed="true">All catalog entries</button>
+      <button type="button" class="pbtn" data-preset="SCALAR" aria-pressed="false">Accelerators::SCALAR (0 SIMD)</button>
+      <button type="button" class="pbtn" data-preset="LAYOUT" aria-pressed="false">Accelerators::LAYOUT</button>
+      <button type="button" class="pbtn" data-preset="WEB_SDR" aria-pressed="false">Accelerators::WEB_SDR</button>
+      <button type="button" class="pbtn" data-preset="HDR" aria-pressed="false">+ with_hdr()</button>
+      <button type="button" class="pbtn" data-preset="OKLAB" aria-pressed="false">+ with_oklab()</button>
+    </div>
+
+    <div class="ctl-row">
+      <div class="field"><label for="q">Search name / why / file</label><input type="search" id="q" placeholder="e.g. oklab, truncate, fused, transpose, hlg, garb"></div>
+      <div class="field"><label for="f-family">Family</label><select id="f-family"><option value="">All families</option></select></div>
+      <div class="field"><label for="f-kind">Kind</label><select id="f-kind"><option value="">All kinds</option></select></div>
+      <div class="field"><label for="f-feat">Cargo feature</label><select id="f-feat"><option value="">All features</option></select></div>
+    </div>
+
+    <p class="sub" id="match-count" aria-live="polite"></p>
+    <div class="klist" id="klist"></div>
+  </section>
+</main>
+
+<footer>
+  <p><a href="index.html">Pixel explorer</a> · <a href="guide.html">Guide</a> · <a href="transfers.html">Transfer functions</a> · <a href="color-hdr.html">Primaries, HDR &amp; CICP/ICC</a> · <a href="speed-and-size.html">Speed &amp; light builds</a> · <a href="eli5.html">ELI5</a></p>
+  <p>Catalog generated directly from <code>zenpixels-convert/src/</code> by <code>scripts/gen-kernel-catalog.py</code> during <code>site/build.sh</code>. External SIMD kernels inside <code>garb</code> and <code>linear-srgb</code> are referenced by backend tag.</p>
+</footer>
+</div>
+
+<script src="kernels-data.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const CAT = window.KERNEL_CATALOG || { total: 0, byKind: {}, byFamily: {}, entries: [] };
+let activePreset = 'any';
+
+function presetMatches(entry, preset) {
+  if (preset === 'any') return true;
+  const a = entry.accel || '';
+  if (preset === 'SCALAR') return a.includes('SCALAR');
+  if (preset === 'LAYOUT') return a.includes('SCALAR') || a.includes('LAYOUT');
+  if (preset === 'WEB_SDR') return a.includes('SCALAR') || a.includes('LAYOUT') || a.includes('SRGB') || a.includes('WEB_SDR') || a.includes('GAMUT');
+  if (preset === 'HDR') return a.includes('HDR');
+  if (preset === 'OKLAB') return a.includes('OKLAB');
+  return true;
+}
+
+function initMeta() {
+  const kpis = [
+    ['Total catalog entries', CAT.total, 'Steps + peepholes + SIMD fns'],
+    ['ConvertStep variants', CAT.byKind['ConvertStep'] || 0, 'Planner IR operations'],
+    ['Fused peepholes', CAT.byKind['Fused Peephole'] || 0, '1-pass TF + matrix + TF'],
+    ['SIMD row kernels', CAT.byKind['SIMD Kernel'] || 0, '#[attune] / #[arcane] / #[magetypes]'],
+    ['Transpose + Scan SIMD', (CAT.byKind['Transpose Kernel'] || 0) + (CAT.byKind['Scan Predicate'] || 0), 'Orientation & lossless scans'],
+    ['Perceptual steps', CAT.byKind['PerceptualStep'] || 0, 'Opt-in `perceptual` feature'],
+  ];
+  $('kpis').innerHTML = kpis.map(([l, v, s]) => `<div class="kpi"><span>${l}</span><b>${v}</b><small>${s}</small></div>`).join('');
+
+  const fams = Object.entries(CAT.byFamily).sort((a, b) => b[1] - a[1]);
+  const maxN = Math.max(1, ...fams.map(x => x[1]));
+  $('family-bars').innerHTML = fams.map(([name, n]) => `
+    <div class="barrow" data-fam="${name}" role="button" tabindex="0">
+      <span class="bname">${name}</span>
+      <div class="btrack"><div class="bfill" style="width:${(n / maxN * 100).toFixed(1)}%"></div></div>
+      <code style="text-align:right">${n}</code>
+    </div>`).join('');
+  $('family-bars').querySelectorAll('.barrow').forEach(el => {
+    const pick = () => {
+      $('f-family').value = $('f-family').value === el.dataset.fam ? '' : el.dataset.fam;
+      renderList();
+      $('h-browse').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+    el.addEventListener('click', pick);
+    el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+  });
+
+  const fillSel = (id, vals) => {
+    const sel = $(id);
+    for (const v of vals) {
+      const o = document.createElement('option');
+      o.value = v; o.textContent = v;
+      sel.appendChild(o);
+    }
+  };
+  fillSel('f-family', fams.map(x => x[0]));
+  fillSel('f-kind', Object.keys(CAT.byKind).sort());
+  fillSel('f-feat', [...new Set(CAT.entries.map(e => e.feature))].sort());
+}
+
+function renderList() {
+  const q = $('q').value.trim().toLowerCase();
+  const fam = $('f-family').value;
+  const kind = $('f-kind').value;
+  const feat = $('f-feat').value;
+
+  const filtered = CAT.entries.filter(e => {
+    if (!presetMatches(e, activePreset)) return false;
+    if (fam && e.family !== fam) return false;
+    if (kind && e.kind !== kind) return false;
+    if (feat && e.feature !== feat) return false;
+    if (q) {
+      const hay = `${e.name} ${e.family} ${e.kind} ${e.accel} ${e.feature} ${e.backend} ${e.file} ${e.why}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  $('match-count').textContent = `Showing ${filtered.length} of ${CAT.total} real kernels/steps in zenpixels-convert.`;
+  $('klist').innerHTML = filtered.map(e => {
+    const ghUrl = `https://github.com/imazen/zenpixels/blob/main/${e.file}#L${e.line}`;
+    return `<details class="kitem">
+      <summary>
+        <span class="kname">${e.name}</span>
+        <span class="kbadges">
+          <span class="badge kind">${e.kind}</span>
+          <span class="badge accel">${e.accel}</span>
+          <span class="badge feat">${e.feature}</span>
+        </span>
+        <span style="font-size:.78rem;color:var(--muted)">${e.family}</span>
+      </summary>
+      <div class="kbody">
+        <div class="kmeta">
+          <span><b>Source:</b> <a href="${ghUrl}" target="_blank" rel="noopener">${e.file}:${e.line}</a></span>
+          <span><b>Backend:</b> <code>${e.backend}</code></span>
+          <span><b>Tiers:</b> <code>${e.tiers}</code></span>
+        </div>
+        <p><b>Why this kernel exists separately:</b> ${e.why}</p>
+      </div>
+    </details>`;
+  }).join('');
+}
+
+document.querySelectorAll('.pbtn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    activePreset = btn.dataset.preset;
+    document.querySelectorAll('.pbtn').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+    renderList();
+  });
+});
+['q','f-family','f-kind','f-feat'].forEach(id => $(id).addEventListener('input', renderList));
+
+initMeta();
+renderList();
+</script>
+</body>
+</html>

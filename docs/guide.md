@@ -7,6 +7,15 @@ your pipeline without juggling loose byte slices and parallel arguments.
 This guide follows the **0.4.0 candidate**. Start here to own, borrow, and
 convert pixels, then jump straight to what you need:
 
+- **[Transfer functions & live Rust codegen](transfers.html)** — interactive
+  EOTF/OETF and bit-allocation charts for sRGB, BT.709, Gamma 2.2, PQ, and HLG,
+  plus a live `zenpixels-convert` code generator.
+- **[Primaries, HDR headroom, CLL & CICP vs ICC](color-hdr.html)** — CIE `xy`
+  and `u'v'` gamut renderings, `DiffuseWhite` / `MaxCLL` / `ST.2086` / BT.2446A
+  roll-off charts, signaling range, and CICP vs ICC comparison.
+- **[Conversion kernel browser](kernels.html)** — explore every real step and
+  SIMD kernel extracted from `zenpixels-convert` and see what each
+  `const Accelerators` preset links.
 - **[Balance speed and light compilation](speed-and-size.md)** — keep libraries
   and Wasm small with the universal fast-FMA scalar core, then turn on SIMD
   cleanly with `accel` and `const Accelerators`.
@@ -85,13 +94,11 @@ for y in 0..crop.rows() {
 ```
 
 The rows belong to the original image. No repacking is necessary. Take crops
-directly from the buffer (`image.crop_view(...)`) or bind `let whole = image.as_slice();`
-first — `slice.crop_view(...)` borrows the `PixelSlice` value rather than the
-underlying buffer (so `image.as_slice().crop_view(...)` fails with a temporary
-borrow error; similarly, bind `let view = ready.pixels();` before calling
-`view.row(0)`). Use `sub_rows(y, count)` for a full-width strip, or
-`try_to_tight_buffer()` when you need an independent packed copy. Crops and
-strips must be in bounds.
+directly from the buffer (`image.crop_view(...)`) or chain through a borrowed
+view (`image.as_slice().crop_view(...)` / `sub_rows(...)` return views tied to
+the underlying buffer's `'a` lifetime). Use `sub_rows(y, count)` for a
+full-width strip, or `try_to_tight_buffer()` when you need an independent
+packed copy. Crops and strips must be in bounds.
 
 ## Stride is the distance between row starts
 
@@ -185,17 +192,16 @@ assert_eq!(dst.as_slice().row(0).len(), 3 * 4);
 
 A few rules save hours on your first real pipeline:
 
-- **Wide-gamut Oklab roundtrips:** `PixelDescriptor::OKLABF32` defaults to
-  BT.709 primaries. When roundtripping Display P3 or BT.2020 through Oklab, set
-  matching primaries on the Oklab descriptor
-  (`PixelDescriptor::OKLABF32.with_primaries(ColorPrimaries::DisplayP3)`) so
-  saturated colors are not clipped to BT.709.
+- **Wide-gamut Oklab works directly:** `PixelDescriptor::OKLABF32` is
+  CIE XYZ D65-anchored, so roundtripping Display P3 or BT.2020 through
+  `OKLABF32` uses that gamut's own `RGB ↔ LMS` matrix directly — bit-exact
+  with zero BT.709 clipping and no extra `.with_primaries(...)` call needed.
 - **Explicit HDR & ICC:** Custom ICC transforms need an explicitly passed CMS
   (`spec.with_cms(&MoxCms)`). HDR→SDR tone mapping requires explicit luminance
-  anchors (`zenpixels::hdr::{Nits, DiffuseWhite, HdrPeak, HlgRendering}` — add
-  `zenpixels` directly because `zenpixels_convert::hdr` is a different module)
-  plus `features = ["bt2446a"]`. See the
-  [conversion guide](https://github.com/imazen/zenpixels/blob/main/zenpixels-convert/README.md)
+  anchors (`zenpixels_convert::hdr::{Nits, DiffuseWhite, HdrPeak, HlgRendering}`)
+  plus `features = ["bt2446a"]`. See
+  [Primaries, HDR & CICP/ICC](color-hdr.html), the
+  [conversion guide](https://github.com/imazen/zenpixels/blob/main/zenpixels-convert/README.md),
   and [plain-English ELI5](eli5.md) for every detail.
 
 ## Keep compilation light, turn on SIMD when you want it
@@ -326,6 +332,9 @@ allocation is fallible; the [allocation audit](https://github.com/imazen/zenpixe
 records the boundaries.
 
 [Explore one pixel](index.html) ·
+[Transfer functions](transfers.html) ·
+[Primaries, HDR & CICP/ICC](color-hdr.html) ·
+[Kernel browser](kernels.html) ·
 [Speed & light builds](speed-and-size.md) ·
 [ELI5 mental model](eli5.md) ·
 [Reference contracts](https://github.com/imazen/zenpixels/blob/main/docs/design-reference.md) ·
