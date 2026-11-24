@@ -38,6 +38,7 @@ macro_rules! unpack_strip_body {
                 | ChannelOrder::Rgbx
                 | ChannelOrder::Bgrx
                 | ChannelOrder::Oklab
+                | ChannelOrder::Xyz
                 | ChannelOrder::Perceptual3
         );
         match ($layout.sample, $layout.channels()) {
@@ -1177,6 +1178,826 @@ fn lin_f32_to_srgb_u8_scalar_t(
 pub(crate) fn simd_lin_f32_to_srgb_u8(src: &[f32], dst: &mut [u8], is_rgba: bool, round: bool) {
     archmage::attuned!(
         lin_f32_to_srgb_u8(src, dst, is_rgba, round),
+        [_v3, _neon, _wasm128, _scalar]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 6. Option A: Fused Exact SIMD U8 sRGB-TRC -> 3x3 Matrix -> sRGB-TRC U8
+//    (0-bit identical to SCALAR strip across all 16,777,216 RGB8 triplets!)
+// ---------------------------------------------------------------------------
+
+/// Scalar exact reference for Option A (0-bit identical to `exec_strip_row` and SIMD Option A!).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn srgb8_matrix_exact_scalar(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    m: &[[f32; 3]; 3],
+    src_order: ChannelOrder,
+    dst_order: ChannelOrder,
+    fill_opaque: bool,
+    round: bool,
+) {
+    let sch = src_order.channels();
+    let dch = dst_order.channels();
+    let sr_i = if src_order.is_bgr() { 2 } else { 0 };
+    let sb_i = 2 - sr_i;
+    let dr_i = if dst_order.is_bgr() { 2 } else { 0 };
+    let db_i = 2 - dr_i;
+    let bias = if round { 0.5_f32 } else { 0.0_f32 };
+    let copy_alpha = sch == 4 && dch == 4 && !fill_opaque;
+
+    let mut i = 0usize;
+    while i < width {
+        let sp = &src[i * sch..i * sch + sch];
+        let dp = &mut dst[i * dch..i * dch + dch];
+        let r = linear_srgb::default::srgb_u8_to_linear(sp[sr_i]);
+        let g = linear_srgb::default::srgb_u8_to_linear(sp[1]);
+        let b = linear_srgb::default::srgb_u8_to_linear(sp[sb_i]);
+
+        // Plain mul+add order matching `strip.rs` & `accel.rs` (`(m0*r + m1*g) + m2*b`).
+        let nr = ((m[0][0] * r + m[0][1] * g) + m[0][2] * b).clamp(0.0, 1.0);
+        let ng = ((m[1][0] * r + m[1][1] * g) + m[1][2] * b).clamp(0.0, 1.0);
+        let nb = ((m[2][0] * r + m[2][1] * g) + m[2][2] * b).clamp(0.0, 1.0);
+
+        let enc =
+            linear_srgb::target_features::x4::linear_to_srgb_extended_scalar([nr, ng, nb, 0.0]);
+        dp[dr_i] = quant_scalar_u8(enc[0], bias);
+        dp[1] = quant_scalar_u8(enc[1], bias);
+        dp[db_i] = quant_scalar_u8(enc[2], bias);
+        if dch == 4 {
+            dp[3] = if copy_alpha { sp[3] } else { 255 };
+        }
+        i += 1;
+    }
+}
+
+macro_rules! impl_srgb8_matrix_exact_body {
+    ($token:expr, $V:ty, $oetf:path, $LANES:literal, $N3:literal, $N4:literal, $src:expr, $dst:expr, $width:expr, $m:expr, $src_order:expr, $dst_order:expr, $fill_opaque:expr, $round:expr) => {{
+        let zero = <$V>::zero_t($token);
+        let one = <$V>::splat_t($token, 1.0);
+        let scale = <$V>::splat_t($token, 255.0);
+        let bias_v = <$V>::splat_t($token, if $round { 0.5_f32 } else { 0.0_f32 });
+
+        let m00 = <$V>::splat_t($token, $m[0][0]);
+        let m01 = <$V>::splat_t($token, $m[0][1]);
+        let m02 = <$V>::splat_t($token, $m[0][2]);
+        let m10 = <$V>::splat_t($token, $m[1][0]);
+        let m11 = <$V>::splat_t($token, $m[1][1]);
+        let m12 = <$V>::splat_t($token, $m[1][2]);
+        let m20 = <$V>::splat_t($token, $m[2][0]);
+        let m21 = <$V>::splat_t($token, $m[2][1]);
+        let m22 = <$V>::splat_t($token, $m[2][2]);
+
+        let done = if $src_order == ChannelOrder::Rgb && $dst_order == ChannelOrder::Rgb {
+            let (in_chunks, _) = $src[..$width * 3].as_chunks::<$N3>();
+            let (out_chunks, _) = $dst[..$width * 3].as_chunks_mut::<$N3>();
+            for (inp, out) in in_chunks.iter().zip(out_chunks.iter_mut()) {
+                let mut lr = [0.0f32; $LANES];
+                let mut lg = [0.0f32; $LANES];
+                let mut lb = [0.0f32; $LANES];
+                for k in 0..$LANES {
+                    lr[k] = linear_srgb::default::srgb_u8_to_linear(inp[k * 3]);
+                    lg[k] = linear_srgb::default::srgb_u8_to_linear(inp[k * 3 + 1]);
+                    lb[k] = linear_srgb::default::srgb_u8_to_linear(inp[k * 3 + 2]);
+                }
+                let vr = <$V>::from_array_t($token, lr);
+                let vg = <$V>::from_array_t($token, lg);
+                let vb = <$V>::from_array_t($token, lb);
+
+                let nr = (m00 * vr + m01 * vg) + m02 * vb;
+                let ng = (m10 * vr + m11 * vg) + m12 * vb;
+                let nb = (m20 * vr + m21 * vg) + m22 * vb;
+
+                let cr = <$V>::blend(nr.simd_gt(zero), nr.min_fast(one), zero);
+                let cg = <$V>::blend(ng.simd_gt(zero), ng.min_fast(one), zero);
+                let cb = <$V>::blend(nb.simd_gt(zero), nb.min_fast(one), zero);
+
+                let er = <$V>::from_array_t($token, $oetf(cr.to_array()));
+                let eg = <$V>::from_array_t($token, $oetf(cg.to_array()));
+                let eb = <$V>::from_array_t($token, $oetf(cb.to_array()));
+
+                let qr = (<$V>::blend(er.simd_gt(zero), er.min_fast(one), zero) * scale + bias_v)
+                    .to_u8_with::<TRUNC_NONNEG>();
+                let qg = (<$V>::blend(eg.simd_gt(zero), eg.min_fast(one), zero) * scale + bias_v)
+                    .to_u8_with::<TRUNC_NONNEG>();
+                let qb = (<$V>::blend(eb.simd_gt(zero), eb.min_fast(one), zero) * scale + bias_v)
+                    .to_u8_with::<TRUNC_NONNEG>();
+
+                for k in 0..$LANES {
+                    out[k * 3] = qr[k];
+                    out[k * 3 + 1] = qg[k];
+                    out[k * 3 + 2] = qb[k];
+                }
+            }
+            in_chunks.len() * $LANES
+        } else if $src_order == ChannelOrder::Rgba
+            && $dst_order == ChannelOrder::Rgba
+            && !$fill_opaque
+        {
+            let (in_chunks, _) = $src[..$width * 4].as_chunks::<$N4>();
+            let (out_chunks, _) = $dst[..$width * 4].as_chunks_mut::<$N4>();
+            for (inp, out) in in_chunks.iter().zip(out_chunks.iter_mut()) {
+                let mut lr = [0.0f32; $LANES];
+                let mut lg = [0.0f32; $LANES];
+                let mut lb = [0.0f32; $LANES];
+                for k in 0..$LANES {
+                    lr[k] = linear_srgb::default::srgb_u8_to_linear(inp[k * 4]);
+                    lg[k] = linear_srgb::default::srgb_u8_to_linear(inp[k * 4 + 1]);
+                    lb[k] = linear_srgb::default::srgb_u8_to_linear(inp[k * 4 + 2]);
+                }
+                let vr = <$V>::from_array_t($token, lr);
+                let vg = <$V>::from_array_t($token, lg);
+                let vb = <$V>::from_array_t($token, lb);
+
+                let nr = (m00 * vr + m01 * vg) + m02 * vb;
+                let ng = (m10 * vr + m11 * vg) + m12 * vb;
+                let nb = (m20 * vr + m21 * vg) + m22 * vb;
+
+                let cr = <$V>::blend(nr.simd_gt(zero), nr.min_fast(one), zero);
+                let cg = <$V>::blend(ng.simd_gt(zero), ng.min_fast(one), zero);
+                let cb = <$V>::blend(nb.simd_gt(zero), nb.min_fast(one), zero);
+
+                let er = <$V>::from_array_t($token, $oetf(cr.to_array()));
+                let eg = <$V>::from_array_t($token, $oetf(cg.to_array()));
+                let eb = <$V>::from_array_t($token, $oetf(cb.to_array()));
+
+                let qr = (<$V>::blend(er.simd_gt(zero), er.min_fast(one), zero) * scale + bias_v)
+                    .to_u8_with::<TRUNC_NONNEG>();
+                let qg = (<$V>::blend(eg.simd_gt(zero), eg.min_fast(one), zero) * scale + bias_v)
+                    .to_u8_with::<TRUNC_NONNEG>();
+                let qb = (<$V>::blend(eb.simd_gt(zero), eb.min_fast(one), zero) * scale + bias_v)
+                    .to_u8_with::<TRUNC_NONNEG>();
+
+                for k in 0..$LANES {
+                    out[k * 4] = qr[k];
+                    out[k * 4 + 1] = qg[k];
+                    out[k * 4 + 2] = qb[k];
+                    out[k * 4 + 3] = inp[k * 4 + 3];
+                }
+            }
+            in_chunks.len() * $LANES
+        } else {
+            let sch = $src_order.channels();
+            let dch = $dst_order.channels();
+            let sr_i = if $src_order.is_bgr() { 2usize } else { 0usize };
+            let sb_i = 2 - sr_i;
+            let dr_i = if $dst_order.is_bgr() { 2usize } else { 0usize };
+            let db_i = 2 - dr_i;
+            let copy_alpha = sch == 4 && dch == 4 && !$fill_opaque;
+
+            let chunks = $width / $LANES;
+            let mut p = 0usize;
+            while p < chunks {
+                let base = p * $LANES;
+                let mut lr = [0.0f32; $LANES];
+                let mut lg = [0.0f32; $LANES];
+                let mut lb = [0.0f32; $LANES];
+                let mut la = [255u8; $LANES];
+                let s_base = base * sch;
+                for k in 0..$LANES {
+                    let off = s_base + k * sch;
+                    lr[k] = linear_srgb::default::srgb_u8_to_linear($src[off + sr_i]);
+                    lg[k] = linear_srgb::default::srgb_u8_to_linear($src[off + 1]);
+                    lb[k] = linear_srgb::default::srgb_u8_to_linear($src[off + sb_i]);
+                    if copy_alpha {
+                        la[k] = $src[off + 3];
+                    }
+                }
+                let vr = <$V>::from_array_t($token, lr);
+                let vg = <$V>::from_array_t($token, lg);
+                let vb = <$V>::from_array_t($token, lb);
+
+                let nr = (m00 * vr + m01 * vg) + m02 * vb;
+                let ng = (m10 * vr + m11 * vg) + m12 * vb;
+                let nb = (m20 * vr + m21 * vg) + m22 * vb;
+
+                let cr = <$V>::blend(nr.simd_gt(zero), nr.min_fast(one), zero);
+                let cg = <$V>::blend(ng.simd_gt(zero), ng.min_fast(one), zero);
+                let cb = <$V>::blend(nb.simd_gt(zero), nb.min_fast(one), zero);
+
+                let er = <$V>::from_array_t($token, $oetf(cr.to_array()));
+                let eg = <$V>::from_array_t($token, $oetf(cg.to_array()));
+                let eb = <$V>::from_array_t($token, $oetf(cb.to_array()));
+
+                let qr = (<$V>::blend(er.simd_gt(zero), er.min_fast(one), zero) * scale + bias_v)
+                    .to_u8_with::<TRUNC_NONNEG>();
+                let qg = (<$V>::blend(eg.simd_gt(zero), eg.min_fast(one), zero) * scale + bias_v)
+                    .to_u8_with::<TRUNC_NONNEG>();
+                let qb = (<$V>::blend(eb.simd_gt(zero), eb.min_fast(one), zero) * scale + bias_v)
+                    .to_u8_with::<TRUNC_NONNEG>();
+
+                let d_base = base * dch;
+                for k in 0..$LANES {
+                    let off = d_base + k * dch;
+                    $dst[off + dr_i] = qr[k];
+                    $dst[off + 1] = qg[k];
+                    $dst[off + db_i] = qb[k];
+                    if dch == 4 {
+                        $dst[off + 3] = la[k];
+                    }
+                }
+                p += 1;
+            }
+            chunks * $LANES
+        };
+        if done < $width {
+            let sch = $src_order.channels();
+            let dch = $dst_order.channels();
+            srgb8_matrix_exact_scalar(
+                &$src[done * sch..],
+                &mut $dst[done * dch..],
+                $width - done,
+                $m,
+                $src_order,
+                $dst_order,
+                $fill_opaque,
+                $round,
+            );
+        }
+    }};
+}
+
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+fn srgb8_matrix_exact_v3_t(
+    token: archmage::X64V3Token,
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    m: &[[f32; 3]; 3],
+    src_order: ChannelOrder,
+    dst_order: ChannelOrder,
+    fill_opaque: bool,
+    round: bool,
+) {
+    type V = magetypes::simd::generic::f32x8<archmage::X64V3Token>;
+    impl_srgb8_matrix_exact_body!(
+        token,
+        V,
+        linear_srgb::target_features::x8::linear_to_srgb_extended_v3,
+        8,
+        24,
+        32,
+        src,
+        dst,
+        width,
+        m,
+        src_order,
+        dst_order,
+        fill_opaque,
+        round
+    );
+}
+
+#[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+fn srgb8_matrix_exact_neon_t(
+    token: archmage::NeonToken,
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    m: &[[f32; 3]; 3],
+    src_order: ChannelOrder,
+    dst_order: ChannelOrder,
+    fill_opaque: bool,
+    round: bool,
+) {
+    type V = magetypes::simd::generic::f32x4<archmage::NeonToken>;
+    impl_srgb8_matrix_exact_body!(
+        token,
+        V,
+        linear_srgb::target_features::x4::linear_to_srgb_extended_neon,
+        4,
+        12,
+        16,
+        src,
+        dst,
+        width,
+        m,
+        src_order,
+        dst_order,
+        fill_opaque,
+        round
+    );
+}
+
+#[cfg(target_arch = "wasm32")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+fn srgb8_matrix_exact_wasm128_t(
+    token: archmage::Wasm128Token,
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    m: &[[f32; 3]; 3],
+    src_order: ChannelOrder,
+    dst_order: ChannelOrder,
+    fill_opaque: bool,
+    round: bool,
+) {
+    type V = magetypes::simd::generic::f32x4<archmage::Wasm128Token>;
+    impl_srgb8_matrix_exact_body!(
+        token,
+        V,
+        linear_srgb::target_features::x4::linear_to_srgb_extended_wasm128,
+        4,
+        12,
+        16,
+        src,
+        dst,
+        width,
+        m,
+        src_order,
+        dst_order,
+        fill_opaque,
+        round
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn srgb8_matrix_exact_scalar_t(
+    _token: ScalarToken,
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    m: &[[f32; 3]; 3],
+    src_order: ChannelOrder,
+    dst_order: ChannelOrder,
+    fill_opaque: bool,
+    round: bool,
+) {
+    srgb8_matrix_exact_scalar(src, dst, width, m, src_order, dst_order, fill_opaque, round);
+}
+
+/// Option A: Fused exact SIMD U8 sRGB-TRC → 3×3 matrix → sRGB-TRC U8 (0-bit parity with scalar strip!).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn simd_srgb8_matrix_exact(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    m: &[[f32; 3]; 3],
+    src_order: ChannelOrder,
+    dst_order: ChannelOrder,
+    fill_opaque: bool,
+    round: bool,
+) {
+    archmage::attuned!(
+        srgb8_matrix_exact(src, dst, width, m, src_order, dst_order, fill_opaque, round),
+        [_v3, _neon, _wasm128, _scalar]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 7. Option B: Opt-In Fast Q14 Fixed-Point SIMD U8 sRGB-TRC -> 3x3 -> sRGB U8
+//    (Max error <= 1 LSB vs exact float across all 16,777,216 RGB8 triplets;
+//     0-bit identical between SCALAR and ALL for the Q14 algorithm;
+//     0 bytes static .rodata — lazy 16 KiB L1-resident LUT via OnceBox!)
+// ---------------------------------------------------------------------------
+
+const Q14_SHIFT: u32 = 14;
+const Q14_ONE: i32 = 1 << Q14_SHIFT; // 16384
+const Q14_HALF: i32 = Q14_ONE >> 1; // 8192
+
+fn srgb8_to_q14_lut() -> &'static [i32; 256] {
+    static LUT: once_cell::race::OnceBox<[i32; 256]> = once_cell::race::OnceBox::new();
+    LUT.get_or_init(|| {
+        let mut t = [0i32; 256];
+        for (i, slot) in t.iter_mut().enumerate() {
+            let lin = f64::from(linear_srgb::default::srgb_u8_to_linear(i as u8));
+            *slot = libm::round(lin * (Q14_ONE as f64)) as i32;
+        }
+        alloc::boxed::Box::new(t)
+    })
+}
+
+// Power-of-two table size (32768 B) lets `& 0x7FFF` eliminate ALL bounds checks in
+// `#![forbid(unsafe_code)]`; only indices `0..=16384` (16 KiB) are ever accessed in L1D!
+const Q14_LUT_MASK: usize = 0x7FFF;
+
+fn q14_to_srgb8_lut(round: bool) -> &'static [u8; 32768] {
+    static LUT_ROUND: once_cell::race::OnceBox<[u8; 32768]> = once_cell::race::OnceBox::new();
+    static LUT_TRUNC: once_cell::race::OnceBox<[u8; 32768]> = once_cell::race::OnceBox::new();
+    let cell = if round { &LUT_ROUND } else { &LUT_TRUNC };
+    cell.get_or_init(|| {
+        let bias = if round { 0.5_f32 } else { 0.0_f32 };
+        let mut t = alloc::boxed::Box::new([255u8; 32768]);
+        let inv = 1.0_f32 / (Q14_ONE as f32);
+        for (q, slot) in t[..=16384].iter_mut().enumerate() {
+            let lin = (q as f32) * inv;
+            let enc = linear_srgb::target_features::x4::linear_to_srgb_extended_scalar([
+                lin, 0.0, 0.0, 0.0,
+            ])[0];
+            *slot = quant_scalar_u8(enc, bias);
+        }
+        t
+    })
+}
+
+#[inline(always)]
+fn quantize_matrix_q14(m: &[[f32; 3]; 3]) -> [[i32; 3]; 3] {
+    let s = Q14_ONE as f64;
+    [
+        [
+            libm::round(f64::from(m[0][0]) * s) as i32,
+            libm::round(f64::from(m[0][1]) * s) as i32,
+            libm::round(f64::from(m[0][2]) * s) as i32,
+        ],
+        [
+            libm::round(f64::from(m[1][0]) * s) as i32,
+            libm::round(f64::from(m[1][1]) * s) as i32,
+            libm::round(f64::from(m[1][2]) * s) as i32,
+        ],
+        [
+            libm::round(f64::from(m[2][0]) * s) as i32,
+            libm::round(f64::from(m[2][1]) * s) as i32,
+            libm::round(f64::from(m[2][2]) * s) as i32,
+        ],
+    ]
+}
+
+/// Pre-multiplied Q14 column tables (`r * col0`, `g * col1`, `b * col2`, 12 KiB L1-resident)
+/// built once at `RowPlan::build` time. Eliminates ALL multiplications, transposes, and
+/// stack scatter-gather from the Option B pixel loop while remaining 0-bit identical to
+/// `(mq[row][0]*r + mq[row][1]*g + mq[row][2]*b + Q14_HALF) >> 14`!
+#[repr(C, align(16))]
+#[derive(Clone, Debug)]
+pub(crate) struct Q14MatrixTables {
+    pub r: [[i32; 4]; 256],
+    pub g: [[i32; 4]; 256],
+    pub b: [[i32; 4]; 256],
+}
+
+impl Q14MatrixTables {
+    pub(crate) fn new(m: &[[f32; 3]; 3], round: bool) -> alloc::sync::Arc<Self> {
+        let in_lut = srgb8_to_q14_lut();
+        let _ = q14_to_srgb8_lut(round); // pre-warm so convert_row allocates 0 bytes!
+        let mq = quantize_matrix_q14(m);
+        let mut r = [[0i32; 4]; 256];
+        let mut g = [[0i32; 4]; 256];
+        let mut b = [[0i32; 4]; 256];
+        for i in 0..256 {
+            let v = in_lut[i];
+            r[i] = [mq[0][0] * v, mq[1][0] * v, mq[2][0] * v, 0];
+            g[i] = [mq[0][1] * v, mq[1][1] * v, mq[2][1] * v, 0];
+            b[i] = [mq[0][2] * v, mq[1][2] * v, mq[2][2] * v, 0];
+        }
+        alloc::sync::Arc::new(Self { r, g, b })
+    }
+}
+
+/// Scalar Q14 fixed-point reference (0-bit identical to SIMD Q14!).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn srgb8_matrix_approx_q14_scalar(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    tables: &Q14MatrixTables,
+    src_order: ChannelOrder,
+    dst_order: ChannelOrder,
+    fill_opaque: bool,
+    round: bool,
+) {
+    let out_lut = q14_to_srgb8_lut(round);
+    let sch = src_order.channels();
+    let dch = dst_order.channels();
+    let sr_i = if src_order.is_bgr() { 2 } else { 0 };
+    let sb_i = 2 - sr_i;
+    let dr_i = if dst_order.is_bgr() { 2 } else { 0 };
+    let db_i = 2 - dr_i;
+    let copy_alpha = sch == 4 && dch == 4 && !fill_opaque;
+
+    for i in 0..width {
+        let sp = &src[i * sch..i * sch + sch];
+        let dp = &mut dst[i * dch..i * dch + dch];
+        let vr = &tables.r[sp[sr_i] as usize];
+        let vg = &tables.g[sp[1] as usize];
+        let vb = &tables.b[sp[sb_i] as usize];
+
+        let nr = ((vr[0] + vg[0] + vb[0] + Q14_HALF) >> Q14_SHIFT).clamp(0, Q14_ONE);
+        let ng = ((vr[1] + vg[1] + vb[1] + Q14_HALF) >> Q14_SHIFT).clamp(0, Q14_ONE);
+        let nb = ((vr[2] + vg[2] + vb[2] + Q14_HALF) >> Q14_SHIFT).clamp(0, Q14_ONE);
+
+        dp[dr_i] = out_lut[(nr as usize) & Q14_LUT_MASK];
+        dp[1] = out_lut[(ng as usize) & Q14_LUT_MASK];
+        dp[db_i] = out_lut[(nb as usize) & Q14_LUT_MASK];
+        if dch == 4 {
+            dp[3] = if copy_alpha { sp[3] } else { 255 };
+        }
+    }
+}
+
+macro_rules! impl_srgb8_matrix_q14_body {
+    ($token:expr, $VI4:ty, $src:expr, $dst:expr, $width:expr, $tables:expr, $src_order:expr, $dst_order:expr, $fill_opaque:expr, $round:expr) => {{
+        let out_lut = q14_to_srgb8_lut($round);
+        let tr = &$tables.r;
+        let tg = &$tables.g;
+        let tb = &$tables.b;
+
+        let zero = <$VI4>::zero_t($token);
+        let max_q = <$VI4>::splat_t($token, Q14_ONE);
+        let half = <$VI4>::splat_t($token, Q14_HALF);
+
+        if $src_order == ChannelOrder::Rgb && $dst_order == ChannelOrder::Rgb {
+            let (in_chunks, in_rem) = $src[..$width * 3].as_chunks::<12>();
+            let (out_chunks, out_rem) = $dst[..$width * 3].as_chunks_mut::<12>();
+            for (inp, out) in in_chunks.iter().zip(out_chunks.iter_mut()) {
+                let s0 = (<$VI4>::load_t($token, &tr[inp[0] as usize])
+                    + <$VI4>::load_t($token, &tg[inp[1] as usize])
+                    + <$VI4>::load_t($token, &tb[inp[2] as usize])
+                    + half)
+                    .shr_arithmetic::<14>()
+                    .max(zero)
+                    .min(max_q)
+                    .to_array();
+                let s1 = (<$VI4>::load_t($token, &tr[inp[3] as usize])
+                    + <$VI4>::load_t($token, &tg[inp[4] as usize])
+                    + <$VI4>::load_t($token, &tb[inp[5] as usize])
+                    + half)
+                    .shr_arithmetic::<14>()
+                    .max(zero)
+                    .min(max_q)
+                    .to_array();
+                let s2 = (<$VI4>::load_t($token, &tr[inp[6] as usize])
+                    + <$VI4>::load_t($token, &tg[inp[7] as usize])
+                    + <$VI4>::load_t($token, &tb[inp[8] as usize])
+                    + half)
+                    .shr_arithmetic::<14>()
+                    .max(zero)
+                    .min(max_q)
+                    .to_array();
+                let s3 = (<$VI4>::load_t($token, &tr[inp[9] as usize])
+                    + <$VI4>::load_t($token, &tg[inp[10] as usize])
+                    + <$VI4>::load_t($token, &tb[inp[11] as usize])
+                    + half)
+                    .shr_arithmetic::<14>()
+                    .max(zero)
+                    .min(max_q)
+                    .to_array();
+
+                out[0] = out_lut[(s0[0] as usize) & Q14_LUT_MASK];
+                out[1] = out_lut[(s0[1] as usize) & Q14_LUT_MASK];
+                out[2] = out_lut[(s0[2] as usize) & Q14_LUT_MASK];
+                out[3] = out_lut[(s1[0] as usize) & Q14_LUT_MASK];
+                out[4] = out_lut[(s1[1] as usize) & Q14_LUT_MASK];
+                out[5] = out_lut[(s1[2] as usize) & Q14_LUT_MASK];
+                out[6] = out_lut[(s2[0] as usize) & Q14_LUT_MASK];
+                out[7] = out_lut[(s2[1] as usize) & Q14_LUT_MASK];
+                out[8] = out_lut[(s2[2] as usize) & Q14_LUT_MASK];
+                out[9] = out_lut[(s3[0] as usize) & Q14_LUT_MASK];
+                out[10] = out_lut[(s3[1] as usize) & Q14_LUT_MASK];
+                out[11] = out_lut[(s3[2] as usize) & Q14_LUT_MASK];
+            }
+            if !in_rem.is_empty() {
+                srgb8_matrix_approx_q14_scalar(
+                    in_rem,
+                    out_rem,
+                    in_rem.len() / 3,
+                    $tables,
+                    $src_order,
+                    $dst_order,
+                    $fill_opaque,
+                    $round,
+                );
+            }
+        } else if $src_order == ChannelOrder::Rgba
+            && $dst_order == ChannelOrder::Rgba
+            && !$fill_opaque
+        {
+            let (in_chunks, in_rem) = $src[..$width * 4].as_chunks::<16>();
+            let (out_chunks, out_rem) = $dst[..$width * 4].as_chunks_mut::<16>();
+            for (inp, out) in in_chunks.iter().zip(out_chunks.iter_mut()) {
+                let s0 = (<$VI4>::load_t($token, &tr[inp[0] as usize])
+                    + <$VI4>::load_t($token, &tg[inp[1] as usize])
+                    + <$VI4>::load_t($token, &tb[inp[2] as usize])
+                    + half)
+                    .shr_arithmetic::<14>()
+                    .max(zero)
+                    .min(max_q)
+                    .to_array();
+                let s1 = (<$VI4>::load_t($token, &tr[inp[4] as usize])
+                    + <$VI4>::load_t($token, &tg[inp[5] as usize])
+                    + <$VI4>::load_t($token, &tb[inp[6] as usize])
+                    + half)
+                    .shr_arithmetic::<14>()
+                    .max(zero)
+                    .min(max_q)
+                    .to_array();
+                let s2 = (<$VI4>::load_t($token, &tr[inp[8] as usize])
+                    + <$VI4>::load_t($token, &tg[inp[9] as usize])
+                    + <$VI4>::load_t($token, &tb[inp[10] as usize])
+                    + half)
+                    .shr_arithmetic::<14>()
+                    .max(zero)
+                    .min(max_q)
+                    .to_array();
+                let s3 = (<$VI4>::load_t($token, &tr[inp[12] as usize])
+                    + <$VI4>::load_t($token, &tg[inp[13] as usize])
+                    + <$VI4>::load_t($token, &tb[inp[14] as usize])
+                    + half)
+                    .shr_arithmetic::<14>()
+                    .max(zero)
+                    .min(max_q)
+                    .to_array();
+
+                out[0] = out_lut[(s0[0] as usize) & Q14_LUT_MASK];
+                out[1] = out_lut[(s0[1] as usize) & Q14_LUT_MASK];
+                out[2] = out_lut[(s0[2] as usize) & Q14_LUT_MASK];
+                out[3] = inp[3];
+                out[4] = out_lut[(s1[0] as usize) & Q14_LUT_MASK];
+                out[5] = out_lut[(s1[1] as usize) & Q14_LUT_MASK];
+                out[6] = out_lut[(s1[2] as usize) & Q14_LUT_MASK];
+                out[7] = inp[7];
+                out[8] = out_lut[(s2[0] as usize) & Q14_LUT_MASK];
+                out[9] = out_lut[(s2[1] as usize) & Q14_LUT_MASK];
+                out[10] = out_lut[(s2[2] as usize) & Q14_LUT_MASK];
+                out[11] = inp[11];
+                out[12] = out_lut[(s3[0] as usize) & Q14_LUT_MASK];
+                out[13] = out_lut[(s3[1] as usize) & Q14_LUT_MASK];
+                out[14] = out_lut[(s3[2] as usize) & Q14_LUT_MASK];
+                out[15] = inp[15];
+            }
+            if !in_rem.is_empty() {
+                srgb8_matrix_approx_q14_scalar(
+                    in_rem,
+                    out_rem,
+                    in_rem.len() / 4,
+                    $tables,
+                    $src_order,
+                    $dst_order,
+                    $fill_opaque,
+                    $round,
+                );
+            }
+        } else {
+            let sch = $src_order.channels();
+            let dch = $dst_order.channels();
+            let sr_i = if $src_order.is_bgr() { 2usize } else { 0usize };
+            let sb_i = 2 - sr_i;
+            let dr_i = if $dst_order.is_bgr() { 2usize } else { 0usize };
+            let db_i = 2 - dr_i;
+            let copy_alpha = sch == 4 && dch == 4 && !$fill_opaque;
+
+            for i in 0..$width {
+                let sp = &$src[i * sch..i * sch + sch];
+                let dp = &mut $dst[i * dch..i * dch + dch];
+                let s = (<$VI4>::load_t($token, &tr[sp[sr_i] as usize])
+                    + <$VI4>::load_t($token, &tg[sp[1] as usize])
+                    + <$VI4>::load_t($token, &tb[sp[sb_i] as usize])
+                    + half)
+                    .shr_arithmetic::<14>()
+                    .max(zero)
+                    .min(max_q)
+                    .to_array();
+                dp[dr_i] = out_lut[(s[0] as usize) & Q14_LUT_MASK];
+                dp[1] = out_lut[(s[1] as usize) & Q14_LUT_MASK];
+                dp[db_i] = out_lut[(s[2] as usize) & Q14_LUT_MASK];
+                if dch == 4 {
+                    dp[3] = if copy_alpha { sp[3] } else { 255 };
+                }
+            }
+        }
+    }};
+}
+
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+fn srgb8_matrix_approx_q14_v3_t(
+    token: archmage::X64V3Token,
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    tables: &Q14MatrixTables,
+    src_order: ChannelOrder,
+    dst_order: ChannelOrder,
+    fill_opaque: bool,
+    round: bool,
+) {
+    type VI4 = magetypes::simd::generic::i32x4<archmage::X64V3Token>;
+    impl_srgb8_matrix_q14_body!(
+        token,
+        VI4,
+        src,
+        dst,
+        width,
+        tables,
+        src_order,
+        dst_order,
+        fill_opaque,
+        round
+    );
+}
+
+#[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+fn srgb8_matrix_approx_q14_neon_t(
+    token: archmage::NeonToken,
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    tables: &Q14MatrixTables,
+    src_order: ChannelOrder,
+    dst_order: ChannelOrder,
+    fill_opaque: bool,
+    round: bool,
+) {
+    type VI4 = magetypes::simd::generic::i32x4<archmage::NeonToken>;
+    impl_srgb8_matrix_q14_body!(
+        token,
+        VI4,
+        src,
+        dst,
+        width,
+        tables,
+        src_order,
+        dst_order,
+        fill_opaque,
+        round
+    );
+}
+
+#[cfg(target_arch = "wasm32")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+fn srgb8_matrix_approx_q14_wasm128_t(
+    token: archmage::Wasm128Token,
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    tables: &Q14MatrixTables,
+    src_order: ChannelOrder,
+    dst_order: ChannelOrder,
+    fill_opaque: bool,
+    round: bool,
+) {
+    type VI4 = magetypes::simd::generic::i32x4<archmage::Wasm128Token>;
+    impl_srgb8_matrix_q14_body!(
+        token,
+        VI4,
+        src,
+        dst,
+        width,
+        tables,
+        src_order,
+        dst_order,
+        fill_opaque,
+        round
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn srgb8_matrix_approx_q14_scalar_t(
+    _token: ScalarToken,
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    tables: &Q14MatrixTables,
+    src_order: ChannelOrder,
+    dst_order: ChannelOrder,
+    fill_opaque: bool,
+    round: bool,
+) {
+    srgb8_matrix_approx_q14_scalar(
+        src,
+        dst,
+        width,
+        tables,
+        src_order,
+        dst_order,
+        fill_opaque,
+        round,
+    );
+}
+
+/// Option B: Opt-in fast Q14 fixed-point SIMD U8 sRGB-TRC → 3×3 matrix → sRGB-TRC U8
+/// (max error <= 1 LSB vs exact float; 0-bit parity between SCALAR and ALL).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn simd_srgb8_matrix_approx_q14(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    tables: &Q14MatrixTables,
+    src_order: ChannelOrder,
+    dst_order: ChannelOrder,
+    fill_opaque: bool,
+    round: bool,
+) {
+    archmage::attuned!(
+        srgb8_matrix_approx_q14(
+            src,
+            dst,
+            width,
+            tables,
+            src_order,
+            dst_order,
+            fill_opaque,
+            round
+        ),
         [_v3, _neon, _wasm128, _scalar]
     );
 }

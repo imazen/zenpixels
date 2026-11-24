@@ -379,9 +379,16 @@ fn cases() -> Vec<Case> {
         // Gamut
         Case {
             name: "gamut/p3_to_srgb_rgb8",
-            src: rgb8_p3,
+            src: rgb8_p3.clone(),
             dst: ImageSpec::rgb8_srgb(),
             policy: p_perm.clone(),
+            hdr_peak: None,
+        },
+        Case {
+            name: "gamut/p3_to_srgb_rgb8_approx_q14",
+            src: rgb8_p3,
+            dst: ImageSpec::rgb8_srgb(),
+            policy: p_perm.clone().with_approximate(true),
             hdr_peak: None,
         },
         Case {

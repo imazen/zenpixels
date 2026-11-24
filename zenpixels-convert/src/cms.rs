@@ -19,6 +19,13 @@ pub trait CmsTransform: Send + Sync {
 
 /// Pluggable ICC / CMYK Color Management System backend.
 pub trait CmsBackend: Send + Sync + Debug {
+    /// Fast, allocation-free check whether this backend supports the `(src, dst)`
+    /// layouts, sample types, and color families (used by [`Negotiate`](crate::Negotiate)
+    /// to avoid selecting unbuildable candidates).
+    fn supports_specs(&self, _src: &ImageSpec, _dst: &ImageSpec) -> bool {
+        true
+    }
+
     /// Build a row transform from `src` to `dst`.
     fn build_transform(
         &self,
@@ -283,6 +290,38 @@ mod moxcms_impl {
     }
 
     impl CmsBackend for MoxCms {
+        fn supports_specs(&self, src: &ImageSpec, dst: &ImageSpec) -> bool {
+            if src.layout.sample != dst.layout.sample
+                || !matches!(
+                    src.layout.sample,
+                    SampleType::U8 | SampleType::U16 | SampleType::F32
+                )
+                || !src.layout.packing.is_full()
+                || !dst.layout.packing.is_full()
+                || src.color.alpha() == AlphaMode::Premultiplied
+                || dst.color.alpha() == AlphaMode::Premultiplied
+            {
+                return false;
+            }
+            if to_mox_layout(src.layout.order).is_none()
+                || to_mox_layout(dst.layout.order).is_none()
+            {
+                return false;
+            }
+            let color_ok = |c: &ColorSpace| match c {
+                ColorSpace::Icc { .. } => true,
+                ColorSpace::Cmyk { icc, .. } => icc.is_some(),
+                ColorSpace::Rgb {
+                    range, transfer, ..
+                }
+                | ColorSpace::Gray {
+                    range, transfer, ..
+                } => *range == SignalRange::Full && !matches!(transfer, Transfer::Hlg(_)),
+                _ => false,
+            };
+            color_ok(&src.color) && color_ok(&dst.color)
+        }
+
         fn build_transform(
             &self,
             src: &ImageSpec,
@@ -799,7 +838,36 @@ mod lcms_impl {
         }
     }
 
+    fn lcms_supports_specs(src: &ImageSpec, dst: &ImageSpec) -> bool {
+        if src.color.alpha() == AlphaMode::Premultiplied
+            || dst.color.alpha() == AlphaMode::Premultiplied
+        {
+            return false;
+        }
+        if describe_layout(src.layout, &src.color).is_none()
+            || describe_layout(dst.layout, &dst.color).is_none()
+        {
+            return false;
+        }
+        let color_ok = |c: &ColorSpace| match c {
+            ColorSpace::Icc { .. } => true,
+            ColorSpace::Cmyk { icc, .. } => icc.is_some(),
+            ColorSpace::Rgb {
+                range, transfer, ..
+            }
+            | ColorSpace::Gray {
+                range, transfer, ..
+            } => *range == SignalRange::Full && !matches!(transfer, Transfer::Hlg(_)),
+            _ => false,
+        };
+        color_ok(&src.color) && color_ok(&dst.color)
+    }
+
     impl CmsBackend for Lcms {
+        fn supports_specs(&self, src: &ImageSpec, dst: &ImageSpec) -> bool {
+            lcms_supports_specs(src, dst)
+        }
+
         fn build_transform(
             &self,
             src: &ImageSpec,
@@ -810,6 +878,10 @@ mod lcms_impl {
     }
 
     impl CmsBackend for LcmsUnoptimized {
+        fn supports_specs(&self, src: &ImageSpec, dst: &ImageSpec) -> bool {
+            lcms_supports_specs(src, dst)
+        }
+
         fn build_transform(
             &self,
             src: &ImageSpec,

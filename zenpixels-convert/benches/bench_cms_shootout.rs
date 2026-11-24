@@ -338,6 +338,34 @@ fn bench_4k_rgb_u8(
                     black_box(dst[total_bytes - 1])
                 })
             });
+
+            let plan_approx = RowPlan::build(
+                nat_src,
+                dst_spec,
+                &ConvertPolicy::permissive()
+                    .with_approximate(true)
+                    .with_accelerators(Accelerators::ALL),
+                None,
+            )
+            .unwrap();
+            let s2 = Arc::clone(&src);
+            let mut dst2 = vec![0u8; total_bytes];
+            g.bench("native_05_approx_q14", move |b| {
+                b.iter(|| {
+                    for y in 0..H_4K {
+                        let off = y as usize * row_bytes;
+                        plan_approx
+                            .convert_row(
+                                &s2[off..off + row_bytes],
+                                &mut dst2[off..off + row_bytes],
+                                W_4K,
+                                y,
+                            )
+                            .unwrap();
+                    }
+                    black_box(dst2[total_bytes - 1])
+                })
+            });
         }
     });
 }

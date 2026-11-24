@@ -250,12 +250,23 @@ fn banded_buf_planar_buf_and_dual_layer_hdr() {
 
     // DualLayerHdr (ISO 21496-1 / UltraHDR)
     let base = PixelBuf::new(16, 16, ImageSpec::rgb8_srgb()).unwrap();
-    let gain = PixelBuf::new(8, 8, ImageSpec::gray8_srgb()).unwrap();
+    let gain = PixelBuf::new(
+        8,
+        8,
+        ImageSpec::new(
+            SampleLayout::GRAY8,
+            ColorSpace::Untagged {
+                channels: 1,
+                alpha: AlphaMode::None,
+            },
+        ),
+    )
+    .unwrap();
     let meta = GainMapMetadata::symmetric(2.3);
     let dual = DualLayerHdr::new(base, gain, meta).unwrap();
     assert_eq!(dual.base().width(), 16);
     assert_eq!(dual.gain_map().width(), 8);
-    assert_eq!(dual.metadata().alternate_hdr_headroom, 2.3);
+    assert!((dual.metadata().alternate_hdr_headroom.to_f64() - 2.3).abs() < 1e-4);
 
     // InteropTarget checks
     assert!(ImageSpec::rgb8_srgb().supports_interop(InteropTarget::DynamicImage));

@@ -1595,7 +1595,7 @@ fn read_sample_u32(sample: SampleType, bytes: &[u8]) -> u32 {
     }
 }
 
-/// Multi-plane image (`1..=4` planes: YCbCr 4:2:0/4:2:2/4:4:4, NV12, P010, planar RGB+A).
+/// Multi-plane image (YCbCr 4:2:0/4:2:2/4:4:4, NV12, P010, planar RGB+A, planar CMYKA, JXL/TIFF extra planes).
 #[derive(Clone, Debug)]
 pub struct PlanarBuf {
     width: u32,
@@ -1606,9 +1606,12 @@ pub struct PlanarBuf {
 }
 
 impl PlanarBuf {
-    /// Fallibly allocate a zero-filled multi-plane buffer for `specs` (`1..=4` planes).
+    /// Maximum plane count supported in a single [`PlanarBuf`].
+    pub const MAX_PLANES: usize = 64;
+
+    /// Fallibly allocate a zero-filled multi-plane buffer for `specs` (`1..=64` planes).
     pub fn new(width: u32, height: u32, specs: &[PlaneSpec]) -> Result<Self, At<BufferError>> {
-        if width == 0 || height == 0 || specs.is_empty() || specs.len() > 4 {
+        if width == 0 || height == 0 || specs.is_empty() || specs.len() > Self::MAX_PLANES {
             return Err(err_at(BufferError::InvalidDimensions));
         }
         let mut planes = Vec::new();
@@ -1641,13 +1644,13 @@ impl PlanarBuf {
         })
     }
 
-    /// Construct a validated [`PlanarBuf`] adopting caller-owned planes zero-copy.
+    /// Construct a validated [`PlanarBuf`] adopting caller-owned planes zero-copy (`1..=64` planes).
     pub fn from_planes(
         width: u32,
         height: u32,
         planes: Vec<OwnedPlane>,
     ) -> Result<Self, At<BufferError>> {
-        if width == 0 || height == 0 || planes.is_empty() || planes.len() > 4 {
+        if width == 0 || height == 0 || planes.is_empty() || planes.len() > Self::MAX_PLANES {
             return Err(err_at(BufferError::InvalidDimensions));
         }
         for p in &planes {
@@ -1864,34 +1867,56 @@ impl<'a> PlaneViewMut<'a> {
     }
 }
 
-/// Borrowed multi-plane view (`1..=4` planes) stored inline with **zero heap allocation**.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
+enum PlanarStorage<'a> {
+    Inline {
+        planes: [PlaneView<'a>; 4],
+        len: usize,
+    },
+    Spill(Vec<PlaneView<'a>>),
+}
+
+/// Borrowed multi-plane view (zero heap allocation for `1..=4` planes; spills cleanly for `5..=64` planes).
+#[derive(Clone, Debug)]
 pub struct PlanarView<'a> {
     width: u32,
     height: u32,
-    planes: [PlaneView<'a>; 4],
-    len: usize,
+    storage: PlanarStorage<'a>,
 }
 
 impl<'a> PlanarView<'a> {
-    /// Construct a validated multi-plane borrowed view (`1..=4` planes).
+    /// Construct a validated multi-plane borrowed view (`1..=64` planes).
     pub fn new(width: u32, height: u32, planes: &[PlaneView<'a>]) -> Result<Self, At<BufferError>> {
-        if width == 0 || height == 0 || planes.is_empty() || planes.len() > 4 {
+        if width == 0 || height == 0 || planes.is_empty() || planes.len() > PlanarBuf::MAX_PLANES {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        let mut arr = [PlaneView::EMPTY; 4];
-        for (i, &p) in planes.iter().enumerate() {
+        for &p in planes {
             let (ew, eh) = p.spec.dimensions(width, height);
             if p.width != ew || p.height != eh {
                 return Err(err_at(BufferError::InvalidDimensions));
             }
-            arr[i] = p;
         }
+        let storage = if planes.len() <= 4 {
+            let mut arr = [PlaneView::EMPTY; 4];
+            for (i, &p) in planes.iter().enumerate() {
+                arr[i] = p;
+            }
+            PlanarStorage::Inline {
+                planes: arr,
+                len: planes.len(),
+            }
+        } else {
+            let mut v = Vec::new();
+            v.try_reserve_exact(planes.len())
+                .map_err(|_| err_at(BufferError::AllocationFailed))?;
+            v.extend_from_slice(planes);
+            PlanarStorage::Spill(v)
+        };
         Ok(Self {
             width,
             height,
-            planes: arr,
-            len: planes.len(),
+            storage,
         })
     }
 
@@ -1909,95 +1934,244 @@ impl<'a> PlanarView<'a> {
         self.height
     }
 
-    /// Borrowed planes slice (`1..=4` entries).
+    /// Borrowed planes slice.
     #[inline]
     #[must_use]
     pub fn planes(&self) -> &[PlaneView<'a>] {
-        &self.planes[..self.len]
+        match &self.storage {
+            PlanarStorage::Inline { planes, len } => &planes[..*len],
+            PlanarStorage::Spill(v) => v.as_slice(),
+        }
     }
 }
 
 impl PlanarBuf {
-    /// Borrow all planes as a zero-allocation [`PlanarView`].
+    /// Borrow all planes as a [`PlanarView`] (zero-allocation for `<= 4` planes).
     #[must_use]
     pub fn as_view(&self) -> PlanarView<'_> {
-        let mut arr = [PlaneView::EMPTY; 4];
-        for (i, p) in self.planes.iter().enumerate() {
-            arr[i] = p.as_view();
-        }
-        PlanarView {
-            width: self.width,
-            height: self.height,
-            planes: arr,
-            len: self.planes.len(),
+        if self.planes.len() <= 4 {
+            let mut arr = [PlaneView::EMPTY; 4];
+            for (i, p) in self.planes.iter().enumerate() {
+                arr[i] = p.as_view();
+            }
+            PlanarView {
+                width: self.width,
+                height: self.height,
+                storage: PlanarStorage::Inline {
+                    planes: arr,
+                    len: self.planes.len(),
+                },
+            }
+        } else {
+            let v: Vec<PlaneView<'_>> = self.planes.iter().map(OwnedPlane::as_view).collect();
+            PlanarView {
+                width: self.width,
+                height: self.height,
+                storage: PlanarStorage::Spill(v),
+            }
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// DualLayerHdr (container-agnostic ISO 21496-1 / UltraHDR interchange)
+// DualLayerHdr & DualLayerHdrView (ISO 21496-1 / UltraHDR interchange)
 // ---------------------------------------------------------------------------
 
-/// Container-agnostic dual-layer HDR image (SDR base + gain map + ISO 21496-1 metadata).
+fn validate_dual_layer_specs(
+    base_spec: &ImageSpec,
+    gain_map_spec: &ImageSpec,
+    metadata: GainMapMetadata,
+    alternate_color_space: Option<&crate::ColorSpace>,
+) -> Result<(), At<BufferError>> {
+    // Base may be RGB, Gray, or a 1/3-channel ICC-described image.
+    let base_ok = match &base_spec.color {
+        crate::ColorSpace::Rgb { .. } | crate::ColorSpace::Gray { .. } => true,
+        crate::ColorSpace::Icc { channels, .. } => matches!(*channels, 1 | 3),
+        _ => false,
+    };
+    if !base_ok {
+        return Err(err_at(BufferError::IncompatibleLayout));
+    }
+
+    // Gain map MUST be numeric (Untagged, 1 or 3 channels, no alpha) with Full/Lsb/Msb U8/U16/F32.
+    let gm_layout = gain_map_spec.layout;
+    let gm_color_ok = matches!(
+        gain_map_spec.color,
+        crate::ColorSpace::Untagged {
+            channels: 1 | 3,
+            alpha: crate::AlphaMode::None,
+        }
+    );
+    let gm_layout_ok = !gm_layout.packing.is_packed_word()
+        && matches!(
+            gm_layout.sample,
+            SampleType::U8 | SampleType::U16 | SampleType::F32
+        )
+        && matches!(
+            gm_layout.order,
+            crate::ChannelOrder::Gray
+                | crate::ChannelOrder::Rgb
+                | crate::ChannelOrder::Generic(1)
+                | crate::ChannelOrder::Generic(3)
+        );
+    if !gm_color_ok || !gm_layout_ok {
+        return Err(err_at(BufferError::IncompatibleLayout));
+    }
+
+    if !metadata.is_valid() {
+        return Err(err_at(BufferError::InvalidDimensions));
+    }
+
+    if let Some(alt) = alternate_color_space {
+        let alt_ok = match alt {
+            crate::ColorSpace::Rgb { .. } | crate::ColorSpace::Gray { .. } => true,
+            crate::ColorSpace::Icc { channels, .. } => matches!(*channels, 1 | 3),
+            _ => false,
+        };
+        if !alt_ok {
+            return Err(err_at(BufferError::IncompatibleLayout));
+        }
+    }
+    Ok(())
+}
+
+/// Borrowed validated ISO 21496-1 / UltraHDR dual-layer HDR view (zero copy).
+#[derive(Clone, Debug)]
+pub struct DualLayerHdrView<'a> {
+    base: PixelView<'a>,
+    gain_map: PixelView<'a>,
+    metadata: GainMapMetadata,
+    alternate_color_space: Option<&'a crate::ColorSpace>,
+    orientation: crate::Orientation,
+}
+
+impl<'a> DualLayerHdrView<'a> {
+    /// Construct a validated borrowed dual-layer HDR view.
+    pub fn new(
+        base: PixelView<'a>,
+        gain_map: PixelView<'a>,
+        metadata: GainMapMetadata,
+        alternate_color_space: Option<&'a crate::ColorSpace>,
+        orientation: crate::Orientation,
+    ) -> Result<Self, At<BufferError>> {
+        validate_dual_layer_specs(
+            base.spec(),
+            gain_map.spec(),
+            metadata,
+            alternate_color_space,
+        )?;
+        Ok(Self {
+            base,
+            gain_map,
+            metadata,
+            alternate_color_space,
+            orientation,
+        })
+    }
+
+    /// Borrowed base rendition view.
+    #[inline]
+    #[must_use]
+    pub const fn base(&self) -> &PixelView<'a> {
+        &self.base
+    }
+
+    /// Borrowed numeric gain-map view (`ColorSpace::Untagged`, 1 or 3 channels).
+    #[inline]
+    #[must_use]
+    pub const fn gain_map(&self) -> &PixelView<'a> {
+        &self.gain_map
+    }
+
+    /// Exact rational ISO 21496-1 reconstruction metadata.
+    #[inline]
+    #[must_use]
+    pub const fn metadata(&self) -> GainMapMetadata {
+        self.metadata
+    }
+
+    /// Alternate rendition color space, if declared (required when `application_space == Alternate`).
+    #[inline]
+    #[must_use]
+    pub const fn alternate_color_space(&self) -> Option<&'a crate::ColorSpace> {
+        self.alternate_color_space
+    }
+
+    /// Shared pending EXIF orientation for the aligned `(base, gain_map)` pair.
+    #[inline]
+    #[must_use]
+    pub const fn orientation(&self) -> crate::Orientation {
+        self.orientation
+    }
+}
+
+/// Container-agnostic dual-layer HDR image (base + numeric gain map + exact ISO 21496-1 metadata).
 ///
-/// Unifies UltraHDR JPEG, AVIF `tmap`, JXL, and PNG gain-map HDR in one validated core type.
+/// Unifies UltraHDR JPEG, AVIF `tmap`, JXL `jhgm`, and PNG gain-map HDR in one validated core type.
 #[derive(Clone, Debug)]
 pub struct DualLayerHdr {
     base: PixelBuf,
     gain_map: PixelBuf,
     metadata: GainMapMetadata,
+    alternate_color_space: Option<crate::ColorSpace>,
+    orientation: crate::Orientation,
 }
 
 impl DualLayerHdr {
     /// Construct a validated dual-layer HDR carrier.
     ///
-    /// Validates base color model (`Rgb`/`Gray`), gain-map layout (full-packing
-    /// `U8`/`U16`/`F32` in `Gray`/`Rgb`/`Rgba`), and finite monotonic ISO 21496-1 metadata.
+    /// Validates base color model (`Rgb`/`Gray`/1-or-3-ch `Icc`), numeric gain-map layout
+    /// (`ColorSpace::Untagged`, 1 or 3 channels, `U8`/`U16`/`F32` with `Full`/`Lsb`/`Msb` packing),
+    /// and exact rational ISO 21496-1 metadata (`gamma > 0`, `min <= max`, `H_base != H_alt`).
     pub fn new(
         base: PixelBuf,
         gain_map: PixelBuf,
         metadata: GainMapMetadata,
     ) -> Result<Self, At<BufferError>> {
-        if !matches!(
-            base.spec().color,
-            crate::ColorSpace::Rgb { .. } | crate::ColorSpace::Gray { .. }
-        ) {
-            return Err(err_at(BufferError::IncompatibleLayout));
-        }
-        let gm_layout = gain_map.spec().layout;
-        if !gm_layout.packing.is_full()
-            || !matches!(
-                gm_layout.sample,
-                SampleType::U8 | SampleType::U16 | SampleType::F32
-            )
-            || !matches!(
-                gm_layout.order,
-                crate::ChannelOrder::Gray | crate::ChannelOrder::Rgb | crate::ChannelOrder::Rgba
-            )
-        {
-            return Err(err_at(BufferError::IncompatibleLayout));
-        }
-        let meta_valid = metadata.base_hdr_headroom.is_finite()
-            && metadata.alternate_hdr_headroom.is_finite()
-            && (0..3).all(|c| {
-                metadata.gamma[c].is_finite()
-                    && metadata.gamma[c] > 0.0
-                    && metadata.min_boost_stops[c].is_finite()
-                    && metadata.max_boost_stops[c].is_finite()
-                    && metadata.min_boost_stops[c] <= metadata.max_boost_stops[c]
-                    && metadata.base_offset[c].is_finite()
-                    && metadata.base_offset[c] >= 0.0
-                    && metadata.alternate_offset[c].is_finite()
-                    && metadata.alternate_offset[c] >= 0.0
-            });
-        if !meta_valid {
-            return Err(err_at(BufferError::InvalidDimensions));
-        }
+        validate_dual_layer_specs(base.spec(), gain_map.spec(), metadata, None)?;
         Ok(Self {
             base,
             gain_map,
             metadata,
+            alternate_color_space: None,
+            orientation: crate::Orientation::Identity,
         })
+    }
+
+    /// Attach a validated alternate rendition color space (required when `application_space == Alternate`).
+    pub fn with_alternate_color_space(
+        mut self,
+        alt: crate::ColorSpace,
+    ) -> Result<Self, At<BufferError>> {
+        validate_dual_layer_specs(
+            self.base.spec(),
+            self.gain_map.spec(),
+            self.metadata,
+            Some(&alt),
+        )?;
+        self.alternate_color_space = Some(alt);
+        Ok(self)
+    }
+
+    /// Attach a shared pending [`Orientation`](crate::Orientation) for the aligned pair.
+    #[inline]
+    #[must_use]
+    pub const fn with_orientation(mut self, orientation: crate::Orientation) -> Self {
+        self.orientation = orientation;
+        self
+    }
+
+    /// Borrow as a zero-copy [`DualLayerHdrView`].
+    #[inline]
+    #[must_use]
+    pub fn as_view(&self) -> DualLayerHdrView<'_> {
+        DualLayerHdrView {
+            base: self.base.as_view(),
+            gain_map: self.gain_map.as_view(),
+            metadata: self.metadata,
+            alternate_color_space: self.alternate_color_space.as_ref(),
+            orientation: self.orientation,
+        }
     }
 
     /// Base rendition buffer.
@@ -2007,18 +2181,32 @@ impl DualLayerHdr {
         &self.base
     }
 
-    /// Gain-map buffer (1-channel or 3/4-channel).
+    /// Numeric gain-map buffer (`ColorSpace::Untagged`, 1 or 3 channels).
     #[inline]
     #[must_use]
     pub fn gain_map(&self) -> &PixelBuf {
         &self.gain_map
     }
 
-    /// Validated ISO 21496-1 reconstruction metadata.
+    /// Validated exact rational ISO 21496-1 reconstruction metadata.
     #[inline]
     #[must_use]
     pub const fn metadata(&self) -> GainMapMetadata {
         self.metadata
+    }
+
+    /// Alternate rendition color space, if declared.
+    #[inline]
+    #[must_use]
+    pub fn alternate_color_space(&self) -> Option<&crate::ColorSpace> {
+        self.alternate_color_space.as_ref()
+    }
+
+    /// Shared pending EXIF orientation for the aligned pair.
+    #[inline]
+    #[must_use]
+    pub const fn orientation(&self) -> crate::Orientation {
+        self.orientation
     }
 
     /// Decompose into owned `(base, gain_map, metadata)`.

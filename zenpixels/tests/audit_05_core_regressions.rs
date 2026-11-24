@@ -285,45 +285,187 @@ fn icc_from_icc_for_intent_rejects_absolute_colorimetric() {
 
 #[test]
 fn dual_layer_hdr_and_planes_enforce_invariants() {
+    use core::num::NonZeroU32;
+    use zenpixels::{
+        ChannelOrder, Chromaticity, Cicp, CustomPrimaries, GainMapChannels, GainMapColorSpace,
+        GainMapComponent, GainMapDirection, Gamma, Orientation, Primaries, SignedFraction,
+        UnsignedFraction, WhitePoint,
+    };
+
+    let untagged_gm_spec = ImageSpec::new(
+        SampleLayout::GRAY8,
+        ColorSpace::Untagged {
+            channels: 1,
+            alpha: AlphaMode::None,
+        },
+    );
     let valid_base = PixelBuf::new(4, 4, ImageSpec::rgb8_srgb()).unwrap();
-    let valid_gm = PixelBuf::new(2, 2, ImageSpec::gray8_srgb()).unwrap();
+    let valid_gm = PixelBuf::new(2, 2, untagged_gm_spec.clone()).unwrap();
     let valid_meta = GainMapMetadata::symmetric(2.0);
-    let hdr = DualLayerHdr::new(valid_base, valid_gm, valid_meta).unwrap();
+    let hdr = DualLayerHdr::new(valid_base, valid_gm, valid_meta)
+        .unwrap()
+        .with_orientation(Orientation::Rotate90);
     assert_eq!(hdr.base().width(), 4);
     assert_eq!(hdr.gain_map().width(), 2);
+    assert_eq!(hdr.orientation(), Orientation::Rotate90);
+    let view = hdr.as_view();
+    assert_eq!(view.base().width(), 4);
+    assert_eq!(view.gain_map().width(), 2);
+    assert_eq!(view.orientation(), Orientation::Rotate90);
     let (b, g, _m) = hdr.into_parts();
     assert_eq!(b.height(), 4);
     assert_eq!(g.height(), 2);
 
-    // Non-RGB/Gray base (CMYK) rejected, and bit-packed gain map (RGB565) rejected.
+    // Non-RGB/Gray/ICC base (CMYK) rejected; transfer-tagged gain map rejected; bitfields gain map rejected.
     let cmyk_base = PixelBuf::new(4, 4, ImageSpec::cmyk8(None)).unwrap();
-    let ok_gm = PixelBuf::new(2, 2, ImageSpec::gray8_srgb()).unwrap();
+    let ok_gm = PixelBuf::new(2, 2, untagged_gm_spec.clone()).unwrap();
     assert!(DualLayerHdr::new(cmyk_base, ok_gm, GainMapMetadata::symmetric(2.0)).is_err());
 
     let ok_base = PixelBuf::new(4, 4, ImageSpec::rgb8_srgb()).unwrap();
-    let rgb565_gm =
-        PixelBuf::new(2, 2, ImageSpec::new(SampleLayout::RGB565, ColorSpace::SRGB)).unwrap();
-    assert!(DualLayerHdr::new(ok_base, rgb565_gm, GainMapMetadata::symmetric(2.0)).is_err());
+    let srgb_gm = PixelBuf::new(2, 2, ImageSpec::gray8_srgb()).unwrap();
+    assert!(
+        DualLayerHdr::new(ok_base, srgb_gm, GainMapMetadata::symmetric(2.0)).is_err(),
+        "ISO 21496-1 gain map must be ColorSpace::Untagged (numeric, no transfer curve)"
+    );
 
-    // Invalid GainMapMetadata (gamma <= 0 or max < min) rejected.
-    let bad_meta = GainMapMetadata {
-        gamma: [0.0; 3],
-        ..GainMapMetadata::symmetric(2.0)
+    let ok_base2 = PixelBuf::new(4, 4, ImageSpec::rgb8_srgb()).unwrap();
+    let rgb565_gm = PixelBuf::new(
+        2,
+        2,
+        ImageSpec::new(
+            SampleLayout::RGB565,
+            ColorSpace::Untagged {
+                channels: 3,
+                alpha: AlphaMode::None,
+            },
+        ),
+    )
+    .unwrap();
+    assert!(DualLayerHdr::new(ok_base2, rgb565_gm, GainMapMetadata::symmetric(2.0)).is_err());
+
+    // Exact unreduced rationals preserved lossless without GCD reduction, and invalid metadata rejected.
+    let unreduced = SignedFraction::new(2, NonZeroU32::new(4).unwrap());
+    assert_eq!(unreduced.num, 2);
+    assert_eq!(unreduced.den.get(), 4);
+    let zero_gamma = GainMapComponent {
+        min_gain_stops: SignedFraction::ZERO,
+        max_gain_stops: SignedFraction::new(2, NonZeroU32::new(1).unwrap()),
+        gamma: UnsignedFraction::ZERO,
+        base_offset: SignedFraction::ZERO,
+        alternate_offset: SignedFraction::ZERO,
     };
-    let b2 = PixelBuf::new(4, 4, ImageSpec::rgb8_srgb()).unwrap();
-    let g2 = PixelBuf::new(2, 2, ImageSpec::gray8_srgb()).unwrap();
-    assert!(DualLayerHdr::new(b2, g2, bad_meta).is_err());
-
-    let bad_meta2 = GainMapMetadata {
-        min_boost_stops: [2.0; 3],
-        max_boost_stops: [1.0; 3],
-        ..GainMapMetadata::symmetric(2.0)
+    assert!(
+        GainMapMetadata::try_new(
+            GainMapChannels::Shared(zero_gamma),
+            UnsignedFraction::ZERO,
+            UnsignedFraction::new(2, NonZeroU32::new(1).unwrap()),
+            GainMapColorSpace::Base,
+        )
+        .is_none()
+    );
+    let inverted_range = GainMapComponent {
+        min_gain_stops: SignedFraction::new(3, NonZeroU32::new(1).unwrap()),
+        max_gain_stops: SignedFraction::new(1, NonZeroU32::new(1).unwrap()),
+        gamma: UnsignedFraction::ONE,
+        base_offset: SignedFraction::ZERO,
+        alternate_offset: SignedFraction::ZERO,
     };
-    let b3 = PixelBuf::new(4, 4, ImageSpec::rgb8_srgb()).unwrap();
-    let g3 = PixelBuf::new(2, 2, ImageSpec::gray8_srgb()).unwrap();
-    assert!(DualLayerHdr::new(b3, g3, bad_meta2).is_err());
+    assert!(
+        GainMapMetadata::try_new(
+            GainMapChannels::Shared(inverted_range),
+            UnsignedFraction::ZERO,
+            UnsignedFraction::new(2, NonZeroU32::new(1).unwrap()),
+            GainMapColorSpace::Base,
+        )
+        .is_none()
+    );
+    // Reverse direction (HDR base -> SDR alternate) accepted!
+    let rev = GainMapMetadata::try_new(
+        GainMapChannels::Shared(GainMapComponent {
+            min_gain_stops: SignedFraction::new(-2, NonZeroU32::new(1).unwrap()),
+            max_gain_stops: SignedFraction::ZERO,
+            gamma: UnsignedFraction::ONE,
+            base_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
+            alternate_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
+        }),
+        UnsignedFraction::new(2, NonZeroU32::new(1).unwrap()),
+        UnsignedFraction::ZERO,
+        GainMapColorSpace::Base,
+    )
+    .unwrap();
+    assert_eq!(rev.direction(), Some(GainMapDirection::Reverse));
 
-    // Sealed PlaneView & OwnedPlane validation.
+    // DCI-P3 (CICP CP 11) vs Display P3 (CICP CP 12) + Bradford adaptation + CustomPrimaries + Gamma + XYZ.
+    assert_eq!(Primaries::DciP3.to_cicp(), Some(11));
+    assert_eq!(Primaries::DisplayP3.to_cicp(), Some(12));
+    assert_eq!(Cicp::DCI_P3.color_primaries, 11);
+    let dci_to_srgb = Primaries::DciP3.gamut_matrix_to(Primaries::Bt709).unwrap();
+    let dp3_to_srgb = Primaries::DisplayP3
+        .gamut_matrix_to(Primaries::Bt709)
+        .unwrap();
+    // D65 white in DCI-P3 (adapted from DCI theater white) differs from Display P3 matrix!
+    assert_ne!(dci_to_srgb, dp3_to_srgb);
+    // White (1,1,1) in DCI-P3 maps to white (1,1,1) in sRGB under Bradford adaptation!
+    for row in dci_to_srgb {
+        let sum = row[0] + row[1] + row[2];
+        assert!((sum - 1.0).abs() < 1e-4, "DCI-P3 white sum={sum}");
+    }
+    let prophoto = CustomPrimaries::try_new(
+        (0.7347, 0.2653),
+        (0.1596, 0.8404),
+        (0.0366, 0.0001),
+        Chromaticity::D50.xy(),
+    )
+    .unwrap();
+    let pp_to_srgb = Primaries::Custom(prophoto)
+        .gamut_matrix_to(Primaries::Bt709)
+        .unwrap();
+    for row in pp_to_srgb {
+        let sum = row[0] + row[1] + row[2];
+        assert!(
+            (sum - 1.0).abs() < 1e-4,
+            "ProPhoto D50->D65 white sum={sum}"
+        );
+    }
+    assert_eq!(Transfer::Gamma(Gamma::DCI_2_6).to_cicp(), Some(17));
+    assert_eq!(
+        Transfer::from_cicp(17),
+        Some(Transfer::Gamma(Gamma::DCI_2_6))
+    );
+    assert_eq!(Transfer::Gamma(Gamma::GAMMA_1_8).to_cicp(), None);
+
+    // ColorSpace::Xyz & CMYKA validation + U32 20-bit Lsb packing.
+    let xyz_spec = ImageSpec::new(
+        SampleLayout::XYZF32,
+        ColorSpace::Xyz {
+            white_point: WhitePoint::E,
+            alpha: AlphaMode::None,
+            white: None,
+        },
+    );
+    assert!(xyz_spec.validate().is_ok());
+    let cmyka_spec = ImageSpec::new(
+        SampleLayout::CMYKA8,
+        ColorSpace::Cmyk {
+            icc: None,
+            inverted: false,
+            alpha: AlphaMode::Straight,
+        },
+    );
+    assert!(cmyka_spec.validate().is_ok());
+    assert_eq!(ChannelOrder::Cmyka.channels(), 5);
+    assert!(
+        BitPacking::Lsb { bits: 20 }
+            .validate(SampleType::U32, 3)
+            .is_ok()
+    );
+    assert!(
+        BitPacking::Lsb { bits: 32 }
+            .validate(SampleType::U32, 3)
+            .is_err()
+    );
+
+    // Sealed PlaneView & OwnedPlane validation, plus 5-plane CMYKA+Extra spillover (>4 inline).
     let y_spec = PlaneSpec::new(PlaneRole::Y, SampleType::U8);
     assert!(PlaneView::new(y_spec, 4, 2, 4, &[0u8; 4]).is_err());
     let pv = PlaneView::new(y_spec, 4, 2, 4, &[0u8; 8]).unwrap();
@@ -333,6 +475,20 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
     let op = OwnedPlane::from_storage(y_spec, 4, 2, 4, PixelStorage::U8(vec![0u8; 8])).unwrap();
     let pbuf = PlanarBuf::from_planes(4, 2, vec![op]).unwrap();
     assert_eq!(pbuf.planes().len(), 1);
+
+    let six_specs = [
+        PlaneSpec::new(PlaneRole::Cyan, SampleType::U8),
+        PlaneSpec::new(PlaneRole::Magenta, SampleType::U8),
+        PlaneSpec::new(PlaneRole::Yellow, SampleType::U8),
+        PlaneSpec::new(PlaneRole::Key, SampleType::U8),
+        PlaneSpec::new(PlaneRole::Alpha, SampleType::U8),
+        PlaneSpec::new(PlaneRole::Extra(0), SampleType::U16),
+    ];
+    let six_buf = PlanarBuf::new(4, 2, &six_specs).unwrap();
+    assert_eq!(six_buf.planes().len(), 6);
+    let six_view = six_buf.as_view();
+    assert_eq!(six_view.planes().len(), 6);
+    assert_eq!(six_view.planes()[5].spec().role, PlaneRole::Extra(0));
 }
 
 #[cfg(feature = "image")]

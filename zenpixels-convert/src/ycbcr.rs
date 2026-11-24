@@ -107,6 +107,7 @@ pub fn ycbcr_to_rgb_f32(
     let mut cb_plane: Option<&PlaneView<'_>> = None;
     let mut cr_plane: Option<&PlaneView<'_>> = None;
     let mut semi_plane: Option<&PlaneView<'_>> = None;
+    let mut alpha_plane: Option<&PlaneView<'_>> = None;
 
     for p in planes {
         match p.spec().role {
@@ -130,13 +131,21 @@ pub fn ycbcr_to_rgb_f32(
                     return Err(err_at(ConvertError::UnsupportedRoute));
                 }
             }
-            PlaneRole::Alpha | PlaneRole::GainMap => {}
+            PlaneRole::Alpha => {
+                if alpha_plane.replace(p).is_some() {
+                    return Err(err_at(ConvertError::UnsupportedRoute));
+                }
+            }
+            // Refuse unrecognized/auxiliary roles (including GainMap) instead of silently dropping them.
             _ => return Err(err_at(ConvertError::UnsupportedRoute)),
         }
     }
 
     let y_plane = y_plane.ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
     validate_ycbcr_plane(y_plane, w, h, 1, true)?;
+    if let Some(ap) = alpha_plane {
+        validate_ycbcr_plane(ap, w, h, 1, true)?;
+    }
 
     let (semi, cb_plane, cr_plane) = if let Some(sp) = semi_plane {
         if cb_plane.is_some() || cr_plane.is_some() {
@@ -152,17 +161,31 @@ pub fn ycbcr_to_rgb_f32(
         (false, cb, cr)
     };
 
+    let has_alpha = alpha_plane.is_some();
+    let dst_ch = if has_alpha { 4usize } else { 3usize };
     let dst_spec = ImageSpec::new(
-        SampleLayout::RGBF32,
+        if has_alpha {
+            SampleLayout::RGBAF32
+        } else {
+            SampleLayout::RGBF32
+        },
         ColorSpace::Rgb {
             primaries,
             transfer,
             range: SignalRange::Full,
-            alpha: AlphaMode::None,
+            alpha: if has_alpha {
+                AlphaMode::Straight
+            } else {
+                AlphaMode::None
+            },
             white: None,
         },
     );
     let mut out = PixelBuf::new(w, h, dst_spec).map_err(|e| err_at((*e.error()).into()))?;
+    let alpha_scale = alpha_plane.map(|ap| {
+        let s = ap.spec();
+        1.0 / (s.packing.max_code(s.sample, 0).max(1) as f32)
+    });
 
     let (kr, kb) = matrix.kr_kb();
     let kg = 1.0 - kr - kb;
@@ -208,6 +231,7 @@ pub fn ycbcr_to_rgb_f32(
         let cry = (y / cr_vy).min(cr_plane.height() - 1);
         let cb_row = cb_plane.row(cby);
         let cr_row = cr_plane.row(cry);
+        let alpha_row = alpha_plane.map(|ap| (ap.spec(), ap.row(y)));
         let dst_f32: &mut [f32] = out_view
             .row_as_mut::<f32>(y)
             .map_err(|e| err_at((*e.error()).into()))?;
@@ -231,10 +255,13 @@ pub fn ycbcr_to_rgb_f32(
             let cb = (cb_code - cb_mid) * cb_scale;
             let cr = (cr_code - cr_mid) * cr_scale;
 
-            let o = (x as usize) * 3;
+            let o = (x as usize) * dst_ch;
             dst_f32[o] = yn + cr_to_r * cr;
             dst_f32[o + 1] = yn + cr_to_g * cr + cb_to_g * cb;
             dst_f32[o + 2] = yn + cb_to_b * cb;
+            if let (Some((a_spec, a_row)), Some(a_sc)) = (alpha_row, alpha_scale) {
+                dst_f32[o + 3] = (read_plane_code(a_spec, a_row, x as usize, 0) as f32) * a_sc;
+            }
         }
     }
     Ok(out)

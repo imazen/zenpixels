@@ -187,6 +187,31 @@ impl OutputPlan {
     pub fn dst_spec(&self) -> &ImageSpec {
         &self.dst
     }
+
+    /// Resolve and validate container color signaling `(cicp, icc)` upfront before
+    /// streaming rows into an encoder (avoids materializing a full `EncodeReady` buffer).
+    #[allow(clippy::type_complexity)]
+    pub fn resolve_signaling(
+        &self,
+        origin: &ColorOrigin,
+    ) -> Result<(Option<Cicp>, Option<Cow<'static, [u8]>>), At<ConvertError>> {
+        resolve_output_signaling(&self.src.color, &self.dst.color, &self.profile, origin)
+    }
+
+    /// Build a streaming [`RowPlan`](crate::RowPlan) matching this output plan so
+    /// row encoders can emit validated headers via [`resolve_signaling`](Self::resolve_signaling)
+    /// and convert scanlines without full-frame allocation.
+    pub fn build_row_plan(
+        &self,
+        hdr_peak: Option<zenpixels::Nits>,
+    ) -> Result<crate::plan::RowPlan, At<ConvertError>> {
+        crate::plan::RowPlan::build(
+            self.src.clone(),
+            self.dst.clone(),
+            self.image_plan.policy(),
+            hdr_peak,
+        )
+    }
 }
 
 fn validate_custom_icc_for_dst(
@@ -216,32 +241,37 @@ fn validate_custom_icc_for_dst(
     let matches_model = match dst_color {
         ColorSpace::Rgb { .. } => sig == zenpixels::IccColorSpace::Rgb,
         ColorSpace::Gray { .. } => sig == zenpixels::IccColorSpace::Gray,
-        ColorSpace::Cmyk { .. } => sig == zenpixels::IccColorSpace::Cmyk,
+        ColorSpace::Cmyk { icc: Some(p), .. } => {
+            sig == zenpixels::IccColorSpace::Cmyk && zenpixels::icc::normalized_eq(p, bytes)
+        }
         ColorSpace::Icc { profile, .. } => zenpixels::icc::normalized_eq(profile, bytes),
         _ => false,
     };
     if !matches_model {
         return Err(err_at(ConvertError::OutputSignalingMismatch));
     }
-    // If destination is a structured RGB/Gray space, ensure the custom profile isn't known to contradict it
-    // (for structured destinations, callers should target ColorSpace::Icc when converting to an arbitrary ICC).
+    // Structured RGB/Gray destinations require positive identification matching
+    // destination primaries & transfer — arbitrary unrecognized ICC profiles must
+    // target `ColorSpace::Icc` explicitly so pixels are converted rather than mislabeled.
     match dst_color {
         ColorSpace::Rgb {
             primaries,
             transfer,
             ..
         } => {
-            if let Some(id) = zenpixels::icc::IccIdentification::from_icc(bytes)
-                && (id.primaries != *primaries || id.transfer != *transfer)
-            {
+            let Some(id) = zenpixels::icc::IccIdentification::from_icc(bytes) else {
+                return Err(err_at(ConvertError::OutputSignalingMismatch));
+            };
+            if id.primaries != *primaries || id.transfer != *transfer {
                 return Err(err_at(ConvertError::OutputSignalingMismatch));
             }
             Ok(())
         }
         ColorSpace::Gray { transfer, .. } => {
-            if let Some(id) = zenpixels::icc::IccIdentification::from_icc(bytes)
-                && id.transfer != *transfer
-            {
+            let Some(id) = zenpixels::icc::IccIdentification::from_icc(bytes) else {
+                return Err(err_at(ConvertError::OutputSignalingMismatch));
+            };
+            if id.transfer != *transfer {
                 return Err(err_at(ConvertError::OutputSignalingMismatch));
             }
             Ok(())
@@ -286,12 +316,27 @@ fn resolve_output_signaling(
                     ..
                 }
             );
-            let icc = if is_narrow {
-                None
+            // Verify that preserved origin ICC and CICP actually agree with `dst_color`
+            // (never leak historical P3/CMYK/YCbCr provenance onto converted sRGB pixels!).
+            let icc = if let Some(orig_icc) = origin.icc.as_ref() {
+                if is_narrow {
+                    return Err(err_at(ConvertError::OutputSignalingMismatch));
+                }
+                validate_custom_icc_for_dst(orig_icc, dst_color)?;
+                Some(Cow::Owned(orig_icc.to_vec()))
             } else {
-                origin.icc.as_ref().map(|b| Cow::Owned(b.to_vec()))
+                None
             };
-            let cicp = origin.cicp.or_else(|| dst_color.to_cicp());
+            let cicp = if let Some(orig_cicp) = origin.cicp {
+                if dst_color.to_cicp() != Some(orig_cicp) {
+                    return Err(err_at(ConvertError::OutputSignalingMismatch));
+                }
+                Some(orig_cicp)
+            } else if icc.is_none() {
+                dst_color.to_cicp()
+            } else {
+                None
+            };
             Ok((cicp, icc))
         }
         OutputProfile::EmbedIcc => {
@@ -312,14 +357,16 @@ fn resolve_output_signaling(
                         })
                 }),
                 ColorSpace::Gray {
+                    transfer,
                     range: zenpixels::SignalRange::Full,
                     ..
-                } => dst_color
-                    .to_cicp()
-                    .and_then(|c| match SynthesizedIcc::for_gray_cicp(c) {
+                } => transfer.to_cicp().and_then(|tc| {
+                    let gray_cicp = Cicp::new(1, tc, 0, true);
+                    match SynthesizedIcc::for_gray_cicp(gray_cicp) {
                         SynthesizedIcc::Profile(b) => Some(b),
                         _ => None,
-                    }),
+                    }
+                }),
                 _ => None,
             };
             let Some(icc_bytes) = icc else {

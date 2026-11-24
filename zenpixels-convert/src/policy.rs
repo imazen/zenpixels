@@ -117,6 +117,11 @@ pub struct ConvertPolicy {
     ///
     /// Default is `true` in `permissive()`/`working_linear()`/`display_sdr()`, and `false` in `lossless()`.
     pub allow_icc_substitution: bool,
+    /// Whether opt-in fast fixed-point approximations (max error <= 1 LSB vs exact float,
+    /// e.g. Q13/Q14 integer LUT U8 sRGB-matrix fast path) may be selected.
+    ///
+    /// Default is `false` (exact 0-bit parity with the float strip pipeline).
+    pub allow_approximate: bool,
 }
 
 impl Default for ConvertPolicy {
@@ -147,6 +152,7 @@ impl ConvertPolicy {
             source_facts: SampleFacts::NONE,
             tone_map_hdr_to_sdr: false,
             allow_icc_substitution: false,
+            allow_approximate: false,
         }
     }
 
@@ -168,6 +174,7 @@ impl ConvertPolicy {
             source_facts: SampleFacts::NONE,
             tone_map_hdr_to_sdr: false,
             allow_icc_substitution: true,
+            allow_approximate: false,
         }
     }
 
@@ -189,6 +196,7 @@ impl ConvertPolicy {
             source_facts: SampleFacts::NONE,
             tone_map_hdr_to_sdr: true,
             allow_icc_substitution: true,
+            allow_approximate: false,
         }
     }
 
@@ -210,6 +218,7 @@ impl ConvertPolicy {
             source_facts: SampleFacts::NONE,
             tone_map_hdr_to_sdr: false,
             allow_icc_substitution: true,
+            allow_approximate: false,
         }
     }
 
@@ -323,6 +332,15 @@ impl ConvertPolicy {
     #[must_use]
     pub fn with_icc_substitution(mut self, allow: bool) -> Self {
         self.allow_icc_substitution = allow;
+        self
+    }
+
+    /// Control whether fast fixed-point approximations (max error <= 1 LSB vs exact float)
+    /// may be used on supported U8 color-matrix routes (default `false`).
+    #[inline]
+    #[must_use]
+    pub fn with_approximate(mut self, allow: bool) -> Self {
+        self.allow_approximate = allow;
         self
     }
 }

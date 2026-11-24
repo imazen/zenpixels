@@ -51,7 +51,9 @@ pub struct Cicp {
 impl Cicp {
     /// sRGB RGB `(1, 13, 0, true)`.
     pub const SRGB: Self = Self::new(1, 13, 0, true);
-    /// Display P3 RGB `(12, 13, 0, true)`.
+    /// DCI-P3 (SMPTE RP 431-2 theater white) RGB `(11, 13, 0, true)`.
+    pub const DCI_P3: Self = Self::new(11, 13, 0, true);
+    /// Display P3 (D65 white) RGB `(12, 13, 0, true)`.
     pub const DISPLAY_P3: Self = Self::new(12, 13, 0, true);
     /// Linear sRGB RGB `(1, 8, 0, true)`.
     pub const LINEAR_SRGB: Self = Self::new(1, 8, 0, true);

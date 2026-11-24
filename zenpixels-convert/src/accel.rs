@@ -26,6 +26,26 @@ pub(crate) type U8ToF32SliceFn = fn(&[u8], &mut [f32]);
 pub(crate) type F32ToU16SliceFn = fn(&[f32], &mut [u16], bool);
 pub(crate) type U16ToF32SliceFn = fn(&[u16], &mut [f32]);
 pub(crate) type LinF32ToSrgbU8Fn = fn(&[f32], &mut [u8], bool, bool);
+pub(crate) type Srgb8MatrixFn = fn(
+    &[u8],
+    &mut [u8],
+    usize,
+    &[[f32; 3]; 3],
+    zenpixels::ChannelOrder,
+    zenpixels::ChannelOrder,
+    bool,
+    bool,
+);
+pub(crate) type Srgb8MatrixQ14Fn = fn(
+    &[u8],
+    &mut [u8],
+    usize,
+    &crate::strip_simd::Q14MatrixTables,
+    zenpixels::ChannelOrder,
+    zenpixels::ChannelOrder,
+    bool,
+    bool,
+);
 pub(crate) type TransferSliceFn = fn(&mut [f32]);
 #[cfg(feature = "hdr-transfers")]
 pub(crate) type ScaledTransferSliceFn = fn(&mut [f32], f32);
@@ -70,6 +90,10 @@ pub struct Accelerators {
     pub(crate) srgb_u8_to_lin: Option<U8ToF32SliceFn>,
     /// Fused SIMD linear `f32 → sRGB u8` exact polynomial + quantization.
     pub(crate) lin_f32_to_srgb_u8: Option<LinF32ToSrgbU8Fn>,
+    /// Option A: Fused exact SIMD U8 sRGB-TRC → 3×3 matrix → sRGB-TRC U8 (0-bit parity).
+    pub(crate) srgb8_matrix_exact: Option<Srgb8MatrixFn>,
+    /// Option B: Opt-in fast Q14 fixed-point SIMD U8 sRGB-TRC → 3×3 matrix → sRGB-TRC U8 (<= 1 LSB).
+    pub(crate) srgb8_matrix_approx: Option<Srgb8MatrixQ14Fn>,
     /// SIMD BT.709 EOTF on `f32` slices.
     pub(crate) bt709_eotf: Option<TransferSliceFn>,
     /// SIMD BT.709 OETF on `f32` slices.
@@ -119,6 +143,8 @@ impl fmt::Debug for Accelerators {
             .field("srgb_eotf", &self.srgb_eotf.is_some())
             .field("srgb_oetf", &self.srgb_oetf.is_some())
             .field("lin_f32_to_srgb_u8", &self.lin_f32_to_srgb_u8.is_some())
+            .field("srgb8_matrix_exact", &self.srgb8_matrix_exact.is_some())
+            .field("srgb8_matrix_approx", &self.srgb8_matrix_approx.is_some())
             .field("bt709", &self.bt709_eotf.is_some())
             .field("gamma22", &self.gamma22_eotf.is_some())
             .field("gamut_3x3", &self.gamut_3x3.is_some())
@@ -147,6 +173,8 @@ impl PartialEq for Accelerators {
             && self.srgb_oetf.is_some() == other.srgb_oetf.is_some()
             && self.srgb_u8_to_lin.is_some() == other.srgb_u8_to_lin.is_some()
             && self.lin_f32_to_srgb_u8.is_some() == other.lin_f32_to_srgb_u8.is_some()
+            && self.srgb8_matrix_exact.is_some() == other.srgb8_matrix_exact.is_some()
+            && self.srgb8_matrix_approx.is_some() == other.srgb8_matrix_approx.is_some()
             && self.bt709_eotf.is_some() == other.bt709_eotf.is_some()
             && self.bt709_oetf.is_some() == other.bt709_oetf.is_some()
             && self.gamma22_eotf.is_some() == other.gamma22_eotf.is_some()
@@ -200,6 +228,8 @@ impl Accelerators {
         srgb_oetf: None,
         srgb_u8_to_lin: None,
         lin_f32_to_srgb_u8: None,
+        srgb8_matrix_exact: None,
+        srgb8_matrix_approx: None,
         bt709_eotf: None,
         bt709_oetf: None,
         gamma22_eotf: None,
@@ -228,14 +258,15 @@ impl Accelerators {
     /// Byte-only layout swizzles (`garb` U8 layouts).
     pub const LAYOUT: Self = Self::SCALAR.with_byte_layout();
 
-    /// Common web SDR workload: byte layouts + SIMD strip codec + sRGB + 3×3 gamut.
+    /// Common web SDR workload: byte layouts + SIMD strip codec + sRGB + 3×3 gamut + fused U8 P3/sRGB matrix.
     ///
     /// Links zero BT.709, Gamma 2.2, F16, PQ, HLG, or Oklab SIMD code.
     pub const WEB_SDR: Self = Self::SCALAR
         .with_byte_layout()
         .with_strip_simd()
         .with_srgb()
-        .with_gamut_3x3();
+        .with_gamut_3x3()
+        .with_srgb8_matrix_internal();
 
     /// HDR & half-float workload: SIMD strip codec + F16C/NEON-fp16 + PQ/HLG + 3×3 gamut.
     pub const HDR: Self = Self::SCALAR
@@ -334,6 +365,14 @@ impl Accelerators {
         self
     }
 
+    #[inline]
+    #[must_use]
+    const fn with_srgb8_matrix_internal(mut self) -> Self {
+        self.srgb8_matrix_exact = Some(crate::strip_simd::simd_srgb8_matrix_exact);
+        self.srgb8_matrix_approx = Some(crate::strip_simd::simd_srgb8_matrix_approx_q14);
+        self
+    }
+
     /// Enable hardware `f16 ↔ f32` slice conversion (`F16C` / `NEON-fp16`).
     #[inline]
     #[must_use]
@@ -396,6 +435,8 @@ impl Accelerators {
             srgb_oetf: pick!(srgb_oetf),
             srgb_u8_to_lin: pick!(srgb_u8_to_lin),
             lin_f32_to_srgb_u8: pick!(lin_f32_to_srgb_u8),
+            srgb8_matrix_exact: pick!(srgb8_matrix_exact),
+            srgb8_matrix_approx: pick!(srgb8_matrix_approx),
             bt709_eotf: pick!(bt709_eotf),
             bt709_oetf: pick!(bt709_oetf),
             gamma22_eotf: pick!(gamma22_eotf),

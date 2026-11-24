@@ -39,15 +39,16 @@ pub mod storage;
 
 // Clean, flat re-exports of the core interchange surface.
 pub use buffer::{
-    BandedBuf, Bgrx, BufferError, DEFAULT_MAX_BAND_BYTES, DualLayerHdr, OwnedPlane, PixelBuf,
-    PixelBufParts, PixelCow, PixelSink, PixelSource, PixelView, PixelViewMut, PlanarBuf,
-    PlanarView, PlaneView, PlaneViewMut, Rgbx,
+    BandedBuf, Bgrx, BufferError, DEFAULT_MAX_BAND_BYTES, DualLayerHdr, DualLayerHdrView,
+    OwnedPlane, PixelBuf, PixelBufParts, PixelCow, PixelSink, PixelSource, PixelView, PixelViewMut,
+    PlanarBuf, PlanarView, PlaneView, PlaneViewMut, Rgbx,
 };
 pub use cicp::{Cicp, CicpError};
 pub use color::{
-    AlphaMode, Color, ColorError, ColorOrigin, ColorSpace, GainMapMetadata, HdrMetadata, HlgMode,
-    IccColorSpace, ImageSpec, OriginKind, PerceptualSpace, Primaries, RenderingIntent, SignalRange,
-    Transfer,
+    AlphaMode, Chromaticity, Color, ColorError, ColorOrigin, ColorSpace, CustomPrimaries,
+    GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapDirection, GainMapMetadata, Gamma,
+    HdrMetadata, HlgMode, IccColorSpace, ImageSpec, OriginKind, PerceptualSpace, Primaries,
+    RenderingIntent, SignalRange, SignedFraction, Transfer, UnsignedFraction, WhitePoint,
 };
 pub use facts::{ExactDepth, FloatFacts, SampleFacts};
 pub use hdr::{

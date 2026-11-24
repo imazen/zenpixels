@@ -113,14 +113,14 @@ pub enum BitPacking {
     /// All bits of each [`SampleType`] word hold the channel value (`0..=255` in `U8`, `0..=65535` in `U16`).
     #[default]
     Full,
-    /// Right-aligned `bits`-wide unsigned code in each `U8`/`U16` sample (unused high bits ignored on read).
+    /// Right-aligned `bits`-wide unsigned code in each `U8`/`U16`/`U32` sample (unused high bits ignored on read).
     Lsb {
-        /// Significant bit depth (`1..=16`).
+        /// Significant bit depth (`1..=8` for `U8`, `1..=16` for `U16`, `1..=31` for `U32`).
         bits: u8,
     },
-    /// Left-aligned `bits`-wide unsigned code in each `U8`/`U16` sample (e.g., P010: 10-bit code shifted left by 6).
+    /// Left-aligned `bits`-wide unsigned code in each `U8`/`U16`/`U32` sample (e.g., P010: 10-bit code shifted left by 6).
     Msb {
-        /// Significant bit depth (`1..=16`).
+        /// Significant bit depth (`1..=8` for `U8`, `1..=16` for `U16`, `1..=31` for `U32`).
         bits: u8,
     },
     /// Multiple channels bit-packed into a single [`SampleType`] word (e.g. `RGB565` in `U16`, `RGB10A1` in `U32`).
@@ -170,10 +170,15 @@ impl BitPacking {
         match self {
             Self::Full => Ok(()),
             Self::Lsb { bits } | Self::Msb { bits } => {
-                if !matches!(sample, SampleType::U8 | SampleType::U16) {
+                if !matches!(sample, SampleType::U8 | SampleType::U16 | SampleType::U32) {
                     return Err(LayoutError::UnsupportedBitPacking);
                 }
-                if bits == 0 || bits > word_bits {
+                let max_bits = if matches!(sample, SampleType::U32) {
+                    31
+                } else {
+                    word_bits
+                };
+                if bits == 0 || bits > max_bits {
                     return Err(LayoutError::InvalidBitDepth);
                 }
                 Ok(())
@@ -339,6 +344,14 @@ pub enum ChannelOrder {
     Cmyk,
     /// Four-channel inverted CMYK (`[C, M, Y, K]`, `max` = no ink, Adobe JPEG/JXL).
     CmykInverted,
+    /// Five-channel CMYK + alpha (`[C, M, Y, K, A]`, `0` = no ink, e.g. TIFF CMYKA).
+    Cmyka,
+    /// Five-channel inverted CMYK + alpha (`[C, M, Y, K, A]`, `max` = no ink).
+    CmykaInverted,
+    /// Three-channel CIE XYZ (`[X, Y, Z]`, e.g. TIFF LogLuv).
+    Xyz,
+    /// Four-channel CIE XYZ + alpha (`[X, Y, Z, A]`).
+    XyzA,
     /// Three-channel perceptual/cylindrical space (`Oklch`, `Lab`, `Lch`, `Jzazbz`, `HSL`, `HSV`).
     Perceptual3,
     /// Four-channel perceptual/cylindrical space + alpha.
@@ -355,7 +368,7 @@ impl ChannelOrder {
         match self {
             Self::Gray => 1,
             Self::GrayAlpha => 2,
-            Self::Rgb | Self::Bgr | Self::Oklab | Self::Perceptual3 => 3,
+            Self::Rgb | Self::Bgr | Self::Oklab | Self::Xyz | Self::Perceptual3 => 3,
             Self::Rgba
             | Self::Bgra
             | Self::Rgbx
@@ -363,7 +376,9 @@ impl ChannelOrder {
             | Self::OklabA
             | Self::Cmyk
             | Self::CmykInverted
+            | Self::XyzA
             | Self::Perceptual4 => 4,
+            Self::Cmyka | Self::CmykaInverted => 5,
             Self::Generic(n) => n as usize,
         }
     }
@@ -374,7 +389,14 @@ impl ChannelOrder {
     pub const fn has_alpha_slot(self) -> bool {
         matches!(
             self,
-            Self::GrayAlpha | Self::Rgba | Self::Bgra | Self::OklabA | Self::Perceptual4
+            Self::GrayAlpha
+                | Self::Rgba
+                | Self::Bgra
+                | Self::OklabA
+                | Self::Cmyka
+                | Self::CmykaInverted
+                | Self::XyzA
+                | Self::Perceptual4
         )
     }
 
@@ -416,11 +438,21 @@ impl ChannelOrder {
         matches!(self, Self::Oklab | Self::OklabA)
     }
 
-    /// Whether this layout is CMYK (`Cmyk` or `CmykInverted`).
+    /// Whether this layout is CIE XYZ (`Xyz` or `XyzA`).
+    #[inline]
+    #[must_use]
+    pub const fn is_xyz_family(self) -> bool {
+        matches!(self, Self::Xyz | Self::XyzA)
+    }
+
+    /// Whether this layout is CMYK (`Cmyk`, `CmykInverted`, `Cmyka`, `CmykaInverted`).
     #[inline]
     #[must_use]
     pub const fn is_cmyk_family(self) -> bool {
-        matches!(self, Self::Cmyk | Self::CmykInverted)
+        matches!(
+            self,
+            Self::Cmyk | Self::CmykInverted | Self::Cmyka | Self::CmykaInverted
+        )
     }
 }
 
@@ -481,6 +513,11 @@ impl SampleLayout {
     /// Packed `f32` grayscale + alpha (`8 B/px`).
     pub const GRAYAF32: Self = Self::new(SampleType::F32, ChannelOrder::GrayAlpha);
 
+    /// Packed `f32` CIE XYZ (`12 B/px`).
+    pub const XYZF32: Self = Self::new(SampleType::F32, ChannelOrder::Xyz);
+    /// Packed `f32` CIE XYZ + alpha (`16 B/px`).
+    pub const XYZAF32: Self = Self::new(SampleType::F32, ChannelOrder::XyzA);
+
     /// Packed `f32` Oklab (`12 B/px`).
     pub const OKLABF32: Self = Self::new(SampleType::F32, ChannelOrder::Oklab);
     /// Packed `f32` Oklab + alpha (`16 B/px`).
@@ -490,6 +527,10 @@ impl SampleLayout {
     pub const CMYK8: Self = Self::new(SampleType::U8, ChannelOrder::Cmyk);
     /// Packed 8-bit inverted CMYK (`4 B/px`, `255` = no ink).
     pub const CMYK8_INVERTED: Self = Self::new(SampleType::U8, ChannelOrder::CmykInverted);
+    /// Packed 8-bit CMYK + alpha (`5 B/px`, `0` = no ink).
+    pub const CMYKA8: Self = Self::new(SampleType::U8, ChannelOrder::Cmyka);
+    /// Packed 8-bit inverted CMYK + alpha (`5 B/px`, `255` = no ink).
+    pub const CMYKA8_INVERTED: Self = Self::new(SampleType::U8, ChannelOrder::CmykaInverted);
     /// Packed 16-bit CMYK (`8 B/px`).
     pub const CMYK16: Self = Self::new(SampleType::U16, ChannelOrder::Cmyk);
     /// Packed `f32` CMYK (`16 B/px`).
@@ -670,10 +711,20 @@ pub enum PlaneRole {
     G,
     /// Separate blue plane.
     B,
+    /// Separate cyan ink plane (planar CMYK/CMYKA).
+    Cyan,
+    /// Separate magenta ink plane.
+    Magenta,
+    /// Separate yellow ink plane.
+    Yellow,
+    /// Separate black/key ink plane.
+    Key,
     /// Separate alpha plane.
     Alpha,
     /// HDR gain-map plane (ISO 21496-1 / UltraHDR).
     GainMap,
+    /// Indexed auxiliary / extra channel plane (JXL extra channels, TIFF extra/multispectral bands).
+    Extra(u16),
 }
 
 /// Chroma subsampling ratio for YCbCr / multi-plane images.

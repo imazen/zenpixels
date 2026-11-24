@@ -6,26 +6,201 @@
 //! **unrepresentable by construction**.
 
 use alloc::sync::Arc;
+use core::cmp::Ordering;
 use core::fmt;
+use core::hash::{Hash, Hasher};
+use core::num::NonZeroU32;
 use whereat::At;
 
 use crate::cicp::Cicp;
 use crate::hdr::{ContentLightLevel, DiffuseWhite, HlgRendering, MasteringDisplay};
 use crate::layout::{ChannelOrder, InteropTarget, LayoutError, SampleLayout, SampleType};
 
-/// Chromaticity primaries for tristimulus RGB color spaces (all D65 white point).
+/// Validated CIE 1931 `(x, y)` chromaticity coordinate with bit-exact equality & hashing.
+#[derive(Clone, Copy, Debug)]
+pub struct Chromaticity {
+    x: f32,
+    y: f32,
+}
+
+impl Chromaticity {
+    /// CIE 1931 D65 standard illuminant `(0.3127, 0.3290)`.
+    pub const D65: Self = Self {
+        x: 0.3127,
+        y: 0.3290,
+    };
+    /// CIE 1931 D50 ICC PCS illuminant `(0.3457, 0.3585)`.
+    pub const D50: Self = Self {
+        x: 0.3457,
+        y: 0.3585,
+    };
+    /// SMPTE RP 431-2 DCI theater white point `(0.314, 0.351)`.
+    pub const DCI: Self = Self { x: 0.314, y: 0.351 };
+    /// Equal-energy illuminant E `(1/3, 1/3)`.
+    pub const E: Self = Self {
+        x: 1.0 / 3.0,
+        y: 1.0 / 3.0,
+    };
+
+    /// Validate and construct a CIE 1931 `(x, y)` chromaticity coordinate.
+    #[inline]
+    #[must_use]
+    pub const fn try_new(x: f32, y: f32) -> Option<Self> {
+        if !x.is_finite() || !y.is_finite() || x <= 0.0 || y <= 0.0 || x >= 1.0 || y >= 1.0 {
+            return None;
+        }
+        Some(Self { x, y })
+    }
+
+    /// Chromaticity `x` coordinate.
+    #[inline]
+    #[must_use]
+    pub const fn x(self) -> f32 {
+        self.x
+    }
+
+    /// Chromaticity `y` coordinate.
+    #[inline]
+    #[must_use]
+    pub const fn y(self) -> f32 {
+        self.y
+    }
+
+    /// Tuple `(x, y)`.
+    #[inline]
+    #[must_use]
+    pub const fn xy(self) -> (f32, f32) {
+        (self.x, self.y)
+    }
+}
+
+impl PartialEq for Chromaticity {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.x.to_bits() == other.x.to_bits() && self.y.to_bits() == other.y.to_bits()
+    }
+}
+impl Eq for Chromaticity {}
+impl Hash for Chromaticity {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.x.to_bits().hash(state);
+        self.y.to_bits().hash(state);
+    }
+}
+
+/// Reference white point for XYZ, Gray, or custom-primary RGB spaces.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum WhitePoint {
+    /// CIE D65 `(0.3127, 0.3290)` — sRGB, Display P3, BT.709, BT.2020, Adobe RGB.
+    #[default]
+    D65,
+    /// CIE D50 `(0.3457, 0.3585)` — ICC PCS / ProPhoto RGB.
+    D50,
+    /// SMPTE RP 431-2 DCI theater white `(0.314, 0.351)`.
+    Dci,
+    /// CIE Illuminant E `(1/3, 1/3)` — JPEG XL / XYZ equal-energy.
+    E,
+    /// Explicit validated CIE 1931 `(x, y)` white point.
+    Custom(Chromaticity),
+}
+
+impl WhitePoint {
+    /// CIE 1931 `(x, y)` coordinates of this white point.
+    #[inline]
+    #[must_use]
+    pub const fn xy(self) -> (f32, f32) {
+        match self {
+            Self::D65 => Chromaticity::D65.xy(),
+            Self::D50 => Chromaticity::D50.xy(),
+            Self::Dci => Chromaticity::DCI.xy(),
+            Self::E => Chromaticity::E.xy(),
+            Self::Custom(c) => c.xy(),
+        }
+    }
+}
+
+/// Validated custom tristimulus RGB primaries + white point (JXL, OpenEXR, PNG `cHRM`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct CustomPrimaries {
+    r: Chromaticity,
+    g: Chromaticity,
+    b: Chromaticity,
+    white: Chromaticity,
+}
+
+impl CustomPrimaries {
+    /// Construct validated custom primaries, verifying finite positive chromaticities
+    /// and a non-singular RGB → XYZ matrix.
+    #[must_use]
+    pub const fn try_new(
+        r: (f32, f32),
+        g: (f32, f32),
+        b: (f32, f32),
+        white: (f32, f32),
+    ) -> Option<Self> {
+        let (Some(r), Some(g), Some(b), Some(white)) = (
+            Chromaticity::try_new(r.0, r.1),
+            Chromaticity::try_new(g.0, g.1),
+            Chromaticity::try_new(b.0, b.1),
+            Chromaticity::try_new(white.0, white.1),
+        ) else {
+            return None;
+        };
+        let cp = Self { r, g, b, white };
+        if rgb_to_xyz_from_xy(cp.r.xy(), cp.g.xy(), cp.b.xy(), cp.white.xy()).is_none() {
+            return None;
+        }
+        Some(cp)
+    }
+
+    /// Red primary `(x, y)`.
+    #[inline]
+    #[must_use]
+    pub const fn r(self) -> Chromaticity {
+        self.r
+    }
+
+    /// Green primary `(x, y)`.
+    #[inline]
+    #[must_use]
+    pub const fn g(self) -> Chromaticity {
+        self.g
+    }
+
+    /// Blue primary `(x, y)`.
+    #[inline]
+    #[must_use]
+    pub const fn b(self) -> Chromaticity {
+        self.b
+    }
+
+    /// White point `(x, y)`.
+    #[inline]
+    #[must_use]
+    pub const fn white(self) -> Chromaticity {
+        self.white
+    }
+}
+
+/// Chromaticity primaries (and reference white point) for tristimulus RGB color spaces.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Primaries {
-    /// ITU-R BT.709 / sRGB primaries (CICP 1).
+    /// ITU-R BT.709 / sRGB primaries, D65 white (CICP 1).
     #[default]
     Bt709,
-    /// Apple Display P3 / DCI-P3 D65 primaries (CICP 12).
+    /// SMPTE RP 431-2 DCI-P3 theater primaries, DCI white `(0.314, 0.351)` (CICP 11).
+    DciP3,
+    /// Apple Display P3 / DCI-P3 primaries, D65 white (CICP 12).
     DisplayP3,
-    /// ITU-R BT.2020 / BT.2100 wide-gamut primaries (CICP 9).
+    /// ITU-R BT.2020 / BT.2100 wide-gamut primaries, D65 white (CICP 9).
     Bt2020,
-    /// Adobe RGB (1998) primaries (no standard H.273 code).
+    /// Adobe RGB (1998) primaries, D65 white (no standard H.273 code).
     AdobeRgb,
+    /// Validated custom CIE 1931 primaries + white point (JXL, OpenEXR, PNG `cHRM`).
+    Custom(CustomPrimaries),
     /// Unspecified / unknown primaries.
     Unknown,
 }
@@ -33,6 +208,8 @@ pub enum Primaries {
 impl Primaries {
     /// CIE 1931 D65 white point `(x, y)`.
     pub const WHITE_D65: (f32, f32) = (0.3127, 0.3290);
+    /// SMPTE RP 431-2 DCI theater white point `(x, y)`.
+    pub const WHITE_DCI: (f32, f32) = (0.314, 0.351);
 
     /// CIE 1931 `(x, y)` coordinates of `(R, G, B)` primaries, or `None` for [`Self::Unknown`].
     #[allow(clippy::type_complexity)]
@@ -41,9 +218,22 @@ impl Primaries {
     pub const fn chromaticity(self) -> Option<((f32, f32), (f32, f32), (f32, f32))> {
         match self {
             Self::Bt709 => Some(((0.64, 0.33), (0.30, 0.60), (0.15, 0.06))),
-            Self::DisplayP3 => Some(((0.680, 0.320), (0.265, 0.690), (0.150, 0.060))),
+            Self::DciP3 | Self::DisplayP3 => Some(((0.680, 0.320), (0.265, 0.690), (0.150, 0.060))),
             Self::Bt2020 => Some(((0.708, 0.292), (0.170, 0.797), (0.131, 0.046))),
             Self::AdobeRgb => Some(((0.64, 0.33), (0.21, 0.71), (0.15, 0.06))),
+            Self::Custom(c) => Some((c.r.xy(), c.g.xy(), c.b.xy())),
+            Self::Unknown => None,
+        }
+    }
+
+    /// Reference white point `(x, y)` of these primaries, or `None` for [`Self::Unknown`].
+    #[inline]
+    #[must_use]
+    pub const fn white_point(self) -> Option<(f32, f32)> {
+        match self {
+            Self::Bt709 | Self::DisplayP3 | Self::Bt2020 | Self::AdobeRgb => Some(Self::WHITE_D65),
+            Self::DciP3 => Some(Self::WHITE_DCI),
+            Self::Custom(c) => Some(c.white.xy()),
             Self::Unknown => None,
         }
     }
@@ -55,6 +245,7 @@ impl Primaries {
         match code {
             1 => Some(Self::Bt709),
             9 => Some(Self::Bt2020),
+            11 => Some(Self::DciP3),
             12 => Some(Self::DisplayP3),
             _ => None,
         }
@@ -67,12 +258,13 @@ impl Primaries {
         match self {
             Self::Bt709 => Some(1),
             Self::Bt2020 => Some(9),
+            Self::DciP3 => Some(11),
             Self::DisplayP3 => Some(12),
-            Self::AdobeRgb | Self::Unknown => None,
+            Self::AdobeRgb | Self::Custom(_) | Self::Unknown => None,
         }
     }
 
-    /// Linear-light luminance weights `[Yr, Yg, Yb]` derived from the primaries' D65 RGB→XYZ `Y` row.
+    /// Linear-light luminance weights `[Yr, Yg, Yb]` derived from the primaries' RGB→XYZ `Y` row.
     #[inline]
     #[must_use]
     pub const fn luma_weights(self) -> [f32; 3] {
@@ -81,69 +273,202 @@ impl Primaries {
             Self::DisplayP3 => [0.228_974_56, 0.691_738_5, 0.079_286_91],
             Self::Bt2020 => [0.2627, 0.6780, 0.0593],
             Self::AdobeRgb => [0.297_344_98, 0.627_363_56, 0.075_291_46],
+            Self::DciP3 | Self::Custom(_) => match self.rgb_to_xyz_f64() {
+                Some(m) => [m[1][0] as f32, m[1][1] as f32, m[1][2] as f32],
+                None => [0.2126, 0.7152, 0.0722],
+            },
         }
     }
 
-    /// Linear RGB → CIE XYZ (D65, `Y_white = 1.0`) 3×3 matrix in `f64`, computed from exact chromaticities.
+    /// Linear RGB → CIE XYZ (`Y_white = 1.0`, relative to `self.white_point()`) 3×3 matrix in `f64`.
     #[must_use]
     pub const fn rgb_to_xyz_f64(self) -> Option<[[f64; 3]; 3]> {
-        let Some(((rx, ry), (gx, gy), (bx, by))) = self.chromaticity() else {
+        let (Some((r, g, b)), Some(w)) = (self.chromaticity(), self.white_point()) else {
             return None;
         };
-        let (rx, ry) = (rx as f64, ry as f64);
-        let (gx, gy) = (gx as f64, gy as f64);
-        let (bx, by) = (bx as f64, by as f64);
-        let (wx, wy) = (0.3127_f64, 0.3290_f64);
-
-        let p = [
-            [rx / ry, gx / gy, bx / by],
-            [1.0, 1.0, 1.0],
-            [
-                (1.0 - rx - ry) / ry,
-                (1.0 - gx - gy) / gy,
-                (1.0 - bx - by) / by,
-            ],
-        ];
-        let Some(p_inv) = inv3_f64(p) else {
-            return None;
-        };
-        let w = [wx / wy, 1.0, (1.0 - wx - wy) / wy];
-        let s = mul3_vec_f64(p_inv, w);
-        Some([
-            [p[0][0] * s[0], p[0][1] * s[1], p[0][2] * s[2]],
-            [p[1][0] * s[0], p[1][1] * s[1], p[1][2] * s[2]],
-            [p[2][0] * s[0], p[2][1] * s[1], p[2][2] * s[2]],
-        ])
+        rgb_to_xyz_from_xy(r, g, b, w)
     }
 
-    /// Exact 3×3 linear-light gamut conversion matrix from `self` to `dst`.
+    /// Exact 3×3 linear-light gamut conversion matrix from `self` to `dst`, applying
+    /// Bradford chromatic adaptation automatically when `self.white_point() != dst.white_point()`.
     ///
-    /// Returns the identity matrix when `self == dst` (even for known primaries),
+    /// Returns the identity matrix when `self == dst` (for known primaries),
     /// and `None` if either side is [`Self::Unknown`].
     #[must_use]
     pub const fn gamut_matrix_to(self, dst: Self) -> Option<[[f32; 3]; 3]> {
-        let (Some(src_xyz), Some(dst_xyz)) = (self.rgb_to_xyz_f64(), dst.rgb_to_xyz_f64()) else {
+        let (Some(src_xyz), Some(dst_xyz), Some(sw), Some(dw)) = (
+            self.rgb_to_xyz_f64(),
+            dst.rgb_to_xyz_f64(),
+            self.white_point(),
+            dst.white_point(),
+        ) else {
             return None;
         };
-        if matches!(
-            (self, dst),
-            (Self::Bt709, Self::Bt709)
-                | (Self::DisplayP3, Self::DisplayP3)
-                | (Self::Bt2020, Self::Bt2020)
-                | (Self::AdobeRgb, Self::AdobeRgb)
-        ) {
+        if same_primaries_const(self, dst) {
             return Some([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
         }
         let Some(dst_inv) = inv3_f64(dst_xyz) else {
             return None;
         };
-        let m = mul3_mat_f64(dst_inv, src_xyz);
+        let adapted_src = if sw.0.to_bits() == dw.0.to_bits() && sw.1.to_bits() == dw.1.to_bits() {
+            src_xyz
+        } else {
+            let Some(bradford) = bradford_adapt_f64(sw, dw) else {
+                return None;
+            };
+            mul3_mat_f64(bradford, src_xyz)
+        };
+        let m = mul3_mat_f64(dst_inv, adapted_src);
         Some([
             [m[0][0] as f32, m[0][1] as f32, m[0][2] as f32],
             [m[1][0] as f32, m[1][1] as f32, m[1][2] as f32],
             [m[2][0] as f32, m[2][1] as f32, m[2][2] as f32],
         ])
     }
+
+    /// Bradford-adapted 3×3 matrix converting CIE XYZ (at `src_white`) → linear RGB in `self`.
+    #[must_use]
+    pub const fn xyz_to_rgb_f32(self, src_white: WhitePoint) -> Option<[[f32; 3]; 3]> {
+        let (Some(dst_xyz), Some(dw)) = (self.rgb_to_xyz_f64(), self.white_point()) else {
+            return None;
+        };
+        let Some(dst_inv) = inv3_f64(dst_xyz) else {
+            return None;
+        };
+        let sw = src_white.xy();
+        let m = if sw.0.to_bits() == dw.0.to_bits() && sw.1.to_bits() == dw.1.to_bits() {
+            dst_inv
+        } else {
+            let Some(adapt) = bradford_adapt_f64(sw, dw) else {
+                return None;
+            };
+            mul3_mat_f64(dst_inv, adapt)
+        };
+        Some([
+            [m[0][0] as f32, m[0][1] as f32, m[0][2] as f32],
+            [m[1][0] as f32, m[1][1] as f32, m[1][2] as f32],
+            [m[2][0] as f32, m[2][1] as f32, m[2][2] as f32],
+        ])
+    }
+
+    /// Bradford-adapted 3×3 matrix converting linear RGB in `self` → CIE XYZ (at `dst_white`).
+    #[must_use]
+    pub const fn rgb_to_xyz_f32(self, dst_white: WhitePoint) -> Option<[[f32; 3]; 3]> {
+        let (Some(src_xyz), Some(sw)) = (self.rgb_to_xyz_f64(), self.white_point()) else {
+            return None;
+        };
+        let dw = dst_white.xy();
+        let m = if sw.0.to_bits() == dw.0.to_bits() && sw.1.to_bits() == dw.1.to_bits() {
+            src_xyz
+        } else {
+            let Some(adapt) = bradford_adapt_f64(sw, dw) else {
+                return None;
+            };
+            mul3_mat_f64(adapt, src_xyz)
+        };
+        Some([
+            [m[0][0] as f32, m[0][1] as f32, m[0][2] as f32],
+            [m[1][0] as f32, m[1][1] as f32, m[1][2] as f32],
+            [m[2][0] as f32, m[2][1] as f32, m[2][2] as f32],
+        ])
+    }
+}
+
+const fn same_primaries_const(a: Primaries, b: Primaries) -> bool {
+    match (a, b) {
+        (Primaries::Bt709, Primaries::Bt709)
+        | (Primaries::DciP3, Primaries::DciP3)
+        | (Primaries::DisplayP3, Primaries::DisplayP3)
+        | (Primaries::Bt2020, Primaries::Bt2020)
+        | (Primaries::AdobeRgb, Primaries::AdobeRgb) => true,
+        (Primaries::Custom(x), Primaries::Custom(y)) => {
+            x.r.x.to_bits() == y.r.x.to_bits()
+                && x.r.y.to_bits() == y.r.y.to_bits()
+                && x.g.x.to_bits() == y.g.x.to_bits()
+                && x.g.y.to_bits() == y.g.y.to_bits()
+                && x.b.x.to_bits() == y.b.x.to_bits()
+                && x.b.y.to_bits() == y.b.y.to_bits()
+                && x.white.x.to_bits() == y.white.x.to_bits()
+                && x.white.y.to_bits() == y.white.y.to_bits()
+        }
+        _ => false,
+    }
+}
+
+const fn rgb_to_xyz_from_xy(
+    r: (f32, f32),
+    g: (f32, f32),
+    b: (f32, f32),
+    white: (f32, f32),
+) -> Option<[[f64; 3]; 3]> {
+    let (rx, ry) = (r.0 as f64, r.1 as f64);
+    let (gx, gy) = (g.0 as f64, g.1 as f64);
+    let (bx, by) = (b.0 as f64, b.1 as f64);
+    let (wx, wy) = (white.0 as f64, white.1 as f64);
+    if ry <= 0.0 || gy <= 0.0 || by <= 0.0 || wy <= 0.0 {
+        return None;
+    }
+    let p = [
+        [rx / ry, gx / gy, bx / by],
+        [1.0, 1.0, 1.0],
+        [
+            (1.0 - rx - ry) / ry,
+            (1.0 - gx - gy) / gy,
+            (1.0 - bx - by) / by,
+        ],
+    ];
+    let Some(p_inv) = inv3_f64(p) else {
+        return None;
+    };
+    let w = [wx / wy, 1.0, (1.0 - wx - wy) / wy];
+    let s = mul3_vec_f64(p_inv, w);
+    Some([
+        [p[0][0] * s[0], p[0][1] * s[1], p[0][2] * s[2]],
+        [p[1][0] * s[0], p[1][1] * s[1], p[1][2] * s[2]],
+        [p[2][0] * s[0], p[2][1] * s[1], p[2][2] * s[2]],
+    ])
+}
+
+/// Bradford chromatic adaptation matrix from source white `(swx, swy)` to destination white `(dwx, dwy)`.
+pub const fn bradford_adapt_f64(sw: (f32, f32), dw: (f32, f32)) -> Option<[[f64; 3]; 3]> {
+    const M_BFD: [[f64; 3]; 3] = [
+        [0.8951, 0.2664, -0.1614],
+        [-0.7502, 1.7135, 0.0367],
+        [0.0389, -0.0685, 1.0296],
+    ];
+    let (swx, swy) = (sw.0 as f64, sw.1 as f64);
+    let (dwx, dwy) = (dw.0 as f64, dw.1 as f64);
+    if swy <= 0.0 || dwy <= 0.0 {
+        return None;
+    }
+    let ws = [swx / swy, 1.0, (1.0 - swx - swy) / swy];
+    let wd = [dwx / dwy, 1.0, (1.0 - dwx - dwy) / dwy];
+    let cs = mul3_vec_f64(M_BFD, ws);
+    let cd = mul3_vec_f64(M_BFD, wd);
+    if cs[0] == 0.0 || cs[1] == 0.0 || cs[2] == 0.0 {
+        return None;
+    }
+    let Some(m_inv) = inv3_f64(M_BFD) else {
+        return None;
+    };
+    let scaled = [
+        [
+            M_BFD[0][0] * (cd[0] / cs[0]),
+            M_BFD[0][1] * (cd[0] / cs[0]),
+            M_BFD[0][2] * (cd[0] / cs[0]),
+        ],
+        [
+            M_BFD[1][0] * (cd[1] / cs[1]),
+            M_BFD[1][1] * (cd[1] / cs[1]),
+            M_BFD[1][2] * (cd[1] / cs[1]),
+        ],
+        [
+            M_BFD[2][0] * (cd[2] / cs[2]),
+            M_BFD[2][1] * (cd[2] / cs[2]),
+            M_BFD[2][2] * (cd[2] / cs[2]),
+        ],
+    ];
+    Some(mul3_mat_f64(m_inv, scaled))
 }
 
 const fn inv3_f64(m: [[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
@@ -207,6 +532,64 @@ pub enum HlgMode {
     Display(HlgRendering),
 }
 
+/// Validated pure power decoding gamma (`L = v^gamma`, OETF `v^(1/gamma)`).
+///
+/// Unambiguously stores the **decoding** (EOTF) exponent (e.g. `2.2` for standard
+/// gamma 2.2, `2.6` for DCI-P3 theater, `1.8` for legacy ProPhoto/Apple).
+#[derive(Clone, Copy, Debug)]
+pub struct Gamma(f32);
+
+impl Gamma {
+    /// DCI-P3 theater decoding gamma `2.6` (SMPTE RP 431-2).
+    pub const DCI_2_6: Self = Self(2.6);
+    /// Standard pure decoding gamma `2.2`.
+    pub const GAMMA_2_2: Self = Self(2.2);
+    /// Legacy decoding gamma `1.8`.
+    pub const GAMMA_1_8: Self = Self(1.8);
+
+    /// Construct a validated decoding gamma (`0.0 < exponent <= 16.0`, finite).
+    #[inline]
+    #[must_use]
+    pub const fn try_new(exponent: f32) -> Option<Self> {
+        if !exponent.is_finite() || exponent <= 0.0 || exponent > 16.0 {
+            return None;
+        }
+        Some(Self(exponent))
+    }
+
+    /// Construct from an encoding gamma (e.g. JPEG XL `gamma` / PNG `gAMA`, `v = L^enc_gamma`),
+    /// storing the reciprocal decoding exponent `1.0 / enc_gamma`.
+    #[inline]
+    #[must_use]
+    pub const fn from_encoding_gamma(encoding_gamma: f32) -> Option<Self> {
+        if !encoding_gamma.is_finite() || encoding_gamma <= 0.0 {
+            return None;
+        }
+        Self::try_new(1.0 / encoding_gamma)
+    }
+
+    /// Decoding (EOTF) exponent `gamma` where `L = v^gamma`.
+    #[inline]
+    #[must_use]
+    pub const fn exponent(self) -> f32 {
+        self.0
+    }
+}
+
+impl PartialEq for Gamma {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.0.to_bits() == other.0.to_bits()
+    }
+}
+impl Eq for Gamma {}
+impl Hash for Gamma {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.to_bits().hash(state);
+    }
+}
+
 /// Electro-optical transfer function (non-linear curve between stored values and light).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -220,6 +603,8 @@ pub enum Transfer {
     Bt709,
     /// Pure power curve `v^(563/256)` used by Adobe RGB (1998).
     Gamma22,
+    /// Explicit validated pure decoding gamma `L = v^gamma` (JXL, DCI 2.6, PNG `gAMA`).
+    Gamma(Gamma),
     /// SMPTE ST 2084 Perceptual Quantizer (absolute `0..=10,000 cd/m²`, CICP 16).
     Pq,
     /// ARIB STD-B67 / ITU-R BT.2100 Hybrid Log-Gamma (CICP 18).
@@ -253,6 +638,7 @@ impl Transfer {
             8 => Some(Self::Linear),
             13 => Some(Self::Srgb),
             16 => Some(Self::Pq),
+            17 => Some(Self::Gamma(Gamma::DCI_2_6)),
             18 => Some(Self::Hlg(HlgMode::Scene)),
             _ => None,
         }
@@ -268,6 +654,10 @@ impl Transfer {
             Self::Linear => Some(8),
             Self::Srgb => Some(13),
             Self::Pq => Some(16),
+            Self::Gamma(g) if g.exponent().to_bits() == Gamma::DCI_2_6.exponent().to_bits() => {
+                Some(17)
+            }
+            Self::Gamma(_) => None,
             Self::Hlg(_) => Some(18),
             Self::Unknown => None,
         }
@@ -380,6 +770,15 @@ pub enum ColorSpace {
         /// Alpha interpretation (`None`, `Opaque`, `Straight`, `Premultiplied`).
         alpha: AlphaMode,
         /// Luminance of relative-linear `1.0` in cd/m².
+        white: Option<DiffuseWhite>,
+    },
+    /// CIE 1931 linear XYZ tristimulus space (e.g. TIFF SGILog / LogLuv).
+    Xyz {
+        /// Reference white point (e.g. `WhitePoint::D65`, `WhitePoint::E`, `WhitePoint::D50`).
+        white_point: WhitePoint,
+        /// Alpha interpretation (`None`, `Opaque`, `Straight`, `Premultiplied`).
+        alpha: AlphaMode,
+        /// Luminance of `Y = 1.0` in cd/m², if known.
         white: Option<DiffuseWhite>,
     },
     /// Björn Ottosson's Oklab — CIE XYZ D65-anchored (no primaries or transfer field!).
@@ -538,6 +937,7 @@ impl ColorSpace {
         match *self {
             Self::Rgb { alpha, .. }
             | Self::Gray { alpha, .. }
+            | Self::Xyz { alpha, .. }
             | Self::Oklab { alpha }
             | Self::Perceptual { alpha, .. }
             | Self::Cmyk { alpha, .. }
@@ -553,6 +953,7 @@ impl ColorSpace {
         match &mut self {
             Self::Rgb { alpha: a, .. }
             | Self::Gray { alpha: a, .. }
+            | Self::Xyz { alpha: a, .. }
             | Self::Oklab { alpha: a }
             | Self::Perceptual { alpha: a, .. }
             | Self::Cmyk { alpha: a, .. }
@@ -594,12 +995,14 @@ impl ColorSpace {
         self
     }
 
-    /// Attach a [`DiffuseWhite`] luminance anchor to an [`Self::Rgb`] or [`Self::Gray`] space.
+    /// Attach a [`DiffuseWhite`] luminance anchor to an [`Self::Rgb`], [`Self::Gray`], or [`Self::Xyz`] space.
     #[inline]
     #[must_use]
     pub fn with_white(mut self, white: DiffuseWhite) -> Self {
         match &mut self {
-            Self::Rgb { white: w, .. } | Self::Gray { white: w, .. } => *w = Some(white),
+            Self::Rgb { white: w, .. }
+            | Self::Gray { white: w, .. }
+            | Self::Xyz { white: w, .. } => *w = Some(white),
             _ => {}
         }
         self
@@ -610,7 +1013,7 @@ impl ColorSpace {
     #[must_use]
     pub const fn white(&self) -> Option<DiffuseWhite> {
         match *self {
-            Self::Rgb { white, .. } | Self::Gray { white, .. } => white,
+            Self::Rgb { white, .. } | Self::Gray { white, .. } | Self::Xyz { white, .. } => white,
             _ => None,
         }
     }
@@ -948,6 +1351,11 @@ impl ImageSpec {
                     return Err(whereat::at!(ColorError::HlgDisplayRequiresBt2020Full));
                 }
             }
+            ColorSpace::Xyz { .. } => {
+                if !order.is_xyz_family() || !matches!(sample, SampleType::F16 | SampleType::F32) {
+                    return Err(whereat::at!(ColorError::ColorLayoutMismatch));
+                }
+            }
             ColorSpace::Oklab { .. } => {
                 if !order.is_oklab_family() || sample != SampleType::F32 {
                     return Err(whereat::at!(ColorError::ColorLayoutMismatch));
@@ -960,11 +1368,14 @@ impl ImageSpec {
                     return Err(whereat::at!(ColorError::ColorLayoutMismatch));
                 }
             }
-            ColorSpace::Cmyk { inverted, .. } => {
-                let want = if *inverted {
-                    ChannelOrder::CmykInverted
-                } else {
-                    ChannelOrder::Cmyk
+            ColorSpace::Cmyk {
+                inverted, alpha, ..
+            } => {
+                let want = match (*inverted, *alpha) {
+                    (false, AlphaMode::None) => ChannelOrder::Cmyk,
+                    (true, AlphaMode::None) => ChannelOrder::CmykInverted,
+                    (false, _) => ChannelOrder::Cmyka,
+                    (true, _) => ChannelOrder::CmykaInverted,
                 };
                 if order != want {
                     return Err(whereat::at!(ColorError::ColorLayoutMismatch));
@@ -1190,43 +1601,399 @@ impl ColorOrigin {
     }
 }
 
-/// ISO 21496-1 / UltraHDR gain-map reconstruction parameters.
+/// Exact unreduced signed rational (`i32 / NonZeroU32`) per ISO 21496-1 wire format.
 ///
-/// All boost and headroom values are expressed in log2 stops relative to SDR white.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// Preserves exact numerator and denominator pairs across lossless transcodes
+/// (e.g. `1/64` vs `2/128`) while supporting exact cross-product comparison and
+/// `f32`/`f64` projection for pixel math.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SignedFraction {
+    /// Signed numerator.
+    pub num: i32,
+    /// Strictly positive denominator.
+    pub den: NonZeroU32,
+}
+
+impl SignedFraction {
+    /// Exact `0 / 1`.
+    pub const ZERO: Self = Self {
+        num: 0,
+        den: NonZeroU32::MIN,
+    };
+
+    /// Standard ISO 21496-1 / UltraHDR `1 / 64` offset.
+    pub const ONE_64TH: Self = Self {
+        num: 1,
+        den: match NonZeroU32::new(64) {
+            Some(d) => d,
+            None => unreachable!(),
+        },
+    };
+
+    /// Construct from `(num, den: NonZeroU32)`.
+    #[inline]
+    #[must_use]
+    pub const fn new(num: i32, den: NonZeroU32) -> Self {
+        Self { num, den }
+    }
+
+    /// Construct from `(num, den: u32)`, returning `None` if `den == 0`.
+    #[inline]
+    #[must_use]
+    pub const fn try_new(num: i32, den: u32) -> Option<Self> {
+        match NonZeroU32::new(den) {
+            Some(d) => Some(Self { num, den: d }),
+            None => None,
+        }
+    }
+
+    /// Exact integer `n / 1`.
+    #[inline]
+    #[must_use]
+    pub const fn from_int(num: i32) -> Self {
+        Self {
+            num,
+            den: NonZeroU32::MIN,
+        }
+    }
+
+    /// Approximate a finite `f32` as a rational (using denominator `1_000_000` or exact `64` for `1/64` multiples).
+    #[must_use]
+    pub fn from_f32_approx(v: f32) -> Option<Self> {
+        if !v.is_finite() {
+            return None;
+        }
+        let s64 = (v as f64) * 64.0;
+        let r64 = if s64 >= 0.0 {
+            (s64 + 0.5) as i64
+        } else {
+            (s64 - 0.5) as i64
+        };
+        if (s64 - (r64 as f64)).abs() < 1e-7 && r64 >= i32::MIN as i64 && r64 <= i32::MAX as i64 {
+            if r64 % 64 == 0 {
+                return Some(Self::from_int((r64 / 64) as i32));
+            }
+            return Self::try_new(r64 as i32, 64);
+        }
+        const SCALE: f64 = 1_000_000.0;
+        let scaled = (v as f64) * SCALE;
+        if scaled < i32::MIN as f64 || scaled > i32::MAX as f64 {
+            return None;
+        }
+        let n = if scaled >= 0.0 {
+            (scaled + 0.5) as i32
+        } else {
+            (scaled - 0.5) as i32
+        };
+        Self::try_new(n, 1_000_000)
+    }
+
+    /// Exact rational value as `f64`.
+    #[inline]
+    #[must_use]
+    pub const fn to_f64(self) -> f64 {
+        (self.num as f64) / (self.den.get() as f64)
+    }
+
+    /// Rational value as `f32`.
+    #[inline]
+    #[must_use]
+    pub const fn to_f32(self) -> f32 {
+        self.to_f64() as f32
+    }
+
+    /// Exact rational comparison (`a.num * b.den` vs `b.num * a.den` in `i128`).
+    #[inline]
+    #[must_use]
+    pub const fn cmp_rational(self, other: Self) -> Ordering {
+        let lhs = (self.num as i128) * (other.den.get() as i128);
+        let rhs = (other.num as i128) * (self.den.get() as i128);
+        if lhs < rhs {
+            Ordering::Less
+        } else if lhs > rhs {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
+    }
+}
+
+/// Exact unreduced unsigned rational (`u32 / NonZeroU32`) per ISO 21496-1 wire format.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct UnsignedFraction {
+    /// Unsigned numerator.
+    pub num: u32,
+    /// Strictly positive denominator.
+    pub den: NonZeroU32,
+}
+
+impl UnsignedFraction {
+    /// Exact `0 / 1`.
+    pub const ZERO: Self = Self {
+        num: 0,
+        den: NonZeroU32::MIN,
+    };
+
+    /// Exact `1 / 1`.
+    pub const ONE: Self = Self {
+        num: 1,
+        den: NonZeroU32::MIN,
+    };
+
+    /// Construct from `(num, den: NonZeroU32)`.
+    #[inline]
+    #[must_use]
+    pub const fn new(num: u32, den: NonZeroU32) -> Self {
+        Self { num, den }
+    }
+
+    /// Construct from `(num, den: u32)`, returning `None` if `den == 0`.
+    #[inline]
+    #[must_use]
+    pub const fn try_new(num: u32, den: u32) -> Option<Self> {
+        match NonZeroU32::new(den) {
+            Some(d) => Some(Self { num, den: d }),
+            None => None,
+        }
+    }
+
+    /// Exact unsigned integer `n / 1`.
+    #[inline]
+    #[must_use]
+    pub const fn from_uint(num: u32) -> Self {
+        Self {
+            num,
+            den: NonZeroU32::MIN,
+        }
+    }
+
+    /// Approximate a finite non-negative `f32` as an unsigned rational.
+    #[must_use]
+    pub fn from_f32_approx(v: f32) -> Option<Self> {
+        if !v.is_finite() || v < 0.0 {
+            return None;
+        }
+        let s64 = (v as f64) * 64.0;
+        let r64 = (s64 + 0.5) as u64;
+        if (s64 - (r64 as f64)).abs() < 1e-7 && r64 <= u32::MAX as u64 {
+            if r64 % 64 == 0 {
+                return Some(Self::from_uint((r64 / 64) as u32));
+            }
+            return Self::try_new(r64 as u32, 64);
+        }
+        const SCALE: f64 = 1_000_000.0;
+        let scaled = (v as f64) * SCALE;
+        if scaled > u32::MAX as f64 {
+            return None;
+        }
+        Self::try_new((scaled + 0.5) as u32, 1_000_000)
+    }
+
+    /// Exact rational value as `f64`.
+    #[inline]
+    #[must_use]
+    pub const fn to_f64(self) -> f64 {
+        (self.num as f64) / (self.den.get() as f64)
+    }
+
+    /// Rational value as `f32`.
+    #[inline]
+    #[must_use]
+    pub const fn to_f32(self) -> f32 {
+        self.to_f64() as f32
+    }
+
+    /// Exact rational comparison (`a.num * b.den` vs `b.num * a.den` in `u64`).
+    #[inline]
+    #[must_use]
+    pub const fn cmp_rational(self, other: Self) -> Ordering {
+        let lhs = (self.num as u64) * (other.den.get() as u64);
+        let rhs = (other.num as u64) * (self.den.get() as u64);
+        if lhs < rhs {
+            Ordering::Less
+        } else if lhs > rhs {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
+    }
+}
+
+/// Per-channel ISO 21496-1 gain-map parameters in exact rational form.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct GainMapComponent {
+    /// Minimum log₂ gain (often `0/1` or negative).
+    pub min_gain_stops: SignedFraction,
+    /// Maximum log₂ gain (e.g. `2.3` stops for ~5× / 1000-nit headroom).
+    pub max_gain_stops: SignedFraction,
+    /// Gain-map encoding gamma (strictly positive; default `1/1`).
+    pub gamma: UnsignedFraction,
+    /// Linear offset added to base rendition before applying gain (may be negative per ISO 21496-1; typical `1/64`).
+    pub base_offset: SignedFraction,
+    /// Linear offset subtracted from alternate rendition (may be negative per ISO 21496-1; typical `1/64`).
+    pub alternate_offset: SignedFraction,
+}
+
+impl GainMapComponent {
+    /// Validate `gamma > 0` and `min_gain_stops <= max_gain_stops` using exact rational math.
+    #[inline]
+    #[must_use]
+    pub const fn is_valid(self) -> bool {
+        self.gamma.num > 0
+            && !matches!(
+                self.min_gain_stops.cmp_rational(self.max_gain_stops),
+                Ordering::Greater
+            )
+    }
+}
+
+/// Metadata record arity per ISO 21496-1 §5.2.5.1 — strictly independent of gain-map image channels (1 or 3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum GainMapChannels {
+    /// Single shared parameter record (`is_multichannel = false`).
+    Shared(GainMapComponent),
+    /// Three explicit per-channel `[R, G, B]` parameter records (`is_multichannel = true`).
+    PerChannel([GainMapComponent; 3]),
+}
+
+impl GainMapChannels {
+    /// Access parameter record for channel `c` (`0..3`).
+    #[inline]
+    #[must_use]
+    pub const fn channel(self, c: usize) -> GainMapComponent {
+        match self {
+            Self::Shared(comp) => comp,
+            Self::PerChannel(arr) => arr[c],
+        }
+    }
+
+    /// Whether three explicit per-channel records were authored (`is_multichannel`).
+    #[inline]
+    #[must_use]
+    pub const fn is_multichannel(self) -> bool {
+        matches!(self, Self::PerChannel(_))
+    }
+
+    /// Validate all component records.
+    #[inline]
+    #[must_use]
+    pub const fn is_valid(self) -> bool {
+        match self {
+            Self::Shared(c) => c.is_valid(),
+            Self::PerChannel([r, g, b]) => r.is_valid() && g.is_valid() && b.is_valid(),
+        }
+    }
+}
+
+/// Which rendition's linear RGB primaries host channelwise gain application (ISO 21496-1 `use_base_colour_space`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum GainMapColorSpace {
+    /// Apply channelwise gain in the base rendition's linear RGB primaries (`use_base_colour_space = true`).
+    #[default]
+    Base,
+    /// Convert base to the alternate rendition's linear RGB primaries before applying gain (`use_base_colour_space = false`).
+    Alternate,
+}
+
+/// Rendition headroom ordering derived from exact rational comparison of `base_hdr_headroom` vs `alternate_hdr_headroom`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum GainMapDirection {
+    /// SDR (or lower-headroom) base → HDR (higher-headroom) alternate (`H_alt > H_base`, positive weight sign).
+    Forward,
+    /// HDR (higher-headroom) base → SDR (lower-headroom) alternate (`H_base > H_alt`, negative weight sign).
+    Reverse,
+}
+
+/// ISO 21496-1 / UltraHDR gain-map reconstruction parameters in exact rational form.
+///
+/// Preserves exact unreduced rational pairs for lossless metadata transcoding across
+/// JPEG APP2, AVIF `tmap`, and JXL `jhgm` while projecting cleanly to float for rendering.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct GainMapMetadata {
-    /// Minimum log2 gain per channel `[R, G, B]` (often `0.0` or negative).
-    pub min_boost_stops: [f32; 3],
-    /// Maximum log2 gain per channel `[R, G, B]` (e.g. `[2.3, 2.3, 2.3]` for ~5× / 1000-nit headroom).
-    pub max_boost_stops: [f32; 3],
-    /// Gain-map encoding gamma per channel `[R, G, B]` (default `[1.0; 3]`).
-    pub gamma: [f32; 3],
-    /// Linear offset added to base image before applying gain (`[1/64; 3]` typical).
-    pub base_offset: [f32; 3],
-    /// Linear offset subtracted from alternate (HDR) image (`[1/64; 3]` typical).
-    pub alternate_offset: [f32; 3],
-    /// Minimum display HDR headroom (log2 stops) where base rendition is shown unchanged.
-    pub base_hdr_headroom: f32,
-    /// Display HDR headroom (log2 stops) at which full gain is applied.
-    pub alternate_hdr_headroom: f32,
-    /// Whether gain application runs in the base image's primaries (true) or alternate primaries (false).
-    pub use_base_color_space: bool,
+    /// Shared (1-record) or per-channel (3-record) gain curve parameters.
+    pub channels: GainMapChannels,
+    /// Minimum display HDR headroom (log₂ stops) where the base rendition is shown unchanged.
+    pub base_hdr_headroom: UnsignedFraction,
+    /// Display HDR headroom (log₂ stops) at which full alternate rendition is reached.
+    pub alternate_hdr_headroom: UnsignedFraction,
+    /// Whether channelwise gain runs in base or alternate linear RGB primaries.
+    pub application_space: GainMapColorSpace,
 }
 
 impl GainMapMetadata {
-    /// Construct a symmetric scalar gain-map parameter set with standard `1/64` offsets.
+    /// Construct and validate an exact ISO 21496-1 parameter set.
+    ///
+    /// Rejects non-positive `gamma`, `min > max`, or equal `base_hdr_headroom == alternate_hdr_headroom`
+    /// (ISO 21496-1 §5.2.7 requires unequal headrooms).
     #[must_use]
-    pub const fn symmetric(max_boost_stops: f32) -> Self {
+    pub const fn try_new(
+        channels: GainMapChannels,
+        base_hdr_headroom: UnsignedFraction,
+        alternate_hdr_headroom: UnsignedFraction,
+        application_space: GainMapColorSpace,
+    ) -> Option<Self> {
+        let m = Self {
+            channels,
+            base_hdr_headroom,
+            alternate_hdr_headroom,
+            application_space,
+        };
+        if m.is_valid() { Some(m) } else { None }
+    }
+
+    /// Construct a symmetric forward SDR-base → HDR-alternate parameter set with standard `1/64` offsets.
+    #[must_use]
+    pub fn symmetric(max_boost_stops: f32) -> Self {
+        let max_f =
+            SignedFraction::from_f32_approx(max_boost_stops).unwrap_or(SignedFraction::from_int(2));
+        let alt_h = UnsignedFraction::from_f32_approx(max_boost_stops.max(1.0 / 64.0))
+            .unwrap_or(UnsignedFraction::from_uint(2));
         Self {
-            min_boost_stops: [0.0; 3],
-            max_boost_stops: [max_boost_stops; 3],
-            gamma: [1.0; 3],
-            base_offset: [1.0 / 64.0; 3],
-            alternate_offset: [1.0 / 64.0; 3],
-            base_hdr_headroom: 0.0,
-            alternate_hdr_headroom: max_boost_stops,
-            use_base_color_space: true,
+            channels: GainMapChannels::Shared(GainMapComponent {
+                min_gain_stops: SignedFraction::ZERO,
+                max_gain_stops: max_f,
+                gamma: UnsignedFraction::ONE,
+                base_offset: SignedFraction::ONE_64TH,
+                alternate_offset: SignedFraction::ONE_64TH,
+            }),
+            base_hdr_headroom: UnsignedFraction::ZERO,
+            alternate_hdr_headroom: alt_h,
+            application_space: GainMapColorSpace::Base,
         }
+    }
+
+    /// Validate all exact rational invariants (`gamma > 0`, `min <= max`, `H_base != H_alt`).
+    #[inline]
+    #[must_use]
+    pub const fn is_valid(self) -> bool {
+        self.channels.is_valid()
+            && !matches!(
+                self.base_hdr_headroom
+                    .cmp_rational(self.alternate_hdr_headroom),
+                Ordering::Equal
+            )
+    }
+
+    /// Exact gain-map direction (`Forward` if `H_alt > H_base`, `Reverse` if `H_base > H_alt`), or `None` if equal.
+    #[inline]
+    #[must_use]
+    pub const fn direction(self) -> Option<GainMapDirection> {
+        match self
+            .base_hdr_headroom
+            .cmp_rational(self.alternate_hdr_headroom)
+        {
+            Ordering::Less => Some(GainMapDirection::Forward),
+            Ordering::Greater => Some(GainMapDirection::Reverse),
+            Ordering::Equal => None,
+        }
+    }
+
+    /// Access parameter record for channel `c` (`0..3`).
+    #[inline]
+    #[must_use]
+    pub const fn channel(self, c: usize) -> GainMapComponent {
+        self.channels.channel(c)
     }
 }
 

@@ -106,6 +106,30 @@ fn gamma22_fallback(v: f32, exp: f64) -> f32 {
     (libm::pow(f64::from(v.abs()), exp) as f32).copysign(v)
 }
 
+/// Arbitrary validated decoding gamma EOTF (`L = sign(v) * |v|^gamma`) on an `f32` slice.
+pub(crate) fn gamma_eotf_scalar_slice(buf: &mut [f32], gamma: f32) {
+    let exp = f64::from(gamma);
+    for v in buf.iter_mut() {
+        let x = *v;
+        if x == 0.0 || !x.is_finite() {
+            continue;
+        }
+        *v = (libm::pow(f64::from(x.abs()), exp) as f32).copysign(x);
+    }
+}
+
+/// Arbitrary validated encoding gamma OETF (`v = sign(L) * |L|^(1/gamma)`) on an `f32` slice.
+pub(crate) fn gamma_oetf_scalar_slice(buf: &mut [f32], gamma: f32) {
+    let inv = 1.0 / f64::from(gamma);
+    for v in buf.iter_mut() {
+        let x = *v;
+        if x == 0.0 || !x.is_finite() {
+            continue;
+        }
+        *v = (libm::pow(f64::from(x.abs()), inv) as f32).copysign(x);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // BT.709 EOTF / OETF (odd-symmetric for extended negative values)
 // ---------------------------------------------------------------------------

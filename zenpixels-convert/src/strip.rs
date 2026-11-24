@@ -25,7 +25,7 @@ use zenpixels::{
 use crate::accel::Accelerators;
 #[cfg(feature = "hdr-transfers")]
 use crate::hlg_render::PreparedHlg;
-use crate::policy::{DepthPolicy, LumaCoefficients};
+use crate::policy::{DepthPolicy, GamutPolicy, LumaCoefficients};
 #[cfg(feature = "oklab")]
 use crate::tonemap::SoftCompress;
 use crate::tonemap::StripMapper;
@@ -650,7 +650,7 @@ impl ByteFastPath {
 // Direct contiguous single-stage row fast paths (zero AoS↔SoA overhead!)
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum FastRow {
     F16ToF32 {
         channels: usize,
@@ -689,23 +689,101 @@ pub(crate) enum FastRow {
         pq_scale: f32,
         preserve_extended: bool,
     },
+    /// Option A: Fused exact SIMD U8 sRGB-TRC → 3×3 matrix → sRGB-TRC U8 (0-bit parity).
+    Srgb8MatrixExact {
+        matrix: [[f32; 3]; 3],
+        src_order: ChannelOrder,
+        dst_order: ChannelOrder,
+        fill_opaque: bool,
+        round: bool,
+    },
+    /// Option B: Opt-in fast Q14 fixed-point SIMD U8 sRGB-TRC → 3×3 matrix → sRGB-TRC U8 (max error <= 1 LSB).
+    Srgb8MatrixApproxQ14 {
+        tables: Arc<crate::strip_simd::Q14MatrixTables>,
+        src_order: ChannelOrder,
+        dst_order: ChannelOrder,
+        fill_opaque: bool,
+        round: bool,
+    },
 }
 
-/// Detect a direct contiguous single-stage row fast path (same channel order,
-/// full packing, no gamut matrix / matte / narrow range / alpha mode change).
+/// Detect a direct contiguous single-stage row fast path (or fused U8 sRGB-TRC 3×3 matrix path).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn detect_fast_row(
     src: &ImageSpec,
     dst: &ImageSpec,
     policy_depth: DepthPolicy,
+    gamut_policy: GamutPolicy,
+    allow_approximate: bool,
     matte_active: bool,
     preserve_extended: bool,
     white_nits: f32,
 ) -> Option<FastRow> {
-    if matte_active
-        || !src.layout.packing.is_full()
-        || !dst.layout.packing.is_full()
-        || src.layout.order != dst.layout.order
+    if matte_active || !src.layout.packing.is_full() || !dst.layout.packing.is_full() {
+        return None;
+    }
+    let round = match policy_depth {
+        DepthPolicy::Round | DepthPolicy::Forbid => true,
+        DepthPolicy::Truncate => false,
+        DepthPolicy::OrderedDither => return None,
+    };
+
+    // Fused U8 sRGB-TRC -> 3x3 matrix -> sRGB-TRC U8 (Display P3 <-> sRGB, BT.2020 <-> sRGB, etc.)
+    // Supports arbitrary U8 RGB/BGR/RGBA/BGRA/RGBX/BGRX combinations in a single pass!
+    if src.layout.sample == SampleType::U8
+        && dst.layout.sample == SampleType::U8
+        && src.layout.order.is_rgb_family()
+        && dst.layout.order.is_rgb_family()
+        && gamut_policy == GamutPolicy::Clip
+        && let (
+            ColorSpace::Rgb {
+                primaries: sp,
+                transfer: Transfer::Srgb,
+                range: SignalRange::Full,
+                alpha: sa,
+                white: sw,
+            },
+            ColorSpace::Rgb {
+                primaries: dp,
+                transfer: Transfer::Srgb,
+                range: SignalRange::Full,
+                alpha: da,
+                white: dw,
+            },
+        ) = (&src.color, &dst.color)
+        && sp != dp
+        && sw == dw
+        && *sa != AlphaMode::Premultiplied
+        && *da != AlphaMode::Premultiplied
+        && let Some(matrix) = sp.gamut_matrix_to(*dp)
     {
+        let fill_opaque = !src.layout.order.has_alpha_slot()
+            || !dst.layout.order.has_alpha_slot()
+            || *sa == AlphaMode::Opaque
+            || *da == AlphaMode::Opaque;
+        let max_row_l1 = matrix
+            .iter()
+            .map(|r| r[0].abs() + r[1].abs() + r[2].abs())
+            .fold(0.0_f32, f32::max);
+        if allow_approximate && max_row_l1 <= 6.0 {
+            return Some(FastRow::Srgb8MatrixApproxQ14 {
+                tables: crate::strip_simd::Q14MatrixTables::new(&matrix, round),
+                src_order: src.layout.order,
+                dst_order: dst.layout.order,
+                fill_opaque,
+                round,
+            });
+        }
+        return Some(FastRow::Srgb8MatrixExact {
+            matrix,
+            src_order: src.layout.order,
+            dst_order: dst.layout.order,
+            fill_opaque,
+            round,
+        });
+    }
+
+    if src.layout.order != dst.layout.order {
         return None;
     }
     let ch = src.layout.channels();
@@ -721,11 +799,6 @@ pub(crate) fn detect_fast_row(
     if !is_plain_color {
         return None;
     }
-    let round = match policy_depth {
-        DepthPolicy::Round | DepthPolicy::Forbid => true,
-        DepthPolicy::Truncate => false,
-        DepthPolicy::OrderedDither => return None,
-    };
 
     // Extract matching primaries / range / alpha / white.
     let (st, dt) = match (&src.color, &dst.color) {
@@ -841,7 +914,11 @@ pub(crate) fn detect_fast_row(
         let supported = |t: Transfer| {
             matches!(
                 t,
-                Transfer::Srgb | Transfer::Bt709 | Transfer::Gamma22 | Transfer::Pq
+                Transfer::Srgb
+                    | Transfer::Bt709
+                    | Transfer::Gamma22
+                    | Transfer::Gamma(_)
+                    | Transfer::Pq
             )
         };
         if dt == Transfer::Linear && supported(st) {
@@ -881,14 +958,14 @@ pub(crate) fn detect_fast_row(
 /// Execute a direct contiguous row fast path with zero heap allocation.
 #[inline(never)]
 pub(crate) fn exec_fast_row(
-    fast: FastRow,
+    fast: &FastRow,
     src: &[u8],
     dst: &mut [u8],
     width: usize,
     accel: &Accelerators,
 ) {
     match fast {
-        FastRow::F16ToF32 { channels } => {
+        &FastRow::F16ToF32 { channels } => {
             let count = width * channels;
             if let (Ok(s16), Ok(df)) = (
                 bytemuck::try_cast_slice::<u8, u16>(&src[..count * 2]),
@@ -926,7 +1003,7 @@ pub(crate) fn exec_fast_row(
                 }
             }
         }
-        FastRow::F32ToF16 { channels } => {
+        &FastRow::F32ToF16 { channels } => {
             let count = width * channels;
             if let (Ok(sf), Ok(d16)) = (
                 bytemuck::try_cast_slice::<u8, f32>(&src[..count * 4]),
@@ -964,7 +1041,7 @@ pub(crate) fn exec_fast_row(
                 }
             }
         }
-        FastRow::U8ToF32 { channels } => {
+        &FastRow::U8ToF32 { channels } => {
             let count = width * channels;
             if let Ok(df) = bytemuck::try_cast_slice_mut::<u8, f32>(&mut dst[..count * 4]) {
                 if let Some(f) = accel.u8_to_f32 {
@@ -982,7 +1059,7 @@ pub(crate) fn exec_fast_row(
                 }
             }
         }
-        FastRow::F32ToU8 { channels, round } => {
+        &FastRow::F32ToU8 { channels, round } => {
             let count = width * channels;
             let bias = if round { 0.5_f32 } else { 0.0_f32 };
             if let Ok(sf) = bytemuck::try_cast_slice::<u8, f32>(&src[..count * 4]) {
@@ -1009,7 +1086,7 @@ pub(crate) fn exec_fast_row(
                 }
             }
         }
-        FastRow::U16ToF32 { channels } => {
+        &FastRow::U16ToF32 { channels } => {
             let count = width * channels;
             if let (Ok(s16), Ok(df)) = (
                 bytemuck::try_cast_slice::<u8, u16>(&src[..count * 2]),
@@ -1031,7 +1108,7 @@ pub(crate) fn exec_fast_row(
                 }
             }
         }
-        FastRow::F32ToU16 { channels, round } => {
+        &FastRow::F32ToU16 { channels, round } => {
             let count = width * channels;
             let bias = if round { 0.5_f32 } else { 0.0_f32 };
             if let (Ok(sf), Ok(d16)) = (
@@ -1062,7 +1139,7 @@ pub(crate) fn exec_fast_row(
                 }
             }
         }
-        FastRow::SrgbU8ToLinF32 { channels, is_rgba } => {
+        &FastRow::SrgbU8ToLinF32 { channels, is_rgba } => {
             const INV_255: f32 = 1.0 / 255.0;
             let count = width * channels;
             if let Ok(df) = bytemuck::try_cast_slice_mut::<u8, f32>(&mut dst[..count * 4]) {
@@ -1097,7 +1174,7 @@ pub(crate) fn exec_fast_row(
                 }
             }
         }
-        FastRow::LinF32ToSrgbU8 {
+        &FastRow::LinF32ToSrgbU8 {
             channels,
             is_rgba,
             round,
@@ -1162,7 +1239,7 @@ pub(crate) fn exec_fast_row(
                 i += n;
             }
         }
-        FastRow::TransferF32 {
+        &FastRow::TransferF32 {
             channels,
             transfer,
             is_eotf,
@@ -1235,6 +1312,68 @@ pub(crate) fn exec_fast_row(
                     }
                     p += n;
                 }
+            }
+        }
+        FastRow::Srgb8MatrixExact {
+            matrix,
+            src_order,
+            dst_order,
+            fill_opaque,
+            round,
+        } => {
+            if let Some(f) = accel.srgb8_matrix_exact {
+                f(
+                    src,
+                    dst,
+                    width,
+                    matrix,
+                    *src_order,
+                    *dst_order,
+                    *fill_opaque,
+                    *round,
+                );
+            } else {
+                crate::strip_simd::srgb8_matrix_exact_scalar(
+                    src,
+                    dst,
+                    width,
+                    matrix,
+                    *src_order,
+                    *dst_order,
+                    *fill_opaque,
+                    *round,
+                );
+            }
+        }
+        FastRow::Srgb8MatrixApproxQ14 {
+            tables,
+            src_order,
+            dst_order,
+            fill_opaque,
+            round,
+        } => {
+            if let Some(f) = accel.srgb8_matrix_approx {
+                f(
+                    src,
+                    dst,
+                    width,
+                    tables,
+                    *src_order,
+                    *dst_order,
+                    *fill_opaque,
+                    *round,
+                );
+            } else {
+                crate::strip_simd::srgb8_matrix_approx_q14_scalar(
+                    src,
+                    dst,
+                    width,
+                    tables,
+                    *src_order,
+                    *dst_order,
+                    *fill_opaque,
+                    *round,
+                );
             }
         }
     }
@@ -1625,7 +1764,7 @@ fn store_ordered(order: ChannelOrder, vals: [f32; 4], strip: &mut StripBuf, i: u
             strip.b[i] = vals[0];
             strip.a[i] = vals[1];
         }
-        ChannelOrder::Rgb | ChannelOrder::Oklab | ChannelOrder::Perceptual3 => {
+        ChannelOrder::Rgb | ChannelOrder::Oklab | ChannelOrder::Xyz | ChannelOrder::Perceptual3 => {
             strip.r[i] = vals[0];
             strip.g[i] = vals[1];
             strip.b[i] = vals[2];
@@ -1637,7 +1776,10 @@ fn store_ordered(order: ChannelOrder, vals: [f32; 4], strip: &mut StripBuf, i: u
             strip.b[i] = vals[0];
             strip.a[i] = 1.0;
         }
-        ChannelOrder::Rgba | ChannelOrder::OklabA | ChannelOrder::Perceptual4 => {
+        ChannelOrder::Rgba
+        | ChannelOrder::OklabA
+        | ChannelOrder::XyzA
+        | ChannelOrder::Perceptual4 => {
             strip.r[i] = vals[0];
             strip.g[i] = vals[1];
             strip.b[i] = vals[2];
@@ -2060,6 +2202,18 @@ fn apply_transfer_slice(
                 crate::transfers::gamma22_oetf_scalar_slice(ch);
             }
         }
+        (Transfer::Gamma(gamma), true) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            crate::transfers::gamma_eotf_scalar_slice(ch, gamma.exponent());
+        }
+        (Transfer::Gamma(gamma), false) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            crate::transfers::gamma_oetf_scalar_slice(ch, gamma.exponent());
+        }
         #[cfg(feature = "hdr-transfers")]
         (Transfer::Pq, true) => {
             if let Some(f) = accel.pq_eotf {
@@ -2393,13 +2547,14 @@ fn load_ordered(order: ChannelOrder, strip: &StripBuf, i: usize) -> [f32; 4] {
     match order {
         ChannelOrder::Gray => [strip.r[i], 0.0, 0.0, 0.0],
         ChannelOrder::GrayAlpha => [strip.r[i], strip.a[i], 0.0, 0.0],
-        ChannelOrder::Rgb | ChannelOrder::Oklab | ChannelOrder::Perceptual3 => {
+        ChannelOrder::Rgb | ChannelOrder::Oklab | ChannelOrder::Xyz | ChannelOrder::Perceptual3 => {
             [strip.r[i], strip.g[i], strip.b[i], 1.0]
         }
         ChannelOrder::Bgr => [strip.b[i], strip.g[i], strip.r[i], 1.0],
-        ChannelOrder::Rgba | ChannelOrder::OklabA | ChannelOrder::Perceptual4 => {
-            [strip.r[i], strip.g[i], strip.b[i], strip.a[i]]
-        }
+        ChannelOrder::Rgba
+        | ChannelOrder::OklabA
+        | ChannelOrder::XyzA
+        | ChannelOrder::Perceptual4 => [strip.r[i], strip.g[i], strip.b[i], strip.a[i]],
         ChannelOrder::Bgra => [strip.b[i], strip.g[i], strip.r[i], strip.a[i]],
         ChannelOrder::Rgbx => [strip.r[i], strip.g[i], strip.b[i], 1.0],
         ChannelOrder::Bgrx => [strip.b[i], strip.g[i], strip.r[i], 1.0],
@@ -2585,6 +2740,18 @@ pub(crate) fn detect_byte_fast_path(
                 white: dw,
             },
         ) => st == dt && sr == dr && sw == dw && sa == da,
+        (
+            ColorSpace::Xyz {
+                white_point: wa,
+                alpha: sa,
+                white: wwa,
+            },
+            ColorSpace::Xyz {
+                white_point: wb,
+                alpha: da,
+                white: wwb,
+            },
+        ) => wa == wb && wwa == wwb && sa == da,
         _ => false,
     };
     if !colors_agree {

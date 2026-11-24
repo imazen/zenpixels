@@ -1,9 +1,11 @@
 //! Codec format negotiation: select the lowest-loss, lowest-effort supported [`ImageSpec`].
 
-use zenpixels::{ColorSpace, ImageSpec};
+use zenpixels::{ColorSpace, ImageSpec, Primaries, Transfer};
 
-use crate::plan::{preflight_and_classify, same_color_meaning};
-use crate::policy::ConvertPolicy;
+use crate::plan::{
+    color_primaries, color_transfer, preflight_and_classify, same_color_meaning, try_substitute_icc,
+};
+use crate::policy::{ConvertPolicy, DepthPolicy, GamutPolicy};
 
 /// Category of information lost when converting `src` to a candidate format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -54,9 +56,10 @@ pub struct Negotiate;
 impl Negotiate {
     /// Select the best candidate from `supported` that satisfies `policy`.
     ///
-    /// Uses the planner's shared preflight classifier so policy-forbidden
-    /// candidates (depth, alpha, range, gamut, missing CMS) are rejected
-    /// consistently without invoking expensive CMS/mapper builders per candidate.
+    /// Shares the planner's deterministic feasibility checks (policy gates,
+    /// `Transfer::Unknown` linear-math guards, PQ/HLG anchor requirements,
+    /// feature gates, and `CmsBackend::supports_specs`) so selected candidates
+    /// do not unexpectedly fail in `RowPlan::build`.
     #[must_use]
     pub fn select(
         src: &ImageSpec,
@@ -69,31 +72,40 @@ impl Negotiate {
                 Ok(p) => p,
                 Err(_) => continue,
             };
-            // Check HLG / HDR / feature-gate feasibility cheaply without building CMS/mappers.
-            if !pre.is_identity && !pre.uses_cms {
-                let st = crate::plan::color_transfer(&src.color);
-                let dt = crate::plan::color_transfer(&cand.color);
-                if (st.is_hdr() || dt.is_hdr()) && !cfg!(feature = "hdr-transfers") {
-                    continue;
-                }
-                if (st == zenpixels::Transfer::Unknown || dt == zenpixels::Transfer::Unknown)
-                    && st != dt
-                {
-                    continue;
-                }
-                if matches!(st, zenpixels::Transfer::Hlg(zenpixels::HlgMode::Scene))
-                    && !matches!(dt, zenpixels::Transfer::Hlg(zenpixels::HlgMode::Scene))
-                    && policy.hlg_rendering.is_none()
-                {
-                    continue;
-                }
-                if matches!(cand.color, ColorSpace::Oklab { .. }) && !cfg!(feature = "oklab") {
-                    continue;
-                }
-                if matches!(cand.color, ColorSpace::Perceptual { .. })
-                    && !cfg!(feature = "perceptual")
-                {
-                    continue;
+
+            if !pre.is_identity {
+                // Check CMS substitution vs direct CMS feasibility.
+                let eff_src_owned = if pre.uses_cms {
+                    try_substitute_icc(src, policy)
+                } else {
+                    None
+                };
+                let eff_dst_owned = if pre.uses_cms {
+                    try_substitute_icc(cand, policy)
+                } else {
+                    None
+                };
+                let direct_cms =
+                    pre.uses_cms && (eff_src_owned.is_none() || eff_dst_owned.is_none());
+
+                if direct_cms {
+                    let Some(cms) = policy.cms.as_ref() else {
+                        continue;
+                    };
+                    if policy.depth == DepthPolicy::OrderedDither
+                        || policy.gamut == GamutPolicy::SoftCompress
+                    {
+                        continue;
+                    }
+                    if !cms.supports_specs(src, cand) {
+                        continue;
+                    }
+                } else {
+                    let eff_src = eff_src_owned.as_ref().unwrap_or(src);
+                    let eff_dst = eff_dst_owned.as_ref().unwrap_or(cand);
+                    if !native_route_feasible(eff_src, eff_dst, policy, pre.matte_color.is_some()) {
+                        continue;
+                    }
                 }
             }
 
@@ -155,4 +167,97 @@ impl Negotiate {
         }
         best
     }
+}
+
+fn native_route_feasible(
+    src: &ImageSpec,
+    dst: &ImageSpec,
+    policy: &ConvertPolicy,
+    matte_active: bool,
+) -> bool {
+    let st = color_transfer(&src.color);
+    let dt = color_transfer(&dst.color);
+    let sp = color_primaries(&src.color);
+    let dp = color_primaries(&dst.color);
+
+    if (st.is_hdr() || dt.is_hdr()) && !cfg!(feature = "hdr-transfers") {
+        return false;
+    }
+    if (matches!(src.color, ColorSpace::Oklab { .. })
+        || matches!(dst.color, ColorSpace::Oklab { .. }))
+        && !cfg!(feature = "oklab")
+    {
+        return false;
+    }
+    if (matches!(src.color, ColorSpace::Perceptual { .. })
+        || matches!(dst.color, ColorSpace::Perceptual { .. }))
+        && !cfg!(feature = "perceptual")
+    {
+        return false;
+    }
+    if policy.gamut == GamutPolicy::SoftCompress && !cfg!(feature = "oklab") {
+        return false;
+    }
+
+    let src_is_pq = st == Transfer::Pq;
+    let dst_is_pq = dt == Transfer::Pq;
+    if src_is_pq && !dst_is_pq && dst.color.white().is_none() && policy.sdr_white.is_none() {
+        return false;
+    }
+    if !src_is_pq && dst_is_pq && src.color.white().is_none() && policy.sdr_white.is_none() {
+        return false;
+    }
+
+    let gamut_changes = sp != dp
+        && matches!(src.color, ColorSpace::Rgb { .. })
+        && matches!(dst.color, ColorSpace::Rgb { .. });
+    if gamut_changes && (sp == Primaries::Unknown || dp == Primaries::Unknown) {
+        return false;
+    }
+
+    let need_linear = st != dt
+        || gamut_changes
+        || matte_active
+        || matches!(
+            src.color,
+            ColorSpace::Oklab { .. } | ColorSpace::Perceptual { .. } | ColorSpace::Xyz { .. }
+        )
+        || matches!(
+            dst.color,
+            ColorSpace::Oklab { .. } | ColorSpace::Perceptual { .. } | ColorSpace::Xyz { .. }
+        )
+        || (matches!(src.color, ColorSpace::Rgb { .. })
+            && matches!(dst.color, ColorSpace::Gray { .. }))
+        || (src.color.white() != dst.color.white()
+            && src.color.white().is_some()
+            && dst.color.white().is_some());
+
+    if (need_linear || st != dt) && (st == Transfer::Unknown || dt == Transfer::Unknown) {
+        return false;
+    }
+
+    let is_bt2020_full = |cs: &ColorSpace| {
+        matches!(
+            cs,
+            ColorSpace::Rgb {
+                primaries: Primaries::Bt2020,
+                range: zenpixels::SignalRange::Full,
+                ..
+            }
+        )
+    };
+    if matches!(st, Transfer::Hlg(zenpixels::HlgMode::Scene))
+        && !matches!(dt, Transfer::Hlg(zenpixels::HlgMode::Scene))
+        && (policy.hlg_rendering.is_none() || !is_bt2020_full(&src.color))
+    {
+        return false;
+    }
+    if matches!(dt, Transfer::Hlg(zenpixels::HlgMode::Scene))
+        && !matches!(st, Transfer::Hlg(zenpixels::HlgMode::Scene))
+        && (policy.hlg_rendering.is_none() || !is_bt2020_full(&dst.color))
+    {
+        return false;
+    }
+
+    true
 }
