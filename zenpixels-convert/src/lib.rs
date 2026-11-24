@@ -9,7 +9,7 @@
 //! This crate re-exports the entire [`zenpixels`] core surface (`pub use zenpixels::*;`)
 //! without shadowing a single module name (`zenpixels::hdr` remains pure metadata;
 //! tone mapping and gamut compression live in [`tonemap`], content light measurement
-//! lives in [`measure`], gain maps live in [`gainmap`]).
+//! lives in [`measure`], gain maps live in `gainmap` when the `gainmap` feature is enabled).
 //!
 //! ## Key Architecture Highlights
 //!

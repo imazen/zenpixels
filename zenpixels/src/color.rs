@@ -1444,7 +1444,8 @@ impl ImageSpec {
     /// Whether this spec can represent HDR light levels above SDR diffuse white (`> 1.0`).
     ///
     /// Returns `true` for PQ and HLG transfers (any sample type), linear floating-point
-    /// RGB/Gray (`F16`/`F32`/`F64`), and floating-point CIE XYZ.
+    /// RGB/Gray (`F16`/`F32`/`F64`), floating-point CIE XYZ, and ICC profiles backed by
+    /// floating-point storage or carrying an HDR (`PQ`/`HLG`) `cicp` tag.
     #[inline]
     #[must_use]
     pub fn can_represent_hdr(&self) -> bool {
@@ -1454,6 +1455,19 @@ impl ImageSpec {
                     || (self.layout.sample.is_float() && transfer.is_linear())
             }
             ColorSpace::Xyz { .. } => self.layout.sample.is_float(),
+            ColorSpace::Icc { profile, .. } => {
+                if self.layout.sample.is_float() {
+                    return true;
+                }
+                #[cfg(feature = "icc")]
+                {
+                    if let Some(cicp) = crate::Cicp::from_icc(profile) {
+                        return matches!(cicp.transfer_characteristics, 16 | 18);
+                    }
+                }
+                let _ = profile;
+                false
+            }
             _ => false,
         }
     }

@@ -333,11 +333,29 @@ fn validate_custom_icc_for_dst(
     }
 }
 
+/// Semantic CICP equality: allows H.273 transfer aliases that map to the same canonical
+/// [`zenpixels::Transfer`] (e.g., BT.709 / BT.601 / BT.2020 10-bit/12-bit codes 1, 6, 14, 15).
+fn cicp_semantically_eq(a: Cicp, b: Cicp) -> bool {
+    if a == b {
+        return true;
+    }
+    a.color_primaries == b.color_primaries
+        && a.matrix_coefficients == b.matrix_coefficients
+        && a.full_range == b.full_range
+        && match (
+            zenpixels::Transfer::from_cicp(a.transfer_characteristics),
+            zenpixels::Transfer::from_cicp(b.transfer_characteristics),
+        ) {
+            (Some(ta), Some(tb)) => ta == tb,
+            _ => false,
+        }
+}
+
 /// Check whether `orig_cicp` agrees with `dst_color` (including `ColorSpace::Icc` via embedded
 /// `cicp` tag or qualified `IccIdentification` — B12).
 fn origin_cicp_agrees(orig_cicp: Cicp, dst_color: &ColorSpace) -> bool {
     if let Some(dst_cicp) = dst_color.to_cicp() {
-        return dst_cicp == orig_cicp;
+        return cicp_semantically_eq(dst_cicp, orig_cicp);
     }
     if let ColorSpace::Icc {
         profile,
@@ -346,10 +364,12 @@ fn origin_cicp_agrees(orig_cicp: Cicp, dst_color: &ColorSpace) -> bool {
     } = dst_color
     {
         if let Some(tag_cicp) = Cicp::from_icc(profile) {
-            return tag_cicp == orig_cicp;
+            return cicp_semantically_eq(tag_cicp, orig_cicp);
         }
         if let Some(id) = zenpixels::icc::IccIdentification::from_icc(profile)
-            && id.to_cicp() == Some(orig_cicp)
+            && id
+                .to_cicp()
+                .is_some_and(|c| cicp_semantically_eq(c, orig_cicp))
         {
             return true;
         }

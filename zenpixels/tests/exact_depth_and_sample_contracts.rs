@@ -511,3 +511,95 @@ fn cicp_wire_range_aces_ap0_opaque_init_and_transfer_distinctness() {
     }
     let _ = RenderingIntent::Perceptual;
 }
+
+#[test]
+fn exact_depth_union_disjoint_strips_and_icc_can_represent_hdr() {
+    // Disjoint-strip union on U16 full range: 3-bit + 5-bit -> 15-bit; 4-bit + 8-bit -> 8-bit;
+    // 8-bit + 12-bit -> lcm(8,12)=24 > 16 -> 16-bit storage depth!
+    let u3 = ExactDepth::new(SampleType::U16, SignalRange::Full, 3, 1).unwrap();
+    let u5 = ExactDepth::new(SampleType::U16, SignalRange::Full, 5, 4).unwrap();
+    let u35 = ExactDepth::union(u3, u5).unwrap();
+    assert_eq!(u35.color_bits(), 15);
+    assert_eq!(u35.alpha_bits(), 4);
+
+    let u8_in_16 = ExactDepth::new(SampleType::U16, SignalRange::Full, 8, 8).unwrap();
+    let u12_in_16 = ExactDepth::new(SampleType::U16, SignalRange::Full, 12, 12).unwrap();
+    let u8_12 = ExactDepth::union(u8_in_16, u12_in_16).unwrap();
+    assert_eq!(u8_12.color_bits(), 16);
+    assert_eq!(u8_12.alpha_bits(), 16);
+
+    // Narrow range: monotonic max (`max(10, 12) = 12`).
+    let n10 = ExactDepth::new(SampleType::U16, SignalRange::Narrow, 10, 8).unwrap();
+    let n12 = ExactDepth::new(SampleType::U16, SignalRange::Narrow, 12, 4).unwrap();
+    let n10_12 = ExactDepth::union(n10, n12).unwrap();
+    assert_eq!(n10_12.color_bits(), 12);
+    assert_eq!(n10_12.alpha_bits(), 8);
+
+    // Exhaustive mathematical verification over ALL U16 full-range pairs (1..=16 x 1..=16):
+    // every widened code from grid `a` and every widened code from grid `b` MUST hold on `union(a, b)`!
+    for a in 1u8..=16 {
+        let da = ExactDepth::new(SampleType::U16, SignalRange::Full, a, 16).unwrap();
+        let max_a = (1u32 << a) - 1;
+        let samples_a: Vec<u16> = (0..=max_a)
+            .step_by(((max_a / 31).max(1)) as usize)
+            .map(|q| ((q * 65535 + max_a / 2) / max_a) as u16)
+            .collect();
+        for b in a..=16 {
+            let db = ExactDepth::new(SampleType::U16, SignalRange::Full, b, 16).unwrap();
+            let merged = ExactDepth::union(da, db).unwrap();
+            assert!(merged.color_bits() >= a && merged.color_bits() >= b);
+            let buf_a = PixelBuf::from_vec(
+                samples_a.clone(),
+                samples_a.len() as u32,
+                1,
+                ImageSpec::gray16_srgb(),
+            )
+            .unwrap();
+            assert!(
+                merged.holds_for(&buf_a.as_view()).unwrap(),
+                "union({a}, {b}) = {} must hold for every {a}-bit sample",
+                merged.color_bits()
+            );
+            let max_b = (1u32 << b) - 1;
+            let samples_b: Vec<u16> = (0..=max_b)
+                .step_by(((max_b / 31).max(1)) as usize)
+                .map(|q| ((q * 65535 + max_b / 2) / max_b) as u16)
+                .collect();
+            let buf_b = PixelBuf::from_vec(
+                samples_b.clone(),
+                samples_b.len() as u32,
+                1,
+                ImageSpec::gray16_srgb(),
+            )
+            .unwrap();
+            assert!(
+                merged.holds_for(&buf_b.as_view()).unwrap(),
+                "union({a}, {b}) = {} must hold for every {b}-bit sample",
+                merged.color_bits()
+            );
+        }
+    }
+
+    // `ImageSpec::can_represent_hdr()` returns true for floating-point ICC and PQ/HLG-tagged ICC.
+    let fake_icc: std::sync::Arc<[u8]> = std::sync::Arc::from(vec![0u8; 128]);
+    let icc_f32 = ImageSpec::new(
+        SampleLayout::RGBF32,
+        ColorSpace::Icc {
+            profile: fake_icc.clone(),
+            channels: 3,
+            alpha: AlphaMode::None,
+            intent: RenderingIntent::Perceptual,
+        },
+    );
+    assert!(icc_f32.can_represent_hdr());
+    let icc_u16 = ImageSpec::new(
+        SampleLayout::RGB16,
+        ColorSpace::Icc {
+            profile: fake_icc,
+            channels: 3,
+            alpha: AlphaMode::None,
+            intent: RenderingIntent::Perceptual,
+        },
+    );
+    assert!(!icc_u16.can_represent_hdr());
+}

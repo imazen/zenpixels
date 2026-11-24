@@ -1,12 +1,15 @@
 //! Exact colorimetry, transfer accuracy, gamut ordering, policy refusal gates,
 //! Oklab CIE XYZ D65 anchoring, PQ NaN flushing, Narrow<->Full, and Perceptual spaces.
 
+#[cfg(any(feature = "hdr-transfers", feature = "perceptual"))]
+use zenpixels_convert::AlphaMode;
 use zenpixels_convert::{
-    AlphaMode, AlphaPolicy, Color, ColorSpace, ConvertError, ConvertPolicy, DepthPolicy,
-    DiffuseWhite, ExactDepth, GamutPolicy, HlgMode, HlgRendering, ImageSpec, Nits, PeakSource,
-    PixelBuf, Primaries, RangePolicy, RowPlan, SampleFacts, SampleLayout, SignalRange, Transfer,
-    convert_buf, scan_facts,
+    AlphaPolicy, Color, ColorSpace, ConvertError, ConvertPolicy, DepthPolicy, ExactDepth,
+    GamutPolicy, ImageSpec, PeakSource, PixelBuf, Primaries, RangePolicy, RowPlan, SampleFacts,
+    SampleLayout, SignalRange, convert_buf, scan_facts,
 };
+#[cfg(feature = "hdr-transfers")]
+use zenpixels_convert::{DiffuseWhite, HlgMode, HlgRendering, Nits, Transfer};
 
 #[test]
 fn linear_bt709_to_srgb_u8_display_p3_applies_gamut_matrix_before_clamping() {

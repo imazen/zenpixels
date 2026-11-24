@@ -21,11 +21,12 @@ use alloc::sync::Arc;
 
 use zenpixels_convert::{
     AlphaMode, AlphaPolicy, BitPacking, ChannelOrder, Cicp, CodeMap, CodePlane, CodeRole,
-    ColorOrigin, ColorSpace, ConvertError, ConvertPolicy, DepthPolicy, DiffuseWhite, FloatFacts,
-    Gamma, ImagePlan, ImageSpec, LoadBearingReport, LossKind, Negotiate, Nits, OutputPlan,
-    OutputProfile, PeakSource, PixelBuf, PixelBufLoadBearingExt, PixelViewLoadBearingExt,
-    Primaries, RangePolicy, RenderingIntent, RowPlan, SampleEncoding, SampleFacts, SampleLayout,
-    SampleType, SignalRange, Transfer, convert_buf, scan_facts, to_canonical,
+    ColorOrigin, ColorSpace, ContentLightLevel, ConvertError, ConvertPolicy, DepthPolicy,
+    DiffuseWhite, FloatFacts, Gamma, HdrMetadata, ImagePlan, ImageSpec, LoadBearingReport,
+    LossKind, MasteringDisplay, Negotiate, Nits, OutputPlan, OutputProfile, PeakSource, PixelBuf,
+    PixelBufLoadBearingExt, PixelViewLoadBearingExt, Primaries, RangePolicy, RenderingIntent,
+    RowPlan, SampleEncoding, SampleFacts, SampleLayout, SampleType, SignalRange, Transfer,
+    convert_buf, scan_facts, to_canonical,
 };
 
 #[test]
@@ -801,4 +802,112 @@ fn d03_codemap_and_to_canonical_exhaustive() {
         Nits::new(100.0),
         convert_buf,
     );
+}
+
+#[test]
+fn phase4a_icc_hdr_identity_load_bearing_origin_and_cicp_alias() {
+    // H9: Identical-ICC identity / layout conversion MUST preserve `HdrMetadata` (CLL + mastering)!
+    let p3_icc: Arc<[u8]> = Arc::from(zenpixels_convert::icc_profiles::DISPLAY_P3_V4);
+    let icc_spec = ImageSpec::new(
+        SampleLayout::RGB16,
+        ColorSpace::Icc {
+            profile: Arc::clone(&p3_icc),
+            channels: 3,
+            alpha: AlphaMode::None,
+            intent: RenderingIntent::Perceptual,
+        },
+    );
+    let hdr = HdrMetadata {
+        cll: Some(ContentLightLevel::new(1000, 400)),
+        mastering: Some(MasteringDisplay::new(
+            [[0.680, 0.320], [0.265, 0.690], [0.150, 0.060]],
+            [0.3127, 0.3290],
+            0.005,
+            1000.0,
+        )),
+    };
+    let raw_nclx = Cicp::new(1, 1, 1, false);
+    let orig = ColorOrigin::from_icc_and_cicp(Arc::clone(&p3_icc), raw_nclx);
+    let src_buf = PixelBuf::from_vec(vec![1000u16, 2000, 3000], 1, 1, icc_spec.clone())
+        .unwrap()
+        .with_origin(orig.clone())
+        .with_hdr(hdr);
+    let copied = convert_buf(
+        &src_buf.as_view(),
+        icc_spec.clone(),
+        &ConvertPolicy::permissive(),
+        PeakSource::Declared,
+    )
+    .unwrap();
+    assert_eq!(
+        copied.hdr(),
+        hdr,
+        "same-ICC identity conversion must preserve HDR metadata"
+    );
+    assert_eq!(
+        copied.origin(),
+        &orig,
+        "same-ICC identity conversion must preserve origin"
+    );
+    assert_eq!(
+        copied.as_view().row_as::<u16>(0).unwrap(),
+        &[1000, 2000, 3000]
+    );
+
+    // Load-bearing RGB -> Gray collapse MUST preserve original source `ColorOrigin` provenance
+    // and refuse collapsing non-D65 primaries (`DciP3`) to D65 Gray!
+    let p3_rgb_spec = ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3);
+    let mut neutral_p3 = PixelBuf::from_vec(vec![128u8, 128, 128, 64, 64, 64], 2, 1, p3_rgb_spec)
+        .unwrap()
+        .with_origin(orig.clone())
+        .with_hdr(hdr);
+    let reduced_alloc = neutral_p3
+        .as_view()
+        .reduce_to_load_bearing_format()
+        .unwrap()
+        .expect("neutral Display P3 RGB reduces to Gray");
+    assert_eq!(reduced_alloc.spec(), &ImageSpec::gray8_srgb());
+    assert_eq!(
+        reduced_alloc.origin(),
+        &orig,
+        "load-bearing reduction must preserve original file provenance untouched"
+    );
+    assert_eq!(reduced_alloc.hdr(), hdr);
+    neutral_p3.reduce_to_load_bearing_format_in_place(true);
+    assert_eq!(neutral_p3.spec(), &ImageSpec::gray8_srgb());
+    assert_eq!(neutral_p3.origin(), &orig);
+
+    // Non-D65 DCI-P3 RGB MUST NOT collapse to D65 Gray!
+    let dci_spec = ImageSpec::rgb8_srgb().with_primaries(Primaries::DciP3);
+    let neutral_dci = PixelBuf::from_vec(vec![128u8, 128, 128], 1, 1, dci_spec.clone()).unwrap();
+    let dci_rep = neutral_dci.as_view().determine_load_bearing();
+    assert_eq!(dci_rep.apply_to(&dci_spec), dci_spec);
+    assert!(
+        neutral_dci
+            .as_view()
+            .reduce_to_load_bearing_format()
+            .unwrap()
+            .is_none(),
+        "DciP3 non-D65 white point must not collapse to D65 Gray"
+    );
+
+    // `OutputProfile::SameAsOrigin` accepts semantically equivalent BT.709 transfer aliases
+    // (`[9, 14, 0, 1]` BT.2020 10-bit transfer alias == `Transfer::Bt709` canonical `[9, 1, 0, 1]`)!
+    let bt2020_709 = ImageSpec::rgb16_srgb()
+        .with_primaries(Primaries::Bt2020)
+        .with_transfer(Transfer::Bt709);
+    let alias_cicp = Cicp::new(9, 14, 0, true);
+    let alias_origin = ColorOrigin::from_cicp(alias_cicp);
+    let plan = OutputPlan::build(
+        bt2020_709.clone(),
+        bt2020_709,
+        ConvertPolicy::permissive(),
+        PeakSource::Declared,
+        OutputProfile::SameAsOrigin,
+    )
+    .unwrap();
+    let (cicp_out, _icc_out) = plan.resolve_signaling(&alias_origin).expect(
+        "SameAsOrigin must accept semantically equivalent CICP transfer alias TC 14 for Bt709",
+    );
+    assert_eq!(cicp_out, Some(alias_cicp));
 }

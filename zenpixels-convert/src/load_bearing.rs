@@ -16,8 +16,8 @@
 use alloc::sync::Arc;
 use whereat::At;
 use zenpixels::{
-    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, ImageSpec, PixelBuf, PixelView, SampleFacts,
-    SampleLayout, SampleType, SignalRange, Transfer,
+    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, ImageSpec, PixelBuf, PixelView, Primaries,
+    SampleFacts, SampleLayout, SampleType, SignalRange, Transfer,
 };
 
 use crate::error::{ConvertError, err_at};
@@ -95,15 +95,17 @@ impl LoadBearingReport {
             }
         }
 
-        // 3. Chroma drop (for structured ColorSpace::Rgb; ColorSpace::Icc requires explicit swap).
+        // 3. Chroma drop (for structured D65 ColorSpace::Rgb; ColorSpace::Icc requires explicit swap,
+        // and non-D65 / Unknown RGB primaries cannot collapse to D65 Gray without shifting white point).
         if matches!(self.uses_chroma, Some(false))
             && let ColorSpace::Rgb {
+                primaries,
                 transfer,
                 range,
                 alpha,
                 white,
-                ..
             } = color
+            && primaries.white_point() == Some(Primaries::WHITE_D65)
         {
             let (next_order, next_alpha) = match order {
                 ChannelOrder::Rgb | ChannelOrder::Bgr => (ChannelOrder::Gray, AlphaMode::None),
@@ -161,53 +163,50 @@ pub trait PixelBufLoadBearingExt: sealed::Sealed {
 
 enum GraySignalPlan {
     Carry,
-    Swap {
-        gray_icc: Option<Arc<[u8]>>,
-        keep_cicp: Option<zenpixels::Cicp>,
-    },
+    Swap { gray_icc: Option<Arc<[u8]>> },
     Suppress,
 }
 
-fn plan_chroma_collapse_for_icc(
-    icc: &[u8],
-    companion_cicp: Option<zenpixels::Cicp>,
-) -> GraySignalPlan {
+fn plan_chroma_collapse_for_icc(icc: &[u8]) -> GraySignalPlan {
+    // Identify RGB ICC either via verified normalized matrix-TRC match OR an explicit ICC v4.4
+    // `cicp` tag carrying full-range RGB (matrix 0).
     let cicp = zenpixels::icc::IccIdentification::from_icc(icc)
         .filter(|id| id.valid_use == zenpixels::icc::IdentificationUse::MatrixTrcSubstitution)
-        .and_then(|id| id.to_cicp());
+        .and_then(|id| id.to_cicp())
+        .or_else(|| {
+            zenpixels::Cicp::from_icc(icc).filter(|c| c.matrix_coefficients == 0 && c.full_range)
+        });
     let Some(cicp) = cicp else {
         return GraySignalPlan::Suppress;
     };
-    if companion_cicp.is_some_and(|hint| hint != cicp) {
+    // Only collapse to D65 Gray when the RGB ICC primaries have a D65 white point (e.g. BT.709,
+    // Display P3, BT.2020 — not DCI-P3 theater white).
+    if zenpixels::Primaries::from_cicp(cicp.color_primaries).and_then(Primaries::white_point)
+        != Some(Primaries::WHITE_D65)
+    {
         return GraySignalPlan::Suppress;
     }
     match synthesize_gray_icc_for_cicp(cicp) {
         SynthesizedIcc::Profile(bytes) => GraySignalPlan::Swap {
             gray_icc: Some(Arc::from(bytes.as_ref())),
-            keep_cicp: companion_cicp,
         },
-        SynthesizedIcc::NotNeeded => GraySignalPlan::Swap {
-            gray_icc: None,
-            keep_cicp: companion_cicp,
-        },
+        SynthesizedIcc::NotNeeded => GraySignalPlan::Swap { gray_icc: None },
         _ => GraySignalPlan::Suppress,
     }
 }
 
-fn plan_chroma_collapse(spec: &ImageSpec, origin: Option<&ColorOrigin>) -> GraySignalPlan {
+fn plan_chroma_collapse(spec: &ImageSpec) -> GraySignalPlan {
     match &spec.color {
         ColorSpace::Icc {
             profile,
             channels: 3,
             ..
-        } => plan_chroma_collapse_for_icc(profile, origin.and_then(|o| o.cicp)),
-        ColorSpace::Rgb { .. } => {
-            if let Some(orig) = origin
-                && let Some(icc) = orig.icc.as_deref()
-            {
-                plan_chroma_collapse_for_icc(icc, orig.cicp)
-            } else {
+        } => plan_chroma_collapse_for_icc(profile),
+        ColorSpace::Rgb { primaries, .. } => {
+            if primaries.white_point() == Some(Primaries::WHITE_D65) {
                 GraySignalPlan::Carry
+            } else {
+                GraySignalPlan::Suppress
             }
         }
         ColorSpace::Gray { .. } => GraySignalPlan::Carry,
@@ -266,35 +265,6 @@ fn apply_icc_chroma_collapse(
     } else {
         base
     }
-}
-
-fn chroma_collapsed(src: ChannelOrder, dst: ChannelOrder) -> bool {
-    src.is_rgb_family() && matches!(dst, ChannelOrder::Gray | ChannelOrder::GrayAlpha)
-}
-
-fn updated_origin_after_reduce(
-    src_order: ChannelOrder,
-    dst_order: ChannelOrder,
-    origin: Option<&ColorOrigin>,
-    plan: GraySignalPlan,
-) -> ColorOrigin {
-    let Some(orig) = origin else {
-        return ColorOrigin::assumed();
-    };
-    if chroma_collapsed(src_order, dst_order)
-        && let GraySignalPlan::Swap {
-            gray_icc,
-            keep_cicp,
-        } = plan
-    {
-        return match (gray_icc, keep_cicp) {
-            (Some(icc), Some(cicp)) => ColorOrigin::from_icc_and_cicp(icc, cicp),
-            (Some(icc), None) => ColorOrigin::from_icc(icc),
-            (None, Some(cicp)) => ColorOrigin::from_cicp(cicp),
-            (None, None) => ColorOrigin::assumed(),
-        };
-    }
-    orig.clone()
 }
 
 impl PixelViewLoadBearingExt for PixelView<'_> {
@@ -477,7 +447,7 @@ impl PixelViewLoadBearingExt for PixelView<'_> {
     fn reduce_to_load_bearing_format(&self) -> Result<Option<PixelBuf>, At<ConvertError>> {
         let src = self.spec().clone();
         let mut report = self.determine_load_bearing();
-        let plan = plan_chroma_collapse(&src, self.origin());
+        let plan = plan_chroma_collapse(&src);
         if matches!(plan, GraySignalPlan::Suppress) {
             report.uses_chroma = None;
         }
@@ -490,8 +460,9 @@ impl PixelViewLoadBearingExt for PixelView<'_> {
         if transform_into(self, &src, &target, &mut out).is_none() {
             return Ok(None);
         }
-        let out_origin =
-            updated_origin_after_reduce(src.layout.order, target.layout.order, self.origin(), plan);
+        // Preserve the original source `ColorOrigin` provenance verbatim — the active raster's
+        // synthesized Gray-class ICC (if any) lives in `target.color`, not in `origin`.
+        let out_origin = self.origin().cloned().unwrap_or_else(ColorOrigin::assumed);
         Ok(Some(out.with_origin(out_origin).with_hdr(self.hdr())))
     }
 }
@@ -506,7 +477,7 @@ impl PixelBufLoadBearingExt for PixelBuf {
                 let view = PixelView::new(bytes, width, rows, in_stride, src.clone()).ok()?;
                 view.determine_load_bearing()
             };
-            let plan = plan_chroma_collapse(src, Some(orig));
+            let plan = plan_chroma_collapse(src);
             if matches!(plan, GraySignalPlan::Suppress) {
                 report.uses_chroma = None;
             }
@@ -564,13 +535,7 @@ impl PixelBufLoadBearingExt for PixelBuf {
                 narrow16,
             );
 
-            let new_origin = updated_origin_after_reduce(
-                src.layout.order,
-                target.layout.order,
-                Some(orig),
-                plan,
-            );
-            Some((out_stride, target, new_origin, SampleFacts::NONE))
+            Some((out_stride, target, orig.clone(), SampleFacts::NONE))
         });
     }
 }

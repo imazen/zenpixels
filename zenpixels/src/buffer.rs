@@ -8,7 +8,7 @@
 //!   `from_vec`, `try_into_vec_zero_copy`) rather than a `<P = ()>` type parameter.
 //! - [`BandedBuf`] handles gigapixel images in bounded-memory horizontal bands.
 //! - [`PlanarBuf`] / [`PlanarView`] handle 1..=4 planes (YCbCr, NV12, P010, planar RGB+A)
-//!   including N-bit [`BitPacking`](crate::BitPacking) code extraction.
+//!   including N-bit [`BitPacking`] code extraction.
 //! - [`DualLayerHdr`] carries ISO 21496-1 / UltraHDR base + gain map + headroom metadata.
 
 use alloc::borrow::Cow;
@@ -2130,7 +2130,7 @@ impl OwnedPlane {
         &mut self.storage.as_bytes_mut()[start..start + rb]
     }
 
-    /// Extract the unpacked integer code for `(x, y, component)` respecting [`BitPacking`](crate::BitPacking).
+    /// Extract the unpacked integer code for `(x, y, component)` respecting [`BitPacking`].
     #[must_use]
     pub fn code_u32(&self, x: u32, y: u32, component: usize) -> Option<u32> {
         if x >= self.width || y >= self.height || component >= self.spec.components as usize {

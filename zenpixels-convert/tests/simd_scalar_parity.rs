@@ -6,10 +6,11 @@
 
 use zenpixels_convert::{
     Accelerators, AlphaMode, AlphaPolicy, BitPacking, ChannelOrder, Color, ColorSpace,
-    ConvertPolicy, DepthPolicy, DiffuseWhite, F16Sample, GamutPolicy, HlgMode, HlgRendering,
-    ImageSpec, Nits, Primaries, RangePolicy, RowPlan, SampleLayout, SampleType, SignalRange,
-    Transfer,
+    ConvertPolicy, DepthPolicy, F16Sample, GamutPolicy, ImageSpec, Nits, Primaries, RangePolicy,
+    RowPlan, SampleLayout, SampleType, SignalRange, Transfer,
 };
+#[cfg(feature = "hdr-transfers")]
+use zenpixels_convert::{DiffuseWhite, HlgMode, HlgRendering};
 
 #[allow(clippy::too_many_arguments)]
 fn assert_scalar_simd_bit_exact(

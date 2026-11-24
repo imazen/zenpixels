@@ -231,8 +231,12 @@ impl ExactDepth {
         }))
     }
 
-    /// Intersect/combine two `ExactDepth` claims for the same storage & range,
-    /// returning the tighter proven depth when both nest on a common grid.
+    /// Intersect two `ExactDepth` claims that both describe the **same** sample set,
+    /// returning the tighter proven depth for matching storage & range.
+    ///
+    /// This is for merging independent evidence about the same buffer (e.g., caller policy
+    /// facts plus buffer facts). To merge evidence from **disjoint** strips or regions of
+    /// an image into a common containing grid, use [`ExactDepth::union`].
     #[must_use]
     pub const fn combine(a: Self, b: Self) -> Option<Self> {
         if !matches!(
@@ -264,11 +268,74 @@ impl ExactDepth {
         })
     }
 
+    /// Merge two `ExactDepth` measurements from **disjoint** strips or regions of the same
+    /// image into the smallest common containing grid holding every sample from both regions.
+    ///
+    /// - **Narrow range:** monotonic `max(a, b)` (power-of-two anchor grids nest monotonically).
+    /// - **Full range:** `lcm(a, b)` when `lcm(a, b) <= storage_bits`, otherwise `storage_bits`
+    ///   (because full-range `d1`-bit and `d2`-bit grids embed in `d` iff both `d1` and `d2`
+    ///   divide `d`, or `d == storage_bits`).
+    ///
+    /// Returns `None` if storage type or signal range disagree.
+    #[must_use]
+    pub const fn union(a: Self, b: Self) -> Option<Self> {
+        if !matches!(
+            (a.storage, b.storage),
+            (SampleType::U8, SampleType::U8) | (SampleType::U16, SampleType::U16)
+        ) {
+            return None;
+        }
+        let a_narrow = matches!(a.range, SignalRange::Narrow);
+        let b_narrow = matches!(b.range, SignalRange::Narrow);
+        if a_narrow != b_narrow {
+            return None;
+        }
+        let sb = a.storage_bits();
+        let color_bits = if a_narrow {
+            if a.color_bits >= b.color_bits {
+                a.color_bits
+            } else {
+                b.color_bits
+            }
+        } else {
+            full_grid_union_bits(sb, a.color_bits, b.color_bits)
+        };
+        let alpha_bits = full_grid_union_bits(sb, a.alpha_bits, b.alpha_bits);
+        Some(Self {
+            storage: a.storage,
+            range: a.range,
+            color_bits,
+            alpha_bits,
+        })
+    }
+
     const fn storage_bits(self) -> u8 {
         match self.storage {
             SampleType::U8 => 8,
             _ => 16,
         }
+    }
+}
+
+const fn gcd_u8(mut a: u8, mut b: u8) -> u8 {
+    while b != 0 {
+        let r = a % b;
+        a = b;
+        b = r;
+    }
+    a
+}
+
+const fn full_grid_union_bits(storage_bits: u8, a: u8, b: u8) -> u8 {
+    if a >= storage_bits || b >= storage_bits {
+        return storage_bits;
+    }
+    let g = gcd_u8(a, b);
+    let lcm = (a as u16 / g as u16) * (b as u16);
+    if lcm <= storage_bits as u16 {
+        lcm as u8
+    } else {
+        storage_bits
     }
 }
 

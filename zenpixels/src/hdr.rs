@@ -23,7 +23,7 @@
 #[derive(Clone, Copy, Debug)]
 pub struct DiffuseWhite(f32);
 
-// Bit-exact equality so `DiffuseWhite` — and therefore `ColorContext` — keeps
+// Bit-exact equality so `DiffuseWhite` — and therefore `ImageSpec` — keeps
 // `Eq` despite wrapping `f32`. A luminance anchor is always a sane, finite,
 // positive cd/m² value (203, 100, 10000, …), so a bitwise compare is reflexive
 // and consistent; the -0.0 / NaN cases a value compare would treat differently

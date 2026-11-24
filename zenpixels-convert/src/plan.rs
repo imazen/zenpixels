@@ -1045,12 +1045,15 @@ impl ImagePlan {
         for y in 0..h {
             row_plan.convert_row(src.source_row(y), dst.sink_row_mut(y), w, y)?;
         }
-        let out_hdr =
-            if self.dst.can_represent_hdr() && same_photometry(&self.src.color, &self.dst.color) {
-                src.source_hdr()
-            } else {
-                HdrMetadata::default()
-            };
+        let preserves_icc_hdr = matches!(self.dst.color, ColorSpace::Icc { .. })
+            && !(self.src.layout.sample.is_float() && !self.dst.layout.sample.is_float());
+        let out_hdr = if same_photometry(&self.src.color, &self.dst.color)
+            && (self.dst.can_represent_hdr() || preserves_icc_hdr)
+        {
+            src.source_hdr()
+        } else {
+            HdrMetadata::default()
+        };
         let out_facts = match &row_plan.exec {
             RowExec::Byte(bp) => {
                 derive_output_facts_byte(&self.src, &self.dst, merged_src_facts, *bp)

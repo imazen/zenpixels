@@ -313,8 +313,8 @@ impl Accelerators {
 
     /// HDR & half-float workload: SIMD strip codec + F16C/NEON-fp16 + PQ/HLG + 3×3 gamut.
     ///
-    /// Links zero gain-map SIMD code; chain [`.with_gainmap()`](Self::with_gainmap) when reconstructing
-    /// ISO 21496-1 / UltraHDR gain maps.
+    /// Links zero gain-map SIMD code; chain `.with_gainmap()` (requires the `gainmap` feature)
+    /// when reconstructing ISO 21496-1 / UltraHDR gain maps.
     pub const HDR: Self = Self::SCALAR
         .with_strip_simd()
         .with_gamut_3x3()
