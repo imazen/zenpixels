@@ -775,7 +775,11 @@ impl RowPlan {
         self.output_facts
     }
 
-    /// Whether this plan is an exact byte-copy identity (`src == dst`).
+    /// Whether this plan executes as a direct byte-copy (`Memcpy`) route with no per-sample work.
+    ///
+    /// Includes identical `src == dst` (unless unverified `AlphaMode::Opaque` requires alpha
+    /// canonicalization) as well as same-layout proven-opaque `Straight <-> Premultiplied` or
+    /// same-layout metadata relabels that need no pixel transformation.
     #[inline]
     #[must_use]
     pub fn is_identity(&self) -> bool {
@@ -1064,6 +1068,9 @@ impl ImagePlan {
             && let Some(orig) = src.source_origin()
         {
             dst.sink_set_origin(orig.clone());
+        } else {
+            // Clear any stale `ColorOrigin` on a reused sink when color meaning changed!
+            dst.sink_set_origin(zenpixels::ColorOrigin::assumed());
         }
         dst.sink_finish(out_facts, out_hdr);
         Ok(())
@@ -1229,11 +1236,16 @@ pub(crate) fn preflight_and_classify(
     dst.validate().map_err(|e| err_at((*e.error()).into()))?;
 
     if src == dst {
+        let needs_opaque_canon = src.color.alpha() == AlphaMode::Opaque
+            && src.layout.order.has_alpha_slot()
+            && !policy.source_facts.all_opaque;
+        let can_canon_fast = needs_opaque_canon
+            && strip::detect_byte_fast_path(src, dst, policy.depth, false, false).is_some();
         return Ok(PreflightOutcome {
             matte_color: None,
             range_change: false,
             uses_cms: false,
-            is_identity: true,
+            is_identity: !can_canon_fast,
             drops_alpha: false,
             alpha_proven_opaque: true,
             drops_chroma: false,
@@ -1984,6 +1996,9 @@ fn derive_output_facts_byte(
             | ByteFastPath::SwapRbFillAlpha4B2(_)
             | ByteFastPath::FillAlpha4B4
             | ByteFastPath::SwapRbFillAlpha4B4
+            | ByteFastPath::FillAlpha2U8
+            | ByteFastPath::FillAlpha2B2(_)
+            | ByteFastPath::FillAlpha2B4
             | ByteFastPath::RepackIntSameDepth {
                 fill_opaque_alpha: true,
                 ..
@@ -1993,15 +2008,68 @@ fn derive_output_facts_byte(
                 ..
             }
     );
+    // Exhaustive allow-list: ONLY byte paths that move, broadcast, or exactly widen/repack
+    // samples without modifying color code values may propagate source `ExactDepth::color_bits`.
+    let preserves_color_values = match bp {
+        ByteFastPath::Memcpy
+        | ByteFastPath::Rgb8ToRgba8
+        | ByteFastPath::Rgb8ToBgra8
+        | ByteFastPath::Rgba8ToRgb8
+        | ByteFastPath::Bgra8ToRgb8
+        | ByteFastPath::SwapRb3U8
+        | ByteFastPath::SwapRb4U8
+        | ByteFastPath::FillAlpha4U8
+        | ByteFastPath::SwapRbFillAlpha4U8
+        | ByteFastPath::Gray8ToRgb8
+        | ByteFastPath::Gray8ToRgba8
+        | ByteFastPath::U8ToU16Exact
+        | ByteFastPath::DropAlpha4To3B2
+        | ByteFastPath::SwapDropAlpha4To3B2
+        | ByteFastPath::AddAlpha3To4B2(_)
+        | ByteFastPath::SwapAddAlpha3To4B2(_)
+        | ByteFastPath::SwapRb3B2
+        | ByteFastPath::SwapRb4B2
+        | ByteFastPath::GrayToRgbB2
+        | ByteFastPath::GrayToRgbaB2(_)
+        | ByteFastPath::DropAlpha4To3B4
+        | ByteFastPath::SwapDropAlpha4To3B4
+        | ByteFastPath::AddAlpha3To4B4
+        | ByteFastPath::SwapAddAlpha3To4B4
+        | ByteFastPath::SwapRb3B4
+        | ByteFastPath::SwapRb4B4
+        | ByteFastPath::GrayToRgbB4
+        | ByteFastPath::GrayToRgbaB4
+        | ByteFastPath::FillAlpha4B2(_)
+        | ByteFastPath::SwapRbFillAlpha4B2(_)
+        | ByteFastPath::FillAlpha4B4
+        | ByteFastPath::SwapRbFillAlpha4B4
+        | ByteFastPath::FillAlpha2U8
+        | ByteFastPath::FillAlpha2B2(_)
+        | ByteFastPath::FillAlpha2B4
+        | ByteFastPath::RepackIntSameDepth { .. }
+        | ByteFastPath::NarrowBitShift { .. } => true,
+        ByteFastPath::U16ToU8Round
+        | ByteFastPath::U16ToU8Trunc
+        | ByteFastPath::Rgba8StraightToPremul { .. }
+        | ByteFastPath::Rgba8PremulToStraight => false,
+    };
     let all_opaque = !dst.layout.order.has_alpha_slot()
         || fills_alpha
         || !src.layout.order.has_alpha_slot()
         || src_facts.all_opaque;
     let binary_alpha = all_opaque || src_facts.binary_alpha;
+    // Full-range U8 -> U16 widening (`v * 257`) preserves an N-bit sub-grid ONLY when N divides 8
+    // (`1, 2, 4, 8`): e.g. U8 3-bit code `36` widens to `9252 != round(65535/7) = 9362`!
+    let widen_u8_full_bits = |b: u8| if b > 0 && 8 % b == 0 { b } else { 8 };
     let depth = match dst.layout.sample {
         SampleType::U8 if dst.layout.packing.is_full() => {
             if src.layout.sample == SampleType::U8 && src.layout.packing.is_full() {
                 if let Some(d) = valid_src_depth {
+                    let c_bits = if preserves_color_values {
+                        d.color_bits()
+                    } else {
+                        8
+                    };
                     let a_bits = if all_opaque && dst.layout.order.has_alpha_slot() {
                         1
                     } else if dst.layout.order.has_alpha_slot() {
@@ -2009,7 +2077,7 @@ fn derive_output_facts_byte(
                     } else {
                         8
                     };
-                    ExactDepth::new(SampleType::U8, dst_range, d.color_bits(), a_bits).ok()
+                    ExactDepth::new(SampleType::U8, dst_range, c_bits, a_bits).ok()
                 } else {
                     ExactDepth::new(SampleType::U8, dst_range, 8, if all_opaque { 1 } else { 8 })
                         .ok()
@@ -2020,11 +2088,11 @@ fn derive_output_facts_byte(
         }
         SampleType::U16 if dst.layout.packing.is_full() => match bp {
             ByteFastPath::U8ToU16Exact => {
-                let c_bits = valid_src_depth.map_or(8, |d| d.color_bits());
+                let c_bits = valid_src_depth.map_or(8, |d| widen_u8_full_bits(d.color_bits()));
                 let a_bits = if all_opaque && dst.layout.order.has_alpha_slot() {
                     1
                 } else if dst.layout.order.has_alpha_slot() {
-                    valid_src_depth.map_or(8, |d| d.alpha_bits())
+                    valid_src_depth.map_or(8, |d| widen_u8_full_bits(d.alpha_bits()))
                 } else {
                     16
                 };
@@ -2039,7 +2107,13 @@ fn derive_output_facts_byte(
                 let a_bits = if all_opaque && dst.layout.order.has_alpha_slot() {
                     1
                 } else if dst.layout.order.has_alpha_slot() {
-                    valid_src_depth.map_or(src_bits, |d| d.alpha_bits())
+                    valid_src_depth.map_or(src_bits, |d| {
+                        if src_bits == 8 {
+                            widen_u8_full_bits(d.alpha_bits())
+                        } else {
+                            src_bits
+                        }
+                    })
                 } else {
                     16
                 };
@@ -2047,6 +2121,11 @@ fn derive_output_facts_byte(
             }
             _ if src.layout.sample == SampleType::U16 && src.layout.packing.is_full() => {
                 valid_src_depth.and_then(|d| {
+                    let c_bits = if preserves_color_values {
+                        d.color_bits()
+                    } else {
+                        16
+                    };
                     let a_bits = if !dst.layout.order.has_alpha_slot() {
                         16
                     } else if all_opaque {
@@ -2054,7 +2133,7 @@ fn derive_output_facts_byte(
                     } else {
                         d.alpha_bits()
                     };
-                    ExactDepth::new(SampleType::U16, dst_range, d.color_bits(), a_bits).ok()
+                    ExactDepth::new(SampleType::U16, dst_range, c_bits, a_bits).ok()
                 })
             }
             _ => None,

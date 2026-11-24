@@ -232,7 +232,11 @@ impl ExactDepth {
     }
 
     /// Intersect two `ExactDepth` claims that both describe the **same** sample set,
-    /// returning the tighter proven depth for matching storage & range.
+    /// returning the tighter proven depth (`min`) for matching storage & range.
+    ///
+    /// Taking `min` (rather than `gcd`) is intentionally sound under integer rounding:
+    /// rounded non-divisor full-range grids can intersect outside `gcd` (for example,
+    /// U16 value `64` lies on both the 10-bit and 12-bit grids, but not on the 2-bit grid).
     ///
     /// This is for merging independent evidence about the same buffer (e.g., caller policy
     /// facts plus buffer facts). To merge evidence from **disjoint** strips or regions of

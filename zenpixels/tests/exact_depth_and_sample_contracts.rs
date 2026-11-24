@@ -603,3 +603,70 @@ fn exact_depth_union_disjoint_strips_and_icc_can_represent_hdr() {
     );
     assert!(!icc_u16.can_represent_hdr());
 }
+
+#[test]
+fn opus_review_p1_5_p2_4_p2_12_gainmap_direction_shifted_and_banded_propagation() {
+    // P1-5: Contradictory `backward_direction` flag MUST fail `is_valid()` and return `direction() == None`!
+    let base_hdr = UnsignedFraction::new(3, NonZeroU32::new(1).unwrap());
+    let alt_sdr = UnsignedFraction::ZERO;
+    let rev_meta = GainMapMetadata::try_new(
+        GainMapChannels::Shared(GainMapComponent {
+            min_gain_stops: SignedFraction::new(-3, NonZeroU32::new(1).unwrap()),
+            max_gain_stops: SignedFraction::ZERO,
+            gamma: UnsignedFraction::ONE,
+            base_offset: SignedFraction::ONE_64TH,
+            alternate_offset: SignedFraction::ONE_64TH,
+        }),
+        base_hdr,
+        alt_sdr,
+        GainMapColorSpace::Base,
+    )
+    .unwrap();
+    assert!(rev_meta.is_valid());
+    assert_eq!(
+        rev_meta.direction(),
+        Some(zenpixels::GainMapDirection::Reverse)
+    );
+    let ok_flag = rev_meta.with_backward_direction(true);
+    assert!(ok_flag.is_valid());
+    assert_eq!(
+        ok_flag.direction(),
+        Some(zenpixels::GainMapDirection::Reverse)
+    );
+    let bad_flag = rev_meta.with_backward_direction(false);
+    assert!(!bad_flag.is_valid());
+    assert_eq!(bad_flag.direction(), None);
+
+    let fwd_bad_flag = GainMapMetadata::symmetric(2.0).with_backward_direction(true);
+    assert!(!fwd_bad_flag.is_valid());
+    assert_eq!(fwd_bad_flag.direction(), None);
+
+    // P2-4: DualLayerHdr rejects BitPacking::Shifted gain map (consistent with gainmap applier).
+    let base = PixelBuf::new(2, 2, ImageSpec::rgb8_srgb()).unwrap();
+    let shifted_gm_spec = ImageSpec::new(
+        SampleLayout::new(SampleType::U16, ChannelOrder::Gray)
+            .with_packing(zenpixels::BitPacking::Shifted { bits: 10, shift: 2 }),
+        ColorSpace::Untagged {
+            channels: 1,
+            alpha: AlphaMode::None,
+        },
+    );
+    let shifted_gm = PixelBuf::new(2, 2, shifted_gm_spec).unwrap();
+    assert!(DualLayerHdr::new(base, shifted_gm, GainMapMetadata::symmetric(2.0)).is_err());
+
+    // P2-12: BandedBuf::with_hdr and with_origin propagate to child bands.
+    let hdr = HdrMetadata {
+        cll: Some(ContentLightLevel::new(1200, 350)),
+        mastering: None,
+    };
+    let orig = ColorOrigin::from_cicp(Cicp::DISPLAY_P3);
+    let banded = zenpixels::BandedBuf::new(4, 4, ImageSpec::rgb8_srgb(), 24)
+        .unwrap()
+        .with_hdr(hdr)
+        .with_origin(orig.clone());
+    assert_eq!(banded.bands().len(), 2);
+    for band in banded.bands() {
+        assert_eq!(band.hdr(), hdr);
+        assert_eq!(band.origin(), &orig);
+    }
+}

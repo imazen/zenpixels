@@ -911,3 +911,187 @@ fn phase4a_icc_hdr_identity_load_bearing_origin_and_cicp_alias() {
     );
     assert_eq!(cicp_out, Some(alias_cicp));
 }
+
+#[test]
+fn opus_review_p0_1_p0_2_p1_1_p1_2_p2_1_regressions() {
+    // P0-1: Discarding premultiplied alpha under permissive() MUST unpremultiply consistently
+    // across BOTH U8 -> RGB8 and U8 -> RGB16 (and -> RGBA8 Opaque)!
+    let premul_spec = ImageSpec::rgba8_srgb().with_alpha(AlphaMode::Premultiplied);
+    let premul_buf = PixelBuf::from_vec(vec![64u8, 0, 0, 128], 1, 1, premul_spec.clone()).unwrap();
+    let out_rgb8 = convert_buf(
+        &premul_buf.as_view(),
+        ImageSpec::rgb8_srgb(),
+        &ConvertPolicy::permissive(),
+        PeakSource::Declared,
+    )
+    .unwrap();
+    let out_rgb16 = convert_buf(
+        &premul_buf.as_view(),
+        ImageSpec::rgb16_srgb(),
+        &ConvertPolicy::permissive(),
+        PeakSource::Declared,
+    )
+    .unwrap();
+    let r8 = out_rgb8.as_view().row(0)[0];
+    let r16 = out_rgb16.as_view().row_as::<u16>(0).unwrap()[0];
+    assert!(
+        (127..=129).contains(&r8),
+        "premul (64,0,0,128) -> RGB8 must unpremultiply (~128), got {r8}"
+    );
+    assert!(
+        ((r16 as i32) - (r8 as i32 * 257)).abs() <= 257,
+        "RGB8 ({r8}) and RGB16 ({r16}) must agree on unpremultiplied red"
+    );
+    let out_opaque = convert_buf(
+        &premul_buf.as_view(),
+        ImageSpec::rgba8_srgb().with_alpha(AlphaMode::Opaque),
+        &ConvertPolicy::permissive(),
+        PeakSource::Declared,
+    )
+    .unwrap();
+    assert!((127..=129).contains(&out_opaque.as_view().row(0)[0]));
+    assert_eq!(out_opaque.as_view().row(0)[3], 255);
+
+    // P0-2: Straight -> Premultiplied byte path MUST NOT preserve 1-bit `ExactDepth::color_bits`!
+    let mut logo = PixelBuf::from_vec(
+        vec![255u8, 0, 0, 128, 0, 255, 0, 255],
+        2,
+        1,
+        ImageSpec::rgba8_srgb(),
+    )
+    .unwrap();
+    let measured = scan_facts(&logo.as_view());
+    assert_eq!(measured.depth.unwrap().color_bits(), 1);
+    logo.set_facts(measured);
+    let premul_out = convert_buf(
+        &logo.as_view(),
+        ImageSpec::rgba8_srgb().with_alpha(AlphaMode::Premultiplied),
+        &ConvertPolicy::permissive(),
+        PeakSource::Declared,
+    )
+    .unwrap();
+    let out_depth = premul_out.facts().depth.expect("U8 output has ExactDepth");
+    assert_eq!(
+        out_depth.color_bits(),
+        8,
+        "straight->premul rewrites color samples and must not claim color_bits=1"
+    );
+    assert!(
+        out_depth.holds_for(&premul_out.as_view()).unwrap(),
+        "attached ExactDepth must actually hold for output pixels!"
+    );
+
+    // P1-1: Unverified `Opaque -> Opaque` canonicalizes poisoned alpha=0 to 255 (both RGBA8 and GrayAlpha8),
+    // while fresh `PixelBuf::new(..., Opaque)` keeps `all_opaque = true` and uses zero-copy `Memcpy`!
+    let op_rgba_spec = ImageSpec::rgba8_srgb().with_alpha(AlphaMode::Opaque);
+    let poisoned = PixelBuf::from_vec(vec![10u8, 20, 30, 0], 1, 1, op_rgba_spec.clone()).unwrap();
+    let canon = convert_buf(
+        &poisoned.as_view(),
+        op_rgba_spec.clone(),
+        &ConvertPolicy::permissive(),
+        PeakSource::Declared,
+    )
+    .unwrap();
+    assert_eq!(canon.as_view().row(0), &[10, 20, 30, 255]);
+    assert!(canon.facts().all_opaque);
+
+    let op_ga_spec = ImageSpec::new(
+        SampleLayout::new(SampleType::U8, ChannelOrder::GrayAlpha),
+        ColorSpace::GRAY_SRGB.with_alpha(AlphaMode::Opaque),
+    );
+    let poisoned_ga = PixelBuf::from_vec(vec![77u8, 0], 1, 1, op_ga_spec.clone()).unwrap();
+    let canon_ga = convert_buf(
+        &poisoned_ga.as_view(),
+        op_ga_spec,
+        &ConvertPolicy::permissive(),
+        PeakSource::Declared,
+    )
+    .unwrap();
+    assert_eq!(canon_ga.as_view().row(0), &[77, 255]);
+    assert!(canon_ga.facts().all_opaque);
+
+    let fresh_op = PixelBuf::new(1, 1, op_rgba_spec.clone()).unwrap();
+    let id_plan = RowPlan::build(
+        op_rgba_spec.clone(),
+        op_rgba_spec,
+        &ConvertPolicy::permissive().with_facts(fresh_op.facts()),
+        None,
+    )
+    .unwrap();
+    assert!(
+        id_plan.is_identity(),
+        "fresh PixelBuf::new(..., Opaque) has all_opaque=true and stays Memcpy"
+    );
+
+    // P1-2: Widening U8 3-bit grid {0, 36, ..., 255} to U16 MUST NOT falsely claim `color_bits = 3`!
+    let mut u8_3bit = PixelBuf::from_vec(
+        vec![0u8, 36, 73, 109, 146, 182, 219, 255],
+        8,
+        1,
+        ImageSpec::gray8_srgb(),
+    )
+    .unwrap();
+    let f3 = scan_facts(&u8_3bit.as_view());
+    assert_eq!(f3.depth.unwrap().color_bits(), 3);
+    u8_3bit.set_facts(f3);
+    let u16_from_3 = convert_buf(
+        &u8_3bit.as_view(),
+        ImageSpec::gray16_srgb(),
+        &ConvertPolicy::permissive(),
+        PeakSource::Declared,
+    )
+    .unwrap();
+    let d_u16_3 = u16_from_3.facts().depth.unwrap();
+    assert_eq!(
+        d_u16_3.color_bits(),
+        8,
+        "3-bit U8 grid does not nest under *257 into U16 3-bit grid"
+    );
+    assert!(d_u16_3.holds_for(&u16_from_3.as_view()).unwrap());
+
+    // Conversely, 4-bit U8 grid {0, 17, 34, ..., 255} DOES nest in U16 (`4 | 8`)!
+    let mut u8_4bit =
+        PixelBuf::from_vec(vec![0u8, 17, 34, 51, 255], 5, 1, ImageSpec::gray8_srgb()).unwrap();
+    let f4 = scan_facts(&u8_4bit.as_view());
+    assert_eq!(f4.depth.unwrap().color_bits(), 4);
+    u8_4bit.set_facts(f4);
+    let u16_from_4 = convert_buf(
+        &u8_4bit.as_view(),
+        ImageSpec::gray16_srgb(),
+        &ConvertPolicy::permissive(),
+        PeakSource::Declared,
+    )
+    .unwrap();
+    let d_u16_4 = u16_from_4.facts().depth.unwrap();
+    assert_eq!(d_u16_4.color_bits(), 4);
+    assert!(d_u16_4.holds_for(&u16_from_4.as_view()).unwrap());
+
+    // P2-1: Reused sink clears stale ColorOrigin when color meaning changes!
+    let p3_origin = ColorOrigin::from_cicp(Cicp::DISPLAY_P3);
+    let mut reused_sink = PixelBuf::new(1, 1, ImageSpec::rgb8_srgb())
+        .unwrap()
+        .with_origin(p3_origin.clone());
+    let src_p3 = PixelBuf::from_vec(
+        vec![200u8, 50, 50],
+        1,
+        1,
+        ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3),
+    )
+    .unwrap()
+    .with_origin(p3_origin);
+    let plan_p3_to_srgb = ImagePlan::build(
+        src_p3.spec().clone(),
+        reused_sink.spec().clone(),
+        ConvertPolicy::permissive(),
+        PeakSource::Declared,
+    )
+    .unwrap();
+    plan_p3_to_srgb
+        .execute_into(&src_p3.as_view(), &mut reused_sink)
+        .unwrap();
+    assert_eq!(
+        reused_sink.origin(),
+        &ColorOrigin::assumed(),
+        "reused sink must clear stale ColorOrigin when color meaning changed"
+    );
+}

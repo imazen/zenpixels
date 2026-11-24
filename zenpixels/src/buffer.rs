@@ -1021,6 +1021,12 @@ pub struct PixelBuf {
 }
 
 impl Clone for PixelBuf {
+    /// Clone this buffer, preserving alignment, metadata, facts, and origin.
+    ///
+    /// # Panics
+    ///
+    /// Panics on allocation failure when repacking misaligned backing storage; use
+    /// [`PixelBuf::try_clone`] for fallible cloning.
     fn clone(&self) -> Self {
         let align = self.spec.layout.min_alignment();
         let cloned_storage = self.storage.clone();
@@ -1931,11 +1937,14 @@ impl BandedBuf {
         self.hdr
     }
 
-    /// Attach descriptive HDR metadata.
+    /// Attach descriptive HDR metadata (propagated to all child bands).
     #[inline]
     #[must_use]
     pub fn with_hdr(mut self, hdr: HdrMetadata) -> Self {
         self.hdr = hdr;
+        for band in &mut self.bands {
+            band.hdr = hdr;
+        }
         self
     }
 
@@ -1946,11 +1955,14 @@ impl BandedBuf {
         &self.origin
     }
 
-    /// Attach container color provenance.
+    /// Attach container color provenance (propagated to all child bands).
     #[inline]
     #[must_use]
     pub fn with_origin(mut self, origin: ColorOrigin) -> Self {
-        self.origin = origin;
+        self.origin = origin.clone();
+        for band in &mut self.bands {
+            band.origin = origin.clone();
+        }
         self
     }
 
@@ -2782,18 +2794,19 @@ fn validate_dual_layer_specs(
             alpha: crate::AlphaMode::None,
         }
     );
-    let gm_layout_ok = !gm_layout.packing.is_packed_word()
-        && matches!(
-            gm_layout.sample,
-            SampleType::U8 | SampleType::U16 | SampleType::F32
-        )
-        && matches!(
-            gm_layout.order,
-            crate::ChannelOrder::Gray
-                | crate::ChannelOrder::Rgb
-                | crate::ChannelOrder::Generic(1)
-                | crate::ChannelOrder::Generic(3)
-        );
+    let gm_layout_ok = matches!(
+        gm_layout.packing,
+        BitPacking::Full | BitPacking::Lsb { .. } | BitPacking::Msb { .. }
+    ) && matches!(
+        gm_layout.sample,
+        SampleType::U8 | SampleType::U16 | SampleType::F32
+    ) && matches!(
+        gm_layout.order,
+        crate::ChannelOrder::Gray
+            | crate::ChannelOrder::Rgb
+            | crate::ChannelOrder::Generic(1)
+            | crate::ChannelOrder::Generic(3)
+    );
     if !gm_color_ok || !gm_layout_ok {
         return Err(err_at(BufferError::IncompatibleLayout));
     }

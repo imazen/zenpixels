@@ -786,7 +786,14 @@ pub enum AlphaMode {
     /// No alpha channel is present in the layout.
     #[default]
     None,
-    /// Alpha channel is present and guaranteed fully opaque (`1.0` / `255` / `65535`).
+    /// Alpha channel is present and logically fully opaque (`1.0` / `255` / `65535`).
+    ///
+    /// Freshly allocated buffers ([`PixelBuf::new`](crate::PixelBuf::new)) initialize stored alpha
+    /// lanes to channel maximum and set `SampleFacts::all_opaque = true`. Zero-copy constructors
+    /// ([`PixelBuf::from_vec`](crate::PixelBuf::from_vec), [`PixelBuf::from_bytes`](crate::PixelBuf::from_bytes),
+    /// [`PixelView::new`](crate::PixelView::new)) do not mutate caller-supplied storage; converters
+    /// and exporters canonicalize unverified `Opaque` alpha lanes to channel maximum unless
+    /// `SampleFacts::all_opaque` is proven.
     Opaque,
     /// Unassociated (straight) alpha: RGB is independent of A.
     Straight,
@@ -1077,7 +1084,7 @@ impl ColorSpace {
         self
     }
 
-    /// Set transfer on an [`Self::Rgb`] or [`Self::Gray`] color space.
+    /// Set transfer on an [`Self::Rgb`] or [`Self::Gray`] color space (no-op on other variants).
     #[inline]
     #[must_use]
     pub fn with_transfer(mut self, transfer: Transfer) -> Self {
@@ -1098,7 +1105,7 @@ impl ColorSpace {
         }
     }
 
-    /// Set signal range on an [`Self::Rgb`] or [`Self::Gray`] color space.
+    /// Set signal range on an [`Self::Rgb`] or [`Self::Gray`] color space (no-op on other variants).
     #[inline]
     #[must_use]
     pub fn with_range(mut self, range: SignalRange) -> Self {
@@ -1109,7 +1116,8 @@ impl ColorSpace {
         self
     }
 
-    /// Attach a [`DiffuseWhite`] luminance anchor to an [`Self::Rgb`], [`Self::Gray`], or [`Self::Xyz`] space.
+    /// Attach a [`DiffuseWhite`] luminance anchor to an [`Self::Rgb`], [`Self::Gray`], or [`Self::Xyz`] space
+    /// (no-op on other variants).
     #[inline]
     #[must_use]
     pub fn with_white(mut self, white: DiffuseWhite) -> Self {
@@ -2301,44 +2309,37 @@ impl GainMapMetadata {
             .expect("GainMapMetadata::symmetric requires finite max_boost_stops > 0.0")
     }
 
-    /// Validate all exact rational invariants (`gamma > 0`, `min <= max`, `H_base != H_alt`).
+    /// Validate all exact rational invariants (`gamma > 0`, `min <= max`, `H_base != H_alt`,
+    /// and any explicit [`backward_direction`](Self::backward_direction) flag agrees with the
+    /// headroom ordering).
     #[inline]
     #[must_use]
     pub const fn is_valid(self) -> bool {
-        self.channels.is_valid()
-            && !matches!(
+        let ordering_ok = !matches!(
+            (
                 self.base_hdr_headroom
                     .cmp_rational(self.alternate_hdr_headroom),
-                Ordering::Equal
-            )
+                self.backward_direction,
+            ),
+            (Ordering::Equal, _) | (Ordering::Less, Some(true)) | (Ordering::Greater, Some(false))
+        );
+        self.channels.is_valid() && ordering_ok
     }
 
     /// Exact gain-map direction (`Forward` if `H_alt > H_base`, `Reverse` if `H_base > H_alt`),
-    /// honoring an explicit [`backward_direction`](Self::backward_direction) override when set.
+    /// returning `None` if headrooms are equal or an explicit [`backward_direction`](Self::backward_direction)
+    /// flag contradicts the headroom ordering.
     #[inline]
     #[must_use]
     pub const fn direction(self) -> Option<GainMapDirection> {
-        if let Some(backward) = self.backward_direction {
-            if matches!(
-                self.base_hdr_headroom
-                    .cmp_rational(self.alternate_hdr_headroom),
-                Ordering::Equal
-            ) {
-                return None;
-            }
-            return Some(if backward {
-                GainMapDirection::Reverse
-            } else {
-                GainMapDirection::Forward
-            });
-        }
-        match self
-            .base_hdr_headroom
-            .cmp_rational(self.alternate_hdr_headroom)
-        {
-            Ordering::Less => Some(GainMapDirection::Forward),
-            Ordering::Greater => Some(GainMapDirection::Reverse),
-            Ordering::Equal => None,
+        match (
+            self.base_hdr_headroom
+                .cmp_rational(self.alternate_hdr_headroom),
+            self.backward_direction,
+        ) {
+            (Ordering::Less, None | Some(false)) => Some(GainMapDirection::Forward),
+            (Ordering::Greater, None | Some(true)) => Some(GainMapDirection::Reverse),
+            _ => None,
         }
     }
 
