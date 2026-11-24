@@ -2637,17 +2637,20 @@ fn apply_transfer_slice(
             }
         }
         (Transfer::DciCinema, false) => {
-            if !preserve_extended {
-                clamp_slice_unit(ch);
-            }
+            // SMPTE ST 428-1: valid linear luminance spans [0, 52.37/48.0] (~1.09104),
+            // which maps to [0, 1] after multiplying by 48.0/52.37. Clamp AFTER scaling
+            // so projector white (52.37/48.0) encodes to 1.0 (65535) instead of 63375.
             if let Some(f) = accel.gamma_pow {
                 const INV_SCALE: f32 = (48.0_f64 / 52.37_f64) as f32;
                 for v in ch.iter_mut() {
                     *v *= INV_SCALE;
                 }
+                if !preserve_extended {
+                    clamp_slice_unit(ch);
+                }
                 f(ch, (1.0_f64 / 2.6_f64) as f32, 1.0_f64 / 2.6_f64);
             } else {
-                crate::transfers::dci_cinema_oetf_scalar_slice(ch);
+                crate::transfers::dci_cinema_oetf_scalar_slice(ch, !preserve_extended);
             }
         }
         (Transfer::Gamma(gamma), true) => {

@@ -93,6 +93,56 @@ jobs:
         run: cross test -p zenpixels-convert --features cms-lcms,cms-moxcms,icc-db --test cms_lcms --target i686-unknown-linux-gnu
 
   # ==========================================================================
+  # Cross-compiled big-endian testing (s390x via QEMU)
+  # ==========================================================================
+  test-s390x:
+    name: Test s390x (big-endian)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: s390x-unknown-linux-gnu
+
+      - name: Install cross
+        uses: taiki-e/install-action@cross
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: cross-s390x
+
+      - name: Test zenpixels core + hash portability (s390x/QEMU)
+        run: cross test -p zenpixels --all-features --lib --tests --target s390x-unknown-linux-gnu
+
+      - name: Test zenpixels-convert (s390x/QEMU)
+        run: cross test -p zenpixels-convert --lib --tests --target s390x-unknown-linux-gnu
+
+  # ==========================================================================
+  # Isolated no-icc-db consumer gate
+  # ==========================================================================
+  icc-collapse-no-db:
+    name: No-DB ICC consumer gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test & Clippy tools/icc-collapse-no-db
+        run: |
+          cargo test --manifest-path tools/icc-collapse-no-db/Cargo.toml
+          cargo clippy --manifest-path tools/icc-collapse-no-db/Cargo.toml --all-targets -- -D warnings
+
+  # ==========================================================================
   # WASM check & WASI test
   # ==========================================================================
   wasm:

@@ -80,7 +80,7 @@ moxcms = { version = "0.9.2", optional = true, features = ["options", "extended_
 lcms = { git = "https://github.com/imazen/lcms", branch = "main", optional = true }
 
 [dev-dependencies]
-zenpixels = { workspace = true, features = ["imgref", "image"] }
+zenpixels = { workspace = true, features = ["imgref", "image", "hash"] }
 lcms = { git = "https://github.com/imazen/lcms", branch = "main", features = ["little-cms-api"] }
 zenbench = { version = "0.1.11" }
 archmage = { version = "0.9.33", features = ["testable_dispatch"] }

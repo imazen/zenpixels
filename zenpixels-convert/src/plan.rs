@@ -576,6 +576,7 @@ impl RowPlan {
                 }
                 GamutPolicy::Clip => {
                     if !dst_tf.is_hdr()
+                        && !matches!(dst_tf, Transfer::DciCinema)
                         && (pre.gamut_narrows || is_hdr_to_sdr || !dst.layout.sample.is_float())
                     {
                         ops.push(MicroOp::ClampUnit);

@@ -6,8 +6,8 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use zenpixels::{
-    BandedBuf, BufferError, ImageSpec, PixelBuf, PlanarBuf, PlaneRole, PlaneSpec, RowAlign,
-    SampleType,
+    BandedBuf, BufferError, ImageSpec, OwnedPlane, PixelBuf, PlanarBuf, PlaneRole, PlaneSpec,
+    RowAlign, SampleType,
 };
 
 struct FailingAlloc;
@@ -97,5 +97,43 @@ fn constructors_and_copies_return_allocation_failed_on_oom() {
 
     // try_into_vec fallback copy path (Aligned64 cannot zero-copy to Vec<u8>)
     let err = with_oom_above(2048, || padded.try_into_vec::<u8>()).unwrap_err();
+    assert_eq!(*err.error(), BufferError::AllocationFailed);
+
+    // External immutable storage CoW promotion (`try_make_mut`) on OOM leaves buffer intact!
+    let ext_backing = vec![0x5Au8; 64 * 64 * 4];
+    let mut ext_buf = PixelBuf::from_external(
+        std::sync::Arc::<[u8]>::from(ext_backing.into_boxed_slice()),
+        64,
+        64,
+        64 * 4,
+        ImageSpec::rgba8_srgb(),
+    )
+    .unwrap();
+    let err = with_oom_above(4096, || ext_buf.try_make_mut()).unwrap_err();
+    assert_eq!(*err.error(), BufferError::AllocationFailed);
+    assert!(ext_buf.is_external());
+    assert_eq!(ext_buf.as_view().row(0)[0], 0x5A);
+
+    // OwnedPlane::from_external CoW promotion (`try_as_view_mut`) on OOM leaves plane intact!
+    let mut ext_plane = OwnedPlane::from_external(
+        PlaneSpec::new(PlaneRole::Y, SampleType::U8),
+        128,
+        64,
+        128,
+        std::sync::Arc::<[u8]>::from(vec![0x33u8; 128 * 64].into_boxed_slice()),
+    )
+    .unwrap();
+    let err = with_oom_above(4096, || ext_plane.try_as_view_mut()).unwrap_err();
+    assert_eq!(*err.error(), BufferError::AllocationFailed);
+    assert_eq!(ext_plane.as_view().row(0)[0], 0x33);
+
+    // BandedBuf::from_view and multi-band into_buf OOM paths
+    let src_big = PixelBuf::new(64, 64, ImageSpec::rgba8_srgb()).unwrap();
+    let err = with_oom_above(4096, || BandedBuf::from_view(&src_big.as_view(), 8192)).unwrap_err();
+    assert_eq!(*err.error(), BufferError::AllocationFailed);
+
+    let banded = BandedBuf::from_view(&src_big.as_view(), 4096).unwrap();
+    assert!(banded.band_count() > 1);
+    let err = with_oom_above(8192, || banded.into_buf()).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
 }

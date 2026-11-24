@@ -145,9 +145,17 @@ pub(crate) fn dci_cinema_eotf_scalar_slice(vals: &mut [f32]) {
 }
 
 /// SMPTE ST 428-1 / ITU-T H.273 TC17 DCI Cinema OETF (`v = sign(L) * (|(48/52.37) * L|)^(1/2.6)`).
-pub(crate) fn dci_cinema_oetf_scalar_slice(vals: &mut [f32]) {
+///
+/// When `clamp_unit` is true, clamps the scaled luminance `(48/52.37) * L` to `[0, 1]`
+/// (i.e. clamps linear `L` to the valid ST 428-1 projector range `[0, 52.37/48]`), NOT
+/// `[0, 1]` before scaling, so projector white (`52.37/48`) encodes to `1.0` (`65535`).
+pub(crate) fn dci_cinema_oetf_scalar_slice(vals: &mut [f32], clamp_unit: bool) {
     for v in vals.iter_mut() {
-        *v *= DCI_INV_WHITE_SCALE;
+        let mut s = *v * DCI_INV_WHITE_SCALE;
+        if clamp_unit {
+            s = s.clamp(0.0, 1.0);
+        }
+        *v = s;
     }
     gamma_scalar_slice(vals, DCI_ENC_EXP, 1.0 / 2.6);
 }
