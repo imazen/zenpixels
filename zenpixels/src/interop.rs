@@ -134,13 +134,18 @@ impl<'a> PixelView<'a> {
             return Err(err_at(BufferError::StrideNotPixelAligned));
         }
         let stride_px = self.stride() / bpp;
-        let pixels =
-            bytemuck::try_cast_slice::<u8, P>(self.as_strided_bytes()).map_err(|e| match e {
-                bytemuck::PodCastError::TargetAlignmentGreaterAndInputNotAligned => {
-                    err_at(BufferError::AlignmentViolation)
-                }
-                _ => err_at(BufferError::IncompatibleLayout),
-            })?;
+        let req = crate::buffer::required_bytes(self.rows(), self.stride(), self.row_bytes())
+            .map_err(err_at)?;
+        let active = self
+            .as_strided_bytes()
+            .get(..req)
+            .ok_or_else(|| err_at(BufferError::InsufficientData))?;
+        let pixels = bytemuck::try_cast_slice::<u8, P>(active).map_err(|e| match e {
+            bytemuck::PodCastError::TargetAlignmentGreaterAndInputNotAligned => {
+                err_at(BufferError::AlignmentViolation)
+            }
+            _ => err_at(BufferError::IncompatibleLayout),
+        })?;
         Ok(imgref::ImgRef::new_stride(
             pixels,
             self.width() as usize,
@@ -165,7 +170,7 @@ impl PixelBuf {
         let h = u32::try_from(img.height()).map_err(|_| err_at(BufferError::InvalidDimensions))?;
         let spec = ImgrefImageSpec::new(P::LAYOUT, color);
         let (buf, _, _) = img.into_contiguous_buf();
-        Self::from_vec(buf, w, h, spec)
+        Self::from_raw_pod(buf, w, h, spec)
     }
 
     /// Move into an [`imgref::ImgVec<P>`], zero-copy when allocation alignment & capacity match.
@@ -198,7 +203,7 @@ fn color_space_to_image_cicp(cs: &ColorSpace) -> Option<image::metadata::Cicp> {
         Transfer::Linear => Some(ImgT::Linear),
         Transfer::Bt709 => Some(ImgT::Bt709),
         Transfer::Pq => Some(ImgT::Smpte2084),
-        Transfer::Hlg(_) => Some(ImgT::Bt2100Hlg),
+        Transfer::Hlg(crate::HlgMode::Scene) => Some(ImgT::Bt2100Hlg),
         _ => None,
     };
     match cs {
@@ -206,6 +211,7 @@ fn color_space_to_image_cicp(cs: &ColorSpace) -> Option<image::metadata::Cicp> {
             primaries,
             transfer,
             range: SignalRange::Full,
+            white: None,
             ..
         } => Some(ImgCicp {
             primaries: map_primaries(*primaries)?,
@@ -216,6 +222,7 @@ fn color_space_to_image_cicp(cs: &ColorSpace) -> Option<image::metadata::Cicp> {
         ColorSpace::Gray {
             transfer,
             range: SignalRange::Full,
+            white: None,
             ..
         } => Some(ImgCicp {
             primaries: ImgP::SRgb,
@@ -228,9 +235,42 @@ fn color_space_to_image_cicp(cs: &ColorSpace) -> Option<image::metadata::Cicp> {
 }
 
 #[cfg(feature = "image")]
+fn canonicalize_opaque_alpha_samples<S: StorageSample>(samples: &mut [S], channels: usize) {
+    if channels < 2 {
+        return;
+    }
+    let alpha_idx = channels - 1;
+    let bytes = bytemuck::cast_slice_mut::<S, u8>(samples);
+    match S::SAMPLE_TYPE {
+        SampleType::U8 => {
+            for px in bytes.chunks_exact_mut(channels) {
+                px[alpha_idx] = 255;
+            }
+        }
+        SampleType::U16 => {
+            let max_bytes = u16::MAX.to_ne_bytes();
+            for px in bytes.chunks_exact_mut(channels * 2) {
+                px[alpha_idx * 2..alpha_idx * 2 + 2].copy_from_slice(&max_bytes);
+            }
+        }
+        SampleType::F32 => {
+            let max_bytes = 1.0f32.to_ne_bytes();
+            for px in bytes.chunks_exact_mut(channels * 4) {
+                px[alpha_idx * 4..alpha_idx * 4 + 4].copy_from_slice(&max_bytes);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(feature = "image")]
 impl PixelBuf {
     /// Move into an `image::ImageBuffer<P, Vec<P::Subpixel>>` zero-copy when layout and color match,
     /// propagating CICP color-space metadata onto the resulting `ImageBuffer`.
+    ///
+    /// When `self.spec().color.alpha() == AlphaMode::Opaque` and cached facts do not already prove
+    /// `all_opaque`, canonicalizes the stored alpha channel to full opacity so `image`'s straight-alpha
+    /// `Rgba`/`LumaA` buffer never receives non-opaque alpha samples.
     pub fn try_into_image_buffer<P>(
         self,
     ) -> Result<image::ImageBuffer<P, alloc::vec::Vec<P::Subpixel>>, At<BufferError>>
@@ -268,7 +308,13 @@ impl PixelBuf {
         }
         let w = self.width();
         let h = self.height();
-        let samples = self.try_into_vec::<P::Subpixel>()?;
+        let needs_opaque_fix =
+            self.spec().color.alpha() == AlphaMode::Opaque && !self.facts().all_opaque;
+        let channels = self.spec().layout.order.channels();
+        let mut samples = self.try_into_vec::<P::Subpixel>()?;
+        if needs_opaque_fix {
+            canonicalize_opaque_alpha_samples(&mut samples, channels);
+        }
         let mut img = image::ImageBuffer::from_raw(w, h, samples)
             .ok_or_else(|| err_at(BufferError::InsufficientData))?;
         img.set_color_space(img_cicp)

@@ -123,6 +123,14 @@ pub enum BitPacking {
         /// Significant bit depth (`1..=8` for `U8`, `1..=16` for `U16`, `1..=31` for `U32`).
         bits: u8,
     },
+    /// Arbitrary bit-shifted `bits`-wide unsigned code sitting at bit offset `shift` in each
+    /// `U8`/`U16`/`U32` sample (`bits >= 1`, `bits + shift <= sample.bits()`).
+    Shifted {
+        /// Significant bit depth (`1..=8` for `U8`, `1..=16` for `U16`, `1..=31` for `U32`).
+        bits: u8,
+        /// Number of low padding bits below the code.
+        shift: u8,
+    },
     /// Multiple channels bit-packed into a single [`SampleType`] word (e.g. `RGB565` in `U16`, `RGB10A1` in `U32`).
     Bitfields {
         /// Bit widths per channel (0 for unused slots).
@@ -179,6 +187,21 @@ impl BitPacking {
                     word_bits
                 };
                 if bits == 0 || bits > max_bits {
+                    return Err(LayoutError::InvalidBitDepth);
+                }
+                Ok(())
+            }
+            Self::Shifted { bits, shift } => {
+                if !matches!(sample, SampleType::U8 | SampleType::U16 | SampleType::U32) {
+                    return Err(LayoutError::UnsupportedBitPacking);
+                }
+                let max_bits = if matches!(sample, SampleType::U32) {
+                    31
+                } else {
+                    word_bits
+                };
+                if bits == 0 || bits > max_bits || (bits as u16) + (shift as u16) > word_bits as u16
+                {
                     return Err(LayoutError::InvalidBitDepth);
                 }
                 Ok(())
@@ -252,6 +275,17 @@ impl BitPacking {
                 };
                 (word >> shift) & mask
             }
+            Self::Shifted { bits, shift } => {
+                if bits == 0 || shift >= 32 {
+                    return 0;
+                }
+                let mask = if bits >= 32 {
+                    u32::MAX
+                } else {
+                    (1u32 << bits) - 1
+                };
+                (word >> shift) & mask
+            }
             Self::Bitfields { bits, shifts } => {
                 if component >= 4 {
                     return 0;
@@ -281,6 +315,13 @@ impl BitPacking {
                 let shift = sample.bits().saturating_sub(bits);
                 if shift >= 32 { 0 } else { clamped << shift }
             }
+            Self::Shifted { shift, .. } => {
+                if shift >= 32 {
+                    0
+                } else {
+                    clamped << shift
+                }
+            }
             Self::Bitfields { shifts, .. } => {
                 if component >= 4 || shifts[component] >= 32 {
                     0
@@ -297,7 +338,7 @@ impl BitPacking {
     pub const fn max_code(self, sample: SampleType, component: usize) -> u32 {
         let b = match self {
             Self::Full => sample.bits(),
-            Self::Lsb { bits } | Self::Msb { bits } => bits,
+            Self::Lsb { bits } | Self::Msb { bits } | Self::Shifted { bits, .. } => bits,
             Self::Bitfields { bits, .. } => {
                 if component < 4 {
                     bits[component]
@@ -845,9 +886,63 @@ impl PlaneSpec {
         (frame_w.div_ceil(hx), frame_h.div_ceil(vy))
     }
 
-    /// Validate component count, subsampling, and bit packing.
+    /// Plane `(width, height)` in elements for a cropped frame of `(frame_w, frame_h)` at
+    /// luma-grid origin `(origin_x, origin_y)`.
+    ///
+    /// Preserves chroma phase at odd crop origins: a `2×2` subsampled plane for a crop
+    /// `[origin_x .. origin_x + frame_w)` covers chroma columns `[origin_x / hx .. ceil((origin_x + frame_w) / hx))`.
+    #[inline]
+    #[must_use]
+    pub const fn cropped_dimensions(
+        self,
+        frame_w: u32,
+        frame_h: u32,
+        origin: (u32, u32),
+    ) -> Option<(u32, u32)> {
+        let hx = if self.subsampling.0 == 0 {
+            1
+        } else {
+            self.subsampling.0 as u32
+        };
+        let vy = if self.subsampling.1 == 0 {
+            1
+        } else {
+            self.subsampling.1 as u32
+        };
+        let Some(end_x) = origin.0.checked_add(frame_w) else {
+            return None;
+        };
+        let Some(end_y) = origin.1.checked_add(frame_h) else {
+            return None;
+        };
+        let pw = end_x.div_ceil(hx) - (origin.0 / hx);
+        let ph = end_y.div_ceil(vy) - (origin.1 / vy);
+        Some((pw, ph))
+    }
+
+    /// Validate component count (including role arity), subsampling, and bit packing.
     pub const fn validate(self) -> Result<(), LayoutError> {
-        if self.components == 0 || self.components > 4 {
+        let expected_arity = match self.role {
+            PlaneRole::CbCr | PlaneRole::CrCb => Some(2u8),
+            PlaneRole::Y
+            | PlaneRole::Cb
+            | PlaneRole::Cr
+            | PlaneRole::R
+            | PlaneRole::G
+            | PlaneRole::B
+            | PlaneRole::Cyan
+            | PlaneRole::Magenta
+            | PlaneRole::Yellow
+            | PlaneRole::Key
+            | PlaneRole::Alpha
+            | PlaneRole::GainMap => Some(1u8),
+            PlaneRole::Packed | PlaneRole::Extra(_) => None,
+        };
+        if let Some(want) = expected_arity {
+            if self.components != want {
+                return Err(LayoutError::InvalidChannelCount);
+            }
+        } else if self.components == 0 || self.components > 4 {
             return Err(LayoutError::InvalidChannelCount);
         }
         if self.subsampling.0 == 0 || self.subsampling.1 == 0 {

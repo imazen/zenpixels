@@ -34,7 +34,6 @@ image = { version = "0.25.10", default-features = false, optional = true }
 whereat = { version = "0.1.5", default-features = false }
 
 [dev-dependencies]
-zenpixels = { path = ".", features = ["rgb", "imgref", "image"] }
 image = { version = "0.25.10", default-features = false }
 imgref = "1.12"
 rgb = { version = "0.8.53", default-features = false, features = ["bytemuck"] }

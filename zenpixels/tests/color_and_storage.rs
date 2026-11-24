@@ -194,7 +194,7 @@ fn view_chained_lifetimes_and_sample_facts_invalidation() {
     // Newly zeroed F32 buffer automatically carries UNIT_INTERVAL + FINITE + NON_NEGATIVE facts!
     assert!(buf.facts().float.is_finite());
     assert!(buf.facts().float.is_unit_interval());
-    assert!(buf.facts().exact.all_grayscale);
+    assert!(buf.facts().all_grayscale);
 
     // Taking mutable view MUST invalidate cached SampleFacts.
     {

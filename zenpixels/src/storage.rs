@@ -87,6 +87,19 @@ impl AlignedSamples {
         self.byte_len == 0
     }
 
+    /// Fallibly clone the 64-byte aligned backing storage without aborting on OOM.
+    pub fn try_clone(&self) -> Result<Self, StorageError> {
+        let mut chunks = Vec::new();
+        chunks
+            .try_reserve_exact(self.chunks.len())
+            .map_err(|_| StorageError::AllocationFailed)?;
+        chunks.extend_from_slice(&self.chunks);
+        Ok(Self {
+            chunks,
+            byte_len: self.byte_len,
+        })
+    }
+
     /// Truncate active byte length without reallocating.
     #[inline]
     pub fn truncate(&mut self, byte_len: usize) {
@@ -108,6 +121,16 @@ pub enum StorageError {
     /// Allocator refused or byte length exceeded `isize::MAX`.
     AllocationFailed,
 }
+
+impl fmt::Display for StorageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AllocationFailed => f.write_str("pixel storage allocation failed"),
+        }
+    }
+}
+
+impl core::error::Error for StorageError {}
 
 /// Read access to native-endian pixel bytes without copying.
 pub trait ByteStorage {
@@ -490,6 +513,31 @@ impl PixelStorage {
     #[must_use]
     pub fn byte_len(&self) -> usize {
         self.as_bytes().len()
+    }
+
+    /// Fallibly clone the underlying storage without panicking on OOM.
+    pub fn try_clone(&self) -> Result<Self, StorageError> {
+        fn try_clone_vec<T: Copy>(v: &[T]) -> Result<Vec<T>, StorageError> {
+            let mut out = Vec::new();
+            out.try_reserve_exact(v.len())
+                .map_err(|_| StorageError::AllocationFailed)?;
+            out.extend_from_slice(v);
+            Ok(out)
+        }
+        match self {
+            Self::U8(v) => Ok(Self::U8(try_clone_vec(v)?)),
+            Self::I8(v) => Ok(Self::I8(try_clone_vec(v)?)),
+            Self::U16(v) => Ok(Self::U16(try_clone_vec(v)?)),
+            Self::I16(v) => Ok(Self::I16(try_clone_vec(v)?)),
+            Self::F16(v) => Ok(Self::F16(try_clone_vec(v)?)),
+            Self::U32(v) => Ok(Self::U32(try_clone_vec(v)?)),
+            Self::I32(v) => Ok(Self::I32(try_clone_vec(v)?)),
+            Self::F32(v) => Ok(Self::F32(try_clone_vec(v)?)),
+            Self::U64(v) => Ok(Self::U64(try_clone_vec(v)?)),
+            Self::I64(v) => Ok(Self::I64(try_clone_vec(v)?)),
+            Self::F64(v) => Ok(Self::F64(try_clone_vec(v)?)),
+            Self::Aligned64(a) => Ok(Self::Aligned64(a.try_clone()?)),
+        }
     }
 
     /// Truncate active byte count in place (rounded up to whole sample units).

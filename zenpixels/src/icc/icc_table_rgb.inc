@@ -18,7 +18,7 @@
     // ((0x0342_6ff5_9d2e_af7c, 0xe595d034), CP::DciP3, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp11-tc14  [primaries deferred]
     ((0x0373_482f_2294_c17a, 0x208911ca), CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] srgb v1 31 canon 6578ac5c
     ((0x03d5_20f2_dff3_4ae6, 0x0f67d16c), CP::DisplayP3, TF::Srgb,  2, Safe::AnyIntent),               // [CPS] DisplayP3Compat-v2-magic
-    ((0x0582_1f2a_e35b_b471, 0x259d50f1), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 d904903e
+    ((0x0582_1f2a_e35b_b471, 0x259d50f1), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 d904903e
     // ((0x0582_d7fc_d6e4_bd22, 0xcfd41938), CP::Smpte170m, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp7-tc14  [primaries deferred]
     // ((0x0645_dfbc_e08c_fae3, 0x82225b79), CP::Smpte170m, TF::Gamma22,  0, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp7-tc4  [primaries deferred]
     // ((0x06ea_6479_de23_7ed1, 0x8be49e82), CP::DciP3, TF::Gamma22,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp11-tc4  [primaries deferred]
@@ -27,8 +27,8 @@
     // ((0x082f_e5f4_5021_7182, 0xffdf4304), CP::Smpte170m, TF::Linear,  0, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp7-tc8  [primaries deferred]
     ((0x0831_3776_1575_8c5d, 0x4d42bc31), CP::Bt709, TF::Srgb, 33, Safe::AnyIntent),               // [CPS] c2 7d61bdc0
     ((0x09f8_f51f_16ab_f5aa, 0x70a03b59), CP::Bt709, TF::Bt709,  4, Safe::AnyIntent),               // [CPS] itu-r bt 709-5 ac17db72
-    ((0x0a1a_3df7_a10c_1333, 0x1fc6d814), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 86828061
-    ((0x0a20_b1a9_ec56_beb6, 0x2b56ef10), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] installed-windows-x64-ClayRGB1998.icm
+    ((0x0a1a_3df7_a10c_1333, 0x1fc6d814), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 86828061
+    ((0x0a20_b1a9_ec56_beb6, 0x2b56ef10), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] installed-windows-x64-ClayRGB1998.icm
     ((0x0a26_3bad_edd4_342d, 0x9fff1a8c), CP::DisplayP3, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp12-tc1
     ((0x0a73_de76_1564_b613, 0x33c96f61), CP::Bt2020, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp9-tc6
     // ((0x0b43_df29_5954_92a8, 0xcddca41c), CP::Bt470Bg, TF::Bt709,  9, Safe::IdOnly),                  // [-] cicp bundle:rgb:cp5-tc15  [primaries deferred]
@@ -39,36 +39,36 @@
     ((0x0cd8_443c_fa63_c480, 0x7e34277b), CP::DisplayP3, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp12-tc12
     ((0x0dcd_80c9_943e_3766, 0x2181d116), CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] RTv4 sRGB 17aebbdf
     // ((0x0e02_095d_3356_4194, 0x7ca4e170), CP::Smpte170m, TF::Gamma26,  1, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp7-tc17  [primaries and transfer deferred]
-    ((0x0e2d_9786_7d36_d6dc, 0xcb3c0466), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] test0 f84f6849
+    ((0x0e2d_9786_7d36_d6dc, 0xcb3c0466), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] test0 f84f6849
     ((0x0e5d_1334_2a49_3ba2, 0x798f49d7), CP::Bt2020, TF::Bt709, 10, Safe::AnyIntent),               // [CPS] Rec2020-v2-magic
     ((0x0e6a_4149_30b0_b278, 0x63d75df5), CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] installed-macos-arm64-Apple Virtual-74CC58E0-36CE-
     ((0x0f40_cd19_eb99_13cd, 0xa9b5f2ac), CP::Bt709, TF::Srgb, 13, Safe::AnyIntent),               // [CPS] urgb ac46f250
     ((0x107b_3faf_46a0_d0a5, 0xe22462f2), CP::DisplayP3, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp12-tc11
     // ((0x10c8_44db_26f3_0575, 0x247d3a3f), CP::Smpte170m, TF::Bt709,  9, Safe::IdOnly),                  // [-] cicp bundle:rgb:cp7-tc15  [primaries deferred]
     ((0x11c9_534c_cea8_85a0, 0x10eca825), CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] rgba uhdr
-    ((0x12aa_1ec5_f4fa_84eb, 0x9abda0a3), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 04166d2d
+    ((0x12aa_1ec5_f4fa_84eb, 0x9abda0a3), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 04166d2d
     ((0x12cb_91f5_cd86_9818, 0x2f9697e9), CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] crayons 355bc1b0
     // ((0x1306_6843_1f9b_3dcb, 0xe693249e), CP::Smpte170m, TF::Bt709,  9, Safe::IdOnly),                  // [-] cicp bundle:rgb:cp6-tc15  [primaries deferred]
     ((0x131e_11c6_471b_dac4, 0x7379cb91), CP::Bt709, TF::Bt709,  3, Safe::AnyIntent),               // [CPS] installed-linux-arm64-Rec709
     // ((0x134d_8482_9bda_f67d, 0x45eabd0b), CP::Bt2020, TF::Gamma24,  1, Safe::AnyIntent),               // [CPS] Rec2020-g24-v4  [transfer deferred]
     // ((0x13a2_c044_7fc7_6184, 0x8969bd43), CP::Smpte170m, TF::Bt709,  9, Safe::IdOnly),                  // [-] cicp bundle:rgb:cp7-tc1  [primaries deferred]
     ((0x1585_7e13_3f8d_56c8, 0xa17c3454), CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] display 10b11b78
-    ((0x15bd_debd_0598_cc5d, 0x46ae1811), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] installed-linux-arm64-compatibleWithAdobeRGB1998
+    ((0x15bd_debd_0598_cc5d, 0x46ae1811), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] installed-linux-arm64-compatibleWithAdobeRGB1998
     // ((0x15cb_ebaa_adb8_7215, 0xfa000845), CP::DciP3, TF::Gamma26,  1, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp11-tc17  [primaries and transfer deferred]
-    ((0x16db_7fa8_9f3d_3268, 0x979796da), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 0958d8ab
+    ((0x16db_7fa8_9f3d_3268, 0x979796da), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 0958d8ab
     ((0x1719_8500_2051_1c42, 0x6d514f26), CP::Bt2020, TF::Bt709, 10, Safe::AnyIntent),               // [CPS] installed-windows-x64-Rec2020.icm
     ((0x1743_0b0e_9bbd_4e77, 0xd112cb72), CP::Bt709, TF::Bt709,  9, Safe::IdOnly),                  // [-] cicp bundle:rgb:cp1-tc6
     // ((0x1744_f347_4427_845e, 0x511dfec4), CP::Bt2020, TF::Gamma26,  1, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp9-tc17  [transfer deferred]
     ((0x17fc_1283_dd3c_d356, 0xdb7146e8), CP::DisplayP3, TF::Bt709,  9, Safe::IdOnly),                  // [-] cicp bundle:rgb:cp12-tc11
     // ((0x194d_27ff_760e_2cec, 0x9484d022), CP::Bt470Bg, TF::Linear,  0, Safe::IdOnly),                  // [-] cicp bundle:rgb:cp5-tc8  [primaries deferred]
     ((0x1966_8805_201a_0b99, 0x65eead5c), CP::DisplayP3, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp12-tc14
-    ((0x1a51_546f_b3e8_9789, 0xd05d4b64), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 c7de586e
+    ((0x1a51_546f_b3e8_9789, 0xd05d4b64), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 c7de586e
     // ((0x1b36_a5f2_363a_8d95, 0xbee042d5), CP::DciP3, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp11-tc14  [primaries deferred]
     // ((0x1c58_905e_76f3_bea4, 0x2773fb40), CP::Smpte170m, TF::Srgb,  1, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp7-tc13  [primaries deferred]
     // ((0x1cc8_23a6_693e_c8c3, 0xbe705e4c), CP::DciP3, TF::Pq,  1, Safe::IdOnly),                  // [-] cicp bundle:rgb:cp11-tc16  [primaries deferred]
     // ((0x1ccf_5537_368f_004c, 0xc859429c), CP::Smpte170m, TF::Bt709,  9, Safe::IdOnly),                  // [-] cicp bundle:rgb:cp7-tc6  [primaries deferred]
     // ((0x1dc8_e63b_cdad_b81e, 0xbdb679d2), CP::Smpte170m, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp6-tc11  [primaries deferred]
-    ((0x1de1_79d1_245a_a2ed, 0x47cc6d63), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] AdobeCS4-RGB-AdobeRGB1998
+    ((0x1de1_79d1_245a_a2ed, 0x47cc6d63), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] AdobeCS4-RGB-AdobeRGB1998
     ((0x1e61_b148_89b2_aa60, 0x92e63170), CP::DisplayP3, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp12-tc11
     // ((0x1f1e_b9a8_da2d_9a43, 0xb0c3302d), CP::EciRgbV2, TF::Gamma18, 11, Safe::AnyIntent),               // [CPS] eci-rgb icm e691806f  [primaries and transfer deferred]
     ((0x1f3d_03bf_8629_34d5, 0xf632b2a7), CP::Bt2020, TF::Bt709,  9, Safe::IdOnly),                  // [-] cicp bundle:rgb:cp9-tc12
@@ -133,11 +133,11 @@
     ((0x3a45_5986_8883_779d, 0x81132c25), CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] display 518dbeba
     // ((0x3aec_e16b_ce3c_88eb, 0xcee2da5a), CP::Smpte170m, TF::Bt709,  9, Safe::IdOnly),                  // [-] cicp bundle:rgb:cp6-tc11  [primaries deferred]
     // ((0x3b32_a0ca_a58a_5705, 0xd65ac755), CP::Bt470Bg, TF::Bt709,  3, Safe::AnyIntent),               // [CPS] Rec601PAL-v2-magic  [primaries deferred]
-    ((0x3b4c_8aad_1af4_34f8, 0x4ac29fb1), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 07c1e073
+    ((0x3b4c_8aad_1af4_34f8, 0x4ac29fb1), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 07c1e073
     ((0x3c23_9a35_ce4c_d003, 0x73f6f1a3), CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] iec61966-2 1 2e2fd04e
     ((0x3c4e_15c5_1211_3d7a, 0xe3879fcf), CP::Bt2020, TF::Bt709, 12, Safe::AnyIntent),               // [CPS] Rec2020Compat-v2-micro
     ((0x3d5d_46ff_cb50_300c, 0x8032077d), CP::Bt2020, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] RTv4 Rec2020 c901452c
-    ((0x3d84_1280_ff79_e82b, 0x9a987bc2), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 17354309
+    ((0x3d84_1280_ff79_e82b, 0x9a987bc2), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 17354309
     // ((0x3da0_12d9_861e_a76c, 0x0a8270d9), CP::Bt470Bg, TF::Pq,  1, Safe::IdOnly),                  // [-] cicp bundle:rgb:cp5-tc16  [primaries deferred]
     // ((0x3df3_188d_db21_9212, 0x85be5e3c), CP::DciP3, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp11-tc1  [primaries deferred]
     ((0x3e44_47de_2191_484f, 0x96c07584), CP::Bt709, TF::Linear,  0, Safe::AnyIntent),               // [CPS] installed-linux-arm64-scrgb
@@ -150,7 +150,7 @@
     // ((0x43a8_d3b2_862c_1263, 0x09fcc696), CP::WideGamut, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] installed-linux-arm64-WideGamutRGB  [primaries deferred]
     // ((0x44a0_dcbd_f18f_7826, 0x4a0b5356), CP::DciP3, TF::Gamma22,  0, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp11-tc4  [primaries deferred]
     ((0x44d8_ae58_5a42_da23, 0x9998bf87), CP::Bt709, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp1-tc6
-    ((0x456c_6127_123e_ec31, 0xbe5f2d0f), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 12484157
+    ((0x456c_6127_123e_ec31, 0xbe5f2d0f), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 12484157
     ((0x464e_4fe3_eb91_4390, 0xfb75ddba), CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] RTv2 sRGB a33396da
     ((0x4716_3976_37bc_a95a, 0x8f5272b8), CP::Bt2020, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp9-tc1
     ((0x4857_6a11_743a_60a5, 0xd627b25f), CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] srgb-v4 d25e5802
@@ -197,7 +197,7 @@
     ((0x595f_47d9_37ff_7598, 0x4b1da9ff), CP::Bt2020, TF::Srgb,  1, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp9-tc13
     ((0x59da_8836_ef94_a390, 0xb3178ddc), CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] colord-Bluish
     ((0x5a1f_f1f0_2856_7ffd, 0x507bcb9f), CP::Bt2020, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp9-tc1
-    ((0x5ab9_e9b9_2dbc_caa9, 0x22f72548), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] AdobeCompat-v2
+    ((0x5ab9_e9b9_2dbc_caa9, 0x22f72548), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] AdobeCompat-v2
     ((0x5bf2_9fda_7c3d_e026, 0xfc4082a4), CP::Bt2020, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp9-tc12
     // ((0x5d09_6412_865d_69c1, 0xf3cb08fa), CP::Smpte170m, TF::Bt709,  9, Safe::IdOnly),                  // [-] cicp bundle:rgb:cp7-tc12  [primaries deferred]
     // ((0x5d16_c0b5_f255_9f5a, 0x6d164635), CP::Smpte170m, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp7-tc14  [primaries deferred]
@@ -212,7 +212,7 @@
     // ((0x6047_102a_4faf_f845, 0xc712ef14), CP::Bt470Bg, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp5-tc12  [primaries deferred]
     // ((0x6082_7df2_5d7a_82ed, 0x62c0418a), CP::DciP3, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp11-tc6  [primaries deferred]
     ((0x61b2_7ba9_8ca9_e4ec, 0x2cdd391b), CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] iec61966-2 1 33c34ecf
-    ((0x61d8_2cfe_4b08_5a07, 0xb137826b), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 72860842
+    ((0x61d8_2cfe_4b08_5a07, 0xb137826b), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 72860842
     // ((0x6309_9848_3b23_1acd, 0x4ee4844f), CP::Bt470Bg, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp5-tc11  [primaries deferred]
     ((0x63b9_9fae_af4c_75a2, 0x7033441d), CP::DisplayP3, TF::Srgb,  5, Safe::AnyIntent),               // [CPS] display p3 7e1c7ec5
     ((0x649c_1cda_8125_e237, 0xaf5e2ead), CP::Bt2020, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp9-tc11
@@ -238,7 +238,7 @@
     ((0x6e44_01ce_573d_051c, 0x69a63726), CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] 65 srg rel srg d7f9e32a
     ((0x6e62_7ec1_ab55_7af9, 0xd0d04f1e), CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] installed-linux-arm64-sRGB2014
     // ((0x6e6c_7b44_6be9_900a, 0x559b563c), CP::DciP3, TF::Gamma26, 15, Safe::AnyIntent),               // [CPS] DCI-P3 Theater 0d99f14a  [primaries and transfer deferred]
-    ((0x6ea8_4a96_a82e_7aa4, 0xa91b987a), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] nikon adobe rgb 4 0 0 3001 359a7324
+    ((0x6ea8_4a96_a82e_7aa4, 0xa91b987a), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] nikon adobe rgb 4 0 0 3001 359a7324
     // ((0x6f5d_2cd3_97ba_8613, 0x581006ed), CP::Smpte170m, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp7-tc14  [primaries deferred]
     ((0x6f6c_a38f_3e1b_2ec2, 0x4324cc82), CP::Bt2020, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp9-tc11
     ((0x70f5_a575_e7de_59e2, 0x6f2f6edb), CP::Bt2020, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp9-tc6
@@ -248,11 +248,11 @@
     // ((0x72fe_b9f3_f74f_2943, 0xf7d229af), CP::Smpte170m, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp6-tc14  [primaries deferred]
     ((0x7398_f0fa_f1b5_e246, 0x3cb5ef37), CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] display 40b4f862
     ((0x73a7_3ebf_94b0_f7e2, 0xf28ce473), CP::Bt709, TF::Bt709,  9, Safe::IdOnly),                  // [-] cicp bundle:rgb:cp1-tc15
-    ((0x73d4_99f8_2fe9_8d7f, 0x49529fcb), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 e5f6ffb8
+    ((0x73d4_99f8_2fe9_8d7f, 0x49529fcb), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 e5f6ffb8
     // ((0x74d7_04ad_f56f_0eff, 0xefa01cf5), CP::Bt470Bg, TF::Gamma22,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp5-tc4  [primaries deferred]
     // ((0x75aa_ed97_bfa4_5a0d, 0xb6859e69), CP::Bt470Bg, TF::Pq,  1, Safe::IdOnly),                  // [-] cicp bundle:rgb:cp5-tc16  [primaries deferred]
     // ((0x7629_afaf_d81c_e7fd, 0x84bb22d3), CP::Bt470Bg, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp5-tc6  [primaries deferred]
-    ((0x77c3_6de1_98c8_8c4f, 0xcd535a28), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] oprgb 2b8daf8c
+    ((0x77c3_6de1_98c8_8c4f, 0xcd535a28), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] oprgb 2b8daf8c
     // ((0x7806_a5d3_9ca2_8158, 0xc462991d), CP::Smpte170m, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp7-tc15  [primaries deferred]
     // ((0x7813_adfd_8121_f96f, 0xdc76c7fc), CP::Bt470Bg, TF::Linear,  0, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp5-tc8  [primaries deferred]
     ((0x78ae_cf05_5611_f98c, 0x5c8b9c32), CP::DisplayP3, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp12-tc1
@@ -300,9 +300,9 @@
     // ((0x8ad8_891d_184c_601f, 0x3f562e43), CP::DciP3, TF::Bt709,  9, Safe::IdOnly),                  // [-] cicp bundle:rgb:cp11-tc1  [primaries deferred]
     ((0x8bd2_5c8e_3e37_6c84, 0x41769401), CP::Bt709, TF::Bt709,  3, Safe::AnyIntent),               // [CPS] Rec709-v2-magic
     ((0x8c0b_549f_4401_8587, 0xfc68c0df), CP::Bt709, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] srgb profile a4eddfda
-    ((0x8c7d_7e3f_4cbb_9256, 0x29e5dc7a), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] installed-linux-arm64-AdobeRGB1998
+    ((0x8c7d_7e3f_4cbb_9256, 0x29e5dc7a), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] installed-linux-arm64-AdobeRGB1998
     ((0x8eb7_7ac6_4d44_3978, 0x97faec34), CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] display p3 0ff6958f
-    ((0x8ec2_3212_9fbe_b37e, 0xe9809eb8), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] nikon adobe rgb 4 0 0 3000 a8d0d753
+    ((0x8ec2_3212_9fbe_b37e, 0xe9809eb8), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] nikon adobe rgb 4 0 0 3000 a8d0d753
     ((0x8ec4_006c_c288_9df9, 0xe910aad0), CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS]  72723b7f
     ((0x8f59_064d_1893_fbc8, 0xb34a7f16), CP::Bt2020, TF::Pq,  1, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp9-tc16
     // ((0x8fd9_dd80_0ad2_306c, 0x3a289531), CP::WideGamut, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] Windows-WideGamutRGB  [primaries deferred]
@@ -377,17 +377,17 @@
     // ((0xb078_83bc_f595_2465, 0x3fc39113), CP::Smpte170m, TF::Gamma22,  9, Safe::IdOnly),                  // [-] cicp bundle:rgb:cp6-tc4  [primaries deferred]
     ((0xb084_97ed_de11_0ace, 0x8a945948), CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] srgb 58f10918
     // ((0xb102_460e_a952_cafd, 0x0b341580), CP::Bt470Bg, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp5-tc1  [primaries deferred]
-    ((0xb102_517d_d955_2753, 0xfe10f3ee), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] installed-linux-arm64-a98
+    ((0xb102_517d_d955_2753, 0xfe10f3ee), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] installed-linux-arm64-a98
     ((0xb173_a9bb_b4de_8131, 0xc00e61b0), CP::Bt709, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] Windows-{6b922e74-48fc-5a5f-94cc-68fc8a91bda9}.icm
     // ((0xb179_3c91_b01e_153d, 0x85464771), CP::DisplayP3, TF::Gamma26,  1, Safe::IdOnly),                  // [-] cicp bundle:rgb:cp12-tc17  [transfer deferred]
     // ((0xb250_ba83_e252_3fbd, 0xbd121496), CP::Smpte170m, TF::Srgb,  1, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp7-tc13  [primaries deferred]
     // ((0xb292_a06f_88c0_3124, 0x8a3a0b2e), CP::ColorMatch, TF::Gamma18,  1, Safe::AnyIntent),               // [CPS] colormatchcompat-v4 72dad175  [primaries and transfer deferred]
-    ((0xb383_5e75_da98_d224, 0x079e8101), CP::AdobeRgb, TF::Gamma22,  9, Safe::AnyIntent),               // [CPS] adobecompat-v4 f923e15f
-    ((0xb389_fc84_b78a_9a55, 0x815ace1d), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 f94e3409
+    ((0xb383_5e75_da98_d224, 0x079e8101), CP::AdobeRgb, TF::AdobeRgb,  9, Safe::AnyIntent),               // [CPS] adobecompat-v4 f923e15f
+    ((0xb389_fc84_b78a_9a55, 0x815ace1d), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 f94e3409
     // ((0xb4a9_04d3_befa_7b6b, 0x8d6f3252), CP::Smpte170m, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp7-tc6  [primaries deferred]
     // ((0xb4fd_471e_e086_222d, 0x18864d65), CP::DciP3, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp11-tc11  [primaries deferred]
     ((0xb59f_47eb_015a_d97a, 0x380dd1e4), CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] moxcms srgb
-    ((0xb5fc_f4f5_49dc_2e44, 0x824f79bb), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 2f6457e2
+    ((0xb5fc_f4f5_49dc_2e44, 0x824f79bb), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 2f6457e2
     ((0xb712_d866_57ff_9c8b, 0x1d9189b2), CP::Bt709, TF::Pq,  1, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp1-tc16
     // ((0xb84a_91f4_1e8f_1e9b, 0xf09b1c6f), CP::Smpte170m, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp6-tc6  [primaries deferred]
     // ((0xb850_c41e_2468_34c2, 0xaf53d995), CP::Bt470Bg, TF::Srgb,  1, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp5-tc13  [primaries deferred]
@@ -430,7 +430,7 @@
     ((0xce3c_6812_ee26_aa6e, 0x9f1412d6), CP::Bt2020, TF::Bt709, 12, Safe::AnyIntent),               // [CPS] Rec2020-v2-micro
     // ((0xcf39_7b15_1fd8_ab31, 0x8c762ca1), CP::AppleRgb, TF::Gamma18, 11, Safe::AnyIntent),               // [CPS] AppleCompat-v2  [primaries and transfer deferred]
     // ((0xcf54_9292_c32a_3215, 0x183c6e4c), CP::Smpte170m, TF::Pq,  1, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp6-tc16  [primaries deferred]
-    ((0xd0ff_072b_721e_a276, 0x02ac725b), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 211d915b
+    ((0xd0ff_072b_721e_a276, 0x02ac725b), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 211d915b
     // ((0xd192_a089_84bf_e888, 0xea40712b), CP::DciP3, TF::Srgb,  1, Safe::IdOnly),                  // [-] cicp bundle:rgb:cp11-tc13  [primaries deferred]
     ((0xd274_a0eb_9670_91cb, 0xa704434a), CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS]  f1932003
     ((0xd309_7ea1_f3c6_f07f, 0x8ed3ce6a), CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] installed-windows-x64-sRGB.icm
@@ -460,7 +460,7 @@
     // ((0xdf22_6c85_aa01_0b62, 0x1e3431ea), CP::DciP3, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp11-tc12  [primaries deferred]
     ((0xdf29_eaee_97c1_32ef, 0x440d0550), CP::DisplayP3, TF::Linear,  0, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp12-tc8
     // ((0xdfc2_02ad_afbf_e0db, 0xb0e7fa45), CP::Smpte170m, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp6-tc14  [primaries deferred]
-    ((0xe027_6b27_9678_f216, 0xa7defaae), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 8551730c
+    ((0xe027_6b27_9678_f216, 0xa7defaae), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 8551730c
     // ((0xe05f_a8a6_3f55_9db4, 0x1579b03a), CP::EciRgbV2, TF::Gamma18, 11, Safe::AnyIntent),               // [CPS] eci-rgb icm 685a9445  [primaries and transfer deferred]
     ((0xe0db_37ef_e3a6_92a3, 0xdbf7450c), CP::Bt2020, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp9-tc15
     // ((0xe2f4_4924_cd20_0fa9, 0x2eaf4159), CP::ColorMatch, TF::Gamma18,  6, Safe::AnyIntent),               // [CPS] ColorMatchCompat-v4  [primaries and transfer deferred]
@@ -474,7 +474,7 @@
     ((0xe72e_5fbe_a574_a3b3, 0x37176bc2), CP::Bt709, TF::Linear,  0, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp1-tc8
     ((0xe832_2d4a_1500_9ded, 0x5ecd428c), CP::Bt709, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp1-tc12
     // ((0xe86b_7bad_b4a7_dc20, 0x1865172b), CP::Smpte170m, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp6-tc15  [primaries deferred]
-    ((0xe8a6_159d_1982_d083, 0xacb1bc04), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 24b690fa
+    ((0xe8a6_159d_1982_d083, 0xacb1bc04), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 24b690fa
     ((0xe8ad_fe92_4776_5c0b, 0xa74af21e), CP::Bt709, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp1-tc15
     ((0xe8ba_4367_7732_7ab2, 0x236ae8b5), CP::Bt709, TF::Bt709,  1, Safe::AnyIntent),               // [CPS] Rec709-v4
     // ((0xe949_3b42_7c9e_0c29, 0x5c5ed96f), CP::Bt470Bg, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp5-tc14  [primaries deferred]
@@ -487,7 +487,7 @@
     // ((0xebe9_a3d0_fa1e_2866, 0x66bf4315), CP::Smpte170m, TF::Bt709,  1, Safe::AnyIntent),               // [CPS] rec601ntsc-v4 9d3c1dea  [primaries deferred]
     // ((0xecb4_5f37_c251_2846, 0xda281861), CP::Smpte170m, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp7-tc11  [primaries deferred]
     // ((0xed45_1801_b6e3_7721, 0xa95b6b0d), CP::Bt709, TF::Gamma26,  1, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp1-tc17  [transfer deferred]
-    ((0xed62_af70_9d79_1fe2, 0xc8a22d54), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 481ca304
+    ((0xed62_af70_9d79_1fe2, 0xc8a22d54), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 481ca304
     ((0xed9a_fff9_2bdc_588d, 0x3061157d), CP::Bt709, TF::Srgb, 13, Safe::AnyIntent),               // [CPS] urgb 2e2c5534
     ((0xede1_371d_d0b8_6f71, 0x74e193c4), CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] skcms-sRGB HP 2
     ((0xeecd_b1c1_1d58_cde5, 0x38d9faab), CP::Bt709, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp1-tc14
@@ -495,7 +495,7 @@
     // ((0xf006_b924_738c_53f0, 0x7f82dca7), CP::Smpte170m, TF::Linear,  0, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp6-tc8  [primaries deferred]
     ((0xf0ae_366c_2312_5435, 0x4cadbb9a), CP::DisplayP3, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] display p3 2eb3480a
     ((0xf0b3_3faa_38da_65fe, 0xd826f3f3), CP::Bt709, TF::Srgb,  1, Safe::AnyIntent),               // [CPS] artifex software srgb icc profile eddaf344
-    ((0xf121_9cd8_1c19_5865, 0x2b1f9c59), CP::AdobeRgb, TF::Gamma22,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 55079c02
+    ((0xf121_9cd8_1c19_5865, 0x2b1f9c59), CP::AdobeRgb, TF::AdobeRgb,  0, Safe::AnyIntent),               // [CPS] adobe rgb 1998 55079c02
     // ((0xf14b_5fd3_e152_6eb2, 0x887bbf33), CP::Smpte170m, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp7-tc1  [primaries deferred]
     ((0xf157_7792_4c5e_5750, 0x5f09a8ec), CP::Bt709, TF::Bt709,  9, Safe::IdOnly),               // [CPS] cicp bundle:rgb:cp1-tc14
     // ((0xf17d_b5d6_88fd_8d78, 0xff850bdf), CP::Bt470Bg, TF::Bt709,  9, Safe::IdOnly),                  // [-] cicp bundle:rgb:cp5-tc12  [primaries deferred]

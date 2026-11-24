@@ -4,7 +4,9 @@
 //! clear them on every `&mut` borrow so stale bounds can never mislead SIMD fast
 //! paths or lossless negotiation.
 
+use crate::color::{AlphaMode, ColorSpace, ImageSpec, SignalRange};
 use crate::layout::SampleType;
+pub use crate::sample::ExactDepth;
 
 /// 6-bit bitmask of proven properties on floating-point samples.
 ///
@@ -154,59 +156,109 @@ impl core::ops::BitAnd for FloatFacts {
     }
 }
 
-/// Proven integer/content evidence about current samples (bit depth, opacity, grayscale).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct ExactDepth {
-    /// Proven effective integer bit depth (`0` = unknown, e.g. `8` when every `U16` sample satisfies `v == (v >> 8) * 257`).
-    pub effective_bits: u8,
-    /// Proven that every alpha sample is fully opaque.
-    pub all_opaque: bool,
-    /// Proven that `R == G == B` for every pixel.
-    pub all_grayscale: bool,
-}
-
 /// Unified sample evidence cached on owned buffers and propagated through conversion plans.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct SampleFacts {
     /// Proven floating-point invariants.
     pub float: FloatFacts,
-    /// Proven integer/content invariants.
-    pub exact: ExactDepth,
+    /// Proven exact integer code-grid depth (range-aware, separate color & alpha grids).
+    pub depth: Option<ExactDepth>,
+    /// Proven that every active alpha sample equals channel max (or layout has no meaningful alpha).
+    pub all_opaque: bool,
+    /// Proven that `R == G == B` for every pixel (or layout is already grayscale).
+    pub all_grayscale: bool,
+    /// Proven that every active alpha sample is either `0` or channel max (binary transparency).
+    pub binary_alpha: bool,
 }
 
 impl SampleFacts {
     /// Unknown / unproven sample properties.
     pub const NONE: Self = Self {
         float: FloatFacts::NONE,
-        exact: ExactDepth {
-            effective_bits: 0,
-            all_opaque: false,
-            all_grayscale: false,
-        },
+        depth: None,
+        all_opaque: false,
+        all_grayscale: false,
+        binary_alpha: false,
     };
 
-    /// Facts guaranteed for any freshly zero-allocated buffer of `sample`.
+    /// Set floating-point invariants.
     #[inline]
     #[must_use]
-    pub const fn for_zeroed(sample: SampleType) -> Self {
+    pub const fn with_float(mut self, float: FloatFacts) -> Self {
+        self.float = float;
+        self
+    }
+
+    /// Attach optional proven [`ExactDepth`].
+    #[inline]
+    #[must_use]
+    pub const fn with_depth_opt(mut self, depth: Option<ExactDepth>) -> Self {
+        self.depth = depth;
+        self
+    }
+
+    /// Facts guaranteed for a freshly allocated buffer of `spec` (with color channels zeroed
+    /// and [`AlphaMode::Opaque`] alpha slots initialized to channel maximum).
+    #[inline]
+    #[must_use]
+    pub const fn for_zeroed_spec(spec: &ImageSpec) -> Self {
+        let layout = spec.layout;
+        let sample = layout.sample;
+        let alpha_mode = spec.color.alpha();
+        let all_opaque = matches!(
+            alpha_mode,
+            AlphaMode::None | AlphaMode::Opaque | AlphaMode::Undefined
+        );
+        // Freshly allocated Straight/Premul buffers have alpha=0 everywhere, which is binary {0, max}.
+        let binary_alpha = true;
+        let all_grayscale = layout.order.is_rgb_family() || layout.order.is_gray_family();
+
         if sample.is_float() {
-            Self {
+            return Self {
                 float: FloatFacts::UNIT_INTERVAL,
-                exact: ExactDepth {
-                    effective_bits: 0,
-                    all_opaque: false,
-                    all_grayscale: true,
-                },
+                depth: None,
+                all_opaque,
+                all_grayscale,
+                binary_alpha,
+            };
+        }
+
+        let depth = if layout.packing.is_full()
+            && matches!(sample, SampleType::U8 | SampleType::U16)
+            && all_grayscale
+        {
+            let range = match spec.color {
+                ColorSpace::Rgb { range, .. } | ColorSpace::Gray { range, .. } => range,
+                ColorSpace::Icc { .. } => SignalRange::Full,
+                _ => {
+                    return Self {
+                        float: FloatFacts::NONE,
+                        depth: None,
+                        all_opaque,
+                        all_grayscale: false,
+                        binary_alpha,
+                    };
+                }
+            };
+            let color_bits = match range {
+                SignalRange::Full => 1,
+                SignalRange::Narrow => 8,
+            };
+            match ExactDepth::new(sample, range, color_bits, 1) {
+                Ok(d) => Some(d),
+                Err(_) => None,
             }
         } else {
-            Self {
-                float: FloatFacts::NONE,
-                exact: ExactDepth {
-                    effective_bits: 8,
-                    all_opaque: false,
-                    all_grayscale: true,
-                },
-            }
+            None
+        };
+
+        Self {
+            float: FloatFacts::NONE,
+            depth,
+            all_opaque,
+            all_grayscale,
+            binary_alpha,
         }
     }
 
@@ -216,11 +268,68 @@ impl SampleFacts {
     pub const fn from_float(float: FloatFacts) -> Self {
         Self {
             float,
-            exact: ExactDepth {
-                effective_bits: 0,
-                all_opaque: false,
-                all_grayscale: false,
-            },
+            depth: None,
+            all_opaque: false,
+            all_grayscale: false,
+            binary_alpha: false,
+        }
+    }
+
+    /// Construct facts carrying proven [`ExactDepth`].
+    #[inline]
+    #[must_use]
+    pub const fn from_depth(depth: ExactDepth) -> Self {
+        Self {
+            float: FloatFacts::NONE,
+            depth: Some(depth),
+            all_opaque: false,
+            all_grayscale: false,
+            binary_alpha: false,
+        }
+    }
+
+    /// Attach proven [`ExactDepth`].
+    #[inline]
+    #[must_use]
+    pub const fn with_depth(mut self, depth: ExactDepth) -> Self {
+        self.depth = Some(depth);
+        self
+    }
+
+    /// Attach proven `all_opaque` flag (also implies `binary_alpha` when `true`).
+    #[inline]
+    #[must_use]
+    pub const fn with_all_opaque(mut self, all_opaque: bool) -> Self {
+        self.all_opaque = all_opaque;
+        if all_opaque {
+            self.binary_alpha = true;
+        }
+        self
+    }
+
+    /// Attach proven `all_grayscale` flag.
+    #[inline]
+    #[must_use]
+    pub const fn with_all_grayscale(mut self, all_grayscale: bool) -> Self {
+        self.all_grayscale = all_grayscale;
+        self
+    }
+
+    /// Attach proven `binary_alpha` flag.
+    #[inline]
+    #[must_use]
+    pub const fn with_binary_alpha(mut self, binary_alpha: bool) -> Self {
+        self.binary_alpha = binary_alpha;
+        self
+    }
+
+    /// Whether current full-range/narrow integer samples are proven exact at `color_bits` and `alpha_bits`.
+    #[inline]
+    #[must_use]
+    pub const fn is_exact_at(self, color_bits: u8, alpha_bits: u8) -> bool {
+        match self.depth {
+            Some(d) => d.color_exact_at(color_bits) && d.alpha_exact_at(alpha_bits),
+            None => false,
         }
     }
 }

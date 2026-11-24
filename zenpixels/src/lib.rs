@@ -35,15 +35,19 @@ pub mod interop;
 pub mod layout;
 pub mod orientation;
 pub mod pixel_types;
+pub mod sample;
 pub mod storage;
 
 // Clean, flat re-exports of the core interchange surface.
 pub use buffer::{
-    BandedBuf, Bgrx, BufferError, DEFAULT_MAX_BAND_BYTES, DualLayerHdr, DualLayerHdrView,
-    OwnedPlane, PixelBuf, PixelBufParts, PixelCow, PixelSink, PixelSource, PixelView, PixelViewMut,
-    PlanarBuf, PlanarView, PlaneView, PlaneViewMut, Rgbx,
+    BandedBuf, Bgrx, BufferError, DEFAULT_MAX_BAND_BYTES, DualLayerHdr, DualLayerHdrParts,
+    DualLayerHdrView, OwnedPlane, PixelBuf, PixelBufParts, PixelCow, PixelSink, PixelSource,
+    PixelView, PixelViewMut, PlanarBuf, PlanarView, PlaneView, PlaneViewMut, Rgbx, TypedElement,
 };
-pub use cicp::{Cicp, CicpError};
+pub use cicp::{
+    Cicp, CicpError, CicpProjectionError, color_primaries_name, matrix_coefficients_name,
+    transfer_characteristics_name,
+};
 pub use color::{
     AlphaMode, Chromaticity, Color, ColorError, ColorOrigin, ColorSpace, CustomPrimaries,
     GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapDirection, GainMapMetadata, Gamma,
@@ -62,6 +66,10 @@ pub use layout::{
 };
 pub use orientation::Orientation;
 pub use pixel_types::{F16Sample, GrayAlpha8, GrayAlpha16, GrayAlphaF16, GrayAlphaF32};
+pub use sample::{
+    ChromaSiting, ChromaSubsampling, CodePlane, CodePlaneError, ExactDepthError, SampleEncoding,
+    SampleEncodingError, full_range_grid_nests, narrow_range_grid_nests,
+};
 pub use storage::{
     AlignedSamples, ByteStorage, ByteStorageMut, PixelStorage, StorageError, StorageSample,
 };

@@ -895,6 +895,7 @@ const fn pack_tf(tf: TF) -> u16 {
         TF::Gamma22 => 3,
         TF::Pq => 4,
         TF::Hlg(_) => 5,
+        TF::AdobeRgb => 6,
         _ => panic!("unsupported Transfer in ICC hash table"),
     }
 }
@@ -907,6 +908,7 @@ const fn unpack_tf(meta: u16) -> TF {
         3 => TF::Gamma22,
         4 => TF::Pq,
         5 => TF::Hlg(HlgMode::Scene),
+        6 => TF::AdobeRgb,
         _ => TF::Unknown,
     }
 }
@@ -1264,9 +1266,9 @@ mod tests {
             rgb_count(CP::DisplayP3, TF::Srgb)
         );
         assert!(
-            rgb_count(CP::AdobeRgb, TF::Gamma22) >= 15,
+            rgb_count(CP::AdobeRgb, TF::AdobeRgb) >= 15,
             "Adobe RGB: {}",
-            rgb_count(CP::AdobeRgb, TF::Gamma22)
+            rgb_count(CP::AdobeRgb, TF::AdobeRgb)
         );
         assert!(
             KNOWN_RGB_PROFILES.len() >= 90,
@@ -1293,8 +1295,26 @@ mod tests {
 
     #[test]
     fn hash_deterministic() {
-        let data = b"test data for hashing";
-        assert_eq!(normalized_hash(data), normalized_hash(data));
+        // Independently computed FNV-1a64 + MurmurHash3_x86_32 (seed 3_242_157_231)
+        // over a 160-byte fixture after zeroing ICC metadata-only header ranges.
+        let mut fixture = [0u8; 160];
+        for (i, slot) in fixture.iter_mut().enumerate() {
+            *slot = (i.wrapping_mul(37).wrapping_add(11)) as u8;
+        }
+        const EXPECTED: (u64, u32) = (0x63a0_c773_7e54_3275, 0x103a_ebf3);
+        assert_eq!(normalized_hash(&fixture), EXPECTED);
+
+        // Editing an allowed metadata header byte (creation date byte 30) keeps the pair identical.
+        let mut meta_edited = fixture;
+        meta_edited[30] ^= 0xFF;
+        assert_eq!(normalized_hash(&meta_edited), EXPECTED);
+        assert!(normalized_eq(&fixture, &meta_edited));
+
+        // Editing a tag payload byte (byte 140) changes the normalized fingerprint and equality.
+        let mut tag_edited = fixture;
+        tag_edited[140] ^= 0x01;
+        assert_ne!(normalized_hash(&tag_edited), EXPECTED);
+        assert!(!normalized_eq(&fixture, &tag_edited));
     }
 
     #[test]

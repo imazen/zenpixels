@@ -12,7 +12,7 @@ use core::hash::{Hash, Hasher};
 use core::num::NonZeroU32;
 use whereat::At;
 
-use crate::cicp::Cicp;
+use crate::cicp::{Cicp, CicpProjectionError};
 use crate::hdr::{ContentLightLevel, DiffuseWhite, HlgRendering, MasteringDisplay};
 use crate::layout::{ChannelOrder, InteropTarget, LayoutError, SampleLayout, SampleType};
 
@@ -29,6 +29,11 @@ impl Chromaticity {
         x: 0.3127,
         y: 0.3290,
     };
+    /// CIE 1931 D60 ACES illuminant `(0.32168, 0.33767)`.
+    pub const D60: Self = Self {
+        x: 0.32168,
+        y: 0.33767,
+    };
     /// CIE 1931 D50 ICC PCS illuminant `(0.3457, 0.3585)`.
     pub const D50: Self = Self {
         x: 0.3457,
@@ -42,11 +47,37 @@ impl Chromaticity {
         y: 1.0 / 3.0,
     };
 
-    /// Validate and construct a CIE 1931 `(x, y)` chromaticity coordinate.
+    /// Validate and construct a physical CIE 1931 `(x, y)` chromaticity coordinate
+    /// (`x > 0`, `y > 0`, `x + y < 1`, finite — guarantees strictly positive `X, Y, Z`).
+    ///
+    /// Use [`try_new_primary`](Self::try_new_primary) for virtual/imaginary RGB primaries
+    /// such as ACES2065-1 AP0 (`G = (0, 1)`, `B = (0.0001, -0.0770)`).
     #[inline]
     #[must_use]
     pub const fn try_new(x: f32, y: f32) -> Option<Self> {
-        if !x.is_finite() || !y.is_finite() || x <= 0.0 || y <= 0.0 || x >= 1.0 || y >= 1.0 {
+        if !x.is_finite() || !y.is_finite() || x <= 0.0 || y <= 0.0 || (x + y) >= 1.0 {
+            return None;
+        }
+        Some(Self { x, y })
+    }
+
+    /// Validate and construct an RGB primary coordinate, permitting boundary and
+    /// imaginary primaries such as ACES2065-1 AP0 (`G = (0.0, 1.0)`, `B = (0.0001, -0.0770)`)
+    /// and ProPhoto RGB (`x + y = 1.0`).
+    ///
+    /// Requires finite coordinates with `|y| >= 1e-6` (so `X = x/y` and `Z = (1-x-y)/y`
+    /// stay finite) and `|x|, |y| <= 4.0`.
+    #[inline]
+    #[must_use]
+    pub const fn try_new_primary(x: f32, y: f32) -> Option<Self> {
+        if !x.is_finite()
+            || !y.is_finite()
+            || (y > -1e-6 && y < 1e-6)
+            || x < -4.0
+            || x > 4.0
+            || y < -4.0
+            || y > 4.0
+        {
             return None;
         }
         Some(Self { x, y })
@@ -131,8 +162,31 @@ pub struct CustomPrimaries {
 }
 
 impl CustomPrimaries {
-    /// Construct validated custom primaries, verifying finite positive chromaticities
-    /// and a non-singular RGB → XYZ matrix.
+    /// ACES2065-1 (SMPTE ST 2065-1) AP0 primaries with D60 white point.
+    pub const ACES_AP0: Self = match Self::try_new(
+        (0.7347, 0.2653),
+        (0.0, 1.0),
+        (0.0001, -0.0770),
+        (0.32168, 0.33767),
+    ) {
+        Some(cp) => cp,
+        None => unreachable!(),
+    };
+
+    /// ProPhoto RGB / ROMM RGB (ISO 22028-2) primaries with D50 white point.
+    pub const PROPHOTO_RGB: Self = match Self::try_new(
+        (0.7347, 0.2653),
+        (0.1596, 0.8404),
+        (0.0366, 0.0001),
+        (0.3457, 0.3585),
+    ) {
+        Some(cp) => cp,
+        None => unreachable!(),
+    };
+
+    /// Construct validated custom primaries, verifying a physical white point
+    /// (`x > 0, y > 0, x + y < 1`), valid primary coordinates (including imaginary
+    /// primaries such as ACES2065-1 AP0), and a finite, non-singular RGB → XYZ matrix.
     #[must_use]
     pub const fn try_new(
         r: (f32, f32),
@@ -141,15 +195,18 @@ impl CustomPrimaries {
         white: (f32, f32),
     ) -> Option<Self> {
         let (Some(r), Some(g), Some(b), Some(white)) = (
-            Chromaticity::try_new(r.0, r.1),
-            Chromaticity::try_new(g.0, g.1),
-            Chromaticity::try_new(b.0, b.1),
+            Chromaticity::try_new_primary(r.0, r.1),
+            Chromaticity::try_new_primary(g.0, g.1),
+            Chromaticity::try_new_primary(b.0, b.1),
             Chromaticity::try_new(white.0, white.1),
         ) else {
             return None;
         };
         let cp = Self { r, g, b, white };
-        if rgb_to_xyz_from_xy(cp.r.xy(), cp.g.xy(), cp.b.xy(), cp.white.xy()).is_none() {
+        let Some(m) = rgb_to_xyz_from_xy(cp.r.xy(), cp.g.xy(), cp.b.xy(), cp.white.xy()) else {
+            return None;
+        };
+        if inv3_f64(m).is_none() {
             return None;
         }
         Some(cp)
@@ -264,19 +321,33 @@ impl Primaries {
         }
     }
 
-    /// Linear-light luminance weights `[Yr, Yg, Yb]` derived from the primaries' RGB→XYZ `Y` row.
+    /// Linear-light luminance weights `[Yr, Yg, Yb]` derived from the primaries' RGB→XYZ `Y` row,
+    /// or `None` for [`Self::Unknown`] (use [`Self::luma_weights`] only when a BT.709 fallback is intended).
+    #[inline]
+    #[must_use]
+    pub const fn try_luma_weights(self) -> Option<[f32; 3]> {
+        match self {
+            Self::Bt709 => Some([0.2126, 0.7152, 0.0722]),
+            Self::DisplayP3 => Some([0.228_974_56, 0.691_738_5, 0.079_286_91]),
+            Self::Bt2020 => Some([0.2627, 0.6780, 0.0593]),
+            Self::AdobeRgb => Some([0.297_344_98, 0.627_363_56, 0.075_291_46]),
+            Self::DciP3 | Self::Custom(_) => match self.rgb_to_xyz_f64() {
+                Some(m) => Some([m[1][0] as f32, m[1][1] as f32, m[1][2] as f32]),
+                None => None,
+            },
+            Self::Unknown => None,
+        }
+    }
+
+    /// Linear-light luminance weights `[Yr, Yg, Yb]` derived from the primaries' RGB→XYZ `Y` row
+    /// (falls back to BT.709 for [`Self::Unknown`]; prefer [`try_luma_weights`](Self::try_luma_weights)
+    /// when unknown primaries must be refused).
     #[inline]
     #[must_use]
     pub const fn luma_weights(self) -> [f32; 3] {
-        match self {
-            Self::Bt709 | Self::Unknown => [0.2126, 0.7152, 0.0722],
-            Self::DisplayP3 => [0.228_974_56, 0.691_738_5, 0.079_286_91],
-            Self::Bt2020 => [0.2627, 0.6780, 0.0593],
-            Self::AdobeRgb => [0.297_344_98, 0.627_363_56, 0.075_291_46],
-            Self::DciP3 | Self::Custom(_) => match self.rgb_to_xyz_f64() {
-                Some(m) => [m[1][0] as f32, m[1][1] as f32, m[1][2] as f32],
-                None => [0.2126, 0.7152, 0.0722],
-            },
+        match self.try_luma_weights() {
+            Some(w) => w,
+            None => [0.2126, 0.7152, 0.0722],
         }
     }
 
@@ -405,7 +476,7 @@ const fn rgb_to_xyz_from_xy(
     let (gx, gy) = (g.0 as f64, g.1 as f64);
     let (bx, by) = (b.0 as f64, b.1 as f64);
     let (wx, wy) = (white.0 as f64, white.1 as f64);
-    if ry <= 0.0 || gy <= 0.0 || by <= 0.0 || wy <= 0.0 {
+    if ry == 0.0 || gy == 0.0 || by == 0.0 || wy <= 0.0 || wx <= 0.0 || (wx + wy) >= 1.0 {
         return None;
     }
     let p = [
@@ -422,11 +493,32 @@ const fn rgb_to_xyz_from_xy(
     };
     let w = [wx / wy, 1.0, (1.0 - wx - wy) / wy];
     let s = mul3_vec_f64(p_inv, w);
-    Some([
+    if !s[0].is_finite()
+        || !s[1].is_finite()
+        || !s[2].is_finite()
+        || s[0].abs() < 1e-9
+        || s[1].abs() < 1e-9
+        || s[2].abs() < 1e-9
+    {
+        return None;
+    }
+    let m = [
         [p[0][0] * s[0], p[0][1] * s[1], p[0][2] * s[2]],
         [p[1][0] * s[0], p[1][1] * s[1], p[1][2] * s[2]],
         [p[2][0] * s[0], p[2][1] * s[1], p[2][2] * s[2]],
-    ])
+    ];
+    let mut row = 0;
+    while row < 3 {
+        let mut col = 0;
+        while col < 3 {
+            if !m[row][col].is_finite() {
+                return None;
+            }
+            col += 1;
+        }
+        row += 1;
+    }
+    Some(m)
 }
 
 /// Bradford chromatic adaptation matrix from source white `(swx, swy)` to destination white `(dwx, dwy)`.
@@ -476,7 +568,7 @@ const fn inv3_f64(m: [[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
     let b = -(m[1][0] * m[2][2] - m[1][2] * m[2][0]);
     let c = m[1][0] * m[2][1] - m[1][1] * m[2][0];
     let det = m[0][0] * a + m[0][1] * b + m[0][2] * c;
-    if det == 0.0 {
+    if !det.is_finite() || det.abs() < 1e-12 {
         return None;
     }
     let inv = 1.0 / det;
@@ -540,18 +632,21 @@ pub enum HlgMode {
 pub struct Gamma(f32);
 
 impl Gamma {
-    /// DCI-P3 theater decoding gamma `2.6` (SMPTE RP 431-2).
+    /// Pure power decoding gamma `2.6` (distinct from H.273 TC=17 [`Transfer::DciCinema`],
+    /// which scales encoded cinema white by `48 / 52.37`).
     pub const DCI_2_6: Self = Self(2.6);
     /// Standard pure decoding gamma `2.2`.
     pub const GAMMA_2_2: Self = Self(2.2);
+    /// Adobe RGB (1998) pure decoding gamma `563 / 256` (`2.19921875`).
+    pub const ADOBE_RGB: Self = Self(563.0 / 256.0);
     /// Legacy decoding gamma `1.8`.
     pub const GAMMA_1_8: Self = Self(1.8);
 
-    /// Construct a validated decoding gamma (`0.0 < exponent <= 16.0`, finite).
+    /// Construct a validated decoding gamma (`0.0 < exponent <= 100.0`, finite).
     #[inline]
     #[must_use]
     pub const fn try_new(exponent: f32) -> Option<Self> {
-        if !exponent.is_finite() || exponent <= 0.0 || exponent > 16.0 {
+        if !exponent.is_finite() || exponent <= 0.0 || exponent > 100.0 {
             return None;
         }
         Some(Self(exponent))
@@ -601,9 +696,18 @@ pub enum Transfer {
     Srgb,
     /// ITU-R BT.709 / BT.601 / BT.2020 camera curve (CICP 1).
     Bt709,
-    /// Pure power curve `v^(563/256)` used by Adobe RGB (1998).
+    /// Pure power curve `v^2.2` (ITU-R BT.470M, CICP 4).
+    ///
+    /// Distinct from [`Self::AdobeRgb`] (`v^(563/256)` = `2.19921875`).
     Gamma22,
-    /// Explicit validated pure decoding gamma `L = v^gamma` (JXL, DCI 2.6, PNG `gAMA`).
+    /// Adobe RGB (1998) pure power curve `v^(563/256)` (`2.19921875`, no exact H.273 code).
+    AdobeRgb,
+    /// SMPTE ST 428-1 digital cinema transfer (CICP 17: `L = (52.37 / 48.0) * v^2.6`,
+    /// where `L = 1.0` = 48 cd/m² theater white encodes to `(48 / 52.37)^(1/2.6) ≈ 0.967043`).
+    ///
+    /// Distinct from pure power [`Self::Gamma(Gamma::DCI_2_6)`](Gamma::DCI_2_6) (`L = v^2.6`).
+    DciCinema,
+    /// Explicit validated pure decoding gamma `L = v^gamma` (JXL, pure 2.6, PNG `gAMA`).
     Gamma(Gamma),
     /// SMPTE ST 2084 Perceptual Quantizer (absolute `0..=10,000 cd/m²`, CICP 16).
     Pq,
@@ -638,13 +742,16 @@ impl Transfer {
             8 => Some(Self::Linear),
             13 => Some(Self::Srgb),
             16 => Some(Self::Pq),
-            17 => Some(Self::Gamma(Gamma::DCI_2_6)),
+            17 => Some(Self::DciCinema),
             18 => Some(Self::Hlg(HlgMode::Scene)),
             _ => None,
         }
     }
 
     /// Map [`Transfer`] to an ITU-T H.273 `TransferCharacteristics` code, when standardized.
+    ///
+    /// Note: [`Self::AdobeRgb`] (`563/256`) and pure [`Self::Gamma`] return `None` so they
+    /// are never silently relabeled as H.273 TC=4 (`2.2`) or TC=17 (`SMPTE ST 428-1`).
     #[inline]
     #[must_use]
     pub const fn to_cicp(self) -> Option<u8> {
@@ -654,12 +761,9 @@ impl Transfer {
             Self::Linear => Some(8),
             Self::Srgb => Some(13),
             Self::Pq => Some(16),
-            Self::Gamma(g) if g.exponent().to_bits() == Gamma::DCI_2_6.exponent().to_bits() => {
-                Some(17)
-            }
-            Self::Gamma(_) => None,
+            Self::DciCinema => Some(17),
             Self::Hlg(_) => Some(18),
-            Self::Unknown => None,
+            Self::AdobeRgb | Self::Gamma(_) | Self::Unknown => None,
         }
     }
 }
@@ -984,6 +1088,16 @@ impl ColorSpace {
         self
     }
 
+    /// Return the signal range of an RGB or Gray color space (`None` for non-range-bearing models).
+    #[inline]
+    #[must_use]
+    pub const fn range(&self) -> Option<SignalRange> {
+        match *self {
+            Self::Rgb { range, .. } | Self::Gray { range, .. } => Some(range),
+            _ => None,
+        }
+    }
+
     /// Set signal range on an [`Self::Rgb`] or [`Self::Gray`] color space.
     #[inline]
     #[must_use]
@@ -1018,7 +1132,11 @@ impl ColorSpace {
         }
     }
 
-    /// Project this color space to a standardized RGB [`Cicp`] tuple when possible.
+    /// Project this color space to a raw ITU-T H.273 RGB [`Cicp`] syntax tuple when possible.
+    ///
+    /// Note: this returns `(9, 18, 0, true)` for both [`HlgMode::Scene`] and [`HlgMode::Display`].
+    /// When lossless round-trip fidelity of display rendering parameters and diffuse white is
+    /// required, use [`try_cicp`](Self::try_cicp).
     #[must_use]
     pub fn to_cicp(&self) -> Option<Cicp> {
         match *self {
@@ -1034,6 +1152,36 @@ impl ColorSpace {
                 range == SignalRange::Full,
             )),
             _ => None,
+        }
+    }
+
+    /// Losslessly project this color space to an ITU-T H.273 [`Cicp`] tuple, refusing when
+    /// CICP cannot represent semantics carried on `self` (such as [`HlgMode::Display`] rendering
+    /// parameters or an explicit [`DiffuseWhite`] anchor).
+    pub fn try_cicp(&self) -> Result<Cicp, CicpProjectionError> {
+        match *self {
+            Self::Rgb {
+                primaries,
+                transfer,
+                range,
+                white,
+                ..
+            } => {
+                if matches!(transfer, Transfer::Hlg(HlgMode::Display(_))) {
+                    return Err(CicpProjectionError::HlgDisplayRenderingLost);
+                }
+                if white.is_some() {
+                    return Err(CicpProjectionError::DiffuseWhiteLost);
+                }
+                let cp = primaries
+                    .to_cicp()
+                    .ok_or(CicpProjectionError::UnmappedPrimaries)?;
+                let tc = transfer
+                    .to_cicp()
+                    .ok_or(CicpProjectionError::UnmappedTransfer)?;
+                Ok(Cicp::new(cp, tc, 0, range == SignalRange::Full))
+            }
+            _ => Err(CicpProjectionError::NotRgb),
         }
     }
 
@@ -1293,6 +1441,92 @@ impl ImageSpec {
         self
     }
 
+    /// Whether this spec can represent HDR light levels above SDR diffuse white (`> 1.0`).
+    ///
+    /// Returns `true` for PQ and HLG transfers (any sample type), linear floating-point
+    /// RGB/Gray (`F16`/`F32`/`F64`), and floating-point CIE XYZ.
+    #[inline]
+    #[must_use]
+    pub fn can_represent_hdr(&self) -> bool {
+        match &self.color {
+            ColorSpace::Rgb { transfer, .. } | ColorSpace::Gray { transfer, .. } => {
+                matches!(transfer, Transfer::Pq | Transfer::Hlg(_))
+                    || (self.layout.sample.is_float() && transfer.is_linear())
+            }
+            ColorSpace::Xyz { .. } => self.layout.sample.is_float(),
+            _ => false,
+        }
+    }
+
+    /// Construct a validated default [`ImageSpec`] for a [`SampleLayout`].
+    ///
+    /// Uses sRGB for integer RGB/Gray layouts and linear sRGB/Gray for floating-point
+    /// layouts, with alpha matching the layout's alpha/padding slot.
+    pub fn for_layout(layout: SampleLayout) -> Result<Self, At<ColorError>> {
+        layout
+            .validate()
+            .map_err(|e| whereat::at!(ColorError::Layout(e)))?;
+        let order = layout.order;
+        let alpha = if order.has_padding_slot() {
+            AlphaMode::Undefined
+        } else if order.has_alpha_slot() {
+            AlphaMode::Straight
+        } else {
+            AlphaMode::None
+        };
+        let tf = if layout.sample.is_float() {
+            Transfer::Linear
+        } else {
+            Transfer::Srgb
+        };
+        let color = if order.is_rgb_family() {
+            ColorSpace::Rgb {
+                primaries: Primaries::Bt709,
+                transfer: tf,
+                range: SignalRange::Full,
+                alpha,
+                white: None,
+            }
+        } else if order.is_gray_family() {
+            ColorSpace::Gray {
+                transfer: tf,
+                range: SignalRange::Full,
+                alpha,
+                white: None,
+            }
+        } else if order.is_xyz_family() {
+            ColorSpace::Xyz {
+                white_point: WhitePoint::D65,
+                alpha,
+                white: None,
+            }
+        } else if order.is_oklab_family() {
+            ColorSpace::Oklab { alpha }
+        } else if order.is_cmyk_family() {
+            ColorSpace::Cmyk {
+                inverted: matches!(
+                    order,
+                    ChannelOrder::CmykInverted | ChannelOrder::CmykaInverted
+                ),
+                alpha,
+                icc: None,
+            }
+        } else if matches!(order, ChannelOrder::Perceptual3 | ChannelOrder::Perceptual4) {
+            ColorSpace::Perceptual {
+                space: PerceptualSpace::Oklch,
+                alpha,
+            }
+        } else {
+            ColorSpace::Untagged {
+                channels: order.channels() as u8,
+                alpha,
+            }
+        };
+        let spec = Self::new(layout, color);
+        spec.validate()?;
+        Ok(spec)
+    }
+
     /// Validate that `layout` and `color` agree on channels, alpha/padding, range, and sample types.
     pub fn validate(&self) -> Result<(), At<ColorError>> {
         self.layout
@@ -1369,7 +1603,9 @@ impl ImageSpec {
                 }
             }
             ColorSpace::Cmyk {
-                inverted, alpha, ..
+                inverted,
+                alpha,
+                icc,
             } => {
                 let want = match (*inverted, *alpha) {
                     (false, AlphaMode::None) => ChannelOrder::Cmyk,
@@ -1380,32 +1616,82 @@ impl ImageSpec {
                 if order != want {
                     return Err(whereat::at!(ColorError::ColorLayoutMismatch));
                 }
+                if let Some(profile) = icc {
+                    if profile.is_empty() {
+                        return Err(whereat::at!(ColorError::InvalidIccProfile));
+                    }
+                    if profile.len() >= 16
+                        && matches!(&profile[12..16], b"link" | b"abst" | b"nmcl")
+                    {
+                        return Err(whereat::at!(ColorError::InvalidIccProfile));
+                    }
+                    if profile.len() >= 20 && &profile[16..20] != b"CMYK" {
+                        return Err(whereat::at!(ColorError::InvalidIccProfile));
+                    }
+                }
             }
             ColorSpace::Icc {
                 profile, channels, ..
             } => {
+                if profile.is_empty() {
+                    return Err(whereat::at!(ColorError::InvalidIccProfile));
+                }
                 let expected = (*channels as usize)
                     + usize::from(order.has_alpha_slot() || order.has_padding_slot());
                 if order.channels() != expected {
                     return Err(whereat::at!(ColorError::ColorLayoutMismatch));
                 }
-                #[cfg(feature = "icc")]
+                if profile.len() >= 16 && matches!(&profile[12..16], b"link" | b"abst" | b"nmcl") {
+                    return Err(whereat::at!(ColorError::InvalidIccProfile));
+                }
                 if profile.len() >= 20 {
-                    if let Some(sig) = crate::icc::profile_color_space(profile) {
-                        let sig_ok = match sig {
-                            IccColorSpace::Gray => *channels == 1,
-                            IccColorSpace::Rgb | IccColorSpace::Lab | IccColorSpace::Xyz => {
-                                *channels == 3
+                    match &profile[16..20] {
+                        b"GRAY" => {
+                            if *channels != 1
+                                || !(order.is_gray_family()
+                                    || matches!(order, ChannelOrder::Generic(1 | 2)))
+                            {
+                                return Err(whereat::at!(ColorError::ColorLayoutMismatch));
                             }
-                            IccColorSpace::Cmyk => *channels == 4,
-                        };
-                        if !sig_ok {
+                        }
+                        b"RGB " => {
+                            if *channels != 3
+                                || !(order.is_rgb_family()
+                                    || matches!(order, ChannelOrder::Generic(3 | 4)))
+                            {
+                                return Err(whereat::at!(ColorError::ColorLayoutMismatch));
+                            }
+                        }
+                        b"CMYK" => {
+                            if *channels != 4
+                                || !(order.is_cmyk_family()
+                                    || matches!(order, ChannelOrder::Generic(4 | 5)))
+                            {
+                                return Err(whereat::at!(ColorError::ColorLayoutMismatch));
+                            }
+                        }
+                        b"Lab " => {
+                            if *channels != 3
+                                || !matches!(
+                                    order,
+                                    ChannelOrder::Perceptual3
+                                        | ChannelOrder::Perceptual4
+                                        | ChannelOrder::Generic(3 | 4)
+                                )
+                            {
+                                return Err(whereat::at!(ColorError::ColorLayoutMismatch));
+                            }
+                        }
+                        b"XYZ "
+                            if *channels != 3
+                                || !(order.is_xyz_family()
+                                    || matches!(order, ChannelOrder::Generic(3 | 4))) =>
+                        {
                             return Err(whereat::at!(ColorError::ColorLayoutMismatch));
                         }
+                        _ => {}
                     }
                 }
-                #[cfg(not(feature = "icc"))]
-                let _ = profile;
             }
             ColorSpace::Untagged { channels, .. } => {
                 if order.channels() != *channels as usize {
@@ -1469,9 +1755,11 @@ impl ImageSpec {
                         primaries,
                         transfer,
                         range,
+                        white,
                         ..
                     } => {
                         *range == SignalRange::Full
+                            && white.is_none()
                             && matches!(
                                 primaries,
                                 Primaries::Bt709 | Primaries::DisplayP3 | Primaries::Bt2020
@@ -1482,20 +1770,24 @@ impl ImageSpec {
                                     | Transfer::Linear
                                     | Transfer::Bt709
                                     | Transfer::Pq
-                                    | Transfer::Hlg(_)
+                                    | Transfer::Hlg(HlgMode::Scene)
                             )
                     }
                     ColorSpace::Gray {
-                        transfer, range, ..
+                        transfer,
+                        range,
+                        white,
+                        ..
                     } => {
                         *range == SignalRange::Full
+                            && white.is_none()
                             && matches!(
                                 transfer,
                                 Transfer::Srgb
                                     | Transfer::Linear
                                     | Transfer::Bt709
                                     | Transfer::Pq
-                                    | Transfer::Hlg(_)
+                                    | Transfer::Hlg(HlgMode::Scene)
                             )
                     }
                     _ => false,
@@ -1919,6 +2211,9 @@ pub struct GainMapMetadata {
     pub alternate_hdr_headroom: UnsignedFraction,
     /// Whether channelwise gain runs in base or alternate linear RGB primaries.
     pub application_space: GainMapColorSpace,
+    /// Optional explicit ISO 21496-1 `backward_direction` flag override (`None` derives
+    /// direction from comparing `base_hdr_headroom` vs `alternate_hdr_headroom`).
+    pub backward_direction: Option<bool>,
 }
 
 impl GainMapMetadata {
@@ -1938,29 +2233,58 @@ impl GainMapMetadata {
             base_hdr_headroom,
             alternate_hdr_headroom,
             application_space,
+            backward_direction: None,
         };
         if m.is_valid() { Some(m) } else { None }
     }
 
-    /// Construct a symmetric forward SDR-base → HDR-alternate parameter set with standard `1/64` offsets.
+    /// Set an explicit ISO 21496-1 `backward_direction` flag (`true` = reverse, `false` = forward).
+    #[inline]
     #[must_use]
-    pub fn symmetric(max_boost_stops: f32) -> Self {
-        let max_f =
-            SignedFraction::from_f32_approx(max_boost_stops).unwrap_or(SignedFraction::from_int(2));
-        let alt_h = UnsignedFraction::from_f32_approx(max_boost_stops.max(1.0 / 64.0))
-            .unwrap_or(UnsignedFraction::from_uint(2));
-        Self {
-            channels: GainMapChannels::Shared(GainMapComponent {
+    pub const fn with_backward_direction(mut self, backward: bool) -> Self {
+        self.backward_direction = Some(backward);
+        self
+    }
+
+    /// Fallibly construct a symmetric forward SDR-base → HDR-alternate parameter set with
+    /// standard `1/64` offsets.
+    ///
+    /// Returns `None` if `max_boost_stops` is non-finite, `<= 0.0`, or rounds to zero at
+    /// `1/1_000_000` precision.
+    #[must_use]
+    pub fn try_symmetric(max_boost_stops: f32) -> Option<Self> {
+        if !max_boost_stops.is_finite() || max_boost_stops <= 0.0 {
+            return None;
+        }
+        let max_f = SignedFraction::from_f32_approx(max_boost_stops)?;
+        let alt_h = UnsignedFraction::from_f32_approx(max_boost_stops)?;
+        if max_f.num <= 0 || alt_h.num == 0 {
+            return None;
+        }
+        Self::try_new(
+            GainMapChannels::Shared(GainMapComponent {
                 min_gain_stops: SignedFraction::ZERO,
                 max_gain_stops: max_f,
                 gamma: UnsignedFraction::ONE,
                 base_offset: SignedFraction::ONE_64TH,
                 alternate_offset: SignedFraction::ONE_64TH,
             }),
-            base_hdr_headroom: UnsignedFraction::ZERO,
-            alternate_hdr_headroom: alt_h,
-            application_space: GainMapColorSpace::Base,
-        }
+            UnsignedFraction::ZERO,
+            alt_h,
+            GainMapColorSpace::Base,
+        )
+    }
+
+    /// Construct a symmetric forward SDR-base → HDR-alternate parameter set with standard `1/64` offsets.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `max_boost_stops` is not finite and strictly positive (use [`try_symmetric`](Self::try_symmetric)
+    /// for untrusted inputs).
+    #[must_use]
+    pub fn symmetric(max_boost_stops: f32) -> Self {
+        Self::try_symmetric(max_boost_stops)
+            .expect("GainMapMetadata::symmetric requires finite max_boost_stops > 0.0")
     }
 
     /// Validate all exact rational invariants (`gamma > 0`, `min <= max`, `H_base != H_alt`).
@@ -1975,10 +2299,25 @@ impl GainMapMetadata {
             )
     }
 
-    /// Exact gain-map direction (`Forward` if `H_alt > H_base`, `Reverse` if `H_base > H_alt`), or `None` if equal.
+    /// Exact gain-map direction (`Forward` if `H_alt > H_base`, `Reverse` if `H_base > H_alt`),
+    /// honoring an explicit [`backward_direction`](Self::backward_direction) override when set.
     #[inline]
     #[must_use]
     pub const fn direction(self) -> Option<GainMapDirection> {
+        if let Some(backward) = self.backward_direction {
+            if matches!(
+                self.base_hdr_headroom
+                    .cmp_rational(self.alternate_hdr_headroom),
+                Ordering::Equal
+            ) {
+                return None;
+            }
+            return Some(if backward {
+                GainMapDirection::Reverse
+            } else {
+                GainMapDirection::Forward
+            });
+        }
         match self
             .base_hdr_headroom
             .cmp_rational(self.alternate_hdr_headroom)
@@ -2057,6 +2396,9 @@ pub enum ColorError {
     NarrowRangeRequiresInteger,
     /// Display-rendered HLG requires full-range BT.2020 RGB/RGBA.
     HlgDisplayRequiresBt2020Full,
+    /// Attached ICC profile is empty, has a disallowed profile class (DeviceLink/Abstract/NamedColor),
+    /// or its header data color space disagrees with the declared color model.
+    InvalidIccProfile,
 }
 
 impl fmt::Display for ColorError {
@@ -2074,6 +2416,9 @@ impl fmt::Display for ColorError {
             }
             Self::HlgDisplayRequiresBt2020Full => {
                 f.write_str("HLG display rendering requires full-range BT.2020 RGB/RGBA")
+            }
+            Self::InvalidIccProfile => {
+                f.write_str("ICC profile is empty, unsupported class, or mismatches color space")
             }
         }
     }

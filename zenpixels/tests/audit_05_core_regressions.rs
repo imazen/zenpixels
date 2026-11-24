@@ -7,10 +7,10 @@ extern crate alloc;
 use alloc::sync::Arc;
 
 use zenpixels::{
-    AlignedSamples, AlphaMode, BandedBuf, BitPacking, ColorSpace, DualLayerHdr, ExactDepth,
-    GainMapMetadata, HdrMetadata, HlgMode, IccColorSpace, ImageSpec, OwnedPlane, PixelBuf,
-    PixelSink, PixelSource, PixelStorage, PlanarBuf, PlanarView, PlaneRole, PlaneSpec, PlaneView,
-    RenderingIntent, SampleFacts, SampleLayout, SampleType, SignalRange, Transfer,
+    AlignedSamples, AlphaMode, BandedBuf, BitPacking, ColorSpace, DualLayerHdr, GainMapMetadata,
+    HdrMetadata, HlgMode, IccColorSpace, ImageSpec, OwnedPlane, PixelBuf, PixelSink, PixelSource,
+    PixelStorage, PlanarBuf, PlanarView, PlaneRole, PlaneSpec, PlaneView, RenderingIntent,
+    SampleFacts, SampleLayout, SampleType, SignalRange, Transfer,
 };
 
 #[test]
@@ -161,27 +161,21 @@ fn banded_buf_rejects_zero_band_bytes_and_tracks_facts_across_child_bands() {
     assert!(banded.bands().len() >= 2);
 
     // Attach facts via sink_finish -> propagates to parent AND child bands.
-    let facts = SampleFacts {
-        exact: ExactDepth {
-            all_opaque: true,
-            ..ExactDepth::default()
-        },
-        ..SampleFacts::NONE
-    };
+    let facts = SampleFacts::NONE.with_all_opaque(true);
     banded.sink_finish(facts, HdrMetadata::default());
-    assert!(banded.facts().exact.all_opaque);
-    assert!(banded.bands().iter().all(|b| b.facts().exact.all_opaque));
+    assert!(banded.facts().all_opaque);
+    assert!(banded.bands().iter().all(|b| b.facts().all_opaque));
 
     // Mutating row 2 via PixelSink::sink_row_mut must clear BOTH parent and mutated child band facts!
     let r = PixelSink::sink_row_mut(&mut banded, 2);
     r[3] = 0;
-    assert!(!banded.facts().exact.all_opaque);
+    assert!(!banded.facts().all_opaque);
     let mut y_acc = 0u32;
     for b in banded.bands() {
         let bh = b.height();
         if 2 >= y_acc && 2 < y_acc + bh {
             assert!(
-                !b.facts().exact.all_opaque,
+                !b.facts().all_opaque,
                 "child band containing mutated row 2 must have cleared facts"
             );
         }
@@ -312,9 +306,11 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
     assert_eq!(view.base().width(), 4);
     assert_eq!(view.gain_map().width(), 2);
     assert_eq!(view.orientation(), Orientation::Rotate90);
-    let (b, g, _m) = hdr.into_parts();
-    assert_eq!(b.height(), 4);
-    assert_eq!(g.height(), 2);
+    let parts = hdr.into_parts();
+    assert_eq!(parts.base.height(), 4);
+    assert_eq!(parts.gain_map.height(), 2);
+    assert_eq!(parts.orientation, Orientation::Rotate90);
+    assert!(parts.alternate_color_space.is_none());
 
     // Non-RGB/Gray/ICC base (CMYK) rejected; transfer-tagged gain map rejected; bitfields gain map rejected.
     let cmyk_base = PixelBuf::new(4, 4, ImageSpec::cmyk8(None)).unwrap();
@@ -427,11 +423,11 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
             "ProPhoto D50->D65 white sum={sum}"
         );
     }
-    assert_eq!(Transfer::Gamma(Gamma::DCI_2_6).to_cicp(), Some(17));
-    assert_eq!(
-        Transfer::from_cicp(17),
-        Some(Transfer::Gamma(Gamma::DCI_2_6))
-    );
+    // A01: H.273 TC17 (SMPTE ST 428-1 DCI Cinema) has 52.37/48 white scale inside the curve,
+    // distinct from pure Gamma::DCI_2_6 (power 2.6 with unit white).
+    assert_eq!(Transfer::DciCinema.to_cicp(), Some(17));
+    assert_eq!(Transfer::from_cicp(17), Some(Transfer::DciCinema));
+    assert_eq!(Transfer::Gamma(Gamma::DCI_2_6).to_cicp(), None);
     assert_eq!(Transfer::Gamma(Gamma::GAMMA_1_8).to_cicp(), None);
 
     // ColorSpace::Xyz & CMYKA validation + U32 20-bit Lsb packing.
