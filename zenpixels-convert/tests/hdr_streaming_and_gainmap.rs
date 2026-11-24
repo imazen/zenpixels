@@ -2,11 +2,17 @@
 //! measurement with ZERO full-image F32 temp buffer), `BandedBuf` parity,
 //! `DualLayerHdr` ISO 21496-1 gain map roundtrips, and YCbCr P010 reconstruction.
 
+#[cfg(any(
+    feature = "gainmap",
+    all(feature = "hdr-transfers", feature = "bt2446a")
+))]
+use zenpixels_convert::PixelBuf;
 use zenpixels_convert::{
-    BitPacking, ColorSpace, ConvertPolicy, DiffuseWhite, GainMapMetadata, ImageSpec, PixelBuf,
-    PlanarBuf, PlaneRole, PlaneSpec, Primaries, RowPlan, SampleType, SignalRange, Transfer,
-    YcbcrMatrix, apply_gain_map, extract_gain_map, ycbcr_to_rgb_f32,
+    BitPacking, ColorSpace, ConvertPolicy, ImageSpec, PlanarBuf, PlaneRole, PlaneSpec, Primaries,
+    RowPlan, SampleType, SignalRange, Transfer, YcbcrMatrix, ycbcr_to_rgb_f32,
 };
+#[cfg(feature = "gainmap")]
+use zenpixels_convert::{DiffuseWhite, GainMapMetadata, apply_gain_map, extract_gain_map};
 
 #[test]
 fn row_plan_convert_row_allocates_zero_bytes() {
@@ -119,6 +125,7 @@ fn hdr_to_sdr_measured_peak_streams_without_full_image_allocation_and_matches_ba
     );
 }
 
+#[cfg(feature = "gainmap")]
 #[test]
 fn dual_layer_hdr_gain_map_extract_and_apply_roundtrip() {
     let (w, h) = (16u32, 12u32);
@@ -217,6 +224,7 @@ fn ycbcr_p010_and_8bit_420_to_rgb_f32() {
     ));
 }
 
+#[cfg(feature = "gainmap")]
 #[test]
 fn gainmap_streaming_row_cache_efficiency_zero_alloc_and_banded_parity() {
     use enough::Unstoppable;
@@ -281,7 +289,7 @@ fn gainmap_streaming_row_cache_efficiency_zero_alloc_and_banded_parity() {
                 base.as_view().row(y),
                 |gy| {
                     fetches.set(fetches.get() + 1);
-                    gm_view.row(gy)
+                    Ok(gm_view.row(gy))
                 },
                 &mut dst,
             )
@@ -370,6 +378,7 @@ fn gainmap_streaming_row_cache_efficiency_zero_alloc_and_banded_parity() {
     }
 }
 
+#[cfg(feature = "gainmap")]
 #[test]
 fn gainmap_resampling_unit_weights_clamping_and_adversarial_guard() {
     use core::num::NonZeroU32;
@@ -523,6 +532,7 @@ fn gainmap_resampling_unit_weights_clamping_and_adversarial_guard() {
     }
 }
 
+#[cfg(feature = "gainmap")]
 #[test]
 fn gainmap_row_extractor_streaming_and_contract_33() {
     use zenpixels_convert::{GainMapExtractConfig, GainMapRowExtractor, SampleLayout};
@@ -586,6 +596,7 @@ fn gainmap_row_extractor_streaming_and_contract_33() {
     assert_eq!(rev_row[2], 0);
 }
 
+#[cfg(feature = "gainmap")]
 #[test]
 fn gainmap_extract_only_subsampling_content_fit_10bit_alternate_and_stop() {
     use enough::{Stop, StopReason, Unstoppable};
@@ -827,5 +838,483 @@ fn gainmap_extract_only_subsampling_content_fit_10bit_alternate_and_stop() {
     assert_eq!(
         *err_app.error(),
         ConvertError::Cancelled(StopReason::Cancelled)
+    );
+}
+
+#[cfg(feature = "gainmap")]
+#[test]
+fn gainmap_orientation_models_bake_passthrough_require_identity_and_dual_layer_rotate() {
+    use enough::Unstoppable;
+    use zenpixels_convert::{
+        AlphaMode, ConvertError, DualLayerHdr, GainMapApplier, GainMapApplyConfig,
+        GainMapOrientation, GainMapResample, Orientation, SampleLayout, apply_gain_map,
+        apply_gain_map_oriented, apply_orientation, bake_dual_layer_orientation, rotate_dual_layer,
+    };
+
+    // Asymmetric non-square 24x16 base + ¼-res 6x4 gain map with distinct spatial gradient so
+    // any misalignment, swapped axis, or wrong dihedral composition fails loudly!
+    let (w, h) = (24u32, 16u32);
+    let (gm_w, gm_h) = (6u32, 4u32);
+    let mut base = PixelBuf::new(w, h, ImageSpec::rgb8_srgb()).unwrap();
+    {
+        let mut bv = base.as_view_mut();
+        for y in 0..h {
+            let row = bv.row_mut(y);
+            for x in 0..w as usize {
+                row[x * 3] = (20 + x * 9) as u8;
+                row[x * 3 + 1] = (30 + y as usize * 13) as u8;
+                row[x * 3 + 2] = ((x * 5 + y as usize * 7) % 240) as u8;
+            }
+        }
+    }
+    let gm_spec = ImageSpec::new(
+        SampleLayout::GRAY8,
+        ColorSpace::Untagged {
+            channels: 1,
+            alpha: AlphaMode::None,
+        },
+    );
+    let mut gm = PixelBuf::new(gm_w, gm_h, gm_spec).unwrap();
+    {
+        let mut gv = gm.as_view_mut();
+        for y in 0..gm_h {
+            let row = gv.row_mut(y);
+            for (x, b) in row.iter_mut().enumerate() {
+                *b = (16 + x * 35 + y as usize * 40) as u8;
+            }
+        }
+    }
+    let meta = GainMapMetadata::symmetric(2.5);
+    let base_dual = DualLayerHdr::new(base, gm, meta).unwrap();
+
+    // 1. O(1) EXIF passthrough metadata rotate composes `then(delta)` on both owned & borrowed views.
+    let meta_rot = base_dual
+        .clone()
+        .rotate_metadata(Orientation::Rotate90)
+        .rotate_metadata(Orientation::FlipH);
+    assert_eq!(
+        meta_rot.orientation(),
+        Orientation::Rotate90.then(Orientation::FlipH)
+    );
+    assert_eq!(meta_rot.display_dimensions(), (h, w));
+    assert_eq!(
+        base_dual
+            .as_view()
+            .rotate_metadata(Orientation::Rotate270)
+            .display_dimensions(),
+        (h, w)
+    );
+
+    // 2. Test all 8 dihedral orientations across ALL orientation models!
+    let all_orients = [
+        Orientation::Identity,
+        Orientation::FlipH,
+        Orientation::FlipV,
+        Orientation::Rotate180,
+        Orientation::Transpose,
+        Orientation::Rotate90,
+        Orientation::Rotate270,
+        Orientation::Transverse,
+    ];
+    for orient in all_orients {
+        let dual = base_dual.clone().with_orientation(orient);
+        let view = dual.as_view();
+        let (ow, oh) = orient.output_dimensions(w, h);
+
+        // Model A: Passthrough -> stored-frame coordinates (zero transpose) + preserved pending orient.
+        let cfg_pass = GainMapApplyConfig::new(2.0)
+            .with_resample(GainMapResample::Bilinear)
+            .with_orientation(GainMapOrientation::Passthrough);
+        let (stored_buf, out_orient) =
+            apply_gain_map_oriented(&view, &cfg_pass, &Unstoppable).unwrap();
+        assert_eq!((stored_buf.width(), stored_buf.height()), (w, h));
+        assert_eq!(out_orient, orient);
+
+        // Streaming applier reports pending orientation faithfully.
+        let applier = GainMapApplier::for_view(&view, &cfg_pass).unwrap();
+        assert_eq!(applier.orientation(), orient);
+
+        // Model B: Bake (default) -> upright display dimensions + Orientation::Identity,
+        // 0-bit identical to apply_orientation(&stored_buf, orient)!
+        let cfg_bake = GainMapApplyConfig::new(2.0)
+            .with_resample(GainMapResample::Bilinear)
+            .with_orientation(GainMapOrientation::Bake);
+        let (baked_buf, baked_orient) =
+            apply_gain_map_oriented(&view, &cfg_bake, &Unstoppable).unwrap();
+        assert_eq!((baked_buf.width(), baked_buf.height()), (ow, oh));
+        assert_eq!(baked_orient, Orientation::Identity);
+
+        let expected_baked = apply_orientation(&stored_buf.as_view(), orient).unwrap();
+        for y in 0..oh {
+            assert_eq!(
+                baked_buf.as_view().row(y),
+                expected_baked.as_view().row(y),
+                "Bake mismatch vs Passthrough+orient for {orient:?} row {y}"
+            );
+        }
+
+        // High-level apply_gain_map defaults to Bake too!
+        let hl_baked = apply_gain_map(&dual, 2.0).unwrap();
+        assert_eq!((hl_baked.width(), hl_baked.height()), (ow, oh));
+        for y in 0..oh {
+            assert_eq!(hl_baked.as_view().row(y), baked_buf.as_view().row(y));
+        }
+
+        // Model C: RequireIdentity refuses non-Identity and accepts Identity.
+        let cfg_req =
+            GainMapApplyConfig::new(2.0).with_orientation(GainMapOrientation::RequireIdentity);
+        let req_res = apply_gain_map_oriented(&view, &cfg_req, &Unstoppable);
+        let app_res = GainMapApplier::for_view(&view, &cfg_req);
+        if orient == Orientation::Identity {
+            assert!(req_res.is_ok());
+            assert!(app_res.is_ok());
+        } else {
+            assert_eq!(
+                *req_res.unwrap_err().error(),
+                ConvertError::UnsupportedRoute
+            );
+            assert_eq!(
+                *app_res.unwrap_err().error(),
+                ConvertError::UnsupportedRoute
+            );
+        }
+
+        // Model D: Coordinated pixel baking of BOTH base + gain_map (`bake_dual_layer_orientation`)
+        // keeps subsampled ¼-res layers strictly aligned under pixel-center siting!
+        let dual_baked = bake_dual_layer_orientation(&view).unwrap();
+        assert_eq!(dual_baked.orientation(), Orientation::Identity);
+        assert_eq!(
+            (dual_baked.base().width(), dual_baked.base().height()),
+            (ow, oh)
+        );
+        let (gm_ow, gm_oh) = orient.output_dimensions(gm_w, gm_h);
+        assert_eq!(
+            (
+                dual_baked.gain_map().width(),
+                dual_baked.gain_map().height()
+            ),
+            (gm_ow, gm_oh)
+        );
+        let rec_from_baked = apply_gain_map(&dual_baked, 2.0).unwrap();
+        for y in 0..oh {
+            let r1 = baked_buf.as_view().row_as::<f32>(y).unwrap();
+            let r2 = rec_from_baked.as_view().row_as::<f32>(y).unwrap();
+            for (i, (&a, &b)) in r1.iter().zip(r2.iter()).enumerate() {
+                assert!(
+                    (a - b).abs() < 1e-4,
+                    "bake_dual_layer_orientation diverged from post-bake for {orient:?} row {y} idx {i}: {a} vs {b}"
+                );
+            }
+        }
+    }
+
+    // Model E: `rotate_dual_layer` composes pending orientation + additional delta physically!
+    let pre_rot = base_dual.clone().with_orientation(Orientation::Rotate90);
+    let phys_rot180 = rotate_dual_layer(&pre_rot.as_view(), Orientation::Rotate90).unwrap();
+    assert_eq!(phys_rot180.orientation(), Orientation::Identity);
+    assert_eq!(
+        (phys_rot180.base().width(), phys_rot180.base().height()),
+        (w, h)
+    );
+    let expected_180 = bake_dual_layer_orientation(
+        &base_dual
+            .clone()
+            .with_orientation(Orientation::Rotate180)
+            .as_view(),
+    )
+    .unwrap();
+    for y in 0..h {
+        assert_eq!(
+            phys_rot180.base().as_view().row(y),
+            expected_180.base().as_view().row(y)
+        );
+    }
+    for y in 0..gm_h {
+        assert_eq!(
+            phys_rot180.gain_map().as_view().row(y),
+            expected_180.gain_map().as_view().row(y)
+        );
+    }
+}
+
+#[cfg(feature = "gainmap")]
+#[test]
+fn gainmap_codex_p1_regressions_and_edge_cases() {
+    use core::num::NonZeroU32;
+    use enough::{Stop, StopReason, Unstoppable};
+    use zenpixels_convert::{
+        Accelerators, AlphaMode, ChannelOrder, ConvertError, DualLayerHdrView, GainMapApplier,
+        GainMapApplyConfig, GainMapChannels, GainMapColorSpace, GainMapComponent,
+        GainMapExtractConfig, GainMapResample, GainMapRowExtractor, GainMapTarget, Orientation,
+        SampleLayout, SignedFraction, UnsignedFraction, apply_gain_map_with,
+        gainmap::{signed_weight, signed_weight_for_target},
+    };
+
+    // P1 #1: Close distinct valid rationals (identical in f64) MUST NOT produce 0/0 = NaN,
+    // and ALL.with_gainmap() == SCALAR must stay 0-bit identical!
+    let close_meta = GainMapMetadata::try_new(
+        GainMapChannels::Shared(GainMapComponent {
+            min_gain_stops: SignedFraction::ZERO,
+            max_gain_stops: SignedFraction::new(2, NonZeroU32::new(1).unwrap()),
+            gamma: UnsignedFraction::ONE,
+            base_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
+            alternate_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
+        }),
+        UnsignedFraction::new(4_278_189_824, NonZeroU32::new(4_278_190_079).unwrap()),
+        UnsignedFraction::new(4_278_189_826, NonZeroU32::new(4_278_190_081).unwrap()),
+        GainMapColorSpace::Base,
+    )
+    .unwrap();
+    let w_at_1 = signed_weight(&close_meta, 1.0).unwrap();
+    assert!(w_at_1.is_finite() && w_at_1 == 1.0, "got {w_at_1}");
+    let w_at_0 = signed_weight(&close_meta, 0.0).unwrap();
+    assert!(w_at_0.is_finite() && w_at_0 == 0.0, "got {w_at_0}");
+    let w_at_base_f32 = signed_weight(&close_meta, close_meta.base_hdr_headroom.to_f32()).unwrap();
+    assert!(w_at_base_f32.is_finite(), "got {w_at_base_f32}");
+    assert_eq!(
+        signed_weight_for_target(&close_meta, GainMapTarget::AlternateRendition),
+        Some(1.0)
+    );
+    assert_eq!(
+        signed_weight_for_target(&close_meta, GainMapTarget::BaseRendition),
+        Some(0.0)
+    );
+
+    let base = PixelBuf::new(13, 5, ImageSpec::rgb8_srgb()).unwrap();
+    let gm_spec = ImageSpec::new(
+        SampleLayout::GRAY8,
+        ColorSpace::Untagged {
+            channels: 1,
+            alpha: AlphaMode::None,
+        },
+    );
+    let mut gm = PixelBuf::new(4, 3, gm_spec.clone()).unwrap();
+    gm.as_view_mut().row_mut(0).fill(200);
+    let dual = DualLayerHdrView::new(
+        base.as_view(),
+        gm.as_view(),
+        close_meta,
+        None,
+        Orientation::Identity,
+    )
+    .unwrap();
+    let out_s = apply_gain_map_with(
+        &dual,
+        &GainMapApplyConfig::alternate_rendition()
+            .with_policy(ConvertPolicy::working_linear().with_accelerators(Accelerators::SCALAR)),
+        &Unstoppable,
+    )
+    .unwrap();
+    let out_v = apply_gain_map_with(
+        &dual,
+        &GainMapApplyConfig::alternate_rendition().with_policy(
+            ConvertPolicy::working_linear().with_accelerators(Accelerators::ALL.with_gainmap()),
+        ),
+        &Unstoppable,
+    )
+    .unwrap();
+    for y in 0..5 {
+        assert_eq!(out_s.as_view().row(y), out_v.as_view().row(y));
+    }
+
+    // P1 #2: Short provider row returns Err(DimensionMismatch), provider Err propagates,
+    // and apply_into rejects mismatched base.source_spec()!
+    let mut applier = GainMapApplier::for_view(&dual, &GainMapApplyConfig::new(1.0)).unwrap();
+    let mut dst_row = vec![0u8; 13 * 12];
+    let short_err = applier
+        .apply_row_with_provider(
+            0,
+            base.as_view().row(0),
+            |_gy| Ok(&[0u8; 1][..]),
+            &mut dst_row,
+        )
+        .unwrap_err();
+    assert_eq!(*short_err.error(), ConvertError::DimensionMismatch);
+
+    let prop_err = applier
+        .apply_row_with_provider(
+            0,
+            base.as_view().row(0),
+            |_gy| Err(whereat::at(ConvertError::Cancelled(StopReason::Cancelled))),
+            &mut dst_row,
+        )
+        .unwrap_err();
+    assert_eq!(
+        *prop_err.error(),
+        ConvertError::Cancelled(StopReason::Cancelled)
+    );
+
+    let wrong_base = PixelBuf::new(13, 5, ImageSpec::bgr8_srgb()).unwrap();
+    let mut dst_buf = PixelBuf::new(13, 5, applier.dst_spec().clone()).unwrap();
+    let spec_err = applier
+        .apply_into(&wrong_base, &gm.as_view(), &mut dst_buf, &Unstoppable)
+        .unwrap_err();
+    assert_eq!(*spec_err.error(), ConvertError::DimensionMismatch);
+
+    // P1 #3: Extreme downscale (65536x1 -> 1x1) rejected cleanly with UnsupportedRoute (no DoS/truncation),
+    // and pre-cancelled Stop fails BEFORE allocating PixelBuf!
+    let huge_err = GainMapApplier::new(
+        ImageSpec::rgb8_srgb(),
+        1,
+        1,
+        gm_spec.clone(),
+        65_536,
+        1,
+        GainMapMetadata::symmetric(2.0),
+        None,
+        &GainMapApplyConfig::new(2.0).with_resample(GainMapResample::Bilinear),
+    )
+    .unwrap_err();
+    assert_eq!(*huge_err.error(), ConvertError::UnsupportedRoute);
+
+    struct AlwaysStop;
+    impl Stop for AlwaysStop {
+        fn check(&self) -> Result<(), StopReason> {
+            Err(StopReason::Cancelled)
+        }
+    }
+    let allocs = allocation_counter::measure(|| {
+        let err =
+            apply_gain_map_with(&dual, &GainMapApplyConfig::new(1.0), &AlwaysStop).unwrap_err();
+        assert_eq!(*err.error(), ConvertError::Cancelled(StopReason::Cancelled));
+    });
+    assert!(
+        allocs.bytes_max < 4096,
+        "pre-cancelled apply_gain_map_with allocated {} bytes before checking stop!",
+        allocs.bytes_max
+    );
+
+    // P1 #4: GainMapRowExtractor rejects F32, BGR, invalid bit packing, and mismatched lengths!
+    let mut ext1 = GainMapRowExtractor::from_config(
+        &GainMapExtractConfig::default()
+            .with_gain_range_stops(0.0, 4.0)
+            .with_headroom_stops(0.0, 4.0)
+            .with_offsets(0.0, 0.0),
+        Primaries::Bt709,
+    )
+    .unwrap();
+    let mut buf16 = [0u8; 16];
+    assert!(
+        ext1.encode_row_linear_f32(
+            &[0.5, 0.5, 0.5],
+            &[1.0, 1.0, 1.0],
+            3,
+            SampleLayout::GRAYF32,
+            &mut buf16
+        )
+        .is_err(),
+        "F32 gain map must be rejected by GainMapRowExtractor"
+    );
+    assert!(
+        ext1.encode_row_linear_f32(
+            &[0.5, 0.5, 0.5],
+            &[1.0, 1.0],
+            3,
+            SampleLayout::GRAY8,
+            &mut buf16
+        )
+        .is_err(),
+        "mismatched base/alt slice lengths must be rejected"
+    );
+    assert!(
+        ext1.encode_row_linear_f32(
+            &[0.5, 0.5, 0.5],
+            &[1.0, 1.0, 1.0],
+            3,
+            SampleLayout::GRAY8.with_packing(BitPacking::Lsb { bits: 0 }),
+            &mut buf16
+        )
+        .is_err(),
+        "0-bit packing must be rejected"
+    );
+    let mut ext3 = GainMapRowExtractor::from_config(
+        &GainMapExtractConfig::default().with_multi_channel(true),
+        Primaries::Bt709,
+    )
+    .unwrap();
+    assert!(
+        ext3.encode_row_linear_f32(
+            &[0.5, 0.5, 0.5],
+            &[1.0, 1.0, 1.0],
+            3,
+            SampleLayout::BGR8,
+            &mut buf16
+        )
+        .is_err(),
+        "BGR8 gain map order must be rejected"
+    );
+
+    // P1 #5: Near-black linear inputs (2^-22 -> 2^-21) and negative offsets extract exact stops!
+    let b_tiny = 2.0f32.powi(-22);
+    let a_tiny = 2.0f32.powi(-21);
+    let mut gm_out = [0u8; 1];
+    ext1.encode_row_linear_f32(
+        &[b_tiny, b_tiny, b_tiny],
+        &[a_tiny, a_tiny, a_tiny],
+        3,
+        SampleLayout::GRAY8,
+        &mut gm_out,
+    )
+    .unwrap();
+    // 1.0 stop / 4.0 stops * 255 = 63.75 -> 64 (would have been 0 with 1e-6 floor!)
+    assert!(
+        (i32::from(gm_out[0]) - 64).abs() <= 1,
+        "near-black 2^-22->2^-21 extracted code {}, expected ~64",
+        gm_out[0]
+    );
+
+    let mut ext_neg = GainMapRowExtractor::from_config(
+        &GainMapExtractConfig::default()
+            .with_gain_range_stops(0.0, 4.0)
+            .with_headroom_stops(0.0, 4.0)
+            .with_offsets(-0.1, -0.1),
+        Primaries::Bt709,
+    )
+    .unwrap();
+    // (1.7 - 0.1) / (0.5 - 0.1) = 1.6 / 0.4 = 4.0 -> +2.0 stops -> 128
+    ext_neg
+        .encode_row_linear_f32(
+            &[0.5, 0.5, 0.5],
+            &[1.7, 1.7, 1.7],
+            3,
+            SampleLayout::GRAY8,
+            &mut gm_out,
+        )
+        .unwrap();
+    assert!(
+        (i32::from(gm_out[0]) - 128).abs() <= 1,
+        "negative-offset extraction produced code {}, expected ~128",
+        gm_out[0]
+    );
+
+    // P2: AlphaMode::Opaque on 4-ch base + RGBF32 target succeeds under default AlphaPolicy::ForbidLoss!
+    let opaque_base =
+        PixelBuf::new(8, 4, ImageSpec::rgba8_srgb().with_alpha(AlphaMode::Opaque)).unwrap();
+    let opaque_dual = DualLayerHdrView::new(
+        opaque_base.as_view(),
+        gm.as_view(),
+        GainMapMetadata::symmetric(2.0),
+        None,
+        Orientation::Identity,
+    )
+    .unwrap();
+    let rgb_out = apply_gain_map_with(
+        &opaque_dual,
+        &GainMapApplyConfig::new(2.0).with_dst_spec(ImageSpec::rgbf32_linear()),
+        &Unstoppable,
+    )
+    .unwrap();
+    assert_eq!(rgb_out.spec().layout.order, ChannelOrder::Rgb);
+
+    // P2: Dynamic denominator avoids clamping values > 2147.48 in to_metadata().
+    let big_meta = GainMapExtractConfig::default()
+        .with_gain_range_stops(0.0, 3000.1)
+        .with_headroom_stops(0.0, 3000.1)
+        .to_metadata()
+        .unwrap();
+    assert!(
+        (big_meta.channel(0).max_gain_stops.to_f32() - 3000.1).abs() < 1e-2,
+        "expected ~3000.1, got {}",
+        big_meta.channel(0).max_gain_stops.to_f32()
     );
 }

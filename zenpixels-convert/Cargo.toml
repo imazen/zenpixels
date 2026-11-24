@@ -20,6 +20,7 @@ include = [
 features = [
     "oklab",
     "hdr-transfers",
+    "gainmap",
     "perceptual",
     "icc-db",
     "bt2446a",
@@ -31,11 +32,13 @@ features = [
 ]
 
 [features]
-default = ["std", "fast-transpose", "oklab", "hdr-transfers"]
+default = ["std", "fast-transpose", "oklab", "hdr-transfers", "gainmap"]
 # Oklab color-space conversions and OKLch soft gamut compression.
 oklab = []
 # PQ (SMPTE ST 2084) and HLG (ARIB STD-B67 + BT.2100 display rendering) transfers.
 hdr-transfers = []
+# ISO 21496-1 / UltraHDR dual-layer gain-map reconstruction, resampling, and extraction.
+gainmap = []
 # Perceptual / cylindrical color spaces (Oklch, CIE Lab/Lch, Jzazbz/Jzczhz, HSL, HSV).
 perceptual = ["oklab", "hdr-transfers"]
 # Committed CICP->ICC profile database (LZ4-compressed bundle).
@@ -92,4 +95,4 @@ required-features = ["cms-lcms", "cms-moxcms"]
 [[bench]]
 name = "bench_05_4k"
 harness = false
-required-features = ["oklab", "hdr-transfers", "bt2446a", "perceptual", "fast-transpose"]
+required-features = ["oklab", "hdr-transfers", "gainmap", "bt2446a", "perceptual", "fast-transpose"]

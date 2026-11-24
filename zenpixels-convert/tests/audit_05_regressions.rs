@@ -9,12 +9,11 @@ use std::sync::Arc;
 
 use zenpixels_convert::{
     Accelerators, AlphaMode, AlphaPolicy, BitPacking, ChannelOrder, Cicp, Color, ColorOrigin,
-    ColorSpace, ConvertError, ConvertPolicy, DepthPolicy, DiffuseWhite, DualLayerHdr, F16Sample,
-    FloatFacts, GainMapMetadata, GamutPolicy, ImagePlan, ImageSpec, Orientation, OutputPlan,
-    OutputProfile, PeakSource, PixelBuf, PlanarView, PlaneRole, PlaneSpec, PlaneView, Primaries,
-    RowPlan, SampleFacts, SampleLayout, SampleType, SignalRange, Transfer, YcbcrMatrix,
-    apply_gain_map, apply_orientation, apply_orientation_into, convert_buf, convert_into,
-    extract_gain_map, scan_facts, ycbcr_to_rgb_f32,
+    ColorSpace, ConvertError, ConvertPolicy, DepthPolicy, DiffuseWhite, F16Sample, FloatFacts,
+    GamutPolicy, ImagePlan, ImageSpec, Orientation, OutputPlan, OutputProfile, PeakSource,
+    PixelBuf, PlanarView, PlaneRole, PlaneSpec, PlaneView, Primaries, RowPlan, SampleFacts,
+    SampleLayout, SampleType, SignalRange, Transfer, YcbcrMatrix, apply_orientation,
+    apply_orientation_into, convert_buf, convert_into, scan_facts, ycbcr_to_rgb_f32,
 };
 
 #[test]
@@ -953,197 +952,201 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
     // 2. GainMap: preserves base DiffuseWhite, supports 3-ch & 1-ch extraction,
     // Reverse HDR-base signed weight, zero-weight identity bypass, negative offsets,
     // Alternate primaries, bit-packed Untagged gain map, and DualLayerHdrView!
-    use core::num::NonZeroU32;
-    use zenpixels_convert::{
-        GainMapChannels, GainMapColorSpace, GainMapComponent, SignedFraction, UnsignedFraction,
-        apply_gain_map_view,
-    };
+    #[cfg(feature = "gainmap")]
+    {
+        use core::num::NonZeroU32;
+        use zenpixels_convert::{
+            DualLayerHdr, GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapMetadata,
+            SignedFraction, UnsignedFraction, apply_gain_map, apply_gain_map_view,
+            extract_gain_map,
+        };
 
-    let base_spec = ImageSpec::rgb8_srgb().with_white(DiffuseWhite::new(100.0));
-    let sdr = PixelBuf::from_vec(vec![128u8, 128, 128, 200, 100, 50], 2, 1, base_spec).unwrap();
-    let mut hdr_raw = Vec::new();
-    for v in [0.5f32, 0.5, 0.5, 2.0, 0.5, 0.1] {
-        hdr_raw.extend_from_slice(&v.to_ne_bytes());
-    }
-    let hdr_buf = PixelBuf::from_bytes(hdr_raw, 2, 1, ImageSpec::rgbf32_linear()).unwrap();
-    let per_ch_meta = GainMapMetadata::try_new(
-        GainMapChannels::PerChannel([
-            GainMapComponent {
+        let base_spec = ImageSpec::rgb8_srgb().with_white(DiffuseWhite::new(100.0));
+        let sdr = PixelBuf::from_vec(vec![128u8, 128, 128, 200, 100, 50], 2, 1, base_spec).unwrap();
+        let mut hdr_raw = Vec::new();
+        for v in [0.5f32, 0.5, 0.5, 2.0, 0.5, 0.1] {
+            hdr_raw.extend_from_slice(&v.to_ne_bytes());
+        }
+        let hdr_buf = PixelBuf::from_bytes(hdr_raw, 2, 1, ImageSpec::rgbf32_linear()).unwrap();
+        let per_ch_meta = GainMapMetadata::try_new(
+            GainMapChannels::PerChannel([
+                GainMapComponent {
+                    min_gain_stops: SignedFraction::ZERO,
+                    max_gain_stops: SignedFraction::new(2, NonZeroU32::new(1).unwrap()),
+                    gamma: UnsignedFraction::ONE,
+                    base_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
+                    alternate_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
+                },
+                GainMapComponent {
+                    min_gain_stops: SignedFraction::new(-1, NonZeroU32::new(1).unwrap()),
+                    max_gain_stops: SignedFraction::new(3, NonZeroU32::new(1).unwrap()),
+                    gamma: UnsignedFraction::ONE,
+                    base_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
+                    alternate_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
+                },
+                GainMapComponent {
+                    min_gain_stops: SignedFraction::new(1, NonZeroU32::new(2).unwrap()),
+                    max_gain_stops: SignedFraction::new(4, NonZeroU32::new(1).unwrap()),
+                    gamma: UnsignedFraction::ONE,
+                    base_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
+                    alternate_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
+                },
+            ]),
+            UnsignedFraction::ZERO,
+            UnsignedFraction::new(2, NonZeroU32::new(1).unwrap()),
+            GainMapColorSpace::Base,
+        )
+        .unwrap();
+        let dual = extract_gain_map(&sdr.as_view(), &hdr_buf.as_view(), per_ch_meta).unwrap();
+        assert_eq!(dual.gain_map().spec().layout, SampleLayout::RGB8);
+        assert_eq!(dual.metadata(), per_ch_meta);
+
+        let applied = apply_gain_map(&dual, 1.0).unwrap();
+        assert_eq!(applied.spec().color.white(), Some(DiffuseWhite::new(100.0)));
+
+        // Witness A (P0): Reverse / HDR-base signed weight: H_base=2, H_alt=0, B=1.0, L=2.0 -> 0.25 / 0.5 / 1.0
+        let hdr_base = PixelBuf::from_bytes(
+            [1.0f32, 1.0, 1.0]
+                .iter()
+                .flat_map(|v| v.to_ne_bytes())
+                .collect(),
+            1,
+            1,
+            ImageSpec::rgbf32_linear(),
+        )
+        .unwrap();
+        let untagged_1 = ColorSpace::Untagged {
+            channels: 1,
+            alpha: AlphaMode::None,
+        };
+        let rev_gm = PixelBuf::from_vec(
+            vec![255u8], // code 255 -> L = max_gain_stops = +2.0
+            1,
+            1,
+            ImageSpec::new(SampleLayout::GRAY8, untagged_1.clone()),
+        )
+        .unwrap();
+        let rev_meta = GainMapMetadata::try_new(
+            GainMapChannels::Shared(GainMapComponent {
+                min_gain_stops: SignedFraction::ZERO,
+                max_gain_stops: SignedFraction::new(2, NonZeroU32::new(1).unwrap()),
+                gamma: UnsignedFraction::ONE,
+                base_offset: SignedFraction::ZERO,
+                alternate_offset: SignedFraction::ZERO,
+            }),
+            UnsignedFraction::new(2, NonZeroU32::new(1).unwrap()),
+            UnsignedFraction::ZERO,
+            GainMapColorSpace::Base,
+        )
+        .unwrap();
+        let rev_dual = DualLayerHdr::new(hdr_base, rev_gm, rev_meta).unwrap();
+        let at_h0 = apply_gain_map(&rev_dual, 0.0).unwrap();
+        let at_h1 = apply_gain_map(&rev_dual, 1.0).unwrap();
+        let at_h2 = apply_gain_map(&rev_dual, 2.0).unwrap();
+        assert!((at_h0.as_view().row_as::<f32>(0).unwrap()[0] - 0.25).abs() < 1e-5);
+        assert!((at_h1.as_view().row_as::<f32>(0).unwrap()[0] - 0.5).abs() < 1e-5);
+        assert!((at_h2.as_view().row_as::<f32>(0).unwrap()[0] - 1.0).abs() < 1e-5);
+
+        // Witness B (P0): Zero-weight exact identity bypass with unequal offsets & negative offsets!
+        let base_half = PixelBuf::from_bytes(
+            [0.5f32, 0.5, 0.5]
+                .iter()
+                .flat_map(|v| v.to_ne_bytes())
+                .collect(),
+            1,
+            1,
+            ImageSpec::rgbf32_linear(),
+        )
+        .unwrap();
+        let gm_10bit = PixelBuf::from_bytes(
+            (512u16).to_ne_bytes().to_vec(),
+            1,
+            1,
+            ImageSpec::new(
+                SampleLayout::GRAY16.with_packing(BitPacking::Lsb { bits: 10 }),
+                untagged_1.clone(),
+            ),
+        )
+        .unwrap();
+        let unequal_off_meta = GainMapMetadata::try_new(
+            GainMapChannels::Shared(GainMapComponent {
                 min_gain_stops: SignedFraction::ZERO,
                 max_gain_stops: SignedFraction::new(2, NonZeroU32::new(1).unwrap()),
                 gamma: UnsignedFraction::ONE,
                 base_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
-                alternate_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
-            },
-            GainMapComponent {
-                min_gain_stops: SignedFraction::new(-1, NonZeroU32::new(1).unwrap()),
-                max_gain_stops: SignedFraction::new(3, NonZeroU32::new(1).unwrap()),
-                gamma: UnsignedFraction::ONE,
-                base_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
-                alternate_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
-            },
-            GainMapComponent {
-                min_gain_stops: SignedFraction::new(1, NonZeroU32::new(2).unwrap()),
-                max_gain_stops: SignedFraction::new(4, NonZeroU32::new(1).unwrap()),
-                gamma: UnsignedFraction::ONE,
-                base_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
-                alternate_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
-            },
-        ]),
-        UnsignedFraction::ZERO,
-        UnsignedFraction::new(2, NonZeroU32::new(1).unwrap()),
-        GainMapColorSpace::Base,
-    )
-    .unwrap();
-    let dual = extract_gain_map(&sdr.as_view(), &hdr_buf.as_view(), per_ch_meta).unwrap();
-    assert_eq!(dual.gain_map().spec().layout, SampleLayout::RGB8);
-    assert_eq!(dual.metadata(), per_ch_meta);
-
-    let applied = apply_gain_map(&dual, 1.0).unwrap();
-    assert_eq!(applied.spec().color.white(), Some(DiffuseWhite::new(100.0)));
-
-    // Witness A (P0): Reverse / HDR-base signed weight: H_base=2, H_alt=0, B=1.0, L=2.0 -> 0.25 / 0.5 / 1.0
-    let hdr_base = PixelBuf::from_bytes(
-        [1.0f32, 1.0, 1.0]
-            .iter()
-            .flat_map(|v| v.to_ne_bytes())
-            .collect(),
-        1,
-        1,
-        ImageSpec::rgbf32_linear(),
-    )
-    .unwrap();
-    let untagged_1 = ColorSpace::Untagged {
-        channels: 1,
-        alpha: AlphaMode::None,
-    };
-    let rev_gm = PixelBuf::from_vec(
-        vec![255u8], // code 255 -> L = max_gain_stops = +2.0
-        1,
-        1,
-        ImageSpec::new(SampleLayout::GRAY8, untagged_1.clone()),
-    )
-    .unwrap();
-    let rev_meta = GainMapMetadata::try_new(
-        GainMapChannels::Shared(GainMapComponent {
-            min_gain_stops: SignedFraction::ZERO,
-            max_gain_stops: SignedFraction::new(2, NonZeroU32::new(1).unwrap()),
-            gamma: UnsignedFraction::ONE,
-            base_offset: SignedFraction::ZERO,
-            alternate_offset: SignedFraction::ZERO,
-        }),
-        UnsignedFraction::new(2, NonZeroU32::new(1).unwrap()),
-        UnsignedFraction::ZERO,
-        GainMapColorSpace::Base,
-    )
-    .unwrap();
-    let rev_dual = DualLayerHdr::new(hdr_base, rev_gm, rev_meta).unwrap();
-    let at_h0 = apply_gain_map(&rev_dual, 0.0).unwrap();
-    let at_h1 = apply_gain_map(&rev_dual, 1.0).unwrap();
-    let at_h2 = apply_gain_map(&rev_dual, 2.0).unwrap();
-    assert!((at_h0.as_view().row_as::<f32>(0).unwrap()[0] - 0.25).abs() < 1e-5);
-    assert!((at_h1.as_view().row_as::<f32>(0).unwrap()[0] - 0.5).abs() < 1e-5);
-    assert!((at_h2.as_view().row_as::<f32>(0).unwrap()[0] - 1.0).abs() < 1e-5);
-
-    // Witness B (P0): Zero-weight exact identity bypass with unequal offsets & negative offsets!
-    let base_half = PixelBuf::from_bytes(
-        [0.5f32, 0.5, 0.5]
-            .iter()
-            .flat_map(|v| v.to_ne_bytes())
-            .collect(),
-        1,
-        1,
-        ImageSpec::rgbf32_linear(),
-    )
-    .unwrap();
-    let gm_10bit = PixelBuf::from_bytes(
-        (512u16).to_ne_bytes().to_vec(),
-        1,
-        1,
-        ImageSpec::new(
-            SampleLayout::GRAY16.with_packing(BitPacking::Lsb { bits: 10 }),
-            untagged_1.clone(),
-        ),
-    )
-    .unwrap();
-    let unequal_off_meta = GainMapMetadata::try_new(
-        GainMapChannels::Shared(GainMapComponent {
-            min_gain_stops: SignedFraction::ZERO,
-            max_gain_stops: SignedFraction::new(2, NonZeroU32::new(1).unwrap()),
-            gamma: UnsignedFraction::ONE,
-            base_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
-            alternate_offset: SignedFraction::new(-1, NonZeroU32::new(32).unwrap()),
-        }),
-        UnsignedFraction::ZERO,
-        UnsignedFraction::new(2, NonZeroU32::new(1).unwrap()),
-        GainMapColorSpace::Base,
-    )
-    .unwrap();
-    let bypass_dual = DualLayerHdr::new(base_half, gm_10bit, unequal_off_meta).unwrap();
-    let at_zero = apply_gain_map_view(
-        &bypass_dual.as_view(),
-        0.0,
-        &ConvertPolicy::working_linear(),
-    )
-    .unwrap();
-    assert!(
-        (at_zero.as_view().row_as::<f32>(0).unwrap()[0] - 0.5).abs() < 1e-6,
-        "weight == 0 must return exact base 0.5 regardless of unequal/negative offsets!"
-    );
-
-    // Witness C (P0): GainMapColorSpace::Alternate converts to alternate primaries BEFORE gain,
-    // and rejects missing alternate_color_space!
-    let alt_meta = GainMapMetadata::try_new(
-        GainMapChannels::Shared(GainMapComponent {
-            min_gain_stops: SignedFraction::ZERO,
-            max_gain_stops: SignedFraction::new(1, NonZeroU32::new(1).unwrap()),
-            gamma: UnsignedFraction::ONE,
-            base_offset: SignedFraction::ZERO,
-            alternate_offset: SignedFraction::ZERO,
-        }),
-        UnsignedFraction::ZERO,
-        UnsignedFraction::new(1, NonZeroU32::new(1).unwrap()),
-        GainMapColorSpace::Alternate,
-    )
-    .unwrap();
-    let srgb_red = PixelBuf::from_bytes(
-        [1.0f32, 0.0, 0.0]
-            .iter()
-            .flat_map(|v| v.to_ne_bytes())
-            .collect(),
-        1,
-        1,
-        ImageSpec::rgbf32_linear(),
-    )
-    .unwrap();
-    let full_gm = PixelBuf::from_vec(
-        vec![255u8],
-        1,
-        1,
-        ImageSpec::new(SampleLayout::GRAY8, untagged_1),
-    )
-    .unwrap();
-    let alt_missing = DualLayerHdr::new(srgb_red.clone(), full_gm.clone(), alt_meta).unwrap();
-    assert!(
-        apply_gain_map(&alt_missing, 1.0).is_err(),
-        "GainMapColorSpace::Alternate without alternate_color_space must fail"
-    );
-    let alt_with_p3 = DualLayerHdr::new(srgb_red, full_gm, alt_meta)
-        .unwrap()
-        .with_alternate_color_space(ColorSpace::DISPLAY_P3)
+                alternate_offset: SignedFraction::new(-1, NonZeroU32::new(32).unwrap()),
+            }),
+            UnsignedFraction::ZERO,
+            UnsignedFraction::new(2, NonZeroU32::new(1).unwrap()),
+            GainMapColorSpace::Base,
+        )
         .unwrap();
-    let alt_out = apply_gain_map(&alt_with_p3, 1.0).unwrap();
-    assert!(matches!(
-        alt_out.spec().color,
-        ColorSpace::Rgb {
-            primaries: Primaries::DisplayP3,
-            transfer: Transfer::Linear,
-            ..
-        }
-    ));
-    let alt_px = alt_out.as_view().row_as::<f32>(0).unwrap();
-    // sRGB red (1,0,0) in Display P3 is ~(0.8225, 0.0332, 0.0171), times 2^1 = ~(1.645, 0.066, 0.034)
-    assert!((alt_px[0] - 1.645).abs() < 0.01 && alt_px[1] > 0.05);
+        let bypass_dual = DualLayerHdr::new(base_half, gm_10bit, unequal_off_meta).unwrap();
+        let at_zero = apply_gain_map_view(
+            &bypass_dual.as_view(),
+            0.0,
+            &ConvertPolicy::working_linear(),
+        )
+        .unwrap();
+        assert!(
+            (at_zero.as_view().row_as::<f32>(0).unwrap()[0] - 0.5).abs() < 1e-6,
+            "weight == 0 must return exact base 0.5 regardless of unequal/negative offsets!"
+        );
+
+        // Witness C (P0): GainMapColorSpace::Alternate converts to alternate primaries BEFORE gain,
+        // and rejects missing alternate_color_space!
+        let alt_meta = GainMapMetadata::try_new(
+            GainMapChannels::Shared(GainMapComponent {
+                min_gain_stops: SignedFraction::ZERO,
+                max_gain_stops: SignedFraction::new(1, NonZeroU32::new(1).unwrap()),
+                gamma: UnsignedFraction::ONE,
+                base_offset: SignedFraction::ZERO,
+                alternate_offset: SignedFraction::ZERO,
+            }),
+            UnsignedFraction::ZERO,
+            UnsignedFraction::new(1, NonZeroU32::new(1).unwrap()),
+            GainMapColorSpace::Alternate,
+        )
+        .unwrap();
+        let srgb_red = PixelBuf::from_bytes(
+            [1.0f32, 0.0, 0.0]
+                .iter()
+                .flat_map(|v| v.to_ne_bytes())
+                .collect(),
+            1,
+            1,
+            ImageSpec::rgbf32_linear(),
+        )
+        .unwrap();
+        let full_gm = PixelBuf::from_vec(
+            vec![255u8],
+            1,
+            1,
+            ImageSpec::new(SampleLayout::GRAY8, untagged_1),
+        )
+        .unwrap();
+        let alt_missing = DualLayerHdr::new(srgb_red.clone(), full_gm.clone(), alt_meta).unwrap();
+        assert!(
+            apply_gain_map(&alt_missing, 1.0).is_err(),
+            "GainMapColorSpace::Alternate without alternate_color_space must fail"
+        );
+        let alt_with_p3 = DualLayerHdr::new(srgb_red, full_gm, alt_meta)
+            .unwrap()
+            .with_alternate_color_space(ColorSpace::DISPLAY_P3)
+            .unwrap();
+        let alt_out = apply_gain_map(&alt_with_p3, 1.0).unwrap();
+        assert!(matches!(
+            alt_out.spec().color,
+            ColorSpace::Rgb {
+                primaries: Primaries::DisplayP3,
+                transfer: Transfer::Linear,
+                ..
+            }
+        ));
+        let alt_px = alt_out.as_view().row_as::<f32>(0).unwrap();
+        // sRGB red (1,0,0) in Display P3 is ~(0.8225, 0.0332, 0.0171), times 2^1 = ~(1.645, 0.066, 0.034)
+        assert!((alt_px[0] - 1.645).abs() < 0.01 && alt_px[1] > 0.05);
+    }
 
     // 3. Orient: reject color mismatch and handle 1x1 buffers without stride overflow.
     let p3_src = PixelBuf::from_vec(

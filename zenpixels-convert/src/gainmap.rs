@@ -1,42 +1,40 @@
-//! ISO 21496-1 / UltraHDR dual-layer gain-map reconstruction, resampling, and extraction.
+//! ISO 21496-1 / UltraHDR dual-layer gain-map reconstruction, resampling, orientation,
+//! and extraction.
 //!
 //! Subsumes pure ISO 21496-1 pixel math in `no_std + alloc`, `#![forbid(unsafe_code)]`
-//! with **0-bit `Accelerators::ALL == Accelerators::SCALAR` parity** and O(width) streaming
-//! memory:
+//! with **0-bit `Accelerators::ALL.with_gainmap() == Accelerators::SCALAR` parity** and
+//! O(width) streaming memory:
 //!
-//! - **Direction-complete ISO 21496-1:** exact rational headroom ordering supports both
-//!   **Forward** (SDR base → HDR alternate, `H_alt > H_base`) and **Reverse** (HDR base →
-//!   SDR alternate, `H_base > H_alt`) with signed weight, plus exact zero-weight identity
-//!   bypass (no map sampling or offset drift when `weight == 0`).
-//! - **Color-space & alpha complete:** handles `GainMapColorSpace::Base` and
-//!   `GainMapColorSpace::Alternate` (converting base into alternate linear primaries
-//!   *before* channelwise gain), ICC-described bases, arbitrary base/destination formats
-//!   (`RGBAF32`, `RGBAF16`, `RGB16` PQ/HLG, `RGBA8` sRGB, etc.) via fused [`RowPlan`],
-//!   and preserves base alpha untouched.
-//! - **Separable resampling (`zenresize` center-sited math):** [`GainMapResample::Bilinear`]
-//!   (ISO 21496-1 / Android Ultra HDR default), [`GainMapResample::Bicubic`] (Catmull-Rom),
-//!   [`GainMapResample::Mitchell`] (low-ringing Mitchell-Netravali), and
-//!   [`GainMapResample::Nearest`], with cached horizontally-upsampled gain rows so ¼-res
-//!   maps decode and horizontally filter each gain row only once.
-//! - **Fast paths with 0-bit parity:** 1:1 / `Nearest` U8 maps use an exact 256-entry LUT;
-//!   upsampled maps use SIMD vertical blending + portable `magemath::Expf` `exp2` + native
-//!   SIMD `deinterleave_{3,4}ch` combine.
-//! - **Streaming row workers & extraction:** [`GainMapApplier`] for pull/streaming decode,
-//!   [`GainMapRowExtractor`] for fused row-level encode (e.g. alongside a tone-map splitter),
-//!   and [`extract_gain_map_only`] supporting subsampling (`Box` area-average, `Bilinear`,
-//!   `Point`), 2-pass `content_fit` grid narrowing, 1-ch/3-ch, U8/U16/10-bit/12-bit maps,
-//!   and cooperative [`enough::Stop`] cancellation.
+//! - **Direction-complete ISO 21496-1:** exact `i128` rational headroom ordering supports
+//!   both **Forward** (SDR base → HDR alternate, `H_alt > H_base`) and **Reverse** (HDR base →
+//!   SDR alternate, `H_base > H_alt`) with signed weight, exact [`GainMapTarget::AlternateRendition`]
+//!   / [`GainMapTarget::BaseRendition`] endpoints, and zero-weight identity bypass.
+//! - **Multiple orientation models:**
+//!   - O(1) EXIF passthrough metadata rotate via [`DualLayerHdr::rotate_metadata`] /
+//!     [`DualLayerHdrView::rotate_metadata`] (zero pixel rebake, both layers kept aligned).
+//!   - Whole-image apply policy [`GainMapOrientation`] (`Bake` to upright display pixels,
+//!     `Passthrough` returning `(PixelBuf, Orientation)` with zero transpose via
+//!     [`apply_gain_map_oriented`], or `RequireIdentity`).
+//!   - Coordinated pixel-level dual-layer baking & rotation via [`bake_dual_layer_orientation`]
+//!     and [`rotate_dual_layer`] keeping `base` and `gain_map` strictly registered.
+//! - **Separable resampling (`zenresize` center-sited math):** [`GainMapResample::Bilinear`],
+//!   [`GainMapResample::Bicubic`], [`GainMapResample::Mitchell`], and [`GainMapResample::Nearest`],
+//!   with cached horizontally-upsampled gain rows and 8-element padded scratch rows so SIMD
+//!   kernels execute **pure SIMD-only loops** with zero scalar tails.
+//! - **Streaming row workers & extraction:** [`GainMapApplier`] for pull/streaming decode
+//!   with fallible row providers, [`GainMapRowExtractor`] for fused row-level encode, and
+//!   [`extract_gain_map_only`] supporting `Box` / `Bilinear` / `Point` downsampling,
+//!   2-pass `content_fit`, 1-ch/3-ch, U8/U16/10-bit/12-bit maps, and [`enough::Stop`].
 
-use alloc::vec;
 use alloc::vec::Vec;
 use core::num::NonZeroU32;
 use enough::{Stop, Unstoppable};
 use whereat::At;
 use zenpixels::{
-    AlphaMode, BitPacking, ColorSpace, DiffuseWhite, DualLayerHdr, DualLayerHdrView,
+    AlphaMode, BitPacking, ChannelOrder, ColorSpace, DiffuseWhite, DualLayerHdr, DualLayerHdrView,
     GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapDirection, GainMapMetadata,
-    HdrMetadata, ImageSpec, PixelBuf, PixelSink, PixelSource, PixelView, Primaries, SampleFacts,
-    SampleLayout, SampleType, SignalRange, SignedFraction, Transfer, UnsignedFraction,
+    HdrMetadata, ImageSpec, Orientation, PixelBuf, PixelSink, PixelSource, PixelView, Primaries,
+    SampleFacts, SampleLayout, SampleType, SignalRange, SignedFraction, Transfer, UnsignedFraction,
 };
 
 use crate::accel::{self, Accelerators};
@@ -45,6 +43,7 @@ use crate::gainmap_simd::{
     MAX_LOG2_GAIN, blend_rows_2_scalar, blend_rows_4_scalar, combine_linear_f32_scalar,
     decode_gain_1ch_scalar, exp2_gain_scalar,
 };
+use crate::orient;
 use crate::plan::RowPlan;
 use crate::policy::{AlphaPolicy, ConvertPolicy};
 
@@ -52,9 +51,52 @@ use crate::policy::{AlphaPolicy, ConvertPolicy};
 /// images never degenerate to a zero-width quantization range.
 pub const CONTENT_FIT_MIN_SPAN_STOPS: f32 = 1.0 / 16.0;
 
+/// Maximum resampling kernel taps allowed in [`GainMapApplier`] (covers unlimited upscaling
+/// and up to 32× Bilinear / 16× Bicubic gain-map downscaling while preventing cache DoS).
+const MAX_APPLY_RESAMPLE_TAPS: usize = 64;
+
+/// Maximum resampling kernel taps allowed in [`extract_gain_map_only`] (`GainMapDownsample::Bilinear`,
+/// covering every valid `scale_factor: u8` `1..=255`).
+const MAX_EXTRACT_RESAMPLE_TAPS: usize = 512;
+
+const INV_255: f32 = 1.0 / 255.0;
+
 // ---------------------------------------------------------------------------
-// Public math & boost helpers
+// Public math, target, orientation & boost helpers
 // ---------------------------------------------------------------------------
+
+/// Target display headroom or explicit rendition endpoint for ISO 21496-1 reconstruction.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum GainMapTarget {
+    /// Target display HDR headroom in log₂ stops (`0.0` = SDR, `2.0` = 4× HDR, `2.32` ≈ 5×).
+    HeadroomStops(f32),
+    /// Exact full alternate rendition (`signed_weight = +1.0` for Forward, `-1.0` for Reverse),
+    /// immune to floating-point rounding of `metadata.alternate_hdr_headroom`.
+    AlternateRendition,
+    /// Exact base rendition (`signed_weight = 0.0` identity bypass, skipping gain-map sampling
+    /// and additive offsets completely).
+    BaseRendition,
+}
+
+/// Policy controlling how pending EXIF [`Orientation`] on a [`DualLayerHdr`] /
+/// [`DualLayerHdrView`] is handled during whole-image gain-map reconstruction.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum GainMapOrientation {
+    /// Reconstruct in stored-frame coordinates (preserving exact subsampled gain-map alignment),
+    /// then physically apply `dual.orientation()` so the returned pixels are display-oriented
+    /// (`Orientation::Identity`). Default.
+    #[default]
+    Bake,
+    /// Reconstruct in stored-frame coordinates with **zero pixel transpose cost**, returning
+    /// the pending `dual.orientation()` alongside the buffer via [`apply_gain_map_oriented`]
+    /// for EXIF passthrough or GPU UV orientation.
+    Passthrough,
+    /// Refuse inputs whose pending orientation is not [`Orientation::Identity`]
+    /// (`ConvertError::UnsupportedRoute`).
+    RequireIdentity,
+}
 
 /// Convert a linear display boost ratio (e.g. `1.0` = SDR, `4.0` = 4× HDR) into
 /// ISO 21496-1 log₂ headroom stops (`0.0` for `<= 1.0` or non-finite).
@@ -69,16 +111,21 @@ pub fn display_boost_to_headroom_stops(display_boost: f32) -> f32 {
 }
 
 /// Full-reconstruction display headroom in log₂ stops (`metadata.alternate_hdr_headroom`).
+///
+/// Note: for guaranteed exact full alternate reconstruction (`|weight| == 1.0`) even when
+/// `alternate_hdr_headroom` is not exactly representable in `f32`, prefer
+/// [`GainMapApplyConfig::alternate_rendition`] / [`GainMapTarget::AlternateRendition`].
 #[inline]
 #[must_use]
 pub fn full_reconstruction_headroom_stops(metadata: &GainMapMetadata) -> f32 {
     metadata.alternate_hdr_headroom.to_f32()
 }
 
-/// Compute the ISO 21496-1 signed application weight for `display_headroom_stops`:
+/// Compute the ISO 21496-1 signed application weight for `display_headroom_stops` using
+/// exact `i128` rational cross-products (never divides by zero or yields `NaN` on close
+/// valid rationals):
 ///
-/// - Compares exact rational `base_hdr_headroom` vs `alternate_hdr_headroom`.
-/// - Returns `None` if `display_headroom_stops` is non-finite or headrooms are equal.
+/// - Returns `None` if `display_headroom_stops` is non-finite or `H_base == H_alt`.
 /// - Returns `0.0` at or beyond the base endpoint (`amount == 0.0`), signaling exact
 ///   base-rendition identity bypass.
 /// - Returns `sign(H_alt - H_base) * clamp((H - H_base) / (H_alt - H_base), 0, 1)`
@@ -90,10 +137,20 @@ pub fn signed_weight(metadata: &GainMapMetadata, display_headroom_stops: f32) ->
         return None;
     }
     let direction = metadata.direction()?;
-    let h_base = metadata.base_hdr_headroom.to_f64();
-    let h_alt = metadata.alternate_hdr_headroom.to_f64();
-    let amount =
-        ((f64::from(display_headroom_stops) - h_base) / (h_alt - h_base)).clamp(0.0, 1.0) as f32;
+    let hb_n = i128::from(metadata.base_hdr_headroom.num);
+    let hb_d = i128::from(metadata.base_hdr_headroom.den.get());
+    let ha_n = i128::from(metadata.alternate_hdr_headroom.num);
+    let ha_d = i128::from(metadata.alternate_hdr_headroom.den.get());
+
+    // Exact non-zero numerator of (H_alt - H_base) * (hb_d * ha_d):
+    //   (H - hb_n/hb_d) / (ha_n/ha_d - hb_n/hb_d)
+    // = ((H * hb_d - hb_n) * ha_d) / (ha_n * hb_d - hb_n * ha_d)
+    let span_num = ha_n * hb_d - hb_n * ha_d;
+    if span_num == 0 {
+        return None;
+    }
+    let num = (f64::from(display_headroom_stops) * (hb_d as f64) - (hb_n as f64)) * (ha_d as f64);
+    let amount = (num / (span_num as f64)).clamp(0.0, 1.0) as f32;
     if amount == 0.0 {
         return Some(0.0);
     }
@@ -103,18 +160,36 @@ pub fn signed_weight(metadata: &GainMapMetadata, display_headroom_stops: f32) ->
     })
 }
 
+/// Compute the signed application weight for any [`GainMapTarget`].
+#[inline]
+#[must_use]
+pub fn signed_weight_for_target(metadata: &GainMapMetadata, target: GainMapTarget) -> Option<f32> {
+    match target {
+        GainMapTarget::HeadroomStops(stops) => signed_weight(metadata, stops),
+        GainMapTarget::BaseRendition => {
+            metadata.direction()?;
+            Some(0.0)
+        }
+        GainMapTarget::AlternateRendition => Some(match metadata.direction()? {
+            GainMapDirection::Forward => 1.0,
+            GainMapDirection::Reverse => -1.0,
+        }),
+    }
+}
+
 // ---------------------------------------------------------------------------
-// Exact rational encoding helpers
+// Exact rational encoding helpers (dynamic denominator, zero silent clamp)
 // ---------------------------------------------------------------------------
 
+#[inline(never)]
 fn signed_fraction_from_f32(v: f32) -> SignedFraction {
     let v = if v.is_finite() { v } else { 0.0 };
     if v == 0.0 {
         return SignedFraction::ZERO;
     }
-    // Preserve exact binary fractions (e.g. 1/64, 1/2, 2.5, -1.25) cleanly.
+    let vf = f64::from(v);
     for den in [1u32, 2, 4, 8, 16, 32, 64, 128, 256, 1024] {
-        let scaled = f64::from(v) * f64::from(den);
+        let scaled = vf * f64::from(den);
         let rounded = libm::round(scaled);
         if (scaled - rounded).abs() <= 1e-7
             && rounded >= f64::from(i32::MIN)
@@ -123,33 +198,73 @@ fn signed_fraction_from_f32(v: f32) -> SignedFraction {
             return SignedFraction::new(rounded as i32, NonZeroU32::new(den).unwrap());
         }
     }
-    let den = 1_000_000u32;
-    let max_abs = (i32::MAX as f64) / f64::from(den);
-    let clamped = f64::from(v).clamp(-max_abs, max_abs);
-    SignedFraction::new(
-        libm::round(clamped * f64::from(den)) as i32,
-        NonZeroU32::new(den).unwrap(),
-    )
+    for den in [1_000_000u32, 100_000, 10_000, 1_000, 100, 10, 1] {
+        let max_abs = (i32::MAX as f64) / f64::from(den);
+        if vf.abs() <= max_abs || den == 1 {
+            let clamped = vf.clamp(-max_abs, max_abs);
+            return SignedFraction::new(
+                libm::round(clamped * f64::from(den)) as i32,
+                NonZeroU32::new(den).unwrap(),
+            );
+        }
+    }
+    SignedFraction::ZERO
 }
 
+#[inline(never)]
 fn unsigned_fraction_from_f32(v: f32) -> UnsignedFraction {
     let v = if v.is_finite() && v > 0.0 { v } else { 0.0 };
     if v == 0.0 {
         return UnsignedFraction::ZERO;
     }
+    let vf = f64::from(v);
     for den in [1u32, 2, 4, 8, 16, 32, 64, 128, 256, 1024] {
-        let scaled = f64::from(v) * f64::from(den);
+        let scaled = vf * f64::from(den);
         let rounded = libm::round(scaled);
         if (scaled - rounded).abs() <= 1e-7 && rounded >= 0.0 && rounded <= f64::from(u32::MAX) {
             return UnsignedFraction::new(rounded as u32, NonZeroU32::new(den).unwrap());
         }
     }
-    let den = 1_000_000u32;
-    let max_val = (u32::MAX as f64) / f64::from(den);
-    let clamped = f64::from(v).clamp(0.0, max_val);
-    UnsignedFraction::new(
-        libm::round(clamped * f64::from(den)) as u32,
-        NonZeroU32::new(den).unwrap(),
+    for den in [1_000_000u32, 100_000, 10_000, 1_000, 100, 10, 1] {
+        let max_val = (u32::MAX as f64) / f64::from(den);
+        if vf <= max_val || den == 1 {
+            let clamped = vf.clamp(0.0, max_val);
+            return UnsignedFraction::new(
+                libm::round(clamped * f64::from(den)) as u32,
+                NonZeroU32::new(den).unwrap(),
+            );
+        }
+    }
+    UnsignedFraction::ZERO
+}
+
+#[inline(never)]
+fn alloc_f32(n: usize) -> Result<Vec<f32>, At<ConvertError>> {
+    let mut v = Vec::new();
+    v.try_reserve_exact(n)
+        .map_err(|_| err_at(ConvertError::AllocationFailed))?;
+    v.resize(n, 0.0f32);
+    Ok(v)
+}
+
+#[inline]
+fn color_alpha_mode(color: &ColorSpace) -> AlphaMode {
+    match *color {
+        ColorSpace::Rgb { alpha, .. }
+        | ColorSpace::Gray { alpha, .. }
+        | ColorSpace::Icc { alpha, .. } => alpha,
+        _ => AlphaMode::None,
+    }
+}
+
+#[inline]
+fn is_valid_gain_map_order(order: ChannelOrder) -> bool {
+    matches!(
+        order,
+        ChannelOrder::Gray
+            | ChannelOrder::Rgb
+            | ChannelOrder::Generic(1)
+            | ChannelOrder::Generic(3)
     )
 }
 
@@ -213,101 +328,109 @@ fn eval_resample_kernel(mode: GainMapResample, x: f64) -> f64 {
     }
 }
 
-#[inline]
-fn resample_window(mode: GainMapResample) -> f64 {
-    match mode {
-        GainMapResample::Nearest => 0.5,
-        GainMapResample::Bilinear => 1.0,
-        GainMapResample::Bicubic | GainMapResample::Mitchell => 2.0,
-    }
-}
-
 /// Precomputed 1D separable resampling weights using `zenresize` pixel-center siting:
 /// `center = (out + 0.5) / scale - 0.5`, edge-clamped before kernel evaluation and
-/// normalized to exact unit sum in `f64`.
+/// normalized to exact unit sum. Single flat `weights_flat` allocation (zero `Vec<Vec<_>>`).
 #[derive(Clone, Debug)]
 struct AxisWeights {
     left: Vec<u32>,
     tap_counts: Vec<u16>,
     weights_flat: Vec<f32>,
+    weights_stride: usize,
     max_taps: usize,
 }
 
 impl AxisWeights {
-    fn try_new(in_size: u32, out_size: u32, mode: GainMapResample) -> Result<Self, ConvertError> {
+    #[inline(never)]
+    fn try_new(
+        in_size: u32,
+        out_size: u32,
+        mode: GainMapResample,
+        max_allowed_taps: usize,
+    ) -> Result<Self, ConvertError> {
         const WEIGHT_EPS: f64 = 2e-8;
         if in_size == 0 || out_size == 0 {
             return Err(ConvertError::DimensionMismatch);
         }
         let out_n = out_size as usize;
 
+        let mut left = Vec::new();
+        left.try_reserve_exact(out_n)
+            .map_err(|_| ConvertError::AllocationFailed)?;
+
         if mode == GainMapResample::Nearest {
-            let mut left = Vec::new();
-            left.try_reserve_exact(out_n)
-                .map_err(|_| ConvertError::AllocationFailed)?;
-            let mut tap_counts = Vec::new();
-            tap_counts
-                .try_reserve_exact(out_n)
-                .map_err(|_| ConvertError::AllocationFailed)?;
-            let mut weights_flat = Vec::new();
-            weights_flat
-                .try_reserve_exact(out_n)
-                .map_err(|_| ConvertError::AllocationFailed)?;
             let ratio = f64::from(in_size) / f64::from(out_size);
+            let max_in = i64::from(in_size - 1);
             for o in 0..out_size {
-                let idx = (libm::floor((f64::from(o) + 0.5) * ratio) as i64)
-                    .clamp(0, i64::from(in_size - 1)) as u32;
+                let idx =
+                    (libm::floor((f64::from(o) + 0.5) * ratio) as i64).clamp(0, max_in) as u32;
                 left.push(idx);
-                tap_counts.push(1);
-                weights_flat.push(1.0);
             }
             return Ok(Self {
                 left,
-                tap_counts,
-                weights_flat,
+                tap_counts: Vec::new(),
+                weights_flat: Vec::new(),
+                weights_stride: 1,
                 max_taps: 1,
             });
         }
 
         let scale = f64::from(out_size) / f64::from(in_size);
         let downscale = scale.min(1.0);
-        let eff_window = resample_window(mode) / downscale;
+        let base_win = match mode {
+            GainMapResample::Bilinear => 1.0,
+            GainMapResample::Bicubic | GainMapResample::Mitchell => 2.0,
+            GainMapResample::Nearest => 0.5,
+        };
+        let eff_window = base_win / downscale;
+        let raw_bound = (libm::ceil(2.0 * eff_window) as u64).saturating_add(2);
+        let stride_u64 = raw_bound.min(u64::from(in_size)).max(1);
+        if stride_u64 > max_allowed_taps as u64 {
+            return Err(ConvertError::UnsupportedRoute);
+        }
+        let weights_stride = stride_u64 as usize;
 
-        let mut all_left = Vec::new();
-        all_left
+        let mut tap_counts = Vec::new();
+        tap_counts
             .try_reserve_exact(out_n)
             .map_err(|_| ConvertError::AllocationFailed)?;
-        let mut all_counts = Vec::new();
-        all_counts
-            .try_reserve_exact(out_n)
+        let flat_len = out_n
+            .checked_mul(weights_stride)
+            .ok_or(ConvertError::AllocationFailed)?;
+        let mut weights_flat = Vec::new();
+        weights_flat
+            .try_reserve_exact(flat_len)
             .map_err(|_| ConvertError::AllocationFailed)?;
-        let mut all_weights: Vec<Vec<f64>> = Vec::new();
-        all_weights
-            .try_reserve_exact(out_n)
-            .map_err(|_| ConvertError::AllocationFailed)?;
+        weights_flat.resize(flat_len, 0.0f32);
 
-        let mut max_taps = 1usize;
         let mut tmp: Vec<f64> = Vec::new();
+        tmp.try_reserve_exact(weights_stride)
+            .map_err(|_| ConvertError::AllocationFailed)?;
+
+        let max_in = i64::from(in_size - 1);
+        let mut max_taps = 1usize;
 
         for o in 0..out_size {
             tmp.clear();
             let center = (f64::from(o) + 0.5) / scale - 0.5;
-            let left_edge = libm::ceil(center - eff_window - 1e-4) as i32;
-            let right_edge = libm::floor(center + eff_window + 1e-4) as i32;
-            let lp = left_edge.max(0) as u32;
-            let rp = right_edge.min(in_size as i32 - 1) as u32;
+            let left_edge = libm::ceil(center - eff_window - 1e-4) as i64;
+            let right_edge = libm::floor(center + eff_window + 1e-4) as i64;
+            let lp = left_edge.max(0);
+            let rp = right_edge.min(max_in);
 
-            let mut trimmed_left = lp;
+            let mut trimmed_left = lp.min(max_in) as u32;
             if lp <= rp {
                 let mut total = 0.0f64;
-                for inp in lp..=rp {
-                    let x = downscale * (f64::from(inp) - center);
+                let mut inp = lp;
+                while inp <= rp {
+                    let x = downscale * ((inp as f64) - center);
                     let mut w = eval_resample_kernel(mode, x);
                     if w.abs() <= WEIGHT_EPS {
                         w = 0.0;
                     }
                     tmp.push(w);
                     total += w;
+                    inp += 1;
                 }
                 if total != 0.0 {
                     let inv = 1.0 / total;
@@ -320,59 +443,56 @@ impl AxisWeights {
                 while tmp.last() == Some(&0.0) {
                     tmp.pop();
                 }
-                while tmp.first() == Some(&0.0) {
-                    tmp.remove(0);
-                    trimmed_left += 1;
+                let leading_zeros = tmp.iter().take_while(|&&w| w == 0.0).count();
+                if leading_zeros > 0 {
+                    tmp.drain(..leading_zeros);
+                    trimmed_left += leading_zeros as u32;
                 }
             }
             if tmp.is_empty() {
-                let nearest = (libm::round(center) as i64).clamp(0, i64::from(in_size - 1)) as u32;
+                let nearest = (libm::round(center) as i64).clamp(0, max_in) as u32;
                 trimmed_left = nearest;
                 tmp.push(1.0);
             }
+            if tmp.len() > weights_stride {
+                return Err(ConvertError::UnsupportedRoute);
+            }
             max_taps = max_taps.max(tmp.len());
-            all_left.push(trimmed_left);
-            all_counts.push(tmp.len().min(u16::MAX as usize) as u16);
-            all_weights.push(tmp.clone());
-        }
+            left.push(trimmed_left);
+            tap_counts.push(tmp.len() as u16);
 
-        let flat_len = out_n
-            .checked_mul(max_taps)
-            .ok_or(ConvertError::AllocationFailed)?;
-        let mut weights_flat = Vec::new();
-        weights_flat
-            .try_reserve_exact(flat_len)
-            .map_err(|_| ConvertError::AllocationFailed)?;
-        weights_flat.resize(flat_len, 0.0f32);
-
-        for (i, ws) in all_weights.iter().enumerate() {
-            let off = i * max_taps;
+            let off = (o as usize) * weights_stride;
             let mut sum = 0.0f32;
-            for (j, &w) in ws.iter().enumerate() {
+            for (j, &w) in tmp.iter().enumerate() {
                 let wf = w as f32;
                 weights_flat[off + j] = wf;
                 sum += wf;
             }
             if sum != 0.0 {
                 let inv = 1.0f32 / sum;
-                for v in &mut weights_flat[off..off + ws.len()] {
+                for v in &mut weights_flat[off..off + tmp.len()] {
                     *v *= inv;
                 }
             }
         }
 
         Ok(Self {
-            left: all_left,
-            tap_counts: all_counts,
+            left,
+            tap_counts,
             weights_flat,
+            weights_stride,
             max_taps,
         })
     }
 
     #[inline(always)]
     fn taps(&self, out_idx: usize) -> (u32, &[f32]) {
+        if self.tap_counts.is_empty() {
+            static ONE: [f32; 1] = [1.0];
+            return (self.left[out_idx], &ONE);
+        }
         let count = usize::from(self.tap_counts[out_idx]);
-        let off = out_idx * self.max_taps;
+        let off = out_idx * self.weights_stride;
         (self.left[out_idx], &self.weights_flat[off..off + count])
     }
 }
@@ -381,15 +501,22 @@ impl AxisWeights {
 // Apply configuration & streaming GainMapApplier
 // ---------------------------------------------------------------------------
 
-/// Configuration for ISO 21496-1 gain-map reconstruction via [`GainMapApplier`] or
-/// [`apply_gain_map_with`].
+/// Configuration for ISO 21496-1 gain-map reconstruction via [`GainMapApplier`],
+/// [`apply_gain_map_oriented`], or [`apply_gain_map_with`].
 #[derive(Clone, Debug)]
 pub struct GainMapApplyConfig {
-    /// Target display HDR headroom in log₂ stops (`0.0` = SDR, `2.0` = 4× HDR, `2.32` ≈ 5×).
-    pub display_headroom_stops: f32,
+    /// Target display HDR headroom in log₂ stops or explicit rendition endpoint.
+    pub target: GainMapTarget,
     /// Resampling kernel used when gain-map dimensions differ from base dimensions.
     pub resample: GainMapResample,
+    /// Pending EXIF orientation policy (`Bake`, `Passthrough`, or `RequireIdentity`).
+    pub orientation: GainMapOrientation,
     /// Conversion policy controlling SIMD [`Accelerators`], `sdr_white`, and CMS backends.
+    ///
+    /// Defaults to [`ConvertPolicy::working_linear`] (`accelerators: None`, respecting the
+    /// process-wide `accel::enable*` registry or scalar fallback for dead-stripping); override
+    /// via [`with_policy`](Self::with_policy) (e.g. `Accelerators::ALL.with_gainmap()` or
+    /// `Accelerators::WEB_SDR.with_gainmap()`).
     pub policy: ConvertPolicy,
     /// Optional target output [`ImageSpec`].
     ///
@@ -397,40 +524,76 @@ pub struct GainMapApplyConfig {
     ///   resolved gain-map application primaries.
     /// - `Some(spec)`: fuses conversion directly to `spec` (e.g. `RGBAF16`, `RGB16` PQ,
     ///   `RGB16` HLG, `RGBA8` sRGB, `DisplayP3`) in O(width) row memory with zero full-frame
-    ///   intermediate buffer!
+    ///   intermediate buffer.
     pub dst_spec: Option<ImageSpec>,
 }
 
 impl GainMapApplyConfig {
     /// Create a default configuration for `display_headroom_stops` (log₂ stops).
-    #[inline]
+    #[inline(always)]
     #[must_use]
     pub fn new(display_headroom_stops: f32) -> Self {
-        Self {
-            display_headroom_stops,
-            resample: GainMapResample::Bilinear,
-            policy: ConvertPolicy::working_linear(),
-            dst_spec: None,
-        }
+        Self::with_target_default(GainMapTarget::HeadroomStops(display_headroom_stops))
     }
 
     /// Create a configuration from a linear display boost ratio (e.g. `4.0` → `2.0` stops).
-    #[inline]
+    #[inline(always)]
     #[must_use]
     pub fn from_display_boost(display_boost: f32) -> Self {
         Self::new(display_boost_to_headroom_stops(display_boost))
     }
 
+    /// Create a configuration targeting exact full alternate reconstruction (`|weight| == 1.0`).
+    #[inline(always)]
+    #[must_use]
+    pub fn alternate_rendition() -> Self {
+        Self::with_target_default(GainMapTarget::AlternateRendition)
+    }
+
+    /// Create a configuration targeting exact base rendition bypass (`weight == 0.0`).
+    #[inline(always)]
+    #[must_use]
+    pub fn base_rendition() -> Self {
+        Self::with_target_default(GainMapTarget::BaseRendition)
+    }
+
+    #[inline(always)]
+    fn with_target_default(target: GainMapTarget) -> Self {
+        Self {
+            target,
+            resample: GainMapResample::Bilinear,
+            orientation: GainMapOrientation::Bake,
+            policy: ConvertPolicy::working_linear(),
+            dst_spec: None,
+        }
+    }
+
+    /// Replace the target headroom / rendition endpoint.
+    #[inline(always)]
+    #[must_use]
+    pub fn with_target(mut self, target: GainMapTarget) -> Self {
+        self.target = target;
+        self
+    }
+
     /// Select the gain-map resampling filter (`Bilinear`, `Bicubic`, `Mitchell`, `Nearest`).
-    #[inline]
+    #[inline(always)]
     #[must_use]
     pub fn with_resample(mut self, resample: GainMapResample) -> Self {
         self.resample = resample;
         self
     }
 
+    /// Select how pending EXIF orientation on [`DualLayerHdr`] / [`DualLayerHdrView`] is handled.
+    #[inline(always)]
+    #[must_use]
+    pub fn with_orientation(mut self, orientation: GainMapOrientation) -> Self {
+        self.orientation = orientation;
+        self
+    }
+
     /// Set the conversion policy (accelerators, `sdr_white`, CMS backend, HLG rendering).
-    #[inline]
+    #[inline(always)]
     #[must_use]
     pub fn with_policy(mut self, policy: ConvertPolicy) -> Self {
         self.policy = policy;
@@ -438,7 +601,7 @@ impl GainMapApplyConfig {
     }
 
     /// Fuse row conversion straight into `dst_spec` (e.g. `RGBAF16`, `RGB16` PQ, `RGBA8` sRGB).
-    #[inline]
+    #[inline(always)]
     #[must_use]
     pub fn with_dst_spec(mut self, dst_spec: ImageSpec) -> Self {
         self.dst_spec = Some(dst_spec);
@@ -446,37 +609,29 @@ impl GainMapApplyConfig {
     }
 }
 
-#[derive(Clone, Debug)]
-struct CachedHorizRow {
-    gm_y: u32,
-    valid: bool,
-    /// Planar horizontally-upsampled gain values: `[ch0: 0..base_w, ch1: ..., ch2: ...]`.
-    planes: Vec<f32>,
-}
-
 /// Reusable, O(width)-memory, row-streaming ISO 21496-1 gain-map reconstructor.
 ///
-/// Replaces `ultrahdr-core`'s `RowDecoder`, `StreamDecoder`, `GainMapLut`, `ShepardsLut`,
-/// and `apply_gain_row_*` with one unified, direction-complete, SIMD-accelerated engine:
-///
-/// - Handles Forward (SDR→HDR) and Reverse (HDR→SDR) gain maps via exact rational headroom
-///   ordering and signed weight.
-/// - Bypasses map sampling and offsets completely when `signed_weight == 0.0`.
-/// - Caches horizontally-upsampled gain rows across consecutive output scanlines so
-///   ¼-res maps decode and horizontally filter each gain row only once.
-/// - Fuses base decode (`base_to_app`) and optional destination encode (`app_to_dst`) in
-///   O(width) scratch memory.
+/// Operates in stored-frame coordinates (`base_w × base_h`) and exposes [`orientation`](Self::orientation)
+/// so streaming callers can pass pending EXIF orientation through or bake it after decode.
+/// All internal scratch rows are padded to a multiple of 8 (`w_pad`), allowing SIMD vertical
+/// blend, `exp2` gain decode, and linear RGB(A) combine kernels to run **pure SIMD-only loops**.
 #[derive(Clone, Debug)]
 pub struct GainMapApplier {
+    base_spec: ImageSpec,
     base_w: u32,
     base_h: u32,
+    w_pad: usize,
+    base_row_bytes: usize,
     gm_w: u32,
     gm_h: u32,
     gm_spec: ImageSpec,
+    gm_row_bytes: usize,
     gm_ch: usize,
     gm_max: [f32; 3],
     has_alpha: bool,
     dst_spec: ImageSpec,
+    dst_row_bytes: usize,
+    orientation: Orientation,
     accel: Accelerators,
 
     signed_weight: f32,
@@ -485,8 +640,8 @@ pub struct GainMapApplier {
     resample: GainMapResample,
     shared_meta: bool,
 
-    min_g: [f32; 3],
-    span_g: [f32; 3],
+    base_w_g: [f32; 3],
+    slope_w_g: [f32; 3],
     inv_gamma: [f32; 3],
     k_base: [f32; 3],
     k_alt: [f32; 3],
@@ -500,25 +655,210 @@ pub struct GainMapApplier {
 
     h_weights: Option<AxisWeights>,
     v_weights: Option<AxisWeights>,
-    cache: Vec<CachedHorizRow>,
+    /// Cached gain-map row index per slot (`u32::MAX` = empty/invalid).
+    cache_gm_y: Vec<u32>,
+    /// Flat cache storage: `[slot * gm_ch * w_pad + c * w_pad .. +w_pad]`, lanes `w..w_pad` zeroed.
+    cache_planes: Vec<f32>,
     cache_cursor: usize,
     v_slot_indices: Vec<usize>,
 
-    // Reusable O(width) row scratch buffers
+    // Flat O(w_pad) row scratch buffers (all multiples of 8 elements)
     base_lin_row: Vec<f32>,
     out_lin_row: Vec<f32>,
     gm_decode_scratch: Vec<f32>,
-    v_blend_planes: [Vec<f32>; 3],
-    gains_planes: [Vec<f32>; 3],
+    /// Flat vertically-blended gain samples: `[c * w_pad .. (c + 1) * w_pad]`.
+    v_blend: Vec<f32>,
+    /// Flat linear gain multipliers: `[c * w_pad .. (c + 1) * w_pad]`.
+    gains: Vec<f32>,
+}
+
+#[inline(never)]
+fn build_u8_gain_lut(
+    base_w_g: [f32; 3],
+    slope_w_g: [f32; 3],
+    inv_gamma: [f32; 3],
+) -> [[f32; 256]; 3] {
+    let mut lut = [[1.0f32; 256]; 3];
+    for c in 0..3 {
+        let unit_gamma = (inv_gamma[c] - 1.0).abs() < 1e-7;
+        for (i, slot) in lut[c].iter_mut().enumerate() {
+            let s = f32::from(i as u8) * INV_255;
+            let g = if unit_gamma || i == 0 || i == 255 {
+                s
+            } else {
+                libm::powf(s, inv_gamma[c])
+            };
+            let lg = base_w_g[c] + slope_w_g[c] * g;
+            *slot = exp2_gain_scalar(lg);
+        }
+    }
+    lut
+}
+
+#[cold]
+#[inline(never)]
+fn decode_gain_gamma_scalar(
+    samples: &[f32],
+    w: usize,
+    inv_gamma: f32,
+    base_w: f32,
+    slope_w: f32,
+    out_gains: &mut [f32],
+) {
+    for i in 0..w {
+        let raw = samples[i];
+        let s = if raw > 0.0 {
+            if raw < 1.0 { raw } else { 1.0 }
+        } else {
+            0.0
+        };
+        let g = if s == 0.0 || s == 1.0 {
+            s
+        } else {
+            libm::powf(s, inv_gamma)
+        };
+        out_gains[i] = exp2_gain_scalar(base_w + slope_w * g);
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn blend_rows_general(
+    cache_planes: &[f32],
+    slot_stride: usize,
+    ch_off: usize,
+    slots: &[usize],
+    ws: &[f32],
+    w: usize,
+    dst: &mut [f32],
+) {
+    dst[..w].fill(0.0);
+    for (t, &wt) in ws.iter().enumerate() {
+        let base = slots[t] * slot_stride + ch_off;
+        let sr = &cache_planes[base..base + w];
+        for (o, &v) in dst[..w].iter_mut().zip(sr.iter()) {
+            *o += v * wt;
+        }
+    }
+    for o in &mut dst[..w] {
+        *o = if *o > 0.0 {
+            if *o < 1.0 { *o } else { 1.0 }
+        } else {
+            0.0
+        };
+    }
+}
+
+struct ApplierScratch {
+    cache_gm_y: Vec<u32>,
+    cache_planes: Vec<f32>,
+    v_slot_indices: Vec<usize>,
+    base_lin_row: Vec<f32>,
+    out_lin_row: Vec<f32>,
+    gm_decode_scratch: Vec<f32>,
+    v_blend: Vec<f32>,
+    gains: Vec<f32>,
+}
+
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn alloc_applier_scratch(
+    w_pad: usize,
+    ch: usize,
+    gm_w: usize,
+    gm_ch: usize,
+    gains_ch: usize,
+    cache_slots: usize,
+    need_base_lin: bool,
+    need_out_lin: bool,
+    need_gm_decode: bool,
+    need_v_blend: bool,
+    need_gains: bool,
+) -> Result<ApplierScratch, At<ConvertError>> {
+    let row_floats_pad = w_pad
+        .checked_mul(ch)
+        .ok_or_else(|| err_at(ConvertError::DimensionMismatch))?;
+    let base_lin_row = if need_base_lin {
+        alloc_f32(row_floats_pad)?
+    } else {
+        Vec::new()
+    };
+    let out_lin_row = if need_out_lin {
+        alloc_f32(row_floats_pad)?
+    } else {
+        Vec::new()
+    };
+    let gm_decode_scratch = if need_gm_decode {
+        let len = gm_w
+            .checked_mul(gm_ch)
+            .ok_or_else(|| err_at(ConvertError::DimensionMismatch))?;
+        alloc_f32(len)?
+    } else {
+        Vec::new()
+    };
+
+    let mut cache_gm_y = Vec::new();
+    let mut cache_planes = Vec::new();
+    let mut v_slot_indices = Vec::new();
+    if cache_slots > 0 {
+        let total = cache_slots
+            .checked_mul(gm_ch)
+            .and_then(|v| v.checked_mul(w_pad))
+            .ok_or_else(|| err_at(ConvertError::DimensionMismatch))?;
+        cache_gm_y
+            .try_reserve_exact(cache_slots)
+            .map_err(|_| err_at(ConvertError::AllocationFailed))?;
+        cache_gm_y.resize(cache_slots, u32::MAX);
+        cache_planes = alloc_f32(total)?;
+        v_slot_indices
+            .try_reserve_exact(cache_slots)
+            .map_err(|_| err_at(ConvertError::AllocationFailed))?;
+        v_slot_indices.resize(cache_slots, 0);
+    }
+
+    let v_blend = if need_v_blend {
+        let len = gm_ch
+            .checked_mul(w_pad)
+            .ok_or_else(|| err_at(ConvertError::DimensionMismatch))?;
+        alloc_f32(len)?
+    } else {
+        Vec::new()
+    };
+    let gains = if need_gains {
+        let len = gains_ch
+            .checked_mul(w_pad)
+            .ok_or_else(|| err_at(ConvertError::DimensionMismatch))?;
+        alloc_f32(len)?
+    } else {
+        Vec::new()
+    };
+
+    Ok(ApplierScratch {
+        cache_gm_y,
+        cache_planes,
+        v_slot_indices,
+        base_lin_row,
+        out_lin_row,
+        gm_decode_scratch,
+        v_blend,
+        gains,
+    })
 }
 
 impl GainMapApplier {
     /// Construct a streaming applier directly from a validated [`DualLayerHdrView`].
+    ///
+    /// Rejects non-`Identity` orientation when `config.orientation == GainMapOrientation::RequireIdentity`.
     pub fn for_view(
         dual: &DualLayerHdrView<'_>,
         config: &GainMapApplyConfig,
     ) -> Result<Self, At<ConvertError>> {
-        Self::new(
+        if config.orientation == GainMapOrientation::RequireIdentity
+            && dual.orientation() != Orientation::Identity
+        {
+            return Err(err_at(ConvertError::UnsupportedRoute));
+        }
+        let mut applier = Self::new(
             dual.base().spec().clone(),
             dual.base().width(),
             dual.base().rows(),
@@ -528,10 +868,13 @@ impl GainMapApplier {
             dual.metadata(),
             dual.alternate_color_space(),
             config,
-        )
+        )?;
+        applier.orientation = dual.orientation();
+        Ok(applier)
     }
 
     /// Construct a streaming applier from explicit layer specs, dimensions, and metadata.
+    #[inline(never)]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         base_spec: ImageSpec,
@@ -544,19 +887,18 @@ impl GainMapApplier {
         alternate_color_space: Option<&ColorSpace>,
         config: &GainMapApplyConfig,
     ) -> Result<Self, At<ConvertError>> {
+        // Phase 1: Pure validation & scalar math BEFORE allocating any `Vec` or `RowPlan`
+        // (eliminates per-`?` drop-glue ladders for `RowPlan` & scratch vectors).
         if base_w == 0 || base_h == 0 || gm_w == 0 || gm_h == 0 {
             return Err(err_at(ConvertError::DimensionMismatch));
         }
-        base_spec
-            .validate()
-            .map_err(|e| err_at((*e.error()).into()))?;
         gm_spec
             .validate()
             .map_err(|e| err_at((*e.error()).into()))?;
         if !metadata.is_valid() {
             return Err(err_at(ConvertError::UnsupportedRoute));
         }
-        let sw = signed_weight(&metadata, config.display_headroom_stops)
+        let sw = signed_weight_for_target(&metadata, config.target)
             .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
         validate_gain_map_spec(&gm_spec)?;
 
@@ -579,8 +921,90 @@ impl GainMapApplier {
             }
         };
 
+        let mut base_w_g = [0.0f32; 3];
+        let mut slope_w_g = [0.0f32; 3];
+        let mut inv_gamma = [1.0f32; 3];
+        let mut k_base = [0.0f32; 3];
+        let mut k_alt = [0.0f32; 3];
+        for c in 0..3 {
+            let comp = metadata.channel(c);
+            let min_g = comp.min_gain_stops.to_f32();
+            let span_g = comp.max_gain_stops.to_f32() - min_g;
+            base_w_g[c] = min_g * sw;
+            slope_w_g[c] = span_g * sw;
+            inv_gamma[c] = 1.0 / comp.gamma.to_f32();
+            k_base[c] = comp.base_offset.to_f32();
+            k_alt[c] = comp.alternate_offset.to_f32();
+            if !base_w_g[c].is_finite()
+                || !slope_w_g[c].is_finite()
+                || !inv_gamma[c].is_finite()
+                || !k_base[c].is_finite()
+                || !k_alt[c].is_finite()
+            {
+                return Err(err_at(ConvertError::UnsupportedRoute));
+            }
+        }
+
         let has_alpha = base_spec.layout.order.has_alpha_slot();
         let ch = if has_alpha { 4usize } else { 3usize };
+        let w_usize = base_w as usize;
+        let w_pad = w_usize
+            .checked_next_multiple_of(8)
+            .ok_or_else(|| err_at(ConvertError::DimensionMismatch))?;
+        let base_row_bytes = w_usize
+            .checked_mul(base_spec.layout.bytes_per_pixel())
+            .ok_or_else(|| err_at(ConvertError::DimensionMismatch))?;
+        let gm_row_bytes = (gm_w as usize)
+            .checked_mul(gm_spec.layout.bytes_per_pixel())
+            .ok_or_else(|| err_at(ConvertError::DimensionMismatch))?;
+        let dst_bpp = config
+            .dst_spec
+            .as_ref()
+            .map_or(ch * 4, |t| t.layout.bytes_per_pixel());
+        let dst_row_bytes = w_usize
+            .checked_mul(dst_bpp)
+            .ok_or_else(|| err_at(ConvertError::DimensionMismatch))?;
+
+        let gm_layout = gm_spec.layout;
+        let gm_ch = gm_layout.channels();
+        let gm_max = [
+            gm_layout.packing.max_code(gm_layout.sample, 0).max(1) as f32,
+            gm_layout.packing.max_code(gm_layout.sample, 1).max(1) as f32,
+            gm_layout.packing.max_code(gm_layout.sample, 2).max(1) as f32,
+        ];
+        let shared_meta = matches!(metadata.channels, GainMapChannels::Shared(_));
+        let same_size = base_w == gm_w && base_h == gm_h;
+        let is_zero_weight = sw == 0.0;
+        let use_u8_lut = !is_zero_weight
+            && gm_layout.sample == SampleType::U8
+            && gm_layout.packing.is_full()
+            && (same_size || config.resample == GainMapResample::Nearest);
+
+        // Phase 2: Build resampling weights (before `RowPlan`s so errors don't emit RowPlan drops).
+        let (h_weights, v_weights, cache_slots) = if is_zero_weight || same_size {
+            (None, None, 0usize)
+        } else {
+            let mode = if use_u8_lut {
+                GainMapResample::Nearest
+            } else {
+                config.resample
+            };
+            let hw = AxisWeights::try_new(gm_w, base_w, mode, MAX_APPLY_RESAMPLE_TAPS)
+                .map_err(err_at)?;
+            let vw = AxisWeights::try_new(gm_h, base_h, mode, MAX_APPLY_RESAMPLE_TAPS)
+                .map_err(err_at)?;
+            let slots = if use_u8_lut { 0 } else { vw.max_taps.max(1) };
+            (Some(hw), Some(vw), slots)
+        };
+
+        // Phase 3: Build `RowPlan`s (`RowPlan::build` validates `base_spec` & `dst_spec`).
+        let app_alpha = if !has_alpha {
+            AlphaMode::None
+        } else if color_alpha_mode(&base_spec.color) == AlphaMode::Opaque {
+            AlphaMode::Opaque
+        } else {
+            AlphaMode::Straight
+        };
         let app_spec = ImageSpec::new(
             if has_alpha {
                 SampleLayout::RGBAF32
@@ -591,24 +1015,19 @@ impl GainMapApplier {
                 primaries: app_primaries,
                 transfer: Transfer::Linear,
                 range: SignalRange::Full,
-                alpha: if has_alpha {
-                    AlphaMode::Straight
-                } else {
-                    AlphaMode::None
-                },
+                alpha: app_alpha,
                 white: Some(base_white),
             },
         );
-
         let mut row_pol = config.policy.clone();
         row_pol.sdr_white = Some(base_white);
         let accel = accel::resolve(row_pol.accelerators);
 
         let base_to_app = RowPlan::build(base_spec.clone(), app_spec.clone(), &row_pol, None)?;
         let (dst_spec, app_to_dst, zero_weight_direct) = if let Some(target) = &config.dst_spec {
-            let a2d = RowPlan::build(app_spec.clone(), target.clone(), &row_pol, None)?;
-            let direct = if sw == 0.0 {
-                RowPlan::build(base_spec, target.clone(), &row_pol, None).ok()
+            let a2d = RowPlan::build(app_spec, target.clone(), &row_pol, None)?;
+            let direct = if is_zero_weight {
+                RowPlan::build(base_spec.clone(), target.clone(), &row_pol, None).ok()
             } else {
                 None
             };
@@ -617,188 +1036,51 @@ impl GainMapApplier {
             (app_spec, None, None)
         };
 
-        let gm_layout = gm_spec.layout;
-        let gm_ch = gm_layout.channels();
-        let gm_max = [
-            gm_layout.packing.max_code(gm_layout.sample, 0).max(1) as f32,
-            gm_layout.packing.max_code(gm_layout.sample, 1).max(1) as f32,
-            gm_layout.packing.max_code(gm_layout.sample, 2).max(1) as f32,
-        ];
-
-        let mut min_g = [0.0f32; 3];
-        let mut span_g = [0.0f32; 3];
-        let mut inv_gamma = [1.0f32; 3];
-        let mut k_base = [0.0f32; 3];
-        let mut k_alt = [0.0f32; 3];
-        for c in 0..3 {
-            let comp = metadata.channel(c);
-            min_g[c] = comp.min_gain_stops.to_f32();
-            span_g[c] = comp.max_gain_stops.to_f32() - min_g[c];
-            inv_gamma[c] = 1.0 / comp.gamma.to_f32();
-            k_base[c] = comp.base_offset.to_f32();
-            k_alt[c] = comp.alternate_offset.to_f32();
-        }
-        let shared_meta = matches!(metadata.channels, GainMapChannels::Shared(_));
-        let same_size = base_w == gm_w && base_h == gm_h;
-        let is_zero_weight = sw == 0.0;
-
-        // Exact 256-entry LUT for full-packing U8 gain maps when no fractional sample
-        // interpolation is performed (1:1 same-size OR Nearest resampling).
-        let use_u8_lut = !is_zero_weight
-            && gm_layout.sample == SampleType::U8
-            && gm_layout.packing.is_full()
-            && (same_size || config.resample == GainMapResample::Nearest);
+        // Phase 4: Single out-of-line flat scratch allocation + optional U8 LUT.
+        let gains_ch = if gm_ch == 3 || !shared_meta { 3 } else { 1 };
+        let scratch = alloc_applier_scratch(
+            w_pad,
+            ch,
+            gm_w as usize,
+            gm_ch,
+            gains_ch,
+            cache_slots,
+            !(is_zero_weight && zero_weight_direct.is_some()),
+            !is_zero_weight && (app_to_dst.is_some() || w_pad != w_usize),
+            !is_zero_weight && !use_u8_lut,
+            !is_zero_weight && !use_u8_lut,
+            !is_zero_weight,
+        )?;
         let u8_gain_lut = if use_u8_lut {
-            let mut lut = [[1.0f32; 256]; 3];
-            for c in 0..3 {
-                let unit_gamma = (inv_gamma[c] - 1.0).abs() < 1e-7;
-                for (i, slot) in lut[c].iter_mut().enumerate() {
-                    let s = (i as f32) / 255.0;
-                    let g = if unit_gamma || i == 0 || i == 255 {
-                        s
-                    } else {
-                        libm::powf(s, inv_gamma[c])
-                    };
-                    let lg = ((min_g[c] + span_g[c] * g) * sw).clamp(-MAX_LOG2_GAIN, MAX_LOG2_GAIN);
-                    *slot = exp2_gain_scalar(lg);
-                }
-            }
-            Some(lut)
+            Some(build_u8_gain_lut(base_w_g, slope_w_g, inv_gamma))
         } else {
             None
         };
 
-        let (h_weights, v_weights, cache_slots) = if is_zero_weight || same_size {
-            (None, None, 0usize)
-        } else if use_u8_lut {
-            // Nearest U8 LUT needs only index mapping, zero float row cache!
-            let hw =
-                AxisWeights::try_new(gm_w, base_w, GainMapResample::Nearest).map_err(err_at)?;
-            let vw =
-                AxisWeights::try_new(gm_h, base_h, GainMapResample::Nearest).map_err(err_at)?;
-            (Some(hw), Some(vw), 0usize)
-        } else {
-            let hw = AxisWeights::try_new(gm_w, base_w, config.resample).map_err(err_at)?;
-            let vw = AxisWeights::try_new(gm_h, base_h, config.resample).map_err(err_at)?;
-            let slots = vw.max_taps.max(1);
-            (Some(hw), Some(vw), slots)
-        };
-
-        let w_usize = base_w as usize;
-        let row_floats = w_usize
-            .checked_mul(ch)
-            .ok_or_else(|| err_at(ConvertError::DimensionMismatch))?;
-
-        let alloc_f32 = |n: usize| -> Result<Vec<f32>, At<ConvertError>> {
-            let mut v = Vec::new();
-            v.try_reserve_exact(n)
-                .map_err(|_| err_at(ConvertError::AllocationFailed))?;
-            v.resize(n, 0.0f32);
-            Ok(v)
-        };
-
-        let base_lin_row = if is_zero_weight && zero_weight_direct.is_some() {
-            Vec::new()
-        } else {
-            alloc_f32(row_floats)?
-        };
-        let out_lin_row = if app_to_dst.is_some() && !is_zero_weight {
-            alloc_f32(row_floats)?
-        } else {
-            Vec::new()
-        };
-
-        let gm_decode_len = if is_zero_weight || use_u8_lut {
-            0
-        } else {
-            (gm_w as usize)
-                .checked_mul(gm_ch)
-                .ok_or_else(|| err_at(ConvertError::DimensionMismatch))?
-        };
-        let gm_decode_scratch = if gm_decode_len > 0 {
-            alloc_f32(gm_decode_len)?
-        } else {
-            Vec::new()
-        };
-
-        let mut cache = Vec::new();
-        let mut v_slot_indices = Vec::new();
-        if cache_slots > 0 {
-            let plane_len = w_usize
-                .checked_mul(gm_ch)
-                .ok_or_else(|| err_at(ConvertError::DimensionMismatch))?;
-            cache
-                .try_reserve_exact(cache_slots)
-                .map_err(|_| err_at(ConvertError::AllocationFailed))?;
-            for _ in 0..cache_slots {
-                cache.push(CachedHorizRow {
-                    gm_y: u32::MAX,
-                    valid: false,
-                    planes: alloc_f32(plane_len)?,
-                });
-            }
-            v_slot_indices
-                .try_reserve_exact(cache_slots)
-                .map_err(|_| err_at(ConvertError::AllocationFailed))?;
-            v_slot_indices.resize(cache_slots, 0);
-        }
-
-        let need_sample_planes = !is_zero_weight && !use_u8_lut;
-        let v_blend_planes = [
-            if need_sample_planes {
-                alloc_f32(w_usize)?
-            } else {
-                Vec::new()
-            },
-            if need_sample_planes && gm_ch == 3 {
-                alloc_f32(w_usize)?
-            } else {
-                Vec::new()
-            },
-            if need_sample_planes && gm_ch == 3 {
-                alloc_f32(w_usize)?
-            } else {
-                Vec::new()
-            },
-        ];
-
-        let need_3_gains = gm_ch == 3 || !shared_meta;
-        let gains_planes = [
-            if !is_zero_weight {
-                alloc_f32(w_usize)?
-            } else {
-                Vec::new()
-            },
-            if !is_zero_weight && need_3_gains {
-                alloc_f32(w_usize)?
-            } else {
-                Vec::new()
-            },
-            if !is_zero_weight && need_3_gains {
-                alloc_f32(w_usize)?
-            } else {
-                Vec::new()
-            },
-        ];
-
         Ok(Self {
+            base_spec,
             base_w,
             base_h,
+            w_pad,
+            base_row_bytes,
             gm_w,
             gm_h,
             gm_spec,
+            gm_row_bytes,
             gm_ch,
             gm_max,
             has_alpha,
             dst_spec,
+            dst_row_bytes,
+            orientation: Orientation::Identity,
             accel,
             signed_weight: sw,
             is_zero_weight,
             same_size,
             resample: config.resample,
             shared_meta,
-            min_g,
-            span_g,
+            base_w_g,
+            slope_w_g,
             inv_gamma,
             k_base,
             k_alt,
@@ -808,22 +1090,31 @@ impl GainMapApplier {
             zero_weight_direct,
             h_weights,
             v_weights,
-            cache,
+            cache_gm_y: scratch.cache_gm_y,
+            cache_planes: scratch.cache_planes,
             cache_cursor: 0,
-            v_slot_indices,
-            base_lin_row,
-            out_lin_row,
-            gm_decode_scratch,
-            v_blend_planes,
-            gains_planes,
+            v_slot_indices: scratch.v_slot_indices,
+            base_lin_row: scratch.base_lin_row,
+            out_lin_row: scratch.out_lin_row,
+            gm_decode_scratch: scratch.gm_decode_scratch,
+            v_blend: scratch.v_blend,
+            gains: scratch.gains,
         })
     }
 
-    /// Output [`ImageSpec`] produced by this applier.
+    /// Output [`ImageSpec`] produced by this applier (in stored-frame coordinates).
     #[inline]
     #[must_use]
     pub fn dst_spec(&self) -> &ImageSpec {
         &self.dst_spec
+    }
+
+    /// Pending EXIF [`Orientation`] captured from [`DualLayerHdrView`] (`Orientation::Identity`
+    /// when constructed directly via [`GainMapApplier::new`]).
+    #[inline]
+    #[must_use]
+    pub const fn orientation(&self) -> Orientation {
+        self.orientation
     }
 
     /// Signed ISO 21496-1 application weight (`0.0` = exact base bypass, `>0` = Forward, `<0` = Reverse).
@@ -842,9 +1133,7 @@ impl GainMapApplier {
 
     /// Clear cached horizontally-upsampled gain rows (call before reusing on a different gain map).
     pub fn reset_cache(&mut self) {
-        for slot in &mut self.cache {
-            slot.valid = false;
-        }
+        self.cache_gm_y.fill(u32::MAX);
         self.cache_cursor = 0;
     }
 
@@ -862,15 +1151,17 @@ impl GainMapApplier {
         {
             return Err(err_at(ConvertError::DimensionMismatch));
         }
-        self.apply_row_with_provider(y, base_row, |gy| gain_map.row(gy), dst_row)
+        self.apply_row_dyn(y, base_row, &mut |gy| Ok(gain_map.row(gy)), dst_row)
     }
 
-    /// Reconstruct row `y` while lazily pulling gain-map rows `gy` on demand via `fetch_gm_row`.
+    /// Reconstruct row `y` while lazily pulling gain-map rows `gy` on demand via a fallible
+    /// `fetch_gm_row` provider.
     ///
     /// On resampled paths (`Bilinear`, `Bicubic`, `Mitchell`), horizontally-upsampled gain rows
     /// are cached across consecutive `y` so `fetch_gm_row` is invoked at most once per unique
-    /// gain-map row during sequential top-to-bottom decode. On 1:1 and `Nearest` full-packing U8
-    /// LUT paths, `fetch_gm_row` borrows the raw gain-map row directly with zero row cache.
+    /// gain-map row during sequential top-to-bottom decode. Short provider rows return
+    /// `Err(ConvertError::DimensionMismatch)` rather than panicking.
+    #[inline]
     pub fn apply_row_with_provider<'a, F>(
         &mut self,
         y: u32,
@@ -879,16 +1170,29 @@ impl GainMapApplier {
         dst_row: &mut [u8],
     ) -> Result<(), At<ConvertError>>
     where
-        F: FnMut(u32) -> &'a [u8],
+        F: FnMut(u32) -> Result<&'a [u8], At<ConvertError>>,
     {
-        if y >= self.base_h {
+        self.apply_row_dyn(y, base_row, &mut fetch_gm_row, dst_row)
+    }
+
+    #[inline(never)]
+    fn apply_row_dyn<'a>(
+        &mut self,
+        y: u32,
+        base_row: &[u8],
+        fetch_gm_row: &mut dyn FnMut(u32) -> Result<&'a [u8], At<ConvertError>>,
+        dst_row: &mut [u8],
+    ) -> Result<(), At<ConvertError>> {
+        if y >= self.base_h
+            || base_row.len() < self.base_row_bytes
+            || dst_row.len() < self.dst_row_bytes
+        {
             return Err(err_at(ConvertError::DimensionMismatch));
         }
         let w = self.base_w;
-        let need_dst = (w as usize) * self.dst_spec.layout.bytes_per_pixel();
-        if dst_row.len() < need_dst {
-            return Err(err_at(ConvertError::DimensionMismatch));
-        }
+        let w_u = w as usize;
+        let ch = if self.has_alpha { 4usize } else { 3usize };
+        let active_lin_bytes = w_u * ch * 4;
 
         // Fast exact identity bypass at zero weight: no gain-map fetch, no offset drift!
         if self.is_zero_weight {
@@ -896,44 +1200,45 @@ impl GainMapApplier {
                 return direct.convert_row(base_row, dst_row, w, y);
             }
             if let Some(a2d) = &self.app_to_dst {
-                self.base_to_app.convert_row(
-                    base_row,
-                    bytemuck::cast_slice_mut(&mut self.base_lin_row),
+                let lin_bytes = &mut bytemuck::cast_slice_mut::<f32, u8>(&mut self.base_lin_row)
+                    [..active_lin_bytes];
+                self.base_to_app.convert_row(base_row, lin_bytes, w, y)?;
+                return a2d.convert_row(
+                    &bytemuck::cast_slice(&self.base_lin_row)[..active_lin_bytes],
+                    dst_row,
                     w,
                     y,
-                )?;
-                return a2d.convert_row(bytemuck::cast_slice(&self.base_lin_row), dst_row, w, y);
+                );
             }
             return self.base_to_app.convert_row(base_row, dst_row, w, y);
         }
 
-        // 1. Decode base row into linear RGB(A) in application primaries.
-        self.base_to_app.convert_row(
-            base_row,
-            bytemuck::cast_slice_mut(&mut self.base_lin_row),
-            w,
-            y,
-        )?;
+        // 1. Decode base row into linear RGB(A) in application primaries (padding lanes stay 0.0).
+        {
+            let lin_bytes = &mut bytemuck::cast_slice_mut::<f32, u8>(&mut self.base_lin_row)
+                [..active_lin_bytes];
+            self.base_to_app.convert_row(base_row, lin_bytes, w, y)?;
+        }
 
-        // 2. Obtain linear gain multipliers into `self.gains_planes`.
+        // 2. Obtain linear gain multipliers into `self.gains` (padded to `w_pad`).
         if let Some(lut) = self.u8_gain_lut {
-            self.fill_gains_u8_lut(y, &lut, &mut fetch_gm_row);
+            self.fill_gains_u8_lut(y, &lut, fetch_gm_row)?;
         } else {
-            self.fill_samples_for_row(y, &mut fetch_gm_row);
+            self.fill_samples_for_row(y, fetch_gm_row)?;
             self.decode_samples_to_gains();
         }
 
-        // 3. Apply ISO 21496-1 gain formula `(base + k_base) * gain - k_alt`.
-        let w_u = w as usize;
+        // 3. Apply ISO 21496-1 gain formula `(base + k_base) * gain - k_alt` on padded `w_pad`.
+        let w_pad = self.w_pad;
         let need_3 = self.gm_ch == 3 || !self.shared_meta;
-        let gr = &self.gains_planes[0][..w_u];
+        let gr = &self.gains[0..w_pad];
         let gg = if need_3 {
-            &self.gains_planes[1][..w_u]
+            &self.gains[w_pad..2 * w_pad]
         } else {
             gr
         };
         let gb = if need_3 {
-            &self.gains_planes[2][..w_u]
+            &self.gains[2 * w_pad..3 * w_pad]
         } else {
             gr
         };
@@ -954,10 +1259,17 @@ impl GainMapApplier {
                 self.has_alpha,
                 &mut self.out_lin_row,
             );
-            a2d.convert_row(bytemuck::cast_slice(&self.out_lin_row), dst_row, w, y)?;
-        } else if let Ok(dst_f32) =
-            bytemuck::try_cast_slice_mut::<u8, f32>(&mut dst_row[..need_dst])
+            a2d.convert_row(
+                &bytemuck::cast_slice(&self.out_lin_row)[..active_lin_bytes],
+                dst_row,
+                w,
+                y,
+            )?;
+        } else if w_u == w_pad
+            && let Ok(dst_f32) =
+                bytemuck::try_cast_slice_mut::<u8, f32>(&mut dst_row[..self.dst_row_bytes])
         {
+            // Zero-copy aligned fast path (e.g. 4K UHD width 3840 % 8 == 0)!
             combine_fn(
                 &self.base_lin_row,
                 gr,
@@ -969,12 +1281,9 @@ impl GainMapApplier {
                 dst_f32,
             );
         } else {
-            // Unaligned destination byte slice fallback (zero-UB safe).
+            // Odd width (w != w_pad) or unaligned dst_row: combine into padded `out_lin_row`.
             if self.out_lin_row.len() < self.base_lin_row.len() {
-                self.out_lin_row
-                    .try_reserve_exact(self.base_lin_row.len() - self.out_lin_row.len())
-                    .map_err(|_| err_at(ConvertError::AllocationFailed))?;
-                self.out_lin_row.resize(self.base_lin_row.len(), 0.0f32);
+                self.out_lin_row = alloc_f32(self.base_lin_row.len())?;
             }
             combine_fn(
                 &self.base_lin_row,
@@ -986,15 +1295,16 @@ impl GainMapApplier {
                 self.has_alpha,
                 &mut self.out_lin_row,
             );
-            dst_row[..need_dst].copy_from_slice(bytemuck::cast_slice(&self.out_lin_row));
+            dst_row[..self.dst_row_bytes]
+                .copy_from_slice(&bytemuck::cast_slice(&self.out_lin_row)[..self.dst_row_bytes]);
         }
 
         Ok(())
     }
 
     /// Stream an entire image from any [`PixelSource`] + borrowed `gain_map` into any
-    /// [`PixelSink`] (`PixelBuf`, `PixelViewMut`, `BandedBuf`) in O(width) scratch memory,
-    /// checking `stop` once per row.
+    /// [`PixelSink`] (`PixelBuf`, `PixelViewMut`, `BandedBuf`) in stored-frame coordinates
+    /// using O(width) scratch memory, checking `stop` once per row.
     pub fn apply_into<S: PixelSource + ?Sized, D: PixelSink + ?Sized>(
         &mut self,
         base: &S,
@@ -1004,6 +1314,10 @@ impl GainMapApplier {
     ) -> Result<(), At<ConvertError>> {
         if base.source_width() != self.base_w
             || base.source_height() != self.base_h
+            || base.source_spec() != &self.base_spec
+            || gain_map.width() != self.gm_w
+            || gain_map.rows() != self.gm_h
+            || gain_map.spec() != &self.gm_spec
             || dst.sink_width() != self.base_w
             || dst.sink_height() != self.base_h
             || dst.sink_spec() != &self.dst_spec
@@ -1013,106 +1327,86 @@ impl GainMapApplier {
         self.reset_cache();
         for y in 0..self.base_h {
             stop.check().map_err(|r| err_at(r.into()))?;
-            self.apply_row(y, base.source_row(y), gain_map, dst.sink_row_mut(y))?;
+            self.apply_row_dyn(
+                y,
+                base.source_row(y),
+                &mut |gy| Ok(gain_map.row(gy)),
+                dst.sink_row_mut(y),
+            )?;
         }
         dst.sink_finish(SampleFacts::NONE, HdrMetadata::default());
         Ok(())
     }
 
-    fn fill_gains_u8_lut<'a, F>(&mut self, y: u32, lut: &[[f32; 256]; 3], fetch_gm_row: &mut F)
-    where
-        F: FnMut(u32) -> &'a [u8],
-    {
+    #[inline(never)]
+    fn fill_gains_u8_lut<'a>(
+        &mut self,
+        y: u32,
+        lut: &[[f32; 256]; 3],
+        fetch_gm_row: &mut dyn FnMut(u32) -> Result<&'a [u8], At<ConvertError>>,
+    ) -> Result<(), At<ConvertError>> {
         let gy = if let Some(vw) = &self.v_weights {
             vw.left[y as usize]
         } else {
             y
         };
-        let row = fetch_gm_row(gy);
+        let row = fetch_gm_row(gy)?;
+        if row.len() < self.gm_row_bytes {
+            return Err(err_at(ConvertError::DimensionMismatch));
+        }
         let w = self.base_w as usize;
+        let w_pad = self.w_pad;
         let need_3 = self.gm_ch == 3 || !self.shared_meta;
 
-        if self.same_size {
-            if self.gm_ch == 1 {
+        if self.same_size && self.gm_ch == 1 && !need_3 {
+            // Hot 1:1 1-channel shared UltraHDR LUT path (branch-free tight loop).
+            for (out, &b) in self.gains[..w].iter_mut().zip(row[..w].iter()) {
+                *out = lut[0][usize::from(b)];
+            }
+            return Ok(());
+        }
+
+        let hw_left = self.h_weights.as_ref().map(|hw| hw.left.as_slice());
+        if self.gm_ch == 1 {
+            for x in 0..w {
+                let sx = hw_left.map_or(x, |l| l[x] as usize);
+                let b = usize::from(row[sx]);
+                self.gains[x] = lut[0][b];
                 if need_3 {
-                    let [g0, g1, g2] = &mut self.gains_planes;
-                    for x in 0..w {
-                        let b = usize::from(row[x]);
-                        g0[x] = lut[0][b];
-                        g1[x] = lut[1][b];
-                        g2[x] = lut[2][b];
-                    }
-                } else {
-                    let g0 = &mut self.gains_planes[0][..w];
-                    for x in 0..w {
-                        g0[x] = lut[0][usize::from(row[x])];
-                    }
-                }
-            } else {
-                let [g0, g1, g2] = &mut self.gains_planes;
-                for x in 0..w {
-                    let o = x * 3;
-                    g0[x] = lut[0][usize::from(row[o])];
-                    g1[x] = lut[1][usize::from(row[o + 1])];
-                    g2[x] = lut[2][usize::from(row[o + 2])];
+                    self.gains[w_pad + x] = lut[1][b];
+                    self.gains[2 * w_pad + x] = lut[2][b];
                 }
             }
-        } else if let Some(hw) = &self.h_weights {
-            if self.gm_ch == 1 {
-                if need_3 {
-                    let [g0, g1, g2] = &mut self.gains_planes;
-                    for x in 0..w {
-                        let b = usize::from(row[hw.left[x] as usize]);
-                        g0[x] = lut[0][b];
-                        g1[x] = lut[1][b];
-                        g2[x] = lut[2][b];
-                    }
-                } else {
-                    for (out, &gx) in self.gains_planes[0][..w]
-                        .iter_mut()
-                        .zip(hw.left[..w].iter())
-                    {
-                        *out = lut[0][usize::from(row[gx as usize])];
-                    }
-                }
-            } else {
-                let [g0, g1, g2] = &mut self.gains_planes;
-                for x in 0..w {
-                    let o = (hw.left[x] as usize) * 3;
-                    g0[x] = lut[0][usize::from(row[o])];
-                    g1[x] = lut[1][usize::from(row[o + 1])];
-                    g2[x] = lut[2][usize::from(row[o + 2])];
-                }
+        } else {
+            for x in 0..w {
+                let o = hw_left.map_or(x, |l| l[x] as usize) * 3;
+                self.gains[x] = lut[0][usize::from(row[o])];
+                self.gains[w_pad + x] = lut[1][usize::from(row[o + 1])];
+                self.gains[2 * w_pad + x] = lut[2][usize::from(row[o + 2])];
             }
         }
+        Ok(())
     }
 
-    fn ensure_horiz_row<'a, F>(
+    #[inline(never)]
+    fn ensure_horiz_row<'a>(
         &mut self,
         gm_y: u32,
         keep_start: u32,
         keep_end: u32,
-        fetch_gm_row: &mut F,
-    ) -> usize
-    where
-        F: FnMut(u32) -> &'a [u8],
-    {
-        for (idx, slot) in self.cache.iter().enumerate() {
-            if slot.valid && slot.gm_y == gm_y {
-                return idx;
-            }
+        fetch_gm_row: &mut dyn FnMut(u32) -> Result<&'a [u8], At<ConvertError>>,
+    ) -> Result<usize, At<ConvertError>> {
+        if let Some(idx) = self.cache_gm_y.iter().position(|&gy| gy == gm_y) {
+            return Ok(idx);
         }
-        // Pick an invalid slot first; otherwise scan from `cache_cursor` for a slot outside
-        // the active `[keep_start, keep_end)` range so taps needed by the current output row
-        // can never be evicted even under non-monotonic row access.
-        let n_slots = self.cache.len();
+        let n_slots = self.cache_gm_y.len();
         let mut slot_idx = self.cache_cursor;
-        if let Some(empty) = self.cache.iter().position(|s| !s.valid) {
+        if let Some(empty) = self.cache_gm_y.iter().position(|&gy| gy == u32::MAX) {
             slot_idx = empty;
         } else {
             for step in 0..n_slots {
                 let cand = (self.cache_cursor + step) % n_slots;
-                let gy = self.cache[cand].gm_y;
+                let gy = self.cache_gm_y[cand];
                 if gy < keep_start || gy >= keep_end {
                     slot_idx = cand;
                     break;
@@ -1121,7 +1415,10 @@ impl GainMapApplier {
         }
         self.cache_cursor = (slot_idx + 1) % n_slots;
 
-        let raw_row = fetch_gm_row(gm_y);
+        let raw_row = fetch_gm_row(gm_y)?;
+        if raw_row.len() < self.gm_row_bytes {
+            return Err(err_at(ConvertError::DimensionMismatch));
+        }
         decode_gm_row_planar(
             raw_row,
             self.gm_w as usize,
@@ -1131,13 +1428,15 @@ impl GainMapApplier {
         );
 
         let w = self.base_w as usize;
+        let w_pad = self.w_pad;
         let gm_w = self.gm_w as usize;
+        let slot_stride = self.gm_ch * w_pad;
         let hw = self.h_weights.as_ref().unwrap();
-        let dst_planes = &mut self.cache[slot_idx].planes;
+        let dst_slot = &mut self.cache_planes[slot_idx * slot_stride..(slot_idx + 1) * slot_stride];
 
         for c in 0..self.gm_ch {
             let src_plane = &self.gm_decode_scratch[c * gm_w..(c + 1) * gm_w];
-            let dst_plane = &mut dst_planes[c * w..(c + 1) * w];
+            let dst_plane = &mut dst_slot[c * w_pad..c * w_pad + w];
             if self.resample == GainMapResample::Nearest {
                 for (x, out) in dst_plane.iter_mut().enumerate() {
                     *out = src_plane[hw.left[x] as usize];
@@ -1154,18 +1453,23 @@ impl GainMapApplier {
                 }
             }
         }
-        self.cache[slot_idx].gm_y = gm_y;
-        self.cache[slot_idx].valid = true;
-        slot_idx
+        self.cache_gm_y[slot_idx] = gm_y;
+        Ok(slot_idx)
     }
 
-    fn fill_samples_for_row<'a, F>(&mut self, y: u32, fetch_gm_row: &mut F)
-    where
-        F: FnMut(u32) -> &'a [u8],
-    {
+    #[inline(never)]
+    fn fill_samples_for_row<'a>(
+        &mut self,
+        y: u32,
+        fetch_gm_row: &mut dyn FnMut(u32) -> Result<&'a [u8], At<ConvertError>>,
+    ) -> Result<(), At<ConvertError>> {
         let w = self.base_w as usize;
+        let w_pad = self.w_pad;
         if self.same_size {
-            let raw = fetch_gm_row(y);
+            let raw = fetch_gm_row(y)?;
+            if raw.len() < self.gm_row_bytes {
+                return Err(err_at(ConvertError::DimensionMismatch));
+            }
             decode_gm_row_planar(
                 raw,
                 w,
@@ -1174,10 +1478,10 @@ impl GainMapApplier {
                 &mut self.gm_decode_scratch,
             );
             for c in 0..self.gm_ch {
-                self.v_blend_planes[c][..w]
+                self.v_blend[c * w_pad..c * w_pad + w]
                     .copy_from_slice(&self.gm_decode_scratch[c * w..(c + 1) * w]);
             }
-            return;
+            return Ok(());
         }
 
         let (v_left, v_count) = {
@@ -1187,9 +1491,8 @@ impl GainMapApplier {
         };
         let keep_end = v_left + v_count as u32;
 
-        // Ensure all required gain-map rows are horizontally resampled & cached (zero allocs).
         for t in 0..v_count {
-            let idx = self.ensure_horiz_row(v_left + t as u32, v_left, keep_end, fetch_gm_row);
+            let idx = self.ensure_horiz_row(v_left + t as u32, v_left, keep_end, fetch_gm_row)?;
             self.v_slot_indices[t] = idx;
         }
 
@@ -1197,95 +1500,91 @@ impl GainMapApplier {
         let (_, ws) = vw.taps(y as usize);
         let blend2 = self.accel.gainmap_blend_2.unwrap_or(blend_rows_2_scalar);
         let blend4 = self.accel.gainmap_blend_4.unwrap_or(blend_rows_4_scalar);
+        let slot_stride = self.gm_ch * w_pad;
 
         for c in 0..self.gm_ch {
-            let co = c * w;
-            let dst = &mut self.v_blend_planes[c][..w];
+            let co = c * w_pad;
+            let dst = &mut self.v_blend[co..co + w_pad];
             match v_count {
                 1 => {
-                    let s0 = &self.cache[self.v_slot_indices[0]].planes[co..co + w];
-                    for (o, &v) in dst.iter_mut().zip(s0.iter()) {
-                        *o = v.clamp(0.0, 1.0);
-                    }
+                    let b0 = self.v_slot_indices[0] * slot_stride + co;
+                    let s0 = &self.cache_planes[b0..b0 + w_pad];
+                    blend2(s0, s0, 1.0, 0.0, dst);
                 }
                 2 => {
-                    let s0 = &self.cache[self.v_slot_indices[0]].planes[co..co + w];
-                    let s1 = &self.cache[self.v_slot_indices[1]].planes[co..co + w];
-                    blend2(s0, s1, ws[0], ws[1], dst);
+                    let b0 = self.v_slot_indices[0] * slot_stride + co;
+                    let b1 = self.v_slot_indices[1] * slot_stride + co;
+                    blend2(
+                        &self.cache_planes[b0..b0 + w_pad],
+                        &self.cache_planes[b1..b1 + w_pad],
+                        ws[0],
+                        ws[1],
+                        dst,
+                    );
                 }
                 4 => {
-                    let s0 = &self.cache[self.v_slot_indices[0]].planes[co..co + w];
-                    let s1 = &self.cache[self.v_slot_indices[1]].planes[co..co + w];
-                    let s2 = &self.cache[self.v_slot_indices[2]].planes[co..co + w];
-                    let s3 = &self.cache[self.v_slot_indices[3]].planes[co..co + w];
-                    blend4(s0, s1, s2, s3, [ws[0], ws[1], ws[2], ws[3]], dst);
+                    let b0 = self.v_slot_indices[0] * slot_stride + co;
+                    let b1 = self.v_slot_indices[1] * slot_stride + co;
+                    let b2 = self.v_slot_indices[2] * slot_stride + co;
+                    let b3 = self.v_slot_indices[3] * slot_stride + co;
+                    blend4(
+                        &self.cache_planes[b0..b0 + w_pad],
+                        &self.cache_planes[b1..b1 + w_pad],
+                        &self.cache_planes[b2..b2 + w_pad],
+                        &self.cache_planes[b3..b3 + w_pad],
+                        [ws[0], ws[1], ws[2], ws[3]],
+                        dst,
+                    );
                 }
                 _ => {
-                    dst.fill(0.0);
-                    for (t, &wt) in ws.iter().enumerate() {
-                        let sr = &self.cache[self.v_slot_indices[t]].planes[co..co + w];
-                        for (o, &v) in dst.iter_mut().zip(sr.iter()) {
-                            *o += v * wt;
-                        }
-                    }
-                    for o in dst.iter_mut() {
-                        *o = if *o > 0.0 {
-                            if *o < 1.0 { *o } else { 1.0 }
-                        } else {
-                            0.0
-                        };
-                    }
+                    blend_rows_general(
+                        &self.cache_planes,
+                        slot_stride,
+                        co,
+                        &self.v_slot_indices,
+                        ws,
+                        w,
+                        dst,
+                    );
                 }
             }
         }
+        Ok(())
     }
 
+    #[inline(never)]
     fn decode_samples_to_gains(&mut self) {
         let w = self.base_w as usize;
+        let w_pad = self.w_pad;
         let decode_fn = self.accel.gainmap_decode.unwrap_or(decode_gain_1ch_scalar);
-        let need_3 = self.gm_ch == 3 || !self.shared_meta;
-
-        decode_fn(
-            &self.v_blend_planes[0][..w],
-            self.min_g[0],
-            self.span_g[0],
-            self.signed_weight,
-            self.inv_gamma[0],
-            &mut self.gains_planes[0][..w],
-        );
-        if need_3 {
-            let s1 = if self.gm_ch == 3 {
-                &self.v_blend_planes[1][..w]
+        let channels = if self.gm_ch == 3 || !self.shared_meta {
+            3usize
+        } else {
+            1usize
+        };
+        for c in 0..channels {
+            let src_off = if self.gm_ch == 3 { c * w_pad } else { 0 };
+            let samples = &self.v_blend[src_off..src_off + w_pad];
+            let dst = &mut self.gains[c * w_pad..(c + 1) * w_pad];
+            if (self.inv_gamma[c] - 1.0).abs() < 1e-7 {
+                decode_fn(samples, self.base_w_g[c], self.slope_w_g[c], dst);
             } else {
-                &self.v_blend_planes[0][..w]
-            };
-            let s2 = if self.gm_ch == 3 {
-                &self.v_blend_planes[2][..w]
-            } else {
-                &self.v_blend_planes[0][..w]
-            };
-            decode_fn(
-                s1,
-                self.min_g[1],
-                self.span_g[1],
-                self.signed_weight,
-                self.inv_gamma[1],
-                &mut self.gains_planes[1][..w],
-            );
-            decode_fn(
-                s2,
-                self.min_g[2],
-                self.span_g[2],
-                self.signed_weight,
-                self.inv_gamma[2],
-                &mut self.gains_planes[2][..w],
-            );
+                decode_gain_gamma_scalar(
+                    samples,
+                    w,
+                    self.inv_gamma[c],
+                    self.base_w_g[c],
+                    self.slope_w_g[c],
+                    dst,
+                );
+            }
         }
     }
 }
 
 /// Decode one gain-map scanline (`U8` / `U16` / `F32`, full or `Lsb`/`Msb` bit-packed,
 /// 1-ch or 3-ch) into planar `[0, 1]` f32 channels inside `dst_planar` (`ch * width`).
+#[inline(never)]
 fn decode_gm_row_planar(
     row: &[u8],
     width: usize,
@@ -1295,63 +1594,54 @@ fn decode_gm_row_planar(
 ) {
     let ch = layout.channels();
     let inv = [1.0 / max_code[0], 1.0 / max_code[1], 1.0 / max_code[2]];
-    match (layout.sample, layout.packing.is_full(), ch) {
-        (SampleType::U8, true, 1) => {
-            let inv0 = inv[0];
-            for (dst, &b) in dst_planar[..width].iter_mut().zip(row[..width].iter()) {
-                *dst = f32::from(b) * inv0;
-            }
+    let full = layout.packing.is_full();
+
+    // Fast path for the dominant UltraHDR 1-ch full-packing U8 gain map.
+    if layout.sample == SampleType::U8 && full && ch == 1 {
+        let inv0 = inv[0];
+        for (dst, &b) in dst_planar[..width].iter_mut().zip(row[..width].iter()) {
+            *dst = f32::from(b) * inv0;
         }
-        (SampleType::U8, true, 3) => {
-            let (p0, rest) = dst_planar.split_at_mut(width);
-            let (p1, p2) = rest.split_at_mut(width);
-            for (x, px) in row[..width * 3].as_chunks::<3>().0.iter().enumerate() {
-                p0[x] = f32::from(px[0]) * inv[0];
-                p1[x] = f32::from(px[1]) * inv[1];
-                p2[x] = f32::from(px[2]) * inv[2];
-            }
-        }
-        (SampleType::U8, false, _) => {
-            for x in 0..width {
-                for c in 0..ch {
-                    let code =
-                        layout
-                            .packing
-                            .extract_code(SampleType::U8, u32::from(row[x * ch + c]), c);
-                    dst_planar[c * width + x] = (code as f32) * inv[c];
+        return;
+    }
+
+    // Compact unified decoder for 3-ch U8, bit-packed U8/U16 (10/12-bit), full U16, and F32.
+    let bps = match layout.sample {
+        SampleType::U8 => 1usize,
+        SampleType::U16 => 2usize,
+        SampleType::F32 => 4usize,
+        _ => return,
+    };
+    for x in 0..width {
+        for c in 0..ch {
+            let elem = x * ch + c;
+            let o = elem * bps;
+            let v = match layout.sample {
+                SampleType::U8 => {
+                    let raw = u32::from(row[o]);
+                    let code = if full {
+                        raw
+                    } else {
+                        layout.packing.extract_code(SampleType::U8, raw, c)
+                    };
+                    (code as f32) * inv[c]
                 }
-            }
-        }
-        (SampleType::U16, true, _) => {
-            for x in 0..width {
-                for c in 0..ch {
-                    let o = (x * ch + c) * 2;
-                    let v = u16::from_ne_bytes([row[o], row[o + 1]]);
-                    dst_planar[c * width + x] = f32::from(v) * inv[c];
+                SampleType::U16 => {
+                    let raw = u32::from(u16::from_ne_bytes([row[o], row[o + 1]]));
+                    let code = if full {
+                        raw
+                    } else {
+                        layout.packing.extract_code(SampleType::U16, raw, c)
+                    };
+                    (code as f32) * inv[c]
                 }
-            }
-        }
-        (SampleType::U16, false, _) => {
-            for x in 0..width {
-                for c in 0..ch {
-                    let o = (x * ch + c) * 2;
-                    let w16 = u32::from(u16::from_ne_bytes([row[o], row[o + 1]]));
-                    let code = layout.packing.extract_code(SampleType::U16, w16, c);
-                    dst_planar[c * width + x] = (code as f32) * inv[c];
+                SampleType::F32 => {
+                    let f = f32::from_ne_bytes([row[o], row[o + 1], row[o + 2], row[o + 3]]);
+                    if f.is_finite() { f } else { 0.0 }
                 }
-            }
-        }
-        (SampleType::F32, _, _) => {
-            for x in 0..width {
-                for c in 0..ch {
-                    let o = (x * ch + c) * 4;
-                    let v = f32::from_ne_bytes([row[o], row[o + 1], row[o + 2], row[o + 3]]);
-                    dst_planar[c * width + x] = if v.is_finite() { v } else { 0.0 };
-                }
-            }
-        }
-        _ => {
-            dst_planar[..width * ch].fill(0.0);
+                _ => 0.0,
+            };
+            dst_planar[c * width + x] = v;
         }
     }
 }
@@ -1372,33 +1662,81 @@ fn validate_gain_map_spec(spec: &ImageSpec) -> Result<(), At<ConvertError>> {
         spec.layout.packing,
         BitPacking::Full | BitPacking::Lsb { .. } | BitPacking::Msb { .. }
     );
+    let ok_order = is_valid_gain_map_order(spec.layout.order);
     let ok_ch = matches!(spec.layout.channels(), 1 | 3);
-    if !ok_color || !ok_sample || !ok_packing || !ok_ch {
+    if !ok_color || !ok_sample || !ok_packing || !ok_order || !ok_ch {
         return Err(err_at(ConvertError::UnsupportedRoute));
     }
     Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// High-level apply convenience functions
+// High-level apply & dual-layer orientation functions
 // ---------------------------------------------------------------------------
+
+#[inline(never)]
+fn apply_gain_map_stored(
+    dual: &DualLayerHdrView<'_>,
+    config: &GainMapApplyConfig,
+    stop: &dyn Stop,
+) -> Result<PixelBuf, At<ConvertError>> {
+    stop.check().map_err(|r| err_at(r.into()))?;
+    let mut applier = GainMapApplier::for_view(dual, config)?;
+    let mut out = PixelBuf::new(
+        dual.base().width(),
+        dual.base().rows(),
+        applier.dst_spec().clone(),
+    )
+    .map_err(|e| err_at((*e.error()).into()))?;
+    applier.apply_into(dual.base(), dual.gain_map(), &mut out, stop)?;
+    Ok(out)
+}
+
+/// Reconstruct a [`PixelBuf`] and its resulting pending [`Orientation`] from a zero-copy
+/// [`DualLayerHdrView`] according to `config.orientation`:
+///
+/// - [`GainMapOrientation::Bake`] (default): reconstructs in stored coordinates, then
+///   physically applies `dual.orientation()`, returning `(display_buf, Orientation::Identity)`.
+/// - [`GainMapOrientation::Passthrough`]: reconstructs in stored coordinates with zero
+///   transpose cost, returning `(stored_buf, dual.orientation())` for EXIF passthrough or
+///   GPU UV rotation.
+/// - [`GainMapOrientation::RequireIdentity`]: returns `Err(ConvertError::UnsupportedRoute)`
+///   if `dual.orientation() != Orientation::Identity`.
+#[inline]
+pub fn apply_gain_map_oriented(
+    dual: &DualLayerHdrView<'_>,
+    config: &GainMapApplyConfig,
+    stop: &dyn Stop,
+) -> Result<(PixelBuf, Orientation), At<ConvertError>> {
+    let orient = dual.orientation();
+    if config.orientation == GainMapOrientation::RequireIdentity && orient != Orientation::Identity
+    {
+        return Err(err_at(ConvertError::UnsupportedRoute));
+    }
+    let out = apply_gain_map_stored(dual, config, stop)?;
+    if config.orientation == GainMapOrientation::Bake && orient != Orientation::Identity {
+        stop.check().map_err(|r| err_at(r.into()))?;
+        let baked = orient::apply_orientation(&out.as_view(), orient)?;
+        Ok((baked, Orientation::Identity))
+    } else {
+        Ok((out, orient))
+    }
+}
 
 /// Reconstruct a linear-light [`PixelBuf`] (`RGBF32` / `RGBAF32`) from an owned
 /// [`DualLayerHdr`] at `display_headroom_stops` (log₂ stops, e.g. `0.0` = SDR,
-/// `2.32` ≈ 5× / 1000-nit HDR display).
+/// `2.32` ≈ 5× / 1000-nit HDR display), baking `dual.orientation()` to display orientation.
 pub fn apply_gain_map(
     dual: &DualLayerHdr,
     display_headroom_stops: f32,
 ) -> Result<PixelBuf, At<ConvertError>> {
-    apply_gain_map_view(
-        &dual.as_view(),
-        display_headroom_stops,
-        &ConvertPolicy::working_linear(),
-    )
+    let cfg = GainMapApplyConfig::new(display_headroom_stops);
+    apply_gain_map_with(&dual.as_view(), &cfg, &Unstoppable)
 }
 
 /// Reconstruct a linear-light [`PixelBuf`] (`RGBF32` / `RGBAF32`) from a zero-copy
-/// [`DualLayerHdrView`] using `policy` (allowing CMS backends and SIMD selection).
+/// [`DualLayerHdrView`] using `policy` (allowing CMS backends and SIMD selection),
+/// baking `dual.orientation()` to display orientation.
 pub fn apply_gain_map_view(
     dual: &DualLayerHdrView<'_>,
     display_headroom_stops: f32,
@@ -1409,22 +1747,59 @@ pub fn apply_gain_map_view(
 }
 
 /// Reconstruct a [`PixelBuf`] from a zero-copy [`DualLayerHdrView`] with full control over
-/// resampling kernel, conversion policy, optional target [`ImageSpec`] (e.g. `RGBAF16`,
-/// `RGB16` PQ, `RGBA8` sRGB), and cooperative [`enough::Stop`] cancellation.
+/// target headroom/rendition, resampling kernel, orientation policy, conversion policy,
+/// optional target [`ImageSpec`], and cooperative [`enough::Stop`] cancellation.
+///
+/// When using [`GainMapOrientation::Passthrough`], prefer [`apply_gain_map_oriented`] to
+/// receive the pending [`Orientation`] alongside the buffer.
+#[inline]
 pub fn apply_gain_map_with(
     dual: &DualLayerHdrView<'_>,
     config: &GainMapApplyConfig,
     stop: &dyn Stop,
 ) -> Result<PixelBuf, At<ConvertError>> {
-    let mut applier = GainMapApplier::for_view(dual, config)?;
-    let mut out = PixelBuf::new(
-        dual.base().width(),
-        dual.base().rows(),
-        applier.dst_spec().clone(),
-    )
-    .map_err(|e| err_at((*e.error()).into()))?;
-    applier.apply_into(dual.base(), dual.gain_map(), &mut out, stop)?;
-    Ok(out)
+    let (buf, _) = apply_gain_map_oriented(dual, config, stop)?;
+    Ok(buf)
+}
+
+/// Physically bake `dual.orientation()` into both `base` and `gain_map`, returning an owned
+/// aligned [`DualLayerHdr`] with [`Orientation::Identity`].
+///
+/// Both layers receive the exact same dihedral transform so their stored-frame coordinates
+/// stay registered (including subsampled ¼-res gain maps under pixel-center siting).
+/// For O(1) lossless EXIF passthrough without rebaking pixels, use
+/// [`DualLayerHdr::rotate_metadata`] instead.
+#[inline(never)]
+pub fn bake_dual_layer_orientation(
+    dual: &DualLayerHdrView<'_>,
+) -> Result<DualLayerHdr, At<ConvertError>> {
+    rotate_dual_layer(dual, Orientation::Identity)
+}
+
+/// Physically apply `dual.orientation().then(delta)` to both `base` and `gain_map`, keeping
+/// both layers strictly registered and returning an owned [`DualLayerHdr`] with
+/// [`Orientation::Identity`].
+///
+/// Preserves `metadata`, `alternate_color_space`, and per-layer `HdrMetadata` / `SampleFacts`.
+/// For O(1) EXIF passthrough metadata rotation without pixel rebake, use
+/// [`DualLayerHdr::rotate_metadata`] / [`DualLayerHdrView::rotate_metadata`].
+#[inline(never)]
+pub fn rotate_dual_layer(
+    dual: &DualLayerHdrView<'_>,
+    delta: Orientation,
+) -> Result<DualLayerHdr, At<ConvertError>> {
+    let total = dual.orientation().then(delta);
+    let base = orient::apply_orientation(dual.base(), total)?;
+    let gain_map = orient::apply_orientation(dual.gain_map(), total)?;
+    let dual_out = DualLayerHdr::new(base, gain_map, dual.metadata())
+        .map_err(|e| err_at((*e.error()).into()))?;
+    if let Some(alt) = dual.alternate_color_space() {
+        dual_out
+            .with_alternate_color_space(alt.clone())
+            .map_err(|e| err_at((*e.error()).into()))
+    } else {
+        Ok(dual_out)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1448,12 +1823,6 @@ pub enum GainMapDownsample {
 
 /// Configuration for ISO 21496-1 gain-map extraction ([`extract_gain_map_only`],
 /// [`GainMapRowExtractor`]).
-///
-/// All gain and headroom fields are in **log₂ stops** (matching ISO 21496-1 &
-/// [`GainMapMetadata`]). Ergonomic linear-boost builders
-/// ([`with_boost_range_linear`](Self::with_boost_range_linear),
-/// [`with_headroom_boost_linear`](Self::with_headroom_boost_linear)) convert linear
-/// ratios (`4.0` → `2.0` stops) once at construction time.
 #[derive(Clone, Debug)]
 pub struct GainMapExtractConfig {
     /// Subsampling divisor for the output gain map (`1` = full resolution, `4` = ¼-res
@@ -1487,8 +1856,7 @@ pub struct GainMapExtractConfig {
     pub application_space: GainMapColorSpace,
     /// When `true`, performs a 2-pass content-fit scan that narrows the quantization grid
     /// to the content's observed gain range within `[min_gain_stops, max_gain_stops]`
-    /// (minimum span [`CONTENT_FIT_MIN_SPAN_STOPS`]), spending the full code space on
-    /// gains that actually occur while declaring the exact narrowed grid in metadata.
+    /// (minimum span [`CONTENT_FIT_MIN_SPAN_STOPS`]).
     pub content_fit: bool,
     /// Conversion policy used to linearize base and alternate inputs.
     pub policy: ConvertPolicy,
@@ -1638,6 +2006,7 @@ impl GainMapExtractConfig {
     }
 
     /// Build the exact [`GainMapMetadata`] matching this configuration's quantization grid.
+    #[inline(never)]
     pub fn to_metadata(&self) -> Result<GainMapMetadata, At<ConvertError>> {
         if !self.min_gain_stops.is_finite()
             || !self.max_gain_stops.is_finite()
@@ -1693,10 +2062,6 @@ impl GainMapExtractConfig {
 }
 
 /// Row-streaming linear-f32 ISO 21496-1 gain-map encoder.
-///
-/// Directly replaces `ultrahdr-core::compute_gain_row` / `RowEncoder` so callers such as
-/// `zenjpeg` can fuse tone-map splitting + gain quantization in a single row pass while
-/// tracking observed content gain bounds and building contract-exact [`GainMapMetadata`].
 #[derive(Clone, Debug)]
 pub struct GainMapRowExtractor {
     metadata: GainMapMetadata,
@@ -1714,6 +2079,7 @@ pub struct GainMapRowExtractor {
 
 impl GainMapRowExtractor {
     /// Construct a row extractor using exact [`GainMapMetadata`] and application primaries.
+    #[inline(never)]
     pub fn new(
         metadata: GainMapMetadata,
         app_primaries: Primaries,
@@ -1766,7 +2132,11 @@ impl GainMapRowExtractor {
 
     /// Quantize one row of paired linear RGB(A) `f32` pixels (`channels` is `3` or `4`)
     /// into packed gain-map sample bytes matching `gm_layout` (`U8` or `U16`, `Full`/`Lsb`/`Msb`,
-    /// 1-ch for `Shared` or 3-ch for `PerChannel`).
+    /// `Gray`/`Rgb`/`Generic(1|3)`).
+    ///
+    /// Computes exact `f64` signed-offset ratios `(alt + k_alt) / (base + k_base)` without
+    /// near-black floor clamping.
+    #[inline(never)]
     pub fn encode_row_linear_f32(
         &mut self,
         base_linear: &[f32],
@@ -1778,12 +2148,37 @@ impl GainMapRowExtractor {
         if channels != 3 && channels != 4 {
             return Err(err_at(ConvertError::UnsupportedRoute));
         }
-        let pixels = (base_linear.len() / channels).min(alt_linear.len() / channels);
+        #[allow(clippy::manual_is_multiple_of)]
+        if base_linear.len() != alt_linear.len() || base_linear.len() % channels != 0 {
+            return Err(err_at(ConvertError::DimensionMismatch));
+        }
         let gm_ch = if self.multichannel { 3usize } else { 1usize };
+        if !matches!(gm_layout.sample, SampleType::U8 | SampleType::U16)
+            || !matches!(
+                gm_layout.packing,
+                BitPacking::Full | BitPacking::Lsb { .. } | BitPacking::Msb { .. }
+            )
+            || !is_valid_gain_map_order(gm_layout.order)
+        {
+            return Err(err_at(ConvertError::UnsupportedRoute));
+        }
         if gm_layout.channels() != gm_ch {
             return Err(err_at(ConvertError::DimensionMismatch));
         }
-        let need_bytes = pixels * gm_layout.bytes_per_pixel();
+        ImageSpec::new(
+            gm_layout,
+            ColorSpace::Untagged {
+                channels: gm_ch as u8,
+                alpha: AlphaMode::None,
+            },
+        )
+        .validate()
+        .map_err(|e| err_at((*e.error()).into()))?;
+
+        let pixels = base_linear.len() / channels;
+        let need_bytes = pixels
+            .checked_mul(gm_layout.bytes_per_pixel())
+            .ok_or_else(|| err_at(ConvertError::DimensionMismatch))?;
         if dst_row.len() < need_bytes {
             return Err(err_at(ConvertError::DimensionMismatch));
         }
@@ -1795,12 +2190,15 @@ impl GainMapRowExtractor {
             for x in 0..pixels {
                 let o = x * channels;
                 for c in 0..3 {
-                    let b = base_linear[o + c].max(0.0);
-                    let a = alt_linear[o + c].max(0.0);
-                    let log2_r = self.sign
-                        * libm::log2f(
-                            (a + self.k_alt[c]).max(1e-6) / (b + self.k_base[c]).max(1e-6),
-                        );
+                    let log2_r = compute_log2_ratio(
+                        self.sign,
+                        base_linear[o + c],
+                        alt_linear[o + c],
+                        self.k_base[c],
+                        self.k_alt[c],
+                        self.min_g[c],
+                        self.min_g[c] + self.span_g[c],
+                    );
                     self.observed_min_stops = self.observed_min_stops.min(log2_r);
                     self.observed_max_stops = self.observed_max_stops.max(log2_r);
                     let code = quantize_log2_gain(
@@ -1816,14 +2214,20 @@ impl GainMapRowExtractor {
             }
         } else {
             let [yr, yg, yb] = self.luma;
+            let max_g0 = self.min_g[0] + self.span_g[0];
             for x in 0..pixels {
                 let o = x * channels;
-                let lb = (yr * base_linear[o] + yg * base_linear[o + 1] + yb * base_linear[o + 2])
-                    .max(0.0);
-                let la =
-                    (yr * alt_linear[o] + yg * alt_linear[o + 1] + yb * alt_linear[o + 2]).max(0.0);
-                let log2_r = self.sign
-                    * libm::log2f((la + self.k_alt[0]).max(1e-6) / (lb + self.k_base[0]).max(1e-6));
+                let lb = yr * base_linear[o] + yg * base_linear[o + 1] + yb * base_linear[o + 2];
+                let la = yr * alt_linear[o] + yg * alt_linear[o + 1] + yb * alt_linear[o + 2];
+                let log2_r = compute_log2_ratio(
+                    self.sign,
+                    lb,
+                    la,
+                    self.k_base[0],
+                    self.k_alt[0],
+                    self.min_g[0],
+                    max_g0,
+                );
                 self.observed_min_stops = self.observed_min_stops.min(log2_r);
                 self.observed_max_stops = self.observed_max_stops.max(log2_r);
                 let code = quantize_log2_gain(
@@ -1853,8 +2257,7 @@ impl GainMapRowExtractor {
         }
     }
 
-    /// Return the exact [`GainMapMetadata`] matching the encoded bytes (never narrows the
-    /// declared quantization grid behind the bytes' back; preserves exact metadata).
+    /// Return the exact [`GainMapMetadata`] matching the encoded bytes.
     #[inline]
     #[must_use]
     pub fn metadata(&self) -> GainMapMetadata {
@@ -1889,6 +2292,38 @@ impl GainMapRowExtractor {
             }
         }
         out
+    }
+}
+
+#[inline]
+fn compute_log2_ratio(
+    sign: f32,
+    base_val: f32,
+    alt_val: f32,
+    k_base: f32,
+    k_alt: f32,
+    min_g: f32,
+    max_g: f32,
+) -> f32 {
+    let num = f64::from(alt_val) + f64::from(k_alt);
+    let den = f64::from(base_val) + f64::from(k_base);
+    if !num.is_finite() || !den.is_finite() {
+        return 0.0;
+    }
+    if (num > 0.0 && den > 0.0) || (num < 0.0 && den < 0.0) {
+        let lg = (f64::from(sign) * libm::log2(num / den)) as f32;
+        if lg.is_finite() {
+            return lg.clamp(-MAX_LOG2_GAIN, MAX_LOG2_GAIN);
+        }
+    }
+    if num == den {
+        0.0
+    } else if num > den {
+        if sign > 0.0 { max_g } else { min_g }
+    } else if sign > 0.0 {
+        min_g
+    } else {
+        max_g
     }
 }
 
@@ -1933,23 +2368,13 @@ fn write_gm_code(layout: SampleLayout, dst: &mut [u8], elem_idx: usize, comp: us
 
 /// Extract only the numeric gain-map [`PixelBuf`] and exact [`GainMapMetadata`] from
 /// borrowed `base_src` and `alternate_src` views without duplicating the base raster.
-///
-/// Supports:
-/// - Subsampling (`config.scale_factor`, `div_ceil` output dimensions) with
-///   [`GainMapDownsample::Box`] (area average), [`GainMapDownsample::Bilinear`], or
-///   [`GainMapDownsample::Point`] (legacy center-pixel).
-/// - 2-pass [`content_fit`](GainMapExtractConfig::content_fit) grid narrowing to the
-///   content's observed gain range (minimum span [`CONTENT_FIT_MIN_SPAN_STOPS`]).
-/// - 1-channel (`GRAY8`/`GRAY16`/`Lsb`) and 3-channel (`RGB8`/`RGB16`/`Lsb`) numeric
-///   `ColorSpace::Untagged` gain maps.
-/// - Forward (SDR→HDR) and Reverse (HDR→SDR) directions, Base and Alternate application
-///   primaries, and cooperative [`enough::Stop`] cancellation.
 pub fn extract_gain_map_only(
     base_src: &PixelView<'_>,
     alternate_src: &PixelView<'_>,
     config: &GainMapExtractConfig,
     stop: &dyn Stop,
 ) -> Result<(PixelBuf, GainMapMetadata), At<ConvertError>> {
+    stop.check().map_err(|r| err_at(r.into()))?;
     if config.content_fit {
         let initial_meta = config.to_metadata()?;
         let (_, observed) = extract_gain_map_internal(
@@ -2083,6 +2508,7 @@ pub fn extract_gain_map(
 
 type ObservedGainRange = Option<(f32, f32)>;
 
+#[inline(never)]
 #[allow(clippy::too_many_arguments)]
 fn extract_gain_map_internal(
     base_src: &PixelView<'_>,
@@ -2095,6 +2521,7 @@ fn extract_gain_map_internal(
     stop: &dyn Stop,
     measure_only: bool,
 ) -> Result<(PixelBuf, ObservedGainRange), At<ConvertError>> {
+    stop.check().map_err(|r| err_at(r.into()))?;
     let w = base_src.width();
     let h = base_src.rows();
     if w == 0 || h == 0 || alternate_src.width() != w || alternate_src.rows() != h {
@@ -2154,20 +2581,14 @@ fn extract_gain_map_internal(
     let gm_floats = (gm_w as usize)
         .checked_mul(3)
         .ok_or_else(|| err_at(ConvertError::DimensionMismatch))?;
-    let mut base_row = vec![0.0f32; 0];
-    base_row
-        .try_reserve_exact(row_floats)
-        .map_err(|_| err_at(ConvertError::AllocationFailed))?;
-    base_row.resize(row_floats, 0.0f32);
-    let mut alt_row = vec![0.0f32; 0];
-    alt_row
-        .try_reserve_exact(row_floats)
-        .map_err(|_| err_at(ConvertError::AllocationFailed))?;
-    alt_row.resize(row_floats, 0.0f32);
+    let mut base_row = alloc_f32(row_floats)?;
+    let mut alt_row = alloc_f32(row_floats)?;
 
-    let mut dummy_row = vec![0u8; 0];
+    let mut dummy_row = Vec::new();
     if measure_only {
-        let b = (gm_w as usize) * gm_spec.layout.bytes_per_pixel();
+        let b = (gm_w as usize)
+            .checked_mul(gm_spec.layout.bytes_per_pixel())
+            .ok_or_else(|| err_at(ConvertError::DimensionMismatch))?;
         dummy_row
             .try_reserve_exact(b)
             .map_err(|_| err_at(ConvertError::AllocationFailed))?;
@@ -2201,17 +2622,8 @@ fn extract_gain_map_internal(
     }
 
     // Subsampled extraction (scale > 1)
-    let mut gm_base_row = Vec::new();
-    gm_base_row
-        .try_reserve_exact(gm_floats)
-        .map_err(|_| err_at(ConvertError::AllocationFailed))?;
-    gm_base_row.resize(gm_floats, 0.0f32);
-    let mut gm_alt_row = Vec::new();
-    gm_alt_row
-        .try_reserve_exact(gm_floats)
-        .map_err(|_| err_at(ConvertError::AllocationFailed))?;
-    gm_alt_row.resize(gm_floats, 0.0f32);
-
+    let mut gm_base_row = alloc_f32(gm_floats)?;
+    let mut gm_alt_row = alloc_f32(gm_floats)?;
     let mut gm_v = gain_buf.as_view_mut();
 
     match downsample {
@@ -2322,8 +2734,20 @@ fn extract_gain_map_internal(
             }
         }
         GainMapDownsample::Bilinear => {
-            let hw = AxisWeights::try_new(w, gm_w, GainMapResample::Bilinear).map_err(err_at)?;
-            let vw = AxisWeights::try_new(h, gm_h, GainMapResample::Bilinear).map_err(err_at)?;
+            let hw = AxisWeights::try_new(
+                w,
+                gm_w,
+                GainMapResample::Bilinear,
+                MAX_EXTRACT_RESAMPLE_TAPS,
+            )
+            .map_err(err_at)?;
+            let vw = AxisWeights::try_new(
+                h,
+                gm_h,
+                GainMapResample::Bilinear,
+                MAX_EXTRACT_RESAMPLE_TAPS,
+            )
+            .map_err(err_at)?;
             for gy in 0..gm_h {
                 stop.check().map_err(|r| err_at(r.into()))?;
                 let (y_left, y_ws) = vw.taps(gy as usize);
@@ -2398,9 +2822,10 @@ fn resolve_linear_rgb_primaries(color: &ColorSpace) -> Option<(Primaries, Option
         ColorSpace::Icc { profile, .. } => {
             let id = zenpixels::icc::IccIdentification::from_icc(profile)?;
             if id.primaries != Primaries::Unknown {
-                return Some((id.primaries, None));
+                Some((id.primaries, None))
+            } else {
+                None
             }
-            None
         }
         _ => None,
     }

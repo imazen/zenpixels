@@ -157,6 +157,7 @@ impl ConvertPolicy {
     }
 
     /// Linear-light working-space policy: preserves extended values, keeps diffuse white anchor explicit, no tone mapping.
+    #[inline]
     #[must_use]
     pub fn working_linear() -> Self {
         Self {

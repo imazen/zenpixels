@@ -59,9 +59,13 @@ pub(crate) type SoftCompressFn = fn(&crate::tonemap::SoftCompress, &mut [[f32; 3
 #[cfg(feature = "hdr-transfers")]
 pub(crate) type HlgDisplaySoaFn =
     fn(&crate::hlg_render::PreparedHlg, &mut [f32], &mut [f32], &mut [f32], usize);
+#[cfg(feature = "gainmap")]
 pub(crate) type GainMapBlend2Fn = fn(&[f32], &[f32], f32, f32, &mut [f32]);
+#[cfg(feature = "gainmap")]
 pub(crate) type GainMapBlend4Fn = fn(&[f32], &[f32], &[f32], &[f32], [f32; 4], &mut [f32]);
-pub(crate) type GainMapDecodeFn = fn(&[f32], f32, f32, f32, f32, &mut [f32]);
+#[cfg(feature = "gainmap")]
+pub(crate) type GainMapDecodeFn = fn(&[f32], f32, f32, &mut [f32]);
+#[cfg(feature = "gainmap")]
 pub(crate) type GainMapCombineFn =
     fn(&[f32], &[f32], &[f32], &[f32], [f32; 3], [f32; 3], bool, &mut [f32]);
 
@@ -138,12 +142,16 @@ pub struct Accelerators {
     #[cfg(feature = "hdr-transfers")]
     pub(crate) hlg_display_soa: Option<HlgDisplaySoaFn>,
     /// SIMD 2-row separable vertical blend for gain-map bilinear resampling.
+    #[cfg(feature = "gainmap")]
     pub(crate) gainmap_blend_2: Option<GainMapBlend2Fn>,
     /// SIMD 4-row separable vertical blend for gain-map bicubic/Mitchell resampling.
+    #[cfg(feature = "gainmap")]
     pub(crate) gainmap_blend_4: Option<GainMapBlend4Fn>,
     /// SIMD `exp2` gain-map sample decoder.
+    #[cfg(feature = "gainmap")]
     pub(crate) gainmap_decode: Option<GainMapDecodeFn>,
     /// SIMD linear RGB(A) ISO 21496-1 gain combine kernel.
+    #[cfg(feature = "gainmap")]
     pub(crate) gainmap_combine: Option<GainMapCombineFn>,
 }
 
@@ -168,6 +176,7 @@ impl fmt::Debug for Accelerators {
             .field("soft_compress", &self.soft_compress.is_some());
         #[cfg(feature = "hdr-transfers")]
         ds.field("hdr_simd", &self.pq_eotf.is_some());
+        #[cfg(feature = "gainmap")]
         ds.field("gainmap_simd", &self.gainmap_combine.is_some());
         ds.finish()
     }
@@ -208,10 +217,13 @@ impl PartialEq for Accelerators {
             && self.hlg_scene_eotf.is_some() == other.hlg_scene_eotf.is_some()
             && self.hlg_scene_oetf.is_some() == other.hlg_scene_oetf.is_some()
             && self.hlg_display_soa.is_some() == other.hlg_display_soa.is_some();
-        base && self.gainmap_blend_2.is_some() == other.gainmap_blend_2.is_some()
+        #[cfg(feature = "gainmap")]
+        let base = base
+            && self.gainmap_blend_2.is_some() == other.gainmap_blend_2.is_some()
             && self.gainmap_blend_4.is_some() == other.gainmap_blend_4.is_some()
             && self.gainmap_decode.is_some() == other.gainmap_decode.is_some()
-            && self.gainmap_combine.is_some() == other.gainmap_combine.is_some()
+            && self.gainmap_combine.is_some() == other.gainmap_combine.is_some();
+        base
     }
 }
 
@@ -270,9 +282,13 @@ impl Accelerators {
         hlg_scene_oetf: None,
         #[cfg(feature = "hdr-transfers")]
         hlg_display_soa: None,
+        #[cfg(feature = "gainmap")]
         gainmap_blend_2: None,
+        #[cfg(feature = "gainmap")]
         gainmap_blend_4: None,
+        #[cfg(feature = "gainmap")]
         gainmap_decode: None,
+        #[cfg(feature = "gainmap")]
         gainmap_combine: None,
     };
 
@@ -281,7 +297,7 @@ impl Accelerators {
 
     /// Common web SDR workload: byte layouts + SIMD strip codec + sRGB + 3×3 gamut + fused U8 P3/sRGB matrix.
     ///
-    /// Links zero BT.709, Gamma 2.2, F16, PQ, HLG, or Oklab SIMD code.
+    /// Links zero BT.709, Gamma 2.2, F16, PQ, HLG, gain-map, or Oklab SIMD code.
     pub const WEB_SDR: Self = Self::SCALAR
         .with_byte_layout()
         .with_strip_simd()
@@ -289,19 +305,29 @@ impl Accelerators {
         .with_gamut_3x3()
         .with_srgb8_matrix_internal();
 
-    /// HDR & half-float workload: SIMD strip codec + F16C/NEON-fp16 + PQ/HLG + 3×3 gamut + gain-map SIMD.
+    /// HDR & half-float workload: SIMD strip codec + F16C/NEON-fp16 + PQ/HLG + 3×3 gamut.
+    ///
+    /// Links zero gain-map SIMD code; chain [`.with_gainmap()`](Self::with_gainmap) when reconstructing
+    /// ISO 21496-1 / UltraHDR gain maps.
     pub const HDR: Self = Self::SCALAR
         .with_strip_simd()
         .with_gamut_3x3()
         .with_f16()
-        .with_hdr_simd()
-        .with_gainmap_internal();
+        .with_hdr_simd();
+
+    /// ISO 21496-1 / UltraHDR gain-map SIMD kernels only (opt-in so `RowPlan`-only binaries dead-strip them).
+    ///
+    /// Combine with `Self::ALL.with_gainmap()` or `Self::WEB_SDR.union(Self::GAINMAP)` when applying gain maps.
+    #[cfg(feature = "gainmap")]
+    pub const GAINMAP: Self = Self::SCALAR.with_gainmap();
 
     /// Oklab perceptual SIMD + strip codec.
     #[cfg(feature = "oklab")]
     pub const OKLAB: Self = Self::SCALAR.with_strip_simd().with_oklab();
 
-    /// Every enabled SIMD accelerator in this build.
+    /// Every enabled `RowPlan` SIMD accelerator in this build (excludes opt-in gain-map SIMD
+    /// so non-gainmap binaries dead-strip it completely; use `Accelerators::ALL.with_gainmap()`
+    /// for accelerated gain-map reconstruction).
     pub const ALL: Self = {
         let base = Self::WEB_SDR.union(Self::HDR).with_bt709().with_gamma22();
         #[cfg(feature = "oklab")]
@@ -395,9 +421,15 @@ impl Accelerators {
         self
     }
 
+    /// Enable ISO 21496-1 / UltraHDR gain-map SIMD kernels (vertical resampling blend,
+    /// `magemath::Expf` gain decode, and linear RGB(A) multiply-add combine).
+    ///
+    /// Kept opt-in (excluded from [`ALL`](Self::ALL) and [`HDR`](Self::HDR)) so non-gainmap
+    /// `RowPlan` binaries dead-strip gain-map SIMD completely (`+0 B`).
+    #[cfg(feature = "gainmap")]
     #[inline]
     #[must_use]
-    const fn with_gainmap_internal(mut self) -> Self {
+    pub const fn with_gainmap(mut self) -> Self {
         self.gainmap_blend_2 = Some(crate::gainmap_simd::simd_blend_rows_2);
         self.gainmap_blend_4 = Some(crate::gainmap_simd::simd_blend_rows_4);
         self.gainmap_decode = Some(crate::gainmap_simd::simd_decode_gain_1ch);
@@ -492,9 +524,13 @@ impl Accelerators {
             hlg_scene_oetf: pick!(hlg_scene_oetf),
             #[cfg(feature = "hdr-transfers")]
             hlg_display_soa: pick!(hlg_display_soa),
+            #[cfg(feature = "gainmap")]
             gainmap_blend_2: pick!(gainmap_blend_2),
+            #[cfg(feature = "gainmap")]
             gainmap_blend_4: pick!(gainmap_blend_4),
+            #[cfg(feature = "gainmap")]
             gainmap_decode: pick!(gainmap_decode),
+            #[cfg(feature = "gainmap")]
             gainmap_combine: pick!(gainmap_combine),
         }
     }

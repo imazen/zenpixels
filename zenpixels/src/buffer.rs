@@ -2103,6 +2103,31 @@ impl<'a> DualLayerHdrView<'a> {
     pub const fn orientation(&self) -> crate::Orientation {
         self.orientation
     }
+
+    /// Replace the shared pending EXIF orientation on this borrowed view.
+    #[inline]
+    #[must_use]
+    pub const fn with_orientation(mut self, orientation: crate::Orientation) -> Self {
+        self.orientation = orientation;
+        self
+    }
+
+    /// Compose an additional display transform onto the shared pending EXIF orientation
+    /// (`self.orientation.then(delta)`) in O(1) without touching or copying either pixel layer.
+    #[inline]
+    #[must_use]
+    pub const fn rotate_metadata(mut self, delta: crate::Orientation) -> Self {
+        self.orientation = self.orientation.then(delta);
+        self
+    }
+
+    /// Display-oriented `(width, height)` of the base image after applying `self.orientation()`.
+    #[inline]
+    #[must_use]
+    pub const fn display_dimensions(&self) -> (u32, u32) {
+        self.orientation
+            .output_dimensions(self.base.width(), self.base.rows())
+    }
 }
 
 /// Container-agnostic dual-layer HDR image (base + numeric gain map + exact ISO 21496-1 metadata).
@@ -2161,6 +2186,19 @@ impl DualLayerHdr {
         self
     }
 
+    /// Compose an additional display transform onto the shared pending EXIF orientation
+    /// (`self.orientation.then(delta)`) in O(1) without touching or rebaking either pixel layer.
+    ///
+    /// Keeps `base` and `gain_map` strictly registered in stored-frame coordinates for
+    /// lossless EXIF passthrough workflows. To physically bake orientation into both pixel
+    /// buffers, use `zenpixels_convert::gainmap::{bake_dual_layer_orientation, rotate_dual_layer}`.
+    #[inline]
+    #[must_use]
+    pub const fn rotate_metadata(mut self, delta: crate::Orientation) -> Self {
+        self.orientation = self.orientation.then(delta);
+        self
+    }
+
     /// Borrow as a zero-copy [`DualLayerHdrView`].
     #[inline]
     #[must_use]
@@ -2207,6 +2245,14 @@ impl DualLayerHdr {
     #[must_use]
     pub const fn orientation(&self) -> crate::Orientation {
         self.orientation
+    }
+
+    /// Display-oriented `(width, height)` of the base image after applying `self.orientation()`.
+    #[inline]
+    #[must_use]
+    pub const fn display_dimensions(&self) -> (u32, u32) {
+        self.orientation
+            .output_dimensions(self.base.width(), self.base.height())
     }
 
     /// Decompose into owned `(base, gain_map, metadata)`.

@@ -40,7 +40,9 @@ pub mod accel;
 pub mod cms;
 pub mod error;
 pub(crate) mod f16_scalar;
+#[cfg(feature = "gainmap")]
 pub mod gainmap;
+#[cfg(feature = "gainmap")]
 pub(crate) mod gainmap_simd;
 pub mod gamut;
 #[cfg(feature = "hdr-transfers")]
@@ -71,10 +73,12 @@ pub use cms::{CmsBackend, CmsTransform};
 #[cfg(feature = "cms-lcms")]
 pub use cms::{Lcms, LcmsUnoptimized};
 pub use error::ConvertError;
+#[cfg(feature = "gainmap")]
 pub use gainmap::{
-    GainMapApplier, GainMapApplyConfig, GainMapDownsample, GainMapExtractConfig, GainMapResample,
-    GainMapRowExtractor, apply_gain_map, apply_gain_map_view, apply_gain_map_with,
-    extract_gain_map, extract_gain_map_only,
+    GainMapApplier, GainMapApplyConfig, GainMapDownsample, GainMapExtractConfig,
+    GainMapOrientation, GainMapResample, GainMapRowExtractor, GainMapTarget, apply_gain_map,
+    apply_gain_map_oriented, apply_gain_map_view, apply_gain_map_with, bake_dual_layer_orientation,
+    extract_gain_map, extract_gain_map_only, rotate_dual_layer,
 };
 pub use gamut::GamutMatrix;
 pub use measure::{LightLevelHistogram, LightLevelMethod, measure_cll, measure_histogram};

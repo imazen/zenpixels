@@ -1,15 +1,10 @@
-//! Bit-exact scalar + SIMD kernels for ISO 21496-1 gain-map resampling and application.
+//! Bit-exact scalar + padded SIMD-only kernels for ISO 21496-1 gain-map resampling and application.
 //!
-//! Every SIMD kernel produces **0-bit identical** output to its scalar reference:
-//! - Vertical separable resampling blends (`blend_rows_2`, `blend_rows_4`) use plain
-//!   mul+add (no FMA contraction) + unit `[0.0, 1.0]` clamp.
-//! - Exponential gain decoding (`decode_gain_1ch`) uses const-configured
-//!   `magemath::expf::Expf` (`BitExact` on x86-64/aarch64, `BackendDependent` on
-//!   default wasm32 unless `precise-portable` is enabled) with defense-in-depth
-//!   clamping to `[-30, +30]` stops (`[2^-30, 2^30]`).
-//! - Linear RGB(A) gain application (`combine_linear_f32`) uses native-width
-//!   `deinterleave_{3,4}ch` / `interleave_{3,4}ch` (`f32x8` on V3, `f32x4` on
-//!   NEON/WASM128) with plain `(base + kb) * gain - ka` arithmetic.
+//! All scratch row slices owned by `GainMapApplier` are padded to a multiple of `8` elements
+//! (`w_pad = width.next_multiple_of(8)`), which is a multiple of both `f32x8` (x86-64 V3) and
+//! `f32x4` (AArch64 NEON / WASM128). Every SIMD kernel therefore executes a **pure SIMD-only
+//! loop with zero scalar tail** inside `#[archmage::arcane]`, minimizing codegen size while
+//! keeping **0-bit parity** against its scalar reference.
 
 use archmage::ScalarToken;
 use magemath::SimdMath;
@@ -35,17 +30,6 @@ const GAINMAP_EXP_OPT: u128 = ExpfOptions::new()
     .caller()
     .bits();
 
-/// Defense-in-depth scalar `exp2(log2_gain)` clamped to `[-30, +30]` stops,
-/// 0-bit identical to the SIMD `exp2` lane calculation!
-#[inline(always)]
-pub(crate) fn exp2_gain_scalar(log2_gain: f32) -> f32 {
-    if !log2_gain.is_finite() {
-        return 1.0;
-    }
-    let clamped = log2_gain.clamp(-MAX_LOG2_GAIN, MAX_LOG2_GAIN);
-    Expf::<GAINMAP_EXP_OPT>::exp2_with_token(ScalarToken, clamped).unwrap_or(1.0)
-}
-
 #[inline(always)]
 fn clamp_unit_scalar(v: f32) -> f32 {
     if v > 0.0 {
@@ -55,11 +39,30 @@ fn clamp_unit_scalar(v: f32) -> f32 {
     }
 }
 
+/// Ordered clamp to `[-MAX_LOG2_GAIN, +MAX_LOG2_GAIN]` matching SIMD `blend(lg.simd_gt(lo), lg.min_fast(hi), lo)`
+/// identically for ALL floats (including `-0.0`, `±Inf`, and `NaN` → `-MAX_LOG2_GAIN`).
+#[inline(always)]
+fn clamp_log2_scalar(v: f32) -> f32 {
+    if v > -MAX_LOG2_GAIN {
+        if v < MAX_LOG2_GAIN { v } else { MAX_LOG2_GAIN }
+    } else {
+        -MAX_LOG2_GAIN
+    }
+}
+
+/// Scalar `exp2(clamp_ordered(log2_gain, -30, +30))`, 0-bit identical to the SIMD lane calculation.
+#[inline(never)]
+pub(crate) fn exp2_gain_scalar(log2_gain: f32) -> f32 {
+    let clamped = clamp_log2_scalar(log2_gain);
+    Expf::<GAINMAP_EXP_OPT>::exp2_with_token(ScalarToken, clamped).unwrap_or(1.0)
+}
+
 // ---------------------------------------------------------------------------
-// 1. Vertical separable resampling blends (2-tap Bilinear & 4-tap Cubic)
+// 1. Vertical separable resampling blends (padded to multiple of 8; SIMD-only!)
 // ---------------------------------------------------------------------------
 
 /// Scalar 2-row vertical blend with `[0.0, 1.0]` clamp (0-bit reference).
+#[inline(never)]
 pub(crate) fn blend_rows_2_scalar(r0: &[f32], r1: &[f32], w0: f32, w1: f32, out: &mut [f32]) {
     let n = out.len().min(r0.len()).min(r1.len());
     for i in 0..n {
@@ -74,15 +77,14 @@ macro_rules! blend_rows_2_body {
         let vw1 = <$V>::splat_t($token, $w1);
         let zero = <$V>::zero_t($token);
         let one = <$V>::splat_t($token, 1.0);
-        let (c0, rem0) = $r0[..n].as_chunks::<$LANES>();
-        let (c1, rem1) = $r1[..n].as_chunks::<$LANES>();
-        let (co, remo) = $out[..n].as_chunks_mut::<$LANES>();
+        let (c0, _) = $r0[..n].as_chunks::<$LANES>();
+        let (c1, _) = $r1[..n].as_chunks::<$LANES>();
+        let (co, _) = $out[..n].as_chunks_mut::<$LANES>();
         for ((a, b), o) in c0.iter().zip(c1.iter()).zip(co.iter_mut()) {
             let sum = <$V>::load_t($token, a) * vw0 + <$V>::load_t($token, b) * vw1;
             let clamped = <$V>::blend(sum.simd_gt(zero), sum.min_fast(one), zero);
             clamped.store(o);
         }
-        blend_rows_2_scalar(rem0, rem1, $w0, $w1, remo);
     }};
 }
 
@@ -147,6 +149,7 @@ pub(crate) fn simd_blend_rows_2(r0: &[f32], r1: &[f32], w0: f32, w1: f32, out: &
 }
 
 /// Scalar 4-row vertical blend (Catmull-Rom / Mitchell) with `[0.0, 1.0]` clamp (0-bit reference).
+#[inline(never)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn blend_rows_4_scalar(
     r0: &[f32],
@@ -182,11 +185,11 @@ macro_rules! blend_rows_4_body {
         let vw3 = <$V>::splat_t($token, $w[3]);
         let zero = <$V>::zero_t($token);
         let one = <$V>::splat_t($token, 1.0);
-        let (c0, rem0) = $r0[..n].as_chunks::<$LANES>();
-        let (c1, rem1) = $r1[..n].as_chunks::<$LANES>();
-        let (c2, rem2) = $r2[..n].as_chunks::<$LANES>();
-        let (c3, rem3) = $r3[..n].as_chunks::<$LANES>();
-        let (co, remo) = $out[..n].as_chunks_mut::<$LANES>();
+        let (c0, _) = $r0[..n].as_chunks::<$LANES>();
+        let (c1, _) = $r1[..n].as_chunks::<$LANES>();
+        let (c2, _) = $r2[..n].as_chunks::<$LANES>();
+        let (c3, _) = $r3[..n].as_chunks::<$LANES>();
+        let (co, _) = $out[..n].as_chunks_mut::<$LANES>();
         for i in 0..co.len() {
             let s = ((<$V>::load_t($token, &c0[i]) * vw0 + <$V>::load_t($token, &c1[i]) * vw1)
                 + <$V>::load_t($token, &c2[i]) * vw2)
@@ -194,7 +197,6 @@ macro_rules! blend_rows_4_body {
             let clamped = <$V>::blend(s.simd_gt(zero), s.min_fast(one), zero);
             clamped.store(&mut co[i]);
         }
-        blend_rows_4_scalar(rem0, rem1, rem2, rem3, $w, remo);
     }};
 }
 
@@ -275,88 +277,47 @@ pub(crate) fn simd_blend_rows_4(
 }
 
 // ---------------------------------------------------------------------------
-// 2. Decode normalized [0, 1] gain samples -> linear gain multipliers via exp2
+// 2. Decode normalized [0, 1] (gamma-applied) gain samples -> exp2 multipliers
+//    Single Expf loop + padded SIMD-only body (no duplicate gamma branch / tail)!
 // ---------------------------------------------------------------------------
 
-/// Scalar gain decode: `exp2(clamp((min_g + span_g * s^(1/gamma)) * signed_weight, -30, 30))`.
+/// Scalar gain decode: `exp2(clamp_ordered(base_w + slope_w * clamp_unit(s), -30, 30))`.
+///
+/// Any non-unit `1/gamma` power is applied to `samples` beforehand so `Expf::exp2` is
+/// instantiated strictly once per ISA tier.
+#[inline(never)]
 pub(crate) fn decode_gain_1ch_scalar(
     samples: &[f32],
-    min_g: f32,
-    span_g: f32,
-    signed_weight: f32,
-    inv_gamma: f32,
+    base_w: f32,
+    slope_w: f32,
     out_gains: &mut [f32],
 ) {
     let n = samples.len().min(out_gains.len());
-    if (inv_gamma - 1.0).abs() < 1e-7 {
-        let base_w = min_g * signed_weight;
-        let slope_w = span_g * signed_weight;
-        for i in 0..n {
-            let s = clamp_unit_scalar(samples[i]);
-            let lg = (base_w + slope_w * s).clamp(-MAX_LOG2_GAIN, MAX_LOG2_GAIN);
-            out_gains[i] = exp2_gain_scalar(lg);
-        }
-    } else {
-        for i in 0..n {
-            let s = clamp_unit_scalar(samples[i]);
-            let g = if s == 0.0 {
-                0.0
-            } else if s == 1.0 {
-                1.0
-            } else {
-                libm::powf(s, inv_gamma)
-            };
-            let lg = ((min_g + span_g * g) * signed_weight).clamp(-MAX_LOG2_GAIN, MAX_LOG2_GAIN);
-            out_gains[i] = exp2_gain_scalar(lg);
-        }
+    for i in 0..n {
+        let s = clamp_unit_scalar(samples[i]);
+        let lg = base_w + slope_w * s;
+        out_gains[i] = exp2_gain_scalar(lg);
     }
 }
 
 macro_rules! decode_gain_1ch_body {
-    ($V:ty, $LANES:literal, $token:ident, $samples:ident, $min_g:ident, $span_g:ident, $signed_weight:ident, $inv_gamma:ident, $out_gains:ident) => {{
+    ($V:ty, $LANES:literal, $token:ident, $samples:ident, $base_w:ident, $slope_w:ident, $out_gains:ident) => {{
         let n = $samples.len().min($out_gains.len());
         let zero = <$V>::zero_t($token);
         let one = <$V>::splat_t($token, 1.0);
         let lo = <$V>::splat_t($token, -MAX_LOG2_GAIN);
         let hi = <$V>::splat_t($token, MAX_LOG2_GAIN);
-        let unit_gamma = ($inv_gamma - 1.0).abs() < 1e-7;
-        let (in_chunks, in_rem) = $samples[..n].as_chunks::<$LANES>();
-        let (out_chunks, out_rem) = $out_gains[..n].as_chunks_mut::<$LANES>();
-
-        if unit_gamma {
-            let base_w = <$V>::splat_t($token, $min_g * $signed_weight);
-            let slope_w = <$V>::splat_t($token, $span_g * $signed_weight);
-            for (inp, out) in in_chunks.iter().zip(out_chunks.iter_mut()) {
-                let raw = <$V>::load_t($token, inp);
-                let s = <$V>::blend(raw.simd_gt(zero), raw.min_fast(one), zero);
-                let lg = (base_w + slope_w * s).max(lo).min(hi);
-                let gain = lg.exp2::<GAINMAP_EXP_OPT>();
-                gain.store(out);
-            }
-        } else {
-            let v_min = <$V>::splat_t($token, $min_g);
-            let v_span = <$V>::splat_t($token, $span_g);
-            let v_w = <$V>::splat_t($token, $signed_weight);
-            for (inp, out) in in_chunks.iter().zip(out_chunks.iter_mut()) {
-                let mut g_arr = [0.0f32; $LANES];
-                for k in 0..$LANES {
-                    let s = clamp_unit_scalar(inp[k]);
-                    g_arr[k] = if s == 0.0 {
-                        0.0
-                    } else if s == 1.0 {
-                        1.0
-                    } else {
-                        libm::powf(s, $inv_gamma)
-                    };
-                }
-                let gv = <$V>::from_array_t($token, g_arr);
-                let lg = ((v_min + v_span * gv) * v_w).max(lo).min(hi);
-                let gain = lg.exp2::<GAINMAP_EXP_OPT>();
-                gain.store(out);
-            }
-        }
-        if !in_rem.is_empty() {
-            decode_gain_1ch_scalar(in_rem, $min_g, $span_g, $signed_weight, $inv_gamma, out_rem);
+        let v_base = <$V>::splat_t($token, $base_w);
+        let v_slope = <$V>::splat_t($token, $slope_w);
+        let (in_chunks, _) = $samples[..n].as_chunks::<$LANES>();
+        let (out_chunks, _) = $out_gains[..n].as_chunks_mut::<$LANES>();
+        for (inp, out) in in_chunks.iter().zip(out_chunks.iter_mut()) {
+            let raw = <$V>::load_t($token, inp);
+            let s = <$V>::blend(raw.simd_gt(zero), raw.min_fast(one), zero);
+            let lg = v_base + v_slope * s;
+            let clamped = <$V>::blend(lg.simd_gt(lo), lg.min_fast(hi), lo);
+            let gain = clamped.exp2::<GAINMAP_EXP_OPT>();
+            gain.store(out);
         }
     }};
 }
@@ -366,24 +327,12 @@ macro_rules! decode_gain_1ch_body {
 fn decode_gain_1ch_v3_t(
     token: archmage::X64V3Token,
     samples: &[f32],
-    min_g: f32,
-    span_g: f32,
-    signed_weight: f32,
-    inv_gamma: f32,
+    base_w: f32,
+    slope_w: f32,
     out_gains: &mut [f32],
 ) {
     type V = magetypes::simd::generic::f32x8<archmage::X64V3Token>;
-    decode_gain_1ch_body!(
-        V,
-        8,
-        token,
-        samples,
-        min_g,
-        span_g,
-        signed_weight,
-        inv_gamma,
-        out_gains
-    );
+    decode_gain_1ch_body!(V, 8, token, samples, base_w, slope_w, out_gains);
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -391,24 +340,12 @@ fn decode_gain_1ch_v3_t(
 fn decode_gain_1ch_neon_t(
     token: archmage::NeonToken,
     samples: &[f32],
-    min_g: f32,
-    span_g: f32,
-    signed_weight: f32,
-    inv_gamma: f32,
+    base_w: f32,
+    slope_w: f32,
     out_gains: &mut [f32],
 ) {
     type V = magetypes::simd::generic::f32x4<archmage::NeonToken>;
-    decode_gain_1ch_body!(
-        V,
-        4,
-        token,
-        samples,
-        min_g,
-        span_g,
-        signed_weight,
-        inv_gamma,
-        out_gains
-    );
+    decode_gain_1ch_body!(V, 4, token, samples, base_w, slope_w, out_gains);
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -416,57 +353,42 @@ fn decode_gain_1ch_neon_t(
 fn decode_gain_1ch_wasm128_t(
     token: archmage::Wasm128Token,
     samples: &[f32],
-    min_g: f32,
-    span_g: f32,
-    signed_weight: f32,
-    inv_gamma: f32,
+    base_w: f32,
+    slope_w: f32,
     out_gains: &mut [f32],
 ) {
     type V = magetypes::simd::generic::f32x4<archmage::Wasm128Token>;
-    decode_gain_1ch_body!(
-        V,
-        4,
-        token,
-        samples,
-        min_g,
-        span_g,
-        signed_weight,
-        inv_gamma,
-        out_gains
-    );
+    decode_gain_1ch_body!(V, 4, token, samples, base_w, slope_w, out_gains);
 }
 
 fn decode_gain_1ch_scalar_t(
     _token: ScalarToken,
     samples: &[f32],
-    min_g: f32,
-    span_g: f32,
-    signed_weight: f32,
-    inv_gamma: f32,
+    base_w: f32,
+    slope_w: f32,
     out_gains: &mut [f32],
 ) {
-    decode_gain_1ch_scalar(samples, min_g, span_g, signed_weight, inv_gamma, out_gains);
+    decode_gain_1ch_scalar(samples, base_w, slope_w, out_gains);
 }
 
 pub(crate) fn simd_decode_gain_1ch(
     samples: &[f32],
-    min_g: f32,
-    span_g: f32,
-    signed_weight: f32,
-    inv_gamma: f32,
+    base_w: f32,
+    slope_w: f32,
     out_gains: &mut [f32],
 ) {
     archmage::attuned!(
-        decode_gain_1ch(samples, min_g, span_g, signed_weight, inv_gamma, out_gains),
+        decode_gain_1ch(samples, base_w, slope_w, out_gains),
         [_v3, _neon, _wasm128, _scalar]
     );
 }
 
 // ---------------------------------------------------------------------------
-// 3. Linear RGB(A) gain application: out[c] = (base[c] + k_base[c]) * g[c] - k_alt[c]
+// 3. Linear RGB(A) gain application (padded to multiple of 8; SIMD-only!)
 // ---------------------------------------------------------------------------
 
 /// Scalar linear RGB(A) gain combine (0-bit reference, preserves alpha untouched when `has_alpha`).
+#[inline(never)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn combine_linear_f32_scalar(
     base_rgb: &[f32],
@@ -484,20 +406,13 @@ pub(crate) fn combine_linear_f32_scalar(
         .min(gr.len())
         .min(gg.len())
         .min(gb.len());
-    if has_alpha {
-        for i in 0..pixels {
-            let o = i * 4;
-            out_rgb[o] = (base_rgb[o] + k_base[0]) * gr[i] - k_alt[0];
-            out_rgb[o + 1] = (base_rgb[o + 1] + k_base[1]) * gg[i] - k_alt[1];
-            out_rgb[o + 2] = (base_rgb[o + 2] + k_base[2]) * gb[i] - k_alt[2];
+    for i in 0..pixels {
+        let o = i * ch;
+        out_rgb[o] = (base_rgb[o] + k_base[0]) * gr[i] - k_alt[0];
+        out_rgb[o + 1] = (base_rgb[o + 1] + k_base[1]) * gg[i] - k_alt[1];
+        out_rgb[o + 2] = (base_rgb[o + 2] + k_base[2]) * gb[i] - k_alt[2];
+        if has_alpha {
             out_rgb[o + 3] = base_rgb[o + 3];
-        }
-    } else {
-        for i in 0..pixels {
-            let o = i * 3;
-            out_rgb[o] = (base_rgb[o] + k_base[0]) * gr[i] - k_alt[0];
-            out_rgb[o + 1] = (base_rgb[o + 1] + k_base[1]) * gg[i] - k_alt[1];
-            out_rgb[o + 2] = (base_rgb[o + 2] + k_base[2]) * gb[i] - k_alt[2];
         }
     }
 }
@@ -538,10 +453,12 @@ macro_rules! combine_linear_f32_body {
                 let vr = <$V>::load_t($token, (&$gr[i..i + $LANES]).try_into().unwrap());
                 let vg = <$V>::load_t($token, (&$gg[i..i + $LANES]).try_into().unwrap());
                 let vb = <$V>::load_t($token, (&$gb[i..i + $LANES]).try_into().unwrap());
-                let or = (r + kb0) * vr - ka0;
-                let og = (g + kb1) * vg - ka1;
-                let ob = (b + kb2) * vb - ka2;
-                let [o0, o1, o2, o3] = <$V>::interleave_4ch([or, og, ob, a]);
+                let [o0, o1, o2, o3] = <$V>::interleave_4ch([
+                    (r + kb0) * vr - ka0,
+                    (g + kb1) * vg - ka1,
+                    (b + kb2) * vb - ka2,
+                    a,
+                ]);
                 o0.store((&mut $out[o..o + $LANES]).try_into().unwrap());
                 o1.store((&mut $out[o + $LANES..o + 2 * $LANES]).try_into().unwrap());
                 o2.store(
@@ -572,10 +489,11 @@ macro_rules! combine_linear_f32_body {
                 let vr = <$V>::load_t($token, (&$gr[i..i + $LANES]).try_into().unwrap());
                 let vg = <$V>::load_t($token, (&$gg[i..i + $LANES]).try_into().unwrap());
                 let vb = <$V>::load_t($token, (&$gb[i..i + $LANES]).try_into().unwrap());
-                let or = (r + kb0) * vr - ka0;
-                let og = (g + kb1) * vg - ka1;
-                let ob = (b + kb2) * vb - ka2;
-                let [o0, o1, o2] = <$V>::interleave_3ch([or, og, ob]);
+                let [o0, o1, o2] = <$V>::interleave_3ch([
+                    (r + kb0) * vr - ka0,
+                    (g + kb1) * vg - ka1,
+                    (b + kb2) * vb - ka2,
+                ]);
                 o0.store((&mut $out[o..o + $LANES]).try_into().unwrap());
                 o1.store((&mut $out[o + $LANES..o + 2 * $LANES]).try_into().unwrap());
                 o2.store(
@@ -585,18 +503,6 @@ macro_rules! combine_linear_f32_body {
                 );
                 i += $LANES;
             }
-        }
-        if i < pixels {
-            combine_linear_f32_scalar(
-                &$base[i * ch..pixels * ch],
-                &$gr[i..pixels],
-                &$gg[i..pixels],
-                &$gb[i..pixels],
-                $kb,
-                $ka,
-                $has_alpha,
-                &mut $out[i * ch..pixels * ch],
-            );
         }
     }};
 }

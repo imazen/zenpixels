@@ -775,6 +775,7 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     }
 }
 
+#[cfg(feature = "gainmap")]
 #[test]
 fn parity_gainmap_applier_all_modes_zero_bit() {
     use core::num::NonZeroU32;
@@ -1005,7 +1006,10 @@ fn parity_gainmap_applier_all_modes_zero_bit() {
                 );
             let mut cfg_all = GainMapApplyConfig::new(headroom)
                 .with_resample(resample)
-                .with_policy(ConvertPolicy::working_linear().with_accelerators(Accelerators::ALL));
+                .with_policy(
+                    ConvertPolicy::working_linear()
+                        .with_accelerators(Accelerators::ALL.with_gainmap()),
+                );
             if let Some(ds) = &dst_spec {
                 cfg_scalar = cfg_scalar.with_dst_spec(ds.clone());
                 cfg_all = cfg_all.with_dst_spec(ds.clone());

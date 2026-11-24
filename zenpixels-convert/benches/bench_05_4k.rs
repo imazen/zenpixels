@@ -720,9 +720,10 @@ fn main() {
                         .min_rounds(6)
                         .max_rounds(6)
                         .max_time(Duration::from_millis(900));
-                    for (tier, acc) in
-                        [("ALL", Accelerators::ALL), ("SCALAR", Accelerators::SCALAR)]
-                    {
+                    for (tier, acc) in [
+                        ("ALL", Accelerators::ALL.with_gainmap()),
+                        ("SCALAR", Accelerators::SCALAR),
+                    ] {
                         let base_ref = Arc::clone(&base_ref);
                         let gm_ref = Arc::clone(&gm_ref);
                         let dst_spec = dst_spec.clone();

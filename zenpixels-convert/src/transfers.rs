@@ -165,6 +165,7 @@ fn bt709_oetf_one(v: f32) -> f32 {
     }
 }
 
+#[cold]
 #[inline(never)]
 pub(crate) fn bt709_eotf_scalar_slice(vals: &mut [f32]) {
     for v in vals {
@@ -172,6 +173,7 @@ pub(crate) fn bt709_eotf_scalar_slice(vals: &mut [f32]) {
     }
 }
 
+#[cold]
 #[inline(never)]
 pub(crate) fn bt709_oetf_scalar_slice(vals: &mut [f32]) {
     for v in vals {
@@ -189,9 +191,19 @@ macro_rules! bt709_eotf_simd_body {
         let hi = $vec::splat_t($token, POW_HI);
         let neg_zero = $vec::splat_t($token, -0.0);
 
-        let (chunks, rem) = $vals.as_chunks_mut::<$lanes>();
-        for chunk in chunks {
-            let v = $vec::load_t($token, chunk);
+        let n = $vals.len();
+        let mut i = 0usize;
+        let mut pad = [0.0f32; $lanes];
+        while i < n {
+            let is_full = i + $lanes <= n;
+            let v = if is_full {
+                $vec::load_t($token, (&$vals[i..i + $lanes]).try_into().unwrap())
+            } else {
+                let rem = n - i;
+                pad = [0.0f32; $lanes];
+                pad[..rem].copy_from_slice(&$vals[i..n]);
+                $vec::load_t($token, &pad)
+            };
             let a = v.abs();
             let sign = v & neg_zero;
             let is_lin = a.simd_lt(beta_lin);
@@ -201,15 +213,18 @@ macro_rules! bt709_eotf_simd_body {
                 let lin = a * inv_45;
                 let pow = safe_base.powf::<TRANSFER_POW>(BT709_DEC_EXP);
                 let out = $vec::blend(is_lin, lin, pow) | sign;
-                out.store(chunk);
-            } else {
-                for x in chunk.iter_mut() {
-                    *x = bt709_eotf_one(*x);
+                if is_full {
+                    out.store((&mut $vals[i..i + $lanes]).try_into().unwrap());
+                } else {
+                    let rem = n - i;
+                    out.store(&mut pad);
+                    $vals[i..n].copy_from_slice(&pad[..rem]);
                 }
+            } else {
+                let end = (i + $lanes).min(n);
+                bt709_eotf_scalar_slice(&mut $vals[i..end]);
             }
-        }
-        for x in rem {
-            *x = bt709_eotf_one(*x);
+            i += $lanes;
         }
     }};
 }
@@ -224,9 +239,19 @@ macro_rules! bt709_oetf_simd_body {
         let hi = $vec::splat_t($token, POW_HI);
         let neg_zero = $vec::splat_t($token, -0.0);
 
-        let (chunks, rem) = $vals.as_chunks_mut::<$lanes>();
-        for chunk in chunks {
-            let v = $vec::load_t($token, chunk);
+        let n = $vals.len();
+        let mut i = 0usize;
+        let mut pad = [0.0f32; $lanes];
+        while i < n {
+            let is_full = i + $lanes <= n;
+            let v = if is_full {
+                $vec::load_t($token, (&$vals[i..i + $lanes]).try_into().unwrap())
+            } else {
+                let rem = n - i;
+                pad = [0.0f32; $lanes];
+                pad[..rem].copy_from_slice(&$vals[i..n]);
+                $vec::load_t($token, &pad)
+            };
             let a = v.abs();
             let sign = v & neg_zero;
             let is_lin = a.simd_lt(beta);
@@ -235,15 +260,18 @@ macro_rules! bt709_oetf_simd_body {
                 let lin = a * s45;
                 let pow = one_pa * safe_base.powf::<TRANSFER_POW>(BT709_ENC_EXP) - alpha;
                 let out = $vec::blend(is_lin, lin, pow) | sign;
-                out.store(chunk);
-            } else {
-                for x in chunk.iter_mut() {
-                    *x = bt709_oetf_one(*x);
+                if is_full {
+                    out.store((&mut $vals[i..i + $lanes]).try_into().unwrap());
+                } else {
+                    let rem = n - i;
+                    out.store(&mut pad);
+                    $vals[i..n].copy_from_slice(&pad[..rem]);
                 }
+            } else {
+                let end = (i + $lanes).min(n);
+                bt709_oetf_scalar_slice(&mut $vals[i..end]);
             }
-        }
-        for x in rem {
-            *x = bt709_oetf_one(*x);
+            i += $lanes;
         }
     }};
 }
@@ -345,18 +373,22 @@ fn gamma_one(v: f32, exp_f32: f32, exp_f64: f64) -> f32 {
     }
 }
 
+#[cold]
 #[inline(never)]
-pub(crate) fn gamma22_eotf_scalar_slice(vals: &mut [f32]) {
+fn gamma_scalar_slice(vals: &mut [f32], exp_f32: f32, exp_f64: f64) {
     for v in vals {
-        *v = gamma_one(*v, GAMMA22_DEC_EXP, 563.0 / 256.0);
+        *v = gamma_one(*v, exp_f32, exp_f64);
     }
 }
 
 #[inline(never)]
+pub(crate) fn gamma22_eotf_scalar_slice(vals: &mut [f32]) {
+    gamma_scalar_slice(vals, GAMMA22_DEC_EXP, 563.0 / 256.0);
+}
+
+#[inline(never)]
 pub(crate) fn gamma22_oetf_scalar_slice(vals: &mut [f32]) {
-    for v in vals {
-        *v = gamma_one(*v, GAMMA22_ENC_EXP, 256.0 / 563.0);
-    }
+    gamma_scalar_slice(vals, GAMMA22_ENC_EXP, 256.0 / 563.0);
 }
 
 macro_rules! gamma_simd_body {
@@ -367,9 +399,19 @@ macro_rules! gamma_simd_body {
         let hi = $vec::splat_t($token, POW_HI);
         let neg_zero = $vec::splat_t($token, -0.0);
 
-        let (chunks, rem) = $vals.as_chunks_mut::<$lanes>();
-        for chunk in chunks {
-            let v = $vec::load_t($token, chunk);
+        let n = $vals.len();
+        let mut i = 0usize;
+        let mut pad = [0.0f32; $lanes];
+        while i < n {
+            let is_full = i + $lanes <= n;
+            let v = if is_full {
+                $vec::load_t($token, (&$vals[i..i + $lanes]).try_into().unwrap())
+            } else {
+                let rem = n - i;
+                pad = [0.0f32; $lanes];
+                pad[..rem].copy_from_slice(&$vals[i..n]);
+                $vec::load_t($token, &pad)
+            };
             let a = v.abs();
             let sign = v & neg_zero;
             let is_zero = a.simd_eq(zero);
@@ -378,15 +420,18 @@ macro_rules! gamma_simd_body {
                 let safe = $vec::blend(is_zero, one, a);
                 let p = safe.powf::<TRANSFER_POW>($exp_f32);
                 let out = $vec::blend(is_zero, zero, p) | sign;
-                out.store(chunk);
-            } else {
-                for x in chunk.iter_mut() {
-                    *x = gamma_one(*x, $exp_f32, $exp_f64);
+                if is_full {
+                    out.store((&mut $vals[i..i + $lanes]).try_into().unwrap());
+                } else {
+                    let rem = n - i;
+                    out.store(&mut pad);
+                    $vals[i..n].copy_from_slice(&pad[..rem]);
                 }
+            } else {
+                let end = (i + $lanes).min(n);
+                gamma_scalar_slice(&mut $vals[i..end], $exp_f32, $exp_f64);
             }
-        }
-        for x in rem {
-            *x = gamma_one(*x, $exp_f32, $exp_f64);
+            i += $lanes;
         }
     }};
 }
@@ -425,9 +470,7 @@ fn gamma_slice_wasm128_t(
 }
 
 fn gamma_slice_scalar_t(_token: ScalarToken, vals: &mut [f32], exp_f32: f32, exp_f64: f64) {
-    for v in vals {
-        *v = gamma_one(*v, exp_f32, exp_f64);
-    }
+    gamma_scalar_slice(vals, exp_f32, exp_f64);
 }
 
 pub(crate) fn gamma22_eotf_simd_slice(vals: &mut [f32]) {

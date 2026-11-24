@@ -26,6 +26,9 @@ const INV_65535: f32 = 1.0 / 65535.0;
 
 macro_rules! unpack_strip_body {
     ($vec:ident, $lanes:literal, $n3:literal, $n4:literal, $token:ident, $layout:ident, $src:ident, $strip:ident, $len:ident) => {{
+        if $len > 64 {
+            return false;
+        }
         let order = $layout.order;
         let is_bgr = matches!(
             order,
@@ -41,60 +44,52 @@ macro_rules! unpack_strip_body {
                 | ChannelOrder::Xyz
                 | ChannelOrder::Perceptual3
         );
+        // StripBuf is 64-px padded (multiple of 8 & 4): every arm executes a pure SIMD-only loop
+        // with a stack-padded final chunk for partial tails or unaligned U16/F32 rows (zero scalar tails!).
         match ($layout.sample, $layout.channels()) {
             (SampleType::U8, 3) => {
                 let inv = $vec::splat_t($token, INV_255);
+                let mut pad = [0u8; $n3];
                 let mut i = 0usize;
-                while i + $lanes <= $len {
-                    let blk: &[u8; $n3] = (&$src[i * 3..i * 3 + $n3]).try_into().unwrap();
+                while i < $len {
+                    let blk: &[u8; $n3] = if i + $lanes <= $len {
+                        (&$src[i * 3..i * 3 + $n3]).try_into().unwrap()
+                    } else {
+                        let rb = ($len - i) * 3;
+                        pad[..rb].copy_from_slice(&$src[i * 3..i * 3 + rb]);
+                        &pad
+                    };
                     let (c0, c1, c2) = $vec::load_rgb_u8_t($token, blk);
                     let (r, b) = if is_bgr { (c2, c0) } else { (c0, c2) };
-                    $strip.r[i..i + $lanes].copy_from_slice(&(r * inv).to_array());
-                    $strip.g[i..i + $lanes].copy_from_slice(&(c1 * inv).to_array());
-                    $strip.b[i..i + $lanes].copy_from_slice(&(b * inv).to_array());
+                    (r * inv).store((&mut $strip.r[i..i + $lanes]).try_into().unwrap());
+                    (c1 * inv).store((&mut $strip.g[i..i + $lanes]).try_into().unwrap());
+                    (b * inv).store((&mut $strip.b[i..i + $lanes]).try_into().unwrap());
                     i += $lanes;
-                }
-                while i < $len {
-                    let (c0, c1, c2) = ($src[i * 3], $src[i * 3 + 1], $src[i * 3 + 2]);
-                    let (r, b) = if is_bgr { (c2, c0) } else { (c0, c2) };
-                    $strip.r[i] = f32::from(r) * INV_255;
-                    $strip.g[i] = f32::from(c1) * INV_255;
-                    $strip.b[i] = f32::from(b) * INV_255;
-                    i += 1;
                 }
                 $strip.a[..$len].fill(1.0);
                 true
             }
             (SampleType::U8, 4) => {
                 let inv = $vec::splat_t($token, INV_255);
+                let mut pad = [0u8; $n4];
                 let mut i = 0usize;
-                while i + $lanes <= $len {
-                    let blk: &[u8; $n4] = (&$src[i * 4..i * 4 + $n4]).try_into().unwrap();
+                while i < $len {
+                    let blk: &[u8; $n4] = if i + $lanes <= $len {
+                        (&$src[i * 4..i * 4 + $n4]).try_into().unwrap()
+                    } else {
+                        let rb = ($len - i) * 4;
+                        pad[..rb].copy_from_slice(&$src[i * 4..i * 4 + rb]);
+                        &pad
+                    };
                     let (c0, c1, c2, c3) = $vec::load_rgba_u8_t($token, blk);
                     let (r, b) = if is_bgr { (c2, c0) } else { (c0, c2) };
-                    $strip.r[i..i + $lanes].copy_from_slice(&(r * inv).to_array());
-                    $strip.g[i..i + $lanes].copy_from_slice(&(c1 * inv).to_array());
-                    $strip.b[i..i + $lanes].copy_from_slice(&(b * inv).to_array());
+                    (r * inv).store((&mut $strip.r[i..i + $lanes]).try_into().unwrap());
+                    (c1 * inv).store((&mut $strip.g[i..i + $lanes]).try_into().unwrap());
+                    (b * inv).store((&mut $strip.b[i..i + $lanes]).try_into().unwrap());
                     if !fill_opaque {
-                        $strip.a[i..i + $lanes].copy_from_slice(&(c3 * inv).to_array());
+                        (c3 * inv).store((&mut $strip.a[i..i + $lanes]).try_into().unwrap());
                     }
                     i += $lanes;
-                }
-                while i < $len {
-                    let (c0, c1, c2, c3) = (
-                        $src[i * 4],
-                        $src[i * 4 + 1],
-                        $src[i * 4 + 2],
-                        $src[i * 4 + 3],
-                    );
-                    let (r, b) = if is_bgr { (c2, c0) } else { (c0, c2) };
-                    $strip.r[i] = f32::from(r) * INV_255;
-                    $strip.g[i] = f32::from(c1) * INV_255;
-                    $strip.b[i] = f32::from(b) * INV_255;
-                    if !fill_opaque {
-                        $strip.a[i] = f32::from(c3) * INV_255;
-                    }
-                    i += 1;
                 }
                 if fill_opaque {
                     $strip.a[..$len].fill(1.0);
@@ -103,99 +98,66 @@ macro_rules! unpack_strip_body {
             }
             (SampleType::U16, 3) => {
                 let inv = $vec::splat_t($token, INV_65535);
+                let aligned = bytemuck::try_cast_slice::<u8, u16>($src).ok();
+                let mut pad = [0u16; $n3];
                 let mut i = 0usize;
-                if let Ok(u16s) = bytemuck::try_cast_slice::<u8, u16>($src) {
-                    while i + $lanes <= $len {
-                        let blk: &[u16; $n3] = (&u16s[i * 3..i * 3 + $n3]).try_into().unwrap();
-                        let (c0, c1, c2) = $vec::load_rgb_u16_t($token, blk);
-                        let (r, b) = if is_bgr { (c2, c0) } else { (c0, c2) };
-                        $strip.r[i..i + $lanes].copy_from_slice(&(r * inv).to_array());
-                        $strip.g[i..i + $lanes].copy_from_slice(&(c1 * inv).to_array());
-                        $strip.b[i..i + $lanes].copy_from_slice(&(b * inv).to_array());
-                        i += $lanes;
-                    }
-                } else {
-                    let mut tmp = [0u16; $n3];
-                    while i + $lanes <= $len {
-                        for k in 0..$n3 {
-                            let o = (i * 3 + k) * 2;
-                            tmp[k] = u16::from_ne_bytes([$src[o], $src[o + 1]]);
-                        }
-                        let (c0, c1, c2) = $vec::load_rgb_u16_t($token, &tmp);
-                        let (r, b) = if is_bgr { (c2, c0) } else { (c0, c2) };
-                        $strip.r[i..i + $lanes].copy_from_slice(&(r * inv).to_array());
-                        $strip.g[i..i + $lanes].copy_from_slice(&(c1 * inv).to_array());
-                        $strip.b[i..i + $lanes].copy_from_slice(&(b * inv).to_array());
-                        i += $lanes;
-                    }
-                }
                 while i < $len {
-                    let o = i * 6;
-                    let c0 = u16::from_ne_bytes([$src[o], $src[o + 1]]);
-                    let c1 = u16::from_ne_bytes([$src[o + 2], $src[o + 3]]);
-                    let c2 = u16::from_ne_bytes([$src[o + 4], $src[o + 5]]);
+                    let blk: &[u16; $n3] = if let Some(u16s) = aligned
+                        && i + $lanes <= $len
+                    {
+                        (&u16s[i * 3..i * 3 + $n3]).try_into().unwrap()
+                    } else {
+                        let rb = ($len - i).min($lanes) * 6;
+                        bytemuck::bytes_of_mut(&mut pad)[..rb]
+                            .copy_from_slice(&$src[i * 6..i * 6 + rb]);
+                        &pad
+                    };
+                    let (c0, c1, c2) = $vec::load_rgb_u16_t($token, blk);
                     let (r, b) = if is_bgr { (c2, c0) } else { (c0, c2) };
-                    $strip.r[i] = f32::from(r) * INV_65535;
-                    $strip.g[i] = f32::from(c1) * INV_65535;
-                    $strip.b[i] = f32::from(b) * INV_65535;
-                    i += 1;
+                    (r * inv).store((&mut $strip.r[i..i + $lanes]).try_into().unwrap());
+                    (c1 * inv).store((&mut $strip.g[i..i + $lanes]).try_into().unwrap());
+                    (b * inv).store((&mut $strip.b[i..i + $lanes]).try_into().unwrap());
+                    i += $lanes;
                 }
                 $strip.a[..$len].fill(1.0);
                 true
             }
             (SampleType::U16, 4) => {
                 let inv = $vec::splat_t($token, INV_65535);
+                let aligned = bytemuck::try_cast_slice::<u8, u16>($src).ok();
+                let mut pad = [0u16; $n4];
                 let mut i = 0usize;
-                if let Ok(u16s) = bytemuck::try_cast_slice::<u8, u16>($src) {
-                    while i + $lanes <= $len {
-                        let base = i * 4;
-                        let v0 = $vec::from_u16_t(
-                            $token,
-                            (&u16s[base..base + $lanes]).try_into().unwrap(),
-                        );
-                        let v1 = $vec::from_u16_t(
-                            $token,
-                            (&u16s[base + $lanes..base + 2 * $lanes])
-                                .try_into()
-                                .unwrap(),
-                        );
-                        let v2 = $vec::from_u16_t(
-                            $token,
-                            (&u16s[base + 2 * $lanes..base + 3 * $lanes])
-                                .try_into()
-                                .unwrap(),
-                        );
-                        let v3 = $vec::from_u16_t(
-                            $token,
-                            (&u16s[base + 3 * $lanes..base + 4 * $lanes])
-                                .try_into()
-                                .unwrap(),
-                        );
-                        let [c0, c1, c2, c3] = $vec::deinterleave_4ch([v0, v1, v2, v3]);
-                        let (r, b) = if is_bgr { (c2, c0) } else { (c0, c2) };
-                        $strip.r[i..i + $lanes].copy_from_slice(&(r * inv).to_array());
-                        $strip.g[i..i + $lanes].copy_from_slice(&(c1 * inv).to_array());
-                        $strip.b[i..i + $lanes].copy_from_slice(&(b * inv).to_array());
-                        if !fill_opaque {
-                            $strip.a[i..i + $lanes].copy_from_slice(&(c3 * inv).to_array());
-                        }
-                        i += $lanes;
-                    }
-                }
                 while i < $len {
-                    let o = i * 8;
-                    let c0 = u16::from_ne_bytes([$src[o], $src[o + 1]]);
-                    let c1 = u16::from_ne_bytes([$src[o + 2], $src[o + 3]]);
-                    let c2 = u16::from_ne_bytes([$src[o + 4], $src[o + 5]]);
-                    let c3 = u16::from_ne_bytes([$src[o + 6], $src[o + 7]]);
+                    let blk: &[u16; $n4] = if let Some(u16s) = aligned
+                        && i + $lanes <= $len
+                    {
+                        (&u16s[i * 4..i * 4 + $n4]).try_into().unwrap()
+                    } else {
+                        let rb = ($len - i).min($lanes) * 8;
+                        bytemuck::bytes_of_mut(&mut pad)[..rb]
+                            .copy_from_slice(&$src[i * 8..i * 8 + rb]);
+                        &pad
+                    };
+                    let v0 = $vec::from_u16_t($token, (&blk[0..$lanes]).try_into().unwrap());
+                    let v1 =
+                        $vec::from_u16_t($token, (&blk[$lanes..2 * $lanes]).try_into().unwrap());
+                    let v2 = $vec::from_u16_t(
+                        $token,
+                        (&blk[2 * $lanes..3 * $lanes]).try_into().unwrap(),
+                    );
+                    let v3 = $vec::from_u16_t(
+                        $token,
+                        (&blk[3 * $lanes..4 * $lanes]).try_into().unwrap(),
+                    );
+                    let [c0, c1, c2, c3] = $vec::deinterleave_4ch([v0, v1, v2, v3]);
                     let (r, b) = if is_bgr { (c2, c0) } else { (c0, c2) };
-                    $strip.r[i] = f32::from(r) * INV_65535;
-                    $strip.g[i] = f32::from(c1) * INV_65535;
-                    $strip.b[i] = f32::from(b) * INV_65535;
+                    (r * inv).store((&mut $strip.r[i..i + $lanes]).try_into().unwrap());
+                    (c1 * inv).store((&mut $strip.g[i..i + $lanes]).try_into().unwrap());
+                    (b * inv).store((&mut $strip.b[i..i + $lanes]).try_into().unwrap());
                     if !fill_opaque {
-                        $strip.a[i] = f32::from(c3) * INV_65535;
+                        (c3 * inv).store((&mut $strip.a[i..i + $lanes]).try_into().unwrap());
                     }
-                    i += 1;
+                    i += $lanes;
                 }
                 if fill_opaque {
                     $strip.a[..$len].fill(1.0);
@@ -203,109 +165,64 @@ macro_rules! unpack_strip_body {
                 true
             }
             (SampleType::F32, 3) => {
+                let aligned = bytemuck::try_cast_slice::<u8, f32>($src).ok();
+                let mut pad = [0.0f32; $n3];
                 let mut i = 0usize;
-                if let Ok(floats) = bytemuck::try_cast_slice::<u8, f32>($src) {
-                    while i + $lanes <= $len {
-                        let base = i * 3;
-                        let v0 = $vec::load_t(
-                            $token,
-                            (&floats[base..base + $lanes]).try_into().unwrap(),
-                        );
-                        let v1 = $vec::load_t(
-                            $token,
-                            (&floats[base + $lanes..base + 2 * $lanes])
-                                .try_into()
-                                .unwrap(),
-                        );
-                        let v2 = $vec::load_t(
-                            $token,
-                            (&floats[base + 2 * $lanes..base + 3 * $lanes])
-                                .try_into()
-                                .unwrap(),
-                        );
-                        let [c0, c1, c2] = $vec::deinterleave_3ch([v0, v1, v2]);
-                        let (r, b) = if is_bgr { (c2, c0) } else { (c0, c2) };
-                        $strip.r[i..i + $lanes].copy_from_slice(&r.to_array());
-                        $strip.g[i..i + $lanes].copy_from_slice(&c1.to_array());
-                        $strip.b[i..i + $lanes].copy_from_slice(&b.to_array());
-                        i += $lanes;
-                    }
-                }
                 while i < $len {
-                    let o = i * 12;
-                    let c0 = f32::from_ne_bytes([$src[o], $src[o + 1], $src[o + 2], $src[o + 3]]);
-                    let c1 =
-                        f32::from_ne_bytes([$src[o + 4], $src[o + 5], $src[o + 6], $src[o + 7]]);
-                    let c2 =
-                        f32::from_ne_bytes([$src[o + 8], $src[o + 9], $src[o + 10], $src[o + 11]]);
+                    let blk: &[f32; $n3] = if let Some(floats) = aligned
+                        && i + $lanes <= $len
+                    {
+                        (&floats[i * 3..i * 3 + $n3]).try_into().unwrap()
+                    } else {
+                        let rb = ($len - i).min($lanes) * 12;
+                        bytemuck::bytes_of_mut(&mut pad)[..rb]
+                            .copy_from_slice(&$src[i * 12..i * 12 + rb]);
+                        &pad
+                    };
+                    let v0 = $vec::load_t($token, (&blk[0..$lanes]).try_into().unwrap());
+                    let v1 = $vec::load_t($token, (&blk[$lanes..2 * $lanes]).try_into().unwrap());
+                    let v2 =
+                        $vec::load_t($token, (&blk[2 * $lanes..3 * $lanes]).try_into().unwrap());
+                    let [c0, c1, c2] = $vec::deinterleave_3ch([v0, v1, v2]);
                     let (r, b) = if is_bgr { (c2, c0) } else { (c0, c2) };
-                    $strip.r[i] = r;
-                    $strip.g[i] = c1;
-                    $strip.b[i] = b;
-                    i += 1;
+                    r.store((&mut $strip.r[i..i + $lanes]).try_into().unwrap());
+                    c1.store((&mut $strip.g[i..i + $lanes]).try_into().unwrap());
+                    b.store((&mut $strip.b[i..i + $lanes]).try_into().unwrap());
+                    i += $lanes;
                 }
                 $strip.a[..$len].fill(1.0);
                 true
             }
             (SampleType::F32, 4) => {
+                let aligned = bytemuck::try_cast_slice::<u8, f32>($src).ok();
+                let mut pad = [0.0f32; $n4];
                 let mut i = 0usize;
-                if let Ok(floats) = bytemuck::try_cast_slice::<u8, f32>($src) {
-                    while i + $lanes <= $len {
-                        let base = i * 4;
-                        let v0 = $vec::load_t(
-                            $token,
-                            (&floats[base..base + $lanes]).try_into().unwrap(),
-                        );
-                        let v1 = $vec::load_t(
-                            $token,
-                            (&floats[base + $lanes..base + 2 * $lanes])
-                                .try_into()
-                                .unwrap(),
-                        );
-                        let v2 = $vec::load_t(
-                            $token,
-                            (&floats[base + 2 * $lanes..base + 3 * $lanes])
-                                .try_into()
-                                .unwrap(),
-                        );
-                        let v3 = $vec::load_t(
-                            $token,
-                            (&floats[base + 3 * $lanes..base + 4 * $lanes])
-                                .try_into()
-                                .unwrap(),
-                        );
-                        let [c0, c1, c2, c3] = $vec::deinterleave_4ch([v0, v1, v2, v3]);
-                        let (r, b) = if is_bgr { (c2, c0) } else { (c0, c2) };
-                        $strip.r[i..i + $lanes].copy_from_slice(&r.to_array());
-                        $strip.g[i..i + $lanes].copy_from_slice(&c1.to_array());
-                        $strip.b[i..i + $lanes].copy_from_slice(&b.to_array());
-                        if !fill_opaque {
-                            $strip.a[i..i + $lanes].copy_from_slice(&c3.to_array());
-                        }
-                        i += $lanes;
-                    }
-                }
                 while i < $len {
-                    let o = i * 16;
-                    let c0 = f32::from_ne_bytes([$src[o], $src[o + 1], $src[o + 2], $src[o + 3]]);
-                    let c1 =
-                        f32::from_ne_bytes([$src[o + 4], $src[o + 5], $src[o + 6], $src[o + 7]]);
-                    let c2 =
-                        f32::from_ne_bytes([$src[o + 8], $src[o + 9], $src[o + 10], $src[o + 11]]);
-                    let c3 = f32::from_ne_bytes([
-                        $src[o + 12],
-                        $src[o + 13],
-                        $src[o + 14],
-                        $src[o + 15],
-                    ]);
+                    let blk: &[f32; $n4] = if let Some(floats) = aligned
+                        && i + $lanes <= $len
+                    {
+                        (&floats[i * 4..i * 4 + $n4]).try_into().unwrap()
+                    } else {
+                        let rb = ($len - i).min($lanes) * 16;
+                        bytemuck::bytes_of_mut(&mut pad)[..rb]
+                            .copy_from_slice(&$src[i * 16..i * 16 + rb]);
+                        &pad
+                    };
+                    let v0 = $vec::load_t($token, (&blk[0..$lanes]).try_into().unwrap());
+                    let v1 = $vec::load_t($token, (&blk[$lanes..2 * $lanes]).try_into().unwrap());
+                    let v2 =
+                        $vec::load_t($token, (&blk[2 * $lanes..3 * $lanes]).try_into().unwrap());
+                    let v3 =
+                        $vec::load_t($token, (&blk[3 * $lanes..4 * $lanes]).try_into().unwrap());
+                    let [c0, c1, c2, c3] = $vec::deinterleave_4ch([v0, v1, v2, v3]);
                     let (r, b) = if is_bgr { (c2, c0) } else { (c0, c2) };
-                    $strip.r[i] = r;
-                    $strip.g[i] = c1;
-                    $strip.b[i] = b;
+                    r.store((&mut $strip.r[i..i + $lanes]).try_into().unwrap());
+                    c1.store((&mut $strip.g[i..i + $lanes]).try_into().unwrap());
+                    b.store((&mut $strip.b[i..i + $lanes]).try_into().unwrap());
                     if !fill_opaque {
-                        $strip.a[i] = c3;
+                        c3.store((&mut $strip.a[i..i + $lanes]).try_into().unwrap());
                     }
-                    i += 1;
+                    i += $lanes;
                 }
                 if fill_opaque {
                     $strip.a[..$len].fill(1.0);
@@ -404,7 +321,10 @@ fn quant_scalar_u16(v: f32, bias: f32) -> u16 {
 }
 
 macro_rules! pack_strip_body {
-    ($vec:ident, $lanes:literal, $token:ident, $layout:ident, $strip:ident, $dst:ident, $len:ident, $policy:ident) => {{
+    ($vec:ident, $lanes:literal, $n3:literal, $n4:literal, $token:ident, $layout:ident, $strip:ident, $dst:ident, $len:ident, $policy:ident) => {{
+        if $len > 64 {
+            return false;
+        }
         let order = $layout.order;
         let is_bgr = matches!(
             order,
@@ -420,11 +340,15 @@ macro_rules! pack_strip_body {
         let one = $vec::splat_t($token, 1.0);
         let bias_v = $vec::splat_t($token, bias);
 
+        // StripBuf is 64-px padded (multiple of 8 & 4): every arm executes a pure SIMD-only loop
+        // with a stack-padded final chunk for partial tails (zero scalar tails, zero align branches).
         match ($layout.sample, $layout.channels()) {
             (SampleType::U8, 3) => {
                 let scale = $vec::splat_t($token, 255.0);
+                let d = &mut $dst[..$len * 3];
+                let mut pad = [0u8; $n3];
                 let mut i = 0usize;
-                while i + $lanes <= $len {
+                while i < $len {
                     let r = $vec::load_t($token, (&$strip.r[i..i + $lanes]).try_into().unwrap());
                     let g = $vec::load_t($token, (&$strip.g[i..i + $lanes]).try_into().unwrap());
                     let b = $vec::load_t($token, (&$strip.b[i..i + $lanes]).try_into().unwrap());
@@ -433,31 +357,32 @@ macro_rules! pack_strip_body {
                     let q1 = $vec::blend(g.simd_gt(zero), g.min_fast(one), zero) * scale + bias_v;
                     let q2 = $vec::blend(c2.simd_gt(zero), c2.min_fast(one), zero) * scale + bias_v;
                     let [v0, v1, v2] = $vec::interleave_3ch([q0, q1, q2]);
+                    let a0 = v0.to_u8_with::<TRUNC_NONNEG>();
+                    let a1 = v1.to_u8_with::<TRUNC_NONNEG>();
+                    let a2 = v2.to_u8_with::<TRUNC_NONNEG>();
                     let o = i * 3;
-                    $dst[o..o + $lanes].copy_from_slice(&v0.to_u8_with::<TRUNC_NONNEG>());
-                    $dst[o + $lanes..o + 2 * $lanes]
-                        .copy_from_slice(&v1.to_u8_with::<TRUNC_NONNEG>());
-                    $dst[o + 2 * $lanes..o + 3 * $lanes]
-                        .copy_from_slice(&v2.to_u8_with::<TRUNC_NONNEG>());
-                    i += $lanes;
-                }
-                while i < $len {
-                    let (c0, c2) = if is_bgr {
-                        ($strip.b[i], $strip.r[i])
+                    if i + $lanes <= $len {
+                        let chunk = &mut d[o..o + $n3];
+                        chunk[..$lanes].copy_from_slice(&a0);
+                        chunk[$lanes..2 * $lanes].copy_from_slice(&a1);
+                        chunk[2 * $lanes..3 * $lanes].copy_from_slice(&a2);
                     } else {
-                        ($strip.r[i], $strip.b[i])
-                    };
-                    $dst[i * 3] = quant_scalar_u8(c0, bias);
-                    $dst[i * 3 + 1] = quant_scalar_u8($strip.g[i], bias);
-                    $dst[i * 3 + 2] = quant_scalar_u8(c2, bias);
-                    i += 1;
+                        pad[..$lanes].copy_from_slice(&a0);
+                        pad[$lanes..2 * $lanes].copy_from_slice(&a1);
+                        pad[2 * $lanes..3 * $lanes].copy_from_slice(&a2);
+                        let rb = ($len - i) * 3;
+                        d[o..o + rb].copy_from_slice(&pad[..rb]);
+                    }
+                    i += $lanes;
                 }
                 true
             }
             (SampleType::U8, 4) => {
                 let scale = $vec::splat_t($token, 255.0);
+                let d = &mut $dst[..$len * 4];
+                let mut pad = [0u8; $n4];
                 let mut i = 0usize;
-                while i + $lanes <= $len {
+                while i < $len {
                     let r = $vec::load_t($token, (&$strip.r[i..i + $lanes]).try_into().unwrap());
                     let g = $vec::load_t($token, (&$strip.g[i..i + $lanes]).try_into().unwrap());
                     let b = $vec::load_t($token, (&$strip.b[i..i + $lanes]).try_into().unwrap());
@@ -472,226 +397,171 @@ macro_rules! pack_strip_body {
                     let q2 = $vec::blend(c2.simd_gt(zero), c2.min_fast(one), zero) * scale + bias_v;
                     let q3 = $vec::blend(a.simd_gt(zero), a.min_fast(one), zero) * scale + bias_v;
                     let [v0, v1, v2, v3] = $vec::interleave_4ch([q0, q1, q2, q3]);
+                    let a0 = v0.to_u8_with::<TRUNC_NONNEG>();
+                    let a1 = v1.to_u8_with::<TRUNC_NONNEG>();
+                    let a2 = v2.to_u8_with::<TRUNC_NONNEG>();
+                    let a3 = v3.to_u8_with::<TRUNC_NONNEG>();
                     let o = i * 4;
-                    $dst[o..o + $lanes].copy_from_slice(&v0.to_u8_with::<TRUNC_NONNEG>());
-                    $dst[o + $lanes..o + 2 * $lanes]
-                        .copy_from_slice(&v1.to_u8_with::<TRUNC_NONNEG>());
-                    $dst[o + 2 * $lanes..o + 3 * $lanes]
-                        .copy_from_slice(&v2.to_u8_with::<TRUNC_NONNEG>());
-                    $dst[o + 3 * $lanes..o + 4 * $lanes]
-                        .copy_from_slice(&v3.to_u8_with::<TRUNC_NONNEG>());
+                    if i + $lanes <= $len {
+                        let chunk = &mut d[o..o + $n4];
+                        chunk[..$lanes].copy_from_slice(&a0);
+                        chunk[$lanes..2 * $lanes].copy_from_slice(&a1);
+                        chunk[2 * $lanes..3 * $lanes].copy_from_slice(&a2);
+                        chunk[3 * $lanes..4 * $lanes].copy_from_slice(&a3);
+                    } else {
+                        pad[..$lanes].copy_from_slice(&a0);
+                        pad[$lanes..2 * $lanes].copy_from_slice(&a1);
+                        pad[2 * $lanes..3 * $lanes].copy_from_slice(&a2);
+                        pad[3 * $lanes..4 * $lanes].copy_from_slice(&a3);
+                        let rb = ($len - i) * 4;
+                        d[o..o + rb].copy_from_slice(&pad[..rb]);
+                    }
                     i += $lanes;
-                }
-                while i < $len {
-                    let (c0, c2) = if is_bgr {
-                        ($strip.b[i], $strip.r[i])
-                    } else {
-                        ($strip.r[i], $strip.b[i])
-                    };
-                    $dst[i * 4] = quant_scalar_u8(c0, bias);
-                    $dst[i * 4 + 1] = quant_scalar_u8($strip.g[i], bias);
-                    $dst[i * 4 + 2] = quant_scalar_u8(c2, bias);
-                    $dst[i * 4 + 3] = if fill_opaque {
-                        255
-                    } else {
-                        quant_scalar_u8($strip.a[i], bias)
-                    };
-                    i += 1;
                 }
                 true
             }
             (SampleType::U16, 3) => {
                 let scale = $vec::splat_t($token, 65535.0);
+                let d = &mut $dst[..$len * 6];
+                let mut pad = [0u16; $n3];
                 let mut i = 0usize;
-                if let Ok(u16s) = bytemuck::try_cast_slice_mut::<u8, u16>($dst) {
-                    while i + $lanes <= $len {
-                        let r =
-                            $vec::load_t($token, (&$strip.r[i..i + $lanes]).try_into().unwrap());
-                        let g =
-                            $vec::load_t($token, (&$strip.g[i..i + $lanes]).try_into().unwrap());
-                        let b =
-                            $vec::load_t($token, (&$strip.b[i..i + $lanes]).try_into().unwrap());
-                        let (c0, c2) = if is_bgr { (b, r) } else { (r, b) };
-                        let q0 =
-                            $vec::blend(c0.simd_gt(zero), c0.min_fast(one), zero) * scale + bias_v;
-                        let q1 =
-                            $vec::blend(g.simd_gt(zero), g.min_fast(one), zero) * scale + bias_v;
-                        let q2 =
-                            $vec::blend(c2.simd_gt(zero), c2.min_fast(one), zero) * scale + bias_v;
-                        let [v0, v1, v2] = $vec::interleave_3ch([q0, q1, q2]);
-                        let o = i * 3;
-                        u16s[o..o + $lanes].copy_from_slice(&v0.to_u16_with::<TRUNC_NONNEG>());
-                        u16s[o + $lanes..o + 2 * $lanes]
-                            .copy_from_slice(&v1.to_u16_with::<TRUNC_NONNEG>());
-                        u16s[o + 2 * $lanes..o + 3 * $lanes]
-                            .copy_from_slice(&v2.to_u16_with::<TRUNC_NONNEG>());
-                        i += $lanes;
-                    }
-                }
                 while i < $len {
-                    let (c0, c2) = if is_bgr {
-                        ($strip.b[i], $strip.r[i])
-                    } else {
-                        ($strip.r[i], $strip.b[i])
-                    };
+                    let r = $vec::load_t($token, (&$strip.r[i..i + $lanes]).try_into().unwrap());
+                    let g = $vec::load_t($token, (&$strip.g[i..i + $lanes]).try_into().unwrap());
+                    let b = $vec::load_t($token, (&$strip.b[i..i + $lanes]).try_into().unwrap());
+                    let (c0, c2) = if is_bgr { (b, r) } else { (r, b) };
+                    let q0 = $vec::blend(c0.simd_gt(zero), c0.min_fast(one), zero) * scale + bias_v;
+                    let q1 = $vec::blend(g.simd_gt(zero), g.min_fast(one), zero) * scale + bias_v;
+                    let q2 = $vec::blend(c2.simd_gt(zero), c2.min_fast(one), zero) * scale + bias_v;
+                    let [v0, v1, v2] = $vec::interleave_3ch([q0, q1, q2]);
+                    let a0 = v0.to_u16_with::<TRUNC_NONNEG>();
+                    let a1 = v1.to_u16_with::<TRUNC_NONNEG>();
+                    let a2 = v2.to_u16_with::<TRUNC_NONNEG>();
                     let o = i * 6;
-                    $dst[o..o + 2].copy_from_slice(&quant_scalar_u16(c0, bias).to_ne_bytes());
-                    $dst[o + 2..o + 4]
-                        .copy_from_slice(&quant_scalar_u16($strip.g[i], bias).to_ne_bytes());
-                    $dst[o + 4..o + 6].copy_from_slice(&quant_scalar_u16(c2, bias).to_ne_bytes());
-                    i += 1;
+                    if i + $lanes <= $len {
+                        let chunk = &mut d[o..o + $n3 * 2];
+                        chunk[..$lanes * 2].copy_from_slice(bytemuck::bytes_of(&a0));
+                        chunk[$lanes * 2..$lanes * 4].copy_from_slice(bytemuck::bytes_of(&a1));
+                        chunk[$lanes * 4..$lanes * 6].copy_from_slice(bytemuck::bytes_of(&a2));
+                    } else {
+                        pad[..$lanes].copy_from_slice(&a0);
+                        pad[$lanes..2 * $lanes].copy_from_slice(&a1);
+                        pad[2 * $lanes..3 * $lanes].copy_from_slice(&a2);
+                        let rb = ($len - i) * 6;
+                        d[o..o + rb].copy_from_slice(&bytemuck::bytes_of(&pad)[..rb]);
+                    }
+                    i += $lanes;
                 }
                 true
             }
             (SampleType::U16, 4) => {
                 let scale = $vec::splat_t($token, 65535.0);
+                let d = &mut $dst[..$len * 8];
+                let mut pad = [0u16; $n4];
                 let mut i = 0usize;
-                if let Ok(u16s) = bytemuck::try_cast_slice_mut::<u8, u16>($dst) {
-                    while i + $lanes <= $len {
-                        let r =
-                            $vec::load_t($token, (&$strip.r[i..i + $lanes]).try_into().unwrap());
-                        let g =
-                            $vec::load_t($token, (&$strip.g[i..i + $lanes]).try_into().unwrap());
-                        let b =
-                            $vec::load_t($token, (&$strip.b[i..i + $lanes]).try_into().unwrap());
-                        let a = if fill_opaque {
-                            one
-                        } else {
-                            $vec::load_t($token, (&$strip.a[i..i + $lanes]).try_into().unwrap())
-                        };
-                        let (c0, c2) = if is_bgr { (b, r) } else { (r, b) };
-                        let q0 =
-                            $vec::blend(c0.simd_gt(zero), c0.min_fast(one), zero) * scale + bias_v;
-                        let q1 =
-                            $vec::blend(g.simd_gt(zero), g.min_fast(one), zero) * scale + bias_v;
-                        let q2 =
-                            $vec::blend(c2.simd_gt(zero), c2.min_fast(one), zero) * scale + bias_v;
-                        let q3 =
-                            $vec::blend(a.simd_gt(zero), a.min_fast(one), zero) * scale + bias_v;
-                        let [v0, v1, v2, v3] = $vec::interleave_4ch([q0, q1, q2, q3]);
-                        let o = i * 4;
-                        u16s[o..o + $lanes].copy_from_slice(&v0.to_u16_with::<TRUNC_NONNEG>());
-                        u16s[o + $lanes..o + 2 * $lanes]
-                            .copy_from_slice(&v1.to_u16_with::<TRUNC_NONNEG>());
-                        u16s[o + 2 * $lanes..o + 3 * $lanes]
-                            .copy_from_slice(&v2.to_u16_with::<TRUNC_NONNEG>());
-                        u16s[o + 3 * $lanes..o + 4 * $lanes]
-                            .copy_from_slice(&v3.to_u16_with::<TRUNC_NONNEG>());
-                        i += $lanes;
-                    }
-                }
                 while i < $len {
-                    let (c0, c2) = if is_bgr {
-                        ($strip.b[i], $strip.r[i])
+                    let r = $vec::load_t($token, (&$strip.r[i..i + $lanes]).try_into().unwrap());
+                    let g = $vec::load_t($token, (&$strip.g[i..i + $lanes]).try_into().unwrap());
+                    let b = $vec::load_t($token, (&$strip.b[i..i + $lanes]).try_into().unwrap());
+                    let a = if fill_opaque {
+                        one
                     } else {
-                        ($strip.r[i], $strip.b[i])
+                        $vec::load_t($token, (&$strip.a[i..i + $lanes]).try_into().unwrap())
                     };
+                    let (c0, c2) = if is_bgr { (b, r) } else { (r, b) };
+                    let q0 = $vec::blend(c0.simd_gt(zero), c0.min_fast(one), zero) * scale + bias_v;
+                    let q1 = $vec::blend(g.simd_gt(zero), g.min_fast(one), zero) * scale + bias_v;
+                    let q2 = $vec::blend(c2.simd_gt(zero), c2.min_fast(one), zero) * scale + bias_v;
+                    let q3 = $vec::blend(a.simd_gt(zero), a.min_fast(one), zero) * scale + bias_v;
+                    let [v0, v1, v2, v3] = $vec::interleave_4ch([q0, q1, q2, q3]);
+                    let a0 = v0.to_u16_with::<TRUNC_NONNEG>();
+                    let a1 = v1.to_u16_with::<TRUNC_NONNEG>();
+                    let a2 = v2.to_u16_with::<TRUNC_NONNEG>();
+                    let a3 = v3.to_u16_with::<TRUNC_NONNEG>();
                     let o = i * 8;
-                    $dst[o..o + 2].copy_from_slice(&quant_scalar_u16(c0, bias).to_ne_bytes());
-                    $dst[o + 2..o + 4]
-                        .copy_from_slice(&quant_scalar_u16($strip.g[i], bias).to_ne_bytes());
-                    $dst[o + 4..o + 6].copy_from_slice(&quant_scalar_u16(c2, bias).to_ne_bytes());
-                    let a_q = if fill_opaque {
-                        65535u16
+                    if i + $lanes <= $len {
+                        let chunk = &mut d[o..o + $n4 * 2];
+                        chunk[..$lanes * 2].copy_from_slice(bytemuck::bytes_of(&a0));
+                        chunk[$lanes * 2..$lanes * 4].copy_from_slice(bytemuck::bytes_of(&a1));
+                        chunk[$lanes * 4..$lanes * 6].copy_from_slice(bytemuck::bytes_of(&a2));
+                        chunk[$lanes * 6..$lanes * 8].copy_from_slice(bytemuck::bytes_of(&a3));
                     } else {
-                        quant_scalar_u16($strip.a[i], bias)
-                    };
-                    $dst[o + 6..o + 8].copy_from_slice(&a_q.to_ne_bytes());
-                    i += 1;
+                        pad[..$lanes].copy_from_slice(&a0);
+                        pad[$lanes..2 * $lanes].copy_from_slice(&a1);
+                        pad[2 * $lanes..3 * $lanes].copy_from_slice(&a2);
+                        pad[3 * $lanes..4 * $lanes].copy_from_slice(&a3);
+                        let rb = ($len - i) * 8;
+                        d[o..o + rb].copy_from_slice(&bytemuck::bytes_of(&pad)[..rb]);
+                    }
+                    i += $lanes;
                 }
                 true
             }
             (SampleType::F32, 3) => {
+                let d = &mut $dst[..$len * 12];
+                let mut pad = [0.0f32; $n3];
                 let mut i = 0usize;
-                if let Ok(floats) = bytemuck::try_cast_slice_mut::<u8, f32>($dst) {
-                    while i + $lanes <= $len {
-                        let r =
-                            $vec::load_t($token, (&$strip.r[i..i + $lanes]).try_into().unwrap());
-                        let g =
-                            $vec::load_t($token, (&$strip.g[i..i + $lanes]).try_into().unwrap());
-                        let b =
-                            $vec::load_t($token, (&$strip.b[i..i + $lanes]).try_into().unwrap());
-                        let (c0, c2) = if is_bgr { (b, r) } else { (r, b) };
-                        let [v0, v1, v2] = $vec::interleave_3ch([c0, g, c2]);
-                        let o = i * 3;
-                        v0.store((&mut floats[o..o + $lanes]).try_into().unwrap());
-                        v1.store(
-                            (&mut floats[o + $lanes..o + 2 * $lanes])
-                                .try_into()
-                                .unwrap(),
-                        );
-                        v2.store(
-                            (&mut floats[o + 2 * $lanes..o + 3 * $lanes])
-                                .try_into()
-                                .unwrap(),
-                        );
-                        i += $lanes;
-                    }
-                }
                 while i < $len {
-                    let (c0, c2) = if is_bgr {
-                        ($strip.b[i], $strip.r[i])
-                    } else {
-                        ($strip.r[i], $strip.b[i])
-                    };
+                    let r = $vec::load_t($token, (&$strip.r[i..i + $lanes]).try_into().unwrap());
+                    let g = $vec::load_t($token, (&$strip.g[i..i + $lanes]).try_into().unwrap());
+                    let b = $vec::load_t($token, (&$strip.b[i..i + $lanes]).try_into().unwrap());
+                    let (c0, c2) = if is_bgr { (b, r) } else { (r, b) };
+                    let [v0, v1, v2] = $vec::interleave_3ch([c0, g, c2]);
+                    let a0 = v0.to_array();
+                    let a1 = v1.to_array();
+                    let a2 = v2.to_array();
                     let o = i * 12;
-                    $dst[o..o + 4].copy_from_slice(&c0.to_ne_bytes());
-                    $dst[o + 4..o + 8].copy_from_slice(&$strip.g[i].to_ne_bytes());
-                    $dst[o + 8..o + 12].copy_from_slice(&c2.to_ne_bytes());
-                    i += 1;
+                    if i + $lanes <= $len {
+                        let chunk = &mut d[o..o + $n3 * 4];
+                        chunk[..$lanes * 4].copy_from_slice(bytemuck::bytes_of(&a0));
+                        chunk[$lanes * 4..$lanes * 8].copy_from_slice(bytemuck::bytes_of(&a1));
+                        chunk[$lanes * 8..$lanes * 12].copy_from_slice(bytemuck::bytes_of(&a2));
+                    } else {
+                        pad[..$lanes].copy_from_slice(&a0);
+                        pad[$lanes..2 * $lanes].copy_from_slice(&a1);
+                        pad[2 * $lanes..3 * $lanes].copy_from_slice(&a2);
+                        let rb = ($len - i) * 12;
+                        d[o..o + rb].copy_from_slice(&bytemuck::bytes_of(&pad)[..rb]);
+                    }
+                    i += $lanes;
                 }
                 true
             }
             (SampleType::F32, 4) => {
+                let d = &mut $dst[..$len * 16];
+                let mut pad = [0.0f32; $n4];
                 let mut i = 0usize;
-                if let Ok(floats) = bytemuck::try_cast_slice_mut::<u8, f32>($dst) {
-                    while i + $lanes <= $len {
-                        let r =
-                            $vec::load_t($token, (&$strip.r[i..i + $lanes]).try_into().unwrap());
-                        let g =
-                            $vec::load_t($token, (&$strip.g[i..i + $lanes]).try_into().unwrap());
-                        let b =
-                            $vec::load_t($token, (&$strip.b[i..i + $lanes]).try_into().unwrap());
-                        let a = if fill_opaque {
-                            one
-                        } else {
-                            $vec::load_t($token, (&$strip.a[i..i + $lanes]).try_into().unwrap())
-                        };
-                        let (c0, c2) = if is_bgr { (b, r) } else { (r, b) };
-                        let [v0, v1, v2, v3] = $vec::interleave_4ch([c0, g, c2, a]);
-                        let o = i * 4;
-                        v0.store((&mut floats[o..o + $lanes]).try_into().unwrap());
-                        v1.store(
-                            (&mut floats[o + $lanes..o + 2 * $lanes])
-                                .try_into()
-                                .unwrap(),
-                        );
-                        v2.store(
-                            (&mut floats[o + 2 * $lanes..o + 3 * $lanes])
-                                .try_into()
-                                .unwrap(),
-                        );
-                        v3.store(
-                            (&mut floats[o + 3 * $lanes..o + 4 * $lanes])
-                                .try_into()
-                                .unwrap(),
-                        );
-                        i += $lanes;
-                    }
-                }
                 while i < $len {
-                    let (c0, c2) = if is_bgr {
-                        ($strip.b[i], $strip.r[i])
+                    let r = $vec::load_t($token, (&$strip.r[i..i + $lanes]).try_into().unwrap());
+                    let g = $vec::load_t($token, (&$strip.g[i..i + $lanes]).try_into().unwrap());
+                    let b = $vec::load_t($token, (&$strip.b[i..i + $lanes]).try_into().unwrap());
+                    let a = if fill_opaque {
+                        one
                     } else {
-                        ($strip.r[i], $strip.b[i])
+                        $vec::load_t($token, (&$strip.a[i..i + $lanes]).try_into().unwrap())
                     };
+                    let (c0, c2) = if is_bgr { (b, r) } else { (r, b) };
+                    let [v0, v1, v2, v3] = $vec::interleave_4ch([c0, g, c2, a]);
+                    let a0 = v0.to_array();
+                    let a1 = v1.to_array();
+                    let a2 = v2.to_array();
+                    let a3 = v3.to_array();
                     let o = i * 16;
-                    $dst[o..o + 4].copy_from_slice(&c0.to_ne_bytes());
-                    $dst[o + 4..o + 8].copy_from_slice(&$strip.g[i].to_ne_bytes());
-                    $dst[o + 8..o + 12].copy_from_slice(&c2.to_ne_bytes());
-                    let a_v = if fill_opaque { 1.0_f32 } else { $strip.a[i] };
-                    $dst[o + 12..o + 16].copy_from_slice(&a_v.to_ne_bytes());
-                    i += 1;
+                    if i + $lanes <= $len {
+                        let chunk = &mut d[o..o + $n4 * 4];
+                        chunk[..$lanes * 4].copy_from_slice(bytemuck::bytes_of(&a0));
+                        chunk[$lanes * 4..$lanes * 8].copy_from_slice(bytemuck::bytes_of(&a1));
+                        chunk[$lanes * 8..$lanes * 12].copy_from_slice(bytemuck::bytes_of(&a2));
+                        chunk[$lanes * 12..$lanes * 16].copy_from_slice(bytemuck::bytes_of(&a3));
+                    } else {
+                        pad[..$lanes].copy_from_slice(&a0);
+                        pad[$lanes..2 * $lanes].copy_from_slice(&a1);
+                        pad[2 * $lanes..3 * $lanes].copy_from_slice(&a2);
+                        pad[3 * $lanes..4 * $lanes].copy_from_slice(&a3);
+                        let rb = ($len - i) * 16;
+                        d[o..o + rb].copy_from_slice(&bytemuck::bytes_of(&pad)[..rb]);
+                    }
+                    i += $lanes;
                 }
                 true
             }
@@ -711,7 +581,7 @@ fn pack_strip_v3_t(
     policy: DepthPolicy,
 ) -> bool {
     type V = magetypes::simd::generic::f32x8<archmage::X64V3Token>;
-    pack_strip_body!(V, 8, token, layout, strip, dst, len, policy)
+    pack_strip_body!(V, 8, 24, 32, token, layout, strip, dst, len, policy)
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -725,7 +595,7 @@ fn pack_strip_neon_t(
     policy: DepthPolicy,
 ) -> bool {
     type V = magetypes::simd::generic::f32x4<archmage::NeonToken>;
-    pack_strip_body!(V, 4, token, layout, strip, dst, len, policy)
+    pack_strip_body!(V, 4, 12, 16, token, layout, strip, dst, len, policy)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -739,7 +609,7 @@ fn pack_strip_wasm128_t(
     policy: DepthPolicy,
 ) -> bool {
     type V = magetypes::simd::generic::f32x4<archmage::Wasm128Token>;
-    pack_strip_body!(V, 4, token, layout, strip, dst, len, policy)
+    pack_strip_body!(V, 4, 12, 16, token, layout, strip, dst, len, policy)
 }
 
 fn pack_strip_scalar_t(
@@ -1028,7 +898,7 @@ pub(crate) fn simd_rgba8_straight_to_premul(src: &[u8], dst: &mut [u8], width: u
 // 5. Fused single-pass linear F32 -> sRGB U8 (exact polynomial + quantize!)
 // ---------------------------------------------------------------------------
 
-#[inline(always)]
+#[inline(never)]
 fn lin_f32_to_srgb_u8_tail(src: &[f32], dst: &mut [u8], is_rgba: bool, round: bool) {
     let bias = if round { 0.5_f32 } else { 0.0_f32 };
     let mut i = 0usize;
@@ -1250,113 +1120,35 @@ macro_rules! impl_srgb8_matrix_exact_body {
         let m21 = <$V>::splat_t($token, $m[2][1]);
         let m22 = <$V>::splat_t($token, $m[2][2]);
 
-        let done = if $src_order == ChannelOrder::Rgb && $dst_order == ChannelOrder::Rgb {
-            let (in_chunks, _) = $src[..$width * 3].as_chunks::<$N3>();
-            let (out_chunks, _) = $dst[..$width * 3].as_chunks_mut::<$N3>();
-            for (inp, out) in in_chunks.iter().zip(out_chunks.iter_mut()) {
-                let mut lr = [0.0f32; $LANES];
-                let mut lg = [0.0f32; $LANES];
-                let mut lb = [0.0f32; $LANES];
+        let sch = $src_order.channels();
+        let dch = $dst_order.channels();
+        let sr_i = if $src_order.is_bgr() { 2usize } else { 0usize };
+        let sb_i = 2 - sr_i;
+        let dr_i = if $dst_order.is_bgr() { 2usize } else { 0usize };
+        let db_i = 2 - dr_i;
+        let copy_alpha = sch == 4 && dch == 4 && !$fill_opaque;
+        let fast_rgb_in = $src_order == ChannelOrder::Rgb;
+        let fast_rgb_out = $dst_order == ChannelOrder::Rgb;
+
+        // Single padded SIMD-only loop: ZERO duplicated OETF copies & ZERO scalar tail!
+        let mut base = 0usize;
+        while base < $width {
+            let count = ($width - base).min($LANES);
+            let mut lr = [0.0f32; $LANES];
+            let mut lg = [0.0f32; $LANES];
+            let mut lb = [0.0f32; $LANES];
+            let mut la = [255u8; $LANES];
+
+            if fast_rgb_in && count == $LANES {
+                let s = &$src[base * 3..base * 3 + $N3];
                 for k in 0..$LANES {
-                    lr[k] = linear_srgb::default::srgb_u8_to_linear(inp[k * 3]);
-                    lg[k] = linear_srgb::default::srgb_u8_to_linear(inp[k * 3 + 1]);
-                    lb[k] = linear_srgb::default::srgb_u8_to_linear(inp[k * 3 + 2]);
+                    lr[k] = linear_srgb::default::srgb_u8_to_linear(s[k * 3]);
+                    lg[k] = linear_srgb::default::srgb_u8_to_linear(s[k * 3 + 1]);
+                    lb[k] = linear_srgb::default::srgb_u8_to_linear(s[k * 3 + 2]);
                 }
-                let vr = <$V>::from_array_t($token, lr);
-                let vg = <$V>::from_array_t($token, lg);
-                let vb = <$V>::from_array_t($token, lb);
-
-                let nr = (m00 * vr + m01 * vg) + m02 * vb;
-                let ng = (m10 * vr + m11 * vg) + m12 * vb;
-                let nb = (m20 * vr + m21 * vg) + m22 * vb;
-
-                let cr = <$V>::blend(nr.simd_gt(zero), nr.min_fast(one), zero);
-                let cg = <$V>::blend(ng.simd_gt(zero), ng.min_fast(one), zero);
-                let cb = <$V>::blend(nb.simd_gt(zero), nb.min_fast(one), zero);
-
-                let er = <$V>::from_array_t($token, $oetf(cr.to_array()));
-                let eg = <$V>::from_array_t($token, $oetf(cg.to_array()));
-                let eb = <$V>::from_array_t($token, $oetf(cb.to_array()));
-
-                let qr = (<$V>::blend(er.simd_gt(zero), er.min_fast(one), zero) * scale + bias_v)
-                    .to_u8_with::<TRUNC_NONNEG>();
-                let qg = (<$V>::blend(eg.simd_gt(zero), eg.min_fast(one), zero) * scale + bias_v)
-                    .to_u8_with::<TRUNC_NONNEG>();
-                let qb = (<$V>::blend(eb.simd_gt(zero), eb.min_fast(one), zero) * scale + bias_v)
-                    .to_u8_with::<TRUNC_NONNEG>();
-
-                for k in 0..$LANES {
-                    out[k * 3] = qr[k];
-                    out[k * 3 + 1] = qg[k];
-                    out[k * 3 + 2] = qb[k];
-                }
-            }
-            in_chunks.len() * $LANES
-        } else if $src_order == ChannelOrder::Rgba
-            && $dst_order == ChannelOrder::Rgba
-            && !$fill_opaque
-        {
-            let (in_chunks, _) = $src[..$width * 4].as_chunks::<$N4>();
-            let (out_chunks, _) = $dst[..$width * 4].as_chunks_mut::<$N4>();
-            for (inp, out) in in_chunks.iter().zip(out_chunks.iter_mut()) {
-                let mut lr = [0.0f32; $LANES];
-                let mut lg = [0.0f32; $LANES];
-                let mut lb = [0.0f32; $LANES];
-                for k in 0..$LANES {
-                    lr[k] = linear_srgb::default::srgb_u8_to_linear(inp[k * 4]);
-                    lg[k] = linear_srgb::default::srgb_u8_to_linear(inp[k * 4 + 1]);
-                    lb[k] = linear_srgb::default::srgb_u8_to_linear(inp[k * 4 + 2]);
-                }
-                let vr = <$V>::from_array_t($token, lr);
-                let vg = <$V>::from_array_t($token, lg);
-                let vb = <$V>::from_array_t($token, lb);
-
-                let nr = (m00 * vr + m01 * vg) + m02 * vb;
-                let ng = (m10 * vr + m11 * vg) + m12 * vb;
-                let nb = (m20 * vr + m21 * vg) + m22 * vb;
-
-                let cr = <$V>::blend(nr.simd_gt(zero), nr.min_fast(one), zero);
-                let cg = <$V>::blend(ng.simd_gt(zero), ng.min_fast(one), zero);
-                let cb = <$V>::blend(nb.simd_gt(zero), nb.min_fast(one), zero);
-
-                let er = <$V>::from_array_t($token, $oetf(cr.to_array()));
-                let eg = <$V>::from_array_t($token, $oetf(cg.to_array()));
-                let eb = <$V>::from_array_t($token, $oetf(cb.to_array()));
-
-                let qr = (<$V>::blend(er.simd_gt(zero), er.min_fast(one), zero) * scale + bias_v)
-                    .to_u8_with::<TRUNC_NONNEG>();
-                let qg = (<$V>::blend(eg.simd_gt(zero), eg.min_fast(one), zero) * scale + bias_v)
-                    .to_u8_with::<TRUNC_NONNEG>();
-                let qb = (<$V>::blend(eb.simd_gt(zero), eb.min_fast(one), zero) * scale + bias_v)
-                    .to_u8_with::<TRUNC_NONNEG>();
-
-                for k in 0..$LANES {
-                    out[k * 4] = qr[k];
-                    out[k * 4 + 1] = qg[k];
-                    out[k * 4 + 2] = qb[k];
-                    out[k * 4 + 3] = inp[k * 4 + 3];
-                }
-            }
-            in_chunks.len() * $LANES
-        } else {
-            let sch = $src_order.channels();
-            let dch = $dst_order.channels();
-            let sr_i = if $src_order.is_bgr() { 2usize } else { 0usize };
-            let sb_i = 2 - sr_i;
-            let dr_i = if $dst_order.is_bgr() { 2usize } else { 0usize };
-            let db_i = 2 - dr_i;
-            let copy_alpha = sch == 4 && dch == 4 && !$fill_opaque;
-
-            let chunks = $width / $LANES;
-            let mut p = 0usize;
-            while p < chunks {
-                let base = p * $LANES;
-                let mut lr = [0.0f32; $LANES];
-                let mut lg = [0.0f32; $LANES];
-                let mut lb = [0.0f32; $LANES];
-                let mut la = [255u8; $LANES];
+            } else {
                 let s_base = base * sch;
-                for k in 0..$LANES {
+                for k in 0..count {
                     let off = s_base + k * sch;
                     lr[k] = linear_srgb::default::srgb_u8_to_linear($src[off + sr_i]);
                     lg[k] = linear_srgb::default::srgb_u8_to_linear($src[off + 1]);
@@ -1365,31 +1157,41 @@ macro_rules! impl_srgb8_matrix_exact_body {
                         la[k] = $src[off + 3];
                     }
                 }
-                let vr = <$V>::from_array_t($token, lr);
-                let vg = <$V>::from_array_t($token, lg);
-                let vb = <$V>::from_array_t($token, lb);
+            }
 
-                let nr = (m00 * vr + m01 * vg) + m02 * vb;
-                let ng = (m10 * vr + m11 * vg) + m12 * vb;
-                let nb = (m20 * vr + m21 * vg) + m22 * vb;
+            let vr = <$V>::from_array_t($token, lr);
+            let vg = <$V>::from_array_t($token, lg);
+            let vb = <$V>::from_array_t($token, lb);
 
-                let cr = <$V>::blend(nr.simd_gt(zero), nr.min_fast(one), zero);
-                let cg = <$V>::blend(ng.simd_gt(zero), ng.min_fast(one), zero);
-                let cb = <$V>::blend(nb.simd_gt(zero), nb.min_fast(one), zero);
+            let nr = (m00 * vr + m01 * vg) + m02 * vb;
+            let ng = (m10 * vr + m11 * vg) + m12 * vb;
+            let nb = (m20 * vr + m21 * vg) + m22 * vb;
 
-                let er = <$V>::from_array_t($token, $oetf(cr.to_array()));
-                let eg = <$V>::from_array_t($token, $oetf(cg.to_array()));
-                let eb = <$V>::from_array_t($token, $oetf(cb.to_array()));
+            let cr = <$V>::blend(nr.simd_gt(zero), nr.min_fast(one), zero);
+            let cg = <$V>::blend(ng.simd_gt(zero), ng.min_fast(one), zero);
+            let cb = <$V>::blend(nb.simd_gt(zero), nb.min_fast(one), zero);
 
-                let qr = (<$V>::blend(er.simd_gt(zero), er.min_fast(one), zero) * scale + bias_v)
-                    .to_u8_with::<TRUNC_NONNEG>();
-                let qg = (<$V>::blend(eg.simd_gt(zero), eg.min_fast(one), zero) * scale + bias_v)
-                    .to_u8_with::<TRUNC_NONNEG>();
-                let qb = (<$V>::blend(eb.simd_gt(zero), eb.min_fast(one), zero) * scale + bias_v)
-                    .to_u8_with::<TRUNC_NONNEG>();
+            let er = <$V>::from_array_t($token, $oetf(cr.to_array()));
+            let eg = <$V>::from_array_t($token, $oetf(cg.to_array()));
+            let eb = <$V>::from_array_t($token, $oetf(cb.to_array()));
 
-                let d_base = base * dch;
+            let qr = (<$V>::blend(er.simd_gt(zero), er.min_fast(one), zero) * scale + bias_v)
+                .to_u8_with::<TRUNC_NONNEG>();
+            let qg = (<$V>::blend(eg.simd_gt(zero), eg.min_fast(one), zero) * scale + bias_v)
+                .to_u8_with::<TRUNC_NONNEG>();
+            let qb = (<$V>::blend(eb.simd_gt(zero), eb.min_fast(one), zero) * scale + bias_v)
+                .to_u8_with::<TRUNC_NONNEG>();
+
+            if fast_rgb_out && count == $LANES {
+                let d = &mut $dst[base * 3..base * 3 + $N3];
                 for k in 0..$LANES {
+                    d[k * 3] = qr[k];
+                    d[k * 3 + 1] = qg[k];
+                    d[k * 3 + 2] = qb[k];
+                }
+            } else {
+                let d_base = base * dch;
+                for k in 0..count {
                     let off = d_base + k * dch;
                     $dst[off + dr_i] = qr[k];
                     $dst[off + 1] = qg[k];
@@ -1398,23 +1200,8 @@ macro_rules! impl_srgb8_matrix_exact_body {
                         $dst[off + 3] = la[k];
                     }
                 }
-                p += 1;
             }
-            chunks * $LANES
-        };
-        if done < $width {
-            let sch = $src_order.channels();
-            let dch = $dst_order.channels();
-            srgb8_matrix_exact_scalar(
-                &$src[done * sch..],
-                &mut $dst[done * dch..],
-                $width - done,
-                $m,
-                $src_order,
-                $dst_order,
-                $fill_opaque,
-                $round,
-            );
+            base += $LANES;
         }
     }};
 }
