@@ -827,7 +827,10 @@ pub(crate) fn detect_fast_row(
             {
                 return None;
             }
-            if *st == *dt && sw != dw {
+            if *st == *dt
+                && let (Some(a), Some(b)) = (sw, dw)
+                && (a.nits() - b.nits()).abs() > 1e-4
+            {
                 return None;
             }
             (*st, *dt)
@@ -854,7 +857,10 @@ pub(crate) fn detect_fast_row(
             {
                 return None;
             }
-            if *st == *dt && sw != dw {
+            if *st == *dt
+                && let (Some(a), Some(b)) = (sw, dw)
+                && (a.nits() - b.nits()).abs() > 1e-4
+            {
                 return None;
             }
             (*st, *dt)

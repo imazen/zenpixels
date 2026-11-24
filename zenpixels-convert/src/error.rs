@@ -50,6 +50,14 @@ pub enum ConvertError {
     OutputSignalingMismatch,
     /// Heap allocation failed.
     AllocationFailed,
+    /// Cooperative cancellation was triggered via [`enough::Stop`].
+    Cancelled(enough::StopReason),
+}
+
+impl From<enough::StopReason> for ConvertError {
+    fn from(r: enough::StopReason) -> Self {
+        Self::Cancelled(r)
+    }
 }
 
 impl From<ColorError> for ConvertError {
@@ -127,6 +135,7 @@ impl fmt::Display for ConvertError {
                 f.write_str("requested container color signaling contradicts the converted destination pixels")
             }
             Self::AllocationFailed => f.write_str("allocation failed during pixel conversion"),
+            Self::Cancelled(r) => write!(f, "conversion cancelled: {r:?}"),
         }
     }
 }

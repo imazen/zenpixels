@@ -774,3 +774,252 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
         );
     }
 }
+
+#[test]
+fn parity_gainmap_applier_all_modes_zero_bit() {
+    use core::num::NonZeroU32;
+    use enough::Unstoppable;
+    use zenpixels_convert::{
+        DualLayerHdrView, GainMapApplyConfig, GainMapChannels, GainMapColorSpace, GainMapComponent,
+        GainMapMetadata, GainMapResample, Orientation, PixelBuf, SignedFraction, UnsignedFraction,
+        apply_gain_map_with,
+    };
+
+    let make_base = |w: u32, h: u32, spec: ImageSpec| -> PixelBuf {
+        let mut buf = PixelBuf::new(w, h, spec.clone()).unwrap();
+        let bpp = spec.layout.bytes_per_pixel();
+        let mut v = buf.as_view_mut();
+        for y in 0..h {
+            let row = v.row_mut(y);
+            for (i, b) in row.iter_mut().enumerate() {
+                *b = (((y as usize * 73 + i * 37 + 19) * 13) % 256) as u8;
+            }
+            if bpp == 4 {
+                // Include varied alpha including 0, 128, 255
+                for x in 0..w as usize {
+                    row[x * 4 + 3] = match x % 4 {
+                        0 => 0,
+                        1 => 128,
+                        2 => 255,
+                        _ => ((x * 29 + y as usize * 17) % 256) as u8,
+                    };
+                }
+            }
+        }
+        buf
+    };
+
+    let make_gm_u8 = |w: u32, h: u32, ch: usize| -> PixelBuf {
+        let spec = if ch == 3 {
+            ImageSpec::new(
+                SampleLayout::RGB8,
+                ColorSpace::Untagged {
+                    channels: 3,
+                    alpha: AlphaMode::None,
+                },
+            )
+        } else {
+            ImageSpec::new(
+                SampleLayout::GRAY8,
+                ColorSpace::Untagged {
+                    channels: 1,
+                    alpha: AlphaMode::None,
+                },
+            )
+        };
+        let mut buf = PixelBuf::new(w, h, spec).unwrap();
+        let mut v = buf.as_view_mut();
+        for y in 0..h {
+            for (i, b) in v.row_mut(y).iter_mut().enumerate() {
+                *b = ((y as usize * 53 + i * 41 + 7) % 256) as u8;
+            }
+        }
+        buf
+    };
+
+    let make_gm_u16 = |w: u32, h: u32| -> PixelBuf {
+        let spec = ImageSpec::new(
+            SampleLayout::GRAY16,
+            ColorSpace::Untagged {
+                channels: 1,
+                alpha: AlphaMode::None,
+            },
+        );
+        let mut buf = PixelBuf::new(w, h, spec).unwrap();
+        let mut v = buf.as_view_mut();
+        for y in 0..h {
+            let row = v.row_mut(y);
+            for x in 0..w as usize {
+                let code = ((y as usize * 2503 + x * 1973 + 17) % 65536) as u16;
+                row[x * 2..x * 2 + 2].copy_from_slice(&code.to_ne_bytes());
+            }
+        }
+        buf
+    };
+
+    let comp_g1 = GainMapComponent {
+        min_gain_stops: SignedFraction::new(-1, NonZeroU32::new(2).unwrap()),
+        max_gain_stops: SignedFraction::new(7, NonZeroU32::new(2).unwrap()),
+        gamma: UnsignedFraction::ONE,
+        base_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
+        alternate_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
+    };
+    let comp_g22 = GainMapComponent {
+        gamma: UnsignedFraction::new(11, NonZeroU32::new(5).unwrap()),
+        ..comp_g1
+    };
+    let comp_b = GainMapComponent {
+        min_gain_stops: SignedFraction::new(0, NonZeroU32::new(1).unwrap()),
+        max_gain_stops: SignedFraction::new(3, NonZeroU32::new(1).unwrap()),
+        gamma: UnsignedFraction::new(3, NonZeroU32::new(2).unwrap()),
+        base_offset: SignedFraction::new(1, NonZeroU32::new(32).unwrap()),
+        alternate_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
+    };
+
+    let meta_fwd_shared_g1 = GainMapMetadata::try_new(
+        GainMapChannels::Shared(comp_g1),
+        UnsignedFraction::ZERO,
+        UnsignedFraction::new(3, NonZeroU32::new(1).unwrap()),
+        GainMapColorSpace::Base,
+    )
+    .unwrap();
+    let meta_fwd_shared_g22 = GainMapMetadata::try_new(
+        GainMapChannels::Shared(comp_g22),
+        UnsignedFraction::ZERO,
+        UnsignedFraction::new(3, NonZeroU32::new(1).unwrap()),
+        GainMapColorSpace::Base,
+    )
+    .unwrap();
+    let meta_rev_perch = GainMapMetadata::try_new(
+        GainMapChannels::PerChannel([comp_g1, comp_g22, comp_b]),
+        UnsignedFraction::new(3, NonZeroU32::new(1).unwrap()),
+        UnsignedFraction::ZERO,
+        GainMapColorSpace::Base,
+    )
+    .unwrap();
+
+    // Prime dimensions exercising AVX2 8-wide loops + scalar tails + edge taps + downscale!
+    let base_rgb = make_base(37, 29, ImageSpec::rgb8_srgb());
+    let base_rgba = make_base(37, 29, ImageSpec::rgba8_srgb());
+    let base_small = make_base(19, 13, ImageSpec::rgb8_srgb());
+    let gm_up_1 = make_gm_u8(11, 7, 1);
+    let gm_up_3 = make_gm_u8(11, 7, 3);
+    let gm_up_u16 = make_gm_u16(11, 7);
+    let gm_1to1_1 = make_gm_u8(37, 29, 1);
+    let gm_down_1 = make_gm_u8(41, 31, 1); // larger than 19x13 base!
+
+    let cases = [
+        (
+            "up_1ch_shared_g1_rgb",
+            &base_rgb,
+            &gm_up_1,
+            meta_fwd_shared_g1,
+            2.2,
+            None,
+        ),
+        (
+            "up_1ch_shared_g22_rgba",
+            &base_rgba,
+            &gm_up_1,
+            meta_fwd_shared_g22,
+            2.2,
+            None,
+        ),
+        (
+            "up_1ch_perch_rev_rgba",
+            &base_rgba,
+            &gm_up_1,
+            meta_rev_perch,
+            0.8,
+            None,
+        ),
+        (
+            "up_3ch_perch_rev_rgb",
+            &base_rgb,
+            &gm_up_3,
+            meta_rev_perch,
+            1.2,
+            None,
+        ),
+        (
+            "up_3ch_shared_g1_rgba_f16",
+            &base_rgba,
+            &gm_up_3,
+            meta_fwd_shared_g1,
+            2.5,
+            Some(ImageSpec::rgbaf16_linear()),
+        ),
+        (
+            "up_u16_shared_g1_rgb",
+            &base_rgb,
+            &gm_up_u16,
+            meta_fwd_shared_g1,
+            1.75,
+            None,
+        ),
+        (
+            "1to1_lut_shared_g1_rgb",
+            &base_rgb,
+            &gm_1to1_1,
+            meta_fwd_shared_g1,
+            2.0,
+            None,
+        ),
+        (
+            "1to1_lut_perch_rev_rgba_srgb8",
+            &base_rgba,
+            &gm_1to1_1,
+            meta_rev_perch,
+            0.5,
+            Some(ImageSpec::rgba8_srgb()),
+        ),
+        (
+            "downscale_gm_larger_than_base",
+            &base_small,
+            &gm_down_1,
+            meta_fwd_shared_g1,
+            2.5,
+            None,
+        ),
+    ];
+
+    for (label, base, gm, meta, headroom, dst_spec) in cases {
+        let dual = DualLayerHdrView::new(
+            base.as_view(),
+            gm.as_view(),
+            meta,
+            None,
+            Orientation::Identity,
+        )
+        .unwrap();
+        for resample in [
+            GainMapResample::Nearest,
+            GainMapResample::Bilinear,
+            GainMapResample::Bicubic,
+            GainMapResample::Mitchell,
+        ] {
+            let mut cfg_scalar = GainMapApplyConfig::new(headroom)
+                .with_resample(resample)
+                .with_policy(
+                    ConvertPolicy::working_linear().with_accelerators(Accelerators::SCALAR),
+                );
+            let mut cfg_all = GainMapApplyConfig::new(headroom)
+                .with_resample(resample)
+                .with_policy(ConvertPolicy::working_linear().with_accelerators(Accelerators::ALL));
+            if let Some(ds) = &dst_spec {
+                cfg_scalar = cfg_scalar.with_dst_spec(ds.clone());
+                cfg_all = cfg_all.with_dst_spec(ds.clone());
+            }
+
+            let out_s = apply_gain_map_with(&dual, &cfg_scalar, &Unstoppable).unwrap();
+            let out_a = apply_gain_map_with(&dual, &cfg_all, &Unstoppable).unwrap();
+            for y in 0..base.height() {
+                assert_eq!(
+                    out_s.as_view().row(y),
+                    out_a.as_view().row(y),
+                    "0-bit gainmap SCALAR vs ALL mismatch on `{label}` resample={resample:?} row={y}"
+                );
+            }
+        }
+    }
+}

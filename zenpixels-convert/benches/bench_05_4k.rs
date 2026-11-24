@@ -13,9 +13,11 @@ use std::time::Duration;
 use zenbench::prelude::*;
 use zenpixels_convert::{
     Accelerators, AlphaMode, AlphaPolicy, BitPacking, ChannelOrder, Color, ColorSpace,
-    ConvertPolicy, DepthPolicy, DiffuseWhite, GamutPolicy, HlgMode, HlgRendering, ImageSpec,
-    LumaCoefficients, Nits, Orientation, PerceptualSpace, PixelBuf, Primaries, RowPlan,
-    SampleLayout, SampleType, SignalRange, Transfer, apply_orientation_into,
+    ConvertPolicy, DepthPolicy, DiffuseWhite, DualLayerHdrView, GainMapApplier, GainMapApplyConfig,
+    GainMapDownsample, GainMapExtractConfig, GainMapMetadata, GainMapResample, GamutPolicy,
+    HlgMode, HlgRendering, ImageSpec, LumaCoefficients, Nits, Orientation, PerceptualSpace,
+    PixelBuf, Primaries, RowPlan, SampleLayout, SampleType, SignalRange, Transfer,
+    apply_orientation_into, extract_gain_map_only,
 };
 
 const W: u32 = 3840;
@@ -624,6 +626,196 @@ fn main() {
                     })
                 });
             });
+        }
+
+        // ISO 21496-1 / UltraHDR 4K UHD (3840x2160) Gain-Map Apply & Extract benchmarks
+        {
+            let gm_spec = ImageSpec::new(
+                SampleLayout::GRAY8,
+                ColorSpace::Untagged {
+                    channels: 1,
+                    alpha: AlphaMode::None,
+                },
+            );
+            let mut base_rgb8 = PixelBuf::new(W, H, ImageSpec::rgb8_srgb()).unwrap();
+            let mut base_rgba8 = PixelBuf::new(W, H, ImageSpec::rgba8_srgb()).unwrap();
+            for y in 0..H {
+                for (i, b) in base_rgb8.as_view_mut().row_mut(y).iter_mut().enumerate() {
+                    *b = ((y as usize * 37 + i * 19 + 11) % 251) as u8;
+                }
+                for (i, b) in base_rgba8.as_view_mut().row_mut(y).iter_mut().enumerate() {
+                    *b = ((y as usize * 41 + i * 23 + 7) % 251) as u8;
+                }
+            }
+            let mut gm_qres = PixelBuf::new(W / 4, H / 4, gm_spec.clone()).unwrap();
+            for y in 0..H / 4 {
+                for (i, b) in gm_qres.as_view_mut().row_mut(y).iter_mut().enumerate() {
+                    *b = ((y as usize * 53 + i * 29 + 13) % 256) as u8;
+                }
+            }
+            let mut gm_full = PixelBuf::new(W, H, gm_spec).unwrap();
+            for y in 0..H {
+                for (i, b) in gm_full.as_view_mut().row_mut(y).iter_mut().enumerate() {
+                    *b = ((y as usize * 53 + i * 29 + 13) % 256) as u8;
+                }
+            }
+            let meta = GainMapMetadata::symmetric(2.5);
+            let base_rgb8 = Arc::new(base_rgb8);
+            let base_rgba8 = Arc::new(base_rgba8);
+            let gm_qres = Arc::new(gm_qres);
+            let gm_full = Arc::new(gm_full);
+
+            for (name, use_rgba, use_full_gm, resample, dst_spec) in [
+                (
+                    "gainmap_4k/apply_qres_bilinear_u8_to_rgbf32",
+                    false,
+                    false,
+                    GainMapResample::Bilinear,
+                    None,
+                ),
+                (
+                    "gainmap_4k/apply_qres_bicubic_u8_to_rgbf32",
+                    false,
+                    false,
+                    GainMapResample::Bicubic,
+                    None,
+                ),
+                (
+                    "gainmap_4k/apply_qres_bilinear_u8_to_rgbaf16",
+                    true,
+                    false,
+                    GainMapResample::Bilinear,
+                    Some(ImageSpec::rgbaf16_linear()),
+                ),
+                (
+                    "gainmap_4k/apply_1to1_lut_u8_to_rgbf32",
+                    false,
+                    true,
+                    GainMapResample::Bilinear,
+                    None,
+                ),
+            ] {
+                let base_ref = if use_rgba {
+                    Arc::clone(&base_rgba8)
+                } else {
+                    Arc::clone(&base_rgb8)
+                };
+                let gm_ref = if use_full_gm {
+                    Arc::clone(&gm_full)
+                } else {
+                    Arc::clone(&gm_qres)
+                };
+                let dst_bpp = dst_spec
+                    .as_ref()
+                    .map(|s| s.layout.bytes_per_pixel())
+                    .unwrap_or(if use_rgba { 16 } else { 12 });
+                let total_bytes = (PIXELS * (base_ref.spec().layout.bytes_per_pixel() + dst_bpp)
+                    + (gm_ref.width() as usize) * (gm_ref.height() as usize))
+                    as u64;
+
+                suite.compare(name, move |g| {
+                    g.throughput(Throughput::Bytes(total_bytes));
+                    g.config()
+                        .auto_rounds(false)
+                        .min_rounds(6)
+                        .max_rounds(6)
+                        .max_time(Duration::from_millis(900));
+                    for (tier, acc) in
+                        [("ALL", Accelerators::ALL), ("SCALAR", Accelerators::SCALAR)]
+                    {
+                        let base_ref = Arc::clone(&base_ref);
+                        let gm_ref = Arc::clone(&gm_ref);
+                        let dst_spec = dst_spec.clone();
+                        g.bench(tier, move |b| {
+                            let dual = DualLayerHdrView::new(
+                                base_ref.as_view(),
+                                gm_ref.as_view(),
+                                meta,
+                                None,
+                                Orientation::Identity,
+                            )
+                            .unwrap();
+                            let mut cfg = GainMapApplyConfig::new(2.0)
+                                .with_resample(resample)
+                                .with_policy(
+                                    ConvertPolicy::working_linear().with_accelerators(acc),
+                                );
+                            if let Some(ds) = &dst_spec {
+                                cfg = cfg.with_dst_spec(ds.clone());
+                            }
+                            let mut applier = GainMapApplier::for_view(&dual, &cfg).unwrap();
+                            let mut out = PixelBuf::new(W, H, applier.dst_spec().clone()).unwrap();
+                            // Pre-fault destination pages once
+                            for y in 0..H {
+                                out.as_view_mut().row_mut(y).fill(0);
+                            }
+                            b.iter(|| {
+                                applier
+                                    .apply_into(
+                                        base_ref.as_ref(),
+                                        &gm_ref.as_view(),
+                                        &mut out,
+                                        &enough::Unstoppable,
+                                    )
+                                    .unwrap();
+                                black_box(out.as_view().row(H - 1)[0])
+                            })
+                        });
+                    }
+                });
+            }
+
+            // 4K ¼-res Gain-Map Extraction (Box & Point)
+            let mut hdr_4k = PixelBuf::new(
+                W,
+                H,
+                ImageSpec::rgbf32_linear().with_white(DiffuseWhite::BT2408),
+            )
+            .unwrap();
+            {
+                let mut hv = hdr_4k.as_view_mut();
+                for y in 0..H {
+                    let r = hv.row_as_mut::<f32>(y).unwrap();
+                    for (i, v) in r.iter_mut().enumerate() {
+                        *v = ((y as usize + i) % 100) as f32 * 0.04;
+                    }
+                }
+            }
+            let hdr_4k = Arc::new(hdr_4k);
+            for (name, ds) in [
+                ("gainmap_4k/extract_qres_box_u8", GainMapDownsample::Box),
+                ("gainmap_4k/extract_qres_point_u8", GainMapDownsample::Point),
+            ] {
+                let base_ref = Arc::clone(&base_rgb8);
+                let hdr_ref = Arc::clone(&hdr_4k);
+                let total_bytes = (PIXELS * (3 + 12) + ((W / 4) * (H / 4)) as usize) as u64;
+                suite.group(name, move |g| {
+                    g.throughput(Throughput::Bytes(total_bytes));
+                    g.config()
+                        .auto_rounds(false)
+                        .min_rounds(5)
+                        .max_rounds(5)
+                        .max_time(Duration::from_millis(1200));
+                    g.bench("ALL", move |b| {
+                        let cfg = GainMapExtractConfig::ultrahdr()
+                            .with_downsample(ds)
+                            .with_policy(
+                                ConvertPolicy::working_linear()
+                                    .with_accelerators(Accelerators::ALL),
+                            );
+                        b.iter(|| {
+                            let (gm, _) = extract_gain_map_only(
+                                &base_ref.as_view(),
+                                &hdr_ref.as_view(),
+                                &cfg,
+                                &enough::Unstoppable,
+                            )
+                            .unwrap();
+                            black_box(gm.as_view().row(0)[0])
+                        })
+                    });
+                });
+            }
         }
     });
 }
