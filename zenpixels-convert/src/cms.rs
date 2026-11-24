@@ -46,6 +46,11 @@ mod moxcms_impl {
     const CHUNK_PX: usize = 64;
 
     /// Pure-Rust `moxcms` ICC CMS backend.
+    ///
+    /// Note: `moxcms` 0.9 does not implement ICC.1 §D.3 media-white / `chad` un-adaptation for
+    /// [`RenderingIntent::AbsoluteColorimetric`]; rather than silently substituting
+    /// `RelativeColorimetric`, [`MoxCms`] refuses `AbsoluteColorimetric` with
+    /// [`ConvertError::UnsupportedRoute`]. Use [`crate::Lcms`] for `AbsoluteColorimetric`.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct MoxCms;
 
@@ -103,11 +108,35 @@ mod moxcms_impl {
                     (Primaries::DisplayP3, Transfer::Srgb) => {
                         moxcms::ColorProfile::new_display_p3()
                     }
-                    (Primaries::AdobeRgb, Transfer::Gamma22) => {
+                    (Primaries::AdobeRgb, Transfer::AdobeRgb) => {
                         moxcms::ColorProfile::new_adobe_rgb()
                     }
                     (Primaries::Bt2020, Transfer::Bt709) => moxcms::ColorProfile::new_bt2020(),
                     (Primaries::Bt2020, Transfer::Pq) => moxcms::ColorProfile::new_bt2020_pq(),
+                    (
+                        p_id @ (Primaries::Bt709 | Primaries::DisplayP3 | Primaries::Bt2020),
+                        Transfer::Linear,
+                    ) => {
+                        let mut prof = match p_id {
+                            Primaries::Bt709 => moxcms::ColorProfile::new_srgb(),
+                            Primaries::DisplayP3 => moxcms::ColorProfile::new_display_p3(),
+                            Primaries::Bt2020 => moxcms::ColorProfile::new_bt2020(),
+                            _ => unreachable!(),
+                        };
+                        let lin = moxcms::ToneReprCurve::Parametric(alloc::vec![1.0]);
+                        prof.red_trc = Some(lin.clone());
+                        prof.green_trc = Some(lin.clone());
+                        prof.blue_trc = Some(lin);
+                        prof
+                    }
+                    (Primaries::Bt709, Transfer::Gamma22) => {
+                        let mut prof = moxcms::ColorProfile::new_srgb();
+                        let g22 = moxcms::ToneReprCurve::Parametric(alloc::vec![2.2]);
+                        prof.red_trc = Some(g22.clone());
+                        prof.green_trc = Some(g22.clone());
+                        prof.blue_trc = Some(g22);
+                        prof
+                    }
                     // HLG requires BT.2100-3 display OOTF which ICC profiles cannot carry faithfully.
                     _ => return Err(err_at(ConvertError::UnsupportedRoute)),
                 };
@@ -126,7 +155,9 @@ mod moxcms_impl {
                         p
                     }
                     Transfer::Linear => moxcms::ColorProfile::new_gray_with_gamma(1.0),
-                    Transfer::Gamma22 => moxcms::ColorProfile::new_gray_with_gamma(563.0 / 256.0),
+                    Transfer::Gamma22 => moxcms::ColorProfile::new_gray_with_gamma(2.2),
+                    Transfer::AdobeRgb => moxcms::ColorProfile::new_gray_with_gamma(563.0 / 256.0),
+                    Transfer::Gamma(g) => moxcms::ColorProfile::new_gray_with_gamma(g.exponent()),
                     _ => return Err(err_at(ConvertError::UnsupportedRoute)),
                 };
                 Ok((p, None))
@@ -291,6 +322,14 @@ mod moxcms_impl {
 
     impl CmsBackend for MoxCms {
         fn supports_specs(&self, src: &ImageSpec, dst: &ImageSpec) -> bool {
+            let eff_intent = match (&src.color, &dst.color) {
+                (ColorSpace::Icc { intent, .. }, _) => Some(*intent),
+                (_, ColorSpace::Icc { intent, .. }) => Some(*intent),
+                _ => None,
+            };
+            if eff_intent == Some(RenderingIntent::AbsoluteColorimetric) {
+                return false;
+            }
             if src.layout.sample != dst.layout.sample
                 || !matches!(
                     src.layout.sample,
@@ -309,14 +348,44 @@ mod moxcms_impl {
                 return false;
             }
             let color_ok = |c: &ColorSpace| match c {
-                ColorSpace::Icc { .. } => true,
-                ColorSpace::Cmyk { icc, .. } => icc.is_some(),
-                ColorSpace::Rgb {
-                    range, transfer, ..
+                ColorSpace::Icc { profile, .. } => {
+                    profile.len() >= 128 && &profile[36..40] == b"acsp"
                 }
-                | ColorSpace::Gray {
+                ColorSpace::Cmyk { icc: Some(p), .. } => p.len() >= 128 && &p[36..40] == b"acsp",
+                ColorSpace::Cmyk { icc: None, .. } => false,
+                ColorSpace::Rgb {
+                    primaries,
+                    transfer,
+                    range,
+                    ..
+                } => {
+                    *range == SignalRange::Full
+                        && matches!(
+                            (primaries, transfer),
+                            (
+                                Primaries::Bt709,
+                                Transfer::Srgb | Transfer::Linear | Transfer::Gamma22
+                            ) | (Primaries::DisplayP3, Transfer::Srgb | Transfer::Linear)
+                                | (Primaries::AdobeRgb, Transfer::AdobeRgb)
+                                | (
+                                    Primaries::Bt2020,
+                                    Transfer::Bt709 | Transfer::Pq | Transfer::Linear
+                                )
+                        )
+                }
+                ColorSpace::Gray {
                     range, transfer, ..
-                } => *range == SignalRange::Full && !matches!(transfer, Transfer::Hlg(_)),
+                } => {
+                    *range == SignalRange::Full
+                        && matches!(
+                            transfer,
+                            Transfer::Srgb
+                                | Transfer::Linear
+                                | Transfer::Gamma22
+                                | Transfer::AdobeRgb
+                                | Transfer::Gamma(_)
+                        )
+                }
                 _ => false,
             };
             color_ok(&src.color) && color_ok(&dst.color)
@@ -340,6 +409,9 @@ mod moxcms_impl {
             let eff_intent = src_intent
                 .or(dst_intent)
                 .unwrap_or(RenderingIntent::RelativeColorimetric);
+            if eff_intent == RenderingIntent::AbsoluteColorimetric {
+                return Err(err_at(ConvertError::UnsupportedRoute));
+            }
             let src_l = to_mox_layout(src.layout.order)
                 .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
             let dst_l = to_mox_layout(dst.layout.order)
@@ -528,7 +600,13 @@ mod lcms_impl {
         match transfer {
             Transfer::Srgb => Ok(Some(ToneCurve::srgb())),
             Transfer::Linear => Ok(Some(ToneCurve::linear())),
-            Transfer::Gamma22 => ToneCurve::gamma(563.0 / 256.0)
+            Transfer::Gamma22 => ToneCurve::gamma(2.2)
+                .map(Some)
+                .map_err(|_| err_at(ConvertError::CmsBackendFailed)),
+            Transfer::AdobeRgb => ToneCurve::gamma(563.0 / 256.0)
+                .map(Some)
+                .map_err(|_| err_at(ConvertError::CmsBackendFailed)),
+            Transfer::Gamma(g) => ToneCurve::gamma(f64::from(g.exponent()))
                 .map(Some)
                 .map_err(|_| err_at(ConvertError::CmsBackendFailed)),
             Transfer::Bt709 => ToneCurve::parametric(
@@ -592,7 +670,7 @@ mod lcms_impl {
                 if *primaries == Primaries::Bt709 && *transfer == Transfer::Srgb {
                     return Ok((Profile::srgb(), None));
                 }
-                if *primaries == Primaries::AdobeRgb && *transfer == Transfer::Gamma22 {
+                if *primaries == Primaries::AdobeRgb && *transfer == Transfer::AdobeRgb {
                     let p = Profile::open(crate::icc_profiles::ADOBE_RGB)
                         .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
                     return Ok((p, None));
@@ -850,14 +928,70 @@ mod lcms_impl {
             return false;
         }
         let color_ok = |c: &ColorSpace| match c {
-            ColorSpace::Icc { .. } => true,
-            ColorSpace::Cmyk { icc, .. } => icc.is_some(),
+            ColorSpace::Icc { profile, .. } => profile.len() >= 128 && &profile[36..40] == b"acsp",
+            ColorSpace::Cmyk { icc: Some(p), .. } => p.len() >= 128 && &p[36..40] == b"acsp",
+            ColorSpace::Cmyk { icc: None, .. } => false,
             ColorSpace::Rgb {
-                range, transfer, ..
+                primaries,
+                transfer,
+                range,
+                ..
+            } => {
+                if *range != SignalRange::Full || matches!(transfer, Transfer::Hlg(_)) {
+                    return false;
+                }
+                if *primaries == Primaries::Bt709 && *transfer == Transfer::Srgb {
+                    return true;
+                }
+                if *primaries == Primaries::AdobeRgb && *transfer == Transfer::AdobeRgb {
+                    return true;
+                }
+                if primaries.chromaticity().is_some()
+                    && matches!(
+                        transfer,
+                        Transfer::Srgb
+                            | Transfer::Linear
+                            | Transfer::Gamma22
+                            | Transfer::AdobeRgb
+                            | Transfer::Gamma(_)
+                            | Transfer::Bt709
+                    )
+                {
+                    return true;
+                }
+                if let (Some(p_code), Some(t_code)) = (primaries.to_cicp(), transfer.to_cicp()) {
+                    return matches!(
+                        SynthesizedIcc::for_cicp(Cicp::new(p_code, t_code, 0, true)),
+                        SynthesizedIcc::Profile(_)
+                    );
+                }
+                false
             }
-            | ColorSpace::Gray {
+            ColorSpace::Gray {
                 range, transfer, ..
-            } => *range == SignalRange::Full && !matches!(transfer, Transfer::Hlg(_)),
+            } => {
+                if *range != SignalRange::Full || matches!(transfer, Transfer::Hlg(_)) {
+                    return false;
+                }
+                if matches!(
+                    transfer,
+                    Transfer::Srgb
+                        | Transfer::Linear
+                        | Transfer::Gamma22
+                        | Transfer::AdobeRgb
+                        | Transfer::Gamma(_)
+                        | Transfer::Bt709
+                ) {
+                    return true;
+                }
+                if let Some(t_code) = transfer.to_cicp() {
+                    return matches!(
+                        SynthesizedIcc::for_gray_cicp(Cicp::new(1, t_code, 0, true)),
+                        SynthesizedIcc::Profile(_)
+                    );
+                }
+                false
+            }
             _ => false,
         };
         color_ok(&src.color) && color_ok(&dst.color)

@@ -18,8 +18,8 @@ use alloc::sync::Arc;
 #[cfg(feature = "perceptual")]
 use zenpixels::PerceptualSpace;
 use zenpixels::{
-    AlphaMode, ChannelOrder, ColorSpace, HlgMode, ImageSpec, Primaries, SampleLayout, SampleType,
-    SignalRange, Transfer,
+    AlphaMode, BitPacking, ChannelOrder, ColorSpace, HlgMode, ImageSpec, Primaries, SampleLayout,
+    SampleType, SignalRange, Transfer,
 };
 
 use crate::accel::Accelerators;
@@ -141,6 +141,39 @@ pub(crate) enum ByteFastPath {
     GrayToRgbB4,
     /// 4-byte/channel (`F32`): `Gray → RGBA` (`1.0f32`).
     GrayToRgbaB4,
+    /// 2-byte/channel (`U16` / `F16`): set 4th channel to opaque (`opaque_bits`).
+    FillAlpha4B2(u16),
+    /// 2-byte/channel (`U16` / `F16`): swap R/B + set 4th channel to opaque (`opaque_bits`).
+    SwapRbFillAlpha4B2(u16),
+    /// 4-byte/channel (`F32`): set 4th channel to `1.0f32`.
+    FillAlpha4B4,
+    /// 4-byte/channel (`F32`): swap R/B + set 4th channel to `1.0f32`.
+    SwapRbFillAlpha4B4,
+    /// Lossless integer bit-packing repacking at identical effective bit depth
+    /// (e.g. `U32 Shifted { bits: 25, shift: 0 } -> shift: 1`, `U16 Lsb(10) <-> Msb(10)`).
+    RepackIntSameDepth {
+        src_sample: SampleType,
+        dst_sample: SampleType,
+        src_packing: BitPacking,
+        dst_packing: BitPacking,
+        channels: usize,
+        fill_opaque_alpha: bool,
+    },
+    /// Exact ITU-R BT.2100-3 Table 9 narrow-range integer bit-shift preserving footroom & headroom
+    /// (`q << s` on widen, `(q + bias) >> s` on narrow; alpha scaled full-range if present).
+    NarrowBitShift {
+        src_sample: SampleType,
+        dst_sample: SampleType,
+        src_packing: BitPacking,
+        dst_packing: BitPacking,
+        channels: usize,
+        has_alpha: bool,
+        has_padding: bool,
+        fill_opaque_alpha: bool,
+        src_bits: u8,
+        dst_bits: u8,
+        round: bool,
+    },
 }
 
 /// Dead-strippable `garb` SIMD dispatcher referenced ONLY by `Accelerators::with_byte_layout()`.
@@ -642,6 +675,193 @@ impl ByteFastPath {
                     dp[12..16].copy_from_slice(&ob);
                 }
             }
+            Self::FillAlpha4B2(alpha) => {
+                let s = &src[..width * 8];
+                let d = &mut dst[..width * 8];
+                if let (Ok(s16), Ok(d16)) = (
+                    bytemuck::try_cast_slice::<u8, [u16; 4]>(s),
+                    bytemuck::try_cast_slice_mut::<u8, [u16; 4]>(d),
+                ) {
+                    for (sp, dp) in s16.iter().zip(d16.iter_mut()) {
+                        *dp = [sp[0], sp[1], sp[2], alpha];
+                    }
+                } else {
+                    let ab = alpha.to_ne_bytes();
+                    for (sp, dp) in s.chunks_exact(8).zip(d.chunks_exact_mut(8)) {
+                        dp[0..6].copy_from_slice(&sp[0..6]);
+                        dp[6..8].copy_from_slice(&ab);
+                    }
+                }
+            }
+            Self::SwapRbFillAlpha4B2(alpha) => {
+                let s = &src[..width * 8];
+                let d = &mut dst[..width * 8];
+                if let (Ok(s16), Ok(d16)) = (
+                    bytemuck::try_cast_slice::<u8, [u16; 4]>(s),
+                    bytemuck::try_cast_slice_mut::<u8, [u16; 4]>(d),
+                ) {
+                    for (sp, dp) in s16.iter().zip(d16.iter_mut()) {
+                        *dp = [sp[2], sp[1], sp[0], alpha];
+                    }
+                } else {
+                    let ab = alpha.to_ne_bytes();
+                    for (sp, dp) in s.chunks_exact(8).zip(d.chunks_exact_mut(8)) {
+                        dp[0..2].copy_from_slice(&sp[4..6]);
+                        dp[2..4].copy_from_slice(&sp[2..4]);
+                        dp[4..6].copy_from_slice(&sp[0..2]);
+                        dp[6..8].copy_from_slice(&ab);
+                    }
+                }
+            }
+            Self::FillAlpha4B4 => {
+                let s = &src[..width * 16];
+                let d = &mut dst[..width * 16];
+                let one = 1.0_f32.to_bits();
+                if let (Ok(sf), Ok(df)) = (
+                    bytemuck::try_cast_slice::<u8, [u32; 4]>(s),
+                    bytemuck::try_cast_slice_mut::<u8, [u32; 4]>(d),
+                ) {
+                    for (sp, dp) in sf.iter().zip(df.iter_mut()) {
+                        *dp = [sp[0], sp[1], sp[2], one];
+                    }
+                } else {
+                    let ob = one.to_ne_bytes();
+                    for (sp, dp) in s.chunks_exact(16).zip(d.chunks_exact_mut(16)) {
+                        dp[0..12].copy_from_slice(&sp[0..12]);
+                        dp[12..16].copy_from_slice(&ob);
+                    }
+                }
+            }
+            Self::SwapRbFillAlpha4B4 => {
+                let s = &src[..width * 16];
+                let d = &mut dst[..width * 16];
+                let one = 1.0_f32.to_bits();
+                if let (Ok(sf), Ok(df)) = (
+                    bytemuck::try_cast_slice::<u8, [u32; 4]>(s),
+                    bytemuck::try_cast_slice_mut::<u8, [u32; 4]>(d),
+                ) {
+                    for (sp, dp) in sf.iter().zip(df.iter_mut()) {
+                        *dp = [sp[2], sp[1], sp[0], one];
+                    }
+                } else {
+                    let ob = one.to_ne_bytes();
+                    for (sp, dp) in s.chunks_exact(16).zip(d.chunks_exact_mut(16)) {
+                        dp[0..4].copy_from_slice(&sp[8..12]);
+                        dp[4..8].copy_from_slice(&sp[4..8]);
+                        dp[8..12].copy_from_slice(&sp[0..4]);
+                        dp[12..16].copy_from_slice(&ob);
+                    }
+                }
+            }
+            Self::RepackIntSameDepth {
+                src_sample,
+                dst_sample,
+                src_packing,
+                dst_packing,
+                channels,
+                fill_opaque_alpha,
+            } => {
+                let s_sz = src_sample.byte_size();
+                let d_sz = dst_sample.byte_size();
+                let s_packed = src_packing.is_packed_word();
+                let d_packed = dst_packing.is_packed_word();
+                let s_bpp = if s_packed { s_sz } else { channels * s_sz };
+                let d_bpp = if d_packed { d_sz } else { channels * d_sz };
+                let alpha_ch = if fill_opaque_alpha {
+                    Some(channels - 1)
+                } else {
+                    None
+                };
+                for x in 0..width {
+                    let sb = x * s_bpp;
+                    let db = x * d_bpp;
+                    let src_packed_word = if s_packed {
+                        read_word_u32(src_sample, &src[sb..])
+                    } else {
+                        0
+                    };
+                    let mut dst_packed_word = 0u32;
+                    for c in 0..channels {
+                        let code = if alpha_ch == Some(c) {
+                            dst_packing.max_code(dst_sample, c)
+                        } else {
+                            let w = if s_packed {
+                                src_packed_word
+                            } else {
+                                read_word_u32(src_sample, &src[sb + c * s_sz..])
+                            };
+                            src_packing.extract_code(src_sample, w, c)
+                        };
+                        let packed = dst_packing.pack_code(dst_sample, c, code);
+                        if d_packed {
+                            dst_packed_word |= packed;
+                        } else {
+                            write_word_u32(dst_sample, &mut dst[db + c * d_sz..], packed);
+                        }
+                    }
+                    if d_packed {
+                        write_word_u32(dst_sample, &mut dst[db..], dst_packed_word);
+                    }
+                }
+            }
+            Self::NarrowBitShift {
+                src_sample,
+                dst_sample,
+                src_packing,
+                dst_packing,
+                channels,
+                has_alpha,
+                has_padding,
+                fill_opaque_alpha,
+                src_bits,
+                dst_bits,
+                round,
+            } => {
+                let s_sz = src_sample.byte_size();
+                let d_sz = dst_sample.byte_size();
+                let s_bpp = channels * s_sz;
+                let d_bpp = channels * d_sz;
+                let src_max = ((1u64 << src_bits) - 1).max(1);
+                let dst_max = (1u32 << dst_bits) - 1;
+                let dst_max64 = u64::from(dst_max);
+                let color_ch = channels.saturating_sub(usize::from(has_alpha || has_padding));
+                for x in 0..width {
+                    let sb = x * s_bpp;
+                    let db = x * d_bpp;
+                    for c in 0..color_ch {
+                        let w = read_word_u32(src_sample, &src[sb + c * s_sz..]);
+                        let q = src_packing.extract_code(src_sample, w, c);
+                        let out_q = if dst_bits > src_bits {
+                            q << (dst_bits - src_bits)
+                        } else {
+                            let shift = src_bits - dst_bits;
+                            if round {
+                                ((q + (1u32 << (shift - 1))) >> shift).min(dst_max)
+                            } else {
+                                (q >> shift).min(dst_max)
+                            }
+                        };
+                        let packed = dst_packing.pack_code(dst_sample, c, out_q);
+                        write_word_u32(dst_sample, &mut dst[db + c * d_sz..], packed);
+                    }
+                    if has_alpha || has_padding {
+                        let c = channels - 1;
+                        let out_a = if has_padding || fill_opaque_alpha {
+                            dst_max
+                        } else {
+                            let w = read_word_u32(src_sample, &src[sb + c * s_sz..]);
+                            let a = u64::from(src_packing.extract_code(src_sample, w, c));
+                            if round {
+                                ((a * dst_max64 + src_max / 2) / src_max) as u32
+                            } else {
+                                ((a * dst_max64) / src_max) as u32
+                            }
+                        };
+                        let packed = dst_packing.pack_code(dst_sample, c, out_a);
+                        write_word_u32(dst_sample, &mut dst[db + c * d_sz..], packed);
+                    }
+                }
+            }
         }
     }
 }
@@ -829,7 +1049,7 @@ pub(crate) fn detect_fast_row(
             }
             if *st == *dt
                 && let (Some(a), Some(b)) = (sw, dw)
-                && (a.nits() - b.nits()).abs() > 1e-4
+                && ((a.nits() / b.nits()) - 1.0).abs() > 1e-6
             {
                 return None;
             }
@@ -859,7 +1079,7 @@ pub(crate) fn detect_fast_row(
             }
             if *st == *dt
                 && let (Some(a), Some(b)) = (sw, dw)
-                && (a.nits() - b.nits()).abs() > 1e-4
+                && ((a.nits() / b.nits()) - 1.0).abs() > 1e-6
             {
                 return None;
             }
@@ -914,8 +1134,10 @@ pub(crate) fn detect_fast_row(
         });
     }
 
-    // F32 <-> F32 single transfer (Linear <-> Srgb / Bt709 / Gamma22 / Pq).
+    // F32 <-> F32 single transfer (Linear <-> Srgb / Bt709 / Gamma22 / AdobeRgb / DciCinema / Gamma / Pq).
     // HLG <-> Linear always resolves through `resolve_hlg` into the BT.2100-3 display strip path.
+    // PQ -> Linear under `GamutPolicy::Clip` must clamp to `[0, 1]` in the strip path (B34), so
+    // only use `FastRow::TransferF32` for PQ -> Linear when NOT clipping (i.e. PreserveExtended/Forbid).
     if src.layout.sample == S::F32 && dst.layout.sample == S::F32 {
         let supported = |t: Transfer| {
             matches!(
@@ -923,11 +1145,16 @@ pub(crate) fn detect_fast_row(
                 Transfer::Srgb
                     | Transfer::Bt709
                     | Transfer::Gamma22
+                    | Transfer::AdobeRgb
+                    | Transfer::DciCinema
                     | Transfer::Gamma(_)
                     | Transfer::Pq
             )
         };
         if dt == Transfer::Linear && supported(st) {
+            if st == Transfer::Pq && gamut_policy == GamutPolicy::Clip {
+                return None;
+            }
             let pq_scale = if st == Transfer::Pq {
                 10_000.0 / white_nits
             } else {
@@ -2208,17 +2435,79 @@ fn apply_transfer_slice(
                 crate::transfers::gamma22_oetf_scalar_slice(ch);
             }
         }
+        (Transfer::AdobeRgb, true) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            if let Some(f) = accel.gamma_pow {
+                f(ch, 563.0 / 256.0, 563.0 / 256.0);
+            } else {
+                crate::transfers::adobe_rgb_eotf_scalar_slice(ch);
+            }
+        }
+        (Transfer::AdobeRgb, false) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            if let Some(f) = accel.gamma_pow {
+                f(ch, 256.0 / 563.0, 256.0 / 563.0);
+            } else {
+                crate::transfers::adobe_rgb_oetf_scalar_slice(ch);
+            }
+        }
+        (Transfer::DciCinema, true) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            if let Some(f) = accel.gamma_pow {
+                f(ch, 2.6_f32, 2.6_f64);
+                const SCALE: f32 = (52.37_f64 / 48.0_f64) as f32;
+                for v in ch.iter_mut() {
+                    *v *= SCALE;
+                }
+            } else {
+                crate::transfers::dci_cinema_eotf_scalar_slice(ch);
+            }
+        }
+        (Transfer::DciCinema, false) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            if let Some(f) = accel.gamma_pow {
+                const INV_SCALE: f32 = (48.0_f64 / 52.37_f64) as f32;
+                for v in ch.iter_mut() {
+                    *v *= INV_SCALE;
+                }
+                f(ch, (1.0_f64 / 2.6_f64) as f32, 1.0_f64 / 2.6_f64);
+            } else {
+                crate::transfers::dci_cinema_oetf_scalar_slice(ch);
+            }
+        }
         (Transfer::Gamma(gamma), true) => {
             if !preserve_extended {
                 clamp_slice_unit(ch);
             }
-            crate::transfers::gamma_eotf_scalar_slice(ch, gamma.exponent());
+            let e = gamma.exponent();
+            if (0.25..=3.0).contains(&e)
+                && let Some(f) = accel.gamma_pow
+            {
+                f(ch, e, f64::from(e));
+            } else {
+                crate::transfers::gamma_eotf_scalar_slice(ch, e);
+            }
         }
         (Transfer::Gamma(gamma), false) => {
             if !preserve_extended {
                 clamp_slice_unit(ch);
             }
-            crate::transfers::gamma_oetf_scalar_slice(ch, gamma.exponent());
+            let inv = 1.0 / gamma.exponent();
+            if (0.25..=3.0).contains(&inv)
+                && let Some(f) = accel.gamma_pow
+            {
+                f(ch, inv, 1.0 / f64::from(gamma.exponent()));
+            } else {
+                crate::transfers::gamma_oetf_scalar_slice(ch, gamma.exponent());
+            }
         }
         #[cfg(feature = "hdr-transfers")]
         (Transfer::Pq, true) => {
@@ -2569,100 +2858,75 @@ fn load_ordered(order: ChannelOrder, strip: &StripBuf, i: usize) -> [f32; 4] {
 }
 
 /// Resolve RGB→Gray linear luminance weights from [`LumaCoefficients`] and source primaries.
+///
+/// Returns `None` when [`LumaCoefficients::FromSourcePrimaries`] is requested on
+/// [`Primaries::Unknown`] (caller must supply explicit luma coefficients or known primaries).
 #[inline]
 pub(crate) const fn resolve_luma_weights(
     coeffs: LumaCoefficients,
     src_primaries: Primaries,
-) -> [f32; 3] {
+) -> Option<[f32; 3]> {
     match coeffs {
-        LumaCoefficients::FromSourcePrimaries => src_primaries.luma_weights(),
-        LumaCoefficients::Bt709 => [0.2126, 0.7152, 0.0722],
-        LumaCoefficients::Bt601 => [0.299, 0.587, 0.114],
-        LumaCoefficients::Bt2020 => [0.2627, 0.6780, 0.0593],
-        LumaCoefficients::Custom(w) => w,
+        LumaCoefficients::FromSourcePrimaries => src_primaries.try_luma_weights(),
+        LumaCoefficients::Bt709 => Some([0.2126, 0.7152, 0.0722]),
+        LumaCoefficients::Bt601 => Some([0.299, 0.587, 0.114]),
+        LumaCoefficients::Bt2020 => Some([0.2627, 0.6780, 0.0593]),
+        LumaCoefficients::Custom(w) => Some(w),
     }
 }
 
+#[inline]
+fn alpha_compatible_for_byte_fast_path(
+    sa: AlphaMode,
+    da: AlphaMode,
+    src_proven_opaque: bool,
+) -> bool {
+    sa == da
+        || (src_proven_opaque
+            && matches!(
+                (sa, da),
+                (AlphaMode::Straight, AlphaMode::Premultiplied)
+                    | (AlphaMode::Premultiplied, AlphaMode::Straight)
+            ))
+        || matches!(
+            (sa, da),
+            (
+                AlphaMode::None | AlphaMode::Undefined,
+                AlphaMode::Straight
+                    | AlphaMode::Opaque
+                    | AlphaMode::Premultiplied
+                    | AlphaMode::Undefined
+                    | AlphaMode::None
+            ) | (
+                AlphaMode::Straight | AlphaMode::Opaque,
+                AlphaMode::None | AlphaMode::Undefined | AlphaMode::Opaque | AlphaMode::Straight
+            ) | (AlphaMode::Opaque, AlphaMode::Premultiplied)
+                | (
+                    AlphaMode::Premultiplied,
+                    AlphaMode::None | AlphaMode::Undefined | AlphaMode::Opaque
+                )
+        )
+}
+
 /// Detect whether a pair of `(src, dst)` specs can execute via a byte-only [`ByteFastPath`].
+///
+/// `src_stored_alpha_max` must be `true` ONLY when stored alpha bytes are proven to equal channel
+/// maximum (i.e. `SampleFacts::all_opaque`), NOT merely because `AlphaMode::Opaque` is declared.
 pub(crate) fn detect_byte_fast_path(
     src: &ImageSpec,
     dst: &ImageSpec,
     policy_depth: DepthPolicy,
     matte_active: bool,
+    src_stored_alpha_max: bool,
 ) -> Option<ByteFastPath> {
-    if matte_active || !src.layout.packing.is_full() || !dst.layout.packing.is_full() {
+    let src_proven_opaque = src_stored_alpha_max;
+    if matte_active {
         return None;
     }
-    // Identical spec -> direct memcpy regardless of color space!
+    // Identical spec -> direct memcpy regardless of color space or bit packing!
     if src == dst {
         return Some(ByteFastPath::Memcpy);
     }
-
-    // Check direct RGBA8 / BGRA8 straight <-> premultiplied (same transfer/primaries/range/order).
-    if src.layout.sample == SampleType::U8
-        && dst.layout.sample == SampleType::U8
-        && src.layout.order == dst.layout.order
-        && matches!(src.layout.order, ChannelOrder::Rgba | ChannelOrder::Bgra)
-        && let (
-            ColorSpace::Rgb {
-                primaries: sp,
-                transfer: st,
-                range: sr,
-                alpha: sa,
-                white: sw,
-            },
-            ColorSpace::Rgb {
-                primaries: dp,
-                transfer: dt,
-                range: dr,
-                alpha: da,
-                white: dw,
-            },
-        ) = (&src.color, &dst.color)
-        && sp == dp
-        && st == dt
-        && sr == dr
-        && *sr == SignalRange::Full
-        && sw == dw
-    {
-        if *sa == AlphaMode::Straight && *da == AlphaMode::Premultiplied {
-            return match policy_depth {
-                DepthPolicy::Round | DepthPolicy::Forbid => {
-                    Some(ByteFastPath::Rgba8StraightToPremul { round: true })
-                }
-                DepthPolicy::Truncate => Some(ByteFastPath::Rgba8StraightToPremul { round: false }),
-                DepthPolicy::OrderedDither => None,
-            };
-        }
-        if *sa == AlphaMode::Premultiplied && *da == AlphaMode::Straight {
-            return match policy_depth {
-                DepthPolicy::Round | DepthPolicy::Forbid => {
-                    Some(ByteFastPath::Rgba8PremulToStraight)
-                }
-                DepthPolicy::Truncate | DepthPolicy::OrderedDither => None,
-            };
-        }
-    }
-
-    // Determine whether 4-channel alpha must be forced to opaque (canonicalizing AlphaMode::Opaque
-    // on either source or destination so unverified alpha bytes never leak!).
-    let needs_opaque_fill = (src.color.alpha() == AlphaMode::Opaque
-        || dst.color.alpha() == AlphaMode::Opaque)
-        && dst.layout.order.has_alpha_slot()
-        && !(src.color.alpha() == AlphaMode::Opaque
-            && dst.color.alpha() == AlphaMode::Opaque
-            && src.layout.sample == dst.layout.sample
-            && src.layout.order == dst.layout.order);
-    let src_is_narrow = matches!(
-        src.color,
-        ColorSpace::Rgb {
-            range: SignalRange::Narrow,
-            ..
-        } | ColorSpace::Gray {
-            range: SignalRange::Narrow,
-            ..
-        }
-    );
 
     // Check that color meaning agrees (ignoring alpha presence changes handled by layout).
     let colors_agree = match (&src.color, &dst.color) {
@@ -2686,24 +2950,7 @@ pub(crate) fn detect_byte_fast_path(
                 && st == dt
                 && sr == dr
                 && sw == dw
-                && (*sa == *da
-                    || matches!(
-                        (*sa, *da),
-                        (
-                            AlphaMode::None | AlphaMode::Undefined,
-                            AlphaMode::Straight
-                                | AlphaMode::Opaque
-                                | AlphaMode::Premultiplied
-                                | AlphaMode::Undefined
-                                | AlphaMode::None
-                        ) | (
-                            AlphaMode::Straight | AlphaMode::Opaque,
-                            AlphaMode::None
-                                | AlphaMode::Undefined
-                                | AlphaMode::Opaque
-                                | AlphaMode::Straight
-                        ) | (AlphaMode::Opaque, AlphaMode::Premultiplied)
-                    ))
+                && alpha_compatible_for_byte_fast_path(*sa, *da, src_proven_opaque)
         }
         (
             ColorSpace::Gray {
@@ -2745,7 +2992,12 @@ pub(crate) fn detect_byte_fast_path(
                 alpha: da,
                 white: dw,
             },
-        ) => st == dt && sr == dr && sw == dw && sa == da,
+        ) => {
+            st == dt
+                && sr == dr
+                && sw == dw
+                && alpha_compatible_for_byte_fast_path(*sa, *da, src_proven_opaque)
+        }
         (
             ColorSpace::Xyz {
                 white_point: wa,
@@ -2757,11 +3009,190 @@ pub(crate) fn detect_byte_fast_path(
                 alpha: da,
                 white: wwb,
             },
-        ) => wa == wb && wwa == wwb && sa == da,
+        ) => {
+            wa == wb
+                && wwa == wwb
+                && alpha_compatible_for_byte_fast_path(*sa, *da, src_proven_opaque)
+        }
+        (
+            ColorSpace::Icc {
+                profile: pa,
+                channels: ca,
+                alpha: sa,
+                intent: ia,
+            },
+            ColorSpace::Icc {
+                profile: pb,
+                channels: cb,
+                alpha: da,
+                intent: ib,
+            },
+        ) => {
+            ca == cb
+                && ia == ib
+                && zenpixels::icc::normalized_eq(pa, pb)
+                && alpha_compatible_for_byte_fast_path(*sa, *da, src_proven_opaque)
+        }
+        (
+            ColorSpace::Cmyk {
+                icc: ia,
+                inverted: inva,
+                alpha: sa,
+            },
+            ColorSpace::Cmyk {
+                icc: ib,
+                inverted: invb,
+                alpha: da,
+            },
+        ) => {
+            inva == invb
+                && match (ia, ib) {
+                    (Some(x), Some(y)) => zenpixels::icc::normalized_eq(x, y),
+                    (None, None) => true,
+                    _ => false,
+                }
+                && alpha_compatible_for_byte_fast_path(*sa, *da, src_proven_opaque)
+        }
         _ => false,
     };
+
+    // Determine whether an existing 4-channel/2-channel alpha or padding slot must be forced to
+    // opaque (canonicalizing AlphaMode::Opaque on either source or destination so unverified alpha
+    // bytes never leak). Does NOT apply to 3ch->4ch or 1ch->4ch insertion, which already fill
+    // opaque alpha in the layout match block below.
+    let needs_opaque_fill = (src.color.alpha() == AlphaMode::Opaque
+        || dst.color.alpha() == AlphaMode::Opaque)
+        && (src.layout.order.has_alpha_slot() || src.layout.order.has_padding_slot())
+        && dst.layout.order.has_alpha_slot()
+        && !src_proven_opaque
+        && !(src.color.alpha() == AlphaMode::Opaque
+            && dst.color.alpha() == AlphaMode::Opaque
+            && src.layout.sample == dst.layout.sample
+            && src.layout.order == dst.layout.order
+            && src.layout.packing == dst.layout.packing);
+
+    let src_is_narrow = src.color.range() == Some(SignalRange::Narrow);
+
+    // Non-full-packing integer exact paths (before the `is_full()` bailout):
+    // 1. Same effective bit-depth integer repacking (B02: e.g. 25-bit U32 Bitfields shift 0 -> 1,
+    //    or 10/12-bit LSB <-> MSB without touching f32).
+    // 2. Narrow-range integer bit-shift preserving ITU-R BT.2100-3 Table 9 footroom & headroom (B33).
+    if colors_agree
+        && src.layout.order == dst.layout.order
+        && matches!(
+            src.layout.sample,
+            SampleType::U8 | SampleType::U16 | SampleType::U32
+        )
+        && matches!(
+            dst.layout.sample,
+            SampleType::U8 | SampleType::U16 | SampleType::U32
+        )
+    {
+        let ch_count = src.layout.channels();
+        let all_ch_same_max = (0..ch_count).all(|c| {
+            src.layout.packing.max_code(src.layout.sample, c)
+                == dst.layout.packing.max_code(dst.layout.sample, c)
+        });
+        if all_ch_same_max {
+            if src.layout.sample == dst.layout.sample
+                && src.layout.packing == dst.layout.packing
+                && !needs_opaque_fill
+            {
+                return Some(ByteFastPath::Memcpy);
+            }
+            if !src.layout.packing.is_full() || !dst.layout.packing.is_full() {
+                return Some(ByteFastPath::RepackIntSameDepth {
+                    src_sample: src.layout.sample,
+                    dst_sample: dst.layout.sample,
+                    src_packing: src.layout.packing,
+                    dst_packing: dst.layout.packing,
+                    channels: ch_count,
+                    fill_opaque_alpha: needs_opaque_fill,
+                });
+            }
+        } else if src_is_narrow
+            && !src.layout.packing.is_packed_word()
+            && !dst.layout.packing.is_packed_word()
+            && policy_depth != DepthPolicy::OrderedDither
+        {
+            let src_max = src.layout.packing.max_code(src.layout.sample, 0);
+            let dst_max = dst.layout.packing.max_code(dst.layout.sample, 0);
+            let src_bits = (32 - src_max.leading_zeros()) as u8;
+            let dst_bits = (32 - dst_max.leading_zeros()) as u8;
+            if (8..=16).contains(&src_bits) && (8..=16).contains(&dst_bits) {
+                let round = !matches!(policy_depth, DepthPolicy::Truncate);
+                return Some(ByteFastPath::NarrowBitShift {
+                    src_sample: src.layout.sample,
+                    dst_sample: dst.layout.sample,
+                    src_packing: src.layout.packing,
+                    dst_packing: dst.layout.packing,
+                    channels: ch_count,
+                    has_alpha: src.layout.order.has_alpha_slot(),
+                    has_padding: src.layout.order.has_padding_slot(),
+                    fill_opaque_alpha: needs_opaque_fill,
+                    src_bits,
+                    dst_bits,
+                    round,
+                });
+            }
+        }
+    }
+
+    if !src.layout.packing.is_full() || !dst.layout.packing.is_full() {
+        return None;
+    }
+
+    // Check direct RGBA8 / BGRA8 straight <-> premultiplied (same transfer/primaries/range/order).
+    // If `src_proven_opaque` is true, `colors_agree` above already handles it as `Memcpy`!
+    if !src_proven_opaque
+        && src.layout.sample == SampleType::U8
+        && dst.layout.sample == SampleType::U8
+        && src.layout.order == dst.layout.order
+        && matches!(src.layout.order, ChannelOrder::Rgba | ChannelOrder::Bgra)
+        && let (
+            ColorSpace::Rgb {
+                primaries: sp,
+                transfer: st,
+                range: sr,
+                alpha: sa,
+                white: sw,
+            },
+            ColorSpace::Rgb {
+                primaries: dp,
+                transfer: dt,
+                range: dr,
+                alpha: da,
+                white: dw,
+            },
+        ) = (&src.color, &dst.color)
+        && sp == dp
+        && st == dt
+        && sr == dr
+        && *sr == SignalRange::Full
+        && sw == dw
+    {
+        if *sa == AlphaMode::Straight && *da == AlphaMode::Premultiplied {
+            return match policy_depth {
+                DepthPolicy::Round => Some(ByteFastPath::Rgba8StraightToPremul { round: true }),
+                DepthPolicy::Truncate => Some(ByteFastPath::Rgba8StraightToPremul { round: false }),
+                DepthPolicy::Forbid | DepthPolicy::OrderedDither => None,
+            };
+        }
+        if *sa == AlphaMode::Premultiplied && *da == AlphaMode::Straight {
+            return match policy_depth {
+                DepthPolicy::Round => Some(ByteFastPath::Rgba8PremulToStraight),
+                DepthPolicy::Forbid | DepthPolicy::Truncate | DepthPolicy::OrderedDither => None,
+            };
+        }
+    }
+
     if !colors_agree {
         return None;
+    }
+
+    // Same layout (e.g. proven-opaque Straight <-> Premul on any sample type, or Straight -> Opaque when proven opaque)
+    if src.layout == dst.layout && !needs_opaque_fill {
+        return Some(ByteFastPath::Memcpy);
     }
 
     use ChannelOrder as O;
@@ -2781,6 +3212,30 @@ pub(crate) fn detect_byte_fast_path(
             | (S::U8, O::Bgra, S::U8, O::Rgba)
             | (S::U8, O::Rgbx, S::U8, O::Bgra)
             | (S::U8, O::Bgrx, S::U8, O::Rgba) => Some(ByteFastPath::SwapRbFillAlpha4U8),
+            (S::U16, O::Rgba, S::U16, O::Rgba)
+            | (S::U16, O::Bgra, S::U16, O::Bgra)
+            | (S::U16, O::Rgbx, S::U16, O::Rgba)
+            | (S::U16, O::Bgrx, S::U16, O::Bgra) => Some(ByteFastPath::FillAlpha4B2(0xFFFF)),
+            (S::F16, O::Rgba, S::F16, O::Rgba)
+            | (S::F16, O::Bgra, S::F16, O::Bgra)
+            | (S::F16, O::Rgbx, S::F16, O::Rgba)
+            | (S::F16, O::Bgrx, S::F16, O::Bgra) => Some(ByteFastPath::FillAlpha4B2(0x3C00)),
+            (S::U16, O::Rgba, S::U16, O::Bgra)
+            | (S::U16, O::Bgra, S::U16, O::Rgba)
+            | (S::U16, O::Rgbx, S::U16, O::Bgra)
+            | (S::U16, O::Bgrx, S::U16, O::Rgba) => Some(ByteFastPath::SwapRbFillAlpha4B2(0xFFFF)),
+            (S::F16, O::Rgba, S::F16, O::Bgra)
+            | (S::F16, O::Bgra, S::F16, O::Rgba)
+            | (S::F16, O::Rgbx, S::F16, O::Bgra)
+            | (S::F16, O::Bgrx, S::F16, O::Rgba) => Some(ByteFastPath::SwapRbFillAlpha4B2(0x3C00)),
+            (S::F32, O::Rgba, S::F32, O::Rgba)
+            | (S::F32, O::Bgra, S::F32, O::Bgra)
+            | (S::F32, O::Rgbx, S::F32, O::Rgba)
+            | (S::F32, O::Bgrx, S::F32, O::Bgra) => Some(ByteFastPath::FillAlpha4B4),
+            (S::F32, O::Rgba, S::F32, O::Bgra)
+            | (S::F32, O::Bgra, S::F32, O::Rgba)
+            | (S::F32, O::Rgbx, S::F32, O::Bgra)
+            | (S::F32, O::Bgrx, S::F32, O::Rgba) => Some(ByteFastPath::SwapRbFillAlpha4B4),
             _ => None,
         };
     }
@@ -2816,7 +3271,7 @@ pub(crate) fn detect_byte_fast_path(
         (S::U8, O::Gray, S::U8, O::Rgb) => Some(ByteFastPath::Gray8ToRgb8),
         (S::U8, O::Gray, S::U8, O::Rgba) => Some(ByteFastPath::Gray8ToRgba8),
 
-        // Pure integer full-range U8 <-> U16 depth changes (narrow range uses BT.2100-3 shift in strip!)
+        // Pure integer full-range U8 <-> U16 depth changes (narrow range uses NarrowBitShift above!)
         (S::U8, so, S::U16, do_) if so == do_ && !src_is_narrow => Some(ByteFastPath::U8ToU16Exact),
         (S::U16, so, S::U8, do_) if so == do_ && !src_is_narrow => match policy_depth {
             DepthPolicy::Round | DepthPolicy::Forbid => Some(ByteFastPath::U16ToU8Round),

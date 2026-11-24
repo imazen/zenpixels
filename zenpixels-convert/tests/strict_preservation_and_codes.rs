@@ -1,0 +1,804 @@
+//! Strict preservation, exact code-grid, load-bearing scan/reduction, signaling authority,
+//! unknown-primaries luma, narrow-range bit-shift, float-facts, and CodeMap regression suite.
+//!
+//! Directly gates audit findings:
+//! - B01 (lossless transfer conversion refusal)
+//! - B02 (non-nesting LSB3->U8 refusal, 2/4->8 acceptance, U32 25-bit shift 0->1 exactness)
+//! - B03 (non-opaque Straight<->Premul lossless refusal + opaque positive)
+//! - B04 (cross-profile ICC lossless refusal + D01 same-profile opaque ICC without CMS)
+//! - B05 (Negotiate feasibility parity)
+//! - B06 / B07 / B08 (scan_facts + ImagePlan swizzle opaque reuse + LoadBearingReport in-place)
+//! - B09 (Unknown primaries luma refusal vs explicit BT.709 / P3 red)
+//! - B10 / B11 / B12 / B13 (OutputProfile strict ICC validation, Gray Auto ICC, SameAsOrigin dual P3 & untagged, Gray CP=2/TC=8)
+//! - B33 (narrow 12b->10b & U8->U16 BT.2100 Table 9)
+//! - B34 (PQ->Linear Clip RGB vs BGR parity + no false AT_MOST_ONE / NO_SUBNORMALS)
+//! - B42 (borrowed vs owned OutputPlan actual transformed pixel values + execute_view rejection)
+//! - A02 (Adobe 563/256 vs Gamma22 2.2 at 0.5 + DCI Cinema TC17 at 0.5 & 1.0)
+//! - D02 / D03 (SIMD scan predicates, LoadBearingReport, CodeMap & to_canonical)
+
+extern crate alloc;
+use alloc::sync::Arc;
+
+use zenpixels_convert::{
+    AlphaMode, AlphaPolicy, BitPacking, ChannelOrder, Cicp, CodeMap, CodePlane, CodeRole,
+    ColorOrigin, ColorSpace, ConvertError, ConvertPolicy, DepthPolicy, DiffuseWhite, FloatFacts,
+    Gamma, ImagePlan, ImageSpec, LoadBearingReport, LossKind, Negotiate, Nits, OutputPlan,
+    OutputProfile, PeakSource, PixelBuf, PixelBufLoadBearingExt, PixelViewLoadBearingExt,
+    Primaries, RangePolicy, RenderingIntent, RowPlan, SampleEncoding, SampleFacts, SampleLayout,
+    SampleType, SignalRange, Transfer, convert_buf, scan_facts, to_canonical,
+};
+
+#[test]
+fn b01_b02_b03_strict_lossless_refuses_non_injective_transfers_grids_and_reassociation() {
+    // B01: sRGB8 [1,2,3] -> Linear8 [0,0,0] and Adobe-gamma -> sRGB8 MUST be refused under lossless()!
+    let srgb8 = ImageSpec::rgb8_srgb();
+    let lin8 = ImageSpec::rgb8_srgb().with_transfer(Transfer::Linear);
+    let adobe_bt709 = ImageSpec::rgb8_srgb().with_transfer(Transfer::AdobeRgb);
+    let err_lin = RowPlan::build(
+        srgb8.clone(),
+        lin8.clone(),
+        &ConvertPolicy::lossless(),
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(*err_lin.error(), ConvertError::DepthReductionForbidden);
+    let err_adobe = RowPlan::build(
+        adobe_bt709.clone(),
+        srgb8.clone(),
+        &ConvertPolicy::lossless(),
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(*err_adobe.error(), ConvertError::DepthReductionForbidden);
+
+    // Negotiation MUST NOT report LossKind::None for sRGB8 -> Linear8!
+    assert!(
+        Negotiate::select(
+            &srgb8,
+            core::slice::from_ref(&lin8),
+            &ConvertPolicy::lossless()
+        )
+        .is_none(),
+        "Negotiate::select under lossless() must reject sRGB8 -> Linear8"
+    );
+    let perm_neg = Negotiate::select(
+        &srgb8,
+        core::slice::from_ref(&lin8),
+        &ConvertPolicy::permissive(),
+    )
+    .unwrap();
+    assert_ne!(perm_neg.cost.loss_rank, 0);
+    let _ = LossKind::None;
+
+    // Permissive witness actually transforms sRGB8 [1,2,3] -> Linear8 [0,0,0] (proving collision!).
+    let perm_plan =
+        RowPlan::build(srgb8.clone(), lin8, &ConvertPolicy::permissive(), None).unwrap();
+    let mut out = [99u8; 3];
+    perm_plan.convert_row(&[1, 2, 3], &mut out, 1, 0).unwrap();
+    assert_eq!(out, [0, 0, 0]);
+
+    // Same-transfer swizzle RGB8 -> BGR8 IS lossless!
+    let bgr8 = ImageSpec::new(SampleLayout::BGR8, ColorSpace::SRGB);
+    let swiz = RowPlan::build(srgb8.clone(), bgr8, &ConvertPolicy::lossless(), None).unwrap();
+    let mut swiz_out = [0u8; 3];
+    swiz.convert_row(&[1, 2, 3], &mut swiz_out, 1, 0).unwrap();
+    assert_eq!(swiz_out, [3, 2, 1]);
+
+    // B02: Full-range LSB3 -> U8 MUST be refused under lossless() (255 % 7 != 0),
+    // while LSB4 -> U8 (255 % 15 == 0) succeeds exact!
+    let lsb3 = ImageSpec::new(
+        SampleLayout::new(SampleType::U8, ChannelOrder::Rgb)
+            .with_packing(BitPacking::Lsb { bits: 3 }),
+        ColorSpace::SRGB,
+    );
+    let lsb4 = ImageSpec::new(
+        SampleLayout::new(SampleType::U8, ChannelOrder::Rgb)
+            .with_packing(BitPacking::Lsb { bits: 4 }),
+        ColorSpace::SRGB,
+    );
+    assert_eq!(
+        *RowPlan::build(lsb3, srgb8.clone(), &ConvertPolicy::lossless(), None)
+            .unwrap_err()
+            .error(),
+        ConvertError::DepthReductionForbidden
+    );
+    let p_lsb4 = RowPlan::build(lsb4, srgb8.clone(), &ConvertPolicy::lossless(), None).unwrap();
+    let mut o4 = [0u8; 3];
+    p_lsb4.convert_row(&[0, 1, 15], &mut o4, 1, 0).unwrap();
+    assert_eq!(o4, [0, 17, 255]); // 1 * (255 / 15) = 17 exact!
+
+    // B02: Gray U32 25-bit field shift 0 -> shift 1 preserves code 16_777_217 bit-exact!
+    let g25_s0 = ImageSpec::new(
+        SampleLayout::new(SampleType::U32, ChannelOrder::Gray).with_packing(
+            BitPacking::Bitfields {
+                bits: [25, 0, 0, 0],
+                shifts: [0, 0, 0, 0],
+            },
+        ),
+        ColorSpace::GRAY_SRGB,
+    );
+    let g25_s1 = ImageSpec::new(
+        SampleLayout::new(SampleType::U32, ChannelOrder::Gray).with_packing(
+            BitPacking::Bitfields {
+                bits: [25, 0, 0, 0],
+                shifts: [1, 0, 0, 0],
+            },
+        ),
+        ColorSpace::GRAY_SRGB,
+    );
+    let p25 = RowPlan::build(g25_s0, g25_s1, &ConvertPolicy::lossless(), None).unwrap();
+    let src_word: u32 = 16_777_217; // > 2^24 (would lose LSB if rounded through f32!)
+    let mut dst_word: u32 = 0;
+    p25.convert_row(
+        &src_word.to_ne_bytes(),
+        bytemuck::bytes_of_mut(&mut dst_word),
+        1,
+        0,
+    )
+    .unwrap();
+    assert_eq!(dst_word >> 1, 16_777_217);
+
+    // B03: Straight <-> Premultiplied on non-opaque RGBA8 MUST be refused under lossless(),
+    // while proven-opaque RGBA8 Straight -> Premul succeeds losslessly!
+    let straight = ImageSpec::rgba8_srgb();
+    let premul = ImageSpec::rgba8_srgb().with_alpha(AlphaMode::Premultiplied);
+    assert_eq!(
+        *RowPlan::build(
+            straight.clone(),
+            premul.clone(),
+            &ConvertPolicy::lossless(),
+            None
+        )
+        .unwrap_err()
+        .error(),
+        ConvertError::DepthReductionForbidden
+    );
+    assert_eq!(
+        *RowPlan::build(
+            premul.clone(),
+            straight.clone(),
+            &ConvertPolicy::lossless(),
+            None
+        )
+        .unwrap_err()
+        .error(),
+        ConvertError::DepthReductionForbidden
+    );
+    assert!(
+        Negotiate::select(
+            &straight,
+            core::slice::from_ref(&premul),
+            &ConvertPolicy::lossless()
+        )
+        .is_none()
+    );
+    let opaque_pol = ConvertPolicy::lossless().with_facts(SampleFacts::NONE.with_all_opaque(true));
+    let op_plan = RowPlan::build(straight, premul, &opaque_pol, None).unwrap();
+    let mut op_out = [0u8; 4];
+    op_plan
+        .convert_row(&[10, 20, 30, 255], &mut op_out, 1, 0)
+        .unwrap();
+    assert_eq!(op_out, [10, 20, 30, 255]);
+}
+
+#[test]
+fn b04_d01_opaque_same_profile_icc_without_cms_and_cross_profile_lossless_refusal() {
+    // D01: Same-profile opaque ICC (unrecognized bytes!) allows exact layout swizzle,
+    // alpha insertion, and U8 -> U16 widening WITHOUT needing a CMS!
+    let mut opaque_icc = vec![0u8; 256];
+    opaque_icc[0..4].copy_from_slice(&256u32.to_be_bytes());
+    opaque_icc[12..16].copy_from_slice(b"mntr");
+    opaque_icc[16..20].copy_from_slice(b"RGB ");
+    opaque_icc[20..24].copy_from_slice(b"XYZ ");
+    opaque_icc[36..40].copy_from_slice(b"acsp");
+    let icc_arc: Arc<[u8]> = Arc::from(opaque_icc.as_slice());
+
+    let src_rgb8 = ImageSpec::new(
+        SampleLayout::RGB8,
+        ColorSpace::Icc {
+            profile: icc_arc.clone(),
+            channels: 3,
+            alpha: AlphaMode::None,
+            intent: RenderingIntent::Perceptual,
+        },
+    );
+    let dst_rgba8 = ImageSpec::new(
+        SampleLayout::RGBA8,
+        ColorSpace::Icc {
+            profile: icc_arc.clone(),
+            channels: 3,
+            alpha: AlphaMode::Opaque,
+            intent: RenderingIntent::Perceptual,
+        },
+    );
+    let dst_rgb16 = ImageSpec::new(
+        SampleLayout::RGB16,
+        ColorSpace::Icc {
+            profile: icc_arc,
+            channels: 3,
+            alpha: AlphaMode::None,
+            intent: RenderingIntent::Perceptual,
+        },
+    );
+    let p_add_a = RowPlan::build(
+        src_rgb8.clone(),
+        dst_rgba8,
+        &ConvertPolicy::lossless(),
+        None,
+    )
+    .unwrap();
+    let mut o_rgba = [0u8; 4];
+    p_add_a
+        .convert_row(&[11, 22, 33], &mut o_rgba, 1, 0)
+        .unwrap();
+    assert_eq!(o_rgba, [11, 22, 33, 255]);
+
+    let p_widen = RowPlan::build(src_rgb8, dst_rgb16, &ConvertPolicy::lossless(), None).unwrap();
+    let mut o_u16 = [0u16; 3];
+    p_widen
+        .convert_row(&[11, 22, 255], bytemuck::cast_slice_mut(&mut o_u16), 1, 0)
+        .unwrap();
+    assert_eq!(o_u16, [0x0B0B, 0x1616, 0xFFFF]);
+
+    // B04: Cross-profile Display P3 ICC -> sRGB8 MUST be refused under lossless() with CMS!
+    #[cfg(feature = "cms-moxcms")]
+    {
+        let p3_spec = ImageSpec::new(
+            SampleLayout::RGB8,
+            ColorSpace::Icc {
+                profile: Arc::from(zenpixels_convert::icc_profiles::DISPLAY_P3_V4),
+                channels: 3,
+                alpha: AlphaMode::None,
+                intent: RenderingIntent::RelativeColorimetric,
+            },
+        );
+        let pol = ConvertPolicy::lossless()
+            .with_icc_substitution(false)
+            .with_cms(Arc::new(zenpixels_convert::MoxCms));
+        assert_eq!(
+            *RowPlan::build(p3_spec, ImageSpec::rgb8_srgb(), &pol, None)
+                .unwrap_err()
+                .error(),
+            ConvertError::DepthReductionForbidden
+        );
+    }
+}
+
+#[test]
+fn b06_b07_b08_d02_scan_facts_image_plan_reuse_and_load_bearing_reduction() {
+    // B08: Cached ImagePlan RGBA8 -> BGRA8 swizzle preserves proven-opaque facts on image #1,
+    // and MUST NOT lie `all_opaque=true` when reused on image #2 containing alpha=254!
+    let plan = ImagePlan::build(
+        ImageSpec::rgba8_srgb(),
+        ImageSpec::bgra8_srgb(),
+        ConvertPolicy::lossless(),
+        PeakSource::Measured,
+    )
+    .unwrap();
+
+    let mut img1 = PixelBuf::from_vec(
+        vec![1u8, 2, 3, 255, 4, 5, 6, 255],
+        2,
+        1,
+        ImageSpec::rgba8_srgb(),
+    )
+    .unwrap();
+    let f1 = scan_facts(&img1.as_view());
+    assert!(f1.all_opaque && f1.binary_alpha && !f1.all_grayscale);
+    img1.set_facts(f1);
+
+    let out1 = plan.execute(&img1).unwrap();
+    assert_eq!(out1.as_view().row(0), &[3, 2, 1, 255, 6, 5, 4, 255]);
+    assert!(
+        out1.facts().all_opaque,
+        "ImagePlan swizzle must propagate proven all_opaque!"
+    );
+
+    let img2 = PixelBuf::from_vec(
+        vec![1u8, 2, 3, 254, 4, 5, 6, 255],
+        2,
+        1,
+        ImageSpec::rgba8_srgb(),
+    )
+    .unwrap();
+    let out2 = plan.execute(&img2).unwrap();
+    assert_eq!(out2.as_view().row(0), &[3, 2, 1, 254, 6, 5, 4, 255]);
+    assert!(
+        !out2.facts().all_opaque,
+        "reused ImagePlan must NOT falsely assert all_opaque on alpha=254!"
+    );
+
+    // B07: Poisoned `AlphaMode::Opaque` buffer with stored alpha=0 MUST scan as `all_opaque=false`!
+    let poisoned = PixelBuf::from_vec(
+        vec![10u8, 20, 30, 0],
+        1,
+        1,
+        ImageSpec::rgba8_srgb().with_alpha(AlphaMode::Opaque),
+    )
+    .unwrap();
+    let pf = scan_facts(&poisoned.as_view());
+    assert!(
+        !pf.all_opaque,
+        "scan_facts must inspect stored alpha even on AlphaMode::Opaque"
+    );
+
+    // D02: LoadBearingReport + zero-alloc in-place compaction on RGBA16 -> Gray8!
+    let mut buf16 = PixelBuf::from_vec(
+        vec![
+            0x4040u16, 0x4040, 0x4040, 0xFFFF, 0x8080, 0x8080, 0x8080, 0xFFFF, 0xC0C0, 0xC0C0,
+            0xC0C0, 0xFFFF,
+        ],
+        3,
+        1,
+        ImageSpec::rgba16_srgb(),
+    )
+    .unwrap();
+    let report: LoadBearingReport = buf16.as_view().determine_load_bearing();
+    assert_eq!(report.uses_alpha, Some(false));
+    assert_eq!(report.uses_chroma, Some(false));
+    assert_eq!(report.uses_low_bits, Some(false));
+    assert_eq!(report.apply_to(buf16.spec()), ImageSpec::gray8_srgb());
+
+    let ptr_before = buf16.as_view().row(0).as_ptr() as usize;
+    buf16.reduce_to_load_bearing_format_in_place(true);
+    assert_eq!(buf16.spec(), &ImageSpec::gray8_srgb());
+    assert_eq!(buf16.as_view().row(0), &[0x40, 0x80, 0xC0]);
+    assert_eq!(
+        buf16.as_view().row(0).as_ptr() as usize,
+        ptr_before,
+        "in-place load-bearing reduction must reuse allocation without reallocating!"
+    );
+
+    // Narrow-range U16 MUST NOT be reduced to U8 via byte-replication!
+    let narrow16 = PixelBuf::from_vec(
+        vec![0x1010u16, 0x8080, 0xEBEB],
+        1,
+        1,
+        ImageSpec::rgb16_srgb().with_range(SignalRange::Narrow),
+    )
+    .unwrap();
+    let nr = narrow16.as_view().determine_load_bearing();
+    assert_eq!(nr.uses_low_bits, None);
+    assert_eq!(nr.apply_to(narrow16.spec()), *narrow16.spec());
+}
+
+#[test]
+fn b09_unknown_primaries_luma_refusal_and_explicit_primaries() {
+    // B09: Unknown primaries RGB -> Gray MUST refuse instead of silently assuming BT.709!
+    let unknown_rgb = ImageSpec::new(
+        SampleLayout::RGBF32,
+        ColorSpace::Rgb {
+            primaries: Primaries::Unknown,
+            transfer: Transfer::Linear,
+            range: SignalRange::Full,
+            alpha: AlphaMode::None,
+            white: None,
+        },
+    );
+    let gray_lin = ImageSpec::grayf32_linear();
+    assert_eq!(
+        *RowPlan::build(
+            unknown_rgb.clone(),
+            gray_lin.clone(),
+            &ConvertPolicy::permissive(),
+            None,
+        )
+        .unwrap_err()
+        .error(),
+        ConvertError::UnsupportedRoute
+    );
+    assert!(
+        Negotiate::select(
+            &unknown_rgb,
+            core::slice::from_ref(&gray_lin),
+            &ConvertPolicy::permissive()
+        )
+        .is_none()
+    );
+
+    // Explicit BT.709 red [1,0,0] -> 0.2126; Display P3 red [1,0,0] -> 0.22897456!
+    let p_709 = RowPlan::build(
+        ImageSpec::rgbf32_linear(),
+        gray_lin.clone(),
+        &ConvertPolicy::permissive(),
+        None,
+    )
+    .unwrap();
+    let p_p3 = RowPlan::build(
+        ImageSpec::rgbf32_linear().with_primaries(Primaries::DisplayP3),
+        gray_lin,
+        &ConvertPolicy::permissive(),
+        None,
+    )
+    .unwrap();
+    let red = [1.0f32, 0.0, 0.0];
+    let mut g709 = [0.0f32; 1];
+    let mut gp3 = [0.0f32; 1];
+    p_709
+        .convert_row(
+            bytemuck::cast_slice(&red),
+            bytemuck::cast_slice_mut(&mut g709),
+            1,
+            0,
+        )
+        .unwrap();
+    p_p3.convert_row(
+        bytemuck::cast_slice(&red),
+        bytemuck::cast_slice_mut(&mut gp3),
+        1,
+        0,
+    )
+    .unwrap();
+    assert!(
+        (g709[0] - 0.2126).abs() < 1e-4,
+        "BT.709 red luma={}",
+        g709[0]
+    );
+    assert!((gp3[0] - 0.22897456).abs() < 1e-4, "P3 red luma={}", gp3[0]);
+}
+
+#[test]
+fn b10_b11_b12_b13_b42_signaling_authority_strict_icc_and_owned_borrowed_pixels() {
+    // B10: Empty, truncated, bad-size, DeviceLink, and wrong-data-space ICC MUST fail OutputPlan!
+    let mut devicelink = vec![0u8; 132];
+    devicelink[0..4].copy_from_slice(&132u32.to_be_bytes());
+    devicelink[12..16].copy_from_slice(b"link");
+    devicelink[16..20].copy_from_slice(b"RGB ");
+    devicelink[36..40].copy_from_slice(b"acsp");
+    for bad_icc in [vec![], vec![0u8; 64], devicelink] {
+        let spec = ImageSpec::new(
+            SampleLayout::RGB8,
+            ColorSpace::Icc {
+                profile: Arc::from(bad_icc.as_slice()),
+                channels: 3,
+                alpha: AlphaMode::None,
+                intent: RenderingIntent::Perceptual,
+            },
+        );
+        let plan = OutputPlan::build(
+            spec.clone(),
+            spec,
+            ConvertPolicy::permissive(),
+            PeakSource::Measured,
+            OutputProfile::Auto,
+        );
+        assert!(
+            plan.is_err(),
+            "OutputPlan::Auto must reject structurally invalid/DeviceLink ICC"
+        );
+    }
+
+    // B11: Known non-sRGB Gray (Linear Gray8 & Gamma 2.2 Gray8) under Auto MUST emit Gray ICC
+    // (with `icc-db`) or fail with OutputSignalingUnavailable (never silently emit `(None, None)`)!
+    for tf in [
+        Transfer::Linear,
+        Transfer::Gamma22,
+        Transfer::Gamma(Gamma::try_new(2.4).unwrap()),
+    ] {
+        let gray_spec = ImageSpec::gray8_srgb().with_transfer(tf);
+        let res = OutputPlan::build(
+            gray_spec.clone(),
+            gray_spec,
+            ConvertPolicy::permissive(),
+            PeakSource::Measured,
+            OutputProfile::Auto,
+        );
+        match res {
+            Ok(plan) => {
+                let (cicp, icc) = plan.resolve_signaling(&ColorOrigin::assumed()).unwrap();
+                assert!(
+                    cicp.is_some() || icc.is_some(),
+                    "Auto must never silently return (None, None) for known Gray {tf:?}"
+                );
+                if let Some(bytes) = icc {
+                    assert_eq!(&bytes[16..20], b"GRAY");
+                }
+            }
+            Err(e) => {
+                assert_eq!(*e.error(), ConvertError::OutputSignalingUnavailable);
+            }
+        }
+    }
+
+    // B12: SameAsOrigin on untagged assumed sRGB returns `(None, None)` (doesn't invent CICP!),
+    // AND agreeing dual P3 ICC + P3 CICP on `ColorSpace::Icc` succeeds preserving both!
+    let srgb_same = OutputPlan::build(
+        ImageSpec::rgb8_srgb(),
+        ImageSpec::rgb8_srgb(),
+        ConvertPolicy::permissive(),
+        PeakSource::Measured,
+        OutputProfile::SameAsOrigin,
+    )
+    .unwrap();
+    let (c_untagged, i_untagged) = srgb_same
+        .resolve_signaling(&ColorOrigin::assumed())
+        .unwrap();
+    assert_eq!((c_untagged, i_untagged), (None, None));
+
+    let p3_icc: Arc<[u8]> = Arc::from(zenpixels_convert::icc_profiles::DISPLAY_P3_V4);
+    let p3_icc_spec = ImageSpec::new(
+        SampleLayout::RGB8,
+        ColorSpace::Icc {
+            profile: p3_icc.clone(),
+            channels: 3,
+            alpha: AlphaMode::None,
+            intent: RenderingIntent::RelativeColorimetric,
+        },
+    );
+    let p3_same = OutputPlan::build(
+        p3_icc_spec.clone(),
+        p3_icc_spec,
+        ConvertPolicy::permissive(),
+        PeakSource::Measured,
+        OutputProfile::SameAsOrigin,
+    )
+    .unwrap();
+    let dual_origin = ColorOrigin::from_icc_and_cicp(p3_icc.clone(), Cicp::DISPLAY_P3);
+    let (dc, di) = p3_same.resolve_signaling(&dual_origin).unwrap();
+    assert_eq!(dc, Some(Cicp::DISPLAY_P3));
+    assert_eq!(di.as_deref(), Some(p3_icc.as_ref()));
+    let conflict_origin = ColorOrigin::from_icc_and_cicp(p3_icc, Cicp::BT2100_PQ);
+    assert!(p3_same.resolve_signaling(&conflict_origin).is_err());
+
+    // B13: Gray CP=2 (unspecified primaries) with assigned TC=8 (Linear) synthesizes D65 Gray ICC!
+    #[cfg(feature = "icc-db")]
+    {
+        use zenpixels_convert::icc_profiles::SynthesizedIcc;
+        let gray_cp2 = SynthesizedIcc::for_gray_cicp(Cicp::new(2, 8, 0, true));
+        let gray_cp1 = SynthesizedIcc::for_gray_cicp(Cicp::new(1, 8, 0, true));
+        assert!(matches!(gray_cp2, SynthesizedIcc::Profile(_)));
+        assert_eq!(gray_cp2, gray_cp1);
+    }
+
+    // B42: Borrowed vs owned OutputPlan checks ACTUAL transformed P3 -> sRGB pixels (not just tag!),
+    // and execute_view rejects mismatched spec!
+    let p3_spec = ImageSpec::new(SampleLayout::RGB8, ColorSpace::DISPLAY_P3);
+    let out_plan = OutputPlan::build(
+        p3_spec.clone(),
+        ImageSpec::rgb8_srgb(),
+        ConvertPolicy::permissive(),
+        PeakSource::Measured,
+        OutputProfile::Auto,
+    )
+    .unwrap();
+    let src_buf = PixelBuf::from_vec(vec![200u8, 60, 40, 12, 124, 200], 2, 1, p3_spec).unwrap();
+    let r_view = out_plan
+        .execute_view(src_buf.as_view(), &ColorOrigin::assumed())
+        .unwrap();
+    let r_owned = out_plan.execute_buf(src_buf.clone()).unwrap();
+    assert_eq!(
+        r_view.pixels.as_view().row(0),
+        r_owned.pixels.as_view().row(0)
+    );
+    assert_ne!(
+        r_view.pixels.as_view().row(0),
+        src_buf.as_view().row(0),
+        "P3 -> sRGB OutputPlan must actually transform pixels, not pass through!"
+    );
+    let got = r_view.pixels.as_view().row(0);
+    assert!(got[0] > 215 && got[1] < 55, "P3->sRGB pixel={got:?}");
+
+    let wrong = PixelBuf::new(2, 1, ImageSpec::rgb8_srgb()).unwrap();
+    assert!(
+        out_plan
+            .execute_view(wrong.as_view(), &ColorOrigin::assumed())
+            .is_err()
+    );
+}
+
+#[test]
+fn a02_a01_b33_b34_transfers_narrow_bitshift_and_fast_row_float_facts() {
+    // A02: Gamma22 (2.2) vs AdobeRgb (563/256) at 0.5 produce distinct binary64 reference values!
+    let g22 = ImageSpec::rgbf32_linear().with_transfer(Transfer::Gamma22);
+    let adobe = ImageSpec::rgbf32_linear().with_transfer(Transfer::AdobeRgb);
+    let dci = ImageSpec::rgbf32_linear().with_transfer(Transfer::DciCinema);
+    let lin = ImageSpec::rgbf32_linear();
+    let half = [0.5f32, 0.5, 0.5];
+    let one = [1.0f32, 1.0, 1.0];
+    let mut o_g22 = [0f32; 3];
+    let mut o_adobe = [0f32; 3];
+    let mut o_dci_half = [0f32; 3];
+    let mut o_dci_one = [0f32; 3];
+    RowPlan::build(g22, lin.clone(), &ConvertPolicy::permissive(), None)
+        .unwrap()
+        .convert_row(
+            bytemuck::cast_slice(&half),
+            bytemuck::cast_slice_mut(&mut o_g22),
+            1,
+            0,
+        )
+        .unwrap();
+    RowPlan::build(adobe, lin.clone(), &ConvertPolicy::permissive(), None)
+        .unwrap()
+        .convert_row(
+            bytemuck::cast_slice(&half),
+            bytemuck::cast_slice_mut(&mut o_adobe),
+            1,
+            0,
+        )
+        .unwrap();
+    let dci_plan = RowPlan::build(dci, lin.clone(), &ConvertPolicy::permissive(), None).unwrap();
+    dci_plan
+        .convert_row(
+            bytemuck::cast_slice(&half),
+            bytemuck::cast_slice_mut(&mut o_dci_half),
+            1,
+            0,
+        )
+        .unwrap();
+    dci_plan
+        .convert_row(
+            bytemuck::cast_slice(&one),
+            bytemuck::cast_slice_mut(&mut o_dci_one),
+            1,
+            0,
+        )
+        .unwrap();
+    assert!(
+        (o_g22[0] - 0.5f32.powf(2.2)).abs() < 1e-4,
+        "Gamma22(0.5)={}",
+        o_g22[0]
+    );
+    assert!(
+        (o_adobe[0] - 0.5f32.powf(563.0 / 256.0)).abs() < 1e-4,
+        "Adobe(0.5)={}",
+        o_adobe[0]
+    );
+    assert!(
+        (o_adobe[0] - o_g22[0]).abs() > 1e-4,
+        "Adobe and Gamma22 must differ at 0.5!"
+    );
+    assert!(
+        (o_dci_one[0] - (52.37 / 48.0)).abs() < 1e-4,
+        "DCI TC17(1.0)={}, expected ~1.091042",
+        o_dci_one[0]
+    );
+    assert!(
+        (o_dci_half[0] - (52.37 / 48.0) * 0.5f32.powf(2.6)).abs() < 1e-4,
+        "DCI TC17(0.5)={}",
+        o_dci_half[0]
+    );
+
+    // B33: Narrow-range BT.2100-3 Table 9 bit-shift preserves footroom & headroom!
+    let n12 = ImageSpec::new(
+        SampleLayout::new(SampleType::U16, ChannelOrder::Rgb)
+            .with_packing(BitPacking::Lsb { bits: 12 }),
+        ColorSpace::SRGB.with_range(SignalRange::Narrow),
+    );
+    let n10 = ImageSpec::new(
+        SampleLayout::new(SampleType::U16, ChannelOrder::Rgb)
+            .with_packing(BitPacking::Lsb { bits: 10 }),
+        ColorSpace::SRGB.with_range(SignalRange::Narrow),
+    );
+    let p_12_10 = RowPlan::build(n12, n10, &ConvertPolicy::permissive(), None).unwrap();
+    let mut o10 = [0u16; 3];
+    p_12_10
+        .convert_row(
+            bytemuck::cast_slice(&[16u16, 274, 4000]),
+            bytemuck::cast_slice_mut(&mut o10),
+            1,
+            0,
+        )
+        .unwrap();
+    assert_eq!(o10, [4, 69, 1000]);
+
+    // U8 narrow -> U16 narrow lossless widening: [15, 235, 236] -> [3840, 60160, 60416] (<< 8 exact!).
+    let n8 = ImageSpec::rgb8_srgb().with_range(SignalRange::Narrow);
+    let n16 = ImageSpec::rgb16_srgb().with_range(SignalRange::Narrow);
+    let p_8_16 = RowPlan::build(n8, n16, &ConvertPolicy::lossless(), None).unwrap();
+    let mut o16 = [0u16; 3];
+    p_8_16
+        .convert_row(&[15u8, 235, 236], bytemuck::cast_slice_mut(&mut o16), 1, 0)
+        .unwrap();
+    assert_eq!(o16, [3840, 60160, 60416]);
+
+    // B34: PQ F32 RGB [1,1,1] -> Linear F32 RGB vs BGR under Clip MUST agree AND clip to [1,1,1],
+    // while PreserveExtended MUST NOT claim AT_MOST_ONE!
+    #[cfg(feature = "hdr-transfers")]
+    {
+        use zenpixels_convert::GamutPolicy;
+        let pq_f32 = ImageSpec::new(SampleLayout::RGBF32, ColorSpace::BT2100_PQ);
+        let lin_rgb = ImageSpec::rgbf32_linear()
+            .with_primaries(Primaries::Bt2020)
+            .with_white(DiffuseWhite::new(100.0));
+        let lin_bgr = ImageSpec::new(
+            SampleLayout::new(SampleType::F32, ChannelOrder::Bgr),
+            lin_rgb.color.clone(),
+        );
+        let pol_clip = ConvertPolicy::permissive().with_gamut(GamutPolicy::Clip);
+        let p_rgb = RowPlan::build(pq_f32.clone(), lin_rgb.clone(), &pol_clip, None).unwrap();
+        let p_bgr = RowPlan::build(pq_f32.clone(), lin_bgr, &pol_clip, None).unwrap();
+        let mut out_rgb = [0f32; 3];
+        let mut out_bgr = [0f32; 3];
+        p_rgb
+            .convert_row(
+                bytemuck::cast_slice(&one),
+                bytemuck::cast_slice_mut(&mut out_rgb),
+                1,
+                0,
+            )
+            .unwrap();
+        p_bgr
+            .convert_row(
+                bytemuck::cast_slice(&one),
+                bytemuck::cast_slice_mut(&mut out_bgr),
+                1,
+                0,
+            )
+            .unwrap();
+        assert_eq!(out_rgb, [1.0, 1.0, 1.0]);
+        assert_eq!(out_bgr, [1.0, 1.0, 1.0]);
+
+        let pol_ext = ConvertPolicy::permissive().with_gamut(GamutPolicy::PreserveExtended);
+        let p_ext = RowPlan::build(pq_f32, lin_rgb, &pol_ext, None).unwrap();
+        assert!(!p_ext.output_facts().float.contains(FloatFacts::AT_MOST_ONE));
+        let mut out_ext = [0f32; 3];
+        p_ext
+            .convert_row(
+                bytemuck::cast_slice(&one),
+                bytemuck::cast_slice_mut(&mut out_ext),
+                1,
+                0,
+            )
+            .unwrap();
+        assert!(
+            (out_ext[0] - 100.0).abs() < 1e-2,
+            "PQ(1.0) at 100 nits = 100.0, got {}",
+            out_ext[0]
+        );
+    }
+
+    // B34: Tiny white ratio producing subnormal output MUST NOT claim `FloatFacts::NO_SUBNORMALS`!
+    let src_tiny = ImageSpec::rgb8_srgb()
+        .with_transfer(Transfer::Linear)
+        .with_white(DiffuseWhite::new(1e-35));
+    let dst_huge = ImageSpec::rgbf32_linear().with_white(DiffuseWhite::new(10_000.0));
+    let p_sub = RowPlan::build(src_tiny, dst_huge, &ConvertPolicy::permissive(), None).unwrap();
+    assert!(
+        !p_sub
+            .output_facts()
+            .float
+            .contains(FloatFacts::NO_SUBNORMALS),
+        "extreme white downscale can produce subnormals and must not claim NO_SUBNORMALS"
+    );
+}
+
+#[test]
+fn d03_codemap_and_to_canonical_exhaustive() {
+    let src10 = SampleEncoding::new(SampleType::U16, 10, 0).unwrap();
+    let dst16 = SampleEncoding::new(SampleType::U16, 16, 0).unwrap();
+    let map = CodeMap::new(src10, dst16, CodeRole::Intensity, SignalRange::Full).unwrap();
+    let all10: Vec<u16> = (0..=1023).collect();
+    let mut mapped = vec![0u16; 1024];
+    map.map_words(&all10, &mut mapped).unwrap();
+    for (c, &got) in mapped.iter().enumerate() {
+        let want = ((c as u64 * 65535 + 511) / 1023) as u16;
+        assert_eq!(got, want, "10->16 full mismatch at code {c}");
+    }
+
+    // Narrow 10-bit -> 12-bit intensity shift exact (`c << 2`).
+    let n10 = SampleEncoding::new(SampleType::U16, 10, 0).unwrap();
+    let n12 = SampleEncoding::new(SampleType::U16, 12, 0).unwrap();
+    let nmap = CodeMap::new(n10, n12, CodeRole::Intensity, SignalRange::Narrow).unwrap();
+    let mut nmapped = [0u16; 3];
+    nmap.map_words(&[64, 512, 940], &mut nmapped).unwrap();
+    assert_eq!(nmapped, [256, 2048, 3760]);
+
+    // `to_canonical` promotes 10-bit full-range CodePlane into canonical U16 PixelViewMut!
+    let words = [0u16, 512, 1023];
+    let plane = CodePlane::from_u16(&words, 3, 1, 3, src10).unwrap();
+    let mut dst_buf = PixelBuf::new(3, 1, ImageSpec::gray16_srgb()).unwrap();
+    let (_, exact) =
+        to_canonical(&[plane], SignalRange::Full, 0, 0, dst_buf.as_view_mut()).unwrap();
+    assert_eq!(exact.color_bits(), 10);
+    let dst_u16 = dst_buf.as_view().row_as::<u16>(0).unwrap();
+    assert_eq!(dst_u16, &[0, ((512u64 * 65535 + 511) / 1023) as u16, 65535]);
+
+    let _ = (
+        AlphaPolicy::Forbid,
+        DepthPolicy::Round,
+        RangePolicy::Convert,
+        Nits::new(100.0),
+        convert_buf,
+    );
+}

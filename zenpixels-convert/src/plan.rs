@@ -13,9 +13,10 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use whereat::At;
 use zenpixels::{
-    AlphaMode, ColorSpace, DiffuseWhite, FloatFacts, HdrMetadata, HlgMode, HlgRendering, ImageSpec,
-    Nits, PeakSource, PixelBuf, PixelSink, PixelSource, PixelView, Primaries, SampleFacts,
-    SampleType, SignalRange, Transfer,
+    AlphaMode, ColorSpace, DiffuseWhite, ExactDepth, FloatFacts, HdrMetadata, HlgMode,
+    HlgRendering, ImageSpec, Nits, PeakSource, PixelBuf, PixelSink, PixelSource, PixelView,
+    Primaries, SampleFacts, SampleType, SignalRange, Transfer, full_range_grid_nests,
+    narrow_range_grid_nests,
 };
 
 use crate::accel::{self, Accelerators};
@@ -116,7 +117,33 @@ impl RowPlan {
             });
         }
 
-        // 2. ICC / CMYK routing (policy checks have ALREADY passed in `preflight_and_classify`!).
+        let matte_color = pre.matte_color;
+        let range_change = pre.range_change;
+
+        // 2. Fast byte-only path (also handles same-profile opaque ICC / CMYK layout, widening,
+        //    opaque alpha fill, same-depth integer repacking, and BT.2100 narrow bit shifts
+        //    without requiring a CMS backend!).
+        //    Pass `policy.source_facts.all_opaque` (proven stored max alpha, NOT merely logical
+        //    `AlphaMode::Opaque`) so unverified `Opaque` junk alpha bytes are canonicalized!
+        if let Some(bp) = strip::detect_byte_fast_path(
+            &src,
+            &dst,
+            policy.depth,
+            matte_color.is_some(),
+            policy.source_facts.all_opaque,
+        ) {
+            let output_facts = derive_output_facts_byte(&src, &dst, policy.source_facts, bp);
+            return Ok(Self {
+                src,
+                dst,
+                exec: RowExec::Byte(bp),
+                depth_policy: policy.depth,
+                accel,
+                output_facts,
+            });
+        }
+
+        // 3. ICC / CMYK routing (policy checks have ALREADY passed in `preflight_and_classify`!).
         if pre.uses_cms {
             if let (Some(sub_src), Some(sub_dst)) = (
                 try_substitute_icc(&src, policy),
@@ -128,24 +155,6 @@ impl RowPlan {
                 return Ok(inner);
             }
             return Self::build_cms(src, dst, policy, pre.matte_color.is_some(), accel);
-        }
-
-        let matte_color = pre.matte_color;
-        let range_change = pre.range_change;
-
-        // 3. Fast byte-only path when no color math, tone mapping, or matte compositing is needed.
-        if let Some(bp) =
-            strip::detect_byte_fast_path(&src, &dst, policy.depth, matte_color.is_some())
-        {
-            let output_facts = derive_output_facts_byte(&src, &dst, policy.source_facts, bp);
-            return Ok(Self {
-                src,
-                dst,
-                exec: RowExec::Byte(bp),
-                depth_policy: policy.depth,
-                accel,
-                output_facts,
-            });
         }
 
         // 4. Resolve photometry, transfers, HDR white anchors, and HLG BEFORE FastRow or Strip!
@@ -161,7 +170,7 @@ impl RowPlan {
 
         let relative_white_scale = if !src_is_pq && !dst_is_pq {
             match (src.color.white(), dst.color.white()) {
-                (Some(sw), Some(dw)) if (sw.nits() - dw.nits()).abs() > 1e-4 => {
+                (Some(sw), Some(dw)) if ((sw.nits() / dw.nits()) - 1.0).abs() > 1e-6 => {
                     sw.nits() / dw.nits()
                 }
                 _ => 1.0,
@@ -212,6 +221,29 @@ impl RowPlan {
                 .nits()
         };
 
+        // Separate source and destination white anchors for HLG display OOTF so a
+        // relative white rescale (`Linear(100) -> HLG(200)`) never double-scales (B16).
+        let src_hlg_white_nits = if src_is_pq || dst_is_pq {
+            white_nits
+        } else {
+            src.color
+                .white()
+                .or_else(|| dst.color.white())
+                .or(policy.sdr_white)
+                .unwrap_or(DiffuseWhite::BT2408)
+                .nits()
+        };
+        let dst_hlg_white_nits = if src_is_pq || dst_is_pq {
+            white_nits
+        } else {
+            dst.color
+                .white()
+                .or_else(|| src.color.white())
+                .or(policy.sdr_white)
+                .unwrap_or(DiffuseWhite::BT2408)
+                .nits()
+        };
+
         let preserve_extended =
             policy.gamut == GamutPolicy::PreserveExtended && dst.layout.sample.is_float();
 
@@ -224,7 +256,7 @@ impl RowPlan {
             dst_tf,
             policy.hlg_rendering,
             false,
-            white_nits,
+            src_hlg_white_nits,
             !preserve_extended,
         )?;
         #[allow(unused_variables)]
@@ -234,13 +266,15 @@ impl RowPlan {
             src_tf,
             policy.hlg_rendering,
             true,
-            white_nits,
+            dst_hlg_white_nits,
             !preserve_extended,
         )?;
 
         // 5. Direct contiguous single-stage row fast path (zero AoS↔SoA bounce)
         // ONLY after policy, Transfer::Unknown, relative-white, and HLG are resolved!
-        let is_hdr_to_sdr = pre.is_hdr_to_sdr;
+        let is_linear_hdr = is_scene_linear_hdr_candidate(&src, &dst)
+            && hdr_peak.is_some_and(|p| p.nits() > white_nits * (1.0 + 1e-4));
+        let is_hdr_to_sdr = pre.is_hdr_to_sdr || is_linear_hdr;
         if !(is_hdr_to_sdr && policy.tone_map_hdr_to_sdr)
             && !has_relative_white_rescale
             && src_prepared_hlg.is_none()
@@ -259,6 +293,14 @@ impl RowPlan {
         {
             let clamped_color = !preserve_extended
                 && !dst_tf.is_hdr()
+                && !matches!(
+                    fr,
+                    FastRow::TransferF32 {
+                        transfer: Transfer::Pq,
+                        is_eotf: true,
+                        ..
+                    }
+                )
                 && matches!(
                     fr,
                     FastRow::SrgbU8ToLinF32 { .. }
@@ -276,6 +318,10 @@ impl RowPlan {
                     ..
                 }
             );
+            let safe_no_subnormals = matches!(
+                fr,
+                FastRow::SrgbU8ToLinF32 { .. } | FastRow::U8ToF32 { .. } | FastRow::U16ToF32 { .. }
+            );
             let output_facts = derive_output_facts_math(
                 &src,
                 &dst,
@@ -284,6 +330,7 @@ impl RowPlan {
                 alpha_filled_opaque,
                 false,
                 matches!(fr, FastRow::F32ToF16 { .. } | FastRow::F16ToF32 { .. }),
+                safe_no_subnormals,
             );
             return Ok(Self {
                 src,
@@ -472,13 +519,19 @@ impl RowPlan {
             // Output of ToneMapper is `1.0 = target_peak_nits`. If destination declares a different
             // SDR diffuse white than `target_peak_nits`, rescale cleanly.
             let out_scale = match dst.color.white() {
-                Some(dw) if (dw.nits() - target_peak_nits).abs() > 1e-4 => {
+                Some(dw) if ((target_peak_nits / dw.nits()) - 1.0).abs() > 1e-6 => {
                     target_peak_nits / dw.nits()
                 }
                 _ => 1.0,
             };
+            // Input strip is relative-linear (`1.0 = dst_hlg_white_nits`, after any relative white rescale).
+            let strip_white_nits = if has_relative_white_rescale {
+                dst_hlg_white_nits
+            } else {
+                white_nits
+            };
             ops.push(MicroOp::ToneMap {
-                in_scale: white_nits / src_peak_nits.max(1e-3),
+                in_scale: strip_white_nits / src_peak_nits.max(1e-3),
                 out_scale,
                 mapper: mapper_shared,
             });
@@ -531,7 +584,8 @@ impl RowPlan {
 
         // 6i. RGB -> Gray in linear light.
         if !cur_is_gray && matches!(dst.color, ColorSpace::Gray { .. }) {
-            let weights = strip::resolve_luma_weights(policy.luma, cur_primaries);
+            let weights = strip::resolve_luma_weights(policy.luma, cur_primaries)
+                .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
             ops.push(MicroOp::RgbToGray(weights));
         }
 
@@ -616,6 +670,20 @@ impl RowPlan {
         }
 
         let src_opaque_alpha = src.color.alpha() == AlphaMode::Opaque;
+        let safe_no_subnormals = !has_relative_white_rescale
+            && !src.layout.sample.is_float()
+            && dst.layout.sample == SampleType::F32
+            && matches!(src.layout.sample, SampleType::U8 | SampleType::U16)
+            && !pre.gamut_narrows
+            && !is_hdr_to_sdr
+            && matte_color.is_none()
+            && matches!(
+                (src_tf, dst_tf),
+                (Transfer::Srgb, Transfer::Linear)
+                    | (Transfer::Linear, Transfer::Srgb)
+                    | (Transfer::Linear, Transfer::Linear)
+                    | (Transfer::Srgb, Transfer::Srgb)
+            );
         let output_facts = derive_output_facts_math(
             &src,
             &dst,
@@ -624,6 +692,7 @@ impl RowPlan {
             alpha_filled_opaque,
             matte_color.is_some(),
             false,
+            safe_no_subnormals,
         );
 
         Ok(Self {
@@ -661,23 +730,20 @@ impl RowPlan {
             .as_ref()
             .ok_or_else(|| err_at(ConvertError::CmsRequired))?;
         let transform = cms.build_transform(&src, &dst)?;
-        let output_facts = SampleFacts {
-            float: FloatFacts::NONE,
-            exact: zenpixels::ExactDepth {
-                effective_bits: if dst.layout.sample == SampleType::U8
-                    && dst.layout.packing.is_full()
-                {
-                    8
-                } else {
-                    0
-                },
-                all_opaque: matches!(
-                    dst.color.alpha(),
-                    AlphaMode::None | AlphaMode::Opaque | AlphaMode::Undefined
-                ),
-                all_grayscale: matches!(dst.color, ColorSpace::Gray { .. }),
-            },
+        let depth = if dst.layout.sample == SampleType::U8 && dst.layout.packing.is_full() {
+            ExactDepth::new(SampleType::U8, color_range(&dst.color), 8, 8).ok()
+        } else {
+            None
         };
+        let all_opaque = matches!(
+            dst.color.alpha(),
+            AlphaMode::None | AlphaMode::Opaque | AlphaMode::Undefined
+        );
+        let output_facts = SampleFacts::NONE
+            .with_depth_opt(depth)
+            .with_all_opaque(all_opaque)
+            .with_all_grayscale(matches!(dst.color, ColorSpace::Gray { .. }))
+            .with_binary_alpha(all_opaque);
         Ok(Self {
             output_facts,
             src,
@@ -820,12 +886,18 @@ impl ImagePlan {
         src.validate().map_err(|e| err_at((*e.error()).into()))?;
         dst.validate().map_err(|e| err_at((*e.error()).into()))?;
 
-        let u16_full_to_u8_full = src.layout.sample == SampleType::U16
-            && dst.layout.sample == SampleType::U8
+        let u16_narrowable = src.layout.sample == SampleType::U16
             && src.layout.packing.is_full()
-            && dst.layout.packing.is_full()
-            && color_range(&src.color) == SignalRange::Full
-            && color_range(&dst.color) == SignalRange::Full;
+            && !dst.layout.sample.is_float()
+            && color_range(&src.color) == color_range(&dst.color)
+            && same_color_meaning(&src.color, &dst.color)
+            && is_depth_reducing(&src, &dst, policy.source_facts);
+
+        let reassociates_alpha = matches!(
+            (src.color.alpha(), dst.color.alpha()),
+            (AlphaMode::Straight, AlphaMode::Premultiplied)
+                | (AlphaMode::Premultiplied, AlphaMode::Straight)
+        );
 
         let needs_runtime_facts = (policy.alpha == AlphaPolicy::DiscardIfOpaque
             && matches!(
@@ -836,14 +908,15 @@ impl ImagePlan {
                 dst.color.alpha(),
                 AlphaMode::None | AlphaMode::Undefined | AlphaMode::Opaque
             )
-            && !policy.source_facts.exact.all_opaque)
+            && !policy.source_facts.all_opaque)
             || (policy.depth == DepthPolicy::Forbid
-                && u16_full_to_u8_full
-                && policy.source_facts.exact.effective_bits != 8)
+                && reassociates_alpha
+                && !policy.source_facts.all_opaque)
+            || (policy.depth == DepthPolicy::Forbid && u16_narrowable)
             || ((policy.depth == DepthPolicy::Forbid || policy.gamut == GamutPolicy::Forbid)
                 && !matches!(src.color, ColorSpace::Gray { .. })
                 && matches!(dst.color, ColorSpace::Gray { .. })
-                && !policy.source_facts.exact.all_grayscale)
+                && !policy.source_facts.all_grayscale)
             || (policy.gamut == GamutPolicy::Forbid
                 && src.layout.sample.is_float()
                 && !dst.layout.sample.is_float()
@@ -854,15 +927,30 @@ impl ImagePlan {
             && matches!(dst.color, ColorSpace::Rgb { .. } | ColorSpace::Gray { .. })
             && policy.tone_map_hdr_to_sdr;
 
-        let mapper_needs_runtime_peak = is_hdr_tonemap
+        let is_linear_hdr_candidate =
+            is_scene_linear_hdr_candidate(&src, &dst) && policy.tone_map_hdr_to_sdr;
+
+        let mapper_needs_runtime_peak = (is_hdr_tonemap
             && !matches!(peak, PeakSource::Fixed(_))
             && resolve_tone_mapper(&policy)
                 .map(|m| m.requirements().source_peak_nits && m.baked_peaks().is_none())
-                .unwrap_or(true);
+                .unwrap_or(true))
+            || (is_linear_hdr_candidate && !matches!(peak, PeakSource::Fixed(_)));
 
         if !needs_runtime_facts && !mapper_needs_runtime_peak {
             let fixed_peak = match peak {
-                PeakSource::Fixed(n) => Some(n),
+                PeakSource::Fixed(n) => {
+                    if is_linear_hdr_candidate {
+                        let ceiling = linear_sdr_ceiling_nits(&src, &dst, &policy);
+                        if n.nits() > ceiling * (1.0 + 1e-4) {
+                            Some(n)
+                        } else {
+                            None
+                        }
+                    } else {
+                        Some(n)
+                    }
+                }
                 _ => None,
             };
             let compiled = RowPlan::build(src.clone(), dst.clone(), &policy, fixed_peak)?;
@@ -877,17 +965,25 @@ impl ImagePlan {
 
         // Validate structural/policy compatibility without needlessly invoking CMS/mapper twice.
         let mut probe_policy = policy.clone();
-        if probe_policy.alpha == AlphaPolicy::DiscardIfOpaque {
-            probe_policy.source_facts.exact.all_opaque = true;
+        if probe_policy.alpha == AlphaPolicy::DiscardIfOpaque || reassociates_alpha {
+            probe_policy.source_facts.all_opaque = true;
         }
-        if probe_policy.depth == DepthPolicy::Forbid && u16_full_to_u8_full {
-            probe_policy.source_facts.exact.effective_bits = 8;
+        if probe_policy.depth == DepthPolicy::Forbid && u16_narrowable {
+            let sr = color_range(&src.color);
+            let min_c = min_color_bits(&dst).max(if sr == SignalRange::Narrow { 8 } else { 1 });
+            let min_a = if dst.layout.order.has_alpha_slot() {
+                raw_channel_bits(&dst, dst.layout.channels() - 1).min(16)
+            } else {
+                16
+            };
+            probe_policy.source_facts.depth =
+                ExactDepth::new(SampleType::U16, sr, min_c.min(16), min_a.max(1)).ok();
         }
         if (probe_policy.depth == DepthPolicy::Forbid || probe_policy.gamut == GamutPolicy::Forbid)
             && !matches!(src.color, ColorSpace::Gray { .. })
             && matches!(dst.color, ColorSpace::Gray { .. })
         {
-            probe_policy.source_facts.exact.all_grayscale = true;
+            probe_policy.source_facts.all_grayscale = true;
         }
         if probe_policy.gamut == GamutPolicy::Forbid
             && src.layout.sample.is_float()
@@ -899,7 +995,8 @@ impl ImagePlan {
         if !pre.uses_cms {
             let test_peak = match peak {
                 PeakSource::Fixed(n) => Some(n),
-                _ => Some(Nits::new(1000.0)),
+                _ if is_hdr_tonemap => Some(Nits::new(1000.0)),
+                _ => None,
             };
             let _ = RowPlan::build(src.clone(), dst.clone(), &probe_policy, test_peak)?;
         }
@@ -928,12 +1025,13 @@ impl ImagePlan {
             return Err(err_at(ConvertError::UnsupportedRoute));
         }
 
+        let merged_src_facts = merge_facts(self.policy.source_facts, src.source_facts());
         let built_plan: RowPlan;
         let row_plan: &RowPlan = if let Some(cached) = &self.cached_row_plan {
             cached
         } else {
             let mut eff_policy = self.policy.clone();
-            eff_policy.source_facts = merge_facts(eff_policy.source_facts, src.source_facts());
+            eff_policy.source_facts = merged_src_facts;
             let resolved_peak = self.resolve_peak(src, &eff_policy)?;
             built_plan = RowPlan::build(
                 self.src.clone(),
@@ -948,16 +1046,22 @@ impl ImagePlan {
             row_plan.convert_row(src.source_row(y), dst.sink_row_mut(y), w, y)?;
         }
         let out_hdr =
-            if self.dst.color.is_hdr() && same_photometry(&self.src.color, &self.dst.color) {
+            if self.dst.can_represent_hdr() && same_photometry(&self.src.color, &self.dst.color) {
                 src.source_hdr()
             } else {
                 HdrMetadata::default()
             };
-        let out_facts = if row_plan.is_identity() {
-            merge_facts(row_plan.output_facts(), src.source_facts())
-        } else {
-            row_plan.output_facts()
+        let out_facts = match &row_plan.exec {
+            RowExec::Byte(bp) => {
+                derive_output_facts_byte(&self.src, &self.dst, merged_src_facts, *bp)
+            }
+            _ => row_plan.output_facts(),
         };
+        if same_color_meaning(&self.src.color, &self.dst.color)
+            && let Some(orig) = src.source_origin()
+        {
+            dst.sink_set_origin(orig.clone());
+        }
         dst.sink_finish(out_facts, out_hdr);
         Ok(())
     }
@@ -979,12 +1083,70 @@ impl ImagePlan {
         src: &S,
         policy: &ConvertPolicy,
     ) -> Result<Option<Nits>, At<ConvertError>> {
-        if !color_transfer(&self.src.color).is_hdr()
-            || color_transfer(&self.dst.color).is_hdr()
-            || !policy.tone_map_hdr_to_sdr
-        {
+        let is_transfer_hdr = color_transfer(&self.src.color).is_hdr()
+            && !color_transfer(&self.dst.color).is_hdr()
+            && matches!(
+                self.dst.color,
+                ColorSpace::Rgb { .. } | ColorSpace::Gray { .. }
+            );
+        let is_linear_hdr_cand = is_scene_linear_hdr_candidate(&self.src, &self.dst);
+
+        if (!is_transfer_hdr && !is_linear_hdr_cand) || !policy.tone_map_hdr_to_sdr {
             return Ok(None);
         }
+
+        if is_linear_hdr_cand {
+            let ceiling = linear_sdr_ceiling_nits(&self.src, &self.dst, policy);
+            let threshold = ceiling * (1.0 + 1e-4);
+            return match self.peak {
+                PeakSource::Fixed(n) => {
+                    if n.nits() > threshold {
+                        Ok(Some(n))
+                    } else {
+                        Ok(None)
+                    }
+                }
+                PeakSource::Declared => {
+                    let hdr = src.source_hdr();
+                    if let Some(cll) = hdr.cll
+                        && f32::from(cll.max_content_light_level) > threshold
+                    {
+                        return Ok(Some(Nits::new(f32::from(cll.max_content_light_level))));
+                    }
+                    if let Some(md) = hdr.mastering
+                        && md.max_luminance > threshold
+                        && let Some(n) = Nits::try_new(md.max_luminance)
+                    {
+                        return Ok(Some(n));
+                    }
+                    Ok(None)
+                }
+                PeakSource::Measured => {
+                    if policy.source_facts.float.is_unit_interval() {
+                        return Ok(None);
+                    }
+                    let white = self
+                        .src
+                        .color
+                        .white()
+                        .or_else(|| self.dst.color.white())
+                        .or(policy.sdr_white)
+                        .unwrap_or(DiffuseWhite::BT2408);
+                    let measured = crate::measure::measure_max_nits_streaming(
+                        src,
+                        white,
+                        policy.hlg_rendering,
+                    )?;
+                    if measured > threshold {
+                        Ok(Some(Nits::new(measured)))
+                    } else {
+                        Ok(None)
+                    }
+                }
+                _ => Err(err_at(ConvertError::UnsupportedRoute)),
+            };
+        }
+
         if let Ok(mapper) = resolve_tone_mapper(policy)
             && (!mapper.requirements().source_peak_nits || mapper.baked_peaks().is_some())
         {
@@ -1079,7 +1241,7 @@ pub(crate) fn preflight_and_classify(
         });
     }
 
-    let uses_cms = matches!(
+    let raw_uses_cms = matches!(
         (&src.color, &dst.color),
         (ColorSpace::Icc { .. } | ColorSpace::Cmyk { .. }, _)
             | (_, ColorSpace::Icc { .. } | ColorSpace::Cmyk { .. })
@@ -1092,21 +1254,6 @@ pub(crate) fn preflight_and_classify(
         return Err(err_at(ConvertError::UnsupportedRoute));
     }
 
-    if !uses_cms {
-        if !src.layout.sample.is_standard_color() && !src.layout.packing.is_packed_word() {
-            return Err(err_at(ConvertError::UnsupportedRoute));
-        }
-        if !dst.layout.sample.is_standard_color() && !dst.layout.packing.is_packed_word() {
-            return Err(err_at(ConvertError::UnsupportedRoute));
-        }
-    }
-
-    // Policy checks apply UNIFORMLY to native AND CMS routes!
-    let depth_reduces = is_depth_reducing(src, dst, policy.source_facts);
-    if depth_reduces && policy.depth == DepthPolicy::Forbid {
-        return Err(err_at(ConvertError::DepthReductionForbidden));
-    }
-
     let src_has_meaningful_alpha = matches!(
         src.color.alpha(),
         AlphaMode::Straight | AlphaMode::Premultiplied
@@ -1116,12 +1263,12 @@ pub(crate) fn preflight_and_classify(
         AlphaMode::None | AlphaMode::Undefined | AlphaMode::Opaque
     );
     let drops_alpha = src_has_meaningful_alpha && dst_drops_alpha;
-    let alpha_proven_opaque = !drops_alpha || policy.source_facts.exact.all_opaque;
+    let alpha_proven_opaque = !drops_alpha || policy.source_facts.all_opaque;
     let matte_color = if drops_alpha {
         match policy.alpha {
             AlphaPolicy::Forbid => return Err(err_at(ConvertError::AlphaLossForbidden)),
             AlphaPolicy::DiscardIfOpaque => {
-                if policy.source_facts.exact.all_opaque {
+                if policy.source_facts.all_opaque {
                     None
                 } else {
                     return Err(err_at(ConvertError::AlphaLossForbidden));
@@ -1134,11 +1281,52 @@ pub(crate) fn preflight_and_classify(
         None
     };
 
+    let src_proven_opaque = is_src_proven_opaque(src, policy.source_facts);
+    let byte_fast_path_available = strip::detect_byte_fast_path(
+        src,
+        dst,
+        policy.depth,
+        matte_color.is_some(),
+        policy.source_facts.all_opaque,
+    )
+    .is_some();
+
+    // Same-profile ICC/CMYK layout, widening, opaque alpha fill, and identity copy bypass CMS (D01).
+    let uses_cms = raw_uses_cms && !byte_fast_path_available;
+
+    if !uses_cms && !byte_fast_path_available {
+        if !src.layout.sample.is_standard_color() && !src.layout.packing.is_packed_word() {
+            return Err(err_at(ConvertError::UnsupportedRoute));
+        }
+        if !dst.layout.sample.is_standard_color() && !dst.layout.packing.is_packed_word() {
+            return Err(err_at(ConvertError::UnsupportedRoute));
+        }
+    }
+
+    // Policy checks apply UNIFORMLY to native AND CMS routes!
+    let reassociates_alpha = matches!(
+        (src.color.alpha(), dst.color.alpha()),
+        (AlphaMode::Straight, AlphaMode::Premultiplied)
+            | (AlphaMode::Premultiplied, AlphaMode::Straight)
+    );
+    let lossy_reassociation = reassociates_alpha && !src_proven_opaque;
+
+    let cross_profile_cms = uses_cms
+        && (try_substitute_icc(src, policy).is_none() || try_substitute_icc(dst, policy).is_none())
+        && !same_color_meaning(&src.color, &dst.color);
+
     let range_change = check_range_policy(src, dst, policy)?;
+
+    let depth_reduces = is_depth_reducing(src, dst, policy.source_facts)
+        || lossy_reassociation
+        || (cross_profile_cms && !dst.layout.sample.is_float());
+    if depth_reduces && policy.depth == DepthPolicy::Forbid {
+        return Err(err_at(ConvertError::DepthReductionForbidden));
+    }
 
     let drops_chroma = !matches!(src.color, ColorSpace::Gray { .. })
         && matches!(dst.color, ColorSpace::Gray { .. });
-    let chroma_proven_gray = !drops_chroma || policy.source_facts.exact.all_grayscale;
+    let chroma_proven_gray = !drops_chroma || policy.source_facts.all_grayscale;
     if drops_chroma
         && !chroma_proven_gray
         && (policy.depth == DepthPolicy::Forbid || policy.gamut == GamutPolicy::Forbid)
@@ -1153,7 +1341,8 @@ pub(crate) fn preflight_and_classify(
         && matches!(dst.color, ColorSpace::Rgb { .. } | ColorSpace::Gray { .. });
 
     let gamut_narrows =
-        is_gamut_narrowing(color_primaries(&src.color), color_primaries(&dst.color));
+        is_gamut_narrowing(color_primaries(&src.color), color_primaries(&dst.color))
+            || cross_profile_cms;
     let unproven_float_to_int = src.layout.sample.is_float()
         && !dst.layout.sample.is_float()
         && !policy.source_facts.float.is_unit_interval();
@@ -1174,8 +1363,9 @@ pub(crate) fn preflight_and_classify(
         return Err(err_at(ConvertError::GamutLossForbidden));
     }
 
-    // If CMS will be used (no substitution), verify CMS is configured and supports requested policy.
+    // If CMS will be used (no byte fast path and no substitution), verify CMS is configured and supports requested policy.
     if uses_cms
+        && !byte_fast_path_available
         && (try_substitute_icc(src, policy).is_none() || try_substitute_icc(dst, policy).is_none())
     {
         if policy.cms.is_none() {
@@ -1326,23 +1516,44 @@ pub(crate) fn same_photometry(a: &ColorSpace, b: &ColorSpace) -> bool {
     }
 }
 
+fn is_src_proven_opaque(src: &ImageSpec, facts: SampleFacts) -> bool {
+    matches!(
+        src.color.alpha(),
+        AlphaMode::None | AlphaMode::Undefined | AlphaMode::Opaque
+    ) || !src.layout.order.has_alpha_slot()
+        || facts.all_opaque
+}
+
+fn is_scene_linear_hdr_candidate(src: &ImageSpec, dst: &ImageSpec) -> bool {
+    matches!(color_transfer(&src.color), Transfer::Linear)
+        && src.layout.sample.is_float()
+        && !dst.can_represent_hdr()
+        && matches!(dst.color, ColorSpace::Rgb { .. } | ColorSpace::Gray { .. })
+}
+
+fn linear_sdr_ceiling_nits(src: &ImageSpec, dst: &ImageSpec, policy: &ConvertPolicy) -> f32 {
+    src.color
+        .white()
+        .or_else(|| dst.color.white())
+        .or(policy.sdr_white)
+        .unwrap_or(DiffuseWhite::BT2408)
+        .nits()
+}
+
 fn merge_facts(policy_facts: SampleFacts, buf_facts: SampleFacts) -> SampleFacts {
-    let effective_bits = match (
-        policy_facts.exact.effective_bits,
-        buf_facts.exact.effective_bits,
-    ) {
-        (0, b) => b,
-        (a, 0) => a,
-        (a, b) => a.min(b),
+    let depth = match (policy_facts.depth, buf_facts.depth) {
+        (Some(a), Some(b)) => ExactDepth::combine(a, b).or(Some(a)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
     };
-    SampleFacts {
-        float: policy_facts.float | buf_facts.float,
-        exact: zenpixels::ExactDepth {
-            effective_bits,
-            all_opaque: policy_facts.exact.all_opaque || buf_facts.exact.all_opaque,
-            all_grayscale: policy_facts.exact.all_grayscale || buf_facts.exact.all_grayscale,
-        },
-    }
+    let all_opaque = policy_facts.all_opaque || buf_facts.all_opaque;
+    SampleFacts::NONE
+        .with_float(policy_facts.float | buf_facts.float)
+        .with_depth_opt(depth)
+        .with_all_opaque(all_opaque)
+        .with_all_grayscale(policy_facts.all_grayscale || buf_facts.all_grayscale)
+        .with_binary_alpha(all_opaque || policy_facts.binary_alpha || buf_facts.binary_alpha)
 }
 
 pub(crate) fn try_substitute_icc(spec: &ImageSpec, policy: &ConvertPolicy) -> Option<ImageSpec> {
@@ -1405,25 +1616,14 @@ fn effective_color_bits(spec: &ImageSpec) -> u8 {
     spec.layout.sample.bits()
 }
 
-fn channel_bits(spec: &ImageSpec, channel: usize, facts: SampleFacts, allow_u8_proven: bool) -> u8 {
+fn raw_channel_bits(spec: &ImageSpec, channel: usize) -> u8 {
     if !spec.layout.packing.is_full() {
         let mc = spec.layout.packing.max_code(spec.layout.sample, channel);
         return (32 - mc.leading_zeros()) as u8;
     }
     match spec.layout.sample {
         SampleType::U8 | SampleType::I8 => 8,
-        SampleType::U16 => {
-            if allow_u8_proven
-                && color_range(&spec.color) == SignalRange::Full
-                && facts.exact.effective_bits > 0
-                && facts.exact.effective_bits <= 8
-            {
-                8
-            } else {
-                16
-            }
-        }
-        SampleType::I16 => 16,
+        SampleType::U16 | SampleType::I16 => 16,
         SampleType::F16 => 11, // IEEE binary16 significand precision (11 bits)
         SampleType::F32 => 24, // IEEE binary32 significand precision (24 bits)
         SampleType::U32 | SampleType::I32 => 32,
@@ -1433,8 +1633,27 @@ fn channel_bits(spec: &ImageSpec, channel: usize, facts: SampleFacts, allow_u8_p
     }
 }
 
-/// Per-channel lossless precision check: checks color channels AND alpha channel independently
-/// (so `RGBA8 -> RGB10A2` catches alpha 8b → 2b loss, and `U16 -> F16` catches 16b → 11b loss!).
+fn min_color_bits(spec: &ImageSpec) -> u8 {
+    let ch = spec.layout.channels();
+    let color_ch = ch.saturating_sub(usize::from(
+        spec.layout.order.has_alpha_slot() || spec.layout.order.has_padding_slot(),
+    ));
+    let mut min_b = u8::MAX;
+    for c in 0..color_ch {
+        min_b = min_b.min(raw_channel_bits(spec, c));
+    }
+    if min_b == u8::MAX { 8 } else { min_b }
+}
+
+/// Per-channel lossless precision and exact code-grid inclusion check (B01 & B02).
+///
+/// - Float → integer always reduces precision.
+/// - Non-identity transfer, gamut matrix, cross-model, range, or diffuse-white changes
+///   into a bounded integer destination are non-injective / precision-reducing (B01).
+/// - Integer → integer checks exact grid inclusion per channel (`full_range_grid_nests`
+///   where `dst_bits % src_bits == 0`, or `narrow_range_grid_nests` where `dst >= src >= 8`)
+///   and checks color and alpha grids independently, consulting validated [`ExactDepth`]
+///   evidence when the nominal grid does not nest (B02).
 fn is_depth_reducing(src: &ImageSpec, dst: &ImageSpec, facts: SampleFacts) -> bool {
     let src_is_float = src.layout.sample.is_float();
     let dst_is_float = dst.layout.sample.is_float();
@@ -1444,10 +1663,38 @@ fn is_depth_reducing(src: &ImageSpec, dst: &ImageSpec, facts: SampleFacts) -> bo
         return true;
     }
 
-    let allow_u8_proven = src.layout.packing.is_full()
-        && dst.layout.packing.is_full()
-        && color_range(&src.color) == SignalRange::Full
-        && color_range(&dst.color) == SignalRange::Full;
+    let valid_depth = facts.depth.filter(|d| d.validate_spec(src).is_ok());
+
+    // B01: Any non-identity color math (transfer, gamut matrix, color model, signal range,
+    // or diffuse-white rescale) into an integer destination is non-injective / precision-reducing.
+    if !dst_is_float {
+        let src_tf = color_transfer(&src.color);
+        let dst_tf = color_transfer(&dst.color);
+        let transfer_changes = src_tf != dst_tf;
+        let gamut_changes = matches!(src.color, ColorSpace::Rgb { .. })
+            && matches!(dst.color, ColorSpace::Rgb { .. })
+            && color_primaries(&src.color) != color_primaries(&dst.color);
+        let model_changes_lossy = (matches!(
+            src.color,
+            ColorSpace::Xyz { .. } | ColorSpace::Oklab { .. } | ColorSpace::Perceptual { .. }
+        ) || matches!(
+            dst.color,
+            ColorSpace::Xyz { .. } | ColorSpace::Oklab { .. } | ColorSpace::Perceptual { .. }
+        )) && !same_color_meaning(&src.color, &dst.color);
+        let range_changes = color_range(&src.color) != color_range(&dst.color);
+        let white_changes = match (src.color.white(), dst.color.white()) {
+            (Some(a), Some(b)) => ((a.nits() / b.nits()) - 1.0).abs() > 1e-6,
+            _ => false,
+        };
+        if transfer_changes
+            || gamut_changes
+            || model_changes_lossy
+            || range_changes
+            || white_changes
+        {
+            return true;
+        }
+    }
 
     let src_ch = src.layout.channels();
     let dst_ch = dst.layout.channels();
@@ -1460,19 +1707,61 @@ fn is_depth_reducing(src: &ImageSpec, dst: &ImageSpec, facts: SampleFacts) -> bo
         dst_has_alpha || dst.layout.order.has_padding_slot(),
     ));
 
+    if !src_is_float && !dst_is_float {
+        let range = color_range(&src.color);
+        // Check every color channel pair for exact code-grid inclusion (B02).
+        for sc in 0..src_color_ch {
+            let s_bits = raw_channel_bits(src, sc);
+            for dc in 0..dst_color_ch {
+                let d_bits = raw_channel_bits(dst, dc);
+                let nests = match range {
+                    SignalRange::Full => full_range_grid_nests(s_bits, d_bits),
+                    SignalRange::Narrow => narrow_range_grid_nests(s_bits, d_bits),
+                    _ => false,
+                };
+                if !nests {
+                    let proven = valid_depth.is_some_and(|d| d.color_exact_at(d_bits));
+                    if !proven {
+                        return true;
+                    }
+                }
+            }
+        }
+        // Check alpha channel independently (always full scale).
+        if src_has_alpha
+            && dst_has_alpha
+            && matches!(
+                src.color.alpha(),
+                AlphaMode::Straight | AlphaMode::Premultiplied
+            )
+            && matches!(
+                dst.color.alpha(),
+                AlphaMode::Straight | AlphaMode::Premultiplied
+            )
+        {
+            let sa_bits = raw_channel_bits(src, src_ch - 1);
+            let da_bits = raw_channel_bits(dst, dst_ch - 1);
+            if !full_range_grid_nests(sa_bits, da_bits) {
+                let proven = valid_depth.is_some_and(|d| d.alpha_exact_at(da_bits));
+                if !proven {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // Float destination (`int -> float` or `float -> float`): compare against float significand bits.
+    let dst_sig_bits = raw_channel_bits(dst, 0);
     let mut src_max_color_bits = 0u8;
     for c in 0..src_color_ch {
-        src_max_color_bits = src_max_color_bits.max(channel_bits(src, c, facts, allow_u8_proven));
+        src_max_color_bits = src_max_color_bits.max(raw_channel_bits(src, c));
     }
-    let mut dst_min_color_bits = u8::MAX;
-    for c in 0..dst_color_ch {
-        dst_min_color_bits = dst_min_color_bits.min(channel_bits(dst, c, SampleFacts::NONE, false));
-    }
-    if dst_min_color_bits < src_max_color_bits {
+    let eff_color_bits = valid_depth.map_or(src_max_color_bits, |d| d.color_bits());
+    if dst_sig_bits < eff_color_bits {
         return true;
     }
 
-    // Check alpha channel precision independently when both carry meaningful alpha.
     if src_has_alpha
         && dst_has_alpha
         && matches!(
@@ -1484,9 +1773,9 @@ fn is_depth_reducing(src: &ImageSpec, dst: &ImageSpec, facts: SampleFacts) -> bo
             AlphaMode::Straight | AlphaMode::Premultiplied
         )
     {
-        let sa_bits = channel_bits(src, src_ch - 1, facts, allow_u8_proven);
-        let da_bits = channel_bits(dst, dst_ch - 1, SampleFacts::NONE, false);
-        if da_bits < sa_bits {
+        let sa_bits = raw_channel_bits(src, src_ch - 1);
+        let eff_alpha_bits = valid_depth.map_or(sa_bits, |d| d.alpha_bits());
+        if dst_sig_bits < eff_alpha_bits {
             return true;
         }
     }
@@ -1634,7 +1923,7 @@ fn resolve_hlg(
     }
 }
 
-fn resolve_tone_mapper(
+pub(crate) fn resolve_tone_mapper(
     policy: &ConvertPolicy,
 ) -> Result<Arc<dyn crate::tonemap::ToneMapper>, At<ConvertError>> {
     if let Some(m) = &policy.tone_mapper {
@@ -1673,34 +1962,114 @@ fn derive_output_facts_byte(
     } else {
         FloatFacts::NONE
     };
-    let effective_bits = match dst.layout.sample {
-        SampleType::U8 if dst.layout.packing.is_full() => 8,
+    let dst_range = color_range(&dst.color);
+    let valid_src_depth = src_facts.depth.filter(|d| d.validate_spec(src).is_ok());
+    let fills_alpha = matches!(
+        bp,
+        ByteFastPath::Rgb8ToRgba8
+            | ByteFastPath::Rgb8ToBgra8
+            | ByteFastPath::FillAlpha4U8
+            | ByteFastPath::SwapRbFillAlpha4U8
+            | ByteFastPath::Gray8ToRgba8
+            | ByteFastPath::AddAlpha3To4B2(_)
+            | ByteFastPath::SwapAddAlpha3To4B2(_)
+            | ByteFastPath::GrayToRgbaB2(_)
+            | ByteFastPath::AddAlpha3To4B4
+            | ByteFastPath::SwapAddAlpha3To4B4
+            | ByteFastPath::GrayToRgbaB4
+            | ByteFastPath::FillAlpha4B2(_)
+            | ByteFastPath::SwapRbFillAlpha4B2(_)
+            | ByteFastPath::FillAlpha4B4
+            | ByteFastPath::SwapRbFillAlpha4B4
+            | ByteFastPath::RepackIntSameDepth {
+                fill_opaque_alpha: true,
+                ..
+            }
+            | ByteFastPath::NarrowBitShift {
+                fill_opaque_alpha: true,
+                ..
+            }
+    );
+    let all_opaque = !dst.layout.order.has_alpha_slot()
+        || fills_alpha
+        || !src.layout.order.has_alpha_slot()
+        || src_facts.all_opaque;
+    let binary_alpha = all_opaque || src_facts.binary_alpha;
+    let depth = match dst.layout.sample {
+        SampleType::U8 if dst.layout.packing.is_full() => {
+            if src.layout.sample == SampleType::U8 && src.layout.packing.is_full() {
+                if let Some(d) = valid_src_depth {
+                    let a_bits = if all_opaque && dst.layout.order.has_alpha_slot() {
+                        1
+                    } else if dst.layout.order.has_alpha_slot() {
+                        d.alpha_bits()
+                    } else {
+                        8
+                    };
+                    ExactDepth::new(SampleType::U8, dst_range, d.color_bits(), a_bits).ok()
+                } else {
+                    ExactDepth::new(SampleType::U8, dst_range, 8, if all_opaque { 1 } else { 8 })
+                        .ok()
+                }
+            } else {
+                ExactDepth::new(SampleType::U8, dst_range, 8, if all_opaque { 1 } else { 8 }).ok()
+            }
+        }
         SampleType::U16 if dst.layout.packing.is_full() => match bp {
-            ByteFastPath::U8ToU16Exact => 8,
-            _ if src.layout.sample == SampleType::U16 => src_facts.exact.effective_bits,
-            _ => 0,
+            ByteFastPath::U8ToU16Exact => {
+                let c_bits = valid_src_depth.map_or(8, |d| d.color_bits());
+                let a_bits = if all_opaque && dst.layout.order.has_alpha_slot() {
+                    1
+                } else if dst.layout.order.has_alpha_slot() {
+                    valid_src_depth.map_or(8, |d| d.alpha_bits())
+                } else {
+                    16
+                };
+                ExactDepth::new(SampleType::U16, SignalRange::Full, c_bits, a_bits).ok()
+            }
+            ByteFastPath::NarrowBitShift {
+                src_bits,
+                dst_bits: 16,
+                ..
+            } if src_bits < 16 => {
+                let c_bits = valid_src_depth.map_or(src_bits, |d| d.color_bits());
+                let a_bits = if all_opaque && dst.layout.order.has_alpha_slot() {
+                    1
+                } else if dst.layout.order.has_alpha_slot() {
+                    valid_src_depth.map_or(src_bits, |d| d.alpha_bits())
+                } else {
+                    16
+                };
+                ExactDepth::new(SampleType::U16, SignalRange::Narrow, c_bits, a_bits).ok()
+            }
+            _ if src.layout.sample == SampleType::U16 && src.layout.packing.is_full() => {
+                valid_src_depth.and_then(|d| {
+                    let a_bits = if !dst.layout.order.has_alpha_slot() {
+                        16
+                    } else if all_opaque {
+                        1
+                    } else {
+                        d.alpha_bits()
+                    };
+                    ExactDepth::new(SampleType::U16, dst_range, d.color_bits(), a_bits).ok()
+                })
+            }
+            _ => None,
         },
-        _ => 0,
+        _ => None,
     };
-    let all_opaque = matches!(
-        dst.color.alpha(),
-        AlphaMode::None | AlphaMode::Opaque | AlphaMode::Undefined
-    ) || !src.layout.order.has_alpha_slot()
-        || src.color.alpha() == AlphaMode::Opaque
-        || src_facts.exact.all_opaque;
     let all_grayscale = matches!(dst.color, ColorSpace::Gray { .. })
         || matches!(src.color, ColorSpace::Gray { .. })
-        || src_facts.exact.all_grayscale;
-    SampleFacts {
-        float,
-        exact: zenpixels::ExactDepth {
-            effective_bits,
-            all_opaque,
-            all_grayscale,
-        },
-    }
+        || src_facts.all_grayscale;
+    SampleFacts::NONE
+        .with_float(float)
+        .with_depth_opt(depth)
+        .with_all_opaque(all_opaque)
+        .with_all_grayscale(all_grayscale)
+        .with_binary_alpha(binary_alpha)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn derive_output_facts_math(
     src: &ImageSpec,
     dst: &ImageSpec,
@@ -1709,6 +2078,7 @@ fn derive_output_facts_math(
     alpha_filled_opaque: bool,
     matte_applied: bool,
     is_f16_cast_only: bool,
+    safe_no_subnormals: bool,
 ) -> SampleFacts {
     let dst_is_rgb_or_gray = matches!(dst.color, ColorSpace::Rgb { .. } | ColorSpace::Gray { .. });
     let float = if dst.layout.sample.is_float() && dst_is_rgb_or_gray {
@@ -1726,10 +2096,7 @@ fn derive_output_facts_math(
                 || !src.layout.sample.is_float()
                 || src_facts.float.is_unit_interval();
             if alpha_unit {
-                let no_subnormals = !src.layout.sample.is_float()
-                    && dst.layout.sample == SampleType::F32
-                    && matches!(src.layout.sample, SampleType::U8 | SampleType::U16);
-                if no_subnormals {
+                if safe_no_subnormals {
                     FloatFacts::UNIT_INTERVAL
                 } else {
                     // Clamping guarantees [0, 1] finite, NOT absence of subnormals!
@@ -1745,25 +2112,30 @@ fn derive_output_facts_math(
         FloatFacts::NONE
     };
 
-    // Never propagate U8 exactness into U16 after transfer/gamut/narrow/premul math!
-    let effective_bits = if dst.layout.sample == SampleType::U8 && dst.layout.packing.is_full() {
-        8
-    } else {
-        0
-    };
     let all_opaque = matches!(
         dst.color.alpha(),
         AlphaMode::None | AlphaMode::Opaque | AlphaMode::Undefined
     ) || matte_applied
         || alpha_filled_opaque
-        || src_facts.exact.all_opaque;
+        || src_facts.all_opaque;
+    let binary_alpha = all_opaque || src_facts.binary_alpha;
+    // Never propagate U8 exactness into U16 after transfer/gamut/narrow/premul math!
+    let depth = if dst.layout.sample == SampleType::U8 && dst.layout.packing.is_full() {
+        ExactDepth::new(
+            SampleType::U8,
+            color_range(&dst.color),
+            8,
+            if all_opaque { 1 } else { 8 },
+        )
+        .ok()
+    } else {
+        None
+    };
     let all_grayscale = matches!(dst.color, ColorSpace::Gray { .. });
-    SampleFacts {
-        float,
-        exact: zenpixels::ExactDepth {
-            effective_bits,
-            all_opaque,
-            all_grayscale,
-        },
-    }
+    SampleFacts::NONE
+        .with_float(float)
+        .with_depth_opt(depth)
+        .with_all_opaque(all_opaque)
+        .with_all_grayscale(all_grayscale)
+        .with_binary_alpha(binary_alpha)
 }

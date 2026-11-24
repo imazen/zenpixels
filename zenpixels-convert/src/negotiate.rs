@@ -215,6 +215,26 @@ fn native_route_feasible(
         return false;
     }
 
+    // B09: RGB -> Gray requires resolvable luma weights (FromSourcePrimaries on Unknown fails).
+    if matches!(src.color, ColorSpace::Rgb { .. })
+        && matches!(dst.color, ColorSpace::Gray { .. })
+        && crate::strip::resolve_luma_weights(policy.luma, sp).is_none()
+    {
+        return false;
+    }
+
+    // B05: HDR -> SDR with tone mapping enabled requires a streaming tone mapper
+    // (either injected on policy or the built-in `bt2446a` feature).
+    let is_hdr_to_sdr = st.is_hdr()
+        && !dt.is_hdr()
+        && matches!(dst.color, ColorSpace::Rgb { .. } | ColorSpace::Gray { .. });
+    if is_hdr_to_sdr && policy.tone_map_hdr_to_sdr {
+        match crate::plan::resolve_tone_mapper(policy) {
+            Ok(m) if !m.requirements().full_image => {}
+            _ => return false,
+        }
+    }
+
     let need_linear = st != dt
         || gamut_changes
         || matte_active

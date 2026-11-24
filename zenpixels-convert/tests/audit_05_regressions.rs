@@ -647,7 +647,7 @@ fn photometry_matte_before_clip_hlg_swizzle_parity_white_rescale_unknown_transfe
         !out_f16.facts().float.contains(FloatFacts::UNIT_INTERVAL),
         "F32->F16 with 2.5/inf/NaN must not claim UNIT_INTERVAL"
     );
-    assert_eq!(out_f16.facts().exact.effective_bits, 0);
+    assert_eq!(out_f16.facts().depth, None);
 
     // 6. scan_facts on F16 detects semitransparent alpha, color, and FloatFacts!
     let mut f16_raw = Vec::new();
@@ -657,11 +657,11 @@ fn photometry_matte_before_clip_hlg_swizzle_parity_white_rescale_unknown_transfe
     let f16_buf = PixelBuf::from_bytes(f16_raw, 1, 1, ImageSpec::rgbaf16_linear()).unwrap();
     let facts = scan_facts(&f16_buf.as_view());
     assert!(
-        !facts.exact.all_opaque,
+        !facts.all_opaque,
         "F16 alpha 0.5 must not be marked all_opaque"
     );
     assert!(
-        !facts.exact.all_grayscale,
+        !facts.all_grayscale,
         "F16 (0.25, 0.75, 0.5) must not be marked all_grayscale"
     );
     assert!(facts.float.contains(FloatFacts::UNIT_INTERVAL));
@@ -818,6 +818,227 @@ fn cms_policy_lossless_alpha_gate_intent_opaque_and_moxcms_gray_srgb() {
     .unwrap();
     assert_eq!(out_mox.as_view().row(0)[3], 255);
     assert_eq!(out_lcms.as_view().row(0)[3], 255);
+    // A10: Verify non-neutral P3 RGB channels actually transform and agree between MoxCms & Lcms!
+    let mox_px = out_mox.as_view().row(0);
+    let lcms_px = out_lcms.as_view().row(0);
+    for c in 0..3 {
+        assert!(
+            (i32::from(mox_px[c]) - i32::from(lcms_px[c])).abs() <= 1,
+            "MoxCms {mox_px:?} vs Lcms {lcms_px:?} disagreed on channel {c}"
+        );
+    }
+    assert!(
+        mox_px[0] > 135 && mox_px[1] < 60 && mox_px[2] < 30,
+        "expected Display P3 [128,64,32] -> sRGB saturated shift, got {mox_px:?}"
+    );
+    // A10: Relative vs Absolute intent between DCI-P3 (theater white 0.314, 0.351 — greenish)
+    // and Display P3 (D65 0.3127, 0.3290) on mid-gray [180, 180, 180] (non-clipping!):
+    // - Lcms RelativeColorimetric adapts DCI white to D65 -> neutral [~180, ~180, ~180].
+    // - Lcms AbsoluteColorimetric preserves greenish DCI white in D65 (G > R, G > B+5)!
+    // - MoxCms cleanly refuses AbsoluteColorimetric (moxcms 0.9 lacks media-white scaling)
+    //   instead of silently substituting RelativeColorimetric!
+    let dci_p3_icc: Arc<[u8]> = match SynthesizedIcc::for_cicp(Cicp::new(11, 13, 0, true)) {
+        SynthesizedIcc::Profile(p) => Arc::from(p.as_ref()),
+        other => panic!("expected DCI-P3 profile, got {other:?}"),
+    };
+    let src_dci_abs = ImageSpec::new(
+        SampleLayout::RGB8,
+        ColorSpace::Icc {
+            profile: dci_p3_icc.clone(),
+            channels: 3,
+            alpha: AlphaMode::None,
+            intent: RenderingIntent::AbsoluteColorimetric,
+        },
+    );
+    let src_dci_rel = ImageSpec::new(
+        SampleLayout::RGB8,
+        ColorSpace::Icc {
+            profile: dci_p3_icc,
+            channels: 3,
+            alpha: AlphaMode::None,
+            intent: RenderingIntent::RelativeColorimetric,
+        },
+    );
+    let dst_p3_rel = ImageSpec::new(
+        SampleLayout::RGB8,
+        ColorSpace::Icc {
+            profile: p3_icc.clone(),
+            channels: 3,
+            alpha: AlphaMode::None,
+            intent: RenderingIntent::RelativeColorimetric,
+        },
+    );
+    let gray_abs_src = PixelBuf::from_vec(vec![180u8, 180, 180], 1, 1, src_dci_abs).unwrap();
+    let gray_rel_src = PixelBuf::from_vec(vec![180u8, 180, 180], 1, 1, src_dci_rel).unwrap();
+    let out_rel_mox = convert_buf(
+        &gray_rel_src.as_view(),
+        dst_p3_rel.clone(),
+        &pol_mox,
+        PeakSource::Measured,
+    )
+    .unwrap();
+    let err_abs_mox = convert_buf(
+        &gray_abs_src.as_view(),
+        dst_p3_rel.clone(),
+        &pol_mox,
+        PeakSource::Measured,
+    )
+    .unwrap_err();
+    assert_eq!(
+        *err_abs_mox.error(),
+        ConvertError::UnsupportedRoute,
+        "MoxCms must refuse AbsoluteColorimetric instead of silently running Relative"
+    );
+    let out_rel_lcms = convert_buf(
+        &gray_rel_src.as_view(),
+        dst_p3_rel.clone(),
+        &pol_lcms,
+        PeakSource::Measured,
+    )
+    .unwrap();
+    let out_abs_lcms = convert_buf(
+        &gray_abs_src.as_view(),
+        dst_p3_rel,
+        &pol_lcms,
+        PeakSource::Measured,
+    )
+    .unwrap();
+    for (name, rel) in [
+        ("MoxCms", out_rel_mox.as_view().row(0)),
+        ("Lcms", out_rel_lcms.as_view().row(0)),
+    ] {
+        for c in 0..3 {
+            assert!(
+                (i32::from(rel[c]) - 180).abs() <= 1,
+                "{name} RelativeColorimetric DCI->P3 must keep neutral gray ~180, got {rel:?}"
+            );
+        }
+    }
+    let abs_l = out_abs_lcms.as_view().row(0);
+    assert!(
+        abs_l[1] > abs_l[2] + 5 && abs_l[1] > abs_l[0] + 2,
+        "Lcms AbsoluteColorimetric DCI->D65 must preserve greenish DCI white (G > R, G > B+5), got {abs_l:?}"
+    );
+
+    // A10b: Dual-intent LUT ICC profile (distinct A2B0 Perceptual -> reddish Lab vs
+    // A2B1 RelativeColorimetric -> bluish Lab) proves BOTH MoxCms AND Lcms honor intent!
+    let make_mft2_const_lab = |l: f64, a: f64, b: f64| -> Vec<u8> {
+        let mut lut = Vec::new();
+        lut.extend_from_slice(b"mft2");
+        lut.extend_from_slice(&[0; 4]);
+        lut.extend_from_slice(&[3, 3, 2, 0]);
+        for row in 0..3 {
+            for col in 0..3 {
+                let one: i32 = if row == col { 0x10000 } else { 0 };
+                lut.extend_from_slice(&one.to_be_bytes());
+            }
+        }
+        lut.extend_from_slice(&2u16.to_be_bytes());
+        lut.extend_from_slice(&2u16.to_be_bytes());
+        for _ in 0..3 {
+            lut.extend_from_slice(&0u16.to_be_bytes());
+            lut.extend_from_slice(&0xFFFFu16.to_be_bytes());
+        }
+        let enc_l = (l * 652.8).round() as u16;
+        let enc_a = ((a + 128.0) * 256.0).round() as u16;
+        let enc_b = ((b + 128.0) * 256.0).round() as u16;
+        for _ in 0..8 {
+            lut.extend_from_slice(&enc_l.to_be_bytes());
+            lut.extend_from_slice(&enc_a.to_be_bytes());
+            lut.extend_from_slice(&enc_b.to_be_bytes());
+        }
+        for _ in 0..3 {
+            lut.extend_from_slice(&0u16.to_be_bytes());
+            lut.extend_from_slice(&0xFFFFu16.to_be_bytes());
+        }
+        lut
+    };
+    let a2b0 = make_mft2_const_lab(55.0, 50.0, 30.0); // Perceptual: strongly warm red
+    let a2b1 = make_mft2_const_lab(55.0, -10.0, -50.0); // Relative: strongly cool blue
+    let tag_start = 128usize + 4 + 2 * 12;
+    let a2b0_off = tag_start;
+    let a2b1_off = (a2b0_off + a2b0.len() + 3) & !3;
+    let total_sz = a2b1_off + a2b1.len();
+    let mut dual_icc = vec![0u8; total_sz];
+    dual_icc[0..4].copy_from_slice(&(total_sz as u32).to_be_bytes());
+    dual_icc[8..12].copy_from_slice(&0x0240_0000u32.to_be_bytes());
+    dual_icc[12..16].copy_from_slice(b"mntr");
+    dual_icc[16..20].copy_from_slice(b"RGB ");
+    dual_icc[20..24].copy_from_slice(b"Lab ");
+    dual_icc[36..40].copy_from_slice(b"acsp");
+    for (i, v) in [0x0000_F6D6u32, 0x0001_0000, 0x0000_D32D]
+        .iter()
+        .enumerate()
+    {
+        dual_icc[68 + i * 4..72 + i * 4].copy_from_slice(&v.to_be_bytes());
+    }
+    dual_icc[128..132].copy_from_slice(&2u32.to_be_bytes());
+    dual_icc[132..136].copy_from_slice(b"A2B0");
+    dual_icc[136..140].copy_from_slice(&(a2b0_off as u32).to_be_bytes());
+    dual_icc[140..144].copy_from_slice(&(a2b0.len() as u32).to_be_bytes());
+    dual_icc[144..148].copy_from_slice(b"A2B1");
+    dual_icc[148..152].copy_from_slice(&(a2b1_off as u32).to_be_bytes());
+    dual_icc[152..156].copy_from_slice(&(a2b1.len() as u32).to_be_bytes());
+    dual_icc[a2b0_off..a2b0_off + a2b0.len()].copy_from_slice(&a2b0);
+    dual_icc[a2b1_off..a2b1_off + a2b1.len()].copy_from_slice(&a2b1);
+    let dual_arc: Arc<[u8]> = Arc::from(dual_icc.as_slice());
+
+    let src_perc = PixelBuf::from_vec(
+        vec![128u8, 128, 128],
+        1,
+        1,
+        ImageSpec::new(
+            SampleLayout::RGB8,
+            ColorSpace::Icc {
+                profile: dual_arc.clone(),
+                channels: 3,
+                alpha: AlphaMode::None,
+                intent: RenderingIntent::Perceptual,
+            },
+        ),
+    )
+    .unwrap();
+    let src_rel = PixelBuf::from_vec(
+        vec![128u8, 128, 128],
+        1,
+        1,
+        ImageSpec::new(
+            SampleLayout::RGB8,
+            ColorSpace::Icc {
+                profile: dual_arc,
+                channels: 3,
+                alpha: AlphaMode::None,
+                intent: RenderingIntent::RelativeColorimetric,
+            },
+        ),
+    )
+    .unwrap();
+    for (name, pol) in [("MoxCms", &pol_mox), ("Lcms", &pol_lcms)] {
+        let p_out = convert_buf(
+            &src_perc.as_view(),
+            ImageSpec::rgb8_srgb(),
+            pol,
+            PeakSource::Measured,
+        )
+        .unwrap();
+        let r_out = convert_buf(
+            &src_rel.as_view(),
+            ImageSpec::rgb8_srgb(),
+            pol,
+            PeakSource::Measured,
+        )
+        .unwrap();
+        let pp = p_out.as_view().row(0);
+        let rp = r_out.as_view().row(0);
+        assert!(
+            pp[0] > pp[2] + 80,
+            "{name} Perceptual A2B0 must produce warm red, got {pp:?}"
+        );
+        assert!(
+            rp[2] > rp[0] + 80,
+            "{name} RelativeColorimetric A2B1 must produce cool blue, got {rp:?}"
+        );
+    }
 
     // 4. MoxCms Gray sRGB matches Lcms Gray sRGB closely (not gamma 2.2!).
     let mut gray_vals = Vec::with_capacity(256);
@@ -1125,15 +1346,20 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
             ImageSpec::new(SampleLayout::GRAY8, untagged_1),
         )
         .unwrap();
-        let alt_missing = DualLayerHdr::new(srgb_red.clone(), full_gm.clone(), alt_meta).unwrap();
+        // B26: DualLayerHdr::new refuses GainMapColorSpace::Alternate without alternate_color_space
+        // at construction time; DualLayerHdr::new_with_alternate supplies the required color space.
         assert!(
-            apply_gain_map(&alt_missing, 1.0).is_err(),
-            "GainMapColorSpace::Alternate without alternate_color_space must fail"
+            DualLayerHdr::new(srgb_red.clone(), full_gm.clone(), alt_meta).is_err(),
+            "DualLayerHdr::new must refuse GainMapColorSpace::Alternate without alternate_color_space"
         );
-        let alt_with_p3 = DualLayerHdr::new(srgb_red, full_gm, alt_meta)
-            .unwrap()
-            .with_alternate_color_space(ColorSpace::DISPLAY_P3)
-            .unwrap();
+        let alt_with_p3 = DualLayerHdr::new_with_alternate(
+            srgb_red,
+            full_gm,
+            alt_meta,
+            Some(ColorSpace::DISPLAY_P3),
+            Orientation::Identity,
+        )
+        .unwrap();
         let alt_out = apply_gain_map(&alt_with_p3, 1.0).unwrap();
         assert!(matches!(
             alt_out.spec().color,
@@ -1184,7 +1410,7 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
     )
     .unwrap();
     assert_eq!(dst_buf.as_view().row(0), &[11, 22, 33, 255]);
-    assert!(dst_buf.facts().exact.all_opaque);
+    assert!(dst_buf.facts().all_opaque);
 
     // Confirm ColorOrigin::from_cicp helper exists.
     let _orig = ColorOrigin::from_cicp(Cicp::SRGB);
@@ -1287,13 +1513,7 @@ fn prefreeze_audit_signaling_lossless_negotiate_facts_xyz_gamma_regressions() {
     // 5. ImagePlan defers all_grayscale check to runtime buffer facts AND preserves identity facts!
     let mut gray_rgb_buf =
         PixelBuf::from_vec(vec![42u8, 42, 42, 99, 99, 99], 2, 1, srgb.clone()).unwrap();
-    gray_rgb_buf.set_facts(SampleFacts {
-        exact: ExactDepth {
-            all_grayscale: true,
-            ..ExactDepth::default()
-        },
-        ..SampleFacts::NONE
-    });
+    gray_rgb_buf.set_facts(SampleFacts::NONE.with_all_grayscale(true));
     let plan_to_gray = ImagePlan::build(
         srgb.clone(),
         ImageSpec::gray8_srgb(),
@@ -1317,23 +1537,19 @@ fn prefreeze_audit_signaling_lossless_negotiate_facts_xyz_gamma_regressions() {
     .unwrap();
     let copied = id_plan.execute(&gray_rgb_buf).unwrap();
     assert!(
-        copied.facts().exact.all_grayscale,
+        copied.facts().all_grayscale,
         "identity ImagePlan must preserve src buffer SampleFacts!"
     );
 
-    // 6. Narrow-range U16 with effective_bits=8 must NOT bypass lossless U16->U8 depth check!
+    // 6. Full-range U16 ExactDepth(8) must NOT bypass lossless narrow-range U16->U8 depth check!
     let u16_narrow = ImageSpec::rgb16_srgb().with_range(SignalRange::Narrow);
     let u8_narrow = ImageSpec::rgb8_srgb().with_range(SignalRange::Narrow);
-    let pol_u8_proven = ConvertPolicy::lossless().with_facts(SampleFacts {
-        exact: ExactDepth {
-            effective_bits: 8,
-            ..ExactDepth::default()
-        },
-        ..SampleFacts::NONE
-    });
+    let pol_u8_proven = ConvertPolicy::lossless().with_facts(SampleFacts::from_depth(
+        ExactDepth::new(SampleType::U16, SignalRange::Full, 8, 8).unwrap(),
+    ));
     assert!(
         RowPlan::build(u16_narrow, u8_narrow, &pol_u8_proven, None).is_err(),
-        "narrow-range U16->U8 must not bypass DepthPolicy::Forbid via effective_bits=8"
+        "narrow-range U16->U8 must not bypass DepthPolicy::Forbid via full-range ExactDepth(8)"
     );
 
     // 7. Negotiate skips infeasible Transfer::Unknown gamut change & MoxCms-unsupported layouts!

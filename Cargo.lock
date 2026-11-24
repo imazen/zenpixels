@@ -1170,7 +1170,6 @@ dependencies = [
  "imgref",
  "rgb",
  "whereat",
- "zenpixels",
 ]
 
 [[package]]

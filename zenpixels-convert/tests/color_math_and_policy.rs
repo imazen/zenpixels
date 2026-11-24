@@ -173,15 +173,11 @@ fn policy_refusal_gates_and_sample_facts_unlock_lossless() {
     .unwrap_err();
     assert_eq!(*err.error(), ConvertError::DepthReductionForbidden);
 
-    // ...but succeeds when SampleFacts proves exact 8-bit values!
-    let facts_8 = SampleFacts {
-        float: zenpixels_convert::FloatFacts::NONE,
-        exact: ExactDepth {
-            effective_bits: 8,
-            all_opaque: true,
-            all_grayscale: false,
-        },
-    };
+    // ...but succeeds when SampleFacts proves exact 8-bit full-range values!
+    let facts_8 = SampleFacts::from_depth(
+        ExactDepth::new(zenpixels_convert::SampleType::U16, SignalRange::Full, 8, 8).unwrap(),
+    )
+    .with_all_opaque(true);
     assert!(
         RowPlan::build(
             ImageSpec::rgb16_srgb(),
@@ -219,7 +215,7 @@ fn policy_refusal_gates_and_sample_facts_unlock_lossless() {
     assert_eq!(*err.error(), ConvertError::AlphaLossForbidden);
 
     let scanned = scan_facts(&rgba_buf.as_view());
-    assert!(scanned.exact.all_opaque);
+    assert!(scanned.all_opaque);
     rgba_buf.set_facts(scanned);
     let out = convert_buf(
         &rgba_buf.as_view(),
@@ -325,7 +321,20 @@ fn narrow_full_roundtrip_and_linear_matte_composite() {
 #[cfg(feature = "hdr-transfers")]
 #[test]
 fn pq_and_hlg_accuracy_bounds() {
-    // PQ U16 -> Linear F32 -> PQ U16 roundtrip within ±1 u16 across full 0..=65535 ramp!
+    // A05: Exhaustive ALL 65,536 PQ U16 codes (not step_by(257)) plus independent binary64
+    // SMPTE ST 2084 reference oracle in BOTH directions!
+    fn st2084_eotf_nits(e: f64) -> f64 {
+        const M1: f64 = 2610.0 / 16384.0;
+        const M2: f64 = 2523.0 / 32.0;
+        const C1: f64 = 3424.0 / 4096.0;
+        const C2: f64 = 2413.0 / 128.0;
+        const C3: f64 = 2392.0 / 128.0;
+        let p = e.max(0.0).powf(1.0 / M2);
+        let num = (p - C1).max(0.0);
+        let den = C2 - C3 * p;
+        10_000.0 * (num / den).powf(1.0 / M1)
+    }
+
     let pq = ImageSpec::rgb16_bt2100_pq();
     let lin = ImageSpec::rgbf32_linear()
         .with_primaries(Primaries::Bt2020)
@@ -339,27 +348,67 @@ fn pq_and_hlg_accuracy_bounds() {
     .unwrap();
     let to_pq = RowPlan::build(lin.clone(), pq, &ConvertPolicy::working_linear(), None).unwrap();
 
-    let mut src_u16 = Vec::new();
-    for i in (0..=65535u32).step_by(257) {
+    // Test every single code 0..=65535 (each pixel carries 3 distinct codes to catch lane crosstalk).
+    let n_codes = 65_536usize;
+    let w = n_codes as u32;
+    let mut src_u16 = Vec::with_capacity(n_codes * 3);
+    for i in 0..n_codes {
         src_u16.push(i as u16);
-        src_u16.push(i as u16);
-        src_u16.push(i as u16);
+        src_u16.push((65_535 - i) as u16);
+        src_u16.push(((i * 13) & 0xFFFF) as u16);
     }
-    let w = (src_u16.len() / 3) as u32;
-    let mut lin_bytes = vec![0u8; w as usize * 12];
-    let mut back_u16 = vec![0u16; src_u16.len()];
+    let mut lin_f32 = vec![0f32; n_codes * 3];
+    let mut back_u16 = vec![0u16; n_codes * 3];
     to_lin
-        .convert_row(bytemuck::cast_slice(&src_u16), &mut lin_bytes, w, 0)
+        .convert_row(
+            bytemuck::cast_slice(&src_u16),
+            bytemuck::cast_slice_mut(&mut lin_f32),
+            w,
+            0,
+        )
         .unwrap();
     to_pq
-        .convert_row(&lin_bytes, bytemuck::cast_slice_mut(&mut back_u16), w, 0)
+        .convert_row(
+            bytemuck::cast_slice(&lin_f32),
+            bytemuck::cast_slice_mut(&mut back_u16),
+            w,
+            0,
+        )
         .unwrap();
-    for (a, b) in src_u16.iter().zip(back_u16.iter()) {
-        assert!(
-            (i32::from(*a) - i32::from(*b)).abs() <= 1,
-            "PQ roundtrip exceeded ±1 u16: in={a} out={b}"
-        );
+
+    let mut max_rt_err = 0i32;
+    for i in 0..n_codes {
+        let code = i as u16;
+        let rt_err = (i32::from(code) - i32::from(back_u16[i * 3])).abs();
+        if rt_err > max_rt_err {
+            max_rt_err = rt_err;
+        }
+        // Check all 3 channels match for the same code (no lane crosstalk).
+        assert_eq!(back_u16[i * 3], back_u16[(65_535 - i) * 3 + 1]);
+        // Independent ST 2084 binary64 EOTF witness at key luminance checkpoints (0, 1, 2, knee, 203 nits, 1000, peak).
+        let got_nits = f64::from(lin_f32[i * 3]) * 203.0;
+        let ref_nits = st2084_eotf_nits(f64::from(code) / 65_535.0);
+        if code == 0 {
+            assert_eq!(got_nits, 0.0, "PQ code 0 must decode to exact 0.0 nits");
+        } else if code == 1 {
+            assert!(
+                got_nits > 0.0 && (got_nits - ref_nits).abs() <= ref_nits * 5e-3 + 1e-10,
+                "PQ code 1: got={got_nits} ref={ref_nits}"
+            );
+        } else {
+            let tol = ref_nits * 2e-4 + 1e-6;
+            assert!(
+                (got_nits - ref_nits).abs() <= tol,
+                "PQ EOTF drift at code {code}: got={got_nits} nits, ref={ref_nits} nits"
+            );
+        }
     }
+    assert!(
+        max_rt_err <= 1,
+        "exhaustive 65,536-code PQ roundtrip exceeded ±1 u16: max_err={max_rt_err}"
+    );
+    assert_eq!(back_u16[0], 0);
+    assert_eq!(back_u16[65_535 * 3], 65_535);
 
     // HLG BT.2100-3 with black lift Lb=0.05: code 0.0 decodes to exact 0.05 / 203.0!
     let hlg_lift = HlgRendering::new(Nits::new(1000.0), 0.05, 1.2).unwrap();

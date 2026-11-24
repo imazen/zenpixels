@@ -156,7 +156,12 @@ impl ConvertPolicy {
         }
     }
 
-    /// Linear-light working-space policy: preserves extended values, keeps diffuse white anchor explicit, no tone mapping.
+    /// Linear-light working-space policy: preserves extended values, defaults diffuse white
+    /// to ITU-R BT.2408 (`203 cd/m²`, override via `.with_sdr_white(...)`), and disables tone mapping.
+    ///
+    /// Use [`ConvertPolicy::permissive`] or [`ConvertPolicy::lossless`] when unanchored
+    /// PQ ↔ relative routes must fail with [`ConvertError::MissingHdrAnchor`](crate::ConvertError::MissingHdrAnchor)
+    /// unless a diffuse white is explicitly provided.
     #[inline]
     #[must_use]
     pub fn working_linear() -> Self {

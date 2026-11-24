@@ -24,6 +24,8 @@ type PixelSliceMut<'a> = PixelViewMut<'a>;
 const TILE: u32 = 32;
 
 /// Apply `orientation` to `src`, returning a freshly allocated tightly packed [`PixelBuf`].
+///
+/// Preserves `src.hdr()`, `src.facts()`, and `src.origin()`.
 pub fn apply_orientation(
     src: &PixelView<'_>,
     orientation: Orientation,
@@ -32,10 +34,21 @@ pub fn apply_orientation(
     let mut out = PixelBuf::new(ow, oh, src.spec().clone())
         .map_err(|e| err_at((*e.error()).into()))?
         .with_hdr(src.hdr());
+    if let Some(origin) = src.origin() {
+        out = out.with_origin(origin.clone());
+    }
     let facts = src.facts();
     apply_orientation_into(src, orientation, &mut out.as_view_mut())?;
     out.set_facts(facts);
     Ok(out)
+}
+
+/// Apply `orientation` to an owned [`PixelBuf`], returning `buf` zero-copy on [`Orientation::Identity`].
+pub fn orient_buf(buf: PixelBuf, orientation: Orientation) -> Result<PixelBuf, At<ConvertError>> {
+    if orientation == Orientation::Identity {
+        return Ok(buf);
+    }
+    apply_orientation(&buf.as_view(), orientation)
 }
 
 /// Apply `orientation` to `src`, writing into caller-provided `dst` with **zero heap allocation**.

@@ -129,56 +129,181 @@ fn orient_all_8_orientations_and_pixel_widths_match_forward_map_oracle() {
     }
 }
 
+#[test]
+fn safe_icc_substitution_without_cms_matches_adobe_oracle() {
+    extern crate alloc;
+    use alloc::sync::Arc;
+    use zenpixels_convert::{AlphaMode, ColorSpace, RenderingIntent, SampleLayout};
+
+    // A08: Safe known ICC profile (Adobe RGB) substitutes directly without needing a CMS.
+    // Test midtone [180, 90, 40], toe [12, 6, 3], and out-of-gamut green [0, 255, 0], pinning alpha.
+    let adobe_icc = Arc::<[u8]>::from(zenpixels_convert::icc_profiles::ADOBE_RGB);
+    let icc_spec = ImageSpec::new(
+        SampleLayout::RGBA8,
+        ColorSpace::Icc {
+            profile: Arc::clone(&adobe_icc),
+            channels: 3,
+            alpha: AlphaMode::Straight,
+            intent: RenderingIntent::RelativeColorimetric,
+        },
+    );
+    let sub_plan = zenpixels_convert::RowPlan::build(
+        icc_spec.clone(),
+        ImageSpec::rgba8_srgb(),
+        &ConvertPolicy::permissive(),
+        None,
+    )
+    .unwrap();
+    let src_px: [u8; 16] = [
+        180, 90, 40, 200, // midtone
+        12, 6, 3, 77, // toe
+        0, 255, 0, 255, // out-of-gamut Adobe green
+        255, 255, 255, 128, // white
+    ];
+    let mut sub_out = [0u8; 16];
+    sub_plan.convert_row(&src_px, &mut sub_out, 4, 0).unwrap();
+
+    // Direct structured AdobeRgb -> sRGB oracle (no ICC path).
+    let direct_spec = ImageSpec::new(
+        SampleLayout::RGBA8,
+        ColorSpace::Rgb {
+            primaries: zenpixels_convert::Primaries::AdobeRgb,
+            transfer: zenpixels_convert::Transfer::AdobeRgb,
+            range: zenpixels_convert::SignalRange::Full,
+            alpha: AlphaMode::Straight,
+            white: None,
+        },
+    );
+    let direct_plan = zenpixels_convert::RowPlan::build(
+        direct_spec,
+        ImageSpec::rgba8_srgb(),
+        &ConvertPolicy::permissive(),
+        None,
+    )
+    .unwrap();
+    let mut direct_out = [0u8; 16];
+    direct_plan
+        .convert_row(&src_px, &mut direct_out, 4, 0)
+        .unwrap();
+    assert_eq!(
+        sub_out, direct_out,
+        "ICC substitution must match structured Adobe RGB -> sRGB bit-exact"
+    );
+    // Pin alpha bytes untouched on all 4 pixels.
+    assert_eq!(
+        [sub_out[3], sub_out[7], sub_out[11], sub_out[15]],
+        [200, 77, 255, 128]
+    );
+    // Out-of-gamut Adobe green [0,255,0] clips R<=0, G=255, B<=0 in sRGB!
+    assert_eq!(&sub_out[8..11], &[0, 255, 0]);
+    // White stays exact white.
+    assert_eq!(&sub_out[12..15], &[255, 255, 255]);
+
+    // AbsoluteColorimetric must NOT use ICC substitution without a CMS!
+    let abs_spec = ImageSpec::new(
+        SampleLayout::RGBA8,
+        ColorSpace::Icc {
+            profile: adobe_icc,
+            channels: 3,
+            alpha: AlphaMode::Straight,
+            intent: RenderingIntent::AbsoluteColorimetric,
+        },
+    );
+    assert!(
+        zenpixels_convert::RowPlan::build(
+            abs_spec,
+            ImageSpec::rgba8_srgb(),
+            &ConvertPolicy::permissive(),
+            None,
+        )
+        .is_err(),
+        "AbsoluteColorimetric must refuse ICC substitution when no CMS is attached"
+    );
+}
+
 #[cfg(feature = "cms-moxcms")]
 #[test]
 fn moxcms_icc_transform_and_safe_substitution() {
     extern crate alloc;
     use alloc::sync::Arc;
-    use zenpixels_convert::{ColorSpace, SampleLayout, Transfer};
+    use zenpixels_convert::{AlphaMode, ColorSpace, RenderingIntent, SampleLayout};
 
-    // 1. Safe known ICC profile (Adobe RGB) substitutes directly without even needing a CMS!
+    // A08: Compare the SAME non-neutral Adobe RGB pixels through BOTH safe substitution AND
+    // explicit MoxCms (with substitution disabled) on every channel!
     let adobe_icc = Arc::<[u8]>::from(zenpixels_convert::icc_profiles::ADOBE_RGB);
     let icc_spec = ImageSpec::new(
-        SampleLayout::RGB8,
+        SampleLayout::RGBA8,
         ColorSpace::Icc {
-            profile: Arc::clone(&adobe_icc),
+            profile: adobe_icc,
             channels: 3,
-            alpha: zenpixels_convert::AlphaMode::None,
-            intent: zenpixels_convert::RenderingIntent::RelativeColorimetric,
+            alpha: AlphaMode::Straight,
+            intent: RenderingIntent::RelativeColorimetric,
         },
     );
+    let src_px: [u8; 16] = [
+        180, 90, 40, 200, // midtone
+        12, 6, 3, 77, // toe
+        0, 255, 0, 255, // out-of-gamut Adobe green
+        255, 255, 255, 128, // white
+    ];
     let sub_plan = zenpixels_convert::RowPlan::build(
         icc_spec.clone(),
-        ImageSpec::rgb8_srgb(),
+        ImageSpec::rgba8_srgb(),
         &ConvertPolicy::permissive(),
         None,
     )
     .unwrap();
-    let mut sub_out = [0u8; 3];
-    sub_plan
-        .convert_row(&[0, 255, 0], &mut sub_out, 1, 0)
-        .unwrap();
-
-    // 2. Explicit MoxCms transform on a custom Display P3 ICC profile agrees closely!
-    let p3_icc = Arc::<[u8]>::from(zenpixels_convert::icc_profiles::DISPLAY_P3_V4);
-    let p3_icc_spec = ImageSpec::new(
-        SampleLayout::RGB8,
-        ColorSpace::Icc {
-            profile: p3_icc,
-            channels: 3,
-            alpha: zenpixels_convert::AlphaMode::None,
-            intent: zenpixels_convert::RenderingIntent::RelativeColorimetric,
-        },
-    );
-    let cms_policy = ConvertPolicy::permissive().with_cms(Arc::new(zenpixels_convert::MoxCms));
+    let cms_policy = ConvertPolicy::permissive()
+        .with_icc_substitution(false)
+        .with_cms(Arc::new(zenpixels_convert::MoxCms));
     let cms_plan =
-        zenpixels_convert::RowPlan::build(p3_icc_spec, ImageSpec::rgb8_srgb(), &cms_policy, None)
+        zenpixels_convert::RowPlan::build(icc_spec, ImageSpec::rgba8_srgb(), &cms_policy, None)
             .unwrap();
-    let mut white_out = [0u8; 3];
-    cms_plan
-        .convert_row(&[255, 255, 255], &mut white_out, 1, 0)
-        .unwrap();
-    assert_eq!(white_out, [255, 255, 255]);
-    assert!(sub_out[1] >= 250);
-    let _ = Transfer::Srgb;
+
+    let mut sub_out = [0u8; 16];
+    let mut cms_out = [0u8; 16];
+    sub_plan.convert_row(&src_px, &mut sub_out, 4, 0).unwrap();
+    cms_plan.convert_row(&src_px, &mut cms_out, 4, 0).unwrap();
+
+    for px in 0..4 {
+        for c in 0..3 {
+            let s = sub_out[px * 4 + c];
+            let m = cms_out[px * 4 + c];
+            assert!(
+                (i32::from(s) - i32::from(m)).abs() <= 1,
+                "Adobe->sRGB px {px} ch {c}: substitution={s} vs MoxCms={m} (sub={sub_out:?}, cms={cms_out:?})"
+            );
+        }
+        assert_eq!(sub_out[px * 4 + 3], src_px[px * 4 + 3]);
+        assert_eq!(cms_out[px * 4 + 3], src_px[px * 4 + 3]);
+    }
+    // Independent binary64 Adobe RGB (1998) -> sRGB oracle for [180, 90, 40]:
+    // Decode Adobe RGB via x^(563/256), convert Adobe->sRGB linear via exact chromaticity matrix,
+    // encode sRGB OETF, round to u8.
+    let adobe_lin = [180.0_f64, 90.0, 40.0].map(|c| (c / 255.0).powf(563.0 / 256.0));
+    // Standard Adobe RGB (1998) -> sRGB (D65) linear matrix (IEC 61966-2-1 / Adobe RGB 1998 spec):
+    let srgb_lin = [
+        1.3983576 * adobe_lin[0] - 0.3983576 * adobe_lin[1],
+        adobe_lin[1],
+        -0.0429383 * adobe_lin[1] + 1.0429383 * adobe_lin[2],
+    ];
+    let srgb_enc = |v: f64| -> u8 {
+        let c = v.clamp(0.0, 1.0);
+        let e = if c <= 0.0031308 {
+            12.92 * c
+        } else {
+            1.055 * c.powf(1.0 / 2.4) - 0.055
+        };
+        (e * 255.0).round() as u8
+    };
+    let expected_mid = srgb_lin.map(srgb_enc);
+    for c in 0..3 {
+        assert!(
+            (i32::from(cms_out[c]) - i32::from(expected_mid[c])).abs() <= 1,
+            "Adobe->sRGB midtone ch {c}: got={} expected_oracle={} (full={:?} vs {expected_mid:?})",
+            cms_out[c],
+            expected_mid[c],
+            &cms_out[0..3]
+        );
+    }
 }

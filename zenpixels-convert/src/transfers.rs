@@ -55,8 +55,14 @@ const BT709_INV_4_5: f32 = 1.0 / 4.5;
 const BT709_DEC_EXP: f32 = 1.0 / 0.45;
 const BT709_ENC_EXP: f32 = 0.45;
 
-const GAMMA22_DEC_EXP: f32 = 563.0 / 256.0;
-const GAMMA22_ENC_EXP: f32 = 256.0 / 563.0;
+const GAMMA22_DEC_EXP: f32 = 2.2;
+const GAMMA22_ENC_EXP: f32 = 1.0 / 2.2;
+const ADOBE_DEC_EXP: f32 = 563.0 / 256.0;
+const ADOBE_ENC_EXP: f32 = 256.0 / 563.0;
+const DCI_DEC_EXP: f32 = 2.6;
+const DCI_ENC_EXP: f32 = 1.0 / 2.6;
+const DCI_WHITE_SCALE: f32 = 52.37 / 48.0;
+const DCI_INV_WHITE_SCALE: f32 = 48.0 / 52.37;
 
 // ---------------------------------------------------------------------------
 // Scalar exact per-lane fallbacks (only invoked on non-finite / |v| > 65536 /
@@ -128,6 +134,22 @@ pub(crate) fn gamma_oetf_scalar_slice(buf: &mut [f32], gamma: f32) {
         }
         *v = (libm::pow(f64::from(x.abs()), inv) as f32).copysign(x);
     }
+}
+
+/// SMPTE ST 428-1 / ITU-T H.273 TC17 DCI Cinema EOTF (`L = (52.37/48) * sign(v) * |v|^2.6`).
+pub(crate) fn dci_cinema_eotf_scalar_slice(vals: &mut [f32]) {
+    gamma_scalar_slice(vals, DCI_DEC_EXP, 2.6);
+    for v in vals.iter_mut() {
+        *v *= DCI_WHITE_SCALE;
+    }
+}
+
+/// SMPTE ST 428-1 / ITU-T H.273 TC17 DCI Cinema OETF (`v = sign(L) * (|(48/52.37) * L|)^(1/2.6)`).
+pub(crate) fn dci_cinema_oetf_scalar_slice(vals: &mut [f32]) {
+    for v in vals.iter_mut() {
+        *v *= DCI_INV_WHITE_SCALE;
+    }
+    gamma_scalar_slice(vals, DCI_ENC_EXP, 1.0 / 2.6);
 }
 
 // ---------------------------------------------------------------------------
@@ -381,14 +403,30 @@ fn gamma_scalar_slice(vals: &mut [f32], exp_f32: f32, exp_f64: f64) {
     }
 }
 
+#[cfg(feature = "gainmap")]
+#[inline(never)]
+pub(crate) fn gamma_pow_scalar_slice(vals: &mut [f32], exp_f32: f32, exp_f64: f64) {
+    gamma_scalar_slice(vals, exp_f32, exp_f64);
+}
+
 #[inline(never)]
 pub(crate) fn gamma22_eotf_scalar_slice(vals: &mut [f32]) {
-    gamma_scalar_slice(vals, GAMMA22_DEC_EXP, 563.0 / 256.0);
+    gamma_scalar_slice(vals, GAMMA22_DEC_EXP, 2.2);
 }
 
 #[inline(never)]
 pub(crate) fn gamma22_oetf_scalar_slice(vals: &mut [f32]) {
-    gamma_scalar_slice(vals, GAMMA22_ENC_EXP, 256.0 / 563.0);
+    gamma_scalar_slice(vals, GAMMA22_ENC_EXP, 1.0 / 2.2);
+}
+
+#[inline(never)]
+pub(crate) fn adobe_rgb_eotf_scalar_slice(vals: &mut [f32]) {
+    gamma_scalar_slice(vals, ADOBE_DEC_EXP, 563.0 / 256.0);
+}
+
+#[inline(never)]
+pub(crate) fn adobe_rgb_oetf_scalar_slice(vals: &mut [f32]) {
+    gamma_scalar_slice(vals, ADOBE_ENC_EXP, 256.0 / 563.0);
 }
 
 macro_rules! gamma_simd_body {
@@ -473,22 +511,22 @@ fn gamma_slice_scalar_t(_token: ScalarToken, vals: &mut [f32], exp_f32: f32, exp
     gamma_scalar_slice(vals, exp_f32, exp_f64);
 }
 
-pub(crate) fn gamma22_eotf_simd_slice(vals: &mut [f32]) {
-    let ef = GAMMA22_DEC_EXP;
-    let ed = 563.0 / 256.0;
+/// Shared SIMD power slice for any `exp_f32` inside `TRANSFER_POW`'s `[0.25, 3.0]` range
+/// (bit-exact with [`gamma_pow_scalar_slice`]). Reused by Gamma 2.2, Adobe RGB, DCI Cinema,
+/// and ISO 21496-1 non-unit gain-map gamma with zero extra monomorphizations.
+pub(crate) fn gamma_pow_simd_slice(vals: &mut [f32], exp_f32: f32, exp_f64: f64) {
     archmage::attuned!(
-        gamma_slice(vals, ef, ed),
+        gamma_slice(vals, exp_f32, exp_f64),
         [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
     );
 }
 
+pub(crate) fn gamma22_eotf_simd_slice(vals: &mut [f32]) {
+    gamma_pow_simd_slice(vals, GAMMA22_DEC_EXP, 2.2);
+}
+
 pub(crate) fn gamma22_oetf_simd_slice(vals: &mut [f32]) {
-    let ef = GAMMA22_ENC_EXP;
-    let ed = 256.0 / 563.0;
-    archmage::attuned!(
-        gamma_slice(vals, ef, ed),
-        [_v4x(cfg(avx512)), _v3, _neon, _wasm128, _scalar]
-    );
+    gamma_pow_simd_slice(vals, GAMMA22_ENC_EXP, 1.0 / 2.2);
 }
 
 // ---------------------------------------------------------------------------

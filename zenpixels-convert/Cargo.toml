@@ -81,6 +81,7 @@ lcms = { git = "https://github.com/imazen/lcms", branch = "main", optional = tru
 
 [dev-dependencies]
 zenpixels = { workspace = true, features = ["imgref", "image"] }
+lcms = { git = "https://github.com/imazen/lcms", branch = "main", features = ["little-cms-api"] }
 zenbench = { version = "0.1.11" }
 archmage = { version = "0.9.33", features = ["testable_dispatch"] }
 half = "2.7.1"

@@ -77,6 +77,12 @@ mod cicp_bundle;
 #[cfg(feature = "icc-db")]
 #[rustfmt::skip]
 mod cicp_bundle_index;
+#[cfg(test)]
+mod canonical;
+#[cfg(all(test, feature = "icc-db"))]
+mod colourimetry_tests;
+#[cfg(all(test, feature = "cms-moxcms", feature = "cms-lcms"))]
+mod synthesis;
 
 // ---------------------------------------------------------------------------
 // Embedded ICC profiles (CC0 license from Compact-ICC-Profiles)
@@ -142,7 +148,7 @@ pub(crate) const REC2020_V4: &[u8] = include_bytes!("profiles/Rec2020Compat-v4.i
 /// | [`Primaries::Bt709`] | [`Transfer::Srgb`] | `None` — sRGB is the assumed default |
 /// | [`Primaries::DisplayP3`] | [`Transfer::Srgb`] or [`Transfer::Bt709`] | compact generated export |
 /// | [`Primaries::Bt2020`] | [`Transfer::Bt709`] | `REC2020_V4` |
-/// | [`Primaries::AdobeRgb`] | [`Transfer::Gamma22`] | [`ADOBE_RGB`] |
+/// | [`Primaries::AdobeRgb`] | [`Transfer::AdobeRgb`] | [`ADOBE_RGB`] |
 ///
 /// # Not bundled (returns `None`)
 ///
@@ -154,7 +160,7 @@ pub(crate) const REC2020_V4: &[u8] = include_bytes!("profiles/Rec2020Compat-v4.i
 /// - [`Transfer::Linear`] on any primaries. Linear-light
 ///   working spaces are typically expressed with CICP transfer code 8
 ///   rather than an ICC profile.
-/// - Adobe RGB with any transfer other than `Gamma22`.
+/// - Adobe RGB with any transfer other than [`Transfer::AdobeRgb`] (`563/256`).
 /// - Display P3 with any transfer other than `Srgb` or `Bt709`, and BT.2020 with any
 ///   transfer other than `Bt709`.
 ///
@@ -169,9 +175,24 @@ pub const fn bundled_icc_profile(
         (Primaries::DisplayP3, Transfer::Srgb) => Some(P3_EXPORT_SRGB),
         (Primaries::DisplayP3, Transfer::Bt709) => Some(P3_EXPORT_BT709),
         (Primaries::Bt2020, Transfer::Bt709) => Some(REC2020_V4),
-        (Primaries::AdobeRgb, Transfer::Gamma22) => Some(ADOBE_RGB),
+        (Primaries::AdobeRgb, Transfer::AdobeRgb) => Some(ADOBE_RGB),
         _ => None,
     }
+}
+
+/// Whether `p` is an assigned H.273 colour-primaries code in the CICP export grid.
+#[inline]
+const fn is_assigned_primaries(p: u8) -> bool {
+    matches!(p, 1 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 22)
+}
+
+/// Whether `t` is an assigned H.273 transfer-characteristics code in the CICP export grid.
+#[inline]
+const fn is_assigned_transfer(t: u8) -> bool {
+    matches!(
+        t,
+        1 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18
+    )
 }
 
 /// Outcome of [`SynthesizedIcc::for_cicp`] — what ICC profile (if any) to embed for a
@@ -197,12 +218,13 @@ pub enum SynthesizedIcc {
     /// asks to synthesize for sRGB (its `synth_worthwhile` test excludes it) — but
     /// it's surfaced explicitly rather than masquerading as a missing profile.
     NotNeeded,
-    /// A CMS would be required to produce a profile for this CICP.
+    /// The requested assigned H.273 pair is covered by the `icc-db` bundle, which is
+    /// disabled in this build (and no curated compact fallback exists for it).
     ///
-    /// Retained for API stability: [`SynthesizedIcc::for_cicp`] no longer returns
-    /// this — the bundled blob serves supported assigned H.273 pairs with no
-    /// CMS, so a no-CMS build reports [`CmsUnsupported`](Self::CmsUnsupported) for an
-    /// unassigned / reserved code rather than `NeedsCms`.
+    /// Note that enabling a transform backend (`cms-moxcms` / `cms-lcms`) does **not**
+    /// synthesize export bytes here — enable the `icc-db` feature to serve the full grid.
+    /// Unassigned / reserved code points, CIE XYZ RGB (`CP=10`), and HLG (`TC=18`)
+    /// always return [`CmsUnsupported`](Self::CmsUnsupported) regardless of `icc-db`.
     NeedsCms,
     /// This export path cannot supply a qualified profile for the CICP.
     /// This includes unsupported code points and HLG without a rendering target.
@@ -302,7 +324,10 @@ pub(crate) fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
     // H.273 primaries 10 denotes CIE XYZ. The generator's RGB model
     // collapses its colorants to rank 1; never serve those bytes, including
     // in builds without the database.
-    if cicp.color_primaries == 10 {
+    if cicp.color_primaries == 10
+        || !is_assigned_primaries(cicp.color_primaries)
+        || !is_assigned_transfer(cicp.transfer_characteristics)
+    {
         return SynthesizedIcc::CmsUnsupported;
     }
 
@@ -322,8 +347,7 @@ pub(crate) fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
         SynthesizedIcc::CmsUnsupported
     }
     // Without the database: a curated const whose curve is exactly the
-    // requested transfer, else NeedsCms ("enable `icc-db`"), the variant's
-    // documented build-dependent meaning.
+    // requested transfer, else NeedsCms ("enable `icc-db`") for eligible assigned pairs.
     #[cfg(not(feature = "icc-db"))]
     {
         let cp = Primaries::from_cicp(cicp.color_primaries).unwrap_or(Primaries::Unknown);
@@ -346,13 +370,15 @@ pub(crate) fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
 /// variant. Matrix coefficients are ignored for gray; H.273 primaries select
 /// its native white rather than an RGB gamut.
 ///
+/// Unspecified primaries (`CP=2`) on a known non-default transfer (such as
+/// `(2, 8)` linear gray or `(2, 4)` gamma-2.2 gray) default explicitly to D65
+/// white (`CP=1`), matching standard sRGB/H.273 grayscale display white.
+///
 /// After HLG refusal, 164 non-default gray pairs remain eligible with `icc-db`.
 /// Primaries 10 is valid here because only its equal-energy white is needed.
-/// The current stored asset's native-white `wtpt` and quantized curves are known
-/// limitations; the staged correction uses PCS D50 display media white and full
-/// native-white adaptation. See `docs/corrected-icc-export.md` for status.
-/// No database means no GRAY synthesis; off-grid/HLG returns
-/// [`CmsUnsupported`](SynthesizedIcc::CmsUnsupported).
+/// Without `icc-db`, eligible assigned pairs return [`NeedsCms`](SynthesizedIcc::NeedsCms);
+/// unassigned/reserved codes and HLG return [`CmsUnsupported`](SynthesizedIcc::CmsUnsupported)
+/// in every build.
 pub(crate) fn synthesize_gray_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
     if cicp.transfer_characteristics == 18 {
         return SynthesizedIcc::CmsUnsupported;
@@ -365,15 +391,25 @@ pub(crate) fn synthesize_gray_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
         return SynthesizedIcc::NotNeeded;
     }
 
+    // B13: Gray images with CP=2 (Unspecified) + a known non-default assigned transfer
+    // (e.g., Linear TC=8, Gamma 2.2 TC=4) explicitly assume D65 white (CP=1).
+    let eff_cp = if cicp.color_primaries == 2 {
+        1
+    } else {
+        cicp.color_primaries
+    };
+    if !is_assigned_primaries(eff_cp) || !is_assigned_transfer(cicp.transfer_characteristics) {
+        return SynthesizedIcc::CmsUnsupported;
+    }
+
     // The bundle's gray table covers the full assigned grid (`icc-db`);
     // there are no curated `&'static` gray consts (nothing in the wild to
     // byte-match).
     #[cfg(feature = "icc-db")]
     {
-        if let Some(bytes) = cicp_bundle::bundled_gray_profile_for_cicp(
-            cicp.color_primaries,
-            cicp.transfer_characteristics,
-        ) {
+        if let Some(bytes) =
+            cicp_bundle::bundled_gray_profile_for_cicp(eff_cp, cicp.transfer_characteristics)
+        {
             return SynthesizedIcc::Profile(bytes);
         }
 
@@ -515,8 +551,12 @@ mod tests {
             Some(REC2020_V4)
         );
         assert_eq!(
-            bundled_icc_profile(Primaries::AdobeRgb, Transfer::Gamma22),
+            bundled_icc_profile(Primaries::AdobeRgb, Transfer::AdobeRgb),
             Some(ADOBE_RGB)
+        );
+        assert_eq!(
+            bundled_icc_profile(Primaries::AdobeRgb, Transfer::Gamma22),
+            None
         );
     }
 

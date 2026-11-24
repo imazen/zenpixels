@@ -26,10 +26,12 @@ pub enum LightLevelMethod {
     LuminanceBt2020,
 }
 
-/// 1024-bin log2 histogram of per-pixel luminance in cd/m² over `[0.005, 10_000]` nits.
+/// 1024-bin log2 histogram of per-pixel luminance in cd/m² over `[0.005, 10_000]` nits,
+/// tracking exact zero / non-positive counts separately from positive sub-bin samples.
 #[derive(Clone, Debug)]
 pub struct LightLevelHistogram {
     bins: Box<[u64]>,
+    zero_count: u64,
     total: u64,
     sum_nits: f64,
     literal_max_nits: f32,
@@ -48,11 +50,28 @@ impl LightLevelHistogram {
     const LOG2_MAX: f32 = 13.287_712;
     const INV_SPAN: f32 = (Self::NUM_BINS - 1) as f32 / (Self::LOG2_MAX - Self::LOG2_MIN);
 
+    /// Fallibly construct an empty histogram (returns `Err(ConvertError::AllocationFailed)` on OOM).
+    pub fn try_new(method: LightLevelMethod) -> Result<Self, At<ConvertError>> {
+        let mut bins = alloc::vec::Vec::new();
+        bins.try_reserve_exact(Self::NUM_BINS)
+            .map_err(|_| crate::error::err_at(ConvertError::AllocationFailed))?;
+        bins.resize(Self::NUM_BINS, 0u64);
+        Ok(Self {
+            bins: bins.into_boxed_slice(),
+            zero_count: 0,
+            total: 0,
+            sum_nits: 0.0,
+            literal_max_nits: 0.0,
+            method,
+        })
+    }
+
     /// Construct an empty histogram.
     #[must_use]
     pub fn new(method: LightLevelMethod) -> Self {
         Self {
             bins: alloc::vec![0u64; Self::NUM_BINS].into_boxed_slice(),
+            zero_count: 0,
             total: 0,
             sum_nits: 0.0,
             literal_max_nits: 0.0,
@@ -64,7 +83,7 @@ impl LightLevelHistogram {
     #[inline]
     pub fn record(&mut self, nits: f32) {
         if !nits.is_finite() || nits <= 0.0 {
-            self.bins[0] += 1;
+            self.zero_count += 1;
             self.total += 1;
             return;
         }
@@ -98,6 +117,13 @@ impl LightLevelHistogram {
         self.total
     }
 
+    /// Number of recorded zero / non-positive / non-finite samples.
+    #[inline]
+    #[must_use]
+    pub const fn zero_pixels(&self) -> u64 {
+        self.zero_count
+    }
+
     /// Exact literal maximum luminance observed in cd/m².
     #[inline]
     #[must_use]
@@ -116,7 +142,11 @@ impl LightLevelHistogram {
         }
     }
 
-    /// Percentile readout (`p` in `0.0..=1.0`, e.g. `0.9999` for outlier-resistant peak).
+    /// Nearest-rank order-statistic percentile readout (`p` in `0.0..=1.0`, e.g. `0.9999`).
+    ///
+    /// Uses rank `k = ceil(p * total).max(1)` over the sorted sample set (so `p = 0.0`
+    /// returns `0.0` when any black pixel was recorded, and `p = 0.5` on `[0, 1, 100]`
+    /// selects the 2nd sample ≈ `1.0`).
     #[must_use]
     pub fn percentile_nits(&self, p: f32) -> f32 {
         if self.total == 0 {
@@ -125,11 +155,15 @@ impl LightLevelHistogram {
         if p >= 1.0 {
             return self.literal_max_nits;
         }
-        let target = ((self.total as f64) * f64::from(p.clamp(0.0, 1.0))) as u64;
-        let mut acc = 0u64;
+        let p_clamped = if p.is_nan() { 0.0 } else { p.clamp(0.0, 1.0) };
+        let rank = (libm::ceil((self.total as f64) * f64::from(p_clamped)) as u64).max(1);
+        if rank <= self.zero_count {
+            return 0.0;
+        }
+        let mut acc = self.zero_count;
         for (i, &count) in self.bins.iter().enumerate() {
             acc += count;
-            if acc >= target.max(1) {
+            if acc >= rank {
                 if i == 0 {
                     return Self::BIN_MIN_NITS.min(self.literal_max_nits);
                 }
@@ -140,12 +174,12 @@ impl LightLevelHistogram {
         self.literal_max_nits
     }
 
-    /// Convert literal max + mean into [`ContentLightLevel`].
+    /// Convert literal max + mean into ITU-T H.274 / CTA-861.3 upper-bound [`ContentLightLevel`].
     #[must_use]
     pub fn to_content_light_level(&self) -> ContentLightLevel {
         ContentLightLevel::new(
-            (f64::from(self.max_nits()) + 0.5) as u16,
-            (f64::from(self.mean_nits()) + 0.5) as u16,
+            ceil_cll_u16(self.max_nits()),
+            ceil_cll_u16(self.mean_nits()),
         )
     }
 
@@ -153,13 +187,41 @@ impl LightLevelHistogram {
     #[must_use]
     pub fn to_robust_cll(&self, percentile: f32) -> ContentLightLevel {
         ContentLightLevel::new(
-            (f64::from(self.percentile_nits(percentile)) + 0.5) as u16,
-            (f64::from(self.mean_nits()) + 0.5) as u16,
+            ceil_cll_u16(self.percentile_nits(percentile)),
+            ceil_cll_u16(self.mean_nits()),
         )
     }
 }
 
+#[inline]
+fn ceil_cll_u16(nits: f32) -> u16 {
+    if !nits.is_finite() || nits <= 0.0 {
+        return 0;
+    }
+    // Ceiling upper bound per ITU-T H.274 / CTA-861.3, with tiny relative guard so exact
+    // integer light levels with 1-ULP float rounding (e.g. 812.00006) do not jump by +1.
+    let v = f64::from(nits);
+    let adjusted = if v >= 1.0 { v * (1.0 - 1e-6) } else { v };
+    libm::ceil(adjusted).clamp(0.0, f64::from(u16::MAX)) as u16
+}
+
+fn measurement_primaries(spec: &ImageSpec, method: LightLevelMethod) -> zenpixels::Primaries {
+    match method {
+        LightLevelMethod::LuminanceBt2020 => zenpixels::Primaries::Bt2020,
+        LightLevelMethod::MaxRgb => match spec.color {
+            ColorSpace::Rgb { primaries, .. } if primaries != zenpixels::Primaries::Unknown => {
+                primaries
+            }
+            _ => zenpixels::Primaries::Bt2020,
+        },
+    }
+}
+
 /// Measure a full [`LightLevelHistogram`] over any [`PixelSource`] in O(1) row scratch memory.
+///
+/// For [`LightLevelMethod::MaxRgb`], RGB inputs are measured in their **native RGB primaries**
+/// (CTA-861.3 / ITU-T H.274 MaxCLL definition); for [`LightLevelMethod::LuminanceBt2020`],
+/// pixels are linearized into BT.2020 to compute CIE Y luminance.
 pub fn measure_histogram<S: PixelSource + ?Sized>(
     src: &S,
     white: DiffuseWhite,
@@ -169,7 +231,7 @@ pub fn measure_histogram<S: PixelSource + ?Sized>(
     let spec = src.source_spec();
     let w = src.source_width();
     let h = src.source_height();
-    let mut hist = LightLevelHistogram::new(method);
+    let mut hist = LightLevelHistogram::try_new(method)?;
     if w == 0 || h == 0 {
         return Ok(hist);
     }
@@ -177,7 +239,7 @@ pub fn measure_histogram<S: PixelSource + ?Sized>(
     let linear_spec = ImageSpec::new(
         zenpixels::SampleLayout::RGBF32,
         ColorSpace::Rgb {
-            primaries: zenpixels::Primaries::Bt2020,
+            primaries: measurement_primaries(spec, method),
             transfer: Transfer::Linear,
             range: zenpixels::SignalRange::Full,
             alpha: zenpixels::AlphaMode::None,
@@ -234,9 +296,18 @@ pub fn measure_cll<S: PixelSource + ?Sized>(
 
 /// Fast zero-histogram streaming max-luminance peak scan in cd/m² (O(1) row scratch).
 ///
-/// Used by [`ImagePlan`](crate::ImagePlan) when `PeakSource::Measured` is active —
-/// never builds a log histogram and allocates at most one fallibly-reserved `f32`
-/// row (or zero bytes on unpremultiplied BT.2020 Linear F32 / Full PQ U16).
+/// Measures native-primaries `MaxRgb` peak luminance without building a log histogram,
+/// allocating at most one fallibly-reserved `f32` row (or zero bytes on unpremultiplied
+/// Linear F32 / Full PQ U16 RGB sources).
+pub fn measure_peak<S: PixelSource + ?Sized>(
+    src: &S,
+    white: DiffuseWhite,
+    hlg_rendering: Option<HlgRendering>,
+) -> Result<f32, At<ConvertError>> {
+    measure_max_nits_streaming(src, white, hlg_rendering)
+}
+
+/// Fast zero-histogram streaming max-luminance peak scan in cd/m² (O(1) row scratch).
 pub(crate) fn measure_max_nits_streaming<S: PixelSource + ?Sized>(
     src: &S,
     white: DiffuseWhite,
@@ -249,16 +320,16 @@ pub(crate) fn measure_max_nits_streaming<S: PixelSource + ?Sized>(
         return Ok(0.0);
     }
 
-    // Zero-allocation fast paths ONLY when source is already BT.2020 RGB and NOT premultiplied
-    // (so peak matches the decoded BT.2020 working-space definition identically!).
+    // Zero-allocation fast paths for unpremultiplied native-primaries Linear F32 or Full PQ U16 RGB.
     if spec.layout.packing.is_full() {
         if let ColorSpace::Rgb {
-            primaries: zenpixels::Primaries::Bt2020,
+            primaries,
             transfer: Transfer::Linear,
             range: zenpixels::SignalRange::Full,
             alpha,
             white: src_white,
         } = spec.color
+            && primaries != zenpixels::Primaries::Unknown
             && alpha != zenpixels::AlphaMode::Premultiplied
             && spec.layout.sample == SampleType::F32
         {
@@ -279,12 +350,13 @@ pub(crate) fn measure_max_nits_streaming<S: PixelSource + ?Sized>(
             return Ok(max_v * eff_white);
         }
         if let ColorSpace::Rgb {
-            primaries: zenpixels::Primaries::Bt2020,
+            primaries,
             transfer: Transfer::Pq,
             range: zenpixels::SignalRange::Full,
             alpha,
             ..
         } = spec.color
+            && primaries != zenpixels::Primaries::Unknown
             && alpha != zenpixels::AlphaMode::Premultiplied
             && spec.layout.sample == SampleType::U16
         {
@@ -324,7 +396,7 @@ pub(crate) fn measure_max_nits_streaming<S: PixelSource + ?Sized>(
     let linear_spec = ImageSpec::new(
         zenpixels::SampleLayout::RGBF32,
         ColorSpace::Rgb {
-            primaries: zenpixels::Primaries::Bt2020,
+            primaries: measurement_primaries(spec, LightLevelMethod::MaxRgb),
             transfer: Transfer::Linear,
             range: zenpixels::SignalRange::Full,
             alpha: zenpixels::AlphaMode::None,

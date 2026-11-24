@@ -340,6 +340,140 @@ struct AxisWeights {
     max_taps: usize,
 }
 
+/// Compute exact trimmed nonzero resampling taps for a single output coordinate `o` on stack
+/// (`0` heap allocations). Only rejects with `UnsupportedRoute` if the **actual** trimmed nonzero
+/// tap count exceeds `max_allowed_taps` (fixes B30: 128→4 bilinear has 64 actual taps and succeeds!).
+#[inline]
+fn compute_axis_taps_stack(
+    in_size: u32,
+    out_size: u32,
+    mode: GainMapResample,
+    o: u32,
+    max_allowed_taps: usize,
+    out_weights: &mut [f32; MAX_APPLY_RESAMPLE_TAPS],
+) -> Result<(u32, usize), ConvertError> {
+    const WEIGHT_EPS: f64 = 2e-8;
+    if in_size == 0 || out_size == 0 {
+        return Err(ConvertError::DimensionMismatch);
+    }
+    let max_in = i64::from(in_size - 1);
+    if mode == GainMapResample::Nearest {
+        let ratio = f64::from(in_size) / f64::from(out_size);
+        let idx = (libm::floor((f64::from(o) + 0.5) * ratio) as i64).clamp(0, max_in) as u32;
+        out_weights[0] = 1.0;
+        return Ok((idx, 1));
+    }
+
+    let scale = f64::from(out_size) / f64::from(in_size);
+    let downscale = scale.min(1.0);
+    let base_win = match mode {
+        GainMapResample::Bilinear => 1.0,
+        GainMapResample::Bicubic | GainMapResample::Mitchell => 2.0,
+        GainMapResample::Nearest => 0.5,
+    };
+    let eff_window = base_win / downscale;
+    // Fast conservative reject only when even the strict interior support exceeds budget.
+    if (2.0 * eff_window) > (max_allowed_taps as f64) + 2.0
+        && u64::from(in_size) > max_allowed_taps as u64
+    {
+        return Err(ConvertError::UnsupportedRoute);
+    }
+
+    let center = (f64::from(o) + 0.5) / scale - 0.5;
+    let lp = (libm::ceil(center - eff_window - 1e-4) as i64).max(0);
+    let rp = (libm::floor(center + eff_window + 1e-4) as i64).min(max_in);
+
+    // Collect nonzero weights on stack, trimming leading/trailing exact zeros before checking count.
+    let mut tmp = [0.0f64; MAX_APPLY_RESAMPLE_TAPS + 6];
+    let mut len = 0usize;
+    let mut total = 0.0f64;
+    let mut trimmed_left = lp.min(max_in) as u32;
+    let mut seen_nonzero = false;
+
+    if lp <= rp {
+        let mut inp = lp;
+        while inp <= rp {
+            let x = downscale * ((inp as f64) - center);
+            let mut w = eval_resample_kernel(mode, x);
+            if w.abs() <= WEIGHT_EPS {
+                w = 0.0;
+            }
+            if !seen_nonzero {
+                if w == 0.0 {
+                    trimmed_left += 1;
+                    inp += 1;
+                    continue;
+                }
+                seen_nonzero = true;
+            }
+            if len >= tmp.len() {
+                return Err(ConvertError::UnsupportedRoute);
+            }
+            tmp[len] = w;
+            len += 1;
+            total += w;
+            inp += 1;
+        }
+        while len > 0 && tmp[len - 1] == 0.0 {
+            len -= 1;
+        }
+        if total != 0.0 && len > 0 {
+            let inv = 1.0 / total;
+            for w in &mut tmp[..len] {
+                *w *= inv;
+            }
+        } else {
+            len = 0;
+        }
+    }
+
+    if len == 0 {
+        let nearest = (libm::round(center) as i64).clamp(0, max_in) as u32;
+        out_weights[0] = 1.0;
+        return Ok((nearest, 1));
+    }
+    if len > max_allowed_taps {
+        return Err(ConvertError::UnsupportedRoute);
+    }
+    let mut sum = 0.0f32;
+    for j in 0..len {
+        let wf = tmp[j] as f32;
+        out_weights[j] = wf;
+        sum += wf;
+    }
+    if sum != 0.0 {
+        let inv = 1.0f32 / sum;
+        for v in &mut out_weights[..len] {
+            *v *= inv;
+        }
+    }
+    Ok((trimmed_left, len))
+}
+
+/// Probe exact maximum vertical tap count across `0..out_size` in **O(1) stack memory**
+/// (zero heap allocation, independent of image height — B30).
+fn probe_max_axis_taps(
+    in_size: u32,
+    out_size: u32,
+    mode: GainMapResample,
+    max_allowed_taps: usize,
+) -> Result<usize, ConvertError> {
+    if in_size == 0 || out_size == 0 {
+        return Err(ConvertError::DimensionMismatch);
+    }
+    if mode == GainMapResample::Nearest {
+        return Ok(1);
+    }
+    let mut ws = [0.0f32; MAX_APPLY_RESAMPLE_TAPS];
+    let mut max_taps = 1usize;
+    for o in 0..out_size {
+        let (_, count) =
+            compute_axis_taps_stack(in_size, out_size, mode, o, max_allowed_taps, &mut ws)?;
+        max_taps = max_taps.max(count);
+    }
+    Ok(max_taps)
+}
+
 impl AxisWeights {
     #[inline(never)]
     fn try_new(
@@ -348,7 +482,6 @@ impl AxisWeights {
         mode: GainMapResample,
         max_allowed_taps: usize,
     ) -> Result<Self, ConvertError> {
-        const WEIGHT_EPS: f64 = 2e-8;
         if in_size == 0 || out_size == 0 {
             return Err(ConvertError::DimensionMismatch);
         }
@@ -375,20 +508,9 @@ impl AxisWeights {
             });
         }
 
-        let scale = f64::from(out_size) / f64::from(in_size);
-        let downscale = scale.min(1.0);
-        let base_win = match mode {
-            GainMapResample::Bilinear => 1.0,
-            GainMapResample::Bicubic | GainMapResample::Mitchell => 2.0,
-            GainMapResample::Nearest => 0.5,
-        };
-        let eff_window = base_win / downscale;
-        let raw_bound = (libm::ceil(2.0 * eff_window) as u64).saturating_add(2);
-        let stride_u64 = raw_bound.min(u64::from(in_size)).max(1);
-        if stride_u64 > max_allowed_taps as u64 {
-            return Err(ConvertError::UnsupportedRoute);
-        }
-        let weights_stride = stride_u64 as usize;
+        // First pass (zero heap alloc): measure exact max_taps and reject only if actual > max_allowed_taps!
+        let max_taps = probe_max_axis_taps(in_size, out_size, mode, max_allowed_taps)?;
+        let weights_stride = max_taps.max(1);
 
         let mut tap_counts = Vec::new();
         tap_counts
@@ -403,77 +525,14 @@ impl AxisWeights {
             .map_err(|_| ConvertError::AllocationFailed)?;
         weights_flat.resize(flat_len, 0.0f32);
 
-        let mut tmp: Vec<f64> = Vec::new();
-        tmp.try_reserve_exact(weights_stride)
-            .map_err(|_| ConvertError::AllocationFailed)?;
-
-        let max_in = i64::from(in_size - 1);
-        let mut max_taps = 1usize;
-
+        let mut ws = [0.0f32; MAX_APPLY_RESAMPLE_TAPS];
         for o in 0..out_size {
-            tmp.clear();
-            let center = (f64::from(o) + 0.5) / scale - 0.5;
-            let left_edge = libm::ceil(center - eff_window - 1e-4) as i64;
-            let right_edge = libm::floor(center + eff_window + 1e-4) as i64;
-            let lp = left_edge.max(0);
-            let rp = right_edge.min(max_in);
-
-            let mut trimmed_left = lp.min(max_in) as u32;
-            if lp <= rp {
-                let mut total = 0.0f64;
-                let mut inp = lp;
-                while inp <= rp {
-                    let x = downscale * ((inp as f64) - center);
-                    let mut w = eval_resample_kernel(mode, x);
-                    if w.abs() <= WEIGHT_EPS {
-                        w = 0.0;
-                    }
-                    tmp.push(w);
-                    total += w;
-                    inp += 1;
-                }
-                if total != 0.0 {
-                    let inv = 1.0 / total;
-                    for w in &mut tmp {
-                        *w *= inv;
-                    }
-                } else {
-                    tmp.clear();
-                }
-                while tmp.last() == Some(&0.0) {
-                    tmp.pop();
-                }
-                let leading_zeros = tmp.iter().take_while(|&&w| w == 0.0).count();
-                if leading_zeros > 0 {
-                    tmp.drain(..leading_zeros);
-                    trimmed_left += leading_zeros as u32;
-                }
-            }
-            if tmp.is_empty() {
-                let nearest = (libm::round(center) as i64).clamp(0, max_in) as u32;
-                trimmed_left = nearest;
-                tmp.push(1.0);
-            }
-            if tmp.len() > weights_stride {
-                return Err(ConvertError::UnsupportedRoute);
-            }
-            max_taps = max_taps.max(tmp.len());
-            left.push(trimmed_left);
-            tap_counts.push(tmp.len() as u16);
-
+            let (l, count) =
+                compute_axis_taps_stack(in_size, out_size, mode, o, max_allowed_taps, &mut ws)?;
+            left.push(l);
+            tap_counts.push(count as u16);
             let off = (o as usize) * weights_stride;
-            let mut sum = 0.0f32;
-            for (j, &w) in tmp.iter().enumerate() {
-                let wf = w as f32;
-                weights_flat[off + j] = wf;
-                sum += wf;
-            }
-            if sum != 0.0 {
-                let inv = 1.0f32 / sum;
-                for v in &mut weights_flat[off..off + tmp.len()] {
-                    *v *= inv;
-                }
-            }
+            weights_flat[off..off + count].copy_from_slice(&ws[..count]);
         }
 
         Ok(Self {
@@ -654,7 +713,6 @@ pub struct GainMapApplier {
     zero_weight_direct: Option<RowPlan>,
 
     h_weights: Option<AxisWeights>,
-    v_weights: Option<AxisWeights>,
     /// Cached gain-map row index per slot (`u32::MAX` = empty/invalid).
     cache_gm_y: Vec<u32>,
     /// Flat cache storage: `[slot * gm_ch * w_pad + c * w_pad .. +w_pad]`, lanes `w..w_pad` zeroed.
@@ -668,6 +726,8 @@ pub struct GainMapApplier {
     gm_decode_scratch: Vec<f32>,
     /// Flat vertically-blended gain samples: `[c * w_pad .. (c + 1) * w_pad]`.
     v_blend: Vec<f32>,
+    /// Padded scratch for SIMD `gamma_pow` when `inv_gamma != 1.0` (`0` bytes when `gamma == 1.0`).
+    gamma_tmp: Vec<f32>,
     /// Flat linear gain multipliers: `[c * w_pad .. (c + 1) * w_pad]`.
     gains: Vec<f32>,
 }
@@ -908,16 +968,22 @@ impl GainMapApplier {
             .or(config.policy.sdr_white)
             .unwrap_or(DiffuseWhite::BT2408);
 
-        let app_primaries = match metadata.application_space {
-            GainMapColorSpace::Base => resolve_linear_rgb_primaries(&base_spec.color)
+        let app_primaries = if sw == 0.0 {
+            resolve_linear_rgb_primaries(&base_spec.color)
                 .map(|(p, _)| p)
-                .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?,
-            GainMapColorSpace::Alternate => {
-                let alt =
-                    alternate_color_space.ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
-                resolve_linear_rgb_primaries(alt)
+                .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?
+        } else {
+            match metadata.application_space {
+                GainMapColorSpace::Base => resolve_linear_rgb_primaries(&base_spec.color)
                     .map(|(p, _)| p)
-                    .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?
+                    .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?,
+                GainMapColorSpace::Alternate => {
+                    let alt = alternate_color_space
+                        .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
+                    resolve_linear_rgb_primaries(alt)
+                        .map(|(p, _)| p)
+                        .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?
+                }
             }
         };
 
@@ -980,9 +1046,10 @@ impl GainMapApplier {
             && gm_layout.packing.is_full()
             && (same_size || config.resample == GainMapResample::Nearest);
 
-        // Phase 2: Build resampling weights (before `RowPlan`s so errors don't emit RowPlan drops).
-        let (h_weights, v_weights, cache_slots) = if is_zero_weight || same_size {
-            (None, None, 0usize)
+        // Phase 2: Build horizontal resampling weights (O(width)) and probe vertical max taps
+        // in O(1) stack memory (zero O(height * taps) heap allocation — B30!).
+        let (h_weights, cache_slots) = if is_zero_weight || same_size {
+            (None, 0usize)
         } else {
             let mode = if use_u8_lut {
                 GainMapResample::Nearest
@@ -991,10 +1058,10 @@ impl GainMapApplier {
             };
             let hw = AxisWeights::try_new(gm_w, base_w, mode, MAX_APPLY_RESAMPLE_TAPS)
                 .map_err(err_at)?;
-            let vw = AxisWeights::try_new(gm_h, base_h, mode, MAX_APPLY_RESAMPLE_TAPS)
-                .map_err(err_at)?;
-            let slots = if use_u8_lut { 0 } else { vw.max_taps.max(1) };
-            (Some(hw), Some(vw), slots)
+            let v_max_taps =
+                probe_max_axis_taps(gm_h, base_h, mode, MAX_APPLY_RESAMPLE_TAPS).map_err(err_at)?;
+            let slots = if use_u8_lut { 0 } else { v_max_taps.max(1) };
+            (Some(hw), slots)
         };
 
         // Phase 3: Build `RowPlan`s (`RowPlan::build` validates `base_spec` & `dst_spec`).
@@ -1051,6 +1118,16 @@ impl GainMapApplier {
             !is_zero_weight && !use_u8_lut,
             !is_zero_weight,
         )?;
+        let need_gamma_tmp = !is_zero_weight
+            && !use_u8_lut
+            && inv_gamma
+                .iter()
+                .any(|&g| (g - 1.0).abs() >= 1e-7 && (0.25..=3.0).contains(&g));
+        let gamma_tmp = if need_gamma_tmp {
+            alloc_f32(w_pad)?
+        } else {
+            Vec::new()
+        };
         let u8_gain_lut = if use_u8_lut {
             Some(build_u8_gain_lut(base_w_g, slope_w_g, inv_gamma))
         } else {
@@ -1089,7 +1166,6 @@ impl GainMapApplier {
             app_to_dst,
             zero_weight_direct,
             h_weights,
-            v_weights,
             cache_gm_y: scratch.cache_gm_y,
             cache_planes: scratch.cache_planes,
             cache_cursor: 0,
@@ -1098,6 +1174,7 @@ impl GainMapApplier {
             out_lin_row: scratch.out_lin_row,
             gm_decode_scratch: scratch.gm_decode_scratch,
             v_blend: scratch.v_blend,
+            gamma_tmp,
             gains: scratch.gains,
         })
     }
@@ -1345,10 +1422,12 @@ impl GainMapApplier {
         lut: &[[f32; 256]; 3],
         fetch_gm_row: &mut dyn FnMut(u32) -> Result<&'a [u8], At<ConvertError>>,
     ) -> Result<(), At<ConvertError>> {
-        let gy = if let Some(vw) = &self.v_weights {
-            vw.left[y as usize]
-        } else {
+        let gy = if self.same_size {
             y
+        } else {
+            let ratio = f64::from(self.gm_h) / f64::from(self.base_h);
+            let max_in = i64::from(self.gm_h - 1);
+            (libm::floor((f64::from(y) + 0.5) * ratio) as i64).clamp(0, max_in) as u32
         };
         let row = fetch_gm_row(gy)?;
         if row.len() < self.gm_row_bytes {
@@ -1441,6 +1520,20 @@ impl GainMapApplier {
                 for (x, out) in dst_plane.iter_mut().enumerate() {
                     *out = src_plane[hw.left[x] as usize];
                 }
+            } else if hw.max_taps == 2 {
+                // Fast unrolled 2-tap horizontal bilinear loop (eliminates inner slice/loop overhead).
+                let lefts = hw.left.as_slice();
+                let counts = hw.tap_counts.as_slice();
+                let wflat = hw.weights_flat.as_slice();
+                for x in 0..w {
+                    let l = lefts[x] as usize;
+                    let off = x * 2;
+                    dst_plane[x] = if counts[x] == 2 {
+                        src_plane[l] * wflat[off] + src_plane[l + 1] * wflat[off + 1]
+                    } else {
+                        src_plane[l] * wflat[off]
+                    };
+                }
             } else {
                 for (x, out) in dst_plane.iter_mut().enumerate() {
                     let (left, ws) = hw.taps(x);
@@ -1484,11 +1577,16 @@ impl GainMapApplier {
             return Ok(());
         }
 
-        let (v_left, v_count) = {
-            let vw = self.v_weights.as_ref().unwrap();
-            let (l, ws) = vw.taps(y as usize);
-            (l, ws.len())
-        };
+        let mut v_ws_buf = [0.0f32; MAX_APPLY_RESAMPLE_TAPS];
+        let (v_left, v_count) = compute_axis_taps_stack(
+            self.gm_h,
+            self.base_h,
+            self.resample,
+            y,
+            MAX_APPLY_RESAMPLE_TAPS,
+            &mut v_ws_buf,
+        )
+        .map_err(err_at)?;
         let keep_end = v_left + v_count as u32;
 
         for t in 0..v_count {
@@ -1496,8 +1594,7 @@ impl GainMapApplier {
             self.v_slot_indices[t] = idx;
         }
 
-        let vw = self.v_weights.as_ref().unwrap();
-        let (_, ws) = vw.taps(y as usize);
+        let ws = &v_ws_buf[..v_count];
         let blend2 = self.accel.gainmap_blend_2.unwrap_or(blend_rows_2_scalar);
         let blend4 = self.accel.gainmap_blend_4.unwrap_or(blend_rows_4_scalar);
         let slot_stride = self.gm_ch * w_pad;
@@ -1557,6 +1654,10 @@ impl GainMapApplier {
         let w = self.base_w as usize;
         let w_pad = self.w_pad;
         let decode_fn = self.accel.gainmap_decode.unwrap_or(decode_gain_1ch_scalar);
+        let pow_fn = self
+            .accel
+            .gamma_pow
+            .unwrap_or(crate::transfers::gamma_pow_scalar_slice);
         let channels = if self.gm_ch == 3 || !self.shared_meta {
             3usize
         } else {
@@ -1566,13 +1667,28 @@ impl GainMapApplier {
             let src_off = if self.gm_ch == 3 { c * w_pad } else { 0 };
             let samples = &self.v_blend[src_off..src_off + w_pad];
             let dst = &mut self.gains[c * w_pad..(c + 1) * w_pad];
-            if (self.inv_gamma[c] - 1.0).abs() < 1e-7 {
+            let inv_g = self.inv_gamma[c];
+            if (inv_g - 1.0).abs() < 1e-7 {
                 decode_fn(samples, self.base_w_g[c], self.slope_w_g[c], dst);
+            } else if (0.25..=3.0).contains(&inv_g) && self.gamma_tmp.len() >= w_pad {
+                // Vectorized zero-codegen-overhead `powf` reusing `transfers::TRANSFER_POW`
+                // (`gamma_pow_simd_slice` / `gamma_pow_scalar_slice` with 0-bit parity!).
+                let tmp = &mut self.gamma_tmp[..w_pad];
+                for i in 0..w_pad {
+                    let raw = samples[i];
+                    tmp[i] = if raw > 0.0 {
+                        if raw < 1.0 { raw } else { 1.0 }
+                    } else {
+                        0.0
+                    };
+                }
+                pow_fn(tmp, inv_g, f64::from(inv_g));
+                decode_fn(tmp, self.base_w_g[c], self.slope_w_g[c], dst);
             } else {
                 decode_gain_gamma_scalar(
                     samples,
                     w,
-                    self.inv_gamma[c],
+                    inv_g,
                     self.base_w_g[c],
                     self.slope_w_g[c],
                     dst,
@@ -1750,14 +1866,20 @@ pub fn apply_gain_map_view(
 /// target headroom/rendition, resampling kernel, orientation policy, conversion policy,
 /// optional target [`ImageSpec`], and cooperative [`enough::Stop`] cancellation.
 ///
-/// When using [`GainMapOrientation::Passthrough`], prefer [`apply_gain_map_oriented`] to
-/// receive the pending [`Orientation`] alongside the buffer.
+/// Refuses [`GainMapOrientation::Passthrough`] when `dual.orientation() != Orientation::Identity`
+/// so a pending rotation is never silently discarded (use [`apply_gain_map_oriented`] when you
+/// want the stored-coordinate buffer paired with its pending [`Orientation`]).
 #[inline]
 pub fn apply_gain_map_with(
     dual: &DualLayerHdrView<'_>,
     config: &GainMapApplyConfig,
     stop: &dyn Stop,
 ) -> Result<PixelBuf, At<ConvertError>> {
+    if config.orientation == GainMapOrientation::Passthrough
+        && dual.orientation() != Orientation::Identity
+    {
+        return Err(err_at(ConvertError::UnsupportedRoute));
+    }
     let (buf, _) = apply_gain_map_oriented(dual, config, stop)?;
     Ok(buf)
 }
@@ -1791,15 +1913,14 @@ pub fn rotate_dual_layer(
     let total = dual.orientation().then(delta);
     let base = orient::apply_orientation(dual.base(), total)?;
     let gain_map = orient::apply_orientation(dual.gain_map(), total)?;
-    let dual_out = DualLayerHdr::new(base, gain_map, dual.metadata())
-        .map_err(|e| err_at((*e.error()).into()))?;
-    if let Some(alt) = dual.alternate_color_space() {
-        dual_out
-            .with_alternate_color_space(alt.clone())
-            .map_err(|e| err_at((*e.error()).into()))
-    } else {
-        Ok(dual_out)
-    }
+    DualLayerHdr::new_with_alternate(
+        base,
+        gain_map,
+        dual.metadata(),
+        dual.alternate_color_space().cloned(),
+        Orientation::Identity,
+    )
+    .map_err(|e| err_at((*e.error()).into()))
 }
 
 // ---------------------------------------------------------------------------
@@ -2494,16 +2615,21 @@ pub fn extract_gain_map(
     let base_owned = base_src
         .try_to_tight_buf()
         .map_err(|e| err_at((*e.error()).into()))?;
-    let dual = DualLayerHdr::new(base_owned, gain_buf, metadata)
-        .map_err(|e| err_at((*e.error()).into()))?;
-    if metadata.application_space == GainMapColorSpace::Alternate
+    let alt_color = if metadata.application_space == GainMapColorSpace::Alternate
         || alternate_src.spec().color != base_src.spec().color
     {
-        dual.with_alternate_color_space(alternate_src.spec().color.clone())
-            .map_err(|e| err_at((*e.error()).into()))
+        Some(alternate_src.spec().color.clone())
     } else {
-        Ok(dual)
-    }
+        None
+    };
+    DualLayerHdr::new_with_alternate(
+        base_owned,
+        gain_buf,
+        metadata,
+        alt_color,
+        Orientation::Identity,
+    )
+    .map_err(|e| err_at((*e.error()).into()))
 }
 
 type ObservedGainRange = Option<(f32, f32)>;

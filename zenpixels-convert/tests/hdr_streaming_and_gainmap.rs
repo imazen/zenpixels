@@ -930,6 +930,20 @@ fn gainmap_orientation_models_bake_passthrough_require_identity_and_dual_layer_r
         assert_eq!((stored_buf.width(), stored_buf.height()), (w, h));
         assert_eq!(out_orient, orient);
 
+        // A07: Pixel-only `apply_gain_map_with` MUST refuse `Passthrough` on non-Identity
+        // orientations (since it cannot return the pending EXIF transform), while accepting Identity.
+        let px_only_pass = zenpixels_convert::apply_gain_map_with(&view, &cfg_pass, &Unstoppable);
+        if orient == Orientation::Identity {
+            let buf = px_only_pass.unwrap();
+            assert_eq!(buf.as_view().row(0), stored_buf.as_view().row(0));
+        } else {
+            assert_eq!(
+                *px_only_pass.unwrap_err().error(),
+                ConvertError::UnsupportedRoute,
+                "apply_gain_map_with must refuse Passthrough on non-Identity {orient:?}"
+            );
+        }
+
         // Streaming applier reports pending orientation faithfully.
         let applier = GainMapApplier::for_view(&view, &cfg_pass).unwrap();
         assert_eq!(applier.orientation(), orient);
@@ -1287,9 +1301,24 @@ fn gainmap_codex_p1_regressions_and_edge_cases() {
         gm_out[0]
     );
 
-    // P2: AlphaMode::Opaque on 4-ch base + RGBF32 target succeeds under default AlphaPolicy::ForbidLoss!
-    let opaque_base =
+    // A09 + B07: Newly allocated AlphaMode::Opaque buffer initializes stored alpha to 255,
+    // and non-black RGB pixels reconstruct faithfully when targeting RGBF32 under ForbidLoss!
+    let mut opaque_base =
         PixelBuf::new(8, 4, ImageSpec::rgba8_srgb().with_alpha(AlphaMode::Opaque)).unwrap();
+    for y in 0..4 {
+        for px in opaque_base.as_view().row(y).as_chunks::<4>().0 {
+            assert_eq!(
+                px,
+                &[0, 0, 0, 255],
+                "AlphaMode::Opaque must zero-init alpha=255"
+            );
+        }
+    }
+    for y in 0..4 {
+        for px in opaque_base.as_view_mut().row_mut(y).as_chunks_mut::<4>().0 {
+            px.copy_from_slice(&[180, 120, 60, 255]);
+        }
+    }
     let opaque_dual = DualLayerHdrView::new(
         opaque_base.as_view(),
         gm.as_view(),
@@ -1305,6 +1334,12 @@ fn gainmap_codex_p1_regressions_and_edge_cases() {
     )
     .unwrap();
     assert_eq!(rgb_out.spec().layout.order, ChannelOrder::Rgb);
+    let out_px = rgb_out.as_view().row_as::<f32>(0).unwrap();
+    assert!(
+        out_px[0] > out_px[1] && out_px[1] > out_px[2] && out_px[2] > 0.01,
+        "reconstructed RGB must reflect non-black base [180,120,60], got {:?}",
+        &out_px[0..3]
+    );
 
     // P2: Dynamic denominator avoids clamping values > 2147.48 in to_metadata().
     let big_meta = GainMapExtractConfig::default()

@@ -47,6 +47,7 @@ pub(crate) type Srgb8MatrixQ14Fn = fn(
     bool,
 );
 pub(crate) type TransferSliceFn = fn(&mut [f32]);
+pub(crate) type GammaPowSliceFn = fn(&mut [f32], f32, f64);
 #[cfg(feature = "hdr-transfers")]
 pub(crate) type ScaledTransferSliceFn = fn(&mut [f32], f32);
 pub(crate) type GamutSoaFn = fn(&[[f32; 3]; 3], &mut [f32], &mut [f32], &mut [f32]);
@@ -107,10 +108,13 @@ pub struct Accelerators {
     pub(crate) bt709_eotf: Option<TransferSliceFn>,
     /// SIMD BT.709 OETF on `f32` slices.
     pub(crate) bt709_oetf: Option<TransferSliceFn>,
-    /// SIMD Adobe Gamma 2.2 (`563/256`) EOTF on `f32` slices.
+    /// SIMD ITU-T H.273 Gamma 2.2 (`2.2`) EOTF on `f32` slices.
     pub(crate) gamma22_eotf: Option<TransferSliceFn>,
-    /// SIMD Adobe Gamma 2.2 (`256/563`) OETF on `f32` slices.
+    /// SIMD ITU-T H.273 Gamma 2.2 (`1/2.2`) OETF on `f32` slices.
     pub(crate) gamma22_oetf: Option<TransferSliceFn>,
+    /// Shared SIMD power slice (`exp in [0.25, 3.0]`) for Adobe RGB (`563/256`), DCI Cinema (`2.6`),
+    /// and gain-map non-unit gamma (reuses `gamma_slice` with zero extra monomorphizations).
+    pub(crate) gamma_pow: Option<GammaPowSliceFn>,
     /// SIMD 3×3 linear gamut multiply on SoA `r/g/b` slices.
     pub(crate) gamut_3x3: Option<GamutSoaFn>,
     /// SIMD `f16 → f32` decode (`F16C` / `NEON-fp16`).
@@ -202,6 +206,7 @@ impl PartialEq for Accelerators {
             && self.bt709_oetf.is_some() == other.bt709_oetf.is_some()
             && self.gamma22_eotf.is_some() == other.gamma22_eotf.is_some()
             && self.gamma22_oetf.is_some() == other.gamma22_oetf.is_some()
+            && self.gamma_pow.is_some() == other.gamma_pow.is_some()
             && self.gamut_3x3.is_some() == other.gamut_3x3.is_some()
             && self.f16_decode.is_some() == other.f16_decode.is_some()
             && self.f16_encode.is_some() == other.f16_encode.is_some();
@@ -263,6 +268,7 @@ impl Accelerators {
         bt709_oetf: None,
         gamma22_eotf: None,
         gamma22_oetf: None,
+        gamma_pow: None,
         gamut_3x3: None,
         f16_decode: None,
         f16_encode: None,
@@ -396,12 +402,13 @@ impl Accelerators {
         self
     }
 
-    /// Enable SIMD Adobe Gamma 2.2 (`563/256`) EOTF & OETF (`magemath::Powf`).
+    /// Enable SIMD Gamma 2.2 (`2.2`), Adobe RGB (`563/256`), and DCI Cinema (`2.6`) EOTF & OETF (`magemath::Powf`).
     #[inline]
     #[must_use]
     pub const fn with_gamma22(mut self) -> Self {
         self.gamma22_eotf = Some(crate::transfers::gamma22_eotf_simd_slice);
         self.gamma22_oetf = Some(crate::transfers::gamma22_oetf_simd_slice);
+        self.gamma_pow = Some(crate::transfers::gamma_pow_simd_slice);
         self
     }
 
@@ -434,6 +441,7 @@ impl Accelerators {
         self.gainmap_blend_4 = Some(crate::gainmap_simd::simd_blend_rows_4);
         self.gainmap_decode = Some(crate::gainmap_simd::simd_decode_gain_1ch);
         self.gainmap_combine = Some(crate::gainmap_simd::simd_combine_linear_f32);
+        self.gamma_pow = Some(crate::transfers::gamma_pow_simd_slice);
         self
     }
 
@@ -505,6 +513,7 @@ impl Accelerators {
             bt709_oetf: pick!(bt709_oetf),
             gamma22_eotf: pick!(gamma22_eotf),
             gamma22_oetf: pick!(gamma22_oetf),
+            gamma_pow: pick!(gamma_pow),
             gamut_3x3: pick!(gamut_3x3),
             f16_decode: pick!(f16_decode),
             f16_encode: pick!(f16_encode),

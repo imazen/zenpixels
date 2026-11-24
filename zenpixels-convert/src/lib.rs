@@ -38,6 +38,7 @@ pub use zenpixels::*;
 
 pub mod accel;
 pub mod cms;
+pub mod codes;
 pub mod error;
 pub(crate) mod f16_scalar;
 #[cfg(feature = "gainmap")]
@@ -48,6 +49,7 @@ pub mod gamut;
 #[cfg(feature = "hdr-transfers")]
 pub(crate) mod hlg_render;
 pub mod icc_profiles;
+pub mod load_bearing;
 pub mod measure;
 pub mod negotiate;
 #[cfg(feature = "oklab")]
@@ -72,6 +74,7 @@ pub use cms::MoxCms;
 pub use cms::{CmsBackend, CmsTransform};
 #[cfg(feature = "cms-lcms")]
 pub use cms::{Lcms, LcmsUnoptimized};
+pub use codes::{CodeMap, CodeMapError, CodeRole, CodesError, to_canonical};
 pub use error::ConvertError;
 #[cfg(feature = "gainmap")]
 pub use gainmap::{
@@ -81,9 +84,12 @@ pub use gainmap::{
     extract_gain_map, extract_gain_map_only, rotate_dual_layer,
 };
 pub use gamut::GamutMatrix;
-pub use measure::{LightLevelHistogram, LightLevelMethod, measure_cll, measure_histogram};
+pub use load_bearing::{LoadBearingReport, PixelBufLoadBearingExt, PixelViewLoadBearingExt};
+pub use measure::{
+    LightLevelHistogram, LightLevelMethod, measure_cll, measure_histogram, measure_peak,
+};
 pub use negotiate::{FormatCost, LossKind, Negotiate, NegotiatedFormat};
-pub use orient::{apply_orientation, apply_orientation_into};
+pub use orient::{apply_orientation, apply_orientation_into, orient_buf};
 pub use output::{EncodeReady, OutputPlan, OutputProfile};
 pub use plan::{ImagePlan, RowPlan, convert_buf, convert_into};
 pub use policy::{
@@ -95,4 +101,4 @@ pub use tonemap::Bt2446A;
 #[cfg(feature = "oklab")]
 pub use tonemap::SoftCompress;
 pub use tonemap::{PreparedMapper, Requirements, StripMapper, ToneMapContext, ToneMapper};
-pub use ycbcr::{YcbcrMatrix, ycbcr_to_rgb_f32};
+pub use ycbcr::{YcbcrMatrix, ycbcr_to_rgb_f32, ycbcr_to_rgb_into};

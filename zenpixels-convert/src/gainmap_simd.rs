@@ -19,10 +19,12 @@ const MATH_PORTABILITY: magemath::Portability = if cfg!(all(
     magemath::Portability::BitExact
 };
 
-/// Defense-in-depth log₂ gain bound matching `ultrahdr-core`: `2^±30 ≈ [9.3e-10, 1.07e9]`.
-pub(crate) const MAX_LOG2_GAIN: f32 = 30.0;
+/// Defense-in-depth log₂ gain bound strictly inside IEEE binary32 normal range (`ExpfDomain::NormalOutput`
+/// covers `[-126, +127]`): `2^±120 ≈ [7.5e-37, 1.33e36]`, keeping all finite ISO 21496-1 stops
+/// (including `±31`, `±40`) exact while preventing non-finite overflow on adversarial metadata (B29).
+pub(crate) const MAX_LOG2_GAIN: f32 = 120.0;
 
-/// Portable bit-exact `exp2f` profile for log₂ gains in `[-30, +30]` (strictly inside `NormalOutput`).
+/// Portable bit-exact `exp2f` profile for log₂ gains in `[-120, +120]` (strictly inside `NormalOutput`).
 const GAINMAP_EXP_OPT: u128 = ExpfOptions::new()
     .domain(ExpfDomain::NormalOutput)
     .portability(MATH_PORTABILITY)
