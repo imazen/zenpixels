@@ -8,28 +8,54 @@ r2_prefix := "icc-profiles/"
 # Run all checks (fmt, clippy, test)
 ci: fmt clippy test
 
-# The rustdoc-JSON nightly for the public-API snapshots is PINNED (keep in
-# sync with the `api-doc` job in .github/workflows/ci.yml). An unpinned
-# tracking nightly churns the rendered surface with zero repo changes: the
-# 2026-08-26 nightly started rendering `PixelBuffer<P>`'s (unconditional,
-# PhantomData-only) `Freeze` impl as conditional on Linux x86_64 while the
-# same nightly on macOS aarch64 did not, so the committed snapshots could
-# not be current on both sides at once. The harness auto-installs the pin
-# via rustup. Bump deliberately, regenerating the snapshots in the same
-# commit.
-apidoc_toolchain := "nightly-2026-07-13"
-
-# Format + regenerate the public-API surface snapshots (docs/public-api/).
-# The snapshot runner lives in the workspace-excluded apidoc/ package, so it
-# is never built or run by plain `cargo test` or any CI job.
+# Format workspace crates (never --all over path deps)
 fmt:
-    cargo fmt --check
-    ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
+    cargo fmt -p zenpixels -p zenpixels-convert -- --check
 
-# Regenerate the public-API surface snapshots only
-# One behavioral contract for every CMS backend. A directory of ICC profiles adds a comparison on each.
-cms-contract PROFILES='':
-    CMS_CONTRACT_PROFILES={{PROFILES}} cargo test --manifest-path cms-contract/Cargo.toml {{ if PROFILES == "" { "" } else { "-- --include-ignored --nocapture" } }}
+# One behavioral contract for every CMS backend (`MoxCms` vs `Lcms`).
+cms-contract:
+    cargo test --manifest-path cms-contract/Cargo.toml
+    cargo clippy --manifest-path cms-contract/Cargo.toml --all-targets -- -D warnings
+
+# Standalone no-icc-db / minimal-feature consumer gate.
+icc-collapse-check:
+    cargo test --manifest-path tools/icc-collapse-no-db/Cargo.toml
+    cargo clippy --manifest-path tools/icc-collapse-no-db/Cargo.toml --all-targets -- -D warnings
+
+# Clippy across workspace feature matrix
+clippy:
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
+    cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+
+# Test all workspace packages across feature matrix + doctests
+test:
+    cargo test --workspace --all-features
+    cargo test --workspace --no-default-features
+    cargo test --workspace --doc --all-features
+
+# Native borrowed code-plane and planar YCbCr checks, default and no-default-features.
+ycbcr-check:
+    cargo test -p zenpixels --all-features
+    cargo test -p zenpixels-convert --all-features --test hdr_gainmap_ycbcr_orient_contracts --test strict_preservation_and_codes
+    cargo test -p zenpixels-convert --no-default-features --test strict_preservation_and_codes
+    cargo check -p zenpixels -p zenpixels-convert --no-default-features --target wasm32-unknown-unknown
+
+# Browser WASM converter crate check & clippy
+wasm-check:
+    cargo check --workspace --no-default-features --target wasm32-unknown-unknown
+    cargo check --manifest-path site/converter-wasm/Cargo.toml --target wasm32-unknown-unknown
+    cargo clippy --manifest-path site/converter-wasm/Cargo.toml --target wasm32-unknown-unknown -- -D warnings
+    cargo test --manifest-path site/converter-wasm/Cargo.toml
+
+# Unpublished IQA API satellite crate (`zenpsy-api`)
+iqa-check:
+    cargo test --manifest-path zenpsy-api/Cargo.toml --no-default-features
+    cargo test --manifest-path zenpsy-api/Cargo.toml --features std
+    cargo clippy --manifest-path zenpsy-api/Cargo.toml --all-targets --all-features -- -D warnings
+    RUSTDOCFLAGS="-D warnings" cargo doc --manifest-path zenpsy-api/Cargo.toml --all-features --no-deps
+
+# Keep the public API snapshot runner available (pinned nightly)
+apidoc_toolchain := "nightly-2026-07-13"
 
 api-doc:
     ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
@@ -37,22 +63,6 @@ api-doc:
 # Verify the committed snapshots are current
 api-doc-check:
     ZEN_API_DOC=check ZEN_API_DOC_TOOLCHAIN={{apidoc_toolchain}} cargo test --manifest-path apidoc/Cargo.toml
-
-# Clippy
-clippy:
-    cargo clippy --workspace -- -D warnings
-
-# Test all packages
-test:
-    cargo test --workspace
-
-# Native borrowed code-plane conversion, default and freestanding compilation.
-ycbcr-check:
-    cargo test -p zenpixels --features planar --test code_planes
-    cargo test -p zenpixels-convert --features planar --test ycbcr_borrowed
-    cargo test -p zenpixels-convert --no-default-features --features planar --test ycbcr_borrowed
-    cargo clippy -p zenpixels -p zenpixels-convert --features zenpixels/planar,zenpixels-convert/planar --lib --test code_planes --test ycbcr_borrowed -- -D warnings
-    cargo check -p zenpixels -p zenpixels-convert --no-default-features --target wasm32-unknown-unknown
 
 # Structural size_of/align_of of pixel views at BASE vs this tree (not heap or RSS).
 layout-probe BASE='86d0e2d30406a006bf8332f142029b7f58353086':
@@ -120,28 +130,29 @@ icc-upload dir:
     # Rebuild manifest: list all objects in the prefix (handles spaces in names)
     echo "Rebuilding manifest..."
     ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+    mkdir -p "$HOME/tmp"
     AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
         aws s3 ls "s3://{{r2_bucket}}/{{r2_prefix}}" --endpoint-url "$ENDPOINT" 2>/dev/null \
         | awk '{ for (i=4; i<=NF; i++) printf "%s%s", $i, (i==NF?"\n":" ") }' \
-        | grep -E '\.(icc|icm)$' | sort > /tmp/icc-manifest-update.txt
+        | grep -E '\.(icc|icm)$' | sort > "$HOME/tmp/icc-manifest-update.txt"
     npx wrangler r2 object put "{{r2_bucket}}/{{r2_prefix}}MANIFEST.txt" \
-        --file /tmp/icc-manifest-update.txt --content-type text/plain 2>/dev/null
-    echo "Done. $(wc -l < /tmp/icc-manifest-update.txt) profiles in manifest."
+        --file "$HOME/tmp/icc-manifest-update.txt" --content-type text/plain 2>/dev/null
+    echo "Done. $(wc -l < "$HOME/tmp/icc-manifest-update.txt") profiles in manifest."
 
 # Ensure well-known ICC profile collections are in the local cache
 icc-ensure-sources:
     #!/usr/bin/env bash
     set -euo pipefail
-    mkdir -p "{{icc_cache}}"
+    mkdir -p "{{icc_cache}}" "$HOME/tmp"
     # Compact-ICC-Profiles (saucecontrol)
-    COMPACT="/tmp/compact-icc-profiles"
+    COMPACT="$HOME/tmp/compact-icc-profiles"
     if [ ! -d "$COMPACT/profiles" ]; then
         echo "Cloning Compact-ICC-Profiles..."
         git clone --depth 1 https://github.com/saucecontrol/Compact-ICC-Profiles.git "$COMPACT"
     fi
     cp -n "$COMPACT"/profiles/*.icc "{{icc_cache}}/" 2>/dev/null || true
     # moxcms test profiles (awxkee)
-    MOXCMS="/tmp/moxcms-profiles"
+    MOXCMS="$HOME/tmp/moxcms-profiles"
     if [ ! -d "$MOXCMS/assets" ]; then
         echo "Cloning moxcms assets..."
         git clone --depth 1 --filter=blob:none --sparse https://github.com/awxkee/moxcms.git "$MOXCMS"
@@ -152,15 +163,15 @@ icc-ensure-sources:
 
 # Build the table generator (unpublished workspace crate)
 icc-build-gen:
-    cargo build -p icc-gen --release
+    cargo build --manifest-path scripts/icc-gen/Cargo.toml --release
 
 # Fingerprint all originals, including rejected profiles and the current bundle.
 icc-inventory input output:
-    cargo run -p icc-gen --release --bin icc-gen -- --inventory "{{input}}" "{{output}}"
+    cargo run --manifest-path scripts/icc-gen/Cargo.toml --release --bin icc-gen -- --inventory "{{input}}" "{{output}}"
 
 # Regenerate .inc table files from ICC profile cache + bundled profiles
 icc-gen: icc-build-gen icc-ensure-sources
-    ./target/release/icc-gen "{{icc_cache}}" "zenpixels-convert/src/profiles" "{{icc_out}}"
+    ./scripts/icc-gen/target/release/icc-gen "{{icc_cache}}" "zenpixels-convert/src/profiles" "{{icc_out}}"
 
 # Full pipeline: fetch profiles, regenerate tables, test
 icc-update: icc-fetch icc-gen test
@@ -168,14 +179,14 @@ icc-update: icc-fetch icc-gen test
 
 # Show what the generator would produce without writing (dry run)
 icc-dry-run: icc-build-gen
-    mkdir -p /tmp/zenpixels-icc-dry-run
-    ./target/release/icc-gen "{{icc_cache}}" "zenpixels-convert/src/profiles" /tmp/zenpixels-icc-dry-run
+    mkdir -p "$HOME/tmp/zenpixels-icc-dry-run"
+    ./scripts/icc-gen/target/release/icc-gen "{{icc_cache}}" "zenpixels-convert/src/profiles" "$HOME/tmp/zenpixels-icc-dry-run"
     @echo "--- RGB ---"
-    @head -5 /tmp/zenpixels-icc-dry-run/icc_table_rgb.inc
+    @head -5 "$HOME/tmp/zenpixels-icc-dry-run/icc_table_rgb.inc"
     @echo "..."
-    @tail -3 /tmp/zenpixels-icc-dry-run/icc_table_rgb.inc
+    @tail -3 "$HOME/tmp/zenpixels-icc-dry-run/icc_table_rgb.inc"
     @echo "--- Gray ---"
-    @cat /tmp/zenpixels-icc-dry-run/icc_table_gray.inc
+    @cat "$HOME/tmp/zenpixels-icc-dry-run/icc_table_gray.inc"
 
 # ── CICP→ICC bundle (full-coverage compressed blob) ───────────────────
 #
@@ -795,28 +806,22 @@ hash-regression-summarize INPUT OUTPUT:
     python3 benchmarks/pixel-hash/summarize.py --regressions "{{INPUT}}" "{{OUTPUT}}"
 
 
-# Failure injection preserves the calling thread's cutoff and unrelated allocations.
+# Portable XXH3-64 pixel/plane hashing and row-partition invariance checks.
+hash-check:
+    cargo test -p zenpixels --features hash
+    cargo test -p zenpixels-convert --all-features --test row_partition_and_tiers
+    cargo clippy -p zenpixels --all-targets --features hash -- -D warnings
+
+# OOM allocation-failure and zero-allocation proof gates.
 allocation-failure-check:
-    cargo test --locked -p zenpixels --features hash,rgb --test alloc_failure --test alloc_failure_typed -- --test-threads=16
-    cargo clippy --locked -p zenpixels --features hash,rgb --test alloc_failure --test alloc_failure_typed -- -D warnings
-
-# Owned and borrowed planar boundaries, including allocation refusal controls.
-planar-storage-check:
-    cargo test --locked -p zenpixels --all-features
-    cargo clippy --locked -p zenpixels --all-features --all-targets -- -D warnings
-    cargo check --locked -p zenpixels --no-default-features
-    cargo test --locked --manifest-path zenpsy-api/Cargo.toml
-
-# Check all converter/generator users of the unified core storage contract.
-planar-storage-integration-check:
-    cargo check --locked --workspace --all-targets --all-features
-    just api-doc
+    cargo test -p zenpixels --all-features --test alloc_failure
+    cargo test -p zenpixels-convert --all-features --test alloc_failure
 
 # Run full-frame 4K UHD (3840x2160) conversion/orientation regression benchmarks.
-# Filter with e.g. `just bench-4k --group='^oklab/'`; set `BENCH_4K_TIER=baseline|v3|v4x|all`.
+# Filter with e.g. `just bench-4k --group=gray_alpha/rgb8_to_gray8_bt709`.
 bench-4k *ARGS:
-    cargo bench -p zenpixels-convert --bench bench_4k_paths -- {{ARGS}}
+    cargo bench -p zenpixels-convert --all-features --bench bench_05_4k -- {{ARGS}}
 
-# Measure stripped binary size added by RowConverter across x86-64 and wasm32.
+# Measure stripped binary size added by RowPlan across x86-64 and wasm32.
 converter-size:
     bash benchmarks/converter-size/measure.sh

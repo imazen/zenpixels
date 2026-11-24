@@ -1,125 +1,91 @@
 #![deny(deprecated)]
 
-use zenpixels::PixelBuffer;
+use zenpixels::{ImageSpec, PixelBuf};
 #[cfg(test)]
-use zenpixels::PixelDescriptor;
-#[cfg(test)]
-use zenpixels_convert::{ConvertPlan, PixelBufferConvertExt, RowConverter};
+use zenpixels_convert::{ConvertPolicy, RowPlan};
 
 // Public buffer boundaries use the very same type from the two crates.
-pub fn through_conversion_crate(buffer: PixelBuffer) -> zenpixels_convert::PixelBuffer {
+pub fn through_conversion_crate(buffer: PixelBuf) -> zenpixels_convert::PixelBuf {
     buffer
 }
 
-// The migrated declaration API must be identical across both core lines.
+// The 0.5 CICP -> ColorSpace declaration boundary.
 pub fn declare_rgb(
     cicp: zenpixels::Cicp,
-    format: zenpixels::PixelFormat,
-) -> Result<zenpixels::PixelDescriptor, zenpixels::cicp::CicpDescriptorError> {
-    cicp.try_to_descriptor(format)
+    alpha: zenpixels::AlphaMode,
+) -> Result<zenpixels::ColorSpace, zenpixels::ColorError> {
+    zenpixels::ColorSpace::from_cicp(cicp, alpha)
 }
 
 #[allow(dead_code)]
-struct Shared;
-impl zenpixels_convert::RowTransform for Shared {
-    fn transform_row(&self, src: &[u8], dst: &mut [u8], width: u32) {
+struct SharedCms;
+impl zenpixels_convert::CmsTransform for SharedCms {
+    fn transform_row(
+        &self,
+        src: &[u8],
+        dst: &mut [u8],
+        width: u32,
+    ) -> Result<(), whereat::At<zenpixels_convert::ConvertError>> {
         dst[..width as usize * 3].copy_from_slice(&src[..width as usize * 3]);
-    }
-}
-#[allow(dead_code)]
-struct Stateful;
-impl zenpixels_convert::RowTransformMut for Stateful {
-    fn transform_row(&mut self, src: &[u8], dst: &mut [u8], width: u32) {
-        dst[..width as usize * 3].copy_from_slice(&src[..width as usize * 3]);
+        Ok(())
     }
 }
 
 #[test]
 fn open_backend_traits_keep_external_implementations() {
-    use zenpixels_convert::{RowTransform, RowTransformMut};
+    use zenpixels_convert::CmsTransform;
     let mut dst = [0; 3];
-    Shared
-        .try_transform_row(&[10, 20, 30], &mut dst, 1)
-        .unwrap();
-    Stateful
-        .try_transform_row(&[30, 20, 10], &mut dst, 1)
-        .unwrap();
-    assert_eq!(dst, [30, 20, 10]);
+    SharedCms.transform_row(&[10, 20, 30], &mut dst, 1).unwrap();
+    assert_eq!(dst, [10, 20, 30]);
 }
 
 #[test]
 fn storage_and_prepared_rows_share_one_public_type_graph() {
-    let buffer =
-        PixelBuffer::from_vec(vec![0, 127, 255], 1, 1, PixelDescriptor::RGB8_SRGB).unwrap();
-    let ptr = buffer.as_slice().row(0).as_ptr();
-    let parts = through_conversion_crate(buffer).into_parts();
-    let restored = PixelBuffer::try_from_parts(parts)
-        .map_err(|e| e.without_buffer())
-        .unwrap();
-    assert_eq!(restored.as_slice().row(0).as_ptr(), ptr);
-    let mut worker = RowConverter::new(restored.descriptor(), PixelDescriptor::RGBA8_SRGB).unwrap();
-    worker.prepare(1).unwrap();
+    let buffer = PixelBuf::from_vec(vec![0, 127, 255], 1, 1, ImageSpec::rgb8_srgb()).unwrap();
+    let ptr = buffer.as_view().row(0).as_ptr();
+    let buf = through_conversion_crate(buffer);
+    assert_eq!(buf.as_view().row(0).as_ptr(), ptr);
+    let plan = RowPlan::build(
+        buf.spec().clone(),
+        ImageSpec::rgba8_srgb(),
+        &ConvertPolicy::lossless(),
+        None,
+    )
+    .unwrap();
     let mut row = [0; 4];
-    worker
-        .try_convert_row(restored.as_slice().row(0), &mut row, 1)
+    plan.convert_row(buf.as_view().row(0), &mut row, 1, 0)
         .unwrap();
     assert_eq!(row, [0, 127, 255, 255]);
-    let widened = restored.try_widen_to_u16().unwrap();
-    assert_eq!(widened.descriptor(), PixelDescriptor::RGB16_SRGB);
-    let proof =
-        ConvertPlan::new_preserving_samples(restored.descriptor(), widened.descriptor()).unwrap();
-    assert_eq!(proof.from(), PixelDescriptor::RGB8_SRGB);
-    let identity = RowConverter::new(widened.descriptor(), widened.descriptor()).unwrap();
-    assert!(identity.compose_preserving(&identity).is_some());
+    let widened = zenpixels_convert::ImagePlan::build(
+        buf.spec().clone(),
+        ImageSpec::rgb16_srgb(),
+        &ConvertPolicy::lossless(),
+        zenpixels_convert::PeakSource::None,
+    )
+    .unwrap()
+    .execute(&buf.as_view())
+    .unwrap();
+    assert_eq!(widened.spec(), &ImageSpec::rgb16_srgb());
 }
 
 #[cfg(feature = "std")]
 #[test]
-fn published_worker_auto_traits_still_hold() {
+fn published_plan_auto_traits_hold() {
     fn send_sync<T: Send + Sync>() {}
-    send_sync::<RowConverter>();
+    send_sync::<RowPlan>();
 }
 
 #[cfg(feature = "interop")]
 #[test]
 fn typed_interop_keeps_layout_and_stride() {
-    let typed = zenpixels::PixelBuffer::<rgb::RGBA<u8>>::from_pixels(
-        vec![rgb::RGBA::new(1, 2, 3, 255); 2],
+    let buf = PixelBuf::from_pixels(
+        vec![rgb::RGBA::new(1u8, 2, 3, 255); 2],
         2,
         1,
-    )
-    .unwrap()
-    .with_descriptor(PixelDescriptor::RGBA8_SRGB);
-    assert_eq!(typed.as_imgref().width(), 2);
-    let packed: PixelBuffer<rgb::RGBA<u8>> = typed.into_contiguous();
-    assert_eq!(
-        packed
-            .erase()
-            .into_contiguous_pixels::<rgb::RGBA<u8>>()
-            .unwrap()
-            .len(),
-        2
-    );
-}
-
-#[cfg(feature = "experimental")]
-#[test]
-fn opt_in_hdr_names_are_identical() {
-    use zenpixels_convert::HdrConfig;
-    let plan = ConvertPlan::new_with_hdr_config(
-        PixelDescriptor::RGBF32_LINEAR,
-        PixelDescriptor::RGB8_SRGB,
-        HdrConfig::for_source_peak(1000.),
+        ImageSpec::rgba8_srgb(),
     )
     .unwrap();
-    RowConverter::from_plan(plan).prepare(10).unwrap();
-}
-
-#[cfg(feature = "siblings")]
-pub fn from_decoder(output: zencodec::decode::DecodeOutput) -> PixelBuffer {
-    output.into_buffer()
-}
-#[cfg(feature = "siblings")]
-pub fn pipeline_format(source: &dyn zenpipe::Source) -> zenpixels::PixelDescriptor {
-    source.format()
+    assert_eq!(buf.as_view().try_as_imgref::<rgb::RGBA<u8>>().unwrap().width(), 2);
+    let vec = buf.try_into_pixels::<rgb::RGBA<u8>>().unwrap();
+    assert_eq!(vec.len(), 2);
 }

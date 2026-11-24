@@ -121,6 +121,35 @@ mod moxcms_impl {
         profile.cicp = None;
     }
 
+    /// Scale a generated `moxcms` RGB profile's colorants so they sum to the ICC PCS D50 white
+    /// (`[0.9642, 1.0, 0.8249]`) rather than CIE D50 (`Z = 0.82521`). Without this, white from
+    /// any ICC profile into generated sRGB/P3/BT.2020 shifts blue by 0.04% (`(255, 255, 254)`).
+    fn with_pcs_white(mut profile: moxcms::ColorProfile) -> moxcms::ColorProfile {
+        const PCS_WHITE: [f64; 3] = [0.9642, 1.0, 0.8249];
+        let (r, g, b) = (
+            profile.red_colorant,
+            profile.green_colorant,
+            profile.blue_colorant,
+        );
+        let scale = [
+            PCS_WHITE[0] / (r.x + g.x + b.x),
+            PCS_WHITE[1] / (r.y + g.y + b.y),
+            PCS_WHITE[2] / (r.z + g.z + b.z),
+        ];
+        if scale.iter().all(|v| v.is_finite()) {
+            for colorant in [
+                &mut profile.red_colorant,
+                &mut profile.green_colorant,
+                &mut profile.blue_colorant,
+            ] {
+                colorant.x *= scale[0];
+                colorant.y *= scale[1];
+                colorant.z *= scale[2];
+            }
+        }
+        profile
+    }
+
     fn icc_bytes_of(cs: &ColorSpace) -> Option<&[u8]> {
         match cs {
             ColorSpace::Icc { profile, .. } => Some(profile),
@@ -163,14 +192,33 @@ mod moxcms_impl {
                     return Err(err_at(ConvertError::UnsupportedRoute));
                 }
                 let p = match (primaries, transfer) {
-                    (Primaries::Bt709, Transfer::Srgb) => moxcms::ColorProfile::new_srgb(),
+                    (Primaries::Bt709, Transfer::Srgb) => {
+                        moxcms::ColorProfile::new_from_cicp(moxcms::CicpProfile {
+                            color_primaries: moxcms::CicpColorPrimaries::Bt709,
+                            transfer_characteristics: moxcms::TransferCharacteristics::Srgb,
+                            matrix_coefficients: moxcms::MatrixCoefficients::Identity,
+                            full_range: true,
+                        })
+                    }
                     (Primaries::DisplayP3, Transfer::Srgb) => {
-                        moxcms::ColorProfile::new_display_p3()
+                        moxcms::ColorProfile::new_from_cicp(moxcms::CicpProfile {
+                            color_primaries: moxcms::CicpColorPrimaries::Smpte432,
+                            transfer_characteristics: moxcms::TransferCharacteristics::Srgb,
+                            matrix_coefficients: moxcms::MatrixCoefficients::Identity,
+                            full_range: true,
+                        })
                     }
                     (Primaries::AdobeRgb, Transfer::AdobeRgb) => {
                         moxcms::ColorProfile::new_adobe_rgb()
                     }
-                    (Primaries::Bt2020, Transfer::Bt709) => moxcms::ColorProfile::new_bt2020(),
+                    (Primaries::Bt2020, Transfer::Bt709) => {
+                        moxcms::ColorProfile::new_from_cicp(moxcms::CicpProfile {
+                            color_primaries: moxcms::CicpColorPrimaries::Bt2020,
+                            transfer_characteristics: moxcms::TransferCharacteristics::Bt709,
+                            matrix_coefficients: moxcms::MatrixCoefficients::Identity,
+                            full_range: true,
+                        })
+                    }
                     (Primaries::Bt2020, Transfer::Pq) => moxcms::ColorProfile::new_bt2020_pq(),
                     (
                         p_id @ (Primaries::Bt709 | Primaries::DisplayP3 | Primaries::Bt2020),
@@ -201,7 +249,7 @@ mod moxcms_impl {
                     // HLG requires BT.2100-3 display OOTF which ICC profiles cannot carry faithfully.
                     _ => return Err(err_at(ConvertError::UnsupportedRoute)),
                 };
-                Ok((p, None))
+                Ok((with_pcs_white(p), None))
             }
             ColorSpace::Gray {
                 transfer, range, ..
@@ -224,6 +272,69 @@ mod moxcms_impl {
                 Ok((p, None))
             }
             _ => Err(err_at(ConvertError::UnsupportedRoute)),
+        }
+    }
+
+    /// Compute D50 luminance `Y` of a CMYK profile's black point for relative-colorimetric
+    /// black-point compensation (matches `Lcms` / `lcms2` BPC when targeting sRGB).
+    fn cmyk_black_point_y(
+        cmyk: &moxcms::ColorProfile,
+        linear_dst: &moxcms::ColorProfile,
+        relative: moxcms::TransformOptions,
+    ) -> Option<f32> {
+        let perceptual = moxcms::TransformOptions {
+            rendering_intent: moxcms::RenderingIntent::Perceptual,
+            ..relative
+        };
+        let to_cmyk = linear_dst
+            .create_transform_f32(moxcms::Layout::Rgb, cmyk, moxcms::Layout::Rgba, perceptual)
+            .ok()?;
+        let to_rgb = cmyk
+            .create_transform_f32(
+                moxcms::Layout::Rgba,
+                linear_dst,
+                moxcms::Layout::Rgb,
+                relative,
+            )
+            .ok()?;
+        let mut ink = [0.0f32; 4];
+        to_cmyk.transform(&[0.0, 0.0, 0.0], &mut ink).ok()?;
+        let mut rgb = [0.0f32; 3];
+        to_rgb.transform(&ink, &mut rgb).ok()?;
+        let y = linear_dst.red_colorant.y * f64::from(rgb[0])
+            + linear_dst.green_colorant.y * f64::from(rgb[1])
+            + linear_dst.blue_colorant.y * f64::from(rgb[2]);
+        Some(y.clamp(0.0, 0.184_186) as f32)
+    }
+
+    /// CMYK F32 -> sRGB F32 wrapper: runs `moxcms` into linear sRGB, applies relative
+    /// black-point compensation, then encodes with exact sign-preserving sRGB OETF
+    /// (avoiding `moxcms`'s coarse post-CLUT sRGB curve and matching `Lcms` BPC).
+    struct MoxCmykToSrgbF32 {
+        inner: Arc<dyn moxcms::TransformExecutor<f32> + Send + Sync>,
+        black_point_y: f32,
+        dst_ch: usize,
+    }
+
+    impl moxcms::TransformExecutor<f32> for MoxCmykToSrgbF32 {
+        fn transform(&self, src: &[f32], dst: &mut [f32]) -> Result<(), moxcms::CmsError> {
+            self.inner.transform(src, dst)?;
+            let bp = self.black_point_y;
+            let tc = self.dst_ch;
+            if bp > 0.0 {
+                let scale = 1.0 / (1.0 - bp);
+                for px in dst.chunks_exact_mut(tc) {
+                    px[0] = (px[0] - bp) * scale;
+                    px[1] = (px[1] - bp) * scale;
+                    px[2] = (px[2] - bp) * scale;
+                }
+            }
+            if tc == 4 {
+                linear_srgb::default::linear_to_srgb_extended_rgba_slice(dst);
+            } else {
+                linear_srgb::default::linear_to_srgb_extended_slice(dst);
+            }
+            Ok(())
         }
     }
 
@@ -529,12 +640,24 @@ mod moxcms_impl {
                 } else {
                     moxcms::BarycentricWeightScale::Low
                 },
-                prefer_fixed_point: !is_f32,
+                // Fixed-point Q2.13 is fine for 8-bit but loses up to 7 8-bit codes on U16 wide-gamut transforms.
+                prefer_fixed_point: src.layout.sample == SampleType::U8,
                 allow_extended_range_rgb_xyz: is_f32
                     && shared_curve(&src_p)
                     && shared_curve(&dst_p),
                 ..Default::default()
             };
+            let cmyk_to_srgb_f32 = is_f32
+                && matches!(src.color, ColorSpace::Cmyk { .. })
+                && matches!(
+                    dst.color,
+                    ColorSpace::Rgb {
+                        primaries: Primaries::Bt709,
+                        transfer: Transfer::Srgb,
+                        ..
+                    }
+                )
+                && matches!(dst_l, moxcms::Layout::Rgb | moxcms::Layout::Rgba);
             let exec = match src.layout.sample {
                 SampleType::U8 => MoxExec::U8(
                     src_p
@@ -546,6 +669,32 @@ mod moxcms_impl {
                         .create_transform_16bit(src_l, &dst_p, dst_l, opts)
                         .map_err(|_| err_at(ConvertError::CmsBackendFailed))?,
                 ),
+                SampleType::F32 if cmyk_to_srgb_f32 => {
+                    let mut linear_dst = dst_p.clone();
+                    linear_dst.cicp = None;
+                    let ident = moxcms::ToneReprCurve::Lut(alloc::vec::Vec::new());
+                    linear_dst.red_trc = Some(ident.clone());
+                    linear_dst.green_trc = Some(ident.clone());
+                    linear_dst.blue_trc = Some(ident);
+                    #[allow(clippy::needless_update)]
+                    let lin_opts = moxcms::TransformOptions {
+                        allow_extended_range_rgb_xyz: true,
+                        ..opts
+                    };
+                    let black_point_y = if eff_intent == RenderingIntent::RelativeColorimetric {
+                        cmyk_black_point_y(&src_p, &linear_dst, lin_opts).unwrap_or(0.0)
+                    } else {
+                        0.0
+                    };
+                    let inner = src_p
+                        .create_transform_f32(src_l, &linear_dst, dst_l, lin_opts)
+                        .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
+                    MoxExec::F32(Arc::new(MoxCmykToSrgbF32 {
+                        inner,
+                        black_point_y,
+                        dst_ch: dst.layout.channels(),
+                    }))
+                }
                 SampleType::F32 => MoxExec::F32(
                     src_p
                         .create_transform_f32(src_l, &dst_p, dst_l, opts)
@@ -782,14 +931,13 @@ mod lcms_impl {
                 if *range != SignalRange::Full || matches!(transfer, Transfer::Hlg(_)) {
                     return Err(err_at(ConvertError::UnsupportedRoute));
                 }
-                if *primaries == Primaries::Bt709 && *transfer == Transfer::Srgb {
-                    return Ok((Profile::srgb(), None));
-                }
                 if *primaries == Primaries::AdobeRgb && *transfer == Transfer::AdobeRgb {
                     let p = Profile::open(crate::icc_profiles::ADOBE_RGB)
                         .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
                     return Ok((p, None));
                 }
+                // Build sRGB and all standard RGB spaces via exact H.273 D65 (0.3127, 0.3290)
+                // primaries + ToneCurve rather than `Profile::srgb()` (which uses legacy 0.3291 D65).
                 if let (Some(triple), Some(curve)) = (
                     primaries_triple(*primaries),
                     tone_curve_for_transfer(*transfer)?,
@@ -879,10 +1027,12 @@ mod lcms_impl {
                 || !from.has_alpha
                 || src.color.alpha() == AlphaMode::Opaque);
 
-        // `NO_CACHE` enables lcms's fused AVX2/SIMD loops (Prelin8, Clut8/16,
-        // MatShaper) and keeps per-row execution cache-independent.
+        // `NO_CACHE` enables lcms's fused AVX2/SIMD loops (Prelin8, Clut8, MatShaper)
+        // for 8-bit transforms while keeping per-row execution cache-independent.
+        // For U16 / F16 / F32, disable pipeline resampling (`NO_OPTIMIZE`) so lcms
+        // evaluates exact curves/matrices without 16-bit CLUT quantization or F32 clipping.
         let mut transform_flags = flags::NO_CACHE;
-        if no_optimize {
+        if no_optimize || from.sample != SampleType::U8 || to.sample != SampleType::U8 {
             transform_flags |= flags::NO_OPTIMIZE;
         }
         if from.has_alpha && to.has_alpha && !fill_opaque_alpha {

@@ -1,6 +1,6 @@
 use std::{cell::Cell, rc::Rc};
 use zenpsy_api::{
-    zenpixels::{PixelDescriptor, PixelSlice},
+    zenpixels::{ImageSpec, PixelView},
     *,
 };
 
@@ -26,7 +26,7 @@ struct A<'a> {
     preparations: Rc<Cell<usize>>,
     map_pointer: Rc<Cell<*const f32>>,
 }
-fn sum(r: &PixelSlice<'_>) -> u64 {
+fn sum(r: &PixelView<'_>) -> u64 {
     (0..r.rows())
         .flat_map(|y| r.row(y))
         .map(|&v| u64::from(v))
@@ -36,7 +36,7 @@ impl A<'_> {
     fn result(
         &self,
         reference: u64,
-        d: &PixelSlice<'_>,
+        d: &PixelView<'_>,
         opts: EvalOpts<'_>,
     ) -> MetricResult<NativeA> {
         opts.checkpoint()?;
@@ -60,8 +60,8 @@ impl Metric for A<'_> {
     }
     fn evaluate(
         &mut self,
-        r: &PixelSlice<'_>,
-        d: &PixelSlice<'_>,
+        r: &PixelView<'_>,
+        d: &PixelView<'_>,
         opts: EvalOpts<'_>,
     ) -> MetricResult<NativeA> {
         self.cold.set(self.cold.get() + 1);
@@ -79,7 +79,7 @@ impl<'c> PrepareReference for A<'c> {
         Self: 'a;
     fn warm_reference(
         &mut self,
-        r: &PixelSlice<'_>,
+        r: &PixelView<'_>,
         opts: EvalOpts<'_>,
     ) -> MetricResult<Self::Prepared<'_>> {
         opts.checkpoint()?;
@@ -92,7 +92,7 @@ impl<'c> PrepareReference for A<'c> {
 }
 impl WarmReference for PreparedA<'_, '_> {
     type Output = NativeA;
-    fn evaluate(&mut self, d: &PixelSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<NativeA> {
+    fn evaluate(&mut self, d: &PixelView<'_>, opts: EvalOpts<'_>) -> MetricResult<NativeA> {
         self.scorer.result(self.reference, d, opts)
     }
 }
@@ -112,20 +112,20 @@ impl Metric for B {
     }
     fn evaluate(
         &mut self,
-        _: &PixelSlice<'_>,
-        _: &PixelSlice<'_>,
+        _: &PixelView<'_>,
+        _: &PixelView<'_>,
         _: EvalOpts<'_>,
     ) -> MetricResult<NativeB> {
         Ok(NativeB(3.5))
     }
 }
-fn view(rows: u32) -> PixelSlice<'static> {
-    PixelSlice::new(
+fn view(rows: u32) -> PixelView<'static> {
+    PixelView::new(
         &[1, 2, 3, 4, 5, 6, 255, 255, 255, 7, 8, 9, 10, 11, 12],
         2,
         rows,
         9,
-        PixelDescriptor::RGB8_SRGB,
+        ImageSpec::rgb8_srgb(),
     )
     .unwrap()
 }
@@ -250,8 +250,8 @@ fn erased_checked_scoring_visits_each_output_set_without_boxed_iterators() {
         }
         fn evaluate(
             &mut self,
-            _: &PixelSlice<'_>,
-            _: &PixelSlice<'_>,
+            _: &PixelView<'_>,
+            _: &PixelView<'_>,
             _: EvalOpts<'_>,
         ) -> MetricResult<V> {
             Ok(V(self.0.clone()))

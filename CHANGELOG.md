@@ -1,5 +1,60 @@
 # zenpixels
 
+## [0.5.0] - Unreleased
+
+Greenfield 0.5 architecture unifying pixel layout, color authority, planar/banded
+buffers, external owned storage, and portable hashing into a compact, zero-unsafe
+core (`#![forbid(unsafe_code)]`, `no_std + alloc`, MSRV 1.85).
+
+See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the complete
+0.2/0.4 -> 0.5 migration guide.
+
+### Added
+
+- **Unified descriptor & buffer model:**
+  - `SampleLayout` (`SampleType`, `ChannelOrder`, `BitPacking`), `ColorSpace`
+    (`Rgb`, `Gray`, `Oklab`, `Xyz`, `Perceptual`, `Icc`, `Cmyk`), `ColorOrigin`,
+    and `ImageSpec` (with preset constructors like `ImageSpec::rgb8_srgb()`,
+    `rgba8_srgb()`, `rgb16_bt2100_pq()`, `rgbf32_linear()`, etc.).
+  - `PixelBuf`, `PixelView`, `PixelViewMut`, `PixelCow`, `BandedBuf` (gigapixel
+    row-banded storage with `BandLayout` and `RowAlign`), `OwnedPlane`,
+    `PlaneView`, `PlaneViewMut`, `PlanarBuf`, `PlanarView`, and `PlanarViewMut`
+    (with optional color interpretation: `color`, `ycbcr_matrix_code`, `range`,
+    `alpha`, `chroma_siting`).
+  - `SampleEncoding`, `CodePlane`, and `CodePlaneMut` (sub-byte / P010 / bit-packed
+    component readers and writers, unconditional without a `planar` feature gate).
+  - `SampleFacts` (`FloatFacts` + `ExactDepth` + `all_opaque` + `all_gray`),
+    `HdrMetadata`, `DiffuseWhite`, `HlgMode`, `HlgRendering`, `Nits`, `Orientation`,
+    `GainMapParams` / `GainMapChannel` / `HdrBundle`, and `DepthTier`.
+- **First-class external owned storage:**
+  - `ByteStorage` / `ByteStorageMut`, `ExternalStorage` / `ExternalMutStorage`,
+    `PixelBuf::from_external`, `PixelBuf::from_external_mut`,
+    `OwnedPlane::from_external`, and `OwnedPlane::from_external_mut` allow codecs,
+    FFI buffers, `Arc<[u8]>`, `Box<[T]>`, `Vec<T>`, `mmap` regions, and pooled
+    arenas to move directly into `PixelBuf` / `OwnedPlane` with zero copies and
+    fallible copy-on-write (`try_make_mut`, `try_as_view_mut`).
+- **Symmetric zero-copy interop:**
+  - `imgref` feature: `PixelView::try_as_imgref`, `PixelViewMut::try_as_imgref_mut`,
+    `PixelBuf::from_imgvec` / `try_into_imgvec`, `PixelView::from_imgref`, and
+    `PixelViewMut::from_imgref_mut`.
+  - `image` feature (`image 0.25`): `PixelBuf::from_dynamic_image` /
+    `from_image_buffer` / `try_into_dynamic_image` / `try_into_image_buffer`.
+- **Portable content hashing (`hash` feature):**
+  - Endian- and stride-independent XXH3-64 digests (`xxhash-rust`) on `PixelView`,
+    `PixelBuf`, `BandedBuf`, `PlaneView`, `OwnedPlane`, `PlanarView`, `PlanarBuf`,
+    and `CodePlane` with `HashInclusions` and `PixelHasher`.
+
+### Breaking Changes (vs 0.2 / 0.4)
+
+- Replaces `PixelDescriptor` / `PixelFormat` / `ColorContext` with `ImageSpec` /
+  `SampleLayout` / `ColorSpace` / `ColorOrigin`.
+- Replaces `PixelBuffer<P, S>` / `PixelSlice` / `PixelSliceMut` with type-erased
+  `PixelBuf` / `PixelView` / `PixelViewMut` plus `ByteStorage` external ownership.
+- Removes the `planar` Cargo feature (planar, banded, and `CodePlane` types are now
+  always compiled in `zenpixels`).
+- Removes legacy `rgb-interop` / `perceptual` core feature aliases (use `rgb`,
+  `imgref`, `image`, `icc`, `hash`, `std`).
+
 ## [Unreleased]
 
 ### Added
@@ -52,6 +107,88 @@
   Existing constructor and interpretation accessors are unchanged (`c8949ec2`).
 
 # zenpixels-convert
+
+## [0.5.0] - Unreleased
+
+Greenfield 0.5 transfer-function-aware pixel converter, HDR tone mapper, ISO 21496-1
+gain-map engine, orientation/transpose suite, codec negotiation, and pluggable CMS
+adapter (`#![forbid(unsafe_code)]`, `no_std + alloc`, MSRV 1.89).
+
+See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the complete
+0.2/0.4 -> 0.5 migration guide.
+
+### Added
+
+- **Cohesive planning & execution:**
+  - `ConvertPolicy` (`lossless()`, `permissive()`, `working_linear()`, `display_sdr()`)
+    with `DepthPolicy`, `AlphaPolicy`, `GamutPolicy`, `RangePolicy`, `LumaCoefficients`,
+    `LumaDomain::{Encoded, LinearLight}`, `allow_icc_substitution`, `allow_approximate`,
+    `with_cms()`, and `with_accelerators()`.
+  - Stateless `Send + Sync` `RowPlan` (zero heap allocation per `convert_row`),
+    whole-image `ImagePlan`, `OutputPlan` + `adapt_for_encode`, `Negotiate` +
+    `CodecSupport`, and ergonomic wrappers (`to_rgb8`, `to_rgba8`, `to_gray8`,
+    `to_bgra8`).
+- **Fast paths & SIMD acceleration:**
+  - Hybrid zero-scratch scalar core + opt-in `Accelerators` (`fast` feature,
+    default-off for minimal library codegen).
+  - Direct encoded `U8` RGB/BGR/RGBA/BGRA -> Gray8 SIMD fast path (`LumaDomain::Encoded`
+    default, matching 0.2/0.4 semantics and neutral exactness at ~22 GiB/s on 4K).
+  - Integer `u16x16` / `u16x8` SIMD `RGBA8`/`BGRA8` straight -> premul (0-bit exact
+    in both `Round` and `Truncate` modes).
+  - Opt-in (`allow_approximate`) 4096-LUT `Linear F32 -> sRGB U8` fast path
+    (`<= 1 LSB` vs exact float, 0-bit identical across SIMD tiers) alongside 2×8
+    unrolled exact SIMD.
+- **HDR, Gain Maps, Orientation, YCbCr & Measurement:**
+  - `gainmap` feature: ISO 21496-1 / UltraHDR reconstruction, extraction, and
+    resampling (`GainMapParams`, `reconstruct_hdr`, `extract_gain_map`, etc.).
+  - `orient`: all 8 EXIF orientations (`apply_orientation`, `apply_orientation_into`,
+    `orient_banded`, zero-alloc `apply_orientation_banded_into`) with cache-blocked
+    SIMD transpose (`fast-transpose`).
+  - `measure`: `measure_cll`, `measure_histogram`, `LightLevelHistogram::{bins, try_merge}`,
+    and `measure_max_smoothed` (3-tap mirror-padded box filter).
+  - `ycbcr`: `YcbcrMatrix::from_cicp_code`, `ycbcr_to_rgb_into`, `ycbcr_to_rgb_f32`,
+    and `ycbcr_to_rgb_from_planar`.
+- **Pluggable CMS (`CmsBackend` / `CmsTransform`):**
+  - `MoxCms` (`cms-moxcms`) with explicit refusal of `AbsoluteColorimetric`, float
+    `D2B*`/`B2D*` MPE tags per active intent, and unequal adjacent RGB TRCs, plus
+    `cicp`-cleared curve evaluation on both explicit ICC and synthetic Linear/Gamma22
+    profiles.
+  - `Lcms` / `LcmsUnoptimized` (`cms-lcms`) pure-Rust Little CMS adapter supporting
+    float MPE, `AbsoluteColorimetric`, CMYK, and Lab/XYZ ICC profiles.
+
+### Fixed
+
+- Fixed SMPTE ST 428-1 (`Transfer::DciCinema`) OETF clamping before multiplying by
+  `48.0 / 52.37` (and pre-OETF `[0, 1]` `ClampUnit` under `GamutPolicy::Clip`),
+  which previously truncated projector peak white (`52.37 / 48.0`) to `63375` instead
+  of `65535`.
+- Fixed `OutputPlan` bypassing `AlphaMode::Opaque` canonicalization when alpha was
+  unverified (stays zero-copy when `SampleFacts::all_opaque` is proven).
+- Fixed `OutputPlan` accepting `MetadataOnly` ICC profiles for structured RGB/Gray
+  destinations (now requires `IdentificationUse::MatrixTrcSubstitution`).
+- Fixed `MoxCms` vs `Lcms` colorimetry parity across U16, F32, and CMYK F32:
+  - `MoxCms` now disables Q2.13 fixed-point quantization on `U16` (`prefer_fixed_point`
+    on `U8` only), normalizes generated CICP RGB profiles to ICC PCS D50 white
+    (`with_pcs_white`), and runs CMYK F32 -> sRGB through linear + BPC + exact
+    `linear-srgb` encoding.
+  - `Lcms` disables 16-bit CLUT pipeline resampling (`NO_OPTIMIZE`) for `U16`/`F16`/`F32`
+    while retaining fast AVX2 optimization for `U8`.
+  - `RowPlan` CMS routes now enforce `GamutPolicy::Clip` on non-HDR `F32` color channels
+    (preserving alpha and leaving `GamutPolicy::PreserveExtended` unclipped).
+- Fixed `Negotiate` skipping scene-linear HDR pre-checks when `tone_map_hdr_to_sdr`
+  is enabled on unbounded float sources.
+
+### Breaking Changes (vs 0.2 / 0.4)
+
+- Replaces `ConvertPlan` / `RowConverter` / `ConvertOptions` / `ConversionSpec` with
+  `RowPlan` / `ImagePlan` / `ConvertPolicy`.
+- Replaces `PluggableCms` / `RowTransform` / `RowTransformMut` with `CmsBackend` /
+  `CmsTransform`.
+- `icc-db` is now **default-off** (opt-in when CICP -> ICC synthesis beyond bundled
+  compact profiles is required without a runtime CMS).
+- Removes legacy Cargo features `planar`, `hdr-experimental`, `introspection`, and
+  `zencms-lite` (use `oklab`, `hdr-transfers`, `gainmap`, `perceptual`, `bt2446a`,
+  `icc-db`, `cms-moxcms`, `cms-lcms`, `fast`, `fast-transpose`).
 
 ## [Unreleased]
 

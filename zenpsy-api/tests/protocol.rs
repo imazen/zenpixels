@@ -15,7 +15,7 @@ use zenpsy_api::whereat::{At, ErrorAtExt};
 use zenpsy_api::*;
 type Error = MetricError;
 type Result<T> = MetricResult<T>;
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels::{ImageSpec, PixelView};
 
 #[derive(Default)]
 struct Log {
@@ -135,8 +135,8 @@ impl Drop for Recorder {
     }
 }
 
-fn image() -> PixelSlice<'static> {
-    PixelSlice::new(&[0; 12], 2, 2, 6, PixelDescriptor::RGB8_SRGB).unwrap()
+fn image() -> PixelView<'static> {
+    PixelView::new(&[0; 12], 2, 2, 6, ImageSpec::rgb8_srgb()).unwrap()
 }
 #[derive(Debug)]
 struct NativeScore(f64);
@@ -163,8 +163,8 @@ impl Metric for Worker {
     }
     fn evaluate(
         &mut self,
-        _: &PixelSlice<'_>,
-        _: &PixelSlice<'_>,
+        _: &PixelView<'_>,
+        _: &PixelView<'_>,
         opts: EvalOpts<'_>,
     ) -> Result<NativeScore> {
         opts.pulse().set_total(Total::Exact(2)).unwrap();
@@ -414,11 +414,7 @@ impl NoReferenceMetric for Worker {
     fn id(&self) -> MetricId {
         Metric::id(self)
     }
-    fn evaluate_image(
-        &mut self,
-        image: &PixelSlice<'_>,
-        opts: EvalOpts<'_>,
-    ) -> Result<NativeScore> {
+    fn evaluate_image(&mut self, image: &PixelView<'_>, opts: EvalOpts<'_>) -> Result<NativeScore> {
         self.evaluate(image, image, opts)
     }
 }

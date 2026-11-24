@@ -1,6 +1,6 @@
 use std::rc::Rc;
 use zenpsy_api::{
-    zenpixels::{PixelDescriptor, PixelSlice},
+    zenpixels::{ImageSpec, PixelView},
     *,
 };
 
@@ -30,12 +30,12 @@ impl Metric for Scorer {
     }
     fn evaluate(
         &mut self,
-        r: &PixelSlice<'_>,
-        d: &PixelSlice<'_>,
+        r: &PixelView<'_>,
+        d: &PixelView<'_>,
         opts: EvalOpts<'_>,
     ) -> MetricResult<Native> {
         opts.checkpoint()?;
-        assert_eq!(r.descriptor(), d.descriptor());
+        assert_eq!(r.spec(), d.spec());
         assert!(!opts.diagnostics());
         Ok(Native {
             values: self.values,
@@ -55,7 +55,7 @@ struct Prepared {
 }
 impl PrepareReference for Scorer {
     type Prepared<'a> = Prepared;
-    fn warm_reference(&mut self, _: &PixelSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<Prepared> {
+    fn warm_reference(&mut self, _: &PixelView<'_>, opts: EvalOpts<'_>) -> MetricResult<Prepared> {
         opts.checkpoint()?;
         Ok(Prepared {
             values: self.values,
@@ -64,7 +64,7 @@ impl PrepareReference for Scorer {
 }
 impl WarmReference for Prepared {
     type Output = Native;
-    fn evaluate(&mut self, d: &PixelSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<Native> {
+    fn evaluate(&mut self, d: &PixelView<'_>, opts: EvalOpts<'_>) -> MetricResult<Native> {
         Scorer {
             values: self.values,
             duplicate: false,
@@ -72,8 +72,8 @@ impl WarmReference for Prepared {
         .evaluate(d, d, opts)
     }
 }
-fn image(rows: u32) -> PixelSlice<'static> {
-    PixelSlice::new(&[0; 12], 2, rows, 6, PixelDescriptor::RGB8_SRGB).unwrap()
+fn image(rows: u32) -> PixelView<'static> {
+    PixelView::new(&[0; 12], 2, rows, 6, ImageSpec::rgb8_srgb()).unwrap()
 }
 #[test]
 fn preserves_multiple_outputs_native_data_and_prepared_geometry() {

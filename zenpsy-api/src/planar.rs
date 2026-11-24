@@ -3,11 +3,9 @@ use crate::metric::{admit_geometry, operation, validate_map_views, validate_scor
 use crate::{
     ErrorKind, EvalOpts, Evaluation, EvaluationRef, Metric, MetricError, MetricResult, fail,
 };
+use alloc::vec::Vec;
 use whereat::ResultAtExt as _;
-use zenpixels::{
-    AlphaMode, ColorContext,
-    plane::{PlanarLayout, PlanarSlice},
-};
+use zenpixels::{AlphaMode, ChromaSiting, ColorSpace, PlanarView, PlaneSpec, SignalRange};
 
 /// Optional native planar input. The packed [`Metric`] contract stays usable
 /// independently; no implicit conversion or packed replay is supplied.
@@ -15,8 +13,8 @@ pub trait PlanarMetric: Metric {
     /// Score complete color-described planes, preserving native output.
     fn evaluate_planar(
         &mut self,
-        reference: &PlanarSlice<'_>,
-        candidate: &PlanarSlice<'_>,
+        reference: &PlanarView<'_>,
+        candidate: &PlanarView<'_>,
         opts: EvalOpts<'_>,
     ) -> MetricResult<Self::Output>;
 }
@@ -29,7 +27,7 @@ pub trait PreparePlanarReference: PlanarMetric {
     /// Build native reference work. Subsequent calls use fresh controls.
     fn warm_planar_reference(
         &mut self,
-        reference: &PlanarSlice<'_>,
+        reference: &PlanarView<'_>,
         opts: EvalOpts<'_>,
     ) -> MetricResult<Self::PlanarPrepared>;
 }
@@ -43,7 +41,7 @@ pub trait PlanarWarmReference {
     /// Evaluate a candidate using actual prepared reference work.
     fn evaluate_planar(
         &mut self,
-        candidate: &PlanarSlice<'_>,
+        candidate: &PlanarView<'_>,
         opts: EvalOpts<'_>,
     ) -> MetricResult<Self::Output>;
     /// Invoke `consumer` exactly once on success, while all borrowed native
@@ -51,7 +49,7 @@ pub trait PlanarWarmReference {
     /// can lend scratch directly. A failed operation need not invoke it.
     fn with_evaluation(
         &mut self,
-        candidate: &PlanarSlice<'_>,
+        candidate: &PlanarView<'_>,
         opts: EvalOpts<'_>,
         consumer: &mut dyn FnMut(EvaluationRef<'_>),
     ) -> MetricResult<()> {
@@ -65,19 +63,31 @@ pub trait PlanarWarmReference {
 pub struct PreparedPlanarReference<P> {
     inner: P,
     size: (u32, u32),
-    layout: PlanarLayout,
-    color: ColorContext,
+    specs: Vec<PlaneSpec>,
+    chroma_siting: ChromaSiting,
+    color: Option<ColorSpace>,
+    ycbcr_matrix_code: Option<u8>,
+    range: Option<SignalRange>,
     alpha: Option<AlphaMode>,
 }
 impl<P: PlanarWarmReference> PreparedPlanarReference<P> {
-    fn admit(&self, candidate: &PlanarSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<()> {
+    fn admit(&self, candidate: &PlanarView<'_>, opts: EvalOpts<'_>) -> MetricResult<()> {
         admit(candidate, opts)?;
         if (candidate.width(), candidate.height()) != self.size {
             return fail(MetricError::new(ErrorKind::DimensionMismatch));
         }
-        if candidate.layout() != &self.layout
-            || candidate.color_context() != &self.color
-            || candidate.alpha_mode() != self.alpha
+        let specs_match = candidate.planes().len() == self.specs.len()
+            && candidate
+                .planes()
+                .iter()
+                .zip(self.specs.iter())
+                .all(|(p, s)| p.spec() == *s);
+        if !specs_match
+            || candidate.chroma_siting() != self.chroma_siting
+            || candidate.color() != self.color.as_ref()
+            || candidate.ycbcr_matrix_code() != self.ycbcr_matrix_code
+            || candidate.range() != self.range
+            || candidate.alpha() != self.alpha
         {
             return fail(
                 MetricError::new(ErrorKind::UnsupportedInput)
@@ -89,7 +99,7 @@ impl<P: PlanarWarmReference> PreparedPlanarReference<P> {
     /// Produce a checked owned native assessment.
     pub fn score(
         &mut self,
-        candidate: &PlanarSlice<'_>,
+        candidate: &PlanarView<'_>,
         opts: EvalOpts<'_>,
     ) -> MetricResult<P::Output> {
         operation(opts, "score prepared planar image", |opts| {
@@ -107,7 +117,7 @@ impl<P: PlanarWarmReference> PreparedPlanarReference<P> {
     /// once at most; callers commit side effects only after this call succeeds.
     pub fn with_evaluation<T>(
         &mut self,
-        candidate: &PlanarSlice<'_>,
+        candidate: &PlanarView<'_>,
         opts: EvalOpts<'_>,
         consume: impl FnOnce(EvaluationRef<'_>) -> MetricResult<T>,
     ) -> MetricResult<T> {
@@ -145,15 +155,15 @@ impl<P: PlanarWarmReference> PreparedPlanarReference<P> {
         })
     }
 }
-fn admit(image: &PlanarSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<()> {
+fn admit(image: &PlanarView<'_>, opts: EvalOpts<'_>) -> MetricResult<()> {
     admit_geometry(image.width(), image.height(), opts)
 }
 /// Checked native planar pair scoring. Color/encoding support is decided by
 /// the metric, which must refuse unsupported interpretation explicitly.
 pub fn score_planar<M: PlanarMetric + ?Sized>(
     metric: &mut M,
-    reference: &PlanarSlice<'_>,
-    candidate: &PlanarSlice<'_>,
+    reference: &PlanarView<'_>,
+    candidate: &PlanarView<'_>,
     opts: EvalOpts<'_>,
 ) -> MetricResult<M::Output> {
     operation(opts, "score planar image pair", |opts| {
@@ -173,19 +183,23 @@ pub fn score_planar<M: PlanarMetric + ?Sized>(
 /// Prepare owned planar work, binding candidate interpretation and geometry.
 pub fn prepare_planar_reference<M: PreparePlanarReference + ?Sized>(
     metric: &mut M,
-    reference: &PlanarSlice<'_>,
+    reference: &PlanarView<'_>,
     opts: EvalOpts<'_>,
 ) -> MetricResult<PreparedPlanarReference<M::PlanarPrepared>> {
     operation(opts, "prepare planar image reference", |opts| {
         admit(reference, opts)?;
         let inner = metric.warm_planar_reference(reference, opts).at()?;
         opts.checkpoint()?;
+        let specs = reference.planes().iter().map(|p| p.spec()).collect();
         Ok(PreparedPlanarReference {
             inner,
             size: (reference.width(), reference.height()),
-            layout: reference.layout().clone(),
-            color: reference.color_context().clone(),
-            alpha: reference.alpha_mode(),
+            specs,
+            chroma_siting: reference.chroma_siting(),
+            color: reference.color().cloned(),
+            ycbcr_matrix_code: reference.ycbcr_matrix_code(),
+            range: reference.range(),
+            alpha: reference.alpha(),
         })
     })
 }
@@ -194,14 +208,14 @@ impl<P: PlanarWarmReference> PlanarWarmReference for PreparedPlanarReference<P> 
     type Output = P::Output;
     fn evaluate_planar(
         &mut self,
-        candidate: &PlanarSlice<'_>,
+        candidate: &PlanarView<'_>,
         opts: EvalOpts<'_>,
     ) -> MetricResult<Self::Output> {
         self.score(candidate, opts)
     }
     fn with_evaluation(
         &mut self,
-        candidate: &PlanarSlice<'_>,
+        candidate: &PlanarView<'_>,
         opts: EvalOpts<'_>,
         consume: &mut dyn FnMut(EvaluationRef<'_>),
     ) -> MetricResult<()> {

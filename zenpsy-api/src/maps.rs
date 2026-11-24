@@ -1,6 +1,6 @@
 //! Borrowed native maps; placement does not imply local causal attribution.
 use crate::{ErrorKind, MetricError, MetricResult, ScoreSpec, fail};
-use zenpixels::plane::AnyPlane;
+use zenpixels::PlaneView;
 
 /// Placement of a regular native map grid in input-pixel coordinates.
 /// Cells may cover only a cropped interior or extend beyond the image.
@@ -85,14 +85,14 @@ pub struct MapView<'a> {
     /// Stable map key, ordering and native unit. Unordered diagnostic features
     /// need no quality direction or perfect value.
     pub spec: &'a ScoreSpec,
-    /// Original samples, with active width, height and sample stride.
-    pub values: AnyPlane<'a>,
+    /// Original samples, with active width, height and byte stride.
+    pub values: PlaneView<'a>,
     /// Cell placement in the input image, independent of filter support.
     pub grid: MapGrid,
 }
 impl<'a> MapView<'a> {
     /// Borrow an existing map without copying its samples or metadata.
-    pub const fn new(spec: &'a ScoreSpec, values: AnyPlane<'a>, grid: MapGrid) -> Self {
+    pub const fn new(spec: &'a ScoreSpec, values: PlaneView<'a>, grid: MapGrid) -> Self {
         Self { spec, values, grid }
     }
 }

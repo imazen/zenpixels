@@ -2,27 +2,49 @@ use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
-use zenpsy_api::{
-    zenpixels::{plane::*, *},
-    *,
-};
+use zenpsy_api::{zenpixels::*, *};
 
-fn layout() -> PlanarLayout {
-    PlanarLayout::new(
-        [PlaneRole::Red, PlaneRole::Green, PlaneRole::Blue]
-            .map(|r| PlaneSpec::new(r, PlaneEncoding::Float(FloatEncoding::NOMINAL)))
-            .to_vec(),
-        sample::ChromaSubsampling::Yuv444,
-        sample::ChromaSiting::Unknown,
-    )
-    .unwrap()
+fn rgb_planes(data: &[f32], stride_samples: usize) -> [PlaneView<'_>; 3] {
+    let bytes: &[u8] = bytemuck::cast_slice(data);
+    let stride = stride_samples * 4;
+    [
+        PlaneView::new(
+            PlaneSpec::new(PlaneRole::R, SampleType::F32),
+            2,
+            2,
+            stride,
+            bytes,
+        )
+        .unwrap(),
+        PlaneView::new(
+            PlaneSpec::new(PlaneRole::G, SampleType::F32),
+            2,
+            2,
+            stride,
+            bytes,
+        )
+        .unwrap(),
+        PlaneView::new(
+            PlaneSpec::new(PlaneRole::B, SampleType::F32),
+            2,
+            2,
+            stride,
+            bytes,
+        )
+        .unwrap(),
+    ]
 }
-fn color() -> ColorContext {
-    ColorContext::from_cicp(Cicp::new(1, 8, 0, true))
+
+fn color() -> ColorSpace {
+    ColorSpace::Rgb {
+        primaries: Primaries::Bt709,
+        transfer: Transfer::Linear,
+        range: SignalRange::Full,
+        alpha: AlphaMode::None,
+        white: None,
+    }
 }
-fn planes(data: &[f32]) -> [AnyPlane<'_>; 3] {
-    [AnyPlane::F32(PlaneRef::new(data, 2, 2, 3).unwrap()); 3]
-}
+
 struct Output {
     values: [f32; 4],
     sum: f64,
@@ -36,7 +58,14 @@ impl Evaluation for Output {
     fn maps(&self) -> impl Iterator<Item = MapView<'_>> {
         std::iter::once(MapView::new(
             &MAP,
-            AnyPlane::F32(PlaneRef::new(&self.values[..], 2, 2, 2).unwrap()),
+            PlaneView::new(
+                PlaneSpec::new(PlaneRole::Y, SampleType::F32),
+                2,
+                2,
+                8,
+                bytemuck::cast_slice(&self.values),
+            )
+            .unwrap(),
             MapGrid::new(2, 2).unwrap(),
         ))
     }
@@ -52,8 +81,8 @@ impl Metric for MetricFactory {
     }
     fn evaluate(
         &mut self,
-        _: &PixelSlice<'_>,
-        _: &PixelSlice<'_>,
+        _: &PixelView<'_>,
+        _: &PixelView<'_>,
         _: EvalOpts<'_>,
     ) -> MetricResult<Output> {
         fail(MetricError::new(ErrorKind::UnsupportedInput))
@@ -62,8 +91,8 @@ impl Metric for MetricFactory {
 impl PlanarMetric for MetricFactory {
     fn evaluate_planar(
         &mut self,
-        r: &PlanarSlice<'_>,
-        d: &PlanarSlice<'_>,
+        r: &PlanarView<'_>,
+        d: &PlanarView<'_>,
         opts: EvalOpts<'_>,
     ) -> MetricResult<Output> {
         self.warm_planar_reference(r, opts)?
@@ -78,7 +107,7 @@ impl PreparePlanarReference for MetricFactory {
     type PlanarPrepared = Prepared;
     fn warm_planar_reference(
         &mut self,
-        r: &PlanarSlice<'_>,
+        r: &PlanarView<'_>,
         _: EvalOpts<'_>,
     ) -> MetricResult<Prepared> {
         self.preparations.fetch_add(1, Ordering::SeqCst);
@@ -88,15 +117,17 @@ impl PreparePlanarReference for MetricFactory {
         })
     }
 }
-fn sum(p: &PlanarSlice<'_>) -> f64 {
-    let AnyPlane::F32(red) = p.plane(0).unwrap() else {
-        panic!("f32")
-    };
-    red.rows().flatten().map(|v| f64::from(*v)).sum()
+fn sum(p: &PlanarView<'_>) -> f64 {
+    let red = p.planes()[0];
+    assert_eq!(red.spec().sample, SampleType::F32);
+    (0..red.height())
+        .flat_map(|y| bytemuck::cast_slice::<u8, f32>(red.row(y)).iter().copied())
+        .map(f64::from)
+        .sum()
 }
 impl PlanarWarmReference for Prepared {
     type Output = Output;
-    fn evaluate_planar(&mut self, p: &PlanarSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<Output> {
+    fn evaluate_planar(&mut self, p: &PlanarView<'_>, opts: EvalOpts<'_>) -> MetricResult<Output> {
         opts.checkpoint()?;
         let sum = sum(p) - self.reference;
         Ok(Output {
@@ -106,7 +137,7 @@ impl PlanarWarmReference for Prepared {
     }
     fn with_evaluation(
         &mut self,
-        p: &PlanarSlice<'_>,
+        p: &PlanarView<'_>,
         opts: EvalOpts<'_>,
         visitor: &mut dyn FnMut(EvaluationRef<'_>),
     ) -> MetricResult<()> {
@@ -122,11 +153,10 @@ impl PlanarWarmReference for Prepared {
 }
 #[test]
 fn owned_preparation_survives_factory_drop_and_erasure_lends_views() {
-    let l = layout();
     let c = color();
     let data = [1.0, 2.0, f32::NAN, 3.0, 4.0];
-    let planes = planes(&data);
-    let r = PlanarSlice::new(&planes, &l, 2, 2, &c, None).unwrap();
+    let planes = rgb_planes(&data, 3);
+    let r = PlanarView::new(2, 2, &planes).unwrap().with_color(c);
     let preparations = Arc::new(AtomicUsize::new(0));
     let mut m = Erased::new(Erased::new(MetricFactory {
         preparations: preparations.clone(),
@@ -147,10 +177,8 @@ fn owned_preparation_survives_factory_drop_and_erasure_lends_views() {
                 view.visit_maps(|m| {
                     map_count += 1;
                     assert_eq!(m.spec.key(), "error");
-                    let AnyPlane::F32(p) = m.values else {
-                        panic!("f32")
-                    };
-                    assert_eq!(p.row(0).unwrap(), [0.0, 0.0]);
+                    assert_eq!(m.values.spec().sample, SampleType::F32);
+                    assert_eq!(bytemuck::cast_slice::<u8, f32>(m.values.row(0)), [0.0, 0.0]);
                 });
                 assert_eq!(map_count, 1);
                 Ok(scores)
@@ -159,8 +187,16 @@ fn owned_preparation_survives_factory_drop_and_erasure_lends_views() {
         assert_eq!(result, cold_scores);
     }
     assert_eq!(preparations.load(Ordering::SeqCst), 2);
-    let other_color = ColorContext::from_cicp(Cicp::new(9, 8, 0, true));
-    let changed = PlanarSlice::new(&planes, &l, 2, 2, &other_color, None).unwrap();
+    let other_color = ColorSpace::Rgb {
+        primaries: Primaries::Bt2020,
+        transfer: Transfer::Linear,
+        range: SignalRange::Full,
+        alpha: AlphaMode::None,
+        white: None,
+    };
+    let changed = PlanarView::new(2, 2, &planes)
+        .unwrap()
+        .with_color(other_color);
     assert_eq!(
         prepared
             .score(&changed, EvalOpts::new())
@@ -192,11 +228,10 @@ fn owned_preparation_survives_factory_drop_and_erasure_lends_views() {
 }
 #[test]
 fn lending_callback_count_and_original_consumer_errors_are_checked() {
-    let l = layout();
     let c = color();
     let data = [0.0; 5];
-    let planes = planes(&data);
-    let p = PlanarSlice::new(&planes, &l, 2, 2, &c, None).unwrap();
+    let planes = rgb_planes(&data, 3);
+    let p = PlanarView::new(2, 2, &planes).unwrap().with_color(c);
     for behavior in [1, 2] {
         let mut m = MetricFactory {
             preparations: Arc::default(),
@@ -224,27 +259,25 @@ fn lending_callback_count_and_original_consumer_errors_are_checked() {
     assert_eq!(e.error().message(), Some("consumer"));
 }
 #[test]
-fn borrowed_picture_checks_geometry_and_alpha_without_inspecting_padding() {
-    let l = layout();
+fn borrowed_picture_checks_geometry_without_inspecting_padding() {
     let c = color();
     let data = [0.0; 5];
-    let planes = planes(&data);
-    assert!(PlanarSlice::new(&planes, &l, 3, 2, &c, None).is_err());
-    assert!(PlanarSlice::new(&planes, &l, 2, 2, &c, Some(AlphaMode::Straight)).is_err());
-    let p = PlanarSlice::new(&planes, &l, 2, 2, &c, None).unwrap();
-    let AnyPlane::F32(r) = p.plane(0).unwrap() else {
-        panic!("f32")
-    };
-    assert_eq!(r.strided_samples().as_ptr(), data.as_ptr());
+    let planes = rgb_planes(&data, 3);
+    assert!(PlanarView::new(3, 2, &planes).is_err());
+    let p = PlanarView::new(2, 2, &planes).unwrap().with_color(c);
+    let r = p.planes()[0];
+    assert_eq!(
+        r.data().as_ptr(),
+        bytemuck::cast_slice::<f32, u8>(&data).as_ptr()
+    );
 }
 
 #[test]
 fn heterogeneous_planar_objects_retain_checked_lending() {
-    let l = layout();
     let c = color();
     let data = [0.0; 5];
-    let planes = planes(&data);
-    let p = PlanarSlice::new(&planes, &l, 2, 2, &c, None).unwrap();
+    let planes = rgb_planes(&data, 3);
+    let p = PlanarView::new(2, 2, &planes).unwrap().with_color(c);
     let mut metrics: Vec<Box<dyn DynPreparePlanarReference>> = vec![
         Box::new(Erased::new(MetricFactory {
             preparations: Arc::default(),
@@ -278,42 +311,70 @@ fn heterogeneous_planar_objects_retain_checked_lending() {
 }
 
 #[test]
-fn prepared_interpretation_retains_authority_and_missing_hdr_conditions() {
-    let l = layout();
+fn prepared_interpretation_retains_authority_and_rejects_changes() {
     let icc: Arc<[u8]> = Arc::from([1, 2, 3, 4]);
-    let c = ColorContext::from_cicp(Cicp::new(200, 18, 202, false)).with_icc(icc.clone());
+    let c = ColorSpace::Icc {
+        profile: icc.clone(),
+        channels: 3,
+        alpha: AlphaMode::None,
+        intent: RenderingIntent::RelativeColorimetric,
+    };
     let data = [1.0, 2.0, f32::NAN, 3.0, 4.0];
-    let p = planes(&data);
-    let image = PlanarSlice::new(&p, &l, 2, 2, &c, None).unwrap();
+    let p = rgb_planes(&data, 3);
+    let image = PlanarView::new(2, 2, &p)
+        .unwrap()
+        .with_color(c.clone())
+        .with_ycbcr_matrix_code(1)
+        .with_range(SignalRange::Narrow);
     let mut metric = Erased::new(Erased::new(MetricFactory {
         preparations: Arc::default(),
         behavior: 0,
     }));
-    // The synthetic scorer tests carriage only, not HLG/color conversion.
-    // No wrapper may infer a white or display rendering from a raw tag.
     let mut prepared = prepare_planar_reference(&mut metric, &image, EvalOpts::new()).unwrap();
-    assert!(image.color_context().diffuse_white().is_none());
-    assert!(image.color_context().hdr_peak().is_none());
-    assert!(Arc::ptr_eq(image.color_context().icc_arc().unwrap(), &icc));
     let independently_padded = [1.0, 2.0, f32::NAN, f32::NAN, 3.0, 4.0];
-    let q = [AnyPlane::F32(PlaneRef::new(&independently_padded[..], 2, 2, 4).unwrap()); 3];
-    let equal_context = c.clone();
-    let candidate = PlanarSlice::new(&q, &l, 2, 2, &equal_context, None).unwrap();
+    let q = rgb_planes(&independently_padded, 4);
+    let candidate = PlanarView::new(2, 2, &q)
+        .unwrap()
+        .with_color(c.clone())
+        .with_ycbcr_matrix_code(1)
+        .with_range(SignalRange::Narrow);
     let result = prepared.score(&candidate, EvalOpts::new()).unwrap();
     assert_eq!(
         result.scores().next().unwrap().value.to_bits(),
         0.0f64.to_bits()
     );
-    for changed in [
-        c.clone().with_icc([4, 3, 2, 1]),
-        c.clone().with_cicp(Cicp::new(200, 18, 203, false)),
-        c.clone().with_diffuse_white(hdr::DiffuseWhite::BT2408),
-        c.clone().with_hdr_peak(hdr::Nits::new(1000.0)),
-    ] {
-        let candidate = PlanarSlice::new(&q, &l, 2, 2, &changed, None).unwrap();
+    let changed_candidates = [
+        PlanarView::new(2, 2, &q)
+            .unwrap()
+            .with_color(ColorSpace::Icc {
+                profile: Arc::from([4, 3, 2, 1]),
+                channels: 3,
+                alpha: AlphaMode::None,
+                intent: RenderingIntent::RelativeColorimetric,
+            })
+            .with_ycbcr_matrix_code(1)
+            .with_range(SignalRange::Narrow),
+        PlanarView::new(2, 2, &q)
+            .unwrap()
+            .with_color(c.clone())
+            .with_ycbcr_matrix_code(9)
+            .with_range(SignalRange::Narrow),
+        PlanarView::new(2, 2, &q)
+            .unwrap()
+            .with_color(c.clone())
+            .with_ycbcr_matrix_code(1)
+            .with_range(SignalRange::Full),
+        PlanarView::new(2, 2, &q)
+            .unwrap()
+            .with_color(c)
+            .with_ycbcr_matrix_code(1)
+            .with_range(SignalRange::Narrow)
+            .with_chroma_siting(ChromaSiting::Left),
+    ];
+    for candidate in &changed_candidates {
         assert_eq!(
             prepared
-                .score(&candidate, EvalOpts::new())
+                .score(candidate, EvalOpts::new())
                 .err()
                 .unwrap()
                 .error()
@@ -322,7 +383,7 @@ fn prepared_interpretation_retains_authority_and_missing_hdr_conditions() {
         );
         assert_eq!(
             prepared
-                .with_evaluation::<()>(&candidate, EvalOpts::new(), |_| panic!(
+                .with_evaluation::<()>(candidate, EvalOpts::new(), |_| panic!(
                     "changed interpretation reached consumer"
                 ))
                 .unwrap_err()
@@ -331,30 +392,6 @@ fn prepared_interpretation_retains_authority_and_missing_hdr_conditions() {
             ErrorKind::UnsupportedInput
         );
     }
-    // A changed representation is not silently normalized to prepared scale.
-    let changed_layout = PlanarLayout::new(
-        [PlaneRole::Red, PlaneRole::Green, PlaneRole::Blue]
-            .map(|r| {
-                PlaneSpec::new(
-                    r,
-                    PlaneEncoding::Float(FloatEncoding::new(2.0, 0.0).unwrap()),
-                )
-            })
-            .to_vec(),
-        sample::ChromaSubsampling::Yuv444,
-        sample::ChromaSiting::Unknown,
-    )
-    .unwrap();
-    let candidate = PlanarSlice::new(&q, &changed_layout, 2, 2, &c, None).unwrap();
-    assert_eq!(
-        prepared
-            .score(&candidate, EvalOpts::new())
-            .err()
-            .unwrap()
-            .error()
-            .kind(),
-        ErrorKind::UnsupportedInput
-    );
     prepared
         .with_evaluation(&image, EvalOpts::new(), |_| Ok(()))
         .unwrap();
@@ -362,13 +399,12 @@ fn prepared_interpretation_retains_authority_and_missing_hdr_conditions() {
 
 #[test]
 fn packed_and_planar_operation_admission_share_request_classification() {
-    let l = layout();
     let c = color();
     let data = [0.0; 5];
-    let p = planes(&data);
-    let planar = PlanarSlice::new(&p, &l, 2, 2, &c, None).unwrap();
+    let p = rgb_planes(&data, 3);
+    let planar = PlanarView::new(2, 2, &p).unwrap().with_color(c);
     let bytes = [0; 12];
-    let packed = PixelSlice::new(&bytes, 2, 2, 6, PixelDescriptor::RGB8_SRGB).unwrap();
+    let packed = PixelView::new(&bytes, 2, 2, 6, ImageSpec::rgb8_srgb()).unwrap();
     let mut metric = MetricFactory {
         preparations: Arc::default(),
         behavior: 0,

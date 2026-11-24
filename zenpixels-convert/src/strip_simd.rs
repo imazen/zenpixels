@@ -849,21 +849,11 @@ macro_rules! rgba8_premul_scalar_loop {
     }};
 }
 
-// Pure-register IEEE-754 f32 SIMD premul:
-// For ALL c, a in 0..=255 and BOTH bias=128 (round) and bias=1 (trunc):
-//   t = c * a + bias <= 65_153
-//   t * 257 <= 16_744_321 < 2^24 = 16_777_216 (exact in f32!)
-//   PREMUL_SCALE = 257.0 / 65536.0 = 257 * 2^-16 (exact in f32!)
-// Writing t = 256*q + r (0 <= r <= 255),
-//   t * 257 / 65536 = (257*q + r + r/256) / 256
-// Since 257*q + r is an integer and 0 <= r/256 < 1, its floor is IDENTICAL to
-// ((t + (t >> 8)) >> 8) for all 65,536 (c, a) pairs — 0-bit exact with scalar!
-#[cfg(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "wasm32"
-))]
-const PREMUL_SCALE: f32 = 257.0 / 65536.0;
+// Integer u16x16/u16x8 SIMD premul using the exact alpha identity:
+// for ALL a in 0..=255 and BOTH bias=128 (round) and bias=1 (trunc),
+//   let t = a * 255 + bias; ((t + (t >> 8)) >> 8) == a.
+// Placing 255 in every 4th multiplier lane preserves alpha branchlessly in one vector op
+// without float conversion or 4-channel shuffle overhead (~2x faster than f32x8 deinterleave).
 #[cfg(any(
     target_arch = "x86_64",
     target_arch = "aarch64",
@@ -871,27 +861,88 @@ const PREMUL_SCALE: f32 = 257.0 / 65536.0;
 ))]
 const INV_256: f32 = 1.0 / 256.0;
 
-#[cfg(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "wasm32"
-))]
-macro_rules! rgba8_premul_f32_body {
-    ($vec:ident, $lanes:literal, $n4:literal, $token:ident, $src:ident, $dst:ident, $bias:expr) => {{
-        let vbias = $vec::splat_t($token, $bias as f32);
-        let vscale = $vec::splat_t($token, PREMUL_SCALE);
-        let (sc, srem) = $src.as_chunks::<$n4>();
-        let (dc, drem) = $dst.as_chunks_mut::<$n4>();
+#[cfg(target_arch = "x86_64")]
+macro_rules! rgba8_premul_simd16_body {
+    ($vec:ident, $token:ident, $src:ident, $dst:ident, $bias:expr) => {{
+        let bias_v = $vec::splat_t($token, $bias);
+        let (sc, srem) = $src.as_chunks::<16>();
+        let (dc, drem) = $dst.as_chunks_mut::<16>();
         for (sp, dp) in sc.iter().zip(dc.iter_mut()) {
-            let (c0, c1, c2, a) = $vec::load_rgba_u8_t($token, sp);
-            let p0 = c0.mul_add_relaxed(a, vbias) * vscale;
-            let p1 = c1.mul_add_relaxed(a, vbias) * vscale;
-            let p2 = c2.mul_add_relaxed(a, vbias) * vscale;
-            let [v0, v1, v2, v3] = $vec::interleave_4ch([p0, p1, p2, a]);
-            dp[0..$lanes].copy_from_slice(&v0.to_u8_with::<TRUNC_NONNEG>());
-            dp[$lanes..$lanes * 2].copy_from_slice(&v1.to_u8_with::<TRUNC_NONNEG>());
-            dp[$lanes * 2..$lanes * 3].copy_from_slice(&v2.to_u8_with::<TRUNC_NONNEG>());
-            dp[$lanes * 3..$lanes * 4].copy_from_slice(&v3.to_u8_with::<TRUNC_NONNEG>());
+            let c = $vec::from_array_t(
+                $token,
+                [
+                    u16::from(sp[0]),
+                    u16::from(sp[1]),
+                    u16::from(sp[2]),
+                    u16::from(sp[3]),
+                    u16::from(sp[4]),
+                    u16::from(sp[5]),
+                    u16::from(sp[6]),
+                    u16::from(sp[7]),
+                    u16::from(sp[8]),
+                    u16::from(sp[9]),
+                    u16::from(sp[10]),
+                    u16::from(sp[11]),
+                    u16::from(sp[12]),
+                    u16::from(sp[13]),
+                    u16::from(sp[14]),
+                    u16::from(sp[15]),
+                ],
+            );
+            let a0 = u16::from(sp[3]);
+            let a1 = u16::from(sp[7]);
+            let a2 = u16::from(sp[11]);
+            let a3 = u16::from(sp[15]);
+            let a = $vec::from_array_t(
+                $token,
+                [
+                    a0, a0, a0, 255, a1, a1, a1, 255, a2, a2, a2, 255, a3, a3, a3, 255,
+                ],
+            );
+            let t = c * a + bias_v;
+            let res = (t + t.shr_logical_const::<8>())
+                .shr_logical_const::<8>()
+                .to_array();
+            for k in 0..16 {
+                dp[k] = res[k] as u8;
+            }
+        }
+        if !srem.is_empty() {
+            rgba8_premul_scalar_loop!(srem, drem, $bias);
+        }
+    }};
+}
+
+#[cfg(any(target_arch = "aarch64", target_arch = "wasm32"))]
+macro_rules! rgba8_premul_simd8_body {
+    ($vec:ident, $token:ident, $src:ident, $dst:ident, $bias:expr) => {{
+        let bias_v = $vec::splat_t($token, $bias);
+        let (sc, srem) = $src.as_chunks::<8>();
+        let (dc, drem) = $dst.as_chunks_mut::<8>();
+        for (sp, dp) in sc.iter().zip(dc.iter_mut()) {
+            let c = $vec::from_array_t(
+                $token,
+                [
+                    u16::from(sp[0]),
+                    u16::from(sp[1]),
+                    u16::from(sp[2]),
+                    u16::from(sp[3]),
+                    u16::from(sp[4]),
+                    u16::from(sp[5]),
+                    u16::from(sp[6]),
+                    u16::from(sp[7]),
+                ],
+            );
+            let a0 = u16::from(sp[3]);
+            let a1 = u16::from(sp[7]);
+            let a = $vec::from_array_t($token, [a0, a0, a0, 255, a1, a1, a1, 255]);
+            let t = c * a + bias_v;
+            let res = (t + t.shr_logical_const::<8>())
+                .shr_logical_const::<8>()
+                .to_array();
+            for k in 0..8 {
+                dp[k] = res[k] as u8;
+            }
         }
         if !srem.is_empty() {
             rgba8_premul_scalar_loop!(srem, drem, $bias);
@@ -902,33 +953,33 @@ macro_rules! rgba8_premul_f32_body {
 #[cfg(target_arch = "x86_64")]
 #[archmage::arcane]
 fn rgba8_premul_v3_t(token: archmage::X64V3Token, src: &[u8], dst: &mut [u8], round: bool) {
-    type V = magetypes::simd::generic::f32x8<archmage::X64V3Token>;
+    type V = magetypes::simd::generic::u16x16<archmage::X64V3Token>;
     if round {
-        rgba8_premul_f32_body!(V, 8, 32, token, src, dst, 128);
+        rgba8_premul_simd16_body!(V, token, src, dst, 128);
     } else {
-        rgba8_premul_f32_body!(V, 8, 32, token, src, dst, 1);
+        rgba8_premul_simd16_body!(V, token, src, dst, 1);
     }
 }
 
 #[cfg(target_arch = "aarch64")]
 #[archmage::arcane]
 fn rgba8_premul_neon_t(token: archmage::NeonToken, src: &[u8], dst: &mut [u8], round: bool) {
-    type V = magetypes::simd::generic::f32x4<archmage::NeonToken>;
+    type V = magetypes::simd::generic::u16x8<archmage::NeonToken>;
     if round {
-        rgba8_premul_f32_body!(V, 4, 16, token, src, dst, 128);
+        rgba8_premul_simd8_body!(V, token, src, dst, 128);
     } else {
-        rgba8_premul_f32_body!(V, 4, 16, token, src, dst, 1);
+        rgba8_premul_simd8_body!(V, token, src, dst, 1);
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 #[archmage::arcane]
 fn rgba8_premul_wasm128_t(token: archmage::Wasm128Token, src: &[u8], dst: &mut [u8], round: bool) {
-    type V = magetypes::simd::generic::f32x4<archmage::Wasm128Token>;
+    type V = magetypes::simd::generic::u16x8<archmage::Wasm128Token>;
     if round {
-        rgba8_premul_f32_body!(V, 4, 16, token, src, dst, 128);
+        rgba8_premul_simd8_body!(V, token, src, dst, 128);
     } else {
-        rgba8_premul_f32_body!(V, 4, 16, token, src, dst, 1);
+        rgba8_premul_simd8_body!(V, token, src, dst, 1);
     }
 }
 

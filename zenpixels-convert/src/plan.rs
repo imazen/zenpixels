@@ -48,7 +48,10 @@ enum RowExec {
         src_opaque_alpha: bool,
     },
     /// External CMS row transform (`ColorSpace::Icc` / `ColorSpace::Cmyk`).
-    Cms { transform: Arc<dyn CmsTransform> },
+    Cms {
+        transform: Arc<dyn CmsTransform>,
+        clip_f32_color: bool,
+    },
 }
 
 /// Shared preflight result used by both [`RowPlan::build`] and [`Negotiate`](crate::Negotiate).
@@ -769,11 +772,23 @@ impl RowPlan {
             .with_all_opaque(all_opaque)
             .with_all_grayscale(matches!(dst.color, ColorSpace::Gray { .. }))
             .with_binary_alpha(all_opaque);
+        let clip_f32_color = policy.gamut == GamutPolicy::Clip
+            && dst.layout.sample == SampleType::F32
+            && match &dst.color {
+                ColorSpace::Rgb { transfer, .. } | ColorSpace::Gray { transfer, .. } => {
+                    !transfer.is_hdr()
+                }
+                ColorSpace::Icc { .. } => true,
+                _ => false,
+            };
         Ok(Self {
             output_facts,
             src,
             dst,
-            exec: RowExec::Cms { transform },
+            exec: RowExec::Cms {
+                transform,
+                clip_f32_color,
+            },
             depth_policy: policy.depth,
             accel,
         })
@@ -873,8 +888,36 @@ impl RowPlan {
                 );
                 Ok(())
             }
-            RowExec::Cms { transform } => {
-                transform.transform_row(&src_row[..need_src], &mut dst_row[..need_dst], width)
+            RowExec::Cms {
+                transform,
+                clip_f32_color,
+            } => {
+                let dst_active = &mut dst_row[..need_dst];
+                transform.transform_row(&src_row[..need_src], dst_active, width)?;
+                if *clip_f32_color {
+                    let ch = self.dst.layout.channels();
+                    let color_ch = if self.dst.layout.order.has_alpha_slot() {
+                        ch - 1
+                    } else {
+                        ch
+                    };
+                    if let Ok(floats) = bytemuck::try_cast_slice_mut::<u8, f32>(dst_active) {
+                        for px in floats.chunks_exact_mut(ch) {
+                            for v in &mut px[..color_ch] {
+                                *v = v.clamp(0.0, 1.0);
+                            }
+                        }
+                    } else {
+                        let px_bytes = ch * 4;
+                        for px in dst_active.chunks_exact_mut(px_bytes) {
+                            for slot in px[..color_ch * 4].as_chunks_mut::<4>().0 {
+                                let v = f32::from_ne_bytes(*slot).clamp(0.0, 1.0);
+                                *slot = v.to_ne_bytes();
+                            }
+                        }
+                    }
+                }
+                Ok(())
             }
         }
     }

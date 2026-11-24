@@ -4,73 +4,78 @@ mod storage;
 
 use serde_json::{Value, json};
 use wasm_bindgen::prelude::*;
-use zenpixels::policy::{AlphaPolicy, ConvertOptions, LumaCoefficients};
 use zenpixels::{
-    AlphaMode, ChannelLayout, ChannelType, ColorPrimaries, PixelBuffer, PixelDescriptor,
-    PixelFormat, SignalRange, TransferFunction,
+    AlphaMode, ChannelOrder, ColorSpace, DiffuseWhite, HlgMode, HlgRendering, ImageSpec, Nits,
+    PixelBuf, Primaries, SampleLayout, SampleType, SignalRange, Transfer,
 };
+use zenpixels_convert::{AlphaPolicy, ConvertPolicy, DepthPolicy, LumaCoefficients, RowPlan};
 
 fn field<'a>(v: &'a Value, key: &str) -> Result<&'a str, String> {
     v[key]
         .as_str()
         .ok_or_else(|| format!("Missing string: {key}"))
 }
-fn channel(v: &Value) -> Result<ChannelType, String> {
+fn sample(v: &Value) -> Result<SampleType, String> {
     match field(v, "ct")? {
-        "U8" => Ok(ChannelType::U8),
-        "U16" => Ok(ChannelType::U16),
-        "F16" => Ok(ChannelType::F16),
-        "F32" => Ok(ChannelType::F32),
-        "I8" => Ok(ChannelType::I8),
-        "I16" => Ok(ChannelType::I16),
-        "U32" => Ok(ChannelType::U32),
-        "I32" => Ok(ChannelType::I32),
-        "U64" => Ok(ChannelType::U64),
-        "I64" => Ok(ChannelType::I64),
-        "F64" => Ok(ChannelType::F64),
+        "U8" => Ok(SampleType::U8),
+        "U16" => Ok(SampleType::U16),
+        "F16" => Ok(SampleType::F16),
+        "F32" => Ok(SampleType::F32),
+        "I8" => Ok(SampleType::I8),
+        "I16" => Ok(SampleType::I16),
+        "U32" => Ok(SampleType::U32),
+        "I32" => Ok(SampleType::I32),
+        "U64" => Ok(SampleType::U64),
+        "I64" => Ok(SampleType::I64),
+        "F64" => Ok(SampleType::F64),
         other => Err(format!("Unknown ct: {other}")),
     }
 }
-fn layout(v: &Value) -> Result<ChannelLayout, String> {
-    match field(v, "layout")? {
-        "Rgb" => Ok(ChannelLayout::Rgb),
-        "Bgr" => Ok(ChannelLayout::Bgr),
-        "Rgba" => Ok(ChannelLayout::Rgba),
-        "Bgra" => Ok(ChannelLayout::Bgra),
-        "Gray" => Ok(ChannelLayout::Gray),
-        "GrayAlpha" => Ok(ChannelLayout::GrayAlpha),
-        "Oklab" => Ok(ChannelLayout::Oklab),
-        "OklabA" => Ok(ChannelLayout::OklabA),
-        "Cmyk" => Ok(ChannelLayout::Cmyk),
-        "CmykInverted" => Ok(ChannelLayout::CmykInverted),
-        other => Err(format!("Unknown layout: {other}")),
+fn order(v: &Value, pad: bool) -> Result<ChannelOrder, String> {
+    match (field(v, "layout")?, pad) {
+        ("Rgb", false) => Ok(ChannelOrder::Rgb),
+        ("Bgr", false) => Ok(ChannelOrder::Bgr),
+        ("Rgba", false) => Ok(ChannelOrder::Rgba),
+        ("Rgba", true) | ("Rgbx", _) => Ok(ChannelOrder::Rgbx),
+        ("Bgra", false) => Ok(ChannelOrder::Bgra),
+        ("Bgra", true) | ("Bgrx", _) => Ok(ChannelOrder::Bgrx),
+        ("Gray", false) => Ok(ChannelOrder::Gray),
+        ("GrayAlpha", false) => Ok(ChannelOrder::GrayAlpha),
+        ("Oklab", false) => Ok(ChannelOrder::Oklab),
+        ("OklabA", false) => Ok(ChannelOrder::OklabA),
+        ("Cmyk", false) => Ok(ChannelOrder::Cmyk),
+        ("CmykInverted", false) => Ok(ChannelOrder::CmykInverted),
+        (other, _) => Err(format!("Unknown layout: {other}")),
     }
 }
-fn transfer(v: &Value) -> Result<TransferFunction, String> {
+fn transfer(v: &Value) -> Result<Transfer, String> {
     match field(v, "transfer")? {
-        "Srgb" => Ok(TransferFunction::Srgb),
-        "Linear" => Ok(TransferFunction::Linear),
-        "Bt709" => Ok(TransferFunction::Bt709),
-        "Gamma22" => Ok(TransferFunction::Gamma22),
-        "Pq" => Ok(TransferFunction::Pq),
-        "Hlg" => Ok(TransferFunction::Hlg),
-        "Unknown" => Ok(TransferFunction::Unknown),
+        "Srgb" => Ok(Transfer::Srgb),
+        "Linear" => Ok(Transfer::Linear),
+        "Bt709" => Ok(Transfer::Bt709),
+        "Gamma22" => Ok(Transfer::Gamma22),
+        "AdobeRgb" => Ok(Transfer::AdobeRgb),
+        "DciCinema" => Ok(Transfer::DciCinema),
+        "Pq" => Ok(Transfer::Pq),
+        "Hlg" => Ok(Transfer::Hlg(HlgMode::Scene)),
+        "Unknown" => Ok(Transfer::Unknown),
         other => Err(format!("Unknown transfer: {other}")),
     }
 }
-fn primaries(v: &Value) -> Result<ColorPrimaries, String> {
+fn primaries(v: &Value) -> Result<Primaries, String> {
     match field(v, "primaries")? {
-        "Bt709" => Ok(ColorPrimaries::Bt709),
-        "DisplayP3" => Ok(ColorPrimaries::DisplayP3),
-        "Bt2020" => Ok(ColorPrimaries::Bt2020),
-        "AdobeRgb" => Ok(ColorPrimaries::AdobeRgb),
-        "Unknown" => Ok(ColorPrimaries::Unknown),
+        "Bt709" => Ok(Primaries::Bt709),
+        "DisplayP3" => Ok(Primaries::DisplayP3),
+        "Bt2020" => Ok(Primaries::Bt2020),
+        "AdobeRgb" => Ok(Primaries::AdobeRgb),
+        "DciP3" => Ok(Primaries::DciP3),
+        "Unknown" => Ok(Primaries::Unknown),
         other => Err(format!("Unknown primaries: {other}")),
     }
 }
 fn alpha(v: &Value) -> Result<AlphaMode, String> {
     match field(v, "alphaMode")? {
-        "Undefined" => Ok(AlphaMode::Undefined),
+        "Undefined" | "None" => Ok(AlphaMode::None),
         "Straight" => Ok(AlphaMode::Straight),
         "Premultiplied" => Ok(AlphaMode::Premultiplied),
         "Opaque" => Ok(AlphaMode::Opaque),
@@ -82,39 +87,61 @@ fn luma(v: &Value) -> Result<LumaCoefficients, String> {
         "Bt709" => Ok(LumaCoefficients::Bt709),
         "Bt601" => Ok(LumaCoefficients::Bt601),
         "Bt2020" => Ok(LumaCoefficients::Bt2020),
-        "DisplayP3" => Ok(LumaCoefficients::DisplayP3),
+        "DisplayP3" => Ok(LumaCoefficients::FromSourcePrimaries),
         other => Err(format!("Unknown luma: {other}")),
     }
 }
 
-fn descriptor(v: &Value) -> Result<PixelDescriptor, String> {
-    let a = match field(v, "alphaKind")? {
-        "alpha" => Some(alpha(v)?),
-        "pad" => Some(AlphaMode::Undefined),
-        "none" => None,
+fn spec_from_json(v: &Value) -> Result<ImageSpec, String> {
+    let alpha_kind = field(v, "alphaKind")?;
+    let is_pad = alpha_kind == "pad";
+    let alpha_mode = match alpha_kind {
+        "alpha" => alpha(v)?,
+        "pad" | "none" => AlphaMode::None,
         _ => return Err("Unknown alpha kind".into()),
     };
-    let format = PixelFormat::from_parts(channel(v)?, layout(v)?, a)
-        .ok_or("Unsupported channel/layout combination")?;
-    let mut d = format.descriptor().with_alpha(a);
-    if matches!(
-        d.layout(),
-        ChannelLayout::Rgb
-            | ChannelLayout::Bgr
-            | ChannelLayout::Rgba
-            | ChannelLayout::Bgra
-            | ChannelLayout::Gray
-            | ChannelLayout::GrayAlpha
-    ) {
-        d = d.with_transfer(transfer(v)?).with_primaries(primaries(v)?);
-    }
-    d = d.with_signal_range(match field(v, "range")? {
+    let ord = order(v, is_pad)?;
+    let layout = SampleLayout::new(sample(v)?, ord);
+    let range = match field(v, "range")? {
         "Full" => SignalRange::Full,
         "Narrow" => SignalRange::Narrow,
         _ => return Err("Unknown signal range".into()),
-    });
-    d.validate().map_err(|e| e.to_string())?;
-    Ok(d)
+    };
+    let color = match ord {
+        ChannelOrder::Rgb
+        | ChannelOrder::Bgr
+        | ChannelOrder::Rgba
+        | ChannelOrder::Bgra
+        | ChannelOrder::Rgbx
+        | ChannelOrder::Bgrx => ColorSpace::Rgb {
+            primaries: primaries(v)?,
+            transfer: transfer(v)?,
+            range,
+            alpha: alpha_mode,
+            white: None,
+        },
+        ChannelOrder::Gray | ChannelOrder::GrayAlpha => ColorSpace::Gray {
+            transfer: transfer(v)?,
+            range,
+            alpha: alpha_mode,
+            white: None,
+        },
+        ChannelOrder::Oklab | ChannelOrder::OklabA => ColorSpace::Oklab { alpha: alpha_mode },
+        ChannelOrder::Cmyk => ColorSpace::Cmyk {
+            icc: None,
+            alpha: alpha_mode,
+            inverted: false,
+        },
+        ChannelOrder::CmykInverted => ColorSpace::Cmyk {
+            icc: None,
+            alpha: alpha_mode,
+            inverted: true,
+        },
+        _ => return Err("Unsupported channel order".into()),
+    };
+    let spec = ImageSpec::new(layout, color);
+    spec.validate().map_err(|e| e.to_string())?;
+    Ok(spec)
 }
 
 fn integer(v: &Value, name: &str, max: u32) -> Result<u32, String> {
@@ -128,13 +155,13 @@ fn integer(v: &Value, name: &str, max: u32) -> Result<u32, String> {
 }
 
 fn run(v: &Value) -> Result<Value, String> {
-    let from = descriptor(&v["from"])?;
-    let to = descriptor(&v["to"])?;
+    let from = spec_from_json(&v["from"])?;
+    let to = spec_from_json(&v["to"])?;
     let width = integer(v, "width", 8)?;
     let rows = integer(v, "rows", 4)?;
     let stride = integer(v, "stride", 4096)? as usize;
     let source = v["bytes"].as_array().ok_or("Missing bytes array")?;
-    let row_bytes = width as usize * from.bytes_per_pixel();
+    let row_bytes = width as usize * from.layout.bytes_per_pixel();
     if stride < row_bytes || source.len() != stride * rows as usize {
         return Err("Input bytes do not match dimensions/stride".into());
     }
@@ -147,36 +174,34 @@ fn run(v: &Value) -> Result<Value, String> {
                 .ok_or("Invalid byte".to_string())
         })
         .collect::<Result<_, _>>()?;
-    // The view allocations guarantee native sample alignment. Copy only active rows.
     let mut input =
-        PixelBuffer::try_new(width, rows, from).map_err(|e| format!("{:?}", e.error()))?;
+        PixelBuf::new(width, rows, from.clone()).map_err(|e| format!("{:?}", e.error()))?;
     for y in 0..rows {
         input
-            .as_slice_mut()
+            .as_view_mut()
             .row_mut(y)
             .copy_from_slice(&bytes[y as usize * stride..y as usize * stride + row_bytes]);
     }
-    let mut options = ConvertOptions::retain_channels()
-        .with_alpha_policy(zenpixels_convert::AlphaPolicy::DiscardIfOpaque)
-        .with_depth_policy(zenpixels_convert::DepthPolicy::Round)
-        .with_luma(Some(zenpixels_convert::LumaCoefficients::Bt709))
-        .with_alpha_policy(AlphaPolicy::DiscardUnchecked)
-        .with_luma(Some(luma(v)?));
+    let mut policy = ConvertPolicy::permissive()
+        .with_depth(DepthPolicy::Round)
+        .with_alpha(AlphaPolicy::DiscardUnchecked)
+        .with_luma(luma(v)?);
+    let mut hdr_peak: Option<Nits> = None;
     for (key, destination) in [("sdrWhite", 0), ("hdrPeak", 1), ("sdrPeak", 2)] {
         if let Some(value) = v[key].as_f64() {
             let value = value as f32;
             if destination == 0 {
-                let white = zenpixels::hdr::DiffuseWhite::try_new(value)
+                let white = DiffuseWhite::try_new(value)
                     .ok_or_else(|| format!("{key} must be positive and finite"))?;
-                options = options.with_sdr_white(white);
+                policy = policy.with_sdr_white(white);
             } else {
-                let nits = zenpixels::hdr::Nits::try_new(value)
+                let nits = Nits::try_new(value)
                     .ok_or_else(|| format!("{key} must be positive and finite"))?;
-                options = if destination == 1 {
-                    options.with_hdr_peak(zenpixels::hdr::HdrPeak::Nits(nits))
+                if destination == 1 {
+                    hdr_peak = Some(nits);
                 } else {
-                    options.with_sdr_peak(nits)
-                };
+                    policy = policy.with_sdr_peak(nits);
+                }
             }
         }
     }
@@ -187,38 +212,37 @@ fn run(v: &Value) -> Result<Value, String> {
                 .map(|n| n as f32)
                 .ok_or_else(|| format!("Missing HLG {name}"))
         };
-        let peak = zenpixels::hdr::Nits::try_new(number("peak")?)
-            .ok_or("HLG peak must be finite and positive")?;
-        let rendering = zenpixels::hdr::HlgRendering::new(peak, number("black")?, number("gamma")?)
-            .ok_or(
-                "HLG black must be 0..=1% of peak; gamma must be 0.5..=3; values must be finite",
-            )?;
-        options = options.with_hlg_rendering(rendering);
+        let peak = Nits::try_new(number("peak")?).ok_or("HLG peak must be finite and positive")?;
+        let rendering = HlgRendering::new(peak, number("black")?, number("gamma")?).ok_or(
+            "HLG black must be 0..=1% of peak; gamma must be 0.5..=3; values must be finite",
+        )?;
+        policy = policy.with_hlg_rendering(rendering);
     }
-    let recipe = zenpixels_convert::ConvertPlan::build(
-        from.into(),
-        to.into(),
-        &zenpixels_convert::ConversionSpec::new(options),
-    )
-    .map_err(|e| format!("{:?}", e.error()))?;
-    let plan = format!("{recipe:#?}");
-    let mut output =
-        PixelBuffer::try_new(width, rows, to).map_err(|e| format!("{:?}", e.error()))?;
-    let mut converter = recipe
-        .prepare(width)
+    let row_plan = RowPlan::build(from, to.clone(), &policy, hdr_peak)
         .map_err(|e| format!("{:?}", e.error()))?;
+    let plan = format!("{row_plan:#?}");
+    let mut output =
+        PixelBuf::new(width, rows, to.clone()).map_err(|e| format!("{:?}", e.error()))?;
     for y in 0..rows {
-        converter
-            .try_convert_row(
-                input.as_slice().row(y),
-                output.as_slice_mut().row_mut(y),
+        row_plan
+            .convert_row(
+                input.as_view().row(y),
+                output.as_view_mut().row_mut(y),
                 width,
+                y,
             )
             .map_err(|e| format!("{:?}", e.error()))?;
     }
-    Ok(
-        json!({"bytes": output.copy_to_contiguous_bytes(), "plan": plan, "stride": width as usize * to.bytes_per_pixel()}),
-    )
+    let out_stride = width as usize * to.layout.bytes_per_pixel();
+    let mut out_bytes = Vec::with_capacity(out_stride * rows as usize);
+    for y in 0..rows {
+        out_bytes.extend_from_slice(output.as_view().row(y));
+    }
+    Ok(json!({
+        "bytes": out_bytes,
+        "plan": plan,
+        "stride": out_stride
+    }))
 }
 
 /// Browser-only JSON boundary for the unpublished explorer tool.
@@ -248,59 +272,54 @@ pub fn inspect_storage(request: &str) -> String {
 /// Source-derived format facts used to check the teaching model for drift.
 #[wasm_bindgen]
 pub fn format_catalog() -> String {
-    let mut formats = Vec::new();
-    for channel in [
-        ChannelType::U8,
-        ChannelType::U16,
-        ChannelType::F16,
-        ChannelType::F32,
-        ChannelType::I8,
-        ChannelType::I16,
-        ChannelType::U32,
-        ChannelType::I32,
-        ChannelType::U64,
-        ChannelType::I64,
-        ChannelType::F64,
+    let mut layouts = Vec::new();
+    for st in [
+        SampleType::U8,
+        SampleType::U16,
+        SampleType::F16,
+        SampleType::F32,
+        SampleType::I8,
+        SampleType::I16,
+        SampleType::U32,
+        SampleType::I32,
+        SampleType::U64,
+        SampleType::I64,
+        SampleType::F64,
     ] {
-        for layout in [
-            ChannelLayout::Gray,
-            ChannelLayout::GrayAlpha,
-            ChannelLayout::Rgb,
-            ChannelLayout::Rgba,
+        for ord in [
+            ChannelOrder::Gray,
+            ChannelOrder::GrayAlpha,
+            ChannelOrder::Rgb,
+            ChannelOrder::Rgba,
         ] {
-            let alpha = layout.has_alpha().then_some(AlphaMode::Straight);
-            formats.push(PixelFormat::from_parts(channel, layout, alpha).unwrap());
+            layouts.push(SampleLayout::new(st, ord));
         }
     }
-    formats.extend([
-        PixelFormat::Bgr8,
-        PixelFormat::Bgra8,
-        PixelFormat::Rgbx8,
-        PixelFormat::Bgrx8,
-        PixelFormat::OklabF32,
-        PixelFormat::OklabaF32,
-        PixelFormat::CMYK8,
-        PixelFormat::CMYK8_INVERTED,
-        PixelFormat::CMYK16,
-        PixelFormat::CMYK16_INVERTED,
-        PixelFormat::CMYKF32,
-        PixelFormat::CMYKF32_INVERTED,
+    layouts.extend([
+        SampleLayout::BGR8,
+        SampleLayout::BGRA8,
+        SampleLayout::RGBX8,
+        SampleLayout::BGRX8,
+        SampleLayout::OKLABF32,
+        SampleLayout::OKLABAF32,
+        SampleLayout::CMYK8,
+        SampleLayout::new(SampleType::U8, ChannelOrder::CmykInverted),
+        SampleLayout::CMYK16,
+        SampleLayout::new(SampleType::U16, ChannelOrder::CmykInverted),
+        SampleLayout::CMYKF32,
+        SampleLayout::new(SampleType::F32, ChannelOrder::CmykInverted),
     ]);
-    let entries: Vec<_> = formats
+    let entries: Vec<_> = layouts
         .into_iter()
-        .map(|f| {
-            let d = f.descriptor();
-            let is_cmyk = matches!(f.color_model(), zenpixels::ColorModel::Cmyk);
-            let generic = matches!(f, PixelFormat::Generic(_)) && !is_cmyk;
-            let id = match f {
-                PixelFormat::CMYK8 => "Cmyk8".to_string(),
-                PixelFormat::CMYK16 => "Cmyk16".to_string(),
-                _ if is_cmyk || generic => f.name().to_string(),
-                _ => format!("{f:?}"),
-            };
-            json!({"id":id, "ct":format!("{:?}", f.channel_type()),
-            "layout":format!("{:?}", d.layout()), "bytes":d.bytes_per_pixel(),
-            "generic":generic})
+        .map(|l| {
+            let id = format!("{:?}_{:?}", l.order, l.sample);
+            json!({
+                "id": id,
+                "ct": format!("{:?}", l.sample),
+                "layout": format!("{:?}", l.order),
+                "bytes": l.bytes_per_pixel(),
+                "generic": false
+            })
         })
         .collect();
     json!(entries).to_string()

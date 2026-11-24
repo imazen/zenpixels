@@ -4,7 +4,7 @@ use crate::{
     WarmReference, score_image,
 };
 use alloc::{format, sync::Arc, vec::Vec};
-use zenpixels::PixelSlice;
+use zenpixels::PixelView;
 
 /// A configured one-image quality metric. Uses the same native assessments,
 /// optional maps and operation controls as full-reference scoring.
@@ -16,7 +16,7 @@ pub trait NoReferenceMetric {
     /// Score one image; use [`crate::score_image`] for checked calls.
     fn evaluate_image(
         &mut self,
-        image: &PixelSlice<'_>,
+        image: &PixelView<'_>,
         opts: EvalOpts<'_>,
     ) -> MetricResult<Self::Output>;
 }
@@ -65,7 +65,7 @@ impl<T: Evaluation> Evaluation for PairedEvaluation<T> {
 type Reference<T> = (Arc<T>, Arc<[ScoreSpec]>);
 fn reference<M: NoReferenceMetric>(
     metric: &mut M,
-    image: &PixelSlice<'_>,
+    image: &PixelView<'_>,
     opts: EvalOpts<'_>,
 ) -> MetricResult<Reference<M::Output>> {
     let result = score_image(metric, image, opts.without_diagnostics())?;
@@ -88,8 +88,8 @@ impl<M: NoReferenceMetric> Metric for PairedNoReference<M> {
     }
     fn evaluate(
         &mut self,
-        r: &PixelSlice<'_>,
-        d: &PixelSlice<'_>,
+        r: &PixelView<'_>,
+        d: &PixelView<'_>,
         opts: EvalOpts<'_>,
     ) -> MetricResult<Self::Output> {
         let (reference, reference_specs) = reference(&mut self.0, r, opts)?;
@@ -115,7 +115,7 @@ impl<M: NoReferenceMetric> PrepareReference for PairedNoReference<M> {
         Self: 'a;
     fn warm_reference(
         &mut self,
-        r: &PixelSlice<'_>,
+        r: &PixelView<'_>,
         opts: EvalOpts<'_>,
     ) -> MetricResult<Self::Prepared<'_>> {
         let (reference, reference_specs) = reference(&mut self.0, r, opts)?;
@@ -128,7 +128,7 @@ impl<M: NoReferenceMetric> PrepareReference for PairedNoReference<M> {
 }
 impl<M: NoReferenceMetric> WarmReference for PairedReference<'_, M> {
     type Output = PairedEvaluation<M::Output>;
-    fn evaluate(&mut self, d: &PixelSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<Self::Output> {
+    fn evaluate(&mut self, d: &PixelView<'_>, opts: EvalOpts<'_>) -> MetricResult<Self::Output> {
         let candidate = score_image(self.metric, d, opts)?;
         Ok(PairedEvaluation {
             reference: Arc::clone(&self.reference),

@@ -1,8 +1,6 @@
 //! Executable examples of existing typed component views.
 use serde_json::{Value, json};
-use zenpixels::ChannelType;
-use zenpixels::plane::{AnyPlane, PlaneRef, PlaneRole};
-use zenpixels::sample::{CodePlane, SampleEncoding};
+use zenpixels::{CodePlane, ImageSpec, PixelViewMut, SampleEncoding, SampleType, SignalRange};
 
 pub(crate) fn inspect(v: &Value) -> Result<Value, String> {
     let case = v["case"].as_str().ok_or("Choose a storage example")?;
@@ -11,30 +9,20 @@ pub(crate) fn inspect(v: &Value) -> Result<Value, String> {
     }
     let padding = v["padding"].as_bool().unwrap_or(true);
     let (components, bits, shifts, role) = match case {
-        "p010" => (
-            PlaneRole::CbCr.components(),
-            vec![10, 10],
-            vec![6, 6],
-            "CbCr",
-        ),
-        "crcb" => (
-            PlaneRole::CrCb.components(),
-            vec![10, 10],
-            vec![6, 6],
-            "CrCb",
-        ),
+        "p010" => (2, vec![10, 10], vec![6, 6], "CbCr"),
+        "crcb" => (2, vec![10, 10], vec![6, 6], "CrCb"),
         "rgba10a1" => (4, vec![10, 10, 10, 1], vec![0; 4], "RGBA"),
         _ => return Err("Unknown storage example".into()),
     };
     let enc: Vec<_> = bits
         .iter()
         .zip(&shifts)
-        .map(|(&b, &s)| SampleEncoding::new(ChannelType::U16, b, s).unwrap())
+        .map(|(&b, &s)| SampleEncoding::new(SampleType::U16, b, s).unwrap())
         .collect();
     let width = 2;
     let rows = 2;
     let stride = width * components + 2;
-    let mut words = vec![0xA5A5; stride + width * components];
+    let mut words = vec![0xA5A5u16; stride + width * components];
     for y in 0..rows {
         for x in 0..width {
             for c in 0..components {
@@ -49,13 +37,21 @@ pub(crate) fn inspect(v: &Value) -> Result<Value, String> {
             }
         }
     }
-    let plane = AnyPlane::U16(
-        PlaneRef::new(&words[..], width * components, rows, stride).map_err(|e| e.to_string())?,
-    );
     let readers: Vec<_> = enc
         .iter()
         .enumerate()
-        .map(|(c, &e)| CodePlane::component(plane, components, c, e).unwrap())
+        .map(|(c, &e)| {
+            CodePlane::component_from_u16(
+                &words,
+                width * components,
+                rows,
+                stride,
+                components,
+                c,
+                e,
+            )
+            .unwrap()
+        })
         .collect();
     let mut plane_codes = Vec::new();
     for y in 0..rows {
@@ -69,23 +65,29 @@ pub(crate) fn inspect(v: &Value) -> Result<Value, String> {
         }
     }
     let bytes: Vec<_> = words.iter().flat_map(|word| word.to_ne_bytes()).collect();
-    Ok(
-        json!({"case":case,"role":role,"bytes":bytes,"width":width,"rows":rows,"stride":stride*2,
-        "planeCodes":plane_codes,
-        "planeStatus":"CodePlane::component reads interleaved components with a different SampleEncoding for each. The storage is an aligned typed U16 plane."}),
-    )
+    Ok(json!({
+        "case": case,
+        "role": role,
+        "bytes": bytes,
+        "width": width,
+        "rows": rows,
+        "stride": stride * 2,
+        "planeCodes": plane_codes,
+        "planeStatus": "CodePlane::component_from_u16 reads interleaved components with a different SampleEncoding for each. The storage is an aligned typed U16 plane."
+    }))
 }
 
 fn rgb565() -> Result<Value, String> {
-    use zenpixels::{PixelDescriptor, PixelSliceMut, SignalRange};
     use zenpixels_convert::codes::to_canonical;
 
     let words = [0xffffu16, 0x8410, 0xa5a5, 0, 0x1234];
-    let plane = AnyPlane::U16(PlaneRef::new(&words[..], 2, 2, 3).map_err(|e| e.to_string())?);
     let readers = [(5, 11), (6, 5), (5, 0)].map(|(bits, shift)| {
-        CodePlane::new(
-            plane,
-            SampleEncoding::new(ChannelType::U16, bits, shift).unwrap(),
+        CodePlane::from_u16(
+            &words,
+            2,
+            2,
+            3,
+            SampleEncoding::new(SampleType::U16, bits, shift).unwrap(),
         )
         .unwrap()
     });
@@ -100,13 +102,21 @@ fn rgb565() -> Result<Value, String> {
             );
         }
     }
-    let mut canonical = [0; 12];
-    let dst = PixelSliceMut::new(&mut canonical, 2, 2, 6, PixelDescriptor::RGB8_SRGB)
+    let mut canonical = [0u8; 12];
+    let dst = PixelViewMut::new(&mut canonical, 2, 2, 6, ImageSpec::rgb8_srgb())
         .map_err(|e| e.to_string())?;
     to_canonical(&readers, SignalRange::Full, 0, 0, dst).map_err(|e| e.to_string())?;
     let bytes: Vec<_> = words.iter().flat_map(|word| word.to_ne_bytes()).collect();
-    Ok(json!({"case":"rgb565", "role":"RGB565", "bytes":bytes,
-        "width":2,"rows":2,"stride":6,"planeCodes":plane_codes,
-        "canonicalBytes":canonical,"allBitsUsed":true,
-        "planeStatus":"Three CodePlane::new views read (5 bits, shift 11), (6, 5) and (5, 0) from the same U16 words. to_canonical extracts and widens directly into RGB8; no intermediate unpacked plane is needed."}))
+    Ok(json!({
+        "case": "rgb565",
+        "role": "RGB565",
+        "bytes": bytes,
+        "width": 2,
+        "rows": 2,
+        "stride": 6,
+        "planeCodes": plane_codes,
+        "canonicalBytes": canonical,
+        "allBitsUsed": true,
+        "planeStatus": "Three CodePlane::from_u16 views read (5 bits, shift 11), (6, 5) and (5, 0) from the same U16 words. to_canonical extracts and widens directly into RGB8; no intermediate unpacked plane is needed."
+    }))
 }

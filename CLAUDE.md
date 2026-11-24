@@ -1,3 +1,39 @@
+## 0.5 Greenfield Architecture (Current Branch)
+
+The workspace is on the `0.5.0` greenfield architecture (`zenpixels` MSRV 1.85,
+`zenpixels-convert` MSRV 1.89, `#![forbid(unsafe_code)]`, `no_std + alloc` default):
+
+- **Core (`zenpixels`):** `SampleLayout` (`SampleType`, `ChannelOrder`, `BitPacking`),
+  `ColorSpace` (`Rgb`, `Gray`, `Oklab`, `Xyz`, `Perceptual`, `Icc`, `Cmyk`),
+  `ColorOrigin`, `ImageSpec`, `PixelBuf` / `PixelView` / `PixelViewMut` / `PixelCow`,
+  external owned storage (`ByteStorage` / `ByteStorageMut`, `PixelBuf::from_external*`,
+  `OwnedPlane::from_external*`, fallible CoW), `BandedBuf`, `OwnedPlane` / `PlaneView` /
+  `PlaneViewMut`, `PlanarBuf` / `PlanarView` / `PlanarViewMut` (with color/matrix/range/alpha
+  metadata), `SampleEncoding` / `CodePlane` / `CodePlaneMut`, symmetric `imgref` and
+  `image 0.25` interop, and portable XXH3-64 content hashing (`hash` feature).
+- **Converter (`zenpixels-convert`):** `ConvertPolicy` (`LumaDomain::{Encoded, LinearLight}`,
+  `DepthPolicy`, `AlphaPolicy`, `GamutPolicy`, `RangePolicy`, `allow_approximate`),
+  stateless `Send + Sync` `RowPlan` (zero heap allocation per row), `ImagePlan`,
+  `OutputPlan` / `adapt_for_encode`, `Negotiate`, `gainmap` (ISO 21496-1 / UltraHDR),
+  `orient` (contiguous + banded), `measure` (`measure_cll`, `measure_histogram`,
+  `measure_max_smoothed`), `ycbcr` (`from_cicp_code`, `ycbcr_to_rgb_from_planar`),
+  pluggable `CmsBackend` (`MoxCms`, `Lcms`), and ergonomic `to_rgb8..to_bgra8`.
+- **Feature layout:** `zenpixels` has no `planar` feature (always compiled); `zenpixels-convert`
+  keeps `icc-db` and `fast` default-off (`tools/icc-collapse-no-db` verifies minimal no-db builds).
+- **Migration guide:** `docs/migration-0.2-to-0.5.md`.
+- **Recent 0.5 fixes recorded for regression tracking:**
+  - `Transfer::DciCinema` (SMPTE ST 428-1) OETF must multiply by `48.0 / 52.37` *before*
+    clamping to `[0, 1]` (and `GamutPolicy::Clip` must not insert pre-OETF `[0, 1]` `ClampUnit`
+    on `DciCinema`), otherwise projector peak white (`52.37 / 48.0`) truncates to `63375`
+    instead of `65535`.
+  - `MoxCms` clears `profile.cicp` on both explicit ICC profiles and synthetic Linear/Gamma22
+    profiles so `moxcms::ColorProfile::new_srgb()` never applies sRGB OETF to extended Linear F32;
+    it also declines `AbsoluteColorimetric`, active-intent float `D2B*`/`B2D*` MPE tags, and
+    unequal adjacent RGB TRCs.
+  - `OutputPlan` canonicalizes unverified `AlphaMode::Opaque` alpha (staying zero-copy only when
+    `SampleFacts::all_opaque` is proven) and requires `IdentificationUse::MatrixTrcSubstitution`
+    for structured RGB/Gray destinations (rejecting `MetadataOnly` ICC profiles).
+
 ## Commit completed work
 
 The owner requests commits by default: commit completed changes before ending a

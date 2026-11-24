@@ -1,16 +1,13 @@
 use std::{cell::Cell, rc::Rc};
 use zenpsy_api::{
-    zenpixels::{
-        PixelDescriptor, PixelSlice,
-        plane::{AnyPlane, PlaneBuf, PlaneRef},
-    },
+    zenpixels::{ImageSpec, OwnedPlane, PixelView, PlaneRole, PlaneSpec, PlaneView, SampleType},
     *,
 };
 
 #[derive(Debug)]
 struct Native {
     scores: [f64; 2],
-    map: Option<PlaneBuf<f32>>,
+    map: Option<OwnedPlane>,
     local: Rc<u32>,
     grid: MapGrid,
 }
@@ -26,7 +23,7 @@ impl Evaluation for Native {
         static SPEC: ScoreSpec = ScoreSpec::new("native", Direction::Unordered);
         self.map
             .iter()
-            .map(|p| MapView::new(&SPEC, AnyPlane::F32(p.view()), self.grid))
+            .map(|p| MapView::new(&SPEC, p.as_view(), self.grid))
     }
 }
 struct ImageMetric {
@@ -39,7 +36,7 @@ impl NoReferenceMetric for ImageMetric {
     fn id(&self) -> MetricId {
         MetricId::new("image", Implementation::new("native-control", "1", 1))
     }
-    fn evaluate_image(&mut self, p: &PixelSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<Native> {
+    fn evaluate_image(&mut self, p: &PixelView<'_>, opts: EvalOpts<'_>) -> MetricResult<Native> {
         if opts.diagnostics() && !self.maps {
             return fail(MetricError::new(ErrorKind::UnsupportedRequest));
         }
@@ -49,13 +46,9 @@ impl NoReferenceMetric for ImageMetric {
         let max = values.max().unwrap();
         let map = opts.diagnostics().then(|| {
             // A cropped/coarse native grid with row padding and a payload NaN.
-            PlaneBuf::new(
-                vec![1.0, f32::from_bits(0x7fc0_1234), -999.0, 3.0, 4.0],
-                2,
-                2,
-                3,
-            )
-            .unwrap()
+            let samples: Vec<f32> = vec![1.0, f32::from_bits(0x7fc0_1234), -999.0, 3.0, 4.0];
+            let spec = PlaneSpec::new(PlaneRole::Y, SampleType::F32);
+            OwnedPlane::from_external(spec, 2, 2, 12, samples).unwrap()
         });
         let grid = MapGrid::new(p.width() + u32::from(self.malformed), p.rows())?
             .with_cells(-1, 1, 2, 2)?;
@@ -74,8 +67,8 @@ fn metric(maps: bool) -> ImageMetric {
         malformed: false,
     }
 }
-fn image(bytes: &[u8]) -> PixelSlice<'_> {
-    PixelSlice::new(bytes, 2, 2, 9, PixelDescriptor::RGB8_SRGB).unwrap()
+fn image(bytes: &[u8]) -> PixelView<'_> {
+    PixelView::new(bytes, 2, 2, 9, ImageSpec::rgb8_srgb()).unwrap()
 }
 fn bits(result: &impl Evaluation) -> Vec<(String, u64)> {
     result
@@ -101,16 +94,18 @@ fn native_maps_borrow_the_original_strided_plane_through_stacked_erasure() {
     let native = out.native::<Native>().unwrap();
     assert_eq!(*native.local, 17);
     let map = out.maps().next().unwrap();
-    let AnyPlane::F32(plane) = map.values else {
-        panic!("native f32 samples")
-    };
+    let plane = map.values;
+    assert_eq!(plane.spec().sample, SampleType::F32);
     assert_eq!(
-        plane.strided_samples().as_ptr(),
-        native.map.as_ref().unwrap().strided_samples().as_ptr()
+        plane.data().as_ptr(),
+        native.map.as_ref().unwrap().as_view().data().as_ptr()
     );
-    assert_eq!((plane.width(), plane.height(), plane.stride()), (2, 2, 3));
-    assert_eq!(plane.row(1).unwrap(), [3.0, 4.0]);
-    assert_eq!(plane.row(0).unwrap()[1].to_bits(), 0x7fc0_1234);
+    assert_eq!((plane.width(), plane.height(), plane.stride()), (2, 2, 12));
+    assert_eq!(bytemuck::cast_slice::<u8, f32>(plane.row(1)), [3.0, 4.0]);
+    assert_eq!(
+        bytemuck::cast_slice::<u8, f32>(plane.row(0))[1].to_bits(),
+        0x7fc0_1234
+    );
     assert_eq!(
         map.grid,
         MapGrid::new(2, 2).unwrap().with_cells(-1, 1, 2, 2).unwrap()
@@ -151,17 +146,17 @@ fn pairing_preserves_both_native_results_and_reuses_reference_work() {
     assert!(a_native.reference().maps().next().is_none());
     assert_eq!(a.maps().count(), 1);
     assert_eq!(b.maps().count(), 0);
-    let AnyPlane::F32(plane) = a.maps().next().unwrap().values else {
-        panic!("native f32 samples")
-    };
+    let plane = a.maps().next().unwrap().values;
+    assert_eq!(plane.spec().sample, SampleType::F32);
     assert_eq!(
-        plane.strided_samples().as_ptr(),
+        plane.data().as_ptr(),
         a_native
             .candidate()
             .map
             .as_ref()
             .unwrap()
-            .strided_samples()
+            .as_view()
+            .data()
             .as_ptr()
     );
 }
@@ -197,5 +192,6 @@ fn unsupported_maps_bad_grids_and_admission_fail_explicitly() {
     assert!(MapGrid::new(0, 2).is_err());
     assert!(MapGrid::new(2, 2).unwrap().with_cells(0, 0, 0, 1).is_err());
     // Borrowed plane construction independently rejects short strides/storage.
-    assert!(PlaneRef::new(&[1.0f32; 4][..], 2, 2, 1).is_err());
+    let spec = PlaneSpec::new(PlaneRole::Y, SampleType::F32);
+    assert!(PlaneView::new(spec, 2, 2, 4, bytemuck::cast_slice(&[1.0f32; 4][..])).is_err());
 }

@@ -1,7 +1,7 @@
 //! Public validation of small and large native output-key sets.
 //! Map witnesses are synthetic one-cell views, requested only in these tests.
 use zenpsy_api::{
-    zenpixels::{PixelDescriptor, PixelSlice, plane::*},
+    zenpixels::{ImageSpec, PixelView, PlaneRole, PlaneSpec, PlaneView, SampleType},
     *,
 };
 
@@ -26,7 +26,14 @@ impl Evaluation for Native {
         self.keys.iter().filter(|_| self.maps).map(|s| {
             MapView::new(
                 s,
-                AnyPlane::F32(PlaneRef::new(&CELL[..], 1, 1, 1).unwrap()),
+                PlaneView::new(
+                    PlaneSpec::new(PlaneRole::Y, SampleType::F32),
+                    1,
+                    1,
+                    4,
+                    bytemuck::cast_slice(&CELL),
+                )
+                .unwrap(),
                 MapGrid::new(1, 1).unwrap(),
             )
         })
@@ -43,8 +50,8 @@ impl Metric for MetricFixture {
     }
     fn evaluate(
         &mut self,
-        _: &PixelSlice<'_>,
-        _: &PixelSlice<'_>,
+        _: &PixelView<'_>,
+        _: &PixelView<'_>,
         _: EvalOpts<'_>,
     ) -> MetricResult<Native> {
         Ok(Native {
@@ -62,7 +69,7 @@ fn names(n: usize) -> Vec<String> {
 }
 fn run(keys: Vec<String>, maps: bool) -> MetricResult<ErasedEvaluation> {
     let mut m = Erased::new(Erased::new(MetricFixture { names: keys, maps }));
-    let pixels = PixelSlice::new(&[0], 1, 1, 1, PixelDescriptor::GRAY8).unwrap();
+    let pixels = PixelView::new(&[0], 1, 1, 1, ImageSpec::gray8_srgb()).unwrap();
     score(
         &mut m,
         &pixels,

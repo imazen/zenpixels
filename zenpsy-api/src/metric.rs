@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use core::fmt;
 use how_far::{Complete, NoPulse, Pulse, Stop};
 use whereat::ResultAtExt as _;
-use zenpixels::PixelSlice;
+use zenpixels::PixelView;
 /// Explicit native diagnostic request. A named request requires a common map
 /// with this exact key; absence is an error, never successful empty output.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,8 +127,8 @@ pub trait Metric {
     /// Use [`score`] for admission and returned-score checks.
     fn evaluate(
         &mut self,
-        reference: &PixelSlice<'_>,
-        candidate: &PixelSlice<'_>,
+        reference: &PixelView<'_>,
+        candidate: &PixelView<'_>,
         opts: EvalOpts<'_>,
     ) -> MetricResult<Self::Output>;
 }
@@ -142,7 +142,7 @@ pub trait PrepareReference: Metric {
     /// Prepare work preserving cold-result scalar bits.
     fn warm_reference(
         &mut self,
-        reference: &PixelSlice<'_>,
+        reference: &PixelView<'_>,
         opts: EvalOpts<'_>,
     ) -> MetricResult<Self::Prepared<'_>>;
 }
@@ -154,7 +154,7 @@ pub trait WarmReference {
     /// Score with fresh operation-local controls.
     fn evaluate(
         &mut self,
-        candidate: &PixelSlice<'_>,
+        candidate: &PixelView<'_>,
         opts: EvalOpts<'_>,
     ) -> MetricResult<Self::Output>;
 }
@@ -166,7 +166,7 @@ pub struct PreparedReference<P> {
 impl<P: WarmReference> PreparedReference<P> {
     /// Check candidate dimensions and return a validated native assessment.
     #[track_caller]
-    pub fn score(&mut self, image: &PixelSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<P::Output> {
+    pub fn score(&mut self, image: &PixelView<'_>, opts: EvalOpts<'_>) -> MetricResult<P::Output> {
         operation(opts, "score prepared image", |opts| {
             admit(image, opts)?;
             if (image.width(), image.rows()) != self.size {
@@ -181,7 +181,7 @@ impl<P: WarmReference> PreparedReference<P> {
     }
 }
 #[track_caller]
-fn admit(image: &PixelSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<()> {
+fn admit(image: &PixelView<'_>, opts: EvalOpts<'_>) -> MetricResult<()> {
     admit_geometry(image.width(), image.rows(), opts)
 }
 /// Shared operation admission for packed and native planar views. Storage and
@@ -266,8 +266,8 @@ pub(crate) fn operation<T>(
 #[track_caller]
 pub fn score<M: Metric + ?Sized>(
     metric: &mut M,
-    reference: &PixelSlice<'_>,
-    candidate: &PixelSlice<'_>,
+    reference: &PixelView<'_>,
+    candidate: &PixelView<'_>,
     opts: EvalOpts<'_>,
 ) -> MetricResult<M::Output> {
     operation(opts, "score image pair", |opts| {
@@ -287,7 +287,7 @@ pub fn score<M: Metric + ?Sized>(
 #[track_caller]
 pub fn prepare_reference<'a, M: PrepareReference + ?Sized>(
     metric: &'a mut M,
-    reference: &PixelSlice<'_>,
+    reference: &PixelView<'_>,
     opts: EvalOpts<'_>,
 ) -> MetricResult<PreparedReference<M::Prepared<'a>>> {
     operation(opts, "prepare image reference", |opts| {
@@ -305,7 +305,7 @@ pub fn prepare_reference<'a, M: PrepareReference + ?Sized>(
 #[track_caller]
 pub fn score_image<M: crate::NoReferenceMetric + ?Sized>(
     metric: &mut M,
-    image: &PixelSlice<'_>,
+    image: &PixelView<'_>,
     opts: EvalOpts<'_>,
 ) -> MetricResult<M::Output> {
     operation(opts, "score one image", |opts| {

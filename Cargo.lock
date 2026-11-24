@@ -403,7 +403,7 @@ checksum = "3bd1574e617a9a6c1f8f8181bd7e841e1f20e4277607ef28945765188d6284d4"
 [[package]]
 name = "lcms"
 version = "0.0.0"
-source = "git+https://github.com/imazen/lcms?branch=main#e1d336ba7dd56b396e520eaa4a1425e3bd8cfcde"
+source = "git+https://github.com/imazen/lcms?rev=e1d336ba7dd56b396e520eaa4a1425e3bd8cfcde#e1d336ba7dd56b396e520eaa4a1425e3bd8cfcde"
 dependencies = [
  "archmage",
  "bytemuck",
