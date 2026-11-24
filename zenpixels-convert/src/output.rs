@@ -58,6 +58,9 @@ pub struct OutputPlan {
     dst: ImageSpec,
     profile: OutputProfile,
     image_plan: ImagePlan,
+    same_spec: bool,
+    src_opaque_slot: bool,
+    policy_all_opaque: bool,
     is_identity: bool,
 }
 
@@ -74,7 +77,11 @@ impl OutputPlan {
         peak: PeakSource,
         profile: OutputProfile,
     ) -> Result<Self, At<ConvertError>> {
-        let is_identity = src == dst;
+        let same_spec = src == dst;
+        let src_opaque_slot =
+            src.color.alpha() == zenpixels::AlphaMode::Opaque && src.layout.order.has_alpha_slot();
+        let policy_all_opaque = policy.source_facts.all_opaque;
+        let is_identity = same_spec && (!src_opaque_slot || policy_all_opaque);
         let image_plan = ImagePlan::build(src.clone(), dst.clone(), policy, peak)?;
         // Eagerly validate signaling rules that don't depend on runtime `ColorOrigin`.
         match &profile {
@@ -97,11 +104,19 @@ impl OutputPlan {
             dst,
             profile,
             image_plan,
+            same_spec,
+            src_opaque_slot,
+            policy_all_opaque,
             is_identity,
         })
     }
 
-    /// Whether pixel bytes require no conversion (`src == dst`).
+    /// Whether pixel bytes require no conversion under the plan's policy (`src == dst`,
+    /// excluding unverified `AlphaMode::Opaque` buffers that need alpha canonicalization).
+    ///
+    /// Note: even when `is_identity()` is `false` due to an unverified `Opaque` alpha slot,
+    /// [`execute_view`](Self::execute_view) and [`execute_buf`](Self::execute_buf) still take
+    /// the zero-copy path when the runtime input carries `facts().all_opaque == true`.
     #[inline]
     #[must_use]
     pub const fn is_identity(&self) -> bool {
@@ -125,7 +140,8 @@ impl OutputPlan {
             } else {
                 HdrMetadata::default()
             };
-        if self.is_identity {
+        let runtime_opaque = self.policy_all_opaque || view.facts().all_opaque;
+        if self.same_spec && (!self.src_opaque_slot || runtime_opaque) {
             return Ok(EncodeReady {
                 pixels: PixelCow::Borrowed(view),
                 cicp,
@@ -159,7 +175,8 @@ impl OutputPlan {
             } else {
                 HdrMetadata::default()
             };
-        if self.is_identity {
+        let runtime_opaque = self.policy_all_opaque || buf.facts().all_opaque;
+        if self.same_spec && (!self.src_opaque_slot || runtime_opaque) {
             return Ok(EncodeReady {
                 pixels: PixelCow::Owned(buf),
                 cicp,
@@ -214,6 +231,37 @@ impl OutputPlan {
             hdr_peak,
         )
     }
+}
+
+/// One-shot encoder preparation: negotiate the lowest-loss, lowest-effort format from
+/// `supported` under `policy`, convert (or borrow **zero-copy** on identity), and resolve
+/// guaranteed-matching container color signaling (`cicp`, `icc`, `hdr`).
+///
+/// Thin wrapper combining [`Negotiate::select`](crate::Negotiate::select),
+/// [`OutputPlan::build`], and [`OutputPlan::execute_view`], automatically merging
+/// `src.facts()` into `policy.source_facts` before negotiation. Returns
+/// [`ConvertError::UnsupportedRoute`] if no candidate in `supported` satisfies `policy`.
+pub fn adapt_for_encode<'a>(
+    src: PixelView<'a>,
+    origin: &ColorOrigin,
+    supported: &[ImageSpec],
+    policy: &ConvertPolicy,
+    peak: PeakSource,
+    profile: OutputProfile,
+) -> Result<(crate::negotiate::NegotiatedFormat, EncodeReady<'a>), At<ConvertError>> {
+    let mut eff_policy = policy.clone();
+    eff_policy.source_facts = crate::plan::merge_facts(policy.source_facts, src.facts());
+    let negotiated = crate::negotiate::Negotiate::select(src.spec(), supported, &eff_policy)
+        .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
+    let plan = OutputPlan::build(
+        src.spec().clone(),
+        negotiated.spec.clone(),
+        eff_policy,
+        peak,
+        profile,
+    )?;
+    let ready = plan.execute_view(src, origin)?;
+    Ok((negotiated, ready))
 }
 
 fn try_clone_bytes(bytes: &[u8]) -> Result<alloc::vec::Vec<u8>, At<ConvertError>> {
@@ -302,9 +350,10 @@ fn validate_custom_icc_for_dst(
     if !matches_model {
         return Err(err_at(ConvertError::OutputSignalingMismatch));
     }
-    // Structured RGB/Gray destinations require positive identification matching
-    // destination primaries & transfer — arbitrary unrecognized ICC profiles must
-    // target `ColorSpace::Icc` explicitly so pixels are converted rather than mislabeled.
+    // Structured RGB/Gray destinations require positive matrix+TRC identification matching
+    // destination primaries & transfer — arbitrary or `MetadataOnly` ICC profiles (such as
+    // non-D65 / Illuminant C historical profiles) must target `ColorSpace::Icc` explicitly
+    // so pixels are converted via CMS rather than mislabeled.
     match dst_color {
         ColorSpace::Rgb {
             primaries,
@@ -314,7 +363,10 @@ fn validate_custom_icc_for_dst(
             let Some(id) = zenpixels::icc::IccIdentification::from_icc(bytes) else {
                 return Err(err_at(ConvertError::OutputSignalingMismatch));
             };
-            if id.primaries != *primaries || id.transfer != *transfer {
+            if id.valid_use != zenpixels::icc::IdentificationUse::MatrixTrcSubstitution
+                || id.primaries != *primaries
+                || id.transfer != *transfer
+            {
                 return Err(err_at(ConvertError::OutputSignalingMismatch));
             }
             Ok(())
@@ -323,7 +375,9 @@ fn validate_custom_icc_for_dst(
             let Some(id) = zenpixels::icc::IccIdentification::from_icc(bytes) else {
                 return Err(err_at(ConvertError::OutputSignalingMismatch));
             };
-            if id.transfer != *transfer {
+            if id.valid_use != zenpixels::icc::IdentificationUse::MatrixTrcSubstitution
+                || id.transfer != *transfer
+            {
                 return Err(err_at(ConvertError::OutputSignalingMismatch));
             }
             Ok(())

@@ -103,6 +103,33 @@ impl LightLevelHistogram {
         self.bins[idx] += 1;
     }
 
+    /// Read-only view of the 1024 log2-spaced luminance histogram bins.
+    #[inline]
+    #[must_use]
+    pub fn bins(&self) -> &[u64] {
+        &self.bins
+    }
+
+    /// Merge another [`LightLevelHistogram`] accumulated with the same [`LightLevelMethod`]
+    /// into `self` (useful for parallel tile/strip reduction).
+    ///
+    /// Returns [`ConvertError::UnsupportedRoute`] if `self.method() != other.method()`.
+    pub fn try_merge(&mut self, other: &Self) -> Result<(), At<ConvertError>> {
+        if self.method != other.method {
+            return Err(crate::error::err_at(ConvertError::UnsupportedRoute));
+        }
+        for (dst, &src) in self.bins.iter_mut().zip(other.bins.iter()) {
+            *dst = dst.saturating_add(src);
+        }
+        self.zero_count = self.zero_count.saturating_add(other.zero_count);
+        self.total = self.total.saturating_add(other.total);
+        self.sum_nits += other.sum_nits;
+        if other.literal_max_nits > self.literal_max_nits {
+            self.literal_max_nits = other.literal_max_nits;
+        }
+        Ok(())
+    }
+
     /// Reduction method used to build this histogram.
     #[inline]
     #[must_use]
@@ -292,6 +319,204 @@ pub fn measure_cll<S: PixelSource + ?Sized>(
     method: LightLevelMethod,
 ) -> Result<ContentLightLevel, At<ConvertError>> {
     Ok(measure_histogram(src, white, hlg_rendering, method)?.to_content_light_level())
+}
+
+/// 3-tap mirror-padded horizontal box filter over one linear-light RGB(A) f32 row.
+/// Returns `(max_smoothed_rel, sum_rel)` in diffuse-white-relative units.
+#[inline]
+fn scan_row_max_mean_smoothed<const N: usize>(row: &[f32], method: LightLevelMethod) -> (f32, f64) {
+    const ONE_THIRD: f32 = 1.0 / 3.0;
+    let pixel_count = row.len() / N;
+    if pixel_count == 0 {
+        return (0.0, 0.0);
+    }
+
+    let reduce_at = |i: usize| -> f32 {
+        let px = &row[i * N..(i + 1) * N];
+        let r = if px[0].is_finite() {
+            px[0].max(0.0)
+        } else {
+            0.0
+        };
+        let g = if px[1].is_finite() {
+            px[1].max(0.0)
+        } else {
+            0.0
+        };
+        let b = if px[2].is_finite() {
+            px[2].max(0.0)
+        } else {
+            0.0
+        };
+        match method {
+            LightLevelMethod::MaxRgb => r.max(g).max(b),
+            LightLevelMethod::LuminanceBt2020 => BT2020_LR * r + BT2020_LG * g + BT2020_LB * b,
+        }
+    };
+
+    if pixel_count == 1 {
+        let m = reduce_at(0);
+        return (m, f64::from(m));
+    }
+    if pixel_count == 2 {
+        let m0 = reduce_at(0);
+        let m1 = reduce_at(1);
+        let s0 = (2.0 * m0 + m1) * ONE_THIRD;
+        let s1 = (m0 + 2.0 * m1) * ONE_THIRD;
+        return (s0.max(s1), f64::from(m0) + f64::from(m1));
+    }
+
+    let m0 = reduce_at(0);
+    let m1 = reduce_at(1);
+    let mut prev = m0;
+    let mut curr = m1;
+    let mut max_x3 = 2.0 * m0 + m1;
+    let mut sum = f64::from(m0);
+
+    for i in 2..pixel_count {
+        let next = reduce_at(i);
+        let s = prev + curr + next;
+        if s > max_x3 {
+            max_x3 = s;
+        }
+        sum += f64::from(curr);
+        prev = curr;
+        curr = next;
+    }
+    let s_last = prev + 2.0 * curr;
+    if s_last > max_x3 {
+        max_x3 = s_last;
+    }
+    sum += f64::from(curr);
+
+    (max_x3 * ONE_THIRD, sum)
+}
+
+/// Measure defect-tolerant [`ContentLightLevel`] using a 3-tap horizontal mirror-padded
+/// box filter on per-pixel light levels (`(m[i-1] + m[i] + m[i+1]) / 3`) in O(1) row memory.
+///
+/// Suppresses isolated stuck/hot pixels by 3× while preserving bright features spanning
+/// ≥2 horizontal pixels; MaxFALL remains the exact arithmetic mean across all pixels.
+pub fn measure_max_smoothed<S: PixelSource + ?Sized>(
+    src: &S,
+    white: DiffuseWhite,
+    hlg_rendering: Option<HlgRendering>,
+    method: LightLevelMethod,
+) -> Result<ContentLightLevel, At<ConvertError>> {
+    let spec = src.source_spec();
+    let w = src.source_width();
+    let h = src.source_height();
+    if w == 0 || h == 0 {
+        return Ok(ContentLightLevel::new(0, 0));
+    }
+    let total_px = (w as f64) * (h as f64);
+
+    // Zero-allocation fast path for unpremultiplied full-packing Linear F32 RGB(A) in matching primaries.
+    let target_primaries = measurement_primaries(spec, method);
+    if spec.layout.packing.is_full()
+        && spec.layout.sample == SampleType::F32
+        && matches!(
+            spec.layout.order,
+            zenpixels::ChannelOrder::Rgb | zenpixels::ChannelOrder::Rgba
+        )
+        && let ColorSpace::Rgb {
+            primaries,
+            transfer: Transfer::Linear,
+            range: zenpixels::SignalRange::Full,
+            alpha,
+            white: src_white,
+        } = spec.color
+        && primaries == target_primaries
+        && alpha != zenpixels::AlphaMode::Premultiplied
+    {
+        let ch = spec.layout.channels();
+        let eff_white = src_white.unwrap_or(white).nits();
+        let mut max_rel = 0.0_f32;
+        let mut sum_rel = 0.0_f64;
+        let mut aligned_scratch: alloc::vec::Vec<f32> = alloc::vec::Vec::new();
+        for y in 0..h {
+            let row = src.source_row(y);
+            let floats: &[f32] = if let Ok(f) = bytemuck::try_cast_slice::<u8, f32>(row) {
+                f
+            } else {
+                let need = (w as usize) * ch;
+                if aligned_scratch.len() < need {
+                    aligned_scratch
+                        .try_reserve_exact(need - aligned_scratch.len())
+                        .map_err(|_| crate::error::err_at(ConvertError::AllocationFailed))?;
+                    aligned_scratch.resize(need, 0.0);
+                }
+                for (dst_f, chunk) in aligned_scratch[..need]
+                    .iter_mut()
+                    .zip(row.as_chunks::<4>().0)
+                {
+                    *dst_f = f32::from_ne_bytes(*chunk);
+                }
+                &aligned_scratch[..need]
+            };
+            let (rm, rs) = if ch == 3 {
+                scan_row_max_mean_smoothed::<3>(floats, method)
+            } else {
+                scan_row_max_mean_smoothed::<4>(floats, method)
+            };
+            if rm > max_rel {
+                max_rel = rm;
+            }
+            sum_rel += rs;
+        }
+        return Ok(ContentLightLevel::new(
+            ceil_cll_u16(max_rel * eff_white),
+            ceil_cll_u16(((sum_rel / total_px) * f64::from(eff_white)) as f32),
+        ));
+    }
+
+    // General streaming path: 1 fallibly-allocated RGBF32 row via RowPlan.
+    let linear_spec = ImageSpec::new(
+        zenpixels::SampleLayout::RGBF32,
+        ColorSpace::Rgb {
+            primaries: target_primaries,
+            transfer: Transfer::Linear,
+            range: zenpixels::SignalRange::Full,
+            alpha: zenpixels::AlphaMode::None,
+            white: Some(white),
+        },
+    );
+    let mut policy = ConvertPolicy::working_linear()
+        .with_sdr_white(white)
+        .with_depth(DepthPolicy::Round)
+        .with_gamut(GamutPolicy::PreserveExtended)
+        .with_alpha(crate::policy::AlphaPolicy::DiscardUnchecked)
+        .with_accelerators(Accelerators::default());
+    if let Some(r) = hlg_rendering {
+        policy = policy.with_hlg_rendering(r);
+    }
+    let row_plan = crate::plan::RowPlan::build(spec.clone(), linear_spec, &policy, None)?;
+
+    let num_floats = (w as usize)
+        .checked_mul(3)
+        .ok_or_else(|| crate::error::err_at(ConvertError::DimensionMismatch))?;
+    let mut scratch_f32: alloc::vec::Vec<f32> = alloc::vec::Vec::new();
+    scratch_f32
+        .try_reserve_exact(num_floats)
+        .map_err(|_| crate::error::err_at(ConvertError::AllocationFailed))?;
+    scratch_f32.resize(num_floats, 0.0f32);
+
+    let white_nits = white.nits();
+    let mut max_rel = 0.0_f32;
+    let mut sum_rel = 0.0_f64;
+    for y in 0..h {
+        let scratch_bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut scratch_f32);
+        row_plan.convert_row(src.source_row(y), scratch_bytes, w, y)?;
+        let (rm, rs) = scan_row_max_mean_smoothed::<3>(&scratch_f32, method);
+        if rm > max_rel {
+            max_rel = rm;
+        }
+        sum_rel += rs;
+    }
+    Ok(ContentLightLevel::new(
+        ceil_cll_u16(max_rel * white_nits),
+        ceil_cll_u16(((sum_rel / total_px) * f64::from(white_nits)) as f32),
+    ))
 }
 
 /// Fast zero-histogram streaming max-luminance peak scan in cd/m² (O(1) row scratch).

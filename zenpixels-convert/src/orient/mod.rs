@@ -7,7 +7,7 @@
 
 use core::cmp::min;
 use whereat::At;
-use zenpixels::{Orientation, PixelBuf, PixelView, PixelViewMut};
+use zenpixels::{BandedBuf, Orientation, PixelBuf, PixelSink, PixelView, PixelViewMut};
 
 use crate::error::{ConvertError, err_at};
 
@@ -49,6 +49,117 @@ pub fn orient_buf(buf: PixelBuf, orientation: Orientation) -> Result<PixelBuf, A
         return Ok(buf);
     }
     apply_orientation(&buf.as_view(), orientation)
+}
+
+/// Apply `orientation` to a [`BandedBuf`], returning a freshly allocated [`BandedBuf`]
+/// with each band bounded by `max_band_bytes` and **zero full-frame contiguous allocation**.
+///
+/// Preserves `src.hdr()`, `src.facts()`, and `src.origin()`.
+pub fn orient_banded(
+    src: &BandedBuf,
+    orientation: Orientation,
+    max_band_bytes: usize,
+) -> Result<BandedBuf, At<ConvertError>> {
+    let (ow, oh) = orientation.output_dimensions(src.width(), src.height());
+    let mut out = BandedBuf::new(ow, oh, src.spec().clone(), max_band_bytes)
+        .map_err(|e| err_at((*e.error()).into()))?
+        .with_origin(src.origin().clone());
+    apply_orientation_banded_into(src, orientation, &mut out)?;
+    out.sink_finish(src.facts(), src.hdr());
+    Ok(out)
+}
+
+/// Apply `orientation` from `src` into pre-allocated `dst` [`BandedBuf`] with
+/// **zero heap allocation** and full SIMD tile transposes across every `(src_band, dst_band)`
+/// intersection.
+///
+/// Works for arbitrary independent source and destination band heights and all 8 orientations.
+pub fn apply_orientation_banded_into(
+    src: &BandedBuf,
+    orientation: Orientation,
+    dst: &mut BandedBuf,
+) -> Result<(), At<ConvertError>> {
+    let w = src.width();
+    let h = src.height();
+    let (ow, oh) = orientation.output_dimensions(w, h);
+    if dst.width() != ow || dst.height() != oh || dst.spec().layout != src.spec().layout {
+        return Err(err_at(ConvertError::DimensionMismatch));
+    }
+    if dst.spec().color != src.spec().color {
+        return Err(err_at(ConvertError::UnsupportedRoute));
+    }
+    if w == 0 || h == 0 || src.spec().layout.bytes_per_pixel() == 0 {
+        return Ok(());
+    }
+
+    let src_band_rows = src.band_rows();
+    let dst_band_rows = dst.band_rows();
+    let src_band_count = src.band_count();
+    let dst_band_count = dst.band_count();
+
+    if !orientation.swaps_axes() {
+        let flips_v = matches!(orientation, Orientation::FlipV | Orientation::Rotate180);
+        for sb_idx in 0..src_band_count {
+            let sy0 = (sb_idx as u32) * src_band_rows;
+            let src_band = src.band_view(sb_idx).expect("valid src band");
+            let sh = src_band.rows();
+            let sy1 = sy0 + sh;
+            let (m_dy0, m_dy1) = if flips_v {
+                (h - sy1, h - sy0)
+            } else {
+                (sy0, sy1)
+            };
+            let first_db = (m_dy0 / dst_band_rows) as usize;
+            let last_db = ((m_dy1 - 1) / dst_band_rows) as usize;
+            for db_idx in first_db..=last_db {
+                let dy0 = (db_idx as u32) * dst_band_rows;
+                let mut dst_band = dst.band_view_mut(db_idx).expect("valid dst band");
+                let dy1 = dy0 + dst_band.rows();
+                let iy0 = dy0.max(m_dy0);
+                let iy1 = dy1.min(m_dy1);
+                if iy0 >= iy1 {
+                    continue;
+                }
+                let ih = iy1 - iy0;
+                let is_y0 = if flips_v { h - iy1 } else { iy0 };
+                let src_sub = src_band
+                    .sub_rows(is_y0 - sy0, ih)
+                    .map_err(|e| err_at((*e.error()).into()))?;
+                let mut dst_sub = dst_band
+                    .sub_rows_mut(iy0 - dy0, ih)
+                    .map_err(|e| err_at((*e.error()).into()))?;
+                apply_orientation_into(&src_sub, orientation, &mut dst_sub)?;
+            }
+        }
+    } else {
+        let rev_sy_to_dx = matches!(orientation, Orientation::Rotate90 | Orientation::Transverse);
+        let rev_sx_to_dy = matches!(
+            orientation,
+            Orientation::Rotate270 | Orientation::Transverse
+        );
+        for sb_idx in 0..src_band_count {
+            let sy0 = (sb_idx as u32) * src_band_rows;
+            let src_band = src.band_view(sb_idx).expect("valid src band");
+            let sh = src_band.rows();
+            let sy1 = sy0 + sh;
+            let dx0 = if rev_sy_to_dx { h - sy1 } else { sy0 };
+            for db_idx in 0..dst_band_count {
+                let dy0 = (db_idx as u32) * dst_band_rows;
+                let mut dst_band = dst.band_view_mut(db_idx).expect("valid dst band");
+                let dh = dst_band.rows();
+                let dy1 = dy0 + dh;
+                let sx0 = if rev_sx_to_dy { w - dy1 } else { dy0 };
+                let src_tile = src_band
+                    .crop(sx0, 0, dh, sh)
+                    .map_err(|e| err_at((*e.error()).into()))?;
+                let mut dst_tile = dst_band
+                    .crop_mut(dx0, 0, sh, dh)
+                    .map_err(|e| err_at((*e.error()).into()))?;
+                apply_orientation_into(&src_tile, orientation, &mut dst_tile)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Apply `orientation` to `src`, writing into caller-provided `dst` with **zero heap allocation**.

@@ -81,6 +81,22 @@ pub enum LumaCoefficients {
     Custom([f32; 3]),
 }
 
+/// Domain in which `RGB → Gray` luminance weights are evaluated.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum LumaDomain {
+    /// Evaluate luma weights directly on transfer-encoded RGB samples (`Y' = w_r·R' + w_g·G' + w_b·B'`).
+    ///
+    /// Matches the JPEG/video Y' convention and `zenpixels 0.2/0.4` defaults, preserves
+    /// neutral gray (`R' = G' = B' → Y' = R'`) bit-for-bit, and enables SIMD integer
+    /// `U8` fast paths.
+    #[default]
+    Encoded,
+    /// Linearize RGB via the source EOTF, compute physical luminance (`Y = w_r·R + w_g·G + w_b·B`),
+    /// then apply the destination OETF.
+    LinearLight,
+}
+
 /// Cohesive conversion policy controlling precision, alpha, gamut, signal range,
 /// HDR anchors, tone mapping, CMS fallback, and SIMD acceleration.
 #[derive(Clone, Debug)]
@@ -96,6 +112,8 @@ pub struct ConvertPolicy {
     pub range: RangePolicy,
     /// RGB → Gray luma weights.
     pub luma: LumaCoefficients,
+    /// Domain in which `RGB → Gray` weights are evaluated (`Encoded` Y' default vs `LinearLight` Y).
+    pub luma_domain: LumaDomain,
     /// Relative-linear `1.0` diffuse white anchor (required when crossing PQ ↔ relative light unless carried on `ColorSpace`).
     pub sdr_white: Option<DiffuseWhite>,
     /// Target SDR peak luminance in cd/m² for HDR → SDR tone mapping (default `100.0` cd/m²).
@@ -143,6 +161,7 @@ impl ConvertPolicy {
             gamut: GamutPolicy::PreserveExtended,
             range: RangePolicy::Forbid,
             luma: LumaCoefficients::FromSourcePrimaries,
+            luma_domain: LumaDomain::Encoded,
             sdr_white: None,
             sdr_peak: Nits::new(100.0),
             hlg_rendering: None,
@@ -171,6 +190,7 @@ impl ConvertPolicy {
             gamut: GamutPolicy::PreserveExtended,
             range: RangePolicy::Convert,
             luma: LumaCoefficients::FromSourcePrimaries,
+            luma_domain: LumaDomain::Encoded,
             sdr_white: Some(DiffuseWhite::BT2408),
             sdr_peak: Nits::new(100.0),
             hlg_rendering: None,
@@ -193,6 +213,7 @@ impl ConvertPolicy {
             gamut: GamutPolicy::Clip,
             range: RangePolicy::Convert,
             luma: LumaCoefficients::FromSourcePrimaries,
+            luma_domain: LumaDomain::Encoded,
             sdr_white: Some(white),
             sdr_peak,
             hlg_rendering: Some(HlgRendering::REFERENCE_1000_NIT),
@@ -215,6 +236,7 @@ impl ConvertPolicy {
             gamut: GamutPolicy::Clip,
             range: RangePolicy::Convert,
             luma: LumaCoefficients::FromSourcePrimaries,
+            luma_domain: LumaDomain::Encoded,
             sdr_white: None,
             sdr_peak: Nits::new(100.0),
             hlg_rendering: None,
@@ -265,6 +287,14 @@ impl ConvertPolicy {
     #[must_use]
     pub fn with_luma(mut self, luma: LumaCoefficients) -> Self {
         self.luma = luma;
+        self
+    }
+
+    /// Set RGB → Gray evaluation domain ([`LumaDomain::Encoded`] Y' default vs [`LumaDomain::LinearLight`] Y).
+    #[inline]
+    #[must_use]
+    pub fn with_luma_domain(mut self, domain: LumaDomain) -> Self {
+        self.luma_domain = domain;
         self
     }
 

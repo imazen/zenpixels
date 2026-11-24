@@ -25,7 +25,7 @@ use zenpixels::{
 use crate::accel::Accelerators;
 #[cfg(feature = "hdr-transfers")]
 use crate::hlg_render::PreparedHlg;
-use crate::policy::{DepthPolicy, GamutPolicy, LumaCoefficients};
+use crate::policy::{DepthPolicy, GamutPolicy, LumaCoefficients, LumaDomain};
 #[cfg(feature = "oklab")]
 use crate::tonemap::SoftCompress;
 use crate::tonemap::StripMapper;
@@ -74,11 +74,40 @@ const UNPREMUL_U8_SCALE: [u32; 256] = {
     t
 };
 
+/// Fixed-point U8 luma matrix matching `garb::bytes::{rgb,bgr,rgba,bgra}_to_gray_*` bit-for-bit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum U8LumaMatrix {
+    /// BT.709 (`(54*R + 183*G + 19*B + 128) >> 8`).
+    Bt709,
+    /// BT.601 (`(77*R + 150*G + 29*B + 128) >> 8`).
+    Bt601,
+    /// BT.2020 (`(67*R + 174*G + 15*B + 128) >> 8`).
+    Bt2020,
+}
+
+impl U8LumaMatrix {
+    #[inline]
+    const fn weights_u16(self) -> (u16, u16, u16) {
+        match self {
+            Self::Bt709 => (54, 183, 19),
+            Self::Bt601 => (77, 150, 29),
+            Self::Bt2020 => (67, 174, 15),
+        }
+    }
+}
+
 /// Direct zero-float byte/integer/wide-layout fast path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ByteFastPath {
     /// Identical layout and color space: direct `copy_from_slice`.
     Memcpy,
+    /// `RGB8`/`BGR8`/`RGBA8`/`BGRA8`/`RGBX8`/`BGRX8` → `GRAY8` in encoded Y' domain
+    /// (`((w_r*R + w_g*G + w_b*B + 128) >> 8)` — 0-bit identical between scalar and `garb` AVX2).
+    Rgb8ToGray8 {
+        bgr: bool,
+        four_ch: bool,
+        matrix: U8LumaMatrix,
+    },
     /// `RGB8 → RGBA8` (`A = 255`).
     Rgb8ToRgba8,
     /// `RGB8 → BGRA8` (`A = 255`).
@@ -217,6 +246,15 @@ pub(crate) fn exec_garb_byte_fast_path(
         ByteFastPath::Gray8ToRgba8 => {
             garb::bytes::gray_to_rgba(&src[..width], &mut dst[..width * 4]).is_ok()
         }
+        ByteFastPath::Rgb8ToGray8 {
+            bgr,
+            four_ch,
+            matrix,
+        } => {
+            let (wr, wg, wb) = matrix.weights_u16();
+            crate::strip_simd::simd_rgb8_to_gray8(src, dst, width, bgr, four_ch, wr, wg, wb);
+            true
+        }
         _ => false,
     }
 }
@@ -233,6 +271,37 @@ impl ByteFastPath {
             Self::Memcpy => {
                 let len = src.len().min(dst.len());
                 dst[..len].copy_from_slice(&src[..len]);
+            }
+            Self::Rgb8ToGray8 {
+                bgr,
+                four_ch,
+                matrix,
+            } => {
+                let (wr, wg, wb) = matrix.weights_u16();
+                let (w0, w2) = if bgr { (wb, wr) } else { (wr, wb) };
+                if four_ch {
+                    for (sp, out) in src[..width * 4]
+                        .chunks_exact(4)
+                        .zip(dst[..width].iter_mut())
+                    {
+                        *out = ((u16::from(sp[0]) * w0
+                            + u16::from(sp[1]) * wg
+                            + u16::from(sp[2]) * w2
+                            + 128)
+                            >> 8) as u8;
+                    }
+                } else {
+                    for (sp, out) in src[..width * 3]
+                        .chunks_exact(3)
+                        .zip(dst[..width].iter_mut())
+                    {
+                        *out = ((u16::from(sp[0]) * w0
+                            + u16::from(sp[1]) * wg
+                            + u16::from(sp[2]) * w2
+                            + 128)
+                            >> 8) as u8;
+                    }
+                }
             }
             Self::Rgb8ToRgba8 => {
                 let s = &src[..width * 3];
@@ -951,6 +1020,7 @@ pub(crate) enum FastRow {
         channels: usize,
         is_rgba: bool,
         round: bool,
+        allow_approximate: bool,
     },
     TransferF32 {
         channels: usize,
@@ -1182,6 +1252,7 @@ pub(crate) fn detect_fast_row(
             channels: ch,
             is_rgba,
             round,
+            allow_approximate,
         });
     }
 
@@ -1462,9 +1533,54 @@ pub(crate) fn exec_fast_row(
             channels,
             is_rgba,
             round,
+            allow_approximate,
         } => {
             let count = width * channels;
             let aligned = bytemuck::try_cast_slice::<u8, f32>(&src[..count * 4]).ok();
+            if allow_approximate && round {
+                // Opt-in Option B: 4096-entry LUT (max error <= 1 LSB vs exact float,
+                // 0-bit identical between SCALAR `linear_to_srgb_u8` and SIMD `linear_to_srgb_u8_slice`).
+                if let Some(sf) = aligned {
+                    if accel.lin_f32_to_srgb_u8.is_some() {
+                        linear_srgb::default::linear_to_srgb_u8_slice(sf, &mut dst[..count]);
+                    } else {
+                        for (&v, out) in sf.iter().zip(dst[..count].iter_mut()) {
+                            let c = if v.is_nan() { 0.0 } else { v };
+                            *out = linear_srgb::default::linear_to_srgb_u8(c);
+                        }
+                    }
+                    if is_rgba {
+                        for p in 0..width {
+                            let a = sf[p * 4 + 3];
+                            dst[p * 4 + 3] = if a.is_nan() || a <= 0.0 {
+                                0
+                            } else {
+                                ((a.min(1.0) * 255.0 + 0.5) as u32).min(255) as u8
+                            };
+                        }
+                    }
+                } else {
+                    for p in 0..width {
+                        for c in 0..channels {
+                            let idx = p * channels + c;
+                            let o = idx * 4;
+                            let v =
+                                f32::from_ne_bytes([src[o], src[o + 1], src[o + 2], src[o + 3]]);
+                            dst[idx] = if is_rgba && c == 3 {
+                                if v.is_nan() || v <= 0.0 {
+                                    0
+                                } else {
+                                    ((v.min(1.0) * 255.0 + 0.5) as u32).min(255) as u8
+                                }
+                            } else {
+                                let cl = if v.is_nan() { 0.0 } else { v };
+                                linear_srgb::default::linear_to_srgb_u8(cl)
+                            };
+                        }
+                    }
+                }
+                return;
+            }
             if let (Some(sf), Some(fused)) = (aligned, accel.lin_f32_to_srgb_u8) {
                 fused(sf, &mut dst[..count], is_rgba, round);
                 return;
@@ -2969,6 +3085,8 @@ pub(crate) fn detect_byte_fast_path(
     src: &ImageSpec,
     dst: &ImageSpec,
     policy_depth: DepthPolicy,
+    luma: LumaCoefficients,
+    luma_domain: LumaDomain,
     matte_active: bool,
     src_stored_alpha_max: bool,
 ) -> Option<ByteFastPath> {
@@ -3235,6 +3353,54 @@ pub(crate) fn detect_byte_fast_path(
                 DepthPolicy::Round => Some(ByteFastPath::Rgba8PremulToStraight),
                 DepthPolicy::Forbid | DepthPolicy::Truncate | DepthPolicy::OrderedDither => None,
             };
+        }
+    }
+
+    // Fast encoded U8 RGB/BGR/RGBA/BGRA/RGBX/BGRX -> Gray8 via exact 8-bit fixed-point Y'
+    // matching `garb::bytes::{rgb,bgr,rgba,bgra}_to_gray_{bt709,bt601,bt2020}` bit-for-bit!
+    if luma_domain == LumaDomain::Encoded
+        && matches!(policy_depth, DepthPolicy::Round | DepthPolicy::Forbid)
+        && src.layout.sample == SampleType::U8
+        && dst.layout.sample == SampleType::U8
+        && src.layout.order.is_rgb_family()
+        && dst.layout.order == ChannelOrder::Gray
+        && let (
+            ColorSpace::Rgb {
+                primaries: sp,
+                transfer: st,
+                range: sr,
+                alpha: sa,
+                white: sw,
+            },
+            ColorSpace::Gray {
+                transfer: dt,
+                range: dr,
+                alpha: AlphaMode::None,
+                white: dw,
+            },
+        ) = (&src.color, &dst.color)
+        && st == dt
+        && sr == dr
+        && sw == dw
+        && (*sa != AlphaMode::Premultiplied || src_proven_opaque)
+    {
+        let matrix = match luma {
+            LumaCoefficients::Bt709 => Some(U8LumaMatrix::Bt709),
+            LumaCoefficients::Bt601 => Some(U8LumaMatrix::Bt601),
+            LumaCoefficients::Bt2020 => Some(U8LumaMatrix::Bt2020),
+            LumaCoefficients::FromSourcePrimaries => match sp {
+                Primaries::Bt709 => Some(U8LumaMatrix::Bt709),
+                Primaries::Bt2020 => Some(U8LumaMatrix::Bt2020),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(matrix) = matrix {
+            return Some(ByteFastPath::Rgb8ToGray8 {
+                bgr: src.layout.order.is_bgr(),
+                four_ch: src.layout.channels() == 4,
+                matrix,
+            });
         }
     }
 

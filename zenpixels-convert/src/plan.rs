@@ -22,7 +22,9 @@ use zenpixels::{
 use crate::accel::{self, Accelerators};
 use crate::cms::CmsTransform;
 use crate::error::{ConvertError, err_at};
-use crate::policy::{AlphaPolicy, ConvertPolicy, DepthPolicy, GamutPolicy, RangePolicy};
+use crate::policy::{
+    AlphaPolicy, ConvertPolicy, DepthPolicy, GamutPolicy, LumaDomain, RangePolicy,
+};
 use crate::strip::{self, ByteFastPath, FastRow, MicroOp};
 use crate::tonemap::{PreparedMapper, StripMapper, ToneMapContext};
 
@@ -129,6 +131,8 @@ impl RowPlan {
             &src,
             &dst,
             policy.depth,
+            policy.luma,
+            policy.luma_domain,
             matte_color.is_some(),
             policy.source_facts.all_opaque,
         ) {
@@ -582,12 +586,27 @@ impl RowPlan {
             }
         }
 
-        // 6i. RGB -> Gray in linear light.
-        if !cur_is_gray && matches!(dst.color, ColorSpace::Gray { .. }) {
+        // 6i. RGB -> Gray in linear light (or directly on encoded RGB when `!need_linear_space`).
+        // When `LumaDomain::Encoded` AND `need_linear_space` (e.g. Display P3 / Linear / matte -> sRGB Gray),
+        // defer `RgbToGray` until AFTER step 6j's destination OETF so luma weights evaluate in
+        // destination encoded space rather than linear light!
+        let defer_encoded_luma = !cur_is_gray
+            && matches!(dst.color, ColorSpace::Gray { .. })
+            && need_linear_space
+            && policy.luma_domain == LumaDomain::Encoded;
+        let deferred_luma_weights = if !cur_is_gray && matches!(dst.color, ColorSpace::Gray { .. })
+        {
             let weights = strip::resolve_luma_weights(policy.luma, cur_primaries)
                 .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
-            ops.push(MicroOp::RgbToGray(weights));
-        }
+            if defer_encoded_luma {
+                Some(weights)
+            } else {
+                ops.push(MicroOp::RgbToGray(weights));
+                None
+            }
+        } else {
+            None
+        };
 
         // 6j. Encode to destination color model (`Xyz`, `Oklab`, `Perceptual`, or `Oetf`).
         match &dst.color {
@@ -640,7 +659,8 @@ impl RowPlan {
                         #[cfg(feature = "hdr-transfers")]
                         hlg: dst_prepared_hlg,
                         preserve_extended,
-                        gray_only: matches!(dst.color, ColorSpace::Gray { .. }),
+                        gray_only: matches!(dst.color, ColorSpace::Gray { .. })
+                            && !defer_encoded_luma,
                     });
                     if !preserve_extended && !dst_hlg_tf.is_hdr() {
                         clamped_color = true;
@@ -648,6 +668,10 @@ impl RowPlan {
                 }
             }
             _ => return Err(err_at(ConvertError::UnsupportedRoute)),
+        }
+
+        if let Some(weights) = deferred_luma_weights {
+            ops.push(MicroOp::RgbToGray(weights));
         }
 
         // 6k. Destination alpha normalization / premultiplication.
@@ -1222,6 +1246,50 @@ pub fn convert_into<S: PixelSource + ?Sized, D: PixelSink + ?Sized>(
     plan.execute_into(src, dst)
 }
 
+/// One-shot convenience helper: convert `src` to full-range sRGB `RGB8` under
+/// [`ConvertPolicy::permissive`] (discarding alpha unchecked and clipping gamut).
+pub fn to_rgb8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
+    convert_buf(
+        src,
+        ImageSpec::rgb8_srgb(),
+        &ConvertPolicy::permissive(),
+        PeakSource::Measured,
+    )
+}
+
+/// One-shot convenience helper: convert `src` to full-range sRGB straight-alpha `RGBA8`
+/// under [`ConvertPolicy::permissive`].
+pub fn to_rgba8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
+    convert_buf(
+        src,
+        ImageSpec::rgba8_srgb(),
+        &ConvertPolicy::permissive(),
+        PeakSource::Measured,
+    )
+}
+
+/// One-shot convenience helper: convert `src` to full-range sRGB `GRAY8` (encoded Y'
+/// luma by default) under [`ConvertPolicy::permissive`].
+pub fn to_gray8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
+    convert_buf(
+        src,
+        ImageSpec::gray8_srgb(),
+        &ConvertPolicy::permissive(),
+        PeakSource::Measured,
+    )
+}
+
+/// One-shot convenience helper: convert `src` to full-range sRGB straight-alpha `BGRA8`
+/// under [`ConvertPolicy::permissive`].
+pub fn to_bgra8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
+    convert_buf(
+        src,
+        ImageSpec::bgra8_srgb(),
+        &ConvertPolicy::permissive(),
+        PeakSource::Measured,
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Internal validation, preflight, and planning helpers
 // ---------------------------------------------------------------------------
@@ -1240,7 +1308,16 @@ pub(crate) fn preflight_and_classify(
             && src.layout.order.has_alpha_slot()
             && !policy.source_facts.all_opaque;
         let can_canon_fast = needs_opaque_canon
-            && strip::detect_byte_fast_path(src, dst, policy.depth, false, false).is_some();
+            && strip::detect_byte_fast_path(
+                src,
+                dst,
+                policy.depth,
+                policy.luma,
+                policy.luma_domain,
+                false,
+                false,
+            )
+            .is_some();
         return Ok(PreflightOutcome {
             matte_color: None,
             range_change: false,
@@ -1301,6 +1378,8 @@ pub(crate) fn preflight_and_classify(
         src,
         dst,
         policy.depth,
+        policy.luma,
+        policy.luma_domain,
         matte_color.is_some(),
         policy.source_facts.all_opaque,
     )
@@ -1539,7 +1618,7 @@ fn is_src_proven_opaque(src: &ImageSpec, facts: SampleFacts) -> bool {
         || facts.all_opaque
 }
 
-fn is_scene_linear_hdr_candidate(src: &ImageSpec, dst: &ImageSpec) -> bool {
+pub(crate) fn is_scene_linear_hdr_candidate(src: &ImageSpec, dst: &ImageSpec) -> bool {
     matches!(color_transfer(&src.color), Transfer::Linear)
         && src.layout.sample.is_float()
         && !dst.can_represent_hdr()
@@ -1555,7 +1634,7 @@ fn linear_sdr_ceiling_nits(src: &ImageSpec, dst: &ImageSpec, policy: &ConvertPol
         .nits()
 }
 
-fn merge_facts(policy_facts: SampleFacts, buf_facts: SampleFacts) -> SampleFacts {
+pub(crate) fn merge_facts(policy_facts: SampleFacts, buf_facts: SampleFacts) -> SampleFacts {
     let depth = match (policy_facts.depth, buf_facts.depth) {
         (Some(a), Some(b)) => ExactDepth::combine(a, b).or(Some(a)),
         (Some(a), None) => Some(a),
@@ -1866,7 +1945,10 @@ fn needs_linear_domain(
     {
         return true;
     }
-    if matches!(src, ColorSpace::Rgb { .. }) && matches!(dst, ColorSpace::Gray { .. }) {
+    if matches!(src, ColorSpace::Rgb { .. })
+        && matches!(dst, ColorSpace::Gray { .. })
+        && policy.luma_domain == LumaDomain::LinearLight
+    {
         return true;
     }
     if policy.gamut == GamutPolicy::SoftCompress {
@@ -2051,7 +2133,8 @@ fn derive_output_facts_byte(
         ByteFastPath::U16ToU8Round
         | ByteFastPath::U16ToU8Trunc
         | ByteFastPath::Rgba8StraightToPremul { .. }
-        | ByteFastPath::Rgba8PremulToStraight => false,
+        | ByteFastPath::Rgba8PremulToStraight
+        | ByteFastPath::Rgb8ToGray8 { .. } => false,
     };
     let all_opaque = !dst.layout.order.has_alpha_slot()
         || fills_alpha

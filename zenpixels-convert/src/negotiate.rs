@@ -223,11 +223,14 @@ fn native_route_feasible(
         return false;
     }
 
-    // B05: HDR -> SDR with tone mapping enabled requires a streaming tone mapper
-    // (either injected on policy or the built-in `bt2446a` feature).
-    let is_hdr_to_sdr = st.is_hdr()
+    // B05 + G14: HDR -> SDR (including unproven scene-linear float -> SDR) with tone
+    // mapping enabled requires a streaming tone mapper (either injected on policy or the
+    // built-in `bt2446a` feature).
+    let is_hdr_to_sdr = (st.is_hdr()
         && !dt.is_hdr()
-        && matches!(dst.color, ColorSpace::Rgb { .. } | ColorSpace::Gray { .. });
+        && matches!(dst.color, ColorSpace::Rgb { .. } | ColorSpace::Gray { .. }))
+        || (crate::plan::is_scene_linear_hdr_candidate(src, dst)
+            && !policy.source_facts.float.is_unit_interval());
     if is_hdr_to_sdr && policy.tone_map_hdr_to_sdr {
         match crate::plan::resolve_tone_mapper(policy) {
             Ok(m) if !m.requirements().full_image => {}
@@ -247,7 +250,8 @@ fn native_route_feasible(
             ColorSpace::Oklab { .. } | ColorSpace::Perceptual { .. } | ColorSpace::Xyz { .. }
         )
         || (matches!(src.color, ColorSpace::Rgb { .. })
-            && matches!(dst.color, ColorSpace::Gray { .. }))
+            && matches!(dst.color, ColorSpace::Gray { .. })
+            && policy.luma_domain == crate::policy::LumaDomain::LinearLight)
         || (src.color.white() != dst.color.white()
             && src.color.white().is_some()
             && dst.color.white().is_some());

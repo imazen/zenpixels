@@ -86,14 +86,20 @@ pub use gainmap::{
 pub use gamut::GamutMatrix;
 pub use load_bearing::{LoadBearingReport, PixelBufLoadBearingExt, PixelViewLoadBearingExt};
 pub use measure::{
-    LightLevelHistogram, LightLevelMethod, measure_cll, measure_histogram, measure_peak,
+    LightLevelHistogram, LightLevelMethod, measure_cll, measure_histogram, measure_max_smoothed,
+    measure_peak,
 };
 pub use negotiate::{FormatCost, LossKind, Negotiate, NegotiatedFormat};
-pub use orient::{apply_orientation, apply_orientation_into, orient_buf};
-pub use output::{EncodeReady, OutputPlan, OutputProfile};
-pub use plan::{ImagePlan, RowPlan, convert_buf, convert_into};
+pub use orient::{
+    apply_orientation, apply_orientation_banded_into, apply_orientation_into, orient_banded,
+    orient_buf,
+};
+pub use output::{EncodeReady, OutputPlan, OutputProfile, adapt_for_encode};
+pub use plan::{
+    ImagePlan, RowPlan, convert_buf, convert_into, to_bgra8, to_gray8, to_rgb8, to_rgba8,
+};
 pub use policy::{
-    AlphaPolicy, ConvertPolicy, DepthPolicy, GamutPolicy, LumaCoefficients, RangePolicy,
+    AlphaPolicy, ConvertPolicy, DepthPolicy, GamutPolicy, LumaCoefficients, LumaDomain, RangePolicy,
 };
 pub use scan::scan_facts;
 #[cfg(feature = "bt2446a")]
@@ -101,4 +107,4 @@ pub use tonemap::Bt2446A;
 #[cfg(feature = "oklab")]
 pub use tonemap::SoftCompress;
 pub use tonemap::{PreparedMapper, Requirements, StripMapper, ToneMapContext, ToneMapper};
-pub use ycbcr::{YcbcrMatrix, ycbcr_to_rgb_f32, ycbcr_to_rgb_into};
+pub use ycbcr::{YcbcrMatrix, ycbcr_to_rgb_f32, ycbcr_to_rgb_from_planar, ycbcr_to_rgb_into};

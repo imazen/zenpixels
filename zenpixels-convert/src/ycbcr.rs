@@ -24,6 +24,22 @@ pub enum YcbcrMatrix {
 }
 
 impl YcbcrMatrix {
+    /// Map an ITU-T H.273 Table 4 `matrix_coefficients` code to a [`YcbcrMatrix`].
+    ///
+    /// Recognizes `0` (`Identity` / GBR), `1` (`Bt709`), `5` / `6` (`Bt601`), and `9` (`Bt2020`).
+    /// Returns `None` for unspecified (`2`) or unsupported matrix codes.
+    #[inline]
+    #[must_use]
+    pub const fn from_cicp_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(Self::Identity),
+            1 => Some(Self::Bt709),
+            5 | 6 => Some(Self::Bt601),
+            9 => Some(Self::Bt2020),
+            _ => None,
+        }
+    }
+
     #[inline]
     const fn kr_kb(self) -> Option<(f32, f32)> {
         match self {
@@ -236,6 +252,69 @@ pub fn ycbcr_to_rgb_f32(
                 AlphaMode::None
             },
             white: None,
+        },
+    );
+    let mut out = PixelBuf::new(src.width(), src.height(), dst_spec)
+        .map_err(|e| err_at((*e.error()).into()))?;
+    ycbcr_to_rgb_into(src, matrix, range, &mut out.as_view_mut())?;
+    Ok(out)
+}
+
+/// Reconstruct a full-range `RGBF32` / `RGBAF32` [`PixelBuf`] directly from the color
+/// interpretation metadata attached to a [`PlanarView`] (`color()`, `effective_range()`,
+/// `ycbcr_matrix_code()`, and `effective_alpha()`).
+///
+/// Refuses views missing required range, color space (`Rgb` / `Gray`), or (for multi-plane
+/// chroma views) recognized ITU-T H.273 `ycbcr_matrix_code` with
+/// [`ConvertError::UnsupportedRoute`] rather than guessing defaults.
+pub fn ycbcr_to_rgb_from_planar(src: &PlanarView<'_>) -> Result<PixelBuf, At<ConvertError>> {
+    let parsed = parse_ycbcr_planes(src)?;
+    let (primaries, transfer, white) = match src.color() {
+        Some(ColorSpace::Rgb {
+            primaries,
+            transfer,
+            white,
+            ..
+        }) => (*primaries, *transfer, *white),
+        Some(ColorSpace::Gray {
+            transfer, white, ..
+        }) if matches!(parsed.chroma, ChromaKind::Monochrome) => {
+            (Primaries::Bt709, *transfer, *white)
+        }
+        _ => return Err(err_at(ConvertError::UnsupportedRoute)),
+    };
+    let range = src
+        .effective_range()
+        .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
+    let matrix = match parsed.chroma {
+        ChromaKind::Monochrome => YcbcrMatrix::Bt709,
+        ChromaKind::Planar { .. } | ChromaKind::Semi { .. } => src
+            .ycbcr_matrix_code()
+            .and_then(YcbcrMatrix::from_cicp_code)
+            .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?,
+    };
+    let has_alpha = parsed.alpha_plane.is_some();
+    let alpha = if has_alpha {
+        match src.effective_alpha() {
+            Some(AlphaMode::Premultiplied) => AlphaMode::Premultiplied,
+            Some(AlphaMode::Opaque) => AlphaMode::Opaque,
+            _ => AlphaMode::Straight,
+        }
+    } else {
+        AlphaMode::None
+    };
+    let dst_spec = ImageSpec::new(
+        if has_alpha {
+            SampleLayout::RGBAF32
+        } else {
+            SampleLayout::RGBF32
+        },
+        ColorSpace::Rgb {
+            primaries,
+            transfer,
+            range: SignalRange::Full,
+            alpha,
+            white,
         },
     );
     let mut out = PixelBuf::new(src.width(), src.height(), dst_spec)

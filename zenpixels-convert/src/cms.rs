@@ -75,6 +75,60 @@ mod moxcms_impl {
         }
     }
 
+    /// `moxcms` 0.9 does not evaluate ICC.1 §8.10.2 float `D2B*`/`B2D*` MPE tags.
+    /// Decline profiles carrying the active rendering intent's float MPE tag rather than
+    /// silently degrading to fallback integer LUTs.
+    fn has_float_pipeline(bytes: &[u8], intent: RenderingIntent, is_source: bool) -> bool {
+        let sig: &[u8; 4] = match (is_source, intent) {
+            (true, RenderingIntent::Perceptual) => b"D2B0",
+            (true, RenderingIntent::RelativeColorimetric) => b"D2B1",
+            (true, RenderingIntent::Saturation) => b"D2B2",
+            (false, RenderingIntent::Perceptual) => b"B2D0",
+            (false, RenderingIntent::RelativeColorimetric) => b"B2D1",
+            (false, RenderingIntent::Saturation) => b"B2D2",
+            _ => return false,
+        };
+        let Some(header) = bytes.get(..132) else {
+            return false;
+        };
+        let count = u32::from_be_bytes(header[128..132].try_into().unwrap()) as usize;
+        let available = (bytes.len() - 132) / 12;
+        bytes[132..]
+            .as_chunks::<12>()
+            .0
+            .iter()
+            .take(count.min(available))
+            .any(|entry| &entry[..4] == sig)
+    }
+
+    /// Guard against `moxcms` 0.9 curve-sharing bugs when an RGB profile has only two
+    /// adjacent channel TRCs equal (`(r == g || g == b) && r != b`).
+    fn validate_channel_curves(profile: &moxcms::ColorProfile) -> bool {
+        if profile.color_space == moxcms::DataColorSpace::Rgb
+            && let (Some(red), Some(green), Some(blue)) =
+                (&profile.red_trc, &profile.green_trc, &profile.blue_trc)
+            && (red == green || green == blue)
+            && red != blue
+        {
+            return false;
+        }
+        true
+    }
+
+    /// Explicit ICC profiles must evaluate their own curves rather than letting an
+    /// embedded `cicp` tag override the profile's TRC/LUTs.
+    fn prefer_icc_curves(profile: &mut moxcms::ColorProfile) {
+        profile.cicp = None;
+    }
+
+    fn icc_bytes_of(cs: &ColorSpace) -> Option<&[u8]> {
+        match cs {
+            ColorSpace::Icc { profile, .. } => Some(profile),
+            ColorSpace::Cmyk { icc: Some(b), .. } => Some(b),
+            _ => None,
+        }
+    }
+
     fn profile_from_color_space(
         cs: &ColorSpace,
     ) -> Result<(moxcms::ColorProfile, Option<RenderingIntent>), At<ConvertError>> {
@@ -82,16 +136,21 @@ mod moxcms_impl {
             ColorSpace::Icc {
                 profile, intent, ..
             } => {
-                let p = moxcms::ColorProfile::new_from_slice(profile)
+                let mut p = moxcms::ColorProfile::new_from_slice(profile)
                     .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
+                prefer_icc_curves(&mut p);
+                if !validate_channel_curves(&p) {
+                    return Err(err_at(ConvertError::UnsupportedRoute));
+                }
                 Ok((p, Some(*intent)))
             }
             ColorSpace::Cmyk { icc, .. } => {
                 let bytes = icc
                     .as_ref()
                     .ok_or_else(|| err_at(ConvertError::CmsRequired))?;
-                let p = moxcms::ColorProfile::new_from_slice(bytes)
+                let mut p = moxcms::ColorProfile::new_from_slice(bytes)
                     .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
+                prefer_icc_curves(&mut p);
                 Ok((p, Some(RenderingIntent::RelativeColorimetric)))
             }
             ColorSpace::Rgb {
@@ -124,6 +183,7 @@ mod moxcms_impl {
                             _ => unreachable!(),
                         };
                         let lin = moxcms::ToneReprCurve::Parametric(alloc::vec![1.0]);
+                        prof.cicp = None;
                         prof.red_trc = Some(lin.clone());
                         prof.green_trc = Some(lin.clone());
                         prof.blue_trc = Some(lin);
@@ -132,6 +192,7 @@ mod moxcms_impl {
                     (Primaries::Bt709, Transfer::Gamma22) => {
                         let mut prof = moxcms::ColorProfile::new_srgb();
                         let g22 = moxcms::ToneReprCurve::Parametric(alloc::vec![2.2]);
+                        prof.cicp = None;
                         prof.red_trc = Some(g22.clone());
                         prof.green_trc = Some(g22.clone());
                         prof.blue_trc = Some(g22);
@@ -323,11 +384,11 @@ mod moxcms_impl {
     impl CmsBackend for MoxCms {
         fn supports_specs(&self, src: &ImageSpec, dst: &ImageSpec) -> bool {
             let eff_intent = match (&src.color, &dst.color) {
-                (ColorSpace::Icc { intent, .. }, _) => Some(*intent),
-                (_, ColorSpace::Icc { intent, .. }) => Some(*intent),
-                _ => None,
+                (ColorSpace::Icc { intent, .. }, _) => *intent,
+                (_, ColorSpace::Icc { intent, .. }) => *intent,
+                _ => RenderingIntent::RelativeColorimetric,
             };
-            if eff_intent == Some(RenderingIntent::AbsoluteColorimetric) {
+            if eff_intent == RenderingIntent::AbsoluteColorimetric {
                 return false;
             }
             if src.layout.sample != dst.layout.sample
@@ -347,9 +408,24 @@ mod moxcms_impl {
             {
                 return false;
             }
+            if let Some(sb) = icc_bytes_of(&src.color)
+                && has_float_pipeline(sb, eff_intent, true)
+            {
+                return false;
+            }
+            if let Some(db) = icc_bytes_of(&dst.color)
+                && has_float_pipeline(db, eff_intent, false)
+            {
+                return false;
+            }
             let color_ok = |c: &ColorSpace| match c {
                 ColorSpace::Icc { profile, .. } => {
-                    profile.len() >= 128 && &profile[36..40] == b"acsp"
+                    if profile.len() < 128 || &profile[36..40] != b"acsp" {
+                        return false;
+                    }
+                    moxcms::ColorProfile::new_from_slice(profile)
+                        .map(|p| validate_channel_curves(&p))
+                        .unwrap_or(false)
                 }
                 ColorSpace::Cmyk { icc: Some(p), .. } => p.len() >= 128 && &p[36..40] == b"acsp",
                 ColorSpace::Cmyk { icc: None, .. } => false,
@@ -412,12 +488,51 @@ mod moxcms_impl {
             if eff_intent == RenderingIntent::AbsoluteColorimetric {
                 return Err(err_at(ConvertError::UnsupportedRoute));
             }
+            if let Some(sb) = icc_bytes_of(&src.color)
+                && has_float_pipeline(sb, eff_intent, true)
+            {
+                return Err(err_at(ConvertError::UnsupportedRoute));
+            }
+            if let Some(db) = icc_bytes_of(&dst.color)
+                && has_float_pipeline(db, eff_intent, false)
+            {
+                return Err(err_at(ConvertError::UnsupportedRoute));
+            }
             let src_l = to_mox_layout(src.layout.order)
                 .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
             let dst_l = to_mox_layout(dst.layout.order)
                 .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
+            let is_f32 = src.layout.sample == SampleType::F32;
+            let mut mox_intent = to_mox_intent(eff_intent);
+            // ICC.1 §8.10.2 Table 25: fall back to A2B0/B2A0 when colorimetric LUTs & TRCs are absent.
+            if eff_intent == RenderingIntent::RelativeColorimetric
+                && ((src_p.lut_a_to_b_colorimetric.is_none()
+                    && src_p.lut_a_to_b_perceptual.is_some()
+                    && src_p.red_trc.is_none())
+                    || (dst_p.lut_b_to_a_colorimetric.is_none()
+                        && dst_p.lut_b_to_a_perceptual.is_some()
+                        && dst_p.red_trc.is_none()))
+            {
+                mox_intent = moxcms::RenderingIntent::Perceptual;
+            }
+            let shared_curve = |p: &moxcms::ColorProfile| {
+                p.color_space != moxcms::DataColorSpace::Rgb
+                    || (p.red_trc == p.green_trc && p.red_trc == p.blue_trc)
+            };
+            #[allow(clippy::needless_update)]
             let opts = moxcms::TransformOptions {
-                rendering_intent: to_mox_intent(eff_intent),
+                rendering_intent: mox_intent,
+                allow_use_cicp_transfer: false,
+                interpolation_method: moxcms::InterpolationMethod::Tetrahedral,
+                barycentric_weight_scale: if is_f32 {
+                    moxcms::BarycentricWeightScale::High
+                } else {
+                    moxcms::BarycentricWeightScale::Low
+                },
+                prefer_fixed_point: !is_f32,
+                allow_extended_range_rgb_xyz: is_f32
+                    && shared_curve(&src_p)
+                    && shared_curve(&dst_p),
                 ..Default::default()
             };
             let exec = match src.layout.sample {
