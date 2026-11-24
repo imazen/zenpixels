@@ -6,11 +6,13 @@
 extern crate alloc;
 use alloc::sync::Arc;
 
+#[cfg(feature = "icc")]
+use zenpixels::IccColorSpace;
 use zenpixels::{
     AlignedSamples, AlphaMode, BandedBuf, BitPacking, ColorSpace, DualLayerHdr, GainMapMetadata,
-    HdrMetadata, HlgMode, IccColorSpace, ImageSpec, OwnedPlane, PixelBuf, PixelSink, PixelSource,
-    PixelStorage, PlanarBuf, PlanarView, PlaneRole, PlaneSpec, PlaneView, RenderingIntent,
-    SampleFacts, SampleLayout, SampleType, SignalRange, Transfer,
+    HdrMetadata, HlgMode, ImageSpec, OwnedPlane, PixelBuf, PixelSink, PixelSource, PixelStorage,
+    PlanarBuf, PlanarView, PlaneRole, PlaneSpec, PlaneView, RenderingIntent, SampleFacts,
+    SampleLayout, SampleType, SignalRange, Transfer,
 };
 
 #[test]
@@ -231,6 +233,7 @@ fn image_spec_validate_rejects_hlg_display_on_gray_and_icc_signature_mismatch() 
     let mut gray_icc = vec![0u8; 128];
     gray_icc[16..20].copy_from_slice(b"GRAY");
     gray_icc[36..40].copy_from_slice(b"acsp");
+    #[cfg(feature = "icc")]
     assert_eq!(
         zenpixels::icc::profile_color_space(&gray_icc),
         Some(IccColorSpace::Gray)
@@ -264,6 +267,7 @@ fn image_spec_validate_rejects_hlg_display_on_gray_and_icc_signature_mismatch() 
     assert!(matched.validate().is_ok());
 }
 
+#[cfg(feature = "icc")]
 #[test]
 fn icc_from_icc_for_intent_rejects_absolute_colorimetric() {
     let fake_icc = vec![0u8; 128];

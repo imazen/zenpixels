@@ -3,7 +3,7 @@
 use core::fmt;
 
 use super::SampleEncoding;
-use crate::buffer::PlaneView;
+use crate::buffer::{PlaneView, PlaneViewMut};
 use crate::layout::SampleType;
 
 /// Chroma resolution relative to the complete luma plane.
@@ -142,8 +142,10 @@ pub enum CodePlaneError {
     Components,
     /// Buffer slice is too short or misaligned for the declared geometry.
     Geometry,
-    /// A requested read extends beyond the active plane.
+    /// A requested read or write extends beyond the active plane.
     OutsideActivePlane,
+    /// A written code exceeds `(1 << code_bits) - 1`.
+    CodeOutOfRange,
 }
 
 impl fmt::Display for CodePlaneError {
@@ -152,7 +154,8 @@ impl fmt::Display for CodePlaneError {
             Self::StorageMismatch => "code plane storage disagrees with sample encoding",
             Self::Components => "component index or plane width disagrees with the component count",
             Self::Geometry => "plane dimensions, stride, or backing buffer length are invalid",
-            Self::OutsideActivePlane => "code plane read extends beyond the active plane",
+            Self::OutsideActivePlane => "code plane access extends beyond the active plane",
+            Self::CodeOutOfRange => "code value exceeds the declared bit depth",
         })
     }
 }
@@ -397,5 +400,326 @@ impl<'a> CodePlane<'a> {
 
     const fn code_mask(self) -> u16 {
         ((1u32 << self.encoding.code_bits()) - 1) as u16
+    }
+}
+
+#[derive(Debug)]
+enum WordsMut<'a> {
+    U8(&'a mut [u8]),
+    U16(&'a mut [u16]),
+}
+
+/// Mutable view of one integer component in a borrowed plane, without normalization or color claims.
+///
+/// Code depth and bit placement come from [`SampleEncoding`]. By default, padding bits outside
+/// `(mask << bit_shift)` are zeroed on write; call [`preserving_other_bits`](Self::preserving_other_bits)
+/// to preserve surrounding bits when packing shared words.
+#[derive(Debug)]
+pub struct CodePlaneMut<'a> {
+    words: WordsMut<'a>,
+    width: usize,
+    height: usize,
+    stride_words: usize,
+    step_words: usize,
+    encoding: SampleEncoding,
+    preserve_bits: bool,
+}
+
+impl<'a> CodePlaneMut<'a> {
+    /// Borrow a single-component mutable `u8` plane (`stride_words >= width`).
+    pub fn from_u8_mut(
+        data: &'a mut [u8],
+        width: usize,
+        height: usize,
+        stride_words: usize,
+        encoding: SampleEncoding,
+    ) -> Result<Self, CodePlaneError> {
+        Self::component_from_u8_mut(data, width, height, stride_words, 1, 0, encoding)
+    }
+
+    /// Borrow component `index` of an interleaved mutable `u8` plane (`width_words % components == 0`).
+    pub fn component_from_u8_mut(
+        data: &'a mut [u8],
+        width_words: usize,
+        height: usize,
+        stride_words: usize,
+        components: usize,
+        index: usize,
+        encoding: SampleEncoding,
+    ) -> Result<Self, CodePlaneError> {
+        if encoding.storage() != SampleType::U8 {
+            return Err(CodePlaneError::StorageMismatch);
+        }
+        if components == 0 || index >= components || width_words % components != 0 {
+            return Err(CodePlaneError::Components);
+        }
+        if stride_words < width_words {
+            return Err(CodePlaneError::Geometry);
+        }
+        let width = width_words / components;
+        if width > 0 && height > 0 {
+            let req = (height - 1)
+                .checked_mul(stride_words)
+                .and_then(|v| v.checked_add(width_words))
+                .ok_or(CodePlaneError::Geometry)?;
+            if data.len() < req {
+                return Err(CodePlaneError::Geometry);
+            }
+        }
+        let skip = if width == 0 || height == 0 { 0 } else { index };
+        Ok(Self {
+            words: WordsMut::U8(&mut data[skip..]),
+            width,
+            height,
+            stride_words,
+            step_words: components,
+            encoding,
+            preserve_bits: false,
+        })
+    }
+
+    /// Borrow a single-component mutable `u16` plane (`stride_words >= width`).
+    pub fn from_u16_mut(
+        data: &'a mut [u16],
+        width: usize,
+        height: usize,
+        stride_words: usize,
+        encoding: SampleEncoding,
+    ) -> Result<Self, CodePlaneError> {
+        Self::component_from_u16_mut(data, width, height, stride_words, 1, 0, encoding)
+    }
+
+    /// Borrow component `index` of an interleaved mutable `u16` plane (`width_words % components == 0`).
+    pub fn component_from_u16_mut(
+        data: &'a mut [u16],
+        width_words: usize,
+        height: usize,
+        stride_words: usize,
+        components: usize,
+        index: usize,
+        encoding: SampleEncoding,
+    ) -> Result<Self, CodePlaneError> {
+        if encoding.storage() != SampleType::U16 {
+            return Err(CodePlaneError::StorageMismatch);
+        }
+        if components == 0 || index >= components || width_words % components != 0 {
+            return Err(CodePlaneError::Components);
+        }
+        if stride_words < width_words {
+            return Err(CodePlaneError::Geometry);
+        }
+        let width = width_words / components;
+        if width > 0 && height > 0 {
+            let req = (height - 1)
+                .checked_mul(stride_words)
+                .and_then(|v| v.checked_add(width_words))
+                .ok_or(CodePlaneError::Geometry)?;
+            if data.len() < req {
+                return Err(CodePlaneError::Geometry);
+            }
+        }
+        let skip = if width == 0 || height == 0 { 0 } else { index };
+        Ok(Self {
+            words: WordsMut::U16(&mut data[skip..]),
+            width,
+            height,
+            stride_words,
+            step_words: components,
+            encoding,
+            preserve_bits: false,
+        })
+    }
+
+    /// Borrow component `index` mutably from a validated [`PlaneViewMut<'a>`] zero-copy.
+    pub fn from_plane_view_mut(
+        plane: PlaneViewMut<'a>,
+        index: usize,
+        encoding: SampleEncoding,
+    ) -> Result<Self, CodePlaneError> {
+        let spec = plane.spec();
+        if spec.packing.is_packed_word() {
+            return Err(CodePlaneError::StorageMismatch);
+        }
+        let components = spec.components as usize;
+        if components == 0 || index >= components {
+            return Err(CodePlaneError::Components);
+        }
+        if spec.sample != encoding.storage() {
+            return Err(CodePlaneError::StorageMismatch);
+        }
+        let width_words = (plane.width() as usize)
+            .checked_mul(components)
+            .ok_or(CodePlaneError::Geometry)?;
+        let height = plane.height() as usize;
+        let stride = plane.stride();
+        let data = plane.into_data_mut();
+        match spec.sample {
+            SampleType::U8 => Self::component_from_u8_mut(
+                data,
+                width_words,
+                height,
+                stride,
+                components,
+                index,
+                encoding,
+            ),
+            SampleType::U16 => {
+                if stride % 2 != 0 {
+                    return Err(CodePlaneError::Geometry);
+                }
+                let words = bytemuck::try_cast_slice_mut::<u8, u16>(data)
+                    .map_err(|_| CodePlaneError::Geometry)?;
+                Self::component_from_u16_mut(
+                    words,
+                    width_words,
+                    height,
+                    stride / 2,
+                    components,
+                    index,
+                    encoding,
+                )
+            }
+            _ => Err(CodePlaneError::StorageMismatch),
+        }
+    }
+
+    /// Preserve bits outside `(mask << bit_shift)` in each written sample word instead of
+    /// zeroing padding bits.
+    #[inline]
+    #[must_use]
+    pub const fn preserving_other_bits(mut self) -> Self {
+        self.preserve_bits = true;
+        self
+    }
+
+    /// Active samples per row.
+    #[inline]
+    #[must_use]
+    pub const fn width(&self) -> usize {
+        self.width
+    }
+
+    /// Number of active rows.
+    #[inline]
+    #[must_use]
+    pub const fn height(&self) -> usize {
+        self.height
+    }
+
+    /// Storage width, code depth, and bit placement.
+    #[inline]
+    #[must_use]
+    pub const fn encoding(&self) -> SampleEncoding {
+        self.encoding
+    }
+
+    /// Borrow as a read-only [`CodePlane`].
+    #[inline]
+    #[must_use]
+    pub fn as_ref(&self) -> CodePlane<'_> {
+        let words = match &self.words {
+            WordsMut::U8(s) => Words::U8(s),
+            WordsMut::U16(s) => Words::U16(s),
+        };
+        CodePlane {
+            words,
+            width: self.width,
+            height: self.height,
+            stride_words: self.stride_words,
+            step_words: self.step_words,
+            encoding: self.encoding,
+        }
+    }
+
+    /// Extract one code, ignoring padding bits; outside the active plane returns `None`.
+    #[inline]
+    #[must_use]
+    pub fn code(&self, x: usize, y: usize) -> Option<u16> {
+        self.as_ref().code(x, y)
+    }
+
+    /// Extract `codes.len()` consecutive codes of row `y` starting at column `x`.
+    #[inline]
+    pub fn read_codes(&self, x: usize, y: usize, codes: &mut [u16]) -> Result<(), CodePlaneError> {
+        self.as_ref().read_codes(x, y, codes)
+    }
+
+    /// Write one code at `(x, y)`. Validated before mutating.
+    #[inline]
+    pub fn set_code(&mut self, x: usize, y: usize, code: u16) -> Result<(), CodePlaneError> {
+        self.write_codes(x, y, core::slice::from_ref(&code))
+    }
+
+    /// Write `codes.len()` consecutive codes on row `y` starting at column `x`.
+    ///
+    /// Validates bounds and code range (`<= (1 << code_bits) - 1`) before writing anything.
+    pub fn write_codes(&mut self, x: usize, y: usize, codes: &[u16]) -> Result<(), CodePlaneError> {
+        if y >= self.height
+            || x.checked_add(codes.len())
+                .is_none_or(|end| end > self.width)
+        {
+            return Err(CodePlaneError::OutsideActivePlane);
+        }
+        let mask = ((1u32 << self.encoding.code_bits()) - 1) as u16;
+        if codes.iter().any(|&c| c > mask) {
+            return Err(CodePlaneError::CodeOutOfRange);
+        }
+        let Some(last) = codes.len().checked_sub(1) else {
+            return Ok(());
+        };
+        let start = y * self.stride_words + x * self.step_words;
+        let end = start + last * self.step_words + 1;
+        let shift = self.encoding.bit_shift();
+        let preserve = self.preserve_bits;
+        let step = self.step_words;
+        match &mut self.words {
+            WordsMut::U8(s) => {
+                let clear = !((mask as u8) << shift);
+                let words = &mut s[start..end];
+                if step == 1 {
+                    for (&c, dst) in codes.iter().zip(words.iter_mut()) {
+                        let placed = (c as u8) << shift;
+                        *dst = if preserve {
+                            (*dst & clear) | placed
+                        } else {
+                            placed
+                        };
+                    }
+                } else {
+                    for (&c, dst) in codes.iter().zip(words.iter_mut().step_by(step)) {
+                        let placed = (c as u8) << shift;
+                        *dst = if preserve {
+                            (*dst & clear) | placed
+                        } else {
+                            placed
+                        };
+                    }
+                }
+            }
+            WordsMut::U16(s) => {
+                let clear = !(mask << shift);
+                let words = &mut s[start..end];
+                if step == 1 {
+                    for (&c, dst) in codes.iter().zip(words.iter_mut()) {
+                        let placed = c << shift;
+                        *dst = if preserve {
+                            (*dst & clear) | placed
+                        } else {
+                            placed
+                        };
+                    }
+                } else {
+                    for (&c, dst) in codes.iter().zip(words.iter_mut().step_by(step)) {
+                        let placed = c << shift;
+                        *dst = if preserve {
+                            (*dst & clear) | placed
+                        } else {
+                            placed
+                        };
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }

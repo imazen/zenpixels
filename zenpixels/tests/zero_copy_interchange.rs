@@ -2,7 +2,9 @@
 //! `PixelStorage`, `rgb`, `imgref`, and `image` 0.25 under Rust's `GlobalAlloc::dealloc`
 //! alignment-matching and `bytemuck::allocation::try_cast_vec` rules.
 
-use zenpixels::{ColorSpace, F16Sample, GrayAlphaF16, ImageSpec, PixelBuf, RowAlign, SampleLayout};
+#[cfg(feature = "imgref")]
+use zenpixels::RowAlign;
+use zenpixels::{ColorSpace, F16Sample, GrayAlphaF16, ImageSpec, PixelBuf, SampleLayout};
 
 #[test]
 fn vec_sample_and_pixel_zero_copy_roundtrips_preserve_pointer_identity() {

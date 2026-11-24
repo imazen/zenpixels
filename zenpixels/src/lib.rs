@@ -28,6 +28,8 @@ pub mod buffer;
 pub mod cicp;
 pub mod color;
 pub mod facts;
+#[cfg(feature = "hash")]
+pub mod hashing;
 pub mod hdr;
 #[cfg(feature = "icc")]
 pub mod icc;
@@ -42,7 +44,8 @@ pub mod storage;
 pub use buffer::{
     BandedBuf, Bgrx, BufferError, DEFAULT_MAX_BAND_BYTES, DualLayerHdr, DualLayerHdrParts,
     DualLayerHdrView, OwnedPlane, PixelBuf, PixelBufParts, PixelCow, PixelSink, PixelSource,
-    PixelView, PixelViewMut, PlanarBuf, PlanarView, PlaneView, PlaneViewMut, Rgbx, TypedElement,
+    PixelView, PixelViewMut, PlanarBuf, PlanarView, PlanarViewMut, PlaneView, PlaneViewMut, Rgbx,
+    TypedElement,
 };
 pub use cicp::{
     Cicp, CicpError, CicpProjectionError, color_primaries_name, matrix_coefficients_name,
@@ -55,6 +58,8 @@ pub use color::{
     RenderingIntent, SignalRange, SignedFraction, Transfer, UnsignedFraction, WhitePoint,
 };
 pub use facts::{ExactDepth, FloatFacts, SampleFacts};
+#[cfg(feature = "hash")]
+pub use hashing::HashInclusions;
 pub use hdr::{
     ContentLightLevel, DiffuseWhite, HlgRendering, MasteringDisplay, Nits, PeakSource, St2086Codes,
 };
@@ -67,10 +72,11 @@ pub use layout::{
 pub use orientation::Orientation;
 pub use pixel_types::{F16Sample, GrayAlpha8, GrayAlpha16, GrayAlphaF16, GrayAlphaF32};
 pub use sample::{
-    ChromaSiting, ChromaSubsampling, CodePlane, CodePlaneError, ExactDepthError, SampleEncoding,
-    SampleEncodingError, full_range_grid_nests, narrow_range_grid_nests,
+    ChromaSiting, ChromaSubsampling, CodePlane, CodePlaneError, CodePlaneMut, ExactDepthError,
+    SampleEncoding, SampleEncodingError, full_range_grid_nests, narrow_range_grid_nests,
 };
 pub use storage::{
-    AlignedSamples, ByteStorage, ByteStorageMut, PixelStorage, StorageError, StorageSample,
+    AlignedSamples, ByteStorage, ByteStorageMut, ExternalMutStorage, ExternalStorage, PixelStorage,
+    StorageError, StorageSample,
 };
 pub use whereat::At;

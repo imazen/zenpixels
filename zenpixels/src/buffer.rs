@@ -16,15 +16,20 @@ use alloc::vec::Vec;
 use core::fmt;
 use whereat::At;
 
-use crate::color::{AlphaMode, ColorError, ColorOrigin, GainMapMetadata, HdrMetadata, ImageSpec};
+use crate::color::{
+    AlphaMode, ColorError, ColorOrigin, ColorSpace, GainMapMetadata, HdrMetadata, ImageSpec,
+    SignalRange,
+};
 use crate::facts::{FloatFacts, SampleFacts};
 use crate::layout::{
-    BitPacking, InteropTarget, LayoutError, PlaneRole, PlaneSpec, RowAlign, SampleLayout,
-    SampleType,
+    BitPacking, ChannelOrder, InteropTarget, LayoutError, PlaneRole, PlaneSpec, RowAlign,
+    SampleLayout, SampleType,
 };
 use crate::pixel_types::{F16Sample, GrayAlpha8, GrayAlpha16, GrayAlphaF16, GrayAlphaF32};
 use crate::sample::ChromaSiting;
-use crate::storage::{ByteStorage, ByteStorageMut, PixelStorage, StorageError, StorageSample};
+use crate::storage::{
+    AlignedSamples, ByteStorage, ByteStorageMut, PixelStorage, StorageError, StorageSample,
+};
 
 mod sealed {
     pub trait Sealed {}
@@ -1112,7 +1117,7 @@ impl PixelBuf {
     /// Fallibly allocate a zero-filled buffer with explicit row alignment (`Tight`, `Cache64`, `PixelCache64`, `Samples(n)`).
     ///
     /// For `Cache64` and `PixelCache64`, storage is allocated as 64-byte aligned
-    /// [`AlignedSamples`](crate::AlignedSamples) so both the first pixel and every
+    /// [`AlignedSamples`] so both the first pixel and every
     /// row start land on a 64-byte boundary. When `spec.color.alpha() == AlphaMode::Opaque`,
     /// alpha samples are initialized to full opacity.
     pub fn new_aligned(
@@ -1339,21 +1344,251 @@ impl PixelBuf {
         })
     }
 
-    /// Checked reconstruction from a [`PixelBufParts`] struct (preserving `hdr`, `origin`, and clearing
-    /// unverified `facts` unless the caller re-attaches them explicitly, or preserving `parts.facts`).
+    /// Checked reconstruction from a [`PixelBufParts`] struct (preserving `hdr`, `origin`, and
+    /// `parts.facts`).
+    ///
+    /// On validation failure, `parts` is dropped; use
+    /// [`try_from_parts_recover`](Self::try_from_parts_recover) to recover the allocation intact.
     pub fn try_from_parts(parts: PixelBufParts) -> Result<Self, At<BufferError>> {
-        let mut buf = Self::from_parts(
-            parts.storage,
-            parts.offset,
+        Self::try_from_parts_recover(parts).map_err(|(err, _)| err)
+    }
+
+    /// Checked reconstruction from [`PixelBufParts`], returning `Err((err, parts))` with the
+    /// original allocation and metadata intact on validation failure.
+    #[allow(clippy::result_large_err)]
+    pub fn try_from_parts_recover(
+        parts: PixelBufParts,
+    ) -> Result<Self, (At<BufferError>, PixelBufParts)> {
+        let bytes = parts.storage.as_bytes();
+        let Some(slice) = bytes.get(parts.offset..) else {
+            return Err((err_at(BufferError::InsufficientData), parts));
+        };
+        if let Err(e) = validate_geometry(
+            slice.len(),
+            slice.as_ptr(),
             parts.width,
             parts.height,
             parts.stride,
-            parts.spec,
-        )?;
-        buf.facts = parts.facts;
-        buf.hdr = parts.hdr;
-        buf.origin = parts.origin;
-        Ok(buf)
+            &parts.spec,
+        ) {
+            return Err((e, parts));
+        }
+        Ok(Self {
+            storage: parts.storage,
+            offset: parts.offset,
+            width: parts.width,
+            height: parts.height,
+            stride: parts.stride,
+            spec: parts.spec,
+            facts: parts.facts,
+            hdr: parts.hdr,
+            origin: parts.origin,
+        })
+    }
+
+    /// Adopt an immutable external owned backing (`Arc<[u8]>`, `Arc<[u16]>`, `&'static [u8]`,
+    /// memory-mapped file wrapper, shared buffer pool handle, etc.) **zero-copy**.
+    ///
+    /// Validates geometry and sample alignment BEFORE boxing `storage`; on error, returns
+    /// `Err((err, storage))` with zero heap allocation and `storage` completely untouched.
+    ///
+    /// Read access (`as_view`, `row`, `PixelSource`) is strictly zero-copy. Requesting
+    /// mutable access (`as_view_mut`, `try_as_view_mut`, `try_make_mut`) transparently
+    /// performs copy-on-write into owned aligned storage without mutating `storage`.
+    /// Call [`try_into_external`](Self::try_into_external) to recover `S` zero-copy.
+    #[allow(clippy::result_large_err)]
+    pub fn from_external<S: ByteStorage + Send + Sync + 'static>(
+        storage: S,
+        width: u32,
+        height: u32,
+        stride: usize,
+        spec: ImageSpec,
+    ) -> Result<Self, (At<BufferError>, S)> {
+        Self::from_external_with_offset(storage, 0, width, height, stride, spec)
+    }
+
+    /// Adopt an immutable external owned backing starting at `offset` bytes **zero-copy**.
+    ///
+    /// Returns `Err((err, storage))` untouched on validation failure with zero heap allocation.
+    #[allow(clippy::result_large_err)]
+    pub fn from_external_with_offset<S: ByteStorage + Send + Sync + 'static>(
+        storage: S,
+        offset: usize,
+        width: u32,
+        height: u32,
+        stride: usize,
+        spec: ImageSpec,
+    ) -> Result<Self, (At<BufferError>, S)> {
+        let check = {
+            let bytes = storage.as_bytes();
+            match bytes.get(offset..) {
+                None => Err(err_at(BufferError::InsufficientData)),
+                Some(slice) => {
+                    validate_geometry(slice.len(), slice.as_ptr(), width, height, stride, &spec)
+                }
+            }
+        };
+        if let Err(e) = check {
+            return Err((e, storage));
+        }
+        Ok(Self {
+            storage: PixelStorage::from_external(storage),
+            offset,
+            width,
+            height,
+            stride,
+            spec,
+            facts: SampleFacts::NONE,
+            hdr: HdrMetadata::default(),
+            origin: ColorOrigin::assumed(),
+        })
+    }
+
+    /// Adopt a mutable external owned backing (`Box<[T]>`, custom-allocator wrapper, mutable
+    /// pool lease, FFI writable buffer, etc.) **zero-copy** for both reads and in-place writes.
+    ///
+    /// Validates geometry and sample alignment BEFORE boxing `storage`; on error, returns
+    /// `Err((err, storage))` with zero heap allocation and `storage` completely untouched.
+    /// Call [`try_into_external_mut`](Self::try_into_external_mut) to recover `S` zero-copy.
+    #[allow(clippy::result_large_err)]
+    pub fn from_external_mut<S: ByteStorageMut + Send + Sync + 'static>(
+        storage: S,
+        width: u32,
+        height: u32,
+        stride: usize,
+        spec: ImageSpec,
+    ) -> Result<Self, (At<BufferError>, S)> {
+        Self::from_external_mut_with_offset(storage, 0, width, height, stride, spec)
+    }
+
+    /// Adopt a mutable external owned backing starting at `offset` bytes **zero-copy**.
+    ///
+    /// Returns `Err((err, storage))` untouched on validation failure with zero heap allocation.
+    #[allow(clippy::result_large_err)]
+    pub fn from_external_mut_with_offset<S: ByteStorageMut + Send + Sync + 'static>(
+        storage: S,
+        offset: usize,
+        width: u32,
+        height: u32,
+        stride: usize,
+        spec: ImageSpec,
+    ) -> Result<Self, (At<BufferError>, S)> {
+        let check = {
+            let bytes = storage.as_bytes();
+            match bytes.get(offset..) {
+                None => Err(err_at(BufferError::InsufficientData)),
+                Some(slice) => {
+                    validate_geometry(slice.len(), slice.as_ptr(), width, height, stride, &spec)
+                }
+            }
+        };
+        if let Err(e) = check {
+            return Err((e, storage));
+        }
+        Ok(Self {
+            storage: PixelStorage::from_external_mut(storage),
+            offset,
+            width,
+            height,
+            stride,
+            spec,
+            facts: SampleFacts::NONE,
+            hdr: HdrMetadata::default(),
+            origin: ColorOrigin::assumed(),
+        })
+    }
+
+    /// Whether this buffer is backed by an external owner (`from_external` or `from_external_mut`).
+    #[inline]
+    #[must_use]
+    pub const fn is_external(&self) -> bool {
+        self.storage.is_external()
+    }
+
+    /// Whether mutable access modifies the current backing in place without copy-on-write.
+    #[inline]
+    #[must_use]
+    pub const fn is_mutable_in_place(&self) -> bool {
+        self.storage.is_mutable_in_place()
+    }
+
+    /// Borrow the external owner if backed by an external owner of concrete type `S`.
+    #[inline]
+    #[must_use]
+    pub fn external_ref<S: 'static>(&self) -> Option<&S> {
+        self.storage.external_ref::<S>()
+    }
+
+    /// Mutably borrow the external owner if backed by `from_external_mut` of concrete type `S`,
+    /// automatically clearing cached [`SampleFacts`].
+    #[inline]
+    pub fn external_mut<S: 'static>(&mut self) -> Option<&mut S> {
+        if self.storage.external_ref::<S>().is_some() {
+            self.facts = SampleFacts::NONE;
+        }
+        self.storage.external_mut::<S>()
+    }
+
+    /// Recover an immutable external owner `S` zero-copy; returns `Err(self)` untouched otherwise.
+    #[allow(clippy::result_large_err)]
+    pub fn try_into_external<S: 'static>(mut self) -> Result<S, Self> {
+        match self.storage.try_into_external::<S>() {
+            Ok(owner) => Ok(owner),
+            Err(storage) => {
+                self.storage = storage;
+                Err(self)
+            }
+        }
+    }
+
+    /// Recover a mutable external owner `S` zero-copy; returns `Err(self)` untouched otherwise.
+    #[allow(clippy::result_large_err)]
+    pub fn try_into_external_mut<S: 'static>(mut self) -> Result<S, Self> {
+        match self.storage.try_into_external_mut::<S>() {
+            Ok(owner) => Ok(owner),
+            Err(storage) => {
+                self.storage = storage;
+                Err(self)
+            }
+        }
+    }
+
+    /// Ensure backing storage is mutable in place, fallibly promoting immutable external
+    /// storage ([`PixelStorage::External`]) via copy-on-write into properly aligned owned storage.
+    ///
+    /// No-op (zero copy, zero allocation) for native `Vec`, `Aligned64`, and `ExternalMut` buffers.
+    pub fn try_make_mut(&mut self) -> Result<(), At<BufferError>> {
+        if !matches!(self.storage, PixelStorage::External(_)) {
+            return Ok(());
+        }
+        let align = self.spec.layout.min_alignment();
+        let rb = self.row_bytes();
+        let req = required_bytes(self.height, self.stride, rb).map_err(err_at)?;
+        if self.offset == 0 && (self.height <= 1 || self.stride % align == 0) {
+            let mut aligned =
+                AlignedSamples::try_zeroed_bytes(req).map_err(|e| err_at(e.into()))?;
+            aligned
+                .as_bytes_mut()
+                .copy_from_slice(&self.storage.as_bytes()[..req]);
+            self.storage = PixelStorage::Aligned64(aligned);
+        } else {
+            let total = rb
+                .checked_mul(self.height as usize)
+                .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+            let native = {
+                let view = self.as_view();
+                PixelStorage::try_from_rows(
+                    self.spec.layout.sample,
+                    total,
+                    (0..self.height).map(|y| view.row(y)),
+                )
+                .map_err(|e| err_at(e.into()))?
+            };
+            self.storage = native;
+            self.offset = 0;
+            self.stride = rb;
+        }
+        Ok(())
     }
 
     /// Width in pixels.
@@ -1540,22 +1775,34 @@ impl PixelBuf {
         }
     }
 
-    /// Borrow a mutable [`PixelViewMut`], automatically clearing cached [`SampleFacts`].
+    /// Fallibly borrow a mutable [`PixelViewMut`], clearing cached [`SampleFacts`] and
+    /// copy-on-write promoting immutable external storage without panicking on OOM.
     #[inline]
-    #[must_use]
-    pub fn as_view_mut(&mut self) -> PixelViewMut<'_> {
+    pub fn try_as_view_mut(&mut self) -> Result<PixelViewMut<'_>, At<BufferError>> {
+        self.try_make_mut()?;
         self.facts = SampleFacts::NONE;
         let rb = self.row_bytes();
         let end = self.offset + required_bytes(self.height, self.stride, rb).unwrap_or(0);
         let bytes = self.storage.as_bytes_mut();
-        PixelViewMut {
+        Ok(PixelViewMut {
             data: &mut bytes[self.offset..end],
             width: self.width,
             rows: self.height,
             stride: self.stride,
             spec: self.spec.clone(),
             hdr: self.hdr,
-        }
+        })
+    }
+
+    /// Borrow a mutable [`PixelViewMut`], automatically clearing cached [`SampleFacts`].
+    ///
+    /// If backed by immutable external storage (`from_external`), promotes via copy-on-write;
+    /// use [`try_as_view_mut`](Self::try_as_view_mut) for fallible OOM handling.
+    #[inline]
+    #[must_use]
+    pub fn as_view_mut(&mut self) -> PixelViewMut<'_> {
+        self.try_as_view_mut()
+            .expect("copy-on-write promotion of external PixelBuf failed")
     }
 
     /// Borrow a mutable horizontal strip of `count` rows starting at `y`, automatically
@@ -1599,6 +1846,7 @@ impl PixelBuf {
             &ColorOrigin,
         ) -> Option<(usize, ImageSpec, ColorOrigin, SampleFacts)>,
     {
+        self.try_make_mut()?;
         let active = &mut self.storage.as_bytes_mut()[self.offset..];
         let Some((new_stride, new_spec, new_origin, new_facts)) = f(
             active,
@@ -1655,6 +1903,10 @@ impl PixelBuf {
                 .truncate_bytes(target_offset + rb * self.height as usize);
             return self;
         }
+        self.try_make_mut()
+            .expect("copy-on-write promotion of external PixelBuf failed");
+        let ptr_rem = (self.storage.as_bytes().as_ptr() as usize) % align;
+        let target_offset = if ptr_rem == 0 { 0 } else { align - ptr_rem };
         let bytes = self.storage.as_bytes_mut();
         for y in 0..self.height as usize {
             let src = self.offset + y * self.stride;
@@ -1668,6 +1920,123 @@ impl PixelBuf {
         self.storage
             .truncate_bytes(target_offset + rb * self.height as usize);
         self
+    }
+
+    /// Permute or compact channels in place without reallocating for compatible same-depth orders.
+    ///
+    /// Supports:
+    /// - Same-width R↔B channel swaps (`Rgb ↔ Bgr`, `Rgba ↔ Bgra`, `Rgbx ↔ Bgrx`) for any
+    ///   unpacked sample type (`U8`, `U16`, `F16`, `F32`, etc.), preserving [`SampleFacts`] and
+    ///   [`ColorSpace`].
+    /// - Lossless 4→3 padding/opaque drops (`Rgbx`/`Bgrx` → `Rgb`/`Bgr`, or `Rgba`/`Bgra` with
+    ///   [`AlphaMode::Opaque`] → `Rgb`/`Bgr`), compacting each row in place and updating
+    ///   `AlphaMode::Opaque` to `AlphaMode::None`.
+    ///
+    /// Refuses lossy alpha drops (`Straight`/`Premultiplied`), packed-word layouts, and
+    /// unsupported channel orders with [`BufferError::IncompatibleLayout`].
+    pub fn swizzle_in_place(&mut self, target_order: ChannelOrder) -> Result<(), At<BufferError>> {
+        let src_order = self.spec.layout.order;
+        if src_order == target_order {
+            return Ok(());
+        }
+        if self.spec.layout.packing.is_packed_word() {
+            return Err(err_at(BufferError::IncompatibleLayout));
+        }
+        let sz = self.spec.layout.sample.byte_size();
+        match (src_order, target_order) {
+            (ChannelOrder::Rgb, ChannelOrder::Bgr)
+            | (ChannelOrder::Bgr, ChannelOrder::Rgb)
+            | (ChannelOrder::Rgba, ChannelOrder::Bgra)
+            | (ChannelOrder::Bgra, ChannelOrder::Rgba)
+            | (ChannelOrder::Rgbx, ChannelOrder::Bgrx)
+            | (ChannelOrder::Bgrx, ChannelOrder::Rgbx) => {
+                let new_layout = SampleLayout {
+                    order: target_order,
+                    ..self.spec.layout
+                };
+                let new_spec = ImageSpec::new(new_layout, self.spec.color.clone());
+                new_spec
+                    .validate()
+                    .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
+                self.try_make_mut()?;
+                let bpp = new_layout.bytes_per_pixel();
+                let rb = (self.width as usize) * bpp;
+                let off = self.offset;
+                let stride = self.stride;
+                let bytes = self.storage.as_bytes_mut();
+                for y in 0..self.height as usize {
+                    let row = &mut bytes[off + y * stride..off + y * stride + rb];
+                    if sz == 1 {
+                        for px in row.chunks_exact_mut(bpp) {
+                            px.swap(0, 2);
+                        }
+                    } else {
+                        let c2 = 2 * sz;
+                        for px in row.chunks_exact_mut(bpp) {
+                            let (first, rest) = px.split_at_mut(c2);
+                            first[..sz].swap_with_slice(&mut rest[..sz]);
+                        }
+                    }
+                }
+                self.spec = new_spec;
+                Ok(())
+            }
+            (
+                ChannelOrder::Rgbx | ChannelOrder::Bgrx | ChannelOrder::Rgba | ChannelOrder::Bgra,
+                ChannelOrder::Rgb | ChannelOrder::Bgr,
+            ) => {
+                let is_alpha_src = matches!(src_order, ChannelOrder::Rgba | ChannelOrder::Bgra);
+                if is_alpha_src && self.spec.color.alpha() != AlphaMode::Opaque {
+                    return Err(err_at(BufferError::IncompatibleLayout));
+                }
+                let new_color = if is_alpha_src {
+                    self.spec.color.clone().with_alpha(AlphaMode::None)
+                } else {
+                    self.spec.color.clone()
+                };
+                let new_layout = SampleLayout {
+                    order: target_order,
+                    ..self.spec.layout
+                };
+                let new_spec = ImageSpec::new(new_layout, new_color);
+                new_spec
+                    .validate()
+                    .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
+                self.try_make_mut()?;
+                let swap_rb = matches!(
+                    (src_order, target_order),
+                    (ChannelOrder::Rgbx | ChannelOrder::Rgba, ChannelOrder::Bgr)
+                        | (ChannelOrder::Bgrx | ChannelOrder::Bgra, ChannelOrder::Rgb)
+                );
+                let src_bpp = 4 * sz;
+                let dst_bpp = 3 * sz;
+                let w = self.width as usize;
+                let off = self.offset;
+                let stride = self.stride;
+                let bytes = self.storage.as_bytes_mut();
+                let mut tmp = [0u8; 24];
+                for y in 0..self.height as usize {
+                    let row_start = off + y * stride;
+                    let row = &mut bytes[row_start..row_start + w * src_bpp];
+                    for i in 0..w {
+                        let s = i * src_bpp;
+                        let d = i * dst_bpp;
+                        if swap_rb {
+                            tmp[..sz].copy_from_slice(&row[s + 2 * sz..s + 3 * sz]);
+                            tmp[sz..2 * sz].copy_from_slice(&row[s + sz..s + 2 * sz]);
+                            tmp[2 * sz..3 * sz].copy_from_slice(&row[s..s + sz]);
+                            row[d..d + dst_bpp].copy_from_slice(&tmp[..dst_bpp]);
+                        } else if s != d {
+                            row.copy_within(s..s + dst_bpp, d);
+                        }
+                    }
+                }
+                self.spec = new_spec;
+                self.facts = SampleFacts::NONE;
+                Ok(())
+            }
+            _ => Err(err_at(BufferError::IncompatibleLayout)),
+        }
     }
 
     /// Move the backing allocation into a tightly packed `Vec<P>` **strictly zero-copy**.
@@ -1844,17 +2213,27 @@ impl BandedBuf {
         spec: ImageSpec,
         max_band_bytes: usize,
     ) -> Result<Self, At<BufferError>> {
+        Self::new_aligned(width, height, spec, max_band_bytes, RowAlign::Tight)
+    }
+
+    /// Fallibly allocate a zero-filled banded image with explicit per-band [`RowAlign`].
+    pub fn new_aligned(
+        width: u32,
+        height: u32,
+        spec: ImageSpec,
+        max_band_bytes: usize,
+        align: RowAlign,
+    ) -> Result<Self, At<BufferError>> {
         spec.validate()
             .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
         if width == 0 || height == 0 || max_band_bytes == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        let row_bytes = (width as usize)
-            .checked_mul(spec.layout.bytes_per_pixel())
-            .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        let rows_per_band = (max_band_bytes / row_bytes.max(1))
-            .max(1)
-            .min(height as usize) as u32;
+        let stride = spec
+            .layout
+            .aligned_stride(width, align)
+            .map_err(|e| err_at(e.into()))?;
+        let rows_per_band = (max_band_bytes / stride.max(1)).max(1).min(height as usize) as u32;
         let band_count = height.div_ceil(rows_per_band) as usize;
         let mut bands = Vec::new();
         bands
@@ -1863,7 +2242,7 @@ impl BandedBuf {
         let mut y = 0u32;
         while y < height {
             let h = (height - y).min(rows_per_band);
-            bands.push(PixelBuf::new(width, h, spec.clone())?);
+            bands.push(PixelBuf::new_aligned(width, h, spec.clone(), align)?);
             y += h;
         }
         let facts = SampleFacts::for_zeroed_spec(&spec);
@@ -1877,6 +2256,172 @@ impl BandedBuf {
             hdr: HdrMetadata::default(),
             origin: ColorOrigin::assumed(),
         })
+    }
+
+    /// Split a contiguous [`PixelBuf`] into a [`BandedBuf`] with each band bounded by
+    /// `max_band_bytes`. Moves `buf` **zero-copy** into a single band when the entire
+    /// image fits within one band.
+    pub fn from_buf(buf: PixelBuf, max_band_bytes: usize) -> Result<Self, At<BufferError>> {
+        if max_band_bytes == 0 {
+            return Err(err_at(BufferError::InvalidDimensions));
+        }
+        let width = buf.width();
+        let height = buf.height();
+        let row_bytes = buf.row_bytes();
+        let rows_per_band = (max_band_bytes / row_bytes.max(1))
+            .max(1)
+            .min(height as usize) as u32;
+        if height <= rows_per_band {
+            let spec = buf.spec().clone();
+            let facts = buf.facts();
+            let hdr = buf.hdr();
+            let origin = buf.origin().clone();
+            let mut bands = Vec::new();
+            bands
+                .try_reserve_exact(1)
+                .map_err(|_| err_at(BufferError::AllocationFailed))?;
+            bands.push(buf);
+            return Ok(Self {
+                width,
+                height,
+                band_rows: height,
+                bands,
+                spec,
+                facts,
+                hdr,
+                origin,
+            });
+        }
+        Self::from_view(&buf.as_view(), max_band_bytes)
+    }
+
+    /// Copy a borrowed [`PixelView`] into a newly allocated [`BandedBuf`], preserving
+    /// `facts`, `hdr`, and `origin`.
+    pub fn from_view(view: &PixelView<'_>, max_band_bytes: usize) -> Result<Self, At<BufferError>> {
+        if max_band_bytes == 0 {
+            return Err(err_at(BufferError::InvalidDimensions));
+        }
+        let width = view.width();
+        let height = view.rows();
+        let row_bytes = view.row_bytes();
+        let rows_per_band = (max_band_bytes / row_bytes.max(1))
+            .max(1)
+            .min(height as usize) as u32;
+        let band_count = height.div_ceil(rows_per_band) as usize;
+        let mut bands = Vec::new();
+        bands
+            .try_reserve_exact(band_count)
+            .map_err(|_| err_at(BufferError::AllocationFailed))?;
+        let mut y = 0u32;
+        while y < height {
+            let h = (height - y).min(rows_per_band);
+            bands.push(view.sub_rows(y, h)?.try_to_tight_buf()?);
+            y += h;
+        }
+        let origin = view.origin().cloned().unwrap_or_else(ColorOrigin::assumed);
+        Ok(Self {
+            width,
+            height,
+            band_rows: rows_per_band,
+            bands,
+            spec: view.spec().clone(),
+            facts: view.facts(),
+            hdr: view.hdr(),
+            origin,
+        })
+    }
+
+    /// Materialize this banded image into a single contiguous [`PixelBuf`].
+    ///
+    /// Moves the single band **zero-copy** when `self.bands().len() == 1`; otherwise
+    /// fallibly gathers active rows into native-aligned storage while preserving
+    /// `facts`, `hdr`, and `origin`.
+    pub fn into_buf(mut self) -> Result<PixelBuf, At<BufferError>> {
+        if self.bands.len() == 1 {
+            let mut single = self.bands.pop().expect("len == 1");
+            single.facts = self.facts;
+            single.hdr = self.hdr;
+            single.origin = self.origin;
+            return Ok(single);
+        }
+        let rb = (self.width as usize)
+            .checked_mul(self.spec.layout.bytes_per_pixel())
+            .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+        let total = rb
+            .checked_mul(self.height as usize)
+            .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+        let storage = PixelStorage::try_from_rows(
+            self.spec.layout.sample,
+            total,
+            (0..self.height).map(|y| self.row(y)),
+        )
+        .map_err(|e| err_at(e.into()))?;
+        Ok(PixelBuf {
+            storage,
+            offset: 0,
+            width: self.width,
+            height: self.height,
+            stride: rb,
+            spec: self.spec,
+            facts: self.facts,
+            hdr: self.hdr,
+            origin: self.origin,
+        })
+    }
+
+    /// Number of horizontal bands.
+    #[inline]
+    #[must_use]
+    pub fn band_count(&self) -> usize {
+        self.bands.len()
+    }
+
+    /// Borrow band `index` immutably as a [`PixelView`].
+    #[inline]
+    #[must_use]
+    pub fn band_view(&self, index: usize) -> Option<PixelView<'_>> {
+        self.bands.get(index).map(PixelBuf::as_view)
+    }
+
+    /// Map global row `y` to `(band_index, row_within_band)`, or `None` if out of bounds.
+    #[inline]
+    #[must_use]
+    pub const fn locate(&self, y: u32) -> Option<(usize, u32)> {
+        if y >= self.height {
+            return None;
+        }
+        Some(((y / self.band_rows) as usize, y % self.band_rows))
+    }
+
+    /// Borrow zero-copy [`PixelView`] slices covering global row range `start_y..start_y + count`,
+    /// split at band boundaries.
+    pub fn row_range_views(
+        &self,
+        start_y: u32,
+        count: u32,
+    ) -> Result<Vec<PixelView<'_>>, At<BufferError>> {
+        if count == 0 {
+            return Err(err_at(BufferError::InvalidDimensions));
+        }
+        let end_y = start_y
+            .checked_add(count)
+            .filter(|&e| e <= self.height)
+            .ok_or_else(|| err_at(BufferError::OutOfBounds))?;
+        let first_band = (start_y / self.band_rows) as usize;
+        let last_band = ((end_y - 1) / self.band_rows) as usize;
+        let mut out = Vec::new();
+        out.try_reserve_exact(last_band - first_band + 1)
+            .map_err(|_| err_at(BufferError::AllocationFailed))?;
+        let mut y = start_y;
+        while y < end_y {
+            let b = (y / self.band_rows) as usize;
+            let ly = y % self.band_rows;
+            let band_h = self.bands[b].height();
+            let take = (end_y - y).min(band_h - ly);
+            out.push(self.bands[b].as_view().sub_rows(ly, take)?);
+            y += take;
+        }
+        Ok(out)
     }
 
     /// Frame width in pixels.
@@ -2040,6 +2585,144 @@ impl OwnedPlane {
             height,
             stride,
             storage,
+        })
+    }
+
+    /// Construct a validated owned plane adopting an immutable external owner (`Arc<[u8]>`,
+    /// `Arc<[u16]>`, mmap, etc.) zero-copy. Returns `Err((err, storage))` untouched on failure.
+    #[allow(clippy::result_large_err)]
+    pub fn from_external<S: ByteStorage + Send + Sync + 'static>(
+        spec: PlaneSpec,
+        width: u32,
+        height: u32,
+        stride: usize,
+        storage: S,
+    ) -> Result<Self, (At<BufferError>, S)> {
+        let check = (|| -> Result<(), At<BufferError>> {
+            spec.validate().map_err(|e| err_at(e.into()))?;
+            if width == 0 || height == 0 {
+                return Err(err_at(BufferError::InvalidDimensions));
+            }
+            let row_bytes = (width as usize)
+                .checked_mul(spec.bytes_per_element())
+                .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+            if stride < row_bytes {
+                return Err(err_at(BufferError::StrideTooSmall));
+            }
+            let align = spec.sample.min_alignment();
+            let bytes = storage.as_bytes();
+            if (bytes.as_ptr() as usize) % align != 0 || (height > 1 && stride % align != 0) {
+                return Err(err_at(BufferError::AlignmentViolation));
+            }
+            let req = required_bytes(height, stride, row_bytes).map_err(err_at)?;
+            if bytes.len() < req {
+                return Err(err_at(BufferError::InsufficientData));
+            }
+            Ok(())
+        })();
+        if let Err(e) = check {
+            return Err((e, storage));
+        }
+        Ok(Self {
+            spec,
+            width,
+            height,
+            stride,
+            storage: PixelStorage::from_external(storage),
+        })
+    }
+
+    /// Construct a validated owned plane adopting a mutable external owner (`Box<[T]>`,
+    /// custom allocator, pool lease, etc.) zero-copy. Returns `Err((err, storage))` untouched on failure.
+    #[allow(clippy::result_large_err)]
+    pub fn from_external_mut<S: ByteStorageMut + Send + Sync + 'static>(
+        spec: PlaneSpec,
+        width: u32,
+        height: u32,
+        stride: usize,
+        storage: S,
+    ) -> Result<Self, (At<BufferError>, S)> {
+        let check = (|| -> Result<(), At<BufferError>> {
+            spec.validate().map_err(|e| err_at(e.into()))?;
+            if width == 0 || height == 0 {
+                return Err(err_at(BufferError::InvalidDimensions));
+            }
+            let row_bytes = (width as usize)
+                .checked_mul(spec.bytes_per_element())
+                .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+            if stride < row_bytes {
+                return Err(err_at(BufferError::StrideTooSmall));
+            }
+            let align = spec.sample.min_alignment();
+            let bytes = storage.as_bytes();
+            if (bytes.as_ptr() as usize) % align != 0 || (height > 1 && stride % align != 0) {
+                return Err(err_at(BufferError::AlignmentViolation));
+            }
+            let req = required_bytes(height, stride, row_bytes).map_err(err_at)?;
+            if bytes.len() < req {
+                return Err(err_at(BufferError::InsufficientData));
+            }
+            Ok(())
+        })();
+        if let Err(e) = check {
+            return Err((e, storage));
+        }
+        Ok(Self {
+            spec,
+            width,
+            height,
+            stride,
+            storage: PixelStorage::from_external_mut(storage),
+        })
+    }
+
+    /// Consume this plane and return its backing [`PixelStorage`].
+    #[inline]
+    #[must_use]
+    pub fn into_storage(self) -> PixelStorage {
+        self.storage
+    }
+
+    /// Recover an immutable external owner `S` zero-copy; returns `Err(self)` untouched otherwise.
+    #[allow(clippy::result_large_err)]
+    pub fn try_into_external<S: 'static>(mut self) -> Result<S, Self> {
+        match self.storage.try_into_external::<S>() {
+            Ok(owner) => Ok(owner),
+            Err(storage) => {
+                self.storage = storage;
+                Err(self)
+            }
+        }
+    }
+
+    /// Recover a mutable external owner `S` zero-copy; returns `Err(self)` untouched otherwise.
+    #[allow(clippy::result_large_err)]
+    pub fn try_into_external_mut<S: 'static>(mut self) -> Result<S, Self> {
+        match self.storage.try_into_external_mut::<S>() {
+            Ok(owner) => Ok(owner),
+            Err(storage) => {
+                self.storage = storage;
+                Err(self)
+            }
+        }
+    }
+
+    /// Fallibly borrow as a mutable [`PlaneViewMut`], copy-on-write promoting immutable external
+    /// storage without panicking on OOM.
+    #[inline]
+    pub fn try_as_view_mut(&mut self) -> Result<PlaneViewMut<'_>, At<BufferError>> {
+        let rb = self.row_bytes();
+        let end = required_bytes(self.height, self.stride, rb).unwrap_or(0);
+        let bytes = self
+            .storage
+            .try_as_bytes_mut()
+            .map_err(|e| err_at(e.into()))?;
+        Ok(PlaneViewMut {
+            spec: self.spec,
+            width: self.width,
+            height: self.height,
+            stride: self.stride,
+            data: &mut bytes[..end],
         })
     }
 
@@ -2214,6 +2897,10 @@ pub struct PlanarBuf {
     height: u32,
     planes: Vec<OwnedPlane>,
     chroma_siting: ChromaSiting,
+    color: Option<ColorSpace>,
+    ycbcr_matrix_code: Option<u8>,
+    range: Option<SignalRange>,
+    alpha: Option<AlphaMode>,
     hdr: HdrMetadata,
     origin: ColorOrigin,
 }
@@ -2254,6 +2941,10 @@ impl PlanarBuf {
             height,
             planes,
             chroma_siting: ChromaSiting::Unknown,
+            color: None,
+            ycbcr_matrix_code: None,
+            range: None,
+            alpha: None,
             hdr: HdrMetadata::default(),
             origin: ColorOrigin::assumed(),
         })
@@ -2280,6 +2971,10 @@ impl PlanarBuf {
             height,
             planes,
             chroma_siting: ChromaSiting::Unknown,
+            color: None,
+            ycbcr_matrix_code: None,
+            range: None,
+            alpha: None,
             hdr: HdrMetadata::default(),
             origin: ColorOrigin::assumed(),
         })
@@ -2314,11 +3009,96 @@ impl PlanarBuf {
         self
     }
 
+    /// Optional color interpretation (target RGB/Gray/CMYK/ICC color space of these planes).
+    #[inline]
+    #[must_use]
+    pub fn color(&self) -> Option<&ColorSpace> {
+        self.color.as_ref()
+    }
+
+    /// Attach color interpretation (primaries, transfer, range, alpha) to this planar buffer.
+    #[inline]
+    #[must_use]
+    pub fn with_color(mut self, color: ColorSpace) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    /// Optional ITU-T H.273 `MatrixCoefficients` code (`1` = BT.709, `6` = BT.601, `9` = BT.2020 NCL, `0` = Identity).
+    #[inline]
+    #[must_use]
+    pub const fn ycbcr_matrix_code(&self) -> Option<u8> {
+        self.ycbcr_matrix_code
+    }
+
+    /// Attach ITU-T H.273 `MatrixCoefficients` code for YCbCr/GBR planes.
+    #[inline]
+    #[must_use]
+    pub const fn with_ycbcr_matrix_code(mut self, matrix_code: u8) -> Self {
+        self.ycbcr_matrix_code = Some(matrix_code);
+        self
+    }
+
+    /// Explicit signal range (`Full` or `Narrow`), if set separately from [`color`](Self::color).
+    #[inline]
+    #[must_use]
+    pub const fn range(&self) -> Option<SignalRange> {
+        self.range
+    }
+
+    /// Effective signal range, checking explicit [`range`](Self::range) first and falling back
+    /// to [`color`](Self::color)'s range.
+    #[inline]
+    #[must_use]
+    pub fn effective_range(&self) -> Option<SignalRange> {
+        self.range
+            .or_else(|| self.color.as_ref().and_then(|c| c.range()))
+    }
+
+    /// Attach explicit signal range (`Full` or `Narrow`).
+    #[inline]
+    #[must_use]
+    pub const fn with_range(mut self, range: SignalRange) -> Self {
+        self.range = Some(range);
+        self
+    }
+
+    /// Explicit alpha association mode for an attached alpha plane, if set separately from [`color`](Self::color).
+    #[inline]
+    #[must_use]
+    pub const fn alpha(&self) -> Option<AlphaMode> {
+        self.alpha
+    }
+
+    /// Effective alpha association mode, checking explicit [`alpha`](Self::alpha) first and
+    /// falling back to [`color`](Self::color)'s alpha mode.
+    #[inline]
+    #[must_use]
+    pub fn effective_alpha(&self) -> Option<AlphaMode> {
+        self.alpha
+            .or_else(|| self.color.as_ref().map(|c| c.alpha()))
+    }
+
+    /// Attach explicit alpha association mode (e.g. `AlphaMode::Straight` or `AlphaMode::Premultiplied`).
+    #[inline]
+    #[must_use]
+    pub const fn with_alpha(mut self, alpha: AlphaMode) -> Self {
+        self.alpha = Some(alpha);
+        self
+    }
+
     /// Immutable slice of planes.
     #[inline]
     #[must_use]
     pub fn planes(&self) -> &[OwnedPlane] {
         &self.planes
+    }
+
+    /// Consume this planar buffer and return its owned planes zero-copy.
+    #[inline]
+    #[must_use]
+    pub fn into_planes(self) -> Vec<OwnedPlane> {
+        self.planes
     }
 
     /// Borrow plane `index` mutably as a [`PlaneViewMut`] without allowing structural replacement.
@@ -2495,6 +3275,41 @@ pub struct PlaneViewMut<'a> {
 }
 
 impl<'a> PlaneViewMut<'a> {
+    /// Construct a validated mutable borrowed plane view.
+    pub fn new(
+        spec: PlaneSpec,
+        width: u32,
+        height: u32,
+        stride: usize,
+        data: &'a mut [u8],
+    ) -> Result<Self, At<BufferError>> {
+        spec.validate().map_err(|e| err_at(e.into()))?;
+        if width == 0 || height == 0 {
+            return Err(err_at(BufferError::InvalidDimensions));
+        }
+        let rb = (width as usize)
+            .checked_mul(spec.bytes_per_element())
+            .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+        if stride < rb {
+            return Err(err_at(BufferError::StrideTooSmall));
+        }
+        let align = spec.sample.min_alignment();
+        if (data.as_ptr() as usize) % align != 0 || (height > 1 && stride % align != 0) {
+            return Err(err_at(BufferError::AlignmentViolation));
+        }
+        let req = required_bytes(height, stride, rb).map_err(err_at)?;
+        if data.len() < req {
+            return Err(err_at(BufferError::InsufficientData));
+        }
+        Ok(Self {
+            spec,
+            width,
+            height,
+            stride,
+            data: &mut data[..req],
+        })
+    }
+
     /// Plane specification.
     #[inline]
     #[must_use]
@@ -2523,6 +3338,40 @@ impl<'a> PlaneViewMut<'a> {
         self.stride
     }
 
+    /// Immutable strided backing byte slice.
+    #[inline]
+    #[must_use]
+    pub fn data(&self) -> &[u8] {
+        self.data
+    }
+
+    /// Mutable strided backing byte slice.
+    #[inline]
+    pub fn data_mut(&mut self) -> &mut [u8] {
+        self.data
+    }
+
+    /// Consume this mutable view and return the underlying strided backing slice tied to `'a`.
+    #[inline]
+    #[must_use]
+    pub fn into_data_mut(self) -> &'a mut [u8] {
+        self.data
+    }
+
+    /// Immutable active bytes of row `y`.
+    #[inline]
+    #[must_use]
+    pub fn row(&self, y: u32) -> &[u8] {
+        assert!(
+            y < self.height,
+            "plane row {y} out of bounds ({})",
+            self.height
+        );
+        let rb = (self.width as usize) * self.spec.bytes_per_element();
+        let start = (y as usize) * self.stride;
+        &self.data[start..start + rb]
+    }
+
     /// Mutable active bytes of row `y`.
     #[inline]
     pub fn row_mut(&mut self, y: u32) -> &mut [u8] {
@@ -2534,6 +3383,88 @@ impl<'a> PlaneViewMut<'a> {
         let rb = (self.width as usize) * self.spec.bytes_per_element();
         let start = (y as usize) * self.stride;
         &mut self.data[start..start + rb]
+    }
+
+    /// Borrow as an immutable [`PlaneView`].
+    #[inline]
+    #[must_use]
+    pub fn as_view(&self) -> PlaneView<'_> {
+        PlaneView {
+            spec: self.spec,
+            width: self.width,
+            height: self.height,
+            stride: self.stride,
+            data: self.data,
+        }
+    }
+
+    /// Downgrade into an immutable [`PlaneView<'a>`] retaining `'a`.
+    #[inline]
+    #[must_use]
+    pub fn into_view(self) -> PlaneView<'a> {
+        PlaneView {
+            spec: self.spec,
+            width: self.width,
+            height: self.height,
+            stride: self.stride,
+            data: self.data,
+        }
+    }
+
+    /// Zero-copy mutable rectangular crop of this single plane.
+    pub fn crop_mut(
+        &mut self,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+    ) -> Result<PlaneViewMut<'_>, At<BufferError>> {
+        if w == 0 || h == 0 {
+            return Err(err_at(BufferError::InvalidDimensions));
+        }
+        if x.checked_add(w).is_none_or(|e| e > self.width)
+            || y.checked_add(h).is_none_or(|e| e > self.height)
+        {
+            return Err(err_at(BufferError::OutOfBounds));
+        }
+        let elem = self.spec.bytes_per_element();
+        let start = (y as usize) * self.stride + (x as usize) * elem;
+        let end = (y as usize + h as usize - 1) * self.stride + (x as usize + w as usize) * elem;
+        Ok(PlaneViewMut {
+            spec: self.spec,
+            width: w,
+            height: h,
+            stride: self.stride,
+            data: &mut self.data[start..end],
+        })
+    }
+
+    /// Consume this mutable plane view and narrow it to a rectangular crop retaining `'a`.
+    pub fn into_crop(
+        self,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+    ) -> Result<PlaneViewMut<'a>, At<BufferError>> {
+        if w == 0 || h == 0 {
+            return Err(err_at(BufferError::InvalidDimensions));
+        }
+        if x.checked_add(w).is_none_or(|e| e > self.width)
+            || y.checked_add(h).is_none_or(|e| e > self.height)
+        {
+            return Err(err_at(BufferError::OutOfBounds));
+        }
+        let elem = self.spec.bytes_per_element();
+        let start = (y as usize) * self.stride + (x as usize) * elem;
+        let end = (y as usize + h as usize - 1) * self.stride + (x as usize + w as usize) * elem;
+        Ok(PlaneViewMut {
+            spec: self.spec,
+            width: w,
+            height: h,
+            stride: self.stride,
+            data: &mut self.data[start..end],
+        })
     }
 }
 
@@ -2549,14 +3480,19 @@ enum PlanarStorage<'a> {
 
 /// Borrowed multi-plane view (zero heap allocation for `1..=4` planes; spills cleanly for `5..=64` planes).
 ///
-/// Tracks `crop_origin` in full-resolution luma coordinates and [`ChromaSiting`] so
-/// subsampled chroma crops (including odd `(x, y)` origins) preserve exact parent-frame phase.
+/// Tracks `crop_origin` in full-resolution luma coordinates, [`ChromaSiting`], and optional
+/// color interpretation (`color`, `ycbcr_matrix_code`, `range`, `alpha`) so subsampled chroma
+/// crops and YCbCr decoders carry full color authority.
 #[derive(Clone, Debug)]
 pub struct PlanarView<'a> {
     width: u32,
     height: u32,
     crop_origin: (u32, u32),
     chroma_siting: ChromaSiting,
+    color: Option<ColorSpace>,
+    ycbcr_matrix_code: Option<u8>,
+    range: Option<SignalRange>,
+    alpha: Option<AlphaMode>,
     storage: PlanarStorage<'a>,
 }
 
@@ -2608,6 +3544,10 @@ impl<'a> PlanarView<'a> {
             height,
             crop_origin,
             chroma_siting,
+            color: None,
+            ycbcr_matrix_code: None,
+            range: None,
+            alpha: None,
             storage,
         })
     }
@@ -2645,6 +3585,82 @@ impl<'a> PlanarView<'a> {
     #[must_use]
     pub const fn with_chroma_siting(mut self, siting: ChromaSiting) -> Self {
         self.chroma_siting = siting;
+        self
+    }
+
+    /// Optional color interpretation of these planes.
+    #[inline]
+    #[must_use]
+    pub fn color(&self) -> Option<&ColorSpace> {
+        self.color.as_ref()
+    }
+
+    /// Attach color interpretation to this borrowed planar view.
+    #[inline]
+    #[must_use]
+    pub fn with_color(mut self, color: ColorSpace) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    /// Optional ITU-T H.273 `MatrixCoefficients` code (`1` = BT.709, `6` = BT.601, `9` = BT.2020 NCL, `0` = Identity).
+    #[inline]
+    #[must_use]
+    pub const fn ycbcr_matrix_code(&self) -> Option<u8> {
+        self.ycbcr_matrix_code
+    }
+
+    /// Attach ITU-T H.273 `MatrixCoefficients` code.
+    #[inline]
+    #[must_use]
+    pub const fn with_ycbcr_matrix_code(mut self, matrix_code: u8) -> Self {
+        self.ycbcr_matrix_code = Some(matrix_code);
+        self
+    }
+
+    /// Explicit signal range, if set.
+    #[inline]
+    #[must_use]
+    pub const fn range(&self) -> Option<SignalRange> {
+        self.range
+    }
+
+    /// Effective signal range (explicit [`range`](Self::range) or [`color`](Self::color)'s range).
+    #[inline]
+    #[must_use]
+    pub fn effective_range(&self) -> Option<SignalRange> {
+        self.range
+            .or_else(|| self.color.as_ref().and_then(|c| c.range()))
+    }
+
+    /// Attach explicit signal range.
+    #[inline]
+    #[must_use]
+    pub const fn with_range(mut self, range: SignalRange) -> Self {
+        self.range = Some(range);
+        self
+    }
+
+    /// Explicit alpha association mode, if set.
+    #[inline]
+    #[must_use]
+    pub const fn alpha(&self) -> Option<AlphaMode> {
+        self.alpha
+    }
+
+    /// Effective alpha association mode (explicit [`alpha`](Self::alpha) or [`color`](Self::color)'s alpha).
+    #[inline]
+    #[must_use]
+    pub fn effective_alpha(&self) -> Option<AlphaMode> {
+        self.alpha
+            .or_else(|| self.color.as_ref().map(|c| c.alpha()))
+    }
+
+    /// Attach explicit alpha association mode.
+    #[inline]
+    #[must_use]
+    pub const fn with_alpha(mut self, alpha: AlphaMode) -> Self {
+        self.alpha = Some(alpha);
         self
     }
 
@@ -2717,6 +3733,426 @@ impl<'a> PlanarView<'a> {
             height: h,
             crop_origin: new_origin,
             chroma_siting: self.chroma_siting,
+            color: self.color.clone(),
+            ycbcr_matrix_code: self.ycbcr_matrix_code,
+            range: self.range,
+            alpha: self.alpha,
+            storage,
+        })
+    }
+}
+
+#[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
+enum PlanarMutStorage<'a> {
+    One([PlaneViewMut<'a>; 1]),
+    Two([PlaneViewMut<'a>; 2]),
+    Three([PlaneViewMut<'a>; 3]),
+    Four([PlaneViewMut<'a>; 4]),
+    Spill(Vec<PlaneViewMut<'a>>),
+}
+
+impl<'a> PlanarMutStorage<'a> {
+    fn as_slice(&self) -> &[PlaneViewMut<'a>] {
+        match self {
+            Self::One(p) => p,
+            Self::Two(p) => p,
+            Self::Three(p) => p,
+            Self::Four(p) => p,
+            Self::Spill(v) => v,
+        }
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [PlaneViewMut<'a>] {
+        match self {
+            Self::One(p) => p,
+            Self::Two(p) => p,
+            Self::Three(p) => p,
+            Self::Four(p) => p,
+            Self::Spill(v) => v,
+        }
+    }
+}
+
+/// Mutable borrowed multi-plane view (zero heap allocation for `1..=4` disjoint planes; spills
+/// cleanly for `5..=64` planes).
+#[derive(Debug)]
+pub struct PlanarViewMut<'a> {
+    width: u32,
+    height: u32,
+    crop_origin: (u32, u32),
+    chroma_siting: ChromaSiting,
+    color: Option<ColorSpace>,
+    ycbcr_matrix_code: Option<u8>,
+    range: Option<SignalRange>,
+    alpha: Option<AlphaMode>,
+    storage: PlanarMutStorage<'a>,
+}
+
+impl<'a> PlanarViewMut<'a> {
+    fn validate_planes(
+        width: u32,
+        height: u32,
+        crop_origin: (u32, u32),
+        planes: &[PlaneViewMut<'a>],
+    ) -> Result<(), At<BufferError>> {
+        if width == 0 || height == 0 || planes.is_empty() || planes.len() > PlanarBuf::MAX_PLANES {
+            return Err(err_at(BufferError::InvalidDimensions));
+        }
+        validate_unique_plane_roles(planes.iter().map(|p| p.spec.role))?;
+        for p in planes {
+            let Some((ew, eh)) = p.spec.cropped_dimensions(width, height, crop_origin) else {
+                return Err(err_at(BufferError::InvalidDimensions));
+            };
+            if p.width != ew || p.height != eh {
+                return Err(err_at(BufferError::InvalidDimensions));
+            }
+        }
+        Ok(())
+    }
+
+    /// Construct a validated mutable multi-plane view from caller-owned `PlaneViewMut`s.
+    pub fn new(
+        width: u32,
+        height: u32,
+        planes: Vec<PlaneViewMut<'a>>,
+    ) -> Result<Self, At<BufferError>> {
+        Self::new_with_origin(width, height, (0, 0), ChromaSiting::Unknown, planes)
+    }
+
+    /// Construct a validated mutable multi-plane view with explicit `crop_origin` and [`ChromaSiting`].
+    pub fn new_with_origin(
+        width: u32,
+        height: u32,
+        crop_origin: (u32, u32),
+        chroma_siting: ChromaSiting,
+        mut planes: Vec<PlaneViewMut<'a>>,
+    ) -> Result<Self, At<BufferError>> {
+        Self::validate_planes(width, height, crop_origin, &planes)?;
+        let storage = match planes.len() {
+            1 => {
+                let p0 = planes.pop().unwrap();
+                PlanarMutStorage::One([p0])
+            }
+            2 => {
+                let p1 = planes.pop().unwrap();
+                let p0 = planes.pop().unwrap();
+                PlanarMutStorage::Two([p0, p1])
+            }
+            3 => {
+                let p2 = planes.pop().unwrap();
+                let p1 = planes.pop().unwrap();
+                let p0 = planes.pop().unwrap();
+                PlanarMutStorage::Three([p0, p1, p2])
+            }
+            4 => {
+                let p3 = planes.pop().unwrap();
+                let p2 = planes.pop().unwrap();
+                let p1 = planes.pop().unwrap();
+                let p0 = planes.pop().unwrap();
+                PlanarMutStorage::Four([p0, p1, p2, p3])
+            }
+            _ => PlanarMutStorage::Spill(planes),
+        };
+        Ok(Self {
+            width,
+            height,
+            crop_origin,
+            chroma_siting,
+            color: None,
+            ycbcr_matrix_code: None,
+            range: None,
+            alpha: None,
+            storage,
+        })
+    }
+
+    /// Construct a validated mutable multi-plane view from a fixed array of `1..=4` disjoint
+    /// planes with **zero heap allocation**.
+    pub fn from_array<const N: usize>(
+        width: u32,
+        height: u32,
+        planes: [PlaneViewMut<'a>; N],
+    ) -> Result<Self, At<BufferError>> {
+        Self::from_array_with_origin(width, height, (0, 0), ChromaSiting::Unknown, planes)
+    }
+
+    /// Construct a validated mutable multi-plane view from a fixed array of planes with explicit
+    /// `crop_origin` and [`ChromaSiting`] (zero heap allocation for `1..=4` planes).
+    pub fn from_array_with_origin<const N: usize>(
+        width: u32,
+        height: u32,
+        crop_origin: (u32, u32),
+        chroma_siting: ChromaSiting,
+        planes: [PlaneViewMut<'a>; N],
+    ) -> Result<Self, At<BufferError>> {
+        Self::validate_planes(width, height, crop_origin, &planes)?;
+        let mut iter = planes.into_iter();
+        let storage = match N {
+            1 => PlanarMutStorage::One([iter.next().unwrap()]),
+            2 => PlanarMutStorage::Two([iter.next().unwrap(), iter.next().unwrap()]),
+            3 => PlanarMutStorage::Three([
+                iter.next().unwrap(),
+                iter.next().unwrap(),
+                iter.next().unwrap(),
+            ]),
+            4 => PlanarMutStorage::Four([
+                iter.next().unwrap(),
+                iter.next().unwrap(),
+                iter.next().unwrap(),
+                iter.next().unwrap(),
+            ]),
+            _ => {
+                let mut v = Vec::new();
+                v.try_reserve_exact(N)
+                    .map_err(|_| err_at(BufferError::AllocationFailed))?;
+                v.extend(iter);
+                PlanarMutStorage::Spill(v)
+            }
+        };
+        Ok(Self {
+            width,
+            height,
+            crop_origin,
+            chroma_siting,
+            color: None,
+            ycbcr_matrix_code: None,
+            range: None,
+            alpha: None,
+            storage,
+        })
+    }
+
+    /// Frame width in pixels.
+    #[inline]
+    #[must_use]
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Frame height in rows.
+    #[inline]
+    #[must_use]
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// Crop origin `(x, y)` in full-resolution parent-frame coordinates.
+    #[inline]
+    #[must_use]
+    pub const fn crop_origin(&self) -> (u32, u32) {
+        self.crop_origin
+    }
+
+    /// Chroma sample siting.
+    #[inline]
+    #[must_use]
+    pub const fn chroma_siting(&self) -> ChromaSiting {
+        self.chroma_siting
+    }
+
+    /// Replace chroma sample siting.
+    #[inline]
+    #[must_use]
+    pub const fn with_chroma_siting(mut self, siting: ChromaSiting) -> Self {
+        self.chroma_siting = siting;
+        self
+    }
+
+    /// Optional color interpretation.
+    #[inline]
+    #[must_use]
+    pub fn color(&self) -> Option<&ColorSpace> {
+        self.color.as_ref()
+    }
+
+    /// Attach color interpretation.
+    #[inline]
+    #[must_use]
+    pub fn with_color(mut self, color: ColorSpace) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    /// Optional ITU-T H.273 `MatrixCoefficients` code.
+    #[inline]
+    #[must_use]
+    pub const fn ycbcr_matrix_code(&self) -> Option<u8> {
+        self.ycbcr_matrix_code
+    }
+
+    /// Attach ITU-T H.273 `MatrixCoefficients` code.
+    #[inline]
+    #[must_use]
+    pub const fn with_ycbcr_matrix_code(mut self, matrix_code: u8) -> Self {
+        self.ycbcr_matrix_code = Some(matrix_code);
+        self
+    }
+
+    /// Explicit signal range, if set.
+    #[inline]
+    #[must_use]
+    pub const fn range(&self) -> Option<SignalRange> {
+        self.range
+    }
+
+    /// Effective signal range.
+    #[inline]
+    #[must_use]
+    pub fn effective_range(&self) -> Option<SignalRange> {
+        self.range
+            .or_else(|| self.color.as_ref().and_then(|c| c.range()))
+    }
+
+    /// Attach explicit signal range.
+    #[inline]
+    #[must_use]
+    pub const fn with_range(mut self, range: SignalRange) -> Self {
+        self.range = Some(range);
+        self
+    }
+
+    /// Explicit alpha association mode, if set.
+    #[inline]
+    #[must_use]
+    pub const fn alpha(&self) -> Option<AlphaMode> {
+        self.alpha
+    }
+
+    /// Effective alpha association mode.
+    #[inline]
+    #[must_use]
+    pub fn effective_alpha(&self) -> Option<AlphaMode> {
+        self.alpha
+            .or_else(|| self.color.as_ref().map(|c| c.alpha()))
+    }
+
+    /// Attach explicit alpha association mode.
+    #[inline]
+    #[must_use]
+    pub const fn with_alpha(mut self, alpha: AlphaMode) -> Self {
+        self.alpha = Some(alpha);
+        self
+    }
+
+    /// Immutable slice of mutable plane views.
+    #[inline]
+    #[must_use]
+    pub fn planes(&self) -> &[PlaneViewMut<'a>] {
+        self.storage.as_slice()
+    }
+
+    /// Mutable slice of all disjoint planes (allows simultaneous mutable access via `split_at_mut`).
+    #[inline]
+    pub fn planes_mut(&mut self) -> &mut [PlaneViewMut<'a>] {
+        self.storage.as_mut_slice()
+    }
+
+    /// Mutably borrow plane `index`.
+    #[inline]
+    pub fn plane_mut(&mut self, index: usize) -> Option<&mut PlaneViewMut<'a>> {
+        self.storage.as_mut_slice().get_mut(index)
+    }
+
+    /// Borrow all planes immutably as a [`PlanarView`].
+    #[must_use]
+    pub fn as_view(&self) -> PlanarView<'_> {
+        self.try_as_view()
+            .expect("PlanarViewMut::as_view allocation failed for >4 planes")
+    }
+
+    /// Fallibly borrow all planes immutably as a [`PlanarView`].
+    pub fn try_as_view(&self) -> Result<PlanarView<'_>, At<BufferError>> {
+        let src = self.storage.as_slice();
+        let storage = if src.len() <= 4 {
+            let mut arr = [PlaneView::EMPTY; 4];
+            for (i, p) in src.iter().enumerate() {
+                arr[i] = p.as_view();
+            }
+            PlanarStorage::Inline {
+                planes: arr,
+                len: src.len(),
+            }
+        } else {
+            let mut v = Vec::new();
+            v.try_reserve_exact(src.len())
+                .map_err(|_| err_at(BufferError::AllocationFailed))?;
+            for p in src {
+                v.push(p.as_view());
+            }
+            PlanarStorage::Spill(v)
+        };
+        Ok(PlanarView {
+            width: self.width,
+            height: self.height,
+            crop_origin: self.crop_origin,
+            chroma_siting: self.chroma_siting,
+            color: self.color.clone(),
+            ycbcr_matrix_code: self.ycbcr_matrix_code,
+            range: self.range,
+            alpha: self.alpha,
+            storage,
+        })
+    }
+
+    /// Downgrade into an immutable [`PlanarView<'a>`] retaining `'a`.
+    pub fn try_into_view(self) -> Result<PlanarView<'a>, At<BufferError>> {
+        let storage = match self.storage {
+            PlanarMutStorage::One([p0]) => PlanarStorage::Inline {
+                planes: [
+                    p0.into_view(),
+                    PlaneView::EMPTY,
+                    PlaneView::EMPTY,
+                    PlaneView::EMPTY,
+                ],
+                len: 1,
+            },
+            PlanarMutStorage::Two([p0, p1]) => PlanarStorage::Inline {
+                planes: [
+                    p0.into_view(),
+                    p1.into_view(),
+                    PlaneView::EMPTY,
+                    PlaneView::EMPTY,
+                ],
+                len: 2,
+            },
+            PlanarMutStorage::Three([p0, p1, p2]) => PlanarStorage::Inline {
+                planes: [
+                    p0.into_view(),
+                    p1.into_view(),
+                    p2.into_view(),
+                    PlaneView::EMPTY,
+                ],
+                len: 3,
+            },
+            PlanarMutStorage::Four([p0, p1, p2, p3]) => PlanarStorage::Inline {
+                planes: [
+                    p0.into_view(),
+                    p1.into_view(),
+                    p2.into_view(),
+                    p3.into_view(),
+                ],
+                len: 4,
+            },
+            PlanarMutStorage::Spill(v) => {
+                let mut out = Vec::new();
+                out.try_reserve_exact(v.len())
+                    .map_err(|_| err_at(BufferError::AllocationFailed))?;
+                for p in v {
+                    out.push(p.into_view());
+                }
+                PlanarStorage::Spill(out)
+            }
+        };
+        Ok(PlanarView {
+            width: self.width,
+            height: self.height,
+            crop_origin: self.crop_origin,
+            chroma_siting: self.chroma_siting,
+            color: self.color,
+            ycbcr_matrix_code: self.ycbcr_matrix_code,
+            range: self.range,
+            alpha: self.alpha,
             storage,
         })
     }
@@ -2732,21 +4168,15 @@ impl PlanarBuf {
 
     /// Fallibly borrow all planes as a [`PlanarView`] (zero-allocation for `<= 4` planes).
     pub fn try_as_view(&self) -> Result<PlanarView<'_>, At<BufferError>> {
-        if self.planes.len() <= 4 {
+        let storage = if self.planes.len() <= 4 {
             let mut arr = [PlaneView::EMPTY; 4];
             for (i, p) in self.planes.iter().enumerate() {
                 arr[i] = p.as_view();
             }
-            Ok(PlanarView {
-                width: self.width,
-                height: self.height,
-                crop_origin: (0, 0),
-                chroma_siting: self.chroma_siting,
-                storage: PlanarStorage::Inline {
-                    planes: arr,
-                    len: self.planes.len(),
-                },
-            })
+            PlanarStorage::Inline {
+                planes: arr,
+                len: self.planes.len(),
+            }
         } else {
             let mut v = Vec::new();
             v.try_reserve_exact(self.planes.len())
@@ -2754,14 +4184,70 @@ impl PlanarBuf {
             for p in &self.planes {
                 v.push(p.as_view());
             }
-            Ok(PlanarView {
-                width: self.width,
-                height: self.height,
-                crop_origin: (0, 0),
-                chroma_siting: self.chroma_siting,
-                storage: PlanarStorage::Spill(v),
-            })
-        }
+            PlanarStorage::Spill(v)
+        };
+        Ok(PlanarView {
+            width: self.width,
+            height: self.height,
+            crop_origin: (0, 0),
+            chroma_siting: self.chroma_siting,
+            color: self.color.clone(),
+            ycbcr_matrix_code: self.ycbcr_matrix_code,
+            range: self.range,
+            alpha: self.alpha,
+            storage,
+        })
+    }
+
+    /// Borrow all planes mutably as a [`PlanarViewMut`] (zero-allocation for `<= 4` planes).
+    #[must_use]
+    pub fn as_view_mut(&mut self) -> PlanarViewMut<'_> {
+        self.try_as_view_mut()
+            .expect("PlanarBuf::as_view_mut allocation failed")
+    }
+
+    /// Fallibly borrow all planes mutably as a [`PlanarViewMut`] (zero-allocation for `<= 4` planes).
+    pub fn try_as_view_mut(&mut self) -> Result<PlanarViewMut<'_>, At<BufferError>> {
+        let len = self.planes.len();
+        let mut iter = self.planes.iter_mut();
+        let storage = match len {
+            1 => PlanarMutStorage::One([iter.next().unwrap().try_as_view_mut()?]),
+            2 => PlanarMutStorage::Two([
+                iter.next().unwrap().try_as_view_mut()?,
+                iter.next().unwrap().try_as_view_mut()?,
+            ]),
+            3 => PlanarMutStorage::Three([
+                iter.next().unwrap().try_as_view_mut()?,
+                iter.next().unwrap().try_as_view_mut()?,
+                iter.next().unwrap().try_as_view_mut()?,
+            ]),
+            4 => PlanarMutStorage::Four([
+                iter.next().unwrap().try_as_view_mut()?,
+                iter.next().unwrap().try_as_view_mut()?,
+                iter.next().unwrap().try_as_view_mut()?,
+                iter.next().unwrap().try_as_view_mut()?,
+            ]),
+            n => {
+                let mut v = Vec::new();
+                v.try_reserve_exact(n)
+                    .map_err(|_| err_at(BufferError::AllocationFailed))?;
+                for p in iter {
+                    v.push(p.try_as_view_mut()?);
+                }
+                PlanarMutStorage::Spill(v)
+            }
+        };
+        Ok(PlanarViewMut {
+            width: self.width,
+            height: self.height,
+            crop_origin: (0, 0),
+            chroma_siting: self.chroma_siting,
+            color: self.color.clone(),
+            ycbcr_matrix_code: self.ycbcr_matrix_code,
+            range: self.range,
+            alpha: self.alpha,
+            storage,
+        })
     }
 }
 
@@ -3288,6 +4774,8 @@ impl PixelSink for PixelBuf {
     #[inline]
     fn sink_row_mut(&mut self, y: u32) -> &mut [u8] {
         assert!(y < self.height, "row {y} out of bounds ({})", self.height);
+        self.try_make_mut()
+            .expect("copy-on-write promotion of external PixelBuf failed");
         self.facts = SampleFacts::NONE;
         let rb = self.row_bytes();
         let start = self.offset + (y as usize) * self.stride;

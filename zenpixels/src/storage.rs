@@ -20,7 +20,10 @@
 //! - On 32-bit targets where `align_of::<u64>()` may differ from
 //!   `align_of::<f64>()`, `F64` checks exact alignment equality before casting.
 
+use alloc::boxed::Box;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::any::Any;
 use core::fmt;
 
 use crate::layout::SampleType;
@@ -158,6 +161,306 @@ impl ByteStorageMut for AlignedSamples {
     }
 }
 
+impl<T: bytemuck::Pod> ByteStorage for Vec<T> {
+    #[inline]
+    fn as_bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(self)
+    }
+}
+
+impl<T: bytemuck::Pod> ByteStorageMut for Vec<T> {
+    #[inline]
+    fn as_bytes_mut(&mut self) -> &mut [u8] {
+        bytemuck::cast_slice_mut(self)
+    }
+}
+
+impl<T: bytemuck::Pod> ByteStorage for Box<[T]> {
+    #[inline]
+    fn as_bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(self)
+    }
+}
+
+impl<T: bytemuck::Pod> ByteStorageMut for Box<[T]> {
+    #[inline]
+    fn as_bytes_mut(&mut self) -> &mut [u8] {
+        bytemuck::cast_slice_mut(self)
+    }
+}
+
+impl<T: bytemuck::Pod> ByteStorage for Arc<[T]> {
+    #[inline]
+    fn as_bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(self)
+    }
+}
+
+impl<T: bytemuck::Pod> ByteStorage for Arc<Vec<T>> {
+    #[inline]
+    fn as_bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(self)
+    }
+}
+
+impl<T: bytemuck::Pod> ByteStorage for &[T] {
+    #[inline]
+    fn as_bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(self)
+    }
+}
+
+impl<T: bytemuck::Pod> ByteStorage for &mut [T] {
+    #[inline]
+    fn as_bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(self)
+    }
+}
+
+impl<T: bytemuck::Pod> ByteStorageMut for &mut [T] {
+    #[inline]
+    fn as_bytes_mut(&mut self) -> &mut [u8] {
+        bytemuck::cast_slice_mut(self)
+    }
+}
+
+trait ExternalReadObj: ByteStorage + Any + Send + Sync {
+    fn as_any(&self) -> &(dyn Any + Send + Sync);
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync>;
+}
+
+impl<S: ByteStorage + Send + Sync + 'static> ExternalReadObj for S {
+    #[inline]
+    fn as_any(&self) -> &(dyn Any + Send + Sync) {
+        self
+    }
+
+    #[inline]
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
+        self
+    }
+}
+
+trait ExternalMutObj: ByteStorageMut + Any + Send + Sync {
+    fn as_any(&self) -> &(dyn Any + Send + Sync);
+    fn as_any_mut(&mut self) -> &mut (dyn Any + Send + Sync);
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync>;
+}
+
+impl<S: ByteStorageMut + Send + Sync + 'static> ExternalMutObj for S {
+    #[inline]
+    fn as_any(&self) -> &(dyn Any + Send + Sync) {
+        self
+    }
+
+    #[inline]
+    fn as_any_mut(&mut self) -> &mut (dyn Any + Send + Sync) {
+        self
+    }
+
+    #[inline]
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
+        self
+    }
+}
+
+/// Type-erased immutable external owned backing storage (`Arc<[T]>`, `&'static [T]`,
+/// memory-mapped files, shared buffer pools, FFI read-only buffers).
+///
+/// Read access is strictly zero-copy. Requesting mutable access through [`PixelStorage`]
+/// or [`PixelBuf`](crate::PixelBuf) performs copy-on-write promotion into 64-byte aligned
+/// owned storage; calling [`try_into_inner`](Self::try_into_inner) recovers the original
+/// owner `S` zero-copy without touching its backing allocation.
+pub struct ExternalStorage {
+    inner: Box<dyn ExternalReadObj>,
+    byte_len: usize,
+}
+
+impl ExternalStorage {
+    /// Wrap any `S: ByteStorage + Send + Sync + 'static` zero-copy.
+    #[inline]
+    #[must_use]
+    pub fn new<S: ByteStorage + Send + Sync + 'static>(owner: S) -> Self {
+        let byte_len = owner.as_bytes().len();
+        Self {
+            inner: Box::new(owner),
+            byte_len,
+        }
+    }
+
+    /// Active immutable byte view (bounded by any prior [`truncate`](Self::truncate)).
+    #[inline]
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        let raw = self.inner.as_bytes();
+        &raw[..self.byte_len.min(raw.len())]
+    }
+
+    /// Active byte length.
+    #[inline]
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.byte_len
+    }
+
+    /// Whether the active byte view is empty.
+    #[inline]
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.byte_len == 0
+    }
+
+    /// Narrow active byte length without touching or copying the external owner.
+    #[inline]
+    pub fn truncate(&mut self, byte_len: usize) {
+        if byte_len < self.byte_len {
+            self.byte_len = byte_len;
+        }
+    }
+
+    /// Borrow the original external owner if its concrete type is `S`.
+    #[inline]
+    #[must_use]
+    pub fn downcast_ref<S: 'static>(&self) -> Option<&S> {
+        self.inner.as_any().downcast_ref::<S>()
+    }
+
+    /// Recover the original external owner `S` zero-copy; returns `Err(self)` untouched if
+    /// the stored type is not `S`.
+    pub fn try_into_inner<S: 'static>(self) -> Result<S, Self> {
+        if self.inner.as_any().is::<S>() {
+            match self.inner.into_any().downcast::<S>() {
+                Ok(boxed) => Ok(*boxed),
+                Err(_) => unreachable!("checked TypeId match before downcast"),
+            }
+        } else {
+            Err(self)
+        }
+    }
+}
+
+impl ByteStorage for ExternalStorage {
+    #[inline]
+    fn as_bytes(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
+impl fmt::Debug for ExternalStorage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ExternalStorage({} bytes, read-only)", self.byte_len)
+    }
+}
+
+/// Type-erased mutable external owned backing storage (`Box<[T]>`, custom-allocator
+/// wrappers, mutable pool leases, FFI writable buffers).
+///
+/// Both read and in-place write access are strictly zero-copy; calling
+/// [`try_into_inner`](Self::try_into_inner) recovers the original owner `S` zero-copy.
+pub struct ExternalMutStorage {
+    inner: Box<dyn ExternalMutObj>,
+    byte_len: usize,
+}
+
+impl ExternalMutStorage {
+    /// Wrap any `S: ByteStorageMut + Send + Sync + 'static` zero-copy.
+    #[inline]
+    #[must_use]
+    pub fn new<S: ByteStorageMut + Send + Sync + 'static>(owner: S) -> Self {
+        let byte_len = owner.as_bytes().len();
+        Self {
+            inner: Box::new(owner),
+            byte_len,
+        }
+    }
+
+    /// Active immutable byte view.
+    #[inline]
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        let raw = self.inner.as_bytes();
+        &raw[..self.byte_len.min(raw.len())]
+    }
+
+    /// Active mutable byte view (zero-copy in place).
+    #[inline]
+    #[must_use]
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        let raw = self.inner.as_bytes_mut();
+        let cap = self.byte_len.min(raw.len());
+        &mut raw[..cap]
+    }
+
+    /// Active byte length.
+    #[inline]
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.byte_len
+    }
+
+    /// Whether the active byte view is empty.
+    #[inline]
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.byte_len == 0
+    }
+
+    /// Narrow active byte length without touching or copying the external owner.
+    #[inline]
+    pub fn truncate(&mut self, byte_len: usize) {
+        if byte_len < self.byte_len {
+            self.byte_len = byte_len;
+        }
+    }
+
+    /// Borrow the original external owner if its concrete type is `S`.
+    #[inline]
+    #[must_use]
+    pub fn downcast_ref<S: 'static>(&self) -> Option<&S> {
+        self.inner.as_any().downcast_ref::<S>()
+    }
+
+    /// Mutably borrow the original external owner if its concrete type is `S`.
+    #[inline]
+    #[must_use]
+    pub fn downcast_mut<S: 'static>(&mut self) -> Option<&mut S> {
+        self.inner.as_any_mut().downcast_mut::<S>()
+    }
+
+    /// Recover the original external owner `S` zero-copy; returns `Err(self)` untouched if
+    /// the stored type is not `S`.
+    pub fn try_into_inner<S: 'static>(self) -> Result<S, Self> {
+        if self.inner.as_any().is::<S>() {
+            match self.inner.into_any().downcast::<S>() {
+                Ok(boxed) => Ok(*boxed),
+                Err(_) => unreachable!("checked TypeId match before downcast"),
+            }
+        } else {
+            Err(self)
+        }
+    }
+}
+
+impl ByteStorage for ExternalMutStorage {
+    #[inline]
+    fn as_bytes(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
+impl ByteStorageMut for ExternalMutStorage {
+    #[inline]
+    fn as_bytes_mut(&mut self) -> &mut [u8] {
+        self.as_bytes_mut()
+    }
+}
+
+impl fmt::Debug for ExternalMutStorage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ExternalMutStorage({} bytes, mutable)", self.byte_len)
+    }
+}
+
 mod sealed {
     use super::*;
     pub trait Sealed: Sized {
@@ -206,6 +509,14 @@ pub enum PixelStorage {
     F64(Vec<f64>),
     /// 64-byte SIMD-aligned backing (`align = 64`).
     Aligned64(AlignedSamples),
+    /// Immutable external owned backing (`Arc<[T]>`, mmap, `&'static [T]`, shared pool).
+    ///
+    /// Read access is zero-copy; mutable access promotes via copy-on-write into `Aligned64`.
+    External(ExternalStorage),
+    /// Mutable external owned backing (`Box<[T]>`, custom allocator, pool lease, FFI buffer).
+    ///
+    /// Both read and write access are zero-copy in place.
+    ExternalMut(ExternalMutStorage),
 }
 
 macro_rules! impl_storage_samples {
@@ -311,6 +622,100 @@ impl PixelStorage {
     #[inline]
     pub fn try_zeroed_aligned64(bytes: usize) -> Result<Self, StorageError> {
         Ok(Self::Aligned64(AlignedSamples::try_zeroed_bytes(bytes)?))
+    }
+
+    /// Wrap an immutable external owned buffer (`Arc<[T]>`, mmap, `&'static [T]`, etc.) zero-copy.
+    #[inline]
+    #[must_use]
+    pub fn from_external<S: ByteStorage + Send + Sync + 'static>(owner: S) -> Self {
+        Self::External(ExternalStorage::new(owner))
+    }
+
+    /// Wrap a mutable external owned buffer (`Box<[T]>`, custom allocator, pool lease, etc.) zero-copy.
+    #[inline]
+    #[must_use]
+    pub fn from_external_mut<S: ByteStorageMut + Send + Sync + 'static>(owner: S) -> Self {
+        Self::ExternalMut(ExternalMutStorage::new(owner))
+    }
+
+    /// Whether this storage is backed by an external owner (`External` or `ExternalMut`).
+    #[inline]
+    #[must_use]
+    pub const fn is_external(&self) -> bool {
+        matches!(self, Self::External(_) | Self::ExternalMut(_))
+    }
+
+    /// Whether mutable byte access operates in place without copy-on-write promotion.
+    #[inline]
+    #[must_use]
+    pub const fn is_mutable_in_place(&self) -> bool {
+        !matches!(self, Self::External(_))
+    }
+
+    /// Borrow the external owner if this storage holds an external owner of concrete type `S`.
+    #[inline]
+    #[must_use]
+    pub fn external_ref<S: 'static>(&self) -> Option<&S> {
+        match self {
+            Self::External(ext) => ext.downcast_ref::<S>(),
+            Self::ExternalMut(ext) => ext.downcast_ref::<S>(),
+            _ => None,
+        }
+    }
+
+    /// Mutably borrow the external owner if this storage is `ExternalMut` of concrete type `S`.
+    #[inline]
+    #[must_use]
+    pub fn external_mut<S: 'static>(&mut self) -> Option<&mut S> {
+        match self {
+            Self::ExternalMut(ext) => ext.downcast_mut::<S>(),
+            _ => None,
+        }
+    }
+
+    /// Recover an immutable external owner `S` zero-copy; returns `Err(self)` untouched otherwise.
+    pub fn try_into_external<S: 'static>(self) -> Result<S, Self> {
+        match self {
+            Self::External(ext) => ext.try_into_inner::<S>().map_err(Self::External),
+            other => Err(other),
+        }
+    }
+
+    /// Recover a mutable external owner `S` zero-copy; returns `Err(self)` untouched otherwise.
+    pub fn try_into_external_mut<S: 'static>(self) -> Result<S, Self> {
+        match self {
+            Self::ExternalMut(ext) => ext.try_into_inner::<S>().map_err(Self::ExternalMut),
+            other => Err(other),
+        }
+    }
+
+    /// Fallibly obtain mutable bytes, performing copy-on-write into 64-byte aligned owned
+    /// storage if backed by immutable [`PixelStorage::External`].
+    ///
+    /// Strictly zero-copy and infallible for native `Vec`, `Aligned64`, and `ExternalMut`.
+    pub fn try_as_bytes_mut(&mut self) -> Result<&mut [u8], StorageError> {
+        if let Self::External(ext) = self {
+            let src = ext.as_bytes();
+            let mut aligned = AlignedSamples::try_zeroed_bytes(src.len())?;
+            aligned.as_bytes_mut().copy_from_slice(src);
+            *self = Self::Aligned64(aligned);
+        }
+        Ok(match self {
+            Self::U8(v) => v,
+            Self::I8(v) => bytemuck::cast_slice_mut(v),
+            Self::U16(v) => bytemuck::cast_slice_mut(v),
+            Self::I16(v) => bytemuck::cast_slice_mut(v),
+            Self::F16(v) => bytemuck::cast_slice_mut(v),
+            Self::U32(v) => bytemuck::cast_slice_mut(v),
+            Self::I32(v) => bytemuck::cast_slice_mut(v),
+            Self::F32(v) => bytemuck::cast_slice_mut(v),
+            Self::U64(v) => bytemuck::cast_slice_mut(v),
+            Self::I64(v) => bytemuck::cast_slice_mut(v),
+            Self::F64(v) => bytemuck::cast_slice_mut(v),
+            Self::Aligned64(a) => a.as_bytes_mut(),
+            Self::ExternalMut(ext) => ext.as_bytes_mut(),
+            Self::External(_) => unreachable!("promoted above"),
+        })
     }
 
     /// Gather row slices into fresh tightly packed storage of `sample`'s native alignment.
@@ -435,8 +840,10 @@ impl PixelStorage {
             Self::U64(v) => try_cast_vec(v).map_err(|(_, v)| Self::U64(v)),
             Self::I64(v) => try_cast_vec(v).map_err(|(_, v)| Self::I64(v)),
             Self::F64(v) => try_cast_vec(v).map_err(|(_, v)| Self::F64(v)),
-            // Aligned64 has deallocation alignment 64; cannot become Vec<P> zero-copy unless align_of::<P>() == 64.
+            // Aligned64 has deallocation alignment 64; external storage owns an opaque type.
             Self::Aligned64(a) => Err(Self::Aligned64(a)),
+            Self::External(e) => Err(Self::External(e)),
+            Self::ExternalMut(e) => Err(Self::ExternalMut(e)),
         }
     }
 
@@ -458,6 +865,7 @@ impl PixelStorage {
             Self::U64(_) | Self::I64(_) => core::mem::align_of::<u64>(),
             Self::F64(_) => core::mem::align_of::<f64>(),
             Self::Aligned64(_) => 64,
+            Self::External(_) | Self::ExternalMut(_) => 1,
         }
     }
 
@@ -478,6 +886,8 @@ impl PixelStorage {
             Self::I64(v) => v.capacity() * 8,
             Self::F64(v) => v.capacity() * 8,
             Self::Aligned64(a) => a.byte_len,
+            Self::External(e) => e.len(),
+            Self::ExternalMut(e) => e.len(),
         }
     }
 
@@ -489,7 +899,10 @@ impl PixelStorage {
         let p_size = core::mem::size_of::<P>();
         let p_align = core::mem::align_of::<P>();
         if p_size == 0
-            || matches!(self, Self::Aligned64(_))
+            || matches!(
+                self,
+                Self::Aligned64(_) | Self::External(_) | Self::ExternalMut(_)
+            )
             || self.alloc_alignment() != p_align
             || target_bytes > self.byte_len()
             || target_bytes % p_size != 0
@@ -503,7 +916,7 @@ impl PixelStorage {
             Self::U16(_) | Self::I16(_) | Self::F16(_) => 2,
             Self::U32(_) | Self::I32(_) | Self::F32(_) => 4,
             Self::U64(_) | Self::I64(_) | Self::F64(_) => 8,
-            Self::Aligned64(_) => 64,
+            Self::Aligned64(_) | Self::External(_) | Self::ExternalMut(_) => 64,
         };
         target_bytes % unit == 0
     }
@@ -516,6 +929,8 @@ impl PixelStorage {
     }
 
     /// Fallibly clone the underlying storage without panicking on OOM.
+    ///
+    /// External storage variants clone their active bytes into 64-byte aligned owned storage.
     pub fn try_clone(&self) -> Result<Self, StorageError> {
         fn try_clone_vec<T: Copy>(v: &[T]) -> Result<Vec<T>, StorageError> {
             let mut out = Vec::new();
@@ -537,6 +952,18 @@ impl PixelStorage {
             Self::I64(v) => Ok(Self::I64(try_clone_vec(v)?)),
             Self::F64(v) => Ok(Self::F64(try_clone_vec(v)?)),
             Self::Aligned64(a) => Ok(Self::Aligned64(a.try_clone()?)),
+            Self::External(e) => {
+                let src = e.as_bytes();
+                let mut aligned = AlignedSamples::try_zeroed_bytes(src.len())?;
+                aligned.as_bytes_mut().copy_from_slice(src);
+                Ok(Self::Aligned64(aligned))
+            }
+            Self::ExternalMut(e) => {
+                let src = e.as_bytes();
+                let mut aligned = AlignedSamples::try_zeroed_bytes(src.len())?;
+                aligned.as_bytes_mut().copy_from_slice(src);
+                Ok(Self::Aligned64(aligned))
+            }
         }
     }
 
@@ -555,6 +982,8 @@ impl PixelStorage {
             Self::I64(v) => v.truncate(bytes.div_ceil(8)),
             Self::F64(v) => v.truncate(bytes.div_ceil(8)),
             Self::Aligned64(a) => a.truncate(bytes),
+            Self::External(e) => e.truncate(bytes),
+            Self::ExternalMut(e) => e.truncate(bytes),
         }
     }
 }
@@ -574,6 +1003,9 @@ impl Clone for PixelStorage {
             Self::I64(v) => Self::I64(v.clone()),
             Self::F64(v) => Self::F64(v.clone()),
             Self::Aligned64(a) => Self::Aligned64(a.clone()),
+            Self::External(_) | Self::ExternalMut(_) => self
+                .try_clone()
+                .expect("cloning external PixelStorage failed"),
         }
     }
 }
@@ -594,6 +1026,8 @@ impl ByteStorage for PixelStorage {
             Self::I64(v) => bytemuck::cast_slice(v),
             Self::F64(v) => bytemuck::cast_slice(v),
             Self::Aligned64(a) => a.as_bytes(),
+            Self::External(e) => e.as_bytes(),
+            Self::ExternalMut(e) => e.as_bytes(),
         }
     }
 }
@@ -601,30 +1035,22 @@ impl ByteStorage for PixelStorage {
 impl ByteStorageMut for PixelStorage {
     #[inline]
     fn as_bytes_mut(&mut self) -> &mut [u8] {
-        match self {
-            Self::U8(v) => v,
-            Self::I8(v) => bytemuck::cast_slice_mut(v),
-            Self::U16(v) => bytemuck::cast_slice_mut(v),
-            Self::I16(v) => bytemuck::cast_slice_mut(v),
-            Self::F16(v) => bytemuck::cast_slice_mut(v),
-            Self::U32(v) => bytemuck::cast_slice_mut(v),
-            Self::I32(v) => bytemuck::cast_slice_mut(v),
-            Self::F32(v) => bytemuck::cast_slice_mut(v),
-            Self::U64(v) => bytemuck::cast_slice_mut(v),
-            Self::I64(v) => bytemuck::cast_slice_mut(v),
-            Self::F64(v) => bytemuck::cast_slice_mut(v),
-            Self::Aligned64(a) => a.as_bytes_mut(),
-        }
+        self.try_as_bytes_mut()
+            .expect("copy-on-write promotion of external PixelStorage failed")
     }
 }
 
 impl fmt::Debug for PixelStorage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "PixelStorage({} bytes, align={})",
-            self.byte_len(),
-            self.alloc_alignment()
-        )
+        match self {
+            Self::External(e) => e.fmt(f),
+            Self::ExternalMut(e) => e.fmt(f),
+            _ => write!(
+                f,
+                "PixelStorage({} bytes, align={})",
+                self.byte_len(),
+                self.alloc_alignment()
+            ),
+        }
     }
 }
