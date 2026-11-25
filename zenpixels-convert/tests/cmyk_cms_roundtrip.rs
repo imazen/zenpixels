@@ -157,7 +157,7 @@ fn cmyk_to_rgb_through_moxcms_8bit() {
         let maybe = cms.build_source_transform(
             src_source,
             dst_source.clone(),
-            PixelFormat::Cmyk8,
+            PixelFormat::CMYK8,
             PixelFormat::Rgb8,
             &opts,
         );
@@ -198,7 +198,7 @@ fn cmyk_to_rgb_through_moxcms_8bit() {
             transfer: zenpixels::TransferFunction::Unknown,
         },
         dst_source,
-        PixelFormat::Cmyk8,
+        PixelFormat::CMYK8,
         PixelFormat::Rgb8,
         &opts,
     );
@@ -261,7 +261,7 @@ fn cmyk_with_real_icc_profile() {
                 primaries: zenpixels::ColorPrimaries::Bt709,
                 transfer: zenpixels::TransferFunction::Srgb,
             },
-            PixelFormat::Cmyk8,
+            PixelFormat::CMYK8,
             PixelFormat::Rgb8,
             &opts,
         )
@@ -359,8 +359,8 @@ mod cmyk_f32 {
         // Longer than the transform's stack chunk, so its seam is inside the row.
         let ink: Vec<f32> = (0..600 * 4).map(|i| (i % 97) as f32 / 96.0).collect();
         let inverted: Vec<f32> = ink.iter().map(|v| 1.0 - v).collect();
-        let mut plain = transform(&icc, PixelFormat::CmykF32, PixelFormat::RgbF32);
-        let mut flipped = transform(&icc, PixelFormat::CmykF32Inverted, PixelFormat::RgbF32);
+        let mut plain = transform(&icc, PixelFormat::CMYKF32, PixelFormat::RgbF32);
+        let mut flipped = transform(&icc, PixelFormat::CMYKF32_INVERTED, PixelFormat::RgbF32);
         let a = run(&mut plain, &ink);
         let b = run(&mut flipped, &inverted);
         for (x, y) in a.iter().zip(&b) {
@@ -383,7 +383,7 @@ mod cmyk_f32 {
     #[test]
     fn k_only_ink_is_black_on_this_profile() {
         let icc = super::synthetic_icc::synthetic_cmyk_icc();
-        let mut plain = transform(&icc, PixelFormat::CmykF32, PixelFormat::RgbF32);
+        let mut plain = transform(&icc, PixelFormat::CMYKF32, PixelFormat::RgbF32);
         for v in run(&mut plain, &[0.0, 0.0, 0.0, 1.0]) {
             assert!(v.abs() < 1e-3, "{v}");
         }
@@ -396,7 +396,7 @@ mod cmyk_f32 {
             SRGB,
             ColorProfileSource::Icc(&icc),
             PixelFormat::RgbF32,
-            PixelFormat::CmykF32,
+            PixelFormat::CMYKF32,
             &ConvertOptions::permissive(),
         );
         assert!(matches!(refused, Some(Err(_))));

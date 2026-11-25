@@ -45,102 +45,17 @@
 //! ```
 
 use crate::ChannelType;
+use crate::pixel_types::F16Sample;
 use crate::sample::{ChromaSiting, ChromaSubsampling, SampleEncoding};
-use alloc::{boxed::Box, vec::Vec};
+use crate::storage::ROW_ALIGN;
+pub use crate::storage::{
+    AlignedSamples, PlaneError, PlaneSample, RowAlign, SampleStorage, SampleStorageMut,
+};
+use alloc::vec::Vec;
 use core::fmt;
 
-/// The shared native storage sample contract. This is the same sealed trait
-/// used by [`crate::buffer::PixelStorage`], not a separate plane-only roster.
-pub use crate::buffer::StorageSample as PlaneSample;
-
-/// Read access to the samples of a plane's owner.
-///
-/// Implement this for an owner type (for example accounted shared storage) to
-/// use it as `Plane<YourOwner>`. `samples` must return the same slice on every
-/// call: geometry is checked once, at construction, and an owner whose samples
-/// shrink afterwards makes row access panic.
-///
-/// Slices, references, boxes and `Vec` implement it, and the trait stays
-/// dyn-compatible, so an owner can also be hidden as
-/// `Plane<Box<dyn SampleStorage<Sample = T> + Send + Sync>>`. Planes of one
-/// picture normally share one owner type per sample type; borrowed views
-/// ([`Plane::view`], [`AnyPlane`]) erase the owner at no cost.
-pub trait SampleStorage {
-    /// The sample type.
-    type Sample: PlaneSample;
-    /// The samples, including any padding.
-    fn samples(&self) -> &[Self::Sample];
-}
-
-/// Write access to the samples of a plane's owner.
-pub trait SampleStorageMut: SampleStorage {
-    /// The samples, including any padding.
-    fn samples_mut(&mut self) -> &mut [Self::Sample];
-}
-
-impl<T: PlaneSample> SampleStorage for [T] {
-    type Sample = T;
-    fn samples(&self) -> &[T] {
-        self
-    }
-}
-impl<T: PlaneSample> SampleStorageMut for [T] {
-    fn samples_mut(&mut self) -> &mut [T] {
-        self
-    }
-}
-impl<S: SampleStorage + ?Sized> SampleStorage for &S {
-    type Sample = S::Sample;
-    fn samples(&self) -> &[S::Sample] {
-        (**self).samples()
-    }
-}
-impl<S: SampleStorage + ?Sized> SampleStorage for &mut S {
-    type Sample = S::Sample;
-    fn samples(&self) -> &[S::Sample] {
-        (**self).samples()
-    }
-}
-impl<S: SampleStorageMut + ?Sized> SampleStorageMut for &mut S {
-    fn samples_mut(&mut self) -> &mut [S::Sample] {
-        (**self).samples_mut()
-    }
-}
-// `Vec` and `Box` storage. With the `allocator_api` feature on Rust 1.100 or newer
-// these cover every allocator, which includes the global one, so existing uses
-// keep compiling; before 1.100 the feature changes nothing.
-macro_rules! owned_storage {
+macro_rules! plane_vec_methods {
     ($($alloc:ident)?) => {
-        impl<S: SampleStorage + ?Sized $(, $alloc: core::alloc::Allocator)?> SampleStorage
-            for Box<S $(, $alloc)?>
-        {
-            type Sample = S::Sample;
-            fn samples(&self) -> &[S::Sample] {
-                (**self).samples()
-            }
-        }
-        impl<S: SampleStorageMut + ?Sized $(, $alloc: core::alloc::Allocator)?> SampleStorageMut
-            for Box<S $(, $alloc)?>
-        {
-            fn samples_mut(&mut self) -> &mut [S::Sample] {
-                (**self).samples_mut()
-            }
-        }
-        impl<T: PlaneSample $(, $alloc: core::alloc::Allocator)?> SampleStorage
-            for Vec<T $(, $alloc)?>
-        {
-            type Sample = T;
-            fn samples(&self) -> &[T] {
-                self
-            }
-        }
-        impl<T: PlaneSample $(, $alloc: core::alloc::Allocator)?> SampleStorageMut
-            for Vec<T $(, $alloc)?>
-        {
-            fn samples_mut(&mut self) -> &mut [T] {
-                self
-            }
-        }
         impl<T: PlaneSample $(, $alloc: core::alloc::Allocator)?> Plane<Vec<T $(, $alloc)?>> {
             /// Give up the `Vec`, for an owner that takes a plain `Vec` and a stride
             /// (an `ImgVec`, yuvutils-rs' owned planes). Read
@@ -154,7 +69,7 @@ macro_rules! owned_storage {
             /// later in a future aligned form, so this stays fallible. Borrow it with
             /// [`view`](Plane::view) instead, or copy it.
             pub fn try_into_vec(self) -> Result<Vec<T $(, $alloc)?>, Self> {
-                if self.start == 0 {
+                if self.geom.start == 0 {
                     Ok(self.buf)
                 } else {
                     Err(self)
@@ -164,121 +79,172 @@ macro_rules! owned_storage {
     };
 }
 #[cfg(not(feature = "allocator_api"))]
-owned_storage!();
+plane_vec_methods!();
 #[cfg(feature = "allocator_api")]
 #[rustversion::before(1.100)]
-owned_storage!();
+plane_vec_methods!();
 #[cfg(feature = "allocator_api")]
 #[rustversion::since(1.100)]
-owned_storage!(A);
+plane_vec_methods!(A);
 
-/// One allocation unit of [`AlignedSamples`]. Its alignment is what keeps the
-/// buffer aligned without an offset, a custom allocator, or `unsafe`: `Vec`
-/// allocates and frees it with this layout.
-#[derive(Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
-#[repr(C, align(64))]
-struct Chunk([u8; 64]);
-
-/// Owned samples whose first element is on a 64-byte boundary, on any allocator.
-///
-/// 64 bytes covers every interleaved pixel type, so the samples can always be
-/// viewed as `&[Rgb<u16>]`, `&[Rgba<f32>]` and the like with `bytemuck`, and index
-/// 0 is always the first sample. Clones stay aligned. It derefs to `[T]`, so it
-/// also serves as an `image::ImageBuffer` container.
-///
-/// The price is that it cannot become a `Vec<T>` without a copy: a `Vec` has to
-/// free memory with the layout it allocated. Adopt a `Vec<T>` directly when the
-/// next owner needs one.
-#[derive(Clone)]
-pub struct AlignedSamples<T> {
-    chunks: Vec<Chunk>,
-    len: usize,
-    _sample: core::marker::PhantomData<T>,
+/// Type-erased geometry of a [`Plane`], compiled once rather than per `(Sample, Owner)`.
+#[derive(Clone, Copy)]
+struct PlaneGeom {
+    start: usize,
+    width: usize,
+    height: usize,
+    stride: usize,
 }
 
-impl<T: PlaneSample> AlignedSamples<T> {
-    /// Allocate `len` zeroed samples, fallibly.
-    ///
-    /// # Errors
-    ///
-    /// [`PlaneError::GeometryOverflow`] when the size overflows,
-    /// [`PlaneError::AllocationFailed`] when the allocator refuses.
-    pub fn try_zeroed(len: usize) -> Result<Self, PlaneError> {
-        let chunk_count = len
-            .checked_mul(core::mem::size_of::<T>())
-            .ok_or(PlaneError::GeometryOverflow)?
-            .div_ceil(core::mem::size_of::<Chunk>());
-        // Goes through `alloc_zeroed`, so large buffers get untouched zero pages.
-        let chunks: Vec<Chunk> = bytemuck::allocation::try_zeroed_vec(chunk_count)
-            .map_err(|()| PlaneError::AllocationFailed)?;
+impl PlaneGeom {
+    fn new_checked(
+        buf_len: usize,
+        start: usize,
+        width: usize,
+        height: usize,
+        stride: usize,
+    ) -> Result<Self, PlaneError> {
+        let end = if width == 0 || height == 0 {
+            start
+        } else {
+            if stride < width {
+                return Err(PlaneError::ShortStride);
+            }
+            (height - 1)
+                .checked_mul(stride)
+                .and_then(|n| n.checked_add(width))
+                .and_then(|n| n.checked_add(start))
+                .ok_or(PlaneError::GeometryOverflow)?
+        };
+        if end > buf_len {
+            return Err(PlaneError::ShortBuffer);
+        }
         Ok(Self {
-            chunks,
-            len,
-            _sample: core::marker::PhantomData,
+            start,
+            width,
+            height,
+            stride,
         })
     }
-}
 
-impl<T: PlaneSample> core::ops::Deref for AlignedSamples<T> {
-    type Target = [T];
-    fn deref(&self) -> &[T] {
-        &bytemuck::cast_slice(&self.chunks)[..self.len]
+    #[inline]
+    fn row_start(self, y: usize) -> usize {
+        if self.width == 0 {
+            self.start
+        } else {
+            self.start + y * self.stride
+        }
+    }
+
+    #[inline]
+    fn strided_end(self) -> usize {
+        if self.width == 0 || self.height == 0 {
+            self.start
+        } else {
+            self.start + (self.height - 1) * self.stride + self.width
+        }
+    }
+
+    fn sub_rect(
+        self,
+        buf_len: usize,
+        x: usize,
+        y: usize,
+        width: usize,
+        height: usize,
+    ) -> Result<Self, PlaneError> {
+        let fits = |o: usize, n: usize, max: usize| o.checked_add(n).is_some_and(|e| e <= max);
+        if !fits(x, width, self.width) || !fits(y, height, self.height) {
+            return Err(PlaneError::OutsidePlane);
+        }
+        let start = if width == 0 || height == 0 {
+            self.start
+        } else {
+            self.start + y * self.stride + x
+        };
+        Self::new_checked(buf_len, start, width, height, self.stride)
+    }
+
+    fn split_at_row(self, buf_len: usize, y: usize) -> Result<(usize, Self, Self), PlaneError> {
+        if y > self.height {
+            return Err(PlaneError::OutsidePlane);
+        }
+        let at = if y == 0 || self.width == 0 {
+            self.start
+        } else if y == self.height {
+            buf_len
+        } else {
+            self.start + y * self.stride
+        };
+        Ok((
+            at,
+            Self {
+                start: self.start,
+                width: self.width,
+                height: y,
+                stride: self.stride,
+            },
+            Self {
+                start: 0,
+                width: self.width,
+                height: self.height - y,
+                stride: self.stride,
+            },
+        ))
+    }
+
+    fn fmt_debug(self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Plane")
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("stride", &self.stride)
+            .finish_non_exhaustive()
     }
 }
 
-impl<T: PlaneSample> core::ops::DerefMut for AlignedSamples<T> {
-    fn deref_mut(&mut self) -> &mut [T] {
-        &mut bytemuck::cast_slice_mut(&mut self.chunks)[..self.len]
-    }
+fn aligned_plane_stride(
+    width: usize,
+    height: usize,
+    size: usize,
+    align: RowAlign,
+) -> Result<(usize, usize), PlaneError> {
+    let stride = match align {
+        RowAlign::Tight => {
+            width
+                .checked_mul(size)
+                .ok_or(PlaneError::GeometryOverflow)?;
+            width
+        }
+        RowAlign::Cache64 | RowAlign::PixelCache64 => {
+            let row_bytes = width
+                .checked_mul(size)
+                .and_then(|b| b.checked_next_multiple_of(ROW_ALIGN))
+                .ok_or(PlaneError::GeometryOverflow)?;
+            let stride_bytes = if row_bytes != 0 && row_bytes % 4096 == 0 {
+                row_bytes
+                    .checked_add(ROW_ALIGN)
+                    .ok_or(PlaneError::GeometryOverflow)?
+            } else {
+                row_bytes
+            };
+            stride_bytes / size
+        }
+        RowAlign::Samples(n) => {
+            let step = usize::from(n.max(1));
+            let stride = width
+                .checked_next_multiple_of(step)
+                .ok_or(PlaneError::GeometryOverflow)?;
+            stride
+                .checked_mul(size)
+                .ok_or(PlaneError::GeometryOverflow)?;
+            stride
+        }
+    };
+    let len = stride
+        .checked_mul(height)
+        .ok_or(PlaneError::GeometryOverflow)?;
+    Ok((stride, len))
 }
-
-impl<T> fmt::Debug for AlignedSamples<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "AlignedSamples(len: {})", self.len)
-    }
-}
-
-impl<T: PlaneSample> SampleStorage for AlignedSamples<T> {
-    type Sample = T;
-    fn samples(&self) -> &[T] {
-        self
-    }
-}
-
-impl<T: PlaneSample> SampleStorageMut for AlignedSamples<T> {
-    fn samples_mut(&mut self) -> &mut [T] {
-        self
-    }
-}
-
-/// A plane's geometry does not fit its storage, or a request leaves the plane.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum PlaneError {
-    /// A nonempty plane's stride is shorter than its row.
-    ShortStride,
-    /// Storage ends before the last active sample.
-    ShortBuffer,
-    /// Computing the plane's extent overflows addressable storage.
-    GeometryOverflow,
-    /// A requested rectangle or row extends beyond the plane.
-    OutsidePlane,
-    /// Allocating plane storage failed.
-    AllocationFailed,
-}
-
-impl fmt::Display for PlaneError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::ShortStride => "plane stride is shorter than its row",
-            Self::ShortBuffer => "plane storage ends before the last active sample",
-            Self::GeometryOverflow => "plane geometry overflows addressable storage",
-            Self::OutsidePlane => "request extends beyond the plane",
-            Self::AllocationFailed => "plane allocation failed",
-        })
-    }
-}
-impl core::error::Error for PlaneError {}
 
 /// A strided two-dimensional array of samples, generic over its owner.
 ///
@@ -289,10 +255,7 @@ impl core::error::Error for PlaneError {}
 #[derive(Clone, Copy)]
 pub struct Plane<C> {
     buf: C,
-    start: usize,
-    width: usize,
-    height: usize,
-    stride: usize,
+    geom: PlaneGeom,
 }
 
 /// A borrowed plane.
@@ -305,41 +268,23 @@ pub type PlaneBuf<T> = Plane<Vec<T>>;
 pub type AlignedPlane<T> = Plane<AlignedSamples<T>>;
 
 impl<C> fmt::Debug for Plane<C> {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Plane")
-            .field("width", &self.width)
-            .field("height", &self.height)
-            .field("stride", &self.stride)
-            .finish_non_exhaustive()
+        self.geom.fmt_debug(f)
     }
-}
-
-/// Samples from the first active sample through the last one.
-fn extent(start: usize, width: usize, height: usize, stride: usize) -> Result<usize, PlaneError> {
-    if width == 0 || height == 0 {
-        return Ok(start);
-    }
-    if stride < width {
-        return Err(PlaneError::ShortStride);
-    }
-    (height - 1)
-        .checked_mul(stride)
-        .and_then(|n| n.checked_add(width))
-        .and_then(|n| n.checked_add(start))
-        .ok_or(PlaneError::GeometryOverflow)
 }
 
 impl<C> Plane<C> {
     /// The index of row 0 in the storage.
     #[cfg(feature = "image")]
+    #[inline]
     pub(crate) fn samples_start(&self) -> usize {
-        self.start
+        self.geom.start
     }
-}
 
-impl<C> Plane<C> {
     /// Recover the original storage owner without copying samples, discarding
     /// plane geometry. Read dimensions/stride first if the next owner needs them.
+    #[inline]
     pub fn into_storage(self) -> C {
         self.buf
     }
@@ -355,10 +300,12 @@ impl<C: SampleStorage> Plane<C> {
     /// than its width, [`PlaneError::ShortBuffer`] when the storage ends
     /// before the last active sample, [`PlaneError::GeometryOverflow`] when the
     /// extent overflows.
+    #[inline]
     pub fn new(buf: C, width: usize, height: usize, stride: usize) -> Result<Self, PlaneError> {
         Self::with_start(buf, 0, width, height, stride)
     }
 
+    #[inline]
     fn with_start(
         buf: C,
         start: usize,
@@ -366,77 +313,66 @@ impl<C: SampleStorage> Plane<C> {
         height: usize,
         stride: usize,
     ) -> Result<Self, PlaneError> {
-        if extent(start, width, height, stride)? > buf.samples().len() {
-            return Err(PlaneError::ShortBuffer);
-        }
-        Ok(Self {
-            buf,
-            start,
-            width,
-            height,
-            stride,
-        })
+        let geom = PlaneGeom::new_checked(buf.samples().len(), start, width, height, stride)?;
+        Ok(Self { buf, geom })
     }
 
     /// Samples per row.
+    #[inline]
     pub fn width(&self) -> usize {
-        self.width
+        self.geom.width
     }
 
     /// Rows.
+    #[inline]
     pub fn height(&self) -> usize {
-        self.height
+        self.geom.height
     }
 
     /// Samples from one row start to the next.
+    #[inline]
     pub fn stride(&self) -> usize {
-        self.stride
-    }
-
-    // First sample of row `y`. An empty row starts at `start`, which is
-    // within the storage even when `y * stride` is not.
-    fn row_start(&self, y: usize) -> usize {
-        if self.width == 0 {
-            self.start
-        } else {
-            self.start + y * self.stride
-        }
+        self.geom.stride
     }
 
     /// Row `y`, without padding; `None` past the last row.
+    #[inline]
     pub fn row(&self, y: usize) -> Option<&[C::Sample]> {
-        if y >= self.height {
+        if y >= self.geom.height {
             return None;
         }
-        let s = self.row_start(y);
-        Some(&self.buf.samples()[s..s + self.width])
+        let s = self.geom.row_start(y);
+        Some(&self.buf.samples()[s..s + self.geom.width])
     }
 
     /// Every row, top to bottom, without padding.
+    #[inline]
     pub fn rows(&self) -> impl DoubleEndedIterator<Item = &[C::Sample]> + ExactSizeIterator {
-        (0..self.height).map(move |y| {
-            let s = self.row_start(y);
-            &self.buf.samples()[s..s + self.width]
+        let geom = self.geom;
+        let samples = self.buf.samples();
+        (0..geom.height).map(move |y| {
+            let s = geom.row_start(y);
+            &samples[s..s + geom.width]
         })
     }
 
     /// The samples from the first active sample through the last one, including
     /// padding between rows but not after the last row. Empty for an empty
     /// plane. For handing the plane to an API that takes a slice and a stride.
+    #[inline]
     pub fn strided_samples(&self) -> &[C::Sample] {
-        let end = extent(self.start, self.width, self.height, self.stride)
-            .expect("checked at construction");
-        &self.buf.samples()[self.start..end]
+        &self.buf.samples()[self.geom.start..self.geom.strided_end()]
     }
 
     /// Borrow this plane.
+    #[inline]
     pub fn view(&self) -> PlaneRef<'_, C::Sample> {
         Plane {
             buf: self.strided_samples(),
-            start: 0,
-            width: self.width,
-            height: self.height,
-            stride: self.stride,
+            geom: PlaneGeom {
+                start: 0,
+                ..self.geom
+            },
         }
     }
 
@@ -445,6 +381,7 @@ impl<C: SampleStorage> Plane<C> {
     /// # Errors
     ///
     /// [`PlaneError::OutsidePlane`] when the rectangle leaves the plane.
+    #[inline]
     pub fn sub(
         &self,
         x: usize,
@@ -452,64 +389,58 @@ impl<C: SampleStorage> Plane<C> {
         width: usize,
         height: usize,
     ) -> Result<PlaneRef<'_, C::Sample>, PlaneError> {
-        let (start, width, height) = self.sub_rect(x, y, width, height)?;
-        Plane::with_start(self.buf.samples(), start, width, height, self.stride)
-    }
-
-    fn sub_rect(
-        &self,
-        x: usize,
-        y: usize,
-        width: usize,
-        height: usize,
-    ) -> Result<(usize, usize, usize), PlaneError> {
-        let fits = |o: usize, n: usize, max: usize| o.checked_add(n).is_some_and(|e| e <= max);
-        if !fits(x, width, self.width) || !fits(y, height, self.height) {
-            return Err(PlaneError::OutsidePlane);
-        }
-        if width == 0 || height == 0 {
-            return Ok((self.start, width, height));
-        }
-        Ok((self.start + y * self.stride + x, width, height))
+        let samples = self.buf.samples();
+        let geom = self.geom.sub_rect(samples.len(), x, y, width, height)?;
+        Ok(Plane { buf: samples, geom })
     }
 }
 
 impl<C: SampleStorageMut> Plane<C> {
     /// Row `y`, without padding; `None` past the last row.
+    #[inline]
     pub fn row_mut(&mut self, y: usize) -> Option<&mut [C::Sample]> {
-        if y >= self.height {
+        let geom = self.geom;
+        if y >= geom.height {
             return None;
         }
-        let s = self.row_start(y);
-        Some(&mut self.buf.samples_mut()[s..s + self.width])
+        let s = geom.row_start(y);
+        Some(&mut self.buf.samples_mut()[s..s + geom.width])
     }
 
     /// Every row, top to bottom, without padding.
+    #[inline]
     pub fn rows_mut(
         &mut self,
     ) -> impl DoubleEndedIterator<Item = &mut [C::Sample]> + ExactSizeIterator {
-        let (width, height, stride) = (self.width, self.height, self.stride);
-        let end = extent(self.start, width, height, stride).expect("checked at construction");
-        let samples = &mut self.buf.samples_mut()[self.start..end];
+        let geom = self.geom;
+        let end = geom.strided_end();
+        let samples = &mut self.buf.samples_mut()[geom.start..end];
         RowsMut {
             samples,
-            width,
-            stride,
-            rows: height,
+            width: geom.width,
+            stride: geom.stride,
+            rows: geom.height,
         }
     }
 
     /// Mutably borrow this plane.
+    #[inline]
     pub fn view_mut(&mut self) -> PlaneMut<'_, C::Sample> {
-        let (width, height, stride) = (self.width, self.height, self.stride);
-        let end = extent(self.start, width, height, stride).expect("checked at construction");
+        let geom = self.geom;
+        let end = geom.strided_end();
         Plane {
-            buf: &mut self.buf.samples_mut()[self.start..end],
-            start: 0,
-            width,
-            height,
-            stride,
+            buf: &mut self.buf.samples_mut()[geom.start..end],
+            geom: PlaneGeom { start: 0, ..geom },
         }
+    }
+
+    /// Mutable samples from the first active sample through the last one,
+    /// including padding between rows (excluding trailing padding past the
+    /// last active row).
+    #[inline]
+    pub fn strided_samples_mut(&mut self) -> &mut [C::Sample] {
+        let end = self.geom.strided_end();
+        &mut self.buf.samples_mut()[self.geom.start..end]
     }
 
     /// Mutably borrow the `width` x `height` samples at column `x`, row `y`.
@@ -517,6 +448,7 @@ impl<C: SampleStorageMut> Plane<C> {
     /// # Errors
     ///
     /// [`PlaneError::OutsidePlane`] when the rectangle leaves the plane.
+    #[inline]
     pub fn sub_mut(
         &mut self,
         x: usize,
@@ -524,9 +456,13 @@ impl<C: SampleStorageMut> Plane<C> {
         width: usize,
         height: usize,
     ) -> Result<PlaneMut<'_, C::Sample>, PlaneError> {
-        let (start, width, height) = self.sub_rect(x, y, width, height)?;
-        let stride = self.stride;
-        Plane::with_start(self.buf.samples_mut(), start, width, height, stride)
+        let geom = self.geom;
+        let samples = self.buf.samples_mut();
+        let sub_geom = geom.sub_rect(samples.len(), x, y, width, height)?;
+        Ok(Plane {
+            buf: samples,
+            geom: sub_geom,
+        })
     }
 }
 
@@ -537,40 +473,18 @@ impl<T: PlaneSample> Plane<&mut [T]> {
     /// # Errors
     ///
     /// [`PlaneError::OutsidePlane`] when `y` is past the last row.
+    #[inline]
     pub fn split_at_row(self, y: usize) -> Result<(Self, Self), PlaneError> {
-        if y > self.height {
-            return Err(PlaneError::OutsidePlane);
-        }
-        let Plane {
-            buf,
-            start,
-            width,
-            height,
-            stride,
-        } = self;
-        let at = if y == 0 || width == 0 {
-            start
-        } else if y == height {
-            // The final row need not include its trailing stride padding.
-            buf.len()
-        } else {
-            start + y * stride
-        };
-        let (top, bottom) = buf.split_at_mut(at);
+        let (at, top_geom, bottom_geom) = self.geom.split_at_row(self.buf.len(), y)?;
+        let (top, bottom) = self.buf.split_at_mut(at);
         Ok((
             Plane {
                 buf: top,
-                start,
-                width,
-                height: y,
-                stride,
+                geom: top_geom,
             },
             Plane {
                 buf: bottom,
-                start: 0,
-                width,
-                height: height - y,
-                stride,
+                geom: bottom_geom,
             },
         ))
     }
@@ -580,20 +494,18 @@ impl<'a, T: PlaneSample> Plane<&'a [T]> {
     /// [`Plane::strided_samples`] for the borrowed lifetime, so an adapter can
     /// hand the samples to another crate's borrowed frame type (slice from the
     /// first sample, stride in samples) without copying.
+    #[inline]
     pub fn into_strided_samples(self) -> &'a [T] {
-        let end = extent(self.start, self.width, self.height, self.stride)
-            .expect("checked at construction");
-        &self.buf[self.start..end]
+        &self.buf[self.geom.start..self.geom.strided_end()]
     }
 }
 
 impl<'a, T: PlaneSample> Plane<&'a mut [T]> {
     /// The mutable samples from the first active sample through the last one,
     /// for the borrowed lifetime; see [`into_strided_samples`](Plane::into_strided_samples).
+    #[inline]
     pub fn into_strided_samples_mut(self) -> &'a mut [T] {
-        let end = extent(self.start, self.width, self.height, self.stride)
-            .expect("checked at construction");
-        &mut self.buf[self.start..end]
+        &mut self.buf[self.geom.start..self.geom.strided_end()]
     }
 }
 
@@ -601,11 +513,14 @@ impl<'a, T: PlaneSample> Plane<&'a mut [T]> {
 /// are [`PlaneError::GeometryOverflow`]. An empty plane's zero stride becomes 1,
 /// which imgref requires.
 #[cfg(feature = "imgref")]
-fn imgref_geometry(width: usize, height: usize, stride: usize) -> Result<usize, PlaneError> {
-    if u32::try_from(width).is_err() || u32::try_from(height).is_err() {
+fn imgref_geometry(geom: PlaneGeom) -> Result<usize, PlaneError> {
+    if u32::try_from(geom.width).is_err() || u32::try_from(geom.height).is_err() {
         return Err(PlaneError::GeometryOverflow);
     }
-    Ok(stride.max(1))
+    Ok(geom
+        .stride
+        .max(if geom.height == 0 { geom.width } else { 0 })
+        .max(1))
 }
 
 /// Borrow an [`imgref::ImgRef`] of samples as a plane, without copying.
@@ -616,6 +531,7 @@ fn imgref_geometry(width: usize, height: usize, stride: usize) -> Result<usize, 
 #[cfg(feature = "imgref")]
 impl<'a, T: PlaneSample> TryFrom<imgref::ImgRef<'a, T>> for PlaneRef<'a, T> {
     type Error = PlaneError;
+    #[inline]
     fn try_from(img: imgref::ImgRef<'a, T>) -> Result<Self, PlaneError> {
         Plane::new(img.buf(), img.width(), img.height(), img.stride())
     }
@@ -625,6 +541,7 @@ impl<'a, T: PlaneSample> TryFrom<imgref::ImgRef<'a, T>> for PlaneRef<'a, T> {
 #[cfg(feature = "imgref")]
 impl<'a, T: PlaneSample> TryFrom<imgref::ImgRefMut<'a, T>> for PlaneMut<'a, T> {
     type Error = PlaneError;
+    #[inline]
     fn try_from(img: imgref::ImgRefMut<'a, T>) -> Result<Self, PlaneError> {
         let (width, height, stride) = (img.width(), img.height(), img.stride());
         Plane::new(img.into_buf(), width, height, stride)
@@ -635,6 +552,7 @@ impl<'a, T: PlaneSample> TryFrom<imgref::ImgRefMut<'a, T>> for PlaneMut<'a, T> {
 #[cfg(feature = "imgref")]
 impl<T: PlaneSample> TryFrom<imgref::ImgVec<T>> for PlaneBuf<T> {
     type Error = PlaneError;
+    #[inline]
     fn try_from(img: imgref::ImgVec<T>) -> Result<Self, PlaneError> {
         let (width, height, stride) = (img.width(), img.height(), img.stride());
         Plane::new(img.into_buf(), width, height, stride)
@@ -645,9 +563,10 @@ impl<T: PlaneSample> TryFrom<imgref::ImgVec<T>> for PlaneBuf<T> {
 #[cfg(feature = "imgref")]
 impl<'a, T: PlaneSample> TryFrom<PlaneRef<'a, T>> for imgref::ImgRef<'a, T> {
     type Error = PlaneError;
+    #[inline]
     fn try_from(plane: PlaneRef<'a, T>) -> Result<Self, PlaneError> {
-        let stride = imgref_geometry(plane.width, plane.height, plane.stride)?;
-        let (width, height) = (plane.width, plane.height);
+        let stride = imgref_geometry(plane.geom)?;
+        let (width, height) = (plane.geom.width, plane.geom.height);
         Ok(imgref::Img::new_stride(
             plane.into_strided_samples(),
             width,
@@ -661,9 +580,10 @@ impl<'a, T: PlaneSample> TryFrom<PlaneRef<'a, T>> for imgref::ImgRef<'a, T> {
 #[cfg(feature = "imgref")]
 impl<'a, T: PlaneSample> TryFrom<PlaneMut<'a, T>> for imgref::ImgRefMut<'a, T> {
     type Error = PlaneError;
+    #[inline]
     fn try_from(plane: PlaneMut<'a, T>) -> Result<Self, PlaneError> {
-        let stride = imgref_geometry(plane.width, plane.height, plane.stride)?;
-        let (width, height) = (plane.width, plane.height);
+        let stride = imgref_geometry(plane.geom)?;
+        let (width, height) = (plane.geom.width, plane.geom.height);
         Ok(imgref::Img::new_stride(
             plane.into_strided_samples_mut(),
             width,
@@ -721,88 +641,17 @@ impl<T> DoubleEndedIterator for RowsMut<'_, T> {
 
 impl<T> ExactSizeIterator for RowsMut<'_, T> {}
 
-/// Row starts on 64 bytes, the widest SIMD vector and the x86/Neoverse line.
-const ROW_ALIGN: usize = 64;
-
-/// Row-start alignment policy for [`Plane::alloc_aligned`] and
-/// [`crate::PixelBuffer::try_new_aligned`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum RowAlign {
-    /// Tightly packed rows (`stride == width` samples, or `width * bytes_per_pixel` bytes).
-    #[default]
-    Tight,
-    /// 64-byte row alignment (widest SIMD vector and x86/ARM cache line), plus
-    /// a 64-byte anti-aliasing bump when the aligned row is a non-zero multiple
-    /// of 4096 bytes (`benchmarks/stride_aliasing_2026-11-01.md`).
-    ///
-    /// For 3-channel packed formats such as `RGB8` (3 B/px) or `RGB16` (6 B/px),
-    /// byte stride is a multiple of 64 (and of `size_of::<T>()`), not necessarily
-    /// a multiple of `bytes_per_pixel`.
-    Cache64,
-    /// Whole-pixel 64-byte row alignment (`lcm(bytes_per_pixel, 64)`), plus one
-    /// alignment step when the aligned row is a non-zero multiple of 4096 bytes.
-    ///
-    /// Every row starts on both a 64-byte boundary and a whole-pixel boundary,
-    /// satisfying whole-pixel stride consumers such as `imgref`. On a single-sample
-    /// [`Plane`], this equals [`Self::Cache64`].
-    PixelCache64,
-    /// Align row stride to a multiple of `N` samples (`0` is treated as `1`,
-    /// i.e. tight), with no 4096-byte bump.
-    ///
-    /// Use [`Self::from_bytes`] or [`Self::try_from_bytes`] to translate a
-    /// hardware byte-pitch requirement (such as `wgpu`'s 256-byte row alignment).
-    Samples(u16),
-}
-
-const _: () = assert!(core::mem::size_of::<RowAlign>() == 4);
-
-impl RowAlign {
-    /// Convert a hardware byte-pitch requirement into a sample-count alignment
-    /// for sample type `T`.
-    ///
-    /// # Panics
-    ///
-    /// Panics (at compile time in `const` context) if `bytes == 0` or `bytes`
-    /// is not a multiple of `size_of::<T>()`.
-    #[inline]
-    pub const fn from_bytes<T: PlaneSample>(bytes: u16) -> Self {
-        match Self::try_from_bytes(bytes, core::mem::size_of::<T>()) {
-            Some(align) => align,
-            None => panic!("RowAlign::from_bytes requires a non-zero multiple of size_of::<T>()"),
-        }
-    }
-
-    /// Fallibly convert a byte-pitch alignment into `RowAlign::Samples` for a
-    /// given `sample_bytes` width (`1`, `2`, `4`, or `8`).
-    ///
-    /// Returns `None` if `bytes == 0`, `sample_bytes == 0`, or `bytes` is not
-    /// divisible by `sample_bytes`.
-    #[inline]
-    pub const fn try_from_bytes(bytes: u16, sample_bytes: usize) -> Option<Self> {
-        if bytes == 0 || sample_bytes == 0 || (bytes as usize) % sample_bytes != 0 {
-            None
-        } else {
-            Some(Self::Samples((bytes as usize / sample_bytes) as u16))
-        }
-    }
-}
-
 impl<T: PlaneSample> Plane<AlignedSamples<T>> {
     /// Allocate a zeroed `width` x `height` plane for SIMD kernels.
     ///
     /// Equivalent to `Self::alloc_aligned(width, height, RowAlign::Cache64)`:
-    /// every row starts on a 64-byte boundary, with row 0 at index 0. The stride
-    /// is the row rounded up to 64 bytes, plus 64 more when that is a multiple of
-    /// 4096: such strides put a column's rows in one cache set, which cost
-    /// cache-resident 12-row vertical filters 19-48% on Zen 4
-    /// (`benchmarks/stride_aliasing_2026-11-01.md` in the zenpixels repo). The
-    /// allocation is fallible, and clones keep the alignment.
+    /// every row starts on a 64-byte boundary, with row 0 at index 0.
     ///
     /// # Errors
     ///
     /// [`PlaneError::GeometryOverflow`] when the size overflows,
     /// [`PlaneError::AllocationFailed`] when the allocator refuses.
+    #[inline]
     pub fn alloc(width: usize, height: usize) -> Result<Self, PlaneError> {
         Self::alloc_aligned(width, height, RowAlign::Cache64)
     }
@@ -814,43 +663,9 @@ impl<T: PlaneSample> Plane<AlignedSamples<T>> {
     ///
     /// [`PlaneError::GeometryOverflow`] when the size overflows,
     /// [`PlaneError::AllocationFailed`] when the allocator refuses.
+    #[inline]
     pub fn alloc_aligned(width: usize, height: usize, align: RowAlign) -> Result<Self, PlaneError> {
-        let size = core::mem::size_of::<T>();
-        let stride = match align {
-            RowAlign::Tight => {
-                width
-                    .checked_mul(size)
-                    .ok_or(PlaneError::GeometryOverflow)?;
-                width
-            }
-            RowAlign::Cache64 | RowAlign::PixelCache64 => {
-                let row_bytes = width
-                    .checked_mul(size)
-                    .and_then(|b| b.checked_next_multiple_of(ROW_ALIGN))
-                    .ok_or(PlaneError::GeometryOverflow)?;
-                let stride_bytes = if row_bytes != 0 && row_bytes % 4096 == 0 {
-                    row_bytes
-                        .checked_add(ROW_ALIGN)
-                        .ok_or(PlaneError::GeometryOverflow)?
-                } else {
-                    row_bytes
-                };
-                stride_bytes / size
-            }
-            RowAlign::Samples(n) => {
-                let step = usize::from(n.max(1));
-                let stride = width
-                    .checked_next_multiple_of(step)
-                    .ok_or(PlaneError::GeometryOverflow)?;
-                stride
-                    .checked_mul(size)
-                    .ok_or(PlaneError::GeometryOverflow)?;
-                stride
-            }
-        };
-        let len = stride
-            .checked_mul(height)
-            .ok_or(PlaneError::GeometryOverflow)?;
+        let (stride, len) = aligned_plane_stride(width, height, core::mem::size_of::<T>(), align)?;
         Self::with_start(AlignedSamples::try_zeroed(len)?, 0, width, height, stride)
     }
 }
@@ -862,11 +677,12 @@ impl<T: PlaneSample> Plane<AlignedSamples<T>> {
 #[cfg(feature = "imgref")]
 impl<T: PlaneSample> TryFrom<PlaneBuf<T>> for imgref::ImgVec<T> {
     type Error = PlaneBuf<T>;
+    #[inline]
     fn try_from(plane: PlaneBuf<T>) -> Result<Self, PlaneBuf<T>> {
-        let Ok(stride) = imgref_geometry(plane.width, plane.height, plane.stride) else {
+        let Ok(stride) = imgref_geometry(plane.geom) else {
             return Err(plane);
         };
-        let (width, height) = (plane.width, plane.height);
+        let (width, height) = (plane.geom.width, plane.geom.height);
         let buf = plane.try_into_vec()?;
         Ok(imgref::Img::new_stride(buf, width, height, stride))
     }
@@ -884,6 +700,8 @@ pub enum AnyPlane<'a> {
     U16(PlaneRef<'a, u16>),
     /// Native `i16` samples.
     I16(PlaneRef<'a, i16>),
+    /// Native `f16` (`F16Sample`) samples.
+    F16(PlaneRef<'a, F16Sample>),
     /// Native `u32` samples.
     U32(PlaneRef<'a, u32>),
     /// Native `i32` samples.
@@ -906,6 +724,7 @@ impl AnyPlane<'_> {
             Self::I8(p) => p.width(),
             Self::U16(p) => p.width(),
             Self::I16(p) => p.width(),
+            Self::F16(p) => p.width(),
             Self::U32(p) => p.width(),
             Self::I32(p) => p.width(),
             Self::F32(p) => p.width(),
@@ -921,6 +740,7 @@ impl AnyPlane<'_> {
             Self::I8(p) => p.height(),
             Self::U16(p) => p.height(),
             Self::I16(p) => p.height(),
+            Self::F16(p) => p.height(),
             Self::U32(p) => p.height(),
             Self::I32(p) => p.height(),
             Self::F32(p) => p.height(),
@@ -936,6 +756,7 @@ impl AnyPlane<'_> {
             Self::I8(_) => ChannelType::I8,
             Self::U16(_) => ChannelType::U16,
             Self::I16(_) => ChannelType::I16,
+            Self::F16(_) => ChannelType::F16,
             Self::U32(_) => ChannelType::U32,
             Self::I32(_) => ChannelType::I32,
             Self::F32(_) => ChannelType::F32,
@@ -951,6 +772,7 @@ impl AnyPlane<'_> {
             Self::I8(p) => p.stride(),
             Self::U16(p) => p.stride(),
             Self::I16(p) => p.stride(),
+            Self::F16(p) => p.stride(),
             Self::U32(p) => p.stride(),
             Self::I32(p) => p.stride(),
             Self::F32(p) => p.stride(),
@@ -969,6 +791,7 @@ impl AnyPlane<'_> {
             Self::I8(p) => bytemuck::cast_slice(p.strided_samples()),
             Self::U16(p) => bytemuck::cast_slice(p.strided_samples()),
             Self::I16(p) => bytemuck::cast_slice(p.strided_samples()),
+            Self::F16(p) => bytemuck::cast_slice(p.strided_samples()),
             Self::U32(p) => bytemuck::cast_slice(p.strided_samples()),
             Self::I32(p) => bytemuck::cast_slice(p.strided_samples()),
             Self::F32(p) => bytemuck::cast_slice(p.strided_samples()),
@@ -991,6 +814,8 @@ pub enum AnyPlaneMut<'a> {
     U16(PlaneMut<'a, u16>),
     /// Native `i16` samples.
     I16(PlaneMut<'a, i16>),
+    /// Native `f16` (`F16Sample`) samples.
+    F16(PlaneMut<'a, F16Sample>),
     /// Native `u32` samples.
     U32(PlaneMut<'a, u32>),
     /// Native `i32` samples.
@@ -1005,7 +830,55 @@ pub enum AnyPlaneMut<'a> {
     F64(PlaneMut<'a, f64>),
 }
 
-impl AnyPlaneMut<'_> {
+impl<'a> AnyPlaneMut<'a> {
+    /// Samples per row.
+    pub fn width(&self) -> usize {
+        self.as_ref().width()
+    }
+    /// Rows.
+    pub fn height(&self) -> usize {
+        self.as_ref().height()
+    }
+    /// Native storage type.
+    pub fn channel_type(&self) -> ChannelType {
+        self.as_ref().channel_type()
+    }
+    /// Bytes between row starts, with checked sample-to-byte multiplication.
+    pub fn stride_bytes(&self) -> Result<usize, PlaneError> {
+        self.as_ref().stride_bytes()
+    }
+    /// Native-endian samples and intervening padding, without final-row padding.
+    pub fn as_strided_bytes(&self) -> &[u8] {
+        match self {
+            Self::U8(p) => bytemuck::cast_slice(p.strided_samples()),
+            Self::I8(p) => bytemuck::cast_slice(p.strided_samples()),
+            Self::U16(p) => bytemuck::cast_slice(p.strided_samples()),
+            Self::I16(p) => bytemuck::cast_slice(p.strided_samples()),
+            Self::F16(p) => bytemuck::cast_slice(p.strided_samples()),
+            Self::U32(p) => bytemuck::cast_slice(p.strided_samples()),
+            Self::I32(p) => bytemuck::cast_slice(p.strided_samples()),
+            Self::F32(p) => bytemuck::cast_slice(p.strided_samples()),
+            Self::U64(p) => bytemuck::cast_slice(p.strided_samples()),
+            Self::I64(p) => bytemuck::cast_slice(p.strided_samples()),
+            Self::F64(p) => bytemuck::cast_slice(p.strided_samples()),
+        }
+    }
+    /// Mutable native-endian samples and intervening padding, without final-row padding.
+    pub fn as_strided_bytes_mut(&mut self) -> &mut [u8] {
+        match self {
+            Self::U8(p) => bytemuck::cast_slice_mut(p.strided_samples_mut()),
+            Self::I8(p) => bytemuck::cast_slice_mut(p.strided_samples_mut()),
+            Self::U16(p) => bytemuck::cast_slice_mut(p.strided_samples_mut()),
+            Self::I16(p) => bytemuck::cast_slice_mut(p.strided_samples_mut()),
+            Self::F16(p) => bytemuck::cast_slice_mut(p.strided_samples_mut()),
+            Self::U32(p) => bytemuck::cast_slice_mut(p.strided_samples_mut()),
+            Self::I32(p) => bytemuck::cast_slice_mut(p.strided_samples_mut()),
+            Self::F32(p) => bytemuck::cast_slice_mut(p.strided_samples_mut()),
+            Self::U64(p) => bytemuck::cast_slice_mut(p.strided_samples_mut()),
+            Self::I64(p) => bytemuck::cast_slice_mut(p.strided_samples_mut()),
+            Self::F64(p) => bytemuck::cast_slice_mut(p.strided_samples_mut()),
+        }
+    }
     /// Borrow without allocating or copying samples.
     pub fn as_ref(&self) -> AnyPlane<'_> {
         match self {
@@ -1013,6 +886,7 @@ impl AnyPlaneMut<'_> {
             Self::I8(p) => AnyPlane::I8(p.view()),
             Self::U16(p) => AnyPlane::U16(p.view()),
             Self::I16(p) => AnyPlane::I16(p.view()),
+            Self::F16(p) => AnyPlane::F16(p.view()),
             Self::U32(p) => AnyPlane::U32(p.view()),
             Self::I32(p) => AnyPlane::I32(p.view()),
             Self::F32(p) => AnyPlane::F32(p.view()),
@@ -1028,6 +902,7 @@ impl AnyPlaneMut<'_> {
             Self::I8(p) => AnyPlaneMut::I8(p.view_mut()),
             Self::U16(p) => AnyPlaneMut::U16(p.view_mut()),
             Self::I16(p) => AnyPlaneMut::I16(p.view_mut()),
+            Self::F16(p) => AnyPlaneMut::F16(p.view_mut()),
             Self::U32(p) => AnyPlaneMut::U32(p.view_mut()),
             Self::I32(p) => AnyPlaneMut::I32(p.view_mut()),
             Self::F32(p) => AnyPlaneMut::F32(p.view_mut()),
@@ -1050,6 +925,8 @@ pub enum AnyPlaneBuf {
     U16(PlaneBuf<u16>),
     /// Native `i16` samples.
     I16(PlaneBuf<i16>),
+    /// Native `f16` (`F16Sample`) samples.
+    F16(PlaneBuf<F16Sample>),
     /// Native `u32` samples.
     U32(PlaneBuf<u32>),
     /// Native `i32` samples.
@@ -1072,6 +949,7 @@ impl AnyPlaneBuf {
             Self::I8(p) => AnyPlane::I8(p.view()),
             Self::U16(p) => AnyPlane::U16(p.view()),
             Self::I16(p) => AnyPlane::I16(p.view()),
+            Self::F16(p) => AnyPlane::F16(p.view()),
             Self::U32(p) => AnyPlane::U32(p.view()),
             Self::I32(p) => AnyPlane::I32(p.view()),
             Self::F32(p) => AnyPlane::F32(p.view()),
@@ -1087,6 +965,7 @@ impl AnyPlaneBuf {
             Self::I8(p) => AnyPlaneMut::I8(p.view_mut()),
             Self::U16(p) => AnyPlaneMut::U16(p.view_mut()),
             Self::I16(p) => AnyPlaneMut::I16(p.view_mut()),
+            Self::F16(p) => AnyPlaneMut::F16(p.view_mut()),
             Self::U32(p) => AnyPlaneMut::U32(p.view_mut()),
             Self::I32(p) => AnyPlaneMut::I32(p.view_mut()),
             Self::F32(p) => AnyPlaneMut::F32(p.view_mut()),
@@ -1226,7 +1105,7 @@ impl<'a> Planes<'a> {
         for i in 0..self.len() {
             layout.check_plane(i, &self.get(i).expect("in bounds"), width, height)?;
         }
-        if layout.roles().any(|r| r == PlaneRole::Alpha) != alpha.is_some()
+        if layout.roles().any(PlaneRole::is_alpha) != alpha.is_some()
             || alpha == Some(crate::AlphaMode::Undefined)
         {
             return Err(LayoutError::AlphaInterpretation);
@@ -1239,8 +1118,15 @@ impl<'a> Planes<'a> {
 ///
 /// A gray or monochrome picture is a `Luma` plane. Semi-planar chroma (NV12,
 /// P010, NV21) is one plane holding two components per position, in the order
-/// the variant names.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// the variant names. Planar CMYK holds `Cyan`, `Magenta`, `Yellow` and `Black`
+/// planes (ink polarity belongs to [`PlanarLayout::is_inverted_cmyk`], not to
+/// separate role variants). Extra channels (`Alpha`, `Depth`, `SelectionMask`,
+/// `Thermal`, `SpotColor`, `Cfa`, `Auxiliary`) may accompany any color family
+/// or form an extra-only `Mono` layout; callers should query
+/// [`PlanarLayout::plane_size`] for every plane's dimensions and use
+/// [`PlaneRole::is_alpha`] / [`PlaneRole::is_cmyk`] rather than hardcoding
+/// variant equality.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PlaneRole {
     /// Y, or gray.
@@ -1261,6 +1147,59 @@ pub enum PlaneRole {
     Blue,
     /// Alpha.
     Alpha,
+    /// Cyan ink component in planar CMYK.
+    Cyan,
+    /// Magenta ink component in planar CMYK.
+    Magenta,
+    /// Yellow ink component in planar CMYK.
+    Yellow,
+    /// Black (key) ink component in planar CMYK.
+    Black,
+    /// Scene or camera depth map extra channel.
+    Depth,
+    /// Selection or segmentation mask extra channel.
+    SelectionMask,
+    /// Thermal / infrared radiance extra channel.
+    Thermal,
+    /// Spot-color ink extra channel (`0..=255`).
+    SpotColor(u8),
+    /// Bayer / color-filter-array sensor sub-channel (`0..=255`).
+    Cfa(u8),
+    /// Codec-generic auxiliary extra channel (`0..=255`, e.g. JPEG XL `Optional` / `Unknown`).
+    Auxiliary(u8),
+}
+
+// Explicit Hash preserves the `isize` discriminant width of the original unit
+// variants (`0..=8`) so `portable_v1_golden_hashes` remains bit-for-bit stable
+// across compilers and enum representation changes.
+impl core::hash::Hash for PlaneRole {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        let (tag, index): (isize, Option<u8>) = match *self {
+            Self::Luma => (0, None),
+            Self::Cb => (1, None),
+            Self::Cr => (2, None),
+            Self::CbCr => (3, None),
+            Self::CrCb => (4, None),
+            Self::Red => (5, None),
+            Self::Green => (6, None),
+            Self::Blue => (7, None),
+            Self::Alpha => (8, None),
+            Self::Cyan => (9, None),
+            Self::Magenta => (10, None),
+            Self::Yellow => (11, None),
+            Self::Black => (12, None),
+            Self::Depth => (13, None),
+            Self::SelectionMask => (14, None),
+            Self::Thermal => (15, None),
+            Self::SpotColor(i) => (16, Some(i)),
+            Self::Cfa(i) => (17, Some(i)),
+            Self::Auxiliary(i) => (18, Some(i)),
+        };
+        state.write_isize(tag);
+        if let Some(i) = index {
+            state.write_u8(i);
+        }
+    }
 }
 
 impl PlaneRole {
@@ -1271,6 +1210,45 @@ impl PlaneRole {
             Self::CbCr | Self::CrCb => 2,
             _ => 1,
         }
+    }
+
+    /// True when this role is a primary color component (`Luma`/chroma, `RGB`, or `CMYK`).
+    pub const fn is_color(self) -> bool {
+        !self.is_extra()
+    }
+
+    /// True when this role is an alpha plane (today [`Self::Alpha`]; future
+    /// minor releases may add indexed secondary alpha variants).
+    ///
+    /// Prefer `role.is_alpha()` over `role == PlaneRole::Alpha`.
+    pub const fn is_alpha(self) -> bool {
+        matches!(self, Self::Alpha)
+    }
+
+    /// True when this role is one of the four planar CMYK ink components.
+    ///
+    /// Prefer `role.is_cmyk()` combined with [`PlanarLayout::is_inverted_cmyk`]
+    /// rather than expecting polarity-specific role variants.
+    pub const fn is_cmyk(self) -> bool {
+        matches!(
+            self,
+            Self::Cyan | Self::Magenta | Self::Yellow | Self::Black
+        )
+    }
+
+    /// True when this role is an extra channel (`Alpha`, `Depth`, `SelectionMask`,
+    /// `Thermal`, `SpotColor`, `Cfa`, or `Auxiliary`).
+    pub const fn is_extra(self) -> bool {
+        matches!(
+            self,
+            Self::Alpha
+                | Self::Depth
+                | Self::SelectionMask
+                | Self::Thermal
+                | Self::SpotColor(_)
+                | Self::Cfa(_)
+                | Self::Auxiliary(_)
+        )
     }
 
     const fn is_chroma(self) -> bool {
@@ -1379,6 +1357,9 @@ pub enum PlaneEncoding {
     /// Native F64 samples, with the same explicit affine interpretation.
     /// Scale and offset are described by [`FloatEncoding`]; samples are not narrowed.
     Float64(FloatEncoding),
+    /// Native F16 ([`F16Sample`]) samples, with the same explicit affine
+    /// interpretation (`scale` and `offset` in [`FloatEncoding`]).
+    Float16(FloatEncoding),
 }
 
 impl PlaneEncoding {
@@ -1388,21 +1369,75 @@ impl PlaneEncoding {
             Self::Code(e) => e.storage(),
             Self::Float(_) => ChannelType::F32,
             Self::Float64(_) => ChannelType::F64,
+            Self::Float16(_) => ChannelType::F16,
         }
     }
 }
 
 /// One plane of a [`PlanarLayout`]: what it holds and how.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+///
+/// Extra-channel planes (`Alpha`, `Depth`, `SelectionMask`, `Thermal`,
+/// `SpotColor`, `Cfa`, `Auxiliary`) may optionally carry power-of-two horizontal
+/// and vertical downsampling shifts (`0..=3`, i.e. 1× to 1/8× resolution,
+/// rounded up at odd image edges) via [`PlaneSpec::with_subsampling_shift`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlaneSpec {
     role: PlaneRole,
     encoding: PlaneEncoding,
+    h_shift: u8,
+    v_shift: u8,
+}
+
+// Explicit Hash preserves exact v1 golden hashes for unshifted (`0, 0`) specs
+// while including non-zero subsampling shifts when present.
+impl core::hash::Hash for PlaneSpec {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.role.hash(state);
+        self.encoding.hash(state);
+        if self.h_shift != 0 || self.v_shift != 0 {
+            state.write_u8(self.h_shift);
+            state.write_u8(self.v_shift);
+        }
+    }
 }
 
 impl PlaneSpec {
-    /// A plane holding `role`, encoded as `encoding`.
+    /// A full-resolution (`h_shift = 0, v_shift = 0`) plane holding `role`,
+    /// encoded as `encoding`. Chroma planes derive their subsampling from the
+    /// enclosing [`PlanarLayout`].
     pub const fn new(role: PlaneRole, encoding: PlaneEncoding) -> Self {
-        Self { role, encoding }
+        Self {
+            role,
+            encoding,
+            h_shift: 0,
+            v_shift: 0,
+        }
+    }
+
+    /// Attach power-of-two horizontal and vertical subsampling shifts (`0..=3`,
+    /// meaning `width.div_ceil(1 << h_shift)` by `height.div_ceil(1 << v_shift)`)
+    /// to an extra-channel plane (`role.is_extra()`, e.g. HEIC/AVIF half-res
+    /// depth/gain-map/alpha or JPEG XL `dim_shift`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LayoutError::Subsampling`] if `h_shift > 3`, `v_shift > 3`, or
+    /// either shift is non-zero on a primary color plane (`Luma`, chroma, `RGB`,
+    /// or `CMYK`, whose subsampling belongs to [`PlanarLayout::subsampling`]).
+    pub const fn with_subsampling_shift(
+        mut self,
+        h_shift: u8,
+        v_shift: u8,
+    ) -> Result<Self, LayoutError> {
+        if h_shift > 3 || v_shift > 3 {
+            return Err(LayoutError::Subsampling);
+        }
+        if (h_shift != 0 || v_shift != 0) && !self.role.is_extra() {
+            return Err(LayoutError::Subsampling);
+        }
+        self.h_shift = h_shift;
+        self.v_shift = v_shift;
+        Ok(self)
     }
 
     /// What the plane holds.
@@ -1413,6 +1448,18 @@ impl PlaneSpec {
     /// How its samples encode values.
     pub const fn encoding(self) -> PlaneEncoding {
         self.encoding
+    }
+
+    /// Horizontal power-of-two subsampling shift (`0..=3`) for extra-channel
+    /// planes; always `0` for primary color and chroma planes.
+    pub const fn h_shift(self) -> u8 {
+        self.h_shift
+    }
+
+    /// Vertical power-of-two subsampling shift (`0..=3`) for extra-channel
+    /// planes; always `0` for primary color and chroma planes.
+    pub const fn v_shift(self) -> u8 {
+        self.v_shift
     }
 }
 
@@ -1427,15 +1474,18 @@ pub enum LayoutError {
     Empty,
     /// A component appears in more than one plane.
     DuplicateRole(PlaneRole),
-    /// YCbCr and RGB components are mixed.
+    /// Primary color families (YCbCr, RGB, CMYK) are mixed.
     MixedFamilies,
-    /// A component the others require is missing (Luma with chroma, or one
-    /// of R, G, B).
+    /// A component the others require is missing (Luma with chroma, one of
+    /// R, G, B, or one of C, M, Y, K).
     MissingRole(PlaneRole),
     /// Subsampling disagrees with the planes: chroma planes need a
-    /// subsampling other than `Mono`, a luma-only layout needs `Mono`, and
-    /// planar RGB needs `Yuv444`.
+    /// subsampling other than `Mono`, luma-only and extra-only layouts need
+    /// `Mono`, planar RGB or CMYK needs `Yuv444`, and per-plane subsampling
+    /// shifts (`0..=3`) apply only to extra-channel planes.
     Subsampling,
+    /// Inverted CMYK ink polarity was requested on a non-CMYK layout.
+    InkPolarity,
     /// The number of planes differs from the layout.
     PlaneCount {
         /// Planes in the layout.
@@ -1474,9 +1524,14 @@ impl fmt::Display for LayoutError {
             }
             Self::Empty => f.write_str("planar layout has no planes"),
             Self::DuplicateRole(r) => write!(f, "planar layout holds {r:?} twice"),
-            Self::MixedFamilies => f.write_str("planar layout mixes YCbCr and RGB components"),
+            Self::MixedFamilies => {
+                f.write_str("planar layout mixes incompatible color families (YCbCr, RGB, CMYK)")
+            }
             Self::MissingRole(r) => write!(f, "planar layout lacks {r:?}"),
-            Self::Subsampling => f.write_str("chroma subsampling disagrees with the planes"),
+            Self::Subsampling => f.write_str("chroma or extra-plane subsampling disagrees with the planes"),
+            Self::InkPolarity => {
+                f.write_str("inverted CMYK polarity requires a planar CMYK layout")
+            }
             Self::PlaneCount { expected, actual } => {
                 write!(f, "layout has {expected} planes, {actual} supplied")
             }
@@ -1504,20 +1559,52 @@ impl core::error::Error for LayoutError {}
 ///
 /// Plane order is the order of [`PlanarLayout::planes`]; it is not implied by
 /// the roles. Color signaling travels with the enclosing descriptor.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlanarLayout {
     planes: Vec<PlaneSpec>,
     subsampling: ChromaSubsampling,
     siting: ChromaSiting,
+    inverted_cmyk: bool,
+}
+
+// Explicit Hash preserves exact v1 golden hashes for conventional layouts while
+// distinguishing inverted-CMYK polarity when set.
+impl core::hash::Hash for PlanarLayout {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.planes.hash(state);
+        self.subsampling.hash(state);
+        self.siting.hash(state);
+        if self.inverted_cmyk {
+            state.write_u8(1);
+        }
+    }
 }
 
 impl PlanarLayout {
     /// Check and adopt a plane list.
     ///
-    /// Each component appears once. YCbCr layouts hold Luma, optionally both
-    /// Cb and Cr (separately or in one interleaved plane), and optionally
-    /// Alpha; RGB layouts hold Red, Green, Blue and optionally Alpha; an alpha-only
-    /// layout holds Alpha alone, with `Mono` subsampling.
+    /// Primary color families are mutually exclusive:
+    /// - **YCbCr / Gray**: `Luma`, optionally both `Cb` and `Cr` (separately or
+    ///   in one `CbCr`/`CrCb` plane).
+    /// - **RGB**: `Red`, `Green`, and `Blue` with `Yuv444`.
+    /// - **CMYK**: `Cyan`, `Magenta`, `Yellow`, and `Black` with `Yuv444`
+    ///   (defaults to conventional ink polarity; chain
+    ///   [`PlanarLayout::with_inverted_cmyk`] for inverted `0 = full ink` CMYK).
+    ///
+    /// Extra roles (`Alpha`, `Depth`, `SelectionMask`, `Thermal`,
+    /// `SpotColor(i)`, `Cfa(i)`, `Auxiliary(i)`) may accompany any primary
+    /// family or stand alone with `Mono` subsampling, and may carry per-plane
+    /// subsampling shifts via [`PlaneSpec::with_subsampling_shift`].
+    ///
+    /// **Forward-compatibility notes for `0.3.x` consumers**:
+    /// - Always query [`PlanarLayout::plane_size`] for every plane rather than
+    ///   assuming non-chroma / extra planes match `(width, height)`.
+    /// - Today [`PlanarLayout::new`] rejects duplicate roles, but future minor
+    ///   constructors may permit multiple extra channels (e.g. secondary alphas,
+    ///   masks, or depth planes); use [`PlaneRole::is_alpha`] and iterate
+    ///   [`PlanarLayout::planes`] rather than assuming at most one extra channel.
+    /// - Planar CMYK ink polarity belongs to [`PlanarLayout::is_inverted_cmyk`],
+    ///   keeping [`PlaneRole`] purely semantic.
     ///
     /// # Errors
     ///
@@ -1549,8 +1636,9 @@ impl PlanarLayout {
             cr |= holds_cr;
         }
         let rgb = planes.iter().any(|p| p.role.is_rgb());
+        let cmyk = planes.iter().any(|p| p.role.is_cmyk());
         let ycbcr = has(PlaneRole::Luma) || cb || cr;
-        if rgb && ycbcr {
+        if u8::from(rgb) + u8::from(cmyk) + u8::from(ycbcr) > 1 {
             return Err(LayoutError::MixedFamilies);
         }
         if rgb {
@@ -1562,10 +1650,22 @@ impl PlanarLayout {
             if subsampling != ChromaSubsampling::Yuv444 {
                 return Err(LayoutError::Subsampling);
             }
-        } else {
-            // A lone alpha plane is a valid image (`image`'s `A8`); anything else needs luma.
-            let alpha_only = planes.len() == 1 && has(PlaneRole::Alpha);
-            if !has(PlaneRole::Luma) && !alpha_only {
+        } else if cmyk {
+            for r in [
+                PlaneRole::Cyan,
+                PlaneRole::Magenta,
+                PlaneRole::Yellow,
+                PlaneRole::Black,
+            ] {
+                if !has(r) {
+                    return Err(LayoutError::MissingRole(r));
+                }
+            }
+            if subsampling != ChromaSubsampling::Yuv444 {
+                return Err(LayoutError::Subsampling);
+            }
+        } else if ycbcr {
+            if !has(PlaneRole::Luma) {
                 return Err(LayoutError::MissingRole(PlaneRole::Luma));
             }
             if cb != cr {
@@ -1575,12 +1675,32 @@ impl PlanarLayout {
             if cb == (subsampling == ChromaSubsampling::Mono) {
                 return Err(LayoutError::Subsampling);
             }
+        } else if subsampling != ChromaSubsampling::Mono {
+            // Extra-only layout (e.g. lone Alpha or Depth/Mask planes) has no chroma.
+            return Err(LayoutError::Subsampling);
         }
         Ok(Self {
             planes,
             subsampling,
             siting,
+            inverted_cmyk: false,
         })
+    }
+
+    /// Set whether a planar CMYK layout uses inverted ink polarity
+    /// (`0 = full ink`, max/`1.0` = no ink, as in JPEG XL and Adobe APP14 CMYK)
+    /// instead of conventional ICC ink polarity (`0 = no ink`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LayoutError::InkPolarity`] if `inverted` is `true` on a layout
+    /// whose primary color family is not planar CMYK.
+    pub fn with_inverted_cmyk(mut self, inverted: bool) -> Result<Self, LayoutError> {
+        if inverted && !self.planes.iter().any(|p| p.role.is_cmyk()) {
+            return Err(LayoutError::InkPolarity);
+        }
+        self.inverted_cmyk = inverted;
+        Ok(self)
     }
 
     /// The planes, in storage order.
@@ -1603,16 +1723,28 @@ impl PlanarLayout {
         self.siting
     }
 
+    /// Whether planar CMYK ink planes use inverted polarity (`0 = full ink`,
+    /// max/1.0 = no ink, as in JPEG XL / Adobe APP14 CMYK) rather than
+    /// conventional ICC ink polarity (`0 = no ink`).
+    ///
+    /// Defaults to `false`; configure with [`PlanarLayout::with_inverted_cmyk`].
+    pub const fn is_inverted_cmyk(&self) -> bool {
+        self.inverted_cmyk
+    }
+
     /// Positions (not samples) per row and rows of plane `index` in a
     /// `width` x `height` picture; `None` for an index past the last plane.
-    /// Chroma planes are rounded up; multiply the width by
-    /// [`PlaneRole::components`] for samples per row.
+    /// Subsampled chroma and shifted extra-channel planes are rounded up at odd
+    /// edges; multiply the width by [`PlaneRole::components`] for samples per row.
     pub fn plane_size(&self, index: usize, width: u32, height: u32) -> Option<(u32, u32)> {
         let spec = self.planes().get(index)?;
         if spec.role.is_chroma() {
             self.subsampling.chroma_size(width, height)
         } else {
-            Some((width, height))
+            Some((
+                width.div_ceil(1u32 << spec.h_shift),
+                height.div_ceil(1u32 << spec.v_shift),
+            ))
         }
     }
 

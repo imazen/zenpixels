@@ -84,12 +84,23 @@ pub trait RowTransform: Send + Sync {
 /// RowTransformMut>`, so implementations can reuse scratch buffers and
 /// update internal state per call without interior mutability.
 ///
+/// Requires `Send + Sync` so an owning [`RowConverter`] or [`OutputPlan`](crate::OutputPlan)
+/// remains `Sync` (for scoped thread fan-out and `&self` borrows across async
+/// `.await` points). Every method on this trait takes `&mut self`, so ordinary
+/// Rust scratch fields (`Vec<f32>`, `Box<...>`, etc.) satisfy `Sync`
+/// automatically. To wrap a `Send + !Sync` C-FFI handle (such as a cached
+/// `lcms2::Transform<..., AllowCache>`), either construct it without cache
+/// (`Flags::NO_CACHE`), or hold it in `sync_wrapper::SyncWrapper<T>` /
+/// `std::sync::Mutex<T>` and access it via `.get_mut()` inside `transform_row`
+/// (which compiles to a zero-locking pointer access because `&mut self` proves
+/// exclusive ownership).
+///
 /// When the transform is stateless and could be shared, use
 /// [`RowTransform`] instead — [`PluggableCms`] can offer both paths via
 /// [`build_shared_source_transform`](PluggableCms::build_shared_source_transform).
 ///
 /// [`RowConverter`]: crate::RowConverter
-pub trait RowTransformMut: Send {
+pub trait RowTransformMut: Send + Sync {
     /// Transform one row of pixels from source to destination color space.
     ///
     /// `src` and `dst` may be different lengths if the transform changes

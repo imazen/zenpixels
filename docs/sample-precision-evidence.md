@@ -253,21 +253,21 @@ zencodec's duplicate `frame::SampleEncoding` can re-export zenpixels' in the pai
 
 zenpixels: `sample::{ExactDepth, ExactDepthError}` with `ExactDepth::{measure, holds_for}`;
 `CodePlane::{from_u8_interleaved, from_u16_interleaved, step_words, read_codes}`;
-`CodePlaneError::{ZeroStep, OutsideActivePlane}` (0.2.17; 0.3.1 replaces the constructors with
-`CodePlane::{new, component}` over `plane::AnyPlane`, see `docs/planar-types.md`); `PixelSlice::{exact_depth, with_exact_depth}`;
+`CodePlaneError::{ZeroStep, OutsideActivePlane}` (0.2.17; 0.3.1 replaces the constructors and `step_words` with
+`CodePlane::{new, component, step_samples}` over `plane::AnyPlane`, see `docs/planar-types.md`); `PixelSlice::{exact_depth, with_exact_depth}`;
 `PixelBuffer::{exact_depth, set_exact_depth}`. zenpixels-convert: `codes::{CodeRole, CodeMap,
 CodeMapError, CodesError, to_canonical}` and `OutputPlan::output_color_context`. Everything is additive (new private
 fields on types that already had private fields), so this design needs no break of its own and can
 ship unchanged in the paired breaking release with zencodec.
 
 Layout cost, measured with `size_of`/`align_of` on x86_64 (rustc 1.99.1, default features; a
-structural measure, not heap or RSS): `PixelSlice` 48 → 56 bytes and `PixelBuffer` 64 → 72 bytes,
-alignment 8 unchanged; `PixelSliceMut` stays 48 (it carries no evidence); `CodePlane` 56 → 64 for
-`step_words`. `Option<ExactDepth>` is 4 bytes with alignment 1. It costs 8 because the base fields
-sum to 45 and 61 bytes, leaving 3 bytes of tail padding. A 2-byte field holding only the two depths
-(storage and range read from the descriptor) would fit that padding by the same arithmetic; it is
-not implemented or measured. Other targets were not measured. Evidence carriage allocates nothing
-(`tests/codes_alloc.rs`). Probe sources, command and results: `benchmarks/layout_2026-10-28.md`.
+structural measure, not heap or RSS): in 0.2.17, `PixelSlice` was 48 → 56 bytes and `PixelBuffer` 64 → 72 bytes,
+alignment 8 unchanged; `PixelSliceMut` stayed 48 (it carries no evidence); `CodePlane` 56 → 64 for
+`step_words`. In 0.3.1, `ExactDepth` packs `(storage, range, color_bits, alpha_bits)` into 2 bytes
+(`[NonZeroU8, u8]`, `Option<ExactDepth>` = 2 bytes), `PixelDescriptor` is 6 bytes, `PixelBuffer` stores
+`stride_samples: u32`, and `CodePlane` replaces `step_words: usize` with `step_samples: u32` (and bytes-based
+sample slicing): `PixelSlice` is 48 bytes, `PixelBuffer` is 64 bytes (one cache line), and `CodePlane` is 48 bytes.
+Evidence carriage allocates nothing (`tests/codes_alloc.rs`). Historical 0.2.17 probe: `benchmarks/layout_2026-10-28.md`.
 
 Not changed: `negotiate::Provenance` stays a cost-model hint (its `origin_depth` is a
 `ChannelType` and cannot say 10/12); `FormatEntry::effective_bits` likewise. Their docs should state

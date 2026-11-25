@@ -23,7 +23,9 @@ use core::fmt;
 mod exact;
 mod plane;
 pub use exact::{ExactDepth, ExactDepthError};
-pub use plane::{ChromaSiting, ChromaSubsampling, CodePlane, CodePlaneError};
+pub use plane::{ChromaSiting, ChromaSubsampling};
+#[cfg(feature = "planar")]
+pub use plane::{CodePlane, CodePlaneError, CodePlaneMut};
 
 /// Checked interpretation of one integer code in a stored sample.
 ///
@@ -91,6 +93,15 @@ impl SampleEncoding {
     /// Number of low padding bits below the code in its stored sample.
     pub const fn bit_shift(self) -> u8 {
         self.bit_shift
+    }
+
+    /// True when the backing integer storage is signed two's complement
+    /// (`I8`, `I16`, `I32`, or `I64`).
+    pub const fn is_signed(self) -> bool {
+        matches!(
+            self.storage,
+            ChannelType::I8 | ChannelType::I16 | ChannelType::I32 | ChannelType::I64
+        )
     }
 }
 

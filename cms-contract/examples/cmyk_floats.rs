@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_source_transform(
             ColorProfileSource::Icc(&icc),
             ColorProfileSource::Cicp(Cicp::new(1, 13, 0, true)),
-            PixelFormat::CmykF32Inverted,
+            PixelFormat::CMYKF32_INVERTED,
             PixelFormat::RgbF32,
             &ConvertOptions::permissive().with_clip_out_of_gamut(false),
         )

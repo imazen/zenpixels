@@ -91,10 +91,12 @@ fn named_spaces_keep_their_descriptor() {
         (pq.descriptor().primaries, pq.descriptor().transfer()),
         (P::Bt2020, Tf::Pq)
     );
-    // CSS puts 1.0 at 203 cd/m², and our linear puts it at PQ's 10,000.
+    // W3C CSS Color HDR 1 §4.1: `color(rec2100-linear 1 1 1)` is media white (`1.0`),
+    // matching sRGB white `#ffffff`.
     let linear = Color::parse_css("color(rec2100-linear 1 1 1)").unwrap();
     let samples: &[f32] = bytemuck::cast_slice(linear.as_bytes());
-    assert!((samples[0] - 0.0203).abs() < 1e-6, "{samples:?}");
+    assert_eq!(samples, &[1.0, 1.0, 1.0]);
+    assert!(linear.same_color(&Color::srgb8(255, 255, 255)));
 }
 
 #[test]

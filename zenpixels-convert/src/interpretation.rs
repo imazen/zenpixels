@@ -18,6 +18,11 @@ pub(crate) fn resolve_options(
     {
         resolved = resolved.with_hdr_peak(zenpixels::hdr::HdrPeak::Nits(peak));
     }
+    if resolved.rendering_intent().is_none()
+        && let Some(intent) = current.and_then(|c| c.rendering_intent())
+    {
+        resolved = resolved.with_rendering_intent(intent);
+    }
     resolved
 }
 

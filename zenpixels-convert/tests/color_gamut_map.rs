@@ -76,12 +76,18 @@ fn eight_bit_targets_and_alpha() {
 #[test]
 fn refuses_what_it_cannot_map() {
     let c = Color::srgb8(1, 2, 3);
+    // Adobe RGB now has exact XYZ/Oklab matrices and maps cleanly.
+    let p3_green = Color::try_new(D::RGB8_SRGB.with_primaries(P::DisplayP3), &[0, 255, 0]).unwrap();
+    let adobe_mapped = p3_green
+        .map_to_gamut(D::RGB8_SRGB.with_primaries(P::AdobeRgb))
+        .unwrap();
+    assert_eq!(adobe_mapped.descriptor().primaries, P::AdobeRgb);
+
     let refused = [
         D::RGB16_SRGB
             .with_transfer(Tf::Pq)
             .with_primaries(P::Bt2020),
         D::GRAY8_SRGB,
-        D::RGB8_SRGB.with_primaries(P::AdobeRgb),
         D::RGB8_SRGB.with_primaries(P::Unknown),
     ];
     for target in refused {
@@ -199,7 +205,7 @@ mod same_color {
         let gray = Color::try_new(D::GRAY8_SRGB, &[128]).unwrap();
         assert!(gray.same_color(&Color::srgb8(128, 128, 128)));
         assert!(!gray.same_color(&Color::srgb8(128, 128, 129)));
-        let bgr = Color::try_new(D::BGR8.with_transfer(T::Srgb), &[30, 20, 10]).unwrap();
+        let bgr = Color::try_new(D::new(C::U8, L::Bgr, None, T::Srgb), &[30, 20, 10]).unwrap();
         assert!(bgr.same_color(&Color::srgb8(10, 20, 30)));
         assert!(!bgr.same_color(&Color::srgb8(30, 20, 10)));
         let bgra = Color::try_new(D::BGRA8_SRGB, &[30, 20, 10, 255]).unwrap();

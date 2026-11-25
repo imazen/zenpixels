@@ -396,13 +396,17 @@ pub(crate) fn bt2446a_tier(
             ga[i] = px[1];
             ba[i] = px[2];
         }
-        // Pre-clamp to `pos_eps` so every downstream `*_unchecked` transcendental
-        // sees only finite positive inputs. The `valid = y_p > 0` mask at the
-        // end still snaps the original-zero pixels back to black, so the tiny
-        // `pos_eps^...` placeholders never reach the output buffer.
-        let r = f32x16::load_t(token, &ra).max(pos_eps);
-        let g = f32x16::load_t(token, &ga).max(pos_eps);
-        let b = f32x16::load_t(token, &ba).max(pos_eps);
+        // ITU-R BT.2446-1 §4.1 Table 2 specifies normalized [0, 1] HDR RGB inputs.
+        // Record `valid` from the raw positive mask before clamping to `[pos_eps, 1.0]`
+        // so every downstream `*_unchecked` transcendental sees finite positive inputs
+        // while originally zero/non-positive pixels still snap to exact 0.0 on store.
+        let raw_r = f32x16::load_t(token, &ra);
+        let raw_g = f32x16::load_t(token, &ga);
+        let raw_b = f32x16::load_t(token, &ba);
+        let valid = raw_r.simd_gt(zero) | raw_g.simd_gt(zero) | raw_b.simd_gt(zero);
+        let r = raw_r.min(one).max(pos_eps);
+        let g = raw_g.min(one).max(pos_eps);
+        let b = raw_b.min(one).max(pos_eps);
 
         let r_p = r.pow_midp_unchecked(inv_24);
         let g_p = g.pow_midp_unchecked(inv_24);
@@ -450,8 +454,7 @@ pub(crate) fn bt2446a_tier(
         let b_out = eotf(b_prime_out);
 
         // Pre-clamp turns originally-zero pixels into `pos_eps`; the
-        // `valid` mask snaps them back to true black on store.
-        let valid = y_p.simd_gt(pos_eps);
+        // `valid` mask computed from the raw inputs snaps them back to true black on store.
         let or_arr = f32x16::blend(valid, r_out, zero).to_array();
         let og_arr = f32x16::blend(valid, g_out, zero).to_array();
         let ob_arr = f32x16::blend(valid, b_out, zero).to_array();

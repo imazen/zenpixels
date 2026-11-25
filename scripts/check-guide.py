@@ -16,7 +16,7 @@ def main():
     scratch = Path(env.setdefault("TMPDIR", str(Path.home() / "tmp")))
     scratch.mkdir(parents=True, exist_ok=True)
     build = subprocess.run(
-        ["cargo", "build", "--locked", "-p", "zenpixels-convert", "--features", "rgb,imgref",
+        ["cargo", "build", "--locked", "-p", "zenpixels-convert", "--features", "rgb,imgref,planar",
          "--message-format=json-render-diagnostics"],
         cwd=root, env=env, text=True, stdout=subprocess.PIPE, check=True,
     )

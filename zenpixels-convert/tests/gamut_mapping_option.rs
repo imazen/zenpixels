@@ -164,10 +164,20 @@ fn every_source_depth_stays_in_range_and_near_clip_inside_the_gamut() {
 
 #[test]
 fn unavailable_mapping_refuses_rather_than_clips() {
-    let adobe_target = D::RGB8_SRGB.with_primaries(P::AdobeRgb);
-    let from = D::RGB8_SRGB.with_primaries(P::Bt2020);
-    let e = RowConverter::new_explicit(from, adobe_target, &soft())
+    // PQ->PQ gamut narrowing succeeds under Clip, so SoftCompress must refuse rather than fall back to clipping.
+    let from_pq = D::RGB16_SRGB
+        .with_transfer(Tf::Pq)
+        .with_primaries(P::Bt2020);
+    let to_pq = D::RGB16_SRGB.with_transfer(Tf::Pq).with_primaries(P::Bt709);
+    assert!(RowConverter::new_explicit(from_pq, to_pq, &clip()).is_ok());
+    let e = RowConverter::new_explicit(from_pq, to_pq, &soft())
         .err()
         .unwrap();
     assert!(matches!(*e.error(), ConvertError::NoPath { .. }), "{e:?}");
+
+    // Adobe RGB now has exact XYZ/Oklab matrices and succeeds with SoftCompress.
+    let from = D::RGB8_SRGB.with_primaries(P::Bt2020);
+    let adobe_target = D::RGB8_SRGB.with_primaries(P::AdobeRgb);
+    let out = convert(from, adobe_target, &soft(), &[0, 255, 0]);
+    assert_eq!(out.len(), 3);
 }

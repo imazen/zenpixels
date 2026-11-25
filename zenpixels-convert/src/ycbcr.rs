@@ -128,7 +128,7 @@ impl<'a> YcbcrToRgbF32<'a> {
         let encoding = planes[0].encoding();
         let bits = encoding.code_bits();
         for (plane, p) in planes.iter().enumerate() {
-            if !matches!(bits, 8 | 10 | 12) || p.encoding() != encoding {
+            if encoding.is_signed() || !matches!(bits, 8 | 10 | 12) || p.encoding() != encoding {
                 return Err(whereat::at!(YcbcrError::UnsupportedEncoding {
                     plane,
                     actual: p.encoding()
@@ -140,6 +140,7 @@ impl<'a> YcbcrToRgbF32<'a> {
             ChromaSubsampling::Yuv444 => (w, h),
             ChromaSubsampling::Yuv422 => (w.div_ceil(2), h),
             ChromaSubsampling::Yuv420 => (w.div_ceil(2), h.div_ceil(2)),
+            ChromaSubsampling::Yuv440 => (w, h.div_ceil(2)),
             _ => {
                 return Err(whereat::at!(YcbcrError::UnsupportedChroma {
                     subsampling: sub,
@@ -268,8 +269,15 @@ impl<'a> YcbcrToRgbF32<'a> {
 
     fn chroma(&self, index: usize, x: usize, y: usize) -> f32 {
         let p = self.planes[index];
-        let (x0, x1, wx) = axis(x, p.width(), self.sub != ChromaSubsampling::Yuv444);
-        let (y0, y1, wy) = axis(y, p.height(), self.sub == ChromaSubsampling::Yuv420);
+        let (h_sub, v_sub) = match self.sub {
+            ChromaSubsampling::Yuv444 => (false, false),
+            ChromaSubsampling::Yuv422 => (true, false),
+            ChromaSubsampling::Yuv420 => (true, true),
+            ChromaSubsampling::Yuv440 => (false, true),
+            _ => unreachable!("unsupported subsampling rejected in YcbcrToRgbF32::new"),
+        };
+        let (x0, x1, wx) = axis(x, p.width(), h_sub);
+        let (y0, y1, wy) = axis(y, p.height(), v_sub);
         let sample = |x, y| u32::from(p.code(x, y).unwrap());
         let top = (4 - wx) * sample(x0, y0) + wx * sample(x1, y0);
         let bottom = (4 - wx) * sample(x0, y1) + wx * sample(x1, y1);
@@ -290,6 +298,8 @@ fn axis(position: usize, length: usize, subsampled: bool) -> (usize, usize, u32)
 fn fma(a: f32, b: f32, c: f32) -> f32 {
     #[cfg(feature = "std")]
     {
+        #[cfg(not(test))]
+        extern crate std;
         a.mul_add(b, c)
     }
     #[cfg(not(feature = "std"))]

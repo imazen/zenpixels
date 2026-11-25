@@ -65,12 +65,22 @@ pub(crate) fn validate_descriptors(
     {
         return Err(whereat::at!(ConvertError::AlphaCheckRequired));
     }
-    if from.signal_range != to.signal_range
-        || (from.signal_range == zenpixels::SignalRange::Narrow
-            && (from.channel_type() != to.channel_type()
-                || from.transfer() != to.transfer()
-                || from.primaries != to.primaries))
-    {
+    let narrow_unsupported = from.signal_range == zenpixels::SignalRange::Narrow
+        && from != to
+        && (from.channel_type() != to.channel_type()
+            || from.transfer() != to.transfer()
+            || from.primaries != to.primaries
+            || from.alpha() == Some(AlphaMode::Premultiplied)
+            || to.alpha() == Some(AlphaMode::Premultiplied)
+            || !matches!(
+                from.color_model(),
+                crate::ColorModel::Rgb | crate::ColorModel::Gray
+            )
+            || !matches!(
+                to.color_model(),
+                crate::ColorModel::Rgb | crate::ColorModel::Gray
+            ));
+    if from.signal_range != to.signal_range || narrow_unsupported {
         return Err(whereat::at!(ConvertError::NoPath { from, to }));
     }
     Ok(())
@@ -440,6 +450,7 @@ pub(crate) enum ConvertStep {
     /// planning so that rows only blend.
     MatteComposite {
         linear: [f32; 3],
+        clip: bool,
     },
     /// Gray → RGB (replicate gray to all 3 channels).
     GrayToRgb,
@@ -484,8 +495,12 @@ pub(crate) enum ConvertStep {
     NaiveU8ToF32,
     /// Naive f32 → u8 (clamp * 255 + 0.5, no gamma).
     NaiveF32ToU8,
+    /// Naive f32 → u8 via floor truncation (`clamp * 255`, `DepthPolicy::Truncate`).
+    NaiveF32ToU8Truncate,
     /// Exact u16 → u8 round-to-nearest.
     U16ToU8,
+    /// u16 → u8 high-byte truncation (`v >> 8`, `DepthPolicy::Truncate`).
+    U16ToU8Truncate,
     /// Composite SDR transfer conversion and final u16 → u8 quantisation in f64.
     SdrU16ToU8 {
         to: TransferFunction,
@@ -496,6 +511,8 @@ pub(crate) enum ConvertStep {
     U16ToF32,
     /// f32 → u16 (clamp * 65535 + 0.5).
     F32ToU16,
+    /// f32 → u16 via floor truncation (`clamp * 65535`, `DepthPolicy::Truncate`).
+    F32ToU16Truncate,
     /// f16 → f32 (IEEE 754 half-precision unpack, no TF).
     F16ToF32,
     /// f32 → f16 (round-to-nearest-even, no TF).
@@ -525,9 +542,9 @@ pub(crate) enum ConvertStep {
     SrgbF32ToLinearF32Extended,
     /// Linear f32 → sRGB f32 (OETF, sign-preserving extended range).
     LinearF32ToSrgbF32Extended,
-    /// BT.709 f32 `[0,1]` → linear f32 (EOTF, no depth change).
+    /// BT.709 f32 → linear f32 (EOTF, same depth; continues linear `v / 4.5` segment below 0).
     Bt709F32ToLinearF32,
-    /// Linear f32 → BT.709 f32 `[0,1]` (OETF, no depth change).
+    /// Linear f32 → BT.709 f32 (OETF, same depth; continues linear `4.5 * v` segment below 0).
     LinearF32ToBt709F32,
     /// Gamma 2.2 (Adobe RGB 1998) f32 `[0,1]` → linear f32 (EOTF, no depth change).
     /// Uses the Adobe RGB 1998 canonical exponent 563/256 ≈ 2.19921875.
@@ -608,6 +625,8 @@ pub(crate) enum ConvertStep {
         primaries: ColorPrimaries,
         knee: f32,
     },
+    /// Closed-form perceptual and polar/cylindrical step (`Oklch`, `Lch`, `Jzazbz`, `Jzczhz`, `Hsl`, `Hsv`).
+    Perceptual(perceptual::PerceptualStep),
 }
 
 impl ConvertStep {
@@ -640,11 +659,14 @@ impl ConvertStep {
             Self::LinearF32ToSrgbU8 => "LinearF32ToSrgbU8",
             Self::NaiveU8ToF32 => "NaiveU8ToF32",
             Self::NaiveF32ToU8 => "NaiveF32ToU8",
+            Self::NaiveF32ToU8Truncate => "NaiveF32ToU8Truncate",
             Self::U16ToU8 => "U16ToU8",
+            Self::U16ToU8Truncate => "U16ToU8Truncate",
             Self::SdrU16ToU8 { .. } => "SdrU16ToU8",
             Self::U8ToU16 => "U8ToU16",
             Self::U16ToF32 => "U16ToF32",
             Self::F32ToU16 => "F32ToU16",
+            Self::F32ToU16Truncate => "F32ToU16Truncate",
             Self::F16ToF32 => "F16ToF32",
             Self::F32ToF16 => "F32ToF16",
             Self::PqU16ToLinearF32 => "PqU16ToLinearF32",
@@ -684,6 +706,7 @@ impl ConvertStep {
             #[cfg(feature = "hdr-experimental")]
             Self::ToneMap(_) => "ToneMap",
             Self::SoftCompressOklch { .. } => "SoftCompressOklch",
+            Self::Perceptual(p) => p.variant_name(),
         }
     }
 }
@@ -691,26 +714,28 @@ impl ConvertStep {
 /// Color models that zenpixels-convert's built-in kernels resolve natively.
 ///
 /// Anything outside this set is a device-dependent / CMS-only path —
-/// CMYK today, Lab / XYZ / spot inks if/when those land as
-/// [`crate::ColorModel`] variants. Used internally before planning.
+/// CMYK, CIE Lab (except direct `Lab <-> Lch` polar coordinate changes),
+/// and CIE XYZ. Used internally before planning.
 #[inline]
 fn native_color_model(m: crate::ColorModel) -> bool {
-    // `Gray`, `Rgb` and `Oklab` are the colorimetric spaces the built-in
-    // kernels handle end-to-end (gamut matrices, transfer LUTs, fused
-    // matluts, polyfit decoders, the OKLab gamut-compression path, …).
-    // `YCbCr` is also colorimetric-equivalent to RGB once the matrix has
-    // been applied, but no kernel here consumes raw `YCbCr` pixels: every
-    // entry point that touches YCbCr first lifts it into RGB via the
-    // decoder's own coefficient pair, so the planner never sees a
-    // `YCbCr` color model on either side. CMYK is the only non-native
-    // model that currently reaches the planner.
     matches!(
         m,
-        crate::ColorModel::Gray | crate::ColorModel::Rgb | crate::ColorModel::Oklab
+        crate::ColorModel::Gray
+            | crate::ColorModel::Rgb
+            | crate::ColorModel::Oklab
+            | crate::ColorModel::Oklch
+            | crate::ColorModel::Lch
+            | crate::ColorModel::Jzazbz
+            | crate::ColorModel::Jzczhz
+            | crate::ColorModel::Hsl
+            | crate::ColorModel::Hsv
     )
 }
 
 pub(crate) fn needs_cms_for_color_model(from: &PixelDescriptor, to: &PixelDescriptor) -> bool {
+    if perceptual::is_direct_lab_lch_pair(from, to) {
+        return false;
+    }
     !native_color_model(from.color_model()) || !native_color_model(to.color_model())
 }
 
@@ -817,8 +842,16 @@ impl ConvertPlan {
         // is the fraction of PQ's 10000 cd/m² peak that relative-linear 1.0 sits at.
         let diffuse_white_nits = f64::from(anchor.nits());
         const PQ_PEAK_NITS: f64 = 10_000.0;
+        let scale = (diffuse_white_nits / PQ_PEAK_NITS) as f32;
         for operation in &mut self.operations {
-            operation.pq_anchor_scale = (diffuse_white_nits / PQ_PEAK_NITS) as f32;
+            operation.pq_anchor_scale = scale;
+            if let ConvertStep::Perceptual(
+                perceptual::PerceptualStep::LinearRgbToJzazbz { anchored, .. }
+                | perceptual::PerceptualStep::JzazbzToLinearRgb { anchored, .. },
+            ) = &mut operation.step
+            {
+                *anchored = true;
+            }
         }
         self
     }
@@ -887,6 +920,19 @@ impl ConvertPlan {
         to: PixelDescriptor,
     ) -> Result<Self, At<ConvertError>> {
         validate_descriptors(from, to)?;
+        if from == to && !needs_cms_for_color_model(&from, &to) {
+            return Ok(Self::build(from, to, vec![ConvertStep::Identity]));
+        }
+        if let Some(pivot) = perceptual::pivot(from, to) {
+            return Self::plan_native(from, pivot)?
+                .compose(&Self::plan_native(pivot, to)?)
+                .ok_or_else(|| whereat::at!(ConvertError::NoPath { from, to }));
+        }
+        match perceptual::try_direct_step(from, to) {
+            Ok(Some(step)) => return Ok(Self::build(from, to, vec![step])),
+            Err(()) => return Err(whereat::at!(ConvertError::NoPath { from, to })),
+            Ok(None) => {}
+        }
         if let Some(pivot) = oklab_pivot(from, to) {
             return Self::plan_native(from, pivot)?
                 .compose(&Self::plan_native(pivot, to)?)
@@ -946,14 +992,8 @@ impl ConvertPlan {
             }));
         }
 
-        // BGR kernels only swap bytes, at U8. Everything else happens as RGB in between.
+        // BGR kernels swap R↔B at the endpoint, with RGB intermediates in between.
         if from.layout() == ChannelLayout::Bgr || to.layout() == ChannelLayout::Bgr {
-            let eight_bit = |d: PixelDescriptor| {
-                d.layout() != ChannelLayout::Bgr || d.channel_type() == ChannelType::U8
-            };
-            if !eight_bit(from) || !eight_bit(to) {
-                return Err(whereat::at!(ConvertError::NoPath { from, to }));
-            }
             let canonical = |d: PixelDescriptor| {
                 if d.layout() == ChannelLayout::Bgr {
                     PixelDescriptor::new(d.channel_type(), ChannelLayout::Rgb, None, d.transfer())
@@ -1246,10 +1286,18 @@ impl ConvertPlan {
                 };
                 steps.insert(insert_pos, gamut_step);
             } else {
-                // No existing linear f32 step — we must add linearize → gamut → delinearize.
+                // No existing linear f32 step — we must add linearize → gamut → delinearize
+                // BEFORE any trailing StraightToPremul so gamut math runs on straight samples
+                // and premultiplication occurs in the destination encoding.
+                let trailing_premul = if matches!(steps.last(), Some(ConvertStep::StraightToPremul))
+                {
+                    steps.pop()
+                } else {
+                    None
+                };
                 // Determine layout for the gamut step.
                 let has_alpha = from.layout().has_alpha() || to.layout().has_alpha();
-                // Use the layout at the current point in the plan.
+                // Use the layout at the current point in the plan (before StraightToPremul).
                 let mut desc = from;
                 for step in &steps {
                     desc = intermediate_desc(desc, step);
@@ -1408,6 +1456,9 @@ impl ConvertPlan {
                 }
 
                 steps.extend(gamut_steps);
+                if let Some(alpha_step) = trailing_premul {
+                    steps.push(alpha_step);
+                }
             }
         }
 
@@ -1963,7 +2014,7 @@ impl ConvertPlan {
                                 .nits()
                         };
                     for operation in &mut after.operations {
-                        if let ConvertStep::MatteComposite { linear } = &mut operation.step {
+                        if let ConvertStep::MatteComposite { linear, .. } = &mut operation.step {
                             for value in linear {
                                 *value *= background_white / white.nits();
                             }
@@ -2007,14 +2058,23 @@ impl ConvertPlan {
         if needs_cms_for_color_model(&from, &to) {
             return Err(whereat::at!(ConvertError::NeedsCms { from, to }));
         }
+        let involves_jzazbz = matches!(
+            from.color_model(),
+            crate::ColorModel::Jzazbz | crate::ColorModel::Jzczhz
+        ) || matches!(
+            to.color_model(),
+            crate::ColorModel::Jzazbz | crate::ColorModel::Jzczhz
+        );
         let pq_boundary = from.transfer() != to.transfer()
-            && (from.transfer() == TransferFunction::Pq || to.transfer() == TransferFunction::Pq);
+            && (from.transfer() == TransferFunction::Pq || to.transfer() == TransferFunction::Pq)
+            && !involves_jzazbz;
         if pq_boundary
             && !is_hdr_to_sdr(from.transfer(), to.transfer())
             && options.sdr_white().is_none()
         {
             return Err(whereat::at!(ConvertError::SdrWhiteRequired));
         }
+        validate_descriptors(from, to)?;
         if let Some(pivot) = oklab_pivot(from, to) {
             return Self::new_explicit(from, pivot, options)?
                 .compose(&Self::new_explicit(pivot, to, options)?)
@@ -2022,6 +2082,12 @@ impl ConvertPlan {
         }
         // Check alpha removal policy.
         let drops_alpha = from.has_alpha() && !to.has_alpha();
+        if drops_alpha
+            && from.signal_range == zenpixels::SignalRange::Narrow
+            && matches!(options.alpha_policy(), AlphaPolicy::CompositeOnto { .. })
+        {
+            return Err(whereat::at!(ConvertError::NoPath { from, to }));
+        }
         if drops_alpha && options.alpha_policy() == AlphaPolicy::DiscardIfOpaque {
             return Err(whereat::at!(ConvertError::AlphaCheckRequired));
         }
@@ -2096,13 +2162,16 @@ impl ConvertPlan {
         } else {
             Self::plan_native(from, to).at()?
         };
-        if from.transfer() != to.transfer()
-            && (from.transfer() == TransferFunction::Pq || to.transfer() == TransferFunction::Pq)
-            && !is_hdr_to_sdr(from.transfer(), to.transfer())
-        {
+        if pq_boundary && !is_hdr_to_sdr(from.transfer(), to.transfer()) {
             let anchor = options
                 .sdr_white()
                 .ok_or_else(|| whereat::at!(ConvertError::SdrWhiteRequired))?;
+            plan = plan.with_pq_anchor(anchor);
+        } else if involves_jzazbz
+            && from.transfer() != TransferFunction::Pq
+            && to.transfer() != TransferFunction::Pq
+            && let Some(anchor) = options.sdr_white()
+        {
             plan = plan.with_pq_anchor(anchor);
         }
 
@@ -2176,7 +2245,19 @@ impl ConvertPlan {
             plan.operations = Vec::new();
             for mut operation in expanded {
                 if matches!(operation.step, ConvertStep::DropAlpha) {
-                    if operation.from.alpha() == Some(AlphaMode::Premultiplied) {
+                    // If `plan_native` already prepended `PremulToStraight` on a linear
+                    // premultiplied source, pop it so `MatteComposite` blends linear premul
+                    // directly (`cs + bg * (1 - a)`), preserving emissive `(rgb > 0, a == 0)` pixels.
+                    if plan.operations.last().is_some_and(|prev| {
+                        matches!(prev.step, ConvertStep::PremulToStraight)
+                            && prev.from.transfer() == TransferFunction::Linear
+                            && prev.to == operation.from
+                    }) {
+                        let prev = plan.operations.pop().expect("checked last");
+                        operation.from = prev.from;
+                    } else if operation.from.alpha() == Some(AlphaMode::Premultiplied)
+                        && operation.from.transfer() != TransferFunction::Linear
+                    {
                         let straight = operation.from.with_alpha(Some(AlphaMode::Straight));
                         plan.operations.push(PlannedOperation {
                             step: ConvertStep::PremulToStraight,
@@ -2187,10 +2268,61 @@ impl ConvertPlan {
                         operation.from = straight;
                     }
                     let matte = matte_background(background, reference_white, operation.from)?;
-                    operation.step = ConvertStep::MatteComposite { linear: matte };
+                    operation.step = ConvertStep::MatteComposite {
+                        linear: matte,
+                        clip: options.clip_out_of_gamut(),
+                    };
                 }
                 plan.operations.push(operation);
             }
+        }
+
+        // Honor DepthPolicy::Truncate on integer narrowing steps.
+        if options.depth_policy() == DepthPolicy::Truncate {
+            let mut truncated_ops = Vec::with_capacity(plan.operations.len() + 2);
+            for mut operation in plan.operations {
+                match operation.step {
+                    ConvertStep::U16ToU8 => {
+                        operation.step = ConvertStep::U16ToU8Truncate;
+                        truncated_ops.push(operation);
+                    }
+                    ConvertStep::NaiveF32ToU8 => {
+                        operation.step = ConvertStep::NaiveF32ToU8Truncate;
+                        truncated_ops.push(operation);
+                    }
+                    ConvertStep::F32ToU16 => {
+                        operation.step = ConvertStep::F32ToU16Truncate;
+                        truncated_ops.push(operation);
+                    }
+                    ConvertStep::LinearF32ToSrgbU8 => {
+                        let mut repl = Self::build(
+                            operation.from,
+                            operation.to,
+                            vec![
+                                ConvertStep::LinearF32ToSrgbF32,
+                                ConvertStep::NaiveF32ToU8Truncate,
+                            ],
+                        );
+                        for op in &mut repl.operations {
+                            op.pq_anchor_scale = operation.pq_anchor_scale;
+                        }
+                        truncated_ops.extend(repl.operations);
+                    }
+                    ConvertStep::SdrU16ToU8 { to: dst_tf } => {
+                        let mut steps = Vec::with_capacity(4);
+                        steps.push(ConvertStep::U16ToF32);
+                        steps.extend(f32_tf_pair_steps(operation.from.transfer(), dst_tf));
+                        steps.push(ConvertStep::NaiveF32ToU8Truncate);
+                        let mut repl = Self::build(operation.from, operation.to, steps);
+                        for op in &mut repl.operations {
+                            op.pq_anchor_scale = operation.pq_anchor_scale;
+                        }
+                        truncated_ops.extend(repl.operations);
+                    }
+                    _ => truncated_ops.push(operation),
+                }
+            }
+            plan.operations = truncated_ops;
         }
 
         // When the caller opts out of clipping, swap qualified pure-f32 transfer
@@ -3180,10 +3312,12 @@ fn are_inverse(a: &ConvertStep, b: &ConvertStep) -> bool {
         | (ConvertStep::LinearF32ToPqU16, ConvertStep::PqU16ToLinearF32)
         | (ConvertStep::HlgU16ToLinearF32, ConvertStep::LinearF32ToHlgU16)
         | (ConvertStep::LinearF32ToHlgU16, ConvertStep::HlgU16ToLinearF32)
-        // Extended-range sRGB f32 pairs
+        // Extended-range SDR f32 pairs
         | (ConvertStep::SrgbF32ToLinearF32Extended, ConvertStep::LinearF32ToSrgbF32Extended)
         | (ConvertStep::LinearF32ToSrgbF32Extended, ConvertStep::SrgbF32ToLinearF32Extended)
-    )
+        | (ConvertStep::Gamma22F32ToLinearF32Extended, ConvertStep::LinearF32ToGamma22F32Extended)
+        | (ConvertStep::LinearF32ToGamma22F32Extended, ConvertStep::Gamma22F32ToLinearF32Extended)
+    ) || matches!((a, b), (ConvertStep::Perceptual(pa), ConvertStep::Perceptual(pb)) if pa.is_inverse_of(pb))
 }
 
 /// Compute the descriptor after applying one step.
@@ -3303,7 +3437,10 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             current.alpha(),
             TransferFunction::Linear,
         ),
-        ConvertStep::NaiveF32ToU8 | ConvertStep::U16ToU8 => PixelDescriptor::new(
+        ConvertStep::NaiveF32ToU8
+        | ConvertStep::NaiveF32ToU8Truncate
+        | ConvertStep::U16ToU8
+        | ConvertStep::U16ToU8Truncate => PixelDescriptor::new(
             ChannelType::U8,
             current.layout(),
             current.alpha(),
@@ -3324,7 +3461,10 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             current.alpha(),
             current.transfer(),
         ),
-        ConvertStep::F32ToU16 | ConvertStep::LinearF32ToPqU16 | ConvertStep::LinearF32ToHlgU16 => {
+        ConvertStep::F32ToU16
+        | ConvertStep::F32ToU16Truncate
+        | ConvertStep::LinearF32ToPqU16
+        | ConvertStep::LinearF32ToHlgU16 => {
             let tf = match step {
                 ConvertStep::LinearF32ToPqU16 => TransferFunction::Pq,
                 ConvertStep::LinearF32ToHlgU16 => TransferFunction::Hlg,
@@ -3466,11 +3606,13 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
             },
         ),
         ConvertStep::SoftCompressOklch { .. } => current,
+        ConvertStep::Perceptual(p) => p.output_descriptor(current),
     };
     next.primaries = match step {
         ConvertStep::GamutMatrixRgbF32(_, primaries)
         | ConvertStep::GamutMatrixRgbaF32(_, primaries)
         | ConvertStep::Fused { primaries, .. } => *primaries,
+        ConvertStep::Perceptual(_) => next.primaries,
         _ => current.primaries,
     };
     next.signal_range = current.signal_range;
@@ -3480,7 +3622,9 @@ fn intermediate_desc(current: PixelDescriptor, step: &ConvertStep) -> PixelDescr
 #[path = "convert_kernels.rs"]
 mod convert_kernels;
 #[path = "hlg_render.rs"]
-mod hlg_render;
+pub(crate) mod hlg_render;
+#[path = "perceptual.rs"]
+mod perceptual;
 use convert_kernels::apply_step_u8;
 pub(crate) use convert_kernels::{hlg_eotf, hlg_oetf, pq_eotf, pq_oetf};
 

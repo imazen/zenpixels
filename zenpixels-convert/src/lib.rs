@@ -357,10 +357,12 @@
 //! - [ ] Test round-trip: native format → encode → decode = lossless
 //! - [ ] Test negotiation: `ConvertIntent::Fastest.best_match(my_format, my_supported)` picks identity
 
-#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(not(test), no_std)]
 #![forbid(unsafe_code)]
 
 extern crate alloc;
+#[cfg(all(not(test), feature = "__trace_ops"))]
+extern crate std;
 
 whereat::define_at_crate_info!(path = "zenpixels-convert/");
 
@@ -378,6 +380,8 @@ mod sealed {
     impl<P> Sealed for zenpixels::PixelBuffer<P> {}
     impl Sealed for zenpixels::PixelSlice<'_> {}
     impl Sealed for zenpixels::hdr::ContentLightLevel {}
+    #[cfg(feature = "planar")]
+    impl<C> Sealed for zenpixels::plane::Plane<C> {}
 }
 pub mod error;
 pub(crate) mod f16_scalar;
@@ -412,6 +416,7 @@ pub(crate) mod cms_lite;
 pub mod cms_moxcms;
 pub mod codes;
 pub mod converter;
+#[cfg(feature = "css")]
 pub mod css;
 pub mod ext;
 #[allow(
@@ -468,6 +473,7 @@ pub(crate) mod orient;
 #[doc(hidden)]
 pub mod orient;
 pub mod output;
+#[cfg(feature = "planar")]
 pub mod ycbcr;
 // Crate-internal SIMD predicates backing `load_bearing` -- the module
 // stays private so the per-(layout × channel-type) kernel set never
@@ -489,6 +495,8 @@ pub use negotiate::{ConversionCost, ConvertIntent, FormatOption, LossBucket, Pro
 pub use ext::PixelBufferConvertTypedExt;
 #[cfg(feature = "hdr-experimental")]
 pub use ext::PixelBufferHdrConvertExt;
+#[cfg(feature = "planar")]
+pub use ext::PlaneConvertExt;
 #[doc(inline)]
 pub use ext::{
     ColorConvertExt, ColorPrimariesExt, PixelBufferConvertExt, PixelSliceConvertExt,
@@ -503,7 +511,6 @@ pub use gamut::GamutMatrix;
 pub use load_bearing::{LoadBearingReport, PixelBufferLoadBearingExt, PixelSliceLoadBearingExt};
 
 // Re-export CMS traits, enums, and implementations.
-#[allow(deprecated)]
 pub use cms::{CmsPluginError, PluggableCms, RowTransform, RowTransformMut};
 // TODO: pub use cms_lite::ZenCmsLite once benchmarked on aarch64.
 #[cfg(feature = "cms-lcms")]
@@ -513,7 +520,6 @@ pub use cms_moxcms::MoxCms;
 
 // Re-export output types.
 pub use output::OutputPlan;
-#[allow(deprecated)]
 pub use output::{EncodeReady, OutputMetadata, OutputProfile};
 
 #[cfg(test)]

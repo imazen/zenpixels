@@ -80,9 +80,10 @@ fn curve(t: u8, inherited: &ToneReprCurve) -> ToneReprCurve {
 
 pub(crate) fn rgb(p: u8, t: u8) -> Option<Vec<u8>> {
     let cicp = cicp(p, t)?;
+    let (name, white) = white(p)?;
     let mut profile = ColorProfile::new_from_cicp(cicp);
     let trc = curve(t, profile.red_trc.as_ref()?);
-    profile.update_rgb_colorimetry(white(p)?.1, primaries(p)?);
+    profile.update_rgb_colorimetry(white, primaries(p)?);
     profile.cicp = Some(cicp);
     profile.red_trc = Some(trc.clone());
     profile.green_trc = Some(trc.clone());
@@ -94,6 +95,16 @@ pub(crate) fn rgb(p: u8, t: u8) -> Option<Vec<u8>> {
             z: 0.0,
         });
     }
+    profile.description = Some(ProfileText::Localizable(vec![LocalizableString::new(
+        "en".into(),
+        "US".into(),
+        format!("RGB H.273 CP{p} TC{t} {name} white"),
+    )]));
+    profile.copyright = Some(ProfileText::Localizable(vec![LocalizableString::new(
+        "en".into(),
+        "US".into(),
+        "Public Domain".into(),
+    )]));
     if t == 16 {
         return pq::encode(profile, false).and_then(super::canonical::canonicalize);
     }

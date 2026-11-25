@@ -55,6 +55,8 @@ pub enum OutputProfile {
     Named(Cicp),
     /// Use specific ICC profile bytes.
     Icc(Arc<[u8]>),
+    /// Use a non-ICC parametric color description (e.g. JPEG XL `ColorEncoding`, PNG `gAMA`+`cHRM`).
+    Parametric(crate::ParametricColor),
 }
 
 impl OutputProfile {
@@ -130,6 +132,8 @@ pub struct OutputMetadata {
     pub icc: Option<Arc<[u8]>>,
     /// CICP code points to embed, if any.
     pub cicp: Option<Cicp>,
+    /// Non-ICC parametric color description to embed, if any.
+    pub parametric: Option<crate::ParametricColor>,
 }
 
 /// Pixel data bundled with matching metadata, ready for encoding.
@@ -293,6 +297,21 @@ pub(crate) fn current_profile_for(
                 }));
             }
         }
+        if let Some(param) = context.parametric()
+            && let Some((primaries, transfer)) = param.to_primaries_transfer()
+        {
+            let primaries_conflict =
+                desc.primaries != ColorPrimaries::Unknown && desc.primaries != primaries;
+            let transfer_conflict =
+                desc.transfer() != TransferFunction::Unknown && desc.transfer() != transfer;
+            if primaries_conflict || transfer_conflict {
+                let signaled = desc.with_primaries(primaries).with_transfer(transfer);
+                return Err(whereat::at!(ConvertError::NoPath {
+                    from: desc,
+                    to: signaled,
+                }));
+            }
+        }
         if let Some(profile) = context.as_profile_source() {
             return Ok(profile);
         }
@@ -302,15 +321,20 @@ pub(crate) fn current_profile_for(
 
 fn origin_profile(origin: &ColorOrigin) -> Option<crate::ColorProfileSource<'_>> {
     let icc = origin.icc.as_deref().map(crate::ColorProfileSource::Icc);
-    let cicp = origin.cicp.map(|c| {
-        crate::ColorProfileSource::Cicp(Cicp::new(
-            c.color_primaries,
-            c.transfer_characteristics,
-            0,
-            true,
-        ))
-    });
-    origin.color_authority.select(icc, cicp)
+    let non_icc = origin
+        .parametric
+        .map(crate::ColorProfileSource::Parametric)
+        .or_else(|| {
+            origin.cicp.map(|c| {
+                crate::ColorProfileSource::Cicp(Cicp::new(
+                    c.color_primaries,
+                    c.transfer_characteristics,
+                    0,
+                    true,
+                ))
+            })
+        });
+    origin.color_authority.select(icc, non_icc)
 }
 
 fn descriptor_for_profile(
@@ -338,6 +362,9 @@ pub(crate) fn profiles_match(
     match (a, b) {
         (crate::ColorProfileSource::Icc(a), crate::ColorProfileSource::Icc(b)) => a == b,
         (crate::ColorProfileSource::Icc(_), _) | (_, crate::ColorProfileSource::Icc(_)) => false,
+        (crate::ColorProfileSource::Parametric(a), crate::ColorProfileSource::Parametric(b)) => {
+            a == b
+        }
         _ => a.resolve().is_some() && a.resolve() == b.resolve(),
     }
 }

@@ -102,12 +102,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lz4_flex"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ecbdfe44b1bd960b68170b417450a628c43f7cf56bb3c5317e61cb230ee7f226"
-
-[[package]]
 name = "magetypes"
 version = "0.9.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -334,7 +328,6 @@ dependencies = [
  "garb",
  "libm",
  "linear-srgb",
- "lz4_flex",
  "magetypes",
  "once_cell",
  "pastey",

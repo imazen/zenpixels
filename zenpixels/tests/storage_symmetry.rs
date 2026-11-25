@@ -128,6 +128,16 @@ fn all_native_storage_types_have_typed_aligned_and_runtime_plane_views() {
         code(ChannelType::I64, 64)
     );
     check!(
+        zenpixels::F16Sample,
+        F16,
+        [
+            zenpixels::F16Sample::NEG_ZERO,
+            zenpixels::F16Sample::from_bits(0x7e21),
+            zenpixels::F16Sample::from_f32(2.5),
+        ],
+        PlaneEncoding::Float16(FloatEncoding::NOMINAL)
+    );
+    check!(
         f32,
         F32,
         [-0.0, f32::from_bits(0x7fc00021), 2.5],
@@ -138,6 +148,23 @@ fn all_native_storage_types_have_typed_aligned_and_runtime_plane_views() {
         F64,
         [-0.0, f64::from_bits(0x7ff8000000000021), 1.0 + f64::EPSILON],
         PlaneEncoding::Float64(FloatEncoding::NOMINAL)
+    );
+
+    // Anti-footgun: F16 storage and planes never silently masquerade as U16.
+    let f16_storage = PixelStorage::from(vec![zenpixels::F16Sample::ONE]);
+    let f16_storage = f16_storage.try_into_vec::<u16>().unwrap_err();
+    assert_eq!(
+        f16_storage.try_into_vec::<zenpixels::F16Sample>().unwrap()[0].to_bits(),
+        0x3c00
+    );
+    let f16_layout = gray(PlaneEncoding::Float16(FloatEncoding::NOMINAL));
+    let u16_samples = [0x3c00u16; 3];
+    let u16_plane = [AnyPlane::U16(
+        PlaneRef::new(&u16_samples[..], 3, 1, 3).unwrap(),
+    )];
+    assert_eq!(
+        f16_layout.check(&u16_plane, 3, 1),
+        Err(LayoutError::SampleType { index: 0 })
     );
 }
 
@@ -289,12 +316,35 @@ fn shared_read_only_owner_needs_no_mutable_implementation() {
 }
 
 #[test]
-fn carrying_signed_or_wide_samples_does_not_claim_code_reader_support() {
-    let p = Plane::new(vec![-1i32], 1, 1, 1).unwrap();
+fn carrying_signed_or_wide_samples_enforces_code_reader_boundaries() {
+    let p_i32 = Plane::new(vec![-1i32], 1, 1, 1).unwrap();
+    let cp_i32 = CodePlane::new(
+        p_i32.as_plane(),
+        SampleEncoding::new(ChannelType::I32, 24, 4).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(cp_i32.code_i32(0, 0), Some(-1));
+    assert_eq!(cp_i32.code_u32(0, 0), None);
+    let mut dst_u32 = [0u32; 1];
+    assert_eq!(
+        cp_i32.read_codes_u32(0, 0, &mut dst_u32),
+        Err(CodePlaneError::StorageMismatch)
+    );
+
+    let p_u64 = Plane::new(vec![u64::MAX], 1, 1, 1).unwrap();
     assert_eq!(
         CodePlane::new(
-            p.as_plane(),
-            SampleEncoding::new(ChannelType::I32, 24, 4).unwrap()
+            p_u64.as_plane(),
+            SampleEncoding::new(ChannelType::U64, 48, 8).unwrap()
+        )
+        .unwrap_err(),
+        CodePlaneError::StorageMismatch
+    );
+    let p_i64 = Plane::new(vec![-1i64], 1, 1, 1).unwrap();
+    assert_eq!(
+        CodePlane::new(
+            p_i64.as_plane(),
+            SampleEncoding::new(ChannelType::I64, 48, 8).unwrap()
         )
         .unwrap_err(),
         CodePlaneError::StorageMismatch

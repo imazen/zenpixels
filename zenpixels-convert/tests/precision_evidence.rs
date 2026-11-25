@@ -837,8 +837,8 @@ fn an_edit_log_misses_unlogged_mutation_and_grows_with_composition() {
         tree = vec![Edit::Composite(tree.clone(), tree)];
     }
     assert_eq!(log_entries(&tree), 1023 + 1024 * 2, "a 1024-tile mosaic");
-    // ExactDepth for the same 1024-tile selection is still 4 bytes of state.
-    assert_eq!(core::mem::size_of::<Option<ExactDepth>>(), 4);
+    // ExactDepth for the same 1024-tile selection is still 2 bytes of state.
+    assert_eq!(core::mem::size_of::<Option<ExactDepth>>(), 2);
 }
 
 // ---------------------------------------------------------------------------
