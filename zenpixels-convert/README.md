@@ -1,51 +1,67 @@
 # zenpixels-convert [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenpixels/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenpixels/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/zenpixels-convert?style=flat-square)](https://crates.io/crates/zenpixels-convert) [![lib.rs](https://img.shields.io/crates/v/zenpixels-convert?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/zenpixels-convert) [![docs.rs](https://img.shields.io/docsrs/zenpixels-convert?style=flat-square)](https://docs.rs/zenpixels-convert) [![MSRV](https://img.shields.io/badge/MSRV-1.89-blue?style=flat-square)](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field) [![license](https://img.shields.io/crates/l/zenpixels-convert?style=flat-square)](#license)
 
 Transfer-function-aware pixel conversion, HDR tone mapping, gamut compression,
-ICC/CMS routing, gain-map reconstruction, EXIF orientation, and codec format
-negotiation for [`zenpixels`](https://github.com/imazen/zenpixels). Re-exports
-`zenpixels::*` with zero module name collisions.
+ICC/CMS routing, gain-map reconstruction, EXIF orientation, planar YCbCr/RGB
+reconstruction, and codec format negotiation for [`zenpixels`](https://github.com/imazen/zenpixels).
+Re-exports `zenpixels::*` at the crate root with zero module name collisions.
 
-This is the **0.5.0 greenfield candidate**.
+This is the **0.5.0 greenfield candidate**. For full end-to-end recipes, see
+[docs/guide.md](../docs/guide.md) and [docs/migration-0.2-to-0.5.md](../docs/migration-0.2-to-0.5.md).
+
+## Which API should I pick?
+
+| Need | API |
+|---|---|
+| Quick 8-bit sRGB output | `to_rgb8(&view)`, `to_gray8(&view)` (refuse unproven alpha discard), `to_rgba8(&view)`, `to_bgra8(&view)` |
+| One-shot image conversion | `convert_to_buf(&view, dst_spec, &policy, PeakSource::Measured)` / `convert_into(&src, &mut dst, &policy, peak)` |
+| Reusable whole-image plan (`PixelBuf` / `PixelView` / `BandedBuf`) | `ImagePlan::build(src, dst, &policy, peak)` → `.execute(&src)` / `.execute_into(&src, &mut dst)` |
+| Streaming row loop (zero per-row heap scratch) | `RowPlan::build(src, dst, &policy, resolved_source_peak)` → `.convert_row(src_row, dst_row, width, y)` |
+| Encoder negotiation + CICP/ICC signaling | `adapt_for_encode_format(view, origin, &[PixelFormat], &policy, peak, profile)` or reusable `OutputPlan::build(...)` |
 
 ## Quick start
 
 ```rust
-use zenpixels_convert::{ConvertPolicy, ImageSpec, PeakSource, PixelBuf, convert_to_buf};
+use zenpixels_convert::{
+    ConvertPolicy, ImageSpec, PeakSource, PixelBuf, convert_to_buf, to_rgba8,
+};
 
 let src = PixelBuf::from_typed(
-    vec![255u8, 0, 0, 0, 255, 0], 2, 1, ImageSpec::rgb8_srgb(),
+    vec![255u8, 0, 0, 0, 255, 0], 2, 1, ImageSpec::RGB8_SRGB,
 )?;
+
+// 1. One-call 8-bit sRGB conversion (no policy/HDR setup needed):
+let rgba = to_rgba8(&src.as_view())?;
+assert_eq!(rgba.as_view().row(0), &[255, 0, 0, 255, 0, 255, 0, 255]);
+
+// 2. Arbitrary destination with explicit policy (safe default = lossless):
 let linear = convert_to_buf(
-    &src.as_view(), ImageSpec::rgbf32_linear_ref(), &ConvertPolicy::permissive(), PeakSource::Measured,
+    &src.as_view(),
+    ImageSpec::rgbf32_linear_ref(),
+    &ConvertPolicy::working_linear(),
+    PeakSource::Measured,
 )?;
 assert_eq!(linear.spec(), ImageSpec::rgbf32_linear_ref());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-`ConvertPolicy::default()` equals `ConvertPolicy::lossless()` (forbids depth
-reduction, alpha discard, and range scaling, and preserves extended float gamut);
-opt in explicitly to `ConvertPolicy::permissive()`, `working_linear()`, or
-`display_sdr(...)` when loss is acceptable. `to_rgb8` / `to_gray8` default to
-`ConvertPolicy::permissive().with_alpha(AlphaPolicy::DiscardIfOpaque)`, refusing
-to drop unproven transparency.
+### Safe-by-default `ConvertPolicy`
 
-## Row-streaming (`RowPlan`) vs image-level (`ImagePlan`)
+`ConvertPolicy::default()` equals **`ConvertPolicy::lossless()`** — it refuses
+depth narrowing, alpha removal, and range scaling, and preserves extended float
+gamut. Opt in explicitly to `ConvertPolicy::permissive()`,
+`ConvertPolicy::working_linear()`, or `ConvertPolicy::display_sdr(white, peak)`
+when lossy conversion is desired. All planners (`RowPlan::build`,
+`ImagePlan::build`, `OutputPlan::build`) borrow `&ConvertPolicy` and accept
+either `&ImageSpec` or `ImageSpec`.
 
-`RowPlan::build` runs rows through a stack-allocated 64-pixel SoA L1 strip with
-zero per-row heap allocation (and statically accepts only `Option<Nits>` for
-`resolved_source_peak`). `ImagePlan::build` accepts `PeakSource` (including
-streaming `PeakSource::Measured`) and runs across `PixelView`, `PixelBuf`, and
-`BandedBuf`. All planners (`RowPlan::build`, `ImagePlan::build`,
-`OutputPlan::build`) borrow `&ConvertPolicy` and accept `impl AsRef<ImageSpec>`.
+## Streaming rows (`RowPlan`)
 
 ```rust
 use zenpixels_convert::{ConvertPolicy, ImageSpec, PixelBuf, RowPlan};
 
 let src = PixelBuf::from_typed(vec![64u8, 128, 192, 255, 0, 0], 2, 1, ImageSpec::RGB8_SRGB)?;
 let mut dst = PixelBuf::new(2, 1, ImageSpec::RGBF32_LINEAR)?;
-let plan = RowPlan::build(
-    src.spec(), dst.spec(), &ConvertPolicy::permissive(), None,
-)?;
+let plan = RowPlan::build(src.spec(), dst.spec(), &ConvertPolicy::permissive(), None)?;
 for y in 0..src.height() {
     plan.convert_row(src.as_view().row(y), dst.as_view_mut().row_mut(y), src.width(), y)?;
 }
@@ -54,46 +70,34 @@ for y in 0..src.height() {
 
 ## Opt-in SIMD (`accel` & `const Accelerators`)
 
-By default, every native pair executes on a compact universal scalar core that
-maintains 0-bit parity with x86-64/AArch64 SIMD kernels so libraries and Wasm
-builds stay light. Enable SIMD globally (`accel::enable_all()`,
-`accel::enable_web_sdr()`) or per-policy via `ConvertPolicy::with_accelerators(Accelerators::ALL)`.
+By default, every native pair runs on a compact scalar core with 0-bit parity
+against x86-64/AArch64 SIMD kernels so libraries and Wasm builds stay small.
+Enable SIMD globally (`accel::enable_all()`, `accel::enable_web_sdr()`) or
+per-policy via `ConvertPolicy::with_accelerators(Accelerators::ALL)`.
 
-## Orientation, gain maps, planar YCbCr, load-bearing & encoder signaling
+## Key capabilities (see [docs/guide.md](../docs/guide.md) for recipes)
 
-- **Orientation & `DualLayerHdrBuf`:** `ImagePlan` and `load_bearing` propagate
-  pending buffer `Orientation` metadata. Use `compose_orientation` for O(1) EXIF
-  composition, `apply_orientation` / `apply_orientation_owned` /
-  `apply_orientation_banded` to physically apply an explicit transform (emitting
-  `Identity`), or `bake_orientation` / `bake_orientation_owned` (zero-copy on
-  `Identity`) / `bake_orientation_banded` to bake pending orientation. On
-  `DualLayerHdrBuf`, use `compose_orientation` / `with_orientation` for O(1)
-  metadata updates, or `bake_dual_layer_orientation` /
-  `bake_dual_layer_orientation_after` to physically transform both layers and
-  reset `orientation()` to `Identity`; pass `&zenpixels_convert::Unstoppable`
-  (re-exported from `enough`) to gain-map APIs taking `&dyn Stop`, and use
-  `GainMapApplyConfig::from_headroom_stops` / `from_display_boost`.
-- **Zero-copy planar YCbCr / RGB reconstruction:** `ycbcr_to_rgb_with_options`
-  and zero-alloc `ycbcr_to_rgb_with_options_into` handle all 9 H.273 Table 4 NCL
-  matrices (including `YCgCo` and `ChromaDerivedNcl`), siting-exact
-  `YcbcrOptions::bilinear()` (or `YcbcrOptions::default().with_upsample(ChromaUpsample::Bilinear)`),
-  planar RGB (`U8`/`U16`/`F32`), and direct `U8`/`U16`/`F32`
-  `RGB`/`RGBA`/`BGR`/`BGRA`/`RGBX`/`BGRX`/`Gray`/`GrayAlpha` outputs.
-- **Load-bearing compaction:** `reduce_to_load_bearing_format_in_place(alpha: AlphaCompaction)`
-  retags provably opaque alpha to `AlphaMode::Opaque` zero-move with
-  `AlphaCompaction::RetagOpaque`, or physically drops unused alpha/padding lanes
-  in place with `AlphaCompaction::DropUnusedLanes` (depth/chroma compaction
-  always applies in-place).
-- **Encoder signaling (`OutputPlan` & `EncodeReady`):** `OutputPlan::build`
-  accepts borrowed `&ImageSpec` or owned `ImageSpec` and borrows `&ConvertPolicy`
-  (retaining internal clones inside the built plan), validates **destination**
-  signaling (`OutputProfile::{Auto, SameAsOrigin, CicpOnly, EmbedIcc, CustomIcc, Strip}`)
-  eagerly (refusing `HlgMode::Display` on `dst` under `CicpOnly`/`Auto`), reuses
-  owned storage zero-copy on identity via `OutputPlan::execute_buf` (or borrows
-  zero-copy via `OutputPlan::execute_view` / `adapt_for_encode_format`), and
-  strips stale HDR metadata when photometry changes. Carrier and pipeline APIs
-  return `whereat::At<E>` (inspect via `*err.error()` or `err.into_inner()`);
-  const-capable layout/code/projection primitives return bare `E`.
+- **Orientation & `DualLayerHdrBuf`:** `compose_orientation` updates metadata in
+  O(1); `apply_orientation*` physically applies an explicit transform (emitting
+  `Identity`); `bake_orientation*` / `bake_dual_layer_orientation*` bake pending
+  orientation (zero-copy when already `Identity`). Pass
+  `&zenpixels_convert::Unstoppable` (re-exported from `enough`) to gain-map APIs
+  accepting `&dyn Stop`, and configure headroom with
+  `GainMapApplyConfig::from_headroom_stops` or `from_display_boost`.
+- **Planar YCbCr & planar RGB:** `ycbcr_to_rgb_with_options` and zero-alloc
+  `ycbcr_to_rgb_with_options_into` reconstruct all 9 H.273 NCL matrices and
+  planar RGB/RGBA directly into `U8`/`U16`/`F32` interleaved layouts with
+  siting-exact `YcbcrOptions::bilinear()`.
+- **HDR & ICC/CMS:** `Bt2446A::pipeline_managed()` tone mapping with streaming
+  `PeakSource::Measured`, plus pure-Rust `MoxCms` and `Lcms` CMS backends
+  (`with_icc_substitution(false)` forces CMS execution).
+- **Load-bearing compaction:** `determine_load_bearing()`,
+  `reduce_to_load_bearing_format()`, and zero-reallocation
+  `reduce_to_load_bearing_format_in_place(AlphaCompaction::RetagOpaque | DropUnusedLanes)`.
+- **Encoder signaling (`OutputPlan` & `EncodeReady`):** validates destination
+  signaling eagerly (`OutputProfile::{Auto, SameAsOrigin, CicpOnly, EmbedIcc, CustomIcc, Strip}`),
+  refuses `HlgMode::Display` on `dst` under `CicpOnly`/`Auto`, and stays
+  zero-copy on identity.
 
 ## Features
 
@@ -103,6 +107,7 @@ builds stay light. Enable SIMD globally (`accel::enable_all()`,
 | `fast-transpose` | Default; runtime-dispatched SIMD orientation kernels |
 | `oklab` | Default; CIE XYZ D65 Oklab conversions and OKLch soft gamut compression |
 | `hdr-transfers` | Default; PQ (ST 2084) and HLG (ARIB STD-B67 + BT.2100-3 display OOTF) |
+| `gainmap` | Default; ISO 21496-1 / UltraHDR gain-map extraction & reconstruction |
 | `perceptual` | Default-off; Oklch, CIE Lab/Lch, Jzazbz/Jzczhz, HSL, HSV |
 | `bt2446a` | Built-in ITU-R BT.2446 Method A HDR→SDR tone mapper |
 | `icc-db` | Committed LZ4-compressed CICP→ICC profile bundle |

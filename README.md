@@ -1,112 +1,85 @@
 # zenpixels [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenpixels/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenpixels/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/zenpixels?style=flat-square)](https://crates.io/crates/zenpixels) [![lib.rs](https://img.shields.io/crates/v/zenpixels?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/zenpixels) [![docs.rs](https://img.shields.io/docsrs/zenpixels?style=flat-square)](https://docs.rs/zenpixels) [![MSRV](https://img.shields.io/badge/MSRV-1.85-blue?style=flat-square)](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field) [![license](https://img.shields.io/crates/l/zenpixels?style=flat-square)](#license)
 
 Pixel types for Rust image pipelines. Keep samples, dimensions, stride, bit
-packing, and color meaning together — `no_std + alloc`, `#![forbid(unsafe_code)]`.
+packing, orientation, and color meaning together — `no_std + alloc`,
+`#![forbid(unsafe_code)]`.
 
 This is the **0.5.0 greenfield candidate**. [docs.rs](https://docs.rs/zenpixels)
 describes the latest published crate.
 
+- **New to `zenpixels`?** Read the task-oriented [User Guide & Cookbook](docs/guide.md).
+- **Upgrading from 0.2 / 0.4?** See [docs/migration-0.2-to-0.5.md](docs/migration-0.2-to-0.5.md).
+- **Need color conversion, HDR, orientation, or YCbCr?** See [zenpixels-convert/README.md](zenpixels-convert/README.md).
+
+## The 4 types you need on day one
+
+| Type | Role |
+|---|---|
+| `ImageSpec` | Pairs physical `SampleLayout` + algebraic `ColorSpace` (RGB, Gray, Oklab, XYZ, CMYK, ICC, Untagged). Use `ImageSpec::RGB8_SRGB` for owned specs and `ImageSpec::rgb8_srgb_ref()` for `'static` borrowed views. |
+| `PixelBuf` | Owned, stride-preserving, alignment-exact 2D buffer (can adopt `Vec<T>`, `Arc<[u8]>`, `Box<[T]>`, or custom FFI storage zero-copy). Carries `Orientation`, `HdrMetadata`, `ColorOrigin`, and `SampleFacts`. |
+| `PixelView<'a>` / `PixelViewMut<'a>` | Zero-copy borrowed strided views and rectangular crops. Primary constructors take `&'a ImageSpec` for guaranteed zero heap allocation (`height()` and `rows()` are equivalent). |
+| `PixelFormat` | `Copy + const` layout + parametric color pair (no ICC) for static codec capability tables (`&[PixelFormat]`). |
+
 ## Quick start
 
-`PixelBuf` owns alignment-exact storage. `PixelView<'a>` / `PixelViewMut<'a>`
-borrow an image or rectangular subimage. `ImageSpec` pairs a `SampleLayout` with
-an algebraic `ColorSpace`.
-
 ```rust
-use zenpixels::{ImageSpec, PixelBuf};
+use zenpixels::{ImageSpec, PixelBuf, PixelView};
 
+// Wrap typed pixel data and take a zero-copy crop:
 let decoded = vec![255u8, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
-let image = PixelBuf::from_typed(decoded, 2, 2, ImageSpec::rgb8_srgb())?;
-let right_column = image.crop_view(1, 0, 1, 2)?;
+let image = PixelBuf::from_typed(decoded, 2, 2, ImageSpec::RGB8_SRGB)?;
+let right_col = image.crop_view(1, 0, 1, 2)?;
 
-assert_eq!(right_column.width(), 1);
-assert_eq!(right_column.height(), 2); // `rows()` and `height()` are equivalent on views.
-assert_eq!(right_column.stride(), image.stride()); // Parent stride: 6 bytes.
-assert_eq!(right_column.row(0), &[0, 255, 0]);     // Only the cropped pixel.
+assert_eq!((right_col.width(), right_col.height()), (1, 2));
+assert_eq!(right_col.stride(), image.stride()); // Parent stride: 6 bytes.
+assert_eq!(right_col.row(0), &[0, 255, 0]);     // Only the cropped pixel.
+
+// Borrow raw bytes with zero heap allocation using a static preset ref:
+let raw = [10u8, 20, 30, 40, 50, 60];
+let view = PixelView::from_bytes(&raw, 2, 1, ImageSpec::rgb8_srgb_ref())?;
+assert_eq!(view.row(0), &[10, 20, 30, 40, 50, 60]);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-No pixels are copied when you borrow or crop. Both `image.crop_view(...)` and
-`image.as_view().crop(...)` preserve the buffer's `'a` lifetime. For a fresh
-zero-filled image, use `PixelBuf::new(width, height, spec)`. To construct a
-borrowed `PixelView` / `PixelViewMut` with zero heap allocations, pass a
-`&'static ImageSpec` preset ref (`ImageSpec::rgb8_srgb_ref()`, etc.) or borrow a
-local `ImageSpec`.
-
-> **Tip (`from_typed` vs `from_bytes`, and `whereat::At<E>`):** `PixelBuf::from_typed` validates the Rust element type against `spec.layout`, so annotate integer literals (`vec![255u8, ...]`) or use `PixelBuf::from_bytes(vec![...], ...)` for raw byte buffers. Carrier and pipeline APIs return `whereat::At<E>` for zero-cost location traces (inspect with `*err.error()` or `err.into_inner()`); const-capable layout, storage, code-plane, and CICP-projection primitives return bare `E`.
+> **Quick tips:**
+> - `PixelBuf::from_typed` checks the Rust element type against `spec.layout` (annotate literals like `vec![255u8, ...]`, or use `PixelBuf::from_bytes` for raw byte buffers).
+> - Carrier/pipeline errors return `whereat::At<E>` — inspect the inner enum with `*err.error()` or `err.into_inner()`. Const-capable layout/storage/code/CICP-projection primitives return bare `E`.
+> - Need your buffer back on error? Use `from_bytes_recover`, `from_typed_recover`, `from_parts_recover`, or `from_external*` (`Err((err, original))`).
 
 ## Two crates
 
 ```toml
-# Storage, views, color spaces, HDR metadata, planes (lightweight — use in codecs)
+# Storage, views, color spaces, CICP, HDR metadata, planes (lightweight — use in codecs)
 zenpixels = "0.5.0"
 
-# Conversion; re-exports zenpixels::* with zero module name collisions
+# Conversion, HDR tone mapping, CMS, gain maps, YCbCr, orientation (re-exports zenpixels::*)
 zenpixels-convert = "0.5.0"
 ```
 
-## Core architecture (0.5)
+## What else is included?
 
-- **Algebraic `ColorSpace` + `Copy`/`const` `PixelFormat`:** mutually exclusive
-  variants (`Rgb`, `Gray`, `Oklab`, `Xyz`, `Perceptual`, `Cmyk`, `Icc`,
-  `Untagged`) make invalid states (such as Oklab carrying BT.709 primaries or
-  ICC contradicting CICP) unrepresentable. `ImageSpec` provides `const` presets
-  (`ImageSpec::RGB8_SRGB`, etc.) plus `&'static ImageSpec` accessors
-  (`ImageSpec::rgb8_srgb_ref()`, etc.), `PixelView` / `PixelViewMut` borrow
-  `&'a ImageSpec` with zero heap allocation (explicit `new_with_spec_cow` +
-  `SpecCow::from_owned` / `from_format` / `from_arc` when sharing an owned spec),
-  and `PixelFormat` (`Copy + const + !Drop`) serves codec tables and `const`
-  slices without heap ownership.
-- **Lossless ITU-T H.273 CICP & ICC.1 `cicpType` amendment:** all 11 Table 2
-  primaries (including projective `y == 0` CIE XYZ), all 16 Table 3 transfers,
-  all 9 Table 4 NCL matrix codes, ICC.1 `cicpType` 44-byte custom-primaries
-  extension (`CicpTag`, signed `s15Fixed16Number` supporting negative
-  chromaticities such as `CustomPrimaries::ACES_AP0`, `ACES_CG`, `PROPHOTO_RGB`,
-  and Annex 1 `to_icc_d50_matrix_f64`; note `s15Fixed16Number` quantizes
-  coordinates to `1/65536` on wire encode, so tag bytes / `to_s15fixed16()`
-  round-trip bit-exact), exact `0.0001 cd/m²` `ClliCodes`, and ISO 15076-1
-  structural ICC validation (`validate_icc_structure`) wired into
-  `ImageSpec::validate()`.
-- **Unified `SampleLayout` + `BitPacking`:** full-width samples (`U8`, `U16`,
-  `F16`, `F32`, `I16`, `I32`, `U32`), 10/12-bit codec planes (`P010`, `U10_LSB`,
-  `U12_LSB`), and bitfield words (`RGB565`, `RGB10A2`).
-- **Sound `AlphaMode::Opaque` & fast fill-then-retag:** `PixelBuf::new` fills
-  black with canonical max alpha, `PixelBuf::new_white` / `new_with_fill` fill
-  reference white, and `PixelBuf::new_zeroed` skips the alpha-fill pass (refusing
-  `AlphaMode::Opaque` on alpha-bearing layouts) so decoders can write all pixels
-  and retag zero-copy via `into_opaque_verified` (scans all active pixels itself,
-  no prior `set_facts` needed), `into_opaque_filled`, or `assume_opaque`.
-- **Alignment-exact zero-copy interchange & external ownership:** `PixelBuf::from_typed<P>`,
-  `from_typed_recover`, `from_bytes`, `from_bytes_recover`, `from_external` /
-  `from_external_mut`, and `into_vec_zero_copy<P>` preserve Rust's allocation
-  alignment contract via `PixelStorage` (`U8`, `U16`, `U32`, `F32`, `Aligned64`,
-  `External`, `ExternalMut`).
-- **Orientation on buffers & multi-plane/dual-layer carriers:** `Orientation`
-  travels directly on `PixelBuf`, `PixelView`, `PixelViewMut`, `BandedBuf`,
-  `PlanarBuf`, `PlanarView`, `PlanarViewMut`, and `DualLayerHdrBuf` (ISO 21496-1 /
-  UltraHDR gain maps) with O(1) `compose_orientation`, `with_orientation`, and
-  `display_dimensions()`. Planar views (`PlaneView`, `PlaneViewMut`, `PlaneBuf`)
-  expose zero-copy typed codec APIs with consistent `(data, width, height, stride, spec)`
-  argument order (`PlaneView::from_samples` taking **element** stride, `row_as`,
-  `code_u32(x, y, component)` with `component = 0` for 1-channel planes,
-  `as_code_plane`, `plane_by_role`, `PlanarBuf::new_aligned`).
+See [docs/guide.md](docs/guide.md) for copy-pasteable recipes covering every area:
+
+- **External zero-copy ownership:** `PixelBuf::from_external` / `from_external_mut` (`Arc<[u8]>`, `Box<[T]>`, FFI) + fallible copy-on-write `try_as_view_mut` + `into_vec_zero_copy`.
+- **Sound `AlphaMode::Opaque` & fast fill-then-retag:** `PixelBuf::new` (black + max alpha), `new_white`, and `new_zeroed` (refuses unverified `Opaque`) paired with `into_opaque_verified` / `into_opaque_filled` / `assume_opaque`.
+- **Planar, banded & dual-layer HDR:** `PlanarBuf` / `PlanarView` / `PlaneBuf` / `PlaneView` (uniform `(data, width, height, stride, spec)` argument order, `CodePlane` bit-packed inspection), `BandedBuf` for gigapixel images, and `DualLayerHdrBuf` for ISO 21496-1 / UltraHDR gain maps.
+- **Lossless CICP & ICC.1 `cicpType`:** all H.273 codes plus 44-byte signed `s15Fixed16` custom primaries (`CicpTag`, `CustomPrimaries::ACES_AP0` / `ACES_CG` / `PROPHOTO_RGB`, Annex 1 D50 matrices) and ISO 15076-1 structural ICC validation (`validate_icc_structure`).
+- **Orientation on every carrier:** O(1) `with_orientation` / `compose_orientation` / `display_dimensions()`.
 
 ## Conversion
 
 ```rust
-use zenpixels_convert::{ConvertPolicy, ImageSpec, PeakSource, PixelBuf, convert_to_buf};
+use zenpixels_convert::{ImageSpec, PixelBuf, to_rgba8};
 
-let src = PixelBuf::from_typed(vec![128u8, 128, 128], 1, 1, ImageSpec::rgb8_srgb())?;
-let linear = convert_to_buf(
-    &src.as_view(), ImageSpec::rgbf32_linear_ref(), &ConvertPolicy::permissive(), PeakSource::Measured,
-)?;
-assert_eq!(linear.spec(), ImageSpec::rgbf32_linear_ref());
+let src = PixelBuf::from_typed(vec![128u8, 128, 128], 1, 1, ImageSpec::RGB8_SRGB)?;
+let rgba = to_rgba8(&src.as_view())?;
+assert_eq!(rgba.as_view().row(0), &[128, 128, 128, 255]);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-See [zenpixels-convert/README.md](https://github.com/imazen/zenpixels/blob/main/zenpixels-convert/README.md)
-for `RowPlan`, `ImagePlan`, `OutputPlan`, `Negotiate`, `const Accelerators`,
-HDR tone mapping, and CMS backends (`MoxCms`, `Lcms`).
+For custom destinations, linear-light working spaces, HDR tone mapping, or ICC
+profiles, use `convert_to_buf`, `ImagePlan`, `RowPlan`, or `OutputPlan` — see
+[docs/guide.md](docs/guide.md) and [zenpixels-convert/README.md](zenpixels-convert/README.md).
 
 ## Features (`zenpixels`)
 
@@ -117,6 +90,7 @@ HDR tone mapping, and CMS backends (`MoxCms`, `Lcms`).
 | `rgb` | `PixelType` trait & typed `rgb` crate interop |
 | `imgref` | `imgref` adapters; enables `rgb` |
 | `image` | `image` 0.25 interop with CICP color-space propagation; requires Rust 1.88 |
+| `hash` | Portable endian/stride-independent XXH3-64 pixel hashing |
 
 ## MSRV
 

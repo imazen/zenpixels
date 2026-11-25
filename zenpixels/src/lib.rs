@@ -1,21 +1,47 @@
-//! # zenpixels 0.5 — Greenfield Pixel & Color Interchange Types
+//! # zenpixels 0.5 — Pixel & Color Interchange Types
 //!
 //! Pure, `no_std + alloc`, `#![forbid(unsafe_code)]` interchange foundation for
-//! Rust image codecs and pipelines:
+//! Rust image codecs and pipelines.
 //!
-//! - **Algebraic [`ColorSpace`]:** mutually exclusive variants (`Rgb`, `Gray`,
-//!   `Oklab`, `Perceptual`, `Cmyk`, `Icc`, `Untagged`) make invalid states such
-//!   as Oklab carrying BT.709 primaries or an ICC profile paired with conflicting
-//!   CICP primaries unrepresentable by construction.
-//! - **Unified [`SampleLayout`] + [`BitPacking`]:** full-width samples, 10/12-bit
-//!   LSB/MSB codec planes (e.g. P010), and bitfield words (RGB565, RGB10A2).
-//! - **Unparameterized, alignment-exact [`PixelBuf`] / [`PixelView<'a>`] /
-//!   [`PixelViewMut<'a>`]:** fallible by default, true `'a` lifetimes, zero-copy
-//!   `bytemuck` typed access and `Vec<P>` moves that strictly preserve Rust's
-//!   allocation/deallocation alignment contract.
-//! - **Unified multi-band, multi-plane, and HDR carriers:** [`BandedBuf`],
-//!   [`PlanarBuf`], [`DualLayerHdrBuf`] (ISO 21496-1 / UltraHDR gain maps), and
-//!   [`SampleFacts`] (automatically cleared on `&mut`).
+//! ## Start Here (The 4 Core Types)
+//!
+//! - [`ImageSpec`]: pairs a physical [`SampleLayout`] with an algebraic [`ColorSpace`]
+//!   (`Rgb`, `Gray`, `Oklab`, `Xyz`, `Perceptual`, `Cmyk`, `Icc`, `Untagged`). Use
+//!   owned presets like [`ImageSpec::RGB8_SRGB`] for buffers and `&'static` refs like
+//!   [`ImageSpec::rgb8_srgb_ref()`] for zero-allocation borrowed views.
+//! - [`PixelBuf`]: owned, stride-preserving, alignment-exact 2D buffer (supporting
+//!   zero-copy external storage via [`ByteStorage`]/[`ByteStorageMut`]) carrying
+//!   [`Orientation`], [`HdrMetadata`], [`ColorOrigin`], and [`SampleFacts`].
+//! - [`PixelView<'a>`] / [`PixelViewMut<'a>`]: zero-copy borrowed strided views and
+//!   rectangular crops (`width()`, `height()` / `rows()`, `stride()`, `row(y)`).
+//! - [`PixelFormat`]: `Copy + const` layout + [`ParametricColor`] for static codec
+//!   capability tables without heap ownership.
+//!
+//! ## Quick Example
+//!
+//! ```rust
+//! use zenpixels::{ImageSpec, PixelBuf, PixelView};
+//!
+//! let buf = PixelBuf::from_typed(vec![255u8, 0, 0, 0, 255, 0], 2, 1, ImageSpec::RGB8_SRGB)?;
+//! let right = buf.crop_view(1, 0, 1, 1)?;
+//! assert_eq!(right.row(0), &[0, 255, 0]);
+//!
+//! let raw = [10u8, 20, 30];
+//! let view = PixelView::from_bytes(&raw, 1, 1, ImageSpec::rgb8_srgb_ref())?;
+//! assert_eq!(view.row(0), &[10, 20, 30]);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! ## Additional Carriers
+//!
+//! - [`PlanarBuf`] / [`PlanarView<'a>`] / [`PlaneBuf`] / [`PlaneView<'a>`]: multi-plane
+//!   YCbCr and planar RGB with uniform `(data, width, height, stride, spec)` constructors
+//!   and bit-packed [`CodePlane`] access.
+//! - [`BandedBuf`]: bounded row-band storage for gigapixel images.
+//! - [`DualLayerHdrBuf`] / [`DualLayerHdrView<'a>`]: ISO 21496-1 / UltraHDR gain maps.
+//! - **Error contract:** carrier/pipeline operations return [`At<E>`] (`*err.error()` /
+//!   `err.into_inner()`); const-capable layout, storage, code-plane, and CICP-projection
+//!   primitives return bare `E`.
 
 #![cfg_attr(not(test), no_std)]
 #![forbid(unsafe_code)]

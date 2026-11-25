@@ -1,30 +1,50 @@
-//! # zenpixels-convert 0.5 — Greenfield Pixel Conversion Engine
+//! # zenpixels-convert 0.5 — Pixel Conversion Engine
 //!
 //! Composable, `no_std + alloc`, `#![forbid(unsafe_code)]` pixel conversion,
 //! HDR tone mapping, gamut compression, ICC/CMS routing, gain-map reconstruction,
-//! EXIF orientation transpose, and codec format negotiation for [`zenpixels`].
+//! EXIF orientation, planar YCbCr/RGB reconstruction, and codec format
+//! negotiation for [`zenpixels`].
 //!
-//! ## Collision-Free Namespace Design
+//! Re-exports the entire [`zenpixels`] core surface (`pub use zenpixels::*;`) at
+//! the crate root without shadowing a single module name.
 //!
-//! This crate re-exports the entire [`zenpixels`] core surface (`pub use zenpixels::*;`)
-//! without shadowing a single module name (`zenpixels::hdr` remains pure metadata;
-//! tone mapping and gamut compression live in [`tonemap`], content light measurement
-//! lives in [`measure`], gain maps live in `gainmap` when the `gainmap` feature is enabled).
+//! ## Which Entry Point Should I Use?
 //!
-//! ## Key Architecture Highlights
+//! - **Quick 8-bit sRGB:** [`to_rgb8`], [`to_gray8`] (both refuse unproven alpha
+//!   discard via [`AlphaPolicy::DiscardIfOpaque`]), [`to_rgba8`], [`to_bgra8`].
+//! - **One-shot image conversion:** [`convert_to_buf`] or [`convert_into`].
+//! - **Reusable image plan:** [`ImagePlan::build`] (accepts [`PeakSource`], works on
+//!   [`PixelView`], [`PixelBuf`], and [`BandedBuf`]).
+//! - **Streaming row loop (zero heap scratch):** [`RowPlan::build`] (accepts
+//!   resolved `Option<Nits>` and executes rows via `convert_row`).
+//! - **Encoder output + CICP/ICC signaling:** [`adapt_for_encode_format`],
+//!   [`adapt_for_encode`], or reusable [`OutputPlan::build`].
 //!
-//! - **64-pixel stack-allocated SoA L1-strip execution engine:** zero heap scratch
-//!   allocation per row, composable micro-kernels covering full & bit-packed
-//!   (`P010`, `RGB565`, `RGB10A2`) layouts, Narrow↔Full studio range, Bayer 4×4
-//!   ordered dithering, exact linear-light gamut matrices, CIE XYZ D65 Oklab,
-//!   BT.2100-3 HLG display rendering, ST 2084 PQ, and BT.2446A tone mapping.
-//! - **Compile-time safe [`RowPlan`] vs [`ImagePlan`]:** `RowPlan::build` accepts
-//!   only `Option<Nits>` (impossible to pass `PeakSource::Measured` to a single-row
-//!   converter); `ImagePlan::build` accepts [`PeakSource`] and streams peak
-//!   measurement in O(1) row memory across [`PixelView`], [`PixelBuf`], and [`BandedBuf`].
-//! - **Dead-stripping `const` [`Accelerators`]:** link only the SIMD kernels you
-//!   use (`SCALAR`, `LAYOUT`, `WEB_SDR`, `HDR`, `OKLAB`, `ALL`), with verified
-//!   0-bit parity between `SCALAR` and `ALL`.
+//! [`ConvertPolicy::default()`] equals [`ConvertPolicy::lossless()`]; opt in
+//! explicitly to [`ConvertPolicy::permissive()`], [`ConvertPolicy::working_linear()`],
+//! or [`ConvertPolicy::display_sdr`] when lossy conversion is desired.
+//!
+//! ## Quick Example
+//!
+//! ```rust
+//! use zenpixels_convert::{ConvertPolicy, ImageSpec, PeakSource, PixelBuf, convert_to_buf};
+//!
+//! let src = PixelBuf::from_typed(vec![255u8, 0, 0, 0, 255, 0], 2, 1, ImageSpec::RGB8_SRGB)?;
+//! let linear = convert_to_buf(
+//!     &src.as_view(),
+//!     ImageSpec::rgbf32_linear_ref(),
+//!     &ConvertPolicy::permissive(),
+//!     PeakSource::Measured,
+//! )?;
+//! assert_eq!(linear.spec(), ImageSpec::rgbf32_linear_ref());
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! ## Opt-in SIMD (`const` [`Accelerators`])
+//!
+//! Native pairs default to a compact scalar core with verified 0-bit parity
+//! against SIMD kernels. Opt into SIMD globally via [`accel::enable_all`] /
+//! [`accel::enable_web_sdr`] or per-policy via [`ConvertPolicy::with_accelerators`].
 
 #![cfg_attr(not(test), no_std)]
 #![forbid(unsafe_code)]
