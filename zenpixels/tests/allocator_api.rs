@@ -98,7 +98,7 @@ mod with_allocator {
             let borrowed: PlaneRef<'_, u16> = owner.view();
             let planes = [AnyPlane::U16(borrowed)];
             let picture = PlanarSlice::new(&planes, &layout, 5, 3, &context, None).unwrap();
-            let AnyPlane::U16(plane) = picture.planes()[0] else {
+            let AnyPlane::U16(plane) = picture.plane(0).unwrap() else {
                 panic!("u16")
             };
             assert_eq!(plane.strided_samples().as_ptr(), ptr);

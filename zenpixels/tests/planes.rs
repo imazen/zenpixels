@@ -640,22 +640,22 @@ fn planar_picture_reuses_native_code_components_and_preserves_interpretation() {
     assert_eq!(image.layout().siting(), ChromaSiting::Left);
     assert_eq!(image.alpha_mode(), Some(AlphaMode::Straight));
     let cr = CodePlane::component(
-        image.planes()[1],
+        image.plane(1).unwrap(),
         2,
         0,
         SampleEncoding::new(ChannelType::U16, 10, 6).unwrap(),
     )
     .unwrap();
-    let cb = CodePlane::component(image.planes()[1], 2, 1, cr.encoding()).unwrap();
+    let cb = CodePlane::component(image.plane(1).unwrap(), 2, 1, cr.encoding()).unwrap();
     assert_eq!(cr.code(2, 1), Some(313));
     assert_eq!(cb.code(2, 1), Some(314));
     let a = CodePlane::new(
-        image.planes()[2],
+        image.plane(2).unwrap(),
         SampleEncoding::new(ChannelType::U8, 1, 0).unwrap(),
     )
     .unwrap();
     assert_eq!(a.code(4, 2), Some(0));
-    let AnyPlane::U16(luma) = image.planes()[0] else {
+    let AnyPlane::U16(luma) = image.plane(0).unwrap() else {
         panic!("U16")
     };
     assert_eq!(luma.strided_samples().as_ptr(), y.as_ptr());

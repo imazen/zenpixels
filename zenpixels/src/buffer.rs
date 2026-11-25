@@ -275,17 +275,25 @@ impl<S: SampleStorageMut + ?Sized> ByteStorageMut for S {
     }
 }
 
-mod storage_sample {
+pub(crate) mod storage_sample {
     use super::{PixelStorage, Vec};
 
     /// Proves a call comes from this module, because a generic caller could otherwise
     /// reach these methods through a `StorageSample` bound.
-    pub struct Private(pub(super) ());
+    pub struct Private(pub(crate) ());
 
     pub trait Sealed: Sized {
         fn into_storage(samples: Vec<Self>, _: Private) -> PixelStorage;
         fn from_storage(storage: PixelStorage, _: Private) -> Result<Vec<Self>, PixelStorage>;
         fn held_by(storage: &PixelStorage, _: Private) -> bool;
+        fn plane_view(
+            plane: crate::plane::PlaneRef<'_, Self>,
+            _: Private,
+        ) -> crate::plane::AnyPlane<'_>;
+        fn plane_view_mut(
+            plane: crate::plane::PlaneMut<'_, Self>,
+            _: Private,
+        ) -> crate::plane::AnyPlaneMut<'_>;
     }
 }
 use storage_sample::Private;
@@ -299,7 +307,19 @@ use storage_sample::Private;
 ///     let _ = T::into_storage(samples, Private(()));
 /// }
 /// ```
-pub trait StorageSample: storage_sample::Sealed + bytemuck::Pod + Sized {}
+pub trait StorageSample:
+    storage_sample::Sealed
+    + bytemuck::Pod
+    + Default
+    + PartialEq
+    + core::fmt::Debug
+    + Send
+    + Sync
+    + 'static
+{
+    /// Native sample type shared by typed storage, planes and runtime owners.
+    const CHANNEL_TYPE: ChannelType;
+}
 
 /// Owned samples of the type a pixel format is made of.
 ///
@@ -368,8 +388,16 @@ macro_rules! storage_samples {
             fn held_by(storage: &PixelStorage, _: Private) -> bool {
                 matches!(storage, PixelStorage::$variant(_))
             }
+            fn plane_view(plane: crate::plane::PlaneRef<'_, Self>, _: Private) -> crate::plane::AnyPlane<'_> {
+                crate::plane::AnyPlane::$variant(plane)
+            }
+            fn plane_view_mut(plane: crate::plane::PlaneMut<'_, Self>, _: Private) -> crate::plane::AnyPlaneMut<'_> {
+                crate::plane::AnyPlaneMut::$variant(plane)
+            }
         }
-        impl StorageSample for $sample {}
+        impl StorageSample for $sample {
+            const CHANNEL_TYPE: ChannelType = ChannelType::$variant;
+        }
     )*};
 }
 storage_samples! {
@@ -2067,7 +2095,7 @@ impl<'a> PixelSliceMut<'a, BGRA<u8>> {
 /// The type parameter `P` tracks pixel format at compile time, same as
 /// [`PixelSlice`].
 ///
-/// `S` defaults to [`PixelStorage`], which owns U8, U16 or F32 samples;
+/// `S` defaults to [`PixelStorage`], which retains the native typed vector;
 /// [`PixelBuffer::try_new_aligned`] makes [`AlignedSamples`].
 /// [`PixelBuffer::try_from_parts`] adopts any
 /// [`SampleStorage`] without copying: a `Vec<u16>` or

@@ -77,6 +77,11 @@ Use `as_contiguous_bytes()` when you specifically require packed rows; it
 returns `None` for a strided view. Use `try_contiguous_bytes()` to borrow when
 packed or make a fallible packed copy otherwise.
 
+For separate Y/Cb/Cr or RGB planes, `plane::PlanarBuffer` adopts existing
+allocations and lends `PlanarSlice` / `PlanarSliceMut` without copying pixels or
+allocating descriptors. Each plane keeps its own stride and sample encoding;
+see [planar storage](docs/planar-types.md).
+
 ## Type system
 
 A `PixelFormat` describes storage and layout. A `PixelDescriptor` adds transfer

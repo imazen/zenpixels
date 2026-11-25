@@ -89,7 +89,7 @@ impl PreparePlanarReference for MetricFactory {
     }
 }
 fn sum(p: &PlanarSlice<'_>) -> f64 {
-    let AnyPlane::F32(red) = p.planes()[0] else {
+    let AnyPlane::F32(red) = p.plane(0).unwrap() else {
         panic!("f32")
     };
     red.rows().flatten().map(|v| f64::from(*v)).sum()
@@ -232,7 +232,7 @@ fn borrowed_picture_checks_geometry_and_alpha_without_inspecting_padding() {
     assert!(PlanarSlice::new(&planes, &l, 3, 2, &c, None).is_err());
     assert!(PlanarSlice::new(&planes, &l, 2, 2, &c, Some(AlphaMode::Straight)).is_err());
     let p = PlanarSlice::new(&planes, &l, 2, 2, &c, None).unwrap();
-    let AnyPlane::F32(r) = p.planes()[0] else {
+    let AnyPlane::F32(r) = p.plane(0).unwrap() else {
         panic!("f32")
     };
     assert_eq!(r.strided_samples().as_ptr(), data.as_ptr());

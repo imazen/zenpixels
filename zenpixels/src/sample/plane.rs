@@ -153,7 +153,7 @@ impl<'a> CodePlane<'a> {
         let (words, stride_words) = match plane {
             AnyPlane::U8(p) => (Words::U8(&p.into_strided_samples()[skip..]), p.stride()),
             AnyPlane::U16(p) => (Words::U16(&p.into_strided_samples()[skip..]), p.stride()),
-            AnyPlane::F32(_) => return Err(CodePlaneError::StorageMismatch),
+            _ => return Err(CodePlaneError::StorageMismatch),
         };
         Ok(Self {
             words,

@@ -231,7 +231,7 @@ fn any_plane<H: Hasher>(
     let size = view.channel_type().byte_size();
     if let Some(e) = encoding.filter(|e| usize::from(e.code_bits()) != size * 8) {
         // Reuse the checked native-code reader; padding rules have one owner.
-        let codes = CodePlane::new(*view, e).expect("validated planar integer encoding");
+        let codes = CodePlane::new(*view, e);
         plane_header(
             state,
             inclusions,
@@ -239,13 +239,63 @@ fn any_plane<H: Hasher>(
             view.height(),
             view.channel_type(),
         );
-        code_samples(&codes, size, state);
+        if let Ok(codes) = codes {
+            code_samples(&codes, size, state);
+        } else {
+            // Wide/signed native carriers are hashable without claiming support
+            // in the U8/U16 numerical CodePlane reader.
+            match view {
+                AnyPlane::I8(p) => masked_plane(p, e, state),
+                AnyPlane::I16(p) => masked_plane(p, e, state),
+                AnyPlane::U32(p) => masked_plane(p, e, state),
+                AnyPlane::I32(p) => masked_plane(p, e, state),
+                AnyPlane::U64(p) => masked_plane(p, e, state),
+                AnyPlane::I64(p) => masked_plane(p, e, state),
+                _ => unreachable!("validated planar integer encoding"),
+            }
+        }
         return;
     }
     match view {
         AnyPlane::U8(v) => plane(v, inclusions, state),
         AnyPlane::U16(v) => plane(v, inclusions, state),
+        AnyPlane::I8(v) => plane(v, inclusions, state),
+        AnyPlane::I16(v) => plane(v, inclusions, state),
+        AnyPlane::U32(v) => plane(v, inclusions, state),
+        AnyPlane::I32(v) => plane(v, inclusions, state),
         AnyPlane::F32(v) => plane(v, inclusions, state),
+        AnyPlane::U64(v) => plane(v, inclusions, state),
+        AnyPlane::I64(v) => plane(v, inclusions, state),
+        AnyPlane::F64(v) => plane(v, inclusions, state),
+    }
+}
+
+fn masked_plane<C: SampleStorage>(
+    view: &Plane<C>,
+    encoding: SampleEncoding,
+    state: &mut impl Hasher,
+) {
+    if view.width() == 0 || view.height() == 0 {
+        return;
+    }
+    let size = core::mem::size_of::<C::Sample>();
+    let mask = u64::MAX >> (64 - encoding.code_bits());
+    let mut bytes = [0u8; 1024];
+    for row in view.rows() {
+        for block in bytemuck::cast_slice::<_, u8>(row).chunks(bytes.len()) {
+            for (input, output) in block.chunks_exact(size).zip(bytes.chunks_exact_mut(size)) {
+                let word = match size {
+                    1 => u64::from(input[0]),
+                    2 => u64::from(u16::from_ne_bytes(input.try_into().expect("sample width"))),
+                    4 => u64::from(u32::from_ne_bytes(input.try_into().expect("sample width"))),
+                    8 => u64::from_ne_bytes(input.try_into().expect("sample width")),
+                    _ => unreachable!("native integer sample width"),
+                };
+                let code = (word >> encoding.bit_shift()) & mask;
+                output.copy_from_slice(&code.to_le_bytes()[..size]);
+            }
+            state.write(&bytes[..block.len()]);
+        }
     }
 }
 
@@ -262,12 +312,12 @@ fn planar(view: &PlanarSlice<'_>, inclusions: HashInclusions, state: &mut impl H
             view.alpha_mode().hash(&mut p);
         }
     }
-    for (view, spec) in view.planes().iter().zip(view.layout().planes()) {
+    for (view, spec) in view.planes().zip(view.layout().planes()) {
         let encoding = match spec.encoding() {
             PlaneEncoding::Code(e) => Some(e),
-            PlaneEncoding::Float(_) => None,
+            PlaneEncoding::Float(_) | PlaneEncoding::Float64(_) => None,
         };
-        any_plane(view, inclusions, encoding, state);
+        any_plane(&view, inclusions, encoding, state);
     }
 }
 
