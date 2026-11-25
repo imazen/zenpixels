@@ -463,7 +463,11 @@ impl PixelViewLoadBearingExt for PixelView<'_> {
         // Preserve the original source `ColorOrigin` provenance verbatim — the active raster's
         // synthesized Gray-class ICC (if any) lives in `target.color`, not in `origin`.
         let out_origin = self.origin().cloned().unwrap_or_else(ColorOrigin::assumed);
-        Ok(Some(out.with_origin(out_origin).with_hdr(self.hdr())))
+        Ok(Some(
+            out.with_origin(out_origin)
+                .with_hdr(self.hdr())
+                .with_orientation(self.orientation()),
+        ))
     }
 }
 

@@ -262,6 +262,73 @@ impl SampleFacts {
         }
     }
 
+    /// Facts guaranteed for a freshly allocated white-filled buffer of `spec`
+    /// (color channels filled to reference white and any alpha slot filled to channel maximum).
+    #[inline]
+    #[must_use]
+    pub const fn for_white_spec(spec: &ImageSpec) -> Self {
+        let layout = spec.layout;
+        let sample = layout.sample;
+        let all_opaque = true;
+        let binary_alpha = true;
+        let all_grayscale = layout.order.is_rgb_family() || layout.order.is_gray_family();
+
+        if sample.is_float() {
+            let float = if matches!(
+                spec.color,
+                ColorSpace::Rgb { .. } | ColorSpace::Gray { .. } | ColorSpace::Icc { .. }
+            ) {
+                FloatFacts::UNIT_INTERVAL.union(FloatFacts::POSITIVE)
+            } else {
+                FloatFacts::FINITE
+            };
+            return Self {
+                float,
+                depth: None,
+                all_opaque,
+                all_grayscale,
+                binary_alpha,
+            };
+        }
+
+        let depth = if layout.packing.is_full()
+            && matches!(sample, SampleType::U8 | SampleType::U16)
+            && all_grayscale
+        {
+            let range = match spec.color {
+                ColorSpace::Rgb { range, .. } | ColorSpace::Gray { range, .. } => range,
+                ColorSpace::Icc { .. } => SignalRange::Full,
+                _ => {
+                    return Self {
+                        float: FloatFacts::NONE,
+                        depth: None,
+                        all_opaque,
+                        all_grayscale: false,
+                        binary_alpha,
+                    };
+                }
+            };
+            let color_bits = match range {
+                SignalRange::Full => 1,
+                SignalRange::Narrow => 8,
+            };
+            match ExactDepth::new(sample, range, color_bits, 1) {
+                Ok(d) => Some(d),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
+        Self {
+            float: FloatFacts::NONE,
+            depth,
+            all_opaque,
+            all_grayscale,
+            binary_alpha,
+        }
+    }
+
     /// Construct facts carrying only proven [`FloatFacts`].
     #[inline]
     #[must_use]

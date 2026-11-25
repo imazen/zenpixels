@@ -25,7 +25,8 @@ const TILE: u32 = 32;
 
 /// Apply `orientation` to `src`, returning a freshly allocated tightly packed [`PixelBuf`].
 ///
-/// Preserves `src.hdr()`, `src.facts()`, and `src.origin()`.
+/// Preserves `src.hdr()`, `src.facts()`, and `src.origin()`. The returned buffer has
+/// [`Orientation::Identity`] because `orientation` has been physically applied to the pixels.
 pub fn apply_orientation(
     src: &PixelView<'_>,
     orientation: Orientation,
@@ -49,6 +50,32 @@ pub fn orient_buf(buf: PixelBuf, orientation: Orientation) -> Result<PixelBuf, A
         return Ok(buf);
     }
     apply_orientation(&buf.as_view(), orientation)
+}
+
+/// Physically bake `src.orientation()` into pixels, returning a tightly packed [`PixelBuf`]
+/// with [`Orientation::Identity`].
+pub fn bake_orientation(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
+    apply_orientation(src, src.orientation())
+}
+
+/// Physically bake `buf.orientation()` into pixels, returning `buf` **zero-copy** when
+/// `buf.orientation() == Orientation::Identity` and clearing the resulting orientation to
+/// [`Orientation::Identity`].
+pub fn bake_orientation_buf(buf: PixelBuf) -> Result<PixelBuf, At<ConvertError>> {
+    let orient = buf.orientation();
+    if orient == Orientation::Identity {
+        return Ok(buf);
+    }
+    apply_orientation(&buf.as_view(), orient)
+}
+
+/// Physically bake `src.orientation()` into a [`BandedBuf`] with each band bounded by
+/// `max_band_bytes` and [`Orientation::Identity`] on the result.
+pub fn bake_orientation_banded(
+    src: &BandedBuf,
+    max_band_bytes: usize,
+) -> Result<BandedBuf, At<ConvertError>> {
+    orient_banded(src, src.orientation(), max_band_bytes)
 }
 
 /// Apply `orientation` to a [`BandedBuf`], returning a freshly allocated [`BandedBuf`]

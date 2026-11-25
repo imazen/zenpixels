@@ -18,13 +18,14 @@ use whereat::At;
 
 use crate::color::{
     AlphaMode, ColorError, ColorOrigin, ColorSpace, GainMapMetadata, HdrMetadata, ImageSpec,
-    SignalRange,
+    SignalRange, SpecCow,
 };
 use crate::facts::{FloatFacts, SampleFacts};
 use crate::layout::{
     BitPacking, ChannelOrder, InteropTarget, LayoutError, PlaneRole, PlaneSpec, RowAlign,
     SampleLayout, SampleType,
 };
+use crate::orientation::Orientation;
 use crate::pixel_types::{F16Sample, GrayAlpha8, GrayAlpha16, GrayAlphaF16, GrayAlphaF32};
 use crate::sample::ChromaSiting;
 use crate::storage::{
@@ -177,6 +178,19 @@ pub struct Bgrx {
     pub x: u8,
 }
 
+/// Initial pixel fill color for freshly allocated [`PixelBuf`]s
+/// ([`PixelBuf::new_with_fill`], [`PixelBuf::new_white`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum BufFill {
+    /// Zeroed black pixels (alpha slot filled to channel maximum when `AlphaMode::Opaque`).
+    #[default]
+    Black,
+    /// Solid opaque white pixels (`MAX` / `1.0` for full range, studio white `235 << shift`
+    /// for narrow integer range; alpha slot filled to channel maximum).
+    White,
+}
+
 /// Errors returned by pixel buffer, view, band, and plane operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -203,6 +217,13 @@ pub enum BufferError {
     InteropUnsupported,
     /// Heap allocation failed (OOM or allocation layout overflow).
     AllocationFailed,
+    /// ISO 21496-1 gain-map metadata failed invariant validation (`gamma == 0`, `min > max`,
+    /// equal headrooms, or contradictory `backward_direction`).
+    InvalidGainMapMetadata,
+    /// Buffer declares or requested [`AlphaMode::Opaque`] without verified channel-maximum alpha
+    /// (for example `PixelBuf::new_zeroed` with `AlphaMode::Opaque`, or `into_opaque_verified`
+    /// encountering a non-maximum alpha sample).
+    UnverifiedOpaqueAlpha,
 }
 
 impl From<ColorError> for BufferError {
@@ -243,6 +264,12 @@ impl fmt::Display for BufferError {
                 f.write_str("image spec does not satisfy requested zero-copy interop contract")
             }
             Self::AllocationFailed => f.write_str("pixel buffer allocation failed"),
+            Self::InvalidGainMapMetadata => {
+                f.write_str("ISO 21496-1 gain-map metadata failed invariant validation")
+            }
+            Self::UnverifiedOpaqueAlpha => f.write_str(
+                "AlphaMode::Opaque requires black/white fill, verification, or explicit assume_opaque",
+            ),
         }
     }
 }
@@ -386,6 +413,256 @@ fn fill_opaque_alpha(bytes: &mut [u8], width: u32, height: u32, stride: usize, s
     }
 }
 
+/// Fill the alpha channel of every active pixel to its canonical maximum value
+/// regardless of `spec.color.alpha()` (used by [`PixelBuf::into_opaque_filled`]).
+fn fill_alpha_max_unconditional(
+    bytes: &mut [u8],
+    width: u32,
+    height: u32,
+    stride: usize,
+    layout: SampleLayout,
+) {
+    if !layout.order.has_alpha_slot() {
+        return;
+    }
+    let tmp_spec = ImageSpec::new(
+        layout,
+        ColorSpace::Untagged {
+            channels: layout.channels() as u8,
+            alpha: AlphaMode::Opaque,
+        },
+    );
+    fill_opaque_alpha(bytes, width, height, stride, &tmp_spec);
+}
+
+/// Return `true` iff every active pixel's alpha channel equals its canonical maximum value.
+fn check_alpha_all_max(
+    bytes: &[u8],
+    width: u32,
+    height: u32,
+    stride: usize,
+    layout: SampleLayout,
+) -> bool {
+    if !layout.order.has_alpha_slot() {
+        return true;
+    }
+    let bpp = layout.bytes_per_pixel();
+    let channels = layout.order.channels();
+    let alpha_idx = channels - 1;
+    let sample = layout.sample;
+    let packing = layout.packing;
+
+    if packing.is_packed_word() {
+        let word_bytes = sample.byte_size();
+        let want = packing.max_code(sample, alpha_idx);
+        for y in 0..height as usize {
+            let row = &bytes[y * stride..y * stride + (width as usize) * bpp];
+            for px in row.chunks_exact(word_bytes) {
+                let w = read_sample_u32(sample, px);
+                if packing.extract_code(sample, w, alpha_idx) != want {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    let sz = sample.byte_size();
+    let alpha_off = alpha_idx * sz;
+    if !packing.is_full() {
+        let want = packing.max_code(sample, alpha_idx);
+        for y in 0..height as usize {
+            let row = &bytes[y * stride..y * stride + (width as usize) * bpp];
+            for px in row.chunks_exact(bpp) {
+                let w = read_sample_u32(sample, &px[alpha_off..alpha_off + sz]);
+                if packing.extract_code(sample, w, alpha_idx) != want {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    for y in 0..height as usize {
+        let row = &bytes[y * stride..y * stride + (width as usize) * bpp];
+        for px in row.chunks_exact(bpp) {
+            let a = &px[alpha_off..alpha_off + sz];
+            let ok = match sample {
+                SampleType::U8 => a[0] == u8::MAX,
+                SampleType::U16 => u16::from_ne_bytes([a[0], a[1]]) == u16::MAX,
+                SampleType::U32 => u32::from_ne_bytes([a[0], a[1], a[2], a[3]]) == u32::MAX,
+                SampleType::U64 => {
+                    u64::from_ne_bytes([a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]]) == u64::MAX
+                }
+                SampleType::I8 => (a[0] as i8) == i8::MAX,
+                SampleType::I16 => i16::from_ne_bytes([a[0], a[1]]) == i16::MAX,
+                SampleType::I32 => i32::from_ne_bytes([a[0], a[1], a[2], a[3]]) == i32::MAX,
+                SampleType::I64 => {
+                    i64::from_ne_bytes([a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]]) == i64::MAX
+                }
+                SampleType::F16 => u16::from_ne_bytes([a[0], a[1]]) == 0x3C00,
+                SampleType::F32 => f32::from_ne_bytes([a[0], a[1], a[2], a[3]]) == 1.0,
+                SampleType::F64 => {
+                    f64::from_ne_bytes([a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]]) == 1.0
+                }
+            };
+            if !ok {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Fill every active pixel with reference white (and channel-maximum alpha on any alpha slot).
+fn fill_white_pixels(bytes: &mut [u8], width: u32, height: u32, stride: usize, spec: &ImageSpec) {
+    let layout = spec.layout;
+    let bpp = layout.bytes_per_pixel();
+    let channels = layout.order.channels();
+    let sample = layout.sample;
+    let packing = layout.packing;
+    let has_alpha = layout.order.has_alpha_slot();
+    let has_padding = layout.order.has_padding_slot();
+    let color_ch = channels - usize::from(has_alpha || has_padding);
+
+    if packing.is_packed_word() {
+        let word_bytes = sample.byte_size();
+        let mut word = 0u32;
+        for c in 0..channels {
+            let max_c = packing.max_code(sample, c);
+            let code = if c < color_ch && spec.color.range() == Some(SignalRange::Narrow) {
+                let bits = (32 - max_c.leading_zeros()).max(8);
+                (235u32 << (bits - 8)).min(max_c)
+            } else {
+                max_c
+            };
+            word |= packing.pack_code(sample, c, code);
+        }
+        let wb = word.to_ne_bytes();
+        for y in 0..height as usize {
+            let row = &mut bytes[y * stride..y * stride + (width as usize) * bpp];
+            for px in row.chunks_exact_mut(word_bytes) {
+                px.copy_from_slice(&wb[..word_bytes]);
+            }
+        }
+        return;
+    }
+
+    let sz = sample.byte_size();
+    let mut white_px = [0u8; 128]; // max 16 channels × 8 B = 128 B
+    let is_narrow = spec.color.range() == Some(SignalRange::Narrow);
+
+    let encode_sample = |dst: &mut [u8], ch_idx: usize, is_alpha: bool| {
+        if !packing.is_full() {
+            let max_c = packing.max_code(sample, ch_idx);
+            let code = if !is_alpha && is_narrow {
+                let bits = (32 - max_c.leading_zeros()).max(8);
+                (235u32 << (bits - 8)).min(max_c)
+            } else {
+                max_c
+            };
+            let packed = packing.pack_code(sample, ch_idx, code);
+            dst.copy_from_slice(&packed.to_ne_bytes()[..sz]);
+            return;
+        }
+        match sample {
+            SampleType::U8 => dst[0] = if !is_alpha && is_narrow { 235 } else { u8::MAX },
+            SampleType::U16 => {
+                let v: u16 = if !is_alpha && is_narrow {
+                    235u16 << 8
+                } else {
+                    u16::MAX
+                };
+                dst.copy_from_slice(&v.to_ne_bytes());
+            }
+            SampleType::U32 => {
+                let v: u32 = if !is_alpha && is_narrow {
+                    235u32 << 24
+                } else {
+                    u32::MAX
+                };
+                dst.copy_from_slice(&v.to_ne_bytes());
+            }
+            SampleType::U64 => dst.copy_from_slice(&u64::MAX.to_ne_bytes()),
+            SampleType::I8 => dst[0] = i8::MAX as u8,
+            SampleType::I16 => dst.copy_from_slice(&i16::MAX.to_ne_bytes()),
+            SampleType::I32 => dst.copy_from_slice(&i32::MAX.to_ne_bytes()),
+            SampleType::I64 => dst.copy_from_slice(&i64::MAX.to_ne_bytes()),
+            SampleType::F16 => dst.copy_from_slice(&0x3C00u16.to_ne_bytes()),
+            SampleType::F32 => dst.copy_from_slice(&1.0f32.to_ne_bytes()),
+            SampleType::F64 => dst.copy_from_slice(&1.0f64.to_ne_bytes()),
+        }
+    };
+
+    match &spec.color {
+        ColorSpace::Oklab { .. } => {
+            // Oklab white: L = 1.0, a = 0.0, b = 0.0 (+ alpha = MAX).
+            encode_sample(&mut white_px[0..sz], 0, false);
+            if has_alpha {
+                encode_sample(
+                    &mut white_px[(channels - 1) * sz..channels * sz],
+                    channels - 1,
+                    true,
+                );
+            }
+        }
+        ColorSpace::Xyz { white_point, .. } => {
+            let (wx, wy) = white_point.xy();
+            let xyz = [wx / wy, 1.0_f32, (1.0 - wx - wy) / wy];
+            for (c, &v) in xyz.iter().enumerate() {
+                match sample {
+                    SampleType::F32 => {
+                        white_px[c * 4..(c + 1) * 4].copy_from_slice(&v.to_ne_bytes());
+                    }
+                    SampleType::F16 => {
+                        let h = crate::pixel_types::F16Sample::from_f32(v).to_bits();
+                        white_px[c * 2..(c + 1) * 2].copy_from_slice(&h.to_ne_bytes());
+                    }
+                    SampleType::F64 => {
+                        white_px[c * 8..(c + 1) * 8].copy_from_slice(&f64::from(v).to_ne_bytes());
+                    }
+                    _ => encode_sample(&mut white_px[c * sz..(c + 1) * sz], c, false),
+                }
+            }
+            if has_alpha {
+                encode_sample(&mut white_px[3 * sz..4 * sz], 3, true);
+            }
+        }
+        ColorSpace::Cmyk {
+            inverted: false, ..
+        } => {
+            // Non-inverted CMYK: 0 = no ink = white paper! Only alpha is MAX.
+            if has_alpha {
+                encode_sample(
+                    &mut white_px[(channels - 1) * sz..channels * sz],
+                    channels - 1,
+                    true,
+                );
+            }
+        }
+        _ => {
+            for c in 0..color_ch {
+                encode_sample(&mut white_px[c * sz..(c + 1) * sz], c, false);
+            }
+            if has_alpha {
+                encode_sample(
+                    &mut white_px[(channels - 1) * sz..channels * sz],
+                    channels - 1,
+                    true,
+                );
+            }
+        }
+    }
+
+    let pat = &white_px[..bpp];
+    for y in 0..height as usize {
+        let row = &mut bytes[y * stride..y * stride + (width as usize) * bpp];
+        for px in row.chunks_exact_mut(bpp) {
+            px.copy_from_slice(pat);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // PixelView (borrowed, immutable, true `'a` lifetimes)
 // ---------------------------------------------------------------------------
@@ -401,14 +678,18 @@ pub struct PixelView<'a> {
     width: u32,
     rows: u32,
     stride: usize,
-    spec: ImageSpec,
+    spec: SpecCow<'a>,
     facts: SampleFacts,
     hdr: HdrMetadata,
     origin: Option<&'a ColorOrigin>,
+    orientation: Orientation,
 }
 
 impl<'a> PixelView<'a> {
     /// Borrow strided bytes with checked dimensions, alignment, and length.
+    ///
+    /// Accepts owned [`ImageSpec`], borrowed `&'a ImageSpec` (zero `Arc` refcount bump),
+    /// or `Copy` [`PixelFormat`](crate::PixelFormat).
     ///
     /// Trims any trailing bytes beyond the active `(rows - 1) * stride + row_bytes`
     /// extent so zero-copy interop bridges (`try_as_imgref`) never touch trailing slop.
@@ -417,9 +698,17 @@ impl<'a> PixelView<'a> {
         width: u32,
         rows: u32,
         stride: usize,
-        spec: ImageSpec,
+        spec: impl Into<SpecCow<'a>>,
     ) -> Result<Self, At<BufferError>> {
-        let (_rb, req) = validate_geometry(data.len(), data.as_ptr(), width, rows, stride, &spec)?;
+        let spec = spec.into();
+        let (_rb, req) = validate_geometry(
+            data.len(),
+            data.as_ptr(),
+            width,
+            rows,
+            stride,
+            spec.as_spec(),
+        )?;
         Ok(Self {
             data: &data[..req],
             width,
@@ -429,6 +718,7 @@ impl<'a> PixelView<'a> {
             facts: SampleFacts::NONE,
             hdr: HdrMetadata::default(),
             origin: None,
+            orientation: Orientation::Identity,
         })
     }
 
@@ -437,10 +727,11 @@ impl<'a> PixelView<'a> {
         data: &'a [u8],
         width: u32,
         rows: u32,
-        spec: ImageSpec,
+        spec: impl Into<SpecCow<'a>>,
     ) -> Result<Self, At<BufferError>> {
+        let spec = spec.into();
         let stride = (width as usize)
-            .checked_mul(spec.layout.bytes_per_pixel())
+            .checked_mul(spec.as_spec().layout.bytes_per_pixel())
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
         Self::new(data, width, rows, stride, spec)
     }
@@ -454,9 +745,10 @@ impl<'a> PixelView<'a> {
         pixels: &'a [P],
         width: u32,
         rows: u32,
-        spec: ImageSpec,
+        spec: impl Into<SpecCow<'a>>,
     ) -> Result<Self, At<BufferError>> {
-        if !P::matches_layout(spec.layout) {
+        let spec = spec.into();
+        if !P::matches_layout(spec.as_spec().layout) {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
         Self::from_packed(bytemuck::cast_slice(pixels), width, rows, spec)
@@ -467,9 +759,10 @@ impl<'a> PixelView<'a> {
         samples: &'a [S],
         width: u32,
         rows: u32,
-        spec: ImageSpec,
+        spec: impl Into<SpecCow<'a>>,
     ) -> Result<Self, At<BufferError>> {
-        if spec.layout.sample != S::SAMPLE_TYPE {
+        let spec = spec.into();
+        if spec.as_spec().layout.sample != S::SAMPLE_TYPE {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
         Self::from_packed(bytemuck::cast_slice(samples), width, rows, spec)
@@ -497,7 +790,7 @@ impl<'a> PixelView<'a> {
         pixels: &'a [P],
         width: u32,
         rows: u32,
-        spec: ImageSpec,
+        spec: impl Into<SpecCow<'a>>,
     ) -> Result<Self, At<BufferError>> {
         Self::from_packed(bytemuck::cast_slice(pixels), width, rows, spec)
     }
@@ -527,14 +820,14 @@ impl<'a> PixelView<'a> {
     #[inline]
     #[must_use]
     pub const fn row_bytes(&self) -> usize {
-        (self.width as usize) * self.spec.layout.bytes_per_pixel()
+        (self.width as usize) * self.spec.as_spec().layout.bytes_per_pixel()
     }
 
     /// Authoritative image specification (`layout` + `color`).
     #[inline]
     #[must_use]
-    pub fn spec(&self) -> &ImageSpec {
-        &self.spec
+    pub const fn spec(&self) -> &ImageSpec {
+        self.spec.as_spec()
     }
 
     /// Proven sample facts attached to this view.
@@ -558,6 +851,20 @@ impl<'a> PixelView<'a> {
         self.origin
     }
 
+    /// Pending EXIF display orientation attached to this view (defaults to [`Orientation::Identity`]).
+    #[inline]
+    #[must_use]
+    pub const fn orientation(&self) -> Orientation {
+        self.orientation
+    }
+
+    /// Display-oriented `(width, height)` after applying [`orientation`](Self::orientation).
+    #[inline]
+    #[must_use]
+    pub const fn display_dimensions(&self) -> (u32, u32) {
+        self.orientation.output_dimensions(self.width, self.rows)
+    }
+
     /// Attach proven sample facts to this view.
     #[inline]
     #[must_use]
@@ -579,6 +886,23 @@ impl<'a> PixelView<'a> {
     #[must_use]
     pub const fn with_origin(mut self, origin: &'a ColorOrigin) -> Self {
         self.origin = Some(origin);
+        self
+    }
+
+    /// Replace the pending EXIF display orientation on this view.
+    #[inline]
+    #[must_use]
+    pub const fn with_orientation(mut self, orientation: Orientation) -> Self {
+        self.orientation = orientation;
+        self
+    }
+
+    /// Compose an additional display transform onto this view's pending orientation
+    /// (`self.orientation.then(delta)`) in O(1) without touching pixels.
+    #[inline]
+    #[must_use]
+    pub const fn rotate_metadata(mut self, delta: Orientation) -> Self {
+        self.orientation = self.orientation.then(delta);
         self
     }
 
@@ -690,6 +1014,7 @@ impl<'a> PixelView<'a> {
             facts: self.facts,
             hdr: self.hdr,
             origin: self.origin,
+            orientation: self.orientation,
         })
     }
 
@@ -716,10 +1041,11 @@ impl<'a> PixelView<'a> {
             width: self.width,
             height: self.rows,
             stride: rb,
-            spec: self.spec.clone(),
+            spec: self.spec.as_spec().clone(),
             facts: self.facts,
             hdr: self.hdr,
             origin: self.origin.cloned().unwrap_or_else(ColorOrigin::assumed),
+            orientation: self.orientation,
         })
     }
 
@@ -753,20 +1079,32 @@ pub struct PixelViewMut<'a> {
     width: u32,
     rows: u32,
     stride: usize,
-    spec: ImageSpec,
+    spec: SpecCow<'a>,
     hdr: HdrMetadata,
+    orientation: Orientation,
 }
 
 impl<'a> PixelViewMut<'a> {
     /// Borrow mutable strided bytes with checked dimensions, alignment, and length.
+    ///
+    /// Accepts owned [`ImageSpec`], borrowed `&'a ImageSpec` (zero `Arc` refcount bump),
+    /// or `Copy` [`PixelFormat`](crate::PixelFormat).
     pub fn new(
         data: &'a mut [u8],
         width: u32,
         rows: u32,
         stride: usize,
-        spec: ImageSpec,
+        spec: impl Into<SpecCow<'a>>,
     ) -> Result<Self, At<BufferError>> {
-        let (_rb, req) = validate_geometry(data.len(), data.as_ptr(), width, rows, stride, &spec)?;
+        let spec = spec.into();
+        let (_rb, req) = validate_geometry(
+            data.len(),
+            data.as_ptr(),
+            width,
+            rows,
+            stride,
+            spec.as_spec(),
+        )?;
         Ok(Self {
             data: &mut data[..req],
             width,
@@ -774,6 +1112,7 @@ impl<'a> PixelViewMut<'a> {
             stride,
             spec,
             hdr: HdrMetadata::default(),
+            orientation: Orientation::Identity,
         })
     }
 
@@ -789,6 +1128,43 @@ impl<'a> PixelViewMut<'a> {
     #[must_use]
     pub const fn with_hdr(mut self, hdr: HdrMetadata) -> Self {
         self.hdr = hdr;
+        self
+    }
+
+    /// Pending EXIF display orientation attached to this mutable view.
+    #[inline]
+    #[must_use]
+    pub const fn orientation(&self) -> Orientation {
+        self.orientation
+    }
+
+    /// Display-oriented `(width, height)` after applying [`orientation`](Self::orientation).
+    #[inline]
+    #[must_use]
+    pub const fn display_dimensions(&self) -> (u32, u32) {
+        self.orientation.output_dimensions(self.width, self.rows)
+    }
+
+    /// Replace the pending EXIF display orientation on this mutable view.
+    #[inline]
+    #[must_use]
+    pub const fn with_orientation(mut self, orientation: Orientation) -> Self {
+        self.orientation = orientation;
+        self
+    }
+
+    /// Set the pending EXIF display orientation on this mutable view in place.
+    #[inline]
+    pub fn set_orientation(&mut self, orientation: Orientation) {
+        self.orientation = orientation;
+    }
+
+    /// Compose an additional display transform onto this view's pending orientation
+    /// (`self.orientation.then(delta)`) in O(1) without touching pixels.
+    #[inline]
+    #[must_use]
+    pub const fn rotate_metadata(mut self, delta: Orientation) -> Self {
+        self.orientation = self.orientation.then(delta);
         self
     }
 
@@ -817,14 +1193,14 @@ impl<'a> PixelViewMut<'a> {
     #[inline]
     #[must_use]
     pub const fn row_bytes(&self) -> usize {
-        (self.width as usize) * self.spec.layout.bytes_per_pixel()
+        (self.width as usize) * self.spec.as_spec().layout.bytes_per_pixel()
     }
 
     /// Authoritative image specification.
     #[inline]
     #[must_use]
-    pub fn spec(&self) -> &ImageSpec {
-        &self.spec
+    pub const fn spec(&self) -> &ImageSpec {
+        self.spec.as_spec()
     }
 
     /// Mutable active bytes of row `y`.
@@ -876,10 +1252,11 @@ impl<'a> PixelViewMut<'a> {
             width: self.width,
             rows: self.rows,
             stride: self.stride,
-            spec: self.spec.clone(),
+            spec: self.spec.to_borrowed(),
             facts: SampleFacts::NONE,
             hdr: self.hdr,
             origin: None,
+            orientation: self.orientation,
         }
     }
 
@@ -896,6 +1273,7 @@ impl<'a> PixelViewMut<'a> {
             facts: SampleFacts::NONE,
             hdr: self.hdr,
             origin: None,
+            orientation: self.orientation,
         }
     }
 
@@ -930,8 +1308,9 @@ impl<'a> PixelViewMut<'a> {
             width: w,
             rows: h,
             stride: self.stride,
-            spec: self.spec.clone(),
+            spec: self.spec.to_borrowed(),
             hdr: self.hdr,
+            orientation: self.orientation,
         })
     }
 
@@ -970,6 +1349,7 @@ impl<'a> PixelViewMut<'a> {
             stride: self.stride,
             spec: self.spec,
             hdr: self.hdr,
+            orientation: self.orientation,
         })
     }
 
@@ -1006,6 +1386,8 @@ pub struct PixelBufParts {
     pub hdr: HdrMetadata,
     /// Container provenance.
     pub origin: ColorOrigin,
+    /// Pending EXIF display orientation.
+    pub orientation: Orientation,
 }
 
 /// Owned, unparameterized, alignment-exact pixel image buffer.
@@ -1023,10 +1405,11 @@ pub struct PixelBuf {
     facts: SampleFacts,
     hdr: HdrMetadata,
     origin: ColorOrigin,
+    orientation: Orientation,
 }
 
 impl Clone for PixelBuf {
-    /// Clone this buffer, preserving alignment, metadata, facts, and origin.
+    /// Clone this buffer, preserving alignment, metadata, facts, origin, and orientation.
     ///
     /// # Panics
     ///
@@ -1064,12 +1447,13 @@ impl Clone for PixelBuf {
             facts: self.facts,
             hdr: self.hdr,
             origin: self.origin.clone(),
+            orientation: self.orientation,
         }
     }
 }
 
 impl PixelBuf {
-    /// Fallibly clone this buffer, preserving alignment, metadata, facts, and origin.
+    /// Fallibly clone this buffer, preserving alignment, metadata, facts, origin, and orientation.
     pub fn try_clone(&self) -> Result<Self, At<BufferError>> {
         let align = self.spec.layout.min_alignment();
         let cloned_storage = self.storage.try_clone().map_err(|e| err_at(e.into()))?;
@@ -1102,19 +1486,41 @@ impl PixelBuf {
             facts: self.facts,
             hdr: self.hdr,
             origin: self.origin.clone(),
+            orientation: self.orientation,
         })
     }
 
-    /// Fallibly allocate a tightly packed zero-filled buffer backed by native sample storage.
+    /// Fallibly allocate a tightly packed black-filled buffer backed by native sample storage.
     ///
     /// When `spec.color.alpha() == AlphaMode::Opaque`, the alpha channel is initialized to
     /// canonical full opacity (`255`, `65535`, `1.0`, or packed max code) so stored pixels
     /// honor the [`AlphaMode::Opaque`] invariant immediately.
-    pub fn new(width: u32, height: u32, spec: ImageSpec) -> Result<Self, At<BufferError>> {
-        Self::new_aligned(width, height, spec, RowAlign::Tight)
+    ///
+    /// For solid opaque white initialization, use [`new_white`](Self::new_white) or
+    /// [`new_with_fill`](Self::new_with_fill). To skip the alpha-fill pass when you will
+    /// overwrite every pixel, allocate via [`new_zeroed`](Self::new_zeroed) with
+    /// [`AlphaMode::Undefined`] (or `Straight`), fill all pixels, and retag zero-copy with
+    /// [`into_opaque_verified`](Self::into_opaque_verified) or [`assume_opaque`](Self::assume_opaque).
+    pub fn new(
+        width: u32,
+        height: u32,
+        spec: impl Into<ImageSpec>,
+    ) -> Result<Self, At<BufferError>> {
+        Self::new_with_fill(width, height, spec, RowAlign::Tight, BufFill::Black)
     }
 
-    /// Fallibly allocate a zero-filled buffer with explicit row alignment (`Tight`, `Cache64`, `PixelCache64`, `Samples(n)`).
+    /// Fallibly allocate a tightly packed white-filled buffer (reference white on color channels
+    /// and canonical maximum on any alpha slot).
+    pub fn new_white(
+        width: u32,
+        height: u32,
+        spec: impl Into<ImageSpec>,
+    ) -> Result<Self, At<BufferError>> {
+        Self::new_with_fill(width, height, spec, RowAlign::Tight, BufFill::White)
+    }
+
+    /// Fallibly allocate a black-filled buffer with explicit row alignment
+    /// (`Tight`, `Cache64`, `PixelCache64`, `Samples(n)`).
     ///
     /// For `Cache64` and `PixelCache64`, storage is allocated as 64-byte aligned
     /// [`AlignedSamples`] so both the first pixel and every
@@ -1123,9 +1529,22 @@ impl PixelBuf {
     pub fn new_aligned(
         width: u32,
         height: u32,
-        spec: ImageSpec,
+        spec: impl Into<ImageSpec>,
         align: RowAlign,
     ) -> Result<Self, At<BufferError>> {
+        Self::new_with_fill(width, height, spec, align, BufFill::Black)
+    }
+
+    /// Fallibly allocate a buffer with explicit row alignment and initial [`BufFill`]
+    /// (`Black` or `White`).
+    pub fn new_with_fill(
+        width: u32,
+        height: u32,
+        spec: impl Into<ImageSpec>,
+        align: RowAlign,
+        fill: BufFill,
+    ) -> Result<Self, At<BufferError>> {
+        let spec = spec.into();
         spec.validate()
             .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
         if width == 0 || height == 0 {
@@ -1149,9 +1568,84 @@ impl PixelBuf {
             _ => PixelStorage::try_zeroed(spec.layout.sample, total),
         }
         .map_err(|e| err_at(e.into()))?;
-        if spec.color.alpha() == AlphaMode::Opaque {
-            fill_opaque_alpha(storage.as_bytes_mut(), width, height, stride, &spec);
+        let facts = match fill {
+            BufFill::Black => {
+                if spec.color.alpha() == AlphaMode::Opaque {
+                    fill_opaque_alpha(storage.as_bytes_mut(), width, height, stride, &spec);
+                }
+                SampleFacts::for_zeroed_spec(&spec)
+            }
+            BufFill::White => {
+                fill_white_pixels(storage.as_bytes_mut(), width, height, stride, &spec);
+                SampleFacts::for_white_spec(&spec)
+            }
+        };
+        Ok(Self {
+            storage,
+            offset: 0,
+            width,
+            height,
+            stride,
+            spec,
+            facts,
+            hdr: HdrMetadata::default(),
+            origin: ColorOrigin::assumed(),
+            orientation: Orientation::Identity,
+        })
+    }
+
+    /// Fallibly allocate raw zero-filled OS pages with **no alpha-fill pass** for maximum
+    /// decoder/renderer write throughput.
+    ///
+    /// Refuses [`AlphaMode::Opaque`] on layouts with an alpha slot with
+    /// [`BufferError::UnverifiedOpaqueAlpha`] so an opaque-tagged buffer can never silently
+    /// contain zero alpha. Allocate with [`AlphaMode::Undefined`] (or `Straight`), write every
+    /// pixel including full alpha, then retag zero-copy via
+    /// [`into_opaque_verified`](Self::into_opaque_verified),
+    /// [`into_opaque_filled`](Self::into_opaque_filled), or [`assume_opaque`](Self::assume_opaque).
+    pub fn new_zeroed(
+        width: u32,
+        height: u32,
+        spec: impl Into<ImageSpec>,
+    ) -> Result<Self, At<BufferError>> {
+        Self::new_zeroed_aligned(width, height, spec, RowAlign::Tight)
+    }
+
+    /// Fallibly allocate raw zero-filled aligned OS pages with **no alpha-fill pass**,
+    /// refusing [`AlphaMode::Opaque`] on layouts with an alpha slot.
+    pub fn new_zeroed_aligned(
+        width: u32,
+        height: u32,
+        spec: impl Into<ImageSpec>,
+        align: RowAlign,
+    ) -> Result<Self, At<BufferError>> {
+        let spec = spec.into();
+        spec.validate()
+            .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
+        if width == 0 || height == 0 {
+            return Err(err_at(BufferError::InvalidDimensions));
         }
+        if spec.color.alpha() == AlphaMode::Opaque && spec.layout.order.has_alpha_slot() {
+            return Err(err_at(BufferError::UnverifiedOpaqueAlpha));
+        }
+        let stride = spec
+            .layout
+            .aligned_stride(width, align)
+            .map_err(|e| err_at(e.into()))?;
+        let row_bytes = (width as usize)
+            .checked_mul(spec.layout.bytes_per_pixel())
+            .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+        let total = match align {
+            RowAlign::Cache64 | RowAlign::PixelCache64 => stride
+                .checked_mul(height as usize)
+                .ok_or_else(|| err_at(BufferError::InvalidDimensions))?,
+            _ => required_bytes(height, stride, row_bytes).map_err(err_at)?,
+        };
+        let storage = match align {
+            RowAlign::Cache64 | RowAlign::PixelCache64 => PixelStorage::try_zeroed_aligned64(total),
+            _ => PixelStorage::try_zeroed(spec.layout.sample, total),
+        }
+        .map_err(|e| err_at(e.into()))?;
         let facts = SampleFacts::for_zeroed_spec(&spec);
         Ok(Self {
             storage,
@@ -1163,6 +1657,7 @@ impl PixelBuf {
             facts,
             hdr: HdrMetadata::default(),
             origin: ColorOrigin::assumed(),
+            orientation: Orientation::Identity,
         })
     }
 
@@ -1170,9 +1665,10 @@ impl PixelBuf {
     pub fn new_for(
         width: u32,
         height: u32,
-        spec: ImageSpec,
+        spec: impl Into<ImageSpec>,
         target: InteropTarget,
     ) -> Result<Self, At<BufferError>> {
+        let spec = spec.into();
         if !spec.supports_interop(target) {
             return Err(err_at(BufferError::InteropUnsupported));
         }
@@ -1185,32 +1681,57 @@ impl PixelBuf {
     /// - For wider samples (`U16`, `F16`, `F32`, `F64`), adopts zero-copy when the pointer
     ///   happens to be sample-aligned, and fallibly copies into properly aligned native
     ///   [`PixelStorage`] when the allocator returned a misaligned address (e.g. odd address).
+    ///
+    /// To recover `bytes` intact on error, use [`try_from_bytes_recover`](Self::try_from_bytes_recover).
     pub fn from_bytes(
         bytes: Vec<u8>,
         width: u32,
         height: u32,
-        spec: ImageSpec,
+        spec: impl Into<ImageSpec>,
     ) -> Result<Self, At<BufferError>> {
-        spec.validate()
-            .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
+        Self::try_from_bytes_recover(bytes, width, height, spec).map_err(|(e, _)| e)
+    }
+
+    /// Adopt tightly packed bytes (`Vec<u8>`), returning `Err((err, bytes))` with the original
+    /// `Vec<u8>` untouched on validation or allocation failure.
+    #[allow(clippy::result_large_err)]
+    pub fn try_from_bytes_recover(
+        bytes: Vec<u8>,
+        width: u32,
+        height: u32,
+        spec: impl Into<ImageSpec>,
+    ) -> Result<Self, (At<BufferError>, Vec<u8>)> {
+        let spec = spec.into();
+        if let Err(e) = spec.validate() {
+            return Err((whereat::at!(BufferError::InvalidSpec(*e.error())), bytes));
+        }
         if width == 0 || height == 0 {
-            return Err(err_at(BufferError::InvalidDimensions));
+            return Err((err_at(BufferError::InvalidDimensions), bytes));
         }
         let bpp = spec.layout.bytes_per_pixel();
-        let row_bytes = (width as usize)
-            .checked_mul(bpp)
-            .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        let req = required_bytes(height, row_bytes, row_bytes).map_err(err_at)?;
+        let Some(row_bytes) = (width as usize).checked_mul(bpp) else {
+            return Err((err_at(BufferError::InvalidDimensions), bytes));
+        };
+        let req = match required_bytes(height, row_bytes, row_bytes) {
+            Ok(r) => r,
+            Err(e) => return Err((err_at(e), bytes)),
+        };
         if bytes.len() < req {
-            return Err(err_at(BufferError::InsufficientData));
+            return Err((err_at(BufferError::InsufficientData), bytes));
         }
         let align = spec.layout.min_alignment();
         let storage = if (bytes.as_ptr() as usize) % align == 0 {
             PixelStorage::U8(bytes)
         } else {
             // Odd-allocator-safe fallible copy into natively aligned storage (first byte = first pixel).
-            PixelStorage::try_from_rows(spec.layout.sample, req, core::iter::once(&bytes[..req]))
-                .map_err(|e| err_at(e.into()))?
+            match PixelStorage::try_from_rows(
+                spec.layout.sample,
+                req,
+                core::iter::once(&bytes[..req]),
+            ) {
+                Ok(s) => s,
+                Err(e) => return Err((err_at(e.into()), bytes)),
+            }
         };
         Ok(Self {
             storage,
@@ -1222,6 +1743,7 @@ impl PixelBuf {
             facts: SampleFacts::NONE,
             hdr: HdrMetadata::default(),
             origin: ColorOrigin::assumed(),
+            orientation: Orientation::Identity,
         })
     }
 
@@ -1235,16 +1757,79 @@ impl PixelBuf {
     /// **Zero-copy** whenever `align_of::<P>() == spec.layout.min_alignment()` and
     /// `bytemuck::allocation::try_cast_vec` succeeds (preserving exact deallocation alignment!).
     /// Otherwise fallibly copies into native-aligned [`PixelStorage`].
+    ///
+    /// To recover `pixels` intact on error, use [`try_from_vec_recover`](Self::try_from_vec_recover).
     pub fn from_vec<P: TypedElement>(
         pixels: Vec<P>,
         width: u32,
         height: u32,
-        spec: ImageSpec,
+        spec: impl Into<ImageSpec>,
     ) -> Result<Self, At<BufferError>> {
+        Self::try_from_vec_recover(pixels, width, height, spec).map_err(|(e, _)| e)
+    }
+
+    /// Adopt a tightly packed typed `Vec<P>`, returning `Err((err, pixels))` with the original
+    /// `Vec<P>` untouched on validation or allocation failure.
+    #[allow(clippy::result_large_err)]
+    pub fn try_from_vec_recover<P: TypedElement>(
+        pixels: Vec<P>,
+        width: u32,
+        height: u32,
+        spec: impl Into<ImageSpec>,
+    ) -> Result<Self, (At<BufferError>, Vec<P>)> {
+        let spec = spec.into();
         if !P::matches_layout(spec.layout) {
-            return Err(err_at(BufferError::IncompatibleLayout));
+            return Err((err_at(BufferError::IncompatibleLayout), pixels));
         }
-        Self::from_raw_pod(pixels, width, height, spec)
+        if let Err(e) = spec.validate() {
+            return Err((whereat::at!(BufferError::InvalidSpec(*e.error())), pixels));
+        }
+        if width == 0 || height == 0 {
+            return Err((err_at(BufferError::InvalidDimensions), pixels));
+        }
+        let bpp = spec.layout.bytes_per_pixel();
+        let Some(row_bytes) = (width as usize).checked_mul(bpp) else {
+            return Err((err_at(BufferError::InvalidDimensions), pixels));
+        };
+        let req = match required_bytes(height, row_bytes, row_bytes) {
+            Ok(r) => r,
+            Err(e) => return Err((err_at(e), pixels)),
+        };
+        let Some(total_bytes) = pixels.len().checked_mul(core::mem::size_of::<P>()) else {
+            return Err((err_at(BufferError::InvalidDimensions), pixels));
+        };
+        if total_bytes < req {
+            return Err((err_at(BufferError::InsufficientData), pixels));
+        }
+        let storage = match PixelStorage::try_adopt_vec(pixels, spec.layout.sample) {
+            Ok(s) => s,
+            Err(pixels) => {
+                let copied = {
+                    let raw = bytemuck::cast_slice::<P, u8>(&pixels);
+                    PixelStorage::try_from_rows(
+                        spec.layout.sample,
+                        req,
+                        core::iter::once(&raw[..req]),
+                    )
+                };
+                match copied {
+                    Ok(s) => s,
+                    Err(e) => return Err((err_at(e.into()), pixels)),
+                }
+            }
+        };
+        Ok(Self {
+            storage,
+            offset: 0,
+            width,
+            height,
+            stride: row_bytes,
+            spec,
+            facts: SampleFacts::NONE,
+            hdr: HdrMetadata::default(),
+            origin: ColorOrigin::assumed(),
+            orientation: Orientation::Identity,
+        })
     }
 
     /// Adopt a tightly packed scalar sample `Vec<S>` (`Vec<u8>`, `Vec<u16>`, `Vec<f32>`, etc.).
@@ -1252,8 +1837,9 @@ impl PixelBuf {
         samples: Vec<S>,
         width: u32,
         height: u32,
-        spec: ImageSpec,
+        spec: impl Into<ImageSpec>,
     ) -> Result<Self, At<BufferError>> {
+        let spec = spec.into();
         if spec.layout.sample != S::SAMPLE_TYPE {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
@@ -1277,8 +1863,9 @@ impl PixelBuf {
         pixels: Vec<P>,
         width: u32,
         height: u32,
-        spec: ImageSpec,
+        spec: impl Into<ImageSpec>,
     ) -> Result<Self, At<BufferError>> {
+        let spec = spec.into();
         spec.validate()
             .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
         if width == 0 || height == 0 {
@@ -1314,6 +1901,7 @@ impl PixelBuf {
             facts: SampleFacts::NONE,
             hdr: HdrMetadata::default(),
             origin: ColorOrigin::assumed(),
+            orientation: Orientation::Identity,
         })
     }
 
@@ -1324,8 +1912,9 @@ impl PixelBuf {
         width: u32,
         height: u32,
         stride: usize,
-        spec: ImageSpec,
+        spec: impl Into<ImageSpec>,
     ) -> Result<Self, At<BufferError>> {
+        let spec = spec.into();
         let bytes = storage.as_bytes();
         let slice = bytes
             .get(offset..)
@@ -1341,11 +1930,12 @@ impl PixelBuf {
             facts: SampleFacts::NONE,
             hdr: HdrMetadata::default(),
             origin: ColorOrigin::assumed(),
+            orientation: Orientation::Identity,
         })
     }
 
-    /// Checked reconstruction from a [`PixelBufParts`] struct (preserving `hdr`, `origin`, and
-    /// `parts.facts`).
+    /// Checked reconstruction from a [`PixelBufParts`] struct (preserving `hdr`, `origin`,
+    /// `orientation`, and `parts.facts`).
     ///
     /// On validation failure, `parts` is dropped; use
     /// [`try_from_parts_recover`](Self::try_from_parts_recover) to recover the allocation intact.
@@ -1383,6 +1973,7 @@ impl PixelBuf {
             facts: parts.facts,
             hdr: parts.hdr,
             origin: parts.origin,
+            orientation: parts.orientation,
         })
     }
 
@@ -1402,7 +1993,7 @@ impl PixelBuf {
         width: u32,
         height: u32,
         stride: usize,
-        spec: ImageSpec,
+        spec: impl Into<ImageSpec>,
     ) -> Result<Self, (At<BufferError>, S)> {
         Self::from_external_with_offset(storage, 0, width, height, stride, spec)
     }
@@ -1417,8 +2008,9 @@ impl PixelBuf {
         width: u32,
         height: u32,
         stride: usize,
-        spec: ImageSpec,
+        spec: impl Into<ImageSpec>,
     ) -> Result<Self, (At<BufferError>, S)> {
+        let spec = spec.into();
         let check = {
             let bytes = storage.as_bytes();
             match bytes.get(offset..) {
@@ -1441,6 +2033,7 @@ impl PixelBuf {
             facts: SampleFacts::NONE,
             hdr: HdrMetadata::default(),
             origin: ColorOrigin::assumed(),
+            orientation: Orientation::Identity,
         })
     }
 
@@ -1456,7 +2049,7 @@ impl PixelBuf {
         width: u32,
         height: u32,
         stride: usize,
-        spec: ImageSpec,
+        spec: impl Into<ImageSpec>,
     ) -> Result<Self, (At<BufferError>, S)> {
         Self::from_external_mut_with_offset(storage, 0, width, height, stride, spec)
     }
@@ -1471,8 +2064,9 @@ impl PixelBuf {
         width: u32,
         height: u32,
         stride: usize,
-        spec: ImageSpec,
+        spec: impl Into<ImageSpec>,
     ) -> Result<Self, (At<BufferError>, S)> {
+        let spec = spec.into();
         let check = {
             let bytes = storage.as_bytes();
             match bytes.get(offset..) {
@@ -1495,6 +2089,7 @@ impl PixelBuf {
             facts: SampleFacts::NONE,
             hdr: HdrMetadata::default(),
             origin: ColorOrigin::assumed(),
+            orientation: Orientation::Identity,
         })
     }
 
@@ -1639,7 +2234,8 @@ impl PixelBuf {
     /// Rejects changes to `sample` type or `packing` (use [`reinterpret`](Self::reinterpret) for
     /// deliberate raw-byte reinterpretation across sample types). Clears cached [`SampleFacts`]
     /// and resets [`ColorOrigin`] to [`ColorOrigin::assumed`] whenever `spec.color` changes.
-    pub fn with_spec(mut self, spec: ImageSpec) -> Result<Self, At<BufferError>> {
+    pub fn with_spec(mut self, spec: impl Into<ImageSpec>) -> Result<Self, At<BufferError>> {
+        let spec = spec.into();
         if spec.layout.sample != self.spec.layout.sample
             || spec.layout.packing != self.spec.layout.packing
             || spec.layout.bytes_per_pixel() != self.spec.layout.bytes_per_pixel()
@@ -1693,7 +2289,8 @@ impl PixelBuf {
     /// `packing`, e.g. `U8` ↔ `I8` or `U16` ↔ `F16`).
     ///
     /// Always clears cached [`SampleFacts`], [`ColorOrigin`], and [`HdrMetadata`].
-    pub fn reinterpret(mut self, spec: ImageSpec) -> Result<Self, At<BufferError>> {
+    pub fn reinterpret(mut self, spec: impl Into<ImageSpec>) -> Result<Self, At<BufferError>> {
+        let spec = spec.into();
         if spec.layout.bytes_per_pixel() != self.spec.layout.bytes_per_pixel() {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
@@ -1710,6 +2307,85 @@ impl PixelBuf {
         self.facts = SampleFacts::NONE;
         self.origin = ColorOrigin::assumed();
         self.hdr = HdrMetadata::default();
+        Ok(self)
+    }
+
+    /// Verify that every active pixel's alpha slot equals its canonical maximum value, then
+    /// retag this buffer as [`AlphaMode::Opaque`] with `facts.all_opaque = true` (zero copy).
+    ///
+    /// Returns [`BufferError::IncompatibleLayout`] if the layout has no alpha slot, or
+    /// [`BufferError::UnverifiedOpaqueAlpha`] if any alpha sample is not at channel maximum.
+    pub fn into_opaque_verified(mut self) -> Result<Self, At<BufferError>> {
+        if !self.spec.layout.order.has_alpha_slot() {
+            return Err(err_at(BufferError::IncompatibleLayout));
+        }
+        let new_spec = self.spec.clone().with_alpha(AlphaMode::Opaque);
+        new_spec
+            .validate()
+            .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
+        let bytes = &self.storage.as_bytes()[self.offset..];
+        if !check_alpha_all_max(
+            bytes,
+            self.width,
+            self.height,
+            self.stride,
+            self.spec.layout,
+        ) {
+            return Err(err_at(BufferError::UnverifiedOpaqueAlpha));
+        }
+        self.spec = new_spec;
+        self.facts.all_opaque = true;
+        self.facts.binary_alpha = true;
+        Ok(self)
+    }
+
+    /// Fill every active pixel's alpha slot to its canonical maximum value and retag this buffer
+    /// as [`AlphaMode::Opaque`] with `facts.all_opaque = true` (in place, promoting immutable
+    /// external storage via copy-on-write if needed).
+    pub fn into_opaque_filled(mut self) -> Result<Self, At<BufferError>> {
+        if !self.spec.layout.order.has_alpha_slot() {
+            return Err(err_at(BufferError::IncompatibleLayout));
+        }
+        let new_spec = self.spec.clone().with_alpha(AlphaMode::Opaque);
+        new_spec
+            .validate()
+            .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
+        self.try_make_mut()?;
+        let layout = self.spec.layout;
+        let off = self.offset;
+        let w = self.width;
+        let h = self.height;
+        let stride = self.stride;
+        fill_alpha_max_unconditional(
+            &mut self.storage.as_bytes_mut()[off..],
+            w,
+            h,
+            stride,
+            layout,
+        );
+        self.spec = new_spec;
+        self.facts.all_opaque = true;
+        self.facts.binary_alpha = true;
+        Ok(self)
+    }
+
+    /// Retag this buffer as [`AlphaMode::Opaque`] in O(1) without scanning pixels, asserting
+    /// that the caller already filled every active alpha sample to channel maximum.
+    ///
+    /// Pairs with [`new_zeroed`](Self::new_zeroed) for maximum-speed decoder/renderer fill loops:
+    /// allocate zeroed as [`AlphaMode::Undefined`], write every pixel including `A = max`,
+    /// then call `assume_opaque()`.
+    pub fn assume_opaque(mut self) -> Result<Self, At<BufferError>> {
+        if !self.spec.layout.order.has_alpha_slot() {
+            return Err(err_at(BufferError::IncompatibleLayout));
+        }
+        let new_spec = self.spec.clone().with_alpha(AlphaMode::Opaque);
+        new_spec
+            .validate()
+            .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
+        self.spec = new_spec;
+        self.facts.all_opaque = true;
+        self.facts.binary_alpha = true;
         Ok(self)
     }
 
@@ -1756,7 +2432,44 @@ impl PixelBuf {
         self
     }
 
-    /// Borrow an immutable [`PixelView`] of the whole image.
+    /// Pending EXIF display orientation attached to this buffer (defaults to [`Orientation::Identity`]).
+    #[inline]
+    #[must_use]
+    pub const fn orientation(&self) -> Orientation {
+        self.orientation
+    }
+
+    /// Display-oriented `(width, height)` after applying [`orientation`](Self::orientation).
+    #[inline]
+    #[must_use]
+    pub const fn display_dimensions(&self) -> (u32, u32) {
+        self.orientation.output_dimensions(self.width, self.height)
+    }
+
+    /// Replace the pending EXIF display orientation on this buffer.
+    #[inline]
+    #[must_use]
+    pub const fn with_orientation(mut self, orientation: Orientation) -> Self {
+        self.orientation = orientation;
+        self
+    }
+
+    /// Set the pending EXIF display orientation on this buffer in place.
+    #[inline]
+    pub fn set_orientation(&mut self, orientation: Orientation) {
+        self.orientation = orientation;
+    }
+
+    /// Compose an additional display transform onto this buffer's pending orientation
+    /// (`self.orientation.then(delta)`) in O(1) without touching or copying pixels.
+    #[inline]
+    #[must_use]
+    pub const fn rotate_metadata(mut self, delta: Orientation) -> Self {
+        self.orientation = self.orientation.then(delta);
+        self
+    }
+
+    /// Borrow an immutable [`PixelView`] of the whole image (zero `Arc` refcount bump).
     #[inline]
     #[must_use]
     pub fn as_view(&self) -> PixelView<'_> {
@@ -1768,10 +2481,11 @@ impl PixelBuf {
             width: self.width,
             rows: self.height,
             stride: self.stride,
-            spec: self.spec.clone(),
+            spec: SpecCow::Borrowed(&self.spec),
             facts: self.facts,
             hdr: self.hdr,
             origin: Some(&self.origin),
+            orientation: self.orientation,
         }
     }
 
@@ -1789,8 +2503,9 @@ impl PixelBuf {
             width: self.width,
             rows: self.height,
             stride: self.stride,
-            spec: self.spec.clone(),
+            spec: SpecCow::Borrowed(&self.spec),
             hdr: self.hdr,
+            orientation: self.orientation,
         })
     }
 
@@ -2137,6 +2852,7 @@ impl PixelBuf {
             facts: self.facts,
             hdr: self.hdr,
             origin: self.origin,
+            orientation: self.orientation,
         }
     }
 
@@ -2158,12 +2874,22 @@ pub enum PixelCow<'a> {
 }
 
 impl<'a> PixelCow<'a> {
-    /// Borrow as a [`PixelView`].
+    /// Borrow as a [`PixelView`] (zero `Arc` refcount bump).
     #[inline]
     #[must_use]
     pub fn as_view(&self) -> PixelView<'_> {
         match self {
-            Self::Borrowed(v) => v.clone(),
+            Self::Borrowed(v) => PixelView {
+                data: v.data,
+                width: v.width,
+                rows: v.rows,
+                stride: v.stride,
+                spec: v.spec.to_borrowed(),
+                facts: v.facts,
+                hdr: v.hdr,
+                origin: v.origin,
+                orientation: v.orientation,
+            },
             Self::Owned(b) => b.as_view(),
         }
     }
@@ -2198,6 +2924,7 @@ pub struct BandedBuf {
     facts: SampleFacts,
     hdr: HdrMetadata,
     origin: ColorOrigin,
+    orientation: Orientation,
 }
 
 impl BandedBuf {
@@ -2210,7 +2937,7 @@ impl BandedBuf {
     pub fn new(
         width: u32,
         height: u32,
-        spec: ImageSpec,
+        spec: impl Into<ImageSpec>,
         max_band_bytes: usize,
     ) -> Result<Self, At<BufferError>> {
         Self::new_aligned(width, height, spec, max_band_bytes, RowAlign::Tight)
@@ -2220,10 +2947,11 @@ impl BandedBuf {
     pub fn new_aligned(
         width: u32,
         height: u32,
-        spec: ImageSpec,
+        spec: impl Into<ImageSpec>,
         max_band_bytes: usize,
         align: RowAlign,
     ) -> Result<Self, At<BufferError>> {
+        let spec = spec.into();
         spec.validate()
             .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
         if width == 0 || height == 0 || max_band_bytes == 0 {
@@ -2255,6 +2983,7 @@ impl BandedBuf {
             facts,
             hdr: HdrMetadata::default(),
             origin: ColorOrigin::assumed(),
+            orientation: Orientation::Identity,
         })
     }
 
@@ -2276,6 +3005,7 @@ impl BandedBuf {
             let facts = buf.facts();
             let hdr = buf.hdr();
             let origin = buf.origin().clone();
+            let orientation = buf.orientation();
             let mut bands = Vec::new();
             bands
                 .try_reserve_exact(1)
@@ -2290,13 +3020,14 @@ impl BandedBuf {
                 facts,
                 hdr,
                 origin,
+                orientation,
             });
         }
         Self::from_view(&buf.as_view(), max_band_bytes)
     }
 
     /// Copy a borrowed [`PixelView`] into a newly allocated [`BandedBuf`], preserving
-    /// `facts`, `hdr`, and `origin`.
+    /// `facts`, `hdr`, `origin`, and `orientation`.
     pub fn from_view(view: &PixelView<'_>, max_band_bytes: usize) -> Result<Self, At<BufferError>> {
         if max_band_bytes == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
@@ -2328,6 +3059,7 @@ impl BandedBuf {
             facts: view.facts(),
             hdr: view.hdr(),
             origin,
+            orientation: view.orientation(),
         })
     }
 
@@ -2335,13 +3067,14 @@ impl BandedBuf {
     ///
     /// Moves the single band **zero-copy** when `self.bands().len() == 1`; otherwise
     /// fallibly gathers active rows into native-aligned storage while preserving
-    /// `facts`, `hdr`, and `origin`.
+    /// `facts`, `hdr`, `origin`, and `orientation`.
     pub fn into_buf(mut self) -> Result<PixelBuf, At<BufferError>> {
         if self.bands.len() == 1 {
             let mut single = self.bands.pop().expect("len == 1");
             single.facts = self.facts;
             single.hdr = self.hdr;
             single.origin = self.origin;
+            single.orientation = self.orientation;
             return Ok(single);
         }
         let rb = (self.width as usize)
@@ -2366,6 +3099,7 @@ impl BandedBuf {
             facts: self.facts,
             hdr: self.hdr,
             origin: self.origin,
+            orientation: self.orientation,
         })
     }
 
@@ -2507,6 +3241,52 @@ impl BandedBuf {
         self.origin = origin.clone();
         for band in &mut self.bands {
             band.origin = origin.clone();
+        }
+        self
+    }
+
+    /// Pending EXIF display orientation attached to this banded buffer.
+    #[inline]
+    #[must_use]
+    pub const fn orientation(&self) -> Orientation {
+        self.orientation
+    }
+
+    /// Display-oriented `(width, height)` after applying [`orientation`](Self::orientation).
+    #[inline]
+    #[must_use]
+    pub const fn display_dimensions(&self) -> (u32, u32) {
+        self.orientation.output_dimensions(self.width, self.height)
+    }
+
+    /// Replace pending EXIF display orientation (propagated to all child bands).
+    #[inline]
+    #[must_use]
+    pub fn with_orientation(mut self, orientation: Orientation) -> Self {
+        self.orientation = orientation;
+        for band in &mut self.bands {
+            band.orientation = orientation;
+        }
+        self
+    }
+
+    /// Set pending EXIF display orientation in place (propagated to all child bands).
+    #[inline]
+    pub fn set_orientation(&mut self, orientation: Orientation) {
+        self.orientation = orientation;
+        for band in &mut self.bands {
+            band.orientation = orientation;
+        }
+    }
+
+    /// Compose an additional display transform onto pending orientation in O(1).
+    #[inline]
+    #[must_use]
+    pub fn rotate_metadata(mut self, delta: Orientation) -> Self {
+        let next = self.orientation.then(delta);
+        self.orientation = next;
+        for band in &mut self.bands {
+            band.orientation = next;
         }
         self
     }
@@ -2903,6 +3683,7 @@ pub struct PlanarBuf {
     alpha: Option<AlphaMode>,
     hdr: HdrMetadata,
     origin: ColorOrigin,
+    orientation: Orientation,
 }
 
 impl PlanarBuf {
@@ -2947,6 +3728,7 @@ impl PlanarBuf {
             alpha: None,
             hdr: HdrMetadata::default(),
             origin: ColorOrigin::assumed(),
+            orientation: Orientation::Identity,
         })
     }
 
@@ -2977,6 +3759,7 @@ impl PlanarBuf {
             alpha: None,
             hdr: HdrMetadata::default(),
             origin: ColorOrigin::assumed(),
+            orientation: Orientation::Identity,
         })
     }
 
@@ -3134,6 +3917,42 @@ impl PlanarBuf {
     #[must_use]
     pub fn with_origin(mut self, origin: ColorOrigin) -> Self {
         self.origin = origin;
+        self
+    }
+
+    /// Pending EXIF display orientation attached to this planar buffer.
+    #[inline]
+    #[must_use]
+    pub const fn orientation(&self) -> Orientation {
+        self.orientation
+    }
+
+    /// Display-oriented `(width, height)` after applying [`orientation`](Self::orientation).
+    #[inline]
+    #[must_use]
+    pub const fn display_dimensions(&self) -> (u32, u32) {
+        self.orientation.output_dimensions(self.width, self.height)
+    }
+
+    /// Replace pending EXIF display orientation.
+    #[inline]
+    #[must_use]
+    pub const fn with_orientation(mut self, orientation: Orientation) -> Self {
+        self.orientation = orientation;
+        self
+    }
+
+    /// Set pending EXIF display orientation in place.
+    #[inline]
+    pub fn set_orientation(&mut self, orientation: Orientation) {
+        self.orientation = orientation;
+    }
+
+    /// Compose an additional display transform onto pending orientation in O(1).
+    #[inline]
+    #[must_use]
+    pub const fn rotate_metadata(mut self, delta: Orientation) -> Self {
+        self.orientation = self.orientation.then(delta);
         self
     }
 }
@@ -3493,6 +4312,7 @@ pub struct PlanarView<'a> {
     ycbcr_matrix_code: Option<u8>,
     range: Option<SignalRange>,
     alpha: Option<AlphaMode>,
+    orientation: Orientation,
     storage: PlanarStorage<'a>,
 }
 
@@ -3548,6 +4368,7 @@ impl<'a> PlanarView<'a> {
             ycbcr_matrix_code: None,
             range: None,
             alpha: None,
+            orientation: Orientation::Identity,
             storage,
         })
     }
@@ -3664,6 +4485,36 @@ impl<'a> PlanarView<'a> {
         self
     }
 
+    /// Pending EXIF display orientation attached to this planar view.
+    #[inline]
+    #[must_use]
+    pub const fn orientation(&self) -> Orientation {
+        self.orientation
+    }
+
+    /// Display-oriented `(width, height)` after applying [`orientation`](Self::orientation).
+    #[inline]
+    #[must_use]
+    pub const fn display_dimensions(&self) -> (u32, u32) {
+        self.orientation.output_dimensions(self.width, self.height)
+    }
+
+    /// Replace pending EXIF display orientation on this planar view.
+    #[inline]
+    #[must_use]
+    pub const fn with_orientation(mut self, orientation: Orientation) -> Self {
+        self.orientation = orientation;
+        self
+    }
+
+    /// Compose an additional display transform onto pending orientation in O(1).
+    #[inline]
+    #[must_use]
+    pub const fn rotate_metadata(mut self, delta: Orientation) -> Self {
+        self.orientation = self.orientation.then(delta);
+        self
+    }
+
     /// Borrowed planes slice.
     #[inline]
     #[must_use]
@@ -3737,6 +4588,7 @@ impl<'a> PlanarView<'a> {
             ycbcr_matrix_code: self.ycbcr_matrix_code,
             range: self.range,
             alpha: self.alpha,
+            orientation: self.orientation,
             storage,
         })
     }
@@ -3786,6 +4638,7 @@ pub struct PlanarViewMut<'a> {
     ycbcr_matrix_code: Option<u8>,
     range: Option<SignalRange>,
     alpha: Option<AlphaMode>,
+    orientation: Orientation,
     storage: PlanarMutStorage<'a>,
 }
 
@@ -3863,6 +4716,7 @@ impl<'a> PlanarViewMut<'a> {
             ycbcr_matrix_code: None,
             range: None,
             alpha: None,
+            orientation: Orientation::Identity,
             storage,
         })
     }
@@ -3919,6 +4773,7 @@ impl<'a> PlanarViewMut<'a> {
             ycbcr_matrix_code: None,
             range: None,
             alpha: None,
+            orientation: Orientation::Identity,
             storage,
         })
     }
@@ -4035,6 +4890,42 @@ impl<'a> PlanarViewMut<'a> {
         self
     }
 
+    /// Pending EXIF display orientation attached to this mutable planar view.
+    #[inline]
+    #[must_use]
+    pub const fn orientation(&self) -> Orientation {
+        self.orientation
+    }
+
+    /// Display-oriented `(width, height)` after applying [`orientation`](Self::orientation).
+    #[inline]
+    #[must_use]
+    pub const fn display_dimensions(&self) -> (u32, u32) {
+        self.orientation.output_dimensions(self.width, self.height)
+    }
+
+    /// Replace pending EXIF display orientation.
+    #[inline]
+    #[must_use]
+    pub const fn with_orientation(mut self, orientation: Orientation) -> Self {
+        self.orientation = orientation;
+        self
+    }
+
+    /// Set pending EXIF display orientation in place.
+    #[inline]
+    pub fn set_orientation(&mut self, orientation: Orientation) {
+        self.orientation = orientation;
+    }
+
+    /// Compose an additional display transform onto pending orientation in O(1).
+    #[inline]
+    #[must_use]
+    pub const fn rotate_metadata(mut self, delta: Orientation) -> Self {
+        self.orientation = self.orientation.then(delta);
+        self
+    }
+
     /// Immutable slice of mutable plane views.
     #[inline]
     #[must_use]
@@ -4091,6 +4982,7 @@ impl<'a> PlanarViewMut<'a> {
             ycbcr_matrix_code: self.ycbcr_matrix_code,
             range: self.range,
             alpha: self.alpha,
+            orientation: self.orientation,
             storage,
         })
     }
@@ -4153,6 +5045,7 @@ impl<'a> PlanarViewMut<'a> {
             ycbcr_matrix_code: self.ycbcr_matrix_code,
             range: self.range,
             alpha: self.alpha,
+            orientation: self.orientation,
             storage,
         })
     }
@@ -4195,6 +5088,7 @@ impl PlanarBuf {
             ycbcr_matrix_code: self.ycbcr_matrix_code,
             range: self.range,
             alpha: self.alpha,
+            orientation: self.orientation,
             storage,
         })
     }
@@ -4246,6 +5140,7 @@ impl PlanarBuf {
             ycbcr_matrix_code: self.ycbcr_matrix_code,
             range: self.range,
             alpha: self.alpha,
+            orientation: self.orientation,
             storage,
         })
     }
@@ -4298,7 +5193,7 @@ fn validate_dual_layer_specs(
     }
 
     if !metadata.is_valid() {
-        return Err(err_at(BufferError::InvalidDimensions));
+        return Err(err_at(BufferError::InvalidGainMapMetadata));
     }
 
     if metadata.application_space == crate::GainMapColorSpace::Alternate
@@ -4348,19 +5243,30 @@ pub struct DualLayerHdrView<'a> {
 
 impl<'a> DualLayerHdrView<'a> {
     /// Construct a validated borrowed dual-layer HDR view.
+    ///
+    /// Rejects misregistered layer orientations (`base.orientation() != gain_map.orientation()`)
+    /// or a non-`Identity` layer orientation that contradicts `orientation`.
     pub fn new(
-        base: PixelView<'a>,
-        gain_map: PixelView<'a>,
+        mut base: PixelView<'a>,
+        mut gain_map: PixelView<'a>,
         metadata: GainMapMetadata,
         alternate_color_space: Option<&'a crate::ColorSpace>,
         orientation: crate::Orientation,
     ) -> Result<Self, At<BufferError>> {
+        if base.orientation() != gain_map.orientation() {
+            return Err(err_at(BufferError::IncompatibleLayout));
+        }
+        if base.orientation() != crate::Orientation::Identity && base.orientation() != orientation {
+            return Err(err_at(BufferError::IncompatibleLayout));
+        }
         validate_dual_layer_specs(
             base.spec(),
             gain_map.spec(),
             metadata,
             alternate_color_space,
         )?;
+        base.orientation = orientation;
+        gain_map.orientation = orientation;
         Ok(Self {
             base,
             gain_map,
@@ -4410,6 +5316,8 @@ impl<'a> DualLayerHdrView<'a> {
     #[must_use]
     pub const fn with_orientation(mut self, orientation: crate::Orientation) -> Self {
         self.orientation = orientation;
+        self.base.orientation = orientation;
+        self.gain_map.orientation = orientation;
         self
     }
 
@@ -4418,7 +5326,10 @@ impl<'a> DualLayerHdrView<'a> {
     #[inline]
     #[must_use]
     pub const fn rotate_metadata(mut self, delta: crate::Orientation) -> Self {
-        self.orientation = self.orientation.then(delta);
+        let next = self.orientation.then(delta);
+        self.orientation = next;
+        self.base.orientation = next;
+        self.gain_map.orientation = next;
         self
     }
 
@@ -4458,25 +5369,37 @@ impl DualLayerHdr {
         gain_map: PixelBuf,
         metadata: GainMapMetadata,
     ) -> Result<Self, At<BufferError>> {
-        Self::new_with_alternate(base, gain_map, metadata, None, crate::Orientation::Identity)
+        let orientation = base.orientation();
+        Self::new_with_alternate(base, gain_map, metadata, None, orientation)
     }
 
     /// Construct a validated dual-layer HDR carrier with optional alternate color space
     /// (required when `metadata.application_space == GainMapColorSpace::Alternate`) and
     /// shared pending [`Orientation`](crate::Orientation).
+    ///
+    /// Rejects misregistered layer orientations (`base.orientation() != gain_map.orientation()`)
+    /// or a non-`Identity` layer orientation that contradicts `orientation`.
     pub fn new_with_alternate(
-        base: PixelBuf,
-        gain_map: PixelBuf,
+        mut base: PixelBuf,
+        mut gain_map: PixelBuf,
         metadata: GainMapMetadata,
         alternate_color_space: Option<crate::ColorSpace>,
         orientation: crate::Orientation,
     ) -> Result<Self, At<BufferError>> {
+        if base.orientation() != gain_map.orientation() {
+            return Err(err_at(BufferError::IncompatibleLayout));
+        }
+        if base.orientation() != crate::Orientation::Identity && base.orientation() != orientation {
+            return Err(err_at(BufferError::IncompatibleLayout));
+        }
         validate_dual_layer_specs(
             base.spec(),
             gain_map.spec(),
             metadata,
             alternate_color_space.as_ref(),
         )?;
+        base.orientation = orientation;
+        gain_map.orientation = orientation;
         Ok(Self {
             base,
             gain_map,
@@ -4517,6 +5440,8 @@ impl DualLayerHdr {
     #[must_use]
     pub const fn with_orientation(mut self, orientation: crate::Orientation) -> Self {
         self.orientation = orientation;
+        self.base.orientation = orientation;
+        self.gain_map.orientation = orientation;
         self
     }
 
@@ -4529,7 +5454,10 @@ impl DualLayerHdr {
     #[inline]
     #[must_use]
     pub const fn rotate_metadata(mut self, delta: crate::Orientation) -> Self {
-        self.orientation = self.orientation.then(delta);
+        let next = self.orientation.then(delta);
+        self.orientation = next;
+        self.base.orientation = next;
+        self.gain_map.orientation = next;
         self
     }
 
@@ -4624,6 +5552,10 @@ pub trait PixelSource {
     fn source_origin(&self) -> Option<&ColorOrigin> {
         None
     }
+    /// Pending EXIF display orientation (defaults to [`Orientation::Identity`]).
+    fn source_orientation(&self) -> Orientation {
+        Orientation::Identity
+    }
     /// Active bytes of row `y`.
     fn source_row(&self, y: u32) -> &[u8];
 }
@@ -4642,6 +5574,8 @@ pub trait PixelSink {
     fn sink_finish(&mut self, _facts: SampleFacts, _hdr: HdrMetadata) {}
     /// Propagate original container color provenance onto owned sinks (no-op on borrowed views).
     fn sink_set_origin(&mut self, _origin: ColorOrigin) {}
+    /// Propagate pending EXIF display orientation onto sinks.
+    fn sink_set_orientation(&mut self, _orientation: Orientation) {}
 }
 
 impl PixelSource for PixelView<'_> {
@@ -4655,7 +5589,7 @@ impl PixelSource for PixelView<'_> {
     }
     #[inline]
     fn source_spec(&self) -> &ImageSpec {
-        &self.spec
+        self.spec.as_spec()
     }
     #[inline]
     fn source_facts(&self) -> SampleFacts {
@@ -4668,6 +5602,10 @@ impl PixelSource for PixelView<'_> {
     #[inline]
     fn source_origin(&self) -> Option<&ColorOrigin> {
         self.origin
+    }
+    #[inline]
+    fn source_orientation(&self) -> Orientation {
+        self.orientation
     }
     #[inline]
     fn source_row(&self, y: u32) -> &[u8] {
@@ -4699,6 +5637,10 @@ impl PixelSource for PixelBuf {
     #[inline]
     fn source_origin(&self) -> Option<&ColorOrigin> {
         Some(&self.origin)
+    }
+    #[inline]
+    fn source_orientation(&self) -> Orientation {
+        self.orientation
     }
     #[inline]
     fn source_row(&self, y: u32) -> &[u8] {
@@ -4734,6 +5676,10 @@ impl PixelSource for BandedBuf {
         Some(&self.origin)
     }
     #[inline]
+    fn source_orientation(&self) -> Orientation {
+        self.orientation
+    }
+    #[inline]
     fn source_row(&self, y: u32) -> &[u8] {
         self.row(y)
     }
@@ -4750,11 +5696,15 @@ impl PixelSink for PixelViewMut<'_> {
     }
     #[inline]
     fn sink_spec(&self) -> &ImageSpec {
-        &self.spec
+        self.spec.as_spec()
     }
     #[inline]
     fn sink_row_mut(&mut self, y: u32) -> &mut [u8] {
         self.row_mut(y)
+    }
+    #[inline]
+    fn sink_set_orientation(&mut self, orientation: Orientation) {
+        self.orientation = orientation;
     }
 }
 
@@ -4790,6 +5740,10 @@ impl PixelSink for PixelBuf {
     fn sink_set_origin(&mut self, origin: ColorOrigin) {
         self.origin = origin;
     }
+    #[inline]
+    fn sink_set_orientation(&mut self, orientation: Orientation) {
+        self.orientation = orientation;
+    }
 }
 
 impl PixelSink for BandedBuf {
@@ -4823,6 +5777,13 @@ impl PixelSink for BandedBuf {
         self.origin = origin.clone();
         for b in &mut self.bands {
             b.origin = origin.clone();
+        }
+    }
+    #[inline]
+    fn sink_set_orientation(&mut self, orientation: Orientation) {
+        self.orientation = orientation;
+        for b in &mut self.bands {
+            b.orientation = orientation;
         }
     }
 }

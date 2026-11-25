@@ -1835,7 +1835,7 @@ pub fn apply_gain_map_oriented(
         let baked = orient::apply_orientation(&out.as_view(), orient)?;
         Ok((baked, Orientation::Identity))
     } else {
-        Ok((out, orient))
+        Ok((out.with_orientation(orient), orient))
     }
 }
 
@@ -2273,18 +2273,21 @@ impl GainMapRowExtractor {
         if base_linear.len() != alt_linear.len() || base_linear.len() % channels != 0 {
             return Err(err_at(ConvertError::DimensionMismatch));
         }
-        let gm_ch = if self.multichannel { 3usize } else { 1usize };
+        let gm_ch = gm_layout.channels();
         if !matches!(gm_layout.sample, SampleType::U8 | SampleType::U16)
             || !matches!(
                 gm_layout.packing,
                 BitPacking::Full | BitPacking::Lsb { .. } | BitPacking::Msb { .. }
             )
             || !is_valid_gain_map_order(gm_layout.order)
+            || !matches!(gm_ch, 1 | 3)
         {
             return Err(err_at(ConvertError::UnsupportedRoute));
         }
-        if gm_layout.channels() != gm_ch {
-            return Err(err_at(ConvertError::DimensionMismatch));
+        // Per-channel ISO 21496-1 metadata requires a 3-channel gain map; shared 1-record
+        // metadata is valid for BOTH 1-channel and 3-channel gain maps!
+        if self.multichannel && gm_ch != 3 {
+            return Err(err_at(ConvertError::UnsupportedRoute));
         }
         ImageSpec::new(
             gm_layout,
@@ -2307,7 +2310,7 @@ impl GainMapRowExtractor {
         let max_code = gm_layout.packing.max_code(gm_layout.sample, 0).max(1);
         let max_f = max_code as f32;
 
-        if self.multichannel {
+        if gm_ch == 3 {
             for x in 0..pixels {
                 let o = x * channels;
                 for c in 0..3 {
@@ -2627,7 +2630,7 @@ pub fn extract_gain_map(
         gain_buf,
         metadata,
         alt_color,
-        Orientation::Identity,
+        base_src.orientation(),
     )
     .map_err(|e| err_at((*e.error()).into()))
 }
@@ -2652,6 +2655,9 @@ fn extract_gain_map_internal(
     let h = base_src.rows();
     if w == 0 || h == 0 || alternate_src.width() != w || alternate_src.rows() != h {
         return Err(err_at(ConvertError::DimensionMismatch));
+    }
+    if base_src.orientation() != alternate_src.orientation() {
+        return Err(err_at(ConvertError::UnsupportedRoute));
     }
     if !metadata.is_valid() {
         return Err(err_at(ConvertError::UnsupportedRoute));
@@ -2698,7 +2704,9 @@ fn extract_gain_map_internal(
     let mut gain_buf = if measure_only {
         PixelBuf::new(1, 1, gm_spec.clone()).map_err(|e| err_at((*e.error()).into()))?
     } else {
-        PixelBuf::new(gm_w, gm_h, gm_spec.clone()).map_err(|e| err_at((*e.error()).into()))?
+        PixelBuf::new(gm_w, gm_h, gm_spec.clone())
+            .map_err(|e| err_at((*e.error()).into()))?
+            .with_orientation(base_src.orientation())
     };
 
     let row_floats = (w as usize)

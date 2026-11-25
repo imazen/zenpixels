@@ -42,7 +42,7 @@ pub mod storage;
 
 // Clean, flat re-exports of the core interchange surface.
 pub use buffer::{
-    BandedBuf, Bgrx, BufferError, DEFAULT_MAX_BAND_BYTES, DualLayerHdr, DualLayerHdrParts,
+    BandedBuf, Bgrx, BufFill, BufferError, DEFAULT_MAX_BAND_BYTES, DualLayerHdr, DualLayerHdrParts,
     DualLayerHdrView, OwnedPlane, PixelBuf, PixelBufParts, PixelCow, PixelSink, PixelSource,
     PixelView, PixelViewMut, PlanarBuf, PlanarView, PlanarViewMut, PlaneView, PlaneViewMut, Rgbx,
     TypedElement,

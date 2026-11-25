@@ -1167,6 +1167,7 @@ impl ImagePlan {
             // Clear any stale `ColorOrigin` on a reused sink when color meaning changed!
             dst.sink_set_origin(zenpixels::ColorOrigin::assumed());
         }
+        dst.sink_set_orientation(src.source_orientation());
         dst.sink_finish(out_facts, out_hdr);
         Ok(())
     }
@@ -1387,11 +1388,19 @@ pub(crate) fn preflight_and_classify(
                 false,
             )
             .is_some();
+        let can_canon_strip = needs_opaque_canon
+            && !can_canon_fast
+            && (src.layout.sample.is_standard_color() || src.layout.packing.is_packed_word())
+            && !matches!(
+                src.color,
+                ColorSpace::Icc { .. } | ColorSpace::Cmyk { .. } | ColorSpace::Untagged { .. }
+            )
+            && (!color_transfer(&src.color).is_hdr() || cfg!(feature = "hdr-transfers"));
         return Ok(PreflightOutcome {
             matte_color: None,
             range_change: false,
             uses_cms: false,
-            is_identity: !can_canon_fast,
+            is_identity: !(can_canon_fast || can_canon_strip),
             drops_alpha: false,
             alpha_proven_opaque: true,
             drops_chroma: false,

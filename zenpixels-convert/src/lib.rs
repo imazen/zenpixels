@@ -91,8 +91,8 @@ pub use measure::{
 };
 pub use negotiate::{FormatCost, LossKind, Negotiate, NegotiatedFormat};
 pub use orient::{
-    apply_orientation, apply_orientation_banded_into, apply_orientation_into, orient_banded,
-    orient_buf,
+    apply_orientation, apply_orientation_banded_into, apply_orientation_into, bake_orientation,
+    bake_orientation_banded, bake_orientation_buf, orient_banded, orient_buf,
 };
 pub use output::{
     EncodeReady, OutputPlan, OutputProfile, adapt_for_encode, adapt_for_encode_format,
