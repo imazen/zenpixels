@@ -32,10 +32,10 @@ peaks). `ImagePlan::build` accepts `PeakSource` (including streaming
 ```rust
 use zenpixels_convert::{ConvertPolicy, ImageSpec, PixelBuf, RowPlan};
 
-let src = PixelBuf::from_vec(vec![64, 128, 192, 255, 0, 0], 2, 1, ImageSpec::rgb8_srgb())?;
-let mut dst = PixelBuf::new(2, 1, ImageSpec::rgbf32_linear())?;
+let src = PixelBuf::from_vec(vec![64, 128, 192, 255, 0, 0], 2, 1, ImageSpec::RGB8_SRGB)?;
+let mut dst = PixelBuf::new(2, 1, ImageSpec::RGBF32_LINEAR)?;
 let plan = RowPlan::build(
-    src.spec().clone(), dst.spec().clone(), &ConvertPolicy::permissive(), None,
+    src.spec(), dst.spec(), &ConvertPolicy::permissive(), None,
 )?;
 for y in 0..src.height() {
     plan.convert_row(src.as_view().row(y), dst.as_view_mut().row_mut(y), src.width(), y)?;
@@ -48,14 +48,26 @@ for y in 0..src.height() {
 By default, every native pair executes on a compact universal scalar core that
 maintains 0-bit parity with x86-64/AArch64 SIMD kernels so libraries and Wasm
 builds stay light. Enable SIMD globally (`accel::enable_all()`,
-`accel::enable_web_sdr()`) or per-policy via `ConvertPolicy::with_accelerators(&Accelerators::ALL)`.
+`accel::enable_web_sdr()`) or per-policy via `ConvertPolicy::with_accelerators(Accelerators::ALL)`.
 
-## Encoder signaling (`OutputPlan` & `EncodeReady`)
+## Orientation, planar YCbCr & encoder signaling
 
-`OutputPlan::build` validates output signaling (`Auto`, `CicpOnly`, `EmbedIcc`,
-`SameAsOrigin`, `Named(Cicp)`, `CustomIcc`) eagerly, reuses owned storage on
-identity via `EncodeReady::from_owned`, and strips stale HDR metadata when
-photometry changes.
+- **Orientation:** `ImagePlan` and `load_bearing` propagate pending buffer
+  `Orientation` metadata; call `bake_orientation` / `bake_orientation_buf`
+  (zero-copy on `Identity`) / `bake_orientation_banded` when physically rotating
+  pixels, or `rotate_metadata` for O(1) EXIF passthrough.
+- **Zero-copy planar YCbCr / RGB reconstruction:** `ycbcr_to_rgb_with_options`
+  and zero-alloc `ycbcr_to_rgb_with_options_into` handle all 9 H.273 Table 4 NCL
+  matrices (including `YCgCo` and `ChromaDerivedNcl`), siting-exact
+  `ChromaUpsample::Bilinear` (9:3:3:1 `Center`, `Left`, `TopLeft`, odd crop
+  origins), planar RGB (`U8`/`U16`/`F32`), and direct `U8`/`U16`/`F32`
+  `RGB`/`RGBA`/`BGR`/`BGRA`/`RGBX`/`BGRX`/`Gray`/`GrayAlpha` outputs.
+- **Encoder signaling (`OutputPlan` & `EncodeReady`):** `OutputPlan::build`
+  accepts borrowed `&ImageSpec` or owned `ImageSpec`, validates output signaling
+  (`Auto`, `CicpOnly`, `EmbedIcc`, `SameAsOrigin`, `Named(Cicp)`, `CustomIcc`)
+  eagerly (refusing `HlgMode::Display` on `CicpOnly`/`Auto`), reuses owned
+  storage on identity via `EncodeReady::from_owned`, and strips stale HDR
+  metadata when photometry changes.
 
 ## Features
 

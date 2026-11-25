@@ -1,5 +1,5 @@
 # zenpixels-convert public API — doc(hidden) items and excluded-feature surface
-# excluded features: __bench_float_depth,__bench_orient,__bench_scan,__bench_u16_hybrids,__trace_ops
+# excluded features: (none)
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -9,177 +9,76 @@
 
 ## summary
 #
-#   pub modules                                 5
-#   pub types (struct/enum/trait/alias)         4
-#   pub consts/statics                          3
-#   free functions                             29
-#   inherent methods                           61
-#   struct fields                               4
-#   trait roster entries (type × trait)        53
-#   auto-trait-complete types                   2
+#   inherent methods                           23
+#   trait roster entries (type × trait)        29
 #
 # per-module pub lines:
-#   (root)                           15
-#   __bench_float_depth              18
-#   __bench_scan                     19
-#   __bench_u16_hybrids               4
-#   __trace_ops                       2
 #   codes                             4
-#   css                               1
-#   hdr                              26
+#   error                             1
+#   gainmap                           3
 #   icc_profiles                      1
-#   orient                            2
-#   precision                         8
-#   ycbcr                             1
-#   zenpixels                         5
+#   load_bearing                      1
+#   measure                           1
+#   negotiate                         3
+#   output                            1
+#   policy                            4
+#   tonemap                           1
+#   ycbcr                             3
 
-## items (105 lines)
+## items (23 lines)
 
-#[non_exhaustive] pub struct hdr::LightLevelHistogram [also: hdr::measure]
-pub const hdr::measure::LightLevelHistogram::BIN_MAX_NITS: f32
-pub const hdr::measure::LightLevelHistogram::BIN_MIN_NITS: f32
-pub const hdr::measure::LightLevelHistogram::NUM_BINS: usize
-pub fn zenpixels::hdr::ContentLightLevel::measure_histogram(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<hdr::measure::LightLevelHistogram>
-pub fn zenpixels::hdr::ContentLightLevel::measure_histogram_banded(&zenpixels::banded::BandedPixelBuffer, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<hdr::measure::LightLevelHistogram>
-pub fn zenpixels::hdr::ContentLightLevel::measure_max_smoothed(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
-pub fn zenpixels::hdr::ContentLightLevel::measure_percentile(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, f32, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
-pub fn zenpixels::hdr::ContentLightLevel::measure_robust(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
-pub fn AccuracyContract::assert_fields_are_eq(&self)
-pub fn ByteBound::assert_fields_are_eq(&self)
-pub fn ConversionCost::assert_fields_are_eq(&self)
-pub fn ConvertIntent::assert_fields_are_eq(&self)
-pub fn KernelTier::assert_fields_are_eq(&self)
-pub fn LossBucket::assert_fields_are_eq(&self)
-pub fn PlannedStepInfo::assert_fields_are_eq(&self)
-pub fn Provenance::assert_fields_are_eq(&self)
-pub fn SemanticEffects::assert_fields_are_eq(&self)
-pub fn WorkExtent::assert_fields_are_eq(&self)
-pub fn __bench_float_depth::f32_to_u16_magic_fma_clamped(&[f32], &mut [u16])
-pub fn __bench_float_depth::f32_to_u16_magic_fma_no_nan(&[f32], &mut [u16])
-pub fn __bench_float_depth::f32_to_u16_magic_fma_unit_clean(&[f32], &mut [u16])
-pub fn __bench_float_depth::f32_to_u16_mul_rne_approx(&[f32], &mut [u16])
-pub fn __bench_float_depth::f32_to_u16_truncate_unit_clean(&[f32], &mut [u16])
-pub fn __bench_float_depth::f32_to_u8_magic_fma_clamped(&[f32], &mut [u8])
-pub fn __bench_float_depth::f32_to_u8_magic_fma_no_nan(&[f32], &mut [u8])
-pub fn __bench_float_depth::f32_to_u8_magic_fma_unit_clean(&[f32], &mut [u8])
-pub fn __bench_float_depth::f32_to_u8_mul_rne_approx(&[f32], &mut [u8])
-pub fn __bench_float_depth::f32_to_u8_truncate_unit_clean(&[f32], &mut [u8])
-pub fn __bench_float_depth::u16_to_f32_div_0ulp(&[u16], &mut [f32])
-pub fn __bench_float_depth::u16_to_f32_newton_0ulp(&[u16], &mut [f32])
-pub fn __bench_float_depth::u16_to_f32_recip_1ulp(&[u16], &mut [f32])
-pub fn __bench_float_depth::u16_to_f32_split_exact(&[u16], &mut [f32])
-pub fn __bench_float_depth::u8_to_f32_div_0ulp(&[u8], &mut [f32])
-pub fn __bench_float_depth::u8_to_f32_newton_0ulp(&[u8], &mut [f32])
-pub fn __bench_float_depth::u8_to_f32_recip_1ulp(&[u8], &mut [f32])
-pub fn __bench_float_depth::u8_to_f32_split_exact(&[u8], &mut [f32])
-pub fn __bench_scan::FusedRequest::assert_fields_are_eq(&self)
-pub fn __bench_scan::FusedRequest::clone(&self) -> __bench_scan::FusedRequest
-pub fn __bench_scan::FusedRequest::default() -> __bench_scan::FusedRequest
-pub fn __bench_scan::FusedRequest::eq(&self, &__bench_scan::FusedRequest) -> bool
-pub fn __bench_scan::FusedRequest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn __bench_scan::FusedResult::assert_fields_are_eq(&self)
-pub fn __bench_scan::FusedResult::clone(&self) -> __bench_scan::FusedResult
-pub fn __bench_scan::FusedResult::default() -> __bench_scan::FusedResult
-pub fn __bench_scan::FusedResult::eq(&self, &__bench_scan::FusedResult) -> bool
-pub fn __bench_scan::FusedResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn __bench_scan::convert_linear_rgb(&[[f32; 3]; 3], &mut [f32])
-pub fn __bench_scan::convert_linear_rgba(&[[f32; 3]; 3], &mut [f32])
-pub fn __bench_scan::fused_predicates_rgba8_cg(&[u8], __bench_scan::FusedRequest) -> __bench_scan::FusedResult
-pub fn __bench_u16_hybrids::lut_lut(&[[f32; 3]; 3], &[u16], &mut [u16])
-pub fn __bench_u16_hybrids::lut_poly(&[[f32; 3]; 3], &[u16], &mut [u16])
-pub fn __bench_u16_hybrids::poly_lut(&[[f32; 3]; 3], &[u16], &mut [u16])
-pub fn __bench_u16_hybrids::poly_poly(&[[f32; 3]; 3], &[u16], &mut [u16])
-pub fn __trace_ops::start_recording()
-pub fn __trace_ops::stop_recording() -> alloc::vec::Vec<&'static str>
 pub fn codes::CodeMap::assert_fields_are_eq(&self)
 pub fn codes::CodeMapError::assert_fields_are_eq(&self)
 pub fn codes::CodeRole::assert_fields_are_eq(&self)
 pub fn codes::CodesError::assert_fields_are_eq(&self)
-pub fn css::CssColorError::assert_fields_are_eq(&self)
-pub fn hdr::CllMeasure::measure_histogram(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<hdr::measure::LightLevelHistogram>
-pub fn hdr::CllMeasure::measure_histogram_banded(&zenpixels::banded::BandedPixelBuffer, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<hdr::measure::LightLevelHistogram>
-pub fn hdr::CllMeasure::measure_max_smoothed(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
-pub fn hdr::CllMeasure::measure_percentile(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, f32, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
-pub fn hdr::CllMeasure::measure_robust(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
-pub fn hdr::Requirements::assert_fields_are_eq(&self)
-pub fn hdr::measure::CllMeasure::measure_histogram(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<hdr::measure::LightLevelHistogram>
-pub fn hdr::measure::CllMeasure::measure_histogram_banded(&zenpixels::banded::BandedPixelBuffer, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<hdr::measure::LightLevelHistogram>
-pub fn hdr::measure::CllMeasure::measure_max_smoothed(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
-pub fn hdr::measure::CllMeasure::measure_percentile(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, f32, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
-pub fn hdr::measure::CllMeasure::measure_robust(zenpixels::buffer::PixelSlice<'_>, zenpixels::hdr::DiffuseWhite, hdr::measure::LightLevelMethod) -> core::option::Option<zenpixels::hdr::ContentLightLevel>
-pub fn hdr::measure::LightLevelHistogram::bins(&self) -> &[u64]
-pub fn hdr::measure::LightLevelHistogram::clone(&self) -> hdr::measure::LightLevelHistogram
-pub fn hdr::measure::LightLevelHistogram::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub fn hdr::measure::LightLevelHistogram::max(&self) -> f32
-pub fn hdr::measure::LightLevelHistogram::mean(&self) -> f32
-pub fn hdr::measure::LightLevelHistogram::method(&self) -> hdr::measure::LightLevelMethod
-pub fn hdr::measure::LightLevelHistogram::percentile(&self, f32) -> f32
-pub fn hdr::measure::LightLevelHistogram::total_pixels(&self) -> u64
-pub fn hdr::measure::LightLevelHistogram::try_merge(&mut self, &Self) -> core::option::Option<()>
-pub fn hdr::measure::LightLevelMethod::assert_fields_are_eq(&self)
+pub fn error::ConvertError::assert_fields_are_eq(&self)
+pub fn gainmap::GainMapDownsample::assert_fields_are_eq(&self)
+pub fn gainmap::GainMapOrientation::assert_fields_are_eq(&self)
+pub fn gainmap::GainMapResample::assert_fields_are_eq(&self)
 pub fn icc_profiles::SynthesizedIcc::assert_fields_are_eq(&self)
-pub fn orient::__bench_apply_orientation_scalar(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation) -> zenpixels::buffer::PixelBuffer
-pub fn orient::__bench_apply_orientation_staged(zenpixels::buffer::PixelSlice<'_>, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), error::ConvertError>
-pub fn precision::ChainPlan::assert_fields_are_eq(&self)
-pub fn precision::ConversionChoice<'a>::assert_fields_are_eq(&self)
-pub fn precision::ConversionDecision::assert_fields_are_eq(&self)
-pub fn precision::ConversionPolicy::assert_fields_are_eq(&self)
-pub fn precision::ConversionPreset::assert_fields_are_eq(&self)
-pub fn precision::ConversionRecord::assert_fields_are_eq(&self)
-pub fn precision::ConversionRefusal::assert_fields_are_eq(&self)
-pub fn precision::DecidedBy::assert_fields_are_eq(&self)
-pub fn ycbcr::YcbcrError::assert_fields_are_eq(&self)
-pub mod __bench_float_depth
-pub mod __bench_scan
-pub mod __bench_u16_hybrids
-pub mod __trace_ops
-pub mod orient
-pub struct __bench_scan::FusedRequest
-pub struct __bench_scan::FusedResult
-pub __bench_scan::FusedRequest::check_grayscale: bool
-pub __bench_scan::FusedRequest::check_opaque: bool
-pub __bench_scan::FusedResult::is_grayscale: bool
-pub __bench_scan::FusedResult::is_opaque: bool
+pub fn load_bearing::LoadBearingReport::assert_fields_are_eq(&self)
+pub fn measure::LightLevelMethod::assert_fields_are_eq(&self)
+pub fn negotiate::FormatCost::assert_fields_are_eq(&self)
+pub fn negotiate::LossKind::assert_fields_are_eq(&self)
+pub fn negotiate::NegotiatedFormat::assert_fields_are_eq(&self)
+pub fn output::OutputProfile::assert_fields_are_eq(&self)
+pub fn policy::DepthPolicy::assert_fields_are_eq(&self)
+pub fn policy::GamutPolicy::assert_fields_are_eq(&self)
+pub fn policy::LumaDomain::assert_fields_are_eq(&self)
+pub fn policy::RangePolicy::assert_fields_are_eq(&self)
+pub fn tonemap::tone_mapper::Requirements::assert_fields_are_eq(&self)
+pub fn ycbcr::ChromaUpsample::assert_fields_are_eq(&self)
+pub fn ycbcr::YcbcrMatrix::assert_fields_are_eq(&self)
+pub fn ycbcr::YcbcrOptions::assert_fields_are_eq(&self)
 
-## trait impls (40 types)
+## trait impls (29 types)
 
-AccuracyContract: TrivialClone
-AllocationRequirements: TrivialClone
-ByteBound: TrivialClone
-CandidateTarget<'a>: TrivialClone
-ConversionCost: TrivialClone
-ConversionSpec<'a>: TrivialClone
-ConvertIntent: TrivialClone
-HdrConfig: TrivialClone
-KernelTier: TrivialClone
-LossBucket: TrivialClone
-PlannedStepInfo: TrivialClone
-Provenance: TrivialClone
-SemanticEffects: TrivialClone
-WorkExtent: TrivialClone
-__bench_scan::FusedRequest: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
-__bench_scan::FusedResult: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
+Lcms: TrivialClone
+LcmsUnoptimized: TrivialClone
+MoxCms: TrivialClone
 accel::Accelerators: TrivialClone
-cms_lcms::Lcms: TrivialClone
-cms_moxcms::MoxCms: TrivialClone
 codes::CodeMap: TrivialClone
 codes::CodeMapError: TrivialClone
 codes::CodeRole: TrivialClone
-codes::CodesError: TrivialClone
-css::CssColorError: TrivialClone
+error::ConvertError: TrivialClone
+gainmap::GainMapDownsample: TrivialClone
+gainmap::GainMapOrientation: TrivialClone
+gainmap::GainMapResample: TrivialClone
+gainmap::GainMapTarget: TrivialClone
 gamut::GamutMatrix: TrivialClone
-hdr::Bt2446A: TrivialClone
-hdr::Requirements: TrivialClone
-hdr::measure::LightLevelHistogram: Clone, Debug
-hdr::measure::LightLevelMethod: TrivialClone
 load_bearing::LoadBearingReport: TrivialClone
+measure::LightLevelMethod: TrivialClone
+negotiate::FormatCost: TrivialClone
+negotiate::LossKind: TrivialClone
 oklab::OklabSpace: TrivialClone
-precision::ConversionChoice<'a>: TrivialClone
-precision::ConversionDecision: TrivialClone
-precision::ConversionPolicy: TrivialClone
-precision::ConversionPreset: TrivialClone
-precision::ConversionQuestion<'a>: TrivialClone
-precision::ConversionRecord: TrivialClone
-precision::ConversionRefusal: TrivialClone
-precision::DecidedBy: TrivialClone
-ycbcr::YcbcrError: TrivialClone
+policy::AlphaPolicy: TrivialClone
+policy::DepthPolicy: TrivialClone
+policy::GamutPolicy: TrivialClone
+policy::LumaCoefficients: TrivialClone
+policy::LumaDomain: TrivialClone
+policy::RangePolicy: TrivialClone
+tonemap::bt2446a::Bt2446A: TrivialClone
+tonemap::tone_mapper::Requirements: TrivialClone
+ycbcr::ChromaUpsample: TrivialClone
+ycbcr::YcbcrMatrix: TrivialClone
+ycbcr::YcbcrOptions: TrivialClone

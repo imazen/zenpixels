@@ -10,14 +10,14 @@ Both crates remain `#![forbid(unsafe_code)]` and `no_std + alloc` by default.
 
 | 0.2 / 0.4 | 0.5 | Notes |
 |---|---|---|
-| `PixelFormat` + `ChannelType` + `ChannelLayout` | `SampleLayout` (`SampleType`, `ChannelOrder`, `BitPacking`) | Orthogonal physical layout; presets like `SampleLayout::RGB8`, `RGBAF32`, `P010` |
-| `PixelDescriptor` + `ColorContext` | `ImageSpec` (`SampleLayout` + `ColorSpace`) + optional `ColorOrigin` | Color authority lives on `ColorSpace` (`Rgb`, `Gray`, `Oklab`, `Xyz`, `Perceptual`, `Icc`, `Cmyk`) |
-| `TransferFunction` / `ColorPrimaries` | `Transfer` / `Primaries` | `Transfer::Hlg(HlgMode::Scene \| HlgMode::Display(HlgRendering))` makes HLG display rendering explicit |
-| `PixelBuffer<P, S>` | `PixelBuf` | Type-erased, stride-preserving, fallible; supports external storage via `PixelBuf::from_external*` |
-| `PixelSlice<'a>` / `PixelSliceMut<'a>` | `PixelView<'a>` / `PixelViewMut<'a>` | Borrowed strided views with `SampleFacts` and `HdrMetadata` |
-| `BandedPixelBuffer` | `BandedBuf` | Bounded row-band storage (`BandLayout`, `RowAlign`) for gigapixel images |
-| `PlanarBuffer` / `PlanarSlice` / `PlanarSliceMut` | `PlanarBuf` / `PlanarView` / `PlanarViewMut` | Always available (no `planar` Cargo feature); carry optional `ColorSpace`, `ycbcr_matrix_code`, `range`, `alpha`, `chroma_siting` |
-| `AnyPlane` / `PlaneRef` / `PlaneBuf` | `PlaneView` / `PlaneViewMut` / `OwnedPlane` | Unified byte-addressed strided planes with `PlaneSpec` (`PlaneRole`, `SampleType`, subsampling) |
+| `PixelFormat` + `ChannelType` + `ChannelLayout` | `SampleLayout` (`SampleType`, `ChannelOrder`, `BitPacking`) + `Copy` `PixelFormat` | Orthogonal physical layout; `PixelFormat` (`Copy + const + !Drop`) pairs `SampleLayout` + `ParametricColor` for codec tables & `const` slices |
+| `PixelDescriptor` + `ColorContext` | `ImageSpec` (`SampleLayout` + `ColorSpace`) + optional `ColorOrigin` | `const` presets (`ImageSpec::RGB8_SRGB`, etc.); `SpecCow<'a>` eliminates `Arc` bumps in views/crops; `ColorSpace` covers `Rgb`, `Gray`, `Oklab`, `Xyz`, `Perceptual`, `Icc`, `Cmyk`, `Untagged` |
+| `TransferFunction` / `ColorPrimaries` | `Transfer` / `Primaries` | Complete lossless H.273 (11 CP, 16 TC, 9 MC); `Transfer::Hlg(HlgMode::Scene \| HlgMode::Display(HlgRendering))` makes HLG display rendering explicit |
+| `PixelBuffer<P, S>` | `PixelBuf` | Type-erased, stride-preserving, fallible, carries `Orientation`; supports external storage via `from_external*`, white fill (`new_white`), and fast `new_zeroed` + `into_opaque_verified` / `assume_opaque` |
+| `PixelSlice<'a>` / `PixelSliceMut<'a>` | `PixelView<'a>` / `PixelViewMut<'a>` | Borrowed strided views carrying `SpecCow<'a>`, `SampleFacts`, `HdrMetadata`, and `Orientation` |
+| `BandedPixelBuffer` | `BandedBuf` | Bounded row-band storage (`RowAlign`, `DEFAULT_MAX_BAND_BYTES`) carrying `Orientation` for gigapixel images |
+| `PlanarBuffer` / `PlanarSlice` / `PlanarSliceMut` | `PlanarBuf` / `PlanarView` / `PlanarViewMut` | Always available (no `planar` Cargo feature); carry `ColorSpace`, `ycbcr_matrix_code`, `range`, `alpha`, `chroma_siting`, `hdr`, `origin`, and `orientation` |
+| `AnyPlane` / `PlaneRef` / `PlaneBuf` | `PlaneView` / `PlaneViewMut` / `OwnedPlane` | Zero-copy typed codec APIs (`from_samples`, `row_as`, `code_u32`, `as_code_plane`, `plane_by_role`) with strict plane role validation |
 | `CodePlane` | `CodePlane` + `CodePlaneMut` | Unconditional in `zenpixels`; read/write arbitrary bit-packed or P010 codes |
 | `ConvertOptions` + `ConversionSpec` | `ConvertPolicy` | Presets: `lossless()`, `permissive()`, `working_linear()`, `display_sdr()` |
 | `ConvertPlan` + `RowConverter` | `RowPlan` + `ImagePlan` | `RowPlan` is stateless, `Send + Sync`, and allocates zero heap bytes per `convert_row` |
@@ -77,10 +77,10 @@ conv.try_convert_row(src.as_slice().row(0), dst_row, w)?;
 use zenpixels::{ImageSpec, PixelBuf};
 use zenpixels_convert::{ConvertPolicy, RowPlan};
 
-let src = PixelBuf::new(w, h, ImageSpec::rgb8_srgb())?;
+let src = PixelBuf::new(w, h, ImageSpec::RGB8_SRGB)?;
 let plan = RowPlan::build(
-    src.spec().clone(),
-    ImageSpec::rgba8_srgb(),
+    src.spec(),
+    &ImageSpec::RGBA8_SRGB,
     &ConvertPolicy::permissive(),
     None,
 )?;
@@ -89,8 +89,8 @@ plan.convert_row(src.as_view().row(0), dst_row, w, 0)?;
 
 For common 8-bit outputs, single-call helpers are available directly on `zenpixels_convert`:
 ```rust
-let rgb = zenpixels_convert::to_rgb8(&src.as_view(), &ConvertPolicy::permissive())?;
-let gray = zenpixels_convert::to_gray8(&src.as_view(), &ConvertPolicy::permissive())?;
+let rgb = zenpixels_convert::to_rgb8(&src.as_view())?;
+let gray = zenpixels_convert::to_gray8(&src.as_view())?;
 ```
 
 ### Zero-Copy External Owned Data into `PixelBuf` / `OwnedPlane`
@@ -103,16 +103,29 @@ use zenpixels::{ByteStorage, ImageSpec, PixelBuf};
 
 // Built-in impls exist for Vec<u8>/Vec<u16>/Vec<f32>, Box<[T]>, Arc<[T]>, Arc<Vec<T>>, etc.
 let shared: Arc<[u8]> = Arc::from(vec![255u8; 4 * 4 * 3]);
-let mut buf = PixelBuf::from_external(shared, 4, 4, 12, ImageSpec::rgb8_srgb())?;
+let mut buf = PixelBuf::from_external(shared, 4, 4, 12, ImageSpec::RGB8_SRGB)
+    .map_err(|(err, _orig)| err)?;
 
 // Read zero-copy:
 let view = buf.as_view();
 
 // Mutate via fallible copy-on-write (only copies if storage is immutable / shared):
-let mut_view = buf.try_make_mut()?;
+let mut mut_view = buf.try_as_view_mut()?;
 ```
 
 For mutable zero-copy external ownership (in-place mutation without CoW), implement `ByteStorageMut` and construct via `PixelBuf::from_external_mut` or `OwnedPlane::from_external_mut`.
+
+### Sound `AlphaMode::Opaque` Allocation & Fast Fill-Then-Retag
+
+`PixelBuf::new` fills black (setting alpha to channel max on `AlphaMode::Opaque`), and `PixelBuf::new_white` fills reference white. When a decoder or renderer overwrites every pixel and wants to skip the upfront alpha-fill pass:
+
+```rust
+use zenpixels::{ImageSpec, PixelBuf};
+
+let mut buf = PixelBuf::new_zeroed(w, h, ImageSpec::RGBA8_SRGB)?; // refuses AlphaMode::Opaque
+// ... write all pixels including A = 255 ...
+let opaque = buf.into_opaque_verified()?; // or `assume_opaque()` / `into_opaque_filled()`
+```
 
 ### RGB -> Gray Luma Domain (`Encoded` vs `LinearLight`)
 
@@ -128,34 +141,41 @@ let policy = ConvertPolicy::permissive().with_luma_domain(LumaDomain::LinearLigh
 ### Encoder Output Adaptation (`OutputPlan` / `adapt_for_encode`)
 
 ```rust
-use zenpixels::{ImageSpec, PixelCow};
-use zenpixels_convert::{ConvertPolicy, OutputPlan, adapt_for_encode};
+use zenpixels::{ColorOrigin, ImageSpec, PixelFormat};
+use zenpixels_convert::{
+    ConvertPolicy, OutputPlan, OutputProfile, PeakSource, adapt_for_encode, adapt_for_encode_format,
+};
 
-// Quick one-shot adaptation (borrows zero-copy when already compatible):
-let ready: PixelCow<'_> = adapt_for_encode(
-    &view,
-    &[ImageSpec::rgb8_srgb(), ImageSpec::rgba8_srgb()],
+// Quick one-shot adaptation over Copy `PixelFormat` slices (borrows zero-copy when compatible):
+let (chosen, ready) = adapt_for_encode_format(
+    buf.as_view(),
+    buf.origin(),
+    &[PixelFormat::RGB8_SRGB, PixelFormat::RGBA8_SRGB],
     &ConvertPolicy::permissive(),
+    PeakSource::Measured,
+    OutputProfile::Auto,
 )?;
 
-// Or build once and reuse:
+// Or build a reusable OutputPlan with zero-clone `&ImageSpec`:
 let out_plan = OutputPlan::build(
-    view.spec().clone(),
-    ImageSpec::rgb8_srgb(),
-    &ConvertPolicy::permissive(),
-    None,
+    buf.spec(),
+    &ImageSpec::RGB8_SRGB,
+    ConvertPolicy::permissive(),
+    PeakSource::Measured,
+    OutputProfile::Auto,
 )?;
 ```
 
 Notes on 0.5 safety fixes:
-- Converting unverified `RGBA8` (`AlphaMode::Straight`) to `AlphaMode::Opaque` canonicalizes alpha to `255` instead of bypassing; it remains zero-copy whenever `view.facts().all_opaque` or `policy.source_facts.all_opaque` is proven.
+- Converting unverified `RGBA8` (`AlphaMode::Straight` or unverified `Opaque`, including `RGB10A2`) to `AlphaMode::Opaque` canonicalizes alpha to channel max instead of bypassing; it remains zero-copy whenever `view.facts().all_opaque` or `policy.source_facts.all_opaque` is proven.
 - `MetadataOnly` ICC profiles (profiles recognized for identification but not safe for matrix+TRC substitution) are rejected when targeting structured `ColorSpace::Rgb` / `ColorSpace::Gray` without a CMS, while remaining valid on explicit `ColorSpace::Icc`.
+- `OutputPlan` refuses `Transfer::Hlg(HlgMode::Display(_))` under `OutputProfile::CicpOnly` and `OutputProfile::Auto` (`ConvertError::OutputSignalingUnavailable`) because CICP cannot signal display rendering parameters.
 
 ### Pluggable CMS (`MoxCms` and `Lcms`)
 
 ```rust
 use std::sync::Arc;
-use zenpixels_convert::{ConvertPolicy, Lcms, MoxCms, RowPlan};
+use zenpixels_convert::{ConvertPolicy, Lcms, MoxCms};
 
 // Pure-Rust MoxCms (fast default; declines AbsoluteColorimetric, float D2B*/B2D* MPE,
 // and unequal adjacent RGB TRCs so callers can fall back explicitly):
@@ -165,18 +185,33 @@ let mox_pol = ConvertPolicy::permissive().with_cms(Arc::new(MoxCms));
 let lcms_pol = ConvertPolicy::permissive().with_cms(Arc::new(Lcms));
 ```
 
-### Planar YCbCr & Banded Orientation
+### Zero-Copy Planar YCbCr / RGB & Orientation
 
 ```rust
-// Planar YCbCr -> packed RGB/RGBA F32:
-let rgb = zenpixels_convert::ycbcr_to_rgb_from_planar(
-    &planar_view,
-    zenpixels_convert::YcbcrMatrix::from_cicp_code(1).unwrap(),
-    zenpixels::SignalRange::Narrow,
-    zenpixels::ColorSpace::SRGB_LINEAR,
-)?;
+use zenpixels::{
+    ChromaSiting, ColorSpace, DEFAULT_MAX_BAND_BYTES, PlaneRole, PlaneSpec, PlaneView, PlanarView,
+    SampleLayout, SampleType,
+};
+use zenpixels_convert::{
+    YcbcrOptions, apply_orientation_banded_into, bake_orientation_buf, orient_banded,
+    ycbcr_to_rgb_from_planar, ycbcr_to_rgb_with_options,
+};
 
-// Gigapixel banded orientation (allocating or zero-alloc into pre-allocated bands):
-let oriented = zenpixels_convert::orient_banded(&src_bands, orient)?;
-zenpixels_convert::apply_orientation_banded_into(&src_bands, orient, &mut dst_bands)?;
+// Borrow codec-native typed planes zero-copy:
+let py = PlaneView::from_samples(PlaneSpec::new(PlaneRole::Y, SampleType::U8), w, h, y_stride, y_slice)?;
+let pcb = PlaneView::from_samples(PlaneSpec::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2), cw, ch, c_stride, cb_slice)?;
+let pcr = PlaneView::from_samples(PlaneSpec::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2), cw, ch, c_stride, cr_slice)?;
+let planar = PlanarView::new(w, h, &[py, pcb, pcr])?
+    .with_color(ColorSpace::SRGB)
+    .with_ycbcr_matrix_code(1)
+    .with_chroma_siting(ChromaSiting::Center);
+
+// Reconstruct directly to RGB8/RGBA8/BGR8/RGB16/RGBF32 with siting-exact Bilinear upsampling:
+let rgb8 = ycbcr_to_rgb_with_options(&planar, SampleLayout::RGB8, &YcbcrOptions::bilinear())?;
+let rgbf32 = ycbcr_to_rgb_from_planar(&planar)?;
+
+// Bake pending buffer orientation (zero-copy when already Identity) or rotate banded buffers:
+let display_buf = bake_orientation_buf(rgb8)?;
+let oriented = orient_banded(&src_bands, orient, DEFAULT_MAX_BAND_BYTES)?;
+apply_orientation_banded_into(&src_bands, orient, &mut dst_bands)?;
 ```

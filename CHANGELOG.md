@@ -13,19 +13,40 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
 
 - **Unified descriptor & buffer model:**
   - `SampleLayout` (`SampleType`, `ChannelOrder`, `BitPacking`), `ColorSpace`
-    (`Rgb`, `Gray`, `Oklab`, `Xyz`, `Perceptual`, `Icc`, `Cmyk`), `ColorOrigin`,
-    and `ImageSpec` (with preset constructors like `ImageSpec::rgb8_srgb()`,
-    `rgba8_srgb()`, `rgb16_bt2100_pq()`, `rgbf32_linear()`, etc.).
+    (`Rgb`, `Gray`, `Oklab`, `Xyz`, `Perceptual`, `Icc`, `Cmyk`, `Untagged`),
+    `ColorOrigin`, `ImageSpec` (with `const` presets `ImageSpec::RGB8_SRGB`,
+    `RGBA8_SRGB`, `RGB16_BT2100_PQ`, `RGBF32_LINEAR`, plus `try_with_*` checked
+    builders), `Copy + const + !Drop` companion `PixelFormat` / `ParametricColor`,
+    and `SpecCow<'a>` for zero-`Arc`-bump borrowed views and crops.
+  - Complete lossless ITU-T H.273 CICP: all 11 Table 2 primaries (with projective
+    `y == 0` matrix solver for `Primaries::Xyz` and custom primaries, `Chromaticity::C`
+    / `WhitePoint::C`, `same_chromaticity`), all 16 Table 3 transfers (`same_curve`),
+    all 9 Table 4 NCL matrix codes (`YcbcrMatrix::to_cicp_code`, `same_coefficients`),
+    exact `0.0001 cd/m²` `ClliCodes`, and ISO 15076-1 structural ICC validation
+    (`validate_icc_structure` / `IccValidationError`) wired into `ImageSpec::validate()`.
   - `PixelBuf`, `PixelView`, `PixelViewMut`, `PixelCow`, `BandedBuf` (gigapixel
-    row-banded storage with `BandLayout` and `RowAlign`), `OwnedPlane`,
-    `PlaneView`, `PlaneViewMut`, `PlanarBuf`, `PlanarView`, and `PlanarViewMut`
-    (with optional color interpretation: `color`, `ycbcr_matrix_code`, `range`,
-    `alpha`, `chroma_siting`).
+    row-banded storage with `RowAlign`), `OwnedPlane`, `PlaneView`, `PlaneViewMut`,
+    `PlanarBuf`, `PlanarView`, and `PlanarViewMut` carrying pending `Orientation`,
+    `HdrMetadata`, `ColorOrigin`, `ChromaSiting`, and optional color interpretation
+    (`color`, `ycbcr_matrix_code`, `range`, `alpha`).
+  - Sound `AlphaMode::Opaque` construction and fast fill-then-retag: `BufFill::{Black, White}`,
+    `PixelBuf::new_white`, `PixelBuf::new_with_fill`, `PixelBuf::new_zeroed` /
+    `new_zeroed_aligned` (refusing `AlphaMode::Opaque` on alpha-bearing layouts with
+    `BufferError::UnverifiedOpaqueAlpha`), `into_opaque_verified`, `into_opaque_filled`,
+    `assume_opaque`, and recovery constructors `try_from_bytes_recover` /
+    `try_from_vec_recover`.
+  - Seamless zero-copy planar codec API: `PlaneView::from_samples`,
+    `PlaneViewMut::from_samples`, `OwnedPlane::from_samples`, `row_as` / `row_as_mut`,
+    `PlaneView::code_u32`, `as_code_plane` / `into_code_plane_mut`, `plane_by_role`,
+    `PlanarBuf::new_aligned`, `PlaneRole::{Depth, Matte, Thermal}`, and strict
+    cross-family plane role set validation.
   - `SampleEncoding`, `CodePlane`, and `CodePlaneMut` (sub-byte / P010 / bit-packed
     component readers and writers, unconditional without a `planar` feature gate).
-  - `SampleFacts` (`FloatFacts` + `ExactDepth` + `all_opaque` + `all_gray`),
-    `HdrMetadata`, `DiffuseWhite`, `HlgMode`, `HlgRendering`, `Nits`, `Orientation`,
-    `GainMapParams` / `GainMapChannel` / `HdrBundle`, and `DepthTier`.
+  - `SampleFacts` (`FloatFacts` + `ExactDepth` + `all_opaque` + `all_grayscale`),
+    `HdrMetadata`, `DiffuseWhite` / `Nits` / `Gamma` (`NonZeroU32` 4-byte niches),
+    `HlgMode`, `HlgRendering`, `Orientation`, `GainMapMetadata` / `GainMapComponent` /
+    `DualLayerHdr` / `DualLayerHdrView` (with `BufferError::InvalidGainMapMetadata`
+    and layer orientation consistency enforcement).
 - **First-class external owned storage:**
   - `ByteStorage` / `ByteStorageMut`, `ExternalStorage` / `ExternalMutStorage`,
     `PixelBuf::from_external`, `PixelBuf::from_external_mut`,
@@ -125,9 +146,11 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
     `LumaDomain::{Encoded, LinearLight}`, `allow_icc_substitution`, `allow_approximate`,
     `with_cms()`, and `with_accelerators()`.
   - Stateless `Send + Sync` `RowPlan` (zero heap allocation per `convert_row`),
-    whole-image `ImagePlan`, `OutputPlan` + `adapt_for_encode`, `Negotiate` +
-    `CodecSupport`, and ergonomic wrappers (`to_rgb8`, `to_rgba8`, `to_gray8`,
-    `to_bgra8`).
+    whole-image `ImagePlan`, `OutputPlan` + `adapt_for_encode` / `adapt_for_encode_format`,
+    `Negotiate` (`select_format` for `Copy` `PixelFormat` slices), and ergonomic wrappers
+    (`to_rgb8`, `to_rgba8`, `to_gray8`, `to_bgra8`). Planners accept `impl AsRef<ImageSpec>`
+    (zero-clone `&ImageSpec` or owned `ImageSpec`) and exact math for all 16 H.273 Table 3
+    transfer functions with 0-bit SCALAR/SIMD parity.
 - **Fast paths & SIMD acceleration:**
   - Hybrid zero-scratch scalar core + opt-in `Accelerators` (`fast` feature,
     default-off for minimal library codegen).
@@ -140,14 +163,22 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
     unrolled exact SIMD.
 - **HDR, Gain Maps, Orientation, YCbCr & Measurement:**
   - `gainmap` feature: ISO 21496-1 / UltraHDR reconstruction, extraction, and
-    resampling (`GainMapParams`, `reconstruct_hdr`, `extract_gain_map`, etc.).
+    resampling (`GainMapApplier`, `GainMapRowExtractor` with decoupled 1/3-ch image vs
+    `Shared`/`PerChannel` metadata arity, `apply_gain_map_oriented` propagating
+    `Passthrough` orientation onto the output `PixelBuf`, `extract_gain_map`,
+    `extract_gain_map_only`, `bake_dual_layer_orientation`, `rotate_dual_layer`).
   - `orient`: all 8 EXIF orientations (`apply_orientation`, `apply_orientation_into`,
-    `orient_banded`, zero-alloc `apply_orientation_banded_into`) with cache-blocked
-    SIMD transpose (`fast-transpose`).
+    `orient_buf`, `orient_banded`, zero-alloc `apply_orientation_banded_into`, plus
+    buffer-carried `bake_orientation`, zero-copy `bake_orientation_buf`, and
+    `bake_orientation_banded`) with cache-blocked SIMD transpose (`fast-transpose`).
   - `measure`: `measure_cll`, `measure_histogram`, `LightLevelHistogram::{bins, try_merge}`,
     and `measure_max_smoothed` (3-tap mirror-padded box filter).
-  - `ycbcr`: `YcbcrMatrix::from_cicp_code`, `ycbcr_to_rgb_into`, `ycbcr_to_rgb_f32`,
-    and `ycbcr_to_rgb_from_planar`.
+  - `ycbcr`: lossless ITU-T H.273 Table 4 `YcbcrMatrix` (`Identity`, `Bt709`, `Fcc`,
+    `Bt470Bg`, `Bt601`, `Smpte240M`, `YCgCo`, `Bt2020`, `ChromaDerivedNcl`),
+    siting-exact `ChromaUpsample::{Nearest, Bilinear}` + `YcbcrOptions`, planar RGB
+    (`U8`/`U16`/`F32`), zero-alloc strided `ycbcr_to_rgb_into` / `ycbcr_to_rgb_with_options_into`
+    targeting `U8`/`U16`/`F32` `RGB`/`RGBA`/`BGR`/`BGRA`/`RGBX`/`BGRX`/`Gray`/`GrayAlpha`,
+    and full `hdr`/`origin`/`orientation` propagation.
 - **Pluggable CMS (`CmsBackend` / `CmsTransform`):**
   - `MoxCms` (`cms-moxcms`) with explicit refusal of `AbsoluteColorimetric`, float
     `D2B*`/`B2D*` MPE tags per active intent, and unequal adjacent RGB TRCs, plus
@@ -163,7 +194,12 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
   which previously truncated projector peak white (`52.37 / 48.0`) to `63375` instead
   of `65535`.
 - Fixed `OutputPlan` bypassing `AlphaMode::Opaque` canonicalization when alpha was
-  unverified (stays zero-copy when `SampleFacts::all_opaque` is proven).
+  unverified (stays zero-copy when `SampleFacts::all_opaque` is proven), and fixed
+  `RowPlan` `src == dst` unverified `Opaque` canonicalization on packed-word layouts
+  such as `RGB10A2`.
+- Fixed `OutputPlan` silently stripping `HlgMode::Display` rendering parameters under
+  `OutputProfile::CicpOnly` and `OutputProfile::Auto` (now returns
+  `ConvertError::OutputSignalingUnavailable`).
 - Fixed `OutputPlan` accepting `MetadataOnly` ICC profiles for structured RGB/Gray
   destinations (now requires `IdentificationUse::MatrixTrcSubstitution`).
 - Fixed `MoxCms` vs `Lcms` colorimetry parity across U16, F32, and CMYK F32:

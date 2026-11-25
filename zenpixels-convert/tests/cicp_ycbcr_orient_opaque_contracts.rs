@@ -6,14 +6,18 @@
 
 use zenpixels_convert::{
     Accelerators, AlphaMode, BandedBuf, ChromaSiting, Cicp, ColorOrigin, ColorSpace,
-    ContentLightLevel, ConvertError, ConvertPolicy, DiffuseWhite, GainMapApplyConfig,
-    GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapMetadata, GainMapOrientation,
-    GainMapRowExtractor, GamutPolicy, HdrMetadata, HlgMode, HlgRendering, ImagePlan, ImageSpec,
-    Orientation, OutputPlan, OutputProfile, PeakSource, PixelBuf, PixelBufLoadBearingExt,
-    PixelFormat, PixelViewLoadBearingExt, PlanarBuf, PlaneRole, PlaneSpec, PlaneView, Primaries,
-    RowPlan, SampleLayout, SampleType, SignalRange, SignedFraction, Transfer, UnsignedFraction,
-    YcbcrMatrix, YcbcrOptions, apply_gain_map_oriented, bake_orientation_buf, ycbcr_to_rgb_f32,
-    ycbcr_to_rgb_into, ycbcr_to_rgb_with_options, ycbcr_to_rgb_with_options_into,
+    ContentLightLevel, ConvertError, ConvertPolicy, DiffuseWhite, GamutPolicy, HdrMetadata,
+    HlgMode, HlgRendering, ImagePlan, ImageSpec, Orientation, OutputPlan, OutputProfile,
+    PeakSource, PixelBuf, PixelBufLoadBearingExt, PixelFormat, PixelViewLoadBearingExt, PlanarBuf,
+    PlaneRole, PlaneSpec, PlaneView, Primaries, RowPlan, SampleLayout, SampleType, SignalRange,
+    Transfer, YcbcrMatrix, YcbcrOptions, bake_orientation_buf, ycbcr_to_rgb_f32, ycbcr_to_rgb_into,
+    ycbcr_to_rgb_with_options, ycbcr_to_rgb_with_options_into,
+};
+#[cfg(feature = "gainmap")]
+use zenpixels_convert::{
+    GainMapApplyConfig, GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapMetadata,
+    GainMapOrientation, GainMapRowExtractor, SignedFraction, UnsignedFraction,
+    apply_gain_map_oriented,
 };
 
 #[test]
@@ -28,6 +32,10 @@ fn all_16_h273_transfers_inverse_accuracy_and_simd_parity() {
     let all_16_tc: [u8; 16] = [1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
     for tc in all_16_tc {
         let tf = Transfer::from_cicp(tc).expect("valid H.273 TC");
+        #[cfg(not(feature = "hdr-transfers"))]
+        if tf.is_hdr() {
+            continue;
+        }
         let prim = if tc == 18 {
             Primaries::Bt2020
         } else {
@@ -561,6 +569,7 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
     );
 }
 
+#[cfg(feature = "gainmap")]
 #[test]
 fn gainmap_decoupled_3ch_shared_metadata_and_passthrough_orientation() {
     let comp = GainMapComponent {

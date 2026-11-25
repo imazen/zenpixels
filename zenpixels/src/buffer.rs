@@ -5773,7 +5773,7 @@ impl DualLayerHdr {
 
     /// Construct a validated dual-layer HDR carrier with optional alternate color space
     /// (required when `metadata.application_space == GainMapColorSpace::Alternate`) and
-    /// shared pending [`Orientation`](crate::Orientation).
+    /// shared pending [`Orientation`].
     ///
     /// Rejects misregistered layer orientations (`base.orientation() != gain_map.orientation()`)
     /// or a non-`Identity` layer orientation that contradicts `orientation`.
@@ -5833,7 +5833,7 @@ impl DualLayerHdr {
         Ok(self)
     }
 
-    /// Attach a shared pending [`Orientation`](crate::Orientation) for the aligned pair.
+    /// Attach a shared pending [`Orientation`] for the aligned pair.
     #[inline]
     #[must_use]
     pub const fn with_orientation(mut self, orientation: crate::Orientation) -> Self {

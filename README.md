@@ -41,20 +41,36 @@ zenpixels-convert = "0.5.0"
 
 ## Core architecture (0.5)
 
-- **Algebraic `ColorSpace`:** mutually exclusive variants (`Rgb`, `Gray`,
-  `Oklab`, `Perceptual`, `Cmyk`, `Icc`, `Untagged`) make invalid states (such as
-  Oklab carrying BT.709 primaries or ICC contradicting CICP) unrepresentable.
+- **Algebraic `ColorSpace` + `Copy`/`const` `PixelFormat`:** mutually exclusive
+  variants (`Rgb`, `Gray`, `Oklab`, `Xyz`, `Perceptual`, `Cmyk`, `Icc`,
+  `Untagged`) make invalid states (such as Oklab carrying BT.709 primaries or
+  ICC contradicting CICP) unrepresentable. `ImageSpec` provides `const` presets
+  (`ImageSpec::RGB8_SRGB`, etc.), `SpecCow<'a>` avoids `Arc` bumps across views
+  and crops, and `PixelFormat` (`Copy + const + !Drop`) serves codec tables and
+  `const` slices without heap ownership.
+- **Lossless ITU-T H.273 CICP & validated ICC:** all 11 Table 2 primaries
+  (including projective `y == 0` CIE XYZ), all 16 Table 3 transfers, all 9
+  Table 4 NCL matrix codes, exact `0.0001 cd/m²` `ClliCodes`, and ISO 15076-1
+  structural ICC validation inside `ImageSpec::validate()`.
 - **Unified `SampleLayout` + `BitPacking`:** full-width samples (`U8`, `U16`,
   `F16`, `F32`, `I16`, `I32`, `U32`), 10/12-bit codec planes (`P010`, `U10_LSB`,
   `U12_LSB`), and bitfield words (`RGB565`, `RGB10A2`).
-- **Alignment-exact zero-copy interchange:** `PixelBuf::from_typed_vec<P>` and
-  `PixelBuf::try_into_vec_zero_copy<P>` strictly preserve Rust's allocation and
-  deallocation alignment contract via `PixelStorage` (`U8`, `U16`, `U32`, `F32`,
-  `AlignedU8`).
-- **Multi-band, planar, and gain-map carriers:** `BandedBuf`, `PlanarBuf` /
-  `PlanarView` (inline zero-allocation up to 4 planes), `DualLayerHdr` (ISO
-  21496-1 / UltraHDR gain maps), and `SampleFacts` (automatically cleared on
-  `&mut`).
+- **Sound `AlphaMode::Opaque` & fast fill-then-retag:** `PixelBuf::new` fills
+  black with canonical max alpha, `PixelBuf::new_white` / `new_with_fill` fill
+  reference white, and `PixelBuf::new_zeroed` skips the alpha-fill pass (refusing
+  `AlphaMode::Opaque` on alpha-bearing layouts) so decoders can write all pixels
+  and retag zero-copy via `into_opaque_verified`, `into_opaque_filled`, or
+  `assume_opaque`.
+- **Alignment-exact zero-copy interchange & external ownership:** `PixelBuf::from_vec<P>`,
+  `try_from_vec_recover`, `from_external` / `from_external_mut`, and
+  `try_into_vec_zero_copy<P>` preserve Rust's allocation alignment contract via
+  `PixelStorage` (`U8`, `U16`, `U32`, `F32`, `Aligned64`, `External`, `ExternalMut`).
+- **Orientation on buffers & multi-plane/dual-layer carriers:** `Orientation`
+  travels directly on `PixelBuf`, `PixelView`, `PixelViewMut`, `BandedBuf`,
+  `PlanarBuf`, `PlanarView`, `PlanarViewMut`, and `DualLayerHdr` (ISO 21496-1 /
+  UltraHDR gain maps) with O(1) `rotate_metadata` and `display_dimensions()`.
+  Planar views expose zero-copy typed codec APIs (`PlaneView::from_samples`,
+  `row_as`, `code_u32`, `as_code_plane`, `plane_by_role`, `PlanarBuf::new_aligned`).
 
 ## Conversion
 

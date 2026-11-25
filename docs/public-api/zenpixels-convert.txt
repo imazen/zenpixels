@@ -8,93 +8,73 @@
 
 ## summary
 #
-#   pub modules                                15
-#   pub types (struct/enum/trait/alias)        73
-#   pub consts/statics                        125
-#   free functions                             12
-#   inherent methods                          160
-#   struct fields                              91
-#   enum variants                             123
-#   re-exports                                  7
-#   trait roster entries (type × trait)       163
-#   conditional trait impls (verbatim)          1
-#   auto-trait-complete types                  28
-#   auto-trait exceptions                      10
+#   pub modules                                21
+#   pub types (struct/enum/trait/alias)       102
+#   pub consts/statics                        126
+#   free functions                             78
+#   inherent methods                          231
+#   struct fields                             159
+#   enum variants                             197
+#   re-exports                                  1
+#   trait roster entries (type × trait)       208
+#   auto-trait-complete types                  35
+#   auto-trait exceptions                       8
 #
 # per-module pub lines:
-#   (root)                          306
+#   (root)                          374
 #   accel                            19
-#   adapt                             1
-#   cms                              26
-#   codes                            20
-#   converter                        21
-#   error                            62
-#   ext                              22
+#   cms                               5
+#   codes                            41
+#   error                            23
+#   gainmap                         128
 #   gamut                            11
-#   hdr                               1
 #   icc_profiles                     10
-#   load_bearing                     13
+#   load_bearing                     12
+#   measure                          32
+#   negotiate                        21
 #   oklab                             8
-#   output                           24
-#   precision                        62
+#   orient                            8
+#   output                           29
+#   plan                             24
+#   policy                           84
+#   scan                              1
+#   tonemap                          62
+#   ycbcr                            23
 
-## items (555 lines)
+## items (786 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
 pub mod accel
 pub const accel::Accelerators::ALL: Self
+pub const accel::Accelerators::GAINMAP: Self
+pub const accel::Accelerators::HDR: Self
 pub const accel::Accelerators::LAYOUT: Self
+pub const accel::Accelerators::OKLAB: Self
 pub const accel::Accelerators::SCALAR: Self
 pub const accel::Accelerators::WEB_SDR: Self
-pub const fn accel::Accelerators::has_float(&self) -> bool [also: (root)]
-pub const fn accel::Accelerators::has_gamut(&self) -> bool [also: (root)]
-pub const fn accel::Accelerators::has_hdr(&self) -> bool [also: (root)]
-pub const fn accel::Accelerators::has_layout(&self) -> bool [also: (root)]
-pub const fn accel::Accelerators::has_oklab(&self) -> bool [also: (root)]
-pub const fn accel::Accelerators::has_srgb(&self) -> bool [also: (root)]
-pub const fn accel::Accelerators::is_all(&self) -> bool [also: (root)]
-pub const fn accel::Accelerators::is_scalar(&self) -> bool [also: (root)]
-pub const fn accel::Accelerators::new() -> Self [also: (root)]
+pub const fn accel::Accelerators::has_byte_layout(&self) -> bool [also: (root)]
+pub const fn accel::Accelerators::has_strip_simd(&self) -> bool [also: (root)]
 pub const fn accel::Accelerators::union(self, Self) -> Self [also: (root)]
-pub const fn accel::Accelerators::with_float(self) -> Self [also: (root)]
-pub const fn accel::Accelerators::with_gamut(self) -> Self [also: (root)]
-pub const fn accel::Accelerators::with_hdr(self) -> Self [also: (root)]
-pub const fn accel::Accelerators::with_layout(self) -> Self [also: (root)]
+pub const fn accel::Accelerators::with_bt709(self) -> Self [also: (root)]
+pub const fn accel::Accelerators::with_byte_layout(self) -> Self [also: (root)]
+pub const fn accel::Accelerators::with_f16(self) -> Self [also: (root)]
+pub const fn accel::Accelerators::with_gainmap(self) -> Self [also: (root)]
+pub const fn accel::Accelerators::with_gamma22(self) -> Self [also: (root)]
+pub const fn accel::Accelerators::with_gamut_3x3(self) -> Self [also: (root)]
+pub const fn accel::Accelerators::with_hdr_simd(self) -> Self [also: (root)]
 pub const fn accel::Accelerators::with_oklab(self) -> Self [also: (root)]
 pub const fn accel::Accelerators::with_srgb(self) -> Self [also: (root)]
-pub fn accel::enable(accel::Accelerators)
-pub fn accel::enable_all()
-pub fn accel::enable_float()
-pub fn accel::enable_gamut()
-pub fn accel::enable_hdr()
-pub fn accel::enable_layout()
-pub fn accel::enable_oklab()
-pub fn accel::enable_srgb()
-pub fn accel::enable_web_sdr()
-pub fn accel::enabled() -> accel::Accelerators
-pub mod adapt
-pub fn adapt::adapt_raw_rows_for_encode<'a>(&'a [u8], zenpixels::descriptor::PixelDescriptor, u32, u32, usize, &[zenpixels::descriptor::PixelDescriptor], &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels::buffer::PixelCow<'a>, whereat::at::At<error::ConvertError>>
+pub const fn accel::Accelerators::with_strip_simd(self) -> Self [also: (root)]
+pub fn accel::enable_all() -> bool
+pub fn accel::enable_web_sdr() -> bool
+pub fn accel::install(accel::Accelerators) -> bool
+pub fn accel::resolve(core::option::Option<accel::Accelerators>) -> accel::Accelerators
 pub mod cms
-pub cms::CmsSupport::Declined
-pub cms::CmsSupport::Owned(alloc::boxed::Box<dyn cms::RowTransformMut>)
-pub cms::CmsSupport::Shared(alloc::sync::Arc<dyn cms::RowTransform>)
-pub fn cms::CmsPluginError::as_inner(&self) -> &(dyn core::error::Error + core::marker::Send + core::marker::Sync + 'static)
-pub fn cms::CmsPluginError::msg(impl core::convert::Into<alloc::string::String>) -> Self
-pub fn cms::CmsPluginError::new<E>(E) -> Self where E: core::error::Error + core::marker::Send + core::marker::Sync + 'static
-pub const fn cms::CmsRequest<'a>::from(&self) -> zenpixels::descriptor::PixelDescriptor [also: (root)]
-pub fn cms::CmsRequest<'a>::new(zenpixels::color::ColorProfileSource<'a>, zenpixels::color::ColorProfileSource<'a>, zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor, zenpixels::policy::ConvertOptions) -> Self
-pub const fn cms::CmsRequest<'a>::options(&self) -> &zenpixels::policy::ConvertOptions [also: (root)]
-pub fn cms::CmsRequest<'a>::source(&self) -> zenpixels::color::ColorProfileSource<'a>
-pub fn cms::CmsRequest<'a>::target(&self) -> zenpixels::color::ColorProfileSource<'a>
-pub const fn cms::CmsRequest<'a>::to(&self) -> zenpixels::descriptor::PixelDescriptor [also: (root)]
-pub fn cms::PluggableCms::build(&self, &cms::CmsRequest<'_>) -> core::result::Result<cms::CmsSupport, whereat::at::At<cms::CmsPluginError>>
-pub fn cms::RowTransform::prepare(&self, u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
-pub fn cms::RowTransform::try_transform_row(&self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
-pub fn cms::RowTransformMut::prepare(&mut self, u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
-pub fn cms::RowTransformMut::try_transform_row(&mut self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
+pub fn cms::CmsBackend::build_transform(&self, &zenpixels::color::ImageSpec, &zenpixels::color::ImageSpec) -> core::result::Result<alloc::sync::Arc<dyn cms::CmsTransform>, whereat::at::At<error::ConvertError>>
+pub fn cms::CmsBackend::supports_specs(&self, &zenpixels::color::ImageSpec, &zenpixels::color::ImageSpec) -> bool
+pub fn cms::CmsTransform::transform_row(&self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub mod codes
-#[non_exhaustive] pub enum codes::CodeMapError
 pub codes::CodeMapError::FullRangeChromaDepth
 pub codes::CodeMapError::FullRangeChromaDepth::from_bits: u8
 pub codes::CodeMapError::FullRangeChromaDepth::to_bits: u8
@@ -103,134 +83,151 @@ pub codes::CodeMapError::LengthMismatch::destination: usize
 pub codes::CodeMapError::LengthMismatch::source: usize
 pub codes::CodeMapError::NarrowBelowEightBits
 pub codes::CodeMapError::NarrowBelowEightBits::bits: u8
-pub codes::CodeMapError::UnsupportedRange(zenpixels::descriptor::SignalRange)
+pub codes::CodeMapError::UnsupportedRange(zenpixels::color::SignalRange)
 pub codes::CodeMapError::UnsupportedStorage
-#[non_exhaustive] pub enum codes::CodeRole
 pub codes::CodeRole::Alpha
 pub codes::CodeRole::Chroma
 pub codes::CodeRole::Intensity
-pub struct codes::CodeMap
-pub const fn codes::CodeMap::code(&self, u16) -> u16
-pub const fn codes::CodeMap::code_i32(&self, i32) -> i32
-pub const fn codes::CodeMap::code_u32(&self, u32) -> u32
-pub const fn codes::CodeMap::input(&self) -> zenpixels::sample::SampleEncoding
+pub codes::CodesError::ComponentCount
+pub codes::CodesError::ComponentCount::actual: usize
+pub codes::CodesError::ComponentCount::expected: usize
+pub codes::CodesError::Destination
+pub codes::CodesError::Destination::actual: zenpixels::color::ImageSpec
+pub codes::CodesError::Extent
+pub codes::CodesError::Extent::component: usize
+pub codes::CodesError::Extent::extent: (usize, usize)
+pub codes::CodesError::Extent::origin: (usize, usize)
+pub codes::CodesError::Extent::plane: (usize, usize)
+pub codes::CodesError::Map
+pub codes::CodesError::Map::component: usize
+pub codes::CodesError::Map::error: codes::CodeMapError
+pub codes::CodesError::Narrowing
+pub codes::CodesError::Narrowing::bits: u8
+pub codes::CodesError::Narrowing::component: usize
+pub codes::CodesError::Narrowing::destination_bits: u8
+pub codes::CodesError::RangeMismatch
+pub codes::CodesError::RangeMismatch::destination: zenpixels::color::SignalRange
+pub codes::CodesError::RangeMismatch::source: zenpixels::color::SignalRange
+pub codes::CodesError::Read(zenpixels::sample::plane::CodePlaneError)
+pub const fn codes::CodeMap::code(&self, u16) -> u16 [also: (root)]
+pub const fn codes::CodeMap::input(&self) -> zenpixels::sample::SampleEncoding [also: (root)]
 pub fn codes::CodeMap::map_words(&self, &[u16], &mut [u16]) -> core::result::Result<(), codes::CodeMapError>
-pub fn codes::CodeMap::map_words_i16(&self, &[i16], &mut [i16]) -> core::result::Result<(), codes::CodeMapError>
-pub fn codes::CodeMap::map_words_i32(&self, &[i32], &mut [i32]) -> core::result::Result<(), codes::CodeMapError>
-pub fn codes::CodeMap::map_words_u32(&self, &[u32], &mut [u32]) -> core::result::Result<(), codes::CodeMapError>
-pub const fn codes::CodeMap::new(zenpixels::sample::SampleEncoding, zenpixels::sample::SampleEncoding, codes::CodeRole, zenpixels::descriptor::SignalRange) -> core::result::Result<Self, codes::CodeMapError>
-pub const fn codes::CodeMap::output(&self) -> zenpixels::sample::SampleEncoding
-pub const fn codes::CodeMap::word(&self, u16) -> u16
-pub const fn codes::CodeMap::word_i16(&self, i16) -> i16
-pub const fn codes::CodeMap::word_i32(&self, i32) -> i32
-pub const fn codes::CodeMap::word_u32(&self, u32) -> u32
-pub mod converter
-pub fn converter::RowConverter::convert(&mut self, impl PackedSource, impl PackedSink) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn converter::RowConverter::convert_bands(&mut self, &zenpixels::banded::BandedPixelBuffer, &mut zenpixels::banded::BandedPixelBuffer) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn converter::RowConverter::convert_raw_rows(&mut self, &[u8], usize, &mut [u8], usize, u32, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn converter::RowConverter::convert_rows<'a>(&mut self, zenpixels::buffer::PixelSlice<'_>, zenpixels::buffer::PixelSliceMut<'a>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, whereat::at::At<error::ConvertError>>
-pub fn converter::RowConverter::from_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
-pub const fn converter::RowConverter::input_float_facts(&self) -> zenpixels::sample::float::FloatFacts [also: (root)]
-pub fn converter::RowConverter::is_identity(&self) -> bool
-pub const fn converter::RowConverter::output_float_facts(&self) -> zenpixels::sample::float::FloatFacts [also: (root)]
-pub fn converter::RowConverter::prepare(&mut self, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn converter::RowConverter::to_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
-pub fn converter::RowConverter::try_clone(&self) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn converter::RowConverter::try_convert_row(&mut self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub const fn codes::CodeMap::new(zenpixels::sample::SampleEncoding, zenpixels::sample::SampleEncoding, codes::CodeRole, zenpixels::color::SignalRange) -> core::result::Result<Self, codes::CodeMapError> [also: (root)]
+pub const fn codes::CodeMap::output(&self) -> zenpixels::sample::SampleEncoding [also: (root)]
+pub const fn codes::CodeMap::word(&self, u16) -> u16 [also: (root)]
 pub mod error
 pub error::ConvertError::AllocationFailed
-pub error::ConvertError::AlphaCheckRequired
-pub error::ConvertError::AlphaNotOpaque
-pub error::ConvertError::AlphaRemovalForbidden
+pub error::ConvertError::AlphaLossForbidden
 pub error::ConvertError::Buffer(zenpixels::buffer::BufferError)
-pub error::ConvertError::BufferSize
-pub error::ConvertError::BufferSize::actual: usize
-pub error::ConvertError::BufferSize::expected: usize
-pub error::ConvertError::CapacityLoss(zenpixels::precision::ConversionEffect)
-pub error::ConvertError::CicpDescriptor(zenpixels::cicp::CicpDescriptorError)
-pub error::ConvertError::CmsBackend(alloc::sync::Arc<cms::CmsPluginError>)
-pub error::ConvertError::CmsError(alloc::string::String)
+pub error::ConvertError::Cancelled(enough::reason::StopReason)
+pub error::ConvertError::CmsBackendFailed
+pub error::ConvertError::CmsRequired
 pub error::ConvertError::DepthReductionForbidden
-pub error::ConvertError::EmptyFormatList
-pub error::ConvertError::FeatureRequired
-pub error::ConvertError::FeatureRequired::feature: &'static str
-pub error::ConvertError::FeatureRequired::from: zenpixels::descriptor::PixelDescriptor
-pub error::ConvertError::FeatureRequired::to: zenpixels::descriptor::PixelDescriptor
-pub error::ConvertError::FloatFactsUnsatisfied
-pub error::ConvertError::FloatFactsUnsatisfied::actual: zenpixels::sample::float::FloatFacts
-pub error::ConvertError::FloatFactsUnsatisfied::required: zenpixels::sample::float::FloatFacts
+pub error::ConvertError::DimensionMismatch
+pub error::ConvertError::FeatureRequired(&'static str)
 pub error::ConvertError::FullImageMapperNotSupported
-pub error::ConvertError::FullImageMapperNotSupported::mapper_name: &'static str
+pub error::ConvertError::GamutLossForbidden
 pub error::ConvertError::HdrFeatureRequired
-pub error::ConvertError::HdrPeakRequired
-pub error::ConvertError::HdrSourceRequiresPeak
-pub error::ConvertError::HdrSourceRequiresPeak::from: zenpixels::descriptor::PixelDescriptor
-pub error::ConvertError::HdrSourceRequiresPeak::to: zenpixels::descriptor::PixelDescriptor
-pub error::ConvertError::HdrWithOpaqueProfileUnsupported
 pub error::ConvertError::HlgRenderingRequired
-pub error::ConvertError::IntermediateMismatch
-pub error::ConvertError::InvalidWidth(u32)
-pub error::ConvertError::NeedsCms
-pub error::ConvertError::NeedsCms::from: zenpixels::descriptor::PixelDescriptor
-pub error::ConvertError::NeedsCms::to: zenpixels::descriptor::PixelDescriptor
-pub error::ConvertError::NoCandidate
-pub error::ConvertError::NoCandidate::cause: alloc::boxed::Box<error::ConvertError>
-pub error::ConvertError::NoCandidate::index: usize
-pub error::ConvertError::NoMatch
-pub error::ConvertError::NoMatch::source: zenpixels::descriptor::PixelDescriptor
-pub error::ConvertError::NoPath
-pub error::ConvertError::NoPath::from: zenpixels::descriptor::PixelDescriptor
-pub error::ConvertError::NoPath::to: zenpixels::descriptor::PixelDescriptor
-pub error::ConvertError::OutputInterpretationMismatch
-pub error::ConvertError::OutputInterpretationMismatch::profile: zenpixels::descriptor::PixelDescriptor
-pub error::ConvertError::OutputInterpretationMismatch::requested: zenpixels::descriptor::PixelDescriptor
-pub error::ConvertError::OwnedCmsConsumed
-pub error::ConvertError::RgbToGray
-pub error::ConvertError::SdrPeakRequired
-pub error::ConvertError::SdrWhiteRequired
-pub error::ConvertError::SourceInterpretationChanged
-pub error::ConvertError::TargetLuminanceMismatch
-pub error::ConvertError::UnknownTransferRelabelForbidden
-pub error::ConvertError::UnknownTransferRelabelForbidden::from: zenpixels::descriptor::PixelDescriptor
-pub error::ConvertError::UnknownTransferRelabelForbidden::to: zenpixels::descriptor::PixelDescriptor
-pub error::ConvertError::UnsupportedTransfer
-pub error::ConvertError::UnsupportedTransfer::from: zenpixels::descriptor::TransferFunction
-pub error::ConvertError::UnsupportedTransfer::to: zenpixels::descriptor::TransferFunction
-pub error::ConvertError::WorkerBudgetExceeded
-pub error::ConvertError::WorkerBudgetExceeded::bytes: ByteBound
-pub error::ConvertError::WorkerBudgetExceeded::limit: u64
-pub mod ext
-pub fn ext::BandedPixelBufferConvertExt::check_opaque(&self) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn ext::BandedPixelBufferConvertExt::oriented_into(&self, zenpixels::orientation::Orientation, &mut zenpixels::banded::BandedPixelBuffer) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn ext::BandedPixelBufferConvertExt::scan_source_precision(&self, &dyn enough::Stop) -> core::result::Result<zenpixels::precision::SourcePrecision, whereat::at::At<enough::reason::StopReason>>
-pub fn ext::ColorConvertExt::map_to_gamut(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn ext::ColorConvertExt::same_color(&self, &Self) -> bool
-pub fn ext::ColorConvertExt::try_convert_to(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn ext::PixelBufferConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
-pub fn ext::PixelBufferConvertExt::convert_to_with_options(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
-pub fn ext::PixelBufferConvertExt::into_oriented(self, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
-pub fn ext::PixelBufferConvertExt::try_adapt_in_place(&mut self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn ext::PixelSliceConvertExt::adapt_for_encode(&self, &[zenpixels::descriptor::PixelDescriptor], &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels::buffer::PixelCow<'a>, whereat::at::At<error::ConvertError>>
-pub fn ext::PixelSliceConvertExt::check_opaque(&self) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn ext::PixelSliceConvertExt::convert_into<'d>(&self, zenpixels::buffer::PixelSliceMut<'d>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'d>, whereat::at::At<error::ConvertError>>
-pub fn ext::PixelSliceConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
-pub fn ext::PixelSliceConvertExt::convert_to_with_options(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
-pub fn ext::PixelSliceConvertExt::oriented(&self, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
-pub fn ext::PixelSliceConvertExt::oriented_into(&self, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn ext::PixelSliceConvertExt::scan_source_precision(&self, &dyn enough::Stop) -> core::result::Result<zenpixels::precision::SourcePrecision, whereat::at::At<enough::reason::StopReason>>
+pub error::ConvertError::InvalidLayout(zenpixels::layout::LayoutError)
+pub error::ConvertError::InvalidSpec(zenpixels::color::ColorError)
+pub error::ConvertError::MissingDeclaredPeak
+pub error::ConvertError::MissingHdrAnchor
+pub error::ConvertError::OutputSignalingMismatch
+pub error::ConvertError::OutputSignalingUnavailable
+pub error::ConvertError::RangeConversionForbidden
+pub error::ConvertError::ToneMapperFailed
+pub error::ConvertError::UnsupportedRoute
+pub mod gainmap
+pub gainmap::GainMapDownsample::Bilinear
+pub gainmap::GainMapDownsample::Box
+pub gainmap::GainMapDownsample::Point
+pub gainmap::GainMapOrientation::Bake
+pub gainmap::GainMapOrientation::Passthrough
+pub gainmap::GainMapOrientation::RequireIdentity
+pub gainmap::GainMapResample::Bicubic
+pub gainmap::GainMapResample::Bilinear
+pub gainmap::GainMapResample::Mitchell
+pub gainmap::GainMapResample::Nearest
+pub gainmap::GainMapTarget::AlternateRendition
+pub gainmap::GainMapTarget::BaseRendition
+pub gainmap::GainMapTarget::HeadroomStops(f32)
+pub fn gainmap::GainMapApplier::apply_into<S: zenpixels::buffer::PixelSource + ?core::marker::Sized, D: zenpixels::buffer::PixelSink + ?core::marker::Sized>(&mut self, &S, &zenpixels::buffer::PixelView<'_>, &mut D, &dyn enough::Stop) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub fn gainmap::GainMapApplier::apply_row(&mut self, u32, &[u8], &zenpixels::buffer::PixelView<'_>, &mut [u8]) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub fn gainmap::GainMapApplier::apply_row_with_provider<'a, F>(&mut self, u32, &[u8], F, &mut [u8]) -> core::result::Result<(), whereat::at::At<error::ConvertError>> where F: core::ops::function::FnMut(u32) -> core::result::Result<&'a [u8], whereat::at::At<error::ConvertError>>
+pub fn gainmap::GainMapApplier::dst_spec(&self) -> &zenpixels::color::ImageSpec
+pub fn gainmap::GainMapApplier::for_view(&zenpixels::buffer::DualLayerHdrView<'_>, &gainmap::GainMapApplyConfig) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub const fn gainmap::GainMapApplier::is_zero_weight(&self) -> bool [also: (root)]
+pub fn gainmap::GainMapApplier::new(zenpixels::color::ImageSpec, u32, u32, zenpixels::color::ImageSpec, u32, u32, zenpixels::color::GainMapMetadata, core::option::Option<&zenpixels::color::ColorSpace>, &gainmap::GainMapApplyConfig) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub const fn gainmap::GainMapApplier::orientation(&self) -> zenpixels::orientation::Orientation [also: (root)]
+pub fn gainmap::GainMapApplier::reset_cache(&mut self)
+pub const fn gainmap::GainMapApplier::signed_weight(&self) -> f32 [also: (root)]
+pub gainmap::GainMapApplyConfig::dst_spec: core::option::Option<zenpixels::color::ImageSpec>
+pub gainmap::GainMapApplyConfig::orientation: gainmap::GainMapOrientation
+pub gainmap::GainMapApplyConfig::policy: policy::ConvertPolicy
+pub gainmap::GainMapApplyConfig::resample: gainmap::GainMapResample
+pub gainmap::GainMapApplyConfig::target: gainmap::GainMapTarget
+pub fn gainmap::GainMapApplyConfig::alternate_rendition() -> Self
+pub fn gainmap::GainMapApplyConfig::base_rendition() -> Self
+pub fn gainmap::GainMapApplyConfig::from_display_boost(f32) -> Self
+pub fn gainmap::GainMapApplyConfig::new(f32) -> Self
+pub fn gainmap::GainMapApplyConfig::with_dst_spec(self, zenpixels::color::ImageSpec) -> Self
+pub fn gainmap::GainMapApplyConfig::with_orientation(self, gainmap::GainMapOrientation) -> Self
+pub fn gainmap::GainMapApplyConfig::with_policy(self, policy::ConvertPolicy) -> Self
+pub fn gainmap::GainMapApplyConfig::with_resample(self, gainmap::GainMapResample) -> Self
+pub fn gainmap::GainMapApplyConfig::with_target(self, gainmap::GainMapTarget) -> Self
+pub gainmap::GainMapExtractConfig::alternate_hdr_headroom_stops: f32
+pub gainmap::GainMapExtractConfig::alternate_offset: f32
+pub gainmap::GainMapExtractConfig::application_space: zenpixels::color::GainMapColorSpace
+pub gainmap::GainMapExtractConfig::base_hdr_headroom_stops: f32
+pub gainmap::GainMapExtractConfig::base_offset: f32
+pub gainmap::GainMapExtractConfig::content_fit: bool
+pub gainmap::GainMapExtractConfig::downsample: gainmap::GainMapDownsample
+pub gainmap::GainMapExtractConfig::gamma: f32
+pub gainmap::GainMapExtractConfig::max_gain_stops: f32
+pub gainmap::GainMapExtractConfig::min_gain_stops: f32
+pub gainmap::GainMapExtractConfig::multi_channel: bool
+pub gainmap::GainMapExtractConfig::packing: zenpixels::layout::BitPacking
+pub gainmap::GainMapExtractConfig::policy: policy::ConvertPolicy
+pub gainmap::GainMapExtractConfig::sample_type: zenpixels::layout::SampleType
+pub gainmap::GainMapExtractConfig::scale_factor: u8
+pub fn gainmap::GainMapExtractConfig::to_metadata(&self) -> core::result::Result<zenpixels::color::GainMapMetadata, whereat::at::At<error::ConvertError>>
+pub fn gainmap::GainMapExtractConfig::ultrahdr() -> Self
+pub fn gainmap::GainMapExtractConfig::with_application_space(self, zenpixels::color::GainMapColorSpace) -> Self
+pub fn gainmap::GainMapExtractConfig::with_boost_range_linear(self, f32, f32) -> Self
+pub fn gainmap::GainMapExtractConfig::with_content_fit(self, bool) -> Self
+pub fn gainmap::GainMapExtractConfig::with_downsample(self, gainmap::GainMapDownsample) -> Self
+pub fn gainmap::GainMapExtractConfig::with_gain_range_stops(self, f32, f32) -> Self
+pub fn gainmap::GainMapExtractConfig::with_gamma(self, f32) -> Self
+pub fn gainmap::GainMapExtractConfig::with_headroom_boost_linear(self, f32, f32) -> Self
+pub fn gainmap::GainMapExtractConfig::with_headroom_stops(self, f32, f32) -> Self
+pub fn gainmap::GainMapExtractConfig::with_multi_channel(self, bool) -> Self
+pub fn gainmap::GainMapExtractConfig::with_offsets(self, f32, f32) -> Self
+pub fn gainmap::GainMapExtractConfig::with_policy(self, policy::ConvertPolicy) -> Self
+pub fn gainmap::GainMapExtractConfig::with_sample_storage(self, zenpixels::layout::SampleType, zenpixels::layout::BitPacking) -> Self
+pub fn gainmap::GainMapExtractConfig::with_scale_factor(self, u8) -> Self
+pub fn gainmap::GainMapRowExtractor::build_metadata_widening_headroom(&self) -> zenpixels::color::GainMapMetadata
+pub fn gainmap::GainMapRowExtractor::encode_row_linear_f32(&mut self, &[f32], &[f32], usize, zenpixels::layout::SampleLayout, &mut [u8]) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub fn gainmap::GainMapRowExtractor::from_config(&gainmap::GainMapExtractConfig, zenpixels::color::Primaries) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn gainmap::GainMapRowExtractor::metadata(&self) -> zenpixels::color::GainMapMetadata
+pub fn gainmap::GainMapRowExtractor::new(zenpixels::color::GainMapMetadata, zenpixels::color::Primaries) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn gainmap::GainMapRowExtractor::observed_gain_stops(&self) -> core::option::Option<(f32, f32)>
+pub const gainmap::CONTENT_FIT_MIN_SPAN_STOPS: f32
+pub fn gainmap::display_boost_to_headroom_stops(f32) -> f32
+pub fn gainmap::full_reconstruction_headroom_stops(&zenpixels::color::GainMapMetadata) -> f32
+pub fn gainmap::signed_weight(&zenpixels::color::GainMapMetadata, f32) -> core::option::Option<f32>
+pub fn gainmap::signed_weight_for_target(&zenpixels::color::GainMapMetadata, gainmap::GainMapTarget) -> core::option::Option<f32>
 pub mod gamut
 pub fn gamut::GamutMatrix::apply(&self, [f32; 3]) -> [f32; 3]
 pub fn gamut::GamutMatrix::apply_row_rgb(&self, &mut [[f32; 3]])
 pub fn gamut::GamutMatrix::apply_row_rgba(&self, &mut [[f32; 4]])
-pub const fn gamut::GamutMatrix::between(zenpixels::descriptor::ColorPrimaries, zenpixels::descriptor::ColorPrimaries) -> core::option::Option<Self> [also: (root)]
+pub const fn gamut::GamutMatrix::between(zenpixels::color::Primaries, zenpixels::color::Primaries) -> core::option::Option<Self> [also: (root)]
 pub const fn gamut::GamutMatrix::from_rows([[f32; 3]; 3]) -> Self [also: (root)]
-pub const fn gamut::GamutMatrix::from_xyz(zenpixels::descriptor::ColorPrimaries) -> core::option::Option<&'static Self> [also: (root)]
+pub const fn gamut::GamutMatrix::from_xyz(zenpixels::color::Primaries) -> core::option::Option<&'static Self> [also: (root)]
 pub fn gamut::GamutMatrix::inverse(&self) -> core::option::Option<Self>
 pub const fn gamut::GamutMatrix::rows(&self) -> &[[f32; 3]; 3] [also: (root)]
 pub fn gamut::GamutMatrix::then(&self, &Self) -> Self
-pub const fn gamut::GamutMatrix::to_xyz(zenpixels::descriptor::ColorPrimaries) -> core::option::Option<&'static Self> [also: (root)]
-pub mod hdr
-pub use hdr::<<zenpixels::hdr::*>>
+pub const fn gamut::GamutMatrix::to_xyz(zenpixels::color::Primaries) -> core::option::Option<&'static Self> [also: (root)]
 pub mod icc_profiles
 #[non_exhaustive] pub enum icc_profiles::SynthesizedIcc
 pub icc_profiles::SynthesizedIcc::CmsUnsupported
@@ -242,422 +239,651 @@ pub fn icc_profiles::SynthesizedIcc::for_gray_cicp(zenpixels::cicp::Cicp) -> Sel
 pub const icc_profiles::ADOBE_RGB: &[u8]
 pub const icc_profiles::DISPLAY_P3_V2: &[u8]
 pub const icc_profiles::DISPLAY_P3_V4: &[u8]
+pub const fn icc_profiles::bundled_icc_profile(zenpixels::color::Primaries, zenpixels::color::Transfer) -> core::option::Option<&'static [u8]>
 pub mod load_bearing
 pub load_bearing::LoadBearingReport::uses_alpha: core::option::Option<bool>
 pub load_bearing::LoadBearingReport::uses_chroma: core::option::Option<bool>
 pub load_bearing::LoadBearingReport::uses_low_bits: core::option::Option<bool>
 pub const fn load_bearing::LoadBearingReport::any_analyzed(&self) -> bool [also: (root)]
-pub fn load_bearing::LoadBearingReport::apply_to(&self, &zenpixels::descriptor::PixelDescriptor) -> zenpixels::descriptor::PixelDescriptor
-pub fn load_bearing::LoadBearingReport::scan_bands(&zenpixels::banded::BandedPixelBuffer) -> Self
-pub fn load_bearing::PixelBufferLoadBearingExt::reduce_to_load_bearing_format_in_place(&mut self, bool)
-pub fn load_bearing::PixelSliceLoadBearingExt::determine_load_bearing(&self) -> load_bearing::LoadBearingReport
-pub fn load_bearing::PixelSliceLoadBearingExt::reduce_to_load_bearing_format(&self) -> core::result::Result<core::option::Option<zenpixels::buffer::PixelBuffer>, whereat::at::At<error::ConvertError>>
+pub fn load_bearing::LoadBearingReport::apply_to(&self, &zenpixels::color::ImageSpec) -> zenpixels::color::ImageSpec
+pub fn load_bearing::PixelBufLoadBearingExt::reduce_to_load_bearing_format_in_place(&mut self, bool)
+pub fn load_bearing::PixelViewLoadBearingExt::determine_load_bearing(&self) -> load_bearing::LoadBearingReport
+pub fn load_bearing::PixelViewLoadBearingExt::reduce_to_load_bearing_format(&self) -> core::result::Result<core::option::Option<zenpixels::buffer::PixelBuf>, whereat::at::At<error::ConvertError>>
+pub fn load_bearing::PixelViewLoadBearingExt::try_reduce_to_load_bearing_format(&self) -> core::option::Option<zenpixels::buffer::PixelBuf>
+pub mod measure
+pub measure::LightLevelMethod::LuminanceBt2020
+pub measure::LightLevelMethod::MaxRgb
+pub const measure::LightLevelHistogram::BIN_MAX_NITS: f32
+pub const measure::LightLevelHistogram::BIN_MIN_NITS: f32
+pub const measure::LightLevelHistogram::NUM_BINS: usize
+pub fn measure::LightLevelHistogram::bins(&self) -> &[u64]
+pub const fn measure::LightLevelHistogram::max_nits(&self) -> f32 [also: (root)]
+pub fn measure::LightLevelHistogram::mean_nits(&self) -> f32
+pub const fn measure::LightLevelHistogram::method(&self) -> measure::LightLevelMethod [also: (root)]
+pub fn measure::LightLevelHistogram::new(measure::LightLevelMethod) -> Self
+pub fn measure::LightLevelHistogram::percentile_nits(&self, f32) -> f32
+pub fn measure::LightLevelHistogram::record(&mut self, f32)
+pub fn measure::LightLevelHistogram::to_content_light_level(&self) -> zenpixels::hdr::ContentLightLevel
+pub fn measure::LightLevelHistogram::to_robust_cll(&self, f32) -> zenpixels::hdr::ContentLightLevel
+pub const fn measure::LightLevelHistogram::total_pixels(&self) -> u64 [also: (root)]
+pub fn measure::LightLevelHistogram::try_merge(&mut self, &Self) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub fn measure::LightLevelHistogram::try_new(measure::LightLevelMethod) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub const fn measure::LightLevelHistogram::zero_pixels(&self) -> u64 [also: (root)]
+pub mod negotiate
+pub negotiate::LossKind::Alpha
+pub negotiate::LossKind::Chroma
+pub negotiate::LossKind::Depth
+pub negotiate::LossKind::Gamut
+pub negotiate::LossKind::None
+pub negotiate::FormatCost::bytes_per_pixel: u8
+pub negotiate::FormatCost::effort: u8
+pub negotiate::FormatCost::loss_mask: u8
+pub negotiate::FormatCost::loss_rank: u8
+pub fn negotiate::Negotiate::select(&zenpixels::color::ImageSpec, &[zenpixels::color::ImageSpec], &policy::ConvertPolicy) -> core::option::Option<negotiate::NegotiatedFormat>
+pub fn negotiate::Negotiate::select_format(&zenpixels::color::ImageSpec, &[zenpixels::color::PixelFormat], &policy::ConvertPolicy) -> core::option::Option<negotiate::NegotiatedFormat>
+pub negotiate::NegotiatedFormat::cost: negotiate::FormatCost
+pub negotiate::NegotiatedFormat::index: usize
+pub negotiate::NegotiatedFormat::loss: negotiate::LossKind
+pub negotiate::NegotiatedFormat::spec: zenpixels::color::ImageSpec
 pub mod oklab
 pub struct oklab::OklabSpace
-pub fn oklab::OklabSpace::for_primaries(zenpixels::descriptor::ColorPrimaries) -> core::option::Option<Self>
+pub fn oklab::OklabSpace::for_primaries(zenpixels::color::Primaries) -> core::option::Option<Self>
 pub fn oklab::OklabSpace::from_rgb(&self, [f32; 3]) -> [f32; 3]
 pub const fn oklab::OklabSpace::lms_to_rgb(&self) -> &gamut::GamutMatrix
-pub const fn oklab::OklabSpace::primaries(&self) -> zenpixels::descriptor::ColorPrimaries
+pub const fn oklab::OklabSpace::primaries(&self) -> zenpixels::color::Primaries
 pub const fn oklab::OklabSpace::rgb_to_lms(&self) -> &gamut::GamutMatrix
 pub fn oklab::OklabSpace::to_rgb(&self, [f32; 3]) -> [f32; 3]
 pub const oklab::LMS_CBRT_FROM_OKLAB: gamut::GamutMatrix
 pub const oklab::LMS_FROM_XYZ: gamut::GamutMatrix
 pub const oklab::OKLAB_FROM_LMS_CBRT: gamut::GamutMatrix
 pub const oklab::XYZ_FROM_LMS: gamut::GamutMatrix
+pub mod orient
 pub mod output
-pub output::OutputProfile::Icc(alloc::sync::Arc<[u8]>)
-pub output::OutputProfile::Named(zenpixels::cicp::Cicp)
-pub output::OutputProfile::Parametric(zenpixels::color::ParametricColor)
+pub output::OutputProfile::Auto
+pub output::OutputProfile::CicpOnly
+pub output::OutputProfile::CustomIcc(alloc::sync::Arc<[u8]>)
+pub output::OutputProfile::EmbedIcc
 pub output::OutputProfile::SameAsOrigin
-pub fn output::OutputProfile::normalize_known_icc(self) -> Self
-pub fn output::EncodeReady::copy_from(zenpixels::buffer::PixelSlice<'_>, OutputPlan) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn output::EncodeReady::from_owned(zenpixels::buffer::PixelBuffer, OutputPlan) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn output::EncodeReady::into_parts(self) -> (zenpixels::buffer::PixelBuffer, output::OutputMetadata)
-pub fn output::EncodeReady::metadata(&self) -> &output::OutputMetadata
-pub fn output::EncodeReady::pixels(&self) -> zenpixels::buffer::PixelSlice<'_>
-pub output::OutputMetadata::cicp: core::option::Option<zenpixels::cicp::Cicp>
-pub output::OutputMetadata::icc: core::option::Option<alloc::sync::Arc<[u8]>>
-pub output::OutputMetadata::parametric: core::option::Option<zenpixels::color::ParametricColor>
-pub fn OutputPlan::borrow_rows<'a>(&self, zenpixels::buffer::PixelSlice<'a>) -> core::result::Result<core::option::Option<zenpixels::buffer::PixelSlice<'a>>, whereat::at::At<error::ConvertError>>
-pub fn OutputPlan::build(zenpixels::color::PixelEncoding<'_>, OutputTarget<'_>, &ConversionSpec<'_>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn OutputPlan::convert_into(&mut self, impl PackedSource, impl PackedSink) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn OutputPlan::convert_rows<'a>(&mut self, zenpixels::buffer::PixelSlice<'_>, zenpixels::buffer::PixelSliceMut<'a>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, whereat::at::At<error::ConvertError>>
-pub const fn OutputPlan::input_float_facts(&self) -> zenpixels::sample::float::FloatFacts [also: (root)]
-pub fn OutputPlan::metadata(&self) -> &output::OutputMetadata
-pub fn OutputPlan::output_color_context(&self) -> &alloc::sync::Arc<zenpixels::color::ColorContext>
-pub fn OutputPlan::output_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
-pub const fn OutputPlan::output_float_facts(&self) -> zenpixels::sample::float::FloatFacts [also: (root)]
-pub fn OutputPlan::prepare(&mut self, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn OutputTarget<'a>::new(output::OutputProfile, zenpixels::descriptor::PixelFormat) -> Self
-pub fn OutputTarget<'a>::with_descriptor(self, zenpixels::descriptor::PixelDescriptor) -> Self
-pub fn OutputTarget<'a>::with_origin(self, &'a zenpixels::color::ColorOrigin) -> Self
-pub mod precision
-pub use precision::AlphaContent
-pub use precision::ConversionEffect
-pub use precision::ConversionOffer
-pub use precision::OutputChoice
-pub use precision::SourcePrecision
-#[non_exhaustive] pub enum precision::ConversionDecision
-pub precision::ConversionDecision::Choose(usize)
-pub precision::ConversionDecision::Defer
-pub precision::ConversionDecision::Refuse
-#[non_exhaustive] pub enum precision::ConversionFailure<E>
-pub precision::ConversionFailure::Refused(precision::ConversionRefusal)
-pub precision::ConversionFailure::Resolver(E)
-#[non_exhaustive] pub enum precision::ConversionPreset
-pub precision::ConversionPreset::DropPrecisionForMemory
-pub precision::ConversionPreset::KeepPrecision
-#[non_exhaustive] pub enum precision::ConversionRefusal
-pub precision::ConversionRefusal::CostUnknown
-pub precision::ConversionRefusal::DropsAlpha
-pub precision::ConversionRefusal::DropsAlpha::output: zenpixels::descriptor::PixelDescriptor
-pub precision::ConversionRefusal::DropsPrecision
-pub precision::ConversionRefusal::DropsPrecision::best_kept: u8
-pub precision::ConversionRefusal::DropsPrecision::output: zenpixels::descriptor::PixelDescriptor
-pub precision::ConversionRefusal::DropsPrecision::significant_bits: u8
-pub precision::ConversionRefusal::DropsRange
-pub precision::ConversionRefusal::DropsRange::output: zenpixels::descriptor::PixelDescriptor
-pub precision::ConversionRefusal::InvalidChoice
-pub precision::ConversionRefusal::InvalidChoice::index: usize
-pub precision::ConversionRefusal::MemoryOrPrecision
-pub precision::ConversionRefusal::MemoryOrPrecision::keep_bytes: u64
-pub precision::ConversionRefusal::MemoryOrPrecision::limit: u64
-pub precision::ConversionRefusal::MemoryOrPrecision::narrow_bytes: u64
-pub precision::ConversionRefusal::MemoryOrPrecision::narrow_drops: u8
-pub precision::ConversionRefusal::NoOffers
-pub precision::ConversionRefusal::NoneAdmitted
-pub precision::ConversionRefusal::NoneAdmitted::max_peak_bytes: core::option::Option<u64>
-pub precision::ConversionRefusal::NoneAdmitted::min_bits: core::option::Option<u8>
-pub precision::ConversionRefusal::ResolverRefused
-#[non_exhaustive] pub enum precision::DecidedBy
-pub precision::DecidedBy::Preset
-pub precision::DecidedBy::Resolver
-#[non_exhaustive] pub struct precision::ChainFailure<E>
-pub precision::ChainFailure::failure: precision::ConversionFailure<E>
-pub precision::ChainFailure::node: usize
-#[non_exhaustive] pub struct precision::ChainPlan
-pub precision::ChainPlan::peak_bytes: core::option::Option<u64>
-pub precision::ChainPlan::steps: alloc::vec::Vec<precision::ConversionRecord>
-pub struct precision::ConversionChoice<'a>
-pub const fn precision::ConversionChoice<'a>::effect(self) -> zenpixels::precision::ConversionEffect
-pub const fn precision::ConversionChoice<'a>::index(self) -> usize
-pub const fn precision::ConversionChoice<'a>::offer(self) -> &'a zenpixels::precision::ConversionOffer
-#[non_exhaustive] pub struct precision::ConversionPolicy
-pub const fn precision::ConversionPolicy::new() -> Self
-pub fn precision::ConversionPolicy::plan_chain<R: precision::ConversionResolver + ?core::marker::Sized>(&self, &zenpixels::precision::SourcePrecision, zenpixels::descriptor::PixelDescriptor, &[&[zenpixels::precision::ConversionOffer]], zenpixels::precision::OutputChoice, &mut R) -> core::result::Result<precision::ChainPlan, whereat::at::At<precision::ChainFailure<<R as precision::ConversionResolver>::Error>>>
-pub fn precision::ConversionPolicy::resolve_preset(&self, &zenpixels::precision::SourcePrecision, zenpixels::precision::OutputChoice, &[zenpixels::precision::ConversionOffer]) -> core::result::Result<precision::ConversionRecord, whereat::at::At<precision::ConversionRefusal>>
-pub const fn precision::ConversionPolicy::with_max_peak_bytes(self, u64) -> Self
-pub const fn precision::ConversionPolicy::with_min_bits(self, u8) -> Self
-pub const fn precision::ConversionPolicy::with_preset(self, precision::ConversionPreset) -> Self
-#[non_exhaustive] pub struct precision::ConversionQuestion<'a>
-pub precision::ConversionQuestion::choice: zenpixels::precision::OutputChoice
-pub precision::ConversionQuestion::source: &'a zenpixels::precision::SourcePrecision
-pub fn precision::ConversionQuestion<'a>::admitted(&self) -> impl core::iter::traits::iterator::Iterator<Item = precision::ConversionChoice<'a>> + use<'a>
-pub const fn precision::ConversionQuestion<'a>::new(&'a zenpixels::precision::SourcePrecision, zenpixels::precision::OutputChoice, &'a [zenpixels::precision::ConversionOffer], precision::ConversionPolicy) -> Self
-#[non_exhaustive] pub struct precision::ConversionRecord
-pub precision::ConversionRecord::decided_by: precision::DecidedBy
-pub precision::ConversionRecord::effect: zenpixels::precision::ConversionEffect
-pub precision::ConversionRecord::index: usize
-pub precision::ConversionRecord::output: zenpixels::descriptor::PixelDescriptor
-pub trait precision::ConversionResolver
-pub type precision::ConversionResolver::Error: core::error::Error + core::marker::Send + core::marker::Sync + 'static
-pub fn precision::ConversionResolver::resolve(&mut self, precision::ConversionQuestion<'_>) -> core::result::Result<precision::ConversionDecision, whereat::at::At<Self::Error>>
-#[non_exhaustive] pub enum ByteBound
-pub ByteBound::AtMost(u64)
-pub ByteBound::Exact(u64)
-pub ByteBound::Unknown
-pub enum CmsSupport [also: cms]
-pub CmsSupport::Declined
-pub CmsSupport::Owned(alloc::boxed::Box<dyn cms::RowTransformMut>)
-pub CmsSupport::Shared(alloc::sync::Arc<dyn cms::RowTransform>)
+pub output::OutputProfile::Strip
+pub output::EncodeReady::cicp: core::option::Option<zenpixels::cicp::Cicp>
+pub output::EncodeReady::hdr: zenpixels::color::HdrMetadata
+pub output::EncodeReady::icc: core::option::Option<alloc::borrow::Cow<'static, [u8]>>
+pub output::EncodeReady::pixels: zenpixels::buffer::PixelCow<'a>
+pub fn output::OutputPlan::build(impl core::convert::AsRef<zenpixels::color::ImageSpec>, impl core::convert::AsRef<zenpixels::color::ImageSpec>, policy::ConvertPolicy, zenpixels::hdr::PeakSource, output::OutputProfile) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn output::OutputPlan::build_row_plan(&self, core::option::Option<zenpixels::hdr::Nits>) -> core::result::Result<plan::RowPlan, whereat::at::At<error::ConvertError>>
+pub fn output::OutputPlan::dst_spec(&self) -> &zenpixels::color::ImageSpec
+pub fn output::OutputPlan::execute_buf(&self, zenpixels::buffer::PixelBuf) -> core::result::Result<output::EncodeReady<'static>, whereat::at::At<error::ConvertError>>
+pub fn output::OutputPlan::execute_view<'a>(&self, zenpixels::buffer::PixelView<'a>, &zenpixels::color::ColorOrigin) -> core::result::Result<output::EncodeReady<'a>, whereat::at::At<error::ConvertError>>
+pub const fn output::OutputPlan::is_identity(&self) -> bool [also: (root)]
+pub fn output::OutputPlan::resolve_signaling(&self, &zenpixels::color::ColorOrigin) -> core::result::Result<(core::option::Option<zenpixels::cicp::Cicp>, core::option::Option<alloc::borrow::Cow<'static, [u8]>>), whereat::at::At<error::ConvertError>>
+pub fn output::OutputPlan::src_spec(&self) -> &zenpixels::color::ImageSpec
+pub mod plan
+pub fn plan::ImagePlan::build(impl core::convert::AsRef<zenpixels::color::ImageSpec>, impl core::convert::AsRef<zenpixels::color::ImageSpec>, policy::ConvertPolicy, zenpixels::hdr::PeakSource) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn plan::ImagePlan::execute<S: zenpixels::buffer::PixelSource + ?core::marker::Sized>(&self, &S) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>>
+pub fn plan::ImagePlan::execute_into<S: zenpixels::buffer::PixelSource + ?core::marker::Sized, D: zenpixels::buffer::PixelSink + ?core::marker::Sized>(&self, &S, &mut D) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub fn plan::RowPlan::build(impl core::convert::AsRef<zenpixels::color::ImageSpec>, impl core::convert::AsRef<zenpixels::color::ImageSpec>, &policy::ConvertPolicy, core::option::Option<zenpixels::hdr::Nits>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn plan::RowPlan::convert_row(&self, &[u8], &mut [u8], u32, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub fn plan::RowPlan::dst_spec(&self) -> &zenpixels::color::ImageSpec
+pub fn plan::RowPlan::is_identity(&self) -> bool
+pub const fn plan::RowPlan::output_facts(&self) -> zenpixels::facts::SampleFacts [also: (root)]
+pub fn plan::RowPlan::src_spec(&self) -> &zenpixels::color::ImageSpec
+pub mod policy
+pub policy::AlphaPolicy::CompositeOnto(zenpixels::color::Color)
+pub policy::AlphaPolicy::DiscardIfOpaque
+pub policy::AlphaPolicy::DiscardUnchecked
+pub policy::AlphaPolicy::Forbid
+pub policy::DepthPolicy::Forbid
+pub policy::DepthPolicy::OrderedDither
+pub policy::DepthPolicy::Round
+pub policy::DepthPolicy::Truncate
+pub policy::GamutPolicy::Clip
+pub policy::GamutPolicy::Forbid
+pub policy::GamutPolicy::PreserveExtended
+pub policy::GamutPolicy::SoftCompress
+pub policy::LumaCoefficients::Bt2020
+pub policy::LumaCoefficients::Bt601
+pub policy::LumaCoefficients::Bt709
+pub policy::LumaCoefficients::Custom([f32; 3])
+pub policy::LumaCoefficients::FromSourcePrimaries
+pub policy::LumaDomain::Encoded
+pub policy::LumaDomain::LinearLight
+pub policy::RangePolicy::Convert
+pub policy::RangePolicy::Forbid
+pub policy::ConvertPolicy::accelerators: core::option::Option<accel::Accelerators>
+pub policy::ConvertPolicy::allow_approximate: bool
+pub policy::ConvertPolicy::allow_icc_substitution: bool
+pub policy::ConvertPolicy::alpha: policy::AlphaPolicy
+pub policy::ConvertPolicy::cms: core::option::Option<alloc::sync::Arc<dyn cms::CmsBackend>>
+pub policy::ConvertPolicy::depth: policy::DepthPolicy
+pub policy::ConvertPolicy::gamut: policy::GamutPolicy
+pub policy::ConvertPolicy::hlg_rendering: core::option::Option<zenpixels::hdr::HlgRendering>
+pub policy::ConvertPolicy::luma: policy::LumaCoefficients
+pub policy::ConvertPolicy::luma_domain: policy::LumaDomain
+pub policy::ConvertPolicy::range: policy::RangePolicy
+pub policy::ConvertPolicy::sdr_peak: zenpixels::hdr::Nits
+pub policy::ConvertPolicy::sdr_white: core::option::Option<zenpixels::hdr::DiffuseWhite>
+pub policy::ConvertPolicy::source_facts: zenpixels::facts::SampleFacts
+pub policy::ConvertPolicy::tone_map_hdr_to_sdr: bool
+pub policy::ConvertPolicy::tone_mapper: core::option::Option<alloc::sync::Arc<dyn tonemap::tone_mapper::ToneMapper>>
+pub fn policy::ConvertPolicy::display_sdr(zenpixels::hdr::DiffuseWhite, zenpixels::hdr::Nits) -> Self
+pub fn policy::ConvertPolicy::lossless() -> Self
+pub fn policy::ConvertPolicy::permissive() -> Self
+pub fn policy::ConvertPolicy::with_accelerators(self, accel::Accelerators) -> Self
+pub fn policy::ConvertPolicy::with_alpha(self, policy::AlphaPolicy) -> Self
+pub fn policy::ConvertPolicy::with_approximate(self, bool) -> Self
+pub fn policy::ConvertPolicy::with_cms(self, alloc::sync::Arc<dyn cms::CmsBackend>) -> Self
+pub fn policy::ConvertPolicy::with_depth(self, policy::DepthPolicy) -> Self
+pub fn policy::ConvertPolicy::with_facts(self, zenpixels::facts::SampleFacts) -> Self
+pub fn policy::ConvertPolicy::with_gamut(self, policy::GamutPolicy) -> Self
+pub fn policy::ConvertPolicy::with_hlg_rendering(self, zenpixels::hdr::HlgRendering) -> Self
+pub fn policy::ConvertPolicy::with_icc_substitution(self, bool) -> Self
+pub fn policy::ConvertPolicy::with_luma(self, policy::LumaCoefficients) -> Self
+pub fn policy::ConvertPolicy::with_luma_domain(self, policy::LumaDomain) -> Self
+pub fn policy::ConvertPolicy::with_range(self, policy::RangePolicy) -> Self
+pub fn policy::ConvertPolicy::with_sdr_peak(self, zenpixels::hdr::Nits) -> Self
+pub fn policy::ConvertPolicy::with_sdr_white(self, zenpixels::hdr::DiffuseWhite) -> Self
+pub fn policy::ConvertPolicy::with_tone_mapper(self, alloc::sync::Arc<dyn tonemap::tone_mapper::ToneMapper>) -> Self
+pub fn policy::ConvertPolicy::with_tone_mapping(self, bool) -> Self
+pub fn policy::ConvertPolicy::working_linear() -> Self
+pub mod scan
+pub mod tonemap
+pub mod tonemap::gamut_compress
+pub const tonemap::gamut_compress::SoftCompress::DEFAULT_KNEE: f32
+pub fn tonemap::gamut_compress::SoftCompress::apply_strip(&self, &mut [[f32; 3]])
+pub fn tonemap::gamut_compress::SoftCompress::compress_oklab_planes(&self, &[f32], &mut [f32], &mut [f32]) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub fn tonemap::gamut_compress::SoftCompress::knee(&self) -> f32
+pub fn tonemap::gamut_compress::SoftCompress::new(&oklab::OklabSpace, f32) -> Self
+pub mod tonemap::tone_mapper
+pub tonemap::tone_mapper::PreparedMapper::Streaming(alloc::boxed::Box<dyn tonemap::tone_mapper::StripMapper>)
+pub tonemap::tone_mapper::Requirements::full_image: bool
+pub tonemap::tone_mapper::Requirements::source_peak_nits: bool
+pub const tonemap::tone_mapper::Requirements::NONE: Self
+pub const tonemap::tone_mapper::Requirements::SOURCE_PEAK_ONLY: Self
+pub tonemap::tone_mapper::ToneMapContext::source_peak_nits: f32
+pub tonemap::tone_mapper::ToneMapContext::target_peak_nits: f32
+pub tonemap::tone_mapper::ToneMapContext::working_primaries: zenpixels::color::Primaries
+pub fn tonemap::tone_mapper::StripMapper::map_strip(&self, &[f32], &mut [f32])
+pub fn tonemap::tone_mapper::ToneMapper::baked_peaks(&self) -> core::option::Option<(f32, f32)>
+pub fn tonemap::tone_mapper::ToneMapper::name(&self) -> &'static str
+pub fn tonemap::tone_mapper::ToneMapper::prepare(&self, &tonemap::tone_mapper::ToneMapContext) -> core::result::Result<tonemap::tone_mapper::PreparedMapper, whereat::at::At<error::ConvertError>>
+pub fn tonemap::tone_mapper::ToneMapper::requirements(&self) -> tonemap::tone_mapper::Requirements
+pub fn tonemap::tone_mapper::ToneMapper::working_primaries_for(&self, zenpixels::color::Primaries) -> zenpixels::color::Primaries
+pub tonemap::PreparedMapper::Streaming(alloc::boxed::Box<dyn tonemap::tone_mapper::StripMapper>)
+pub tonemap::Requirements::full_image: bool
+pub tonemap::Requirements::source_peak_nits: bool
+pub const tonemap::tone_mapper::Requirements::NONE: Self
+pub const tonemap::tone_mapper::Requirements::SOURCE_PEAK_ONLY: Self
+pub const tonemap::gamut_compress::SoftCompress::DEFAULT_KNEE: f32
+pub fn tonemap::gamut_compress::SoftCompress::apply_strip(&self, &mut [[f32; 3]])
+pub fn tonemap::gamut_compress::SoftCompress::compress_oklab_planes(&self, &[f32], &mut [f32], &mut [f32]) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub fn tonemap::gamut_compress::SoftCompress::knee(&self) -> f32
+pub fn tonemap::gamut_compress::SoftCompress::new(&oklab::OklabSpace, f32) -> Self
+pub tonemap::ToneMapContext::source_peak_nits: f32
+pub tonemap::ToneMapContext::target_peak_nits: f32
+pub tonemap::ToneMapContext::working_primaries: zenpixels::color::Primaries
+pub const tonemap::BT2020_LB: f32
+pub const tonemap::BT2020_LG: f32
+pub const tonemap::BT2020_LR: f32
+pub fn tonemap::StripMapper::map_strip(&self, &[f32], &mut [f32])
+pub fn tonemap::ToneMapper::baked_peaks(&self) -> core::option::Option<(f32, f32)>
+pub fn tonemap::ToneMapper::name(&self) -> &'static str
+pub fn tonemap::ToneMapper::prepare(&self, &tonemap::tone_mapper::ToneMapContext) -> core::result::Result<tonemap::tone_mapper::PreparedMapper, whereat::at::At<error::ConvertError>>
+pub fn tonemap::ToneMapper::requirements(&self) -> tonemap::tone_mapper::Requirements
+pub fn tonemap::ToneMapper::working_primaries_for(&self, zenpixels::color::Primaries) -> zenpixels::color::Primaries
+pub mod ycbcr
+pub ycbcr::ChromaUpsample::Bilinear
+pub ycbcr::ChromaUpsample::Nearest
+pub ycbcr::YcbcrMatrix::Bt2020
+pub ycbcr::YcbcrMatrix::Bt470Bg
+pub ycbcr::YcbcrMatrix::Bt601
+pub ycbcr::YcbcrMatrix::Bt709
+pub ycbcr::YcbcrMatrix::ChromaDerivedNcl
+pub ycbcr::YcbcrMatrix::Fcc
+pub ycbcr::YcbcrMatrix::Identity
+pub ycbcr::YcbcrMatrix::Smpte240M
+pub ycbcr::YcbcrMatrix::YCgCo
+pub const fn ycbcr::YcbcrMatrix::from_cicp_code(u8) -> core::option::Option<Self> [also: (root)]
+pub const fn ycbcr::YcbcrMatrix::kr_kb(self) -> core::option::Option<(f32, f32)> [also: (root)]
+pub fn ycbcr::YcbcrMatrix::kr_kb_for(self, core::option::Option<zenpixels::color::Primaries>) -> core::option::Option<(f32, f32)>
+pub const fn ycbcr::YcbcrMatrix::same_coefficients(self, Self) -> bool [also: (root)]
+pub const fn ycbcr::YcbcrMatrix::to_cicp_code(self) -> u8 [also: (root)]
+pub ycbcr::YcbcrOptions::unknown_siting_fallback: core::option::Option<zenpixels::sample::plane::ChromaSiting>
+pub ycbcr::YcbcrOptions::upsample: ycbcr::ChromaUpsample
+pub const fn ycbcr::YcbcrOptions::bilinear() -> Self [also: (root)]
+pub const fn ycbcr::YcbcrOptions::nearest() -> Self [also: (root)]
+pub const fn ycbcr::YcbcrOptions::with_unknown_siting_fallback(self, zenpixels::sample::plane::ChromaSiting) -> Self [also: (root)]
+pub const fn ycbcr::YcbcrOptions::with_upsample(self, ycbcr::ChromaUpsample) -> Self [also: (root)]
+#[non_exhaustive] pub enum AlphaPolicy [also: policy]
+pub AlphaPolicy::CompositeOnto(zenpixels::color::Color)
+pub AlphaPolicy::DiscardIfOpaque
+pub AlphaPolicy::DiscardUnchecked
+pub AlphaPolicy::Forbid
+#[non_exhaustive] pub enum ChromaUpsample [also: ycbcr]
+pub ChromaUpsample::Bilinear
+pub ChromaUpsample::Nearest
+#[non_exhaustive] pub enum CodeMapError [also: codes]
+pub CodeMapError::FullRangeChromaDepth
+pub CodeMapError::FullRangeChromaDepth::from_bits: u8
+pub CodeMapError::FullRangeChromaDepth::to_bits: u8
+pub CodeMapError::LengthMismatch
+pub CodeMapError::LengthMismatch::destination: usize
+pub CodeMapError::LengthMismatch::source: usize
+pub CodeMapError::NarrowBelowEightBits
+pub CodeMapError::NarrowBelowEightBits::bits: u8
+pub CodeMapError::UnsupportedRange(zenpixels::color::SignalRange)
+pub CodeMapError::UnsupportedStorage
+#[non_exhaustive] pub enum CodeRole [also: codes]
+pub CodeRole::Alpha
+pub CodeRole::Chroma
+pub CodeRole::Intensity
+#[non_exhaustive] pub enum CodesError [also: codes]
+pub CodesError::ComponentCount
+pub CodesError::ComponentCount::actual: usize
+pub CodesError::ComponentCount::expected: usize
+pub CodesError::Destination
+pub CodesError::Destination::actual: zenpixels::color::ImageSpec
+pub CodesError::Extent
+pub CodesError::Extent::component: usize
+pub CodesError::Extent::extent: (usize, usize)
+pub CodesError::Extent::origin: (usize, usize)
+pub CodesError::Extent::plane: (usize, usize)
+pub CodesError::Map
+pub CodesError::Map::component: usize
+pub CodesError::Map::error: codes::CodeMapError
+pub CodesError::Narrowing
+pub CodesError::Narrowing::bits: u8
+pub CodesError::Narrowing::component: usize
+pub CodesError::Narrowing::destination_bits: u8
+pub CodesError::RangeMismatch
+pub CodesError::RangeMismatch::destination: zenpixels::color::SignalRange
+pub CodesError::RangeMismatch::source: zenpixels::color::SignalRange
+pub CodesError::Read(zenpixels::sample::plane::CodePlaneError)
 #[non_exhaustive] pub enum ConvertError [also: error]
 pub ConvertError::AllocationFailed
-pub ConvertError::AlphaCheckRequired
-pub ConvertError::AlphaNotOpaque
-pub ConvertError::AlphaRemovalForbidden
+pub ConvertError::AlphaLossForbidden
 pub ConvertError::Buffer(zenpixels::buffer::BufferError)
-pub ConvertError::BufferSize
-pub ConvertError::BufferSize::actual: usize
-pub ConvertError::BufferSize::expected: usize
-pub ConvertError::CapacityLoss(zenpixels::precision::ConversionEffect)
-pub ConvertError::CicpDescriptor(zenpixels::cicp::CicpDescriptorError)
-pub ConvertError::CmsBackend(alloc::sync::Arc<cms::CmsPluginError>)
-pub ConvertError::CmsError(alloc::string::String)
+pub ConvertError::Cancelled(enough::reason::StopReason)
+pub ConvertError::CmsBackendFailed
+pub ConvertError::CmsRequired
 pub ConvertError::DepthReductionForbidden
-pub ConvertError::EmptyFormatList
-pub ConvertError::FeatureRequired
-pub ConvertError::FeatureRequired::feature: &'static str
-pub ConvertError::FeatureRequired::from: zenpixels::descriptor::PixelDescriptor
-pub ConvertError::FeatureRequired::to: zenpixels::descriptor::PixelDescriptor
-pub ConvertError::FloatFactsUnsatisfied
-pub ConvertError::FloatFactsUnsatisfied::actual: zenpixels::sample::float::FloatFacts
-pub ConvertError::FloatFactsUnsatisfied::required: zenpixels::sample::float::FloatFacts
+pub ConvertError::DimensionMismatch
+pub ConvertError::FeatureRequired(&'static str)
 pub ConvertError::FullImageMapperNotSupported
-pub ConvertError::FullImageMapperNotSupported::mapper_name: &'static str
+pub ConvertError::GamutLossForbidden
 pub ConvertError::HdrFeatureRequired
-pub ConvertError::HdrPeakRequired
-pub ConvertError::HdrSourceRequiresPeak
-pub ConvertError::HdrSourceRequiresPeak::from: zenpixels::descriptor::PixelDescriptor
-pub ConvertError::HdrSourceRequiresPeak::to: zenpixels::descriptor::PixelDescriptor
-pub ConvertError::HdrWithOpaqueProfileUnsupported
 pub ConvertError::HlgRenderingRequired
-pub ConvertError::IntermediateMismatch
-pub ConvertError::InvalidWidth(u32)
-pub ConvertError::NeedsCms
-pub ConvertError::NeedsCms::from: zenpixels::descriptor::PixelDescriptor
-pub ConvertError::NeedsCms::to: zenpixels::descriptor::PixelDescriptor
-pub ConvertError::NoCandidate
-pub ConvertError::NoCandidate::cause: alloc::boxed::Box<error::ConvertError>
-pub ConvertError::NoCandidate::index: usize
-pub ConvertError::NoMatch
-pub ConvertError::NoMatch::source: zenpixels::descriptor::PixelDescriptor
-pub ConvertError::NoPath
-pub ConvertError::NoPath::from: zenpixels::descriptor::PixelDescriptor
-pub ConvertError::NoPath::to: zenpixels::descriptor::PixelDescriptor
-pub ConvertError::OutputInterpretationMismatch
-pub ConvertError::OutputInterpretationMismatch::profile: zenpixels::descriptor::PixelDescriptor
-pub ConvertError::OutputInterpretationMismatch::requested: zenpixels::descriptor::PixelDescriptor
-pub ConvertError::OwnedCmsConsumed
-pub ConvertError::RgbToGray
-pub ConvertError::SdrPeakRequired
-pub ConvertError::SdrWhiteRequired
-pub ConvertError::SourceInterpretationChanged
-pub ConvertError::TargetLuminanceMismatch
-pub ConvertError::UnknownTransferRelabelForbidden
-pub ConvertError::UnknownTransferRelabelForbidden::from: zenpixels::descriptor::PixelDescriptor
-pub ConvertError::UnknownTransferRelabelForbidden::to: zenpixels::descriptor::PixelDescriptor
-pub ConvertError::UnsupportedTransfer
-pub ConvertError::UnsupportedTransfer::from: zenpixels::descriptor::TransferFunction
-pub ConvertError::UnsupportedTransfer::to: zenpixels::descriptor::TransferFunction
-pub ConvertError::WorkerBudgetExceeded
-pub ConvertError::WorkerBudgetExceeded::bytes: ByteBound
-pub ConvertError::WorkerBudgetExceeded::limit: u64
-#[non_exhaustive] pub enum ConvertIntent
-pub ConvertIntent::Blend
-pub ConvertIntent::Fastest
-pub ConvertIntent::LinearLight
-pub ConvertIntent::Perceptual
+pub ConvertError::InvalidLayout(zenpixels::layout::LayoutError)
+pub ConvertError::InvalidSpec(zenpixels::color::ColorError)
+pub ConvertError::MissingDeclaredPeak
+pub ConvertError::MissingHdrAnchor
+pub ConvertError::OutputSignalingMismatch
+pub ConvertError::OutputSignalingUnavailable
+pub ConvertError::RangeConversionForbidden
+pub ConvertError::ToneMapperFailed
+pub ConvertError::UnsupportedRoute
+#[non_exhaustive] pub enum DepthPolicy [also: policy]
+pub DepthPolicy::Forbid
+pub DepthPolicy::OrderedDither
+pub DepthPolicy::Round
+pub DepthPolicy::Truncate
+#[non_exhaustive] pub enum GainMapDownsample [also: gainmap]
+pub GainMapDownsample::Bilinear
+pub GainMapDownsample::Box
+pub GainMapDownsample::Point
+#[non_exhaustive] pub enum GainMapOrientation [also: gainmap]
+pub GainMapOrientation::Bake
+pub GainMapOrientation::Passthrough
+pub GainMapOrientation::RequireIdentity
+#[non_exhaustive] pub enum GainMapResample [also: gainmap]
+pub GainMapResample::Bicubic
+pub GainMapResample::Bilinear
+pub GainMapResample::Mitchell
+pub GainMapResample::Nearest
+#[non_exhaustive] pub enum GainMapTarget [also: gainmap]
+pub GainMapTarget::AlternateRendition
+pub GainMapTarget::BaseRendition
+pub GainMapTarget::HeadroomStops(f32)
+#[non_exhaustive] pub enum GamutPolicy [also: policy]
+pub GamutPolicy::Clip
+pub GamutPolicy::Forbid
+pub GamutPolicy::PreserveExtended
+pub GamutPolicy::SoftCompress
+#[non_exhaustive] pub enum LightLevelMethod [also: measure]
+pub LightLevelMethod::LuminanceBt2020
+pub LightLevelMethod::MaxRgb
+#[non_exhaustive] pub enum LossKind [also: negotiate]
+pub LossKind::Alpha
+pub LossKind::Chroma
+pub LossKind::Depth
+pub LossKind::Gamut
+pub LossKind::None
+#[non_exhaustive] pub enum LumaCoefficients [also: policy]
+pub LumaCoefficients::Bt2020
+pub LumaCoefficients::Bt601
+pub LumaCoefficients::Bt709
+pub LumaCoefficients::Custom([f32; 3])
+pub LumaCoefficients::FromSourcePrimaries
+#[non_exhaustive] pub enum LumaDomain [also: policy]
+pub LumaDomain::Encoded
+pub LumaDomain::LinearLight
 #[non_exhaustive] pub enum OutputProfile [also: output]
-pub OutputProfile::Icc(alloc::sync::Arc<[u8]>)
-pub OutputProfile::Named(zenpixels::cicp::Cicp)
-pub OutputProfile::Parametric(zenpixels::color::ParametricColor)
+pub OutputProfile::Auto
+pub OutputProfile::CicpOnly
+pub OutputProfile::CustomIcc(alloc::sync::Arc<[u8]>)
+pub OutputProfile::EmbedIcc
 pub OutputProfile::SameAsOrigin
-pub fn output::OutputProfile::normalize_known_icc(self) -> Self
+pub OutputProfile::Strip
+#[non_exhaustive] pub enum PreparedMapper [also: tonemap, tonemap::tone_mapper]
+pub PreparedMapper::Streaming(alloc::boxed::Box<dyn tonemap::tone_mapper::StripMapper>)
+#[non_exhaustive] pub enum RangePolicy [also: policy]
+pub RangePolicy::Convert
+pub RangePolicy::Forbid
+#[non_exhaustive] pub enum YcbcrMatrix [also: ycbcr]
+pub YcbcrMatrix::Bt2020
+pub YcbcrMatrix::Bt470Bg
+pub YcbcrMatrix::Bt601
+pub YcbcrMatrix::Bt709
+pub YcbcrMatrix::ChromaDerivedNcl
+pub YcbcrMatrix::Fcc
+pub YcbcrMatrix::Identity
+pub YcbcrMatrix::Smpte240M
+pub YcbcrMatrix::YCgCo
+pub fn ycbcr::YcbcrMatrix::kr_kb_for(self, core::option::Option<zenpixels::color::Primaries>) -> core::option::Option<(f32, f32)>
 pub struct Accelerators [also: accel]
 pub const accel::Accelerators::ALL: Self
+pub const accel::Accelerators::GAINMAP: Self
+pub const accel::Accelerators::HDR: Self
 pub const accel::Accelerators::LAYOUT: Self
+pub const accel::Accelerators::OKLAB: Self
 pub const accel::Accelerators::SCALAR: Self
 pub const accel::Accelerators::WEB_SDR: Self
-pub struct AllocationRequirements
-pub const fn AllocationRequirements::native_worker(&self) -> u64
-pub const fn AllocationRequirements::resident_heap(&self) -> ByteBound
-pub const fn AllocationRequirements::shared_cold_setup(&self) -> ByteBound
-pub const fn AllocationRequirements::worker_heap(&self) -> ByteBound
-pub struct CandidateTarget<'a>
-pub const fn CandidateTarget<'a>::encoding(&self) -> zenpixels::color::PixelEncoding<'a>
-pub const fn CandidateTarget<'a>::new(zenpixels::color::PixelEncoding<'a>) -> Self
-pub const fn CandidateTarget<'a>::with_consumer_cost(self, u16, u16) -> Self
-pub const fn CandidateTarget<'a>::with_preference(self, u32) -> Self
-pub struct CmsPluginError(_) [also: cms]
-pub fn cms::CmsPluginError::as_inner(&self) -> &(dyn core::error::Error + core::marker::Send + core::marker::Sync + 'static)
-pub fn cms::CmsPluginError::msg(impl core::convert::Into<alloc::string::String>) -> Self
-pub fn cms::CmsPluginError::new<E>(E) -> Self where E: core::error::Error + core::marker::Send + core::marker::Sync + 'static
-pub struct CmsRequest<'a> [also: cms]
-pub fn cms::CmsRequest<'a>::new(zenpixels::color::ColorProfileSource<'a>, zenpixels::color::ColorProfileSource<'a>, zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor, zenpixels::policy::ConvertOptions) -> Self
-pub fn cms::CmsRequest<'a>::source(&self) -> zenpixels::color::ColorProfileSource<'a>
-pub fn cms::CmsRequest<'a>::target(&self) -> zenpixels::color::ColorProfileSource<'a>
-pub struct ConversionSpec<'a>
-pub const fn ConversionSpec<'a>::accelerators(&self) -> core::option::Option<&'a accel::Accelerators>
-pub const fn ConversionSpec<'a>::fast(zenpixels::policy::ConvertOptions) -> Self
-pub const fn ConversionSpec<'a>::float_facts(&self) -> zenpixels::sample::float::FloatFacts
-pub const fn ConversionSpec<'a>::new(zenpixels::policy::ConvertOptions) -> Self
-pub const fn ConversionSpec<'a>::preserve_samples() -> Self
-pub const fn ConversionSpec<'a>::with_accelerators(self, &'a accel::Accelerators) -> Self
-pub const fn ConversionSpec<'a>::with_cms(self, &'a dyn cms::PluggableCms) -> Self
-pub const fn ConversionSpec<'a>::with_float_facts(self, zenpixels::sample::float::FloatFacts) -> Self
-pub const fn ConversionSpec<'a>::with_intent(self, ConvertIntent) -> Self
-pub const fn ConversionSpec<'a>::with_output_choice(self, zenpixels::precision::OutputChoice) -> Self
-pub const fn ConversionSpec<'a>::with_provenance(self, Provenance) -> Self
-pub const fn ConversionSpec<'a>::with_source_precision(self, zenpixels::precision::SourcePrecision) -> Self
-pub const fn ConversionSpec<'a>::with_worker_limit(self, u32, u64) -> Self
-pub struct ConvertPlan
-pub fn ConvertPlan::build(zenpixels::color::PixelEncoding<'_>, zenpixels::color::PixelEncoding<'_>, &ConversionSpec<'_>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub const fn ConvertPlan::input_float_facts(&self) -> zenpixels::sample::float::FloatFacts
-pub fn ConvertPlan::is_identity(&self) -> bool
-pub fn ConvertPlan::output_encoding(&self) -> zenpixels::color::PixelEncoding<'_>
-pub const fn ConvertPlan::output_float_facts(&self) -> zenpixels::sample::float::FloatFacts
-pub fn ConvertPlan::prepare(self, u32) -> core::result::Result<converter::RowConverter, whereat::at::At<error::ConvertError>>
-pub fn ConvertPlan::prepare_shared(&self, u32) -> core::result::Result<converter::RowConverter, whereat::at::At<error::ConvertError>>
-pub fn ConvertPlan::relabel_transfer(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn ConvertPlan::select(zenpixels::color::PixelEncoding<'_>, &[CandidateTarget<'_>], &ConversionSpec<'_>) -> core::result::Result<SelectedConversion, whereat::at::At<error::ConvertError>>
-pub fn ConvertPlan::source_encoding(&self) -> zenpixels::color::PixelEncoding<'_>
-pub fn ConvertPlan::then(self, Self) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn ConvertPlan::try_clone(&self) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn ConvertPlan::workspace(&self, WorkExtent) -> core::result::Result<AllocationRequirements, whereat::at::At<error::ConvertError>>
-#[non_exhaustive] pub struct EncodeReady [also: output]
-pub fn output::EncodeReady::copy_from(zenpixels::buffer::PixelSlice<'_>, OutputPlan) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn output::EncodeReady::from_owned(zenpixels::buffer::PixelBuffer, OutputPlan) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn output::EncodeReady::into_parts(self) -> (zenpixels::buffer::PixelBuffer, output::OutputMetadata)
-pub fn output::EncodeReady::metadata(&self) -> &output::OutputMetadata
-pub fn output::EncodeReady::pixels(&self) -> zenpixels::buffer::PixelSlice<'_>
+pub struct CodeMap [also: codes]
+pub fn codes::CodeMap::map_words(&self, &[u16], &mut [u16]) -> core::result::Result<(), codes::CodeMapError>
+#[non_exhaustive] pub struct ConvertPolicy [also: policy]
+pub ConvertPolicy::accelerators: core::option::Option<accel::Accelerators>
+pub ConvertPolicy::allow_approximate: bool
+pub ConvertPolicy::allow_icc_substitution: bool
+pub ConvertPolicy::alpha: policy::AlphaPolicy
+pub ConvertPolicy::cms: core::option::Option<alloc::sync::Arc<dyn cms::CmsBackend>>
+pub ConvertPolicy::depth: policy::DepthPolicy
+pub ConvertPolicy::gamut: policy::GamutPolicy
+pub ConvertPolicy::hlg_rendering: core::option::Option<zenpixels::hdr::HlgRendering>
+pub ConvertPolicy::luma: policy::LumaCoefficients
+pub ConvertPolicy::luma_domain: policy::LumaDomain
+pub ConvertPolicy::range: policy::RangePolicy
+pub ConvertPolicy::sdr_peak: zenpixels::hdr::Nits
+pub ConvertPolicy::sdr_white: core::option::Option<zenpixels::hdr::DiffuseWhite>
+pub ConvertPolicy::source_facts: zenpixels::facts::SampleFacts
+pub ConvertPolicy::tone_map_hdr_to_sdr: bool
+pub ConvertPolicy::tone_mapper: core::option::Option<alloc::sync::Arc<dyn tonemap::tone_mapper::ToneMapper>>
+pub fn policy::ConvertPolicy::display_sdr(zenpixels::hdr::DiffuseWhite, zenpixels::hdr::Nits) -> Self
+pub fn policy::ConvertPolicy::lossless() -> Self
+pub fn policy::ConvertPolicy::permissive() -> Self
+pub fn policy::ConvertPolicy::with_accelerators(self, accel::Accelerators) -> Self
+pub fn policy::ConvertPolicy::with_alpha(self, policy::AlphaPolicy) -> Self
+pub fn policy::ConvertPolicy::with_approximate(self, bool) -> Self
+pub fn policy::ConvertPolicy::with_cms(self, alloc::sync::Arc<dyn cms::CmsBackend>) -> Self
+pub fn policy::ConvertPolicy::with_depth(self, policy::DepthPolicy) -> Self
+pub fn policy::ConvertPolicy::with_facts(self, zenpixels::facts::SampleFacts) -> Self
+pub fn policy::ConvertPolicy::with_gamut(self, policy::GamutPolicy) -> Self
+pub fn policy::ConvertPolicy::with_hlg_rendering(self, zenpixels::hdr::HlgRendering) -> Self
+pub fn policy::ConvertPolicy::with_icc_substitution(self, bool) -> Self
+pub fn policy::ConvertPolicy::with_luma(self, policy::LumaCoefficients) -> Self
+pub fn policy::ConvertPolicy::with_luma_domain(self, policy::LumaDomain) -> Self
+pub fn policy::ConvertPolicy::with_range(self, policy::RangePolicy) -> Self
+pub fn policy::ConvertPolicy::with_sdr_peak(self, zenpixels::hdr::Nits) -> Self
+pub fn policy::ConvertPolicy::with_sdr_white(self, zenpixels::hdr::DiffuseWhite) -> Self
+pub fn policy::ConvertPolicy::with_tone_mapper(self, alloc::sync::Arc<dyn tonemap::tone_mapper::ToneMapper>) -> Self
+pub fn policy::ConvertPolicy::with_tone_mapping(self, bool) -> Self
+pub fn policy::ConvertPolicy::working_linear() -> Self
+#[non_exhaustive] pub struct EncodeReady<'a> [also: output]
+pub EncodeReady::cicp: core::option::Option<zenpixels::cicp::Cicp>
+pub EncodeReady::hdr: zenpixels::color::HdrMetadata
+pub EncodeReady::icc: core::option::Option<alloc::borrow::Cow<'static, [u8]>>
+pub EncodeReady::pixels: zenpixels::buffer::PixelCow<'a>
+pub struct FormatCost [also: negotiate]
+pub FormatCost::bytes_per_pixel: u8
+pub FormatCost::effort: u8
+pub FormatCost::loss_mask: u8
+pub FormatCost::loss_rank: u8
+pub struct GainMapApplier [also: gainmap]
+pub fn gainmap::GainMapApplier::apply_into<S: zenpixels::buffer::PixelSource + ?core::marker::Sized, D: zenpixels::buffer::PixelSink + ?core::marker::Sized>(&mut self, &S, &zenpixels::buffer::PixelView<'_>, &mut D, &dyn enough::Stop) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub fn gainmap::GainMapApplier::apply_row(&mut self, u32, &[u8], &zenpixels::buffer::PixelView<'_>, &mut [u8]) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub fn gainmap::GainMapApplier::apply_row_with_provider<'a, F>(&mut self, u32, &[u8], F, &mut [u8]) -> core::result::Result<(), whereat::at::At<error::ConvertError>> where F: core::ops::function::FnMut(u32) -> core::result::Result<&'a [u8], whereat::at::At<error::ConvertError>>
+pub fn gainmap::GainMapApplier::dst_spec(&self) -> &zenpixels::color::ImageSpec
+pub fn gainmap::GainMapApplier::for_view(&zenpixels::buffer::DualLayerHdrView<'_>, &gainmap::GainMapApplyConfig) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn gainmap::GainMapApplier::new(zenpixels::color::ImageSpec, u32, u32, zenpixels::color::ImageSpec, u32, u32, zenpixels::color::GainMapMetadata, core::option::Option<&zenpixels::color::ColorSpace>, &gainmap::GainMapApplyConfig) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn gainmap::GainMapApplier::reset_cache(&mut self)
+pub struct GainMapApplyConfig [also: gainmap]
+pub GainMapApplyConfig::dst_spec: core::option::Option<zenpixels::color::ImageSpec>
+pub GainMapApplyConfig::orientation: gainmap::GainMapOrientation
+pub GainMapApplyConfig::policy: policy::ConvertPolicy
+pub GainMapApplyConfig::resample: gainmap::GainMapResample
+pub GainMapApplyConfig::target: gainmap::GainMapTarget
+pub fn gainmap::GainMapApplyConfig::alternate_rendition() -> Self
+pub fn gainmap::GainMapApplyConfig::base_rendition() -> Self
+pub fn gainmap::GainMapApplyConfig::from_display_boost(f32) -> Self
+pub fn gainmap::GainMapApplyConfig::new(f32) -> Self
+pub fn gainmap::GainMapApplyConfig::with_dst_spec(self, zenpixels::color::ImageSpec) -> Self
+pub fn gainmap::GainMapApplyConfig::with_orientation(self, gainmap::GainMapOrientation) -> Self
+pub fn gainmap::GainMapApplyConfig::with_policy(self, policy::ConvertPolicy) -> Self
+pub fn gainmap::GainMapApplyConfig::with_resample(self, gainmap::GainMapResample) -> Self
+pub fn gainmap::GainMapApplyConfig::with_target(self, gainmap::GainMapTarget) -> Self
+pub struct GainMapExtractConfig [also: gainmap]
+pub GainMapExtractConfig::alternate_hdr_headroom_stops: f32
+pub GainMapExtractConfig::alternate_offset: f32
+pub GainMapExtractConfig::application_space: zenpixels::color::GainMapColorSpace
+pub GainMapExtractConfig::base_hdr_headroom_stops: f32
+pub GainMapExtractConfig::base_offset: f32
+pub GainMapExtractConfig::content_fit: bool
+pub GainMapExtractConfig::downsample: gainmap::GainMapDownsample
+pub GainMapExtractConfig::gamma: f32
+pub GainMapExtractConfig::max_gain_stops: f32
+pub GainMapExtractConfig::min_gain_stops: f32
+pub GainMapExtractConfig::multi_channel: bool
+pub GainMapExtractConfig::packing: zenpixels::layout::BitPacking
+pub GainMapExtractConfig::policy: policy::ConvertPolicy
+pub GainMapExtractConfig::sample_type: zenpixels::layout::SampleType
+pub GainMapExtractConfig::scale_factor: u8
+pub fn gainmap::GainMapExtractConfig::to_metadata(&self) -> core::result::Result<zenpixels::color::GainMapMetadata, whereat::at::At<error::ConvertError>>
+pub fn gainmap::GainMapExtractConfig::ultrahdr() -> Self
+pub fn gainmap::GainMapExtractConfig::with_application_space(self, zenpixels::color::GainMapColorSpace) -> Self
+pub fn gainmap::GainMapExtractConfig::with_boost_range_linear(self, f32, f32) -> Self
+pub fn gainmap::GainMapExtractConfig::with_content_fit(self, bool) -> Self
+pub fn gainmap::GainMapExtractConfig::with_downsample(self, gainmap::GainMapDownsample) -> Self
+pub fn gainmap::GainMapExtractConfig::with_gain_range_stops(self, f32, f32) -> Self
+pub fn gainmap::GainMapExtractConfig::with_gamma(self, f32) -> Self
+pub fn gainmap::GainMapExtractConfig::with_headroom_boost_linear(self, f32, f32) -> Self
+pub fn gainmap::GainMapExtractConfig::with_headroom_stops(self, f32, f32) -> Self
+pub fn gainmap::GainMapExtractConfig::with_multi_channel(self, bool) -> Self
+pub fn gainmap::GainMapExtractConfig::with_offsets(self, f32, f32) -> Self
+pub fn gainmap::GainMapExtractConfig::with_policy(self, policy::ConvertPolicy) -> Self
+pub fn gainmap::GainMapExtractConfig::with_sample_storage(self, zenpixels::layout::SampleType, zenpixels::layout::BitPacking) -> Self
+pub fn gainmap::GainMapExtractConfig::with_scale_factor(self, u8) -> Self
+pub struct GainMapRowExtractor [also: gainmap]
+pub fn gainmap::GainMapRowExtractor::build_metadata_widening_headroom(&self) -> zenpixels::color::GainMapMetadata
+pub fn gainmap::GainMapRowExtractor::encode_row_linear_f32(&mut self, &[f32], &[f32], usize, zenpixels::layout::SampleLayout, &mut [u8]) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub fn gainmap::GainMapRowExtractor::from_config(&gainmap::GainMapExtractConfig, zenpixels::color::Primaries) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn gainmap::GainMapRowExtractor::metadata(&self) -> zenpixels::color::GainMapMetadata
+pub fn gainmap::GainMapRowExtractor::new(zenpixels::color::GainMapMetadata, zenpixels::color::Primaries) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn gainmap::GainMapRowExtractor::observed_gain_stops(&self) -> core::option::Option<(f32, f32)>
 pub struct GamutMatrix(_) [also: gamut]
 pub fn gamut::GamutMatrix::apply(&self, [f32; 3]) -> [f32; 3]
 pub fn gamut::GamutMatrix::apply_row_rgb(&self, &mut [[f32; 3]])
 pub fn gamut::GamutMatrix::apply_row_rgba(&self, &mut [[f32; 4]])
 pub fn gamut::GamutMatrix::inverse(&self) -> core::option::Option<Self>
 pub fn gamut::GamutMatrix::then(&self, &Self) -> Self
+pub struct ImagePlan [also: plan]
+pub fn plan::ImagePlan::build(impl core::convert::AsRef<zenpixels::color::ImageSpec>, impl core::convert::AsRef<zenpixels::color::ImageSpec>, policy::ConvertPolicy, zenpixels::hdr::PeakSource) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn plan::ImagePlan::execute<S: zenpixels::buffer::PixelSource + ?core::marker::Sized>(&self, &S) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>>
+pub fn plan::ImagePlan::execute_into<S: zenpixels::buffer::PixelSource + ?core::marker::Sized, D: zenpixels::buffer::PixelSink + ?core::marker::Sized>(&self, &S, &mut D) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub struct LightLevelHistogram [also: measure]
+pub const measure::LightLevelHistogram::BIN_MAX_NITS: f32
+pub const measure::LightLevelHistogram::BIN_MIN_NITS: f32
+pub const measure::LightLevelHistogram::NUM_BINS: usize
+pub fn measure::LightLevelHistogram::bins(&self) -> &[u64]
+pub fn measure::LightLevelHistogram::mean_nits(&self) -> f32
+pub fn measure::LightLevelHistogram::new(measure::LightLevelMethod) -> Self
+pub fn measure::LightLevelHistogram::percentile_nits(&self, f32) -> f32
+pub fn measure::LightLevelHistogram::record(&mut self, f32)
+pub fn measure::LightLevelHistogram::to_content_light_level(&self) -> zenpixels::hdr::ContentLightLevel
+pub fn measure::LightLevelHistogram::to_robust_cll(&self, f32) -> zenpixels::hdr::ContentLightLevel
+pub fn measure::LightLevelHistogram::try_merge(&mut self, &Self) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub fn measure::LightLevelHistogram::try_new(measure::LightLevelMethod) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 #[non_exhaustive] pub struct LoadBearingReport [also: load_bearing]
 pub LoadBearingReport::uses_alpha: core::option::Option<bool>
 pub LoadBearingReport::uses_chroma: core::option::Option<bool>
 pub LoadBearingReport::uses_low_bits: core::option::Option<bool>
-pub fn load_bearing::LoadBearingReport::apply_to(&self, &zenpixels::descriptor::PixelDescriptor) -> zenpixels::descriptor::PixelDescriptor
-pub fn load_bearing::LoadBearingReport::scan_bands(&zenpixels::banded::BandedPixelBuffer) -> Self
-#[non_exhaustive] pub struct OutputMetadata [also: output]
-pub OutputMetadata::cicp: core::option::Option<zenpixels::cicp::Cicp>
-pub OutputMetadata::icc: core::option::Option<alloc::sync::Arc<[u8]>>
-pub OutputMetadata::parametric: core::option::Option<zenpixels::color::ParametricColor>
+pub fn load_bearing::LoadBearingReport::apply_to(&self, &zenpixels::color::ImageSpec) -> zenpixels::color::ImageSpec
+pub struct Negotiate [also: negotiate]
+pub fn negotiate::Negotiate::select(&zenpixels::color::ImageSpec, &[zenpixels::color::ImageSpec], &policy::ConvertPolicy) -> core::option::Option<negotiate::NegotiatedFormat>
+pub fn negotiate::Negotiate::select_format(&zenpixels::color::ImageSpec, &[zenpixels::color::PixelFormat], &policy::ConvertPolicy) -> core::option::Option<negotiate::NegotiatedFormat>
+#[non_exhaustive] pub struct NegotiatedFormat [also: negotiate]
+pub NegotiatedFormat::cost: negotiate::FormatCost
+pub NegotiatedFormat::index: usize
+pub NegotiatedFormat::loss: negotiate::LossKind
+pub NegotiatedFormat::spec: zenpixels::color::ImageSpec
 pub struct OutputPlan [also: output]
-pub fn OutputPlan::borrow_rows<'a>(&self, zenpixels::buffer::PixelSlice<'a>) -> core::result::Result<core::option::Option<zenpixels::buffer::PixelSlice<'a>>, whereat::at::At<error::ConvertError>>
-pub fn OutputPlan::build(zenpixels::color::PixelEncoding<'_>, OutputTarget<'_>, &ConversionSpec<'_>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn OutputPlan::convert_into(&mut self, impl PackedSource, impl PackedSink) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn OutputPlan::convert_rows<'a>(&mut self, zenpixels::buffer::PixelSlice<'_>, zenpixels::buffer::PixelSliceMut<'a>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, whereat::at::At<error::ConvertError>>
-pub fn OutputPlan::metadata(&self) -> &output::OutputMetadata
-pub fn OutputPlan::output_color_context(&self) -> &alloc::sync::Arc<zenpixels::color::ColorContext>
-pub fn OutputPlan::output_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
-pub fn OutputPlan::prepare(&mut self, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub struct OutputTarget<'a> [also: output]
-pub fn OutputTarget<'a>::new(output::OutputProfile, zenpixels::descriptor::PixelFormat) -> Self
-pub fn OutputTarget<'a>::with_descriptor(self, zenpixels::descriptor::PixelDescriptor) -> Self
-pub fn OutputTarget<'a>::with_origin(self, &'a zenpixels::color::ColorOrigin) -> Self
-#[non_exhaustive] pub struct Provenance
-pub Provenance::origin_depth: zenpixels::descriptor::ChannelType
-pub Provenance::origin_primaries: zenpixels::descriptor::ColorPrimaries
-pub fn Provenance::from_source(zenpixels::descriptor::PixelDescriptor) -> Self
-pub fn Provenance::invalidate_primaries(&mut self, zenpixels::descriptor::ColorPrimaries)
-pub const fn Provenance::with_origin(zenpixels::descriptor::ChannelType, zenpixels::descriptor::ColorPrimaries) -> Self
-pub const fn Provenance::with_origin_depth(zenpixels::descriptor::ChannelType) -> Self
-pub fn Provenance::with_origin_primaries(zenpixels::descriptor::PixelDescriptor, zenpixels::descriptor::ColorPrimaries) -> Self
-pub struct RowConverter [also: converter]
-pub fn converter::RowConverter::convert(&mut self, impl PackedSource, impl PackedSink) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn converter::RowConverter::convert_bands(&mut self, &zenpixels::banded::BandedPixelBuffer, &mut zenpixels::banded::BandedPixelBuffer) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn converter::RowConverter::convert_raw_rows(&mut self, &[u8], usize, &mut [u8], usize, u32, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn converter::RowConverter::convert_rows<'a>(&mut self, zenpixels::buffer::PixelSlice<'_>, zenpixels::buffer::PixelSliceMut<'a>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'a>, whereat::at::At<error::ConvertError>>
-pub fn converter::RowConverter::from_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
-pub fn converter::RowConverter::is_identity(&self) -> bool
-pub fn converter::RowConverter::prepare(&mut self, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn converter::RowConverter::to_descriptor(&self) -> zenpixels::descriptor::PixelDescriptor
-pub fn converter::RowConverter::try_clone(&self) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn converter::RowConverter::try_convert_row(&mut self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub struct SelectedConversion
-pub const fn SelectedConversion::candidate_index(&self) -> usize
-pub fn SelectedConversion::into_plan(self) -> ConvertPlan
-pub const fn SelectedConversion::plan(&self) -> &ConvertPlan
-pub struct WorkExtent
-pub const fn WorkExtent::new(u32, u32) -> Self
-pub const fn WorkExtent::pixel_count(self) -> u64
-pub const fn WorkExtent::rows(self) -> u32
-pub const fn WorkExtent::width(self) -> u32
-pub trait BandedPixelBufferConvertExt: sealed::Sealed [also: ext]
-pub fn BandedPixelBufferConvertExt::check_opaque(&self) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn BandedPixelBufferConvertExt::oriented_into(&self, zenpixels::orientation::Orientation, &mut zenpixels::banded::BandedPixelBuffer) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn BandedPixelBufferConvertExt::scan_source_precision(&self, &dyn enough::Stop) -> core::result::Result<zenpixels::precision::SourcePrecision, whereat::at::At<enough::reason::StopReason>>
-pub trait ColorConvertExt: sealed::Sealed + core::marker::Sized [also: ext]
-pub fn ColorConvertExt::map_to_gamut(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn ColorConvertExt::same_color(&self, &Self) -> bool
-pub fn ColorConvertExt::try_convert_to(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub trait PackedSink: packed::private::SealedSink
-pub trait PackedSource: packed::private::SealedSource
-pub trait PixelBufferConvertExt: sealed::Sealed + core::marker::Sized [also: ext]
-pub fn PixelBufferConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
-pub fn PixelBufferConvertExt::convert_to_with_options(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
-pub fn PixelBufferConvertExt::into_oriented(self, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
-pub fn PixelBufferConvertExt::try_adapt_in_place(&mut self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub trait PixelBufferLoadBearingExt: load_bearing::sealed::Sealed [also: load_bearing]
-pub fn PixelBufferLoadBearingExt::reduce_to_load_bearing_format_in_place(&mut self, bool)
-pub trait PixelSliceConvertExt<'a>: sealed::Sealed [also: ext]
-pub fn PixelSliceConvertExt::adapt_for_encode(&self, &[zenpixels::descriptor::PixelDescriptor], &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels::buffer::PixelCow<'a>, whereat::at::At<error::ConvertError>>
-pub fn PixelSliceConvertExt::check_opaque(&self) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn PixelSliceConvertExt::convert_into<'d>(&self, zenpixels::buffer::PixelSliceMut<'d>) -> core::result::Result<zenpixels::buffer::PixelSliceMut<'d>, whereat::at::At<error::ConvertError>>
-pub fn PixelSliceConvertExt::convert_to(&self, zenpixels::descriptor::PixelDescriptor) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
-pub fn PixelSliceConvertExt::convert_to_with_options(&self, zenpixels::descriptor::PixelDescriptor, &zenpixels::policy::ConvertOptions) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
-pub fn PixelSliceConvertExt::oriented(&self, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuffer, whereat::at::At<error::ConvertError>>
-pub fn PixelSliceConvertExt::oriented_into(&self, zenpixels::orientation::Orientation, zenpixels::buffer::PixelSliceMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn PixelSliceConvertExt::scan_source_precision(&self, &dyn enough::Stop) -> core::result::Result<zenpixels::precision::SourcePrecision, whereat::at::At<enough::reason::StopReason>>
-pub trait PixelSliceLoadBearingExt: load_bearing::sealed::Sealed [also: load_bearing]
-pub fn PixelSliceLoadBearingExt::determine_load_bearing(&self) -> load_bearing::LoadBearingReport
-pub fn PixelSliceLoadBearingExt::reduce_to_load_bearing_format(&self) -> core::result::Result<core::option::Option<zenpixels::buffer::PixelBuffer>, whereat::at::At<error::ConvertError>>
-pub trait PluggableCms: core::marker::Send + core::marker::Sync [also: cms]
-pub fn PluggableCms::build(&self, &cms::CmsRequest<'_>) -> core::result::Result<cms::CmsSupport, whereat::at::At<cms::CmsPluginError>>
-pub trait RowTransform: core::marker::Send + core::marker::Sync [also: cms]
-pub fn RowTransform::prepare(&self, u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
-pub fn RowTransform::try_transform_row(&self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
-pub trait RowTransformMut: core::marker::Send + core::marker::Sync [also: cms]
-pub fn RowTransformMut::prepare(&mut self, u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
-pub fn RowTransformMut::try_transform_row(&mut self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<cms::CmsPluginError>>
-pub fn orient_into(impl PackedSource, zenpixels::orientation::Orientation, impl PackedSink) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub fn output::OutputPlan::build(impl core::convert::AsRef<zenpixels::color::ImageSpec>, impl core::convert::AsRef<zenpixels::color::ImageSpec>, policy::ConvertPolicy, zenpixels::hdr::PeakSource, output::OutputProfile) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn output::OutputPlan::build_row_plan(&self, core::option::Option<zenpixels::hdr::Nits>) -> core::result::Result<plan::RowPlan, whereat::at::At<error::ConvertError>>
+pub fn output::OutputPlan::dst_spec(&self) -> &zenpixels::color::ImageSpec
+pub fn output::OutputPlan::execute_buf(&self, zenpixels::buffer::PixelBuf) -> core::result::Result<output::EncodeReady<'static>, whereat::at::At<error::ConvertError>>
+pub fn output::OutputPlan::execute_view<'a>(&self, zenpixels::buffer::PixelView<'a>, &zenpixels::color::ColorOrigin) -> core::result::Result<output::EncodeReady<'a>, whereat::at::At<error::ConvertError>>
+pub fn output::OutputPlan::resolve_signaling(&self, &zenpixels::color::ColorOrigin) -> core::result::Result<(core::option::Option<zenpixels::cicp::Cicp>, core::option::Option<alloc::borrow::Cow<'static, [u8]>>), whereat::at::At<error::ConvertError>>
+pub fn output::OutputPlan::src_spec(&self) -> &zenpixels::color::ImageSpec
+#[non_exhaustive] pub struct Requirements [also: tonemap, tonemap::tone_mapper]
+pub Requirements::full_image: bool
+pub Requirements::source_peak_nits: bool
+pub const tonemap::tone_mapper::Requirements::NONE: Self
+pub const tonemap::tone_mapper::Requirements::SOURCE_PEAK_ONLY: Self
+pub struct RowPlan [also: plan]
+pub fn plan::RowPlan::build(impl core::convert::AsRef<zenpixels::color::ImageSpec>, impl core::convert::AsRef<zenpixels::color::ImageSpec>, &policy::ConvertPolicy, core::option::Option<zenpixels::hdr::Nits>) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn plan::RowPlan::convert_row(&self, &[u8], &mut [u8], u32, u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub fn plan::RowPlan::dst_spec(&self) -> &zenpixels::color::ImageSpec
+pub fn plan::RowPlan::is_identity(&self) -> bool
+pub fn plan::RowPlan::src_spec(&self) -> &zenpixels::color::ImageSpec
+pub struct SoftCompress [also: tonemap, tonemap::gamut_compress]
+pub const tonemap::gamut_compress::SoftCompress::DEFAULT_KNEE: f32
+pub fn tonemap::gamut_compress::SoftCompress::apply_strip(&self, &mut [[f32; 3]])
+pub fn tonemap::gamut_compress::SoftCompress::compress_oklab_planes(&self, &[f32], &mut [f32], &mut [f32]) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub fn tonemap::gamut_compress::SoftCompress::knee(&self) -> f32
+pub fn tonemap::gamut_compress::SoftCompress::new(&oklab::OklabSpace, f32) -> Self
+#[non_exhaustive] pub struct ToneMapContext [also: tonemap, tonemap::tone_mapper]
+pub ToneMapContext::source_peak_nits: f32
+pub ToneMapContext::target_peak_nits: f32
+pub ToneMapContext::working_primaries: zenpixels::color::Primaries
+#[non_exhaustive] pub struct YcbcrOptions [also: ycbcr]
+pub YcbcrOptions::unknown_siting_fallback: core::option::Option<zenpixels::sample::plane::ChromaSiting>
+pub YcbcrOptions::upsample: ycbcr::ChromaUpsample
+pub trait CmsBackend: core::marker::Send + core::marker::Sync + core::fmt::Debug [also: cms]
+pub fn CmsBackend::build_transform(&self, &zenpixels::color::ImageSpec, &zenpixels::color::ImageSpec) -> core::result::Result<alloc::sync::Arc<dyn cms::CmsTransform>, whereat::at::At<error::ConvertError>>
+pub fn CmsBackend::supports_specs(&self, &zenpixels::color::ImageSpec, &zenpixels::color::ImageSpec) -> bool
+pub trait CmsTransform: core::marker::Send + core::marker::Sync [also: cms]
+pub fn CmsTransform::transform_row(&self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
+pub trait PixelBufLoadBearingExt: load_bearing::sealed::Sealed [also: load_bearing]
+pub fn PixelBufLoadBearingExt::reduce_to_load_bearing_format_in_place(&mut self, bool)
+pub trait PixelViewLoadBearingExt: load_bearing::sealed::Sealed [also: load_bearing]
+pub fn PixelViewLoadBearingExt::determine_load_bearing(&self) -> load_bearing::LoadBearingReport
+pub fn PixelViewLoadBearingExt::reduce_to_load_bearing_format(&self) -> core::result::Result<core::option::Option<zenpixels::buffer::PixelBuf>, whereat::at::At<error::ConvertError>>
+pub fn PixelViewLoadBearingExt::try_reduce_to_load_bearing_format(&self) -> core::option::Option<zenpixels::buffer::PixelBuf>
+pub trait StripMapper: core::marker::Send + core::marker::Sync + core::panic::unwind_safe::UnwindSafe + core::panic::unwind_safe::RefUnwindSafe + core::fmt::Debug [also: tonemap, tonemap::tone_mapper]
+pub fn StripMapper::map_strip(&self, &[f32], &mut [f32])
+pub trait ToneMapper: core::marker::Send + core::marker::Sync + core::panic::unwind_safe::UnwindSafe + core::panic::unwind_safe::RefUnwindSafe + core::fmt::Debug [also: tonemap, tonemap::tone_mapper]
+pub fn ToneMapper::baked_peaks(&self) -> core::option::Option<(f32, f32)>
+pub fn ToneMapper::name(&self) -> &'static str
+pub fn ToneMapper::prepare(&self, &tonemap::tone_mapper::ToneMapContext) -> core::result::Result<tonemap::tone_mapper::PreparedMapper, whereat::at::At<error::ConvertError>>
+pub fn ToneMapper::requirements(&self) -> tonemap::tone_mapper::Requirements
+pub fn ToneMapper::working_primaries_for(&self, zenpixels::color::Primaries) -> zenpixels::color::Primaries
+pub fn adapt_for_encode<'a>(zenpixels::buffer::PixelView<'a>, &zenpixels::color::ColorOrigin, &[zenpixels::color::ImageSpec], &policy::ConvertPolicy, zenpixels::hdr::PeakSource, output::OutputProfile) -> core::result::Result<(negotiate::NegotiatedFormat, output::EncodeReady<'a>), whereat::at::At<error::ConvertError>> [also: output]
+pub fn adapt_for_encode_format<'a>(zenpixels::buffer::PixelView<'a>, &zenpixels::color::ColorOrigin, &[zenpixels::color::PixelFormat], &policy::ConvertPolicy, zenpixels::hdr::PeakSource, output::OutputProfile) -> core::result::Result<(negotiate::NegotiatedFormat, output::EncodeReady<'a>), whereat::at::At<error::ConvertError>> [also: output]
+pub fn apply_gain_map(&zenpixels::buffer::DualLayerHdr, f32) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: gainmap]
+pub fn apply_gain_map_oriented(&zenpixels::buffer::DualLayerHdrView<'_>, &gainmap::GainMapApplyConfig, &dyn enough::Stop) -> core::result::Result<(zenpixels::buffer::PixelBuf, zenpixels::orientation::Orientation), whereat::at::At<error::ConvertError>> [also: gainmap]
+pub fn apply_gain_map_view(&zenpixels::buffer::DualLayerHdrView<'_>, f32, &policy::ConvertPolicy) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: gainmap]
+pub fn apply_gain_map_with(&zenpixels::buffer::DualLayerHdrView<'_>, &gainmap::GainMapApplyConfig, &dyn enough::Stop) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: gainmap]
+pub fn apply_orientation(&zenpixels::buffer::PixelView<'_>, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: orient]
+pub fn apply_orientation_banded_into(&zenpixels::buffer::BandedBuf, zenpixels::orientation::Orientation, &mut zenpixels::buffer::BandedBuf) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: orient]
+pub fn apply_orientation_into(&zenpixels::buffer::PixelView<'_>, zenpixels::orientation::Orientation, &mut zenpixels::buffer::PixelViewMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: orient]
+pub fn bake_dual_layer_orientation(&zenpixels::buffer::DualLayerHdrView<'_>) -> core::result::Result<zenpixels::buffer::DualLayerHdr, whereat::at::At<error::ConvertError>> [also: gainmap]
+pub fn bake_orientation(&zenpixels::buffer::PixelView<'_>) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: orient]
+pub fn bake_orientation_banded(&zenpixels::buffer::BandedBuf, usize) -> core::result::Result<zenpixels::buffer::BandedBuf, whereat::at::At<error::ConvertError>> [also: orient]
+pub fn bake_orientation_buf(zenpixels::buffer::PixelBuf) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: orient]
+pub fn convert_buf(&zenpixels::buffer::PixelView<'_>, impl core::convert::AsRef<zenpixels::color::ImageSpec>, &policy::ConvertPolicy, zenpixels::hdr::PeakSource) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: plan]
+pub fn convert_into<S: zenpixels::buffer::PixelSource + ?core::marker::Sized, D: zenpixels::buffer::PixelSink + ?core::marker::Sized>(&S, &mut D, &policy::ConvertPolicy, zenpixels::hdr::PeakSource) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: plan]
+pub fn extract_gain_map(&zenpixels::buffer::PixelView<'_>, &zenpixels::buffer::PixelView<'_>, zenpixels::color::GainMapMetadata) -> core::result::Result<zenpixels::buffer::DualLayerHdr, whereat::at::At<error::ConvertError>> [also: gainmap]
+pub fn extract_gain_map_only(&zenpixels::buffer::PixelView<'_>, &zenpixels::buffer::PixelView<'_>, &gainmap::GainMapExtractConfig, &dyn enough::Stop) -> core::result::Result<(zenpixels::buffer::PixelBuf, zenpixels::color::GainMapMetadata), whereat::at::At<error::ConvertError>> [also: gainmap]
+pub fn measure_cll<S: zenpixels::buffer::PixelSource + ?core::marker::Sized>(&S, zenpixels::hdr::DiffuseWhite, core::option::Option<zenpixels::hdr::HlgRendering>, measure::LightLevelMethod) -> core::result::Result<zenpixels::hdr::ContentLightLevel, whereat::at::At<error::ConvertError>> [also: measure]
+pub fn measure_histogram<S: zenpixels::buffer::PixelSource + ?core::marker::Sized>(&S, zenpixels::hdr::DiffuseWhite, core::option::Option<zenpixels::hdr::HlgRendering>, measure::LightLevelMethod) -> core::result::Result<measure::LightLevelHistogram, whereat::at::At<error::ConvertError>> [also: measure]
+pub fn measure_max_smoothed<S: zenpixels::buffer::PixelSource + ?core::marker::Sized>(&S, zenpixels::hdr::DiffuseWhite, core::option::Option<zenpixels::hdr::HlgRendering>, measure::LightLevelMethod) -> core::result::Result<zenpixels::hdr::ContentLightLevel, whereat::at::At<error::ConvertError>> [also: measure]
+pub fn measure_peak<S: zenpixels::buffer::PixelSource + ?core::marker::Sized>(&S, zenpixels::hdr::DiffuseWhite, core::option::Option<zenpixels::hdr::HlgRendering>) -> core::result::Result<f32, whereat::at::At<error::ConvertError>> [also: measure]
+pub fn orient_banded(&zenpixels::buffer::BandedBuf, zenpixels::orientation::Orientation, usize) -> core::result::Result<zenpixels::buffer::BandedBuf, whereat::at::At<error::ConvertError>> [also: orient]
+pub fn orient_buf(zenpixels::buffer::PixelBuf, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: orient]
+pub fn rotate_dual_layer(&zenpixels::buffer::DualLayerHdrView<'_>, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::DualLayerHdr, whereat::at::At<error::ConvertError>> [also: gainmap]
+pub fn scan_facts(&zenpixels::buffer::PixelView<'_>) -> zenpixels::facts::SampleFacts [also: scan]
+pub fn to_bgra8(&zenpixels::buffer::PixelView<'_>) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: plan]
+pub fn to_canonical<'b>(&[zenpixels::sample::plane::CodePlane<'_>], zenpixels::color::SignalRange, usize, usize, zenpixels::buffer::PixelViewMut<'b>) -> core::result::Result<(zenpixels::buffer::PixelViewMut<'b>, zenpixels::sample::exact::ExactDepth), whereat::at::At<codes::CodesError>> [also: codes]
+pub fn to_gray8(&zenpixels::buffer::PixelView<'_>) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: plan]
+pub fn to_rgb8(&zenpixels::buffer::PixelView<'_>) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: plan]
+pub fn to_rgba8(&zenpixels::buffer::PixelView<'_>) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: plan]
+pub fn ycbcr_to_rgb_f32(&zenpixels::buffer::PlanarView<'_>, ycbcr::YcbcrMatrix, zenpixels::color::SignalRange, zenpixels::color::Primaries, zenpixels::color::Transfer) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: ycbcr]
+pub fn ycbcr_to_rgb_from_planar(&zenpixels::buffer::PlanarView<'_>) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: ycbcr]
+pub fn ycbcr_to_rgb_into(&zenpixels::buffer::PlanarView<'_>, ycbcr::YcbcrMatrix, zenpixels::color::SignalRange, &mut zenpixels::buffer::PixelViewMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: ycbcr]
+pub fn ycbcr_to_rgb_with_options(&zenpixels::buffer::PlanarView<'_>, zenpixels::layout::SampleLayout, &ycbcr::YcbcrOptions) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: ycbcr]
+pub fn ycbcr_to_rgb_with_options_into(&zenpixels::buffer::PlanarView<'_>, ycbcr::YcbcrMatrix, zenpixels::color::SignalRange, &ycbcr::YcbcrOptions, &mut zenpixels::buffer::PixelViewMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: ycbcr]
 
-## trait impls (49 types)
+## trait impls (44 types)
 
-&mut zenpixels::banded::BandedPixelBuffer: PackedSink
-&mut zenpixels::buffer::PixelBuffer<P, S>: PackedSink
-&mut zenpixels::buffer::PixelSliceMut<'_, P>: PackedSink
-&zenpixels::banded::BandedPixelBuffer: PackedSource
-&zenpixels::buffer::PixelBuffer<P, S>: PackedSource
-&zenpixels::buffer::PixelSlice<'_, P>: PackedSource
-AllocationRequirements: Clone, Copy, Debug
-ByteBound: Clone, Copy, Debug, Eq, PartialEq
-CandidateTarget<'a>: Clone, Copy, Debug, From<zenpixels::color::PixelEncoding<'a>>
-CandidateTarget<'static>: From<&zenpixels::descriptor::PixelDescriptor>, From<zenpixels::descriptor::PixelDescriptor>
-ConversionSpec<'a>: Clone, Copy
-ConvertIntent: Clone, Copy, Debug, Default, Eq, PartialEq
-ConvertPlan: Debug
-OutputPlan: Debug
-OutputTarget<'a>: Clone, Debug
-Provenance: Clone, Copy, Debug, Eq, PartialEq
-SelectedConversion: Debug
-WorkExtent: Clone, Copy, Debug, Eq, PartialEq
 accel::Accelerators: Clone, Copy, Debug, Default, Eq, PartialEq
-cms::CmsPluginError: Debug, Display, Error, PartialEq
-cms::CmsRequest<'a>: Clone, Debug
 codes::CodeMap: Clone, Copy, Debug, Eq, PartialEq
 codes::CodeMapError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 codes::CodeRole: Clone, Copy, Debug, Eq, Hash, PartialEq
-converter::RowConverter: Debug
-error::ConvertError: Clone, Debug, Display, Error, From<zenpixels::buffer::BufferError>, PartialEq
+codes::CodesError: Clone, Debug, Display, Eq, Error, PartialEq
+error::ConvertError: Clone, Copy, Debug, Display, Eq, Error, From<enough::reason::StopReason>, From<zenpixels::buffer::BufferError>, From<zenpixels::color::ColorError>, From<zenpixels::layout::LayoutError>, PartialEq
+gainmap::GainMapApplier: Clone, Debug
+gainmap::GainMapApplyConfig: Clone, Debug
+gainmap::GainMapDownsample: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+gainmap::GainMapExtractConfig: Clone, Debug, Default
+gainmap::GainMapOrientation: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+gainmap::GainMapResample: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+gainmap::GainMapRowExtractor: Clone, Debug
+gainmap::GainMapTarget: Clone, Copy, Debug, PartialEq
 gamut::GamutMatrix: Clone, Copy, Debug, PartialEq
 icc_profiles::SynthesizedIcc: Clone, Debug, Eq, PartialEq
-load_bearing::LoadBearingReport: Clone, Copy, Debug, Default
+load_bearing::LoadBearingReport: Clone, Copy, Debug, Default, Eq, PartialEq
+measure::LightLevelHistogram: Clone, Debug
+measure::LightLevelMethod: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+negotiate::FormatCost: Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd
+negotiate::LossKind: Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd
+negotiate::NegotiatedFormat: Clone, Debug, Eq, PartialEq
 oklab::OklabSpace: Clone, Copy, Debug, PartialEq
-output::OutputMetadata: Clone, Debug
-output::OutputProfile: Clone, Debug
-precision::ChainFailure<E>: Debug, Display, Error
-precision::ChainPlan: Clone, Debug, Eq, PartialEq
-precision::ConversionChoice<'a>: Clone, Copy, Debug, Eq, PartialEq
-precision::ConversionDecision: Clone, Copy, Debug, Eq, PartialEq
-precision::ConversionFailure<E>: Debug, Display, Error
-precision::ConversionPolicy: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
-precision::ConversionPreset: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
-precision::ConversionQuestion<'a>: Clone, Copy, Debug
-precision::ConversionRecord: Clone, Copy, Debug, Eq, PartialEq
-precision::ConversionRefusal: Clone, Copy, Debug, Display, Eq, Error, PartialEq
-precision::DecidedBy: Clone, Copy, Debug, Eq, Hash, PartialEq
-zenpixels::banded::BandedPixelBuffer: ext::BandedPixelBufferConvertExt
-zenpixels::buffer::PixelBuffer: ext::PixelBufferConvertExt, load_bearing::PixelBufferLoadBearingExt
-zenpixels::buffer::PixelSlice<'_, P>: PackedSource, load_bearing::PixelSliceLoadBearingExt
-zenpixels::buffer::PixelSlice<'a>: ext::PixelSliceConvertExt<'a>
-zenpixels::buffer::PixelSliceMut<'_, P>: PackedSink
-zenpixels::color::Color: ext::ColorConvertExt
-impl<F, E> precision::ConversionResolver for F where F: core::ops::function::FnMut(precision::ConversionQuestion<'_>) -> core::result::Result<precision::ConversionDecision, whereat::at::At<E>>, E: core::error::Error + core::marker::Send + core::marker::Sync + 'static
+output::EncodeReady<'a>: Clone, Debug
+output::OutputPlan: Clone, Debug
+output::OutputProfile: Clone, Debug, Default, Eq, PartialEq
+plan::ImagePlan: Clone, Debug
+plan::RowPlan: Clone, Debug
+policy::AlphaPolicy: Clone, Copy, Debug, Default, PartialEq
+policy::ConvertPolicy: Clone, Debug, Default
+policy::DepthPolicy: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+policy::GamutPolicy: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+policy::LumaCoefficients: Clone, Copy, Debug, Default, PartialEq
+policy::LumaDomain: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+policy::RangePolicy: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+tonemap::gamut_compress::SoftCompress: Clone, Debug, PartialEq
+tonemap::tone_mapper::PreparedMapper: Debug
+tonemap::tone_mapper::Requirements: Clone, Copy, Debug, Default, Eq, PartialEq
+tonemap::tone_mapper::ToneMapContext: Debug
+ycbcr::ChromaUpsample: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+ycbcr::YcbcrMatrix: Clone, Copy, Debug, Eq, Hash, PartialEq
+ycbcr::YcbcrOptions: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+zenpixels::buffer::PixelBuf: load_bearing::PixelBufLoadBearingExt
+zenpixels::buffer::PixelView<'_>: load_bearing::PixelViewLoadBearingExt
 
 ## auto traits
 
-ConversionSpec<'a>: !RefUnwindSafe !UnwindSafe
-ConvertPlan: !RefUnwindSafe !UnwindSafe
-OutputPlan: !RefUnwindSafe !UnwindSafe
-SelectedConversion: !RefUnwindSafe !UnwindSafe
-cms::CmsPluginError: !RefUnwindSafe !UnwindSafe
-cms::CmsSupport: !RefUnwindSafe !UnwindSafe
-converter::RowConverter: !RefUnwindSafe !UnwindSafe
-error::ConvertError: !RefUnwindSafe !UnwindSafe
-precision::ChainFailure<E>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
-precision::ConversionFailure<E>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
+gainmap::GainMapApplier: !RefUnwindSafe !UnwindSafe
+gainmap::GainMapApplyConfig: !RefUnwindSafe !UnwindSafe
+gainmap::GainMapExtractConfig: !RefUnwindSafe !UnwindSafe
+output::EncodeReady<'a>: !RefUnwindSafe !UnwindSafe
+output::OutputPlan: !RefUnwindSafe !UnwindSafe
+plan::ImagePlan: !RefUnwindSafe !UnwindSafe
+plan::RowPlan: !RefUnwindSafe !UnwindSafe
+policy::ConvertPolicy: !RefUnwindSafe !UnwindSafe

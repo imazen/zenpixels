@@ -169,10 +169,10 @@ fn lossless_h273_cicp_all_primaries_transfers_projective_and_clli() {
 
     // CIE 1931 XYZ (CP=10) has r_y == 0 and b_y == 0; projective solver produces identity matrix!
     let xyz_mat = Primaries::Xyz.rgb_to_xyz_f64().unwrap();
-    for i in 0..3 {
-        for j in 0..3 {
+    for (i, row) in xyz_mat.iter().enumerate() {
+        for (j, &val) in row.iter().enumerate() {
             let want = if i == j { 1.0 } else { 0.0 };
-            assert!((xyz_mat[i][j] - want).abs() < 1e-6);
+            assert!((val - want).abs() < 1e-6);
         }
     }
 

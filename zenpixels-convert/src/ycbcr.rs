@@ -88,17 +88,17 @@ impl YcbcrMatrix {
     #[inline]
     #[must_use]
     pub const fn same_coefficients(self, other: Self) -> bool {
-        match (self, other) {
+        matches!(
+            (self, other),
             (Self::Identity, Self::Identity)
-            | (Self::Bt709, Self::Bt709)
-            | (Self::Fcc, Self::Fcc)
-            | (Self::Bt470Bg | Self::Bt601, Self::Bt470Bg | Self::Bt601)
-            | (Self::Smpte240M, Self::Smpte240M)
-            | (Self::YCgCo, Self::YCgCo)
-            | (Self::Bt2020, Self::Bt2020)
-            | (Self::ChromaDerivedNcl, Self::ChromaDerivedNcl) => true,
-            _ => false,
-        }
+                | (Self::Bt709, Self::Bt709)
+                | (Self::Fcc, Self::Fcc)
+                | (Self::Bt470Bg | Self::Bt601, Self::Bt470Bg | Self::Bt601)
+                | (Self::Smpte240M, Self::Smpte240M)
+                | (Self::YCgCo, Self::YCgCo)
+                | (Self::Bt2020, Self::Bt2020)
+                | (Self::ChromaDerivedNcl, Self::ChromaDerivedNcl)
+        )
     }
 
     /// Fixed `(Kr, Kb)` weights for standard NCL matrices (`None` for `Identity`, `YCgCo`,
@@ -208,6 +208,7 @@ impl YcbcrOptions {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_plane(
     plane: &PlaneView<'_>,
     crop_x: u32,
