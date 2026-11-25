@@ -57,12 +57,23 @@ const BT709_ENC_EXP: f32 = 0.45;
 
 const GAMMA22_DEC_EXP: f32 = 2.2;
 const GAMMA22_ENC_EXP: f32 = 1.0 / 2.2;
+const GAMMA28_DEC_EXP: f32 = 2.8;
+const GAMMA28_ENC_EXP: f32 = 1.0 / 2.8;
 const ADOBE_DEC_EXP: f32 = 563.0 / 256.0;
 const ADOBE_ENC_EXP: f32 = 256.0 / 563.0;
 const DCI_DEC_EXP: f32 = 2.6;
 const DCI_ENC_EXP: f32 = 1.0 / 2.6;
 const DCI_WHITE_SCALE: f32 = 52.37 / 48.0;
 const DCI_INV_WHITE_SCALE: f32 = 48.0 / 52.37;
+
+// SMPTE 240M (ITU-T H.273 TC=7): exact continuous intersection of 4*L and 1.1115*L^0.45 - 0.1115.
+const SMPTE240M_ALPHA: f64 = 1.1115;
+const SMPTE240M_BETA: f64 = 0.022_821_585_529_445;
+const SMPTE240M_BETA_LIN: f64 = 4.0 * SMPTE240M_BETA;
+
+// Logarithmic transfer thresholds (ITU-T H.273 TC=9, TC=10).
+const LOG100_MIN: f64 = 0.01;
+const LOG100_SQRT10_MIN: f64 = 0.003_162_277_660_168_379_5; // 10^-2.5 = sqrt(10) / 1000
 
 // ---------------------------------------------------------------------------
 // Scalar exact per-lane fallbacks (only invoked on non-finite / |v| > 65536 /
@@ -425,6 +436,166 @@ pub(crate) fn gamma22_eotf_scalar_slice(vals: &mut [f32]) {
 #[inline(never)]
 pub(crate) fn gamma22_oetf_scalar_slice(vals: &mut [f32]) {
     gamma_scalar_slice(vals, GAMMA22_ENC_EXP, 1.0 / 2.2);
+}
+
+#[inline(never)]
+pub(crate) fn gamma28_eotf_scalar_slice(vals: &mut [f32]) {
+    gamma_scalar_slice(vals, GAMMA28_DEC_EXP, 2.8);
+}
+
+#[inline(never)]
+pub(crate) fn gamma28_oetf_scalar_slice(vals: &mut [f32]) {
+    gamma_scalar_slice(vals, GAMMA28_ENC_EXP, 1.0 / 2.8);
+}
+
+/// SMPTE 240M (ITU-T H.273 TC=7) exact odd-symmetric EOTF.
+#[inline(never)]
+pub(crate) fn smpte240m_eotf_scalar_slice(vals: &mut [f32]) {
+    for v in vals {
+        let x = *v;
+        if !x.is_finite() {
+            continue;
+        }
+        let a = f64::from(x.abs());
+        let out = if a < SMPTE240M_BETA_LIN {
+            a * 0.25
+        } else {
+            libm::pow((a + (SMPTE240M_ALPHA - 1.0)) / SMPTE240M_ALPHA, 1.0 / 0.45)
+        };
+        *v = (out as f32).copysign(x);
+    }
+}
+
+/// SMPTE 240M (ITU-T H.273 TC=7) exact odd-symmetric OETF.
+#[inline(never)]
+pub(crate) fn smpte240m_oetf_scalar_slice(vals: &mut [f32]) {
+    for v in vals {
+        let x = *v;
+        if !x.is_finite() {
+            continue;
+        }
+        let a = f64::from(x.abs());
+        let out = if a < SMPTE240M_BETA {
+            4.0 * a
+        } else {
+            SMPTE240M_ALPHA * libm::pow(a, 0.45) - (SMPTE240M_ALPHA - 1.0)
+        };
+        *v = (out as f32).copysign(x);
+    }
+}
+
+/// ITU-T H.273 TC=9 (`100:1` logarithmic) EOTF: `v <= 0 => 0`, else `10^(2*(v - 1))`.
+#[inline(never)]
+pub(crate) fn log100_eotf_scalar_slice(vals: &mut [f32]) {
+    for v in vals {
+        let x = *v;
+        if !x.is_finite() {
+            continue;
+        }
+        *v = if x <= 0.0 {
+            0.0
+        } else {
+            libm::pow(10.0, 2.0 * (f64::from(x) - 1.0)) as f32
+        };
+    }
+}
+
+/// ITU-T H.273 TC=9 (`100:1` logarithmic) OETF: `L < 0.01 => 0`, else `1 + log10(L)/2`.
+#[inline(never)]
+pub(crate) fn log100_oetf_scalar_slice(vals: &mut [f32]) {
+    for v in vals {
+        let x = *v;
+        if !x.is_finite() {
+            continue;
+        }
+        let l = f64::from(x);
+        *v = if l < LOG100_MIN {
+            0.0
+        } else {
+            (1.0 + libm::log10(l) * 0.5) as f32
+        };
+    }
+}
+
+/// ITU-T H.273 TC=10 (`100 * sqrt(10):1` logarithmic) EOTF: `v <= 0 => 0`, else `10^(2.5*(v - 1))`.
+#[inline(never)]
+pub(crate) fn log100_sqrt10_eotf_scalar_slice(vals: &mut [f32]) {
+    for v in vals {
+        let x = *v;
+        if !x.is_finite() {
+            continue;
+        }
+        *v = if x <= 0.0 {
+            0.0
+        } else {
+            libm::pow(10.0, 2.5 * (f64::from(x) - 1.0)) as f32
+        };
+    }
+}
+
+/// ITU-T H.273 TC=10 (`100 * sqrt(10):1` logarithmic) OETF: `L < sqrt(10)/1000 => 0`, else `1 + log10(L)/2.5`.
+#[inline(never)]
+pub(crate) fn log100_sqrt10_oetf_scalar_slice(vals: &mut [f32]) {
+    for v in vals {
+        let x = *v;
+        if !x.is_finite() {
+            continue;
+        }
+        let l = f64::from(x);
+        *v = if l < LOG100_SQRT10_MIN {
+            0.0
+        } else {
+            (1.0 + libm::log10(l) / 2.5) as f32
+        };
+    }
+}
+
+/// ITU-T H.273 TC=12 (ITU-R BT.1361-0 extended colour gamut) exact EOTF.
+#[inline(never)]
+pub(crate) fn bt1361_eotf_scalar_slice(vals: &mut [f32]) {
+    const ALPHA: f64 = 1.099_296_826_809_44;
+    const BETA_LIN: f64 = 0.081_242_858_298_631_5;
+    for v in vals {
+        let x = *v;
+        if !x.is_finite() {
+            continue;
+        }
+        if x >= 0.0 {
+            *v = bt709_eotf_one(x);
+        } else {
+            let a = -4.0 * f64::from(x);
+            let out = if a < BETA_LIN {
+                f64::from(x) / 4.5
+            } else {
+                -0.25 * libm::pow((a + (ALPHA - 1.0)) / ALPHA, 1.0 / 0.45)
+            };
+            *v = out as f32;
+        }
+    }
+}
+
+/// ITU-T H.273 TC=12 (ITU-R BT.1361-0 extended colour gamut) exact OETF.
+#[inline(never)]
+pub(crate) fn bt1361_oetf_scalar_slice(vals: &mut [f32]) {
+    const ALPHA: f64 = 1.099_296_826_809_44;
+    const BETA: f64 = 0.018_053_968_510_807;
+    for v in vals {
+        let x = *v;
+        if !x.is_finite() {
+            continue;
+        }
+        if x >= 0.0 {
+            *v = bt709_oetf_one(x);
+        } else {
+            let a = -4.0 * f64::from(x);
+            let out = if a < BETA {
+                4.5 * f64::from(x)
+            } else {
+                -0.25 * (ALPHA * libm::pow(a, 0.45) - (ALPHA - 1.0))
+            };
+            *v = out as f32;
+        }
+    }
 }
 
 #[inline(never)]

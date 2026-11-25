@@ -649,10 +649,22 @@ mod tests {
                 // gap, not a profile error, so Unknown fields are skipped.)
                 if let Some(id) = zenpixels::icc::IccIdentification::from_icc(&bytes) {
                     if let Some(want_p) = Primaries::from_cicp(asked.color_primaries) {
-                        assert_eq!(id.primaries, want_p, "({p}, {t}): identified primaries");
+                        assert!(
+                            id.primaries.same_chromaticity(want_p),
+                            "({p}, {t}): identified primaries {:?} vs {want_p:?}",
+                            id.primaries
+                        );
                     }
                     if let Some(want_t) = Transfer::from_cicp(asked.transfer_characteristics) {
-                        assert_eq!(id.transfer, want_t, "({p}, {t}): identified transfer");
+                        // ICC v4 TRC tags only encode `[0, 1]`, where BT.1361 (TC=12) is
+                        // identical to BT.709 (TC=1); only negative extended values differ.
+                        let unit_trc_match = id.transfer.same_curve(want_t)
+                            || (id.transfer == Transfer::Bt709 && want_t == Transfer::Bt1361);
+                        assert!(
+                            unit_trc_match,
+                            "({p}, {t}): identified transfer {:?} vs {want_t:?}",
+                            id.transfer
+                        );
                     }
                 }
                 checked += 1;

@@ -1159,16 +1159,16 @@ pub(crate) fn detect_fast_row(
                 white: dw,
             },
         ) => {
-            if sp != dp
+            if !sp.same_chromaticity(*dp)
                 || sr != dr
                 || *sr != SignalRange::Full
                 || sa != da
                 || (*sa == AlphaMode::Opaque && is_rgba)
-                || (*sa == AlphaMode::Premultiplied && st != dt)
+                || (*sa == AlphaMode::Premultiplied && !st.same_curve(*dt))
             {
                 return None;
             }
-            if *st == *dt
+            if st.same_curve(*dt)
                 && let (Some(a), Some(b)) = (sw, dw)
                 && ((a.nits() / b.nits()) - 1.0).abs() > 1e-6
             {
@@ -1194,11 +1194,11 @@ pub(crate) fn detect_fast_row(
                 || *sr != SignalRange::Full
                 || sa != da
                 || (*sa == AlphaMode::Opaque && src.layout.order.has_alpha_slot())
-                || (*sa == AlphaMode::Premultiplied && st != dt)
+                || (*sa == AlphaMode::Premultiplied && !st.same_curve(*dt))
             {
                 return None;
             }
-            if *st == *dt
+            if st.same_curve(*dt)
                 && let (Some(a), Some(b)) = (sw, dw)
                 && ((a.nits() / b.nits()) - 1.0).abs() > 1e-6
             {
@@ -1209,12 +1209,12 @@ pub(crate) fn detect_fast_row(
         _ => return None,
     };
 
-    if st != dt && (st == Transfer::Unknown || dt == Transfer::Unknown) {
+    if !st.same_curve(dt) && (st == Transfer::Unknown || dt == Transfer::Unknown) {
         return None;
     }
 
     use SampleType as S;
-    if st == dt {
+    if st.same_curve(dt) {
         return match (src.layout.sample, dst.layout.sample) {
             (S::F16, S::F32) => Some(FastRow::F16ToF32 { channels: ch }),
             (S::F32, S::F16) => Some(FastRow::F32ToF16 { channels: ch }),
@@ -1256,7 +1256,7 @@ pub(crate) fn detect_fast_row(
         });
     }
 
-    // F32 <-> F32 single transfer (Linear <-> Srgb / Bt709 / Gamma22 / AdobeRgb / DciCinema / Gamma / Pq).
+    // F32 <-> F32 single transfer (Linear <-> any non-HLG known transfer).
     // HLG <-> Linear always resolves through `resolve_hlg` into the BT.2100-3 display strip path.
     // PQ -> Linear under `GamutPolicy::Clip` must clamp to `[0, 1]` in the strip path (B34), so
     // only use `FastRow::TransferF32` for PQ -> Linear when NOT clipping (i.e. PreserveExtended/Forbid).
@@ -1266,7 +1266,16 @@ pub(crate) fn detect_fast_row(
                 t,
                 Transfer::Srgb
                     | Transfer::Bt709
+                    | Transfer::Bt601
+                    | Transfer::Iec61966_2_4
+                    | Transfer::Bt2020_10bit
+                    | Transfer::Bt2020_12bit
                     | Transfer::Gamma22
+                    | Transfer::Gamma28
+                    | Transfer::Smpte240M
+                    | Transfer::Log100
+                    | Transfer::Log100Sqrt10
+                    | Transfer::Bt1361
                     | Transfer::AdobeRgb
                     | Transfer::DciCinema
                     | Transfer::Gamma(_)
@@ -2562,7 +2571,14 @@ fn apply_transfer_slice(
                 srgb_oetf_scalar_slice(ch);
             }
         }
-        (Transfer::Bt709, true) => {
+        (
+            Transfer::Bt709
+            | Transfer::Bt601
+            | Transfer::Iec61966_2_4
+            | Transfer::Bt2020_10bit
+            | Transfer::Bt2020_12bit,
+            true,
+        ) => {
             if !preserve_extended {
                 clamp_slice_unit(ch);
             }
@@ -2572,7 +2588,14 @@ fn apply_transfer_slice(
                 crate::transfers::bt709_eotf_scalar_slice(ch);
             }
         }
-        (Transfer::Bt709, false) => {
+        (
+            Transfer::Bt709
+            | Transfer::Bt601
+            | Transfer::Iec61966_2_4
+            | Transfer::Bt2020_10bit
+            | Transfer::Bt2020_12bit,
+            false,
+        ) => {
             if !preserve_extended {
                 clamp_slice_unit(ch);
             }
@@ -2601,6 +2624,74 @@ fn apply_transfer_slice(
             } else {
                 crate::transfers::gamma22_oetf_scalar_slice(ch);
             }
+        }
+        (Transfer::Gamma28, true) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            if let Some(f) = accel.gamma_pow {
+                f(ch, 2.8_f32, 2.8_f64);
+            } else {
+                crate::transfers::gamma28_eotf_scalar_slice(ch);
+            }
+        }
+        (Transfer::Gamma28, false) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            if let Some(f) = accel.gamma_pow {
+                f(ch, (1.0_f64 / 2.8_f64) as f32, 1.0_f64 / 2.8_f64);
+            } else {
+                crate::transfers::gamma28_oetf_scalar_slice(ch);
+            }
+        }
+        (Transfer::Smpte240M, true) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            crate::transfers::smpte240m_eotf_scalar_slice(ch);
+        }
+        (Transfer::Smpte240M, false) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            crate::transfers::smpte240m_oetf_scalar_slice(ch);
+        }
+        (Transfer::Log100, true) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            crate::transfers::log100_eotf_scalar_slice(ch);
+        }
+        (Transfer::Log100, false) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            crate::transfers::log100_oetf_scalar_slice(ch);
+        }
+        (Transfer::Log100Sqrt10, true) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            crate::transfers::log100_sqrt10_eotf_scalar_slice(ch);
+        }
+        (Transfer::Log100Sqrt10, false) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            crate::transfers::log100_sqrt10_oetf_scalar_slice(ch);
+        }
+        (Transfer::Bt1361, true) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            crate::transfers::bt1361_eotf_scalar_slice(ch);
+        }
+        (Transfer::Bt1361, false) => {
+            if !preserve_extended {
+                clamp_slice_unit(ch);
+            }
+            crate::transfers::bt1361_oetf_scalar_slice(ch);
         }
         (Transfer::AdobeRgb, true) => {
             if !preserve_extended {
@@ -3124,8 +3215,8 @@ pub(crate) fn detect_byte_fast_path(
                 white: dw,
             },
         ) => {
-            sp == dp
-                && st == dt
+            sp.same_chromaticity(*dp)
+                && st.same_curve(*dt)
                 && sr == dr
                 && sw == dw
                 && alpha_compatible_for_byte_fast_path(*sa, *da, src_proven_opaque)
@@ -3145,7 +3236,7 @@ pub(crate) fn detect_byte_fast_path(
                 ..
             },
         ) => {
-            st == dt
+            st.same_curve(*dt)
                 && sr == dr
                 && sw == dw
                 && *sa == AlphaMode::None
@@ -3171,7 +3262,7 @@ pub(crate) fn detect_byte_fast_path(
                 white: dw,
             },
         ) => {
-            st == dt
+            st.same_curve(*dt)
                 && sr == dr
                 && sw == dw
                 && alpha_compatible_for_byte_fast_path(*sa, *da, src_proven_opaque)
@@ -3338,8 +3429,8 @@ pub(crate) fn detect_byte_fast_path(
                 white: dw,
             },
         ) = (&src.color, &dst.color)
-        && sp == dp
-        && st == dt
+        && sp.same_chromaticity(*dp)
+        && st.same_curve(*dt)
         && sr == dr
         && *sr == SignalRange::Full
         && sw == dw
@@ -3382,7 +3473,7 @@ pub(crate) fn detect_byte_fast_path(
                 white: dw,
             },
         ) = (&src.color, &dst.color)
-        && st == dt
+        && st.same_curve(*dt)
         && sr == dr
         && sw == dw
         && (*sa != AlphaMode::Premultiplied || src_proven_opaque)

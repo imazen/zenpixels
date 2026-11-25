@@ -1,6 +1,6 @@
 //! Codec format negotiation: select the lowest-loss, lowest-effort supported [`ImageSpec`].
 
-use zenpixels::{ColorSpace, ImageSpec, Primaries, Transfer};
+use zenpixels::{ColorSpace, ImageSpec, PixelFormat, Primaries, Transfer};
 
 use crate::plan::{
     color_primaries, color_transfer, preflight_and_classify, same_color_meaning, try_substitute_icc,
@@ -68,105 +68,126 @@ impl Negotiate {
     ) -> Option<NegotiatedFormat> {
         let mut best: Option<NegotiatedFormat> = None;
         for (index, cand) in supported.iter().enumerate() {
-            let pre = match preflight_and_classify(src, cand, policy) {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
-
-            if !pre.is_identity {
-                // Check CMS substitution vs direct CMS feasibility.
-                let eff_src_owned = if pre.uses_cms {
-                    try_substitute_icc(src, policy)
-                } else {
-                    None
-                };
-                let eff_dst_owned = if pre.uses_cms {
-                    try_substitute_icc(cand, policy)
-                } else {
-                    None
-                };
-                let direct_cms =
-                    pre.uses_cms && (eff_src_owned.is_none() || eff_dst_owned.is_none());
-
-                if direct_cms {
-                    let Some(cms) = policy.cms.as_ref() else {
-                        continue;
-                    };
-                    if policy.depth == DepthPolicy::OrderedDither
-                        || policy.gamut == GamutPolicy::SoftCompress
-                    {
-                        continue;
-                    }
-                    if !cms.supports_specs(src, cand) {
-                        continue;
-                    }
-                } else {
-                    let eff_src = eff_src_owned.as_ref().unwrap_or(src);
-                    let eff_dst = eff_dst_owned.as_ref().unwrap_or(cand);
-                    if !native_route_feasible(eff_src, eff_dst, policy, pre.matte_color.is_some()) {
-                        continue;
-                    }
-                }
-            }
-
-            let mut loss_mask = 0u8;
-            if pre.depth_reduces {
-                loss_mask |= 1 << 0;
-            }
-            if pre.gamut_narrows || pre.is_hdr_to_sdr || pre.range_change {
-                loss_mask |= 1 << 1;
-            }
-            if pre.drops_chroma && !pre.chroma_proven_gray {
-                loss_mask |= 1 << 2;
-            }
-            if pre.drops_alpha && !pre.alpha_proven_opaque {
-                loss_mask |= 1 << 3;
-            }
-
-            let (loss, loss_rank) = if (loss_mask & (1 << 3)) != 0 {
-                (LossKind::Alpha, 4)
-            } else if (loss_mask & (1 << 2)) != 0 {
-                (LossKind::Chroma, 3)
-            } else if (loss_mask & (1 << 1)) != 0 {
-                (LossKind::Gamut, 2)
-            } else if (loss_mask & (1 << 0)) != 0 {
-                (LossKind::Depth, 1)
-            } else {
-                (LossKind::None, 0)
-            };
-
-            let effort = if pre.is_identity {
-                0
-            } else if same_color_meaning(&src.color, &cand.color)
-                && !pre.range_change
-                && src.color.alpha() == cand.color.alpha()
+            if let Some(scored) = score_candidate(src, cand, index, policy)
+                && best.as_ref().is_none_or(|prev| scored.cost < prev.cost)
             {
-                1
-            } else {
-                2
-            };
-
-            let cost = FormatCost {
-                loss_rank,
-                loss_mask,
-                effort,
-                bytes_per_pixel: cand.layout.bytes_per_pixel().min(255) as u8,
-            };
-            let replace = match &best {
-                None => true,
-                Some(prev) => cost < prev.cost,
-            };
-            if replace {
-                best = Some(NegotiatedFormat {
-                    index,
-                    spec: cand.clone(),
-                    loss,
-                    cost,
-                });
+                best = Some(scored);
             }
         }
         best
     }
+
+    /// Select the best candidate from a `Copy`/`const` [`PixelFormat`] capability table
+    /// (e.g. `&[PixelFormat::RGB8_SRGB, PixelFormat::RGBA8_SRGB]`) under `policy`.
+    #[must_use]
+    pub fn select_format(
+        src: &ImageSpec,
+        supported: &[PixelFormat],
+        policy: &ConvertPolicy,
+    ) -> Option<NegotiatedFormat> {
+        let mut best: Option<NegotiatedFormat> = None;
+        for (index, &fmt) in supported.iter().enumerate() {
+            let cand = fmt.to_spec();
+            if let Some(scored) = score_candidate(src, &cand, index, policy)
+                && best.as_ref().is_none_or(|prev| scored.cost < prev.cost)
+            {
+                best = Some(scored);
+            }
+        }
+        best
+    }
+}
+
+fn score_candidate(
+    src: &ImageSpec,
+    cand: &ImageSpec,
+    index: usize,
+    policy: &ConvertPolicy,
+) -> Option<NegotiatedFormat> {
+    let pre = preflight_and_classify(src, cand, policy).ok()?;
+
+    if !pre.is_identity {
+        // Check CMS substitution vs direct CMS feasibility.
+        let eff_src_owned = if pre.uses_cms {
+            try_substitute_icc(src, policy)
+        } else {
+            None
+        };
+        let eff_dst_owned = if pre.uses_cms {
+            try_substitute_icc(cand, policy)
+        } else {
+            None
+        };
+        let direct_cms = pre.uses_cms && (eff_src_owned.is_none() || eff_dst_owned.is_none());
+
+        if direct_cms {
+            let cms = policy.cms.as_ref()?;
+            if policy.depth == DepthPolicy::OrderedDither
+                || policy.gamut == GamutPolicy::SoftCompress
+            {
+                return None;
+            }
+            if !cms.supports_specs(src, cand) {
+                return None;
+            }
+        } else {
+            let eff_src = eff_src_owned.as_ref().unwrap_or(src);
+            let eff_dst = eff_dst_owned.as_ref().unwrap_or(cand);
+            if !native_route_feasible(eff_src, eff_dst, policy, pre.matte_color.is_some()) {
+                return None;
+            }
+        }
+    }
+
+    let mut loss_mask = 0u8;
+    if pre.depth_reduces {
+        loss_mask |= 1 << 0;
+    }
+    if pre.gamut_narrows || pre.is_hdr_to_sdr || pre.range_change {
+        loss_mask |= 1 << 1;
+    }
+    if pre.drops_chroma && !pre.chroma_proven_gray {
+        loss_mask |= 1 << 2;
+    }
+    if pre.drops_alpha && !pre.alpha_proven_opaque {
+        loss_mask |= 1 << 3;
+    }
+
+    let (loss, loss_rank) = if (loss_mask & (1 << 3)) != 0 {
+        (LossKind::Alpha, 4)
+    } else if (loss_mask & (1 << 2)) != 0 {
+        (LossKind::Chroma, 3)
+    } else if (loss_mask & (1 << 1)) != 0 {
+        (LossKind::Gamut, 2)
+    } else if (loss_mask & (1 << 0)) != 0 {
+        (LossKind::Depth, 1)
+    } else {
+        (LossKind::None, 0)
+    };
+
+    let effort = if pre.is_identity {
+        0
+    } else if same_color_meaning(&src.color, &cand.color)
+        && !pre.range_change
+        && src.color.alpha() == cand.color.alpha()
+    {
+        1
+    } else {
+        2
+    };
+
+    let cost = FormatCost {
+        loss_rank,
+        loss_mask,
+        effort,
+        bytes_per_pixel: cand.layout.bytes_per_pixel().min(255) as u8,
+    };
+    Some(NegotiatedFormat {
+        index,
+        spec: cand.clone(),
+        loss,
+        cost,
+    })
 }
 
 fn native_route_feasible(
@@ -208,7 +229,7 @@ fn native_route_feasible(
         return false;
     }
 
-    let gamut_changes = sp != dp
+    let gamut_changes = !sp.same_chromaticity(dp)
         && matches!(src.color, ColorSpace::Rgb { .. })
         && matches!(dst.color, ColorSpace::Rgb { .. });
     if gamut_changes && (sp == Primaries::Unknown || dp == Primaries::Unknown) {
@@ -238,7 +259,7 @@ fn native_route_feasible(
         }
     }
 
-    let need_linear = st != dt
+    let need_linear = !st.same_curve(dt)
         || gamut_changes
         || matte_active
         || matches!(
@@ -256,7 +277,7 @@ fn native_route_feasible(
             && src.color.white().is_some()
             && dst.color.white().is_some());
 
-    if (need_linear || st != dt) && (st == Transfer::Unknown || dt == Transfer::Unknown) {
+    if (need_linear || !st.same_curve(dt)) && (st == Transfer::Unknown || dt == Transfer::Unknown) {
         return false;
     }
 

@@ -229,14 +229,33 @@ fn image_spec_validate_rejects_hlg_display_on_gray_and_icc_signature_mismatch() 
         "HLG Display OOTF is undefined on Gray"
     );
 
-    // Minimal 128-byte ICC header with 'GRAY' at bytes 16..20 and 'acsp' at 36..40.
-    let mut gray_icc = vec![0u8; 128];
+    // Minimal structurally valid 132-byte ICC header with 'GRAY' at 16..20, 'mntr' at 12..16,
+    // 'acsp' at 36..40, declared size = 132, and tag count = 0.
+    let mut gray_icc = vec![0u8; 132];
+    gray_icc[0..4].copy_from_slice(&132u32.to_be_bytes());
+    gray_icc[12..16].copy_from_slice(b"mntr");
     gray_icc[16..20].copy_from_slice(b"GRAY");
     gray_icc[36..40].copy_from_slice(b"acsp");
     #[cfg(feature = "icc")]
     assert_eq!(
         zenpixels::icc::profile_color_space(&gray_icc),
         Some(IccColorSpace::Gray)
+    );
+
+    // Truncated 128-byte ICC (missing 4-byte tag count / zero declared size) MUST be rejected!
+    let truncated_icc = vec![0u8; 128];
+    let trunc_spec = ImageSpec::new(
+        SampleLayout::GRAY8,
+        ColorSpace::Icc {
+            profile: Arc::from(truncated_icc.as_slice()),
+            channels: 1,
+            alpha: AlphaMode::None,
+            intent: RenderingIntent::Perceptual,
+        },
+    );
+    assert!(
+        trunc_spec.validate().is_err(),
+        "truncated 128-byte ICC must fail structural validation"
     );
 
     // Gray ICC attached to RGB8 layout must be rejected!

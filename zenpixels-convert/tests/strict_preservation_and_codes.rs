@@ -800,7 +800,7 @@ fn d03_codemap_and_to_canonical_exhaustive() {
         DepthPolicy::Round,
         RangePolicy::Convert,
         Nits::new(100.0),
-        convert_buf,
+        |v, s: &ImageSpec, p, pk| convert_buf(v, s, p, pk),
     );
 }
 

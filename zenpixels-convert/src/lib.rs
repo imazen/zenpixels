@@ -94,7 +94,9 @@ pub use orient::{
     apply_orientation, apply_orientation_banded_into, apply_orientation_into, orient_banded,
     orient_buf,
 };
-pub use output::{EncodeReady, OutputPlan, OutputProfile, adapt_for_encode};
+pub use output::{
+    EncodeReady, OutputPlan, OutputProfile, adapt_for_encode, adapt_for_encode_format,
+};
 pub use plan::{
     ImagePlan, RowPlan, convert_buf, convert_into, to_bgra8, to_gray8, to_rgb8, to_rgba8,
 };

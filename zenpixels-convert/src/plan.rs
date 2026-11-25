@@ -98,24 +98,37 @@ impl core::fmt::Debug for RowPlan {
 impl RowPlan {
     /// Compile a single-row conversion plan from `src` to `dst` under `policy`.
     ///
+    /// Accepts either borrowed `&ImageSpec` (zero-clone) or owned `ImageSpec`.
+    ///
     /// For HDR → SDR tone mapping with a pipeline-managed mapper, pass
     /// `hdr_peak: Some(nits)`. To measure peak automatically over a whole image,
     /// use [`ImagePlan::build`] with [`PeakSource::Measured`].
+    #[inline]
     pub fn build(
-        src: ImageSpec,
-        dst: ImageSpec,
+        src: impl AsRef<ImageSpec>,
+        dst: impl AsRef<ImageSpec>,
         policy: &ConvertPolicy,
         hdr_peak: Option<Nits>,
     ) -> Result<Self, At<ConvertError>> {
-        let pre = preflight_and_classify(&src, &dst, policy)?;
+        Self::build_inner(src.as_ref(), dst.as_ref(), policy, hdr_peak)
+    }
+
+    #[inline(never)]
+    fn build_inner(
+        src: &ImageSpec,
+        dst: &ImageSpec,
+        policy: &ConvertPolicy,
+        hdr_peak: Option<Nits>,
+    ) -> Result<Self, At<ConvertError>> {
+        let pre = preflight_and_classify(src, dst, policy)?;
         let accel = accel::resolve(policy.accelerators);
 
         // 1. Byte-exact identity (supports all 11 sample types).
         if pre.is_identity {
             return Ok(Self {
                 output_facts: policy.source_facts,
-                src,
-                dst,
+                src: src.clone(),
+                dst: dst.clone(),
                 exec: RowExec::Byte(ByteFastPath::Memcpy),
                 depth_policy: policy.depth,
                 accel,
@@ -131,18 +144,18 @@ impl RowPlan {
         //    Pass `policy.source_facts.all_opaque` (proven stored max alpha, NOT merely logical
         //    `AlphaMode::Opaque`) so unverified `Opaque` junk alpha bytes are canonicalized!
         if let Some(bp) = strip::detect_byte_fast_path(
-            &src,
-            &dst,
+            src,
+            dst,
             policy.depth,
             policy.luma,
             policy.luma_domain,
             matte_color.is_some(),
             policy.source_facts.all_opaque,
         ) {
-            let output_facts = derive_output_facts_byte(&src, &dst, policy.source_facts, bp);
+            let output_facts = derive_output_facts_byte(src, dst, policy.source_facts, bp);
             return Ok(Self {
-                src,
-                dst,
+                src: src.clone(),
+                dst: dst.clone(),
                 exec: RowExec::Byte(bp),
                 depth_policy: policy.depth,
                 accel,
@@ -153,15 +166,21 @@ impl RowPlan {
         // 3. ICC / CMYK routing (policy checks have ALREADY passed in `preflight_and_classify`!).
         if pre.uses_cms {
             if let (Some(sub_src), Some(sub_dst)) = (
-                try_substitute_icc(&src, policy),
-                try_substitute_icc(&dst, policy),
+                try_substitute_icc(src, policy),
+                try_substitute_icc(dst, policy),
             ) {
-                let mut inner = Self::build(sub_src, sub_dst, policy, hdr_peak)?;
-                inner.src = src;
-                inner.dst = dst;
+                let mut inner = Self::build_inner(&sub_src, &sub_dst, policy, hdr_peak)?;
+                inner.src = src.clone();
+                inner.dst = dst.clone();
                 return Ok(inner);
             }
-            return Self::build_cms(src, dst, policy, pre.matte_color.is_some(), accel);
+            return Self::build_cms(
+                src.clone(),
+                dst.clone(),
+                policy,
+                pre.matte_color.is_some(),
+                accel,
+            );
         }
 
         // 4. Resolve photometry, transfers, HDR white anchors, and HLG BEFORE FastRow or Strip!
@@ -169,8 +188,8 @@ impl RowPlan {
         let dst_tf = color_transfer(&dst.color);
         let src_range = color_range(&src.color);
         let dst_range = color_range(&dst.color);
-        let src_bits = effective_color_bits(&src);
-        let dst_bits = effective_color_bits(&dst);
+        let src_bits = effective_color_bits(src);
+        let dst_bits = effective_color_bits(dst);
 
         let src_is_pq = matches!(src_tf, Transfer::Pq);
         let dst_is_pq = matches!(dst_tf, Transfer::Pq);
@@ -197,7 +216,7 @@ impl RowPlan {
 
         // Reject `Transfer::Unknown` whenever transfer changes or linear-domain math is required.
         if (src_tf == Transfer::Unknown || dst_tf == Transfer::Unknown)
-            && (src_tf != dst_tf || need_linear_space)
+            && (!src_tf.same_curve(dst_tf) || need_linear_space)
         {
             return Err(err_at(ConvertError::UnsupportedRoute));
         }
@@ -279,7 +298,7 @@ impl RowPlan {
 
         // 5. Direct contiguous single-stage row fast path (zero AoS↔SoA bounce)
         // ONLY after policy, Transfer::Unknown, relative-white, and HLG are resolved!
-        let is_linear_hdr = is_scene_linear_hdr_candidate(&src, &dst)
+        let is_linear_hdr = is_scene_linear_hdr_candidate(src, dst)
             && hdr_peak.is_some_and(|p| p.nits() > white_nits * (1.0 + 1e-4));
         let is_hdr_to_sdr = pre.is_hdr_to_sdr || is_linear_hdr;
         if !(is_hdr_to_sdr && policy.tone_map_hdr_to_sdr)
@@ -288,8 +307,8 @@ impl RowPlan {
             && dst_prepared_hlg.is_none()
             && policy.gamut != GamutPolicy::SoftCompress
             && let Some(fr) = strip::detect_fast_row(
-                &src,
-                &dst,
+                src,
+                dst,
                 policy.depth,
                 policy.gamut,
                 policy.allow_approximate,
@@ -330,8 +349,8 @@ impl RowPlan {
                 FastRow::SrgbU8ToLinF32 { .. } | FastRow::U8ToF32 { .. } | FastRow::U16ToF32 { .. }
             );
             let output_facts = derive_output_facts_math(
-                &src,
-                &dst,
+                src,
+                dst,
                 policy.source_facts,
                 clamped_color,
                 alpha_filled_opaque,
@@ -340,8 +359,8 @@ impl RowPlan {
                 safe_no_subnormals,
             );
             return Ok(Self {
-                src,
-                dst,
+                src: src.clone(),
+                dst: dst.clone(),
                 exec: RowExec::FastRow(fr),
                 depth_policy: policy.depth,
                 accel,
@@ -489,7 +508,7 @@ impl RowPlan {
         if is_hdr_to_sdr && policy.tone_map_hdr_to_sdr {
             let mapper_arc = resolve_tone_mapper(policy)?;
             let work_primaries = mapper_arc.working_primaries_for(dst_primaries);
-            if cur_primaries != work_primaries {
+            if !cur_primaries.same_chromaticity(work_primaries) {
                 let m = cur_primaries
                     .gamut_matrix_to(work_primaries)
                     .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
@@ -547,7 +566,7 @@ impl RowPlan {
         // 6g. Linear-light 3×3 Gamut Matrix (ALWAYS BEFORE encoding or clamping!).
         if !cur_is_gray
             && matches!(dst.color, ColorSpace::Rgb { .. })
-            && cur_primaries != dst_primaries
+            && !cur_primaries.same_chromaticity(dst_primaries)
         {
             let m = cur_primaries
                 .gamut_matrix_to(dst_primaries)
@@ -713,8 +732,8 @@ impl RowPlan {
                     | (Transfer::Srgb, Transfer::Srgb)
             );
         let output_facts = derive_output_facts_math(
-            &src,
-            &dst,
+            src,
+            dst,
             policy.source_facts,
             clamped_color,
             alpha_filled_opaque,
@@ -724,8 +743,8 @@ impl RowPlan {
         );
 
         Ok(Self {
-            src,
-            dst,
+            src: src.clone(),
+            dst: dst.clone(),
             exec: RowExec::Strip {
                 ops,
                 src_opaque_alpha,
@@ -946,12 +965,25 @@ impl ImagePlan {
 
     /// Validate and construct an image-level conversion plan.
     ///
+    /// Accepts either borrowed `&ImageSpec` (zero-clone) or owned `ImageSpec`.
+    ///
     /// When the route does not require per-image HDR peak resolution or runtime
     /// buffer facts (`DiscardIfOpaque` / `Forbid` on U16→U8, RGB→Gray, or float→int),
     /// the compiled [`RowPlan`] is built **once** and reused across every `execute` call.
+    #[inline]
     pub fn build(
-        src: ImageSpec,
-        dst: ImageSpec,
+        src: impl AsRef<ImageSpec>,
+        dst: impl AsRef<ImageSpec>,
+        policy: ConvertPolicy,
+        peak: PeakSource,
+    ) -> Result<Self, At<ConvertError>> {
+        Self::build_inner(src.as_ref(), dst.as_ref(), policy, peak)
+    }
+
+    #[inline(never)]
+    fn build_inner(
+        src: &ImageSpec,
+        dst: &ImageSpec,
         policy: ConvertPolicy,
         peak: PeakSource,
     ) -> Result<Self, At<ConvertError>> {
@@ -963,7 +995,7 @@ impl ImagePlan {
             && !dst.layout.sample.is_float()
             && color_range(&src.color) == color_range(&dst.color)
             && same_color_meaning(&src.color, &dst.color)
-            && is_depth_reducing(&src, &dst, policy.source_facts);
+            && is_depth_reducing(src, dst, policy.source_facts);
 
         let reassociates_alpha = matches!(
             (src.color.alpha(), dst.color.alpha()),
@@ -1000,7 +1032,7 @@ impl ImagePlan {
             && policy.tone_map_hdr_to_sdr;
 
         let is_linear_hdr_candidate =
-            is_scene_linear_hdr_candidate(&src, &dst) && policy.tone_map_hdr_to_sdr;
+            is_scene_linear_hdr_candidate(src, dst) && policy.tone_map_hdr_to_sdr;
 
         let mapper_needs_runtime_peak = (is_hdr_tonemap
             && !matches!(peak, PeakSource::Fixed(_))
@@ -1013,7 +1045,7 @@ impl ImagePlan {
             let fixed_peak = match peak {
                 PeakSource::Fixed(n) => {
                     if is_linear_hdr_candidate {
-                        let ceiling = linear_sdr_ceiling_nits(&src, &dst, &policy);
+                        let ceiling = linear_sdr_ceiling_nits(src, dst, &policy);
                         if n.nits() > ceiling * (1.0 + 1e-4) {
                             Some(n)
                         } else {
@@ -1025,10 +1057,10 @@ impl ImagePlan {
                 }
                 _ => None,
             };
-            let compiled = RowPlan::build(src.clone(), dst.clone(), &policy, fixed_peak)?;
+            let compiled = RowPlan::build_inner(src, dst, &policy, fixed_peak)?;
             return Ok(Self {
-                src,
-                dst,
+                src: src.clone(),
+                dst: dst.clone(),
                 policy,
                 peak,
                 cached_row_plan: Some(compiled),
@@ -1042,9 +1074,9 @@ impl ImagePlan {
         }
         if probe_policy.depth == DepthPolicy::Forbid && u16_narrowable {
             let sr = color_range(&src.color);
-            let min_c = min_color_bits(&dst).max(if sr == SignalRange::Narrow { 8 } else { 1 });
+            let min_c = min_color_bits(dst).max(if sr == SignalRange::Narrow { 8 } else { 1 });
             let min_a = if dst.layout.order.has_alpha_slot() {
-                raw_channel_bits(&dst, dst.layout.channels() - 1).min(16)
+                raw_channel_bits(dst, dst.layout.channels() - 1).min(16)
             } else {
                 16
             };
@@ -1063,18 +1095,18 @@ impl ImagePlan {
         {
             probe_policy.source_facts.float = FloatFacts::UNIT_INTERVAL;
         }
-        let pre = preflight_and_classify(&src, &dst, &probe_policy)?;
+        let pre = preflight_and_classify(src, dst, &probe_policy)?;
         if !pre.uses_cms {
             let test_peak = match peak {
                 PeakSource::Fixed(n) => Some(n),
                 _ if is_hdr_tonemap => Some(Nits::new(1000.0)),
                 _ => None,
             };
-            let _ = RowPlan::build(src.clone(), dst.clone(), &probe_policy, test_peak)?;
+            let _ = RowPlan::build_inner(src, dst, &probe_policy, test_peak)?;
         }
         Ok(Self {
-            src,
-            dst,
+            src: src.clone(),
+            dst: dst.clone(),
             policy,
             peak,
             cached_row_plan: None,
@@ -1105,12 +1137,7 @@ impl ImagePlan {
             let mut eff_policy = self.policy.clone();
             eff_policy.source_facts = merged_src_facts;
             let resolved_peak = self.resolve_peak(src, &eff_policy)?;
-            built_plan = RowPlan::build(
-                self.src.clone(),
-                self.dst.clone(),
-                &eff_policy,
-                resolved_peak,
-            )?;
+            built_plan = RowPlan::build_inner(&self.src, &self.dst, &eff_policy, resolved_peak)?;
             &built_plan
         };
 
@@ -1264,13 +1291,16 @@ impl ImagePlan {
 }
 
 /// One-shot convenience helper: convert a borrowed [`PixelView`] into a new [`PixelBuf`].
+///
+/// Accepts either borrowed `&ImageSpec` (zero-clone) or owned `ImageSpec`.
+#[inline]
 pub fn convert_buf(
     src: &PixelView<'_>,
-    dst_spec: ImageSpec,
+    dst_spec: impl AsRef<ImageSpec>,
     policy: &ConvertPolicy,
     peak: PeakSource,
 ) -> Result<PixelBuf, At<ConvertError>> {
-    let plan = ImagePlan::build(src.spec().clone(), dst_spec, policy.clone(), peak)?;
+    let plan = ImagePlan::build_inner(src.spec(), dst_spec.as_ref(), policy.clone(), peak)?;
     plan.execute(src)
 }
 
@@ -1281,12 +1311,7 @@ pub fn convert_into<S: PixelSource + ?Sized, D: PixelSink + ?Sized>(
     policy: &ConvertPolicy,
     peak: PeakSource,
 ) -> Result<(), At<ConvertError>> {
-    let plan = ImagePlan::build(
-        src.source_spec().clone(),
-        dst.sink_spec().clone(),
-        policy.clone(),
-        peak,
-    )?;
+    let plan = ImagePlan::build_inner(src.source_spec(), dst.sink_spec(), policy.clone(), peak)?;
     plan.execute_into(src, dst)
 }
 
@@ -1551,7 +1576,7 @@ pub(crate) fn same_color_meaning(a: &ColorSpace, b: &ColorSpace) -> bool {
                 white: wb,
                 ..
             },
-        ) => pa == pb && ta == tb && ra == rb && wa == wb,
+        ) => pa.same_chromaticity(*pb) && ta.same_curve(*tb) && ra == rb && wa == wb,
         (
             ColorSpace::Gray {
                 transfer: ta,
@@ -1565,7 +1590,7 @@ pub(crate) fn same_color_meaning(a: &ColorSpace, b: &ColorSpace) -> bool {
                 white: wb,
                 ..
             },
-        ) => ta == tb && ra == rb && wa == wb,
+        ) => ta.same_curve(*tb) && ra == rb && wa == wb,
         (
             ColorSpace::Xyz {
                 white_point: wa,
@@ -1637,7 +1662,7 @@ pub(crate) fn same_photometry(a: &ColorSpace, b: &ColorSpace) -> bool {
                 white: wb,
                 ..
             },
-        ) => pa == pb && ta == tb && wa == wb,
+        ) => pa.same_chromaticity(*pb) && ta.same_curve(*tb) && wa == wb,
         (
             ColorSpace::Gray {
                 transfer: ta,
@@ -1649,7 +1674,7 @@ pub(crate) fn same_photometry(a: &ColorSpace, b: &ColorSpace) -> bool {
                 white: wb,
                 ..
             },
-        ) => ta == tb && wa == wb,
+        ) => ta.same_curve(*tb) && wa == wb,
         _ => same_color_meaning(a, b),
     }
 }
@@ -1808,10 +1833,10 @@ fn is_depth_reducing(src: &ImageSpec, dst: &ImageSpec, facts: SampleFacts) -> bo
     if !dst_is_float {
         let src_tf = color_transfer(&src.color);
         let dst_tf = color_transfer(&dst.color);
-        let transfer_changes = src_tf != dst_tf;
+        let transfer_changes = !src_tf.same_curve(dst_tf);
         let gamut_changes = matches!(src.color, ColorSpace::Rgb { .. })
             && matches!(dst.color, ColorSpace::Rgb { .. })
-            && color_primaries(&src.color) != color_primaries(&dst.color);
+            && !color_primaries(&src.color).same_chromaticity(color_primaries(&dst.color));
         let model_changes_lossy = (matches!(
             src.color,
             ColorSpace::Xyz { .. } | ColorSpace::Oklab { .. } | ColorSpace::Perceptual { .. }
@@ -1980,12 +2005,12 @@ fn needs_linear_domain(
     }
     let st = color_transfer(src);
     let dt = color_transfer(dst);
-    if st != dt {
+    if !st.same_curve(dt) {
         return true;
     }
     if matches!(src, ColorSpace::Rgb { .. })
         && matches!(dst, ColorSpace::Rgb { .. })
-        && color_primaries(src) != color_primaries(dst)
+        && !color_primaries(src).same_chromaticity(color_primaries(dst))
     {
         return true;
     }
@@ -2081,7 +2106,7 @@ pub(crate) fn resolve_tone_mapper(
 }
 
 pub(crate) fn is_gamut_narrowing(src: Primaries, dst: Primaries) -> bool {
-    if src == dst || src == Primaries::Unknown || dst == Primaries::Unknown {
+    if src.same_chromaticity(dst) || src == Primaries::Unknown || dst == Primaries::Unknown {
         return false;
     }
     // Exact geometric test over convex RGB cones: source primaries lie inside destination

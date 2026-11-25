@@ -9,8 +9,8 @@ use alloc::borrow::Cow;
 use alloc::sync::Arc;
 use whereat::At;
 use zenpixels::{
-    Cicp, ColorOrigin, ColorSpace, HdrMetadata, ImageSpec, PeakSource, PixelBuf, PixelCow,
-    PixelView, Primaries, Transfer,
+    Cicp, ColorOrigin, ColorSpace, HdrMetadata, HlgMode, ImageSpec, PeakSource, PixelBuf, PixelCow,
+    PixelFormat, PixelView, Primaries, Transfer,
 };
 
 use crate::error::{ConvertError, err_at};
@@ -67,12 +67,26 @@ pub struct OutputPlan {
 impl OutputPlan {
     /// Build an encode-ready output plan.
     ///
+    /// Accepts either borrowed `&ImageSpec` (zero-clone) or owned `ImageSpec`.
+    ///
     /// Validates pixel conversion feasibility AND container signaling compatibility
     /// upfront (for non-origin-dependent profiles) so invalid output configurations
     /// fail before processing any pixels.
+    #[inline]
     pub fn build(
-        src: ImageSpec,
-        dst: ImageSpec,
+        src: impl AsRef<ImageSpec>,
+        dst: impl AsRef<ImageSpec>,
+        policy: ConvertPolicy,
+        peak: PeakSource,
+        profile: OutputProfile,
+    ) -> Result<Self, At<ConvertError>> {
+        Self::build_inner(src.as_ref(), dst.as_ref(), policy, peak, profile)
+    }
+
+    #[inline(never)]
+    fn build_inner(
+        src: &ImageSpec,
+        dst: &ImageSpec,
         policy: ConvertPolicy,
         peak: PeakSource,
         profile: OutputProfile,
@@ -82,7 +96,7 @@ impl OutputPlan {
             src.color.alpha() == zenpixels::AlphaMode::Opaque && src.layout.order.has_alpha_slot();
         let policy_all_opaque = policy.source_facts.all_opaque;
         let is_identity = same_spec && (!src_opaque_slot || policy_all_opaque);
-        let image_plan = ImagePlan::build(src.clone(), dst.clone(), policy, peak)?;
+        let image_plan = ImagePlan::build(src, dst, policy, peak)?;
         // Eagerly validate signaling rules that don't depend on runtime `ColorOrigin`.
         match &profile {
             OutputProfile::SameAsOrigin => {
@@ -100,8 +114,8 @@ impl OutputPlan {
             }
         }
         Ok(Self {
-            src,
-            dst,
+            src: src.clone(),
+            dst: dst.clone(),
             profile,
             image_plan,
             same_spec,
@@ -224,12 +238,7 @@ impl OutputPlan {
         &self,
         hdr_peak: Option<zenpixels::Nits>,
     ) -> Result<crate::plan::RowPlan, At<ConvertError>> {
-        crate::plan::RowPlan::build(
-            self.src.clone(),
-            self.dst.clone(),
-            self.image_plan.policy(),
-            hdr_peak,
-        )
+        crate::plan::RowPlan::build(&self.src, &self.dst, self.image_plan.policy(), hdr_peak)
     }
 }
 
@@ -253,13 +262,25 @@ pub fn adapt_for_encode<'a>(
     eff_policy.source_facts = crate::plan::merge_facts(policy.source_facts, src.facts());
     let negotiated = crate::negotiate::Negotiate::select(src.spec(), supported, &eff_policy)
         .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
-    let plan = OutputPlan::build(
-        src.spec().clone(),
-        negotiated.spec.clone(),
-        eff_policy,
-        peak,
-        profile,
-    )?;
+    let plan = OutputPlan::build(src.spec(), &negotiated.spec, eff_policy, peak, profile)?;
+    let ready = plan.execute_view(src, origin)?;
+    Ok((negotiated, ready))
+}
+
+/// One-shot encoder preparation selecting from a `Copy`/`const` [`PixelFormat`] capability table.
+pub fn adapt_for_encode_format<'a>(
+    src: PixelView<'a>,
+    origin: &ColorOrigin,
+    supported: &[PixelFormat],
+    policy: &ConvertPolicy,
+    peak: PeakSource,
+    profile: OutputProfile,
+) -> Result<(crate::negotiate::NegotiatedFormat, EncodeReady<'a>), At<ConvertError>> {
+    let mut eff_policy = policy.clone();
+    eff_policy.source_facts = crate::plan::merge_facts(policy.source_facts, src.facts());
+    let negotiated = crate::negotiate::Negotiate::select_format(src.spec(), supported, &eff_policy)
+        .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
+    let plan = OutputPlan::build(src.spec(), &negotiated.spec, eff_policy, peak, profile)?;
     let ready = plan.execute_view(src, origin)?;
     Ok((negotiated, ready))
 }
@@ -274,46 +295,8 @@ fn try_clone_bytes(bytes: &[u8]) -> Result<alloc::vec::Vec<u8>, At<ConvertError>
 
 /// Validate ICC header, declared length, profile class, and tag-table bounds (B10).
 fn validate_icc_structure(bytes: &[u8]) -> Result<(), At<ConvertError>> {
-    if bytes.len() < 132 || &bytes[36..40] != b"acsp" {
-        return Err(err_at(ConvertError::OutputSignalingMismatch));
-    }
-    let declared_size = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
-    if declared_size == 0 || declared_size > bytes.len() {
-        return Err(err_at(ConvertError::OutputSignalingMismatch));
-    }
-    // Reject DeviceLink (`link`), Abstract (`abst`), and NamedColor (`nmcl`) profiles
-    // for image-encoding output (only device/color-space classes describe image color).
-    let class = &bytes[12..16];
-    if !matches!(class, b"mntr" | b"scnr" | b"prtr" | b"spac") {
-        return Err(err_at(ConvertError::OutputSignalingMismatch));
-    }
-    let tag_count = u32::from_be_bytes([bytes[128], bytes[129], bytes[130], bytes[131]]) as usize;
-    let table_end = tag_count
-        .checked_mul(12)
-        .and_then(|n| n.checked_add(132))
-        .ok_or_else(|| err_at(ConvertError::OutputSignalingMismatch))?;
-    if table_end > declared_size {
-        return Err(err_at(ConvertError::OutputSignalingMismatch));
-    }
-    for i in 0..tag_count {
-        let base = 132 + i * 12;
-        let off = u32::from_be_bytes([
-            bytes[base + 4],
-            bytes[base + 5],
-            bytes[base + 6],
-            bytes[base + 7],
-        ]) as usize;
-        let len = u32::from_be_bytes([
-            bytes[base + 8],
-            bytes[base + 9],
-            bytes[base + 10],
-            bytes[base + 11],
-        ]) as usize;
-        if off < table_end || off.checked_add(len).is_none_or(|end| end > declared_size) {
-            return Err(err_at(ConvertError::OutputSignalingMismatch));
-        }
-    }
-    Ok(())
+    zenpixels::validate_icc_structure(bytes)
+        .map_err(|_| err_at(ConvertError::OutputSignalingMismatch))
 }
 
 fn validate_custom_icc_for_dst(
@@ -364,8 +347,8 @@ fn validate_custom_icc_for_dst(
                 return Err(err_at(ConvertError::OutputSignalingMismatch));
             };
             if id.valid_use != zenpixels::icc::IdentificationUse::MatrixTrcSubstitution
-                || id.primaries != *primaries
-                || id.transfer != *transfer
+                || !id.primaries.same_chromaticity(*primaries)
+                || !id.transfer.same_curve(*transfer)
             {
                 return Err(err_at(ConvertError::OutputSignalingMismatch));
             }
@@ -376,7 +359,7 @@ fn validate_custom_icc_for_dst(
                 return Err(err_at(ConvertError::OutputSignalingMismatch));
             };
             if id.valid_use != zenpixels::icc::IdentificationUse::MatrixTrcSubstitution
-                || id.transfer != *transfer
+                || !id.transfer.same_curve(*transfer)
             {
                 return Err(err_at(ConvertError::OutputSignalingMismatch));
             }
@@ -387,22 +370,33 @@ fn validate_custom_icc_for_dst(
     }
 }
 
-/// Semantic CICP equality: allows H.273 transfer aliases that map to the same canonical
-/// [`zenpixels::Transfer`] (e.g., BT.709 / BT.601 / BT.2020 10-bit/12-bit codes 1, 6, 14, 15).
+/// Semantic CICP equality: allows H.273 chromaticity/transfer aliases that evaluate the exact
+/// same mathematical primaries/curve (e.g. BT.709 / BT.601 / BT.2020 10-bit/12-bit transfer codes
+/// 1, 6, 14, 15, or BT.601 / SMPTE 240M primaries 6 and 7).
 fn cicp_semantically_eq(a: Cicp, b: Cicp) -> bool {
     if a == b {
         return true;
     }
-    a.color_primaries == b.color_primaries
+    let prim_eq = a.color_primaries == b.color_primaries
+        || match (
+            Primaries::from_cicp(a.color_primaries),
+            Primaries::from_cicp(b.color_primaries),
+        ) {
+            (Some(pa), Some(pb)) => pa.same_chromaticity(pb),
+            _ => false,
+        };
+    let tf_eq = a.transfer_characteristics == b.transfer_characteristics
+        || match (
+            Transfer::from_cicp(a.transfer_characteristics),
+            Transfer::from_cicp(b.transfer_characteristics),
+        ) {
+            (Some(ta), Some(tb)) => ta.same_curve(tb),
+            _ => false,
+        };
+    prim_eq
+        && tf_eq
         && a.matrix_coefficients == b.matrix_coefficients
         && a.full_range == b.full_range
-        && match (
-            zenpixels::Transfer::from_cicp(a.transfer_characteristics),
-            zenpixels::Transfer::from_cicp(b.transfer_characteristics),
-        ) {
-            (Some(ta), Some(tb)) => ta == tb,
-            _ => false,
-        }
 }
 
 /// Check whether `orig_cicp` agrees with `dst_color` (including `ColorSpace::Icc` via embedded
@@ -447,6 +441,15 @@ fn resolve_output_signaling(
             Ok((None, Some(Cow::Owned(try_clone_bytes(bytes)?))))
         }
         OutputProfile::CicpOnly => {
+            if matches!(
+                dst_color,
+                ColorSpace::Rgb {
+                    transfer: Transfer::Hlg(HlgMode::Display(_)),
+                    ..
+                }
+            ) {
+                return Err(err_at(ConvertError::OutputSignalingUnavailable));
+            }
             let cicp = dst_color
                 .to_cicp()
                 .ok_or_else(|| err_at(ConvertError::OutputSignalingUnavailable))?;
@@ -544,6 +547,12 @@ fn resolve_output_signaling(
                 range,
                 ..
             } => {
+                // CICP TC=18 carries scene-referred HLG syntax only; display-rendered HLG
+                // parameters (`peak`, `black_nits`, `system_gamma`) cannot be represented in CICP
+                // or ICC without explicit conversion.
+                if matches!(transfer, Transfer::Hlg(HlgMode::Display(_))) {
+                    return Err(err_at(ConvertError::OutputSignalingUnavailable));
+                }
                 let cicp = dst_color.to_cicp();
                 // ICC RGB profiles describe full-range sample codes; never attach them to narrow-range outputs.
                 let is_default_srgb = *primaries == Primaries::Bt709

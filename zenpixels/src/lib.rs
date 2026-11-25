@@ -54,14 +54,16 @@ pub use cicp::{
 pub use color::{
     AlphaMode, Chromaticity, Color, ColorError, ColorOrigin, ColorSpace, CustomPrimaries,
     GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapDirection, GainMapMetadata, Gamma,
-    HdrMetadata, HlgMode, IccColorSpace, ImageSpec, OriginKind, PerceptualSpace, Primaries,
-    RenderingIntent, SignalRange, SignedFraction, Transfer, UnsignedFraction, WhitePoint,
+    HdrMetadata, HlgMode, IccColorSpace, IccValidationError, ImageSpec, OriginKind,
+    ParametricColor, PerceptualSpace, PixelFormat, Primaries, RenderingIntent, SignalRange,
+    SignedFraction, SpecCow, Transfer, UnsignedFraction, WhitePoint, validate_icc_structure,
 };
 pub use facts::{ExactDepth, FloatFacts, SampleFacts};
 #[cfg(feature = "hash")]
 pub use hashing::HashInclusions;
 pub use hdr::{
-    ContentLightLevel, DiffuseWhite, HlgRendering, MasteringDisplay, Nits, PeakSource, St2086Codes,
+    ClliCodes, ContentLightLevel, DiffuseWhite, HlgRendering, MasteringDisplay, Nits, PeakSource,
+    St2086Codes,
 };
 #[cfg(feature = "rgb")]
 pub use interop::PixelType;

@@ -79,11 +79,17 @@ impl core::error::Error for CicpProjectionError {}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct Cicp {
-    /// `ColourPrimaries` (1 = BT.709/sRGB, 9 = BT.2020, 11 = DCI-P3, 12 = Display P3).
+    /// `ColourPrimaries` (1 = BT.709/sRGB, 4 = BT.470M, 5 = BT.470BG, 6 = BT.601,
+    /// 7 = SMPTE 240M, 8 = Generic Film, 9 = BT.2020, 10 = XYZ, 11 = DCI-P3,
+    /// 12 = Display P3, 22 = EBU Tech 3213).
     pub color_primaries: u8,
-    /// `TransferCharacteristics` (1 = BT.709, 4 = Gamma 2.2, 8 = Linear, 13 = sRGB, 16 = PQ, 17 = SMPTE 428-1, 18 = HLG).
+    /// `TransferCharacteristics` (1 = BT.709, 4 = Gamma 2.2, 5 = Gamma 2.8, 6 = BT.601,
+    /// 7 = SMPTE 240M, 8 = Linear, 9 = Log100, 10 = Log100Sqrt10, 11 = IEC 61966-2-4,
+    /// 12 = BT.1361, 13 = sRGB, 14 = BT.2020 10-bit, 15 = BT.2020 12-bit, 16 = PQ,
+    /// 17 = SMPTE ST 428-1, 18 = HLG).
     pub transfer_characteristics: u8,
-    /// `MatrixCoefficients` (0 = Identity/RGB, 1 = BT.709, 6 = BT.601, 9 = BT.2020 NCL).
+    /// `MatrixCoefficients` (0 = Identity/RGB, 1 = BT.709, 4 = FCC, 5 = BT.470BG,
+    /// 6 = BT.601, 7 = SMPTE 240M, 8 = YCgCo, 9 = BT.2020 NCL, 12 = Chroma-derived NCL).
     pub matrix_coefficients: u8,
     /// `true` = full range, `false` = narrow/studio swing.
     pub full_range: bool,

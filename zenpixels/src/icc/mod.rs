@@ -33,6 +33,7 @@
 //! }
 //! ```
 
+pub use crate::color::{IccValidationError, validate_icc_structure};
 use crate::{Cicp, HlgMode, IccColorSpace, Primaries, Transfer};
 
 impl Cicp {

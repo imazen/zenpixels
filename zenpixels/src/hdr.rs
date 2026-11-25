@@ -6,6 +6,9 @@
 //! For tone mapping, gamut compression, and content light-level measurement,
 //! see `zenpixels_convert::tonemap` and `zenpixels_convert::measure`.
 
+use core::fmt;
+use core::num::NonZeroU32;
+
 /// The absolute luminance, in cd/m² (nits), that a relative-linear sample
 /// value of `1.0` represents — the "diffuse white" (a.k.a. nominal diffuse
 /// white / SDR reference white) anchor that bridges relative-linear pixel
@@ -20,23 +23,15 @@
 /// It is a *typed* anchor on purpose: HDR code mixes nits, PQ-encoded `[0,1]`,
 /// log2 gain, and headroom ratios — passing a bare `f32` invites unit
 /// confusion. Use [`DiffuseWhite::new`] / [`DiffuseWhite::nits`].
-#[derive(Clone, Copy, Debug)]
-pub struct DiffuseWhite(f32);
+///
+/// Internally stored as a [`NonZeroU32`] IEEE 754 bit pattern so
+/// `Option<DiffuseWhite>` fits in 4 bytes via Rust niche optimization.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DiffuseWhite(NonZeroU32);
 
-// Bit-exact equality so `DiffuseWhite` — and therefore `ImageSpec` — keeps
-// `Eq` despite wrapping `f32`. A luminance anchor is always a sane, finite,
-// positive cd/m² value (203, 100, 10000, …), so a bitwise compare is reflexive
-// and consistent; the -0.0 / NaN cases a value compare would treat differently
-// never occur for an anchor.
-impl PartialEq for DiffuseWhite {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.to_bits() == other.0.to_bits()
-    }
-}
-impl Eq for DiffuseWhite {}
-impl core::hash::Hash for DiffuseWhite {
-    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.0.to_bits().hash(state);
+impl fmt::Debug for DiffuseWhite {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("DiffuseWhite").field(&self.nits()).finish()
     }
 }
 
@@ -44,13 +39,17 @@ impl DiffuseWhite {
     /// ITU-R BT.2408 HDR reference white: **203 cd/m²**. The cross-industry
     /// default anchor for relative-linear HDR (matches Chrome `SDRWhiteLevel`,
     /// Skia skcms, CSS `rec2100-linear`, and libplacebo).
-    pub const BT2408: Self = Self(203.0);
+    pub const BT2408: Self = Self::new(203.0);
 
     /// [`new`](Self::new), or `None` unless `nits` is finite and strictly positive.
+    #[inline]
     #[must_use]
     pub const fn try_new(nits: f32) -> Option<Self> {
         if nits.is_finite() && nits > 0.0 {
-            Some(Self(nits))
+            match NonZeroU32::new(nits.to_bits()) {
+                Some(bits) => Some(Self(bits)),
+                None => None,
+            }
         } else {
             None
         }
@@ -63,19 +62,24 @@ impl DiffuseWhite {
     ///
     /// Panics if `nits` is zero, negative, NaN, or infinite.
     #[track_caller]
+    #[inline]
     #[must_use]
     pub const fn new(nits: f32) -> Self {
         assert!(
             nits.is_finite() && nits > 0.0,
             "diffuse white must be finite and strictly positive"
         );
-        Self(nits)
+        match NonZeroU32::new(nits.to_bits()) {
+            Some(bits) => Self(bits),
+            None => unreachable!(),
+        }
     }
 
     /// The anchor in cd/m² (nits).
+    #[inline]
     #[must_use]
     pub const fn nits(self) -> f32 {
-        self.0
+        f32::from_bits(self.0.get())
     }
 }
 
@@ -88,13 +92,28 @@ impl Default for DiffuseWhite {
 
 /// A finite, strictly positive luminance in cd/m².
 /// Used for source/display peaks independently of the relative-linear white anchor.
-#[derive(Clone, Copy, Debug)]
-pub struct Nits(f32);
+///
+/// Internally stored as a [`NonZeroU32`] IEEE 754 bit pattern so `Option<Nits>`
+/// fits in 4 bytes via Rust niche optimization.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Nits(NonZeroU32);
+
+impl fmt::Debug for Nits {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Nits").field(&self.nits()).finish()
+    }
+}
+
 impl Nits {
     /// Return a luminance when it is finite and strictly positive.
+    #[inline]
+    #[must_use]
     pub const fn try_new(value: f32) -> Option<Self> {
         if value.is_finite() && value > 0.0 {
-            Some(Self(value))
+            match NonZeroU32::new(value.to_bits()) {
+                Some(bits) => Some(Self(bits)),
+                None => None,
+            }
         } else {
             None
         }
@@ -103,27 +122,23 @@ impl Nits {
     /// # Panics
     /// Panics for zero, negative, NaN or infinite values.
     #[track_caller]
+    #[inline]
+    #[must_use]
     pub const fn new(value: f32) -> Self {
         assert!(
             value.is_finite() && value > 0.0,
             "luminance must be finite and strictly positive"
         );
-        Self(value)
+        match NonZeroU32::new(value.to_bits()) {
+            Some(bits) => Self(bits),
+            None => unreachable!(),
+        }
     }
     /// Luminance in cd/m².
+    #[inline]
+    #[must_use]
     pub const fn nits(self) -> f32 {
-        self.0
-    }
-}
-impl PartialEq for Nits {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.to_bits() == other.0.to_bits()
-    }
-}
-impl Eq for Nits {}
-impl core::hash::Hash for Nits {
-    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.0.to_bits().hash(state);
+        f32::from_bits(self.0.get())
     }
 }
 
@@ -310,6 +325,89 @@ mod tests {
     fn mastering_display_constants() {
         assert_eq!(MasteringDisplay::HDR10_REFERENCE.max_luminance, 10000.0);
         assert_eq!(MasteringDisplay::DISPLAY_P3_1000.max_luminance, 1000.0);
+    }
+}
+
+/// Exact PNG 3 / ITU-T H.274 `cLLI` content light-level codes (`0.0001 cd/m²` precision).
+///
+/// Separate from the integer-nit [`ContentLightLevel`] view so sub-nit PNG `cLLI`
+/// payloads (`max_cll`, `max_fall` as big-endian `u32` in units of `0.0001 cd/m²`)
+/// survive lossless transcodes without quantization.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ClliCodes([u8; 8]);
+
+impl ClliCodes {
+    /// Preserve all 8 big-endian bytes (`[max_cll: u32 BE, max_fall: u32 BE]`).
+    #[inline]
+    #[must_use]
+    pub const fn from_be_bytes(bytes: [u8; 8]) -> Self {
+        Self(bytes)
+    }
+
+    /// Construct from exact `0.0001 cd/m²` integer units (PNG `cLLI` wire scale).
+    #[inline]
+    #[must_use]
+    pub const fn from_ten_thousandths(max_cll_10000: u32, max_fall_10000: u32) -> Self {
+        let a = max_cll_10000.to_be_bytes();
+        let b = max_fall_10000.to_be_bytes();
+        Self([a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3]])
+    }
+
+    /// Return the exact original 8 big-endian bytes without float or integer rounding.
+    #[inline]
+    #[must_use]
+    pub const fn to_be_bytes(self) -> [u8; 8] {
+        self.0
+    }
+
+    /// Exact MaxCLL in units of `0.0001 cd/m²`.
+    #[inline]
+    #[must_use]
+    pub const fn max_cll_ten_thousandths(self) -> u32 {
+        u32::from_be_bytes([self.0[0], self.0[1], self.0[2], self.0[3]])
+    }
+
+    /// Exact MaxFALL in units of `0.0001 cd/m²`.
+    #[inline]
+    #[must_use]
+    pub const fn max_fall_ten_thousandths(self) -> u32 {
+        u32::from_be_bytes([self.0[4], self.0[5], self.0[6], self.0[7]])
+    }
+
+    /// MaxCLL in cd/m² (`f64`).
+    #[inline]
+    #[must_use]
+    pub const fn max_cll_nits(self) -> f64 {
+        self.max_cll_ten_thousandths() as f64 / 10_000.0
+    }
+
+    /// MaxFALL in cd/m² (`f64`).
+    #[inline]
+    #[must_use]
+    pub const fn max_fall_nits(self) -> f64 {
+        self.max_fall_ten_thousandths() as f64 / 10_000.0
+    }
+
+    /// Project to integer-nit [`ContentLightLevel`] (rounded to nearest nit, clamped to `u16::MAX`).
+    ///
+    /// Retain `ClliCodes` when exact `0.0001 cd/m²` precision must survive a transcode.
+    #[inline]
+    #[must_use]
+    pub const fn semantic(self) -> ContentLightLevel {
+        let cll = (self.max_cll_ten_thousandths() as u64 + 5_000) / 10_000;
+        let fall = (self.max_fall_ten_thousandths() as u64 + 5_000) / 10_000;
+        ContentLightLevel::new(
+            if cll > u16::MAX as u64 {
+                u16::MAX
+            } else {
+                cll as u16
+            },
+            if fall > u16::MAX as u64 {
+                u16::MAX
+            } else {
+                fall as u16
+            },
+        )
     }
 }
 
