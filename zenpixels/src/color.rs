@@ -12,7 +12,7 @@ use core::hash::{Hash, Hasher};
 use core::num::NonZeroU32;
 use whereat::At;
 
-use crate::cicp::{Cicp, CicpProjectionError};
+use crate::cicp::{Cicp, CicpProjectionError, CicpTag};
 use crate::hdr::{ContentLightLevel, DiffuseWhite, HlgRendering, MasteringDisplay};
 use crate::layout::{ChannelOrder, InteropTarget, LayoutError, SampleLayout, SampleType};
 
@@ -82,6 +82,33 @@ impl Chromaticity {
         Some(Self { x, y })
     }
 
+    /// Validate and construct a physical CIE 1931 `(x, y)` chromaticity coordinate from
+    /// ICC `s15Fixed16Number` fixed-point values (`value = raw / 65536.0`, ICC.1:2022 §4.6).
+    ///
+    /// Every representable coordinate in `[-4.0, 4.0]` converts to `f32` without rounding
+    /// error (`|raw| <= 262_144 < 2^24`), so valid `s15Fixed16Number` values round-trip
+    /// bit-exact through [`to_s15fixed16`](Self::to_s15fixed16).
+    #[inline]
+    #[must_use]
+    pub const fn from_s15fixed16(x: i32, y: i32) -> Option<Self> {
+        Self::try_new((x as f64 / 65536.0) as f32, (y as f64 / 65536.0) as f32)
+    }
+
+    /// Validate and construct an RGB primary coordinate from ICC `s15Fixed16Number` values,
+    /// permitting negative or boundary chromaticities such as ACES AP0 `y_B = -0.0770`.
+    #[inline]
+    #[must_use]
+    pub const fn from_s15fixed16_primary(x: i32, y: i32) -> Option<Self> {
+        Self::try_new_primary((x as f64 / 65536.0) as f32, (y as f64 / 65536.0) as f32)
+    }
+
+    /// Encode this chromaticity as a pair of ICC `s15Fixed16Number` values (`round(v * 65536)`).
+    #[inline]
+    #[must_use]
+    pub const fn to_s15fixed16(self) -> (i32, i32) {
+        (round_s15fixed16(self.x), round_s15fixed16(self.y))
+    }
+
     /// Chromaticity `x` coordinate.
     #[inline]
     #[must_use]
@@ -101,6 +128,16 @@ impl Chromaticity {
     #[must_use]
     pub const fn xy(self) -> (f32, f32) {
         (self.x, self.y)
+    }
+}
+
+#[inline]
+const fn round_s15fixed16(v: f32) -> i32 {
+    let scaled = (v as f64) * 65536.0;
+    if scaled >= 0.0 {
+        (scaled + 0.5) as i32
+    } else {
+        (scaled - 0.5) as i32
     }
 }
 
@@ -154,7 +191,8 @@ impl WhitePoint {
     }
 }
 
-/// Validated custom tristimulus RGB primaries + white point (JXL, OpenEXR, PNG `cHRM`).
+/// Validated custom tristimulus RGB primaries + white point (ICC `cicpType` amendment,
+/// JXL, OpenEXR, PNG `cHRM`, HAGC Mode 3 / SMPTE ST 2094-50).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CustomPrimaries {
     r: Chromaticity,
@@ -164,11 +202,22 @@ pub struct CustomPrimaries {
 }
 
 impl CustomPrimaries {
-    /// ACES2065-1 (SMPTE ST 2065-1) AP0 primaries with D60 white point.
+    /// ACES2065-1 (SMPTE ST 2065-1) AP0 primaries with D60 white point (negative `y_B = -0.0770`).
     pub const ACES_AP0: Self = match Self::try_new(
         (0.7347, 0.2653),
         (0.0, 1.0),
         (0.0001, -0.0770),
+        (0.32168, 0.33767),
+    ) {
+        Some(cp) => cp,
+        None => unreachable!(),
+    };
+
+    /// ACEScg (Academy S-2014-004) AP1 primaries with D60 white point.
+    pub const ACES_CG: Self = match Self::try_new(
+        (0.713, 0.293),
+        (0.165, 0.830),
+        (0.128, 0.044),
         (0.32168, 0.33767),
     ) {
         Some(cp) => cp,
@@ -212,6 +261,94 @@ impl CustomPrimaries {
             return None;
         }
         Some(cp)
+    }
+
+    /// Construct validated custom primaries from eight ICC `s15Fixed16Number` values
+    /// in the canonical field order `[xR, yR, xG, yG, xB, yB, xw, yw]` (ICC.1:2022 §10.3
+    /// `cicpType` amendment Table 32 / HAGC Mode 3 / SMPTE ST 2094-50).
+    #[must_use]
+    pub const fn from_s15fixed16(coords: [i32; 8]) -> Option<Self> {
+        let (Some(r), Some(g), Some(b), Some(white)) = (
+            Chromaticity::from_s15fixed16_primary(coords[0], coords[1]),
+            Chromaticity::from_s15fixed16_primary(coords[2], coords[3]),
+            Chromaticity::from_s15fixed16_primary(coords[4], coords[5]),
+            Chromaticity::from_s15fixed16(coords[6], coords[7]),
+        ) else {
+            return None;
+        };
+        let cp = Self { r, g, b, white };
+        let Some(m) = rgb_to_xyz_from_xy(cp.r.xy(), cp.g.xy(), cp.b.xy(), cp.white.xy()) else {
+            return None;
+        };
+        if inv3_f64(m).is_none() {
+            return None;
+        }
+        Some(cp)
+    }
+
+    /// Encode as eight ICC `s15Fixed16Number` values `[xR, yR, xG, yG, xB, yB, xw, yw]`.
+    #[inline]
+    #[must_use]
+    pub const fn to_s15fixed16(self) -> [i32; 8] {
+        let (xr, yr) = self.r.to_s15fixed16();
+        let (xg, yg) = self.g.to_s15fixed16();
+        let (xb, yb) = self.b.to_s15fixed16();
+        let (xw, yw) = self.white.to_s15fixed16();
+        [xr, yr, xg, yg, xb, yb, xw, yw]
+    }
+
+    /// Decode the 32-byte big-endian `cicpType` custom-primaries extension (ICC.1 §10.3
+    /// bytes `12..44`, eight `s15Fixed16Number` values `[xR, yR, xG, yG, xB, yB, xw, yw]`).
+    #[must_use]
+    pub const fn from_cicp_extension_bytes(bytes: [u8; 32]) -> Option<Self> {
+        Self::from_s15fixed16([
+            i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+            i32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
+            i32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
+            i32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]),
+            i32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]),
+            i32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]),
+            i32::from_be_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]),
+            i32::from_be_bytes([bytes[28], bytes[29], bytes[30], bytes[31]]),
+        ])
+    }
+
+    /// Encode the 32-byte big-endian `cicpType` custom-primaries extension (ICC.1 §10.3
+    /// bytes `12..44`).
+    #[must_use]
+    pub const fn to_cicp_extension_bytes(self) -> [u8; 32] {
+        let v = self.to_s15fixed16();
+        let mut out = [0u8; 32];
+        let mut i = 0;
+        while i < 8 {
+            let b = v[i].to_be_bytes();
+            out[i * 4] = b[0];
+            out[i * 4 + 1] = b[1];
+            out[i * 4 + 2] = b[2];
+            out[i * 4 + 3] = b[3];
+            i += 1;
+        }
+        out
+    }
+
+    /// Derive the ICC PCS D50-adapted 3×3 primary matrix (`M_D50 = M_adapt · M_native`) per
+    /// ICC.1 `cicpType` Amendment Annex 1 (A1.1–A1.4) using Bradford chromatic adaptation to
+    /// the ICC PCS adopted white `(0.9642, 1.0000, 0.8249)` (ICC.1:2022 §7.2.16).
+    ///
+    /// Columns `0`, `1`, `2` (`[m[0][c], m[1][c], m[2][c]]`) are the conforming
+    /// `redMatrixColumnTag`, `greenMatrixColumnTag`, and `blueMatrixColumnTag` XYZ triples.
+    /// Supports negative chromaticities such as ACES AP0 (`y_B = -0.0770`) without special cases.
+    #[must_use]
+    pub const fn to_icc_d50_matrix_f64(self) -> Option<[[f64; 3]; 3]> {
+        let Some(m_native) =
+            rgb_to_xyz_from_xy(self.r.xy(), self.g.xy(), self.b.xy(), self.white.xy())
+        else {
+            return None;
+        };
+        let Some(m_adapt) = bradford_adapt_to_icc_d50_f64(self.white.xy()) else {
+            return None;
+        };
+        Some(mul3_mat_f64(m_adapt, m_native))
     }
 
     /// Red primary `(x, y)`.
@@ -332,6 +469,40 @@ impl Primaries {
             Self::Custom(c) => Some(c.white.xy()),
             Self::Unknown => None,
         }
+    }
+
+    /// Convert any known [`Primaries`] variant (including named presets such as
+    /// [`Self::AdobeRgb`] and [`Self::Bt709`]) into explicit [`CustomPrimaries`],
+    /// or `None` for [`Self::Unknown`].
+    #[inline]
+    #[must_use]
+    pub const fn to_custom(self) -> Option<CustomPrimaries> {
+        match self {
+            Self::Custom(cp) => Some(cp),
+            Self::Unknown => None,
+            other => {
+                let (Some((r, g, b)), Some(w)) = (other.chromaticity(), other.white_point()) else {
+                    return None;
+                };
+                CustomPrimaries::try_new(r, g, b, w)
+            }
+        }
+    }
+
+    /// Derive the ICC PCS D50-adapted 3×3 primary matrix (`M_D50 = M_adapt · M_native`) per
+    /// ICC.1 `cicpType` Amendment Annex 1 using Bradford adaptation to PCS D50
+    /// `(0.9642, 1.0000, 0.8249)` (ICC.1:2022 §7.2.16).
+    ///
+    /// Columns `0`, `1`, `2` are the `rXYZ`, `gXYZ`, `bXYZ` matrix column tags.
+    #[must_use]
+    pub const fn to_icc_d50_matrix_f64(self) -> Option<[[f64; 3]; 3]> {
+        let (Some(m_native), Some(w)) = (self.rgb_to_xyz_f64(), self.white_point()) else {
+            return None;
+        };
+        let Some(m_adapt) = bradford_adapt_to_icc_d50_f64(w) else {
+            return None;
+        };
+        Some(mul3_mat_f64(m_adapt, m_native))
     }
 
     /// Whether `self` and `other` have identical CIE 1931 primaries and white point
@@ -615,6 +786,48 @@ pub const fn bradford_adapt_f64(sw: (f32, f32), dw: (f32, f32)) -> Option<[[f64;
     let cs = mul3_vec_f64(M_BFD, ws);
     let cd = mul3_vec_f64(M_BFD, wd);
     if cs[0] == 0.0 || cs[1] == 0.0 || cs[2] == 0.0 {
+        return None;
+    }
+    let Some(m_inv) = inv3_f64(M_BFD) else {
+        return None;
+    };
+    let scaled = [
+        [
+            M_BFD[0][0] * (cd[0] / cs[0]),
+            M_BFD[0][1] * (cd[0] / cs[0]),
+            M_BFD[0][2] * (cd[0] / cs[0]),
+        ],
+        [
+            M_BFD[1][0] * (cd[1] / cs[1]),
+            M_BFD[1][1] * (cd[1] / cs[1]),
+            M_BFD[1][2] * (cd[1] / cs[1]),
+        ],
+        [
+            M_BFD[2][0] * (cd[2] / cs[2]),
+            M_BFD[2][1] * (cd[2] / cs[2]),
+            M_BFD[2][2] * (cd[2] / cs[2]),
+        ],
+    ];
+    Some(mul3_mat_f64(m_inv, scaled))
+}
+
+/// Bradford chromatic adaptation matrix from source white `(swx, swy)` to the ICC.1:2022 §7.2.16
+/// PCS adopted white D50 `nCIEXYZ = (0.9642, 1.0000, 0.8249)` (ICC `cicpType` Amendment Annex 1 A1.3).
+const fn bradford_adapt_to_icc_d50_f64(sw: (f32, f32)) -> Option<[[f64; 3]; 3]> {
+    const M_BFD: [[f64; 3]; 3] = [
+        [0.8951, 0.2664, -0.1614],
+        [-0.7502, 1.7135, 0.0367],
+        [0.0389, -0.0685, 1.0296],
+    ];
+    const ICC_PCS_D50_XYZ: [f64; 3] = [0.9642, 1.0, 0.8249];
+    let (swx, swy) = (sw.0 as f64, sw.1 as f64);
+    if swy <= 0.0 || swx <= 0.0 || (swx + swy) >= 1.0 {
+        return None;
+    }
+    let ws = [swx / swy, 1.0, (1.0 - swx - swy) / swy];
+    let cs = mul3_vec_f64(M_BFD, ws);
+    let cd = mul3_vec_f64(M_BFD, ICC_PCS_D50_XYZ);
+    if cs[0].abs() < 1e-12 || cs[1].abs() < 1e-12 || cs[2].abs() < 1e-12 {
         return None;
     }
     let Some(m_inv) = inv3_f64(M_BFD) else {
@@ -1051,6 +1264,8 @@ pub enum IccColorSpace {
     Lab,
     /// `'XYZ '`
     Xyz,
+    /// `'YCbr'` (YCbCr, ICC.1:2022 Table 19)
+    Ycbcr,
 }
 
 /// Authoritative color meaning of pixel samples — an algebraic enum with zero
@@ -1457,6 +1672,14 @@ impl ColorSpace {
             }
             _ => Err(CicpProjectionError::NotRgb),
         }
+    }
+
+    /// Losslessly project this color space to an ICC.1 `cicpType` tag ([`CicpTag`]),
+    /// emitting the 12-byte base form for standardized H.273 primaries or the 44-byte
+    /// custom-primaries extension (ICC `cicpType` Amendment, 2026-10-19) for
+    /// [`Primaries::AdobeRgb`] and [`Primaries::Custom`].
+    pub fn try_cicp_tag(&self) -> Result<CicpTag, CicpProjectionError> {
+        CicpTag::from_color_space(self)
     }
 
     /// Whether this color space is HDR (`Pq` or `Hlg`).

@@ -9,13 +9,13 @@
 
 ## summary
 #
-#   inherent methods                           66
-#   trait roster entries (type × trait)        72
+#   inherent methods                           67
+#   trait roster entries (type × trait)        73
 #
 # per-module pub lines:
 #   (root)                            5
 #   buffer                            4
-#   cicp                              3
+#   cicp                              4
 #   color                            26
 #   facts                             2
 #   hashing                           1
@@ -27,7 +27,7 @@
 #   sample                            2
 #   storage                           1
 
-## items (66 lines)
+## items (67 lines)
 
 pub fn ChromaSiting::assert_fields_are_eq(&self)
 pub fn ChromaSubsampling::assert_fields_are_eq(&self)
@@ -41,6 +41,7 @@ pub fn buffer::Rgbx::assert_fields_are_eq(&self)
 pub fn cicp::Cicp::assert_fields_are_eq(&self)
 pub fn cicp::CicpError::assert_fields_are_eq(&self)
 pub fn cicp::CicpProjectionError::assert_fields_are_eq(&self)
+pub fn cicp::CicpTag::assert_fields_are_eq(&self)
 pub fn color::AlphaMode::assert_fields_are_eq(&self)
 pub fn color::ColorError::assert_fields_are_eq(&self)
 pub fn color::ColorOrigin::assert_fields_are_eq(&self)
@@ -96,7 +97,7 @@ pub fn sample::SampleEncoding::assert_fields_are_eq(&self)
 pub fn sample::SampleEncodingError::assert_fields_are_eq(&self)
 pub fn storage::StorageError::assert_fields_are_eq(&self)
 
-## trait impls (72 types)
+## trait impls (73 types)
 
 ChromaSiting: TrivialClone
 ChromaSubsampling: TrivialClone
@@ -112,6 +113,7 @@ buffer::Rgbx: TrivialClone
 cicp::Cicp: TrivialClone
 cicp::CicpError: TrivialClone
 cicp::CicpProjectionError: TrivialClone
+cicp::CicpTag: TrivialClone
 color::AlphaMode: TrivialClone
 color::Chromaticity: TrivialClone
 color::Color: TrivialClone

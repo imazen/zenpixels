@@ -48,10 +48,14 @@ zenpixels-convert = "0.5.0"
   (`ImageSpec::RGB8_SRGB`, etc.), `SpecCow<'a>` avoids `Arc` bumps across views
   and crops, and `PixelFormat` (`Copy + const + !Drop`) serves codec tables and
   `const` slices without heap ownership.
-- **Lossless ITU-T H.273 CICP & validated ICC:** all 11 Table 2 primaries
-  (including projective `y == 0` CIE XYZ), all 16 Table 3 transfers, all 9
-  Table 4 NCL matrix codes, exact `0.0001 cd/m²` `ClliCodes`, and ISO 15076-1
-  structural ICC validation inside `ImageSpec::validate()`.
+- **Lossless ITU-T H.273 CICP & ICC.1 `cicpType` amendment:** all 11 Table 2
+  primaries (including projective `y == 0` CIE XYZ), all 16 Table 3 transfers,
+  all 9 Table 4 NCL matrix codes, ICC.1 `cicpType` 44-byte custom-primaries
+  extension (`CicpTag`, signed `s15Fixed16Number` supporting negative
+  chromaticities such as `CustomPrimaries::ACES_AP0`, `ACES_CG`, `PROPHOTO_RGB`,
+  and Annex 1 `to_icc_d50_matrix_f64`), exact `0.0001 cd/m²` `ClliCodes`, and
+  ISO 15076-1 structural ICC validation (`validate_icc_structure`) wired into
+  `ImageSpec::validate()`.
 - **Unified `SampleLayout` + `BitPacking`:** full-width samples (`U8`, `U16`,
   `F16`, `F32`, `I16`, `I32`, `U32`), 10/12-bit codec planes (`P010`, `U10_LSB`,
   `U12_LSB`), and bitfield words (`RGB565`, `RGB10A2`).

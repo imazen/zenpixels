@@ -2954,12 +2954,13 @@ fn resolve_linear_rgb_primaries(color: &ColorSpace) -> Option<(Primaries, Option
         } if *primaries != Primaries::Unknown => Some((*primaries, *white)),
         ColorSpace::Gray { white, .. } => Some((Primaries::Bt709, *white)),
         ColorSpace::Icc { profile, .. } => {
-            let id = zenpixels::icc::IccIdentification::from_icc(profile)?;
-            if id.primaries != Primaries::Unknown {
-                Some((id.primaries, None))
-            } else {
-                None
+            if let Some(id) = zenpixels::icc::IccIdentification::from_icc(profile)
+                && id.primaries != Primaries::Unknown
+            {
+                return Some((id.primaries, None));
             }
+            let primaries = zenpixels::CicpTag::from_icc(profile)?.primaries()?;
+            (primaries != Primaries::Unknown).then_some((primaries, None))
         }
         _ => None,
     }

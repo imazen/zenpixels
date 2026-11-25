@@ -2,8 +2,10 @@
 //!
 //! Two capabilities, no dependencies beyond `core`:
 //!
-//! - **CICP extraction**: [`Cicp::from_icc`] reads the `cicp` tag from ICC v4.4+
-//!   profiles (~100ns, no allocation).
+//! - **CICP extraction**: [`Cicp::from_icc`] and [`CicpTag::from_icc`] read the
+//!   `cicp` tag from ICC v4.4+ profiles (~100ns, no allocation), including the
+//!   44-byte custom-primaries `cicpType` extension (ICC amendment approved
+//!   2026-10-19).
 //!
 //! - **Hash-based identification**: [`IccIdentification::from_icc`] recognizes
 //!   retained profile fingerprints (sRGB, Display P3, BT.2020, Adobe RGB,
@@ -33,6 +35,7 @@
 //! }
 //! ```
 
+pub use crate::cicp::CicpTag;
 pub use crate::color::{IccValidationError, validate_icc_structure};
 use crate::{Cicp, HlgMode, IccColorSpace, Primaries, Transfer};
 
@@ -112,60 +115,7 @@ const fn is_metadata_field(i: usize) -> bool {
 /// (see the GRAY-class synthesis in `zenpixels-convert`); this leniency only
 /// affects what we accept, never what we produce.
 pub(crate) fn extract_cicp(data: &[u8]) -> Option<Cicp> {
-    if data.len() < ICC_MIN_SIZE {
-        return None;
-    }
-    if data.get(ICC_SIGNATURE_OFFSET..ICC_SIGNATURE_OFFSET + 4)? != b"acsp" {
-        return None;
-    }
-    // ICC.1 §9.2.17: `cicpTag` exists only in v4+ Input, Display, or ColorSpace profiles.
-    let version = u32::from_be_bytes(data.get(8..12)?.try_into().ok()?);
-    if version < 0x0400_0000 {
-        return None;
-    }
-    if !matches!(data.get(12..16)?, b"scnr" | b"mntr" | b"spac") {
-        return None;
-    }
-
-    let tag_count = u32::from_be_bytes(
-        data[ICC_TAG_COUNT_OFFSET..ICC_TAG_COUNT_OFFSET + 4]
-            .try_into()
-            .ok()?,
-    ) as usize;
-    let tag_count = tag_count.min(ICC_MAX_TAG_COUNT);
-
-    for i in 0..tag_count {
-        let entry_offset = ICC_TAG_TABLE_OFFSET + i * ICC_TAG_ENTRY_SIZE;
-        let entry = data.get(entry_offset..entry_offset + ICC_TAG_ENTRY_SIZE)?;
-
-        if entry[..4] != *b"cicp" {
-            continue;
-        }
-
-        let data_offset = u32::from_be_bytes(entry[4..8].try_into().ok()?) as usize;
-        let data_size = u32::from_be_bytes(entry[8..12].try_into().ok()?) as usize;
-
-        if data_size < 12 {
-            return None;
-        }
-
-        let tag_span = data.get(data_offset..data_offset.checked_add(data_size)?)?;
-        let tag_data = &tag_span[..12];
-
-        // Tag data starts with type signature "cicp" + 4 zero reserved bytes (ICC.1 §10.4).
-        if tag_data[..4] != *b"cicp" || tag_data[4..8] != [0; 4] || tag_data[11] > 1 {
-            return None;
-        }
-        // Bytes 8..12 are the four CICP fields.
-        return Some(Cicp::new(
-            tag_data[8],
-            tag_data[9],
-            tag_data[10],
-            tag_data[11] == 1,
-        ));
-    }
-
-    None
+    crate::cicp::extract_cicp_tag(data).map(CicpTag::cicp)
 }
 
 // ── Profile inspection ───────────────────────────────────────────────────
@@ -682,6 +632,7 @@ pub fn profile_color_space(icc_bytes: &[u8]) -> Option<IccColorSpace> {
         b"CMYK" => Some(IccColorSpace::Cmyk),
         b"Lab " => Some(IccColorSpace::Lab),
         b"XYZ " => Some(IccColorSpace::Xyz),
+        b"YCbr" => Some(IccColorSpace::Ycbcr),
         _ => None,
     }
 }
@@ -1605,6 +1556,9 @@ mod tests {
 
         header[16..20].copy_from_slice(b"XYZ ");
         assert_eq!(profile_color_space(&header), Some(IccColorSpace::Xyz));
+
+        header[16..20].copy_from_slice(b"YCbr");
+        assert_eq!(profile_color_space(&header), Some(IccColorSpace::Ycbcr));
     }
 
     #[test]

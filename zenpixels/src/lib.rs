@@ -48,7 +48,7 @@ pub use buffer::{
     TypedElement,
 };
 pub use cicp::{
-    Cicp, CicpError, CicpProjectionError, color_primaries_name, matrix_coefficients_name,
+    Cicp, CicpError, CicpProjectionError, CicpTag, color_primaries_name, matrix_coefficients_name,
     transfer_characteristics_name,
 };
 pub use color::{

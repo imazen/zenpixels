@@ -667,3 +667,251 @@ fn planar_zero_copy_codec_apis_and_strict_role_validation() {
     assert_eq!(rgb_pbuf.planes().len(), 4);
     assert!(PlanarView::new(4, 4, rgb_pbuf.as_view().planes()).is_ok());
 }
+
+fn build_icc_with_raw_cicp(
+    class: &[u8; 4],
+    data_space: &[u8; 4],
+    cicp_tag_bytes: &[u8],
+) -> Vec<u8> {
+    let tag_offset = 144usize;
+    let total_len = tag_offset + cicp_tag_bytes.len();
+    let mut data = vec![0u8; total_len];
+    data[0..4].copy_from_slice(&(total_len as u32).to_be_bytes());
+    data[8..12].copy_from_slice(&[4, 0x40, 0, 0]);
+    data[12..16].copy_from_slice(class);
+    data[16..20].copy_from_slice(data_space);
+    data[20..24].copy_from_slice(b"XYZ ");
+    data[36..40].copy_from_slice(b"acsp");
+    data[128..132].copy_from_slice(&1u32.to_be_bytes());
+    data[132..136].copy_from_slice(b"cicp");
+    data[136..140].copy_from_slice(&(tag_offset as u32).to_be_bytes());
+    data[140..144].copy_from_slice(&(cicp_tag_bytes.len() as u32).to_be_bytes());
+    data[tag_offset..].copy_from_slice(cicp_tag_bytes);
+    data
+}
+
+#[test]
+fn icc1_cicptype_custom_primaries_amendment_and_annex1() {
+    use zenpixels::{CicpError, CicpProjectionError, CicpTag, CustomPrimaries, IccColorSpace};
+
+    // 1. Annex 1 A1.6 worked example: BT.709 (0.64,0.33), (0.30,0.60), (0.15,0.06), D65 (0.3127,0.3290)
+    //    must reproduce the published D50-adapted matrix to < 1e-6 and sum to ICC PCS D50.
+    const ANNEX1_BT709_D50: [[f64; 3]; 3] = [
+        [0.4360413, 0.3851129, 0.1430458],
+        [0.2224845, 0.7169051, 0.0606104],
+        [0.0139202, 0.0970672, 0.7139126],
+    ];
+    const ICC_PCS_D50: [f64; 3] = [0.9642, 1.0, 0.8249];
+
+    let bt709_d50 = Primaries::Bt709.to_icc_d50_matrix_f64().unwrap();
+    let bt709_custom_d50 = Primaries::Bt709
+        .to_custom()
+        .unwrap()
+        .to_icc_d50_matrix_f64()
+        .unwrap();
+    for r in 0..3 {
+        let mut row_sum = 0.0;
+        for c in 0..3 {
+            assert!(
+                (bt709_d50[r][c] - ANNEX1_BT709_D50[r][c]).abs() < 1e-6,
+                "Annex 1 A1.6 mismatch at [{r}][{c}]: got {}, want {}",
+                bt709_d50[r][c],
+                ANNEX1_BT709_D50[r][c]
+            );
+            assert!((bt709_d50[r][c] - bt709_custom_d50[r][c]).abs() < 1e-12);
+            row_sum += bt709_d50[r][c];
+        }
+        assert!(
+            (row_sum - ICC_PCS_D50[r]).abs() < 1e-12,
+            "row {r} sum {row_sum} != PCS D50 {}",
+            ICC_PCS_D50[r]
+        );
+    }
+
+    // 2. ACES AP0 negative blue y_B = -0.0770 (Annex 1 p.10 & §1 "The solution"),
+    //    ACEScg (AP1), ProPhoto RGB, and Adobe RGB round-trip cleanly via 44-byte cicpType.
+    for (name, cp) in [
+        ("ACES_AP0", CustomPrimaries::ACES_AP0),
+        ("ACES_CG", CustomPrimaries::ACES_CG),
+        ("PROPHOTO_RGB", CustomPrimaries::PROPHOTO_RGB),
+        ("ADOBE_RGB", Primaries::AdobeRgb.to_custom().unwrap()),
+    ] {
+        let s15 = cp.to_s15fixed16();
+        let rt_cp = CustomPrimaries::from_s15fixed16(s15).expect(name);
+        // Once quantized to s15Fixed16Number, round-trip through f32 and bytes is bit-exact!
+        assert_eq!(rt_cp.to_s15fixed16(), s15, "{name}: s15Fixed16 idempotence");
+        let ext = rt_cp.to_cicp_extension_bytes();
+        assert_eq!(CustomPrimaries::from_cicp_extension_bytes(ext), Some(rt_cp));
+
+        let d50 = rt_cp.to_icc_d50_matrix_f64().expect(name);
+        for (r, &pcs_w) in ICC_PCS_D50.iter().enumerate() {
+            let sum = d50[r][0] + d50[r][1] + d50[r][2];
+            assert!(
+                (sum - pcs_w).abs() < 1e-11,
+                "{name}: D50 matrix row {r} sum {sum} != {pcs_w}"
+            );
+        }
+
+        let tag = CicpTag::with_custom_primaries(rt_cp, 16, 0, true);
+        assert_eq!(tag.encoded_len(), CicpTag::EXTENDED_TAG_LEN);
+        assert_eq!(tag.cicp(), Cicp::new(2, 16, 0, true));
+        assert_eq!(tag.custom_primaries(), Some(rt_cp));
+        assert_eq!(tag.primaries(), Some(Primaries::Custom(rt_cp)));
+
+        let bytes = tag.to_tag_bytes_vec();
+        assert_eq!(bytes.len(), 44);
+        assert_eq!(&bytes[0..4], b"cicp");
+        assert_eq!(&bytes[4..8], &[0, 0, 0, 0]);
+        assert_eq!(bytes[8], 2);
+        assert_eq!(bytes[9], 16);
+        assert_eq!(bytes[10], 0);
+        assert_eq!(bytes[11], 1);
+        assert_eq!(CicpTag::try_from_tag_bytes(&bytes).unwrap(), tag);
+
+        let mut stack = [0u8; 44];
+        assert_eq!(tag.write_tag_bytes(&mut stack[..43]), None);
+        assert_eq!(tag.write_tag_bytes(&mut stack), Some(44));
+        assert_eq!(&stack[..], bytes.as_slice());
+
+        // Project to ColorSpace::Rgb and back to CicpTag!
+        let cs = tag.to_color_space(AlphaMode::None).unwrap();
+        assert_eq!(cs.try_cicp_tag().unwrap(), tag);
+        // Plain 4-byte Cicp projection refuses unmapped custom primaries.
+        assert_eq!(cs.try_cicp(), Err(CicpProjectionError::UnmappedPrimaries));
+
+        // Works across Input (scnr), Display (mntr), and ColorSpace (spac) with NO matrix tags (§4.1 / NOTE 5)!
+        for class in [b"scnr", b"mntr", b"spac"] {
+            let icc = build_icc_with_raw_cicp(class, b"RGB ", &bytes);
+            validate_icc_structure(&icc).unwrap();
+            let parsed = CicpTag::from_icc(&icc).expect("from_icc");
+            assert_eq!(parsed, tag);
+            // Backward compatibility (§3): Cicp::from_icc sees the 4-byte base with CP=2!
+            #[cfg(feature = "icc")]
+            assert_eq!(Cicp::from_icc(&icc), Some(Cicp::new(2, 16, 0, true)));
+        }
+    }
+
+    // Verify ACES AP0 blue y_B is strictly negative in s15Fixed16Number!
+    let ap0_s15 = CustomPrimaries::ACES_AP0.to_s15fixed16();
+    assert!(
+        ap0_s15[5] < 0,
+        "ACES AP0 y_B must be negative: {}",
+        ap0_s15[5]
+    );
+
+    // 3. §4.3 NOTE 3: Every HAGC / SMPTE ST 2086 u16/50000 value (0..=50000) round-trips
+    //    losslessly through s15Fixed16Number and back!
+    for code in 0u16..=50_000 {
+        let x = (code as f32) / 50_000.0;
+        let c = Chromaticity::try_new_primary(x, 0.5).unwrap();
+        let (s15_x, _) = c.to_s15fixed16();
+        let back = (((s15_x as f64) / 65536.0) * 50_000.0 + 0.5) as u16;
+        assert_eq!(back, code, "HAGC code {code} failed s15Fixed16 round-trip");
+    }
+
+    // 4. §4.1 Scope: YCbr applies the extension; XYZ does NOT apply the extension!
+    let ycbcr_tag = CicpTag::with_custom_primaries(CustomPrimaries::ACES_CG, 16, 9, false);
+    let ycbcr_bytes = ycbcr_tag.to_tag_bytes_vec();
+    let ycbcr_icc = build_icc_with_raw_cicp(b"spac", b"YCbr", &ycbcr_bytes);
+    #[cfg(feature = "icc")]
+    assert_eq!(
+        IccColorSpace::from_icc(&ycbcr_icc),
+        Some(IccColorSpace::Ycbcr)
+    );
+    let parsed_ycbcr = CicpTag::from_icc(&ycbcr_icc).unwrap();
+    assert_eq!(parsed_ycbcr.cicp(), Cicp::new(2, 16, 9, false));
+    assert!(parsed_ycbcr.custom_primaries().is_some());
+    assert_eq!(
+        *parsed_ycbcr
+            .to_color_space(AlphaMode::None)
+            .unwrap_err()
+            .error(),
+        CicpError::NonIdentityMatrix(9)
+    );
+
+    // XYZ data colour space (§4.1 NOTE): extension does not apply -> custom_primaries is None!
+    let xyz_icc = build_icc_with_raw_cicp(b"mntr", b"XYZ ", &ycbcr_bytes);
+    let parsed_xyz = CicpTag::from_icc(&xyz_icc).unwrap();
+    assert_eq!(parsed_xyz.cicp(), Cicp::new(2, 16, 9, false));
+    assert_eq!(parsed_xyz.custom_primaries(), None);
+
+    // 5. §4.3 NOTE 1 & NOTE 2 + malformed tag rejections.
+    // CP=2 with 12-byte tag -> Unspecified (no extension, NOTE 2).
+    let base_unspec = CicpTag::from_cicp(Cicp::new(2, 13, 0, true));
+    assert_eq!(base_unspec.encoded_len(), 12);
+    assert!(base_unspec.to_extended_tag_bytes().is_none());
+    let base_unspec_bytes = base_unspec.to_tag_bytes_vec();
+    assert_eq!(base_unspec_bytes.len(), 12);
+    let parsed_unspec = CicpTag::try_from_tag_bytes(&base_unspec_bytes).unwrap();
+    assert_eq!(parsed_unspec.custom_primaries(), None);
+    assert_eq!(
+        *parsed_unspec
+            .to_color_space(AlphaMode::None)
+            .unwrap_err()
+            .error(),
+        CicpError::UnmappedPrimaries(2)
+    );
+    let unspec_icc = build_icc_with_raw_cicp(b"mntr", b"RGB ", &base_unspec_bytes);
+    assert_eq!(CicpTag::from_icc(&unspec_icc), Some(base_unspec));
+
+    // CP=2 with truncated extension (20 bytes < 44) -> rejected!
+    assert_eq!(
+        *CicpTag::try_from_tag_bytes(&ycbcr_bytes[..20])
+            .unwrap_err()
+            .error(),
+        CicpError::MalformedTag
+    );
+    let trunc_icc = build_icc_with_raw_cicp(b"mntr", b"RGB ", &ycbcr_bytes[..20]);
+    assert_eq!(CicpTag::from_icc(&trunc_icc), None);
+
+    // CP != 2 (e.g. CP=1) with 44 bytes -> rejected per §4.3 NOTE 1!
+    let mut bad_cp1 = ycbcr_bytes.clone();
+    bad_cp1[8] = 1;
+    assert_eq!(
+        *CicpTag::try_from_tag_bytes(&bad_cp1).unwrap_err().error(),
+        CicpError::MalformedTag
+    );
+    let bad_cp1_icc = build_icc_with_raw_cicp(b"mntr", b"RGB ", &bad_cp1);
+    assert_eq!(CicpTag::from_icc(&bad_cp1_icc), None);
+
+    // CP=2 with 44 bytes containing degenerate/collinear primaries (all zero) -> rejected!
+    let mut degen = [0u8; 44];
+    degen[0..4].copy_from_slice(b"cicp");
+    degen[8] = 2;
+    degen[9] = 13;
+    degen[11] = 1;
+    assert_eq!(
+        *CicpTag::try_from_tag_bytes(&degen).unwrap_err().error(),
+        CicpError::InvalidCustomPrimaries
+    );
+    let degen_icc = build_icc_with_raw_cicp(b"mntr", b"RGB ", &degen);
+    assert_eq!(CicpTag::from_icc(&degen_icc), None);
+
+    // ColorSpace::try_cicp_tag emits 12-byte base for standardized H.273 spaces, 44-byte for AdobeRgb+Linear,
+    // and refuses HlgMode::Display / DiffuseWhite / non-H.273 Transfer::AdobeRgb.
+    let srgb_tag = ColorSpace::SRGB.try_cicp_tag().unwrap();
+    assert_eq!(srgb_tag.encoded_len(), 12);
+    assert_eq!(srgb_tag.cicp(), Cicp::SRGB);
+
+    let adobe_lin = ColorSpace::Rgb {
+        primaries: Primaries::AdobeRgb,
+        transfer: Transfer::Linear,
+        range: SignalRange::Full,
+        alpha: AlphaMode::None,
+        white: None,
+    };
+    let adobe_tag = adobe_lin.try_cicp_tag().unwrap();
+    assert_eq!(adobe_tag.encoded_len(), 44);
+    assert_eq!(adobe_tag.cicp(), Cicp::new(2, 8, 0, true));
+
+    assert_eq!(
+        ColorSpace::BT2100_HLG_1000.try_cicp_tag(),
+        Err(CicpProjectionError::HlgDisplayRenderingLost)
+    );
+    assert_eq!(
+        ColorSpace::SRGB
+            .with_white(DiffuseWhite::BT2408)
+            .try_cicp_tag(),
+        Err(CicpProjectionError::DiffuseWhiteLost)
+    );
+}

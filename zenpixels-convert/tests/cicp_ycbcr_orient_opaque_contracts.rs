@@ -641,3 +641,295 @@ fn gainmap_decoupled_3ch_shared_metadata_and_passthrough_orientation() {
     assert_eq!(out.orientation(), Orientation::Rotate90);
     assert_eq!(out.display_dimensions(), (2, 4));
 }
+
+/// Construct a complete, spec-conformant ICC v4.4 `mntr` `RGB ` matrix/TRC profile from
+/// `CustomPrimaries` (using Annex 1 `to_icc_d50_matrix_f64()` for `rXYZ`/`gXYZ`/`bXYZ`)
+/// plus a linear `curv` TRC, `wtpt` D50, and a 44-byte `cicp` custom-primaries tag!
+fn build_matrix_trc_icc_with_custom_cicp(
+    cp: zenpixels_convert::CustomPrimaries,
+    tc: u8,
+) -> Vec<u8> {
+    let d50 = cp.to_icc_d50_matrix_f64().unwrap();
+    let s15 = |v: f64| -> [u8; 4] {
+        let q = if v >= 0.0 {
+            (v * 65536.0 + 0.5) as i32
+        } else {
+            (v * 65536.0 - 0.5) as i32
+        };
+        q.to_be_bytes()
+    };
+    let xyz_tag = |col: usize| -> [u8; 20] {
+        let mut b = [0u8; 20];
+        b[0..4].copy_from_slice(b"XYZ ");
+        b[8..12].copy_from_slice(&s15(d50[0][col]));
+        b[12..16].copy_from_slice(&s15(d50[1][col]));
+        b[16..20].copy_from_slice(&s15(d50[2][col]));
+        b
+    };
+    let mut wtpt = [0u8; 20];
+    wtpt[0..4].copy_from_slice(b"XYZ ");
+    wtpt[8..12].copy_from_slice(&s15(0.9642));
+    wtpt[12..16].copy_from_slice(&s15(1.0));
+    wtpt[16..20].copy_from_slice(&s15(0.8249));
+
+    // Linear TRC (`curv` with count = 0 = identity) or pure sRGB `para` funcType 3.
+    let trc: Vec<u8> = if tc == 13 {
+        let mut p = vec![0u8; 32];
+        p[0..4].copy_from_slice(b"para");
+        p[8..10].copy_from_slice(&3u16.to_be_bytes());
+        p[12..16].copy_from_slice(&s15(2.4));
+        p[16..20].copy_from_slice(&s15(1.0 / 1.055));
+        p[20..24].copy_from_slice(&s15(0.055 / 1.055));
+        p[24..28].copy_from_slice(&s15(1.0 / 12.92));
+        p[28..32].copy_from_slice(&s15(0.04045));
+        p
+    } else {
+        let mut c = vec![0u8; 12];
+        c[0..4].copy_from_slice(b"curv");
+        c
+    };
+
+    let cicp_tag =
+        zenpixels_convert::CicpTag::with_custom_primaries(cp, tc, 0, true).to_tag_bytes_vec();
+    let r_xyz = xyz_tag(0);
+    let g_xyz = xyz_tag(1);
+    let b_xyz = xyz_tag(2);
+
+    // 8 tags: wtpt, rXYZ, gXYZ, bXYZ, rTRC, gTRC, bTRC (shared), cicp.
+    let tag_count = 8u32;
+    let table_end = 132 + (tag_count as usize) * 12;
+    let mut body = Vec::new();
+    let mut entries: Vec<([u8; 4], u32, u32)> = Vec::new();
+
+    let push_tag = |entries: &mut Vec<([u8; 4], u32, u32)>,
+                    body: &mut Vec<u8>,
+                    sig: [u8; 4],
+                    payload: &[u8]| {
+        let off = (table_end + body.len()) as u32;
+        body.extend_from_slice(payload);
+        body.resize((body.len() + 3) & !3, 0);
+        entries.push((sig, off, payload.len() as u32));
+        off
+    };
+
+    push_tag(&mut entries, &mut body, *b"wtpt", &wtpt);
+    push_tag(&mut entries, &mut body, *b"rXYZ", &r_xyz);
+    push_tag(&mut entries, &mut body, *b"gXYZ", &g_xyz);
+    push_tag(&mut entries, &mut body, *b"bXYZ", &b_xyz);
+    let trc_off = push_tag(&mut entries, &mut body, *b"rTRC", &trc);
+    entries.push((*b"gTRC", trc_off, trc.len() as u32));
+    entries.push((*b"bTRC", trc_off, trc.len() as u32));
+    push_tag(&mut entries, &mut body, *b"cicp", &cicp_tag);
+
+    let total_size = (table_end + body.len()) as u32;
+    let mut icc = vec![0u8; table_end];
+    icc[0..4].copy_from_slice(&total_size.to_be_bytes());
+    icc[8..12].copy_from_slice(&[4, 0x40, 0, 0]);
+    icc[12..16].copy_from_slice(b"mntr");
+    icc[16..20].copy_from_slice(b"RGB ");
+    icc[20..24].copy_from_slice(b"XYZ ");
+    icc[36..40].copy_from_slice(b"acsp");
+    // PCS illuminant D50 (0.9642, 1.0, 0.8249) at bytes 68..80
+    icc[68..72].copy_from_slice(&s15(0.9642));
+    icc[72..76].copy_from_slice(&s15(1.0));
+    icc[76..80].copy_from_slice(&s15(0.8249));
+    icc[128..132].copy_from_slice(&tag_count.to_be_bytes());
+    for (i, (sig, off, len)) in entries.into_iter().enumerate() {
+        let base = 132 + i * 12;
+        icc[base..base + 4].copy_from_slice(&sig);
+        icc[base + 4..base + 8].copy_from_slice(&off.to_be_bytes());
+        icc[base + 8..base + 12].copy_from_slice(&len.to_be_bytes());
+    }
+    icc.extend_from_slice(&body);
+    icc
+}
+
+#[test]
+fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
+    use std::sync::Arc;
+    use zenpixels_convert::{
+        ChannelOrder, Cicp, CicpTag, CustomPrimaries, PixelViewLoadBearingExt,
+        validate_icc_structure,
+    };
+
+    // 1. Build ACEScg (D60) and custom D65 ICC v4.4 profiles carrying 44-byte cicp tags.
+    let acescg_icc = build_matrix_trc_icc_with_custom_cicp(CustomPrimaries::ACES_CG, 8);
+    validate_icc_structure(&acescg_icc).unwrap();
+    let acescg_tag = CicpTag::from_icc(&acescg_icc).unwrap();
+    assert_eq!(acescg_tag.cicp(), Cicp::new(2, 8, 0, true));
+    assert!(acescg_tag.custom_primaries().is_some());
+
+    let custom_d65 =
+        CustomPrimaries::try_new((0.65, 0.33), (0.28, 0.62), (0.15, 0.06), (0.3127, 0.3290))
+            .unwrap();
+    let d65_icc = build_matrix_trc_icc_with_custom_cicp(custom_d65, 13);
+    validate_icc_structure(&d65_icc).unwrap();
+    assert!(
+        CicpTag::from_icc(&d65_icc)
+            .unwrap()
+            .custom_primaries()
+            .is_some()
+    );
+
+    // 2. Load-bearing chroma collapse respects custom white point in 44-byte cicp tag:
+    //    - Custom D65 neutral RGB ICC -> allowed to collapse to Gray!
+    //    - ACEScg D60 neutral RGB ICC -> suppressed (stays RGB ICC, never shifts D60 to D65 Gray)!
+    let d65_spec = ImageSpec::new(
+        SampleLayout::RGB8,
+        ColorSpace::Icc {
+            profile: Arc::from(d65_icc.clone()),
+            channels: 3,
+            alpha: AlphaMode::None,
+            intent: zenpixels_convert::RenderingIntent::RelativeColorimetric,
+        },
+    );
+    let d65_gray_buf = PixelBuf::from_vec(vec![128u8; 4 * 3], 2, 2, d65_spec).unwrap();
+    let reduced_d65 = d65_gray_buf
+        .as_view()
+        .reduce_to_load_bearing_format()
+        .unwrap()
+        .expect("custom D65 neutral ICC should collapse to Gray");
+    assert_eq!(reduced_d65.spec().layout.order, ChannelOrder::Gray);
+
+    let acescg_spec_u8 = ImageSpec::new(
+        SampleLayout::RGB8,
+        ColorSpace::Icc {
+            profile: Arc::from(acescg_icc.clone()),
+            channels: 3,
+            alpha: AlphaMode::None,
+            intent: zenpixels_convert::RenderingIntent::RelativeColorimetric,
+        },
+    );
+    let acescg_gray_buf = PixelBuf::from_vec(vec![128u8; 4 * 3], 2, 2, acescg_spec_u8).unwrap();
+    assert!(
+        acescg_gray_buf
+            .as_view()
+            .reduce_to_load_bearing_format()
+            .unwrap()
+            .is_none(),
+        "ACEScg (D60) neutral RGB ICC must NOT collapse to D65 Gray"
+    );
+
+    // 3. CMS interop (MoxCms & Lcms): both parse the 44-byte cicp ICC profile cleanly AND match
+    //    native `Primaries::Custom(ACES_CG)` -> linear sRGB!
+    let native_acescg_spec = ImageSpec::new(
+        SampleLayout::RGBF32,
+        ColorSpace::Rgb {
+            primaries: Primaries::Custom(CustomPrimaries::ACES_CG),
+            transfer: Transfer::Linear,
+            range: SignalRange::Full,
+            alpha: AlphaMode::None,
+            white: None,
+        },
+    );
+    let icc_acescg_spec = ImageSpec::new(
+        SampleLayout::RGBF32,
+        ColorSpace::Icc {
+            profile: Arc::from(acescg_icc),
+            channels: 3,
+            alpha: AlphaMode::None,
+            intent: zenpixels_convert::RenderingIntent::RelativeColorimetric,
+        },
+    );
+    let sample_pixels: Vec<f32> = vec![
+        1.0, 1.0, 1.0, // D60 white -> must adapt to D65 white (1, 1, 1)
+        0.5, 0.25, 0.1, // warm chromatic
+        0.1, 0.4, 0.3, // cool chromatic
+    ];
+    let native_src =
+        PixelBuf::from_vec(sample_pixels.clone(), 3, 1, native_acescg_spec.clone()).unwrap();
+    let icc_src = PixelBuf::from_vec(sample_pixels, 3, 1, icc_acescg_spec).unwrap();
+
+    let native_out = ImagePlan::build(
+        &native_acescg_spec,
+        &ImageSpec::RGBF32_LINEAR,
+        ConvertPolicy::permissive(),
+        PeakSource::default(),
+    )
+    .unwrap()
+    .execute(&native_src)
+    .unwrap();
+    let native_row: &[f32] = native_out.as_view().row_as(0).unwrap();
+
+    #[cfg(feature = "cms-moxcms")]
+    {
+        let mox_pol = ConvertPolicy::permissive().with_cms(Arc::new(zenpixels_convert::MoxCms));
+        let mox_out = ImagePlan::build(
+            icc_src.spec(),
+            &ImageSpec::RGBF32_LINEAR,
+            mox_pol,
+            PeakSource::default(),
+        )
+        .unwrap()
+        .execute(&icc_src)
+        .unwrap();
+        let mox_row: &[f32] = mox_out.as_view().row_as(0).unwrap();
+        for (i, (&got, &want)) in mox_row.iter().zip(native_row).enumerate() {
+            assert!(
+                (got - want).abs() < 1e-3,
+                "MoxCms 44B-cicp ICC mismatch at ch {i}: got {got}, want {want}"
+            );
+        }
+    }
+
+    #[cfg(feature = "cms-lcms")]
+    {
+        let lcms_pol = ConvertPolicy::permissive().with_cms(Arc::new(zenpixels_convert::Lcms));
+        let lcms_out = ImagePlan::build(
+            icc_src.spec(),
+            &ImageSpec::RGBF32_LINEAR,
+            lcms_pol.clone(),
+            PeakSource::default(),
+        )
+        .unwrap()
+        .execute(&icc_src)
+        .unwrap();
+        let lcms_row: &[f32] = lcms_out.as_view().row_as(0).unwrap();
+        for (i, (&got, &want)) in lcms_row.iter().zip(native_row).enumerate() {
+            assert!(
+                (got - want).abs() < 1e-3,
+                "Lcms 44B-cicp ICC mismatch at ch {i}: got {got}, want {want}"
+            );
+        }
+
+        // Also verify Lcms converting directly from `ColorSpace::Icc` -> `Primaries::Custom(ACES_CG)`
+        // preserves true D60 white point (non-D65 white-point regression test!).
+        let lcms_back = ImagePlan::build(
+            icc_src.spec(),
+            &native_acescg_spec,
+            lcms_pol,
+            PeakSource::default(),
+        )
+        .unwrap()
+        .execute(&icc_src)
+        .unwrap();
+        let back_row: &[f32] = lcms_back.as_view().row_as(0).unwrap();
+        // White (1, 1, 1) in ACEScg ICC -> ACEScg structured RGB must stay (1, 1, 1)!
+        for (c, &val) in back_row.iter().enumerate().take(3) {
+            assert!(
+                (val - 1.0).abs() < 1e-3,
+                "Lcms ACEScg white ch {c}: got {val} (expected 1.0)"
+            );
+        }
+    }
+
+    // 4. Gain-map extraction resolves primaries from 44-byte custom-primaries cicp tag on ColorSpace::Icc!
+    #[cfg(all(feature = "gainmap", feature = "cms-lcms"))]
+    {
+        let gm_cfg = zenpixels_convert::GainMapExtractConfig::default()
+            .with_scale_factor(1)
+            .with_policy(ConvertPolicy::permissive().with_cms(Arc::new(zenpixels_convert::Lcms)));
+        let base_sdr =
+            PixelBuf::from_vec(vec![0.5_f32; 4 * 3], 2, 2, icc_src.spec().clone()).unwrap();
+        let alt_hdr = PixelBuf::from_vec(vec![1.0_f32; 4 * 3], 2, 2, native_acescg_spec).unwrap();
+        let (gm_buf, _meta) = zenpixels_convert::extract_gain_map_only(
+            &base_sdr.as_view(),
+            &alt_hdr.as_view(),
+            &gm_cfg,
+            &enough::Unstoppable,
+        )
+        .unwrap();
+        assert_eq!(gm_buf.width(), 2);
+        assert_eq!(gm_buf.height(), 2);
+    }
+}

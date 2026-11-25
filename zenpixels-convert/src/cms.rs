@@ -883,25 +883,38 @@ mod lcms_impl {
         }
     }
 
-    fn primaries_triple(primaries: Primaries) -> Option<CiexyYTriple> {
-        let ((rx, ry), (gx, gy), (bx, by)) = primaries.chromaticity()?;
-        Some(CiexyYTriple {
-            Red: CiexyY {
-                x: f64::from(rx),
-                y: f64::from(ry),
+    fn primaries_triple(primaries: Primaries) -> Option<(CiexyY, CiexyYTriple)> {
+        let (((rx, ry), (gx, gy), (bx, by)), (wx, wy)) =
+            (primaries.chromaticity()?, primaries.white_point()?);
+        // `lcms::Profile::rgb` divides by each primary's `y`, so skip `y == 0` (e.g. `Primaries::Xyz`).
+        // Negative `y` (such as ACES AP0 `y_B = -0.0770`) is finite and well-defined.
+        if ry == 0.0 || gy == 0.0 || by == 0.0 || wy <= 0.0 {
+            return None;
+        }
+        Some((
+            CiexyY {
+                x: f64::from(wx),
+                y: f64::from(wy),
                 Y: 1.0,
             },
-            Green: CiexyY {
-                x: f64::from(gx),
-                y: f64::from(gy),
-                Y: 1.0,
+            CiexyYTriple {
+                Red: CiexyY {
+                    x: f64::from(rx),
+                    y: f64::from(ry),
+                    Y: 1.0,
+                },
+                Green: CiexyY {
+                    x: f64::from(gx),
+                    y: f64::from(gy),
+                    Y: 1.0,
+                },
+                Blue: CiexyY {
+                    x: f64::from(bx),
+                    y: f64::from(by),
+                    Y: 1.0,
+                },
             },
-            Blue: CiexyY {
-                x: f64::from(bx),
-                y: f64::from(by),
-                Y: 1.0,
-            },
-        })
+        ))
     }
 
     fn profile_from_color_space(
@@ -936,13 +949,14 @@ mod lcms_impl {
                         .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
                     return Ok((p, None));
                 }
-                // Build sRGB and all standard RGB spaces via exact H.273 D65 (0.3127, 0.3290)
-                // primaries + ToneCurve rather than `Profile::srgb()` (which uses legacy 0.3291 D65).
-                if let (Some(triple), Some(curve)) = (
+                // Build sRGB and all standard / custom RGB spaces using each space's actual white
+                // point (D65, D50, D60, DCI, C, or custom) + ToneCurve rather than `Profile::srgb()`
+                // (which uses legacy 0.3291 D65).
+                if let (Some((wp, triple)), Some(curve)) = (
                     primaries_triple(*primaries),
                     tone_curve_for_transfer(*transfer)?,
                 ) {
-                    let p = Profile::rgb(&D65, &triple, [&curve, &curve, &curve])
+                    let p = Profile::rgb(&wp, &triple, [&curve, &curve, &curve])
                         .map_err(|_| err_at(ConvertError::CmsBackendFailed))?;
                     return Ok((p, None));
                 }
@@ -1211,7 +1225,7 @@ mod lcms_impl {
                 if *primaries == Primaries::AdobeRgb && *transfer == Transfer::AdobeRgb {
                     return true;
                 }
-                if primaries.chromaticity().is_some()
+                if primaries_triple(*primaries).is_some()
                     && matches!(
                         transfer,
                         Transfer::Srgb

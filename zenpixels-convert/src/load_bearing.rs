@@ -167,22 +167,33 @@ enum GraySignalPlan {
     Suppress,
 }
 
+fn is_d65_white(wp: (f32, f32)) -> bool {
+    const D65: (f32, f32) = Primaries::WHITE_D65;
+    (wp.0 - D65.0).abs() <= 1e-4 && (wp.1 - D65.1).abs() <= 1e-4
+}
+
 fn plan_chroma_collapse_for_icc(icc: &[u8]) -> GraySignalPlan {
-    // Identify RGB ICC either via verified normalized matrix-TRC match OR an explicit ICC v4.4
-    // `cicp` tag carrying full-range RGB (matrix 0).
-    let cicp = zenpixels::icc::IccIdentification::from_icc(icc)
+    // Identify RGB ICC either via verified normalized matrix-TRC match OR an explicit ICC v4.4+
+    // `cicp` tag (base 12-byte or amended 44-byte custom-primaries) carrying full-range RGB (MC=0).
+    let (cicp, primaries) = if let Some(id) = zenpixels::icc::IccIdentification::from_icc(icc)
         .filter(|id| id.valid_use == zenpixels::icc::IdentificationUse::MatrixTrcSubstitution)
-        .and_then(|id| id.to_cicp())
-        .or_else(|| {
-            zenpixels::Cicp::from_icc(icc).filter(|c| c.matrix_coefficients == 0 && c.full_range)
-        });
-    let Some(cicp) = cicp else {
+    {
+        let Some(c) = id.to_cicp() else {
+            return GraySignalPlan::Suppress;
+        };
+        (c, Some(id.primaries))
+    } else if let Some(tag) = zenpixels::CicpTag::from_icc(icc)
+        .filter(|t| t.cicp().matrix_coefficients == 0 && t.cicp().full_range)
+    {
+        (tag.cicp(), tag.primaries())
+    } else {
         return GraySignalPlan::Suppress;
     };
     // Only collapse to D65 Gray when the RGB ICC primaries have a D65 white point (e.g. BT.709,
-    // Display P3, BT.2020 — not DCI-P3 theater white).
-    if zenpixels::Primaries::from_cicp(cicp.color_primaries).and_then(Primaries::white_point)
-        != Some(Primaries::WHITE_D65)
+    // Display P3, BT.2020, or custom D65 primaries — not DCI-P3, ProPhoto D50, or ACES D60).
+    if !primaries
+        .and_then(Primaries::white_point)
+        .is_some_and(is_d65_white)
     {
         return GraySignalPlan::Suppress;
     }

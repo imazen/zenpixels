@@ -1,22 +1,30 @@
-//! CICP (Coding-Independent Code Points, ITU-T H.273 / ISO 23091-2).
+//! CICP (Coding-Independent Code Points, ITU-T H.273 / ISO 23091-2) and
+//! ICC.1 `cicpType` tag codec including the 2026-10-19 custom-primaries extension.
 
+use alloc::vec::Vec;
 use core::fmt;
 use whereat::At;
 
-use crate::color::{AlphaMode, ColorSpace, Primaries, SignalRange, Transfer};
+use crate::color::{
+    AlphaMode, ColorSpace, CustomPrimaries, HlgMode, Primaries, SignalRange, Transfer,
+};
 
-/// Failure parsing a raw wire CICP payload or projecting a [`Cicp`] tuple into an RGB [`ColorSpace`].
+/// Failure parsing a raw wire CICP payload or projecting a [`Cicp`] / [`CicpTag`] into an RGB [`ColorSpace`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CicpError {
     /// Non-zero matrix coefficients (YCbCr, ICtCp, etc.) require component reconstruction before RGB projection.
     NonIdentityMatrix(u8),
-    /// `color_primaries` code has no built-in [`Primaries`] mapping.
+    /// `color_primaries` code has no built-in [`Primaries`] mapping (and no custom-primaries extension was supplied).
     UnmappedPrimaries(u8),
     /// `transfer_characteristics` code has no built-in [`Transfer`] mapping.
     UnmappedTransfer(u8),
     /// Wire `video_full_range_flag` byte was neither `0` nor `1` (ITU-T H.273 §8.3 / PNG 3 §11.3.2.1).
     InvalidFullRangeFlag(u8),
+    /// Raw ICC `cicpType` tag bytes had an invalid length, type signature, or non-zero reserved field.
+    MalformedTag,
+    /// ICC `cicpType` 32-byte custom-primaries extension contained invalid, non-physical, or degenerate chromaticities.
+    InvalidCustomPrimaries,
 }
 
 impl fmt::Display for CicpError {
@@ -34,6 +42,18 @@ impl fmt::Display for CicpError {
                 write!(
                     f,
                     "invalid CICP video_full_range_flag byte {flag} (must be 0 or 1)"
+                )
+            }
+            Self::MalformedTag => {
+                write!(
+                    f,
+                    "malformed ICC cicpType tag (invalid signature, reserved bytes, or declared length)"
+                )
+            }
+            Self::InvalidCustomPrimaries => {
+                write!(
+                    f,
+                    "ICC cicpType custom-primaries extension has invalid or degenerate chromaticities"
                 )
             }
         }
@@ -311,4 +331,412 @@ impl fmt::Display for Cicp {
             ),
         }
     }
+}
+
+/// ICC.1:2022 §10.3 `cicpType` tag payload, including the ICC custom-primaries amendment
+/// (approved 2026-10-19).
+///
+/// - **Base 12-byte form:** `'cicp'` + 4 zero reserved bytes + 4-byte [`Cicp`] tuple.
+/// - **Extended 44-byte form:** valid only when `cicp.color_primaries == 2` (Unspecified)
+///   in an ICC v4+ Input (`scnr`), Display (`mntr`), or ColorSpace (`spac`) profile whose
+///   header data colour space is `RGB ` or `YCbr` (ICC `cicpType` Amendment §4.1 & §4.3
+///   Table 32). Bytes `12..44` encode eight signed `s15Fixed16Number` CIE 1931 `(x, y)`
+///   coordinates `[xR, yR, xG, yG, xB, yB, xw, yw]`, supporting negative chromaticities
+///   such as ACES AP0 (`y_B = -0.0770`).
+///
+/// The invariant `custom_primaries.is_some() => cicp.color_primaries == 2` is enforced
+/// by construction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct CicpTag {
+    cicp: Cicp,
+    custom_primaries: Option<CustomPrimaries>,
+}
+
+impl CicpTag {
+    /// Byte length of the base ICC.1:2022 §10.3 `cicpType` tag (`12` bytes).
+    pub const BASE_TAG_LEN: usize = 12;
+
+    /// Byte length of the extended `cicpType` tag carrying eight `s15Fixed16Number`
+    /// custom chromaticities (`12 + 32 = 44` bytes).
+    pub const EXTENDED_TAG_LEN: usize = 44;
+
+    /// Construct a 12-byte base `cicpType` tag with no custom-primaries extension.
+    #[inline]
+    #[must_use]
+    pub const fn from_cicp(cicp: Cicp) -> Self {
+        Self {
+            cicp,
+            custom_primaries: None,
+        }
+    }
+
+    /// Construct a 44-byte extended `cicpType` tag (`ColourPrimaries = 2` + custom
+    /// CIE 1931 primaries and white point).
+    #[inline]
+    #[must_use]
+    pub const fn with_custom_primaries(
+        primaries: CustomPrimaries,
+        transfer_characteristics: u8,
+        matrix_coefficients: u8,
+        full_range: bool,
+    ) -> Self {
+        Self {
+            cicp: Cicp::new(2, transfer_characteristics, matrix_coefficients, full_range),
+            custom_primaries: Some(primaries),
+        }
+    }
+
+    /// Construct a `cicpType` tag from any known [`Primaries`] (emitting the 12-byte form
+    /// when standardized in H.273 Table 2, or the 44-byte custom-primaries form for
+    /// [`Primaries::AdobeRgb`] and [`Primaries::Custom`]).
+    ///
+    /// Returns `None` for [`Primaries::Unknown`].
+    #[inline]
+    #[must_use]
+    pub const fn from_primaries_and_cicp(
+        primaries: Primaries,
+        transfer_characteristics: u8,
+        matrix_coefficients: u8,
+        full_range: bool,
+    ) -> Option<Self> {
+        if let Some(cp_code) = primaries.to_cicp() {
+            return Some(Self::from_cicp(Cicp::new(
+                cp_code,
+                transfer_characteristics,
+                matrix_coefficients,
+                full_range,
+            )));
+        }
+        let Some(custom) = primaries.to_custom() else {
+            return None;
+        };
+        Some(Self::with_custom_primaries(
+            custom,
+            transfer_characteristics,
+            matrix_coefficients,
+            full_range,
+        ))
+    }
+
+    /// Losslessly project an RGB [`ColorSpace`] to an ICC `cicpType` tag, using the
+    /// 12-byte enumerated form when standardized or the 44-byte custom-primaries form
+    /// for [`Primaries::AdobeRgb`] and [`Primaries::Custom`].
+    ///
+    /// Refuses [`HlgMode::Display`], explicit [`DiffuseWhite`](crate::DiffuseWhite),
+    /// non-RGB color spaces, [`Primaries::Unknown`], and non-H.273 transfers.
+    pub fn from_color_space(color: &ColorSpace) -> Result<Self, CicpProjectionError> {
+        match *color {
+            ColorSpace::Rgb {
+                primaries,
+                transfer,
+                range,
+                white,
+                ..
+            } => {
+                if matches!(transfer, Transfer::Hlg(HlgMode::Display(_))) {
+                    return Err(CicpProjectionError::HlgDisplayRenderingLost);
+                }
+                if white.is_some() {
+                    return Err(CicpProjectionError::DiffuseWhiteLost);
+                }
+                let tc = transfer
+                    .to_cicp()
+                    .ok_or(CicpProjectionError::UnmappedTransfer)?;
+                Self::from_primaries_and_cicp(primaries, tc, 0, range == SignalRange::Full)
+                    .ok_or(CicpProjectionError::UnmappedPrimaries)
+            }
+            _ => Err(CicpProjectionError::NotRgb),
+        }
+    }
+
+    /// Underlying 4-byte H.273 [`Cicp`] tuple (`color_primaries == 2` when extended).
+    #[inline]
+    #[must_use]
+    pub const fn cicp(self) -> Cicp {
+        self.cicp
+    }
+
+    /// Embedded custom primaries from bytes `12..44`, if present.
+    #[inline]
+    #[must_use]
+    pub const fn custom_primaries(self) -> Option<CustomPrimaries> {
+        self.custom_primaries
+    }
+
+    /// Resolved [`Primaries`]: [`Primaries::Custom`] when the 32-byte extension is present,
+    /// otherwise [`Primaries::from_cicp`] on the H.273 `ColourPrimaries` code.
+    #[inline]
+    #[must_use]
+    pub const fn primaries(self) -> Option<Primaries> {
+        match self.custom_primaries {
+            Some(cp) => Some(Primaries::Custom(cp)),
+            None => Primaries::from_cicp(self.cicp.color_primaries),
+        }
+    }
+
+    /// Encoded ICC `cicpType` tag length in bytes: `12` (base) or `44` (extended).
+    #[inline]
+    #[must_use]
+    pub const fn encoded_len(self) -> usize {
+        if self.custom_primaries.is_some() {
+            Self::EXTENDED_TAG_LEN
+        } else {
+            Self::BASE_TAG_LEN
+        }
+    }
+
+    /// Project an Identity-matrix (`MC == 0`) `cicpType` tag into [`ColorSpace::Rgb`],
+    /// resolving the 32-byte custom-primaries extension into [`Primaries::Custom`] when present.
+    pub fn to_color_space(self, alpha: AlphaMode) -> Result<ColorSpace, At<CicpError>> {
+        if self.cicp.matrix_coefficients != 0 {
+            return Err(whereat::at!(CicpError::NonIdentityMatrix(
+                self.cicp.matrix_coefficients
+            )));
+        }
+        let primaries = self
+            .primaries()
+            .ok_or_else(|| whereat::at!(CicpError::UnmappedPrimaries(self.cicp.color_primaries)))?;
+        let transfer =
+            Transfer::from_cicp(self.cicp.transfer_characteristics).ok_or_else(|| {
+                whereat::at!(CicpError::UnmappedTransfer(
+                    self.cicp.transfer_characteristics
+                ))
+            })?;
+        Ok(ColorSpace::Rgb {
+            primaries,
+            transfer,
+            range: if self.cicp.full_range {
+                SignalRange::Full
+            } else {
+                SignalRange::Narrow
+            },
+            alpha,
+            white: None,
+        })
+    }
+
+    /// Strictly decode raw ICC `cicpType` tag bytes (12-byte base or 44-byte extended)
+    /// per ICC.1:2022 §10.3 and the 2026-10-19 custom-primaries amendment.
+    ///
+    /// - Rejects lengths `< 12`, wrong `'cicp'` signature, non-zero reserved bytes `4..8`,
+    ///   or `VideoFullRangeFlag > 1`.
+    /// - When `ColourPrimaries != 2`, rejects declared lengths `!= 12` (§4.3 NOTE 1).
+    /// - When `ColourPrimaries == 2` and `tag_bytes.len() == 12`, returns `custom_primaries = None`
+    ///   (§4.3 NOTE 2).
+    /// - When `ColourPrimaries == 2` and `tag_bytes.len() > 12`, requires at least 44 bytes and
+    ///   validates bytes `12..44` as eight `s15Fixed16Number` chromaticities.
+    pub fn try_from_tag_bytes(tag_bytes: &[u8]) -> Result<Self, At<CicpError>> {
+        if tag_bytes.len() < Self::BASE_TAG_LEN
+            || &tag_bytes[0..4] != b"cicp"
+            || tag_bytes[4..8] != [0; 4]
+        {
+            return Err(whereat::at!(CicpError::MalformedTag));
+        }
+        let full_range = match tag_bytes[11] {
+            0 => false,
+            1 => true,
+            other => return Err(whereat::at!(CicpError::InvalidFullRangeFlag(other))),
+        };
+        let cicp = Cicp::new(tag_bytes[8], tag_bytes[9], tag_bytes[10], full_range);
+        if cicp.color_primaries == 2 {
+            if tag_bytes.len() == Self::BASE_TAG_LEN {
+                return Ok(Self {
+                    cicp,
+                    custom_primaries: None,
+                });
+            }
+            if tag_bytes.len() < Self::EXTENDED_TAG_LEN {
+                return Err(whereat::at!(CicpError::MalformedTag));
+            }
+            let ext: [u8; 32] = tag_bytes[12..44]
+                .try_into()
+                .map_err(|_| whereat::at!(CicpError::MalformedTag))?;
+            let custom = CustomPrimaries::from_cicp_extension_bytes(ext)
+                .ok_or_else(|| whereat::at!(CicpError::InvalidCustomPrimaries))?;
+            return Ok(Self {
+                cicp,
+                custom_primaries: Some(custom),
+            });
+        }
+        if tag_bytes.len() != Self::BASE_TAG_LEN {
+            return Err(whereat::at!(CicpError::MalformedTag));
+        }
+        Ok(Self {
+            cicp,
+            custom_primaries: None,
+        })
+    }
+
+    /// Encode the 12-byte base `cicpType` header + 4-byte CICP payload.
+    #[inline]
+    #[must_use]
+    pub const fn to_base_tag_bytes(self) -> [u8; 12] {
+        [
+            b'c',
+            b'i',
+            b'c',
+            b'p',
+            0,
+            0,
+            0,
+            0,
+            self.cicp.color_primaries,
+            self.cicp.transfer_characteristics,
+            self.cicp.matrix_coefficients,
+            self.cicp.full_range as u8,
+        ]
+    }
+
+    /// Encode the full 44-byte extended `cicpType` payload when `custom_primaries` is present,
+    /// or `None` for 12-byte base tags.
+    #[must_use]
+    pub const fn to_extended_tag_bytes(self) -> Option<[u8; 44]> {
+        let Some(cp) = self.custom_primaries else {
+            return None;
+        };
+        let base = self.to_base_tag_bytes();
+        let ext = cp.to_cicp_extension_bytes();
+        let mut out = [0u8; 44];
+        let mut i = 0;
+        while i < 12 {
+            out[i] = base[i];
+            i += 1;
+        }
+        let mut j = 0;
+        while j < 32 {
+            out[12 + j] = ext[j];
+            j += 1;
+        }
+        Some(out)
+    }
+
+    /// Write the encoded `cicpType` tag (`12` or `44` bytes) into `dst` without allocating,
+    /// returning the number of bytes written (`None` if `dst.len() < self.encoded_len()`).
+    #[must_use]
+    pub fn write_tag_bytes(self, dst: &mut [u8]) -> Option<usize> {
+        let len = self.encoded_len();
+        if dst.len() < len {
+            return None;
+        }
+        match self.to_extended_tag_bytes() {
+            Some(ext) => dst[..44].copy_from_slice(&ext),
+            None => dst[..12].copy_from_slice(&self.to_base_tag_bytes()),
+        }
+        Some(len)
+    }
+
+    /// Encode the `cicpType` tag into an owned `Vec<u8>` (`12` or `44` bytes).
+    #[must_use]
+    pub fn to_tag_bytes_vec(self) -> Vec<u8> {
+        match self.to_extended_tag_bytes() {
+            Some(ext) => ext.to_vec(),
+            None => self.to_base_tag_bytes().to_vec(),
+        }
+    }
+
+    /// Extract the `cicp` tag from an ICC v4+ profile (Input `scnr`, Display `mntr`, or
+    /// ColorSpace `spac`), parsing the optional 32-byte custom-primaries extension when
+    /// `ColourPrimaries == 2`, declared tag length is `>= 44`, and the profile's header
+    /// data colour space is `RGB ` or `YCbr` (ICC `cicpType` Amendment §4.1 & §4.3).
+    ///
+    /// When the profile header's data colour space is `XYZ ` (or non-RGB/YCbCr), the
+    /// custom-primaries extension does not apply (§4.1 NOTE) and `custom_primaries()` is `None`.
+    #[must_use]
+    pub fn from_icc(icc_bytes: &[u8]) -> Option<Self> {
+        extract_cicp_tag(icc_bytes)
+    }
+}
+
+impl From<Cicp> for CicpTag {
+    #[inline]
+    fn from(cicp: Cicp) -> Self {
+        Self::from_cicp(cicp)
+    }
+}
+
+impl fmt::Display for CicpTag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.custom_primaries {
+            Some(cp) => write!(
+                f,
+                "{} + custom(R=({:.4},{:.4}), G=({:.4},{:.4}), B=({:.4},{:.4}), W=({:.4},{:.4}))",
+                self.cicp,
+                cp.r().x(),
+                cp.r().y(),
+                cp.g().x(),
+                cp.g().y(),
+                cp.b().x(),
+                cp.b().y(),
+                cp.white().x(),
+                cp.white().y(),
+            ),
+            None => fmt::Display::fmt(&self.cicp, f),
+        }
+    }
+}
+
+/// Internal zero-allocation ICC `cicp` tag extractor shared by `CicpTag::from_icc` and `Cicp::from_icc`.
+pub(crate) fn extract_cicp_tag(data: &[u8]) -> Option<CicpTag> {
+    const ICC_MIN_SIZE: usize = 132;
+    const ICC_MAX_TAG_COUNT: usize = 200;
+
+    if data.len() < ICC_MIN_SIZE {
+        return None;
+    }
+    if data.get(36..40)? != b"acsp" {
+        return None;
+    }
+    // ICC.1 §9.2.17 (and HDR Profiles Amendment §4.4): `cicpTag` exists in v4+ Input, Display, or ColorSpace profiles.
+    let version = u32::from_be_bytes(data.get(8..12)?.try_into().ok()?);
+    if version < 0x0400_0000 {
+        return None;
+    }
+    if !matches!(data.get(12..16)?, b"scnr" | b"mntr" | b"spac") {
+        return None;
+    }
+    let data_color_space = data.get(16..20)?;
+    let custom_primaries_applicable = matches!(data_color_space, b"RGB " | b"YCbr");
+
+    let tag_count = u32::from_be_bytes(data[128..132].try_into().ok()?) as usize;
+    let tag_count = tag_count.min(ICC_MAX_TAG_COUNT);
+
+    for i in 0..tag_count {
+        let entry_offset = 132 + i * 12;
+        let entry = data.get(entry_offset..entry_offset + 12)?;
+        if entry[..4] != *b"cicp" {
+            continue;
+        }
+        let data_offset = u32::from_be_bytes(entry[4..8].try_into().ok()?) as usize;
+        let data_size = u32::from_be_bytes(entry[8..12].try_into().ok()?) as usize;
+        if data_size < CicpTag::BASE_TAG_LEN {
+            return None;
+        }
+        let tag_span = data.get(data_offset..data_offset.checked_add(data_size)?)?;
+        if tag_span[..4] != *b"cicp" || tag_span[4..8] != [0; 4] || tag_span[11] > 1 {
+            return None;
+        }
+        let cicp = Cicp::new(tag_span[8], tag_span[9], tag_span[10], tag_span[11] == 1);
+        if cicp.color_primaries == 2 && data_size > CicpTag::BASE_TAG_LEN {
+            if data_size < CicpTag::EXTENDED_TAG_LEN {
+                return None;
+            }
+            if !custom_primaries_applicable {
+                // §4.1 NOTE: amendment does not apply when header data colour space is XYZ (or non-RGB/YCbCr).
+                return Some(CicpTag::from_cicp(cicp));
+            }
+            let ext: [u8; 32] = tag_span[12..44].try_into().ok()?;
+            let custom = CustomPrimaries::from_cicp_extension_bytes(ext)?;
+            return Some(CicpTag {
+                cicp,
+                custom_primaries: Some(custom),
+            });
+        }
+        if cicp.color_primaries != 2 && data_size != CicpTag::BASE_TAG_LEN {
+            // §4.3 NOTE 1: when ColourPrimaries != 2, declared length is exactly 12 bytes.
+            return None;
+        }
+        return Some(CicpTag::from_cicp(cicp));
+    }
+
+    None
 }

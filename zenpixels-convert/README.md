@@ -64,10 +64,11 @@ builds stay light. Enable SIMD globally (`accel::enable_all()`,
   `RGB`/`RGBA`/`BGR`/`BGRA`/`RGBX`/`BGRX`/`Gray`/`GrayAlpha` outputs.
 - **Encoder signaling (`OutputPlan` & `EncodeReady`):** `OutputPlan::build`
   accepts borrowed `&ImageSpec` or owned `ImageSpec`, validates output signaling
-  (`Auto`, `CicpOnly`, `EmbedIcc`, `SameAsOrigin`, `Named(Cicp)`, `CustomIcc`)
+  (`OutputProfile::{Auto, SameAsOrigin, CicpOnly, EmbedIcc, CustomIcc, Strip}`)
   eagerly (refusing `HlgMode::Display` on `CicpOnly`/`Auto`), reuses owned
-  storage on identity via `EncodeReady::from_owned`, and strips stale HDR
-  metadata when photometry changes.
+  storage zero-copy on identity via `OutputPlan::execute_buf` (or borrows
+  zero-copy via `OutputPlan::execute_view` / `adapt_for_encode_format`), and
+  strips stale HDR metadata when photometry changes.
 
 ## Features
 

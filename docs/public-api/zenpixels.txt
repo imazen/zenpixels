@@ -9,32 +9,32 @@
 ## summary
 #
 #   pub modules                                13
-#   pub types (struct/enum/trait/alias)       200
-#   pub consts/statics                       1120
+#   pub types (struct/enum/trait/alias)       203
+#   pub consts/statics                       1175
 #   free functions                             18
-#   inherent methods                          634
+#   inherent methods                          654
 #   struct fields                             259
-#   enum variants                             518
+#   enum variants                             524
 #   re-exports                                  1
-#   trait roster entries (type × trait)       597
-#   auto-trait-complete types                  79
+#   trait roster entries (type × trait)       605
+#   auto-trait-complete types                  80
 #   auto-trait exceptions                      15
 #
 # per-module pub lines:
-#   (root)                         1360
+#   (root)                         1411
 #   buffer                          471
-#   cicp                             40
-#   color                           451
+#   cicp                             67
+#   color                           456
 #   facts                            30
 #   hdr                              27
-#   icc                              22
+#   icc                              23
 #   layout                          171
 #   orientation                      11
 #   pixel_types                      49
 #   sample                           35
 #   storage                          96
 
-## items (2259 lines)
+## items (2313 lines)
 
 pub mod zenpixels
 pub use At
@@ -423,7 +423,9 @@ pub fn [S; 3]::matches_layout(layout::SampleLayout) -> bool [also: (root)]
 pub fn [S; 4]::matches_layout(layout::SampleLayout) -> bool [also: (root)]
 pub fn [S; 5]::matches_layout(layout::SampleLayout) -> bool [also: (root)]
 pub mod cicp
+pub cicp::CicpError::InvalidCustomPrimaries
 pub cicp::CicpError::InvalidFullRangeFlag(u8)
+pub cicp::CicpError::MalformedTag
 pub cicp::CicpError::NonIdentityMatrix(u8)
 pub cicp::CicpError::UnmappedPrimaries(u8)
 pub cicp::CicpError::UnmappedTransfer(u8)
@@ -454,6 +456,23 @@ pub fn cicp::Cicp::to_color_space(self, color::AlphaMode) -> core::result::Resul
 pub const fn cicp::Cicp::transfer_name(self) -> core::option::Option<&'static str> [also: (root)]
 pub fn cicp::Cicp::try_from_bytes([u8; 4]) -> core::result::Result<Self, whereat::at::At<cicp::CicpError>>
 pub fn cicp::Cicp::from_icc(&[u8]) -> core::option::Option<Self>
+pub const cicp::CicpTag::BASE_TAG_LEN: usize
+pub const cicp::CicpTag::EXTENDED_TAG_LEN: usize
+pub const fn cicp::CicpTag::cicp(self) -> cicp::Cicp [also: (root)]
+pub const fn cicp::CicpTag::custom_primaries(self) -> core::option::Option<color::CustomPrimaries> [also: (root)]
+pub const fn cicp::CicpTag::encoded_len(self) -> usize [also: (root)]
+pub const fn cicp::CicpTag::from_cicp(cicp::Cicp) -> Self [also: (root)]
+pub fn cicp::CicpTag::from_color_space(&color::ColorSpace) -> core::result::Result<Self, cicp::CicpProjectionError>
+pub fn cicp::CicpTag::from_icc(&[u8]) -> core::option::Option<Self>
+pub const fn cicp::CicpTag::from_primaries_and_cicp(color::Primaries, u8, u8, bool) -> core::option::Option<Self> [also: (root)]
+pub const fn cicp::CicpTag::primaries(self) -> core::option::Option<color::Primaries> [also: (root)]
+pub const fn cicp::CicpTag::to_base_tag_bytes(self) -> [u8; 12] [also: (root)]
+pub fn cicp::CicpTag::to_color_space(self, color::AlphaMode) -> core::result::Result<color::ColorSpace, whereat::at::At<cicp::CicpError>>
+pub const fn cicp::CicpTag::to_extended_tag_bytes(self) -> core::option::Option<[u8; 44]> [also: (root)]
+pub fn cicp::CicpTag::to_tag_bytes_vec(self) -> alloc::vec::Vec<u8>
+pub fn cicp::CicpTag::try_from_tag_bytes(&[u8]) -> core::result::Result<Self, whereat::at::At<cicp::CicpError>>
+pub const fn cicp::CicpTag::with_custom_primaries(color::CustomPrimaries, u8, u8, bool) -> Self [also: (root)]
+pub fn cicp::CicpTag::write_tag_bytes(self, &mut [u8]) -> core::option::Option<usize>
 pub const fn cicp::color_primaries_name(u8) -> core::option::Option<&'static str>
 pub const fn cicp::matrix_coefficients_name(u8) -> core::option::Option<&'static str>
 pub const fn cicp::transfer_characteristics_name(u8) -> core::option::Option<&'static str>
@@ -519,6 +538,7 @@ pub const fn color::ColorSpace::is_hdr(&self) -> bool [also: (root)]
 pub const fn color::ColorSpace::range(&self) -> core::option::Option<color::SignalRange> [also: (root)]
 pub fn color::ColorSpace::to_cicp(&self) -> core::option::Option<cicp::Cicp>
 pub fn color::ColorSpace::try_cicp(&self) -> core::result::Result<cicp::Cicp, cicp::CicpProjectionError>
+pub fn color::ColorSpace::try_cicp_tag(&self) -> core::result::Result<cicp::CicpTag, cicp::CicpProjectionError>
 pub fn color::ColorSpace::try_with_primaries(self, color::Primaries) -> core::option::Option<Self>
 pub fn color::ColorSpace::try_with_range(self, color::SignalRange) -> core::option::Option<Self>
 pub fn color::ColorSpace::try_with_transfer(self, color::Transfer) -> core::option::Option<Self>
@@ -545,6 +565,7 @@ pub color::IccColorSpace::Gray
 pub color::IccColorSpace::Lab
 pub color::IccColorSpace::Rgb
 pub color::IccColorSpace::Xyz
+pub color::IccColorSpace::Ycbcr
 pub fn color::IccColorSpace::from_icc(&[u8]) -> core::option::Option<Self>
 pub color::IccValidationError::InvalidDeclaredSize
 pub color::IccValidationError::MissingSignature
@@ -635,6 +656,8 @@ pub const fn color::Primaries::rgb_to_xyz_f32(self, color::WhitePoint) -> core::
 pub const fn color::Primaries::rgb_to_xyz_f64(self) -> core::option::Option<[[f64; 3]; 3]> [also: (root)]
 pub const fn color::Primaries::same_chromaticity(self, Self) -> bool [also: (root)]
 pub const fn color::Primaries::to_cicp(self) -> core::option::Option<u8> [also: (root)]
+pub const fn color::Primaries::to_custom(self) -> core::option::Option<color::CustomPrimaries> [also: (root)]
+pub const fn color::Primaries::to_icc_d50_matrix_f64(self) -> core::option::Option<[[f64; 3]; 3]> [also: (root)]
 pub const fn color::Primaries::try_luma_weights(self) -> core::option::Option<[f32; 3]> [also: (root)]
 pub const fn color::Primaries::white_point(self) -> core::option::Option<(f32, f32)> [also: (root)]
 pub const fn color::Primaries::xyz_to_rgb_f32(self, color::WhitePoint) -> core::option::Option<[[f32; 3]; 3]> [also: (root)]
@@ -687,6 +710,9 @@ pub const color::Chromaticity::D60: Self
 pub const color::Chromaticity::D65: Self
 pub const color::Chromaticity::DCI: Self
 pub const color::Chromaticity::E: Self
+pub const fn color::Chromaticity::from_s15fixed16(i32, i32) -> core::option::Option<Self> [also: (root)]
+pub const fn color::Chromaticity::from_s15fixed16_primary(i32, i32) -> core::option::Option<Self> [also: (root)]
+pub const fn color::Chromaticity::to_s15fixed16(self) -> (i32, i32) [also: (root)]
 pub const fn color::Chromaticity::try_new(f32, f32) -> core::option::Option<Self> [also: (root)]
 pub const fn color::Chromaticity::try_new_primary(f32, f32) -> core::option::Option<Self> [also: (root)]
 pub const fn color::Chromaticity::x(self) -> f32 [also: (root)]
@@ -706,10 +732,16 @@ pub const fn color::ColorOrigin::from_cicp(cicp::Cicp) -> Self [also: (root)]
 pub fn color::ColorOrigin::from_icc(alloc::sync::Arc<[u8]>) -> Self
 pub fn color::ColorOrigin::from_icc_and_cicp(alloc::sync::Arc<[u8]>, cicp::Cicp) -> Self
 pub const color::CustomPrimaries::ACES_AP0: Self
+pub const color::CustomPrimaries::ACES_CG: Self
 pub const color::CustomPrimaries::PROPHOTO_RGB: Self
 pub const fn color::CustomPrimaries::b(self) -> color::Chromaticity [also: (root)]
+pub const fn color::CustomPrimaries::from_cicp_extension_bytes([u8; 32]) -> core::option::Option<Self> [also: (root)]
+pub const fn color::CustomPrimaries::from_s15fixed16([i32; 8]) -> core::option::Option<Self> [also: (root)]
 pub const fn color::CustomPrimaries::g(self) -> color::Chromaticity [also: (root)]
 pub const fn color::CustomPrimaries::r(self) -> color::Chromaticity [also: (root)]
+pub const fn color::CustomPrimaries::to_cicp_extension_bytes(self) -> [u8; 32] [also: (root)]
+pub const fn color::CustomPrimaries::to_icc_d50_matrix_f64(self) -> core::option::Option<[[f64; 3]; 3]> [also: (root)]
+pub const fn color::CustomPrimaries::to_s15fixed16(self) -> [i32; 8] [also: (root)]
 pub const fn color::CustomPrimaries::try_new((f32, f32), (f32, f32), (f32, f32), (f32, f32)) -> core::option::Option<Self> [also: (root)]
 pub const fn color::CustomPrimaries::white(self) -> color::Chromaticity [also: (root)]
 pub color::GainMapComponent::alternate_offset: color::SignedFraction
@@ -954,6 +986,14 @@ pub icc::IccValidationError::UnsupportedProfileClass
 #[non_exhaustive] pub enum icc::IdentificationUse
 pub icc::IdentificationUse::MatrixTrcSubstitution
 pub icc::IdentificationUse::MetadataOnly
+pub const cicp::CicpTag::BASE_TAG_LEN: usize
+pub const cicp::CicpTag::EXTENDED_TAG_LEN: usize
+pub fn cicp::CicpTag::from_color_space(&color::ColorSpace) -> core::result::Result<Self, cicp::CicpProjectionError>
+pub fn cicp::CicpTag::from_icc(&[u8]) -> core::option::Option<Self>
+pub fn cicp::CicpTag::to_color_space(self, color::AlphaMode) -> core::result::Result<color::ColorSpace, whereat::at::At<cicp::CicpError>>
+pub fn cicp::CicpTag::to_tag_bytes_vec(self) -> alloc::vec::Vec<u8>
+pub fn cicp::CicpTag::try_from_tag_bytes(&[u8]) -> core::result::Result<Self, whereat::at::At<cicp::CicpError>>
+pub fn cicp::CicpTag::write_tag_bytes(self, &mut [u8]) -> core::option::Option<usize>
 #[non_exhaustive] pub struct icc::IccIdentification
 pub icc::IccIdentification::primaries: color::Primaries
 pub icc::IccIdentification::transfer: color::Transfer
@@ -1406,7 +1446,9 @@ pub ChromaSubsampling::Yuv422
 pub ChromaSubsampling::Yuv440
 pub ChromaSubsampling::Yuv444
 #[non_exhaustive] pub enum CicpError [also: cicp]
+pub CicpError::InvalidCustomPrimaries
 pub CicpError::InvalidFullRangeFlag(u8)
+pub CicpError::MalformedTag
 pub CicpError::NonIdentityMatrix(u8)
 pub CicpError::UnmappedPrimaries(u8)
 pub CicpError::UnmappedTransfer(u8)
@@ -1477,6 +1519,7 @@ pub const color::ColorSpace::SRGB: Self
 pub const color::ColorSpace::SRGB_ALPHA: Self
 pub fn color::ColorSpace::to_cicp(&self) -> core::option::Option<cicp::Cicp>
 pub fn color::ColorSpace::try_cicp(&self) -> core::result::Result<cicp::Cicp, cicp::CicpProjectionError>
+pub fn color::ColorSpace::try_cicp_tag(&self) -> core::result::Result<cicp::CicpTag, cicp::CicpProjectionError>
 pub fn color::ColorSpace::try_with_primaries(self, color::Primaries) -> core::option::Option<Self>
 pub fn color::ColorSpace::try_with_range(self, color::SignalRange) -> core::option::Option<Self>
 pub fn color::ColorSpace::try_with_transfer(self, color::Transfer) -> core::option::Option<Self>
@@ -1510,6 +1553,7 @@ pub IccColorSpace::Gray
 pub IccColorSpace::Lab
 pub IccColorSpace::Rgb
 pub IccColorSpace::Xyz
+pub IccColorSpace::Ycbcr
 pub fn color::IccColorSpace::from_icc(&[u8]) -> core::option::Option<Self>
 #[non_exhaustive] pub enum IccValidationError [also: color, icc]
 pub IccValidationError::InvalidDeclaredSize
@@ -1796,6 +1840,15 @@ pub const cicp::Cicp::SRGB: Self
 pub fn cicp::Cicp::to_color_space(self, color::AlphaMode) -> core::result::Result<color::ColorSpace, whereat::at::At<cicp::CicpError>>
 pub fn cicp::Cicp::try_from_bytes([u8; 4]) -> core::result::Result<Self, whereat::at::At<cicp::CicpError>>
 pub fn cicp::Cicp::from_icc(&[u8]) -> core::option::Option<Self>
+pub struct CicpTag [also: cicp, icc]
+pub const cicp::CicpTag::BASE_TAG_LEN: usize
+pub const cicp::CicpTag::EXTENDED_TAG_LEN: usize
+pub fn cicp::CicpTag::from_color_space(&color::ColorSpace) -> core::result::Result<Self, cicp::CicpProjectionError>
+pub fn cicp::CicpTag::from_icc(&[u8]) -> core::option::Option<Self>
+pub fn cicp::CicpTag::to_color_space(self, color::AlphaMode) -> core::result::Result<color::ColorSpace, whereat::at::At<cicp::CicpError>>
+pub fn cicp::CicpTag::to_tag_bytes_vec(self) -> alloc::vec::Vec<u8>
+pub fn cicp::CicpTag::try_from_tag_bytes(&[u8]) -> core::result::Result<Self, whereat::at::At<cicp::CicpError>>
+pub fn cicp::CicpTag::write_tag_bytes(self, &mut [u8]) -> core::option::Option<usize>
 pub struct ClliCodes(_) [also: hdr]
 pub struct CodePlane<'a> [also: sample]
 pub fn CodePlane<'a>::code(self, usize, usize) -> core::option::Option<u16>
@@ -1833,6 +1886,7 @@ pub ContentLightLevel::max_content_light_level: u16
 pub ContentLightLevel::max_frame_average_light_level: u16
 pub struct CustomPrimaries [also: color]
 pub const color::CustomPrimaries::ACES_AP0: Self
+pub const color::CustomPrimaries::ACES_CG: Self
 pub const color::CustomPrimaries::PROPHOTO_RGB: Self
 pub struct DiffuseWhite(_) [also: hdr]
 pub const hdr::DiffuseWhite::BT2408: Self
@@ -2296,7 +2350,7 @@ pub const fn narrow_range_grid_nests(u8, u8) -> bool
 pub const fn transfer_characteristics_name(u8) -> core::option::Option<&'static str>
 pub fn validate_icc_structure(&[u8]) -> core::result::Result<(), color::IccValidationError> [also: color, icc]
 
-## trait impls (118 types)
+## trait impls (119 types)
 
 &[T]: storage::ByteStorage
 &mut [T]: storage::ByteStorage, storage::ByteStorageMut
@@ -2340,6 +2394,7 @@ buffer::Rgbx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::TypedEle
 cicp::Cicp: Clone, Copy, Debug, Display, Eq, Hash, PartialEq
 cicp::CicpError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 cicp::CicpProjectionError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
+cicp::CicpTag: Clone, Copy, Debug, Display, Eq, From<cicp::Cicp>, Hash, PartialEq
 color::AlphaMode: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 color::Chromaticity: Clone, Copy, Debug, Eq, Hash, PartialEq
 color::Color: Clone, Copy, Debug, PartialEq

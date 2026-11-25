@@ -22,6 +22,11 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
     `y == 0` matrix solver for `Primaries::Xyz` and custom primaries, `Chromaticity::C`
     / `WhitePoint::C`, `same_chromaticity`), all 16 Table 3 transfers (`same_curve`),
     all 9 Table 4 NCL matrix codes (`YcbcrMatrix::to_cicp_code`, `same_coefficients`),
+    ICC.1 `cicpType` 44-byte custom-primaries amendment (approved 2026-10-19:
+    `CicpTag`, signed `s15Fixed16Number` helpers on `Chromaticity`/`CustomPrimaries`,
+    `CustomPrimaries::ACES_CG`, `Primaries::to_custom`, Annex 1
+    `to_icc_d50_matrix_f64`, `IccColorSpace::Ycbcr`, `ColorSpace::try_cicp_tag`,
+    plus `load_bearing` / `gainmap` / `Lcms` non-D65 white-point support),
     exact `0.0001 cd/m²` `ClliCodes`, and ISO 15076-1 structural ICC validation
     (`validate_icc_structure` / `IccValidationError`) wired into `ImageSpec::validate()`.
   - `PixelBuf`, `PixelView`, `PixelViewMut`, `PixelCow`, `BandedBuf` (gigapixel
