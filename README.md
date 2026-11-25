@@ -43,7 +43,7 @@ assert_eq!(view.row(0), &[10, 20, 30, 40, 50, 60]);
 
 > **Quick tips:**
 > - `PixelBuf::from_typed` checks the Rust element type against `spec.layout` (annotate literals like `vec![255u8, ...]`, or use `PixelBuf::from_bytes` for raw byte buffers).
-> - Carrier/pipeline errors return `whereat::At<E>` — inspect the inner enum with `*err.error()` or `err.into_inner()`. Const-capable layout/storage/code/CICP-projection primitives return bare `E`.
+> - Carrier/pipeline errors return `whereat::At<E>` — inspect the inner enum with `*err.error()` (or `err.decompose()` / `err.map_error(...)`). Const-capable layout/storage/code/CICP-projection primitives return bare `E`.
 > - Need your buffer back on error? Use `from_bytes_recover`, `from_typed_recover`, `from_parts_recover`, or `from_external*` (`Err((err, original))`).
 
 ## Two crates

@@ -81,7 +81,7 @@ Neither pinned 0.2 nor pinned 0.4 implemented `Default` on `ConvertOptions`. In 
     ```rust
     match PixelBuf::from_typed(data, w, h, ImageSpec::RGB8_SRGB) {
         Ok(buf) => buf,
-        Err(err) => match err.into_inner() { // or `*err.error()`
+        Err(err) => match *err.error() { // or `err.decompose()` to take `(E, trace)`
             BufferError::IncompatibleLayout => { /* ... */ }
             other => return Err(other.into()),
         },

@@ -40,7 +40,7 @@
 //! - [`BandedBuf`]: bounded row-band storage for gigapixel images.
 //! - [`DualLayerHdrBuf`] / [`DualLayerHdrView<'a>`]: ISO 21496-1 / UltraHDR gain maps.
 //! - **Error contract:** carrier/pipeline operations return [`At<E>`] (`*err.error()` /
-//!   `err.into_inner()`); const-capable layout, storage, code-plane, and CICP-projection
+//!   `err.decompose()`); const-capable layout, storage, code-plane, and CICP-projection
 //!   primitives return bare `E`.
 
 #![cfg_attr(not(test), no_std)]

@@ -68,7 +68,7 @@ Not every fallible API returns `whereat::At<E>`. The boundary is consistent:
 
    match PixelBuf::from_bytes(bytes, w, h, ImageSpec::RGB8_SRGB) {
        Ok(buf) => buf,
-       Err(err) => match *err.error() { // or `err.into_inner()`
+       Err(err) => match *err.error() { // or `err.decompose()` to take ownership of `(E, trace)`
            BufferError::InsufficientData => { /* ... */ }
            BufferError::UnverifiedOpaqueAlpha => { /* ... */ }
            other => return Err(other.into()),
@@ -593,7 +593,7 @@ let back_from_image = PixelBuf::from_dynamic_image(dyn_img)?;
 
 | Term | Meaning in `zenpixels` 0.5 |
 |---|---|
-| **`whereat::At<E>`** | Error wrapper pairing the typed error `E` with source-location trace frames. Match the inner enum via `*err.error()` or `err.into_inner()`. |
+| **`whereat::At<E>`** | Error wrapper pairing the typed error `E` with source-location trace frames. Match the inner enum via `*err.error()` (or take `(E, trace)` via `err.decompose()`). |
 | **`SampleFacts`** | Proven or caller-asserted content invariants (`all_opaque`, `all_grayscale`, `binary_alpha`, `float`, `depth`). Measured via `scan_facts(&view)` / `into_opaque_verified()`, seeded by `PixelBuf::new`/`new_white`/`new_zeroed`, or asserted via `assume_facts` / `with_assumed_facts` / `policy.with_source_facts`. Cleared on mutable access. |
 | **`ColorOrigin`** | File-level provenance (`assumed()`, `from_cicp`, `from_icc`, `from_icc_and_cicp`) recording *how the file originally signaled color*, distinct from the buffer's active `ColorSpace`. |
 | **`OutputSignaling`** | Encoder signaling policy (`Auto`, `SameAsOrigin`, `CicpOnly`, `EmbedIcc`, `CustomIcc`, `Strip`) controlling which CICP/ICC metadata `OutputPlan` emits alongside encoded pixels. |
