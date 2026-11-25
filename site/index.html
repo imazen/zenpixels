@@ -1054,9 +1054,10 @@ function rustCode(R, st) {
   lines.push(`let descriptor = PixelDescriptor::from_pixel_format(${fmtExpr})` + chain.map(c => `\n    ${c}`).join("") + ";");
   lines.push(`assert_eq!(descriptor.bytes_per_pixel(), ${CT[f.ct].bytes * f.chans.length});`, "");
   if (S.align) {
+    uses.add("RowAlign");
     uses.add("plane::AlignedSamples");
     lines.push(`// Each row is padded to a multiple of lcm(bytes_per_pixel, 64): stride ${st}.`);
-    lines.push(`let buffer = PixelBuffer::<(), AlignedSamples<u8>>::try_new_aligned(${S.w}, ${S.h}, descriptor)?;`);
+    lines.push(`let buffer = PixelBuffer::<(), AlignedSamples<u8>>::try_new_aligned(${S.w}, ${S.h}, descriptor, RowAlign::PixelCache64)?;`);
   } else {
     lines.push(`// Packed rows: stride = width × bytes_per_pixel = ${st}.`);
     lines.push(`let buffer = PixelBuffer::try_new(${S.w}, ${S.h}, descriptor)?;`);

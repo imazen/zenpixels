@@ -311,57 +311,210 @@ impl ColorAuthority {
     }
 }
 
-/// Color space metadata for pixel data.
+/// Authoritative extended color profile carried by [`ColorContext`].
 ///
-/// Bundles ICC profile bytes and/or CICP parameters into a single
-/// shareable context. Carried via `Arc` on pixel slices and pipeline
-/// sources so color metadata travels with pixel data without per-strip
-/// cloning overhead.
-// `Eq` retained: `DiffuseWhite` wraps `f32` but implements a bit-exact `Eq` (a
-// luminance anchor is never NaN/-0.0), so adding the anchor field did not cost
-// `ColorContext` its `Eq` — avoiding a removed-trait break vs 0.2.13.
-// `#[non_exhaustive]` added so future HDR carrier fields (mastering display,
-// content light level) extend this without another break. `Default` (all fields
-// `None`) is the empty "no color signaling" context — the only way to construct
-// one now that the struct literal is sealed.
+/// A current pixel buffer has at most one active extended profile authority:
+/// either ITU-T H.273 [`Cicp`] parameters or raw ICC profile bytes, never both
+/// simultaneously. File-level dual signaling (for example PNG `cICP` + `iCCP`
+/// or AVIF `colr` boxes) belongs on [`ColorOrigin`] alongside
+/// [`ColorAuthority`], which resolves to a single authority at decode time.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub enum ColorProfile {
+    /// ITU-T H.273 CICP parameters.
+    Cicp(Cicp),
+    /// Raw ICC profile bytes.
+    Icc(Arc<[u8]>),
+}
+
+impl PartialEq for ColorProfile {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Cicp(a), Self::Cicp(b)) => a == b,
+            (Self::Icc(a), Self::Icc(b)) => Arc::ptr_eq(a, b) || a == b,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ColorProfile {}
+
+#[cfg(feature = "hash")]
+impl core::hash::Hash for ColorProfile {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        core::mem::discriminant(self).hash(state);
+        match self {
+            Self::Cicp(cicp) => cicp.hash(state),
+            Self::Icc(icc) => icc[..].hash(state),
+        }
+    }
+}
+
+impl From<Cicp> for ColorProfile {
+    fn from(cicp: Cicp) -> Self {
+        Self::Cicp(cicp)
+    }
+}
+
+impl From<Arc<[u8]>> for ColorProfile {
+    fn from(icc: Arc<[u8]>) -> Self {
+        Self::Icc(icc)
+    }
+}
+
+impl ColorProfile {
+    /// Borrow as a [`ColorProfileSource`] for CMS integration.
+    #[inline]
+    pub fn as_profile_source(&self) -> ColorProfileSource<'_> {
+        match self {
+            Self::Cicp(cicp) => ColorProfileSource::Cicp(*cicp),
+            Self::Icc(icc) => ColorProfileSource::Icc(icc),
+        }
+    }
+
+    /// The [`Cicp`] parameters when this profile is `Cicp`.
+    #[inline]
+    pub const fn cicp(&self) -> Option<Cicp> {
+        match self {
+            Self::Cicp(cicp) => Some(*cicp),
+            Self::Icc(_) => None,
+        }
+    }
+
+    /// Borrowed ICC profile bytes when this profile is `Icc`.
+    #[inline]
+    pub fn icc(&self) -> Option<&[u8]> {
+        match self {
+            Self::Cicp(_) => None,
+            Self::Icc(icc) => Some(icc),
+        }
+    }
+
+    /// Shared ICC profile allocation when this profile is `Icc`.
+    #[inline]
+    pub const fn icc_arc(&self) -> Option<&Arc<[u8]>> {
+        match self {
+            Self::Cicp(_) => None,
+            Self::Icc(icc) => Some(icc),
+        }
+    }
+}
+
+/// Extended color space and luminance metadata for current pixel data.
+///
+/// Bundles at most one authoritative [`ColorProfile`] (either ICC bytes or
+/// CICP parameters, never both) plus optional scene/display luminance anchors
+/// into a single shareable context. Carried boxed out-of-line via
+/// `Option<Arc<ColorContext>>` on pixel slices and buffers so inner window/row
+/// loops stay compact in registers while color metadata travels without
+/// per-strip byte cloning.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "hash", derive(Hash))]
 #[non_exhaustive]
 pub struct ColorContext {
-    /// Raw ICC profile bytes.
-    pub icc: Option<Arc<[u8]>>,
-    /// CICP parameters (ITU-T H.273).
-    pub cicp: Option<Cicp>,
-    /// Absolute-luminance anchor: the cd/m² (nits) that a relative-linear
-    /// sample value of `1.0` represents. `None` means unsignaled — consumers
-    /// require an explicit anchor when crossing relative and absolute light.
-    /// Travels with the pixels so the HDR converter can map
-    /// relative-linear light to absolute luminance for PQ/HLG encode and
-    /// tone-mapping.
-    pub diffuse_white: Option<DiffuseWhite>,
-    /// Declared source peak luminance, used only when explicitly requested.
-    pub hdr_peak: Option<crate::hdr::Nits>,
+    profile: Option<ColorProfile>,
+    diffuse_white: Option<DiffuseWhite>,
+    hdr_peak: Option<crate::hdr::Nits>,
+}
+
+#[cfg(feature = "hash")]
+impl core::hash::Hash for ColorContext {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.icc().hash(state);
+        self.cicp().hash(state);
+        self.diffuse_white.hash(state);
+        self.hdr_peak.hash(state);
+    }
 }
 
 impl ColorContext {
-    /// Create from an ICC profile.
-    pub fn from_icc(icc: impl Into<Arc<[u8]>>) -> Self {
+    /// Create an empty context with no profile or luminance anchors.
+    #[inline]
+    pub const fn new() -> Self {
         Self {
-            icc: Some(icc.into()),
-            cicp: None,
+            profile: None,
             diffuse_white: None,
             hdr_peak: None,
         }
     }
 
-    /// Create from CICP parameters.
-    pub fn from_cicp(cicp: Cicp) -> Self {
+    /// Create from an authoritative [`ColorProfile`].
+    #[inline]
+    pub const fn from_profile(profile: ColorProfile) -> Self {
         Self {
-            icc: None,
-            cicp: Some(cicp),
+            profile: Some(profile),
             diffuse_white: None,
             hdr_peak: None,
         }
+    }
+
+    /// Create from an ICC profile.
+    pub fn from_icc(icc: impl Into<Arc<[u8]>>) -> Self {
+        Self::from_profile(ColorProfile::Icc(icc.into()))
+    }
+
+    /// Create from CICP parameters.
+    #[inline]
+    pub const fn from_cicp(cicp: Cicp) -> Self {
+        Self::from_profile(ColorProfile::Cicp(cicp))
+    }
+
+    /// The active extended [`ColorProfile`], if any.
+    #[inline]
+    pub const fn profile(&self) -> Option<&ColorProfile> {
+        self.profile.as_ref()
+    }
+
+    /// Borrowed ICC profile bytes when the active profile is [`ColorProfile::Icc`].
+    #[inline]
+    pub fn icc(&self) -> Option<&[u8]> {
+        match &self.profile {
+            Some(ColorProfile::Icc(icc)) => Some(icc),
+            _ => None,
+        }
+    }
+
+    /// Shared ICC profile allocation when the active profile is [`ColorProfile::Icc`].
+    #[inline]
+    pub const fn icc_arc(&self) -> Option<&Arc<[u8]>> {
+        match &self.profile {
+            Some(ColorProfile::Icc(icc)) => Some(icc),
+            _ => None,
+        }
+    }
+
+    /// CICP parameters when the active profile is [`ColorProfile::Cicp`].
+    #[inline]
+    pub const fn cicp(&self) -> Option<Cicp> {
+        match &self.profile {
+            Some(ColorProfile::Cicp(cicp)) => Some(*cicp),
+            _ => None,
+        }
+    }
+
+    /// Absolute-luminance anchor: the cd/m² (nits) that a relative-linear
+    /// sample value of `1.0` represents, or `None` when unsignaled.
+    #[inline]
+    pub const fn diffuse_white(&self) -> Option<DiffuseWhite> {
+        self.diffuse_white
+    }
+
+    /// Declared source peak luminance, used only when explicitly requested.
+    #[inline]
+    pub const fn hdr_peak(&self) -> Option<crate::hdr::Nits> {
+        self.hdr_peak
+    }
+
+    /// True when neither a profile nor any luminance anchor is set.
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.profile.is_none() && self.diffuse_white.is_none() && self.hdr_peak.is_none()
+    }
+
+    /// Set or clear the active [`ColorProfile`], preserving luminance anchors.
+    #[must_use]
+    pub fn with_profile(mut self, profile: Option<ColorProfile>) -> Self {
+        self.profile = profile;
+        self
     }
 
     /// Attach an absolute-luminance anchor — the nits that relative-linear
@@ -372,52 +525,46 @@ impl ColorContext {
     /// conversion can map relative-linear light to absolute cd/m² for PQ/HLG
     /// encode and tone-mapping.
     #[must_use]
-    pub fn with_diffuse_white(mut self, white: DiffuseWhite) -> Self {
+    pub const fn with_diffuse_white(mut self, white: DiffuseWhite) -> Self {
         self.diffuse_white = Some(white);
         self
     }
 
     /// Set declared source peak luminance for `HdrPeak::Declared` conversion.
-    pub fn with_hdr_peak(mut self, peak: crate::hdr::Nits) -> Self {
+    #[must_use]
+    pub const fn with_hdr_peak(mut self, peak: crate::hdr::Nits) -> Self {
         self.hdr_peak = Some(peak);
         self
     }
 
-    /// Set the [`Cicp`] colour signalling, returning the updated context.
+    /// Set [`Cicp`] as the active profile, replacing any prior ICC or CICP profile.
     #[must_use]
     pub fn with_cicp(mut self, cicp: Cicp) -> Self {
-        self.cicp = Some(cicp);
+        self.profile = Some(ColorProfile::Cicp(cicp));
         self
     }
 
-    /// Set the raw ICC profile, returning the updated context.
+    /// Set raw ICC bytes as the active profile, replacing any prior CICP or ICC profile.
     #[must_use]
     pub fn with_icc(mut self, icc: impl Into<Arc<[u8]>>) -> Self {
-        self.icc = Some(icc.into());
+        self.profile = Some(ColorProfile::Icc(icc.into()));
         self
     }
 
     /// Get a [`ColorProfileSource`] reference for CMS integration.
     ///
-    /// Returns ICC if present, otherwise CICP. Returns `None` when neither
-    /// is present.
-    ///
-    /// Codecs should populate only the authoritative field on `ColorContext`
-    /// at decode time, using [`ColorAuthority`] on [`ColorOrigin`] to
-    /// determine which. When only one field is set, this method returns it.
+    /// Returns [`ColorProfileSource::Icc`] or [`ColorProfileSource::Cicp`]
+    /// according to the single active [`ColorProfile`], or `None` when no
+    /// extended profile is set.
     pub fn as_profile_source(&self) -> Option<ColorProfileSource<'_>> {
-        if let Some(icc) = self.icc.as_deref() {
-            Some(ColorProfileSource::Icc(icc))
-        } else {
-            self.cicp.map(ColorProfileSource::Cicp)
-        }
+        self.profile.as_ref().map(ColorProfile::as_profile_source)
     }
 
     /// Derive the selected current profile's transfer function.
     ///
-    /// CICP is used only when it is the selected authority. ICC remains opaque
-    /// here, so an ICC-selected context returns `Unknown`, even if CICP is also
-    /// present. This method does not identify or approximate ICC profiles.
+    /// CICP is used when it is the active profile. ICC remains opaque here, so
+    /// an ICC-backed context returns `Unknown` without identifying or
+    /// approximating ICC profiles.
     pub fn transfer_function(&self) -> TransferFunction {
         match self.as_profile_source() {
             Some(ColorProfileSource::Cicp(c)) => {
@@ -428,12 +575,106 @@ impl ColorContext {
         }
     }
 
-    /// True when the selected current profile is explicitly CICP sRGB.
-    ///
-    /// An authoritative ICC is opaque here; a secondary CICP claim does not
-    /// establish the ICC's identity or permit bypassing color management.
+    /// True when the active profile is explicitly CICP sRGB.
     pub fn is_srgb(&self) -> bool {
-        self.as_profile_source() == Some(ColorProfileSource::Cicp(Cicp::SRGB))
+        self.cicp() == Some(Cicp::SRGB)
+    }
+}
+
+/// Complete pixel interpretation for an interleaved view or buffer: its compact
+/// [`PixelDescriptor`] paired with an optional borrowed [`ColorContext`].
+///
+/// `PixelEncoding` is `16` bytes on 64-bit targets (`12` bytes on 32-bit
+/// targets), `Copy`, and incurs zero `Arc` reference-count traffic. Conversion
+/// and output planners accept `PixelEncoding<'_>` so callers pass
+/// `slice.encoding()`, `buffer.encoding()`, or `descriptor.encoding()` as a
+/// single coherent value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "hash", derive(Hash))]
+pub struct PixelEncoding<'a> {
+    descriptor: PixelDescriptor,
+    color: Option<&'a ColorContext>,
+}
+
+const _: () = assert!(core::mem::size_of::<PixelEncoding<'static>>() <= 16);
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<PixelEncoding<'static>>() == 16);
+
+impl From<PixelDescriptor> for PixelEncoding<'static> {
+    #[inline]
+    fn from(descriptor: PixelDescriptor) -> Self {
+        Self::from_descriptor(descriptor)
+    }
+}
+
+impl<'a> PixelEncoding<'a> {
+    /// Combine a [`PixelDescriptor`] with an optional borrowed [`ColorContext`].
+    #[inline]
+    pub const fn new(descriptor: PixelDescriptor, color: Option<&'a ColorContext>) -> Self {
+        Self { descriptor, color }
+    }
+
+    /// Describe pixels that have only compact [`PixelDescriptor`] signaling.
+    #[inline]
+    pub const fn from_descriptor(descriptor: PixelDescriptor) -> Self {
+        Self {
+            descriptor,
+            color: None,
+        }
+    }
+
+    /// The compact format and color descriptor.
+    #[inline]
+    pub const fn descriptor(self) -> PixelDescriptor {
+        self.descriptor
+    }
+
+    /// The borrowed extended [`ColorContext`], if attached.
+    #[inline]
+    pub const fn color_context(self) -> Option<&'a ColorContext> {
+        self.color
+    }
+
+    /// Borrowed ICC profile bytes when the attached context holds [`ColorProfile::Icc`].
+    #[inline]
+    pub fn icc(self) -> Option<&'a [u8]> {
+        self.color.and_then(ColorContext::icc)
+    }
+
+    /// CICP parameters when the attached context holds [`ColorProfile::Cicp`].
+    #[inline]
+    pub const fn cicp(self) -> Option<Cicp> {
+        match self.color {
+            Some(ctx) => ctx.cicp(),
+            None => None,
+        }
+    }
+
+    /// Signaled diffuse-white anchor on the attached context, if any.
+    #[inline]
+    pub const fn diffuse_white(self) -> Option<DiffuseWhite> {
+        match self.color {
+            Some(ctx) => ctx.diffuse_white(),
+            None => None,
+        }
+    }
+
+    /// Declared source HDR peak on the attached context, if any.
+    #[inline]
+    pub const fn hdr_peak(self) -> Option<crate::hdr::Nits> {
+        match self.color {
+            Some(ctx) => ctx.hdr_peak(),
+            None => None,
+        }
+    }
+
+    /// Resolve a [`ColorProfileSource`] from the extended context if it holds a
+    /// profile, falling back to the compact descriptor's primaries and transfer.
+    #[inline]
+    pub fn color_profile_source(self) -> ColorProfileSource<'a> {
+        self.color
+            .and_then(ColorContext::as_profile_source)
+            .unwrap_or_else(|| self.descriptor.color_profile_source())
     }
 }
 
@@ -609,36 +850,50 @@ mod tests {
     #[test]
     fn color_context_from_cicp() {
         let ctx = ColorContext::from_cicp(Cicp::SRGB);
-        assert!(ctx.icc.is_none());
-        assert_eq!(ctx.cicp, Some(Cicp::SRGB));
+        assert!(ctx.icc().is_none());
+        assert_eq!(ctx.cicp(), Some(Cicp::SRGB));
+        assert_eq!(ctx.profile(), Some(&ColorProfile::Cicp(Cicp::SRGB)));
+        assert!(!ctx.is_empty());
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn color_context_profile_source_prefers_icc() {
-        // When both are present, ICC wins (codecs should avoid this case)
-        let ctx = ColorContext::from_icc(vec![1, 2, 3]).with_cicp(Cicp::SRGB);
-        let src = ctx.as_profile_source().unwrap();
-        assert_eq!(src, ColorProfileSource::Icc(&[1, 2, 3]));
+    fn color_context_profile_variants_are_mutually_exclusive() {
+        let ctx = ColorContext::from_icc(vec![1, 2, 3])
+            .with_diffuse_white(DiffuseWhite::BT2408)
+            .with_cicp(Cicp::SRGB);
+        assert!(ctx.icc().is_none());
+        assert_eq!(ctx.cicp(), Some(Cicp::SRGB));
+        assert_eq!(ctx.diffuse_white(), Some(DiffuseWhite::BT2408));
+        assert_eq!(
+            ctx.as_profile_source(),
+            Some(ColorProfileSource::Cicp(Cicp::SRGB))
+        );
+
+        let replaced = ctx.with_icc(vec![9, 8, 7]);
+        assert_eq!(replaced.icc(), Some(&[9u8, 8, 7][..]));
+        assert!(replaced.cicp().is_none());
+        assert_eq!(replaced.diffuse_white(), Some(DiffuseWhite::BT2408));
+        assert_eq!(
+            replaced.as_profile_source(),
+            Some(ColorProfileSource::Icc(&[9, 8, 7]))
+        );
     }
 
     #[test]
     fn current_color_predicates_follow_the_selected_authority() {
-        for cicp in [Cicp::SRGB, Cicp::BT2100_PQ] {
-            for icc in [&[][..], &[1, 2, 3][..]] {
-                let context = ColorContext::from_icc(icc).with_cicp(cicp);
-                assert_eq!(
-                    context.as_profile_source(),
-                    Some(ColorProfileSource::Icc(icc))
-                );
-                assert_eq!(context.transfer_function(), TransferFunction::Unknown);
-                assert!(!context.is_srgb());
-                // Selecting the current authority does not erase source claims.
-                assert_eq!(context.cicp, Some(cicp));
-                assert_eq!(context.icc.as_deref(), Some(icc));
-            }
+        for icc in [&[][..], &[1, 2, 3][..]] {
+            let context = ColorContext::from_icc(icc);
+            assert_eq!(
+                context.as_profile_source(),
+                Some(ColorProfileSource::Icc(icc))
+            );
+            assert_eq!(context.transfer_function(), TransferFunction::Unknown);
+            assert!(!context.is_srgb());
+            assert!(context.cicp().is_none());
+            assert_eq!(context.icc(), Some(icc));
         }
         let unknown = ColorContext::default();
+        assert!(unknown.is_empty());
         assert_eq!(unknown.transfer_function(), TransferFunction::Unknown);
         assert!(!unknown.is_srgb());
     }
@@ -666,17 +921,21 @@ mod tests {
     #[test]
     fn color_context_from_icc() {
         let ctx = ColorContext::from_icc(vec![10, 20, 30]);
-        assert!(ctx.icc.is_some());
-        assert_eq!(ctx.icc.as_deref(), Some(&[10u8, 20, 30][..]));
-        assert!(ctx.cicp.is_none());
+        assert!(ctx.icc().is_some());
+        assert_eq!(ctx.icc(), Some(&[10u8, 20, 30][..]));
+        assert!(ctx.cicp().is_none());
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn color_context_from_icc_and_cicp() {
-        let ctx = ColorContext::from_icc(vec![1, 2]).with_cicp(Cicp::BT2100_PQ);
-        assert!(ctx.icc.is_some());
-        assert_eq!(ctx.cicp, Some(Cicp::BT2100_PQ));
+    fn color_context_with_profile_clears_profile_and_retains_anchors() {
+        let ctx = ColorContext::from_icc(vec![1, 2])
+            .with_diffuse_white(DiffuseWhite::BT2408)
+            .with_profile(None);
+        assert!(ctx.profile().is_none());
+        assert!(ctx.icc().is_none());
+        assert!(ctx.cicp().is_none());
+        assert_eq!(ctx.diffuse_white(), Some(DiffuseWhite::BT2408));
+        assert!(!ctx.is_empty());
     }
 
     #[test]
@@ -688,13 +947,29 @@ mod tests {
 
     #[test]
     fn color_context_profile_source_none() {
-        let ctx = ColorContext {
-            icc: None,
-            cicp: None,
-            diffuse_white: None,
-            hdr_peak: None,
-        };
+        let ctx = ColorContext::new();
+        assert!(ctx.is_empty());
         assert!(ctx.as_profile_source().is_none());
+    }
+
+    #[test]
+    fn pixel_encoding_combines_descriptor_and_borrowed_context() {
+        let bare = PixelDescriptor::RGB8_SRGB.encoding();
+        assert_eq!(bare, PixelEncoding::from(PixelDescriptor::RGB8_SRGB));
+        assert_eq!(bare.descriptor(), PixelDescriptor::RGB8_SRGB);
+        assert!(bare.color_context().is_none());
+        assert!(bare.icc().is_none());
+        assert!(bare.cicp().is_none());
+        assert!(bare.diffuse_white().is_none());
+
+        let ctx = ColorContext::from_cicp(Cicp::BT2100_PQ).with_diffuse_white(DiffuseWhite::BT2408);
+        let enc = PixelEncoding::new(PixelDescriptor::RGB16_BT2100_PQ, Some(&ctx));
+        assert_eq!(enc.cicp(), Some(Cicp::BT2100_PQ));
+        assert_eq!(enc.diffuse_white(), Some(DiffuseWhite::BT2408));
+        assert_eq!(
+            enc.color_profile_source(),
+            ColorProfileSource::Cicp(Cicp::BT2100_PQ)
+        );
     }
 
     #[test]
@@ -708,18 +983,21 @@ mod tests {
     #[test]
     fn color_context_diffuse_white_defaults_none_and_round_trips() {
         // Unsignaled by default — consumers fall back to BT.2408 (203).
-        assert_eq!(ColorContext::from_cicp(Cicp::BT2100_PQ).diffuse_white, None);
-        assert_eq!(ColorContext::from_icc([0u8; 4]).diffuse_white, None);
+        assert_eq!(
+            ColorContext::from_cicp(Cicp::BT2100_PQ).diffuse_white(),
+            None
+        );
+        assert_eq!(ColorContext::from_icc([0u8; 4]).diffuse_white(), None);
 
         // The anchor round-trips through the builder, and is preserved by Clone.
         let ctx = ColorContext::from_cicp(Cicp::BT2100_PQ).with_diffuse_white(DiffuseWhite::BT2408);
-        assert_eq!(ctx.diffuse_white, Some(DiffuseWhite::BT2408));
-        assert_eq!(ctx.clone().diffuse_white, Some(DiffuseWhite::BT2408));
+        assert_eq!(ctx.diffuse_white(), Some(DiffuseWhite::BT2408));
+        assert_eq!(ctx.clone().diffuse_white(), Some(DiffuseWhite::BT2408));
 
         // A custom anchor (e.g. a 100-nit SDR reference) carries through too.
         let custom =
             ColorContext::from_cicp(Cicp::BT2100_PQ).with_diffuse_white(DiffuseWhite::new(100.0));
-        assert_eq!(custom.diffuse_white.map(DiffuseWhite::nits), Some(100.0));
+        assert_eq!(custom.diffuse_white().map(DiffuseWhite::nits), Some(100.0));
     }
 
     #[test]

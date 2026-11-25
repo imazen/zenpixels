@@ -91,7 +91,10 @@ fn native_storage_survives_strides_subviews_and_owned_handoff() {
             assert_eq!(descriptor.alpha(), alpha);
             let mut buffer =
                 PixelBuffer::<(), zenpixels::plane::AlignedSamples<u8>>::try_new_aligned(
-                    5, 3, descriptor,
+                    5,
+                    3,
+                    descriptor,
+                    zenpixels::RowAlign::Cache64,
                 )
                 .unwrap();
             let patterns = native_patterns(channel);
@@ -165,7 +168,7 @@ fn cmyk_f32_carries_strides_profiles_and_every_sample_bit() {
         assert_eq!(parts.data, expected);
         assert_eq!(parts.data.as_ptr(), address);
         assert_eq!(
-            parts.color_context.unwrap().icc.as_ref().unwrap().as_ref(),
+            parts.color_context.unwrap().icc().unwrap(),
             profile.as_ref()
         );
     }

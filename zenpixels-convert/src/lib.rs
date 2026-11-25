@@ -113,8 +113,10 @@
 //!   [`RowConverter`]. If your JPEG decoder outputs u8 sRGB only, register
 //!   `RGB8_SRGB`, not `RGBF32_LINEAR`.
 //!
-//! - Extract all available color metadata. Both ICC and CICP can coexist
-//!   (AVIF/HEIF containers carry both). Record all of it on [`ColorContext`].
+//! - Extract all available color metadata. Both ICC and CICP can coexist in a
+//!   file (AVIF/HEIF/PNG containers carry both): select the single active
+//!   authority for [`ColorContext`] according to the container's precedence
+//!   rules, and record all file-level carriers on [`ColorOrigin`].
 //!
 //! - Build a [`ColorOrigin`] that records *how* the file described its color,
 //!   not what the pixels are. This is immutable and used only at encode time

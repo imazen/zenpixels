@@ -1,6 +1,6 @@
 //! Qualify the combined native-sample and profile-aware output review APIs.
 use std::sync::Arc;
-use zenpixels::{ColorContext, ColorOrigin, PixelFormat, PixelSlice, PixelSliceMut};
+use zenpixels::{ColorContext, ColorOrigin, PixelEncoding, PixelFormat, PixelSlice, PixelSliceMut};
 use zenpixels_convert::{ConvertOptions, OutputPlan, OutputProfile};
 
 #[test]
@@ -14,8 +14,7 @@ fn native_cmyk_identity_plan_preserves_float_bits_and_strides() {
         let profile: Arc<[u8]> = Arc::from(&b"unchanged current CMYK profile"[..]);
         let context = Arc::new(ColorContext::from_icc(profile.clone()));
         let mut plan = OutputPlan::new(
-            descriptor,
-            Some(context.clone()),
+            PixelEncoding::new(descriptor, Some(&context)),
             &ColorOrigin::from_icc(profile.clone()),
             OutputProfile::SameAsOrigin,
             format,
@@ -57,7 +56,7 @@ fn native_cmyk_identity_plan_preserves_float_bits_and_strides() {
         );
         assert_eq!(borrowed.as_strided_bytes(), input.as_strided_bytes());
         assert_eq!(borrowed.stride(), input.stride());
-        assert_eq!(borrowed.color_context().unwrap().icc, Some(profile.clone()));
+        assert_eq!(borrowed.color_context().unwrap().icc_arc(), Some(&profile));
         let output = PixelSliceMut::new(
             bytemuck::cast_slice_mut(&mut destination),
             2,
@@ -67,10 +66,7 @@ fn native_cmyk_identity_plan_preserves_float_bits_and_strides() {
         )
         .unwrap();
         let converted = plan.convert_rows(input.clone(), output).unwrap();
-        assert_eq!(
-            converted.color_context().unwrap().icc,
-            Some(profile.clone())
-        );
+        assert_eq!(converted.color_context().unwrap().icc_arc(), Some(&profile));
         assert_eq!(plan.metadata().icc, Some(profile));
         assert_eq!(converted.row(0), input.row(0));
         assert_eq!(converted.row(1), input.row(1));
@@ -88,8 +84,7 @@ fn borrow_rows_refuses_changed_interpretation_and_keeps_real_conversion_availabl
     let source = PixelSlice::new(&input, 2, 1, 6, descriptor).unwrap();
     for format in [PixelFormat::Rgb8, PixelFormat::Rgba8] {
         let mut plan = OutputPlan::new(
-            descriptor,
-            None,
+            source.encoding(),
             &ColorOrigin::assumed(),
             OutputProfile::Named(Cicp::SRGB),
             format,
@@ -114,14 +109,14 @@ fn borrow_rows_refuses_changed_interpretation_and_keeps_real_conversion_availabl
         assert_eq!(borrowed.is_some(), format == PixelFormat::Rgb8);
         if let Some(view) = borrowed {
             assert_eq!(view.as_strided_bytes().as_ptr(), input.as_ptr());
-            assert_eq!(view.color_context().unwrap().cicp, Some(Cicp::SRGB));
+            assert_eq!(view.color_context().unwrap().cicp(), Some(Cicp::SRGB));
         } else {
             let mut output = [0u8; 8];
             let destination =
                 PixelSliceMut::new(&mut output, 2, 1, 8, plan.output_descriptor()).unwrap();
             let converted = plan.convert_rows(source.clone(), destination).unwrap();
             assert_eq!(converted.row(0), &[7, 19, 121, 255, 23, 51, 93, 255]);
-            assert_eq!(converted.color_context().unwrap().cicp, Some(Cicp::SRGB));
+            assert_eq!(converted.color_context().unwrap().cicp(), Some(Cicp::SRGB));
         }
     }
 }
@@ -186,8 +181,7 @@ fn unchanged_opaque_profile_alpha_addition_preserves_strided_color_without_a_cms
             .with_color_context(context.clone());
         for cms in [None, Some(&NoColorWork as &dyn PluggableCms)] {
             let mut plan = OutputPlan::new(
-                descriptor,
-                Some(context.clone()),
+                source.encoding(),
                 &ColorOrigin::from_icc(profile.clone()),
                 OutputProfile::SameAsOrigin,
                 to,
@@ -270,8 +264,7 @@ fn alpha_addition_does_not_bypass_changed_profile_or_required_depth_policy() {
     let origin = ColorOrigin::from_icc(current);
     let cms = Decline(AtomicUsize::new(0));
     let error = OutputPlan::new(
-        descriptor,
-        Some(context.clone()),
+        PixelEncoding::new(descriptor, Some(&context)),
         &origin,
         OutputProfile::Icc(Arc::from(&b"different target ICC"[..])),
         PixelFormat::RgbaF32,
@@ -282,8 +275,7 @@ fn alpha_addition_does_not_bypass_changed_profile_or_required_depth_policy() {
     assert!(matches!(error.error(), ConvertError::NeedsCms { .. }));
     assert_eq!(cms.0.load(Ordering::SeqCst), 1);
     let error = OutputPlan::new(
-        descriptor,
-        Some(context),
+        PixelEncoding::new(descriptor, Some(&context)),
         &origin,
         OutputProfile::SameAsOrigin,
         PixelFormat::Rgba8,

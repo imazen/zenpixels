@@ -30,9 +30,7 @@ use imgref::ImgRef;
 #[cfg(feature = "imgref")]
 use imgref::ImgVec;
 #[cfg(feature = "rgb")]
-use rgb::alt::BGRA;
-#[cfg(feature = "rgb")]
-use rgb::{Gray, Rgb, Rgba};
+use rgb::{Bgra, Gray, Rgb, Rgba};
 
 use crate::cicp::Cicp;
 use crate::color::ColorContext;
@@ -67,7 +65,7 @@ pub struct Rgbx {
 
 /// 32-bit BGR pixel with padding byte (BGRx).
 ///
-/// Same memory layout as `BGRA<u8>` but the 4th byte is padding.
+/// Same memory layout as `Bgra<u8>` but the 4th byte is padding.
 #[derive(bytemuck::Zeroable, bytemuck::Pod, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[repr(C)]
 pub struct Bgrx {
@@ -153,7 +151,7 @@ impl Pixel for Gray<f32> {
 }
 
 #[cfg(feature = "rgb")]
-impl Pixel for BGRA<u8> {
+impl Pixel for Bgra<u8> {
     const DESCRIPTOR: PixelDescriptor = PixelDescriptor::BGRA8;
 }
 
@@ -1017,6 +1015,12 @@ impl<'a, P> PixelSlice<'a, P> {
         self.color.as_ref()
     }
 
+    /// Combined format descriptor and borrowed color context.
+    #[inline]
+    pub fn encoding(&self) -> crate::PixelEncoding<'_> {
+        crate::PixelEncoding::new(self.descriptor, self.color.as_deref())
+    }
+
     /// Return a copy of this slice with a color context attached.
     #[inline]
     #[must_use]
@@ -1376,11 +1380,19 @@ impl<'a, P> PixelSlice<'a, P> {
         (y < self.rows).then(|| self.row(y))
     }
 
-    /// [`row_with_stride`](Self::row_with_stride), or `None` when `y` is out of bounds.
+    /// [`row_with_stride`](Self::row_with_stride), or `None` when `y` is out of bounds
+    /// or the backing slice does not hold a full `stride` for row `y` (such as the
+    /// final row of a [`crop_view`](Self::crop_view), [`sub_rows`](Self::sub_rows),
+    /// or minimal-extent slice).
     #[inline]
     #[must_use]
     pub fn try_row_with_stride(&self, y: u32) -> Option<&[u8]> {
-        (y < self.rows).then(|| self.row_with_stride(y))
+        if y >= self.rows {
+            return None;
+        }
+        let start = (y as usize).checked_mul(self.stride)?;
+        let end = start.checked_add(self.stride)?;
+        self.data.get(start..end)
     }
 
     /// [`sub_rows`](Self::sub_rows), or `None` when the rows are out of bounds.
@@ -1666,6 +1678,12 @@ impl<'a, P> PixelSliceMut<'a, P> {
     #[inline]
     pub fn color_context(&self) -> Option<&Arc<ColorContext>> {
         self.color.as_ref()
+    }
+
+    /// Combined format descriptor and borrowed color context.
+    #[inline]
+    pub fn encoding(&self) -> crate::PixelEncoding<'_> {
+        crate::PixelEncoding::new(self.descriptor, self.color.as_deref())
     }
 
     /// Return a copy of this slice with a color context attached.
@@ -2026,7 +2044,7 @@ impl<'a> PixelSliceMut<'a, Bgrx> {}
 impl<'a> PixelSliceMut<'a, Rgba<u8>> {
     /// Byte-swap R<->B channels in place, converting to BGRA.
     #[must_use]
-    pub fn swap_to_bgra(self) -> PixelSliceMut<'a, BGRA<u8>> {
+    pub fn swap_to_bgra(self) -> PixelSliceMut<'a, Bgra<u8>> {
         let width = self.width;
         let rows = self.rows;
         let stride = self.stride;
@@ -2052,7 +2070,7 @@ impl<'a> PixelSliceMut<'a, Rgba<u8>> {
 }
 
 #[cfg(feature = "rgb")]
-impl<'a> PixelSliceMut<'a, BGRA<u8>> {
+impl<'a> PixelSliceMut<'a, Bgra<u8>> {
     /// Byte-swap B<->R channels in place, converting to RGBA.
     #[must_use]
     pub fn swap_to_rgba(self) -> PixelSliceMut<'a, Rgba<u8>> {
@@ -2117,6 +2135,13 @@ pub struct PixelBuffer<P = (), S = PixelStorage> {
     exact: Option<ExactDepth>,
     _pixel: PhantomData<P>,
 }
+
+#[cfg(target_pointer_width = "64")]
+const _: () = {
+    assert!(core::mem::size_of::<PixelBuffer>() == 72);
+    assert!(core::mem::size_of::<PixelSlice<'static>>() == 56);
+    assert!(core::mem::size_of::<PixelSliceMut<'static>>() == 48);
+};
 
 /// An owned allocation with the layout and color metadata of its pixels.
 ///
@@ -2268,6 +2293,15 @@ impl<P> PixelCow<'_, P> {
             Self::Owned(buffer) => buffer.as_slice(),
         }
     }
+
+    /// Combined format descriptor and borrowed color context.
+    #[inline]
+    pub fn encoding(&self) -> crate::PixelEncoding<'_> {
+        match self {
+            Self::Borrowed(slice) => slice.encoding(),
+            Self::Owned(buffer) => buffer.encoding(),
+        }
+    }
 }
 
 impl<'a> PixelCow<'a> {
@@ -2350,8 +2384,14 @@ impl<P> fmt::Debug for PixelCow<'_, P> {
 }
 
 impl<T: PlaneSample> PixelBuffer<(), AlignedSamples<T>> {
-    /// Allocate a zeroed buffer with every row on a 64-byte boundary where the
-    /// pixel size allows it, and the first pixel at index 0.
+    /// Allocate a zeroed buffer whose row stride satisfies `align`, with the
+    /// first pixel at index 0 on a 64-byte boundary.
+    ///
+    /// Pass [`RowAlign::Cache64`](crate::RowAlign::Cache64) for 64-byte row starts,
+    /// [`RowAlign::PixelCache64`](crate::RowAlign::PixelCache64) when every row
+    /// stride must also be a whole number of pixels, [`RowAlign::Tight`](crate::RowAlign::Tight)
+    /// for sample-aligned rows without padding, or [`RowAlign::Samples`](crate::RowAlign::Samples) /
+    /// [`RowAlign::from_bytes`](crate::RowAlign::from_bytes) for a custom alignment step.
     ///
     /// The storage can always be viewed as the descriptor's pixel type. `T` is
     /// `u8` for any descriptor, or the descriptor's own channel type when the
@@ -2360,22 +2400,22 @@ impl<T: PlaneSample> PixelBuffer<(), AlignedSamples<T>> {
     /// # Errors
     ///
     /// [`BufferError::IncompatibleDescriptor`] when `T` is neither,
-    /// [`BufferError::InvalidDimensions`] when the size overflows,
+    /// [`BufferError::InvalidDimensions`] when the stride or total size overflows,
     /// [`BufferError::AllocationFailed`] when the allocator refuses.
     pub fn try_new_aligned(
         width: u32,
         height: u32,
         descriptor: PixelDescriptor,
+        align: crate::RowAlign,
     ) -> Result<Self, At<BufferError>> {
         descriptor.validate().map_err(|e| whereat::at!(e))?;
         let sample = core::mem::size_of::<T>();
         if sample != 1 && T::CHANNEL_TYPE != descriptor.channel_type() {
             return Err(whereat::at!(BufferError::IncompatibleDescriptor));
         }
-        (width as usize)
-            .checked_mul(descriptor.bytes_per_pixel())
+        let stride = descriptor
+            .try_aligned_stride(width, align)
             .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
-        let stride = descriptor.simd_aligned_stride(width, 64);
         let total = stride
             .checked_mul(height as usize)
             .ok_or_else(|| whereat::at!(BufferError::InvalidDimensions))?;
@@ -3679,6 +3719,12 @@ impl<P, S: ByteStorage> PixelBuffer<P, S> {
         self.color.as_ref()
     }
 
+    /// Combined format descriptor and borrowed color context.
+    #[inline]
+    pub fn encoding(&self) -> crate::PixelEncoding<'_> {
+        crate::PixelEncoding::new(self.descriptor, self.color.as_deref())
+    }
+
     /// Set the color context on this buffer.
     #[inline]
     #[must_use]
@@ -4146,7 +4192,7 @@ impl_from_imgref!(Gray<u16>, PixelDescriptor::GRAY16);
 #[cfg(feature = "imgref")]
 impl_from_imgref!(Gray<f32>, PixelDescriptor::GRAYF32_LINEAR);
 #[cfg(feature = "imgref")]
-impl_from_imgref!(BGRA<u8>, PixelDescriptor::BGRA8_SRGB);
+impl_from_imgref!(Bgra<u8>, PixelDescriptor::BGRA8_SRGB);
 
 // ---------------------------------------------------------------------------
 // ImgRefMut -> PixelSliceMut (zero-copy From impls) -- imgref feature only
@@ -4196,7 +4242,7 @@ impl_from_imgref_mut!(Gray<u16>, PixelDescriptor::GRAY16);
 #[cfg(feature = "imgref")]
 impl_from_imgref_mut!(Gray<f32>, PixelDescriptor::GRAYF32_LINEAR);
 #[cfg(feature = "imgref")]
-impl_from_imgref_mut!(BGRA<u8>, PixelDescriptor::BGRA8_SRGB);
+impl_from_imgref_mut!(Bgra<u8>, PixelDescriptor::BGRA8_SRGB);
 
 // ---------------------------------------------------------------------------
 // Typed -> Erased blanket From impls (erase via From)
@@ -4295,19 +4341,56 @@ mod tests {
             .with_cicp(Cicp::BT2100_PQ)
             .with_diffuse_white(DiffuseWhite::new(120.0));
         let ctx = slice.color_context().expect("context attached");
-        assert_eq!(ctx.diffuse_white, Some(DiffuseWhite::new(120.0)));
+        assert_eq!(ctx.diffuse_white(), Some(DiffuseWhite::new(120.0)));
         assert_eq!(
-            ctx.cicp,
+            ctx.cicp(),
             Some(Cicp::BT2100_PQ),
-            "cicp preserved across the second relabel"
+            "cicp preserved across diffuse_white relabel"
+        );
+        assert_eq!(
+            slice.encoding(),
+            crate::PixelEncoding::new(PixelDescriptor::RGB8_SRGB, Some(ctx.as_ref()))
         );
 
-        // A third relabel (icc) preserves the two already set.
+        // Relabeling with an ICC profile replaces the single-authority profile
+        // (clearing CICP) while preserving diffuse_white.
         let slice = slice.with_icc(alloc::vec![1u8, 2, 3]);
         let ctx = slice.color_context().unwrap();
-        assert!(ctx.icc.is_some());
-        assert_eq!(ctx.cicp, Some(Cicp::BT2100_PQ));
-        assert_eq!(ctx.diffuse_white, Some(DiffuseWhite::new(120.0)));
+        assert_eq!(ctx.icc(), Some(&[1u8, 2, 3][..]));
+        assert_eq!(ctx.cicp(), None);
+        assert_eq!(ctx.diffuse_white(), Some(DiffuseWhite::new(120.0)));
+    }
+
+    #[test]
+    fn try_row_with_stride_handles_cropped_and_minimal_extent_final_rows() {
+        // 2x2 RGBA8 with stride 16, minimal-extent backing (row 0 = 16 B, row 1 = 8 B -> 24 B total).
+        let data = alloc::vec![7u8; 24];
+        let slice = PixelSlice::new(&data, 2, 2, 16, PixelDescriptor::RGBA8_SRGB).unwrap();
+        assert_eq!(slice.try_row_with_stride(0).map(|r| r.len()), Some(16));
+        assert_eq!(slice.try_row_with_stride(1), None);
+        assert_eq!(slice.try_row_with_stride(2), None);
+
+        // Full-extent padded buffer works on all rows, then sub_rows / crop_view trims the final row.
+        let buf = simd_padded(2, 3, PixelDescriptor::RGBA8_SRGB, 64);
+        let full = buf.as_slice();
+        assert_eq!(
+            full.try_row_with_stride(2).map(|r| r.len()),
+            Some(full.stride())
+        );
+
+        let sub = full.sub_rows(0, 2);
+        assert_eq!(
+            sub.try_row_with_stride(0).map(|r| r.len()),
+            Some(full.stride())
+        );
+        assert_eq!(sub.try_row_with_stride(1), None);
+
+        let cropped = full.crop_view(0, 0, 1, 2);
+        assert_eq!(
+            cropped.try_row_with_stride(0).map(|r| r.len()),
+            Some(full.stride())
+        );
+        assert_eq!(cropped.try_row_with_stride(1), None);
     }
 
     // --- PixelBuffer allocation and row access ---

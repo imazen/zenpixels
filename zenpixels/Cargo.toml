@@ -46,7 +46,7 @@ serde = []
 [dependencies]
 zenhash = { git = "https://github.com/imazen/zenhash", rev = "98c385a4e54a", default-features = false, features = ["xxh3", "avx512"], optional = true }
 bytemuck = { version = "1.21", default-features = false, features = ["extern_crate_alloc", "derive"] }
-rgb = { version = "0.8", default-features = false, features = ["bytemuck"], optional = true }
+rgb = { version = "0.8.53", default-features = false, features = ["bytemuck"], optional = true }
 imgref = { version = "1.12", optional = true }
 rustversion = { version = "1.0.23", optional = true }
 image = { version = "0.25.10", default-features = false, optional = true }
@@ -58,7 +58,7 @@ zenpixels = { path = ".", features = ["image", "allocator_api"] }
 image = { version = "0.25.10", default-features = false }
 rustversion = "1.0.23"
 imgref = "1.12"
-rgb = { version = "0.8", default-features = false, features = ["bytemuck"] }
+rgb = { version = "0.8.53", default-features = false, features = ["bytemuck"] }
 
 [[test]]
 name = "typed_extraction_contract"

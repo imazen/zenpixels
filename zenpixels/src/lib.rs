@@ -103,20 +103,22 @@ pub use descriptor::{
     PixelFormat, SignalRange, TransferFunction,
 };
 
-// Re-export buffer types at crate root.
+// Re-export buffer and alignment types at crate root.
 #[doc(inline)]
 pub use buffer::{
     Bgrx, BufferError, ByteStorage, ByteStorageMut, FromPartsError, InPlacePixels, Pixel,
     PixelBuffer, PixelBufferParts, PixelCow, PixelSlice, PixelSliceMut, PixelStorage, Rgbx,
     StorageSample,
 };
+#[doc(inline)]
+pub use plane::RowAlign;
 
 // Re-export color types at crate root.
 pub use cicp::Cicp;
 #[doc(inline)]
 pub use color::{
-    AnyColor, Color, ColorAuthority, ColorContext, ColorOrigin, ColorProfileSource,
-    ColorProvenance, NamedProfile,
+    AnyColor, Color, ColorAuthority, ColorContext, ColorOrigin, ColorProfile, ColorProfileSource,
+    ColorProvenance, NamedProfile, PixelEncoding,
 };
 
 // Re-export GrayAlpha pixel types at crate root.
