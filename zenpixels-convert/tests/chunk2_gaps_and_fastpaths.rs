@@ -733,7 +733,7 @@ fn t2_4_t2_5_adapt_for_encode_convenience_helpers_and_ycbcr_from_planar() {
             alpha: AlphaMode::None,
             white: None,
         })
-        .with_matrix_coefficients_code(1);
+        .with_matrix_coefficients(zenpixels_convert::MatrixCoefficients::BT709);
     let from_meta = reconstruct_planar_f32(&tagged.as_view()).unwrap();
     let via_to_buf = reconstruct_planar_to_buf(
         &tagged.as_view(),

@@ -95,6 +95,76 @@ impl fmt::Display for CicpProjectionError {
 
 impl core::error::Error for CicpProjectionError {}
 
+/// 1-byte lossless ITU-T H.273 Table 4 `MatrixCoefficients` code.
+///
+/// Preserves arbitrary `u8` wire codes losslessly (including unknown, reserved, or future
+/// codes such as `10` = BT.2020 CL or `14` = ICtCp), while exposing named constants for
+/// every standardized ITU-T H.273 Table 4 entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct MatrixCoefficients(u8);
+
+impl MatrixCoefficients {
+    /// Identity / RGB / GBR (`MC = 0`).
+    pub const IDENTITY: Self = Self(0);
+    /// ITU-R BT.709 (`MC = 1`).
+    pub const BT709: Self = Self(1);
+    /// Unspecified (`MC = 2`).
+    pub const UNSPECIFIED: Self = Self(2);
+    /// FCC Title 47 CFR 73.682 (`MC = 4`).
+    pub const FCC: Self = Self(4);
+    /// ITU-R BT.470-6 System B, G (`MC = 5`).
+    pub const BT470BG: Self = Self(5);
+    /// SMPTE 170M / ITU-R BT.601 (`MC = 6`).
+    pub const BT601: Self = Self(6);
+    /// SMPTE 240M (`MC = 7`).
+    pub const SMPTE240M: Self = Self(7);
+    /// YCgCo (`MC = 8`).
+    pub const YCGCO: Self = Self(8);
+    /// ITU-R BT.2020 non-constant luminance (`MC = 9`).
+    pub const BT2020_NCL: Self = Self(9);
+    /// ITU-R BT.2020 constant luminance (`MC = 10`).
+    pub const BT2020_CL: Self = Self(10);
+    /// SMPTE ST 2085 (`MC = 11`).
+    pub const SMPTE2085: Self = Self(11);
+    /// Chromaticity-derived non-constant luminance (`MC = 12`).
+    pub const CHROMA_DERIVED_NCL: Self = Self(12);
+    /// Chromaticity-derived constant luminance (`MC = 13`).
+    pub const CHROMA_DERIVED_CL: Self = Self(13);
+    /// ITU-R BT.2100 ICtCp (`MC = 14`).
+    pub const ICTCP: Self = Self(14);
+
+    /// Wrap any raw ITU-T H.273 Table 4 `matrix_coefficients` byte losslessly.
+    #[inline]
+    #[must_use]
+    pub const fn from_code(code: u8) -> Self {
+        Self(code)
+    }
+
+    /// Raw ITU-T H.273 Table 4 `matrix_coefficients` byte.
+    #[inline]
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        self.0
+    }
+
+    /// Human-readable ITU-T H.273 Table 4 name for this code, if standardized.
+    #[inline]
+    #[must_use]
+    pub const fn name(self) -> Option<&'static str> {
+        matrix_coefficients_name(self.0)
+    }
+}
+
+impl fmt::Display for MatrixCoefficients {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.name() {
+            Some(name) => write!(f, "{name} (MC={})", self.0),
+            None => write!(f, "MatrixCoefficients({})", self.0),
+        }
+    }
+}
+
 /// 4-byte ITU-T H.273 color description (`CP`, `TC`, `MC`, `full_range`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -197,6 +267,13 @@ impl Cicp {
     #[must_use]
     pub const fn transfer_name(self) -> Option<&'static str> {
         transfer_characteristics_name(self.transfer_characteristics)
+    }
+
+    /// Typed [`MatrixCoefficients`] wrapper for `self.matrix_coefficients`.
+    #[inline]
+    #[must_use]
+    pub const fn matrix(self) -> MatrixCoefficients {
+        MatrixCoefficients::from_code(self.matrix_coefficients)
     }
 
     /// Human-readable ITU-T H.273 name for `self.matrix_coefficients`, if known.

@@ -7,15 +7,14 @@
     all(feature = "hdr-transfers", feature = "bt2446a")
 ))]
 use zenpixels_convert::PixelBuf;
+#[cfg(feature = "gainmap")]
+use zenpixels_convert::gainmap::{GainMapApplyConfig, apply_gain_map_with, extract_gain_map};
 use zenpixels_convert::{
     AlphaMode, BitPacking, ColorSpace, ConvertPolicy, ImageSpec, PlanarBuf, PlaneRole, PlaneSpec,
     Primaries, RowPlan, SampleType, SignalRange, Transfer, YcbcrMatrix, reconstruct_planar_f32,
 };
 #[cfg(feature = "gainmap")]
-use zenpixels_convert::{
-    DiffuseWhite, GainMapApplyConfig, GainMapMetadata, Unstoppable, apply_gain_map_with,
-    extract_gain_map,
-};
+use zenpixels_convert::{DiffuseWhite, GainMapMetadata, Unstoppable};
 
 #[test]
 fn row_plan_convert_row_allocates_zero_bytes() {
@@ -207,7 +206,7 @@ fn ycbcr_p010_and_8bit_420_to_rgb_f32() {
             alpha: AlphaMode::None,
             white: None,
         })
-        .with_matrix_coefficients_code(YcbcrMatrix::Bt2020.to_cicp_code());
+        .with_matrix_coefficients(YcbcrMatrix::Bt2020.to_matrix_coefficients());
     let y_packed = BitPacking::P010.pack_code(SampleType::U16, 0, 940) as u16;
     let c_packed = BitPacking::P010.pack_code(SampleType::U16, 0, 512) as u16;
     for y in 0..6 {
@@ -244,9 +243,11 @@ fn ycbcr_p010_and_8bit_420_to_rgb_f32() {
 fn gainmap_streaming_row_cache_efficiency_zero_alloc_and_banded_parity() {
     use enough::Unstoppable;
     use std::cell::Cell;
+    use zenpixels_convert::gainmap::{
+        GainMapApplier, GainMapApplyConfig, GainMapResample, apply_gain_map_with,
+    };
     use zenpixels_convert::{
-        AlphaMode, BandedBuf, DualLayerHdrView, GainMapApplier, GainMapApplyConfig,
-        GainMapResample, Orientation, PixelSource, SampleLayout, apply_gain_map_with,
+        AlphaMode, BandedBuf, DualLayerHdrView, Orientation, PixelSource, SampleLayout,
         convert_to_buf,
     };
 
@@ -399,10 +400,10 @@ fn gainmap_resampling_unit_weights_clamping_and_adversarial_guard() {
     use core::num::NonZeroU32;
     use enough::Unstoppable;
     use zenpixels_convert::{
-        AlphaMode, DualLayerHdrView, GainMapApplyConfig, GainMapChannels, GainMapColorSpace,
-        GainMapComponent, GainMapResample, Orientation, SampleLayout, SignedFraction,
-        UnsignedFraction, apply_gain_map_with,
+        AlphaMode, DualLayerHdrView, GainMapChannels, GainMapColorSpace, GainMapComponent,
+        Orientation, SampleLayout, SignedFraction, UnsignedFraction,
         gainmap::{
+            GainMapApplyConfig, GainMapResample, apply_gain_map_with,
             display_boost_to_headroom_stops, full_reconstruction_headroom_stops, signed_weight,
         },
     };
@@ -550,7 +551,8 @@ fn gainmap_resampling_unit_weights_clamping_and_adversarial_guard() {
 #[cfg(feature = "gainmap")]
 #[test]
 fn gainmap_row_extractor_streaming_and_contract_33() {
-    use zenpixels_convert::{GainMapExtractConfig, GainMapRowExtractor, SampleLayout};
+    use zenpixels_convert::SampleLayout;
+    use zenpixels_convert::gainmap::{GainMapExtractConfig, GainMapRowExtractor};
 
     // Configure grid [0, 4] stops with alternate_hdr_headroom = 2.0 stops, then feed 3.0-stop pixels:
     // contract #33: `metadata()` keeps exact grid, `build_metadata_widening_headroom()` widens
@@ -616,9 +618,11 @@ fn gainmap_row_extractor_streaming_and_contract_33() {
 fn gainmap_extract_only_subsampling_content_fit_10bit_alternate_and_stop() {
     use enough::{Stop, StopReason, Unstoppable};
     use zenpixels_convert::{
-        ConvertError, DualLayerHdrView, GainMapApplyConfig, GainMapColorSpace, GainMapDownsample,
-        GainMapExtractConfig, GainMapResample, Orientation, apply_gain_map_with,
-        extract_gain_map_only, gainmap::CONTENT_FIT_MIN_SPAN_STOPS,
+        ConvertError, DualLayerHdrView, GainMapColorSpace, Orientation,
+        gainmap::{
+            CONTENT_FIT_MIN_SPAN_STOPS, GainMapApplyConfig, GainMapDownsample,
+            GainMapExtractConfig, GainMapResample, apply_gain_map_with, extract_gain_map_only,
+        },
     };
 
     use core::sync::atomic::{AtomicU32, Ordering};
@@ -869,10 +873,12 @@ fn gainmap_extract_only_subsampling_content_fit_10bit_alternate_and_stop() {
 fn gainmap_orientation_models_bake_passthrough_require_identity_and_dual_layer_rotate() {
     use enough::Unstoppable;
     use zenpixels_convert::{
-        AlphaMode, ConvertError, DualLayerHdrBuf, GainMapApplier, GainMapApplyConfig,
-        GainMapOrientation, GainMapResample, Orientation, SampleLayout, apply_gain_map_oriented,
-        apply_gain_map_with, apply_orientation, bake_dual_layer_orientation,
-        bake_dual_layer_orientation_after,
+        AlphaMode, ConvertError, DualLayerHdrBuf, Orientation, SampleLayout, apply_orientation,
+        gainmap::{
+            GainMapApplier, GainMapApplyConfig, GainMapOrientation, GainMapResample,
+            apply_gain_map_oriented, apply_gain_map_with, bake_dual_layer_orientation,
+            bake_dual_layer_orientation_after,
+        },
     };
 
     // Asymmetric non-square 24x16 base + ¼-res 6x4 gain map with distinct spatial gradient so
@@ -956,7 +962,7 @@ fn gainmap_orientation_models_bake_passthrough_require_identity_and_dual_layer_r
 
         // A07: Pixel-only `apply_gain_map_with` MUST refuse `Passthrough` on non-Identity
         // orientations (since it cannot return the pending EXIF transform), while accepting Identity.
-        let px_only_pass = zenpixels_convert::apply_gain_map_with(&view, &cfg_pass, &Unstoppable);
+        let px_only_pass = apply_gain_map_with(&view, &cfg_pass, &Unstoppable);
         if orient == Orientation::Identity {
             let buf = px_only_pass.unwrap();
             assert_eq!(buf.as_view().row(0), stored_buf.as_view().row(0));
@@ -1092,11 +1098,14 @@ fn gainmap_codex_p1_regressions_and_edge_cases() {
     use core::num::NonZeroU32;
     use enough::{Stop, StopReason, Unstoppable};
     use zenpixels_convert::{
-        Accelerators, AlphaMode, ChannelOrder, ConvertError, DualLayerHdrView, GainMapApplier,
-        GainMapApplyConfig, GainMapChannels, GainMapColorSpace, GainMapComponent,
-        GainMapExtractConfig, GainMapResample, GainMapRowExtractor, GainMapTarget, Orientation,
-        SampleLayout, SignedFraction, UnsignedFraction, apply_gain_map_with,
-        gainmap::{signed_weight, signed_weight_for_target},
+        Accelerators, AlphaMode, ChannelOrder, ConvertError, DualLayerHdrView, GainMapChannels,
+        GainMapColorSpace, GainMapComponent, Orientation, SampleLayout, SignedFraction,
+        UnsignedFraction,
+        gainmap::{
+            GainMapApplier, GainMapApplyConfig, GainMapExtractConfig, GainMapResample,
+            GainMapRowExtractor, GainMapTarget, apply_gain_map_with, signed_weight,
+            signed_weight_for_target,
+        },
     };
 
     // P1 #1: Close distinct valid rationals (identical in f64) MUST NOT produce 0/0 = NaN,

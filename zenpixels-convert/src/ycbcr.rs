@@ -6,7 +6,7 @@
 //! [`reconstruct_planar_into`](crate::reconstruct_planar_into),
 //! [`reconstruct_planar_f32`](crate::reconstruct_planar_f32)).
 
-use zenpixels::Primaries;
+use zenpixels::{MatrixCoefficients, Primaries};
 
 /// YCbCr / GBR / YCgCo luma-chroma matrix standard (ITU-T H.273 Table 4).
 ///
@@ -60,6 +60,23 @@ impl YcbcrMatrix {
             12 => Some(Self::ChromaDerivedNcl),
             _ => None,
         }
+    }
+
+    /// Losslessly map a typed [`MatrixCoefficients`] wrapper to a [`YcbcrMatrix`].
+    ///
+    /// Returns `None` for unspecified (`2`), reserved (`3`), or non-NCL matrix codes
+    /// (such as `BT2020_CL` or `ICTCP`).
+    #[inline]
+    #[must_use]
+    pub const fn from_matrix_coefficients(mc: MatrixCoefficients) -> Option<Self> {
+        Self::from_cicp_code(mc.code())
+    }
+
+    /// Exact typed [`MatrixCoefficients`] for this matrix.
+    #[inline]
+    #[must_use]
+    pub const fn to_matrix_coefficients(self) -> MatrixCoefficients {
+        MatrixCoefficients::from_code(self.to_cicp_code())
     }
 
     /// Exact ITU-T H.273 Table 4 `matrix_coefficients` code for this matrix.
@@ -129,5 +146,12 @@ impl YcbcrMatrix {
             return Some((kr, kb));
         }
         self.kr_kb()
+    }
+}
+
+impl From<YcbcrMatrix> for MatrixCoefficients {
+    #[inline]
+    fn from(matrix: YcbcrMatrix) -> Self {
+        matrix.to_matrix_coefficients()
     }
 }

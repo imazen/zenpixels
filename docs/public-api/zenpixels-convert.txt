@@ -9,25 +9,25 @@
 ## summary
 #
 #   pub modules                                22
-#   pub types (struct/enum/trait/alias)       100
-#   pub consts/statics                        126
-#   free functions                             80
-#   inherent methods                          223
-#   struct fields                             159
-#   enum variants                             201
+#   pub types (struct/enum/trait/alias)        92
+#   pub consts/statics                        127
+#   free functions                             74
+#   inherent methods                          186
+#   struct fields                             139
+#   enum variants                             188
 #   re-exports                                  4
-#   trait roster entries (type × trait)       212
+#   trait roster entries (type × trait)       213
 #   auto-trait-complete types                  36
 #   auto-trait exceptions                       8
 #
 # per-module pub lines:
-#   (root)                          376
+#   (root)                          330
 #   accel                            19
 #   cms                               5
 #   codes                            41
 #   compact                          12
 #   error                            23
-#   gainmap                         126
+#   gainmap                          89
 #   gamut                            11
 #   icc_profiles                     10
 #   measure                          32
@@ -42,7 +42,7 @@
 #   tonemap                          62
 #   ycbcr                            12
 
-## items (786 lines)
+## items (718 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -151,29 +151,35 @@ pub error::ConvertError::RangeConversionForbidden
 pub error::ConvertError::ToneMapperFailed
 pub error::ConvertError::UnsupportedRoute
 pub mod gainmap
+#[non_exhaustive] pub enum gainmap::GainMapDownsample
 pub gainmap::GainMapDownsample::Bilinear
 pub gainmap::GainMapDownsample::Box
 pub gainmap::GainMapDownsample::Point
+#[non_exhaustive] pub enum gainmap::GainMapOrientation
 pub gainmap::GainMapOrientation::Bake
 pub gainmap::GainMapOrientation::Passthrough
 pub gainmap::GainMapOrientation::RequireIdentity
+#[non_exhaustive] pub enum gainmap::GainMapResample
 pub gainmap::GainMapResample::Bicubic
 pub gainmap::GainMapResample::Bilinear
 pub gainmap::GainMapResample::Mitchell
 pub gainmap::GainMapResample::Nearest
+#[non_exhaustive] pub enum gainmap::GainMapTarget
 pub gainmap::GainMapTarget::AlternateRendition
 pub gainmap::GainMapTarget::BaseRendition
 pub gainmap::GainMapTarget::HeadroomStops(f32)
+pub struct gainmap::GainMapApplier
 pub fn gainmap::GainMapApplier::apply_into<S: zenpixels::buffer::PixelSource + ?core::marker::Sized, D: zenpixels::buffer::PixelSink + ?core::marker::Sized>(&mut self, &S, &zenpixels::buffer::PixelView<'_>, &mut D, &dyn enough::Stop) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn gainmap::GainMapApplier::apply_row(&mut self, u32, &[u8], &zenpixels::buffer::PixelView<'_>, &mut [u8]) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn gainmap::GainMapApplier::apply_row_with_provider<'a, F>(&mut self, u32, &[u8], F, &mut [u8]) -> core::result::Result<(), whereat::at::At<error::ConvertError>> where F: core::ops::function::FnMut(u32) -> core::result::Result<&'a [u8], whereat::at::At<error::ConvertError>>
 pub fn gainmap::GainMapApplier::dst_spec(&self) -> &zenpixels::color::ImageSpec
 pub fn gainmap::GainMapApplier::for_view(&zenpixels::buffer::DualLayerHdrView<'_>, &gainmap::GainMapApplyConfig) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub const fn gainmap::GainMapApplier::is_zero_weight(&self) -> bool [also: (root)]
+pub const fn gainmap::GainMapApplier::is_zero_weight(&self) -> bool
 pub fn gainmap::GainMapApplier::new(zenpixels::color::ImageSpec, u32, u32, zenpixels::color::ImageSpec, u32, u32, zenpixels::color::GainMapMetadata, core::option::Option<&zenpixels::color::ColorSpace>, &gainmap::GainMapApplyConfig) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub const fn gainmap::GainMapApplier::orientation(&self) -> zenpixels::orientation::Orientation [also: (root)]
+pub const fn gainmap::GainMapApplier::orientation(&self) -> zenpixels::orientation::Orientation
 pub fn gainmap::GainMapApplier::reset_cache(&mut self)
-pub const fn gainmap::GainMapApplier::signed_weight(&self) -> f32 [also: (root)]
+pub const fn gainmap::GainMapApplier::signed_weight(&self) -> f32
+pub struct gainmap::GainMapApplyConfig
 pub gainmap::GainMapApplyConfig::dst_spec: core::option::Option<zenpixels::color::ImageSpec>
 pub gainmap::GainMapApplyConfig::orientation: gainmap::GainMapOrientation
 pub gainmap::GainMapApplyConfig::policy: policy::ConvertPolicy
@@ -188,6 +194,7 @@ pub fn gainmap::GainMapApplyConfig::with_orientation(self, gainmap::GainMapOrien
 pub fn gainmap::GainMapApplyConfig::with_policy(self, policy::ConvertPolicy) -> Self
 pub fn gainmap::GainMapApplyConfig::with_resample(self, gainmap::GainMapResample) -> Self
 pub fn gainmap::GainMapApplyConfig::with_target(self, gainmap::GainMapTarget) -> Self
+pub struct gainmap::GainMapExtractConfig
 pub gainmap::GainMapExtractConfig::alternate_hdr_headroom_stops: f32
 pub gainmap::GainMapExtractConfig::alternate_offset: f32
 pub gainmap::GainMapExtractConfig::application_space: zenpixels::color::GainMapColorSpace
@@ -218,6 +225,7 @@ pub fn gainmap::GainMapExtractConfig::with_offsets(self, f32, f32) -> Self
 pub fn gainmap::GainMapExtractConfig::with_policy(self, policy::ConvertPolicy) -> Self
 pub fn gainmap::GainMapExtractConfig::with_sample_storage(self, zenpixels::layout::SampleType, zenpixels::layout::BitPacking) -> Self
 pub fn gainmap::GainMapExtractConfig::with_scale_factor(self, u8) -> Self
+pub struct gainmap::GainMapRowExtractor
 pub fn gainmap::GainMapRowExtractor::build_metadata_widening_headroom(&self) -> zenpixels::color::GainMapMetadata
 pub fn gainmap::GainMapRowExtractor::encode_row_linear_f32(&mut self, &[f32], &[f32], usize, zenpixels::layout::SampleLayout, &mut [u8]) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
 pub fn gainmap::GainMapRowExtractor::from_config(&gainmap::GainMapExtractConfig, zenpixels::color::Primaries) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
@@ -225,7 +233,13 @@ pub fn gainmap::GainMapRowExtractor::metadata(&self) -> zenpixels::color::GainMa
 pub fn gainmap::GainMapRowExtractor::new(zenpixels::color::GainMapMetadata, zenpixels::color::Primaries) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn gainmap::GainMapRowExtractor::observed_gain_stops(&self) -> core::option::Option<(f32, f32)>
 pub const gainmap::CONTENT_FIT_MIN_SPAN_STOPS: f32
+pub fn gainmap::apply_gain_map_oriented(&zenpixels::buffer::DualLayerHdrView<'_>, &gainmap::GainMapApplyConfig, &dyn enough::Stop) -> core::result::Result<(zenpixels::buffer::PixelBuf, zenpixels::orientation::Orientation), whereat::at::At<error::ConvertError>>
+pub fn gainmap::apply_gain_map_with(&zenpixels::buffer::DualLayerHdrView<'_>, &gainmap::GainMapApplyConfig, &dyn enough::Stop) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>>
+pub fn gainmap::bake_dual_layer_orientation(&zenpixels::buffer::DualLayerHdrView<'_>) -> core::result::Result<zenpixels::buffer::DualLayerHdrBuf, whereat::at::At<error::ConvertError>>
+pub fn gainmap::bake_dual_layer_orientation_after(&zenpixels::buffer::DualLayerHdrView<'_>, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::DualLayerHdrBuf, whereat::at::At<error::ConvertError>>
 pub fn gainmap::display_boost_to_headroom_stops(f32) -> f32
+pub fn gainmap::extract_gain_map(&zenpixels::buffer::PixelView<'_>, &zenpixels::buffer::PixelView<'_>, zenpixels::color::GainMapMetadata) -> core::result::Result<zenpixels::buffer::DualLayerHdrBuf, whereat::at::At<error::ConvertError>>
+pub fn gainmap::extract_gain_map_only(&zenpixels::buffer::PixelView<'_>, &zenpixels::buffer::PixelView<'_>, &gainmap::GainMapExtractConfig, &dyn enough::Stop) -> core::result::Result<(zenpixels::buffer::PixelBuf, zenpixels::color::GainMapMetadata), whereat::at::At<error::ConvertError>>
 pub fn gainmap::full_reconstruction_headroom_stops(&zenpixels::color::GainMapMetadata) -> f32
 pub fn gainmap::signed_weight(&zenpixels::color::GainMapMetadata, f32) -> core::option::Option<f32>
 pub fn gainmap::signed_weight_for_target(&zenpixels::color::GainMapMetadata, gainmap::GainMapTarget) -> core::option::Option<f32>
@@ -452,10 +466,12 @@ pub ycbcr::YcbcrMatrix::Identity
 pub ycbcr::YcbcrMatrix::Smpte240M
 pub ycbcr::YcbcrMatrix::YCgCo
 pub const fn ycbcr::YcbcrMatrix::from_cicp_code(u8) -> core::option::Option<Self> [also: (root)]
+pub const fn ycbcr::YcbcrMatrix::from_matrix_coefficients(zenpixels::cicp::MatrixCoefficients) -> core::option::Option<Self> [also: (root)]
 pub const fn ycbcr::YcbcrMatrix::kr_kb(self) -> core::option::Option<(f32, f32)> [also: (root)]
 pub fn ycbcr::YcbcrMatrix::kr_kb_for(self, core::option::Option<zenpixels::color::Primaries>) -> core::option::Option<(f32, f32)>
 pub const fn ycbcr::YcbcrMatrix::same_coefficients(self, Self) -> bool [also: (root)]
 pub const fn ycbcr::YcbcrMatrix::to_cicp_code(self) -> u8 [also: (root)]
+pub const fn ycbcr::YcbcrMatrix::to_matrix_coefficients(self) -> zenpixels::cicp::MatrixCoefficients [also: (root)]
 #[non_exhaustive] pub enum AlphaCompaction [also: compact]
 pub AlphaCompaction::DropUnusedLanes
 pub AlphaCompaction::RetagOpaque
@@ -532,23 +548,6 @@ pub DepthPolicy::Forbid
 pub DepthPolicy::OrderedDither
 pub DepthPolicy::Round
 pub DepthPolicy::Truncate
-#[non_exhaustive] pub enum GainMapDownsample [also: gainmap]
-pub GainMapDownsample::Bilinear
-pub GainMapDownsample::Box
-pub GainMapDownsample::Point
-#[non_exhaustive] pub enum GainMapOrientation [also: gainmap]
-pub GainMapOrientation::Bake
-pub GainMapOrientation::Passthrough
-pub GainMapOrientation::RequireIdentity
-#[non_exhaustive] pub enum GainMapResample [also: gainmap]
-pub GainMapResample::Bicubic
-pub GainMapResample::Bilinear
-pub GainMapResample::Mitchell
-pub GainMapResample::Nearest
-#[non_exhaustive] pub enum GainMapTarget [also: gainmap]
-pub GainMapTarget::AlternateRendition
-pub GainMapTarget::BaseRendition
-pub GainMapTarget::HeadroomStops(f32)
 #[non_exhaustive] pub enum GamutPolicy [also: policy]
 pub GamutPolicy::Clip
 pub GamutPolicy::Forbid
@@ -657,67 +656,6 @@ pub FormatCost::bytes_per_pixel: u8
 pub FormatCost::effort: u8
 pub FormatCost::loss_mask: u8
 pub FormatCost::loss_rank: u8
-pub struct GainMapApplier [also: gainmap]
-pub fn gainmap::GainMapApplier::apply_into<S: zenpixels::buffer::PixelSource + ?core::marker::Sized, D: zenpixels::buffer::PixelSink + ?core::marker::Sized>(&mut self, &S, &zenpixels::buffer::PixelView<'_>, &mut D, &dyn enough::Stop) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn gainmap::GainMapApplier::apply_row(&mut self, u32, &[u8], &zenpixels::buffer::PixelView<'_>, &mut [u8]) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn gainmap::GainMapApplier::apply_row_with_provider<'a, F>(&mut self, u32, &[u8], F, &mut [u8]) -> core::result::Result<(), whereat::at::At<error::ConvertError>> where F: core::ops::function::FnMut(u32) -> core::result::Result<&'a [u8], whereat::at::At<error::ConvertError>>
-pub fn gainmap::GainMapApplier::dst_spec(&self) -> &zenpixels::color::ImageSpec
-pub fn gainmap::GainMapApplier::for_view(&zenpixels::buffer::DualLayerHdrView<'_>, &gainmap::GainMapApplyConfig) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn gainmap::GainMapApplier::new(zenpixels::color::ImageSpec, u32, u32, zenpixels::color::ImageSpec, u32, u32, zenpixels::color::GainMapMetadata, core::option::Option<&zenpixels::color::ColorSpace>, &gainmap::GainMapApplyConfig) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn gainmap::GainMapApplier::reset_cache(&mut self)
-pub struct GainMapApplyConfig [also: gainmap]
-pub GainMapApplyConfig::dst_spec: core::option::Option<zenpixels::color::ImageSpec>
-pub GainMapApplyConfig::orientation: gainmap::GainMapOrientation
-pub GainMapApplyConfig::policy: policy::ConvertPolicy
-pub GainMapApplyConfig::resample: gainmap::GainMapResample
-pub GainMapApplyConfig::target: gainmap::GainMapTarget
-pub fn gainmap::GainMapApplyConfig::alternate_rendition() -> Self
-pub fn gainmap::GainMapApplyConfig::base_rendition() -> Self
-pub fn gainmap::GainMapApplyConfig::from_display_boost_linear(f32) -> Self
-pub fn gainmap::GainMapApplyConfig::from_headroom_stops(f32) -> Self
-pub fn gainmap::GainMapApplyConfig::with_dst_spec(self, zenpixels::color::ImageSpec) -> Self
-pub fn gainmap::GainMapApplyConfig::with_orientation(self, gainmap::GainMapOrientation) -> Self
-pub fn gainmap::GainMapApplyConfig::with_policy(self, policy::ConvertPolicy) -> Self
-pub fn gainmap::GainMapApplyConfig::with_resample(self, gainmap::GainMapResample) -> Self
-pub fn gainmap::GainMapApplyConfig::with_target(self, gainmap::GainMapTarget) -> Self
-pub struct GainMapExtractConfig [also: gainmap]
-pub GainMapExtractConfig::alternate_hdr_headroom_stops: f32
-pub GainMapExtractConfig::alternate_offset: f32
-pub GainMapExtractConfig::application_space: zenpixels::color::GainMapColorSpace
-pub GainMapExtractConfig::base_hdr_headroom_stops: f32
-pub GainMapExtractConfig::base_offset: f32
-pub GainMapExtractConfig::content_fit: bool
-pub GainMapExtractConfig::downsample: gainmap::GainMapDownsample
-pub GainMapExtractConfig::gamma: f32
-pub GainMapExtractConfig::max_gain_stops: f32
-pub GainMapExtractConfig::min_gain_stops: f32
-pub GainMapExtractConfig::multi_channel: bool
-pub GainMapExtractConfig::packing: zenpixels::layout::BitPacking
-pub GainMapExtractConfig::policy: policy::ConvertPolicy
-pub GainMapExtractConfig::sample_type: zenpixels::layout::SampleType
-pub GainMapExtractConfig::scale_factor: u8
-pub fn gainmap::GainMapExtractConfig::to_metadata(&self) -> core::result::Result<zenpixels::color::GainMapMetadata, whereat::at::At<error::ConvertError>>
-pub fn gainmap::GainMapExtractConfig::ultrahdr() -> Self
-pub fn gainmap::GainMapExtractConfig::with_application_space(self, zenpixels::color::GainMapColorSpace) -> Self
-pub fn gainmap::GainMapExtractConfig::with_boost_range_linear(self, f32, f32) -> Self
-pub fn gainmap::GainMapExtractConfig::with_content_fit(self, bool) -> Self
-pub fn gainmap::GainMapExtractConfig::with_downsample(self, gainmap::GainMapDownsample) -> Self
-pub fn gainmap::GainMapExtractConfig::with_gain_range_stops(self, f32, f32) -> Self
-pub fn gainmap::GainMapExtractConfig::with_gamma(self, f32) -> Self
-pub fn gainmap::GainMapExtractConfig::with_headroom_boost_linear(self, f32, f32) -> Self
-pub fn gainmap::GainMapExtractConfig::with_headroom_stops(self, f32, f32) -> Self
-pub fn gainmap::GainMapExtractConfig::with_multi_channel(self, bool) -> Self
-pub fn gainmap::GainMapExtractConfig::with_offsets(self, f32, f32) -> Self
-pub fn gainmap::GainMapExtractConfig::with_policy(self, policy::ConvertPolicy) -> Self
-pub fn gainmap::GainMapExtractConfig::with_sample_storage(self, zenpixels::layout::SampleType, zenpixels::layout::BitPacking) -> Self
-pub fn gainmap::GainMapExtractConfig::with_scale_factor(self, u8) -> Self
-pub struct GainMapRowExtractor [also: gainmap]
-pub fn gainmap::GainMapRowExtractor::build_metadata_widening_headroom(&self) -> zenpixels::color::GainMapMetadata
-pub fn gainmap::GainMapRowExtractor::encode_row_linear_f32(&mut self, &[f32], &[f32], usize, zenpixels::layout::SampleLayout, &mut [u8]) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub fn gainmap::GainMapRowExtractor::from_config(&gainmap::GainMapExtractConfig, zenpixels::color::Primaries) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn gainmap::GainMapRowExtractor::metadata(&self) -> zenpixels::color::GainMapMetadata
-pub fn gainmap::GainMapRowExtractor::new(zenpixels::color::GainMapMetadata, zenpixels::color::Primaries) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub fn gainmap::GainMapRowExtractor::observed_gain_stops(&self) -> core::option::Option<(f32, f32)>
 pub struct GamutMatrix(_) [also: gamut]
 pub fn gamut::GamutMatrix::apply(&self, [f32; 3]) -> [f32; 3]
 pub fn gamut::GamutMatrix::apply_row_rgb(&self, &mut [[f32; 3]])
@@ -797,15 +735,11 @@ pub fn ToneMapper::working_primaries_for(&self, zenpixels::color::Primaries) -> 
 pub fn adapt_for_encode<'a>(zenpixels::buffer::PixelView<'a>, &zenpixels::color::ColorOrigin, &[zenpixels::color::ImageSpec], &policy::ConvertPolicy, zenpixels::hdr::PeakSource, output::OutputSignaling) -> core::result::Result<(negotiate::NegotiatedFormat, output::EncodeReady<'a>), whereat::at::At<error::ConvertError>> [also: output]
 pub fn adapt_for_encode_format<'a>(zenpixels::buffer::PixelView<'a>, &zenpixels::color::ColorOrigin, &[zenpixels::color::PixelFormat], &policy::ConvertPolicy, zenpixels::hdr::PeakSource, output::OutputSignaling) -> core::result::Result<(negotiate::NegotiatedFormat, output::EncodeReady<'a>), whereat::at::At<error::ConvertError>> [also: output]
 pub fn analyze_compaction(&zenpixels::buffer::PixelView<'_>) -> compact::CompactionReport [also: compact]
-pub fn apply_gain_map_oriented(&zenpixels::buffer::DualLayerHdrView<'_>, &gainmap::GainMapApplyConfig, &dyn enough::Stop) -> core::result::Result<(zenpixels::buffer::PixelBuf, zenpixels::orientation::Orientation), whereat::at::At<error::ConvertError>> [also: gainmap]
-pub fn apply_gain_map_with(&zenpixels::buffer::DualLayerHdrView<'_>, &gainmap::GainMapApplyConfig, &dyn enough::Stop) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: gainmap]
 pub fn apply_orientation(&zenpixels::buffer::PixelView<'_>, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: orient]
 pub fn apply_orientation_banded(&zenpixels::buffer::BandedBuf, zenpixels::orientation::Orientation, usize) -> core::result::Result<zenpixels::buffer::BandedBuf, whereat::at::At<error::ConvertError>> [also: orient]
 pub fn apply_orientation_banded_into(&zenpixels::buffer::BandedBuf, zenpixels::orientation::Orientation, &mut zenpixels::buffer::BandedBuf) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: orient]
 pub fn apply_orientation_into(&zenpixels::buffer::PixelView<'_>, zenpixels::orientation::Orientation, &mut zenpixels::buffer::PixelViewMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: orient]
 pub fn apply_orientation_owned(zenpixels::buffer::PixelBuf, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: orient]
-pub fn bake_dual_layer_orientation(&zenpixels::buffer::DualLayerHdrView<'_>) -> core::result::Result<zenpixels::buffer::DualLayerHdrBuf, whereat::at::At<error::ConvertError>> [also: gainmap]
-pub fn bake_dual_layer_orientation_after(&zenpixels::buffer::DualLayerHdrView<'_>, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::DualLayerHdrBuf, whereat::at::At<error::ConvertError>> [also: gainmap]
 pub fn bake_orientation(&zenpixels::buffer::PixelView<'_>) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: orient]
 pub fn bake_orientation_banded(&zenpixels::buffer::BandedBuf, usize) -> core::result::Result<zenpixels::buffer::BandedBuf, whereat::at::At<error::ConvertError>> [also: orient]
 pub fn bake_orientation_owned(zenpixels::buffer::PixelBuf) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: orient]
@@ -815,8 +749,6 @@ pub fn convert_into<S: zenpixels::buffer::PixelSource + ?core::marker::Sized, D:
 pub fn convert_into_with_peak<S: zenpixels::buffer::PixelSource + ?core::marker::Sized, D: zenpixels::buffer::PixelSink + ?core::marker::Sized>(&S, &mut D, &policy::ConvertPolicy, zenpixels::hdr::PeakSource) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: plan]
 pub fn convert_to_buf(&zenpixels::buffer::PixelView<'_>, impl core::convert::AsRef<zenpixels::color::ImageSpec>, &policy::ConvertPolicy) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: plan]
 pub fn convert_to_buf_with_peak(&zenpixels::buffer::PixelView<'_>, impl core::convert::AsRef<zenpixels::color::ImageSpec>, &policy::ConvertPolicy, zenpixels::hdr::PeakSource) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: plan]
-pub fn extract_gain_map(&zenpixels::buffer::PixelView<'_>, &zenpixels::buffer::PixelView<'_>, zenpixels::color::GainMapMetadata) -> core::result::Result<zenpixels::buffer::DualLayerHdrBuf, whereat::at::At<error::ConvertError>> [also: gainmap]
-pub fn extract_gain_map_only(&zenpixels::buffer::PixelView<'_>, &zenpixels::buffer::PixelView<'_>, &gainmap::GainMapExtractConfig, &dyn enough::Stop) -> core::result::Result<(zenpixels::buffer::PixelBuf, zenpixels::color::GainMapMetadata), whereat::at::At<error::ConvertError>> [also: gainmap]
 pub fn measure_cll<S: zenpixels::buffer::PixelSource + ?core::marker::Sized>(&S, zenpixels::hdr::DiffuseWhite, core::option::Option<zenpixels::hdr::HlgRendering>, measure::LightLevelMethod) -> core::result::Result<zenpixels::hdr::ContentLightLevel, whereat::at::At<error::ConvertError>> [also: measure]
 pub fn measure_histogram<S: zenpixels::buffer::PixelSource + ?core::marker::Sized>(&S, zenpixels::hdr::DiffuseWhite, core::option::Option<zenpixels::hdr::HlgRendering>, measure::LightLevelMethod) -> core::result::Result<measure::LightLevelHistogram, whereat::at::At<error::ConvertError>> [also: measure]
 pub fn measure_max_smoothed<S: zenpixels::buffer::PixelSource + ?core::marker::Sized>(&S, zenpixels::hdr::DiffuseWhite, core::option::Option<zenpixels::hdr::HlgRendering>, measure::LightLevelMethod) -> core::result::Result<zenpixels::hdr::ContentLightLevel, whereat::at::At<error::ConvertError>> [also: measure]
@@ -831,7 +763,7 @@ pub fn to_gray8(&zenpixels::buffer::PixelView<'_>) -> core::result::Result<zenpi
 pub fn to_rgb8(&zenpixels::buffer::PixelView<'_>) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: plan]
 pub fn to_rgba8(&zenpixels::buffer::PixelView<'_>) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: plan]
 
-## trait impls (43 types)
+## trait impls (44 types)
 
 accel::Accelerators: Clone, Copy, Debug, Default, Eq, PartialEq
 codes::CodeMap: Clone, Copy, Debug, Eq, PartialEq
@@ -876,6 +808,7 @@ tonemap::tone_mapper::PreparedMapper: Debug
 tonemap::tone_mapper::Requirements: Clone, Copy, Debug, Default, Eq, PartialEq
 tonemap::tone_mapper::ToneMapContext: Debug
 ycbcr::YcbcrMatrix: Clone, Copy, Debug, Eq, Hash, PartialEq
+zenpixels::cicp::MatrixCoefficients: From<ycbcr::YcbcrMatrix>
 
 ## auto traits
 

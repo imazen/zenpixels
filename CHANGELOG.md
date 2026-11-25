@@ -30,29 +30,32 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
     plus `compact` / `gainmap` / `Lcms` non-D65 white-point support),
     exact `0.0001 cd/m²` `ClliCodes`, and ISO 15076-1 structural ICC validation
     (`validate_icc_structure` / `IccValidationError`) wired into `ImageSpec::validate()`.
-  - `PixelBuf` (with direct `row`/`row_mut`, fallible `into_tight_buf`,
-    `new_for_interop`, explicit `relabel_color`/`relabel_spec`/`reinterpret_bytes`,
-    and `assume_facts`), `PixelView`, `PixelViewMut`, `PixelCow`, `BandedBuf`
-    (gigapixel row-banded storage with `RowAlign`), `PlaneBuf`, `PlaneView`,
-    `PlaneViewMut`, `PlanarBuf`, `PlanarView`, and `PlanarViewMut` carrying pending
+  - `PixelBuf` (with direct `row`/`row_mut`, fallible `into_tight_buf`, O(1)
+    zero-copy `into_crop`, symmetric `crop_view`/`crop_view_mut`/`sub_rows`/
+    `sub_rows_mut` with fallible CoW on mutable crops, `new_for_interop`, explicit
+    `relabel_color`/`relabel_spec`/`reinterpret_bytes`, and `assume_facts`),
+    `PixelView`, `PixelViewMut`, `PixelCow`, `BandedBuf` (gigapixel row-banded
+    storage with `RowAlign`), `PlaneBuf`, `PlaneView`, `PlaneViewMut`, `PlanarBuf`,
+    `PlanarView`, and `PlanarViewMut` (symmetric `crop_view`/`crop_view_mut`/
+    `crop`/`crop_mut`/`into_crop`/`sub_rows*` across carriers) carrying pending
     `Orientation`, `HdrMetadata` (`Option<Arc<HdrMetadata>>`, zero-alloc when empty),
     `ColorOrigin` (`Option<Arc<ColorOrigin>>`, zero-alloc when assumed), `ChromaSiting`,
-    `new_with_crop_origin`, and optional color interpretation (`color`,
-    `matrix_coefficients_code`, `range_override`/`effective_range`,
-    `alpha_override`/`effective_alpha`). Compact stack footprints (`SpecCow`: 16 B,
-    `PixelViewMut`: 64 B, `PixelView`: 80 B, `PlanarBuf`: 64 B, `BandedBuf`: 144 B,
-    `PixelBuf`: 168 B), `PixelView::height()` / `PixelViewMut::height()` aliases,
-    descriptive `whereat::At` context on `BufferError::IncompatibleLayout` element
-    mismatches, and top-level `zenpixels_convert::{Stop, StopReason, Unstoppable}`
-    re-exports.
+    `new_with_crop_origin`, and optional color interpretation (`color`, 1-byte
+    lossless `MatrixCoefficients` via `matrix_coefficients`/`with_matrix_coefficients`,
+    `range_override`/`effective_range`, `alpha_override`/`effective_alpha`). Compact
+    stack footprints (`SpecCow`: 16 B, `PixelViewMut`: 64 B, `PixelView`: 80 B,
+    `PlanarBuf`: 64 B, `BandedBuf`: 144 B, `PixelBuf`: 168 B), `PixelView::height()` /
+    `PixelViewMut::height()` aliases, descriptive `whereat::At` context on
+    `BufferError::IncompatibleLayout` element mismatches, and top-level
+    `zenpixels_convert::{Stop, StopReason, Unstoppable}` re-exports.
   - Sound `AlphaMode::Opaque` construction and fast fill-then-retag: `BufFill::{Black, White}`,
     `PixelBuf::new_white`, `PixelBuf::new_with_fill`, `PixelBuf::new_zeroed` /
     `new_zeroed_aligned` (refusing `AlphaMode::Opaque` on alpha-bearing layouts with
     `BufferError::UnverifiedOpaqueAlpha`), `into_opaque_verified`, `into_opaque_filled`,
     `assume_opaque`, and recovery constructors `from_bytes_recover` /
     `from_typed_recover` / `from_parts_recover`.
-  - Seamless zero-copy planar codec API: `PlaneView::from_samples`,
-    `PlaneViewMut::from_samples`, `PlaneBuf::from_samples`, `row_as` / `row_as_mut`,
+  - Seamless zero-copy planar codec API: tight 4-arg `Plane{View,ViewMut,Buf}::from_samples`,
+    strided 5-arg `from_samples_strided` taking typed `SampleStride(n)`, `row_as` / `row_as_mut`,
     `PlaneView::code_u32`, `as_code_plane` / `into_code_plane_mut`, `plane_by_role`,
     `PlanarBuf::new_aligned`, `PlaneRole::{Depth, Matte, Thermal}`, and strict
     cross-family plane role set validation.
@@ -185,8 +188,9 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
     (`<= 1 LSB` vs exact float, 0-bit identical across SIMD tiers) alongside 2×8
     unrolled exact SIMD.
 - **HDR, Gain Maps, Orientation, Planar Reconstruction & Measurement:**
-  - `gainmap` feature: ISO 21496-1 / UltraHDR reconstruction, extraction, and
-    resampling (`GainMapApplier`, `GainMapApplyConfig::{from_headroom_stops, from_display_boost_linear}`,
+  - `gainmap` feature (namespaced under `zenpixels_convert::gainmap::*`): ISO 21496-1 /
+    UltraHDR reconstruction, extraction, and resampling (`GainMapApplier`,
+    `GainMapApplyConfig::{from_headroom_stops, from_display_boost_linear}`,
     `GainMapRowExtractor` with decoupled 1/3-ch image vs `Shared`/`PerChannel` metadata
     arity, `apply_gain_map_with`, `apply_gain_map_oriented` propagating `Passthrough`
     orientation onto the output `PixelBuf`, `extract_gain_map`, `extract_gain_map_only`,

@@ -534,7 +534,7 @@ fn planar_zero_copy_codec_apis_and_strict_role_validation() {
     let y_spec = PlaneSpec::new(PlaneRole::Y, SampleType::U16).with_packing(BitPacking::U10_LSB);
 
     {
-        let mut pvm = PlaneViewMut::from_samples(&mut y_samples, 4, 2, 4, y_spec).unwrap();
+        let mut pvm = PlaneViewMut::from_samples(&mut y_samples, 4, 2, y_spec).unwrap();
         assert_eq!(pvm.row_as::<u16>(0).unwrap(), &[100, 200, 300, 400]);
         pvm.row_as_mut::<u16>(1).unwrap()[0] = 512;
         let mut cp = pvm.into_code_plane_mut(0).unwrap();
@@ -543,14 +543,14 @@ fn planar_zero_copy_codec_apis_and_strict_role_validation() {
     assert_eq!(y_samples[4], 512);
     assert_eq!(y_samples[7], 1023);
 
-    let pv = PlaneView::from_samples(&y_samples, 4, 2, 4, y_spec).unwrap();
+    let pv = PlaneView::from_samples(&y_samples, 4, 2, y_spec).unwrap();
     assert_eq!(pv.data().as_ptr() as *const u16, y_ptr);
     assert_eq!(pv.row_as::<u16>(1).unwrap(), &[512, 600, 700, 1023]);
     assert_eq!(pv.code_u32(3, 1, 0), Some(1023));
     let cp = pv.as_code_plane(0).unwrap();
     assert_eq!(cp.code(3, 1), Some(1023));
 
-    let owned = PlaneBuf::from_samples(y_samples, 4, 2, 4, y_spec).unwrap();
+    let owned = PlaneBuf::from_samples(y_samples, 4, 2, y_spec).unwrap();
     assert_eq!(owned.as_view().data().as_ptr() as *const u16, y_ptr);
     assert_eq!(owned.row_as::<u16>(0).unwrap(), &[100, 200, 300, 400]);
 
@@ -1053,4 +1053,195 @@ fn option_1a_static_spec_refs_and_zero_alloc_view_construction() {
         PixelViewMut::new_with_spec_cow(&mut bytes, 2, 1, 6, SpecCow::from_owned(custom)).unwrap();
     view_mut_cow.row_mut(0)[1] = 88;
     assert_eq!(&bytes[..2], &[99, 88]);
+}
+
+#[test]
+fn option_1_sample_stride_matrix_coefficients_and_crop_symmetry() {
+    use zenpixels::{ChromaSiting, MatrixCoefficients, PlanarViewMut, SampleFacts, SampleStride};
+
+    // 1. MatrixCoefficients 1-byte lossless newtype & Cicp::matrix() interop.
+    assert_eq!(core::mem::size_of::<MatrixCoefficients>(), 1);
+    assert_eq!(core::mem::size_of::<Option<MatrixCoefficients>>(), 2);
+    assert_eq!(Cicp::BT2100_PQ.matrix(), MatrixCoefficients::BT2020_NCL);
+    assert_eq!(MatrixCoefficients::BT709.code(), 1);
+    assert_eq!(MatrixCoefficients::BT709.name(), Some("BT.709"));
+    assert_eq!(format!("{}", MatrixCoefficients::BT709), "BT.709 (MC=1)");
+    // Unknown / future codes round-trip losslessly.
+    let unknown = MatrixCoefficients::from_code(200);
+    assert_eq!(unknown.code(), 200);
+    assert_eq!(unknown.name(), None);
+    assert_eq!(format!("{unknown}"), "MatrixCoefficients(200)");
+    assert_eq!(MatrixCoefficients::ICTCP.code(), 14);
+
+    // 2. SampleStride + 4-arg tight `Plane*::from_samples` (1-comp Y & 2-comp CbCr) + 5-arg strided.
+    let ss = SampleStride::new(6);
+    assert_eq!(ss.samples(), 6);
+    assert_eq!(format!("{ss}"), "6 samples");
+
+    let cbcr_spec = PlaneSpec::new(PlaneRole::CbCr, SampleType::U16).with_subsampling(2, 2);
+    // 2x2 CbCr has 2 components per element -> tight stride = 2 * 2 = 4 u16 samples = 8 bytes.
+    let mut cbcr_tight = vec![10u16, 20, 30, 40, 50, 60, 70, 80];
+    {
+        let mut pvm = PlaneViewMut::from_samples(&mut cbcr_tight, 2, 2, cbcr_spec).unwrap();
+        assert_eq!(pvm.stride(), 8);
+        assert_eq!(pvm.row_as::<u16>(1).unwrap(), &[50, 60, 70, 80]);
+        pvm.row_as_mut::<u16>(0).unwrap()[1] = 25;
+    }
+    let pv_tight = PlaneView::from_samples(&cbcr_tight, 2, 2, cbcr_spec).unwrap();
+    assert_eq!(pv_tight.stride(), 8);
+    assert_eq!(pv_tight.row_as::<u16>(0).unwrap(), &[10, 25, 30, 40]);
+    let pb_tight = PlaneBuf::from_samples(cbcr_tight, 2, 2, cbcr_spec).unwrap();
+    assert_eq!(pb_tight.stride(), 8);
+
+    // Padded strided plane (`stride = 6 u16 samples = 12 bytes`, width = 4, height = 2).
+    let y_spec = PlaneSpec::new(PlaneRole::Y, SampleType::U16);
+    let mut y_padded = vec![
+        1u16, 2, 3, 4, 99, 99, // row 0 + 2 pad samples
+        5, 6, 7, 8, 99, 99, // row 1 + 2 pad samples
+    ];
+    {
+        let mut pvm =
+            PlaneViewMut::from_samples_strided(&mut y_padded, 4, 2, SampleStride(6), y_spec)
+                .unwrap();
+        assert_eq!(pvm.stride(), 12);
+        assert_eq!(pvm.row_as::<u16>(0).unwrap(), &[1, 2, 3, 4]);
+        let mut sub = pvm.sub_rows_mut(1, 1).unwrap();
+        sub.row_as_mut::<u16>(0).unwrap()[0] = 50;
+        let sub_owned = pvm.into_sub_rows(1, 1).unwrap();
+        assert_eq!(sub_owned.row_as::<u16>(0).unwrap(), &[50, 6, 7, 8]);
+    }
+    let pv_strided =
+        PlaneView::from_samples_strided(&y_padded, 4, 2, SampleStride(6), y_spec).unwrap();
+    assert_eq!(
+        pv_strided.sub_rows(1, 1).unwrap().row_as::<u16>(0).unwrap(),
+        &[50, 6, 7, 8]
+    );
+    let mut pb_strided =
+        PlaneBuf::from_samples_strided(y_padded, 4, 2, SampleStride(6), y_spec).unwrap();
+    assert_eq!(
+        pb_strided
+            .crop_view(1, 0, 2, 2)
+            .unwrap()
+            .row_as::<u16>(1)
+            .unwrap(),
+        &[6, 7]
+    );
+    pb_strided
+        .crop_view_mut(2, 0, 2, 1)
+        .unwrap()
+        .row_as_mut::<u16>(0)
+        .unwrap()[1] = 44;
+    assert_eq!(pb_strided.row_as::<u16>(0).unwrap(), &[1, 2, 3, 44]);
+
+    // 3. Crop symmetry on `PixelBuf`: `sub_rows`, `crop_view_mut`, O(1) zero-copy `into_crop`.
+    let hdr = HdrMetadata {
+        cll: Some(ContentLightLevel::new(1000, 300)),
+        mastering: None,
+    };
+    let origin = ColorOrigin::from_cicp(Cicp::DISPLAY_P3);
+    let u16_pixels: Vec<u16> = (0u16..(4 * 4 * 3)).collect();
+    let base_ptr = u16_pixels.as_ptr() as usize;
+    let mut gray_facts = SampleFacts::NONE;
+    gray_facts.all_grayscale = true;
+    let mut pbuf = PixelBuf::from_typed(u16_pixels, 4, 4, ImageSpec::RGB16_SRGB)
+        .unwrap()
+        .with_hdr(hdr)
+        .with_origin(origin.clone())
+        .with_orientation(Orientation::Rotate90);
+    pbuf.assume_facts(gray_facts);
+
+    assert_eq!(
+        pbuf.sub_rows(1, 2).unwrap().row_as::<u16>(0).unwrap()[..3],
+        [12, 13, 14]
+    );
+    // Out-of-bounds `crop_view_mut` fails without clearing cached `SampleFacts`.
+    assert_eq!(
+        *pbuf.crop_view_mut(3, 0, 2, 1).unwrap_err().error(),
+        BufferError::OutOfBounds
+    );
+    assert!(pbuf.facts().all_grayscale);
+
+    // Valid `crop_view_mut` mutates in-place and clears cached `SampleFacts`.
+    pbuf.crop_view_mut(1, 1, 2, 2)
+        .unwrap()
+        .row_as_mut::<u16>(0)
+        .unwrap()[0] = 999;
+    assert!(!pbuf.facts().all_grayscale);
+    assert_eq!(pbuf.as_view().row_as::<u16>(1).unwrap()[3], 999);
+
+    // Re-assume facts, then O(1) zero-copy `into_crop` preserves pointer shift, alignment,
+    // stride, facts, hdr, origin, orientation, and compacts cleanly via `into_tight_buf`.
+    pbuf.assume_facts(gray_facts);
+    let orig_stride = pbuf.stride();
+    let cropped = pbuf.into_crop(1, 1, 2, 2).unwrap();
+    assert_eq!((cropped.width(), cropped.height()), (2, 2));
+    assert_eq!(cropped.stride(), orig_stride);
+    assert_eq!(cropped.offset(), orig_stride + 6);
+    assert_eq!(
+        cropped.as_view().row(0).as_ptr() as usize,
+        base_ptr + orig_stride + 6
+    );
+    assert_eq!(cropped.as_view().row_as::<u16>(0).unwrap()[0], 999);
+    assert!(cropped.facts().all_grayscale);
+    assert_eq!(cropped.hdr(), hdr);
+    assert_eq!(cropped.origin(), &origin);
+    assert_eq!(cropped.orientation(), Orientation::Rotate90);
+
+    let tight = cropped.into_tight_buf().unwrap();
+    assert_eq!(tight.stride(), 2 * 6);
+    assert_eq!(tight.as_view().row_as::<u16>(0).unwrap()[0], 999);
+    assert!(tight.facts().all_grayscale);
+
+    // 4. Crop symmetry on `PlanarBuf`, `PlanarView`, `PlanarViewMut` (odd crop_origin on 4:2:0!).
+    let pspecs = [
+        PlaneSpec::new(PlaneRole::Y, SampleType::U8),
+        PlaneSpec::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2),
+        PlaneSpec::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2),
+    ];
+    let mut planar = PlanarBuf::new(6, 6, &pspecs)
+        .unwrap()
+        .with_chroma_siting(ChromaSiting::Left)
+        .with_matrix_coefficients(MatrixCoefficients::BT709)
+        .with_orientation(Orientation::FlipH);
+
+    // `PlanarBuf::crop_view_mut` at odd origin (1, 1) with size (3, 3) on 4:2:0:
+    // chroma spans indices 0..=1 (width 2, height 2) and records `crop_origin == (1, 1)`.
+    {
+        let mut cvm: PlanarViewMut<'_> = planar.crop_view_mut(1, 1, 3, 3).unwrap();
+        assert_eq!((cvm.width(), cvm.height()), (3, 3));
+        assert_eq!(cvm.crop_origin(), (1, 1));
+        assert_eq!(cvm.matrix_coefficients(), Some(MatrixCoefficients::BT709));
+        assert_eq!(cvm.orientation(), Orientation::FlipH);
+        assert_eq!(cvm.planes()[0].width(), 3);
+        assert_eq!(cvm.planes()[1].width(), 2);
+        assert_eq!(cvm.planes()[1].height(), 2);
+        cvm.plane_mut(0).unwrap().row_mut(0)[0] = 200; // writes Y(1, 1)
+
+        // Nested `crop_mut` advances `crop_origin` to (2, 2) (chroma rel offset (1, 1)).
+        let mut inner = cvm.crop_mut(1, 1, 2, 2).unwrap();
+        assert_eq!(inner.crop_origin(), (2, 2));
+        assert_eq!(inner.planes()[1].width(), 1);
+        assert_eq!(inner.planes()[1].height(), 1);
+        inner.plane_mut(1).unwrap().row_mut(0)[0] = 77; // writes Cb(1, 1)
+
+        // `sub_rows_mut` and `into_sub_rows` preserve `crop_origin` shift.
+        let mut strip = cvm.sub_rows_mut(1, 2).unwrap();
+        assert_eq!(strip.crop_origin(), (1, 2));
+        strip.plane_mut(0).unwrap().row_mut(0)[1] = 211; // writes Y(2, 2)
+        let owned_strip = cvm.into_sub_rows(2, 1).unwrap();
+        assert_eq!(owned_strip.crop_origin(), (1, 3));
+        assert_eq!(owned_strip.height(), 1);
+    }
+
+    assert_eq!(planar.planes()[0].row(1)[1], 200);
+    assert_eq!(planar.planes()[0].row(2)[2], 211);
+    assert_eq!(planar.planes()[1].row(1)[1], 77);
+
+    // `PlanarBuf::crop_view` + `PlanarView::sub_rows` see the mutations and metadata.
+    let cv = planar.crop_view(1, 1, 3, 3).unwrap();
+    assert_eq!(cv.crop_origin(), (1, 1));
+    assert_eq!(cv.planes()[0].row(0)[0], 200);
+    let sv = cv.sub_rows(1, 2).unwrap();
+    assert_eq!(sv.crop_origin(), (1, 2));
+    assert_eq!(sv.planes()[0].row(0)[1], 211);
 }

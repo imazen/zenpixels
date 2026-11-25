@@ -342,23 +342,32 @@ fn banded_buf_helpers_and_planar_color_and_mut_views() {
             alpha: AlphaMode::None,
             white: None,
         })
-        .with_matrix_coefficients_code(1)
+        .with_matrix_coefficients(zenpixels::MatrixCoefficients::BT709)
         .with_range_override(SignalRange::Narrow);
 
     {
         let mut pvm = planar.as_view_mut();
-        assert_eq!(pvm.matrix_coefficients_code(), Some(1));
+        assert_eq!(
+            pvm.matrix_coefficients(),
+            Some(zenpixels::MatrixCoefficients::BT709)
+        );
         assert_eq!(pvm.effective_range(), Some(SignalRange::Narrow));
         pvm.plane_mut(0).unwrap().row_mut(0).fill(235);
         pvm.plane_mut(1).unwrap().row_mut(0).fill(128);
         pvm.plane_mut(2).unwrap().row_mut(0).fill(128);
     }
     let pv = planar.as_view();
-    assert_eq!(pv.matrix_coefficients_code(), Some(1));
+    assert_eq!(
+        pv.matrix_coefficients(),
+        Some(zenpixels::MatrixCoefficients::BT709)
+    );
     assert_eq!(pv.effective_range(), Some(SignalRange::Narrow));
     assert_eq!(pv.color(), planar.color());
     let cropped = pv.crop(1, 1, 2, 2).unwrap();
-    assert_eq!(cropped.matrix_coefficients_code(), Some(1));
+    assert_eq!(
+        cropped.matrix_coefficients(),
+        Some(zenpixels::MatrixCoefficients::BT709)
+    );
     assert_eq!(cropped.chroma_siting(), ChromaSiting::Left);
 
     // Caller-owned zero-alloc `PlanarViewMut::from_array`.
@@ -375,11 +384,14 @@ fn banded_buf_helpers_and_planar_color_and_mut_views() {
         ],
     )
     .unwrap()
-    .with_matrix_coefficients_code(6);
+    .with_matrix_coefficients(zenpixels::MatrixCoefficients::BT601);
     let mut pvm = pvm;
     pvm.planes_mut()[0].row_mut(2)[3] = 42;
     let imm = pvm.into_view().unwrap();
-    assert_eq!(imm.matrix_coefficients_code(), Some(6));
+    assert_eq!(
+        imm.matrix_coefficients(),
+        Some(zenpixels::MatrixCoefficients::BT601)
+    );
     assert_eq!(imm.planes()[0].row(2)[3], 42);
 }
 

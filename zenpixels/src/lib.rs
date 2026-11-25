@@ -35,7 +35,8 @@
 //! ## Additional Carriers
 //!
 //! - [`PlanarBuf`] / [`PlanarView<'a>`] / [`PlaneBuf`] / [`PlaneView<'a>`]: multi-plane
-//!   YCbCr and planar RGB with uniform `(data, width, height, stride, spec)` constructors
+//!   YCbCr and planar RGB with tight typed `from_samples(samples, width, height, spec)`,
+//!   explicit [`SampleStride`] `from_samples_strided`, typed [`MatrixCoefficients`],
 //!   and bit-packed [`CodePlane`] access.
 //! - [`BandedBuf`]: bounded row-band storage for gigapixel images.
 //! - [`DualLayerHdrBuf`] / [`DualLayerHdrView<'a>`]: ISO 21496-1 / UltraHDR gain maps.
@@ -74,8 +75,8 @@ pub use buffer::{
     PlaneView, PlaneViewMut, Rgbx, TypedElement,
 };
 pub use cicp::{
-    Cicp, CicpError, CicpProjectionError, CicpTag, color_primaries_name, matrix_coefficients_name,
-    transfer_characteristics_name,
+    Cicp, CicpError, CicpProjectionError, CicpTag, MatrixCoefficients, color_primaries_name,
+    matrix_coefficients_name, transfer_characteristics_name,
 };
 pub use color::{
     AlphaMode, Chromaticity, Color, ColorError, ColorOrigin, ColorSpace, CustomPrimaries,
@@ -95,7 +96,7 @@ pub use hdr::{
 pub use interop::PixelType;
 pub use layout::{
     BitPacking, ChannelOrder, InteropTarget, LayoutError, PlaneRole, PlaneSpec, RowAlign,
-    SampleLayout, SampleType, Subsampling,
+    SampleLayout, SampleStride, SampleType, Subsampling,
 };
 pub use orientation::Orientation;
 pub use pixel_types::{F16Sample, GrayAlpha8, GrayAlpha16, GrayAlphaF16, GrayAlphaF32};

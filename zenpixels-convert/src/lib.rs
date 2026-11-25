@@ -21,6 +21,9 @@
 //!   resolved `Option<Nits>` and executes rows via `convert_row`).
 //! - **Planar YCbCr / GBR / RGB / monochrome reconstruction:**
 //!   [`reconstruct_planar_to_buf`], [`reconstruct_planar_into`], [`reconstruct_planar_f32`].
+//! - **ISO 21496-1 / UltraHDR gain maps (`gainmap` feature):**
+//!   `gainmap::apply_gain_map_with`, `gainmap::extract_gain_map_only`,
+//!   `gainmap::GainMapApplier`, `gainmap::GainMapRowExtractor`.
 //! - **Content compaction:** [`analyze_compaction`], [`compact_to_buf`], [`compact_in_place`].
 //! - **Encoder output + CICP/ICC signaling:** [`adapt_for_encode_format`],
 //!   [`adapt_for_encode`], or reusable [`OutputPlan::build`] with [`OutputSignaling`].
@@ -106,13 +109,6 @@ pub use compact::{
 };
 pub use enough::{Stop, StopReason, Unstoppable};
 pub use error::ConvertError;
-#[cfg(feature = "gainmap")]
-pub use gainmap::{
-    GainMapApplier, GainMapApplyConfig, GainMapDownsample, GainMapExtractConfig,
-    GainMapOrientation, GainMapResample, GainMapRowExtractor, GainMapTarget,
-    apply_gain_map_oriented, apply_gain_map_with, bake_dual_layer_orientation,
-    bake_dual_layer_orientation_after, extract_gain_map, extract_gain_map_only,
-};
 pub use gamut::GamutMatrix;
 pub use measure::{
     LightLevelHistogram, LightLevelMethod, measure_cll, measure_histogram, measure_max_smoothed,

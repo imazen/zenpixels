@@ -139,7 +139,7 @@ fn converter_allocating_paths_return_allocation_failed_on_oom() {
     let planar = PlanarBuf::from_planes(64, 64, vec![y, cb, cr])
         .unwrap()
         .with_color(ColorSpace::SRGB)
-        .with_matrix_coefficients_code(YcbcrMatrix::Bt709.to_cicp_code());
+        .with_matrix_coefficients(YcbcrMatrix::Bt709.to_matrix_coefficients());
     let err = with_oom_above(4096, || reconstruct_planar_f32(&planar.as_view())).unwrap_err();
     assert_eq!(*err.error(), ConvertError::AllocationFailed);
 }
@@ -191,7 +191,7 @@ fn into_and_row_apis_execute_with_zero_heap_allocations() {
     let planar = PlanarBuf::from_planes(16, 16, vec![y, cb, cr])
         .unwrap()
         .with_color(ColorSpace::LINEAR_SRGB)
-        .with_matrix_coefficients_code(YcbcrMatrix::Bt709.to_cicp_code());
+        .with_matrix_coefficients(YcbcrMatrix::Bt709.to_matrix_coefficients());
     let mut ycbcr_dst = PixelBuf::new(16, 16, ImageSpec::RGBF32_LINEAR).unwrap();
 
     // FAIL_THRESHOLD = 1 forbids ANY heap allocation >= 1 byte!

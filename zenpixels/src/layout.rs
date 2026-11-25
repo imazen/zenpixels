@@ -1073,6 +1073,41 @@ impl RowAlign {
     }
 }
 
+/// Row stride measured in **scalar samples** (not bytes).
+///
+/// Used by [`PlaneBuf::from_samples_strided`](crate::PlaneBuf::from_samples_strided),
+/// [`PlaneView::from_samples_strided`](crate::PlaneView::from_samples_strided), and
+/// [`PlaneViewMut::from_samples_strided`](crate::PlaneViewMut::from_samples_strided) so
+/// sample-count strides can never be confused with byte strides at the call site.
+///
+/// For tightly packed planes (`stride == width * spec.components`), use the 4-argument
+/// `from_samples` constructors instead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct SampleStride(pub usize);
+
+impl SampleStride {
+    /// Construct a row stride measured in scalar samples.
+    #[inline]
+    #[must_use]
+    pub const fn new(samples: usize) -> Self {
+        Self(samples)
+    }
+
+    /// Row stride in scalar samples.
+    #[inline]
+    #[must_use]
+    pub const fn samples(self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for SampleStride {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} samples", self.0)
+    }
+}
+
 /// Downstream container contract for [`PixelBuf::new_for_interop`](crate::PixelBuf::new_for_interop).
 ///
 /// Validates upfront that an [`ImageSpec`](crate::ImageSpec) can move into the

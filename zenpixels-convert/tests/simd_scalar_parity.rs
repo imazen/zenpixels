@@ -781,10 +781,10 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
 fn parity_gainmap_applier_all_modes_zero_bit() {
     use core::num::NonZeroU32;
     use enough::Unstoppable;
+    use zenpixels_convert::gainmap::{GainMapApplyConfig, GainMapResample, apply_gain_map_with};
     use zenpixels_convert::{
-        DualLayerHdrView, GainMapApplyConfig, GainMapChannels, GainMapColorSpace, GainMapComponent,
-        GainMapMetadata, GainMapResample, Orientation, PixelBuf, SignedFraction, UnsignedFraction,
-        apply_gain_map_with,
+        DualLayerHdrView, GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapMetadata,
+        Orientation, PixelBuf, SignedFraction, UnsignedFraction,
     };
 
     let make_base = |w: u32, h: u32, spec: ImageSpec| -> PixelBuf {

@@ -4,7 +4,7 @@
 //! `Gray`, `GrayAlpha`).
 //!
 //! All three entry points read source color interpretation identically from the [`PlanarView`]
-//! (`color()`, `effective_range()`, `matrix_coefficients_code()`, `effective_alpha()`,
+//! (`color()`, `effective_range()`, `matrix_coefficients()`, `effective_alpha()`,
 //! `chroma_siting()`, `crop_origin()`, `hdr()`, `origin()`, and `orientation()`):
 //! - [`reconstruct_planar_to_buf`] allocates a tightly packed interleaved [`PixelBuf`] with
 //!   caller-chosen [`SampleLayout`], deriving output [`ColorSpace`] and propagating `hdr()`,
@@ -462,8 +462,8 @@ fn resolve_planar_source(
     let matrix = match parsed {
         ParsedPlanar::Monochrome { .. } | ParsedPlanar::PlanarRgb { .. } => YcbcrMatrix::Bt709,
         ParsedPlanar::YcbcrPlanar { .. } | ParsedPlanar::YcbcrSemi { .. } => src
-            .matrix_coefficients_code()
-            .and_then(YcbcrMatrix::from_cicp_code)
+            .matrix_coefficients()
+            .and_then(YcbcrMatrix::from_matrix_coefficients)
             .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?,
     };
 
@@ -553,7 +553,7 @@ fn attach_planar_metadata(mut out: PixelBuf, src: &PlanarView<'_>) -> PixelBuf {
 }
 
 /// Reconstruct a full-range `RGBF32` / `RGBAF32` [`PixelBuf`] directly from a tagged
-/// [`PlanarView`] (`color()`, `effective_range()`, `matrix_coefficients_code()`,
+/// [`PlanarView`] (`color()`, `effective_range()`, `matrix_coefficients()`,
 /// `effective_alpha()`, `hdr()`, `origin()`, and `orientation()`).
 ///
 /// Handles 3-plane YCbCr (`Y`, `Cb`, `Cr`), 2-plane semi-planar YCbCr (`Y`, `CbCr` / `CrCb`,
@@ -561,7 +561,7 @@ fn attach_planar_metadata(mut out: PixelBuf, src: &PlanarView<'_>) -> PixelBuf {
 /// optional `Alpha` plane, using [`PlanarReconstructionOptions::nearest()`].
 ///
 /// Refuses views missing required range, color space (`Rgb` / `Gray`), or (for YCbCr chroma
-/// views) recognized ITU-T H.273 `matrix_coefficients_code` with
+/// views) recognized ITU-T H.273 [`MatrixCoefficients`](zenpixels::MatrixCoefficients) with
 /// [`ConvertError::UnsupportedRoute`].
 pub fn reconstruct_planar_f32(src: &PlanarView<'_>) -> Result<PixelBuf, At<ConvertError>> {
     let parsed = parse_planar(src)?;
@@ -578,7 +578,7 @@ pub fn reconstruct_planar_f32(src: &PlanarView<'_>) -> Result<PixelBuf, At<Conve
 /// `GRAY16`, `GRAYA16`, `GRAYF32`, `GRAYAF32`) directly from a tagged [`PlanarView`] using
 /// explicit [`PlanarReconstructionOptions`] (e.g. siting-exact [`ChromaUpsample::Bilinear`]).
 ///
-/// Reads source interpretation (`color()`, `effective_range()`, `matrix_coefficients_code()`,
+/// Reads source interpretation (`color()`, `effective_range()`, `matrix_coefficients()`,
 /// `effective_alpha()`) from `src`, derives the output [`ColorSpace`], and propagates
 /// `src.hdr()`, `src.origin()`, and `src.orientation()` onto the returned [`PixelBuf`].
 #[doc(alias = "ycbcr_to_rgb")]
@@ -603,7 +603,7 @@ pub fn reconstruct_planar_to_buf(
 /// `BGRA`, `RGBX`, `BGRX`, `Gray`, `GrayAlpha`) with **zero heap allocation**.
 ///
 /// Uses the exact same source interpretation metadata as [`reconstruct_planar_to_buf`]
-/// (`color()`, `effective_range()`, `matrix_coefficients_code()`, `effective_alpha()`), and
+/// (`color()`, `effective_range()`, `matrix_coefficients()`, `effective_alpha()`), and
 /// validates that `dst.spec().color` matches the derived full-range destination color space
 /// (refusing mismatched primaries, transfer, white point, narrow range, or conflicting alpha
 /// semantics rather than silently converting). Sets `dst.set_orientation(src.orientation())`;

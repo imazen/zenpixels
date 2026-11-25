@@ -17,6 +17,7 @@ This is the **0.5.0 greenfield candidate**. For full end-to-end recipes, see
 | Reusable whole-image plan (`PixelBuf` / `PixelView` / `BandedBuf`) | `ImagePlan::build(src, dst, &policy, peak)` → `.execute(&src)` / `.execute_into(&src, &mut dst)` |
 | Streaming row loop (zero per-row heap scratch) | `RowPlan::build(src, dst, &policy, resolved_source_peak)` → `.convert_row(src_row, dst_row, width, y)` |
 | Planar YCbCr / GBR / RGB / monochrome reconstruction | `reconstruct_planar_to_buf(&planar, layout, &opts)` / `reconstruct_planar_into(&planar, &opts, &mut dst)` / `reconstruct_planar_f32(&planar)` |
+| ISO 21496-1 / UltraHDR gain maps (`gainmap` module) | `gainmap::apply_gain_map_with`, `gainmap::apply_gain_map_oriented`, `gainmap::extract_gain_map_only`, `gainmap::GainMapApplier`, `gainmap::GainMapRowExtractor` |
 | Content compaction (alpha, chroma, U16→U8) | `analyze_compaction(&view)`, `compact_to_buf(&view)`, `compact_in_place(&mut buf, mode)` |
 | Encoder negotiation + CICP/ICC signaling | `adapt_for_encode_format(view, origin, &[PixelFormat], &policy, peak, signaling)` or reusable `OutputPlan::build(...)` |
 
@@ -79,13 +80,14 @@ per-policy via `ConvertPolicy::with_accelerators(Accelerators::ALL)`.
 
 - **Orientation & `DualLayerHdrBuf`:** `compose_orientation` updates metadata in
   O(1); `apply_orientation*` physically applies an explicit transform;
-  `bake_orientation*` / `bake_dual_layer_orientation*` bake pending orientation
-  (zero-copy when already `Identity`). Apply gain maps via `apply_gain_map_with`
-  or `apply_gain_map_oriented` with explicit `GainMapApplyConfig::from_headroom_stops`
-  (log₂ stops) or `from_display_boost_linear` (linear multiplier) and `&Unstoppable`.
+  `bake_orientation*` / `gainmap::bake_dual_layer_orientation*` bake pending
+  orientation (zero-copy when already `Identity`). Apply gain maps via
+  `gainmap::apply_gain_map_with` or `gainmap::apply_gain_map_oriented` with
+  explicit `gainmap::GainMapApplyConfig::from_headroom_stops` (log₂ stops) or
+  `from_display_boost_linear` (linear multiplier) and `&Unstoppable`.
 - **Planar YCbCr, GBR, RGB & monochrome:** `reconstruct_planar_to_buf`,
   zero-alloc `reconstruct_planar_into`, and `reconstruct_planar_f32` all read
-  source interpretation (`color()`, `effective_range()`, `matrix_coefficients_code()`,
+  source interpretation (`color()`, `effective_range()`, `matrix_coefficients()`,
   `effective_alpha()`) identically from `PlanarView`, supporting all 9 H.273 NCL
   matrices and siting-exact `PlanarReconstructionOptions::bilinear()`.
 - **HDR & ICC/CMS:** `Bt2446A::pipeline_managed()` (or explicit typed

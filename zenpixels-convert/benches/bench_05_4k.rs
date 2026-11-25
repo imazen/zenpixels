@@ -11,13 +11,16 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use zenbench::prelude::*;
+use zenpixels_convert::gainmap::{
+    GainMapApplier, GainMapApplyConfig, GainMapDownsample, GainMapExtractConfig, GainMapResample,
+    extract_gain_map_only,
+};
 use zenpixels_convert::{
     Accelerators, AlphaMode, AlphaPolicy, BitPacking, ChannelOrder, Color, ColorSpace,
-    ConvertPolicy, DepthPolicy, DiffuseWhite, DualLayerHdrView, GainMapApplier, GainMapApplyConfig,
-    GainMapDownsample, GainMapExtractConfig, GainMapMetadata, GainMapResample, GamutPolicy,
+    ConvertPolicy, DepthPolicy, DiffuseWhite, DualLayerHdrView, GainMapMetadata, GamutPolicy,
     HlgMode, HlgRendering, ImageSpec, LumaCoefficients, Nits, Orientation, PerceptualSpace,
     PixelBuf, Primaries, RowPlan, SampleLayout, SampleType, SignalRange, Transfer,
-    apply_orientation_into, extract_gain_map_only,
+    apply_orientation_into,
 };
 
 const W: u32 = 3840;

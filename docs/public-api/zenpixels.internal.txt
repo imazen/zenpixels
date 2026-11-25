@@ -9,22 +9,22 @@
 
 ## summary
 #
-#   inherent methods                           43
-#   trait roster entries (type × trait)        73
+#   inherent methods                           45
+#   trait roster entries (type × trait)        75
 #
 # per-module pub lines:
 #   (root)                            1
 #   buffer                            3
-#   cicp                              3
+#   cicp                              4
 #   color                            17
 #   facts                             2
 #   hdr                               7
 #   icc                               1
-#   layout                            6
+#   layout                            7
 #   pixel_types                       2
 #   sample                            1
 
-## items (43 lines)
+## items (45 lines)
 
 pub fn ExactDepth::assert_fields_are_eq(&self)
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
@@ -33,6 +33,7 @@ pub fn buffer::Rgbx::assert_fields_are_eq(&self)
 pub fn cicp::Cicp::assert_fields_are_eq(&self)
 pub fn cicp::CicpError::assert_fields_are_eq(&self)
 pub fn cicp::CicpTag::assert_fields_are_eq(&self)
+pub fn cicp::MatrixCoefficients::assert_fields_are_eq(&self)
 pub fn color::ColorError::assert_fields_are_eq(&self)
 pub fn color::ColorOrigin::assert_fields_are_eq(&self)
 pub fn color::ColorSpace::assert_fields_are_eq(&self)
@@ -66,11 +67,12 @@ pub fn layout::PlaneRole::assert_fields_are_eq(&self)
 pub fn layout::PlaneSpec::assert_fields_are_eq(&self)
 pub fn layout::RowAlign::assert_fields_are_eq(&self)
 pub fn layout::SampleLayout::assert_fields_are_eq(&self)
+pub fn layout::SampleStride::assert_fields_are_eq(&self)
 pub fn pixel_types::GrayAlpha16::assert_fields_are_eq(&self)
 pub fn pixel_types::GrayAlpha8::assert_fields_are_eq(&self)
 pub fn sample::SampleEncoding::assert_fields_are_eq(&self)
 
-## trait impls (73 types)
+## trait impls (75 types)
 
 ChromaSiting: TrivialClone
 ChromaSubsampling: TrivialClone
@@ -87,6 +89,7 @@ cicp::Cicp: TrivialClone
 cicp::CicpError: TrivialClone
 cicp::CicpProjectionError: TrivialClone
 cicp::CicpTag: TrivialClone
+cicp::MatrixCoefficients: TrivialClone
 color::AlphaMode: TrivialClone
 color::Chromaticity: TrivialClone
 color::Color: TrivialClone
@@ -134,6 +137,7 @@ layout::PlaneRole: TrivialClone
 layout::PlaneSpec: TrivialClone
 layout::RowAlign: TrivialClone
 layout::SampleLayout: TrivialClone
+layout::SampleStride: TrivialClone
 layout::SampleType: TrivialClone
 layout::Subsampling: TrivialClone
 orientation::Orientation: TrivialClone

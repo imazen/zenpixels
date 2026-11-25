@@ -4,6 +4,10 @@
 //! chroma upsampling, zero-alloc U8/U16/F32/BGR/Gray/PlanarRgb reconstruction, and
 //! decoupled GainMapRowExtractor 3-ch + Shared metadata.
 
+#[cfg(feature = "gainmap")]
+use zenpixels_convert::gainmap::{
+    GainMapApplyConfig, GainMapOrientation, GainMapRowExtractor, apply_gain_map_oriented,
+};
 use zenpixels_convert::{
     Accelerators, AlphaMode, BandedBuf, ChromaSiting, Cicp, ColorOrigin, ColorSpace,
     ContentLightLevel, ConvertError, ConvertPolicy, DiffuseWhite, GamutPolicy, HdrMetadata,
@@ -15,9 +19,8 @@ use zenpixels_convert::{
 };
 #[cfg(feature = "gainmap")]
 use zenpixels_convert::{
-    GainMapApplyConfig, GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapMetadata,
-    GainMapOrientation, GainMapRowExtractor, SignedFraction, UnsignedFraction,
-    apply_gain_map_oriented,
+    GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapMetadata, SignedFraction,
+    UnsignedFraction,
 };
 
 #[test]
@@ -298,17 +301,10 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
     let y_data = [128u8];
     let cg_data = [255u8];
     let co_data = [128u8];
-    let py = PlaneView::from_samples(
-        &y_data,
-        1,
-        1,
-        1,
-        PlaneSpec::new(PlaneRole::Y, SampleType::U8),
-    )
-    .unwrap();
+    let py = PlaneView::from_samples(&y_data, 1, 1, PlaneSpec::new(PlaneRole::Y, SampleType::U8))
+        .unwrap();
     let pcg = PlaneView::from_samples(
         &cg_data,
-        1,
         1,
         1,
         PlaneSpec::new(PlaneRole::Cb, SampleType::U8),
@@ -318,14 +314,13 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
         &co_data,
         1,
         1,
-        1,
         PlaneSpec::new(PlaneRole::Cr, SampleType::U8),
     )
     .unwrap();
     let ycgco_view = zenpixels_convert::PlanarView::new(1, 1, &[py, pcg, pco])
         .unwrap()
         .with_color(ColorSpace::SRGB)
-        .with_matrix_coefficients_code(8);
+        .with_matrix_coefficients(zenpixels_convert::MatrixCoefficients::YCGCO);
     let ycgco_rgb = reconstruct_planar_to_buf(
         &ycgco_view,
         SampleLayout::RGB8,
@@ -342,26 +337,33 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
     let cd_view = ycgco_view
         .clone()
         .with_color(ColorSpace::DISPLAY_P3)
-        .with_matrix_coefficients_code(12);
+        .with_matrix_coefficients(zenpixels_convert::MatrixCoefficients::CHROMA_DERIVED_NCL);
     let cd_f32 = reconstruct_planar_f32(&cd_view).unwrap();
     assert_eq!(cd_f32.spec().layout, SampleLayout::RGBF32);
+
+    // 3b. MatrixCoefficients <-> YcbcrMatrix lossless interop.
+    assert_eq!(
+        YcbcrMatrix::from_matrix_coefficients(zenpixels_convert::MatrixCoefficients::BT709),
+        Some(YcbcrMatrix::Bt709)
+    );
+    assert_eq!(
+        YcbcrMatrix::from_matrix_coefficients(zenpixels_convert::MatrixCoefficients::ICTCP),
+        None
+    );
+    assert_eq!(
+        zenpixels_convert::MatrixCoefficients::from(YcbcrMatrix::Bt2020),
+        zenpixels_convert::MatrixCoefficients::BT2020_NCL
+    );
 
     // 4. Siting-exact Bilinear 4:2:0 upsampling (Center = 9:3:3:1, TopLeft, odd crop_origin, Unknown refused).
     let y_4x4 = [128u8; 16];
     // 2x2 chroma grid: top-left=0, top-right=255, bottom-left=0, bottom-right=255 (horizontal gradient)
     let cb_2x2 = [0u8, 255, 0, 255];
     let cr_2x2 = [128u8; 4];
-    let y_p = PlaneView::from_samples(
-        &y_4x4,
-        4,
-        4,
-        4,
-        PlaneSpec::new(PlaneRole::Y, SampleType::U8),
-    )
-    .unwrap();
+    let y_p = PlaneView::from_samples(&y_4x4, 4, 4, PlaneSpec::new(PlaneRole::Y, SampleType::U8))
+        .unwrap();
     let cb_p = PlaneView::from_samples(
         &cb_2x2,
-        2,
         2,
         2,
         PlaneSpec::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2),
@@ -369,7 +371,6 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
     .unwrap();
     let cr_p = PlaneView::from_samples(
         &cr_2x2,
-        2,
         2,
         2,
         PlaneSpec::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2),
@@ -380,7 +381,7 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
     let unk_420 = zenpixels_convert::PlanarView::new(4, 4, &[y_p, cb_p, cr_p])
         .unwrap()
         .with_color(ColorSpace::SRGB)
-        .with_matrix_coefficients_code(1);
+        .with_matrix_coefficients(zenpixels_convert::MatrixCoefficients::BT709);
     assert_eq!(
         *reconstruct_planar_to_buf(
             &unk_420,
@@ -954,13 +955,13 @@ fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
     // 4. Gain-map extraction resolves primaries from 44-byte custom-primaries cicp tag on ColorSpace::Icc!
     #[cfg(all(feature = "gainmap", feature = "cms-lcms"))]
     {
-        let gm_cfg = zenpixels_convert::GainMapExtractConfig::default()
+        let gm_cfg = zenpixels_convert::gainmap::GainMapExtractConfig::default()
             .with_scale_factor(1)
             .with_policy(ConvertPolicy::permissive().with_cms(Arc::new(zenpixels_convert::Lcms)));
         let base_sdr =
             PixelBuf::from_typed(vec![0.5_f32; 4 * 3], 2, 2, icc_src.spec().clone()).unwrap();
         let alt_hdr = PixelBuf::from_typed(vec![1.0_f32; 4 * 3], 2, 2, native_acescg_spec).unwrap();
-        let (gm_buf, _meta) = zenpixels_convert::extract_gain_map_only(
+        let (gm_buf, _meta) = zenpixels_convert::gainmap::extract_gain_map_only(
             &base_sdr.as_view(),
             &alt_hdr.as_view(),
             &gm_cfg,

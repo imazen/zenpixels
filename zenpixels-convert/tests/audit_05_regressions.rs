@@ -951,7 +951,7 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
     let planar = PlanarView::new(4, 4, &[pv_y, pv_cb, pv_cr])
         .unwrap()
         .with_color(ColorSpace::SRGB)
-        .with_matrix_coefficients_code(YcbcrMatrix::Bt709.to_cicp_code());
+        .with_matrix_coefficients(YcbcrMatrix::Bt709.to_matrix_coefficients());
     assert!(
         reconstruct_planar_f32(&planar).is_err(),
         "YCbCr must reject unsupported F32 Cr plane"
@@ -1000,7 +1000,7 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
     let planar_alpha = PlanarView::new(4, 4, &[y_ok, cb_ok, cr_ok, a_ok])
         .unwrap()
         .with_color(srgb_narrow_alpha.clone())
-        .with_matrix_coefficients_code(YcbcrMatrix::Bt709.to_cicp_code());
+        .with_matrix_coefficients(YcbcrMatrix::Bt709.to_matrix_coefficients());
     let rgba_out = reconstruct_planar_f32(&planar_alpha).unwrap();
     assert_eq!(rgba_out.spec().layout, SampleLayout::RGBAF32);
     assert_eq!(rgba_out.spec().color.alpha(), AlphaMode::Straight);
@@ -1018,7 +1018,7 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
     let planar_gm = PlanarView::new(4, 4, &[y_ok, cb_ok, cr_ok, gm_extra])
         .unwrap()
         .with_color(srgb_narrow_alpha)
-        .with_matrix_coefficients_code(YcbcrMatrix::Bt709.to_cicp_code());
+        .with_matrix_coefficients(YcbcrMatrix::Bt709.to_matrix_coefficients());
     assert!(
         reconstruct_planar_f32(&planar_gm).is_err(),
         "YCbCr must reject PlaneRole::GainMap rather than silently dropping it"
@@ -1030,10 +1030,12 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
     #[cfg(feature = "gainmap")]
     {
         use core::num::NonZeroU32;
+        use zenpixels_convert::gainmap::{
+            GainMapApplyConfig, apply_gain_map_with, extract_gain_map,
+        };
         use zenpixels_convert::{
-            DualLayerHdrBuf, GainMapApplyConfig, GainMapChannels, GainMapColorSpace,
-            GainMapComponent, GainMapMetadata, SignedFraction, UnsignedFraction, Unstoppable,
-            apply_gain_map_with, extract_gain_map,
+            DualLayerHdrBuf, GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapMetadata,
+            SignedFraction, UnsignedFraction, Unstoppable,
         };
 
         let base_spec = ImageSpec::RGB8_SRGB.with_white(DiffuseWhite::new(100.0));

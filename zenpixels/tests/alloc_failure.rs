@@ -112,6 +112,16 @@ fn constructors_and_copies_return_allocation_failed_on_oom() {
     assert!(ext_buf.is_external());
     assert_eq!(ext_buf.as_view().row(0)[0], 0x5A);
 
+    // Fallible CoW promotion on `sub_rows_mut` / `crop_view_mut` returns `AllocationFailed`
+    // without panicking, and out-of-bounds fails BEFORE attempting CoW allocation.
+    let err = with_oom_above(4096, || ext_buf.sub_rows_mut(0, 4)).unwrap_err();
+    assert_eq!(*err.error(), BufferError::AllocationFailed);
+    let err = with_oom_above(4096, || ext_buf.crop_view_mut(0, 0, 4, 4)).unwrap_err();
+    assert_eq!(*err.error(), BufferError::AllocationFailed);
+    let err = with_oom_above(4096, || ext_buf.crop_view_mut(100, 0, 4, 4)).unwrap_err();
+    assert_eq!(*err.error(), BufferError::OutOfBounds);
+    assert!(ext_buf.is_external());
+
     // Padded external immutable storage `into_tight_buf` returns `AllocationFailed` cleanly on OOM!
     let padded_ext = PixelBuf::from_external(
         std::sync::Arc::<[u8]>::from(vec![0x42u8; 64 * 260].into_boxed_slice()),
@@ -134,6 +144,8 @@ fn constructors_and_copies_return_allocation_failed_on_oom() {
     )
     .unwrap();
     let err = with_oom_above(4096, || ext_plane.try_as_view_mut()).unwrap_err();
+    assert_eq!(*err.error(), BufferError::AllocationFailed);
+    let err = with_oom_above(4096, || ext_plane.crop_view_mut(0, 0, 4, 4)).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
     assert_eq!(ext_plane.as_view().row(0)[0], 0x33);
 

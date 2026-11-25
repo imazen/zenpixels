@@ -18,6 +18,7 @@ use alloc::vec::Vec;
 use core::fmt;
 use whereat::At;
 
+use crate::cicp::MatrixCoefficients;
 use crate::color::{
     AlphaMode, ColorError, ColorOrigin, ColorSpace, GainMapMetadata, HdrMetadata, ImageSpec,
     SignalRange, SpecCow,
@@ -25,7 +26,7 @@ use crate::color::{
 use crate::facts::{FloatFacts, SampleFacts};
 use crate::layout::{
     BitPacking, ChannelOrder, InteropTarget, LayoutError, PlaneRole, PlaneSpec, RowAlign,
-    SampleLayout, SampleType,
+    SampleLayout, SampleStride, SampleType,
 };
 use crate::orientation::Orientation;
 use crate::pixel_types::{F16Sample, GrayAlpha8, GrayAlpha16, GrayAlphaF16, GrayAlphaF32};
@@ -2722,15 +2723,28 @@ impl PixelBuf {
             .expect("copy-on-write promotion of external PixelBuf failed")
     }
 
-    /// Borrow a mutable horizontal strip of `count` rows starting at `y`, automatically
-    /// clearing cached [`SampleFacts`].
+    /// Borrow a full-width horizontal strip of `count` rows starting at `y` without copying pixels.
+    #[inline]
+    pub fn sub_rows(&self, y: u32, count: u32) -> Result<PixelView<'_>, At<BufferError>> {
+        self.as_view().sub_rows(y, count)
+    }
+
+    /// Borrow a mutable full-width horizontal strip of `count` rows starting at `y`,
+    /// automatically clearing cached [`SampleFacts`] and fallibly copy-on-write promoting
+    /// immutable external storage if needed.
     #[inline]
     pub fn sub_rows_mut(
         &mut self,
         y: u32,
         count: u32,
     ) -> Result<PixelViewMut<'_>, At<BufferError>> {
-        self.as_view_mut().into_sub_rows(y, count)
+        if count == 0 {
+            return Err(err_at(BufferError::InvalidDimensions));
+        }
+        if y.checked_add(count).is_none_or(|e| e > self.height) {
+            return Err(err_at(BufferError::OutOfBounds));
+        }
+        self.try_as_view_mut()?.into_sub_rows(y, count)
     }
 
     /// Borrow a rectangular cropped subimage view without copying pixels.
@@ -2743,6 +2757,53 @@ impl PixelBuf {
         h: u32,
     ) -> Result<PixelView<'_>, At<BufferError>> {
         self.as_view().crop(x, y, w, h)
+    }
+
+    /// Borrow a mutable rectangular cropped subimage view without copying pixels,
+    /// automatically clearing cached [`SampleFacts`] and fallibly copy-on-write promoting
+    /// immutable external storage if needed.
+    #[inline]
+    pub fn crop_view_mut(
+        &mut self,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+    ) -> Result<PixelViewMut<'_>, At<BufferError>> {
+        if w == 0 || h == 0 {
+            return Err(err_at(BufferError::InvalidDimensions));
+        }
+        if x.checked_add(w).is_none_or(|e| e > self.width)
+            || y.checked_add(h).is_none_or(|e| e > self.height)
+        {
+            return Err(err_at(BufferError::OutOfBounds));
+        }
+        self.try_as_view_mut()?.into_crop(x, y, w, h)
+    }
+
+    /// Consume this buffer and narrow it to a rectangular crop in **O(1) with zero pixel copies**.
+    ///
+    /// Keeps the underlying [`PixelStorage`] and row `stride` intact while advancing the active
+    /// byte offset and narrowing `(width, height)`. Preserves sample alignment, cached
+    /// [`SampleFacts`], [`HdrMetadata`], [`ColorOrigin`], and [`Orientation`]. Chain
+    /// [`into_tight_buf`](Self::into_tight_buf) afterwards to compact the cropped region into
+    /// tightly packed storage if desired.
+    #[inline]
+    pub fn into_crop(mut self, x: u32, y: u32, w: u32, h: u32) -> Result<Self, At<BufferError>> {
+        if w == 0 || h == 0 {
+            return Err(err_at(BufferError::InvalidDimensions));
+        }
+        if x.checked_add(w).is_none_or(|e| e > self.width)
+            || y.checked_add(h).is_none_or(|e| e > self.height)
+        {
+            return Err(err_at(BufferError::OutOfBounds));
+        }
+        let bpp = self.spec.layout.bytes_per_pixel();
+        let delta = (y as usize) * self.stride + (x as usize) * bpp;
+        self.offset += delta;
+        self.width = w;
+        self.height = h;
+        Ok(self)
     }
 
     /// Atomically transform this buffer's bytes and metadata in place with zero reallocation.
@@ -3812,27 +3873,79 @@ impl PlaneBuf {
         &mut self.storage.as_bytes_mut()[start..start + rb]
     }
 
-    /// Construct a validated owned plane adopting a typed `Vec<S>` (`Vec<u8>`, `Vec<u16>`,
-    /// `Vec<f32>`, etc.) **zero-copy**, where `stride_samples` is the row stride in **`S`
-    /// elements** (NOT bytes — e.g. `stride_samples == width` for tight `u16` luma, or
-    /// `stride_samples >= width * 2` for interleaved `CbCr`).
+    /// Construct a validated owned plane adopting a tightly packed typed `Vec<S>` (`Vec<u8>`,
+    /// `Vec<u16>`, `Vec<f32>`, etc.) **zero-copy**.
+    ///
+    /// Row stride is derived automatically as `width * spec.components` samples (e.g. `width`
+    /// for luma `Y`, `width * 2` for semi-planar `CbCr`). For padded row strides, use
+    /// [`from_samples_strided`](Self::from_samples_strided).
     pub fn from_samples<S: StorageSample>(
         samples: Vec<S>,
         width: u32,
         height: u32,
-        stride_samples: usize,
+        spec: PlaneSpec,
+    ) -> Result<Self, At<BufferError>> {
+        spec.validate().map_err(|e| err_at(e.into()))?;
+        let tight_samples = (width as usize)
+            .checked_mul(usize::from(spec.components))
+            .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+        Self::from_samples_strided(samples, width, height, SampleStride(tight_samples), spec)
+    }
+
+    /// Construct a validated owned plane adopting a strided typed `Vec<S>` (`Vec<u8>`,
+    /// `Vec<u16>`, `Vec<f32>`, etc.) **zero-copy** with an explicit [`SampleStride`]
+    /// measured in **`S` elements** (NOT bytes).
+    pub fn from_samples_strided<S: StorageSample>(
+        samples: Vec<S>,
+        width: u32,
+        height: u32,
+        stride: SampleStride,
         spec: PlaneSpec,
     ) -> Result<Self, At<BufferError>> {
         spec.validate().map_err(|e| err_at(e.into()))?;
         if spec.sample != S::SAMPLE_TYPE || spec.packing.is_packed_word() {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
-        let stride = stride_samples
+        let stride_bytes = stride
+            .samples()
             .checked_mul(core::mem::size_of::<S>())
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
         let storage = PixelStorage::adopt_vec(samples, spec.sample)
             .map_err(|_| err_at(BufferError::IncompatibleLayout))?;
-        Self::from_storage(storage, width, height, stride, spec)
+        Self::from_storage(storage, width, height, stride_bytes, spec)
+    }
+
+    /// Borrow a zero-copy rectangular crop of this single plane.
+    #[inline]
+    pub fn crop_view(
+        &self,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+    ) -> Result<PlaneView<'_>, At<BufferError>> {
+        self.as_view().crop(x, y, w, h)
+    }
+
+    /// Borrow a zero-copy mutable rectangular crop of this single plane, fallibly
+    /// copy-on-write promoting immutable external storage if needed.
+    #[inline]
+    pub fn crop_view_mut(
+        &mut self,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+    ) -> Result<PlaneViewMut<'_>, At<BufferError>> {
+        if w == 0 || h == 0 {
+            return Err(err_at(BufferError::InvalidDimensions));
+        }
+        if x.checked_add(w).is_none_or(|e| e > self.width)
+            || y.checked_add(h).is_none_or(|e| e > self.height)
+        {
+            return Err(err_at(BufferError::OutOfBounds));
+        }
+        self.try_as_view_mut()?.into_crop(x, y, w, h)
     }
 
     /// Zero-copy typed slice view of row `y` (e.g. `plane.row_as::<u16>(y)`).
@@ -4001,7 +4114,7 @@ pub struct PlanarBuf {
     planes: Vec<PlaneBuf>,
     chroma_siting: ChromaSiting,
     color: Option<Arc<ColorSpace>>,
-    ycbcr_matrix_code: Option<u8>,
+    matrix_coefficients: Option<MatrixCoefficients>,
     range: Option<SignalRange>,
     alpha: Option<AlphaMode>,
     hdr: Option<Arc<HdrMetadata>>,
@@ -4066,7 +4179,7 @@ impl PlanarBuf {
             planes,
             chroma_siting: ChromaSiting::Unknown,
             color: None,
-            ycbcr_matrix_code: None,
+            matrix_coefficients: None,
             range: None,
             alpha: None,
             hdr: None,
@@ -4097,7 +4210,7 @@ impl PlanarBuf {
             planes,
             chroma_siting: ChromaSiting::Unknown,
             color: None,
-            ycbcr_matrix_code: None,
+            matrix_coefficients: None,
             range: None,
             alpha: None,
             hdr: None,
@@ -4150,18 +4263,18 @@ impl PlanarBuf {
         self
     }
 
-    /// Optional ITU-T H.273 `MatrixCoefficients` code (`1` = BT.709, `6` = BT.601, `9` = BT.2020 NCL, `0` = Identity/GBR).
+    /// Optional ITU-T H.273 [`MatrixCoefficients`] (`BT709`, `BT601`, `BT2020_NCL`, `IDENTITY`, etc.).
     #[inline]
     #[must_use]
-    pub const fn matrix_coefficients_code(&self) -> Option<u8> {
-        self.ycbcr_matrix_code
+    pub const fn matrix_coefficients(&self) -> Option<MatrixCoefficients> {
+        self.matrix_coefficients
     }
 
-    /// Attach ITU-T H.273 `MatrixCoefficients` code for YCbCr/GBR planes.
+    /// Attach ITU-T H.273 [`MatrixCoefficients`] for YCbCr/GBR planes.
     #[inline]
     #[must_use]
-    pub const fn with_matrix_coefficients_code(mut self, matrix_code: u8) -> Self {
-        self.ycbcr_matrix_code = Some(matrix_code);
+    pub const fn with_matrix_coefficients(mut self, matrix: MatrixCoefficients) -> Self {
+        self.matrix_coefficients = Some(matrix);
         self
     }
 
@@ -4381,25 +4494,50 @@ impl<'a> PlaneView<'a> {
         })
     }
 
-    /// Construct a validated borrowed plane view from a typed sample slice (`&[u8]`, `&[u16]`,
-    /// `&[f32]`, etc.) **zero-copy**, where `stride_samples` is the row stride in **`S`
-    /// elements** (NOT bytes — e.g. `stride_samples == width` for tight `u16` luma, or
-    /// `stride_samples >= width * 2` for interleaved `CbCr`).
+    /// Construct a validated borrowed plane view from a tightly packed typed sample slice
+    /// (`&[u8]`, `&[u16]`, `&[f32]`, etc.) **zero-copy**.
+    ///
+    /// Row stride is derived automatically as `width * spec.components` samples (e.g. `width`
+    /// for luma `Y`, `width * 2` for semi-planar `CbCr`). For padded row strides, use
+    /// [`from_samples_strided`](Self::from_samples_strided).
     pub fn from_samples<S: StorageSample>(
         samples: &'a [S],
         width: u32,
         height: u32,
-        stride_samples: usize,
+        spec: PlaneSpec,
+    ) -> Result<Self, At<BufferError>> {
+        spec.validate().map_err(|e| err_at(e.into()))?;
+        let tight_samples = (width as usize)
+            .checked_mul(usize::from(spec.components))
+            .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+        Self::from_samples_strided(samples, width, height, SampleStride(tight_samples), spec)
+    }
+
+    /// Construct a validated borrowed plane view from a strided typed sample slice (`&[u8]`,
+    /// `&[u16]`, `&[f32]`, etc.) **zero-copy** with an explicit [`SampleStride`] measured in
+    /// **`S` elements** (NOT bytes).
+    pub fn from_samples_strided<S: StorageSample>(
+        samples: &'a [S],
+        width: u32,
+        height: u32,
+        stride: SampleStride,
         spec: PlaneSpec,
     ) -> Result<Self, At<BufferError>> {
         spec.validate().map_err(|e| err_at(e.into()))?;
         if spec.sample != S::SAMPLE_TYPE || spec.packing.is_packed_word() {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
-        let stride = stride_samples
+        let stride_bytes = stride
+            .samples()
             .checked_mul(core::mem::size_of::<S>())
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        Self::new(bytemuck::cast_slice(samples), width, height, stride, spec)
+        Self::new(
+            bytemuck::cast_slice(samples),
+            width,
+            height,
+            stride_bytes,
+            spec,
+        )
     }
 
     /// Plane specification.
@@ -4533,6 +4671,12 @@ impl<'a> PlaneView<'a> {
             data: &self.data[start..end],
         })
     }
+
+    /// Zero-copy full-width horizontal strip of this single plane retaining `'a`.
+    #[inline]
+    pub fn sub_rows(&self, y: u32, count: u32) -> Result<PlaneView<'a>, At<BufferError>> {
+        self.crop(0, y, self.width, count)
+    }
 }
 
 /// Validated mutable borrowed view of one plane.
@@ -4581,28 +4725,48 @@ impl<'a> PlaneViewMut<'a> {
         })
     }
 
-    /// Construct a validated mutable borrowed plane view from a typed sample slice (`&mut [u8]`,
-    /// `&mut [u16]`, `&mut [f32]`, etc.) **zero-copy**, where `stride_samples` is the row stride
-    /// in **`S` elements** (NOT bytes).
+    /// Construct a validated mutable borrowed plane view from a tightly packed typed sample
+    /// slice (`&mut [u8]`, `&mut [u16]`, `&mut [f32]`, etc.) **zero-copy**.
+    ///
+    /// Row stride is derived automatically as `width * spec.components` samples (e.g. `width`
+    /// for luma `Y`, `width * 2` for semi-planar `CbCr`). For padded row strides, use
+    /// [`from_samples_strided`](Self::from_samples_strided).
     pub fn from_samples<S: StorageSample>(
         samples: &'a mut [S],
         width: u32,
         height: u32,
-        stride_samples: usize,
+        spec: PlaneSpec,
+    ) -> Result<Self, At<BufferError>> {
+        spec.validate().map_err(|e| err_at(e.into()))?;
+        let tight_samples = (width as usize)
+            .checked_mul(usize::from(spec.components))
+            .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+        Self::from_samples_strided(samples, width, height, SampleStride(tight_samples), spec)
+    }
+
+    /// Construct a validated mutable borrowed plane view from a strided typed sample slice
+    /// (`&mut [u8]`, `&mut [u16]`, `&mut [f32]`, etc.) **zero-copy** with an explicit
+    /// [`SampleStride`] measured in **`S` elements** (NOT bytes).
+    pub fn from_samples_strided<S: StorageSample>(
+        samples: &'a mut [S],
+        width: u32,
+        height: u32,
+        stride: SampleStride,
         spec: PlaneSpec,
     ) -> Result<Self, At<BufferError>> {
         spec.validate().map_err(|e| err_at(e.into()))?;
         if spec.sample != S::SAMPLE_TYPE || spec.packing.is_packed_word() {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
-        let stride = stride_samples
+        let stride_bytes = stride
+            .samples()
             .checked_mul(core::mem::size_of::<S>())
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
         Self::new(
             bytemuck::cast_slice_mut(samples),
             width,
             height,
-            stride,
+            stride_bytes,
             spec,
         )
     }
@@ -4815,6 +4979,42 @@ impl<'a> PlaneViewMut<'a> {
             data: &mut self.data[start..end],
         })
     }
+
+    /// Zero-copy mutable full-width horizontal strip of this single plane.
+    #[inline]
+    pub fn sub_rows_mut(
+        &mut self,
+        y: u32,
+        count: u32,
+    ) -> Result<PlaneViewMut<'_>, At<BufferError>> {
+        self.crop_mut(0, y, self.width, count)
+    }
+
+    /// Consume this mutable plane view and narrow it to a full-width horizontal strip retaining `'a`.
+    #[inline]
+    pub fn into_sub_rows(self, y: u32, count: u32) -> Result<PlaneViewMut<'a>, At<BufferError>> {
+        let width = self.width;
+        self.into_crop(0, y, width, count)
+    }
+}
+
+fn plane_crop_rect(
+    spec: PlaneSpec,
+    old_origin: (u32, u32),
+    new_origin: (u32, u32),
+    w: u32,
+    h: u32,
+) -> Result<(u32, u32, u32, u32), At<BufferError>> {
+    let hx = spec.subsampling.0.max(1) as u32;
+    let vy = spec.subsampling.1.max(1) as u32;
+    let base_cx = old_origin.0 / hx;
+    let base_cy = old_origin.1 / vy;
+    let rel_cx = (new_origin.0 / hx) - base_cx;
+    let rel_cy = (new_origin.1 / vy) - base_cy;
+    let (cw, ch) = spec
+        .cropped_dimensions(w, h, new_origin)
+        .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+    Ok((rel_cx, rel_cy, cw, ch))
 }
 
 #[derive(Clone, Debug)]
@@ -4830,7 +5030,7 @@ enum PlanarStorage<'a> {
 /// Borrowed multi-plane view (zero heap allocation for `1..=4` planes; spills cleanly for `5..=64` planes).
 ///
 /// Tracks `crop_origin` in full-resolution luma coordinates, [`ChromaSiting`], and optional
-/// color interpretation (`color`, `matrix_coefficients_code`, `range_override`, `alpha_override`) so subsampled chroma
+/// color interpretation (`color`, `matrix_coefficients`, `range_override`, `alpha_override`) so subsampled chroma
 /// crops and YCbCr decoders carry full color authority.
 #[derive(Clone, Debug)]
 pub struct PlanarView<'a> {
@@ -4839,7 +5039,7 @@ pub struct PlanarView<'a> {
     crop_origin: (u32, u32),
     chroma_siting: ChromaSiting,
     color: Option<Arc<ColorSpace>>,
-    ycbcr_matrix_code: Option<u8>,
+    matrix_coefficients: Option<MatrixCoefficients>,
     range: Option<SignalRange>,
     alpha: Option<AlphaMode>,
     hdr: Option<Arc<HdrMetadata>>,
@@ -4897,7 +5097,7 @@ impl<'a> PlanarView<'a> {
             crop_origin,
             chroma_siting,
             color: None,
-            ycbcr_matrix_code: None,
+            matrix_coefficients: None,
             range: None,
             alpha: None,
             hdr: None,
@@ -4958,18 +5158,18 @@ impl<'a> PlanarView<'a> {
         self
     }
 
-    /// Optional ITU-T H.273 `MatrixCoefficients` code (`1` = BT.709, `6` = BT.601, `9` = BT.2020 NCL, `0` = Identity/GBR).
+    /// Optional ITU-T H.273 [`MatrixCoefficients`] (`BT709`, `BT601`, `BT2020_NCL`, `IDENTITY`, etc.).
     #[inline]
     #[must_use]
-    pub const fn matrix_coefficients_code(&self) -> Option<u8> {
-        self.ycbcr_matrix_code
+    pub const fn matrix_coefficients(&self) -> Option<MatrixCoefficients> {
+        self.matrix_coefficients
     }
 
-    /// Attach ITU-T H.273 `MatrixCoefficients` code.
+    /// Attach ITU-T H.273 [`MatrixCoefficients`].
     #[inline]
     #[must_use]
-    pub const fn with_matrix_coefficients_code(mut self, matrix_code: u8) -> Self {
-        self.ycbcr_matrix_code = Some(matrix_code);
+    pub const fn with_matrix_coefficients(mut self, matrix: MatrixCoefficients) -> Self {
+        self.matrix_coefficients = Some(matrix);
         self
     }
 
@@ -5121,16 +5321,8 @@ impl<'a> PlanarView<'a> {
         let new_origin = (new_ox, new_oy);
         let src_planes = self.planes();
         let crop_one = |p: &PlaneView<'a>| -> Result<PlaneView<'a>, At<BufferError>> {
-            let hx = p.spec.subsampling.0.max(1) as u32;
-            let vy = p.spec.subsampling.1.max(1) as u32;
-            let base_cx = self.crop_origin.0 / hx;
-            let base_cy = self.crop_origin.1 / vy;
-            let rel_cx = (new_ox / hx) - base_cx;
-            let rel_cy = (new_oy / vy) - base_cy;
-            let (cw, ch) = p
-                .spec
-                .cropped_dimensions(w, h, new_origin)
-                .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+            let (rel_cx, rel_cy, cw, ch) =
+                plane_crop_rect(p.spec, self.crop_origin, new_origin, w, h)?;
             p.crop(rel_cx, rel_cy, cw, ch)
         };
         let storage = if src_planes.len() <= 4 {
@@ -5157,7 +5349,7 @@ impl<'a> PlanarView<'a> {
             crop_origin: new_origin,
             chroma_siting: self.chroma_siting,
             color: self.color.clone(),
-            ycbcr_matrix_code: self.ycbcr_matrix_code,
+            matrix_coefficients: self.matrix_coefficients,
             range: self.range,
             alpha: self.alpha,
             hdr: self.hdr.clone(),
@@ -5165,6 +5357,12 @@ impl<'a> PlanarView<'a> {
             orientation: self.orientation,
             storage,
         })
+    }
+
+    /// Zero-copy full-width horizontal strip of all planes preserving parent-frame chroma phase.
+    #[inline]
+    pub fn sub_rows(&self, y: u32, count: u32) -> Result<PlanarView<'a>, At<BufferError>> {
+        self.crop(0, y, self.width, count)
     }
 }
 
@@ -5209,7 +5407,7 @@ pub struct PlanarViewMut<'a> {
     crop_origin: (u32, u32),
     chroma_siting: ChromaSiting,
     color: Option<Arc<ColorSpace>>,
-    ycbcr_matrix_code: Option<u8>,
+    matrix_coefficients: Option<MatrixCoefficients>,
     range: Option<SignalRange>,
     alpha: Option<AlphaMode>,
     hdr: Option<Arc<HdrMetadata>>,
@@ -5288,7 +5486,7 @@ impl<'a> PlanarViewMut<'a> {
             crop_origin,
             chroma_siting,
             color: None,
-            ycbcr_matrix_code: None,
+            matrix_coefficients: None,
             range: None,
             alpha: None,
             hdr: None,
@@ -5346,7 +5544,7 @@ impl<'a> PlanarViewMut<'a> {
             crop_origin,
             chroma_siting,
             color: None,
-            ycbcr_matrix_code: None,
+            matrix_coefficients: None,
             range: None,
             alpha: None,
             hdr: None,
@@ -5406,18 +5604,18 @@ impl<'a> PlanarViewMut<'a> {
         self
     }
 
-    /// Optional ITU-T H.273 `MatrixCoefficients` code.
+    /// Optional ITU-T H.273 [`MatrixCoefficients`].
     #[inline]
     #[must_use]
-    pub const fn matrix_coefficients_code(&self) -> Option<u8> {
-        self.ycbcr_matrix_code
+    pub const fn matrix_coefficients(&self) -> Option<MatrixCoefficients> {
+        self.matrix_coefficients
     }
 
-    /// Attach ITU-T H.273 `MatrixCoefficients` code.
+    /// Attach ITU-T H.273 [`MatrixCoefficients`].
     #[inline]
     #[must_use]
-    pub const fn with_matrix_coefficients_code(mut self, matrix_code: u8) -> Self {
-        self.ycbcr_matrix_code = Some(matrix_code);
+    pub const fn with_matrix_coefficients(mut self, matrix: MatrixCoefficients) -> Self {
+        self.matrix_coefficients = Some(matrix);
         self
     }
 
@@ -5587,7 +5785,7 @@ impl<'a> PlanarViewMut<'a> {
             crop_origin: self.crop_origin,
             chroma_siting: self.chroma_siting,
             color: self.color.clone(),
-            ycbcr_matrix_code: self.ycbcr_matrix_code,
+            matrix_coefficients: self.matrix_coefficients,
             range: self.range,
             alpha: self.alpha,
             hdr: self.hdr.clone(),
@@ -5652,7 +5850,7 @@ impl<'a> PlanarViewMut<'a> {
             crop_origin: self.crop_origin,
             chroma_siting: self.chroma_siting,
             color: self.color,
-            ycbcr_matrix_code: self.ycbcr_matrix_code,
+            matrix_coefficients: self.matrix_coefficients,
             range: self.range,
             alpha: self.alpha,
             hdr: self.hdr,
@@ -5660,6 +5858,202 @@ impl<'a> PlanarViewMut<'a> {
             orientation: self.orientation,
             storage,
         })
+    }
+
+    /// Zero-copy mutable rectangular crop of all planes preserving exact parent-frame chroma
+    /// phase even for odd `(x, y)` origins on 4:2:0 / 4:2:2 subsampled frames (zero heap
+    /// allocation for `<= 4` planes).
+    pub fn crop_mut(
+        &mut self,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+    ) -> Result<PlanarViewMut<'_>, At<BufferError>> {
+        if w == 0 || h == 0 {
+            return Err(err_at(BufferError::InvalidDimensions));
+        }
+        if x.checked_add(w).is_none_or(|e| e > self.width)
+            || y.checked_add(h).is_none_or(|e| e > self.height)
+        {
+            return Err(err_at(BufferError::OutOfBounds));
+        }
+        let old_origin = self.crop_origin;
+        let new_ox = old_origin
+            .0
+            .checked_add(x)
+            .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+        let new_oy = old_origin
+            .1
+            .checked_add(y)
+            .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+        let new_origin = (new_ox, new_oy);
+        let storage = match self.storage.as_mut_slice() {
+            [p0] => {
+                let (rx, ry, cw, ch) = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
+                PlanarMutStorage::One([p0.crop_mut(rx, ry, cw, ch)?])
+            }
+            [p0, p1] => {
+                let (rx0, ry0, cw0, ch0) = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
+                let (rx1, ry1, cw1, ch1) = plane_crop_rect(p1.spec, old_origin, new_origin, w, h)?;
+                PlanarMutStorage::Two([
+                    p0.crop_mut(rx0, ry0, cw0, ch0)?,
+                    p1.crop_mut(rx1, ry1, cw1, ch1)?,
+                ])
+            }
+            [p0, p1, p2] => {
+                let (rx0, ry0, cw0, ch0) = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
+                let (rx1, ry1, cw1, ch1) = plane_crop_rect(p1.spec, old_origin, new_origin, w, h)?;
+                let (rx2, ry2, cw2, ch2) = plane_crop_rect(p2.spec, old_origin, new_origin, w, h)?;
+                PlanarMutStorage::Three([
+                    p0.crop_mut(rx0, ry0, cw0, ch0)?,
+                    p1.crop_mut(rx1, ry1, cw1, ch1)?,
+                    p2.crop_mut(rx2, ry2, cw2, ch2)?,
+                ])
+            }
+            [p0, p1, p2, p3] => {
+                let (rx0, ry0, cw0, ch0) = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
+                let (rx1, ry1, cw1, ch1) = plane_crop_rect(p1.spec, old_origin, new_origin, w, h)?;
+                let (rx2, ry2, cw2, ch2) = plane_crop_rect(p2.spec, old_origin, new_origin, w, h)?;
+                let (rx3, ry3, cw3, ch3) = plane_crop_rect(p3.spec, old_origin, new_origin, w, h)?;
+                PlanarMutStorage::Four([
+                    p0.crop_mut(rx0, ry0, cw0, ch0)?,
+                    p1.crop_mut(rx1, ry1, cw1, ch1)?,
+                    p2.crop_mut(rx2, ry2, cw2, ch2)?,
+                    p3.crop_mut(rx3, ry3, cw3, ch3)?,
+                ])
+            }
+            many => {
+                let mut v = Vec::new();
+                v.try_reserve_exact(many.len())
+                    .map_err(|_| err_at(BufferError::AllocationFailed))?;
+                for p in many.iter_mut() {
+                    let (rx, ry, cw, ch) = plane_crop_rect(p.spec, old_origin, new_origin, w, h)?;
+                    v.push(p.crop_mut(rx, ry, cw, ch)?);
+                }
+                PlanarMutStorage::Spill(v)
+            }
+        };
+        Ok(PlanarViewMut {
+            width: w,
+            height: h,
+            crop_origin: new_origin,
+            chroma_siting: self.chroma_siting,
+            color: self.color.clone(),
+            matrix_coefficients: self.matrix_coefficients,
+            range: self.range,
+            alpha: self.alpha,
+            hdr: self.hdr.clone(),
+            orientation: self.orientation,
+            storage,
+        })
+    }
+
+    /// Consume this mutable multi-plane view and narrow it to a rectangular crop retaining `'a`
+    /// (zero heap allocation for `<= 4` planes).
+    pub fn into_crop(
+        self,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+    ) -> Result<PlanarViewMut<'a>, At<BufferError>> {
+        if w == 0 || h == 0 {
+            return Err(err_at(BufferError::InvalidDimensions));
+        }
+        if x.checked_add(w).is_none_or(|e| e > self.width)
+            || y.checked_add(h).is_none_or(|e| e > self.height)
+        {
+            return Err(err_at(BufferError::OutOfBounds));
+        }
+        let old_origin = self.crop_origin;
+        let new_ox = old_origin
+            .0
+            .checked_add(x)
+            .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+        let new_oy = old_origin
+            .1
+            .checked_add(y)
+            .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+        let new_origin = (new_ox, new_oy);
+        let storage = match self.storage {
+            PlanarMutStorage::One([p0]) => {
+                let (rx, ry, cw, ch) = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
+                PlanarMutStorage::One([p0.into_crop(rx, ry, cw, ch)?])
+            }
+            PlanarMutStorage::Two([p0, p1]) => {
+                let (rx0, ry0, cw0, ch0) = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
+                let (rx1, ry1, cw1, ch1) = plane_crop_rect(p1.spec, old_origin, new_origin, w, h)?;
+                PlanarMutStorage::Two([
+                    p0.into_crop(rx0, ry0, cw0, ch0)?,
+                    p1.into_crop(rx1, ry1, cw1, ch1)?,
+                ])
+            }
+            PlanarMutStorage::Three([p0, p1, p2]) => {
+                let (rx0, ry0, cw0, ch0) = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
+                let (rx1, ry1, cw1, ch1) = plane_crop_rect(p1.spec, old_origin, new_origin, w, h)?;
+                let (rx2, ry2, cw2, ch2) = plane_crop_rect(p2.spec, old_origin, new_origin, w, h)?;
+                PlanarMutStorage::Three([
+                    p0.into_crop(rx0, ry0, cw0, ch0)?,
+                    p1.into_crop(rx1, ry1, cw1, ch1)?,
+                    p2.into_crop(rx2, ry2, cw2, ch2)?,
+                ])
+            }
+            PlanarMutStorage::Four([p0, p1, p2, p3]) => {
+                let (rx0, ry0, cw0, ch0) = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
+                let (rx1, ry1, cw1, ch1) = plane_crop_rect(p1.spec, old_origin, new_origin, w, h)?;
+                let (rx2, ry2, cw2, ch2) = plane_crop_rect(p2.spec, old_origin, new_origin, w, h)?;
+                let (rx3, ry3, cw3, ch3) = plane_crop_rect(p3.spec, old_origin, new_origin, w, h)?;
+                PlanarMutStorage::Four([
+                    p0.into_crop(rx0, ry0, cw0, ch0)?,
+                    p1.into_crop(rx1, ry1, cw1, ch1)?,
+                    p2.into_crop(rx2, ry2, cw2, ch2)?,
+                    p3.into_crop(rx3, ry3, cw3, ch3)?,
+                ])
+            }
+            PlanarMutStorage::Spill(v) => {
+                let mut out = Vec::new();
+                out.try_reserve_exact(v.len())
+                    .map_err(|_| err_at(BufferError::AllocationFailed))?;
+                for p in v {
+                    let (rx, ry, cw, ch) = plane_crop_rect(p.spec, old_origin, new_origin, w, h)?;
+                    out.push(p.into_crop(rx, ry, cw, ch)?);
+                }
+                PlanarMutStorage::Spill(out)
+            }
+        };
+        Ok(PlanarViewMut {
+            width: w,
+            height: h,
+            crop_origin: new_origin,
+            chroma_siting: self.chroma_siting,
+            color: self.color,
+            matrix_coefficients: self.matrix_coefficients,
+            range: self.range,
+            alpha: self.alpha,
+            hdr: self.hdr,
+            orientation: self.orientation,
+            storage,
+        })
+    }
+
+    /// Zero-copy mutable full-width horizontal strip of all planes preserving parent-frame chroma
+    /// phase.
+    #[inline]
+    pub fn sub_rows_mut(
+        &mut self,
+        y: u32,
+        count: u32,
+    ) -> Result<PlanarViewMut<'_>, At<BufferError>> {
+        self.crop_mut(0, y, self.width, count)
+    }
+
+    /// Consume this mutable multi-plane view and narrow it to a full-width horizontal strip
+    /// retaining `'a`.
+    #[inline]
+    pub fn into_sub_rows(self, y: u32, count: u32) -> Result<PlanarViewMut<'a>, At<BufferError>> {
+        let width = self.width;
+        self.into_crop(0, y, width, count)
     }
 }
 
@@ -5697,7 +6091,7 @@ impl PlanarBuf {
             crop_origin: (0, 0),
             chroma_siting: self.chroma_siting,
             color: self.color.clone(),
-            ycbcr_matrix_code: self.ycbcr_matrix_code,
+            matrix_coefficients: self.matrix_coefficients,
             range: self.range,
             alpha: self.alpha,
             hdr: self.hdr.clone(),
@@ -5705,6 +6099,27 @@ impl PlanarBuf {
             orientation: self.orientation,
             storage,
         })
+    }
+
+    /// Borrow a zero-copy rectangular crop of all planes preserving exact parent-frame chroma
+    /// phase (zero heap allocation for `<= 4` planes).
+    #[inline]
+    pub fn crop_view(
+        &self,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+    ) -> Result<PlanarView<'_>, At<BufferError>> {
+        if w == 0 || h == 0 {
+            return Err(err_at(BufferError::InvalidDimensions));
+        }
+        if x.checked_add(w).is_none_or(|e| e > self.width)
+            || y.checked_add(h).is_none_or(|e| e > self.height)
+        {
+            return Err(err_at(BufferError::OutOfBounds));
+        }
+        self.try_as_view()?.crop(x, y, w, h)
     }
 
     /// Borrow all planes mutably as a [`PlanarViewMut`] (zero-allocation for `<= 4` planes).
@@ -5753,13 +6168,35 @@ impl PlanarBuf {
             crop_origin: (0, 0),
             chroma_siting: self.chroma_siting,
             color: self.color.clone(),
-            ycbcr_matrix_code: self.ycbcr_matrix_code,
+            matrix_coefficients: self.matrix_coefficients,
             range: self.range,
             alpha: self.alpha,
             hdr: self.hdr.clone(),
             orientation: self.orientation,
             storage,
         })
+    }
+
+    /// Borrow a zero-copy mutable rectangular crop of all planes preserving exact parent-frame
+    /// chroma phase, fallibly copy-on-write promoting immutable external planes if needed
+    /// (zero heap allocation for `<= 4` planes).
+    #[inline]
+    pub fn crop_view_mut(
+        &mut self,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+    ) -> Result<PlanarViewMut<'_>, At<BufferError>> {
+        if w == 0 || h == 0 {
+            return Err(err_at(BufferError::InvalidDimensions));
+        }
+        if x.checked_add(w).is_none_or(|e| e > self.width)
+            || y.checked_add(h).is_none_or(|e| e > self.height)
+        {
+            return Err(err_at(BufferError::OutOfBounds));
+        }
+        self.try_as_view_mut()?.into_crop(x, y, w, h)
     }
 }
 

@@ -374,7 +374,7 @@ fn b24_b39_ycbcr_odd_crop_phase_nv12_nv21_i420_gbr_monochrome_and_exact_white() 
     )
     .unwrap()
     .with_color(bt709_narrow_alpha.clone())
-    .with_matrix_coefficients_code(YcbcrMatrix::Bt709.to_cicp_code());
+    .with_matrix_coefficients(YcbcrMatrix::Bt709.to_matrix_coefficients());
 
     let full_rgb = reconstruct_planar_f32(&full).unwrap();
     let cropped_view = full.crop(1, 1, 3, 2).unwrap();
@@ -419,7 +419,7 @@ fn b24_b39_ycbcr_odd_crop_phase_nv12_nv21_i420_gbr_monochrome_and_exact_white() 
     )
     .unwrap()
     .with_color(bt709_narrow_alpha.clone())
-    .with_matrix_coefficients_code(YcbcrMatrix::Bt709.to_cicp_code());
+    .with_matrix_coefficients(YcbcrMatrix::Bt709.to_matrix_coefficients());
     let nv21 = PlanarView::new(
         5,
         3,
@@ -438,7 +438,7 @@ fn b24_b39_ycbcr_odd_crop_phase_nv12_nv21_i420_gbr_monochrome_and_exact_white() 
     )
     .unwrap()
     .with_color(bt709_narrow_alpha)
-    .with_matrix_coefficients_code(YcbcrMatrix::Bt709.to_cicp_code());
+    .with_matrix_coefficients(YcbcrMatrix::Bt709.to_matrix_coefficients());
     let rgb_nv12 = reconstruct_planar_f32(&nv12).unwrap();
     let rgb_nv21 = reconstruct_planar_f32(&nv21).unwrap();
     for row in 0..3 {
@@ -460,7 +460,7 @@ fn b24_b39_ycbcr_odd_crop_phase_nv12_nv21_i420_gbr_monochrome_and_exact_white() 
     )
     .unwrap()
     .with_color(bt709_narrow.clone())
-    .with_matrix_coefficients_code(YcbcrMatrix::Bt709.to_cicp_code());
+    .with_matrix_coefficients(YcbcrMatrix::Bt709.to_matrix_coefficients());
     let mut dst_w = PixelBuf::new(
         1,
         1,
@@ -510,7 +510,7 @@ fn b24_b39_ycbcr_odd_crop_phase_nv12_nv21_i420_gbr_monochrome_and_exact_white() 
     )
     .unwrap()
     .with_color(ColorSpace::SRGB)
-    .with_matrix_coefficients_code(YcbcrMatrix::Identity.to_cicp_code());
+    .with_matrix_coefficients(YcbcrMatrix::Identity.to_matrix_coefficients());
     let gbr_out = reconstruct_planar_f32(&gbr_pv).unwrap();
     let gp = gbr_out.as_view().row_as::<f32>(0).unwrap();
     assert_eq!(gp[0], 0.0);
@@ -630,10 +630,10 @@ fn b25_d06_independent_8_orientation_coordinate_oracle_with_canaries_and_origin(
 fn b28_b29_b30_b40_gainmap_analytic_oracle_31stops_64tap_inclusive_and_gamma_simd_parity() {
     use core::num::NonZeroU32;
     use enough::Unstoppable;
+    use zenpixels_convert::gainmap::{GainMapApplyConfig, GainMapResample, apply_gain_map_with};
     use zenpixels_convert::{
-        Accelerators, DualLayerHdrView, GainMapApplyConfig, GainMapChannels, GainMapColorSpace,
-        GainMapComponent, GainMapMetadata, GainMapResample, SignedFraction, UnsignedFraction,
-        apply_gain_map_with,
+        Accelerators, DualLayerHdrView, GainMapChannels, GainMapColorSpace, GainMapComponent,
+        GainMapMetadata, SignedFraction, UnsignedFraction,
     };
     let gm_spec = ImageSpec::new(
         SampleLayout::GRAY8,
