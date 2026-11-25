@@ -434,6 +434,8 @@ pub fn analyze_compaction(view: &PixelView<'_>) -> CompactionReport {
 
 /// Analyze `view` and compact into a newly allocated [`PixelBuf`] if a narrower bit-exact
 /// representation exists (`Ok(None)` if already minimal), preserving allocation errors.
+#[doc(alias = "load_bearing")]
+#[doc(alias = "shrink")]
 pub fn compact_to_buf(view: &PixelView<'_>) -> Result<Option<PixelBuf>, At<ConvertError>> {
     let src = view.spec().clone();
     let mut report = analyze_compaction(view);
@@ -464,6 +466,8 @@ pub fn compact_to_buf(view: &PixelView<'_>) -> Result<Option<PixelBuf>, At<Conve
 /// controls whether redundant alpha/padding lanes are retagged in metadata
 /// ([`AlphaCompaction::RetagOpaque`]) or physically dropped in place
 /// ([`AlphaCompaction::DropUnusedLanes`]).
+#[doc(alias = "load_bearing")]
+#[doc(alias = "shrink")]
 pub fn compact_in_place(buf: &mut PixelBuf, alpha: AlphaCompaction) {
     let drop_alpha_lanes = alpha == AlphaCompaction::DropUnusedLanes;
     let _ = buf.transform_in_place(|bytes, width, rows, in_stride, src, orig| {

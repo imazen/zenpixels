@@ -2,7 +2,7 @@
 
 A task-oriented guide to storing, borrowing, and converting pixels in Rust with `zenpixels` and `zenpixels-convert`. Both crates are `#![forbid(unsafe_code)]` and support `no_std + alloc` (disable default `std` features for `no_std`).
 
-If you are upgrading from `zenpixels` 0.2 or 0.4, see [migration-0.2-to-0.5.md](migration-0.2-to-0.5.md).
+If you are upgrading from `zenpixels` 0.2 or 0.4, see [migration-0.2-to-0.5.md](migration-0.2-to-0.5.md). Unfamiliar term (`SampleFacts`, `DiffuseWhite`, `CICP`, `ChromaSiting`, `whereat::At<E>`)? Jump to the [Quick Glossary](#11-quick-glossary).
 
 ---
 
@@ -586,3 +586,25 @@ let back_from_imgref = PixelBuf::from_imgvec(owned_img, ColorSpace::SRGB)?;
 let dyn_img = buf.into_dynamic_image()?;
 let back_from_image = PixelBuf::from_dynamic_image(dyn_img)?;
 ```
+
+---
+
+## 11. Quick Glossary
+
+| Term | Meaning in `zenpixels` 0.5 |
+|---|---|
+| **`whereat::At<E>`** | Error wrapper pairing the typed error `E` with source-location trace frames. Match the inner enum via `*err.error()` or `err.into_inner()`. |
+| **`SampleFacts`** | Proven or caller-asserted content invariants (`all_opaque`, `all_grayscale`, `binary_alpha`, `float`, `depth`). Measured via `scan_facts(&view)` / `into_opaque_verified()`, seeded by `PixelBuf::new`/`new_white`/`new_zeroed`, or asserted via `assume_facts` / `with_assumed_facts` / `policy.with_source_facts`. Cleared on mutable access. |
+| **`ColorOrigin`** | File-level provenance (`assumed()`, `from_cicp`, `from_icc`, `from_icc_and_cicp`) recording *how the file originally signaled color*, distinct from the buffer's active `ColorSpace`. |
+| **`OutputSignaling`** | Encoder signaling policy (`Auto`, `SameAsOrigin`, `CicpOnly`, `EmbedIcc`, `CustomIcc`, `Strip`) controlling which CICP/ICC metadata `OutputPlan` emits alongside encoded pixels. |
+| **`CICP` / ITU-T H.273** | 4-byte wire code `(color_primaries, transfer_characteristics, matrix_coefficients, full_range)` used in PNG, AVIF, HEIF, JPEG XL, and video. `CicpTag` also supports the 44-byte ICC.1 custom-primaries amendment. |
+| **`SignalRange`** | Integer code swing: `Full` (`0..=255` / `0..=65535`) vs `Narrow` (video "limited" / studio swing: `16..=235` / `4096..=60160`). |
+| **`AlphaMode`** | `None` (no alpha channel), `Opaque` (alpha slot present and logically all-max), `Straight` (unpremultiplied / unassociated), `Premultiplied` (associated), `Undefined` (ignored `RGBx`/`BGRx` padding byte). |
+| **`BitPacking`** | How coded integers sit inside `U8`/`U16`/`U32` storage: `Full`, `Lsb { bits }` (`U10_LSB`), `Msb { bits }` (`P010`), or packed-word `Bitfields` (`RGB565`, `RGB10A2`). |
+| **`CodePlane`** | Zero-copy borrowed reader (`CodePlaneMut` writer) exposing raw coded integer samples (`0..=1023`, etc.) from bit-packed or multi-component planes without color conversion. |
+| **`ChromaSiting`** | Subsampled chroma sample position relative to luma pixels (also called chroma location): `Unknown`, `Center` (JPEG), `Left` (H.264/HEVC/AV1), `TopLeft` (BT.2020), `Top`, `BottomLeft`, `Bottom`. |
+| **`Nits` & `DiffuseWhite`** | Typed luminance in cd/m² (`Nits::new(100.0)`). `DiffuseWhite` anchors SDR paper white in HDR workflows (e.g. `DiffuseWhite::BT2408` = `203` cd/m²). |
+| **`PeakSource`** | How HDR→SDR tone mapping obtains source peak luminance on whole-image plans: `Measured` (streaming O(1) scan when needed), `Declared` (`MaxCLL` / `MasteringDisplay`), or `Fixed(Nits)`. |
+| **`HlgMode`** | Distinguishes `HlgMode::Scene` (scene-referred ARIB STD-B67, representable in 4-byte CICP) from `HlgMode::Display(HlgRendering)` (BT.2100 display-rendered at e.g. `1000` nits; cannot be carried by CICP alone). |
+| **`SpecCow<'a>`** | Borrow-or-share `ImageSpec` wrapper inside views (`Borrowed(&'a ImageSpec)` for 0-alloc views vs `Owned(Arc<ImageSpec>)` for dynamic specs). |
+| **`try_as_view_mut` / `make_mut`** | Fallible copy-on-write (CoW) promotion for `PixelBuf` / `PlaneBuf` / `PlanarBuf` backed by immutable external storage (`Arc<[u8]>`, `&'static [u8]`, FFI pools). |

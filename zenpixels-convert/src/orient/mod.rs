@@ -27,6 +27,9 @@ const TILE: u32 = 32;
 ///
 /// Preserves `src.hdr()`, `src.facts()`, and `src.origin()`. The returned buffer has
 /// [`Orientation::Identity`] because `orientation` has been physically applied to the pixels.
+#[doc(alias = "rotate")]
+#[doc(alias = "transpose")]
+#[doc(alias = "exif")]
 pub fn apply_orientation(
     src: &PixelView<'_>,
     orientation: Orientation,
@@ -63,6 +66,8 @@ pub fn apply_orientation_owned(
 
 /// Physically bake `src.orientation()` into pixels, returning a tightly packed [`PixelBuf`]
 /// with [`Orientation::Identity`].
+#[doc(alias = "rotate")]
+#[doc(alias = "exif")]
 pub fn bake_orientation(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
     apply_orientation(src, src.orientation())
 }

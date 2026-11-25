@@ -2297,6 +2297,8 @@ impl PixelBuf {
     /// storage ([`PixelStorage::External`]) via copy-on-write into properly aligned owned storage.
     ///
     /// No-op (zero copy, zero allocation) for native `Vec`, `Aligned64`, and `ExternalMut` buffers.
+    #[doc(alias = "cow")]
+    #[doc(alias = "copy_on_write")]
     pub fn make_mut(&mut self) -> Result<(), At<BufferError>> {
         if !matches!(self.storage, PixelStorage::External(_)) {
             return Ok(());
@@ -2467,6 +2469,8 @@ impl PixelBuf {
     /// Performs the full-pixel scan itself — no prior [`assume_facts`](Self::assume_facts) call is
     /// required. Returns [`BufferError::IncompatibleLayout`] if the layout has no alpha slot, or
     /// [`BufferError::UnverifiedOpaqueAlpha`] if any alpha sample is not at channel maximum.
+    #[doc(alias = "verify_opaque")]
+    #[doc(alias = "mark_opaque")]
     pub fn into_opaque_verified(mut self) -> Result<Self, At<BufferError>> {
         if !self.spec.layout.order.has_alpha_slot() {
             return Err(err_at(BufferError::IncompatibleLayout));
@@ -2688,6 +2692,8 @@ impl PixelBuf {
     /// Fallibly borrow a mutable [`PixelViewMut`], clearing cached [`SampleFacts`] and
     /// copy-on-write promoting immutable external storage without panicking on OOM.
     #[inline]
+    #[doc(alias = "cow")]
+    #[doc(alias = "copy_on_write")]
     pub fn try_as_view_mut(&mut self) -> Result<PixelViewMut<'_>, At<BufferError>> {
         self.make_mut()?;
         self.facts = SampleFacts::NONE;
@@ -3689,6 +3695,8 @@ impl PlaneBuf {
     /// Fallibly borrow as a mutable [`PlaneViewMut`], copy-on-write promoting immutable external
     /// storage without panicking on OOM.
     #[inline]
+    #[doc(alias = "cow")]
+    #[doc(alias = "copy_on_write")]
     pub fn try_as_view_mut(&mut self) -> Result<PlaneViewMut<'_>, At<BufferError>> {
         let rb = self.row_bytes();
         let end = required_bytes(self.height, self.stride, rb).unwrap_or(0);
@@ -5707,6 +5715,8 @@ impl PlanarBuf {
     }
 
     /// Fallibly borrow all planes mutably as a [`PlanarViewMut`] (zero-allocation for `<= 4` planes).
+    #[doc(alias = "cow")]
+    #[doc(alias = "copy_on_write")]
     pub fn try_as_view_mut(&mut self) -> Result<PlanarViewMut<'_>, At<BufferError>> {
         let len = self.planes.len();
         let mut iter = self.planes.iter_mut();

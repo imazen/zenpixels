@@ -1188,6 +1188,9 @@ pub enum SignalRange {
     #[default]
     Full,
     /// Broadcast studio / limited swing (`16..=235` in `U8`, `4096..=60160` in `U16`).
+    #[doc(alias = "limited")]
+    #[doc(alias = "studio")]
+    #[doc(alias = "tv")]
     Narrow,
 }
 
@@ -1208,8 +1211,12 @@ pub enum AlphaMode {
     /// `SampleFacts::all_opaque` is proven.
     Opaque,
     /// Unassociated (straight) alpha: RGB is independent of A.
+    #[doc(alias = "unpremultiplied")]
+    #[doc(alias = "non-premultiplied")]
+    #[doc(alias = "unassociated")]
     Straight,
     /// Associated (premultiplied) alpha: RGB is already multiplied by A.
+    #[doc(alias = "associated")]
     Premultiplied,
     /// Padding channel (`RGBx` / `BGRx`): bytes carry unspecified values and are ignored.
     Undefined,

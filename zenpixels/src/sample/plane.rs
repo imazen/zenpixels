@@ -58,6 +58,9 @@ impl ChromaSubsampling {
 /// explicit caller fallback policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
+#[doc(alias = "chroma_location")]
+#[doc(alias = "chroma_position")]
+#[doc(alias = "chroma_sample_position")]
 pub enum ChromaSiting {
     /// The source did not declare a chroma sample location (AV1 `CSP_UNKNOWN`).
     #[default]
@@ -123,6 +126,8 @@ enum Words<'a> {
 /// Code depth and bit placement come from [`SampleEncoding`]; padding bits are
 /// ignored on read. Nothing is copied or allocated.
 #[derive(Clone, Copy, Debug)]
+#[doc(alias = "bit_plane")]
+#[doc(alias = "raw_samples")]
 pub struct CodePlane<'a> {
     words: Words<'a>,
     width: usize,

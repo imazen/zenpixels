@@ -581,6 +581,9 @@ pub fn reconstruct_planar_f32(src: &PlanarView<'_>) -> Result<PixelBuf, At<Conve
 /// Reads source interpretation (`color()`, `effective_range()`, `matrix_coefficients_code()`,
 /// `effective_alpha()`) from `src`, derives the output [`ColorSpace`], and propagates
 /// `src.hdr()`, `src.origin()`, and `src.orientation()` onto the returned [`PixelBuf`].
+#[doc(alias = "ycbcr_to_rgb")]
+#[doc(alias = "yuv_to_rgb")]
+#[doc(alias = "interleave")]
 pub fn reconstruct_planar_to_buf(
     src: &PlanarView<'_>,
     dst_layout: SampleLayout,
@@ -605,6 +608,9 @@ pub fn reconstruct_planar_to_buf(
 /// (refusing mismatched primaries, transfer, white point, narrow range, or conflicting alpha
 /// semantics rather than silently converting). Sets `dst.set_orientation(src.orientation())`;
 /// `hdr()` and `origin()` remain caller-managed on the destination storage.
+#[doc(alias = "ycbcr_to_rgb_into")]
+#[doc(alias = "yuv_to_rgb")]
+#[doc(alias = "interleave")]
 pub fn reconstruct_planar_into(
     src: &PlanarView<'_>,
     options: &PlanarReconstructionOptions,

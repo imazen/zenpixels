@@ -159,6 +159,8 @@ impl core::ops::BitAnd for FloatFacts {
 /// Unified sample evidence cached on owned buffers and propagated through conversion plans.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
+#[doc(alias = "content_facts")]
+#[doc(alias = "proven_opaque")]
 pub struct SampleFacts {
     /// Proven floating-point invariants.
     pub float: FloatFacts,
