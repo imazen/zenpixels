@@ -10,15 +10,15 @@ This is the **0.5.0 greenfield candidate**.
 ## Quick start
 
 ```rust
-use zenpixels_convert::{ConvertPolicy, ImageSpec, PeakSource, PixelBuf, convert_buf};
+use zenpixels_convert::{ConvertPolicy, ImageSpec, PeakSource, PixelBuf, convert_to_buf};
 
-let src = PixelBuf::from_vec(
+let src = PixelBuf::from_typed(
     vec![255u8, 0, 0, 0, 255, 0], 2, 1, ImageSpec::rgb8_srgb(),
 )?;
-let linear = convert_buf(
-    &src.as_view(), ImageSpec::rgbf32_linear(), &ConvertPolicy::permissive(), PeakSource::Measured,
+let linear = convert_to_buf(
+    &src.as_view(), ImageSpec::rgbf32_linear_ref(), &ConvertPolicy::permissive(), PeakSource::Measured,
 )?;
-assert_eq!(linear.spec(), &ImageSpec::rgbf32_linear());
+assert_eq!(linear.spec(), ImageSpec::rgbf32_linear_ref());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

@@ -82,24 +82,27 @@ pub use gainmap::{
     GainMapApplier, GainMapApplyConfig, GainMapDownsample, GainMapExtractConfig,
     GainMapOrientation, GainMapResample, GainMapRowExtractor, GainMapTarget, apply_gain_map,
     apply_gain_map_oriented, apply_gain_map_view, apply_gain_map_with, bake_dual_layer_orientation,
-    extract_gain_map, extract_gain_map_only, rotate_dual_layer,
+    bake_dual_layer_orientation_after, extract_gain_map, extract_gain_map_only,
 };
 pub use gamut::GamutMatrix;
-pub use load_bearing::{LoadBearingReport, PixelBufLoadBearingExt, PixelViewLoadBearingExt};
+pub use load_bearing::{
+    AlphaCompaction, LoadBearingReport, PixelBufLoadBearingExt, PixelViewLoadBearingExt,
+};
 pub use measure::{
     LightLevelHistogram, LightLevelMethod, measure_cll, measure_histogram, measure_max_smoothed,
     measure_peak,
 };
 pub use negotiate::{FormatCost, LossKind, Negotiate, NegotiatedFormat};
 pub use orient::{
-    apply_orientation, apply_orientation_banded_into, apply_orientation_into, bake_orientation,
-    bake_orientation_banded, bake_orientation_buf, orient_banded, orient_buf,
+    apply_orientation, apply_orientation_banded, apply_orientation_banded_into,
+    apply_orientation_into, apply_orientation_owned, bake_orientation, bake_orientation_banded,
+    bake_orientation_owned,
 };
 pub use output::{
     EncodeReady, OutputPlan, OutputProfile, adapt_for_encode, adapt_for_encode_format,
 };
 pub use plan::{
-    ImagePlan, RowPlan, convert_buf, convert_into, to_bgra8, to_gray8, to_rgb8, to_rgba8,
+    ImagePlan, RowPlan, convert_into, convert_to_buf, to_bgra8, to_gray8, to_rgb8, to_rgba8,
 };
 pub use policy::{
     AlphaPolicy, ConvertPolicy, DepthPolicy, GamutPolicy, LumaCoefficients, LumaDomain, RangePolicy,

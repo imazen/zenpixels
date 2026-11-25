@@ -1,29 +1,34 @@
 # Migrating from `zenpixels` 0.2 / 0.4 to 0.5
 
-`zenpixels 0.5` and `zenpixels-convert 0.5` are a clean-sheet consolidation of the 0.2/0.4 APIs around a single unified descriptor (`ImageSpec`), type-erased zero-copy buffers with external storage ownership (`PixelBuf` + `ByteStorage`), and stateless `Send + Sync` row/image conversion plans (`RowPlan`, `ImagePlan`, `OutputPlan`).
+`zenpixels 0.5` and `zenpixels-convert 0.5` consolidate the 0.2 and 0.4 APIs around a single unified descriptor (`ImageSpec`), type-erased zero-copy buffers with external storage ownership (`PixelBuf` + `ByteStorage`), zero-allocation borrowed views (`PixelView<'a>` / `PixelViewMut<'a>` taking `&'a ImageSpec`), and stateless `Send + Sync` row/image conversion plans (`RowPlan`, `ImagePlan`, `OutputPlan`).
 
 Both crates remain `#![forbid(unsafe_code)]` and `no_std + alloc` by default.
 
 ---
 
-## 1. Quick Type & Concept Map
+## 1. Descriptor & Concept Map
 
-| 0.2 / 0.4 | 0.5 | Notes |
+**Important:** In 0.5, the old layout-only `PixelFormat` enum became `SampleLayout`, while the new `Copy + const` `PixelFormat` struct carries **both layout and parametric color** (replacing color-bearing `PixelDescriptor` in `const` codec tables). Two `PixelFormat` values can share `SampleLayout::RGB8` while differing in primaries or transfer, and format negotiation compares color as well as layout.
+
+| 0.2 (`e96e4e9c`) / 0.4 (`666814ab`) | 0.5 | Notes |
 |---|---|---|
-| `PixelFormat` + `ChannelType` + `ChannelLayout` | `SampleLayout` (`SampleType`, `ChannelOrder`, `BitPacking`) + `Copy` `PixelFormat` | Orthogonal physical layout; `PixelFormat` (`Copy + const + !Drop`) pairs `SampleLayout` + `ParametricColor` for codec tables & `const` slices |
-| `PixelDescriptor` + `ColorContext` | `ImageSpec` (`SampleLayout` + `ColorSpace`) + optional `ColorOrigin` | `const` presets (`ImageSpec::RGB8_SRGB`, etc.); `SpecCow<'a>` eliminates `Arc` bumps in views/crops; `ColorSpace` covers `Rgb`, `Gray`, `Oklab`, `Xyz`, `Perceptual`, `Icc`, `Cmyk`, `Untagged` |
-| `TransferFunction` / `ColorPrimaries` | `Transfer` / `Primaries` + `CicpTag` | Complete lossless H.273 (11 CP, 16 TC, 9 MC) + ICC.1 `cicpType` 44-byte custom-primaries amendment (`CicpTag`, `CustomPrimaries::{ACES_AP0, ACES_CG, PROPHOTO_RGB}`, Annex 1 `to_icc_d50_matrix_f64`); `Transfer::Hlg(HlgMode::Scene \| HlgMode::Display(HlgRendering))` makes HLG display rendering explicit |
-| `PixelBuffer<P, S>` | `PixelBuf` | Type-erased, stride-preserving, fallible, carries `Orientation`; supports external storage via `from_external*`, white fill (`new_white`), and fast `new_zeroed` + `into_opaque_verified` / `assume_opaque` |
-| `PixelSlice<'a>` / `PixelSliceMut<'a>` | `PixelView<'a>` / `PixelViewMut<'a>` | Borrowed strided views carrying `SpecCow<'a>`, `SampleFacts`, `HdrMetadata`, and `Orientation` |
-| `BandedPixelBuffer` | `BandedBuf` | Bounded row-band storage (`RowAlign`, `DEFAULT_MAX_BAND_BYTES`) carrying `Orientation` for gigapixel images |
-| `PlanarBuffer` / `PlanarSlice` / `PlanarSliceMut` | `PlanarBuf` / `PlanarView` / `PlanarViewMut` | Always available (no `planar` Cargo feature); carry `ColorSpace`, `ycbcr_matrix_code`, `range`, `alpha`, `chroma_siting`, `hdr`, `origin`, and `orientation` |
-| `AnyPlane` / `PlaneRef` / `PlaneBuf` | `PlaneView` / `PlaneViewMut` / `OwnedPlane` | Zero-copy typed codec APIs (`from_samples`, `row_as`, `code_u32`, `as_code_plane`, `plane_by_role`) with strict plane role validation |
+| `PixelFormat::Rgb8` + `ChannelType` + `ChannelLayout` | `SampleLayout::RGB8` (`SampleType`, `ChannelOrder`, `BitPacking`) | Physical byte/sample layout only; cannot authorize a color conversion |
+| `PixelDescriptor::RGB8_SRGB` | `PixelFormat::RGB8_SRGB` (`Copy`/`const` codec tables) or `ImageSpec::RGB8_SRGB` / `ImageSpec::rgb8_srgb_ref()` | Both include color; use `ImageSpec::with_default_color_for_layout` only when intentionally assuming default color for a raw layout |
+| `PixelDescriptor` + `ColorContext` (ICC) | `ImageSpec { layout, color: ColorSpace::Icc { ... } }` + optional `ColorOrigin` | Arbitrary ICC profiles live in `ImageSpec` (not `Copy` `PixelFormat`). `ImageSpec::new` / `PixelFormat::new` are unchecked `const` constructors; call `validate()` or pass to a carrier constructor |
+| `TransferFunction` / `ColorPrimaries` | `Transfer` / `Primaries` + `CicpTag` | Lossless H.273 (11 CP, 16 TC, 9 MC) + ICC.1 `cicpType` 44-byte custom-primaries amendment (`CicpTag`, `CustomPrimaries::{ACES_AP0, ACES_CG, PROPHOTO_RGB}`, Annex 1 `to_icc_d50_matrix_f64`); explicit `Transfer::Hlg(HlgMode::Scene \| HlgMode::Display(HlgRendering))` |
+| `PixelBuffer<P, S>` | `PixelBuf` | Type-erased, stride-preserving, fallible, carries `Orientation`; supports external storage (`from_external*`), white fill (`new_white`), and fast `new_zeroed` + `into_opaque_verified` / `assume_opaque` |
+| `PixelSlice<'a>` / `PixelSliceMut<'a>` | `PixelView<'a>` / `PixelViewMut<'a>` | Borrowed strided views taking `&'a ImageSpec` (0 heap allocations; use `ImageSpec::*_ref()` static presets or borrow a local spec; explicit `new_with_spec_cow` when owning/sharing a `SpecCow`) |
+| `BandedPixelBuffer` (0.4) | `BandedBuf` | Bounded row-band storage (`RowAlign`, `DEFAULT_MAX_BAND_BYTES`) carrying `Orientation` for gigapixel images |
+| `MultiPlaneImage` (0.2) / `PlanarBuffer` / `PlanarSlice` (0.4) | `PlanarBuf` / `PlanarView` / `PlanarViewMut` | Always built (no `planar` feature); carry `ColorSpace`, `ycbcr_matrix_code`, `range`, `alpha`, `chroma_siting`, `hdr`, `origin`, and `orientation` |
+| `AnyPlane` / `PlaneRef<T>` / `PlaneBuf<T>` (0.4) | `PlaneView` / `PlaneViewMut` / `PlaneBuf` | Zero-copy typed codec APIs with uniform `(data, width, height, stride, spec)` argument order (`from_samples` takes **element** stride; `stride()` returns **bytes**) |
 | `CodePlane` | `CodePlane` + `CodePlaneMut` | Unconditional in `zenpixels`; read/write arbitrary bit-packed or P010 codes |
-| `ConvertOptions` + `ConversionSpec` | `ConvertPolicy` | Presets: `lossless()`, `permissive()`, `working_linear()`, `display_sdr()` |
-| `ConvertPlan` + `RowConverter` | `RowPlan` + `ImagePlan` | `RowPlan` is stateless, `Send + Sync`, and allocates zero heap bytes per `convert_row` |
-| `OutputPlan` / `adapt_for_encode` | `OutputPlan` / `adapt_for_encode` | Canonicalizes unverified `AlphaMode::Opaque`; rejects `MetadataOnly` ICC on structured RGB/Gray |
+| Dual-layer gain maps | `DualLayerHdrBuf` / `DualLayerHdrView` / `DualLayerHdrBufParts` | Unified base + gain-map + ISO 21496-1 metadata + orientation carrier |
+| `ConvertOptions` (0.2/0.4) + `ConversionSpec` (0.4) | `ConvertPolicy` | `Default` is **`lossless()`** (never silently drops alpha/depth/range); explicit `permissive()`, `working_linear()`, `display_sdr(...)`. All planners borrow `&ConvertPolicy` |
+| `RowConverter` (0.2) / `ConvertPlan` + `RowConverter` (0.4) | `RowPlan` + `ImagePlan` | `RowPlan` is stateless, `Send + Sync`, zero heap allocation per `convert_row`, takes resolved `Option<Nits>`; `ImagePlan` takes `PeakSource` |
+| `buf.to_rgb8()` / `slice.convert_to(...)` | `to_rgb8(&view)?` / `convert_to_buf(&view, &dst, &policy, peak)?` | `to_rgb8` / `to_gray8` use `DiscardIfOpaque` (refuse unproven alpha discard) |
+| `OutputPlan` / `adapt_for_encode` | `OutputPlan` / `adapt_for_encode` / `adapt_for_encode_format` | Canonicalizes unverified `AlphaMode::Opaque`; rejects `MetadataOnly` ICC on structured RGB/Gray; rejects `HlgMode::Display` on `dst` under `CicpOnly`/`Auto` |
 | `PluggableCms` + `RowTransformMut` | `CmsBackend` + `CmsTransform` | Stateless `Send + Sync` row transforms; built-in `MoxCms` and `Lcms` |
-| `CllMeasure` / `LightLevelHistogram` | `measure_cll`, `measure_histogram`, `measure_max_smoothed` | `LightLevelHistogram::{bins, try_merge}` + 3-tap smoothed peak |
+| `CllMeasure` / `LightLevelHistogram` | `measure_cll`, `measure_histogram`, `measure_max_smoothed` | `LightLevelHistogram::{bins, merge}` + 3-tap smoothed peak |
 
 ---
 
@@ -53,26 +58,82 @@ Both crates remain `#![forbid(unsafe_code)]` and `no_std + alloc` by default.
 
 ---
 
-## 3. Code Migration Examples
+## 3. Policy Presets & Fallibility / Error Contracts
+
+### `ConvertPolicy` Presets (Safe Default!)
+
+Neither pinned 0.2 nor pinned 0.4 implemented `Default` on `ConvertOptions`. In 0.5, `ConvertPolicy::default()` equals **`ConvertPolicy::lossless()`** so callers never silently drop alpha, quantize bit depth, or rescale narrow/full range.
+
+| Preset | `depth` | `alpha` | `gamut` | `range` | `tone_map_hdr_to_sdr` | `allow_icc_substitution` | Notes |
+|---|---|---|---|---|---|---|---|
+| `lossless()` / `default()` | `Forbid` | `Forbid` | `PreserveExtended` | `Forbid` | `false` | `false` | Loss-permission preset (`allow_approximate: false`); forbids RGB→Gray unless proven grayscale; does not claim universal mathematical invertibility of float transforms |
+| `permissive()` | `Round` | `DiscardUnchecked` | `Clip` | `Convert` | `false` | `true` | Explicit opt-in for unchecked lossy conversion |
+| `working_linear()` | `Round` | `DiscardIfOpaque` | `PreserveExtended` | `Convert` | `false` | `true` | Defaults `sdr_white` to BT.2408 (`203 cd/m²`) |
+| `display_sdr(white, peak)` | `Round` | `CompositeOnto(BLACK)` | `Clip` | `Convert` | `true` | `true` | Enables HDR→SDR tone mapping + HLG 1000-nit reference rendering |
+
+> **`to_rgb8` / `to_gray8`:** Both convenience helpers target full-range sRGB `RGB8` / encoded-Y' `GRAY8` under `ConvertPolicy::permissive().with_alpha(AlphaPolicy::DiscardIfOpaque)`. Unproven straight/premultiplied alpha returns `ConvertError::AlphaLossForbidden`; pass proven-opaque inputs (via `scan_facts` / `into_opaque_verified`) or call `convert_to_buf` with `AlphaPolicy::CompositeOnto` / `DiscardUnchecked`.
+
+### Fallibility Naming & Error Shapes
+
+- **Naming rule:** Standalone fallible operations use ordinary descriptive names (`from_typed`, `from_bytes`, `from_parts`, `from_storage_parts`, `into_vec_zero_copy`, `into_external`, `make_mut`, `merge`, `project_cicp`, etc.). The `try_` prefix is used **only** when the same type already exposes a direct value-returning twin (e.g. `try_clone` / `clone`, `try_as_view_mut` / `as_view_mut`, `try_with_*` / `with_*`, `Cicp::try_from_bytes` / `Cicp::from_bytes`, `LightLevelHistogram::try_new` / `new`).
+- **Error shape boundary (not every fallible API uses `At<E>`!):**
+  - **Located `whereat::At<E>`** on carrier/pipeline boundaries (`PixelBuf`, `PixelView`, `PlanarBuf`, `BandedBuf`, `DualLayerHdrBuf`, `ImageSpec::validate`, `PixelFormat::validate`, `Cicp::try_from_bytes`, `CicpTag::from_tag_bytes`, `RowPlan`, `ImagePlan`, `OutputPlan`, `apply_orientation*`, `ycbcr_to_rgb*`, `gainmap`, `CmsBackend`, `measure_*`, `to_canonical`, `TryFrom<DynamicImage> for PixelBuf`):
+    ```rust
+    match PixelBuf::from_typed(data, w, h, ImageSpec::RGB8_SRGB) {
+        Ok(buf) => buf,
+        Err(err) => match err.into_inner() { // or `*err.error()`
+            BufferError::IncompatibleLayout => { /* ... */ }
+            other => return Err(other.into()),
+        },
+    }
+    ```
+  - **Bare `E`** on const-capable layout, storage, code-plane, validation, and projection primitives (`LayoutError`, `StorageError`, `SampleEncodingError`, `ExactDepthError`, `CodePlaneError`, `CicpProjectionError`, `IccValidationError`, `CodeMapError`, plus `TryFrom<Cicp> for image::metadata::Cicp` returning bare `BufferError`):
+    ```rust
+    match spec.color.project_cicp_tag() {
+        Ok(tag) => tag,
+        Err(CicpProjectionError::HlgDisplayRenderingLost) => { /* ... */ }
+        Err(other) => { /* ... */ }
+    }
+    ```
+  - **Recovery shapes:** Plain `from_typed` / `from_bytes` drop the input `Vec` on error. Use `from_typed_recover`, `from_bytes_recover`, `from_parts_recover`, or `from_external*` to recover `(At<BufferError>, original_input)` on failure; zero-copy extractors (`into_vec_zero_copy`, `into_external`, `into_imgvec_zero_copy`) return `Result<T, Self>` returning the untouched buffer on mismatch.
+
+---
+
+## 4. Code Migration Examples
 
 ### Constructing Specs & Converting Rows
 
-**Before (0.2 / 0.4):**
+**Before — `zenpixels 0.2` (`e96e4e9c`):**
 ```rust
 use zenpixels::{PixelBuffer, PixelDescriptor};
-use zenpixels_convert::{ConvertOptions, ConvertPlan, ConversionSpec};
+use zenpixels_convert::{ConvertOptions, RowConverter};
 
 let src = PixelBuffer::try_new(w, h, PixelDescriptor::RGB8_SRGB)?;
+let mut conv = RowConverter::new_explicit(
+    src.descriptor(),
+    PixelDescriptor::RGBA8_SRGB,
+    &ConvertOptions::permissive(),
+)?;
+conv.try_convert_row(src.as_slice().row(0), dst_row, w)?;
+```
+
+**Before — `zenpixels 0.4` (`666814ab` — note `ConvertOptions` had no `permissive()` or `Default`):**
+```rust
+use zenpixels::{ConvertOptions, DepthPolicy, PixelBuffer, PixelDescriptor};
+use zenpixels_convert::{ConversionSpec, ConvertPlan};
+
+let src = PixelBuffer::try_new(w, h, PixelDescriptor::RGB8_SRGB)?;
+let opts = ConvertOptions::retain_channels().with_depth_policy(DepthPolicy::Round);
 let plan = ConvertPlan::build(
     src.descriptor().into(),
     PixelDescriptor::RGBA8_SRGB.into(),
-    &ConversionSpec::new(ConvertOptions::permissive()),
+    &ConversionSpec::new(opts),
 )?;
 let mut conv = plan.prepare(w)?;
 conv.try_convert_row(src.as_slice().row(0), dst_row, w)?;
 ```
 
-**After (0.5):**
+**After — `zenpixels 0.5`:**
 ```rust
 use zenpixels::{ImageSpec, PixelBuf};
 use zenpixels_convert::{ConvertPolicy, RowPlan};
@@ -80,22 +141,45 @@ use zenpixels_convert::{ConvertPolicy, RowPlan};
 let src = PixelBuf::new(w, h, ImageSpec::RGB8_SRGB)?;
 let plan = RowPlan::build(
     src.spec(),
-    &ImageSpec::RGBA8_SRGB,
+    ImageSpec::rgba8_srgb_ref(),
     &ConvertPolicy::permissive(),
-    None,
+    None, // resolved_source_peak: Option<Nits>
 )?;
 plan.convert_row(src.as_view().row(0), dst_row, w, 0)?;
 ```
 
-For common 8-bit outputs, single-call helpers are available directly on `zenpixels_convert`:
+For whole-image conversion, use `convert_to_buf` or the safe 8-bit helpers:
 ```rust
-let rgb = zenpixels_convert::to_rgb8(&src.as_view())?;
-let gray = zenpixels_convert::to_gray8(&src.as_view())?;
+let linear = zenpixels_convert::convert_to_buf(
+    &src.as_view(),
+    ImageSpec::rgbf32_linear_ref(),
+    &ConvertPolicy::permissive(),
+    zenpixels_convert::PeakSource::Measured,
+)?;
+let rgb = zenpixels_convert::to_rgb8(&linear.as_view())?;
+let gray = zenpixels_convert::to_gray8(&linear.as_view())?;
 ```
 
-### Zero-Copy External Owned Data into `PixelBuf` / `OwnedPlane`
+### Zero-Allocation Borrowed Views (`&'a ImageSpec` vs `SpecCow`)
 
-In 0.5, external buffers (`Vec<T>`, `Box<[T]>`, `Arc<[T]>`, FFI allocations, memory-mapped slices, or custom pools) move into `PixelBuf` or `OwnedPlane` with **zero copies** via `ByteStorage` / `ByteStorageMut`:
+Normal `PixelView` / `PixelViewMut` constructors take `&'a ImageSpec` so view construction **never allocates**:
+
+```rust
+use zenpixels::{ImageSpec, PixelFormat, PixelView, SpecCow};
+
+// Zero heap allocation: borrow a static preset ref (or any local `ImageSpec`):
+let view = PixelView::from_bytes(rgb_bytes, w, h, ImageSpec::rgb8_srgb_ref())?;
+
+// Only when a view must carry an owned/shared spec (e.g. a dynamically built custom spec),
+// opt in explicitly via `new_with_spec_cow` + `SpecCow`:
+let view_cow = PixelView::new_with_spec_cow(
+    rgb_bytes, w, h, stride, SpecCow::from_format(PixelFormat::RGB8_SRGB), // 0-alloc for presets!
+)?;
+```
+
+### Zero-Copy External Owned Data into `PixelBuf` / `PlaneBuf`
+
+External buffers (`Vec<T>`, `Box<[T]>`, `Arc<[T]>`, FFI allocations, memory-mapped slices, or custom pools) move into `PixelBuf` or `PlaneBuf` with **zero copies** via `ByteStorage` / `ByteStorageMut`:
 
 ```rust
 use std::sync::Arc;
@@ -113,7 +197,7 @@ let view = buf.as_view();
 let mut mut_view = buf.try_as_view_mut()?;
 ```
 
-For mutable zero-copy external ownership (in-place mutation without CoW), implement `ByteStorageMut` and construct via `PixelBuf::from_external_mut` or `OwnedPlane::from_external_mut`.
+For mutable zero-copy external ownership (in-place mutation without CoW), implement `ByteStorageMut` and construct via `PixelBuf::from_external_mut` or `PlaneBuf::from_external_mut`.
 
 ### Sound `AlphaMode::Opaque` Allocation & Fast Fill-Then-Retag
 
@@ -124,7 +208,7 @@ use zenpixels::{ImageSpec, PixelBuf};
 
 let mut buf = PixelBuf::new_zeroed(w, h, ImageSpec::RGBA8_SRGB)?; // refuses AlphaMode::Opaque
 // ... write all pixels including A = 255 ...
-let opaque = buf.into_opaque_verified()?; // or `assume_opaque()` / `into_opaque_filled()`
+let opaque = buf.into_opaque_verified()?; // scans active pixels itself; or `assume_opaque()` / `into_opaque_filled()`
 ```
 
 ### RGB -> Gray Luma Domain (`Encoded` vs `LinearLight`)
@@ -141,9 +225,9 @@ let policy = ConvertPolicy::permissive().with_luma_domain(LumaDomain::LinearLigh
 ### Encoder Output Adaptation (`OutputPlan` / `adapt_for_encode`)
 
 ```rust
-use zenpixels::{ColorOrigin, ImageSpec, PixelFormat};
+use zenpixels::{ImageSpec, PixelFormat};
 use zenpixels_convert::{
-    ConvertPolicy, OutputPlan, OutputProfile, PeakSource, adapt_for_encode, adapt_for_encode_format,
+    ConvertPolicy, OutputPlan, OutputProfile, PeakSource, adapt_for_encode_format,
 };
 
 // Quick one-shot adaptation over Copy `PixelFormat` slices (borrows zero-copy when compatible):
@@ -156,27 +240,26 @@ let (chosen, ready) = adapt_for_encode_format(
     OutputProfile::Auto,
 )?;
 
-// Or build a reusable OutputPlan with zero-clone `&ImageSpec`:
+// Or build a reusable OutputPlan borrowing specs & policy (cloned internally into the plan):
 let out_plan = OutputPlan::build(
     buf.spec(),
-    &ImageSpec::RGB8_SRGB,
-    ConvertPolicy::permissive(),
+    ImageSpec::rgb8_srgb_ref(),
+    &ConvertPolicy::permissive(),
     PeakSource::Measured,
     OutputProfile::Auto,
 )?;
 ```
 
-Notes on 0.5 safety fixes & ergonomics:
-- Converting unverified `RGBA8` (`AlphaMode::Straight` or unverified `Opaque`, including `RGB10A2`) to `AlphaMode::Opaque` canonicalizes alpha to channel max instead of bypassing; it remains zero-copy whenever `view.facts().all_opaque` or `policy.source_facts.all_opaque` is proven.
-- `MetadataOnly` ICC profiles (profiles recognized for identification but not safe for matrix+TRC substitution) are rejected when targeting structured `ColorSpace::Rgb` / `ColorSpace::Gray` without a CMS, while remaining valid on explicit `ColorSpace::Icc`.
-- `OutputPlan` refuses `Transfer::Hlg(HlgMode::Display(_))` on the **destination** spec (`dst`) under `OutputProfile::CicpOnly` and `OutputProfile::Auto` (`ConvertError::OutputSignalingUnavailable`) because CICP cannot signal display rendering parameters (converting *from* display HLG to sRGB/PQ succeeds).
-- Fallible APIs return `whereat::At<E>` — match the underlying enum with `*err.error()` or `err.into_inner()`.
-- `PixelBuf::from_vec` enforces typed element compatibility with `spec.layout`: annotate integer literals (`vec![255u8, ...]`, not untyped `vec![255, ...]`, which Rust infers as `Vec<i32>`).
-- `PixelBuf::into_opaque_verified()` scans every active pixel itself (no prior `set_facts` call needed).
-- `CicpTag` 44-byte custom-primaries encoding quantizes `(x, y)` to signed `s15Fixed16Number` (`1 / 65536`); compare tag bytes or `CustomPrimaries::to_s15fixed16()` after wire round-trip rather than raw decimal `f32` presets.
-- `DualLayerHdr`: use `rotate_metadata` / `with_orientation` for O(1) EXIF updates, or `rotate_dual_layer` / `bake_dual_layer_orientation` to physically rotate both layers and reset `orientation()` to `Identity`. When rebuilding from `DualLayerHdrParts`, keep `base.orientation()` and `gain_map.orientation()` equal to `parts.orientation` (or both `Identity`). Pass `&zenpixels_convert::Unstoppable` (re-exported from `enough`) to gain-map APIs accepting `&dyn Stop`.
-- `load_bearing`: `reduce_to_load_bearing_format_in_place(false)` retags opaque alpha zero-move; pass `true` to physically drop unused alpha/padding lanes in place.
-- `imgref` interop: `imgref::ImgVec::new(pixels, width, height)` takes `(pixels, w, h)` and indexes via `img[(x_usize, y_usize)]`; `PixelView` exposes both `rows()` and `height()`.
+### Orientation Verb Table
+
+| Operation | 0.5 API | Contract |
+|---|---|---|
+| Replace metadata | `with_orientation(self, o)` / `set_orientation(&mut self, o)` | Sets pending orientation to `o` in O(1); no pixel movement |
+| Compose metadata | `compose_orientation(self, delta)` (on all 9 carriers/views) | Sets pending orientation to `old.then(delta)` in O(1) (includes flips) |
+| Explicit physical transform | `apply_orientation(&view, o)` / `apply_orientation_owned(buf, o)` / `apply_orientation_banded(&bands, o, max_bytes)` | Physically transforms stored pixels by **exactly `o`** (does not compose pending orientation); output carries `Orientation::Identity` (`apply_orientation_owned(_, Identity)` stays zero-copy) |
+| Explicit into caller sink | `apply_orientation_into(&view, o, &mut dst)` / `apply_orientation_banded_into(...)` | Writes transformed pixels into caller-owned destination with zero allocation |
+| Bake pending orientation | `bake_orientation(&view)` / `bake_orientation_owned(buf)` / `bake_orientation_banded(&bands, max_bytes)` | Consumes pending `orientation()`, transforms pixels, emits `Orientation::Identity` (owned fast path is zero-copy on `Identity`) |
+| Dual-layer physical bake | `bake_dual_layer_orientation(&view)` / `bake_dual_layer_orientation_after(&view, delta)` | Transforms both base & gain map by `pending` (or `pending.then(delta)`), emitting `Orientation::Identity` |
 
 ### Pluggable CMS (`MoxCms` and `Lcms`)
 
@@ -192,7 +275,7 @@ let mox_pol = ConvertPolicy::permissive().with_cms(Arc::new(MoxCms));
 let lcms_pol = ConvertPolicy::permissive().with_cms(Arc::new(Lcms));
 ```
 
-### Zero-Copy Planar YCbCr / RGB & Orientation
+### Zero-Copy Planar YCbCr / RGB, Load-Bearing & Orientation
 
 ```rust
 use zenpixels::{
@@ -200,27 +283,38 @@ use zenpixels::{
     SampleLayout, SampleType,
 };
 use zenpixels_convert::{
-    YcbcrOptions, apply_orientation_banded_into, bake_orientation_buf, orient_banded,
-    ycbcr_to_rgb_from_planar, ycbcr_to_rgb_with_options,
+    AlphaCompaction, PixelBufLoadBearingExt, YcbcrOptions, apply_orientation_banded,
+    apply_orientation_banded_into, bake_orientation_owned, ycbcr_to_rgb_from_planar,
+    ycbcr_to_rgb_with_options,
 };
 
-// Borrow codec-native typed planes zero-copy (stride is in S elements, not bytes;
-// `plane.code_u32(x, y, 0)` takes component index `0` for 1-channel planes):
-let py = PlaneView::from_samples(PlaneSpec::new(PlaneRole::Y, SampleType::U8), w, h, y_stride, y_slice)?;
-let pcb = PlaneView::from_samples(PlaneSpec::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2), cw, ch, c_stride, cb_slice)?;
-let pcr = PlaneView::from_samples(PlaneSpec::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2), cw, ch, c_stride, cr_slice)?;
+// Borrow codec-native typed planes zero-copy: uniform `(samples, w, h, element_stride, spec)` order;
+// `plane.code_u32(x, y, 0)` takes component index `0` for 1-channel planes:
+let py = PlaneView::from_samples(y_slice, w, h, y_stride, PlaneSpec::new(PlaneRole::Y, SampleType::U8))?;
+let pcb = PlaneView::from_samples(cb_slice, cw, ch, c_stride, PlaneSpec::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2))?;
+let pcr = PlaneView::from_samples(cr_slice, cw, ch, c_stride, PlaneSpec::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2))?;
 let planar = PlanarView::new(w, h, &[py, pcb, pcr])?
     .with_color(ColorSpace::SRGB)
     .with_ycbcr_matrix_code(1)
     .with_chroma_siting(ChromaSiting::Center);
 
-// Reconstruct directly to RGB8/RGBA8/BGR8/RGB16/RGBF32 with siting-exact Bilinear upsampling
-// (`YcbcrOptions::bilinear()` or `YcbcrOptions::default().with_upsample(ChromaUpsample::Bilinear)`):
+// Reconstruct directly to RGB8/RGBA8/BGR8/RGB16/RGBF32 with siting-exact Bilinear upsampling:
 let rgb8 = ycbcr_to_rgb_with_options(&planar, SampleLayout::RGB8, &YcbcrOptions::bilinear())?;
 let rgbf32 = ycbcr_to_rgb_from_planar(&planar)?;
 
 // Bake pending buffer orientation (zero-copy when already Identity) or rotate banded buffers:
-let display_buf = bake_orientation_buf(rgb8)?;
-let oriented = orient_banded(&src_bands, orient, DEFAULT_MAX_BAND_BYTES)?;
+let mut display_buf = bake_orientation_owned(rgb8)?;
+display_buf.reduce_to_load_bearing_format_in_place(AlphaCompaction::DropUnusedLanes);
+let oriented = apply_orientation_banded(&src_bands, orient, DEFAULT_MAX_BAND_BYTES)?;
 apply_orientation_banded_into(&src_bands, orient, &mut dst_bands)?;
 ```
+
+### Additional 0.5 Safety & Ergonomics Notes
+
+- **Opaque alpha canonicalization:** Converting unverified `RGBA8` (`AlphaMode::Straight` or unverified `Opaque`, including `RGB10A2`) to `AlphaMode::Opaque` canonicalizes alpha to channel max instead of bypassing; it stays zero-copy when `view.facts().all_opaque` or `policy.source_facts.all_opaque` (set via `ConvertPolicy::with_source_facts`) is proven.
+- **`MetadataOnly` ICC profiles:** Rejected when targeting structured `ColorSpace::Rgb` / `ColorSpace::Gray` without a CMS, while remaining valid on explicit `ColorSpace::Icc`.
+- **HLG display signaling:** `OutputPlan` refuses `Transfer::Hlg(HlgMode::Display(_))` on `dst` under `OutputProfile::CicpOnly` and `OutputProfile::Auto` (`ConvertError::OutputSignalingUnavailable`) because CICP cannot signal display rendering parameters (converting *from* display HLG to sRGB/PQ succeeds).
+- **`CicpTag` 44-byte custom primaries:** Encodes `(x, y)` in signed `s15Fixed16Number` (`1 / 65536`); compare tag bytes or `CustomPrimaries::to_s15fixed16()` after wire round-trip rather than raw decimal `f32` presets.
+- **`DualLayerHdrBuf`:** Rebuilding via `DualLayerHdrBuf::from_parts(DualLayerHdrBufParts)` requires `base.orientation()` and `gain_map.orientation()` to match `parts.orientation` (or both `Identity`). Pass `&zenpixels_convert::Unstoppable` (re-exported from `enough`) to gain-map APIs accepting `&dyn Stop`, and configure headroom via `GainMapApplyConfig::from_headroom_stops` / `from_display_boost`.
+- **`load_bearing`:** `reduce_to_load_bearing_format_in_place(AlphaCompaction::RetagOpaque)` retags provably opaque alpha zero-move (while still compacting depth/chroma in-place); `AlphaCompaction::DropUnusedLanes` also drops unused alpha/padding lanes in place. Use `reduce_to_load_bearing_format()` for allocating reduction (`try_reduce_to_load_bearing_format` was removed so OOM errors are never silently conflated with no-op).
+- **`imgref` interop:** `imgref::ImgVec::new(pixels, width, height)` takes `(pixels, w, h)` and indexes via `img[(x_usize, y_usize)]`; `PixelView` exposes both `rows()` and `height()`.

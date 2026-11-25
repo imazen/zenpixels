@@ -51,7 +51,7 @@ pub struct AlignedSamples {
 
 impl AlignedSamples {
     /// Fallibly allocate `byte_len` zeroed bytes on a 64-byte boundary.
-    pub fn try_zeroed_bytes(byte_len: usize) -> Result<Self, StorageError> {
+    pub fn zeroed_bytes(byte_len: usize) -> Result<Self, StorageError> {
         if byte_len > isize::MAX as usize {
             return Err(StorageError::AllocationFailed);
         }
@@ -269,7 +269,7 @@ impl<S: ByteStorageMut + Send + Sync + 'static> ExternalMutObj for S {
 ///
 /// Read access is strictly zero-copy. Requesting mutable access through [`PixelStorage`]
 /// or [`PixelBuf`](crate::PixelBuf) performs copy-on-write promotion into 64-byte aligned
-/// owned storage; calling [`try_into_inner`](Self::try_into_inner) recovers the original
+/// owned storage; calling [`into_inner`](Self::into_inner) recovers the original
 /// owner `S` zero-copy without touching its backing allocation.
 pub struct ExternalStorage {
     inner: Box<dyn ExternalReadObj>,
@@ -327,7 +327,7 @@ impl ExternalStorage {
 
     /// Recover the original external owner `S` zero-copy; returns `Err(self)` untouched if
     /// the stored type is not `S`.
-    pub fn try_into_inner<S: 'static>(self) -> Result<S, Self> {
+    pub fn into_inner<S: 'static>(self) -> Result<S, Self> {
         if self.inner.as_any().is::<S>() {
             match self.inner.into_any().downcast::<S>() {
                 Ok(boxed) => Ok(*boxed),
@@ -356,7 +356,7 @@ impl fmt::Debug for ExternalStorage {
 /// wrappers, mutable pool leases, FFI writable buffers).
 ///
 /// Both read and in-place write access are strictly zero-copy; calling
-/// [`try_into_inner`](Self::try_into_inner) recovers the original owner `S` zero-copy.
+/// [`into_inner`](Self::into_inner) recovers the original owner `S` zero-copy.
 pub struct ExternalMutStorage {
     inner: Box<dyn ExternalMutObj>,
     byte_len: usize,
@@ -429,7 +429,7 @@ impl ExternalMutStorage {
 
     /// Recover the original external owner `S` zero-copy; returns `Err(self)` untouched if
     /// the stored type is not `S`.
-    pub fn try_into_inner<S: 'static>(self) -> Result<S, Self> {
+    pub fn into_inner<S: 'static>(self) -> Result<S, Self> {
         if self.inner.as_any().is::<S>() {
             match self.inner.into_any().downcast::<S>() {
                 Ok(boxed) => Ok(*boxed),
@@ -593,7 +593,7 @@ fn gather_typed<T: bytemuck::Zeroable + bytemuck::Pod>(
 
 impl PixelStorage {
     /// Allocate zeroed storage with exact alignment for `sample`, holding at least `bytes` bytes.
-    pub fn try_zeroed(sample: SampleType, bytes: usize) -> Result<Self, StorageError> {
+    pub fn zeroed(sample: SampleType, bytes: usize) -> Result<Self, StorageError> {
         if bytes > isize::MAX as usize {
             return Err(StorageError::AllocationFailed);
         }
@@ -620,8 +620,8 @@ impl PixelStorage {
 
     /// Allocate 64-byte SIMD-aligned zeroed storage.
     #[inline]
-    pub fn try_zeroed_aligned64(bytes: usize) -> Result<Self, StorageError> {
-        Ok(Self::Aligned64(AlignedSamples::try_zeroed_bytes(bytes)?))
+    pub fn zeroed_aligned64(bytes: usize) -> Result<Self, StorageError> {
+        Ok(Self::Aligned64(AlignedSamples::zeroed_bytes(bytes)?))
     }
 
     /// Wrap an immutable external owned buffer (`Arc<[T]>`, mmap, `&'static [T]`, etc.) zero-copy.
@@ -674,17 +674,17 @@ impl PixelStorage {
     }
 
     /// Recover an immutable external owner `S` zero-copy; returns `Err(self)` untouched otherwise.
-    pub fn try_into_external<S: 'static>(self) -> Result<S, Self> {
+    pub fn into_external<S: 'static>(self) -> Result<S, Self> {
         match self {
-            Self::External(ext) => ext.try_into_inner::<S>().map_err(Self::External),
+            Self::External(ext) => ext.into_inner::<S>().map_err(Self::External),
             other => Err(other),
         }
     }
 
     /// Recover a mutable external owner `S` zero-copy; returns `Err(self)` untouched otherwise.
-    pub fn try_into_external_mut<S: 'static>(self) -> Result<S, Self> {
+    pub fn into_external_mut<S: 'static>(self) -> Result<S, Self> {
         match self {
-            Self::ExternalMut(ext) => ext.try_into_inner::<S>().map_err(Self::ExternalMut),
+            Self::ExternalMut(ext) => ext.into_inner::<S>().map_err(Self::ExternalMut),
             other => Err(other),
         }
     }
@@ -696,7 +696,7 @@ impl PixelStorage {
     pub fn try_as_bytes_mut(&mut self) -> Result<&mut [u8], StorageError> {
         if let Self::External(ext) = self {
             let src = ext.as_bytes();
-            let mut aligned = AlignedSamples::try_zeroed_bytes(src.len())?;
+            let mut aligned = AlignedSamples::zeroed_bytes(src.len())?;
             aligned.as_bytes_mut().copy_from_slice(src);
             *self = Self::Aligned64(aligned);
         }
@@ -719,15 +719,15 @@ impl PixelStorage {
     }
 
     /// Gather row slices into fresh tightly packed storage of `sample`'s native alignment.
-    pub fn try_from_rows<'r>(
+    pub fn from_rows<'r>(
         sample: SampleType,
         total_bytes: usize,
         mut rows: impl Iterator<Item = &'r [u8]>,
     ) -> Result<Self, StorageError> {
-        Self::try_from_rows_dyn(sample, total_bytes, &mut rows)
+        Self::from_rows_dyn(sample, total_bytes, &mut rows)
     }
 
-    fn try_from_rows_dyn(
+    fn from_rows_dyn(
         sample: SampleType,
         total_bytes: usize,
         rows: &mut dyn Iterator<Item = &[u8]>,
@@ -779,10 +779,7 @@ impl PixelStorage {
     ///
     /// On mismatch (e.g., an over-aligned pixel type), returns `Err(pixels)`
     /// untouched without allocating.
-    pub fn try_adopt_vec<P: bytemuck::Pod>(
-        pixels: Vec<P>,
-        sample: SampleType,
-    ) -> Result<Self, Vec<P>> {
+    pub fn adopt_vec<P: bytemuck::Pod>(pixels: Vec<P>, sample: SampleType) -> Result<Self, Vec<P>> {
         use bytemuck::allocation::try_cast_vec;
         match sample {
             SampleType::U8 => try_cast_vec::<P, u8>(pixels)
@@ -826,7 +823,7 @@ impl PixelStorage {
     /// length and byte capacity are exact multiples of `size_of::<P>()`.
     ///
     /// Returns `Err(self)` untouched otherwise (never UB, never copies).
-    pub fn try_cast_into_vec<P: bytemuck::Pod>(self) -> Result<Vec<P>, Self> {
+    pub fn cast_into_vec<P: bytemuck::Pod>(self) -> Result<Vec<P>, Self> {
         use bytemuck::allocation::try_cast_vec;
         match self {
             Self::U8(v) => try_cast_vec(v).map_err(|(_, v)| Self::U8(v)),
@@ -849,7 +846,7 @@ impl PixelStorage {
 
     /// Extract the exact sample-typed `Vec<T>` zero-copy when the variant matches.
     #[inline]
-    pub fn try_into_sample_vec<T: StorageSample>(self) -> Result<Vec<T>, Self> {
+    pub fn into_sample_vec<T: StorageSample>(self) -> Result<Vec<T>, Self> {
         T::from_storage(self)
     }
 
@@ -891,7 +888,7 @@ impl PixelStorage {
         }
     }
 
-    /// Whether truncating to `target_bytes` and calling `try_cast_into_vec::<P>`
+    /// Whether truncating to `target_bytes` and calling `cast_into_vec::<P>`
     /// will succeed zero-copy without violating deallocation alignment or capacity.
     #[inline]
     #[must_use]
@@ -954,13 +951,13 @@ impl PixelStorage {
             Self::Aligned64(a) => Ok(Self::Aligned64(a.try_clone()?)),
             Self::External(e) => {
                 let src = e.as_bytes();
-                let mut aligned = AlignedSamples::try_zeroed_bytes(src.len())?;
+                let mut aligned = AlignedSamples::zeroed_bytes(src.len())?;
                 aligned.as_bytes_mut().copy_from_slice(src);
                 Ok(Self::Aligned64(aligned))
             }
             Self::ExternalMut(e) => {
                 let src = e.as_bytes();
-                let mut aligned = AlignedSamples::try_zeroed_bytes(src.len())?;
+                let mut aligned = AlignedSamples::zeroed_bytes(src.len())?;
                 aligned.as_bytes_mut().copy_from_slice(src);
                 Ok(Self::Aligned64(aligned))
             }

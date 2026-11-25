@@ -44,9 +44,18 @@ pub fn apply_orientation(
     Ok(out)
 }
 
-/// Apply `orientation` to an owned [`PixelBuf`], returning `buf` zero-copy on [`Orientation::Identity`].
-pub fn orient_buf(buf: PixelBuf, orientation: Orientation) -> Result<PixelBuf, At<ConvertError>> {
+/// Apply explicit `orientation` to an owned [`PixelBuf`], returning `buf` **zero-copy** on
+/// [`Orientation::Identity`] and always emitting [`Orientation::Identity`] metadata on the result
+/// (matching [`apply_orientation`]).
+///
+/// Pending input `buf.orientation()` is not implicitly composed; use [`bake_orientation_owned`]
+/// to apply and clear pending orientation.
+pub fn apply_orientation_owned(
+    mut buf: PixelBuf,
+    orientation: Orientation,
+) -> Result<PixelBuf, At<ConvertError>> {
     if orientation == Orientation::Identity {
+        buf.set_orientation(Orientation::Identity);
         return Ok(buf);
     }
     apply_orientation(&buf.as_view(), orientation)
@@ -61,7 +70,7 @@ pub fn bake_orientation(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError
 /// Physically bake `buf.orientation()` into pixels, returning `buf` **zero-copy** when
 /// `buf.orientation() == Orientation::Identity` and clearing the resulting orientation to
 /// [`Orientation::Identity`].
-pub fn bake_orientation_buf(buf: PixelBuf) -> Result<PixelBuf, At<ConvertError>> {
+pub fn bake_orientation_owned(buf: PixelBuf) -> Result<PixelBuf, At<ConvertError>> {
     let orient = buf.orientation();
     if orient == Orientation::Identity {
         return Ok(buf);
@@ -75,14 +84,15 @@ pub fn bake_orientation_banded(
     src: &BandedBuf,
     max_band_bytes: usize,
 ) -> Result<BandedBuf, At<ConvertError>> {
-    orient_banded(src, src.orientation(), max_band_bytes)
+    apply_orientation_banded(src, src.orientation(), max_band_bytes)
 }
 
-/// Apply `orientation` to a [`BandedBuf`], returning a freshly allocated [`BandedBuf`]
-/// with each band bounded by `max_band_bytes` and **zero full-frame contiguous allocation**.
+/// Apply explicit `orientation` to a [`BandedBuf`], returning a freshly allocated [`BandedBuf`]
+/// with each band bounded by `max_band_bytes`, [`Orientation::Identity`] metadata, and
+/// **zero full-frame contiguous allocation**.
 ///
 /// Preserves `src.hdr()`, `src.facts()`, and `src.origin()`.
-pub fn orient_banded(
+pub fn apply_orientation_banded(
     src: &BandedBuf,
     orientation: Orientation,
     max_band_bytes: usize,

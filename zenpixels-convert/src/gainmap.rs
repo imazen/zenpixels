@@ -10,13 +10,13 @@
 //!   SDR alternate, `H_base > H_alt`) with signed weight, exact [`GainMapTarget::AlternateRendition`]
 //!   / [`GainMapTarget::BaseRendition`] endpoints, and zero-weight identity bypass.
 //! - **Multiple orientation models:**
-//!   - O(1) EXIF passthrough metadata rotate via [`DualLayerHdr::rotate_metadata`] /
-//!     [`DualLayerHdrView::rotate_metadata`] (zero pixel rebake, both layers kept aligned).
+//!   - O(1) EXIF passthrough metadata compose via [`DualLayerHdrBuf::compose_orientation`] /
+//!     [`DualLayerHdrView::compose_orientation`] (zero pixel rebake, both layers kept aligned).
 //!   - Whole-image apply policy [`GainMapOrientation`] (`Bake` to upright display pixels,
 //!     `Passthrough` returning `(PixelBuf, Orientation)` with zero transpose via
 //!     [`apply_gain_map_oriented`], or `RequireIdentity`).
-//!   - Coordinated pixel-level dual-layer baking & rotation via [`bake_dual_layer_orientation`]
-//!     and [`rotate_dual_layer`] keeping `base` and `gain_map` strictly registered.
+//!   - Coordinated pixel-level dual-layer baking via [`bake_dual_layer_orientation`]
+//!     and [`bake_dual_layer_orientation_after`] keeping `base` and `gain_map` strictly registered.
 //! - **Separable resampling (`zenresize` center-sited math):** [`GainMapResample::Bilinear`],
 //!   [`GainMapResample::Bicubic`], [`GainMapResample::Mitchell`], and [`GainMapResample::Nearest`],
 //!   with cached horizontally-upsampled gain rows and 8-element padded scratch rows so SIMD
@@ -31,10 +31,11 @@ use core::num::NonZeroU32;
 use enough::{Stop, Unstoppable};
 use whereat::At;
 use zenpixels::{
-    AlphaMode, BitPacking, ChannelOrder, ColorSpace, DiffuseWhite, DualLayerHdr, DualLayerHdrView,
-    GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapDirection, GainMapMetadata,
-    HdrMetadata, ImageSpec, Orientation, PixelBuf, PixelSink, PixelSource, PixelView, Primaries,
-    SampleFacts, SampleLayout, SampleType, SignalRange, SignedFraction, Transfer, UnsignedFraction,
+    AlphaMode, BitPacking, ChannelOrder, ColorSpace, DiffuseWhite, DualLayerHdrBuf,
+    DualLayerHdrView, GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapDirection,
+    GainMapMetadata, HdrMetadata, ImageSpec, Orientation, PixelBuf, PixelSink, PixelSource,
+    PixelView, Primaries, SampleFacts, SampleLayout, SampleType, SignalRange, SignedFraction,
+    Transfer, UnsignedFraction,
 };
 
 use crate::accel::{self, Accelerators};
@@ -79,7 +80,7 @@ pub enum GainMapTarget {
     BaseRendition,
 }
 
-/// Policy controlling how pending EXIF [`Orientation`] on a [`DualLayerHdr`] /
+/// Policy controlling how pending EXIF [`Orientation`] on a [`DualLayerHdrBuf`] /
 /// [`DualLayerHdrView`] is handled during whole-image gain-map reconstruction.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -588,10 +589,10 @@ pub struct GainMapApplyConfig {
 }
 
 impl GainMapApplyConfig {
-    /// Create a default configuration for `display_headroom_stops` (log₂ stops).
+    /// Create a default configuration for `display_headroom_stops` (log₂ stops, e.g. `2.0` = 4× display boost).
     #[inline(always)]
     #[must_use]
-    pub fn new(display_headroom_stops: f32) -> Self {
+    pub fn from_headroom_stops(display_headroom_stops: f32) -> Self {
         Self::with_target_default(GainMapTarget::HeadroomStops(display_headroom_stops))
     }
 
@@ -599,7 +600,7 @@ impl GainMapApplyConfig {
     #[inline(always)]
     #[must_use]
     pub fn from_display_boost(display_boost: f32) -> Self {
-        Self::new(display_boost_to_headroom_stops(display_boost))
+        Self::from_headroom_stops(display_boost_to_headroom_stops(display_boost))
     }
 
     /// Create a configuration targeting exact full alternate reconstruction (`|weight| == 1.0`).
@@ -643,7 +644,7 @@ impl GainMapApplyConfig {
         self
     }
 
-    /// Select how pending EXIF orientation on [`DualLayerHdr`] / [`DualLayerHdrView`] is handled.
+    /// Select how pending EXIF orientation on [`DualLayerHdrBuf`] / [`DualLayerHdrView`] is handled.
     #[inline(always)]
     #[must_use]
     pub fn with_orientation(mut self, orientation: GainMapOrientation) -> Self {
@@ -1840,13 +1841,13 @@ pub fn apply_gain_map_oriented(
 }
 
 /// Reconstruct a linear-light [`PixelBuf`] (`RGBF32` / `RGBAF32`) from an owned
-/// [`DualLayerHdr`] at `display_headroom_stops` (log₂ stops, e.g. `0.0` = SDR,
+/// [`DualLayerHdrBuf`] at `display_headroom_stops` (log₂ stops, e.g. `0.0` = SDR,
 /// `2.32` ≈ 5× / 1000-nit HDR display), baking `dual.orientation()` to display orientation.
 pub fn apply_gain_map(
-    dual: &DualLayerHdr,
+    dual: &DualLayerHdrBuf,
     display_headroom_stops: f32,
 ) -> Result<PixelBuf, At<ConvertError>> {
-    let cfg = GainMapApplyConfig::new(display_headroom_stops);
+    let cfg = GainMapApplyConfig::from_headroom_stops(display_headroom_stops);
     apply_gain_map_with(&dual.as_view(), &cfg, &Unstoppable)
 }
 
@@ -1858,7 +1859,8 @@ pub fn apply_gain_map_view(
     display_headroom_stops: f32,
     policy: &ConvertPolicy,
 ) -> Result<PixelBuf, At<ConvertError>> {
-    let cfg = GainMapApplyConfig::new(display_headroom_stops).with_policy(policy.clone());
+    let cfg =
+        GainMapApplyConfig::from_headroom_stops(display_headroom_stops).with_policy(policy.clone());
     apply_gain_map_with(dual, &cfg, &Unstoppable)
 }
 
@@ -1886,35 +1888,35 @@ pub fn apply_gain_map_with(
 }
 
 /// Physically bake `dual.orientation()` into both `base` and `gain_map`, returning an owned
-/// aligned [`DualLayerHdr`] with [`Orientation::Identity`].
+/// aligned [`DualLayerHdrBuf`] with [`Orientation::Identity`].
 ///
 /// Both layers receive the exact same dihedral transform so their stored-frame coordinates
 /// stay registered (including subsampled ¼-res gain maps under pixel-center siting).
 /// For O(1) lossless EXIF passthrough without rebaking pixels, use
-/// [`DualLayerHdr::rotate_metadata`] instead.
+/// [`DualLayerHdrBuf::compose_orientation`] instead.
 #[inline(never)]
 pub fn bake_dual_layer_orientation(
     dual: &DualLayerHdrView<'_>,
-) -> Result<DualLayerHdr, At<ConvertError>> {
-    rotate_dual_layer(dual, Orientation::Identity)
+) -> Result<DualLayerHdrBuf, At<ConvertError>> {
+    bake_dual_layer_orientation_after(dual, Orientation::Identity)
 }
 
-/// Physically apply `dual.orientation().then(delta)` to both `base` and `gain_map`, keeping
-/// both layers strictly registered and returning an owned [`DualLayerHdr`] with
+/// Physically bake `dual.orientation().then(delta)` into both `base` and `gain_map`, keeping
+/// both layers strictly registered and returning an owned [`DualLayerHdrBuf`] with
 /// [`Orientation::Identity`].
 ///
 /// Preserves `metadata`, `alternate_color_space`, and per-layer `HdrMetadata` / `SampleFacts`.
-/// For O(1) EXIF passthrough metadata rotation without pixel rebake, use
-/// [`DualLayerHdr::rotate_metadata`] / [`DualLayerHdrView::rotate_metadata`].
+/// For O(1) EXIF passthrough metadata composition without pixel rebake, use
+/// [`DualLayerHdrBuf::compose_orientation`] / [`DualLayerHdrView::compose_orientation`].
 #[inline(never)]
-pub fn rotate_dual_layer(
+pub fn bake_dual_layer_orientation_after(
     dual: &DualLayerHdrView<'_>,
     delta: Orientation,
-) -> Result<DualLayerHdr, At<ConvertError>> {
+) -> Result<DualLayerHdrBuf, At<ConvertError>> {
     let total = dual.orientation().then(delta);
     let base = orient::apply_orientation(dual.base(), total)?;
     let gain_map = orient::apply_orientation(dual.gain_map(), total)?;
-    DualLayerHdr::new_with_alternate(
+    DualLayerHdrBuf::new_with_alternate(
         base,
         gain_map,
         dual.metadata(),
@@ -2158,7 +2160,7 @@ impl GainMapExtractConfig {
         };
         let h_base = unsigned_fraction_from_f32(self.base_hdr_headroom_stops);
         let h_alt = unsigned_fraction_from_f32(self.alternate_hdr_headroom_stops);
-        GainMapMetadata::try_new(channels, h_base, h_alt, self.application_space)
+        GainMapMetadata::new(channels, h_base, h_alt, self.application_space)
             .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))
     }
 
@@ -2406,7 +2408,7 @@ impl GainMapRowExtractor {
             let clamped = self.observed_max_stops.clamp(grid_lo, grid_hi);
             if clamped > out.alternate_hdr_headroom.to_f32() {
                 let candidate = unsigned_fraction_from_f32(clamped);
-                if let Some(updated) = GainMapMetadata::try_new(
+                if let Some(updated) = GainMapMetadata::new(
                     out.channels,
                     out.base_hdr_headroom,
                     candidate,
@@ -2577,7 +2579,7 @@ fn content_fit_config(
     out
 }
 
-/// Extract an ISO 21496-1 [`DualLayerHdr`] at 1:1 resolution from `base_src` and
+/// Extract an ISO 21496-1 [`DualLayerHdrBuf`] at 1:1 resolution from `base_src` and
 /// `alternate_src` using exact caller-supplied `metadata` verbatim.
 ///
 /// For subsampled maps, content-fit grids, 10/12-bit maps, or avoiding a base buffer copy,
@@ -2586,7 +2588,7 @@ pub fn extract_gain_map(
     base_src: &PixelView<'_>,
     alternate_src: &PixelView<'_>,
     metadata: GainMapMetadata,
-) -> Result<DualLayerHdr, At<ConvertError>> {
+) -> Result<DualLayerHdrBuf, At<ConvertError>> {
     let gm_spec = if metadata.channels.is_multichannel() {
         ImageSpec::new(
             SampleLayout::RGB8,
@@ -2617,7 +2619,7 @@ pub fn extract_gain_map(
     )?;
 
     let base_owned = base_src
-        .try_to_tight_buf()
+        .to_tight_buf()
         .map_err(|e| err_at((*e.error()).into()))?;
     let alt_color = if metadata.application_space == GainMapColorSpace::Alternate
         || alternate_src.spec().color != base_src.spec().color
@@ -2626,7 +2628,7 @@ pub fn extract_gain_map(
     } else {
         None
     };
-    DualLayerHdr::new_with_alternate(
+    DualLayerHdrBuf::new_with_alternate(
         base_owned,
         gain_buf,
         metadata,

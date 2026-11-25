@@ -494,7 +494,7 @@ fn portable_xxh3_digests_are_invariant_across_simd_and_stride() {
         let out_sc = ImagePlan::build(
             src_spec.clone(),
             dst_spec.clone(),
-            pol.clone().with_accelerators(Accelerators::SCALAR),
+            &pol.clone().with_accelerators(Accelerators::SCALAR),
             PeakSource::Measured,
         )
         .unwrap()
@@ -503,7 +503,7 @@ fn portable_xxh3_digests_are_invariant_across_simd_and_stride() {
         let out_all = ImagePlan::build(
             src_spec.clone(),
             dst_spec.clone(),
-            pol.with_accelerators(Accelerators::ALL),
+            &pol.with_accelerators(Accelerators::ALL),
             PeakSource::Measured,
         )
         .unwrap()

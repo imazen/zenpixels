@@ -6,7 +6,7 @@
 //! - `PixelView` / `PixelBuf` origin carriage across borrow, crop, sub_rows, tight copy [B21]
 //! - `imgref` active-extent trim (trailing bytes) + consuming `into_crop`/`into_sub_rows` [B22]
 //! - `PlaneSpec` role arity, `PlanarView::crop` odd-origin phase, alignment checks [B23, B24]
-//! - `DualLayerHdr::new_with_alternate`, `into_parts` roundtrip, `GainMapMetadata::try_symmetric` [B26, B27]
+//! - `DualLayerHdrBuf::new_with_alternate`, `into_parts` roundtrip, `GainMapMetadata::try_symmetric` [B26, B27]
 //! - `Cicp::try_from_bytes` range validation [B38]
 //! - `PixelBuf::new` `AlphaMode::Opaque` stored max alpha + `image` interop canonicalization [A09, B07, D06]
 //! - `CustomPrimaries::ACES_AP0` + singularity refusal [B09]
@@ -17,7 +17,7 @@ use core::num::NonZeroU32;
 
 use zenpixels::{
     AlphaMode, BufferError, ChannelOrder, ChromaSiting, ChromaSubsampling, Chromaticity, Cicp,
-    CodePlane, ColorOrigin, ColorSpace, ContentLightLevel, CustomPrimaries, DualLayerHdr,
+    CodePlane, ColorOrigin, ColorSpace, ContentLightLevel, CustomPrimaries, DualLayerHdrBuf,
     DualLayerHdrView, ExactDepth, ExactDepthError, F16Sample, GainMapChannels, GainMapColorSpace,
     GainMapComponent, GainMapMetadata, Gamma, HdrMetadata, ImageSpec, MasteringDisplay,
     Orientation, PixelBuf, PixelStorage, PixelView, PlanarBuf, PlanarView, PlaneRole, PlaneSpec,
@@ -63,7 +63,7 @@ fn exact_depth_grid_nesting_and_independent_color_alpha_measurement() {
         1,
         2,
         12,
-        ImageSpec::rgba16_srgb(),
+        ImageSpec::rgba16_srgb_ref(),
     )
     .unwrap();
     let d = ExactDepth::measure(&view).unwrap();
@@ -80,14 +80,8 @@ fn exact_depth_grid_nesting_and_independent_color_alpha_measurement() {
     // (narrow 8-bit codes live at multiples of 256: [0x1000, 0x8000, 0xEB00]!).
     let narrow_spec = ImageSpec::rgb16_srgb().with_range(SignalRange::Narrow);
     let rep_narrow: [u16; 3] = [0x1010, 0x8080, 0xEBEB];
-    let rep_view = PixelView::new(
-        bytemuck::cast_slice(&rep_narrow),
-        1,
-        1,
-        6,
-        narrow_spec.clone(),
-    )
-    .unwrap();
+    let rep_view =
+        PixelView::new(bytemuck::cast_slice(&rep_narrow), 1, 1, 6, &narrow_spec).unwrap();
     let d_rep = ExactDepth::measure(&rep_view).unwrap();
     assert!(
         !d_rep.color_exact_at(8),
@@ -97,7 +91,7 @@ fn exact_depth_grid_nesting_and_independent_color_alpha_measurement() {
 
     let exact_narrow: [u16; 3] = [0x1000, 0x8000, 0xEB00];
     let exact_view =
-        PixelView::new(bytemuck::cast_slice(&exact_narrow), 1, 1, 6, narrow_spec).unwrap();
+        PixelView::new(bytemuck::cast_slice(&exact_narrow), 1, 1, 6, &narrow_spec).unwrap();
     let d_ex = ExactDepth::measure(&exact_view).unwrap();
     assert_eq!(d_ex.color_bits(), 8);
     assert!(d_ex.color_exact_at(8));
@@ -108,20 +102,13 @@ fn exact_depth_grid_nesting_and_independent_color_alpha_measurement() {
         ColorSpace::SRGB.with_alpha(AlphaMode::Undefined),
     );
     let rgbx_words: [u16; 4] = [0x2323, 0x7878, 0xCDCD, 0x1357];
-    let rgbx_view = PixelView::new(
-        bytemuck::cast_slice(&rgbx_words),
-        1,
-        1,
-        8,
-        rgbx_spec.clone(),
-    )
-    .unwrap();
+    let rgbx_view = PixelView::new(bytemuck::cast_slice(&rgbx_words), 1, 1, 8, &rgbx_spec).unwrap();
     let d_rgbx = ExactDepth::measure(&rgbx_view).unwrap();
     assert_eq!(d_rgbx.color_bits(), 8);
     // And 4-bit replicated RGB [0x2222, 0x7777, 0xCCCC] with off-grid X=0x1357 measures tightest 4-bit!
     let rgbx_4b: [u16; 4] = [0x2222, 0x7777, 0xCCCC, 0x1357];
     let d_rgbx_4b = ExactDepth::measure(
-        &PixelView::new(bytemuck::cast_slice(&rgbx_4b), 1, 1, 8, rgbx_spec).unwrap(),
+        &PixelView::new(bytemuck::cast_slice(&rgbx_4b), 1, 1, 8, &rgbx_spec).unwrap(),
     )
     .unwrap();
     assert_eq!(d_rgbx_4b.color_bits(), 4);
@@ -184,20 +171,20 @@ fn sample_encoding_and_code_plane_contracts() {
 
 #[test]
 fn typed_from_vec_rejects_mismatched_types_while_from_raw_pod_explicitly_reinterprets() {
-    // B19: `vec![0x3f800000_i32; 3]` MUST NOT adopt as RGBF32 via typed `PixelBuf::from_vec`!
+    // B19: `vec![0x3f800000_i32; 3]` MUST NOT adopt as RGBF32 via typed `PixelBuf::from_typed`!
     let bad_i32 = vec![0x3f80_0000_i32; 3];
-    let err = PixelBuf::from_vec(bad_i32, 1, 1, ImageSpec::rgbf32_linear()).unwrap_err();
+    let err = PixelBuf::from_typed(bad_i32, 1, 1, ImageSpec::rgbf32_linear()).unwrap_err();
     assert_eq!(*err.error(), BufferError::IncompatibleLayout);
 
     // U32 rejected as RGBF32, U16 rejected as RGBF16, F16Sample rejected as RGB16.
-    assert!(PixelBuf::from_vec(vec![0u32; 3], 1, 1, ImageSpec::rgbf32_linear()).is_err());
-    assert!(PixelBuf::from_vec(vec![0u16; 3], 1, 1, ImageSpec::rgbf16_linear()).is_err());
-    assert!(PixelBuf::from_vec(vec![F16Sample::ZERO; 3], 1, 1, ImageSpec::rgb16_srgb()).is_err());
+    assert!(PixelBuf::from_typed(vec![0u32; 3], 1, 1, ImageSpec::rgbf32_linear()).is_err());
+    assert!(PixelBuf::from_typed(vec![0u16; 3], 1, 1, ImageSpec::rgbf16_linear()).is_err());
+    assert!(PixelBuf::from_typed(vec![F16Sample::ZERO; 3], 1, 1, ImageSpec::rgb16_srgb()).is_err());
 
     // Matching typed adoption succeeds zero-copy at identical pointer.
     let good_f32 = vec![1.0f32, 0.5, 0.25];
     let good_ptr = good_f32.as_ptr() as usize;
-    let buf = PixelBuf::from_vec(good_f32, 1, 1, ImageSpec::rgbf32_linear()).unwrap();
+    let buf = PixelBuf::from_typed(good_f32, 1, 1, ImageSpec::rgbf32_linear()).unwrap();
     assert_eq!(buf.as_view().row(0).as_ptr() as usize, good_ptr);
 
     // Explicit `from_raw_pod` permits deliberate native-endian byte reinterpretation.
@@ -214,7 +201,7 @@ fn with_spec_with_color_reinterpret_and_origin_preservation_contracts() {
     // B20: `with_spec` refuses numeric sample/packing changes (U8 -> I8), while `reinterpret`
     // explicitly allows same-bpp relabel AND clears stale ColorOrigin!
     let p3_origin = ColorOrigin::from_cicp(Cicp::DISPLAY_P3);
-    let buf = PixelBuf::from_vec(vec![255u8, 128, 127], 1, 1, ImageSpec::rgb8_srgb())
+    let buf = PixelBuf::from_typed(vec![255u8, 128, 127], 1, 1, ImageSpec::rgb8_srgb())
         .unwrap()
         .with_origin(p3_origin.clone());
     let i8_spec = ImageSpec::new(
@@ -264,7 +251,7 @@ fn with_spec_with_color_reinterpret_and_origin_preservation_contracts() {
     let cropped_v = v.crop(1, 1, 2, 2).unwrap();
     assert_eq!(cropped_v.origin(), Some(&p3_origin));
     assert_eq!(cropped_v.hdr(), hdr);
-    let tight = cropped_v.try_to_tight_buf().unwrap();
+    let tight = cropped_v.to_tight_buf().unwrap();
     assert_eq!(tight.origin(), &p3_origin);
     assert_eq!(tight.hdr(), hdr);
     // B22: Consuming mutable `into_sub_rows` + `into_crop` preserves backing `'a` lifetime!
@@ -284,8 +271,8 @@ fn imgref_bridge_trims_trailing_bytes_and_rejects_misaligned_stride() {
     // B22: Direct PixelView with extra trailing storage byte `[1,2,3,99]` MUST borrow as 1x1
     // ImgRef<rgb::Rgb<u8>> at the exact same pointer (NOT fail with IncompatibleLayout!).
     let storage = [1u8, 2, 3, 99];
-    let v = PixelView::new(&storage, 1, 1, 3, ImageSpec::rgb8_srgb()).unwrap();
-    let img: imgref::ImgRef<'_, rgb::Rgb<u8>> = v.try_as_imgref().unwrap();
+    let v = PixelView::new(&storage, 1, 1, 3, ImageSpec::rgb8_srgb_ref()).unwrap();
+    let img: imgref::ImgRef<'_, rgb::Rgb<u8>> = v.as_imgref().unwrap();
     assert_eq!(img.width(), 1);
     assert_eq!(img.height(), 1);
     assert_eq!(img.buf().as_ptr() as *const u8, storage.as_ptr());
@@ -296,15 +283,15 @@ fn imgref_bridge_trims_trailing_bytes_and_rejects_misaligned_stride() {
     pitched[0..9].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9]);
     pitched[12..21].copy_from_slice(&[10, 11, 12, 13, 14, 15, 16, 17, 18]);
     pitched[21] = 0xAA;
-    let pv = PixelView::new(&pitched, 3, 2, 12, ImageSpec::rgb8_srgb()).unwrap();
-    let pimg: imgref::ImgRef<'_, rgb::Rgb<u8>> = pv.try_as_imgref().unwrap();
+    let pv = PixelView::new(&pitched, 3, 2, 12, ImageSpec::rgb8_srgb_ref()).unwrap();
+    let pimg: imgref::ImgRef<'_, rgb::Rgb<u8>> = pv.as_imgref().unwrap();
     assert_eq!(pimg.stride(), 4);
     assert_eq!(pimg[(2usize, 1usize)], rgb::Rgb::new(16, 17, 18));
 
     // Non-whole-pixel stride (10 bytes for 3-byte RGB) must still be refused!
     let bad_stride = vec![0u8; 20];
-    let bv = PixelView::new(&bad_stride, 3, 2, 10, ImageSpec::rgb8_srgb()).unwrap();
-    assert!(bv.try_as_imgref::<rgb::Rgb<u8>>().is_err());
+    let bv = PixelView::new(&bad_stride, 3, 2, 10, ImageSpec::rgb8_srgb_ref()).unwrap();
+    assert!(bv.as_imgref::<rgb::Rgb<u8>>().is_err());
 }
 
 #[test]
@@ -333,9 +320,9 @@ fn planar_role_arity_odd_crop_origin_and_alignment() {
     let y_data = [0u8; 5 * 3];
     let cb_data = [0u8; 3 * 2];
     let cr_data = [0u8; 3 * 2];
-    let py = PlaneView::new(y_spec, 5, 3, 5, &y_data).unwrap();
-    let pcb = PlaneView::new(cb_spec, 3, 2, 3, &cb_data).unwrap();
-    let pcr = PlaneView::new(cr_spec, 3, 2, 3, &cr_data).unwrap();
+    let py = PlaneView::new(&y_data, 5, 3, 5, y_spec).unwrap();
+    let pcb = PlaneView::new(&cb_data, 3, 2, 3, cb_spec).unwrap();
+    let pcr = PlaneView::new(&cr_data, 3, 2, 3, cr_spec).unwrap();
     let full = PlanarView::new(5, 3, &[py, pcb, pcr]).unwrap();
     assert_eq!(full.crop_origin(), (0, 0));
     let cropped = full.crop(1, 1, 3, 2).unwrap();
@@ -347,8 +334,8 @@ fn planar_role_arity_odd_crop_origin_and_alignment() {
     let u64_spec = PlaneSpec::new(PlaneRole::Extra(1), SampleType::U64);
     let mut aligned = vec![0u64; 4];
     let bytes = bytemuck::cast_slice_mut::<u64, u8>(&mut aligned);
-    assert!(PlaneView::new(u64_spec, 1, 1, 8, &bytes[0..8]).is_ok());
-    assert!(PlaneView::new(u64_spec, 1, 1, 8, &bytes[1..9]).is_err());
+    assert!(PlaneView::new(&bytes[0..8], 1, 1, 8, u64_spec).is_ok());
+    assert!(PlaneView::new(&bytes[1..9], 1, 1, 8, u64_spec).is_err());
 
     let _ = (
         PlanarBuf::new(4, 2, &[y_spec]).unwrap(),
@@ -368,9 +355,9 @@ fn dual_layer_hdr_strict_alternate_into_parts_and_try_symmetric() {
     assert!(pos_meta.is_valid());
     assert!((pos_meta.alternate_hdr_headroom.to_f32() - 2.5).abs() < 1e-4);
 
-    // B26 + B27: `DualLayerHdr::new` refuses `Alternate` without alternate_color_space;
+    // B26 + B27: `DualLayerHdrBuf::new` refuses `Alternate` without alternate_color_space;
     // `new_with_alternate` succeeds and `into_parts()` round-trips every single field!
-    let alt_meta = GainMapMetadata::try_new(
+    let alt_meta = GainMapMetadata::new(
         GainMapChannels::Shared(GainMapComponent {
             min_gain_stops: SignedFraction::ZERO,
             max_gain_stops: SignedFraction::new(2, NonZeroU32::new(1).unwrap()),
@@ -392,7 +379,7 @@ fn dual_layer_hdr_strict_alternate_into_parts_and_try_symmetric() {
     );
     let base = PixelBuf::new(4, 4, ImageSpec::rgb8_srgb()).unwrap();
     let gm = PixelBuf::new(2, 2, gm_spec).unwrap();
-    assert!(DualLayerHdr::new(base.clone(), gm.clone(), alt_meta).is_err());
+    assert!(DualLayerHdrBuf::new(base.clone(), gm.clone(), alt_meta).is_err());
     assert!(
         DualLayerHdrView::new(
             base.as_view(),
@@ -404,7 +391,7 @@ fn dual_layer_hdr_strict_alternate_into_parts_and_try_symmetric() {
         .is_err()
     );
 
-    let dual = DualLayerHdr::new_with_alternate(
+    let dual = DualLayerHdrBuf::new_with_alternate(
         base,
         gm,
         alt_meta,
@@ -416,7 +403,7 @@ fn dual_layer_hdr_strict_alternate_into_parts_and_try_symmetric() {
     assert_eq!(parts.orientation, Orientation::Rotate270);
     assert_eq!(parts.alternate_color_space, Some(ColorSpace::DISPLAY_P3));
     assert_eq!(parts.metadata, alt_meta);
-    let rebuilt = DualLayerHdr::new_with_alternate(
+    let rebuilt = DualLayerHdrBuf::new_with_alternate(
         parts.base,
         parts.gain_map,
         parts.metadata,
@@ -453,7 +440,7 @@ fn cicp_wire_range_aces_ap0_opaque_init_and_transfer_distinctness() {
         );
     }
     assert!(
-        CustomPrimaries::try_new(
+        CustomPrimaries::new(
             (0.64, 0.33),
             (0.64, 0.33),
             (0.15, 0.06),
@@ -498,14 +485,14 @@ fn cicp_wire_range_aces_ap0_opaque_init_and_transfer_distinctness() {
     // `image` crate interop canonicalizes poisoned AlphaMode::Opaque alpha=0 to 255 on export!
     #[cfg(feature = "image")]
     {
-        let poisoned = PixelBuf::from_vec(
+        let poisoned = PixelBuf::from_typed(
             vec![10u8, 20, 30, 0, 40, 50, 60, 17],
             2,
             1,
             ImageSpec::rgba8_srgb().with_alpha(AlphaMode::Opaque),
         )
         .unwrap();
-        let img = poisoned.try_into_image_buffer::<image::Rgba<u8>>().unwrap();
+        let img = poisoned.into_image_buffer::<image::Rgba<u8>>().unwrap();
         assert_eq!(img.get_pixel(0, 0).0, [10, 20, 30, 255]);
         assert_eq!(img.get_pixel(1, 0).0, [40, 50, 60, 255]);
     }
@@ -548,7 +535,7 @@ fn exact_depth_union_disjoint_strips_and_icc_can_represent_hdr() {
             let db = ExactDepth::new(SampleType::U16, SignalRange::Full, b, 16).unwrap();
             let merged = ExactDepth::union(da, db).unwrap();
             assert!(merged.color_bits() >= a && merged.color_bits() >= b);
-            let buf_a = PixelBuf::from_vec(
+            let buf_a = PixelBuf::from_typed(
                 samples_a.clone(),
                 samples_a.len() as u32,
                 1,
@@ -565,7 +552,7 @@ fn exact_depth_union_disjoint_strips_and_icc_can_represent_hdr() {
                 .step_by(((max_b / 31).max(1)) as usize)
                 .map(|q| ((q * 65535 + max_b / 2) / max_b) as u16)
                 .collect();
-            let buf_b = PixelBuf::from_vec(
+            let buf_b = PixelBuf::from_typed(
                 samples_b.clone(),
                 samples_b.len() as u32,
                 1,
@@ -609,7 +596,7 @@ fn opus_review_p1_5_p2_4_p2_12_gainmap_direction_shifted_and_banded_propagation(
     // P1-5: Contradictory `backward_direction` flag MUST fail `is_valid()` and return `direction() == None`!
     let base_hdr = UnsignedFraction::new(3, NonZeroU32::new(1).unwrap());
     let alt_sdr = UnsignedFraction::ZERO;
-    let rev_meta = GainMapMetadata::try_new(
+    let rev_meta = GainMapMetadata::new(
         GainMapChannels::Shared(GainMapComponent {
             min_gain_stops: SignedFraction::new(-3, NonZeroU32::new(1).unwrap()),
             max_gain_stops: SignedFraction::ZERO,
@@ -641,7 +628,7 @@ fn opus_review_p1_5_p2_4_p2_12_gainmap_direction_shifted_and_banded_propagation(
     assert!(!fwd_bad_flag.is_valid());
     assert_eq!(fwd_bad_flag.direction(), None);
 
-    // P2-4: DualLayerHdr rejects BitPacking::Shifted gain map (consistent with gainmap applier).
+    // P2-4: DualLayerHdrBuf rejects BitPacking::Shifted gain map (consistent with gainmap applier).
     let base = PixelBuf::new(2, 2, ImageSpec::rgb8_srgb()).unwrap();
     let shifted_gm_spec = ImageSpec::new(
         SampleLayout::new(SampleType::U16, ChannelOrder::Gray)
@@ -652,7 +639,7 @@ fn opus_review_p1_5_p2_4_p2_12_gainmap_direction_shifted_and_banded_propagation(
         },
     );
     let shifted_gm = PixelBuf::new(2, 2, shifted_gm_spec).unwrap();
-    assert!(DualLayerHdr::new(base, shifted_gm, GainMapMetadata::symmetric(2.0)).is_err());
+    assert!(DualLayerHdrBuf::new(base, shifted_gm, GainMapMetadata::symmetric(2.0)).is_err());
 
     // P2-12: BandedBuf::with_hdr and with_origin propagate to child bands.
     let hdr = HdrMetadata {

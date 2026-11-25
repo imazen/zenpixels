@@ -17,7 +17,7 @@ fn output_plan_zero_copy_identity_and_atomic_signaling() {
     let id_plan = OutputPlan::build(
         ImageSpec::rgb8_srgb(),
         ImageSpec::rgb8_srgb(),
-        ConvertPolicy::lossless(),
+        &ConvertPolicy::lossless(),
         PeakSource::Measured,
         OutputProfile::CicpOnly,
     )
@@ -29,7 +29,7 @@ fn output_plan_zero_copy_identity_and_atomic_signaling() {
     assert_eq!(ready.pixels.as_view().row(0).as_ptr(), in_ptr);
 
     // Identity on borrowed PixelView returns PixelCow::Borrowed zero-copy!
-    let owned = ready.pixels.try_into_owned().unwrap();
+    let owned = ready.pixels.into_owned().unwrap();
     let ready_view = id_plan
         .execute_view(owned.as_view(), &ColorOrigin::assumed())
         .unwrap();
@@ -44,7 +44,7 @@ fn output_plan_zero_copy_identity_and_atomic_signaling() {
     let p3_plan = OutputPlan::build(
         ImageSpec::rgb8_srgb(),
         p3_spec,
-        ConvertPolicy::permissive(),
+        &ConvertPolicy::permissive(),
         PeakSource::Measured,
         OutputProfile::Auto,
     )

@@ -15,6 +15,8 @@ use crate::buffer::{BufferError, PixelBuf, PixelView, PixelViewMut, err_at};
 use crate::cicp::Cicp;
 #[cfg(feature = "imgref")]
 use crate::color::ImageSpec as ImgrefImageSpec;
+#[cfg(any(feature = "imgref", feature = "image"))]
+use crate::color::SpecCow;
 #[cfg(feature = "image")]
 use crate::color::{AlphaMode, ColorSpace, ImageSpec, Primaries, SignalRange, Transfer};
 #[cfg(feature = "image")]
@@ -127,7 +129,10 @@ mod rgb_impls {
 #[cfg(feature = "imgref")]
 impl<'a> PixelView<'a> {
     /// Borrow a typed [`imgref::ImgRef<'a, P>`] **zero-copy** with true `'a` lifetime.
-    pub fn try_from_imgref<P: PixelType>(
+    ///
+    /// Uses a zero-allocation `&'static ImageSpec` for all standard built-in presets, and
+    /// allocates an `Arc<ImageSpec>` only for custom/ICC color spaces.
+    pub fn from_imgref<P: PixelType>(
         img: imgref::ImgRef<'a, P>,
         color: crate::ColorSpace,
     ) -> Result<Self, At<BufferError>> {
@@ -141,17 +146,17 @@ impl<'a> PixelView<'a> {
             .stride()
             .checked_mul(bpp)
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        Self::new(
+        Self::new_with_spec_cow(
             bytemuck::cast_slice(img.buf()),
             w,
             h,
             stride,
-            ImgrefImageSpec::new(P::LAYOUT, color),
+            SpecCow::from_owned(ImgrefImageSpec::new(P::LAYOUT, color)),
         )
     }
 
     /// Borrow as a zero-copy [`imgref::ImgRef<'a, P>`] when layout, alignment, and pixel-whole stride match.
-    pub fn try_as_imgref<P: PixelType>(&self) -> Result<imgref::ImgRef<'a, P>, At<BufferError>> {
+    pub fn as_imgref<P: PixelType>(&self) -> Result<imgref::ImgRef<'a, P>, At<BufferError>> {
         let bpp = core::mem::size_of::<P>();
         if bpp == 0 || bpp != P::LAYOUT.bytes_per_pixel() || self.spec().layout != P::LAYOUT {
             return Err(err_at(BufferError::IncompatibleLayout));
@@ -182,7 +187,7 @@ impl<'a> PixelView<'a> {
 
     /// Borrow as a sample-strided zero-copy [`imgref::ImgRef<'a, S>`] where
     /// `img.width() == self.width() * channels` and `img.stride() == self.stride() / size_of::<S>()`.
-    pub fn try_as_sample_imgref<S: StorageSample>(
+    pub fn as_sample_imgref<S: StorageSample>(
         &self,
     ) -> Result<imgref::ImgRef<'a, S>, At<BufferError>> {
         let layout = self.spec().layout;
@@ -221,7 +226,10 @@ impl<'a> PixelView<'a> {
 #[cfg(feature = "imgref")]
 impl<'a> PixelViewMut<'a> {
     /// Borrow a mutable typed [`imgref::ImgRefMut<'a, P>`] **zero-copy** with true `'a` lifetime.
-    pub fn try_from_imgref_mut<P: PixelType>(
+    ///
+    /// Uses a zero-allocation `&'static ImageSpec` for all standard built-in presets, and
+    /// allocates an `Arc<ImageSpec>` only for custom/ICC color spaces.
+    pub fn from_imgref_mut<P: PixelType>(
         img: imgref::ImgRefMut<'a, P>,
         color: crate::ColorSpace,
     ) -> Result<Self, At<BufferError>> {
@@ -235,17 +243,17 @@ impl<'a> PixelViewMut<'a> {
             .stride()
             .checked_mul(bpp)
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        Self::new(
+        Self::new_with_spec_cow(
             bytemuck::cast_slice_mut(img.into_buf()),
             w,
             h,
             stride,
-            ImgrefImageSpec::new(P::LAYOUT, color),
+            SpecCow::from_owned(ImgrefImageSpec::new(P::LAYOUT, color)),
         )
     }
 
     /// Borrow as a mutable zero-copy [`imgref::ImgRefMut<'_, P>`].
-    pub fn try_as_imgref_mut<P: PixelType>(
+    pub fn as_imgref_mut<P: PixelType>(
         &mut self,
     ) -> Result<imgref::ImgRefMut<'_, P>, At<BufferError>> {
         let bpp = core::mem::size_of::<P>();
@@ -303,7 +311,7 @@ impl<'a> PixelViewMut<'a> {
     }
 
     /// Borrow as a mutable sample-strided zero-copy [`imgref::ImgRefMut<'_, S>`].
-    pub fn try_as_sample_imgref_mut<S: StorageSample>(
+    pub fn as_sample_imgref_mut<S: StorageSample>(
         &mut self,
     ) -> Result<imgref::ImgRefMut<'_, S>, At<BufferError>> {
         let layout = self.spec().layout;
@@ -363,28 +371,28 @@ impl PixelBuf {
     /// Returns `Err(self)` completely untouched if layout, contiguity, alignment, or allocation
     /// capacity prevent a zero-copy `Vec<P>` cast.
     #[allow(clippy::result_large_err)]
-    pub fn try_into_imgvec_zero_copy<P: PixelType>(self) -> Result<imgref::ImgVec<P>, Self> {
+    pub fn into_imgvec_zero_copy<P: PixelType>(self) -> Result<imgref::ImgVec<P>, Self> {
         let bpp = core::mem::size_of::<P>();
         if bpp == 0 || bpp != P::LAYOUT.bytes_per_pixel() || self.spec().layout != P::LAYOUT {
             return Err(self);
         }
         let w = self.width() as usize;
         let h = self.height() as usize;
-        match self.try_into_vec_zero_copy::<P>() {
+        match self.into_vec_zero_copy::<P>() {
             Ok(vec) => Ok(imgref::ImgVec::new(vec, w, h)),
             Err(buf) => Err(buf),
         }
     }
 
     /// Move into an [`imgref::ImgVec<P>`], zero-copy when allocation alignment & capacity match.
-    pub fn try_into_imgvec<P: PixelType>(self) -> Result<imgref::ImgVec<P>, At<BufferError>> {
+    pub fn into_imgvec<P: PixelType>(self) -> Result<imgref::ImgVec<P>, At<BufferError>> {
         let bpp = core::mem::size_of::<P>();
         if bpp == 0 || bpp != P::LAYOUT.bytes_per_pixel() || self.spec().layout != P::LAYOUT {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
         let w = self.width() as usize;
         let h = self.height() as usize;
-        let vec: Vec<P> = self.try_into_vec()?;
+        let vec: Vec<P> = self.into_vec()?;
         Ok(imgref::ImgVec::new(vec, w, h))
     }
 }
@@ -682,7 +690,7 @@ impl PixelBuf {
     /// When `self.spec().color.alpha() == AlphaMode::Opaque` and cached facts do not already prove
     /// `all_opaque`, canonicalizes the stored alpha channel to full opacity so `image`'s straight-alpha
     /// `Rgba`/`LumaA` buffer never receives non-opaque alpha samples.
-    pub fn try_into_image_buffer<P>(
+    pub fn into_image_buffer<P>(
         self,
     ) -> Result<image::ImageBuffer<P, alloc::vec::Vec<P::Subpixel>>, At<BufferError>>
     where
@@ -722,7 +730,7 @@ impl PixelBuf {
         let needs_opaque_fix =
             self.spec().color.alpha() == AlphaMode::Opaque && !self.facts().all_opaque;
         let channels = self.spec().layout.order.channels();
-        let mut samples = self.try_into_vec::<P::Subpixel>()?;
+        let mut samples = self.into_vec::<P::Subpixel>()?;
         if needs_opaque_fix {
             canonicalize_opaque_alpha_samples(&mut samples, channels);
         }
@@ -785,7 +793,10 @@ fn image_cicp_to_color_space(
 impl<'a> PixelView<'a> {
     /// Borrow any `image::ImageBuffer<P, C>` **zero-copy** for all 10 standard formats
     /// (`Luma`, `LumaA`, `Rgb`, `Rgba` × `u8`/`u16`/`f32`), reading its declared CICP color space.
-    pub fn try_from_image_buffer<P, C>(
+    ///
+    /// Uses a zero-allocation `&'static ImageSpec` for all standard sRGB / linear formats, and
+    /// allocates an `Arc<ImageSpec>` only for non-preset CICP color spaces.
+    pub fn from_image_buffer<P, C>(
         img: &'a image::ImageBuffer<P, C>,
     ) -> Result<Self, At<BufferError>>
     where
@@ -799,22 +810,31 @@ impl<'a> PixelView<'a> {
             .ok_or_else(|| err_at(BufferError::InteropUnsupported))?;
         let (w, h) = img.dimensions();
         let layout = SampleLayout::new(P::Subpixel::SAMPLE_TYPE, order);
-        Self::from_samples(img.as_raw().deref(), w, h, ImageSpec::new(layout, color))
+        let stride = (w as usize)
+            .checked_mul(layout.bytes_per_pixel())
+            .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+        Self::new_with_spec_cow(
+            bytemuck::cast_slice(img.as_raw().deref()),
+            w,
+            h,
+            stride,
+            SpecCow::from_owned(ImageSpec::new(layout, color)),
+        )
     }
 
     /// Borrow an `image::DynamicImage` **zero-copy** for all 10 standard variants.
-    pub fn try_from_dynamic_image(img: &'a image::DynamicImage) -> Result<Self, At<BufferError>> {
+    pub fn from_dynamic_image(img: &'a image::DynamicImage) -> Result<Self, At<BufferError>> {
         match img {
-            image::DynamicImage::ImageLuma8(b) => Self::try_from_image_buffer(b),
-            image::DynamicImage::ImageLumaA8(b) => Self::try_from_image_buffer(b),
-            image::DynamicImage::ImageRgb8(b) => Self::try_from_image_buffer(b),
-            image::DynamicImage::ImageRgba8(b) => Self::try_from_image_buffer(b),
-            image::DynamicImage::ImageLuma16(b) => Self::try_from_image_buffer(b),
-            image::DynamicImage::ImageLumaA16(b) => Self::try_from_image_buffer(b),
-            image::DynamicImage::ImageRgb16(b) => Self::try_from_image_buffer(b),
-            image::DynamicImage::ImageRgba16(b) => Self::try_from_image_buffer(b),
-            image::DynamicImage::ImageRgb32F(b) => Self::try_from_image_buffer(b),
-            image::DynamicImage::ImageRgba32F(b) => Self::try_from_image_buffer(b),
+            image::DynamicImage::ImageLuma8(b) => Self::from_image_buffer(b),
+            image::DynamicImage::ImageLumaA8(b) => Self::from_image_buffer(b),
+            image::DynamicImage::ImageRgb8(b) => Self::from_image_buffer(b),
+            image::DynamicImage::ImageRgba8(b) => Self::from_image_buffer(b),
+            image::DynamicImage::ImageLuma16(b) => Self::from_image_buffer(b),
+            image::DynamicImage::ImageLumaA16(b) => Self::from_image_buffer(b),
+            image::DynamicImage::ImageRgb16(b) => Self::from_image_buffer(b),
+            image::DynamicImage::ImageRgba16(b) => Self::from_image_buffer(b),
+            image::DynamicImage::ImageRgb32F(b) => Self::from_image_buffer(b),
+            image::DynamicImage::ImageRgba32F(b) => Self::from_image_buffer(b),
             _ => Err(err_at(BufferError::InteropUnsupported)),
         }
     }
@@ -823,7 +843,10 @@ impl<'a> PixelView<'a> {
 #[cfg(feature = "image")]
 impl<'a> PixelViewMut<'a> {
     /// Mutably borrow any `image::ImageBuffer<P, C>` **zero-copy** for all 10 standard formats.
-    pub fn try_from_image_buffer_mut<P, C>(
+    ///
+    /// Uses a zero-allocation `&'static ImageSpec` for all standard sRGB / linear formats, and
+    /// allocates an `Arc<ImageSpec>` only for non-preset CICP color spaces.
+    pub fn from_image_buffer_mut<P, C>(
         img: &'a mut image::ImageBuffer<P, C>,
     ) -> Result<Self, At<BufferError>>
     where
@@ -841,30 +864,30 @@ impl<'a> PixelViewMut<'a> {
             .checked_mul(layout.bytes_per_pixel())
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
         let samples: &'a mut [P::Subpixel] = img;
-        Self::new(
+        Self::new_with_spec_cow(
             bytemuck::cast_slice_mut(samples),
             w,
             h,
             stride,
-            ImageSpec::new(layout, color),
+            SpecCow::from_owned(ImageSpec::new(layout, color)),
         )
     }
 
     /// Mutably borrow an `image::DynamicImage` **zero-copy** for all 10 standard variants.
-    pub fn try_from_dynamic_image_mut(
+    pub fn from_dynamic_image_mut(
         img: &'a mut image::DynamicImage,
     ) -> Result<Self, At<BufferError>> {
         match img {
-            image::DynamicImage::ImageLuma8(b) => Self::try_from_image_buffer_mut(b),
-            image::DynamicImage::ImageLumaA8(b) => Self::try_from_image_buffer_mut(b),
-            image::DynamicImage::ImageRgb8(b) => Self::try_from_image_buffer_mut(b),
-            image::DynamicImage::ImageRgba8(b) => Self::try_from_image_buffer_mut(b),
-            image::DynamicImage::ImageLuma16(b) => Self::try_from_image_buffer_mut(b),
-            image::DynamicImage::ImageLumaA16(b) => Self::try_from_image_buffer_mut(b),
-            image::DynamicImage::ImageRgb16(b) => Self::try_from_image_buffer_mut(b),
-            image::DynamicImage::ImageRgba16(b) => Self::try_from_image_buffer_mut(b),
-            image::DynamicImage::ImageRgb32F(b) => Self::try_from_image_buffer_mut(b),
-            image::DynamicImage::ImageRgba32F(b) => Self::try_from_image_buffer_mut(b),
+            image::DynamicImage::ImageLuma8(b) => Self::from_image_buffer_mut(b),
+            image::DynamicImage::ImageLumaA8(b) => Self::from_image_buffer_mut(b),
+            image::DynamicImage::ImageRgb8(b) => Self::from_image_buffer_mut(b),
+            image::DynamicImage::ImageRgba8(b) => Self::from_image_buffer_mut(b),
+            image::DynamicImage::ImageLuma16(b) => Self::from_image_buffer_mut(b),
+            image::DynamicImage::ImageLumaA16(b) => Self::from_image_buffer_mut(b),
+            image::DynamicImage::ImageRgb16(b) => Self::from_image_buffer_mut(b),
+            image::DynamicImage::ImageRgba16(b) => Self::from_image_buffer_mut(b),
+            image::DynamicImage::ImageRgb32F(b) => Self::from_image_buffer_mut(b),
+            image::DynamicImage::ImageRgba32F(b) => Self::from_image_buffer_mut(b),
             _ => Err(err_at(BufferError::InteropUnsupported)),
         }
     }
@@ -875,7 +898,7 @@ impl PixelBuf {
     /// Adopt any `image::ImageBuffer<P, Vec<P::Subpixel>>` **zero-copy** across all 10 standard
     /// formats (`Luma`, `LumaA`, `Rgb`, `Rgba` × `u8`/`u16`/`f32`), preserving its declared
     /// `image::metadata::Cicp` color space.
-    pub fn try_from_image_buffer<P>(
+    pub fn from_image_buffer<P>(
         img: image::ImageBuffer<P, alloc::vec::Vec<P::Subpixel>>,
     ) -> Result<Self, At<BufferError>>
     where
@@ -893,7 +916,7 @@ impl PixelBuf {
 
     /// Adopt any `image::ImageBuffer<P, Vec<P::Subpixel>>` **zero-copy** with an explicit
     /// `color`, rejecting contradictory non-default CICP declarations.
-    pub fn try_from_image_buffer_with_color<P>(
+    pub fn from_image_buffer_with_color<P>(
         img: image::ImageBuffer<P, alloc::vec::Vec<P::Subpixel>>,
         color: ColorSpace,
     ) -> Result<Self, At<BufferError>>
@@ -916,30 +939,30 @@ impl PixelBuf {
 
     /// Adopt an `image::DynamicImage` **zero-copy** across all 10 standard variants, preserving
     /// its declared CICP color space.
-    pub fn try_from_dynamic_image(img: image::DynamicImage) -> Result<Self, At<BufferError>> {
+    pub fn from_dynamic_image(img: image::DynamicImage) -> Result<Self, At<BufferError>> {
         match img {
-            image::DynamicImage::ImageLuma8(b) => Self::try_from_image_buffer(b),
-            image::DynamicImage::ImageLumaA8(b) => Self::try_from_image_buffer(b),
-            image::DynamicImage::ImageRgb8(b) => Self::try_from_image_buffer(b),
-            image::DynamicImage::ImageRgba8(b) => Self::try_from_image_buffer(b),
-            image::DynamicImage::ImageLuma16(b) => Self::try_from_image_buffer(b),
-            image::DynamicImage::ImageLumaA16(b) => Self::try_from_image_buffer(b),
-            image::DynamicImage::ImageRgb16(b) => Self::try_from_image_buffer(b),
-            image::DynamicImage::ImageRgba16(b) => Self::try_from_image_buffer(b),
-            image::DynamicImage::ImageRgb32F(b) => Self::try_from_image_buffer(b),
-            image::DynamicImage::ImageRgba32F(b) => Self::try_from_image_buffer(b),
+            image::DynamicImage::ImageLuma8(b) => Self::from_image_buffer(b),
+            image::DynamicImage::ImageLumaA8(b) => Self::from_image_buffer(b),
+            image::DynamicImage::ImageRgb8(b) => Self::from_image_buffer(b),
+            image::DynamicImage::ImageRgba8(b) => Self::from_image_buffer(b),
+            image::DynamicImage::ImageLuma16(b) => Self::from_image_buffer(b),
+            image::DynamicImage::ImageLumaA16(b) => Self::from_image_buffer(b),
+            image::DynamicImage::ImageRgb16(b) => Self::from_image_buffer(b),
+            image::DynamicImage::ImageRgba16(b) => Self::from_image_buffer(b),
+            image::DynamicImage::ImageRgb32F(b) => Self::from_image_buffer(b),
+            image::DynamicImage::ImageRgba32F(b) => Self::from_image_buffer(b),
             _ => Err(err_at(BufferError::InteropUnsupported)),
         }
     }
 
     /// Adopt an `image::RgbImage` zero-copy, reading its declared `image::metadata::Cicp` color space.
     pub fn from_rgb8_image(img: image::RgbImage) -> Result<Self, At<BufferError>> {
-        Self::try_from_image_buffer(img)
+        Self::from_image_buffer(img)
     }
 
     /// Adopt an `image::RgbaImage` zero-copy, reading its declared `image::metadata::Cicp` color space.
     pub fn from_rgba8_image(img: image::RgbaImage) -> Result<Self, At<BufferError>> {
-        Self::try_from_image_buffer(img)
+        Self::from_image_buffer(img)
     }
 
     /// Adopt an `image::ImageBuffer<image::Rgb<u8>, Vec<u8>>` zero-copy with explicit `color`.
@@ -951,7 +974,7 @@ impl PixelBuf {
         img: image::RgbImage,
         color: ColorSpace,
     ) -> Result<Self, At<BufferError>> {
-        Self::try_from_image_buffer_with_color(img, color)
+        Self::from_image_buffer_with_color(img, color)
     }
 
     /// Adopt an `image::ImageBuffer<image::Rgba<u8>, Vec<u8>>` zero-copy with explicit `color`.
@@ -963,45 +986,45 @@ impl PixelBuf {
         img: image::RgbaImage,
         color: ColorSpace,
     ) -> Result<Self, At<BufferError>> {
-        Self::try_from_image_buffer_with_color(img, color)
+        Self::from_image_buffer_with_color(img, color)
     }
 
     /// Move into an `image::DynamicImage` zero-copy when [`InteropTarget::DynamicImage`] is satisfied.
-    pub fn try_into_dynamic_image(self) -> Result<image::DynamicImage, At<BufferError>> {
+    pub fn into_dynamic_image(self) -> Result<image::DynamicImage, At<BufferError>> {
         if !self.spec().supports_interop(InteropTarget::DynamicImage) {
             return Err(err_at(BufferError::InteropUnsupported));
         }
         match (self.spec().layout.sample, self.spec().layout.order) {
-            (SampleType::U8, ChannelOrder::Gray) => Ok(image::DynamicImage::ImageLuma8(
-                self.try_into_image_buffer()?,
-            )),
-            (SampleType::U8, ChannelOrder::GrayAlpha) => Ok(image::DynamicImage::ImageLumaA8(
-                self.try_into_image_buffer()?,
-            )),
-            (SampleType::U8, ChannelOrder::Rgb) => Ok(image::DynamicImage::ImageRgb8(
-                self.try_into_image_buffer()?,
-            )),
-            (SampleType::U8, ChannelOrder::Rgba) => Ok(image::DynamicImage::ImageRgba8(
-                self.try_into_image_buffer()?,
-            )),
-            (SampleType::U16, ChannelOrder::Gray) => Ok(image::DynamicImage::ImageLuma16(
-                self.try_into_image_buffer()?,
-            )),
-            (SampleType::U16, ChannelOrder::GrayAlpha) => Ok(image::DynamicImage::ImageLumaA16(
-                self.try_into_image_buffer()?,
-            )),
-            (SampleType::U16, ChannelOrder::Rgb) => Ok(image::DynamicImage::ImageRgb16(
-                self.try_into_image_buffer()?,
-            )),
-            (SampleType::U16, ChannelOrder::Rgba) => Ok(image::DynamicImage::ImageRgba16(
-                self.try_into_image_buffer()?,
-            )),
-            (SampleType::F32, ChannelOrder::Rgb) => Ok(image::DynamicImage::ImageRgb32F(
-                self.try_into_image_buffer()?,
-            )),
-            (SampleType::F32, ChannelOrder::Rgba) => Ok(image::DynamicImage::ImageRgba32F(
-                self.try_into_image_buffer()?,
-            )),
+            (SampleType::U8, ChannelOrder::Gray) => {
+                Ok(image::DynamicImage::ImageLuma8(self.into_image_buffer()?))
+            }
+            (SampleType::U8, ChannelOrder::GrayAlpha) => {
+                Ok(image::DynamicImage::ImageLumaA8(self.into_image_buffer()?))
+            }
+            (SampleType::U8, ChannelOrder::Rgb) => {
+                Ok(image::DynamicImage::ImageRgb8(self.into_image_buffer()?))
+            }
+            (SampleType::U8, ChannelOrder::Rgba) => {
+                Ok(image::DynamicImage::ImageRgba8(self.into_image_buffer()?))
+            }
+            (SampleType::U16, ChannelOrder::Gray) => {
+                Ok(image::DynamicImage::ImageLuma16(self.into_image_buffer()?))
+            }
+            (SampleType::U16, ChannelOrder::GrayAlpha) => {
+                Ok(image::DynamicImage::ImageLumaA16(self.into_image_buffer()?))
+            }
+            (SampleType::U16, ChannelOrder::Rgb) => {
+                Ok(image::DynamicImage::ImageRgb16(self.into_image_buffer()?))
+            }
+            (SampleType::U16, ChannelOrder::Rgba) => {
+                Ok(image::DynamicImage::ImageRgba16(self.into_image_buffer()?))
+            }
+            (SampleType::F32, ChannelOrder::Rgb) => {
+                Ok(image::DynamicImage::ImageRgb32F(self.into_image_buffer()?))
+            }
+            (SampleType::F32, ChannelOrder::Rgba) => {
+                Ok(image::DynamicImage::ImageRgba32F(self.into_image_buffer()?))
+            }
             _ => Err(err_at(BufferError::InteropUnsupported)),
         }
     }
@@ -1035,6 +1058,6 @@ impl TryFrom<image::DynamicImage> for PixelBuf {
 
     #[inline]
     fn try_from(img: image::DynamicImage) -> Result<Self, At<BufferError>> {
-        Self::try_from_dynamic_image(img)
+        Self::from_dynamic_image(img)
     }
 }

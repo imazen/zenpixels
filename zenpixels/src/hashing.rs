@@ -13,8 +13,8 @@
 use core::hash::{Hash, Hasher};
 
 use crate::buffer::{
-    BandedBuf, OwnedPlane, PixelBuf, PixelCow, PixelSource, PixelView, PixelViewMut, PlanarBuf,
-    PlanarView, PlanarViewMut, PlaneView, PlaneViewMut,
+    BandedBuf, PixelBuf, PixelCow, PixelSource, PixelView, PixelViewMut, PlanarBuf, PlanarView,
+    PlanarViewMut, PlaneBuf, PlaneView, PlaneViewMut,
 };
 use crate::color::{AlphaMode, ImageSpec};
 use crate::facts::SampleFacts;
@@ -404,7 +404,7 @@ impl PlaneViewMut<'_> {
     }
 }
 
-impl OwnedPlane {
+impl PlaneBuf {
     /// Compute a portable, endian- and stride-independent XXH3 fingerprint of this owned plane.
     #[must_use]
     pub fn hash_with(&self, inclusions: HashInclusions) -> u64 {

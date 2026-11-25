@@ -878,21 +878,21 @@ fn parity_gainmap_applier_all_modes_zero_bit() {
         alternate_offset: SignedFraction::new(1, NonZeroU32::new(64).unwrap()),
     };
 
-    let meta_fwd_shared_g1 = GainMapMetadata::try_new(
+    let meta_fwd_shared_g1 = GainMapMetadata::new(
         GainMapChannels::Shared(comp_g1),
         UnsignedFraction::ZERO,
         UnsignedFraction::new(3, NonZeroU32::new(1).unwrap()),
         GainMapColorSpace::Base,
     )
     .unwrap();
-    let meta_fwd_shared_g22 = GainMapMetadata::try_new(
+    let meta_fwd_shared_g22 = GainMapMetadata::new(
         GainMapChannels::Shared(comp_g22),
         UnsignedFraction::ZERO,
         UnsignedFraction::new(3, NonZeroU32::new(1).unwrap()),
         GainMapColorSpace::Base,
     )
     .unwrap();
-    let meta_rev_perch = GainMapMetadata::try_new(
+    let meta_rev_perch = GainMapMetadata::new(
         GainMapChannels::PerChannel([comp_g1, comp_g22, comp_b]),
         UnsignedFraction::new(3, NonZeroU32::new(1).unwrap()),
         UnsignedFraction::ZERO,
@@ -1000,12 +1000,12 @@ fn parity_gainmap_applier_all_modes_zero_bit() {
             GainMapResample::Bicubic,
             GainMapResample::Mitchell,
         ] {
-            let mut cfg_scalar = GainMapApplyConfig::new(headroom)
+            let mut cfg_scalar = GainMapApplyConfig::from_headroom_stops(headroom)
                 .with_resample(resample)
                 .with_policy(
                     ConvertPolicy::working_linear().with_accelerators(Accelerators::SCALAR),
                 );
-            let mut cfg_all = GainMapApplyConfig::new(headroom)
+            let mut cfg_all = GainMapApplyConfig::from_headroom_stops(headroom)
                 .with_resample(resample)
                 .with_policy(
                     ConvertPolicy::working_linear()

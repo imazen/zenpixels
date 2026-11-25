@@ -5,7 +5,7 @@
 //! - G04: `OutputProfile::CustomIcc` / `SameAsOrigin` rejects `MetadataOnly` ICC profiles
 //! - G14: `Negotiate::select` scene-linear HDR precheck without tone mapper
 //! - G02: `MoxCms` float MPE (`D2B*`/`B2D*`) refusal, unequal adjacent RGB TRC refusal, extended F32
-//! - T2-3/G05: `orient_banded` / `apply_orientation_banded_into` across all 8 orientations & seams
+//! - T2-3/G05: `apply_orientation_banded` / `apply_orientation_banded_into` across all 8 orientations & seams
 //! - T2-6/G18: `measure_max_smoothed`, `LightLevelHistogram::{bins, try_merge}`
 //! - T2-4/T2-5: `adapt_for_encode`, `to_rgb8`/`to_rgba8`/`to_gray8`/`to_bgra8`, `ycbcr_to_rgb_from_planar`
 //! - T2-11: Exhaustive 65,536-pair `rgba8_straight_to_premul` & `lin_f32_to_srgb_u8` SIMD parity
@@ -14,15 +14,15 @@ use alloc::sync::Arc;
 use zenpixels::icc::{IccIdentification, IdentificationUse};
 use zenpixels::{
     AlphaMode, BandedBuf, ChannelOrder, ColorOrigin, ColorSpace, DiffuseWhite, FloatFacts,
-    ImageSpec, Orientation, OwnedPlane, PeakSource, PixelBuf, PixelCow, PlanarBuf, PlaneRole,
+    ImageSpec, Orientation, PeakSource, PixelBuf, PixelCow, PlanarBuf, PlaneBuf, PlaneRole,
     PlaneSpec, Primaries, RenderingIntent, SampleFacts, SampleLayout, SampleType, SignalRange,
     Transfer,
 };
 use zenpixels_convert::{
     Accelerators, ConvertError, ConvertPolicy, DepthPolicy, LightLevelHistogram, LightLevelMethod,
     LumaCoefficients, LumaDomain, Negotiate, OutputPlan, OutputProfile, RowPlan, YcbcrMatrix,
-    adapt_for_encode, apply_orientation, apply_orientation_banded_into, measure_cll,
-    measure_histogram, measure_max_smoothed, orient_banded, to_bgra8, to_gray8, to_rgb8, to_rgba8,
+    adapt_for_encode, apply_orientation, apply_orientation_banded, apply_orientation_banded_into,
+    measure_cll, measure_histogram, measure_max_smoothed, to_bgra8, to_gray8, to_rgb8, to_rgba8,
     ycbcr_to_rgb_f32, ycbcr_to_rgb_from_planar,
 };
 
@@ -204,13 +204,13 @@ fn g03_output_plan_canonicalizes_unverified_opaque_alpha_and_stays_zero_copy_whe
     let spec = ImageSpec::rgba8_srgb().with_alpha(AlphaMode::Opaque);
 
     // Unverified poisoned Opaque alpha [9, 13, 17, 0] -> MUST canonicalize to [9, 13, 17, 255]!
-    let mut poisoned = PixelBuf::from_vec(vec![9u8, 13, 17, 0], 1, 1, spec.clone()).unwrap();
+    let mut poisoned = PixelBuf::from_typed(vec![9u8, 13, 17, 0], 1, 1, spec.clone()).unwrap();
     poisoned.set_facts(SampleFacts::NONE);
 
     let plan = OutputPlan::build(
         spec.clone(),
         spec.clone(),
-        ConvertPolicy::permissive(),
+        &ConvertPolicy::permissive(),
         PeakSource::Measured,
         OutputProfile::Auto,
     )
@@ -230,7 +230,7 @@ fn g03_output_plan_canonicalizes_unverified_opaque_alpha_and_stays_zero_copy_whe
     assert_eq!(ready_b.pixels.as_view().row(0), &[9, 13, 17, 255]);
 
     // Proven all_opaque on runtime view -> zero-copy Borrowed even from the same plan!
-    let mut proven = PixelBuf::from_vec(vec![9u8, 13, 17, 255], 1, 1, spec.clone()).unwrap();
+    let mut proven = PixelBuf::from_typed(vec![9u8, 13, 17, 255], 1, 1, spec.clone()).unwrap();
     proven.set_facts(SampleFacts::NONE.with_all_opaque(true));
     let ready_zc = plan
         .execute_view(proven.as_view(), &ColorOrigin::assumed())
@@ -244,7 +244,7 @@ fn g03_output_plan_canonicalizes_unverified_opaque_alpha_and_stays_zero_copy_whe
     let plan_proven = OutputPlan::build(
         spec.clone(),
         spec,
-        ConvertPolicy::permissive().with_facts(SampleFacts::NONE.with_all_opaque(true)),
+        &ConvertPolicy::permissive().with_source_facts(SampleFacts::NONE.with_all_opaque(true)),
         PeakSource::Measured,
         OutputProfile::Auto,
     )
@@ -287,7 +287,7 @@ fn g04_output_plan_rejects_metadata_only_icc_for_structured_dst() {
     let err = OutputPlan::build(
         gray.clone(),
         gray.clone(),
-        ConvertPolicy::permissive(),
+        &ConvertPolicy::permissive(),
         PeakSource::Measured,
         OutputProfile::CustomIcc(Arc::from(c_white_icc.as_slice())),
     )
@@ -298,7 +298,7 @@ fn g04_output_plan_rejects_metadata_only_icc_for_structured_dst() {
     let plan_orig = OutputPlan::build(
         gray.clone(),
         gray.clone(),
-        ConvertPolicy::permissive(),
+        &ConvertPolicy::permissive(),
         PeakSource::Measured,
         OutputProfile::SameAsOrigin,
     )
@@ -324,7 +324,7 @@ fn g04_output_plan_rejects_metadata_only_icc_for_structured_dst() {
         OutputPlan::build(
             icc_gray.clone(),
             icc_gray,
-            ConvertPolicy::permissive(),
+            &ConvertPolicy::permissive(),
             PeakSource::Measured,
             OutputProfile::CustomIcc(Arc::from(c_white_icc.as_slice())),
         )
@@ -348,7 +348,8 @@ fn g14_negotiate_scene_linear_hdr_precheck() {
     }
 
     // When UNIT_INTERVAL is proven, tone mapping won't fire -> SDR candidate IS feasible!
-    let pol_unit = pol_tm.with_facts(SampleFacts::NONE.with_float(FloatFacts::UNIT_INTERVAL));
+    let pol_unit =
+        pol_tm.with_source_facts(SampleFacts::NONE.with_float(FloatFacts::UNIT_INTERVAL));
     assert!(
         Negotiate::select(&lin_src, core::slice::from_ref(&sdr_dst), &pol_unit).is_some(),
         "unit-interval proven linear F32 must allow SDR candidate even without tone mapper"
@@ -539,14 +540,14 @@ fn t2_3_banded_orientation_matches_contiguous_bit_exact_all_8_orientations() {
             // Use a DIFFERENT destination band height (~5 rows/band) to stress band seams!
             let (ow, oh) = orient.output_dimensions(w, h);
             let dst_band_bytes = (ow as usize) * bpp * 5;
-            let got = orient_banded(&banded_src, orient, dst_band_bytes).unwrap();
+            let got = apply_orientation_banded(&banded_src, orient, dst_band_bytes).unwrap();
             assert_eq!(got.width(), ow);
             assert_eq!(got.height(), oh);
             let got_contig = got.into_buf().unwrap();
             assert_eq!(
                 got_contig.as_view().as_contiguous_bytes().unwrap(),
                 expected.as_view().as_contiguous_bytes().unwrap(),
-                "orient_banded mismatch for spec={:?} orient={:?}",
+                "apply_orientation_banded mismatch for spec={:?} orient={:?}",
                 spec.layout,
                 orient
             );
@@ -580,7 +581,7 @@ fn t2_6_measure_max_smoothed_and_histogram_bins_try_merge() {
     //    literal MaxCLL = 9000, smoothed MaxCLL = 9000 / 3 = 3000, MaxFALL = 1000!
     let mut row = vec![0.0f32; 9 * 3];
     row[4 * 3] = 90.0;
-    let buf = PixelBuf::from_vec(row.clone(), 9, 1, spec.clone()).unwrap();
+    let buf = PixelBuf::from_typed(row.clone(), 9, 1, spec.clone()).unwrap();
     let lit = measure_cll(&buf, white, None, LightLevelMethod::MaxRgb).unwrap();
     let sm = measure_max_smoothed(&buf, white, None, LightLevelMethod::MaxRgb).unwrap();
     assert_eq!(lit.max_content_light_level, 9000);
@@ -593,7 +594,7 @@ fn t2_6_measure_max_smoothed_and_histogram_bins_try_merge() {
     // 2. 3-pixel-wide bright bar at 9000 nits survives smoothed measurement at 9000!
     row[3 * 3] = 90.0;
     row[5 * 3] = 90.0;
-    let buf3 = PixelBuf::from_vec(row, 9, 1, spec.clone()).unwrap();
+    let buf3 = PixelBuf::from_typed(row, 9, 1, spec.clone()).unwrap();
     let sm3 = measure_max_smoothed(&buf3, white, None, LightLevelMethod::MaxRgb).unwrap();
     assert_eq!(sm3.max_content_light_level, 9000);
 
@@ -605,7 +606,7 @@ fn t2_6_measure_max_smoothed_and_histogram_bins_try_merge() {
         img[p * 3 + 1] = v * 0.5;
         img[p * 3 + 2] = v * 0.25;
     }
-    let full = PixelBuf::from_vec(img, 8, 4, spec).unwrap();
+    let full = PixelBuf::from_typed(img, 8, 4, spec).unwrap();
     let h_full = measure_histogram(&full, white, None, LightLevelMethod::MaxRgb).unwrap();
     let mut h_top = measure_histogram(
         &full.as_view().sub_rows(0, 2).unwrap(),
@@ -621,7 +622,7 @@ fn t2_6_measure_max_smoothed_and_histogram_bins_try_merge() {
         LightLevelMethod::MaxRgb,
     )
     .unwrap();
-    h_top.try_merge(&h_bot).unwrap();
+    h_top.merge(&h_bot).unwrap();
     assert_eq!(h_top.bins(), h_full.bins());
     assert_eq!(h_top.total_pixels(), h_full.total_pixels());
     assert_eq!(h_top.zero_pixels(), h_full.zero_pixels());
@@ -631,7 +632,7 @@ fn t2_6_measure_max_smoothed_and_histogram_bins_try_merge() {
     // Merging mismatched method must fail cleanly.
     let h_luma = LightLevelHistogram::new(LightLevelMethod::LuminanceBt2020);
     assert_eq!(
-        *h_top.try_merge(&h_luma).unwrap_err().error(),
+        *h_top.merge(&h_luma).unwrap_err().error(),
         ConvertError::UnsupportedRoute
     );
 }
@@ -639,7 +640,7 @@ fn t2_6_measure_max_smoothed_and_histogram_bins_try_merge() {
 #[test]
 fn t2_4_t2_5_adapt_for_encode_convenience_helpers_and_ycbcr_from_planar() {
     // 1. adapt_for_encode zero-copy identity + conversion.
-    let buf = PixelBuf::from_vec(vec![10u8, 20, 30, 255], 1, 1, ImageSpec::rgba8_srgb()).unwrap();
+    let buf = PixelBuf::from_typed(vec![10u8, 20, 30, 255], 1, 1, ImageSpec::rgba8_srgb()).unwrap();
     let supported = [ImageSpec::rgb8_srgb(), ImageSpec::rgba8_srgb()];
     let (neg, ready) = adapt_for_encode(
         buf.as_view(),
@@ -654,13 +655,26 @@ fn t2_4_t2_5_adapt_for_encode_convenience_helpers_and_ycbcr_from_planar() {
     assert!(matches!(ready.pixels, PixelCow::Borrowed(_)));
 
     // 2. to_rgb8 / to_rgba8 / to_gray8 / to_bgra8 convenience wrappers.
-    let r = to_rgb8(&buf.as_view()).unwrap();
-    assert_eq!(r.as_view().row(0), &[10, 20, 30]);
+    // Unproven straight-alpha RGBA8 is refused by alpha-dropping helpers (DiscardIfOpaque):
+    assert_eq!(
+        *to_rgb8(&buf.as_view()).unwrap_err().error(),
+        ConvertError::AlphaLossForbidden
+    );
+    assert_eq!(
+        *to_gray8(&buf.as_view()).unwrap_err().error(),
+        ConvertError::AlphaLossForbidden
+    );
     let ra = to_rgba8(&buf.as_view()).unwrap();
     assert_eq!(ra.as_view().row(0), &[10, 20, 30, 255]);
     let bg = to_bgra8(&buf.as_view()).unwrap();
     assert_eq!(bg.as_view().row(0), &[30, 20, 10, 255]);
-    let gr = to_gray8(&buf.as_view()).unwrap();
+    // Once opacity is proven (scan_facts or into_opaque_verified), to_rgb8 and to_gray8 succeed:
+    let mut proven_buf = buf.clone();
+    let facts = zenpixels_convert::scan_facts(&proven_buf.as_view());
+    proven_buf.set_facts(facts);
+    let r = to_rgb8(&proven_buf.as_view()).unwrap();
+    assert_eq!(r.as_view().row(0), &[10, 20, 30]);
+    let gr = to_gray8(&proven_buf.as_view()).unwrap();
     assert_eq!(
         gr.as_view().row(0),
         &[((10u16 * 54 + 20 * 183 + 30 * 19 + 128) >> 8) as u8]
@@ -677,28 +691,28 @@ fn t2_4_t2_5_adapt_for_encode_convenience_helpers_and_ycbcr_from_planar() {
     assert_eq!(YcbcrMatrix::from_cicp_code(9), Some(YcbcrMatrix::Bt2020));
     assert_eq!(YcbcrMatrix::from_cicp_code(2), None);
 
-    let y_p = OwnedPlane::from_external(
-        PlaneSpec::new(PlaneRole::Y, SampleType::U8),
-        2,
-        2,
-        2,
+    let y_p = PlaneBuf::from_external(
         vec![235u8; 4],
+        2,
+        2,
+        2,
+        PlaneSpec::new(PlaneRole::Y, SampleType::U8),
     )
     .unwrap();
-    let cb_p = OwnedPlane::from_external(
+    let cb_p = PlaneBuf::from_external(
+        vec![128u8],
+        1,
+        1,
+        1,
         PlaneSpec::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2),
-        1,
-        1,
-        1,
-        vec![128u8],
     )
     .unwrap();
-    let cr_p = OwnedPlane::from_external(
-        PlaneSpec::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2),
-        1,
-        1,
-        1,
+    let cr_p = PlaneBuf::from_external(
         vec![128u8],
+        1,
+        1,
+        1,
+        PlaneSpec::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2),
     )
     .unwrap();
     let untagged_planar = PlanarBuf::from_planes(2, 2, vec![y_p, cb_p, cr_p]).unwrap();

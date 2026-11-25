@@ -6,7 +6,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use zenpixels::{
-    BandedBuf, BufferError, ImageSpec, OwnedPlane, PixelBuf, PlanarBuf, PlaneRole, PlaneSpec,
+    BandedBuf, BufferError, ImageSpec, PixelBuf, PlanarBuf, PlaneBuf, PlaneRole, PlaneSpec,
     RowAlign, SampleType,
 };
 
@@ -89,14 +89,14 @@ fn constructors_and_copies_return_allocation_failed_on_oom() {
 
     // View fallback copy paths: try_to_tight_buf, try_contiguous_bytes
     let padded = PixelBuf::new_aligned(33, 64, ImageSpec::rgb8_srgb(), RowAlign::Cache64).unwrap();
-    let err = with_oom_above(2048, || padded.as_view().try_to_tight_buf()).unwrap_err();
+    let err = with_oom_above(2048, || padded.as_view().to_tight_buf()).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
 
-    let err = with_oom_above(2048, || padded.as_view().try_contiguous_bytes()).unwrap_err();
+    let err = with_oom_above(2048, || padded.as_view().contiguous_bytes()).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
 
     // try_into_vec fallback copy path (Aligned64 cannot zero-copy to Vec<u8>)
-    let err = with_oom_above(2048, || padded.try_into_vec::<u8>()).unwrap_err();
+    let err = with_oom_above(2048, || padded.into_vec::<u8>()).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
 
     // External immutable storage CoW promotion (`try_make_mut`) on OOM leaves buffer intact!
@@ -109,18 +109,18 @@ fn constructors_and_copies_return_allocation_failed_on_oom() {
         ImageSpec::rgba8_srgb(),
     )
     .unwrap();
-    let err = with_oom_above(4096, || ext_buf.try_make_mut()).unwrap_err();
+    let err = with_oom_above(4096, || ext_buf.make_mut()).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
     assert!(ext_buf.is_external());
     assert_eq!(ext_buf.as_view().row(0)[0], 0x5A);
 
-    // OwnedPlane::from_external CoW promotion (`try_as_view_mut`) on OOM leaves plane intact!
-    let mut ext_plane = OwnedPlane::from_external(
-        PlaneSpec::new(PlaneRole::Y, SampleType::U8),
+    // PlaneBuf::from_external CoW promotion (`try_as_view_mut`) on OOM leaves plane intact!
+    let mut ext_plane = PlaneBuf::from_external(
+        std::sync::Arc::<[u8]>::from(vec![0x33u8; 128 * 64].into_boxed_slice()),
         128,
         64,
         128,
-        std::sync::Arc::<[u8]>::from(vec![0x33u8; 128 * 64].into_boxed_slice()),
+        PlaneSpec::new(PlaneRole::Y, SampleType::U8),
     )
     .unwrap();
     let err = with_oom_above(4096, || ext_plane.try_as_view_mut()).unwrap_err();

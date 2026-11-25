@@ -21,7 +21,7 @@ use zenpixels_convert::{
     MasteringDisplay, Nits, Orientation, PeakSource, PixelBuf, PlanarView, PlaneRole, PlaneSpec,
     PlaneView, PreparedMapper, Primaries, Requirements, SampleLayout, SampleType, SignalRange,
     StripMapper, ToneMapContext, ToneMapper, Transfer, YcbcrMatrix, apply_orientation,
-    apply_orientation_into, convert_buf, measure_cll, measure_histogram, measure_peak,
+    apply_orientation_into, convert_to_buf, measure_cll, measure_histogram, measure_peak,
     ycbcr_to_rgb_f32, ycbcr_to_rgb_into,
 };
 
@@ -176,7 +176,7 @@ fn b17_scene_linear_hdr_triggers_tone_mapper_and_identity_retains_hdr_metadata()
             1000.0,
         )),
     };
-    let src_buf = PixelBuf::from_vec(vec![4.0f32, 1.0, 0.0], 1, 1, src_hdr_lin.clone())
+    let src_buf = PixelBuf::from_typed(vec![4.0f32, 1.0, 0.0], 1, 1, src_hdr_lin.clone())
         .unwrap()
         .with_hdr(hdr_meta);
 
@@ -186,7 +186,7 @@ fn b17_scene_linear_hdr_triggers_tone_mapper_and_identity_retains_hdr_metadata()
             calls: Arc::clone(&calls),
         }),
     );
-    let out = convert_buf(
+    let out = convert_to_buf(
         &src_buf.as_view(),
         ImageSpec::rgb8_srgb(),
         &pol,
@@ -211,7 +211,7 @@ fn b17_scene_linear_hdr_triggers_tone_mapper_and_identity_retains_hdr_metadata()
     let id_plan = ImagePlan::build(
         src_hdr_lin.clone(),
         src_hdr_lin,
-        ConvertPolicy::lossless(),
+        &ConvertPolicy::lossless(),
         PeakSource::Measured,
     )
     .unwrap();
@@ -225,8 +225,8 @@ fn b17_scene_linear_hdr_triggers_tone_mapper_and_identity_retains_hdr_metadata()
             calls: Arc::clone(&sdr_calls),
         }));
     let sdr_buf =
-        PixelBuf::from_vec(vec![0.5f32, 0.25, 0.0], 1, 1, ImageSpec::rgbf32_linear()).unwrap();
-    let _ = convert_buf(
+        PixelBuf::from_typed(vec![0.5f32, 0.25, 0.0], 1, 1, ImageSpec::rgbf32_linear()).unwrap();
+    let _ = convert_to_buf(
         &sdr_buf.as_view(),
         ImageSpec::rgb8_srgb(),
         &sdr_pol,
@@ -243,7 +243,7 @@ fn b17_scene_linear_hdr_triggers_tone_mapper_and_identity_retains_hdr_metadata()
 #[test]
 fn b18_b41_native_primaries_cll_ceiling_and_histogram_ranks() {
     // B18: BT.709 linear red [4,0,0] @ 203 nits -> native MaxRGB = 812/812 (NOT 509 from BT.2020 conversion!).
-    let bt709_red = PixelBuf::from_vec(
+    let bt709_red = PixelBuf::from_typed(
         vec![4.0f32, 0.0, 0.0],
         1,
         1,
@@ -261,7 +261,7 @@ fn b18_b41_native_primaries_cll_ceiling_and_histogram_ranks() {
     assert_eq!(cll709.max_frame_average_light_level, 812);
 
     // Display P3 linear red [1,0,0] @ 203 nits -> native MaxRGB = 203/203 (NOT 153!).
-    let p3_red = PixelBuf::from_vec(
+    let p3_red = PixelBuf::from_typed(
         vec![1.0f32, 0.0, 0.0],
         1,
         1,
@@ -281,7 +281,7 @@ fn b18_b41_native_primaries_cll_ceiling_and_histogram_ranks() {
     assert_eq!(cll_p3.max_frame_average_light_level, 203);
 
     // H.274 upper-bound ceiling: 100.4 nits -> 101!
-    let frac = PixelBuf::from_vec(
+    let frac = PixelBuf::from_typed(
         vec![100.4f32, 0.0, 0.0],
         1,
         1,
@@ -318,7 +318,7 @@ fn b18_b41_native_primaries_cll_ceiling_and_histogram_ranks() {
         "median of [0, 1, 100] must be ~1.0 nits, got {p50}"
     );
 
-    let hist_buf = PixelBuf::from_vec(
+    let hist_buf = PixelBuf::from_typed(
         vec![0.0f32, 0.0, 0.0, 1.0, 1.0, 1.0, 100.0, 100.0, 100.0],
         3,
         1,
@@ -356,10 +356,10 @@ fn b24_b39_ycbcr_odd_crop_phase_nv12_nv21_i420_gbr_monochrome_and_exact_white() 
         5,
         3,
         &[
-            PlaneView::new(y_spec, 5, 3, 6, &y_plane).unwrap(),
-            PlaneView::new(cb_spec, 3, 2, 4, &cb_plane).unwrap(),
-            PlaneView::new(cr_spec, 3, 2, 4, &cr_plane).unwrap(),
-            PlaneView::new(a_spec, 5, 3, 6, &a_plane).unwrap(),
+            PlaneView::new(&y_plane, 5, 3, 6, y_spec).unwrap(),
+            PlaneView::new(&cb_plane, 3, 2, 4, cb_spec).unwrap(),
+            PlaneView::new(&cr_plane, 3, 2, 4, cr_spec).unwrap(),
+            PlaneView::new(&a_plane, 5, 3, 6, a_spec).unwrap(),
         ],
     )
     .unwrap();
@@ -407,16 +407,16 @@ fn b24_b39_ycbcr_odd_crop_phase_nv12_nv21_i420_gbr_monochrome_and_exact_white() 
         5,
         3,
         &[
-            PlaneView::new(y_spec, 5, 3, 6, &y_plane).unwrap(),
+            PlaneView::new(&y_plane, 5, 3, 6, y_spec).unwrap(),
             PlaneView::new(
-                PlaneSpec::new(PlaneRole::CbCr, SampleType::U8).with_subsampling(2, 2),
+                &cbcr,
                 3,
                 2,
                 6,
-                &cbcr,
+                PlaneSpec::new(PlaneRole::CbCr, SampleType::U8).with_subsampling(2, 2),
             )
             .unwrap(),
-            PlaneView::new(a_spec, 5, 3, 6, &a_plane).unwrap(),
+            PlaneView::new(&a_plane, 5, 3, 6, a_spec).unwrap(),
         ],
     )
     .unwrap();
@@ -424,16 +424,16 @@ fn b24_b39_ycbcr_odd_crop_phase_nv12_nv21_i420_gbr_monochrome_and_exact_white() 
         5,
         3,
         &[
-            PlaneView::new(y_spec, 5, 3, 6, &y_plane).unwrap(),
+            PlaneView::new(&y_plane, 5, 3, 6, y_spec).unwrap(),
             PlaneView::new(
-                PlaneSpec::new(PlaneRole::CrCb, SampleType::U8).with_subsampling(2, 2),
+                &crcb,
                 3,
                 2,
                 6,
-                &crcb,
+                PlaneSpec::new(PlaneRole::CrCb, SampleType::U8).with_subsampling(2, 2),
             )
             .unwrap(),
-            PlaneView::new(a_spec, 5, 3, 6, &a_plane).unwrap(),
+            PlaneView::new(&a_plane, 5, 3, 6, a_spec).unwrap(),
         ],
     )
     .unwrap();
@@ -465,9 +465,9 @@ fn b24_b39_ycbcr_odd_crop_phase_nv12_nv21_i420_gbr_monochrome_and_exact_white() 
         1,
         1,
         &[
-            PlaneView::new(y_spec, 1, 1, 1, &w_y).unwrap(),
-            PlaneView::new(PlaneSpec::new(PlaneRole::Cb, SampleType::U8), 1, 1, 1, &w_c).unwrap(),
-            PlaneView::new(PlaneSpec::new(PlaneRole::Cr, SampleType::U8), 1, 1, 1, &w_c).unwrap(),
+            PlaneView::new(&w_y, 1, 1, 1, y_spec).unwrap(),
+            PlaneView::new(&w_c, 1, 1, 1, PlaneSpec::new(PlaneRole::Cb, SampleType::U8)).unwrap(),
+            PlaneView::new(&w_c, 1, 1, 1, PlaneSpec::new(PlaneRole::Cr, SampleType::U8)).unwrap(),
         ],
     )
     .unwrap();
@@ -500,21 +500,21 @@ fn b24_b39_ycbcr_odd_crop_phase_nv12_nv21_i420_gbr_monochrome_and_exact_white() 
         1,
         1,
         &[
-            PlaneView::new(y_spec, 1, 1, 1, &[128u8]).unwrap(),
+            PlaneView::new(&[128u8], 1, 1, 1, y_spec).unwrap(),
             PlaneView::new(
-                PlaneSpec::new(PlaneRole::Cb, SampleType::U8),
-                1,
-                1,
-                1,
                 &[255u8],
+                1,
+                1,
+                1,
+                PlaneSpec::new(PlaneRole::Cb, SampleType::U8),
             )
             .unwrap(),
             PlaneView::new(
-                PlaneSpec::new(PlaneRole::Cr, SampleType::U8),
-                1,
-                1,
-                1,
                 &[0u8],
+                1,
+                1,
+                1,
+                PlaneSpec::new(PlaneRole::Cr, SampleType::U8),
             )
             .unwrap(),
         ],
@@ -535,7 +535,7 @@ fn b24_b39_ycbcr_odd_crop_phase_nv12_nv21_i420_gbr_monochrome_and_exact_white() 
 
     // Monochrome Y-only produces neutral RGB `[y, y, y]`!
     let mono_pv =
-        PlanarView::new(1, 1, &[PlaneView::new(y_spec, 1, 1, 1, &[235u8]).unwrap()]).unwrap();
+        PlanarView::new(1, 1, &[PlaneView::new(&[235u8], 1, 1, 1, y_spec).unwrap()]).unwrap();
     let mono_out = ycbcr_to_rgb_f32(
         &mono_pv,
         YcbcrMatrix::Bt709,
@@ -615,7 +615,7 @@ fn b25_d06_independent_8_orientation_coordinate_oracle_with_canaries_and_origin(
                     ew,
                     eh,
                     dst_stride,
-                    ImageSpec::rgba8_srgb(),
+                    ImageSpec::rgba8_srgb_ref(),
                 )
                 .unwrap();
                 apply_orientation_into(&src.as_view(), orient, &mut dst_view).unwrap();
@@ -668,9 +668,9 @@ fn b28_b29_b30_b40_gainmap_analytic_oracle_31stops_64tap_inclusive_and_gamma_sim
     // B28: Independent analytic oracle: base=1.0, min=0, max=2, gamma=1, offsets=0, U8 code 128
     // => exact gain = 2^(2 * 128 / 255)!
     let base1 =
-        PixelBuf::from_vec(vec![1.0f32, 1.0, 1.0], 1, 1, ImageSpec::rgbf32_linear()).unwrap();
-    let gm128 = PixelBuf::from_vec(vec![128u8], 1, 1, gm_spec.clone()).unwrap();
-    let meta2 = GainMapMetadata::try_new(
+        PixelBuf::from_typed(vec![1.0f32, 1.0, 1.0], 1, 1, ImageSpec::rgbf32_linear()).unwrap();
+    let gm128 = PixelBuf::from_typed(vec![128u8], 1, 1, gm_spec.clone()).unwrap();
+    let meta2 = GainMapMetadata::new(
         GainMapChannels::Shared(GainMapComponent {
             min_gain_stops: SignedFraction::ZERO,
             max_gain_stops: SignedFraction::new(2, NonZeroU32::new(1).unwrap()),
@@ -691,7 +691,12 @@ fn b28_b29_b30_b40_gainmap_analytic_oracle_31stops_64tap_inclusive_and_gamma_sim
         Orientation::Identity,
     )
     .unwrap();
-    let out = apply_gain_map_with(&dv, &GainMapApplyConfig::new(2.0), &Unstoppable).unwrap();
+    let out = apply_gain_map_with(
+        &dv,
+        &GainMapApplyConfig::from_headroom_stops(2.0),
+        &Unstoppable,
+    )
+    .unwrap();
     let expected_val = (2.0_f64).powf(2.0 * 128.0 / 255.0) as f32;
     let got_px = out.as_view().row_as::<f32>(0).unwrap();
     for (c, &val) in got_px.iter().enumerate().take(3) {
@@ -703,7 +708,7 @@ fn b28_b29_b30_b40_gainmap_analytic_oracle_31stops_64tap_inclusive_and_gamma_sim
 
     // B29: Exact 31-stop reconstruction (NOT silently clamped to 30 stops!):
     // (1 + 1/64) * 2^31 - 1/64 ~= 2.181038e9 (whereas 30 stops would be ~1.0905e9!).
-    let meta31 = GainMapMetadata::try_new(
+    let meta31 = GainMapMetadata::new(
         GainMapChannels::Shared(GainMapComponent {
             min_gain_stops: SignedFraction::ZERO,
             max_gain_stops: SignedFraction::new(31, NonZeroU32::new(1).unwrap()),
@@ -716,7 +721,7 @@ fn b28_b29_b30_b40_gainmap_analytic_oracle_31stops_64tap_inclusive_and_gamma_sim
         GainMapColorSpace::Base,
     )
     .unwrap();
-    let gm255 = PixelBuf::from_vec(vec![255u8], 1, 1, gm_spec.clone()).unwrap();
+    let gm255 = PixelBuf::from_typed(vec![255u8], 1, 1, gm_spec.clone()).unwrap();
     let dv31 = DualLayerHdrView::new(
         base1.as_view(),
         gm255.as_view(),
@@ -727,14 +732,14 @@ fn b28_b29_b30_b40_gainmap_analytic_oracle_31stops_64tap_inclusive_and_gamma_sim
     .unwrap();
     let out31_scalar = apply_gain_map_with(
         &dv31,
-        &GainMapApplyConfig::new(31.0)
+        &GainMapApplyConfig::from_headroom_stops(31.0)
             .with_policy(ConvertPolicy::permissive().with_accelerators(Accelerators::SCALAR)),
         &Unstoppable,
     )
     .unwrap();
     let out31_simd = apply_gain_map_with(
         &dv31,
-        &GainMapApplyConfig::new(31.0)
+        &GainMapApplyConfig::from_headroom_stops(31.0)
             .with_policy(ConvertPolicy::permissive().with_accelerators(Accelerators::ALL)),
         &Unstoppable,
     )
@@ -754,8 +759,9 @@ fn b28_b29_b30_b40_gainmap_analytic_oracle_31stops_64tap_inclusive_and_gamma_sim
 
     // B30: Bilinear 128x1 -> 4x1 has exact max actual tap count = 64 (inclusive!) -> MUST SUCCEED
     // and equal 1x1 control; 132x1 -> 4x1 has >64 taps -> MUST FAIL with UnsupportedRoute!
-    let base4 = PixelBuf::from_vec(vec![1.0f32; 4 * 3], 4, 1, ImageSpec::rgbf32_linear()).unwrap();
-    let gm128w = PixelBuf::from_vec(vec![128u8; 128], 128, 1, gm_spec.clone()).unwrap();
+    let base4 =
+        PixelBuf::from_typed(vec![1.0f32; 4 * 3], 4, 1, ImageSpec::rgbf32_linear()).unwrap();
+    let gm128w = PixelBuf::from_typed(vec![128u8; 128], 128, 1, gm_spec.clone()).unwrap();
     let dv128 = DualLayerHdrView::new(
         base4.as_view(),
         gm128w.as_view(),
@@ -764,7 +770,8 @@ fn b28_b29_b30_b40_gainmap_analytic_oracle_31stops_64tap_inclusive_and_gamma_sim
         Orientation::Identity,
     )
     .unwrap();
-    let cfg_bi = GainMapApplyConfig::new(2.0).with_resample(GainMapResample::Bilinear);
+    let cfg_bi =
+        GainMapApplyConfig::from_headroom_stops(2.0).with_resample(GainMapResample::Bilinear);
     let out128 = apply_gain_map_with(&dv128, &cfg_bi, &Unstoppable).unwrap();
     for px in out128
         .as_view()
@@ -779,7 +786,7 @@ fn b28_b29_b30_b40_gainmap_analytic_oracle_31stops_64tap_inclusive_and_gamma_sim
             px[0]
         );
     }
-    let gm132w = PixelBuf::from_vec(vec![128u8; 132], 132, 1, gm_spec.clone()).unwrap();
+    let gm132w = PixelBuf::from_typed(vec![128u8; 132], 132, 1, gm_spec.clone()).unwrap();
     let dv132 = DualLayerHdrView::new(
         base4.as_view(),
         gm132w.as_view(),
@@ -797,7 +804,7 @@ fn b28_b29_b30_b40_gainmap_analytic_oracle_31stops_64tap_inclusive_and_gamma_sim
 
     // Non-unit gamma (1.5) bilinear SIMD (`Accelerators::ALL`) vs `Accelerators::SCALAR`:
     // 0-bit identical across a 67-pixel ramp (covers SIMD lanes + scalar tail)!
-    let meta_g15 = GainMapMetadata::try_new(
+    let meta_g15 = GainMapMetadata::new(
         GainMapChannels::Shared(GainMapComponent {
             min_gain_stops: SignedFraction::ZERO,
             max_gain_stops: SignedFraction::new(3, NonZeroU32::new(1).unwrap()),
@@ -810,14 +817,14 @@ fn b28_b29_b30_b40_gainmap_analytic_oracle_31stops_64tap_inclusive_and_gamma_sim
         GainMapColorSpace::Base,
     )
     .unwrap();
-    let base67 = PixelBuf::from_vec(
+    let base67 = PixelBuf::from_typed(
         (0..67 * 3).map(|i| (i % 19) as f32 / 18.0).collect(),
         67,
         1,
         ImageSpec::rgbf32_linear(),
     )
     .unwrap();
-    let gm34 = PixelBuf::from_vec(
+    let gm34 = PixelBuf::from_typed(
         (0..34u8).map(|i| i.wrapping_mul(7)).collect(),
         34,
         1,
@@ -834,7 +841,7 @@ fn b28_b29_b30_b40_gainmap_analytic_oracle_31stops_64tap_inclusive_and_gamma_sim
     .unwrap();
     let o_g15_scalar = apply_gain_map_with(
         &dv_g15,
-        &GainMapApplyConfig::new(2.0)
+        &GainMapApplyConfig::from_headroom_stops(2.0)
             .with_resample(GainMapResample::Bilinear)
             .with_policy(ConvertPolicy::permissive().with_accelerators(Accelerators::SCALAR)),
         &Unstoppable,
@@ -842,7 +849,7 @@ fn b28_b29_b30_b40_gainmap_analytic_oracle_31stops_64tap_inclusive_and_gamma_sim
     .unwrap();
     let o_g15_simd = apply_gain_map_with(
         &dv_g15,
-        &GainMapApplyConfig::new(2.0)
+        &GainMapApplyConfig::from_headroom_stops(2.0)
             .with_resample(GainMapResample::Bilinear)
             .with_policy(ConvertPolicy::permissive().with_accelerators(Accelerators::ALL)),
         &Unstoppable,

@@ -27,39 +27,39 @@
 
 pub fn buffer::PixelCow<'_>::hash_with(&self, hashing::HashInclusions) -> u64
 pub fn buffer::BandedBuf::hash_with(&self, hashing::HashInclusions) -> u64
-pub fn buffer::OwnedPlane::hash_with(&self, hashing::HashInclusions) -> u64
-pub fn buffer::PixelBuf::try_from_pixels<P: interop::PixelType>(alloc::vec::Vec<P>, u32, u32, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::from_imgvec<P: interop::PixelType>(imgref::ImgVec<P>, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::try_into_imgvec<P: interop::PixelType>(self) -> core::result::Result<imgref::ImgVec<P>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::try_into_imgvec_zero_copy<P: interop::PixelType>(self) -> core::result::Result<imgref::ImgVec<P>, Self>
+pub fn buffer::PixelBuf::from_pixels<P: interop::PixelType>(alloc::vec::Vec<P>, u32, u32, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_dynamic_image(image::images::dynimage::DynamicImage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_image_buffer<P>(image::images::buffer::ImageBuffer<P, alloc::vec::Vec<<P as image::traits::Pixel>::Subpixel>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample
+pub fn buffer::PixelBuf::from_image_buffer_with_color<P>(image::images::buffer::ImageBuffer<P, alloc::vec::Vec<<P as image::traits::Pixel>::Subpixel>>, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample
 pub fn buffer::PixelBuf::from_rgb8_image(image::images::buffer::RgbImage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::from_rgb8_image_buffer(image::images::buffer::RgbImage, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::from_rgba8_image(image::images::buffer::RgbaImage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::from_rgba8_image_buffer(image::images::buffer::RgbaImage, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PixelBuf::image_default_color(layout::ChannelOrder) -> color::ColorSpace [also: (root)]
-pub fn buffer::PixelBuf::try_from_dynamic_image(image::images::dynimage::DynamicImage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::try_from_image_buffer<P>(image::images::buffer::ImageBuffer<P, alloc::vec::Vec<<P as image::traits::Pixel>::Subpixel>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample
-pub fn buffer::PixelBuf::try_from_image_buffer_with_color<P>(image::images::buffer::ImageBuffer<P, alloc::vec::Vec<<P as image::traits::Pixel>::Subpixel>>, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample
-pub fn buffer::PixelBuf::try_into_dynamic_image(self) -> core::result::Result<image::images::dynimage::DynamicImage, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::into_dynamic_image(self) -> core::result::Result<image::images::dynimage::DynamicImage, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_imgvec<P: interop::PixelType>(imgref::ImgVec<P>, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::into_imgvec<P: interop::PixelType>(self) -> core::result::Result<imgref::ImgVec<P>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::into_imgvec_zero_copy<P: interop::PixelType>(self) -> core::result::Result<imgref::ImgVec<P>, Self>
 pub fn buffer::PixelBuf::hash_with(&self, hashing::HashInclusions) -> u64
-pub fn buffer::PixelBuf::try_into_image_buffer<P>(self) -> core::result::Result<image::images::buffer::ImageBuffer<P, alloc::vec::Vec<<P as image::traits::Pixel>::Subpixel>>, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample
+pub fn buffer::PixelBuf::into_image_buffer<P>(self) -> core::result::Result<image::images::buffer::ImageBuffer<P, alloc::vec::Vec<<P as image::traits::Pixel>::Subpixel>>, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample
 pub fn buffer::PixelView<'_>::hash_with(&self, hashing::HashInclusions) -> u64
 pub fn buffer::PixelView<'a>::from_pixels<P: interop::PixelType>(&'a [P], u32, u32, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::try_as_imgref<P: interop::PixelType>(&self) -> core::result::Result<imgref::ImgRef<'a, P>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::try_as_sample_imgref<S: storage::StorageSample>(&self) -> core::result::Result<imgref::ImgRef<'a, S>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::try_from_imgref<P: interop::PixelType>(imgref::ImgRef<'a, P>, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::try_from_dynamic_image(&'a image::images::dynimage::DynamicImage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::try_from_image_buffer<P, C>(&'a image::images::buffer::ImageBuffer<P, C>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample, C: core::ops::deref::Deref<Target = [<P as image::traits::Pixel>::Subpixel]>
+pub fn buffer::PixelView<'a>::as_imgref<P: interop::PixelType>(&self) -> core::result::Result<imgref::ImgRef<'a, P>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::as_sample_imgref<S: storage::StorageSample>(&self) -> core::result::Result<imgref::ImgRef<'a, S>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::from_imgref<P: interop::PixelType>(imgref::ImgRef<'a, P>, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::from_dynamic_image(&'a image::images::dynimage::DynamicImage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::from_image_buffer<P, C>(&'a image::images::buffer::ImageBuffer<P, C>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample, C: core::ops::deref::Deref<Target = [<P as image::traits::Pixel>::Subpixel]>
 pub fn buffer::PixelViewMut<'_>::hash_with(&self, hashing::HashInclusions) -> u64
+pub fn buffer::PixelViewMut<'a>::as_imgref_mut<P: interop::PixelType>(&mut self) -> core::result::Result<imgref::ImgRefMut<'_, P>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelViewMut<'a>::as_sample_imgref_mut<S: storage::StorageSample>(&mut self) -> core::result::Result<imgref::ImgRefMut<'_, S>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelViewMut<'a>::from_imgref_mut<P: interop::PixelType>(imgref::ImgRefMut<'a, P>, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelViewMut<'a>::into_imgref_mut<P: interop::PixelType>(self) -> core::result::Result<imgref::ImgRefMut<'a, P>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelViewMut<'a>::try_as_imgref_mut<P: interop::PixelType>(&mut self) -> core::result::Result<imgref::ImgRefMut<'_, P>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelViewMut<'a>::try_as_sample_imgref_mut<S: storage::StorageSample>(&mut self) -> core::result::Result<imgref::ImgRefMut<'_, S>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelViewMut<'a>::try_from_imgref_mut<P: interop::PixelType>(imgref::ImgRefMut<'a, P>, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelViewMut<'a>::try_from_dynamic_image_mut(&'a mut image::images::dynimage::DynamicImage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelViewMut<'a>::try_from_image_buffer_mut<P, C>(&'a mut image::images::buffer::ImageBuffer<P, C>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample, C: core::ops::deref::Deref<Target = [<P as image::traits::Pixel>::Subpixel]> + core::ops::deref::DerefMut
+pub fn buffer::PixelViewMut<'a>::from_dynamic_image_mut(&'a mut image::images::dynimage::DynamicImage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelViewMut<'a>::from_image_buffer_mut<P, C>(&'a mut image::images::buffer::ImageBuffer<P, C>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample, C: core::ops::deref::Deref<Target = [<P as image::traits::Pixel>::Subpixel]> + core::ops::deref::DerefMut
 pub fn buffer::PlanarBuf::hash_with(&self, hashing::HashInclusions) -> u64
 pub fn buffer::PlanarView<'_>::hash_with(&self, hashing::HashInclusions) -> u64
 pub fn buffer::PlanarViewMut<'_>::hash_with(&self, hashing::HashInclusions) -> u64
+pub fn buffer::PlaneBuf::hash_with(&self, hashing::HashInclusions) -> u64
 pub fn buffer::PlaneView<'_>::hash_with(&self, hashing::HashInclusions) -> u64
 pub fn buffer::PlaneViewMut<'_>::hash_with(&self, hashing::HashInclusions) -> u64
 pub mod hashing
@@ -77,38 +77,38 @@ pub fn buffer::PixelCow<'_>::hash_with(&self, hashing::HashInclusions) -> u64
 pub fn buffer::BandedBuf::hash_with(&self, hashing::HashInclusions) -> u64
 pub fn CodePlane<'_>::hash_with(&self, hashing::HashInclusions) -> u64
 pub fn CodePlaneMut<'_>::hash_with(&self, hashing::HashInclusions) -> u64
-pub fn buffer::OwnedPlane::hash_with(&self, hashing::HashInclusions) -> u64
-pub fn buffer::PixelBuf::try_from_pixels<P: interop::PixelType>(alloc::vec::Vec<P>, u32, u32, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::from_imgvec<P: interop::PixelType>(imgref::ImgVec<P>, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::try_into_imgvec<P: interop::PixelType>(self) -> core::result::Result<imgref::ImgVec<P>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::try_into_imgvec_zero_copy<P: interop::PixelType>(self) -> core::result::Result<imgref::ImgVec<P>, Self>
+pub fn buffer::PixelBuf::from_pixels<P: interop::PixelType>(alloc::vec::Vec<P>, u32, u32, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_dynamic_image(image::images::dynimage::DynamicImage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_image_buffer<P>(image::images::buffer::ImageBuffer<P, alloc::vec::Vec<<P as image::traits::Pixel>::Subpixel>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample
+pub fn buffer::PixelBuf::from_image_buffer_with_color<P>(image::images::buffer::ImageBuffer<P, alloc::vec::Vec<<P as image::traits::Pixel>::Subpixel>>, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample
 pub fn buffer::PixelBuf::from_rgb8_image(image::images::buffer::RgbImage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::from_rgb8_image_buffer(image::images::buffer::RgbImage, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::from_rgba8_image(image::images::buffer::RgbaImage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::from_rgba8_image_buffer(image::images::buffer::RgbaImage, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::try_from_dynamic_image(image::images::dynimage::DynamicImage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::try_from_image_buffer<P>(image::images::buffer::ImageBuffer<P, alloc::vec::Vec<<P as image::traits::Pixel>::Subpixel>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample
-pub fn buffer::PixelBuf::try_from_image_buffer_with_color<P>(image::images::buffer::ImageBuffer<P, alloc::vec::Vec<<P as image::traits::Pixel>::Subpixel>>, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample
-pub fn buffer::PixelBuf::try_into_dynamic_image(self) -> core::result::Result<image::images::dynimage::DynamicImage, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::into_dynamic_image(self) -> core::result::Result<image::images::dynimage::DynamicImage, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_imgvec<P: interop::PixelType>(imgref::ImgVec<P>, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::into_imgvec<P: interop::PixelType>(self) -> core::result::Result<imgref::ImgVec<P>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::into_imgvec_zero_copy<P: interop::PixelType>(self) -> core::result::Result<imgref::ImgVec<P>, Self>
 pub fn buffer::PixelBuf::hash_with(&self, hashing::HashInclusions) -> u64
-pub fn buffer::PixelBuf::try_into_image_buffer<P>(self) -> core::result::Result<image::images::buffer::ImageBuffer<P, alloc::vec::Vec<<P as image::traits::Pixel>::Subpixel>>, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample
+pub fn buffer::PixelBuf::into_image_buffer<P>(self) -> core::result::Result<image::images::buffer::ImageBuffer<P, alloc::vec::Vec<<P as image::traits::Pixel>::Subpixel>>, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample
 pub fn buffer::PixelView<'_>::hash_with(&self, hashing::HashInclusions) -> u64
 pub fn buffer::PixelView<'a>::from_pixels<P: interop::PixelType>(&'a [P], u32, u32, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::try_as_imgref<P: interop::PixelType>(&self) -> core::result::Result<imgref::ImgRef<'a, P>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::try_as_sample_imgref<S: storage::StorageSample>(&self) -> core::result::Result<imgref::ImgRef<'a, S>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::try_from_imgref<P: interop::PixelType>(imgref::ImgRef<'a, P>, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::try_from_dynamic_image(&'a image::images::dynimage::DynamicImage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::try_from_image_buffer<P, C>(&'a image::images::buffer::ImageBuffer<P, C>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample, C: core::ops::deref::Deref<Target = [<P as image::traits::Pixel>::Subpixel]>
+pub fn buffer::PixelView<'a>::as_imgref<P: interop::PixelType>(&self) -> core::result::Result<imgref::ImgRef<'a, P>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::as_sample_imgref<S: storage::StorageSample>(&self) -> core::result::Result<imgref::ImgRef<'a, S>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::from_imgref<P: interop::PixelType>(imgref::ImgRef<'a, P>, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::from_dynamic_image(&'a image::images::dynimage::DynamicImage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::from_image_buffer<P, C>(&'a image::images::buffer::ImageBuffer<P, C>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample, C: core::ops::deref::Deref<Target = [<P as image::traits::Pixel>::Subpixel]>
 pub fn buffer::PixelViewMut<'_>::hash_with(&self, hashing::HashInclusions) -> u64
+pub fn buffer::PixelViewMut<'a>::as_imgref_mut<P: interop::PixelType>(&mut self) -> core::result::Result<imgref::ImgRefMut<'_, P>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelViewMut<'a>::as_sample_imgref_mut<S: storage::StorageSample>(&mut self) -> core::result::Result<imgref::ImgRefMut<'_, S>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelViewMut<'a>::from_imgref_mut<P: interop::PixelType>(imgref::ImgRefMut<'a, P>, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelViewMut<'a>::into_imgref_mut<P: interop::PixelType>(self) -> core::result::Result<imgref::ImgRefMut<'a, P>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelViewMut<'a>::try_as_imgref_mut<P: interop::PixelType>(&mut self) -> core::result::Result<imgref::ImgRefMut<'_, P>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelViewMut<'a>::try_as_sample_imgref_mut<S: storage::StorageSample>(&mut self) -> core::result::Result<imgref::ImgRefMut<'_, S>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelViewMut<'a>::try_from_imgref_mut<P: interop::PixelType>(imgref::ImgRefMut<'a, P>, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelViewMut<'a>::try_from_dynamic_image_mut(&'a mut image::images::dynimage::DynamicImage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelViewMut<'a>::try_from_image_buffer_mut<P, C>(&'a mut image::images::buffer::ImageBuffer<P, C>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample, C: core::ops::deref::Deref<Target = [<P as image::traits::Pixel>::Subpixel]> + core::ops::deref::DerefMut
+pub fn buffer::PixelViewMut<'a>::from_dynamic_image_mut(&'a mut image::images::dynimage::DynamicImage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelViewMut<'a>::from_image_buffer_mut<P, C>(&'a mut image::images::buffer::ImageBuffer<P, C>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample, C: core::ops::deref::Deref<Target = [<P as image::traits::Pixel>::Subpixel]> + core::ops::deref::DerefMut
 pub fn buffer::PlanarBuf::hash_with(&self, hashing::HashInclusions) -> u64
 pub fn buffer::PlanarView<'_>::hash_with(&self, hashing::HashInclusions) -> u64
 pub fn buffer::PlanarViewMut<'_>::hash_with(&self, hashing::HashInclusions) -> u64
+pub fn buffer::PlaneBuf::hash_with(&self, hashing::HashInclusions) -> u64
 pub fn buffer::PlaneView<'_>::hash_with(&self, hashing::HashInclusions) -> u64
 pub fn buffer::PlaneViewMut<'_>::hash_with(&self, hashing::HashInclusions) -> u64
 pub trait PixelType: bytemuck::pod::Pod [also: interop]

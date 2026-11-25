@@ -13,7 +13,7 @@ use zenpixels_convert::{
     GamutPolicy, ImagePlan, ImageSpec, Orientation, OutputPlan, OutputProfile, PeakSource,
     PixelBuf, PlanarView, PlaneRole, PlaneSpec, PlaneView, Primaries, RowPlan, SampleFacts,
     SampleLayout, SampleType, SignalRange, Transfer, YcbcrMatrix, apply_orientation,
-    apply_orientation_into, convert_buf, convert_into, scan_facts, ycbcr_to_rgb_f32,
+    apply_orientation_into, convert_into, convert_to_buf, scan_facts, ycbcr_to_rgb_f32,
 };
 
 #[test]
@@ -29,7 +29,7 @@ fn exhaustive_256x256_rgba8_straight_to_premul_simd_matches_scalar_and_exact_ora
     }
     let src_spec = ImageSpec::rgba8_srgb();
     let dst_spec = ImageSpec::rgba8_srgb().with_alpha(AlphaMode::Premultiplied);
-    let src = PixelBuf::from_vec(src_bytes, 256, 256, src_spec).unwrap();
+    let src = PixelBuf::from_typed(src_bytes, 256, 256, src_spec).unwrap();
 
     for (depth_policy, round) in [(DepthPolicy::Round, true), (DepthPolicy::Truncate, false)] {
         let pol_scalar = ConvertPolicy::permissive()
@@ -39,14 +39,14 @@ fn exhaustive_256x256_rgba8_straight_to_premul_simd_matches_scalar_and_exact_ora
             .with_depth(depth_policy)
             .with_accelerators(Accelerators::ALL);
 
-        let out_scalar = convert_buf(
+        let out_scalar = convert_to_buf(
             &src.as_view(),
             dst_spec.clone(),
             &pol_scalar,
             PeakSource::Measured,
         )
         .unwrap();
-        let out_simd = convert_buf(
+        let out_simd = convert_to_buf(
             &src.as_view(),
             dst_spec.clone(),
             &pol_simd,
@@ -91,14 +91,14 @@ fn exhaustive_f16_including_signaling_nan_zero_bit_parity_simd_vs_scalar() {
     let dst_spec = ImageSpec::rgbaf32_linear();
     let src = PixelBuf::from_bytes(raw, 256, 64, src_spec).unwrap();
 
-    let out_scalar = convert_buf(
+    let out_scalar = convert_to_buf(
         &src.as_view(),
         dst_spec.clone(),
         &ConvertPolicy::permissive().with_accelerators(Accelerators::SCALAR),
         PeakSource::Measured,
     )
     .unwrap();
-    let out_simd = convert_buf(
+    let out_simd = convert_to_buf(
         &src.as_view(),
         dst_spec,
         &ConvertPolicy::permissive().with_accelerators(Accelerators::ALL),
@@ -131,7 +131,7 @@ fn exhaustive_f16_including_signaling_nan_zero_bit_parity_simd_vs_scalar() {
 fn narrow_range_u8_to_u16_and_p010_follow_bt2100_table_9() {
     // 1. RGB8 Narrow -> RGB16 Narrow: black 16 -> 4096 (16 << 8), white 235 -> 60160 (235 << 8).
     let narrow_rgb = ColorSpace::SRGB.with_range(SignalRange::Narrow);
-    let src = PixelBuf::from_vec(
+    let src = PixelBuf::from_typed(
         vec![16u8, 128, 235],
         1,
         1,
@@ -139,7 +139,7 @@ fn narrow_range_u8_to_u16_and_p010_follow_bt2100_table_9() {
     )
     .unwrap();
     let dst_spec = ImageSpec::new(SampleLayout::RGB16, narrow_rgb);
-    let out = convert_buf(
+    let out = convert_to_buf(
         &src.as_view(),
         dst_spec,
         &ConvertPolicy::permissive(),
@@ -177,7 +177,7 @@ fn narrow_range_u8_to_u16_and_p010_follow_bt2100_table_9() {
             white: None,
         },
     );
-    let out_f32 = convert_buf(
+    let out_f32 = convert_to_buf(
         &src_p010.as_view(),
         dst_f32,
         &ConvertPolicy::permissive(),
@@ -214,34 +214,34 @@ fn rgba_and_bgra_srgb_u8_to_lin_f32_alpha_and_fused_lin_to_srgb_zero_bit_parity(
         rgba_bytes.extend_from_slice(&[r, g, b, a]);
         bgra_bytes.extend_from_slice(&[b, g, r, a]);
     }
-    let src_rgba = PixelBuf::from_vec(rgba_bytes, 256, 1, ImageSpec::rgba8_srgb()).unwrap();
-    let src_bgra = PixelBuf::from_vec(bgra_bytes, 256, 1, ImageSpec::bgra8_srgb()).unwrap();
+    let src_rgba = PixelBuf::from_typed(rgba_bytes, 256, 1, ImageSpec::rgba8_srgb()).unwrap();
+    let src_bgra = PixelBuf::from_typed(bgra_bytes, 256, 1, ImageSpec::bgra8_srgb()).unwrap();
 
     let pol_s = ConvertPolicy::permissive().with_accelerators(Accelerators::SCALAR);
     let pol_v = ConvertPolicy::permissive().with_accelerators(Accelerators::ALL);
 
-    let r_s = convert_buf(
+    let r_s = convert_to_buf(
         &src_rgba.as_view(),
         ImageSpec::rgbaf32_linear(),
         &pol_s,
         PeakSource::Measured,
     )
     .unwrap();
-    let r_v = convert_buf(
+    let r_v = convert_to_buf(
         &src_rgba.as_view(),
         ImageSpec::rgbaf32_linear(),
         &pol_v,
         PeakSource::Measured,
     )
     .unwrap();
-    let b_s = convert_buf(
+    let b_s = convert_to_buf(
         &src_bgra.as_view(),
         ImageSpec::rgbaf32_linear(),
         &pol_s,
         PeakSource::Measured,
     )
     .unwrap();
-    let b_v = convert_buf(
+    let b_v = convert_to_buf(
         &src_bgra.as_view(),
         ImageSpec::rgbaf32_linear(),
         &pol_v,
@@ -275,14 +275,14 @@ fn rgba_and_bgra_srgb_u8_to_lin_f32_alpha_and_fused_lin_to_srgb_zero_bit_parity(
     }
     let lin_buf = PixelBuf::from_bytes(lin_raw, 37, 1, ImageSpec::rgbaf32_linear()).unwrap();
     for dst_spec in [ImageSpec::rgba8_srgb(), ImageSpec::bgra8_srgb()] {
-        let os = convert_buf(
+        let os = convert_to_buf(
             &lin_buf.as_view(),
             dst_spec.clone(),
             &pol_s,
             PeakSource::Measured,
         )
         .unwrap();
-        let ov = convert_buf(
+        let ov = convert_to_buf(
             &lin_buf.as_view(),
             dst_spec.clone(),
             &pol_v,
@@ -308,7 +308,7 @@ fn unpremul_subnormal_alpha_no_nan_and_opaque_alpha_canonicalization() {
     }
     let premul_spec = ImageSpec::rgbaf32_linear().with_alpha(AlphaMode::Premultiplied);
     let src = PixelBuf::from_bytes(raw, 1, 1, premul_spec).unwrap();
-    let out = convert_buf(
+    let out = convert_to_buf(
         &src.as_view(),
         ImageSpec::rgbaf32_linear(),
         &ConvertPolicy::permissive(),
@@ -326,8 +326,8 @@ fn unpremul_subnormal_alpha_no_nan_and_opaque_alpha_canonicalization() {
     // 2. AlphaMode::Opaque canonicalizes junk alpha to 255 / 1.0 on BOTH byte fast path and strip path.
     let opaque_u8 = ImageSpec::rgba8_srgb().with_alpha(AlphaMode::Opaque);
     let src_op =
-        PixelBuf::from_vec(vec![10u8, 20, 30, 0, 40, 50, 60, 17], 2, 1, opaque_u8).unwrap();
-    let dst_straight = convert_buf(
+        PixelBuf::from_typed(vec![10u8, 20, 30, 0, 40, 50, 60, 17], 2, 1, opaque_u8).unwrap();
+    let dst_straight = convert_to_buf(
         &src_op.as_view(),
         ImageSpec::rgba8_srgb(),
         &ConvertPolicy::permissive(),
@@ -339,7 +339,7 @@ fn unpremul_subnormal_alpha_no_nan_and_opaque_alpha_canonicalization() {
         &[10, 20, 30, 255, 40, 50, 60, 255]
     );
 
-    let dst_lin = convert_buf(
+    let dst_lin = convert_to_buf(
         &src_op.as_view(),
         ImageSpec::rgbaf32_linear(),
         &ConvertPolicy::permissive(),
@@ -360,7 +360,7 @@ fn output_plan_validates_spec_on_identity_and_signaling_contracts() {
     let id_plan = OutputPlan::build(
         srgb_spec.clone(),
         srgb_spec.clone(),
-        ConvertPolicy::permissive(),
+        &ConvertPolicy::permissive(),
         PeakSource::Measured,
         OutputProfile::Auto,
     )
@@ -373,7 +373,7 @@ fn output_plan_validates_spec_on_identity_and_signaling_contracts() {
         OutputPlan::build(
             p3_spec.clone(),
             srgb_spec.clone(),
-            ConvertPolicy::permissive(),
+            &ConvertPolicy::permissive(),
             PeakSource::Measured,
             OutputProfile::SameAsOrigin,
         )
@@ -383,7 +383,7 @@ fn output_plan_validates_spec_on_identity_and_signaling_contracts() {
         OutputPlan::build(
             p3_spec.clone(),
             p3_spec,
-            ConvertPolicy::permissive(),
+            &ConvertPolicy::permissive(),
             PeakSource::Measured,
             OutputProfile::SameAsOrigin,
         )
@@ -398,7 +398,7 @@ fn output_plan_validates_spec_on_identity_and_signaling_contracts() {
     let err_cicp = OutputPlan::build(
         adobe_spec.clone(),
         adobe_spec,
-        ConvertPolicy::permissive(),
+        &ConvertPolicy::permissive(),
         PeakSource::Measured,
         OutputProfile::CicpOnly,
     );
@@ -412,7 +412,7 @@ fn output_plan_validates_spec_on_identity_and_signaling_contracts() {
     let narrow_plan = OutputPlan::build(
         narrow_spec.clone(),
         narrow_spec.clone(),
-        ConvertPolicy::permissive(),
+        &ConvertPolicy::permissive(),
         PeakSource::Measured,
         OutputProfile::Auto,
     )
@@ -433,7 +433,7 @@ fn output_plan_validates_spec_on_identity_and_signaling_contracts() {
     let bad_custom = OutputPlan::build(
         srgb_spec.clone(),
         srgb_spec,
-        ConvertPolicy::permissive(),
+        &ConvertPolicy::permissive(),
         PeakSource::Measured,
         OutputProfile::CustomIcc(Arc::from(gray_icc.as_slice())),
     );
@@ -454,7 +454,7 @@ fn output_plan_validates_spec_on_identity_and_signaling_contracts() {
         let plan = OutputPlan::build(
             hdr_spec,
             ImageSpec::rgb8_srgb(),
-            pol,
+            &pol,
             PeakSource::Fixed(Nits::new(1000.0)),
             OutputProfile::Auto,
         )
@@ -504,7 +504,8 @@ fn policy_lossless_gates_chroma_bitfield_alpha_f16_mantissa_and_unproven_float()
         )
         .is_err()
     );
-    let proven_pol = forbid_gamut.with_facts(SampleFacts::from_float(FloatFacts::UNIT_INTERVAL));
+    let proven_pol =
+        forbid_gamut.with_source_facts(SampleFacts::from_float(FloatFacts::UNIT_INTERVAL));
     assert!(
         RowPlan::build(
             ImageSpec::rgbf32_linear(),
@@ -519,7 +520,7 @@ fn policy_lossless_gates_chroma_bitfield_alpha_f16_mantissa_and_unproven_float()
     let img_plan = ImagePlan::build(
         ImageSpec::rgb8_srgb(),
         ImageSpec::rgba8_srgb(),
-        ConvertPolicy::permissive(),
+        &ConvertPolicy::permissive(),
         PeakSource::Measured,
     )
     .unwrap();
@@ -539,7 +540,7 @@ fn photometry_matte_before_clip_hlg_swizzle_parity_white_rescale_unknown_transfe
     let pol = ConvertPolicy::permissive()
         .with_alpha(AlphaPolicy::CompositeOnto(Color::BLACK))
         .with_gamut(GamutPolicy::Clip);
-    let out = convert_buf(
+    let out = convert_to_buf(
         &src.as_view(),
         ImageSpec::rgbf32_linear(),
         &pol,
@@ -592,7 +593,7 @@ fn photometry_matte_before_clip_hlg_swizzle_parity_white_rescale_unknown_transfe
         w_raw.extend_from_slice(&v.to_ne_bytes());
     }
     let src_100 = PixelBuf::from_bytes(w_raw, 1, 1, lin_100).unwrap();
-    let out_203 = convert_buf(
+    let out_203 = convert_to_buf(
         &src_100.as_view(),
         lin_203,
         &ConvertPolicy::permissive(),
@@ -636,7 +637,7 @@ fn photometry_matte_before_clip_hlg_swizzle_parity_white_rescale_unknown_transfe
         big_f32.extend_from_slice(&v.to_ne_bytes());
     }
     let src_big = PixelBuf::from_bytes(big_f32, 1, 1, ImageSpec::rgbf32_linear()).unwrap();
-    let out_f16 = convert_buf(
+    let out_f16 = convert_to_buf(
         &src_big.as_view(),
         ImageSpec::rgbf16_linear(),
         &ConvertPolicy::permissive(),
@@ -708,7 +709,7 @@ fn bt2446a_respects_baked_peaks_and_rejects_tiny_peaks() {
         raw.extend_from_slice(&0.9026f32.to_ne_bytes());
     }
     let src = PixelBuf::from_bytes(raw, 1, 1, src_spec).unwrap();
-    let out = convert_buf(
+    let out = convert_to_buf(
         &src.as_view(),
         ImageSpec::rgbf32_linear(),
         &pol,
@@ -801,15 +802,15 @@ fn cms_policy_lossless_alpha_gate_intent_opaque_and_moxcms_gray_srgb() {
             intent: RenderingIntent::Perceptual,
         },
     );
-    let buf_op = PixelBuf::from_vec(vec![128u8, 64, 32, 0], 1, 1, src_p3_opaque).unwrap();
-    let out_mox = convert_buf(
+    let buf_op = PixelBuf::from_typed(vec![128u8, 64, 32, 0], 1, 1, src_p3_opaque).unwrap();
+    let out_mox = convert_to_buf(
         &buf_op.as_view(),
         ImageSpec::rgba8_srgb(),
         &pol_mox,
         PeakSource::Measured,
     )
     .unwrap();
-    let out_lcms = convert_buf(
+    let out_lcms = convert_to_buf(
         &buf_op.as_view(),
         ImageSpec::rgba8_srgb(),
         &pol_lcms,
@@ -868,16 +869,16 @@ fn cms_policy_lossless_alpha_gate_intent_opaque_and_moxcms_gray_srgb() {
             intent: RenderingIntent::RelativeColorimetric,
         },
     );
-    let gray_abs_src = PixelBuf::from_vec(vec![180u8, 180, 180], 1, 1, src_dci_abs).unwrap();
-    let gray_rel_src = PixelBuf::from_vec(vec![180u8, 180, 180], 1, 1, src_dci_rel).unwrap();
-    let out_rel_mox = convert_buf(
+    let gray_abs_src = PixelBuf::from_typed(vec![180u8, 180, 180], 1, 1, src_dci_abs).unwrap();
+    let gray_rel_src = PixelBuf::from_typed(vec![180u8, 180, 180], 1, 1, src_dci_rel).unwrap();
+    let out_rel_mox = convert_to_buf(
         &gray_rel_src.as_view(),
         dst_p3_rel.clone(),
         &pol_mox,
         PeakSource::Measured,
     )
     .unwrap();
-    let err_abs_mox = convert_buf(
+    let err_abs_mox = convert_to_buf(
         &gray_abs_src.as_view(),
         dst_p3_rel.clone(),
         &pol_mox,
@@ -889,14 +890,14 @@ fn cms_policy_lossless_alpha_gate_intent_opaque_and_moxcms_gray_srgb() {
         ConvertError::UnsupportedRoute,
         "MoxCms must refuse AbsoluteColorimetric instead of silently running Relative"
     );
-    let out_rel_lcms = convert_buf(
+    let out_rel_lcms = convert_to_buf(
         &gray_rel_src.as_view(),
         dst_p3_rel.clone(),
         &pol_lcms,
         PeakSource::Measured,
     )
     .unwrap();
-    let out_abs_lcms = convert_buf(
+    let out_abs_lcms = convert_to_buf(
         &gray_abs_src.as_view(),
         dst_p3_rel,
         &pol_lcms,
@@ -983,7 +984,7 @@ fn cms_policy_lossless_alpha_gate_intent_opaque_and_moxcms_gray_srgb() {
     dual_icc[a2b1_off..a2b1_off + a2b1.len()].copy_from_slice(&a2b1);
     let dual_arc: Arc<[u8]> = Arc::from(dual_icc.as_slice());
 
-    let src_perc = PixelBuf::from_vec(
+    let src_perc = PixelBuf::from_typed(
         vec![128u8, 128, 128],
         1,
         1,
@@ -998,7 +999,7 @@ fn cms_policy_lossless_alpha_gate_intent_opaque_and_moxcms_gray_srgb() {
         ),
     )
     .unwrap();
-    let src_rel = PixelBuf::from_vec(
+    let src_rel = PixelBuf::from_typed(
         vec![128u8, 128, 128],
         1,
         1,
@@ -1014,14 +1015,14 @@ fn cms_policy_lossless_alpha_gate_intent_opaque_and_moxcms_gray_srgb() {
     )
     .unwrap();
     for (name, pol) in [("MoxCms", &pol_mox), ("Lcms", &pol_lcms)] {
-        let p_out = convert_buf(
+        let p_out = convert_to_buf(
             &src_perc.as_view(),
             ImageSpec::rgb8_srgb(),
             pol,
             PeakSource::Measured,
         )
         .unwrap();
-        let r_out = convert_buf(
+        let r_out = convert_to_buf(
             &src_rel.as_view(),
             ImageSpec::rgb8_srgb(),
             pol,
@@ -1045,7 +1046,7 @@ fn cms_policy_lossless_alpha_gate_intent_opaque_and_moxcms_gray_srgb() {
     for g in 0u8..=255 {
         gray_vals.push(g);
     }
-    let src_gray = PixelBuf::from_vec(gray_vals, 256, 1, ImageSpec::gray8_srgb()).unwrap();
+    let src_gray = PixelBuf::from_typed(gray_vals, 256, 1, ImageSpec::gray8_srgb()).unwrap();
     let dst_p3 = ImageSpec::new(
         SampleLayout::RGB8,
         ColorSpace::Icc {
@@ -1055,14 +1056,15 @@ fn cms_policy_lossless_alpha_gate_intent_opaque_and_moxcms_gray_srgb() {
             intent: RenderingIntent::RelativeColorimetric,
         },
     );
-    let g_mox = convert_buf(
+    let g_mox = convert_to_buf(
         &src_gray.as_view(),
         dst_p3.clone(),
         &pol_mox,
         PeakSource::Measured,
     )
     .unwrap();
-    let g_lcms = convert_buf(&src_gray.as_view(), dst_p3, &pol_lcms, PeakSource::Measured).unwrap();
+    let g_lcms =
+        convert_to_buf(&src_gray.as_view(), dst_p3, &pol_lcms, PeakSource::Measured).unwrap();
     let max_diff = g_mox
         .as_view()
         .row(0)
@@ -1086,9 +1088,9 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
     let y_bytes = [128u8; 16];
     let cb_bytes = [128u8; 4];
     let cr_bytes = [0u8; 16];
-    let pv_y = PlaneView::new(y_spec, 4, 4, 4, &y_bytes).unwrap();
-    let pv_cb = PlaneView::new(cb_spec, 2, 2, 2, &cb_bytes).unwrap();
-    let pv_cr = PlaneView::new(cr_bad_spec, 2, 2, 8, &cr_bytes).unwrap();
+    let pv_y = PlaneView::new(&y_bytes, 4, 4, 4, y_spec).unwrap();
+    let pv_cb = PlaneView::new(&cb_bytes, 2, 2, 2, cb_spec).unwrap();
+    let pv_cr = PlaneView::new(&cr_bytes, 2, 2, 8, cr_bad_spec).unwrap();
     let planar = PlanarView::new(4, 4, &[pv_y, pv_cb, pv_cr]).unwrap();
     assert!(
         ycbcr_to_rgb_f32(
@@ -1104,35 +1106,35 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
 
     // 1b. YCbCr preserves full-res Alpha plane into RGBAF32 and rejects GainMap plane.
     let y_ok = PlaneView::new(
-        PlaneSpec::new(PlaneRole::Y, SampleType::U8),
-        4,
-        4,
-        4,
         &[235u8; 16],
+        4,
+        4,
+        4,
+        PlaneSpec::new(PlaneRole::Y, SampleType::U8),
     )
     .unwrap();
     let cb_ok = PlaneView::new(
-        PlaneSpec::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2),
-        2,
-        2,
-        2,
         &[128u8; 4],
+        2,
+        2,
+        2,
+        PlaneSpec::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2),
     )
     .unwrap();
     let cr_ok = PlaneView::new(
-        PlaneSpec::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2),
-        2,
-        2,
-        2,
         &[128u8; 4],
+        2,
+        2,
+        2,
+        PlaneSpec::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2),
     )
     .unwrap();
     let a_ok = PlaneView::new(
-        PlaneSpec::new(PlaneRole::Alpha, SampleType::U8),
-        4,
-        4,
-        4,
         &[128u8; 16],
+        4,
+        4,
+        4,
+        PlaneSpec::new(PlaneRole::Alpha, SampleType::U8),
     )
     .unwrap();
     let planar_alpha = PlanarView::new(4, 4, &[y_ok, cb_ok, cr_ok, a_ok]).unwrap();
@@ -1150,11 +1152,11 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
     assert!((px_a[3] - 128.0 / 255.0).abs() < 1e-5);
 
     let gm_extra = PlaneView::new(
-        PlaneSpec::new(PlaneRole::GainMap, SampleType::U8),
-        4,
-        4,
-        4,
         &[0u8; 16],
+        4,
+        4,
+        4,
+        PlaneSpec::new(PlaneRole::GainMap, SampleType::U8),
     )
     .unwrap();
     let planar_gm = PlanarView::new(4, 4, &[y_ok, cb_ok, cr_ok, gm_extra]).unwrap();
@@ -1177,19 +1179,20 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
     {
         use core::num::NonZeroU32;
         use zenpixels_convert::{
-            DualLayerHdr, GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapMetadata,
+            DualLayerHdrBuf, GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapMetadata,
             SignedFraction, UnsignedFraction, apply_gain_map, apply_gain_map_view,
             extract_gain_map,
         };
 
         let base_spec = ImageSpec::rgb8_srgb().with_white(DiffuseWhite::new(100.0));
-        let sdr = PixelBuf::from_vec(vec![128u8, 128, 128, 200, 100, 50], 2, 1, base_spec).unwrap();
+        let sdr =
+            PixelBuf::from_typed(vec![128u8, 128, 128, 200, 100, 50], 2, 1, base_spec).unwrap();
         let mut hdr_raw = Vec::new();
         for v in [0.5f32, 0.5, 0.5, 2.0, 0.5, 0.1] {
             hdr_raw.extend_from_slice(&v.to_ne_bytes());
         }
         let hdr_buf = PixelBuf::from_bytes(hdr_raw, 2, 1, ImageSpec::rgbf32_linear()).unwrap();
-        let per_ch_meta = GainMapMetadata::try_new(
+        let per_ch_meta = GainMapMetadata::new(
             GainMapChannels::PerChannel([
                 GainMapComponent {
                     min_gain_stops: SignedFraction::ZERO,
@@ -1240,14 +1243,14 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
             channels: 1,
             alpha: AlphaMode::None,
         };
-        let rev_gm = PixelBuf::from_vec(
+        let rev_gm = PixelBuf::from_typed(
             vec![255u8], // code 255 -> L = max_gain_stops = +2.0
             1,
             1,
             ImageSpec::new(SampleLayout::GRAY8, untagged_1.clone()),
         )
         .unwrap();
-        let rev_meta = GainMapMetadata::try_new(
+        let rev_meta = GainMapMetadata::new(
             GainMapChannels::Shared(GainMapComponent {
                 min_gain_stops: SignedFraction::ZERO,
                 max_gain_stops: SignedFraction::new(2, NonZeroU32::new(1).unwrap()),
@@ -1260,7 +1263,7 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
             GainMapColorSpace::Base,
         )
         .unwrap();
-        let rev_dual = DualLayerHdr::new(hdr_base, rev_gm, rev_meta).unwrap();
+        let rev_dual = DualLayerHdrBuf::new(hdr_base, rev_gm, rev_meta).unwrap();
         let at_h0 = apply_gain_map(&rev_dual, 0.0).unwrap();
         let at_h1 = apply_gain_map(&rev_dual, 1.0).unwrap();
         let at_h2 = apply_gain_map(&rev_dual, 2.0).unwrap();
@@ -1289,7 +1292,7 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
             ),
         )
         .unwrap();
-        let unequal_off_meta = GainMapMetadata::try_new(
+        let unequal_off_meta = GainMapMetadata::new(
             GainMapChannels::Shared(GainMapComponent {
                 min_gain_stops: SignedFraction::ZERO,
                 max_gain_stops: SignedFraction::new(2, NonZeroU32::new(1).unwrap()),
@@ -1302,7 +1305,7 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
             GainMapColorSpace::Base,
         )
         .unwrap();
-        let bypass_dual = DualLayerHdr::new(base_half, gm_10bit, unequal_off_meta).unwrap();
+        let bypass_dual = DualLayerHdrBuf::new(base_half, gm_10bit, unequal_off_meta).unwrap();
         let at_zero = apply_gain_map_view(
             &bypass_dual.as_view(),
             0.0,
@@ -1316,7 +1319,7 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
 
         // Witness C (P0): GainMapColorSpace::Alternate converts to alternate primaries BEFORE gain,
         // and rejects missing alternate_color_space!
-        let alt_meta = GainMapMetadata::try_new(
+        let alt_meta = GainMapMetadata::new(
             GainMapChannels::Shared(GainMapComponent {
                 min_gain_stops: SignedFraction::ZERO,
                 max_gain_stops: SignedFraction::new(1, NonZeroU32::new(1).unwrap()),
@@ -1339,20 +1342,20 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
             ImageSpec::rgbf32_linear(),
         )
         .unwrap();
-        let full_gm = PixelBuf::from_vec(
+        let full_gm = PixelBuf::from_typed(
             vec![255u8],
             1,
             1,
             ImageSpec::new(SampleLayout::GRAY8, untagged_1),
         )
         .unwrap();
-        // B26: DualLayerHdr::new refuses GainMapColorSpace::Alternate without alternate_color_space
-        // at construction time; DualLayerHdr::new_with_alternate supplies the required color space.
+        // B26: DualLayerHdrBuf::new refuses GainMapColorSpace::Alternate without alternate_color_space
+        // at construction time; DualLayerHdrBuf::new_with_alternate supplies the required color space.
         assert!(
-            DualLayerHdr::new(srgb_red.clone(), full_gm.clone(), alt_meta).is_err(),
-            "DualLayerHdr::new must refuse GainMapColorSpace::Alternate without alternate_color_space"
+            DualLayerHdrBuf::new(srgb_red.clone(), full_gm.clone(), alt_meta).is_err(),
+            "DualLayerHdrBuf::new must refuse GainMapColorSpace::Alternate without alternate_color_space"
         );
-        let alt_with_p3 = DualLayerHdr::new_with_alternate(
+        let alt_with_p3 = DualLayerHdrBuf::new_with_alternate(
             srgb_red,
             full_gm,
             alt_meta,
@@ -1375,7 +1378,7 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
     }
 
     // 3. Orient: reject color mismatch and handle 1x1 buffers without stride overflow.
-    let p3_src = PixelBuf::from_vec(
+    let p3_src = PixelBuf::from_typed(
         vec![10u8, 20, 30],
         1,
         1,
@@ -1392,7 +1395,7 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
         .is_err()
     );
 
-    let one_px = PixelBuf::from_vec(vec![11u8, 22, 33], 1, 1, ImageSpec::rgb8_srgb()).unwrap();
+    let one_px = PixelBuf::from_typed(vec![11u8, 22, 33], 1, 1, ImageSpec::rgb8_srgb()).unwrap();
     for orient in Orientation::ALL {
         let out = apply_orientation(&one_px.as_view(), orient).unwrap();
         assert_eq!(out.width(), 1);
@@ -1425,7 +1428,7 @@ fn prefreeze_audit_signaling_lossless_negotiate_facts_xyz_gamma_regressions() {
     let same_plan = OutputPlan::build(
         srgb.clone(),
         srgb.clone(),
-        ConvertPolicy::permissive(),
+        &ConvertPolicy::permissive(),
         PeakSource::Measured,
         OutputProfile::SameAsOrigin,
     )
@@ -1455,7 +1458,7 @@ fn prefreeze_audit_signaling_lossless_negotiate_facts_xyz_gamma_regressions() {
         OutputPlan::build(
             srgb.clone(),
             srgb.clone(),
-            ConvertPolicy::permissive(),
+            &ConvertPolicy::permissive(),
             PeakSource::Measured,
             OutputProfile::CustomIcc(Arc::from(dummy_rgb_icc.as_slice())),
         )
@@ -1470,7 +1473,7 @@ fn prefreeze_audit_signaling_lossless_negotiate_facts_xyz_gamma_regressions() {
         let plan = OutputPlan::build(
             gray_spec.clone(),
             gray_spec,
-            ConvertPolicy::permissive(),
+            &ConvertPolicy::permissive(),
             PeakSource::Measured,
             OutputProfile::EmbedIcc,
         )
@@ -1512,12 +1515,12 @@ fn prefreeze_audit_signaling_lossless_negotiate_facts_xyz_gamma_regressions() {
 
     // 5. ImagePlan defers all_grayscale check to runtime buffer facts AND preserves identity facts!
     let mut gray_rgb_buf =
-        PixelBuf::from_vec(vec![42u8, 42, 42, 99, 99, 99], 2, 1, srgb.clone()).unwrap();
+        PixelBuf::from_typed(vec![42u8, 42, 42, 99, 99, 99], 2, 1, srgb.clone()).unwrap();
     gray_rgb_buf.set_facts(SampleFacts::NONE.with_all_grayscale(true));
     let plan_to_gray = ImagePlan::build(
         srgb.clone(),
         ImageSpec::gray8_srgb(),
-        ConvertPolicy::lossless(),
+        &ConvertPolicy::lossless(),
         PeakSource::Measured,
     )
     .unwrap();
@@ -1525,13 +1528,13 @@ fn prefreeze_audit_signaling_lossless_negotiate_facts_xyz_gamma_regressions() {
     assert_eq!(out_g.as_view().row(0), &[42, 99]);
 
     let unverified_rgb =
-        PixelBuf::from_vec(vec![255u8, 0, 0, 0, 255, 0], 2, 1, srgb.clone()).unwrap();
+        PixelBuf::from_typed(vec![255u8, 0, 0, 0, 255, 0], 2, 1, srgb.clone()).unwrap();
     assert!(plan_to_gray.execute(&unverified_rgb).is_err());
 
     let id_plan = ImagePlan::build(
         srgb.clone(),
         srgb.clone(),
-        ConvertPolicy::lossless(),
+        &ConvertPolicy::lossless(),
         PeakSource::Measured,
     )
     .unwrap();
@@ -1544,7 +1547,7 @@ fn prefreeze_audit_signaling_lossless_negotiate_facts_xyz_gamma_regressions() {
     // 6. Full-range U16 ExactDepth(8) must NOT bypass lossless narrow-range U16->U8 depth check!
     let u16_narrow = ImageSpec::rgb16_srgb().with_range(SignalRange::Narrow);
     let u8_narrow = ImageSpec::rgb8_srgb().with_range(SignalRange::Narrow);
-    let pol_u8_proven = ConvertPolicy::lossless().with_facts(SampleFacts::from_depth(
+    let pol_u8_proven = ConvertPolicy::lossless().with_source_facts(SampleFacts::from_depth(
         ExactDepth::new(SampleType::U16, SignalRange::Full, 8, 8).unwrap(),
     ));
     assert!(
@@ -1644,14 +1647,14 @@ fn prefreeze_audit_signaling_lossless_negotiate_facts_xyz_gamma_regressions() {
         .row_as_mut::<f32>(0)
         .unwrap()
         .copy_from_slice(&[0.5, 0.25, 0.75, 1.0, 1.0, 1.0]);
-    let in_xyz = convert_buf(
+    let in_xyz = convert_to_buf(
         &dci_buf.as_view(),
         xyz_spec,
         &ConvertPolicy::working_linear(),
         PeakSource::Measured,
     )
     .unwrap();
-    let back_dci = convert_buf(
+    let back_dci = convert_to_buf(
         &in_xyz.as_view(),
         dci_spec,
         &ConvertPolicy::working_linear(),

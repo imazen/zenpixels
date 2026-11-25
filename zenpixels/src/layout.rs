@@ -1063,7 +1063,7 @@ impl RowAlign {
     /// Convert a byte pitch (such as `wgpu`'s 256-byte alignment) into [`RowAlign::Samples`].
     #[inline]
     #[must_use]
-    pub const fn try_from_bytes(bytes: u16, sample: SampleType) -> Option<Self> {
+    pub const fn from_bytes(bytes: u16, sample: SampleType) -> Option<Self> {
         let sz = sample.byte_size();
         if bytes == 0 || (bytes as usize) % sz != 0 {
             None

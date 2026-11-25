@@ -98,19 +98,21 @@ impl core::fmt::Debug for RowPlan {
 impl RowPlan {
     /// Compile a single-row conversion plan from `src` to `dst` under `policy`.
     ///
-    /// Accepts either borrowed `&ImageSpec` (zero-clone) or owned `ImageSpec`.
+    /// Accepts either borrowed `&ImageSpec` or owned `ImageSpec` at the call site (retaining
+    /// internal clones inside the compiled plan).
     ///
     /// For HDR → SDR tone mapping with a pipeline-managed mapper, pass
-    /// `hdr_peak: Some(nits)`. To measure peak automatically over a whole image,
-    /// use [`ImagePlan::build`] with [`PeakSource::Measured`].
+    /// `resolved_source_peak: Some(nits)` (`None` means no peak supplied — never "measure this
+    /// row"). To measure peak automatically over a whole image, use [`ImagePlan::build`] with
+    /// [`PeakSource::Measured`].
     #[inline]
     pub fn build(
         src: impl AsRef<ImageSpec>,
         dst: impl AsRef<ImageSpec>,
         policy: &ConvertPolicy,
-        hdr_peak: Option<Nits>,
+        resolved_source_peak: Option<Nits>,
     ) -> Result<Self, At<ConvertError>> {
-        Self::build_inner(src.as_ref(), dst.as_ref(), policy, hdr_peak)
+        Self::build_inner(src.as_ref(), dst.as_ref(), policy, resolved_source_peak)
     }
 
     #[inline(never)]
@@ -965,7 +967,8 @@ impl ImagePlan {
 
     /// Validate and construct an image-level conversion plan.
     ///
-    /// Accepts either borrowed `&ImageSpec` (zero-clone) or owned `ImageSpec`.
+    /// Accepts either borrowed `&ImageSpec` or owned `ImageSpec` at the call site and borrows
+    /// `&ConvertPolicy` (retaining internal clones inside the built plan).
     ///
     /// When the route does not require per-image HDR peak resolution or runtime
     /// buffer facts (`DiscardIfOpaque` / `Forbid` on U16→U8, RGB→Gray, or float→int),
@@ -974,7 +977,7 @@ impl ImagePlan {
     pub fn build(
         src: impl AsRef<ImageSpec>,
         dst: impl AsRef<ImageSpec>,
-        policy: ConvertPolicy,
+        policy: &ConvertPolicy,
         peak: PeakSource,
     ) -> Result<Self, At<ConvertError>> {
         Self::build_inner(src.as_ref(), dst.as_ref(), policy, peak)
@@ -984,7 +987,7 @@ impl ImagePlan {
     fn build_inner(
         src: &ImageSpec,
         dst: &ImageSpec,
-        policy: ConvertPolicy,
+        policy: &ConvertPolicy,
         peak: PeakSource,
     ) -> Result<Self, At<ConvertError>> {
         src.validate().map_err(|e| err_at((*e.error()).into()))?;
@@ -1036,7 +1039,7 @@ impl ImagePlan {
 
         let mapper_needs_runtime_peak = (is_hdr_tonemap
             && !matches!(peak, PeakSource::Fixed(_))
-            && resolve_tone_mapper(&policy)
+            && resolve_tone_mapper(policy)
                 .map(|m| m.requirements().source_peak_nits && m.baked_peaks().is_none())
                 .unwrap_or(true))
             || (is_linear_hdr_candidate && !matches!(peak, PeakSource::Fixed(_)));
@@ -1045,7 +1048,7 @@ impl ImagePlan {
             let fixed_peak = match peak {
                 PeakSource::Fixed(n) => {
                     if is_linear_hdr_candidate {
-                        let ceiling = linear_sdr_ceiling_nits(src, dst, &policy);
+                        let ceiling = linear_sdr_ceiling_nits(src, dst, policy);
                         if n.nits() > ceiling * (1.0 + 1e-4) {
                             Some(n)
                         } else {
@@ -1057,11 +1060,11 @@ impl ImagePlan {
                 }
                 _ => None,
             };
-            let compiled = RowPlan::build_inner(src, dst, &policy, fixed_peak)?;
+            let compiled = RowPlan::build_inner(src, dst, policy, fixed_peak)?;
             return Ok(Self {
                 src: src.clone(),
                 dst: dst.clone(),
-                policy,
+                policy: policy.clone(),
                 peak,
                 cached_row_plan: Some(compiled),
             });
@@ -1107,7 +1110,7 @@ impl ImagePlan {
         Ok(Self {
             src: src.clone(),
             dst: dst.clone(),
-            policy,
+            policy: policy.clone(),
             peak,
             cached_row_plan: None,
         })
@@ -1291,17 +1294,17 @@ impl ImagePlan {
     }
 }
 
-/// One-shot convenience helper: convert a borrowed [`PixelView`] into a new [`PixelBuf`].
+/// One-shot convenience helper: convert a borrowed [`PixelView`] into a newly allocated [`PixelBuf`].
 ///
-/// Accepts either borrowed `&ImageSpec` (zero-clone) or owned `ImageSpec`.
+/// Accepts either borrowed `&ImageSpec` or owned `ImageSpec` at the call site.
 #[inline]
-pub fn convert_buf(
+pub fn convert_to_buf(
     src: &PixelView<'_>,
     dst_spec: impl AsRef<ImageSpec>,
     policy: &ConvertPolicy,
     peak: PeakSource,
 ) -> Result<PixelBuf, At<ConvertError>> {
-    let plan = ImagePlan::build_inner(src.spec(), dst_spec.as_ref(), policy.clone(), peak)?;
+    let plan = ImagePlan::build_inner(src.spec(), dst_spec.as_ref(), policy, peak)?;
     plan.execute(src)
 }
 
@@ -1312,17 +1315,22 @@ pub fn convert_into<S: PixelSource + ?Sized, D: PixelSink + ?Sized>(
     policy: &ConvertPolicy,
     peak: PeakSource,
 ) -> Result<(), At<ConvertError>> {
-    let plan = ImagePlan::build_inner(src.source_spec(), dst.sink_spec(), policy.clone(), peak)?;
+    let plan = ImagePlan::build_inner(src.source_spec(), dst.sink_spec(), policy, peak)?;
     plan.execute_into(src, dst)
 }
 
 /// One-shot convenience helper: convert `src` to full-range sRGB `RGB8` under
-/// [`ConvertPolicy::permissive`] (discarding alpha unchecked and clipping gamut).
+/// `ConvertPolicy::permissive().with_alpha(AlphaPolicy::DiscardIfOpaque)`.
+///
+/// Refuses dropping unproven non-opaque alpha (`ConvertError::AlphaLossForbidden`);
+/// use [`convert_to_buf`] with [`AlphaPolicy::CompositeOnto`] or [`AlphaPolicy::DiscardUnchecked`]
+/// to flatten or drop live transparency explicitly.
 pub fn to_rgb8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
-    convert_buf(
+    let policy = ConvertPolicy::permissive().with_alpha(AlphaPolicy::DiscardIfOpaque);
+    convert_to_buf(
         src,
-        ImageSpec::rgb8_srgb(),
-        &ConvertPolicy::permissive(),
+        ImageSpec::rgb8_srgb_ref(),
+        &policy,
         PeakSource::Measured,
     )
 }
@@ -1330,21 +1338,26 @@ pub fn to_rgb8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
 /// One-shot convenience helper: convert `src` to full-range sRGB straight-alpha `RGBA8`
 /// under [`ConvertPolicy::permissive`].
 pub fn to_rgba8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
-    convert_buf(
+    convert_to_buf(
         src,
-        ImageSpec::rgba8_srgb(),
+        ImageSpec::rgba8_srgb_ref(),
         &ConvertPolicy::permissive(),
         PeakSource::Measured,
     )
 }
 
-/// One-shot convenience helper: convert `src` to full-range sRGB `GRAY8` (encoded Y'
-/// luma by default) under [`ConvertPolicy::permissive`].
+/// One-shot convenience helper: convert `src` to full-range sRGB `GRAY8` (encoded Y' luma
+/// by default) under `ConvertPolicy::permissive().with_alpha(AlphaPolicy::DiscardIfOpaque)`.
+///
+/// Refuses dropping unproven non-opaque alpha (`ConvertError::AlphaLossForbidden`);
+/// use [`convert_to_buf`] with [`AlphaPolicy::CompositeOnto`] or [`AlphaPolicy::DiscardUnchecked`]
+/// to flatten or drop live transparency explicitly.
 pub fn to_gray8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
-    convert_buf(
+    let policy = ConvertPolicy::permissive().with_alpha(AlphaPolicy::DiscardIfOpaque);
+    convert_to_buf(
         src,
-        ImageSpec::gray8_srgb(),
-        &ConvertPolicy::permissive(),
+        ImageSpec::gray8_srgb_ref(),
+        &policy,
         PeakSource::Measured,
     )
 }
@@ -1352,9 +1365,9 @@ pub fn to_gray8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
 /// One-shot convenience helper: convert `src` to full-range sRGB straight-alpha `BGRA8`
 /// under [`ConvertPolicy::permissive`].
 pub fn to_bgra8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
-    convert_buf(
+    convert_to_buf(
         src,
-        ImageSpec::bgra8_srgb(),
+        ImageSpec::bgra8_srgb_ref(),
         &ConvertPolicy::permissive(),
         PeakSource::Measured,
     )

@@ -10,8 +10,8 @@ use zenpixels::BitPacking;
 use zenpixels::RowAlign;
 use zenpixels::{
     AlphaMode, BandedBuf, BufferError, ByteStorage, ByteStorageMut, ChannelOrder, ChromaSiting,
-    CodePlaneError, CodePlaneMut, ColorSpace, ImageSpec, OwnedPlane, PixelBuf, PixelSink,
-    PlanarBuf, PlanarViewMut, PlaneRole, PlaneSpec, PlaneViewMut, Primaries, SampleEncoding,
+    CodePlaneError, CodePlaneMut, ColorSpace, ImageSpec, PixelBuf, PixelSink, PlanarBuf,
+    PlanarViewMut, PlaneBuf, PlaneRole, PlaneSpec, PlaneViewMut, Primaries, SampleEncoding,
     SampleFacts, SampleLayout, SampleType, SignalRange, Transfer,
 };
 #[cfg(any(feature = "imgref", feature = "image"))]
@@ -70,7 +70,7 @@ fn external_immutable_zero_copy_cow_and_recovery() {
     assert_eq!(buf.as_view().as_strided_bytes().as_ptr(), ptr);
 
     // Wrong downcast returns `Err(buf)` completely untouched.
-    let buf = buf.try_into_external::<Arc<[u8]>>().unwrap_err();
+    let buf = buf.into_external::<Arc<[u8]>>().unwrap_err();
     assert_eq!(buf.as_view().as_strided_bytes().as_ptr(), ptr);
 
     // Clone copies into independent aligned storage.
@@ -80,7 +80,7 @@ fn external_immutable_zero_copy_cow_and_recovery() {
     assert_eq!(raw[0], 0);
 
     // Recover exact original handle zero-copy!
-    let recovered = buf.try_into_external::<ReadOnlyPoolHandle>().unwrap();
+    let recovered = buf.into_external::<ReadOnlyPoolHandle>().unwrap();
     assert_eq!(recovered.id, 42);
     assert_eq!(recovered.data.as_ptr(), ptr);
 
@@ -130,7 +130,7 @@ fn external_immutable_validation_failure_returns_owner_untouched() {
         static_buf.as_view().as_strided_bytes().as_ptr(),
         STATIC_RGB.as_ptr()
     );
-    let back: &'static [u8] = static_buf.try_into_external().unwrap();
+    let back: &'static [u8] = static_buf.into_external().unwrap();
     assert_eq!(back.as_ptr(), STATIC_RGB.as_ptr());
 }
 
@@ -166,7 +166,7 @@ fn external_mutable_zero_copy_in_place_write_and_recovery() {
     assert!(!buf.facts().all_opaque);
 
     // Recover exact original lease zero-copy and verify in-place mutations persisted!
-    let lease_out = buf.try_into_external_mut::<MutablePoolLease>().unwrap();
+    let lease_out = buf.into_external_mut::<MutablePoolLease>().unwrap();
     assert_eq!(lease_out.lease_id, 777);
     assert_eq!(lease_out.bytes.as_ptr(), ptr);
     assert_eq!(&lease_out.bytes[0..4], &[10, 20, 30, 255]);
@@ -185,7 +185,7 @@ fn external_mutable_zero_copy_in_place_write_and_recovery() {
     .unwrap();
     assert_eq!(f32_buf.as_view().as_strided_bytes().as_ptr(), f32_ptr);
     f32_buf.as_view_mut().row_as_mut::<f32>(1).unwrap()[0] = 0.75;
-    let recovered_box = f32_buf.try_into_external_mut::<Box<[f32]>>().unwrap();
+    let recovered_box = f32_buf.into_external_mut::<Box<[f32]>>().unwrap();
     assert_eq!(recovered_box[6], 0.75);
 }
 
@@ -194,22 +194,22 @@ fn external_owned_plane_and_try_from_parts_recover() {
     let y_arc: Arc<[u8]> = Arc::from(vec![120u8; 16]);
     let y_ptr = y_arc.as_ptr();
     let y_plane =
-        OwnedPlane::from_external(PlaneSpec::new(PlaneRole::Y, SampleType::U8), 4, 4, 4, y_arc)
+        PlaneBuf::from_external(y_arc, 4, 4, 4, PlaneSpec::new(PlaneRole::Y, SampleType::U8))
             .unwrap();
     assert_eq!(y_plane.as_view().data().as_ptr(), y_ptr);
-    let back = y_plane.try_into_external::<Arc<[u8]>>().unwrap();
+    let back = y_plane.into_external::<Arc<[u8]>>().unwrap();
     assert_eq!(back.as_ptr(), y_ptr);
 
-    let mut uv_plane = OwnedPlane::from_external_mut(
-        PlaneSpec::new(PlaneRole::Cb, SampleType::U16),
+    let mut uv_plane = PlaneBuf::from_external_mut(
+        vec![512u16; 4].into_boxed_slice(),
         2,
         2,
         4,
-        vec![512u16; 4].into_boxed_slice(),
+        PlaneSpec::new(PlaneRole::Cb, SampleType::U16),
     )
     .unwrap();
     uv_plane.try_as_view_mut().unwrap().row_mut(0)[0..2].copy_from_slice(&1023u16.to_ne_bytes());
-    let uv_back = uv_plane.try_into_external_mut::<Box<[u16]>>().unwrap();
+    let uv_back = uv_plane.into_external_mut::<Box<[u16]>>().unwrap();
     assert_eq!(uv_back[0], 1023);
 
     // `try_from_parts_recover` preserves storage allocation on geometry rejection.
@@ -217,11 +217,11 @@ fn external_owned_plane_and_try_from_parts_recover() {
     let orig_ptr = buf.as_view().as_strided_bytes().as_ptr();
     let mut parts = buf.into_parts();
     parts.stride = 2; // invalid (< row_bytes=12)
-    let (err, mut parts) = PixelBuf::try_from_parts_recover(parts).unwrap_err();
+    let (err, mut parts) = PixelBuf::from_parts_recover(parts).unwrap_err();
     assert_eq!(*err.error(), BufferError::StrideTooSmall);
     assert_eq!(parts.storage.as_bytes().as_ptr(), orig_ptr);
     parts.stride = 12;
-    let restored = PixelBuf::try_from_parts_recover(parts).unwrap();
+    let restored = PixelBuf::from_parts_recover(parts).unwrap();
     assert_eq!(restored.as_view().as_strided_bytes().as_ptr(), orig_ptr);
 }
 
@@ -358,16 +358,16 @@ fn banded_buf_helpers_and_planar_color_and_mut_views() {
         4,
         4,
         [
-            PlaneViewMut::new(y_spec, 4, 4, 4, &mut y_raw).unwrap(),
-            PlaneViewMut::new(cb_spec, 2, 2, 2, &mut cb_raw).unwrap(),
-            PlaneViewMut::new(cr_spec, 2, 2, 2, &mut cr_raw).unwrap(),
+            PlaneViewMut::new(&mut y_raw, 4, 4, 4, y_spec).unwrap(),
+            PlaneViewMut::new(&mut cb_raw, 2, 2, 2, cb_spec).unwrap(),
+            PlaneViewMut::new(&mut cr_raw, 2, 2, 2, cr_spec).unwrap(),
         ],
     )
     .unwrap()
     .with_ycbcr_matrix_code(6);
     let mut pvm = pvm;
     pvm.planes_mut()[0].row_mut(2)[3] = 42;
-    let imm = pvm.try_into_view().unwrap();
+    let imm = pvm.into_view().unwrap();
     assert_eq!(imm.ycbcr_matrix_code(), Some(6));
     assert_eq!(imm.planes()[0].row(2)[3], 42);
 }
@@ -403,13 +403,13 @@ fn imgref_mutable_borrowed_and_sample_interop() {
     let mut data = vec![Rgb::new(1u8, 2, 3); 12];
     let ptr = data.as_ptr() as *const u8;
     let img_mut = imgref::ImgRefMut::new_stride(&mut data, 3, 3, 4);
-    let mut vm = PixelViewMut::try_from_imgref_mut(img_mut, ColorSpace::SRGB).unwrap();
+    let mut vm = PixelViewMut::from_imgref_mut(img_mut, ColorSpace::SRGB).unwrap();
     assert_eq!(vm.width(), 3);
     assert_eq!(vm.rows(), 3);
     assert_eq!(vm.stride(), 12);
     assert_eq!(vm.as_strided_bytes_mut().as_ptr(), ptr);
     {
-        let mut s_img = vm.try_as_sample_imgref_mut::<u8>().unwrap();
+        let mut s_img = vm.as_sample_imgref_mut::<u8>().unwrap();
         assert_eq!(s_img.width(), 9);
         assert_eq!(s_img.stride(), 12);
         s_img.buf_mut()[0] = 77;
@@ -417,19 +417,19 @@ fn imgref_mutable_borrowed_and_sample_interop() {
     let back = vm.into_imgref_mut::<Rgb<u8>>().unwrap();
     assert_eq!(back.buf()[0], Rgb::new(77, 2, 3));
 
-    let view = PixelView::try_from_imgref(back.as_ref(), ColorSpace::SRGB).unwrap();
-    let sample_ref = view.try_as_sample_imgref::<u8>().unwrap();
+    let view = PixelView::from_imgref(back.as_ref(), ColorSpace::SRGB).unwrap();
+    let sample_ref = view.as_sample_imgref::<u8>().unwrap();
     assert_eq!(sample_ref.buf()[0], 77);
 
-    // `try_into_imgvec_zero_copy` succeeds on tight Vec<u8> and returns Err(buf) untouched on Aligned64.
+    // `into_imgvec_zero_copy` succeeds on tight Vec<u8> and returns Err(buf) untouched on Aligned64.
     let tight = PixelBuf::new(2, 2, ImageSpec::rgb8_srgb()).unwrap();
     let ptr = tight.as_view().as_strided_bytes().as_ptr();
-    let iv = tight.try_into_imgvec_zero_copy::<Rgb<u8>>().unwrap();
+    let iv = tight.into_imgvec_zero_copy::<Rgb<u8>>().unwrap();
     assert_eq!(iv.buf().as_ptr() as *const u8, ptr);
 
     let aligned = PixelBuf::new_aligned(2, 2, ImageSpec::rgb8_srgb(), RowAlign::Cache64).unwrap();
     let aptr = aligned.as_view().as_strided_bytes().as_ptr();
-    let back = aligned.try_into_imgvec_zero_copy::<Rgb<u8>>().unwrap_err();
+    let back = aligned.into_imgvec_zero_copy::<Rgb<u8>>().unwrap_err();
     assert_eq!(back.as_view().as_strided_bytes().as_ptr(), aptr);
 }
 
@@ -461,12 +461,12 @@ fn image_crate_symmetric_10_formats_borrowed_and_metadata() {
         .set_color_space(image::metadata::Cicp::DISPLAY_P3)
         .unwrap();
     {
-        let v = PixelView::try_from_image_buffer(&rgb16).unwrap();
+        let v = PixelView::from_image_buffer(&rgb16).unwrap();
         assert_eq!(v.spec().color, ColorSpace::DISPLAY_P3);
         assert_eq!(v.row_as::<u16>(0).unwrap()[0..3], [1000, 2000, 3000]);
     }
     {
-        let mut vm = PixelViewMut::try_from_image_buffer_mut(&mut rgb16).unwrap();
+        let mut vm = PixelViewMut::from_image_buffer_mut(&mut rgb16).unwrap();
         vm.row_as_mut::<u16>(1).unwrap()[0] = 9999;
     }
     assert_eq!(rgb16.get_pixel(0, 1)[0], 9999);
@@ -474,7 +474,7 @@ fn image_crate_symmetric_10_formats_borrowed_and_metadata() {
     let dyn_img = image::DynamicImage::ImageRgb16(rgb16);
     let zp = PixelBuf::try_from(dyn_img).unwrap();
     assert_eq!(zp.spec().color, ColorSpace::DISPLAY_P3);
-    let dyn_back = zp.try_into_dynamic_image().unwrap();
+    let dyn_back = zp.into_dynamic_image().unwrap();
     assert!(matches!(dyn_back, image::DynamicImage::ImageRgb16(_)));
 
     let luma16 = image::DynamicImage::ImageLuma16(image::ImageBuffer::from_pixel(
@@ -482,7 +482,7 @@ fn image_crate_symmetric_10_formats_borrowed_and_metadata() {
         2,
         image::Luma([4321u16]),
     ));
-    let zp_l = PixelBuf::try_from_dynamic_image(luma16).unwrap();
+    let zp_l = PixelBuf::from_dynamic_image(luma16).unwrap();
     assert_eq!(zp_l.spec().layout, SampleLayout::GRAY16);
 
     let rgb32f = image::DynamicImage::ImageRgb32F(image::ImageBuffer::from_pixel(
@@ -490,7 +490,7 @@ fn image_crate_symmetric_10_formats_borrowed_and_metadata() {
         2,
         image::Rgb([0.25f32, 0.5, 0.75]),
     ));
-    let zp_f = PixelBuf::try_from_dynamic_image(rgb32f).unwrap();
+    let zp_f = PixelBuf::from_dynamic_image(rgb32f).unwrap();
     assert_eq!(zp_f.spec().layout, SampleLayout::RGBF32);
 }
 

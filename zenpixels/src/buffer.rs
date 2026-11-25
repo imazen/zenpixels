@@ -5,11 +5,11 @@
 //! - [`PixelView<'a>`] and [`PixelViewMut<'a>`] borrow rectangular (possibly strided
 //!   or cropped) subimages with lifetimes tied directly to `'a` backing storage.
 //! - Zero-copy typed pixel access is provided by methods (`row_as::<Rgb<u8>>`,
-//!   `from_vec`, `try_into_vec_zero_copy`) rather than a `<P = ()>` type parameter.
+//!   `from_typed`, `into_vec_zero_copy`) rather than a `<P = ()>` type parameter.
 //! - [`BandedBuf`] handles gigapixel images in bounded-memory horizontal bands.
 //! - [`PlanarBuf`] / [`PlanarView`] handle 1..=4 planes (YCbCr, NV12, P010, planar RGB+A)
 //!   including N-bit [`BitPacking`] code extraction.
-//! - [`DualLayerHdr`] carries ISO 21496-1 / UltraHDR base + gain map + headroom metadata.
+//! - [`DualLayerHdrBuf`] carries ISO 21496-1 / UltraHDR base + gain map + headroom metadata.
 
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
@@ -41,7 +41,7 @@ mod sealed {
 /// Sealed marker trait for Rust scalar, channel-array, or pixel types that carry a
 /// known [`SampleLayout`] compatibility contract.
 ///
-/// Used by [`PixelBuf::from_vec`] and [`PixelView::from_typed`] to prevent silent
+/// Used by [`PixelBuf::from_typed`] and [`PixelView::from_typed`] to prevent silent
 /// native-endian reinterpretation across unrelated scalar types (e.g. `Vec<i32>`
 /// adopted as `RGBF32`). For intentional raw byte reinterpretation, use
 /// [`PixelBuf::from_raw_pod`] or [`PixelView::from_raw_pod`].
@@ -732,21 +732,37 @@ pub struct PixelView<'a> {
 }
 
 impl<'a> PixelView<'a> {
-    /// Borrow strided bytes with checked dimensions, alignment, and length.
+    /// Borrow strided bytes with checked dimensions, alignment, and length (**zero heap allocation**).
     ///
-    /// Accepts owned [`ImageSpec`], borrowed `&'a ImageSpec` (zero `Arc` refcount bump),
-    /// or `Copy` [`PixelFormat`](crate::PixelFormat).
+    /// Pass [`ImageSpec::rgb8_srgb_ref()`] (or any `ImageSpec::*_ref()` preset) or a borrowed
+    /// `&'a ImageSpec`. If a view genuinely needs to own a dynamically constructed [`ImageSpec`],
+    /// use [`new_with_spec_cow`](Self::new_with_spec_cow) with [`SpecCow::from_owned`] or
+    /// [`SpecCow::from_arc`].
     ///
     /// Trims any trailing bytes beyond the active `(rows - 1) * stride + row_bytes`
-    /// extent so zero-copy interop bridges (`try_as_imgref`) never touch trailing slop.
+    /// extent so zero-copy interop bridges (`as_imgref`) never touch trailing slop.
     pub fn new(
         data: &'a [u8],
         width: u32,
         rows: u32,
         stride: usize,
-        spec: impl Into<SpecCow<'a>>,
+        spec: &'a ImageSpec,
     ) -> Result<Self, At<BufferError>> {
-        let spec = spec.into();
+        Self::new_with_spec_cow(data, width, rows, stride, SpecCow::Borrowed(spec))
+    }
+
+    /// Borrow strided bytes with an explicit [`SpecCow<'a>`] (borrowed `&'a ImageSpec` or
+    /// shared `Arc<ImageSpec>` via [`SpecCow::from_owned`] / [`SpecCow::from_format`] /
+    /// [`SpecCow::from_arc`]).
+    ///
+    /// Trims any trailing bytes beyond the active `(rows - 1) * stride + row_bytes` extent.
+    pub fn new_with_spec_cow(
+        data: &'a [u8],
+        width: u32,
+        rows: u32,
+        stride: usize,
+        spec: SpecCow<'a>,
+    ) -> Result<Self, At<BufferError>> {
         let (_rb, req) = validate_geometry(
             data.len(),
             data.as_ptr(),
@@ -768,21 +784,20 @@ impl<'a> PixelView<'a> {
         })
     }
 
-    /// Borrow tightly packed bytes (`stride == width * bytes_per_pixel`).
-    pub fn from_packed(
+    /// Borrow tightly packed native-endian bytes (`stride == width * bytes_per_pixel`, **zero allocation**).
+    pub fn from_bytes(
         data: &'a [u8],
         width: u32,
         rows: u32,
-        spec: impl Into<SpecCow<'a>>,
+        spec: &'a ImageSpec,
     ) -> Result<Self, At<BufferError>> {
-        let spec = spec.into();
         let stride = (width as usize)
-            .checked_mul(spec.as_spec().layout.bytes_per_pixel())
+            .checked_mul(spec.layout.bytes_per_pixel())
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
         Self::new(data, width, rows, stride, spec)
     }
 
-    /// Borrow a tightly packed typed pixel or sample slice zero-copy via `bytemuck`.
+    /// Borrow a tightly packed typed pixel or sample slice zero-copy via `bytemuck` (**zero allocation**).
     ///
     /// Validates that `P` is structurally compatible with `spec.layout` (rejecting
     /// e.g. `&[i32]` as `RGBF32`). For intentional raw byte reinterpretation, use
@@ -791,43 +806,44 @@ impl<'a> PixelView<'a> {
         pixels: &'a [P],
         width: u32,
         rows: u32,
-        spec: impl Into<SpecCow<'a>>,
+        spec: &'a ImageSpec,
     ) -> Result<Self, At<BufferError>> {
-        let spec = spec.into();
-        if !P::matches_layout(spec.as_spec().layout) {
+        if !P::matches_layout(spec.layout) {
             return Err(err_at(BufferError::IncompatibleLayout).at_string(|| {
                 alloc::format!(
                     "element `{}` does not match {:?} layout (annotate integer literals e.g. `0u8`, or use `from_raw_pod`)",
                     core::any::type_name::<P>(),
-                    spec.as_spec().layout
+                    spec.layout
                 )
             }));
         }
-        Self::from_packed(bytemuck::cast_slice(pixels), width, rows, spec)
+        Self::from_bytes(bytemuck::cast_slice(pixels), width, rows, spec)
     }
 
-    /// Borrow a tightly packed scalar sample slice (`&[u8]`, `&[u16]`, `&[f32]`, etc.) zero-copy.
+    /// Borrow a tightly packed scalar sample slice (`&[u8]`, `&[u16]`, `&[f32]`, etc.) zero-copy (**zero allocation**).
     pub fn from_samples<S: StorageSample>(
         samples: &'a [S],
         width: u32,
         rows: u32,
-        spec: impl Into<SpecCow<'a>>,
+        spec: &'a ImageSpec,
     ) -> Result<Self, At<BufferError>> {
-        let spec = spec.into();
-        if spec.as_spec().layout.sample != S::SAMPLE_TYPE {
+        if spec.layout.sample != S::SAMPLE_TYPE {
             return Err(err_at(BufferError::IncompatibleLayout).at_string(|| {
                 alloc::format!(
                     "sample `{}` ({:?}) does not match {:?} layout",
                     core::any::type_name::<S>(),
                     S::SAMPLE_TYPE,
-                    spec.as_spec().layout
+                    spec.layout
                 )
             }));
         }
-        Self::from_packed(bytemuck::cast_slice(samples), width, rows, spec)
+        Self::from_bytes(bytemuck::cast_slice(samples), width, rows, spec)
     }
 
     /// Borrow a tightly packed `rgb` pixel slice (`&[rgb::Rgb<u8>]`, etc.) zero-copy.
+    ///
+    /// Uses a zero-allocation `&'static ImageSpec` for all standard built-in presets, and
+    /// allocates an `Arc<ImageSpec>` only for custom/ICC color spaces.
     #[cfg(feature = "rgb")]
     pub fn from_pixels<P: crate::interop::PixelType>(
         pixels: &'a [P],
@@ -835,23 +851,27 @@ impl<'a> PixelView<'a> {
         rows: u32,
         color: crate::ColorSpace,
     ) -> Result<Self, At<BufferError>> {
-        Self::from_packed(
+        let stride = (width as usize)
+            .checked_mul(P::LAYOUT.bytes_per_pixel())
+            .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+        Self::new_with_spec_cow(
             bytemuck::cast_slice(pixels),
             width,
             rows,
-            ImageSpec::new(P::LAYOUT, color),
+            stride,
+            SpecCow::from_owned(ImageSpec::new(P::LAYOUT, color)),
         )
     }
 
     /// Explicitly reinterpret any tightly packed `bytemuck::Pod` slice in native endianness
-    /// as raw pixel bytes matching `spec`.
+    /// as raw pixel bytes matching `spec` (**zero allocation**).
     pub fn from_raw_pod<P: bytemuck::Pod>(
         pixels: &'a [P],
         width: u32,
         rows: u32,
-        spec: impl Into<SpecCow<'a>>,
+        spec: &'a ImageSpec,
     ) -> Result<Self, At<BufferError>> {
-        Self::from_packed(bytemuck::cast_slice(pixels), width, rows, spec)
+        Self::from_bytes(bytemuck::cast_slice(pixels), width, rows, spec)
     }
 
     /// Image width in pixels.
@@ -963,11 +983,11 @@ impl<'a> PixelView<'a> {
         self
     }
 
-    /// Compose an additional display transform onto this view's pending orientation
-    /// (`self.orientation.then(delta)`) in O(1) without touching pixels.
+    /// Compose an additional display transform (including reflections) onto this view's
+    /// pending orientation (`self.orientation.then(delta)`) in O(1) without touching pixels.
     #[inline]
     #[must_use]
-    pub const fn rotate_metadata(mut self, delta: Orientation) -> Self {
+    pub const fn compose_orientation(mut self, delta: Orientation) -> Self {
         self.orientation = self.orientation.then(delta);
         self
     }
@@ -1035,7 +1055,10 @@ impl<'a> PixelView<'a> {
     }
 
     /// Zero-copy contiguous typed slice across all rows (e.g. `&[rgb::Rgba<f32>]`).
-    pub fn as_contiguous_as<P: bytemuck::Pod>(&self) -> Result<&'a [P], At<BufferError>> {
+    ///
+    /// Validates `bytemuck::try_cast_slice` alignment and exact element divisibility (raw POD
+    /// reinterpretation, not semantic channel-order validation).
+    pub fn as_contiguous_typed<P: bytemuck::Pod>(&self) -> Result<&'a [P], At<BufferError>> {
         let bytes = self
             .as_contiguous_bytes()
             .ok_or_else(|| err_at(BufferError::StrideNotPixelAligned))?;
@@ -1055,7 +1078,7 @@ impl<'a> PixelView<'a> {
     }
 
     /// Borrow contiguous bytes if tightly packed, or fallibly copy active rows into a `Vec<u8>`.
-    pub fn try_contiguous_bytes(&self) -> Result<Cow<'a, [u8]>, At<BufferError>> {
+    pub fn contiguous_bytes(&self) -> Result<Cow<'a, [u8]>, At<BufferError>> {
         if let Some(bytes) = self.as_contiguous_bytes() {
             return Ok(Cow::Borrowed(bytes));
         }
@@ -1104,12 +1127,12 @@ impl<'a> PixelView<'a> {
     }
 
     /// Fallibly copy active pixels into a freshly allocated, tightly packed [`PixelBuf`].
-    pub fn try_to_tight_buf(&self) -> Result<PixelBuf, At<BufferError>> {
+    pub fn to_tight_buf(&self) -> Result<PixelBuf, At<BufferError>> {
         let rb = self.row_bytes();
         let total = rb
             .checked_mul(self.rows as usize)
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        let storage = PixelStorage::try_from_rows(
+        let storage = PixelStorage::from_rows(
             self.spec.layout.sample,
             total,
             (0..self.rows).map(|y| self.row(y)),
@@ -1165,18 +1188,30 @@ pub struct PixelViewMut<'a> {
 }
 
 impl<'a> PixelViewMut<'a> {
-    /// Borrow mutable strided bytes with checked dimensions, alignment, and length.
+    /// Borrow mutable strided bytes with checked dimensions, alignment, and length (**zero heap allocation**).
     ///
-    /// Accepts owned [`ImageSpec`], borrowed `&'a ImageSpec` (zero `Arc` refcount bump),
-    /// or `Copy` [`PixelFormat`](crate::PixelFormat).
+    /// Pass [`ImageSpec::rgb8_srgb_ref()`] (or any `ImageSpec::*_ref()` preset) or a borrowed
+    /// `&'a ImageSpec`. If a view genuinely needs to own a dynamically constructed [`ImageSpec`],
+    /// use [`new_with_spec_cow`](Self::new_with_spec_cow) with [`SpecCow::from_owned`] or
+    /// [`SpecCow::from_arc`].
     pub fn new(
         data: &'a mut [u8],
         width: u32,
         rows: u32,
         stride: usize,
-        spec: impl Into<SpecCow<'a>>,
+        spec: &'a ImageSpec,
     ) -> Result<Self, At<BufferError>> {
-        let spec = spec.into();
+        Self::new_with_spec_cow(data, width, rows, stride, SpecCow::Borrowed(spec))
+    }
+
+    /// Borrow mutable strided bytes with an explicit [`SpecCow<'a>`].
+    pub fn new_with_spec_cow(
+        data: &'a mut [u8],
+        width: u32,
+        rows: u32,
+        stride: usize,
+        spec: SpecCow<'a>,
+    ) -> Result<Self, At<BufferError>> {
         let (_rb, req) = validate_geometry(
             data.len(),
             data.as_ptr(),
@@ -1239,11 +1274,11 @@ impl<'a> PixelViewMut<'a> {
         self.orientation = orientation;
     }
 
-    /// Compose an additional display transform onto this view's pending orientation
-    /// (`self.orientation.then(delta)`) in O(1) without touching pixels.
+    /// Compose an additional display transform (including reflections) onto this view's
+    /// pending orientation (`self.orientation.then(delta)`) in O(1) without touching pixels.
     #[inline]
     #[must_use]
-    pub const fn rotate_metadata(mut self, delta: Orientation) -> Self {
+    pub const fn compose_orientation(mut self, delta: Orientation) -> Self {
         self.orientation = self.orientation.then(delta);
         self
     }
@@ -1521,7 +1556,7 @@ impl Clone for PixelBuf {
             let rb = self.row_bytes();
             let total = rb * (self.height as usize);
             let view = self.as_view();
-            let native = PixelStorage::try_from_rows(
+            let native = PixelStorage::from_rows(
                 self.spec.layout.sample,
                 total,
                 (0..self.height).map(|y| view.row(y)),
@@ -1560,7 +1595,7 @@ impl PixelBuf {
                 .checked_mul(self.height as usize)
                 .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
             let view = self.as_view();
-            let native = PixelStorage::try_from_rows(
+            let native = PixelStorage::from_rows(
                 self.spec.layout.sample,
                 total,
                 (0..self.height).map(|y| view.row(y)),
@@ -1658,8 +1693,8 @@ impl PixelBuf {
             _ => required_bytes(height, stride, row_bytes).map_err(err_at)?,
         };
         let mut storage = match align {
-            RowAlign::Cache64 | RowAlign::PixelCache64 => PixelStorage::try_zeroed_aligned64(total),
-            _ => PixelStorage::try_zeroed(spec.layout.sample, total),
+            RowAlign::Cache64 | RowAlign::PixelCache64 => PixelStorage::zeroed_aligned64(total),
+            _ => PixelStorage::zeroed(spec.layout.sample, total),
         }
         .map_err(|e| err_at(e.into()))?;
         let facts = match fill {
@@ -1736,8 +1771,8 @@ impl PixelBuf {
             _ => required_bytes(height, stride, row_bytes).map_err(err_at)?,
         };
         let storage = match align {
-            RowAlign::Cache64 | RowAlign::PixelCache64 => PixelStorage::try_zeroed_aligned64(total),
-            _ => PixelStorage::try_zeroed(spec.layout.sample, total),
+            RowAlign::Cache64 | RowAlign::PixelCache64 => PixelStorage::zeroed_aligned64(total),
+            _ => PixelStorage::zeroed(spec.layout.sample, total),
         }
         .map_err(|e| err_at(e.into()))?;
         let facts = SampleFacts::for_zeroed_spec(&spec);
@@ -1776,20 +1811,20 @@ impl PixelBuf {
     ///   happens to be sample-aligned, and fallibly copies into properly aligned native
     ///   [`PixelStorage`] when the allocator returned a misaligned address (e.g. odd address).
     ///
-    /// To recover `bytes` intact on error, use [`try_from_bytes_recover`](Self::try_from_bytes_recover).
+    /// To recover `bytes` intact on error, use [`from_bytes_recover`](Self::from_bytes_recover).
     pub fn from_bytes(
         bytes: Vec<u8>,
         width: u32,
         height: u32,
         spec: impl Into<ImageSpec>,
     ) -> Result<Self, At<BufferError>> {
-        Self::try_from_bytes_recover(bytes, width, height, spec).map_err(|(e, _)| e)
+        Self::from_bytes_recover(bytes, width, height, spec).map_err(|(e, _)| e)
     }
 
     /// Adopt tightly packed bytes (`Vec<u8>`), returning `Err((err, bytes))` with the original
     /// `Vec<u8>` untouched on validation or allocation failure.
     #[allow(clippy::result_large_err)]
-    pub fn try_from_bytes_recover(
+    pub fn from_bytes_recover(
         bytes: Vec<u8>,
         width: u32,
         height: u32,
@@ -1818,11 +1853,8 @@ impl PixelBuf {
             PixelStorage::U8(bytes)
         } else {
             // Odd-allocator-safe fallible copy into natively aligned storage (first byte = first pixel).
-            match PixelStorage::try_from_rows(
-                spec.layout.sample,
-                req,
-                core::iter::once(&bytes[..req]),
-            ) {
+            match PixelStorage::from_rows(spec.layout.sample, req, core::iter::once(&bytes[..req]))
+            {
                 Ok(s) => s,
                 Err(e) => return Err((err_at(e.into()), bytes)),
             }
@@ -1854,20 +1886,20 @@ impl PixelBuf {
     /// `bytemuck::allocation::try_cast_vec` succeeds (preserving exact deallocation alignment!).
     /// Otherwise fallibly copies into native-aligned [`PixelStorage`].
     ///
-    /// To recover `pixels` intact on error, use [`try_from_vec_recover`](Self::try_from_vec_recover).
-    pub fn from_vec<P: TypedElement>(
+    /// To recover `pixels` intact on error, use [`from_typed_recover`](Self::from_typed_recover).
+    pub fn from_typed<P: TypedElement>(
         pixels: Vec<P>,
         width: u32,
         height: u32,
         spec: impl Into<ImageSpec>,
     ) -> Result<Self, At<BufferError>> {
-        Self::try_from_vec_recover(pixels, width, height, spec).map_err(|(e, _)| e)
+        Self::from_typed_recover(pixels, width, height, spec).map_err(|(e, _)| e)
     }
 
     /// Adopt a tightly packed typed `Vec<P>`, returning `Err((err, pixels))` with the original
     /// `Vec<P>` untouched on validation or allocation failure.
     #[allow(clippy::result_large_err)]
-    pub fn try_from_vec_recover<P: TypedElement>(
+    pub fn from_typed_recover<P: TypedElement>(
         pixels: Vec<P>,
         width: u32,
         height: u32,
@@ -1906,16 +1938,12 @@ impl PixelBuf {
         if total_bytes < req {
             return Err((err_at(BufferError::InsufficientData), pixels));
         }
-        let storage = match PixelStorage::try_adopt_vec(pixels, spec.layout.sample) {
+        let storage = match PixelStorage::adopt_vec(pixels, spec.layout.sample) {
             Ok(s) => s,
             Err(pixels) => {
                 let copied = {
                     let raw = bytemuck::cast_slice::<P, u8>(&pixels);
-                    PixelStorage::try_from_rows(
-                        spec.layout.sample,
-                        req,
-                        core::iter::once(&raw[..req]),
-                    )
+                    PixelStorage::from_rows(spec.layout.sample, req, core::iter::once(&raw[..req]))
                 };
                 match copied {
                     Ok(s) => s,
@@ -1960,7 +1988,7 @@ impl PixelBuf {
 
     /// Adopt a tightly packed `rgb` pixel `Vec<P>` (`Vec<rgb::Rgb<u8>>`, etc.).
     #[cfg(feature = "rgb")]
-    pub fn try_from_pixels<P: crate::interop::PixelType>(
+    pub fn from_pixels<P: crate::interop::PixelType>(
         pixels: Vec<P>,
         width: u32,
         height: u32,
@@ -1995,11 +2023,11 @@ impl PixelBuf {
         if total_bytes < req {
             return Err(err_at(BufferError::InsufficientData));
         }
-        let storage = match PixelStorage::try_adopt_vec(pixels, spec.layout.sample) {
+        let storage = match PixelStorage::adopt_vec(pixels, spec.layout.sample) {
             Ok(s) => s,
             Err(pixels) => {
                 let raw = bytemuck::cast_slice::<P, u8>(&pixels);
-                PixelStorage::try_from_rows(spec.layout.sample, req, core::iter::once(&raw[..req]))
+                PixelStorage::from_rows(spec.layout.sample, req, core::iter::once(&raw[..req]))
                     .map_err(|e| err_at(e.into()))?
             }
         };
@@ -2017,8 +2045,13 @@ impl PixelBuf {
         })
     }
 
-    /// Checked reconstruction from owned [`PixelStorage`], offset, dimensions, stride, and spec.
-    pub fn from_parts(
+    /// Checked construction from owned [`PixelStorage`], offset, dimensions, stride, and spec
+    /// with fresh default metadata (`facts = NONE`, `hdr = empty`, `origin = assumed`,
+    /// `orientation = Identity`).
+    ///
+    /// To restore full decomposed metadata from [`PixelBuf::into_parts`], use
+    /// [`from_parts`](Self::from_parts) or [`from_parts_recover`](Self::from_parts_recover).
+    pub fn from_storage_parts(
         storage: PixelStorage,
         offset: usize,
         width: u32,
@@ -2050,15 +2083,15 @@ impl PixelBuf {
     /// `orientation`, and `parts.facts`).
     ///
     /// On validation failure, `parts` is dropped; use
-    /// [`try_from_parts_recover`](Self::try_from_parts_recover) to recover the allocation intact.
-    pub fn try_from_parts(parts: PixelBufParts) -> Result<Self, At<BufferError>> {
-        Self::try_from_parts_recover(parts).map_err(|(err, _)| err)
+    /// [`from_parts_recover`](Self::from_parts_recover) to recover the allocation intact.
+    pub fn from_parts(parts: PixelBufParts) -> Result<Self, At<BufferError>> {
+        Self::from_parts_recover(parts).map_err(|(err, _)| err)
     }
 
     /// Checked reconstruction from [`PixelBufParts`], returning `Err((err, parts))` with the
     /// original allocation and metadata intact on validation failure.
     #[allow(clippy::result_large_err)]
-    pub fn try_from_parts_recover(
+    pub fn from_parts_recover(
         parts: PixelBufParts,
     ) -> Result<Self, (At<BufferError>, PixelBufParts)> {
         let bytes = parts.storage.as_bytes();
@@ -2096,9 +2129,9 @@ impl PixelBuf {
     /// `Err((err, storage))` with zero heap allocation and `storage` completely untouched.
     ///
     /// Read access (`as_view`, `row`, `PixelSource`) is strictly zero-copy. Requesting
-    /// mutable access (`as_view_mut`, `try_as_view_mut`, `try_make_mut`) transparently
+    /// mutable access (`as_view_mut`, `try_as_view_mut`, `make_mut`) transparently
     /// performs copy-on-write into owned aligned storage without mutating `storage`.
-    /// Call [`try_into_external`](Self::try_into_external) to recover `S` zero-copy.
+    /// Call [`into_external`](Self::into_external) to recover `S` zero-copy.
     #[allow(clippy::result_large_err)]
     pub fn from_external<S: ByteStorage + Send + Sync + 'static>(
         storage: S,
@@ -2154,7 +2187,7 @@ impl PixelBuf {
     ///
     /// Validates geometry and sample alignment BEFORE boxing `storage`; on error, returns
     /// `Err((err, storage))` with zero heap allocation and `storage` completely untouched.
-    /// Call [`try_into_external_mut`](Self::try_into_external_mut) to recover `S` zero-copy.
+    /// Call [`into_external_mut`](Self::into_external_mut) to recover `S` zero-copy.
     #[allow(clippy::result_large_err)]
     pub fn from_external_mut<S: ByteStorageMut + Send + Sync + 'static>(
         storage: S,
@@ -2238,8 +2271,8 @@ impl PixelBuf {
 
     /// Recover an immutable external owner `S` zero-copy; returns `Err(self)` untouched otherwise.
     #[allow(clippy::result_large_err)]
-    pub fn try_into_external<S: 'static>(mut self) -> Result<S, Self> {
-        match self.storage.try_into_external::<S>() {
+    pub fn into_external<S: 'static>(mut self) -> Result<S, Self> {
+        match self.storage.into_external::<S>() {
             Ok(owner) => Ok(owner),
             Err(storage) => {
                 self.storage = storage;
@@ -2250,8 +2283,8 @@ impl PixelBuf {
 
     /// Recover a mutable external owner `S` zero-copy; returns `Err(self)` untouched otherwise.
     #[allow(clippy::result_large_err)]
-    pub fn try_into_external_mut<S: 'static>(mut self) -> Result<S, Self> {
-        match self.storage.try_into_external_mut::<S>() {
+    pub fn into_external_mut<S: 'static>(mut self) -> Result<S, Self> {
+        match self.storage.into_external_mut::<S>() {
             Ok(owner) => Ok(owner),
             Err(storage) => {
                 self.storage = storage;
@@ -2264,7 +2297,7 @@ impl PixelBuf {
     /// storage ([`PixelStorage::External`]) via copy-on-write into properly aligned owned storage.
     ///
     /// No-op (zero copy, zero allocation) for native `Vec`, `Aligned64`, and `ExternalMut` buffers.
-    pub fn try_make_mut(&mut self) -> Result<(), At<BufferError>> {
+    pub fn make_mut(&mut self) -> Result<(), At<BufferError>> {
         if !matches!(self.storage, PixelStorage::External(_)) {
             return Ok(());
         }
@@ -2272,8 +2305,7 @@ impl PixelBuf {
         let rb = self.row_bytes();
         let req = required_bytes(self.height, self.stride, rb).map_err(err_at)?;
         if self.offset == 0 && (self.height <= 1 || self.stride % align == 0) {
-            let mut aligned =
-                AlignedSamples::try_zeroed_bytes(req).map_err(|e| err_at(e.into()))?;
+            let mut aligned = AlignedSamples::zeroed_bytes(req).map_err(|e| err_at(e.into()))?;
             aligned
                 .as_bytes_mut()
                 .copy_from_slice(&self.storage.as_bytes()[..req]);
@@ -2284,7 +2316,7 @@ impl PixelBuf {
                 .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
             let native = {
                 let view = self.as_view();
-                PixelStorage::try_from_rows(
+                PixelStorage::from_rows(
                     self.spec.layout.sample,
                     total,
                     (0..self.height).map(|y| view.row(y)),
@@ -2463,7 +2495,7 @@ impl PixelBuf {
         new_spec
             .validate()
             .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
-        self.try_make_mut()?;
+        self.make_mut()?;
         let layout = self.spec.layout;
         let off = self.offset;
         let w = self.width;
@@ -2573,11 +2605,11 @@ impl PixelBuf {
         self.orientation = orientation;
     }
 
-    /// Compose an additional display transform onto this buffer's pending orientation
-    /// (`self.orientation.then(delta)`) in O(1) without touching or copying pixels.
+    /// Compose an additional display transform (including reflections) onto this buffer's
+    /// pending orientation (`self.orientation.then(delta)`) in O(1) without touching or copying pixels.
     #[inline]
     #[must_use]
-    pub const fn rotate_metadata(mut self, delta: Orientation) -> Self {
+    pub const fn compose_orientation(mut self, delta: Orientation) -> Self {
         self.orientation = self.orientation.then(delta);
         self
     }
@@ -2606,7 +2638,7 @@ impl PixelBuf {
     /// copy-on-write promoting immutable external storage without panicking on OOM.
     #[inline]
     pub fn try_as_view_mut(&mut self) -> Result<PixelViewMut<'_>, At<BufferError>> {
-        self.try_make_mut()?;
+        self.make_mut()?;
         self.facts = SampleFacts::NONE;
         let rb = self.row_bytes();
         let end = self.offset + required_bytes(self.height, self.stride, rb).unwrap_or(0);
@@ -2636,7 +2668,7 @@ impl PixelBuf {
     /// Borrow a mutable horizontal strip of `count` rows starting at `y`, automatically
     /// clearing cached [`SampleFacts`].
     #[inline]
-    pub fn view_rows_mut(
+    pub fn sub_rows_mut(
         &mut self,
         y: u32,
         count: u32,
@@ -2674,7 +2706,7 @@ impl PixelBuf {
             &ColorOrigin,
         ) -> Option<(usize, ImageSpec, ColorOrigin, SampleFacts)>,
     {
-        self.try_make_mut()?;
+        self.make_mut()?;
         let active = &mut self.storage.as_bytes_mut()[self.offset..];
         let Some((new_stride, new_spec, new_origin, new_facts)) = f(
             active,
@@ -2731,7 +2763,7 @@ impl PixelBuf {
                 .truncate_bytes(target_offset + rb * self.height as usize);
             return self;
         }
-        self.try_make_mut()
+        self.make_mut()
             .expect("copy-on-write promotion of external PixelBuf failed");
         let ptr_rem = (self.storage.as_bytes().as_ptr() as usize) % align;
         let target_offset = if ptr_rem == 0 { 0 } else { align - ptr_rem };
@@ -2786,7 +2818,7 @@ impl PixelBuf {
                 new_spec
                     .validate()
                     .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
-                self.try_make_mut()?;
+                self.make_mut()?;
                 let bpp = new_layout.bytes_per_pixel();
                 let rb = (self.width as usize) * bpp;
                 let off = self.offset;
@@ -2830,7 +2862,7 @@ impl PixelBuf {
                 new_spec
                     .validate()
                     .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
-                self.try_make_mut()?;
+                self.make_mut()?;
                 let swap_rb = matches!(
                     (src_order, target_order),
                     (ChannelOrder::Rgbx | ChannelOrder::Rgba, ChannelOrder::Bgr)
@@ -2874,7 +2906,7 @@ impl PixelBuf {
     /// allocation's exact alignment, and capacity in bytes is a multiple of
     /// `size_of::<P>()`. Returns `Err(self)` untouched otherwise.
     #[allow(clippy::result_large_err)]
-    pub fn try_into_vec_zero_copy<P: bytemuck::Pod>(mut self) -> Result<Vec<P>, Self> {
+    pub fn into_vec_zero_copy<P: bytemuck::Pod>(mut self) -> Result<Vec<P>, Self> {
         let total = self.row_bytes() * (self.height as usize);
         if self.offset != 0
             || (self.height > 1 && self.stride != self.row_bytes())
@@ -2887,7 +2919,7 @@ impl PixelBuf {
         if self.storage.byte_len() > total {
             self.storage.truncate_bytes(total);
         }
-        match self.storage.try_cast_into_vec::<P>() {
+        match self.storage.cast_into_vec::<P>() {
             Ok(vec) => Ok(vec),
             Err(storage) => {
                 self.storage = storage;
@@ -2901,7 +2933,7 @@ impl PixelBuf {
     ///
     /// Never violates deallocation alignment, never drops row tails on cross-row elements,
     /// and never panics on OOM.
-    pub fn try_into_vec<P: bytemuck::Pod>(self) -> Result<Vec<P>, At<BufferError>> {
+    pub fn into_vec<P: bytemuck::Pod>(self) -> Result<Vec<P>, At<BufferError>> {
         let elem = core::mem::size_of::<P>();
         let rb = self.row_bytes();
         let total = rb
@@ -2910,7 +2942,7 @@ impl PixelBuf {
         if elem == 0 || total % elem != 0 {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
-        match self.try_into_vec_zero_copy::<P>() {
+        match self.into_vec_zero_copy::<P>() {
             Ok(v) => Ok(v),
             Err(buf) => {
                 let count = total / elem;
@@ -3008,9 +3040,9 @@ impl<'a> PixelCow<'a> {
     }
 
     /// Convert into an owned [`PixelBuf`] (zero-copy if already owned, fallible copy if borrowed).
-    pub fn try_into_owned(self) -> Result<PixelBuf, At<BufferError>> {
+    pub fn into_owned(self) -> Result<PixelBuf, At<BufferError>> {
         match self {
-            Self::Borrowed(v) => v.try_to_tight_buf(),
+            Self::Borrowed(v) => v.to_tight_buf(),
             Self::Owned(b) => Ok(b),
         }
     }
@@ -3159,7 +3191,7 @@ impl BandedBuf {
         let mut y = 0u32;
         while y < height {
             let h = (height - y).min(rows_per_band);
-            bands.push(view.sub_rows(y, h)?.try_to_tight_buf()?);
+            bands.push(view.sub_rows(y, h)?.to_tight_buf()?);
             y += h;
         }
         let origin = view.origin().cloned().and_then(box_origin);
@@ -3196,7 +3228,7 @@ impl BandedBuf {
         let total = rb
             .checked_mul(self.height as usize)
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        let storage = PixelStorage::try_from_rows(
+        let storage = PixelStorage::from_rows(
             self.spec.layout.sample,
             total,
             (0..self.height).map(|y| self.row(y)),
@@ -3397,7 +3429,7 @@ impl BandedBuf {
     /// Compose an additional display transform onto pending orientation in O(1).
     #[inline]
     #[must_use]
-    pub fn rotate_metadata(mut self, delta: Orientation) -> Self {
+    pub fn compose_orientation(mut self, delta: Orientation) -> Self {
         let next = self.orientation.then(delta);
         self.orientation = next;
         for band in &mut self.bands {
@@ -3438,7 +3470,7 @@ impl BandedBuf {
 
 /// Owned single plane inside a [`PlanarBuf`] with validated geometry invariants.
 #[derive(Clone, Debug)]
-pub struct OwnedPlane {
+pub struct PlaneBuf {
     spec: PlaneSpec,
     width: u32,
     height: u32,
@@ -3446,14 +3478,14 @@ pub struct OwnedPlane {
     storage: PixelStorage,
 }
 
-impl OwnedPlane {
+impl PlaneBuf {
     /// Construct a validated owned plane adopting caller-provided [`PixelStorage`] zero-copy.
     pub fn from_storage(
-        spec: PlaneSpec,
+        storage: PixelStorage,
         width: u32,
         height: u32,
         stride: usize,
-        storage: PixelStorage,
+        spec: PlaneSpec,
     ) -> Result<Self, At<BufferError>> {
         spec.validate().map_err(|e| err_at(e.into()))?;
         if width == 0 || height == 0 {
@@ -3487,11 +3519,11 @@ impl OwnedPlane {
     /// `Arc<[u16]>`, mmap, etc.) zero-copy. Returns `Err((err, storage))` untouched on failure.
     #[allow(clippy::result_large_err)]
     pub fn from_external<S: ByteStorage + Send + Sync + 'static>(
-        spec: PlaneSpec,
+        storage: S,
         width: u32,
         height: u32,
         stride: usize,
-        storage: S,
+        spec: PlaneSpec,
     ) -> Result<Self, (At<BufferError>, S)> {
         let check = (|| -> Result<(), At<BufferError>> {
             spec.validate().map_err(|e| err_at(e.into()))?;
@@ -3531,11 +3563,11 @@ impl OwnedPlane {
     /// custom allocator, pool lease, etc.) zero-copy. Returns `Err((err, storage))` untouched on failure.
     #[allow(clippy::result_large_err)]
     pub fn from_external_mut<S: ByteStorageMut + Send + Sync + 'static>(
-        spec: PlaneSpec,
+        storage: S,
         width: u32,
         height: u32,
         stride: usize,
-        storage: S,
+        spec: PlaneSpec,
     ) -> Result<Self, (At<BufferError>, S)> {
         let check = (|| -> Result<(), At<BufferError>> {
             spec.validate().map_err(|e| err_at(e.into()))?;
@@ -3580,8 +3612,8 @@ impl OwnedPlane {
 
     /// Recover an immutable external owner `S` zero-copy; returns `Err(self)` untouched otherwise.
     #[allow(clippy::result_large_err)]
-    pub fn try_into_external<S: 'static>(mut self) -> Result<S, Self> {
-        match self.storage.try_into_external::<S>() {
+    pub fn into_external<S: 'static>(mut self) -> Result<S, Self> {
+        match self.storage.into_external::<S>() {
             Ok(owner) => Ok(owner),
             Err(storage) => {
                 self.storage = storage;
@@ -3592,8 +3624,8 @@ impl OwnedPlane {
 
     /// Recover a mutable external owner `S` zero-copy; returns `Err(self)` untouched otherwise.
     #[allow(clippy::result_large_err)]
-    pub fn try_into_external_mut<S: 'static>(mut self) -> Result<S, Self> {
-        match self.storage.try_into_external_mut::<S>() {
+    pub fn into_external_mut<S: 'static>(mut self) -> Result<S, Self> {
+        match self.storage.into_external_mut::<S>() {
             Ok(owner) => Ok(owner),
             Err(storage) => {
                 self.storage = storage;
@@ -3725,11 +3757,11 @@ impl OwnedPlane {
     /// elements** (NOT bytes — e.g. `stride_samples == width` for tight `u16` luma, or
     /// `stride_samples >= width * 2` for interleaved `CbCr`).
     pub fn from_samples<S: StorageSample>(
-        spec: PlaneSpec,
+        samples: Vec<S>,
         width: u32,
         height: u32,
         stride_samples: usize,
-        samples: Vec<S>,
+        spec: PlaneSpec,
     ) -> Result<Self, At<BufferError>> {
         spec.validate().map_err(|e| err_at(e.into()))?;
         if spec.sample != S::SAMPLE_TYPE || spec.packing.is_packed_word() {
@@ -3738,9 +3770,9 @@ impl OwnedPlane {
         let stride = stride_samples
             .checked_mul(core::mem::size_of::<S>())
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        let storage = PixelStorage::try_adopt_vec(samples, spec.sample)
+        let storage = PixelStorage::adopt_vec(samples, spec.sample)
             .map_err(|_| err_at(BufferError::IncompatibleLayout))?;
-        Self::from_storage(spec, width, height, stride, storage)
+        Self::from_storage(storage, width, height, stride, spec)
     }
 
     /// Zero-copy typed slice view of row `y` (e.g. `plane.row_as::<u16>(y)`).
@@ -3906,7 +3938,7 @@ fn validate_plane_role_set(roles: impl Iterator<Item = PlaneRole>) -> Result<(),
 pub struct PlanarBuf {
     width: u32,
     height: u32,
-    planes: Vec<OwnedPlane>,
+    planes: Vec<PlaneBuf>,
     chroma_siting: ChromaSiting,
     color: Option<Arc<ColorSpace>>,
     ycbcr_matrix_code: Option<u8>,
@@ -3956,13 +3988,11 @@ impl PlanarBuf {
                 _ => required_bytes(ph, stride, row_bytes).map_err(err_at)?,
             };
             let storage = match align {
-                RowAlign::Cache64 | RowAlign::PixelCache64 => {
-                    PixelStorage::try_zeroed_aligned64(total)
-                }
-                _ => PixelStorage::try_zeroed(ps.sample, total),
+                RowAlign::Cache64 | RowAlign::PixelCache64 => PixelStorage::zeroed_aligned64(total),
+                _ => PixelStorage::zeroed(ps.sample, total),
             }
             .map_err(|e| err_at(e.into()))?;
-            planes.push(OwnedPlane {
+            planes.push(PlaneBuf {
                 spec: ps,
                 width: pw,
                 height: ph,
@@ -3989,7 +4019,7 @@ impl PlanarBuf {
     pub fn from_planes(
         width: u32,
         height: u32,
-        planes: Vec<OwnedPlane>,
+        planes: Vec<PlaneBuf>,
     ) -> Result<Self, At<BufferError>> {
         if width == 0 || height == 0 || planes.is_empty() || planes.len() > Self::MAX_PLANES {
             return Err(err_at(BufferError::InvalidDimensions));
@@ -4126,27 +4156,27 @@ impl PlanarBuf {
     /// Immutable slice of planes.
     #[inline]
     #[must_use]
-    pub fn planes(&self) -> &[OwnedPlane] {
+    pub fn planes(&self) -> &[PlaneBuf] {
         &self.planes
     }
 
     /// Consume this planar buffer and return its owned planes zero-copy.
     #[inline]
     #[must_use]
-    pub fn into_planes(self) -> Vec<OwnedPlane> {
+    pub fn into_planes(self) -> Vec<PlaneBuf> {
         self.planes
     }
 
     /// Borrow plane `index` mutably as a [`PlaneViewMut`] without allowing structural replacement.
     #[inline]
     pub fn plane_view_mut(&mut self, index: usize) -> Option<PlaneViewMut<'_>> {
-        self.planes.get_mut(index).map(OwnedPlane::as_view_mut)
+        self.planes.get_mut(index).map(PlaneBuf::as_view_mut)
     }
 
     /// Look up the first owned plane matching `role` (e.g. `PlaneRole::Y`, `PlaneRole::CbCr`).
     #[inline]
     #[must_use]
-    pub fn plane_by_role(&self, role: PlaneRole) -> Option<&OwnedPlane> {
+    pub fn plane_by_role(&self, role: PlaneRole) -> Option<&PlaneBuf> {
         self.planes.iter().find(|p| p.spec.role == role)
     }
 
@@ -4154,7 +4184,7 @@ impl PlanarBuf {
     #[inline]
     #[must_use]
     pub fn plane_view_by_role(&self, role: PlaneRole) -> Option<PlaneView<'_>> {
-        self.plane_by_role(role).map(OwnedPlane::as_view)
+        self.plane_by_role(role).map(PlaneBuf::as_view)
     }
 
     /// Borrow the first plane matching `role` mutably as a [`PlaneViewMut`].
@@ -4163,7 +4193,7 @@ impl PlanarBuf {
         self.planes
             .iter_mut()
             .find(|p| p.spec.role == role)
-            .map(OwnedPlane::as_view_mut)
+            .map(PlaneBuf::as_view_mut)
     }
 
     /// Descriptive HDR metadata.
@@ -4227,7 +4257,7 @@ impl PlanarBuf {
     /// Compose an additional display transform onto pending orientation in O(1).
     #[inline]
     #[must_use]
-    pub const fn rotate_metadata(mut self, delta: Orientation) -> Self {
+    pub const fn compose_orientation(mut self, delta: Orientation) -> Self {
         self.orientation = self.orientation.then(delta);
         self
     }
@@ -4254,11 +4284,11 @@ impl<'a> PlaneView<'a> {
 
     /// Construct a validated borrowed plane view.
     pub fn new(
-        spec: PlaneSpec,
+        data: &'a [u8],
         width: u32,
         height: u32,
         stride: usize,
-        data: &'a [u8],
+        spec: PlaneSpec,
     ) -> Result<Self, At<BufferError>> {
         spec.validate().map_err(|e| err_at(e.into()))?;
         if width == 0 || height == 0 {
@@ -4292,11 +4322,11 @@ impl<'a> PlaneView<'a> {
     /// elements** (NOT bytes — e.g. `stride_samples == width` for tight `u16` luma, or
     /// `stride_samples >= width * 2` for interleaved `CbCr`).
     pub fn from_samples<S: StorageSample>(
-        spec: PlaneSpec,
+        samples: &'a [S],
         width: u32,
         height: u32,
         stride_samples: usize,
-        samples: &'a [S],
+        spec: PlaneSpec,
     ) -> Result<Self, At<BufferError>> {
         spec.validate().map_err(|e| err_at(e.into()))?;
         if spec.sample != S::SAMPLE_TYPE || spec.packing.is_packed_word() {
@@ -4305,7 +4335,7 @@ impl<'a> PlaneView<'a> {
         let stride = stride_samples
             .checked_mul(core::mem::size_of::<S>())
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        Self::new(spec, width, height, stride, bytemuck::cast_slice(samples))
+        Self::new(bytemuck::cast_slice(samples), width, height, stride, spec)
     }
 
     /// Plane specification.
@@ -4454,11 +4484,11 @@ pub struct PlaneViewMut<'a> {
 impl<'a> PlaneViewMut<'a> {
     /// Construct a validated mutable borrowed plane view.
     pub fn new(
-        spec: PlaneSpec,
+        data: &'a mut [u8],
         width: u32,
         height: u32,
         stride: usize,
-        data: &'a mut [u8],
+        spec: PlaneSpec,
     ) -> Result<Self, At<BufferError>> {
         spec.validate().map_err(|e| err_at(e.into()))?;
         if width == 0 || height == 0 {
@@ -4491,11 +4521,11 @@ impl<'a> PlaneViewMut<'a> {
     /// `&mut [u16]`, `&mut [f32]`, etc.) **zero-copy**, where `stride_samples` is the row stride
     /// in **`S` elements** (NOT bytes).
     pub fn from_samples<S: StorageSample>(
-        spec: PlaneSpec,
+        samples: &'a mut [S],
         width: u32,
         height: u32,
         stride_samples: usize,
-        samples: &'a mut [S],
+        spec: PlaneSpec,
     ) -> Result<Self, At<BufferError>> {
         spec.validate().map_err(|e| err_at(e.into()))?;
         if spec.sample != S::SAMPLE_TYPE || spec.packing.is_packed_word() {
@@ -4505,11 +4535,11 @@ impl<'a> PlaneViewMut<'a> {
             .checked_mul(core::mem::size_of::<S>())
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
         Self::new(
-            spec,
+            bytemuck::cast_slice_mut(samples),
             width,
             height,
             stride,
-            bytemuck::cast_slice_mut(samples),
+            spec,
         )
     }
 
@@ -4980,7 +5010,7 @@ impl<'a> PlanarView<'a> {
     /// Compose an additional display transform onto pending orientation in O(1).
     #[inline]
     #[must_use]
-    pub const fn rotate_metadata(mut self, delta: Orientation) -> Self {
+    pub const fn compose_orientation(mut self, delta: Orientation) -> Self {
         self.orientation = self.orientation.then(delta);
         self
     }
@@ -5419,7 +5449,7 @@ impl<'a> PlanarViewMut<'a> {
     /// Compose an additional display transform onto pending orientation in O(1).
     #[inline]
     #[must_use]
-    pub const fn rotate_metadata(mut self, delta: Orientation) -> Self {
+    pub const fn compose_orientation(mut self, delta: Orientation) -> Self {
         self.orientation = self.orientation.then(delta);
         self
     }
@@ -5504,7 +5534,7 @@ impl<'a> PlanarViewMut<'a> {
     }
 
     /// Downgrade into an immutable [`PlanarView<'a>`] retaining `'a`.
-    pub fn try_into_view(self) -> Result<PlanarView<'a>, At<BufferError>> {
+    pub fn into_view(self) -> Result<PlanarView<'a>, At<BufferError>> {
         let storage = match self.storage {
             PlanarMutStorage::One([p0]) => PlanarStorage::Inline {
                 planes: [
@@ -5668,7 +5698,7 @@ impl PlanarBuf {
 }
 
 // ---------------------------------------------------------------------------
-// DualLayerHdr & DualLayerHdrView (ISO 21496-1 / UltraHDR interchange)
+// DualLayerHdrBuf & DualLayerHdrView (ISO 21496-1 / UltraHDR interchange)
 // ---------------------------------------------------------------------------
 
 fn validate_dual_layer_specs(
@@ -5736,16 +5766,16 @@ fn validate_dual_layer_specs(
     Ok(())
 }
 
-/// Complete decomposed parts of a [`DualLayerHdr`] carrier, preserving every field losslessly.
+/// Complete decomposed parts of a [`DualLayerHdrBuf`] carrier, preserving every field losslessly.
 ///
-/// When modifying `orientation` before calling [`DualLayerHdr::try_from_parts`], keep
+/// When modifying `orientation` before calling [`DualLayerHdrBuf::from_parts`], keep
 /// `base.orientation()` and `gain_map.orientation()` either equal to `parts.orientation` or
-/// reset to [`Orientation::Identity`] (for example, after [`DualLayerHdr::into_parts`], prefer
-/// [`DualLayerHdr::with_orientation`] / [`DualLayerHdr::rotate_metadata`] for O(1) metadata
+/// reset to [`Orientation::Identity`] (for example, after [`DualLayerHdrBuf::into_parts`], prefer
+/// [`DualLayerHdrBuf::with_orientation`] / [`DualLayerHdrBuf::compose_orientation`] for O(1) metadata
 /// updates, or update `parts.base`, `parts.gain_map`, and `parts.orientation` together).
 #[derive(Clone, Debug)]
 #[non_exhaustive]
-pub struct DualLayerHdrParts {
+pub struct DualLayerHdrBufParts {
     /// Base rendition pixel buffer.
     pub base: PixelBuf,
     /// Numeric gain-map pixel buffer (`ColorSpace::Untagged`, 1 or 3 channels).
@@ -5852,11 +5882,12 @@ impl<'a> DualLayerHdrView<'a> {
         self
     }
 
-    /// Compose an additional display transform onto the shared pending EXIF orientation
-    /// (`self.orientation.then(delta)`) in O(1) without touching or copying either pixel layer.
+    /// Compose an additional display transform (including reflections) onto the shared pending
+    /// EXIF orientation (`self.orientation.then(delta)`) in O(1) without touching or copying
+    /// either pixel layer.
     #[inline]
     #[must_use]
-    pub const fn rotate_metadata(mut self, delta: crate::Orientation) -> Self {
+    pub const fn compose_orientation(mut self, delta: crate::Orientation) -> Self {
         let next = self.orientation.then(delta);
         self.orientation = next;
         self.base.orientation = next;
@@ -5877,7 +5908,7 @@ impl<'a> DualLayerHdrView<'a> {
 ///
 /// Unifies UltraHDR JPEG, AVIF `tmap`, JXL `jhgm`, and PNG gain-map HDR in one validated core type.
 #[derive(Clone, Debug)]
-pub struct DualLayerHdr {
+pub struct DualLayerHdrBuf {
     base: PixelBuf,
     gain_map: PixelBuf,
     metadata: GainMapMetadata,
@@ -5885,7 +5916,7 @@ pub struct DualLayerHdr {
     orientation: crate::Orientation,
 }
 
-impl DualLayerHdr {
+impl DualLayerHdrBuf {
     /// Construct a validated dual-layer HDR carrier with `GainMapColorSpace::Base`.
     ///
     /// Validates base color model (`Rgb`/`Gray`/1-or-3-ch `Icc`), numeric gain-map layout
@@ -5918,12 +5949,13 @@ impl DualLayerHdr {
         orientation: crate::Orientation,
     ) -> Result<Self, At<BufferError>> {
         if base.orientation() != gain_map.orientation() {
-            return Err(err_at(BufferError::IncompatibleLayout)
-                .at_str("DualLayerHdr base and gain_map must have matching pending orientations"));
+            return Err(err_at(BufferError::IncompatibleLayout).at_str(
+                "DualLayerHdrBuf base and gain_map must have matching pending orientations",
+            ));
         }
         if base.orientation() != crate::Orientation::Identity && base.orientation() != orientation {
             return Err(err_at(BufferError::IncompatibleLayout).at_str(
-                "DualLayerHdr non-Identity layer orientations must match the requested orientation",
+                "DualLayerHdrBuf non-Identity layer orientations must match the requested orientation",
             ));
         }
         validate_dual_layer_specs(
@@ -5943,11 +5975,11 @@ impl DualLayerHdr {
         })
     }
 
-    /// Reconstruct a validated [`DualLayerHdr`] from [`DualLayerHdrParts`].
+    /// Reconstruct a validated [`DualLayerHdrBuf`] from [`DualLayerHdrBufParts`].
     ///
     /// Requires `parts.base.orientation() == parts.gain_map.orientation()`, and if non-`Identity`,
     /// that they match `parts.orientation`.
-    pub fn try_from_parts(parts: DualLayerHdrParts) -> Result<Self, At<BufferError>> {
+    pub fn from_parts(parts: DualLayerHdrBufParts) -> Result<Self, At<BufferError>> {
         Self::new_with_alternate(
             parts.base,
             parts.gain_map,
@@ -5982,15 +6014,16 @@ impl DualLayerHdr {
         self
     }
 
-    /// Compose an additional display transform onto the shared pending EXIF orientation
-    /// (`self.orientation.then(delta)`) in O(1) without touching or rebaking either pixel layer.
+    /// Compose an additional display transform (including reflections) onto the shared pending
+    /// EXIF orientation (`self.orientation.then(delta)`) in O(1) without touching or rebaking
+    /// either pixel layer.
     ///
     /// Keeps `base` and `gain_map` strictly registered in stored-frame coordinates for
     /// lossless EXIF passthrough workflows. To physically bake orientation into both pixel
-    /// buffers, use `zenpixels_convert::gainmap::{bake_dual_layer_orientation, rotate_dual_layer}`.
+    /// buffers, use `zenpixels_convert::gainmap::{bake_dual_layer_orientation, bake_dual_layer_orientation_after}`.
     #[inline]
     #[must_use]
-    pub const fn rotate_metadata(mut self, delta: crate::Orientation) -> Self {
+    pub const fn compose_orientation(mut self, delta: crate::Orientation) -> Self {
         let next = self.orientation.then(delta);
         self.orientation = next;
         self.base.orientation = next;
@@ -6054,12 +6087,12 @@ impl DualLayerHdr {
             .output_dimensions(self.base.width(), self.base.height())
     }
 
-    /// Decompose into complete owned [`DualLayerHdrParts`], preserving `alternate_color_space`
+    /// Decompose into complete owned [`DualLayerHdrBufParts`], preserving `alternate_color_space`
     /// and pending `orientation` losslessly.
     #[inline]
     #[must_use]
-    pub fn into_parts(self) -> DualLayerHdrParts {
-        DualLayerHdrParts {
+    pub fn into_parts(self) -> DualLayerHdrBufParts {
+        DualLayerHdrBufParts {
             base: self.base,
             gain_map: self.gain_map,
             metadata: self.metadata,
@@ -6261,7 +6294,7 @@ impl PixelSink for PixelBuf {
     #[inline]
     fn sink_row_mut(&mut self, y: u32) -> &mut [u8] {
         assert!(y < self.height, "row {y} out of bounds ({})", self.height);
-        self.try_make_mut()
+        self.make_mut()
             .expect("copy-on-write promotion of external PixelBuf failed");
         self.facts = SampleFacts::NONE;
         let rb = self.row_bytes();

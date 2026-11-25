@@ -191,7 +191,7 @@ fn allocating_constructors_and_into_contiguous_preserve_alignment() {
     backing[1..7].copy_from_slice(row0);
     backing[11..17].copy_from_slice(row1);
 
-    let buf = PixelBuf::from_parts(
+    let buf = PixelBuf::from_storage_parts(
         PixelStorage::U8(backing),
         1,
         1,

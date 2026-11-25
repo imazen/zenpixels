@@ -6,7 +6,7 @@ use zenpixels_convert::AlphaMode;
 use zenpixels_convert::{
     AlphaPolicy, Color, ColorSpace, ConvertError, ConvertPolicy, DepthPolicy, ExactDepth,
     GamutPolicy, ImageSpec, PeakSource, PixelBuf, Primaries, RangePolicy, RowPlan, SampleFacts,
-    SampleLayout, SignalRange, convert_buf, scan_facts,
+    SampleLayout, SignalRange, convert_to_buf, scan_facts,
 };
 #[cfg(feature = "hdr-transfers")]
 use zenpixels_convert::{DiffuseWhite, HlgMode, HlgRendering, Nits, Transfer};
@@ -185,7 +185,7 @@ fn policy_refusal_gates_and_sample_facts_unlock_lossless() {
         RowPlan::build(
             ImageSpec::rgb16_srgb(),
             ImageSpec::rgb8_srgb(),
-            &ConvertPolicy::lossless().with_facts(facts_8),
+            &ConvertPolicy::lossless().with_source_facts(facts_8),
             None
         )
         .is_ok()
@@ -208,7 +208,7 @@ fn policy_refusal_gates_and_sample_facts_unlock_lossless() {
             px.copy_from_slice(&[100, 150, 200, 255]);
         }
     }
-    let err = convert_buf(
+    let err = convert_to_buf(
         &rgba_buf.as_view(),
         ImageSpec::rgb8_srgb(),
         &ConvertPolicy::working_linear().with_alpha(AlphaPolicy::DiscardIfOpaque),
@@ -220,7 +220,7 @@ fn policy_refusal_gates_and_sample_facts_unlock_lossless() {
     let scanned = scan_facts(&rgba_buf.as_view());
     assert!(scanned.all_opaque);
     rgba_buf.set_facts(scanned);
-    let out = convert_buf(
+    let out = convert_to_buf(
         &rgba_buf.as_view(),
         ImageSpec::rgb8_srgb(),
         &ConvertPolicy::working_linear().with_alpha(AlphaPolicy::DiscardIfOpaque),

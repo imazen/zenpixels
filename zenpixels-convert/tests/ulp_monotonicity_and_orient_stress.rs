@@ -230,7 +230,7 @@ fn transfer_monotonicity_endpoints_and_roundtrips_exhaustive() {
             white: Some(DiffuseWhite::BT2408),
         },
     );
-    let clip_pol = ConvertPolicy::default().with_accelerators(Accelerators::ALL);
+    let clip_pol = ConvertPolicy::permissive().with_accelerators(Accelerators::ALL);
     let dci_up = RowPlan::build(dci_rgb16.clone(), dci_lin.clone(), &pol, None).unwrap();
     let dci_dn = RowPlan::build(dci_lin, dci_rgb16, &clip_pol, None).unwrap();
     let white_in = [65535u16, 32768, 0];
@@ -334,7 +334,7 @@ fn orientation_dense_dimensions_misaligned_strides_and_group_closure() {
                     }
                 }
             }
-            let src_view = PixelView::new(src_raw, w, h, src_stride, spec.clone()).unwrap();
+            let src_view = PixelView::new(src_raw, w, h, src_stride, spec).unwrap();
 
             for &orient in &all_orientations {
                 let (ow, oh) = orient.output_dimensions(w, h);
@@ -345,7 +345,7 @@ fn orientation_dense_dimensions_misaligned_strides_and_group_closure() {
                     [..dst_stride * (oh as usize)];
                 {
                     let mut dst_view =
-                        PixelViewMut::new(dst_raw, ow, oh, dst_stride, spec.clone()).unwrap();
+                        PixelViewMut::new(dst_raw, ow, oh, dst_stride, spec).unwrap();
                     apply_orientation_into(&src_view, orient, &mut dst_view).unwrap();
                 }
 
@@ -402,7 +402,7 @@ fn orientation_dense_dimensions_misaligned_strides_and_group_closure() {
         let p_simd = RowPlan::build(
             src_premul.clone(),
             dst_premul.clone(),
-            &ConvertPolicy::default()
+            &ConvertPolicy::permissive()
                 .with_depth(depth)
                 .with_accelerators(Accelerators::ALL),
             None,
@@ -411,7 +411,7 @@ fn orientation_dense_dimensions_misaligned_strides_and_group_closure() {
         let p_scalar = RowPlan::build(
             src_premul.clone(),
             dst_premul.clone(),
-            &ConvertPolicy::default()
+            &ConvertPolicy::permissive()
                 .with_depth(depth)
                 .with_accelerators(Accelerators::SCALAR),
             None,

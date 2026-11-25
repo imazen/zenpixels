@@ -1,11 +1,11 @@
 //! Core 0.5 tests covering algebraic `ColorSpace`, `ImageSpec` validation,
 //! `Primaries::gamut_matrix_to`, `Cicp`, `BitPacking` (P010 / U10_LSB / RGB565 / RGB10A2),
 //! `PixelView<'a>` chained lifetimes, `SampleFacts` invalidation, `BandedBuf`,
-//! `PlanarBuf`, and `DualLayerHdr`.
+//! `PlanarBuf`, and `DualLayerHdrBuf`.
 
 use zenpixels::{
     AlphaMode, BandedBuf, BitPacking, ChannelOrder, Cicp, CicpError, ColorError, ColorSpace,
-    DiffuseWhite, DualLayerHdr, FloatFacts, GainMapMetadata, HlgMode, HlgRendering, ImageSpec,
+    DiffuseWhite, DualLayerHdrBuf, FloatFacts, GainMapMetadata, HlgMode, HlgRendering, ImageSpec,
     InteropTarget, Nits, PixelBuf, PixelSink, PixelSource, PlanarBuf, PlaneRole, PlaneSpec,
     Primaries, SampleFacts, SampleLayout, SampleType, SignalRange, Transfer,
 };
@@ -248,7 +248,7 @@ fn banded_buf_planar_buf_and_dual_layer_hdr() {
     planar.plane_view_mut(0).unwrap().row_mut(2)[6..8].copy_from_slice(&y_val.to_ne_bytes());
     assert_eq!(planar.planes()[0].code_u32(3, 2, 0), Some(940));
 
-    // DualLayerHdr (ISO 21496-1 / UltraHDR)
+    // DualLayerHdrBuf (ISO 21496-1 / UltraHDR)
     let base = PixelBuf::new(16, 16, ImageSpec::rgb8_srgb()).unwrap();
     let gain = PixelBuf::new(
         8,
@@ -263,7 +263,7 @@ fn banded_buf_planar_buf_and_dual_layer_hdr() {
     )
     .unwrap();
     let meta = GainMapMetadata::symmetric(2.3);
-    let dual = DualLayerHdr::new(base, gain, meta).unwrap();
+    let dual = DualLayerHdrBuf::new(base, gain, meta).unwrap();
     assert_eq!(dual.base().width(), 16);
     assert_eq!(dual.gain_map().width(), 8);
     assert!((dual.metadata().alternate_hdr_headroom.to_f64() - 2.3).abs() < 1e-4);

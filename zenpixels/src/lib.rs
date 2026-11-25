@@ -14,7 +14,7 @@
 //!   `bytemuck` typed access and `Vec<P>` moves that strictly preserve Rust's
 //!   allocation/deallocation alignment contract.
 //! - **Unified multi-band, multi-plane, and HDR carriers:** [`BandedBuf`],
-//!   [`PlanarBuf`], [`DualLayerHdr`] (ISO 21496-1 / UltraHDR gain maps), and
+//!   [`PlanarBuf`], [`DualLayerHdrBuf`] (ISO 21496-1 / UltraHDR gain maps), and
 //!   [`SampleFacts`] (automatically cleared on `&mut`).
 
 #![cfg_attr(not(test), no_std)]
@@ -42,10 +42,10 @@ pub mod storage;
 
 // Clean, flat re-exports of the core interchange surface.
 pub use buffer::{
-    BandedBuf, Bgrx, BufFill, BufferError, DEFAULT_MAX_BAND_BYTES, DualLayerHdr, DualLayerHdrParts,
-    DualLayerHdrView, OwnedPlane, PixelBuf, PixelBufParts, PixelCow, PixelSink, PixelSource,
-    PixelView, PixelViewMut, PlanarBuf, PlanarView, PlanarViewMut, PlaneView, PlaneViewMut, Rgbx,
-    TypedElement,
+    BandedBuf, Bgrx, BufFill, BufferError, DEFAULT_MAX_BAND_BYTES, DualLayerHdrBuf,
+    DualLayerHdrBufParts, DualLayerHdrView, PixelBuf, PixelBufParts, PixelCow, PixelSink,
+    PixelSource, PixelView, PixelViewMut, PlanarBuf, PlanarView, PlanarViewMut, PlaneBuf,
+    PlaneView, PlaneViewMut, Rgbx, TypedElement,
 };
 pub use cicp::{
     Cicp, CicpError, CicpProjectionError, CicpTag, color_primaries_name, matrix_coefficients_name,

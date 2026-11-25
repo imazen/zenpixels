@@ -67,7 +67,8 @@ pub struct OutputPlan {
 impl OutputPlan {
     /// Build an encode-ready output plan.
     ///
-    /// Accepts either borrowed `&ImageSpec` (zero-clone) or owned `ImageSpec`.
+    /// Accepts either borrowed `&ImageSpec` or owned `ImageSpec` at the call site and borrows
+    /// `&ConvertPolicy` (retaining internal clones inside the built plan).
     ///
     /// Validates pixel conversion feasibility AND container signaling compatibility
     /// upfront (for non-origin-dependent profiles) so invalid output configurations
@@ -80,7 +81,7 @@ impl OutputPlan {
     pub fn build(
         src: impl AsRef<ImageSpec>,
         dst: impl AsRef<ImageSpec>,
-        policy: ConvertPolicy,
+        policy: &ConvertPolicy,
         peak: PeakSource,
         profile: OutputProfile,
     ) -> Result<Self, At<ConvertError>> {
@@ -91,7 +92,7 @@ impl OutputPlan {
     fn build_inner(
         src: &ImageSpec,
         dst: &ImageSpec,
-        policy: ConvertPolicy,
+        policy: &ConvertPolicy,
         peak: PeakSource,
         profile: OutputProfile,
     ) -> Result<Self, At<ConvertError>> {
@@ -240,9 +241,14 @@ impl OutputPlan {
     /// and convert scanlines without full-frame allocation.
     pub fn build_row_plan(
         &self,
-        hdr_peak: Option<zenpixels::Nits>,
+        resolved_source_peak: Option<zenpixels::Nits>,
     ) -> Result<crate::plan::RowPlan, At<ConvertError>> {
-        crate::plan::RowPlan::build(&self.src, &self.dst, self.image_plan.policy(), hdr_peak)
+        crate::plan::RowPlan::build(
+            &self.src,
+            &self.dst,
+            self.image_plan.policy(),
+            resolved_source_peak,
+        )
     }
 }
 
@@ -266,7 +272,7 @@ pub fn adapt_for_encode<'a>(
     eff_policy.source_facts = crate::plan::merge_facts(policy.source_facts, src.facts());
     let negotiated = crate::negotiate::Negotiate::select(src.spec(), supported, &eff_policy)
         .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
-    let plan = OutputPlan::build(src.spec(), &negotiated.spec, eff_policy, peak, profile)?;
+    let plan = OutputPlan::build(src.spec(), &negotiated.spec, &eff_policy, peak, profile)?;
     let ready = plan.execute_view(src, origin)?;
     Ok((negotiated, ready))
 }
@@ -284,7 +290,7 @@ pub fn adapt_for_encode_format<'a>(
     eff_policy.source_facts = crate::plan::merge_facts(policy.source_facts, src.facts());
     let negotiated = crate::negotiate::Negotiate::select_format(src.spec(), supported, &eff_policy)
         .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
-    let plan = OutputPlan::build(src.spec(), &negotiated.spec, eff_policy, peak, profile)?;
+    let plan = OutputPlan::build(src.spec(), &negotiated.spec, &eff_policy, peak, profile)?;
     let ready = plan.execute_view(src, origin)?;
     Ok((negotiated, ready))
 }

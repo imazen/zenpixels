@@ -143,16 +143,24 @@ pub struct ConvertPolicy {
 }
 
 impl Default for ConvertPolicy {
+    /// Defaults to [`ConvertPolicy::lossless`] so callers never silently discard alpha,
+    /// narrow bit depth, clip gamut, or rescale signal range without opting in.
+    ///
+    /// Use [`ConvertPolicy::permissive`], [`ConvertPolicy::working_linear`], or
+    /// [`ConvertPolicy::display_sdr`] when lossy conversion is desired.
     fn default() -> Self {
-        Self::permissive()
+        Self::lossless()
     }
 }
 
 impl ConvertPolicy {
-    /// Strict lossless policy: forbids depth reduction, alpha loss, gamut clipping, and range scaling.
+    /// Strict lossless-permission policy: forbids depth reduction, alpha loss, gamut clipping,
+    /// RGB→Gray chroma loss (unless proven grayscale), and range scaling.
     ///
     /// Allows lossless widening (`U8 → U16 → F32`), channel reordering (`RGB ↔ BGR`),
-    /// adding opaque alpha, and floating-point extended-gamut preservation.
+    /// adding opaque alpha, and floating-point extended-gamut preservation. Note that
+    /// `lossless()` describes **loss-permission settings** rather than mathematical
+    /// invertibility of arbitrary floating-point color transforms.
     #[must_use]
     pub fn lossless() -> Self {
         Self {
@@ -355,10 +363,11 @@ impl ConvertPolicy {
         self
     }
 
-    /// Supply proven [`SampleFacts`] for row-level plans without buffer headers.
+    /// Supply proven source [`SampleFacts`] for row-level plans without buffer headers
+    /// (merged with runtime buffer facts in [`ImagePlan`](crate::ImagePlan)).
     #[inline]
     #[must_use]
-    pub fn with_facts(mut self, facts: SampleFacts) -> Self {
+    pub fn with_source_facts(mut self, facts: SampleFacts) -> Self {
         self.source_facts = facts;
         self
     }

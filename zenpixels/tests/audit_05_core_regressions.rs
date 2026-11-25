@@ -1,6 +1,6 @@
 //! Comprehensive regression tests for zenpixels 0.5 core invariants
 //! (allocation alignment, zero-copy error recovery, strided gather, BandedBuf,
-//! BitPacking, ImageSpec validation, ICC intent matching, DualLayerHdr,
+//! BitPacking, ImageSpec validation, ICC intent matching, DualLayerHdrBuf,
 //! sealed planes, and image-crate CICP interop).
 
 extern crate alloc;
@@ -9,9 +9,9 @@ use alloc::sync::Arc;
 #[cfg(feature = "icc")]
 use zenpixels::IccColorSpace;
 use zenpixels::{
-    AlignedSamples, AlphaMode, BandedBuf, BitPacking, ColorSpace, DualLayerHdr, GainMapMetadata,
-    HdrMetadata, HlgMode, ImageSpec, OwnedPlane, PixelBuf, PixelSink, PixelSource, PixelStorage,
-    PlanarBuf, PlanarView, PlaneRole, PlaneSpec, PlaneView, RenderingIntent, SampleFacts,
+    AlignedSamples, AlphaMode, BandedBuf, BitPacking, ColorSpace, DualLayerHdrBuf, GainMapMetadata,
+    HdrMetadata, HlgMode, ImageSpec, PixelBuf, PixelSink, PixelSource, PixelStorage, PlanarBuf,
+    PlanarView, PlaneBuf, PlaneRole, PlaneSpec, PlaneView, RenderingIntent, SampleFacts,
     SampleLayout, SampleType, SignalRange, Transfer,
 };
 
@@ -24,8 +24,8 @@ fn pixel_buf_clone_preserves_alignment_and_with_spec_checks_bpp() {
     assert_eq!(cloned.spec(), buf.spec());
 
     // Aligned64 backing for wide RGBAF32 layout: Clone must also satisfy f32 alignment.
-    let aligned_bytes = AlignedSamples::try_zeroed_bytes(4 * 2 * 16).unwrap();
-    let from_aligned = PixelBuf::from_parts(
+    let aligned_bytes = AlignedSamples::zeroed_bytes(4 * 2 * 16).unwrap();
+    let from_aligned = PixelBuf::from_storage_parts(
         PixelStorage::Aligned64(aligned_bytes),
         0,
         4,
@@ -43,7 +43,7 @@ fn pixel_buf_clone_preserves_alignment_and_with_spec_checks_bpp() {
     let raw_u8 = vec![0u8; 4 * 2 * 16 + 16];
     let ptr_addr = raw_u8.as_ptr() as usize;
     let off = (16 - (ptr_addr % 16)) % 16;
-    let from_u8 = PixelBuf::from_parts(
+    let from_u8 = PixelBuf::from_storage_parts(
         PixelStorage::U8(raw_u8),
         off,
         4,
@@ -81,8 +81,9 @@ fn try_into_vec_zero_copy_preserves_self_on_error_and_strided_gather_preserves_a
         70, 80, 90, 100, 110, 120, 0xEE, 0xFF, // row 1
     ];
     let buf =
-        PixelBuf::from_parts(PixelStorage::U8(raw), 0, 2, 2, 8, ImageSpec::rgb8_srgb()).unwrap();
-    let recovered = match buf.try_into_vec_zero_copy::<[u8; 3]>() {
+        PixelBuf::from_storage_parts(PixelStorage::U8(raw), 0, 2, 2, 8, ImageSpec::rgb8_srgb())
+            .unwrap();
+    let recovered = match buf.into_vec_zero_copy::<[u8; 3]>() {
         Ok(_) => panic!("strided buffer must not zero-copy cast to tight Vec<[u8; 3]>"),
         Err(b) => b,
     };
@@ -90,14 +91,14 @@ fn try_into_vec_zero_copy_preserves_self_on_error_and_strided_gather_preserves_a
     assert_eq!(recovered.as_view().row(1), &[70, 80, 90, 100, 110, 120]);
 
     // 2. Tight Vec<u8> -> Vec<u32> must fail (alignment mismatch) AND preserve self untouched!
-    let tight_rgba = PixelBuf::from_vec(
+    let tight_rgba = PixelBuf::from_typed(
         vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
         2,
         2,
         ImageSpec::rgba8_srgb(),
     )
     .unwrap();
-    let recovered2 = match tight_rgba.try_into_vec_zero_copy::<u32>() {
+    let recovered2 = match tight_rgba.into_vec_zero_copy::<u32>() {
         Ok(_) => panic!("Vec<u8> must never zero-copy cast to Vec<u32> (alignment mismatch)"),
         Err(b) => b,
     };
@@ -120,15 +121,16 @@ fn try_into_vec_zero_copy_preserves_self_on_error_and_strided_gather_preserves_a
     }
     raw2.extend_from_slice(&[0xCC, 0xDD]);
     let strided =
-        PixelBuf::from_parts(PixelStorage::U8(raw2), 0, 2, 2, 8, ImageSpec::rgb8_srgb()).unwrap();
-    let gathered: Vec<[u16; 2]> = strided.try_into_vec::<[u16; 2]>().unwrap();
+        PixelBuf::from_storage_parts(PixelStorage::U8(raw2), 0, 2, 2, 8, ImageSpec::rgb8_srgb())
+            .unwrap();
+    let gathered: Vec<[u16; 2]> = strided.into_vec::<[u16; 2]>().unwrap();
     assert_eq!(gathered, vec![[1, 2], [3, 4], [5, 6]]);
 }
 
 #[test]
 #[should_panic]
 fn pixel_buf_source_row_panics_out_of_bounds_even_with_trailing_capacity() {
-    let buf = PixelBuf::from_parts(
+    let buf = PixelBuf::from_storage_parts(
         PixelStorage::U8(vec![0u8; 2 * 4 * 3]),
         0,
         2,
@@ -143,7 +145,7 @@ fn pixel_buf_source_row_panics_out_of_bounds_even_with_trailing_capacity() {
 #[test]
 #[should_panic]
 fn pixel_buf_sink_row_mut_panics_out_of_bounds_even_with_trailing_capacity() {
-    let mut buf = PixelBuf::from_parts(
+    let mut buf = PixelBuf::from_storage_parts(
         PixelStorage::U8(vec![0u8; 2 * 4 * 3]),
         0,
         2,
@@ -319,7 +321,7 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
     let valid_base = PixelBuf::new(4, 4, ImageSpec::rgb8_srgb()).unwrap();
     let valid_gm = PixelBuf::new(2, 2, untagged_gm_spec.clone()).unwrap();
     let valid_meta = GainMapMetadata::symmetric(2.0);
-    let hdr = DualLayerHdr::new(valid_base, valid_gm, valid_meta)
+    let hdr = DualLayerHdrBuf::new(valid_base, valid_gm, valid_meta)
         .unwrap()
         .with_orientation(Orientation::Rotate90);
     assert_eq!(hdr.base().width(), 4);
@@ -338,12 +340,12 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
     // Non-RGB/Gray/ICC base (CMYK) rejected; transfer-tagged gain map rejected; bitfields gain map rejected.
     let cmyk_base = PixelBuf::new(4, 4, ImageSpec::cmyk8(None)).unwrap();
     let ok_gm = PixelBuf::new(2, 2, untagged_gm_spec.clone()).unwrap();
-    assert!(DualLayerHdr::new(cmyk_base, ok_gm, GainMapMetadata::symmetric(2.0)).is_err());
+    assert!(DualLayerHdrBuf::new(cmyk_base, ok_gm, GainMapMetadata::symmetric(2.0)).is_err());
 
     let ok_base = PixelBuf::new(4, 4, ImageSpec::rgb8_srgb()).unwrap();
     let srgb_gm = PixelBuf::new(2, 2, ImageSpec::gray8_srgb()).unwrap();
     assert!(
-        DualLayerHdr::new(ok_base, srgb_gm, GainMapMetadata::symmetric(2.0)).is_err(),
+        DualLayerHdrBuf::new(ok_base, srgb_gm, GainMapMetadata::symmetric(2.0)).is_err(),
         "ISO 21496-1 gain map must be ColorSpace::Untagged (numeric, no transfer curve)"
     );
 
@@ -360,7 +362,7 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
         ),
     )
     .unwrap();
-    assert!(DualLayerHdr::new(ok_base2, rgb565_gm, GainMapMetadata::symmetric(2.0)).is_err());
+    assert!(DualLayerHdrBuf::new(ok_base2, rgb565_gm, GainMapMetadata::symmetric(2.0)).is_err());
 
     // Exact unreduced rationals preserved lossless without GCD reduction, and invalid metadata rejected.
     let unreduced = SignedFraction::new(2, NonZeroU32::new(4).unwrap());
@@ -374,7 +376,7 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
         alternate_offset: SignedFraction::ZERO,
     };
     assert!(
-        GainMapMetadata::try_new(
+        GainMapMetadata::new(
             GainMapChannels::Shared(zero_gamma),
             UnsignedFraction::ZERO,
             UnsignedFraction::new(2, NonZeroU32::new(1).unwrap()),
@@ -390,7 +392,7 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
         alternate_offset: SignedFraction::ZERO,
     };
     assert!(
-        GainMapMetadata::try_new(
+        GainMapMetadata::new(
             GainMapChannels::Shared(inverted_range),
             UnsignedFraction::ZERO,
             UnsignedFraction::new(2, NonZeroU32::new(1).unwrap()),
@@ -399,7 +401,7 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
         .is_none()
     );
     // Reverse direction (HDR base -> SDR alternate) accepted!
-    let rev = GainMapMetadata::try_new(
+    let rev = GainMapMetadata::new(
         GainMapChannels::Shared(GainMapComponent {
             min_gain_stops: SignedFraction::new(-2, NonZeroU32::new(1).unwrap()),
             max_gain_stops: SignedFraction::ZERO,
@@ -429,7 +431,7 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
         let sum = row[0] + row[1] + row[2];
         assert!((sum - 1.0).abs() < 1e-4, "DCI-P3 white sum={sum}");
     }
-    let prophoto = CustomPrimaries::try_new(
+    let prophoto = CustomPrimaries::new(
         (0.7347, 0.2653),
         (0.1596, 0.8404),
         (0.0366, 0.0001),
@@ -484,14 +486,14 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
             .is_err()
     );
 
-    // Sealed PlaneView & OwnedPlane validation, plus 5-plane CMYKA+Extra spillover (>4 inline).
+    // Sealed PlaneView & PlaneBuf validation, plus 5-plane CMYKA+Extra spillover (>4 inline).
     let y_spec = PlaneSpec::new(PlaneRole::Y, SampleType::U8);
-    assert!(PlaneView::new(y_spec, 4, 2, 4, &[0u8; 4]).is_err());
-    let pv = PlaneView::new(y_spec, 4, 2, 4, &[0u8; 8]).unwrap();
+    assert!(PlaneView::new(&[0u8; 4], 4, 2, 4, y_spec).is_err());
+    let pv = PlaneView::new(&[0u8; 8], 4, 2, 4, y_spec).unwrap();
     let planar = PlanarView::new(4, 2, &[pv]).unwrap();
     assert_eq!(planar.planes().len(), 1);
 
-    let op = OwnedPlane::from_storage(y_spec, 4, 2, 4, PixelStorage::U8(vec![0u8; 8])).unwrap();
+    let op = PlaneBuf::from_storage(PixelStorage::U8(vec![0u8; 8]), 4, 2, 4, y_spec).unwrap();
     let pbuf = PlanarBuf::from_planes(4, 2, vec![op]).unwrap();
     assert_eq!(pbuf.planes().len(), 1);
 
@@ -521,10 +523,10 @@ fn image_crate_interop_propagates_p3_cicp_and_rejects_mismatches() {
 
     // Exporting RGBA PixelBuf into image::Rgb<u8> must fail!
     let rgba_buf = PixelBuf::new(2, 1, ImageSpec::rgba8_srgb()).unwrap();
-    assert!(rgba_buf.try_into_image_buffer::<image::Rgb<u8>>().is_err());
+    assert!(rgba_buf.into_image_buffer::<image::Rgb<u8>>().is_err());
 
     // Exporting Display P3 RGB8 sets Display P3 CICP on the resulting ImageBuffer.
-    let img = buf.try_into_image_buffer::<image::Rgb<u8>>().unwrap();
+    let img = buf.into_image_buffer::<image::Rgb<u8>>().unwrap();
     assert_eq!(img.color_space(), image::metadata::Cicp::DISPLAY_P3);
 
     // from_rgb8_image_buffer rejects contradictory ColorSpace::SRGB on a Display P3 ImageBuffer!

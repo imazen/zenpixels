@@ -533,7 +533,7 @@ impl CicpTag {
     ///   (§4.3 NOTE 2).
     /// - When `ColourPrimaries == 2` and `tag_bytes.len() > 12`, requires at least 44 bytes and
     ///   validates bytes `12..44` as eight `s15Fixed16Number` chromaticities.
-    pub fn try_from_tag_bytes(tag_bytes: &[u8]) -> Result<Self, At<CicpError>> {
+    pub fn from_tag_bytes(tag_bytes: &[u8]) -> Result<Self, At<CicpError>> {
         if tag_bytes.len() < Self::BASE_TAG_LEN
             || &tag_bytes[0..4] != b"cicp"
             || tag_bytes[4..8] != [0; 4]

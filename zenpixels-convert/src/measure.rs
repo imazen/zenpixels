@@ -114,7 +114,7 @@ impl LightLevelHistogram {
     /// into `self` (useful for parallel tile/strip reduction).
     ///
     /// Returns [`ConvertError::UnsupportedRoute`] if `self.method() != other.method()`.
-    pub fn try_merge(&mut self, other: &Self) -> Result<(), At<ConvertError>> {
+    pub fn merge(&mut self, other: &Self) -> Result<(), At<ConvertError>> {
         if self.method != other.method {
             return Err(crate::error::err_at(ConvertError::UnsupportedRoute));
         }

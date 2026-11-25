@@ -5,10 +5,10 @@
 use std::sync::Arc;
 use zenpixels::{
     AlphaMode, BandedBuf, BitPacking, BufFill, BufferError, Chromaticity, Cicp, ClliCodes,
-    ColorError, ColorOrigin, ColorSpace, ContentLightLevel, DiffuseWhite, DualLayerHdr,
+    ColorError, ColorOrigin, ColorSpace, ContentLightLevel, DiffuseWhite, DualLayerHdrBuf,
     DualLayerHdrView, GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapMetadata, Gamma,
-    HdrMetadata, IccValidationError, ImageSpec, Nits, Orientation, OwnedPlane, ParametricColor,
-    PixelBuf, PixelCow, PixelFormat, PixelSink, PixelSource, PixelView, PlanarBuf, PlanarView,
+    HdrMetadata, IccValidationError, ImageSpec, Nits, Orientation, ParametricColor, PixelBuf,
+    PixelCow, PixelFormat, PixelSink, PixelSource, PixelView, PlanarBuf, PlanarView, PlaneBuf,
     PlaneRole, PlaneSpec, PlaneView, PlaneViewMut, Primaries, RenderingIntent, RowAlign,
     SampleLayout, SampleType, SignalRange, SignedFraction, Transfer, UnsignedFraction, WhitePoint,
     validate_icc_structure,
@@ -33,7 +33,7 @@ fn sample_gm_meta() -> GainMapMetadata {
         base_offset: SignedFraction::try_new(1, 64).unwrap(),
         alternate_offset: SignedFraction::try_new(1, 64).unwrap(),
     };
-    GainMapMetadata::try_new(
+    GainMapMetadata::new(
         GainMapChannels::Shared(comp),
         UnsignedFraction::try_new(0, 1).unwrap(),
         UnsignedFraction::try_new(2, 1).unwrap(),
@@ -405,14 +405,14 @@ fn opaque_construction_white_fill_new_zeroed_retag_and_recovery() {
     let short_bytes = vec![7u8; 5];
     let ptr = short_bytes.as_ptr();
     let (err, recovered) =
-        PixelBuf::try_from_bytes_recover(short_bytes, 4, 4, PixelFormat::RGB8_SRGB).unwrap_err();
+        PixelBuf::from_bytes_recover(short_bytes, 4, 4, PixelFormat::RGB8_SRGB).unwrap_err();
     assert_eq!(*err.error(), BufferError::InsufficientData);
     assert_eq!(recovered.as_ptr(), ptr);
 
     let wrong_vec = vec![123u16; 12];
     let vptr = wrong_vec.as_ptr();
     let (err, recovered_v) =
-        PixelBuf::try_from_vec_recover(wrong_vec, 2, 2, PixelFormat::RGB8_SRGB).unwrap_err();
+        PixelBuf::from_typed_recover(wrong_vec, 2, 2, PixelFormat::RGB8_SRGB).unwrap_err();
     assert_eq!(*err.error(), BufferError::IncompatibleLayout);
     assert_eq!(recovered_v.as_ptr(), vptr);
 }
@@ -435,11 +435,11 @@ fn orientation_carriage_across_buffers_views_bands_planar_and_dual_layer() {
     // PixelBufParts preserves orientation losslessly.
     let parts = buf.clone().into_parts();
     assert_eq!(parts.orientation, Orientation::Rotate90);
-    let restored = PixelBuf::try_from_parts(parts).unwrap();
+    let restored = PixelBuf::from_parts(parts).unwrap();
     assert_eq!(restored.orientation(), Orientation::Rotate90);
 
     // rotate_metadata composes in O(1).
-    buf = buf.rotate_metadata(Orientation::Rotate90);
+    buf = buf.compose_orientation(Orientation::Rotate90);
     assert_eq!(buf.orientation(), Orientation::Rotate180);
     assert_eq!(buf.display_dimensions(), (6, 4));
 
@@ -455,7 +455,7 @@ fn orientation_carriage_across_buffers_views_bands_planar_and_dual_layer() {
         Orientation::Rotate270
     );
 
-    // DualLayerHdr orientation validation, inheritance, sync, and InvalidGainMapMetadata.
+    // DualLayerHdrBuf orientation validation, inheritance, sync, and InvalidGainMapMetadata.
     let gm_spec = ImageSpec::new(
         SampleLayout::GRAY8,
         ColorSpace::Untagged {
@@ -471,27 +471,27 @@ fn orientation_carriage_across_buffers_views_bands_planar_and_dual_layer() {
 
     // Misregistered layer orientations must fail!
     assert_eq!(
-        *DualLayerHdr::new(base_r90.clone(), gm_id.clone(), meta)
+        *DualLayerHdrBuf::new(base_r90.clone(), gm_id.clone(), meta)
             .unwrap_err()
             .error(),
         BufferError::IncompatibleLayout
     );
 
-    // Matching layer orientations inherited by `DualLayerHdr::new` and synced on `rotate_metadata`.
+    // Matching layer orientations inherited by `DualLayerHdrBuf::new` and synced on `rotate_metadata`.
     let gm_r90 = gm_id.clone().with_orientation(Orientation::Rotate90);
-    let dual = DualLayerHdr::new(base_r90.clone(), gm_r90.clone(), meta)
+    let dual = DualLayerHdrBuf::new(base_r90.clone(), gm_r90.clone(), meta)
         .unwrap()
-        .rotate_metadata(Orientation::Rotate90);
+        .compose_orientation(Orientation::Rotate90);
     assert_eq!(dual.orientation(), Orientation::Rotate180);
     assert_eq!(dual.base().orientation(), Orientation::Rotate180);
     assert_eq!(dual.gain_map().orientation(), Orientation::Rotate180);
     let dual_parts = dual.into_parts();
-    let dual_rt = DualLayerHdr::try_from_parts(dual_parts).unwrap();
+    let dual_rt = DualLayerHdrBuf::from_parts(dual_parts).unwrap();
     assert_eq!(dual_rt.orientation(), Orientation::Rotate180);
 
     // Contradictory explicit orientation must fail!
     assert_eq!(
-        *DualLayerHdr::new_with_alternate(
+        *DualLayerHdrBuf::new_with_alternate(
             base_r90.clone(),
             gm_r90.clone(),
             meta,
@@ -519,7 +519,7 @@ fn orientation_carriage_across_buffers_views_bands_planar_and_dual_layer() {
     let mut bad_meta = meta;
     bad_meta.alternate_hdr_headroom = bad_meta.base_hdr_headroom; // H_base == H_alt invalid!
     assert_eq!(
-        *DualLayerHdr::new(
+        *DualLayerHdrBuf::new(
             PixelBuf::new(4, 2, PixelFormat::RGB8_SRGB).unwrap(),
             gm_id,
             bad_meta,
@@ -538,7 +538,7 @@ fn planar_zero_copy_codec_apis_and_strict_role_validation() {
     let y_spec = PlaneSpec::new(PlaneRole::Y, SampleType::U16).with_packing(BitPacking::U10_LSB);
 
     {
-        let mut pvm = PlaneViewMut::from_samples(y_spec, 4, 2, 4, &mut y_samples).unwrap();
+        let mut pvm = PlaneViewMut::from_samples(&mut y_samples, 4, 2, 4, y_spec).unwrap();
         assert_eq!(pvm.row_as::<u16>(0).unwrap(), &[100, 200, 300, 400]);
         pvm.row_as_mut::<u16>(1).unwrap()[0] = 512;
         let mut cp = pvm.into_code_plane_mut(0).unwrap();
@@ -547,14 +547,14 @@ fn planar_zero_copy_codec_apis_and_strict_role_validation() {
     assert_eq!(y_samples[4], 512);
     assert_eq!(y_samples[7], 1023);
 
-    let pv = PlaneView::from_samples(y_spec, 4, 2, 4, &y_samples).unwrap();
+    let pv = PlaneView::from_samples(&y_samples, 4, 2, 4, y_spec).unwrap();
     assert_eq!(pv.data().as_ptr() as *const u16, y_ptr);
     assert_eq!(pv.row_as::<u16>(1).unwrap(), &[512, 600, 700, 1023]);
     assert_eq!(pv.code_u32(3, 1, 0), Some(1023));
     let cp = pv.as_code_plane(0).unwrap();
     assert_eq!(cp.code(3, 1), Some(1023));
 
-    let owned = OwnedPlane::from_samples(y_spec, 4, 2, 4, y_samples).unwrap();
+    let owned = PlaneBuf::from_samples(y_samples, 4, 2, 4, y_spec).unwrap();
     assert_eq!(owned.as_view().data().as_ptr() as *const u16, y_ptr);
     assert_eq!(owned.row_as::<u16>(0).unwrap(), &[100, 200, 300, 400]);
 
@@ -766,7 +766,7 @@ fn icc1_cicptype_custom_primaries_amendment_and_annex1() {
         assert_eq!(bytes[9], 16);
         assert_eq!(bytes[10], 0);
         assert_eq!(bytes[11], 1);
-        assert_eq!(CicpTag::try_from_tag_bytes(&bytes).unwrap(), tag);
+        assert_eq!(CicpTag::from_tag_bytes(&bytes).unwrap(), tag);
 
         let mut stack = [0u8; 44];
         assert_eq!(tag.write_tag_bytes(&mut stack[..43]), None);
@@ -775,9 +775,12 @@ fn icc1_cicptype_custom_primaries_amendment_and_annex1() {
 
         // Project to ColorSpace::Rgb and back to CicpTag!
         let cs = tag.to_color_space(AlphaMode::None).unwrap();
-        assert_eq!(cs.try_cicp_tag().unwrap(), tag);
+        assert_eq!(cs.project_cicp_tag().unwrap(), tag);
         // Plain 4-byte Cicp projection refuses unmapped custom primaries.
-        assert_eq!(cs.try_cicp(), Err(CicpProjectionError::UnmappedPrimaries));
+        assert_eq!(
+            cs.project_cicp(),
+            Err(CicpProjectionError::UnmappedPrimaries)
+        );
 
         // Works across Input (scnr), Display (mntr), and ColorSpace (spac) with NO matrix tags (§4.1 / NOTE 5)!
         for class in [b"scnr", b"mntr", b"spac"] {
@@ -803,7 +806,7 @@ fn icc1_cicptype_custom_primaries_amendment_and_annex1() {
     //    losslessly through s15Fixed16Number and back!
     for code in 0u16..=50_000 {
         let x = (code as f32) / 50_000.0;
-        let c = Chromaticity::try_new_primary(x, 0.5).unwrap();
+        let c = Chromaticity::new_primary(x, 0.5).unwrap();
         let (s15_x, _) = c.to_s15fixed16();
         let back = (((s15_x as f64) / 65536.0) * 50_000.0 + 0.5) as u16;
         assert_eq!(back, code, "HAGC code {code} failed s15Fixed16 round-trip");
@@ -842,7 +845,7 @@ fn icc1_cicptype_custom_primaries_amendment_and_annex1() {
     assert!(base_unspec.to_extended_tag_bytes().is_none());
     let base_unspec_bytes = base_unspec.to_tag_bytes_vec();
     assert_eq!(base_unspec_bytes.len(), 12);
-    let parsed_unspec = CicpTag::try_from_tag_bytes(&base_unspec_bytes).unwrap();
+    let parsed_unspec = CicpTag::from_tag_bytes(&base_unspec_bytes).unwrap();
     assert_eq!(parsed_unspec.custom_primaries(), None);
     assert_eq!(
         *parsed_unspec
@@ -856,7 +859,7 @@ fn icc1_cicptype_custom_primaries_amendment_and_annex1() {
 
     // CP=2 with truncated extension (20 bytes < 44) -> rejected!
     assert_eq!(
-        *CicpTag::try_from_tag_bytes(&ycbcr_bytes[..20])
+        *CicpTag::from_tag_bytes(&ycbcr_bytes[..20])
             .unwrap_err()
             .error(),
         CicpError::MalformedTag
@@ -868,7 +871,7 @@ fn icc1_cicptype_custom_primaries_amendment_and_annex1() {
     let mut bad_cp1 = ycbcr_bytes.clone();
     bad_cp1[8] = 1;
     assert_eq!(
-        *CicpTag::try_from_tag_bytes(&bad_cp1).unwrap_err().error(),
+        *CicpTag::from_tag_bytes(&bad_cp1).unwrap_err().error(),
         CicpError::MalformedTag
     );
     let bad_cp1_icc = build_icc_with_raw_cicp(b"mntr", b"RGB ", &bad_cp1);
@@ -881,7 +884,7 @@ fn icc1_cicptype_custom_primaries_amendment_and_annex1() {
     degen[9] = 13;
     degen[11] = 1;
     assert_eq!(
-        *CicpTag::try_from_tag_bytes(&degen).unwrap_err().error(),
+        *CicpTag::from_tag_bytes(&degen).unwrap_err().error(),
         CicpError::InvalidCustomPrimaries
     );
     let degen_icc = build_icc_with_raw_cicp(b"mntr", b"RGB ", &degen);
@@ -889,7 +892,7 @@ fn icc1_cicptype_custom_primaries_amendment_and_annex1() {
 
     // ColorSpace::try_cicp_tag emits 12-byte base for standardized H.273 spaces, 44-byte for AdobeRgb+Linear,
     // and refuses HlgMode::Display / DiffuseWhite / non-H.273 Transfer::AdobeRgb.
-    let srgb_tag = ColorSpace::SRGB.try_cicp_tag().unwrap();
+    let srgb_tag = ColorSpace::SRGB.project_cicp_tag().unwrap();
     assert_eq!(srgb_tag.encoded_len(), 12);
     assert_eq!(srgb_tag.cicp(), Cicp::SRGB);
 
@@ -900,18 +903,18 @@ fn icc1_cicptype_custom_primaries_amendment_and_annex1() {
         alpha: AlphaMode::None,
         white: None,
     };
-    let adobe_tag = adobe_lin.try_cicp_tag().unwrap();
+    let adobe_tag = adobe_lin.project_cicp_tag().unwrap();
     assert_eq!(adobe_tag.encoded_len(), 44);
     assert_eq!(adobe_tag.cicp(), Cicp::new(2, 8, 0, true));
 
     assert_eq!(
-        ColorSpace::BT2100_HLG_1000.try_cicp_tag(),
+        ColorSpace::BT2100_HLG_1000.project_cicp_tag(),
         Err(CicpProjectionError::HlgDisplayRenderingLost)
     );
     assert_eq!(
         ColorSpace::SRGB
             .with_white(DiffuseWhite::BT2408)
-            .try_cicp_tag(),
+            .project_cicp_tag(),
         Err(CicpProjectionError::DiffuseWhiteLost)
     );
 }
@@ -968,9 +971,9 @@ fn view_and_buffer_sizeof_layout_budgets_and_ergonomics() {
         size_of::<DualLayerHdrView<'static>>()
     );
     assert!(
-        size_of::<DualLayerHdr>() <= 488,
-        "DualLayerHdr grew to {}",
-        size_of::<DualLayerHdr>()
+        size_of::<DualLayerHdrBuf>() <= 488,
+        "DualLayerHdrBuf grew to {}",
+        size_of::<DualLayerHdrBuf>()
     );
     // CicpTag stays Copy + const + unboxed (40 B = 4 B Cicp + 36 B Option<CustomPrimaries>).
     assert_eq!(size_of::<CicpTag>(), 40);
@@ -984,7 +987,7 @@ fn view_and_buffer_sizeof_layout_budgets_and_ergonomics() {
     assert_eq!(buf.as_view_mut().height(), buf.as_view_mut().rows());
 
     // Descriptive whereat::At context on untyped Vec<i32> -> U8 IncompatibleLayout mismatch.
-    let err = PixelBuf::from_vec(vec![0i32; 3], 1, 1, ImageSpec::RGB8_SRGB).unwrap_err();
+    let err = PixelBuf::from_typed(vec![0i32; 3], 1, 1, ImageSpec::RGB8_SRGB).unwrap_err();
     assert_eq!(*err.error(), BufferError::IncompatibleLayout);
     let diag = format!("{err:?}");
     assert!(
@@ -999,4 +1002,58 @@ fn view_and_buffer_sizeof_layout_budgets_and_ergonomics() {
         vdiag.contains("i32") && vdiag.contains("U8"),
         "expected element/layout context in PixelView diagnostic, got: {vdiag}"
     );
+}
+
+#[test]
+fn option_1a_static_spec_refs_and_zero_alloc_view_construction() {
+    extern crate alloc;
+    use alloc::sync::Arc;
+    use zenpixels::{PixelViewMut, SpecCow};
+
+    // Static preset accessors match consts and round-trip via `as_static_ref`.
+    assert_eq!(ImageSpec::rgb8_srgb_ref(), &ImageSpec::RGB8_SRGB);
+    assert_eq!(ImageSpec::rgba8_srgb_ref(), &ImageSpec::RGBA8_SRGB);
+    assert_eq!(ImageSpec::rgbf32_linear_ref(), &ImageSpec::RGBF32_LINEAR);
+    assert_eq!(ImageSpec::gray8_srgb_ref(), &ImageSpec::GRAY8_SRGB);
+    assert!(ImageSpec::RGB8_SRGB.as_static_ref().is_some());
+
+    // `SpecCow::from_owned` and `SpecCow::from_format` hit static refs with 0 heap allocations.
+    assert!(matches!(
+        SpecCow::from_owned(ImageSpec::RGB8_SRGB),
+        SpecCow::Borrowed(_)
+    ));
+    assert!(matches!(
+        SpecCow::from_format(PixelFormat::RGBA8_SRGB),
+        SpecCow::Borrowed(_)
+    ));
+
+    // Custom (non-preset) specs fall back to `SpecCow::Owned(Arc<ImageSpec>)` only via explicit APIs.
+    let custom = ImageSpec::rgb8_srgb().with_range(SignalRange::Narrow);
+    assert!(custom.as_static_ref().is_none());
+    assert!(matches!(
+        SpecCow::from_owned(custom.clone()),
+        SpecCow::Owned(_)
+    ));
+    assert!(matches!(
+        SpecCow::from_arc(Arc::new(custom.clone())),
+        SpecCow::Owned(_)
+    ));
+
+    // Borrowed `&'a ImageSpec` view constructors work directly with static preset refs.
+    let mut bytes = [10u8, 20, 30, 40, 50, 60];
+    {
+        let view = PixelView::from_bytes(&bytes, 2, 1, ImageSpec::rgb8_srgb_ref()).unwrap();
+        assert_eq!(view.row(0), &[10, 20, 30, 40, 50, 60]);
+        let view_cow =
+            PixelView::new_with_spec_cow(&bytes, 2, 1, 6, SpecCow::from_owned(custom.clone()))
+                .unwrap();
+        assert_eq!(view_cow.spec(), &custom);
+    }
+    let mut view_mut = PixelViewMut::new(&mut bytes, 2, 1, 6, ImageSpec::rgb8_srgb_ref()).unwrap();
+    view_mut.row_mut(0)[0] = 99;
+    drop(view_mut);
+    let mut view_mut_cow =
+        PixelViewMut::new_with_spec_cow(&mut bytes, 2, 1, 6, SpecCow::from_owned(custom)).unwrap();
+    view_mut_cow.row_mut(0)[1] = 88;
+    assert_eq!(&bytes[..2], &[99, 88]);
 }

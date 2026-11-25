@@ -736,7 +736,7 @@ fn main() {
                                 Orientation::Identity,
                             )
                             .unwrap();
-                            let mut cfg = GainMapApplyConfig::new(2.0)
+                            let mut cfg = GainMapApplyConfig::from_headroom_stops(2.0)
                                 .with_resample(resample)
                                 .with_policy(
                                     ConvertPolicy::working_linear().with_accelerators(acc),

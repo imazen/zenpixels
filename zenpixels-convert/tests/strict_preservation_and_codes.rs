@@ -20,13 +20,13 @@ extern crate alloc;
 use alloc::sync::Arc;
 
 use zenpixels_convert::{
-    AlphaMode, AlphaPolicy, BitPacking, ChannelOrder, Cicp, CodeMap, CodePlane, CodeRole,
-    ColorOrigin, ColorSpace, ContentLightLevel, ConvertError, ConvertPolicy, DepthPolicy,
+    AlphaCompaction, AlphaMode, AlphaPolicy, BitPacking, ChannelOrder, Cicp, CodeMap, CodePlane,
+    CodeRole, ColorOrigin, ColorSpace, ContentLightLevel, ConvertError, ConvertPolicy, DepthPolicy,
     DiffuseWhite, FloatFacts, Gamma, HdrMetadata, ImagePlan, ImageSpec, LoadBearingReport,
     LossKind, MasteringDisplay, Negotiate, Nits, OutputPlan, OutputProfile, PeakSource, PixelBuf,
     PixelBufLoadBearingExt, PixelViewLoadBearingExt, Primaries, RangePolicy, RenderingIntent,
     RowPlan, SampleEncoding, SampleFacts, SampleLayout, SampleType, SignalRange, Transfer,
-    convert_buf, scan_facts, to_canonical,
+    convert_to_buf, scan_facts, to_canonical,
 };
 
 #[test]
@@ -173,7 +173,8 @@ fn b01_b02_b03_strict_lossless_refuses_non_injective_transfers_grids_and_reassoc
         )
         .is_none()
     );
-    let opaque_pol = ConvertPolicy::lossless().with_facts(SampleFacts::NONE.with_all_opaque(true));
+    let opaque_pol =
+        ConvertPolicy::lossless().with_source_facts(SampleFacts::NONE.with_all_opaque(true));
     let op_plan = RowPlan::build(straight, premul, &opaque_pol, None).unwrap();
     let mut op_out = [0u8; 4];
     op_plan
@@ -272,12 +273,12 @@ fn b06_b07_b08_d02_scan_facts_image_plan_reuse_and_load_bearing_reduction() {
     let plan = ImagePlan::build(
         ImageSpec::rgba8_srgb(),
         ImageSpec::bgra8_srgb(),
-        ConvertPolicy::lossless(),
+        &ConvertPolicy::lossless(),
         PeakSource::Measured,
     )
     .unwrap();
 
-    let mut img1 = PixelBuf::from_vec(
+    let mut img1 = PixelBuf::from_typed(
         vec![1u8, 2, 3, 255, 4, 5, 6, 255],
         2,
         1,
@@ -295,7 +296,7 @@ fn b06_b07_b08_d02_scan_facts_image_plan_reuse_and_load_bearing_reduction() {
         "ImagePlan swizzle must propagate proven all_opaque!"
     );
 
-    let img2 = PixelBuf::from_vec(
+    let img2 = PixelBuf::from_typed(
         vec![1u8, 2, 3, 254, 4, 5, 6, 255],
         2,
         1,
@@ -310,7 +311,7 @@ fn b06_b07_b08_d02_scan_facts_image_plan_reuse_and_load_bearing_reduction() {
     );
 
     // B07: Poisoned `AlphaMode::Opaque` buffer with stored alpha=0 MUST scan as `all_opaque=false`!
-    let poisoned = PixelBuf::from_vec(
+    let poisoned = PixelBuf::from_typed(
         vec![10u8, 20, 30, 0],
         1,
         1,
@@ -324,7 +325,7 @@ fn b06_b07_b08_d02_scan_facts_image_plan_reuse_and_load_bearing_reduction() {
     );
 
     // D02: LoadBearingReport + zero-alloc in-place compaction on RGBA16 -> Gray8!
-    let mut buf16 = PixelBuf::from_vec(
+    let mut buf16 = PixelBuf::from_typed(
         vec![
             0x4040u16, 0x4040, 0x4040, 0xFFFF, 0x8080, 0x8080, 0x8080, 0xFFFF, 0xC0C0, 0xC0C0,
             0xC0C0, 0xFFFF,
@@ -341,7 +342,7 @@ fn b06_b07_b08_d02_scan_facts_image_plan_reuse_and_load_bearing_reduction() {
     assert_eq!(report.apply_to(buf16.spec()), ImageSpec::gray8_srgb());
 
     let ptr_before = buf16.as_view().row(0).as_ptr() as usize;
-    buf16.reduce_to_load_bearing_format_in_place(true);
+    buf16.reduce_to_load_bearing_format_in_place(AlphaCompaction::DropUnusedLanes);
     assert_eq!(buf16.spec(), &ImageSpec::gray8_srgb());
     assert_eq!(buf16.as_view().row(0), &[0x40, 0x80, 0xC0]);
     assert_eq!(
@@ -351,7 +352,7 @@ fn b06_b07_b08_d02_scan_facts_image_plan_reuse_and_load_bearing_reduction() {
     );
 
     // Narrow-range U16 MUST NOT be reduced to U8 via byte-replication!
-    let narrow16 = PixelBuf::from_vec(
+    let narrow16 = PixelBuf::from_typed(
         vec![0x1010u16, 0x8080, 0xEBEB],
         1,
         1,
@@ -459,7 +460,7 @@ fn b10_b11_b12_b13_b42_signaling_authority_strict_icc_and_owned_borrowed_pixels(
         let plan = OutputPlan::build(
             spec.clone(),
             spec,
-            ConvertPolicy::permissive(),
+            &ConvertPolicy::permissive(),
             PeakSource::Measured,
             OutputProfile::Auto,
         );
@@ -474,13 +475,13 @@ fn b10_b11_b12_b13_b42_signaling_authority_strict_icc_and_owned_borrowed_pixels(
     for tf in [
         Transfer::Linear,
         Transfer::Gamma22,
-        Transfer::Gamma(Gamma::try_new(2.4).unwrap()),
+        Transfer::Gamma(Gamma::new(2.4).unwrap()),
     ] {
         let gray_spec = ImageSpec::gray8_srgb().with_transfer(tf);
         let res = OutputPlan::build(
             gray_spec.clone(),
             gray_spec,
-            ConvertPolicy::permissive(),
+            &ConvertPolicy::permissive(),
             PeakSource::Measured,
             OutputProfile::Auto,
         );
@@ -506,7 +507,7 @@ fn b10_b11_b12_b13_b42_signaling_authority_strict_icc_and_owned_borrowed_pixels(
     let srgb_same = OutputPlan::build(
         ImageSpec::rgb8_srgb(),
         ImageSpec::rgb8_srgb(),
-        ConvertPolicy::permissive(),
+        &ConvertPolicy::permissive(),
         PeakSource::Measured,
         OutputProfile::SameAsOrigin,
     )
@@ -529,7 +530,7 @@ fn b10_b11_b12_b13_b42_signaling_authority_strict_icc_and_owned_borrowed_pixels(
     let p3_same = OutputPlan::build(
         p3_icc_spec.clone(),
         p3_icc_spec,
-        ConvertPolicy::permissive(),
+        &ConvertPolicy::permissive(),
         PeakSource::Measured,
         OutputProfile::SameAsOrigin,
     )
@@ -557,12 +558,12 @@ fn b10_b11_b12_b13_b42_signaling_authority_strict_icc_and_owned_borrowed_pixels(
     let out_plan = OutputPlan::build(
         p3_spec.clone(),
         ImageSpec::rgb8_srgb(),
-        ConvertPolicy::permissive(),
+        &ConvertPolicy::permissive(),
         PeakSource::Measured,
         OutputProfile::Auto,
     )
     .unwrap();
-    let src_buf = PixelBuf::from_vec(vec![200u8, 60, 40, 12, 124, 200], 2, 1, p3_spec).unwrap();
+    let src_buf = PixelBuf::from_typed(vec![200u8, 60, 40, 12, 124, 200], 2, 1, p3_spec).unwrap();
     let r_view = out_plan
         .execute_view(src_buf.as_view(), &ColorOrigin::assumed())
         .unwrap();
@@ -800,7 +801,7 @@ fn d03_codemap_and_to_canonical_exhaustive() {
         DepthPolicy::Round,
         RangePolicy::Convert,
         Nits::new(100.0),
-        |v, s: &ImageSpec, p, pk| convert_buf(v, s, p, pk),
+        |v, s: &ImageSpec, p, pk| convert_to_buf(v, s, p, pk),
     );
 }
 
@@ -828,11 +829,11 @@ fn phase4a_icc_hdr_identity_load_bearing_origin_and_cicp_alias() {
     };
     let raw_nclx = Cicp::new(1, 1, 1, false);
     let orig = ColorOrigin::from_icc_and_cicp(Arc::clone(&p3_icc), raw_nclx);
-    let src_buf = PixelBuf::from_vec(vec![1000u16, 2000, 3000], 1, 1, icc_spec.clone())
+    let src_buf = PixelBuf::from_typed(vec![1000u16, 2000, 3000], 1, 1, icc_spec.clone())
         .unwrap()
         .with_origin(orig.clone())
         .with_hdr(hdr);
-    let copied = convert_buf(
+    let copied = convert_to_buf(
         &src_buf.as_view(),
         icc_spec.clone(),
         &ConvertPolicy::permissive(),
@@ -857,7 +858,7 @@ fn phase4a_icc_hdr_identity_load_bearing_origin_and_cicp_alias() {
     // Load-bearing RGB -> Gray collapse MUST preserve original source `ColorOrigin` provenance
     // and refuse collapsing non-D65 primaries (`DciP3`) to D65 Gray!
     let p3_rgb_spec = ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3);
-    let mut neutral_p3 = PixelBuf::from_vec(vec![128u8, 128, 128, 64, 64, 64], 2, 1, p3_rgb_spec)
+    let mut neutral_p3 = PixelBuf::from_typed(vec![128u8, 128, 128, 64, 64, 64], 2, 1, p3_rgb_spec)
         .unwrap()
         .with_origin(orig.clone())
         .with_hdr(hdr);
@@ -873,13 +874,13 @@ fn phase4a_icc_hdr_identity_load_bearing_origin_and_cicp_alias() {
         "load-bearing reduction must preserve original file provenance untouched"
     );
     assert_eq!(reduced_alloc.hdr(), hdr);
-    neutral_p3.reduce_to_load_bearing_format_in_place(true);
+    neutral_p3.reduce_to_load_bearing_format_in_place(AlphaCompaction::DropUnusedLanes);
     assert_eq!(neutral_p3.spec(), &ImageSpec::gray8_srgb());
     assert_eq!(neutral_p3.origin(), &orig);
 
     // Non-D65 DCI-P3 RGB MUST NOT collapse to D65 Gray!
     let dci_spec = ImageSpec::rgb8_srgb().with_primaries(Primaries::DciP3);
-    let neutral_dci = PixelBuf::from_vec(vec![128u8, 128, 128], 1, 1, dci_spec.clone()).unwrap();
+    let neutral_dci = PixelBuf::from_typed(vec![128u8, 128, 128], 1, 1, dci_spec.clone()).unwrap();
     let dci_rep = neutral_dci.as_view().determine_load_bearing();
     assert_eq!(dci_rep.apply_to(&dci_spec), dci_spec);
     assert!(
@@ -901,7 +902,7 @@ fn phase4a_icc_hdr_identity_load_bearing_origin_and_cicp_alias() {
     let plan = OutputPlan::build(
         bt2020_709.clone(),
         bt2020_709,
-        ConvertPolicy::permissive(),
+        &ConvertPolicy::permissive(),
         PeakSource::Declared,
         OutputProfile::SameAsOrigin,
     )
@@ -917,15 +918,16 @@ fn opus_review_p0_1_p0_2_p1_1_p1_2_p2_1_regressions() {
     // P0-1: Discarding premultiplied alpha under permissive() MUST unpremultiply consistently
     // across BOTH U8 -> RGB8 and U8 -> RGB16 (and -> RGBA8 Opaque)!
     let premul_spec = ImageSpec::rgba8_srgb().with_alpha(AlphaMode::Premultiplied);
-    let premul_buf = PixelBuf::from_vec(vec![64u8, 0, 0, 128], 1, 1, premul_spec.clone()).unwrap();
-    let out_rgb8 = convert_buf(
+    let premul_buf =
+        PixelBuf::from_typed(vec![64u8, 0, 0, 128], 1, 1, premul_spec.clone()).unwrap();
+    let out_rgb8 = convert_to_buf(
         &premul_buf.as_view(),
         ImageSpec::rgb8_srgb(),
         &ConvertPolicy::permissive(),
         PeakSource::Declared,
     )
     .unwrap();
-    let out_rgb16 = convert_buf(
+    let out_rgb16 = convert_to_buf(
         &premul_buf.as_view(),
         ImageSpec::rgb16_srgb(),
         &ConvertPolicy::permissive(),
@@ -942,7 +944,7 @@ fn opus_review_p0_1_p0_2_p1_1_p1_2_p2_1_regressions() {
         ((r16 as i32) - (r8 as i32 * 257)).abs() <= 257,
         "RGB8 ({r8}) and RGB16 ({r16}) must agree on unpremultiplied red"
     );
-    let out_opaque = convert_buf(
+    let out_opaque = convert_to_buf(
         &premul_buf.as_view(),
         ImageSpec::rgba8_srgb().with_alpha(AlphaMode::Opaque),
         &ConvertPolicy::permissive(),
@@ -953,7 +955,7 @@ fn opus_review_p0_1_p0_2_p1_1_p1_2_p2_1_regressions() {
     assert_eq!(out_opaque.as_view().row(0)[3], 255);
 
     // P0-2: Straight -> Premultiplied byte path MUST NOT preserve 1-bit `ExactDepth::color_bits`!
-    let mut logo = PixelBuf::from_vec(
+    let mut logo = PixelBuf::from_typed(
         vec![255u8, 0, 0, 128, 0, 255, 0, 255],
         2,
         1,
@@ -963,7 +965,7 @@ fn opus_review_p0_1_p0_2_p1_1_p1_2_p2_1_regressions() {
     let measured = scan_facts(&logo.as_view());
     assert_eq!(measured.depth.unwrap().color_bits(), 1);
     logo.set_facts(measured);
-    let premul_out = convert_buf(
+    let premul_out = convert_to_buf(
         &logo.as_view(),
         ImageSpec::rgba8_srgb().with_alpha(AlphaMode::Premultiplied),
         &ConvertPolicy::permissive(),
@@ -984,8 +986,8 @@ fn opus_review_p0_1_p0_2_p1_1_p1_2_p2_1_regressions() {
     // P1-1: Unverified `Opaque -> Opaque` canonicalizes poisoned alpha=0 to 255 (both RGBA8 and GrayAlpha8),
     // while fresh `PixelBuf::new(..., Opaque)` keeps `all_opaque = true` and uses zero-copy `Memcpy`!
     let op_rgba_spec = ImageSpec::rgba8_srgb().with_alpha(AlphaMode::Opaque);
-    let poisoned = PixelBuf::from_vec(vec![10u8, 20, 30, 0], 1, 1, op_rgba_spec.clone()).unwrap();
-    let canon = convert_buf(
+    let poisoned = PixelBuf::from_typed(vec![10u8, 20, 30, 0], 1, 1, op_rgba_spec.clone()).unwrap();
+    let canon = convert_to_buf(
         &poisoned.as_view(),
         op_rgba_spec.clone(),
         &ConvertPolicy::permissive(),
@@ -999,8 +1001,8 @@ fn opus_review_p0_1_p0_2_p1_1_p1_2_p2_1_regressions() {
         SampleLayout::new(SampleType::U8, ChannelOrder::GrayAlpha),
         ColorSpace::GRAY_SRGB.with_alpha(AlphaMode::Opaque),
     );
-    let poisoned_ga = PixelBuf::from_vec(vec![77u8, 0], 1, 1, op_ga_spec.clone()).unwrap();
-    let canon_ga = convert_buf(
+    let poisoned_ga = PixelBuf::from_typed(vec![77u8, 0], 1, 1, op_ga_spec.clone()).unwrap();
+    let canon_ga = convert_to_buf(
         &poisoned_ga.as_view(),
         op_ga_spec,
         &ConvertPolicy::permissive(),
@@ -1014,7 +1016,7 @@ fn opus_review_p0_1_p0_2_p1_1_p1_2_p2_1_regressions() {
     let id_plan = RowPlan::build(
         op_rgba_spec.clone(),
         op_rgba_spec,
-        &ConvertPolicy::permissive().with_facts(fresh_op.facts()),
+        &ConvertPolicy::permissive().with_source_facts(fresh_op.facts()),
         None,
     )
     .unwrap();
@@ -1024,7 +1026,7 @@ fn opus_review_p0_1_p0_2_p1_1_p1_2_p2_1_regressions() {
     );
 
     // P1-2: Widening U8 3-bit grid {0, 36, ..., 255} to U16 MUST NOT falsely claim `color_bits = 3`!
-    let mut u8_3bit = PixelBuf::from_vec(
+    let mut u8_3bit = PixelBuf::from_typed(
         vec![0u8, 36, 73, 109, 146, 182, 219, 255],
         8,
         1,
@@ -1034,7 +1036,7 @@ fn opus_review_p0_1_p0_2_p1_1_p1_2_p2_1_regressions() {
     let f3 = scan_facts(&u8_3bit.as_view());
     assert_eq!(f3.depth.unwrap().color_bits(), 3);
     u8_3bit.set_facts(f3);
-    let u16_from_3 = convert_buf(
+    let u16_from_3 = convert_to_buf(
         &u8_3bit.as_view(),
         ImageSpec::gray16_srgb(),
         &ConvertPolicy::permissive(),
@@ -1051,11 +1053,11 @@ fn opus_review_p0_1_p0_2_p1_1_p1_2_p2_1_regressions() {
 
     // Conversely, 4-bit U8 grid {0, 17, 34, ..., 255} DOES nest in U16 (`4 | 8`)!
     let mut u8_4bit =
-        PixelBuf::from_vec(vec![0u8, 17, 34, 51, 255], 5, 1, ImageSpec::gray8_srgb()).unwrap();
+        PixelBuf::from_typed(vec![0u8, 17, 34, 51, 255], 5, 1, ImageSpec::gray8_srgb()).unwrap();
     let f4 = scan_facts(&u8_4bit.as_view());
     assert_eq!(f4.depth.unwrap().color_bits(), 4);
     u8_4bit.set_facts(f4);
-    let u16_from_4 = convert_buf(
+    let u16_from_4 = convert_to_buf(
         &u8_4bit.as_view(),
         ImageSpec::gray16_srgb(),
         &ConvertPolicy::permissive(),
@@ -1071,7 +1073,7 @@ fn opus_review_p0_1_p0_2_p1_1_p1_2_p2_1_regressions() {
     let mut reused_sink = PixelBuf::new(1, 1, ImageSpec::rgb8_srgb())
         .unwrap()
         .with_origin(p3_origin.clone());
-    let src_p3 = PixelBuf::from_vec(
+    let src_p3 = PixelBuf::from_typed(
         vec![200u8, 50, 50],
         1,
         1,
@@ -1082,7 +1084,7 @@ fn opus_review_p0_1_p0_2_p1_1_p1_2_p2_1_regressions() {
     let plan_p3_to_srgb = ImagePlan::build(
         src_p3.spec().clone(),
         reused_sink.spec().clone(),
-        ConvertPolicy::permissive(),
+        &ConvertPolicy::permissive(),
         PeakSource::Declared,
     )
     .unwrap();

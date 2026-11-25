@@ -10,29 +10,38 @@ This is the **0.5.0 greenfield candidate**.
 ## Quick start
 
 ```rust
-use zenpixels_convert::{ConvertPolicy, ImageSpec, PeakSource, PixelBuf, convert_buf};
+use zenpixels_convert::{ConvertPolicy, ImageSpec, PeakSource, PixelBuf, convert_to_buf};
 
-let src = PixelBuf::from_vec(
+let src = PixelBuf::from_typed(
     vec![255u8, 0, 0, 0, 255, 0], 2, 1, ImageSpec::rgb8_srgb(),
 )?;
-let linear = convert_buf(
-    &src.as_view(), ImageSpec::rgbf32_linear(), &ConvertPolicy::permissive(), PeakSource::Measured,
+let linear = convert_to_buf(
+    &src.as_view(), ImageSpec::rgbf32_linear_ref(), &ConvertPolicy::permissive(), PeakSource::Measured,
 )?;
-assert_eq!(linear.spec(), &ImageSpec::rgbf32_linear());
+assert_eq!(linear.spec(), ImageSpec::rgbf32_linear_ref());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+`ConvertPolicy::default()` equals `ConvertPolicy::lossless()` (forbids depth
+reduction, alpha discard, and range scaling, and preserves extended float gamut);
+opt in explicitly to `ConvertPolicy::permissive()`, `working_linear()`, or
+`display_sdr(...)` when loss is acceptable. `to_rgb8` / `to_gray8` default to
+`ConvertPolicy::permissive().with_alpha(AlphaPolicy::DiscardIfOpaque)`, refusing
+to drop unproven transparency.
 
 ## Row-streaming (`RowPlan`) vs image-level (`ImagePlan`)
 
 `RowPlan::build` runs rows through a stack-allocated 64-pixel SoA L1 strip with
-zero per-row heap allocation (and statically accepts only `Option<Nits>` for HDR
-peaks). `ImagePlan::build` accepts `PeakSource` (including streaming
-`PeakSource::Measured`) and runs across `PixelView`, `PixelBuf`, and `BandedBuf`.
+zero per-row heap allocation (and statically accepts only `Option<Nits>` for
+`resolved_source_peak`). `ImagePlan::build` accepts `PeakSource` (including
+streaming `PeakSource::Measured`) and runs across `PixelView`, `PixelBuf`, and
+`BandedBuf`. All planners (`RowPlan::build`, `ImagePlan::build`,
+`OutputPlan::build`) borrow `&ConvertPolicy` and accept `impl AsRef<ImageSpec>`.
 
 ```rust
 use zenpixels_convert::{ConvertPolicy, ImageSpec, PixelBuf, RowPlan};
 
-let src = PixelBuf::from_vec(vec![64u8, 128, 192, 255, 0, 0], 2, 1, ImageSpec::RGB8_SRGB)?;
+let src = PixelBuf::from_typed(vec![64u8, 128, 192, 255, 0, 0], 2, 1, ImageSpec::RGB8_SRGB)?;
 let mut dst = PixelBuf::new(2, 1, ImageSpec::RGBF32_LINEAR)?;
 let plan = RowPlan::build(
     src.spec(), dst.spec(), &ConvertPolicy::permissive(), None,
@@ -52,32 +61,39 @@ builds stay light. Enable SIMD globally (`accel::enable_all()`,
 
 ## Orientation, gain maps, planar YCbCr, load-bearing & encoder signaling
 
-- **Orientation & `DualLayerHdr`:** `ImagePlan` and `load_bearing` propagate
-  pending buffer `Orientation` metadata; call `bake_orientation` /
-  `bake_orientation_buf` (zero-copy on `Identity`) / `bake_orientation_banded`
-  when physically rotating pixels, or `rotate_metadata` for O(1) EXIF
-  passthrough. On `DualLayerHdr`, use `rotate_metadata` / `with_orientation`
-  for O(1) EXIF updates, or `rotate_dual_layer` / `bake_dual_layer_orientation`
-  to physically rotate both layers and reset `orientation()` to `Identity`; pass
-  `&zenpixels_convert::Unstoppable` (re-exported from `enough`) to gain-map APIs
-  taking `&dyn Stop`.
+- **Orientation & `DualLayerHdrBuf`:** `ImagePlan` and `load_bearing` propagate
+  pending buffer `Orientation` metadata. Use `compose_orientation` for O(1) EXIF
+  composition, `apply_orientation` / `apply_orientation_owned` /
+  `apply_orientation_banded` to physically apply an explicit transform (emitting
+  `Identity`), or `bake_orientation` / `bake_orientation_owned` (zero-copy on
+  `Identity`) / `bake_orientation_banded` to bake pending orientation. On
+  `DualLayerHdrBuf`, use `compose_orientation` / `with_orientation` for O(1)
+  metadata updates, or `bake_dual_layer_orientation` /
+  `bake_dual_layer_orientation_after` to physically transform both layers and
+  reset `orientation()` to `Identity`; pass `&zenpixels_convert::Unstoppable`
+  (re-exported from `enough`) to gain-map APIs taking `&dyn Stop`, and use
+  `GainMapApplyConfig::from_headroom_stops` / `from_display_boost`.
 - **Zero-copy planar YCbCr / RGB reconstruction:** `ycbcr_to_rgb_with_options`
   and zero-alloc `ycbcr_to_rgb_with_options_into` handle all 9 H.273 Table 4 NCL
   matrices (including `YCgCo` and `ChromaDerivedNcl`), siting-exact
   `YcbcrOptions::bilinear()` (or `YcbcrOptions::default().with_upsample(ChromaUpsample::Bilinear)`),
   planar RGB (`U8`/`U16`/`F32`), and direct `U8`/`U16`/`F32`
   `RGB`/`RGBA`/`BGR`/`BGRA`/`RGBX`/`BGRX`/`Gray`/`GrayAlpha` outputs.
-- **Load-bearing compaction:** `reduce_to_load_bearing_format_in_place(force_alpha_restructuring)`
-  retags provably opaque alpha to `AlphaMode::Opaque` zero-move when `false`,
-  or physically drops unused alpha/padding lanes in place when `true`.
+- **Load-bearing compaction:** `reduce_to_load_bearing_format_in_place(alpha: AlphaCompaction)`
+  retags provably opaque alpha to `AlphaMode::Opaque` zero-move with
+  `AlphaCompaction::RetagOpaque`, or physically drops unused alpha/padding lanes
+  in place with `AlphaCompaction::DropUnusedLanes` (depth/chroma compaction
+  always applies in-place).
 - **Encoder signaling (`OutputPlan` & `EncodeReady`):** `OutputPlan::build`
-  accepts borrowed `&ImageSpec` or owned `ImageSpec`, validates **destination**
+  accepts borrowed `&ImageSpec` or owned `ImageSpec` and borrows `&ConvertPolicy`
+  (retaining internal clones inside the built plan), validates **destination**
   signaling (`OutputProfile::{Auto, SameAsOrigin, CicpOnly, EmbedIcc, CustomIcc, Strip}`)
   eagerly (refusing `HlgMode::Display` on `dst` under `CicpOnly`/`Auto`), reuses
   owned storage zero-copy on identity via `OutputPlan::execute_buf` (or borrows
   zero-copy via `OutputPlan::execute_view` / `adapt_for_encode_format`), and
-  strips stale HDR metadata when photometry changes. Fallible APIs return
-  `whereat::At<E>` — inspect the inner variant with `*err.error()`.
+  strips stale HDR metadata when photometry changes. Carrier and pipeline APIs
+  return `whereat::At<E>` (inspect via `*err.error()` or `err.into_inner()`);
+  const-capable layout/code/projection primitives return bare `E`.
 
 ## Features
 

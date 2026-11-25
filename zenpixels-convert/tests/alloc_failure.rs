@@ -1,7 +1,7 @@
 //! Integration test with a thread-local failing `GlobalAlloc` for `zenpixels-convert`.
 //!
 //! 1. Proves allocating APIs (`ImagePlan::execute`, `measure_histogram`, `measure_max_smoothed`,
-//!    `apply_orientation`, `orient_banded`, `ycbcr_to_rgb_f32`) return
+//!    `apply_orientation`, `apply_orientation_banded`, `ycbcr_to_rgb_f32`) return
 //!    `Err(ConvertError::AllocationFailed)` cleanly on OOM without panicking.
 //! 2. Proves zero-allocation APIs (`RowPlan::convert_row`, `apply_orientation_into`,
 //!    `apply_orientation_banded_into`, `ycbcr_to_rgb_into`) perform **zero heap allocations**
@@ -10,13 +10,14 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use zenpixels::{
-    BandedBuf, DiffuseWhite, ImageSpec, Orientation, OwnedPlane, PixelBuf, PlanarBuf, PlaneRole,
+    BandedBuf, DiffuseWhite, ImageSpec, Orientation, PixelBuf, PlanarBuf, PlaneBuf, PlaneRole,
     PlaneSpec, Primaries, SampleType, SignalRange, Transfer,
 };
 use zenpixels_convert::{
     Accelerators, ConvertError, ConvertPolicy, ImagePlan, LightLevelMethod, PeakSource, RowPlan,
-    YcbcrMatrix, apply_orientation, apply_orientation_banded_into, apply_orientation_into,
-    measure_histogram, measure_max_smoothed, orient_banded, ycbcr_to_rgb_f32, ycbcr_to_rgb_into,
+    YcbcrMatrix, apply_orientation, apply_orientation_banded, apply_orientation_banded_into,
+    apply_orientation_into, measure_histogram, measure_max_smoothed, ycbcr_to_rgb_f32,
+    ycbcr_to_rgb_into,
 };
 
 struct FailingAlloc;
@@ -75,7 +76,7 @@ fn converter_allocating_paths_return_allocation_failed_on_oom() {
     let plan = ImagePlan::build(
         ImageSpec::rgba8_srgb(),
         ImageSpec::rgbf32_linear(),
-        ConvertPolicy::permissive(),
+        &ConvertPolicy::permissive(),
         PeakSource::Measured,
     )
     .unwrap();
@@ -96,7 +97,7 @@ fn converter_allocating_paths_return_allocation_failed_on_oom() {
     .unwrap_err();
     assert_eq!(*err.error(), ConvertError::AllocationFailed);
 
-    // 3. apply_orientation & orient_banded OOM
+    // 3. apply_orientation & apply_orientation_banded OOM
     let err = with_oom_above(4096, || {
         apply_orientation(&src.as_view(), Orientation::Rotate90)
     })
@@ -104,33 +105,35 @@ fn converter_allocating_paths_return_allocation_failed_on_oom() {
     assert_eq!(*err.error(), ConvertError::AllocationFailed);
 
     let banded = BandedBuf::from_view(&src.as_view(), 4096).unwrap();
-    let err =
-        with_oom_above(2048, || orient_banded(&banded, Orientation::Rotate90, 4096)).unwrap_err();
+    let err = with_oom_above(2048, || {
+        apply_orientation_banded(&banded, Orientation::Rotate90, 4096)
+    })
+    .unwrap_err();
     assert_eq!(*err.error(), ConvertError::AllocationFailed);
 
     // 4. ycbcr_to_rgb_f32 OOM
-    let y = OwnedPlane::from_external(
-        PlaneSpec::new(PlaneRole::Y, SampleType::U8),
-        64,
-        64,
-        64,
+    let y = PlaneBuf::from_external(
         vec![128u8; 64 * 64],
+        64,
+        64,
+        64,
+        PlaneSpec::new(PlaneRole::Y, SampleType::U8),
     )
     .unwrap();
-    let cb = OwnedPlane::from_external(
+    let cb = PlaneBuf::from_external(
+        vec![128u8; 32 * 32],
+        32,
+        32,
+        32,
         PlaneSpec::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2),
-        32,
-        32,
-        32,
-        vec![128u8; 32 * 32],
     )
     .unwrap();
-    let cr = OwnedPlane::from_external(
-        PlaneSpec::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2),
-        32,
-        32,
-        32,
+    let cr = PlaneBuf::from_external(
         vec![128u8; 32 * 32],
+        32,
+        32,
+        32,
+        PlaneSpec::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2),
     )
     .unwrap();
     let planar = PlanarBuf::from_planes(64, 64, vec![y, cb, cr]).unwrap();
@@ -167,28 +170,28 @@ fn into_and_row_apis_execute_with_zero_heap_allocations() {
     let src_banded = BandedBuf::from_view(&src_img.as_view(), 33 * 3 * 7).unwrap();
     let mut dst_banded = BandedBuf::new(29, 33, ImageSpec::rgb8_srgb(), 29 * 3 * 5).unwrap();
 
-    let y = OwnedPlane::from_external(
-        PlaneSpec::new(PlaneRole::Y, SampleType::U8),
-        16,
-        16,
-        16,
+    let y = PlaneBuf::from_external(
         vec![180u8; 256],
+        16,
+        16,
+        16,
+        PlaneSpec::new(PlaneRole::Y, SampleType::U8),
     )
     .unwrap();
-    let cb = OwnedPlane::from_external(
+    let cb = PlaneBuf::from_external(
+        vec![128u8; 64],
+        8,
+        8,
+        8,
         PlaneSpec::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2),
-        8,
-        8,
-        8,
-        vec![128u8; 64],
     )
     .unwrap();
-    let cr = OwnedPlane::from_external(
-        PlaneSpec::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2),
-        8,
-        8,
-        8,
+    let cr = PlaneBuf::from_external(
         vec![128u8; 64],
+        8,
+        8,
+        8,
+        PlaneSpec::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2),
     )
     .unwrap();
     let planar = PlanarBuf::from_planes(16, 16, vec![y, cb, cr]).unwrap();

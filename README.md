@@ -16,7 +16,7 @@ an algebraic `ColorSpace`.
 use zenpixels::{ImageSpec, PixelBuf};
 
 let decoded = vec![255u8, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
-let image = PixelBuf::from_vec(decoded, 2, 2, ImageSpec::rgb8_srgb())?;
+let image = PixelBuf::from_typed(decoded, 2, 2, ImageSpec::rgb8_srgb())?;
 let right_column = image.crop_view(1, 0, 1, 2)?;
 
 assert_eq!(right_column.width(), 1);
@@ -28,9 +28,12 @@ assert_eq!(right_column.row(0), &[0, 255, 0]);     // Only the cropped pixel.
 
 No pixels are copied when you borrow or crop. Both `image.crop_view(...)` and
 `image.as_view().crop(...)` preserve the buffer's `'a` lifetime. For a fresh
-zero-filled image, use `PixelBuf::new(width, height, spec)`.
+zero-filled image, use `PixelBuf::new(width, height, spec)`. To construct a
+borrowed `PixelView` / `PixelViewMut` with zero heap allocations, pass a
+`&'static ImageSpec` preset ref (`ImageSpec::rgb8_srgb_ref()`, etc.) or borrow a
+local `ImageSpec`.
 
-> **Tip (`from_vec` & `whereat::At<E>`):** `PixelBuf::from_vec` checks the Rust element type against `spec.layout`, so annotate integer literals (`vec![255u8, ...]`, not `vec![255, ...]`, which infers `Vec<i32>` and returns `BufferError::IncompatibleLayout`). Fallible APIs return `whereat::At<E>` for zero-cost location traces; inspect the inner error enum via `*err.error()` or `err.into_inner()`.
+> **Tip (`from_typed` vs `from_bytes`, and `whereat::At<E>`):** `PixelBuf::from_typed` validates the Rust element type against `spec.layout`, so annotate integer literals (`vec![255u8, ...]`) or use `PixelBuf::from_bytes(vec![...], ...)` for raw byte buffers. Carrier and pipeline APIs return `whereat::At<E>` for zero-cost location traces (inspect with `*err.error()` or `err.into_inner()`); const-capable layout, storage, code-plane, and CICP-projection primitives return bare `E`.
 
 ## Two crates
 
@@ -48,9 +51,12 @@ zenpixels-convert = "0.5.0"
   variants (`Rgb`, `Gray`, `Oklab`, `Xyz`, `Perceptual`, `Cmyk`, `Icc`,
   `Untagged`) make invalid states (such as Oklab carrying BT.709 primaries or
   ICC contradicting CICP) unrepresentable. `ImageSpec` provides `const` presets
-  (`ImageSpec::RGB8_SRGB`, etc.), `SpecCow<'a>` avoids `Arc` bumps across views
-  and crops, and `PixelFormat` (`Copy + const + !Drop`) serves codec tables and
-  `const` slices without heap ownership.
+  (`ImageSpec::RGB8_SRGB`, etc.) plus `&'static ImageSpec` accessors
+  (`ImageSpec::rgb8_srgb_ref()`, etc.), `PixelView` / `PixelViewMut` borrow
+  `&'a ImageSpec` with zero heap allocation (explicit `new_with_spec_cow` +
+  `SpecCow::from_owned` / `from_format` / `from_arc` when sharing an owned spec),
+  and `PixelFormat` (`Copy + const + !Drop`) serves codec tables and `const`
+  slices without heap ownership.
 - **Lossless ITU-T H.273 CICP & ICC.1 `cicpType` amendment:** all 11 Table 2
   primaries (including projective `y == 0` CIE XYZ), all 16 Table 3 transfers,
   all 9 Table 4 NCL matrix codes, ICC.1 `cicpType` 44-byte custom-primaries
@@ -70,29 +76,31 @@ zenpixels-convert = "0.5.0"
   `AlphaMode::Opaque` on alpha-bearing layouts) so decoders can write all pixels
   and retag zero-copy via `into_opaque_verified` (scans all active pixels itself,
   no prior `set_facts` needed), `into_opaque_filled`, or `assume_opaque`.
-- **Alignment-exact zero-copy interchange & external ownership:** `PixelBuf::from_vec<P>`,
-  `try_from_vec_recover`, `from_external` / `from_external_mut`, and
-  `try_into_vec_zero_copy<P>` preserve Rust's allocation alignment contract via
-  `PixelStorage` (`U8`, `U16`, `U32`, `F32`, `Aligned64`, `External`, `ExternalMut`).
+- **Alignment-exact zero-copy interchange & external ownership:** `PixelBuf::from_typed<P>`,
+  `from_typed_recover`, `from_bytes`, `from_bytes_recover`, `from_external` /
+  `from_external_mut`, and `into_vec_zero_copy<P>` preserve Rust's allocation
+  alignment contract via `PixelStorage` (`U8`, `U16`, `U32`, `F32`, `Aligned64`,
+  `External`, `ExternalMut`).
 - **Orientation on buffers & multi-plane/dual-layer carriers:** `Orientation`
   travels directly on `PixelBuf`, `PixelView`, `PixelViewMut`, `BandedBuf`,
-  `PlanarBuf`, `PlanarView`, `PlanarViewMut`, and `DualLayerHdr` (ISO 21496-1 /
-  UltraHDR gain maps) with O(1) `rotate_metadata`, `with_orientation`, and
-  `display_dimensions()`. Planar views expose zero-copy typed codec APIs
-  (`PlaneView::from_samples` taking **element** stride, `row_as`,
+  `PlanarBuf`, `PlanarView`, `PlanarViewMut`, and `DualLayerHdrBuf` (ISO 21496-1 /
+  UltraHDR gain maps) with O(1) `compose_orientation`, `with_orientation`, and
+  `display_dimensions()`. Planar views (`PlaneView`, `PlaneViewMut`, `PlaneBuf`)
+  expose zero-copy typed codec APIs with consistent `(data, width, height, stride, spec)`
+  argument order (`PlaneView::from_samples` taking **element** stride, `row_as`,
   `code_u32(x, y, component)` with `component = 0` for 1-channel planes,
   `as_code_plane`, `plane_by_role`, `PlanarBuf::new_aligned`).
 
 ## Conversion
 
 ```rust
-use zenpixels_convert::{ConvertPolicy, ImageSpec, PeakSource, PixelBuf, convert_buf};
+use zenpixels_convert::{ConvertPolicy, ImageSpec, PeakSource, PixelBuf, convert_to_buf};
 
-let src = PixelBuf::from_vec(vec![128u8, 128, 128], 1, 1, ImageSpec::rgb8_srgb())?;
-let linear = convert_buf(
-    &src.as_view(), ImageSpec::rgbf32_linear(), &ConvertPolicy::permissive(), PeakSource::Measured,
+let src = PixelBuf::from_typed(vec![128u8, 128, 128], 1, 1, ImageSpec::rgb8_srgb())?;
+let linear = convert_to_buf(
+    &src.as_view(), ImageSpec::rgbf32_linear_ref(), &ConvertPolicy::permissive(), PeakSource::Measured,
 )?;
-assert_eq!(linear.spec(), &ImageSpec::rgbf32_linear());
+assert_eq!(linear.spec(), ImageSpec::rgbf32_linear_ref());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

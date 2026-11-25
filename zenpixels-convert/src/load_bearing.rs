@@ -139,15 +139,30 @@ mod sealed {
     impl Sealed for zenpixels::PixelBuf {}
 }
 
+/// How [`PixelBufLoadBearingExt::reduce_to_load_bearing_format_in_place`] handles
+/// non-load-bearing alpha or padding lanes.
+///
+/// Depth (`U16 → U8`) and chroma (`RGB → Gray`) compaction still run in both modes whenever
+/// justified by the scan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum AlphaCompaction {
+    /// Upgrade provably opaque `Straight`/`Premultiplied` alpha to [`AlphaMode::Opaque`]
+    /// in metadata without restructuring alpha/padding lanes (0 byte movement when depth and
+    /// chroma are unchanged).
+    RetagOpaque,
+    /// Physically drop non-load-bearing alpha or undefined padding lanes in place
+    /// (`RGBA`/`BGRA`/`RGBX`/`BGRX` → `RGB`, `GrayAlpha` → `Gray`).
+    DropUnusedLanes,
+}
+
 /// Extension trait running load-bearing analysis and allocating compaction on [`PixelView`].
 pub trait PixelViewLoadBearingExt: sealed::Sealed {
     /// Measure which dimensions of the view's spec actually carry information.
     fn determine_load_bearing(&self) -> LoadBearingReport;
 
-    /// Analyze and compact into a newly allocated [`PixelBuf`] if narrower; `None` if already minimal or OOM.
-    fn try_reduce_to_load_bearing_format(&self) -> Option<PixelBuf>;
-
-    /// Analyze and compact into a newly allocated [`PixelBuf`], preserving allocation errors.
+    /// Analyze and compact into a newly allocated [`PixelBuf`] if narrower (`Ok(None)` if already
+    /// minimal), preserving allocation errors.
     fn reduce_to_load_bearing_format(&self) -> Result<Option<PixelBuf>, At<ConvertError>>;
 }
 
@@ -155,10 +170,11 @@ pub trait PixelViewLoadBearingExt: sealed::Sealed {
 pub trait PixelBufLoadBearingExt: sealed::Sealed {
     /// Analyze and compact this [`PixelBuf`] in place (zero allocation).
     ///
-    /// - `force_alpha_restructuring = false`: upgrades provably opaque `Straight`/`Premultiplied`
-    ///   alpha to [`AlphaMode::Opaque`] without moving bytes (depth/chroma compaction still runs).
-    /// - `force_alpha_restructuring = true`: physically drops non-load-bearing alpha/padding lanes.
-    fn reduce_to_load_bearing_format_in_place(&mut self, force_alpha_restructuring: bool);
+    /// Depth (`U16 → U8`) and chroma (`RGB → Gray`) compaction run whenever justified; `alpha`
+    /// controls whether non-load-bearing alpha/padding lanes are retagged in metadata
+    /// ([`AlphaCompaction::RetagOpaque`]) or physically dropped in place
+    /// ([`AlphaCompaction::DropUnusedLanes`]).
+    fn reduce_to_load_bearing_format_in_place(&mut self, alpha: AlphaCompaction);
 }
 
 enum GraySignalPlan {
@@ -451,10 +467,6 @@ impl PixelViewLoadBearingExt for PixelView<'_> {
         }
     }
 
-    fn try_reduce_to_load_bearing_format(&self) -> Option<PixelBuf> {
-        self.reduce_to_load_bearing_format().ok().flatten()
-    }
-
     fn reduce_to_load_bearing_format(&self) -> Result<Option<PixelBuf>, At<ConvertError>> {
         let src = self.spec().clone();
         let mut report = self.determine_load_bearing();
@@ -483,13 +495,14 @@ impl PixelViewLoadBearingExt for PixelView<'_> {
 }
 
 impl PixelBufLoadBearingExt for PixelBuf {
-    fn reduce_to_load_bearing_format_in_place(&mut self, force_alpha_restructuring: bool) {
+    fn reduce_to_load_bearing_format_in_place(&mut self, alpha: AlphaCompaction) {
+        let drop_alpha_lanes = alpha == AlphaCompaction::DropUnusedLanes;
         let _ = self.transform_in_place(|bytes, width, rows, in_stride, src, orig| {
             if width == 0 || rows == 0 || !src.layout.packing.is_full() {
                 return None;
             }
             let mut report = {
-                let view = PixelView::new(bytes, width, rows, in_stride, src.clone()).ok()?;
+                let view = PixelView::new(bytes, width, rows, in_stride, src).ok()?;
                 view.determine_load_bearing()
             };
             let plan = plan_chroma_collapse(src);
@@ -499,12 +512,12 @@ impl PixelBufLoadBearingExt for PixelBuf {
 
             let alpha_droppable =
                 matches!(report.uses_alpha, Some(false)) && src.layout.order.has_alpha_slot();
-            if !force_alpha_restructuring {
+            if !drop_alpha_lanes {
                 report.uses_alpha = None;
             }
 
             let mut target = apply_icc_chroma_collapse(src, &report, &plan);
-            if !force_alpha_restructuring
+            if !drop_alpha_lanes
                 && alpha_droppable
                 && target.layout.order.has_alpha_slot()
                 && !matches!(src.color.alpha(), AlphaMode::Undefined | AlphaMode::Opaque)

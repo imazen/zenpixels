@@ -10,21 +10,21 @@
 #
 #   pub modules                                13
 #   pub types (struct/enum/trait/alias)       203
-#   pub consts/statics                       1145
+#   pub consts/statics                       1147
 #   free functions                             18
-#   inherent methods                          690
+#   inherent methods                          742
 #   struct fields                             259
 #   enum variants                             524
 #   re-exports                                  1
-#   trait roster entries (type × trait)       605
+#   trait roster entries (type × trait)       604
 #   auto-trait-complete types                  80
 #   auto-trait exceptions                      15
 #
 # per-module pub lines:
-#   (root)                         1381
-#   buffer                          503
+#   (root)                         1383
+#   buffer                          507
 #   cicp                             67
-#   color                           460
+#   color                           508
 #   facts                            30
 #   hdr                              27
 #   icc                              23
@@ -34,7 +34,7 @@
 #   sample                           35
 #   storage                          96
 
-## items (2334 lines)
+## items (2387 lines)
 
 pub mod zenpixels
 pub use At
@@ -57,12 +57,13 @@ pub buffer::BufferError::UnverifiedOpaqueAlpha
 pub buffer::PixelCow::Borrowed(buffer::PixelView<'a>)
 pub buffer::PixelCow::Owned(buffer::PixelBuf)
 pub fn buffer::PixelCow<'a>::as_view(&self) -> buffer::PixelView<'_>
-pub fn buffer::PixelCow<'a>::try_into_owned(self) -> core::result::Result<buffer::PixelBuf, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelCow<'a>::into_owned(self) -> core::result::Result<buffer::PixelBuf, whereat::at::At<buffer::BufferError>>
 pub fn buffer::BandedBuf::band_count(&self) -> usize
 pub const fn buffer::BandedBuf::band_rows(&self) -> u32 [also: (root)]
 pub fn buffer::BandedBuf::band_view(&self, usize) -> core::option::Option<buffer::PixelView<'_>>
 pub fn buffer::BandedBuf::band_view_mut(&mut self, usize) -> core::option::Option<buffer::PixelViewMut<'_>>
 pub fn buffer::BandedBuf::bands(&self) -> &[buffer::PixelBuf]
+pub fn buffer::BandedBuf::compose_orientation(self, orientation::Orientation) -> Self
 pub const fn buffer::BandedBuf::display_dimensions(&self) -> (u32, u32) [also: (root)]
 pub const fn buffer::BandedBuf::facts(&self) -> facts::SampleFacts [also: (root)]
 pub fn buffer::BandedBuf::from_buf(buffer::PixelBuf, usize) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
@@ -75,7 +76,6 @@ pub fn buffer::BandedBuf::new(u32, u32, impl core::convert::Into<color::ImageSpe
 pub fn buffer::BandedBuf::new_aligned(u32, u32, impl core::convert::Into<color::ImageSpec>, usize, layout::RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::BandedBuf::orientation(&self) -> orientation::Orientation [also: (root)]
 pub fn buffer::BandedBuf::origin(&self) -> &color::ColorOrigin
-pub fn buffer::BandedBuf::rotate_metadata(self, orientation::Orientation) -> Self
 pub fn buffer::BandedBuf::row(&self, u32) -> &[u8]
 pub fn buffer::BandedBuf::row_mut(&mut self, u32) -> &mut [u8]
 pub fn buffer::BandedBuf::row_range_views(&self, u32, u32) -> core::result::Result<alloc::vec::Vec<buffer::PixelView<'_>>, whereat::at::At<buffer::BufferError>>
@@ -89,80 +89,69 @@ pub buffer::Bgrx::b: u8
 pub buffer::Bgrx::g: u8
 pub buffer::Bgrx::r: u8
 pub buffer::Bgrx::x: u8
-pub fn buffer::DualLayerHdr::alternate_color_space(&self) -> core::option::Option<&color::ColorSpace>
-pub fn buffer::DualLayerHdr::as_view(&self) -> buffer::DualLayerHdrView<'_>
-pub fn buffer::DualLayerHdr::base(&self) -> &buffer::PixelBuf
-pub const fn buffer::DualLayerHdr::display_dimensions(&self) -> (u32, u32) [also: (root)]
-pub fn buffer::DualLayerHdr::gain_map(&self) -> &buffer::PixelBuf
-pub fn buffer::DualLayerHdr::into_parts(self) -> buffer::DualLayerHdrParts
-pub const fn buffer::DualLayerHdr::metadata(&self) -> color::GainMapMetadata [also: (root)]
-pub fn buffer::DualLayerHdr::new(buffer::PixelBuf, buffer::PixelBuf, color::GainMapMetadata) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::DualLayerHdr::new_with_alternate(buffer::PixelBuf, buffer::PixelBuf, color::GainMapMetadata, core::option::Option<color::ColorSpace>, orientation::Orientation) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub const fn buffer::DualLayerHdr::orientation(&self) -> orientation::Orientation [also: (root)]
-pub const fn buffer::DualLayerHdr::rotate_metadata(self, orientation::Orientation) -> Self [also: (root)]
-pub fn buffer::DualLayerHdr::try_from_parts(buffer::DualLayerHdrParts) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::DualLayerHdr::with_alternate_color_space(self, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub const fn buffer::DualLayerHdr::with_orientation(self, orientation::Orientation) -> Self [also: (root)]
-pub buffer::DualLayerHdrParts::alternate_color_space: core::option::Option<color::ColorSpace>
-pub buffer::DualLayerHdrParts::base: buffer::PixelBuf
-pub buffer::DualLayerHdrParts::gain_map: buffer::PixelBuf
-pub buffer::DualLayerHdrParts::metadata: color::GainMapMetadata
-pub buffer::DualLayerHdrParts::orientation: orientation::Orientation
+pub fn buffer::DualLayerHdrBuf::alternate_color_space(&self) -> core::option::Option<&color::ColorSpace>
+pub fn buffer::DualLayerHdrBuf::as_view(&self) -> buffer::DualLayerHdrView<'_>
+pub fn buffer::DualLayerHdrBuf::base(&self) -> &buffer::PixelBuf
+pub const fn buffer::DualLayerHdrBuf::compose_orientation(self, orientation::Orientation) -> Self [also: (root)]
+pub const fn buffer::DualLayerHdrBuf::display_dimensions(&self) -> (u32, u32) [also: (root)]
+pub fn buffer::DualLayerHdrBuf::from_parts(buffer::DualLayerHdrBufParts) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::DualLayerHdrBuf::gain_map(&self) -> &buffer::PixelBuf
+pub fn buffer::DualLayerHdrBuf::into_parts(self) -> buffer::DualLayerHdrBufParts
+pub const fn buffer::DualLayerHdrBuf::metadata(&self) -> color::GainMapMetadata [also: (root)]
+pub fn buffer::DualLayerHdrBuf::new(buffer::PixelBuf, buffer::PixelBuf, color::GainMapMetadata) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::DualLayerHdrBuf::new_with_alternate(buffer::PixelBuf, buffer::PixelBuf, color::GainMapMetadata, core::option::Option<color::ColorSpace>, orientation::Orientation) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub const fn buffer::DualLayerHdrBuf::orientation(&self) -> orientation::Orientation [also: (root)]
+pub fn buffer::DualLayerHdrBuf::with_alternate_color_space(self, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub const fn buffer::DualLayerHdrBuf::with_orientation(self, orientation::Orientation) -> Self [also: (root)]
+pub buffer::DualLayerHdrBufParts::alternate_color_space: core::option::Option<color::ColorSpace>
+pub buffer::DualLayerHdrBufParts::base: buffer::PixelBuf
+pub buffer::DualLayerHdrBufParts::gain_map: buffer::PixelBuf
+pub buffer::DualLayerHdrBufParts::metadata: color::GainMapMetadata
+pub buffer::DualLayerHdrBufParts::orientation: orientation::Orientation
 pub const fn buffer::DualLayerHdrView<'a>::alternate_color_space(&self) -> core::option::Option<&'a color::ColorSpace> [also: (root)]
 pub const fn buffer::DualLayerHdrView<'a>::base(&self) -> &buffer::PixelView<'a> [also: (root)]
+pub const fn buffer::DualLayerHdrView<'a>::compose_orientation(self, orientation::Orientation) -> Self [also: (root)]
 pub const fn buffer::DualLayerHdrView<'a>::display_dimensions(&self) -> (u32, u32) [also: (root)]
 pub const fn buffer::DualLayerHdrView<'a>::gain_map(&self) -> &buffer::PixelView<'a> [also: (root)]
 pub const fn buffer::DualLayerHdrView<'a>::metadata(&self) -> color::GainMapMetadata [also: (root)]
 pub fn buffer::DualLayerHdrView<'a>::new(buffer::PixelView<'a>, buffer::PixelView<'a>, color::GainMapMetadata, core::option::Option<&'a color::ColorSpace>, orientation::Orientation) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::DualLayerHdrView<'a>::orientation(&self) -> orientation::Orientation [also: (root)]
-pub const fn buffer::DualLayerHdrView<'a>::rotate_metadata(self, orientation::Orientation) -> Self [also: (root)]
 pub const fn buffer::DualLayerHdrView<'a>::with_orientation(self, orientation::Orientation) -> Self [also: (root)]
-pub fn buffer::OwnedPlane::as_view(&self) -> buffer::PlaneView<'_>
-pub fn buffer::OwnedPlane::as_view_mut(&mut self) -> buffer::PlaneViewMut<'_>
-pub fn buffer::OwnedPlane::code_u32(&self, u32, u32, usize) -> core::option::Option<u32>
-pub fn buffer::OwnedPlane::from_external<S: storage::ByteStorage + core::marker::Send + core::marker::Sync + 'static>(layout::PlaneSpec, u32, u32, usize, S) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, S)>
-pub fn buffer::OwnedPlane::from_external_mut<S: storage::ByteStorageMut + core::marker::Send + core::marker::Sync + 'static>(layout::PlaneSpec, u32, u32, usize, S) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, S)>
-pub fn buffer::OwnedPlane::from_samples<S: storage::StorageSample>(layout::PlaneSpec, u32, u32, usize, alloc::vec::Vec<S>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::OwnedPlane::from_storage(layout::PlaneSpec, u32, u32, usize, storage::PixelStorage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub const fn buffer::OwnedPlane::height(&self) -> u32 [also: (root)]
-pub fn buffer::OwnedPlane::into_storage(self) -> storage::PixelStorage
-pub fn buffer::OwnedPlane::row(&self, u32) -> &[u8]
-pub fn buffer::OwnedPlane::row_as<S: storage::StorageSample>(&self, u32) -> core::result::Result<&[S], whereat::at::At<buffer::BufferError>>
-pub fn buffer::OwnedPlane::row_as_mut<S: storage::StorageSample>(&mut self, u32) -> core::result::Result<&mut [S], whereat::at::At<buffer::BufferError>>
-pub const fn buffer::OwnedPlane::row_bytes(&self) -> usize [also: (root)]
-pub fn buffer::OwnedPlane::row_mut(&mut self, u32) -> &mut [u8]
-pub const fn buffer::OwnedPlane::spec(&self) -> layout::PlaneSpec [also: (root)]
-pub fn buffer::OwnedPlane::storage(&self) -> &storage::PixelStorage
-pub const fn buffer::OwnedPlane::stride(&self) -> usize [also: (root)]
-pub fn buffer::OwnedPlane::try_as_view_mut(&mut self) -> core::result::Result<buffer::PlaneViewMut<'_>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::OwnedPlane::try_into_external<S: 'static>(self) -> core::result::Result<S, Self>
-pub fn buffer::OwnedPlane::try_into_external_mut<S: 'static>(self) -> core::result::Result<S, Self>
-pub const fn buffer::OwnedPlane::width(&self) -> u32 [also: (root)]
 pub fn buffer::PixelBuf::as_view(&self) -> buffer::PixelView<'_>
 pub fn buffer::PixelBuf::as_view_mut(&mut self) -> buffer::PixelViewMut<'_>
 pub fn buffer::PixelBuf::assume_opaque(self) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub const fn buffer::PixelBuf::compose_orientation(self, orientation::Orientation) -> Self [also: (root)]
 pub fn buffer::PixelBuf::crop_view(&self, u32, u32, u32, u32) -> core::result::Result<buffer::PixelView<'_>, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PixelBuf::display_dimensions(&self) -> (u32, u32) [also: (root)]
 pub fn buffer::PixelBuf::external_mut<S: 'static>(&mut self) -> core::option::Option<&mut S>
 pub fn buffer::PixelBuf::external_ref<S: 'static>(&self) -> core::option::Option<&S>
 pub const fn buffer::PixelBuf::facts(&self) -> facts::SampleFacts [also: (root)]
 pub fn buffer::PixelBuf::from_bytes(alloc::vec::Vec<u8>, u32, u32, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_bytes_recover(alloc::vec::Vec<u8>, u32, u32, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, alloc::vec::Vec<u8>)>
 pub fn buffer::PixelBuf::from_external<S: storage::ByteStorage + core::marker::Send + core::marker::Sync + 'static>(S, u32, u32, usize, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, S)>
 pub fn buffer::PixelBuf::from_external_mut<S: storage::ByteStorageMut + core::marker::Send + core::marker::Sync + 'static>(S, u32, u32, usize, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, S)>
 pub fn buffer::PixelBuf::from_external_mut_with_offset<S: storage::ByteStorageMut + core::marker::Send + core::marker::Sync + 'static>(S, usize, u32, u32, usize, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, S)>
 pub fn buffer::PixelBuf::from_external_with_offset<S: storage::ByteStorage + core::marker::Send + core::marker::Sync + 'static>(S, usize, u32, u32, usize, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, S)>
-pub fn buffer::PixelBuf::from_parts(storage::PixelStorage, usize, u32, u32, usize, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_parts(buffer::PixelBufParts) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_parts_recover(buffer::PixelBufParts) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, buffer::PixelBufParts)>
 pub fn buffer::PixelBuf::from_raw_pod<P: bytemuck::pod::Pod>(alloc::vec::Vec<P>, u32, u32, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::from_samples<S: storage::StorageSample>(alloc::vec::Vec<S>, u32, u32, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::from_vec<P: buffer::TypedElement>(alloc::vec::Vec<P>, u32, u32, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_storage_parts(storage::PixelStorage, usize, u32, u32, usize, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_typed<P: buffer::TypedElement>(alloc::vec::Vec<P>, u32, u32, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_typed_recover<P: buffer::TypedElement>(alloc::vec::Vec<P>, u32, u32, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, alloc::vec::Vec<P>)>
 pub fn buffer::PixelBuf::hdr(&self) -> color::HdrMetadata
 pub const fn buffer::PixelBuf::height(&self) -> u32 [also: (root)]
 pub fn buffer::PixelBuf::into_contiguous(self) -> Self
+pub fn buffer::PixelBuf::into_external<S: 'static>(self) -> core::result::Result<S, Self>
+pub fn buffer::PixelBuf::into_external_mut<S: 'static>(self) -> core::result::Result<S, Self>
 pub fn buffer::PixelBuf::into_opaque_filled(self) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::into_opaque_verified(self) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::into_parts(self) -> buffer::PixelBufParts
+pub fn buffer::PixelBuf::into_vec<P: bytemuck::pod::Pod>(self) -> core::result::Result<alloc::vec::Vec<P>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::into_vec_zero_copy<P: bytemuck::pod::Pod>(self) -> core::result::Result<alloc::vec::Vec<P>, Self>
 pub const fn buffer::PixelBuf::is_external(&self) -> bool [also: (root)]
 pub const fn buffer::PixelBuf::is_mutable_in_place(&self) -> bool [also: (root)]
+pub fn buffer::PixelBuf::make_mut(&mut self) -> core::result::Result<(), whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::new(u32, u32, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::new_aligned(u32, u32, impl core::convert::Into<color::ImageSpec>, layout::RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::new_for(u32, u32, impl core::convert::Into<color::ImageSpec>, layout::InteropTarget) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
@@ -174,27 +163,17 @@ pub const fn buffer::PixelBuf::offset(&self) -> usize [also: (root)]
 pub const fn buffer::PixelBuf::orientation(&self) -> orientation::Orientation [also: (root)]
 pub fn buffer::PixelBuf::origin(&self) -> &color::ColorOrigin
 pub fn buffer::PixelBuf::reinterpret(self, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub const fn buffer::PixelBuf::rotate_metadata(self, orientation::Orientation) -> Self [also: (root)]
 pub const fn buffer::PixelBuf::row_bytes(&self) -> usize [also: (root)]
 pub fn buffer::PixelBuf::set_facts(&mut self, facts::SampleFacts)
 pub fn buffer::PixelBuf::set_orientation(&mut self, orientation::Orientation)
 pub fn buffer::PixelBuf::spec(&self) -> &color::ImageSpec
 pub fn buffer::PixelBuf::storage(&self) -> &storage::PixelStorage
 pub const fn buffer::PixelBuf::stride(&self) -> usize [also: (root)]
+pub fn buffer::PixelBuf::sub_rows_mut(&mut self, u32, u32) -> core::result::Result<buffer::PixelViewMut<'_>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::swizzle_in_place(&mut self, layout::ChannelOrder) -> core::result::Result<(), whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::transform_in_place<F>(&mut self, F) -> core::result::Result<(), whereat::at::At<buffer::BufferError>> where F: core::ops::function::FnOnce(&mut [u8], u32, u32, usize, &color::ImageSpec, &color::ColorOrigin) -> core::option::Option<(usize, color::ImageSpec, color::ColorOrigin, facts::SampleFacts)>
 pub fn buffer::PixelBuf::try_as_view_mut(&mut self) -> core::result::Result<buffer::PixelViewMut<'_>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::try_clone(&self) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::try_from_bytes_recover(alloc::vec::Vec<u8>, u32, u32, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, alloc::vec::Vec<u8>)>
-pub fn buffer::PixelBuf::try_from_parts(buffer::PixelBufParts) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::try_from_parts_recover(buffer::PixelBufParts) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, buffer::PixelBufParts)>
-pub fn buffer::PixelBuf::try_from_vec_recover<P: buffer::TypedElement>(alloc::vec::Vec<P>, u32, u32, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, alloc::vec::Vec<P>)>
-pub fn buffer::PixelBuf::try_into_external<S: 'static>(self) -> core::result::Result<S, Self>
-pub fn buffer::PixelBuf::try_into_external_mut<S: 'static>(self) -> core::result::Result<S, Self>
-pub fn buffer::PixelBuf::try_into_vec<P: bytemuck::pod::Pod>(self) -> core::result::Result<alloc::vec::Vec<P>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::try_into_vec_zero_copy<P: bytemuck::pod::Pod>(self) -> core::result::Result<alloc::vec::Vec<P>, Self>
-pub fn buffer::PixelBuf::try_make_mut(&mut self) -> core::result::Result<(), whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::view_rows_mut(&mut self, u32, u32) -> core::result::Result<buffer::PixelViewMut<'_>, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PixelBuf::width(&self) -> u32 [also: (root)]
 pub fn buffer::PixelBuf::with_color(self, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::with_hdr(self, color::HdrMetadata) -> Self
@@ -211,24 +190,26 @@ pub buffer::PixelBufParts::spec: color::ImageSpec
 pub buffer::PixelBufParts::storage: storage::PixelStorage
 pub buffer::PixelBufParts::stride: usize
 pub buffer::PixelBufParts::width: u32
-pub fn buffer::PixelView<'a>::as_contiguous_as<P: bytemuck::pod::Pod>(&self) -> core::result::Result<&'a [P], whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelView<'a>::as_contiguous_bytes(&self) -> core::option::Option<&'a [u8]>
+pub fn buffer::PixelView<'a>::as_contiguous_typed<P: bytemuck::pod::Pod>(&self) -> core::result::Result<&'a [P], whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PixelView<'a>::as_strided_bytes(&self) -> &'a [u8] [also: (root)]
+pub const fn buffer::PixelView<'a>::compose_orientation(self, orientation::Orientation) -> Self [also: (root)]
+pub fn buffer::PixelView<'a>::contiguous_bytes(&self) -> core::result::Result<alloc::borrow::Cow<'a, [u8]>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelView<'a>::crop(&self, u32, u32, u32, u32) -> core::result::Result<buffer::PixelView<'a>, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PixelView<'a>::display_dimensions(&self) -> (u32, u32) [also: (root)]
 pub const fn buffer::PixelView<'a>::facts(&self) -> facts::SampleFacts [also: (root)]
-pub fn buffer::PixelView<'a>::from_packed(&'a [u8], u32, u32, impl core::convert::Into<color::SpecCow<'a>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::from_raw_pod<P: bytemuck::pod::Pod>(&'a [P], u32, u32, impl core::convert::Into<color::SpecCow<'a>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::from_samples<S: storage::StorageSample>(&'a [S], u32, u32, impl core::convert::Into<color::SpecCow<'a>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::from_typed<P: buffer::TypedElement>(&'a [P], u32, u32, impl core::convert::Into<color::SpecCow<'a>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::from_bytes(&'a [u8], u32, u32, &'a color::ImageSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::from_raw_pod<P: bytemuck::pod::Pod>(&'a [P], u32, u32, &'a color::ImageSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::from_samples<S: storage::StorageSample>(&'a [S], u32, u32, &'a color::ImageSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::from_typed<P: buffer::TypedElement>(&'a [P], u32, u32, &'a color::ImageSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelView<'a>::hdr(&self) -> color::HdrMetadata
 pub const fn buffer::PixelView<'a>::height(&self) -> u32 [also: (root)]
 pub fn buffer::PixelView<'a>::is_contiguous(&self) -> bool
 pub fn buffer::PixelView<'a>::measure_float_facts(&self) -> facts::FloatFacts
-pub fn buffer::PixelView<'a>::new(&'a [u8], u32, u32, usize, impl core::convert::Into<color::SpecCow<'a>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::new(&'a [u8], u32, u32, usize, &'a color::ImageSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::new_with_spec_cow(&'a [u8], u32, u32, usize, color::SpecCow<'a>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PixelView<'a>::orientation(&self) -> orientation::Orientation [also: (root)]
 pub const fn buffer::PixelView<'a>::origin(&self) -> core::option::Option<&'a color::ColorOrigin> [also: (root)]
-pub const fn buffer::PixelView<'a>::rotate_metadata(self, orientation::Orientation) -> Self [also: (root)]
 pub fn buffer::PixelView<'a>::row(&self, u32) -> &'a [u8]
 pub fn buffer::PixelView<'a>::row_as<P: bytemuck::pod::Pod>(&self, u32) -> core::result::Result<&'a [P], whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelView<'a>::row_bytes(&self) -> usize
@@ -236,8 +217,7 @@ pub const fn buffer::PixelView<'a>::rows(&self) -> u32 [also: (root)]
 pub fn buffer::PixelView<'a>::spec(&self) -> &color::ImageSpec
 pub const fn buffer::PixelView<'a>::stride(&self) -> usize [also: (root)]
 pub fn buffer::PixelView<'a>::sub_rows(&self, u32, u32) -> core::result::Result<buffer::PixelView<'a>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::try_contiguous_bytes(&self) -> core::result::Result<alloc::borrow::Cow<'a, [u8]>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::try_to_tight_buf(&self) -> core::result::Result<buffer::PixelBuf, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::to_tight_buf(&self) -> core::result::Result<buffer::PixelBuf, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PixelView<'a>::width(&self) -> u32 [also: (root)]
 pub fn buffer::PixelView<'a>::with_facts(self, facts::SampleFacts) -> Self
 pub fn buffer::PixelView<'a>::with_hdr(self, color::HdrMetadata) -> Self
@@ -246,6 +226,7 @@ pub const fn buffer::PixelView<'a>::with_origin(self, &'a color::ColorOrigin) ->
 pub fn buffer::PixelViewMut<'a>::as_contiguous_bytes_mut(&mut self) -> core::option::Option<&mut [u8]>
 pub fn buffer::PixelViewMut<'a>::as_strided_bytes_mut(&mut self) -> &mut [u8]
 pub fn buffer::PixelViewMut<'a>::as_view(&self) -> buffer::PixelView<'_>
+pub const fn buffer::PixelViewMut<'a>::compose_orientation(self, orientation::Orientation) -> Self [also: (root)]
 pub fn buffer::PixelViewMut<'a>::crop_mut(&mut self, u32, u32, u32, u32) -> core::result::Result<buffer::PixelViewMut<'_>, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PixelViewMut<'a>::display_dimensions(&self) -> (u32, u32) [also: (root)]
 pub fn buffer::PixelViewMut<'a>::hdr(&self) -> color::HdrMetadata
@@ -254,9 +235,9 @@ pub fn buffer::PixelViewMut<'a>::into_crop(self, u32, u32, u32, u32) -> core::re
 pub fn buffer::PixelViewMut<'a>::into_strided_bytes_mut(self) -> &'a mut [u8]
 pub fn buffer::PixelViewMut<'a>::into_sub_rows(self, u32, u32) -> core::result::Result<buffer::PixelViewMut<'a>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelViewMut<'a>::into_view(self) -> buffer::PixelView<'a>
-pub fn buffer::PixelViewMut<'a>::new(&'a mut [u8], u32, u32, usize, impl core::convert::Into<color::SpecCow<'a>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelViewMut<'a>::new(&'a mut [u8], u32, u32, usize, &'a color::ImageSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelViewMut<'a>::new_with_spec_cow(&'a mut [u8], u32, u32, usize, color::SpecCow<'a>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PixelViewMut<'a>::orientation(&self) -> orientation::Orientation [also: (root)]
-pub const fn buffer::PixelViewMut<'a>::rotate_metadata(self, orientation::Orientation) -> Self [also: (root)]
 pub fn buffer::PixelViewMut<'a>::row_as_mut<P: bytemuck::pod::Pod>(&mut self, u32) -> core::result::Result<&mut [P], whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelViewMut<'a>::row_bytes(&self) -> usize
 pub fn buffer::PixelViewMut<'a>::row_mut(&mut self, u32) -> &mut [u8]
@@ -272,24 +253,24 @@ pub const buffer::PlanarBuf::MAX_PLANES: usize
 pub const fn buffer::PlanarBuf::alpha(&self) -> core::option::Option<color::AlphaMode> [also: (root)]
 pub const fn buffer::PlanarBuf::chroma_siting(&self) -> ChromaSiting [also: (root)]
 pub fn buffer::PlanarBuf::color(&self) -> core::option::Option<&color::ColorSpace>
+pub const fn buffer::PlanarBuf::compose_orientation(self, orientation::Orientation) -> Self [also: (root)]
 pub const fn buffer::PlanarBuf::display_dimensions(&self) -> (u32, u32) [also: (root)]
 pub fn buffer::PlanarBuf::effective_alpha(&self) -> core::option::Option<color::AlphaMode>
 pub fn buffer::PlanarBuf::effective_range(&self) -> core::option::Option<color::SignalRange>
-pub fn buffer::PlanarBuf::from_planes(u32, u32, alloc::vec::Vec<buffer::OwnedPlane>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PlanarBuf::from_planes(u32, u32, alloc::vec::Vec<buffer::PlaneBuf>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlanarBuf::hdr(&self) -> color::HdrMetadata
 pub const fn buffer::PlanarBuf::height(&self) -> u32 [also: (root)]
-pub fn buffer::PlanarBuf::into_planes(self) -> alloc::vec::Vec<buffer::OwnedPlane>
+pub fn buffer::PlanarBuf::into_planes(self) -> alloc::vec::Vec<buffer::PlaneBuf>
 pub fn buffer::PlanarBuf::new(u32, u32, &[layout::PlaneSpec]) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlanarBuf::new_aligned(u32, u32, &[layout::PlaneSpec], layout::RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PlanarBuf::orientation(&self) -> orientation::Orientation [also: (root)]
 pub fn buffer::PlanarBuf::origin(&self) -> &color::ColorOrigin
-pub fn buffer::PlanarBuf::plane_by_role(&self, layout::PlaneRole) -> core::option::Option<&buffer::OwnedPlane>
+pub fn buffer::PlanarBuf::plane_by_role(&self, layout::PlaneRole) -> core::option::Option<&buffer::PlaneBuf>
 pub fn buffer::PlanarBuf::plane_view_by_role(&self, layout::PlaneRole) -> core::option::Option<buffer::PlaneView<'_>>
 pub fn buffer::PlanarBuf::plane_view_mut(&mut self, usize) -> core::option::Option<buffer::PlaneViewMut<'_>>
 pub fn buffer::PlanarBuf::plane_view_mut_by_role(&mut self, layout::PlaneRole) -> core::option::Option<buffer::PlaneViewMut<'_>>
-pub fn buffer::PlanarBuf::planes(&self) -> &[buffer::OwnedPlane]
+pub fn buffer::PlanarBuf::planes(&self) -> &[buffer::PlaneBuf]
 pub const fn buffer::PlanarBuf::range(&self) -> core::option::Option<color::SignalRange> [also: (root)]
-pub const fn buffer::PlanarBuf::rotate_metadata(self, orientation::Orientation) -> Self [also: (root)]
 pub fn buffer::PlanarBuf::set_orientation(&mut self, orientation::Orientation)
 pub const fn buffer::PlanarBuf::width(&self) -> u32 [also: (root)]
 pub const fn buffer::PlanarBuf::with_alpha(self, color::AlphaMode) -> Self [also: (root)]
@@ -308,6 +289,7 @@ pub fn buffer::PlanarBuf::try_as_view_mut(&mut self) -> core::result::Result<buf
 pub const fn buffer::PlanarView<'a>::alpha(&self) -> core::option::Option<color::AlphaMode> [also: (root)]
 pub const fn buffer::PlanarView<'a>::chroma_siting(&self) -> ChromaSiting [also: (root)]
 pub fn buffer::PlanarView<'a>::color(&self) -> core::option::Option<&color::ColorSpace>
+pub const fn buffer::PlanarView<'a>::compose_orientation(self, orientation::Orientation) -> Self [also: (root)]
 pub fn buffer::PlanarView<'a>::crop(&self, u32, u32, u32, u32) -> core::result::Result<buffer::PlanarView<'a>, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PlanarView<'a>::crop_origin(&self) -> (u32, u32) [also: (root)]
 pub const fn buffer::PlanarView<'a>::display_dimensions(&self) -> (u32, u32) [also: (root)]
@@ -322,7 +304,6 @@ pub const fn buffer::PlanarView<'a>::origin(&self) -> core::option::Option<&'a c
 pub fn buffer::PlanarView<'a>::plane_by_role(&self, layout::PlaneRole) -> core::option::Option<buffer::PlaneView<'a>>
 pub fn buffer::PlanarView<'a>::planes(&self) -> &[buffer::PlaneView<'a>]
 pub const fn buffer::PlanarView<'a>::range(&self) -> core::option::Option<color::SignalRange> [also: (root)]
-pub const fn buffer::PlanarView<'a>::rotate_metadata(self, orientation::Orientation) -> Self [also: (root)]
 pub const fn buffer::PlanarView<'a>::width(&self) -> u32 [also: (root)]
 pub const fn buffer::PlanarView<'a>::with_alpha(self, color::AlphaMode) -> Self [also: (root)]
 pub const fn buffer::PlanarView<'a>::with_chroma_siting(self, ChromaSiting) -> Self [also: (root)]
@@ -337,6 +318,7 @@ pub const fn buffer::PlanarViewMut<'a>::alpha(&self) -> core::option::Option<col
 pub fn buffer::PlanarViewMut<'a>::as_view(&self) -> buffer::PlanarView<'_>
 pub const fn buffer::PlanarViewMut<'a>::chroma_siting(&self) -> ChromaSiting [also: (root)]
 pub fn buffer::PlanarViewMut<'a>::color(&self) -> core::option::Option<&color::ColorSpace>
+pub const fn buffer::PlanarViewMut<'a>::compose_orientation(self, orientation::Orientation) -> Self [also: (root)]
 pub const fn buffer::PlanarViewMut<'a>::crop_origin(&self) -> (u32, u32) [also: (root)]
 pub const fn buffer::PlanarViewMut<'a>::display_dimensions(&self) -> (u32, u32) [also: (root)]
 pub fn buffer::PlanarViewMut<'a>::effective_alpha(&self) -> core::option::Option<color::AlphaMode>
@@ -345,6 +327,7 @@ pub fn buffer::PlanarViewMut<'a>::from_array<const N: usize>(u32, u32, [buffer::
 pub fn buffer::PlanarViewMut<'a>::from_array_with_origin<const N: usize>(u32, u32, (u32, u32), ChromaSiting, [buffer::PlaneViewMut<'a>; N]) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlanarViewMut<'a>::hdr(&self) -> color::HdrMetadata
 pub const fn buffer::PlanarViewMut<'a>::height(&self) -> u32 [also: (root)]
+pub fn buffer::PlanarViewMut<'a>::into_view(self) -> core::result::Result<buffer::PlanarView<'a>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlanarViewMut<'a>::new(u32, u32, alloc::vec::Vec<buffer::PlaneViewMut<'a>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlanarViewMut<'a>::new_with_origin(u32, u32, (u32, u32), ChromaSiting, alloc::vec::Vec<buffer::PlaneViewMut<'a>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PlanarViewMut<'a>::orientation(&self) -> orientation::Orientation [also: (root)]
@@ -354,10 +337,8 @@ pub fn buffer::PlanarViewMut<'a>::plane_mut(&mut self, usize) -> core::option::O
 pub fn buffer::PlanarViewMut<'a>::planes(&self) -> &[buffer::PlaneViewMut<'a>]
 pub fn buffer::PlanarViewMut<'a>::planes_mut(&mut self) -> &mut [buffer::PlaneViewMut<'a>]
 pub const fn buffer::PlanarViewMut<'a>::range(&self) -> core::option::Option<color::SignalRange> [also: (root)]
-pub const fn buffer::PlanarViewMut<'a>::rotate_metadata(self, orientation::Orientation) -> Self [also: (root)]
 pub fn buffer::PlanarViewMut<'a>::set_orientation(&mut self, orientation::Orientation)
 pub fn buffer::PlanarViewMut<'a>::try_as_view(&self) -> core::result::Result<buffer::PlanarView<'_>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PlanarViewMut<'a>::try_into_view(self) -> core::result::Result<buffer::PlanarView<'a>, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PlanarViewMut<'a>::width(&self) -> u32 [also: (root)]
 pub const fn buffer::PlanarViewMut<'a>::with_alpha(self, color::AlphaMode) -> Self [also: (root)]
 pub const fn buffer::PlanarViewMut<'a>::with_chroma_siting(self, ChromaSiting) -> Self [also: (root)]
@@ -367,14 +348,35 @@ pub const fn buffer::PlanarViewMut<'a>::with_orientation(self, orientation::Orie
 pub const fn buffer::PlanarViewMut<'a>::with_range(self, color::SignalRange) -> Self [also: (root)]
 pub const fn buffer::PlanarViewMut<'a>::with_ycbcr_matrix_code(self, u8) -> Self [also: (root)]
 pub const fn buffer::PlanarViewMut<'a>::ycbcr_matrix_code(&self) -> core::option::Option<u8> [also: (root)]
+pub fn buffer::PlaneBuf::as_view(&self) -> buffer::PlaneView<'_>
+pub fn buffer::PlaneBuf::as_view_mut(&mut self) -> buffer::PlaneViewMut<'_>
+pub fn buffer::PlaneBuf::code_u32(&self, u32, u32, usize) -> core::option::Option<u32>
+pub fn buffer::PlaneBuf::from_external<S: storage::ByteStorage + core::marker::Send + core::marker::Sync + 'static>(S, u32, u32, usize, layout::PlaneSpec) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, S)>
+pub fn buffer::PlaneBuf::from_external_mut<S: storage::ByteStorageMut + core::marker::Send + core::marker::Sync + 'static>(S, u32, u32, usize, layout::PlaneSpec) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, S)>
+pub fn buffer::PlaneBuf::from_samples<S: storage::StorageSample>(alloc::vec::Vec<S>, u32, u32, usize, layout::PlaneSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PlaneBuf::from_storage(storage::PixelStorage, u32, u32, usize, layout::PlaneSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub const fn buffer::PlaneBuf::height(&self) -> u32 [also: (root)]
+pub fn buffer::PlaneBuf::into_external<S: 'static>(self) -> core::result::Result<S, Self>
+pub fn buffer::PlaneBuf::into_external_mut<S: 'static>(self) -> core::result::Result<S, Self>
+pub fn buffer::PlaneBuf::into_storage(self) -> storage::PixelStorage
+pub fn buffer::PlaneBuf::row(&self, u32) -> &[u8]
+pub fn buffer::PlaneBuf::row_as<S: storage::StorageSample>(&self, u32) -> core::result::Result<&[S], whereat::at::At<buffer::BufferError>>
+pub fn buffer::PlaneBuf::row_as_mut<S: storage::StorageSample>(&mut self, u32) -> core::result::Result<&mut [S], whereat::at::At<buffer::BufferError>>
+pub const fn buffer::PlaneBuf::row_bytes(&self) -> usize [also: (root)]
+pub fn buffer::PlaneBuf::row_mut(&mut self, u32) -> &mut [u8]
+pub const fn buffer::PlaneBuf::spec(&self) -> layout::PlaneSpec [also: (root)]
+pub fn buffer::PlaneBuf::storage(&self) -> &storage::PixelStorage
+pub const fn buffer::PlaneBuf::stride(&self) -> usize [also: (root)]
+pub fn buffer::PlaneBuf::try_as_view_mut(&mut self) -> core::result::Result<buffer::PlaneViewMut<'_>, whereat::at::At<buffer::BufferError>>
+pub const fn buffer::PlaneBuf::width(&self) -> u32 [also: (root)]
 pub fn buffer::PlaneView<'a>::as_code_plane(self, usize) -> core::result::Result<CodePlane<'a>, CodePlaneError>
 pub fn buffer::PlaneView<'a>::as_code_plane_with(self, usize, sample::SampleEncoding) -> core::result::Result<CodePlane<'a>, CodePlaneError>
 pub fn buffer::PlaneView<'a>::code_u32(&self, u32, u32, usize) -> core::option::Option<u32>
 pub fn buffer::PlaneView<'a>::crop(&self, u32, u32, u32, u32) -> core::result::Result<buffer::PlaneView<'a>, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PlaneView<'a>::data(&self) -> &'a [u8] [also: (root)]
-pub fn buffer::PlaneView<'a>::from_samples<S: storage::StorageSample>(layout::PlaneSpec, u32, u32, usize, &'a [S]) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PlaneView<'a>::from_samples<S: storage::StorageSample>(&'a [S], u32, u32, usize, layout::PlaneSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PlaneView<'a>::height(&self) -> u32 [also: (root)]
-pub fn buffer::PlaneView<'a>::new(layout::PlaneSpec, u32, u32, usize, &'a [u8]) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PlaneView<'a>::new(&'a [u8], u32, u32, usize, layout::PlaneSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlaneView<'a>::row(&self, u32) -> &'a [u8]
 pub fn buffer::PlaneView<'a>::row_as<S: storage::StorageSample>(&self, u32) -> core::result::Result<&'a [S], whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PlaneView<'a>::spec(&self) -> layout::PlaneSpec [also: (root)]
@@ -384,14 +386,14 @@ pub fn buffer::PlaneViewMut<'a>::as_view(&self) -> buffer::PlaneView<'_>
 pub fn buffer::PlaneViewMut<'a>::crop_mut(&mut self, u32, u32, u32, u32) -> core::result::Result<buffer::PlaneViewMut<'_>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlaneViewMut<'a>::data(&self) -> &[u8]
 pub fn buffer::PlaneViewMut<'a>::data_mut(&mut self) -> &mut [u8]
-pub fn buffer::PlaneViewMut<'a>::from_samples<S: storage::StorageSample>(layout::PlaneSpec, u32, u32, usize, &'a mut [S]) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PlaneViewMut<'a>::from_samples<S: storage::StorageSample>(&'a mut [S], u32, u32, usize, layout::PlaneSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PlaneViewMut<'a>::height(&self) -> u32 [also: (root)]
 pub fn buffer::PlaneViewMut<'a>::into_code_plane_mut(self, usize) -> core::result::Result<CodePlaneMut<'a>, CodePlaneError>
 pub fn buffer::PlaneViewMut<'a>::into_code_plane_mut_with(self, usize, sample::SampleEncoding) -> core::result::Result<CodePlaneMut<'a>, CodePlaneError>
 pub fn buffer::PlaneViewMut<'a>::into_crop(self, u32, u32, u32, u32) -> core::result::Result<buffer::PlaneViewMut<'a>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlaneViewMut<'a>::into_data_mut(self) -> &'a mut [u8]
 pub fn buffer::PlaneViewMut<'a>::into_view(self) -> buffer::PlaneView<'a>
-pub fn buffer::PlaneViewMut<'a>::new(layout::PlaneSpec, u32, u32, usize, &'a mut [u8]) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PlaneViewMut<'a>::new(&'a mut [u8], u32, u32, usize, layout::PlaneSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlaneViewMut<'a>::row(&self, u32) -> &[u8]
 pub fn buffer::PlaneViewMut<'a>::row_as<S: storage::StorageSample>(&self, u32) -> core::result::Result<&[S], whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlaneViewMut<'a>::row_as_mut<S: storage::StorageSample>(&mut self, u32) -> core::result::Result<&mut [S], whereat::at::At<buffer::BufferError>>
@@ -467,12 +469,12 @@ pub const fn cicp::CicpTag::from_cicp(cicp::Cicp) -> Self [also: (root)]
 pub fn cicp::CicpTag::from_color_space(&color::ColorSpace) -> core::result::Result<Self, cicp::CicpProjectionError>
 pub fn cicp::CicpTag::from_icc(&[u8]) -> core::option::Option<Self>
 pub const fn cicp::CicpTag::from_primaries_and_cicp(color::Primaries, u8, u8, bool) -> core::option::Option<Self> [also: (root)]
+pub fn cicp::CicpTag::from_tag_bytes(&[u8]) -> core::result::Result<Self, whereat::at::At<cicp::CicpError>>
 pub const fn cicp::CicpTag::primaries(self) -> core::option::Option<color::Primaries> [also: (root)]
 pub const fn cicp::CicpTag::to_base_tag_bytes(self) -> [u8; 12] [also: (root)]
 pub fn cicp::CicpTag::to_color_space(self, color::AlphaMode) -> core::result::Result<color::ColorSpace, whereat::at::At<cicp::CicpError>>
 pub const fn cicp::CicpTag::to_extended_tag_bytes(self) -> core::option::Option<[u8; 44]> [also: (root)]
 pub fn cicp::CicpTag::to_tag_bytes_vec(self) -> alloc::vec::Vec<u8>
-pub fn cicp::CicpTag::try_from_tag_bytes(&[u8]) -> core::result::Result<Self, whereat::at::At<cicp::CicpError>>
 pub const fn cicp::CicpTag::with_custom_primaries(color::CustomPrimaries, u8, u8, bool) -> Self [also: (root)]
 pub fn cicp::CicpTag::write_tag_bytes(self, &mut [u8]) -> core::option::Option<usize>
 pub const fn cicp::color_primaries_name(u8) -> core::option::Option<&'static str>
@@ -492,7 +494,7 @@ pub color::ColorError::Layout(layout::LayoutError)
 pub color::ColorError::NarrowRangeRequiresInteger
 pub color::ColorSpace::Cmyk
 pub color::ColorSpace::Cmyk::alpha: color::AlphaMode
-pub color::ColorSpace::Cmyk::icc: core::option::Option<alloc::sync::Arc<[u8]>>
+pub color::ColorSpace::Cmyk::icc: core::option::Option<alloc::rcs::arc::Arc<[u8]>>
 pub color::ColorSpace::Cmyk::inverted: bool
 pub color::ColorSpace::Gray
 pub color::ColorSpace::Gray::alpha: color::AlphaMode
@@ -503,7 +505,7 @@ pub color::ColorSpace::Icc
 pub color::ColorSpace::Icc::alpha: color::AlphaMode
 pub color::ColorSpace::Icc::channels: u8
 pub color::ColorSpace::Icc::intent: color::RenderingIntent
-pub color::ColorSpace::Icc::profile: alloc::sync::Arc<[u8]>
+pub color::ColorSpace::Icc::profile: alloc::rcs::arc::Arc<[u8]>
 pub color::ColorSpace::Oklab
 pub color::ColorSpace::Oklab::alpha: color::AlphaMode
 pub color::ColorSpace::Perceptual
@@ -537,10 +539,10 @@ pub const color::ColorSpace::SRGB: Self
 pub const color::ColorSpace::SRGB_ALPHA: Self
 pub const fn color::ColorSpace::alpha(&self) -> color::AlphaMode [also: (root)]
 pub const fn color::ColorSpace::is_hdr(&self) -> bool [also: (root)]
+pub fn color::ColorSpace::project_cicp(&self) -> core::result::Result<cicp::Cicp, cicp::CicpProjectionError>
+pub fn color::ColorSpace::project_cicp_tag(&self) -> core::result::Result<cicp::CicpTag, cicp::CicpProjectionError>
 pub const fn color::ColorSpace::range(&self) -> core::option::Option<color::SignalRange> [also: (root)]
 pub fn color::ColorSpace::to_cicp(&self) -> core::option::Option<cicp::Cicp>
-pub fn color::ColorSpace::try_cicp(&self) -> core::result::Result<cicp::Cicp, cicp::CicpProjectionError>
-pub fn color::ColorSpace::try_cicp_tag(&self) -> core::result::Result<cicp::CicpTag, cicp::CicpProjectionError>
 pub fn color::ColorSpace::try_with_primaries(self, color::Primaries) -> core::option::Option<Self>
 pub fn color::ColorSpace::try_with_range(self, color::SignalRange) -> core::option::Option<Self>
 pub fn color::ColorSpace::try_with_transfer(self, color::Transfer) -> core::option::Option<Self>
@@ -620,11 +622,11 @@ pub const color::ParametricColor::SRGB_ALPHA: Self
 pub const fn color::ParametricColor::alpha(self) -> color::AlphaMode [also: (root)]
 pub const fn color::ParametricColor::from_color_space(&color::ColorSpace) -> core::option::Option<Self> [also: (root)]
 pub const fn color::ParametricColor::to_color_space(self) -> color::ColorSpace [also: (root)]
-pub const fn color::ParametricColor::try_with_primaries(self, color::Primaries) -> core::option::Option<Self> [also: (root)]
-pub const fn color::ParametricColor::try_with_range(self, color::SignalRange) -> core::option::Option<Self> [also: (root)]
-pub const fn color::ParametricColor::try_with_transfer(self, color::Transfer) -> core::option::Option<Self> [also: (root)]
-pub const fn color::ParametricColor::try_with_white(self, hdr::DiffuseWhite) -> core::option::Option<Self> [also: (root)]
 pub const fn color::ParametricColor::with_alpha(self, color::AlphaMode) -> Self [also: (root)]
+pub const fn color::ParametricColor::with_primaries(self, color::Primaries) -> core::option::Option<Self> [also: (root)]
+pub const fn color::ParametricColor::with_range(self, color::SignalRange) -> core::option::Option<Self> [also: (root)]
+pub const fn color::ParametricColor::with_transfer(self, color::Transfer) -> core::option::Option<Self> [also: (root)]
+pub const fn color::ParametricColor::with_white(self, hdr::DiffuseWhite) -> core::option::Option<Self> [also: (root)]
 pub color::PerceptualSpace::CieLab
 pub color::PerceptualSpace::CieLch
 pub color::PerceptualSpace::Hsl
@@ -670,8 +672,11 @@ pub color::RenderingIntent::Saturation
 pub color::SignalRange::Full
 pub color::SignalRange::Narrow
 pub color::SpecCow::Borrowed(&'a color::ImageSpec)
-pub color::SpecCow::Owned(alloc::sync::Arc<color::ImageSpec>)
+pub color::SpecCow::Owned(alloc::rcs::arc::Arc<color::ImageSpec>)
 pub fn color::SpecCow<'a>::as_spec(&self) -> &color::ImageSpec
+pub const fn color::SpecCow<'a>::from_arc(alloc::rcs::arc::Arc<color::ImageSpec>) -> Self [also: (root)]
+pub fn color::SpecCow<'a>::from_format(color::PixelFormat) -> Self
+pub fn color::SpecCow<'a>::from_owned(color::ImageSpec) -> Self
 pub fn color::SpecCow<'a>::into_owned(self) -> color::ImageSpec
 pub fn color::SpecCow<'a>::to_borrowed(&self) -> color::SpecCow<'_>
 pub color::Transfer::AdobeRgb
@@ -714,9 +719,9 @@ pub const color::Chromaticity::DCI: Self
 pub const color::Chromaticity::E: Self
 pub const fn color::Chromaticity::from_s15fixed16(i32, i32) -> core::option::Option<Self> [also: (root)]
 pub const fn color::Chromaticity::from_s15fixed16_primary(i32, i32) -> core::option::Option<Self> [also: (root)]
+pub const fn color::Chromaticity::new(f32, f32) -> core::option::Option<Self> [also: (root)]
+pub const fn color::Chromaticity::new_primary(f32, f32) -> core::option::Option<Self> [also: (root)]
 pub const fn color::Chromaticity::to_s15fixed16(self) -> (i32, i32) [also: (root)]
-pub const fn color::Chromaticity::try_new(f32, f32) -> core::option::Option<Self> [also: (root)]
-pub const fn color::Chromaticity::try_new_primary(f32, f32) -> core::option::Option<Self> [also: (root)]
 pub const fn color::Chromaticity::x(self) -> f32 [also: (root)]
 pub const fn color::Chromaticity::xy(self) -> (f32, f32) [also: (root)]
 pub const fn color::Chromaticity::y(self) -> f32 [also: (root)]
@@ -727,12 +732,12 @@ pub const color::Color::WHITE: Self
 pub const fn color::Color::linear([f32; 3], color::Primaries) -> Self [also: (root)]
 pub fn color::Color::to_primaries(self, color::Primaries) -> core::option::Option<[f32; 3]>
 pub color::ColorOrigin::cicp: core::option::Option<cicp::Cicp>
-pub color::ColorOrigin::icc: core::option::Option<alloc::sync::Arc<[u8]>>
+pub color::ColorOrigin::icc: core::option::Option<alloc::rcs::arc::Arc<[u8]>>
 pub color::ColorOrigin::kind: color::OriginKind
 pub const fn color::ColorOrigin::assumed() -> Self [also: (root)]
 pub const fn color::ColorOrigin::from_cicp(cicp::Cicp) -> Self [also: (root)]
-pub fn color::ColorOrigin::from_icc(alloc::sync::Arc<[u8]>) -> Self
-pub fn color::ColorOrigin::from_icc_and_cicp(alloc::sync::Arc<[u8]>, cicp::Cicp) -> Self
+pub fn color::ColorOrigin::from_icc(alloc::rcs::arc::Arc<[u8]>) -> Self
+pub fn color::ColorOrigin::from_icc_and_cicp(alloc::rcs::arc::Arc<[u8]>, cicp::Cicp) -> Self
 pub const color::CustomPrimaries::ACES_AP0: Self
 pub const color::CustomPrimaries::ACES_CG: Self
 pub const color::CustomPrimaries::PROPHOTO_RGB: Self
@@ -740,11 +745,11 @@ pub const fn color::CustomPrimaries::b(self) -> color::Chromaticity [also: (root
 pub const fn color::CustomPrimaries::from_cicp_extension_bytes([u8; 32]) -> core::option::Option<Self> [also: (root)]
 pub const fn color::CustomPrimaries::from_s15fixed16([i32; 8]) -> core::option::Option<Self> [also: (root)]
 pub const fn color::CustomPrimaries::g(self) -> color::Chromaticity [also: (root)]
+pub const fn color::CustomPrimaries::new((f32, f32), (f32, f32), (f32, f32), (f32, f32)) -> core::option::Option<Self> [also: (root)]
 pub const fn color::CustomPrimaries::r(self) -> color::Chromaticity [also: (root)]
 pub const fn color::CustomPrimaries::to_cicp_extension_bytes(self) -> [u8; 32] [also: (root)]
 pub const fn color::CustomPrimaries::to_icc_d50_matrix_f64(self) -> core::option::Option<[[f64; 3]; 3]> [also: (root)]
 pub const fn color::CustomPrimaries::to_s15fixed16(self) -> [i32; 8] [also: (root)]
-pub const fn color::CustomPrimaries::try_new((f32, f32), (f32, f32), (f32, f32), (f32, f32)) -> core::option::Option<Self> [also: (root)]
 pub const fn color::CustomPrimaries::white(self) -> color::Chromaticity [also: (root)]
 pub color::GainMapComponent::alternate_offset: color::SignedFraction
 pub color::GainMapComponent::base_offset: color::SignedFraction
@@ -760,8 +765,8 @@ pub color::GainMapMetadata::channels: color::GainMapChannels
 pub const fn color::GainMapMetadata::channel(self, usize) -> color::GainMapComponent [also: (root)]
 pub const fn color::GainMapMetadata::direction(self) -> core::option::Option<color::GainMapDirection> [also: (root)]
 pub const fn color::GainMapMetadata::is_valid(self) -> bool [also: (root)]
+pub const fn color::GainMapMetadata::new(color::GainMapChannels, color::UnsignedFraction, color::UnsignedFraction, color::GainMapColorSpace) -> core::option::Option<Self> [also: (root)]
 pub fn color::GainMapMetadata::symmetric(f32) -> Self
-pub const fn color::GainMapMetadata::try_new(color::GainMapChannels, color::UnsignedFraction, color::UnsignedFraction, color::GainMapColorSpace) -> core::option::Option<Self> [also: (root)]
 pub fn color::GainMapMetadata::try_symmetric(f32) -> core::option::Option<Self>
 pub const fn color::GainMapMetadata::with_backward_direction(self, bool) -> Self [also: (root)]
 pub const color::Gamma::ADOBE_RGB: Self
@@ -771,7 +776,7 @@ pub const color::Gamma::GAMMA_2_2: Self
 pub const color::Gamma::GAMMA_2_8: Self
 pub const fn color::Gamma::exponent(self) -> f32 [also: (root)]
 pub const fn color::Gamma::from_encoding_gamma(f32) -> core::option::Option<Self> [also: (root)]
-pub const fn color::Gamma::try_new(f32) -> core::option::Option<Self> [also: (root)]
+pub const fn color::Gamma::new(f32) -> core::option::Option<Self> [also: (root)]
 pub color::HdrMetadata::cll: core::option::Option<hdr::ContentLightLevel>
 pub color::HdrMetadata::mastering: core::option::Option<hdr::MasteringDisplay>
 pub const fn color::HdrMetadata::is_empty(&self) -> bool [also: (root)]
@@ -799,32 +804,53 @@ pub const color::ImageSpec::RGBF16_LINEAR: Self
 pub const color::ImageSpec::RGBF32_LINEAR: Self
 pub const color::ImageSpec::RGBX8_SRGB: Self
 pub const fn color::ImageSpec::as_format(&self) -> core::option::Option<color::PixelFormat> [also: (root)]
+pub fn color::ImageSpec::as_static_ref(&self) -> core::option::Option<&'static Self>
 pub const fn color::ImageSpec::bgr8_srgb() -> Self [also: (root)]
+pub fn color::ImageSpec::bgr8_srgb_ref() -> &'static Self
 pub const fn color::ImageSpec::bgra8_srgb() -> Self [also: (root)]
+pub fn color::ImageSpec::bgra8_srgb_ref() -> &'static Self
 pub const fn color::ImageSpec::bgrx8_srgb() -> Self [also: (root)]
+pub fn color::ImageSpec::bgrx8_srgb_ref() -> &'static Self
 pub fn color::ImageSpec::can_represent_hdr(&self) -> bool
-pub const fn color::ImageSpec::cmyk8(core::option::Option<alloc::sync::Arc<[u8]>>) -> Self [also: (root)]
-pub fn color::ImageSpec::for_layout(layout::SampleLayout) -> core::result::Result<Self, whereat::at::At<color::ColorError>>
+pub const fn color::ImageSpec::cmyk8(core::option::Option<alloc::rcs::arc::Arc<[u8]>>) -> Self [also: (root)]
 pub const fn color::ImageSpec::from_format(color::PixelFormat) -> Self [also: (root)]
 pub const fn color::ImageSpec::gray16_srgb() -> Self [also: (root)]
+pub fn color::ImageSpec::gray16_srgb_ref() -> &'static Self
 pub const fn color::ImageSpec::gray8_srgb() -> Self [also: (root)]
+pub fn color::ImageSpec::gray8_srgb_ref() -> &'static Self
 pub const fn color::ImageSpec::graya8_srgb() -> Self [also: (root)]
+pub fn color::ImageSpec::graya8_srgb_ref() -> &'static Self
 pub const fn color::ImageSpec::grayf32_linear() -> Self [also: (root)]
+pub fn color::ImageSpec::grayf32_linear_ref() -> &'static Self
 pub const fn color::ImageSpec::new(layout::SampleLayout, color::ColorSpace) -> Self [also: (root)]
 pub const fn color::ImageSpec::oklab_f32() -> Self [also: (root)]
+pub fn color::ImageSpec::oklab_f32_ref() -> &'static Self
 pub const fn color::ImageSpec::oklaba_f32() -> Self [also: (root)]
+pub fn color::ImageSpec::oklaba_f32_ref() -> &'static Self
 pub const fn color::ImageSpec::rgb16_bt2100_hlg_1000() -> Self [also: (root)]
+pub fn color::ImageSpec::rgb16_bt2100_hlg_1000_ref() -> &'static Self
 pub const fn color::ImageSpec::rgb16_bt2100_hlg_scene() -> Self [also: (root)]
+pub fn color::ImageSpec::rgb16_bt2100_hlg_scene_ref() -> &'static Self
 pub const fn color::ImageSpec::rgb16_bt2100_pq() -> Self [also: (root)]
+pub fn color::ImageSpec::rgb16_bt2100_pq_ref() -> &'static Self
 pub const fn color::ImageSpec::rgb16_srgb() -> Self [also: (root)]
+pub fn color::ImageSpec::rgb16_srgb_ref() -> &'static Self
 pub const fn color::ImageSpec::rgb8_srgb() -> Self [also: (root)]
+pub fn color::ImageSpec::rgb8_srgb_ref() -> &'static Self
 pub const fn color::ImageSpec::rgba16_srgb() -> Self [also: (root)]
+pub fn color::ImageSpec::rgba16_srgb_ref() -> &'static Self
 pub const fn color::ImageSpec::rgba8_srgb() -> Self [also: (root)]
+pub fn color::ImageSpec::rgba8_srgb_ref() -> &'static Self
 pub const fn color::ImageSpec::rgbaf16_linear() -> Self [also: (root)]
+pub fn color::ImageSpec::rgbaf16_linear_ref() -> &'static Self
 pub const fn color::ImageSpec::rgbaf32_linear() -> Self [also: (root)]
+pub fn color::ImageSpec::rgbaf32_linear_ref() -> &'static Self
 pub const fn color::ImageSpec::rgbf16_linear() -> Self [also: (root)]
+pub fn color::ImageSpec::rgbf16_linear_ref() -> &'static Self
 pub const fn color::ImageSpec::rgbf32_linear() -> Self [also: (root)]
+pub fn color::ImageSpec::rgbf32_linear_ref() -> &'static Self
 pub const fn color::ImageSpec::rgbx8_srgb() -> Self [also: (root)]
+pub fn color::ImageSpec::rgbx8_srgb_ref() -> &'static Self
 pub fn color::ImageSpec::supports_interop(&self, layout::InteropTarget) -> bool
 pub fn color::ImageSpec::try_with_primaries(self, color::Primaries) -> core::option::Option<Self>
 pub fn color::ImageSpec::try_with_range(self, color::SignalRange) -> core::option::Option<Self>
@@ -832,6 +858,7 @@ pub fn color::ImageSpec::try_with_transfer(self, color::Transfer) -> core::optio
 pub fn color::ImageSpec::try_with_white(self, hdr::DiffuseWhite) -> core::option::Option<Self>
 pub fn color::ImageSpec::validate(&self) -> core::result::Result<(), whereat::at::At<color::ColorError>>
 pub fn color::ImageSpec::with_alpha(self, color::AlphaMode) -> Self
+pub fn color::ImageSpec::with_default_color_for_layout(layout::SampleLayout) -> core::result::Result<Self, whereat::at::At<color::ColorError>>
 pub fn color::ImageSpec::with_primaries(self, color::Primaries) -> Self
 pub fn color::ImageSpec::with_range(self, color::SignalRange) -> Self
 pub fn color::ImageSpec::with_transfer(self, color::Transfer) -> Self
@@ -993,9 +1020,9 @@ pub const cicp::CicpTag::BASE_TAG_LEN: usize
 pub const cicp::CicpTag::EXTENDED_TAG_LEN: usize
 pub fn cicp::CicpTag::from_color_space(&color::ColorSpace) -> core::result::Result<Self, cicp::CicpProjectionError>
 pub fn cicp::CicpTag::from_icc(&[u8]) -> core::option::Option<Self>
+pub fn cicp::CicpTag::from_tag_bytes(&[u8]) -> core::result::Result<Self, whereat::at::At<cicp::CicpError>>
 pub fn cicp::CicpTag::to_color_space(self, color::AlphaMode) -> core::result::Result<color::ColorSpace, whereat::at::At<cicp::CicpError>>
 pub fn cicp::CicpTag::to_tag_bytes_vec(self) -> alloc::vec::Vec<u8>
-pub fn cicp::CicpTag::try_from_tag_bytes(&[u8]) -> core::result::Result<Self, whereat::at::At<cicp::CicpError>>
 pub fn cicp::CicpTag::write_tag_bytes(self, &mut [u8]) -> core::option::Option<usize>
 #[non_exhaustive] pub struct icc::IccIdentification
 pub icc::IccIdentification::primaries: color::Primaries
@@ -1095,7 +1122,7 @@ pub layout::RowAlign::Cache64
 pub layout::RowAlign::PixelCache64
 pub layout::RowAlign::Samples(u16)
 pub layout::RowAlign::Tight
-pub const fn layout::RowAlign::try_from_bytes(u16, layout::SampleType) -> core::option::Option<Self> [also: (root)]
+pub const fn layout::RowAlign::from_bytes(u16, layout::SampleType) -> core::option::Option<Self> [also: (root)]
 pub layout::SampleType::F16
 pub layout::SampleType::F32
 pub layout::SampleType::F64
@@ -1323,27 +1350,27 @@ pub storage::PixelStorage::U16(alloc::vec::Vec<u16>)
 pub storage::PixelStorage::U32(alloc::vec::Vec<u32>)
 pub storage::PixelStorage::U64(alloc::vec::Vec<u64>)
 pub storage::PixelStorage::U8(alloc::vec::Vec<u8>)
+pub fn storage::PixelStorage::adopt_vec<P: bytemuck::pod::Pod>(alloc::vec::Vec<P>, layout::SampleType) -> core::result::Result<Self, alloc::vec::Vec<P>>
 pub const fn storage::PixelStorage::alloc_alignment(&self) -> usize [also: (root)]
 pub fn storage::PixelStorage::byte_capacity(&self) -> usize
 pub fn storage::PixelStorage::byte_len(&self) -> usize
 pub fn storage::PixelStorage::can_cast_into_vec<P: bytemuck::pod::Pod>(&self, usize) -> bool
+pub fn storage::PixelStorage::cast_into_vec<P: bytemuck::pod::Pod>(self) -> core::result::Result<alloc::vec::Vec<P>, Self>
 pub fn storage::PixelStorage::external_mut<S: 'static>(&mut self) -> core::option::Option<&mut S>
 pub fn storage::PixelStorage::external_ref<S: 'static>(&self) -> core::option::Option<&S>
 pub fn storage::PixelStorage::from_external<S: storage::ByteStorage + core::marker::Send + core::marker::Sync + 'static>(S) -> Self
 pub fn storage::PixelStorage::from_external_mut<S: storage::ByteStorageMut + core::marker::Send + core::marker::Sync + 'static>(S) -> Self
+pub fn storage::PixelStorage::from_rows<'r>(layout::SampleType, usize, impl core::iter::traits::iterator::Iterator<Item = &'r [u8]>) -> core::result::Result<Self, storage::StorageError>
+pub fn storage::PixelStorage::into_external<S: 'static>(self) -> core::result::Result<S, Self>
+pub fn storage::PixelStorage::into_external_mut<S: 'static>(self) -> core::result::Result<S, Self>
+pub fn storage::PixelStorage::into_sample_vec<T: storage::StorageSample>(self) -> core::result::Result<alloc::vec::Vec<T>, Self>
 pub const fn storage::PixelStorage::is_external(&self) -> bool [also: (root)]
 pub const fn storage::PixelStorage::is_mutable_in_place(&self) -> bool [also: (root)]
 pub fn storage::PixelStorage::truncate_bytes(&mut self, usize)
-pub fn storage::PixelStorage::try_adopt_vec<P: bytemuck::pod::Pod>(alloc::vec::Vec<P>, layout::SampleType) -> core::result::Result<Self, alloc::vec::Vec<P>>
 pub fn storage::PixelStorage::try_as_bytes_mut(&mut self) -> core::result::Result<&mut [u8], storage::StorageError>
-pub fn storage::PixelStorage::try_cast_into_vec<P: bytemuck::pod::Pod>(self) -> core::result::Result<alloc::vec::Vec<P>, Self>
 pub fn storage::PixelStorage::try_clone(&self) -> core::result::Result<Self, storage::StorageError>
-pub fn storage::PixelStorage::try_from_rows<'r>(layout::SampleType, usize, impl core::iter::traits::iterator::Iterator<Item = &'r [u8]>) -> core::result::Result<Self, storage::StorageError>
-pub fn storage::PixelStorage::try_into_external<S: 'static>(self) -> core::result::Result<S, Self>
-pub fn storage::PixelStorage::try_into_external_mut<S: 'static>(self) -> core::result::Result<S, Self>
-pub fn storage::PixelStorage::try_into_sample_vec<T: storage::StorageSample>(self) -> core::result::Result<alloc::vec::Vec<T>, Self>
-pub fn storage::PixelStorage::try_zeroed(layout::SampleType, usize) -> core::result::Result<Self, storage::StorageError>
-pub fn storage::PixelStorage::try_zeroed_aligned64(usize) -> core::result::Result<Self, storage::StorageError>
+pub fn storage::PixelStorage::zeroed(layout::SampleType, usize) -> core::result::Result<Self, storage::StorageError>
+pub fn storage::PixelStorage::zeroed_aligned64(usize) -> core::result::Result<Self, storage::StorageError>
 pub storage::StorageError::AllocationFailed
 pub fn storage::AlignedSamples::as_bytes(&self) -> &[u8]
 pub fn storage::AlignedSamples::as_bytes_mut(&mut self) -> &mut [u8]
@@ -1351,23 +1378,23 @@ pub const fn storage::AlignedSamples::is_empty(&self) -> bool [also: (root)]
 pub const fn storage::AlignedSamples::len(&self) -> usize [also: (root)]
 pub fn storage::AlignedSamples::truncate(&mut self, usize)
 pub fn storage::AlignedSamples::try_clone(&self) -> core::result::Result<Self, storage::StorageError>
-pub fn storage::AlignedSamples::try_zeroed_bytes(usize) -> core::result::Result<Self, storage::StorageError>
+pub fn storage::AlignedSamples::zeroed_bytes(usize) -> core::result::Result<Self, storage::StorageError>
 pub fn storage::ExternalMutStorage::as_bytes(&self) -> &[u8]
 pub fn storage::ExternalMutStorage::as_bytes_mut(&mut self) -> &mut [u8]
 pub fn storage::ExternalMutStorage::downcast_mut<S: 'static>(&mut self) -> core::option::Option<&mut S>
 pub fn storage::ExternalMutStorage::downcast_ref<S: 'static>(&self) -> core::option::Option<&S>
+pub fn storage::ExternalMutStorage::into_inner<S: 'static>(self) -> core::result::Result<S, Self>
 pub const fn storage::ExternalMutStorage::is_empty(&self) -> bool [also: (root)]
 pub const fn storage::ExternalMutStorage::len(&self) -> usize [also: (root)]
 pub fn storage::ExternalMutStorage::new<S: storage::ByteStorageMut + core::marker::Send + core::marker::Sync + 'static>(S) -> Self
 pub fn storage::ExternalMutStorage::truncate(&mut self, usize)
-pub fn storage::ExternalMutStorage::try_into_inner<S: 'static>(self) -> core::result::Result<S, Self>
 pub fn storage::ExternalStorage::as_bytes(&self) -> &[u8]
 pub fn storage::ExternalStorage::downcast_ref<S: 'static>(&self) -> core::option::Option<&S>
+pub fn storage::ExternalStorage::into_inner<S: 'static>(self) -> core::result::Result<S, Self>
 pub const fn storage::ExternalStorage::is_empty(&self) -> bool [also: (root)]
 pub const fn storage::ExternalStorage::len(&self) -> usize [also: (root)]
 pub fn storage::ExternalStorage::new<S: storage::ByteStorage + core::marker::Send + core::marker::Sync + 'static>(S) -> Self
 pub fn storage::ExternalStorage::truncate(&mut self, usize)
-pub fn storage::ExternalStorage::try_into_inner<S: 'static>(self) -> core::result::Result<S, Self>
 pub fn storage::ByteStorage::as_bytes(&self) -> &[u8]
 pub fn &mut [T]::as_bytes(&self) -> &[u8] [also: (root)]
 pub fn storage::ByteStorageMut::as_bytes_mut(&mut self) -> &mut [u8]
@@ -1477,7 +1504,7 @@ pub ColorError::NarrowRangeRequiresInteger
 #[non_exhaustive] pub enum ColorSpace [also: color]
 pub ColorSpace::Cmyk
 pub ColorSpace::Cmyk::alpha: color::AlphaMode
-pub ColorSpace::Cmyk::icc: core::option::Option<alloc::sync::Arc<[u8]>>
+pub ColorSpace::Cmyk::icc: core::option::Option<alloc::rcs::arc::Arc<[u8]>>
 pub ColorSpace::Cmyk::inverted: bool
 pub ColorSpace::Gray
 pub ColorSpace::Gray::alpha: color::AlphaMode
@@ -1488,7 +1515,7 @@ pub ColorSpace::Icc
 pub ColorSpace::Icc::alpha: color::AlphaMode
 pub ColorSpace::Icc::channels: u8
 pub ColorSpace::Icc::intent: color::RenderingIntent
-pub ColorSpace::Icc::profile: alloc::sync::Arc<[u8]>
+pub ColorSpace::Icc::profile: alloc::rcs::arc::Arc<[u8]>
 pub ColorSpace::Oklab
 pub ColorSpace::Oklab::alpha: color::AlphaMode
 pub ColorSpace::Perceptual
@@ -1520,9 +1547,9 @@ pub const color::ColorSpace::OKLAB: Self
 pub const color::ColorSpace::OKLABA: Self
 pub const color::ColorSpace::SRGB: Self
 pub const color::ColorSpace::SRGB_ALPHA: Self
+pub fn color::ColorSpace::project_cicp(&self) -> core::result::Result<cicp::Cicp, cicp::CicpProjectionError>
+pub fn color::ColorSpace::project_cicp_tag(&self) -> core::result::Result<cicp::CicpTag, cicp::CicpProjectionError>
 pub fn color::ColorSpace::to_cicp(&self) -> core::option::Option<cicp::Cicp>
-pub fn color::ColorSpace::try_cicp(&self) -> core::result::Result<cicp::Cicp, cicp::CicpProjectionError>
-pub fn color::ColorSpace::try_cicp_tag(&self) -> core::result::Result<cicp::CicpTag, cicp::CicpProjectionError>
 pub fn color::ColorSpace::try_with_primaries(self, color::Primaries) -> core::option::Option<Self>
 pub fn color::ColorSpace::try_with_range(self, color::SignalRange) -> core::option::Option<Self>
 pub fn color::ColorSpace::try_with_transfer(self, color::Transfer) -> core::option::Option<Self>
@@ -1647,7 +1674,7 @@ pub enum PixelCow<'a> [also: buffer]
 pub PixelCow::Borrowed(buffer::PixelView<'a>)
 pub PixelCow::Owned(buffer::PixelBuf)
 pub fn buffer::PixelCow<'a>::as_view(&self) -> buffer::PixelView<'_>
-pub fn buffer::PixelCow<'a>::try_into_owned(self) -> core::result::Result<buffer::PixelBuf, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelCow<'a>::into_owned(self) -> core::result::Result<buffer::PixelBuf, whereat::at::At<buffer::BufferError>>
 #[non_exhaustive] pub enum PixelStorage [also: storage]
 pub PixelStorage::Aligned64(storage::AlignedSamples)
 pub PixelStorage::External(storage::ExternalStorage)
@@ -1663,24 +1690,24 @@ pub PixelStorage::U16(alloc::vec::Vec<u16>)
 pub PixelStorage::U32(alloc::vec::Vec<u32>)
 pub PixelStorage::U64(alloc::vec::Vec<u64>)
 pub PixelStorage::U8(alloc::vec::Vec<u8>)
+pub fn storage::PixelStorage::adopt_vec<P: bytemuck::pod::Pod>(alloc::vec::Vec<P>, layout::SampleType) -> core::result::Result<Self, alloc::vec::Vec<P>>
 pub fn storage::PixelStorage::byte_capacity(&self) -> usize
 pub fn storage::PixelStorage::byte_len(&self) -> usize
 pub fn storage::PixelStorage::can_cast_into_vec<P: bytemuck::pod::Pod>(&self, usize) -> bool
+pub fn storage::PixelStorage::cast_into_vec<P: bytemuck::pod::Pod>(self) -> core::result::Result<alloc::vec::Vec<P>, Self>
 pub fn storage::PixelStorage::external_mut<S: 'static>(&mut self) -> core::option::Option<&mut S>
 pub fn storage::PixelStorage::external_ref<S: 'static>(&self) -> core::option::Option<&S>
 pub fn storage::PixelStorage::from_external<S: storage::ByteStorage + core::marker::Send + core::marker::Sync + 'static>(S) -> Self
 pub fn storage::PixelStorage::from_external_mut<S: storage::ByteStorageMut + core::marker::Send + core::marker::Sync + 'static>(S) -> Self
+pub fn storage::PixelStorage::from_rows<'r>(layout::SampleType, usize, impl core::iter::traits::iterator::Iterator<Item = &'r [u8]>) -> core::result::Result<Self, storage::StorageError>
+pub fn storage::PixelStorage::into_external<S: 'static>(self) -> core::result::Result<S, Self>
+pub fn storage::PixelStorage::into_external_mut<S: 'static>(self) -> core::result::Result<S, Self>
+pub fn storage::PixelStorage::into_sample_vec<T: storage::StorageSample>(self) -> core::result::Result<alloc::vec::Vec<T>, Self>
 pub fn storage::PixelStorage::truncate_bytes(&mut self, usize)
-pub fn storage::PixelStorage::try_adopt_vec<P: bytemuck::pod::Pod>(alloc::vec::Vec<P>, layout::SampleType) -> core::result::Result<Self, alloc::vec::Vec<P>>
 pub fn storage::PixelStorage::try_as_bytes_mut(&mut self) -> core::result::Result<&mut [u8], storage::StorageError>
-pub fn storage::PixelStorage::try_cast_into_vec<P: bytemuck::pod::Pod>(self) -> core::result::Result<alloc::vec::Vec<P>, Self>
 pub fn storage::PixelStorage::try_clone(&self) -> core::result::Result<Self, storage::StorageError>
-pub fn storage::PixelStorage::try_from_rows<'r>(layout::SampleType, usize, impl core::iter::traits::iterator::Iterator<Item = &'r [u8]>) -> core::result::Result<Self, storage::StorageError>
-pub fn storage::PixelStorage::try_into_external<S: 'static>(self) -> core::result::Result<S, Self>
-pub fn storage::PixelStorage::try_into_external_mut<S: 'static>(self) -> core::result::Result<S, Self>
-pub fn storage::PixelStorage::try_into_sample_vec<T: storage::StorageSample>(self) -> core::result::Result<alloc::vec::Vec<T>, Self>
-pub fn storage::PixelStorage::try_zeroed(layout::SampleType, usize) -> core::result::Result<Self, storage::StorageError>
-pub fn storage::PixelStorage::try_zeroed_aligned64(usize) -> core::result::Result<Self, storage::StorageError>
+pub fn storage::PixelStorage::zeroed(layout::SampleType, usize) -> core::result::Result<Self, storage::StorageError>
+pub fn storage::PixelStorage::zeroed_aligned64(usize) -> core::result::Result<Self, storage::StorageError>
 #[non_exhaustive] pub enum PlaneRole [also: layout]
 pub PlaneRole::Alpha
 pub PlaneRole::B
@@ -1751,8 +1778,10 @@ pub SignalRange::Full
 pub SignalRange::Narrow
 pub enum SpecCow<'a> [also: color]
 pub SpecCow::Borrowed(&'a color::ImageSpec)
-pub SpecCow::Owned(alloc::sync::Arc<color::ImageSpec>)
+pub SpecCow::Owned(alloc::rcs::arc::Arc<color::ImageSpec>)
 pub fn color::SpecCow<'a>::as_spec(&self) -> &color::ImageSpec
+pub fn color::SpecCow<'a>::from_format(color::PixelFormat) -> Self
+pub fn color::SpecCow<'a>::from_owned(color::ImageSpec) -> Self
 pub fn color::SpecCow<'a>::into_owned(self) -> color::ImageSpec
 pub fn color::SpecCow<'a>::to_borrowed(&self) -> color::SpecCow<'_>
 pub enum StorageError [also: storage]
@@ -1795,12 +1824,13 @@ pub fn storage::AlignedSamples::as_bytes(&self) -> &[u8]
 pub fn storage::AlignedSamples::as_bytes_mut(&mut self) -> &mut [u8]
 pub fn storage::AlignedSamples::truncate(&mut self, usize)
 pub fn storage::AlignedSamples::try_clone(&self) -> core::result::Result<Self, storage::StorageError>
-pub fn storage::AlignedSamples::try_zeroed_bytes(usize) -> core::result::Result<Self, storage::StorageError>
+pub fn storage::AlignedSamples::zeroed_bytes(usize) -> core::result::Result<Self, storage::StorageError>
 pub struct BandedBuf [also: buffer]
 pub fn buffer::BandedBuf::band_count(&self) -> usize
 pub fn buffer::BandedBuf::band_view(&self, usize) -> core::option::Option<buffer::PixelView<'_>>
 pub fn buffer::BandedBuf::band_view_mut(&mut self, usize) -> core::option::Option<buffer::PixelViewMut<'_>>
 pub fn buffer::BandedBuf::bands(&self) -> &[buffer::PixelBuf]
+pub fn buffer::BandedBuf::compose_orientation(self, orientation::Orientation) -> Self
 pub fn buffer::BandedBuf::from_buf(buffer::PixelBuf, usize) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::BandedBuf::from_view(&buffer::PixelView<'_>, usize) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::BandedBuf::hdr(&self) -> color::HdrMetadata
@@ -1808,7 +1838,6 @@ pub fn buffer::BandedBuf::into_buf(self) -> core::result::Result<buffer::PixelBu
 pub fn buffer::BandedBuf::new(u32, u32, impl core::convert::Into<color::ImageSpec>, usize) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::BandedBuf::new_aligned(u32, u32, impl core::convert::Into<color::ImageSpec>, usize, layout::RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::BandedBuf::origin(&self) -> &color::ColorOrigin
-pub fn buffer::BandedBuf::rotate_metadata(self, orientation::Orientation) -> Self
 pub fn buffer::BandedBuf::row(&self, u32) -> &[u8]
 pub fn buffer::BandedBuf::row_mut(&mut self, u32) -> &mut [u8]
 pub fn buffer::BandedBuf::row_range_views(&self, u32, u32) -> core::result::Result<alloc::vec::Vec<buffer::PixelView<'_>>, whereat::at::At<buffer::BufferError>>
@@ -1851,9 +1880,9 @@ pub const cicp::CicpTag::BASE_TAG_LEN: usize
 pub const cicp::CicpTag::EXTENDED_TAG_LEN: usize
 pub fn cicp::CicpTag::from_color_space(&color::ColorSpace) -> core::result::Result<Self, cicp::CicpProjectionError>
 pub fn cicp::CicpTag::from_icc(&[u8]) -> core::option::Option<Self>
+pub fn cicp::CicpTag::from_tag_bytes(&[u8]) -> core::result::Result<Self, whereat::at::At<cicp::CicpError>>
 pub fn cicp::CicpTag::to_color_space(self, color::AlphaMode) -> core::result::Result<color::ColorSpace, whereat::at::At<cicp::CicpError>>
 pub fn cicp::CicpTag::to_tag_bytes_vec(self) -> alloc::vec::Vec<u8>
-pub fn cicp::CicpTag::try_from_tag_bytes(&[u8]) -> core::result::Result<Self, whereat::at::At<cicp::CicpError>>
 pub fn cicp::CicpTag::write_tag_bytes(self, &mut [u8]) -> core::option::Option<usize>
 pub struct ClliCodes(_) [also: hdr]
 pub struct CodePlane<'a> [also: sample]
@@ -1883,10 +1912,10 @@ pub const color::Color::WHITE: Self
 pub fn color::Color::to_primaries(self, color::Primaries) -> core::option::Option<[f32; 3]>
 #[non_exhaustive] pub struct ColorOrigin [also: color]
 pub ColorOrigin::cicp: core::option::Option<cicp::Cicp>
-pub ColorOrigin::icc: core::option::Option<alloc::sync::Arc<[u8]>>
+pub ColorOrigin::icc: core::option::Option<alloc::rcs::arc::Arc<[u8]>>
 pub ColorOrigin::kind: color::OriginKind
-pub fn color::ColorOrigin::from_icc(alloc::sync::Arc<[u8]>) -> Self
-pub fn color::ColorOrigin::from_icc_and_cicp(alloc::sync::Arc<[u8]>, cicp::Cicp) -> Self
+pub fn color::ColorOrigin::from_icc(alloc::rcs::arc::Arc<[u8]>) -> Self
+pub fn color::ColorOrigin::from_icc_and_cicp(alloc::rcs::arc::Arc<[u8]>, cicp::Cicp) -> Self
 pub struct ContentLightLevel [also: hdr]
 pub ContentLightLevel::max_content_light_level: u16
 pub ContentLightLevel::max_frame_average_light_level: u16
@@ -1896,22 +1925,22 @@ pub const color::CustomPrimaries::ACES_CG: Self
 pub const color::CustomPrimaries::PROPHOTO_RGB: Self
 pub struct DiffuseWhite(_) [also: hdr]
 pub const hdr::DiffuseWhite::BT2408: Self
-pub struct DualLayerHdr [also: buffer]
-pub fn buffer::DualLayerHdr::alternate_color_space(&self) -> core::option::Option<&color::ColorSpace>
-pub fn buffer::DualLayerHdr::as_view(&self) -> buffer::DualLayerHdrView<'_>
-pub fn buffer::DualLayerHdr::base(&self) -> &buffer::PixelBuf
-pub fn buffer::DualLayerHdr::gain_map(&self) -> &buffer::PixelBuf
-pub fn buffer::DualLayerHdr::into_parts(self) -> buffer::DualLayerHdrParts
-pub fn buffer::DualLayerHdr::new(buffer::PixelBuf, buffer::PixelBuf, color::GainMapMetadata) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::DualLayerHdr::new_with_alternate(buffer::PixelBuf, buffer::PixelBuf, color::GainMapMetadata, core::option::Option<color::ColorSpace>, orientation::Orientation) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::DualLayerHdr::try_from_parts(buffer::DualLayerHdrParts) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::DualLayerHdr::with_alternate_color_space(self, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-#[non_exhaustive] pub struct DualLayerHdrParts [also: buffer]
-pub DualLayerHdrParts::alternate_color_space: core::option::Option<color::ColorSpace>
-pub DualLayerHdrParts::base: buffer::PixelBuf
-pub DualLayerHdrParts::gain_map: buffer::PixelBuf
-pub DualLayerHdrParts::metadata: color::GainMapMetadata
-pub DualLayerHdrParts::orientation: orientation::Orientation
+pub struct DualLayerHdrBuf [also: buffer]
+pub fn buffer::DualLayerHdrBuf::alternate_color_space(&self) -> core::option::Option<&color::ColorSpace>
+pub fn buffer::DualLayerHdrBuf::as_view(&self) -> buffer::DualLayerHdrView<'_>
+pub fn buffer::DualLayerHdrBuf::base(&self) -> &buffer::PixelBuf
+pub fn buffer::DualLayerHdrBuf::from_parts(buffer::DualLayerHdrBufParts) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::DualLayerHdrBuf::gain_map(&self) -> &buffer::PixelBuf
+pub fn buffer::DualLayerHdrBuf::into_parts(self) -> buffer::DualLayerHdrBufParts
+pub fn buffer::DualLayerHdrBuf::new(buffer::PixelBuf, buffer::PixelBuf, color::GainMapMetadata) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::DualLayerHdrBuf::new_with_alternate(buffer::PixelBuf, buffer::PixelBuf, color::GainMapMetadata, core::option::Option<color::ColorSpace>, orientation::Orientation) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::DualLayerHdrBuf::with_alternate_color_space(self, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+#[non_exhaustive] pub struct DualLayerHdrBufParts [also: buffer]
+pub DualLayerHdrBufParts::alternate_color_space: core::option::Option<color::ColorSpace>
+pub DualLayerHdrBufParts::base: buffer::PixelBuf
+pub DualLayerHdrBufParts::gain_map: buffer::PixelBuf
+pub DualLayerHdrBufParts::metadata: color::GainMapMetadata
+pub DualLayerHdrBufParts::orientation: orientation::Orientation
 pub struct DualLayerHdrView<'a> [also: buffer]
 pub fn buffer::DualLayerHdrView<'a>::new(buffer::PixelView<'a>, buffer::PixelView<'a>, color::GainMapMetadata, core::option::Option<&'a color::ColorSpace>, orientation::Orientation) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub struct ExactDepth [also: facts, sample]
@@ -1922,15 +1951,15 @@ pub fn storage::ExternalMutStorage::as_bytes(&self) -> &[u8]
 pub fn storage::ExternalMutStorage::as_bytes_mut(&mut self) -> &mut [u8]
 pub fn storage::ExternalMutStorage::downcast_mut<S: 'static>(&mut self) -> core::option::Option<&mut S>
 pub fn storage::ExternalMutStorage::downcast_ref<S: 'static>(&self) -> core::option::Option<&S>
+pub fn storage::ExternalMutStorage::into_inner<S: 'static>(self) -> core::result::Result<S, Self>
 pub fn storage::ExternalMutStorage::new<S: storage::ByteStorageMut + core::marker::Send + core::marker::Sync + 'static>(S) -> Self
 pub fn storage::ExternalMutStorage::truncate(&mut self, usize)
-pub fn storage::ExternalMutStorage::try_into_inner<S: 'static>(self) -> core::result::Result<S, Self>
 pub struct ExternalStorage [also: storage]
 pub fn storage::ExternalStorage::as_bytes(&self) -> &[u8]
 pub fn storage::ExternalStorage::downcast_ref<S: 'static>(&self) -> core::option::Option<&S>
+pub fn storage::ExternalStorage::into_inner<S: 'static>(self) -> core::result::Result<S, Self>
 pub fn storage::ExternalStorage::new<S: storage::ByteStorage + core::marker::Send + core::marker::Sync + 'static>(S) -> Self
 pub fn storage::ExternalStorage::truncate(&mut self, usize)
-pub fn storage::ExternalStorage::try_into_inner<S: 'static>(self) -> core::result::Result<S, Self>
 #[repr(transparent)] pub struct F16Sample(_) [also: pixel_types]
 pub const pixel_types::F16Sample::EPSILON: Self
 pub const pixel_types::F16Sample::INFINITY: Self
@@ -2022,8 +2051,29 @@ pub const color::ImageSpec::RGBAF32_LINEAR: Self
 pub const color::ImageSpec::RGBF16_LINEAR: Self
 pub const color::ImageSpec::RGBF32_LINEAR: Self
 pub const color::ImageSpec::RGBX8_SRGB: Self
+pub fn color::ImageSpec::as_static_ref(&self) -> core::option::Option<&'static Self>
+pub fn color::ImageSpec::bgr8_srgb_ref() -> &'static Self
+pub fn color::ImageSpec::bgra8_srgb_ref() -> &'static Self
+pub fn color::ImageSpec::bgrx8_srgb_ref() -> &'static Self
 pub fn color::ImageSpec::can_represent_hdr(&self) -> bool
-pub fn color::ImageSpec::for_layout(layout::SampleLayout) -> core::result::Result<Self, whereat::at::At<color::ColorError>>
+pub fn color::ImageSpec::gray16_srgb_ref() -> &'static Self
+pub fn color::ImageSpec::gray8_srgb_ref() -> &'static Self
+pub fn color::ImageSpec::graya8_srgb_ref() -> &'static Self
+pub fn color::ImageSpec::grayf32_linear_ref() -> &'static Self
+pub fn color::ImageSpec::oklab_f32_ref() -> &'static Self
+pub fn color::ImageSpec::oklaba_f32_ref() -> &'static Self
+pub fn color::ImageSpec::rgb16_bt2100_hlg_1000_ref() -> &'static Self
+pub fn color::ImageSpec::rgb16_bt2100_hlg_scene_ref() -> &'static Self
+pub fn color::ImageSpec::rgb16_bt2100_pq_ref() -> &'static Self
+pub fn color::ImageSpec::rgb16_srgb_ref() -> &'static Self
+pub fn color::ImageSpec::rgb8_srgb_ref() -> &'static Self
+pub fn color::ImageSpec::rgba16_srgb_ref() -> &'static Self
+pub fn color::ImageSpec::rgba8_srgb_ref() -> &'static Self
+pub fn color::ImageSpec::rgbaf16_linear_ref() -> &'static Self
+pub fn color::ImageSpec::rgbaf32_linear_ref() -> &'static Self
+pub fn color::ImageSpec::rgbf16_linear_ref() -> &'static Self
+pub fn color::ImageSpec::rgbf32_linear_ref() -> &'static Self
+pub fn color::ImageSpec::rgbx8_srgb_ref() -> &'static Self
 pub fn color::ImageSpec::supports_interop(&self, layout::InteropTarget) -> bool
 pub fn color::ImageSpec::try_with_primaries(self, color::Primaries) -> core::option::Option<Self>
 pub fn color::ImageSpec::try_with_range(self, color::SignalRange) -> core::option::Option<Self>
@@ -2031,6 +2081,7 @@ pub fn color::ImageSpec::try_with_transfer(self, color::Transfer) -> core::optio
 pub fn color::ImageSpec::try_with_white(self, hdr::DiffuseWhite) -> core::option::Option<Self>
 pub fn color::ImageSpec::validate(&self) -> core::result::Result<(), whereat::at::At<color::ColorError>>
 pub fn color::ImageSpec::with_alpha(self, color::AlphaMode) -> Self
+pub fn color::ImageSpec::with_default_color_for_layout(layout::SampleLayout) -> core::result::Result<Self, whereat::at::At<color::ColorError>>
 pub fn color::ImageSpec::with_primaries(self, color::Primaries) -> Self
 pub fn color::ImageSpec::with_range(self, color::SignalRange) -> Self
 pub fn color::ImageSpec::with_transfer(self, color::Transfer) -> Self
@@ -2043,23 +2094,6 @@ pub MasteringDisplay::white_point_xy: [f32; 2]
 pub const hdr::MasteringDisplay::DISPLAY_P3_1000: Self
 pub const hdr::MasteringDisplay::HDR10_REFERENCE: Self
 pub struct Nits(_) [also: hdr]
-pub struct OwnedPlane [also: buffer]
-pub fn buffer::OwnedPlane::as_view(&self) -> buffer::PlaneView<'_>
-pub fn buffer::OwnedPlane::as_view_mut(&mut self) -> buffer::PlaneViewMut<'_>
-pub fn buffer::OwnedPlane::code_u32(&self, u32, u32, usize) -> core::option::Option<u32>
-pub fn buffer::OwnedPlane::from_external<S: storage::ByteStorage + core::marker::Send + core::marker::Sync + 'static>(layout::PlaneSpec, u32, u32, usize, S) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, S)>
-pub fn buffer::OwnedPlane::from_external_mut<S: storage::ByteStorageMut + core::marker::Send + core::marker::Sync + 'static>(layout::PlaneSpec, u32, u32, usize, S) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, S)>
-pub fn buffer::OwnedPlane::from_samples<S: storage::StorageSample>(layout::PlaneSpec, u32, u32, usize, alloc::vec::Vec<S>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::OwnedPlane::from_storage(layout::PlaneSpec, u32, u32, usize, storage::PixelStorage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::OwnedPlane::into_storage(self) -> storage::PixelStorage
-pub fn buffer::OwnedPlane::row(&self, u32) -> &[u8]
-pub fn buffer::OwnedPlane::row_as<S: storage::StorageSample>(&self, u32) -> core::result::Result<&[S], whereat::at::At<buffer::BufferError>>
-pub fn buffer::OwnedPlane::row_as_mut<S: storage::StorageSample>(&mut self, u32) -> core::result::Result<&mut [S], whereat::at::At<buffer::BufferError>>
-pub fn buffer::OwnedPlane::row_mut(&mut self, u32) -> &mut [u8]
-pub fn buffer::OwnedPlane::storage(&self) -> &storage::PixelStorage
-pub fn buffer::OwnedPlane::try_as_view_mut(&mut self) -> core::result::Result<buffer::PlaneViewMut<'_>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::OwnedPlane::try_into_external<S: 'static>(self) -> core::result::Result<S, Self>
-pub fn buffer::OwnedPlane::try_into_external_mut<S: 'static>(self) -> core::result::Result<S, Self>
 pub struct PixelBuf [also: buffer]
 pub fn buffer::PixelBuf::as_view(&self) -> buffer::PixelView<'_>
 pub fn buffer::PixelBuf::as_view_mut(&mut self) -> buffer::PixelViewMut<'_>
@@ -2068,19 +2102,28 @@ pub fn buffer::PixelBuf::crop_view(&self, u32, u32, u32, u32) -> core::result::R
 pub fn buffer::PixelBuf::external_mut<S: 'static>(&mut self) -> core::option::Option<&mut S>
 pub fn buffer::PixelBuf::external_ref<S: 'static>(&self) -> core::option::Option<&S>
 pub fn buffer::PixelBuf::from_bytes(alloc::vec::Vec<u8>, u32, u32, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_bytes_recover(alloc::vec::Vec<u8>, u32, u32, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, alloc::vec::Vec<u8>)>
 pub fn buffer::PixelBuf::from_external<S: storage::ByteStorage + core::marker::Send + core::marker::Sync + 'static>(S, u32, u32, usize, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, S)>
 pub fn buffer::PixelBuf::from_external_mut<S: storage::ByteStorageMut + core::marker::Send + core::marker::Sync + 'static>(S, u32, u32, usize, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, S)>
 pub fn buffer::PixelBuf::from_external_mut_with_offset<S: storage::ByteStorageMut + core::marker::Send + core::marker::Sync + 'static>(S, usize, u32, u32, usize, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, S)>
 pub fn buffer::PixelBuf::from_external_with_offset<S: storage::ByteStorage + core::marker::Send + core::marker::Sync + 'static>(S, usize, u32, u32, usize, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, S)>
-pub fn buffer::PixelBuf::from_parts(storage::PixelStorage, usize, u32, u32, usize, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_parts(buffer::PixelBufParts) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_parts_recover(buffer::PixelBufParts) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, buffer::PixelBufParts)>
 pub fn buffer::PixelBuf::from_raw_pod<P: bytemuck::pod::Pod>(alloc::vec::Vec<P>, u32, u32, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::from_samples<S: storage::StorageSample>(alloc::vec::Vec<S>, u32, u32, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::from_vec<P: buffer::TypedElement>(alloc::vec::Vec<P>, u32, u32, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_storage_parts(storage::PixelStorage, usize, u32, u32, usize, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_typed<P: buffer::TypedElement>(alloc::vec::Vec<P>, u32, u32, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_typed_recover<P: buffer::TypedElement>(alloc::vec::Vec<P>, u32, u32, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, alloc::vec::Vec<P>)>
 pub fn buffer::PixelBuf::hdr(&self) -> color::HdrMetadata
 pub fn buffer::PixelBuf::into_contiguous(self) -> Self
+pub fn buffer::PixelBuf::into_external<S: 'static>(self) -> core::result::Result<S, Self>
+pub fn buffer::PixelBuf::into_external_mut<S: 'static>(self) -> core::result::Result<S, Self>
 pub fn buffer::PixelBuf::into_opaque_filled(self) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::into_opaque_verified(self) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::into_parts(self) -> buffer::PixelBufParts
+pub fn buffer::PixelBuf::into_vec<P: bytemuck::pod::Pod>(self) -> core::result::Result<alloc::vec::Vec<P>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::into_vec_zero_copy<P: bytemuck::pod::Pod>(self) -> core::result::Result<alloc::vec::Vec<P>, Self>
+pub fn buffer::PixelBuf::make_mut(&mut self) -> core::result::Result<(), whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::new(u32, u32, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::new_aligned(u32, u32, impl core::convert::Into<color::ImageSpec>, layout::RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::new_for(u32, u32, impl core::convert::Into<color::ImageSpec>, layout::InteropTarget) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
@@ -2094,20 +2137,11 @@ pub fn buffer::PixelBuf::set_facts(&mut self, facts::SampleFacts)
 pub fn buffer::PixelBuf::set_orientation(&mut self, orientation::Orientation)
 pub fn buffer::PixelBuf::spec(&self) -> &color::ImageSpec
 pub fn buffer::PixelBuf::storage(&self) -> &storage::PixelStorage
+pub fn buffer::PixelBuf::sub_rows_mut(&mut self, u32, u32) -> core::result::Result<buffer::PixelViewMut<'_>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::swizzle_in_place(&mut self, layout::ChannelOrder) -> core::result::Result<(), whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::transform_in_place<F>(&mut self, F) -> core::result::Result<(), whereat::at::At<buffer::BufferError>> where F: core::ops::function::FnOnce(&mut [u8], u32, u32, usize, &color::ImageSpec, &color::ColorOrigin) -> core::option::Option<(usize, color::ImageSpec, color::ColorOrigin, facts::SampleFacts)>
 pub fn buffer::PixelBuf::try_as_view_mut(&mut self) -> core::result::Result<buffer::PixelViewMut<'_>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::try_clone(&self) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::try_from_bytes_recover(alloc::vec::Vec<u8>, u32, u32, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, alloc::vec::Vec<u8>)>
-pub fn buffer::PixelBuf::try_from_parts(buffer::PixelBufParts) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::try_from_parts_recover(buffer::PixelBufParts) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, buffer::PixelBufParts)>
-pub fn buffer::PixelBuf::try_from_vec_recover<P: buffer::TypedElement>(alloc::vec::Vec<P>, u32, u32, impl core::convert::Into<color::ImageSpec>) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, alloc::vec::Vec<P>)>
-pub fn buffer::PixelBuf::try_into_external<S: 'static>(self) -> core::result::Result<S, Self>
-pub fn buffer::PixelBuf::try_into_external_mut<S: 'static>(self) -> core::result::Result<S, Self>
-pub fn buffer::PixelBuf::try_into_vec<P: bytemuck::pod::Pod>(self) -> core::result::Result<alloc::vec::Vec<P>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::try_into_vec_zero_copy<P: bytemuck::pod::Pod>(self) -> core::result::Result<alloc::vec::Vec<P>, Self>
-pub fn buffer::PixelBuf::try_make_mut(&mut self) -> core::result::Result<(), whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::view_rows_mut(&mut self, u32, u32) -> core::result::Result<buffer::PixelViewMut<'_>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::with_color(self, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::with_hdr(self, color::HdrMetadata) -> Self
 pub fn buffer::PixelBuf::with_origin(self, color::ColorOrigin) -> Self
@@ -2150,24 +2184,25 @@ pub const color::PixelFormat::RGBF32_LINEAR: Self
 pub const color::PixelFormat::RGBX8_SRGB: Self
 pub fn color::PixelFormat::validate(self) -> core::result::Result<(), whereat::at::At<color::ColorError>>
 pub struct PixelView<'a> [also: buffer]
-pub fn buffer::PixelView<'a>::as_contiguous_as<P: bytemuck::pod::Pod>(&self) -> core::result::Result<&'a [P], whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelView<'a>::as_contiguous_bytes(&self) -> core::option::Option<&'a [u8]>
+pub fn buffer::PixelView<'a>::as_contiguous_typed<P: bytemuck::pod::Pod>(&self) -> core::result::Result<&'a [P], whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::contiguous_bytes(&self) -> core::result::Result<alloc::borrow::Cow<'a, [u8]>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelView<'a>::crop(&self, u32, u32, u32, u32) -> core::result::Result<buffer::PixelView<'a>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::from_packed(&'a [u8], u32, u32, impl core::convert::Into<color::SpecCow<'a>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::from_raw_pod<P: bytemuck::pod::Pod>(&'a [P], u32, u32, impl core::convert::Into<color::SpecCow<'a>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::from_samples<S: storage::StorageSample>(&'a [S], u32, u32, impl core::convert::Into<color::SpecCow<'a>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::from_typed<P: buffer::TypedElement>(&'a [P], u32, u32, impl core::convert::Into<color::SpecCow<'a>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::from_bytes(&'a [u8], u32, u32, &'a color::ImageSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::from_raw_pod<P: bytemuck::pod::Pod>(&'a [P], u32, u32, &'a color::ImageSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::from_samples<S: storage::StorageSample>(&'a [S], u32, u32, &'a color::ImageSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::from_typed<P: buffer::TypedElement>(&'a [P], u32, u32, &'a color::ImageSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelView<'a>::hdr(&self) -> color::HdrMetadata
 pub fn buffer::PixelView<'a>::is_contiguous(&self) -> bool
 pub fn buffer::PixelView<'a>::measure_float_facts(&self) -> facts::FloatFacts
-pub fn buffer::PixelView<'a>::new(&'a [u8], u32, u32, usize, impl core::convert::Into<color::SpecCow<'a>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::new(&'a [u8], u32, u32, usize, &'a color::ImageSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::new_with_spec_cow(&'a [u8], u32, u32, usize, color::SpecCow<'a>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelView<'a>::row(&self, u32) -> &'a [u8]
 pub fn buffer::PixelView<'a>::row_as<P: bytemuck::pod::Pod>(&self, u32) -> core::result::Result<&'a [P], whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelView<'a>::row_bytes(&self) -> usize
 pub fn buffer::PixelView<'a>::spec(&self) -> &color::ImageSpec
 pub fn buffer::PixelView<'a>::sub_rows(&self, u32, u32) -> core::result::Result<buffer::PixelView<'a>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::try_contiguous_bytes(&self) -> core::result::Result<alloc::borrow::Cow<'a, [u8]>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelView<'a>::try_to_tight_buf(&self) -> core::result::Result<buffer::PixelBuf, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelView<'a>::to_tight_buf(&self) -> core::result::Result<buffer::PixelBuf, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelView<'a>::with_facts(self, facts::SampleFacts) -> Self
 pub fn buffer::PixelView<'a>::with_hdr(self, color::HdrMetadata) -> Self
 pub struct PixelViewMut<'a> [also: buffer]
@@ -2180,7 +2215,8 @@ pub fn buffer::PixelViewMut<'a>::into_crop(self, u32, u32, u32, u32) -> core::re
 pub fn buffer::PixelViewMut<'a>::into_strided_bytes_mut(self) -> &'a mut [u8]
 pub fn buffer::PixelViewMut<'a>::into_sub_rows(self, u32, u32) -> core::result::Result<buffer::PixelViewMut<'a>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelViewMut<'a>::into_view(self) -> buffer::PixelView<'a>
-pub fn buffer::PixelViewMut<'a>::new(&'a mut [u8], u32, u32, usize, impl core::convert::Into<color::SpecCow<'a>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelViewMut<'a>::new(&'a mut [u8], u32, u32, usize, &'a color::ImageSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelViewMut<'a>::new_with_spec_cow(&'a mut [u8], u32, u32, usize, color::SpecCow<'a>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelViewMut<'a>::row_as_mut<P: bytemuck::pod::Pod>(&mut self, u32) -> core::result::Result<&mut [P], whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelViewMut<'a>::row_bytes(&self) -> usize
 pub fn buffer::PixelViewMut<'a>::row_mut(&mut self, u32) -> &mut [u8]
@@ -2193,17 +2229,17 @@ pub const buffer::PlanarBuf::MAX_PLANES: usize
 pub fn buffer::PlanarBuf::color(&self) -> core::option::Option<&color::ColorSpace>
 pub fn buffer::PlanarBuf::effective_alpha(&self) -> core::option::Option<color::AlphaMode>
 pub fn buffer::PlanarBuf::effective_range(&self) -> core::option::Option<color::SignalRange>
-pub fn buffer::PlanarBuf::from_planes(u32, u32, alloc::vec::Vec<buffer::OwnedPlane>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PlanarBuf::from_planes(u32, u32, alloc::vec::Vec<buffer::PlaneBuf>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlanarBuf::hdr(&self) -> color::HdrMetadata
-pub fn buffer::PlanarBuf::into_planes(self) -> alloc::vec::Vec<buffer::OwnedPlane>
+pub fn buffer::PlanarBuf::into_planes(self) -> alloc::vec::Vec<buffer::PlaneBuf>
 pub fn buffer::PlanarBuf::new(u32, u32, &[layout::PlaneSpec]) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlanarBuf::new_aligned(u32, u32, &[layout::PlaneSpec], layout::RowAlign) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlanarBuf::origin(&self) -> &color::ColorOrigin
-pub fn buffer::PlanarBuf::plane_by_role(&self, layout::PlaneRole) -> core::option::Option<&buffer::OwnedPlane>
+pub fn buffer::PlanarBuf::plane_by_role(&self, layout::PlaneRole) -> core::option::Option<&buffer::PlaneBuf>
 pub fn buffer::PlanarBuf::plane_view_by_role(&self, layout::PlaneRole) -> core::option::Option<buffer::PlaneView<'_>>
 pub fn buffer::PlanarBuf::plane_view_mut(&mut self, usize) -> core::option::Option<buffer::PlaneViewMut<'_>>
 pub fn buffer::PlanarBuf::plane_view_mut_by_role(&mut self, layout::PlaneRole) -> core::option::Option<buffer::PlaneViewMut<'_>>
-pub fn buffer::PlanarBuf::planes(&self) -> &[buffer::OwnedPlane]
+pub fn buffer::PlanarBuf::planes(&self) -> &[buffer::PlaneBuf]
 pub fn buffer::PlanarBuf::set_orientation(&mut self, orientation::Orientation)
 pub fn buffer::PlanarBuf::with_color(self, color::ColorSpace) -> Self
 pub fn buffer::PlanarBuf::with_hdr(self, color::HdrMetadata) -> Self
@@ -2232,6 +2268,7 @@ pub fn buffer::PlanarViewMut<'a>::effective_range(&self) -> core::option::Option
 pub fn buffer::PlanarViewMut<'a>::from_array<const N: usize>(u32, u32, [buffer::PlaneViewMut<'a>; N]) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlanarViewMut<'a>::from_array_with_origin<const N: usize>(u32, u32, (u32, u32), ChromaSiting, [buffer::PlaneViewMut<'a>; N]) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlanarViewMut<'a>::hdr(&self) -> color::HdrMetadata
+pub fn buffer::PlanarViewMut<'a>::into_view(self) -> core::result::Result<buffer::PlanarView<'a>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlanarViewMut<'a>::new(u32, u32, alloc::vec::Vec<buffer::PlaneViewMut<'a>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlanarViewMut<'a>::new_with_origin(u32, u32, (u32, u32), ChromaSiting, alloc::vec::Vec<buffer::PlaneViewMut<'a>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlanarViewMut<'a>::plane_by_role(&self, layout::PlaneRole) -> core::option::Option<&buffer::PlaneViewMut<'a>>
@@ -2241,9 +2278,25 @@ pub fn buffer::PlanarViewMut<'a>::planes(&self) -> &[buffer::PlaneViewMut<'a>]
 pub fn buffer::PlanarViewMut<'a>::planes_mut(&mut self) -> &mut [buffer::PlaneViewMut<'a>]
 pub fn buffer::PlanarViewMut<'a>::set_orientation(&mut self, orientation::Orientation)
 pub fn buffer::PlanarViewMut<'a>::try_as_view(&self) -> core::result::Result<buffer::PlanarView<'_>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PlanarViewMut<'a>::try_into_view(self) -> core::result::Result<buffer::PlanarView<'a>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlanarViewMut<'a>::with_color(self, color::ColorSpace) -> Self
 pub fn buffer::PlanarViewMut<'a>::with_hdr(self, color::HdrMetadata) -> Self
+pub struct PlaneBuf [also: buffer]
+pub fn buffer::PlaneBuf::as_view(&self) -> buffer::PlaneView<'_>
+pub fn buffer::PlaneBuf::as_view_mut(&mut self) -> buffer::PlaneViewMut<'_>
+pub fn buffer::PlaneBuf::code_u32(&self, u32, u32, usize) -> core::option::Option<u32>
+pub fn buffer::PlaneBuf::from_external<S: storage::ByteStorage + core::marker::Send + core::marker::Sync + 'static>(S, u32, u32, usize, layout::PlaneSpec) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, S)>
+pub fn buffer::PlaneBuf::from_external_mut<S: storage::ByteStorageMut + core::marker::Send + core::marker::Sync + 'static>(S, u32, u32, usize, layout::PlaneSpec) -> core::result::Result<Self, (whereat::at::At<buffer::BufferError>, S)>
+pub fn buffer::PlaneBuf::from_samples<S: storage::StorageSample>(alloc::vec::Vec<S>, u32, u32, usize, layout::PlaneSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PlaneBuf::from_storage(storage::PixelStorage, u32, u32, usize, layout::PlaneSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PlaneBuf::into_external<S: 'static>(self) -> core::result::Result<S, Self>
+pub fn buffer::PlaneBuf::into_external_mut<S: 'static>(self) -> core::result::Result<S, Self>
+pub fn buffer::PlaneBuf::into_storage(self) -> storage::PixelStorage
+pub fn buffer::PlaneBuf::row(&self, u32) -> &[u8]
+pub fn buffer::PlaneBuf::row_as<S: storage::StorageSample>(&self, u32) -> core::result::Result<&[S], whereat::at::At<buffer::BufferError>>
+pub fn buffer::PlaneBuf::row_as_mut<S: storage::StorageSample>(&mut self, u32) -> core::result::Result<&mut [S], whereat::at::At<buffer::BufferError>>
+pub fn buffer::PlaneBuf::row_mut(&mut self, u32) -> &mut [u8]
+pub fn buffer::PlaneBuf::storage(&self) -> &storage::PixelStorage
+pub fn buffer::PlaneBuf::try_as_view_mut(&mut self) -> core::result::Result<buffer::PlaneViewMut<'_>, whereat::at::At<buffer::BufferError>>
 #[non_exhaustive] pub struct PlaneSpec [also: layout]
 pub PlaneSpec::components: u8
 pub PlaneSpec::packing: layout::BitPacking
@@ -2255,8 +2308,8 @@ pub fn buffer::PlaneView<'a>::as_code_plane(self, usize) -> core::result::Result
 pub fn buffer::PlaneView<'a>::as_code_plane_with(self, usize, sample::SampleEncoding) -> core::result::Result<CodePlane<'a>, CodePlaneError>
 pub fn buffer::PlaneView<'a>::code_u32(&self, u32, u32, usize) -> core::option::Option<u32>
 pub fn buffer::PlaneView<'a>::crop(&self, u32, u32, u32, u32) -> core::result::Result<buffer::PlaneView<'a>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PlaneView<'a>::from_samples<S: storage::StorageSample>(layout::PlaneSpec, u32, u32, usize, &'a [S]) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PlaneView<'a>::new(layout::PlaneSpec, u32, u32, usize, &'a [u8]) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PlaneView<'a>::from_samples<S: storage::StorageSample>(&'a [S], u32, u32, usize, layout::PlaneSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PlaneView<'a>::new(&'a [u8], u32, u32, usize, layout::PlaneSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlaneView<'a>::row(&self, u32) -> &'a [u8]
 pub fn buffer::PlaneView<'a>::row_as<S: storage::StorageSample>(&self, u32) -> core::result::Result<&'a [S], whereat::at::At<buffer::BufferError>>
 pub struct PlaneViewMut<'a> [also: buffer]
@@ -2264,13 +2317,13 @@ pub fn buffer::PlaneViewMut<'a>::as_view(&self) -> buffer::PlaneView<'_>
 pub fn buffer::PlaneViewMut<'a>::crop_mut(&mut self, u32, u32, u32, u32) -> core::result::Result<buffer::PlaneViewMut<'_>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlaneViewMut<'a>::data(&self) -> &[u8]
 pub fn buffer::PlaneViewMut<'a>::data_mut(&mut self) -> &mut [u8]
-pub fn buffer::PlaneViewMut<'a>::from_samples<S: storage::StorageSample>(layout::PlaneSpec, u32, u32, usize, &'a mut [S]) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PlaneViewMut<'a>::from_samples<S: storage::StorageSample>(&'a mut [S], u32, u32, usize, layout::PlaneSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlaneViewMut<'a>::into_code_plane_mut(self, usize) -> core::result::Result<CodePlaneMut<'a>, CodePlaneError>
 pub fn buffer::PlaneViewMut<'a>::into_code_plane_mut_with(self, usize, sample::SampleEncoding) -> core::result::Result<CodePlaneMut<'a>, CodePlaneError>
 pub fn buffer::PlaneViewMut<'a>::into_crop(self, u32, u32, u32, u32) -> core::result::Result<buffer::PlaneViewMut<'a>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlaneViewMut<'a>::into_data_mut(self) -> &'a mut [u8]
 pub fn buffer::PlaneViewMut<'a>::into_view(self) -> buffer::PlaneView<'a>
-pub fn buffer::PlaneViewMut<'a>::new(layout::PlaneSpec, u32, u32, usize, &'a mut [u8]) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PlaneViewMut<'a>::new(&'a mut [u8], u32, u32, usize, layout::PlaneSpec) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlaneViewMut<'a>::row(&self, u32) -> &[u8]
 pub fn buffer::PlaneViewMut<'a>::row_as<S: storage::StorageSample>(&self, u32) -> core::result::Result<&[S], whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlaneViewMut<'a>::row_as_mut<S: storage::StorageSample>(&mut self, u32) -> core::result::Result<&mut [S], whereat::at::At<buffer::BufferError>>
@@ -2388,17 +2441,16 @@ ExactDepthError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 [S; 4]: buffer::TypedElement
 [S; 5]: buffer::TypedElement
 alloc::boxed::Box<[T]>: storage::ByteStorage, storage::ByteStorageMut
-alloc::sync::Arc<[T]>: storage::ByteStorage
-alloc::sync::Arc<alloc::vec::Vec<T>>: storage::ByteStorage
+alloc::rcs::arc::Arc<[T]>: storage::ByteStorage
+alloc::rcs::arc::Arc<alloc::vec::Vec<T>>: storage::ByteStorage
 alloc::vec::Vec<T>: storage::ByteStorage, storage::ByteStorageMut
 buffer::BandedBuf: Clone, Debug, buffer::PixelSink, buffer::PixelSource
 buffer::Bgrx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::TypedElement, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
 buffer::BufFill: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 buffer::BufferError: Clone, Copy, Debug, Display, Eq, Error, From<color::ColorError>, From<layout::LayoutError>, From<storage::StorageError>, PartialEq
-buffer::DualLayerHdr: Clone, Debug
-buffer::DualLayerHdrParts: Clone, Debug
+buffer::DualLayerHdrBuf: Clone, Debug
+buffer::DualLayerHdrBufParts: Clone, Debug
 buffer::DualLayerHdrView<'a>: Clone, Debug
-buffer::OwnedPlane: Clone, Debug
 buffer::PixelBuf: Clone, Debug, buffer::PixelSink, buffer::PixelSource
 buffer::PixelBufParts: Debug
 buffer::PixelCow<'a>: Clone, Debug
@@ -2409,6 +2461,7 @@ buffer::PixelViewMut<'a>: Debug
 buffer::PlanarBuf: Clone, Debug
 buffer::PlanarView<'a>: Clone, Debug
 buffer::PlanarViewMut<'a>: Debug
+buffer::PlaneBuf: Clone, Debug
 buffer::PlaneView<'a>: Clone, Copy, Debug
 buffer::PlaneViewMut<'a>: Debug
 buffer::Rgbx: Clone, Copy, Debug, Default, Eq, Hash, PartialEq, buffer::TypedElement, bytemuck::pod::Pod, bytemuck::zeroable::Zeroable
@@ -2442,7 +2495,7 @@ color::Primaries: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 color::RenderingIntent: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 color::SignalRange: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 color::SignedFraction: Clone, Copy, Debug, Eq, Hash, PartialEq
-color::SpecCow<'_>: AsRef<color::ImageSpec>, Deref, Eq, From<color::ImageSpec>, From<color::PixelFormat>, Hash, PartialEq
+color::SpecCow<'_>: AsRef<color::ImageSpec>, Deref, Eq, From<alloc::rcs::arc::Arc<color::ImageSpec>>, Hash, PartialEq
 color::SpecCow<'a>: Clone, Debug, From<&'a color::ImageSpec>
 color::Transfer: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 color::UnsignedFraction: Clone, Copy, Debug, Eq, Hash, PartialEq
@@ -2497,15 +2550,15 @@ u8: buffer::TypedElement, storage::StorageSample
 
 CodePlaneMut<'a>: !UnwindSafe
 buffer::BandedBuf: !RefUnwindSafe !UnwindSafe
-buffer::DualLayerHdr: !RefUnwindSafe !UnwindSafe
-buffer::DualLayerHdrParts: !RefUnwindSafe !UnwindSafe
-buffer::OwnedPlane: !RefUnwindSafe !UnwindSafe
+buffer::DualLayerHdrBuf: !RefUnwindSafe !UnwindSafe
+buffer::DualLayerHdrBufParts: !RefUnwindSafe !UnwindSafe
 buffer::PixelBuf: !RefUnwindSafe !UnwindSafe
 buffer::PixelBufParts: !RefUnwindSafe !UnwindSafe
 buffer::PixelCow<'a>: !RefUnwindSafe !UnwindSafe
 buffer::PixelViewMut<'a>: !UnwindSafe
 buffer::PlanarBuf: !RefUnwindSafe !UnwindSafe
 buffer::PlanarViewMut<'a>: !UnwindSafe
+buffer::PlaneBuf: !RefUnwindSafe !UnwindSafe
 buffer::PlaneViewMut<'a>: !UnwindSafe
 storage::ExternalMutStorage: !RefUnwindSafe !UnwindSafe
 storage::ExternalStorage: !RefUnwindSafe !UnwindSafe
