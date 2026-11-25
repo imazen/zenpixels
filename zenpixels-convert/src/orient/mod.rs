@@ -40,7 +40,7 @@ pub fn apply_orientation(
     }
     let facts = src.facts();
     apply_orientation_into(src, orientation, &mut out.as_view_mut())?;
-    out.set_facts(facts);
+    out.assume_facts(facts);
     Ok(out)
 }
 

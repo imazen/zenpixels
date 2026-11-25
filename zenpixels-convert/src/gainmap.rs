@@ -596,10 +596,10 @@ impl GainMapApplyConfig {
         Self::with_target_default(GainMapTarget::HeadroomStops(display_headroom_stops))
     }
 
-    /// Create a configuration from a linear display boost ratio (e.g. `4.0` → `2.0` stops).
+    /// Create a configuration from a **linear** display boost multiplier (e.g. `4.0` → `2.0` stops).
     #[inline(always)]
     #[must_use]
-    pub fn from_display_boost(display_boost: f32) -> Self {
+    pub fn from_display_boost_linear(display_boost: f32) -> Self {
         Self::from_headroom_stops(display_boost_to_headroom_stops(display_boost))
     }
 
@@ -1840,33 +1840,10 @@ pub fn apply_gain_map_oriented(
     }
 }
 
-/// Reconstruct a linear-light [`PixelBuf`] (`RGBF32` / `RGBAF32`) from an owned
-/// [`DualLayerHdrBuf`] at `display_headroom_stops` (log₂ stops, e.g. `0.0` = SDR,
-/// `2.32` ≈ 5× / 1000-nit HDR display), baking `dual.orientation()` to display orientation.
-pub fn apply_gain_map(
-    dual: &DualLayerHdrBuf,
-    display_headroom_stops: f32,
-) -> Result<PixelBuf, At<ConvertError>> {
-    let cfg = GainMapApplyConfig::from_headroom_stops(display_headroom_stops);
-    apply_gain_map_with(&dual.as_view(), &cfg, &Unstoppable)
-}
-
-/// Reconstruct a linear-light [`PixelBuf`] (`RGBF32` / `RGBAF32`) from a zero-copy
-/// [`DualLayerHdrView`] using `policy` (allowing CMS backends and SIMD selection),
-/// baking `dual.orientation()` to display orientation.
-pub fn apply_gain_map_view(
-    dual: &DualLayerHdrView<'_>,
-    display_headroom_stops: f32,
-    policy: &ConvertPolicy,
-) -> Result<PixelBuf, At<ConvertError>> {
-    let cfg =
-        GainMapApplyConfig::from_headroom_stops(display_headroom_stops).with_policy(policy.clone());
-    apply_gain_map_with(dual, &cfg, &Unstoppable)
-}
-
 /// Reconstruct a [`PixelBuf`] from a zero-copy [`DualLayerHdrView`] with full control over
-/// target headroom/rendition, resampling kernel, orientation policy, conversion policy,
-/// optional target [`ImageSpec`], and cooperative [`Stop`] cancellation
+/// target headroom/rendition ([`GainMapApplyConfig::from_headroom_stops`] or
+/// [`GainMapApplyConfig::from_display_boost_linear`]), resampling kernel, orientation policy,
+/// conversion policy, optional target [`ImageSpec`], and cooperative [`Stop`] cancellation
 /// (pass `&zenpixels_convert::Unstoppable` when cancellation is not needed).
 ///
 /// Refuses [`GainMapOrientation::Passthrough`] when `dual.orientation() != Orientation::Identity`
@@ -1916,13 +1893,12 @@ pub fn bake_dual_layer_orientation_after(
     let total = dual.orientation().then(delta);
     let base = orient::apply_orientation(dual.base(), total)?;
     let gain_map = orient::apply_orientation(dual.gain_map(), total)?;
-    DualLayerHdrBuf::new_with_alternate(
-        base,
-        gain_map,
-        dual.metadata(),
-        dual.alternate_color_space().cloned(),
-        Orientation::Identity,
-    )
+    match dual.alternate_color_space().cloned() {
+        Some(alt) => {
+            DualLayerHdrBuf::new_with_alternate_color(base, gain_map, dual.metadata(), alt)
+        }
+        None => DualLayerHdrBuf::new(base, gain_map, dual.metadata()),
+    }
     .map_err(|e| err_at((*e.error()).into()))
 }
 
@@ -2606,7 +2582,7 @@ pub fn extract_gain_map(
             },
         )
     };
-    let (gain_buf, _) = extract_gain_map_internal(
+    let (mut gain_buf, _) = extract_gain_map_internal(
         base_src,
         alternate_src,
         metadata,
@@ -2621,6 +2597,7 @@ pub fn extract_gain_map(
     let base_owned = base_src
         .to_tight_buf()
         .map_err(|e| err_at((*e.error()).into()))?;
+    gain_buf.set_orientation(base_src.orientation());
     let alt_color = if metadata.application_space == GainMapColorSpace::Alternate
         || alternate_src.spec().color != base_src.spec().color
     {
@@ -2628,13 +2605,10 @@ pub fn extract_gain_map(
     } else {
         None
     };
-    DualLayerHdrBuf::new_with_alternate(
-        base_owned,
-        gain_buf,
-        metadata,
-        alt_color,
-        base_src.orientation(),
-    )
+    match alt_color {
+        Some(alt) => DualLayerHdrBuf::new_with_alternate_color(base_owned, gain_buf, metadata, alt),
+        None => DualLayerHdrBuf::new(base_owned, gain_buf, metadata),
+    }
     .map_err(|e| err_at((*e.error()).into()))
 }
 

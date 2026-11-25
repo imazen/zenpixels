@@ -15,7 +15,8 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
   - `SampleLayout` (`SampleType`, `ChannelOrder`, `BitPacking`), `ColorSpace`
     (`Rgb`, `Gray`, `Oklab`, `Xyz`, `Perceptual`, `Icc`, `Cmyk`, `Untagged`),
     `ColorOrigin`, `ImageSpec` (with `const` presets `ImageSpec::RGB8_SRGB`,
-    `RGBA8_SRGB`, `RGB16_BT2100_PQ`, `RGBF32_LINEAR`, plus `try_with_*` checked
+    `RGBA8_SRGB`, `RGB16_BT2100_PQ`, `RGBF32_LINEAR`, `'static` borrowed presets
+    in `specs::*`, `from_layout_assuming_color`, plus `try_with_*` checked
     builders), `Copy + const + !Drop` companion `PixelFormat` / `ParametricColor`,
     and `SpecCow<'a>` for zero-`Arc`-bump borrowed views and crops.
   - Complete lossless ITU-T H.273 CICP: all 11 Table 2 primaries (with projective
@@ -25,29 +26,33 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
     ICC.1 `cicpType` 44-byte custom-primaries amendment (approved 2026-10-19:
     `CicpTag`, signed `s15Fixed16Number` helpers on `Chromaticity`/`CustomPrimaries`,
     `CustomPrimaries::ACES_CG`, `Primaries::to_custom`, Annex 1
-    `to_icc_d50_matrix_f64`, `IccColorSpace::Ycbcr`, `ColorSpace::try_cicp_tag`,
-    plus `load_bearing` / `gainmap` / `Lcms` non-D65 white-point support),
+    `to_icc_d50_matrix_f64`, `IccColorSpace::Ycbcr`, `ColorSpace::project_cicp_tag`,
+    plus `compact` / `gainmap` / `Lcms` non-D65 white-point support),
     exact `0.0001 cd/m²` `ClliCodes`, and ISO 15076-1 structural ICC validation
     (`validate_icc_structure` / `IccValidationError`) wired into `ImageSpec::validate()`.
-  - `PixelBuf`, `PixelView`, `PixelViewMut`, `PixelCow`, `BandedBuf` (gigapixel
-    row-banded storage with `RowAlign`), `OwnedPlane`, `PlaneView`, `PlaneViewMut`,
-    `PlanarBuf`, `PlanarView`, and `PlanarViewMut` carrying pending `Orientation`,
-    `HdrMetadata` (`Option<Arc<HdrMetadata>>`, zero-alloc when empty), `ColorOrigin`
-    (`Option<Arc<ColorOrigin>>`, zero-alloc when assumed), `ChromaSiting`, and optional
-    color interpretation (`color`, `ycbcr_matrix_code`, `range`, `alpha`). Compact
-    stack footprints (`SpecCow`: 16 B, `PixelViewMut`: 64 B, `PixelView`: 80 B,
-    `PlanarBuf`: 64 B, `BandedBuf`: 144 B, `PixelBuf`: 168 B), `PixelView::height()` /
-    `PixelViewMut::height()` aliases, descriptive `whereat::At` context on
-    `BufferError::IncompatibleLayout` element mismatches, and top-level
-    `zenpixels_convert::{Stop, StopReason, Unstoppable}` re-exports.
+  - `PixelBuf` (with direct `row`/`row_mut`, fallible `into_tight_buf`,
+    `new_for_interop`, explicit `relabel_color`/`relabel_spec`/`reinterpret_bytes`,
+    and `assume_facts`), `PixelView`, `PixelViewMut`, `PixelCow`, `BandedBuf`
+    (gigapixel row-banded storage with `RowAlign`), `PlaneBuf`, `PlaneView`,
+    `PlaneViewMut`, `PlanarBuf`, `PlanarView`, and `PlanarViewMut` carrying pending
+    `Orientation`, `HdrMetadata` (`Option<Arc<HdrMetadata>>`, zero-alloc when empty),
+    `ColorOrigin` (`Option<Arc<ColorOrigin>>`, zero-alloc when assumed), `ChromaSiting`,
+    `new_with_crop_origin`, and optional color interpretation (`color`,
+    `matrix_coefficients_code`, `range_override`/`effective_range`,
+    `alpha_override`/`effective_alpha`). Compact stack footprints (`SpecCow`: 16 B,
+    `PixelViewMut`: 64 B, `PixelView`: 80 B, `PlanarBuf`: 64 B, `BandedBuf`: 144 B,
+    `PixelBuf`: 168 B), `PixelView::height()` / `PixelViewMut::height()` aliases,
+    descriptive `whereat::At` context on `BufferError::IncompatibleLayout` element
+    mismatches, and top-level `zenpixels_convert::{Stop, StopReason, Unstoppable}`
+    re-exports.
   - Sound `AlphaMode::Opaque` construction and fast fill-then-retag: `BufFill::{Black, White}`,
     `PixelBuf::new_white`, `PixelBuf::new_with_fill`, `PixelBuf::new_zeroed` /
     `new_zeroed_aligned` (refusing `AlphaMode::Opaque` on alpha-bearing layouts with
     `BufferError::UnverifiedOpaqueAlpha`), `into_opaque_verified`, `into_opaque_filled`,
-    `assume_opaque`, and recovery constructors `try_from_bytes_recover` /
-    `try_from_vec_recover`.
+    `assume_opaque`, and recovery constructors `from_bytes_recover` /
+    `from_typed_recover` / `from_parts_recover`.
   - Seamless zero-copy planar codec API: `PlaneView::from_samples`,
-    `PlaneViewMut::from_samples`, `OwnedPlane::from_samples`, `row_as` / `row_as_mut`,
+    `PlaneViewMut::from_samples`, `PlaneBuf::from_samples`, `row_as` / `row_as_mut`,
     `PlaneView::code_u32`, `as_code_plane` / `into_code_plane_mut`, `plane_by_role`,
     `PlanarBuf::new_aligned`, `PlaneRole::{Depth, Matte, Thermal}`, and strict
     cross-family plane role set validation.
@@ -56,24 +61,26 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
   - `SampleFacts` (`FloatFacts` + `ExactDepth` + `all_opaque` + `all_grayscale`),
     `HdrMetadata`, `DiffuseWhite` / `Nits` / `Gamma` (`NonZeroU32` 4-byte niches),
     `HlgMode`, `HlgRendering`, `Orientation`, `GainMapMetadata` / `GainMapComponent` /
-    `DualLayerHdr` / `DualLayerHdrView` (with `BufferError::InvalidGainMapMetadata`
-    and layer orientation consistency enforcement).
+    `DualLayerHdrBuf` (`new_with_alternate_color`) / `DualLayerHdrView` /
+    `DualLayerHdrBufParts` (with `BufferError::InvalidGainMapMetadata` and layer
+    orientation consistency enforcement).
 - **First-class external owned storage:**
   - `ByteStorage` / `ByteStorageMut`, `ExternalStorage` / `ExternalMutStorage`,
     `PixelBuf::from_external`, `PixelBuf::from_external_mut`,
-    `OwnedPlane::from_external`, and `OwnedPlane::from_external_mut` allow codecs,
+    `PlaneBuf::from_external`, and `PlaneBuf::from_external_mut` allow codecs,
     FFI buffers, `Arc<[u8]>`, `Box<[T]>`, `Vec<T>`, `mmap` regions, and pooled
-    arenas to move directly into `PixelBuf` / `OwnedPlane` with zero copies and
-    fallible copy-on-write (`try_make_mut`, `try_as_view_mut`).
+    arenas to move directly into `PixelBuf` / `PlaneBuf` with zero copies and
+    fallible copy-on-write (`make_mut`, `try_as_view_mut`).
 - **Symmetric zero-copy interop:**
-  - `imgref` feature: `PixelView::try_as_imgref`, `PixelViewMut::try_as_imgref_mut`,
-    `PixelBuf::from_imgvec` / `try_into_imgvec`, `PixelView::from_imgref`, and
-    `PixelViewMut::from_imgref_mut`.
+  - `imgref` feature: `PixelView::as_imgref`, `PixelViewMut::as_imgref_mut`,
+    `PixelBuf::from_imgvec` / `into_imgvec` / `into_imgvec_zero_copy`,
+    `PixelView::from_imgref`, and `PixelViewMut::from_imgref_mut`.
   - `image` feature (`image 0.25`): `PixelBuf::from_dynamic_image` /
-    `from_image_buffer` / `try_into_dynamic_image` / `try_into_image_buffer`.
+    `from_image_buffer` / `from_rgb8_image_with_color` / `from_rgba8_image_with_color` /
+    `into_dynamic_image` / `into_image_buffer`.
 - **Portable content hashing (`hash` feature):**
   - Endian- and stride-independent XXH3-64 digests (`xxhash-rust`) on `PixelView`,
-    `PixelBuf`, `BandedBuf`, `PlaneView`, `OwnedPlane`, `PlanarView`, `PlanarBuf`,
+    `PixelBuf`, `BandedBuf`, `PlaneView`, `PlaneBuf`, `PlanarView`, `PlanarBuf`,
     and `CodePlane` with `HashInclusions` and `PixelHasher`.
 
 ### Breaking Changes (vs 0.2 / 0.4)
@@ -152,16 +159,21 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
 ### Added
 
 - **Cohesive planning & execution:**
-  - `ConvertPolicy` (`lossless()`, `permissive()`, `working_linear()`, `display_sdr()`)
-    with `DepthPolicy`, `AlphaPolicy`, `GamutPolicy`, `RangePolicy`, `LumaCoefficients`,
-    `LumaDomain::{Encoded, LinearLight}`, `allow_icc_substitution`, `allow_approximate`,
-    `with_cms()`, and `with_accelerators()`.
+  - `ConvertPolicy` (`default() == lossless()`, `permissive()`, `working_linear()`,
+    `display_sdr()`) with `DepthPolicy`, `AlphaPolicy`, `GamutPolicy`, `RangePolicy`,
+    `LumaCoefficients`, `LumaDomain::{Encoded, LinearLight}`, `allow_icc_substitution`,
+    `allow_approximate`, `with_cms()`, and `with_accelerators()`.
   - Stateless `Send + Sync` `RowPlan` (zero heap allocation per `convert_row`),
-    whole-image `ImagePlan`, `OutputPlan` + `adapt_for_encode` / `adapt_for_encode_format`,
+    whole-image `ImagePlan`, 3-arg `convert_to_buf`/`convert_into` (plus `*_with_peak`),
+    `OutputPlan` (`OutputSignaling`) + `adapt_for_encode` / `adapt_for_encode_format`,
     `Negotiate` (`select_format` for `Copy` `PixelFormat` slices), and ergonomic wrappers
     (`to_rgb8`, `to_rgba8`, `to_gray8`, `to_bgra8`). Planners accept `impl AsRef<ImageSpec>`
     (zero-clone `&ImageSpec` or owned `ImageSpec`) and exact math for all 16 H.273 Table 3
     transfer functions with 0-bit SCALAR/SIMD parity.
+  - `compact`: free functions `analyze_compaction(&view)` → `CompactionReport`
+    (`requires_alpha`, `requires_chroma`, `requires_u16_precision`, `candidate_spec`),
+    `compact_to_buf(&view)`, and zero-reallocation
+    `compact_in_place(&mut buf, AlphaCompaction::{RetagOpaque, DropUnusedLanes})`.
 - **Fast paths & SIMD acceleration:**
   - Hybrid zero-scratch scalar core + opt-in `Accelerators` (`fast` feature,
     default-off for minimal library codegen).
@@ -172,24 +184,30 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
   - Opt-in (`allow_approximate`) 4096-LUT `Linear F32 -> sRGB U8` fast path
     (`<= 1 LSB` vs exact float, 0-bit identical across SIMD tiers) alongside 2×8
     unrolled exact SIMD.
-- **HDR, Gain Maps, Orientation, YCbCr & Measurement:**
+- **HDR, Gain Maps, Orientation, Planar Reconstruction & Measurement:**
   - `gainmap` feature: ISO 21496-1 / UltraHDR reconstruction, extraction, and
-    resampling (`GainMapApplier`, `GainMapRowExtractor` with decoupled 1/3-ch image vs
-    `Shared`/`PerChannel` metadata arity, `apply_gain_map_oriented` propagating
-    `Passthrough` orientation onto the output `PixelBuf`, `extract_gain_map`,
-    `extract_gain_map_only`, `bake_dual_layer_orientation`, `rotate_dual_layer`).
+    resampling (`GainMapApplier`, `GainMapApplyConfig::{from_headroom_stops, from_display_boost_linear}`,
+    `GainMapRowExtractor` with decoupled 1/3-ch image vs `Shared`/`PerChannel` metadata
+    arity, `apply_gain_map_with`, `apply_gain_map_oriented` propagating `Passthrough`
+    orientation onto the output `PixelBuf`, `extract_gain_map`, `extract_gain_map_only`,
+    `bake_dual_layer_orientation`, `bake_dual_layer_orientation_after`).
+  - `bt2446a` feature: `Bt2446A::pipeline_managed()` and explicit typed
+    `Bt2446A::with_peaks(hdr_peak: Nits, sdr_peak: Nits)`.
   - `orient`: all 8 EXIF orientations (`apply_orientation`, `apply_orientation_into`,
-    `orient_buf`, `orient_banded`, zero-alloc `apply_orientation_banded_into`, plus
-    buffer-carried `bake_orientation`, zero-copy `bake_orientation_buf`, and
-    `bake_orientation_banded`) with cache-blocked SIMD transpose (`fast-transpose`).
-  - `measure`: `measure_cll`, `measure_histogram`, `LightLevelHistogram::{bins, try_merge}`,
+    `apply_orientation_owned`, `apply_orientation_banded`, zero-alloc
+    `apply_orientation_banded_into`, plus buffer-carried `bake_orientation`, zero-copy
+    `bake_orientation_owned`, and `bake_orientation_banded`) with cache-blocked SIMD
+    transpose (`fast-transpose`).
+  - `measure`: `measure_cll`, `measure_histogram`, `LightLevelHistogram::{bins, merge}`,
     and `measure_max_smoothed` (3-tap mirror-padded box filter).
-  - `ycbcr`: lossless ITU-T H.273 Table 4 `YcbcrMatrix` (`Identity`, `Bt709`, `Fcc`,
-    `Bt470Bg`, `Bt601`, `Smpte240M`, `YCgCo`, `Bt2020`, `ChromaDerivedNcl`),
-    siting-exact `ChromaUpsample::{Nearest, Bilinear}` + `YcbcrOptions`, planar RGB
-    (`U8`/`U16`/`F32`), zero-alloc strided `ycbcr_to_rgb_into` / `ycbcr_to_rgb_with_options_into`
-    targeting `U8`/`U16`/`F32` `RGB`/`RGBA`/`BGR`/`BGRA`/`RGBX`/`BGRX`/`Gray`/`GrayAlpha`,
-    and full `hdr`/`origin`/`orientation` propagation.
+  - `planar` & `ycbcr`: lossless ITU-T H.273 Table 4 `YcbcrMatrix` (`Identity`,
+    `Bt709`, `Fcc`, `Bt470Bg`, `Bt601`, `Smpte240M`, `YCgCo`, `Bt2020`,
+    `ChromaDerivedNcl`), siting-exact `ChromaUpsample::{Nearest, Bilinear}` +
+    `PlanarReconstructionOptions`, and unified `reconstruct_planar_to_buf`, zero-alloc
+    `reconstruct_planar_into` (validating destination color compatibility), and
+    `reconstruct_planar_f32` supporting YCbCr, GBR, planar RGB (`U8`/`U16`/`F32`),
+    and monochrome targeting `U8`/`U16`/`F32` `RGB`/`RGBA`/`BGR`/`BGRA`/`RGBX`/`BGRX`/
+    `Gray`/`GrayAlpha` with full `hdr`/`origin`/`orientation` propagation.
 - **Pluggable CMS (`CmsBackend` / `CmsTransform`):**
   - `MoxCms` (`cms-moxcms`) with explicit refusal of `AbsoluteColorimetric`, float
     `D2B*`/`B2D*` MPE tags per active intent, and unequal adjacent RGB TRCs, plus
@@ -209,7 +227,7 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
   `RowPlan` `src == dst` unverified `Opaque` canonicalization on packed-word layouts
   such as `RGB10A2`.
 - Fixed `OutputPlan` silently stripping `HlgMode::Display` rendering parameters under
-  `OutputProfile::CicpOnly` and `OutputProfile::Auto` (now returns
+  `OutputSignaling::CicpOnly` and `OutputSignaling::Auto` (now returns
   `ConvertError::OutputSignalingUnavailable`).
 - Fixed `OutputPlan` accepting `MetadataOnly` ICC profiles for structured RGB/Gray
   destinations (now requires `IdentificationUse::MatrixTrcSubstitution`).

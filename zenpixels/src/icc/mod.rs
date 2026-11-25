@@ -718,7 +718,7 @@ pub const fn normalized_hash(data: &[u8]) -> (u64, u32) {
 /// profile can use them as a filter and then compare the retained bytes here.
 /// Inputs of different lengths never compare equal; identical empty inputs do.
 ///
-/// Used by `zenpixels-convert::OutputProfile::normalize_known_icc` before
+/// Used by `zenpixels-convert::OutputSignaling::normalize_known_icc` before
 /// replacing a profile with its bundled canonical bytes.
 #[must_use]
 pub const fn normalized_eq(left: &[u8], right: &[u8]) -> bool {

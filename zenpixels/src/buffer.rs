@@ -734,7 +734,7 @@ pub struct PixelView<'a> {
 impl<'a> PixelView<'a> {
     /// Borrow strided bytes with checked dimensions, alignment, and length (**zero heap allocation**).
     ///
-    /// Pass [`ImageSpec::rgb8_srgb_ref()`] (or any `ImageSpec::*_ref()` preset) or a borrowed
+    /// Pass [`&specs::RGB8_SRGB`](crate::specs::RGB8_SRGB) (or any `crate::specs::*` preset) or a borrowed
     /// `&'a ImageSpec`. If a view genuinely needs to own a dynamically constructed [`ImageSpec`],
     /// use [`new_with_spec_cow`](Self::new_with_spec_cow) with [`SpecCow::from_owned`] or
     /// [`SpecCow::from_arc`].
@@ -951,10 +951,10 @@ impl<'a> PixelView<'a> {
         self.orientation.output_dimensions(self.width, self.rows)
     }
 
-    /// Attach proven sample facts to this view.
+    /// Attach caller-asserted [`SampleFacts`] to this view (caller assumes responsibility for validity).
     #[inline]
     #[must_use]
-    pub fn with_facts(mut self, facts: SampleFacts) -> Self {
+    pub fn with_assumed_facts(mut self, facts: SampleFacts) -> Self {
         self.facts = facts;
         self
     }
@@ -1190,7 +1190,7 @@ pub struct PixelViewMut<'a> {
 impl<'a> PixelViewMut<'a> {
     /// Borrow mutable strided bytes with checked dimensions, alignment, and length (**zero heap allocation**).
     ///
-    /// Pass [`ImageSpec::rgb8_srgb_ref()`] (or any `ImageSpec::*_ref()` preset) or a borrowed
+    /// Pass [`&specs::RGB8_SRGB`](crate::specs::RGB8_SRGB) (or any `crate::specs::*` preset) or a borrowed
     /// `&'a ImageSpec`. If a view genuinely needs to own a dynamically constructed [`ImageSpec`],
     /// use [`new_with_spec_cow`](Self::new_with_spec_cow) with [`SpecCow::from_owned`] or
     /// [`SpecCow::from_arc`].
@@ -1791,7 +1791,7 @@ impl PixelBuf {
     }
 
     /// Fallibly allocate tight native storage validated upfront for a zero-copy [`InteropTarget`].
-    pub fn new_for(
+    pub fn new_for_interop(
         width: u32,
         height: u32,
         spec: impl Into<ImageSpec>,
@@ -2372,13 +2372,14 @@ impl PixelBuf {
         &self.spec
     }
 
-    /// Replace specification metadata while preserving numeric sample type, bit packing, and
-    /// `bytes_per_pixel` (e.g. relabeling color space or channel order without modifying bytes).
+    /// Relabel specification metadata without modifying pixel bytes, preserving numeric sample
+    /// type, bit packing, and `bytes_per_pixel` (e.g. relabeling color space or channel order).
     ///
-    /// Rejects changes to `sample` type or `packing` (use [`reinterpret`](Self::reinterpret) for
-    /// deliberate raw-byte reinterpretation across sample types). Clears cached [`SampleFacts`]
-    /// and resets [`ColorOrigin`] to [`ColorOrigin::assumed`] whenever `spec.color` changes.
-    pub fn with_spec(mut self, spec: impl Into<ImageSpec>) -> Result<Self, At<BufferError>> {
+    /// Rejects changes to `sample` type or `packing` (use
+    /// [`reinterpret_bytes`](Self::reinterpret_bytes) for deliberate raw-byte reinterpretation
+    /// across sample types). Clears cached [`SampleFacts`] and resets [`ColorOrigin`] to
+    /// [`ColorOrigin::assumed`] whenever `spec.color` changes.
+    pub fn relabel_spec(mut self, spec: impl Into<ImageSpec>) -> Result<Self, At<BufferError>> {
         let spec = spec.into();
         if spec.layout.sample != self.spec.layout.sample
             || spec.layout.packing != self.spec.layout.packing
@@ -2404,11 +2405,13 @@ impl PixelBuf {
         Ok(self)
     }
 
-    /// Replace only the color space while keeping the exact [`SampleLayout`].
+    /// Relabel only the color space metadata without modifying pixel bytes, keeping the exact
+    /// [`SampleLayout`].
     ///
-    /// Resets [`ColorOrigin`] to [`ColorOrigin::assumed`] when `color` changes and clears
-    /// cached [`SampleFacts`] when signal range, alpha mode, or color model changes.
-    pub fn with_color(mut self, color: crate::ColorSpace) -> Result<Self, At<BufferError>> {
+    /// Does **not** convert pixel values (use `zenpixels-convert` to convert colors). Resets
+    /// [`ColorOrigin`] to [`ColorOrigin::assumed`] when `color` changes and clears cached
+    /// [`SampleFacts`] when signal range, alpha mode, or color model changes.
+    pub fn relabel_color(mut self, color: crate::ColorSpace) -> Result<Self, At<BufferError>> {
         let new_spec = ImageSpec::new(self.spec.layout, color);
         new_spec
             .validate()
@@ -2432,8 +2435,12 @@ impl PixelBuf {
     /// `bytes_per_pixel` and satisfied sample alignment (permits changing `sample` type and
     /// `packing`, e.g. `U8` ↔ `I8` or `U16` ↔ `F16`).
     ///
-    /// Always clears cached [`SampleFacts`], [`ColorOrigin`], and [`HdrMetadata`].
-    pub fn reinterpret(mut self, spec: impl Into<ImageSpec>) -> Result<Self, At<BufferError>> {
+    /// Does **not** convert pixel values. Always clears cached [`SampleFacts`], [`ColorOrigin`],
+    /// and [`HdrMetadata`].
+    pub fn reinterpret_bytes(
+        mut self,
+        spec: impl Into<ImageSpec>,
+    ) -> Result<Self, At<BufferError>> {
         let spec = spec.into();
         if spec.layout.bytes_per_pixel() != self.spec.layout.bytes_per_pixel() {
             return Err(err_at(BufferError::IncompatibleLayout));
@@ -2457,7 +2464,7 @@ impl PixelBuf {
     /// Scan every active pixel to verify its alpha slot equals its canonical maximum value, then
     /// retag this buffer as [`AlphaMode::Opaque`] with `facts.all_opaque = true` (zero copy).
     ///
-    /// Performs the full-pixel scan itself — no prior [`set_facts`](Self::set_facts) call is
+    /// Performs the full-pixel scan itself — no prior [`assume_facts`](Self::assume_facts) call is
     /// required. Returns [`BufferError::IncompatibleLayout`] if the layout has no alpha slot, or
     /// [`BufferError::UnverifiedOpaqueAlpha`] if any alpha sample is not at channel maximum.
     pub fn into_opaque_verified(mut self) -> Result<Self, At<BufferError>> {
@@ -2541,9 +2548,10 @@ impl PixelBuf {
         self.facts
     }
 
-    /// Attach proven sample facts (caller asserts validity; cleared on next `&mut` borrow).
+    /// Attach caller-asserted [`SampleFacts`] (caller assumes responsibility for validity;
+    /// cleared on next mutable pixel access).
     #[inline]
-    pub fn set_facts(&mut self, facts: SampleFacts) {
+    pub fn assume_facts(&mut self, facts: SampleFacts) {
         self.facts = facts;
     }
 
@@ -2612,6 +2620,49 @@ impl PixelBuf {
     pub const fn compose_orientation(mut self, delta: Orientation) -> Self {
         self.orientation = self.orientation.then(delta);
         self
+    }
+
+    /// Borrow active pixel bytes for row `y` (`len == row_bytes()`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `y >= self.height()`.
+    #[inline]
+    #[must_use]
+    pub fn row(&self, y: u32) -> &[u8] {
+        assert!(
+            y < self.height,
+            "row index {y} out of bounds ({})",
+            self.height
+        );
+        let start = self.offset + (y as usize) * self.stride;
+        &self.storage.as_bytes()[start..start + self.row_bytes()]
+    }
+
+    /// Mutably borrow active pixel bytes for row `y` (`len == row_bytes()`), clearing cached
+    /// [`SampleFacts`] and copy-on-write promoting immutable external storage if needed.
+    ///
+    /// For fallible external-storage CoW without panicking on OOM, use
+    /// `buf.try_as_view_mut()?.row_mut(y)`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `y >= self.height()`, or if copy-on-write promotion of immutable external storage
+    /// fails to allocate.
+    #[inline]
+    #[must_use]
+    pub fn row_mut(&mut self, y: u32) -> &mut [u8] {
+        assert!(
+            y < self.height,
+            "row index {y} out of bounds ({})",
+            self.height
+        );
+        self.make_mut()
+            .expect("copy-on-write promotion of external PixelBuf failed");
+        self.facts = SampleFacts::NONE;
+        let rb = self.row_bytes();
+        let start = self.offset + (y as usize) * self.stride;
+        &mut self.storage.as_bytes_mut()[start..start + rb]
     }
 
     /// Borrow an immutable [`PixelView`] of the whole image (zero `Arc` refcount bump).
@@ -2747,12 +2798,14 @@ impl PixelBuf {
         Ok(())
     }
 
-    /// Compact strided rows in-place within the current allocation (`stride = row_bytes`).
+    /// Fallibly compact strided rows into tight row packing (`stride == row_bytes()`).
     ///
-    /// Preserves `offset = 0` whenever the backing storage base pointer satisfies
-    /// `spec.layout.min_alignment()`, and otherwise keeps the smallest valid
-    /// aligned offset (`< min_alignment()`) so sample alignment is never violated.
-    pub fn into_contiguous(mut self) -> Self {
+    /// Reuses the existing allocation in-place for owned mutable storage; promotes shared or
+    /// immutable external storage via fallible copy-on-write (`BufferError::AllocationFailed` on
+    /// OOM). Preserves `offset = 0` whenever the backing base pointer satisfies
+    /// `spec.layout.min_alignment()`, and otherwise retains the smallest valid aligned offset
+    /// (`< min_alignment()`) so sample alignment is never violated.
+    pub fn into_tight_buf(mut self) -> Result<Self, At<BufferError>> {
         let rb = self.row_bytes();
         let align = self.spec.layout.min_alignment();
         let ptr_rem = (self.storage.as_bytes().as_ptr() as usize) % align;
@@ -2761,10 +2814,9 @@ impl PixelBuf {
             self.stride = rb;
             self.storage
                 .truncate_bytes(target_offset + rb * self.height as usize);
-            return self;
+            return Ok(self);
         }
-        self.make_mut()
-            .expect("copy-on-write promotion of external PixelBuf failed");
+        self.make_mut()?;
         let ptr_rem = (self.storage.as_bytes().as_ptr() as usize) % align;
         let target_offset = if ptr_rem == 0 { 0 } else { align - ptr_rem };
         let bytes = self.storage.as_bytes_mut();
@@ -2779,7 +2831,7 @@ impl PixelBuf {
         self.stride = rb;
         self.storage
             .truncate_bytes(target_offset + rb * self.height as usize);
-        self
+        Ok(self)
     }
 
     /// Permute or compact channels in place without reallocating for compatible same-depth orders.
@@ -4090,30 +4142,32 @@ impl PlanarBuf {
         self
     }
 
-    /// Optional ITU-T H.273 `MatrixCoefficients` code (`1` = BT.709, `6` = BT.601, `9` = BT.2020 NCL, `0` = Identity).
+    /// Optional ITU-T H.273 `MatrixCoefficients` code (`1` = BT.709, `6` = BT.601, `9` = BT.2020 NCL, `0` = Identity/GBR).
     #[inline]
     #[must_use]
-    pub const fn ycbcr_matrix_code(&self) -> Option<u8> {
+    pub const fn matrix_coefficients_code(&self) -> Option<u8> {
         self.ycbcr_matrix_code
     }
 
     /// Attach ITU-T H.273 `MatrixCoefficients` code for YCbCr/GBR planes.
     #[inline]
     #[must_use]
-    pub const fn with_ycbcr_matrix_code(mut self, matrix_code: u8) -> Self {
+    pub const fn with_matrix_coefficients_code(mut self, matrix_code: u8) -> Self {
         self.ycbcr_matrix_code = Some(matrix_code);
         self
     }
 
-    /// Explicit signal range (`Full` or `Narrow`), if set separately from [`color`](Self::color).
+    /// Explicit signal range override (`Full` or `Narrow`), if set separately from [`color`](Self::color).
+    ///
+    /// Prefer [`effective_range`](Self::effective_range) when reading the active range.
     #[inline]
     #[must_use]
-    pub const fn range(&self) -> Option<SignalRange> {
+    pub const fn range_override(&self) -> Option<SignalRange> {
         self.range
     }
 
-    /// Effective signal range, checking explicit [`range`](Self::range) first and falling back
-    /// to [`color`](Self::color)'s range.
+    /// Effective signal range, checking [`range_override`](Self::range_override) first and falling
+    /// back to [`color`](Self::color)'s range.
     #[inline]
     #[must_use]
     pub fn effective_range(&self) -> Option<SignalRange> {
@@ -4121,23 +4175,25 @@ impl PlanarBuf {
             .or_else(|| self.color.as_deref().and_then(|c| c.range()))
     }
 
-    /// Attach explicit signal range (`Full` or `Narrow`).
+    /// Attach an explicit signal range override (`Full` or `Narrow`).
     #[inline]
     #[must_use]
-    pub const fn with_range(mut self, range: SignalRange) -> Self {
+    pub const fn with_range_override(mut self, range: SignalRange) -> Self {
         self.range = Some(range);
         self
     }
 
-    /// Explicit alpha association mode for an attached alpha plane, if set separately from [`color`](Self::color).
+    /// Explicit alpha association override for an attached alpha plane, if set separately from [`color`](Self::color).
+    ///
+    /// Prefer [`effective_alpha`](Self::effective_alpha) when reading the active alpha mode.
     #[inline]
     #[must_use]
-    pub const fn alpha(&self) -> Option<AlphaMode> {
+    pub const fn alpha_override(&self) -> Option<AlphaMode> {
         self.alpha
     }
 
-    /// Effective alpha association mode, checking explicit [`alpha`](Self::alpha) first and
-    /// falling back to [`color`](Self::color)'s alpha mode.
+    /// Effective alpha association mode, checking [`alpha_override`](Self::alpha_override) first
+    /// and falling back to [`color`](Self::color)'s alpha mode.
     #[inline]
     #[must_use]
     pub fn effective_alpha(&self) -> Option<AlphaMode> {
@@ -4145,10 +4201,10 @@ impl PlanarBuf {
             .or_else(|| self.color.as_deref().map(|c| c.alpha()))
     }
 
-    /// Attach explicit alpha association mode (e.g. `AlphaMode::Straight` or `AlphaMode::Premultiplied`).
+    /// Attach an explicit alpha association override (e.g. `AlphaMode::Straight` or `AlphaMode::Premultiplied`).
     #[inline]
     #[must_use]
-    pub const fn with_alpha(mut self, alpha: AlphaMode) -> Self {
+    pub const fn with_alpha_override(mut self, alpha: AlphaMode) -> Self {
         self.alpha = Some(alpha);
         self
     }
@@ -4766,7 +4822,7 @@ enum PlanarStorage<'a> {
 /// Borrowed multi-plane view (zero heap allocation for `1..=4` planes; spills cleanly for `5..=64` planes).
 ///
 /// Tracks `crop_origin` in full-resolution luma coordinates, [`ChromaSiting`], and optional
-/// color interpretation (`color`, `ycbcr_matrix_code`, `range`, `alpha`) so subsampled chroma
+/// color interpretation (`color`, `matrix_coefficients_code`, `range_override`, `alpha_override`) so subsampled chroma
 /// crops and YCbCr decoders carry full color authority.
 #[derive(Clone, Debug)]
 pub struct PlanarView<'a> {
@@ -4785,14 +4841,14 @@ pub struct PlanarView<'a> {
 }
 
 impl<'a> PlanarView<'a> {
-    /// Construct a validated multi-plane borrowed view (`1..=64` planes) at origin `(0, 0)`.
+    /// Construct a validated multi-plane borrowed view (`1..=64` planes) at crop origin `(0, 0)`.
     pub fn new(width: u32, height: u32, planes: &[PlaneView<'a>]) -> Result<Self, At<BufferError>> {
-        Self::new_with_origin(width, height, (0, 0), ChromaSiting::Unknown, planes)
+        Self::new_with_crop_origin(width, height, (0, 0), ChromaSiting::Unknown, planes)
     }
 
     /// Construct a validated multi-plane borrowed view with explicit parent-frame `crop_origin`
     /// and [`ChromaSiting`].
-    pub fn new_with_origin(
+    pub fn new_with_crop_origin(
         width: u32,
         height: u32,
         crop_origin: (u32, u32),
@@ -4894,29 +4950,29 @@ impl<'a> PlanarView<'a> {
         self
     }
 
-    /// Optional ITU-T H.273 `MatrixCoefficients` code (`1` = BT.709, `6` = BT.601, `9` = BT.2020 NCL, `0` = Identity).
+    /// Optional ITU-T H.273 `MatrixCoefficients` code (`1` = BT.709, `6` = BT.601, `9` = BT.2020 NCL, `0` = Identity/GBR).
     #[inline]
     #[must_use]
-    pub const fn ycbcr_matrix_code(&self) -> Option<u8> {
+    pub const fn matrix_coefficients_code(&self) -> Option<u8> {
         self.ycbcr_matrix_code
     }
 
     /// Attach ITU-T H.273 `MatrixCoefficients` code.
     #[inline]
     #[must_use]
-    pub const fn with_ycbcr_matrix_code(mut self, matrix_code: u8) -> Self {
+    pub const fn with_matrix_coefficients_code(mut self, matrix_code: u8) -> Self {
         self.ycbcr_matrix_code = Some(matrix_code);
         self
     }
 
-    /// Explicit signal range, if set.
+    /// Explicit signal range override, if set separately from [`color`](Self::color).
     #[inline]
     #[must_use]
-    pub const fn range(&self) -> Option<SignalRange> {
+    pub const fn range_override(&self) -> Option<SignalRange> {
         self.range
     }
 
-    /// Effective signal range (explicit [`range`](Self::range) or [`color`](Self::color)'s range).
+    /// Effective signal range ([`range_override`](Self::range_override) or [`color`](Self::color)'s range).
     #[inline]
     #[must_use]
     pub fn effective_range(&self) -> Option<SignalRange> {
@@ -4924,22 +4980,22 @@ impl<'a> PlanarView<'a> {
             .or_else(|| self.color.as_deref().and_then(|c| c.range()))
     }
 
-    /// Attach explicit signal range.
+    /// Attach an explicit signal range override.
     #[inline]
     #[must_use]
-    pub const fn with_range(mut self, range: SignalRange) -> Self {
+    pub const fn with_range_override(mut self, range: SignalRange) -> Self {
         self.range = Some(range);
         self
     }
 
-    /// Explicit alpha association mode, if set.
+    /// Explicit alpha association override, if set separately from [`color`](Self::color).
     #[inline]
     #[must_use]
-    pub const fn alpha(&self) -> Option<AlphaMode> {
+    pub const fn alpha_override(&self) -> Option<AlphaMode> {
         self.alpha
     }
 
-    /// Effective alpha association mode (explicit [`alpha`](Self::alpha) or [`color`](Self::color)'s alpha).
+    /// Effective alpha association mode ([`alpha_override`](Self::alpha_override) or [`color`](Self::color)'s alpha).
     #[inline]
     #[must_use]
     pub fn effective_alpha(&self) -> Option<AlphaMode> {
@@ -4947,10 +5003,10 @@ impl<'a> PlanarView<'a> {
             .or_else(|| self.color.as_deref().map(|c| c.alpha()))
     }
 
-    /// Attach explicit alpha association mode.
+    /// Attach an explicit alpha association override.
     #[inline]
     #[must_use]
-    pub const fn with_alpha(mut self, alpha: AlphaMode) -> Self {
+    pub const fn with_alpha_override(mut self, alpha: AlphaMode) -> Self {
         self.alpha = Some(alpha);
         self
     }
@@ -5181,11 +5237,11 @@ impl<'a> PlanarViewMut<'a> {
         height: u32,
         planes: Vec<PlaneViewMut<'a>>,
     ) -> Result<Self, At<BufferError>> {
-        Self::new_with_origin(width, height, (0, 0), ChromaSiting::Unknown, planes)
+        Self::new_with_crop_origin(width, height, (0, 0), ChromaSiting::Unknown, planes)
     }
 
     /// Construct a validated mutable multi-plane view with explicit `crop_origin` and [`ChromaSiting`].
-    pub fn new_with_origin(
+    pub fn new_with_crop_origin(
         width: u32,
         height: u32,
         crop_origin: (u32, u32),
@@ -5240,12 +5296,12 @@ impl<'a> PlanarViewMut<'a> {
         height: u32,
         planes: [PlaneViewMut<'a>; N],
     ) -> Result<Self, At<BufferError>> {
-        Self::from_array_with_origin(width, height, (0, 0), ChromaSiting::Unknown, planes)
+        Self::from_array_with_crop_origin(width, height, (0, 0), ChromaSiting::Unknown, planes)
     }
 
     /// Construct a validated mutable multi-plane view from a fixed array of planes with explicit
     /// `crop_origin` and [`ChromaSiting`] (zero heap allocation for `1..=4` planes).
-    pub fn from_array_with_origin<const N: usize>(
+    pub fn from_array_with_crop_origin<const N: usize>(
         width: u32,
         height: u32,
         crop_origin: (u32, u32),
@@ -5345,22 +5401,22 @@ impl<'a> PlanarViewMut<'a> {
     /// Optional ITU-T H.273 `MatrixCoefficients` code.
     #[inline]
     #[must_use]
-    pub const fn ycbcr_matrix_code(&self) -> Option<u8> {
+    pub const fn matrix_coefficients_code(&self) -> Option<u8> {
         self.ycbcr_matrix_code
     }
 
     /// Attach ITU-T H.273 `MatrixCoefficients` code.
     #[inline]
     #[must_use]
-    pub const fn with_ycbcr_matrix_code(mut self, matrix_code: u8) -> Self {
+    pub const fn with_matrix_coefficients_code(mut self, matrix_code: u8) -> Self {
         self.ycbcr_matrix_code = Some(matrix_code);
         self
     }
 
-    /// Explicit signal range, if set.
+    /// Explicit signal range override, if set separately from [`color`](Self::color).
     #[inline]
     #[must_use]
-    pub const fn range(&self) -> Option<SignalRange> {
+    pub const fn range_override(&self) -> Option<SignalRange> {
         self.range
     }
 
@@ -5372,18 +5428,18 @@ impl<'a> PlanarViewMut<'a> {
             .or_else(|| self.color.as_deref().and_then(|c| c.range()))
     }
 
-    /// Attach explicit signal range.
+    /// Attach an explicit signal range override.
     #[inline]
     #[must_use]
-    pub const fn with_range(mut self, range: SignalRange) -> Self {
+    pub const fn with_range_override(mut self, range: SignalRange) -> Self {
         self.range = Some(range);
         self
     }
 
-    /// Explicit alpha association mode, if set.
+    /// Explicit alpha association override, if set separately from [`color`](Self::color).
     #[inline]
     #[must_use]
-    pub const fn alpha(&self) -> Option<AlphaMode> {
+    pub const fn alpha_override(&self) -> Option<AlphaMode> {
         self.alpha
     }
 
@@ -5395,10 +5451,10 @@ impl<'a> PlanarViewMut<'a> {
             .or_else(|| self.color.as_deref().map(|c| c.alpha()))
     }
 
-    /// Attach explicit alpha association mode.
+    /// Attach an explicit alpha association override.
     #[inline]
     #[must_use]
-    pub const fn with_alpha(mut self, alpha: AlphaMode) -> Self {
+    pub const fn with_alpha_override(mut self, alpha: AlphaMode) -> Self {
         self.alpha = Some(alpha);
         self
     }
@@ -5922,26 +5978,44 @@ impl DualLayerHdrBuf {
     /// Validates base color model (`Rgb`/`Gray`/1-or-3-ch `Icc`), numeric gain-map layout
     /// (`ColorSpace::Untagged`, 1 or 3 channels, `U8`/`U16`/`F32` with `Full`/`Lsb`/`Msb` packing),
     /// and exact rational ISO 21496-1 metadata (`gamma > 0`, `min <= max`, `H_base != H_alt`).
+    /// Inherits pending [`Orientation`] from `base` (requiring `base.orientation() == gain_map.orientation()`).
     ///
     /// Rejects `metadata.application_space == GainMapColorSpace::Alternate` because no
-    /// alternate color space is supplied — use [`new_with_alternate`](Self::new_with_alternate)
-    /// when `application_space == Alternate`.
+    /// alternate color space is supplied — use
+    /// [`new_with_alternate_color`](Self::new_with_alternate_color) when
+    /// `application_space == Alternate`.
     pub fn new(
         base: PixelBuf,
         gain_map: PixelBuf,
         metadata: GainMapMetadata,
     ) -> Result<Self, At<BufferError>> {
         let orientation = base.orientation();
-        Self::new_with_alternate(base, gain_map, metadata, None, orientation)
+        Self::from_layers(base, gain_map, metadata, None, orientation)
     }
 
-    /// Construct a validated dual-layer HDR carrier with optional alternate color space
-    /// (required when `metadata.application_space == GainMapColorSpace::Alternate`) and
-    /// shared pending [`Orientation`].
+    /// Construct a validated dual-layer HDR carrier with an explicit alternate [`ColorSpace`]
+    /// (required when `metadata.application_space == GainMapColorSpace::Alternate`).
     ///
-    /// Rejects misregistered layer orientations (`base.orientation() != gain_map.orientation()`)
-    /// or a non-`Identity` layer orientation that contradicts `orientation`.
-    pub fn new_with_alternate(
+    /// Inherits pending [`Orientation`] from `base` (rejecting misregistered
+    /// `base.orientation() != gain_map.orientation()`). To attach or replace orientation metadata
+    /// afterward, chain [`with_orientation`](Self::with_orientation).
+    pub fn new_with_alternate_color(
+        base: PixelBuf,
+        gain_map: PixelBuf,
+        metadata: GainMapMetadata,
+        alternate_color_space: crate::ColorSpace,
+    ) -> Result<Self, At<BufferError>> {
+        let orientation = base.orientation();
+        Self::from_layers(
+            base,
+            gain_map,
+            metadata,
+            Some(alternate_color_space),
+            orientation,
+        )
+    }
+
+    fn from_layers(
         mut base: PixelBuf,
         mut gain_map: PixelBuf,
         metadata: GainMapMetadata,
@@ -5980,7 +6054,7 @@ impl DualLayerHdrBuf {
     /// Requires `parts.base.orientation() == parts.gain_map.orientation()`, and if non-`Identity`,
     /// that they match `parts.orientation`.
     pub fn from_parts(parts: DualLayerHdrBufParts) -> Result<Self, At<BufferError>> {
-        Self::new_with_alternate(
+        Self::from_layers(
             parts.base,
             parts.gain_map,
             parts.metadata,

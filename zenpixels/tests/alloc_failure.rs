@@ -61,21 +61,19 @@ fn with_oom_above<T>(threshold: usize, f: impl FnOnce() -> T) -> T {
 #[test]
 fn constructors_and_copies_return_allocation_failed_on_oom() {
     // PixelBuf::new (tight)
-    let err = with_oom_above(4096, || PixelBuf::new(64, 64, ImageSpec::rgba8_srgb())).unwrap_err();
+    let err = with_oom_above(4096, || PixelBuf::new(64, 64, ImageSpec::RGBA8_SRGB)).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
 
     // PixelBuf::new_aligned (Cache64 / AlignedSamples)
     let err = with_oom_above(4096, || {
-        PixelBuf::new_aligned(64, 64, ImageSpec::rgbf32_linear(), RowAlign::Cache64)
+        PixelBuf::new_aligned(64, 64, ImageSpec::RGBF32_LINEAR, RowAlign::Cache64)
     })
     .unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
 
     // BandedBuf::new
-    let err = with_oom_above(4096, || {
-        BandedBuf::new(64, 64, ImageSpec::rgba8_srgb(), 8192)
-    })
-    .unwrap_err();
+    let err =
+        with_oom_above(4096, || BandedBuf::new(64, 64, ImageSpec::RGBA8_SRGB, 8192)).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
 
     // PlanarBuf::new
@@ -88,7 +86,7 @@ fn constructors_and_copies_return_allocation_failed_on_oom() {
     assert_eq!(*err.error(), BufferError::AllocationFailed);
 
     // View fallback copy paths: try_to_tight_buf, try_contiguous_bytes
-    let padded = PixelBuf::new_aligned(33, 64, ImageSpec::rgb8_srgb(), RowAlign::Cache64).unwrap();
+    let padded = PixelBuf::new_aligned(33, 64, ImageSpec::RGB8_SRGB, RowAlign::Cache64).unwrap();
     let err = with_oom_above(2048, || padded.as_view().to_tight_buf()).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
 
@@ -106,13 +104,25 @@ fn constructors_and_copies_return_allocation_failed_on_oom() {
         64,
         64,
         64 * 4,
-        ImageSpec::rgba8_srgb(),
+        ImageSpec::RGBA8_SRGB,
     )
     .unwrap();
     let err = with_oom_above(4096, || ext_buf.make_mut()).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
     assert!(ext_buf.is_external());
     assert_eq!(ext_buf.as_view().row(0)[0], 0x5A);
+
+    // Padded external immutable storage `into_tight_buf` returns `AllocationFailed` cleanly on OOM!
+    let padded_ext = PixelBuf::from_external(
+        std::sync::Arc::<[u8]>::from(vec![0x42u8; 64 * 260].into_boxed_slice()),
+        64,
+        64,
+        260,
+        ImageSpec::RGBA8_SRGB,
+    )
+    .unwrap();
+    let err = with_oom_above(4096, || padded_ext.into_tight_buf()).unwrap_err();
+    assert_eq!(*err.error(), BufferError::AllocationFailed);
 
     // PlaneBuf::from_external CoW promotion (`try_as_view_mut`) on OOM leaves plane intact!
     let mut ext_plane = PlaneBuf::from_external(
@@ -128,7 +138,7 @@ fn constructors_and_copies_return_allocation_failed_on_oom() {
     assert_eq!(ext_plane.as_view().row(0)[0], 0x33);
 
     // BandedBuf::from_view and multi-band into_buf OOM paths
-    let src_big = PixelBuf::new(64, 64, ImageSpec::rgba8_srgb()).unwrap();
+    let src_big = PixelBuf::new(64, 64, ImageSpec::RGBA8_SRGB).unwrap();
     let err = with_oom_above(4096, || BandedBuf::from_view(&src_big.as_view(), 8192)).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
 

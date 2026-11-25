@@ -2346,7 +2346,7 @@ impl From<PixelFormat> for ImageSpec {
 ///
 /// Ordinary view constructors ([`PixelView::new`](crate::PixelView::new),
 /// [`PixelViewMut::new`](crate::PixelViewMut::new)) accept `&'a ImageSpec` directly (guaranteed
-/// zero heap allocation — pass [`ImageSpec::rgb8_srgb_ref()`] or `&local_spec`). When a view
+/// zero heap allocation — pass [`&specs::RGB8_SRGB`](crate::specs::RGB8_SRGB) or `&local_spec`). When a view
 /// genuinely needs to own a dynamically constructed [`ImageSpec`], pass an explicit [`SpecCow`]
 /// via [`PixelView::new_with_spec_cow`](crate::PixelView::new_with_spec_cow) using
 /// [`SpecCow::from_owned`], [`SpecCow::from_format`], or [`SpecCow::from_arc`].
@@ -2476,21 +2476,62 @@ impl AsRef<ImageSpec> for ImageSpec {
     }
 }
 
-static STATIC_RGB8_SRGB: ImageSpec = ImageSpec::RGB8_SRGB;
-static STATIC_RGBA8_SRGB: ImageSpec = ImageSpec::RGBA8_SRGB;
-static STATIC_BGR8_SRGB: ImageSpec = ImageSpec::BGR8_SRGB;
-static STATIC_BGRA8_SRGB: ImageSpec = ImageSpec::BGRA8_SRGB;
-static STATIC_RGBX8_SRGB: ImageSpec = ImageSpec::RGBX8_SRGB;
-static STATIC_BGRX8_SRGB: ImageSpec = ImageSpec::BGRX8_SRGB;
-static STATIC_RGB16_SRGB: ImageSpec = ImageSpec::RGB16_SRGB;
-static STATIC_RGBA16_SRGB: ImageSpec = ImageSpec::RGBA16_SRGB;
-static STATIC_RGBF32_LINEAR: ImageSpec = ImageSpec::RGBF32_LINEAR;
-static STATIC_RGBAF32_LINEAR: ImageSpec = ImageSpec::RGBAF32_LINEAR;
-static STATIC_RGBF16_LINEAR: ImageSpec = ImageSpec::RGBF16_LINEAR;
-static STATIC_RGBAF16_LINEAR: ImageSpec = ImageSpec::RGBAF16_LINEAR;
-static STATIC_GRAY8_SRGB: ImageSpec = ImageSpec::GRAY8_SRGB;
-static STATIC_GRAYA8_SRGB: ImageSpec = ImageSpec::GRAYA8_SRGB;
-static STATIC_GRAY16_SRGB: ImageSpec = ImageSpec::GRAY16_SRGB;
+/// Built-in `'static` [`ImageSpec`] preset instances for zero-allocation borrowed views.
+///
+/// Use `&specs::RGB8_SRGB` when constructing a [`PixelView`](crate::PixelView) or
+/// [`PixelViewMut`](crate::PixelViewMut) (or passing `&ImageSpec` to a planner), and
+/// `ImageSpec::RGB8_SRGB` when you need an owned `const` value for [`PixelBuf`](crate::PixelBuf)
+/// constructors or builder chaining (`.with_alpha(...)`, `.with_primaries(...)`).
+///
+/// *(Because [`ImageSpec`] owns an `Arc<[u8]>` inside its `ColorSpace::Icc` variant and
+/// therefore has non-trivial `Drop`, Rust does not static-promote `&ImageSpec::RGB8_SRGB`.)*
+pub mod specs {
+    use super::ImageSpec;
+
+    /// Static `&'static ImageSpec` for [`ImageSpec::RGB8_SRGB`].
+    pub static RGB8_SRGB: ImageSpec = ImageSpec::RGB8_SRGB;
+    /// Static `&'static ImageSpec` for [`ImageSpec::RGBA8_SRGB`].
+    pub static RGBA8_SRGB: ImageSpec = ImageSpec::RGBA8_SRGB;
+    /// Static `&'static ImageSpec` for [`ImageSpec::BGR8_SRGB`].
+    pub static BGR8_SRGB: ImageSpec = ImageSpec::BGR8_SRGB;
+    /// Static `&'static ImageSpec` for [`ImageSpec::BGRA8_SRGB`].
+    pub static BGRA8_SRGB: ImageSpec = ImageSpec::BGRA8_SRGB;
+    /// Static `&'static ImageSpec` for [`ImageSpec::RGBX8_SRGB`].
+    pub static RGBX8_SRGB: ImageSpec = ImageSpec::RGBX8_SRGB;
+    /// Static `&'static ImageSpec` for [`ImageSpec::BGRX8_SRGB`].
+    pub static BGRX8_SRGB: ImageSpec = ImageSpec::BGRX8_SRGB;
+    /// Static `&'static ImageSpec` for [`ImageSpec::RGB16_SRGB`].
+    pub static RGB16_SRGB: ImageSpec = ImageSpec::RGB16_SRGB;
+    /// Static `&'static ImageSpec` for [`ImageSpec::RGBA16_SRGB`].
+    pub static RGBA16_SRGB: ImageSpec = ImageSpec::RGBA16_SRGB;
+    /// Static `&'static ImageSpec` for [`ImageSpec::RGBF32_LINEAR`].
+    pub static RGBF32_LINEAR: ImageSpec = ImageSpec::RGBF32_LINEAR;
+    /// Static `&'static ImageSpec` for [`ImageSpec::RGBAF32_LINEAR`].
+    pub static RGBAF32_LINEAR: ImageSpec = ImageSpec::RGBAF32_LINEAR;
+    /// Static `&'static ImageSpec` for [`ImageSpec::RGBF16_LINEAR`].
+    pub static RGBF16_LINEAR: ImageSpec = ImageSpec::RGBF16_LINEAR;
+    /// Static `&'static ImageSpec` for [`ImageSpec::RGBAF16_LINEAR`].
+    pub static RGBAF16_LINEAR: ImageSpec = ImageSpec::RGBAF16_LINEAR;
+    /// Static `&'static ImageSpec` for [`ImageSpec::GRAY8_SRGB`].
+    pub static GRAY8_SRGB: ImageSpec = ImageSpec::GRAY8_SRGB;
+    /// Static `&'static ImageSpec` for [`ImageSpec::GRAYA8_SRGB`].
+    pub static GRAYA8_SRGB: ImageSpec = ImageSpec::GRAYA8_SRGB;
+    /// Static `&'static ImageSpec` for [`ImageSpec::GRAY16_SRGB`].
+    pub static GRAY16_SRGB: ImageSpec = ImageSpec::GRAY16_SRGB;
+    /// Static `&'static ImageSpec` for [`ImageSpec::GRAYF32_LINEAR`].
+    pub static GRAYF32_LINEAR: ImageSpec = ImageSpec::GRAYF32_LINEAR;
+    /// Static `&'static ImageSpec` for [`ImageSpec::RGB16_BT2100_PQ`].
+    pub static RGB16_BT2100_PQ: ImageSpec = ImageSpec::RGB16_BT2100_PQ;
+    /// Static `&'static ImageSpec` for [`ImageSpec::RGB16_BT2100_HLG_SCENE`].
+    pub static RGB16_BT2100_HLG_SCENE: ImageSpec = ImageSpec::RGB16_BT2100_HLG_SCENE;
+    /// Static `&'static ImageSpec` for [`ImageSpec::RGB16_BT2100_HLG_1000`].
+    pub static RGB16_BT2100_HLG_1000: ImageSpec = ImageSpec::RGB16_BT2100_HLG_1000;
+    /// Static `&'static ImageSpec` for [`ImageSpec::OKLAB_F32`].
+    pub static OKLAB_F32: ImageSpec = ImageSpec::OKLAB_F32;
+    /// Static `&'static ImageSpec` for [`ImageSpec::OKLABA_F32`].
+    pub static OKLABA_F32: ImageSpec = ImageSpec::OKLABA_F32;
+}
+
 static STATIC_GRAYA16_SRGB: ImageSpec = ImageSpec::new(
     SampleLayout::GRAYA16,
     ColorSpace::Gray {
@@ -2500,210 +2541,56 @@ static STATIC_GRAYA16_SRGB: ImageSpec = ImageSpec::new(
         white: None,
     },
 );
-static STATIC_GRAYF32_LINEAR: ImageSpec = ImageSpec::GRAYF32_LINEAR;
 static STATIC_RGBF32_SRGB: ImageSpec = ImageSpec::new(SampleLayout::RGBF32, ColorSpace::SRGB);
 static STATIC_RGBAF32_SRGB: ImageSpec =
     ImageSpec::new(SampleLayout::RGBAF32, ColorSpace::SRGB_ALPHA);
-static STATIC_RGB16_BT2100_PQ: ImageSpec = ImageSpec::RGB16_BT2100_PQ;
-static STATIC_RGB16_BT2100_HLG_SCENE: ImageSpec = ImageSpec::RGB16_BT2100_HLG_SCENE;
-static STATIC_RGB16_BT2100_HLG_1000: ImageSpec = ImageSpec::RGB16_BT2100_HLG_1000;
-static STATIC_OKLAB_F32: ImageSpec = ImageSpec::OKLAB_F32;
-static STATIC_OKLABA_F32: ImageSpec = ImageSpec::OKLABA_F32;
 
 impl ImageSpec {
     /// 8-bit sRGB RGB (`RGB8`).
     ///
-    /// Note: because [`ImageSpec`] contains `ColorSpace::Icc { profile: Arc<[u8]> }` (non-trivial
-    /// `Drop`), Rust cannot static-promote `&ImageSpec::RGB8_SRGB`. Use [`Self::rgb8_srgb_ref`]
-    /// (or a local `let` / `static` binding) when borrowing `&ImageSpec` for [`PixelView::new`](crate::PixelView::new).
+    /// For a `'static` borrowed reference (`&'static ImageSpec`) in [`PixelView::new`](crate::PixelView::new),
+    /// borrow [`&specs::RGB8_SRGB`](crate::specs::RGB8_SRGB).
     pub const RGB8_SRGB: Self = PixelFormat::RGB8_SRGB.to_spec();
-    /// 8-bit sRGB RGBA straight alpha (`RGBA8`). See [`Self::rgba8_srgb_ref`] for `&'static ImageSpec`.
+    /// 8-bit sRGB RGBA straight alpha (`RGBA8`). Borrow [`&specs::RGBA8_SRGB`](crate::specs::RGBA8_SRGB) for views.
     pub const RGBA8_SRGB: Self = PixelFormat::RGBA8_SRGB.to_spec();
-    /// 8-bit sRGB BGR (`BGR8`). See [`Self::bgr8_srgb_ref`] for `&'static ImageSpec`.
+    /// 8-bit sRGB BGR (`BGR8`). Borrow [`&specs::BGR8_SRGB`](crate::specs::BGR8_SRGB) for views.
     pub const BGR8_SRGB: Self = PixelFormat::BGR8_SRGB.to_spec();
-    /// 8-bit sRGB BGRA straight alpha (`BGRA8`). See [`Self::bgra8_srgb_ref`] for `&'static ImageSpec`.
+    /// 8-bit sRGB BGRA straight alpha (`BGRA8`). Borrow [`&specs::BGRA8_SRGB`](crate::specs::BGRA8_SRGB) for views.
     pub const BGRA8_SRGB: Self = PixelFormat::BGRA8_SRGB.to_spec();
-    /// 8-bit sRGB RGBx (4th byte undefined padding). See [`Self::rgbx8_srgb_ref`] for `&'static ImageSpec`.
+    /// 8-bit sRGB RGBx (4th byte undefined padding). Borrow [`&specs::RGBX8_SRGB`](crate::specs::RGBX8_SRGB) for views.
     pub const RGBX8_SRGB: Self = PixelFormat::RGBX8_SRGB.to_spec();
-    /// 8-bit sRGB BGRx (4th byte undefined padding). See [`Self::bgrx8_srgb_ref`] for `&'static ImageSpec`.
+    /// 8-bit sRGB BGRx (4th byte undefined padding). Borrow [`&specs::BGRX8_SRGB`](crate::specs::BGRX8_SRGB) for views.
     pub const BGRX8_SRGB: Self = PixelFormat::BGRX8_SRGB.to_spec();
-    /// 16-bit sRGB RGB (`RGB16`). See [`Self::rgb16_srgb_ref`] for `&'static ImageSpec`.
+    /// 16-bit sRGB RGB (`RGB16`). Borrow [`&specs::RGB16_SRGB`](crate::specs::RGB16_SRGB) for views.
     pub const RGB16_SRGB: Self = PixelFormat::RGB16_SRGB.to_spec();
-    /// 16-bit sRGB RGBA straight alpha (`RGBA16`). See [`Self::rgba16_srgb_ref`] for `&'static ImageSpec`.
+    /// 16-bit sRGB RGBA straight alpha (`RGBA16`). Borrow [`&specs::RGBA16_SRGB`](crate::specs::RGBA16_SRGB) for views.
     pub const RGBA16_SRGB: Self = PixelFormat::RGBA16_SRGB.to_spec();
-    /// 32-bit float linear RGB (`RGBF32`). See [`Self::rgbf32_linear_ref`] for `&'static ImageSpec`.
+    /// 32-bit float linear RGB (`RGBF32`). Borrow [`&specs::RGBF32_LINEAR`](crate::specs::RGBF32_LINEAR) for views.
     pub const RGBF32_LINEAR: Self = PixelFormat::RGBF32_LINEAR.to_spec();
-    /// 32-bit float linear RGBA straight alpha (`RGBAF32`). See [`Self::rgbaf32_linear_ref`] for `&'static ImageSpec`.
+    /// 32-bit float linear RGBA straight alpha (`RGBAF32`). Borrow [`&specs::RGBAF32_LINEAR`](crate::specs::RGBAF32_LINEAR) for views.
     pub const RGBAF32_LINEAR: Self = PixelFormat::RGBAF32_LINEAR.to_spec();
-    /// 16-bit half-float linear RGB (`RGBF16`). See [`Self::rgbf16_linear_ref`] for `&'static ImageSpec`.
+    /// 16-bit half-float linear RGB (`RGBF16`). Borrow [`&specs::RGBF16_LINEAR`](crate::specs::RGBF16_LINEAR) for views.
     pub const RGBF16_LINEAR: Self = PixelFormat::RGBF16_LINEAR.to_spec();
-    /// 16-bit half-float linear RGBA straight alpha (`RGBAF16`). See [`Self::rgbaf16_linear_ref`] for `&'static ImageSpec`.
+    /// 16-bit half-float linear RGBA straight alpha (`RGBAF16`). Borrow [`&specs::RGBAF16_LINEAR`](crate::specs::RGBAF16_LINEAR) for views.
     pub const RGBAF16_LINEAR: Self = PixelFormat::RGBAF16_LINEAR.to_spec();
-    /// 8-bit sRGB grayscale (`GRAY8`). See [`Self::gray8_srgb_ref`] for `&'static ImageSpec`.
+    /// 8-bit sRGB grayscale (`GRAY8`). Borrow [`&specs::GRAY8_SRGB`](crate::specs::GRAY8_SRGB) for views.
     pub const GRAY8_SRGB: Self = PixelFormat::GRAY8_SRGB.to_spec();
-    /// 8-bit sRGB grayscale + straight alpha (`GRAYA8`). See [`Self::graya8_srgb_ref`] for `&'static ImageSpec`.
+    /// 8-bit sRGB grayscale + straight alpha (`GRAYA8`). Borrow [`&specs::GRAYA8_SRGB`](crate::specs::GRAYA8_SRGB) for views.
     pub const GRAYA8_SRGB: Self = PixelFormat::GRAYA8_SRGB.to_spec();
-    /// 16-bit sRGB grayscale (`GRAY16`). See [`Self::gray16_srgb_ref`] for `&'static ImageSpec`.
+    /// 16-bit sRGB grayscale (`GRAY16`). Borrow [`&specs::GRAY16_SRGB`](crate::specs::GRAY16_SRGB) for views.
     pub const GRAY16_SRGB: Self = PixelFormat::GRAY16_SRGB.to_spec();
-    /// 32-bit float linear grayscale (`GRAYF32`). See [`Self::grayf32_linear_ref`] for `&'static ImageSpec`.
+    /// 32-bit float linear grayscale (`GRAYF32`). Borrow [`&specs::GRAYF32_LINEAR`](crate::specs::GRAYF32_LINEAR) for views.
     pub const GRAYF32_LINEAR: Self = PixelFormat::GRAYF32_LINEAR.to_spec();
-    /// 16-bit BT.2100 PQ HDR RGB (`RGB16`, BT.2020, ST 2084). See [`Self::rgb16_bt2100_pq_ref`] for `&'static ImageSpec`.
+    /// 16-bit BT.2100 PQ HDR RGB (`RGB16`, BT.2020, ST 2084). Borrow [`&specs::RGB16_BT2100_PQ`](crate::specs::RGB16_BT2100_PQ) for views.
     pub const RGB16_BT2100_PQ: Self = PixelFormat::RGB16_BT2100_PQ.to_spec();
-    /// 16-bit BT.2100 HLG HDR RGB, scene-referred. See [`Self::rgb16_bt2100_hlg_scene_ref`] for `&'static ImageSpec`.
+    /// 16-bit BT.2100 HLG HDR RGB, scene-referred. Borrow [`&specs::RGB16_BT2100_HLG_SCENE`](crate::specs::RGB16_BT2100_HLG_SCENE) for views.
     pub const RGB16_BT2100_HLG_SCENE: Self = PixelFormat::RGB16_BT2100_HLG_SCENE.to_spec();
-    /// 16-bit BT.2100 HLG HDR RGB with explicit 1000-nit reference rendering. See [`Self::rgb16_bt2100_hlg_1000_ref`] for `&'static ImageSpec`.
+    /// 16-bit BT.2100 HLG HDR RGB with explicit 1000-nit reference rendering. Borrow [`&specs::RGB16_BT2100_HLG_1000`](crate::specs::RGB16_BT2100_HLG_1000) for views.
     pub const RGB16_BT2100_HLG_1000: Self = PixelFormat::RGB16_BT2100_HLG_1000.to_spec();
-    /// 32-bit float Oklab (no alpha). See [`Self::oklab_f32_ref`] for `&'static ImageSpec`.
+    /// 32-bit float Oklab (no alpha). Borrow [`&specs::OKLAB_F32`](crate::specs::OKLAB_F32) for views.
     pub const OKLAB_F32: Self = PixelFormat::OKLAB_F32.to_spec();
-    /// 32-bit float Oklab + straight alpha. See [`Self::oklaba_f32_ref`] for `&'static ImageSpec`.
+    /// 32-bit float Oklab + straight alpha. Borrow [`&specs::OKLABA_F32`](crate::specs::OKLABA_F32) for views.
     pub const OKLABA_F32: Self = PixelFormat::OKLABA_F32.to_spec();
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::RGB8_SRGB`].
-    #[inline]
-    #[must_use]
-    pub fn rgb8_srgb_ref() -> &'static Self {
-        &STATIC_RGB8_SRGB
-    }
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::RGBA8_SRGB`].
-    #[inline]
-    #[must_use]
-    pub fn rgba8_srgb_ref() -> &'static Self {
-        &STATIC_RGBA8_SRGB
-    }
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::BGR8_SRGB`].
-    #[inline]
-    #[must_use]
-    pub fn bgr8_srgb_ref() -> &'static Self {
-        &STATIC_BGR8_SRGB
-    }
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::BGRA8_SRGB`].
-    #[inline]
-    #[must_use]
-    pub fn bgra8_srgb_ref() -> &'static Self {
-        &STATIC_BGRA8_SRGB
-    }
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::RGBX8_SRGB`].
-    #[inline]
-    #[must_use]
-    pub fn rgbx8_srgb_ref() -> &'static Self {
-        &STATIC_RGBX8_SRGB
-    }
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::BGRX8_SRGB`].
-    #[inline]
-    #[must_use]
-    pub fn bgrx8_srgb_ref() -> &'static Self {
-        &STATIC_BGRX8_SRGB
-    }
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::RGB16_SRGB`].
-    #[inline]
-    #[must_use]
-    pub fn rgb16_srgb_ref() -> &'static Self {
-        &STATIC_RGB16_SRGB
-    }
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::RGBA16_SRGB`].
-    #[inline]
-    #[must_use]
-    pub fn rgba16_srgb_ref() -> &'static Self {
-        &STATIC_RGBA16_SRGB
-    }
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::RGBF32_LINEAR`].
-    #[inline]
-    #[must_use]
-    pub fn rgbf32_linear_ref() -> &'static Self {
-        &STATIC_RGBF32_LINEAR
-    }
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::RGBAF32_LINEAR`].
-    #[inline]
-    #[must_use]
-    pub fn rgbaf32_linear_ref() -> &'static Self {
-        &STATIC_RGBAF32_LINEAR
-    }
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::RGBF16_LINEAR`].
-    #[inline]
-    #[must_use]
-    pub fn rgbf16_linear_ref() -> &'static Self {
-        &STATIC_RGBF16_LINEAR
-    }
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::RGBAF16_LINEAR`].
-    #[inline]
-    #[must_use]
-    pub fn rgbaf16_linear_ref() -> &'static Self {
-        &STATIC_RGBAF16_LINEAR
-    }
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::GRAY8_SRGB`].
-    #[inline]
-    #[must_use]
-    pub fn gray8_srgb_ref() -> &'static Self {
-        &STATIC_GRAY8_SRGB
-    }
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::GRAYA8_SRGB`].
-    #[inline]
-    #[must_use]
-    pub fn graya8_srgb_ref() -> &'static Self {
-        &STATIC_GRAYA8_SRGB
-    }
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::GRAY16_SRGB`].
-    #[inline]
-    #[must_use]
-    pub fn gray16_srgb_ref() -> &'static Self {
-        &STATIC_GRAY16_SRGB
-    }
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::GRAYF32_LINEAR`].
-    #[inline]
-    #[must_use]
-    pub fn grayf32_linear_ref() -> &'static Self {
-        &STATIC_GRAYF32_LINEAR
-    }
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::RGB16_BT2100_PQ`].
-    #[inline]
-    #[must_use]
-    pub fn rgb16_bt2100_pq_ref() -> &'static Self {
-        &STATIC_RGB16_BT2100_PQ
-    }
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::RGB16_BT2100_HLG_SCENE`].
-    #[inline]
-    #[must_use]
-    pub fn rgb16_bt2100_hlg_scene_ref() -> &'static Self {
-        &STATIC_RGB16_BT2100_HLG_SCENE
-    }
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::RGB16_BT2100_HLG_1000`].
-    #[inline]
-    #[must_use]
-    pub fn rgb16_bt2100_hlg_1000_ref() -> &'static Self {
-        &STATIC_RGB16_BT2100_HLG_1000
-    }
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::OKLAB_F32`].
-    #[inline]
-    #[must_use]
-    pub fn oklab_f32_ref() -> &'static Self {
-        &STATIC_OKLAB_F32
-    }
-
-    /// Zero-allocation `&'static ImageSpec` for [`Self::OKLABA_F32`].
-    #[inline]
-    #[must_use]
-    pub fn oklaba_f32_ref() -> &'static Self {
-        &STATIC_OKLABA_F32
-    }
 
     /// Return a `'static` preset reference if `self` equals one of the built-in common specs.
     ///
@@ -2713,50 +2600,50 @@ impl ImageSpec {
     #[must_use]
     pub fn as_static_ref(&self) -> Option<&'static Self> {
         let candidate: &'static Self = match self.layout {
-            SampleLayout::RGB8 => &STATIC_RGB8_SRGB,
-            SampleLayout::RGBA8 => &STATIC_RGBA8_SRGB,
-            SampleLayout::BGR8 => &STATIC_BGR8_SRGB,
-            SampleLayout::BGRA8 => &STATIC_BGRA8_SRGB,
-            SampleLayout::RGBX8 => &STATIC_RGBX8_SRGB,
-            SampleLayout::BGRX8 => &STATIC_BGRX8_SRGB,
+            SampleLayout::RGB8 => &specs::RGB8_SRGB,
+            SampleLayout::RGBA8 => &specs::RGBA8_SRGB,
+            SampleLayout::BGR8 => &specs::BGR8_SRGB,
+            SampleLayout::BGRA8 => &specs::BGRA8_SRGB,
+            SampleLayout::RGBX8 => &specs::RGBX8_SRGB,
+            SampleLayout::BGRX8 => &specs::BGRX8_SRGB,
             SampleLayout::RGB16 => {
-                if self == &STATIC_RGB16_SRGB {
-                    return Some(&STATIC_RGB16_SRGB);
-                } else if self == &STATIC_RGB16_BT2100_PQ {
-                    return Some(&STATIC_RGB16_BT2100_PQ);
-                } else if self == &STATIC_RGB16_BT2100_HLG_SCENE {
-                    return Some(&STATIC_RGB16_BT2100_HLG_SCENE);
-                } else if self == &STATIC_RGB16_BT2100_HLG_1000 {
-                    return Some(&STATIC_RGB16_BT2100_HLG_1000);
+                if self == &specs::RGB16_SRGB {
+                    return Some(&specs::RGB16_SRGB);
+                } else if self == &specs::RGB16_BT2100_PQ {
+                    return Some(&specs::RGB16_BT2100_PQ);
+                } else if self == &specs::RGB16_BT2100_HLG_SCENE {
+                    return Some(&specs::RGB16_BT2100_HLG_SCENE);
+                } else if self == &specs::RGB16_BT2100_HLG_1000 {
+                    return Some(&specs::RGB16_BT2100_HLG_1000);
                 }
                 return None;
             }
-            SampleLayout::RGBA16 => &STATIC_RGBA16_SRGB,
+            SampleLayout::RGBA16 => &specs::RGBA16_SRGB,
             SampleLayout::RGBF32 => {
-                if self == &STATIC_RGBF32_LINEAR {
-                    return Some(&STATIC_RGBF32_LINEAR);
+                if self == &specs::RGBF32_LINEAR {
+                    return Some(&specs::RGBF32_LINEAR);
                 } else if self == &STATIC_RGBF32_SRGB {
                     return Some(&STATIC_RGBF32_SRGB);
                 }
                 return None;
             }
             SampleLayout::RGBAF32 => {
-                if self == &STATIC_RGBAF32_LINEAR {
-                    return Some(&STATIC_RGBAF32_LINEAR);
+                if self == &specs::RGBAF32_LINEAR {
+                    return Some(&specs::RGBAF32_LINEAR);
                 } else if self == &STATIC_RGBAF32_SRGB {
                     return Some(&STATIC_RGBAF32_SRGB);
                 }
                 return None;
             }
-            SampleLayout::RGBF16 => &STATIC_RGBF16_LINEAR,
-            SampleLayout::RGBAF16 => &STATIC_RGBAF16_LINEAR,
-            SampleLayout::GRAY8 => &STATIC_GRAY8_SRGB,
-            SampleLayout::GRAYA8 => &STATIC_GRAYA8_SRGB,
-            SampleLayout::GRAY16 => &STATIC_GRAY16_SRGB,
+            SampleLayout::RGBF16 => &specs::RGBF16_LINEAR,
+            SampleLayout::RGBAF16 => &specs::RGBAF16_LINEAR,
+            SampleLayout::GRAY8 => &specs::GRAY8_SRGB,
+            SampleLayout::GRAYA8 => &specs::GRAYA8_SRGB,
+            SampleLayout::GRAY16 => &specs::GRAY16_SRGB,
             SampleLayout::GRAYA16 => &STATIC_GRAYA16_SRGB,
-            SampleLayout::GRAYF32 => &STATIC_GRAYF32_LINEAR,
-            SampleLayout::OKLABF32 => &STATIC_OKLAB_F32,
-            SampleLayout::OKLABAF32 => &STATIC_OKLABA_F32,
+            SampleLayout::GRAYF32 => &specs::GRAYF32_LINEAR,
+            SampleLayout::OKLABF32 => &specs::OKLAB_F32,
+            SampleLayout::OKLABAF32 => &specs::OKLABA_F32,
             _ => return None,
         };
         if self == candidate {
@@ -2788,179 +2675,6 @@ impl ImageSpec {
             Some(color) => Some(PixelFormat::new(self.layout, color)),
             None => None,
         }
-    }
-
-    /// 8-bit sRGB RGB (`RGB8`).
-    #[inline]
-    #[must_use]
-    pub const fn rgb8_srgb() -> Self {
-        Self::new(SampleLayout::RGB8, ColorSpace::SRGB)
-    }
-
-    /// 8-bit sRGB RGBA straight alpha (`RGBA8`).
-    #[inline]
-    #[must_use]
-    pub const fn rgba8_srgb() -> Self {
-        Self::new(SampleLayout::RGBA8, ColorSpace::SRGB_ALPHA)
-    }
-
-    /// 8-bit sRGB BGR (`BGR8`).
-    #[inline]
-    #[must_use]
-    pub const fn bgr8_srgb() -> Self {
-        Self::new(SampleLayout::BGR8, ColorSpace::SRGB)
-    }
-
-    /// 8-bit sRGB BGRA straight alpha (`BGRA8`).
-    #[inline]
-    #[must_use]
-    pub const fn bgra8_srgb() -> Self {
-        Self::new(SampleLayout::BGRA8, ColorSpace::SRGB_ALPHA)
-    }
-
-    /// 8-bit sRGB RGBx (4th byte undefined padding).
-    #[inline]
-    #[must_use]
-    pub const fn rgbx8_srgb() -> Self {
-        Self::new(
-            SampleLayout::RGBX8,
-            ColorSpace::Rgb {
-                primaries: Primaries::Bt709,
-                transfer: Transfer::Srgb,
-                range: SignalRange::Full,
-                alpha: AlphaMode::Undefined,
-                white: None,
-            },
-        )
-    }
-
-    /// 8-bit sRGB BGRx (4th byte undefined padding).
-    #[inline]
-    #[must_use]
-    pub const fn bgrx8_srgb() -> Self {
-        Self::new(
-            SampleLayout::BGRX8,
-            ColorSpace::Rgb {
-                primaries: Primaries::Bt709,
-                transfer: Transfer::Srgb,
-                range: SignalRange::Full,
-                alpha: AlphaMode::Undefined,
-                white: None,
-            },
-        )
-    }
-
-    /// 16-bit sRGB RGB (`RGB16`).
-    #[inline]
-    #[must_use]
-    pub const fn rgb16_srgb() -> Self {
-        Self::new(SampleLayout::RGB16, ColorSpace::SRGB)
-    }
-
-    /// 16-bit sRGB RGBA straight alpha (`RGBA16`).
-    #[inline]
-    #[must_use]
-    pub const fn rgba16_srgb() -> Self {
-        Self::new(SampleLayout::RGBA16, ColorSpace::SRGB_ALPHA)
-    }
-
-    /// 32-bit float linear RGB (`RGBF32`).
-    #[inline]
-    #[must_use]
-    pub const fn rgbf32_linear() -> Self {
-        Self::new(SampleLayout::RGBF32, ColorSpace::LINEAR_SRGB)
-    }
-
-    /// 32-bit float linear RGBA straight alpha (`RGBAF32`).
-    #[inline]
-    #[must_use]
-    pub const fn rgbaf32_linear() -> Self {
-        Self::new(SampleLayout::RGBAF32, ColorSpace::LINEAR_SRGB_ALPHA)
-    }
-
-    /// 16-bit half-float linear RGB (`RGBF16`).
-    #[inline]
-    #[must_use]
-    pub const fn rgbf16_linear() -> Self {
-        Self::new(SampleLayout::RGBF16, ColorSpace::LINEAR_SRGB)
-    }
-
-    /// 16-bit half-float linear RGBA straight alpha (`RGBAF16`).
-    #[inline]
-    #[must_use]
-    pub const fn rgbaf16_linear() -> Self {
-        Self::new(SampleLayout::RGBAF16, ColorSpace::LINEAR_SRGB_ALPHA)
-    }
-
-    /// 8-bit sRGB grayscale (`GRAY8`).
-    #[inline]
-    #[must_use]
-    pub const fn gray8_srgb() -> Self {
-        Self::new(SampleLayout::GRAY8, ColorSpace::GRAY_SRGB)
-    }
-
-    /// 8-bit sRGB grayscale + straight alpha (`GRAYA8`).
-    #[inline]
-    #[must_use]
-    pub const fn graya8_srgb() -> Self {
-        Self::new(
-            SampleLayout::GRAYA8,
-            ColorSpace::Gray {
-                transfer: Transfer::Srgb,
-                range: SignalRange::Full,
-                alpha: AlphaMode::Straight,
-                white: None,
-            },
-        )
-    }
-
-    /// 16-bit sRGB grayscale (`GRAY16`).
-    #[inline]
-    #[must_use]
-    pub const fn gray16_srgb() -> Self {
-        Self::new(SampleLayout::GRAY16, ColorSpace::GRAY_SRGB)
-    }
-
-    /// 32-bit float linear grayscale (`GRAYF32`).
-    #[inline]
-    #[must_use]
-    pub const fn grayf32_linear() -> Self {
-        Self::new(SampleLayout::GRAYF32, ColorSpace::GRAY_LINEAR)
-    }
-
-    /// 16-bit BT.2100 PQ HDR RGB (`RGB16`, BT.2020, ST 2084).
-    #[inline]
-    #[must_use]
-    pub const fn rgb16_bt2100_pq() -> Self {
-        Self::new(SampleLayout::RGB16, ColorSpace::BT2100_PQ)
-    }
-
-    /// 16-bit BT.2100 HLG HDR RGB, scene-referred.
-    #[inline]
-    #[must_use]
-    pub const fn rgb16_bt2100_hlg_scene() -> Self {
-        Self::new(SampleLayout::RGB16, ColorSpace::BT2100_HLG_SCENE)
-    }
-
-    /// 16-bit BT.2100 HLG HDR RGB with explicit 1000-nit reference rendering.
-    #[inline]
-    #[must_use]
-    pub const fn rgb16_bt2100_hlg_1000() -> Self {
-        Self::new(SampleLayout::RGB16, ColorSpace::BT2100_HLG_1000)
-    }
-
-    /// 32-bit float Oklab (CIE XYZ D65-anchored, no alpha).
-    #[inline]
-    #[must_use]
-    pub const fn oklab_f32() -> Self {
-        Self::new(SampleLayout::OKLABF32, ColorSpace::OKLAB)
-    }
-
-    /// 32-bit float Oklab + straight alpha.
-    #[inline]
-    #[must_use]
-    pub const fn oklaba_f32() -> Self {
-        Self::new(SampleLayout::OKLABAF32, ColorSpace::OKLABA)
     }
 
     /// 8-bit CMYK (`0` = no ink, optional ICC profile).
@@ -3086,7 +2800,7 @@ impl ImageSpec {
     /// linear sRGB/Gray for floating-point layouts, D65 for XYZ, straight/undefined alpha matching
     /// the layout's alpha/padding slot, and untagged otherwise. Prefer explicit color spaces
     /// whenever container metadata is available.
-    pub fn with_default_color_for_layout(layout: SampleLayout) -> Result<Self, At<ColorError>> {
+    pub fn from_layout_assuming_color(layout: SampleLayout) -> Result<Self, At<ColorError>> {
         layout
             .validate()
             .map_err(|e| whereat::at!(ColorError::Layout(e)))?;

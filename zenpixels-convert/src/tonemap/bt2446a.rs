@@ -99,7 +99,7 @@ const BT2446_EOTF24_SAT: u128 = PowfOptions::new()
 
 /// BT.2446 Method A tonemapper.
 ///
-/// Construct with `new()`, then apply via [`map_rgb`](Self::map_rgb) or
+/// Construct with [`with_peaks`](Self::with_peaks) or [`pipeline_managed`](Self::pipeline_managed), then apply via [`map_rgb`](Self::map_rgb) or
 /// [`map_strip_simd`](Self::map_strip_simd). Input is linear-light
 /// BT.2020 RGB normalized so `1.0 = hdr_peak_nits`. Output is linear-light
 /// BT.2020 RGB normalized so `1.0 = sdr_peak_nits` — the BT.2446-1 §4
@@ -123,9 +123,9 @@ const BT2446_EOTF24_SAT: u128 = PowfOptions::new()
 /// ```
 /// # #[cfg(feature = "bt2446a")]
 /// # {
-/// use zenpixels_convert::tonemap::Bt2446A;
+/// use zenpixels_convert::{Nits, tonemap::Bt2446A};
 ///
-/// let curve = Bt2446A::new(1000.0, 100.0);
+/// let curve = Bt2446A::with_peaks(Nits::new(1000.0), Nits::new(100.0));
 /// let sdr = curve.map_rgb([0.6, 0.4, 0.2]);
 /// assert!(sdr.iter().all(|&c| (0.0..=1.0).contains(&c)));
 /// # }
@@ -152,17 +152,19 @@ pub struct Bt2446A {
 }
 
 impl Bt2446A {
-    /// Create a new BT.2446 Method A tonemapper with peaks baked in.
+    /// Create a new BT.2446 Method A tonemapper with explicit typed peak luminances baked in.
     ///
-    /// `hdr_peak_nits`: peak luminance of HDR content (typically 1000).
-    /// `sdr_peak_nits`: peak luminance of SDR target (typically 100).
+    /// - `hdr_peak`: peak luminance of HDR content (e.g. `Nits::new(1000.0)`).
+    /// - `sdr_peak`: peak luminance of SDR target (e.g. `Nits::new(100.0)`).
     ///
     /// Use this when the source peak is already known at construction
     /// time. For pipeline-orchestrated peak resolution via
     /// [`PeakSource`](zenpixels::PeakSource) (`Measured`, `Declared`, or `Fixed`)
     /// at `prepare()` time, use [`pipeline_managed`](Self::pipeline_managed) instead.
     #[must_use]
-    pub fn new(hdr_peak_nits: f32, sdr_peak_nits: f32) -> Self {
+    pub fn with_peaks(hdr_peak: zenpixels::Nits, sdr_peak: zenpixels::Nits) -> Self {
+        let hdr_peak_nits = hdr_peak.nits();
+        let sdr_peak_nits = sdr_peak.nits();
         let compiled = Bt2446AExecutor::compile(hdr_peak_nits, sdr_peak_nits);
         Self {
             source_peak_nits: hdr_peak_nits,
@@ -202,7 +204,7 @@ impl Bt2446A {
     }
 
     /// `true` when this descriptor was constructed via
-    /// [`new`](Self::new) with explicit peaks — its coefficients are
+    /// [`with_peaks`](Self::with_peaks) with explicit peaks — its coefficients are
     /// already compiled. `false` after
     /// [`pipeline_managed`](Self::pipeline_managed); the pipeline must
     /// supply peaks via [`ToneMapContext`](crate::tonemap::ToneMapContext)
@@ -213,7 +215,7 @@ impl Bt2446A {
     }
 
     /// HDR source peak luminance in cd/m², as constructed via
-    /// [`new`](Self::new). Returns `0.0` for
+    /// [`with_peaks`](Self::with_peaks). Returns `0.0` for
     /// [`pipeline_managed`](Self::pipeline_managed) descriptors —
     /// peaks live on the [`ToneMapContext`](crate::tonemap::ToneMapContext) in that mode.
     #[must_use]
@@ -297,7 +299,7 @@ pub(crate) struct Bt2446AExecutor {
 
 impl Bt2446AExecutor {
     /// Compile from a resolved `(source_peak_nits, target_peak_nits)`
-    /// pair. Mirrors the math in [`Bt2446A::new`].
+    /// pair. Mirrors the math in [`Bt2446A::with_peaks`].
     #[must_use]
     pub(crate) fn compile(source_peak_nits: f32, target_peak_nits: f32) -> Self {
         let inv_gamma = 1.0_f32 / 2.4;
@@ -593,13 +595,14 @@ mod tests {
         // ρ_H ≈ 1.127 — essentially identity — breaking the entire
         // compression curve. Pin ρ to the spec values so the bug can't
         // return.
-        let tm1k = Bt2446A::new(1000.0, 100.0);
+        let tm1k = Bt2446A::with_peaks(zenpixels::Nits::new(1000.0), zenpixels::Nits::new(100.0));
         assert!(
             (tm1k.rho_hdr - 13.260).abs() < 0.02,
             "ρ_H at 1000 nits ≈ 13.26, got {}",
             tm1k.rho_hdr
         );
-        let tm10k = Bt2446A::new(10_000.0, 100.0);
+        let tm10k =
+            Bt2446A::with_peaks(zenpixels::Nits::new(10_000.0), zenpixels::Nits::new(100.0));
         assert!(
             (tm10k.rho_hdr - 33.0).abs() < 0.05,
             "ρ_H at 10 000 nits = 33.0, got {}",
@@ -640,7 +643,7 @@ mod tests {
         }
 
         for &(hdr, sdr) in &[(1000.0_f32, 100.0_f32), (4000.0, 100.0), (10_000.0, 100.0)] {
-            let tm = Bt2446A::new(hdr, sdr);
+            let tm = Bt2446A::with_peaks(zenpixels::Nits::new(hdr), zenpixels::Nits::new(sdr));
             for &x in &[0.05_f32, 0.18, 0.3, 0.5, 0.7, 0.85, 0.95, 1.0] {
                 let got = tm.map_rgb([x, x, x])[0];
                 let want = libplacebo_eetf_then_eotf(x, hdr, sdr);
@@ -660,7 +663,7 @@ mod tests {
         // `bt1886_eotf` close). Pre-fix returned gamma-encoded values,
         // which the consumer then double-gamma-encoded — every pixel came
         // out far too bright (median ΔE2000 ≈ 23 on the shootout corpus).
-        let tm = Bt2446A::new(1000.0, 100.0);
+        let tm = Bt2446A::with_peaks(zenpixels::Nits::new(1000.0), zenpixels::Nits::new(100.0));
 
         let black = tm.map_rgb([0.0, 0.0, 0.0]);
         assert_eq!(black, [0.0, 0.0, 0.0]);

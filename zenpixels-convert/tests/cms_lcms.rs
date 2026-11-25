@@ -182,7 +182,7 @@ fn lcms_p3_icc_to_srgb_rgb8_rgb16_rgbf32_zero_alloc() {
     // RGB8
     let plan8 = RowPlan::build(
         icc_spec(SampleLayout::RGB8, Arc::clone(&p3_icc), 3, AlphaMode::None),
-        ImageSpec::rgb8_srgb(),
+        ImageSpec::RGB8_SRGB,
         &policy,
         None,
     )
@@ -201,7 +201,7 @@ fn lcms_p3_icc_to_srgb_rgb8_rgb16_rgbf32_zero_alloc() {
     // RGB16
     let plan16 = RowPlan::build(
         icc_spec(SampleLayout::RGB16, Arc::clone(&p3_icc), 3, AlphaMode::None),
-        ImageSpec::rgb16_srgb(),
+        ImageSpec::RGB16_SRGB,
         &policy,
         None,
     )
@@ -276,7 +276,7 @@ fn lcms_preserves_alpha_exact_on_matrix_and_clut_profiles_including_f32() {
                     3,
                     AlphaMode::Straight,
                 ),
-                &ImageSpec::rgba8_srgb(),
+                &ImageSpec::RGBA8_SRGB,
             )
             .unwrap();
         let src8 = [200u8, 120, 40, 73, 10, 220, 90, 211];
@@ -294,7 +294,7 @@ fn lcms_preserves_alpha_exact_on_matrix_and_clut_profiles_including_f32() {
                     3,
                     AlphaMode::Straight,
                 ),
-                &ImageSpec::rgba16_srgb(),
+                &ImageSpec::RGBA16_SRGB,
             )
             .unwrap();
         let src16 = [40000u16, 20000, 10000, 12345, 5000, 60000, 30000, 54321];
@@ -352,7 +352,7 @@ fn lcms_cmyk_u8_u16_f32_standard_and_inverted_zero_alloc() {
             alpha: AlphaMode::None,
         },
     );
-    let plan8 = RowPlan::build(cmyk8, ImageSpec::rgba8_srgb(), &policy, None).unwrap();
+    let plan8 = RowPlan::build(cmyk8, ImageSpec::RGBA8_SRGB, &policy, None).unwrap();
     // 0% ink = paper white; 100% K = black.
     let src8 = [0u8, 0, 0, 0, 0, 0, 0, 255];
     let mut dst8 = [0u8; 8];
@@ -380,7 +380,7 @@ fn lcms_cmyk_u8_u16_f32_standard_and_inverted_zero_alloc() {
             alpha: AlphaMode::None,
         },
     );
-    let plan8_inv = RowPlan::build(cmyk8_inv, ImageSpec::rgb8_srgb(), &policy, None).unwrap();
+    let plan8_inv = RowPlan::build(cmyk8_inv, ImageSpec::RGB8_SRGB, &policy, None).unwrap();
     let src8_inv = [255u8, 255, 255, 255, 255, 255, 255, 0];
     let mut dst8_inv = [0u8; 6];
     let allocs_inv = allocation_counter::measure(|| {
@@ -447,14 +447,10 @@ fn lcms_bgr_bgra_and_unoptimized_mode() {
         3,
         AlphaMode::Straight,
     );
-    let t_bgra = Lcms
-        .build_transform(&src, &ImageSpec::bgra8_srgb())
-        .unwrap();
-    let t_rgba = Lcms
-        .build_transform(&src, &ImageSpec::rgba8_srgb())
-        .unwrap();
+    let t_bgra = Lcms.build_transform(&src, &ImageSpec::BGRA8_SRGB).unwrap();
+    let t_rgba = Lcms.build_transform(&src, &ImageSpec::RGBA8_SRGB).unwrap();
     let t_unopt = LcmsUnoptimized
-        .build_transform(&src, &ImageSpec::rgba8_srgb())
+        .build_transform(&src, &ImageSpec::RGBA8_SRGB)
         .unwrap();
 
     let inp = [200u8, 100, 40, 177, 30, 180, 240, 42];
@@ -486,7 +482,7 @@ fn lcms_bgr_bgra_and_unoptimized_mode() {
 fn lcms_and_moxcms_agree_on_p3_and_cmyk() {
     let p3_icc: Arc<[u8]> = Arc::from(icc_profiles::DISPLAY_P3_V4);
     let src8 = icc_spec(SampleLayout::RGB8, Arc::clone(&p3_icc), 3, AlphaMode::None);
-    let dst8 = ImageSpec::rgb8_srgb();
+    let dst8 = ImageSpec::RGB8_SRGB;
 
     let t_lcms = Lcms.build_transform(&src8, &dst8).unwrap();
     let t_mox = zenpixels_convert::MoxCms

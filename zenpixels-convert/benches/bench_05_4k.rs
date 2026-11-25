@@ -154,7 +154,7 @@ fn cases() -> Vec<Case> {
         Transfer::Srgb,
         AlphaMode::None,
     );
-    let rgb16_pq = ImageSpec::rgb16_bt2100_pq();
+    let rgb16_pq = ImageSpec::RGB16_BT2100_PQ;
     let rgb16_hlg = ImageSpec::new(
         SampleLayout::RGB16,
         ColorSpace::Rgb {
@@ -181,7 +181,7 @@ fn cases() -> Vec<Case> {
         Transfer::Srgb,
         AlphaMode::Premultiplied,
     );
-    let oklab_f32 = ImageSpec::oklab_f32();
+    let oklab_f32 = ImageSpec::OKLAB_F32;
     let jzazbz_f32 = ImageSpec::new(
         SampleLayout::new(SampleType::F32, ChannelOrder::Perceptual3),
         ColorSpace::Perceptual {
@@ -224,142 +224,142 @@ fn cases() -> Vec<Case> {
         // Layout U8 & Wide
         Case {
             name: "layout/rgba8_to_rgb8",
-            src: ImageSpec::rgba8_srgb(),
-            dst: ImageSpec::rgb8_srgb(),
+            src: ImageSpec::RGBA8_SRGB,
+            dst: ImageSpec::RGB8_SRGB,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "layout/rgb8_to_bgra8",
-            src: ImageSpec::rgb8_srgb(),
-            dst: ImageSpec::bgra8_srgb(),
+            src: ImageSpec::RGB8_SRGB,
+            dst: ImageSpec::BGRA8_SRGB,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "layout/rgba8_to_bgra8",
-            src: ImageSpec::rgba8_srgb(),
-            dst: ImageSpec::bgra8_srgb(),
+            src: ImageSpec::RGBA8_SRGB,
+            dst: ImageSpec::BGRA8_SRGB,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "layout/rgb8_to_bgr8",
-            src: ImageSpec::rgb8_srgb(),
-            dst: ImageSpec::bgr8_srgb(),
+            src: ImageSpec::RGB8_SRGB,
+            dst: ImageSpec::BGR8_SRGB,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "layout/rgba16_to_rgb16",
-            src: ImageSpec::rgba16_srgb(),
-            dst: ImageSpec::rgb16_srgb(),
+            src: ImageSpec::RGBA16_SRGB,
+            dst: ImageSpec::RGB16_SRGB,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "layout/rgbaf32_to_rgbf32",
-            src: ImageSpec::rgbaf32_linear(),
-            dst: ImageSpec::rgbf32_linear(),
+            src: ImageSpec::RGBAF32_LINEAR,
+            dst: ImageSpec::RGBF32_LINEAR,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         // Depth & BitPacking
         Case {
             name: "depth/rgb8_to_rgb16",
-            src: ImageSpec::rgb8_srgb(),
-            dst: ImageSpec::rgb16_srgb(),
+            src: ImageSpec::RGB8_SRGB,
+            dst: ImageSpec::RGB16_SRGB,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "depth/rgb16_to_rgb8_round",
-            src: ImageSpec::rgb16_srgb(),
-            dst: ImageSpec::rgb8_srgb(),
+            src: ImageSpec::RGB16_SRGB,
+            dst: ImageSpec::RGB8_SRGB,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "depth/rgb16_to_rgb8_trunc",
-            src: ImageSpec::rgb16_srgb(),
-            dst: ImageSpec::rgb8_srgb(),
+            src: ImageSpec::RGB16_SRGB,
+            dst: ImageSpec::RGB8_SRGB,
             policy: p_trunc,
             hdr_peak: None,
         },
         Case {
             name: "depth/rgb16_to_rgb8_dither",
-            src: ImageSpec::rgb16_srgb(),
-            dst: ImageSpec::rgb8_srgb(),
+            src: ImageSpec::RGB16_SRGB,
+            dst: ImageSpec::RGB8_SRGB,
             policy: p_dither,
             hdr_peak: None,
         },
         Case {
             name: "depth/rgbf16_to_rgbf32",
-            src: ImageSpec::rgbf16_linear(),
-            dst: ImageSpec::rgbf32_linear(),
+            src: ImageSpec::RGBF16_LINEAR,
+            dst: ImageSpec::RGBF32_LINEAR,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "depth/rgbf32_to_rgbf16",
-            src: ImageSpec::rgbf32_linear(),
-            dst: ImageSpec::rgbf16_linear(),
+            src: ImageSpec::RGBF32_LINEAR,
+            dst: ImageSpec::RGBF16_LINEAR,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "depth/rgbf32_to_rgb8_round",
             src: rgbf32_srgb.clone(),
-            dst: ImageSpec::rgb8_srgb(),
+            dst: ImageSpec::RGB8_SRGB,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "depth/rgb8_narrow_to_full",
             src: rgb8_narrow,
-            dst: ImageSpec::rgb8_srgb(),
+            dst: ImageSpec::RGB8_SRGB,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "depth/p010_to_rgb16",
             src: rgb_p010,
-            dst: ImageSpec::rgb16_srgb(),
+            dst: ImageSpec::RGB16_SRGB,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "depth/rgb565_to_rgb8",
             src: rgb565,
-            dst: ImageSpec::rgb8_srgb(),
+            dst: ImageSpec::RGB8_SRGB,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         // Transfer SDR
         Case {
             name: "transfer_sdr/rgb8_srgb_to_rgbf32_lin",
-            src: ImageSpec::rgb8_srgb(),
-            dst: ImageSpec::rgbf32_linear(),
+            src: ImageSpec::RGB8_SRGB,
+            dst: ImageSpec::RGBF32_LINEAR,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "transfer_sdr/rgbf32_lin_to_rgb8_srgb",
-            src: ImageSpec::rgbf32_linear(),
-            dst: ImageSpec::rgb8_srgb(),
+            src: ImageSpec::RGBF32_LINEAR,
+            dst: ImageSpec::RGB8_SRGB,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "transfer_sdr/rgbf32_srgb_to_lin",
             src: rgbf32_srgb.clone(),
-            dst: ImageSpec::rgbf32_linear(),
+            dst: ImageSpec::RGBF32_LINEAR,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "transfer_sdr/rgbf32_lin_to_srgb",
-            src: ImageSpec::rgbf32_linear(),
+            src: ImageSpec::RGBF32_LINEAR,
             dst: rgbf32_srgb.clone(),
             policy: p_perm.clone(),
             hdr_peak: None,
@@ -367,14 +367,14 @@ fn cases() -> Vec<Case> {
         Case {
             name: "transfer_sdr/rgbf32_bt709_to_lin",
             src: rgbf32_bt709,
-            dst: ImageSpec::rgbf32_linear(),
+            dst: ImageSpec::RGBF32_LINEAR,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "transfer_sdr/rgbf32_gamma22_to_lin",
             src: rgbf32_g22,
-            dst: ImageSpec::rgbf32_linear(),
+            dst: ImageSpec::RGBF32_LINEAR,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
@@ -382,28 +382,28 @@ fn cases() -> Vec<Case> {
         Case {
             name: "gamut/p3_to_srgb_rgb8",
             src: rgb8_p3.clone(),
-            dst: ImageSpec::rgb8_srgb(),
+            dst: ImageSpec::RGB8_SRGB,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "gamut/p3_to_srgb_rgb8_approx_q14",
             src: rgb8_p3,
-            dst: ImageSpec::rgb8_srgb(),
+            dst: ImageSpec::RGB8_SRGB,
             policy: p_perm.clone().with_approximate(true),
             hdr_peak: None,
         },
         Case {
             name: "gamut/p3_to_srgb_rgb16",
             src: rgb16_p3,
-            dst: ImageSpec::rgb16_srgb(),
+            dst: ImageSpec::RGB16_SRGB,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "gamut/p3_to_srgb_lin_rgbf32",
             src: rgbf32_p3_lin,
-            dst: ImageSpec::rgbf32_linear(),
+            dst: ImageSpec::RGBF32_LINEAR,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
@@ -446,21 +446,21 @@ fn cases() -> Vec<Case> {
         Case {
             name: "transfer_hdr/pq_u16_to_srgb_u8_bt2446a",
             src: rgb16_pq,
-            dst: ImageSpec::rgb8_srgb(),
+            dst: ImageSpec::RGB8_SRGB,
             policy: p_hdr_sdr,
             hdr_peak: Some(Nits::new(1000.0)),
         },
         // Gray, Premul, Matte
         Case {
             name: "gray_alpha/rgb8_to_gray8_bt709",
-            src: ImageSpec::rgb8_srgb(),
-            dst: ImageSpec::gray8_srgb(),
+            src: ImageSpec::RGB8_SRGB,
+            dst: ImageSpec::GRAY8_SRGB,
             policy: p_perm.clone().with_luma(LumaCoefficients::Bt709),
             hdr_peak: None,
         },
         Case {
             name: "gray_alpha/rgba8_straight_to_premul",
-            src: ImageSpec::rgba8_srgb(),
+            src: ImageSpec::RGBA8_SRGB,
             dst: rgba8_premul.clone(),
             policy: p_perm.clone(),
             hdr_peak: None,
@@ -468,21 +468,21 @@ fn cases() -> Vec<Case> {
         Case {
             name: "gray_alpha/rgba8_premul_to_straight",
             src: rgba8_premul,
-            dst: ImageSpec::rgba8_srgb(),
+            dst: ImageSpec::RGBA8_SRGB,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "gray_alpha/rgba8_srgb_matte_black",
-            src: ImageSpec::rgba8_srgb(),
-            dst: ImageSpec::rgb8_srgb(),
+            src: ImageSpec::RGBA8_SRGB,
+            dst: ImageSpec::RGB8_SRGB,
             policy: p_matte,
             hdr_peak: None,
         },
         // Oklab & Perceptual
         Case {
             name: "oklab/rgb_lin_to_oklab_f32",
-            src: ImageSpec::rgbf32_linear(),
+            src: ImageSpec::RGBF32_LINEAR,
             dst: oklab_f32.clone(),
             policy: p_perm.clone(),
             hdr_peak: None,
@@ -490,20 +490,20 @@ fn cases() -> Vec<Case> {
         Case {
             name: "oklab/oklab_to_rgb_lin_f32",
             src: oklab_f32.clone(),
-            dst: ImageSpec::rgbf32_linear(),
+            dst: ImageSpec::RGBF32_LINEAR,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "oklab/rgb8_srgb_to_oklab_f32",
-            src: ImageSpec::rgb8_srgb(),
+            src: ImageSpec::RGB8_SRGB,
             dst: oklab_f32,
             policy: p_perm.clone(),
             hdr_peak: None,
         },
         Case {
             name: "perceptual/lin_rgb_to_jzazbz_f32",
-            src: ImageSpec::rgbf32_linear(),
+            src: ImageSpec::RGBF32_LINEAR,
             dst: jzazbz_f32,
             policy: p_perm,
             hdr_peak: None,
@@ -578,14 +578,11 @@ fn main() {
 
         // Orient 4K Rotate90 across pixel widths
         for (name, spec) in [
-            ("orient_4k/rotate90_gray8_1bpp", ImageSpec::gray8_srgb()),
-            ("orient_4k/rotate90_rgb8_3bpp", ImageSpec::rgb8_srgb()),
-            ("orient_4k/rotate90_rgba8_4bpp", ImageSpec::rgba8_srgb()),
-            ("orient_4k/rotate90_rgba16_8bpp", ImageSpec::rgba16_srgb()),
-            (
-                "orient_4k/rotate90_rgbf32_12bpp",
-                ImageSpec::rgbf32_linear(),
-            ),
+            ("orient_4k/rotate90_gray8_1bpp", ImageSpec::GRAY8_SRGB),
+            ("orient_4k/rotate90_rgb8_3bpp", ImageSpec::RGB8_SRGB),
+            ("orient_4k/rotate90_rgba8_4bpp", ImageSpec::RGBA8_SRGB),
+            ("orient_4k/rotate90_rgba16_8bpp", ImageSpec::RGBA16_SRGB),
+            ("orient_4k/rotate90_rgbf32_12bpp", ImageSpec::RGBF32_LINEAR),
         ] {
             let bytes = (PIXELS * spec.layout.bytes_per_pixel() * 2) as u64;
             suite.group(name, move |g| {
@@ -637,8 +634,8 @@ fn main() {
                     alpha: AlphaMode::None,
                 },
             );
-            let mut base_rgb8 = PixelBuf::new(W, H, ImageSpec::rgb8_srgb()).unwrap();
-            let mut base_rgba8 = PixelBuf::new(W, H, ImageSpec::rgba8_srgb()).unwrap();
+            let mut base_rgb8 = PixelBuf::new(W, H, ImageSpec::RGB8_SRGB).unwrap();
+            let mut base_rgba8 = PixelBuf::new(W, H, ImageSpec::RGBA8_SRGB).unwrap();
             for y in 0..H {
                 for (i, b) in base_rgb8.as_view_mut().row_mut(y).iter_mut().enumerate() {
                     *b = ((y as usize * 37 + i * 19 + 11) % 251) as u8;
@@ -685,7 +682,7 @@ fn main() {
                     true,
                     false,
                     GainMapResample::Bilinear,
-                    Some(ImageSpec::rgbaf16_linear()),
+                    Some(ImageSpec::RGBAF16_LINEAR),
                 ),
                 (
                     "gainmap_4k/apply_1to1_lut_u8_to_rgbf32",
@@ -770,7 +767,7 @@ fn main() {
             let mut hdr_4k = PixelBuf::new(
                 W,
                 H,
-                ImageSpec::rgbf32_linear().with_white(DiffuseWhite::BT2408),
+                ImageSpec::RGBF32_LINEAR.with_white(DiffuseWhite::BT2408),
             )
             .unwrap();
             {

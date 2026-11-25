@@ -93,7 +93,7 @@ pub trait ToneMapper: Send + Sync + UnwindSafe + RefUnwindSafe + Debug {
     }
 
     /// Pre-baked `(source_peak_nits, target_peak_nits)` when this mapper ignores
-    /// pipeline-supplied peaks (e.g., `Bt2446A::new(4000.0, 100.0)`).
+    /// pipeline-supplied peaks (e.g., `Bt2446A::with_peaks(Nits::new(4000.0), Nits::new(100.0))`).
     ///
     /// When `Some((src_peak, dst_peak))`, the pipeline normalizes input/output
     /// strips to those exact peaks and skips redundant peak scanning.

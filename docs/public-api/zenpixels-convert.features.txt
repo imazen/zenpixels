@@ -32,26 +32,26 @@ pub fn perceptual::polar_to_cartesian([f32; 3]) -> [f32; 3]
 pub mod tonemap::bt2446a
 pub fn tonemap::bt2446a::Bt2446A::map_rgb(&self, [f32; 3]) -> [f32; 3]
 pub fn tonemap::bt2446a::Bt2446A::map_strip_simd(&self, &mut [[f32; 3]])
-pub fn tonemap::bt2446a::Bt2446A::new(f32, f32) -> Self
 pub fn tonemap::bt2446a::Bt2446A::peaks_baked(&self) -> bool
 pub fn tonemap::bt2446a::Bt2446A::pipeline_managed() -> Self
 pub fn tonemap::bt2446a::Bt2446A::source_peak_nits(&self) -> f32
 pub fn tonemap::bt2446a::Bt2446A::target_peak_nits(&self) -> f32
+pub fn tonemap::bt2446a::Bt2446A::with_peaks(zenpixels::hdr::Nits, zenpixels::hdr::Nits) -> Self
 pub fn tonemap::bt2446a::Bt2446A::map_rgb(&self, [f32; 3]) -> [f32; 3]
 pub fn tonemap::bt2446a::Bt2446A::map_strip_simd(&self, &mut [[f32; 3]])
-pub fn tonemap::bt2446a::Bt2446A::new(f32, f32) -> Self
 pub fn tonemap::bt2446a::Bt2446A::peaks_baked(&self) -> bool
 pub fn tonemap::bt2446a::Bt2446A::pipeline_managed() -> Self
 pub fn tonemap::bt2446a::Bt2446A::source_peak_nits(&self) -> f32
 pub fn tonemap::bt2446a::Bt2446A::target_peak_nits(&self) -> f32
+pub fn tonemap::bt2446a::Bt2446A::with_peaks(zenpixels::hdr::Nits, zenpixels::hdr::Nits) -> Self
 pub struct Bt2446A [also: tonemap, tonemap::bt2446a]
 pub fn tonemap::bt2446a::Bt2446A::map_rgb(&self, [f32; 3]) -> [f32; 3]
 pub fn tonemap::bt2446a::Bt2446A::map_strip_simd(&self, &mut [[f32; 3]])
-pub fn tonemap::bt2446a::Bt2446A::new(f32, f32) -> Self
 pub fn tonemap::bt2446a::Bt2446A::peaks_baked(&self) -> bool
 pub fn tonemap::bt2446a::Bt2446A::pipeline_managed() -> Self
 pub fn tonemap::bt2446a::Bt2446A::source_peak_nits(&self) -> f32
 pub fn tonemap::bt2446a::Bt2446A::target_peak_nits(&self) -> f32
+pub fn tonemap::bt2446a::Bt2446A::with_peaks(zenpixels::hdr::Nits, zenpixels::hdr::Nits) -> Self
 pub struct Lcms [also: cms]
 pub struct LcmsUnoptimized [also: cms]
 pub struct MoxCms [also: cms]

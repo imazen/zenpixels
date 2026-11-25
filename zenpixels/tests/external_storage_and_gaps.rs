@@ -56,7 +56,7 @@ fn external_immutable_zero_copy_cow_and_recovery() {
         data: Arc::clone(&raw),
     };
 
-    let spec = ImageSpec::rgb8_srgb();
+    let spec = ImageSpec::RGB8_SRGB;
     let buf = PixelBuf::from_external(handle, 4, 3, 12, spec.clone()).unwrap();
     assert!(buf.is_external());
     assert!(!buf.is_mutable_in_place());
@@ -64,8 +64,8 @@ fn external_immutable_zero_copy_cow_and_recovery() {
     assert_eq!(buf.external_ref::<ReadOnlyPoolHandle>().unwrap().id, 42);
     assert!(buf.external_ref::<Arc<[u8]>>().is_none());
 
-    // Already-contiguous external buffer stays external zero-copy through `into_contiguous`.
-    let buf = buf.into_contiguous();
+    // Already-tight external buffer stays external zero-copy through `into_tight_buf`.
+    let buf = buf.into_tight_buf().unwrap();
     assert!(buf.is_external());
     assert_eq!(buf.as_view().as_strided_bytes().as_ptr(), ptr);
 
@@ -85,7 +85,7 @@ fn external_immutable_zero_copy_cow_and_recovery() {
     assert_eq!(recovered.data.as_ptr(), ptr);
 
     // Direct `Arc<[u8]>` with copy-on-write on mutation leaves `raw` untouched.
-    let mut arc_buf = PixelBuf::from_external(Arc::clone(&raw), 4, 3, 12, spec).unwrap();
+    let mut arc_buf = PixelBuf::from_external(Arc::clone(&raw), 4, 3, 12, spec.clone()).unwrap();
     assert_eq!(arc_buf.as_view().as_strided_bytes().as_ptr(), ptr);
     {
         let mut vm = arc_buf.try_as_view_mut().unwrap();
@@ -95,6 +95,18 @@ fn external_immutable_zero_copy_cow_and_recovery() {
     assert!(arc_buf.is_mutable_in_place());
     assert_eq!(arc_buf.as_view().row(1)[2], 99);
     assert_eq!(raw[14], 14);
+
+    // Direct `PixelBuf::row` / `row_mut` CoW-promotes external storage and clears cached facts!
+    let mut row_buf = PixelBuf::from_external(Arc::clone(&raw), 4, 3, 12, spec).unwrap();
+    assert_eq!(row_buf.row(1)[2], 14);
+    row_buf.assume_facts(SampleFacts::NONE.with_all_opaque(true));
+    assert!(row_buf.facts().all_opaque);
+    row_buf.row_mut(1)[2] = 99;
+    assert!(!row_buf.is_external());
+    assert!(row_buf.is_mutable_in_place());
+    assert!(!row_buf.facts().all_opaque);
+    assert_eq!(row_buf.row(1)[2], 99);
+    assert_eq!(raw[14], 14);
 }
 
 #[test]
@@ -102,8 +114,7 @@ fn external_immutable_validation_failure_returns_owner_untouched() {
     let raw: Arc<[u8]> = Arc::from(vec![7u8; 10]);
     let ptr = raw.as_ptr();
     // Too short for 4x3 RGB8 (needs 36 bytes).
-    let (err, returned) =
-        PixelBuf::from_external(raw, 4, 3, 12, ImageSpec::rgb8_srgb()).unwrap_err();
+    let (err, returned) = PixelBuf::from_external(raw, 4, 3, 12, ImageSpec::RGB8_SRGB).unwrap_err();
     assert_eq!(*err.error(), BufferError::InsufficientData);
     assert_eq!(returned.as_ptr(), ptr);
 
@@ -125,7 +136,7 @@ fn external_immutable_validation_failure_returns_owner_untouched() {
     // Static slice `&'static [u8]` works zero-copy!
     static STATIC_RGB: [u8; 12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
     let static_buf =
-        PixelBuf::from_external(&STATIC_RGB[..], 2, 2, 6, ImageSpec::rgb8_srgb()).unwrap();
+        PixelBuf::from_external(&STATIC_RGB[..], 2, 2, 6, ImageSpec::RGB8_SRGB).unwrap();
     assert_eq!(
         static_buf.as_view().as_strided_bytes().as_ptr(),
         STATIC_RGB.as_ptr()
@@ -142,7 +153,7 @@ fn external_mutable_zero_copy_in_place_write_and_recovery() {
     };
     let ptr = lease.bytes.as_ptr();
 
-    let mut buf = PixelBuf::from_external_mut(lease, 4, 3, 16, ImageSpec::rgba8_srgb()).unwrap();
+    let mut buf = PixelBuf::from_external_mut(lease, 4, 3, 16, ImageSpec::RGBA8_SRGB).unwrap();
     assert!(buf.is_external());
     assert!(buf.is_mutable_in_place());
     assert_eq!(buf.as_view().as_strided_bytes().as_ptr(), ptr);
@@ -157,7 +168,7 @@ fn external_mutable_zero_copy_in_place_write_and_recovery() {
     assert!(buf.is_external());
 
     // `external_mut` clears cached facts.
-    buf.set_facts(SampleFacts::NONE.with_all_opaque(true));
+    buf.assume_facts(SampleFacts::NONE.with_all_opaque(true));
     assert!(buf.facts().all_opaque);
     assert_eq!(
         buf.external_mut::<MutablePoolLease>().unwrap().lease_id,
@@ -213,7 +224,7 @@ fn external_owned_plane_and_try_from_parts_recover() {
     assert_eq!(uv_back[0], 1023);
 
     // `try_from_parts_recover` preserves storage allocation on geometry rejection.
-    let buf = PixelBuf::new(4, 3, ImageSpec::rgb8_srgb()).unwrap();
+    let buf = PixelBuf::new(4, 3, ImageSpec::RGB8_SRGB).unwrap();
     let orig_ptr = buf.as_view().as_strided_bytes().as_ptr();
     let mut parts = buf.into_parts();
     parts.stride = 2; // invalid (< row_bytes=12)
@@ -238,7 +249,7 @@ fn swizzle_in_place_rgb_bgr_and_drop_padding_zero_realloc() {
     )
     .unwrap();
     let ptr = buf.as_view().as_strided_bytes().as_ptr();
-    buf.set_facts(SampleFacts::NONE.with_all_opaque(true));
+    buf.assume_facts(SampleFacts::NONE.with_all_opaque(true));
 
     buf.swizzle_in_place(ChannelOrder::Bgra).unwrap();
     assert_eq!(buf.spec().layout.order, ChannelOrder::Bgra);
@@ -254,7 +265,7 @@ fn swizzle_in_place_rgb_bgr_and_drop_padding_zero_realloc() {
     assert_eq!(buf.as_view().row(0), &[10, 20, 30, 40, 50, 60]);
 
     // Straight alpha refuses lossy 4->3 drop.
-    let mut straight = PixelBuf::new(2, 1, ImageSpec::rgba8_srgb()).unwrap();
+    let mut straight = PixelBuf::new(2, 1, ImageSpec::RGBA8_SRGB).unwrap();
     assert_eq!(
         *straight
             .swizzle_in_place(ChannelOrder::Rgb)
@@ -282,7 +293,7 @@ fn swizzle_in_place_rgb_bgr_and_drop_padding_zero_realloc() {
 
 #[test]
 fn banded_buf_helpers_and_planar_color_and_mut_views() {
-    let mut src = PixelBuf::new(5, 7, ImageSpec::rgb8_srgb()).unwrap();
+    let mut src = PixelBuf::new(5, 7, ImageSpec::RGB8_SRGB).unwrap();
     {
         let mut vm = src.as_view_mut();
         for y in 0..7 {
@@ -331,23 +342,23 @@ fn banded_buf_helpers_and_planar_color_and_mut_views() {
             alpha: AlphaMode::None,
             white: None,
         })
-        .with_ycbcr_matrix_code(1)
-        .with_range(SignalRange::Narrow);
+        .with_matrix_coefficients_code(1)
+        .with_range_override(SignalRange::Narrow);
 
     {
         let mut pvm = planar.as_view_mut();
-        assert_eq!(pvm.ycbcr_matrix_code(), Some(1));
+        assert_eq!(pvm.matrix_coefficients_code(), Some(1));
         assert_eq!(pvm.effective_range(), Some(SignalRange::Narrow));
         pvm.plane_mut(0).unwrap().row_mut(0).fill(235);
         pvm.plane_mut(1).unwrap().row_mut(0).fill(128);
         pvm.plane_mut(2).unwrap().row_mut(0).fill(128);
     }
     let pv = planar.as_view();
-    assert_eq!(pv.ycbcr_matrix_code(), Some(1));
+    assert_eq!(pv.matrix_coefficients_code(), Some(1));
     assert_eq!(pv.effective_range(), Some(SignalRange::Narrow));
     assert_eq!(pv.color(), planar.color());
     let cropped = pv.crop(1, 1, 2, 2).unwrap();
-    assert_eq!(cropped.ycbcr_matrix_code(), Some(1));
+    assert_eq!(cropped.matrix_coefficients_code(), Some(1));
     assert_eq!(cropped.chroma_siting(), ChromaSiting::Left);
 
     // Caller-owned zero-alloc `PlanarViewMut::from_array`.
@@ -364,11 +375,11 @@ fn banded_buf_helpers_and_planar_color_and_mut_views() {
         ],
     )
     .unwrap()
-    .with_ycbcr_matrix_code(6);
+    .with_matrix_coefficients_code(6);
     let mut pvm = pvm;
     pvm.planes_mut()[0].row_mut(2)[3] = 42;
     let imm = pvm.into_view().unwrap();
-    assert_eq!(imm.ycbcr_matrix_code(), Some(6));
+    assert_eq!(imm.matrix_coefficients_code(), Some(6));
     assert_eq!(imm.planes()[0].row(2)[3], 42);
 }
 
@@ -422,12 +433,12 @@ fn imgref_mutable_borrowed_and_sample_interop() {
     assert_eq!(sample_ref.buf()[0], 77);
 
     // `into_imgvec_zero_copy` succeeds on tight Vec<u8> and returns Err(buf) untouched on Aligned64.
-    let tight = PixelBuf::new(2, 2, ImageSpec::rgb8_srgb()).unwrap();
+    let tight = PixelBuf::new(2, 2, ImageSpec::RGB8_SRGB).unwrap();
     let ptr = tight.as_view().as_strided_bytes().as_ptr();
     let iv = tight.into_imgvec_zero_copy::<Rgb<u8>>().unwrap();
     assert_eq!(iv.buf().as_ptr() as *const u8, ptr);
 
-    let aligned = PixelBuf::new_aligned(2, 2, ImageSpec::rgb8_srgb(), RowAlign::Cache64).unwrap();
+    let aligned = PixelBuf::new_aligned(2, 2, ImageSpec::RGB8_SRGB, RowAlign::Cache64).unwrap();
     let aptr = aligned.as_view().as_strided_bytes().as_ptr();
     let back = aligned.into_imgvec_zero_copy::<Rgb<u8>>().unwrap_err();
     assert_eq!(back.as_view().as_strided_bytes().as_ptr(), aptr);
@@ -499,7 +510,7 @@ fn image_crate_symmetric_10_formats_borrowed_and_metadata() {
 fn portable_xxh3_hash_invariance_and_padding_exclusion() {
     use zenpixels::HashInclusions;
 
-    let mut tight = PixelBuf::new(5, 4, ImageSpec::rgb8_srgb()).unwrap();
+    let mut tight = PixelBuf::new(5, 4, ImageSpec::RGB8_SRGB).unwrap();
     {
         let mut vm = tight.as_view_mut();
         for y in 0..4 {
@@ -514,8 +525,7 @@ fn portable_xxh3_hash_invariance_and_padding_exclusion() {
     let h_tight = tight.hash_with(HashInclusions::All);
 
     // 64-byte aligned padded stride hashes IDENTICALLY.
-    let mut padded =
-        PixelBuf::new_aligned(5, 4, ImageSpec::rgb8_srgb(), RowAlign::Cache64).unwrap();
+    let mut padded = PixelBuf::new_aligned(5, 4, ImageSpec::RGB8_SRGB, RowAlign::Cache64).unwrap();
     for y in 0..4 {
         padded
             .as_view_mut()
@@ -526,7 +536,7 @@ fn portable_xxh3_hash_invariance_and_padding_exclusion() {
 
     // External storage hashes IDENTICALLY.
     let ext_arc: Arc<[u8]> = Arc::from(tight.as_view().as_contiguous_bytes().unwrap());
-    let ext = PixelBuf::from_external(ext_arc, 5, 4, 15, ImageSpec::rgb8_srgb()).unwrap();
+    let ext = PixelBuf::from_external(ext_arc, 5, 4, 15, ImageSpec::RGB8_SRGB).unwrap();
     assert_eq!(ext.hash_with(HashInclusions::All), h_tight);
 
     // BandedBuf hashes IDENTICALLY across band sizes!
@@ -602,7 +612,7 @@ fn portable_xxh3_hash_invariance_and_padding_exclusion() {
     let recolored = tight
         .try_clone()
         .unwrap()
-        .with_color(ColorSpace::DISPLAY_P3)
+        .relabel_color(ColorSpace::DISPLAY_P3)
         .unwrap();
     assert_eq!(
         tight.hash_with(HashInclusions::SamplesOnly),

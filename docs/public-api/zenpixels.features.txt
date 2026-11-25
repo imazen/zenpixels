@@ -32,9 +32,9 @@ pub fn buffer::PixelBuf::from_dynamic_image(image::images::dynimage::DynamicImag
 pub fn buffer::PixelBuf::from_image_buffer<P>(image::images::buffer::ImageBuffer<P, alloc::vec::Vec<<P as image::traits::Pixel>::Subpixel>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample
 pub fn buffer::PixelBuf::from_image_buffer_with_color<P>(image::images::buffer::ImageBuffer<P, alloc::vec::Vec<<P as image::traits::Pixel>::Subpixel>>, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample
 pub fn buffer::PixelBuf::from_rgb8_image(image::images::buffer::RgbImage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::from_rgb8_image_buffer(image::images::buffer::RgbImage, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_rgb8_image_with_color(image::images::buffer::RgbImage, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::from_rgba8_image(image::images::buffer::RgbaImage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::from_rgba8_image_buffer(image::images::buffer::RgbaImage, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_rgba8_image_with_color(image::images::buffer::RgbaImage, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PixelBuf::image_default_color(layout::ChannelOrder) -> color::ColorSpace [also: (root)]
 pub fn buffer::PixelBuf::into_dynamic_image(self) -> core::result::Result<image::images::dynimage::DynamicImage, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::from_imgvec<P: interop::PixelType>(imgref::ImgVec<P>, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
@@ -82,9 +82,9 @@ pub fn buffer::PixelBuf::from_dynamic_image(image::images::dynimage::DynamicImag
 pub fn buffer::PixelBuf::from_image_buffer<P>(image::images::buffer::ImageBuffer<P, alloc::vec::Vec<<P as image::traits::Pixel>::Subpixel>>) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample
 pub fn buffer::PixelBuf::from_image_buffer_with_color<P>(image::images::buffer::ImageBuffer<P, alloc::vec::Vec<<P as image::traits::Pixel>::Subpixel>>, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>> where P: image::traits::Pixel + image::traits::PixelWithColorType + 'static, <P as image::traits::Pixel>::Subpixel: storage::StorageSample
 pub fn buffer::PixelBuf::from_rgb8_image(image::images::buffer::RgbImage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::from_rgb8_image_buffer(image::images::buffer::RgbImage, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_rgb8_image_with_color(image::images::buffer::RgbImage, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::from_rgba8_image(image::images::buffer::RgbaImage) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::from_rgba8_image_buffer(image::images::buffer::RgbaImage, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::from_rgba8_image_with_color(image::images::buffer::RgbaImage, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::into_dynamic_image(self) -> core::result::Result<image::images::dynimage::DynamicImage, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::from_imgvec<P: interop::PixelType>(imgref::ImgVec<P>, color::ColorSpace) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::into_imgvec<P: interop::PixelType>(self) -> core::result::Result<imgref::ImgVec<P>, whereat::at::At<buffer::BufferError>>

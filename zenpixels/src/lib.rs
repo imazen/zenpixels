@@ -1,14 +1,14 @@
 //! # zenpixels 0.5 — Pixel & Color Interchange Types
 //!
-//! Pure, `no_std + alloc`, `#![forbid(unsafe_code)]` interchange foundation for
-//! Rust image codecs and pipelines.
+//! Pure, `#![forbid(unsafe_code)]` interchange foundation for Rust image codecs
+//! and pipelines. Supports `no_std + alloc` (disable default `std` feature).
 //!
 //! ## Start Here (The 4 Core Types)
 //!
 //! - [`ImageSpec`]: pairs a physical [`SampleLayout`] with an algebraic [`ColorSpace`]
 //!   (`Rgb`, `Gray`, `Oklab`, `Xyz`, `Perceptual`, `Cmyk`, `Icc`, `Untagged`). Use
-//!   owned presets like [`ImageSpec::RGB8_SRGB`] for buffers and `&'static` refs like
-//!   [`ImageSpec::rgb8_srgb_ref()`] for zero-allocation borrowed views.
+//!   owned presets like [`ImageSpec::RGB8_SRGB`] for buffers and `&'static` statics like
+//!   [`&specs::RGB8_SRGB`](specs::RGB8_SRGB) for zero-allocation borrowed views.
 //! - [`PixelBuf`]: owned, stride-preserving, alignment-exact 2D buffer (supporting
 //!   zero-copy external storage via [`ByteStorage`]/[`ByteStorageMut`]) carrying
 //!   [`Orientation`], [`HdrMetadata`], [`ColorOrigin`], and [`SampleFacts`].
@@ -20,14 +20,14 @@
 //! ## Quick Example
 //!
 //! ```rust
-//! use zenpixels::{ImageSpec, PixelBuf, PixelView};
+//! use zenpixels::{ImageSpec, PixelBuf, PixelView, specs};
 //!
 //! let buf = PixelBuf::from_typed(vec![255u8, 0, 0, 0, 255, 0], 2, 1, ImageSpec::RGB8_SRGB)?;
 //! let right = buf.crop_view(1, 0, 1, 1)?;
 //! assert_eq!(right.row(0), &[0, 255, 0]);
 //!
 //! let raw = [10u8, 20, 30];
-//! let view = PixelView::from_bytes(&raw, 1, 1, ImageSpec::rgb8_srgb_ref())?;
+//! let view = PixelView::from_bytes(&raw, 1, 1, &specs::RGB8_SRGB)?;
 //! assert_eq!(view.row(0), &[10, 20, 30]);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -82,7 +82,7 @@ pub use color::{
     GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapDirection, GainMapMetadata, Gamma,
     HdrMetadata, HlgMode, IccColorSpace, IccValidationError, ImageSpec, OriginKind,
     ParametricColor, PerceptualSpace, PixelFormat, Primaries, RenderingIntent, SignalRange,
-    SignedFraction, SpecCow, Transfer, UnsignedFraction, WhitePoint, validate_icc_structure,
+    SignedFraction, SpecCow, Transfer, UnsignedFraction, WhitePoint, specs, validate_icc_structure,
 };
 pub use facts::{ExactDepth, FloatFacts, SampleFacts};
 #[cfg(feature = "hash")]

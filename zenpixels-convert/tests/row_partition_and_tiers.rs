@@ -149,10 +149,10 @@ fn verify_partition_and_canary(
 #[test]
 fn row_partition_and_odd_stride_canary_invariance_matrix() {
     let perm = ConvertPolicy::permissive();
-    let p3_u8 = ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3);
-    let p3_u16 = ImageSpec::rgb16_srgb().with_primaries(Primaries::DisplayP3);
-    let p3_f32 = ImageSpec::rgbf32_linear().with_primaries(Primaries::DisplayP3);
-    let rgba8_premul = ImageSpec::rgba8_srgb().with_alpha(AlphaMode::Premultiplied);
+    let p3_u8 = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
+    let p3_u16 = ImageSpec::RGB16_SRGB.with_primaries(Primaries::DisplayP3);
+    let p3_f32 = ImageSpec::RGBF32_LINEAR.with_primaries(Primaries::DisplayP3);
+    let rgba8_premul = ImageSpec::RGBA8_SRGB.with_alpha(AlphaMode::Premultiplied);
     let rgb8_narrow = ImageSpec::new(
         SampleLayout::RGB8,
         ColorSpace::Rgb {
@@ -197,77 +197,77 @@ fn row_partition_and_odd_stride_canary_invariance_matrix() {
     let cases: Vec<(&str, ImageSpec, ImageSpec, ConvertPolicy, Option<Nits>)> = vec![
         (
             "RGBA8->RGB8",
-            ImageSpec::rgba8_srgb(),
-            ImageSpec::rgb8_srgb(),
+            ImageSpec::RGBA8_SRGB,
+            ImageSpec::RGB8_SRGB,
             perm.clone(),
             None,
         ),
         (
             "RGB8->BGRA8",
-            ImageSpec::rgb8_srgb(),
-            ImageSpec::bgra8_srgb(),
+            ImageSpec::RGB8_SRGB,
+            ImageSpec::BGRA8_SRGB,
             perm.clone(),
             None,
         ),
         (
             "RGBA8->BGRA8",
-            ImageSpec::rgba8_srgb(),
-            ImageSpec::bgra8_srgb(),
+            ImageSpec::RGBA8_SRGB,
+            ImageSpec::BGRA8_SRGB,
             perm.clone(),
             None,
         ),
         (
             "RGB8->Gray8_Encoded_709",
-            ImageSpec::rgb8_srgb(),
-            ImageSpec::gray8_srgb(),
+            ImageSpec::RGB8_SRGB,
+            ImageSpec::GRAY8_SRGB,
             perm.clone(),
             None,
         ),
         (
             "BGRA8->Gray8_Encoded_601",
-            ImageSpec::bgra8_srgb(),
-            ImageSpec::gray8_srgb(),
+            ImageSpec::BGRA8_SRGB,
+            ImageSpec::GRAY8_SRGB,
             perm.clone().with_luma(LumaCoefficients::Bt601),
             None,
         ),
         (
             "RGB8->Gray8_LinearLight",
-            ImageSpec::rgb8_srgb(),
-            ImageSpec::gray8_srgb(),
+            ImageSpec::RGB8_SRGB,
+            ImageSpec::GRAY8_SRGB,
             perm.clone().with_luma_domain(LumaDomain::LinearLight),
             None,
         ),
         (
             "RGB8->RGB16",
-            ImageSpec::rgb8_srgb(),
-            ImageSpec::rgb16_srgb(),
+            ImageSpec::RGB8_SRGB,
+            ImageSpec::RGB16_SRGB,
             perm.clone(),
             None,
         ),
         (
             "RGB16->RGB8_Round",
-            ImageSpec::rgb16_srgb(),
-            ImageSpec::rgb8_srgb(),
+            ImageSpec::RGB16_SRGB,
+            ImageSpec::RGB8_SRGB,
             perm.clone(),
             None,
         ),
         (
             "RGB16->RGB8_Trunc",
-            ImageSpec::rgb16_srgb(),
-            ImageSpec::rgb8_srgb(),
+            ImageSpec::RGB16_SRGB,
+            ImageSpec::RGB8_SRGB,
             perm.clone().with_depth(DepthPolicy::Truncate),
             None,
         ),
         (
             "RGBA8_Straight->Premul_Round",
-            ImageSpec::rgba8_srgb(),
+            ImageSpec::RGBA8_SRGB,
             rgba8_premul.clone(),
             perm.clone(),
             None,
         ),
         (
             "RGBA8_Straight->Premul_Trunc",
-            ImageSpec::rgba8_srgb(),
+            ImageSpec::RGBA8_SRGB,
             rgba8_premul.clone(),
             perm.clone().with_depth(DepthPolicy::Truncate),
             None,
@@ -275,83 +275,83 @@ fn row_partition_and_odd_stride_canary_invariance_matrix() {
         (
             "RGBA8_Premul->Straight",
             rgba8_premul,
-            ImageSpec::rgba8_srgb(),
+            ImageSpec::RGBA8_SRGB,
             perm.clone(),
             None,
         ),
         (
             "RGB8_sRGB->RGBF32_Lin",
-            ImageSpec::rgb8_srgb(),
-            ImageSpec::rgbf32_linear(),
+            ImageSpec::RGB8_SRGB,
+            ImageSpec::RGBF32_LINEAR,
             perm.clone(),
             None,
         ),
         (
             "RGBF32_Lin->RGB8_sRGB_Exact",
-            ImageSpec::rgbf32_linear(),
-            ImageSpec::rgb8_srgb(),
+            ImageSpec::RGBF32_LINEAR,
+            ImageSpec::RGB8_SRGB,
             perm.clone(),
             None,
         ),
         (
             "RGBAF32_Lin->RGBA8_sRGB_Approx",
-            ImageSpec::rgbaf32_linear(),
-            ImageSpec::rgba8_srgb(),
+            ImageSpec::RGBAF32_LINEAR,
+            ImageSpec::RGBA8_SRGB,
             perm.clone().with_approximate(true),
             None,
         ),
         (
             "RGBF16_Lin->RGBF32_Lin",
-            ImageSpec::rgbf16_linear(),
-            ImageSpec::rgbf32_linear(),
+            ImageSpec::RGBF16_LINEAR,
+            ImageSpec::RGBF32_LINEAR,
             perm.clone(),
             None,
         ),
         (
             "RGBF32_Lin->RGBF16_Lin",
-            ImageSpec::rgbf32_linear(),
-            ImageSpec::rgbf16_linear(),
+            ImageSpec::RGBF32_LINEAR,
+            ImageSpec::RGBF16_LINEAR,
             perm.clone(),
             None,
         ),
         (
             "P3_RGB8->sRGB_RGB8_Exact",
             p3_u8.clone(),
-            ImageSpec::rgb8_srgb(),
+            ImageSpec::RGB8_SRGB,
             perm.clone(),
             None,
         ),
         (
             "P3_RGB8->sRGB_RGB8_ApproxQ14",
             p3_u8,
-            ImageSpec::rgb8_srgb(),
+            ImageSpec::RGB8_SRGB,
             perm.clone().with_approximate(true),
             None,
         ),
         (
             "P3_RGB16->sRGB_RGB16",
             p3_u16,
-            ImageSpec::rgb16_srgb(),
+            ImageSpec::RGB16_SRGB,
             perm.clone(),
             None,
         ),
         (
             "P3_F32->sRGB_F32",
             p3_f32,
-            ImageSpec::rgbf32_linear(),
+            ImageSpec::RGBF32_LINEAR,
             perm.clone(),
             None,
         ),
         (
             "NarrowRGB8->FullRGB8",
             rgb8_narrow.clone(),
-            ImageSpec::rgb8_srgb(),
+            ImageSpec::RGB8_SRGB,
             perm.clone(),
             None,
         ),
         (
             "FullRGB8->NarrowRGB8",
-            ImageSpec::rgb8_srgb(),
+            ImageSpec::RGB8_SRGB,
             rgb8_narrow,
             perm.clone(),
             None,
@@ -359,28 +359,28 @@ fn row_partition_and_odd_stride_canary_invariance_matrix() {
         (
             "RGB565->RGBA8",
             rgb565,
-            ImageSpec::rgba8_srgb(),
+            ImageSpec::RGBA8_SRGB,
             perm.clone(),
             None,
         ),
         (
             "RGB10A2->RGB16",
             rgb10a2,
-            ImageSpec::rgb16_srgb(),
+            ImageSpec::RGB16_SRGB,
             perm.clone(),
             None,
         ),
         (
             "P010_RGB->RGBF32",
             p010_rgb,
-            ImageSpec::rgbf32_linear(),
+            ImageSpec::RGBF32_LINEAR,
             perm.clone(),
             None,
         ),
         (
             "RGBA8->RGB8_MatteBlack",
-            ImageSpec::rgba8_srgb(),
-            ImageSpec::rgb8_srgb(),
+            ImageSpec::RGBA8_SRGB,
+            ImageSpec::RGB8_SRGB,
             perm.clone()
                 .with_alpha(AlphaPolicy::CompositeOnto(Color::BLACK)),
             None,
@@ -395,15 +395,15 @@ fn row_partition_and_odd_stride_canary_invariance_matrix() {
     {
         verify_partition_and_canary(
             "RGB8_sRGB->OklabF32",
-            ImageSpec::rgb8_srgb(),
-            ImageSpec::oklab_f32(),
+            ImageSpec::RGB8_SRGB,
+            ImageSpec::OKLAB_F32,
             perm.clone(),
             None,
         );
         verify_partition_and_canary(
             "P3_F32->sRGB_F32_SoftCompress",
-            ImageSpec::rgbf32_linear().with_primaries(Primaries::DisplayP3),
-            ImageSpec::rgbf32_linear(),
+            ImageSpec::RGBF32_LINEAR.with_primaries(Primaries::DisplayP3),
+            ImageSpec::RGBF32_LINEAR,
             perm.clone().with_gamut(GamutPolicy::SoftCompress),
             None,
         );
@@ -424,7 +424,7 @@ fn row_partition_and_odd_stride_canary_invariance_matrix() {
         verify_partition_and_canary(
             "HLG16_Display->Lin2020_F32",
             hlg_disp,
-            ImageSpec::rgbf32_linear()
+            ImageSpec::RGBF32_LINEAR
                 .with_primaries(Primaries::Bt2020)
                 .with_white(DiffuseWhite::BT2408),
             ConvertPolicy::working_linear(),
@@ -433,8 +433,8 @@ fn row_partition_and_odd_stride_canary_invariance_matrix() {
         #[cfg(feature = "bt2446a")]
         verify_partition_and_canary(
             "PQ16->sRGB8_BT2446A",
-            ImageSpec::rgb16_bt2100_pq(),
-            ImageSpec::rgb8_srgb(),
+            ImageSpec::RGB16_BT2100_PQ,
+            ImageSpec::RGB8_SRGB,
             ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0)),
             Some(Nits::new(1000.0)),
         );
@@ -445,7 +445,7 @@ fn row_partition_and_odd_stride_canary_invariance_matrix() {
 fn portable_xxh3_digests_are_invariant_across_simd_and_stride() {
     let w = 67u32;
     let h = 5u32;
-    let src_spec = ImageSpec::rgba8_srgb().with_primaries(Primaries::DisplayP3);
+    let src_spec = ImageSpec::RGBA8_SRGB.with_primaries(Primaries::DisplayP3);
     let mut src_tight = PixelBuf::new(w, h, src_spec.clone()).unwrap();
     let mut src_strided = PixelBuf::new_aligned(w, h, src_spec.clone(), RowAlign::Cache64).unwrap();
     for y in 0..h {
@@ -465,27 +465,27 @@ fn portable_xxh3_digests_are_invariant_across_simd_and_stride() {
     let targets: Vec<(&str, ImageSpec, ConvertPolicy)> = vec![
         (
             "p3_rgba8_to_srgb_rgb8",
-            ImageSpec::rgb8_srgb(),
+            ImageSpec::RGB8_SRGB,
             ConvertPolicy::permissive(),
         ),
         (
             "p3_rgba8_to_srgb_gray8_enc",
-            ImageSpec::gray8_srgb(),
+            ImageSpec::GRAY8_SRGB,
             ConvertPolicy::permissive(),
         ),
         (
             "p3_rgba8_to_srgb_gray8_lin",
-            ImageSpec::gray8_srgb(),
+            ImageSpec::GRAY8_SRGB,
             ConvertPolicy::permissive().with_luma_domain(LumaDomain::LinearLight),
         ),
         (
             "p3_rgba8_to_srgb_rgb16",
-            ImageSpec::rgb16_srgb(),
+            ImageSpec::RGB16_SRGB,
             ConvertPolicy::permissive(),
         ),
         (
             "p3_rgba8_to_srgb_rgbf32",
-            ImageSpec::rgbf32_linear(),
+            ImageSpec::RGBF32_LINEAR,
             ConvertPolicy::permissive(),
         ),
     ];

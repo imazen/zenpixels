@@ -5,8 +5,8 @@
 use zenpixels_convert::AlphaMode;
 use zenpixels_convert::{
     AlphaPolicy, Color, ColorSpace, ConvertError, ConvertPolicy, DepthPolicy, ExactDepth,
-    GamutPolicy, ImageSpec, PeakSource, PixelBuf, Primaries, RangePolicy, RowPlan, SampleFacts,
-    SampleLayout, SignalRange, convert_to_buf, scan_facts,
+    GamutPolicy, ImageSpec, PixelBuf, Primaries, RangePolicy, RowPlan, SampleFacts, SampleLayout,
+    SignalRange, convert_to_buf, scan_facts,
 };
 #[cfg(feature = "hdr-transfers")]
 use zenpixels_convert::{DiffuseWhite, HlgMode, HlgRendering, Nits, Transfer};
@@ -16,8 +16,8 @@ fn linear_bt709_to_srgb_u8_display_p3_applies_gamut_matrix_before_clamping() {
     // Out-of-sRGB linear color in BT.709 with negative red (`R = -0.15, G = 0.85, B = 0.05`)
     // that maps INSIDE Display P3 gamut! If clamping happened before the 3x3 matrix,
     // R would be clipped to 0.0 and shift the resulting P3 color visibly.
-    let src = ImageSpec::rgbf32_linear(); // Bt709
-    let dst = ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3);
+    let src = ImageSpec::RGBF32_LINEAR; // Bt709
+    let dst = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
 
     let px_in = [-0.15f32, 0.85, 0.05];
     let expected_lin_p3 = Primaries::Bt709
@@ -46,21 +46,16 @@ fn linear_bt709_to_srgb_u8_display_p3_applies_gamut_matrix_before_clamping() {
 #[cfg(feature = "oklab")]
 #[test]
 fn display_p3_oklab_roundtrip_is_exact_and_primaries_anchored_via_xyz_d65() {
-    let p3 = ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3);
+    let p3 = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     let to_ok = RowPlan::build(
         p3.clone(),
-        ImageSpec::oklab_f32(),
+        ImageSpec::OKLAB_F32,
         &ConvertPolicy::working_linear(),
         None,
     )
     .unwrap();
-    let from_ok = RowPlan::build(
-        ImageSpec::oklab_f32(),
-        p3,
-        &ConvertPolicy::permissive(),
-        None,
-    )
-    .unwrap();
+    let from_ok =
+        RowPlan::build(ImageSpec::OKLAB_F32, p3, &ConvertPolicy::permissive(), None).unwrap();
 
     let src = [0u8, 255, 128, 255, 0, 64, 42, 180, 210];
     let mut oklab = [0u8; 3 * 12];
@@ -80,7 +75,7 @@ fn pq_flushes_rgb_nan_to_zero_while_leaving_alpha_untouched() {
         SampleLayout::RGBAF32,
         ColorSpace::BT2100_PQ.with_alpha(AlphaMode::Straight),
     );
-    let lin_rgba = ImageSpec::rgbaf32_linear()
+    let lin_rgba = ImageSpec::RGBAF32_LINEAR
         .with_primaries(Primaries::Bt2020)
         .with_white(DiffuseWhite::BT2408);
 
@@ -168,8 +163,8 @@ fn depth_policy_truncate_vs_round_and_bayer_ordered_dither() {
 fn policy_refusal_gates_and_sample_facts_unlock_lossless() {
     // DepthPolicy::Forbid refuses U16 -> U8 normally
     let err = RowPlan::build(
-        ImageSpec::rgb16_srgb(),
-        ImageSpec::rgb8_srgb(),
+        ImageSpec::RGB16_SRGB,
+        ImageSpec::RGB8_SRGB,
         &ConvertPolicy::lossless(),
         None,
     )
@@ -183,8 +178,8 @@ fn policy_refusal_gates_and_sample_facts_unlock_lossless() {
     .with_all_opaque(true);
     assert!(
         RowPlan::build(
-            ImageSpec::rgb16_srgb(),
-            ImageSpec::rgb8_srgb(),
+            ImageSpec::RGB16_SRGB,
+            ImageSpec::RGB8_SRGB,
             &ConvertPolicy::lossless().with_source_facts(facts_8),
             None
         )
@@ -193,8 +188,8 @@ fn policy_refusal_gates_and_sample_facts_unlock_lossless() {
 
     // AlphaPolicy::Forbid refuses RGBA -> RGB
     let err = RowPlan::build(
-        ImageSpec::rgba8_srgb(),
-        ImageSpec::rgb8_srgb(),
+        ImageSpec::RGBA8_SRGB,
+        ImageSpec::RGB8_SRGB,
         &ConvertPolicy::lossless(),
         None,
     )
@@ -202,7 +197,7 @@ fn policy_refusal_gates_and_sample_facts_unlock_lossless() {
     assert_eq!(*err.error(), ConvertError::AlphaLossForbidden);
 
     // AlphaPolicy::DiscardIfOpaque refuses unproven RGBA -> RGB, succeeds once scan_facts proves opacity!
-    let mut rgba_buf = PixelBuf::new(4, 2, ImageSpec::rgba8_srgb()).unwrap();
+    let mut rgba_buf = PixelBuf::new(4, 2, ImageSpec::RGBA8_SRGB).unwrap();
     for y in 0..2 {
         for px in rgba_buf.as_view_mut().row_mut(y).as_chunks_mut::<4>().0 {
             px.copy_from_slice(&[100, 150, 200, 255]);
@@ -210,29 +205,27 @@ fn policy_refusal_gates_and_sample_facts_unlock_lossless() {
     }
     let err = convert_to_buf(
         &rgba_buf.as_view(),
-        ImageSpec::rgb8_srgb(),
+        ImageSpec::RGB8_SRGB,
         &ConvertPolicy::working_linear().with_alpha(AlphaPolicy::DiscardIfOpaque),
-        PeakSource::Measured,
     )
     .unwrap_err();
     assert_eq!(*err.error(), ConvertError::AlphaLossForbidden);
 
     let scanned = scan_facts(&rgba_buf.as_view());
     assert!(scanned.all_opaque);
-    rgba_buf.set_facts(scanned);
+    rgba_buf.assume_facts(scanned);
     let out = convert_to_buf(
         &rgba_buf.as_view(),
-        ImageSpec::rgb8_srgb(),
+        ImageSpec::RGB8_SRGB,
         &ConvertPolicy::working_linear().with_alpha(AlphaPolicy::DiscardIfOpaque),
-        PeakSource::Measured,
     )
     .unwrap();
     assert_eq!(&out.as_view().row(0)[0..3], &[100, 150, 200]);
 
     // RangePolicy::Forbid refuses Narrow <-> Full
     let err = RowPlan::build(
-        ImageSpec::rgb8_srgb().with_range(SignalRange::Narrow),
-        ImageSpec::rgb8_srgb(),
+        ImageSpec::RGB8_SRGB.with_range(SignalRange::Narrow),
+        ImageSpec::RGB8_SRGB,
         &ConvertPolicy::lossless(),
         None,
     )
@@ -241,8 +234,8 @@ fn policy_refusal_gates_and_sample_facts_unlock_lossless() {
 
     // GamutPolicy::Forbid refuses P3 -> Bt709
     let err = RowPlan::build(
-        ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3),
-        ImageSpec::rgb8_srgb(),
+        ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3),
+        ImageSpec::RGB8_SRGB,
         &ConvertPolicy::permissive().with_gamut(GamutPolicy::Forbid),
         None,
     )
@@ -253,8 +246,8 @@ fn policy_refusal_gates_and_sample_facts_unlock_lossless() {
     #[cfg(feature = "hdr-transfers")]
     {
         let err = RowPlan::build(
-            ImageSpec::rgb16_bt2100_pq(),
-            ImageSpec::rgbf32_linear().with_primaries(Primaries::Bt2020),
+            ImageSpec::RGB16_BT2100_PQ,
+            ImageSpec::RGBF32_LINEAR.with_primaries(Primaries::Bt2020),
             &ConvertPolicy::permissive(),
             None,
         )
@@ -263,8 +256,8 @@ fn policy_refusal_gates_and_sample_facts_unlock_lossless() {
 
         // HlgRenderingRequired: HLG Scene -> Linear without HlgRendering
         let err = RowPlan::build(
-            ImageSpec::rgb16_bt2100_hlg_scene(),
-            ImageSpec::rgbf32_linear().with_primaries(Primaries::Bt2020),
+            ImageSpec::RGB16_BT2100_HLG_SCENE,
+            ImageSpec::RGBF32_LINEAR.with_primaries(Primaries::Bt2020),
             &ConvertPolicy::working_linear(),
             None,
         )
@@ -275,7 +268,7 @@ fn policy_refusal_gates_and_sample_facts_unlock_lossless() {
     // CmsRequired: CMYK -> sRGB without CmsBackend
     let err = RowPlan::build(
         ImageSpec::cmyk8(None),
-        ImageSpec::rgb8_srgb(),
+        ImageSpec::RGB8_SRGB,
         &ConvertPolicy::permissive(),
         None,
     )
@@ -286,8 +279,8 @@ fn policy_refusal_gates_and_sample_facts_unlock_lossless() {
 #[test]
 fn narrow_full_roundtrip_and_linear_matte_composite() {
     // Narrow U8 (16..=235) -> Full U8 (0..=255): 16 -> 0, 235 -> 255
-    let narrow = ImageSpec::rgb8_srgb().with_range(SignalRange::Narrow);
-    let full = ImageSpec::rgb8_srgb();
+    let narrow = ImageSpec::RGB8_SRGB.with_range(SignalRange::Narrow);
+    let full = ImageSpec::RGB8_SRGB;
     let plan = RowPlan::build(
         narrow,
         full,
@@ -304,8 +297,8 @@ fn narrow_full_roundtrip_and_linear_matte_composite() {
 
     // 50% opaque white over linear black matte -> linear 0.5 -> sRGB ~188 (NOT naive gamma 128!)
     let matte_plan = RowPlan::build(
-        ImageSpec::rgba8_srgb(),
-        ImageSpec::rgb8_srgb(),
+        ImageSpec::RGBA8_SRGB,
+        ImageSpec::RGB8_SRGB,
         &ConvertPolicy::permissive().with_alpha(AlphaPolicy::CompositeOnto(Color::BLACK)),
         None,
     )
@@ -338,8 +331,8 @@ fn pq_and_hlg_accuracy_bounds() {
         10_000.0 * (num / den).powf(1.0 / M1)
     }
 
-    let pq = ImageSpec::rgb16_bt2100_pq();
-    let lin = ImageSpec::rgbf32_linear()
+    let pq = ImageSpec::RGB16_BT2100_PQ;
+    let lin = ImageSpec::RGBF32_LINEAR
         .with_primaries(Primaries::Bt2020)
         .with_white(DiffuseWhite::BT2408);
     let to_lin = RowPlan::build(
@@ -442,7 +435,7 @@ fn pq_and_hlg_accuracy_bounds() {
 #[test]
 fn perceptual_spaces_roundtrip_accurately() {
     use zenpixels_convert::{ChannelOrder, PerceptualSpace, SampleType};
-    let lin = ImageSpec::rgbf32_linear();
+    let lin = ImageSpec::RGBF32_LINEAR;
     let sample = [0.6f32, 0.35, 0.2];
     for space in [
         PerceptualSpace::Oklch,

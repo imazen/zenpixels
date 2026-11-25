@@ -17,7 +17,7 @@ use zenpixels::{
 
 #[test]
 fn pixel_buf_clone_preserves_alignment_and_with_spec_checks_bpp() {
-    let mut buf = PixelBuf::new(4, 2, ImageSpec::rgbaf32_linear()).unwrap();
+    let mut buf = PixelBuf::new(4, 2, ImageSpec::RGBAF32_LINEAR).unwrap();
     buf.as_view_mut().row_as_mut::<f32>(0).unwrap()[0] = 0.75;
     let cloned = buf.clone();
     assert_eq!(cloned.as_view().row_as::<f32>(0).unwrap()[0], 0.75);
@@ -31,7 +31,7 @@ fn pixel_buf_clone_preserves_alignment_and_with_spec_checks_bpp() {
         4,
         2,
         4 * 16,
-        ImageSpec::rgbaf32_linear(),
+        ImageSpec::RGBAF32_LINEAR,
     )
     .unwrap();
     let cloned_aligned = from_aligned.clone();
@@ -49,7 +49,7 @@ fn pixel_buf_clone_preserves_alignment_and_with_spec_checks_bpp() {
         4,
         2,
         4 * 16,
-        ImageSpec::rgbaf32_linear(),
+        ImageSpec::RGBAF32_LINEAR,
     )
     .unwrap();
     let cloned_u8 = from_u8.clone();
@@ -58,17 +58,17 @@ fn pixel_buf_clone_preserves_alignment_and_with_spec_checks_bpp() {
         "cloning U8-backed F32 buffer must preserve F32 alignment"
     );
 
-    // with_spec must reject mismatched bytes_per_pixel (RGB8 -> RGBA8).
-    let rgb = PixelBuf::new(2, 2, ImageSpec::rgb8_srgb()).unwrap();
+    // relabel_spec must reject mismatched bytes_per_pixel (RGB8 -> RGBA8).
+    let rgb = PixelBuf::new(2, 2, ImageSpec::RGB8_SRGB).unwrap();
     assert!(
-        rgb.with_spec(ImageSpec::rgba8_srgb()).is_err(),
-        "with_spec must reject mismatched bytes_per_pixel"
+        rgb.relabel_spec(ImageSpec::RGBA8_SRGB).is_err(),
+        "relabel_spec must reject mismatched bytes_per_pixel"
     );
 
-    // with_spec accepts identical bytes_per_pixel (RGB8 -> BGR8).
-    let rgb2 = PixelBuf::new(2, 2, ImageSpec::rgb8_srgb()).unwrap();
+    // relabel_spec accepts identical bytes_per_pixel (RGB8 -> BGR8).
+    let rgb2 = PixelBuf::new(2, 2, ImageSpec::RGB8_SRGB).unwrap();
     let bgr_spec = ImageSpec::new(SampleLayout::BGR8, ColorSpace::SRGB);
-    let bgr = rgb2.with_spec(bgr_spec).unwrap();
+    let bgr = rgb2.relabel_spec(bgr_spec).unwrap();
     assert_eq!(bgr.spec().layout, SampleLayout::BGR8);
 }
 
@@ -80,9 +80,8 @@ fn try_into_vec_zero_copy_preserves_self_on_error_and_strided_gather_preserves_a
         10, 20, 30, 40, 50, 60, 0xEE, 0xFF, // row 0 (2 px = 6B, stride = 8B)
         70, 80, 90, 100, 110, 120, 0xEE, 0xFF, // row 1
     ];
-    let buf =
-        PixelBuf::from_storage_parts(PixelStorage::U8(raw), 0, 2, 2, 8, ImageSpec::rgb8_srgb())
-            .unwrap();
+    let buf = PixelBuf::from_storage_parts(PixelStorage::U8(raw), 0, 2, 2, 8, ImageSpec::RGB8_SRGB)
+        .unwrap();
     let recovered = match buf.into_vec_zero_copy::<[u8; 3]>() {
         Ok(_) => panic!("strided buffer must not zero-copy cast to tight Vec<[u8; 3]>"),
         Err(b) => b,
@@ -95,7 +94,7 @@ fn try_into_vec_zero_copy_preserves_self_on_error_and_strided_gather_preserves_a
         vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
         2,
         2,
-        ImageSpec::rgba8_srgb(),
+        ImageSpec::RGBA8_SRGB,
     )
     .unwrap();
     let recovered2 = match tight_rgba.into_vec_zero_copy::<u32>() {
@@ -121,7 +120,7 @@ fn try_into_vec_zero_copy_preserves_self_on_error_and_strided_gather_preserves_a
     }
     raw2.extend_from_slice(&[0xCC, 0xDD]);
     let strided =
-        PixelBuf::from_storage_parts(PixelStorage::U8(raw2), 0, 2, 2, 8, ImageSpec::rgb8_srgb())
+        PixelBuf::from_storage_parts(PixelStorage::U8(raw2), 0, 2, 2, 8, ImageSpec::RGB8_SRGB)
             .unwrap();
     let gathered: Vec<[u16; 2]> = strided.into_vec::<[u16; 2]>().unwrap();
     assert_eq!(gathered, vec![[1, 2], [3, 4], [5, 6]]);
@@ -136,7 +135,7 @@ fn pixel_buf_source_row_panics_out_of_bounds_even_with_trailing_capacity() {
         2,
         1,
         6,
-        ImageSpec::rgb8_srgb(),
+        ImageSpec::RGB8_SRGB,
     )
     .unwrap();
     let _ = PixelSource::source_row(&buf, 1);
@@ -151,7 +150,7 @@ fn pixel_buf_sink_row_mut_panics_out_of_bounds_even_with_trailing_capacity() {
         2,
         1,
         6,
-        ImageSpec::rgb8_srgb(),
+        ImageSpec::RGB8_SRGB,
     )
     .unwrap();
     let _ = PixelSink::sink_row_mut(&mut buf, 1);
@@ -159,9 +158,9 @@ fn pixel_buf_sink_row_mut_panics_out_of_bounds_even_with_trailing_capacity() {
 
 #[test]
 fn banded_buf_rejects_zero_band_bytes_and_tracks_facts_across_child_bands() {
-    assert!(BandedBuf::new(4, 4, ImageSpec::rgba8_srgb(), 0).is_err());
+    assert!(BandedBuf::new(4, 4, ImageSpec::RGBA8_SRGB, 0).is_err());
 
-    let mut banded = BandedBuf::new(4, 4, ImageSpec::rgba8_srgb(), 32).unwrap();
+    let mut banded = BandedBuf::new(4, 4, ImageSpec::RGBA8_SRGB, 32).unwrap();
     assert!(banded.bands().len() >= 2);
 
     // Attach facts via sink_finish -> propagates to parent AND child bands.
@@ -318,7 +317,7 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
             alpha: AlphaMode::None,
         },
     );
-    let valid_base = PixelBuf::new(4, 4, ImageSpec::rgb8_srgb()).unwrap();
+    let valid_base = PixelBuf::new(4, 4, ImageSpec::RGB8_SRGB).unwrap();
     let valid_gm = PixelBuf::new(2, 2, untagged_gm_spec.clone()).unwrap();
     let valid_meta = GainMapMetadata::symmetric(2.0);
     let hdr = DualLayerHdrBuf::new(valid_base, valid_gm, valid_meta)
@@ -342,14 +341,14 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
     let ok_gm = PixelBuf::new(2, 2, untagged_gm_spec.clone()).unwrap();
     assert!(DualLayerHdrBuf::new(cmyk_base, ok_gm, GainMapMetadata::symmetric(2.0)).is_err());
 
-    let ok_base = PixelBuf::new(4, 4, ImageSpec::rgb8_srgb()).unwrap();
-    let srgb_gm = PixelBuf::new(2, 2, ImageSpec::gray8_srgb()).unwrap();
+    let ok_base = PixelBuf::new(4, 4, ImageSpec::RGB8_SRGB).unwrap();
+    let srgb_gm = PixelBuf::new(2, 2, ImageSpec::GRAY8_SRGB).unwrap();
     assert!(
         DualLayerHdrBuf::new(ok_base, srgb_gm, GainMapMetadata::symmetric(2.0)).is_err(),
         "ISO 21496-1 gain map must be ColorSpace::Untagged (numeric, no transfer curve)"
     );
 
-    let ok_base2 = PixelBuf::new(4, 4, ImageSpec::rgb8_srgb()).unwrap();
+    let ok_base2 = PixelBuf::new(4, 4, ImageSpec::RGB8_SRGB).unwrap();
     let rgb565_gm = PixelBuf::new(
         2,
         2,
@@ -522,7 +521,7 @@ fn image_crate_interop_propagates_p3_cicp_and_rejects_mismatches() {
         .copy_from_slice(&[255, 0, 0, 0, 255, 0]);
 
     // Exporting RGBA PixelBuf into image::Rgb<u8> must fail!
-    let rgba_buf = PixelBuf::new(2, 1, ImageSpec::rgba8_srgb()).unwrap();
+    let rgba_buf = PixelBuf::new(2, 1, ImageSpec::RGBA8_SRGB).unwrap();
     assert!(rgba_buf.into_image_buffer::<image::Rgb<u8>>().is_err());
 
     // Exporting Display P3 RGB8 sets Display P3 CICP on the resulting ImageBuffer.
@@ -530,7 +529,7 @@ fn image_crate_interop_propagates_p3_cicp_and_rejects_mismatches() {
     assert_eq!(img.color_space(), image::metadata::Cicp::DISPLAY_P3);
 
     // from_rgb8_image_buffer rejects contradictory ColorSpace::SRGB on a Display P3 ImageBuffer!
-    assert!(PixelBuf::from_rgb8_image_buffer(img.clone(), ColorSpace::SRGB).is_err());
+    assert!(PixelBuf::from_rgb8_image_with_color(img.clone(), ColorSpace::SRGB).is_err());
 
     // from_rgb8_image preserves Display P3!
     let roundtripped = PixelBuf::from_rgb8_image(img).unwrap();

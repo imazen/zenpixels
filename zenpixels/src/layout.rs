@@ -1073,7 +1073,7 @@ impl RowAlign {
     }
 }
 
-/// Downstream container contract for [`PixelBuf::new_for`](crate::PixelBuf::new_for).
+/// Downstream container contract for [`PixelBuf::new_for_interop`](crate::PixelBuf::new_for_interop).
 ///
 /// Validates upfront that an [`ImageSpec`](crate::ImageSpec) can move into the
 /// target container **without copying or silently relabeling pixels**.

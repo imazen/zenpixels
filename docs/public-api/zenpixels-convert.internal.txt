@@ -14,27 +14,27 @@
 #
 # per-module pub lines:
 #   codes                             3
+#   compact                           1
 #   error                             1
 #   icc_profiles                      1
-#   load_bearing                      1
 #   negotiate                         2
 #   output                            1
+#   planar                            1
 #   tonemap                           1
-#   ycbcr                             1
 
 ## items (11 lines)
 
 pub fn codes::CodeMap::assert_fields_are_eq(&self)
 pub fn codes::CodeMapError::assert_fields_are_eq(&self)
 pub fn codes::CodesError::assert_fields_are_eq(&self)
+pub fn compact::CompactionReport::assert_fields_are_eq(&self)
 pub fn error::ConvertError::assert_fields_are_eq(&self)
 pub fn icc_profiles::SynthesizedIcc::assert_fields_are_eq(&self)
-pub fn load_bearing::LoadBearingReport::assert_fields_are_eq(&self)
 pub fn negotiate::FormatCost::assert_fields_are_eq(&self)
 pub fn negotiate::NegotiatedFormat::assert_fields_are_eq(&self)
-pub fn output::OutputProfile::assert_fields_are_eq(&self)
+pub fn output::OutputSignaling::assert_fields_are_eq(&self)
+pub fn planar::PlanarReconstructionOptions::assert_fields_are_eq(&self)
 pub fn tonemap::tone_mapper::Requirements::assert_fields_are_eq(&self)
-pub fn ycbcr::YcbcrOptions::assert_fields_are_eq(&self)
 
 ## trait impls (30 types)
 
@@ -45,18 +45,20 @@ accel::Accelerators: TrivialClone
 codes::CodeMap: TrivialClone
 codes::CodeMapError: TrivialClone
 codes::CodeRole: TrivialClone
+compact::AlphaCompaction: TrivialClone
+compact::CompactionReport: TrivialClone
 error::ConvertError: TrivialClone
 gainmap::GainMapDownsample: TrivialClone
 gainmap::GainMapOrientation: TrivialClone
 gainmap::GainMapResample: TrivialClone
 gainmap::GainMapTarget: TrivialClone
 gamut::GamutMatrix: TrivialClone
-load_bearing::AlphaCompaction: TrivialClone
-load_bearing::LoadBearingReport: TrivialClone
 measure::LightLevelMethod: TrivialClone
 negotiate::FormatCost: TrivialClone
 negotiate::LossKind: TrivialClone
 oklab::OklabSpace: TrivialClone
+planar::ChromaUpsample: TrivialClone
+planar::PlanarReconstructionOptions: TrivialClone
 policy::AlphaPolicy: TrivialClone
 policy::DepthPolicy: TrivialClone
 policy::GamutPolicy: TrivialClone
@@ -65,6 +67,4 @@ policy::LumaDomain: TrivialClone
 policy::RangePolicy: TrivialClone
 tonemap::bt2446a::Bt2446A: TrivialClone
 tonemap::tone_mapper::Requirements: TrivialClone
-ycbcr::ChromaUpsample: TrivialClone
 ycbcr::YcbcrMatrix: TrivialClone
-ycbcr::YcbcrOptions: TrivialClone

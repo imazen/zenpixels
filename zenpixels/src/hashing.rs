@@ -309,9 +309,9 @@ fn hash_planar_into<H: Hasher>(view: &PlanarView<'_>, inclusions: HashInclusions
             view.crop_origin().hash(&mut p);
             view.chroma_siting().hash(&mut p);
             view.color().hash(&mut p);
-            view.ycbcr_matrix_code().hash(&mut p);
-            view.range().hash(&mut p);
-            view.alpha().hash(&mut p);
+            view.matrix_coefficients_code().hash(&mut p);
+            view.range_override().hash(&mut p);
+            view.alpha_override().hash(&mut p);
         }
     }
     for plane in view.planes() {

@@ -18,10 +18,13 @@ use crate::icc_profiles::SynthesizedIcc;
 use crate::plan::{ImagePlan, same_color_meaning, same_photometry};
 use crate::policy::ConvertPolicy;
 
-/// Requested container color signaling for an encoder.
+/// Requested container color signaling for an encoder (CICP / ICC metadata emission).
+///
+/// Selects **container signaling metadata**, not the target pixel color space (which is
+/// determined by the destination [`ImageSpec`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum OutputProfile {
+pub enum OutputSignaling {
     /// Emit CICP when standardized (`sRGB`, `DisplayP3`, `BT.2100 PQ/HLG`), and fall back to bundled ICC otherwise (e.g. Adobe RGB).
     #[default]
     Auto,
@@ -33,7 +36,7 @@ pub enum OutputProfile {
     EmbedIcc,
     /// Embed an explicit caller-provided ICC profile.
     CustomIcc(Arc<[u8]>),
-    /// Strip color metadata (assume sRGB / untagged).
+    /// Strip color metadata (assume sRGB / untagged; does not alter pixel values).
     Strip,
 }
 
@@ -51,12 +54,12 @@ pub struct EncodeReady<'a> {
     pub hdr: HdrMetadata,
 }
 
-/// Atomic encoder preparation plan combining [`ImagePlan`] with [`OutputProfile`] signaling.
+/// Atomic encoder preparation plan combining [`ImagePlan`] with [`OutputSignaling`].
 #[derive(Clone, Debug)]
 pub struct OutputPlan {
     src: ImageSpec,
     dst: ImageSpec,
-    profile: OutputProfile,
+    signaling: OutputSignaling,
     image_plan: ImagePlan,
     same_spec: bool,
     src_opaque_slot: bool,
@@ -71,10 +74,10 @@ impl OutputPlan {
     /// `&ConvertPolicy` (retaining internal clones inside the built plan).
     ///
     /// Validates pixel conversion feasibility AND container signaling compatibility
-    /// upfront (for non-origin-dependent profiles) so invalid output configurations
+    /// upfront (for non-origin-dependent signaling modes) so invalid output configurations
     /// fail before processing any pixels. Note that signaling rules inspect the
-    /// **destination** spec (`dst`) — for example, `OutputProfile::CicpOnly` and
-    /// `OutputProfile::Auto` refuse `Transfer::Hlg(HlgMode::Display(_))` when `dst`
+    /// **destination** spec (`dst`) — for example, `OutputSignaling::CicpOnly` and
+    /// `OutputSignaling::Auto` refuse `Transfer::Hlg(HlgMode::Display(_))` when `dst`
     /// targets display-referred HLG (converting *from* display HLG to sRGB or PQ
     /// succeeds because the output signaling is sRGB or PQ).
     #[inline]
@@ -83,9 +86,9 @@ impl OutputPlan {
         dst: impl AsRef<ImageSpec>,
         policy: &ConvertPolicy,
         peak: PeakSource,
-        profile: OutputProfile,
+        signaling: OutputSignaling,
     ) -> Result<Self, At<ConvertError>> {
-        Self::build_inner(src.as_ref(), dst.as_ref(), policy, peak, profile)
+        Self::build_inner(src.as_ref(), dst.as_ref(), policy, peak, signaling)
     }
 
     #[inline(never)]
@@ -94,7 +97,7 @@ impl OutputPlan {
         dst: &ImageSpec,
         policy: &ConvertPolicy,
         peak: PeakSource,
-        profile: OutputProfile,
+        signaling: OutputSignaling,
     ) -> Result<Self, At<ConvertError>> {
         let same_spec = src == dst;
         let src_opaque_slot =
@@ -103,8 +106,8 @@ impl OutputPlan {
         let is_identity = same_spec && (!src_opaque_slot || policy_all_opaque);
         let image_plan = ImagePlan::build(src, dst, policy, peak)?;
         // Eagerly validate signaling rules that don't depend on runtime `ColorOrigin`.
-        match &profile {
-            OutputProfile::SameAsOrigin => {
+        match &signaling {
+            OutputSignaling::SameAsOrigin => {
                 if !same_color_meaning(&src.color, &dst.color) {
                     return Err(err_at(ConvertError::OutputSignalingMismatch));
                 }
@@ -113,7 +116,7 @@ impl OutputPlan {
                 let _ = resolve_output_signaling(
                     &src.color,
                     &dst.color,
-                    &profile,
+                    &signaling,
                     &ColorOrigin::assumed(),
                 )?;
             }
@@ -121,7 +124,7 @@ impl OutputPlan {
         Ok(Self {
             src: src.clone(),
             dst: dst.clone(),
-            profile,
+            signaling,
             image_plan,
             same_spec,
             src_opaque_slot,
@@ -152,7 +155,7 @@ impl OutputPlan {
             return Err(err_at(ConvertError::UnsupportedRoute));
         }
         let (cicp, icc) =
-            resolve_output_signaling(&self.src.color, &self.dst.color, &self.profile, origin)?;
+            resolve_output_signaling(&self.src.color, &self.dst.color, &self.signaling, origin)?;
         let hdr =
             if self.dst.can_represent_hdr() && same_photometry(&self.src.color, &self.dst.color) {
                 view.hdr()
@@ -185,7 +188,7 @@ impl OutputPlan {
         let (cicp, icc) = resolve_output_signaling(
             &self.src.color,
             &self.dst.color,
-            &self.profile,
+            &self.signaling,
             buf.origin(),
         )?;
         let hdr =
@@ -233,7 +236,7 @@ impl OutputPlan {
         &self,
         origin: &ColorOrigin,
     ) -> Result<(Option<Cicp>, Option<Cow<'static, [u8]>>), At<ConvertError>> {
-        resolve_output_signaling(&self.src.color, &self.dst.color, &self.profile, origin)
+        resolve_output_signaling(&self.src.color, &self.dst.color, &self.signaling, origin)
     }
 
     /// Build a streaming [`RowPlan`](crate::RowPlan) matching this output plan so
@@ -266,13 +269,13 @@ pub fn adapt_for_encode<'a>(
     supported: &[ImageSpec],
     policy: &ConvertPolicy,
     peak: PeakSource,
-    profile: OutputProfile,
+    signaling: OutputSignaling,
 ) -> Result<(crate::negotiate::NegotiatedFormat, EncodeReady<'a>), At<ConvertError>> {
     let mut eff_policy = policy.clone();
     eff_policy.source_facts = crate::plan::merge_facts(policy.source_facts, src.facts());
     let negotiated = crate::negotiate::Negotiate::select(src.spec(), supported, &eff_policy)
         .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
-    let plan = OutputPlan::build(src.spec(), &negotiated.spec, &eff_policy, peak, profile)?;
+    let plan = OutputPlan::build(src.spec(), &negotiated.spec, &eff_policy, peak, signaling)?;
     let ready = plan.execute_view(src, origin)?;
     Ok((negotiated, ready))
 }
@@ -284,13 +287,13 @@ pub fn adapt_for_encode_format<'a>(
     supported: &[PixelFormat],
     policy: &ConvertPolicy,
     peak: PeakSource,
-    profile: OutputProfile,
+    signaling: OutputSignaling,
 ) -> Result<(crate::negotiate::NegotiatedFormat, EncodeReady<'a>), At<ConvertError>> {
     let mut eff_policy = policy.clone();
     eff_policy.source_facts = crate::plan::merge_facts(policy.source_facts, src.facts());
     let negotiated = crate::negotiate::Negotiate::select_format(src.spec(), supported, &eff_policy)
         .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
-    let plan = OutputPlan::build(src.spec(), &negotiated.spec, &eff_policy, peak, profile)?;
+    let plan = OutputPlan::build(src.spec(), &negotiated.spec, &eff_policy, peak, signaling)?;
     let ready = plan.execute_view(src, origin)?;
     Ok((negotiated, ready))
 }
@@ -440,17 +443,17 @@ type ResolvedSignaling = (Option<Cicp>, Option<Cow<'static, [u8]>>);
 fn resolve_output_signaling(
     src_color: &ColorSpace,
     dst_color: &ColorSpace,
-    profile: &OutputProfile,
+    signaling: &OutputSignaling,
     origin: &ColorOrigin,
 ) -> Result<ResolvedSignaling, At<ConvertError>> {
-    match profile {
-        OutputProfile::Strip => Ok((None, None)),
-        OutputProfile::CustomIcc(bytes) => {
+    match signaling {
+        OutputSignaling::Strip => Ok((None, None)),
+        OutputSignaling::CustomIcc(bytes) => {
             validate_custom_icc_for_dst(bytes, dst_color)?;
             // Do not synthesize a potentially contradicting CICP alongside an arbitrary custom ICC.
             Ok((None, Some(Cow::Owned(try_clone_bytes(bytes)?))))
         }
-        OutputProfile::CicpOnly => {
+        OutputSignaling::CicpOnly => {
             if matches!(
                 dst_color,
                 ColorSpace::Rgb {
@@ -465,7 +468,7 @@ fn resolve_output_signaling(
                 .ok_or_else(|| err_at(ConvertError::OutputSignalingUnavailable))?;
             Ok((Some(cicp), None))
         }
-        OutputProfile::SameAsOrigin => {
+        OutputSignaling::SameAsOrigin => {
             if !same_color_meaning(src_color, dst_color) {
                 return Err(err_at(ConvertError::OutputSignalingMismatch));
             }
@@ -496,7 +499,7 @@ fn resolve_output_signaling(
             };
             Ok((cicp, icc))
         }
-        OutputProfile::EmbedIcc => {
+        OutputSignaling::EmbedIcc => {
             let icc = match dst_color {
                 ColorSpace::Icc { profile, .. } => {
                     validate_custom_icc_for_dst(profile, dst_color)?;
@@ -541,7 +544,7 @@ fn resolve_output_signaling(
             };
             Ok((cicp, Some(icc_bytes)))
         }
-        OutputProfile::Auto => match dst_color {
+        OutputSignaling::Auto => match dst_color {
             ColorSpace::Icc { profile, .. } => {
                 validate_custom_icc_for_dst(profile, dst_color)?;
                 Ok((None, Some(Cow::Owned(try_clone_bytes(profile)?))))

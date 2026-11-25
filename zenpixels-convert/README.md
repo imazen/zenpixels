@@ -1,7 +1,7 @@
 # zenpixels-convert [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenpixels/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenpixels/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/zenpixels-convert?style=flat-square)](https://crates.io/crates/zenpixels-convert) [![lib.rs](https://img.shields.io/crates/v/zenpixels-convert?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/zenpixels-convert) [![docs.rs](https://img.shields.io/docsrs/zenpixels-convert?style=flat-square)](https://docs.rs/zenpixels-convert) [![MSRV](https://img.shields.io/badge/MSRV-1.89-blue?style=flat-square)](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field) [![license](https://img.shields.io/crates/l/zenpixels-convert?style=flat-square)](#license)
 
 Transfer-function-aware pixel conversion, HDR tone mapping, gamut compression,
-ICC/CMS routing, gain-map reconstruction, EXIF orientation, planar YCbCr/RGB
+ICC/CMS routing, gain-map reconstruction, EXIF orientation, planar YCbCr/RGB/monochrome
 reconstruction, and codec format negotiation for [`zenpixels`](https://github.com/imazen/zenpixels).
 Re-exports `zenpixels::*` at the crate root with zero module name collisions.
 
@@ -13,46 +13,46 @@ This is the **0.5.0 greenfield candidate**. For full end-to-end recipes, see
 | Need | API |
 |---|---|
 | Quick 8-bit sRGB output | `to_rgb8(&view)`, `to_gray8(&view)` (refuse unproven alpha discard), `to_rgba8(&view)`, `to_bgra8(&view)` |
-| One-shot image conversion | `convert_to_buf(&view, dst_spec, &policy, PeakSource::Measured)` / `convert_into(&src, &mut dst, &policy, peak)` |
+| One-shot image conversion | `convert_to_buf(&view, dst_spec, &policy)` / `convert_into(&src, &mut dst, &policy)` (add `_with_peak` for explicit `PeakSource`) |
 | Reusable whole-image plan (`PixelBuf` / `PixelView` / `BandedBuf`) | `ImagePlan::build(src, dst, &policy, peak)` → `.execute(&src)` / `.execute_into(&src, &mut dst)` |
 | Streaming row loop (zero per-row heap scratch) | `RowPlan::build(src, dst, &policy, resolved_source_peak)` → `.convert_row(src_row, dst_row, width, y)` |
-| Encoder negotiation + CICP/ICC signaling | `adapt_for_encode_format(view, origin, &[PixelFormat], &policy, peak, profile)` or reusable `OutputPlan::build(...)` |
+| Planar YCbCr / GBR / RGB / monochrome reconstruction | `reconstruct_planar_to_buf(&planar, layout, &opts)` / `reconstruct_planar_into(&planar, &opts, &mut dst)` / `reconstruct_planar_f32(&planar)` |
+| Content compaction (alpha, chroma, U16→U8) | `analyze_compaction(&view)`, `compact_to_buf(&view)`, `compact_in_place(&mut buf, mode)` |
+| Encoder negotiation + CICP/ICC signaling | `adapt_for_encode_format(view, origin, &[PixelFormat], &policy, peak, signaling)` or reusable `OutputPlan::build(...)` |
 
 ## Quick start
 
 ```rust
-use zenpixels_convert::{
-    ConvertPolicy, ImageSpec, PeakSource, PixelBuf, convert_to_buf, to_rgba8,
-};
+use zenpixels_convert::{ConvertPolicy, ImageSpec, PixelBuf, convert_to_buf, specs, to_rgba8};
 
 let src = PixelBuf::from_typed(
     vec![255u8, 0, 0, 0, 255, 0], 2, 1, ImageSpec::RGB8_SRGB,
 )?;
 
-// 1. One-call 8-bit sRGB conversion (no policy/HDR setup needed):
+// 1. One-call 8-bit sRGB conversion:
 let rgba = to_rgba8(&src.as_view())?;
-assert_eq!(rgba.as_view().row(0), &[255, 0, 0, 255, 0, 255, 0, 255]);
+assert_eq!(rgba.row(0), &[255, 0, 0, 255, 0, 255, 0, 255]);
 
-// 2. Arbitrary destination with explicit policy (safe default = lossless):
+// 2. Arbitrary destination with safe-by-default lossless policy (widening RGB8 -> linear F32):
 let linear = convert_to_buf(
     &src.as_view(),
-    ImageSpec::rgbf32_linear_ref(),
-    &ConvertPolicy::working_linear(),
-    PeakSource::Measured,
+    &specs::RGBF32_LINEAR,
+    &ConvertPolicy::lossless(),
 )?;
-assert_eq!(linear.spec(), ImageSpec::rgbf32_linear_ref());
+assert_eq!(linear.spec(), &specs::RGBF32_LINEAR);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 ### Safe-by-default `ConvertPolicy`
 
-`ConvertPolicy::default()` equals **`ConvertPolicy::lossless()`** — it refuses
-depth narrowing, alpha removal, and range scaling, and preserves extended float
-gamut. Opt in explicitly to `ConvertPolicy::permissive()`,
-`ConvertPolicy::working_linear()`, or `ConvertPolicy::display_sdr(white, peak)`
-when lossy conversion is desired. All planners (`RowPlan::build`,
-`ImagePlan::build`, `OutputPlan::build`) borrow `&ConvertPolicy` and accept
-either `&ImageSpec` or `ImageSpec`.
+`ConvertPolicy::default()` equals **`ConvertPolicy::lossless()`** — a strict
+loss-permission preset that refuses unprovable depth narrowing, alpha removal,
+and range scaling, and preserves extended float gamut. Opt in explicitly to
+`ConvertPolicy::permissive()`, `ConvertPolicy::working_linear()`, or
+`ConvertPolicy::display_sdr(white, peak)` when lossy conversion is desired.
+`convert_to_buf` and `convert_into` default to `PeakSource::Measured` (measured
+only when HDR tone mapping actually needs a peak); use `convert_to_buf_with_peak`
+or `convert_into_with_peak` for explicit `PeakSource::Declared` / `Fixed`.
 
 ## Streaming rows (`RowPlan`)
 
@@ -61,9 +61,9 @@ use zenpixels_convert::{ConvertPolicy, ImageSpec, PixelBuf, RowPlan};
 
 let src = PixelBuf::from_typed(vec![64u8, 128, 192, 255, 0, 0], 2, 1, ImageSpec::RGB8_SRGB)?;
 let mut dst = PixelBuf::new(2, 1, ImageSpec::RGBF32_LINEAR)?;
-let plan = RowPlan::build(src.spec(), dst.spec(), &ConvertPolicy::permissive(), None)?;
+let plan = RowPlan::build(src.spec(), dst.spec(), &ConvertPolicy::lossless(), None)?;
 for y in 0..src.height() {
-    plan.convert_row(src.as_view().row(y), dst.as_view_mut().row_mut(y), src.width(), y)?;
+    plan.convert_row(src.row(y), dst.row_mut(y), src.width(), y)?;
 }
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
@@ -78,24 +78,26 @@ per-policy via `ConvertPolicy::with_accelerators(Accelerators::ALL)`.
 ## Key capabilities (see [docs/guide.md](../docs/guide.md) for recipes)
 
 - **Orientation & `DualLayerHdrBuf`:** `compose_orientation` updates metadata in
-  O(1); `apply_orientation*` physically applies an explicit transform (emitting
-  `Identity`); `bake_orientation*` / `bake_dual_layer_orientation*` bake pending
-  orientation (zero-copy when already `Identity`). Pass
-  `&zenpixels_convert::Unstoppable` (re-exported from `enough`) to gain-map APIs
-  accepting `&dyn Stop`, and configure headroom with
-  `GainMapApplyConfig::from_headroom_stops` or `from_display_boost`.
-- **Planar YCbCr & planar RGB:** `ycbcr_to_rgb_with_options` and zero-alloc
-  `ycbcr_to_rgb_with_options_into` reconstruct all 9 H.273 NCL matrices and
-  planar RGB/RGBA directly into `U8`/`U16`/`F32` interleaved layouts with
-  siting-exact `YcbcrOptions::bilinear()`.
-- **HDR & ICC/CMS:** `Bt2446A::pipeline_managed()` tone mapping with streaming
-  `PeakSource::Measured`, plus pure-Rust `MoxCms` and `Lcms` CMS backends
-  (`with_icc_substitution(false)` forces CMS execution).
-- **Load-bearing compaction:** `determine_load_bearing()`,
-  `reduce_to_load_bearing_format()`, and zero-reallocation
-  `reduce_to_load_bearing_format_in_place(AlphaCompaction::RetagOpaque | DropUnusedLanes)`.
+  O(1); `apply_orientation*` physically applies an explicit transform;
+  `bake_orientation*` / `bake_dual_layer_orientation*` bake pending orientation
+  (zero-copy when already `Identity`). Apply gain maps via `apply_gain_map_with`
+  or `apply_gain_map_oriented` with explicit `GainMapApplyConfig::from_headroom_stops`
+  (log₂ stops) or `from_display_boost_linear` (linear multiplier) and `&Unstoppable`.
+- **Planar YCbCr, GBR, RGB & monochrome:** `reconstruct_planar_to_buf`,
+  zero-alloc `reconstruct_planar_into`, and `reconstruct_planar_f32` all read
+  source interpretation (`color()`, `effective_range()`, `matrix_coefficients_code()`,
+  `effective_alpha()`) identically from `PlanarView`, supporting all 9 H.273 NCL
+  matrices and siting-exact `PlanarReconstructionOptions::bilinear()`.
+- **HDR & ICC/CMS:** `Bt2446A::pipeline_managed()` (or explicit typed
+  `Bt2446A::with_peaks(hdr_peak, sdr_peak)`) with streaming `PeakSource::Measured`,
+  plus pure-Rust `MoxCms` and `Lcms` CMS backends (`with_icc_substitution(false)`
+  forces CMS execution).
+- **Content compaction (`compact`):** `analyze_compaction(&view)` returns
+  `CompactionReport { requires_alpha, requires_chroma, requires_u16_precision }`,
+  with `compact_to_buf(&view)` and zero-reallocation
+  `compact_in_place(&mut buf, AlphaCompaction::RetagOpaque | DropUnusedLanes)`.
 - **Encoder signaling (`OutputPlan` & `EncodeReady`):** validates destination
-  signaling eagerly (`OutputProfile::{Auto, SameAsOrigin, CicpOnly, EmbedIcc, CustomIcc, Strip}`),
+  signaling eagerly (`OutputSignaling::{Auto, SameAsOrigin, CicpOnly, EmbedIcc, CustomIcc, Strip}`),
   refuses `HlgMode::Display` on `dst` under `CicpOnly`/`Auto`, and stays
   zero-copy on identity.
 
@@ -103,7 +105,7 @@ per-policy via `ConvertPolicy::with_accelerators(Accelerators::ALL)`.
 
 | Feature | Effect |
 |---|---|
-| `std` | Default; omit for `no_std + alloc` |
+| `std` | Default; disable default features for `no_std + alloc` |
 | `fast-transpose` | Default; runtime-dispatched SIMD orientation kernels |
 | `oklab` | Default; CIE XYZ D65 Oklab conversions and OKLch soft gamut compression |
 | `hdr-transfers` | Default; PQ (ST 2084) and HLG (ARIB STD-B67 + BT.2100-3 display OOTF) |
@@ -119,7 +121,8 @@ per-policy via `ConvertPolicy::with_accelerators(Accelerators::ALL)`.
 
 ## MSRV
 
-Rust 1.89, edition 2024. `no_std + alloc`, `#![forbid(unsafe_code)]`.
+Rust 1.89, edition 2024. `#![forbid(unsafe_code)]`; supports `no_std + alloc`
+(disable default `std` feature).
 
 ## License
 

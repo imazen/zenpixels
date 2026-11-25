@@ -8,40 +8,41 @@
 
 ## summary
 #
-#   pub modules                                21
-#   pub types (struct/enum/trait/alias)       104
+#   pub modules                                22
+#   pub types (struct/enum/trait/alias)       100
 #   pub consts/statics                        126
-#   free functions                             78
-#   inherent methods                          229
+#   free functions                             80
+#   inherent methods                          223
 #   struct fields                             159
 #   enum variants                             201
 #   re-exports                                  4
-#   trait roster entries (type × trait)       214
+#   trait roster entries (type × trait)       212
 #   auto-trait-complete types                  36
 #   auto-trait exceptions                       8
 #
 # per-module pub lines:
-#   (root)                          379
+#   (root)                          376
 #   accel                            19
 #   cms                               5
 #   codes                            41
+#   compact                          12
 #   error                            23
-#   gainmap                         128
+#   gainmap                         126
 #   gamut                            11
 #   icc_profiles                     10
-#   load_bearing                     14
 #   measure                          32
 #   negotiate                        21
 #   oklab                             8
 #   orient                            8
 #   output                           29
-#   plan                             24
+#   plan                             26
+#   planar                            9
 #   policy                           84
 #   scan                              1
 #   tonemap                          62
-#   ycbcr                            23
+#   ycbcr                            12
 
-## items (792 lines)
+## items (786 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -118,6 +119,14 @@ pub fn codes::CodeMap::map_words(&self, &[u16], &mut [u16]) -> core::result::Res
 pub const fn codes::CodeMap::new(zenpixels::sample::SampleEncoding, zenpixels::sample::SampleEncoding, codes::CodeRole, zenpixels::color::SignalRange) -> core::result::Result<Self, codes::CodeMapError> [also: (root)]
 pub const fn codes::CodeMap::output(&self) -> zenpixels::sample::SampleEncoding [also: (root)]
 pub const fn codes::CodeMap::word(&self, u16) -> u16 [also: (root)]
+pub mod compact
+pub compact::AlphaCompaction::DropUnusedLanes
+pub compact::AlphaCompaction::RetagOpaque
+pub compact::CompactionReport::requires_alpha: core::option::Option<bool>
+pub compact::CompactionReport::requires_chroma: core::option::Option<bool>
+pub compact::CompactionReport::requires_u16_precision: core::option::Option<bool>
+pub const fn compact::CompactionReport::any_analyzed(&self) -> bool [also: (root)]
+pub fn compact::CompactionReport::candidate_spec(&self, &zenpixels::color::ImageSpec) -> zenpixels::color::ImageSpec
 pub mod error
 pub error::ConvertError::AllocationFailed
 pub error::ConvertError::AlphaLossForbidden
@@ -172,7 +181,7 @@ pub gainmap::GainMapApplyConfig::resample: gainmap::GainMapResample
 pub gainmap::GainMapApplyConfig::target: gainmap::GainMapTarget
 pub fn gainmap::GainMapApplyConfig::alternate_rendition() -> Self
 pub fn gainmap::GainMapApplyConfig::base_rendition() -> Self
-pub fn gainmap::GainMapApplyConfig::from_display_boost(f32) -> Self
+pub fn gainmap::GainMapApplyConfig::from_display_boost_linear(f32) -> Self
 pub fn gainmap::GainMapApplyConfig::from_headroom_stops(f32) -> Self
 pub fn gainmap::GainMapApplyConfig::with_dst_spec(self, zenpixels::color::ImageSpec) -> Self
 pub fn gainmap::GainMapApplyConfig::with_orientation(self, gainmap::GainMapOrientation) -> Self
@@ -243,17 +252,6 @@ pub const icc_profiles::ADOBE_RGB: &[u8]
 pub const icc_profiles::DISPLAY_P3_V2: &[u8]
 pub const icc_profiles::DISPLAY_P3_V4: &[u8]
 pub const fn icc_profiles::bundled_icc_profile(zenpixels::color::Primaries, zenpixels::color::Transfer) -> core::option::Option<&'static [u8]>
-pub mod load_bearing
-pub load_bearing::AlphaCompaction::DropUnusedLanes
-pub load_bearing::AlphaCompaction::RetagOpaque
-pub load_bearing::LoadBearingReport::uses_alpha: core::option::Option<bool>
-pub load_bearing::LoadBearingReport::uses_chroma: core::option::Option<bool>
-pub load_bearing::LoadBearingReport::uses_low_bits: core::option::Option<bool>
-pub const fn load_bearing::LoadBearingReport::any_analyzed(&self) -> bool [also: (root)]
-pub fn load_bearing::LoadBearingReport::apply_to(&self, &zenpixels::color::ImageSpec) -> zenpixels::color::ImageSpec
-pub fn load_bearing::PixelBufLoadBearingExt::reduce_to_load_bearing_format_in_place(&mut self, load_bearing::AlphaCompaction)
-pub fn load_bearing::PixelViewLoadBearingExt::determine_load_bearing(&self) -> load_bearing::LoadBearingReport
-pub fn load_bearing::PixelViewLoadBearingExt::reduce_to_load_bearing_format(&self) -> core::result::Result<core::option::Option<zenpixels::buffer::PixelBuf>, whereat::at::At<error::ConvertError>>
 pub mod measure
 pub measure::LightLevelMethod::LuminanceBt2020
 pub measure::LightLevelMethod::MaxRgb
@@ -303,17 +301,17 @@ pub const oklab::OKLAB_FROM_LMS_CBRT: gamut::GamutMatrix
 pub const oklab::XYZ_FROM_LMS: gamut::GamutMatrix
 pub mod orient
 pub mod output
-pub output::OutputProfile::Auto
-pub output::OutputProfile::CicpOnly
-pub output::OutputProfile::CustomIcc(alloc::rcs::arc::Arc<[u8]>)
-pub output::OutputProfile::EmbedIcc
-pub output::OutputProfile::SameAsOrigin
-pub output::OutputProfile::Strip
+pub output::OutputSignaling::Auto
+pub output::OutputSignaling::CicpOnly
+pub output::OutputSignaling::CustomIcc(alloc::rcs::arc::Arc<[u8]>)
+pub output::OutputSignaling::EmbedIcc
+pub output::OutputSignaling::SameAsOrigin
+pub output::OutputSignaling::Strip
 pub output::EncodeReady::cicp: core::option::Option<zenpixels::cicp::Cicp>
 pub output::EncodeReady::hdr: zenpixels::color::HdrMetadata
 pub output::EncodeReady::icc: core::option::Option<alloc::borrow::Cow<'static, [u8]>>
 pub output::EncodeReady::pixels: zenpixels::buffer::PixelCow<'a>
-pub fn output::OutputPlan::build(impl core::convert::AsRef<zenpixels::color::ImageSpec>, impl core::convert::AsRef<zenpixels::color::ImageSpec>, &policy::ConvertPolicy, zenpixels::hdr::PeakSource, output::OutputProfile) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn output::OutputPlan::build(impl core::convert::AsRef<zenpixels::color::ImageSpec>, impl core::convert::AsRef<zenpixels::color::ImageSpec>, &policy::ConvertPolicy, zenpixels::hdr::PeakSource, output::OutputSignaling) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn output::OutputPlan::build_row_plan(&self, core::option::Option<zenpixels::hdr::Nits>) -> core::result::Result<plan::RowPlan, whereat::at::At<error::ConvertError>>
 pub fn output::OutputPlan::dst_spec(&self) -> &zenpixels::color::ImageSpec
 pub fn output::OutputPlan::execute_buf(&self, zenpixels::buffer::PixelBuf) -> core::result::Result<output::EncodeReady<'static>, whereat::at::At<error::ConvertError>>
@@ -331,6 +329,15 @@ pub fn plan::RowPlan::dst_spec(&self) -> &zenpixels::color::ImageSpec
 pub fn plan::RowPlan::is_identity(&self) -> bool
 pub const fn plan::RowPlan::output_facts(&self) -> zenpixels::facts::SampleFacts [also: (root)]
 pub fn plan::RowPlan::src_spec(&self) -> &zenpixels::color::ImageSpec
+pub mod planar
+pub planar::ChromaUpsample::Bilinear
+pub planar::ChromaUpsample::Nearest
+pub planar::PlanarReconstructionOptions::unknown_siting_fallback: core::option::Option<zenpixels::sample::plane::ChromaSiting>
+pub planar::PlanarReconstructionOptions::upsample: planar::ChromaUpsample
+pub const fn planar::PlanarReconstructionOptions::bilinear() -> Self [also: (root)]
+pub const fn planar::PlanarReconstructionOptions::nearest() -> Self [also: (root)]
+pub const fn planar::PlanarReconstructionOptions::with_unknown_siting_fallback(self, zenpixels::sample::plane::ChromaSiting) -> Self [also: (root)]
+pub const fn planar::PlanarReconstructionOptions::with_upsample(self, planar::ChromaUpsample) -> Self [also: (root)]
 pub mod policy
 pub policy::AlphaPolicy::CompositeOnto(zenpixels::color::Color)
 pub policy::AlphaPolicy::DiscardIfOpaque
@@ -435,8 +442,6 @@ pub fn tonemap::ToneMapper::prepare(&self, &tonemap::tone_mapper::ToneMapContext
 pub fn tonemap::ToneMapper::requirements(&self) -> tonemap::tone_mapper::Requirements
 pub fn tonemap::ToneMapper::working_primaries_for(&self, zenpixels::color::Primaries) -> zenpixels::color::Primaries
 pub mod ycbcr
-pub ycbcr::ChromaUpsample::Bilinear
-pub ycbcr::ChromaUpsample::Nearest
 pub ycbcr::YcbcrMatrix::Bt2020
 pub ycbcr::YcbcrMatrix::Bt470Bg
 pub ycbcr::YcbcrMatrix::Bt601
@@ -451,13 +456,7 @@ pub const fn ycbcr::YcbcrMatrix::kr_kb(self) -> core::option::Option<(f32, f32)>
 pub fn ycbcr::YcbcrMatrix::kr_kb_for(self, core::option::Option<zenpixels::color::Primaries>) -> core::option::Option<(f32, f32)>
 pub const fn ycbcr::YcbcrMatrix::same_coefficients(self, Self) -> bool [also: (root)]
 pub const fn ycbcr::YcbcrMatrix::to_cicp_code(self) -> u8 [also: (root)]
-pub ycbcr::YcbcrOptions::unknown_siting_fallback: core::option::Option<zenpixels::sample::plane::ChromaSiting>
-pub ycbcr::YcbcrOptions::upsample: ycbcr::ChromaUpsample
-pub const fn ycbcr::YcbcrOptions::bilinear() -> Self [also: (root)]
-pub const fn ycbcr::YcbcrOptions::nearest() -> Self [also: (root)]
-pub const fn ycbcr::YcbcrOptions::with_unknown_siting_fallback(self, zenpixels::sample::plane::ChromaSiting) -> Self [also: (root)]
-pub const fn ycbcr::YcbcrOptions::with_upsample(self, ycbcr::ChromaUpsample) -> Self [also: (root)]
-#[non_exhaustive] pub enum AlphaCompaction [also: load_bearing]
+#[non_exhaustive] pub enum AlphaCompaction [also: compact]
 pub AlphaCompaction::DropUnusedLanes
 pub AlphaCompaction::RetagOpaque
 #[non_exhaustive] pub enum AlphaPolicy [also: policy]
@@ -465,7 +464,7 @@ pub AlphaPolicy::CompositeOnto(zenpixels::color::Color)
 pub AlphaPolicy::DiscardIfOpaque
 pub AlphaPolicy::DiscardUnchecked
 pub AlphaPolicy::Forbid
-#[non_exhaustive] pub enum ChromaUpsample [also: ycbcr]
+#[non_exhaustive] pub enum ChromaUpsample [also: planar]
 pub ChromaUpsample::Bilinear
 pub ChromaUpsample::Nearest
 #[non_exhaustive] pub enum CodeMapError [also: codes]
@@ -573,13 +572,13 @@ pub LumaCoefficients::FromSourcePrimaries
 #[non_exhaustive] pub enum LumaDomain [also: policy]
 pub LumaDomain::Encoded
 pub LumaDomain::LinearLight
-#[non_exhaustive] pub enum OutputProfile [also: output]
-pub OutputProfile::Auto
-pub OutputProfile::CicpOnly
-pub OutputProfile::CustomIcc(alloc::rcs::arc::Arc<[u8]>)
-pub OutputProfile::EmbedIcc
-pub OutputProfile::SameAsOrigin
-pub OutputProfile::Strip
+#[non_exhaustive] pub enum OutputSignaling [also: output]
+pub OutputSignaling::Auto
+pub OutputSignaling::CicpOnly
+pub OutputSignaling::CustomIcc(alloc::rcs::arc::Arc<[u8]>)
+pub OutputSignaling::EmbedIcc
+pub OutputSignaling::SameAsOrigin
+pub OutputSignaling::Strip
 #[non_exhaustive] pub enum PreparedMapper [also: tonemap, tonemap::tone_mapper]
 pub PreparedMapper::Streaming(alloc::boxed::Box<dyn tonemap::tone_mapper::StripMapper>)
 #[non_exhaustive] pub enum RangePolicy [also: policy]
@@ -606,6 +605,11 @@ pub const accel::Accelerators::SCALAR: Self
 pub const accel::Accelerators::WEB_SDR: Self
 pub struct CodeMap [also: codes]
 pub fn codes::CodeMap::map_words(&self, &[u16], &mut [u16]) -> core::result::Result<(), codes::CodeMapError>
+#[non_exhaustive] pub struct CompactionReport [also: compact]
+pub CompactionReport::requires_alpha: core::option::Option<bool>
+pub CompactionReport::requires_chroma: core::option::Option<bool>
+pub CompactionReport::requires_u16_precision: core::option::Option<bool>
+pub fn compact::CompactionReport::candidate_spec(&self, &zenpixels::color::ImageSpec) -> zenpixels::color::ImageSpec
 #[non_exhaustive] pub struct ConvertPolicy [also: policy]
 pub ConvertPolicy::accelerators: core::option::Option<accel::Accelerators>
 pub ConvertPolicy::allow_approximate: bool
@@ -669,7 +673,7 @@ pub GainMapApplyConfig::resample: gainmap::GainMapResample
 pub GainMapApplyConfig::target: gainmap::GainMapTarget
 pub fn gainmap::GainMapApplyConfig::alternate_rendition() -> Self
 pub fn gainmap::GainMapApplyConfig::base_rendition() -> Self
-pub fn gainmap::GainMapApplyConfig::from_display_boost(f32) -> Self
+pub fn gainmap::GainMapApplyConfig::from_display_boost_linear(f32) -> Self
 pub fn gainmap::GainMapApplyConfig::from_headroom_stops(f32) -> Self
 pub fn gainmap::GainMapApplyConfig::with_dst_spec(self, zenpixels::color::ImageSpec) -> Self
 pub fn gainmap::GainMapApplyConfig::with_orientation(self, gainmap::GainMapOrientation) -> Self
@@ -737,11 +741,6 @@ pub fn measure::LightLevelHistogram::record(&mut self, f32)
 pub fn measure::LightLevelHistogram::to_content_light_level(&self) -> zenpixels::hdr::ContentLightLevel
 pub fn measure::LightLevelHistogram::to_robust_cll(&self, f32) -> zenpixels::hdr::ContentLightLevel
 pub fn measure::LightLevelHistogram::try_new(measure::LightLevelMethod) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-#[non_exhaustive] pub struct LoadBearingReport [also: load_bearing]
-pub LoadBearingReport::uses_alpha: core::option::Option<bool>
-pub LoadBearingReport::uses_chroma: core::option::Option<bool>
-pub LoadBearingReport::uses_low_bits: core::option::Option<bool>
-pub fn load_bearing::LoadBearingReport::apply_to(&self, &zenpixels::color::ImageSpec) -> zenpixels::color::ImageSpec
 pub struct Negotiate [also: negotiate]
 pub fn negotiate::Negotiate::select(&zenpixels::color::ImageSpec, &[zenpixels::color::ImageSpec], &policy::ConvertPolicy) -> core::option::Option<negotiate::NegotiatedFormat>
 pub fn negotiate::Negotiate::select_format(&zenpixels::color::ImageSpec, &[zenpixels::color::PixelFormat], &policy::ConvertPolicy) -> core::option::Option<negotiate::NegotiatedFormat>
@@ -751,13 +750,16 @@ pub NegotiatedFormat::index: usize
 pub NegotiatedFormat::loss: negotiate::LossKind
 pub NegotiatedFormat::spec: zenpixels::color::ImageSpec
 pub struct OutputPlan [also: output]
-pub fn output::OutputPlan::build(impl core::convert::AsRef<zenpixels::color::ImageSpec>, impl core::convert::AsRef<zenpixels::color::ImageSpec>, &policy::ConvertPolicy, zenpixels::hdr::PeakSource, output::OutputProfile) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
+pub fn output::OutputPlan::build(impl core::convert::AsRef<zenpixels::color::ImageSpec>, impl core::convert::AsRef<zenpixels::color::ImageSpec>, &policy::ConvertPolicy, zenpixels::hdr::PeakSource, output::OutputSignaling) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub fn output::OutputPlan::build_row_plan(&self, core::option::Option<zenpixels::hdr::Nits>) -> core::result::Result<plan::RowPlan, whereat::at::At<error::ConvertError>>
 pub fn output::OutputPlan::dst_spec(&self) -> &zenpixels::color::ImageSpec
 pub fn output::OutputPlan::execute_buf(&self, zenpixels::buffer::PixelBuf) -> core::result::Result<output::EncodeReady<'static>, whereat::at::At<error::ConvertError>>
 pub fn output::OutputPlan::execute_view<'a>(&self, zenpixels::buffer::PixelView<'a>, &zenpixels::color::ColorOrigin) -> core::result::Result<output::EncodeReady<'a>, whereat::at::At<error::ConvertError>>
 pub fn output::OutputPlan::resolve_signaling(&self, &zenpixels::color::ColorOrigin) -> core::result::Result<(core::option::Option<zenpixels::cicp::Cicp>, core::option::Option<alloc::borrow::Cow<'static, [u8]>>), whereat::at::At<error::ConvertError>>
 pub fn output::OutputPlan::src_spec(&self) -> &zenpixels::color::ImageSpec
+#[non_exhaustive] pub struct PlanarReconstructionOptions [also: planar]
+pub PlanarReconstructionOptions::unknown_siting_fallback: core::option::Option<zenpixels::sample::plane::ChromaSiting>
+pub PlanarReconstructionOptions::upsample: planar::ChromaUpsample
 #[non_exhaustive] pub struct Requirements [also: tonemap, tonemap::tone_mapper]
 pub Requirements::full_image: bool
 pub Requirements::source_peak_nits: bool
@@ -779,19 +781,11 @@ pub fn tonemap::gamut_compress::SoftCompress::new(&oklab::OklabSpace, f32) -> Se
 pub ToneMapContext::source_peak_nits: f32
 pub ToneMapContext::target_peak_nits: f32
 pub ToneMapContext::working_primaries: zenpixels::color::Primaries
-#[non_exhaustive] pub struct YcbcrOptions [also: ycbcr]
-pub YcbcrOptions::unknown_siting_fallback: core::option::Option<zenpixels::sample::plane::ChromaSiting>
-pub YcbcrOptions::upsample: ycbcr::ChromaUpsample
 pub trait CmsBackend: core::marker::Send + core::marker::Sync + core::fmt::Debug [also: cms]
 pub fn CmsBackend::build_transform(&self, &zenpixels::color::ImageSpec, &zenpixels::color::ImageSpec) -> core::result::Result<alloc::rcs::arc::Arc<dyn cms::CmsTransform>, whereat::at::At<error::ConvertError>>
 pub fn CmsBackend::supports_specs(&self, &zenpixels::color::ImageSpec, &zenpixels::color::ImageSpec) -> bool
 pub trait CmsTransform: core::marker::Send + core::marker::Sync [also: cms]
 pub fn CmsTransform::transform_row(&self, &[u8], &mut [u8], u32) -> core::result::Result<(), whereat::at::At<error::ConvertError>>
-pub trait PixelBufLoadBearingExt: load_bearing::sealed::Sealed [also: load_bearing]
-pub fn PixelBufLoadBearingExt::reduce_to_load_bearing_format_in_place(&mut self, load_bearing::AlphaCompaction)
-pub trait PixelViewLoadBearingExt: load_bearing::sealed::Sealed [also: load_bearing]
-pub fn PixelViewLoadBearingExt::determine_load_bearing(&self) -> load_bearing::LoadBearingReport
-pub fn PixelViewLoadBearingExt::reduce_to_load_bearing_format(&self) -> core::result::Result<core::option::Option<zenpixels::buffer::PixelBuf>, whereat::at::At<error::ConvertError>>
 pub trait StripMapper: core::marker::Send + core::marker::Sync + core::panic::unwind_safe::UnwindSafe + core::panic::unwind_safe::RefUnwindSafe + core::fmt::Debug [also: tonemap, tonemap::tone_mapper]
 pub fn StripMapper::map_strip(&self, &[f32], &mut [f32])
 pub trait ToneMapper: core::marker::Send + core::marker::Sync + core::panic::unwind_safe::UnwindSafe + core::panic::unwind_safe::RefUnwindSafe + core::fmt::Debug [also: tonemap, tonemap::tone_mapper]
@@ -800,11 +794,10 @@ pub fn ToneMapper::name(&self) -> &'static str
 pub fn ToneMapper::prepare(&self, &tonemap::tone_mapper::ToneMapContext) -> core::result::Result<tonemap::tone_mapper::PreparedMapper, whereat::at::At<error::ConvertError>>
 pub fn ToneMapper::requirements(&self) -> tonemap::tone_mapper::Requirements
 pub fn ToneMapper::working_primaries_for(&self, zenpixels::color::Primaries) -> zenpixels::color::Primaries
-pub fn adapt_for_encode<'a>(zenpixels::buffer::PixelView<'a>, &zenpixels::color::ColorOrigin, &[zenpixels::color::ImageSpec], &policy::ConvertPolicy, zenpixels::hdr::PeakSource, output::OutputProfile) -> core::result::Result<(negotiate::NegotiatedFormat, output::EncodeReady<'a>), whereat::at::At<error::ConvertError>> [also: output]
-pub fn adapt_for_encode_format<'a>(zenpixels::buffer::PixelView<'a>, &zenpixels::color::ColorOrigin, &[zenpixels::color::PixelFormat], &policy::ConvertPolicy, zenpixels::hdr::PeakSource, output::OutputProfile) -> core::result::Result<(negotiate::NegotiatedFormat, output::EncodeReady<'a>), whereat::at::At<error::ConvertError>> [also: output]
-pub fn apply_gain_map(&zenpixels::buffer::DualLayerHdrBuf, f32) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: gainmap]
+pub fn adapt_for_encode<'a>(zenpixels::buffer::PixelView<'a>, &zenpixels::color::ColorOrigin, &[zenpixels::color::ImageSpec], &policy::ConvertPolicy, zenpixels::hdr::PeakSource, output::OutputSignaling) -> core::result::Result<(negotiate::NegotiatedFormat, output::EncodeReady<'a>), whereat::at::At<error::ConvertError>> [also: output]
+pub fn adapt_for_encode_format<'a>(zenpixels::buffer::PixelView<'a>, &zenpixels::color::ColorOrigin, &[zenpixels::color::PixelFormat], &policy::ConvertPolicy, zenpixels::hdr::PeakSource, output::OutputSignaling) -> core::result::Result<(negotiate::NegotiatedFormat, output::EncodeReady<'a>), whereat::at::At<error::ConvertError>> [also: output]
+pub fn analyze_compaction(&zenpixels::buffer::PixelView<'_>) -> compact::CompactionReport [also: compact]
 pub fn apply_gain_map_oriented(&zenpixels::buffer::DualLayerHdrView<'_>, &gainmap::GainMapApplyConfig, &dyn enough::Stop) -> core::result::Result<(zenpixels::buffer::PixelBuf, zenpixels::orientation::Orientation), whereat::at::At<error::ConvertError>> [also: gainmap]
-pub fn apply_gain_map_view(&zenpixels::buffer::DualLayerHdrView<'_>, f32, &policy::ConvertPolicy) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: gainmap]
 pub fn apply_gain_map_with(&zenpixels::buffer::DualLayerHdrView<'_>, &gainmap::GainMapApplyConfig, &dyn enough::Stop) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: gainmap]
 pub fn apply_orientation(&zenpixels::buffer::PixelView<'_>, zenpixels::orientation::Orientation) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: orient]
 pub fn apply_orientation_banded(&zenpixels::buffer::BandedBuf, zenpixels::orientation::Orientation, usize) -> core::result::Result<zenpixels::buffer::BandedBuf, whereat::at::At<error::ConvertError>> [also: orient]
@@ -816,33 +809,37 @@ pub fn bake_dual_layer_orientation_after(&zenpixels::buffer::DualLayerHdrView<'_
 pub fn bake_orientation(&zenpixels::buffer::PixelView<'_>) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: orient]
 pub fn bake_orientation_banded(&zenpixels::buffer::BandedBuf, usize) -> core::result::Result<zenpixels::buffer::BandedBuf, whereat::at::At<error::ConvertError>> [also: orient]
 pub fn bake_orientation_owned(zenpixels::buffer::PixelBuf) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: orient]
-pub fn convert_into<S: zenpixels::buffer::PixelSource + ?core::marker::Sized, D: zenpixels::buffer::PixelSink + ?core::marker::Sized>(&S, &mut D, &policy::ConvertPolicy, zenpixels::hdr::PeakSource) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: plan]
-pub fn convert_to_buf(&zenpixels::buffer::PixelView<'_>, impl core::convert::AsRef<zenpixels::color::ImageSpec>, &policy::ConvertPolicy, zenpixels::hdr::PeakSource) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: plan]
+pub fn compact_in_place(&mut zenpixels::buffer::PixelBuf, compact::AlphaCompaction) [also: compact]
+pub fn compact_to_buf(&zenpixels::buffer::PixelView<'_>) -> core::result::Result<core::option::Option<zenpixels::buffer::PixelBuf>, whereat::at::At<error::ConvertError>> [also: compact]
+pub fn convert_into<S: zenpixels::buffer::PixelSource + ?core::marker::Sized, D: zenpixels::buffer::PixelSink + ?core::marker::Sized>(&S, &mut D, &policy::ConvertPolicy) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: plan]
+pub fn convert_into_with_peak<S: zenpixels::buffer::PixelSource + ?core::marker::Sized, D: zenpixels::buffer::PixelSink + ?core::marker::Sized>(&S, &mut D, &policy::ConvertPolicy, zenpixels::hdr::PeakSource) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: plan]
+pub fn convert_to_buf(&zenpixels::buffer::PixelView<'_>, impl core::convert::AsRef<zenpixels::color::ImageSpec>, &policy::ConvertPolicy) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: plan]
+pub fn convert_to_buf_with_peak(&zenpixels::buffer::PixelView<'_>, impl core::convert::AsRef<zenpixels::color::ImageSpec>, &policy::ConvertPolicy, zenpixels::hdr::PeakSource) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: plan]
 pub fn extract_gain_map(&zenpixels::buffer::PixelView<'_>, &zenpixels::buffer::PixelView<'_>, zenpixels::color::GainMapMetadata) -> core::result::Result<zenpixels::buffer::DualLayerHdrBuf, whereat::at::At<error::ConvertError>> [also: gainmap]
 pub fn extract_gain_map_only(&zenpixels::buffer::PixelView<'_>, &zenpixels::buffer::PixelView<'_>, &gainmap::GainMapExtractConfig, &dyn enough::Stop) -> core::result::Result<(zenpixels::buffer::PixelBuf, zenpixels::color::GainMapMetadata), whereat::at::At<error::ConvertError>> [also: gainmap]
 pub fn measure_cll<S: zenpixels::buffer::PixelSource + ?core::marker::Sized>(&S, zenpixels::hdr::DiffuseWhite, core::option::Option<zenpixels::hdr::HlgRendering>, measure::LightLevelMethod) -> core::result::Result<zenpixels::hdr::ContentLightLevel, whereat::at::At<error::ConvertError>> [also: measure]
 pub fn measure_histogram<S: zenpixels::buffer::PixelSource + ?core::marker::Sized>(&S, zenpixels::hdr::DiffuseWhite, core::option::Option<zenpixels::hdr::HlgRendering>, measure::LightLevelMethod) -> core::result::Result<measure::LightLevelHistogram, whereat::at::At<error::ConvertError>> [also: measure]
 pub fn measure_max_smoothed<S: zenpixels::buffer::PixelSource + ?core::marker::Sized>(&S, zenpixels::hdr::DiffuseWhite, core::option::Option<zenpixels::hdr::HlgRendering>, measure::LightLevelMethod) -> core::result::Result<zenpixels::hdr::ContentLightLevel, whereat::at::At<error::ConvertError>> [also: measure]
 pub fn measure_peak<S: zenpixels::buffer::PixelSource + ?core::marker::Sized>(&S, zenpixels::hdr::DiffuseWhite, core::option::Option<zenpixels::hdr::HlgRendering>) -> core::result::Result<f32, whereat::at::At<error::ConvertError>> [also: measure]
+pub fn reconstruct_planar_f32(&zenpixels::buffer::PlanarView<'_>) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: planar]
+pub fn reconstruct_planar_into(&zenpixels::buffer::PlanarView<'_>, &planar::PlanarReconstructionOptions, &mut zenpixels::buffer::PixelViewMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: planar]
+pub fn reconstruct_planar_to_buf(&zenpixels::buffer::PlanarView<'_>, zenpixels::layout::SampleLayout, &planar::PlanarReconstructionOptions) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: planar]
 pub fn scan_facts(&zenpixels::buffer::PixelView<'_>) -> zenpixels::facts::SampleFacts [also: scan]
 pub fn to_bgra8(&zenpixels::buffer::PixelView<'_>) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: plan]
 pub fn to_canonical<'b>(&[zenpixels::sample::plane::CodePlane<'_>], zenpixels::color::SignalRange, usize, usize, zenpixels::buffer::PixelViewMut<'b>) -> core::result::Result<(zenpixels::buffer::PixelViewMut<'b>, zenpixels::sample::exact::ExactDepth), whereat::at::At<codes::CodesError>> [also: codes]
 pub fn to_gray8(&zenpixels::buffer::PixelView<'_>) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: plan]
 pub fn to_rgb8(&zenpixels::buffer::PixelView<'_>) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: plan]
 pub fn to_rgba8(&zenpixels::buffer::PixelView<'_>) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: plan]
-pub fn ycbcr_to_rgb_f32(&zenpixels::buffer::PlanarView<'_>, ycbcr::YcbcrMatrix, zenpixels::color::SignalRange, zenpixels::color::Primaries, zenpixels::color::Transfer) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: ycbcr]
-pub fn ycbcr_to_rgb_from_planar(&zenpixels::buffer::PlanarView<'_>) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: ycbcr]
-pub fn ycbcr_to_rgb_into(&zenpixels::buffer::PlanarView<'_>, ycbcr::YcbcrMatrix, zenpixels::color::SignalRange, &mut zenpixels::buffer::PixelViewMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: ycbcr]
-pub fn ycbcr_to_rgb_with_options(&zenpixels::buffer::PlanarView<'_>, zenpixels::layout::SampleLayout, &ycbcr::YcbcrOptions) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: ycbcr]
-pub fn ycbcr_to_rgb_with_options_into(&zenpixels::buffer::PlanarView<'_>, ycbcr::YcbcrMatrix, zenpixels::color::SignalRange, &ycbcr::YcbcrOptions, &mut zenpixels::buffer::PixelViewMut<'_>) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: ycbcr]
 
-## trait impls (45 types)
+## trait impls (43 types)
 
 accel::Accelerators: Clone, Copy, Debug, Default, Eq, PartialEq
 codes::CodeMap: Clone, Copy, Debug, Eq, PartialEq
 codes::CodeMapError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 codes::CodeRole: Clone, Copy, Debug, Eq, Hash, PartialEq
 codes::CodesError: Clone, Debug, Display, Eq, Error, PartialEq
+compact::AlphaCompaction: Clone, Copy, Debug, Eq, Hash, PartialEq
+compact::CompactionReport: Clone, Copy, Debug, Default, Eq, PartialEq
 error::ConvertError: Clone, Copy, Debug, Display, Eq, Error, From<enough::reason::StopReason>, From<zenpixels::buffer::BufferError>, From<zenpixels::color::ColorError>, From<zenpixels::layout::LayoutError>, PartialEq
 gainmap::GainMapApplier: Clone, Debug
 gainmap::GainMapApplyConfig: Clone, Debug
@@ -854,8 +851,6 @@ gainmap::GainMapRowExtractor: Clone, Debug
 gainmap::GainMapTarget: Clone, Copy, Debug, PartialEq
 gamut::GamutMatrix: Clone, Copy, Debug, PartialEq
 icc_profiles::SynthesizedIcc: Clone, Debug, Eq, PartialEq
-load_bearing::AlphaCompaction: Clone, Copy, Debug, Eq, Hash, PartialEq
-load_bearing::LoadBearingReport: Clone, Copy, Debug, Default, Eq, PartialEq
 measure::LightLevelHistogram: Clone, Debug
 measure::LightLevelMethod: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 negotiate::FormatCost: Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd
@@ -864,9 +859,11 @@ negotiate::NegotiatedFormat: Clone, Debug, Eq, PartialEq
 oklab::OklabSpace: Clone, Copy, Debug, PartialEq
 output::EncodeReady<'a>: Clone, Debug
 output::OutputPlan: Clone, Debug
-output::OutputProfile: Clone, Debug, Default, Eq, PartialEq
+output::OutputSignaling: Clone, Debug, Default, Eq, PartialEq
 plan::ImagePlan: Clone, Debug
 plan::RowPlan: Clone, Debug
+planar::ChromaUpsample: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
+planar::PlanarReconstructionOptions: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 policy::AlphaPolicy: Clone, Copy, Debug, Default, PartialEq
 policy::ConvertPolicy: Clone, Debug, Default
 policy::DepthPolicy: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
@@ -878,11 +875,7 @@ tonemap::gamut_compress::SoftCompress: Clone, Debug, PartialEq
 tonemap::tone_mapper::PreparedMapper: Debug
 tonemap::tone_mapper::Requirements: Clone, Copy, Debug, Default, Eq, PartialEq
 tonemap::tone_mapper::ToneMapContext: Debug
-ycbcr::ChromaUpsample: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
 ycbcr::YcbcrMatrix: Clone, Copy, Debug, Eq, Hash, PartialEq
-ycbcr::YcbcrOptions: Clone, Copy, Debug, Default, Eq, Hash, PartialEq
-zenpixels::buffer::PixelBuf: load_bearing::PixelBufLoadBearingExt
-zenpixels::buffer::PixelView<'_>: load_bearing::PixelViewLoadBearingExt
 
 ## auto traits
 

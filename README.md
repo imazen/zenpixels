@@ -1,29 +1,29 @@
 # zenpixels [![CI](https://img.shields.io/github/actions/workflow/status/imazen/zenpixels/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/zenpixels/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/zenpixels?style=flat-square)](https://crates.io/crates/zenpixels) [![lib.rs](https://img.shields.io/crates/v/zenpixels?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/zenpixels) [![docs.rs](https://img.shields.io/docsrs/zenpixels?style=flat-square)](https://docs.rs/zenpixels) [![MSRV](https://img.shields.io/badge/MSRV-1.85-blue?style=flat-square)](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field) [![license](https://img.shields.io/crates/l/zenpixels?style=flat-square)](#license)
 
 Pixel types for Rust image pipelines. Keep samples, dimensions, stride, bit
-packing, orientation, and color meaning together — `no_std + alloc`,
-`#![forbid(unsafe_code)]`.
+packing, orientation, and color meaning together — `#![forbid(unsafe_code)]`,
+supporting `no_std + alloc` (disable default `std` feature).
 
 This is the **0.5.0 greenfield candidate**. [docs.rs](https://docs.rs/zenpixels)
 describes the latest published crate.
 
 - **New to `zenpixels`?** Read the task-oriented [User Guide & Cookbook](docs/guide.md).
 - **Upgrading from 0.2 / 0.4?** See [docs/migration-0.2-to-0.5.md](docs/migration-0.2-to-0.5.md).
-- **Need color conversion, HDR, orientation, or YCbCr?** See [zenpixels-convert/README.md](zenpixels-convert/README.md).
+- **Need color conversion, HDR, orientation, or planar reconstruction?** See [zenpixels-convert/README.md](zenpixels-convert/README.md).
 
 ## The 4 types you need on day one
 
 | Type | Role |
 |---|---|
-| `ImageSpec` | Pairs physical `SampleLayout` + algebraic `ColorSpace` (RGB, Gray, Oklab, XYZ, CMYK, ICC, Untagged). Use `ImageSpec::RGB8_SRGB` for owned specs and `ImageSpec::rgb8_srgb_ref()` for `'static` borrowed views. |
-| `PixelBuf` | Owned, stride-preserving, alignment-exact 2D buffer (can adopt `Vec<T>`, `Arc<[u8]>`, `Box<[T]>`, or custom FFI storage zero-copy). Carries `Orientation`, `HdrMetadata`, `ColorOrigin`, and `SampleFacts`. |
+| `ImageSpec` | Pairs physical `SampleLayout` + algebraic `ColorSpace` (RGB, Gray, Oklab, XYZ, CMYK, ICC, Untagged). Use `ImageSpec::RGB8_SRGB` for owned specs and `&specs::RGB8_SRGB` for `'static` borrowed views. |
+| `PixelBuf` | Owned, stride-preserving, alignment-exact 2D buffer (can adopt `Vec<T>`, `Arc<[u8]>`, `Box<[T]>`, or custom FFI storage zero-copy). Exposes direct `row(y)` / `row_mut(y)` access and carries `Orientation`, `HdrMetadata`, `ColorOrigin`, and `SampleFacts`. |
 | `PixelView<'a>` / `PixelViewMut<'a>` | Zero-copy borrowed strided views and rectangular crops. Primary constructors take `&'a ImageSpec` for guaranteed zero heap allocation (`height()` and `rows()` are equivalent). |
 | `PixelFormat` | `Copy + const` layout + parametric color pair (no ICC) for static codec capability tables (`&[PixelFormat]`). |
 
 ## Quick start
 
 ```rust
-use zenpixels::{ImageSpec, PixelBuf, PixelView};
+use zenpixels::{ImageSpec, PixelBuf, PixelView, specs};
 
 // Wrap typed pixel data and take a zero-copy crop:
 let decoded = vec![255u8, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
@@ -34,9 +34,9 @@ assert_eq!((right_col.width(), right_col.height()), (1, 2));
 assert_eq!(right_col.stride(), image.stride()); // Parent stride: 6 bytes.
 assert_eq!(right_col.row(0), &[0, 255, 0]);     // Only the cropped pixel.
 
-// Borrow raw bytes with zero heap allocation using a static preset ref:
+// Borrow raw bytes with zero heap allocation using a static preset:
 let raw = [10u8, 20, 30, 40, 50, 60];
-let view = PixelView::from_bytes(&raw, 2, 1, ImageSpec::rgb8_srgb_ref())?;
+let view = PixelView::from_bytes(&raw, 2, 1, &specs::RGB8_SRGB)?;
 assert_eq!(view.row(0), &[10, 20, 30, 40, 50, 60]);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
@@ -52,7 +52,7 @@ assert_eq!(view.row(0), &[10, 20, 30, 40, 50, 60]);
 # Storage, views, color spaces, CICP, HDR metadata, planes (lightweight — use in codecs)
 zenpixels = "0.5.0"
 
-# Conversion, HDR tone mapping, CMS, gain maps, YCbCr, orientation (re-exports zenpixels::*)
+# Conversion, HDR tone mapping, CMS, gain maps, planar reconstruction, orientation (re-exports zenpixels::*)
 zenpixels-convert = "0.5.0"
 ```
 
@@ -60,7 +60,7 @@ zenpixels-convert = "0.5.0"
 
 See [docs/guide.md](docs/guide.md) for copy-pasteable recipes covering every area:
 
-- **External zero-copy ownership:** `PixelBuf::from_external` / `from_external_mut` (`Arc<[u8]>`, `Box<[T]>`, FFI) + fallible copy-on-write `try_as_view_mut` + `into_vec_zero_copy`.
+- **External zero-copy ownership & fallible tightening:** `PixelBuf::from_external` / `from_external_mut` (`Arc<[u8]>`, `Box<[T]>`, FFI), fallible copy-on-write `try_as_view_mut` / `into_tight_buf`, `into_vec_zero_copy`, and explicit metadata relabeling (`relabel_color`, `relabel_spec`, `reinterpret_bytes`).
 - **Sound `AlphaMode::Opaque` & fast fill-then-retag:** `PixelBuf::new` (black + max alpha), `new_white`, and `new_zeroed` (refuses unverified `Opaque`) paired with `into_opaque_verified` / `into_opaque_filled` / `assume_opaque`.
 - **Planar, banded & dual-layer HDR:** `PlanarBuf` / `PlanarView` / `PlaneBuf` / `PlaneView` (uniform `(data, width, height, stride, spec)` argument order, `CodePlane` bit-packed inspection), `BandedBuf` for gigapixel images, and `DualLayerHdrBuf` for ISO 21496-1 / UltraHDR gain maps.
 - **Lossless CICP & ICC.1 `cicpType`:** all H.273 codes plus 44-byte signed `s15Fixed16` custom primaries (`CicpTag`, `CustomPrimaries::ACES_AP0` / `ACES_CG` / `PROPHOTO_RGB`, Annex 1 D50 matrices) and ISO 15076-1 structural ICC validation (`validate_icc_structure`).
@@ -73,7 +73,7 @@ use zenpixels_convert::{ImageSpec, PixelBuf, to_rgba8};
 
 let src = PixelBuf::from_typed(vec![128u8, 128, 128], 1, 1, ImageSpec::RGB8_SRGB)?;
 let rgba = to_rgba8(&src.as_view())?;
-assert_eq!(rgba.as_view().row(0), &[128, 128, 128, 255]);
+assert_eq!(rgba.row(0), &[128, 128, 128, 255]);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
@@ -85,7 +85,7 @@ profiles, use `convert_to_buf`, `ImagePlan`, `RowPlan`, or `OutputPlan` — see
 
 | Feature | Effect |
 |---|---|
-| `std` | Default; omit for `no_std + alloc` |
+| `std` | Default; disable default features for `no_std + alloc` |
 | `icc` | Default; paired-fingerprint ICC recognition with intent-scoped substitution |
 | `rgb` | `PixelType` trait & typed `rgb` crate interop |
 | `imgref` | `imgref` adapters; enables `rgb` |

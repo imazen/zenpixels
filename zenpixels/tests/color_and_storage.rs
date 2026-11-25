@@ -12,13 +12,13 @@ use zenpixels::{
 
 #[test]
 fn algebraic_color_space_and_spec_validation() {
-    assert!(ImageSpec::rgb8_srgb().validate().is_ok());
-    assert!(ImageSpec::rgba8_srgb().validate().is_ok());
-    assert!(ImageSpec::rgbx8_srgb().validate().is_ok());
-    assert!(ImageSpec::oklab_f32().validate().is_ok());
-    assert!(ImageSpec::oklaba_f32().validate().is_ok());
-    assert!(ImageSpec::rgb16_bt2100_pq().validate().is_ok());
-    assert!(ImageSpec::rgb16_bt2100_hlg_1000().validate().is_ok());
+    assert!(ImageSpec::RGB8_SRGB.validate().is_ok());
+    assert!(ImageSpec::RGBA8_SRGB.validate().is_ok());
+    assert!(ImageSpec::RGBX8_SRGB.validate().is_ok());
+    assert!(ImageSpec::OKLAB_F32.validate().is_ok());
+    assert!(ImageSpec::OKLABA_F32.validate().is_ok());
+    assert!(ImageSpec::RGB16_BT2100_PQ.validate().is_ok());
+    assert!(ImageSpec::RGB16_BT2100_HLG_1000.validate().is_ok());
 
     // Alpha / layout slot mismatch rejected.
     let bad_alpha = ImageSpec::new(SampleLayout::RGB8, ColorSpace::SRGB_ALPHA);
@@ -34,14 +34,14 @@ fn algebraic_color_space_and_spec_validation() {
     );
 
     // Narrow range requires integer samples.
-    let bad_narrow = ImageSpec::rgbf32_linear().with_range(SignalRange::Narrow);
+    let bad_narrow = ImageSpec::RGBF32_LINEAR.with_range(SignalRange::Narrow);
     assert_eq!(
         *bad_narrow.validate().unwrap_err().error(),
         ColorError::NarrowRangeRequiresInteger
     );
 
     // HLG Display requires full-range BT.2020.
-    let bad_hlg = ImageSpec::rgb16_bt2100_hlg_1000().with_primaries(Primaries::Bt709);
+    let bad_hlg = ImageSpec::RGB16_BT2100_HLG_1000.with_primaries(Primaries::Bt709);
     assert_eq!(
         *bad_hlg.validate().unwrap_err().error(),
         ColorError::HlgDisplayRequiresBt2020Full
@@ -190,7 +190,7 @@ fn bit_packing_p010_u10_lsb_rgb565_and_rgb10a2() {
 
 #[test]
 fn view_chained_lifetimes_and_sample_facts_invalidation() {
-    let mut buf = PixelBuf::new(8, 6, ImageSpec::rgbf32_linear()).unwrap();
+    let mut buf = PixelBuf::new(8, 6, ImageSpec::RGBF32_LINEAR).unwrap();
     // Newly zeroed F32 buffer automatically carries UNIT_INTERVAL + FINITE + NON_NEGATIVE facts!
     assert!(buf.facts().float.is_finite());
     assert!(buf.facts().float.is_unit_interval());
@@ -224,7 +224,7 @@ fn view_chained_lifetimes_and_sample_facts_invalidation() {
 #[test]
 fn banded_buf_planar_buf_and_dual_layer_hdr() {
     // BandedBuf with tiny 64-byte band cap forces multiple bands and shares PixelSource/PixelSink.
-    let mut banded = BandedBuf::new(8, 10, ImageSpec::rgba8_srgb(), 64).unwrap();
+    let mut banded = BandedBuf::new(8, 10, ImageSpec::RGBA8_SRGB, 64).unwrap();
     assert!(banded.bands().len() >= 5);
     assert_eq!(banded.source_width(), 8);
     assert_eq!(banded.source_height(), 10);
@@ -249,7 +249,7 @@ fn banded_buf_planar_buf_and_dual_layer_hdr() {
     assert_eq!(planar.planes()[0].code_u32(3, 2, 0), Some(940));
 
     // DualLayerHdrBuf (ISO 21496-1 / UltraHDR)
-    let base = PixelBuf::new(16, 16, ImageSpec::rgb8_srgb()).unwrap();
+    let base = PixelBuf::new(16, 16, ImageSpec::RGB8_SRGB).unwrap();
     let gain = PixelBuf::new(
         8,
         8,
@@ -269,9 +269,9 @@ fn banded_buf_planar_buf_and_dual_layer_hdr() {
     assert!((dual.metadata().alternate_hdr_headroom.to_f64() - 2.3).abs() < 1e-4);
 
     // InteropTarget checks
-    assert!(ImageSpec::rgb8_srgb().supports_interop(InteropTarget::DynamicImage));
-    assert!(!ImageSpec::grayf32_linear().supports_interop(InteropTarget::DynamicImage));
-    assert!(ImageSpec::grayf32_linear().supports_interop(InteropTarget::ImageBuffer));
+    assert!(ImageSpec::RGB8_SRGB.supports_interop(InteropTarget::DynamicImage));
+    assert!(!ImageSpec::GRAYF32_LINEAR.supports_interop(InteropTarget::DynamicImage));
+    assert!(ImageSpec::GRAYF32_LINEAR.supports_interop(InteropTarget::ImageBuffer));
     assert!(
         !ImageSpec::new(SampleLayout::RGB565, ColorSpace::SRGB)
             .supports_interop(InteropTarget::Imgref)

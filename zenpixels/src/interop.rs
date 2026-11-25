@@ -970,7 +970,7 @@ impl PixelBuf {
     /// Rejects contradictory color spaces when `img` declares a non-default CICP space
     /// that disagrees with `color` (use [`from_rgb8_image`](Self::from_rgb8_image) to
     /// preserve `img`'s own declared CICP automatically).
-    pub fn from_rgb8_image_buffer(
+    pub fn from_rgb8_image_with_color(
         img: image::RgbImage,
         color: ColorSpace,
     ) -> Result<Self, At<BufferError>> {
@@ -982,7 +982,7 @@ impl PixelBuf {
     /// Rejects contradictory color spaces when `img` declares a non-default CICP space
     /// that disagrees with `color` (use [`from_rgba8_image`](Self::from_rgba8_image) to
     /// preserve `img`'s own declared CICP automatically).
-    pub fn from_rgba8_image_buffer(
+    pub fn from_rgba8_image_with_color(
         img: image::RgbaImage,
         color: ColorSpace,
     ) -> Result<Self, At<BufferError>> {

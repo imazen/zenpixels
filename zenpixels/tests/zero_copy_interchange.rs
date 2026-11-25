@@ -12,7 +12,7 @@ fn vec_sample_and_pixel_zero_copy_roundtrips_preserve_pointer_identity() {
     let mut raw_u16 = Vec::with_capacity(12);
     raw_u16.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
     let in_ptr = raw_u16.as_ptr();
-    let buf = PixelBuf::from_typed(raw_u16, 2, 2, ImageSpec::rgb16_srgb()).unwrap();
+    let buf = PixelBuf::from_typed(raw_u16, 2, 2, ImageSpec::RGB16_SRGB).unwrap();
     assert_eq!(buf.as_view().row_as::<u16>(0).unwrap().as_ptr(), in_ptr);
     let back = buf.into_vec_zero_copy::<u16>().unwrap();
     assert_eq!(back.as_ptr(), in_ptr);
@@ -27,7 +27,7 @@ fn vec_sample_and_pixel_zero_copy_roundtrips_preserve_pointer_identity() {
         F16Sample::from_f32(0.25),
     ];
     let f16_ptr = f16s.as_ptr();
-    let buf = PixelBuf::from_typed(f16s, 2, 1, ImageSpec::rgbf16_linear()).unwrap();
+    let buf = PixelBuf::from_typed(f16s, 2, 1, ImageSpec::RGBF16_LINEAR).unwrap();
     let back = buf.into_vec_zero_copy::<F16Sample>().unwrap();
     assert_eq!(back.as_ptr(), f16_ptr);
 
@@ -54,7 +54,7 @@ fn rgb_crate_zero_copy_moves_and_capacity_slop_guards() {
     // Vec<Rgb<u8>> zero-copy roundtrip
     let px8 = vec![Rgb::new(1u8, 2, 3), Rgb::new(4, 5, 6)];
     let p8 = px8.as_ptr();
-    let buf = PixelBuf::from_typed(px8, 2, 1, ImageSpec::rgb8_srgb()).unwrap();
+    let buf = PixelBuf::from_typed(px8, 2, 1, ImageSpec::RGB8_SRGB).unwrap();
     assert_eq!(
         buf.as_view()
             .as_contiguous_typed::<Rgb<u8>>()
@@ -68,7 +68,7 @@ fn rgb_crate_zero_copy_moves_and_capacity_slop_guards() {
     // Vec<Rgb<u16>> zero-copy roundtrip (align=2 == align_of::<u16>(), cap_bytes % 6 == 0)
     let px16 = vec![Rgb::new(100u16, 200, 300), Rgb::new(400, 500, 600)];
     let p16 = px16.as_ptr();
-    let buf = PixelBuf::from_typed(px16, 2, 1, ImageSpec::rgb16_srgb()).unwrap();
+    let buf = PixelBuf::from_typed(px16, 2, 1, ImageSpec::RGB16_SRGB).unwrap();
     assert_eq!(buf.as_view().row_as::<Rgb<u16>>(0).unwrap().as_ptr(), p16);
     let back16 = buf.into_vec_zero_copy::<Rgb<u16>>().unwrap();
     assert_eq!(back16.as_ptr(), p16);
@@ -79,7 +79,7 @@ fn rgb_crate_zero_copy_moves_and_capacity_slop_guards() {
         Rgba::new(0.4, 0.5, 0.6, 0.8),
     ];
     let pf32 = pxf32.as_ptr();
-    let buf = PixelBuf::from_typed(pxf32, 2, 1, ImageSpec::rgbaf32_linear()).unwrap();
+    let buf = PixelBuf::from_typed(pxf32, 2, 1, ImageSpec::RGBAF32_LINEAR).unwrap();
     let backf32 = buf.into_vec_zero_copy::<Rgba<f32>>().unwrap();
     assert_eq!(backf32.as_ptr(), pf32);
 
@@ -88,7 +88,7 @@ fn rgb_crate_zero_copy_moves_and_capacity_slop_guards() {
     sloppy.extend_from_slice(&[10u16, 20, 30, 40, 50, 60]);
     assert_eq!(sloppy.capacity(), 7);
     let sloppy_ptr = sloppy.as_ptr();
-    let buf = PixelBuf::from_typed(sloppy, 2, 1, ImageSpec::rgb16_srgb()).unwrap();
+    let buf = PixelBuf::from_typed(sloppy, 2, 1, ImageSpec::RGB16_SRGB).unwrap();
     // Strict zero-copy MUST refuse (dealloc layout capacity mismatch) and return buf untouched.
     let buf = buf.into_vec_zero_copy::<Rgb<u16>>().unwrap_err();
     // Safe fallback copies cleanly with exact values and a fresh pointer.
@@ -103,7 +103,7 @@ fn rgb_crate_zero_copy_moves_and_capacity_slop_guards() {
         bytes_rgb16.extend_from_slice(&v.to_ne_bytes());
     }
     let bytes_ptr = bytes_rgb16.as_ptr();
-    let buf = PixelBuf::from_bytes(bytes_rgb16, 2, 1, ImageSpec::rgb16_srgb()).unwrap();
+    let buf = PixelBuf::from_bytes(bytes_rgb16, 2, 1, ImageSpec::RGB16_SRGB).unwrap();
     assert_eq!(buf.storage().alloc_alignment(), 1);
     let buf = buf.into_vec_zero_copy::<Rgb<u16>>().unwrap_err();
     let copied = buf.into_vec::<Rgb<u16>>().unwrap();
@@ -117,7 +117,7 @@ fn aligned64_borrows_zero_copy_as_typed_slice_but_copies_for_vec() {
     use rgb::Rgba;
 
     let mut buf =
-        PixelBuf::new_aligned(4, 2, ImageSpec::rgbaf32_linear(), RowAlign::Cache64).unwrap();
+        PixelBuf::new_aligned(4, 2, ImageSpec::RGBAF32_LINEAR, RowAlign::Cache64).unwrap();
     assert_eq!(buf.storage().alloc_alignment(), 64);
     assert_eq!(buf.stride(), 64); // 4 * 16 = 64 bytes -> contiguous AND 64-byte aligned!
 
@@ -160,7 +160,7 @@ fn image_crate_zero_copy_roundtrip() {
     let ptr = raw.as_ptr();
     let rgb_img = image::RgbImage::from_raw(2, 2, raw).unwrap();
 
-    let buf = PixelBuf::from_rgb8_image_buffer(rgb_img, ColorSpace::SRGB).unwrap();
+    let buf = PixelBuf::from_rgb8_image_with_color(rgb_img, ColorSpace::SRGB).unwrap();
     assert_eq!(buf.as_view().row(0).as_ptr(), ptr);
 
     let dyn_img = buf.into_dynamic_image().unwrap();

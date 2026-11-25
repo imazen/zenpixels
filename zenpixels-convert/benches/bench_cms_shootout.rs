@@ -544,7 +544,7 @@ fn bench_cmyk_rows(suite: &mut zenbench::Suite, cmyk_icc: Arc<[u8]>) {
             alpha: AlphaMode::None,
         },
     );
-    let rgb8 = ImageSpec::rgb8_srgb();
+    let rgb8 = ImageSpec::RGB8_SRGB;
 
     let s_row = Arc::new(fill_u8(ROW_W as usize * 4));
     suite.compare("cmyk8_to_rgb8_4096px", |g| {
@@ -588,7 +588,7 @@ fn bench_cmyk_rows(suite: &mut zenbench::Suite, cmyk_icc: Arc<[u8]>) {
             alpha: AlphaMode::None,
         },
     );
-    let rgb16 = ImageSpec::rgb16_srgb();
+    let rgb16 = ImageSpec::RGB16_SRGB;
     let s16 = Arc::new(fill_u16(ROW_W as usize * 4));
     suite.compare("cmyk16_to_rgb16_4096px", |g| {
         g.throughput(Throughput::Elements(ROW_W as u64));

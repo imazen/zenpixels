@@ -4,22 +4,22 @@
 
 use zenpixels_convert::{
     Cicp, ColorOrigin, ConvertPolicy, ImageSpec, LossKind, Negotiate, Orientation, OutputPlan,
-    OutputProfile, PeakSource, PixelBuf, PixelCow, Primaries, apply_orientation,
+    OutputSignaling, PeakSource, PixelBuf, PixelCow, Primaries, apply_orientation,
 };
 
 #[test]
 fn output_plan_zero_copy_identity_and_atomic_signaling() {
-    let mut buf = PixelBuf::new(8, 4, ImageSpec::rgb8_srgb()).unwrap();
+    let mut buf = PixelBuf::new(8, 4, ImageSpec::RGB8_SRGB).unwrap();
     buf.as_view_mut().row_mut(0)[0..3].copy_from_slice(&[42, 84, 126]);
     let in_ptr = buf.as_view().row(0).as_ptr();
 
     // Identity on owned PixelBuf moves storage ZERO-COPY!
     let id_plan = OutputPlan::build(
-        ImageSpec::rgb8_srgb(),
-        ImageSpec::rgb8_srgb(),
+        ImageSpec::RGB8_SRGB,
+        ImageSpec::RGB8_SRGB,
         &ConvertPolicy::lossless(),
         PeakSource::Measured,
-        OutputProfile::CicpOnly,
+        OutputSignaling::CicpOnly,
     )
     .unwrap();
     assert!(id_plan.is_identity());
@@ -40,13 +40,13 @@ fn output_plan_zero_copy_identity_and_atomic_signaling() {
     );
 
     // Non-identity: sRGB -> Display P3 Auto emits Display P3 CICP + bundled P3 ICC!
-    let p3_spec = ImageSpec::rgb8_srgb().with_primaries(Primaries::DisplayP3);
+    let p3_spec = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     let p3_plan = OutputPlan::build(
-        ImageSpec::rgb8_srgb(),
+        ImageSpec::RGB8_SRGB,
         p3_spec,
         &ConvertPolicy::permissive(),
         PeakSource::Measured,
-        OutputProfile::Auto,
+        OutputSignaling::Auto,
     )
     .unwrap();
     let p3_ready = p3_plan.execute_buf(owned).unwrap();
@@ -56,23 +56,23 @@ fn output_plan_zero_copy_identity_and_atomic_signaling() {
 
 #[test]
 fn negotiate_selects_lowest_loss_and_respects_policy() {
-    let src = ImageSpec::rgba8_srgb();
+    let src = ImageSpec::RGBA8_SRGB;
     let supported = [
-        ImageSpec::gray8_srgb(),
-        ImageSpec::rgb8_srgb(),
-        ImageSpec::bgra8_srgb(),
-        ImageSpec::rgba16_srgb(),
+        ImageSpec::GRAY8_SRGB,
+        ImageSpec::RGB8_SRGB,
+        ImageSpec::BGRA8_SRGB,
+        ImageSpec::RGBA16_SRGB,
     ];
 
     // Under lossless policy (forbids alpha drop & depth loss), BGRA8 beats RGBA16 (smaller bpp, lossless swizzle!)
     let best = Negotiate::select(&src, &supported, &ConvertPolicy::lossless()).unwrap();
-    assert_eq!(best.spec, ImageSpec::bgra8_srgb());
+    assert_eq!(best.spec, ImageSpec::BGRA8_SRGB);
     assert_eq!(best.loss, LossKind::None);
 
     // If exact identity is in supported list, it wins immediately (effort = 0).
-    let supported_with_id = [ImageSpec::bgra8_srgb(), ImageSpec::rgba8_srgb()];
+    let supported_with_id = [ImageSpec::BGRA8_SRGB, ImageSpec::RGBA8_SRGB];
     let best_id = Negotiate::select(&src, &supported_with_id, &ConvertPolicy::lossless()).unwrap();
-    assert_eq!(best_id.spec, ImageSpec::rgba8_srgb());
+    assert_eq!(best_id.spec, ImageSpec::RGBA8_SRGB);
     assert_eq!(best_id.cost.effort, 0);
 }
 
@@ -81,14 +81,14 @@ fn orient_all_8_orientations_and_pixel_widths_match_forward_map_oracle() {
     // Prime non-multiple-of-tile dims (37x29) test BOTH AVX2/NEON register bodies AND edge tails!
     let (w, h) = (37u32, 29u32);
     let specs = [
-        ImageSpec::gray8_srgb(),     // 1 B/px
-        ImageSpec::gray16_srgb(),    // 2 B/px
-        ImageSpec::rgb8_srgb(),      // 3 B/px
-        ImageSpec::rgba8_srgb(),     // 4 B/px
-        ImageSpec::rgb16_srgb(),     // 6 B/px
-        ImageSpec::rgba16_srgb(),    // 8 B/px
-        ImageSpec::rgbf32_linear(),  // 12 B/px
-        ImageSpec::rgbaf32_linear(), // 16 B/px
+        ImageSpec::GRAY8_SRGB,     // 1 B/px
+        ImageSpec::GRAY16_SRGB,    // 2 B/px
+        ImageSpec::RGB8_SRGB,      // 3 B/px
+        ImageSpec::RGBA8_SRGB,     // 4 B/px
+        ImageSpec::RGB16_SRGB,     // 6 B/px
+        ImageSpec::RGBA16_SRGB,    // 8 B/px
+        ImageSpec::RGBF32_LINEAR,  // 12 B/px
+        ImageSpec::RGBAF32_LINEAR, // 16 B/px
     ];
 
     for spec in specs {
@@ -149,7 +149,7 @@ fn safe_icc_substitution_without_cms_matches_adobe_oracle() {
     );
     let sub_plan = zenpixels_convert::RowPlan::build(
         icc_spec.clone(),
-        ImageSpec::rgba8_srgb(),
+        ImageSpec::RGBA8_SRGB,
         &ConvertPolicy::permissive(),
         None,
     )
@@ -176,7 +176,7 @@ fn safe_icc_substitution_without_cms_matches_adobe_oracle() {
     );
     let direct_plan = zenpixels_convert::RowPlan::build(
         direct_spec,
-        ImageSpec::rgba8_srgb(),
+        ImageSpec::RGBA8_SRGB,
         &ConvertPolicy::permissive(),
         None,
     )
@@ -212,7 +212,7 @@ fn safe_icc_substitution_without_cms_matches_adobe_oracle() {
     assert!(
         zenpixels_convert::RowPlan::build(
             abs_spec,
-            ImageSpec::rgba8_srgb(),
+            ImageSpec::RGBA8_SRGB,
             &ConvertPolicy::permissive(),
             None,
         )
@@ -248,7 +248,7 @@ fn moxcms_icc_transform_and_safe_substitution() {
     ];
     let sub_plan = zenpixels_convert::RowPlan::build(
         icc_spec.clone(),
-        ImageSpec::rgba8_srgb(),
+        ImageSpec::RGBA8_SRGB,
         &ConvertPolicy::permissive(),
         None,
     )
@@ -257,7 +257,7 @@ fn moxcms_icc_transform_and_safe_substitution() {
         .with_icc_substitution(false)
         .with_cms(Arc::new(zenpixels_convert::MoxCms));
     let cms_plan =
-        zenpixels_convert::RowPlan::build(icc_spec, ImageSpec::rgba8_srgb(), &cms_policy, None)
+        zenpixels_convert::RowPlan::build(icc_spec, ImageSpec::RGBA8_SRGB, &cms_policy, None)
             .unwrap();
 
     let mut sub_out = [0u8; 16];

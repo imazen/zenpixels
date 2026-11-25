@@ -1,10 +1,11 @@
-//! Spec-aware load-bearing analysis and bit-exact format compaction.
+//! Spec-aware content analysis and bit-exact lossless format compaction.
 //!
 //! Answers: *"Which parts of this buffer's declared [`ImageSpec`] are actually
-//! carrying information?"* — alpha, chroma (`R == G == B`), and 16-bit low
-//! bytes (`(v >> 8) == (v & 0xFF)` on full-range `U16`) — and optionally
-//! compacts the pixel buffer either into a fresh [`PixelBuf`] or **in place**
-//! with zero allocation.
+//! required by its pixel values?"* — non-opaque alpha, chroma (`R != G` or `G != B`),
+//! and 16-bit precision beyond byte-replicated 8-bit (`(v >> 8) != (v & 0xFF)` on
+//! full-range `U16`) — and optionally compacts the pixel buffer either into a fresh
+//! [`PixelBuf`] ([`compact_to_buf`]) or **in place** with zero allocation
+//! ([`compact_in_place`]).
 //!
 //! Every reduction this module performs is **bit-exact invertible**:
 //! - Dropping an all-max alpha lane (or undefined `RGBX`/`BGRX` padding).
@@ -24,46 +25,50 @@ use crate::error::{ConvertError, err_at};
 use crate::icc_profiles::{SynthesizedIcc, synthesize_gray_icc_for_cicp};
 use crate::scan::{self, FusedRequest};
 
-/// What a buffer's content actually exercises about its declared [`ImageSpec`].
+/// Which channels and precision of a buffer's declared [`ImageSpec`] are required
+/// to represent its current pixel values without loss.
 ///
 /// Each field is `Option<bool>`:
-/// - `Some(false)` — measured not load-bearing (safe to drop/narrow).
-/// - `Some(true)` — measured load-bearing (keep).
-/// - `None` — predicate did not apply / was not run (keep conservatively).
+/// - `Some(false)` — measured redundant (safe to drop/narrow without loss).
+/// - `Some(true)` — measured required (keep).
+/// - `None` — predicate did not apply / was not assessed (keep conservatively).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct LoadBearingReport {
+pub struct CompactionReport {
     /// `Some(true)` if any alpha sample is below channel-max; `Some(false)` if
     /// all-max, `Opaque`, `Undefined` padding, or no alpha channel.
-    pub uses_alpha: Option<bool>,
+    pub requires_alpha: Option<bool>,
     /// `Some(true)` if any pixel has `R != G` or `G != B`; `Some(false)` if all
     /// neutral or already grayscale.
-    pub uses_chroma: Option<bool>,
-    /// `Some(true)` if any active `U16` sample has `(v >> 8) != (v & 0xFF)`;
-    /// `Some(false)` if bit-replicated or already `U8`. [`Self::apply_to`] keeps
-    /// narrow-range `U16` at 16-bit regardless.
-    pub uses_low_bits: Option<bool>,
+    pub requires_chroma: Option<bool>,
+    /// `Some(true)` if any active full-range `U16` sample is not byte-replicated
+    /// (`(v >> 8) != (v & 0xFF)`); `Some(false)` if bit-replicated (`v * 257`) or
+    /// already `U8`. Narrow-range `U16` reports `None` and stays 16-bit.
+    pub requires_u16_precision: Option<bool>,
 }
 
-impl LoadBearingReport {
+impl CompactionReport {
     /// Whether at least one predicate ran or answered structurally.
     #[inline]
     #[must_use]
     pub const fn any_analyzed(&self) -> bool {
-        self.uses_alpha.is_some() || self.uses_chroma.is_some() || self.uses_low_bits.is_some()
+        self.requires_alpha.is_some()
+            || self.requires_chroma.is_some()
+            || self.requires_u16_precision.is_some()
     }
 
-    /// Produce the narrowest [`ImageSpec`] justified by this report.
+    /// Compute the narrowest candidate [`ImageSpec`] justified by this report (metadata only;
+    /// does not inspect or transform pixels).
     ///
     /// Order of reduction:
-    /// 1. Full-range `U16 -> U8` when `uses_low_bits == Some(false)`.
+    /// 1. Full-range `U16 -> U8` when `requires_u16_precision == Some(false)`.
     /// 2. Alpha/padding drop (`RGBA/BGRA/RGBX/BGRX -> RGB`, `GrayAlpha -> Gray`)
-    ///    when `uses_alpha == Some(false)`.
+    ///    when `requires_alpha == Some(false)`.
     /// 3. Chroma drop (`RGB/BGR -> Gray`, `RGBA/BGRA/RGBX/BGRX -> GrayAlpha/Gray`)
-    ///    when `uses_chroma == Some(false)` (only on `Rgb` / `Gray` color spaces;
+    ///    when `requires_chroma == Some(false)` (only on structured D65 `Rgb` / `Gray`;
     ///    `ColorSpace::Icc` chroma collapse is gated separately by ICC class swapping).
     #[must_use]
-    pub fn apply_to(&self, src: &ImageSpec) -> ImageSpec {
+    pub fn candidate_spec(&self, src: &ImageSpec) -> ImageSpec {
         if !src.layout.packing.is_full() {
             return src.clone();
         }
@@ -72,7 +77,7 @@ impl LoadBearingReport {
         let mut color = src.color.clone();
 
         // 1. Full-range U16 -> U8 narrowing.
-        if matches!(self.uses_low_bits, Some(false))
+        if matches!(self.requires_u16_precision, Some(false))
             && sample == SampleType::U16
             && color.range().unwrap_or(SignalRange::Full) == SignalRange::Full
         {
@@ -80,7 +85,7 @@ impl LoadBearingReport {
         }
 
         // 2. Alpha / padding drop.
-        if matches!(self.uses_alpha, Some(false)) {
+        if matches!(self.requires_alpha, Some(false)) {
             let next_order = match order {
                 ChannelOrder::Rgba
                 | ChannelOrder::Bgra
@@ -97,7 +102,7 @@ impl LoadBearingReport {
 
         // 3. Chroma drop (for structured D65 ColorSpace::Rgb; ColorSpace::Icc requires explicit swap,
         // and non-D65 / Unknown RGB primaries cannot collapse to D65 Gray without shifting white point).
-        if matches!(self.uses_chroma, Some(false))
+        if matches!(self.requires_chroma, Some(false))
             && let ColorSpace::Rgb {
                 primaries,
                 transfer,
@@ -133,14 +138,7 @@ impl LoadBearingReport {
     }
 }
 
-mod sealed {
-    pub trait Sealed {}
-    impl Sealed for zenpixels::PixelView<'_> {}
-    impl Sealed for zenpixels::PixelBuf {}
-}
-
-/// How [`PixelBufLoadBearingExt::reduce_to_load_bearing_format_in_place`] handles
-/// non-load-bearing alpha or padding lanes.
+/// How [`compact_in_place`] handles redundant alpha or padding lanes.
 ///
 /// Depth (`U16 → U8`) and chroma (`RGB → Gray`) compaction still run in both modes whenever
 /// justified by the scan.
@@ -151,30 +149,9 @@ pub enum AlphaCompaction {
     /// in metadata without restructuring alpha/padding lanes (0 byte movement when depth and
     /// chroma are unchanged).
     RetagOpaque,
-    /// Physically drop non-load-bearing alpha or undefined padding lanes in place
+    /// Physically drop redundant alpha or undefined padding lanes in place
     /// (`RGBA`/`BGRA`/`RGBX`/`BGRX` → `RGB`, `GrayAlpha` → `Gray`).
     DropUnusedLanes,
-}
-
-/// Extension trait running load-bearing analysis and allocating compaction on [`PixelView`].
-pub trait PixelViewLoadBearingExt: sealed::Sealed {
-    /// Measure which dimensions of the view's spec actually carry information.
-    fn determine_load_bearing(&self) -> LoadBearingReport;
-
-    /// Analyze and compact into a newly allocated [`PixelBuf`] if narrower (`Ok(None)` if already
-    /// minimal), preserving allocation errors.
-    fn reduce_to_load_bearing_format(&self) -> Result<Option<PixelBuf>, At<ConvertError>>;
-}
-
-/// Extension trait for zero-allocation in-place load-bearing compaction on [`PixelBuf`].
-pub trait PixelBufLoadBearingExt: sealed::Sealed {
-    /// Analyze and compact this [`PixelBuf`] in place (zero allocation).
-    ///
-    /// Depth (`U16 → U8`) and chroma (`RGB → Gray`) compaction run whenever justified; `alpha`
-    /// controls whether non-load-bearing alpha/padding lanes are retagged in metadata
-    /// ([`AlphaCompaction::RetagOpaque`]) or physically dropped in place
-    /// ([`AlphaCompaction::DropUnusedLanes`]).
-    fn reduce_to_load_bearing_format_in_place(&mut self, alpha: AlphaCompaction);
 }
 
 enum GraySignalPlan {
@@ -189,8 +166,6 @@ fn is_d65_white(wp: (f32, f32)) -> bool {
 }
 
 fn plan_chroma_collapse_for_icc(icc: &[u8]) -> GraySignalPlan {
-    // Identify RGB ICC either via verified normalized matrix-TRC match OR an explicit ICC v4.4+
-    // `cicp` tag (base 12-byte or amended 44-byte custom-primaries) carrying full-range RGB (MC=0).
     let (cicp, primaries) = if let Some(id) = zenpixels::icc::IccIdentification::from_icc(icc)
         .filter(|id| id.valid_use == zenpixels::icc::IdentificationUse::MatrixTrcSubstitution)
     {
@@ -205,8 +180,6 @@ fn plan_chroma_collapse_for_icc(icc: &[u8]) -> GraySignalPlan {
     } else {
         return GraySignalPlan::Suppress;
     };
-    // Only collapse to D65 Gray when the RGB ICC primaries have a D65 white point (e.g. BT.709,
-    // Display P3, BT.2020, or custom D65 primaries — not DCI-P3, ProPhoto D50, or ACES D60).
     if !primaries
         .and_then(Primaries::white_point)
         .is_some_and(is_d65_white)
@@ -243,11 +216,11 @@ fn plan_chroma_collapse(spec: &ImageSpec) -> GraySignalPlan {
 
 fn apply_icc_chroma_collapse(
     src: &ImageSpec,
-    report: &LoadBearingReport,
+    report: &CompactionReport,
     plan: &GraySignalPlan,
 ) -> ImageSpec {
-    let base = report.apply_to(src);
-    if !matches!(report.uses_chroma, Some(false)) {
+    let base = report.candidate_spec(src);
+    if !matches!(report.requires_chroma, Some(false)) {
         return base;
     }
     let ColorSpace::Icc {
@@ -294,278 +267,273 @@ fn apply_icc_chroma_collapse(
     }
 }
 
-impl PixelViewLoadBearingExt for PixelView<'_> {
-    fn determine_load_bearing(&self) -> LoadBearingReport {
-        let spec = self.spec();
-        if !spec.layout.packing.is_full() {
-            return LoadBearingReport::default();
+/// Measure which dimensions of `view`'s spec are actually required by its pixel values.
+#[must_use]
+pub fn analyze_compaction(view: &PixelView<'_>) -> CompactionReport {
+    let spec = view.spec();
+    if !spec.layout.packing.is_full() {
+        return CompactionReport::default();
+    }
+    let order = spec.layout.order;
+    let sample = spec.layout.sample;
+
+    let alpha_structural: Option<Option<bool>> = if order.has_padding_slot() {
+        Some(Some(false))
+    } else if order.has_alpha_slot() {
+        match spec.color.alpha() {
+            AlphaMode::Undefined | AlphaMode::Opaque => Some(Some(false)),
+            _ => None,
         }
-        let order = spec.layout.order;
-        let sample = spec.layout.sample;
+    } else {
+        None
+    };
+    let scan_alpha = alpha_structural.is_none();
 
-        let alpha_structural: Option<Option<bool>> = if order.has_padding_slot() {
-            Some(Some(false))
-        } else if order.has_alpha_slot() {
-            match spec.color.alpha() {
-                AlphaMode::Undefined | AlphaMode::Opaque => Some(Some(false)),
-                _ => None,
-            }
-        } else {
-            None
-        };
-        let scan_alpha = alpha_structural.is_none();
-
-        // Fused U16 single-pass scan (opacity + chroma + bit-replication, ignoring RGBX padding).
-        if sample == SampleType::U16
-            && matches!(
-                order,
-                ChannelOrder::Rgba
-                    | ChannelOrder::Bgra
-                    | ChannelOrder::Rgbx
-                    | ChannelOrder::Bgrx
-                    | ChannelOrder::Rgb
-                    | ChannelOrder::Bgr
-                    | ChannelOrder::GrayAlpha
-                    | ChannelOrder::Gray
-            )
-        {
-            let has_alpha = order.has_alpha_slot();
-            let has_chroma = order.is_rgb_family();
-            let padding = order.has_padding_slot();
-            let is_narrow = spec.color.range() == Some(SignalRange::Narrow);
-            let ch = order.channels();
-            // Byte-replication `(v >> 8) == (v & 0xFF)` is a full-range 8-bit grid property only;
-            // narrow-range U16 must NEVER report `uses_low_bits = Some(false)` from replication.
-            let mut flags = [false, false, is_narrow];
-            for y in 0..self.rows() {
-                let row = self.row(y);
-                if let Ok(s16) = bytemuck::try_cast_slice::<u8, u16>(row) {
-                    flags = scan::fused_u16(
-                        s16,
-                        ch,
-                        has_alpha && scan_alpha,
-                        has_chroma,
-                        padding,
-                        flags,
-                    );
-                } else {
-                    for px in row.chunks_exact(ch * 2) {
-                        if has_alpha && scan_alpha && !flags[0] {
-                            let a = u16::from_ne_bytes([px[(ch - 1) * 2], px[(ch - 1) * 2 + 1]]);
-                            if a != u16::MAX {
-                                flags[0] = true;
-                            }
+    // Fused U16 single-pass scan (opacity + chroma + bit-replication, ignoring RGBX padding).
+    if sample == SampleType::U16
+        && matches!(
+            order,
+            ChannelOrder::Rgba
+                | ChannelOrder::Bgra
+                | ChannelOrder::Rgbx
+                | ChannelOrder::Bgrx
+                | ChannelOrder::Rgb
+                | ChannelOrder::Bgr
+                | ChannelOrder::GrayAlpha
+                | ChannelOrder::Gray
+        )
+    {
+        let has_alpha = order.has_alpha_slot();
+        let has_chroma = order.is_rgb_family();
+        let padding = order.has_padding_slot();
+        let is_narrow = spec.color.range() == Some(SignalRange::Narrow);
+        let ch = order.channels();
+        let mut flags = [false, false, is_narrow];
+        for y in 0..view.rows() {
+            let row = view.row(y);
+            if let Ok(s16) = bytemuck::try_cast_slice::<u8, u16>(row) {
+                flags =
+                    scan::fused_u16(s16, ch, has_alpha && scan_alpha, has_chroma, padding, flags);
+            } else {
+                for px in row.chunks_exact(ch * 2) {
+                    if has_alpha && scan_alpha && !flags[0] {
+                        let a = u16::from_ne_bytes([px[(ch - 1) * 2], px[(ch - 1) * 2 + 1]]);
+                        if a != u16::MAX {
+                            flags[0] = true;
                         }
-                        if has_chroma && !flags[1] {
-                            let s0 = u16::from_ne_bytes([px[0], px[1]]);
-                            let s1 = u16::from_ne_bytes([px[2], px[3]]);
-                            let s2 = u16::from_ne_bytes([px[4], px[5]]);
-                            if s0 != s1 || s1 != s2 {
-                                flags[1] = true;
-                            }
+                    }
+                    if has_chroma && !flags[1] {
+                        let s0 = u16::from_ne_bytes([px[0], px[1]]);
+                        let s1 = u16::from_ne_bytes([px[2], px[3]]);
+                        let s2 = u16::from_ne_bytes([px[4], px[5]]);
+                        if s0 != s1 || s1 != s2 {
+                            flags[1] = true;
                         }
-                        if !flags[2] {
-                            let data_ch = if padding { ch - 1 } else { ch };
-                            for c in 0..data_ch {
-                                let v = u16::from_ne_bytes([px[c * 2], px[c * 2 + 1]]);
-                                if (v >> 8) != (v & 0xFF) {
-                                    flags[2] = true;
-                                    break;
-                                }
+                    }
+                    if !flags[2] {
+                        let data_ch = if padding { ch - 1 } else { ch };
+                        for c in 0..data_ch {
+                            let v = u16::from_ne_bytes([px[c * 2], px[c * 2 + 1]]);
+                            if (v >> 8) != (v & 0xFF) {
+                                flags[2] = true;
+                                break;
                             }
                         }
                     }
                 }
-                if (!has_alpha || !scan_alpha || flags[0]) && (!has_chroma || flags[1]) && flags[2]
-                {
-                    break;
-                }
             }
-            return LoadBearingReport {
-                uses_alpha: Some(flags[0]),
-                uses_chroma: Some(flags[1]),
-                uses_low_bits: if is_narrow { None } else { Some(flags[2]) },
-            };
+            if (!has_alpha || !scan_alpha || flags[0]) && (!has_chroma || flags[1]) && flags[2] {
+                break;
+            }
         }
-
-        let (mut uses_alpha, uses_chroma) = match (order, sample) {
-            (
-                ChannelOrder::Rgba | ChannelOrder::Bgra | ChannelOrder::Rgbx | ChannelOrder::Bgrx,
-                SampleType::U8,
-            ) => {
-                let fused = fused_rgba8_over_rows(
-                    self,
-                    FusedRequest {
-                        check_opaque: scan_alpha,
-                        check_grayscale: true,
-                    },
-                );
-                (Some(!fused.is_opaque), Some(!fused.is_grayscale))
-            }
-            (ChannelOrder::Rgb | ChannelOrder::Bgr, SampleType::U8) => {
-                let gray = if let Some(b) = self.as_contiguous_bytes() {
-                    scan::is_grayscale_rgb8(b)
-                } else {
-                    (0..self.rows()).all(|y| scan::is_grayscale_rgb8(self.row(y)))
-                };
-                (Some(false), Some(!gray))
-            }
-            (ChannelOrder::GrayAlpha, SampleType::U8) => {
-                let op = if !scan_alpha {
-                    true
-                } else if let Some(b) = self.as_contiguous_bytes() {
-                    scan::is_opaque_ga8(b)
-                } else {
-                    (0..self.rows()).all(|y| scan::is_opaque_ga8(self.row(y)))
-                };
-                (Some(!op), Some(false))
-            }
-            (ChannelOrder::Gray, _) => (Some(false), Some(false)),
-            (
-                ChannelOrder::Rgba | ChannelOrder::Bgra | ChannelOrder::Rgbx | ChannelOrder::Bgrx,
-                SampleType::F32,
-            ) => {
-                let op = if !scan_alpha {
-                    true
-                } else {
-                    rows_all_f32(self, scan::is_opaque_rgba_f32)
-                };
-                let gr = rows_all_f32(self, scan::is_grayscale_rgba_f32);
-                (Some(!op), Some(!gr))
-            }
-            (ChannelOrder::Rgb | ChannelOrder::Bgr, SampleType::F32) => (
-                Some(false),
-                Some(!rows_all_f32(self, scan::is_grayscale_rgb_f32)),
-            ),
-            (ChannelOrder::GrayAlpha, SampleType::F32) => {
-                let op = if !scan_alpha {
-                    true
-                } else {
-                    rows_all_f32(self, scan::is_opaque_ga_f32)
-                };
-                (Some(!op), Some(false))
-            }
-            _ => (None, None),
+        return CompactionReport {
+            requires_alpha: Some(flags[0]),
+            requires_chroma: Some(flags[1]),
+            requires_u16_precision: if is_narrow { None } else { Some(flags[2]) },
         };
-
-        if let Some(structural) = alpha_structural
-            && uses_alpha.is_some()
-        {
-            uses_alpha = structural;
-        }
-
-        let uses_low_bits = match sample {
-            SampleType::U8 => Some(false),
-            SampleType::U16 => Some(!rows_all_u16(self, scan::bit_replication_lossless_u16)),
-            _ => None,
-        };
-
-        LoadBearingReport {
-            uses_alpha,
-            uses_chroma,
-            uses_low_bits,
-        }
     }
 
-    fn reduce_to_load_bearing_format(&self) -> Result<Option<PixelBuf>, At<ConvertError>> {
-        let src = self.spec().clone();
-        let mut report = self.determine_load_bearing();
-        let plan = plan_chroma_collapse(&src);
-        if matches!(plan, GraySignalPlan::Suppress) {
-            report.uses_chroma = None;
+    let (mut requires_alpha, requires_chroma) = match (order, sample) {
+        (
+            ChannelOrder::Rgba | ChannelOrder::Bgra | ChannelOrder::Rgbx | ChannelOrder::Bgrx,
+            SampleType::U8,
+        ) => {
+            let fused = fused_rgba8_over_rows(
+                view,
+                FusedRequest {
+                    check_opaque: scan_alpha,
+                    check_grayscale: true,
+                },
+            );
+            (Some(!fused.is_opaque), Some(!fused.is_grayscale))
         }
-        let target = apply_icc_chroma_collapse(&src, &report, &plan);
-        if target == src {
-            return Ok(None);
+        (ChannelOrder::Rgb | ChannelOrder::Bgr, SampleType::U8) => {
+            let gray = if let Some(b) = view.as_contiguous_bytes() {
+                scan::is_grayscale_rgb8(b)
+            } else {
+                (0..view.rows()).all(|y| scan::is_grayscale_rgb8(view.row(y)))
+            };
+            (Some(false), Some(!gray))
         }
-        let mut out = PixelBuf::new(self.width(), self.rows(), target.clone())
-            .map_err(|e| err_at((*e.error()).into()))?;
-        if transform_into(self, &src, &target, &mut out).is_none() {
-            return Ok(None);
+        (ChannelOrder::GrayAlpha, SampleType::U8) => {
+            let op = if !scan_alpha {
+                true
+            } else if let Some(b) = view.as_contiguous_bytes() {
+                scan::is_opaque_ga8(b)
+            } else {
+                (0..view.rows()).all(|y| scan::is_opaque_ga8(view.row(y)))
+            };
+            (Some(!op), Some(false))
         }
-        // Preserve the original source `ColorOrigin` provenance verbatim — the active raster's
-        // synthesized Gray-class ICC (if any) lives in `target.color`, not in `origin`.
-        let out_origin = self.origin().cloned().unwrap_or_else(ColorOrigin::assumed);
-        Ok(Some(
-            out.with_origin(out_origin)
-                .with_hdr(self.hdr())
-                .with_orientation(self.orientation()),
-        ))
+        (ChannelOrder::Gray, _) => (Some(false), Some(false)),
+        (
+            ChannelOrder::Rgba | ChannelOrder::Bgra | ChannelOrder::Rgbx | ChannelOrder::Bgrx,
+            SampleType::F32,
+        ) => {
+            let op = if !scan_alpha {
+                true
+            } else {
+                rows_all_f32(view, scan::is_opaque_rgba_f32)
+            };
+            let gr = rows_all_f32(view, scan::is_grayscale_rgba_f32);
+            (Some(!op), Some(!gr))
+        }
+        (ChannelOrder::Rgb | ChannelOrder::Bgr, SampleType::F32) => (
+            Some(false),
+            Some(!rows_all_f32(view, scan::is_grayscale_rgb_f32)),
+        ),
+        (ChannelOrder::GrayAlpha, SampleType::F32) => {
+            let op = if !scan_alpha {
+                true
+            } else {
+                rows_all_f32(view, scan::is_opaque_ga_f32)
+            };
+            (Some(!op), Some(false))
+        }
+        _ => (None, None),
+    };
+
+    if let Some(structural) = alpha_structural
+        && requires_alpha.is_some()
+    {
+        requires_alpha = structural;
+    }
+
+    let requires_u16_precision = match sample {
+        SampleType::U8 => Some(false),
+        SampleType::U16 => Some(!rows_all_u16(view, scan::bit_replication_lossless_u16)),
+        _ => None,
+    };
+
+    CompactionReport {
+        requires_alpha,
+        requires_chroma,
+        requires_u16_precision,
     }
 }
 
-impl PixelBufLoadBearingExt for PixelBuf {
-    fn reduce_to_load_bearing_format_in_place(&mut self, alpha: AlphaCompaction) {
-        let drop_alpha_lanes = alpha == AlphaCompaction::DropUnusedLanes;
-        let _ = self.transform_in_place(|bytes, width, rows, in_stride, src, orig| {
-            if width == 0 || rows == 0 || !src.layout.packing.is_full() {
-                return None;
-            }
-            let mut report = {
-                let view = PixelView::new(bytes, width, rows, in_stride, src).ok()?;
-                view.determine_load_bearing()
-            };
-            let plan = plan_chroma_collapse(src);
-            if matches!(plan, GraySignalPlan::Suppress) {
-                report.uses_chroma = None;
-            }
-
-            let alpha_droppable =
-                matches!(report.uses_alpha, Some(false)) && src.layout.order.has_alpha_slot();
-            if !drop_alpha_lanes {
-                report.uses_alpha = None;
-            }
-
-            let mut target = apply_icc_chroma_collapse(src, &report, &plan);
-            if !drop_alpha_lanes
-                && alpha_droppable
-                && target.layout.order.has_alpha_slot()
-                && !matches!(src.color.alpha(), AlphaMode::Undefined | AlphaMode::Opaque)
-            {
-                target = target.with_alpha(AlphaMode::Opaque);
-            }
-
-            if &target == src {
-                return None;
-            }
-
-            // Equal-bpp target: metadata-only alpha retag (0 data movement).
-            let in_bpp = src.layout.bytes_per_pixel();
-            let out_bpp = target.layout.bytes_per_pixel();
-            if out_bpp == in_bpp {
-                let retagged = src.clone().with_alpha(target.color.alpha());
-                let mut facts = SampleFacts::NONE;
-                if matches!(retagged.color.alpha(), AlphaMode::Opaque) {
-                    facts.all_opaque = true;
-                    facts.binary_alpha = true;
-                }
-                return Some((in_stride, retagged, orig.clone(), facts));
-            }
-            if out_bpp > in_bpp {
-                return None;
-            }
-
-            let narrow16 =
-                src.layout.sample == SampleType::U16 && target.layout.sample == SampleType::U8;
-            let map = selection_map(src.layout.order, target.layout.order)?;
-            let out_stride = (width as usize) * out_bpp;
-
-            compact_rows_in_place(
-                bytes,
-                width as usize,
-                rows as usize,
-                in_stride,
-                in_bpp,
-                out_bpp,
-                src.layout.order,
-                target.layout.order,
-                map,
-                narrow16,
-            );
-
-            Some((out_stride, target, orig.clone(), SampleFacts::NONE))
-        });
+/// Analyze `view` and compact into a newly allocated [`PixelBuf`] if a narrower bit-exact
+/// representation exists (`Ok(None)` if already minimal), preserving allocation errors.
+pub fn compact_to_buf(view: &PixelView<'_>) -> Result<Option<PixelBuf>, At<ConvertError>> {
+    let src = view.spec().clone();
+    let mut report = analyze_compaction(view);
+    let plan = plan_chroma_collapse(&src);
+    if matches!(plan, GraySignalPlan::Suppress) {
+        report.requires_chroma = None;
     }
+    let target = apply_icc_chroma_collapse(&src, &report, &plan);
+    if target == src {
+        return Ok(None);
+    }
+    let mut out = PixelBuf::new(view.width(), view.rows(), target.clone())
+        .map_err(|e| err_at((*e.error()).into()))?;
+    if transform_into(view, &src, &target, &mut out).is_none() {
+        return Ok(None);
+    }
+    let out_origin = view.origin().cloned().unwrap_or_else(ColorOrigin::assumed);
+    Ok(Some(
+        out.with_origin(out_origin)
+            .with_hdr(view.hdr())
+            .with_orientation(view.orientation()),
+    ))
+}
+
+/// Analyze and compact `buf` **in place** without reallocating its backing pixel buffer.
+///
+/// Depth (`U16 → U8`) and chroma (`RGB → Gray`) compaction run whenever justified; `alpha`
+/// controls whether redundant alpha/padding lanes are retagged in metadata
+/// ([`AlphaCompaction::RetagOpaque`]) or physically dropped in place
+/// ([`AlphaCompaction::DropUnusedLanes`]).
+pub fn compact_in_place(buf: &mut PixelBuf, alpha: AlphaCompaction) {
+    let drop_alpha_lanes = alpha == AlphaCompaction::DropUnusedLanes;
+    let _ = buf.transform_in_place(|bytes, width, rows, in_stride, src, orig| {
+        if width == 0 || rows == 0 || !src.layout.packing.is_full() {
+            return None;
+        }
+        let mut report = {
+            let view = PixelView::new(bytes, width, rows, in_stride, src).ok()?;
+            analyze_compaction(&view)
+        };
+        let plan = plan_chroma_collapse(src);
+        if matches!(plan, GraySignalPlan::Suppress) {
+            report.requires_chroma = None;
+        }
+
+        let alpha_droppable =
+            matches!(report.requires_alpha, Some(false)) && src.layout.order.has_alpha_slot();
+        if !drop_alpha_lanes {
+            report.requires_alpha = None;
+        }
+
+        let mut target = apply_icc_chroma_collapse(src, &report, &plan);
+        if !drop_alpha_lanes
+            && alpha_droppable
+            && target.layout.order.has_alpha_slot()
+            && !matches!(src.color.alpha(), AlphaMode::Undefined | AlphaMode::Opaque)
+        {
+            target = target.with_alpha(AlphaMode::Opaque);
+        }
+
+        if &target == src {
+            return None;
+        }
+
+        // Equal-bpp target: metadata-only alpha retag (0 data movement).
+        let in_bpp = src.layout.bytes_per_pixel();
+        let out_bpp = target.layout.bytes_per_pixel();
+        if out_bpp == in_bpp {
+            let retagged = src.clone().with_alpha(target.color.alpha());
+            let mut facts = SampleFacts::NONE;
+            if matches!(retagged.color.alpha(), AlphaMode::Opaque) {
+                facts.all_opaque = true;
+                facts.binary_alpha = true;
+            }
+            return Some((in_stride, retagged, orig.clone(), facts));
+        }
+        if out_bpp > in_bpp {
+            return None;
+        }
+
+        let narrow16 =
+            src.layout.sample == SampleType::U16 && target.layout.sample == SampleType::U8;
+        let map = selection_map(src.layout.order, target.layout.order)?;
+        let out_stride = (width as usize) * out_bpp;
+
+        compact_rows_in_place(
+            bytes,
+            width as usize,
+            rows as usize,
+            in_stride,
+            in_bpp,
+            out_bpp,
+            src.layout.order,
+            target.layout.order,
+            map,
+            narrow16,
+        );
+
+        Some((out_stride, target, orig.clone(), SampleFacts::NONE))
+    });
 }
 
 // ── Row helpers & byte-exact compaction kernels ────────────────────────

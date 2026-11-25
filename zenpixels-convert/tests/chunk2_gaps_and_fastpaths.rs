@@ -2,7 +2,7 @@
 //! - C1: `LumaDomain::{Encoded, LinearLight}` (`(255,0,0)` -> 54 Encoded vs 127 LinearLight,
 //!   12-variant `garb` SIMD vs scalar 0-bit parity, Display P3 deferred encoded OETF, Unknown transfer)
 //! - G03: `OutputPlan` `AlphaMode::Opaque` canonicalization vs proven-opaque zero-copy
-//! - G04: `OutputProfile::CustomIcc` / `SameAsOrigin` rejects `MetadataOnly` ICC profiles
+//! - G04: `OutputSignaling::CustomIcc` / `SameAsOrigin` rejects `MetadataOnly` ICC profiles
 //! - G14: `Negotiate::select` scene-linear HDR precheck without tone mapper
 //! - G02: `MoxCms` float MPE (`D2B*`/`B2D*`) refusal, unequal adjacent RGB TRC refusal, extended F32
 //! - T2-3/G05: `apply_orientation_banded` / `apply_orientation_banded_into` across all 8 orientations & seams
@@ -20,18 +20,19 @@ use zenpixels::{
 };
 use zenpixels_convert::{
     Accelerators, ConvertError, ConvertPolicy, DepthPolicy, LightLevelHistogram, LightLevelMethod,
-    LumaCoefficients, LumaDomain, Negotiate, OutputPlan, OutputProfile, RowPlan, YcbcrMatrix,
-    adapt_for_encode, apply_orientation, apply_orientation_banded, apply_orientation_banded_into,
-    measure_cll, measure_histogram, measure_max_smoothed, to_bgra8, to_gray8, to_rgb8, to_rgba8,
-    ycbcr_to_rgb_f32, ycbcr_to_rgb_from_planar,
+    LumaCoefficients, LumaDomain, Negotiate, OutputPlan, OutputSignaling,
+    PlanarReconstructionOptions, RowPlan, YcbcrMatrix, adapt_for_encode, apply_orientation,
+    apply_orientation_banded, apply_orientation_banded_into, measure_cll, measure_histogram,
+    measure_max_smoothed, reconstruct_planar_f32, reconstruct_planar_to_buf, to_bgra8, to_gray8,
+    to_rgb8, to_rgba8,
 };
 
 extern crate alloc;
 
 #[test]
 fn c1_luma_domain_encoded_default_vs_linear_light_and_simd_parity() {
-    let rgb_srgb = ImageSpec::rgb8_srgb();
-    let gray_srgb = ImageSpec::gray8_srgb();
+    let rgb_srgb = ImageSpec::RGB8_SRGB;
+    let gray_srgb = ImageSpec::GRAY8_SRGB;
 
     // Default policy uses LumaDomain::Encoded (0.2/0.4 JPEG/video Y' semantic).
     let def_pol = ConvertPolicy::permissive();
@@ -171,7 +172,7 @@ fn c1_luma_domain_encoded_default_vs_linear_light_and_simd_parity() {
 
     // Cross-transfer Linear RGB -> sRGB Gray: Encoded applies OETF before luma (red = 54),
     // LinearLight computes luma in linear light before OETF (red = 127).
-    let lin_rgb = ImageSpec::rgbf32_linear();
+    let lin_rgb = ImageSpec::RGBF32_LINEAR;
     let p_cross_enc = RowPlan::build(
         lin_rgb.clone(),
         gray_srgb.clone(),
@@ -201,18 +202,18 @@ fn c1_luma_domain_encoded_default_vs_linear_light_and_simd_parity() {
 
 #[test]
 fn g03_output_plan_canonicalizes_unverified_opaque_alpha_and_stays_zero_copy_when_proven() {
-    let spec = ImageSpec::rgba8_srgb().with_alpha(AlphaMode::Opaque);
+    let spec = ImageSpec::RGBA8_SRGB.with_alpha(AlphaMode::Opaque);
 
     // Unverified poisoned Opaque alpha [9, 13, 17, 0] -> MUST canonicalize to [9, 13, 17, 255]!
     let mut poisoned = PixelBuf::from_typed(vec![9u8, 13, 17, 0], 1, 1, spec.clone()).unwrap();
-    poisoned.set_facts(SampleFacts::NONE);
+    poisoned.assume_facts(SampleFacts::NONE);
 
     let plan = OutputPlan::build(
         spec.clone(),
         spec.clone(),
         &ConvertPolicy::permissive(),
         PeakSource::Measured,
-        OutputProfile::Auto,
+        OutputSignaling::Auto,
     )
     .unwrap();
     assert!(
@@ -231,7 +232,7 @@ fn g03_output_plan_canonicalizes_unverified_opaque_alpha_and_stays_zero_copy_whe
 
     // Proven all_opaque on runtime view -> zero-copy Borrowed even from the same plan!
     let mut proven = PixelBuf::from_typed(vec![9u8, 13, 17, 255], 1, 1, spec.clone()).unwrap();
-    proven.set_facts(SampleFacts::NONE.with_all_opaque(true));
+    proven.assume_facts(SampleFacts::NONE.with_all_opaque(true));
     let ready_zc = plan
         .execute_view(proven.as_view(), &ColorOrigin::assumed())
         .unwrap();
@@ -246,7 +247,7 @@ fn g03_output_plan_canonicalizes_unverified_opaque_alpha_and_stays_zero_copy_whe
         spec,
         &ConvertPolicy::permissive().with_source_facts(SampleFacts::NONE.with_all_opaque(true)),
         PeakSource::Measured,
-        OutputProfile::Auto,
+        OutputSignaling::Auto,
     )
     .unwrap();
     assert!(plan_proven.is_identity());
@@ -283,13 +284,13 @@ fn g04_output_plan_rejects_metadata_only_icc_for_structured_dst() {
     assert_eq!(id.valid_use, IdentificationUse::MetadataOnly);
 
     // Must be rejected as CustomIcc for structured D65 Gray sRGB!
-    let gray = ImageSpec::gray8_srgb();
+    let gray = ImageSpec::GRAY8_SRGB;
     let err = OutputPlan::build(
         gray.clone(),
         gray.clone(),
         &ConvertPolicy::permissive(),
         PeakSource::Measured,
-        OutputProfile::CustomIcc(Arc::from(c_white_icc.as_slice())),
+        OutputSignaling::CustomIcc(Arc::from(c_white_icc.as_slice())),
     )
     .unwrap_err();
     assert_eq!(*err.error(), ConvertError::OutputSignalingMismatch);
@@ -300,7 +301,7 @@ fn g04_output_plan_rejects_metadata_only_icc_for_structured_dst() {
         gray.clone(),
         &ConvertPolicy::permissive(),
         PeakSource::Measured,
-        OutputProfile::SameAsOrigin,
+        OutputSignaling::SameAsOrigin,
     )
     .unwrap();
     let buf = PixelBuf::new(2, 2, gray).unwrap();
@@ -326,7 +327,7 @@ fn g04_output_plan_rejects_metadata_only_icc_for_structured_dst() {
             icc_gray,
             &ConvertPolicy::permissive(),
             PeakSource::Measured,
-            OutputProfile::CustomIcc(Arc::from(c_white_icc.as_slice())),
+            OutputSignaling::CustomIcc(Arc::from(c_white_icc.as_slice())),
         )
         .is_ok()
     );
@@ -334,8 +335,8 @@ fn g04_output_plan_rejects_metadata_only_icc_for_structured_dst() {
 
 #[test]
 fn g14_negotiate_scene_linear_hdr_precheck() {
-    let lin_src = ImageSpec::rgbf32_linear();
-    let sdr_dst = ImageSpec::rgb8_srgb();
+    let lin_src = ImageSpec::RGBF32_LINEAR;
+    let sdr_dst = ImageSpec::RGB8_SRGB;
     let pol_tm = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, zenpixels::Nits::new(100.0));
 
     #[cfg(not(feature = "bt2446a"))]
@@ -411,7 +412,7 @@ fn g02_moxcms_float_mpe_and_unequal_trc_refusal_and_extended_f32() {
             intent: RenderingIntent::Perceptual,
         },
     );
-    let dst_srgb = ImageSpec::rgb8_srgb();
+    let dst_srgb = ImageSpec::RGB8_SRGB;
     assert!(!MoxCms.supports_specs(&src_rel, &dst_srgb));
     assert_eq!(
         *MoxCms
@@ -483,7 +484,7 @@ fn g02_moxcms_float_mpe_and_unequal_trc_refusal_and_extended_f32() {
             intent: RenderingIntent::RelativeColorimetric,
         },
     );
-    let dst_f32 = ImageSpec::rgbf32_linear();
+    let dst_f32 = ImageSpec::RGBF32_LINEAR;
     let tx = MoxCms.build_transform(&src_f32, &dst_f32).unwrap();
     let input = [1.5f32, 1.5, 1.5];
     let mut output = [0.0f32; 3];
@@ -512,10 +513,10 @@ fn t2_3_banded_orientation_matches_contiguous_bit_exact_all_8_orientations() {
         Orientation::Transverse,
     ];
     let specs = [
-        ImageSpec::rgb8_srgb(),
-        ImageSpec::rgba8_srgb(),
-        ImageSpec::rgb16_srgb(),
-        ImageSpec::rgbaf32_linear(),
+        ImageSpec::RGB8_SRGB,
+        ImageSpec::RGBA8_SRGB,
+        ImageSpec::RGB16_SRGB,
+        ImageSpec::RGBAF32_LINEAR,
     ];
     let (w, h) = (37u32, 29u32);
     for spec in specs {
@@ -575,7 +576,7 @@ fn t2_3_banded_orientation_matches_contiguous_bit_exact_all_8_orientations() {
 #[test]
 fn t2_6_measure_max_smoothed_and_histogram_bins_try_merge() {
     let white = DiffuseWhite::new(100.0);
-    let spec = ImageSpec::rgbf32_linear().with_white(white);
+    let spec = ImageSpec::RGBF32_LINEAR.with_white(white);
 
     // 1. Single stuck hot pixel at 9000 nits (90.0 relative) in black 9x1 row:
     //    literal MaxCLL = 9000, smoothed MaxCLL = 9000 / 3 = 3000, MaxFALL = 1000!
@@ -640,18 +641,18 @@ fn t2_6_measure_max_smoothed_and_histogram_bins_try_merge() {
 #[test]
 fn t2_4_t2_5_adapt_for_encode_convenience_helpers_and_ycbcr_from_planar() {
     // 1. adapt_for_encode zero-copy identity + conversion.
-    let buf = PixelBuf::from_typed(vec![10u8, 20, 30, 255], 1, 1, ImageSpec::rgba8_srgb()).unwrap();
-    let supported = [ImageSpec::rgb8_srgb(), ImageSpec::rgba8_srgb()];
+    let buf = PixelBuf::from_typed(vec![10u8, 20, 30, 255], 1, 1, ImageSpec::RGBA8_SRGB).unwrap();
+    let supported = [ImageSpec::RGB8_SRGB, ImageSpec::RGBA8_SRGB];
     let (neg, ready) = adapt_for_encode(
         buf.as_view(),
         buf.origin(),
         &supported,
         &ConvertPolicy::permissive(),
         PeakSource::Measured,
-        OutputProfile::Auto,
+        OutputSignaling::Auto,
     )
     .unwrap();
-    assert_eq!(neg.spec, ImageSpec::rgba8_srgb());
+    assert_eq!(neg.spec, ImageSpec::RGBA8_SRGB);
     assert!(matches!(ready.pixels, PixelCow::Borrowed(_)));
 
     // 2. to_rgb8 / to_rgba8 / to_gray8 / to_bgra8 convenience wrappers.
@@ -671,7 +672,7 @@ fn t2_4_t2_5_adapt_for_encode_convenience_helpers_and_ycbcr_from_planar() {
     // Once opacity is proven (scan_facts or into_opaque_verified), to_rgb8 and to_gray8 succeed:
     let mut proven_buf = buf.clone();
     let facts = zenpixels_convert::scan_facts(&proven_buf.as_view());
-    proven_buf.set_facts(facts);
+    proven_buf.assume_facts(facts);
     let r = to_rgb8(&proven_buf.as_view()).unwrap();
     assert_eq!(r.as_view().row(0), &[10, 20, 30]);
     let gr = to_gray8(&proven_buf.as_view()).unwrap();
@@ -718,7 +719,7 @@ fn t2_4_t2_5_adapt_for_encode_convenience_helpers_and_ycbcr_from_planar() {
     let untagged_planar = PlanarBuf::from_planes(2, 2, vec![y_p, cb_p, cr_p]).unwrap();
     // Missing color/range/matrix metadata must refuse rather than guess!
     assert_eq!(
-        *ycbcr_to_rgb_from_planar(&untagged_planar.as_view())
+        *reconstruct_planar_f32(&untagged_planar.as_view())
             .unwrap_err()
             .error(),
         ConvertError::UnsupportedRoute
@@ -732,27 +733,25 @@ fn t2_4_t2_5_adapt_for_encode_convenience_helpers_and_ycbcr_from_planar() {
             alpha: AlphaMode::None,
             white: None,
         })
-        .with_ycbcr_matrix_code(1);
-    let from_meta = ycbcr_to_rgb_from_planar(&tagged.as_view()).unwrap();
-    let explicit = ycbcr_to_rgb_f32(
+        .with_matrix_coefficients_code(1);
+    let from_meta = reconstruct_planar_f32(&tagged.as_view()).unwrap();
+    let via_to_buf = reconstruct_planar_to_buf(
         &tagged.as_view(),
-        YcbcrMatrix::Bt709,
-        SignalRange::Narrow,
-        Primaries::Bt709,
-        Transfer::Bt709,
+        SampleLayout::RGBF32,
+        &PlanarReconstructionOptions::nearest(),
     )
     .unwrap();
     assert_eq!(
         from_meta.as_view().as_contiguous_bytes().unwrap(),
-        explicit.as_view().as_contiguous_bytes().unwrap()
+        via_to_buf.as_view().as_contiguous_bytes().unwrap()
     );
 }
 
 #[test]
 fn t2_11_exhaustive_rgba8_premul_and_lin_f32_to_srgb_u8_parity() {
     // Exhaustive 65,536 (c, a) pairs for rgba8_straight_to_premul (both round=true and round=false).
-    let src_spec = ImageSpec::rgba8_srgb();
-    let dst_spec = ImageSpec::rgba8_srgb().with_alpha(AlphaMode::Premultiplied);
+    let src_spec = ImageSpec::RGBA8_SRGB;
+    let dst_spec = ImageSpec::RGBA8_SRGB.with_alpha(AlphaMode::Premultiplied);
     let mut pairs = Vec::with_capacity(65536 * 4);
     for a in 0u8..=255 {
         for c in 0u8..=255 {
@@ -790,8 +789,8 @@ fn t2_11_exhaustive_rgba8_premul_and_lin_f32_to_srgb_u8_parity() {
 
     // LinF32ToSrgbU8 exact (allow_approximate=false) and Option B approx (allow_approximate=true):
     // both MUST have 0-bit parity between SCALAR and ALL, and Option B must be within <= 1 LSB of exact!
-    let src_f32 = ImageSpec::rgbaf32_linear();
-    let dst_u8 = ImageSpec::rgba8_srgb();
+    let src_f32 = ImageSpec::RGBAF32_LINEAR;
+    let dst_u8 = ImageSpec::RGBA8_SRGB;
     let width = 1029u32; // Exercises 16-wide, 8-wide, and tail loops!
     let mut vals = Vec::with_capacity(width as usize * 4);
     for i in 0..width as usize {

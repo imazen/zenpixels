@@ -60,8 +60,8 @@ fn imagespec_const_promotion_pixelformat_copy_and_niches() {
         PixelFormat::RGB16_BT2100_PQ,
     ];
     assert_eq!(PROMOTED.len(), 2);
-    assert_eq!(promoted_in_fn[0], ImageSpec::rgb8_srgb());
-    assert_eq!(promoted_in_fn[2], ImageSpec::rgb16_bt2100_pq());
+    assert_eq!(promoted_in_fn[0], ImageSpec::RGB8_SRGB);
+    assert_eq!(promoted_in_fn[2], ImageSpec::RGB16_BT2100_PQ);
     assert_eq!(promoted_formats[0].to_spec(), ImageSpec::RGB8_SRGB);
 
     // 2. PixelFormat is Copy + !Drop + const.
@@ -489,17 +489,13 @@ fn orientation_carriage_across_buffers_views_bands_planar_and_dual_layer() {
     let dual_rt = DualLayerHdrBuf::from_parts(dual_parts).unwrap();
     assert_eq!(dual_rt.orientation(), Orientation::Rotate180);
 
-    // Contradictory explicit orientation must fail!
+    // Contradictory explicit orientation must fail via `from_parts`!
+    let mut bad_parts = DualLayerHdrBuf::new(base_r90.clone(), gm_r90.clone(), meta)
+        .unwrap()
+        .into_parts();
+    bad_parts.orientation = Orientation::Rotate270;
     assert_eq!(
-        *DualLayerHdrBuf::new_with_alternate(
-            base_r90.clone(),
-            gm_r90.clone(),
-            meta,
-            None,
-            Orientation::Rotate270,
-        )
-        .unwrap_err()
-        .error(),
+        *DualLayerHdrBuf::from_parts(bad_parts).unwrap_err().error(),
         BufferError::IncompatibleLayout
     );
     assert_eq!(
@@ -1011,10 +1007,10 @@ fn option_1a_static_spec_refs_and_zero_alloc_view_construction() {
     use zenpixels::{PixelViewMut, SpecCow};
 
     // Static preset accessors match consts and round-trip via `as_static_ref`.
-    assert_eq!(ImageSpec::rgb8_srgb_ref(), &ImageSpec::RGB8_SRGB);
-    assert_eq!(ImageSpec::rgba8_srgb_ref(), &ImageSpec::RGBA8_SRGB);
-    assert_eq!(ImageSpec::rgbf32_linear_ref(), &ImageSpec::RGBF32_LINEAR);
-    assert_eq!(ImageSpec::gray8_srgb_ref(), &ImageSpec::GRAY8_SRGB);
+    assert_eq!(&zenpixels::specs::RGB8_SRGB, &ImageSpec::RGB8_SRGB);
+    assert_eq!(&zenpixels::specs::RGBA8_SRGB, &ImageSpec::RGBA8_SRGB);
+    assert_eq!(&zenpixels::specs::RGBF32_LINEAR, &ImageSpec::RGBF32_LINEAR);
+    assert_eq!(&zenpixels::specs::GRAY8_SRGB, &ImageSpec::GRAY8_SRGB);
     assert!(ImageSpec::RGB8_SRGB.as_static_ref().is_some());
 
     // `SpecCow::from_owned` and `SpecCow::from_format` hit static refs with 0 heap allocations.
@@ -1028,7 +1024,7 @@ fn option_1a_static_spec_refs_and_zero_alloc_view_construction() {
     ));
 
     // Custom (non-preset) specs fall back to `SpecCow::Owned(Arc<ImageSpec>)` only via explicit APIs.
-    let custom = ImageSpec::rgb8_srgb().with_range(SignalRange::Narrow);
+    let custom = ImageSpec::RGB8_SRGB.with_range(SignalRange::Narrow);
     assert!(custom.as_static_ref().is_none());
     assert!(matches!(
         SpecCow::from_owned(custom.clone()),
@@ -1042,14 +1038,15 @@ fn option_1a_static_spec_refs_and_zero_alloc_view_construction() {
     // Borrowed `&'a ImageSpec` view constructors work directly with static preset refs.
     let mut bytes = [10u8, 20, 30, 40, 50, 60];
     {
-        let view = PixelView::from_bytes(&bytes, 2, 1, ImageSpec::rgb8_srgb_ref()).unwrap();
+        let view = PixelView::from_bytes(&bytes, 2, 1, &zenpixels::specs::RGB8_SRGB).unwrap();
         assert_eq!(view.row(0), &[10, 20, 30, 40, 50, 60]);
         let view_cow =
             PixelView::new_with_spec_cow(&bytes, 2, 1, 6, SpecCow::from_owned(custom.clone()))
                 .unwrap();
         assert_eq!(view_cow.spec(), &custom);
     }
-    let mut view_mut = PixelViewMut::new(&mut bytes, 2, 1, 6, ImageSpec::rgb8_srgb_ref()).unwrap();
+    let mut view_mut =
+        PixelViewMut::new(&mut bytes, 2, 1, 6, &zenpixels::specs::RGB8_SRGB).unwrap();
     view_mut.row_mut(0)[0] = 99;
     drop(view_mut);
     let mut view_mut_cow =

@@ -1296,9 +1296,21 @@ impl ImagePlan {
 
 /// One-shot convenience helper: convert a borrowed [`PixelView`] into a newly allocated [`PixelBuf`].
 ///
-/// Accepts either borrowed `&ImageSpec` or owned `ImageSpec` at the call site.
+/// Accepts either borrowed `&ImageSpec` or owned `ImageSpec` at the call site. Resolves HDR source
+/// peak via [`PeakSource::Measured`] **only when HDR→SDR tone mapping actually requires it**; for
+/// explicit peak control (`Declared` / `Fixed`), use [`convert_to_buf_with_peak`].
 #[inline]
 pub fn convert_to_buf(
+    src: &PixelView<'_>,
+    dst_spec: impl AsRef<ImageSpec>,
+    policy: &ConvertPolicy,
+) -> Result<PixelBuf, At<ConvertError>> {
+    convert_to_buf_with_peak(src, dst_spec, policy, PeakSource::Measured)
+}
+
+/// One-shot convenience helper with an explicit [`PeakSource`] (`Measured`, `Declared`, or `Fixed`).
+#[inline]
+pub fn convert_to_buf_with_peak(
     src: &PixelView<'_>,
     dst_spec: impl AsRef<ImageSpec>,
     policy: &ConvertPolicy,
@@ -1309,7 +1321,20 @@ pub fn convert_to_buf(
 }
 
 /// One-shot convenience helper: convert from any [`PixelSource`] into any [`PixelSink`].
+///
+/// Resolves HDR source peak via [`PeakSource::Measured`] **only when HDR→SDR tone mapping actually
+/// requires it**; for explicit peak control, use [`convert_into_with_peak`].
+#[inline]
 pub fn convert_into<S: PixelSource + ?Sized, D: PixelSink + ?Sized>(
+    src: &S,
+    dst: &mut D,
+    policy: &ConvertPolicy,
+) -> Result<(), At<ConvertError>> {
+    convert_into_with_peak(src, dst, policy, PeakSource::Measured)
+}
+
+/// One-shot convenience helper into a [`PixelSink`] with an explicit [`PeakSource`].
+pub fn convert_into_with_peak<S: PixelSource + ?Sized, D: PixelSink + ?Sized>(
     src: &S,
     dst: &mut D,
     policy: &ConvertPolicy,
@@ -1327,12 +1352,7 @@ pub fn convert_into<S: PixelSource + ?Sized, D: PixelSink + ?Sized>(
 /// to flatten or drop live transparency explicitly.
 pub fn to_rgb8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
     let policy = ConvertPolicy::permissive().with_alpha(AlphaPolicy::DiscardIfOpaque);
-    convert_to_buf(
-        src,
-        ImageSpec::rgb8_srgb_ref(),
-        &policy,
-        PeakSource::Measured,
-    )
+    convert_to_buf(src, &zenpixels::specs::RGB8_SRGB, &policy)
 }
 
 /// One-shot convenience helper: convert `src` to full-range sRGB straight-alpha `RGBA8`
@@ -1340,9 +1360,8 @@ pub fn to_rgb8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
 pub fn to_rgba8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
     convert_to_buf(
         src,
-        ImageSpec::rgba8_srgb_ref(),
+        &zenpixels::specs::RGBA8_SRGB,
         &ConvertPolicy::permissive(),
-        PeakSource::Measured,
     )
 }
 
@@ -1354,12 +1373,7 @@ pub fn to_rgba8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
 /// to flatten or drop live transparency explicitly.
 pub fn to_gray8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
     let policy = ConvertPolicy::permissive().with_alpha(AlphaPolicy::DiscardIfOpaque);
-    convert_to_buf(
-        src,
-        ImageSpec::gray8_srgb_ref(),
-        &policy,
-        PeakSource::Measured,
-    )
+    convert_to_buf(src, &zenpixels::specs::GRAY8_SRGB, &policy)
 }
 
 /// One-shot convenience helper: convert `src` to full-range sRGB straight-alpha `BGRA8`
@@ -1367,9 +1381,8 @@ pub fn to_gray8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
 pub fn to_bgra8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
     convert_to_buf(
         src,
-        ImageSpec::bgra8_srgb_ref(),
+        &zenpixels::specs::BGRA8_SRGB,
         &ConvertPolicy::permissive(),
-        PeakSource::Measured,
     )
 }
 
