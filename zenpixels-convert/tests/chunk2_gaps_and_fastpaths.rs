@@ -666,11 +666,14 @@ fn t2_4_t2_5_adapt_for_encode_convenience_helpers_and_ycbcr_from_planar() {
         &[((10u16 * 54 + 20 * 183 + 30 * 19 + 128) >> 8) as u8]
     );
 
-    // 3. YcbcrMatrix::from_cicp_code + ycbcr_to_rgb_from_planar.
+    // 3. YcbcrMatrix::from_cicp_code + to_cicp_code (lossless) + ycbcr_to_rgb_from_planar.
     assert_eq!(YcbcrMatrix::from_cicp_code(0), Some(YcbcrMatrix::Identity));
     assert_eq!(YcbcrMatrix::from_cicp_code(1), Some(YcbcrMatrix::Bt709));
-    assert_eq!(YcbcrMatrix::from_cicp_code(5), Some(YcbcrMatrix::Bt601));
+    assert_eq!(YcbcrMatrix::from_cicp_code(5), Some(YcbcrMatrix::Bt470Bg));
     assert_eq!(YcbcrMatrix::from_cicp_code(6), Some(YcbcrMatrix::Bt601));
+    assert!(YcbcrMatrix::Bt470Bg.same_coefficients(YcbcrMatrix::Bt601));
+    assert_eq!(YcbcrMatrix::Bt470Bg.to_cicp_code(), 5);
+    assert_eq!(YcbcrMatrix::Bt601.to_cicp_code(), 6);
     assert_eq!(YcbcrMatrix::from_cicp_code(9), Some(YcbcrMatrix::Bt2020));
     assert_eq!(YcbcrMatrix::from_cicp_code(2), None);
 

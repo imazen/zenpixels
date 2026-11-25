@@ -764,6 +764,12 @@ pub enum PlaneRole {
     Alpha,
     /// HDR gain-map plane (ISO 21496-1 / UltraHDR).
     GainMap,
+    /// Depth / disparity map plane (HEIF/AVIF/JXL/TIFF depth auxiliary image).
+    Depth,
+    /// Segmentation / foreground matte plane (HEIF/AVIF portrait matte).
+    Matte,
+    /// Thermal / infrared radiance plane.
+    Thermal,
     /// Indexed auxiliary / extra channel plane (JXL extra channels, TIFF extra/multispectral bands).
     Extra(u16),
 }
@@ -920,6 +926,87 @@ impl PlaneSpec {
         Some((pw, ph))
     }
 
+    /// Compute the row byte stride for `width` plane elements under `align`.
+    pub const fn aligned_stride(self, width: u32, align: RowAlign) -> Result<usize, LayoutError> {
+        let bpe = self.bytes_per_element();
+        let Some(row_bytes) = (width as usize).checked_mul(bpe) else {
+            return Err(LayoutError::GeometryOverflow);
+        };
+        if row_bytes == 0 {
+            return Ok(0);
+        }
+        let sample_bytes = self.sample.byte_size();
+        match align {
+            RowAlign::Tight => Ok(row_bytes),
+            RowAlign::Cache64 => {
+                let step = if sample_bytes > 64 { sample_bytes } else { 64 };
+                let Some(aligned) = round_up_checked(row_bytes, step) else {
+                    return Err(LayoutError::GeometryOverflow);
+                };
+                if aligned % 4096 == 0 {
+                    match aligned.checked_add(step) {
+                        Some(v) => Ok(v),
+                        None => Err(LayoutError::GeometryOverflow),
+                    }
+                } else {
+                    Ok(aligned)
+                }
+            }
+            RowAlign::PixelCache64 => {
+                let step = lcm(bpe, 64);
+                let Some(aligned) = round_up_checked(row_bytes, step) else {
+                    return Err(LayoutError::GeometryOverflow);
+                };
+                if aligned % 4096 == 0 {
+                    match aligned.checked_add(step) {
+                        Some(v) => Ok(v),
+                        None => Err(LayoutError::GeometryOverflow),
+                    }
+                } else {
+                    Ok(aligned)
+                }
+            }
+            RowAlign::Samples(n) => {
+                let mult = if n == 0 { 1 } else { n as usize };
+                let Some(step) = mult.checked_mul(sample_bytes) else {
+                    return Err(LayoutError::GeometryOverflow);
+                };
+                match round_up_checked(row_bytes, step) {
+                    Some(v) => Ok(v),
+                    None => Err(LayoutError::GeometryOverflow),
+                }
+            }
+        }
+    }
+
+    /// Derive the [`SampleEncoding`](crate::SampleEncoding) for unpacked integer planes
+    /// (`U8`/`U16`/`U32` with `Full`, `Lsb`, `Msb`, or `Shifted` packing), or `None` for
+    /// floating-point or packed bitfield words.
+    #[inline]
+    #[must_use]
+    pub const fn sample_encoding(self) -> Option<crate::SampleEncoding> {
+        if !self.sample.is_integer() {
+            return None;
+        }
+        let word_bits = self.sample.bits();
+        let (code_bits, bit_shift) = match self.packing {
+            BitPacking::Full => (word_bits, 0),
+            BitPacking::Lsb { bits } => (bits, 0),
+            BitPacking::Msb { bits } => {
+                if bits > word_bits {
+                    return None;
+                }
+                (bits, word_bits - bits)
+            }
+            BitPacking::Shifted { bits, shift } => (bits, shift),
+            BitPacking::Bitfields { .. } => return None,
+        };
+        match crate::SampleEncoding::new(self.sample, code_bits, bit_shift) {
+            Ok(enc) => Some(enc),
+            Err(_) => None,
+        }
+    }
+
     /// Validate component count (including role arity), subsampling, and bit packing.
     pub const fn validate(self) -> Result<(), LayoutError> {
         let expected_arity = match self.role {
@@ -935,7 +1022,10 @@ impl PlaneSpec {
             | PlaneRole::Yellow
             | PlaneRole::Key
             | PlaneRole::Alpha
-            | PlaneRole::GainMap => Some(1u8),
+            | PlaneRole::GainMap
+            | PlaneRole::Depth
+            | PlaneRole::Matte
+            | PlaneRole::Thermal => Some(1u8),
             PlaneRole::Packed | PlaneRole::Extra(_) => None,
         };
         if let Some(want) = expected_arity {

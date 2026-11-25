@@ -109,4 +109,7 @@ pub use tonemap::Bt2446A;
 #[cfg(feature = "oklab")]
 pub use tonemap::SoftCompress;
 pub use tonemap::{PreparedMapper, Requirements, StripMapper, ToneMapContext, ToneMapper};
-pub use ycbcr::{YcbcrMatrix, ycbcr_to_rgb_f32, ycbcr_to_rgb_from_planar, ycbcr_to_rgb_into};
+pub use ycbcr::{
+    ChromaUpsample, YcbcrMatrix, YcbcrOptions, ycbcr_to_rgb_f32, ycbcr_to_rgb_from_planar,
+    ycbcr_to_rgb_into, ycbcr_to_rgb_with_options, ycbcr_to_rgb_with_options_into,
+};

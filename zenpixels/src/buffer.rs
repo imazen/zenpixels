@@ -27,7 +27,7 @@ use crate::layout::{
 };
 use crate::orientation::Orientation;
 use crate::pixel_types::{F16Sample, GrayAlpha8, GrayAlpha16, GrayAlphaF16, GrayAlphaF32};
-use crate::sample::ChromaSiting;
+use crate::sample::{ChromaSiting, CodePlane, CodePlaneError, CodePlaneMut, SampleEncoding};
 use crate::storage::{
     AlignedSamples, ByteStorage, ByteStorageMut, PixelStorage, StorageError, StorageSample,
 };
@@ -1499,7 +1499,7 @@ impl PixelBuf {
     /// For solid opaque white initialization, use [`new_white`](Self::new_white) or
     /// [`new_with_fill`](Self::new_with_fill). To skip the alpha-fill pass when you will
     /// overwrite every pixel, allocate via [`new_zeroed`](Self::new_zeroed) with
-    /// [`AlphaMode::Undefined`] (or `Straight`), fill all pixels, and retag zero-copy with
+    /// [`AlphaMode::Straight`], fill all pixels, and retag zero-copy with
     /// [`into_opaque_verified`](Self::into_opaque_verified) or [`assume_opaque`](Self::assume_opaque).
     pub fn new(
         width: u32,
@@ -1599,7 +1599,7 @@ impl PixelBuf {
     ///
     /// Refuses [`AlphaMode::Opaque`] on layouts with an alpha slot with
     /// [`BufferError::UnverifiedOpaqueAlpha`] so an opaque-tagged buffer can never silently
-    /// contain zero alpha. Allocate with [`AlphaMode::Undefined`] (or `Straight`), write every
+    /// contain zero alpha. Allocate with [`AlphaMode::Straight`], write every
     /// pixel including full alpha, then retag zero-copy via
     /// [`into_opaque_verified`](Self::into_opaque_verified),
     /// [`into_opaque_filled`](Self::into_opaque_filled), or [`assume_opaque`](Self::assume_opaque).
@@ -2373,7 +2373,7 @@ impl PixelBuf {
     /// that the caller already filled every active alpha sample to channel maximum.
     ///
     /// Pairs with [`new_zeroed`](Self::new_zeroed) for maximum-speed decoder/renderer fill loops:
-    /// allocate zeroed as [`AlphaMode::Undefined`], write every pixel including `A = max`,
+    /// allocate zeroed with [`AlphaMode::Straight`], write every pixel including `A = max`,
     /// then call `assume_opaque()`.
     pub fn assume_opaque(mut self) -> Result<Self, At<BufferError>> {
         if !self.spec.layout.order.has_alpha_slot() {
@@ -3605,26 +3605,64 @@ impl OwnedPlane {
         &mut self.storage.as_bytes_mut()[start..start + rb]
     }
 
+    /// Construct a validated owned plane adopting a typed `Vec<S>` (`Vec<u8>`, `Vec<u16>`,
+    /// `Vec<f32>`, etc.) **zero-copy**, where `stride_samples` is the row stride in `S` samples
+    /// (for interleaved `CbCr`, `stride_samples >= width * 2`).
+    pub fn from_samples<S: StorageSample>(
+        spec: PlaneSpec,
+        width: u32,
+        height: u32,
+        stride_samples: usize,
+        samples: Vec<S>,
+    ) -> Result<Self, At<BufferError>> {
+        spec.validate().map_err(|e| err_at(e.into()))?;
+        if spec.sample != S::SAMPLE_TYPE || spec.packing.is_packed_word() {
+            return Err(err_at(BufferError::IncompatibleLayout));
+        }
+        let stride = stride_samples
+            .checked_mul(core::mem::size_of::<S>())
+            .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+        let storage = PixelStorage::try_adopt_vec(samples, spec.sample)
+            .map_err(|_| err_at(BufferError::IncompatibleLayout))?;
+        Self::from_storage(spec, width, height, stride, storage)
+    }
+
+    /// Zero-copy typed slice view of row `y` (e.g. `plane.row_as::<u16>(y)`).
+    pub fn row_as<S: StorageSample>(&self, y: u32) -> Result<&[S], At<BufferError>> {
+        if y >= self.height {
+            return Err(err_at(BufferError::OutOfBounds));
+        }
+        if self.spec.sample != S::SAMPLE_TYPE || self.spec.packing.is_packed_word() {
+            return Err(err_at(BufferError::IncompatibleLayout));
+        }
+        bytemuck::try_cast_slice(self.row(y)).map_err(|e| match e {
+            bytemuck::PodCastError::TargetAlignmentGreaterAndInputNotAligned => {
+                err_at(BufferError::AlignmentViolation)
+            }
+            _ => err_at(BufferError::IncompatibleLayout),
+        })
+    }
+
+    /// Zero-copy mutable typed slice view of row `y` (e.g. `plane.row_as_mut::<u16>(y)`).
+    pub fn row_as_mut<S: StorageSample>(&mut self, y: u32) -> Result<&mut [S], At<BufferError>> {
+        if y >= self.height {
+            return Err(err_at(BufferError::OutOfBounds));
+        }
+        if self.spec.sample != S::SAMPLE_TYPE || self.spec.packing.is_packed_word() {
+            return Err(err_at(BufferError::IncompatibleLayout));
+        }
+        bytemuck::try_cast_slice_mut(self.row_mut(y)).map_err(|e| match e {
+            bytemuck::PodCastError::TargetAlignmentGreaterAndInputNotAligned => {
+                err_at(BufferError::AlignmentViolation)
+            }
+            _ => err_at(BufferError::IncompatibleLayout),
+        })
+    }
+
     /// Extract the unpacked integer code for `(x, y, component)` respecting [`BitPacking`].
     #[must_use]
     pub fn code_u32(&self, x: u32, y: u32, component: usize) -> Option<u32> {
-        if x >= self.width || y >= self.height || component >= self.spec.components as usize {
-            return None;
-        }
-        let row = self.row(y);
-        let elem = self.spec.bytes_per_element();
-        let base = (x as usize) * elem;
-        let word = if self.spec.packing.is_packed_word() {
-            read_sample_u32(self.spec.sample, &row[base..])
-        } else {
-            let sz = self.spec.sample.byte_size();
-            read_sample_u32(self.spec.sample, &row[base + component * sz..])
-        };
-        Some(
-            self.spec
-                .packing
-                .extract_code(self.spec.sample, word, component),
-        )
+        self.as_view().code_u32(x, y, component)
     }
 }
 
@@ -3637,36 +3675,110 @@ fn read_sample_u32(sample: SampleType, bytes: &[u8]) -> u32 {
     }
 }
 
-fn validate_unique_plane_roles(
-    roles: impl Iterator<Item = PlaneRole>,
-) -> Result<(), At<BufferError>> {
+fn validate_plane_role_set(roles: impl Iterator<Item = PlaneRole>) -> Result<(), At<BufferError>> {
+    const BIT_Y: u32 = 1 << 0;
+    const BIT_CB: u32 = 1 << 1;
+    const BIT_CR: u32 = 1 << 2;
+    const BIT_CBCR: u32 = 1 << 3;
+    const BIT_CRCB: u32 = 1 << 4;
+    const BIT_R: u32 = 1 << 5;
+    const BIT_G: u32 = 1 << 6;
+    const BIT_B: u32 = 1 << 7;
+    const BIT_C: u32 = 1 << 8;
+    const BIT_M: u32 = 1 << 9;
+    const BIT_Y_INK: u32 = 1 << 10;
+    const BIT_K: u32 = 1 << 11;
+    const BIT_ALPHA: u32 = 1 << 12;
+    const BIT_GAINMAP: u32 = 1 << 13;
+    const BIT_DEPTH: u32 = 1 << 14;
+    const BIT_MATTE: u32 = 1 << 15;
+    const BIT_THERMAL: u32 = 1 << 16;
+
+    const MASK_YCBCR: u32 = BIT_Y | BIT_CB | BIT_CR | BIT_CBCR | BIT_CRCB;
+    const MASK_CHROMA: u32 = BIT_CB | BIT_CR | BIT_CBCR | BIT_CRCB;
+    const MASK_RGB: u32 = BIT_R | BIT_G | BIT_B;
+    const MASK_CMYK: u32 = BIT_C | BIT_M | BIT_Y_INK | BIT_K;
+
     let mut seen_mask: u32 = 0;
+    let mut has_packed = false;
+    let mut extra_ids = [0u16; PlanarBuf::MAX_PLANES];
+    let mut extra_len = 0usize;
+
     for role in roles {
-        let bit: Option<u32> = match role {
-            PlaneRole::Y => Some(0),
-            PlaneRole::Cb => Some(1),
-            PlaneRole::Cr => Some(2),
-            PlaneRole::CbCr => Some(3),
-            PlaneRole::CrCb => Some(4),
-            PlaneRole::R => Some(5),
-            PlaneRole::G => Some(6),
-            PlaneRole::B => Some(7),
-            PlaneRole::Cyan => Some(8),
-            PlaneRole::Magenta => Some(9),
-            PlaneRole::Yellow => Some(10),
-            PlaneRole::Key => Some(11),
-            PlaneRole::Alpha => Some(12),
-            PlaneRole::GainMap => Some(13),
-            PlaneRole::Packed | PlaneRole::Extra(_) => None,
+        let mask_opt: Option<u32> = match role {
+            PlaneRole::Y => Some(BIT_Y),
+            PlaneRole::Cb => Some(BIT_CB),
+            PlaneRole::Cr => Some(BIT_CR),
+            PlaneRole::CbCr => Some(BIT_CBCR),
+            PlaneRole::CrCb => Some(BIT_CRCB),
+            PlaneRole::R => Some(BIT_R),
+            PlaneRole::G => Some(BIT_G),
+            PlaneRole::B => Some(BIT_B),
+            PlaneRole::Cyan => Some(BIT_C),
+            PlaneRole::Magenta => Some(BIT_M),
+            PlaneRole::Yellow => Some(BIT_Y_INK),
+            PlaneRole::Key => Some(BIT_K),
+            PlaneRole::Alpha => Some(BIT_ALPHA),
+            PlaneRole::GainMap => Some(BIT_GAINMAP),
+            PlaneRole::Depth => Some(BIT_DEPTH),
+            PlaneRole::Matte => Some(BIT_MATTE),
+            PlaneRole::Thermal => Some(BIT_THERMAL),
+            PlaneRole::Packed => {
+                has_packed = true;
+                None
+            }
+            PlaneRole::Extra(id) => {
+                if extra_ids[..extra_len].contains(&id) {
+                    return Err(err_at(BufferError::IncompatibleLayout));
+                }
+                if extra_len < extra_ids.len() {
+                    extra_ids[extra_len] = id;
+                    extra_len += 1;
+                }
+                None
+            }
         };
-        if let Some(b) = bit {
-            let mask = 1u32 << b;
+        if let Some(mask) = mask_opt {
             if (seen_mask & mask) != 0 {
                 return Err(err_at(BufferError::IncompatibleLayout));
             }
             seen_mask |= mask;
         }
     }
+
+    let has_ycbcr = (seen_mask & MASK_YCBCR) != 0;
+    let has_rgb = (seen_mask & MASK_RGB) != 0;
+    let has_cmyk = (seen_mask & MASK_CMYK) != 0;
+
+    // Color families are mutually exclusive (`YCbCr`, `RGB`, `CMYK`, `Packed`).
+    let families =
+        u8::from(has_ycbcr) + u8::from(has_rgb) + u8::from(has_cmyk) + u8::from(has_packed);
+    if families > 1 {
+        return Err(err_at(BufferError::IncompatibleLayout));
+    }
+
+    // YCbCr structural invariants: no orphan Cb/Cr, no mixing planar & semi-planar chroma,
+    // no CbCr + CrCb, and chroma requires luma Y.
+    let has_cb = (seen_mask & BIT_CB) != 0;
+    let has_cr = (seen_mask & BIT_CR) != 0;
+    let has_cbcr = (seen_mask & BIT_CBCR) != 0;
+    let has_crcb = (seen_mask & BIT_CRCB) != 0;
+    if has_cb != has_cr
+        || (has_cbcr && has_crcb)
+        || ((has_cb || has_cr) && (has_cbcr || has_crcb))
+        || ((seen_mask & MASK_CHROMA) != 0 && (seen_mask & BIT_Y) == 0)
+    {
+        return Err(err_at(BufferError::IncompatibleLayout));
+    }
+
+    // Planar RGB requires all three (R, G, B); planar CMYK requires all four (C, M, Y, K).
+    if has_rgb && (seen_mask & MASK_RGB) != MASK_RGB {
+        return Err(err_at(BufferError::IncompatibleLayout));
+    }
+    if has_cmyk && (seen_mask & MASK_CMYK) != MASK_CMYK {
+        return Err(err_at(BufferError::IncompatibleLayout));
+    }
+
     Ok(())
 }
 
@@ -3692,10 +3804,21 @@ impl PlanarBuf {
 
     /// Fallibly allocate a zero-filled multi-plane buffer for `specs` (`1..=64` planes).
     pub fn new(width: u32, height: u32, specs: &[PlaneSpec]) -> Result<Self, At<BufferError>> {
+        Self::new_aligned(width, height, specs, RowAlign::Tight)
+    }
+
+    /// Fallibly allocate a zero-filled multi-plane buffer for `specs` (`1..=64` planes) with
+    /// explicit per-plane [`RowAlign`] (`Tight`, `Cache64`, `PixelCache64`, `Samples(n)`).
+    pub fn new_aligned(
+        width: u32,
+        height: u32,
+        specs: &[PlaneSpec],
+        align: RowAlign,
+    ) -> Result<Self, At<BufferError>> {
         if width == 0 || height == 0 || specs.is_empty() || specs.len() > Self::MAX_PLANES {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        validate_unique_plane_roles(specs.iter().map(|s| s.role))?;
+        validate_plane_role_set(specs.iter().map(|s| s.role))?;
         let mut planes = Vec::new();
         planes
             .try_reserve_exact(specs.len())
@@ -3703,12 +3826,23 @@ impl PlanarBuf {
         for &ps in specs {
             ps.validate().map_err(|e| err_at(e.into()))?;
             let (pw, ph) = ps.dimensions(width, height);
-            let stride = (pw as usize)
+            let row_bytes = (pw as usize)
                 .checked_mul(ps.bytes_per_element())
                 .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-            let total = required_bytes(ph, stride, stride).map_err(err_at)?;
-            let storage =
-                PixelStorage::try_zeroed(ps.sample, total).map_err(|e| err_at(e.into()))?;
+            let stride = ps.aligned_stride(pw, align).map_err(|e| err_at(e.into()))?;
+            let total = match align {
+                RowAlign::Cache64 | RowAlign::PixelCache64 => stride
+                    .checked_mul(ph as usize)
+                    .ok_or_else(|| err_at(BufferError::InvalidDimensions))?,
+                _ => required_bytes(ph, stride, row_bytes).map_err(err_at)?,
+            };
+            let storage = match align {
+                RowAlign::Cache64 | RowAlign::PixelCache64 => {
+                    PixelStorage::try_zeroed_aligned64(total)
+                }
+                _ => PixelStorage::try_zeroed(ps.sample, total),
+            }
+            .map_err(|e| err_at(e.into()))?;
             planes.push(OwnedPlane {
                 spec: ps,
                 width: pw,
@@ -3741,7 +3875,7 @@ impl PlanarBuf {
         if width == 0 || height == 0 || planes.is_empty() || planes.len() > Self::MAX_PLANES {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        validate_unique_plane_roles(planes.iter().map(|p| p.spec.role))?;
+        validate_plane_role_set(planes.iter().map(|p| p.spec.role))?;
         for p in &planes {
             let (ew, eh) = p.spec.dimensions(width, height);
             if p.width != ew || p.height != eh {
@@ -3890,6 +4024,29 @@ impl PlanarBuf {
         self.planes.get_mut(index).map(OwnedPlane::as_view_mut)
     }
 
+    /// Look up the first owned plane matching `role` (e.g. `PlaneRole::Y`, `PlaneRole::CbCr`).
+    #[inline]
+    #[must_use]
+    pub fn plane_by_role(&self, role: PlaneRole) -> Option<&OwnedPlane> {
+        self.planes.iter().find(|p| p.spec.role == role)
+    }
+
+    /// Borrow the first plane matching `role` as an immutable [`PlaneView`].
+    #[inline]
+    #[must_use]
+    pub fn plane_view_by_role(&self, role: PlaneRole) -> Option<PlaneView<'_>> {
+        self.plane_by_role(role).map(OwnedPlane::as_view)
+    }
+
+    /// Borrow the first plane matching `role` mutably as a [`PlaneViewMut`].
+    #[inline]
+    pub fn plane_view_mut_by_role(&mut self, role: PlaneRole) -> Option<PlaneViewMut<'_>> {
+        self.planes
+            .iter_mut()
+            .find(|p| p.spec.role == role)
+            .map(OwnedPlane::as_view_mut)
+    }
+
     /// Descriptive HDR metadata.
     #[inline]
     #[must_use]
@@ -4011,6 +4168,26 @@ impl<'a> PlaneView<'a> {
         })
     }
 
+    /// Construct a validated borrowed plane view from a typed sample slice (`&[u8]`, `&[u16]`,
+    /// `&[f32]`, etc.) **zero-copy**, where `stride_samples` is the row stride in `S` samples
+    /// (for interleaved `CbCr`, `stride_samples >= width * 2`).
+    pub fn from_samples<S: StorageSample>(
+        spec: PlaneSpec,
+        width: u32,
+        height: u32,
+        stride_samples: usize,
+        samples: &'a [S],
+    ) -> Result<Self, At<BufferError>> {
+        spec.validate().map_err(|e| err_at(e.into()))?;
+        if spec.sample != S::SAMPLE_TYPE || spec.packing.is_packed_word() {
+            return Err(err_at(BufferError::IncompatibleLayout));
+        }
+        let stride = stride_samples
+            .checked_mul(core::mem::size_of::<S>())
+            .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+        Self::new(spec, width, height, stride, bytemuck::cast_slice(samples))
+    }
+
     /// Plane specification.
     #[inline]
     #[must_use]
@@ -4058,6 +4235,64 @@ impl<'a> PlaneView<'a> {
         let rb = (self.width as usize) * self.spec.bytes_per_element();
         let start = (y as usize) * self.stride;
         &self.data[start..start + rb]
+    }
+
+    /// Zero-copy typed slice view of row `y` (e.g. `plane.row_as::<u16>(y)`), tied directly to `'a`.
+    pub fn row_as<S: StorageSample>(&self, y: u32) -> Result<&'a [S], At<BufferError>> {
+        if y >= self.height {
+            return Err(err_at(BufferError::OutOfBounds));
+        }
+        if self.spec.sample != S::SAMPLE_TYPE || self.spec.packing.is_packed_word() {
+            return Err(err_at(BufferError::IncompatibleLayout));
+        }
+        bytemuck::try_cast_slice(self.row(y)).map_err(|e| match e {
+            bytemuck::PodCastError::TargetAlignmentGreaterAndInputNotAligned => {
+                err_at(BufferError::AlignmentViolation)
+            }
+            _ => err_at(BufferError::IncompatibleLayout),
+        })
+    }
+
+    /// Extract the unpacked integer code for `(x, y, component)` respecting [`BitPacking`].
+    #[must_use]
+    pub fn code_u32(&self, x: u32, y: u32, component: usize) -> Option<u32> {
+        if x >= self.width || y >= self.height || component >= self.spec.components as usize {
+            return None;
+        }
+        let row = self.row(y);
+        let elem = self.spec.bytes_per_element();
+        let base = (x as usize) * elem;
+        let word = if self.spec.packing.is_packed_word() {
+            read_sample_u32(self.spec.sample, &row[base..])
+        } else {
+            let sz = self.spec.sample.byte_size();
+            read_sample_u32(self.spec.sample, &row[base + component * sz..])
+        };
+        Some(
+            self.spec
+                .packing
+                .extract_code(self.spec.sample, word, component),
+        )
+    }
+
+    /// Borrow `component` of this plane as a zero-copy [`CodePlane<'a>`] using the
+    /// [`SampleEncoding`] implied by `self.spec()`.
+    pub fn as_code_plane(self, component: usize) -> Result<CodePlane<'a>, CodePlaneError> {
+        let enc = self
+            .spec
+            .sample_encoding()
+            .ok_or(CodePlaneError::StorageMismatch)?;
+        CodePlane::from_plane_view(self, component, enc)
+    }
+
+    /// Borrow `component` of this plane as a zero-copy [`CodePlane<'a>`] with an explicit
+    /// [`SampleEncoding`].
+    pub fn as_code_plane_with(
+        self,
+        component: usize,
+        encoding: SampleEncoding,
+    ) -> Result<CodePlane<'a>, CodePlaneError> {
+        CodePlane::from_plane_view(self, component, encoding)
     }
 
     /// Zero-copy rectangular crop of this single plane retaining `'a`.
@@ -4127,6 +4362,32 @@ impl<'a> PlaneViewMut<'a> {
             stride,
             data: &mut data[..req],
         })
+    }
+
+    /// Construct a validated mutable borrowed plane view from a typed sample slice (`&mut [u8]`,
+    /// `&mut [u16]`, `&mut [f32]`, etc.) **zero-copy**, where `stride_samples` is the row stride
+    /// in `S` samples.
+    pub fn from_samples<S: StorageSample>(
+        spec: PlaneSpec,
+        width: u32,
+        height: u32,
+        stride_samples: usize,
+        samples: &'a mut [S],
+    ) -> Result<Self, At<BufferError>> {
+        spec.validate().map_err(|e| err_at(e.into()))?;
+        if spec.sample != S::SAMPLE_TYPE || spec.packing.is_packed_word() {
+            return Err(err_at(BufferError::IncompatibleLayout));
+        }
+        let stride = stride_samples
+            .checked_mul(core::mem::size_of::<S>())
+            .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
+        Self::new(
+            spec,
+            width,
+            height,
+            stride,
+            bytemuck::cast_slice_mut(samples),
+        )
     }
 
     /// Plane specification.
@@ -4202,6 +4463,58 @@ impl<'a> PlaneViewMut<'a> {
         let rb = (self.width as usize) * self.spec.bytes_per_element();
         let start = (y as usize) * self.stride;
         &mut self.data[start..start + rb]
+    }
+
+    /// Zero-copy typed slice view of row `y` (e.g. `plane.row_as::<u16>(y)`).
+    pub fn row_as<S: StorageSample>(&self, y: u32) -> Result<&[S], At<BufferError>> {
+        if y >= self.height {
+            return Err(err_at(BufferError::OutOfBounds));
+        }
+        if self.spec.sample != S::SAMPLE_TYPE || self.spec.packing.is_packed_word() {
+            return Err(err_at(BufferError::IncompatibleLayout));
+        }
+        bytemuck::try_cast_slice(self.row(y)).map_err(|e| match e {
+            bytemuck::PodCastError::TargetAlignmentGreaterAndInputNotAligned => {
+                err_at(BufferError::AlignmentViolation)
+            }
+            _ => err_at(BufferError::IncompatibleLayout),
+        })
+    }
+
+    /// Zero-copy mutable typed slice view of row `y` (e.g. `plane.row_as_mut::<u16>(y)`).
+    pub fn row_as_mut<S: StorageSample>(&mut self, y: u32) -> Result<&mut [S], At<BufferError>> {
+        if y >= self.height {
+            return Err(err_at(BufferError::OutOfBounds));
+        }
+        if self.spec.sample != S::SAMPLE_TYPE || self.spec.packing.is_packed_word() {
+            return Err(err_at(BufferError::IncompatibleLayout));
+        }
+        bytemuck::try_cast_slice_mut(self.row_mut(y)).map_err(|e| match e {
+            bytemuck::PodCastError::TargetAlignmentGreaterAndInputNotAligned => {
+                err_at(BufferError::AlignmentViolation)
+            }
+            _ => err_at(BufferError::IncompatibleLayout),
+        })
+    }
+
+    /// Convert `component` of this mutable plane into a zero-copy [`CodePlaneMut<'a>`] using
+    /// the [`SampleEncoding`] implied by `self.spec()`.
+    pub fn into_code_plane_mut(self, component: usize) -> Result<CodePlaneMut<'a>, CodePlaneError> {
+        let enc = self
+            .spec
+            .sample_encoding()
+            .ok_or(CodePlaneError::StorageMismatch)?;
+        CodePlaneMut::from_plane_view_mut(self, component, enc)
+    }
+
+    /// Convert `component` of this mutable plane into a zero-copy [`CodePlaneMut<'a>`] with an
+    /// explicit [`SampleEncoding`].
+    pub fn into_code_plane_mut_with(
+        self,
+        component: usize,
+        encoding: SampleEncoding,
+    ) -> Result<CodePlaneMut<'a>, CodePlaneError> {
+        CodePlaneMut::from_plane_view_mut(self, component, encoding)
     }
 
     /// Borrow as an immutable [`PlaneView`].
@@ -4312,6 +4625,8 @@ pub struct PlanarView<'a> {
     ycbcr_matrix_code: Option<u8>,
     range: Option<SignalRange>,
     alpha: Option<AlphaMode>,
+    hdr: HdrMetadata,
+    origin: Option<&'a ColorOrigin>,
     orientation: Orientation,
     storage: PlanarStorage<'a>,
 }
@@ -4334,7 +4649,7 @@ impl<'a> PlanarView<'a> {
         if width == 0 || height == 0 || planes.is_empty() || planes.len() > PlanarBuf::MAX_PLANES {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        validate_unique_plane_roles(planes.iter().map(|p| p.spec.role))?;
+        validate_plane_role_set(planes.iter().map(|p| p.spec.role))?;
         for &p in planes {
             let Some((ew, eh)) = p.spec.cropped_dimensions(width, height, crop_origin) else {
                 return Err(err_at(BufferError::InvalidDimensions));
@@ -4368,6 +4683,8 @@ impl<'a> PlanarView<'a> {
             ycbcr_matrix_code: None,
             range: None,
             alpha: None,
+            hdr: HdrMetadata::default(),
+            origin: None,
             orientation: Orientation::Identity,
             storage,
         })
@@ -4485,6 +4802,36 @@ impl<'a> PlanarView<'a> {
         self
     }
 
+    /// Descriptive HDR container metadata attached to this planar view.
+    #[inline]
+    #[must_use]
+    pub const fn hdr(&self) -> HdrMetadata {
+        self.hdr
+    }
+
+    /// Attach descriptive HDR container metadata to this planar view.
+    #[inline]
+    #[must_use]
+    pub const fn with_hdr(mut self, hdr: HdrMetadata) -> Self {
+        self.hdr = hdr;
+        self
+    }
+
+    /// Borrowed original container color provenance, if attached.
+    #[inline]
+    #[must_use]
+    pub const fn origin(&self) -> Option<&'a ColorOrigin> {
+        self.origin
+    }
+
+    /// Attach borrowed container color provenance to this planar view.
+    #[inline]
+    #[must_use]
+    pub const fn with_origin(mut self, origin: &'a ColorOrigin) -> Self {
+        self.origin = Some(origin);
+        self
+    }
+
     /// Pending EXIF display orientation attached to this planar view.
     #[inline]
     #[must_use]
@@ -4523,6 +4870,14 @@ impl<'a> PlanarView<'a> {
             PlanarStorage::Inline { planes, len } => &planes[..*len],
             PlanarStorage::Spill(v) => v.as_slice(),
         }
+    }
+
+    /// Look up the first plane matching `role` (e.g. `PlaneRole::Y`, `PlaneRole::CbCr`),
+    /// returning a copy tied directly to `'a`.
+    #[inline]
+    #[must_use]
+    pub fn plane_by_role(&self, role: PlaneRole) -> Option<PlaneView<'a>> {
+        self.planes().iter().copied().find(|p| p.spec.role == role)
     }
 
     /// Zero-copy rectangular crop of all planes preserving exact parent-frame chroma phase
@@ -4588,6 +4943,8 @@ impl<'a> PlanarView<'a> {
             ycbcr_matrix_code: self.ycbcr_matrix_code,
             range: self.range,
             alpha: self.alpha,
+            hdr: self.hdr,
+            origin: self.origin,
             orientation: self.orientation,
             storage,
         })
@@ -4638,6 +4995,7 @@ pub struct PlanarViewMut<'a> {
     ycbcr_matrix_code: Option<u8>,
     range: Option<SignalRange>,
     alpha: Option<AlphaMode>,
+    hdr: HdrMetadata,
     orientation: Orientation,
     storage: PlanarMutStorage<'a>,
 }
@@ -4652,7 +5010,7 @@ impl<'a> PlanarViewMut<'a> {
         if width == 0 || height == 0 || planes.is_empty() || planes.len() > PlanarBuf::MAX_PLANES {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        validate_unique_plane_roles(planes.iter().map(|p| p.spec.role))?;
+        validate_plane_role_set(planes.iter().map(|p| p.spec.role))?;
         for p in planes {
             let Some((ew, eh)) = p.spec.cropped_dimensions(width, height, crop_origin) else {
                 return Err(err_at(BufferError::InvalidDimensions));
@@ -4716,6 +5074,7 @@ impl<'a> PlanarViewMut<'a> {
             ycbcr_matrix_code: None,
             range: None,
             alpha: None,
+            hdr: HdrMetadata::default(),
             orientation: Orientation::Identity,
             storage,
         })
@@ -4773,6 +5132,7 @@ impl<'a> PlanarViewMut<'a> {
             ycbcr_matrix_code: None,
             range: None,
             alpha: None,
+            hdr: HdrMetadata::default(),
             orientation: Orientation::Identity,
             storage,
         })
@@ -4890,6 +5250,21 @@ impl<'a> PlanarViewMut<'a> {
         self
     }
 
+    /// Descriptive HDR container metadata attached to this mutable planar view.
+    #[inline]
+    #[must_use]
+    pub const fn hdr(&self) -> HdrMetadata {
+        self.hdr
+    }
+
+    /// Attach descriptive HDR container metadata.
+    #[inline]
+    #[must_use]
+    pub const fn with_hdr(mut self, hdr: HdrMetadata) -> Self {
+        self.hdr = hdr;
+        self
+    }
+
     /// Pending EXIF display orientation attached to this mutable planar view.
     #[inline]
     #[must_use]
@@ -4945,6 +5320,22 @@ impl<'a> PlanarViewMut<'a> {
         self.storage.as_mut_slice().get_mut(index)
     }
 
+    /// Look up the first plane matching `role` immutably.
+    #[inline]
+    #[must_use]
+    pub fn plane_by_role(&self, role: PlaneRole) -> Option<&PlaneViewMut<'a>> {
+        self.storage.as_slice().iter().find(|p| p.spec.role == role)
+    }
+
+    /// Look up the first plane matching `role` mutably.
+    #[inline]
+    pub fn plane_by_role_mut(&mut self, role: PlaneRole) -> Option<&mut PlaneViewMut<'a>> {
+        self.storage
+            .as_mut_slice()
+            .iter_mut()
+            .find(|p| p.spec.role == role)
+    }
+
     /// Borrow all planes immutably as a [`PlanarView`].
     #[must_use]
     pub fn as_view(&self) -> PlanarView<'_> {
@@ -4982,6 +5373,8 @@ impl<'a> PlanarViewMut<'a> {
             ycbcr_matrix_code: self.ycbcr_matrix_code,
             range: self.range,
             alpha: self.alpha,
+            hdr: self.hdr,
+            origin: None,
             orientation: self.orientation,
             storage,
         })
@@ -5045,6 +5438,8 @@ impl<'a> PlanarViewMut<'a> {
             ycbcr_matrix_code: self.ycbcr_matrix_code,
             range: self.range,
             alpha: self.alpha,
+            hdr: self.hdr,
+            origin: None,
             orientation: self.orientation,
             storage,
         })
@@ -5088,6 +5483,8 @@ impl PlanarBuf {
             ycbcr_matrix_code: self.ycbcr_matrix_code,
             range: self.range,
             alpha: self.alpha,
+            hdr: self.hdr,
+            origin: Some(&self.origin),
             orientation: self.orientation,
             storage,
         })
@@ -5140,6 +5537,7 @@ impl PlanarBuf {
             ycbcr_matrix_code: self.ycbcr_matrix_code,
             range: self.range,
             alpha: self.alpha,
+            hdr: self.hdr,
             orientation: self.orientation,
             storage,
         })
