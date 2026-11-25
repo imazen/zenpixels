@@ -15,13 +15,13 @@
 #   inherent methods                          231
 #   struct fields                             159
 #   enum variants                             197
-#   re-exports                                  1
+#   re-exports                                  4
 #   trait roster entries (type × trait)       208
 #   auto-trait-complete types                  35
 #   auto-trait exceptions                       8
 #
 # per-module pub lines:
-#   (root)                          374
+#   (root)                          377
 #   accel                            19
 #   cms                               5
 #   codes                            41
@@ -41,10 +41,13 @@
 #   tonemap                          62
 #   ycbcr                            23
 
-## items (786 lines)
+## items (789 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
+pub use Stop
+pub use StopReason
+pub use Unstoppable
 pub mod accel
 pub const accel::Accelerators::ALL: Self
 pub const accel::Accelerators::GAINMAP: Self

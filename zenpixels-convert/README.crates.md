@@ -13,7 +13,7 @@ This is the **0.5.0 greenfield candidate**.
 use zenpixels_convert::{ConvertPolicy, ImageSpec, PeakSource, PixelBuf, convert_buf};
 
 let src = PixelBuf::from_vec(
-    vec![255, 0, 0, 0, 255, 0], 2, 1, ImageSpec::rgb8_srgb(),
+    vec![255u8, 0, 0, 0, 255, 0], 2, 1, ImageSpec::rgb8_srgb(),
 )?;
 let linear = convert_buf(
     &src.as_view(), ImageSpec::rgbf32_linear(), &ConvertPolicy::permissive(), PeakSource::Measured,

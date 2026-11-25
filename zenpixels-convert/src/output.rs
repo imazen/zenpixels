@@ -71,7 +71,11 @@ impl OutputPlan {
     ///
     /// Validates pixel conversion feasibility AND container signaling compatibility
     /// upfront (for non-origin-dependent profiles) so invalid output configurations
-    /// fail before processing any pixels.
+    /// fail before processing any pixels. Note that signaling rules inspect the
+    /// **destination** spec (`dst`) — for example, `OutputProfile::CicpOnly` and
+    /// `OutputProfile::Auto` refuse `Transfer::Hlg(HlgMode::Display(_))` when `dst`
+    /// targets display-referred HLG (converting *from* display HLG to sRGB or PQ
+    /// succeeds because the output signaling is sRGB or PQ).
     #[inline]
     pub fn build(
         src: impl AsRef<ImageSpec>,

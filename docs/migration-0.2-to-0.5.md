@@ -166,10 +166,17 @@ let out_plan = OutputPlan::build(
 )?;
 ```
 
-Notes on 0.5 safety fixes:
+Notes on 0.5 safety fixes & ergonomics:
 - Converting unverified `RGBA8` (`AlphaMode::Straight` or unverified `Opaque`, including `RGB10A2`) to `AlphaMode::Opaque` canonicalizes alpha to channel max instead of bypassing; it remains zero-copy whenever `view.facts().all_opaque` or `policy.source_facts.all_opaque` is proven.
 - `MetadataOnly` ICC profiles (profiles recognized for identification but not safe for matrix+TRC substitution) are rejected when targeting structured `ColorSpace::Rgb` / `ColorSpace::Gray` without a CMS, while remaining valid on explicit `ColorSpace::Icc`.
-- `OutputPlan` refuses `Transfer::Hlg(HlgMode::Display(_))` under `OutputProfile::CicpOnly` and `OutputProfile::Auto` (`ConvertError::OutputSignalingUnavailable`) because CICP cannot signal display rendering parameters.
+- `OutputPlan` refuses `Transfer::Hlg(HlgMode::Display(_))` on the **destination** spec (`dst`) under `OutputProfile::CicpOnly` and `OutputProfile::Auto` (`ConvertError::OutputSignalingUnavailable`) because CICP cannot signal display rendering parameters (converting *from* display HLG to sRGB/PQ succeeds).
+- Fallible APIs return `whereat::At<E>` — match the underlying enum with `*err.error()` or `err.into_inner()`.
+- `PixelBuf::from_vec` enforces typed element compatibility with `spec.layout`: annotate integer literals (`vec![255u8, ...]`, not untyped `vec![255, ...]`, which Rust infers as `Vec<i32>`).
+- `PixelBuf::into_opaque_verified()` scans every active pixel itself (no prior `set_facts` call needed).
+- `CicpTag` 44-byte custom-primaries encoding quantizes `(x, y)` to signed `s15Fixed16Number` (`1 / 65536`); compare tag bytes or `CustomPrimaries::to_s15fixed16()` after wire round-trip rather than raw decimal `f32` presets.
+- `DualLayerHdr`: use `rotate_metadata` / `with_orientation` for O(1) EXIF updates, or `rotate_dual_layer` / `bake_dual_layer_orientation` to physically rotate both layers and reset `orientation()` to `Identity`. When rebuilding from `DualLayerHdrParts`, keep `base.orientation()` and `gain_map.orientation()` equal to `parts.orientation` (or both `Identity`). Pass `&zenpixels_convert::Unstoppable` (re-exported from `enough`) to gain-map APIs accepting `&dyn Stop`.
+- `load_bearing`: `reduce_to_load_bearing_format_in_place(false)` retags opaque alpha zero-move; pass `true` to physically drop unused alpha/padding lanes in place.
+- `imgref` interop: `imgref::ImgVec::new(pixels, width, height)` takes `(pixels, w, h)` and indexes via `img[(x_usize, y_usize)]`; `PixelView` exposes both `rows()` and `height()`.
 
 ### Pluggable CMS (`MoxCms` and `Lcms`)
 
@@ -197,7 +204,8 @@ use zenpixels_convert::{
     ycbcr_to_rgb_from_planar, ycbcr_to_rgb_with_options,
 };
 
-// Borrow codec-native typed planes zero-copy:
+// Borrow codec-native typed planes zero-copy (stride is in S elements, not bytes;
+// `plane.code_u32(x, y, 0)` takes component index `0` for 1-channel planes):
 let py = PlaneView::from_samples(PlaneSpec::new(PlaneRole::Y, SampleType::U8), w, h, y_stride, y_slice)?;
 let pcb = PlaneView::from_samples(PlaneSpec::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2), cw, ch, c_stride, cb_slice)?;
 let pcr = PlaneView::from_samples(PlaneSpec::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2), cw, ch, c_stride, cr_slice)?;
@@ -206,7 +214,8 @@ let planar = PlanarView::new(w, h, &[py, pcb, pcr])?
     .with_ycbcr_matrix_code(1)
     .with_chroma_siting(ChromaSiting::Center);
 
-// Reconstruct directly to RGB8/RGBA8/BGR8/RGB16/RGBF32 with siting-exact Bilinear upsampling:
+// Reconstruct directly to RGB8/RGBA8/BGR8/RGB16/RGBF32 with siting-exact Bilinear upsampling
+// (`YcbcrOptions::bilinear()` or `YcbcrOptions::default().with_upsample(ChromaUpsample::Bilinear)`):
 let rgb8 = ycbcr_to_rgb_with_options(&planar, SampleLayout::RGB8, &YcbcrOptions::bilinear())?;
 let rgbf32 = ycbcr_to_rgb_from_planar(&planar)?;
 

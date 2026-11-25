@@ -346,6 +346,14 @@ impl fmt::Display for Cicp {
 ///
 /// The invariant `custom_primaries.is_some() => cicp.color_primaries == 2` is enforced
 /// by construction.
+///
+/// # `s15Fixed16Number` wire quantization
+///
+/// Encoding the 44-byte extended form quantizes each CIE 1931 `(x, y)` coordinate to
+/// signed `s15Fixed16Number` (`1 / 65536 ≈ 1.53e-5`), so a decimal `f32` preset such as
+/// `0.7347` decodes back as `48149 / 65536 ≈ 0.73469543`. Wire bytes and
+/// [`CustomPrimaries::to_s15fixed16`] round-trip bit-exact; compare those (or a
+/// `1 / 65536` tolerance) rather than raw decimal `f32` presets after serialization.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CicpTag {
     cicp: Cicp,

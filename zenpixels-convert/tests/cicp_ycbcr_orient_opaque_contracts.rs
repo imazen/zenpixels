@@ -926,10 +926,17 @@ fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
             &base_sdr.as_view(),
             &alt_hdr.as_view(),
             &gm_cfg,
-            &enough::Unstoppable,
+            &zenpixels_convert::Unstoppable,
         )
         .unwrap();
         assert_eq!(gm_buf.width(), 2);
         assert_eq!(gm_buf.height(), 2);
     }
+}
+
+#[test]
+fn enough_stop_reexports_available_at_convert_root() {
+    let stop: &dyn zenpixels_convert::Stop = &zenpixels_convert::Unstoppable;
+    let check: Result<(), zenpixels_convert::StopReason> = stop.check();
+    assert!(check.is_ok());
 }

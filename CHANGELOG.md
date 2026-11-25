@@ -32,8 +32,14 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
   - `PixelBuf`, `PixelView`, `PixelViewMut`, `PixelCow`, `BandedBuf` (gigapixel
     row-banded storage with `RowAlign`), `OwnedPlane`, `PlaneView`, `PlaneViewMut`,
     `PlanarBuf`, `PlanarView`, and `PlanarViewMut` carrying pending `Orientation`,
-    `HdrMetadata`, `ColorOrigin`, `ChromaSiting`, and optional color interpretation
-    (`color`, `ycbcr_matrix_code`, `range`, `alpha`).
+    `HdrMetadata` (`Option<Arc<HdrMetadata>>`, zero-alloc when empty), `ColorOrigin`
+    (`Option<Arc<ColorOrigin>>`, zero-alloc when assumed), `ChromaSiting`, and optional
+    color interpretation (`color`, `ycbcr_matrix_code`, `range`, `alpha`). Compact
+    stack footprints (`SpecCow`: 16 B, `PixelViewMut`: 64 B, `PixelView`: 80 B,
+    `PlanarBuf`: 64 B, `BandedBuf`: 144 B, `PixelBuf`: 168 B), `PixelView::height()` /
+    `PixelViewMut::height()` aliases, descriptive `whereat::At` context on
+    `BufferError::IncompatibleLayout` element mismatches, and top-level
+    `zenpixels_convert::{Stop, StopReason, Unstoppable}` re-exports.
   - Sound `AlphaMode::Opaque` construction and fast fill-then-retag: `BufFill::{Black, White}`,
     `PixelBuf::new_white`, `PixelBuf::new_with_fill`, `PixelBuf::new_zeroed` /
     `new_zeroed_aligned` (refusing `AlphaMode::Opaque` on alpha-bearing layouts with

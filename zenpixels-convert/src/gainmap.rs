@@ -1864,7 +1864,8 @@ pub fn apply_gain_map_view(
 
 /// Reconstruct a [`PixelBuf`] from a zero-copy [`DualLayerHdrView`] with full control over
 /// target headroom/rendition, resampling kernel, orientation policy, conversion policy,
-/// optional target [`ImageSpec`], and cooperative [`enough::Stop`] cancellation.
+/// optional target [`ImageSpec`], and cooperative [`Stop`] cancellation
+/// (pass `&zenpixels_convert::Unstoppable` when cancellation is not needed).
 ///
 /// Refuses [`GainMapOrientation::Passthrough`] when `dual.orientation() != Orientation::Identity`
 /// so a pending rotation is never silently discarded (use [`apply_gain_map_oriented`] when you

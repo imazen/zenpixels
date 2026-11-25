@@ -12,6 +12,8 @@
 //! - [`DualLayerHdr`] carries ISO 21496-1 / UltraHDR base + gain map + headroom metadata.
 
 use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::fmt;
 use whereat::At;
@@ -667,6 +669,50 @@ fn fill_white_pixels(bytes: &mut [u8], width: u32, height: u32, stride: usize, s
 // PixelView (borrowed, immutable, true `'a` lifetimes)
 // ---------------------------------------------------------------------------
 
+static ASSUMED_ORIGIN: ColorOrigin = ColorOrigin::assumed();
+
+#[inline]
+fn box_hdr(hdr: HdrMetadata) -> Option<Arc<HdrMetadata>> {
+    if hdr.is_empty() {
+        None
+    } else {
+        Some(Arc::new(hdr))
+    }
+}
+
+#[inline]
+fn unbox_hdr(hdr: &Option<Arc<HdrMetadata>>) -> HdrMetadata {
+    match hdr {
+        Some(h) => **h,
+        None => HdrMetadata::default(),
+    }
+}
+
+#[inline]
+fn box_origin(origin: ColorOrigin) -> Option<Arc<ColorOrigin>> {
+    if origin.is_assumed() {
+        None
+    } else {
+        Some(Arc::new(origin))
+    }
+}
+
+#[inline]
+fn origin_ref(origin: &Option<Arc<ColorOrigin>>) -> &ColorOrigin {
+    match origin {
+        Some(o) => o,
+        None => &ASSUMED_ORIGIN,
+    }
+}
+
+#[inline]
+fn unbox_origin(origin: Option<Arc<ColorOrigin>>) -> ColorOrigin {
+    match origin {
+        Some(o) => Arc::unwrap_or_clone(o),
+        None => ColorOrigin::assumed(),
+    }
+}
+
 /// Zero-copy borrowed view of an interleaved image or rectangular crop.
 ///
 /// Every slicing method (`row`, `row_as`, `crop`, `sub_rows`,
@@ -680,7 +726,7 @@ pub struct PixelView<'a> {
     stride: usize,
     spec: SpecCow<'a>,
     facts: SampleFacts,
-    hdr: HdrMetadata,
+    hdr: Option<Arc<HdrMetadata>>,
     origin: Option<&'a ColorOrigin>,
     orientation: Orientation,
 }
@@ -716,7 +762,7 @@ impl<'a> PixelView<'a> {
             stride,
             spec,
             facts: SampleFacts::NONE,
-            hdr: HdrMetadata::default(),
+            hdr: None,
             origin: None,
             orientation: Orientation::Identity,
         })
@@ -749,7 +795,13 @@ impl<'a> PixelView<'a> {
     ) -> Result<Self, At<BufferError>> {
         let spec = spec.into();
         if !P::matches_layout(spec.as_spec().layout) {
-            return Err(err_at(BufferError::IncompatibleLayout));
+            return Err(err_at(BufferError::IncompatibleLayout).at_string(|| {
+                alloc::format!(
+                    "element `{}` does not match {:?} layout (annotate integer literals e.g. `0u8`, or use `from_raw_pod`)",
+                    core::any::type_name::<P>(),
+                    spec.as_spec().layout
+                )
+            }));
         }
         Self::from_packed(bytemuck::cast_slice(pixels), width, rows, spec)
     }
@@ -763,7 +815,14 @@ impl<'a> PixelView<'a> {
     ) -> Result<Self, At<BufferError>> {
         let spec = spec.into();
         if spec.as_spec().layout.sample != S::SAMPLE_TYPE {
-            return Err(err_at(BufferError::IncompatibleLayout));
+            return Err(err_at(BufferError::IncompatibleLayout).at_string(|| {
+                alloc::format!(
+                    "sample `{}` ({:?}) does not match {:?} layout",
+                    core::any::type_name::<S>(),
+                    S::SAMPLE_TYPE,
+                    spec.as_spec().layout
+                )
+            }));
         }
         Self::from_packed(bytemuck::cast_slice(samples), width, rows, spec)
     }
@@ -809,6 +868,13 @@ impl<'a> PixelView<'a> {
         self.rows
     }
 
+    /// Image height in rows (alias for [`rows`](Self::rows), matching [`PixelBuf::height`]).
+    #[inline]
+    #[must_use]
+    pub const fn height(&self) -> u32 {
+        self.rows
+    }
+
     /// Byte distance between consecutive row starts.
     #[inline]
     #[must_use]
@@ -819,14 +885,14 @@ impl<'a> PixelView<'a> {
     /// Active bytes per row (`width * bytes_per_pixel`).
     #[inline]
     #[must_use]
-    pub const fn row_bytes(&self) -> usize {
+    pub fn row_bytes(&self) -> usize {
         (self.width as usize) * self.spec.as_spec().layout.bytes_per_pixel()
     }
 
     /// Authoritative image specification (`layout` + `color`).
     #[inline]
     #[must_use]
-    pub const fn spec(&self) -> &ImageSpec {
+    pub fn spec(&self) -> &ImageSpec {
         self.spec.as_spec()
     }
 
@@ -840,8 +906,8 @@ impl<'a> PixelView<'a> {
     /// Descriptive HDR container metadata attached to this view.
     #[inline]
     #[must_use]
-    pub const fn hdr(&self) -> HdrMetadata {
-        self.hdr
+    pub fn hdr(&self) -> HdrMetadata {
+        unbox_hdr(&self.hdr)
     }
 
     /// Original container color provenance borrowed from the owning image, if attached.
@@ -877,7 +943,7 @@ impl<'a> PixelView<'a> {
     #[inline]
     #[must_use]
     pub fn with_hdr(mut self, hdr: HdrMetadata) -> Self {
-        self.hdr = hdr;
+        self.hdr = box_hdr(hdr);
         self
     }
 
@@ -931,7 +997,14 @@ impl<'a> PixelView<'a> {
             bytemuck::PodCastError::TargetAlignmentGreaterAndInputNotAligned => {
                 err_at(BufferError::AlignmentViolation)
             }
-            _ => err_at(BufferError::IncompatibleLayout),
+            _ => err_at(BufferError::IncompatibleLayout).at_string(|| {
+                alloc::format!(
+                    "row byte length {} is not compatible with element `{}` (size {})",
+                    bytes.len(),
+                    core::any::type_name::<P>(),
+                    core::mem::size_of::<P>()
+                )
+            }),
         })
     }
 
@@ -945,7 +1018,7 @@ impl<'a> PixelView<'a> {
     /// Whether rows are tightly packed (`stride == row_bytes` or `rows <= 1`).
     #[inline]
     #[must_use]
-    pub const fn is_contiguous(&self) -> bool {
+    pub fn is_contiguous(&self) -> bool {
         self.rows <= 1 || self.stride == self.row_bytes()
     }
 
@@ -970,7 +1043,14 @@ impl<'a> PixelView<'a> {
             bytemuck::PodCastError::TargetAlignmentGreaterAndInputNotAligned => {
                 err_at(BufferError::AlignmentViolation)
             }
-            _ => err_at(BufferError::IncompatibleLayout),
+            _ => err_at(BufferError::IncompatibleLayout).at_string(|| {
+                alloc::format!(
+                    "contiguous byte length {} is not compatible with element `{}` (size {})",
+                    bytes.len(),
+                    core::any::type_name::<P>(),
+                    core::mem::size_of::<P>()
+                )
+            }),
         })
     }
 
@@ -1012,7 +1092,7 @@ impl<'a> PixelView<'a> {
             stride: self.stride,
             spec: self.spec.clone(),
             facts: self.facts,
-            hdr: self.hdr,
+            hdr: self.hdr.clone(),
             origin: self.origin,
             orientation: self.orientation,
         })
@@ -1043,8 +1123,8 @@ impl<'a> PixelView<'a> {
             stride: rb,
             spec: self.spec.as_spec().clone(),
             facts: self.facts,
-            hdr: self.hdr,
-            origin: self.origin.cloned().unwrap_or_else(ColorOrigin::assumed),
+            hdr: self.hdr.clone(),
+            origin: self.origin.cloned().and_then(box_origin),
             orientation: self.orientation,
         })
     }
@@ -1080,7 +1160,7 @@ pub struct PixelViewMut<'a> {
     rows: u32,
     stride: usize,
     spec: SpecCow<'a>,
-    hdr: HdrMetadata,
+    hdr: Option<Arc<HdrMetadata>>,
     orientation: Orientation,
 }
 
@@ -1111,7 +1191,7 @@ impl<'a> PixelViewMut<'a> {
             rows,
             stride,
             spec,
-            hdr: HdrMetadata::default(),
+            hdr: None,
             orientation: Orientation::Identity,
         })
     }
@@ -1119,15 +1199,15 @@ impl<'a> PixelViewMut<'a> {
     /// Descriptive HDR container metadata attached to this mutable view.
     #[inline]
     #[must_use]
-    pub const fn hdr(&self) -> HdrMetadata {
-        self.hdr
+    pub fn hdr(&self) -> HdrMetadata {
+        unbox_hdr(&self.hdr)
     }
 
     /// Attach descriptive HDR metadata to this mutable view.
     #[inline]
     #[must_use]
-    pub const fn with_hdr(mut self, hdr: HdrMetadata) -> Self {
-        self.hdr = hdr;
+    pub fn with_hdr(mut self, hdr: HdrMetadata) -> Self {
+        self.hdr = box_hdr(hdr);
         self
     }
 
@@ -1182,6 +1262,13 @@ impl<'a> PixelViewMut<'a> {
         self.rows
     }
 
+    /// Height in rows (alias for [`rows`](Self::rows), matching [`PixelBuf::height`]).
+    #[inline]
+    #[must_use]
+    pub const fn height(&self) -> u32 {
+        self.rows
+    }
+
     /// Row stride in bytes.
     #[inline]
     #[must_use]
@@ -1192,14 +1279,14 @@ impl<'a> PixelViewMut<'a> {
     /// Active bytes per row.
     #[inline]
     #[must_use]
-    pub const fn row_bytes(&self) -> usize {
+    pub fn row_bytes(&self) -> usize {
         (self.width as usize) * self.spec.as_spec().layout.bytes_per_pixel()
     }
 
     /// Authoritative image specification.
     #[inline]
     #[must_use]
-    pub const fn spec(&self) -> &ImageSpec {
+    pub fn spec(&self) -> &ImageSpec {
         self.spec.as_spec()
     }
 
@@ -1218,11 +1305,18 @@ impl<'a> PixelViewMut<'a> {
             return Err(err_at(BufferError::OutOfBounds));
         }
         let bytes = self.row_mut(y);
+        let len = bytes.len();
         bytemuck::try_cast_slice_mut(bytes).map_err(|e| match e {
             bytemuck::PodCastError::TargetAlignmentGreaterAndInputNotAligned => {
                 err_at(BufferError::AlignmentViolation)
             }
-            _ => err_at(BufferError::IncompatibleLayout),
+            _ => err_at(BufferError::IncompatibleLayout).at_string(|| {
+                alloc::format!(
+                    "row byte length {len} is not compatible with element `{}` (size {})",
+                    core::any::type_name::<P>(),
+                    core::mem::size_of::<P>()
+                )
+            }),
         })
     }
 
@@ -1254,7 +1348,7 @@ impl<'a> PixelViewMut<'a> {
             stride: self.stride,
             spec: self.spec.to_borrowed(),
             facts: SampleFacts::NONE,
-            hdr: self.hdr,
+            hdr: self.hdr.clone(),
             origin: None,
             orientation: self.orientation,
         }
@@ -1309,7 +1403,7 @@ impl<'a> PixelViewMut<'a> {
             rows: h,
             stride: self.stride,
             spec: self.spec.to_borrowed(),
-            hdr: self.hdr,
+            hdr: self.hdr.clone(),
             orientation: self.orientation,
         })
     }
@@ -1403,8 +1497,8 @@ pub struct PixelBuf {
     stride: usize,
     spec: ImageSpec,
     facts: SampleFacts,
-    hdr: HdrMetadata,
-    origin: ColorOrigin,
+    hdr: Option<Arc<HdrMetadata>>,
+    origin: Option<Arc<ColorOrigin>>,
     orientation: Orientation,
 }
 
@@ -1445,7 +1539,7 @@ impl Clone for PixelBuf {
             stride,
             spec: self.spec.clone(),
             facts: self.facts,
-            hdr: self.hdr,
+            hdr: self.hdr.clone(),
             origin: self.origin.clone(),
             orientation: self.orientation,
         }
@@ -1484,7 +1578,7 @@ impl PixelBuf {
             stride,
             spec: self.spec.clone(),
             facts: self.facts,
-            hdr: self.hdr,
+            hdr: self.hdr.clone(),
             origin: self.origin.clone(),
             orientation: self.orientation,
         })
@@ -1588,8 +1682,8 @@ impl PixelBuf {
             stride,
             spec,
             facts,
-            hdr: HdrMetadata::default(),
-            origin: ColorOrigin::assumed(),
+            hdr: None,
+            origin: None,
             orientation: Orientation::Identity,
         })
     }
@@ -1655,8 +1749,8 @@ impl PixelBuf {
             stride,
             spec,
             facts,
-            hdr: HdrMetadata::default(),
-            origin: ColorOrigin::assumed(),
+            hdr: None,
+            origin: None,
             orientation: Orientation::Identity,
         })
     }
@@ -1741,8 +1835,8 @@ impl PixelBuf {
             stride: row_bytes,
             spec,
             facts: SampleFacts::NONE,
-            hdr: HdrMetadata::default(),
-            origin: ColorOrigin::assumed(),
+            hdr: None,
+            origin: None,
             orientation: Orientation::Identity,
         })
     }
@@ -1751,8 +1845,10 @@ impl PixelBuf {
     /// or raw samples like `Vec<f32>`).
     ///
     /// Validates that `P` is structurally compatible with `spec.layout` (preventing silent
-    /// reinterpretation such as `Vec<i32>` as `RGBF32`). For intentional raw byte
-    /// reinterpretation, use [`from_raw_pod`](Self::from_raw_pod).
+    /// reinterpretation such as `Vec<i32>` as `RGBF32`). Note that untyped integer literals
+    /// (`vec![255, 0, 0]`) default to `Vec<i32>` in Rust and will be rejected for `U8` layouts;
+    /// annotate the first element (e.g. `vec![255u8, 0, 0]`) or use [`from_bytes`](Self::from_bytes).
+    /// For intentional raw byte reinterpretation, use [`from_raw_pod`](Self::from_raw_pod).
     ///
     /// **Zero-copy** whenever `align_of::<P>() == spec.layout.min_alignment()` and
     /// `bytemuck::allocation::try_cast_vec` succeeds (preserving exact deallocation alignment!).
@@ -1779,7 +1875,16 @@ impl PixelBuf {
     ) -> Result<Self, (At<BufferError>, Vec<P>)> {
         let spec = spec.into();
         if !P::matches_layout(spec.layout) {
-            return Err((err_at(BufferError::IncompatibleLayout), pixels));
+            return Err((
+                err_at(BufferError::IncompatibleLayout).at_string(|| {
+                    alloc::format!(
+                        "element `{}` does not match {:?} layout (annotate integer literals e.g. `0u8`, or use `from_raw_pod`)",
+                        core::any::type_name::<P>(),
+                        spec.layout
+                    )
+                }),
+                pixels,
+            ));
         }
         if let Err(e) = spec.validate() {
             return Err((whereat::at!(BufferError::InvalidSpec(*e.error())), pixels));
@@ -1826,8 +1931,8 @@ impl PixelBuf {
             stride: row_bytes,
             spec,
             facts: SampleFacts::NONE,
-            hdr: HdrMetadata::default(),
-            origin: ColorOrigin::assumed(),
+            hdr: None,
+            origin: None,
             orientation: Orientation::Identity,
         })
     }
@@ -1841,7 +1946,14 @@ impl PixelBuf {
     ) -> Result<Self, At<BufferError>> {
         let spec = spec.into();
         if spec.layout.sample != S::SAMPLE_TYPE {
-            return Err(err_at(BufferError::IncompatibleLayout));
+            return Err(err_at(BufferError::IncompatibleLayout).at_string(|| {
+                alloc::format!(
+                    "sample `{}` ({:?}) does not match {:?} layout",
+                    core::any::type_name::<S>(),
+                    S::SAMPLE_TYPE,
+                    spec.layout
+                )
+            }));
         }
         Self::from_raw_pod(samples, width, height, spec)
     }
@@ -1899,8 +2011,8 @@ impl PixelBuf {
             stride: row_bytes,
             spec,
             facts: SampleFacts::NONE,
-            hdr: HdrMetadata::default(),
-            origin: ColorOrigin::assumed(),
+            hdr: None,
+            origin: None,
             orientation: Orientation::Identity,
         })
     }
@@ -1928,8 +2040,8 @@ impl PixelBuf {
             stride,
             spec,
             facts: SampleFacts::NONE,
-            hdr: HdrMetadata::default(),
-            origin: ColorOrigin::assumed(),
+            hdr: None,
+            origin: None,
             orientation: Orientation::Identity,
         })
     }
@@ -1971,8 +2083,8 @@ impl PixelBuf {
             stride: parts.stride,
             spec: parts.spec,
             facts: parts.facts,
-            hdr: parts.hdr,
-            origin: parts.origin,
+            hdr: box_hdr(parts.hdr),
+            origin: box_origin(parts.origin),
             orientation: parts.orientation,
         })
     }
@@ -2031,8 +2143,8 @@ impl PixelBuf {
             stride,
             spec,
             facts: SampleFacts::NONE,
-            hdr: HdrMetadata::default(),
-            origin: ColorOrigin::assumed(),
+            hdr: None,
+            origin: None,
             orientation: Orientation::Identity,
         })
     }
@@ -2087,8 +2199,8 @@ impl PixelBuf {
             stride,
             spec,
             facts: SampleFacts::NONE,
-            hdr: HdrMetadata::default(),
-            origin: ColorOrigin::assumed(),
+            hdr: None,
+            origin: None,
             orientation: Orientation::Identity,
         })
     }
@@ -2255,7 +2367,7 @@ impl PixelBuf {
         self.spec = spec;
         self.facts = SampleFacts::NONE;
         if color_changed {
-            self.origin = ColorOrigin::assumed();
+            self.origin = None;
         }
         Ok(self)
     }
@@ -2279,7 +2391,7 @@ impl PixelBuf {
             self.facts = SampleFacts::NONE;
         }
         if color_changed {
-            self.origin = ColorOrigin::assumed();
+            self.origin = None;
         }
         Ok(self)
     }
@@ -2305,15 +2417,16 @@ impl PixelBuf {
         )?;
         self.spec = spec;
         self.facts = SampleFacts::NONE;
-        self.origin = ColorOrigin::assumed();
-        self.hdr = HdrMetadata::default();
+        self.origin = None;
+        self.hdr = None;
         Ok(self)
     }
 
-    /// Verify that every active pixel's alpha slot equals its canonical maximum value, then
+    /// Scan every active pixel to verify its alpha slot equals its canonical maximum value, then
     /// retag this buffer as [`AlphaMode::Opaque`] with `facts.all_opaque = true` (zero copy).
     ///
-    /// Returns [`BufferError::IncompatibleLayout`] if the layout has no alpha slot, or
+    /// Performs the full-pixel scan itself — no prior [`set_facts`](Self::set_facts) call is
+    /// required. Returns [`BufferError::IncompatibleLayout`] if the layout has no alpha slot, or
     /// [`BufferError::UnverifiedOpaqueAlpha`] if any alpha sample is not at channel maximum.
     pub fn into_opaque_verified(mut self) -> Result<Self, At<BufferError>> {
         if !self.spec.layout.order.has_alpha_slot() {
@@ -2405,15 +2518,15 @@ impl PixelBuf {
     /// Descriptive HDR container metadata.
     #[inline]
     #[must_use]
-    pub const fn hdr(&self) -> HdrMetadata {
-        self.hdr
+    pub fn hdr(&self) -> HdrMetadata {
+        unbox_hdr(&self.hdr)
     }
 
     /// Attach descriptive HDR container metadata.
     #[inline]
     #[must_use]
     pub fn with_hdr(mut self, hdr: HdrMetadata) -> Self {
-        self.hdr = hdr;
+        self.hdr = box_hdr(hdr);
         self
     }
 
@@ -2421,14 +2534,14 @@ impl PixelBuf {
     #[inline]
     #[must_use]
     pub fn origin(&self) -> &ColorOrigin {
-        &self.origin
+        origin_ref(&self.origin)
     }
 
     /// Attach container color provenance.
     #[inline]
     #[must_use]
     pub fn with_origin(mut self, origin: ColorOrigin) -> Self {
-        self.origin = origin;
+        self.origin = box_origin(origin);
         self
     }
 
@@ -2483,8 +2596,8 @@ impl PixelBuf {
             stride: self.stride,
             spec: SpecCow::Borrowed(&self.spec),
             facts: self.facts,
-            hdr: self.hdr,
-            origin: Some(&self.origin),
+            hdr: self.hdr.clone(),
+            origin: Some(origin_ref(&self.origin)),
             orientation: self.orientation,
         }
     }
@@ -2504,7 +2617,7 @@ impl PixelBuf {
             rows: self.height,
             stride: self.stride,
             spec: SpecCow::Borrowed(&self.spec),
-            hdr: self.hdr,
+            hdr: self.hdr.clone(),
             orientation: self.orientation,
         })
     }
@@ -2569,7 +2682,7 @@ impl PixelBuf {
             self.height,
             self.stride,
             &self.spec,
-            &self.origin,
+            origin_ref(&self.origin),
         ) else {
             return Ok(());
         };
@@ -2597,7 +2710,7 @@ impl PixelBuf {
         }
         self.stride = new_stride;
         self.spec = new_spec;
-        self.origin = new_origin;
+        self.origin = box_origin(new_origin);
         self.facts = new_facts;
         Ok(())
     }
@@ -2850,8 +2963,8 @@ impl PixelBuf {
             stride: self.stride,
             spec: self.spec,
             facts: self.facts,
-            hdr: self.hdr,
-            origin: self.origin,
+            hdr: unbox_hdr(&self.hdr),
+            origin: unbox_origin(self.origin),
             orientation: self.orientation,
         }
     }
@@ -2886,7 +2999,7 @@ impl<'a> PixelCow<'a> {
                 stride: v.stride,
                 spec: v.spec.to_borrowed(),
                 facts: v.facts,
-                hdr: v.hdr,
+                hdr: v.hdr.clone(),
                 origin: v.origin,
                 orientation: v.orientation,
             },
@@ -2922,8 +3035,8 @@ pub struct BandedBuf {
     bands: Vec<PixelBuf>,
     spec: ImageSpec,
     facts: SampleFacts,
-    hdr: HdrMetadata,
-    origin: ColorOrigin,
+    hdr: Option<Arc<HdrMetadata>>,
+    origin: Option<Arc<ColorOrigin>>,
     orientation: Orientation,
 }
 
@@ -2981,8 +3094,8 @@ impl BandedBuf {
             bands,
             spec,
             facts,
-            hdr: HdrMetadata::default(),
-            origin: ColorOrigin::assumed(),
+            hdr: None,
+            origin: None,
             orientation: Orientation::Identity,
         })
     }
@@ -3003,8 +3116,8 @@ impl BandedBuf {
         if height <= rows_per_band {
             let spec = buf.spec().clone();
             let facts = buf.facts();
-            let hdr = buf.hdr();
-            let origin = buf.origin().clone();
+            let hdr = buf.hdr.clone();
+            let origin = buf.origin.clone();
             let orientation = buf.orientation();
             let mut bands = Vec::new();
             bands
@@ -3049,7 +3162,7 @@ impl BandedBuf {
             bands.push(view.sub_rows(y, h)?.try_to_tight_buf()?);
             y += h;
         }
-        let origin = view.origin().cloned().unwrap_or_else(ColorOrigin::assumed);
+        let origin = view.origin().cloned().and_then(box_origin);
         Ok(Self {
             width,
             height,
@@ -3057,7 +3170,7 @@ impl BandedBuf {
             bands,
             spec: view.spec().clone(),
             facts: view.facts(),
-            hdr: view.hdr(),
+            hdr: view.hdr.clone(),
             origin,
             orientation: view.orientation(),
         })
@@ -3212,17 +3325,18 @@ impl BandedBuf {
     /// Descriptive HDR metadata.
     #[inline]
     #[must_use]
-    pub const fn hdr(&self) -> HdrMetadata {
-        self.hdr
+    pub fn hdr(&self) -> HdrMetadata {
+        unbox_hdr(&self.hdr)
     }
 
-    /// Attach descriptive HDR metadata (propagated to all child bands).
+    /// Attach descriptive HDR metadata (propagated to all child bands via shared `Arc`).
     #[inline]
     #[must_use]
     pub fn with_hdr(mut self, hdr: HdrMetadata) -> Self {
-        self.hdr = hdr;
+        let boxed = box_hdr(hdr);
+        self.hdr = boxed.clone();
         for band in &mut self.bands {
-            band.hdr = hdr;
+            band.hdr = boxed.clone();
         }
         self
     }
@@ -3231,16 +3345,17 @@ impl BandedBuf {
     #[inline]
     #[must_use]
     pub fn origin(&self) -> &ColorOrigin {
-        &self.origin
+        origin_ref(&self.origin)
     }
 
-    /// Attach container color provenance (propagated to all child bands).
+    /// Attach container color provenance (propagated to all child bands via shared `Arc`).
     #[inline]
     #[must_use]
     pub fn with_origin(mut self, origin: ColorOrigin) -> Self {
-        self.origin = origin.clone();
+        let boxed = box_origin(origin);
+        self.origin = boxed.clone();
         for band in &mut self.bands {
-            band.origin = origin.clone();
+            band.origin = boxed.clone();
         }
         self
     }
@@ -3606,8 +3721,9 @@ impl OwnedPlane {
     }
 
     /// Construct a validated owned plane adopting a typed `Vec<S>` (`Vec<u8>`, `Vec<u16>`,
-    /// `Vec<f32>`, etc.) **zero-copy**, where `stride_samples` is the row stride in `S` samples
-    /// (for interleaved `CbCr`, `stride_samples >= width * 2`).
+    /// `Vec<f32>`, etc.) **zero-copy**, where `stride_samples` is the row stride in **`S`
+    /// elements** (NOT bytes — e.g. `stride_samples == width` for tight `u16` luma, or
+    /// `stride_samples >= width * 2` for interleaved `CbCr`).
     pub fn from_samples<S: StorageSample>(
         spec: PlaneSpec,
         width: u32,
@@ -3660,6 +3776,9 @@ impl OwnedPlane {
     }
 
     /// Extract the unpacked integer code for `(x, y, component)` respecting [`BitPacking`].
+    ///
+    /// `component` is the 0-based channel index within this plane: pass `0` for single-channel
+    /// planes (`Y`, `Cb`, `Cr`, `R`, `G`, `B`, `Alpha`), or `0`/`1` for interleaved `CbCr`.
     #[must_use]
     pub fn code_u32(&self, x: u32, y: u32, component: usize) -> Option<u32> {
         self.as_view().code_u32(x, y, component)
@@ -3789,12 +3908,12 @@ pub struct PlanarBuf {
     height: u32,
     planes: Vec<OwnedPlane>,
     chroma_siting: ChromaSiting,
-    color: Option<ColorSpace>,
+    color: Option<Arc<ColorSpace>>,
     ycbcr_matrix_code: Option<u8>,
     range: Option<SignalRange>,
     alpha: Option<AlphaMode>,
-    hdr: HdrMetadata,
-    origin: ColorOrigin,
+    hdr: Option<Arc<HdrMetadata>>,
+    origin: Option<Arc<ColorOrigin>>,
     orientation: Orientation,
 }
 
@@ -3860,8 +3979,8 @@ impl PlanarBuf {
             ycbcr_matrix_code: None,
             range: None,
             alpha: None,
-            hdr: HdrMetadata::default(),
-            origin: ColorOrigin::assumed(),
+            hdr: None,
+            origin: None,
             orientation: Orientation::Identity,
         })
     }
@@ -3891,8 +4010,8 @@ impl PlanarBuf {
             ycbcr_matrix_code: None,
             range: None,
             alpha: None,
-            hdr: HdrMetadata::default(),
-            origin: ColorOrigin::assumed(),
+            hdr: None,
+            origin: None,
             orientation: Orientation::Identity,
         })
     }
@@ -3930,14 +4049,14 @@ impl PlanarBuf {
     #[inline]
     #[must_use]
     pub fn color(&self) -> Option<&ColorSpace> {
-        self.color.as_ref()
+        self.color.as_deref()
     }
 
     /// Attach color interpretation (primaries, transfer, range, alpha) to this planar buffer.
     #[inline]
     #[must_use]
     pub fn with_color(mut self, color: ColorSpace) -> Self {
-        self.color = Some(color);
+        self.color = Some(Arc::new(color));
         self
     }
 
@@ -3969,7 +4088,7 @@ impl PlanarBuf {
     #[must_use]
     pub fn effective_range(&self) -> Option<SignalRange> {
         self.range
-            .or_else(|| self.color.as_ref().and_then(|c| c.range()))
+            .or_else(|| self.color.as_deref().and_then(|c| c.range()))
     }
 
     /// Attach explicit signal range (`Full` or `Narrow`).
@@ -3993,7 +4112,7 @@ impl PlanarBuf {
     #[must_use]
     pub fn effective_alpha(&self) -> Option<AlphaMode> {
         self.alpha
-            .or_else(|| self.color.as_ref().map(|c| c.alpha()))
+            .or_else(|| self.color.as_deref().map(|c| c.alpha()))
     }
 
     /// Attach explicit alpha association mode (e.g. `AlphaMode::Straight` or `AlphaMode::Premultiplied`).
@@ -4050,15 +4169,15 @@ impl PlanarBuf {
     /// Descriptive HDR metadata.
     #[inline]
     #[must_use]
-    pub const fn hdr(&self) -> HdrMetadata {
-        self.hdr
+    pub fn hdr(&self) -> HdrMetadata {
+        unbox_hdr(&self.hdr)
     }
 
     /// Attach descriptive HDR metadata.
     #[inline]
     #[must_use]
-    pub const fn with_hdr(mut self, hdr: HdrMetadata) -> Self {
-        self.hdr = hdr;
+    pub fn with_hdr(mut self, hdr: HdrMetadata) -> Self {
+        self.hdr = box_hdr(hdr);
         self
     }
 
@@ -4066,14 +4185,14 @@ impl PlanarBuf {
     #[inline]
     #[must_use]
     pub fn origin(&self) -> &ColorOrigin {
-        &self.origin
+        origin_ref(&self.origin)
     }
 
     /// Attach original container provenance.
     #[inline]
     #[must_use]
     pub fn with_origin(mut self, origin: ColorOrigin) -> Self {
-        self.origin = origin;
+        self.origin = box_origin(origin);
         self
     }
 
@@ -4169,8 +4288,9 @@ impl<'a> PlaneView<'a> {
     }
 
     /// Construct a validated borrowed plane view from a typed sample slice (`&[u8]`, `&[u16]`,
-    /// `&[f32]`, etc.) **zero-copy**, where `stride_samples` is the row stride in `S` samples
-    /// (for interleaved `CbCr`, `stride_samples >= width * 2`).
+    /// `&[f32]`, etc.) **zero-copy**, where `stride_samples` is the row stride in **`S`
+    /// elements** (NOT bytes — e.g. `stride_samples == width` for tight `u16` luma, or
+    /// `stride_samples >= width * 2` for interleaved `CbCr`).
     pub fn from_samples<S: StorageSample>(
         spec: PlaneSpec,
         width: u32,
@@ -4254,6 +4374,9 @@ impl<'a> PlaneView<'a> {
     }
 
     /// Extract the unpacked integer code for `(x, y, component)` respecting [`BitPacking`].
+    ///
+    /// `component` is the 0-based channel index within this plane: pass `0` for single-channel
+    /// planes (`Y`, `Cb`, `Cr`, `R`, `G`, `B`, `Alpha`), or `0`/`1` for interleaved `CbCr`.
     #[must_use]
     pub fn code_u32(&self, x: u32, y: u32, component: usize) -> Option<u32> {
         if x >= self.width || y >= self.height || component >= self.spec.components as usize {
@@ -4366,7 +4489,7 @@ impl<'a> PlaneViewMut<'a> {
 
     /// Construct a validated mutable borrowed plane view from a typed sample slice (`&mut [u8]`,
     /// `&mut [u16]`, `&mut [f32]`, etc.) **zero-copy**, where `stride_samples` is the row stride
-    /// in `S` samples.
+    /// in **`S` elements** (NOT bytes).
     pub fn from_samples<S: StorageSample>(
         spec: PlaneSpec,
         width: u32,
@@ -4621,11 +4744,11 @@ pub struct PlanarView<'a> {
     height: u32,
     crop_origin: (u32, u32),
     chroma_siting: ChromaSiting,
-    color: Option<ColorSpace>,
+    color: Option<Arc<ColorSpace>>,
     ycbcr_matrix_code: Option<u8>,
     range: Option<SignalRange>,
     alpha: Option<AlphaMode>,
-    hdr: HdrMetadata,
+    hdr: Option<Arc<HdrMetadata>>,
     origin: Option<&'a ColorOrigin>,
     orientation: Orientation,
     storage: PlanarStorage<'a>,
@@ -4683,7 +4806,7 @@ impl<'a> PlanarView<'a> {
             ycbcr_matrix_code: None,
             range: None,
             alpha: None,
-            hdr: HdrMetadata::default(),
+            hdr: None,
             origin: None,
             orientation: Orientation::Identity,
             storage,
@@ -4730,14 +4853,14 @@ impl<'a> PlanarView<'a> {
     #[inline]
     #[must_use]
     pub fn color(&self) -> Option<&ColorSpace> {
-        self.color.as_ref()
+        self.color.as_deref()
     }
 
     /// Attach color interpretation to this borrowed planar view.
     #[inline]
     #[must_use]
     pub fn with_color(mut self, color: ColorSpace) -> Self {
-        self.color = Some(color);
+        self.color = Some(Arc::new(color));
         self
     }
 
@@ -4768,7 +4891,7 @@ impl<'a> PlanarView<'a> {
     #[must_use]
     pub fn effective_range(&self) -> Option<SignalRange> {
         self.range
-            .or_else(|| self.color.as_ref().and_then(|c| c.range()))
+            .or_else(|| self.color.as_deref().and_then(|c| c.range()))
     }
 
     /// Attach explicit signal range.
@@ -4791,7 +4914,7 @@ impl<'a> PlanarView<'a> {
     #[must_use]
     pub fn effective_alpha(&self) -> Option<AlphaMode> {
         self.alpha
-            .or_else(|| self.color.as_ref().map(|c| c.alpha()))
+            .or_else(|| self.color.as_deref().map(|c| c.alpha()))
     }
 
     /// Attach explicit alpha association mode.
@@ -4805,15 +4928,15 @@ impl<'a> PlanarView<'a> {
     /// Descriptive HDR container metadata attached to this planar view.
     #[inline]
     #[must_use]
-    pub const fn hdr(&self) -> HdrMetadata {
-        self.hdr
+    pub fn hdr(&self) -> HdrMetadata {
+        unbox_hdr(&self.hdr)
     }
 
     /// Attach descriptive HDR container metadata to this planar view.
     #[inline]
     #[must_use]
-    pub const fn with_hdr(mut self, hdr: HdrMetadata) -> Self {
-        self.hdr = hdr;
+    pub fn with_hdr(mut self, hdr: HdrMetadata) -> Self {
+        self.hdr = box_hdr(hdr);
         self
     }
 
@@ -4943,7 +5066,7 @@ impl<'a> PlanarView<'a> {
             ycbcr_matrix_code: self.ycbcr_matrix_code,
             range: self.range,
             alpha: self.alpha,
-            hdr: self.hdr,
+            hdr: self.hdr.clone(),
             origin: self.origin,
             orientation: self.orientation,
             storage,
@@ -4991,11 +5114,11 @@ pub struct PlanarViewMut<'a> {
     height: u32,
     crop_origin: (u32, u32),
     chroma_siting: ChromaSiting,
-    color: Option<ColorSpace>,
+    color: Option<Arc<ColorSpace>>,
     ycbcr_matrix_code: Option<u8>,
     range: Option<SignalRange>,
     alpha: Option<AlphaMode>,
-    hdr: HdrMetadata,
+    hdr: Option<Arc<HdrMetadata>>,
     orientation: Orientation,
     storage: PlanarMutStorage<'a>,
 }
@@ -5074,7 +5197,7 @@ impl<'a> PlanarViewMut<'a> {
             ycbcr_matrix_code: None,
             range: None,
             alpha: None,
-            hdr: HdrMetadata::default(),
+            hdr: None,
             orientation: Orientation::Identity,
             storage,
         })
@@ -5132,7 +5255,7 @@ impl<'a> PlanarViewMut<'a> {
             ycbcr_matrix_code: None,
             range: None,
             alpha: None,
-            hdr: HdrMetadata::default(),
+            hdr: None,
             orientation: Orientation::Identity,
             storage,
         })
@@ -5178,14 +5301,14 @@ impl<'a> PlanarViewMut<'a> {
     #[inline]
     #[must_use]
     pub fn color(&self) -> Option<&ColorSpace> {
-        self.color.as_ref()
+        self.color.as_deref()
     }
 
     /// Attach color interpretation.
     #[inline]
     #[must_use]
     pub fn with_color(mut self, color: ColorSpace) -> Self {
-        self.color = Some(color);
+        self.color = Some(Arc::new(color));
         self
     }
 
@@ -5216,7 +5339,7 @@ impl<'a> PlanarViewMut<'a> {
     #[must_use]
     pub fn effective_range(&self) -> Option<SignalRange> {
         self.range
-            .or_else(|| self.color.as_ref().and_then(|c| c.range()))
+            .or_else(|| self.color.as_deref().and_then(|c| c.range()))
     }
 
     /// Attach explicit signal range.
@@ -5239,7 +5362,7 @@ impl<'a> PlanarViewMut<'a> {
     #[must_use]
     pub fn effective_alpha(&self) -> Option<AlphaMode> {
         self.alpha
-            .or_else(|| self.color.as_ref().map(|c| c.alpha()))
+            .or_else(|| self.color.as_deref().map(|c| c.alpha()))
     }
 
     /// Attach explicit alpha association mode.
@@ -5253,15 +5376,15 @@ impl<'a> PlanarViewMut<'a> {
     /// Descriptive HDR container metadata attached to this mutable planar view.
     #[inline]
     #[must_use]
-    pub const fn hdr(&self) -> HdrMetadata {
-        self.hdr
+    pub fn hdr(&self) -> HdrMetadata {
+        unbox_hdr(&self.hdr)
     }
 
     /// Attach descriptive HDR container metadata.
     #[inline]
     #[must_use]
-    pub const fn with_hdr(mut self, hdr: HdrMetadata) -> Self {
-        self.hdr = hdr;
+    pub fn with_hdr(mut self, hdr: HdrMetadata) -> Self {
+        self.hdr = box_hdr(hdr);
         self
     }
 
@@ -5373,7 +5496,7 @@ impl<'a> PlanarViewMut<'a> {
             ycbcr_matrix_code: self.ycbcr_matrix_code,
             range: self.range,
             alpha: self.alpha,
-            hdr: self.hdr,
+            hdr: self.hdr.clone(),
             origin: None,
             orientation: self.orientation,
             storage,
@@ -5483,8 +5606,8 @@ impl PlanarBuf {
             ycbcr_matrix_code: self.ycbcr_matrix_code,
             range: self.range,
             alpha: self.alpha,
-            hdr: self.hdr,
-            origin: Some(&self.origin),
+            hdr: self.hdr.clone(),
+            origin: Some(origin_ref(&self.origin)),
             orientation: self.orientation,
             storage,
         })
@@ -5537,7 +5660,7 @@ impl PlanarBuf {
             ycbcr_matrix_code: self.ycbcr_matrix_code,
             range: self.range,
             alpha: self.alpha,
-            hdr: self.hdr,
+            hdr: self.hdr.clone(),
             orientation: self.orientation,
             storage,
         })
@@ -5614,6 +5737,12 @@ fn validate_dual_layer_specs(
 }
 
 /// Complete decomposed parts of a [`DualLayerHdr`] carrier, preserving every field losslessly.
+///
+/// When modifying `orientation` before calling [`DualLayerHdr::try_from_parts`], keep
+/// `base.orientation()` and `gain_map.orientation()` either equal to `parts.orientation` or
+/// reset to [`Orientation::Identity`] (for example, after [`DualLayerHdr::into_parts`], prefer
+/// [`DualLayerHdr::with_orientation`] / [`DualLayerHdr::rotate_metadata`] for O(1) metadata
+/// updates, or update `parts.base`, `parts.gain_map`, and `parts.orientation` together).
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct DualLayerHdrParts {
@@ -5652,10 +5781,14 @@ impl<'a> DualLayerHdrView<'a> {
         orientation: crate::Orientation,
     ) -> Result<Self, At<BufferError>> {
         if base.orientation() != gain_map.orientation() {
-            return Err(err_at(BufferError::IncompatibleLayout));
+            return Err(err_at(BufferError::IncompatibleLayout).at_str(
+                "DualLayerHdrView base and gain_map must have matching pending orientations",
+            ));
         }
         if base.orientation() != crate::Orientation::Identity && base.orientation() != orientation {
-            return Err(err_at(BufferError::IncompatibleLayout));
+            return Err(err_at(BufferError::IncompatibleLayout).at_str(
+                "DualLayerHdrView non-Identity layer orientations must match the requested orientation",
+            ));
         }
         validate_dual_layer_specs(
             base.spec(),
@@ -5748,7 +5881,7 @@ pub struct DualLayerHdr {
     base: PixelBuf,
     gain_map: PixelBuf,
     metadata: GainMapMetadata,
-    alternate_color_space: Option<crate::ColorSpace>,
+    alternate_color_space: Option<Box<crate::ColorSpace>>,
     orientation: crate::Orientation,
 }
 
@@ -5785,10 +5918,13 @@ impl DualLayerHdr {
         orientation: crate::Orientation,
     ) -> Result<Self, At<BufferError>> {
         if base.orientation() != gain_map.orientation() {
-            return Err(err_at(BufferError::IncompatibleLayout));
+            return Err(err_at(BufferError::IncompatibleLayout)
+                .at_str("DualLayerHdr base and gain_map must have matching pending orientations"));
         }
         if base.orientation() != crate::Orientation::Identity && base.orientation() != orientation {
-            return Err(err_at(BufferError::IncompatibleLayout));
+            return Err(err_at(BufferError::IncompatibleLayout).at_str(
+                "DualLayerHdr non-Identity layer orientations must match the requested orientation",
+            ));
         }
         validate_dual_layer_specs(
             base.spec(),
@@ -5802,12 +5938,15 @@ impl DualLayerHdr {
             base,
             gain_map,
             metadata,
-            alternate_color_space,
+            alternate_color_space: alternate_color_space.map(Box::new),
             orientation,
         })
     }
 
     /// Reconstruct a validated [`DualLayerHdr`] from [`DualLayerHdrParts`].
+    ///
+    /// Requires `parts.base.orientation() == parts.gain_map.orientation()`, and if non-`Identity`,
+    /// that they match `parts.orientation`.
     pub fn try_from_parts(parts: DualLayerHdrParts) -> Result<Self, At<BufferError>> {
         Self::new_with_alternate(
             parts.base,
@@ -5829,7 +5968,7 @@ impl DualLayerHdr {
             self.metadata,
             Some(&alt),
         )?;
-        self.alternate_color_space = Some(alt);
+        self.alternate_color_space = Some(Box::new(alt));
         Ok(self)
     }
 
@@ -5867,7 +6006,7 @@ impl DualLayerHdr {
             base: self.base.as_view(),
             gain_map: self.gain_map.as_view(),
             metadata: self.metadata,
-            alternate_color_space: self.alternate_color_space.as_ref(),
+            alternate_color_space: self.alternate_color_space.as_deref(),
             orientation: self.orientation,
         }
     }
@@ -5897,7 +6036,7 @@ impl DualLayerHdr {
     #[inline]
     #[must_use]
     pub fn alternate_color_space(&self) -> Option<&crate::ColorSpace> {
-        self.alternate_color_space.as_ref()
+        self.alternate_color_space.as_deref()
     }
 
     /// Shared pending EXIF orientation for the aligned pair.
@@ -5924,7 +6063,7 @@ impl DualLayerHdr {
             base: self.base,
             gain_map: self.gain_map,
             metadata: self.metadata,
-            alternate_color_space: self.alternate_color_space,
+            alternate_color_space: self.alternate_color_space.map(|b| *b),
             orientation: self.orientation,
         }
     }
@@ -5995,7 +6134,7 @@ impl PixelSource for PixelView<'_> {
     }
     #[inline]
     fn source_hdr(&self) -> HdrMetadata {
-        self.hdr
+        unbox_hdr(&self.hdr)
     }
     #[inline]
     fn source_origin(&self) -> Option<&ColorOrigin> {
@@ -6030,11 +6169,11 @@ impl PixelSource for PixelBuf {
     }
     #[inline]
     fn source_hdr(&self) -> HdrMetadata {
-        self.hdr
+        unbox_hdr(&self.hdr)
     }
     #[inline]
     fn source_origin(&self) -> Option<&ColorOrigin> {
-        Some(&self.origin)
+        Some(origin_ref(&self.origin))
     }
     #[inline]
     fn source_orientation(&self) -> Orientation {
@@ -6067,11 +6206,11 @@ impl PixelSource for BandedBuf {
     }
     #[inline]
     fn source_hdr(&self) -> HdrMetadata {
-        self.hdr
+        unbox_hdr(&self.hdr)
     }
     #[inline]
     fn source_origin(&self) -> Option<&ColorOrigin> {
-        Some(&self.origin)
+        Some(origin_ref(&self.origin))
     }
     #[inline]
     fn source_orientation(&self) -> Orientation {
@@ -6132,11 +6271,11 @@ impl PixelSink for PixelBuf {
     #[inline]
     fn sink_finish(&mut self, facts: SampleFacts, hdr: HdrMetadata) {
         self.facts = facts;
-        self.hdr = hdr;
+        self.hdr = box_hdr(hdr);
     }
     #[inline]
     fn sink_set_origin(&mut self, origin: ColorOrigin) {
-        self.origin = origin;
+        self.origin = box_origin(origin);
     }
     #[inline]
     fn sink_set_orientation(&mut self, orientation: Orientation) {
@@ -6163,18 +6302,20 @@ impl PixelSink for BandedBuf {
     }
     #[inline]
     fn sink_finish(&mut self, facts: SampleFacts, hdr: HdrMetadata) {
+        let boxed = box_hdr(hdr);
         self.facts = facts;
-        self.hdr = hdr;
+        self.hdr = boxed.clone();
         for b in &mut self.bands {
             b.facts = facts;
-            b.hdr = hdr;
+            b.hdr = boxed.clone();
         }
     }
     #[inline]
     fn sink_set_origin(&mut self, origin: ColorOrigin) {
-        self.origin = origin.clone();
+        let boxed = box_origin(origin);
+        self.origin = boxed.clone();
         for b in &mut self.bands {
-            b.origin = origin.clone();
+            b.origin = boxed.clone();
         }
     }
     #[inline]

@@ -13,7 +13,7 @@ This is the **0.5.0 greenfield candidate**.
 use zenpixels_convert::{ConvertPolicy, ImageSpec, PeakSource, PixelBuf, convert_buf};
 
 let src = PixelBuf::from_vec(
-    vec![255, 0, 0, 0, 255, 0], 2, 1, ImageSpec::rgb8_srgb(),
+    vec![255u8, 0, 0, 0, 255, 0], 2, 1, ImageSpec::rgb8_srgb(),
 )?;
 let linear = convert_buf(
     &src.as_view(), ImageSpec::rgbf32_linear(), &ConvertPolicy::permissive(), PeakSource::Measured,
@@ -32,7 +32,7 @@ peaks). `ImagePlan::build` accepts `PeakSource` (including streaming
 ```rust
 use zenpixels_convert::{ConvertPolicy, ImageSpec, PixelBuf, RowPlan};
 
-let src = PixelBuf::from_vec(vec![64, 128, 192, 255, 0, 0], 2, 1, ImageSpec::RGB8_SRGB)?;
+let src = PixelBuf::from_vec(vec![64u8, 128, 192, 255, 0, 0], 2, 1, ImageSpec::RGB8_SRGB)?;
 let mut dst = PixelBuf::new(2, 1, ImageSpec::RGBF32_LINEAR)?;
 let plan = RowPlan::build(
     src.spec(), dst.spec(), &ConvertPolicy::permissive(), None,
@@ -50,25 +50,34 @@ maintains 0-bit parity with x86-64/AArch64 SIMD kernels so libraries and Wasm
 builds stay light. Enable SIMD globally (`accel::enable_all()`,
 `accel::enable_web_sdr()`) or per-policy via `ConvertPolicy::with_accelerators(Accelerators::ALL)`.
 
-## Orientation, planar YCbCr & encoder signaling
+## Orientation, gain maps, planar YCbCr, load-bearing & encoder signaling
 
-- **Orientation:** `ImagePlan` and `load_bearing` propagate pending buffer
-  `Orientation` metadata; call `bake_orientation` / `bake_orientation_buf`
-  (zero-copy on `Identity`) / `bake_orientation_banded` when physically rotating
-  pixels, or `rotate_metadata` for O(1) EXIF passthrough.
+- **Orientation & `DualLayerHdr`:** `ImagePlan` and `load_bearing` propagate
+  pending buffer `Orientation` metadata; call `bake_orientation` /
+  `bake_orientation_buf` (zero-copy on `Identity`) / `bake_orientation_banded`
+  when physically rotating pixels, or `rotate_metadata` for O(1) EXIF
+  passthrough. On `DualLayerHdr`, use `rotate_metadata` / `with_orientation`
+  for O(1) EXIF updates, or `rotate_dual_layer` / `bake_dual_layer_orientation`
+  to physically rotate both layers and reset `orientation()` to `Identity`; pass
+  `&zenpixels_convert::Unstoppable` (re-exported from `enough`) to gain-map APIs
+  taking `&dyn Stop`.
 - **Zero-copy planar YCbCr / RGB reconstruction:** `ycbcr_to_rgb_with_options`
   and zero-alloc `ycbcr_to_rgb_with_options_into` handle all 9 H.273 Table 4 NCL
   matrices (including `YCgCo` and `ChromaDerivedNcl`), siting-exact
-  `ChromaUpsample::Bilinear` (9:3:3:1 `Center`, `Left`, `TopLeft`, odd crop
-  origins), planar RGB (`U8`/`U16`/`F32`), and direct `U8`/`U16`/`F32`
+  `YcbcrOptions::bilinear()` (or `YcbcrOptions::default().with_upsample(ChromaUpsample::Bilinear)`),
+  planar RGB (`U8`/`U16`/`F32`), and direct `U8`/`U16`/`F32`
   `RGB`/`RGBA`/`BGR`/`BGRA`/`RGBX`/`BGRX`/`Gray`/`GrayAlpha` outputs.
+- **Load-bearing compaction:** `reduce_to_load_bearing_format_in_place(force_alpha_restructuring)`
+  retags provably opaque alpha to `AlphaMode::Opaque` zero-move when `false`,
+  or physically drops unused alpha/padding lanes in place when `true`.
 - **Encoder signaling (`OutputPlan` & `EncodeReady`):** `OutputPlan::build`
-  accepts borrowed `&ImageSpec` or owned `ImageSpec`, validates output signaling
-  (`OutputProfile::{Auto, SameAsOrigin, CicpOnly, EmbedIcc, CustomIcc, Strip}`)
-  eagerly (refusing `HlgMode::Display` on `CicpOnly`/`Auto`), reuses owned
-  storage zero-copy on identity via `OutputPlan::execute_buf` (or borrows
+  accepts borrowed `&ImageSpec` or owned `ImageSpec`, validates **destination**
+  signaling (`OutputProfile::{Auto, SameAsOrigin, CicpOnly, EmbedIcc, CustomIcc, Strip}`)
+  eagerly (refusing `HlgMode::Display` on `dst` under `CicpOnly`/`Auto`), reuses
+  owned storage zero-copy on identity via `OutputPlan::execute_buf` (or borrows
   zero-copy via `OutputPlan::execute_view` / `adapt_for_encode_format`), and
-  strips stale HDR metadata when photometry changes.
+  strips stale HDR metadata when photometry changes. Fallible APIs return
+  `whereat::At<E>` — inspect the inner variant with `*err.error()`.
 
 ## Features
 

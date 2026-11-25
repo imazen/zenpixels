@@ -15,11 +15,12 @@ an algebraic `ColorSpace`.
 ```rust
 use zenpixels::{ImageSpec, PixelBuf};
 
-let decoded = vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
+let decoded = vec![255u8, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
 let image = PixelBuf::from_vec(decoded, 2, 2, ImageSpec::rgb8_srgb())?;
 let right_column = image.crop_view(1, 0, 1, 2)?;
 
 assert_eq!(right_column.width(), 1);
+assert_eq!(right_column.height(), 2);
 assert_eq!(right_column.stride(), image.stride()); // Parent stride: 6 bytes.
 assert_eq!(right_column.row(0), &[0, 255, 0]);     // Only the cropped pixel.
 # Ok::<(), Box<dyn std::error::Error>>(())

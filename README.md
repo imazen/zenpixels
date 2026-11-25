@@ -15,11 +15,12 @@ an algebraic `ColorSpace`.
 ```rust
 use zenpixels::{ImageSpec, PixelBuf};
 
-let decoded = vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
+let decoded = vec![255u8, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
 let image = PixelBuf::from_vec(decoded, 2, 2, ImageSpec::rgb8_srgb())?;
 let right_column = image.crop_view(1, 0, 1, 2)?;
 
 assert_eq!(right_column.width(), 1);
+assert_eq!(right_column.height(), 2); // `rows()` and `height()` are equivalent on views.
 assert_eq!(right_column.stride(), image.stride()); // Parent stride: 6 bytes.
 assert_eq!(right_column.row(0), &[0, 255, 0]);     // Only the cropped pixel.
 # Ok::<(), Box<dyn std::error::Error>>(())
@@ -28,6 +29,8 @@ assert_eq!(right_column.row(0), &[0, 255, 0]);     // Only the cropped pixel.
 No pixels are copied when you borrow or crop. Both `image.crop_view(...)` and
 `image.as_view().crop(...)` preserve the buffer's `'a` lifetime. For a fresh
 zero-filled image, use `PixelBuf::new(width, height, spec)`.
+
+> **Tip (`from_vec` & `whereat::At<E>`):** `PixelBuf::from_vec` checks the Rust element type against `spec.layout`, so annotate integer literals (`vec![255u8, ...]`, not `vec![255, ...]`, which infers `Vec<i32>` and returns `BufferError::IncompatibleLayout`). Fallible APIs return `whereat::At<E>` for zero-cost location traces; inspect the inner error enum via `*err.error()` or `err.into_inner()`.
 
 ## Two crates
 
@@ -53,8 +56,10 @@ zenpixels-convert = "0.5.0"
   all 9 Table 4 NCL matrix codes, ICC.1 `cicpType` 44-byte custom-primaries
   extension (`CicpTag`, signed `s15Fixed16Number` supporting negative
   chromaticities such as `CustomPrimaries::ACES_AP0`, `ACES_CG`, `PROPHOTO_RGB`,
-  and Annex 1 `to_icc_d50_matrix_f64`), exact `0.0001 cd/m²` `ClliCodes`, and
-  ISO 15076-1 structural ICC validation (`validate_icc_structure`) wired into
+  and Annex 1 `to_icc_d50_matrix_f64`; note `s15Fixed16Number` quantizes
+  coordinates to `1/65536` on wire encode, so tag bytes / `to_s15fixed16()`
+  round-trip bit-exact), exact `0.0001 cd/m²` `ClliCodes`, and ISO 15076-1
+  structural ICC validation (`validate_icc_structure`) wired into
   `ImageSpec::validate()`.
 - **Unified `SampleLayout` + `BitPacking`:** full-width samples (`U8`, `U16`,
   `F16`, `F32`, `I16`, `I32`, `U32`), 10/12-bit codec planes (`P010`, `U10_LSB`,
@@ -63,8 +68,8 @@ zenpixels-convert = "0.5.0"
   black with canonical max alpha, `PixelBuf::new_white` / `new_with_fill` fill
   reference white, and `PixelBuf::new_zeroed` skips the alpha-fill pass (refusing
   `AlphaMode::Opaque` on alpha-bearing layouts) so decoders can write all pixels
-  and retag zero-copy via `into_opaque_verified`, `into_opaque_filled`, or
-  `assume_opaque`.
+  and retag zero-copy via `into_opaque_verified` (scans all active pixels itself,
+  no prior `set_facts` needed), `into_opaque_filled`, or `assume_opaque`.
 - **Alignment-exact zero-copy interchange & external ownership:** `PixelBuf::from_vec<P>`,
   `try_from_vec_recover`, `from_external` / `from_external_mut`, and
   `try_into_vec_zero_copy<P>` preserve Rust's allocation alignment contract via
@@ -72,16 +77,18 @@ zenpixels-convert = "0.5.0"
 - **Orientation on buffers & multi-plane/dual-layer carriers:** `Orientation`
   travels directly on `PixelBuf`, `PixelView`, `PixelViewMut`, `BandedBuf`,
   `PlanarBuf`, `PlanarView`, `PlanarViewMut`, and `DualLayerHdr` (ISO 21496-1 /
-  UltraHDR gain maps) with O(1) `rotate_metadata` and `display_dimensions()`.
-  Planar views expose zero-copy typed codec APIs (`PlaneView::from_samples`,
-  `row_as`, `code_u32`, `as_code_plane`, `plane_by_role`, `PlanarBuf::new_aligned`).
+  UltraHDR gain maps) with O(1) `rotate_metadata`, `with_orientation`, and
+  `display_dimensions()`. Planar views expose zero-copy typed codec APIs
+  (`PlaneView::from_samples` taking **element** stride, `row_as`,
+  `code_u32(x, y, component)` with `component = 0` for 1-channel planes,
+  `as_code_plane`, `plane_by_role`, `PlanarBuf::new_aligned`).
 
 ## Conversion
 
 ```rust
 use zenpixels_convert::{ConvertPolicy, ImageSpec, PeakSource, PixelBuf, convert_buf};
 
-let src = PixelBuf::from_vec(vec![128, 128, 128], 1, 1, ImageSpec::rgb8_srgb())?;
+let src = PixelBuf::from_vec(vec![128u8, 128, 128], 1, 1, ImageSpec::rgb8_srgb())?;
 let linear = convert_buf(
     &src.as_view(), ImageSpec::rgbf32_linear(), &ConvertPolicy::permissive(), PeakSource::Measured,
 )?;

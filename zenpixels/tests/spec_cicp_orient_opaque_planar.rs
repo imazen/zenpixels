@@ -915,3 +915,88 @@ fn icc1_cicptype_custom_primaries_amendment_and_annex1() {
         Err(CicpProjectionError::DiffuseWhiteLost)
     );
 }
+
+#[test]
+fn view_and_buffer_sizeof_layout_budgets_and_ergonomics() {
+    use core::mem::size_of;
+    use zenpixels::{CicpTag, PixelViewMut, PlanarViewMut, SpecCow};
+
+    // Compact stack footprints (on 64-bit targets; <= allows smaller 32-bit targets too).
+    assert!(
+        size_of::<SpecCow<'static>>() <= 16,
+        "SpecCow grew to {}",
+        size_of::<SpecCow<'static>>()
+    );
+    assert!(
+        size_of::<PixelView<'static>>() <= 80,
+        "PixelView grew to {}",
+        size_of::<PixelView<'static>>()
+    );
+    assert!(
+        size_of::<PixelViewMut<'static>>() <= 64,
+        "PixelViewMut grew to {}",
+        size_of::<PixelViewMut<'static>>()
+    );
+    assert!(
+        size_of::<PixelBuf>() <= 168,
+        "PixelBuf grew to {}",
+        size_of::<PixelBuf>()
+    );
+    assert!(
+        size_of::<BandedBuf>() <= 144,
+        "BandedBuf grew to {}",
+        size_of::<BandedBuf>()
+    );
+    assert!(
+        size_of::<PlanarBuf>() <= 64,
+        "PlanarBuf grew to {}",
+        size_of::<PlanarBuf>()
+    );
+    assert!(
+        size_of::<PlanarView<'static>>() <= 280,
+        "PlanarView grew to {}",
+        size_of::<PlanarView<'static>>()
+    );
+    assert!(
+        size_of::<PlanarViewMut<'static>>() <= 264,
+        "PlanarViewMut grew to {}",
+        size_of::<PlanarViewMut<'static>>()
+    );
+    assert!(
+        size_of::<DualLayerHdrView<'static>>() <= 312,
+        "DualLayerHdrView grew to {}",
+        size_of::<DualLayerHdrView<'static>>()
+    );
+    assert!(
+        size_of::<DualLayerHdr>() <= 488,
+        "DualLayerHdr grew to {}",
+        size_of::<DualLayerHdr>()
+    );
+    // CicpTag stays Copy + const + unboxed (40 B = 4 B Cicp + 36 B Option<CustomPrimaries>).
+    assert_eq!(size_of::<CicpTag>(), 40);
+    assert!(HdrMetadata::default().is_empty());
+
+    // PixelView::height() & PixelViewMut::height() match rows().
+    let mut buf = PixelBuf::new(5, 3, ImageSpec::RGB8_SRGB).unwrap();
+    assert_eq!(buf.as_view().height(), 3);
+    assert_eq!(buf.as_view().height(), buf.as_view().rows());
+    assert_eq!(buf.as_view_mut().height(), 3);
+    assert_eq!(buf.as_view_mut().height(), buf.as_view_mut().rows());
+
+    // Descriptive whereat::At context on untyped Vec<i32> -> U8 IncompatibleLayout mismatch.
+    let err = PixelBuf::from_vec(vec![0i32; 3], 1, 1, ImageSpec::RGB8_SRGB).unwrap_err();
+    assert_eq!(*err.error(), BufferError::IncompatibleLayout);
+    let diag = format!("{err:?}");
+    assert!(
+        diag.contains("i32") && diag.contains("U8"),
+        "expected element/layout context in diagnostic, got: {diag}"
+    );
+
+    let view_err = PixelView::from_typed(&[0i32; 3], 1, 1, &ImageSpec::RGB8_SRGB).unwrap_err();
+    assert_eq!(*view_err.error(), BufferError::IncompatibleLayout);
+    let vdiag = format!("{view_err:?}");
+    assert!(
+        vdiag.contains("i32") && vdiag.contains("U8"),
+        "expected element/layout context in PixelView diagnostic, got: {vdiag}"
+    );
+}

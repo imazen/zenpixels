@@ -75,6 +75,7 @@ pub use cms::{CmsBackend, CmsTransform};
 #[cfg(feature = "cms-lcms")]
 pub use cms::{Lcms, LcmsUnoptimized};
 pub use codes::{CodeMap, CodeMapError, CodeRole, CodesError, to_canonical};
+pub use enough::{Stop, StopReason, Unstoppable};
 pub use error::ConvertError;
 #[cfg(feature = "gainmap")]
 pub use gainmap::{

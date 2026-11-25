@@ -2337,21 +2337,23 @@ impl From<PixelFormat> for ImageSpec {
 /// [`PixelViewMut<'a>`](crate::PixelViewMut).
 ///
 /// Eliminates `Arc` refcount bumps on `PixelBuf::as_view()`, `as_view_mut()`, `crop()`,
-/// and `sub_rows()`, while still accepting owned `ImageSpec`, borrowed `&'a ImageSpec`,
-/// and `Copy` [`PixelFormat`] values in view constructors via `impl Into<SpecCow<'a>>`.
+/// and `sub_rows()`, while storing owned specs behind an [`Arc`] so [`PixelView`](crate::PixelView) and
+/// [`PixelViewMut`](crate::PixelViewMut) stay compact (`size_of::<SpecCow<'_>>() == 16`). Still accepts owned
+/// `ImageSpec`, borrowed `&'a ImageSpec`, and `Copy` [`PixelFormat`] values in view
+/// constructors via `impl Into<SpecCow<'a>>`.
 #[derive(Clone, Debug)]
 pub enum SpecCow<'a> {
     /// Zero-clone reference to an [`ImageSpec`] owned by a buffer or caller.
     Borrowed(&'a ImageSpec),
-    /// Owned [`ImageSpec`] (e.g. constructed inline from `ImageSpec::rgb8_srgb()` or [`PixelFormat`]).
-    Owned(ImageSpec),
+    /// Heap-shared owned [`ImageSpec`] (e.g. constructed inline from `ImageSpec::rgb8_srgb()` or [`PixelFormat`]).
+    Owned(Arc<ImageSpec>),
 }
 
 impl<'a> SpecCow<'a> {
     /// Borrow the underlying [`ImageSpec`].
     #[inline]
     #[must_use]
-    pub const fn as_spec(&self) -> &ImageSpec {
+    pub fn as_spec(&self) -> &ImageSpec {
         match self {
             Self::Borrowed(s) => s,
             Self::Owned(s) => s,
@@ -2361,17 +2363,17 @@ impl<'a> SpecCow<'a> {
     /// Re-borrow as a zero-clone [`SpecCow::Borrowed`] tied to `&self`.
     #[inline]
     #[must_use]
-    pub const fn to_borrowed(&self) -> SpecCow<'_> {
+    pub fn to_borrowed(&self) -> SpecCow<'_> {
         SpecCow::Borrowed(self.as_spec())
     }
 
-    /// Convert into an owned [`ImageSpec`] (cloning only if borrowed).
+    /// Convert into an owned [`ImageSpec`] (cloning only if borrowed or shared).
     #[inline]
     #[must_use]
     pub fn into_owned(self) -> ImageSpec {
         match self {
             Self::Borrowed(s) => s.clone(),
-            Self::Owned(s) => s,
+            Self::Owned(s) => Arc::unwrap_or_clone(s),
         }
     }
 }
@@ -2417,14 +2419,14 @@ impl<'a> From<&'a ImageSpec> for SpecCow<'a> {
 impl From<ImageSpec> for SpecCow<'_> {
     #[inline]
     fn from(spec: ImageSpec) -> Self {
-        Self::Owned(spec)
+        Self::Owned(Arc::new(spec))
     }
 }
 
 impl From<PixelFormat> for SpecCow<'_> {
     #[inline]
     fn from(fmt: PixelFormat) -> Self {
-        Self::Owned(fmt.to_spec())
+        Self::Owned(Arc::new(fmt.to_spec()))
     }
 }
 
@@ -3149,6 +3151,15 @@ pub struct HdrMetadata {
     pub mastering: Option<MasteringDisplay>,
 }
 
+impl HdrMetadata {
+    /// Whether neither content light level nor mastering display metadata is present.
+    #[inline]
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.cll.is_none() && self.mastering.is_none()
+    }
+}
+
 /// How the original file signaled its color space.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -3225,6 +3236,11 @@ impl ColorOrigin {
             icc: Some(icc),
             cicp: Some(cicp),
         }
+    }
+
+    #[inline]
+    pub(crate) const fn is_assumed(&self) -> bool {
+        matches!(self.kind, OriginKind::Assumed) && self.icc.is_none() && self.cicp.is_none()
     }
 }
 
