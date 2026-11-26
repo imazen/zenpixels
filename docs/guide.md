@@ -2,7 +2,7 @@
 
 A task-oriented guide to storing, borrowing, and converting pixels in Rust with `zenpixels` and `zenpixels-convert`. Both crates are `#![forbid(unsafe_code)]` and support `no_std + alloc` (disable default `std` features for `no_std`).
 
-If you are upgrading from `zenpixels` 0.2 or 0.4, see [migration-0.2-to-0.5.md](migration-0.2-to-0.5.md). Unfamiliar term (`SampleFacts`, `DiffuseWhite`, `CICP`, `ChromaSiting`, `whereat::At<E>`)? Jump to the [Quick Glossary](#11-quick-glossary).
+If you want a struct- and enum-first map with visual drilldowns, see [types-and-relationships.md](types-and-relationships.md). If you are upgrading from `zenpixels` 0.2 or 0.4, see [migration-0.2-to-0.5.md](migration-0.2-to-0.5.md). Unfamiliar term (`SampleFacts`, `DiffuseWhite`, `CICP`, `ChromaSiting`, `whereat::At<E>`)? Jump to the [Quick Glossary](#11-quick-glossary).
 
 ---
 

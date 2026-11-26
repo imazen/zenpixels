@@ -16,7 +16,7 @@ an algebraic `ColorSpace`.
 use zenpixels::{PixelFormat, PixelBuf};
 
 let decoded = vec![255u8, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
-let image = PixelBuf::from_vec(decoded, 2, 2, PixelFormat::rgb8_srgb())?;
+let image = PixelBuf::from_typed(decoded, 2, 2, PixelFormat::RGB8_SRGB)?;
 let right_column = image.crop_view(1, 0, 1, 2)?;
 
 assert_eq!(right_column.width(), 1);

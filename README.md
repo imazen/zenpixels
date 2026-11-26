@@ -7,6 +7,7 @@ supporting `no_std + alloc` (disable default `std` feature).
 This is the **0.5.0 greenfield candidate**. [docs.rs](https://docs.rs/zenpixels)
 describes the latest published crate.
 
+- **Start by struct/enum name?** Browse the [Type Atlas & Visual Drilldown](docs/types-and-relationships.md) (`PixelFormat`, `PixelBuf`, `PixelView`, `PlanarBuf`, `ConvertPolicy`, …).
 - **New to `zenpixels`?** Read the task-oriented [User Guide & Cookbook](docs/guide.md).
 - **Upgrading from 0.2 / 0.4?** See [docs/migration-0.2-to-0.5.md](docs/migration-0.2-to-0.5.md).
 - **Need color conversion, HDR, orientation, or planar reconstruction?** See [zenpixels-convert/README.md](zenpixels-convert/README.md).

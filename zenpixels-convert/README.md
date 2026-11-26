@@ -5,8 +5,9 @@ ICC/CMS routing, gain-map reconstruction, EXIF orientation, planar YCbCr/RGB/mon
 reconstruction, and codec format negotiation for [`zenpixels`](https://github.com/imazen/zenpixels).
 Re-exports `zenpixels::*` at the crate root with zero module name collisions.
 
-This is the **0.5.0 greenfield candidate**. For full end-to-end recipes, see
-[docs/guide.md](../docs/guide.md) and [docs/migration-0.2-to-0.5.md](../docs/migration-0.2-to-0.5.md).
+This is the **0.5.0 greenfield candidate**. Start with the
+[Type Atlas & Visual Drilldown](../docs/types-and-relationships.md),
+[docs/guide.md](../docs/guide.md), or [docs/migration-0.2-to-0.5.md](../docs/migration-0.2-to-0.5.md).
 
 ## Which API should I pick?
 
@@ -69,7 +70,7 @@ for y in 0..src.height() {
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-## Opt-in SIMD (`accel` & `const Accelerators`)
+## Opt-in SIMD (`accelerators` & `const Accelerators`)
 
 By default, every native pair runs on a compact scalar core with 0-bit parity
 against x86-64/AArch64 SIMD kernels so libraries and Wasm builds stay small.
