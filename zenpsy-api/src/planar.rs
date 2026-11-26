@@ -5,7 +5,7 @@ use crate::{
 };
 use alloc::vec::Vec;
 use whereat::ResultAtExt as _;
-use zenpixels::{AlphaMode, ChromaSiting, ColorSpace, PlanarView, PlaneSpec, SignalRange};
+use zenpixels::{AlphaMode, ChromaSiting, ColorSpace, PlanarView, PlaneFormat, SignalRange};
 
 /// Optional native planar input. The packed [`Metric`] contract stays usable
 /// independently; no implicit conversion or packed replay is supplied.
@@ -63,10 +63,10 @@ pub trait PlanarWarmReference {
 pub struct PreparedPlanarReference<P> {
     inner: P,
     size: (u32, u32),
-    specs: Vec<PlaneSpec>,
+    specs: Vec<PlaneFormat>,
     chroma_siting: ChromaSiting,
     color: Option<ColorSpace>,
-    ycbcr_matrix_code: Option<u8>,
+    matrix_coefficients: Option<zenpixels::MatrixCoefficients>,
     range: Option<SignalRange>,
     alpha: Option<AlphaMode>,
 }
@@ -81,13 +81,13 @@ impl<P: PlanarWarmReference> PreparedPlanarReference<P> {
                 .planes()
                 .iter()
                 .zip(self.specs.iter())
-                .all(|(p, s)| p.spec() == *s);
+                .all(|(p, s)| p.format() == *s);
         if !specs_match
             || candidate.chroma_siting() != self.chroma_siting
             || candidate.color() != self.color.as_ref()
-            || candidate.ycbcr_matrix_code() != self.ycbcr_matrix_code
-            || candidate.range() != self.range
-            || candidate.alpha() != self.alpha
+            || candidate.matrix_coefficients() != self.matrix_coefficients
+            || candidate.effective_range() != self.range
+            || candidate.effective_alpha() != self.alpha
         {
             return fail(
                 MetricError::new(ErrorKind::UnsupportedInput)
@@ -190,16 +190,16 @@ pub fn prepare_planar_reference<M: PreparePlanarReference + ?Sized>(
         admit(reference, opts)?;
         let inner = metric.warm_planar_reference(reference, opts).at()?;
         opts.checkpoint()?;
-        let specs = reference.planes().iter().map(|p| p.spec()).collect();
+        let specs = reference.planes().iter().map(|p| p.format()).collect();
         Ok(PreparedPlanarReference {
             inner,
             size: (reference.width(), reference.height()),
             specs,
             chroma_siting: reference.chroma_siting(),
             color: reference.color().cloned(),
-            ycbcr_matrix_code: reference.ycbcr_matrix_code(),
-            range: reference.range(),
-            alpha: reference.alpha(),
+            matrix_coefficients: reference.matrix_coefficients(),
+            range: reference.effective_range(),
+            alpha: reference.effective_alpha(),
         })
     })
 }

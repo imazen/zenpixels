@@ -41,7 +41,7 @@ pub fn tonemap::tone_mapper::Requirements::assert_fields_are_eq(&self)
 Lcms: TrivialClone
 LcmsUnoptimized: TrivialClone
 MoxCms: TrivialClone
-accel::Accelerators: TrivialClone
+accelerators::Accelerators: TrivialClone
 codes::CodeMap: TrivialClone
 codes::CodeMapError: TrivialClone
 codes::CodeRole: TrivialClone

@@ -1,7 +1,7 @@
 //! Public validation of small and large native output-key sets.
 //! Map witnesses are synthetic one-cell views, requested only in these tests.
 use zenpsy_api::{
-    zenpixels::{ImageSpec, PixelView, PlaneRole, PlaneSpec, PlaneView, SampleType},
+    zenpixels::{PixelView, PlaneFormat, PlaneRole, PlaneView, SampleType, formats},
     *,
 };
 
@@ -27,11 +27,11 @@ impl Evaluation for Native {
             MapView::new(
                 s,
                 PlaneView::new(
-                    PlaneSpec::new(PlaneRole::Y, SampleType::F32),
+                    bytemuck::cast_slice(&CELL),
                     1,
                     1,
                     4,
-                    bytemuck::cast_slice(&CELL),
+                    PlaneFormat::new(PlaneRole::Y, SampleType::F32),
                 )
                 .unwrap(),
                 MapGrid::new(1, 1).unwrap(),
@@ -69,7 +69,7 @@ fn names(n: usize) -> Vec<String> {
 }
 fn run(keys: Vec<String>, maps: bool) -> MetricResult<ErasedEvaluation> {
     let mut m = Erased::new(Erased::new(MetricFixture { names: keys, maps }));
-    let pixels = PixelView::new(&[0], 1, 1, 1, ImageSpec::gray8_srgb()).unwrap();
+    let pixels = PixelView::new(&[0], 1, 1, 1, &formats::GRAY8_SRGB).unwrap();
     score(
         &mut m,
         &pixels,

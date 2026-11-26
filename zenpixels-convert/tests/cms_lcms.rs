@@ -5,8 +5,8 @@ extern crate alloc;
 
 use alloc::sync::Arc;
 use zenpixels_convert::{
-    AlphaMode, CmsBackend, ColorSpace, ConvertPolicy, ImageSpec, Lcms, LcmsUnoptimized, Primaries,
-    RenderingIntent, RowPlan, SampleLayout, SignalRange, Transfer, icc_profiles,
+    AlphaMode, CmsBackend, ColorSpace, ConvertPolicy, Lcms, LcmsUnoptimized, PixelFormat,
+    Primaries, RenderingIntent, RowPlan, SampleLayout, SignalRange, Transfer, icc_profiles,
 };
 
 /// Build a small synthetic CMYK `A2B0` `mft2` ICC profile in memory (9^4 grid -> Lab).
@@ -162,8 +162,13 @@ fn synthetic_rgb_lut_icc() -> Vec<u8> {
     icc
 }
 
-fn icc_spec(layout: SampleLayout, profile: Arc<[u8]>, channels: u8, alpha: AlphaMode) -> ImageSpec {
-    ImageSpec::new(
+fn icc_spec(
+    layout: SampleLayout,
+    profile: Arc<[u8]>,
+    channels: u8,
+    alpha: AlphaMode,
+) -> PixelFormat {
+    PixelFormat::new(
         layout,
         ColorSpace::Icc {
             profile,
@@ -182,7 +187,7 @@ fn lcms_p3_icc_to_srgb_rgb8_rgb16_rgbf32_zero_alloc() {
     // RGB8
     let plan8 = RowPlan::build(
         icc_spec(SampleLayout::RGB8, Arc::clone(&p3_icc), 3, AlphaMode::None),
-        ImageSpec::RGB8_SRGB,
+        PixelFormat::RGB8_SRGB,
         &policy,
         None,
     )
@@ -201,7 +206,7 @@ fn lcms_p3_icc_to_srgb_rgb8_rgb16_rgbf32_zero_alloc() {
     // RGB16
     let plan16 = RowPlan::build(
         icc_spec(SampleLayout::RGB16, Arc::clone(&p3_icc), 3, AlphaMode::None),
-        ImageSpec::RGB16_SRGB,
+        PixelFormat::RGB16_SRGB,
         &policy,
         None,
     )
@@ -224,7 +229,7 @@ fn lcms_p3_icc_to_srgb_rgb8_rgb16_rgbf32_zero_alloc() {
     assert!((dst16[6] as i32 - 32768).abs() <= 8);
 
     // RGBF32
-    let srgb_f32 = ImageSpec::new(
+    let srgb_f32 = PixelFormat::new(
         SampleLayout::RGBF32,
         ColorSpace::Rgb {
             primaries: Primaries::Bt709,
@@ -276,7 +281,7 @@ fn lcms_preserves_alpha_exact_on_matrix_and_clut_profiles_including_f32() {
                     3,
                     AlphaMode::Straight,
                 ),
-                &ImageSpec::RGBA8_SRGB,
+                &PixelFormat::RGBA8_SRGB,
             )
             .unwrap();
         let src8 = [200u8, 120, 40, 73, 10, 220, 90, 211];
@@ -294,7 +299,7 @@ fn lcms_preserves_alpha_exact_on_matrix_and_clut_profiles_including_f32() {
                     3,
                     AlphaMode::Straight,
                 ),
-                &ImageSpec::RGBA16_SRGB,
+                &PixelFormat::RGBA16_SRGB,
             )
             .unwrap();
         let src16 = [40000u16, 20000, 10000, 12345, 5000, 60000, 30000, 54321];
@@ -309,7 +314,7 @@ fn lcms_preserves_alpha_exact_on_matrix_and_clut_profiles_including_f32() {
         assert_eq!(dst16[7], 54321);
 
         // RGBAF32 (exercises both matrix-shaper and ClutOnly RGBA_FLT alpha guard!)
-        let dst_spec_f32 = ImageSpec::new(
+        let dst_spec_f32 = PixelFormat::new(
             SampleLayout::RGBAF32,
             ColorSpace::Rgb {
                 primaries: Primaries::Bt709,
@@ -344,7 +349,7 @@ fn lcms_cmyk_u8_u16_f32_standard_and_inverted_zero_alloc() {
     let policy = ConvertPolicy::permissive().with_cms(Arc::new(Lcms));
 
     // Standard CMYK8 -> RGBA8 (adds opaque alpha!)
-    let cmyk8 = ImageSpec::new(
+    let cmyk8 = PixelFormat::new(
         SampleLayout::CMYK8,
         ColorSpace::Cmyk {
             icc: Some(Arc::clone(&cmyk_icc)),
@@ -352,7 +357,7 @@ fn lcms_cmyk_u8_u16_f32_standard_and_inverted_zero_alloc() {
             alpha: AlphaMode::None,
         },
     );
-    let plan8 = RowPlan::build(cmyk8, ImageSpec::RGBA8_SRGB, &policy, None).unwrap();
+    let plan8 = RowPlan::build(cmyk8, PixelFormat::RGBA8_SRGB, &policy, None).unwrap();
     // 0% ink = paper white; 100% K = black.
     let src8 = [0u8, 0, 0, 0, 0, 0, 0, 255];
     let mut dst8 = [0u8; 8];
@@ -372,7 +377,7 @@ fn lcms_cmyk_u8_u16_f32_standard_and_inverted_zero_alloc() {
     assert_eq!(dst8[7], 255);
 
     // Inverted CMYK8 (Adobe JPEG convention: 255 = no ink) -> RGB8 matches standard!
-    let cmyk8_inv = ImageSpec::new(
+    let cmyk8_inv = PixelFormat::new(
         SampleLayout::CMYK8_INVERTED,
         ColorSpace::Cmyk {
             icc: Some(Arc::clone(&cmyk_icc)),
@@ -380,7 +385,7 @@ fn lcms_cmyk_u8_u16_f32_standard_and_inverted_zero_alloc() {
             alpha: AlphaMode::None,
         },
     );
-    let plan8_inv = RowPlan::build(cmyk8_inv, ImageSpec::RGB8_SRGB, &policy, None).unwrap();
+    let plan8_inv = RowPlan::build(cmyk8_inv, PixelFormat::RGB8_SRGB, &policy, None).unwrap();
     let src8_inv = [255u8, 255, 255, 255, 255, 255, 255, 0];
     let mut dst8_inv = [0u8; 6];
     let allocs_inv = allocation_counter::measure(|| {
@@ -393,7 +398,7 @@ fn lcms_cmyk_u8_u16_f32_standard_and_inverted_zero_alloc() {
     assert_eq!(&dst8_inv[3..6], &dst8[4..7]);
 
     // Inverted CMYK F32 ([0, 1] -> percent inside Lcms!) -> RGBF32 zero-alloc!
-    let cmyk_f32_inv = ImageSpec::new(
+    let cmyk_f32_inv = PixelFormat::new(
         SampleLayout::new(
             zenpixels_convert::SampleType::F32,
             zenpixels_convert::ChannelOrder::CmykInverted,
@@ -404,7 +409,7 @@ fn lcms_cmyk_u8_u16_f32_standard_and_inverted_zero_alloc() {
             alpha: AlphaMode::None,
         },
     );
-    let dst_rgbf = ImageSpec::new(
+    let dst_rgbf = PixelFormat::new(
         SampleLayout::RGBF32,
         ColorSpace::Rgb {
             primaries: Primaries::Bt709,
@@ -447,10 +452,14 @@ fn lcms_bgr_bgra_and_unoptimized_mode() {
         3,
         AlphaMode::Straight,
     );
-    let t_bgra = Lcms.build_transform(&src, &ImageSpec::BGRA8_SRGB).unwrap();
-    let t_rgba = Lcms.build_transform(&src, &ImageSpec::RGBA8_SRGB).unwrap();
+    let t_bgra = Lcms
+        .build_transform(&src, &PixelFormat::BGRA8_SRGB)
+        .unwrap();
+    let t_rgba = Lcms
+        .build_transform(&src, &PixelFormat::RGBA8_SRGB)
+        .unwrap();
     let t_unopt = LcmsUnoptimized
-        .build_transform(&src, &ImageSpec::RGBA8_SRGB)
+        .build_transform(&src, &PixelFormat::RGBA8_SRGB)
         .unwrap();
 
     let inp = [200u8, 100, 40, 177, 30, 180, 240, 42];
@@ -482,7 +491,7 @@ fn lcms_bgr_bgra_and_unoptimized_mode() {
 fn lcms_and_moxcms_agree_on_p3_and_cmyk() {
     let p3_icc: Arc<[u8]> = Arc::from(icc_profiles::DISPLAY_P3_V4);
     let src8 = icc_spec(SampleLayout::RGB8, Arc::clone(&p3_icc), 3, AlphaMode::None);
-    let dst8 = ImageSpec::RGB8_SRGB;
+    let dst8 = PixelFormat::RGB8_SRGB;
 
     let t_lcms = Lcms.build_transform(&src8, &dst8).unwrap();
     let t_mox = zenpixels_convert::MoxCms
@@ -513,7 +522,7 @@ fn lcms_and_moxcms_agree_on_p3_and_cmyk() {
 
     // CMYK8 synthetic profile parity.
     let cmyk_icc: Arc<[u8]> = Arc::from(synthetic_cmyk_icc());
-    let cmyk_src = ImageSpec::new(
+    let cmyk_src = PixelFormat::new(
         SampleLayout::CMYK8,
         ColorSpace::Cmyk {
             icc: Some(cmyk_icc),

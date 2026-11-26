@@ -276,7 +276,7 @@ impl<'a> CodePlane<'a> {
         index: usize,
         encoding: SampleEncoding,
     ) -> Result<Self, CodePlaneError> {
-        let spec = plane.spec();
+        let spec = plane.format();
         if spec.packing.is_packed_word() {
             return Err(CodePlaneError::StorageMismatch);
         }
@@ -541,7 +541,7 @@ impl<'a> CodePlaneMut<'a> {
         index: usize,
         encoding: SampleEncoding,
     ) -> Result<Self, CodePlaneError> {
-        let spec = plane.spec();
+        let spec = plane.format();
         if spec.packing.is_packed_word() {
             return Err(CodePlaneError::StorageMismatch);
         }

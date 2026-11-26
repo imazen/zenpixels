@@ -9,14 +9,14 @@ describes the latest published crate.
 ## Quick start
 
 `PixelBuf` owns alignment-exact storage. `PixelView<'a>` / `PixelViewMut<'a>`
-borrow an image or rectangular subimage. `ImageSpec` pairs a `SampleLayout` with
+borrow an image or rectangular subimage. `PixelFormat` pairs a `SampleLayout` with
 an algebraic `ColorSpace`.
 
 ```rust
-use zenpixels::{ImageSpec, PixelBuf};
+use zenpixels::{PixelFormat, PixelBuf};
 
 let decoded = vec![255u8, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
-let image = PixelBuf::from_vec(decoded, 2, 2, ImageSpec::rgb8_srgb())?;
+let image = PixelBuf::from_vec(decoded, 2, 2, PixelFormat::rgb8_srgb())?;
 let right_column = image.crop_view(1, 0, 1, 2)?;
 
 assert_eq!(right_column.width(), 1);

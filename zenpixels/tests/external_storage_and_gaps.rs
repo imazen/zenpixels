@@ -10,8 +10,8 @@ use zenpixels::BitPacking;
 use zenpixels::RowAlign;
 use zenpixels::{
     AlphaMode, BandedBuf, BufferError, ByteStorage, ByteStorageMut, ChannelOrder, ChromaSiting,
-    CodePlaneError, CodePlaneMut, ColorSpace, ImageSpec, PixelBuf, PixelSink, PlanarBuf,
-    PlanarViewMut, PlaneBuf, PlaneRole, PlaneSpec, PlaneViewMut, Primaries, SampleEncoding,
+    CodePlaneError, CodePlaneMut, ColorSpace, PixelBuf, PixelFormat, PixelSink, PlanarBuf,
+    PlanarViewMut, PlaneBuf, PlaneFormat, PlaneRole, PlaneViewMut, Primaries, SampleEncoding,
     SampleFacts, SampleLayout, SampleType, SignalRange, Transfer,
 };
 #[cfg(any(feature = "imgref", feature = "image"))]
@@ -56,7 +56,7 @@ fn external_immutable_zero_copy_cow_and_recovery() {
         data: Arc::clone(&raw),
     };
 
-    let spec = ImageSpec::RGB8_SRGB;
+    let spec = PixelFormat::RGB8_SRGB;
     let buf = PixelBuf::from_external(handle, 4, 3, 12, spec.clone()).unwrap();
     assert!(buf.is_external());
     assert!(!buf.is_mutable_in_place());
@@ -114,7 +114,8 @@ fn external_immutable_validation_failure_returns_owner_untouched() {
     let raw: Arc<[u8]> = Arc::from(vec![7u8; 10]);
     let ptr = raw.as_ptr();
     // Too short for 4x3 RGB8 (needs 36 bytes).
-    let (err, returned) = PixelBuf::from_external(raw, 4, 3, 12, ImageSpec::RGB8_SRGB).unwrap_err();
+    let (err, returned) =
+        PixelBuf::from_external(raw, 4, 3, 12, PixelFormat::RGB8_SRGB).unwrap_err();
     assert_eq!(*err.error(), BufferError::InsufficientData);
     assert_eq!(returned.as_ptr(), ptr);
 
@@ -127,7 +128,7 @@ fn external_immutable_validation_failure_returns_owner_untouched() {
         2,
         2,
         12,
-        ImageSpec::new(SampleLayout::RGB16, ColorSpace::SRGB),
+        PixelFormat::new(SampleLayout::RGB16, ColorSpace::SRGB),
     )
     .unwrap_err();
     assert_eq!(*err.error(), BufferError::AlignmentViolation);
@@ -136,7 +137,7 @@ fn external_immutable_validation_failure_returns_owner_untouched() {
     // Static slice `&'static [u8]` works zero-copy!
     static STATIC_RGB: [u8; 12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
     let static_buf =
-        PixelBuf::from_external(&STATIC_RGB[..], 2, 2, 6, ImageSpec::RGB8_SRGB).unwrap();
+        PixelBuf::from_external(&STATIC_RGB[..], 2, 2, 6, PixelFormat::RGB8_SRGB).unwrap();
     assert_eq!(
         static_buf.as_view().as_strided_bytes().as_ptr(),
         STATIC_RGB.as_ptr()
@@ -153,7 +154,7 @@ fn external_mutable_zero_copy_in_place_write_and_recovery() {
     };
     let ptr = lease.bytes.as_ptr();
 
-    let mut buf = PixelBuf::from_external_mut(lease, 4, 3, 16, ImageSpec::RGBA8_SRGB).unwrap();
+    let mut buf = PixelBuf::from_external_mut(lease, 4, 3, 16, PixelFormat::RGBA8_SRGB).unwrap();
     assert!(buf.is_external());
     assert!(buf.is_mutable_in_place());
     assert_eq!(buf.as_view().as_strided_bytes().as_ptr(), ptr);
@@ -191,7 +192,7 @@ fn external_mutable_zero_copy_in_place_write_and_recovery() {
         2,
         2,
         24,
-        ImageSpec::new(SampleLayout::RGBF32, ColorSpace::LINEAR_SRGB),
+        PixelFormat::new(SampleLayout::RGBF32, ColorSpace::LINEAR_SRGB),
     )
     .unwrap();
     assert_eq!(f32_buf.as_view().as_strided_bytes().as_ptr(), f32_ptr);
@@ -204,9 +205,14 @@ fn external_mutable_zero_copy_in_place_write_and_recovery() {
 fn external_owned_plane_and_try_from_parts_recover() {
     let y_arc: Arc<[u8]> = Arc::from(vec![120u8; 16]);
     let y_ptr = y_arc.as_ptr();
-    let y_plane =
-        PlaneBuf::from_external(y_arc, 4, 4, 4, PlaneSpec::new(PlaneRole::Y, SampleType::U8))
-            .unwrap();
+    let y_plane = PlaneBuf::from_external(
+        y_arc,
+        4,
+        4,
+        4,
+        PlaneFormat::new(PlaneRole::Y, SampleType::U8),
+    )
+    .unwrap();
     assert_eq!(y_plane.as_view().data().as_ptr(), y_ptr);
     let back = y_plane.into_external::<Arc<[u8]>>().unwrap();
     assert_eq!(back.as_ptr(), y_ptr);
@@ -216,7 +222,7 @@ fn external_owned_plane_and_try_from_parts_recover() {
         2,
         2,
         4,
-        PlaneSpec::new(PlaneRole::Cb, SampleType::U16),
+        PlaneFormat::new(PlaneRole::Cb, SampleType::U16),
     )
     .unwrap();
     uv_plane.try_as_view_mut().unwrap().row_mut(0)[0..2].copy_from_slice(&1023u16.to_ne_bytes());
@@ -224,7 +230,7 @@ fn external_owned_plane_and_try_from_parts_recover() {
     assert_eq!(uv_back[0], 1023);
 
     // `try_from_parts_recover` preserves storage allocation on geometry rejection.
-    let buf = PixelBuf::new(4, 3, ImageSpec::RGB8_SRGB).unwrap();
+    let buf = PixelBuf::new(4, 3, PixelFormat::RGB8_SRGB).unwrap();
     let orig_ptr = buf.as_view().as_strided_bytes().as_ptr();
     let mut parts = buf.into_parts();
     parts.stride = 2; // invalid (< row_bytes=12)
@@ -242,7 +248,7 @@ fn swizzle_in_place_rgb_bgr_and_drop_padding_zero_realloc() {
         vec![10, 20, 30, 255, 40, 50, 60, 255],
         2,
         1,
-        ImageSpec::new(
+        PixelFormat::new(
             SampleLayout::RGBA8,
             ColorSpace::SRGB.with_alpha(AlphaMode::Opaque),
         ),
@@ -252,20 +258,20 @@ fn swizzle_in_place_rgb_bgr_and_drop_padding_zero_realloc() {
     buf.assume_facts(SampleFacts::NONE.with_all_opaque(true));
 
     buf.swizzle_in_place(ChannelOrder::Bgra).unwrap();
-    assert_eq!(buf.spec().layout.order, ChannelOrder::Bgra);
+    assert_eq!(buf.format().layout.order, ChannelOrder::Bgra);
     assert_eq!(buf.as_view().as_strided_bytes().as_ptr(), ptr);
     assert_eq!(buf.as_view().row(0), &[30, 20, 10, 255, 60, 50, 40, 255]);
     assert!(buf.facts().all_opaque);
 
     // Opaque BGRA -> RGB compacts in place without reallocating!
     buf.swizzle_in_place(ChannelOrder::Rgb).unwrap();
-    assert_eq!(buf.spec().layout.order, ChannelOrder::Rgb);
-    assert_eq!(buf.spec().color.alpha(), AlphaMode::None);
+    assert_eq!(buf.format().layout.order, ChannelOrder::Rgb);
+    assert_eq!(buf.format().color.alpha(), AlphaMode::None);
     assert_eq!(buf.as_view().as_strided_bytes().as_ptr(), ptr);
     assert_eq!(buf.as_view().row(0), &[10, 20, 30, 40, 50, 60]);
 
     // Straight alpha refuses lossy 4->3 drop.
-    let mut straight = PixelBuf::new(2, 1, ImageSpec::RGBA8_SRGB).unwrap();
+    let mut straight = PixelBuf::new(2, 1, PixelFormat::RGBA8_SRGB).unwrap();
     assert_eq!(
         *straight
             .swizzle_in_place(ChannelOrder::Rgb)
@@ -279,7 +285,7 @@ fn swizzle_in_place_rgb_bgr_and_drop_padding_zero_realloc() {
         vec![1000u16, 2000, 3000, 4000, 5000, 6000],
         2,
         1,
-        ImageSpec::new(SampleLayout::RGB16, ColorSpace::SRGB),
+        PixelFormat::new(SampleLayout::RGB16, ColorSpace::SRGB),
     )
     .unwrap();
     let ptr16 = u16_buf.as_view().as_strided_bytes().as_ptr();
@@ -293,7 +299,7 @@ fn swizzle_in_place_rgb_bgr_and_drop_padding_zero_realloc() {
 
 #[test]
 fn banded_buf_helpers_and_planar_color_and_mut_views() {
-    let mut src = PixelBuf::new(5, 7, ImageSpec::RGB8_SRGB).unwrap();
+    let mut src = PixelBuf::new(5, 7, PixelFormat::RGB8_SRGB).unwrap();
     {
         let mut vm = src.as_view_mut();
         for y in 0..7 {
@@ -329,9 +335,9 @@ fn banded_buf_helpers_and_planar_color_and_mut_views() {
     assert_eq!(back.as_view().as_strided_bytes().as_ptr(), ptr);
 
     // PlanarBuf + PlanarView + PlanarViewMut with full color metadata.
-    let y_spec = PlaneSpec::new(PlaneRole::Y, SampleType::U8);
-    let cb_spec = PlaneSpec::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2);
-    let cr_spec = PlaneSpec::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2);
+    let y_spec = PlaneFormat::new(PlaneRole::Y, SampleType::U8);
+    let cb_spec = PlaneFormat::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2);
+    let cr_spec = PlaneFormat::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2);
     let mut planar = PlanarBuf::new(4, 4, &[y_spec, cb_spec, cr_spec])
         .unwrap()
         .with_chroma_siting(ChromaSiting::Left)
@@ -445,12 +451,12 @@ fn imgref_mutable_borrowed_and_sample_interop() {
     assert_eq!(sample_ref.buf()[0], 77);
 
     // `into_imgvec_zero_copy` succeeds on tight Vec<u8> and returns Err(buf) untouched on Aligned64.
-    let tight = PixelBuf::new(2, 2, ImageSpec::RGB8_SRGB).unwrap();
+    let tight = PixelBuf::new(2, 2, PixelFormat::RGB8_SRGB).unwrap();
     let ptr = tight.as_view().as_strided_bytes().as_ptr();
     let iv = tight.into_imgvec_zero_copy::<Rgb<u8>>().unwrap();
     assert_eq!(iv.buf().as_ptr() as *const u8, ptr);
 
-    let aligned = PixelBuf::new_aligned(2, 2, ImageSpec::RGB8_SRGB, RowAlign::Cache64).unwrap();
+    let aligned = PixelBuf::new_aligned(2, 2, PixelFormat::RGB8_SRGB, RowAlign::Cache64).unwrap();
     let aptr = aligned.as_view().as_strided_bytes().as_ptr();
     let back = aligned.into_imgvec_zero_copy::<Rgb<u8>>().unwrap_err();
     assert_eq!(back.as_view().as_strided_bytes().as_ptr(), aptr);
@@ -485,7 +491,7 @@ fn image_crate_symmetric_10_formats_borrowed_and_metadata() {
         .unwrap();
     {
         let v = PixelView::from_image_buffer(&rgb16).unwrap();
-        assert_eq!(v.spec().color, ColorSpace::DISPLAY_P3);
+        assert_eq!(v.format().color, ColorSpace::DISPLAY_P3);
         assert_eq!(v.row_as::<u16>(0).unwrap()[0..3], [1000, 2000, 3000]);
     }
     {
@@ -496,7 +502,7 @@ fn image_crate_symmetric_10_formats_borrowed_and_metadata() {
 
     let dyn_img = image::DynamicImage::ImageRgb16(rgb16);
     let zp = PixelBuf::try_from(dyn_img).unwrap();
-    assert_eq!(zp.spec().color, ColorSpace::DISPLAY_P3);
+    assert_eq!(zp.format().color, ColorSpace::DISPLAY_P3);
     let dyn_back = zp.into_dynamic_image().unwrap();
     assert!(matches!(dyn_back, image::DynamicImage::ImageRgb16(_)));
 
@@ -506,7 +512,7 @@ fn image_crate_symmetric_10_formats_borrowed_and_metadata() {
         image::Luma([4321u16]),
     ));
     let zp_l = PixelBuf::from_dynamic_image(luma16).unwrap();
-    assert_eq!(zp_l.spec().layout, SampleLayout::GRAY16);
+    assert_eq!(zp_l.format().layout, SampleLayout::GRAY16);
 
     let rgb32f = image::DynamicImage::ImageRgb32F(image::ImageBuffer::from_pixel(
         2,
@@ -514,7 +520,7 @@ fn image_crate_symmetric_10_formats_borrowed_and_metadata() {
         image::Rgb([0.25f32, 0.5, 0.75]),
     ));
     let zp_f = PixelBuf::from_dynamic_image(rgb32f).unwrap();
-    assert_eq!(zp_f.spec().layout, SampleLayout::RGBF32);
+    assert_eq!(zp_f.format().layout, SampleLayout::RGBF32);
 }
 
 #[cfg(feature = "hash")]
@@ -522,7 +528,7 @@ fn image_crate_symmetric_10_formats_borrowed_and_metadata() {
 fn portable_xxh3_hash_invariance_and_padding_exclusion() {
     use zenpixels::HashInclusions;
 
-    let mut tight = PixelBuf::new(5, 4, ImageSpec::RGB8_SRGB).unwrap();
+    let mut tight = PixelBuf::new(5, 4, PixelFormat::RGB8_SRGB).unwrap();
     {
         let mut vm = tight.as_view_mut();
         for y in 0..4 {
@@ -537,7 +543,8 @@ fn portable_xxh3_hash_invariance_and_padding_exclusion() {
     let h_tight = tight.hash_with(HashInclusions::All);
 
     // 64-byte aligned padded stride hashes IDENTICALLY.
-    let mut padded = PixelBuf::new_aligned(5, 4, ImageSpec::RGB8_SRGB, RowAlign::Cache64).unwrap();
+    let mut padded =
+        PixelBuf::new_aligned(5, 4, PixelFormat::RGB8_SRGB, RowAlign::Cache64).unwrap();
     for y in 0..4 {
         padded
             .as_view_mut()
@@ -548,7 +555,7 @@ fn portable_xxh3_hash_invariance_and_padding_exclusion() {
 
     // External storage hashes IDENTICALLY.
     let ext_arc: Arc<[u8]> = Arc::from(tight.as_view().as_contiguous_bytes().unwrap());
-    let ext = PixelBuf::from_external(ext_arc, 5, 4, 15, ImageSpec::RGB8_SRGB).unwrap();
+    let ext = PixelBuf::from_external(ext_arc, 5, 4, 15, PixelFormat::RGB8_SRGB).unwrap();
     assert_eq!(ext.hash_with(HashInclusions::All), h_tight);
 
     // BandedBuf hashes IDENTICALLY across band sizes!
@@ -561,7 +568,7 @@ fn portable_xxh3_hash_invariance_and_padding_exclusion() {
         vec![10, 20, 30, 0, 40, 50, 60, 123],
         2,
         1,
-        ImageSpec::new(
+        PixelFormat::new(
             SampleLayout::RGBX8,
             ColorSpace::SRGB.with_alpha(AlphaMode::Undefined),
         ),
@@ -571,7 +578,7 @@ fn portable_xxh3_hash_invariance_and_padding_exclusion() {
         vec![10, 20, 30, 255, 40, 50, 60, 99],
         2,
         1,
-        ImageSpec::new(
+        PixelFormat::new(
             SampleLayout::RGBX8,
             ColorSpace::SRGB.with_alpha(AlphaMode::Undefined),
         ),
@@ -586,7 +593,7 @@ fn portable_xxh3_hash_invariance_and_padding_exclusion() {
         vec![10, 20, 30, 0],
         1,
         1,
-        ImageSpec::new(
+        PixelFormat::new(
             SampleLayout::RGBA8,
             ColorSpace::SRGB.with_alpha(AlphaMode::Opaque),
         ),
@@ -596,7 +603,7 @@ fn portable_xxh3_hash_invariance_and_padding_exclusion() {
         vec![10, 20, 30, 255],
         1,
         1,
-        ImageSpec::new(
+        PixelFormat::new(
             SampleLayout::RGBA8,
             ColorSpace::SRGB.with_alpha(AlphaMode::Opaque),
         ),
@@ -608,7 +615,7 @@ fn portable_xxh3_hash_invariance_and_padding_exclusion() {
     );
 
     // BitPacking::Lsb { bits: 10 } ignores high 6 padding bits!
-    let lsb_spec = ImageSpec::new(
+    let lsb_spec = PixelFormat::new(
         SampleLayout::new(SampleType::U16, ChannelOrder::Gray)
             .with_packing(BitPacking::Lsb { bits: 10 }),
         ColorSpace::GRAY_SRGB,

@@ -35,7 +35,7 @@ pub fn apply_orientation(
     orientation: Orientation,
 ) -> Result<PixelBuf, At<ConvertError>> {
     let (ow, oh) = orientation.output_dimensions(src.width(), src.rows());
-    let mut out = PixelBuf::new(ow, oh, src.spec().clone())
+    let mut out = PixelBuf::new(ow, oh, src.format().clone())
         .map_err(|e| err_at((*e.error()).into()))?
         .with_hdr(src.hdr());
     if let Some(origin) = src.origin() {
@@ -103,7 +103,7 @@ pub fn apply_orientation_banded(
     max_band_bytes: usize,
 ) -> Result<BandedBuf, At<ConvertError>> {
     let (ow, oh) = orientation.output_dimensions(src.width(), src.height());
-    let mut out = BandedBuf::new(ow, oh, src.spec().clone(), max_band_bytes)
+    let mut out = BandedBuf::new(ow, oh, src.format().clone(), max_band_bytes)
         .map_err(|e| err_at((*e.error()).into()))?
         .with_origin(src.origin().clone());
     apply_orientation_banded_into(src, orientation, &mut out)?;
@@ -124,13 +124,13 @@ pub fn apply_orientation_banded_into(
     let w = src.width();
     let h = src.height();
     let (ow, oh) = orientation.output_dimensions(w, h);
-    if dst.width() != ow || dst.height() != oh || dst.spec().layout != src.spec().layout {
+    if dst.width() != ow || dst.height() != oh || dst.format().layout != src.format().layout {
         return Err(err_at(ConvertError::DimensionMismatch));
     }
-    if dst.spec().color != src.spec().color {
+    if dst.format().color != src.format().color {
         return Err(err_at(ConvertError::UnsupportedRoute));
     }
-    if w == 0 || h == 0 || src.spec().layout.bytes_per_pixel() == 0 {
+    if w == 0 || h == 0 || src.format().layout.bytes_per_pixel() == 0 {
         return Ok(());
     }
 
@@ -212,17 +212,17 @@ pub fn apply_orientation_into(
 ) -> Result<(), At<ConvertError>> {
     let w = src.width();
     let h = src.rows();
-    let bpp = src.spec().layout.bytes_per_pixel();
+    let bpp = src.format().layout.bytes_per_pixel();
     let (ow, oh) = orientation.output_dimensions(w, h);
 
     if dst.width() != ow
         || dst.rows() != oh
-        || dst.spec().layout.bytes_per_pixel() != bpp
-        || dst.spec().layout != src.spec().layout
+        || dst.format().layout.bytes_per_pixel() != bpp
+        || dst.format().layout != src.format().layout
     {
         return Err(err_at(ConvertError::DimensionMismatch));
     }
-    if dst.spec().color != src.spec().color {
+    if dst.format().color != src.format().color {
         return Err(err_at(ConvertError::UnsupportedRoute));
     }
     if w == 0 || h == 0 || bpp == 0 {

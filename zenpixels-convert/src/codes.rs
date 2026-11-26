@@ -20,7 +20,7 @@
 use core::fmt;
 use whereat::At;
 use zenpixels::sample::{CodePlane, CodePlaneError, ExactDepth, SampleEncoding};
-use zenpixels::{ChannelOrder, ImageSpec, PixelViewMut, SampleType, SignalRange};
+use zenpixels::{ChannelOrder, PixelFormat, PixelViewMut, SampleType, SignalRange};
 
 /// What a component's codes mean, which selects its depth-conversion rule.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -219,7 +219,7 @@ pub enum CodesError {
     /// The destination is not canonical full-packing `U8`/`U16` Gray, GrayAlpha, RGB, or RGBA.
     Destination {
         /// The destination spec.
-        actual: ImageSpec,
+        actual: PixelFormat,
     },
     /// The destination's signal range differs from the components' range.
     RangeMismatch {
@@ -329,7 +329,7 @@ pub fn to_canonical<'b>(
     y: usize,
     mut destination: PixelViewMut<'b>,
 ) -> Result<(PixelViewMut<'b>, ExactDepth), At<CodesError>> {
-    let spec = destination.spec().clone();
+    let spec = destination.format().clone();
     if !spec.layout.packing.is_full() {
         return Err(whereat::at!(CodesError::Destination { actual: spec }));
     }

@@ -43,8 +43,8 @@ pub fn color::GainMapComponent::assert_fields_are_eq(&self)
 pub fn color::GainMapMetadata::assert_fields_are_eq(&self)
 pub fn color::Gamma::assert_fields_are_eq(&self)
 pub fn color::HlgMode::assert_fields_are_eq(&self)
-pub fn color::ImageSpec::assert_fields_are_eq(&self)
 pub fn color::ParametricColor::assert_fields_are_eq(&self)
+pub fn color::ParametricFormat::assert_fields_are_eq(&self)
 pub fn color::PixelFormat::assert_fields_are_eq(&self)
 pub fn color::Primaries::assert_fields_are_eq(&self)
 pub fn color::SignedFraction::assert_fields_are_eq(&self)
@@ -63,8 +63,8 @@ pub fn hdr::St2086Codes::assert_fields_are_eq(&self)
 pub fn icc::IccIdentification::assert_fields_are_eq(&self)
 pub fn layout::BitPacking::assert_fields_are_eq(&self)
 pub fn layout::ChannelOrder::assert_fields_are_eq(&self)
+pub fn layout::PlaneFormat::assert_fields_are_eq(&self)
 pub fn layout::PlaneRole::assert_fields_are_eq(&self)
-pub fn layout::PlaneSpec::assert_fields_are_eq(&self)
 pub fn layout::RowAlign::assert_fields_are_eq(&self)
 pub fn layout::SampleLayout::assert_fields_are_eq(&self)
 pub fn layout::SampleStride::assert_fields_are_eq(&self)
@@ -107,8 +107,8 @@ color::IccColorSpace: TrivialClone
 color::IccValidationError: TrivialClone
 color::OriginKind: TrivialClone
 color::ParametricColor: TrivialClone
+color::ParametricFormat: TrivialClone
 color::PerceptualSpace: TrivialClone
-color::PixelFormat: TrivialClone
 color::Primaries: TrivialClone
 color::RenderingIntent: TrivialClone
 color::SignalRange: TrivialClone
@@ -133,8 +133,8 @@ layout::BitPacking: TrivialClone
 layout::ChannelOrder: TrivialClone
 layout::InteropTarget: TrivialClone
 layout::LayoutError: TrivialClone
+layout::PlaneFormat: TrivialClone
 layout::PlaneRole: TrivialClone
-layout::PlaneSpec: TrivialClone
 layout::RowAlign: TrivialClone
 layout::SampleLayout: TrivialClone
 layout::SampleStride: TrivialClone

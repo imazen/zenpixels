@@ -33,12 +33,12 @@ use whereat::At;
 use zenpixels::{
     AlphaMode, BitPacking, ChannelOrder, ColorSpace, DiffuseWhite, DualLayerHdrBuf,
     DualLayerHdrView, GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapDirection,
-    GainMapMetadata, HdrMetadata, ImageSpec, Orientation, PixelBuf, PixelSink, PixelSource,
+    GainMapMetadata, HdrMetadata, Orientation, PixelBuf, PixelFormat, PixelSink, PixelSource,
     PixelView, Primaries, SampleFacts, SampleLayout, SampleType, SignalRange, SignedFraction,
     Transfer, UnsignedFraction,
 };
 
-use crate::accel::{self, Accelerators};
+use crate::accelerators::{self, Accelerators};
 use crate::error::{ConvertError, err_at};
 use crate::gainmap_simd::{
     MAX_LOG2_GAIN, blend_rows_2_scalar, blend_rows_4_scalar, combine_linear_f32_scalar,
@@ -138,10 +138,10 @@ pub fn signed_weight(metadata: &GainMapMetadata, display_headroom_stops: f32) ->
         return None;
     }
     let direction = metadata.direction()?;
-    let hb_n = i128::from(metadata.base_hdr_headroom.num);
-    let hb_d = i128::from(metadata.base_hdr_headroom.den.get());
-    let ha_n = i128::from(metadata.alternate_hdr_headroom.num);
-    let ha_d = i128::from(metadata.alternate_hdr_headroom.den.get());
+    let hb_n = i128::from(metadata.base_hdr_headroom.numerator);
+    let hb_d = i128::from(metadata.base_hdr_headroom.denominator.get());
+    let ha_n = i128::from(metadata.alternate_hdr_headroom.numerator);
+    let ha_d = i128::from(metadata.alternate_hdr_headroom.denominator.get());
 
     // Exact non-zero numerator of (H_alt - H_base) * (hb_d * ha_d):
     //   (H - hb_n/hb_d) / (ha_n/ha_d - hb_n/hb_d)
@@ -578,14 +578,14 @@ pub struct GainMapApplyConfig {
     /// via [`with_policy`](Self::with_policy) (e.g. `Accelerators::ALL.with_gainmap()` or
     /// `Accelerators::WEB_SDR.with_gainmap()`).
     pub policy: ConvertPolicy,
-    /// Optional target output [`ImageSpec`].
+    /// Optional target output [`PixelFormat`].
     ///
     /// - `None`: outputs relative-linear `RGBF32` (or `RGBAF32` when base has alpha) in the
     ///   resolved gain-map application primaries.
     /// - `Some(spec)`: fuses conversion directly to `spec` (e.g. `RGBAF16`, `RGB16` PQ,
     ///   `RGB16` HLG, `RGBA8` sRGB, `DisplayP3`) in O(width) row memory with zero full-frame
     ///   intermediate buffer.
-    pub dst_spec: Option<ImageSpec>,
+    pub destination_format: Option<PixelFormat>,
 }
 
 impl GainMapApplyConfig {
@@ -624,7 +624,7 @@ impl GainMapApplyConfig {
             resample: GainMapResample::Bilinear,
             orientation: GainMapOrientation::Bake,
             policy: ConvertPolicy::working_linear(),
-            dst_spec: None,
+            destination_format: None,
         }
     }
 
@@ -660,11 +660,11 @@ impl GainMapApplyConfig {
         self
     }
 
-    /// Fuse row conversion straight into `dst_spec` (e.g. `RGBAF16`, `RGB16` PQ, `RGBA8` sRGB).
+    /// Fuse row conversion straight into `destination_format` (e.g. `RGBAF16`, `RGB16` PQ, `RGBA8` sRGB).
     #[inline(always)]
     #[must_use]
-    pub fn with_dst_spec(mut self, dst_spec: ImageSpec) -> Self {
-        self.dst_spec = Some(dst_spec);
+    pub fn with_destination_format(mut self, destination_format: PixelFormat) -> Self {
+        self.destination_format = Some(destination_format);
         self
     }
 }
@@ -677,19 +677,19 @@ impl GainMapApplyConfig {
 /// blend, `exp2` gain decode, and linear RGB(A) combine kernels to run **pure SIMD-only loops**.
 #[derive(Clone, Debug)]
 pub struct GainMapApplier {
-    base_spec: ImageSpec,
+    base_spec: PixelFormat,
     base_w: u32,
     base_h: u32,
     w_pad: usize,
     base_row_bytes: usize,
     gm_w: u32,
     gm_h: u32,
-    gm_spec: ImageSpec,
+    gm_spec: PixelFormat,
     gm_row_bytes: usize,
     gm_ch: usize,
     gm_max: [f32; 3],
     has_alpha: bool,
-    dst_spec: ImageSpec,
+    destination_format: PixelFormat,
     dst_row_bytes: usize,
     orientation: Orientation,
     accel: Accelerators,
@@ -920,10 +920,10 @@ impl GainMapApplier {
             return Err(err_at(ConvertError::UnsupportedRoute));
         }
         let mut applier = Self::new(
-            dual.base().spec().clone(),
+            dual.base().format().clone(),
             dual.base().width(),
             dual.base().rows(),
-            dual.gain_map().spec().clone(),
+            dual.gain_map().format().clone(),
             dual.gain_map().width(),
             dual.gain_map().rows(),
             dual.metadata(),
@@ -938,10 +938,10 @@ impl GainMapApplier {
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        base_spec: ImageSpec,
+        base_spec: PixelFormat,
         base_w: u32,
         base_h: u32,
-        gm_spec: ImageSpec,
+        gm_spec: PixelFormat,
         gm_w: u32,
         gm_h: u32,
         metadata: GainMapMetadata,
@@ -1025,7 +1025,7 @@ impl GainMapApplier {
             .checked_mul(gm_spec.layout.bytes_per_pixel())
             .ok_or_else(|| err_at(ConvertError::DimensionMismatch))?;
         let dst_bpp = config
-            .dst_spec
+            .destination_format
             .as_ref()
             .map_or(ch * 4, |t| t.layout.bytes_per_pixel());
         let dst_row_bytes = w_usize
@@ -1065,7 +1065,7 @@ impl GainMapApplier {
             (Some(hw), slots)
         };
 
-        // Phase 3: Build `RowPlan`s (`RowPlan::build` validates `base_spec` & `dst_spec`).
+        // Phase 3: Build `RowPlan`s (`RowPlan::build` validates `base_spec` & `destination_format`).
         let app_alpha = if !has_alpha {
             AlphaMode::None
         } else if color_alpha_mode(&base_spec.color) == AlphaMode::Opaque {
@@ -1073,7 +1073,7 @@ impl GainMapApplier {
         } else {
             AlphaMode::Straight
         };
-        let app_spec = ImageSpec::new(
+        let app_spec = PixelFormat::new(
             if has_alpha {
                 SampleLayout::RGBAF32
             } else {
@@ -1089,20 +1089,21 @@ impl GainMapApplier {
         );
         let mut row_pol = config.policy.clone();
         row_pol.sdr_white = Some(base_white);
-        let accel = accel::resolve(row_pol.accelerators);
+        let accel = accelerators::resolve(row_pol.accelerators);
 
         let base_to_app = RowPlan::build(base_spec.clone(), app_spec.clone(), &row_pol, None)?;
-        let (dst_spec, app_to_dst, zero_weight_direct) = if let Some(target) = &config.dst_spec {
-            let a2d = RowPlan::build(app_spec, target.clone(), &row_pol, None)?;
-            let direct = if is_zero_weight {
-                RowPlan::build(base_spec.clone(), target.clone(), &row_pol, None).ok()
+        let (destination_format, app_to_dst, zero_weight_direct) =
+            if let Some(target) = &config.destination_format {
+                let a2d = RowPlan::build(app_spec, target.clone(), &row_pol, None)?;
+                let direct = if is_zero_weight {
+                    RowPlan::build(base_spec.clone(), target.clone(), &row_pol, None).ok()
+                } else {
+                    None
+                };
+                (target.clone(), Some(a2d), direct)
             } else {
-                None
+                (app_spec, None, None)
             };
-            (target.clone(), Some(a2d), direct)
-        } else {
-            (app_spec, None, None)
-        };
 
         // Phase 4: Single out-of-line flat scratch allocation + optional U8 LUT.
         let gains_ch = if gm_ch == 3 || !shared_meta { 3 } else { 1 };
@@ -1148,7 +1149,7 @@ impl GainMapApplier {
             gm_ch,
             gm_max,
             has_alpha,
-            dst_spec,
+            destination_format,
             dst_row_bytes,
             orientation: Orientation::Identity,
             accel,
@@ -1180,11 +1181,11 @@ impl GainMapApplier {
         })
     }
 
-    /// Output [`ImageSpec`] produced by this applier (in stored-frame coordinates).
+    /// Output [`PixelFormat`] produced by this applier (in stored-frame coordinates).
     #[inline]
     #[must_use]
-    pub fn dst_spec(&self) -> &ImageSpec {
-        &self.dst_spec
+    pub fn destination_format(&self) -> &PixelFormat {
+        &self.destination_format
     }
 
     /// Pending EXIF [`Orientation`] captured from [`DualLayerHdrView`] (`Orientation::Identity`
@@ -1225,7 +1226,7 @@ impl GainMapApplier {
     ) -> Result<(), At<ConvertError>> {
         if gain_map.width() != self.gm_w
             || gain_map.rows() != self.gm_h
-            || gain_map.spec() != &self.gm_spec
+            || gain_map.format() != &self.gm_spec
         {
             return Err(err_at(ConvertError::DimensionMismatch));
         }
@@ -1392,13 +1393,13 @@ impl GainMapApplier {
     ) -> Result<(), At<ConvertError>> {
         if base.source_width() != self.base_w
             || base.source_height() != self.base_h
-            || base.source_spec() != &self.base_spec
+            || base.source_format() != &self.base_spec
             || gain_map.width() != self.gm_w
             || gain_map.rows() != self.gm_h
-            || gain_map.spec() != &self.gm_spec
+            || gain_map.format() != &self.gm_spec
             || dst.sink_width() != self.base_w
             || dst.sink_height() != self.base_h
-            || dst.sink_spec() != &self.dst_spec
+            || dst.sink_format() != &self.destination_format
         {
             return Err(err_at(ConvertError::DimensionMismatch));
         }
@@ -1763,7 +1764,7 @@ fn decode_gm_row_planar(
     }
 }
 
-fn validate_gain_map_spec(spec: &ImageSpec) -> Result<(), At<ConvertError>> {
+fn validate_gain_map_spec(spec: &PixelFormat) -> Result<(), At<ConvertError>> {
     let ok_color = matches!(
         spec.color,
         ColorSpace::Untagged {
@@ -1802,7 +1803,7 @@ fn apply_gain_map_stored(
     let mut out = PixelBuf::new(
         dual.base().width(),
         dual.base().rows(),
-        applier.dst_spec().clone(),
+        applier.destination_format().clone(),
     )
     .map_err(|e| err_at((*e.error()).into()))?;
     applier.apply_into(dual.base(), dual.gain_map(), &mut out, stop)?;
@@ -1843,7 +1844,7 @@ pub fn apply_gain_map_oriented(
 /// Reconstruct a [`PixelBuf`] from a zero-copy [`DualLayerHdrView`] with full control over
 /// target headroom/rendition ([`GainMapApplyConfig::from_headroom_stops`] or
 /// [`GainMapApplyConfig::from_display_boost_linear`]), resampling kernel, orientation policy,
-/// conversion policy, optional target [`ImageSpec`], and cooperative [`Stop`] cancellation
+/// conversion policy, optional target [`PixelFormat`], and cooperative [`Stop`] cancellation
 /// (pass `&zenpixels_convert::Unstoppable` when cancellation is not needed).
 ///
 /// Refuses [`GainMapOrientation::Passthrough`] when `dual.orientation() != Orientation::Identity`
@@ -2140,7 +2141,7 @@ impl GainMapExtractConfig {
             .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))
     }
 
-    fn gain_map_spec(&self) -> Result<ImageSpec, At<ConvertError>> {
+    fn gain_map_spec(&self) -> Result<PixelFormat, At<ConvertError>> {
         let layout = match (self.sample_type, self.multi_channel) {
             (SampleType::U8, false) => SampleLayout::GRAY8.with_packing(self.packing),
             (SampleType::U8, true) => SampleLayout::RGB8.with_packing(self.packing),
@@ -2148,7 +2149,7 @@ impl GainMapExtractConfig {
             (SampleType::U16, true) => SampleLayout::RGB16.with_packing(self.packing),
             _ => return Err(err_at(ConvertError::UnsupportedRoute)),
         };
-        let spec = ImageSpec::new(
+        let spec = PixelFormat::new(
             layout,
             ColorSpace::Untagged {
                 channels: if self.multi_channel { 3 } else { 1 },
@@ -2268,7 +2269,7 @@ impl GainMapRowExtractor {
         if self.multichannel && gm_ch != 3 {
             return Err(err_at(ConvertError::UnsupportedRoute));
         }
-        ImageSpec::new(
+        PixelFormat::new(
             gm_layout,
             ColorSpace::Untagged {
                 channels: gm_ch as u8,
@@ -2566,7 +2567,7 @@ pub fn extract_gain_map(
     metadata: GainMapMetadata,
 ) -> Result<DualLayerHdrBuf, At<ConvertError>> {
     let gm_spec = if metadata.channels.is_multichannel() {
-        ImageSpec::new(
+        PixelFormat::new(
             SampleLayout::RGB8,
             ColorSpace::Untagged {
                 channels: 3,
@@ -2574,7 +2575,7 @@ pub fn extract_gain_map(
             },
         )
     } else {
-        ImageSpec::new(
+        PixelFormat::new(
             SampleLayout::GRAY8,
             ColorSpace::Untagged {
                 channels: 1,
@@ -2599,9 +2600,9 @@ pub fn extract_gain_map(
         .map_err(|e| err_at((*e.error()).into()))?;
     gain_buf.set_orientation(base_src.orientation());
     let alt_color = if metadata.application_space == GainMapColorSpace::Alternate
-        || alternate_src.spec().color != base_src.spec().color
+        || alternate_src.format().color != base_src.format().color
     {
-        Some(alternate_src.spec().color.clone())
+        Some(alternate_src.format().color.clone())
     } else {
         None
     };
@@ -2622,7 +2623,7 @@ fn extract_gain_map_internal(
     metadata: GainMapMetadata,
     scale_factor: u8,
     downsample: GainMapDownsample,
-    gm_spec: ImageSpec,
+    gm_spec: PixelFormat,
     base_policy: &ConvertPolicy,
     stop: &dyn Stop,
     measure_only: bool,
@@ -2643,7 +2644,7 @@ fn extract_gain_map_internal(
         .direction()
         .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
 
-    let (base_primaries, base_white_opt) = resolve_linear_rgb_primaries(&base_src.spec().color)
+    let (base_primaries, base_white_opt) = resolve_linear_rgb_primaries(&base_src.format().color)
         .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
     let base_white = base_white_opt
         .or(base_policy.sdr_white)
@@ -2651,12 +2652,12 @@ fn extract_gain_map_internal(
 
     let app_primaries = match metadata.application_space {
         GainMapColorSpace::Base => base_primaries,
-        GainMapColorSpace::Alternate => resolve_linear_rgb_primaries(&alternate_src.spec().color)
+        GainMapColorSpace::Alternate => resolve_linear_rgb_primaries(&alternate_src.format().color)
             .map(|(p, _)| p)
             .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?,
     };
 
-    let linear_rgb = ImageSpec::new(
+    let linear_rgb = PixelFormat::new(
         SampleLayout::RGBF32,
         ColorSpace::Rgb {
             primaries: app_primaries,
@@ -2670,8 +2671,8 @@ fn extract_gain_map_internal(
         .clone()
         .with_sdr_white(base_white)
         .with_alpha(AlphaPolicy::DiscardUnchecked);
-    let base_plan = RowPlan::build(base_src.spec().clone(), linear_rgb.clone(), &policy, None)?;
-    let alt_plan = RowPlan::build(alternate_src.spec().clone(), linear_rgb, &policy, None)?;
+    let base_plan = RowPlan::build(base_src.format().clone(), linear_rgb.clone(), &policy, None)?;
+    let alt_plan = RowPlan::build(alternate_src.format().clone(), linear_rgb, &policy, None)?;
 
     let scale = u32::from(scale_factor.max(1));
     let gm_w = w.div_ceil(scale);

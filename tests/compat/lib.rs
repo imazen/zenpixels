@@ -1,6 +1,6 @@
 #![deny(deprecated)]
 
-use zenpixels::{ImageSpec, PixelBuf};
+use zenpixels::{PixelFormat, PixelBuf};
 #[cfg(test)]
 use zenpixels_convert::{ConvertPolicy, RowPlan};
 
@@ -41,13 +41,13 @@ fn open_backend_traits_keep_external_implementations() {
 
 #[test]
 fn storage_and_prepared_rows_share_one_public_type_graph() {
-    let buffer = PixelBuf::from_vec(vec![0, 127, 255], 1, 1, ImageSpec::rgb8_srgb()).unwrap();
+    let buffer = PixelBuf::from_bytes(vec![0, 127, 255], 1, 1, PixelFormat::RGB8_SRGB).unwrap();
     let ptr = buffer.as_view().row(0).as_ptr();
     let buf = through_conversion_crate(buffer);
     assert_eq!(buf.as_view().row(0).as_ptr(), ptr);
     let plan = RowPlan::build(
-        buf.spec().clone(),
-        ImageSpec::rgba8_srgb(),
+        buf.format(),
+        &zenpixels::formats::RGBA8_SRGB,
         &ConvertPolicy::lossless(),
         None,
     )
@@ -57,15 +57,15 @@ fn storage_and_prepared_rows_share_one_public_type_graph() {
         .unwrap();
     assert_eq!(row, [0, 127, 255, 255]);
     let widened = zenpixels_convert::ImagePlan::build(
-        buf.spec().clone(),
-        ImageSpec::rgb16_srgb(),
+        buf.format(),
+        &zenpixels::formats::RGB16_SRGB,
         &ConvertPolicy::lossless(),
         zenpixels_convert::PeakSource::None,
     )
     .unwrap()
     .execute(&buf.as_view())
     .unwrap();
-    assert_eq!(widened.spec(), &ImageSpec::rgb16_srgb());
+    assert_eq!(widened.format(), &PixelFormat::RGB16_SRGB);
 }
 
 #[cfg(feature = "std")]
@@ -78,14 +78,14 @@ fn published_plan_auto_traits_hold() {
 #[cfg(feature = "interop")]
 #[test]
 fn typed_interop_keeps_layout_and_stride() {
-    let buf = PixelBuf::from_pixels(
+    let buf = PixelBuf::from_typed(
         vec![rgb::RGBA::new(1u8, 2, 3, 255); 2],
         2,
         1,
-        ImageSpec::rgba8_srgb(),
+        PixelFormat::RGBA8_SRGB,
     )
     .unwrap();
-    assert_eq!(buf.as_view().try_as_imgref::<rgb::RGBA<u8>>().unwrap().width(), 2);
-    let vec = buf.try_into_pixels::<rgb::RGBA<u8>>().unwrap();
+    assert_eq!(buf.as_view().as_imgref::<rgb::RGBA<u8>>().unwrap().width(), 2);
+    let vec = buf.into_vec::<rgb::RGBA<u8>>().unwrap();
     assert_eq!(vec.len(), 2);
 }

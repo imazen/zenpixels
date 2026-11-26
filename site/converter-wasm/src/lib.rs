@@ -5,7 +5,7 @@ mod storage;
 use serde_json::{Value, json};
 use wasm_bindgen::prelude::*;
 use zenpixels::{
-    AlphaMode, ChannelOrder, ColorSpace, DiffuseWhite, HlgMode, HlgRendering, ImageSpec, Nits,
+    AlphaMode, ChannelOrder, ColorSpace, DiffuseWhite, HlgMode, HlgRendering, PixelFormat, Nits,
     PixelBuf, Primaries, SampleLayout, SampleType, SignalRange, Transfer,
 };
 use zenpixels_convert::{AlphaPolicy, ConvertPolicy, DepthPolicy, LumaCoefficients, RowPlan};
@@ -92,7 +92,7 @@ fn luma(v: &Value) -> Result<LumaCoefficients, String> {
     }
 }
 
-fn spec_from_json(v: &Value) -> Result<ImageSpec, String> {
+fn spec_from_json(v: &Value) -> Result<PixelFormat, String> {
     let alpha_kind = field(v, "alphaKind")?;
     let is_pad = alpha_kind == "pad";
     let alpha_mode = match alpha_kind {
@@ -139,7 +139,7 @@ fn spec_from_json(v: &Value) -> Result<ImageSpec, String> {
         },
         _ => return Err("Unsupported channel order".into()),
     };
-    let spec = ImageSpec::new(layout, color);
+    let spec = PixelFormat::new(layout, color);
     spec.validate().map_err(|e| e.to_string())?;
     Ok(spec)
 }

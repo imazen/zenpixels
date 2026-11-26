@@ -18,11 +18,11 @@ use alloc::sync::Arc;
 #[cfg(feature = "perceptual")]
 use zenpixels::PerceptualSpace;
 use zenpixels::{
-    AlphaMode, BitPacking, ChannelOrder, ColorSpace, HlgMode, ImageSpec, Primaries, SampleLayout,
+    AlphaMode, BitPacking, ChannelOrder, ColorSpace, HlgMode, PixelFormat, Primaries, SampleLayout,
     SampleType, SignalRange, Transfer,
 };
 
-use crate::accel::Accelerators;
+use crate::accelerators::Accelerators;
 #[cfg(feature = "hdr-transfers")]
 use crate::hlg_render::PreparedHlg;
 use crate::policy::{DepthPolicy, GamutPolicy, LumaCoefficients, LumaDomain};
@@ -1051,8 +1051,8 @@ pub(crate) enum FastRow {
 /// Detect a direct contiguous single-stage row fast path (or fused U8 sRGB-TRC 3×3 matrix path).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn detect_fast_row(
-    src: &ImageSpec,
-    dst: &ImageSpec,
+    src: &PixelFormat,
+    dst: &PixelFormat,
     policy_depth: DepthPolicy,
     gamut_policy: GamutPolicy,
     allow_approximate: bool,
@@ -3176,8 +3176,8 @@ fn alpha_compatible_for_byte_fast_path(
 /// `src_stored_alpha_max` must be `true` ONLY when stored alpha bytes are proven to equal channel
 /// maximum (i.e. `SampleFacts::all_opaque`), NOT merely because `AlphaMode::Opaque` is declared.
 pub(crate) fn detect_byte_fast_path(
-    src: &ImageSpec,
-    dst: &ImageSpec,
+    src: &PixelFormat,
+    dst: &PixelFormat,
     policy_depth: DepthPolicy,
     luma: LumaCoefficients,
     luma_domain: LumaDomain,

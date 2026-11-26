@@ -4,7 +4,7 @@
 //! clear them on every `&mut` borrow so stale bounds can never mislead SIMD fast
 //! paths or lossless negotiation.
 
-use crate::color::{AlphaMode, ColorSpace, ImageSpec, SignalRange};
+use crate::color::{AlphaMode, ColorSpace, PixelFormat, SignalRange};
 use crate::layout::SampleType;
 pub use crate::sample::ExactDepth;
 
@@ -192,11 +192,13 @@ impl SampleFacts {
         self
     }
 
-    /// Attach optional proven [`ExactDepth`].
+    /// Attach (or clear with `None`) proven [`ExactDepth`].
+    ///
+    /// Accepts either [`ExactDepth`] directly or [`Option<ExactDepth>`].
     #[inline]
     #[must_use]
-    pub const fn with_depth_opt(mut self, depth: Option<ExactDepth>) -> Self {
-        self.depth = depth;
+    pub fn with_depth(mut self, depth: impl Into<Option<ExactDepth>>) -> Self {
+        self.depth = depth.into();
         self
     }
 
@@ -204,7 +206,7 @@ impl SampleFacts {
     /// and [`AlphaMode::Opaque`] alpha slots initialized to channel maximum).
     #[inline]
     #[must_use]
-    pub const fn for_zeroed_spec(spec: &ImageSpec) -> Self {
+    pub const fn for_zeroed_format(spec: &PixelFormat) -> Self {
         let layout = spec.layout;
         let sample = layout.sample;
         let alpha_mode = spec.color.alpha();
@@ -268,7 +270,7 @@ impl SampleFacts {
     /// (color channels filled to reference white and any alpha slot filled to channel maximum).
     #[inline]
     #[must_use]
-    pub const fn for_white_spec(spec: &ImageSpec) -> Self {
+    pub const fn for_white_format(spec: &PixelFormat) -> Self {
         let layout = spec.layout;
         let sample = layout.sample;
         let all_opaque = true;
@@ -355,14 +357,6 @@ impl SampleFacts {
             all_grayscale: false,
             binary_alpha: false,
         }
-    }
-
-    /// Attach proven [`ExactDepth`].
-    #[inline]
-    #[must_use]
-    pub const fn with_depth(mut self, depth: ExactDepth) -> Self {
-        self.depth = Some(depth);
-        self
     }
 
     /// Attach proven `all_opaque` flag (also implies `binary_alpha` when `true`).

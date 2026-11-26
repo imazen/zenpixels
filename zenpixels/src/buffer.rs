@@ -20,12 +20,12 @@ use whereat::At;
 
 use crate::cicp::MatrixCoefficients;
 use crate::color::{
-    AlphaMode, ColorError, ColorOrigin, ColorSpace, GainMapMetadata, HdrMetadata, ImageSpec,
-    SignalRange, SpecCow,
+    AlphaMode, ColorError, ColorOrigin, ColorSpace, FormatCow, GainMapMetadata, HdrMetadata,
+    PixelFormat, SignalRange,
 };
 use crate::facts::{FloatFacts, SampleFacts};
 use crate::layout::{
-    BitPacking, ChannelOrder, InteropTarget, LayoutError, PlaneRole, PlaneSpec, RowAlign,
+    BitPacking, ChannelOrder, InteropTarget, LayoutError, PlaneFormat, PlaneRole, RowAlign,
     SampleLayout, SampleStride, SampleType,
 };
 use crate::orientation::Orientation;
@@ -199,7 +199,7 @@ pub enum BufFill {
 #[non_exhaustive]
 pub enum BufferError {
     /// Image specification failed validation.
-    InvalidSpec(ColorError),
+    InvalidFormat(ColorError),
     /// Layout or stride calculation error.
     InvalidLayout(LayoutError),
     /// Base pointer or row stride does not satisfy the sample or pixel alignment.
@@ -231,7 +231,7 @@ pub enum BufferError {
 
 impl From<ColorError> for BufferError {
     fn from(e: ColorError) -> Self {
-        Self::InvalidSpec(e)
+        Self::InvalidFormat(e)
     }
 }
 
@@ -250,7 +250,7 @@ impl From<StorageError> for BufferError {
 impl fmt::Display for BufferError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidSpec(e) => e.fmt(f),
+            Self::InvalidFormat(e) => e.fmt(f),
             Self::InvalidLayout(e) => e.fmt(f),
             Self::AlignmentViolation => f.write_str("pointer or stride violates sample alignment"),
             Self::InsufficientData => f.write_str("buffer is smaller than required image extent"),
@@ -309,10 +309,10 @@ fn validate_geometry(
     width: u32,
     rows: u32,
     stride: usize,
-    spec: &ImageSpec,
+    spec: &PixelFormat,
 ) -> Result<(usize, usize), At<BufferError>> {
     spec.validate()
-        .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
+        .map_err(|e| whereat::at!(BufferError::InvalidFormat(*e.error())))?;
     if width == 0 || rows == 0 {
         return Err(err_at(BufferError::InvalidDimensions));
     }
@@ -336,7 +336,7 @@ fn validate_geometry(
 
 /// Fill the alpha channel of every active pixel to its canonical maximum value
 /// when `spec.color.alpha() == AlphaMode::Opaque`.
-fn fill_opaque_alpha(bytes: &mut [u8], width: u32, height: u32, stride: usize, spec: &ImageSpec) {
+fn fill_opaque_alpha(bytes: &mut [u8], width: u32, height: u32, stride: usize, spec: &PixelFormat) {
     if spec.color.alpha() != AlphaMode::Opaque || !spec.layout.order.has_alpha_slot() {
         return;
     }
@@ -428,7 +428,7 @@ fn fill_alpha_max_unconditional(
     if !layout.order.has_alpha_slot() {
         return;
     }
-    let tmp_spec = ImageSpec::new(
+    let tmp_spec = PixelFormat::new(
         layout,
         ColorSpace::Untagged {
             channels: layout.channels() as u8,
@@ -518,7 +518,7 @@ fn check_alpha_all_max(
 }
 
 /// Fill every active pixel with reference white (and channel-maximum alpha on any alpha slot).
-fn fill_white_pixels(bytes: &mut [u8], width: u32, height: u32, stride: usize, spec: &ImageSpec) {
+fn fill_white_pixels(bytes: &mut [u8], width: u32, height: u32, stride: usize, spec: &PixelFormat) {
     let layout = spec.layout;
     let bpp = layout.bytes_per_pixel();
     let channels = layout.order.channels();
@@ -725,7 +725,7 @@ pub struct PixelView<'a> {
     width: u32,
     rows: u32,
     stride: usize,
-    spec: SpecCow<'a>,
+    spec: FormatCow<'a>,
     facts: SampleFacts,
     hdr: Option<Arc<HdrMetadata>>,
     origin: Option<&'a ColorOrigin>,
@@ -735,10 +735,10 @@ pub struct PixelView<'a> {
 impl<'a> PixelView<'a> {
     /// Borrow strided bytes with checked dimensions, alignment, and length (**zero heap allocation**).
     ///
-    /// Pass [`&specs::RGB8_SRGB`](crate::specs::RGB8_SRGB) (or any `crate::specs::*` preset) or a borrowed
-    /// `&'a ImageSpec`. If a view genuinely needs to own a dynamically constructed [`ImageSpec`],
-    /// use [`new_with_spec_cow`](Self::new_with_spec_cow) with [`SpecCow::from_owned`] or
-    /// [`SpecCow::from_arc`].
+    /// Pass [`&formats::RGB8_SRGB`](crate::formats::RGB8_SRGB) (or any `crate::formats::*` preset) or a borrowed
+    /// `&'a PixelFormat`. If a view genuinely needs to own a dynamically constructed [`PixelFormat`],
+    /// use [`new_with_format_cow`](Self::new_with_format_cow) with [`FormatCow::from_owned`] or
+    /// [`FormatCow::from_arc`].
     ///
     /// Trims any trailing bytes beyond the active `(rows - 1) * stride + row_bytes`
     /// extent so zero-copy interop bridges (`as_imgref`) never touch trailing slop.
@@ -747,22 +747,22 @@ impl<'a> PixelView<'a> {
         width: u32,
         rows: u32,
         stride: usize,
-        spec: &'a ImageSpec,
+        spec: &'a PixelFormat,
     ) -> Result<Self, At<BufferError>> {
-        Self::new_with_spec_cow(data, width, rows, stride, SpecCow::Borrowed(spec))
+        Self::new_with_format_cow(data, width, rows, stride, FormatCow::Borrowed(spec))
     }
 
-    /// Borrow strided bytes with an explicit [`SpecCow<'a>`] (borrowed `&'a ImageSpec` or
-    /// shared `Arc<ImageSpec>` via [`SpecCow::from_owned`] / [`SpecCow::from_format`] /
-    /// [`SpecCow::from_arc`]).
+    /// Borrow strided bytes with an explicit [`FormatCow<'a>`] (borrowed `&'a PixelFormat` or
+    /// shared `Arc<PixelFormat>` via [`FormatCow::from_owned`] / [`FormatCow::from_parametric`] /
+    /// [`FormatCow::from_arc`]).
     ///
     /// Trims any trailing bytes beyond the active `(rows - 1) * stride + row_bytes` extent.
-    pub fn new_with_spec_cow(
+    pub fn new_with_format_cow(
         data: &'a [u8],
         width: u32,
         rows: u32,
         stride: usize,
-        spec: SpecCow<'a>,
+        spec: FormatCow<'a>,
     ) -> Result<Self, At<BufferError>> {
         let (_rb, req) = validate_geometry(
             data.len(),
@@ -770,7 +770,7 @@ impl<'a> PixelView<'a> {
             width,
             rows,
             stride,
-            spec.as_spec(),
+            spec.as_format(),
         )?;
         Ok(Self {
             data: &data[..req],
@@ -790,7 +790,7 @@ impl<'a> PixelView<'a> {
         data: &'a [u8],
         width: u32,
         rows: u32,
-        spec: &'a ImageSpec,
+        spec: &'a PixelFormat,
     ) -> Result<Self, At<BufferError>> {
         let stride = (width as usize)
             .checked_mul(spec.layout.bytes_per_pixel())
@@ -807,7 +807,7 @@ impl<'a> PixelView<'a> {
         pixels: &'a [P],
         width: u32,
         rows: u32,
-        spec: &'a ImageSpec,
+        spec: &'a PixelFormat,
     ) -> Result<Self, At<BufferError>> {
         if !P::matches_layout(spec.layout) {
             return Err(err_at(BufferError::IncompatibleLayout).at_string(|| {
@@ -826,7 +826,7 @@ impl<'a> PixelView<'a> {
         samples: &'a [S],
         width: u32,
         rows: u32,
-        spec: &'a ImageSpec,
+        spec: &'a PixelFormat,
     ) -> Result<Self, At<BufferError>> {
         if spec.layout.sample != S::SAMPLE_TYPE {
             return Err(err_at(BufferError::IncompatibleLayout).at_string(|| {
@@ -843,8 +843,8 @@ impl<'a> PixelView<'a> {
 
     /// Borrow a tightly packed `rgb` pixel slice (`&[rgb::Rgb<u8>]`, etc.) zero-copy.
     ///
-    /// Uses a zero-allocation `&'static ImageSpec` for all standard built-in presets, and
-    /// allocates an `Arc<ImageSpec>` only for custom/ICC color spaces.
+    /// Uses a zero-allocation `&'static PixelFormat` for all standard built-in presets, and
+    /// allocates an `Arc<PixelFormat>` only for custom/ICC color spaces.
     #[cfg(feature = "rgb")]
     pub fn from_pixels<P: crate::interop::PixelType>(
         pixels: &'a [P],
@@ -855,12 +855,12 @@ impl<'a> PixelView<'a> {
         let stride = (width as usize)
             .checked_mul(P::LAYOUT.bytes_per_pixel())
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        Self::new_with_spec_cow(
+        Self::new_with_format_cow(
             bytemuck::cast_slice(pixels),
             width,
             rows,
             stride,
-            SpecCow::from_owned(ImageSpec::new(P::LAYOUT, color)),
+            FormatCow::from_owned(PixelFormat::new(P::LAYOUT, color)),
         )
     }
 
@@ -870,7 +870,7 @@ impl<'a> PixelView<'a> {
         pixels: &'a [P],
         width: u32,
         rows: u32,
-        spec: &'a ImageSpec,
+        spec: &'a PixelFormat,
     ) -> Result<Self, At<BufferError>> {
         Self::from_bytes(bytemuck::cast_slice(pixels), width, rows, spec)
     }
@@ -907,14 +907,14 @@ impl<'a> PixelView<'a> {
     #[inline]
     #[must_use]
     pub fn row_bytes(&self) -> usize {
-        (self.width as usize) * self.spec.as_spec().layout.bytes_per_pixel()
+        (self.width as usize) * self.spec.as_format().layout.bytes_per_pixel()
     }
 
     /// Authoritative image specification (`layout` + `color`).
     #[inline]
     #[must_use]
-    pub fn spec(&self) -> &ImageSpec {
-        self.spec.as_spec()
+    pub fn format(&self) -> &PixelFormat {
+        self.spec.as_format()
     }
 
     /// Proven sample facts attached to this view.
@@ -1145,7 +1145,7 @@ impl<'a> PixelView<'a> {
             width: self.width,
             height: self.rows,
             stride: rb,
-            spec: self.spec.as_spec().clone(),
+            spec: self.spec.as_format().clone(),
             facts: self.facts,
             hdr: self.hdr.clone(),
             origin: self.origin.cloned().and_then(box_origin),
@@ -1183,7 +1183,7 @@ pub struct PixelViewMut<'a> {
     width: u32,
     rows: u32,
     stride: usize,
-    spec: SpecCow<'a>,
+    spec: FormatCow<'a>,
     hdr: Option<Arc<HdrMetadata>>,
     orientation: Orientation,
 }
@@ -1191,27 +1191,27 @@ pub struct PixelViewMut<'a> {
 impl<'a> PixelViewMut<'a> {
     /// Borrow mutable strided bytes with checked dimensions, alignment, and length (**zero heap allocation**).
     ///
-    /// Pass [`&specs::RGB8_SRGB`](crate::specs::RGB8_SRGB) (or any `crate::specs::*` preset) or a borrowed
-    /// `&'a ImageSpec`. If a view genuinely needs to own a dynamically constructed [`ImageSpec`],
-    /// use [`new_with_spec_cow`](Self::new_with_spec_cow) with [`SpecCow::from_owned`] or
-    /// [`SpecCow::from_arc`].
+    /// Pass [`&formats::RGB8_SRGB`](crate::formats::RGB8_SRGB) (or any `crate::formats::*` preset) or a borrowed
+    /// `&'a PixelFormat`. If a view genuinely needs to own a dynamically constructed [`PixelFormat`],
+    /// use [`new_with_format_cow`](Self::new_with_format_cow) with [`FormatCow::from_owned`] or
+    /// [`FormatCow::from_arc`].
     pub fn new(
         data: &'a mut [u8],
         width: u32,
         rows: u32,
         stride: usize,
-        spec: &'a ImageSpec,
+        spec: &'a PixelFormat,
     ) -> Result<Self, At<BufferError>> {
-        Self::new_with_spec_cow(data, width, rows, stride, SpecCow::Borrowed(spec))
+        Self::new_with_format_cow(data, width, rows, stride, FormatCow::Borrowed(spec))
     }
 
-    /// Borrow mutable strided bytes with an explicit [`SpecCow<'a>`].
-    pub fn new_with_spec_cow(
+    /// Borrow mutable strided bytes with an explicit [`FormatCow<'a>`].
+    pub fn new_with_format_cow(
         data: &'a mut [u8],
         width: u32,
         rows: u32,
         stride: usize,
-        spec: SpecCow<'a>,
+        spec: FormatCow<'a>,
     ) -> Result<Self, At<BufferError>> {
         let (_rb, req) = validate_geometry(
             data.len(),
@@ -1219,7 +1219,7 @@ impl<'a> PixelViewMut<'a> {
             width,
             rows,
             stride,
-            spec.as_spec(),
+            spec.as_format(),
         )?;
         Ok(Self {
             data: &mut data[..req],
@@ -1316,14 +1316,14 @@ impl<'a> PixelViewMut<'a> {
     #[inline]
     #[must_use]
     pub fn row_bytes(&self) -> usize {
-        (self.width as usize) * self.spec.as_spec().layout.bytes_per_pixel()
+        (self.width as usize) * self.spec.as_format().layout.bytes_per_pixel()
     }
 
     /// Authoritative image specification.
     #[inline]
     #[must_use]
-    pub fn spec(&self) -> &ImageSpec {
-        self.spec.as_spec()
+    pub fn format(&self) -> &PixelFormat {
+        self.spec.as_format()
     }
 
     /// Mutable active bytes of row `y`.
@@ -1508,8 +1508,8 @@ pub struct PixelBufParts {
     pub height: u32,
     /// Byte stride between rows.
     pub stride: usize,
-    /// Image specification.
-    pub spec: ImageSpec,
+    /// Pixel format (layout + color space).
+    pub format: PixelFormat,
     /// Cached sample facts.
     pub facts: SampleFacts,
     /// Descriptive HDR metadata.
@@ -1531,7 +1531,7 @@ pub struct PixelBuf {
     width: u32,
     height: u32,
     stride: usize,
-    spec: ImageSpec,
+    spec: PixelFormat,
     facts: SampleFacts,
     hdr: Option<Arc<HdrMetadata>>,
     origin: Option<Arc<ColorOrigin>>,
@@ -1634,7 +1634,7 @@ impl PixelBuf {
     pub fn new(
         width: u32,
         height: u32,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
     ) -> Result<Self, At<BufferError>> {
         Self::new_with_fill(width, height, spec, RowAlign::Tight, BufFill::Black)
     }
@@ -1644,7 +1644,7 @@ impl PixelBuf {
     pub fn new_white(
         width: u32,
         height: u32,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
     ) -> Result<Self, At<BufferError>> {
         Self::new_with_fill(width, height, spec, RowAlign::Tight, BufFill::White)
     }
@@ -1659,7 +1659,7 @@ impl PixelBuf {
     pub fn new_aligned(
         width: u32,
         height: u32,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
         align: RowAlign,
     ) -> Result<Self, At<BufferError>> {
         Self::new_with_fill(width, height, spec, align, BufFill::Black)
@@ -1670,13 +1670,13 @@ impl PixelBuf {
     pub fn new_with_fill(
         width: u32,
         height: u32,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
         align: RowAlign,
         fill: BufFill,
     ) -> Result<Self, At<BufferError>> {
         let spec = spec.into();
         spec.validate()
-            .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
+            .map_err(|e| whereat::at!(BufferError::InvalidFormat(*e.error())))?;
         if width == 0 || height == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
@@ -1703,11 +1703,11 @@ impl PixelBuf {
                 if spec.color.alpha() == AlphaMode::Opaque {
                     fill_opaque_alpha(storage.as_bytes_mut(), width, height, stride, &spec);
                 }
-                SampleFacts::for_zeroed_spec(&spec)
+                SampleFacts::for_zeroed_format(&spec)
             }
             BufFill::White => {
                 fill_white_pixels(storage.as_bytes_mut(), width, height, stride, &spec);
-                SampleFacts::for_white_spec(&spec)
+                SampleFacts::for_white_format(&spec)
             }
         };
         Ok(Self {
@@ -1736,7 +1736,7 @@ impl PixelBuf {
     pub fn new_zeroed(
         width: u32,
         height: u32,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
     ) -> Result<Self, At<BufferError>> {
         Self::new_zeroed_aligned(width, height, spec, RowAlign::Tight)
     }
@@ -1746,12 +1746,12 @@ impl PixelBuf {
     pub fn new_zeroed_aligned(
         width: u32,
         height: u32,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
         align: RowAlign,
     ) -> Result<Self, At<BufferError>> {
         let spec = spec.into();
         spec.validate()
-            .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
+            .map_err(|e| whereat::at!(BufferError::InvalidFormat(*e.error())))?;
         if width == 0 || height == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
@@ -1776,7 +1776,7 @@ impl PixelBuf {
             _ => PixelStorage::zeroed(spec.layout.sample, total),
         }
         .map_err(|e| err_at(e.into()))?;
-        let facts = SampleFacts::for_zeroed_spec(&spec);
+        let facts = SampleFacts::for_zeroed_format(&spec);
         Ok(Self {
             storage,
             offset: 0,
@@ -1795,7 +1795,7 @@ impl PixelBuf {
     pub fn new_for_interop(
         width: u32,
         height: u32,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
         target: InteropTarget,
     ) -> Result<Self, At<BufferError>> {
         let spec = spec.into();
@@ -1817,7 +1817,7 @@ impl PixelBuf {
         bytes: Vec<u8>,
         width: u32,
         height: u32,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
     ) -> Result<Self, At<BufferError>> {
         Self::from_bytes_recover(bytes, width, height, spec).map_err(|(e, _)| e)
     }
@@ -1829,11 +1829,11 @@ impl PixelBuf {
         bytes: Vec<u8>,
         width: u32,
         height: u32,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
     ) -> Result<Self, (At<BufferError>, Vec<u8>)> {
         let spec = spec.into();
         if let Err(e) = spec.validate() {
-            return Err((whereat::at!(BufferError::InvalidSpec(*e.error())), bytes));
+            return Err((whereat::at!(BufferError::InvalidFormat(*e.error())), bytes));
         }
         if width == 0 || height == 0 {
             return Err((err_at(BufferError::InvalidDimensions), bytes));
@@ -1892,7 +1892,7 @@ impl PixelBuf {
         pixels: Vec<P>,
         width: u32,
         height: u32,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
     ) -> Result<Self, At<BufferError>> {
         Self::from_typed_recover(pixels, width, height, spec).map_err(|(e, _)| e)
     }
@@ -1904,7 +1904,7 @@ impl PixelBuf {
         pixels: Vec<P>,
         width: u32,
         height: u32,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
     ) -> Result<Self, (At<BufferError>, Vec<P>)> {
         let spec = spec.into();
         if !P::matches_layout(spec.layout) {
@@ -1920,7 +1920,7 @@ impl PixelBuf {
             ));
         }
         if let Err(e) = spec.validate() {
-            return Err((whereat::at!(BufferError::InvalidSpec(*e.error())), pixels));
+            return Err((whereat::at!(BufferError::InvalidFormat(*e.error())), pixels));
         }
         if width == 0 || height == 0 {
             return Err((err_at(BufferError::InvalidDimensions), pixels));
@@ -1971,7 +1971,7 @@ impl PixelBuf {
         samples: Vec<S>,
         width: u32,
         height: u32,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
     ) -> Result<Self, At<BufferError>> {
         let spec = spec.into();
         if spec.layout.sample != S::SAMPLE_TYPE {
@@ -1995,7 +1995,7 @@ impl PixelBuf {
         height: u32,
         color: crate::ColorSpace,
     ) -> Result<Self, At<BufferError>> {
-        Self::from_raw_pod(pixels, width, height, ImageSpec::new(P::LAYOUT, color))
+        Self::from_raw_pod(pixels, width, height, PixelFormat::new(P::LAYOUT, color))
     }
 
     /// Explicitly reinterpret any tightly packed `Vec<P: bytemuck::Pod>` in native endianness
@@ -2004,11 +2004,11 @@ impl PixelBuf {
         pixels: Vec<P>,
         width: u32,
         height: u32,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
     ) -> Result<Self, At<BufferError>> {
         let spec = spec.into();
         spec.validate()
-            .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
+            .map_err(|e| whereat::at!(BufferError::InvalidFormat(*e.error())))?;
         if width == 0 || height == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
@@ -2058,7 +2058,7 @@ impl PixelBuf {
         width: u32,
         height: u32,
         stride: usize,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
     ) -> Result<Self, At<BufferError>> {
         let spec = spec.into();
         let bytes = storage.as_bytes();
@@ -2105,7 +2105,7 @@ impl PixelBuf {
             parts.width,
             parts.height,
             parts.stride,
-            &parts.spec,
+            &parts.format,
         ) {
             return Err((e, parts));
         }
@@ -2115,7 +2115,7 @@ impl PixelBuf {
             width: parts.width,
             height: parts.height,
             stride: parts.stride,
-            spec: parts.spec,
+            spec: parts.format,
             facts: parts.facts,
             hdr: box_hdr(parts.hdr),
             origin: box_origin(parts.origin),
@@ -2139,7 +2139,7 @@ impl PixelBuf {
         width: u32,
         height: u32,
         stride: usize,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
     ) -> Result<Self, (At<BufferError>, S)> {
         Self::from_external_with_offset(storage, 0, width, height, stride, spec)
     }
@@ -2154,7 +2154,7 @@ impl PixelBuf {
         width: u32,
         height: u32,
         stride: usize,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
     ) -> Result<Self, (At<BufferError>, S)> {
         let spec = spec.into();
         let check = {
@@ -2195,7 +2195,7 @@ impl PixelBuf {
         width: u32,
         height: u32,
         stride: usize,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
     ) -> Result<Self, (At<BufferError>, S)> {
         Self::from_external_mut_with_offset(storage, 0, width, height, stride, spec)
     }
@@ -2210,7 +2210,7 @@ impl PixelBuf {
         width: u32,
         height: u32,
         stride: usize,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
     ) -> Result<Self, (At<BufferError>, S)> {
         let spec = spec.into();
         let check = {
@@ -2371,7 +2371,7 @@ impl PixelBuf {
     /// Authoritative image specification.
     #[inline]
     #[must_use]
-    pub fn spec(&self) -> &ImageSpec {
+    pub fn format(&self) -> &PixelFormat {
         &self.spec
     }
 
@@ -2382,7 +2382,7 @@ impl PixelBuf {
     /// [`reinterpret_bytes`](Self::reinterpret_bytes) for deliberate raw-byte reinterpretation
     /// across sample types). Clears cached [`SampleFacts`] and resets [`ColorOrigin`] to
     /// [`ColorOrigin::assumed`] whenever `spec.color` changes.
-    pub fn relabel_spec(mut self, spec: impl Into<ImageSpec>) -> Result<Self, At<BufferError>> {
+    pub fn relabel_format(mut self, spec: impl Into<PixelFormat>) -> Result<Self, At<BufferError>> {
         let spec = spec.into();
         if spec.layout.sample != self.spec.layout.sample
             || spec.layout.packing != self.spec.layout.packing
@@ -2415,10 +2415,10 @@ impl PixelBuf {
     /// [`ColorOrigin`] to [`ColorOrigin::assumed`] when `color` changes and clears cached
     /// [`SampleFacts`] when signal range, alpha mode, or color model changes.
     pub fn relabel_color(mut self, color: crate::ColorSpace) -> Result<Self, At<BufferError>> {
-        let new_spec = ImageSpec::new(self.spec.layout, color);
+        let new_spec = PixelFormat::new(self.spec.layout, color);
         new_spec
             .validate()
-            .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
+            .map_err(|e| whereat::at!(BufferError::InvalidFormat(*e.error())))?;
         let color_changed = new_spec.color != self.spec.color;
         let same_facts_domain = new_spec.color.range() == self.spec.color.range()
             && new_spec.color.alpha() == self.spec.color.alpha()
@@ -2434,7 +2434,7 @@ impl PixelBuf {
         Ok(self)
     }
 
-    /// Deliberately reinterpret the raw pixel bytes under a new [`ImageSpec`] with identical
+    /// Deliberately reinterpret the raw pixel bytes under a new [`PixelFormat`] with identical
     /// `bytes_per_pixel` and satisfied sample alignment (permits changing `sample` type and
     /// `packing`, e.g. `U8` ↔ `I8` or `U16` ↔ `F16`).
     ///
@@ -2442,7 +2442,7 @@ impl PixelBuf {
     /// and [`HdrMetadata`].
     pub fn reinterpret_bytes(
         mut self,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
     ) -> Result<Self, At<BufferError>> {
         let spec = spec.into();
         if spec.layout.bytes_per_pixel() != self.spec.layout.bytes_per_pixel() {
@@ -2479,7 +2479,7 @@ impl PixelBuf {
         let new_spec = self.spec.clone().with_alpha(AlphaMode::Opaque);
         new_spec
             .validate()
-            .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
+            .map_err(|e| whereat::at!(BufferError::InvalidFormat(*e.error())))?;
         let bytes = &self.storage.as_bytes()[self.offset..];
         if !check_alpha_all_max(
             bytes,
@@ -2506,7 +2506,7 @@ impl PixelBuf {
         let new_spec = self.spec.clone().with_alpha(AlphaMode::Opaque);
         new_spec
             .validate()
-            .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
+            .map_err(|e| whereat::at!(BufferError::InvalidFormat(*e.error())))?;
         self.make_mut()?;
         let layout = self.spec.layout;
         let off = self.offset;
@@ -2539,7 +2539,7 @@ impl PixelBuf {
         let new_spec = self.spec.clone().with_alpha(AlphaMode::Opaque);
         new_spec
             .validate()
-            .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
+            .map_err(|e| whereat::at!(BufferError::InvalidFormat(*e.error())))?;
         self.spec = new_spec;
         self.facts.all_opaque = true;
         self.facts.binary_alpha = true;
@@ -2682,7 +2682,7 @@ impl PixelBuf {
             width: self.width,
             rows: self.height,
             stride: self.stride,
-            spec: SpecCow::Borrowed(&self.spec),
+            spec: FormatCow::Borrowed(&self.spec),
             facts: self.facts,
             hdr: self.hdr.clone(),
             origin: Some(origin_ref(&self.origin)),
@@ -2706,7 +2706,7 @@ impl PixelBuf {
             width: self.width,
             rows: self.height,
             stride: self.stride,
-            spec: SpecCow::Borrowed(&self.spec),
+            spec: FormatCow::Borrowed(&self.spec),
             hdr: self.hdr.clone(),
             orientation: self.orientation,
         })
@@ -2820,9 +2820,9 @@ impl PixelBuf {
             u32,
             u32,
             usize,
-            &ImageSpec,
+            &PixelFormat,
             &ColorOrigin,
-        ) -> Option<(usize, ImageSpec, ColorOrigin, SampleFacts)>,
+        ) -> Option<(usize, PixelFormat, ColorOrigin, SampleFacts)>,
     {
         self.make_mut()?;
         let active = &mut self.storage.as_bytes_mut()[self.offset..];
@@ -2838,7 +2838,7 @@ impl PixelBuf {
         };
         new_spec
             .validate()
-            .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
+            .map_err(|e| whereat::at!(BufferError::InvalidFormat(*e.error())))?;
         let new_bpp = new_spec.layout.bytes_per_pixel();
         let new_rb = (self.width as usize)
             .checked_mul(new_bpp)
@@ -2933,10 +2933,10 @@ impl PixelBuf {
                     order: target_order,
                     ..self.spec.layout
                 };
-                let new_spec = ImageSpec::new(new_layout, self.spec.color.clone());
+                let new_spec = PixelFormat::new(new_layout, self.spec.color.clone());
                 new_spec
                     .validate()
-                    .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
+                    .map_err(|e| whereat::at!(BufferError::InvalidFormat(*e.error())))?;
                 self.make_mut()?;
                 let bpp = new_layout.bytes_per_pixel();
                 let rb = (self.width as usize) * bpp;
@@ -2977,10 +2977,10 @@ impl PixelBuf {
                     order: target_order,
                     ..self.spec.layout
                 };
-                let new_spec = ImageSpec::new(new_layout, new_color);
+                let new_spec = PixelFormat::new(new_layout, new_color);
                 new_spec
                     .validate()
-                    .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
+                    .map_err(|e| whereat::at!(BufferError::InvalidFormat(*e.error())))?;
                 self.make_mut()?;
                 let swap_rb = matches!(
                     (src_order, target_order),
@@ -3112,7 +3112,7 @@ impl PixelBuf {
             width: self.width,
             height: self.height,
             stride: self.stride,
-            spec: self.spec,
+            format: self.spec,
             facts: self.facts,
             hdr: unbox_hdr(&self.hdr),
             origin: unbox_origin(self.origin),
@@ -3184,7 +3184,7 @@ pub struct BandedBuf {
     height: u32,
     band_rows: u32,
     bands: Vec<PixelBuf>,
-    spec: ImageSpec,
+    spec: PixelFormat,
     facts: SampleFacts,
     hdr: Option<Arc<HdrMetadata>>,
     origin: Option<Arc<ColorOrigin>>,
@@ -3201,7 +3201,7 @@ impl BandedBuf {
     pub fn new(
         width: u32,
         height: u32,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
         max_band_bytes: usize,
     ) -> Result<Self, At<BufferError>> {
         Self::new_aligned(width, height, spec, max_band_bytes, RowAlign::Tight)
@@ -3211,13 +3211,13 @@ impl BandedBuf {
     pub fn new_aligned(
         width: u32,
         height: u32,
-        spec: impl Into<ImageSpec>,
+        spec: impl Into<PixelFormat>,
         max_band_bytes: usize,
         align: RowAlign,
     ) -> Result<Self, At<BufferError>> {
         let spec = spec.into();
         spec.validate()
-            .map_err(|e| whereat::at!(BufferError::InvalidSpec(*e.error())))?;
+            .map_err(|e| whereat::at!(BufferError::InvalidFormat(*e.error())))?;
         if width == 0 || height == 0 || max_band_bytes == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
@@ -3237,7 +3237,7 @@ impl BandedBuf {
             bands.push(PixelBuf::new_aligned(width, h, spec.clone(), align)?);
             y += h;
         }
-        let facts = SampleFacts::for_zeroed_spec(&spec);
+        let facts = SampleFacts::for_zeroed_format(&spec);
         Ok(Self {
             width,
             height,
@@ -3265,7 +3265,7 @@ impl BandedBuf {
             .max(1)
             .min(height as usize) as u32;
         if height <= rows_per_band {
-            let spec = buf.spec().clone();
+            let spec = buf.format().clone();
             let facts = buf.facts();
             let hdr = buf.hdr.clone();
             let origin = buf.origin.clone();
@@ -3319,7 +3319,7 @@ impl BandedBuf {
             height,
             band_rows: rows_per_band,
             bands,
-            spec: view.spec().clone(),
+            spec: view.format().clone(),
             facts: view.facts(),
             hdr: view.hdr.clone(),
             origin,
@@ -3462,7 +3462,7 @@ impl BandedBuf {
     /// Image specification.
     #[inline]
     #[must_use]
-    pub fn spec(&self) -> &ImageSpec {
+    pub fn format(&self) -> &PixelFormat {
         &self.spec
     }
 
@@ -3590,7 +3590,7 @@ impl BandedBuf {
 /// Owned single plane inside a [`PlanarBuf`] with validated geometry invariants.
 #[derive(Clone, Debug)]
 pub struct PlaneBuf {
-    spec: PlaneSpec,
+    spec: PlaneFormat,
     width: u32,
     height: u32,
     stride: usize,
@@ -3604,7 +3604,7 @@ impl PlaneBuf {
         width: u32,
         height: u32,
         stride: usize,
-        spec: PlaneSpec,
+        spec: PlaneFormat,
     ) -> Result<Self, At<BufferError>> {
         spec.validate().map_err(|e| err_at(e.into()))?;
         if width == 0 || height == 0 {
@@ -3642,7 +3642,7 @@ impl PlaneBuf {
         width: u32,
         height: u32,
         stride: usize,
-        spec: PlaneSpec,
+        spec: PlaneFormat,
     ) -> Result<Self, (At<BufferError>, S)> {
         let check = (|| -> Result<(), At<BufferError>> {
             spec.validate().map_err(|e| err_at(e.into()))?;
@@ -3686,7 +3686,7 @@ impl PlaneBuf {
         width: u32,
         height: u32,
         stride: usize,
-        spec: PlaneSpec,
+        spec: PlaneFormat,
     ) -> Result<Self, (At<BufferError>, S)> {
         let check = (|| -> Result<(), At<BufferError>> {
             spec.validate().map_err(|e| err_at(e.into()))?;
@@ -3777,7 +3777,7 @@ impl PlaneBuf {
     /// Plane specification.
     #[inline]
     #[must_use]
-    pub const fn spec(&self) -> PlaneSpec {
+    pub const fn format(&self) -> PlaneFormat {
         self.spec
     }
 
@@ -3883,7 +3883,7 @@ impl PlaneBuf {
         samples: Vec<S>,
         width: u32,
         height: u32,
-        spec: PlaneSpec,
+        spec: PlaneFormat,
     ) -> Result<Self, At<BufferError>> {
         spec.validate().map_err(|e| err_at(e.into()))?;
         let tight_samples = (width as usize)
@@ -3900,7 +3900,7 @@ impl PlaneBuf {
         width: u32,
         height: u32,
         stride: SampleStride,
-        spec: PlaneSpec,
+        spec: PlaneFormat,
     ) -> Result<Self, At<BufferError>> {
         spec.validate().map_err(|e| err_at(e.into()))?;
         if spec.sample != S::SAMPLE_TYPE || spec.packing.is_packed_word() {
@@ -4127,7 +4127,7 @@ impl PlanarBuf {
     pub const MAX_PLANES: usize = 64;
 
     /// Fallibly allocate a zero-filled multi-plane buffer for `specs` (`1..=64` planes).
-    pub fn new(width: u32, height: u32, specs: &[PlaneSpec]) -> Result<Self, At<BufferError>> {
+    pub fn new(width: u32, height: u32, specs: &[PlaneFormat]) -> Result<Self, At<BufferError>> {
         Self::new_aligned(width, height, specs, RowAlign::Tight)
     }
 
@@ -4136,7 +4136,7 @@ impl PlanarBuf {
     pub fn new_aligned(
         width: u32,
         height: u32,
-        specs: &[PlaneSpec],
+        specs: &[PlaneFormat],
         align: RowAlign,
     ) -> Result<Self, At<BufferError>> {
         if width == 0 || height == 0 || specs.is_empty() || specs.len() > Self::MAX_PLANES {
@@ -4443,7 +4443,7 @@ impl PlanarBuf {
 /// Validated borrowed view of one plane inside a [`PlanarView`].
 #[derive(Clone, Copy, Debug)]
 pub struct PlaneView<'a> {
-    spec: PlaneSpec,
+    spec: PlaneFormat,
     width: u32,
     height: u32,
     stride: usize,
@@ -4452,7 +4452,7 @@ pub struct PlaneView<'a> {
 
 impl<'a> PlaneView<'a> {
     const EMPTY: Self = Self {
-        spec: PlaneSpec::new(crate::PlaneRole::Y, SampleType::U8),
+        spec: PlaneFormat::new(crate::PlaneRole::Y, SampleType::U8),
         width: 0,
         height: 0,
         stride: 0,
@@ -4465,7 +4465,7 @@ impl<'a> PlaneView<'a> {
         width: u32,
         height: u32,
         stride: usize,
-        spec: PlaneSpec,
+        spec: PlaneFormat,
     ) -> Result<Self, At<BufferError>> {
         spec.validate().map_err(|e| err_at(e.into()))?;
         if width == 0 || height == 0 {
@@ -4504,7 +4504,7 @@ impl<'a> PlaneView<'a> {
         samples: &'a [S],
         width: u32,
         height: u32,
-        spec: PlaneSpec,
+        spec: PlaneFormat,
     ) -> Result<Self, At<BufferError>> {
         spec.validate().map_err(|e| err_at(e.into()))?;
         let tight_samples = (width as usize)
@@ -4521,7 +4521,7 @@ impl<'a> PlaneView<'a> {
         width: u32,
         height: u32,
         stride: SampleStride,
-        spec: PlaneSpec,
+        spec: PlaneFormat,
     ) -> Result<Self, At<BufferError>> {
         spec.validate().map_err(|e| err_at(e.into()))?;
         if spec.sample != S::SAMPLE_TYPE || spec.packing.is_packed_word() {
@@ -4543,7 +4543,7 @@ impl<'a> PlaneView<'a> {
     /// Plane specification.
     #[inline]
     #[must_use]
-    pub const fn spec(&self) -> PlaneSpec {
+    pub const fn format(&self) -> PlaneFormat {
         self.spec
     }
 
@@ -4631,7 +4631,7 @@ impl<'a> PlaneView<'a> {
     }
 
     /// Borrow `component` of this plane as a zero-copy [`CodePlane<'a>`] using the
-    /// [`SampleEncoding`] implied by `self.spec()`.
+    /// [`SampleEncoding`] implied by `self.format()`.
     pub fn as_code_plane(self, component: usize) -> Result<CodePlane<'a>, CodePlaneError> {
         let enc = self
             .spec
@@ -4682,7 +4682,7 @@ impl<'a> PlaneView<'a> {
 /// Validated mutable borrowed view of one plane.
 #[derive(Debug)]
 pub struct PlaneViewMut<'a> {
-    spec: PlaneSpec,
+    spec: PlaneFormat,
     width: u32,
     height: u32,
     stride: usize,
@@ -4696,7 +4696,7 @@ impl<'a> PlaneViewMut<'a> {
         width: u32,
         height: u32,
         stride: usize,
-        spec: PlaneSpec,
+        spec: PlaneFormat,
     ) -> Result<Self, At<BufferError>> {
         spec.validate().map_err(|e| err_at(e.into()))?;
         if width == 0 || height == 0 {
@@ -4735,7 +4735,7 @@ impl<'a> PlaneViewMut<'a> {
         samples: &'a mut [S],
         width: u32,
         height: u32,
-        spec: PlaneSpec,
+        spec: PlaneFormat,
     ) -> Result<Self, At<BufferError>> {
         spec.validate().map_err(|e| err_at(e.into()))?;
         let tight_samples = (width as usize)
@@ -4752,7 +4752,7 @@ impl<'a> PlaneViewMut<'a> {
         width: u32,
         height: u32,
         stride: SampleStride,
-        spec: PlaneSpec,
+        spec: PlaneFormat,
     ) -> Result<Self, At<BufferError>> {
         spec.validate().map_err(|e| err_at(e.into()))?;
         if spec.sample != S::SAMPLE_TYPE || spec.packing.is_packed_word() {
@@ -4774,7 +4774,7 @@ impl<'a> PlaneViewMut<'a> {
     /// Plane specification.
     #[inline]
     #[must_use]
-    pub const fn spec(&self) -> PlaneSpec {
+    pub const fn format(&self) -> PlaneFormat {
         self.spec
     }
 
@@ -4879,7 +4879,7 @@ impl<'a> PlaneViewMut<'a> {
     }
 
     /// Convert `component` of this mutable plane into a zero-copy [`CodePlaneMut<'a>`] using
-    /// the [`SampleEncoding`] implied by `self.spec()`.
+    /// the [`SampleEncoding`] implied by `self.format()`.
     pub fn into_code_plane_mut(self, component: usize) -> Result<CodePlaneMut<'a>, CodePlaneError> {
         let enc = self
             .spec
@@ -4999,7 +4999,7 @@ impl<'a> PlaneViewMut<'a> {
 }
 
 fn plane_crop_rect(
-    spec: PlaneSpec,
+    spec: PlaneFormat,
     old_origin: (u32, u32),
     new_origin: (u32, u32),
     w: u32,
@@ -6205,8 +6205,8 @@ impl PlanarBuf {
 // ---------------------------------------------------------------------------
 
 fn validate_dual_layer_specs(
-    base_spec: &ImageSpec,
-    gain_map_spec: &ImageSpec,
+    base_spec: &PixelFormat,
+    gain_map_spec: &PixelFormat,
     metadata: GainMapMetadata,
     alternate_color_space: Option<&crate::ColorSpace>,
 ) -> Result<(), At<BufferError>> {
@@ -6324,8 +6324,8 @@ impl<'a> DualLayerHdrView<'a> {
             ));
         }
         validate_dual_layer_specs(
-            base.spec(),
-            gain_map.spec(),
+            base.format(),
+            gain_map.format(),
             metadata,
             alternate_color_space,
         )?;
@@ -6480,8 +6480,8 @@ impl DualLayerHdrBuf {
             ));
         }
         validate_dual_layer_specs(
-            base.spec(),
-            gain_map.spec(),
+            base.format(),
+            gain_map.format(),
             metadata,
             alternate_color_space.as_ref(),
         )?;
@@ -6516,8 +6516,8 @@ impl DualLayerHdrBuf {
         alt: crate::ColorSpace,
     ) -> Result<Self, At<BufferError>> {
         validate_dual_layer_specs(
-            self.base.spec(),
-            self.gain_map.spec(),
+            self.base.format(),
+            self.gain_map.format(),
             self.metadata,
             Some(&alt),
         )?;
@@ -6634,7 +6634,7 @@ pub trait PixelSource {
     /// Frame height in rows.
     fn source_height(&self) -> u32;
     /// Authoritative image specification.
-    fn source_spec(&self) -> &ImageSpec;
+    fn source_format(&self) -> &PixelFormat;
     /// Proven sample facts.
     fn source_facts(&self) -> SampleFacts;
     /// Descriptive HDR metadata.
@@ -6658,7 +6658,7 @@ pub trait PixelSink {
     /// Frame height in rows.
     fn sink_height(&self) -> u32;
     /// Authoritative destination specification.
-    fn sink_spec(&self) -> &ImageSpec;
+    fn sink_format(&self) -> &PixelFormat;
     /// Mutable active bytes of row `y`.
     fn sink_row_mut(&mut self, y: u32) -> &mut [u8];
     /// Propagate proven output facts & HDR metadata on owned sinks (no-op on borrowed views).
@@ -6679,8 +6679,8 @@ impl PixelSource for PixelView<'_> {
         self.rows
     }
     #[inline]
-    fn source_spec(&self) -> &ImageSpec {
-        self.spec.as_spec()
+    fn source_format(&self) -> &PixelFormat {
+        self.spec.as_format()
     }
     #[inline]
     fn source_facts(&self) -> SampleFacts {
@@ -6714,7 +6714,7 @@ impl PixelSource for PixelBuf {
         self.height
     }
     #[inline]
-    fn source_spec(&self) -> &ImageSpec {
+    fn source_format(&self) -> &PixelFormat {
         &self.spec
     }
     #[inline]
@@ -6751,7 +6751,7 @@ impl PixelSource for BandedBuf {
         self.height
     }
     #[inline]
-    fn source_spec(&self) -> &ImageSpec {
+    fn source_format(&self) -> &PixelFormat {
         &self.spec
     }
     #[inline]
@@ -6786,8 +6786,8 @@ impl PixelSink for PixelViewMut<'_> {
         self.rows
     }
     #[inline]
-    fn sink_spec(&self) -> &ImageSpec {
-        self.spec.as_spec()
+    fn sink_format(&self) -> &PixelFormat {
+        self.spec.as_format()
     }
     #[inline]
     fn sink_row_mut(&mut self, y: u32) -> &mut [u8] {
@@ -6809,7 +6809,7 @@ impl PixelSink for PixelBuf {
         self.height
     }
     #[inline]
-    fn sink_spec(&self) -> &ImageSpec {
+    fn sink_format(&self) -> &PixelFormat {
         &self.spec
     }
     #[inline]
@@ -6847,7 +6847,7 @@ impl PixelSink for BandedBuf {
         self.height
     }
     #[inline]
-    fn sink_spec(&self) -> &ImageSpec {
+    fn sink_format(&self) -> &PixelFormat {
         &self.spec
     }
     #[inline]

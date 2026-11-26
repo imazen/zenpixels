@@ -1,4 +1,4 @@
-//! Integration tests for ImageSpec/PixelFormat/SpecCow, lossless H.273 CICP,
+//! Integration tests for PixelFormat/ParametricFormat/FormatCow, lossless H.273 CICP,
 //! ICC structural validation, ClliCodes, Orientation on buffers/views/bands/planar,
 //! sound Opaque construction/new_zeroed/retag, recovery constructors, and zero-copy planar APIs.
 
@@ -7,11 +7,11 @@ use zenpixels::{
     AlphaMode, BandedBuf, BitPacking, BufFill, BufferError, Chromaticity, Cicp, ClliCodes,
     ColorError, ColorOrigin, ColorSpace, ContentLightLevel, DiffuseWhite, DualLayerHdrBuf,
     DualLayerHdrView, GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapMetadata, Gamma,
-    HdrMetadata, IccValidationError, ImageSpec, Nits, Orientation, ParametricColor, PixelBuf,
-    PixelCow, PixelFormat, PixelSink, PixelSource, PixelView, PlanarBuf, PlanarView, PlaneBuf,
-    PlaneRole, PlaneSpec, PlaneView, PlaneViewMut, Primaries, RenderingIntent, RowAlign,
-    SampleLayout, SampleType, SignalRange, SignedFraction, Transfer, UnsignedFraction, WhitePoint,
-    validate_icc_structure,
+    HdrMetadata, IccValidationError, Nits, Orientation, ParametricColor, ParametricFormat,
+    PixelBuf, PixelCow, PixelFormat, PixelSink, PixelSource, PixelView, PlanarBuf, PlanarView,
+    PlaneBuf, PlaneFormat, PlaneRole, PlaneView, PlaneViewMut, Primaries, RenderingIntent,
+    RowAlign, SampleLayout, SampleType, SignalRange, SignedFraction, Transfer, UnsignedFraction,
+    WhitePoint, validate_icc_structure,
 };
 
 fn minimal_valid_icc(class: &[u8; 4]) -> Vec<u8> {
@@ -44,39 +44,42 @@ fn sample_gm_meta() -> GainMapMetadata {
 
 #[test]
 fn imagespec_const_promotion_pixelformat_copy_and_niches() {
-    // 1. Static slice promotion via `const` and inline `const { ... }` on ImageSpec,
-    //    plus direct static promotion on Copy/!Drop PixelFormat!
-    const PROMOTED: &[ImageSpec] = &[ImageSpec::RGB8_SRGB, ImageSpec::RGBA8_SRGB];
-    let promoted_in_fn: &'static [ImageSpec] = const {
+    // 1. Static slice promotion via `const` and inline `const { ... }` on PixelFormat,
+    //    plus direct static promotion on Copy/!Drop ParametricFormat!
+    const PROMOTED: &[PixelFormat] = &[PixelFormat::RGB8_SRGB, PixelFormat::RGBA8_SRGB];
+    let promoted_in_fn: &'static [PixelFormat] = const {
         &[
-            ImageSpec::RGB8_SRGB,
-            ImageSpec::RGBA8_SRGB,
-            ImageSpec::RGB16_BT2100_PQ,
+            PixelFormat::RGB8_SRGB,
+            PixelFormat::RGBA8_SRGB,
+            PixelFormat::RGB16_BT2100_PQ,
         ]
     };
-    let promoted_formats: &'static [PixelFormat] = &[
-        PixelFormat::RGB8_SRGB,
-        PixelFormat::RGBA8_SRGB,
-        PixelFormat::RGB16_BT2100_PQ,
+    let promoted_formats: &'static [ParametricFormat] = &[
+        ParametricFormat::RGB8_SRGB,
+        ParametricFormat::RGBA8_SRGB,
+        ParametricFormat::RGB16_BT2100_PQ,
     ];
     assert_eq!(PROMOTED.len(), 2);
-    assert_eq!(promoted_in_fn[0], ImageSpec::RGB8_SRGB);
-    assert_eq!(promoted_in_fn[2], ImageSpec::RGB16_BT2100_PQ);
-    assert_eq!(promoted_formats[0].to_spec(), ImageSpec::RGB8_SRGB);
+    assert_eq!(promoted_in_fn[0], PixelFormat::RGB8_SRGB);
+    assert_eq!(promoted_in_fn[2], PixelFormat::RGB16_BT2100_PQ);
+    assert_eq!(
+        promoted_formats[0].to_pixel_format(),
+        PixelFormat::RGB8_SRGB
+    );
 
-    // 2. PixelFormat is Copy + !Drop + const.
+    // 2. ParametricFormat is Copy + !Drop + const.
     fn assert_copy<T: Copy>() {}
-    assert_copy::<PixelFormat>();
+    assert_copy::<ParametricFormat>();
     assert_copy::<ParametricColor>();
-    assert!(!core::mem::needs_drop::<PixelFormat>());
+    assert!(!core::mem::needs_drop::<ParametricFormat>());
     assert!(!core::mem::needs_drop::<ParametricColor>());
 
-    let fmt = PixelFormat::RGB8_SRGB;
-    let spec: ImageSpec = fmt.into();
-    assert_eq!(spec, ImageSpec::RGB8_SRGB);
-    assert_eq!(spec.as_format(), Some(fmt));
+    let fmt = ParametricFormat::RGB8_SRGB;
+    let spec: PixelFormat = fmt.into();
+    assert_eq!(spec, PixelFormat::RGB8_SRGB);
+    assert_eq!(spec.as_parametric(), Some(fmt));
 
-    let icc_spec = ImageSpec::new(
+    let icc_spec = PixelFormat::new(
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(minimal_valid_icc(b"mntr")),
@@ -85,7 +88,7 @@ fn imagespec_const_promotion_pixelformat_copy_and_niches() {
             intent: RenderingIntent::Perceptual,
         },
     );
-    assert_eq!(icc_spec.as_format(), None);
+    assert_eq!(icc_spec.as_parametric(), None);
 
     // 3. NonZeroU32 niches keep Option<DiffuseWhite>, Option<Nits>, Option<Gamma> at 4 bytes!
     assert_eq!(core::mem::size_of::<Option<DiffuseWhite>>(), 4);
@@ -96,7 +99,7 @@ fn imagespec_const_promotion_pixelformat_copy_and_niches() {
 #[test]
 fn speccow_zero_arc_bumps_across_views_crops_and_mut_views() {
     let profile: Arc<[u8]> = Arc::from(minimal_valid_icc(b"mntr"));
-    let icc_spec = ImageSpec::new(
+    let icc_spec = PixelFormat::new(
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::clone(&profile),
@@ -134,9 +137,9 @@ fn speccow_zero_arc_bumps_across_views_crops_and_mut_views() {
         assert_eq!(imm.width(), 4);
     }
 
-    // Passing `&ImageSpec` to `PixelView::new` ALSO avoids any Arc bump!
+    // Passing `&PixelFormat` to `PixelView::new` ALSO avoids any Arc bump!
     let raw = [0u8; 4 * 4 * 3];
-    let borrowed = PixelView::new(&raw, 4, 4, 12, buf.spec()).unwrap();
+    let borrowed = PixelView::new(&raw, 4, 4, 12, buf.format()).unwrap();
     assert_eq!(Arc::strong_count(&profile), 2);
     assert_eq!(borrowed.width(), 4);
 }
@@ -210,32 +213,32 @@ fn lossless_h273_cicp_all_primaries_transfers_projective_and_clli() {
 
     // Checked `try_with_*` helpers detect no-op variants.
     assert!(
-        ImageSpec::OKLAB_F32
+        PixelFormat::OKLAB_F32
             .try_with_primaries(Primaries::DisplayP3)
             .is_none()
     );
     assert!(
-        ImageSpec::OKLAB_F32
+        PixelFormat::OKLAB_F32
             .try_with_transfer(Transfer::Srgb)
             .is_none()
     );
     assert!(
-        ImageSpec::OKLAB_F32
+        PixelFormat::OKLAB_F32
             .try_with_range(SignalRange::Narrow)
             .is_none()
     );
     assert!(
-        ImageSpec::OKLAB_F32
+        PixelFormat::OKLAB_F32
             .try_with_white(DiffuseWhite::BT2408)
             .is_none()
     );
     assert!(
-        ImageSpec::RGB8_SRGB
+        PixelFormat::RGB8_SRGB
             .try_with_primaries(Primaries::DisplayP3)
             .is_some()
     );
     assert!(
-        ImageSpec::GRAY8_SRGB
+        PixelFormat::GRAY8_SRGB
             .try_with_transfer(Transfer::Linear)
             .is_some()
     );
@@ -281,7 +284,7 @@ fn icc_structural_validation_wired_into_imagespec() {
         validate_icc_structure(&oob_tag),
         Err(IccValidationError::TagSpanOutOfBounds)
     );
-    let bad_spec = ImageSpec::new(
+    let bad_spec = PixelFormat::new(
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(oob_tag),
@@ -296,7 +299,7 @@ fn icc_structural_validation_wired_into_imagespec() {
     );
 
     // Valid profile passes.
-    let ok_spec = ImageSpec::new(
+    let ok_spec = PixelFormat::new(
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(minimal_valid_icc(b"mntr")),
@@ -311,7 +314,7 @@ fn icc_structural_validation_wired_into_imagespec() {
 #[test]
 fn opaque_construction_white_fill_new_zeroed_retag_and_recovery() {
     // 1. `new` black-fills and sets Opaque alpha to MAX.
-    let op_rgba8 = ImageSpec::RGBA8_SRGB.with_alpha(AlphaMode::Opaque);
+    let op_rgba8 = PixelFormat::RGBA8_SRGB.with_alpha(AlphaMode::Opaque);
     let black = PixelBuf::new(2, 2, op_rgba8.clone()).unwrap();
     assert!(black.facts().all_opaque);
     assert_eq!(black.as_view().row(0), &[0, 0, 0, 255, 0, 0, 0, 255]);
@@ -324,14 +327,14 @@ fn opaque_construction_white_fill_new_zeroed_retag_and_recovery() {
         &[255, 255, 255, 255, 255, 255, 255, 255]
     );
 
-    let narrow_rgb8 = ImageSpec::RGB8_SRGB.with_range(SignalRange::Narrow);
+    let narrow_rgb8 = PixelFormat::RGB8_SRGB.with_range(SignalRange::Narrow);
     let white_narrow = PixelBuf::new_white(2, 1, narrow_rgb8).unwrap();
     assert_eq!(
         white_narrow.as_view().row(0),
         &[235, 235, 235, 235, 235, 235]
     );
 
-    let rgb10a2_spec = ImageSpec::new(
+    let rgb10a2_spec = PixelFormat::new(
         SampleLayout::RGB10A2,
         ColorSpace::SRGB.with_alpha(AlphaMode::Opaque),
     );
@@ -339,11 +342,11 @@ fn opaque_construction_white_fill_new_zeroed_retag_and_recovery() {
     let w10 = u32::from_ne_bytes(white_10a2.as_view().row(0).try_into().unwrap());
     assert_eq!(w10, 0xFFFF_FFFF);
 
-    let white_oklab = PixelBuf::new_white(1, 1, ImageSpec::OKLABA_F32).unwrap();
+    let white_oklab = PixelBuf::new_white(1, 1, PixelFormat::OKLABA_F32).unwrap();
     let ok_px: &[f32] = white_oklab.as_view().row_as(0).unwrap();
     assert_eq!(ok_px, &[1.0, 0.0, 0.0, 1.0]);
 
-    let white_cmyk = PixelBuf::new_white(1, 1, ImageSpec::cmyk8(None)).unwrap();
+    let white_cmyk = PixelBuf::new_white(1, 1, PixelFormat::cmyk8(None)).unwrap();
     assert_eq!(white_cmyk.as_view().row(0), &[0, 0, 0, 0]);
 
     // 3. `new_zeroed` refuses `AlphaMode::Opaque` on alpha-bearing layouts, accepts `Undefined`.
@@ -360,7 +363,7 @@ fn opaque_construction_white_fill_new_zeroed_retag_and_recovery() {
         BufferError::UnverifiedOpaqueAlpha
     );
 
-    let straight_rgba8 = ImageSpec::RGBA8_SRGB;
+    let straight_rgba8 = PixelFormat::RGBA8_SRGB;
     let mut fast = PixelBuf::new_zeroed(2, 1, straight_rgba8).unwrap();
     assert_eq!(fast.as_view().row(0), &[0, 0, 0, 0, 0, 0, 0, 0]);
 
@@ -376,26 +379,31 @@ fn opaque_construction_white_fill_new_zeroed_retag_and_recovery() {
 
     // `into_opaque_filled` repairs alpha to 255 and retags as Opaque.
     let filled = fast.clone().into_opaque_filled().unwrap();
-    assert_eq!(filled.spec().color.alpha(), AlphaMode::Opaque);
+    assert_eq!(filled.format().color.alpha(), AlphaMode::Opaque);
     assert!(filled.facts().all_opaque);
     assert_eq!(filled.as_view().row(0), &[10, 20, 30, 255, 40, 50, 60, 255]);
 
     // Fixing alpha then calling `into_opaque_verified` succeeds zero-copy.
     fast.as_view_mut().row_mut(0)[7] = 255;
     let verified = fast.into_opaque_verified().unwrap();
-    assert_eq!(verified.spec().color.alpha(), AlphaMode::Opaque);
+    assert_eq!(verified.format().color.alpha(), AlphaMode::Opaque);
     assert!(verified.facts().all_opaque);
 
     // `assume_opaque` retags in O(1) without scanning.
-    let mut fast2 =
-        PixelBuf::new_with_fill(2, 1, ImageSpec::RGBA8_SRGB, RowAlign::Tight, BufFill::White)
-            .unwrap();
+    let mut fast2 = PixelBuf::new_with_fill(
+        2,
+        1,
+        PixelFormat::RGBA8_SRGB,
+        RowAlign::Tight,
+        BufFill::White,
+    )
+    .unwrap();
     fast2 = fast2.assume_opaque().unwrap();
-    assert_eq!(fast2.spec().color.alpha(), AlphaMode::Opaque);
+    assert_eq!(fast2.format().color.alpha(), AlphaMode::Opaque);
     assert!(fast2.facts().all_opaque);
 
     // No-alpha layout rejects all three opaque retags.
-    let rgb = PixelBuf::new(2, 2, PixelFormat::RGB8_SRGB).unwrap();
+    let rgb = PixelBuf::new(2, 2, ParametricFormat::RGB8_SRGB).unwrap();
     assert_eq!(
         *rgb.assume_opaque().unwrap_err().error(),
         BufferError::IncompatibleLayout
@@ -405,21 +413,21 @@ fn opaque_construction_white_fill_new_zeroed_retag_and_recovery() {
     let short_bytes = vec![7u8; 5];
     let ptr = short_bytes.as_ptr();
     let (err, recovered) =
-        PixelBuf::from_bytes_recover(short_bytes, 4, 4, PixelFormat::RGB8_SRGB).unwrap_err();
+        PixelBuf::from_bytes_recover(short_bytes, 4, 4, ParametricFormat::RGB8_SRGB).unwrap_err();
     assert_eq!(*err.error(), BufferError::InsufficientData);
     assert_eq!(recovered.as_ptr(), ptr);
 
     let wrong_vec = vec![123u16; 12];
     let vptr = wrong_vec.as_ptr();
     let (err, recovered_v) =
-        PixelBuf::from_typed_recover(wrong_vec, 2, 2, PixelFormat::RGB8_SRGB).unwrap_err();
+        PixelBuf::from_typed_recover(wrong_vec, 2, 2, ParametricFormat::RGB8_SRGB).unwrap_err();
     assert_eq!(*err.error(), BufferError::IncompatibleLayout);
     assert_eq!(recovered_v.as_ptr(), vptr);
 }
 
 #[test]
 fn orientation_carriage_across_buffers_views_bands_planar_and_dual_layer() {
-    let mut buf = PixelBuf::new(6, 4, PixelFormat::RGB8_SRGB)
+    let mut buf = PixelBuf::new(6, 4, ParametricFormat::RGB8_SRGB)
         .unwrap()
         .with_orientation(Orientation::Rotate90);
     assert_eq!(buf.orientation(), Orientation::Rotate90);
@@ -447,7 +455,7 @@ fn orientation_carriage_across_buffers_views_bands_planar_and_dual_layer() {
     let banded = BandedBuf::from_buf(buf.clone(), 64).unwrap();
     assert_eq!(banded.orientation(), Orientation::Rotate180);
     assert_eq!(banded.bands()[0].orientation(), Orientation::Rotate180);
-    let mut dst_band = BandedBuf::new(6, 4, PixelFormat::RGB8_SRGB, 64).unwrap();
+    let mut dst_band = BandedBuf::new(6, 4, ParametricFormat::RGB8_SRGB, 64).unwrap();
     dst_band.sink_set_orientation(Orientation::Rotate270);
     assert_eq!(dst_band.orientation(), Orientation::Rotate270);
     assert_eq!(
@@ -456,14 +464,14 @@ fn orientation_carriage_across_buffers_views_bands_planar_and_dual_layer() {
     );
 
     // DualLayerHdrBuf orientation validation, inheritance, sync, and InvalidGainMapMetadata.
-    let gm_spec = ImageSpec::new(
+    let gm_spec = PixelFormat::new(
         SampleLayout::GRAY8,
         ColorSpace::Untagged {
             channels: 1,
             alpha: AlphaMode::None,
         },
     );
-    let base_r90 = PixelBuf::new(4, 2, PixelFormat::RGB8_SRGB)
+    let base_r90 = PixelBuf::new(4, 2, ParametricFormat::RGB8_SRGB)
         .unwrap()
         .with_orientation(Orientation::Rotate90);
     let gm_id = PixelBuf::new(4, 2, gm_spec.clone()).unwrap();
@@ -516,7 +524,7 @@ fn orientation_carriage_across_buffers_views_bands_planar_and_dual_layer() {
     bad_meta.alternate_hdr_headroom = bad_meta.base_hdr_headroom; // H_base == H_alt invalid!
     assert_eq!(
         *DualLayerHdrBuf::new(
-            PixelBuf::new(4, 2, PixelFormat::RGB8_SRGB).unwrap(),
+            PixelBuf::new(4, 2, ParametricFormat::RGB8_SRGB).unwrap(),
             gm_id,
             bad_meta,
         )
@@ -531,7 +539,7 @@ fn planar_zero_copy_codec_apis_and_strict_role_validation() {
     // 1. Zero-copy typed sample plane construction + row_as + code_u32 + CodePlane bridge.
     let mut y_samples: Vec<u16> = vec![100, 200, 300, 400, 500, 600, 700, 800];
     let y_ptr = y_samples.as_ptr();
-    let y_spec = PlaneSpec::new(PlaneRole::Y, SampleType::U16).with_packing(BitPacking::U10_LSB);
+    let y_spec = PlaneFormat::new(PlaneRole::Y, SampleType::U16).with_packing(BitPacking::U10_LSB);
 
     {
         let mut pvm = PlaneViewMut::from_samples(&mut y_samples, 4, 2, y_spec).unwrap();
@@ -556,12 +564,12 @@ fn planar_zero_copy_codec_apis_and_strict_role_validation() {
 
     // 2. PlanarBuf::new_aligned + auxiliary roles + plane_by_role + hdr/origin/orientation propagation.
     let specs = [
-        PlaneSpec::new(PlaneRole::Y, SampleType::U8),
-        PlaneSpec::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2),
-        PlaneSpec::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2),
-        PlaneSpec::new(PlaneRole::Depth, SampleType::U16),
-        PlaneSpec::new(PlaneRole::Matte, SampleType::U8),
-        PlaneSpec::new(PlaneRole::Thermal, SampleType::F32),
+        PlaneFormat::new(PlaneRole::Y, SampleType::U8),
+        PlaneFormat::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2),
+        PlaneFormat::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2),
+        PlaneFormat::new(PlaneRole::Depth, SampleType::U16),
+        PlaneFormat::new(PlaneRole::Matte, SampleType::U8),
+        PlaneFormat::new(PlaneRole::Thermal, SampleType::F32),
     ];
     let hdr = HdrMetadata {
         cll: Some(ContentLightLevel::new(1000, 400)),
@@ -591,56 +599,56 @@ fn planar_zero_copy_codec_apis_and_strict_role_validation() {
     assert_eq!(cropped.orientation(), Orientation::Rotate270);
 
     // 3. Strict `validate_plane_role_set` rejections.
-    let bad_sets: &[&[PlaneSpec]] = &[
+    let bad_sets: &[&[PlaneFormat]] = &[
         // Mix planar Cb with semi-planar CbCr
         &[
-            PlaneSpec::new(PlaneRole::Y, SampleType::U8),
-            PlaneSpec::new(PlaneRole::Cb, SampleType::U8),
-            PlaneSpec::new(PlaneRole::CbCr, SampleType::U8),
+            PlaneFormat::new(PlaneRole::Y, SampleType::U8),
+            PlaneFormat::new(PlaneRole::Cb, SampleType::U8),
+            PlaneFormat::new(PlaneRole::CbCr, SampleType::U8),
         ],
         // Mix CbCr and CrCb
         &[
-            PlaneSpec::new(PlaneRole::Y, SampleType::U8),
-            PlaneSpec::new(PlaneRole::CbCr, SampleType::U8),
-            PlaneSpec::new(PlaneRole::CrCb, SampleType::U8),
+            PlaneFormat::new(PlaneRole::Y, SampleType::U8),
+            PlaneFormat::new(PlaneRole::CbCr, SampleType::U8),
+            PlaneFormat::new(PlaneRole::CrCb, SampleType::U8),
         ],
         // Orphan Cb without Cr
         &[
-            PlaneSpec::new(PlaneRole::Y, SampleType::U8),
-            PlaneSpec::new(PlaneRole::Cb, SampleType::U8),
+            PlaneFormat::new(PlaneRole::Y, SampleType::U8),
+            PlaneFormat::new(PlaneRole::Cb, SampleType::U8),
         ],
         // Chroma without Y
         &[
-            PlaneSpec::new(PlaneRole::Cb, SampleType::U8),
-            PlaneSpec::new(PlaneRole::Cr, SampleType::U8),
+            PlaneFormat::new(PlaneRole::Cb, SampleType::U8),
+            PlaneFormat::new(PlaneRole::Cr, SampleType::U8),
         ],
         // Mix YCbCr with RGB
         &[
-            PlaneSpec::new(PlaneRole::Y, SampleType::U8),
-            PlaneSpec::new(PlaneRole::R, SampleType::U8),
-            PlaneSpec::new(PlaneRole::G, SampleType::U8),
-            PlaneSpec::new(PlaneRole::B, SampleType::U8),
+            PlaneFormat::new(PlaneRole::Y, SampleType::U8),
+            PlaneFormat::new(PlaneRole::R, SampleType::U8),
+            PlaneFormat::new(PlaneRole::G, SampleType::U8),
+            PlaneFormat::new(PlaneRole::B, SampleType::U8),
         ],
         // Partial RGB (missing B)
         &[
-            PlaneSpec::new(PlaneRole::R, SampleType::U8),
-            PlaneSpec::new(PlaneRole::G, SampleType::U8),
+            PlaneFormat::new(PlaneRole::R, SampleType::U8),
+            PlaneFormat::new(PlaneRole::G, SampleType::U8),
         ],
         // Partial CMYK (missing Key)
         &[
-            PlaneSpec::new(PlaneRole::Cyan, SampleType::U8),
-            PlaneSpec::new(PlaneRole::Magenta, SampleType::U8),
-            PlaneSpec::new(PlaneRole::Yellow, SampleType::U8),
+            PlaneFormat::new(PlaneRole::Cyan, SampleType::U8),
+            PlaneFormat::new(PlaneRole::Magenta, SampleType::U8),
+            PlaneFormat::new(PlaneRole::Yellow, SampleType::U8),
         ],
         // Mix Packed with Y
         &[
-            PlaneSpec::new(PlaneRole::Packed, SampleType::U8),
-            PlaneSpec::new(PlaneRole::Y, SampleType::U8),
+            PlaneFormat::new(PlaneRole::Packed, SampleType::U8),
+            PlaneFormat::new(PlaneRole::Y, SampleType::U8),
         ],
         // Duplicate Extra(0)
         &[
-            PlaneSpec::new(PlaneRole::Extra(0), SampleType::U8),
-            PlaneSpec::new(PlaneRole::Extra(0), SampleType::U8),
+            PlaneFormat::new(PlaneRole::Extra(0), SampleType::U8),
+            PlaneFormat::new(PlaneRole::Extra(0), SampleType::U8),
         ],
     ];
     for (idx, set) in bad_sets.iter().enumerate() {
@@ -654,10 +662,10 @@ fn planar_zero_copy_codec_apis_and_strict_role_validation() {
 
     // Valid complete PlanarRgb (R + G + B + Alpha) succeeds!
     let rgb_planes = [
-        PlaneSpec::new(PlaneRole::R, SampleType::F32),
-        PlaneSpec::new(PlaneRole::G, SampleType::F32),
-        PlaneSpec::new(PlaneRole::B, SampleType::F32),
-        PlaneSpec::new(PlaneRole::Alpha, SampleType::F32),
+        PlaneFormat::new(PlaneRole::R, SampleType::F32),
+        PlaneFormat::new(PlaneRole::G, SampleType::F32),
+        PlaneFormat::new(PlaneRole::B, SampleType::F32),
+        PlaneFormat::new(PlaneRole::Alpha, SampleType::F32),
     ];
     let rgb_pbuf = PlanarBuf::new(4, 4, &rgb_planes).unwrap();
     assert_eq!(rgb_pbuf.planes().len(), 4);
@@ -918,13 +926,13 @@ fn icc1_cicptype_custom_primaries_amendment_and_annex1() {
 #[test]
 fn view_and_buffer_sizeof_layout_budgets_and_ergonomics() {
     use core::mem::size_of;
-    use zenpixels::{CicpTag, PixelViewMut, PlanarViewMut, SpecCow};
+    use zenpixels::{CicpTag, FormatCow, PixelViewMut, PlanarViewMut};
 
     // Compact stack footprints (on 64-bit targets; <= allows smaller 32-bit targets too).
     assert!(
-        size_of::<SpecCow<'static>>() <= 16,
-        "SpecCow grew to {}",
-        size_of::<SpecCow<'static>>()
+        size_of::<FormatCow<'static>>() <= 16,
+        "FormatCow grew to {}",
+        size_of::<FormatCow<'static>>()
     );
     assert!(
         size_of::<PixelView<'static>>() <= 80,
@@ -976,14 +984,14 @@ fn view_and_buffer_sizeof_layout_budgets_and_ergonomics() {
     assert!(HdrMetadata::default().is_empty());
 
     // PixelView::height() & PixelViewMut::height() match rows().
-    let mut buf = PixelBuf::new(5, 3, ImageSpec::RGB8_SRGB).unwrap();
+    let mut buf = PixelBuf::new(5, 3, PixelFormat::RGB8_SRGB).unwrap();
     assert_eq!(buf.as_view().height(), 3);
     assert_eq!(buf.as_view().height(), buf.as_view().rows());
     assert_eq!(buf.as_view_mut().height(), 3);
     assert_eq!(buf.as_view_mut().height(), buf.as_view_mut().rows());
 
     // Descriptive whereat::At context on untyped Vec<i32> -> U8 IncompatibleLayout mismatch.
-    let err = PixelBuf::from_typed(vec![0i32; 3], 1, 1, ImageSpec::RGB8_SRGB).unwrap_err();
+    let err = PixelBuf::from_typed(vec![0i32; 3], 1, 1, PixelFormat::RGB8_SRGB).unwrap_err();
     assert_eq!(*err.error(), BufferError::IncompatibleLayout);
     let diag = format!("{err:?}");
     assert!(
@@ -991,7 +999,7 @@ fn view_and_buffer_sizeof_layout_budgets_and_ergonomics() {
         "expected element/layout context in diagnostic, got: {diag}"
     );
 
-    let view_err = PixelView::from_typed(&[0i32; 3], 1, 1, &ImageSpec::RGB8_SRGB).unwrap_err();
+    let view_err = PixelView::from_typed(&[0i32; 3], 1, 1, &PixelFormat::RGB8_SRGB).unwrap_err();
     assert_eq!(*view_err.error(), BufferError::IncompatibleLayout);
     let vdiag = format!("{view_err:?}");
     assert!(
@@ -1004,53 +1012,57 @@ fn view_and_buffer_sizeof_layout_budgets_and_ergonomics() {
 fn option_1a_static_spec_refs_and_zero_alloc_view_construction() {
     extern crate alloc;
     use alloc::sync::Arc;
-    use zenpixels::{PixelViewMut, SpecCow};
+    use zenpixels::{FormatCow, PixelViewMut};
 
     // Static preset accessors match consts and round-trip via `as_static_ref`.
-    assert_eq!(&zenpixels::specs::RGB8_SRGB, &ImageSpec::RGB8_SRGB);
-    assert_eq!(&zenpixels::specs::RGBA8_SRGB, &ImageSpec::RGBA8_SRGB);
-    assert_eq!(&zenpixels::specs::RGBF32_LINEAR, &ImageSpec::RGBF32_LINEAR);
-    assert_eq!(&zenpixels::specs::GRAY8_SRGB, &ImageSpec::GRAY8_SRGB);
-    assert!(ImageSpec::RGB8_SRGB.as_static_ref().is_some());
+    assert_eq!(&zenpixels::formats::RGB8_SRGB, &PixelFormat::RGB8_SRGB);
+    assert_eq!(&zenpixels::formats::RGBA8_SRGB, &PixelFormat::RGBA8_SRGB);
+    assert_eq!(
+        &zenpixels::formats::RGBF32_LINEAR,
+        &PixelFormat::RGBF32_LINEAR
+    );
+    assert_eq!(&zenpixels::formats::GRAY8_SRGB, &PixelFormat::GRAY8_SRGB);
+    assert!(PixelFormat::RGB8_SRGB.as_static_ref().is_some());
 
-    // `SpecCow::from_owned` and `SpecCow::from_format` hit static refs with 0 heap allocations.
+    // `FormatCow::from_owned` and `FormatCow::from_parametric` hit static refs with 0 heap allocations.
     assert!(matches!(
-        SpecCow::from_owned(ImageSpec::RGB8_SRGB),
-        SpecCow::Borrowed(_)
+        FormatCow::from_owned(PixelFormat::RGB8_SRGB),
+        FormatCow::Borrowed(_)
     ));
     assert!(matches!(
-        SpecCow::from_format(PixelFormat::RGBA8_SRGB),
-        SpecCow::Borrowed(_)
+        FormatCow::from_parametric(ParametricFormat::RGBA8_SRGB),
+        FormatCow::Borrowed(_)
     ));
 
-    // Custom (non-preset) specs fall back to `SpecCow::Owned(Arc<ImageSpec>)` only via explicit APIs.
-    let custom = ImageSpec::RGB8_SRGB.with_range(SignalRange::Narrow);
+    // Custom (non-preset) specs fall back to `FormatCow::Owned(Arc<PixelFormat>)` only via explicit APIs.
+    let custom = PixelFormat::RGB8_SRGB.with_range(SignalRange::Narrow);
     assert!(custom.as_static_ref().is_none());
     assert!(matches!(
-        SpecCow::from_owned(custom.clone()),
-        SpecCow::Owned(_)
+        FormatCow::from_owned(custom.clone()),
+        FormatCow::Owned(_)
     ));
     assert!(matches!(
-        SpecCow::from_arc(Arc::new(custom.clone())),
-        SpecCow::Owned(_)
+        FormatCow::from_arc(Arc::new(custom.clone())),
+        FormatCow::Owned(_)
     ));
 
-    // Borrowed `&'a ImageSpec` view constructors work directly with static preset refs.
+    // Borrowed `&'a PixelFormat` view constructors work directly with static preset refs.
     let mut bytes = [10u8, 20, 30, 40, 50, 60];
     {
-        let view = PixelView::from_bytes(&bytes, 2, 1, &zenpixels::specs::RGB8_SRGB).unwrap();
+        let view = PixelView::from_bytes(&bytes, 2, 1, &zenpixels::formats::RGB8_SRGB).unwrap();
         assert_eq!(view.row(0), &[10, 20, 30, 40, 50, 60]);
         let view_cow =
-            PixelView::new_with_spec_cow(&bytes, 2, 1, 6, SpecCow::from_owned(custom.clone()))
+            PixelView::new_with_format_cow(&bytes, 2, 1, 6, FormatCow::from_owned(custom.clone()))
                 .unwrap();
-        assert_eq!(view_cow.spec(), &custom);
+        assert_eq!(view_cow.format(), &custom);
     }
     let mut view_mut =
-        PixelViewMut::new(&mut bytes, 2, 1, 6, &zenpixels::specs::RGB8_SRGB).unwrap();
+        PixelViewMut::new(&mut bytes, 2, 1, 6, &zenpixels::formats::RGB8_SRGB).unwrap();
     view_mut.row_mut(0)[0] = 99;
     drop(view_mut);
     let mut view_mut_cow =
-        PixelViewMut::new_with_spec_cow(&mut bytes, 2, 1, 6, SpecCow::from_owned(custom)).unwrap();
+        PixelViewMut::new_with_format_cow(&mut bytes, 2, 1, 6, FormatCow::from_owned(custom))
+            .unwrap();
     view_mut_cow.row_mut(0)[1] = 88;
     assert_eq!(&bytes[..2], &[99, 88]);
 }
@@ -1078,7 +1090,7 @@ fn option_1_sample_stride_matrix_coefficients_and_crop_symmetry() {
     assert_eq!(ss.samples(), 6);
     assert_eq!(format!("{ss}"), "6 samples");
 
-    let cbcr_spec = PlaneSpec::new(PlaneRole::CbCr, SampleType::U16).with_subsampling(2, 2);
+    let cbcr_spec = PlaneFormat::new(PlaneRole::CbCr, SampleType::U16).with_subsampling(2, 2);
     // 2x2 CbCr has 2 components per element -> tight stride = 2 * 2 = 4 u16 samples = 8 bytes.
     let mut cbcr_tight = vec![10u16, 20, 30, 40, 50, 60, 70, 80];
     {
@@ -1094,7 +1106,7 @@ fn option_1_sample_stride_matrix_coefficients_and_crop_symmetry() {
     assert_eq!(pb_tight.stride(), 8);
 
     // Padded strided plane (`stride = 6 u16 samples = 12 bytes`, width = 4, height = 2).
-    let y_spec = PlaneSpec::new(PlaneRole::Y, SampleType::U16);
+    let y_spec = PlaneFormat::new(PlaneRole::Y, SampleType::U16);
     let mut y_padded = vec![
         1u16, 2, 3, 4, 99, 99, // row 0 + 2 pad samples
         5, 6, 7, 8, 99, 99, // row 1 + 2 pad samples
@@ -1143,7 +1155,7 @@ fn option_1_sample_stride_matrix_coefficients_and_crop_symmetry() {
     let base_ptr = u16_pixels.as_ptr() as usize;
     let mut gray_facts = SampleFacts::NONE;
     gray_facts.all_grayscale = true;
-    let mut pbuf = PixelBuf::from_typed(u16_pixels, 4, 4, ImageSpec::RGB16_SRGB)
+    let mut pbuf = PixelBuf::from_typed(u16_pixels, 4, 4, PixelFormat::RGB16_SRGB)
         .unwrap()
         .with_hdr(hdr)
         .with_origin(origin.clone())
@@ -1194,9 +1206,9 @@ fn option_1_sample_stride_matrix_coefficients_and_crop_symmetry() {
 
     // 4. Crop symmetry on `PlanarBuf`, `PlanarView`, `PlanarViewMut` (odd crop_origin on 4:2:0!).
     let pspecs = [
-        PlaneSpec::new(PlaneRole::Y, SampleType::U8),
-        PlaneSpec::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2),
-        PlaneSpec::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2),
+        PlaneFormat::new(PlaneRole::Y, SampleType::U8),
+        PlaneFormat::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2),
+        PlaneFormat::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2),
     ];
     let mut planar = PlanarBuf::new(6, 6, &pspecs)
         .unwrap()

@@ -9,8 +9,8 @@
 //!   misaligned strides, guard canaries, and physical dihedral group closure (`o ∘ o^-1 == id`).
 
 use zenpixels::{
-    AlphaMode, ColorSpace, DiffuseWhite, ImageSpec, Orientation, PixelBuf, PixelView, PixelViewMut,
-    SampleLayout, SignalRange, Transfer,
+    AlphaMode, ColorSpace, DiffuseWhite, Orientation, PixelBuf, PixelFormat, PixelView,
+    PixelViewMut, SampleLayout, SignalRange, Transfer,
 };
 #[cfg(feature = "hdr-transfers")]
 use zenpixels::{HlgMode, HlgRendering};
@@ -18,13 +18,13 @@ use zenpixels_convert::{
     Accelerators, ConvertPolicy, RowPlan, apply_orientation, apply_orientation_into,
 };
 
-fn transfer_spec_u16(tf: Transfer) -> ImageSpec {
+fn transfer_spec_u16(tf: Transfer) -> PixelFormat {
     let white = if matches!(tf, Transfer::Pq) {
         None
     } else {
         Some(DiffuseWhite::BT2408)
     };
-    ImageSpec::new(
+    PixelFormat::new(
         SampleLayout::GRAY16,
         ColorSpace::Gray {
             transfer: tf,
@@ -35,8 +35,8 @@ fn transfer_spec_u16(tf: Transfer) -> ImageSpec {
     )
 }
 
-fn linear_gray_f32() -> ImageSpec {
-    ImageSpec::new(
+fn linear_gray_f32() -> PixelFormat {
+    PixelFormat::new(
         SampleLayout::GRAYF32,
         ColorSpace::Gray {
             transfer: Transfer::Linear,
@@ -52,8 +52,8 @@ fn transfer_monotonicity_endpoints_and_roundtrips_exhaustive() {
     let pol = ConvertPolicy::working_linear().with_accelerators(Accelerators::ALL);
 
     // 1. Exact 0-error U8 sRGB -> Linear F32 -> sRGB U8 round-trip for all 256 codes.
-    let srgb8 = ImageSpec::GRAY8_SRGB;
-    let lin_f32 = ImageSpec::GRAYF32_LINEAR;
+    let srgb8 = PixelFormat::GRAY8_SRGB;
+    let lin_f32 = PixelFormat::GRAYF32_LINEAR;
     let p_up = RowPlan::build(srgb8.clone(), lin_f32.clone(), &pol, None).unwrap();
     let p_dn = RowPlan::build(lin_f32, srgb8, &pol, None).unwrap();
     let ramp8: Vec<u8> = (0u8..=255).collect();
@@ -144,7 +144,7 @@ fn transfer_monotonicity_endpoints_and_roundtrips_exhaustive() {
     // 2b. Full 65,536-code monotonicity + endpoint + round-trip for BT.2100 HLG Display (RGB BT.2020).
     #[cfg(feature = "hdr-transfers")]
     {
-        let hlg_rgb16 = ImageSpec::new(
+        let hlg_rgb16 = PixelFormat::new(
             SampleLayout::RGB16,
             ColorSpace::Rgb {
                 primaries: zenpixels::Primaries::Bt2020,
@@ -154,7 +154,7 @@ fn transfer_monotonicity_endpoints_and_roundtrips_exhaustive() {
                 white: Some(DiffuseWhite::BT2408),
             },
         );
-        let lin_rgb = ImageSpec::new(
+        let lin_rgb = PixelFormat::new(
             SampleLayout::RGBF32,
             ColorSpace::Rgb {
                 primaries: zenpixels::Primaries::Bt2020,
@@ -210,7 +210,7 @@ fn transfer_monotonicity_endpoints_and_roundtrips_exhaustive() {
 
     // 3. Also verify RGB16 DciCinema round-trip under default GamutPolicy::Clip (ensuring
     //    pre-OETF ClampUnit doesn't truncate projector white 52.37/48.0 before INV_SCALE).
-    let dci_rgb16 = ImageSpec::new(
+    let dci_rgb16 = PixelFormat::new(
         SampleLayout::RGB16,
         ColorSpace::Rgb {
             primaries: zenpixels::Primaries::DciP3,
@@ -220,7 +220,7 @@ fn transfer_monotonicity_endpoints_and_roundtrips_exhaustive() {
             white: Some(DiffuseWhite::BT2408),
         },
     );
-    let dci_lin = ImageSpec::new(
+    let dci_lin = PixelFormat::new(
         SampleLayout::RGBF32,
         ColorSpace::Rgb {
             primaries: zenpixels::Primaries::DciP3,
@@ -279,14 +279,14 @@ fn orientation_dense_dimensions_misaligned_strides_and_group_closure() {
     ];
 
     let specs = [
-        ImageSpec::GRAY8_SRGB,     // 1 bpp
-        ImageSpec::GRAY16_SRGB,    // 2 bpp
-        ImageSpec::RGB8_SRGB,      // 3 bpp
-        ImageSpec::RGBA8_SRGB,     // 4 bpp
-        ImageSpec::RGB16_SRGB,     // 6 bpp
-        ImageSpec::RGBA16_SRGB,    // 8 bpp
-        ImageSpec::RGBF32_LINEAR,  // 12 bpp
-        ImageSpec::RGBAF32_LINEAR, // 16 bpp
+        PixelFormat::GRAY8_SRGB,     // 1 bpp
+        PixelFormat::GRAY16_SRGB,    // 2 bpp
+        PixelFormat::RGB8_SRGB,      // 3 bpp
+        PixelFormat::RGBA8_SRGB,     // 4 bpp
+        PixelFormat::RGB16_SRGB,     // 6 bpp
+        PixelFormat::RGBA16_SRGB,    // 8 bpp
+        PixelFormat::RGBF32_LINEAR,  // 12 bpp
+        PixelFormat::RGBAF32_LINEAR, // 16 bpp
     ];
 
     // Dense small dimensions (covering 1..=17, plus SIMD/tile boundaries 31, 32, 33, 63, 64, 65).
@@ -382,8 +382,8 @@ fn orientation_dense_dimensions_misaligned_strides_and_group_closure() {
             all_pairs.extend_from_slice(&[c, c ^ 0x55, 255 - c, a]);
         }
     }
-    let src_premul = ImageSpec::RGBA8_SRGB;
-    let dst_premul = ImageSpec::new(
+    let src_premul = PixelFormat::RGBA8_SRGB;
+    let dst_premul = PixelFormat::new(
         SampleLayout::RGBA8,
         ColorSpace::Rgb {
             primaries: zenpixels::Primaries::Bt709,
@@ -432,7 +432,7 @@ fn orientation_dense_dimensions_misaligned_strides_and_group_closure() {
     }
 
     // Physical dihedral group closure: applying o then o.inverse() restores the original image bit-exact!
-    let mut base = PixelBuf::new(23, 19, ImageSpec::RGB8_SRGB).unwrap();
+    let mut base = PixelBuf::new(23, 19, PixelFormat::RGB8_SRGB).unwrap();
     let rb = base.row_bytes();
     {
         let mut vm = base.as_view_mut();

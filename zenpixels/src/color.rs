@@ -1793,10 +1793,10 @@ pub fn validate_icc_structure(bytes: &[u8]) -> Result<(), IccValidationError> {
 
 /// `Copy`, `const`, drop-free color model for every non-ICC [`ColorSpace`] variant.
 ///
-/// Paired with [`SampleLayout`] inside [`PixelFormat`] so codec capability tables,
+/// Paired with [`SampleLayout`] inside [`ParametricFormat`] so codec capability tables,
 /// format presets, and config structs stay `Copy`, `!Drop`, and statically promotable
-/// (`&[PixelFormat::RGB8_SRGB, PixelFormat::RGBA8_SRGB]`) while converting losslessly
-/// into [`ColorSpace`] / [`ImageSpec`].
+/// (`&[ParametricFormat::RGB8_SRGB, ParametricFormat::RGBA8_SRGB]`) while converting losslessly
+/// into [`ColorSpace`] / [`PixelFormat`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ParametricColor {
@@ -2133,21 +2133,21 @@ impl From<ParametricColor> for ColorSpace {
     }
 }
 
-/// `Copy`, `const`, drop-free companion to [`ImageSpec`] covering every non-ICC pixel format.
+/// `Copy`, `const`, drop-free companion to [`PixelFormat`] covering every non-ICC pixel format.
 ///
-/// Ideal for static codec capability tables (`&[PixelFormat::RGB8_SRGB, PixelFormat::RGBA8_SRGB]`),
+/// Ideal for static codec capability tables (`&[ParametricFormat::RGB8_SRGB, ParametricFormat::RGBA8_SRGB]`),
 /// `#[derive(Copy)]` decoder/encoder configuration structs, and const-context format helpers.
-/// Converts losslessly into [`ImageSpec`] via [`to_spec`](Self::to_spec) or `From<PixelFormat>`.
+/// Converts losslessly into [`PixelFormat`] via [`to_pixel_format`](Self::to_pixel_format) or `From<ParametricFormat>`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub struct PixelFormat {
+pub struct ParametricFormat {
     /// Physical byte/bit layout.
     pub layout: SampleLayout,
     /// Non-ICC algebraic color meaning.
     pub color: ParametricColor,
 }
 
-impl PixelFormat {
+impl ParametricFormat {
     /// 8-bit sRGB RGB (`RGB8`).
     pub const RGB8_SRGB: Self = Self::new(SampleLayout::RGB8, ParametricColor::SRGB);
     /// 8-bit sRGB RGBA straight alpha (`RGBA8`).
@@ -2212,24 +2212,24 @@ impl PixelFormat {
         },
     );
 
-    /// Construct a [`PixelFormat`] from a [`SampleLayout`] and [`ParametricColor`].
+    /// Construct a [`ParametricFormat`] from a [`SampleLayout`] and [`ParametricColor`].
     #[inline]
     #[must_use]
     pub const fn new(layout: SampleLayout, color: ParametricColor) -> Self {
         Self { layout, color }
     }
 
-    /// Convert losslessly into an [`ImageSpec`] in `const` context.
+    /// Convert losslessly into an [`PixelFormat`] in `const` context.
     #[inline]
     #[must_use]
-    pub const fn to_spec(self) -> ImageSpec {
-        ImageSpec::new(self.layout, self.color.to_color_space())
+    pub const fn to_pixel_format(self) -> PixelFormat {
+        PixelFormat::new(self.layout, self.color.to_color_space())
     }
 
     /// Validate that `layout` and `color` agree on channels, alpha/padding, range, and sample types.
     #[inline]
     pub fn validate(self) -> Result<(), At<ColorError>> {
-        self.to_spec().validate()
+        self.to_pixel_format().validate()
     }
 
     /// Replace primaries on an RGB format (no-op on non-RGB; use
@@ -2337,40 +2337,40 @@ impl PixelFormat {
     }
 }
 
-impl From<PixelFormat> for ImageSpec {
+impl From<ParametricFormat> for PixelFormat {
     #[inline]
-    fn from(fmt: PixelFormat) -> Self {
-        fmt.to_spec()
+    fn from(fmt: ParametricFormat) -> Self {
+        fmt.to_pixel_format()
     }
 }
 
-/// Borrowed-or-owned [`ImageSpec`] carried inside [`PixelView<'a>`](crate::PixelView) and
+/// Borrowed-or-owned [`PixelFormat`] carried inside [`PixelView<'a>`](crate::PixelView) and
 /// [`PixelViewMut<'a>`](crate::PixelViewMut).
 ///
 /// Eliminates `Arc` refcount bumps on `PixelBuf::as_view()`, `as_view_mut()`, `crop()`,
 /// and `sub_rows()`, while storing owned specs behind an [`Arc`] so [`PixelView`](crate::PixelView)
-/// and [`PixelViewMut`](crate::PixelViewMut) stay compact (`size_of::<SpecCow<'_>>() == 16`).
+/// and [`PixelViewMut`](crate::PixelViewMut) stay compact (`size_of::<FormatCow<'_>>() == 16`).
 ///
 /// Ordinary view constructors ([`PixelView::new`](crate::PixelView::new),
-/// [`PixelViewMut::new`](crate::PixelViewMut::new)) accept `&'a ImageSpec` directly (guaranteed
-/// zero heap allocation — pass [`&specs::RGB8_SRGB`](crate::specs::RGB8_SRGB) or `&local_spec`). When a view
-/// genuinely needs to own a dynamically constructed [`ImageSpec`], pass an explicit [`SpecCow`]
-/// via [`PixelView::new_with_spec_cow`](crate::PixelView::new_with_spec_cow) using
-/// [`SpecCow::from_owned`], [`SpecCow::from_format`], or [`SpecCow::from_arc`].
+/// [`PixelViewMut::new`](crate::PixelViewMut::new)) accept `&'a PixelFormat` directly (guaranteed
+/// zero heap allocation — pass [`&formats::RGB8_SRGB`](crate::formats::RGB8_SRGB) or `&local_spec`). When a view
+/// genuinely needs to own a dynamically constructed [`PixelFormat`], pass an explicit [`FormatCow`]
+/// via [`PixelView::new_with_format_cow`](crate::PixelView::new_with_format_cow) using
+/// [`FormatCow::from_owned`], [`FormatCow::from_parametric`], or [`FormatCow::from_arc`].
 #[derive(Clone, Debug)]
-pub enum SpecCow<'a> {
-    /// Zero-clone reference to an [`ImageSpec`] owned by a buffer, caller, or static preset.
-    Borrowed(&'a ImageSpec),
-    /// Heap-shared owned [`ImageSpec`] (e.g. a dynamically constructed custom or ICC spec).
-    Owned(Arc<ImageSpec>),
+pub enum FormatCow<'a> {
+    /// Zero-clone reference to an [`PixelFormat`] owned by a buffer, caller, or static preset.
+    Borrowed(&'a PixelFormat),
+    /// Heap-shared owned [`PixelFormat`] (e.g. a dynamically constructed custom or ICC spec).
+    Owned(Arc<PixelFormat>),
 }
 
-impl<'a> SpecCow<'a> {
-    /// Wrap an owned [`ImageSpec`], borrowing a zero-allocation `&'static ImageSpec` when `spec`
-    /// matches a built-in preset, or allocating an [`Arc<ImageSpec>`] otherwise.
+impl<'a> FormatCow<'a> {
+    /// Wrap an owned [`PixelFormat`], borrowing a zero-allocation `&'static PixelFormat` when `spec`
+    /// matches a built-in preset, or allocating an [`Arc<PixelFormat>`] otherwise.
     #[inline]
     #[must_use]
-    pub fn from_owned(spec: ImageSpec) -> Self {
+    pub fn from_owned(spec: PixelFormat) -> Self {
         if let Some(static_ref) = spec.as_static_ref() {
             Self::Borrowed(static_ref)
         } else {
@@ -2378,42 +2378,42 @@ impl<'a> SpecCow<'a> {
         }
     }
 
-    /// Wrap a `Copy` [`PixelFormat`], borrowing a zero-allocation `&'static ImageSpec` for all
-    /// built-in presets, or allocating an [`Arc<ImageSpec>`] for custom parametric formats.
+    /// Wrap a `Copy` [`ParametricFormat`], borrowing a zero-allocation `&'static PixelFormat` for all
+    /// built-in presets, or allocating an [`Arc<PixelFormat>`] for custom parametric formats.
     #[inline]
     #[must_use]
-    pub fn from_format(format: PixelFormat) -> Self {
-        Self::from_owned(format.to_spec())
+    pub fn from_parametric(format: ParametricFormat) -> Self {
+        Self::from_owned(format.to_pixel_format())
     }
 
-    /// Wrap an existing [`Arc<ImageSpec>`] with zero additional allocation.
+    /// Wrap an existing [`Arc<PixelFormat>`] with zero additional allocation.
     #[inline]
     #[must_use]
-    pub const fn from_arc(spec: Arc<ImageSpec>) -> Self {
+    pub const fn from_arc(spec: Arc<PixelFormat>) -> Self {
         Self::Owned(spec)
     }
 
-    /// Borrow the underlying [`ImageSpec`].
+    /// Borrow the underlying [`PixelFormat`].
     #[inline]
     #[must_use]
-    pub fn as_spec(&self) -> &ImageSpec {
+    pub fn as_format(&self) -> &PixelFormat {
         match self {
             Self::Borrowed(s) => s,
             Self::Owned(s) => s,
         }
     }
 
-    /// Re-borrow as a zero-clone [`SpecCow::Borrowed`] tied to `&self`.
+    /// Re-borrow as a zero-clone [`FormatCow::Borrowed`] tied to `&self`.
     #[inline]
     #[must_use]
-    pub fn to_borrowed(&self) -> SpecCow<'_> {
-        SpecCow::Borrowed(self.as_spec())
+    pub fn to_borrowed(&self) -> FormatCow<'_> {
+        FormatCow::Borrowed(self.as_format())
     }
 
-    /// Convert into an owned [`ImageSpec`] (cloning only if borrowed or shared).
+    /// Convert into an owned [`PixelFormat`] (cloning only if borrowed or shared).
     #[inline]
     #[must_use]
-    pub fn into_owned(self) -> ImageSpec {
+    pub fn into_owned(self) -> PixelFormat {
         match self {
             Self::Borrowed(s) => s.clone(),
             Self::Owned(s) => Arc::unwrap_or_clone(s),
@@ -2421,125 +2421,127 @@ impl<'a> SpecCow<'a> {
     }
 }
 
-impl core::ops::Deref for SpecCow<'_> {
-    type Target = ImageSpec;
+impl core::ops::Deref for FormatCow<'_> {
+    type Target = PixelFormat;
     #[inline]
-    fn deref(&self) -> &ImageSpec {
-        self.as_spec()
+    fn deref(&self) -> &PixelFormat {
+        self.as_format()
     }
 }
 
-impl AsRef<ImageSpec> for SpecCow<'_> {
+impl AsRef<PixelFormat> for FormatCow<'_> {
     #[inline]
-    fn as_ref(&self) -> &ImageSpec {
-        self.as_spec()
+    fn as_ref(&self) -> &PixelFormat {
+        self.as_format()
     }
 }
 
-impl PartialEq for SpecCow<'_> {
+impl PartialEq for FormatCow<'_> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        self.as_spec() == other.as_spec()
+        self.as_format() == other.as_format()
     }
 }
 
-impl Eq for SpecCow<'_> {}
+impl Eq for FormatCow<'_> {}
 
-impl Hash for SpecCow<'_> {
+impl Hash for FormatCow<'_> {
     #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.as_spec().hash(state);
+        self.as_format().hash(state);
     }
 }
 
-impl<'a> From<&'a ImageSpec> for SpecCow<'a> {
+impl<'a> From<&'a PixelFormat> for FormatCow<'a> {
     #[inline]
-    fn from(spec: &'a ImageSpec) -> Self {
+    fn from(spec: &'a PixelFormat) -> Self {
         Self::Borrowed(spec)
     }
 }
 
-impl From<Arc<ImageSpec>> for SpecCow<'_> {
+impl From<Arc<PixelFormat>> for FormatCow<'_> {
     #[inline]
-    fn from(spec: Arc<ImageSpec>) -> Self {
+    fn from(spec: Arc<PixelFormat>) -> Self {
         Self::Owned(spec)
     }
 }
 
-/// Complete, validated description of an interleaved image: physical [`SampleLayout`] + algebraic [`ColorSpace`].
+/// Complete, validated description of an interleaved pixel: physical [`SampleLayout`] + algebraic [`ColorSpace`].
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub struct ImageSpec {
+#[doc(alias = "ImageSpec")]
+#[doc(alias = "PixelDescriptor")]
+pub struct PixelFormat {
     /// Physical byte/bit layout.
     pub layout: SampleLayout,
     /// Authoritative color meaning.
     pub color: ColorSpace,
 }
 
-impl AsRef<ImageSpec> for ImageSpec {
+impl AsRef<PixelFormat> for PixelFormat {
     #[inline]
-    fn as_ref(&self) -> &ImageSpec {
+    fn as_ref(&self) -> &PixelFormat {
         self
     }
 }
 
-/// Built-in `'static` [`ImageSpec`] preset instances for zero-allocation borrowed views.
+/// Built-in `'static` [`PixelFormat`] preset instances for zero-allocation borrowed views.
 ///
-/// Use `&specs::RGB8_SRGB` when constructing a [`PixelView`](crate::PixelView) or
-/// [`PixelViewMut`](crate::PixelViewMut) (or passing `&ImageSpec` to a planner), and
-/// `ImageSpec::RGB8_SRGB` when you need an owned `const` value for [`PixelBuf`](crate::PixelBuf)
+/// Use `&formats::RGB8_SRGB` when constructing a [`PixelView`](crate::PixelView) or
+/// [`PixelViewMut`](crate::PixelViewMut) (or passing `&PixelFormat` to a planner), and
+/// `PixelFormat::RGB8_SRGB` when you need an owned `const` value for [`PixelBuf`](crate::PixelBuf)
 /// constructors or builder chaining (`.with_alpha(...)`, `.with_primaries(...)`).
 ///
-/// *(Because [`ImageSpec`] owns an `Arc<[u8]>` inside its `ColorSpace::Icc` variant and
-/// therefore has non-trivial `Drop`, Rust does not static-promote `&ImageSpec::RGB8_SRGB`.)*
-pub mod specs {
-    use super::ImageSpec;
+/// *(Because [`PixelFormat`] owns an `Arc<[u8]>` inside its `ColorSpace::Icc` variant and
+/// therefore has non-trivial `Drop`, Rust does not static-promote `&PixelFormat::RGB8_SRGB`.)*
+pub mod formats {
+    use super::PixelFormat;
 
-    /// Static `&'static ImageSpec` for [`ImageSpec::RGB8_SRGB`].
-    pub static RGB8_SRGB: ImageSpec = ImageSpec::RGB8_SRGB;
-    /// Static `&'static ImageSpec` for [`ImageSpec::RGBA8_SRGB`].
-    pub static RGBA8_SRGB: ImageSpec = ImageSpec::RGBA8_SRGB;
-    /// Static `&'static ImageSpec` for [`ImageSpec::BGR8_SRGB`].
-    pub static BGR8_SRGB: ImageSpec = ImageSpec::BGR8_SRGB;
-    /// Static `&'static ImageSpec` for [`ImageSpec::BGRA8_SRGB`].
-    pub static BGRA8_SRGB: ImageSpec = ImageSpec::BGRA8_SRGB;
-    /// Static `&'static ImageSpec` for [`ImageSpec::RGBX8_SRGB`].
-    pub static RGBX8_SRGB: ImageSpec = ImageSpec::RGBX8_SRGB;
-    /// Static `&'static ImageSpec` for [`ImageSpec::BGRX8_SRGB`].
-    pub static BGRX8_SRGB: ImageSpec = ImageSpec::BGRX8_SRGB;
-    /// Static `&'static ImageSpec` for [`ImageSpec::RGB16_SRGB`].
-    pub static RGB16_SRGB: ImageSpec = ImageSpec::RGB16_SRGB;
-    /// Static `&'static ImageSpec` for [`ImageSpec::RGBA16_SRGB`].
-    pub static RGBA16_SRGB: ImageSpec = ImageSpec::RGBA16_SRGB;
-    /// Static `&'static ImageSpec` for [`ImageSpec::RGBF32_LINEAR`].
-    pub static RGBF32_LINEAR: ImageSpec = ImageSpec::RGBF32_LINEAR;
-    /// Static `&'static ImageSpec` for [`ImageSpec::RGBAF32_LINEAR`].
-    pub static RGBAF32_LINEAR: ImageSpec = ImageSpec::RGBAF32_LINEAR;
-    /// Static `&'static ImageSpec` for [`ImageSpec::RGBF16_LINEAR`].
-    pub static RGBF16_LINEAR: ImageSpec = ImageSpec::RGBF16_LINEAR;
-    /// Static `&'static ImageSpec` for [`ImageSpec::RGBAF16_LINEAR`].
-    pub static RGBAF16_LINEAR: ImageSpec = ImageSpec::RGBAF16_LINEAR;
-    /// Static `&'static ImageSpec` for [`ImageSpec::GRAY8_SRGB`].
-    pub static GRAY8_SRGB: ImageSpec = ImageSpec::GRAY8_SRGB;
-    /// Static `&'static ImageSpec` for [`ImageSpec::GRAYA8_SRGB`].
-    pub static GRAYA8_SRGB: ImageSpec = ImageSpec::GRAYA8_SRGB;
-    /// Static `&'static ImageSpec` for [`ImageSpec::GRAY16_SRGB`].
-    pub static GRAY16_SRGB: ImageSpec = ImageSpec::GRAY16_SRGB;
-    /// Static `&'static ImageSpec` for [`ImageSpec::GRAYF32_LINEAR`].
-    pub static GRAYF32_LINEAR: ImageSpec = ImageSpec::GRAYF32_LINEAR;
-    /// Static `&'static ImageSpec` for [`ImageSpec::RGB16_BT2100_PQ`].
-    pub static RGB16_BT2100_PQ: ImageSpec = ImageSpec::RGB16_BT2100_PQ;
-    /// Static `&'static ImageSpec` for [`ImageSpec::RGB16_BT2100_HLG_SCENE`].
-    pub static RGB16_BT2100_HLG_SCENE: ImageSpec = ImageSpec::RGB16_BT2100_HLG_SCENE;
-    /// Static `&'static ImageSpec` for [`ImageSpec::RGB16_BT2100_HLG_1000`].
-    pub static RGB16_BT2100_HLG_1000: ImageSpec = ImageSpec::RGB16_BT2100_HLG_1000;
-    /// Static `&'static ImageSpec` for [`ImageSpec::OKLAB_F32`].
-    pub static OKLAB_F32: ImageSpec = ImageSpec::OKLAB_F32;
-    /// Static `&'static ImageSpec` for [`ImageSpec::OKLABA_F32`].
-    pub static OKLABA_F32: ImageSpec = ImageSpec::OKLABA_F32;
+    /// Static `&'static PixelFormat` for [`PixelFormat::RGB8_SRGB`].
+    pub static RGB8_SRGB: PixelFormat = PixelFormat::RGB8_SRGB;
+    /// Static `&'static PixelFormat` for [`PixelFormat::RGBA8_SRGB`].
+    pub static RGBA8_SRGB: PixelFormat = PixelFormat::RGBA8_SRGB;
+    /// Static `&'static PixelFormat` for [`PixelFormat::BGR8_SRGB`].
+    pub static BGR8_SRGB: PixelFormat = PixelFormat::BGR8_SRGB;
+    /// Static `&'static PixelFormat` for [`PixelFormat::BGRA8_SRGB`].
+    pub static BGRA8_SRGB: PixelFormat = PixelFormat::BGRA8_SRGB;
+    /// Static `&'static PixelFormat` for [`PixelFormat::RGBX8_SRGB`].
+    pub static RGBX8_SRGB: PixelFormat = PixelFormat::RGBX8_SRGB;
+    /// Static `&'static PixelFormat` for [`PixelFormat::BGRX8_SRGB`].
+    pub static BGRX8_SRGB: PixelFormat = PixelFormat::BGRX8_SRGB;
+    /// Static `&'static PixelFormat` for [`PixelFormat::RGB16_SRGB`].
+    pub static RGB16_SRGB: PixelFormat = PixelFormat::RGB16_SRGB;
+    /// Static `&'static PixelFormat` for [`PixelFormat::RGBA16_SRGB`].
+    pub static RGBA16_SRGB: PixelFormat = PixelFormat::RGBA16_SRGB;
+    /// Static `&'static PixelFormat` for [`PixelFormat::RGBF32_LINEAR`].
+    pub static RGBF32_LINEAR: PixelFormat = PixelFormat::RGBF32_LINEAR;
+    /// Static `&'static PixelFormat` for [`PixelFormat::RGBAF32_LINEAR`].
+    pub static RGBAF32_LINEAR: PixelFormat = PixelFormat::RGBAF32_LINEAR;
+    /// Static `&'static PixelFormat` for [`PixelFormat::RGBF16_LINEAR`].
+    pub static RGBF16_LINEAR: PixelFormat = PixelFormat::RGBF16_LINEAR;
+    /// Static `&'static PixelFormat` for [`PixelFormat::RGBAF16_LINEAR`].
+    pub static RGBAF16_LINEAR: PixelFormat = PixelFormat::RGBAF16_LINEAR;
+    /// Static `&'static PixelFormat` for [`PixelFormat::GRAY8_SRGB`].
+    pub static GRAY8_SRGB: PixelFormat = PixelFormat::GRAY8_SRGB;
+    /// Static `&'static PixelFormat` for [`PixelFormat::GRAYA8_SRGB`].
+    pub static GRAYA8_SRGB: PixelFormat = PixelFormat::GRAYA8_SRGB;
+    /// Static `&'static PixelFormat` for [`PixelFormat::GRAY16_SRGB`].
+    pub static GRAY16_SRGB: PixelFormat = PixelFormat::GRAY16_SRGB;
+    /// Static `&'static PixelFormat` for [`PixelFormat::GRAYF32_LINEAR`].
+    pub static GRAYF32_LINEAR: PixelFormat = PixelFormat::GRAYF32_LINEAR;
+    /// Static `&'static PixelFormat` for [`PixelFormat::RGB16_BT2100_PQ`].
+    pub static RGB16_BT2100_PQ: PixelFormat = PixelFormat::RGB16_BT2100_PQ;
+    /// Static `&'static PixelFormat` for [`PixelFormat::RGB16_BT2100_HLG_SCENE`].
+    pub static RGB16_BT2100_HLG_SCENE: PixelFormat = PixelFormat::RGB16_BT2100_HLG_SCENE;
+    /// Static `&'static PixelFormat` for [`PixelFormat::RGB16_BT2100_HLG_1000`].
+    pub static RGB16_BT2100_HLG_1000: PixelFormat = PixelFormat::RGB16_BT2100_HLG_1000;
+    /// Static `&'static PixelFormat` for [`PixelFormat::OKLAB_F32`].
+    pub static OKLAB_F32: PixelFormat = PixelFormat::OKLAB_F32;
+    /// Static `&'static PixelFormat` for [`PixelFormat::OKLABA_F32`].
+    pub static OKLABA_F32: PixelFormat = PixelFormat::OKLABA_F32;
 }
 
-static STATIC_GRAYA16_SRGB: ImageSpec = ImageSpec::new(
+static STATIC_GRAYA16_SRGB: PixelFormat = PixelFormat::new(
     SampleLayout::GRAYA16,
     ColorSpace::Gray {
         transfer: Transfer::Srgb,
@@ -2548,109 +2550,111 @@ static STATIC_GRAYA16_SRGB: ImageSpec = ImageSpec::new(
         white: None,
     },
 );
-static STATIC_RGBF32_SRGB: ImageSpec = ImageSpec::new(SampleLayout::RGBF32, ColorSpace::SRGB);
-static STATIC_RGBAF32_SRGB: ImageSpec =
-    ImageSpec::new(SampleLayout::RGBAF32, ColorSpace::SRGB_ALPHA);
+static STATIC_RGBF32_SRGB: PixelFormat = PixelFormat::new(SampleLayout::RGBF32, ColorSpace::SRGB);
+static STATIC_RGBAF32_SRGB: PixelFormat =
+    PixelFormat::new(SampleLayout::RGBAF32, ColorSpace::SRGB_ALPHA);
 
-impl ImageSpec {
+impl PixelFormat {
     /// 8-bit sRGB RGB (`RGB8`).
     ///
-    /// For a `'static` borrowed reference (`&'static ImageSpec`) in [`PixelView::new`](crate::PixelView::new),
-    /// borrow [`&specs::RGB8_SRGB`](crate::specs::RGB8_SRGB).
-    pub const RGB8_SRGB: Self = PixelFormat::RGB8_SRGB.to_spec();
-    /// 8-bit sRGB RGBA straight alpha (`RGBA8`). Borrow [`&specs::RGBA8_SRGB`](crate::specs::RGBA8_SRGB) for views.
-    pub const RGBA8_SRGB: Self = PixelFormat::RGBA8_SRGB.to_spec();
-    /// 8-bit sRGB BGR (`BGR8`). Borrow [`&specs::BGR8_SRGB`](crate::specs::BGR8_SRGB) for views.
-    pub const BGR8_SRGB: Self = PixelFormat::BGR8_SRGB.to_spec();
-    /// 8-bit sRGB BGRA straight alpha (`BGRA8`). Borrow [`&specs::BGRA8_SRGB`](crate::specs::BGRA8_SRGB) for views.
-    pub const BGRA8_SRGB: Self = PixelFormat::BGRA8_SRGB.to_spec();
-    /// 8-bit sRGB RGBx (4th byte undefined padding). Borrow [`&specs::RGBX8_SRGB`](crate::specs::RGBX8_SRGB) for views.
-    pub const RGBX8_SRGB: Self = PixelFormat::RGBX8_SRGB.to_spec();
-    /// 8-bit sRGB BGRx (4th byte undefined padding). Borrow [`&specs::BGRX8_SRGB`](crate::specs::BGRX8_SRGB) for views.
-    pub const BGRX8_SRGB: Self = PixelFormat::BGRX8_SRGB.to_spec();
-    /// 16-bit sRGB RGB (`RGB16`). Borrow [`&specs::RGB16_SRGB`](crate::specs::RGB16_SRGB) for views.
-    pub const RGB16_SRGB: Self = PixelFormat::RGB16_SRGB.to_spec();
-    /// 16-bit sRGB RGBA straight alpha (`RGBA16`). Borrow [`&specs::RGBA16_SRGB`](crate::specs::RGBA16_SRGB) for views.
-    pub const RGBA16_SRGB: Self = PixelFormat::RGBA16_SRGB.to_spec();
-    /// 32-bit float linear RGB (`RGBF32`). Borrow [`&specs::RGBF32_LINEAR`](crate::specs::RGBF32_LINEAR) for views.
-    pub const RGBF32_LINEAR: Self = PixelFormat::RGBF32_LINEAR.to_spec();
-    /// 32-bit float linear RGBA straight alpha (`RGBAF32`). Borrow [`&specs::RGBAF32_LINEAR`](crate::specs::RGBAF32_LINEAR) for views.
-    pub const RGBAF32_LINEAR: Self = PixelFormat::RGBAF32_LINEAR.to_spec();
-    /// 16-bit half-float linear RGB (`RGBF16`). Borrow [`&specs::RGBF16_LINEAR`](crate::specs::RGBF16_LINEAR) for views.
-    pub const RGBF16_LINEAR: Self = PixelFormat::RGBF16_LINEAR.to_spec();
-    /// 16-bit half-float linear RGBA straight alpha (`RGBAF16`). Borrow [`&specs::RGBAF16_LINEAR`](crate::specs::RGBAF16_LINEAR) for views.
-    pub const RGBAF16_LINEAR: Self = PixelFormat::RGBAF16_LINEAR.to_spec();
-    /// 8-bit sRGB grayscale (`GRAY8`). Borrow [`&specs::GRAY8_SRGB`](crate::specs::GRAY8_SRGB) for views.
-    pub const GRAY8_SRGB: Self = PixelFormat::GRAY8_SRGB.to_spec();
-    /// 8-bit sRGB grayscale + straight alpha (`GRAYA8`). Borrow [`&specs::GRAYA8_SRGB`](crate::specs::GRAYA8_SRGB) for views.
-    pub const GRAYA8_SRGB: Self = PixelFormat::GRAYA8_SRGB.to_spec();
-    /// 16-bit sRGB grayscale (`GRAY16`). Borrow [`&specs::GRAY16_SRGB`](crate::specs::GRAY16_SRGB) for views.
-    pub const GRAY16_SRGB: Self = PixelFormat::GRAY16_SRGB.to_spec();
-    /// 32-bit float linear grayscale (`GRAYF32`). Borrow [`&specs::GRAYF32_LINEAR`](crate::specs::GRAYF32_LINEAR) for views.
-    pub const GRAYF32_LINEAR: Self = PixelFormat::GRAYF32_LINEAR.to_spec();
-    /// 16-bit BT.2100 PQ HDR RGB (`RGB16`, BT.2020, ST 2084). Borrow [`&specs::RGB16_BT2100_PQ`](crate::specs::RGB16_BT2100_PQ) for views.
-    pub const RGB16_BT2100_PQ: Self = PixelFormat::RGB16_BT2100_PQ.to_spec();
-    /// 16-bit BT.2100 HLG HDR RGB, scene-referred. Borrow [`&specs::RGB16_BT2100_HLG_SCENE`](crate::specs::RGB16_BT2100_HLG_SCENE) for views.
-    pub const RGB16_BT2100_HLG_SCENE: Self = PixelFormat::RGB16_BT2100_HLG_SCENE.to_spec();
-    /// 16-bit BT.2100 HLG HDR RGB with explicit 1000-nit reference rendering. Borrow [`&specs::RGB16_BT2100_HLG_1000`](crate::specs::RGB16_BT2100_HLG_1000) for views.
-    pub const RGB16_BT2100_HLG_1000: Self = PixelFormat::RGB16_BT2100_HLG_1000.to_spec();
-    /// 32-bit float Oklab (no alpha). Borrow [`&specs::OKLAB_F32`](crate::specs::OKLAB_F32) for views.
-    pub const OKLAB_F32: Self = PixelFormat::OKLAB_F32.to_spec();
-    /// 32-bit float Oklab + straight alpha. Borrow [`&specs::OKLABA_F32`](crate::specs::OKLABA_F32) for views.
-    pub const OKLABA_F32: Self = PixelFormat::OKLABA_F32.to_spec();
+    /// For a `'static` borrowed reference (`&'static PixelFormat`) in [`PixelView::new`](crate::PixelView::new),
+    /// borrow [`&formats::RGB8_SRGB`](crate::formats::RGB8_SRGB).
+    pub const RGB8_SRGB: Self = ParametricFormat::RGB8_SRGB.to_pixel_format();
+    /// 8-bit sRGB RGBA straight alpha (`RGBA8`). Borrow [`&formats::RGBA8_SRGB`](crate::formats::RGBA8_SRGB) for views.
+    pub const RGBA8_SRGB: Self = ParametricFormat::RGBA8_SRGB.to_pixel_format();
+    /// 8-bit sRGB BGR (`BGR8`). Borrow [`&formats::BGR8_SRGB`](crate::formats::BGR8_SRGB) for views.
+    pub const BGR8_SRGB: Self = ParametricFormat::BGR8_SRGB.to_pixel_format();
+    /// 8-bit sRGB BGRA straight alpha (`BGRA8`). Borrow [`&formats::BGRA8_SRGB`](crate::formats::BGRA8_SRGB) for views.
+    pub const BGRA8_SRGB: Self = ParametricFormat::BGRA8_SRGB.to_pixel_format();
+    /// 8-bit sRGB RGBx (4th byte undefined padding). Borrow [`&formats::RGBX8_SRGB`](crate::formats::RGBX8_SRGB) for views.
+    pub const RGBX8_SRGB: Self = ParametricFormat::RGBX8_SRGB.to_pixel_format();
+    /// 8-bit sRGB BGRx (4th byte undefined padding). Borrow [`&formats::BGRX8_SRGB`](crate::formats::BGRX8_SRGB) for views.
+    pub const BGRX8_SRGB: Self = ParametricFormat::BGRX8_SRGB.to_pixel_format();
+    /// 16-bit sRGB RGB (`RGB16`). Borrow [`&formats::RGB16_SRGB`](crate::formats::RGB16_SRGB) for views.
+    pub const RGB16_SRGB: Self = ParametricFormat::RGB16_SRGB.to_pixel_format();
+    /// 16-bit sRGB RGBA straight alpha (`RGBA16`). Borrow [`&formats::RGBA16_SRGB`](crate::formats::RGBA16_SRGB) for views.
+    pub const RGBA16_SRGB: Self = ParametricFormat::RGBA16_SRGB.to_pixel_format();
+    /// 32-bit float linear RGB (`RGBF32`). Borrow [`&formats::RGBF32_LINEAR`](crate::formats::RGBF32_LINEAR) for views.
+    pub const RGBF32_LINEAR: Self = ParametricFormat::RGBF32_LINEAR.to_pixel_format();
+    /// 32-bit float linear RGBA straight alpha (`RGBAF32`). Borrow [`&formats::RGBAF32_LINEAR`](crate::formats::RGBAF32_LINEAR) for views.
+    pub const RGBAF32_LINEAR: Self = ParametricFormat::RGBAF32_LINEAR.to_pixel_format();
+    /// 16-bit half-float linear RGB (`RGBF16`). Borrow [`&formats::RGBF16_LINEAR`](crate::formats::RGBF16_LINEAR) for views.
+    pub const RGBF16_LINEAR: Self = ParametricFormat::RGBF16_LINEAR.to_pixel_format();
+    /// 16-bit half-float linear RGBA straight alpha (`RGBAF16`). Borrow [`&formats::RGBAF16_LINEAR`](crate::formats::RGBAF16_LINEAR) for views.
+    pub const RGBAF16_LINEAR: Self = ParametricFormat::RGBAF16_LINEAR.to_pixel_format();
+    /// 8-bit sRGB grayscale (`GRAY8`). Borrow [`&formats::GRAY8_SRGB`](crate::formats::GRAY8_SRGB) for views.
+    pub const GRAY8_SRGB: Self = ParametricFormat::GRAY8_SRGB.to_pixel_format();
+    /// 8-bit sRGB grayscale + straight alpha (`GRAYA8`). Borrow [`&formats::GRAYA8_SRGB`](crate::formats::GRAYA8_SRGB) for views.
+    pub const GRAYA8_SRGB: Self = ParametricFormat::GRAYA8_SRGB.to_pixel_format();
+    /// 16-bit sRGB grayscale (`GRAY16`). Borrow [`&formats::GRAY16_SRGB`](crate::formats::GRAY16_SRGB) for views.
+    pub const GRAY16_SRGB: Self = ParametricFormat::GRAY16_SRGB.to_pixel_format();
+    /// 32-bit float linear grayscale (`GRAYF32`). Borrow [`&formats::GRAYF32_LINEAR`](crate::formats::GRAYF32_LINEAR) for views.
+    pub const GRAYF32_LINEAR: Self = ParametricFormat::GRAYF32_LINEAR.to_pixel_format();
+    /// 16-bit BT.2100 PQ HDR RGB (`RGB16`, BT.2020, ST 2084). Borrow [`&formats::RGB16_BT2100_PQ`](crate::formats::RGB16_BT2100_PQ) for views.
+    pub const RGB16_BT2100_PQ: Self = ParametricFormat::RGB16_BT2100_PQ.to_pixel_format();
+    /// 16-bit BT.2100 HLG HDR RGB, scene-referred. Borrow [`&formats::RGB16_BT2100_HLG_SCENE`](crate::formats::RGB16_BT2100_HLG_SCENE) for views.
+    pub const RGB16_BT2100_HLG_SCENE: Self =
+        ParametricFormat::RGB16_BT2100_HLG_SCENE.to_pixel_format();
+    /// 16-bit BT.2100 HLG HDR RGB with explicit 1000-nit reference rendering. Borrow [`&formats::RGB16_BT2100_HLG_1000`](crate::formats::RGB16_BT2100_HLG_1000) for views.
+    pub const RGB16_BT2100_HLG_1000: Self =
+        ParametricFormat::RGB16_BT2100_HLG_1000.to_pixel_format();
+    /// 32-bit float Oklab (no alpha). Borrow [`&formats::OKLAB_F32`](crate::formats::OKLAB_F32) for views.
+    pub const OKLAB_F32: Self = ParametricFormat::OKLAB_F32.to_pixel_format();
+    /// 32-bit float Oklab + straight alpha. Borrow [`&formats::OKLABA_F32`](crate::formats::OKLABA_F32) for views.
+    pub const OKLABA_F32: Self = ParametricFormat::OKLABA_F32.to_pixel_format();
 
     /// Return a `'static` preset reference if `self` equals one of the built-in common specs.
     ///
-    /// Used by [`SpecCow::from_owned`] and interop bridges (`from_pixels`, `from_imgref`,
+    /// Used by [`FormatCow::from_owned`] and interop bridges (`from_pixels`, `from_imgref`,
     /// `from_image_buffer`) to avoid heap allocation for standard sRGB / linear / HDR / Oklab specs.
     #[inline]
     #[must_use]
     pub fn as_static_ref(&self) -> Option<&'static Self> {
         let candidate: &'static Self = match self.layout {
-            SampleLayout::RGB8 => &specs::RGB8_SRGB,
-            SampleLayout::RGBA8 => &specs::RGBA8_SRGB,
-            SampleLayout::BGR8 => &specs::BGR8_SRGB,
-            SampleLayout::BGRA8 => &specs::BGRA8_SRGB,
-            SampleLayout::RGBX8 => &specs::RGBX8_SRGB,
-            SampleLayout::BGRX8 => &specs::BGRX8_SRGB,
+            SampleLayout::RGB8 => &formats::RGB8_SRGB,
+            SampleLayout::RGBA8 => &formats::RGBA8_SRGB,
+            SampleLayout::BGR8 => &formats::BGR8_SRGB,
+            SampleLayout::BGRA8 => &formats::BGRA8_SRGB,
+            SampleLayout::RGBX8 => &formats::RGBX8_SRGB,
+            SampleLayout::BGRX8 => &formats::BGRX8_SRGB,
             SampleLayout::RGB16 => {
-                if self == &specs::RGB16_SRGB {
-                    return Some(&specs::RGB16_SRGB);
-                } else if self == &specs::RGB16_BT2100_PQ {
-                    return Some(&specs::RGB16_BT2100_PQ);
-                } else if self == &specs::RGB16_BT2100_HLG_SCENE {
-                    return Some(&specs::RGB16_BT2100_HLG_SCENE);
-                } else if self == &specs::RGB16_BT2100_HLG_1000 {
-                    return Some(&specs::RGB16_BT2100_HLG_1000);
+                if self == &formats::RGB16_SRGB {
+                    return Some(&formats::RGB16_SRGB);
+                } else if self == &formats::RGB16_BT2100_PQ {
+                    return Some(&formats::RGB16_BT2100_PQ);
+                } else if self == &formats::RGB16_BT2100_HLG_SCENE {
+                    return Some(&formats::RGB16_BT2100_HLG_SCENE);
+                } else if self == &formats::RGB16_BT2100_HLG_1000 {
+                    return Some(&formats::RGB16_BT2100_HLG_1000);
                 }
                 return None;
             }
-            SampleLayout::RGBA16 => &specs::RGBA16_SRGB,
+            SampleLayout::RGBA16 => &formats::RGBA16_SRGB,
             SampleLayout::RGBF32 => {
-                if self == &specs::RGBF32_LINEAR {
-                    return Some(&specs::RGBF32_LINEAR);
+                if self == &formats::RGBF32_LINEAR {
+                    return Some(&formats::RGBF32_LINEAR);
                 } else if self == &STATIC_RGBF32_SRGB {
                     return Some(&STATIC_RGBF32_SRGB);
                 }
                 return None;
             }
             SampleLayout::RGBAF32 => {
-                if self == &specs::RGBAF32_LINEAR {
-                    return Some(&specs::RGBAF32_LINEAR);
+                if self == &formats::RGBAF32_LINEAR {
+                    return Some(&formats::RGBAF32_LINEAR);
                 } else if self == &STATIC_RGBAF32_SRGB {
                     return Some(&STATIC_RGBAF32_SRGB);
                 }
                 return None;
             }
-            SampleLayout::RGBF16 => &specs::RGBF16_LINEAR,
-            SampleLayout::RGBAF16 => &specs::RGBAF16_LINEAR,
-            SampleLayout::GRAY8 => &specs::GRAY8_SRGB,
-            SampleLayout::GRAYA8 => &specs::GRAYA8_SRGB,
-            SampleLayout::GRAY16 => &specs::GRAY16_SRGB,
+            SampleLayout::RGBF16 => &formats::RGBF16_LINEAR,
+            SampleLayout::RGBAF16 => &formats::RGBAF16_LINEAR,
+            SampleLayout::GRAY8 => &formats::GRAY8_SRGB,
+            SampleLayout::GRAYA8 => &formats::GRAYA8_SRGB,
+            SampleLayout::GRAY16 => &formats::GRAY16_SRGB,
             SampleLayout::GRAYA16 => &STATIC_GRAYA16_SRGB,
-            SampleLayout::GRAYF32 => &specs::GRAYF32_LINEAR,
-            SampleLayout::OKLABF32 => &specs::OKLAB_F32,
-            SampleLayout::OKLABAF32 => &specs::OKLABA_F32,
+            SampleLayout::GRAYF32 => &formats::GRAYF32_LINEAR,
+            SampleLayout::OKLABF32 => &formats::OKLAB_F32,
+            SampleLayout::OKLABAF32 => &formats::OKLABA_F32,
             _ => return None,
         };
         if self == candidate {
@@ -2660,26 +2664,26 @@ impl ImageSpec {
         }
     }
 
-    /// Construct an [`ImageSpec`] from a layout and color space.
+    /// Construct an [`PixelFormat`] from a layout and color space.
     #[inline]
     #[must_use]
     pub const fn new(layout: SampleLayout, color: ColorSpace) -> Self {
         Self { layout, color }
     }
 
-    /// Construct an [`ImageSpec`] from a drop-free `Copy` [`PixelFormat`].
+    /// Construct an [`PixelFormat`] from a drop-free `Copy` [`ParametricFormat`].
     #[inline]
     #[must_use]
-    pub const fn from_format(format: PixelFormat) -> Self {
-        format.to_spec()
+    pub const fn from_parametric(format: ParametricFormat) -> Self {
+        format.to_pixel_format()
     }
 
-    /// Project this spec into a `Copy` [`PixelFormat`], returning `None` if it owns an ICC profile.
+    /// Project this spec into a `Copy` [`ParametricFormat`], returning `None` if it owns an ICC profile.
     #[inline]
     #[must_use]
-    pub const fn as_format(&self) -> Option<PixelFormat> {
+    pub const fn as_parametric(&self) -> Option<ParametricFormat> {
         match ParametricColor::from_color_space(&self.color) {
-            Some(color) => Some(PixelFormat::new(self.layout, color)),
+            Some(color) => Some(ParametricFormat::new(self.layout, color)),
             None => None,
         }
     }
@@ -2801,7 +2805,7 @@ impl ImageSpec {
         }
     }
 
-    /// Construct a validated [`ImageSpec`] by assuming a conventional default color space for `layout`.
+    /// Construct a validated [`PixelFormat`] by assuming a conventional default color space for `layout`.
     ///
     /// **Assumption, not signal detection:** chooses full-range sRGB for integer RGB/Gray layouts,
     /// linear sRGB/Gray for floating-point layouts, D65 for XYZ, straight/undefined alpha matching
@@ -3250,40 +3254,46 @@ impl ColorOrigin {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SignedFraction {
     /// Signed numerator.
-    pub num: i32,
+    pub numerator: i32,
     /// Strictly positive denominator.
-    pub den: NonZeroU32,
+    pub denominator: NonZeroU32,
 }
 
 impl SignedFraction {
     /// Exact `0 / 1`.
     pub const ZERO: Self = Self {
-        num: 0,
-        den: NonZeroU32::MIN,
+        numerator: 0,
+        denominator: NonZeroU32::MIN,
     };
 
     /// Standard ISO 21496-1 / UltraHDR `1 / 64` offset.
     pub const ONE_64TH: Self = Self {
-        num: 1,
-        den: match NonZeroU32::new(64) {
+        numerator: 1,
+        denominator: match NonZeroU32::new(64) {
             Some(d) => d,
             None => unreachable!(),
         },
     };
 
-    /// Construct from `(num, den: NonZeroU32)`.
+    /// Construct from `(numerator, denominator: NonZeroU32)`.
     #[inline]
     #[must_use]
-    pub const fn new(num: i32, den: NonZeroU32) -> Self {
-        Self { num, den }
+    pub const fn new(numerator: i32, denominator: NonZeroU32) -> Self {
+        Self {
+            numerator,
+            denominator,
+        }
     }
 
-    /// Construct from `(num, den: u32)`, returning `None` if `den == 0`.
+    /// Construct from `(numerator, denominator: u32)`, returning `None` if `denominator == 0`.
     #[inline]
     #[must_use]
-    pub const fn try_new(num: i32, den: u32) -> Option<Self> {
-        match NonZeroU32::new(den) {
-            Some(d) => Some(Self { num, den: d }),
+    pub const fn try_new(numerator: i32, denominator: u32) -> Option<Self> {
+        match NonZeroU32::new(denominator) {
+            Some(denominator) => Some(Self {
+                numerator,
+                denominator,
+            }),
             None => None,
         }
     }
@@ -3291,10 +3301,10 @@ impl SignedFraction {
     /// Exact integer `n / 1`.
     #[inline]
     #[must_use]
-    pub const fn from_int(num: i32) -> Self {
+    pub const fn from_int(numerator: i32) -> Self {
         Self {
-            num,
-            den: NonZeroU32::MIN,
+            numerator,
+            denominator: NonZeroU32::MIN,
         }
     }
 
@@ -3333,7 +3343,7 @@ impl SignedFraction {
     #[inline]
     #[must_use]
     pub const fn to_f64(self) -> f64 {
-        (self.num as f64) / (self.den.get() as f64)
+        (self.numerator as f64) / (self.denominator.get() as f64)
     }
 
     /// Rational value as `f32`.
@@ -3343,12 +3353,12 @@ impl SignedFraction {
         self.to_f64() as f32
     }
 
-    /// Exact rational comparison (`a.num * b.den` vs `b.num * a.den` in `i128`).
+    /// Exact rational comparison (`a.numerator * b.denominator` vs `b.numerator * a.denominator` in `i128`).
     #[inline]
     #[must_use]
     pub const fn cmp_rational(self, other: Self) -> Ordering {
-        let lhs = (self.num as i128) * (other.den.get() as i128);
-        let rhs = (other.num as i128) * (self.den.get() as i128);
+        let lhs = (self.numerator as i128) * (other.denominator.get() as i128);
+        let rhs = (other.numerator as i128) * (self.denominator.get() as i128);
         if lhs < rhs {
             Ordering::Less
         } else if lhs > rhs {
@@ -3363,37 +3373,43 @@ impl SignedFraction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct UnsignedFraction {
     /// Unsigned numerator.
-    pub num: u32,
+    pub numerator: u32,
     /// Strictly positive denominator.
-    pub den: NonZeroU32,
+    pub denominator: NonZeroU32,
 }
 
 impl UnsignedFraction {
     /// Exact `0 / 1`.
     pub const ZERO: Self = Self {
-        num: 0,
-        den: NonZeroU32::MIN,
+        numerator: 0,
+        denominator: NonZeroU32::MIN,
     };
 
     /// Exact `1 / 1`.
     pub const ONE: Self = Self {
-        num: 1,
-        den: NonZeroU32::MIN,
+        numerator: 1,
+        denominator: NonZeroU32::MIN,
     };
 
-    /// Construct from `(num, den: NonZeroU32)`.
+    /// Construct from `(numerator, denominator: NonZeroU32)`.
     #[inline]
     #[must_use]
-    pub const fn new(num: u32, den: NonZeroU32) -> Self {
-        Self { num, den }
+    pub const fn new(numerator: u32, denominator: NonZeroU32) -> Self {
+        Self {
+            numerator,
+            denominator,
+        }
     }
 
-    /// Construct from `(num, den: u32)`, returning `None` if `den == 0`.
+    /// Construct from `(numerator, denominator: u32)`, returning `None` if `denominator == 0`.
     #[inline]
     #[must_use]
-    pub const fn try_new(num: u32, den: u32) -> Option<Self> {
-        match NonZeroU32::new(den) {
-            Some(d) => Some(Self { num, den: d }),
+    pub const fn try_new(numerator: u32, denominator: u32) -> Option<Self> {
+        match NonZeroU32::new(denominator) {
+            Some(denominator) => Some(Self {
+                numerator,
+                denominator,
+            }),
             None => None,
         }
     }
@@ -3401,10 +3417,10 @@ impl UnsignedFraction {
     /// Exact unsigned integer `n / 1`.
     #[inline]
     #[must_use]
-    pub const fn from_uint(num: u32) -> Self {
+    pub const fn from_uint(numerator: u32) -> Self {
         Self {
-            num,
-            den: NonZeroU32::MIN,
+            numerator,
+            denominator: NonZeroU32::MIN,
         }
     }
 
@@ -3434,7 +3450,7 @@ impl UnsignedFraction {
     #[inline]
     #[must_use]
     pub const fn to_f64(self) -> f64 {
-        (self.num as f64) / (self.den.get() as f64)
+        (self.numerator as f64) / (self.denominator.get() as f64)
     }
 
     /// Rational value as `f32`.
@@ -3444,12 +3460,12 @@ impl UnsignedFraction {
         self.to_f64() as f32
     }
 
-    /// Exact rational comparison (`a.num * b.den` vs `b.num * a.den` in `u64`).
+    /// Exact rational comparison (`a.numerator * b.denominator` vs `b.numerator * a.denominator` in `u64`).
     #[inline]
     #[must_use]
     pub const fn cmp_rational(self, other: Self) -> Ordering {
-        let lhs = (self.num as u64) * (other.den.get() as u64);
-        let rhs = (other.num as u64) * (self.den.get() as u64);
+        let lhs = (self.numerator as u64) * (other.denominator.get() as u64);
+        let rhs = (other.numerator as u64) * (self.denominator.get() as u64);
         if lhs < rhs {
             Ordering::Less
         } else if lhs > rhs {
@@ -3480,7 +3496,7 @@ impl GainMapComponent {
     #[inline]
     #[must_use]
     pub const fn is_valid(self) -> bool {
-        self.gamma.num > 0
+        self.gamma.numerator > 0
             && !matches!(
                 self.min_gain_stops.cmp_rational(self.max_gain_stops),
                 Ordering::Greater
@@ -3607,7 +3623,7 @@ impl GainMapMetadata {
         }
         let max_f = SignedFraction::from_f32_approx(max_boost_stops)?;
         let alt_h = UnsignedFraction::from_f32_approx(max_boost_stops)?;
-        if max_f.num <= 0 || alt_h.num == 0 {
+        if max_f.numerator <= 0 || alt_h.numerator == 0 {
             return None;
         }
         Self::new(
@@ -3724,7 +3740,7 @@ impl Color {
     }
 }
 
-/// Validation errors for [`ImageSpec`] and [`ColorSpace`].
+/// Validation errors for [`PixelFormat`] and [`ColorSpace`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ColorError {

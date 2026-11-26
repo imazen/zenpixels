@@ -25,7 +25,7 @@
 //!   `gainmap::apply_gain_map_with`, `gainmap::extract_gain_map_only`,
 //!   `gainmap::GainMapApplier`, `gainmap::GainMapRowExtractor`.
 //! - **Content compaction:** [`analyze_compaction`], [`compact_to_buf`], [`compact_in_place`].
-//! - **Encoder output + CICP/ICC signaling:** [`adapt_for_encode_format`],
+//! - **Encoder output + CICP/ICC signaling:** [`adapt_for_encode_parametric`],
 //!   [`adapt_for_encode`], or reusable [`OutputPlan::build`] with [`OutputSignaling`].
 //!
 //! [`ConvertPolicy::default()`] equals [`ConvertPolicy::lossless()`], a strict permission
@@ -36,23 +36,23 @@
 //! ## Quick Example
 //!
 //! ```rust
-//! use zenpixels_convert::{ConvertPolicy, ImageSpec, PixelBuf, convert_to_buf, specs};
+//! use zenpixels_convert::{ConvertPolicy, PixelFormat, PixelBuf, convert_to_buf, formats};
 //!
-//! let src = PixelBuf::from_typed(vec![255u8, 0, 0, 0, 255, 0], 2, 1, ImageSpec::RGB8_SRGB)?;
+//! let src = PixelBuf::from_typed(vec![255u8, 0, 0, 0, 255, 0], 2, 1, PixelFormat::RGB8_SRGB)?;
 //! let linear = convert_to_buf(
 //!     &src.as_view(),
-//!     &specs::RGBF32_LINEAR,
+//!     &formats::RGBF32_LINEAR,
 //!     &ConvertPolicy::lossless(),
 //! )?;
-//! assert_eq!(linear.spec(), &specs::RGBF32_LINEAR);
+//! assert_eq!(linear.format(), &formats::RGBF32_LINEAR);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! ## Opt-in SIMD (`const` [`Accelerators`])
 //!
 //! Native pairs default to a compact scalar core with verified 0-bit parity
-//! against SIMD kernels. Opt into SIMD globally via [`accel::enable_all`] /
-//! [`accel::enable_web_sdr`] or per-policy via [`ConvertPolicy::with_accelerators`].
+//! against SIMD kernels. Opt into SIMD globally via [`accelerators::enable_all`] /
+//! [`accelerators::enable_web_sdr`] or per-policy via [`ConvertPolicy::with_accelerators`].
 
 #![cfg_attr(not(test), no_std)]
 #![forbid(unsafe_code)]
@@ -64,7 +64,7 @@ whereat::define_at_crate_info!(path = "zenpixels-convert/");
 /// Full re-export of [`zenpixels`] core types (zero module name collisions!).
 pub use zenpixels::*;
 
-pub mod accel;
+pub mod accelerators;
 pub mod cms;
 pub mod codes;
 pub mod compact;
@@ -97,7 +97,7 @@ pub(crate) mod transfers;
 pub mod ycbcr;
 
 // Ergonomic top-level re-exports.
-pub use accel::Accelerators;
+pub use accelerators::Accelerators;
 #[cfg(feature = "cms-moxcms")]
 pub use cms::MoxCms;
 pub use cms::{CmsBackend, CmsTransform};
@@ -121,7 +121,7 @@ pub use orient::{
     bake_orientation_owned,
 };
 pub use output::{
-    EncodeReady, OutputPlan, OutputSignaling, adapt_for_encode, adapt_for_encode_format,
+    EncodeReady, OutputPlan, OutputSignaling, adapt_for_encode, adapt_for_encode_parametric,
 };
 pub use plan::{
     ImagePlan, RowPlan, convert_into, convert_into_with_peak, convert_to_buf,

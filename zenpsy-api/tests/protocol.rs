@@ -15,7 +15,7 @@ use zenpsy_api::whereat::{At, ErrorAtExt};
 use zenpsy_api::*;
 type Error = MetricError;
 type Result<T> = MetricResult<T>;
-use zenpixels::{ImageSpec, PixelView};
+use zenpixels::{PixelView, formats};
 
 #[derive(Default)]
 struct Log {
@@ -136,7 +136,7 @@ impl Drop for Recorder {
 }
 
 fn image() -> PixelView<'static> {
-    PixelView::new(&[0; 12], 2, 2, 6, ImageSpec::rgb8_srgb()).unwrap()
+    PixelView::new(&[0; 12], 2, 2, 6, &formats::RGB8_SRGB).unwrap()
 }
 #[derive(Debug)]
 struct NativeScore(f64);

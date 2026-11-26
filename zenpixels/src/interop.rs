@@ -13,12 +13,12 @@ use whereat::At;
 use crate::buffer::{BufferError, PixelBuf, PixelView, PixelViewMut, err_at};
 #[cfg(feature = "image")]
 use crate::cicp::Cicp;
-#[cfg(feature = "imgref")]
-use crate::color::ImageSpec as ImgrefImageSpec;
 #[cfg(any(feature = "imgref", feature = "image"))]
-use crate::color::SpecCow;
+use crate::color::FormatCow;
+#[cfg(feature = "imgref")]
+use crate::color::PixelFormat as ImgrefImageSpec;
 #[cfg(feature = "image")]
-use crate::color::{AlphaMode, ColorSpace, ImageSpec, Primaries, SignalRange, Transfer};
+use crate::color::{AlphaMode, ColorSpace, PixelFormat, Primaries, SignalRange, Transfer};
 #[cfg(feature = "image")]
 use crate::layout::{ChannelOrder, InteropTarget, SampleLayout, SampleType};
 #[cfg(feature = "image")]
@@ -130,8 +130,8 @@ mod rgb_impls {
 impl<'a> PixelView<'a> {
     /// Borrow a typed [`imgref::ImgRef<'a, P>`] **zero-copy** with true `'a` lifetime.
     ///
-    /// Uses a zero-allocation `&'static ImageSpec` for all standard built-in presets, and
-    /// allocates an `Arc<ImageSpec>` only for custom/ICC color spaces.
+    /// Uses a zero-allocation `&'static PixelFormat` for all standard built-in presets, and
+    /// allocates an `Arc<PixelFormat>` only for custom/ICC color spaces.
     pub fn from_imgref<P: PixelType>(
         img: imgref::ImgRef<'a, P>,
         color: crate::ColorSpace,
@@ -146,19 +146,19 @@ impl<'a> PixelView<'a> {
             .stride()
             .checked_mul(bpp)
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        Self::new_with_spec_cow(
+        Self::new_with_format_cow(
             bytemuck::cast_slice(img.buf()),
             w,
             h,
             stride,
-            SpecCow::from_owned(ImgrefImageSpec::new(P::LAYOUT, color)),
+            FormatCow::from_owned(ImgrefImageSpec::new(P::LAYOUT, color)),
         )
     }
 
     /// Borrow as a zero-copy [`imgref::ImgRef<'a, P>`] when layout, alignment, and pixel-whole stride match.
     pub fn as_imgref<P: PixelType>(&self) -> Result<imgref::ImgRef<'a, P>, At<BufferError>> {
         let bpp = core::mem::size_of::<P>();
-        if bpp == 0 || bpp != P::LAYOUT.bytes_per_pixel() || self.spec().layout != P::LAYOUT {
+        if bpp == 0 || bpp != P::LAYOUT.bytes_per_pixel() || self.format().layout != P::LAYOUT {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
         if self.stride() % bpp != 0 {
@@ -190,7 +190,7 @@ impl<'a> PixelView<'a> {
     pub fn as_sample_imgref<S: StorageSample>(
         &self,
     ) -> Result<imgref::ImgRef<'a, S>, At<BufferError>> {
-        let layout = self.spec().layout;
+        let layout = self.format().layout;
         if layout.packing.is_packed_word() || layout.sample != S::SAMPLE_TYPE {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
@@ -227,8 +227,8 @@ impl<'a> PixelView<'a> {
 impl<'a> PixelViewMut<'a> {
     /// Borrow a mutable typed [`imgref::ImgRefMut<'a, P>`] **zero-copy** with true `'a` lifetime.
     ///
-    /// Uses a zero-allocation `&'static ImageSpec` for all standard built-in presets, and
-    /// allocates an `Arc<ImageSpec>` only for custom/ICC color spaces.
+    /// Uses a zero-allocation `&'static PixelFormat` for all standard built-in presets, and
+    /// allocates an `Arc<PixelFormat>` only for custom/ICC color spaces.
     pub fn from_imgref_mut<P: PixelType>(
         img: imgref::ImgRefMut<'a, P>,
         color: crate::ColorSpace,
@@ -243,12 +243,12 @@ impl<'a> PixelViewMut<'a> {
             .stride()
             .checked_mul(bpp)
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        Self::new_with_spec_cow(
+        Self::new_with_format_cow(
             bytemuck::cast_slice_mut(img.into_buf()),
             w,
             h,
             stride,
-            SpecCow::from_owned(ImgrefImageSpec::new(P::LAYOUT, color)),
+            FormatCow::from_owned(ImgrefImageSpec::new(P::LAYOUT, color)),
         )
     }
 
@@ -257,7 +257,7 @@ impl<'a> PixelViewMut<'a> {
         &mut self,
     ) -> Result<imgref::ImgRefMut<'_, P>, At<BufferError>> {
         let bpp = core::mem::size_of::<P>();
-        if bpp == 0 || bpp != P::LAYOUT.bytes_per_pixel() || self.spec().layout != P::LAYOUT {
+        if bpp == 0 || bpp != P::LAYOUT.bytes_per_pixel() || self.format().layout != P::LAYOUT {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
         if self.stride() % bpp != 0 {
@@ -286,7 +286,7 @@ impl<'a> PixelViewMut<'a> {
         self,
     ) -> Result<imgref::ImgRefMut<'a, P>, At<BufferError>> {
         let bpp = core::mem::size_of::<P>();
-        if bpp == 0 || bpp != P::LAYOUT.bytes_per_pixel() || self.spec().layout != P::LAYOUT {
+        if bpp == 0 || bpp != P::LAYOUT.bytes_per_pixel() || self.format().layout != P::LAYOUT {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
         if self.stride() % bpp != 0 {
@@ -314,7 +314,7 @@ impl<'a> PixelViewMut<'a> {
     pub fn as_sample_imgref_mut<S: StorageSample>(
         &mut self,
     ) -> Result<imgref::ImgRefMut<'_, S>, At<BufferError>> {
-        let layout = self.spec().layout;
+        let layout = self.format().layout;
         if layout.packing.is_packed_word() || layout.sample != S::SAMPLE_TYPE {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
@@ -373,7 +373,7 @@ impl PixelBuf {
     #[allow(clippy::result_large_err)]
     pub fn into_imgvec_zero_copy<P: PixelType>(self) -> Result<imgref::ImgVec<P>, Self> {
         let bpp = core::mem::size_of::<P>();
-        if bpp == 0 || bpp != P::LAYOUT.bytes_per_pixel() || self.spec().layout != P::LAYOUT {
+        if bpp == 0 || bpp != P::LAYOUT.bytes_per_pixel() || self.format().layout != P::LAYOUT {
             return Err(self);
         }
         let w = self.width() as usize;
@@ -387,7 +387,7 @@ impl PixelBuf {
     /// Move into an [`imgref::ImgVec<P>`], zero-copy when allocation alignment & capacity match.
     pub fn into_imgvec<P: PixelType>(self) -> Result<imgref::ImgVec<P>, At<BufferError>> {
         let bpp = core::mem::size_of::<P>();
-        if bpp == 0 || bpp != P::LAYOUT.bytes_per_pixel() || self.spec().layout != P::LAYOUT {
+        if bpp == 0 || bpp != P::LAYOUT.bytes_per_pixel() || self.format().layout != P::LAYOUT {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
         let w = self.width() as usize;
@@ -687,7 +687,7 @@ impl PixelBuf {
     /// Move into an `image::ImageBuffer<P, Vec<P::Subpixel>>` zero-copy when layout and color match,
     /// propagating CICP color-space metadata onto the resulting `ImageBuffer`.
     ///
-    /// When `self.spec().color.alpha() == AlphaMode::Opaque` and cached facts do not already prove
+    /// When `self.format().color.alpha() == AlphaMode::Opaque` and cached facts do not already prove
     /// `all_opaque`, canonicalizes the stored alpha channel to full opacity so `image`'s straight-alpha
     /// `Rgba`/`LumaA` buffer never receives non-opaque alpha samples.
     pub fn into_image_buffer<P>(
@@ -697,13 +697,13 @@ impl PixelBuf {
         P: image::Pixel + image::PixelWithColorType + 'static,
         P::Subpixel: crate::storage::StorageSample,
     {
-        if !self.spec().supports_interop(InteropTarget::ImageBuffer) {
+        if !self.format().supports_interop(InteropTarget::ImageBuffer) {
             return Err(err_at(BufferError::InteropUnsupported));
         }
-        let img_cicp = color_space_to_image_cicp(&self.spec().color)
+        let img_cicp = color_space_to_image_cicp(&self.format().color)
             .ok_or_else(|| err_at(BufferError::InteropUnsupported))?;
         let order_matches = matches!(
-            (self.spec().layout.order, P::COLOR_TYPE),
+            (self.format().layout.order, P::COLOR_TYPE),
             (
                 ChannelOrder::Gray,
                 image::ExtendedColorType::L8 | image::ExtendedColorType::L16
@@ -722,14 +722,14 @@ impl PixelBuf {
                     | image::ExtendedColorType::Rgba32F
             )
         );
-        if !order_matches || self.spec().layout.sample != P::Subpixel::SAMPLE_TYPE {
+        if !order_matches || self.format().layout.sample != P::Subpixel::SAMPLE_TYPE {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
         let w = self.width();
         let h = self.height();
         let needs_opaque_fix =
-            self.spec().color.alpha() == AlphaMode::Opaque && !self.facts().all_opaque;
-        let channels = self.spec().layout.order.channels();
+            self.format().color.alpha() == AlphaMode::Opaque && !self.facts().all_opaque;
+        let channels = self.format().layout.order.channels();
         let mut samples = self.into_vec::<P::Subpixel>()?;
         if needs_opaque_fix {
             canonicalize_opaque_alpha_samples(&mut samples, channels);
@@ -794,8 +794,8 @@ impl<'a> PixelView<'a> {
     /// Borrow any `image::ImageBuffer<P, C>` **zero-copy** for all 10 standard formats
     /// (`Luma`, `LumaA`, `Rgb`, `Rgba` × `u8`/`u16`/`f32`), reading its declared CICP color space.
     ///
-    /// Uses a zero-allocation `&'static ImageSpec` for all standard sRGB / linear formats, and
-    /// allocates an `Arc<ImageSpec>` only for non-preset CICP color spaces.
+    /// Uses a zero-allocation `&'static PixelFormat` for all standard sRGB / linear formats, and
+    /// allocates an `Arc<PixelFormat>` only for non-preset CICP color spaces.
     pub fn from_image_buffer<P, C>(
         img: &'a image::ImageBuffer<P, C>,
     ) -> Result<Self, At<BufferError>>
@@ -813,12 +813,12 @@ impl<'a> PixelView<'a> {
         let stride = (w as usize)
             .checked_mul(layout.bytes_per_pixel())
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        Self::new_with_spec_cow(
+        Self::new_with_format_cow(
             bytemuck::cast_slice(img.as_raw().deref()),
             w,
             h,
             stride,
-            SpecCow::from_owned(ImageSpec::new(layout, color)),
+            FormatCow::from_owned(PixelFormat::new(layout, color)),
         )
     }
 
@@ -844,8 +844,8 @@ impl<'a> PixelView<'a> {
 impl<'a> PixelViewMut<'a> {
     /// Mutably borrow any `image::ImageBuffer<P, C>` **zero-copy** for all 10 standard formats.
     ///
-    /// Uses a zero-allocation `&'static ImageSpec` for all standard sRGB / linear formats, and
-    /// allocates an `Arc<ImageSpec>` only for non-preset CICP color spaces.
+    /// Uses a zero-allocation `&'static PixelFormat` for all standard sRGB / linear formats, and
+    /// allocates an `Arc<PixelFormat>` only for non-preset CICP color spaces.
     pub fn from_image_buffer_mut<P, C>(
         img: &'a mut image::ImageBuffer<P, C>,
     ) -> Result<Self, At<BufferError>>
@@ -864,12 +864,12 @@ impl<'a> PixelViewMut<'a> {
             .checked_mul(layout.bytes_per_pixel())
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
         let samples: &'a mut [P::Subpixel] = img;
-        Self::new_with_spec_cow(
+        Self::new_with_format_cow(
             bytemuck::cast_slice_mut(samples),
             w,
             h,
             stride,
-            SpecCow::from_owned(ImageSpec::new(layout, color)),
+            FormatCow::from_owned(PixelFormat::new(layout, color)),
         )
     }
 
@@ -911,7 +911,7 @@ impl PixelBuf {
             .ok_or_else(|| err_at(BufferError::InteropUnsupported))?;
         let (w, h) = img.dimensions();
         let layout = SampleLayout::new(P::Subpixel::SAMPLE_TYPE, order);
-        Self::from_samples(img.into_raw(), w, h, ImageSpec::new(layout, color))
+        Self::from_samples(img.into_raw(), w, h, PixelFormat::new(layout, color))
     }
 
     /// Adopt any `image::ImageBuffer<P, Vec<P::Subpixel>>` **zero-copy** with an explicit
@@ -934,7 +934,7 @@ impl PixelBuf {
         }
         let (w, h) = img.dimensions();
         let layout = SampleLayout::new(P::Subpixel::SAMPLE_TYPE, order);
-        Self::from_samples(img.into_raw(), w, h, ImageSpec::new(layout, color))
+        Self::from_samples(img.into_raw(), w, h, PixelFormat::new(layout, color))
     }
 
     /// Adopt an `image::DynamicImage` **zero-copy** across all 10 standard variants, preserving
@@ -991,10 +991,10 @@ impl PixelBuf {
 
     /// Move into an `image::DynamicImage` zero-copy when [`InteropTarget::DynamicImage`] is satisfied.
     pub fn into_dynamic_image(self) -> Result<image::DynamicImage, At<BufferError>> {
-        if !self.spec().supports_interop(InteropTarget::DynamicImage) {
+        if !self.format().supports_interop(InteropTarget::DynamicImage) {
             return Err(err_at(BufferError::InteropUnsupported));
         }
-        match (self.spec().layout.sample, self.spec().layout.order) {
+        match (self.format().layout.sample, self.format().layout.order) {
             (SampleType::U8, ChannelOrder::Gray) => {
                 Ok(image::DynamicImage::ImageLuma8(self.into_image_buffer()?))
             }

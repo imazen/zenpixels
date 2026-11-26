@@ -3,7 +3,7 @@
 use core::fmt;
 
 use crate::buffer::PixelView;
-use crate::color::{AlphaMode, ColorSpace, ImageSpec, SignalRange};
+use crate::color::{AlphaMode, ColorSpace, PixelFormat, SignalRange};
 use crate::layout::{ChannelOrder, SampleType};
 
 /// Proven exact code depth of the current samples of a canonical `U8`/`U16` image.
@@ -40,7 +40,7 @@ pub enum ExactDepthError {
     /// Narrow-range codes need at least eight bits.
     NarrowBelowEightBits,
     /// The evidence names a different storage type or signal range than the pixels.
-    SpecMismatch,
+    FormatMismatch,
     /// Scans cover gray, gray-alpha, RGB, BGR, RGBA, BGRA, RGBX, and BGRX layouts only.
     UnsupportedLayout,
 }
@@ -53,7 +53,7 @@ impl fmt::Display for ExactDepthError {
             }
             Self::InvalidBits => "exact depth must be positive and fit its storage",
             Self::NarrowBelowEightBits => "narrow-range exact depth needs at least 8 bits",
-            Self::SpecMismatch => "exact-depth evidence disagrees with the image spec",
+            Self::FormatMismatch => "exact-depth evidence disagrees with the image spec",
             Self::UnsupportedLayout => {
                 "exact-depth scans require Gray, GrayAlpha, RGB, BGR, RGBA, BGRA, RGBX, or BGRX"
             }
@@ -158,7 +158,7 @@ impl ExactDepth {
     }
 
     /// Validate that this evidence is compatible with `spec` without requiring a pixel buffer.
-    pub const fn validate_spec(self, spec: &ImageSpec) -> Result<(), ExactDepthError> {
+    pub const fn validate_format(self, spec: &PixelFormat) -> Result<(), ExactDepthError> {
         if !spec.layout.packing.is_full() {
             return Err(ExactDepthError::UnsupportedStorage);
         }
@@ -172,12 +172,12 @@ impl ExactDepth {
             (self.storage, spec.layout.sample),
             (SampleType::U8, SampleType::U8) | (SampleType::U16, SampleType::U16)
         ) {
-            return Err(ExactDepthError::SpecMismatch);
+            return Err(ExactDepthError::FormatMismatch);
         }
         let spec_narrow = roles.narrow;
         let self_narrow = matches!(self.range, SignalRange::Narrow);
         if spec_narrow != self_narrow {
-            return Err(ExactDepthError::SpecMismatch);
+            return Err(ExactDepthError::FormatMismatch);
         }
         Ok(())
     }
@@ -188,7 +188,7 @@ impl ExactDepth {
     /// is the storage depth. Reads only active samples (never row padding or an
     /// `RGBX`/`BGRX` padding slot) and exits early once only storage depth remains.
     pub fn measure(view: &PixelView<'_>) -> Result<Self, ExactDepthError> {
-        let spec = view.spec();
+        let spec = view.format();
         let roles = Roles::of(spec)?;
         let mut color = GridScan::new(roles.storage_bits, roles.narrow);
         let mut alpha = GridScan::new(roles.storage_bits, false);
@@ -216,8 +216,8 @@ impl ExactDepth {
 
     /// Whether every active sample of `view` lies on this statement's color & alpha grids.
     pub fn holds_for(self, view: &PixelView<'_>) -> Result<bool, ExactDepthError> {
-        let spec = view.spec();
-        self.validate_spec(spec)?;
+        let spec = view.format();
+        self.validate_format(spec)?;
         let roles = Roles::of(spec)?;
         let storage_bits = roles.storage_bits;
         Ok(roles.for_each(view, |is_alpha, v| {
@@ -409,7 +409,7 @@ struct Roles {
 }
 
 impl Roles {
-    const fn of(spec: &ImageSpec) -> Result<Self, ExactDepthError> {
+    const fn of(spec: &PixelFormat) -> Result<Self, ExactDepthError> {
         if !spec.layout.packing.is_full() {
             return Err(ExactDepthError::UnsupportedStorage);
         }

@@ -1,6 +1,6 @@
 use std::{cell::Cell, rc::Rc};
 use zenpsy_api::{
-    zenpixels::{ImageSpec, PixelView},
+    zenpixels::{PixelView, formats},
     *,
 };
 
@@ -125,7 +125,7 @@ fn view(rows: u32) -> PixelView<'static> {
         2,
         rows,
         9,
-        ImageSpec::rgb8_srgb(),
+        &formats::RGB8_SRGB,
     )
     .unwrap()
 }

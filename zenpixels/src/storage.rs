@@ -853,7 +853,7 @@ impl PixelStorage {
     /// Element alignment of the underlying heap allocation.
     #[inline]
     #[must_use]
-    pub const fn alloc_alignment(&self) -> usize {
+    pub const fn allocation_alignment(&self) -> usize {
         match self {
             Self::U8(_) | Self::I8(_) => core::mem::align_of::<u8>(),
             Self::U16(_) | Self::I16(_) | Self::F16(_) => core::mem::align_of::<u16>(),
@@ -900,7 +900,7 @@ impl PixelStorage {
                 self,
                 Self::Aligned64(_) | Self::External(_) | Self::ExternalMut(_)
             )
-            || self.alloc_alignment() != p_align
+            || self.allocation_alignment() != p_align
             || target_bytes > self.byte_len()
             || target_bytes % p_size != 0
             || self.byte_capacity() % p_size != 0
@@ -1046,7 +1046,7 @@ impl fmt::Debug for PixelStorage {
                 f,
                 "PixelStorage({} bytes, align={})",
                 self.byte_len(),
-                self.alloc_alignment()
+                self.allocation_alignment()
             ),
         }
     }

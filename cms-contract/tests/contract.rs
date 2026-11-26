@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use cms_contract::LcmsPort;
 use zenpixels::{
-    AlphaMode, ChannelOrder, ColorSpace, ImageSpec, Primaries, RenderingIntent, SampleLayout,
+    AlphaMode, ChannelOrder, ColorSpace, PixelFormat, Primaries, RenderingIntent, SampleLayout,
     SampleType, SignalRange, Transfer,
 };
 use zenpixels_convert::{CmsBackend, CmsTransform, ConvertPolicy, MoxCms, RowPlan};
@@ -92,7 +92,7 @@ enum ProfileKind {
 }
 
 impl ProfileKind {
-    fn spec(&self, layout: SampleLayout, intent: RenderingIntent) -> ImageSpec {
+    fn spec(&self, layout: SampleLayout, intent: RenderingIntent) -> PixelFormat {
         let alpha = if layout.order.has_alpha_slot() {
             AlphaMode::Straight
         } else {
@@ -117,7 +117,7 @@ impl ProfileKind {
                 intent,
             },
         };
-        ImageSpec::new(layout, color)
+        PixelFormat::new(layout, color)
     }
 }
 
@@ -144,7 +144,7 @@ const LAYOUTS: [SampleLayout; 6] = [
     SampleLayout::RGBAF32,
 ];
 
-fn build(cms: &dyn CmsBackend, src: &ImageSpec, dst: &ImageSpec) -> Arc<dyn CmsTransform> {
+fn build(cms: &dyn CmsBackend, src: &PixelFormat, dst: &PixelFormat) -> Arc<dyn CmsTransform> {
     cms.build_transform(src, dst)
         .unwrap_or_else(|e| panic!("build_transform failed: {e:?}"))
 }
@@ -215,12 +215,12 @@ fn worst(layout: SampleLayout, a: &[u8], b: &[u8]) -> f64 {
 
 #[test]
 fn garbage_icc_is_never_accepted() {
-    let dst = ImageSpec::rgb8_srgb();
+    let dst = PixelFormat::RGB8_SRGB;
     let mut truncated = P3.to_vec();
     truncated.truncate(200);
     for (name, cms) in backends() {
         for bad in [&b"not a profile"[..], &truncated, &[]] {
-            let src = ImageSpec::new(
+            let src = PixelFormat::new(
                 SampleLayout::RGB8,
                 ColorSpace::Icc {
                     profile: Arc::from(bad),
@@ -384,7 +384,7 @@ fn relative_intent_maps_paper_white_to_destination_white() {
     bytes[0..4].copy_from_slice(&total.to_be_bytes());
 
     let bytes: Arc<[u8]> = Arc::from(bytes);
-    let src = ImageSpec::new(
+    let src = PixelFormat::new(
         SampleLayout::CMYKF32,
         ColorSpace::Cmyk {
             icc: Some(bytes),
@@ -392,7 +392,7 @@ fn relative_intent_maps_paper_white_to_destination_white() {
             inverted: false,
         },
     );
-    let dst = ImageSpec::new(
+    let dst = PixelFormat::new(
         SampleLayout::RGBF32,
         ColorSpace::Rgb {
             primaries: Primaries::Bt709,
@@ -419,8 +419,8 @@ fn relative_intent_maps_paper_white_to_destination_white() {
     }
 }
 
-fn rgbf32_srgb() -> ImageSpec {
-    ImageSpec::new(
+fn rgbf32_srgb() -> PixelFormat {
+    PixelFormat::new(
         SampleLayout::RGBF32,
         ColorSpace::Rgb {
             primaries: Primaries::Bt709,
@@ -436,7 +436,7 @@ fn rgbf32_srgb() -> ImageSpec {
 fn f32_cmyk_ink_polarity_and_limits() {
     let icc: Arc<[u8]> = Arc::from(synthetic_cmyk_icc());
     let dst = rgbf32_srgb();
-    let plain_spec = ImageSpec::new(
+    let plain_spec = PixelFormat::new(
         SampleLayout::CMYKF32,
         ColorSpace::Cmyk {
             icc: Some(Arc::clone(&icc)),
@@ -444,7 +444,7 @@ fn f32_cmyk_ink_polarity_and_limits() {
             inverted: false,
         },
     );
-    let flipped_spec = ImageSpec::new(
+    let flipped_spec = PixelFormat::new(
         SampleLayout::new(SampleType::F32, ChannelOrder::CmykInverted),
         ColorSpace::Cmyk {
             icc: Some(icc),
@@ -511,7 +511,7 @@ fn backends_agree() {
 #[test]
 fn f32_cmyk_backends_agree() {
     let icc: Arc<[u8]> = Arc::from(synthetic_cmyk_icc());
-    let src = ImageSpec::new(
+    let src = PixelFormat::new(
         SampleLayout::CMYKF32,
         ColorSpace::Cmyk {
             icc: Some(icc),
@@ -552,7 +552,7 @@ fn f32_cmyk_backends_agree() {
 #[test]
 fn gray_round_trips_and_carries_alpha() {
     let icc: Arc<[u8]> = Arc::from(cms_contract::gray_gamma22_icc());
-    let src_gray = ImageSpec::new(
+    let src_gray = PixelFormat::new(
         SampleLayout::GRAY8,
         ColorSpace::Icc {
             profile: Arc::clone(&icc),
@@ -561,7 +561,7 @@ fn gray_round_trips_and_carries_alpha() {
             intent: RenderingIntent::RelativeColorimetric,
         },
     );
-    let dst_rgb = ImageSpec::rgb8_srgb();
+    let dst_rgb = PixelFormat::RGB8_SRGB;
     let [(_, mox), (_, lcms)] = backends();
     let ramp: Vec<u8> = (0..=255).collect();
     let a = run(
@@ -581,7 +581,7 @@ fn gray_round_trips_and_carries_alpha() {
     assert_eq!(a.as_chunks::<3>().0.first().map(|p| p[0]), Some(0));
     assert_eq!(a.as_chunks::<3>().0.last().map(|p| p[0]), Some(255));
 
-    let src_ga = ImageSpec::new(
+    let src_ga = PixelFormat::new(
         SampleLayout::GRAYA8,
         ColorSpace::Icc {
             profile: icc,
@@ -590,7 +590,7 @@ fn gray_round_trips_and_carries_alpha() {
             intent: RenderingIntent::RelativeColorimetric,
         },
     );
-    let dst_rgba = ImageSpec::rgba8_srgb();
+    let dst_rgba = PixelFormat::RGBA8_SRGB;
     let with_alpha: Vec<u8> = (0..=255u8).flat_map(|v| [v, 255 - v]).collect();
     for (name, cms) in backends() {
         let t = build(cms, &src_ga, &dst_rgba);
@@ -604,7 +604,7 @@ fn gray_round_trips_and_carries_alpha() {
 #[test]
 fn eight_bit_cmyk_and_inverted_polarity_agree() {
     let icc: Arc<[u8]> = Arc::from(synthetic_cmyk_icc());
-    let src_std = ImageSpec::new(
+    let src_std = PixelFormat::new(
         SampleLayout::CMYK8,
         ColorSpace::Cmyk {
             icc: Some(Arc::clone(&icc)),
@@ -612,7 +612,7 @@ fn eight_bit_cmyk_and_inverted_polarity_agree() {
             inverted: false,
         },
     );
-    let src_inv = ImageSpec::new(
+    let src_inv = PixelFormat::new(
         SampleLayout::new(SampleType::U8, ChannelOrder::CmykInverted),
         ColorSpace::Cmyk {
             icc: Some(icc),
@@ -620,7 +620,7 @@ fn eight_bit_cmyk_and_inverted_polarity_agree() {
             inverted: true,
         },
     );
-    let dst = ImageSpec::rgb8_srgb();
+    let dst = PixelFormat::RGB8_SRGB;
     let ink: Vec<u8> = (0..1024 * 4)
         .map(|i| ((i * 53 + 17) & 0xFF) as u8)
         .collect();
@@ -667,7 +667,7 @@ fn eight_bit_cmyk_and_inverted_polarity_agree() {
 fn row_plan_drives_every_backend_without_substitution() {
     let p3_spec = ProfileKind::Icc(Arc::from(P3))
         .spec(SampleLayout::RGB8, RenderingIntent::RelativeColorimetric);
-    let srgb_spec = ImageSpec::rgb8_srgb();
+    let srgb_spec = PixelFormat::RGB8_SRGB;
     let input = row(SampleLayout::RGB8, 256);
 
     let pol_mox = ConvertPolicy::permissive()
@@ -710,7 +710,7 @@ fn float_mpe_and_absolute_intent_guards_hold() {
     let new_size = mpe.len() as u32;
     mpe[0..4].copy_from_slice(&new_size.to_be_bytes());
 
-    let src_rel = ImageSpec::new(
+    let src_rel = PixelFormat::new(
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(mpe.clone()),
@@ -719,7 +719,7 @@ fn float_mpe_and_absolute_intent_guards_hold() {
             intent: RenderingIntent::RelativeColorimetric,
         },
     );
-    let src_perc = ImageSpec::new(
+    let src_perc = PixelFormat::new(
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(mpe),
@@ -728,17 +728,17 @@ fn float_mpe_and_absolute_intent_guards_hold() {
             intent: RenderingIntent::Perceptual,
         },
     );
-    let dst = ImageSpec::rgb8_srgb();
-    assert!(!MoxCms.supports_specs(&src_rel, &dst));
+    let dst = PixelFormat::RGB8_SRGB;
+    assert!(!MoxCms.supports_formats(&src_rel, &dst));
     assert!(MoxCms.build_transform(&src_rel, &dst).is_err());
-    assert!(MoxCms.supports_specs(&src_perc, &dst));
+    assert!(MoxCms.supports_formats(&src_perc, &dst));
     assert!(MoxCms.build_transform(&src_perc, &dst).is_ok());
 
     // AbsoluteColorimetric: MoxCms must refuse; Lcms must succeed!
     let src_abs = ProfileKind::Icc(Arc::from(P3))
         .spec(SampleLayout::RGB8, RenderingIntent::AbsoluteColorimetric);
-    assert!(!MoxCms.supports_specs(&src_abs, &dst));
+    assert!(!MoxCms.supports_formats(&src_abs, &dst));
     assert!(MoxCms.build_transform(&src_abs, &dst).is_err());
-    assert!(LcmsPort.supports_specs(&src_abs, &dst));
+    assert!(LcmsPort.supports_formats(&src_abs, &dst));
     assert!(LcmsPort.build_transform(&src_abs, &dst).is_ok());
 }

@@ -14,8 +14,8 @@ use alloc::sync::Arc;
 use zenpixels::icc::{IccIdentification, IdentificationUse};
 use zenpixels::{
     AlphaMode, BandedBuf, ChannelOrder, ColorOrigin, ColorSpace, DiffuseWhite, FloatFacts,
-    ImageSpec, Orientation, PeakSource, PixelBuf, PixelCow, PlanarBuf, PlaneBuf, PlaneRole,
-    PlaneSpec, Primaries, RenderingIntent, SampleFacts, SampleLayout, SampleType, SignalRange,
+    Orientation, PeakSource, PixelBuf, PixelCow, PixelFormat, PlanarBuf, PlaneBuf, PlaneFormat,
+    PlaneRole, Primaries, RenderingIntent, SampleFacts, SampleLayout, SampleType, SignalRange,
     Transfer,
 };
 use zenpixels_convert::{
@@ -31,8 +31,8 @@ extern crate alloc;
 
 #[test]
 fn c1_luma_domain_encoded_default_vs_linear_light_and_simd_parity() {
-    let rgb_srgb = ImageSpec::RGB8_SRGB;
-    let gray_srgb = ImageSpec::GRAY8_SRGB;
+    let rgb_srgb = PixelFormat::RGB8_SRGB;
+    let gray_srgb = PixelFormat::GRAY8_SRGB;
 
     // Default policy uses LumaDomain::Encoded (0.2/0.4 JPEG/video Y' semantic).
     let def_pol = ConvertPolicy::permissive();
@@ -84,7 +84,7 @@ fn c1_luma_domain_encoded_default_vs_linear_light_and_simd_parity() {
     ];
     for (order, alpha) in orders {
         let bpp = order.channels();
-        let src_spec = ImageSpec::new(
+        let source_format = PixelFormat::new(
             SampleLayout::new(SampleType::U8, order),
             ColorSpace::Rgb {
                 primaries: Primaries::Bt709,
@@ -96,7 +96,7 @@ fn c1_luma_domain_encoded_default_vs_linear_light_and_simd_parity() {
         );
         for coeff in coeffs {
             let p_sc = RowPlan::build(
-                src_spec.clone(),
+                source_format.clone(),
                 gray_srgb.clone(),
                 &ConvertPolicy::permissive()
                     .with_luma(coeff)
@@ -105,7 +105,7 @@ fn c1_luma_domain_encoded_default_vs_linear_light_and_simd_parity() {
             )
             .unwrap();
             let p_all = RowPlan::build(
-                src_spec.clone(),
+                source_format.clone(),
                 gray_srgb.clone(),
                 &ConvertPolicy::permissive()
                     .with_luma(coeff)
@@ -130,7 +130,7 @@ fn c1_luma_domain_encoded_default_vs_linear_light_and_simd_parity() {
     }
 
     // Matching Transfer::Unknown succeeds in Encoded mode, fails in LinearLight mode.
-    let unk_rgb = ImageSpec::new(
+    let unk_rgb = PixelFormat::new(
         SampleLayout::RGB8,
         ColorSpace::Rgb {
             primaries: Primaries::Bt709,
@@ -140,7 +140,7 @@ fn c1_luma_domain_encoded_default_vs_linear_light_and_simd_parity() {
             white: None,
         },
     );
-    let unk_gray = ImageSpec::new(
+    let unk_gray = PixelFormat::new(
         SampleLayout::GRAY8,
         ColorSpace::Gray {
             transfer: Transfer::Unknown,
@@ -172,7 +172,7 @@ fn c1_luma_domain_encoded_default_vs_linear_light_and_simd_parity() {
 
     // Cross-transfer Linear RGB -> sRGB Gray: Encoded applies OETF before luma (red = 54),
     // LinearLight computes luma in linear light before OETF (red = 127).
-    let lin_rgb = ImageSpec::RGBF32_LINEAR;
+    let lin_rgb = PixelFormat::RGBF32_LINEAR;
     let p_cross_enc = RowPlan::build(
         lin_rgb.clone(),
         gray_srgb.clone(),
@@ -202,7 +202,7 @@ fn c1_luma_domain_encoded_default_vs_linear_light_and_simd_parity() {
 
 #[test]
 fn g03_output_plan_canonicalizes_unverified_opaque_alpha_and_stays_zero_copy_when_proven() {
-    let spec = ImageSpec::RGBA8_SRGB.with_alpha(AlphaMode::Opaque);
+    let spec = PixelFormat::RGBA8_SRGB.with_alpha(AlphaMode::Opaque);
 
     // Unverified poisoned Opaque alpha [9, 13, 17, 0] -> MUST canonicalize to [9, 13, 17, 255]!
     let mut poisoned = PixelBuf::from_typed(vec![9u8, 13, 17, 0], 1, 1, spec.clone()).unwrap();
@@ -284,7 +284,7 @@ fn g04_output_plan_rejects_metadata_only_icc_for_structured_dst() {
     assert_eq!(id.valid_use, IdentificationUse::MetadataOnly);
 
     // Must be rejected as CustomIcc for structured D65 Gray sRGB!
-    let gray = ImageSpec::GRAY8_SRGB;
+    let gray = PixelFormat::GRAY8_SRGB;
     let err = OutputPlan::build(
         gray.clone(),
         gray.clone(),
@@ -312,7 +312,7 @@ fn g04_output_plan_rejects_metadata_only_icc_for_structured_dst() {
     assert_eq!(*err2.error(), ConvertError::OutputSignalingMismatch);
 
     // But when destination IS ColorSpace::Icc with that exact profile, it succeeds!
-    let icc_gray = ImageSpec::new(
+    let icc_gray = PixelFormat::new(
         SampleLayout::GRAY8,
         ColorSpace::Icc {
             profile: Arc::from(c_white_icc.as_slice()),
@@ -335,8 +335,8 @@ fn g04_output_plan_rejects_metadata_only_icc_for_structured_dst() {
 
 #[test]
 fn g14_negotiate_scene_linear_hdr_precheck() {
-    let lin_src = ImageSpec::RGBF32_LINEAR;
-    let sdr_dst = ImageSpec::RGB8_SRGB;
+    let lin_src = PixelFormat::RGBF32_LINEAR;
+    let sdr_dst = PixelFormat::RGB8_SRGB;
     let pol_tm = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, zenpixels::Nits::new(100.0));
 
     #[cfg(not(feature = "bt2446a"))]
@@ -394,7 +394,7 @@ fn g02_moxcms_float_mpe_and_unequal_trc_refusal_and_extended_f32() {
 
     let base_srgb = moxcms::ColorProfile::new_srgb().encode().unwrap();
     let with_d2b1 = append_dummy_tag(&base_srgb, b"D2B1");
-    let src_rel = ImageSpec::new(
+    let src_rel = PixelFormat::new(
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(with_d2b1.as_slice()),
@@ -403,7 +403,7 @@ fn g02_moxcms_float_mpe_and_unequal_trc_refusal_and_extended_f32() {
             intent: RenderingIntent::RelativeColorimetric,
         },
     );
-    let src_perc = ImageSpec::new(
+    let src_perc = PixelFormat::new(
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(with_d2b1.as_slice()),
@@ -412,8 +412,8 @@ fn g02_moxcms_float_mpe_and_unequal_trc_refusal_and_extended_f32() {
             intent: RenderingIntent::Perceptual,
         },
     );
-    let dst_srgb = ImageSpec::RGB8_SRGB;
-    assert!(!MoxCms.supports_specs(&src_rel, &dst_srgb));
+    let dst_srgb = PixelFormat::RGB8_SRGB;
+    assert!(!MoxCms.supports_formats(&src_rel, &dst_srgb));
     assert_eq!(
         *MoxCms
             .build_transform(&src_rel, &dst_srgb)
@@ -422,11 +422,11 @@ fn g02_moxcms_float_mpe_and_unequal_trc_refusal_and_extended_f32() {
             .error(),
         ConvertError::UnsupportedRoute
     );
-    assert!(MoxCms.supports_specs(&src_perc, &dst_srgb));
+    assert!(MoxCms.supports_formats(&src_perc, &dst_srgb));
 
     // 2. Destination B2D0 refusal for Perceptual.
     let with_b2d0 = append_dummy_tag(&base_srgb, b"B2D0");
-    let dst_perc = ImageSpec::new(
+    let dst_perc = PixelFormat::new(
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(with_b2d0.as_slice()),
@@ -435,7 +435,7 @@ fn g02_moxcms_float_mpe_and_unequal_trc_refusal_and_extended_f32() {
             intent: RenderingIntent::Perceptual,
         },
     );
-    assert!(!MoxCms.supports_specs(&dst_srgb, &dst_perc));
+    assert!(!MoxCms.supports_formats(&dst_srgb, &dst_perc));
     assert_eq!(
         *MoxCms
             .build_transform(&dst_srgb, &dst_perc)
@@ -449,7 +449,7 @@ fn g02_moxcms_float_mpe_and_unequal_trc_refusal_and_extended_f32() {
     let mut unequal = moxcms::ColorProfile::new_srgb();
     unequal.blue_trc = Some(moxcms::ToneReprCurve::Parametric(vec![1.8]));
     let unequal_bytes = unequal.encode().unwrap();
-    let src_unequal = ImageSpec::new(
+    let src_unequal = PixelFormat::new(
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(unequal_bytes.as_slice()),
@@ -458,7 +458,7 @@ fn g02_moxcms_float_mpe_and_unequal_trc_refusal_and_extended_f32() {
             intent: RenderingIntent::RelativeColorimetric,
         },
     );
-    assert!(!MoxCms.supports_specs(&src_unequal, &dst_srgb));
+    assert!(!MoxCms.supports_formats(&src_unequal, &dst_srgb));
     assert_eq!(
         *MoxCms
             .build_transform(&src_unequal, &dst_srgb)
@@ -475,7 +475,7 @@ fn g02_moxcms_float_mpe_and_unequal_trc_refusal_and_extended_f32() {
     lin_p3.green_trc = Some(lin.clone());
     lin_p3.blue_trc = Some(lin);
     let lin_p3_bytes = lin_p3.encode().unwrap();
-    let src_f32 = ImageSpec::new(
+    let src_f32 = PixelFormat::new(
         SampleLayout::RGBF32,
         ColorSpace::Icc {
             profile: Arc::from(lin_p3_bytes.as_slice()),
@@ -484,7 +484,7 @@ fn g02_moxcms_float_mpe_and_unequal_trc_refusal_and_extended_f32() {
             intent: RenderingIntent::RelativeColorimetric,
         },
     );
-    let dst_f32 = ImageSpec::RGBF32_LINEAR;
+    let dst_f32 = PixelFormat::RGBF32_LINEAR;
     let tx = MoxCms.build_transform(&src_f32, &dst_f32).unwrap();
     let input = [1.5f32, 1.5, 1.5];
     let mut output = [0.0f32; 3];
@@ -513,10 +513,10 @@ fn t2_3_banded_orientation_matches_contiguous_bit_exact_all_8_orientations() {
         Orientation::Transverse,
     ];
     let specs = [
-        ImageSpec::RGB8_SRGB,
-        ImageSpec::RGBA8_SRGB,
-        ImageSpec::RGB16_SRGB,
-        ImageSpec::RGBAF32_LINEAR,
+        PixelFormat::RGB8_SRGB,
+        PixelFormat::RGBA8_SRGB,
+        PixelFormat::RGB16_SRGB,
+        PixelFormat::RGBAF32_LINEAR,
     ];
     let (w, h) = (37u32, 29u32);
     for spec in specs {
@@ -576,7 +576,7 @@ fn t2_3_banded_orientation_matches_contiguous_bit_exact_all_8_orientations() {
 #[test]
 fn t2_6_measure_max_smoothed_and_histogram_bins_try_merge() {
     let white = DiffuseWhite::new(100.0);
-    let spec = ImageSpec::RGBF32_LINEAR.with_white(white);
+    let spec = PixelFormat::RGBF32_LINEAR.with_white(white);
 
     // 1. Single stuck hot pixel at 9000 nits (90.0 relative) in black 9x1 row:
     //    literal MaxCLL = 9000, smoothed MaxCLL = 9000 / 3 = 3000, MaxFALL = 1000!
@@ -641,8 +641,8 @@ fn t2_6_measure_max_smoothed_and_histogram_bins_try_merge() {
 #[test]
 fn t2_4_t2_5_adapt_for_encode_convenience_helpers_and_ycbcr_from_planar() {
     // 1. adapt_for_encode zero-copy identity + conversion.
-    let buf = PixelBuf::from_typed(vec![10u8, 20, 30, 255], 1, 1, ImageSpec::RGBA8_SRGB).unwrap();
-    let supported = [ImageSpec::RGB8_SRGB, ImageSpec::RGBA8_SRGB];
+    let buf = PixelBuf::from_typed(vec![10u8, 20, 30, 255], 1, 1, PixelFormat::RGBA8_SRGB).unwrap();
+    let supported = [PixelFormat::RGB8_SRGB, PixelFormat::RGBA8_SRGB];
     let (neg, ready) = adapt_for_encode(
         buf.as_view(),
         buf.origin(),
@@ -652,7 +652,7 @@ fn t2_4_t2_5_adapt_for_encode_convenience_helpers_and_ycbcr_from_planar() {
         OutputSignaling::Auto,
     )
     .unwrap();
-    assert_eq!(neg.spec, ImageSpec::RGBA8_SRGB);
+    assert_eq!(neg.format, PixelFormat::RGBA8_SRGB);
     assert!(matches!(ready.pixels, PixelCow::Borrowed(_)));
 
     // 2. to_rgb8 / to_rgba8 / to_gray8 / to_bgra8 convenience wrappers.
@@ -697,7 +697,7 @@ fn t2_4_t2_5_adapt_for_encode_convenience_helpers_and_ycbcr_from_planar() {
         2,
         2,
         2,
-        PlaneSpec::new(PlaneRole::Y, SampleType::U8),
+        PlaneFormat::new(PlaneRole::Y, SampleType::U8),
     )
     .unwrap();
     let cb_p = PlaneBuf::from_external(
@@ -705,7 +705,7 @@ fn t2_4_t2_5_adapt_for_encode_convenience_helpers_and_ycbcr_from_planar() {
         1,
         1,
         1,
-        PlaneSpec::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2),
+        PlaneFormat::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2),
     )
     .unwrap();
     let cr_p = PlaneBuf::from_external(
@@ -713,7 +713,7 @@ fn t2_4_t2_5_adapt_for_encode_convenience_helpers_and_ycbcr_from_planar() {
         1,
         1,
         1,
-        PlaneSpec::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2),
+        PlaneFormat::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2),
     )
     .unwrap();
     let untagged_planar = PlanarBuf::from_planes(2, 2, vec![y_p, cb_p, cr_p]).unwrap();
@@ -750,8 +750,8 @@ fn t2_4_t2_5_adapt_for_encode_convenience_helpers_and_ycbcr_from_planar() {
 #[test]
 fn t2_11_exhaustive_rgba8_premul_and_lin_f32_to_srgb_u8_parity() {
     // Exhaustive 65,536 (c, a) pairs for rgba8_straight_to_premul (both round=true and round=false).
-    let src_spec = ImageSpec::RGBA8_SRGB;
-    let dst_spec = ImageSpec::RGBA8_SRGB.with_alpha(AlphaMode::Premultiplied);
+    let source_format = PixelFormat::RGBA8_SRGB;
+    let destination_format = PixelFormat::RGBA8_SRGB.with_alpha(AlphaMode::Premultiplied);
     let mut pairs = Vec::with_capacity(65536 * 4);
     for a in 0u8..=255 {
         for c in 0u8..=255 {
@@ -760,8 +760,8 @@ fn t2_11_exhaustive_rgba8_premul_and_lin_f32_to_srgb_u8_parity() {
     }
     for depth in [DepthPolicy::Round, DepthPolicy::Truncate] {
         let p_sc = RowPlan::build(
-            src_spec.clone(),
-            dst_spec.clone(),
+            source_format.clone(),
+            destination_format.clone(),
             &ConvertPolicy::permissive()
                 .with_depth(depth)
                 .with_accelerators(Accelerators::SCALAR),
@@ -769,8 +769,8 @@ fn t2_11_exhaustive_rgba8_premul_and_lin_f32_to_srgb_u8_parity() {
         )
         .unwrap();
         let p_all = RowPlan::build(
-            src_spec.clone(),
-            dst_spec.clone(),
+            source_format.clone(),
+            destination_format.clone(),
             &ConvertPolicy::permissive()
                 .with_depth(depth)
                 .with_accelerators(Accelerators::ALL),
@@ -789,8 +789,8 @@ fn t2_11_exhaustive_rgba8_premul_and_lin_f32_to_srgb_u8_parity() {
 
     // LinF32ToSrgbU8 exact (allow_approximate=false) and Option B approx (allow_approximate=true):
     // both MUST have 0-bit parity between SCALAR and ALL, and Option B must be within <= 1 LSB of exact!
-    let src_f32 = ImageSpec::RGBAF32_LINEAR;
-    let dst_u8 = ImageSpec::RGBA8_SRGB;
+    let src_f32 = PixelFormat::RGBAF32_LINEAR;
+    let dst_u8 = PixelFormat::RGBA8_SRGB;
     let width = 1029u32; // Exercises 16-wide, 8-wide, and tail loops!
     let mut vals = Vec::with_capacity(width as usize * 4);
     for i in 0..width as usize {

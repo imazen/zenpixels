@@ -687,7 +687,7 @@ fn fused_u16_impl(
 /// - Uses SIMD-accelerated predicates across contiguous or strided rows.
 #[must_use]
 pub fn scan_facts(view: &PixelView<'_>) -> SampleFacts {
-    let layout = view.spec().layout;
+    let layout = view.format().layout;
     let float = if layout.sample == SampleType::F32 && layout.packing.is_full() {
         view.measure_float_facts()
     } else if layout.sample == SampleType::F16 && layout.packing.is_full() {
@@ -703,7 +703,7 @@ pub fn scan_facts(view: &PixelView<'_>) -> SampleFacts {
         let all_grayscale = matches!(layout.order, ChannelOrder::Gray | ChannelOrder::GrayAlpha);
         return SampleFacts::NONE
             .with_float(float)
-            .with_depth_opt(depth)
+            .with_depth(depth)
             .with_all_opaque(all_opaque)
             .with_all_grayscale(all_grayscale)
             .with_binary_alpha(all_opaque);
@@ -911,7 +911,7 @@ pub fn scan_facts(view: &PixelView<'_>) -> SampleFacts {
 
     SampleFacts::NONE
         .with_float(float)
-        .with_depth_opt(depth)
+        .with_depth(depth)
         .with_all_opaque(all_opaque)
         .with_all_grayscale(all_grayscale)
         .with_binary_alpha(binary_alpha)
@@ -942,7 +942,7 @@ fn scan_rows_f32(
 }
 
 fn scan_binary_alpha_float(view: &PixelView<'_>) -> bool {
-    let layout = view.spec().layout;
+    let layout = view.format().layout;
     let ch = layout.channels();
     match layout.sample {
         SampleType::F32 => {

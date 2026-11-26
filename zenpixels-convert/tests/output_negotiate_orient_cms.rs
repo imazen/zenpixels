@@ -3,20 +3,20 @@
 //! and `MoxCms` ICC transforms.
 
 use zenpixels_convert::{
-    Cicp, ColorOrigin, ConvertPolicy, ImageSpec, LossKind, Negotiate, Orientation, OutputPlan,
-    OutputSignaling, PeakSource, PixelBuf, PixelCow, Primaries, apply_orientation,
+    Cicp, ColorOrigin, ConvertPolicy, LossKind, Negotiate, Orientation, OutputPlan,
+    OutputSignaling, PeakSource, PixelBuf, PixelCow, PixelFormat, Primaries, apply_orientation,
 };
 
 #[test]
 fn output_plan_zero_copy_identity_and_atomic_signaling() {
-    let mut buf = PixelBuf::new(8, 4, ImageSpec::RGB8_SRGB).unwrap();
+    let mut buf = PixelBuf::new(8, 4, PixelFormat::RGB8_SRGB).unwrap();
     buf.as_view_mut().row_mut(0)[0..3].copy_from_slice(&[42, 84, 126]);
     let in_ptr = buf.as_view().row(0).as_ptr();
 
     // Identity on owned PixelBuf moves storage ZERO-COPY!
     let id_plan = OutputPlan::build(
-        ImageSpec::RGB8_SRGB,
-        ImageSpec::RGB8_SRGB,
+        PixelFormat::RGB8_SRGB,
+        PixelFormat::RGB8_SRGB,
         &ConvertPolicy::lossless(),
         PeakSource::Measured,
         OutputSignaling::CicpOnly,
@@ -40,9 +40,9 @@ fn output_plan_zero_copy_identity_and_atomic_signaling() {
     );
 
     // Non-identity: sRGB -> Display P3 Auto emits Display P3 CICP + bundled P3 ICC!
-    let p3_spec = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
+    let p3_spec = PixelFormat::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
     let p3_plan = OutputPlan::build(
-        ImageSpec::RGB8_SRGB,
+        PixelFormat::RGB8_SRGB,
         p3_spec,
         &ConvertPolicy::permissive(),
         PeakSource::Measured,
@@ -56,23 +56,23 @@ fn output_plan_zero_copy_identity_and_atomic_signaling() {
 
 #[test]
 fn negotiate_selects_lowest_loss_and_respects_policy() {
-    let src = ImageSpec::RGBA8_SRGB;
+    let src = PixelFormat::RGBA8_SRGB;
     let supported = [
-        ImageSpec::GRAY8_SRGB,
-        ImageSpec::RGB8_SRGB,
-        ImageSpec::BGRA8_SRGB,
-        ImageSpec::RGBA16_SRGB,
+        PixelFormat::GRAY8_SRGB,
+        PixelFormat::RGB8_SRGB,
+        PixelFormat::BGRA8_SRGB,
+        PixelFormat::RGBA16_SRGB,
     ];
 
     // Under lossless policy (forbids alpha drop & depth loss), BGRA8 beats RGBA16 (smaller bpp, lossless swizzle!)
     let best = Negotiate::select(&src, &supported, &ConvertPolicy::lossless()).unwrap();
-    assert_eq!(best.spec, ImageSpec::BGRA8_SRGB);
+    assert_eq!(best.format, PixelFormat::BGRA8_SRGB);
     assert_eq!(best.loss, LossKind::None);
 
     // If exact identity is in supported list, it wins immediately (effort = 0).
-    let supported_with_id = [ImageSpec::BGRA8_SRGB, ImageSpec::RGBA8_SRGB];
+    let supported_with_id = [PixelFormat::BGRA8_SRGB, PixelFormat::RGBA8_SRGB];
     let best_id = Negotiate::select(&src, &supported_with_id, &ConvertPolicy::lossless()).unwrap();
-    assert_eq!(best_id.spec, ImageSpec::RGBA8_SRGB);
+    assert_eq!(best_id.format, PixelFormat::RGBA8_SRGB);
     assert_eq!(best_id.cost.effort, 0);
 }
 
@@ -81,14 +81,14 @@ fn orient_all_8_orientations_and_pixel_widths_match_forward_map_oracle() {
     // Prime non-multiple-of-tile dims (37x29) test BOTH AVX2/NEON register bodies AND edge tails!
     let (w, h) = (37u32, 29u32);
     let specs = [
-        ImageSpec::GRAY8_SRGB,     // 1 B/px
-        ImageSpec::GRAY16_SRGB,    // 2 B/px
-        ImageSpec::RGB8_SRGB,      // 3 B/px
-        ImageSpec::RGBA8_SRGB,     // 4 B/px
-        ImageSpec::RGB16_SRGB,     // 6 B/px
-        ImageSpec::RGBA16_SRGB,    // 8 B/px
-        ImageSpec::RGBF32_LINEAR,  // 12 B/px
-        ImageSpec::RGBAF32_LINEAR, // 16 B/px
+        PixelFormat::GRAY8_SRGB,     // 1 B/px
+        PixelFormat::GRAY16_SRGB,    // 2 B/px
+        PixelFormat::RGB8_SRGB,      // 3 B/px
+        PixelFormat::RGBA8_SRGB,     // 4 B/px
+        PixelFormat::RGB16_SRGB,     // 6 B/px
+        PixelFormat::RGBA16_SRGB,    // 8 B/px
+        PixelFormat::RGBF32_LINEAR,  // 12 B/px
+        PixelFormat::RGBAF32_LINEAR, // 16 B/px
     ];
 
     for spec in specs {
@@ -138,7 +138,7 @@ fn safe_icc_substitution_without_cms_matches_adobe_oracle() {
     // A08: Safe known ICC profile (Adobe RGB) substitutes directly without needing a CMS.
     // Test midtone [180, 90, 40], toe [12, 6, 3], and out-of-gamut green [0, 255, 0], pinning alpha.
     let adobe_icc = Arc::<[u8]>::from(zenpixels_convert::icc_profiles::ADOBE_RGB);
-    let icc_spec = ImageSpec::new(
+    let icc_spec = PixelFormat::new(
         SampleLayout::RGBA8,
         ColorSpace::Icc {
             profile: Arc::clone(&adobe_icc),
@@ -149,7 +149,7 @@ fn safe_icc_substitution_without_cms_matches_adobe_oracle() {
     );
     let sub_plan = zenpixels_convert::RowPlan::build(
         icc_spec.clone(),
-        ImageSpec::RGBA8_SRGB,
+        PixelFormat::RGBA8_SRGB,
         &ConvertPolicy::permissive(),
         None,
     )
@@ -164,7 +164,7 @@ fn safe_icc_substitution_without_cms_matches_adobe_oracle() {
     sub_plan.convert_row(&src_px, &mut sub_out, 4, 0).unwrap();
 
     // Direct structured AdobeRgb -> sRGB oracle (no ICC path).
-    let direct_spec = ImageSpec::new(
+    let direct_spec = PixelFormat::new(
         SampleLayout::RGBA8,
         ColorSpace::Rgb {
             primaries: zenpixels_convert::Primaries::AdobeRgb,
@@ -176,7 +176,7 @@ fn safe_icc_substitution_without_cms_matches_adobe_oracle() {
     );
     let direct_plan = zenpixels_convert::RowPlan::build(
         direct_spec,
-        ImageSpec::RGBA8_SRGB,
+        PixelFormat::RGBA8_SRGB,
         &ConvertPolicy::permissive(),
         None,
     )
@@ -200,7 +200,7 @@ fn safe_icc_substitution_without_cms_matches_adobe_oracle() {
     assert_eq!(&sub_out[12..15], &[255, 255, 255]);
 
     // AbsoluteColorimetric must NOT use ICC substitution without a CMS!
-    let abs_spec = ImageSpec::new(
+    let abs_spec = PixelFormat::new(
         SampleLayout::RGBA8,
         ColorSpace::Icc {
             profile: adobe_icc,
@@ -212,7 +212,7 @@ fn safe_icc_substitution_without_cms_matches_adobe_oracle() {
     assert!(
         zenpixels_convert::RowPlan::build(
             abs_spec,
-            ImageSpec::RGBA8_SRGB,
+            PixelFormat::RGBA8_SRGB,
             &ConvertPolicy::permissive(),
             None,
         )
@@ -231,7 +231,7 @@ fn moxcms_icc_transform_and_safe_substitution() {
     // A08: Compare the SAME non-neutral Adobe RGB pixels through BOTH safe substitution AND
     // explicit MoxCms (with substitution disabled) on every channel!
     let adobe_icc = Arc::<[u8]>::from(zenpixels_convert::icc_profiles::ADOBE_RGB);
-    let icc_spec = ImageSpec::new(
+    let icc_spec = PixelFormat::new(
         SampleLayout::RGBA8,
         ColorSpace::Icc {
             profile: adobe_icc,
@@ -248,7 +248,7 @@ fn moxcms_icc_transform_and_safe_substitution() {
     ];
     let sub_plan = zenpixels_convert::RowPlan::build(
         icc_spec.clone(),
-        ImageSpec::RGBA8_SRGB,
+        PixelFormat::RGBA8_SRGB,
         &ConvertPolicy::permissive(),
         None,
     )
@@ -257,7 +257,7 @@ fn moxcms_icc_transform_and_safe_substitution() {
         .with_icc_substitution(false)
         .with_cms(Arc::new(zenpixels_convert::MoxCms));
     let cms_plan =
-        zenpixels_convert::RowPlan::build(icc_spec, ImageSpec::RGBA8_SRGB, &cms_policy, None)
+        zenpixels_convert::RowPlan::build(icc_spec, PixelFormat::RGBA8_SRGB, &cms_policy, None)
             .unwrap();
 
     let mut sub_out = [0u8; 16];

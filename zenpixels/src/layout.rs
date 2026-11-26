@@ -3,7 +3,7 @@
 //! Layout describes **how bytes and bits sit in memory** without making any
 //! claim about color space, transfer curve, or primaries. Pair a
 //! [`SampleLayout`] with a [`ColorSpace`](crate::ColorSpace) in an
-//! [`ImageSpec`](crate::ImageSpec) to describe real pixels.
+//! [`PixelFormat`](crate::PixelFormat) to describe real pixels.
 
 use core::fmt;
 
@@ -817,7 +817,8 @@ impl Subsampling {
 /// Storage specification for one plane in a multi-plane image.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub struct PlaneSpec {
+#[doc(alias = "PlaneSpec")]
+pub struct PlaneFormat {
     /// Semantic role of this plane.
     pub role: PlaneRole,
     /// Sample numeric storage type.
@@ -830,7 +831,7 @@ pub struct PlaneSpec {
     pub subsampling: (u8, u8),
 }
 
-impl PlaneSpec {
+impl PlaneFormat {
     /// Construct a full-resolution single-component plane specification.
     #[inline]
     #[must_use]
@@ -1110,7 +1111,7 @@ impl fmt::Display for SampleStride {
 
 /// Downstream container contract for [`PixelBuf::new_for_interop`](crate::PixelBuf::new_for_interop).
 ///
-/// Validates upfront that an [`ImageSpec`](crate::ImageSpec) can move into the
+/// Validates upfront that an [`PixelFormat`](crate::PixelFormat) can move into the
 /// target container **without copying or silently relabeling pixels**.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]

@@ -5,29 +5,29 @@
 //!
 //! ## Start Here (The 4 Core Types)
 //!
-//! - [`ImageSpec`]: pairs a physical [`SampleLayout`] with an algebraic [`ColorSpace`]
+//! - [`PixelFormat`]: pairs a physical [`SampleLayout`] with an algebraic [`ColorSpace`]
 //!   (`Rgb`, `Gray`, `Oklab`, `Xyz`, `Perceptual`, `Cmyk`, `Icc`, `Untagged`). Use
-//!   owned presets like [`ImageSpec::RGB8_SRGB`] for buffers and `&'static` statics like
-//!   [`&specs::RGB8_SRGB`](specs::RGB8_SRGB) for zero-allocation borrowed views.
+//!   owned presets like [`PixelFormat::RGB8_SRGB`] for buffers and `&'static` statics like
+//!   [`&formats::RGB8_SRGB`](formats::RGB8_SRGB) for zero-allocation borrowed views.
 //! - [`PixelBuf`]: owned, stride-preserving, alignment-exact 2D buffer (supporting
 //!   zero-copy external storage via [`ByteStorage`]/[`ByteStorageMut`]) carrying
 //!   [`Orientation`], [`HdrMetadata`], [`ColorOrigin`], and [`SampleFacts`].
 //! - [`PixelView<'a>`] / [`PixelViewMut<'a>`]: zero-copy borrowed strided views and
 //!   rectangular crops (`width()`, `height()` / `rows()`, `stride()`, `row(y)`).
-//! - [`PixelFormat`]: `Copy + const` layout + [`ParametricColor`] for static codec
+//! - [`ParametricFormat`]: `Copy + const` layout + [`ParametricColor`] for static codec
 //!   capability tables without heap ownership.
 //!
 //! ## Quick Example
 //!
 //! ```rust
-//! use zenpixels::{ImageSpec, PixelBuf, PixelView, specs};
+//! use zenpixels::{PixelFormat, PixelBuf, PixelView, formats};
 //!
-//! let buf = PixelBuf::from_typed(vec![255u8, 0, 0, 0, 255, 0], 2, 1, ImageSpec::RGB8_SRGB)?;
+//! let buf = PixelBuf::from_typed(vec![255u8, 0, 0, 0, 255, 0], 2, 1, PixelFormat::RGB8_SRGB)?;
 //! let right = buf.crop_view(1, 0, 1, 1)?;
 //! assert_eq!(right.row(0), &[0, 255, 0]);
 //!
 //! let raw = [10u8, 20, 30];
-//! let view = PixelView::from_bytes(&raw, 1, 1, &specs::RGB8_SRGB)?;
+//! let view = PixelView::from_bytes(&raw, 1, 1, &formats::RGB8_SRGB)?;
 //! assert_eq!(view.row(0), &[10, 20, 30]);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -80,10 +80,11 @@ pub use cicp::{
 };
 pub use color::{
     AlphaMode, Chromaticity, Color, ColorError, ColorOrigin, ColorSpace, CustomPrimaries,
-    GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapDirection, GainMapMetadata, Gamma,
-    HdrMetadata, HlgMode, IccColorSpace, IccValidationError, ImageSpec, OriginKind,
-    ParametricColor, PerceptualSpace, PixelFormat, Primaries, RenderingIntent, SignalRange,
-    SignedFraction, SpecCow, Transfer, UnsignedFraction, WhitePoint, specs, validate_icc_structure,
+    FormatCow, GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapDirection,
+    GainMapMetadata, Gamma, HdrMetadata, HlgMode, IccColorSpace, IccValidationError, OriginKind,
+    ParametricColor, ParametricFormat, PerceptualSpace, PixelFormat, Primaries, RenderingIntent,
+    SignalRange, SignedFraction, Transfer, UnsignedFraction, WhitePoint, formats,
+    validate_icc_structure,
 };
 pub use facts::{ExactDepth, FloatFacts, SampleFacts};
 #[cfg(feature = "hash")]
@@ -95,7 +96,7 @@ pub use hdr::{
 #[cfg(feature = "rgb")]
 pub use interop::PixelType;
 pub use layout::{
-    BitPacking, ChannelOrder, InteropTarget, LayoutError, PlaneRole, PlaneSpec, RowAlign,
+    BitPacking, ChannelOrder, InteropTarget, LayoutError, PlaneFormat, PlaneRole, RowAlign,
     SampleLayout, SampleStride, SampleType, Subsampling,
 };
 pub use orientation::Orientation;

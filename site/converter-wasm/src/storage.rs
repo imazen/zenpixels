@@ -103,7 +103,7 @@ fn rgb565() -> Result<Value, String> {
         }
     }
     let mut canonical = [0u8; 12];
-    let dst = PixelViewMut::new(&mut canonical, 2, 2, 6, &zenpixels::specs::RGB8_SRGB)
+    let dst = PixelViewMut::new(&mut canonical, 2, 2, 6, &zenpixels::formats::RGB8_SRGB)
         .map_err(|e| e.to_string())?;
     to_canonical(&readers, SignalRange::Full, 0, 0, dst).map_err(|e| e.to_string())?;
     let bytes: Vec<_> = words.iter().flat_map(|word| word.to_ne_bytes()).collect();

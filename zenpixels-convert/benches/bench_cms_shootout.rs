@@ -16,9 +16,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use zenbench::prelude::*;
 use zenpixels_convert::{
-    Accelerators, AlphaMode, CmsBackend, ColorSpace, ConvertPolicy, ImageSpec, Lcms,
-    LcmsUnoptimized, MoxCms, Primaries, RenderingIntent, RowPlan, SampleLayout, SampleType,
-    SignalRange, Transfer, icc_profiles,
+    Accelerators, AlphaMode, CmsBackend, ColorSpace, ConvertPolicy, Lcms, LcmsUnoptimized, MoxCms,
+    PixelFormat, Primaries, RenderingIntent, RowPlan, SampleLayout, SampleType, SignalRange,
+    Transfer, icc_profiles,
 };
 
 const W_4K: u32 = 3840;
@@ -194,8 +194,8 @@ fn fill_f32(samples: usize) -> Vec<f32> {
         .collect()
 }
 
-fn icc_spec(layout: SampleLayout, profile: Arc<[u8]>, alpha: AlphaMode) -> ImageSpec {
-    ImageSpec::new(
+fn icc_spec(layout: SampleLayout, profile: Arc<[u8]>, alpha: AlphaMode) -> PixelFormat {
+    PixelFormat::new(
         layout,
         ColorSpace::Icc {
             profile,
@@ -211,8 +211,8 @@ fn rgb_spec(
     primaries: Primaries,
     transfer: Transfer,
     alpha: AlphaMode,
-) -> ImageSpec {
-    ImageSpec::new(
+) -> PixelFormat {
+    PixelFormat::new(
         layout,
         ColorSpace::Rgb {
             primaries,
@@ -232,17 +232,21 @@ fn bench_4k_rgb_u8(
     alpha: AlphaMode,
     native_src: Option<(Primaries, Transfer)>,
 ) {
-    let src_spec = icc_spec(layout, Arc::clone(&icc), alpha);
-    let dst_spec = rgb_spec(layout, Primaries::Bt709, Transfer::Srgb, alpha);
+    let source_format = icc_spec(layout, Arc::clone(&icc), alpha);
+    let destination_format = rgb_spec(layout, Primaries::Bt709, Transfer::Srgb, alpha);
     let bpp = layout.bytes_per_pixel();
     let row_bytes = W_4K as usize * bpp;
     let total_bytes = row_bytes * H_4K as usize;
 
-    let lcms_t = Lcms.build_transform(&src_spec, &dst_spec).unwrap();
-    let lcms_unopt_t = LcmsUnoptimized
-        .build_transform(&src_spec, &dst_spec)
+    let lcms_t = Lcms
+        .build_transform(&source_format, &destination_format)
         .unwrap();
-    let mox_t = MoxCms.build_transform(&src_spec, &dst_spec).unwrap();
+    let lcms_unopt_t = LcmsUnoptimized
+        .build_transform(&source_format, &destination_format)
+        .unwrap();
+    let mox_t = MoxCms
+        .build_transform(&source_format, &destination_format)
+        .unwrap();
 
     let src = Arc::new(fill_u8(total_bytes));
 
@@ -315,7 +319,7 @@ fn bench_4k_rgb_u8(
             let nat_src = rgb_spec(layout, prim, tf, alpha);
             let plan_simd = RowPlan::build(
                 nat_src.clone(),
-                dst_spec.clone(),
+                destination_format.clone(),
                 &ConvertPolicy::permissive().with_accelerators(Accelerators::ALL),
                 None,
             )
@@ -341,7 +345,7 @@ fn bench_4k_rgb_u8(
 
             let plan_approx = RowPlan::build(
                 nat_src,
-                dst_spec,
+                destination_format,
                 &ConvertPolicy::permissive()
                     .with_approximate(true)
                     .with_accelerators(Accelerators::ALL),
@@ -377,17 +381,21 @@ fn bench_4k_rgb_u16(
     native_src: Option<(Primaries, Transfer)>,
 ) {
     let layout = SampleLayout::RGB16;
-    let src_spec = icc_spec(layout, Arc::clone(&icc), AlphaMode::None);
-    let dst_spec = rgb_spec(layout, Primaries::Bt709, Transfer::Srgb, AlphaMode::None);
+    let source_format = icc_spec(layout, Arc::clone(&icc), AlphaMode::None);
+    let destination_format = rgb_spec(layout, Primaries::Bt709, Transfer::Srgb, AlphaMode::None);
     let row_elems = W_4K as usize * 3;
     let total_elems = row_elems * H_4K as usize;
     let total_bytes = total_elems * 2;
 
-    let lcms_t = Lcms.build_transform(&src_spec, &dst_spec).unwrap();
-    let lcms_unopt_t = LcmsUnoptimized
-        .build_transform(&src_spec, &dst_spec)
+    let lcms_t = Lcms
+        .build_transform(&source_format, &destination_format)
         .unwrap();
-    let mox_t = MoxCms.build_transform(&src_spec, &dst_spec).unwrap();
+    let lcms_unopt_t = LcmsUnoptimized
+        .build_transform(&source_format, &destination_format)
+        .unwrap();
+    let mox_t = MoxCms
+        .build_transform(&source_format, &destination_format)
+        .unwrap();
 
     let src = Arc::new(fill_u16(total_elems));
 
@@ -425,7 +433,7 @@ fn bench_4k_rgb_u16(
             let nat_src = rgb_spec(layout, prim, tf, AlphaMode::None);
             let plan_simd = RowPlan::build(
                 nat_src,
-                dst_spec,
+                destination_format,
                 &ConvertPolicy::permissive().with_accelerators(Accelerators::ALL),
                 None,
             )
@@ -459,14 +467,18 @@ fn bench_4k_rgb_f32(
     native_src: Option<(Primaries, Transfer)>,
 ) {
     let layout = SampleLayout::RGBF32;
-    let src_spec = icc_spec(layout, Arc::clone(&icc), AlphaMode::None);
-    let dst_spec = rgb_spec(layout, Primaries::Bt709, Transfer::Srgb, AlphaMode::None);
+    let source_format = icc_spec(layout, Arc::clone(&icc), AlphaMode::None);
+    let destination_format = rgb_spec(layout, Primaries::Bt709, Transfer::Srgb, AlphaMode::None);
     let row_elems = W_4K as usize * 3;
     let total_elems = row_elems * H_4K as usize;
     let total_bytes = total_elems * 4;
 
-    let lcms_t = Lcms.build_transform(&src_spec, &dst_spec).unwrap();
-    let mox_t = MoxCms.build_transform(&src_spec, &dst_spec).unwrap();
+    let lcms_t = Lcms
+        .build_transform(&source_format, &destination_format)
+        .unwrap();
+    let mox_t = MoxCms
+        .build_transform(&source_format, &destination_format)
+        .unwrap();
     let src = Arc::new(fill_f32(total_elems));
 
     suite.compare(label, |g| {
@@ -499,7 +511,7 @@ fn bench_4k_rgb_f32(
             let nat_src = rgb_spec(layout, prim, tf, AlphaMode::None);
             let plan_simd = RowPlan::build(
                 nat_src,
-                dst_spec,
+                destination_format,
                 &ConvertPolicy::permissive().with_accelerators(Accelerators::ALL),
                 None,
             )
@@ -528,7 +540,7 @@ fn bench_4k_rgb_f32(
 
 fn bench_cmyk_rows(suite: &mut zenbench::Suite, cmyk_icc: Arc<[u8]>) {
     // 4096-px single-row CMYK8 -> RGB8 (comparable to benchmarks/cmyk8_bpc_2026-11-05.md!)
-    let cmyk8 = ImageSpec::new(
+    let cmyk8 = PixelFormat::new(
         SampleLayout::CMYK8,
         ColorSpace::Cmyk {
             icc: Some(Arc::clone(&cmyk_icc)),
@@ -536,7 +548,7 @@ fn bench_cmyk_rows(suite: &mut zenbench::Suite, cmyk_icc: Arc<[u8]>) {
             alpha: AlphaMode::None,
         },
     );
-    let cmyk8_inv = ImageSpec::new(
+    let cmyk8_inv = PixelFormat::new(
         SampleLayout::CMYK8_INVERTED,
         ColorSpace::Cmyk {
             icc: Some(Arc::clone(&cmyk_icc)),
@@ -544,7 +556,7 @@ fn bench_cmyk_rows(suite: &mut zenbench::Suite, cmyk_icc: Arc<[u8]>) {
             alpha: AlphaMode::None,
         },
     );
-    let rgb8 = ImageSpec::RGB8_SRGB;
+    let rgb8 = PixelFormat::RGB8_SRGB;
 
     let s_row = Arc::new(fill_u8(ROW_W as usize * 4));
     suite.compare("cmyk8_to_rgb8_4096px", |g| {
@@ -580,7 +592,7 @@ fn bench_cmyk_rows(suite: &mut zenbench::Suite, cmyk_icc: Arc<[u8]>) {
     });
 
     // 4096-px CMYK16 -> RGB16
-    let cmyk16 = ImageSpec::new(
+    let cmyk16 = PixelFormat::new(
         SampleLayout::new(SampleType::U16, zenpixels_convert::ChannelOrder::Cmyk),
         ColorSpace::Cmyk {
             icc: Some(Arc::clone(&cmyk_icc)),
@@ -588,7 +600,7 @@ fn bench_cmyk_rows(suite: &mut zenbench::Suite, cmyk_icc: Arc<[u8]>) {
             alpha: AlphaMode::None,
         },
     );
-    let rgb16 = ImageSpec::RGB16_SRGB;
+    let rgb16 = PixelFormat::RGB16_SRGB;
     let s16 = Arc::new(fill_u16(ROW_W as usize * 4));
     suite.compare("cmyk16_to_rgb16_4096px", |g| {
         g.throughput(Throughput::Elements(ROW_W as u64));
@@ -617,7 +629,7 @@ fn bench_cmyk_rows(suite: &mut zenbench::Suite, cmyk_icc: Arc<[u8]>) {
     });
 
     // 4096-px CMYKF32 -> RGBF32
-    let cmykf = ImageSpec::new(
+    let cmykf = PixelFormat::new(
         SampleLayout::new(SampleType::F32, zenpixels_convert::ChannelOrder::Cmyk),
         ColorSpace::Cmyk {
             icc: Some(cmyk_icc),

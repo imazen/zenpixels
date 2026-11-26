@@ -8,8 +8,8 @@ use zenpixels::{BufferError, ColorError, LayoutError};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConvertError {
-    /// Underlying [`ImageSpec`](zenpixels::ImageSpec) validation error.
-    InvalidSpec(ColorError),
+    /// Underlying [`PixelFormat`](zenpixels::PixelFormat) validation error.
+    InvalidFormat(ColorError),
     /// Underlying [`SampleLayout`](zenpixels::SampleLayout) validation error.
     InvalidLayout(LayoutError),
     /// Underlying pixel buffer geometry, alignment, or allocation error.
@@ -62,7 +62,7 @@ impl From<enough::StopReason> for ConvertError {
 
 impl From<ColorError> for ConvertError {
     fn from(e: ColorError) -> Self {
-        Self::InvalidSpec(e)
+        Self::InvalidFormat(e)
     }
 }
 
@@ -84,7 +84,7 @@ impl From<BufferError> for ConvertError {
 impl fmt::Display for ConvertError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidSpec(e) => e.fmt(f),
+            Self::InvalidFormat(e) => e.fmt(f),
             Self::InvalidLayout(e) => e.fmt(f),
             Self::Buffer(e) => e.fmt(f),
             Self::MissingHdrAnchor => f.write_str(

@@ -11,9 +11,9 @@ use zenpixels_convert::gainmap::{
 use zenpixels_convert::{
     Accelerators, AlphaMode, BandedBuf, ChromaSiting, Cicp, ColorOrigin, ColorSpace,
     ContentLightLevel, ConvertError, ConvertPolicy, DiffuseWhite, GamutPolicy, HdrMetadata,
-    HlgMode, HlgRendering, ImagePlan, ImageSpec, Orientation, OutputPlan, OutputSignaling,
-    PeakSource, PixelBuf, PixelFormat, PlanarBuf, PlanarReconstructionOptions, PlaneRole,
-    PlaneSpec, PlaneView, Primaries, RowPlan, SampleLayout, SampleType, SignalRange, Transfer,
+    HlgMode, HlgRendering, ImagePlan, Orientation, OutputPlan, OutputSignaling, ParametricFormat,
+    PeakSource, PixelBuf, PixelFormat, PlanarBuf, PlanarReconstructionOptions, PlaneFormat,
+    PlaneRole, PlaneView, Primaries, RowPlan, SampleLayout, SampleType, SignalRange, Transfer,
     YcbcrMatrix, bake_orientation_owned, compact_in_place, compact_to_buf, reconstruct_planar_f32,
     reconstruct_planar_into, reconstruct_planar_to_buf,
 };
@@ -25,7 +25,7 @@ use zenpixels_convert::{
 
 #[test]
 fn all_16_h273_transfers_inverse_accuracy_and_simd_parity() {
-    let linear_spec = ImageSpec::RGBF32_LINEAR.with_white(DiffuseWhite::BT2408);
+    let linear_spec = PixelFormat::RGBF32_LINEAR.with_white(DiffuseWhite::BT2408);
     let mut ramp = Vec::with_capacity(65 * 3);
     for i in 0..65 {
         let v = (i as f32) / 64.0;
@@ -45,7 +45,7 @@ fn all_16_h273_transfers_inverse_accuracy_and_simd_parity() {
             Primaries::Bt709
         };
         let lin_for_tc = linear_spec.clone().with_primaries(prim);
-        let enc_spec = ImageSpec::new(
+        let enc_spec = PixelFormat::new(
             SampleLayout::RGBF32,
             ColorSpace::Rgb {
                 primaries: prim,
@@ -114,19 +114,29 @@ fn all_16_h273_transfers_inverse_accuracy_and_simd_parity() {
 
     // Extended negative values on Iec61966_2_4 (xvYCC, TC=11) and Bt1361 (TC=12) preserve sign!
     for tf in [Transfer::Iec61966_2_4, Transfer::Bt1361] {
-        let enc = ImageSpec::RGBF32_LINEAR.with_transfer(tf);
+        let enc = PixelFormat::RGBF32_LINEAR.with_transfer(tf);
         let neg = PixelBuf::from_typed(vec![-0.25_f32, -0.05, 0.5], 1, 1, enc.clone()).unwrap();
         let pol = ConvertPolicy::permissive().with_gamut(GamutPolicy::PreserveExtended);
-        let lin = ImagePlan::build(&enc, &ImageSpec::RGBF32_LINEAR, &pol, PeakSource::Measured)
-            .unwrap()
-            .execute(&neg)
-            .unwrap();
+        let lin = ImagePlan::build(
+            &enc,
+            &PixelFormat::RGBF32_LINEAR,
+            &pol,
+            PeakSource::Measured,
+        )
+        .unwrap()
+        .execute(&neg)
+        .unwrap();
         let lin_f: &[f32] = lin.as_view().row_as(0).unwrap();
         assert!(lin_f[0] < 0.0 && lin_f[1] < 0.0 && lin_f[2] > 0.0);
-        let back = ImagePlan::build(&ImageSpec::RGBF32_LINEAR, &enc, &pol, PeakSource::Measured)
-            .unwrap()
-            .execute(&lin)
-            .unwrap();
+        let back = ImagePlan::build(
+            &PixelFormat::RGBF32_LINEAR,
+            &enc,
+            &pol,
+            PeakSource::Measured,
+        )
+        .unwrap()
+        .execute(&lin)
+        .unwrap();
         let back_f: &[f32] = back.as_view().row_as(0).unwrap();
         assert!((back_f[0] - (-0.25)).abs() < 1e-4);
         assert!((back_f[1] - (-0.05)).abs() < 1e-4);
@@ -136,8 +146,8 @@ fn all_16_h273_transfers_inverse_accuracy_and_simd_parity() {
 
 #[test]
 fn output_plan_refuses_hlg_display_on_cicp_and_auto() {
-    let hlg_display = ImageSpec::RGB16_BT2100_HLG_1000;
-    let hlg_scene = ImageSpec::RGB16_BT2100_HLG_SCENE;
+    let hlg_display = PixelFormat::RGB16_BT2100_HLG_1000;
+    let hlg_scene = PixelFormat::RGB16_BT2100_HLG_SCENE;
     let pol = ConvertPolicy::permissive();
 
     assert_eq!(
@@ -185,7 +195,7 @@ fn output_plan_refuses_hlg_display_on_cicp_and_auto() {
         .is_ok()
     );
     // Also verify HlgMode::Display variant explicitly.
-    let custom_disp = ImageSpec::RGB16_BT2100_HLG_SCENE.with_transfer(Transfer::Hlg(
+    let custom_disp = PixelFormat::RGB16_BT2100_HLG_SCENE.with_transfer(Transfer::Hlg(
         HlgMode::Display(HlgRendering::REFERENCE_1000_NIT),
     ));
     assert_eq!(
@@ -205,7 +215,7 @@ fn output_plan_refuses_hlg_display_on_cicp_and_auto() {
 #[test]
 fn rgb10a2_unverified_opaque_canonicalization_and_orientation_propagation() {
     // 1. RGB10A2 with AlphaMode::Opaque and poisoned alpha bits (0 instead of 3) must canonicalize!
-    let spec = ImageSpec::new(
+    let spec = PixelFormat::new(
         SampleLayout::RGB10A2,
         ColorSpace::SRGB.with_alpha(AlphaMode::Opaque),
     );
@@ -255,12 +265,12 @@ fn rgb10a2_unverified_opaque_canonicalization_and_orientation_propagation() {
         vec![100u8, 100, 100, 255, 50, 50, 50, 255],
         2,
         1,
-        PixelFormat::RGBA8_SRGB,
+        ParametricFormat::RGBA8_SRGB,
     )
     .unwrap()
     .with_orientation(Orientation::Rotate270);
     let reduced = compact_to_buf(&rgba_gray.as_view()).unwrap().unwrap();
-    assert_eq!(reduced.spec().layout, SampleLayout::GRAY8);
+    assert_eq!(reduced.format().layout, SampleLayout::GRAY8);
     assert_eq!(reduced.orientation(), Orientation::Rotate270);
     compact_in_place(
         &mut rgba_gray,
@@ -270,16 +280,20 @@ fn rgb10a2_unverified_opaque_canonicalization_and_orientation_propagation() {
 
     // 3. `bake_orientation_owned` is zero-copy on Identity and bakes + resets to Identity otherwise.
     let id_buf =
-        PixelBuf::from_typed(vec![1u8, 2, 3, 4, 5, 6], 2, 1, PixelFormat::RGB8_SRGB).unwrap();
+        PixelBuf::from_typed(vec![1u8, 2, 3, 4, 5, 6], 2, 1, ParametricFormat::RGB8_SRGB).unwrap();
     let orig_ptr = id_buf.as_view().as_strided_bytes().as_ptr();
     let baked_id = bake_orientation_owned(id_buf).unwrap();
     assert_eq!(baked_id.as_view().as_strided_bytes().as_ptr(), orig_ptr);
     assert_eq!(baked_id.orientation(), Orientation::Identity);
 
-    let rot_buf =
-        PixelBuf::from_typed(vec![10u8, 20, 30, 40, 50, 60], 2, 1, PixelFormat::RGB8_SRGB)
-            .unwrap()
-            .with_orientation(Orientation::Rotate90);
+    let rot_buf = PixelBuf::from_typed(
+        vec![10u8, 20, 30, 40, 50, 60],
+        2,
+        1,
+        ParametricFormat::RGB8_SRGB,
+    )
+    .unwrap()
+    .with_orientation(Orientation::Rotate90);
     let baked_rot = bake_orientation_owned(rot_buf).unwrap();
     assert_eq!(baked_rot.orientation(), Orientation::Identity);
     assert_eq!((baked_rot.width(), baked_rot.height()), (1, 2));
@@ -301,20 +315,25 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
     let y_data = [128u8];
     let cg_data = [255u8];
     let co_data = [128u8];
-    let py = PlaneView::from_samples(&y_data, 1, 1, PlaneSpec::new(PlaneRole::Y, SampleType::U8))
-        .unwrap();
+    let py = PlaneView::from_samples(
+        &y_data,
+        1,
+        1,
+        PlaneFormat::new(PlaneRole::Y, SampleType::U8),
+    )
+    .unwrap();
     let pcg = PlaneView::from_samples(
         &cg_data,
         1,
         1,
-        PlaneSpec::new(PlaneRole::Cb, SampleType::U8),
+        PlaneFormat::new(PlaneRole::Cb, SampleType::U8),
     )
     .unwrap();
     let pco = PlaneView::from_samples(
         &co_data,
         1,
         1,
-        PlaneSpec::new(PlaneRole::Cr, SampleType::U8),
+        PlaneFormat::new(PlaneRole::Cr, SampleType::U8),
     )
     .unwrap();
     let ycgco_view = zenpixels_convert::PlanarView::new(1, 1, &[py, pcg, pco])
@@ -339,7 +358,7 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
         .with_color(ColorSpace::DISPLAY_P3)
         .with_matrix_coefficients(zenpixels_convert::MatrixCoefficients::CHROMA_DERIVED_NCL);
     let cd_f32 = reconstruct_planar_f32(&cd_view).unwrap();
-    assert_eq!(cd_f32.spec().layout, SampleLayout::RGBF32);
+    assert_eq!(cd_f32.format().layout, SampleLayout::RGBF32);
 
     // 3b. MatrixCoefficients <-> YcbcrMatrix lossless interop.
     assert_eq!(
@@ -360,20 +379,20 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
     // 2x2 chroma grid: top-left=0, top-right=255, bottom-left=0, bottom-right=255 (horizontal gradient)
     let cb_2x2 = [0u8, 255, 0, 255];
     let cr_2x2 = [128u8; 4];
-    let y_p = PlaneView::from_samples(&y_4x4, 4, 4, PlaneSpec::new(PlaneRole::Y, SampleType::U8))
+    let y_p = PlaneView::from_samples(&y_4x4, 4, 4, PlaneFormat::new(PlaneRole::Y, SampleType::U8))
         .unwrap();
     let cb_p = PlaneView::from_samples(
         &cb_2x2,
         2,
         2,
-        PlaneSpec::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2),
+        PlaneFormat::new(PlaneRole::Cb, SampleType::U8).with_subsampling(2, 2),
     )
     .unwrap();
     let cr_p = PlaneView::from_samples(
         &cr_2x2,
         2,
         2,
-        PlaneSpec::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2),
+        PlaneFormat::new(PlaneRole::Cr, SampleType::U8).with_subsampling(2, 2),
     )
     .unwrap();
 
@@ -450,14 +469,14 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
     );
 
     // 5. Zero-alloc `reconstruct_planar_into` into BGR8, RGB8, RGBA8, GRAY8 + strict dst validation!
-    let mut bgr8_buf = PixelBuf::new(4, 4, PixelFormat::BGR8_SRGB).unwrap();
+    let mut bgr8_buf = PixelBuf::new(4, 4, ParametricFormat::BGR8_SRGB).unwrap();
     reconstruct_planar_into(
         &center_420,
         &PlanarReconstructionOptions::bilinear(),
         &mut bgr8_buf.as_view_mut(),
     )
     .unwrap();
-    let mut rgb8_buf = PixelBuf::new(4, 4, PixelFormat::RGB8_SRGB).unwrap();
+    let mut rgb8_buf = PixelBuf::new(4, 4, ParametricFormat::RGB8_SRGB).unwrap();
     reconstruct_planar_into(
         &center_420,
         &PlanarReconstructionOptions::bilinear(),
@@ -473,7 +492,7 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
 
     // `reconstruct_planar_into` accepts RGBA8_SRGB (Straight) when source has no alpha plane (fills 255),
     // and refuses mismatched destination color space (e.g., DisplayP3 or Linear) or untagged source!
-    let mut rgba8_buf = PixelBuf::new(4, 4, ImageSpec::RGBA8_SRGB).unwrap();
+    let mut rgba8_buf = PixelBuf::new(4, 4, PixelFormat::RGBA8_SRGB).unwrap();
     reconstruct_planar_into(
         &center_420,
         &PlanarReconstructionOptions::bilinear(),
@@ -485,7 +504,7 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
     let mut wrong_p3_dst = PixelBuf::new(
         4,
         4,
-        ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3),
+        PixelFormat::RGB8_SRGB.with_primaries(Primaries::DisplayP3),
     )
     .unwrap();
     assert_eq!(
@@ -516,13 +535,13 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
         &PlanarReconstructionOptions::bilinear(),
     )
     .unwrap();
-    assert_eq!(rgb16_buf.spec().layout, SampleLayout::RGB16);
+    assert_eq!(rgb16_buf.format().layout, SampleLayout::RGB16);
 
     // Monochrome Y -> GRAY8 zero-alloc!
     let mono_view = zenpixels_convert::PlanarView::new(4, 4, &[y_p])
         .unwrap()
         .with_color(ColorSpace::GRAY_SRGB);
-    let mut gray8 = PixelBuf::new(4, 4, PixelFormat::GRAY8_SRGB).unwrap();
+    let mut gray8 = PixelBuf::new(4, 4, ParametricFormat::GRAY8_SRGB).unwrap();
     reconstruct_planar_into(
         &mono_view,
         &PlanarReconstructionOptions::nearest(),
@@ -536,10 +555,10 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
         2,
         1,
         &[
-            PlaneSpec::new(PlaneRole::R, SampleType::F32),
-            PlaneSpec::new(PlaneRole::G, SampleType::F32),
-            PlaneSpec::new(PlaneRole::B, SampleType::F32),
-            PlaneSpec::new(PlaneRole::Alpha, SampleType::F32),
+            PlaneFormat::new(PlaneRole::R, SampleType::F32),
+            PlaneFormat::new(PlaneRole::G, SampleType::F32),
+            PlaneFormat::new(PlaneRole::B, SampleType::F32),
+            PlaneFormat::new(PlaneRole::Alpha, SampleType::F32),
         ],
     )
     .unwrap()
@@ -605,7 +624,7 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
     let p_premul = p_rgb
         .as_view()
         .with_alpha_override(AlphaMode::Premultiplied);
-    let mut dst_straight = PixelBuf::new(2, 1, ImageSpec::RGBAF32_LINEAR).unwrap();
+    let mut dst_straight = PixelBuf::new(2, 1, PixelFormat::RGBAF32_LINEAR).unwrap();
     assert_eq!(
         *reconstruct_planar_into(
             &p_premul,
@@ -666,14 +685,14 @@ fn gainmap_decoupled_3ch_shared_metadata_and_passthrough_orientation() {
     );
 
     // `apply_gain_map_oriented` in `Passthrough` attaches `orient` onto the returned `PixelBuf`!
-    let gm_spec = ImageSpec::new(
+    let gm_spec = PixelFormat::new(
         SampleLayout::GRAY8,
         ColorSpace::Untagged {
             channels: 1,
             alpha: AlphaMode::None,
         },
     );
-    let base_buf = PixelBuf::new_white(4, 2, PixelFormat::RGB8_SRGB).unwrap();
+    let base_buf = PixelBuf::new_white(4, 2, ParametricFormat::RGB8_SRGB).unwrap();
     let gm_buf = PixelBuf::new(4, 2, gm_spec).unwrap();
     let dual = zenpixels_convert::DualLayerHdrBuf::new(base_buf, gm_buf, shared_meta)
         .unwrap()
@@ -817,7 +836,7 @@ fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
     // 2. Load-bearing chroma collapse respects custom white point in 44-byte cicp tag:
     //    - Custom D65 neutral RGB ICC -> allowed to collapse to Gray!
     //    - ACEScg D60 neutral RGB ICC -> suppressed (stays RGB ICC, never shifts D60 to D65 Gray)!
-    let d65_spec = ImageSpec::new(
+    let d65_spec = PixelFormat::new(
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(d65_icc.clone()),
@@ -830,9 +849,9 @@ fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
     let reduced_d65 = compact_to_buf(&d65_gray_buf.as_view())
         .unwrap()
         .expect("custom D65 neutral ICC should collapse to Gray");
-    assert_eq!(reduced_d65.spec().layout.order, ChannelOrder::Gray);
+    assert_eq!(reduced_d65.format().layout.order, ChannelOrder::Gray);
 
-    let acescg_spec_u8 = ImageSpec::new(
+    let acescg_spec_u8 = PixelFormat::new(
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(acescg_icc.clone()),
@@ -851,7 +870,7 @@ fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
 
     // 3. CMS interop (MoxCms & Lcms): both parse the 44-byte cicp ICC profile cleanly AND match
     //    native `Primaries::Custom(ACES_CG)` -> linear sRGB!
-    let native_acescg_spec = ImageSpec::new(
+    let native_acescg_spec = PixelFormat::new(
         SampleLayout::RGBF32,
         ColorSpace::Rgb {
             primaries: Primaries::Custom(CustomPrimaries::ACES_CG),
@@ -861,7 +880,7 @@ fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
             white: None,
         },
     );
-    let icc_acescg_spec = ImageSpec::new(
+    let icc_acescg_spec = PixelFormat::new(
         SampleLayout::RGBF32,
         ColorSpace::Icc {
             profile: Arc::from(acescg_icc),
@@ -881,7 +900,7 @@ fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
 
     let native_out = ImagePlan::build(
         &native_acescg_spec,
-        &ImageSpec::RGBF32_LINEAR,
+        &PixelFormat::RGBF32_LINEAR,
         &ConvertPolicy::permissive(),
         PeakSource::default(),
     )
@@ -894,8 +913,8 @@ fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
     {
         let mox_pol = ConvertPolicy::permissive().with_cms(Arc::new(zenpixels_convert::MoxCms));
         let mox_out = ImagePlan::build(
-            icc_src.spec(),
-            &ImageSpec::RGBF32_LINEAR,
+            icc_src.format(),
+            &PixelFormat::RGBF32_LINEAR,
             &mox_pol,
             PeakSource::default(),
         )
@@ -915,8 +934,8 @@ fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
     {
         let lcms_pol = ConvertPolicy::permissive().with_cms(Arc::new(zenpixels_convert::Lcms));
         let lcms_out = ImagePlan::build(
-            icc_src.spec(),
-            &ImageSpec::RGBF32_LINEAR,
+            icc_src.format(),
+            &PixelFormat::RGBF32_LINEAR,
             &lcms_pol,
             PeakSource::default(),
         )
@@ -934,7 +953,7 @@ fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
         // Also verify Lcms converting directly from `ColorSpace::Icc` -> `Primaries::Custom(ACES_CG)`
         // preserves true D60 white point (non-D65 white-point regression test!).
         let lcms_back = ImagePlan::build(
-            icc_src.spec(),
+            icc_src.format(),
             &native_acescg_spec,
             &lcms_pol,
             PeakSource::default(),
@@ -959,7 +978,7 @@ fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
             .with_scale_factor(1)
             .with_policy(ConvertPolicy::permissive().with_cms(Arc::new(zenpixels_convert::Lcms)));
         let base_sdr =
-            PixelBuf::from_typed(vec![0.5_f32; 4 * 3], 2, 2, icc_src.spec().clone()).unwrap();
+            PixelBuf::from_typed(vec![0.5_f32; 4 * 3], 2, 2, icc_src.format().clone()).unwrap();
         let alt_hdr = PixelBuf::from_typed(vec![1.0_f32; 4 * 3], 2, 2, native_acescg_spec).unwrap();
         let (gm_buf, _meta) = zenpixels_convert::gainmap::extract_gain_map_only(
             &base_sdr.as_view(),
@@ -994,21 +1013,31 @@ fn bundle_1_and_2_policy_default_to_rgb8_orient_owned_and_alpha_compaction() {
     assert_eq!(def.gamut, zenpixels_convert::GamutPolicy::PreserveExtended);
     assert_eq!(def.range, zenpixels_convert::RangePolicy::Forbid);
     assert_eq!(
-        *RowPlan::build(&ImageSpec::RGB16_SRGB, &ImageSpec::RGB8_SRGB, &def, None)
-            .unwrap_err()
-            .error(),
+        *RowPlan::build(
+            &PixelFormat::RGB16_SRGB,
+            &PixelFormat::RGB8_SRGB,
+            &def,
+            None
+        )
+        .unwrap_err()
+        .error(),
         ConvertError::DepthReductionForbidden
     );
     assert_eq!(
-        *RowPlan::build(&ImageSpec::RGBA8_SRGB, &ImageSpec::RGB8_SRGB, &def, None)
-            .unwrap_err()
-            .error(),
+        *RowPlan::build(
+            &PixelFormat::RGBA8_SRGB,
+            &PixelFormat::RGB8_SRGB,
+            &def,
+            None
+        )
+        .unwrap_err()
+        .error(),
         ConvertError::AlphaLossForbidden
     );
     assert_eq!(
         *RowPlan::build(
-            ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3),
-            &zenpixels_convert::specs::RGB8_SRGB,
+            PixelFormat::RGB8_SRGB.with_primaries(Primaries::DisplayP3),
+            &zenpixels_convert::formats::RGB8_SRGB,
             &def,
             None,
         )
@@ -1018,8 +1047,8 @@ fn bundle_1_and_2_policy_default_to_rgb8_orient_owned_and_alpha_compaction() {
     );
     assert!(
         RowPlan::build(
-            ImageSpec::RGBF32_LINEAR.with_primaries(Primaries::DisplayP3),
-            &zenpixels_convert::specs::RGBF32_LINEAR,
+            PixelFormat::RGBF32_LINEAR.with_primaries(Primaries::DisplayP3),
+            &zenpixels_convert::formats::RGBF32_LINEAR,
             &def,
             None,
         )
@@ -1028,8 +1057,8 @@ fn bundle_1_and_2_policy_default_to_rgb8_orient_owned_and_alpha_compaction() {
     );
     assert_eq!(
         *RowPlan::build(
-            ImageSpec::RGB8_SRGB.with_range(SignalRange::Narrow),
-            &zenpixels_convert::specs::RGB8_SRGB,
+            PixelFormat::RGB8_SRGB.with_range(SignalRange::Narrow),
+            &zenpixels_convert::formats::RGB8_SRGB,
             &def,
             None,
         )
@@ -1039,7 +1068,8 @@ fn bundle_1_and_2_policy_default_to_rgb8_orient_owned_and_alpha_compaction() {
     );
 
     // M2: to_rgb8 / to_gray8 refuse unproven/semi-transparent alpha, succeed on proven opaque.
-    let semi = PixelBuf::from_typed(vec![10u8, 20, 30, 128], 1, 1, ImageSpec::RGBA8_SRGB).unwrap();
+    let semi =
+        PixelBuf::from_typed(vec![10u8, 20, 30, 128], 1, 1, PixelFormat::RGBA8_SRGB).unwrap();
     assert_eq!(
         *to_rgb8(&semi.as_view()).unwrap_err().error(),
         ConvertError::AlphaLossForbidden
@@ -1049,7 +1079,7 @@ fn bundle_1_and_2_policy_default_to_rgb8_orient_owned_and_alpha_compaction() {
         ConvertError::AlphaLossForbidden
     );
     let mut opaque_rgba =
-        PixelBuf::from_typed(vec![10u8, 20, 30, 255], 1, 1, ImageSpec::RGBA8_SRGB).unwrap();
+        PixelBuf::from_typed(vec![10u8, 20, 30, 255], 1, 1, PixelFormat::RGBA8_SRGB).unwrap();
     assert_eq!(
         *to_rgb8(&opaque_rgba.as_view()).unwrap_err().error(),
         ConvertError::AlphaLossForbidden
@@ -1064,7 +1094,7 @@ fn bundle_1_and_2_policy_default_to_rgb8_orient_owned_and_alpha_compaction() {
 
     // M7: apply_orientation_owned(rot90_buf, Identity) clears pending orientation to Identity
     // zero-copy, matching borrowed apply_orientation(&view, Identity).
-    let rot90 = PixelBuf::from_typed(vec![1u8, 2, 3, 4, 5, 6], 2, 1, ImageSpec::RGB8_SRGB)
+    let rot90 = PixelBuf::from_typed(vec![1u8, 2, 3, 4, 5, 6], 2, 1, PixelFormat::RGB8_SRGB)
         .unwrap()
         .with_orientation(Orientation::Rotate90);
     let borrowed_id = apply_orientation(&rot90.as_view(), Orientation::Identity).unwrap();
@@ -1087,25 +1117,25 @@ fn bundle_1_and_2_policy_default_to_rgb8_orient_owned_and_alpha_compaction() {
         vec![10u8, 20, 30, 255, 40, 50, 60, 255],
         2,
         1,
-        ImageSpec::RGBA8_SRGB,
+        PixelFormat::RGBA8_SRGB,
     )
     .unwrap();
     let ptr_retag = b_retag.as_view().row(0).as_ptr() as usize;
     compact_in_place(&mut b_retag, AlphaCompaction::RetagOpaque);
-    assert_eq!(b_retag.spec().layout, SampleLayout::RGBA8);
-    assert_eq!(b_retag.spec().color.alpha(), AlphaMode::Opaque);
+    assert_eq!(b_retag.format().layout, SampleLayout::RGBA8);
+    assert_eq!(b_retag.format().color.alpha(), AlphaMode::Opaque);
     assert_eq!(b_retag.as_view().row(0).as_ptr() as usize, ptr_retag);
 
     let mut b_drop = PixelBuf::from_typed(
         vec![10u8, 20, 30, 255, 40, 50, 60, 255],
         2,
         1,
-        ImageSpec::RGBA8_SRGB,
+        PixelFormat::RGBA8_SRGB,
     )
     .unwrap();
     let ptr_drop = b_drop.as_view().row(0).as_ptr() as usize;
     compact_in_place(&mut b_drop, AlphaCompaction::DropUnusedLanes);
-    assert_eq!(b_drop.spec(), &ImageSpec::RGB8_SRGB);
+    assert_eq!(b_drop.format(), &PixelFormat::RGB8_SRGB);
     assert_eq!(b_drop.as_view().row(0), &[10, 20, 30, 40, 50, 60]);
     assert_eq!(b_drop.as_view().row(0).as_ptr() as usize, ptr_drop);
 }

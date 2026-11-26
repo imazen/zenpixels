@@ -1,6 +1,6 @@
 use std::rc::Rc;
 use zenpsy_api::{
-    zenpixels::{ImageSpec, PixelView},
+    zenpixels::{PixelView, formats},
     *,
 };
 
@@ -35,7 +35,7 @@ impl Metric for Scorer {
         opts: EvalOpts<'_>,
     ) -> MetricResult<Native> {
         opts.checkpoint()?;
-        assert_eq!(r.spec(), d.spec());
+        assert_eq!(r.format(), d.format());
         assert!(!opts.diagnostics());
         Ok(Native {
             values: self.values,
@@ -73,7 +73,7 @@ impl WarmReference for Prepared {
     }
 }
 fn image(rows: u32) -> PixelView<'static> {
-    PixelView::new(&[0; 12], 2, rows, 6, ImageSpec::rgb8_srgb()).unwrap()
+    PixelView::new(&[0; 12], 2, rows, 6, &formats::RGB8_SRGB).unwrap()
 }
 #[test]
 fn preserves_multiple_outputs_native_data_and_prepared_geometry() {

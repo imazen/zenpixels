@@ -9,27 +9,27 @@ fn rgb_planes(data: &[f32], stride_samples: usize) -> [PlaneView<'_>; 3] {
     let stride = stride_samples * 4;
     [
         PlaneView::new(
-            PlaneSpec::new(PlaneRole::R, SampleType::F32),
+            bytes,
             2,
             2,
             stride,
-            bytes,
+            PlaneFormat::new(PlaneRole::R, SampleType::F32),
         )
         .unwrap(),
         PlaneView::new(
-            PlaneSpec::new(PlaneRole::G, SampleType::F32),
+            bytes,
             2,
             2,
             stride,
-            bytes,
+            PlaneFormat::new(PlaneRole::G, SampleType::F32),
         )
         .unwrap(),
         PlaneView::new(
-            PlaneSpec::new(PlaneRole::B, SampleType::F32),
+            bytes,
             2,
             2,
             stride,
-            bytes,
+            PlaneFormat::new(PlaneRole::B, SampleType::F32),
         )
         .unwrap(),
     ]
@@ -59,11 +59,11 @@ impl Evaluation for Output {
         std::iter::once(MapView::new(
             &MAP,
             PlaneView::new(
-                PlaneSpec::new(PlaneRole::Y, SampleType::F32),
+                bytemuck::cast_slice(&self.values),
                 2,
                 2,
                 8,
-                bytemuck::cast_slice(&self.values),
+                PlaneFormat::new(PlaneRole::Y, SampleType::F32),
             )
             .unwrap(),
             MapGrid::new(2, 2).unwrap(),
@@ -119,7 +119,7 @@ impl PreparePlanarReference for MetricFactory {
 }
 fn sum(p: &PlanarView<'_>) -> f64 {
     let red = p.planes()[0];
-    assert_eq!(red.spec().sample, SampleType::F32);
+    assert_eq!(red.format().sample, SampleType::F32);
     (0..red.height())
         .flat_map(|y| bytemuck::cast_slice::<u8, f32>(red.row(y)).iter().copied())
         .map(f64::from)
@@ -177,7 +177,7 @@ fn owned_preparation_survives_factory_drop_and_erasure_lends_views() {
                 view.visit_maps(|m| {
                     map_count += 1;
                     assert_eq!(m.spec.key(), "error");
-                    assert_eq!(m.values.spec().sample, SampleType::F32);
+                    assert_eq!(m.values.format().sample, SampleType::F32);
                     assert_eq!(bytemuck::cast_slice::<u8, f32>(m.values.row(0)), [0.0, 0.0]);
                 });
                 assert_eq!(map_count, 1);
@@ -324,8 +324,8 @@ fn prepared_interpretation_retains_authority_and_rejects_changes() {
     let image = PlanarView::new(2, 2, &p)
         .unwrap()
         .with_color(c.clone())
-        .with_ycbcr_matrix_code(1)
-        .with_range(SignalRange::Narrow);
+        .with_matrix_coefficients(MatrixCoefficients::BT709)
+        .with_range_override(SignalRange::Narrow);
     let mut metric = Erased::new(Erased::new(MetricFactory {
         preparations: Arc::default(),
         behavior: 0,
@@ -336,8 +336,8 @@ fn prepared_interpretation_retains_authority_and_rejects_changes() {
     let candidate = PlanarView::new(2, 2, &q)
         .unwrap()
         .with_color(c.clone())
-        .with_ycbcr_matrix_code(1)
-        .with_range(SignalRange::Narrow);
+        .with_matrix_coefficients(MatrixCoefficients::BT709)
+        .with_range_override(SignalRange::Narrow);
     let result = prepared.score(&candidate, EvalOpts::new()).unwrap();
     assert_eq!(
         result.scores().next().unwrap().value.to_bits(),
@@ -352,23 +352,23 @@ fn prepared_interpretation_retains_authority_and_rejects_changes() {
                 alpha: AlphaMode::None,
                 intent: RenderingIntent::RelativeColorimetric,
             })
-            .with_ycbcr_matrix_code(1)
-            .with_range(SignalRange::Narrow),
+            .with_matrix_coefficients(MatrixCoefficients::BT709)
+            .with_range_override(SignalRange::Narrow),
         PlanarView::new(2, 2, &q)
             .unwrap()
             .with_color(c.clone())
-            .with_ycbcr_matrix_code(9)
-            .with_range(SignalRange::Narrow),
+            .with_matrix_coefficients(MatrixCoefficients::BT2020_NCL)
+            .with_range_override(SignalRange::Narrow),
         PlanarView::new(2, 2, &q)
             .unwrap()
             .with_color(c.clone())
-            .with_ycbcr_matrix_code(1)
-            .with_range(SignalRange::Full),
+            .with_matrix_coefficients(MatrixCoefficients::BT709)
+            .with_range_override(SignalRange::Full),
         PlanarView::new(2, 2, &q)
             .unwrap()
             .with_color(c)
-            .with_ycbcr_matrix_code(1)
-            .with_range(SignalRange::Narrow)
+            .with_matrix_coefficients(MatrixCoefficients::BT709)
+            .with_range_override(SignalRange::Narrow)
             .with_chroma_siting(ChromaSiting::Left),
     ];
     for candidate in &changed_candidates {
@@ -404,7 +404,7 @@ fn packed_and_planar_operation_admission_share_request_classification() {
     let p = rgb_planes(&data, 3);
     let planar = PlanarView::new(2, 2, &p).unwrap().with_color(c);
     let bytes = [0; 12];
-    let packed = PixelView::new(&bytes, 2, 2, 6, ImageSpec::rgb8_srgb()).unwrap();
+    let packed = PixelView::new(&bytes, 2, 2, 6, &formats::RGB8_SRGB).unwrap();
     let mut metric = MetricFactory {
         preparations: Arc::default(),
         behavior: 0,

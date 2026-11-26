@@ -18,8 +18,9 @@
 
 use whereat::At;
 use zenpixels::{
-    AlphaMode, ChannelOrder, ChromaSiting, ColorSpace, ImageSpec, PixelBuf, PixelViewMut,
-    PlanarView, PlaneRole, PlaneSpec, PlaneView, Primaries, SampleLayout, SampleType, SignalRange,
+    AlphaMode, ChannelOrder, ChromaSiting, ColorSpace, PixelBuf, PixelFormat, PixelViewMut,
+    PlanarView, PlaneFormat, PlaneRole, PlaneView, Primaries, SampleLayout, SampleType,
+    SignalRange,
 };
 
 use crate::error::{ConvertError, err_at};
@@ -112,7 +113,7 @@ fn validate_plane(
     require_full_res: bool,
     allow_f32: bool,
 ) -> Result<(), At<ConvertError>> {
-    let spec = plane.spec();
+    let spec = plane.format();
     spec.validate().map_err(|e| err_at(e.into()))?;
     let sample_ok = matches!(
         spec.sample,
@@ -136,7 +137,10 @@ fn validate_plane(
     Ok(())
 }
 
-fn luma_scale_params(spec: PlaneSpec, range: SignalRange) -> Result<(f32, f32), At<ConvertError>> {
+fn luma_scale_params(
+    spec: PlaneFormat,
+    range: SignalRange,
+) -> Result<(f32, f32), At<ConvertError>> {
     if spec.sample == SampleType::F32 {
         return Ok((0.0, 1.0));
     }
@@ -156,7 +160,7 @@ fn luma_scale_params(spec: PlaneSpec, range: SignalRange) -> Result<(f32, f32), 
 }
 
 fn chroma_scale_params(
-    spec: PlaneSpec,
+    spec: PlaneFormat,
     comp: usize,
     range: SignalRange,
 ) -> Result<(f32, f32), At<ConvertError>> {
@@ -237,7 +241,7 @@ fn parse_planar<'a>(src: &'a PlanarView<'a>) -> Result<ParsedPlanar<'a>, At<Conv
     let mut alpha_plane: Option<&PlaneView<'_>> = None;
 
     for p in planes {
-        match p.spec().role {
+        match p.format().role {
             PlaneRole::Y => {
                 if y_plane.replace(p).is_some() {
                     return Err(err_at(ConvertError::UnsupportedRoute));
@@ -318,7 +322,7 @@ fn parse_planar<'a>(src: &'a PlanarView<'a>) -> Result<ParsedPlanar<'a>, At<Conv
         Ok(ParsedPlanar::YcbcrSemi {
             y,
             uv,
-            swapped: uv.spec().role == PlaneRole::CrCb,
+            swapped: uv.format().role == PlaneRole::CrCb,
             alpha: alpha_plane,
         })
     } else if cb_plane.is_none() && cr_plane.is_none() {
@@ -444,9 +448,9 @@ fn resolve_planar_source(
             let planar_f32 = matches!(
                 parsed,
                 ParsedPlanar::PlanarRgb { r, g, b, .. }
-                    if r.spec().sample == SampleType::F32
-                        && g.spec().sample == SampleType::F32
-                        && b.spec().sample == SampleType::F32
+                    if r.format().sample == SampleType::F32
+                        && g.format().sample == SampleType::F32
+                        && b.format().sample == SampleType::F32
             );
             (color, planar_f32)
         }
@@ -483,7 +487,7 @@ fn alpha_compatible(
 ) -> bool {
     if !has_alpha && dst_layout.order.has_alpha_slot() {
         // Constant 1.0 alpha written into RGBA/BGRA/GrayAlpha is valid under Opaque,
-        // Straight, or Premultiplied tags (e.g., callers writing into `ImageSpec::RGBA8_SRGB`).
+        // Straight, or Premultiplied tags (e.g., callers writing into `PixelFormat::RGBA8_SRGB`).
         matches!(
             actual,
             AlphaMode::Opaque | AlphaMode::Straight | AlphaMode::Premultiplied
@@ -591,8 +595,8 @@ pub fn reconstruct_planar_to_buf(
 ) -> Result<PixelBuf, At<ConvertError>> {
     let parsed = parse_planar(src)?;
     let resolved = resolve_planar_source(src, &parsed, dst_layout)?;
-    let dst_spec = ImageSpec::new(dst_layout, resolved.dst_color.clone());
-    let mut out = PixelBuf::new(src.width(), src.height(), dst_spec)
+    let destination_format = PixelFormat::new(dst_layout, resolved.dst_color.clone());
+    let mut out = PixelBuf::new(src.width(), src.height(), destination_format)
         .map_err(|e| err_at((*e.error()).into()))?;
     reconstruct_parsed_into(src, &parsed, &resolved, options, &mut out.as_view_mut())?;
     Ok(attach_planar_metadata(out, src))
@@ -604,7 +608,7 @@ pub fn reconstruct_planar_to_buf(
 ///
 /// Uses the exact same source interpretation metadata as [`reconstruct_planar_to_buf`]
 /// (`color()`, `effective_range()`, `matrix_coefficients()`, `effective_alpha()`), and
-/// validates that `dst.spec().color` matches the derived full-range destination color space
+/// validates that `dst.format().color` matches the derived full-range destination color space
 /// (refusing mismatched primaries, transfer, white point, narrow range, or conflicting alpha
 /// semantics rather than silently converting). Sets `dst.set_orientation(src.orientation())`;
 /// `hdr()` and `origin()` remain caller-managed on the destination storage.
@@ -619,14 +623,14 @@ pub fn reconstruct_planar_into(
     let parsed = parse_planar(src)?;
     let w = src.width();
     let h = src.height();
-    let dst_layout = dst.spec().layout;
+    let dst_layout = dst.format().layout;
     if dst.width() != w || dst.rows() != h {
         return Err(err_at(ConvertError::DimensionMismatch));
     }
     let resolved = resolve_planar_source(src, &parsed, dst_layout)?;
     validate_dst_color_compatible(
         &resolved.dst_color,
-        &dst.spec().color,
+        &dst.format().color,
         resolved.has_alpha,
         dst_layout,
     )?;
@@ -643,10 +647,10 @@ fn reconstruct_parsed_into(
     let w = src.width();
     let h = src.height();
     let (ox, oy) = src.crop_origin();
-    let dst_layout = dst.spec().layout;
+    let dst_layout = dst.format().layout;
     let writer = DstWriter::from_layout(dst_layout, resolved.has_alpha, parsed.is_monochrome())?;
     let alpha_max = parsed.alpha_plane().map(|ap| {
-        let s = ap.spec();
+        let s = ap.format();
         if s.sample == SampleType::F32 {
             1.0_f32
         } else {
@@ -656,11 +660,11 @@ fn reconstruct_parsed_into(
 
     match *parsed {
         ParsedPlanar::Monochrome { y: y_plane, alpha } => {
-            let y_spec = y_plane.spec();
+            let y_spec = y_plane.format();
             let (y_off, y_span) = luma_scale_params(y_spec, resolved.range)?;
             for y in 0..h {
                 let y_row = y_plane.row(y);
-                let alpha_row = alpha.map(|ap| (ap.spec(), ap.row(y)));
+                let alpha_row = alpha.map(|ap| (ap.format(), ap.row(y)));
                 let dst_row = dst.row_mut(y);
                 for x in 0..w {
                     let yn = (read_plane_f32(y_spec, y_row, x as usize, 0) - y_off) / y_span;
@@ -670,9 +674,9 @@ fn reconstruct_parsed_into(
             }
         }
         ParsedPlanar::PlanarRgb { r, g, b, alpha } => {
-            let r_spec = r.spec();
-            let g_spec = g.spec();
-            let b_spec = b.spec();
+            let r_spec = r.format();
+            let g_spec = g.format();
+            let b_spec = b.format();
             let (r_off, r_span) = luma_scale_params(r_spec, resolved.range)?;
             let (g_off, g_span) = luma_scale_params(g_spec, resolved.range)?;
             let (b_off, b_span) = luma_scale_params(b_spec, resolved.range)?;
@@ -680,7 +684,7 @@ fn reconstruct_parsed_into(
                 let r_row = r.row(y);
                 let g_row = g.row(y);
                 let b_row = b.row(y);
-                let alpha_row = alpha.map(|ap| (ap.spec(), ap.row(y)));
+                let alpha_row = alpha.map(|ap| (ap.format(), ap.row(y)));
                 let dst_row = dst.row_mut(y);
                 for x in 0..w {
                     let xu = x as usize;
@@ -698,7 +702,7 @@ fn reconstruct_parsed_into(
             cr: cr_plane,
             alpha,
         } => {
-            let primaries = extract_primaries(src.color(), &dst.spec().color);
+            let primaries = extract_primaries(src.color(), &dst.format().color);
             reconstruct_ycbcr_planes(
                 y_plane,
                 cb_plane,
@@ -726,7 +730,7 @@ fn reconstruct_parsed_into(
             swapped,
             alpha,
         } => {
-            let primaries = extract_primaries(src.color(), &dst.spec().color);
+            let primaries = extract_primaries(src.color(), &dst.format().color);
             reconstruct_ycbcr_planes(
                 y_plane,
                 uv,
@@ -789,9 +793,9 @@ fn reconstruct_ycbcr_planes(
     writer: DstWriter,
     dst: &mut PixelViewMut<'_>,
 ) -> Result<(), At<ConvertError>> {
-    let y_spec = y_plane.spec();
-    let cb_spec = cb_plane.spec();
-    let cr_spec = cr_plane.spec();
+    let y_spec = y_plane.format();
+    let cb_spec = cb_plane.format();
+    let cr_spec = cr_plane.format();
     let (y_off, y_span) = luma_scale_params(y_spec, range)?;
 
     let (cb_hx, cb_vy) = (cb_spec.subsampling.0.max(1), cb_spec.subsampling.1.max(1));
@@ -904,7 +908,7 @@ fn reconstruct_ycbcr_planes(
     for y in 0..h {
         let y_row = y_plane.row(y);
         let gy = oy + y;
-        let alpha_row = alpha.map(|ap| (ap.spec(), ap.row(y)));
+        let alpha_row = alpha.map(|ap| (ap.format(), ap.row(y)));
         let dst_row = dst.row_mut(y);
 
         let (cby0, cby1, cb_ty) = if bilinear && cb_vy > 1 {
@@ -1026,7 +1030,7 @@ fn axis_bilinear_taps(
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn sample_chroma_bilinear(
-    spec: PlaneSpec,
+    spec: PlaneFormat,
     row0: &[u8],
     row1: &[u8],
     ty: f32,
@@ -1231,7 +1235,7 @@ impl DstWriter {
 }
 
 #[inline(always)]
-fn read_alpha(alpha_row: Option<(PlaneSpec, &[u8])>, alpha_max: Option<f32>, x: usize) -> f32 {
+fn read_alpha(alpha_row: Option<(PlaneFormat, &[u8])>, alpha_max: Option<f32>, x: usize) -> f32 {
     if let (Some((a_spec, a_row)), Some(a_max)) = (alpha_row, alpha_max) {
         read_plane_f32(a_spec, a_row, x, 0) / a_max
     } else {
@@ -1240,7 +1244,7 @@ fn read_alpha(alpha_row: Option<(PlaneSpec, &[u8])>, alpha_max: Option<f32>, x: 
 }
 
 #[inline(always)]
-fn read_plane_f32(spec: PlaneSpec, row: &[u8], x: usize, comp: usize) -> f32 {
+fn read_plane_f32(spec: PlaneFormat, row: &[u8], x: usize, comp: usize) -> f32 {
     if spec.sample == SampleType::F32 {
         let elem = spec.bytes_per_element();
         let off = x * elem + comp * 4;
@@ -1251,7 +1255,7 @@ fn read_plane_f32(spec: PlaneSpec, row: &[u8], x: usize, comp: usize) -> f32 {
 }
 
 #[inline(always)]
-fn read_plane_code(spec: PlaneSpec, row: &[u8], x: usize, comp: usize) -> u32 {
+fn read_plane_code(spec: PlaneFormat, row: &[u8], x: usize, comp: usize) -> u32 {
     let sz = spec.sample.byte_size();
     let elem = spec.bytes_per_element();
     // Packed bitfield words store all components inside one word at `x * elem`;

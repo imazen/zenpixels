@@ -14,12 +14,12 @@ use alloc::vec::Vec;
 use whereat::At;
 use zenpixels::{
     AlphaMode, ColorSpace, DiffuseWhite, ExactDepth, FloatFacts, HdrMetadata, HlgMode,
-    HlgRendering, ImageSpec, Nits, PeakSource, PixelBuf, PixelSink, PixelSource, PixelView,
+    HlgRendering, Nits, PeakSource, PixelBuf, PixelFormat, PixelSink, PixelSource, PixelView,
     Primaries, SampleFacts, SampleType, SignalRange, Transfer, full_range_grid_nests,
     narrow_range_grid_nests,
 };
 
-use crate::accel::{self, Accelerators};
+use crate::accelerators::{self, Accelerators};
 use crate::cms::CmsTransform;
 use crate::error::{ConvertError, err_at};
 use crate::policy::{
@@ -76,8 +76,8 @@ pub(crate) struct PreflightOutcome {
 /// heap memory** and uses a 1 KiB stack-allocated 64-pixel SoA tile.
 #[derive(Clone)]
 pub struct RowPlan {
-    src: ImageSpec,
-    dst: ImageSpec,
+    src: PixelFormat,
+    dst: PixelFormat,
     exec: RowExec,
     depth_policy: DepthPolicy,
     accel: Accelerators,
@@ -98,7 +98,7 @@ impl core::fmt::Debug for RowPlan {
 impl RowPlan {
     /// Compile a single-row conversion plan from `src` to `dst` under `policy`.
     ///
-    /// Accepts either borrowed `&ImageSpec` or owned `ImageSpec` at the call site (retaining
+    /// Accepts either borrowed `&PixelFormat` or owned `PixelFormat` at the call site (retaining
     /// internal clones inside the compiled plan).
     ///
     /// For HDR → SDR tone mapping with a pipeline-managed mapper, pass
@@ -107,8 +107,8 @@ impl RowPlan {
     /// [`PeakSource::Measured`].
     #[inline]
     pub fn build(
-        src: impl AsRef<ImageSpec>,
-        dst: impl AsRef<ImageSpec>,
+        src: impl AsRef<PixelFormat>,
+        dst: impl AsRef<PixelFormat>,
         policy: &ConvertPolicy,
         resolved_source_peak: Option<Nits>,
     ) -> Result<Self, At<ConvertError>> {
@@ -117,13 +117,13 @@ impl RowPlan {
 
     #[inline(never)]
     fn build_inner(
-        src: &ImageSpec,
-        dst: &ImageSpec,
+        src: &PixelFormat,
+        dst: &PixelFormat,
         policy: &ConvertPolicy,
         hdr_peak: Option<Nits>,
     ) -> Result<Self, At<ConvertError>> {
         let pre = preflight_and_classify(src, dst, policy)?;
-        let accel = accel::resolve(policy.accelerators);
+        let accel = accelerators::resolve(policy.accelerators);
 
         // 1. Byte-exact identity (supports all 11 sample types).
         if pre.is_identity {
@@ -758,8 +758,8 @@ impl RowPlan {
     }
 
     fn build_cms(
-        src: ImageSpec,
-        dst: ImageSpec,
+        src: PixelFormat,
+        dst: PixelFormat,
         policy: &ConvertPolicy,
         matte_active: bool,
         accel: Accelerators,
@@ -789,7 +789,7 @@ impl RowPlan {
             AlphaMode::None | AlphaMode::Opaque | AlphaMode::Undefined
         );
         let output_facts = SampleFacts::NONE
-            .with_depth_opt(depth)
+            .with_depth(depth)
             .with_all_opaque(all_opaque)
             .with_all_grayscale(matches!(dst.color, ColorSpace::Gray { .. }))
             .with_binary_alpha(all_opaque);
@@ -818,14 +818,14 @@ impl RowPlan {
     /// Source image specification.
     #[inline]
     #[must_use]
-    pub fn src_spec(&self) -> &ImageSpec {
+    pub fn source_format(&self) -> &PixelFormat {
         &self.src
     }
 
     /// Destination image specification.
     #[inline]
     #[must_use]
-    pub fn dst_spec(&self) -> &ImageSpec {
+    pub fn destination_format(&self) -> &PixelFormat {
         &self.dst
     }
 
@@ -949,8 +949,8 @@ impl RowPlan {
 /// and uniform execution across [`PixelView`], [`PixelBuf`], and [`BandedBuf`](zenpixels::BandedBuf).
 #[derive(Clone, Debug)]
 pub struct ImagePlan {
-    src: ImageSpec,
-    dst: ImageSpec,
+    src: PixelFormat,
+    dst: PixelFormat,
     policy: ConvertPolicy,
     peak: PeakSource,
     /// Cached compiled [`RowPlan`] when the route does not depend on per-image
@@ -967,7 +967,7 @@ impl ImagePlan {
 
     /// Validate and construct an image-level conversion plan.
     ///
-    /// Accepts either borrowed `&ImageSpec` or owned `ImageSpec` at the call site and borrows
+    /// Accepts either borrowed `&PixelFormat` or owned `PixelFormat` at the call site and borrows
     /// `&ConvertPolicy` (retaining internal clones inside the built plan).
     ///
     /// When the route does not require per-image HDR peak resolution or runtime
@@ -975,8 +975,8 @@ impl ImagePlan {
     /// the compiled [`RowPlan`] is built **once** and reused across every `execute` call.
     #[inline]
     pub fn build(
-        src: impl AsRef<ImageSpec>,
-        dst: impl AsRef<ImageSpec>,
+        src: impl AsRef<PixelFormat>,
+        dst: impl AsRef<PixelFormat>,
         policy: &ConvertPolicy,
         peak: PeakSource,
     ) -> Result<Self, At<ConvertError>> {
@@ -985,8 +985,8 @@ impl ImagePlan {
 
     #[inline(never)]
     fn build_inner(
-        src: &ImageSpec,
-        dst: &ImageSpec,
+        src: &PixelFormat,
+        dst: &PixelFormat,
         policy: &ConvertPolicy,
         peak: PeakSource,
     ) -> Result<Self, At<ConvertError>> {
@@ -1128,7 +1128,7 @@ impl ImagePlan {
         if dst.sink_width() != w || dst.sink_height() != h {
             return Err(err_at(ConvertError::DimensionMismatch));
         }
-        if src.source_spec() != &self.src || dst.sink_spec() != &self.dst {
+        if src.source_format() != &self.src || dst.sink_format() != &self.dst {
             return Err(err_at(ConvertError::UnsupportedRoute));
         }
 
@@ -1178,7 +1178,7 @@ impl ImagePlan {
     /// Execute into a freshly allocated tightly packed [`PixelBuf`].
     pub fn execute<S: PixelSource + ?Sized>(&self, src: &S) -> Result<PixelBuf, At<ConvertError>> {
         // Validate source spec BEFORE allocating destination memory!
-        if src.source_spec() != &self.src {
+        if src.source_format() != &self.src {
             return Err(err_at(ConvertError::UnsupportedRoute));
         }
         let mut out = PixelBuf::new(src.source_width(), src.source_height(), self.dst.clone())
@@ -1296,27 +1296,27 @@ impl ImagePlan {
 
 /// One-shot convenience helper: convert a borrowed [`PixelView`] into a newly allocated [`PixelBuf`].
 ///
-/// Accepts either borrowed `&ImageSpec` or owned `ImageSpec` at the call site. Resolves HDR source
+/// Accepts either borrowed `&PixelFormat` or owned `PixelFormat` at the call site. Resolves HDR source
 /// peak via [`PeakSource::Measured`] **only when HDR→SDR tone mapping actually requires it**; for
 /// explicit peak control (`Declared` / `Fixed`), use [`convert_to_buf_with_peak`].
 #[inline]
 pub fn convert_to_buf(
     src: &PixelView<'_>,
-    dst_spec: impl AsRef<ImageSpec>,
+    destination_format: impl AsRef<PixelFormat>,
     policy: &ConvertPolicy,
 ) -> Result<PixelBuf, At<ConvertError>> {
-    convert_to_buf_with_peak(src, dst_spec, policy, PeakSource::Measured)
+    convert_to_buf_with_peak(src, destination_format, policy, PeakSource::Measured)
 }
 
 /// One-shot convenience helper with an explicit [`PeakSource`] (`Measured`, `Declared`, or `Fixed`).
 #[inline]
 pub fn convert_to_buf_with_peak(
     src: &PixelView<'_>,
-    dst_spec: impl AsRef<ImageSpec>,
+    destination_format: impl AsRef<PixelFormat>,
     policy: &ConvertPolicy,
     peak: PeakSource,
 ) -> Result<PixelBuf, At<ConvertError>> {
-    let plan = ImagePlan::build_inner(src.spec(), dst_spec.as_ref(), policy, peak)?;
+    let plan = ImagePlan::build_inner(src.format(), destination_format.as_ref(), policy, peak)?;
     plan.execute(src)
 }
 
@@ -1340,7 +1340,7 @@ pub fn convert_into_with_peak<S: PixelSource + ?Sized, D: PixelSink + ?Sized>(
     policy: &ConvertPolicy,
     peak: PeakSource,
 ) -> Result<(), At<ConvertError>> {
-    let plan = ImagePlan::build_inner(src.source_spec(), dst.sink_spec(), policy, peak)?;
+    let plan = ImagePlan::build_inner(src.source_format(), dst.sink_format(), policy, peak)?;
     plan.execute_into(src, dst)
 }
 
@@ -1352,7 +1352,7 @@ pub fn convert_into_with_peak<S: PixelSource + ?Sized, D: PixelSink + ?Sized>(
 /// to flatten or drop live transparency explicitly.
 pub fn to_rgb8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
     let policy = ConvertPolicy::permissive().with_alpha(AlphaPolicy::DiscardIfOpaque);
-    convert_to_buf(src, &zenpixels::specs::RGB8_SRGB, &policy)
+    convert_to_buf(src, &zenpixels::formats::RGB8_SRGB, &policy)
 }
 
 /// One-shot convenience helper: convert `src` to full-range sRGB straight-alpha `RGBA8`
@@ -1360,7 +1360,7 @@ pub fn to_rgb8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
 pub fn to_rgba8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
     convert_to_buf(
         src,
-        &zenpixels::specs::RGBA8_SRGB,
+        &zenpixels::formats::RGBA8_SRGB,
         &ConvertPolicy::permissive(),
     )
 }
@@ -1373,7 +1373,7 @@ pub fn to_rgba8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
 /// to flatten or drop live transparency explicitly.
 pub fn to_gray8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
     let policy = ConvertPolicy::permissive().with_alpha(AlphaPolicy::DiscardIfOpaque);
-    convert_to_buf(src, &zenpixels::specs::GRAY8_SRGB, &policy)
+    convert_to_buf(src, &zenpixels::formats::GRAY8_SRGB, &policy)
 }
 
 /// One-shot convenience helper: convert `src` to full-range sRGB straight-alpha `BGRA8`
@@ -1381,7 +1381,7 @@ pub fn to_gray8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
 pub fn to_bgra8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
     convert_to_buf(
         src,
-        &zenpixels::specs::BGRA8_SRGB,
+        &zenpixels::formats::BGRA8_SRGB,
         &ConvertPolicy::permissive(),
     )
 }
@@ -1392,8 +1392,8 @@ pub fn to_bgra8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
 
 /// Shared policy & feasibility preflight invoked BEFORE CMS, ByteFastPath, FastRow, or Strip.
 pub(crate) fn preflight_and_classify(
-    src: &ImageSpec,
-    dst: &ImageSpec,
+    src: &PixelFormat,
+    dst: &PixelFormat,
     policy: &ConvertPolicy,
 ) -> Result<PreflightOutcome, At<ConvertError>> {
     src.validate().map_err(|e| err_at((*e.error()).into()))?;
@@ -1714,7 +1714,7 @@ pub(crate) fn same_photometry(a: &ColorSpace, b: &ColorSpace) -> bool {
     }
 }
 
-fn is_src_proven_opaque(src: &ImageSpec, facts: SampleFacts) -> bool {
+fn is_src_proven_opaque(src: &PixelFormat, facts: SampleFacts) -> bool {
     matches!(
         src.color.alpha(),
         AlphaMode::None | AlphaMode::Undefined | AlphaMode::Opaque
@@ -1722,14 +1722,14 @@ fn is_src_proven_opaque(src: &ImageSpec, facts: SampleFacts) -> bool {
         || facts.all_opaque
 }
 
-pub(crate) fn is_scene_linear_hdr_candidate(src: &ImageSpec, dst: &ImageSpec) -> bool {
+pub(crate) fn is_scene_linear_hdr_candidate(src: &PixelFormat, dst: &PixelFormat) -> bool {
     matches!(color_transfer(&src.color), Transfer::Linear)
         && src.layout.sample.is_float()
         && !dst.can_represent_hdr()
         && matches!(dst.color, ColorSpace::Rgb { .. } | ColorSpace::Gray { .. })
 }
 
-fn linear_sdr_ceiling_nits(src: &ImageSpec, dst: &ImageSpec, policy: &ConvertPolicy) -> f32 {
+fn linear_sdr_ceiling_nits(src: &PixelFormat, dst: &PixelFormat, policy: &ConvertPolicy) -> f32 {
     src.color
         .white()
         .or_else(|| dst.color.white())
@@ -1748,13 +1748,16 @@ pub(crate) fn merge_facts(policy_facts: SampleFacts, buf_facts: SampleFacts) -> 
     let all_opaque = policy_facts.all_opaque || buf_facts.all_opaque;
     SampleFacts::NONE
         .with_float(policy_facts.float | buf_facts.float)
-        .with_depth_opt(depth)
+        .with_depth(depth)
         .with_all_opaque(all_opaque)
         .with_all_grayscale(policy_facts.all_grayscale || buf_facts.all_grayscale)
         .with_binary_alpha(all_opaque || policy_facts.binary_alpha || buf_facts.binary_alpha)
 }
 
-pub(crate) fn try_substitute_icc(spec: &ImageSpec, policy: &ConvertPolicy) -> Option<ImageSpec> {
+pub(crate) fn try_substitute_icc(
+    spec: &PixelFormat,
+    policy: &ConvertPolicy,
+) -> Option<PixelFormat> {
     if !policy.allow_icc_substitution {
         return None;
     }
@@ -1798,7 +1801,7 @@ pub(crate) fn try_substitute_icc(spec: &ImageSpec, policy: &ConvertPolicy) -> Op
             } else {
                 return None;
             };
-            let candidate = ImageSpec::new(spec.layout, color);
+            let candidate = PixelFormat::new(spec.layout, color);
             candidate.validate().ok()?;
             Some(candidate)
         }
@@ -1806,7 +1809,7 @@ pub(crate) fn try_substitute_icc(spec: &ImageSpec, policy: &ConvertPolicy) -> Op
     }
 }
 
-fn effective_color_bits(spec: &ImageSpec) -> u8 {
+fn effective_color_bits(spec: &PixelFormat) -> u8 {
     if !spec.layout.packing.is_full() {
         let mc = spec.layout.packing.max_code(spec.layout.sample, 0);
         return (32 - mc.leading_zeros()) as u8;
@@ -1814,7 +1817,7 @@ fn effective_color_bits(spec: &ImageSpec) -> u8 {
     spec.layout.sample.bits()
 }
 
-fn raw_channel_bits(spec: &ImageSpec, channel: usize) -> u8 {
+fn raw_channel_bits(spec: &PixelFormat, channel: usize) -> u8 {
     if !spec.layout.packing.is_full() {
         let mc = spec.layout.packing.max_code(spec.layout.sample, channel);
         return (32 - mc.leading_zeros()) as u8;
@@ -1831,7 +1834,7 @@ fn raw_channel_bits(spec: &ImageSpec, channel: usize) -> u8 {
     }
 }
 
-fn min_color_bits(spec: &ImageSpec) -> u8 {
+fn min_color_bits(spec: &PixelFormat) -> u8 {
     let ch = spec.layout.channels();
     let color_ch = ch.saturating_sub(usize::from(
         spec.layout.order.has_alpha_slot() || spec.layout.order.has_padding_slot(),
@@ -1852,7 +1855,7 @@ fn min_color_bits(spec: &ImageSpec) -> u8 {
 ///   where `dst_bits % src_bits == 0`, or `narrow_range_grid_nests` where `dst >= src >= 8`)
 ///   and checks color and alpha grids independently, consulting validated [`ExactDepth`]
 ///   evidence when the nominal grid does not nest (B02).
-fn is_depth_reducing(src: &ImageSpec, dst: &ImageSpec, facts: SampleFacts) -> bool {
+fn is_depth_reducing(src: &PixelFormat, dst: &PixelFormat, facts: SampleFacts) -> bool {
     let src_is_float = src.layout.sample.is_float();
     let dst_is_float = dst.layout.sample.is_float();
 
@@ -1861,7 +1864,7 @@ fn is_depth_reducing(src: &ImageSpec, dst: &ImageSpec, facts: SampleFacts) -> bo
         return true;
     }
 
-    let valid_depth = facts.depth.filter(|d| d.validate_spec(src).is_ok());
+    let valid_depth = facts.depth.filter(|d| d.validate_format(src).is_ok());
 
     // B01: Any non-identity color math (transfer, gamut matrix, color model, signal range,
     // or diffuse-white rescale) into an integer destination is non-injective / precision-reducing.
@@ -1982,8 +1985,8 @@ fn is_depth_reducing(src: &ImageSpec, dst: &ImageSpec, facts: SampleFacts) -> bo
 }
 
 fn check_range_policy(
-    src: &ImageSpec,
-    dst: &ImageSpec,
+    src: &PixelFormat,
+    dst: &PixelFormat,
     policy: &ConvertPolicy,
 ) -> Result<bool, At<ConvertError>> {
     let sr = color_range(&src.color);
@@ -2100,7 +2103,7 @@ fn resolve_hlg(
                     }
                 );
                 if !is_bt2020_rgb_full {
-                    return Err(err_at(ConvertError::InvalidSpec(
+                    return Err(err_at(ConvertError::InvalidFormat(
                         zenpixels::ColorError::HlgDisplayRequiresBt2020Full,
                     )));
                 }
@@ -2153,8 +2156,8 @@ pub(crate) fn is_gamut_narrowing(src: Primaries, dst: Primaries) -> bool {
 }
 
 fn derive_output_facts_byte(
-    src: &ImageSpec,
-    dst: &ImageSpec,
+    src: &PixelFormat,
+    dst: &PixelFormat,
     src_facts: SampleFacts,
     bp: ByteFastPath,
 ) -> SampleFacts {
@@ -2164,7 +2167,7 @@ fn derive_output_facts_byte(
         FloatFacts::NONE
     };
     let dst_range = color_range(&dst.color);
-    let valid_src_depth = src_facts.depth.filter(|d| d.validate_spec(src).is_ok());
+    let valid_src_depth = src_facts.depth.filter(|d| d.validate_format(src).is_ok());
     let fills_alpha = matches!(
         bp,
         ByteFastPath::Rgb8ToRgba8
@@ -2332,7 +2335,7 @@ fn derive_output_facts_byte(
         || src_facts.all_grayscale;
     SampleFacts::NONE
         .with_float(float)
-        .with_depth_opt(depth)
+        .with_depth(depth)
         .with_all_opaque(all_opaque)
         .with_all_grayscale(all_grayscale)
         .with_binary_alpha(binary_alpha)
@@ -2340,8 +2343,8 @@ fn derive_output_facts_byte(
 
 #[allow(clippy::too_many_arguments)]
 fn derive_output_facts_math(
-    src: &ImageSpec,
-    dst: &ImageSpec,
+    src: &PixelFormat,
+    dst: &PixelFormat,
     src_facts: SampleFacts,
     clamped_color: bool,
     alpha_filled_opaque: bool,
@@ -2403,7 +2406,7 @@ fn derive_output_facts_math(
     let all_grayscale = matches!(dst.color, ColorSpace::Gray { .. });
     SampleFacts::NONE
         .with_float(float)
-        .with_depth_opt(depth)
+        .with_depth(depth)
         .with_all_opaque(all_opaque)
         .with_all_grayscale(all_grayscale)
         .with_binary_alpha(binary_alpha)

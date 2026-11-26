@@ -9,8 +9,8 @@ use alloc::borrow::Cow;
 use alloc::sync::Arc;
 use whereat::At;
 use zenpixels::{
-    Cicp, ColorOrigin, ColorSpace, HdrMetadata, HlgMode, ImageSpec, PeakSource, PixelBuf, PixelCow,
-    PixelFormat, PixelView, Primaries, Transfer,
+    Cicp, ColorOrigin, ColorSpace, HdrMetadata, HlgMode, ParametricFormat, PeakSource, PixelBuf,
+    PixelCow, PixelFormat, PixelView, Primaries, Transfer,
 };
 
 use crate::error::{ConvertError, err_at};
@@ -21,7 +21,7 @@ use crate::policy::ConvertPolicy;
 /// Requested container color signaling for an encoder (CICP / ICC metadata emission).
 ///
 /// Selects **container signaling metadata**, not the target pixel color space (which is
-/// determined by the destination [`ImageSpec`]).
+/// determined by the destination [`PixelFormat`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum OutputSignaling {
@@ -57,8 +57,8 @@ pub struct EncodeReady<'a> {
 /// Atomic encoder preparation plan combining [`ImagePlan`] with [`OutputSignaling`].
 #[derive(Clone, Debug)]
 pub struct OutputPlan {
-    src: ImageSpec,
-    dst: ImageSpec,
+    src: PixelFormat,
+    dst: PixelFormat,
     signaling: OutputSignaling,
     image_plan: ImagePlan,
     same_spec: bool,
@@ -70,7 +70,7 @@ pub struct OutputPlan {
 impl OutputPlan {
     /// Build an encode-ready output plan.
     ///
-    /// Accepts either borrowed `&ImageSpec` or owned `ImageSpec` at the call site and borrows
+    /// Accepts either borrowed `&PixelFormat` or owned `PixelFormat` at the call site and borrows
     /// `&ConvertPolicy` (retaining internal clones inside the built plan).
     ///
     /// Validates pixel conversion feasibility AND container signaling compatibility
@@ -82,8 +82,8 @@ impl OutputPlan {
     /// succeeds because the output signaling is sRGB or PQ).
     #[inline]
     pub fn build(
-        src: impl AsRef<ImageSpec>,
-        dst: impl AsRef<ImageSpec>,
+        src: impl AsRef<PixelFormat>,
+        dst: impl AsRef<PixelFormat>,
         policy: &ConvertPolicy,
         peak: PeakSource,
         signaling: OutputSignaling,
@@ -93,8 +93,8 @@ impl OutputPlan {
 
     #[inline(never)]
     fn build_inner(
-        src: &ImageSpec,
-        dst: &ImageSpec,
+        src: &PixelFormat,
+        dst: &PixelFormat,
         policy: &ConvertPolicy,
         peak: PeakSource,
         signaling: OutputSignaling,
@@ -151,7 +151,7 @@ impl OutputPlan {
         view: PixelView<'a>,
         origin: &ColorOrigin,
     ) -> Result<EncodeReady<'a>, At<ConvertError>> {
-        if view.spec() != &self.src {
+        if view.format() != &self.src {
             return Err(err_at(ConvertError::UnsupportedRoute));
         }
         let (cicp, icc) =
@@ -182,7 +182,7 @@ impl OutputPlan {
 
     /// Execute on an owned [`PixelBuf`], moving `buf` **zero-copy** on identity!
     pub fn execute_buf(&self, buf: PixelBuf) -> Result<EncodeReady<'static>, At<ConvertError>> {
-        if buf.spec() != &self.src {
+        if buf.format() != &self.src {
             return Err(err_at(ConvertError::UnsupportedRoute));
         }
         let (cicp, icc) = resolve_output_signaling(
@@ -218,14 +218,14 @@ impl OutputPlan {
     /// Source spec.
     #[inline]
     #[must_use]
-    pub fn src_spec(&self) -> &ImageSpec {
+    pub fn source_format(&self) -> &PixelFormat {
         &self.src
     }
 
     /// Destination spec.
     #[inline]
     #[must_use]
-    pub fn dst_spec(&self) -> &ImageSpec {
+    pub fn destination_format(&self) -> &PixelFormat {
         &self.dst
     }
 
@@ -266,24 +266,6 @@ impl OutputPlan {
 pub fn adapt_for_encode<'a>(
     src: PixelView<'a>,
     origin: &ColorOrigin,
-    supported: &[ImageSpec],
-    policy: &ConvertPolicy,
-    peak: PeakSource,
-    signaling: OutputSignaling,
-) -> Result<(crate::negotiate::NegotiatedFormat, EncodeReady<'a>), At<ConvertError>> {
-    let mut eff_policy = policy.clone();
-    eff_policy.source_facts = crate::plan::merge_facts(policy.source_facts, src.facts());
-    let negotiated = crate::negotiate::Negotiate::select(src.spec(), supported, &eff_policy)
-        .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
-    let plan = OutputPlan::build(src.spec(), &negotiated.spec, &eff_policy, peak, signaling)?;
-    let ready = plan.execute_view(src, origin)?;
-    Ok((negotiated, ready))
-}
-
-/// One-shot encoder preparation selecting from a `Copy`/`const` [`PixelFormat`] capability table.
-pub fn adapt_for_encode_format<'a>(
-    src: PixelView<'a>,
-    origin: &ColorOrigin,
     supported: &[PixelFormat],
     policy: &ConvertPolicy,
     peak: PeakSource,
@@ -291,9 +273,40 @@ pub fn adapt_for_encode_format<'a>(
 ) -> Result<(crate::negotiate::NegotiatedFormat, EncodeReady<'a>), At<ConvertError>> {
     let mut eff_policy = policy.clone();
     eff_policy.source_facts = crate::plan::merge_facts(policy.source_facts, src.facts());
-    let negotiated = crate::negotiate::Negotiate::select_format(src.spec(), supported, &eff_policy)
+    let negotiated = crate::negotiate::Negotiate::select(src.format(), supported, &eff_policy)
         .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
-    let plan = OutputPlan::build(src.spec(), &negotiated.spec, &eff_policy, peak, signaling)?;
+    let plan = OutputPlan::build(
+        src.format(),
+        &negotiated.format,
+        &eff_policy,
+        peak,
+        signaling,
+    )?;
+    let ready = plan.execute_view(src, origin)?;
+    Ok((negotiated, ready))
+}
+
+/// One-shot encoder preparation selecting from a `Copy`/`const` [`ParametricFormat`] capability table.
+pub fn adapt_for_encode_parametric<'a>(
+    src: PixelView<'a>,
+    origin: &ColorOrigin,
+    supported: &[ParametricFormat],
+    policy: &ConvertPolicy,
+    peak: PeakSource,
+    signaling: OutputSignaling,
+) -> Result<(crate::negotiate::NegotiatedFormat, EncodeReady<'a>), At<ConvertError>> {
+    let mut eff_policy = policy.clone();
+    eff_policy.source_facts = crate::plan::merge_facts(policy.source_facts, src.facts());
+    let negotiated =
+        crate::negotiate::Negotiate::select_parametric(src.format(), supported, &eff_policy)
+            .ok_or_else(|| err_at(ConvertError::UnsupportedRoute))?;
+    let plan = OutputPlan::build(
+        src.format(),
+        &negotiated.format,
+        &eff_policy,
+        peak,
+        signaling,
+    )?;
     let ready = plan.execute_view(src, origin)?;
     Ok((negotiated, ready))
 }

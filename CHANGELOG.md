@@ -14,11 +14,12 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
 - **Unified descriptor & buffer model:**
   - `SampleLayout` (`SampleType`, `ChannelOrder`, `BitPacking`), `ColorSpace`
     (`Rgb`, `Gray`, `Oklab`, `Xyz`, `Perceptual`, `Icc`, `Cmyk`, `Untagged`),
-    `ColorOrigin`, `ImageSpec` (with `const` presets `ImageSpec::RGB8_SRGB`,
-    `RGBA8_SRGB`, `RGB16_BT2100_PQ`, `RGBF32_LINEAR`, `'static` borrowed presets
-    in `specs::*`, `from_layout_assuming_color`, plus `try_with_*` checked
-    builders), `Copy + const + !Drop` companion `PixelFormat` / `ParametricColor`,
-    and `SpecCow<'a>` for zero-`Arc`-bump borrowed views and crops.
+    `ColorOrigin`, `PixelFormat` (full pixel format including `ColorSpace::Icc`,
+    with `const` presets `PixelFormat::RGB8_SRGB`, `RGBA8_SRGB`, `RGB16_BT2100_PQ`,
+    `RGBF32_LINEAR`, `'static` borrowed presets in `formats::*`,
+    `from_layout_assuming_color`, plus `try_with_*` checked builders), `Copy + const + !Drop`
+    companion `ParametricFormat` / `ParametricColor`, `PlaneFormat`, and
+    `FormatCow<'a>` for zero-`Arc`-bump borrowed views and crops.
   - Complete lossless ITU-T H.273 CICP: all 11 Table 2 primaries (with projective
     `y == 0` matrix solver for `Primaries::Xyz` and custom primaries, `Chromaticity::C`
     / `WhitePoint::C`, `same_chromaticity`), all 16 Table 3 transfers (`same_curve`),
@@ -29,11 +30,11 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
     `to_icc_d50_matrix_f64`, `IccColorSpace::Ycbcr`, `ColorSpace::project_cicp_tag`,
     plus `compact` / `gainmap` / `Lcms` non-D65 white-point support),
     exact `0.0001 cd/m²` `ClliCodes`, and ISO 15076-1 structural ICC validation
-    (`validate_icc_structure` / `IccValidationError`) wired into `ImageSpec::validate()`.
+    (`validate_icc_structure` / `IccValidationError`) wired into `PixelFormat::validate()`.
   - `PixelBuf` (with direct `row`/`row_mut`, fallible `into_tight_buf`, O(1)
     zero-copy `into_crop`, symmetric `crop_view`/`crop_view_mut`/`sub_rows`/
     `sub_rows_mut` with fallible CoW on mutable crops, `new_for_interop`, explicit
-    `relabel_color`/`relabel_spec`/`reinterpret_bytes`, and `assume_facts`),
+    `relabel_color`/`relabel_format`/`reinterpret_bytes`, and `assume_facts`),
     `PixelView`, `PixelViewMut`, `PixelCow`, `BandedBuf` (gigapixel row-banded
     storage with `RowAlign`), `PlaneBuf`, `PlaneView`, `PlaneViewMut`, `PlanarBuf`,
     `PlanarView`, and `PlanarViewMut` (symmetric `crop_view`/`crop_view_mut`/
@@ -43,7 +44,7 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
     `new_with_crop_origin`, and optional color interpretation (`color`, 1-byte
     lossless `MatrixCoefficients` via `matrix_coefficients`/`with_matrix_coefficients`,
     `range_override`/`effective_range`, `alpha_override`/`effective_alpha`). Compact
-    stack footprints (`SpecCow`: 16 B, `PixelViewMut`: 64 B, `PixelView`: 80 B,
+    stack footprints (`FormatCow`: 16 B, `PixelViewMut`: 64 B, `PixelView`: 80 B,
     `PlanarBuf`: 64 B, `BandedBuf`: 144 B, `PixelBuf`: 168 B), `PixelView::height()` /
     `PixelViewMut::height()` aliases, descriptive `whereat::At` context on
     `BufferError::IncompatibleLayout` element mismatches, and top-level
@@ -61,12 +62,13 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
     cross-family plane role set validation.
   - `SampleEncoding`, `CodePlane`, and `CodePlaneMut` (sub-byte / P010 / bit-packed
     component readers and writers, unconditional without a `planar` feature gate).
-  - `SampleFacts` (`FloatFacts` + `ExactDepth` + `all_opaque` + `all_grayscale`),
+  - `SampleFacts` (`FloatFacts` + `ExactDepth` via unified `with_depth(impl Into<Option<ExactDepth>>)` + `all_opaque` + `all_grayscale`),
     `HdrMetadata`, `DiffuseWhite` / `Nits` / `Gamma` (`NonZeroU32` 4-byte niches),
+    `SignedFraction` / `UnsignedFraction` (`numerator`/`denominator`),
     `HlgMode`, `HlgRendering`, `Orientation`, `GainMapMetadata` / `GainMapComponent` /
     `DualLayerHdrBuf` (`new_with_alternate_color`) / `DualLayerHdrView` /
     `DualLayerHdrBufParts` (with `BufferError::InvalidGainMapMetadata` and layer
-    orientation consistency enforcement).
+    orientation consistency enforcement), and `PixelStorage::allocation_alignment`.
 - **First-class external owned storage:**
   - `ByteStorage` / `ByteStorageMut`, `ExternalStorage` / `ExternalMutStorage`,
     `PixelBuf::from_external`, `PixelBuf::from_external_mut`,
@@ -88,8 +90,8 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
 
 ### Breaking Changes (vs 0.2 / 0.4)
 
-- Replaces `PixelDescriptor` / `PixelFormat` / `ColorContext` with `ImageSpec` /
-  `SampleLayout` / `ColorSpace` / `ColorOrigin`.
+- Replaces `PixelDescriptor` / layout-only `PixelFormat` / `ColorContext` with `PixelFormat` /
+  `ParametricFormat` / `SampleLayout` / `ColorSpace` / `ColorOrigin`.
 - Replaces `PixelBuffer<P, S>` / `PixelSlice` / `PixelSliceMut` with type-erased
   `PixelBuf` / `PixelView` / `PixelViewMut` plus `ByteStorage` external ownership.
 - Removes the `planar` Cargo feature (planar, banded, and `CodePlane` types are now
@@ -166,19 +168,22 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
     `display_sdr()`) with `DepthPolicy`, `AlphaPolicy`, `GamutPolicy`, `RangePolicy`,
     `LumaCoefficients`, `LumaDomain::{Encoded, LinearLight}`, `allow_icc_substitution`,
     `allow_approximate`, `with_cms()`, and `with_accelerators()`.
-  - Stateless `Send + Sync` `RowPlan` (zero heap allocation per `convert_row`),
-    whole-image `ImagePlan`, 3-arg `convert_to_buf`/`convert_into` (plus `*_with_peak`),
-    `OutputPlan` (`OutputSignaling`) + `adapt_for_encode` / `adapt_for_encode_format`,
-    `Negotiate` (`select_format` for `Copy` `PixelFormat` slices), and ergonomic wrappers
-    (`to_rgb8`, `to_rgba8`, `to_gray8`, `to_bgra8`). Planners accept `impl AsRef<ImageSpec>`
-    (zero-clone `&ImageSpec` or owned `ImageSpec`) and exact math for all 16 H.273 Table 3
-    transfer functions with 0-bit SCALAR/SIMD parity.
+  - Stateless `Send + Sync` `RowPlan` (zero heap allocation per `convert_row`,
+    `source_format()` / `destination_format()`), whole-image `ImagePlan`, 3-arg
+    `convert_to_buf`/`convert_into` (plus `*_with_peak`), `OutputPlan`
+    (`OutputSignaling`, `source_format()` / `destination_format()`) +
+    `adapt_for_encode` / `adapt_for_encode_parametric`, `Negotiate`
+    (`select_parametric` for `Copy` `ParametricFormat` slices), and ergonomic
+    wrappers (`to_rgb8`, `to_rgba8`, `to_gray8`, `to_bgra8`). Planners accept
+    `impl AsRef<PixelFormat>` (zero-clone `&PixelFormat` or owned `PixelFormat`)
+    and exact math for all 16 H.273 Table 3 transfer functions with 0-bit
+    SCALAR/SIMD parity.
   - `compact`: free functions `analyze_compaction(&view)` → `CompactionReport`
-    (`requires_alpha`, `requires_chroma`, `requires_u16_precision`, `candidate_spec`),
+    (`requires_alpha`, `requires_chroma`, `requires_u16_precision`, `candidate_format`),
     `compact_to_buf(&view)`, and zero-reallocation
     `compact_in_place(&mut buf, AlphaCompaction::{RetagOpaque, DropUnusedLanes})`.
 - **Fast paths & SIMD acceleration:**
-  - Hybrid zero-scratch scalar core + opt-in `Accelerators` (`fast` feature,
+  - Hybrid zero-scratch scalar core + opt-in `accelerators::Accelerators` (`fast` feature,
     default-off for minimal library codegen).
   - Direct encoded `U8` RGB/BGR/RGBA/BGRA -> Gray8 SIMD fast path (`LumaDomain::Encoded`
     default, matching 0.2/0.4 semantics and neutral exactness at ~22 GiB/s on 4K).

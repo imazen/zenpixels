@@ -437,7 +437,7 @@ fn exported_pq_declares_absolute_scale_and_both_pipeline_directions() {
 fn exported_pq_dense_neutral_roundtrip_has_no_black_plateau() {
     use crate::cms::{CmsBackend, Lcms};
     use alloc::sync::Arc;
-    use zenpixels::{AlphaMode, ColorSpace, ImageSpec, RenderingIntent, SampleLayout};
+    use zenpixels::{AlphaMode, ColorSpace, PixelFormat, RenderingIntent, SampleLayout};
 
     for gray in [false, true] {
         let synth = if gray {
@@ -457,7 +457,7 @@ fn exported_pq_dense_neutral_roundtrip_has_no_black_plateau() {
         } else {
             SampleLayout::RGBF32
         };
-        let pq_spec = ImageSpec::new(
+        let pq_spec = PixelFormat::new(
             layout,
             ColorSpace::Icc {
                 profile: Arc::from(pq.as_ref()),
@@ -466,7 +466,7 @@ fn exported_pq_dense_neutral_roundtrip_has_no_black_plateau() {
                 intent: RenderingIntent::RelativeColorimetric,
             },
         );
-        let lin_spec = ImageSpec::new(
+        let lin_spec = PixelFormat::new(
             layout,
             ColorSpace::Icc {
                 profile: Arc::from(linear.as_ref()),
@@ -488,13 +488,13 @@ fn exported_pq_dense_neutral_roundtrip_has_no_black_plateau() {
                 })
                 .collect();
             let mut output = alloc::vec![0.0_f32; input.len()];
-            let (src_spec, dst_spec) = if reverse {
+            let (source_format, destination_format) = if reverse {
                 (&lin_spec, &pq_spec)
             } else {
                 (&pq_spec, &lin_spec)
             };
             let transform = Lcms
-                .build_transform(src_spec, dst_spec)
+                .build_transform(source_format, destination_format)
                 .expect("build LCMS transform");
             transform
                 .transform_row(

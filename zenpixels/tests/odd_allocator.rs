@@ -11,7 +11,7 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use zenpixels::{
-    ColorSpace, F16Sample, ImageSpec, PixelBuf, PixelStorage, RowAlign, SampleLayout, SampleType,
+    ColorSpace, F16Sample, PixelBuf, PixelFormat, PixelStorage, RowAlign, SampleLayout, SampleType,
 };
 
 struct OddBytes;
@@ -99,7 +99,7 @@ fn from_bytes_u8_adopts_zero_copy_at_odd_address() {
     let in_ptr = raw.as_ptr();
     assert_eq!((in_ptr as usize) % 2, 1);
 
-    let buf = PixelBuf::from_bytes(raw, 2, 1, ImageSpec::RGB8_SRGB).unwrap();
+    let buf = PixelBuf::from_bytes(raw, 2, 1, PixelFormat::RGB8_SRGB).unwrap();
     assert_eq!(buf.as_view().row(0).as_ptr(), in_ptr);
     assert_eq!(buf.as_view().row(0), &[10, 20, 30, 40, 50, 60]);
 }
@@ -114,7 +114,7 @@ fn from_bytes_u16_copies_safely_preserving_first_byte_equals_first_pixel() {
     assert_eq!((raw.as_ptr() as usize) % 2, 1);
 
     // Exact-length odd input
-    let buf = PixelBuf::from_bytes(raw.clone(), 2, 1, ImageSpec::RGB16_SRGB).unwrap();
+    let buf = PixelBuf::from_bytes(raw.clone(), 2, 1, PixelFormat::RGB16_SRGB).unwrap();
     let view = buf.as_view();
     assert_eq!((view.row(0).as_ptr() as usize) % 2, 0);
     assert_eq!(view.row_as::<u16>(0).unwrap(), &samples);
@@ -123,7 +123,7 @@ fn from_bytes_u16_copies_safely_preserving_first_byte_equals_first_pixel() {
     let mut padded = raw;
     padded.extend_from_slice(&[0xFF; 7]);
     assert_eq!((padded.as_ptr() as usize) % 2, 1);
-    let buf2 = PixelBuf::from_bytes(padded, 2, 1, ImageSpec::RGB16_SRGB).unwrap();
+    let buf2 = PixelBuf::from_bytes(padded, 2, 1, PixelFormat::RGB16_SRGB).unwrap();
     assert_eq!(buf2.as_view().row_as::<u16>(0).unwrap(), &samples);
 }
 
@@ -133,14 +133,14 @@ fn from_bytes_f16_and_f32_and_f64_copy_safely_from_odd_address() {
     let h = [F16Sample::ONE, F16Sample::from_f32(0.5), F16Sample::ZERO];
     let raw_f16: Vec<u8> = bytemuck::cast_slice(&h).to_vec();
     assert_eq!((raw_f16.as_ptr() as usize) % 2, 1);
-    let buf_f16 = PixelBuf::from_bytes(raw_f16, 1, 1, ImageSpec::RGBF16_LINEAR).unwrap();
+    let buf_f16 = PixelBuf::from_bytes(raw_f16, 1, 1, PixelFormat::RGBF16_LINEAR).unwrap();
     assert_eq!(buf_f16.as_view().row_as::<F16Sample>(0).unwrap(), &h);
 
     // F32
     let f = [0.25f32, 0.5, 0.75];
     let raw_f32: Vec<u8> = bytemuck::cast_slice(&f).to_vec();
     assert_eq!((raw_f32.as_ptr() as usize) % 2, 1);
-    let buf_f32 = PixelBuf::from_bytes(raw_f32, 1, 1, ImageSpec::RGBF32_LINEAR).unwrap();
+    let buf_f32 = PixelBuf::from_bytes(raw_f32, 1, 1, PixelFormat::RGBF32_LINEAR).unwrap();
     assert_eq!((buf_f32.as_view().row(0).as_ptr() as usize) % 4, 0);
     assert_eq!(buf_f32.as_view().row_as::<f32>(0).unwrap(), &f);
 
@@ -148,7 +148,7 @@ fn from_bytes_f16_and_f32_and_f64_copy_safely_from_odd_address() {
     let d = [1.5f64, -2.25f64];
     let raw_f64: Vec<u8> = bytemuck::cast_slice(&d).to_vec();
     assert_eq!((raw_f64.as_ptr() as usize) % 2, 1);
-    let spec_f64 = ImageSpec::new(
+    let spec_f64 = PixelFormat::new(
         SampleLayout::new(SampleType::F64, zenpixels::ChannelOrder::Gray),
         ColorSpace::Untagged {
             channels: 1,
@@ -171,7 +171,7 @@ fn allocating_constructors_and_into_contiguous_preserve_alignment() {
         RowAlign::PixelCache64,
         RowAlign::Samples(8),
     ] {
-        let buf = PixelBuf::new_aligned(7, 3, ImageSpec::RGBF32_LINEAR, align).unwrap();
+        let buf = PixelBuf::new_aligned(7, 3, PixelFormat::RGBF32_LINEAR, align).unwrap();
         let view = buf.as_view();
         for y in 0..3 {
             let ptr = view.row(y).as_ptr() as usize;
@@ -197,7 +197,7 @@ fn allocating_constructors_and_into_contiguous_preserve_alignment() {
         1,
         2,
         10,
-        ImageSpec::RGB16_SRGB,
+        PixelFormat::RGB16_SRGB,
     )
     .unwrap();
     let tight = buf.into_tight_buf().unwrap();

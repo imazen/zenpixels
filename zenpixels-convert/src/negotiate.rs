@@ -1,6 +1,6 @@
-//! Codec format negotiation: select the lowest-loss, lowest-effort supported [`ImageSpec`].
+//! Codec format negotiation: select the lowest-loss, lowest-effort supported [`PixelFormat`].
 
-use zenpixels::{ColorSpace, ImageSpec, PixelFormat, Primaries, Transfer};
+use zenpixels::{ColorSpace, ParametricFormat, PixelFormat, Primaries, Transfer};
 
 use crate::plan::{
     color_primaries, color_transfer, preflight_and_classify, same_color_meaning, try_substitute_icc,
@@ -42,8 +42,8 @@ pub struct FormatCost {
 pub struct NegotiatedFormat {
     /// Index into the caller's `supported` slice.
     pub index: usize,
-    /// Chosen destination specification.
-    pub spec: ImageSpec,
+    /// Chosen destination pixel format.
+    pub format: PixelFormat,
     /// Worst-case loss category.
     pub loss: LossKind,
     /// Deterministic ranking cost.
@@ -58,12 +58,12 @@ impl Negotiate {
     ///
     /// Shares the planner's deterministic feasibility checks (policy gates,
     /// `Transfer::Unknown` linear-math guards, PQ/HLG anchor requirements,
-    /// feature gates, and `CmsBackend::supports_specs`) so selected candidates
+    /// feature gates, and `CmsBackend::supports_formats`) so selected candidates
     /// do not unexpectedly fail in `RowPlan::build`.
     #[must_use]
     pub fn select(
-        src: &ImageSpec,
-        supported: &[ImageSpec],
+        src: &PixelFormat,
+        supported: &[PixelFormat],
         policy: &ConvertPolicy,
     ) -> Option<NegotiatedFormat> {
         let mut best: Option<NegotiatedFormat> = None;
@@ -77,17 +77,17 @@ impl Negotiate {
         best
     }
 
-    /// Select the best candidate from a `Copy`/`const` [`PixelFormat`] capability table
-    /// (e.g. `&[PixelFormat::RGB8_SRGB, PixelFormat::RGBA8_SRGB]`) under `policy`.
+    /// Select the best candidate from a `Copy`/`const` [`ParametricFormat`] capability table
+    /// (e.g. `&[ParametricFormat::RGB8_SRGB, ParametricFormat::RGBA8_SRGB]`) under `policy`.
     #[must_use]
-    pub fn select_format(
-        src: &ImageSpec,
-        supported: &[PixelFormat],
+    pub fn select_parametric(
+        src: &PixelFormat,
+        supported: &[ParametricFormat],
         policy: &ConvertPolicy,
     ) -> Option<NegotiatedFormat> {
         let mut best: Option<NegotiatedFormat> = None;
         for (index, &fmt) in supported.iter().enumerate() {
-            let cand = fmt.to_spec();
+            let cand = fmt.to_pixel_format();
             if let Some(scored) = score_candidate(src, &cand, index, policy)
                 && best.as_ref().is_none_or(|prev| scored.cost < prev.cost)
             {
@@ -99,8 +99,8 @@ impl Negotiate {
 }
 
 fn score_candidate(
-    src: &ImageSpec,
-    cand: &ImageSpec,
+    src: &PixelFormat,
+    cand: &PixelFormat,
     index: usize,
     policy: &ConvertPolicy,
 ) -> Option<NegotiatedFormat> {
@@ -127,7 +127,7 @@ fn score_candidate(
             {
                 return None;
             }
-            if !cms.supports_specs(src, cand) {
+            if !cms.supports_formats(src, cand) {
                 return None;
             }
         } else {
@@ -184,15 +184,15 @@ fn score_candidate(
     };
     Some(NegotiatedFormat {
         index,
-        spec: cand.clone(),
+        format: cand.clone(),
         loss,
         cost,
     })
 }
 
 fn native_route_feasible(
-    src: &ImageSpec,
-    dst: &ImageSpec,
+    src: &PixelFormat,
+    dst: &PixelFormat,
     policy: &ConvertPolicy,
     matte_active: bool,
 ) -> bool {

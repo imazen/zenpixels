@@ -6,11 +6,11 @@
 use alloc::boxed::Box;
 use whereat::At;
 use zenpixels::{
-    ColorSpace, ContentLightLevel, DiffuseWhite, HlgMode, HlgRendering, ImageSpec, PixelSource,
+    ColorSpace, ContentLightLevel, DiffuseWhite, HlgMode, HlgRendering, PixelFormat, PixelSource,
     SampleType, Transfer,
 };
 
-use crate::accel::Accelerators;
+use crate::accelerators::Accelerators;
 use crate::error::ConvertError;
 use crate::policy::{ConvertPolicy, DepthPolicy, GamutPolicy};
 use crate::tonemap::{BT2020_LB, BT2020_LG, BT2020_LR};
@@ -232,7 +232,7 @@ fn ceil_cll_u16(nits: f32) -> u16 {
     libm::ceil(adjusted).clamp(0.0, f64::from(u16::MAX)) as u16
 }
 
-fn measurement_primaries(spec: &ImageSpec, method: LightLevelMethod) -> zenpixels::Primaries {
+fn measurement_primaries(spec: &PixelFormat, method: LightLevelMethod) -> zenpixels::Primaries {
     match method {
         LightLevelMethod::LuminanceBt2020 => zenpixels::Primaries::Bt2020,
         LightLevelMethod::MaxRgb => match spec.color {
@@ -255,7 +255,7 @@ pub fn measure_histogram<S: PixelSource + ?Sized>(
     hlg_rendering: Option<HlgRendering>,
     method: LightLevelMethod,
 ) -> Result<LightLevelHistogram, At<ConvertError>> {
-    let spec = src.source_spec();
+    let spec = src.source_format();
     let w = src.source_width();
     let h = src.source_height();
     let mut hist = LightLevelHistogram::try_new(method)?;
@@ -263,7 +263,7 @@ pub fn measure_histogram<S: PixelSource + ?Sized>(
         return Ok(hist);
     }
 
-    let linear_spec = ImageSpec::new(
+    let linear_spec = PixelFormat::new(
         zenpixels::SampleLayout::RGBF32,
         ColorSpace::Rgb {
             primaries: measurement_primaries(spec, method),
@@ -403,7 +403,7 @@ pub fn measure_max_smoothed<S: PixelSource + ?Sized>(
     hlg_rendering: Option<HlgRendering>,
     method: LightLevelMethod,
 ) -> Result<ContentLightLevel, At<ConvertError>> {
-    let spec = src.source_spec();
+    let spec = src.source_format();
     let w = src.source_width();
     let h = src.source_height();
     if w == 0 || h == 0 {
@@ -471,7 +471,7 @@ pub fn measure_max_smoothed<S: PixelSource + ?Sized>(
     }
 
     // General streaming path: 1 fallibly-allocated RGBF32 row via RowPlan.
-    let linear_spec = ImageSpec::new(
+    let linear_spec = PixelFormat::new(
         zenpixels::SampleLayout::RGBF32,
         ColorSpace::Rgb {
             primaries: target_primaries,
@@ -538,7 +538,7 @@ pub(crate) fn measure_max_nits_streaming<S: PixelSource + ?Sized>(
     white: DiffuseWhite,
     hlg_rendering: Option<HlgRendering>,
 ) -> Result<f32, At<ConvertError>> {
-    let spec = src.source_spec();
+    let spec = src.source_format();
     let w = src.source_width();
     let h = src.source_height();
     if w == 0 || h == 0 {
@@ -618,7 +618,7 @@ pub(crate) fn measure_max_nits_streaming<S: PixelSource + ?Sized>(
         } => Some(r),
         _ => hlg_rendering,
     };
-    let linear_spec = ImageSpec::new(
+    let linear_spec = PixelFormat::new(
         zenpixels::SampleLayout::RGBF32,
         ColorSpace::Rgb {
             primaries: measurement_primaries(spec, LightLevelMethod::MaxRgb),

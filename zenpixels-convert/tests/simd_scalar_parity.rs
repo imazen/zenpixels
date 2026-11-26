@@ -6,7 +6,7 @@
 
 use zenpixels_convert::{
     Accelerators, AlphaMode, AlphaPolicy, BitPacking, ChannelOrder, Color, ColorSpace,
-    ConvertPolicy, DepthPolicy, F16Sample, GamutPolicy, ImageSpec, Nits, Primaries, RangePolicy,
+    ConvertPolicy, DepthPolicy, F16Sample, GamutPolicy, Nits, PixelFormat, Primaries, RangePolicy,
     RowPlan, SampleLayout, SampleType, SignalRange, Transfer,
 };
 #[cfg(feature = "hdr-transfers")]
@@ -15,8 +15,8 @@ use zenpixels_convert::{DiffuseWhite, HlgMode, HlgRendering};
 #[allow(clippy::too_many_arguments)]
 fn assert_scalar_simd_bit_exact(
     label: &str,
-    src_spec: ImageSpec,
-    dst_spec: ImageSpec,
+    source_format: PixelFormat,
+    destination_format: PixelFormat,
     base_policy: ConvertPolicy,
     src_bytes: &[u8],
     width: u32,
@@ -26,12 +26,17 @@ fn assert_scalar_simd_bit_exact(
     let p_scalar = base_policy.clone().with_accelerators(Accelerators::SCALAR);
     let p_simd = base_policy.with_accelerators(Accelerators::ALL);
 
-    let plan_scalar = RowPlan::build(src_spec.clone(), dst_spec.clone(), &p_scalar, hdr_peak)
-        .unwrap_or_else(|e| panic!("{label}: scalar build failed: {e}"));
-    let plan_simd = RowPlan::build(src_spec, dst_spec.clone(), &p_simd, hdr_peak)
+    let plan_scalar = RowPlan::build(
+        source_format.clone(),
+        destination_format.clone(),
+        &p_scalar,
+        hdr_peak,
+    )
+    .unwrap_or_else(|e| panic!("{label}: scalar build failed: {e}"));
+    let plan_simd = RowPlan::build(source_format, destination_format.clone(), &p_simd, hdr_peak)
         .unwrap_or_else(|e| panic!("{label}: simd build failed: {e}"));
 
-    let dst_len = (width as usize) * dst_spec.layout.bytes_per_pixel();
+    let dst_len = (width as usize) * destination_format.layout.bytes_per_pixel();
     let mut out_scalar = vec![0xA5u8; dst_len];
     let mut out_simd = vec![0x5Au8; dst_len];
 
@@ -64,8 +69,8 @@ fn parity_byte_layouts_and_u8_to_u16() {
     let pol = ConvertPolicy::permissive();
     assert_scalar_simd_bit_exact(
         "RGB8->RGBA8",
-        ImageSpec::RGB8_SRGB,
-        ImageSpec::RGBA8_SRGB,
+        PixelFormat::RGB8_SRGB,
+        PixelFormat::RGBA8_SRGB,
         pol.clone(),
         &rgb8,
         width,
@@ -74,8 +79,8 @@ fn parity_byte_layouts_and_u8_to_u16() {
     );
     assert_scalar_simd_bit_exact(
         "RGB8->BGRA8",
-        ImageSpec::RGB8_SRGB,
-        ImageSpec::BGRA8_SRGB,
+        PixelFormat::RGB8_SRGB,
+        PixelFormat::BGRA8_SRGB,
         pol.clone(),
         &rgb8,
         width,
@@ -84,8 +89,8 @@ fn parity_byte_layouts_and_u8_to_u16() {
     );
     assert_scalar_simd_bit_exact(
         "RGB8->BGR8",
-        ImageSpec::RGB8_SRGB,
-        ImageSpec::BGR8_SRGB,
+        PixelFormat::RGB8_SRGB,
+        PixelFormat::BGR8_SRGB,
         pol.clone(),
         &rgb8,
         width,
@@ -94,8 +99,8 @@ fn parity_byte_layouts_and_u8_to_u16() {
     );
     assert_scalar_simd_bit_exact(
         "RGBA8->RGB8",
-        ImageSpec::RGBA8_SRGB,
-        ImageSpec::RGB8_SRGB,
+        PixelFormat::RGBA8_SRGB,
+        PixelFormat::RGB8_SRGB,
         pol.clone(),
         &rgba8,
         width,
@@ -104,8 +109,8 @@ fn parity_byte_layouts_and_u8_to_u16() {
     );
     assert_scalar_simd_bit_exact(
         "BGRA8->RGB8",
-        ImageSpec::BGRA8_SRGB,
-        ImageSpec::RGB8_SRGB,
+        PixelFormat::BGRA8_SRGB,
+        PixelFormat::RGB8_SRGB,
         pol.clone(),
         &rgba8,
         width,
@@ -114,8 +119,8 @@ fn parity_byte_layouts_and_u8_to_u16() {
     );
     assert_scalar_simd_bit_exact(
         "RGBA8->BGRA8",
-        ImageSpec::RGBA8_SRGB,
-        ImageSpec::BGRA8_SRGB,
+        PixelFormat::RGBA8_SRGB,
+        PixelFormat::BGRA8_SRGB,
         pol.clone(),
         &rgba8,
         width,
@@ -124,8 +129,8 @@ fn parity_byte_layouts_and_u8_to_u16() {
     );
     assert_scalar_simd_bit_exact(
         "RGBX8->RGBA8",
-        ImageSpec::RGBX8_SRGB,
-        ImageSpec::RGBA8_SRGB,
+        PixelFormat::RGBX8_SRGB,
+        PixelFormat::RGBA8_SRGB,
         pol.clone(),
         &rgba8,
         width,
@@ -134,8 +139,8 @@ fn parity_byte_layouts_and_u8_to_u16() {
     );
     assert_scalar_simd_bit_exact(
         "RGBX8->BGRA8",
-        ImageSpec::RGBX8_SRGB,
-        ImageSpec::BGRA8_SRGB,
+        PixelFormat::RGBX8_SRGB,
+        PixelFormat::BGRA8_SRGB,
         pol.clone(),
         &rgba8,
         width,
@@ -144,8 +149,8 @@ fn parity_byte_layouts_and_u8_to_u16() {
     );
     assert_scalar_simd_bit_exact(
         "GRAY8->RGB8",
-        ImageSpec::GRAY8_SRGB,
-        ImageSpec::RGB8_SRGB,
+        PixelFormat::GRAY8_SRGB,
+        PixelFormat::RGB8_SRGB,
         pol.clone(),
         &gray8,
         width,
@@ -154,8 +159,8 @@ fn parity_byte_layouts_and_u8_to_u16() {
     );
     assert_scalar_simd_bit_exact(
         "GRAY8->RGBA8",
-        ImageSpec::GRAY8_SRGB,
-        ImageSpec::RGBA8_SRGB,
+        PixelFormat::GRAY8_SRGB,
+        PixelFormat::RGBA8_SRGB,
         pol.clone(),
         &gray8,
         width,
@@ -164,8 +169,8 @@ fn parity_byte_layouts_and_u8_to_u16() {
     );
     assert_scalar_simd_bit_exact(
         "RGB8->RGB16",
-        ImageSpec::RGB8_SRGB,
-        ImageSpec::RGB16_SRGB,
+        PixelFormat::RGB8_SRGB,
+        PixelFormat::RGB16_SRGB,
         pol,
         &rgb8,
         width,
@@ -190,8 +195,8 @@ fn parity_srgb_gamut_f16_oklab_and_extended_floats() {
     // sRGB <-> Linear (extended & clipped)
     assert_scalar_simd_bit_exact(
         "LinearF32->SrgbF32(extended)",
-        ImageSpec::RGBF32_LINEAR,
-        ImageSpec::new(SampleLayout::RGBF32, ColorSpace::SRGB),
+        PixelFormat::RGBF32_LINEAR,
+        PixelFormat::new(SampleLayout::RGBF32, ColorSpace::SRGB),
         ConvertPolicy::working_linear().with_gamut(GamutPolicy::PreserveExtended),
         f32_bytes,
         width,
@@ -200,8 +205,8 @@ fn parity_srgb_gamut_f16_oklab_and_extended_floats() {
     );
     assert_scalar_simd_bit_exact(
         "SrgbF32->LinearF32(extended)",
-        ImageSpec::new(SampleLayout::RGBF32, ColorSpace::SRGB),
-        ImageSpec::RGBF32_LINEAR,
+        PixelFormat::new(SampleLayout::RGBF32, ColorSpace::SRGB),
+        PixelFormat::RGBF32_LINEAR,
         ConvertPolicy::working_linear().with_gamut(GamutPolicy::PreserveExtended),
         f32_bytes,
         width,
@@ -210,9 +215,9 @@ fn parity_srgb_gamut_f16_oklab_and_extended_floats() {
     );
 
     // Cross-gamut 3x3 (DisplayP3 <-> Bt709 <-> Bt2020 <-> AdobeRgb)
-    let p3_srgb = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
-    let bt2020_u16 = ImageSpec::RGB16_SRGB.with_primaries(Primaries::Bt2020);
-    let adobe_u16 = ImageSpec::RGB16_SRGB
+    let p3_srgb = PixelFormat::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
+    let bt2020_u16 = PixelFormat::RGB16_SRGB.with_primaries(Primaries::Bt2020);
+    let adobe_u16 = PixelFormat::RGB16_SRGB
         .with_primaries(Primaries::AdobeRgb)
         .with_transfer(Transfer::Gamma22);
     let rgb8: Vec<u8> = (0..width as usize * 3)
@@ -226,7 +231,7 @@ fn parity_srgb_gamut_f16_oklab_and_extended_floats() {
     assert_scalar_simd_bit_exact(
         "P3U8->sRGBU8",
         p3_srgb.clone(),
-        ImageSpec::RGB8_SRGB,
+        PixelFormat::RGB8_SRGB,
         ConvertPolicy::permissive(),
         &rgb8,
         width,
@@ -236,7 +241,7 @@ fn parity_srgb_gamut_f16_oklab_and_extended_floats() {
     assert_scalar_simd_bit_exact(
         "Bt2020U16->sRGBU8(OrderedDither)",
         bt2020_u16.clone(),
-        ImageSpec::RGB8_SRGB,
+        PixelFormat::RGB8_SRGB,
         ConvertPolicy::permissive().with_depth(DepthPolicy::OrderedDither),
         rgb16_bytes,
         width,
@@ -259,8 +264,8 @@ fn parity_srgb_gamut_f16_oklab_and_extended_floats() {
     let f16_bytes: &[u8] = bytemuck::cast_slice(&f16s);
     assert_scalar_simd_bit_exact(
         "RGBF16->RGBF32",
-        ImageSpec::RGBF16_LINEAR,
-        ImageSpec::RGBF32_LINEAR,
+        PixelFormat::RGBF16_LINEAR,
+        PixelFormat::RGBF32_LINEAR,
         ConvertPolicy::working_linear(),
         f16_bytes,
         width,
@@ -269,8 +274,8 @@ fn parity_srgb_gamut_f16_oklab_and_extended_floats() {
     );
     assert_scalar_simd_bit_exact(
         "RGBF32->RGBF16",
-        ImageSpec::RGBF32_LINEAR,
-        ImageSpec::RGBF16_LINEAR,
+        PixelFormat::RGBF32_LINEAR,
+        PixelFormat::RGBF16_LINEAR,
         ConvertPolicy::working_linear(),
         f32_bytes,
         width,
@@ -284,7 +289,7 @@ fn parity_srgb_gamut_f16_oklab_and_extended_floats() {
         assert_scalar_simd_bit_exact(
             "P3U8->OKLABF32",
             p3_srgb.clone(),
-            ImageSpec::OKLAB_F32,
+            PixelFormat::OKLAB_F32,
             ConvertPolicy::working_linear(),
             &rgb8,
             width,
@@ -293,7 +298,7 @@ fn parity_srgb_gamut_f16_oklab_and_extended_floats() {
         );
         assert_scalar_simd_bit_exact(
             "OKLABF32->P3U8",
-            ImageSpec::OKLAB_F32,
+            PixelFormat::OKLAB_F32,
             p3_srgb,
             ConvertPolicy::permissive(),
             f32_bytes,
@@ -316,11 +321,11 @@ fn parity_hlg_pq_narrow_matte_and_bitpacking() {
     #[cfg(feature = "hdr-transfers")]
     {
         let hlg_lift = HlgRendering::new(Nits::new(1000.0), 0.05, 1.2).unwrap();
-        let hlg_spec = ImageSpec::new(
+        let hlg_spec = PixelFormat::new(
             SampleLayout::RGB16,
             ColorSpace::BT2100_HLG_SCENE.with_transfer(Transfer::Hlg(HlgMode::Display(hlg_lift))),
         );
-        let lin_2020 = ImageSpec::RGBF32_LINEAR
+        let lin_2020 = PixelFormat::RGBF32_LINEAR
             .with_primaries(Primaries::Bt2020)
             .with_white(DiffuseWhite::BT2408);
         assert_scalar_simd_bit_exact(
@@ -338,8 +343,8 @@ fn parity_hlg_pq_narrow_matte_and_bitpacking() {
         #[cfg(feature = "bt2446a")]
         assert_scalar_simd_bit_exact(
             "PQ16->sRGB8(BT2446A)",
-            ImageSpec::RGB16_BT2100_PQ,
-            ImageSpec::RGB8_SRGB,
+            PixelFormat::RGB16_BT2100_PQ,
+            PixelFormat::RGB8_SRGB,
             ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0)),
             rgb16_bytes,
             width,
@@ -352,11 +357,11 @@ fn parity_hlg_pq_narrow_matte_and_bitpacking() {
     let rgba8: Vec<u8> = (0..width as usize * 4)
         .map(|i| ((i * 31 + 16) % 256) as u8)
         .collect();
-    let narrow_spec = ImageSpec::RGB8_SRGB.with_range(SignalRange::Narrow);
+    let narrow_spec = PixelFormat::RGB8_SRGB.with_range(SignalRange::Narrow);
     assert_scalar_simd_bit_exact(
         "Narrow->Full",
         narrow_spec.clone(),
-        ImageSpec::RGB8_SRGB,
+        PixelFormat::RGB8_SRGB,
         ConvertPolicy::permissive().with_range(RangePolicy::Convert),
         &rgba8[..width as usize * 3],
         width,
@@ -365,23 +370,23 @@ fn parity_hlg_pq_narrow_matte_and_bitpacking() {
     );
     assert_scalar_simd_bit_exact(
         "RGBA8->RGB8(Matte)",
-        ImageSpec::RGBA8_SRGB,
-        ImageSpec::RGB8_SRGB,
+        PixelFormat::RGBA8_SRGB,
+        PixelFormat::RGB8_SRGB,
         ConvertPolicy::permissive().with_alpha(AlphaPolicy::CompositeOnto(Color::WHITE)),
         &rgba8,
         width,
         0,
         None,
     );
-    let rgb565_spec = ImageSpec::new(SampleLayout::RGB565, ColorSpace::SRGB);
-    let rgb10a2_spec = ImageSpec::new(SampleLayout::RGB10A2, ColorSpace::SRGB_ALPHA);
-    let p010_rgb_spec = ImageSpec::new(
+    let rgb565_spec = PixelFormat::new(SampleLayout::RGB565, ColorSpace::SRGB);
+    let rgb10a2_spec = PixelFormat::new(SampleLayout::RGB10A2, ColorSpace::SRGB_ALPHA);
+    let p010_rgb_spec = PixelFormat::new(
         SampleLayout::new(SampleType::U16, ChannelOrder::Rgb).with_packing(BitPacking::P010),
         ColorSpace::SRGB.with_alpha(AlphaMode::None),
     );
     assert_scalar_simd_bit_exact(
         "RGBA8->RGB10A2",
-        ImageSpec::RGBA8_SRGB,
+        PixelFormat::RGBA8_SRGB,
         rgb10a2_spec,
         ConvertPolicy::permissive(),
         &rgba8,
@@ -391,7 +396,7 @@ fn parity_hlg_pq_narrow_matte_and_bitpacking() {
     );
     assert_scalar_simd_bit_exact(
         "RGB8->RGB565",
-        ImageSpec::RGB8_SRGB,
+        PixelFormat::RGB8_SRGB,
         rgb565_spec,
         ConvertPolicy::permissive(),
         &rgba8[..width as usize * 3],
@@ -401,7 +406,7 @@ fn parity_hlg_pq_narrow_matte_and_bitpacking() {
     );
     assert_scalar_simd_bit_exact(
         "RGB16->P010RGB",
-        ImageSpec::RGB16_SRGB,
+        PixelFormat::RGB16_SRGB,
         p010_rgb_spec,
         ConvertPolicy::permissive(),
         rgb16_bytes,
@@ -454,8 +459,8 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     // Wide layouts & integer depth
     assert_scalar_simd_bit_exact(
         "RGBA16->RGB16",
-        ImageSpec::RGBA16_SRGB,
-        ImageSpec::RGB16_SRGB,
+        PixelFormat::RGBA16_SRGB,
+        PixelFormat::RGB16_SRGB,
         pol.clone(),
         rgba16_bytes,
         width,
@@ -464,8 +469,8 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     );
     assert_scalar_simd_bit_exact(
         "RGB16->RGBA16",
-        ImageSpec::RGB16_SRGB,
-        ImageSpec::RGBA16_SRGB,
+        PixelFormat::RGB16_SRGB,
+        PixelFormat::RGBA16_SRGB,
         pol.clone(),
         rgb16_bytes,
         width,
@@ -474,8 +479,8 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     );
     assert_scalar_simd_bit_exact(
         "RGBAF32->RGBF32",
-        ImageSpec::RGBAF32_LINEAR,
-        ImageSpec::RGBF32_LINEAR,
+        PixelFormat::RGBAF32_LINEAR,
+        PixelFormat::RGBF32_LINEAR,
         pol.clone(),
         f32_rgba_bytes,
         width,
@@ -484,8 +489,8 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     );
     assert_scalar_simd_bit_exact(
         "RGB16->RGB8(Round)",
-        ImageSpec::RGB16_SRGB,
-        ImageSpec::RGB8_SRGB,
+        PixelFormat::RGB16_SRGB,
+        PixelFormat::RGB8_SRGB,
         pol.clone(),
         rgb16_bytes,
         width,
@@ -494,8 +499,8 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     );
     assert_scalar_simd_bit_exact(
         "RGB16->RGB8(Trunc)",
-        ImageSpec::RGB16_SRGB,
-        ImageSpec::RGB8_SRGB,
+        PixelFormat::RGB16_SRGB,
+        PixelFormat::RGB8_SRGB,
         pol_trunc.clone(),
         rgb16_bytes,
         width,
@@ -504,13 +509,13 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     );
 
     // Premul U8 fast paths
-    let rgba8_premul = ImageSpec::new(
+    let rgba8_premul = PixelFormat::new(
         SampleLayout::RGBA8,
         ColorSpace::SRGB_ALPHA.with_alpha(AlphaMode::Premultiplied),
     );
     assert_scalar_simd_bit_exact(
         "RGBA8_Straight->Premul",
-        ImageSpec::RGBA8_SRGB,
+        PixelFormat::RGBA8_SRGB,
         rgba8_premul.clone(),
         pol.clone(),
         &rgba8,
@@ -521,7 +526,7 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     assert_scalar_simd_bit_exact(
         "RGBA8_Premul->Straight",
         rgba8_premul,
-        ImageSpec::RGBA8_SRGB,
+        PixelFormat::RGBA8_SRGB,
         pol.clone(),
         &rgba8,
         width,
@@ -530,12 +535,12 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     );
 
     // Direct sRGB U8 <-> Linear F32 & F32 <-> U8/U16 depth
-    let rgbf32_srgb = ImageSpec::new(SampleLayout::RGBF32, ColorSpace::SRGB);
-    let rgbaf32_srgb = ImageSpec::new(SampleLayout::RGBAF32, ColorSpace::SRGB_ALPHA);
+    let rgbf32_srgb = PixelFormat::new(SampleLayout::RGBF32, ColorSpace::SRGB);
+    let rgbaf32_srgb = PixelFormat::new(SampleLayout::RGBAF32, ColorSpace::SRGB_ALPHA);
     assert_scalar_simd_bit_exact(
         "RGB8_sRGB->RGBF32_Lin",
-        ImageSpec::RGB8_SRGB,
-        ImageSpec::RGBF32_LINEAR,
+        PixelFormat::RGB8_SRGB,
+        PixelFormat::RGBF32_LINEAR,
         pol.clone(),
         &rgb8,
         width,
@@ -544,8 +549,8 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     );
     assert_scalar_simd_bit_exact(
         "RGBA8_sRGB->RGBAF32_Lin",
-        ImageSpec::RGBA8_SRGB,
-        ImageSpec::RGBAF32_LINEAR,
+        PixelFormat::RGBA8_SRGB,
+        PixelFormat::RGBAF32_LINEAR,
         pol.clone(),
         &rgba8,
         width,
@@ -554,8 +559,8 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     );
     assert_scalar_simd_bit_exact(
         "RGBF32_Lin->RGB8_sRGB",
-        ImageSpec::RGBF32_LINEAR,
-        ImageSpec::RGB8_SRGB,
+        PixelFormat::RGBF32_LINEAR,
+        PixelFormat::RGB8_SRGB,
         pol.clone(),
         f32_rgb_bytes,
         width,
@@ -564,8 +569,8 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     );
     assert_scalar_simd_bit_exact(
         "RGBAF32_Lin->RGBA8_sRGB",
-        ImageSpec::RGBAF32_LINEAR,
-        ImageSpec::RGBA8_SRGB,
+        PixelFormat::RGBAF32_LINEAR,
+        PixelFormat::RGBA8_SRGB,
         pol.clone(),
         f32_rgba_bytes,
         width,
@@ -575,7 +580,7 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     assert_scalar_simd_bit_exact(
         "RGBF32_sRGB->RGB8_sRGB(Round)",
         rgbf32_srgb.clone(),
-        ImageSpec::RGB8_SRGB,
+        PixelFormat::RGB8_SRGB,
         pol.clone(),
         f32_rgb_bytes,
         width,
@@ -585,7 +590,7 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     assert_scalar_simd_bit_exact(
         "RGBF32_sRGB->RGB8_sRGB(Trunc)",
         rgbf32_srgb.clone(),
-        ImageSpec::RGB8_SRGB,
+        PixelFormat::RGB8_SRGB,
         pol_trunc,
         f32_rgb_bytes,
         width,
@@ -595,7 +600,7 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     assert_scalar_simd_bit_exact(
         "RGBAF32_sRGB->RGBAF32_Lin",
         rgbaf32_srgb,
-        ImageSpec::RGBAF32_LINEAR,
+        PixelFormat::RGBAF32_LINEAR,
         pol.clone(),
         f32_rgba_bytes,
         width,
@@ -609,7 +614,7 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     assert_scalar_simd_bit_exact(
         "BT709_F32->Lin(Clamped)",
         rgbf32_bt709.clone(),
-        ImageSpec::RGBF32_LINEAR,
+        PixelFormat::RGBF32_LINEAR,
         pol.clone(),
         f32_rgb_bytes,
         width,
@@ -619,7 +624,7 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     assert_scalar_simd_bit_exact(
         "BT709_F32->Lin(Extended)",
         rgbf32_bt709.clone(),
-        ImageSpec::RGBF32_LINEAR,
+        PixelFormat::RGBF32_LINEAR,
         pol_ext.clone(),
         f32_rgb_bytes,
         width,
@@ -628,7 +633,7 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     );
     assert_scalar_simd_bit_exact(
         "Lin->BT709_F32(Extended)",
-        ImageSpec::RGBF32_LINEAR,
+        PixelFormat::RGBF32_LINEAR,
         rgbf32_bt709,
         pol_ext.clone(),
         f32_rgb_bytes,
@@ -639,7 +644,7 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     assert_scalar_simd_bit_exact(
         "Gamma22_F32->Lin(Clamped)",
         rgbf32_g22.clone(),
-        ImageSpec::RGBF32_LINEAR,
+        PixelFormat::RGBF32_LINEAR,
         pol.clone(),
         f32_rgb_bytes,
         width,
@@ -649,7 +654,7 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     assert_scalar_simd_bit_exact(
         "Gamma22_F32->Lin(Extended)",
         rgbf32_g22.clone(),
-        ImageSpec::RGBF32_LINEAR,
+        PixelFormat::RGBF32_LINEAR,
         pol_ext.clone(),
         f32_rgb_bytes,
         width,
@@ -658,7 +663,7 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     );
     assert_scalar_simd_bit_exact(
         "Lin->Gamma22_F32(Extended)",
-        ImageSpec::RGBF32_LINEAR,
+        PixelFormat::RGBF32_LINEAR,
         rgbf32_g22,
         pol_ext.clone(),
         f32_rgb_bytes,
@@ -668,11 +673,11 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     );
 
     // Strip SIMD unpack/pack + gamut + gray
-    let p3_f32_lin = ImageSpec::RGBF32_LINEAR.with_primaries(Primaries::DisplayP3);
+    let p3_f32_lin = PixelFormat::RGBF32_LINEAR.with_primaries(Primaries::DisplayP3);
     assert_scalar_simd_bit_exact(
         "P3_LinF32->sRGB_LinF32",
         p3_f32_lin,
-        ImageSpec::RGBF32_LINEAR,
+        PixelFormat::RGBF32_LINEAR,
         pol.clone(),
         f32_rgb_bytes,
         width,
@@ -681,8 +686,8 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     );
     assert_scalar_simd_bit_exact(
         "P3_U16->sRGB_U16",
-        ImageSpec::RGB16_SRGB.with_primaries(Primaries::DisplayP3),
-        ImageSpec::RGB16_SRGB,
+        PixelFormat::RGB16_SRGB.with_primaries(Primaries::DisplayP3),
+        PixelFormat::RGB16_SRGB,
         pol.clone(),
         rgb16_bytes,
         width,
@@ -691,8 +696,8 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     );
     assert_scalar_simd_bit_exact(
         "RGB8_sRGB->Gray8_sRGB",
-        ImageSpec::RGB8_SRGB,
-        ImageSpec::GRAY8_SRGB,
+        PixelFormat::RGB8_SRGB,
+        PixelFormat::GRAY8_SRGB,
         pol.clone(),
         &rgb8,
         width,
@@ -703,7 +708,7 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
     // PQ & HLG Scene SIMD parity
     #[cfg(feature = "hdr-transfers")]
     {
-        let lin_2020 = ImageSpec::RGBF32_LINEAR
+        let lin_2020 = PixelFormat::RGBF32_LINEAR
             .with_primaries(Primaries::Bt2020)
             .with_white(DiffuseWhite::BT2408);
         let pq_f32 = lin_2020.clone().with_transfer(Transfer::Pq);
@@ -712,7 +717,7 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
             .with_transfer(Transfer::Hlg(HlgMode::Scene));
         assert_scalar_simd_bit_exact(
             "PQ_U16->Lin2020_F32",
-            ImageSpec::RGB16_BT2100_PQ,
+            PixelFormat::RGB16_BT2100_PQ,
             lin_2020.clone(),
             ConvertPolicy::working_linear(),
             rgb16_bytes,
@@ -723,7 +728,7 @@ fn parity_fast_rows_wide_layouts_premul_and_all_transfers() {
         assert_scalar_simd_bit_exact(
             "Lin2020_F32->PQ_U16",
             lin_2020.clone(),
-            ImageSpec::RGB16_BT2100_PQ,
+            PixelFormat::RGB16_BT2100_PQ,
             ConvertPolicy::working_linear(),
             f32_rgb_bytes,
             width,
@@ -787,7 +792,7 @@ fn parity_gainmap_applier_all_modes_zero_bit() {
         Orientation, PixelBuf, SignedFraction, UnsignedFraction,
     };
 
-    let make_base = |w: u32, h: u32, spec: ImageSpec| -> PixelBuf {
+    let make_base = |w: u32, h: u32, spec: PixelFormat| -> PixelBuf {
         let mut buf = PixelBuf::new(w, h, spec.clone()).unwrap();
         let bpp = spec.layout.bytes_per_pixel();
         let mut v = buf.as_view_mut();
@@ -813,7 +818,7 @@ fn parity_gainmap_applier_all_modes_zero_bit() {
 
     let make_gm_u8 = |w: u32, h: u32, ch: usize| -> PixelBuf {
         let spec = if ch == 3 {
-            ImageSpec::new(
+            PixelFormat::new(
                 SampleLayout::RGB8,
                 ColorSpace::Untagged {
                     channels: 3,
@@ -821,7 +826,7 @@ fn parity_gainmap_applier_all_modes_zero_bit() {
                 },
             )
         } else {
-            ImageSpec::new(
+            PixelFormat::new(
                 SampleLayout::GRAY8,
                 ColorSpace::Untagged {
                     channels: 1,
@@ -840,7 +845,7 @@ fn parity_gainmap_applier_all_modes_zero_bit() {
     };
 
     let make_gm_u16 = |w: u32, h: u32| -> PixelBuf {
-        let spec = ImageSpec::new(
+        let spec = PixelFormat::new(
             SampleLayout::GRAY16,
             ColorSpace::Untagged {
                 channels: 1,
@@ -901,9 +906,9 @@ fn parity_gainmap_applier_all_modes_zero_bit() {
     .unwrap();
 
     // Prime dimensions exercising AVX2 8-wide loops + scalar tails + edge taps + downscale!
-    let base_rgb = make_base(37, 29, ImageSpec::RGB8_SRGB);
-    let base_rgba = make_base(37, 29, ImageSpec::RGBA8_SRGB);
-    let base_small = make_base(19, 13, ImageSpec::RGB8_SRGB);
+    let base_rgb = make_base(37, 29, PixelFormat::RGB8_SRGB);
+    let base_rgba = make_base(37, 29, PixelFormat::RGBA8_SRGB);
+    let base_small = make_base(19, 13, PixelFormat::RGB8_SRGB);
     let gm_up_1 = make_gm_u8(11, 7, 1);
     let gm_up_3 = make_gm_u8(11, 7, 3);
     let gm_up_u16 = make_gm_u16(11, 7);
@@ -949,7 +954,7 @@ fn parity_gainmap_applier_all_modes_zero_bit() {
             &gm_up_3,
             meta_fwd_shared_g1,
             2.5,
-            Some(ImageSpec::RGBAF16_LINEAR),
+            Some(PixelFormat::RGBAF16_LINEAR),
         ),
         (
             "up_u16_shared_g1_rgb",
@@ -973,7 +978,7 @@ fn parity_gainmap_applier_all_modes_zero_bit() {
             &gm_1to1_1,
             meta_rev_perch,
             0.5,
-            Some(ImageSpec::RGBA8_SRGB),
+            Some(PixelFormat::RGBA8_SRGB),
         ),
         (
             "downscale_gm_larger_than_base",
@@ -985,7 +990,7 @@ fn parity_gainmap_applier_all_modes_zero_bit() {
         ),
     ];
 
-    for (label, base, gm, meta, headroom, dst_spec) in cases {
+    for (label, base, gm, meta, headroom, destination_format) in cases {
         let dual = DualLayerHdrView::new(
             base.as_view(),
             gm.as_view(),
@@ -1011,9 +1016,9 @@ fn parity_gainmap_applier_all_modes_zero_bit() {
                     ConvertPolicy::working_linear()
                         .with_accelerators(Accelerators::ALL.with_gainmap()),
                 );
-            if let Some(ds) = &dst_spec {
-                cfg_scalar = cfg_scalar.with_dst_spec(ds.clone());
-                cfg_all = cfg_all.with_dst_spec(ds.clone());
+            if let Some(ds) = &destination_format {
+                cfg_scalar = cfg_scalar.with_destination_format(ds.clone());
+                cfg_all = cfg_all.with_destination_format(ds.clone());
             }
 
             let out_s = apply_gain_map_with(&dual, &cfg_scalar, &Unstoppable).unwrap();

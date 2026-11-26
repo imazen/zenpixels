@@ -5,7 +5,7 @@
 //! without racing unrelated parallel tests, asserting **0-bit exact parity** across all tiers.
 
 use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
-use zenpixels::{AlphaMode, ImageSpec, Orientation, PixelBuf, Primaries, Transfer};
+use zenpixels::{AlphaMode, Orientation, PixelBuf, PixelFormat, Primaries, Transfer};
 #[cfg(feature = "hdr-transfers")]
 use zenpixels::{ColorSpace, DiffuseWhite, HlgMode, HlgRendering, SampleLayout, SignalRange};
 #[cfg(feature = "oklab")]
@@ -40,12 +40,12 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
         })
         .collect();
 
-    let p3_u8 = ImageSpec::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
-    let p3_f32 = ImageSpec::RGBF32_LINEAR.with_primaries(Primaries::DisplayP3);
-    let rgba8_premul = ImageSpec::RGBA8_SRGB.with_alpha(AlphaMode::Premultiplied);
-    let bt709_f32 = ImageSpec::RGBF32_LINEAR.with_transfer(Transfer::Bt709);
-    let g22_f32 = ImageSpec::RGBF32_LINEAR.with_transfer(Transfer::Gamma22);
-    let adobe_f32 = ImageSpec::RGBF32_LINEAR
+    let p3_u8 = PixelFormat::RGB8_SRGB.with_primaries(Primaries::DisplayP3);
+    let p3_f32 = PixelFormat::RGBF32_LINEAR.with_primaries(Primaries::DisplayP3);
+    let rgba8_premul = PixelFormat::RGBA8_SRGB.with_alpha(AlphaMode::Premultiplied);
+    let bt709_f32 = PixelFormat::RGBF32_LINEAR.with_transfer(Transfer::Bt709);
+    let g22_f32 = PixelFormat::RGBF32_LINEAR.with_transfer(Transfer::Gamma22);
+    let adobe_f32 = PixelFormat::RGBF32_LINEAR
         .with_primaries(Primaries::AdobeRgb)
         .with_transfer(Transfer::AdobeRgb);
 
@@ -54,8 +54,8 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
         (
             "rgb8_to_gray8_bt709",
             RowPlan::build(
-                ImageSpec::RGB8_SRGB,
-                ImageSpec::GRAY8_SRGB,
+                PixelFormat::RGB8_SRGB,
+                PixelFormat::GRAY8_SRGB,
                 &ConvertPolicy::permissive().with_accelerators(Accelerators::ALL),
                 None,
             )
@@ -65,8 +65,8 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
         (
             "rgba8_to_gray8_bt601",
             RowPlan::build(
-                ImageSpec::RGBA8_SRGB,
-                ImageSpec::GRAY8_SRGB,
+                PixelFormat::RGBA8_SRGB,
+                PixelFormat::GRAY8_SRGB,
                 &ConvertPolicy::permissive()
                     .with_luma(LumaCoefficients::Bt601)
                     .with_accelerators(Accelerators::ALL),
@@ -78,7 +78,7 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
         (
             "rgba8_premul_round",
             RowPlan::build(
-                ImageSpec::RGBA8_SRGB,
+                PixelFormat::RGBA8_SRGB,
                 rgba8_premul.clone(),
                 &ConvertPolicy::permissive().with_accelerators(Accelerators::ALL),
                 None,
@@ -89,7 +89,7 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
         (
             "rgba8_premul_trunc",
             RowPlan::build(
-                ImageSpec::RGBA8_SRGB,
+                PixelFormat::RGBA8_SRGB,
                 rgba8_premul,
                 &ConvertPolicy::permissive()
                     .with_depth(DepthPolicy::Truncate)
@@ -102,8 +102,8 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
         (
             "lin_f32_to_srgb8_exact",
             RowPlan::build(
-                ImageSpec::RGBAF32_LINEAR,
-                ImageSpec::RGBA8_SRGB,
+                PixelFormat::RGBAF32_LINEAR,
+                PixelFormat::RGBA8_SRGB,
                 &ConvertPolicy::permissive().with_accelerators(Accelerators::ALL),
                 None,
             )
@@ -113,8 +113,8 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
         (
             "lin_f32_to_srgb8_approx",
             RowPlan::build(
-                ImageSpec::RGBAF32_LINEAR,
-                ImageSpec::RGBA8_SRGB,
+                PixelFormat::RGBAF32_LINEAR,
+                PixelFormat::RGBA8_SRGB,
                 &ConvertPolicy::permissive()
                     .with_approximate(true)
                     .with_accelerators(Accelerators::ALL),
@@ -127,7 +127,7 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
             "p3_u8_to_srgb8_exact",
             RowPlan::build(
                 p3_u8.clone(),
-                ImageSpec::RGB8_SRGB,
+                PixelFormat::RGB8_SRGB,
                 &ConvertPolicy::permissive().with_accelerators(Accelerators::ALL),
                 None,
             )
@@ -138,7 +138,7 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
             "p3_u8_to_srgb8_q14",
             RowPlan::build(
                 p3_u8,
-                ImageSpec::RGB8_SRGB,
+                PixelFormat::RGB8_SRGB,
                 &ConvertPolicy::permissive()
                     .with_approximate(true)
                     .with_accelerators(Accelerators::ALL),
@@ -151,7 +151,7 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
             "p3_f32_to_srgb_f32",
             RowPlan::build(
                 p3_f32,
-                ImageSpec::RGBF32_LINEAR,
+                PixelFormat::RGBF32_LINEAR,
                 &ConvertPolicy::permissive().with_accelerators(Accelerators::ALL),
                 None,
             )
@@ -161,8 +161,8 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
         (
             "f16_to_f32",
             RowPlan::build(
-                ImageSpec::RGBF16_LINEAR,
-                ImageSpec::RGBF32_LINEAR,
+                PixelFormat::RGBF16_LINEAR,
+                PixelFormat::RGBF32_LINEAR,
                 &ConvertPolicy::permissive().with_accelerators(Accelerators::ALL),
                 None,
             )
@@ -172,8 +172,8 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
         (
             "f32_to_f16",
             RowPlan::build(
-                ImageSpec::RGBF32_LINEAR,
-                ImageSpec::RGBF16_LINEAR,
+                PixelFormat::RGBF32_LINEAR,
+                PixelFormat::RGBF16_LINEAR,
                 &ConvertPolicy::permissive().with_accelerators(Accelerators::ALL),
                 None,
             )
@@ -184,7 +184,7 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
             "bt709_eotf",
             RowPlan::build(
                 bt709_f32,
-                ImageSpec::RGBF32_LINEAR,
+                PixelFormat::RGBF32_LINEAR,
                 &ConvertPolicy::permissive().with_accelerators(Accelerators::ALL),
                 None,
             )
@@ -194,7 +194,7 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
         (
             "gamma22_oetf",
             RowPlan::build(
-                ImageSpec::RGBF32_LINEAR,
+                PixelFormat::RGBF32_LINEAR,
                 g22_f32,
                 &ConvertPolicy::permissive().with_accelerators(Accelerators::ALL),
                 None,
@@ -206,7 +206,7 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
             "adobe_eotf",
             RowPlan::build(
                 adobe_f32,
-                ImageSpec::RGBF32_LINEAR.with_primaries(Primaries::AdobeRgb),
+                PixelFormat::RGBF32_LINEAR.with_primaries(Primaries::AdobeRgb),
                 &ConvertPolicy::permissive().with_accelerators(Accelerators::ALL),
                 None,
             )
@@ -216,8 +216,8 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
         (
             "u16_p3_to_u16_srgb",
             RowPlan::build(
-                ImageSpec::RGB16_SRGB.with_primaries(Primaries::DisplayP3),
-                ImageSpec::RGB16_SRGB,
+                PixelFormat::RGB16_SRGB.with_primaries(Primaries::DisplayP3),
+                PixelFormat::RGB16_SRGB,
                 &ConvertPolicy::permissive().with_accelerators(Accelerators::ALL),
                 None,
             )
@@ -231,8 +231,8 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
         routes.push((
             "rgb8_to_oklab_f32",
             RowPlan::build(
-                ImageSpec::RGB8_SRGB,
-                ImageSpec::OKLAB_F32,
+                PixelFormat::RGB8_SRGB,
+                PixelFormat::OKLAB_F32,
                 &ConvertPolicy::permissive().with_accelerators(Accelerators::ALL),
                 None,
             )
@@ -242,8 +242,8 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
         routes.push((
             "p3_soft_compress",
             RowPlan::build(
-                ImageSpec::RGBF32_LINEAR.with_primaries(Primaries::DisplayP3),
-                ImageSpec::RGBF32_LINEAR,
+                PixelFormat::RGBF32_LINEAR.with_primaries(Primaries::DisplayP3),
+                PixelFormat::RGBF32_LINEAR,
                 &ConvertPolicy::permissive()
                     .with_gamut(GamutPolicy::SoftCompress)
                     .with_accelerators(Accelerators::ALL),
@@ -259,8 +259,8 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
         routes.push((
             "pq16_to_lin2020_f32",
             RowPlan::build(
-                ImageSpec::RGB16_BT2100_PQ,
-                ImageSpec::RGBF32_LINEAR
+                PixelFormat::RGB16_BT2100_PQ,
+                PixelFormat::RGBF32_LINEAR
                     .with_primaries(Primaries::Bt2020)
                     .with_white(DiffuseWhite::BT2408),
                 &ConvertPolicy::working_linear().with_accelerators(Accelerators::ALL),
@@ -269,7 +269,7 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
             .unwrap(),
             &rgb16,
         ));
-        let hlg = ImageSpec::new(
+        let hlg = PixelFormat::new(
             SampleLayout::RGB16,
             ColorSpace::Rgb {
                 primaries: Primaries::Bt2020,
@@ -283,7 +283,7 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
             "hlg16_display_to_lin2020_f32",
             RowPlan::build(
                 hlg,
-                ImageSpec::RGBF32_LINEAR
+                PixelFormat::RGBF32_LINEAR
                     .with_primaries(Primaries::Bt2020)
                     .with_white(DiffuseWhite::BT2408),
                 &ConvertPolicy::working_linear().with_accelerators(Accelerators::ALL),
@@ -296,14 +296,14 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
 
     // Orient transpose buffers for 1, 2, 3, 4, 6, 8, 12, 16 bpp.
     let orient_specs = [
-        ImageSpec::GRAY8_SRGB,
-        ImageSpec::GRAY16_SRGB,
-        ImageSpec::RGB8_SRGB,
-        ImageSpec::RGBA8_SRGB,
-        ImageSpec::RGB16_SRGB,
-        ImageSpec::RGBA16_SRGB,
-        ImageSpec::RGBF32_LINEAR,
-        ImageSpec::RGBAF32_LINEAR,
+        PixelFormat::GRAY8_SRGB,
+        PixelFormat::GRAY16_SRGB,
+        PixelFormat::RGB8_SRGB,
+        PixelFormat::RGBA8_SRGB,
+        PixelFormat::RGB16_SRGB,
+        PixelFormat::RGBA16_SRGB,
+        PixelFormat::RGBF32_LINEAR,
+        PixelFormat::RGBAF32_LINEAR,
     ];
     let orient_bufs: Vec<PixelBuf> = orient_specs
         .iter()
@@ -324,7 +324,8 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
     let baselines: Vec<Vec<u8>> = routes
         .iter()
         .map(|(_, plan, src)| {
-            let mut dst = vec![0u8; w as usize * plan.dst_spec().layout.bytes_per_pixel()];
+            let mut dst =
+                vec![0u8; w as usize * plan.destination_format().layout.bytes_per_pixel()];
             plan.convert_row(src, &mut dst, w, 0).unwrap();
             dst
         })

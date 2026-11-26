@@ -15,19 +15,19 @@ describes the latest published crate.
 
 | Type | Role |
 |---|---|
-| `ImageSpec` | Pairs physical `SampleLayout` + algebraic `ColorSpace` (RGB, Gray, Oklab, XYZ, CMYK, ICC, Untagged). Use `ImageSpec::RGB8_SRGB` for owned specs and `&specs::RGB8_SRGB` for `'static` borrowed views. |
+| `PixelFormat` | Pairs physical `SampleLayout` + algebraic `ColorSpace` (RGB, Gray, Oklab, XYZ, CMYK, ICC, Untagged). Use `PixelFormat::RGB8_SRGB` for owned specs and `&formats::RGB8_SRGB` for `'static` borrowed views. |
 | `PixelBuf` | Owned, stride-preserving, alignment-exact 2D buffer (can adopt `Vec<T>`, `Arc<[u8]>`, `Box<[T]>`, or custom FFI storage zero-copy). Exposes direct `row(y)` / `row_mut(y)` access and carries `Orientation`, `HdrMetadata`, `ColorOrigin`, and `SampleFacts`. |
-| `PixelView<'a>` / `PixelViewMut<'a>` | Zero-copy borrowed strided views and rectangular crops. Primary constructors take `&'a ImageSpec` for guaranteed zero heap allocation (`height()` and `rows()` are equivalent). |
-| `PixelFormat` | `Copy + const` layout + parametric color pair (no ICC) for static codec capability tables (`&[PixelFormat]`). |
+| `PixelView<'a>` / `PixelViewMut<'a>` | Zero-copy borrowed strided views and rectangular crops. Primary constructors take `&'a PixelFormat` for guaranteed zero heap allocation (`height()` and `rows()` are equivalent). |
+| `ParametricFormat` | `Copy + const` layout + parametric color pair (no ICC) for static codec capability tables (`&[ParametricFormat]`). |
 
 ## Quick start
 
 ```rust
-use zenpixels::{ImageSpec, PixelBuf, PixelView, specs};
+use zenpixels::{PixelFormat, PixelBuf, PixelView, formats};
 
 // Wrap typed pixel data and take a zero-copy crop:
 let decoded = vec![255u8, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
-let image = PixelBuf::from_typed(decoded, 2, 2, ImageSpec::RGB8_SRGB)?;
+let image = PixelBuf::from_typed(decoded, 2, 2, PixelFormat::RGB8_SRGB)?;
 let right_col = image.crop_view(1, 0, 1, 2)?;
 
 assert_eq!((right_col.width(), right_col.height()), (1, 2));
@@ -36,7 +36,7 @@ assert_eq!(right_col.row(0), &[0, 255, 0]);     // Only the cropped pixel.
 
 // Borrow raw bytes with zero heap allocation using a static preset:
 let raw = [10u8, 20, 30, 40, 50, 60];
-let view = PixelView::from_bytes(&raw, 2, 1, &specs::RGB8_SRGB)?;
+let view = PixelView::from_bytes(&raw, 2, 1, &formats::RGB8_SRGB)?;
 assert_eq!(view.row(0), &[10, 20, 30, 40, 50, 60]);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
@@ -60,7 +60,7 @@ zenpixels-convert = "0.5.0"
 
 See [docs/guide.md](docs/guide.md) for copy-pasteable recipes covering every area:
 
-- **External zero-copy ownership, cropping & fallible tightening:** `PixelBuf::from_external` / `from_external_mut` (`Arc<[u8]>`, `Box<[T]>`, FFI), O(1) zero-copy `PixelBuf::into_crop`, symmetric `crop_view` / `crop_view_mut` / `sub_rows` / `sub_rows_mut` across carriers, fallible copy-on-write `try_as_view_mut` / `into_tight_buf`, `into_vec_zero_copy`, and explicit metadata relabeling (`relabel_color`, `relabel_spec`, `reinterpret_bytes`).
+- **External zero-copy ownership, cropping & fallible tightening:** `PixelBuf::from_external` / `from_external_mut` (`Arc<[u8]>`, `Box<[T]>`, FFI), O(1) zero-copy `PixelBuf::into_crop`, symmetric `crop_view` / `crop_view_mut` / `sub_rows` / `sub_rows_mut` across carriers, fallible copy-on-write `try_as_view_mut` / `into_tight_buf`, `into_vec_zero_copy`, and explicit metadata relabeling (`relabel_color`, `relabel_format`, `reinterpret_bytes`).
 - **Sound `AlphaMode::Opaque` & fast fill-then-retag:** `PixelBuf::new` (black + max alpha), `new_white`, and `new_zeroed` (refuses unverified `Opaque`) paired with `into_opaque_verified` / `into_opaque_filled` / `assume_opaque`.
 - **Planar, banded & dual-layer HDR:** `PlanarBuf` / `PlanarView` / `PlaneBuf` / `PlaneView` (tight typed `from_samples(samples, w, h, spec)`, strided `from_samples_strided(..., SampleStride(n), spec)`, typed 1-byte `MatrixCoefficients`, `CodePlane` bit-packed inspection), `BandedBuf` for gigapixel images, and `DualLayerHdrBuf` for ISO 21496-1 / UltraHDR gain maps.
 - **Lossless CICP & ICC.1 `cicpType`:** all H.273 codes plus 44-byte signed `s15Fixed16` custom primaries (`CicpTag`, `CustomPrimaries::ACES_AP0` / `ACES_CG` / `PROPHOTO_RGB`, Annex 1 D50 matrices) and ISO 15076-1 structural ICC validation (`validate_icc_structure`).
@@ -69,9 +69,9 @@ See [docs/guide.md](docs/guide.md) for copy-pasteable recipes covering every are
 ## Conversion
 
 ```rust
-use zenpixels_convert::{ImageSpec, PixelBuf, to_rgba8};
+use zenpixels_convert::{PixelFormat, PixelBuf, to_rgba8};
 
-let src = PixelBuf::from_typed(vec![128u8, 128, 128], 1, 1, ImageSpec::RGB8_SRGB)?;
+let src = PixelBuf::from_typed(vec![128u8, 128, 128], 1, 1, PixelFormat::RGB8_SRGB)?;
 let rgba = to_rgba8(&src.as_view())?;
 assert_eq!(rgba.row(0), &[128, 128, 128, 255]);
 # Ok::<(), Box<dyn std::error::Error>>(())

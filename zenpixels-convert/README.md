@@ -13,21 +13,21 @@ This is the **0.5.0 greenfield candidate**. For full end-to-end recipes, see
 | Need | API |
 |---|---|
 | Quick 8-bit sRGB output | `to_rgb8(&view)`, `to_gray8(&view)` (refuse unproven alpha discard), `to_rgba8(&view)`, `to_bgra8(&view)` |
-| One-shot image conversion | `convert_to_buf(&view, dst_spec, &policy)` / `convert_into(&src, &mut dst, &policy)` (add `_with_peak` for explicit `PeakSource`) |
+| One-shot image conversion | `convert_to_buf(&view, destination_format, &policy)` / `convert_into(&src, &mut dst, &policy)` (add `_with_peak` for explicit `PeakSource`) |
 | Reusable whole-image plan (`PixelBuf` / `PixelView` / `BandedBuf`) | `ImagePlan::build(src, dst, &policy, peak)` → `.execute(&src)` / `.execute_into(&src, &mut dst)` |
 | Streaming row loop (zero per-row heap scratch) | `RowPlan::build(src, dst, &policy, resolved_source_peak)` → `.convert_row(src_row, dst_row, width, y)` |
 | Planar YCbCr / GBR / RGB / monochrome reconstruction | `reconstruct_planar_to_buf(&planar, layout, &opts)` / `reconstruct_planar_into(&planar, &opts, &mut dst)` / `reconstruct_planar_f32(&planar)` |
 | ISO 21496-1 / UltraHDR gain maps (`gainmap` module) | `gainmap::apply_gain_map_with`, `gainmap::apply_gain_map_oriented`, `gainmap::extract_gain_map_only`, `gainmap::GainMapApplier`, `gainmap::GainMapRowExtractor` |
 | Content compaction (alpha, chroma, U16→U8) | `analyze_compaction(&view)`, `compact_to_buf(&view)`, `compact_in_place(&mut buf, mode)` |
-| Encoder negotiation + CICP/ICC signaling | `adapt_for_encode_format(view, origin, &[PixelFormat], &policy, peak, signaling)` or reusable `OutputPlan::build(...)` |
+| Encoder negotiation + CICP/ICC signaling | `adapt_for_encode_parametric(view, origin, &[ParametricFormat], &policy, peak, signaling)` or reusable `OutputPlan::build(...)` |
 
 ## Quick start
 
 ```rust
-use zenpixels_convert::{ConvertPolicy, ImageSpec, PixelBuf, convert_to_buf, specs, to_rgba8};
+use zenpixels_convert::{ConvertPolicy, PixelFormat, PixelBuf, convert_to_buf, formats, to_rgba8};
 
 let src = PixelBuf::from_typed(
-    vec![255u8, 0, 0, 0, 255, 0], 2, 1, ImageSpec::RGB8_SRGB,
+    vec![255u8, 0, 0, 0, 255, 0], 2, 1, PixelFormat::RGB8_SRGB,
 )?;
 
 // 1. One-call 8-bit sRGB conversion:
@@ -37,10 +37,10 @@ assert_eq!(rgba.row(0), &[255, 0, 0, 255, 0, 255, 0, 255]);
 // 2. Arbitrary destination with safe-by-default lossless policy (widening RGB8 -> linear F32):
 let linear = convert_to_buf(
     &src.as_view(),
-    &specs::RGBF32_LINEAR,
+    &formats::RGBF32_LINEAR,
     &ConvertPolicy::lossless(),
 )?;
-assert_eq!(linear.spec(), &specs::RGBF32_LINEAR);
+assert_eq!(linear.format(), &formats::RGBF32_LINEAR);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
@@ -58,11 +58,11 @@ or `convert_into_with_peak` for explicit `PeakSource::Declared` / `Fixed`.
 ## Streaming rows (`RowPlan`)
 
 ```rust
-use zenpixels_convert::{ConvertPolicy, ImageSpec, PixelBuf, RowPlan};
+use zenpixels_convert::{ConvertPolicy, PixelFormat, PixelBuf, RowPlan};
 
-let src = PixelBuf::from_typed(vec![64u8, 128, 192, 255, 0, 0], 2, 1, ImageSpec::RGB8_SRGB)?;
-let mut dst = PixelBuf::new(2, 1, ImageSpec::RGBF32_LINEAR)?;
-let plan = RowPlan::build(src.spec(), dst.spec(), &ConvertPolicy::lossless(), None)?;
+let src = PixelBuf::from_typed(vec![64u8, 128, 192, 255, 0, 0], 2, 1, PixelFormat::RGB8_SRGB)?;
+let mut dst = PixelBuf::new(2, 1, PixelFormat::RGBF32_LINEAR)?;
+let plan = RowPlan::build(src.format(), dst.format(), &ConvertPolicy::lossless(), None)?;
 for y in 0..src.height() {
     plan.convert_row(src.row(y), dst.row_mut(y), src.width(), y)?;
 }
@@ -73,7 +73,7 @@ for y in 0..src.height() {
 
 By default, every native pair runs on a compact scalar core with 0-bit parity
 against x86-64/AArch64 SIMD kernels so libraries and Wasm builds stay small.
-Enable SIMD globally (`accel::enable_all()`, `accel::enable_web_sdr()`) or
+Enable SIMD globally (`accelerators::enable_all()`, `accelerators::enable_web_sdr()`) or
 per-policy via `ConvertPolicy::with_accelerators(Accelerators::ALL)`.
 
 ## Key capabilities (see [docs/guide.md](../docs/guide.md) for recipes)

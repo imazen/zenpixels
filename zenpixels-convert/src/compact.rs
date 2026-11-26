@@ -1,6 +1,6 @@
 //! Spec-aware content analysis and bit-exact lossless format compaction.
 //!
-//! Answers: *"Which parts of this buffer's declared [`ImageSpec`] are actually
+//! Answers: *"Which parts of this buffer's declared [`PixelFormat`] are actually
 //! required by its pixel values?"* — non-opaque alpha, chroma (`R != G` or `G != B`),
 //! and 16-bit precision beyond byte-replicated 8-bit (`(v >> 8) != (v & 0xFF)` on
 //! full-range `U16`) — and optionally compacts the pixel buffer either into a fresh
@@ -17,7 +17,7 @@
 use alloc::sync::Arc;
 use whereat::At;
 use zenpixels::{
-    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, ImageSpec, PixelBuf, PixelView, Primaries,
+    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, PixelBuf, PixelFormat, PixelView, Primaries,
     SampleFacts, SampleLayout, SampleType, SignalRange, Transfer,
 };
 
@@ -25,7 +25,7 @@ use crate::error::{ConvertError, err_at};
 use crate::icc_profiles::{SynthesizedIcc, synthesize_gray_icc_for_cicp};
 use crate::scan::{self, FusedRequest};
 
-/// Which channels and precision of a buffer's declared [`ImageSpec`] are required
+/// Which channels and precision of a buffer's declared [`PixelFormat`] are required
 /// to represent its current pixel values without loss.
 ///
 /// Each field is `Option<bool>`:
@@ -57,7 +57,7 @@ impl CompactionReport {
             || self.requires_u16_precision.is_some()
     }
 
-    /// Compute the narrowest candidate [`ImageSpec`] justified by this report (metadata only;
+    /// Compute the narrowest candidate [`PixelFormat`] justified by this report (metadata only;
     /// does not inspect or transform pixels).
     ///
     /// Order of reduction:
@@ -68,7 +68,7 @@ impl CompactionReport {
     ///    when `requires_chroma == Some(false)` (only on structured D65 `Rgb` / `Gray`;
     ///    `ColorSpace::Icc` chroma collapse is gated separately by ICC class swapping).
     #[must_use]
-    pub fn candidate_spec(&self, src: &ImageSpec) -> ImageSpec {
+    pub fn candidate_format(&self, src: &PixelFormat) -> PixelFormat {
         if !src.layout.packing.is_full() {
             return src.clone();
         }
@@ -129,7 +129,7 @@ impl CompactionReport {
             }
         }
 
-        let candidate = ImageSpec::new(SampleLayout::new(sample, order), color);
+        let candidate = PixelFormat::new(SampleLayout::new(sample, order), color);
         if candidate.validate().is_ok() {
             candidate
         } else {
@@ -195,7 +195,7 @@ fn plan_chroma_collapse_for_icc(icc: &[u8]) -> GraySignalPlan {
     }
 }
 
-fn plan_chroma_collapse(spec: &ImageSpec) -> GraySignalPlan {
+fn plan_chroma_collapse(spec: &PixelFormat) -> GraySignalPlan {
     match &spec.color {
         ColorSpace::Icc {
             profile,
@@ -215,11 +215,11 @@ fn plan_chroma_collapse(spec: &ImageSpec) -> GraySignalPlan {
 }
 
 fn apply_icc_chroma_collapse(
-    src: &ImageSpec,
+    src: &PixelFormat,
     report: &CompactionReport,
     plan: &GraySignalPlan,
-) -> ImageSpec {
-    let base = report.candidate_spec(src);
+) -> PixelFormat {
+    let base = report.candidate_format(src);
     if !matches!(report.requires_chroma, Some(false)) {
         return base;
     }
@@ -256,7 +256,7 @@ fn apply_icc_chroma_collapse(
             white: None,
         },
     };
-    let candidate = ImageSpec::new(
+    let candidate = PixelFormat::new(
         SampleLayout::new(base.layout.sample, next_order),
         next_color,
     );
@@ -270,7 +270,7 @@ fn apply_icc_chroma_collapse(
 /// Measure which dimensions of `view`'s spec are actually required by its pixel values.
 #[must_use]
 pub fn analyze_compaction(view: &PixelView<'_>) -> CompactionReport {
-    let spec = view.spec();
+    let spec = view.format();
     if !spec.layout.packing.is_full() {
         return CompactionReport::default();
     }
@@ -437,7 +437,7 @@ pub fn analyze_compaction(view: &PixelView<'_>) -> CompactionReport {
 #[doc(alias = "load_bearing")]
 #[doc(alias = "shrink")]
 pub fn compact_to_buf(view: &PixelView<'_>) -> Result<Option<PixelBuf>, At<ConvertError>> {
-    let src = view.spec().clone();
+    let src = view.format().clone();
     let mut report = analyze_compaction(view);
     let plan = plan_chroma_collapse(&src);
     if matches!(plan, GraySignalPlan::Suppress) {
@@ -634,8 +634,8 @@ fn selection_map(src: ChannelOrder, dst: ChannelOrder) -> Option<&'static [usize
 
 fn transform_into(
     view: &PixelView<'_>,
-    src: &ImageSpec,
-    dst: &ImageSpec,
+    src: &PixelFormat,
+    dst: &PixelFormat,
     out: &mut PixelBuf,
 ) -> Option<()> {
     let narrow16 = src.layout.sample == SampleType::U16 && dst.layout.sample == SampleType::U8;

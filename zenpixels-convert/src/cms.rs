@@ -6,7 +6,7 @@
 use alloc::sync::Arc;
 use core::fmt::Debug;
 use whereat::At;
-use zenpixels::ImageSpec;
+use zenpixels::PixelFormat;
 
 use crate::error::ConvertError;
 
@@ -22,15 +22,15 @@ pub trait CmsBackend: Send + Sync + Debug {
     /// Fast, allocation-free check whether this backend supports the `(src, dst)`
     /// layouts, sample types, and color families (used by [`Negotiate`](crate::Negotiate)
     /// to avoid selecting unbuildable candidates).
-    fn supports_specs(&self, _src: &ImageSpec, _dst: &ImageSpec) -> bool {
+    fn supports_formats(&self, _src: &PixelFormat, _dst: &PixelFormat) -> bool {
         true
     }
 
     /// Build a row transform from `src` to `dst`.
     fn build_transform(
         &self,
-        src: &ImageSpec,
-        dst: &ImageSpec,
+        src: &PixelFormat,
+        dst: &PixelFormat,
     ) -> Result<Arc<dyn CmsTransform>, At<ConvertError>>;
 }
 
@@ -493,7 +493,7 @@ mod moxcms_impl {
     }
 
     impl CmsBackend for MoxCms {
-        fn supports_specs(&self, src: &ImageSpec, dst: &ImageSpec) -> bool {
+        fn supports_formats(&self, src: &PixelFormat, dst: &PixelFormat) -> bool {
             let eff_intent = match (&src.color, &dst.color) {
                 (ColorSpace::Icc { intent, .. }, _) => *intent,
                 (_, ColorSpace::Icc { intent, .. }) => *intent,
@@ -580,8 +580,8 @@ mod moxcms_impl {
 
         fn build_transform(
             &self,
-            src: &ImageSpec,
-            dst: &ImageSpec,
+            src: &PixelFormat,
+            dst: &PixelFormat,
         ) -> Result<Arc<dyn CmsTransform>, At<ConvertError>> {
             if src.layout.sample != dst.layout.sample
                 || !src.layout.packing.is_full()
@@ -1007,8 +1007,8 @@ mod lcms_impl {
     }
 
     fn build_lcms_transform(
-        src: &ImageSpec,
-        dst: &ImageSpec,
+        src: &PixelFormat,
+        dst: &PixelFormat,
         no_optimize: bool,
     ) -> Result<Arc<dyn CmsTransform>, At<ConvertError>> {
         if src.color.alpha() == AlphaMode::Premultiplied
@@ -1195,7 +1195,7 @@ mod lcms_impl {
         }
     }
 
-    fn lcms_supports_specs(src: &ImageSpec, dst: &ImageSpec) -> bool {
+    fn lcms_supports_specs(src: &PixelFormat, dst: &PixelFormat) -> bool {
         if src.color.alpha() == AlphaMode::Premultiplied
             || dst.color.alpha() == AlphaMode::Premultiplied
         {
@@ -1277,28 +1277,28 @@ mod lcms_impl {
     }
 
     impl CmsBackend for Lcms {
-        fn supports_specs(&self, src: &ImageSpec, dst: &ImageSpec) -> bool {
+        fn supports_formats(&self, src: &PixelFormat, dst: &PixelFormat) -> bool {
             lcms_supports_specs(src, dst)
         }
 
         fn build_transform(
             &self,
-            src: &ImageSpec,
-            dst: &ImageSpec,
+            src: &PixelFormat,
+            dst: &PixelFormat,
         ) -> Result<Arc<dyn CmsTransform>, At<ConvertError>> {
             build_lcms_transform(src, dst, false)
         }
     }
 
     impl CmsBackend for LcmsUnoptimized {
-        fn supports_specs(&self, src: &ImageSpec, dst: &ImageSpec) -> bool {
+        fn supports_formats(&self, src: &PixelFormat, dst: &PixelFormat) -> bool {
             lcms_supports_specs(src, dst)
         }
 
         fn build_transform(
             &self,
-            src: &ImageSpec,
-            dst: &ImageSpec,
+            src: &PixelFormat,
+            dst: &PixelFormat,
         ) -> Result<Arc<dyn CmsTransform>, At<ConvertError>> {
             build_lcms_transform(src, dst, true)
         }

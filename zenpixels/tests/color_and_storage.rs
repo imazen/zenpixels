@@ -1,54 +1,54 @@
-//! Core 0.5 tests covering algebraic `ColorSpace`, `ImageSpec` validation,
+//! Core 0.5 tests covering algebraic `ColorSpace`, `PixelFormat` validation,
 //! `Primaries::gamut_matrix_to`, `Cicp`, `BitPacking` (P010 / U10_LSB / RGB565 / RGB10A2),
 //! `PixelView<'a>` chained lifetimes, `SampleFacts` invalidation, `BandedBuf`,
 //! `PlanarBuf`, and `DualLayerHdrBuf`.
 
 use zenpixels::{
     AlphaMode, BandedBuf, BitPacking, ChannelOrder, Cicp, CicpError, ColorError, ColorSpace,
-    DiffuseWhite, DualLayerHdrBuf, FloatFacts, GainMapMetadata, HlgMode, HlgRendering, ImageSpec,
-    InteropTarget, Nits, PixelBuf, PixelSink, PixelSource, PlanarBuf, PlaneRole, PlaneSpec,
-    Primaries, SampleFacts, SampleLayout, SampleType, SignalRange, Transfer,
+    DiffuseWhite, DualLayerHdrBuf, FloatFacts, GainMapMetadata, HlgMode, HlgRendering,
+    InteropTarget, Nits, PixelBuf, PixelFormat, PixelSink, PixelSource, PlanarBuf, PlaneFormat,
+    PlaneRole, Primaries, SampleFacts, SampleLayout, SampleType, SignalRange, Transfer,
 };
 
 #[test]
 fn algebraic_color_space_and_spec_validation() {
-    assert!(ImageSpec::RGB8_SRGB.validate().is_ok());
-    assert!(ImageSpec::RGBA8_SRGB.validate().is_ok());
-    assert!(ImageSpec::RGBX8_SRGB.validate().is_ok());
-    assert!(ImageSpec::OKLAB_F32.validate().is_ok());
-    assert!(ImageSpec::OKLABA_F32.validate().is_ok());
-    assert!(ImageSpec::RGB16_BT2100_PQ.validate().is_ok());
-    assert!(ImageSpec::RGB16_BT2100_HLG_1000.validate().is_ok());
+    assert!(PixelFormat::RGB8_SRGB.validate().is_ok());
+    assert!(PixelFormat::RGBA8_SRGB.validate().is_ok());
+    assert!(PixelFormat::RGBX8_SRGB.validate().is_ok());
+    assert!(PixelFormat::OKLAB_F32.validate().is_ok());
+    assert!(PixelFormat::OKLABA_F32.validate().is_ok());
+    assert!(PixelFormat::RGB16_BT2100_PQ.validate().is_ok());
+    assert!(PixelFormat::RGB16_BT2100_HLG_1000.validate().is_ok());
 
     // Alpha / layout slot mismatch rejected.
-    let bad_alpha = ImageSpec::new(SampleLayout::RGB8, ColorSpace::SRGB_ALPHA);
+    let bad_alpha = PixelFormat::new(SampleLayout::RGB8, ColorSpace::SRGB_ALPHA);
     assert_eq!(
         *bad_alpha.validate().unwrap_err().error(),
         ColorError::AlphaLayoutMismatch
     );
 
-    let bad_padding = ImageSpec::new(SampleLayout::RGBX8, ColorSpace::SRGB_ALPHA);
+    let bad_padding = PixelFormat::new(SampleLayout::RGBX8, ColorSpace::SRGB_ALPHA);
     assert_eq!(
         *bad_padding.validate().unwrap_err().error(),
         ColorError::AlphaLayoutMismatch
     );
 
     // Narrow range requires integer samples.
-    let bad_narrow = ImageSpec::RGBF32_LINEAR.with_range(SignalRange::Narrow);
+    let bad_narrow = PixelFormat::RGBF32_LINEAR.with_range(SignalRange::Narrow);
     assert_eq!(
         *bad_narrow.validate().unwrap_err().error(),
         ColorError::NarrowRangeRequiresInteger
     );
 
     // HLG Display requires full-range BT.2020.
-    let bad_hlg = ImageSpec::RGB16_BT2100_HLG_1000.with_primaries(Primaries::Bt709);
+    let bad_hlg = PixelFormat::RGB16_BT2100_HLG_1000.with_primaries(Primaries::Bt709);
     assert_eq!(
         *bad_hlg.validate().unwrap_err().error(),
         ColorError::HlgDisplayRequiresBt2020Full
     );
 
     // Oklab requires F32 + Oklab channel order.
-    let bad_oklab = ImageSpec::new(SampleLayout::RGBF32, ColorSpace::OKLAB);
+    let bad_oklab = PixelFormat::new(SampleLayout::RGBF32, ColorSpace::OKLAB);
     assert_eq!(
         *bad_oklab.validate().unwrap_err().error(),
         ColorError::ColorLayoutMismatch
@@ -190,7 +190,7 @@ fn bit_packing_p010_u10_lsb_rgb565_and_rgb10a2() {
 
 #[test]
 fn view_chained_lifetimes_and_sample_facts_invalidation() {
-    let mut buf = PixelBuf::new(8, 6, ImageSpec::RGBF32_LINEAR).unwrap();
+    let mut buf = PixelBuf::new(8, 6, PixelFormat::RGBF32_LINEAR).unwrap();
     // Newly zeroed F32 buffer automatically carries UNIT_INTERVAL + FINITE + NON_NEGATIVE facts!
     assert!(buf.facts().float.is_finite());
     assert!(buf.facts().float.is_unit_interval());
@@ -224,7 +224,7 @@ fn view_chained_lifetimes_and_sample_facts_invalidation() {
 #[test]
 fn banded_buf_planar_buf_and_dual_layer_hdr() {
     // BandedBuf with tiny 64-byte band cap forces multiple bands and shares PixelSource/PixelSink.
-    let mut banded = BandedBuf::new(8, 10, ImageSpec::RGBA8_SRGB, 64).unwrap();
+    let mut banded = BandedBuf::new(8, 10, PixelFormat::RGBA8_SRGB, 64).unwrap();
     assert!(banded.bands().len() >= 5);
     assert_eq!(banded.source_width(), 8);
     assert_eq!(banded.source_height(), 10);
@@ -233,8 +233,8 @@ fn banded_buf_planar_buf_and_dual_layer_hdr() {
 
     // PlanarBuf P010 (Y 10-bit MSB + semi-planar CbCr 4:2:0 10-bit MSB)
     let p010 = [
-        PlaneSpec::new(PlaneRole::Y, SampleType::U16).with_packing(BitPacking::P010),
-        PlaneSpec::new(PlaneRole::CbCr, SampleType::U16)
+        PlaneFormat::new(PlaneRole::Y, SampleType::U16).with_packing(BitPacking::P010),
+        PlaneFormat::new(PlaneRole::CbCr, SampleType::U16)
             .with_packing(BitPacking::P010)
             .with_subsampling(2, 2),
     ];
@@ -249,11 +249,11 @@ fn banded_buf_planar_buf_and_dual_layer_hdr() {
     assert_eq!(planar.planes()[0].code_u32(3, 2, 0), Some(940));
 
     // DualLayerHdrBuf (ISO 21496-1 / UltraHDR)
-    let base = PixelBuf::new(16, 16, ImageSpec::RGB8_SRGB).unwrap();
+    let base = PixelBuf::new(16, 16, PixelFormat::RGB8_SRGB).unwrap();
     let gain = PixelBuf::new(
         8,
         8,
-        ImageSpec::new(
+        PixelFormat::new(
             SampleLayout::GRAY8,
             ColorSpace::Untagged {
                 channels: 1,
@@ -269,11 +269,11 @@ fn banded_buf_planar_buf_and_dual_layer_hdr() {
     assert!((dual.metadata().alternate_hdr_headroom.to_f64() - 2.3).abs() < 1e-4);
 
     // InteropTarget checks
-    assert!(ImageSpec::RGB8_SRGB.supports_interop(InteropTarget::DynamicImage));
-    assert!(!ImageSpec::GRAYF32_LINEAR.supports_interop(InteropTarget::DynamicImage));
-    assert!(ImageSpec::GRAYF32_LINEAR.supports_interop(InteropTarget::ImageBuffer));
+    assert!(PixelFormat::RGB8_SRGB.supports_interop(InteropTarget::DynamicImage));
+    assert!(!PixelFormat::GRAYF32_LINEAR.supports_interop(InteropTarget::DynamicImage));
+    assert!(PixelFormat::GRAYF32_LINEAR.supports_interop(InteropTarget::ImageBuffer));
     assert!(
-        !ImageSpec::new(SampleLayout::RGB565, ColorSpace::SRGB)
+        !PixelFormat::new(SampleLayout::RGB565, ColorSpace::SRGB)
             .supports_interop(InteropTarget::Imgref)
     );
 

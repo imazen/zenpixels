@@ -4,7 +4,7 @@
 use alloc::sync::Arc;
 use zenpixels::{Color, DiffuseWhite, HlgRendering, Nits, SampleFacts};
 
-use crate::accel::Accelerators;
+use crate::accelerators::Accelerators;
 use crate::cms::CmsBackend;
 use crate::tonemap::ToneMapper;
 
