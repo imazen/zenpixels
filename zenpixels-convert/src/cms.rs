@@ -12,9 +12,13 @@ use crate::error::ConvertError;
 
 /// Shareable, stateless row-level CMS transform executor (`Send + Sync`).
 pub trait CmsTransform: Send + Sync {
-    /// Transform one row of `width` pixels from `src` bytes to `dst` bytes.
-    fn transform_row(&self, src: &[u8], dst: &mut [u8], width: u32)
-    -> Result<(), At<ConvertError>>;
+    /// Transform one row of `width_pixels` pixels from `src` bytes to `dst` bytes.
+    fn transform_row(
+        &self,
+        src: &[u8],
+        dst: &mut [u8],
+        width_pixels: u32,
+    ) -> Result<(), At<ConvertError>>;
 }
 
 /// Pluggable ICC / CMYK Color Management System backend.

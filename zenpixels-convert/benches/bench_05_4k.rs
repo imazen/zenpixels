@@ -117,7 +117,7 @@ fn cases() -> Vec<Case> {
     let p_soft = ConvertPolicy::permissive().with_gamut(GamutPolicy::SoftCompress);
     let p_matte = ConvertPolicy::permissive().with_alpha(AlphaPolicy::CompositeOnto(Color::BLACK));
     let p_hdr_work = ConvertPolicy::working_linear();
-    let p_hdr_sdr = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0));
+    let p_hdr_sdr = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0).unwrap());
 
     let rgbf32_srgb = rgb(
         SampleLayout::RGBF32,
@@ -455,7 +455,7 @@ fn cases() -> Vec<Case> {
             src: rgb16_pq,
             dst: PixelFormat::RGB8_SRGB,
             policy: p_hdr_sdr,
-            hdr_peak: Some(Nits::new(1000.0)),
+            hdr_peak: Some(Nits::new(1000.0).unwrap()),
         },
         // Gray, Premul, Matte
         Case {
@@ -562,17 +562,17 @@ fn main() {
                         let mut scratch = shared.lock().unwrap();
                         let (src, dst) = scratch.prepare(&source_format, &destination_format);
                         // Warm up lazy tables once.
-                        plan.convert_row(&src[..src_stride], &mut dst[..dst_stride], W, 0)
+                        plan.convert_row(&src[..src_stride], &mut dst[..dst_stride], W)
                             .unwrap();
                         b.iter(|| {
                             for y in 0..H {
                                 let so = y as usize * src_stride;
                                 let do_ = y as usize * dst_stride;
-                                plan.convert_row(
+                                plan.convert_row_at(
+                                    y,
                                     &src[so..so + src_stride],
                                     &mut dst[do_..do_ + dst_stride],
                                     W,
-                                    y,
                                 )
                                 .unwrap();
                             }
@@ -666,7 +666,7 @@ fn main() {
                     *b = ((y as usize * 53 + i * 29 + 13) % 256) as u8;
                 }
             }
-            let meta = GainMapMetadata::symmetric(2.5);
+            let meta = GainMapMetadata::symmetric_stops(2.5).unwrap();
             let base_rgb8 = Arc::new(base_rgb8);
             let base_rgba8 = Arc::new(base_rgba8);
             let gm_qres = Arc::new(gm_qres);

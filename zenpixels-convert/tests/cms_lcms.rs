@@ -195,7 +195,7 @@ fn lcms_p3_icc_to_srgb_rgb8_rgb16_rgbf32_zero_alloc() {
     let src8 = [255u8, 255, 255, 0, 0, 0, 128, 128, 128, 255, 0, 0];
     let mut dst8 = [0u8; 12];
     let allocs = allocation_counter::measure(|| {
-        plan8.convert_row(&src8, &mut dst8, 4, 0).unwrap();
+        plan8.convert_row(&src8, &mut dst8, 4).unwrap();
     });
     assert_eq!(allocs.count_total, 0, "Lcms RGB8 row must not allocate");
     assert_eq!(&dst8[0..3], &[255, 255, 255]);
@@ -219,7 +219,6 @@ fn lcms_p3_icc_to_srgb_rgb8_rgb16_rgbf32_zero_alloc() {
                 bytemuck::cast_slice(&src16),
                 bytemuck::cast_slice_mut(&mut dst16),
                 3,
-                0,
             )
             .unwrap();
     });
@@ -254,7 +253,6 @@ fn lcms_p3_icc_to_srgb_rgb8_rgb16_rgbf32_zero_alloc() {
                 bytemuck::cast_slice(&src_f),
                 bytemuck::cast_slice_mut(&mut dst_f),
                 3,
-                0,
             )
             .unwrap();
     });
@@ -362,7 +360,7 @@ fn lcms_cmyk_u8_u16_f32_standard_and_inverted_zero_alloc() {
     let src8 = [0u8, 0, 0, 0, 0, 0, 0, 255];
     let mut dst8 = [0u8; 8];
     let allocs = allocation_counter::measure(|| {
-        plan8.convert_row(&src8, &mut dst8, 2, 0).unwrap();
+        plan8.convert_row(&src8, &mut dst8, 2).unwrap();
     });
     assert_eq!(allocs.count_total, 0);
     assert!(
@@ -389,9 +387,7 @@ fn lcms_cmyk_u8_u16_f32_standard_and_inverted_zero_alloc() {
     let src8_inv = [255u8, 255, 255, 255, 255, 255, 255, 0];
     let mut dst8_inv = [0u8; 6];
     let allocs_inv = allocation_counter::measure(|| {
-        plan8_inv
-            .convert_row(&src8_inv, &mut dst8_inv, 2, 0)
-            .unwrap();
+        plan8_inv.convert_row(&src8_inv, &mut dst8_inv, 2).unwrap();
     });
     assert_eq!(allocs_inv.count_total, 0);
     assert_eq!(&dst8_inv[0..3], &dst8[0..3]);
@@ -428,7 +424,6 @@ fn lcms_cmyk_u8_u16_f32_standard_and_inverted_zero_alloc() {
                 bytemuck::cast_slice(&src_f),
                 bytemuck::cast_slice_mut(&mut dst_f),
                 2,
-                0,
             )
             .unwrap();
     });

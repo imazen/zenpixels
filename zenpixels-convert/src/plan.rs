@@ -847,18 +847,36 @@ impl RowPlan {
         matches!(self.exec, RowExec::Byte(ByteFastPath::Memcpy))
     }
 
-    /// Convert a single row of `width` pixels from `src_row` into `dst_row` with **zero heap allocation**.
+    /// Convert a single row of `width_pixels` pixels from `src_row` into `dst_row` with
+    /// **zero heap allocation**.
     ///
-    /// Pass the row index `y` so [`DepthPolicy::OrderedDither`] applies a
-    /// consistent 2D Bayer 4×4 matrix across strips and bands.
+    /// Uses row index `0` for ordered dithering. When converting a multi-row image with
+    /// [`DepthPolicy::OrderedDither`], use [`convert_row_at`](Self::convert_row_at) to pass
+    /// the vertical row coordinate so the 2D Bayer 4×4 matrix varies across rows.
+    #[inline]
     pub fn convert_row(
         &self,
         src_row: &[u8],
         dst_row: &mut [u8],
-        width: u32,
-        y: u32,
+        width_pixels: u32,
     ) -> Result<(), At<ConvertError>> {
-        let w = width as usize;
+        self.convert_row_at(0, src_row, dst_row, width_pixels)
+    }
+
+    /// Convert a single row of `width_pixels` pixels at vertical coordinate `row_index` from
+    /// `src_row` into `dst_row` with **zero heap allocation**.
+    ///
+    /// `row_index` selects the vertical phase of the 2D Bayer 4×4 matrix under
+    /// [`DepthPolicy::OrderedDither`] so strips and bands produce identical dither patterns
+    /// to whole-image conversion.
+    pub fn convert_row_at(
+        &self,
+        row_index: u32,
+        src_row: &[u8],
+        dst_row: &mut [u8],
+        width_pixels: u32,
+    ) -> Result<(), At<ConvertError>> {
+        let w = width_pixels as usize;
         let need_src = w
             .checked_mul(self.src.layout.bytes_per_pixel())
             .ok_or_else(|| err_at(ConvertError::DimensionMismatch))?;
@@ -905,7 +923,7 @@ impl RowPlan {
                     &src_row[..need_src],
                     &mut dst_row[..need_dst],
                     w,
-                    y,
+                    row_index,
                 );
                 Ok(())
             }
@@ -914,7 +932,7 @@ impl RowPlan {
                 clip_f32_color,
             } => {
                 let dst_active = &mut dst_row[..need_dst];
-                transform.transform_row(&src_row[..need_src], dst_active, width)?;
+                transform.transform_row(&src_row[..need_src], dst_active, width_pixels)?;
                 if *clip_f32_color {
                     let ch = self.dst.layout.channels();
                     let color_ch = if self.dst.layout.order.has_alpha_slot() {
@@ -1102,7 +1120,7 @@ impl ImagePlan {
         if !pre.uses_cms {
             let test_peak = match peak {
                 PeakSource::Fixed(n) => Some(n),
-                _ if is_hdr_tonemap => Some(Nits::new(1000.0)),
+                _ if is_hdr_tonemap => Some(Nits::new_or_panic(1000.0)),
                 _ => None,
             };
             let _ = RowPlan::build_inner(src, dst, &probe_policy, test_peak)?;
@@ -1145,7 +1163,7 @@ impl ImagePlan {
         };
 
         for y in 0..h {
-            row_plan.convert_row(src.source_row(y), dst.sink_row_mut(y), w, y)?;
+            row_plan.convert_row_at(y, src.source_row(y), dst.sink_row_mut(y), w)?;
         }
         let preserves_icc_hdr = matches!(self.dst.color, ColorSpace::Icc { .. })
             && !(self.src.layout.sample.is_float() && !self.dst.layout.sample.is_float());
@@ -1217,14 +1235,15 @@ impl ImagePlan {
                 }
                 PeakSource::Declared => {
                     let hdr = src.source_hdr();
-                    if let Some(cll) = hdr.cll
+                    if let Some(cll) = hdr.content_light_level
                         && f32::from(cll.max_content_light_level) > threshold
+                        && let Some(n) = Nits::new(f32::from(cll.max_content_light_level))
                     {
-                        return Ok(Some(Nits::new(f32::from(cll.max_content_light_level))));
+                        return Ok(Some(n));
                     }
                     if let Some(md) = hdr.mastering
                         && md.max_luminance > threshold
-                        && let Some(n) = Nits::try_new(md.max_luminance)
+                        && let Some(n) = Nits::new(md.max_luminance)
                     {
                         return Ok(Some(n));
                     }
@@ -1247,7 +1266,7 @@ impl ImagePlan {
                         policy.hlg_rendering,
                     )?;
                     if measured > threshold {
-                        Ok(Some(Nits::new(measured)))
+                        Ok(Nits::new(measured))
                     } else {
                         Ok(None)
                     }
@@ -1265,13 +1284,14 @@ impl ImagePlan {
             PeakSource::Fixed(n) => Ok(Some(n)),
             PeakSource::Declared => {
                 let hdr = src.source_hdr();
-                if let Some(cll) = hdr.cll
+                if let Some(cll) = hdr.content_light_level
                     && cll.max_content_light_level > 0
+                    && let Some(n) = Nits::new(f32::from(cll.max_content_light_level))
                 {
-                    return Ok(Some(Nits::new(f32::from(cll.max_content_light_level))));
+                    return Ok(Some(n));
                 }
                 if let Some(md) = hdr.mastering
-                    && let Some(n) = Nits::try_new(md.max_luminance)
+                    && let Some(n) = Nits::new(md.max_luminance)
                 {
                     return Ok(Some(n));
                 }
@@ -1287,7 +1307,9 @@ impl ImagePlan {
                     .unwrap_or(DiffuseWhite::BT2408);
                 let measured =
                     crate::measure::measure_max_nits_streaming(src, white, policy.hlg_rendering)?;
-                Ok(Some(Nits::new(measured.max(policy.sdr_peak.nits()))))
+                Ok(Some(
+                    Nits::new(measured.max(policy.sdr_peak.nits())).unwrap_or(policy.sdr_peak),
+                ))
             }
             _ => Err(err_at(ConvertError::UnsupportedRoute)),
         }
@@ -1740,7 +1762,7 @@ fn linear_sdr_ceiling_nits(src: &PixelFormat, dst: &PixelFormat, policy: &Conver
 
 pub(crate) fn merge_facts(policy_facts: SampleFacts, buf_facts: SampleFacts) -> SampleFacts {
     let depth = match (policy_facts.depth, buf_facts.depth) {
-        (Some(a), Some(b)) => ExactDepth::combine(a, b).or(Some(a)),
+        (Some(a), Some(b)) => ExactDepth::intersect_same_buffer(a, b).or(Some(a)),
         (Some(a), None) => Some(a),
         (None, Some(b)) => Some(b),
         (None, None) => None,

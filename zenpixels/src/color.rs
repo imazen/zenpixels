@@ -354,28 +354,28 @@ impl CustomPrimaries {
     /// Red primary `(x, y)`.
     #[inline]
     #[must_use]
-    pub const fn r(self) -> Chromaticity {
+    pub const fn red(self) -> Chromaticity {
         self.r
     }
 
     /// Green primary `(x, y)`.
     #[inline]
     #[must_use]
-    pub const fn g(self) -> Chromaticity {
+    pub const fn green(self) -> Chromaticity {
         self.g
     }
 
     /// Blue primary `(x, y)`.
     #[inline]
     #[must_use]
-    pub const fn b(self) -> Chromaticity {
+    pub const fn blue(self) -> Chromaticity {
         self.b
     }
 
     /// White point `(x, y)`.
     #[inline]
     #[must_use]
-    pub const fn white(self) -> Chromaticity {
+    pub const fn white_point(self) -> Chromaticity {
         self.white
     }
 }
@@ -769,15 +769,18 @@ const fn rgb_to_xyz_from_xy(
     Some(m)
 }
 
-/// Bradford chromatic adaptation matrix from source white `(swx, swy)` to destination white `(dwx, dwy)`.
-pub const fn bradford_adapt_f64(sw: (f32, f32), dw: (f32, f32)) -> Option<[[f64; 3]; 3]> {
+/// Bradford chromatic adaptation matrix from `source_white` `(x, y)` to `destination_white` `(x, y)`.
+pub const fn bradford_adapt_f64(
+    source_white: (f32, f32),
+    destination_white: (f32, f32),
+) -> Option<[[f64; 3]; 3]> {
     const M_BFD: [[f64; 3]; 3] = [
         [0.8951, 0.2664, -0.1614],
         [-0.7502, 1.7135, 0.0367],
         [0.0389, -0.0685, 1.0296],
     ];
-    let (swx, swy) = (sw.0 as f64, sw.1 as f64);
-    let (dwx, dwy) = (dw.0 as f64, dw.1 as f64);
+    let (swx, swy) = (source_white.0 as f64, source_white.1 as f64);
+    let (dwx, dwy) = (destination_white.0 as f64, destination_white.1 as f64);
     if swy <= 0.0 || dwy <= 0.0 {
         return None;
     }
@@ -2071,10 +2074,23 @@ impl ParametricColor {
         self
     }
 
+    /// Replace primaries on an RGB color (no-op on non-RGB variants).
+    ///
+    /// Prefer [`try_with_primaries`](Self::try_with_primaries) when applying to an unknown variant
+    /// should be detected rather than silently ignored.
+    #[inline]
+    #[must_use]
+    pub const fn with_primaries(mut self, primaries: Primaries) -> Self {
+        if let Self::Rgb { primaries: p, .. } = &mut self {
+            *p = primaries;
+        }
+        self
+    }
+
     /// Replace primaries on an RGB color (returns `None` on non-RGB variants).
     #[inline]
     #[must_use]
-    pub const fn with_primaries(mut self, primaries: Primaries) -> Option<Self> {
+    pub const fn try_with_primaries(mut self, primaries: Primaries) -> Option<Self> {
         match &mut self {
             Self::Rgb { primaries: p, .. } => {
                 *p = primaries;
@@ -2084,10 +2100,24 @@ impl ParametricColor {
         }
     }
 
+    /// Replace transfer on an RGB or Gray color (no-op on other variants).
+    ///
+    /// Prefer [`try_with_transfer`](Self::try_with_transfer) when applying to an incompatible
+    /// variant should be detected rather than silently ignored.
+    #[inline]
+    #[must_use]
+    pub const fn with_transfer(mut self, transfer: Transfer) -> Self {
+        match &mut self {
+            Self::Rgb { transfer: t, .. } | Self::Gray { transfer: t, .. } => *t = transfer,
+            _ => {}
+        }
+        self
+    }
+
     /// Replace transfer on an RGB or Gray color (returns `None` on other variants).
     #[inline]
     #[must_use]
-    pub const fn with_transfer(mut self, transfer: Transfer) -> Option<Self> {
+    pub const fn try_with_transfer(mut self, transfer: Transfer) -> Option<Self> {
         match &mut self {
             Self::Rgb { transfer: t, .. } | Self::Gray { transfer: t, .. } => {
                 *t = transfer;
@@ -2097,10 +2127,24 @@ impl ParametricColor {
         }
     }
 
+    /// Replace signal range on an RGB or Gray color (no-op on other variants).
+    ///
+    /// Prefer [`try_with_range`](Self::try_with_range) when applying to an incompatible
+    /// variant should be detected rather than silently ignored.
+    #[inline]
+    #[must_use]
+    pub const fn with_range(mut self, range: SignalRange) -> Self {
+        match &mut self {
+            Self::Rgb { range: r, .. } | Self::Gray { range: r, .. } => *r = range,
+            _ => {}
+        }
+        self
+    }
+
     /// Replace signal range on an RGB or Gray color (returns `None` on other variants).
     #[inline]
     #[must_use]
-    pub const fn with_range(mut self, range: SignalRange) -> Option<Self> {
+    pub const fn try_with_range(mut self, range: SignalRange) -> Option<Self> {
         match &mut self {
             Self::Rgb { range: r, .. } | Self::Gray { range: r, .. } => {
                 *r = range;
@@ -2110,10 +2154,26 @@ impl ParametricColor {
         }
     }
 
+    /// Attach a [`DiffuseWhite`] anchor on RGB, Gray, or XYZ (no-op on other variants).
+    ///
+    /// Prefer [`try_with_white`](Self::try_with_white) when applying to an incompatible
+    /// variant should be detected rather than silently ignored.
+    #[inline]
+    #[must_use]
+    pub const fn with_white(mut self, white: DiffuseWhite) -> Self {
+        match &mut self {
+            Self::Rgb { white: w, .. }
+            | Self::Gray { white: w, .. }
+            | Self::Xyz { white: w, .. } => *w = Some(white),
+            _ => {}
+        }
+        self
+    }
+
     /// Attach a [`DiffuseWhite`] anchor on RGB, Gray, or XYZ (returns `None` on other variants).
     #[inline]
     #[must_use]
-    pub const fn with_white(mut self, white: DiffuseWhite) -> Option<Self> {
+    pub const fn try_with_white(mut self, white: DiffuseWhite) -> Option<Self> {
         match &mut self {
             Self::Rgb { white: w, .. }
             | Self::Gray { white: w, .. }
@@ -2237,9 +2297,7 @@ impl ParametricFormat {
     #[inline]
     #[must_use]
     pub const fn with_primaries(mut self, primaries: Primaries) -> Self {
-        if let Some(c) = self.color.with_primaries(primaries) {
-            self.color = c;
-        }
+        self.color = self.color.with_primaries(primaries);
         self
     }
 
@@ -2247,7 +2305,7 @@ impl ParametricFormat {
     #[inline]
     #[must_use]
     pub const fn try_with_primaries(mut self, primaries: Primaries) -> Option<Self> {
-        match self.color.with_primaries(primaries) {
+        match self.color.try_with_primaries(primaries) {
             Some(c) => {
                 self.color = c;
                 Some(self)
@@ -2261,9 +2319,7 @@ impl ParametricFormat {
     #[inline]
     #[must_use]
     pub const fn with_transfer(mut self, transfer: Transfer) -> Self {
-        if let Some(c) = self.color.with_transfer(transfer) {
-            self.color = c;
-        }
+        self.color = self.color.with_transfer(transfer);
         self
     }
 
@@ -2271,7 +2327,7 @@ impl ParametricFormat {
     #[inline]
     #[must_use]
     pub const fn try_with_transfer(mut self, transfer: Transfer) -> Option<Self> {
-        match self.color.with_transfer(transfer) {
+        match self.color.try_with_transfer(transfer) {
             Some(c) => {
                 self.color = c;
                 Some(self)
@@ -2285,9 +2341,7 @@ impl ParametricFormat {
     #[inline]
     #[must_use]
     pub const fn with_range(mut self, range: SignalRange) -> Self {
-        if let Some(c) = self.color.with_range(range) {
-            self.color = c;
-        }
+        self.color = self.color.with_range(range);
         self
     }
 
@@ -2295,7 +2349,7 @@ impl ParametricFormat {
     #[inline]
     #[must_use]
     pub const fn try_with_range(mut self, range: SignalRange) -> Option<Self> {
-        match self.color.with_range(range) {
+        match self.color.try_with_range(range) {
             Some(c) => {
                 self.color = c;
                 Some(self)
@@ -2317,9 +2371,7 @@ impl ParametricFormat {
     #[inline]
     #[must_use]
     pub const fn with_white(mut self, white: DiffuseWhite) -> Self {
-        if let Some(c) = self.color.with_white(white) {
-            self.color = c;
-        }
+        self.color = self.color.with_white(white);
         self
     }
 
@@ -2327,7 +2379,7 @@ impl ParametricFormat {
     #[inline]
     #[must_use]
     pub const fn try_with_white(mut self, white: DiffuseWhite) -> Option<Self> {
-        match self.color.with_white(white) {
+        match self.color.try_with_white(white) {
             Some(c) => {
                 self.color = c;
                 Some(self)
@@ -2366,15 +2418,15 @@ pub enum FormatCow<'a> {
 }
 
 impl<'a> FormatCow<'a> {
-    /// Wrap an owned [`PixelFormat`], borrowing a zero-allocation `&'static PixelFormat` when `spec`
+    /// Wrap an owned [`PixelFormat`], borrowing a zero-allocation `&'static PixelFormat` when `format`
     /// matches a built-in preset, or allocating an [`Arc<PixelFormat>`] otherwise.
     #[inline]
     #[must_use]
-    pub fn from_owned(spec: PixelFormat) -> Self {
-        if let Some(static_ref) = spec.as_static_ref() {
+    pub fn from_owned(format: PixelFormat) -> Self {
+        if let Some(static_ref) = format.as_static_ref() {
             Self::Borrowed(static_ref)
         } else {
-            Self::Owned(Arc::new(spec))
+            Self::Owned(Arc::new(format))
         }
     }
 
@@ -2389,8 +2441,8 @@ impl<'a> FormatCow<'a> {
     /// Wrap an existing [`Arc<PixelFormat>`] with zero additional allocation.
     #[inline]
     #[must_use]
-    pub const fn from_arc(spec: Arc<PixelFormat>) -> Self {
-        Self::Owned(spec)
+    pub const fn from_arc(format: Arc<PixelFormat>) -> Self {
+        Self::Owned(format)
     }
 
     /// Borrow the underlying [`PixelFormat`].
@@ -2605,7 +2657,7 @@ impl PixelFormat {
 
     /// Return a `'static` preset reference if `self` equals one of the built-in common specs.
     ///
-    /// Used by [`FormatCow::from_owned`] and interop bridges (`from_pixels`, `from_imgref`,
+    /// Used by [`FormatCow::from_owned`] and interop bridges (`from_pixels_with_color`, `from_imgref`,
     /// `from_image_buffer`) to avoid heap allocation for standard sRGB / linear / HDR / Oklab specs.
     #[inline]
     #[must_use]
@@ -3148,7 +3200,7 @@ impl PixelFormat {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct HdrMetadata {
     /// Content light level (`MaxCLL` / `MaxFALL`).
-    pub cll: Option<ContentLightLevel>,
+    pub content_light_level: Option<ContentLightLevel>,
     /// Mastering display color volume (SMPTE ST 2086 / `mDCV`).
     pub mastering: Option<MasteringDisplay>,
 }
@@ -3158,7 +3210,7 @@ impl HdrMetadata {
     #[inline]
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.cll.is_none() && self.mastering.is_none()
+        self.content_light_level.is_none() && self.mastering.is_none()
     }
 }
 
@@ -3612,12 +3664,12 @@ impl GainMapMetadata {
     }
 
     /// Fallibly construct a symmetric forward SDR-base → HDR-alternate parameter set with
-    /// standard `1/64` offsets.
+    /// standard `1/64` offsets, taking headroom boost in **log₂ stops**.
     ///
     /// Returns `None` if `max_boost_stops` is non-finite, `<= 0.0`, or rounds to zero at
     /// `1/1_000_000` precision.
     #[must_use]
-    pub fn try_symmetric(max_boost_stops: f32) -> Option<Self> {
+    pub fn symmetric_stops(max_boost_stops: f32) -> Option<Self> {
         if !max_boost_stops.is_finite() || max_boost_stops <= 0.0 {
             return None;
         }
@@ -3638,18 +3690,6 @@ impl GainMapMetadata {
             alt_h,
             GainMapColorSpace::Base,
         )
-    }
-
-    /// Construct a symmetric forward SDR-base → HDR-alternate parameter set with standard `1/64` offsets.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `max_boost_stops` is not finite and strictly positive (use [`try_symmetric`](Self::try_symmetric)
-    /// for untrusted inputs).
-    #[must_use]
-    pub fn symmetric(max_boost_stops: f32) -> Self {
-        Self::try_symmetric(max_boost_stops)
-            .expect("GainMapMetadata::symmetric requires finite max_boost_stops > 0.0")
     }
 
     /// Validate all exact rational invariants (`gamma > 0`, `min <= max`, `H_base != H_alt`,

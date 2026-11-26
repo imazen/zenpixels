@@ -6,8 +6,8 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use zenpixels::{
-    BandedBuf, BufferError, PixelBuf, PixelFormat, PlanarBuf, PlaneBuf, PlaneFormat, PlaneRole,
-    RowAlign, SampleType,
+    BandedBuf, BufferError, PixelBuf, PixelFormat, PixelRect, PlanarBuf, PlaneBuf, PlaneFormat,
+    PlaneRole, RowAlign, SampleType,
 };
 
 struct FailingAlloc;
@@ -92,7 +92,7 @@ fn constructors_and_copies_return_allocation_failed_on_oom() {
     let err = with_oom_above(2048, || padded.as_view().to_tight_buf()).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
 
-    let err = with_oom_above(2048, || padded.as_view().contiguous_bytes()).unwrap_err();
+    let err = with_oom_above(2048, || padded.as_view().to_contiguous_bytes()).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
 
     // try_into_vec fallback copy path (Aligned64 cannot zero-copy to Vec<u8>)
@@ -118,9 +118,11 @@ fn constructors_and_copies_return_allocation_failed_on_oom() {
     // without panicking, and out-of-bounds fails BEFORE attempting CoW allocation.
     let err = with_oom_above(4096, || ext_buf.sub_rows_mut(0, 4)).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
-    let err = with_oom_above(4096, || ext_buf.crop_view_mut(0, 0, 4, 4)).unwrap_err();
+    let err =
+        with_oom_above(4096, || ext_buf.crop_view_mut(PixelRect::new(0, 0, 4, 4))).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
-    let err = with_oom_above(4096, || ext_buf.crop_view_mut(100, 0, 4, 4)).unwrap_err();
+    let err =
+        with_oom_above(4096, || ext_buf.crop_view_mut(PixelRect::new(100, 0, 4, 4))).unwrap_err();
     assert_eq!(*err.error(), BufferError::OutOfBounds);
     assert!(ext_buf.is_external());
 
@@ -147,7 +149,8 @@ fn constructors_and_copies_return_allocation_failed_on_oom() {
     .unwrap();
     let err = with_oom_above(4096, || ext_plane.try_as_view_mut()).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
-    let err = with_oom_above(4096, || ext_plane.crop_view_mut(0, 0, 4, 4)).unwrap_err();
+    let err =
+        with_oom_above(4096, || ext_plane.crop_view_mut(PixelRect::new(0, 0, 4, 4))).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
     assert_eq!(ext_plane.as_view().row(0)[0], 0x33);
 

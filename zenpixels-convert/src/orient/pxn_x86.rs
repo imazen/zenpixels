@@ -20,7 +20,7 @@ pub(super) fn scalar_rect(
 ) {
     for y in y0..y1 {
         for x in x0..x1 {
-            let (dx, dy) = orientation.forward_map(x, y, w, h);
+            let (dx, dy) = orientation.map_pixel_coordinates((x, y), (w, h));
             let s = y as usize * sstride + x as usize * bpp;
             let d = dy as usize * dstride + dx as usize * bpp;
             dbytes[d..d + bpp].copy_from_slice(&sbytes[s..s + bpp]);
@@ -135,8 +135,8 @@ pub(super) fn transpose1_v3(
 ) {
     let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
     let sbytes = src.as_strided_bytes();
-    let sstride = src.stride();
-    let dstride = dst.stride();
+    let sstride = src.stride_bytes();
+    let dstride = dst.stride_bytes();
     let dbytes = dst.as_strided_bytes_mut();
 
     const REV16B: [u8; 16] = [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
@@ -257,8 +257,8 @@ pub(super) fn transpose2_v3(
 ) {
     let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
     let sbytes = src.as_strided_bytes();
-    let sstride = src.stride();
-    let dstride = dst.stride();
+    let sstride = src.stride_bytes();
+    let dstride = dst.stride_bytes();
     let dbytes = dst.as_strided_bytes_mut();
 
     // Reverse 16 u16 across 32 B: per-lane u16 reversal + half swap.
@@ -375,8 +375,8 @@ pub(super) fn transpose4_v3(
 ) {
     let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
     let sbytes = src.as_strided_bytes();
-    let sstride = src.stride();
-    let dstride = dst.stride();
+    let sstride = src.stride_bytes();
+    let dstride = dst.stride_bytes();
     let dbytes = dst.as_strided_bytes_mut();
 
     let rev = _mm256_setr_epi32(7, 6, 5, 4, 3, 2, 1, 0);
@@ -481,8 +481,8 @@ pub(super) fn transpose8_v3(
 ) {
     let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
     let sbytes = src.as_strided_bytes();
-    let sstride = src.stride();
-    let dstride = dst.stride();
+    let sstride = src.stride_bytes();
+    let dstride = dst.stride_bytes();
     let dbytes = dst.as_strided_bytes_mut();
 
     let full_w = w & !3;
@@ -569,8 +569,8 @@ pub(super) fn transpose16_v3(
 ) {
     let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
     let sbytes = src.as_strided_bytes();
-    let sstride = src.stride();
-    let dstride = dst.stride();
+    let sstride = src.stride_bytes();
+    let dstride = dst.stride_bytes();
     let dbytes = dst.as_strided_bytes_mut();
 
     let full_h = h & !7;
@@ -691,8 +691,8 @@ pub(super) fn transpose6_v3(
 ) {
     let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
     let sbytes = src.as_strided_bytes();
-    let sstride = src.stride();
-    let dstride = dst.stride();
+    let sstride = src.stride_bytes();
+    let dstride = dst.stride_bytes();
     let dbytes = dst.as_strided_bytes_mut();
 
     let expand = _mm256_broadcastsi128_si256(_mm_loadu_si128(&EXPAND6));
@@ -827,8 +827,8 @@ pub(super) fn transpose12_v3(
 ) {
     let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
     let sbytes = src.as_strided_bytes();
-    let sstride = src.stride();
-    let dstride = dst.stride();
+    let sstride = src.stride_bytes();
+    let dstride = dst.stride_bytes();
     let dbytes = dst.as_strided_bytes_mut();
 
     let merge = if flip_sy {

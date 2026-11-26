@@ -201,7 +201,11 @@ fn allocating_constructors_and_into_contiguous_preserve_alignment() {
     )
     .unwrap();
     let tight = buf.into_tight_buf().unwrap();
-    assert_eq!(tight.offset(), 1, "cannot shift to odd offset 0 for U16");
+    assert_eq!(
+        tight.byte_offset(),
+        1,
+        "cannot shift to odd offset 0 for U16"
+    );
     assert_eq!(tight.as_view().row_as::<u16>(0).unwrap(), &[100, 200, 300]);
     assert_eq!(tight.as_view().row_as::<u16>(1).unwrap(), &[400, 500, 600]);
 }

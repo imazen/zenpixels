@@ -17,8 +17,9 @@
 use alloc::sync::Arc;
 use whereat::At;
 use zenpixels::{
-    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, PixelBuf, PixelFormat, PixelView, Primaries,
-    SampleFacts, SampleLayout, SampleType, SignalRange, Transfer,
+    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, InPlaceTransformOutput, PixelBuf,
+    PixelFormat, PixelView, Primaries, SampleFacts, SampleLayout, SampleType, SignalRange,
+    Transfer,
 };
 
 use crate::error::{ConvertError, err_at};
@@ -309,7 +310,7 @@ pub fn analyze_compaction(view: &PixelView<'_>) -> CompactionReport {
         let is_narrow = spec.color.range() == Some(SignalRange::Narrow);
         let ch = order.channels();
         let mut flags = [false, false, is_narrow];
-        for y in 0..view.rows() {
+        for y in 0..view.height() {
             let row = view.row(y);
             if let Ok(s16) = bytemuck::try_cast_slice::<u8, u16>(row) {
                 flags =
@@ -371,7 +372,7 @@ pub fn analyze_compaction(view: &PixelView<'_>) -> CompactionReport {
             let gray = if let Some(b) = view.as_contiguous_bytes() {
                 scan::is_grayscale_rgb8(b)
             } else {
-                (0..view.rows()).all(|y| scan::is_grayscale_rgb8(view.row(y)))
+                (0..view.height()).all(|y| scan::is_grayscale_rgb8(view.row(y)))
             };
             (Some(false), Some(!gray))
         }
@@ -381,7 +382,7 @@ pub fn analyze_compaction(view: &PixelView<'_>) -> CompactionReport {
             } else if let Some(b) = view.as_contiguous_bytes() {
                 scan::is_opaque_ga8(b)
             } else {
-                (0..view.rows()).all(|y| scan::is_opaque_ga8(view.row(y)))
+                (0..view.height()).all(|y| scan::is_opaque_ga8(view.row(y)))
             };
             (Some(!op), Some(false))
         }
@@ -447,7 +448,7 @@ pub fn compact_to_buf(view: &PixelView<'_>) -> Result<Option<PixelBuf>, At<Conve
     if target == src {
         return Ok(None);
     }
-    let mut out = PixelBuf::new(view.width(), view.rows(), target.clone())
+    let mut out = PixelBuf::new(view.width(), view.height(), target.clone())
         .map_err(|e| err_at((*e.error()).into()))?;
     if transform_into(view, &src, &target, &mut out).is_none() {
         return Ok(None);
@@ -470,7 +471,12 @@ pub fn compact_to_buf(view: &PixelView<'_>) -> Result<Option<PixelBuf>, At<Conve
 #[doc(alias = "shrink")]
 pub fn compact_in_place(buf: &mut PixelBuf, alpha: AlphaCompaction) {
     let drop_alpha_lanes = alpha == AlphaCompaction::DropUnusedLanes;
-    let _ = buf.transform_in_place(|bytes, width, rows, in_stride, src, orig| {
+    let _ = buf.transform_in_place(|bytes, input| {
+        let width = input.width;
+        let rows = input.height;
+        let in_stride = input.stride_bytes;
+        let src = input.format;
+        let orig = input.origin;
         if width == 0 || rows == 0 || !src.layout.packing.is_full() {
             return None;
         }
@@ -512,7 +518,12 @@ pub fn compact_in_place(buf: &mut PixelBuf, alpha: AlphaCompaction) {
                 facts.all_opaque = true;
                 facts.binary_alpha = true;
             }
-            return Some((in_stride, retagged, orig.clone(), facts));
+            return Some(InPlaceTransformOutput {
+                stride_bytes: in_stride,
+                format: retagged,
+                origin: orig.clone(),
+                facts,
+            });
         }
         if out_bpp > in_bpp {
             return None;
@@ -536,7 +547,12 @@ pub fn compact_in_place(buf: &mut PixelBuf, alpha: AlphaCompaction) {
             narrow16,
         );
 
-        Some((out_stride, target, orig.clone(), SampleFacts::NONE))
+        Some(InPlaceTransformOutput {
+            stride_bytes: out_stride,
+            format: target,
+            origin: orig.clone(),
+            facts: SampleFacts::NONE,
+        })
     });
 }
 
@@ -551,7 +567,7 @@ fn fused_rgba8_over_rows(view: &PixelView<'_>, request: FusedRequest) -> scan::F
         is_opaque: req.check_opaque,
         is_grayscale: req.check_grayscale,
     };
-    for y in 0..view.rows() {
+    for y in 0..view.height() {
         if !req.check_opaque && !req.check_grayscale {
             break;
         }
@@ -574,7 +590,7 @@ fn rows_all_u16(view: &PixelView<'_>, pred: fn(&[u16]) -> bool) -> bool {
     {
         return pred(s);
     }
-    for y in 0..view.rows() {
+    for y in 0..view.height() {
         let row = view.row(y);
         if let Ok(s) = bytemuck::try_cast_slice::<u8, u16>(row) {
             if !pred(s) {
@@ -598,7 +614,7 @@ fn rows_all_f32(view: &PixelView<'_>, pred: fn(&[f32]) -> bool) -> bool {
     {
         return pred(s);
     }
-    for y in 0..view.rows() {
+    for y in 0..view.height() {
         let row = view.row(y);
         if let Ok(s) = bytemuck::try_cast_slice::<u8, f32>(row) {
             if !pred(s) {
@@ -645,7 +661,7 @@ fn transform_into(
     let in_ch = src.layout.channels();
     let map = selection_map(src.layout.order, dst.layout.order)?;
     let mut out_view = out.as_view_mut();
-    for y in 0..view.rows() {
+    for y in 0..view.height() {
         let row_in = view.row(y);
         let row_out = out_view.row_mut(y);
         if narrow16 {

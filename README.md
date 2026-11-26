@@ -18,22 +18,22 @@ describes the latest published crate.
 |---|---|
 | `PixelFormat` | Pairs physical `SampleLayout` + algebraic `ColorSpace` (RGB, Gray, Oklab, XYZ, CMYK, ICC, Untagged). Use `PixelFormat::RGB8_SRGB` for owned specs and `&formats::RGB8_SRGB` for `'static` borrowed views. |
 | `PixelBuf` | Owned, stride-preserving, alignment-exact 2D buffer (can adopt `Vec<T>`, `Arc<[u8]>`, `Box<[T]>`, or custom FFI storage zero-copy). Exposes direct `row(y)` / `row_mut(y)` access and carries `Orientation`, `HdrMetadata`, `ColorOrigin`, and `SampleFacts`. |
-| `PixelView<'a>` / `PixelViewMut<'a>` | Zero-copy borrowed strided views and rectangular crops. Primary constructors take `&'a PixelFormat` for guaranteed zero heap allocation (`height()` and `rows()` are equivalent). |
+| `PixelView<'a>` / `PixelViewMut<'a>` | Zero-copy borrowed strided views and rectangular crops. Primary constructors take `&'a PixelFormat` for guaranteed zero heap allocation. |
 | `ParametricFormat` | `Copy + const` layout + parametric color pair (no ICC) for static codec capability tables (`&[ParametricFormat]`). |
 
 ## Quick start
 
 ```rust
-use zenpixels::{PixelFormat, PixelBuf, PixelView, formats};
+use zenpixels::{PixelBuf, PixelFormat, PixelRect, PixelView, formats};
 
 // Wrap typed pixel data and take a zero-copy crop:
 let decoded = vec![255u8, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
 let image = PixelBuf::from_typed(decoded, 2, 2, PixelFormat::RGB8_SRGB)?;
-let right_col = image.crop_view(1, 0, 1, 2)?;
+let right_col = image.crop_view(PixelRect::new(1, 0, 1, 2))?;
 
 assert_eq!((right_col.width(), right_col.height()), (1, 2));
-assert_eq!(right_col.stride(), image.stride()); // Parent stride: 6 bytes.
-assert_eq!(right_col.row(0), &[0, 255, 0]);     // Only the cropped pixel.
+assert_eq!(right_col.stride_bytes(), image.stride_bytes()); // Parent stride: 6 bytes.
+assert_eq!(right_col.row(0), &[0, 255, 0]);                 // Only the cropped pixel.
 
 // Borrow raw bytes with zero heap allocation using a static preset:
 let raw = [10u8, 20, 30, 40, 50, 60];

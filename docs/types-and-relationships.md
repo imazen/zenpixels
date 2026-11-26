@@ -36,10 +36,12 @@ Start with a **struct or enum name** below to see how it fits into the `zenpixel
 | `PixelBuf` | `struct` | Owned, alignment-exact, stride-preserving 2D image buffer + metadata (`Orientation`, `HdrMetadata`, `ColorOrigin`, `SampleFacts`) | [Drilldown 2](#drilldown-2-packed-image-carriers-pixelbuf-pixelview-pixelviewmut-pixelstorage-bandedbuf) |
 | `PixelView<'a>` | `struct` | Zero-copy borrowed strided 2D image or rectangular crop (immutable) | [Drilldown 2](#drilldown-2-packed-image-carriers-pixelbuf-pixelview-pixelviewmut-pixelstorage-bandedbuf) |
 | `PixelViewMut<'a>` | `struct` | Zero-copy borrowed mutable strided 2D image or rectangular crop | [Drilldown 2](#drilldown-2-packed-image-carriers-pixelbuf-pixelview-pixelviewmut-pixelstorage-bandedbuf) |
+| `PixelRect` | `struct` (`Copy`) | Rectangular crop region `{ x, y, width, height }` in pixels passed to every `crop*` / `into_crop` method | [Drilldown 2](#constructing-borrowing-cropping--relabeling) |
 | `PixelCow<'a>` | `enum` | `Borrowed(PixelView<'a>)` or `Owned(PixelBuf)` (used by `EncodeReady`) | [Drilldown 2](#ownership-and-borrowing-relationships) |
 | `PixelStorage` | `enum` | Owned backing memory behind `PixelBuf`/`PlaneBuf` (`U8`..`F64`, `F16`, `Aligned64`, `External`, `ExternalMut`) | [Drilldown 2](#anatomy-of-pixelbuf-and-pixelstorage) |
 | `PixelBufParts` | `struct` | All 10 fields of `PixelBuf` disassembled for `into_parts` / `from_parts` | [Drilldown 2](#anatomy-of-pixelbuf-and-pixelstorage) |
-| `BandedBuf` | `struct` | Gigapixel-safe image split into bounded-memory horizontal `Vec<PixelBuf>` bands | [Drilldown 2](#bandedbuf-for-gigapixel-images) |
+| `BandedBuf` / `BandRowLocation` | `struct` | Gigapixel-safe image split into bounded-memory horizontal `Vec<PixelBuf>` bands (`locate_row -> Option<BandRowLocation>`) | [Drilldown 2](#bandedbuf-for-gigapixel-images) |
+| `InPlaceTransformInput` / `Output` | `struct` | Named input/output structs for `PixelBuf::transform_in_place` closure | [Drilldown 2](#anatomy-of-pixelbuf-and-pixelstorage) |
 | `PixelSource` / `PixelSink` | `trait` | Row-by-row source/sink traits implemented by `PixelBuf`, `PixelView`/`PixelViewMut`, and `BandedBuf` | [Drilldown 2](#ownership-and-borrowing-relationships) |
 | `ByteStorage` / `ByteStorageMut` | `trait` | Zero-copy external backing storage traits (`Arc<[T]>`, `Box<[T]>`, `Vec<T>`, custom FFI owners) | [Drilldown 2](#anatomy-of-pixelbuf-and-pixelstorage) |
 | `RowAlign` / `BufFill` / `InteropTarget` | `enum` | Stride alignment (`Tight`, `Cache64`, `PixelCache64`, `Samples(u16)`), initial fill (`Black`, `White`), and interop preflight | [Drilldown 2](#choosing-a-pixelbuf-constructor) |
@@ -51,11 +53,11 @@ Start with a **struct or enum name** below to see how it fits into the `zenpixel
 |---|---|---|---|
 | `PlanarBuf` | `struct` | Owned multi-plane image (`Vec<PlaneBuf>`, e.g. YCbCr 4:2:0, P010, planar RGB+A) + frame-level color/matrix/siting | [Drilldown 3](#drilldown-3-planar-and-bit-packed-types) |
 | `PlanarView<'a>` / `PlanarViewMut<'a>` | `struct` | Borrowed multi-plane image or chroma-phase-exact crop (inline for `<= 4` planes, zero alloc) | [Drilldown 3](#drilldown-3-planar-and-bit-packed-types) |
-| `PlaneBuf` / `PlaneView<'a>` / `PlaneViewMut<'a>` | `struct` | Single plane (owned or borrowed) pairing `PlaneFormat` + `(width, height, stride)` + storage/bytes | [Drilldown 3](#anatomy-of-planarbuf-and-planeformat) |
+| `PlaneBuf` / `PlaneView<'a>` / `PlaneViewMut<'a>` | `struct` | Single plane (owned or borrowed) pairing `PlaneFormat` + `(width, height, stride_bytes)` + storage/bytes | [Drilldown 3](#anatomy-of-planarbuf-and-planeformat) |
 | `PlaneFormat` | `struct` (`Copy`) | Per-plane descriptor: `role: PlaneRole`, `sample: SampleType`, `components: u8`, `packing: BitPacking`, `subsampling: (u8, u8)` | [Drilldown 3](#anatomy-of-planarbuf-and-planeformat) |
 | `PlaneRole` | `enum` (`Copy`) | Semantic role: `Y`, `Cb`, `Cr`, `CbCr`, `CrCb`, `R`, `G`, `B`, `Alpha`, `Cyan`, `Magenta`, `Yellow`, `Key`, `Depth`, `GainMap`, `Matte`, `Thermal`, `Packed`, `Extra(u16)` | [Drilldown 3](#anatomy-of-planarbuf-and-planeformat) |
 | `SampleStride` | `struct` (`Copy`) | Newtype `SampleStride(usize)` expressing a plane stride in scalar elements `S` (not bytes) | [Drilldown 3](#plane-stride-rules-bytes-vs-samples) |
-| `CodePlane<'a>` / `CodePlaneMut<'a>` | `struct` | Zero-copy reader/writer for raw N-bit integer codes (`0..=1023`, etc.) without color conversion | [Drilldown 3](#codeplane-and-sampleencoding) |
+| `CodePlane<'a>` / `CodePlaneMut<'a>` / `InterleavedCodeLayout` | `struct` | Zero-copy reader/writer for raw N-bit integer codes (`0..=1023`, etc.) and interleaved component layout | [Drilldown 3](#codeplane-and-sampleencoding) |
 | `SampleEncoding` | `struct` (`Copy`) | Integer word bit-layout for `CodePlane` / `CodeMap`: `(storage: SampleType, code_bits: u8, bit_shift: u8)` | [Drilldown 3](#codeplane-and-sampleencoding) |
 | `ChromaSiting` | `enum` (`Copy`) | Subsampled chroma sample position relative to luma (`Unknown`, `Center`, `Left`, `TopLeft`, `Top`, `BottomLeft`, `Bottom`) | [Drilldown 3](#anatomy-of-planarbuf-and-planeformat) |
 | `ChromaSubsampling` | `enum` (`Copy`) | Chroma grid ratio: `Mono`, `Yuv444`, `Yuv422`, `Yuv420`, `Yuv440`, `Yuv411` | [Drilldown 3](#anatomy-of-planarbuf-and-planeformat) |
@@ -67,7 +69,7 @@ Start with a **struct or enum name** below to see how it fits into the `zenpixel
 |---|---|---|---|
 | `ColorOrigin` / `OriginKind` | `struct` / `enum` | File provenance of original color chunks (`Assumed`, `Cicp`, `Icc`, `IccAndCicp`, `GamaChrm`), distinct from active `ColorSpace` | [Drilldown 4](#colororigin-cicp-and-cicptag) |
 | `Cicp` / `CicpTag` | `struct` (`Copy`) | 4-byte H.273 CICP tuple and 12/44-byte ICC.1 `cicpType` tag (with signed `s15Fixed16` custom primaries) | [Drilldown 4](#colororigin-cicp-and-cicptag) |
-| `HdrMetadata` | `struct` (`Copy`) | Optional `cll: Option<ContentLightLevel>` + `mastering: Option<MasteringDisplay>` | [Drilldown 4](#hdrmetadata-nits-diffusewhite-and-hlgrendering) |
+| `HdrMetadata` | `struct` (`Copy`) | Optional `content_light_level: Option<ContentLightLevel>` + `mastering: Option<MasteringDisplay>` | [Drilldown 4](#hdrmetadata-nits-diffusewhite-and-hlgrendering) |
 | `Nits` / `DiffuseWhite` / `HlgRendering` | `struct` (`Copy`) | Validated positive luminance units (cd/m²), SDR paper-white anchor (`BT2408` = 203 nits), and HLG display OOTF | [Drilldown 4](#hdrmetadata-nits-diffusewhite-and-hlgrendering) |
 | `SampleFacts` / `ExactDepth` / `FloatFacts` | `struct` (`Copy`) | Proven or caller-asserted content invariants (`all_opaque`, `all_grayscale`, `binary_alpha`, exact bit-grid depth, float finiteness/range) | [Drilldown 4](#samplefacts-exactdepth-and-floatfacts) |
 | `Orientation` | `enum` (`Copy`) | EXIF 1..=8 D4 dihedral transform (`Identity`, `FlipH`, `Rotate90`, `Rotate180`, `Rotate270`, `FlipV`, `Transpose`, `Transverse`) | [Drilldown 4](#orientation) |
@@ -80,13 +82,13 @@ Start with a **struct or enum name** below to see how it fits into the `zenpixel
 |---|---|---|---|
 | `ConvertPolicy` | `struct` | Complete conversion rules: loss gates (`DepthPolicy`, `AlphaPolicy`, `GamutPolicy`, `RangePolicy`), luma, HDR anchors, CMS, tone mapper, SIMD | [Drilldown 5](#drilldown-5-conversion-engine-zenpixels-convert) |
 | `ImagePlan` | `struct` | Compiled reusable whole-image converter (`PixelSource` → `PixelBuf` or `PixelSink`) | [Drilldown 5](#choosing-a-conversion-entry-point) |
-| `RowPlan` | `struct` | Compiled streaming row-by-row converter with zero per-row heap allocation (`convert_row`) | [Drilldown 5](#choosing-a-conversion-entry-point) |
-| `OutputPlan` / `EncodeReady<'a>` / `OutputSignaling` | `struct` / `struct` / `enum` | Encoder adaptation plan that converts pixels and resolves matching CICP + ICC signaling atomically | [Drilldown 5](#outputplan-negotiate-and-encodeready) |
+| `RowPlan` | `struct` | Compiled streaming row-by-row converter with zero per-row heap allocation (`convert_row` / `convert_row_at`) | [Drilldown 5](#choosing-a-conversion-entry-point) |
+| `OutputPlan` / `EncodeReady<'a>` / `OutputSignaling` / `ResolvedSignaling` | `struct` / `struct` / `enum` / `struct` | Encoder adaptation plan that converts pixels and resolves matching CICP + ICC signaling atomically | [Drilldown 5](#outputplan-negotiate-and-encodeready) |
 | `Negotiate` / `NegotiatedFormat` / `FormatCost` / `LossKind` | `struct` / `struct` / `struct` / `enum` | Picks the lowest-loss, lowest-effort encoder format from `&[PixelFormat]` or `&[ParametricFormat]` | [Drilldown 5](#outputplan-negotiate-and-encodeready) |
 | `Accelerators` | `struct` (`Copy`) | `const` SIMD feature bitmask (`SCALAR`, `LAYOUT`, `WEB_SDR`, `HDR`, `GAINMAP`, `OKLAB`, `ALL`) | [Drilldown 5](#convertpolicy-anatomy-and-presets) |
 | `CmsBackend` / `CmsTransform` / `MoxCms` / `Lcms` | `trait` / `struct` | Pluggable ICC/CMYK color management backends (`cms-moxcms`, `cms-lcms` features) | [Drilldown 5](#convertpolicy-anatomy-and-presets) |
 | `ToneMapper` / `Bt2446A` / `SoftCompress` | `trait` / `struct` | Pluggable HDR→SDR tone mapper (ITU-R BT.2446 Method A) and Oklab gamut soft-knee compressor | [Drilldown 5](#convertpolicy-anatomy-and-presets) |
-| `GainMapApplier` / `GainMapApplyConfig` / `GainMapExtractConfig` / `GainMapRowExtractor` | `struct` | Streaming and whole-image ISO 21496-1 / UltraHDR gain-map rendering and extraction (`gainmap` module) | [Drilldown 5](#gain-maps-compaction-and-measurement) |
+| `GainMapApplier` / `GainMapLayer` / `GainMapApplyConfig` / `GainMapExtractConfig` / `GainMapRowExtractor` | `struct` | Streaming and whole-image ISO 21496-1 / UltraHDR gain-map rendering and extraction (`gainmap` module) | [Drilldown 5](#gain-maps-compaction-and-measurement) |
 | `PlanarReconstructionOptions` / `ChromaUpsample` | `struct` / `enum` | Planar YCbCr/GBR/RGB → interleaved reconstruction settings (`nearest`, `bilinear`, siting fallback) | [Drilldown 3](#constructing-and-reconstructing-planar-images) |
 | `CompactionReport` / `AlphaCompaction` | `struct` / `enum` | Content analysis (`requires_alpha`, `requires_chroma`, `requires_u16_precision`) + lossless compaction | [Drilldown 5](#gain-maps-compaction-and-measurement) |
 | `LightLevelHistogram` / `LightLevelMethod` | `struct` / `enum` | HDR luminance histogram for `MaxCLL` / `MaxFALL` / peak measurement | [Drilldown 5](#gain-maps-compaction-and-measurement) |
@@ -329,26 +331,26 @@ PixelBuf  <── into_parts() / from_parts() ──>  PixelBufParts
 │   ├── Aligned64(AlignedSamples)           // 64-byte cache-line aligned allocation
 │   ├── External(ExternalStorage)           // Read-only zero-copy (Arc<[u8]>, FFI); CoW on mutation
 │   └── ExternalMut(ExternalMutStorage)     // Mutable zero-copy (Box<[T]>, custom ByteStorageMut)
-├── offset:      usize                      // Byte offset into storage (updated O(1) by into_crop!)
-├── width:       u32                        // Active width in pixels
-├── height:      u32                        // Active height in rows
-├── stride:      usize                      // Byte distance between consecutive row starts (>= width * bpp)
-├── format:      PixelFormat                // layout: SampleLayout + color: ColorSpace
-├── facts:       SampleFacts                // Proven/asserted content facts (cleared on mutable access)
-├── hdr:         HdrMetadata                // Optional ContentLightLevel + MasteringDisplay
-├── origin:      ColorOrigin                // Original file signaling provenance
-└── orientation: Orientation                // EXIF 1..=8 (Identity by default)
+├── byte_offset:  usize                      // Byte offset into storage (updated O(1) by into_crop!)
+├── width:        u32                        // Active width in pixels
+├── height:       u32                        // Active height in rows
+├── stride_bytes: usize                      // Byte distance between consecutive row starts (>= width * bpp)
+├── format:       PixelFormat                // layout: SampleLayout + color: ColorSpace
+├── facts:        SampleFacts                // Proven/asserted content facts (cleared on mutable access)
+├── hdr:          HdrMetadata                // Optional ContentLightLevel + MasteringDisplay
+├── origin:       ColorOrigin                // Original file signaling provenance
+└── orientation:  Orientation                // EXIF 1..=8 (Identity by default)
 
 PixelView<'a>                               PixelViewMut<'a>
-├── data:        &'a [u8]                   ├── data:        &'a mut [u8]
-├── width:       u32                        ├── width:       u32
-├── height:      u32  (alias: rows())       ├── height:      u32  (alias: rows())
-├── stride:      usize (bytes)              ├── stride:      usize (bytes)
-├── format:      FormatCow<'a>              ├── format:      FormatCow<'a>
-├── facts:       SampleFacts                ├── hdr:         HdrMetadata
-├── hdr:         HdrMetadata                └── orientation: Orientation
-├── origin:      Option<&'a ColorOrigin>
-└── orientation: Orientation
+├── data:         &'a [u8]                  ├── data:         &'a mut [u8]
+├── width:        u32                       ├── width:        u32
+├── height:       u32                       ├── height:       u32
+├── stride_bytes: usize                     ├── stride_bytes: usize
+├── format:       FormatCow<'a>             ├── format:       FormatCow<'a>
+├── facts:        SampleFacts               ├── hdr:          HdrMetadata
+├── hdr:          HdrMetadata               └── orientation:  Orientation
+├── origin:       Option<&'a ColorOrigin>
+└── orientation:  Orientation
 ```
 
 ### Choosing a `PixelBuf` Constructor
@@ -362,15 +364,15 @@ PixelView<'a>                               PixelViewMut<'a>
 | Tight `Vec<u8>` raw bytes | `PixelBuf::from_bytes(bytes, w, h, format)` | Use `from_bytes_recover` to get `Vec<u8>` back on error |
 | Tight `Vec<P>` (`u8`, `u16`, `f32`, `[u8; 3]`, `Rgbx`, `rgb::Rgb<u8>`) | `PixelBuf::from_typed(vec, w, h, format)` | Checks `P: TypedElement` against `format.layout`; use `from_typed_recover` to recover |
 | Tight scalar `Vec<S>` (`u8`/`u16`/`f32`/`F16Sample`) | `PixelBuf::from_samples(vec, w, h, format)` | Checks `S::SAMPLE_TYPE == format.layout.sample` |
-| Tight `rgb::Rgb<T>` / `Rgba<T>` (`rgb` feature) | `PixelBuf::from_pixels(vec, w, h, ColorSpace::SRGB)` | Layout inferred from `P::LAYOUT`, so takes `ColorSpace` (not `PixelFormat`) |
-| Arbitrary `Vec<P: Pod>` (unchecked cast) | `PixelBuf::from_raw_pod(vec, w, h, format)` | Reinterprets native-endian bytes without checking `P`'s channel structure |
-| External `Arc<[u8]>`, `Box<[T]>`, or FFI buffer | `PixelBuf::from_external(owner, w, h, stride, format)` / `from_external_mut` | Zero-copy; returns `Err((err, owner))` on failure; `_with_offset` takes a leading byte offset |
+| Tight `rgb::Rgb<T>` / `Rgba<T>` (`rgb` feature) | `PixelBuf::from_pixels_with_color(vec, w, h, ColorSpace::SRGB)` | Layout inferred from `P::LAYOUT`, so takes `ColorSpace` (not `PixelFormat`) |
+| Arbitrary `Vec<P: Pod>` (unchecked cast) | `PixelBuf::from_pod_bytes_unchecked(vec, w, h, format)` | Reinterprets native-endian bytes without checking `P`'s channel structure |
+| External `Arc<[u8]>`, `Box<[T]>`, or FFI buffer | `PixelBuf::from_external(owner, w, h, stride_bytes, format)` / `from_external_mut` | Zero-copy; returns `Err((err, owner))` on failure; `_with_byte_offset` takes a leading byte offset |
 
 ### Constructing, Borrowing, Cropping & Relabeling
 
 ```rust
 use std::sync::Arc;
-use zenpixels::{AlphaMode, ColorSpace, PixelBuf, PixelFormat, PixelView, formats};
+use zenpixels::{AlphaMode, ColorSpace, PixelBuf, PixelFormat, PixelRect, PixelView, formats};
 
 // 1. Borrow raw bytes with zero heap allocation using `&formats::*`:
 let raw = [255u8, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
@@ -381,14 +383,14 @@ assert_eq!(view.row(1), &[0, 0, 255, 255, 255, 255]);
 let shared: Arc<[u8]> = Arc::from(raw.to_vec());
 let mut buf = PixelBuf::from_external(shared.clone(), 2, 2, 6, PixelFormat::RGB8_SRGB)
     .map_err(|(err, _orig)| err)?;
-let crop = buf.crop_view(1, 0, 1, 2)?; // (x=1, y=0, width=1, height=2)
-assert_eq!(crop.stride(), 6);          // Parent stride preserved; row(y) has 3 active bytes
+let crop = buf.crop_view(PixelRect::new(1, 0, 1, 2))?;
+assert_eq!(crop.stride_bytes(), 6);        // Parent stride preserved; row(y) has 3 active bytes
 buf.try_as_view_mut()?.row_mut(0)[0] = 42; // CoW promotes `buf`; `shared` stays untouched
 
 // 3. Relabel metadata without changing pixel bytes:
 let p3_buf = buf.relabel_color(ColorSpace::DISPLAY_P3)?; // Same layout, new ColorSpace
 let bgr_buf = p3_buf.relabel_format(PixelFormat::BGR8_SRGB)?; // Same sample/bpp, different order
-let _tight = bgr_buf.into_crop(0, 0, 1, 2)?.into_tight_buf()?; // O(1) crop, then pack tight
+let _tight = bgr_buf.into_crop(PixelRect::new(0, 0, 1, 2))?.into_tight_buf()?; // O(1) crop, then pack tight
 ```
 
 ### `BandedBuf` for Gigapixel Images
@@ -396,10 +398,10 @@ let _tight = bgr_buf.into_crop(0, 0, 1, 2)?.into_tight_buf()?; // O(1) crop, the
 `BandedBuf` holds `Vec<PixelBuf>` horizontal bands each capped at `max_band_bytes` (default `DEFAULT_MAX_BAND_BYTES`), and implements both `PixelSource` and `PixelSink` so `ImagePlan::execute` / `execute_into` and `apply_orientation_banded` process arbitrarily large images without one contiguous allocation:
 
 ```rust
-use zenpixels::{BandedBuf, DEFAULT_MAX_BAND_BYTES, PixelFormat};
+use zenpixels::{BandRowLocation, BandedBuf, DEFAULT_MAX_BAND_BYTES, PixelFormat};
 
 let mut big = BandedBuf::new(4096, 4096, PixelFormat::RGB8_SRGB, DEFAULT_MAX_BAND_BYTES)?;
-let (band_index, local_y) = big.locate(1000).unwrap();
+let BandRowLocation { band_index, local_y } = big.locate_row(1000).unwrap();
 let _row: &[u8] = big.row(1000);
 let _band_view = big.band_view(band_index).unwrap();
 ```
@@ -430,7 +432,7 @@ PlanarBuf (owned) / PlanarView<'a> (inline <= 4 planes, 0-alloc) / PlanarViewMut
     │   ├── packing:     BitPacking               // Full | U10_LSB | U12_LSB | P010 | ...
     │   └── subsampling: (u8, u8)                 // (hx, vy): (1,1)=4:4:4, (2,1)=4:2:2, (2,2)=4:2:0
     ├── width, height:   u32                      // THIS plane's element dimensions (post-subsampling!)
-    ├── stride:          usize                    // Row stride in BYTES
+    ├── stride_bytes:    usize                    // Row stride in BYTES
     └── storage / data:  PixelStorage / &'a [u8] / &'a mut [u8]
 ```
 
@@ -449,7 +451,7 @@ PlanarBuf (owned) / PlanarView<'a> (inline <= 4 planes, 0-alloc) / PlanarViewMut
 |---|---|---|
 | `from_samples(samples, width, height, plane_format)` | 4 args | Tight automatic (`width * components * size_of::<S>()`) |
 | `from_samples_strided(samples, width, height, SampleStride(n), plane_format)` | 5 args | **Scalar elements `S`** (wrapped in `SampleStride` so bytes cannot be confused with samples) |
-| `new(bytes, width, height, stride_bytes, plane_format)` | 5 args | **Bytes** (`stride()` always returns bytes) |
+| `new(bytes, width, height, stride_bytes, plane_format)` | 5 args | **Bytes** (`stride_bytes()` always returns bytes) |
 
 ### Constructing and Reconstructing Planar Images
 
@@ -486,12 +488,12 @@ let rgba = reconstruct_planar_to_buf(
     &PlanarReconstructionOptions::bilinear(),
 )?;
 
-// Option B: zero-alloc into pre-allocated destination (note: `options` precedes `dst`!):
+// Option B: zero-alloc into pre-allocated destination (src, dst, options):
 let mut dst = PixelBuf::new(4, 4, PixelFormat::BGRA8_SRGB)?;
 reconstruct_planar_into(
     &planar,
-    &PlanarReconstructionOptions::bilinear(),
     &mut dst.as_view_mut(),
+    &PlanarReconstructionOptions::bilinear(),
 )?;
 ```
 
@@ -500,7 +502,9 @@ reconstruct_planar_into(
 When you want raw integer codes (e.g. 10-bit `0..=1023` from `U10_LSB` or `P010`) without color math:
 
 ```rust
-use zenpixels_convert::{CodeMap, CodeRole, SampleEncoding, SampleType, SignalRange, to_canonical};
+use zenpixels_convert::{
+    CodeMap, CodeRole, SampleEncoding, SampleType, SignalRange, unpack_code_planes_into,
+};
 
 // Borrow component 0 directly from a PlaneView:
 let code_plane = py.as_code_plane(0)?;
@@ -510,7 +514,7 @@ let sample_code: Option<u16> = code_plane.code(0, 0);
 let enc10 = SampleEncoding::new(SampleType::U16, 10, 0)?;
 let enc16 = SampleEncoding::new(SampleType::U16, 16, 0)?;
 let map = CodeMap::new(enc10, enc16, CodeRole::Intensity, SignalRange::Full)?;
-let widened_code = map.code(512);
+let widened_code = map.map_code(512);
 ```
 
 ---
@@ -550,7 +554,7 @@ assert_eq!(tag.encoded_len(), 44);
 
 ```text
 HdrMetadata (Copy, Default = empty)
-├── cll:       Option<ContentLightLevel>
+├── content_light_level: Option<ContentLightLevel>
 │   ├── max_content_light_level:       u16   (MaxCLL in cd/m²)
 │   └── max_frame_average_light_level: u16   (MaxFALL in cd/m²)
 └── mastering: Option<MasteringDisplay>      (presets: HDR10_REFERENCE, DISPLAY_P3_1000)
@@ -560,8 +564,8 @@ HdrMetadata (Copy, Default = empty)
     └── min_luminance:  f32                  (cd/m²)
 
 Validated luminance wrappers:
-├── Nits(f32)         ── finite > 0.0; Nits::new(1000.0) (panics if invalid) / Nits::try_new(v)
-├── DiffuseWhite(f32) ── SDR paper-white anchor; DiffuseWhite::BT2408 = 203.0 nits
+├── Nits(f32)         ── finite > 0.0; Nits::new(1000.0) -> Option<Nits>, const Nits::new_or_panic(1000.0)
+├── DiffuseWhite(f32) ── SDR paper-white anchor; DiffuseWhite::new(v) -> Option, DiffuseWhite::BT2408 = 203.0 nits
 └── HlgRendering      ── peak: Nits, black_nits: f32, system_gamma: f32 (REFERENCE_1000_NIT)
 ```
 
@@ -703,11 +707,11 @@ let row_plan = RowPlan::build(
 )?;
 let mut dst = PixelBuf::new(src_view.width(), src_view.height(), PixelFormat::RGBF32_LINEAR)?;
 for y in 0..src_view.height() {
-    row_plan.convert_row(src_view.row(y), dst.row_mut(y), src_view.width(), y)?;
+    row_plan.convert_row_at(y, src_view.row(y), dst.row_mut(y), src_view.width())?;
 }
 
 // 4. Whole-image HDR PQ -> SDR tone mapping with streaming peak measurement:
-let hdr_policy = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0))
+let hdr_policy = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0).unwrap())
     .with_tone_mapper(Arc::new(Bt2446A::pipeline_managed()));
 let sdr = ImagePlan::build(
     &formats::RGB16_BT2100_PQ,
@@ -748,23 +752,23 @@ let (negotiated, ready) = adapt_for_encode_parametric(
 
 ### Gain Maps, Compaction, and Measurement
 
-- **Gain maps (`zenpixels_convert::gainmap`):** Configure application via `GainMapApplyConfig::from_headroom_stops(stops)` or `from_display_boost_linear(boost)` (plus `.with_destination_format(...)`, `.with_orientation(...)`, `.with_resample(...)`), then run `apply_gain_map_with(&dual_view, &cfg, &Unstoppable)` or streaming `GainMapApplier::for_view(&dual_view, &cfg)`. Extract via `GainMapExtractConfig::default()` / `::ultrahdr()` + `extract_gain_map_only`.
+- **Gain maps (`zenpixels_convert::gainmap`):** Configure application via `GainMapApplyConfig::from_headroom_stops(stops)` or `from_display_boost_linear(boost)` (plus `.with_destination_format(...)`, `.with_orientation(...)`, `.with_resample(...)`), then run `apply_gain_map_with(&dual_view, &cfg, &Unstoppable)` or streaming `GainMapApplier::for_view(&dual_view, &cfg)` (or `GainMapApplier::new(GainMapLayer::new(...), GainMapLayer::new(...), ...)`). Extract via `GainMapExtractConfig::default()` / `::ultrahdr()` + `extract_gain_map_only`.
 - **Compaction (`zenpixels_convert::compact`):** `analyze_compaction(&view)` returns `CompactionReport { requires_alpha, requires_chroma, requires_u16_precision }`, `.candidate_format(src_format)` computes the smallest lossless target, and `compact_to_buf` / `compact_in_place` perform the reduction.
-- **HDR Measurement (`zenpixels_convert::measure`):** `measure_cll`, `measure_peak`, `measure_histogram` → `LightLevelHistogram` (note: `percentile_nits(p)` and `to_robust_cll(percentile)` expect a fraction `0.0..=1.0`, e.g. `0.9999`).
+- **HDR Measurement (`zenpixels_convert::measure`):** `measure_content_light_level`, `measure_peak`, `measure_histogram` → `LightLevelHistogram` (note: `quantile_nits(quantile)` and `to_robust_content_light_level(quantile)` expect a fraction `0.0..=1.0`, e.g. `0.9999`).
 
 ---
 
-## Current Sharp Edges & Gotchas to Keep in Mind
+## Key Contracts & Conventions to Keep in Mind
 
-| Area | What actually happens |
+| Area | Contract |
 |---|---|
-| `PixelView::rows()` / `PixelViewMut::rows()` | Returns **`u32` height** (an alias for `height()`), **not** an iterator over rows. Prefer `.height()` for clarity. |
 | `PixelBuf::new` vs `PixelBuf::new_zeroed` | `new` fills black + channel-max alpha for `AlphaMode::Opaque`. `new_zeroed` skips alpha fill and **rejects `AlphaMode::Opaque`** with `BufferError::UnverifiedOpaqueAlpha` until you fill pixels and call `into_opaque_verified()` / `assume_opaque()`. |
-| `crop(x, y, w, h)` / `crop_view(x, y, w, h)` | Parameters are `(x, y, width, height)` in pixels, **not** `(x0, y0, x1, y1)`. Crops keep the parent's `stride()`. |
-| `RowPlan::convert_row(src, dst, width, y)` | `width` is in pixels; `y` is the row index (only used for deterministic 4×4 Bayer ordered dithering; pass `0` if not dithering). |
-| `reconstruct_planar_to_buf` vs `reconstruct_planar_into` | `to_buf(src, dst_layout, options)` puts `options` **3rd**, while `into(src, options, dst)` puts `options` **2nd**. |
-| `ColorSpace::with_primaries` vs `ParametricColor::with_primaries` | On `ColorSpace`/`PixelFormat`/`ParametricFormat`, `with_primaries` returns `Self` (silently no-ops on non-RGB) and `try_with_primaries` returns `Option<Self>`. On `ParametricColor`, `with_primaries` itself returns `Option<Self>`. |
-| `LightLevelHistogram::percentile_nits(p)` | `p` is a **fraction in `0.0..=1.0`** (e.g. `0.999`), not `0.0..=100.0`. |
-| `PixelView::as_strided_bytes()` vs `as_contiguous_bytes()` vs `contiguous_bytes()` | `as_strided_bytes()` includes row padding bytes; `as_contiguous_bytes()` returns `Option<&[u8]>` (only when tight); `contiguous_bytes()` returns `Result<Cow<[u8]>, _>` (copies to strip padding when strided). |
+| `crop(PixelRect)` / `crop_view(PixelRect)` | Takes `PixelRect::new(x, y, width, height)` in pixels. Crops preserve the parent's `stride_bytes()`. |
+| `RowPlan::convert_row` vs `convert_row_at` | `convert_row(src, dst, width_pixels)` is the common 3-arg call; `convert_row_at(row_index, src, dst, width_pixels)` passes the image row index for deterministic 4×4 Bayer ordered dithering. |
+| `reconstruct_planar_to_buf` vs `reconstruct_planar_into` | Both put `&PlanarReconstructionOptions` **last**: `to_buf(src, dst_layout, options)` and `into(src, dst, options)`. |
+| `with_*` vs `try_with_*` on `ColorSpace`, `ParametricColor`, `PixelFormat`, `ParametricFormat` | `with_*` returns `Self` (no-op if the variant lacks that field); `try_with_*` returns `Option<Self>` (`None` if inapplicable). |
+| `LightLevelHistogram::quantile_nits(quantile)` | `quantile` is a **fraction in `0.0..=1.0`** (e.g. `0.999`), not `0.0..=100.0`. `LightLevelHistogram::new(method)` is fallible (`Result<Self, At<ConvertError>>`). |
+| `PixelView::as_strided_bytes()` vs `as_contiguous_bytes()` vs `to_contiguous_bytes()` | `as_strided_bytes()` includes row padding bytes; `as_contiguous_bytes()` returns `Option<&[u8]>` (only when tight); `to_contiguous_bytes()` returns `Result<Cow<[u8]>, _>` (copies to strip padding when strided). |
 | `PixelBuf::as_view_mut()` vs `try_as_view_mut()` | On immutable `External` storage (`Arc<[u8]>`), `as_view_mut()` promotes via CoW and **panics on OOM**; `try_as_view_mut()` returns `Result<PixelViewMut<'_>, At<BufferError>>`. |
-| `ExactDepth::combine` vs `ExactDepth::union` | `combine` takes the tighter depth (`min`) of two facts about the **same** buffer; `union` computes the smallest common containing grid (`lcm` / `max`) across **disjoint** strips of an image. |
+| `ExactDepth::intersect_same_buffer` vs `union_disjoint_regions` | `intersect_same_buffer` takes the tighter depth (`min`) of two facts about the **same** buffer; `union_disjoint_regions` computes the smallest common containing grid (`lcm` / `max`) across **disjoint** strips of an image. |
+| `Nits::new` / `DiffuseWhite::new` / `GainMapMetadata::symmetric_stops` | Fallible (`Option<Self>`) when rejecting non-positive or non-finite values; const panicking constructors use explicit `_or_panic` (`Nits::new_or_panic`, `DiffuseWhite::new_or_panic`). |

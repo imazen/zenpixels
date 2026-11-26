@@ -39,12 +39,13 @@ impl DiffuseWhite {
     /// ITU-R BT.2408 HDR reference white: **203 cd/m²**. The cross-industry
     /// default anchor for relative-linear HDR (matches Chrome `SDRWhiteLevel`,
     /// Skia skcms, CSS `rec2100-linear`, and libplacebo).
-    pub const BT2408: Self = Self::new(203.0);
+    pub const BT2408: Self = Self::new_or_panic(203.0);
 
-    /// [`new`](Self::new), or `None` unless `nits` is finite and strictly positive.
+    /// Construct a diffuse white anchor of `nits` cd/m², returning `None` unless
+    /// `nits` is finite and strictly positive.
     #[inline]
     #[must_use]
-    pub const fn try_new(nits: f32) -> Option<Self> {
+    pub const fn new(nits: f32) -> Option<Self> {
         if nits.is_finite() && nits > 0.0 {
             match NonZeroU32::new(nits.to_bits()) {
                 Some(bits) => Some(Self(bits)),
@@ -55,8 +56,11 @@ impl DiffuseWhite {
         }
     }
 
-    /// An anchor of `nits` cd/m² (the luminance that relative-linear `1.0`
-    /// represents).
+    /// Construct a diffuse white anchor of `nits` cd/m² (the luminance that
+    /// relative-linear `1.0` represents), panicking on invalid input.
+    ///
+    /// Intended for `const` items and validated literals; prefer [`new`](Self::new)
+    /// for runtime inputs.
     ///
     /// # Panics
     ///
@@ -64,7 +68,7 @@ impl DiffuseWhite {
     #[track_caller]
     #[inline]
     #[must_use]
-    pub const fn new(nits: f32) -> Self {
+    pub const fn new_or_panic(nits: f32) -> Self {
         assert!(
             nits.is_finite() && nits > 0.0,
             "diffuse white must be finite and strictly positive"
@@ -105,10 +109,10 @@ impl fmt::Debug for Nits {
 }
 
 impl Nits {
-    /// Return a luminance when it is finite and strictly positive.
+    /// Construct a luminance in cd/m², returning `None` unless `value` is finite and strictly positive.
     #[inline]
     #[must_use]
-    pub const fn try_new(value: f32) -> Option<Self> {
+    pub const fn new(value: f32) -> Option<Self> {
         if value.is_finite() && value > 0.0 {
             match NonZeroU32::new(value.to_bits()) {
                 Some(bits) => Some(Self(bits)),
@@ -118,13 +122,17 @@ impl Nits {
             None
         }
     }
-    /// Construct a luminance.
+    /// Construct a luminance in cd/m², panicking on invalid input.
+    ///
+    /// Intended for `const` items and validated literals; prefer [`new`](Self::new)
+    /// for runtime inputs.
+    ///
     /// # Panics
     /// Panics for zero, negative, NaN or infinite values.
     #[track_caller]
     #[inline]
     #[must_use]
-    pub const fn new(value: f32) -> Self {
+    pub const fn new_or_panic(value: f32) -> Self {
         assert!(
             value.is_finite() && value > 0.0,
             "luminance must be finite and strictly positive"
@@ -241,7 +249,7 @@ mod tests {
     fn diffuse_white_defaults_to_bt2408() {
         assert_eq!(DiffuseWhite::default(), DiffuseWhite::BT2408);
         assert_eq!(DiffuseWhite::BT2408.nits(), 203.0);
-        assert_eq!(DiffuseWhite::new(100.0).nits(), 100.0);
+        assert_eq!(DiffuseWhite::new(100.0).unwrap().nits(), 100.0);
     }
 
     #[test]
@@ -249,56 +257,73 @@ mod tests {
         // Anchor metadata is byte-identical-preserved through the constructor:
         // a custom 100 cd/m² (HDR home-tier mastering) and 10 000 cd/m² (PQ
         // peak) both round-trip through `new` → `nits` losslessly.
-        assert_eq!(DiffuseWhite::new(100.0).nits(), 100.0);
-        assert_eq!(DiffuseWhite::new(10_000.0).nits(), 10_000.0);
+        assert_eq!(DiffuseWhite::new(100.0).unwrap().nits(), 100.0);
+        assert_eq!(DiffuseWhite::new(10_000.0).unwrap().nits(), 10_000.0);
         // PartialEq honours bit equality (see the impl above) so two
         // independently constructed anchors compare equal.
-        assert_eq!(DiffuseWhite::new(203.0), DiffuseWhite::BT2408);
+        assert_eq!(DiffuseWhite::new(203.0), Some(DiffuseWhite::BT2408));
     }
 
     #[test]
     fn diffuse_white_accepts_positive_finite_bounds_and_const_construction() {
-        const CUSTOM: DiffuseWhite = DiffuseWhite::new(100.0);
+        const CUSTOM: DiffuseWhite = DiffuseWhite::new_or_panic(100.0);
         assert_eq!(CUSTOM.nits(), 100.0);
         for nits in [f32::from_bits(1), f32::MIN_POSITIVE, f32::MAX] {
-            assert_eq!(DiffuseWhite::new(nits).nits().to_bits(), nits.to_bits());
+            assert_eq!(
+                DiffuseWhite::new(nits).unwrap().nits().to_bits(),
+                nits.to_bits()
+            );
+        }
+    }
+
+    #[test]
+    fn diffuse_white_new_returns_none_for_invalid() {
+        for invalid in [
+            0.0,
+            -0.0,
+            -100.0,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ] {
+            assert_eq!(DiffuseWhite::new(invalid), None);
         }
     }
 
     #[test]
     #[should_panic(expected = "diffuse white must be finite and strictly positive")]
     fn diffuse_white_rejects_zero() {
-        let _ = DiffuseWhite::new(0.0);
+        let _ = DiffuseWhite::new_or_panic(0.0);
     }
 
     #[test]
     #[should_panic(expected = "diffuse white must be finite and strictly positive")]
     fn diffuse_white_rejects_negative_zero() {
-        let _ = DiffuseWhite::new(-0.0);
+        let _ = DiffuseWhite::new_or_panic(-0.0);
     }
 
     #[test]
     #[should_panic(expected = "diffuse white must be finite and strictly positive")]
     fn diffuse_white_rejects_negative() {
-        let _ = DiffuseWhite::new(-100.0);
+        let _ = DiffuseWhite::new_or_panic(-100.0);
     }
 
     #[test]
     #[should_panic(expected = "diffuse white must be finite and strictly positive")]
     fn diffuse_white_rejects_nan() {
-        let _ = DiffuseWhite::new(f32::NAN);
+        let _ = DiffuseWhite::new_or_panic(f32::NAN);
     }
 
     #[test]
     #[should_panic(expected = "diffuse white must be finite and strictly positive")]
     fn diffuse_white_rejects_infinity() {
-        let _ = DiffuseWhite::new(f32::INFINITY);
+        let _ = DiffuseWhite::new_or_panic(f32::INFINITY);
     }
 
     #[test]
     #[should_panic(expected = "diffuse white must be finite and strictly positive")]
     fn diffuse_white_rejects_negative_infinity() {
-        let _ = DiffuseWhite::new(f32::NEG_INFINITY);
+        let _ = DiffuseWhite::new_or_panic(f32::NEG_INFINITY);
     }
 
     #[test]
@@ -456,7 +481,7 @@ impl HlgRendering {
     /// Explicit ideal-black reference rendering: 1000 nits, gamma 1.2,
     /// reference surround (5 cd/m²). Opt in; never inferred from an HLG tag.
     pub const REFERENCE_1000_NIT: Self = Self {
-        peak: Nits::new(1000.0),
+        peak: Nits::new_or_panic(1000.0),
         black_bits: 0,
         gamma_bits: 1.2f32.to_bits(),
     };

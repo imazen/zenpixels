@@ -1,6 +1,8 @@
 //! Executable examples of existing typed component views.
 use serde_json::{Value, json};
-use zenpixels::{CodePlane, PixelViewMut, SampleEncoding, SampleType, SignalRange};
+use zenpixels::{
+    CodePlane, InterleavedCodeLayout, PixelViewMut, SampleEncoding, SampleType, SignalRange,
+};
 
 pub(crate) fn inspect(v: &Value) -> Result<Value, String> {
     let case = v["case"].as_str().ok_or("Choose a storage example")?;
@@ -43,11 +45,7 @@ pub(crate) fn inspect(v: &Value) -> Result<Value, String> {
         .map(|(c, &e)| {
             CodePlane::component_from_u16(
                 &words,
-                width * components,
-                rows,
-                stride,
-                components,
-                c,
+                InterleavedCodeLayout::new(width * components, rows, stride, components, c),
                 e,
             )
             .unwrap()
@@ -78,7 +76,7 @@ pub(crate) fn inspect(v: &Value) -> Result<Value, String> {
 }
 
 fn rgb565() -> Result<Value, String> {
-    use zenpixels_convert::codes::to_canonical;
+    use zenpixels_convert::codes::unpack_code_planes_into;
 
     let words = [0xffffu16, 0x8410, 0xa5a5, 0, 0x1234];
     let readers = [(5, 11), (6, 5), (5, 0)].map(|(bits, shift)| {
@@ -103,9 +101,10 @@ fn rgb565() -> Result<Value, String> {
         }
     }
     let mut canonical = [0u8; 12];
-    let dst = PixelViewMut::new(&mut canonical, 2, 2, 6, &zenpixels::formats::RGB8_SRGB)
+    let mut dst = PixelViewMut::new(&mut canonical, 2, 2, 6, &zenpixels::formats::RGB8_SRGB)
         .map_err(|e| e.to_string())?;
-    to_canonical(&readers, SignalRange::Full, 0, 0, dst).map_err(|e| e.to_string())?;
+    unpack_code_planes_into(&readers, SignalRange::Full, (0, 0), &mut dst)
+        .map_err(|e| e.to_string())?;
     let bytes: Vec<_> = words.iter().flat_map(|word| word.to_ne_bytes()).collect();
     Ok(json!({
         "case": "rgb565",
@@ -117,6 +116,6 @@ fn rgb565() -> Result<Value, String> {
         "planeCodes": plane_codes,
         "canonicalBytes": canonical,
         "allBitsUsed": true,
-        "planeStatus": "Three CodePlane::from_u16 views read (5 bits, shift 11), (6, 5) and (5, 0) from the same U16 words. to_canonical extracts and widens directly into RGB8; no intermediate unpacked plane is needed."
+        "planeStatus": "Three CodePlane::from_u16 views read (5 bits, shift 11), (6, 5) and (5, 0) from the same U16 words. unpack_code_planes_into extracts and widens directly into RGB8; no intermediate unpacked plane is needed."
     }))
 }

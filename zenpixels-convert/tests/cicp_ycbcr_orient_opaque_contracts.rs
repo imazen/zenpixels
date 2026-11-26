@@ -12,10 +12,10 @@ use zenpixels_convert::{
     Accelerators, AlphaMode, BandedBuf, ChromaSiting, Cicp, ColorOrigin, ColorSpace,
     ContentLightLevel, ConvertError, ConvertPolicy, DiffuseWhite, GamutPolicy, HdrMetadata,
     HlgMode, HlgRendering, ImagePlan, Orientation, OutputPlan, OutputSignaling, ParametricFormat,
-    PeakSource, PixelBuf, PixelFormat, PlanarBuf, PlanarReconstructionOptions, PlaneFormat,
-    PlaneRole, PlaneView, Primaries, RowPlan, SampleLayout, SampleType, SignalRange, Transfer,
-    YcbcrMatrix, bake_orientation_owned, compact_in_place, compact_to_buf, reconstruct_planar_f32,
-    reconstruct_planar_into, reconstruct_planar_to_buf,
+    PeakSource, PixelBuf, PixelFormat, PixelRect, PlanarBuf, PlanarReconstructionOptions,
+    PlaneFormat, PlaneRole, PlaneView, Primaries, RowPlan, SampleLayout, SampleType, SignalRange,
+    Transfer, YcbcrMatrix, bake_orientation_owned, compact_in_place, compact_to_buf,
+    reconstruct_planar_f32, reconstruct_planar_into, reconstruct_planar_to_buf,
 };
 #[cfg(feature = "gainmap")]
 use zenpixels_convert::{
@@ -223,7 +223,7 @@ fn rgb10a2_unverified_opaque_canonicalization_and_orientation_propagation() {
     let g = 256u32;
     let b = 1023u32;
     let poisoned_word: u32 = r | (g << 10) | (b << 20); // alpha = 0!
-    let src = PixelBuf::from_raw_pod(vec![poisoned_word; 4], 4, 1, spec.clone())
+    let src = PixelBuf::from_pod_bytes_unchecked(vec![poisoned_word; 4], 4, 1, spec.clone())
         .unwrap()
         .with_orientation(Orientation::Rotate90);
 
@@ -414,7 +414,7 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
 
     // With Center siting: x=0 -> c[0]=0, x=1 -> 0.75*0 + 0.25*255, x=2 -> 0.25*0 + 0.75*255, x=3 -> c[1]=255!
     let hdr = HdrMetadata {
-        cll: Some(ContentLightLevel::new(500, 100)),
+        content_light_level: Some(ContentLightLevel::new(500, 100)),
         mastering: None,
     };
     let origin = ColorOrigin::from_cicp(Cicp::SRGB);
@@ -439,7 +439,7 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
     assert!(row0[2] < row0[5] && row0[5] < row0[8] && row0[8] < row0[11]);
 
     // Odd crop origin (1, 1) bilinear MUST match full-frame bilinear cropped at (1, 1)!
-    let odd_crop = center_420.crop(1, 1, 2, 2).unwrap();
+    let odd_crop = center_420.crop(PixelRect::new(1, 1, 2, 2)).unwrap();
     let crop_bi = reconstruct_planar_to_buf(
         &odd_crop,
         SampleLayout::RGBF32,
@@ -449,7 +449,11 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
     for y in 0..2 {
         assert_eq!(
             crop_bi.as_view().row(y),
-            full_bi.as_view().crop(1, 1, 2, 2).unwrap().row(y),
+            full_bi
+                .as_view()
+                .crop(PixelRect::new(1, 1, 2, 2))
+                .unwrap()
+                .row(y),
             "odd-origin 4:2:0 bilinear row {y} must match full-frame bilinear + crop"
         );
     }
@@ -472,15 +476,15 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
     let mut bgr8_buf = PixelBuf::new(4, 4, ParametricFormat::BGR8_SRGB).unwrap();
     reconstruct_planar_into(
         &center_420,
-        &PlanarReconstructionOptions::bilinear(),
         &mut bgr8_buf.as_view_mut(),
+        &PlanarReconstructionOptions::bilinear(),
     )
     .unwrap();
     let mut rgb8_buf = PixelBuf::new(4, 4, ParametricFormat::RGB8_SRGB).unwrap();
     reconstruct_planar_into(
         &center_420,
-        &PlanarReconstructionOptions::bilinear(),
         &mut rgb8_buf.as_view_mut(),
+        &PlanarReconstructionOptions::bilinear(),
     )
     .unwrap();
     // BGR8 matches RGB8 with R<->B swapped!
@@ -495,8 +499,8 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
     let mut rgba8_buf = PixelBuf::new(4, 4, PixelFormat::RGBA8_SRGB).unwrap();
     reconstruct_planar_into(
         &center_420,
-        &PlanarReconstructionOptions::bilinear(),
         &mut rgba8_buf.as_view_mut(),
+        &PlanarReconstructionOptions::bilinear(),
     )
     .unwrap();
     assert_eq!(rgba8_buf.row(0)[3], 255);
@@ -510,8 +514,8 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
     assert_eq!(
         *reconstruct_planar_into(
             &center_420,
-            &PlanarReconstructionOptions::bilinear(),
             &mut wrong_p3_dst.as_view_mut(),
+            &PlanarReconstructionOptions::bilinear(),
         )
         .unwrap_err()
         .error(),
@@ -521,8 +525,8 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
     assert_eq!(
         *reconstruct_planar_into(
             &untagged_420,
-            &PlanarReconstructionOptions::nearest(),
             &mut rgb8_buf.as_view_mut(),
+            &PlanarReconstructionOptions::nearest(),
         )
         .unwrap_err()
         .error(),
@@ -544,8 +548,8 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
     let mut gray8 = PixelBuf::new(4, 4, ParametricFormat::GRAY8_SRGB).unwrap();
     reconstruct_planar_into(
         &mono_view,
-        &PlanarReconstructionOptions::nearest(),
         &mut gray8.as_view_mut(),
+        &PlanarReconstructionOptions::nearest(),
     )
     .unwrap();
     assert_eq!(gray8.as_view().row(0), &[128, 128, 128, 128]);
@@ -628,8 +632,8 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
     assert_eq!(
         *reconstruct_planar_into(
             &p_premul,
-            &PlanarReconstructionOptions::nearest(),
             &mut dst_straight.as_view_mut(),
+            &PlanarReconstructionOptions::nearest(),
         )
         .unwrap_err()
         .error(),
@@ -896,6 +900,10 @@ fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
     ];
     let native_src =
         PixelBuf::from_typed(sample_pixels.clone(), 3, 1, native_acescg_spec.clone()).unwrap();
+    #[cfg_attr(
+        not(any(feature = "cms-moxcms", feature = "cms-lcms")),
+        allow(unused_variables)
+    )]
     let icc_src = PixelBuf::from_typed(sample_pixels, 3, 1, icc_acescg_spec).unwrap();
 
     let native_out = ImagePlan::build(
@@ -907,6 +915,10 @@ fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
     .unwrap()
     .execute(&native_src)
     .unwrap();
+    #[cfg_attr(
+        not(any(feature = "cms-moxcms", feature = "cms-lcms")),
+        allow(unused_variables)
+    )]
     let native_row: &[f32] = native_out.as_view().row_as(0).unwrap();
 
     #[cfg(feature = "cms-moxcms")]

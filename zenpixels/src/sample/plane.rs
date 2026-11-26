@@ -91,7 +91,12 @@ impl ChromaSiting {
     /// - `Center` → `(0.5, 0.5)`
     #[inline]
     #[must_use]
-    pub const fn offset_in_cell(self, hx: u8, vy: u8) -> Option<(f32, f32)> {
+    pub const fn offset_in_cell(
+        self,
+        horizontal_divisor: u8,
+        vertical_divisor: u8,
+    ) -> Option<(f32, f32)> {
+        let (hx, vy) = (horizontal_divisor, vertical_divisor);
         let cx = if hx <= 1 {
             0.0
         } else {
@@ -167,28 +172,71 @@ impl fmt::Display for CodePlaneError {
 
 impl core::error::Error for CodePlaneError {}
 
-impl<'a> CodePlane<'a> {
-    /// Borrow a single-component `u8` plane (`stride_words >= width`).
-    pub fn from_u8(
-        data: &'a [u8],
-        width: usize,
-        height: usize,
-        stride_words: usize,
-        encoding: SampleEncoding,
-    ) -> Result<Self, CodePlaneError> {
-        Self::component_from_u8(data, width, height, stride_words, 1, 0, encoding)
-    }
+/// Geometry and component selection for borrowing one component from an interleaved code plane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct InterleavedCodeLayout {
+    /// Active row width in storage words across all interleaved components (`width_pixels * component_count`).
+    pub width_words: usize,
+    /// Active plane height in rows.
+    pub height: usize,
+    /// Row stride in storage words (`>= width_words`).
+    pub stride_words: usize,
+    /// Number of interleaved components per element (e.g., `2` for `CbCr`).
+    pub component_count: usize,
+    /// Zero-based component index to extract (`0..component_count`).
+    pub component_index: usize,
+}
 
-    /// Borrow component `index` of an interleaved `u8` plane (`width_words % components == 0`).
-    pub fn component_from_u8(
-        data: &'a [u8],
+impl InterleavedCodeLayout {
+    /// Construct an interleaved code-plane layout descriptor.
+    #[inline]
+    #[must_use]
+    pub const fn new(
         width_words: usize,
         height: usize,
         stride_words: usize,
-        components: usize,
-        index: usize,
+        component_count: usize,
+        component_index: usize,
+    ) -> Self {
+        Self {
+            width_words,
+            height,
+            stride_words,
+            component_count,
+            component_index,
+        }
+    }
+}
+
+impl<'a> CodePlane<'a> {
+    /// Borrow a single-component `u8` plane (`stride_words >= width_pixels`).
+    pub fn from_u8(
+        data: &'a [u8],
+        width_pixels: usize,
+        height: usize,
+        stride_words: usize,
         encoding: SampleEncoding,
     ) -> Result<Self, CodePlaneError> {
+        Self::component_from_u8(
+            data,
+            InterleavedCodeLayout::new(width_pixels, height, stride_words, 1, 0),
+            encoding,
+        )
+    }
+
+    /// Borrow one component of an interleaved `u8` plane described by `layout`.
+    pub fn component_from_u8(
+        data: &'a [u8],
+        layout: InterleavedCodeLayout,
+        encoding: SampleEncoding,
+    ) -> Result<Self, CodePlaneError> {
+        let InterleavedCodeLayout {
+            width_words,
+            height,
+            stride_words,
+            component_count: components,
+            component_index: index,
+        } = layout;
         if encoding.storage() != SampleType::U8 {
             return Err(CodePlaneError::StorageMismatch);
         }
@@ -219,27 +267,34 @@ impl<'a> CodePlane<'a> {
         })
     }
 
-    /// Borrow a single-component `u16` plane (`stride_words >= width`).
+    /// Borrow a single-component `u16` plane (`stride_words >= width_pixels`).
     pub fn from_u16(
         data: &'a [u16],
-        width: usize,
+        width_pixels: usize,
         height: usize,
         stride_words: usize,
         encoding: SampleEncoding,
     ) -> Result<Self, CodePlaneError> {
-        Self::component_from_u16(data, width, height, stride_words, 1, 0, encoding)
+        Self::component_from_u16(
+            data,
+            InterleavedCodeLayout::new(width_pixels, height, stride_words, 1, 0),
+            encoding,
+        )
     }
 
-    /// Borrow component `index` of an interleaved `u16` plane (`width_words % components == 0`).
+    /// Borrow one component of an interleaved `u16` plane described by `layout`.
     pub fn component_from_u16(
         data: &'a [u16],
-        width_words: usize,
-        height: usize,
-        stride_words: usize,
-        components: usize,
-        index: usize,
+        layout: InterleavedCodeLayout,
         encoding: SampleEncoding,
     ) -> Result<Self, CodePlaneError> {
+        let InterleavedCodeLayout {
+            width_words,
+            height,
+            stride_words,
+            component_count: components,
+            component_index: index,
+        } = layout;
         if encoding.storage() != SampleType::U16 {
             return Err(CodePlaneError::StorageMismatch);
         }
@@ -270,12 +325,13 @@ impl<'a> CodePlane<'a> {
         })
     }
 
-    /// Borrow component `index` from a validated [`PlaneView<'a>`] zero-copy.
+    /// Borrow component `component_index` from a validated [`PlaneView<'a>`] zero-copy.
     pub fn from_plane_view(
         plane: PlaneView<'a>,
-        index: usize,
+        component_index: usize,
         encoding: SampleEncoding,
     ) -> Result<Self, CodePlaneError> {
+        let index = component_index;
         let spec = plane.format();
         if spec.packing.is_packed_word() {
             return Err(CodePlaneError::StorageMismatch);
@@ -294,26 +350,30 @@ impl<'a> CodePlane<'a> {
         match spec.sample {
             SampleType::U8 => Self::component_from_u8(
                 plane.data(),
-                width_words,
-                height,
-                plane.stride(),
-                components,
-                index,
+                InterleavedCodeLayout::new(
+                    width_words,
+                    height,
+                    plane.stride_bytes(),
+                    components,
+                    index,
+                ),
                 encoding,
             ),
             SampleType::U16 => {
-                if plane.stride() % 2 != 0 {
+                if plane.stride_bytes() % 2 != 0 {
                     return Err(CodePlaneError::Geometry);
                 }
                 let words = bytemuck::try_cast_slice::<u8, u16>(plane.data())
                     .map_err(|_| CodePlaneError::Geometry)?;
                 Self::component_from_u16(
                     words,
-                    width_words,
-                    height,
-                    plane.stride() / 2,
-                    components,
-                    index,
+                    InterleavedCodeLayout::new(
+                        width_words,
+                        height,
+                        plane.stride_bytes() / 2,
+                        components,
+                        index,
+                    ),
                     encoding,
                 )
             }
@@ -431,27 +491,34 @@ pub struct CodePlaneMut<'a> {
 }
 
 impl<'a> CodePlaneMut<'a> {
-    /// Borrow a single-component mutable `u8` plane (`stride_words >= width`).
+    /// Borrow a single-component mutable `u8` plane (`stride_words >= width_pixels`).
     pub fn from_u8_mut(
         data: &'a mut [u8],
-        width: usize,
+        width_pixels: usize,
         height: usize,
         stride_words: usize,
         encoding: SampleEncoding,
     ) -> Result<Self, CodePlaneError> {
-        Self::component_from_u8_mut(data, width, height, stride_words, 1, 0, encoding)
+        Self::component_from_u8_mut(
+            data,
+            InterleavedCodeLayout::new(width_pixels, height, stride_words, 1, 0),
+            encoding,
+        )
     }
 
-    /// Borrow component `index` of an interleaved mutable `u8` plane (`width_words % components == 0`).
+    /// Borrow one component of an interleaved mutable `u8` plane described by `layout`.
     pub fn component_from_u8_mut(
         data: &'a mut [u8],
-        width_words: usize,
-        height: usize,
-        stride_words: usize,
-        components: usize,
-        index: usize,
+        layout: InterleavedCodeLayout,
         encoding: SampleEncoding,
     ) -> Result<Self, CodePlaneError> {
+        let InterleavedCodeLayout {
+            width_words,
+            height,
+            stride_words,
+            component_count: components,
+            component_index: index,
+        } = layout;
         if encoding.storage() != SampleType::U8 {
             return Err(CodePlaneError::StorageMismatch);
         }
@@ -483,27 +550,34 @@ impl<'a> CodePlaneMut<'a> {
         })
     }
 
-    /// Borrow a single-component mutable `u16` plane (`stride_words >= width`).
+    /// Borrow a single-component mutable `u16` plane (`stride_words >= width_pixels`).
     pub fn from_u16_mut(
         data: &'a mut [u16],
-        width: usize,
+        width_pixels: usize,
         height: usize,
         stride_words: usize,
         encoding: SampleEncoding,
     ) -> Result<Self, CodePlaneError> {
-        Self::component_from_u16_mut(data, width, height, stride_words, 1, 0, encoding)
+        Self::component_from_u16_mut(
+            data,
+            InterleavedCodeLayout::new(width_pixels, height, stride_words, 1, 0),
+            encoding,
+        )
     }
 
-    /// Borrow component `index` of an interleaved mutable `u16` plane (`width_words % components == 0`).
+    /// Borrow one component of an interleaved mutable `u16` plane described by `layout`.
     pub fn component_from_u16_mut(
         data: &'a mut [u16],
-        width_words: usize,
-        height: usize,
-        stride_words: usize,
-        components: usize,
-        index: usize,
+        layout: InterleavedCodeLayout,
         encoding: SampleEncoding,
     ) -> Result<Self, CodePlaneError> {
+        let InterleavedCodeLayout {
+            width_words,
+            height,
+            stride_words,
+            component_count: components,
+            component_index: index,
+        } = layout;
         if encoding.storage() != SampleType::U16 {
             return Err(CodePlaneError::StorageMismatch);
         }
@@ -535,12 +609,13 @@ impl<'a> CodePlaneMut<'a> {
         })
     }
 
-    /// Borrow component `index` mutably from a validated [`PlaneViewMut<'a>`] zero-copy.
+    /// Borrow component `component_index` mutably from a validated [`PlaneViewMut<'a>`] zero-copy.
     pub fn from_plane_view_mut(
         plane: PlaneViewMut<'a>,
-        index: usize,
+        component_index: usize,
         encoding: SampleEncoding,
     ) -> Result<Self, CodePlaneError> {
+        let index = component_index;
         let spec = plane.format();
         if spec.packing.is_packed_word() {
             return Err(CodePlaneError::StorageMismatch);
@@ -556,16 +631,12 @@ impl<'a> CodePlaneMut<'a> {
             .checked_mul(components)
             .ok_or(CodePlaneError::Geometry)?;
         let height = plane.height() as usize;
-        let stride = plane.stride();
+        let stride = plane.stride_bytes();
         let data = plane.into_data_mut();
         match spec.sample {
             SampleType::U8 => Self::component_from_u8_mut(
                 data,
-                width_words,
-                height,
-                stride,
-                components,
-                index,
+                InterleavedCodeLayout::new(width_words, height, stride, components, index),
                 encoding,
             ),
             SampleType::U16 => {
@@ -576,11 +647,7 @@ impl<'a> CodePlaneMut<'a> {
                     .map_err(|_| CodePlaneError::Geometry)?;
                 Self::component_from_u16_mut(
                     words,
-                    width_words,
-                    height,
-                    stride / 2,
-                    components,
-                    index,
+                    InterleavedCodeLayout::new(width_words, height, stride / 2, components, index),
                     encoding,
                 )
             }

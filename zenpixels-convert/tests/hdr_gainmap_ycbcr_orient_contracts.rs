@@ -18,32 +18,33 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use zenpixels_convert::{
     AlphaMode, At, Cicp, ColorOrigin, ColorSpace, ContentLightLevel, ConvertError, ConvertPolicy,
     DiffuseWhite, HdrMetadata, ImagePlan, LightLevelHistogram, LightLevelMethod, MasteringDisplay,
-    Nits, Orientation, PeakSource, PixelBuf, PixelFormat, PlanarReconstructionOptions, PlanarView,
-    PlaneFormat, PlaneRole, PlaneView, PreparedMapper, Primaries, Requirements, SampleLayout,
-    SampleType, SignalRange, StripMapper, ToneMapContext, ToneMapper, Transfer, YcbcrMatrix,
-    apply_orientation, apply_orientation_into, convert_to_buf, convert_to_buf_with_peak,
-    measure_cll, measure_histogram, measure_peak, reconstruct_planar_f32, reconstruct_planar_into,
+    Nits, Orientation, PeakSource, PixelBuf, PixelFormat, PixelRect, PlanarReconstructionOptions,
+    PlanarView, PlaneFormat, PlaneRole, PlaneView, PreparedMapper, Primaries, Requirements,
+    SampleLayout, SampleType, SignalRange, StripMapper, ToneMapContext, ToneMapper, Transfer,
+    YcbcrMatrix, apply_orientation, apply_orientation_into, convert_to_buf,
+    convert_to_buf_with_peak, measure_content_light_level, measure_histogram, measure_peak,
+    reconstruct_planar_f32, reconstruct_planar_into,
 };
 
 #[cfg(feature = "hdr-transfers")]
 #[test]
 fn b16_hlg_white_anchor_no_double_scale_and_relative_white_epsilon() {
     use zenpixels_convert::{ChannelOrder, HlgMode, HlgRendering, RowPlan};
-    let hlg_1000 = HlgRendering::new(Nits::new(1000.0), 0.0, 1.2).unwrap();
+    let hlg_1000 = HlgRendering::new(Nits::new(1000.0).unwrap(), 0.0, 1.2).unwrap();
     let src_lin = PixelFormat::RGBF32_LINEAR
         .with_primaries(Primaries::Bt2020)
-        .with_white(DiffuseWhite::new(100.0));
+        .with_white(DiffuseWhite::new(100.0).unwrap());
     let dst_hlg_100 = PixelFormat::new(
         SampleLayout::RGBF32,
         ColorSpace::BT2100_HLG_SCENE
             .with_transfer(Transfer::Hlg(HlgMode::Display(hlg_1000)))
-            .with_white(DiffuseWhite::new(100.0)),
+            .with_white(DiffuseWhite::new(100.0).unwrap()),
     );
     let dst_hlg_200 = PixelFormat::new(
         SampleLayout::RGBF32,
         ColorSpace::BT2100_HLG_SCENE
             .with_transfer(Transfer::Hlg(HlgMode::Display(hlg_1000)))
-            .with_white(DiffuseWhite::new(200.0)),
+            .with_white(DiffuseWhite::new(200.0).unwrap()),
     );
     let dst_hlg_200_bgr = PixelFormat::new(
         SampleLayout::new(SampleType::F32, ChannelOrder::Bgr),
@@ -65,7 +66,6 @@ fn b16_hlg_white_anchor_no_double_scale_and_relative_white_epsilon() {
         bytemuck::cast_slice(&one),
         bytemuck::cast_slice_mut(&mut o100),
         1,
-        0,
     )
     .unwrap();
     RowPlan::build(
@@ -79,7 +79,6 @@ fn b16_hlg_white_anchor_no_double_scale_and_relative_white_epsilon() {
         bytemuck::cast_slice(&one),
         bytemuck::cast_slice_mut(&mut o200),
         1,
-        0,
     )
     .unwrap();
     RowPlan::build(src_lin, dst_hlg_200_bgr, &ConvertPolicy::permissive(), None)
@@ -88,7 +87,6 @@ fn b16_hlg_white_anchor_no_double_scale_and_relative_white_epsilon() {
             bytemuck::cast_slice(&one),
             bytemuck::cast_slice_mut(&mut o200_bgr),
             1,
-            0,
         )
         .unwrap();
 
@@ -108,8 +106,8 @@ fn b16_hlg_white_anchor_no_double_scale_and_relative_white_epsilon() {
     );
 
     // B16: Tiny white ratio 0.001 -> 0.00105 must apply exact physical scale 0.001/0.00105 ~= 0.95238!
-    let src_small_w = PixelFormat::RGBF32_LINEAR.with_white(DiffuseWhite::new(0.001));
-    let dst_small_w = PixelFormat::RGBF32_LINEAR.with_white(DiffuseWhite::new(0.00105));
+    let src_small_w = PixelFormat::RGBF32_LINEAR.with_white(DiffuseWhite::new(0.001).unwrap());
+    let dst_small_w = PixelFormat::RGBF32_LINEAR.with_white(DiffuseWhite::new(0.00105).unwrap());
     let mut o_small = [0f32; 3];
     RowPlan::build(src_small_w, dst_small_w, &ConvertPolicy::permissive(), None)
         .unwrap()
@@ -117,7 +115,6 @@ fn b16_hlg_white_anchor_no_double_scale_and_relative_white_epsilon() {
             bytemuck::cast_slice(&one),
             bytemuck::cast_slice_mut(&mut o_small),
             1,
-            0,
         )
         .unwrap();
     let want_ratio = 0.001_f32 / 0.00105_f32;
@@ -168,7 +165,7 @@ fn b17_scene_linear_hdr_triggers_tone_mapper_and_identity_retains_hdr_metadata()
     let calls = Arc::new(AtomicUsize::new(0));
     let src_hdr_lin = PixelFormat::RGBF32_LINEAR.with_white(DiffuseWhite::BT2408);
     let hdr_meta = HdrMetadata {
-        cll: Some(ContentLightLevel::new(812, 400)),
+        content_light_level: Some(ContentLightLevel::new(812, 400)),
         mastering: Some(MasteringDisplay::new(
             [[0.708, 0.292], [0.170, 0.797], [0.131, 0.046]],
             [0.3127, 0.3290],
@@ -181,11 +178,10 @@ fn b17_scene_linear_hdr_triggers_tone_mapper_and_identity_retains_hdr_metadata()
         .with_hdr(hdr_meta);
 
     // 1. Scene-linear HDR [4,1,0] @ 203 nits with Declared CLL 812 -> sRGB8 MUST invoke tone mapper!
-    let pol = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(203.0)).with_tone_mapper(
-        Arc::new(SpyMapper {
+    let pol = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(203.0).unwrap())
+        .with_tone_mapper(Arc::new(SpyMapper {
             calls: Arc::clone(&calls),
-        }),
-    );
+        }));
     let out = convert_to_buf_with_peak(
         &src_buf.as_view(),
         PixelFormat::RGB8_SRGB,
@@ -205,7 +201,7 @@ fn b17_scene_linear_hdr_triggers_tone_mapper_and_identity_retains_hdr_metadata()
         "expected tone-mapped G~137, got {px:?}"
     );
     assert_eq!(px[2], 0);
-    assert!(out.hdr().cll.is_none());
+    assert!(out.hdr().content_light_level.is_none());
 
     // 2. Identity ImagePlan on HDR linear F32 MUST preserve CLL & MDCV metadata!
     let id_plan = ImagePlan::build(
@@ -220,7 +216,7 @@ fn b17_scene_linear_hdr_triggers_tone_mapper_and_identity_retains_hdr_metadata()
 
     // 3. Ordinary SDR linear F32 [0.5, 0.25, 0.0] (no HDR metadata, peak <= ceiling) MUST NOT invoke mapper!
     let sdr_calls = Arc::new(AtomicUsize::new(0));
-    let sdr_pol = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(203.0))
+    let sdr_pol = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(203.0).unwrap())
         .with_tone_mapper(Arc::new(SpyMapper {
             calls: Arc::clone(&sdr_calls),
         }));
@@ -244,7 +240,7 @@ fn b18_b41_native_primaries_cll_ceiling_and_histogram_ranks() {
         PixelFormat::RGBF32_LINEAR.with_white(DiffuseWhite::BT2408),
     )
     .unwrap();
-    let cll709 = measure_cll(
+    let cll709 = measure_content_light_level(
         &bt709_red,
         DiffuseWhite::BT2408,
         None,
@@ -264,7 +260,7 @@ fn b18_b41_native_primaries_cll_ceiling_and_histogram_ranks() {
             .with_white(DiffuseWhite::BT2408),
     )
     .unwrap();
-    let cll_p3 = measure_cll(
+    let cll_p3 = measure_content_light_level(
         &p3_red,
         DiffuseWhite::BT2408,
         None,
@@ -279,34 +275,34 @@ fn b18_b41_native_primaries_cll_ceiling_and_histogram_ranks() {
         vec![100.4f32, 0.0, 0.0],
         1,
         1,
-        PixelFormat::RGBF32_LINEAR.with_white(DiffuseWhite::new(1.0)),
+        PixelFormat::RGBF32_LINEAR.with_white(DiffuseWhite::new(1.0).unwrap()),
     )
     .unwrap();
-    let cll_frac = measure_cll(
+    let cll_frac = measure_content_light_level(
         &frac,
-        DiffuseWhite::new(1.0),
+        DiffuseWhite::new(1.0).unwrap(),
         None,
         LightLevelMethod::MaxRgb,
     )
     .unwrap();
     assert_eq!(cll_frac.max_content_light_level, 101);
-    let peak = measure_peak(&frac, DiffuseWhite::new(1.0), None).unwrap();
+    let peak = measure_peak(&frac, DiffuseWhite::new(1.0).unwrap(), None).unwrap();
     assert!((peak - 100.4).abs() < 1e-3);
 
-    // B41: LightLevelHistogram zero_count, nearest-rank median, and fallible `try_new`!
-    let mut h_zeros = LightLevelHistogram::try_new(LightLevelMethod::MaxRgb).unwrap();
+    // B41: LightLevelHistogram zero_count, nearest-rank median, and fallible `new`!
+    let mut h_zeros = LightLevelHistogram::new(LightLevelMethod::MaxRgb).unwrap();
     h_zeros.record(0.0);
     h_zeros.record(0.0);
     h_zeros.record(1.0);
-    assert_eq!(h_zeros.percentile_nits(0.0), 0.0);
-    assert_eq!(h_zeros.percentile_nits(0.5), 0.0);
-    assert!((h_zeros.percentile_nits(1.0) - 1.0).abs() < 0.05);
+    assert_eq!(h_zeros.quantile_nits(0.0), 0.0);
+    assert_eq!(h_zeros.quantile_nits(0.5), 0.0);
+    assert!((h_zeros.quantile_nits(1.0) - 1.0).abs() < 0.05);
 
-    let mut h_med = LightLevelHistogram::try_new(LightLevelMethod::MaxRgb).unwrap();
+    let mut h_med = LightLevelHistogram::new(LightLevelMethod::MaxRgb).unwrap();
     h_med.record(0.0);
     h_med.record(1.0);
     h_med.record(100.0);
-    let p50 = h_med.percentile_nits(0.5);
+    let p50 = h_med.quantile_nits(0.5);
     assert!(
         (p50 - 1.0).abs() < 0.15,
         "median of [0, 1, 100] must be ~1.0 nits, got {p50}"
@@ -316,18 +312,18 @@ fn b18_b41_native_primaries_cll_ceiling_and_histogram_ranks() {
         vec![0.0f32, 0.0, 0.0, 1.0, 1.0, 1.0, 100.0, 100.0, 100.0],
         3,
         1,
-        PixelFormat::RGBF32_LINEAR.with_white(DiffuseWhite::new(1.0)),
+        PixelFormat::RGBF32_LINEAR.with_white(DiffuseWhite::new(1.0).unwrap()),
     )
     .unwrap();
     let measured_h = measure_histogram(
         &hist_buf,
-        DiffuseWhite::new(1.0),
+        DiffuseWhite::new(1.0).unwrap(),
         None,
         LightLevelMethod::MaxRgb,
     )
     .unwrap();
-    assert_eq!(measured_h.percentile_nits(0.0), 0.0);
-    assert!((measured_h.percentile_nits(0.5) - 1.0).abs() < 0.15);
+    assert_eq!(measured_h.quantile_nits(0.0), 0.0);
+    assert!((measured_h.quantile_nits(0.5) - 1.0).abs() < 0.15);
 }
 
 #[test]
@@ -376,9 +372,9 @@ fn b24_b39_ycbcr_odd_crop_phase_nv12_nv21_i420_gbr_monochrome_and_exact_white() 
     .with_matrix_coefficients(YcbcrMatrix::Bt709.to_matrix_coefficients());
 
     let full_rgb = reconstruct_planar_f32(&full).unwrap();
-    let cropped_view = full.crop(1, 1, 3, 2).unwrap();
+    let cropped_view = full.crop(PixelRect::new(1, 1, 3, 2)).unwrap();
     let cropped_rgb = reconstruct_planar_f32(&cropped_view).unwrap();
-    let full_then_crop = full_rgb.as_view().crop(1, 1, 3, 2).unwrap();
+    let full_then_crop = full_rgb.as_view().crop(PixelRect::new(1, 1, 3, 2)).unwrap();
     for row in 0..2 {
         assert_eq!(
             cropped_rgb.as_view().row(row),
@@ -491,8 +487,8 @@ fn b24_b39_ycbcr_odd_crop_phase_nv12_nv21_i420_gbr_monochrome_and_exact_white() 
     .unwrap();
     reconstruct_planar_into(
         &white_pv,
-        &PlanarReconstructionOptions::nearest(),
         &mut dst_w.as_view_mut(),
+        &PlanarReconstructionOptions::nearest(),
     )
     .unwrap();
     assert_eq!(dst_w.as_view().row_as::<f32>(0).unwrap(), &[1.0, 1.0, 1.0]);
@@ -560,7 +556,7 @@ fn b25_d06_independent_8_orientation_coordinate_oracle_with_canaries_and_origin(
 
     let origin = ColorOrigin::from_cicp(Cicp::DISPLAY_P3);
     let hdr = HdrMetadata {
-        cll: Some(ContentLightLevel::new(1000, 300)),
+        content_light_level: Some(ContentLightLevel::new(1000, 300)),
         mastering: None,
     };
 

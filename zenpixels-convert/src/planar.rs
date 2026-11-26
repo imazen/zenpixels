@@ -129,7 +129,7 @@ fn validate_plane(
         return Err(err_at(ConvertError::UnsupportedRoute));
     }
     let (ew, eh) = spec
-        .cropped_dimensions(frame_w, frame_h, (crop_x, crop_y))
+        .cropped_plane_dimensions(frame_w, frame_h, (crop_x, crop_y))
         .ok_or_else(|| err_at(ConvertError::DimensionMismatch))?;
     if plane.width() != ew || plane.height() != eh || plane.width() == 0 || plane.height() == 0 {
         return Err(err_at(ConvertError::DimensionMismatch));
@@ -617,14 +617,14 @@ pub fn reconstruct_planar_to_buf(
 #[doc(alias = "interleave")]
 pub fn reconstruct_planar_into(
     src: &PlanarView<'_>,
-    options: &PlanarReconstructionOptions,
     dst: &mut PixelViewMut<'_>,
+    options: &PlanarReconstructionOptions,
 ) -> Result<(), At<ConvertError>> {
     let parsed = parse_planar(src)?;
     let w = src.width();
     let h = src.height();
     let dst_layout = dst.format().layout;
-    if dst.width() != w || dst.rows() != h {
+    if dst.width() != w || dst.height() != h {
         return Err(err_at(ConvertError::DimensionMismatch));
     }
     let resolved = resolve_planar_source(src, &parsed, dst_layout)?;

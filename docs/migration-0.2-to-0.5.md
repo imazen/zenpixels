@@ -20,15 +20,15 @@ Both crates remain `#![forbid(unsafe_code)]` and support `no_std + alloc` (disab
 | `PixelSlice<'a>` / `PixelSliceMut<'a>` | `PixelView<'a>` / `PixelViewMut<'a>` | Borrowed strided views taking `&'a PixelFormat` (0 heap allocations; borrow `&formats::*` or any local spec; explicit `new_with_format_cow` when owning/sharing a `FormatCow`) |
 | `BandedPixelBuffer` (0.4) | `BandedBuf` | Bounded row-band storage (`RowAlign`, `DEFAULT_MAX_BAND_BYTES`) carrying `Orientation` for gigapixel images |
 | `MultiPlaneImage` (0.2) / `PlanarBuffer` / `PlanarSlice` (0.4) | `PlanarBuf` / `PlanarView` / `PlanarViewMut` | Always built (no `planar` feature); symmetric `crop_view`/`crop_view_mut`/`crop`/`crop_mut`/`into_crop`/`sub_rows*`; carry `ColorSpace`, typed `MatrixCoefficients` (`matrix_coefficients`), `range_override`/`effective_range`, `alpha_override`/`effective_alpha`, `chroma_siting`, `crop_origin` (`new_with_crop_origin`), `hdr`, `origin`, and `orientation` |
-| `AnyPlane` / `PlaneRef<T>` / `PlaneBuf<T>` (0.4) | `PlaneView` / `PlaneViewMut` / `PlaneBuf` | Zero-copy typed codec APIs: tight 4-arg `from_samples(samples, width, height, spec)` and strided 5-arg `from_samples_strided(..., SampleStride(n), spec)`; raw byte `new` / `from_external` take byte stride (`stride()` returns **bytes**) |
-| `CodePlane` | `CodePlane` + `CodePlaneMut` | Unconditional in `zenpixels`; read/write arbitrary bit-packed or P010 codes |
+| `AnyPlane` / `PlaneRef<T>` / `PlaneBuf<T>` (0.4) | `PlaneView` / `PlaneViewMut` / `PlaneBuf` | Zero-copy typed codec APIs: tight 4-arg `from_samples(samples, width, height, spec)` and strided 5-arg `from_samples_strided(..., SampleStride(n), spec)`; raw byte `new` / `from_external` take byte stride (`stride_bytes()` returns **bytes**) |
+| `CodePlane` | `CodePlane` + `CodePlaneMut` | Unconditional in `zenpixels`; read/write arbitrary bit-packed or P010 codes (`InterleavedCodeLayout`) |
 | Dual-layer gain maps | `DualLayerHdrBuf` / `DualLayerHdrView` / `DualLayerHdrBufParts` | Unified base + gain-map + ISO 21496-1 metadata + orientation carrier (`new_with_alternate_color` for `Alternate` space) |
 | `ConvertOptions` (0.2/0.4) + `ConversionSpec` (0.4) | `ConvertPolicy` | `Default` is **`lossless()`** (never silently drops alpha/depth/range); explicit `permissive()`, `working_linear()`, `display_sdr(...)`. All planners borrow `&ConvertPolicy` |
-| `RowConverter` (0.2) / `ConvertPlan` + `RowConverter` (0.4) | `RowPlan` + `ImagePlan` | `RowPlan` is stateless, `Send + Sync`, zero heap allocation per `convert_row`, takes resolved `Option<Nits>`; `ImagePlan` takes `PeakSource` |
+| `RowConverter` (0.2) / `ConvertPlan` + `RowConverter` (0.4) | `RowPlan` + `ImagePlan` | `RowPlan` is stateless, `Send + Sync`, zero heap allocation per `convert_row` / `convert_row_at`, takes resolved `Option<Nits>`; `ImagePlan` takes `PeakSource` |
 | `buf.to_rgb8()` / `slice.convert_to(...)` | `to_rgb8(&view)?` / `convert_to_buf(&view, &dst, &policy)?` | `to_rgb8` / `to_gray8` use `DiscardIfOpaque` (refuse unproven alpha discard); `convert_to_buf`/`convert_into` default to `PeakSource::Measured` when HDR needs it (`*_with_peak` for explicit `PeakSource`) |
-| `OutputPlan` / `adapt_for_encode` | `OutputPlan` / `adapt_for_encode` / `adapt_for_encode_parametric` (`OutputSignaling`) | Canonicalizes unverified `AlphaMode::Opaque`; rejects `MetadataOnly` ICC on structured RGB/Gray; rejects `HlgMode::Display` on `dst` under `CicpOnly`/`Auto` |
+| `OutputPlan` / `adapt_for_encode` | `OutputPlan` / `adapt_for_encode` / `adapt_for_encode_parametric` (`OutputSignaling`, `ResolvedSignaling`) | Canonicalizes unverified `AlphaMode::Opaque`; rejects `MetadataOnly` ICC on structured RGB/Gray; rejects `HlgMode::Display` on `dst` under `CicpOnly`/`Auto` |
 | `PluggableCms` + `RowTransformMut` | `CmsBackend` + `CmsTransform` | Stateless `Send + Sync` row transforms; built-in `MoxCms` and `Lcms` |
-| `CllMeasure` / `LightLevelHistogram` | `measure_cll`, `measure_histogram`, `measure_max_smoothed` | `LightLevelHistogram::{bins, merge}` + 3-tap smoothed peak |
+| `CllMeasure` / `LightLevelHistogram` | `measure_content_light_level`, `measure_histogram`, `measure_max_smoothed` | `LightLevelHistogram::{bins, merge, quantile_nits, to_robust_content_light_level}` + 3-tap smoothed peak |
 
 ---
 
@@ -75,9 +75,9 @@ Neither pinned 0.2 nor pinned 0.4 implemented `Default` on `ConvertOptions`. In 
 
 ### Fallibility Naming & Error Shapes
 
-- **Naming rule:** Standalone fallible operations use ordinary descriptive names (`from_typed`, `from_bytes`, `from_parts`, `from_storage_parts`, `into_tight_buf`, `into_vec_zero_copy`, `into_external`, `make_mut`, `merge`, `project_cicp`, etc.). The `try_` prefix is used **only** when the same type already exposes a direct value-returning twin (e.g. `try_clone` / `clone`, `try_as_view_mut` / `as_view_mut`, `try_with_*` / `with_*`, `Cicp::try_from_bytes` / `Cicp::from_bytes`, `LightLevelHistogram::try_new` / `new`).
+- **Naming rule:** Standalone fallible operations use ordinary descriptive names (`from_typed`, `from_bytes`, `from_parts`, `from_storage_parts`, `into_tight_buf`, `into_vec_zero_copy`, `into_external`, `make_mut`, `merge`, `project_cicp`, `Nits::new`, `DiffuseWhite::new`, `LightLevelHistogram::new`, etc.). The `try_` prefix is used **only** when the same type already exposes a direct value-returning twin (e.g. `try_clone` / `clone`, `try_as_view_mut` / `as_view_mut`, `try_with_*` / `with_*`, `Cicp::try_from_bytes` / `Cicp::from_bytes`).
 - **Error shape boundary (not every fallible API uses `At<E>`!):**
-  - **Located `whereat::At<E>`** on carrier/pipeline boundaries (`PixelBuf`, `PixelView`, `PlanarBuf`, `BandedBuf`, `DualLayerHdrBuf`, `PixelFormat::validate`, `ParametricFormat::validate`, `Cicp::try_from_bytes`, `CicpTag::from_tag_bytes`, `RowPlan`, `ImagePlan`, `OutputPlan`, `apply_orientation*`, `reconstruct_planar_*`, `compact_to_buf`, `gainmap`, `CmsBackend`, `measure_*`, `to_canonical`, `TryFrom<DynamicImage> for PixelBuf`):
+  - **Located `whereat::At<E>`** on carrier/pipeline boundaries (`PixelBuf`, `PixelView`, `PlanarBuf`, `BandedBuf`, `DualLayerHdrBuf`, `PixelFormat::validate`, `ParametricFormat::validate`, `Cicp::try_from_bytes`, `CicpTag::from_tag_bytes`, `RowPlan`, `ImagePlan`, `OutputPlan`, `apply_orientation*`, `reconstruct_planar_*`, `compact_to_buf`, `gainmap`, `CmsBackend`, `measure_*`, `unpack_code_planes_into`, `TryFrom<DynamicImage> for PixelBuf`):
     ```rust
     match PixelBuf::from_typed(data, w, h, PixelFormat::RGB8_SRGB) {
         Ok(buf) => buf,
@@ -145,7 +145,7 @@ let plan = RowPlan::build(
     &ConvertPolicy::lossless(),
     None, // resolved_source_peak: Option<Nits>
 )?;
-plan.convert_row(src.row(0), dst_row, w, 0)?;
+plan.convert_row(src.row(0), dst_row, w)?;
 ```
 
 For whole-image conversion, use `convert_to_buf` (defaults to `PeakSource::Measured` only when HDR tone mapping needs a peak; use `convert_to_buf_with_peak` for explicit `PeakSource`) or the safe 8-bit helpers:
@@ -317,5 +317,5 @@ apply_orientation_banded_into(&src_bands, orient, &mut dst_bands)?;
 - **`CicpTag` 44-byte custom primaries:** Encodes `(x, y)` in signed `s15Fixed16Number` (`1 / 65536`); compare tag bytes or `CustomPrimaries::to_s15fixed16()` after wire round-trip rather than raw decimal `f32` presets.
 - **`DualLayerHdrBuf`:** Use `DualLayerHdrBuf::new_with_alternate_color(base, gain_map, metadata, color)` for `GainMapColorSpace::Alternate` (inherits layer orientation). Rebuilding via `DualLayerHdrBuf::from_parts(DualLayerHdrBufParts)` requires `base.orientation()` and `gain_map.orientation()` to match `parts.orientation` (or both `Identity`). Gain-map conversion/extraction APIs are namespaced under `zenpixels_convert::gainmap::*`: apply via `gainmap::apply_gain_map_with` / `gainmap::apply_gain_map_oriented` with `&zenpixels_convert::Unstoppable` (re-exported from `enough`) and explicit `gainmap::GainMapApplyConfig::from_headroom_stops` (stops) or `from_display_boost_linear` (linear multiplier).
 - **Content compaction (`compact`):** Free functions `analyze_compaction(&view)` → `CompactionReport { requires_alpha, requires_chroma, requires_u16_precision }` (`candidate_format`), `compact_to_buf(&view)`, and `compact_in_place(&mut buf, AlphaCompaction::{RetagOpaque, DropUnusedLanes})`. `RetagOpaque` retags provably opaque alpha zero-move (while still compacting depth/chroma in-place); `DropUnusedLanes` also drops unused alpha/padding lanes in place.
-- **`Bt2446A`:** Use `Bt2446A::pipeline_managed()` for planner-resolved peaks or `Bt2446A::with_peaks(Nits::new(hdr), Nits::new(sdr))` for baked typed peaks.
-- **`imgref` & `image` interop:** `imgref::ImgVec::new(pixels, width, height)` takes `(pixels, w, h)` and indexes via `img[(x_usize, y_usize)]`; `PixelView` exposes both `rows()` and `height()`; explicit-color `image` adapters are named `from_rgb8_image_with_color` / `from_rgba8_image_with_color`.
+- **`Bt2446A`:** Use `Bt2446A::pipeline_managed()` for planner-resolved peaks or `Bt2446A::with_peaks(Nits::new(hdr).unwrap(), Nits::new(sdr).unwrap())` for baked typed peaks.
+- **`imgref` & `image` interop:** `imgref::ImgVec::new(pixels, width, height)` takes `(pixels, w, h)` and indexes via `img[(x_usize, y_usize)]`; `PixelView` exposes `height()` and `stride_bytes()`; explicit-color `image` adapters are named `from_rgb8_image_with_color` / `from_rgba8_image_with_color` and typed `rgb` crate adapters `from_pixels_with_color`.

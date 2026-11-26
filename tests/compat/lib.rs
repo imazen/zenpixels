@@ -53,7 +53,7 @@ fn storage_and_prepared_rows_share_one_public_type_graph() {
     )
     .unwrap();
     let mut row = [0; 4];
-    plan.convert_row(buf.as_view().row(0), &mut row, 1, 0)
+    plan.convert_row(buf.as_view().row(0), &mut row, 1)
         .unwrap();
     assert_eq!(row, [0, 127, 255, 255]);
     let widened = zenpixels_convert::ImagePlan::build(

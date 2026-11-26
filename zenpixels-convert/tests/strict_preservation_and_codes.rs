@@ -26,7 +26,7 @@ use zenpixels_convert::{
     MasteringDisplay, Negotiate, Nits, OutputPlan, OutputSignaling, PeakSource, PixelBuf,
     PixelFormat, Primaries, RangePolicy, RenderingIntent, RowPlan, SampleEncoding, SampleFacts,
     SampleLayout, SampleType, SignalRange, Transfer, analyze_compaction, compact_in_place,
-    compact_to_buf, convert_to_buf_with_peak, scan_facts, to_canonical,
+    compact_to_buf, convert_to_buf_with_peak, scan_facts, unpack_code_planes_into,
 };
 
 #[test]
@@ -75,14 +75,14 @@ fn b01_b02_b03_strict_lossless_refuses_non_injective_transfers_grids_and_reassoc
     let perm_plan =
         RowPlan::build(srgb8.clone(), lin8, &ConvertPolicy::permissive(), None).unwrap();
     let mut out = [99u8; 3];
-    perm_plan.convert_row(&[1, 2, 3], &mut out, 1, 0).unwrap();
+    perm_plan.convert_row(&[1, 2, 3], &mut out, 1).unwrap();
     assert_eq!(out, [0, 0, 0]);
 
     // Same-transfer swizzle RGB8 -> BGR8 IS lossless!
     let bgr8 = PixelFormat::new(SampleLayout::BGR8, ColorSpace::SRGB);
     let swiz = RowPlan::build(srgb8.clone(), bgr8, &ConvertPolicy::lossless(), None).unwrap();
     let mut swiz_out = [0u8; 3];
-    swiz.convert_row(&[1, 2, 3], &mut swiz_out, 1, 0).unwrap();
+    swiz.convert_row(&[1, 2, 3], &mut swiz_out, 1).unwrap();
     assert_eq!(swiz_out, [3, 2, 1]);
 
     // B02: Full-range LSB3 -> U8 MUST be refused under lossless() (255 % 7 != 0),
@@ -105,7 +105,7 @@ fn b01_b02_b03_strict_lossless_refuses_non_injective_transfers_grids_and_reassoc
     );
     let p_lsb4 = RowPlan::build(lsb4, srgb8.clone(), &ConvertPolicy::lossless(), None).unwrap();
     let mut o4 = [0u8; 3];
-    p_lsb4.convert_row(&[0, 1, 15], &mut o4, 1, 0).unwrap();
+    p_lsb4.convert_row(&[0, 1, 15], &mut o4, 1).unwrap();
     assert_eq!(o4, [0, 17, 255]); // 1 * (255 / 15) = 17 exact!
 
     // B02: Gray U32 25-bit field shift 0 -> shift 1 preserves code 16_777_217 bit-exact!
@@ -134,7 +134,6 @@ fn b01_b02_b03_strict_lossless_refuses_non_injective_transfers_grids_and_reassoc
         &src_word.to_ne_bytes(),
         bytemuck::bytes_of_mut(&mut dst_word),
         1,
-        0,
     )
     .unwrap();
     assert_eq!(dst_word >> 1, 16_777_217);
@@ -178,7 +177,7 @@ fn b01_b02_b03_strict_lossless_refuses_non_injective_transfers_grids_and_reassoc
     let op_plan = RowPlan::build(straight, premul, &opaque_pol, None).unwrap();
     let mut op_out = [0u8; 4];
     op_plan
-        .convert_row(&[10, 20, 30, 255], &mut op_out, 1, 0)
+        .convert_row(&[10, 20, 30, 255], &mut op_out, 1)
         .unwrap();
     assert_eq!(op_out, [10, 20, 30, 255]);
 }
@@ -230,15 +229,13 @@ fn b04_d01_opaque_same_profile_icc_without_cms_and_cross_profile_lossless_refusa
     )
     .unwrap();
     let mut o_rgba = [0u8; 4];
-    p_add_a
-        .convert_row(&[11, 22, 33], &mut o_rgba, 1, 0)
-        .unwrap();
+    p_add_a.convert_row(&[11, 22, 33], &mut o_rgba, 1).unwrap();
     assert_eq!(o_rgba, [11, 22, 33, 255]);
 
     let p_widen = RowPlan::build(src_rgb8, dst_rgb16, &ConvertPolicy::lossless(), None).unwrap();
     let mut o_u16 = [0u16; 3];
     p_widen
-        .convert_row(&[11, 22, 255], bytemuck::cast_slice_mut(&mut o_u16), 1, 0)
+        .convert_row(&[11, 22, 255], bytemuck::cast_slice_mut(&mut o_u16), 1)
         .unwrap();
     assert_eq!(o_u16, [0x0B0B, 0x1616, 0xFFFF]);
 
@@ -424,14 +421,12 @@ fn b09_unknown_primaries_luma_refusal_and_explicit_primaries() {
             bytemuck::cast_slice(&red),
             bytemuck::cast_slice_mut(&mut g709),
             1,
-            0,
         )
         .unwrap();
     p_p3.convert_row(
         bytemuck::cast_slice(&red),
         bytemuck::cast_slice_mut(&mut gp3),
         1,
-        0,
     )
     .unwrap();
     assert!(
@@ -490,12 +485,12 @@ fn b10_b11_b12_b13_b42_signaling_authority_strict_icc_and_owned_borrowed_pixels(
         );
         match res {
             Ok(plan) => {
-                let (cicp, icc) = plan.resolve_signaling(&ColorOrigin::assumed()).unwrap();
+                let sig = plan.resolve_signaling(&ColorOrigin::assumed()).unwrap();
                 assert!(
-                    cicp.is_some() || icc.is_some(),
+                    sig.cicp.is_some() || sig.icc.is_some(),
                     "Auto must never silently return (None, None) for known Gray {tf:?}"
                 );
-                if let Some(bytes) = icc {
+                if let Some(bytes) = sig.icc {
                     assert_eq!(&bytes[16..20], b"GRAY");
                 }
             }
@@ -515,10 +510,10 @@ fn b10_b11_b12_b13_b42_signaling_authority_strict_icc_and_owned_borrowed_pixels(
         OutputSignaling::SameAsOrigin,
     )
     .unwrap();
-    let (c_untagged, i_untagged) = srgb_same
+    let sig_untagged = srgb_same
         .resolve_signaling(&ColorOrigin::assumed())
         .unwrap();
-    assert_eq!((c_untagged, i_untagged), (None, None));
+    assert_eq!((sig_untagged.cicp, sig_untagged.icc), (None, None));
 
     let p3_icc: Arc<[u8]> = Arc::from(zenpixels_convert::icc_profiles::DISPLAY_P3_V4);
     let p3_icc_spec = PixelFormat::new(
@@ -539,9 +534,9 @@ fn b10_b11_b12_b13_b42_signaling_authority_strict_icc_and_owned_borrowed_pixels(
     )
     .unwrap();
     let dual_origin = ColorOrigin::from_icc_and_cicp(p3_icc.clone(), Cicp::DISPLAY_P3);
-    let (dc, di) = p3_same.resolve_signaling(&dual_origin).unwrap();
-    assert_eq!(dc, Some(Cicp::DISPLAY_P3));
-    assert_eq!(di.as_deref(), Some(p3_icc.as_ref()));
+    let dual_sig = p3_same.resolve_signaling(&dual_origin).unwrap();
+    assert_eq!(dual_sig.cicp, Some(Cicp::DISPLAY_P3));
+    assert_eq!(dual_sig.icc.as_deref(), Some(p3_icc.as_ref()));
     let conflict_origin = ColorOrigin::from_icc_and_cicp(p3_icc, Cicp::BT2100_PQ);
     assert!(p3_same.resolve_signaling(&conflict_origin).is_err());
 
@@ -610,7 +605,6 @@ fn a02_a01_b33_b34_transfers_narrow_bitshift_and_fast_row_float_facts() {
             bytemuck::cast_slice(&half),
             bytemuck::cast_slice_mut(&mut o_g22),
             1,
-            0,
         )
         .unwrap();
     RowPlan::build(adobe, lin.clone(), &ConvertPolicy::permissive(), None)
@@ -619,7 +613,6 @@ fn a02_a01_b33_b34_transfers_narrow_bitshift_and_fast_row_float_facts() {
             bytemuck::cast_slice(&half),
             bytemuck::cast_slice_mut(&mut o_adobe),
             1,
-            0,
         )
         .unwrap();
     let dci_plan = RowPlan::build(dci, lin.clone(), &ConvertPolicy::permissive(), None).unwrap();
@@ -628,7 +621,6 @@ fn a02_a01_b33_b34_transfers_narrow_bitshift_and_fast_row_float_facts() {
             bytemuck::cast_slice(&half),
             bytemuck::cast_slice_mut(&mut o_dci_half),
             1,
-            0,
         )
         .unwrap();
     dci_plan
@@ -636,7 +628,6 @@ fn a02_a01_b33_b34_transfers_narrow_bitshift_and_fast_row_float_facts() {
             bytemuck::cast_slice(&one),
             bytemuck::cast_slice_mut(&mut o_dci_one),
             1,
-            0,
         )
         .unwrap();
     assert!(
@@ -682,7 +673,6 @@ fn a02_a01_b33_b34_transfers_narrow_bitshift_and_fast_row_float_facts() {
             bytemuck::cast_slice(&[16u16, 274, 4000]),
             bytemuck::cast_slice_mut(&mut o10),
             1,
-            0,
         )
         .unwrap();
     assert_eq!(o10, [4, 69, 1000]);
@@ -693,7 +683,7 @@ fn a02_a01_b33_b34_transfers_narrow_bitshift_and_fast_row_float_facts() {
     let p_8_16 = RowPlan::build(n8, n16, &ConvertPolicy::lossless(), None).unwrap();
     let mut o16 = [0u16; 3];
     p_8_16
-        .convert_row(&[15u8, 235, 236], bytemuck::cast_slice_mut(&mut o16), 1, 0)
+        .convert_row(&[15u8, 235, 236], bytemuck::cast_slice_mut(&mut o16), 1)
         .unwrap();
     assert_eq!(o16, [3840, 60160, 60416]);
 
@@ -705,7 +695,7 @@ fn a02_a01_b33_b34_transfers_narrow_bitshift_and_fast_row_float_facts() {
         let pq_f32 = PixelFormat::new(SampleLayout::RGBF32, ColorSpace::BT2100_PQ);
         let lin_rgb = PixelFormat::RGBF32_LINEAR
             .with_primaries(Primaries::Bt2020)
-            .with_white(DiffuseWhite::new(100.0));
+            .with_white(DiffuseWhite::new(100.0).unwrap());
         let lin_bgr = PixelFormat::new(
             SampleLayout::new(SampleType::F32, ChannelOrder::Bgr),
             lin_rgb.color.clone(),
@@ -720,7 +710,6 @@ fn a02_a01_b33_b34_transfers_narrow_bitshift_and_fast_row_float_facts() {
                 bytemuck::cast_slice(&one),
                 bytemuck::cast_slice_mut(&mut out_rgb),
                 1,
-                0,
             )
             .unwrap();
         p_bgr
@@ -728,7 +717,6 @@ fn a02_a01_b33_b34_transfers_narrow_bitshift_and_fast_row_float_facts() {
                 bytemuck::cast_slice(&one),
                 bytemuck::cast_slice_mut(&mut out_bgr),
                 1,
-                0,
             )
             .unwrap();
         assert_eq!(out_rgb, [1.0, 1.0, 1.0]);
@@ -743,7 +731,6 @@ fn a02_a01_b33_b34_transfers_narrow_bitshift_and_fast_row_float_facts() {
                 bytemuck::cast_slice(&one),
                 bytemuck::cast_slice_mut(&mut out_ext),
                 1,
-                0,
             )
             .unwrap();
         assert!(
@@ -756,8 +743,8 @@ fn a02_a01_b33_b34_transfers_narrow_bitshift_and_fast_row_float_facts() {
     // B34: Tiny white ratio producing subnormal output MUST NOT claim `FloatFacts::NO_SUBNORMALS`!
     let src_tiny = PixelFormat::RGB8_SRGB
         .with_transfer(Transfer::Linear)
-        .with_white(DiffuseWhite::new(1e-35));
-    let dst_huge = PixelFormat::RGBF32_LINEAR.with_white(DiffuseWhite::new(10_000.0));
+        .with_white(DiffuseWhite::new(1e-35).unwrap());
+    let dst_huge = PixelFormat::RGBF32_LINEAR.with_white(DiffuseWhite::new(10_000.0).unwrap());
     let p_sub = RowPlan::build(src_tiny, dst_huge, &ConvertPolicy::permissive(), None).unwrap();
     assert!(
         !p_sub
@@ -789,12 +776,17 @@ fn d03_codemap_and_to_canonical_exhaustive() {
     nmap.map_words(&[64, 512, 940], &mut nmapped).unwrap();
     assert_eq!(nmapped, [256, 2048, 3760]);
 
-    // `to_canonical` promotes 10-bit full-range CodePlane into canonical U16 PixelViewMut!
+    // `unpack_code_planes_into` promotes 10-bit full-range CodePlane into canonical U16 PixelViewMut!
     let words = [0u16, 512, 1023];
     let plane = CodePlane::from_u16(&words, 3, 1, 3, src10).unwrap();
     let mut dst_buf = PixelBuf::new(3, 1, PixelFormat::GRAY16_SRGB).unwrap();
-    let (_, exact) =
-        to_canonical(&[plane], SignalRange::Full, 0, 0, dst_buf.as_view_mut()).unwrap();
+    let exact = unpack_code_planes_into(
+        &[plane],
+        SignalRange::Full,
+        (0, 0),
+        &mut dst_buf.as_view_mut(),
+    )
+    .unwrap();
     assert_eq!(exact.color_bits(), 10);
     let dst_u16 = dst_buf.as_view().row_as::<u16>(0).unwrap();
     assert_eq!(dst_u16, &[0, ((512u64 * 65535 + 511) / 1023) as u16, 65535]);
@@ -803,7 +795,7 @@ fn d03_codemap_and_to_canonical_exhaustive() {
         AlphaPolicy::Forbid,
         DepthPolicy::Round,
         RangePolicy::Convert,
-        Nits::new(100.0),
+        Nits::new(100.0).unwrap(),
         |v, s: &PixelFormat, p, pk| convert_to_buf_with_peak(v, s, p, pk),
     );
 }
@@ -822,7 +814,7 @@ fn phase4a_icc_hdr_identity_load_bearing_origin_and_cicp_alias() {
         },
     );
     let hdr = HdrMetadata {
-        cll: Some(ContentLightLevel::new(1000, 400)),
+        content_light_level: Some(ContentLightLevel::new(1000, 400)),
         mastering: Some(MasteringDisplay::new(
             [[0.680, 0.320], [0.265, 0.690], [0.150, 0.060]],
             [0.3127, 0.3290],
@@ -904,10 +896,10 @@ fn phase4a_icc_hdr_identity_load_bearing_origin_and_cicp_alias() {
         OutputSignaling::SameAsOrigin,
     )
     .unwrap();
-    let (cicp_out, _icc_out) = plan.resolve_signaling(&alias_origin).expect(
+    let sig_out = plan.resolve_signaling(&alias_origin).expect(
         "SameAsOrigin must accept semantically equivalent CICP transfer alias TC 14 for Bt709",
     );
-    assert_eq!(cicp_out, Some(alias_cicp));
+    assert_eq!(sig_out.cicp, Some(alias_cicp));
 }
 
 #[test]

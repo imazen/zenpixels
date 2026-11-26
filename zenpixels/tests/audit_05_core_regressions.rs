@@ -320,7 +320,7 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
     );
     let valid_base = PixelBuf::new(4, 4, PixelFormat::RGB8_SRGB).unwrap();
     let valid_gm = PixelBuf::new(2, 2, untagged_gm_spec.clone()).unwrap();
-    let valid_meta = GainMapMetadata::symmetric(2.0);
+    let valid_meta = GainMapMetadata::symmetric_stops(2.0).unwrap();
     let hdr = DualLayerHdrBuf::new(valid_base, valid_gm, valid_meta)
         .unwrap()
         .with_orientation(Orientation::Rotate90);
@@ -340,12 +340,24 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
     // Non-RGB/Gray/ICC base (CMYK) rejected; transfer-tagged gain map rejected; bitfields gain map rejected.
     let cmyk_base = PixelBuf::new(4, 4, PixelFormat::cmyk8(None)).unwrap();
     let ok_gm = PixelBuf::new(2, 2, untagged_gm_spec.clone()).unwrap();
-    assert!(DualLayerHdrBuf::new(cmyk_base, ok_gm, GainMapMetadata::symmetric(2.0)).is_err());
+    assert!(
+        DualLayerHdrBuf::new(
+            cmyk_base,
+            ok_gm,
+            GainMapMetadata::symmetric_stops(2.0).unwrap()
+        )
+        .is_err()
+    );
 
     let ok_base = PixelBuf::new(4, 4, PixelFormat::RGB8_SRGB).unwrap();
     let srgb_gm = PixelBuf::new(2, 2, PixelFormat::GRAY8_SRGB).unwrap();
     assert!(
-        DualLayerHdrBuf::new(ok_base, srgb_gm, GainMapMetadata::symmetric(2.0)).is_err(),
+        DualLayerHdrBuf::new(
+            ok_base,
+            srgb_gm,
+            GainMapMetadata::symmetric_stops(2.0).unwrap()
+        )
+        .is_err(),
         "ISO 21496-1 gain map must be ColorSpace::Untagged (numeric, no transfer curve)"
     );
 
@@ -362,7 +374,14 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
         ),
     )
     .unwrap();
-    assert!(DualLayerHdrBuf::new(ok_base2, rgb565_gm, GainMapMetadata::symmetric(2.0)).is_err());
+    assert!(
+        DualLayerHdrBuf::new(
+            ok_base2,
+            rgb565_gm,
+            GainMapMetadata::symmetric_stops(2.0).unwrap()
+        )
+        .is_err()
+    );
 
     // Exact unreduced rationals preserved lossless without GCD reduction, and invalid metadata rejected.
     let unreduced = SignedFraction::new(2, NonZeroU32::new(4).unwrap());

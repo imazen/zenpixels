@@ -9,50 +9,71 @@
 
 ## summary
 #
-#   inherent methods                           45
-#   trait roster entries (type × trait)        75
+#   inherent methods                           71
+#   trait roster entries (type × trait)        78
 #
 # per-module pub lines:
-#   (root)                            1
-#   buffer                            3
-#   cicp                              4
-#   color                            17
+#   (root)                            6
+#   buffer                            5
+#   cicp                              5
+#   color                            26
 #   facts                             2
+#   hashing                           1
 #   hdr                               7
-#   icc                               1
-#   layout                            7
+#   icc                               2
+#   layout                           11
+#   orientation                       1
 #   pixel_types                       2
-#   sample                            1
+#   sample                            2
+#   storage                           1
 
-## items (45 lines)
+## items (71 lines)
 
+pub fn ChromaSiting::assert_fields_are_eq(&self)
+pub fn ChromaSubsampling::assert_fields_are_eq(&self)
+pub fn CodePlaneError::assert_fields_are_eq(&self)
 pub fn ExactDepth::assert_fields_are_eq(&self)
+pub fn ExactDepthError::assert_fields_are_eq(&self)
+pub fn InterleavedCodeLayout::assert_fields_are_eq(&self)
+pub fn buffer::BandRowLocation::assert_fields_are_eq(&self)
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
+pub fn buffer::BufFill::assert_fields_are_eq(&self)
 pub fn buffer::BufferError::assert_fields_are_eq(&self)
 pub fn buffer::Rgbx::assert_fields_are_eq(&self)
 pub fn cicp::Cicp::assert_fields_are_eq(&self)
 pub fn cicp::CicpError::assert_fields_are_eq(&self)
+pub fn cicp::CicpProjectionError::assert_fields_are_eq(&self)
 pub fn cicp::CicpTag::assert_fields_are_eq(&self)
 pub fn cicp::MatrixCoefficients::assert_fields_are_eq(&self)
+pub fn color::AlphaMode::assert_fields_are_eq(&self)
 pub fn color::ColorError::assert_fields_are_eq(&self)
 pub fn color::ColorOrigin::assert_fields_are_eq(&self)
 pub fn color::ColorSpace::assert_fields_are_eq(&self)
 pub fn color::CustomPrimaries::assert_fields_are_eq(&self)
 pub fn color::GainMapChannels::assert_fields_are_eq(&self)
+pub fn color::GainMapColorSpace::assert_fields_are_eq(&self)
 pub fn color::GainMapComponent::assert_fields_are_eq(&self)
+pub fn color::GainMapDirection::assert_fields_are_eq(&self)
 pub fn color::GainMapMetadata::assert_fields_are_eq(&self)
 pub fn color::Gamma::assert_fields_are_eq(&self)
 pub fn color::HlgMode::assert_fields_are_eq(&self)
+pub fn color::IccColorSpace::assert_fields_are_eq(&self)
+pub fn color::IccValidationError::assert_fields_are_eq(&self)
+pub fn color::OriginKind::assert_fields_are_eq(&self)
 pub fn color::ParametricColor::assert_fields_are_eq(&self)
 pub fn color::ParametricFormat::assert_fields_are_eq(&self)
+pub fn color::PerceptualSpace::assert_fields_are_eq(&self)
 pub fn color::PixelFormat::assert_fields_are_eq(&self)
 pub fn color::Primaries::assert_fields_are_eq(&self)
+pub fn color::RenderingIntent::assert_fields_are_eq(&self)
+pub fn color::SignalRange::assert_fields_are_eq(&self)
 pub fn color::SignedFraction::assert_fields_are_eq(&self)
 pub fn color::Transfer::assert_fields_are_eq(&self)
 pub fn color::UnsignedFraction::assert_fields_are_eq(&self)
 pub fn color::WhitePoint::assert_fields_are_eq(&self)
 pub fn facts::FloatFacts::assert_fields_are_eq(&self)
 pub fn facts::SampleFacts::assert_fields_are_eq(&self)
+pub fn hashing::HashInclusions::assert_fields_are_eq(&self)
 pub fn hdr::ClliCodes::assert_fields_are_eq(&self)
 pub fn hdr::ContentLightLevel::assert_fields_are_eq(&self)
 pub fn hdr::DiffuseWhite::assert_fields_are_eq(&self)
@@ -61,18 +82,26 @@ pub fn hdr::Nits::assert_fields_are_eq(&self)
 pub fn hdr::PeakSource::assert_fields_are_eq(&self)
 pub fn hdr::St2086Codes::assert_fields_are_eq(&self)
 pub fn icc::IccIdentification::assert_fields_are_eq(&self)
+pub fn icc::IdentificationUse::assert_fields_are_eq(&self)
 pub fn layout::BitPacking::assert_fields_are_eq(&self)
 pub fn layout::ChannelOrder::assert_fields_are_eq(&self)
+pub fn layout::InteropTarget::assert_fields_are_eq(&self)
+pub fn layout::LayoutError::assert_fields_are_eq(&self)
+pub fn layout::PixelRect::assert_fields_are_eq(&self)
 pub fn layout::PlaneFormat::assert_fields_are_eq(&self)
 pub fn layout::PlaneRole::assert_fields_are_eq(&self)
 pub fn layout::RowAlign::assert_fields_are_eq(&self)
 pub fn layout::SampleLayout::assert_fields_are_eq(&self)
 pub fn layout::SampleStride::assert_fields_are_eq(&self)
+pub fn layout::SampleType::assert_fields_are_eq(&self)
+pub fn orientation::Orientation::assert_fields_are_eq(&self)
 pub fn pixel_types::GrayAlpha16::assert_fields_are_eq(&self)
 pub fn pixel_types::GrayAlpha8::assert_fields_are_eq(&self)
 pub fn sample::SampleEncoding::assert_fields_are_eq(&self)
+pub fn sample::SampleEncodingError::assert_fields_are_eq(&self)
+pub fn storage::StorageError::assert_fields_are_eq(&self)
 
-## trait impls (75 types)
+## trait impls (78 types)
 
 ChromaSiting: TrivialClone
 ChromaSubsampling: TrivialClone
@@ -80,9 +109,12 @@ CodePlane<'a>: TrivialClone
 CodePlaneError: TrivialClone
 ExactDepth: TrivialClone
 ExactDepthError: TrivialClone
+InterleavedCodeLayout: TrivialClone
+buffer::BandRowLocation: TrivialClone
 buffer::Bgrx: TrivialClone
 buffer::BufFill: TrivialClone
 buffer::BufferError: TrivialClone
+buffer::InPlaceTransformInput<'a>: TrivialClone
 buffer::PlaneView<'a>: TrivialClone
 buffer::Rgbx: TrivialClone
 cicp::Cicp: TrivialClone
@@ -133,13 +165,13 @@ layout::BitPacking: TrivialClone
 layout::ChannelOrder: TrivialClone
 layout::InteropTarget: TrivialClone
 layout::LayoutError: TrivialClone
+layout::PixelRect: TrivialClone
 layout::PlaneFormat: TrivialClone
 layout::PlaneRole: TrivialClone
 layout::RowAlign: TrivialClone
 layout::SampleLayout: TrivialClone
 layout::SampleStride: TrivialClone
 layout::SampleType: TrivialClone
-layout::Subsampling: TrivialClone
 orientation::Orientation: TrivialClone
 pixel_types::F16Sample: TrivialClone
 pixel_types::GrayAlpha16: TrivialClone

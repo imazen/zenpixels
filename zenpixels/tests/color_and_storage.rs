@@ -6,8 +6,9 @@
 use zenpixels::{
     AlphaMode, BandedBuf, BitPacking, ChannelOrder, Cicp, CicpError, ColorError, ColorSpace,
     DiffuseWhite, DualLayerHdrBuf, FloatFacts, GainMapMetadata, HlgMode, HlgRendering,
-    InteropTarget, Nits, PixelBuf, PixelFormat, PixelSink, PixelSource, PlanarBuf, PlaneFormat,
-    PlaneRole, Primaries, SampleFacts, SampleLayout, SampleType, SignalRange, Transfer,
+    InteropTarget, Nits, PixelBuf, PixelFormat, PixelRect, PixelSink, PixelSource, PlanarBuf,
+    PlaneFormat, PlaneRole, Primaries, SampleFacts, SampleLayout, SampleType, SignalRange,
+    Transfer,
 };
 
 #[test]
@@ -208,7 +209,7 @@ fn view_chained_lifetimes_and_sample_facts_invalidation() {
         .as_view()
         .sub_rows(2, 3)
         .unwrap()
-        .crop(2, 1, 3, 2)
+        .crop(PixelRect::new(2, 1, 3, 2))
         .unwrap()
         .row(0);
     let floats: &[f32] = bytemuck::cast_slice(row_slice);
@@ -262,7 +263,7 @@ fn banded_buf_planar_buf_and_dual_layer_hdr() {
         ),
     )
     .unwrap();
-    let meta = GainMapMetadata::symmetric(2.3);
+    let meta = GainMapMetadata::symmetric_stops(2.3).unwrap();
     let dual = DualLayerHdrBuf::new(base, gain, meta).unwrap();
     assert_eq!(dual.base().width(), 16);
     assert_eq!(dual.gain_map().width(), 8);
@@ -279,7 +280,7 @@ fn banded_buf_planar_buf_and_dual_layer_hdr() {
 
     // DiffuseWhite + HlgRendering invariants
     assert_eq!(DiffuseWhite::default(), DiffuseWhite::BT2408);
-    let hlg_disp = HlgRendering::new(Nits::new(2000.0), 0.01, 1.32).unwrap();
+    let hlg_disp = HlgRendering::new(Nits::new(2000.0).unwrap(), 0.01, 1.32).unwrap();
     let cs = ColorSpace::BT2100_HLG_SCENE.with_transfer(Transfer::Hlg(HlgMode::Display(hlg_disp)));
     assert!(cs.is_hdr());
     assert_eq!(cs.to_cicp().unwrap().transfer_characteristics, 18);

@@ -22,7 +22,9 @@ mod exact;
 mod plane;
 
 pub use exact::{ExactDepth, ExactDepthError, full_range_grid_nests, narrow_range_grid_nests};
-pub use plane::{ChromaSiting, ChromaSubsampling, CodePlane, CodePlaneError, CodePlaneMut};
+pub use plane::{
+    ChromaSiting, ChromaSubsampling, CodePlane, CodePlaneError, CodePlaneMut, InterleavedCodeLayout,
+};
 
 /// Checked interpretation of one integer code in a stored sample.
 ///

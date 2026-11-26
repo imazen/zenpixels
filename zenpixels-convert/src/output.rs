@@ -40,6 +40,16 @@ pub enum OutputSignaling {
     Strip,
 }
 
+/// Validated container color signaling (`cicp` and/or `icc`) resolved for a destination format
+/// and [`OutputSignaling`] mode.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ResolvedSignaling {
+    /// Authoritative CICP tuple matching the output pixels, if applicable.
+    pub cicp: Option<Cicp>,
+    /// Authoritative ICC profile bytes matching the output pixels, if applicable.
+    pub icc: Option<Cow<'static, [u8]>>,
+}
+
 /// Atomic output handed to an image encoder: pixels + guaranteed-matching CICP/ICC/HDR metadata.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -154,7 +164,7 @@ impl OutputPlan {
         if view.format() != &self.src {
             return Err(err_at(ConvertError::UnsupportedRoute));
         }
-        let (cicp, icc) =
+        let ResolvedSignaling { cicp, icc } =
             resolve_output_signaling(&self.src.color, &self.dst.color, &self.signaling, origin)?;
         let hdr =
             if self.dst.can_represent_hdr() && same_photometry(&self.src.color, &self.dst.color) {
@@ -185,7 +195,7 @@ impl OutputPlan {
         if buf.format() != &self.src {
             return Err(err_at(ConvertError::UnsupportedRoute));
         }
-        let (cicp, icc) = resolve_output_signaling(
+        let ResolvedSignaling { cicp, icc } = resolve_output_signaling(
             &self.src.color,
             &self.dst.color,
             &self.signaling,
@@ -229,13 +239,12 @@ impl OutputPlan {
         &self.dst
     }
 
-    /// Resolve and validate container color signaling `(cicp, icc)` upfront before
+    /// Resolve and validate container color signaling (`cicp` and `icc`) upfront before
     /// streaming rows into an encoder (avoids materializing a full `EncodeReady` buffer).
-    #[allow(clippy::type_complexity)]
     pub fn resolve_signaling(
         &self,
         origin: &ColorOrigin,
-    ) -> Result<(Option<Cicp>, Option<Cow<'static, [u8]>>), At<ConvertError>> {
+    ) -> Result<ResolvedSignaling, At<ConvertError>> {
         resolve_output_signaling(&self.src.color, &self.dst.color, &self.signaling, origin)
     }
 
@@ -451,8 +460,6 @@ fn origin_cicp_agrees(orig_cicp: Cicp, dst_color: &ColorSpace) -> bool {
     false
 }
 
-type ResolvedSignaling = (Option<Cicp>, Option<Cow<'static, [u8]>>);
-
 fn resolve_output_signaling(
     src_color: &ColorSpace,
     dst_color: &ColorSpace,
@@ -460,11 +467,17 @@ fn resolve_output_signaling(
     origin: &ColorOrigin,
 ) -> Result<ResolvedSignaling, At<ConvertError>> {
     match signaling {
-        OutputSignaling::Strip => Ok((None, None)),
+        OutputSignaling::Strip => Ok(ResolvedSignaling {
+            cicp: None,
+            icc: None,
+        }),
         OutputSignaling::CustomIcc(bytes) => {
             validate_custom_icc_for_dst(bytes, dst_color)?;
             // Do not synthesize a potentially contradicting CICP alongside an arbitrary custom ICC.
-            Ok((None, Some(Cow::Owned(try_clone_bytes(bytes)?))))
+            Ok(ResolvedSignaling {
+                cicp: None,
+                icc: Some(Cow::Owned(try_clone_bytes(bytes)?)),
+            })
         }
         OutputSignaling::CicpOnly => {
             if matches!(
@@ -479,7 +492,10 @@ fn resolve_output_signaling(
             let cicp = dst_color
                 .to_cicp()
                 .ok_or_else(|| err_at(ConvertError::OutputSignalingUnavailable))?;
-            Ok((Some(cicp), None))
+            Ok(ResolvedSignaling {
+                cicp: Some(cicp),
+                icc: None,
+            })
         }
         OutputSignaling::SameAsOrigin => {
             if !same_color_meaning(src_color, dst_color) {
@@ -488,7 +504,10 @@ fn resolve_output_signaling(
             // Untagged / assumed origin carries no tags — preserve `(None, None)` verbatim
             // rather than inventing a CICP tuple (B12).
             if origin.icc.is_none() && origin.cicp.is_none() {
-                return Ok((None, None));
+                return Ok(ResolvedSignaling {
+                    cicp: None,
+                    icc: None,
+                });
             }
             let is_narrow = dst_color.range() == Some(zenpixels::SignalRange::Narrow);
             // Verify that preserved origin ICC and CICP actually agree with `dst_color`
@@ -510,7 +529,7 @@ fn resolve_output_signaling(
             } else {
                 None
             };
-            Ok((cicp, icc))
+            Ok(ResolvedSignaling { cicp, icc })
         }
         OutputSignaling::EmbedIcc => {
             let icc = match dst_color {
@@ -555,18 +574,30 @@ fn resolve_output_signaling(
                 ColorSpace::Icc { .. } | ColorSpace::Cmyk { .. } => None,
                 _ => dst_color.to_cicp(),
             };
-            Ok((cicp, Some(icc_bytes)))
+            Ok(ResolvedSignaling {
+                cicp,
+                icc: Some(icc_bytes),
+            })
         }
         OutputSignaling::Auto => match dst_color {
             ColorSpace::Icc { profile, .. } => {
                 validate_custom_icc_for_dst(profile, dst_color)?;
-                Ok((None, Some(Cow::Owned(try_clone_bytes(profile)?))))
+                Ok(ResolvedSignaling {
+                    cicp: None,
+                    icc: Some(Cow::Owned(try_clone_bytes(profile)?)),
+                })
             }
             ColorSpace::Cmyk { icc: Some(b), .. } => {
                 validate_custom_icc_for_dst(b, dst_color)?;
-                Ok((None, Some(Cow::Owned(try_clone_bytes(b)?))))
+                Ok(ResolvedSignaling {
+                    cicp: None,
+                    icc: Some(Cow::Owned(try_clone_bytes(b)?)),
+                })
             }
-            ColorSpace::Cmyk { icc: None, .. } => Ok((None, None)),
+            ColorSpace::Cmyk { icc: None, .. } => Ok(ResolvedSignaling {
+                cicp: None,
+                icc: None,
+            }),
             ColorSpace::Rgb {
                 primaries,
                 transfer,
@@ -597,14 +628,17 @@ fn resolve_output_signaling(
                 if cicp.is_none() && icc.is_none() && !is_default_srgb {
                     return Err(err_at(ConvertError::OutputSignalingUnavailable));
                 }
-                Ok((cicp, icc))
+                Ok(ResolvedSignaling { cicp, icc })
             }
             ColorSpace::Gray {
                 transfer, range, ..
             } => {
                 // Default full-range sRGB Gray needs no ICC tag (universally assumed default).
                 if *transfer == Transfer::Srgb && *range == zenpixels::SignalRange::Full {
-                    return Ok((None, None));
+                    return Ok(ResolvedSignaling {
+                        cicp: None,
+                        icc: None,
+                    });
                 }
                 if *range != zenpixels::SignalRange::Full {
                     return Err(err_at(ConvertError::OutputSignalingUnavailable));
@@ -618,10 +652,16 @@ fn resolve_output_signaling(
                 let Some(icc_bytes) = icc else {
                     return Err(err_at(ConvertError::OutputSignalingUnavailable));
                 };
-                Ok((None, Some(icc_bytes)))
+                Ok(ResolvedSignaling {
+                    cicp: None,
+                    icc: Some(icc_bytes),
+                })
             }
             _ => match dst_color.to_cicp() {
-                Some(c) => Ok((Some(c), None)),
+                Some(c) => Ok(ResolvedSignaling {
+                    cicp: Some(c),
+                    icc: None,
+                }),
                 None => Err(err_at(ConvertError::OutputSignalingUnavailable)),
             },
         },

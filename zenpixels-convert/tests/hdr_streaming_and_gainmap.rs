@@ -31,7 +31,7 @@ fn row_plan_convert_row_allocates_zero_bytes() {
 
     let info = allocation_counter::measure(|| {
         for y in 0..8 {
-            plan.convert_row(&src, &mut dst, 256, y).unwrap();
+            plan.convert_row_at(y, &src, &mut dst, 256).unwrap();
         }
     });
     assert_eq!(
@@ -45,7 +45,7 @@ fn row_plan_convert_row_allocates_zero_bytes() {
 fn hdr_to_sdr_measured_peak_streams_without_full_image_allocation_and_matches_banded() {
     use zenpixels_convert::{
         BandedBuf, ContentLightLevel, ConvertError, HdrMetadata, ImagePlan, LightLevelMethod,
-        MasteringDisplay, Nits, PeakSource, PixelSink, PixelSource, measure_cll,
+        MasteringDisplay, Nits, PeakSource, PixelSink, PixelSource, measure_content_light_level,
     };
     let (w, h) = (128u32, 128u32); // 128x128 RGBF32 would be 196,608 B
     let mut hdr_buf = PixelBuf::new(w, h, PixelFormat::RGB16_BT2100_PQ).unwrap();
@@ -67,7 +67,7 @@ fn hdr_to_sdr_measured_peak_streams_without_full_image_allocation_and_matches_ba
         hdr_banded.sink_row_mut(y).copy_from_slice(bytes);
     }
 
-    let policy = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0));
+    let policy = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0).unwrap());
     let plan = ImagePlan::build(
         PixelFormat::RGB16_BT2100_PQ,
         PixelFormat::RGB8_SRGB,
@@ -108,13 +108,13 @@ fn hdr_to_sdr_measured_peak_streams_without_full_image_allocation_and_matches_ba
     assert_eq!(*err.error(), ConvertError::MissingDeclaredPeak);
 
     let with_cll = hdr_buf.clone().with_hdr(HdrMetadata {
-        cll: Some(ContentLightLevel::new(1000, 250)),
+        content_light_level: Some(ContentLightLevel::new(1000, 250)),
         mastering: Some(MasteringDisplay::HDR10_REFERENCE),
     });
     assert!(plan_decl.execute(&with_cll).is_ok());
 
     // CLL measurement agrees with ~1000-nit peak!
-    let cll = measure_cll(
+    let cll = measure_content_light_level(
         &hdr_buf,
         DiffuseWhite::BT2408,
         None,
@@ -157,7 +157,7 @@ fn dual_layer_hdr_gain_map_extract_and_apply_roundtrip() {
         }
     }
 
-    let meta = GainMapMetadata::symmetric(2.5);
+    let meta = GainMapMetadata::symmetric_stops(2.5).unwrap();
     let dual = extract_gain_map(&sdr.as_view(), &hdr.as_view(), meta).unwrap();
 
     // At headroom = 0.0 stops -> exact SDR base luminance!
@@ -281,7 +281,7 @@ fn gainmap_streaming_row_cache_efficiency_zero_alloc_and_banded_parity() {
             *b = ((y as usize * 31 + x * 23 + 17) % 256) as u8;
         }
     }
-    let meta = GainMapMetadata::symmetric(3.0);
+    let meta = GainMapMetadata::symmetric_stops(3.0).unwrap();
     let dual = DualLayerHdrView::new(
         base.as_view(),
         gm.as_view(),
@@ -415,7 +415,7 @@ fn gainmap_resampling_unit_weights_clamping_and_adversarial_guard() {
     assert_eq!(display_boost_to_headroom_stops(f32::NAN), 0.0);
     assert!((display_boost_to_headroom_stops(4.0) - 2.0).abs() < 1e-6);
 
-    let meta = GainMapMetadata::symmetric(2.0);
+    let meta = GainMapMetadata::symmetric_stops(2.0).unwrap();
     assert!((full_reconstruction_headroom_stops(&meta) - 2.0).abs() < 1e-6);
     assert_eq!(signed_weight(&meta, 0.0), Some(0.0));
     assert_eq!(signed_weight(&meta, 1.0), Some(0.5));
@@ -915,7 +915,7 @@ fn gainmap_orientation_models_bake_passthrough_require_identity_and_dual_layer_r
             }
         }
     }
-    let meta = GainMapMetadata::symmetric(2.5);
+    let meta = GainMapMetadata::symmetric_stops(2.5).unwrap();
     let base_dual = DualLayerHdrBuf::new(base, gm, meta).unwrap();
 
     // 1. O(1) EXIF passthrough metadata rotate composes `then(delta)` on both owned & borrowed views.
@@ -1103,9 +1103,9 @@ fn gainmap_codex_p1_regressions_and_edge_cases() {
         GainMapColorSpace, GainMapComponent, Orientation, SampleLayout, SignedFraction,
         UnsignedFraction,
         gainmap::{
-            GainMapApplier, GainMapApplyConfig, GainMapExtractConfig, GainMapResample,
-            GainMapRowExtractor, GainMapTarget, apply_gain_map_with, signed_weight,
-            signed_weight_for_target,
+            GainMapApplier, GainMapApplyConfig, GainMapExtractConfig, GainMapLayer,
+            GainMapResample, GainMapRowExtractor, GainMapTarget, apply_gain_map_with,
+            signed_weight, signed_weight_for_target,
         },
     };
 
@@ -1214,13 +1214,9 @@ fn gainmap_codex_p1_regressions_and_edge_cases() {
     // P1 #3: Extreme downscale (65536x1 -> 1x1) rejected cleanly with UnsupportedRoute (no DoS/truncation),
     // and pre-cancelled Stop fails BEFORE allocating PixelBuf!
     let huge_err = GainMapApplier::new(
-        PixelFormat::RGB8_SRGB,
-        1,
-        1,
-        gm_spec.clone(),
-        65_536,
-        1,
-        GainMapMetadata::symmetric(2.0),
+        GainMapLayer::new(PixelFormat::RGB8_SRGB, 1, 1),
+        GainMapLayer::new(gm_spec.clone(), 65_536, 1),
+        GainMapMetadata::symmetric_stops(2.0).unwrap(),
         None,
         &GainMapApplyConfig::from_headroom_stops(2.0).with_resample(GainMapResample::Bilinear),
     )
@@ -1372,7 +1368,7 @@ fn gainmap_codex_p1_regressions_and_edge_cases() {
     let opaque_dual = DualLayerHdrView::new(
         opaque_base.as_view(),
         gm.as_view(),
-        GainMapMetadata::symmetric(2.0),
+        GainMapMetadata::symmetric_stops(2.0).unwrap(),
         None,
         Orientation::Identity,
     )

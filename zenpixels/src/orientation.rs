@@ -29,7 +29,7 @@
 ///
 /// # D4 group operations
 ///
-/// [`compose`](Orientation::compose) implements group multiplication (verified
+/// [`then`](Orientation::then) implements group multiplication (verified
 /// against a full Cayley table). [`inverse`](Orientation::inverse) returns the
 /// element that undoes the transformation.
 ///
@@ -39,7 +39,7 @@
 /// let combined = Orientation::Rotate90.then(Orientation::FlipH);
 /// assert_eq!(combined, Orientation::Transpose);
 ///
-/// let roundtrip = Orientation::Rotate90.compose(Orientation::Rotate90.inverse());
+/// let roundtrip = Orientation::Rotate90.then(Orientation::Rotate90.inverse());
 /// assert_eq!(roundtrip, Orientation::Identity);
 /// ```
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -126,12 +126,13 @@ impl Orientation {
         matches!(self, Self::Identity | Self::FlipH)
     }
 
-    /// Compose two orientations: apply `self` first, then `other`.
+    /// Chain two orientations: apply `self` first, then `next`.
     ///
-    /// This is D4 group multiplication, verified against the full Cayley table.
-    pub const fn compose(self, other: Self) -> Self {
+    /// This is D4 group multiplication, verified against the full Cayley table:
+    /// `Orientation::Rotate90.then(Orientation::FlipH)` means "apply Rotate90 first, then FlipH."
+    pub const fn then(self, next: Self) -> Self {
         let (r1, f1) = self.decompose();
-        let (r2, f2) = other.decompose();
+        let (r2, f2) = next.decompose();
         if !f1 {
             Self::from_rotation_flip((r1 + r2) & 3, f2)
         } else {
@@ -139,13 +140,7 @@ impl Orientation {
         }
     }
 
-    /// Alias for [`compose`](Self::compose). Reads naturally in chains:
-    /// `Rotate90.then(FlipH)` = "apply Rotate90 first, then FlipH."
-    pub const fn then(self, other: Self) -> Self {
-        self.compose(other)
-    }
-
-    /// The inverse orientation: `self.compose(self.inverse()) == Identity`.
+    /// The inverse orientation: `self.then(self.inverse()) == Identity`.
     pub const fn inverse(self) -> Self {
         let (r, f) = self.decompose();
         if !f {
@@ -159,15 +154,25 @@ impl Orientation {
     /// Compute output dimensions after applying this orientation.
     ///
     /// Returns `(width, height)` — swapped when [`swaps_axes`](Self::swaps_axes) is true.
-    pub const fn output_dimensions(self, w: u32, h: u32) -> (u32, u32) {
-        if self.swaps_axes() { (h, w) } else { (w, h) }
+    pub const fn output_dimensions(self, width: u32, height: u32) -> (u32, u32) {
+        if self.swaps_axes() {
+            (height, width)
+        } else {
+            (width, height)
+        }
     }
 
-    /// Forward-map a source pixel `(sx, sy)` to its destination position.
+    /// Forward-map a source pixel coordinate `source_xy = (sx, sy)` to its destination
+    /// position `(dx, dy)` in the oriented output image.
     ///
-    /// `(w, h)` are the **source** (pre-orientation) dimensions.
-    /// Returns `(dx, dy)` in the output coordinate space.
-    pub const fn forward_map(self, sx: u32, sy: u32, w: u32, h: u32) -> (u32, u32) {
+    /// `source_dimensions = (width, height)` are the **source** (pre-orientation) dimensions.
+    pub const fn map_pixel_coordinates(
+        self,
+        source_xy: (u32, u32),
+        source_dimensions: (u32, u32),
+    ) -> (u32, u32) {
+        let (sx, sy) = source_xy;
+        let (w, h) = source_dimensions;
         match self {
             Self::Identity => (sx, sy),
             Self::FlipH => (w - 1 - sx, sy),
@@ -324,10 +329,10 @@ mod tests {
                 let a = zj[i];
                 let b = zj[j];
                 let expected = zj[expected_idx];
-                let got = a.compose(b);
+                let got = a.then(b);
                 assert_eq!(
                     got, expected,
-                    "Cayley: {a:?}.compose({b:?}) = {got:?}, expected {expected:?}"
+                    "Cayley: {a:?}.then({b:?}) = {got:?}, expected {expected:?}"
                 );
             }
         }
@@ -338,14 +343,14 @@ mod tests {
         for &o in &Orientation::ALL {
             let inv = o.inverse();
             assert_eq!(
-                o.compose(inv),
+                o.then(inv),
                 Orientation::Identity,
-                "{o:?}.compose({inv:?}) should be Identity"
+                "{o:?}.then({inv:?}) should be Identity"
             );
             assert_eq!(
-                inv.compose(o),
+                inv.then(o),
                 Orientation::Identity,
-                "{inv:?}.compose({o:?}) should be Identity"
+                "{inv:?}.then({o:?}) should be Identity"
             );
         }
     }
@@ -355,8 +360,8 @@ mod tests {
         for &a in &Orientation::ALL {
             for &b in &Orientation::ALL {
                 for &c in &Orientation::ALL {
-                    let ab_c = a.compose(b).compose(c);
-                    let a_bc = a.compose(b.compose(c));
+                    let ab_c = a.then(b).then(c);
+                    let a_bc = a.then(b.then(c));
                     assert_eq!(ab_c, a_bc, "({a:?}*{b:?})*{c:?} != {a:?}*({b:?}*{c:?})");
                 }
             }
@@ -367,31 +372,22 @@ mod tests {
     fn identity_is_neutral() {
         let id = Orientation::Identity;
         for &o in &Orientation::ALL {
-            assert_eq!(id.compose(o), o);
-            assert_eq!(o.compose(id), o);
-        }
-    }
-
-    #[test]
-    fn then_is_compose() {
-        for &a in &Orientation::ALL {
-            for &b in &Orientation::ALL {
-                assert_eq!(a.then(b), a.compose(b));
-            }
+            assert_eq!(id.then(o), o);
+            assert_eq!(o.then(id), o);
         }
     }
 
     // --- Coordinate mapping ---
 
     #[test]
-    fn forward_map_brute_force_4x3() {
+    fn map_pixel_coordinates_brute_force_4x3() {
         let (sw, sh) = (4u32, 3u32);
         for &o in &Orientation::ALL {
             let (dw, dh) = o.output_dimensions(sw, sh);
             // Every source pixel must land inside the output bounds.
             for sy in 0..sh {
                 for sx in 0..sw {
-                    let (dx, dy) = o.forward_map(sx, sy, sw, sh);
+                    let (dx, dy) = o.map_pixel_coordinates((sx, sy), (sw, sh));
                     assert!(
                         dx < dw && dy < dh,
                         "{o:?}: ({sx},{sy}) mapped to ({dx},{dy}) outside {dw}x{dh}"
@@ -402,7 +398,7 @@ mod tests {
             let mut seen = alloc::vec![false; (dw * dh) as usize];
             for sy in 0..sh {
                 for sx in 0..sw {
-                    let (dx, dy) = o.forward_map(sx, sy, sw, sh);
+                    let (dx, dy) = o.map_pixel_coordinates((sx, sy), (sw, sh));
                     let idx = (dy * dw + dx) as usize;
                     assert!(!seen[idx], "{o:?}: output ({dx},{dy}) hit twice");
                     seen[idx] = true;
@@ -416,15 +412,15 @@ mod tests {
     }
 
     #[test]
-    fn forward_map_inverse_round_trip() {
+    fn map_pixel_coordinates_inverse_round_trip() {
         let (w, h) = (5u32, 3u32);
         for &o in &Orientation::ALL {
             let inv = o.inverse();
             let (dw, dh) = o.output_dimensions(w, h);
             for sy in 0..h {
                 for sx in 0..w {
-                    let (dx, dy) = o.forward_map(sx, sy, w, h);
-                    let (rx, ry) = inv.forward_map(dx, dy, dw, dh);
+                    let (dx, dy) = o.map_pixel_coordinates((sx, sy), (w, h));
+                    let (rx, ry) = inv.map_pixel_coordinates((dx, dy), (dw, dh));
                     assert_eq!(
                         (rx, ry),
                         (sx, sy),

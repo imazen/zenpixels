@@ -119,7 +119,7 @@ fn aligned64_borrows_zero_copy_as_typed_slice_but_copies_for_vec() {
     let mut buf =
         PixelBuf::new_aligned(4, 2, PixelFormat::RGBAF32_LINEAR, RowAlign::Cache64).unwrap();
     assert_eq!(buf.storage().allocation_alignment(), 64);
-    assert_eq!(buf.stride(), 64); // 4 * 16 = 64 bytes -> contiguous AND 64-byte aligned!
+    assert_eq!(buf.stride_bytes(), 64); // 4 * 16 = 64 bytes -> contiguous AND 64-byte aligned!
 
     buf.as_view_mut().row_as_mut::<Rgba<f32>>(0).unwrap()[1] = Rgba::new(0.5, 0.25, 0.75, 1.0);
     let slice = buf.as_view().as_contiguous_typed::<Rgba<f32>>().unwrap();

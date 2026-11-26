@@ -540,8 +540,8 @@ fn f32_cmyk_backends_agree() {
     .unwrap();
     let mut a = vec![0u8; 4096 * SampleLayout::RGBF32.bytes_per_pixel()];
     let mut b = vec![0u8; 4096 * SampleLayout::RGBF32.bytes_per_pixel()];
-    pm.convert_row(&ink, &mut a, 4096, 0).unwrap();
-    pl.convert_row(&ink, &mut b, 4096, 0).unwrap();
+    pm.convert_row(&ink, &mut a, 4096).unwrap();
+    pl.convert_row(&ink, &mut b, 4096).unwrap();
     let (d, idx, vx, vy) = worst_with_witness(SampleLayout::RGBF32, &a, &b);
     assert!(
         d < 2.5,
@@ -681,8 +681,8 @@ fn row_plan_drives_every_backend_without_substitution() {
     let pl = RowPlan::build(p3_spec, srgb_spec, &pol_lcms, None).unwrap();
     let mut om = vec![0u8; 256 * 3];
     let mut ol = vec![0u8; 256 * 3];
-    pm.convert_row(&input, &mut om, 256, 0).unwrap();
-    pl.convert_row(&input, &mut ol, 256, 0).unwrap();
+    pm.convert_row(&input, &mut om, 256).unwrap();
+    pl.convert_row(&input, &mut ol, 256).unwrap();
     let d = worst(SampleLayout::RGB8, &om, &ol);
     assert!(d <= 1.0, "RowPlan MoxCms vs Lcms diff {d:.3}");
 }

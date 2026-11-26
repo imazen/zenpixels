@@ -906,6 +906,30 @@ fn alloc_applier_scratch(
     })
 }
 
+/// Layer format and stored pixel dimensions passed to [`GainMapApplier::new`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GainMapLayer {
+    /// Pixel format of this layer (`layout` + `color`).
+    pub format: PixelFormat,
+    /// Layer width in pixels.
+    pub width: u32,
+    /// Layer height in rows.
+    pub height: u32,
+}
+
+impl GainMapLayer {
+    /// Construct a layer descriptor from `(format, width, height)`.
+    #[inline]
+    #[must_use]
+    pub const fn new(format: PixelFormat, width: u32, height: u32) -> Self {
+        Self {
+            format,
+            width,
+            height,
+        }
+    }
+}
+
 impl GainMapApplier {
     /// Construct a streaming applier directly from a validated [`DualLayerHdrView`].
     ///
@@ -920,12 +944,16 @@ impl GainMapApplier {
             return Err(err_at(ConvertError::UnsupportedRoute));
         }
         let mut applier = Self::new(
-            dual.base().format().clone(),
-            dual.base().width(),
-            dual.base().rows(),
-            dual.gain_map().format().clone(),
-            dual.gain_map().width(),
-            dual.gain_map().rows(),
+            GainMapLayer::new(
+                dual.base().format().clone(),
+                dual.base().width(),
+                dual.base().height(),
+            ),
+            GainMapLayer::new(
+                dual.gain_map().format().clone(),
+                dual.gain_map().width(),
+                dual.gain_map().height(),
+            ),
             dual.metadata(),
             dual.alternate_color_space(),
             config,
@@ -934,20 +962,25 @@ impl GainMapApplier {
         Ok(applier)
     }
 
-    /// Construct a streaming applier from explicit layer specs, dimensions, and metadata.
+    /// Construct a streaming applier from explicit base and gain-map layer descriptors and metadata.
     #[inline(never)]
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        base_spec: PixelFormat,
-        base_w: u32,
-        base_h: u32,
-        gm_spec: PixelFormat,
-        gm_w: u32,
-        gm_h: u32,
+        base: GainMapLayer,
+        gain_map: GainMapLayer,
         metadata: GainMapMetadata,
         alternate_color_space: Option<&ColorSpace>,
         config: &GainMapApplyConfig,
     ) -> Result<Self, At<ConvertError>> {
+        let GainMapLayer {
+            format: base_spec,
+            width: base_w,
+            height: base_h,
+        } = base;
+        let GainMapLayer {
+            format: gm_spec,
+            width: gm_w,
+            height: gm_h,
+        } = gain_map;
         // Phase 1: Pure validation & scalar math BEFORE allocating any `Vec` or `RowPlan`
         // (eliminates per-`?` drop-glue ladders for `RowPlan` & scratch vectors).
         if base_w == 0 || base_h == 0 || gm_w == 0 || gm_h == 0 {
@@ -1216,34 +1249,34 @@ impl GainMapApplier {
         self.cache_cursor = 0;
     }
 
-    /// Reconstruct row `y` from `base_row` and a borrowed decoded `gain_map` view into `dst_row`.
+    /// Reconstruct row `row_index` from `base_row` and a borrowed decoded `gain_map` view into `dst_row`.
     pub fn apply_row(
         &mut self,
-        y: u32,
+        row_index: u32,
         base_row: &[u8],
         gain_map: &PixelView<'_>,
         dst_row: &mut [u8],
     ) -> Result<(), At<ConvertError>> {
         if gain_map.width() != self.gm_w
-            || gain_map.rows() != self.gm_h
+            || gain_map.height() != self.gm_h
             || gain_map.format() != &self.gm_spec
         {
             return Err(err_at(ConvertError::DimensionMismatch));
         }
-        self.apply_row_dyn(y, base_row, &mut |gy| Ok(gain_map.row(gy)), dst_row)
+        self.apply_row_dyn(row_index, base_row, &mut |gy| Ok(gain_map.row(gy)), dst_row)
     }
 
-    /// Reconstruct row `y` while lazily pulling gain-map rows `gy` on demand via a fallible
+    /// Reconstruct row `row_index` while lazily pulling gain-map rows `gy` on demand via a fallible
     /// `fetch_gm_row` provider.
     ///
     /// On resampled paths (`Bilinear`, `Bicubic`, `Mitchell`), horizontally-upsampled gain rows
-    /// are cached across consecutive `y` so `fetch_gm_row` is invoked at most once per unique
+    /// are cached across consecutive `row_index` so `fetch_gm_row` is invoked at most once per unique
     /// gain-map row during sequential top-to-bottom decode. Short provider rows return
     /// `Err(ConvertError::DimensionMismatch)` rather than panicking.
     #[inline]
     pub fn apply_row_with_provider<'a, F>(
         &mut self,
-        y: u32,
+        row_index: u32,
         base_row: &[u8],
         mut fetch_gm_row: F,
         dst_row: &mut [u8],
@@ -1251,7 +1284,7 @@ impl GainMapApplier {
     where
         F: FnMut(u32) -> Result<&'a [u8], At<ConvertError>>,
     {
-        self.apply_row_dyn(y, base_row, &mut fetch_gm_row, dst_row)
+        self.apply_row_dyn(row_index, base_row, &mut fetch_gm_row, dst_row)
     }
 
     #[inline(never)]
@@ -1276,27 +1309,27 @@ impl GainMapApplier {
         // Fast exact identity bypass at zero weight: no gain-map fetch, no offset drift!
         if self.is_zero_weight {
             if let Some(direct) = &self.zero_weight_direct {
-                return direct.convert_row(base_row, dst_row, w, y);
+                return direct.convert_row_at(y, base_row, dst_row, w);
             }
             if let Some(a2d) = &self.app_to_dst {
                 let lin_bytes = &mut bytemuck::cast_slice_mut::<f32, u8>(&mut self.base_lin_row)
                     [..active_lin_bytes];
-                self.base_to_app.convert_row(base_row, lin_bytes, w, y)?;
-                return a2d.convert_row(
+                self.base_to_app.convert_row_at(y, base_row, lin_bytes, w)?;
+                return a2d.convert_row_at(
+                    y,
                     &bytemuck::cast_slice(&self.base_lin_row)[..active_lin_bytes],
                     dst_row,
                     w,
-                    y,
                 );
             }
-            return self.base_to_app.convert_row(base_row, dst_row, w, y);
+            return self.base_to_app.convert_row_at(y, base_row, dst_row, w);
         }
 
         // 1. Decode base row into linear RGB(A) in application primaries (padding lanes stay 0.0).
         {
             let lin_bytes = &mut bytemuck::cast_slice_mut::<f32, u8>(&mut self.base_lin_row)
                 [..active_lin_bytes];
-            self.base_to_app.convert_row(base_row, lin_bytes, w, y)?;
+            self.base_to_app.convert_row_at(y, base_row, lin_bytes, w)?;
         }
 
         // 2. Obtain linear gain multipliers into `self.gains` (padded to `w_pad`).
@@ -1338,11 +1371,11 @@ impl GainMapApplier {
                 self.has_alpha,
                 &mut self.out_lin_row,
             );
-            a2d.convert_row(
+            a2d.convert_row_at(
+                y,
                 &bytemuck::cast_slice(&self.out_lin_row)[..active_lin_bytes],
                 dst_row,
                 w,
-                y,
             )?;
         } else if w_u == w_pad
             && let Ok(dst_f32) =
@@ -1395,7 +1428,7 @@ impl GainMapApplier {
             || base.source_height() != self.base_h
             || base.source_format() != &self.base_spec
             || gain_map.width() != self.gm_w
-            || gain_map.rows() != self.gm_h
+            || gain_map.height() != self.gm_h
             || gain_map.format() != &self.gm_spec
             || dst.sink_width() != self.base_w
             || dst.sink_height() != self.base_h
@@ -1802,7 +1835,7 @@ fn apply_gain_map_stored(
     let mut applier = GainMapApplier::for_view(dual, config)?;
     let mut out = PixelBuf::new(
         dual.base().width(),
-        dual.base().rows(),
+        dual.base().height(),
         applier.destination_format().clone(),
     )
     .map_err(|e| err_at((*e.error()).into()))?;
@@ -2231,9 +2264,9 @@ impl GainMapRowExtractor {
         Self::new(config.to_metadata()?, app_primaries)
     }
 
-    /// Quantize one row of paired linear RGB(A) `f32` pixels (`channels` is `3` or `4`)
-    /// into packed gain-map sample bytes matching `gm_layout` (`U8` or `U16`, `Full`/`Lsb`/`Msb`,
-    /// `Gray`/`Rgb`/`Generic(1|3)`).
+    /// Quantize one row of paired linear RGB(A) `f32` pixels (`input_channels` is `3` or `4`)
+    /// into packed gain-map sample bytes matching `gain_map_layout` (`U8` or `U16`,
+    /// `Full`/`Lsb`/`Msb`, `Gray`/`Rgb`/`Generic(1|3)`).
     ///
     /// Computes exact `f64` signed-offset ratios `(alt + k_alt) / (base + k_base)` without
     /// near-black floor clamping.
@@ -2242,10 +2275,12 @@ impl GainMapRowExtractor {
         &mut self,
         base_linear: &[f32],
         alt_linear: &[f32],
-        channels: usize,
-        gm_layout: SampleLayout,
+        input_channels: usize,
+        gain_map_layout: SampleLayout,
         dst_row: &mut [u8],
     ) -> Result<(), At<ConvertError>> {
+        let channels = input_channels;
+        let gm_layout = gain_map_layout;
         if channels != 3 && channels != 4 {
             return Err(err_at(ConvertError::UnsupportedRoute));
         }
@@ -2630,8 +2665,8 @@ fn extract_gain_map_internal(
 ) -> Result<(PixelBuf, ObservedGainRange), At<ConvertError>> {
     stop.check().map_err(|r| err_at(r.into()))?;
     let w = base_src.width();
-    let h = base_src.rows();
-    if w == 0 || h == 0 || alternate_src.width() != w || alternate_src.rows() != h {
+    let h = base_src.height();
+    if w == 0 || h == 0 || alternate_src.width() != w || alternate_src.height() != h {
         return Err(err_at(ConvertError::DimensionMismatch));
     }
     if base_src.orientation() != alternate_src.orientation() {
@@ -2711,17 +2746,17 @@ fn extract_gain_map_internal(
         let mut gm_v = gain_buf.as_view_mut();
         for y in 0..h {
             stop.check().map_err(|r| err_at(r.into()))?;
-            base_plan.convert_row(
+            base_plan.convert_row_at(
+                y,
                 base_src.row(y),
                 bytemuck::cast_slice_mut(&mut base_row),
                 w,
-                y,
             )?;
-            alt_plan.convert_row(
+            alt_plan.convert_row_at(
+                y,
                 alternate_src.row(y),
                 bytemuck::cast_slice_mut(&mut alt_row),
                 w,
-                y,
             )?;
             let dst_slice = if measure_only {
                 &mut dummy_row[..]
@@ -2743,17 +2778,17 @@ fn extract_gain_map_internal(
             for gy in 0..gm_h {
                 stop.check().map_err(|r| err_at(r.into()))?;
                 let y = (gy * scale + scale / 2).min(h - 1);
-                base_plan.convert_row(
+                base_plan.convert_row_at(
+                    y,
                     base_src.row(y),
                     bytemuck::cast_slice_mut(&mut base_row),
                     w,
-                    y,
                 )?;
-                alt_plan.convert_row(
+                alt_plan.convert_row_at(
+                    y,
                     alternate_src.row(y),
                     bytemuck::cast_slice_mut(&mut alt_row),
                     w,
-                    y,
                 )?;
                 for gx in 0..gm_w as usize {
                     let sx = ((gx as u32 * scale + scale / 2).min(w - 1)) as usize * 3;
@@ -2784,17 +2819,17 @@ fn extract_gain_map_internal(
                 gm_base_row.fill(0.0);
                 gm_alt_row.fill(0.0);
                 for y in y0..y1 {
-                    base_plan.convert_row(
+                    base_plan.convert_row_at(
+                        y,
                         base_src.row(y),
                         bytemuck::cast_slice_mut(&mut base_row),
                         w,
-                        y,
                     )?;
-                    alt_plan.convert_row(
+                    alt_plan.convert_row_at(
+                        y,
                         alternate_src.row(y),
                         bytemuck::cast_slice_mut(&mut alt_row),
                         w,
-                        y,
                     )?;
                     for gx in 0..gm_w {
                         let x0 = gx * scale;
@@ -2867,17 +2902,17 @@ fn extract_gain_map_internal(
                 gm_alt_row.fill(0.0);
                 for (yt, &wy) in y_ws.iter().enumerate() {
                     let y = y_left + yt as u32;
-                    base_plan.convert_row(
+                    base_plan.convert_row_at(
+                        y,
                         base_src.row(y),
                         bytemuck::cast_slice_mut(&mut base_row),
                         w,
-                        y,
                     )?;
-                    alt_plan.convert_row(
+                    alt_plan.convert_row_at(
+                        y,
                         alternate_src.row(y),
                         bytemuck::cast_slice_mut(&mut alt_row),
                         w,
-                        y,
                     )?;
                     for gx in 0..gm_w as usize {
                         let (x_left, x_ws) = hw.taps(gx);

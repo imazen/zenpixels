@@ -106,10 +106,10 @@ fn verify_partition_and_canary(
         let mut dst_1px = vec![0xAAu8; dst_len + 2 * GUARD];
 
         plan_all
-            .convert_row(&src, &mut dst_all[GUARD..GUARD + dst_len], w, 0)
+            .convert_row(&src, &mut dst_all[GUARD..GUARD + dst_len], w)
             .unwrap();
         plan_sc
-            .convert_row(&src, &mut dst_sc[GUARD..GUARD + dst_len], w, 0)
+            .convert_row(&src, &mut dst_sc[GUARD..GUARD + dst_len], w)
             .unwrap();
 
         for x in 0..(w as usize) {
@@ -118,7 +118,6 @@ fn verify_partition_and_canary(
                     &src[x * sbpp..(x + 1) * sbpp],
                     &mut dst_1px[GUARD + x * dbpp..GUARD + (x + 1) * dbpp],
                     1,
-                    0,
                 )
                 .unwrap();
         }
@@ -435,8 +434,8 @@ fn row_partition_and_odd_stride_canary_invariance_matrix() {
             "PQ16->sRGB8_BT2446A",
             PixelFormat::RGB16_BT2100_PQ,
             PixelFormat::RGB8_SRGB,
-            ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0)),
-            Some(Nits::new(1000.0)),
+            ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0).unwrap()),
+            Some(Nits::new(1000.0).unwrap()),
         );
     }
 }

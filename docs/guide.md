@@ -9,7 +9,9 @@ If you want a struct- and enum-first map with visual drilldowns, see [types-and-
 ## Your First 60 Seconds (Wrap → Crop → Convert)
 
 ```rust
-use zenpixels_convert::{ConvertPolicy, PixelFormat, PixelBuf, convert_to_buf, formats, to_rgba8};
+use zenpixels_convert::{
+    ConvertPolicy, PixelBuf, PixelFormat, PixelRect, convert_to_buf, formats, to_rgba8,
+};
 
 // 1. Own tightly packed sRGB RGB8 pixels (annotate literals so Rust infers u8):
 let img = PixelBuf::from_typed(
@@ -19,7 +21,7 @@ let img = PixelBuf::from_typed(
 )?;
 
 // 2. Borrow a zero-copy rectangular crop (keeps parent stride = 6 bytes):
-let right_col = img.crop_view(1, 0, 1, 2)?;
+let right_col = img.crop_view(PixelRect::new(1, 0, 1, 2))?;
 assert_eq!(right_col.row(0), &[0, 255, 0]);
 
 // 3. Convert to straight-alpha RGBA8 in one call, or widen losslessly to linear F32:
@@ -143,23 +145,23 @@ assert_eq!(opaque.format().color.alpha(), AlphaMode::Opaque);
 
 ```rust
 use std::sync::Arc;
-use zenpixels::{PixelFormat, PixelBuf};
+use zenpixels::{PixelBuf, PixelFormat, PixelRect};
 
 let shared: Arc<[u8]> = Arc::from(vec![42u8; 8 * 6 * 3]);
 let mut buf = PixelBuf::from_external(shared.clone(), 8, 6, 8 * 3, PixelFormat::RGB8_SRGB)
     .map_err(|(err, _orig)| err)?;
 
 // Rectangular zero-copy crop preserves parent stride (24 bytes):
-let tile = buf.crop_view(2, 1, 4, 3)?;
-assert_eq!((tile.width(), tile.height()), (4, 3)); // `rows()` and `height()` are aliases on views
-assert_eq!(tile.stride(), 24);
+let tile = buf.crop_view(PixelRect::new(2, 1, 4, 3))?;
+assert_eq!((tile.width(), tile.height()), (4, 3));
+assert_eq!(tile.stride_bytes(), 24);
 assert_eq!(tile.row(0).len(), 4 * 3);
 
 // Fallible CoW mutation promotes `buf` to owned storage without touching `shared`:
 buf.try_as_view_mut()?.row_mut(0)[0] = 99;
 assert_eq!(buf.row(0)[0], 99);
 // Mutable crops (`crop_view_mut` / `sub_rows_mut`) also promote fallibly on CoW;
-// `buf.into_crop(x, y, w, h)?` crops an owned `PixelBuf` in O(1) without copying pixels
+// `buf.into_crop(PixelRect::new(x, y, w, h))?` crops an owned `PixelBuf` in O(1) without copying pixels
 // (chain `.into_tight_buf()?` afterwards to compact).
 assert_eq!(shared[0], 42);
 ```
@@ -219,7 +221,7 @@ assert_eq!(back.as_ptr(), ptr);
 | One-shot conversion into a new `PixelBuf` | `convert_to_buf(&view, destination_format, &policy)` | Defaults to `PeakSource::Measured` (measured **only when HDR tone mapping needs a peak**); use `convert_to_buf_with_peak` for explicit `PeakSource` |
 | One-shot conversion into an existing sink | `convert_into(&src, &mut dst, &policy)` | Works with `PixelBuf`, `PixelViewMut`, `BandedBuf`; use `convert_into_with_peak` for explicit `PeakSource` |
 | Reusable whole-image converter | `ImagePlan::build(src, dst, &policy, peak)` | `.execute(&src)` or `.execute_into(&src, &mut dst)` |
-| Streaming row-by-row converter (zero heap scratch) | `RowPlan::build(src, dst, &policy, resolved_source_peak)` | Takes `Option<Nits>` (cannot measure a whole image from one row); `plan.convert_row(src_row, dst_row, width, y)` |
+| Streaming row-by-row converter (zero heap scratch) | `RowPlan::build(src, dst, &policy, resolved_source_peak)` | Takes `Option<Nits>` (cannot measure a whole image from one row); `plan.convert_row(src_row, dst_row, width_pixels)` (or `convert_row_at(row_index, ...)` for ordered dithering) |
 | Negotiate + convert + resolve CICP/ICC for an encoder | `adapt_for_encode_parametric` / `adapt_for_encode` / `OutputPlan` | Returns `EncodeReady { pixels: PixelCow, cicp, icc, hdr }` under `OutputSignaling` |
 
 ### `ConvertPolicy` Presets (Safe by Default)
@@ -237,7 +239,7 @@ assert_eq!(back.as_ptr(), ptr);
 
 ### HDR PQ → SDR Tone Mapping & SIMD/Scalar 0-Bit Parity
 
-Plain `ConvertPolicy::permissive()` refuses unanchored PQ→SDR routes (`ConvertError::MissingHdrAnchor`) until you configure a diffuse white anchor and tone mapper (`Bt2446A`, enabled via the `bt2446a` Cargo feature; use `Bt2446A::pipeline_managed()` or explicit typed `Bt2446A::with_peaks(Nits::new(1000.0), Nits::new(100.0))`):
+Plain `ConvertPolicy::permissive()` refuses unanchored PQ→SDR routes (`ConvertError::MissingHdrAnchor`) until you configure a diffuse white anchor and tone mapper (`Bt2446A`, enabled via the `bt2446a` Cargo feature; use `Bt2446A::pipeline_managed()` or explicit typed `Bt2446A::with_peaks(Nits::new(1000.0).unwrap(), Nits::new(100.0).unwrap())`):
 
 ```rust
 use std::sync::Arc;
@@ -246,7 +248,7 @@ use zenpixels_convert::{
     formats,
 };
 
-let policy = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0))
+let policy = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0).unwrap())
     .with_tone_mapper(Arc::new(Bt2446A::pipeline_managed()));
 
 // Whole-image streaming peak measurement (O(1) row memory):
@@ -259,7 +261,7 @@ let plan = ImagePlan::build(
 let sdr_buf = plan.execute(&pq16_buf)?;
 
 // Streaming row-by-row with explicit resolved source peak (e.g. 1000 nits) + SIMD vs scalar parity:
-let peak = Some(Nits::try_new(1000.0).unwrap());
+let peak = Nits::new(1000.0);
 let simd_row = RowPlan::build(
     &formats::RGB16_BT2100_PQ,
     &formats::RGB8_SRGB,
@@ -360,7 +362,7 @@ assert_eq!(*err.error(), ConvertError::OutputSignalingUnavailable);
 Plane constructors (`PlaneView`, `PlaneViewMut`, `PlaneBuf`) keep byte vs. sample strides unambiguous:
 - **Tight typed samples (4 args):** `from_samples(samples, width, height, plane_spec)` derives tight stride `width * spec.components` automatically (`width` for luma `Y`, `width * 2` for semi-planar `CbCr`).
 - **Strided typed samples (5 args):** `from_samples_strided(samples, width, height, SampleStride(stride_samples), plane_spec)` takes an explicit [`SampleStride`] measured in **`S` elements** (not bytes).
-- **Strided raw bytes (5 args):** `new` / `from_external` take `(data, width, height, stride_bytes, plane_spec)`; `.stride()` always returns **bytes**.
+- **Strided raw bytes (5 args):** `new` / `from_external` take `(data, width, height, stride_bytes, plane_spec)`; `.stride_bytes()` always returns **bytes**.
 - `code_u32(x, y, component)` and `as_code_plane(component)` take `component = 0` for 1-channel planes (`Y`, `Cb`, `Cr`, `R`, `G`, `B`, `Alpha`) and `0` or `1` for semi-planar `CbCr`/`CrCb`.
 - All three reconstruction functions (`reconstruct_planar_to_buf`, `reconstruct_planar_into`, `reconstruct_planar_f32`) read source interpretation (`color()`, `effective_range()`, `matrix_coefficients()`, `effective_alpha()`, `chroma_siting()`, `crop_origin()`) **identically** from `PlanarView`. `reconstruct_planar_into` validates that `dst.format().color` matches the derived destination color space (refusing mismatched primaries/transfer/range/alpha rather than silently converting) and sets `dst.set_orientation(src.orientation())`.
 
@@ -402,8 +404,8 @@ assert_eq!(code_plane.code(0, 0), Some(code as u16));
 let mut dst = PixelBuf::new(4, 4, PixelFormat::BGRA8_SRGB)?;
 reconstruct_planar_into(
     &planar,
-    &PlanarReconstructionOptions::bilinear(),
     &mut dst.as_view_mut(),
+    &PlanarReconstructionOptions::bilinear(),
 )?;
 ```
 
@@ -613,7 +615,7 @@ let back_from_image = PixelBuf::from_dynamic_image(dyn_img)?;
 | **`BitPacking`** | How coded integers sit inside `U8`/`U16`/`U32` storage: `Full`, `Lsb { bits }` (`U10_LSB`), `Msb { bits }` (`P010`), or packed-word `Bitfields` (`RGB565`, `RGB10A2`). |
 | **`CodePlane`** | Zero-copy borrowed reader (`CodePlaneMut` writer) exposing raw coded integer samples (`0..=1023`, etc.) from bit-packed or multi-component planes without color conversion. |
 | **`ChromaSiting`** | Subsampled chroma sample position relative to luma pixels (also called chroma location): `Unknown`, `Center` (JPEG), `Left` (H.264/HEVC/AV1), `TopLeft` (BT.2020), `Top`, `BottomLeft`, `Bottom`. |
-| **`Nits` & `DiffuseWhite`** | Typed luminance in cd/m² (`Nits::new(100.0)`). `DiffuseWhite` anchors SDR paper white in HDR workflows (e.g. `DiffuseWhite::BT2408` = `203` cd/m²). |
+| **`Nits` & `DiffuseWhite`** | Typed luminance in cd/m² (`Nits::new(100.0).unwrap()` or const `Nits::new_or_panic(100.0)`). `DiffuseWhite` anchors SDR paper white in HDR workflows (e.g. `DiffuseWhite::BT2408` = `203` cd/m²). |
 | **`PeakSource`** | How HDR→SDR tone mapping obtains source peak luminance on whole-image plans: `Measured` (streaming O(1) scan when needed), `Declared` (`MaxCLL` / `MasteringDisplay`), or `Fixed(Nits)`. |
 | **`HlgMode`** | Distinguishes `HlgMode::Scene` (scene-referred ARIB STD-B67, representable in 4-byte CICP) from `HlgMode::Display(HlgRendering)` (BT.2100 display-rendered at e.g. `1000` nits; cannot be carried by CICP alone). |
 | **`FormatCow<'a>`** | Borrow-or-share `PixelFormat` wrapper inside views (`Borrowed(&'a PixelFormat)` for 0-alloc views vs `Owned(Arc<PixelFormat>)` for dynamic specs). |

@@ -592,36 +592,36 @@ fn gather_typed<T: bytemuck::Zeroable + bytemuck::Pod>(
 }
 
 impl PixelStorage {
-    /// Allocate zeroed storage with exact alignment for `sample`, holding at least `bytes` bytes.
-    pub fn zeroed(sample: SampleType, bytes: usize) -> Result<Self, StorageError> {
-        if bytes > isize::MAX as usize {
+    /// Allocate zeroed storage with exact alignment for `sample`, holding at least `byte_len` bytes.
+    pub fn zeroed_bytes(sample: SampleType, byte_len: usize) -> Result<Self, StorageError> {
+        if byte_len > isize::MAX as usize {
             return Err(StorageError::AllocationFailed);
         }
         match sample {
-            SampleType::U8 => Ok(Self::U8(zeroed_vec(bytes)?)),
-            SampleType::I8 => Ok(Self::I8(cast_same_layout(zeroed_vec::<u8>(bytes)?))),
-            SampleType::U16 => Ok(Self::U16(zeroed_vec(bytes)?)),
-            SampleType::I16 => Ok(Self::I16(cast_same_layout(zeroed_vec::<u16>(bytes)?))),
-            SampleType::F16 => Ok(Self::F16(cast_same_layout(zeroed_vec::<u16>(bytes)?))),
-            SampleType::U32 => Ok(Self::U32(zeroed_vec(bytes)?)),
-            SampleType::I32 => Ok(Self::I32(cast_same_layout(zeroed_vec::<u32>(bytes)?))),
-            SampleType::F32 => Ok(Self::F32(cast_same_layout(zeroed_vec::<u32>(bytes)?))),
-            SampleType::U64 => Ok(Self::U64(zeroed_vec(bytes)?)),
-            SampleType::I64 => Ok(Self::I64(cast_same_layout(zeroed_vec::<u64>(bytes)?))),
+            SampleType::U8 => Ok(Self::U8(zeroed_vec(byte_len)?)),
+            SampleType::I8 => Ok(Self::I8(cast_same_layout(zeroed_vec::<u8>(byte_len)?))),
+            SampleType::U16 => Ok(Self::U16(zeroed_vec(byte_len)?)),
+            SampleType::I16 => Ok(Self::I16(cast_same_layout(zeroed_vec::<u16>(byte_len)?))),
+            SampleType::F16 => Ok(Self::F16(cast_same_layout(zeroed_vec::<u16>(byte_len)?))),
+            SampleType::U32 => Ok(Self::U32(zeroed_vec(byte_len)?)),
+            SampleType::I32 => Ok(Self::I32(cast_same_layout(zeroed_vec::<u32>(byte_len)?))),
+            SampleType::F32 => Ok(Self::F32(cast_same_layout(zeroed_vec::<u32>(byte_len)?))),
+            SampleType::U64 => Ok(Self::U64(zeroed_vec(byte_len)?)),
+            SampleType::I64 => Ok(Self::I64(cast_same_layout(zeroed_vec::<u64>(byte_len)?))),
             SampleType::F64 => {
                 if core::mem::align_of::<u64>() == core::mem::align_of::<f64>() {
-                    Ok(Self::F64(cast_same_layout(zeroed_vec::<u64>(bytes)?)))
+                    Ok(Self::F64(cast_same_layout(zeroed_vec::<u64>(byte_len)?)))
                 } else {
-                    Ok(Self::F64(zeroed_vec(bytes)?))
+                    Ok(Self::F64(zeroed_vec(byte_len)?))
                 }
             }
         }
     }
 
-    /// Allocate 64-byte SIMD-aligned zeroed storage.
+    /// Allocate 64-byte SIMD-aligned zeroed storage holding at least `byte_len` bytes.
     #[inline]
-    pub fn zeroed_aligned64(bytes: usize) -> Result<Self, StorageError> {
-        Ok(Self::Aligned64(AlignedSamples::zeroed_bytes(bytes)?))
+    pub fn zeroed_aligned64_bytes(byte_len: usize) -> Result<Self, StorageError> {
+        Ok(Self::Aligned64(AlignedSamples::zeroed_bytes(byte_len)?))
     }
 
     /// Wrap an immutable external owned buffer (`Arc<[T]>`, mmap, `&'static [T]`, etc.) zero-copy.

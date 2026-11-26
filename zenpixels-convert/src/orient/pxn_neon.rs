@@ -18,7 +18,7 @@ fn scalar_rect(
 ) {
     for y in y0..y1 {
         for x in x0..x1 {
-            let (dx, dy) = orientation.forward_map(x, y, w, h);
+            let (dx, dy) = orientation.map_pixel_coordinates((x, y), (w, h));
             let s = y as usize * sstride + x as usize * bpp;
             let d = dy as usize * dstride + dx as usize * bpp;
             dbytes[d..d + bpp].copy_from_slice(&sbytes[s..s + bpp]);
@@ -128,8 +128,8 @@ pub(super) fn transpose1_neon(
 ) {
     let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
     let sbytes = src.as_strided_bytes();
-    let sstride = src.stride();
-    let dstride = dst.stride();
+    let sstride = src.stride_bytes();
+    let dstride = dst.stride_bytes();
     let dbytes = dst.as_strided_bytes_mut();
 
     let full_w = w & !15;
@@ -231,8 +231,8 @@ pub(super) fn transpose2_neon(
 ) {
     let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
     let sbytes = src.as_strided_bytes();
-    let sstride = src.stride();
-    let dstride = dst.stride();
+    let sstride = src.stride_bytes();
+    let dstride = dst.stride_bytes();
     let dbytes = dst.as_strided_bytes_mut();
 
     let full_w = w & !7;
@@ -350,8 +350,8 @@ pub(super) fn transpose3_neon(
 ) {
     let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
     let sbytes = src.as_strided_bytes();
-    let sstride = src.stride();
-    let dstride = dst.stride();
+    let sstride = src.stride_bytes();
+    let dstride = dst.stride_bytes();
     let dbytes = dst.as_strided_bytes_mut();
 
     let expand = vld1q_u8(&EXPAND3);
@@ -458,8 +458,8 @@ pub(super) fn transpose4_neon(
 ) {
     let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
     let sbytes = src.as_strided_bytes();
-    let sstride = src.stride();
-    let dstride = dst.stride();
+    let sstride = src.stride_bytes();
+    let dstride = dst.stride_bytes();
     let dbytes = dst.as_strided_bytes_mut();
 
     let full_w = w & !3;
@@ -552,8 +552,8 @@ pub(super) fn transpose8_neon(
 ) {
     let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
     let sbytes = src.as_strided_bytes();
-    let sstride = src.stride();
-    let dstride = dst.stride();
+    let sstride = src.stride_bytes();
+    let dstride = dst.stride_bytes();
     let dbytes = dst.as_strided_bytes_mut();
 
     let full_w = w & !3;
@@ -650,8 +650,8 @@ pub(super) fn transpose6_neon(
 ) {
     let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
     let sbytes = src.as_strided_bytes();
-    let sstride = src.stride();
-    let dstride = dst.stride();
+    let sstride = src.stride_bytes();
+    let dstride = dst.stride_bytes();
     let dbytes = dst.as_strided_bytes_mut();
 
     let expand = vld1q_u8(&EXPAND6);
@@ -752,8 +752,8 @@ pub(super) fn transpose12_neon(
 ) {
     let (flip_sx, flip_sy) = inverse_flips(orientation).expect("transposing orientation");
     let sbytes = src.as_strided_bytes();
-    let sstride = src.stride();
-    let dstride = dst.stride();
+    let sstride = src.stride_bytes();
+    let dstride = dst.stride_bytes();
     let dbytes = dst.as_strided_bytes_mut();
 
     let full_w = w & !1;

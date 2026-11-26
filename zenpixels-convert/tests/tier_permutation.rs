@@ -326,7 +326,7 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
         .map(|(_, plan, src)| {
             let mut dst =
                 vec![0u8; w as usize * plan.destination_format().layout.bytes_per_pixel()];
-            plan.convert_row(src, &mut dst, w, 0).unwrap();
+            plan.convert_row(src, &mut dst, w).unwrap();
             dst
         })
         .collect();
@@ -345,7 +345,7 @@ fn all_simd_kernels_and_orient_are_bit_identical_across_every_cpu_tier() {
     let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
         for ((name, plan, src), expected) in routes.iter().zip(baselines.iter()) {
             let mut got = vec![0u8; expected.len()];
-            plan.convert_row(src, &mut got, w, 0).unwrap();
+            plan.convert_row(src, &mut got, w).unwrap();
             assert_eq!(
                 &got, expected,
                 "tier permutation mismatch on {name} under tier {perm}"

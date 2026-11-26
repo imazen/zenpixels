@@ -45,10 +45,14 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
     lossless `MatrixCoefficients` via `matrix_coefficients`/`with_matrix_coefficients`,
     `range_override`/`effective_range`, `alpha_override`/`effective_alpha`). Compact
     stack footprints (`FormatCow`: 16 B, `PixelViewMut`: 64 B, `PixelView`: 80 B,
-    `PlanarBuf`: 64 B, `BandedBuf`: 144 B, `PixelBuf`: 168 B), `PixelView::height()` /
-    `PixelViewMut::height()` aliases, descriptive `whereat::At` context on
-    `BufferError::IncompatibleLayout` element mismatches, and top-level
-    `zenpixels_convert::{Stop, StopReason, Unstoppable}` re-exports.
+    `PlanarBuf`: 64 B, `BandedBuf`: 144 B, `PixelBuf`: 168 B), explicit `PixelRect`
+    crops, `stride_bytes()` / `byte_offset()` / `height()` unit-explicit accessors,
+    `BandRowLocation`, `InPlaceTransformInput` / `InPlaceTransformOutput`,
+    `InterleavedCodeLayout`, fallible `Nits::new` / `DiffuseWhite::new` /
+    `GainMapMetadata::symmetric_stops` (with const `*_or_panic`),
+    `ExactDepth::{intersect_same_buffer, union_disjoint_regions}`, descriptive
+    `whereat::At` context on `BufferError::IncompatibleLayout` element mismatches,
+    and top-level `zenpixels_convert::{Stop, StopReason, Unstoppable}` re-exports.
   - Sound `AlphaMode::Opaque` construction and fast fill-then-retag: `BufFill::{Black, White}`,
     `PixelBuf::new_white`, `PixelBuf::new_with_fill`, `PixelBuf::new_zeroed` /
     `new_zeroed_aligned` (refusing `AlphaMode::Opaque` on alpha-bearing layouts with
@@ -168,16 +172,16 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
     `display_sdr()`) with `DepthPolicy`, `AlphaPolicy`, `GamutPolicy`, `RangePolicy`,
     `LumaCoefficients`, `LumaDomain::{Encoded, LinearLight}`, `allow_icc_substitution`,
     `allow_approximate`, `with_cms()`, and `with_accelerators()`.
-  - Stateless `Send + Sync` `RowPlan` (zero heap allocation per `convert_row`,
-    `source_format()` / `destination_format()`), whole-image `ImagePlan`, 3-arg
-    `convert_to_buf`/`convert_into` (plus `*_with_peak`), `OutputPlan`
-    (`OutputSignaling`, `source_format()` / `destination_format()`) +
-    `adapt_for_encode` / `adapt_for_encode_parametric`, `Negotiate`
-    (`select_parametric` for `Copy` `ParametricFormat` slices), and ergonomic
-    wrappers (`to_rgb8`, `to_rgba8`, `to_gray8`, `to_bgra8`). Planners accept
-    `impl AsRef<PixelFormat>` (zero-clone `&PixelFormat` or owned `PixelFormat`)
-    and exact math for all 16 H.273 Table 3 transfer functions with 0-bit
-    SCALAR/SIMD parity.
+  - Stateless `Send + Sync` `RowPlan` (zero heap allocation per `convert_row` /
+    `convert_row_at`, `source_format()` / `destination_format()`), whole-image
+    `ImagePlan`, 3-arg `convert_to_buf`/`convert_into` (plus `*_with_peak`),
+    `OutputPlan` (`OutputSignaling`, `ResolvedSignaling`, `source_format()` /
+    `destination_format()`) + `adapt_for_encode` / `adapt_for_encode_parametric`,
+    `Negotiate` (`select_parametric` for `Copy` `ParametricFormat` slices), and
+    ergonomic wrappers (`to_rgb8`, `to_rgba8`, `to_gray8`, `to_bgra8`). Planners
+    accept `impl AsRef<PixelFormat>` (zero-clone `&PixelFormat` or owned
+    `PixelFormat`) and exact math for all 16 H.273 Table 3 transfer functions with
+    0-bit SCALAR/SIMD parity.
   - `compact`: free functions `analyze_compaction(&view)` → `CompactionReport`
     (`requires_alpha`, `requires_chroma`, `requires_u16_precision`, `candidate_format`),
     `compact_to_buf(&view)`, and zero-reallocation
@@ -207,8 +211,10 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
     `apply_orientation_banded_into`, plus buffer-carried `bake_orientation`, zero-copy
     `bake_orientation_owned`, and `bake_orientation_banded`) with cache-blocked SIMD
     transpose (`fast-transpose`).
-  - `measure`: `measure_cll`, `measure_histogram`, `LightLevelHistogram::{bins, merge}`,
+  - `measure`: `measure_content_light_level`, `measure_histogram`,
+    `LightLevelHistogram::{new, bins, merge, quantile_nits, to_robust_content_light_level}`,
     and `measure_max_smoothed` (3-tap mirror-padded box filter).
+  - `codes`: `CodeMap::{map_code, map_word}` and `unpack_code_planes_into`.
   - `planar` & `ycbcr`: lossless ITU-T H.273 Table 4 `YcbcrMatrix` (`Identity`,
     `Bt709`, `Fcc`, `Bt470Bg`, `Bt601`, `Smpte240M`, `YCgCo`, `Bt2020`,
     `ChromaDerivedNcl`), siting-exact `ChromaUpsample::{Nearest, Bilinear}` +

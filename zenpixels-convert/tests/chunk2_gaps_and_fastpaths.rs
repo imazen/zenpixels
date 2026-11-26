@@ -22,9 +22,9 @@ use zenpixels_convert::{
     Accelerators, ConvertError, ConvertPolicy, DepthPolicy, LightLevelHistogram, LightLevelMethod,
     LumaCoefficients, LumaDomain, Negotiate, OutputPlan, OutputSignaling,
     PlanarReconstructionOptions, RowPlan, YcbcrMatrix, adapt_for_encode, apply_orientation,
-    apply_orientation_banded, apply_orientation_banded_into, measure_cll, measure_histogram,
-    measure_max_smoothed, reconstruct_planar_f32, reconstruct_planar_to_buf, to_bgra8, to_gray8,
-    to_rgb8, to_rgba8,
+    apply_orientation_banded, apply_orientation_banded_into, measure_content_light_level,
+    measure_histogram, measure_max_smoothed, reconstruct_planar_f32, reconstruct_planar_to_buf,
+    to_bgra8, to_gray8, to_rgb8, to_rgba8,
 };
 
 extern crate alloc;
@@ -51,8 +51,8 @@ fn c1_luma_domain_encoded_default_vs_linear_light_and_simd_parity() {
     let red = [255u8, 0, 0];
     let mut out_enc = [0u8; 1];
     let mut out_lin = [0u8; 1];
-    plan_enc.convert_row(&red, &mut out_enc, 1, 0).unwrap();
-    plan_lin.convert_row(&red, &mut out_lin, 1, 0).unwrap();
+    plan_enc.convert_row(&red, &mut out_enc, 1).unwrap();
+    plan_lin.convert_row(&red, &mut out_lin, 1).unwrap();
     assert_eq!(out_enc[0], 54, "encoded BT.709 sRGB red must be 54");
     assert_eq!(out_lin[0], 127, "linear-light BT.709 sRGB red must be 127");
 
@@ -62,9 +62,7 @@ fn c1_luma_domain_encoded_default_vs_linear_light_and_simd_parity() {
         grays.extend_from_slice(&[v, v, v]);
     }
     let mut out_grays = vec![0u8; 256];
-    plan_enc
-        .convert_row(&grays, &mut out_grays, 256, 0)
-        .unwrap();
+    plan_enc.convert_row(&grays, &mut out_grays, 256).unwrap();
     for (v, &g) in out_grays.iter().enumerate() {
         assert_eq!(g, v as u8, "neutral gray {v} drifted to {g}");
     }
@@ -119,8 +117,8 @@ fn c1_luma_domain_encoded_default_vs_linear_light_and_simd_parity() {
                     .collect();
                 let mut d_sc = vec![0u8; w as usize];
                 let mut d_all = vec![0u8; w as usize];
-                p_sc.convert_row(&src, &mut d_sc, w, 0).unwrap();
-                p_all.convert_row(&src, &mut d_all, w, 0).unwrap();
+                p_sc.convert_row(&src, &mut d_sc, w).unwrap();
+                p_all.convert_row(&src, &mut d_all, w).unwrap();
                 assert_eq!(
                     d_sc, d_all,
                     "SCALAR vs ALL mismatch for {order:?}/{coeff:?} width={w}"
@@ -191,10 +189,10 @@ fn c1_luma_domain_encoded_default_vs_linear_light_and_simd_parity() {
     let mut g_ce = [0u8; 1];
     let mut g_cl = [0u8; 1];
     p_cross_enc
-        .convert_row(bytemuck::cast_slice(&lin_red), &mut g_ce, 1, 0)
+        .convert_row(bytemuck::cast_slice(&lin_red), &mut g_ce, 1)
         .unwrap();
     p_cross_lin
-        .convert_row(bytemuck::cast_slice(&lin_red), &mut g_cl, 1, 0)
+        .convert_row(bytemuck::cast_slice(&lin_red), &mut g_cl, 1)
         .unwrap();
     assert_eq!(g_ce[0], 54);
     assert_eq!(g_cl[0], 127);
@@ -337,7 +335,8 @@ fn g04_output_plan_rejects_metadata_only_icc_for_structured_dst() {
 fn g14_negotiate_scene_linear_hdr_precheck() {
     let lin_src = PixelFormat::RGBF32_LINEAR;
     let sdr_dst = PixelFormat::RGB8_SRGB;
-    let pol_tm = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, zenpixels::Nits::new(100.0));
+    let pol_tm =
+        ConvertPolicy::display_sdr(DiffuseWhite::BT2408, zenpixels::Nits::new(100.0).unwrap());
 
     #[cfg(not(feature = "bt2446a"))]
     {
@@ -575,7 +574,7 @@ fn t2_3_banded_orientation_matches_contiguous_bit_exact_all_8_orientations() {
 
 #[test]
 fn t2_6_measure_max_smoothed_and_histogram_bins_try_merge() {
-    let white = DiffuseWhite::new(100.0);
+    let white = DiffuseWhite::new(100.0).unwrap();
     let spec = PixelFormat::RGBF32_LINEAR.with_white(white);
 
     // 1. Single stuck hot pixel at 9000 nits (90.0 relative) in black 9x1 row:
@@ -583,7 +582,7 @@ fn t2_6_measure_max_smoothed_and_histogram_bins_try_merge() {
     let mut row = vec![0.0f32; 9 * 3];
     row[4 * 3] = 90.0;
     let buf = PixelBuf::from_typed(row.clone(), 9, 1, spec.clone()).unwrap();
-    let lit = measure_cll(&buf, white, None, LightLevelMethod::MaxRgb).unwrap();
+    let lit = measure_content_light_level(&buf, white, None, LightLevelMethod::MaxRgb).unwrap();
     let sm = measure_max_smoothed(&buf, white, None, LightLevelMethod::MaxRgb).unwrap();
     assert_eq!(lit.max_content_light_level, 9000);
     assert_eq!(sm.max_content_light_level, 3000);
@@ -631,7 +630,7 @@ fn t2_6_measure_max_smoothed_and_histogram_bins_try_merge() {
     assert!((h_top.mean_nits() - h_full.mean_nits()).abs() < 1e-4);
 
     // Merging mismatched method must fail cleanly.
-    let h_luma = LightLevelHistogram::new(LightLevelMethod::LuminanceBt2020);
+    let h_luma = LightLevelHistogram::new(LightLevelMethod::LuminanceBt2020).unwrap();
     assert_eq!(
         *h_top.merge(&h_luma).unwrap_err().error(),
         ConvertError::UnsupportedRoute
@@ -779,8 +778,8 @@ fn t2_11_exhaustive_rgba8_premul_and_lin_f32_to_srgb_u8_parity() {
         .unwrap();
         let mut d_sc = vec![0u8; pairs.len()];
         let mut d_all = vec![0u8; pairs.len()];
-        p_sc.convert_row(&pairs, &mut d_sc, 65536, 0).unwrap();
-        p_all.convert_row(&pairs, &mut d_all, 65536, 0).unwrap();
+        p_sc.convert_row(&pairs, &mut d_sc, 65536).unwrap();
+        p_all.convert_row(&pairs, &mut d_all, 65536).unwrap();
         assert_eq!(
             d_sc, d_all,
             "rgba8 premul SCALAR vs ALL mismatch for {depth:?}"
@@ -836,18 +835,10 @@ fn t2_11_exhaustive_rgba8_premul_and_lin_f32_to_srgb_u8_parity() {
     let mut ex_all = vec![0u8; width as usize * 4];
     let mut ap_sc = vec![0u8; width as usize * 4];
     let mut ap_all = vec![0u8; width as usize * 4];
-    p_ex_sc
-        .convert_row(src_bytes, &mut ex_sc, width, 0)
-        .unwrap();
-    p_ex_all
-        .convert_row(src_bytes, &mut ex_all, width, 0)
-        .unwrap();
-    p_ap_sc
-        .convert_row(src_bytes, &mut ap_sc, width, 0)
-        .unwrap();
-    p_ap_all
-        .convert_row(src_bytes, &mut ap_all, width, 0)
-        .unwrap();
+    p_ex_sc.convert_row(src_bytes, &mut ex_sc, width).unwrap();
+    p_ex_all.convert_row(src_bytes, &mut ex_all, width).unwrap();
+    p_ap_sc.convert_row(src_bytes, &mut ap_sc, width).unwrap();
+    p_ap_all.convert_row(src_bytes, &mut ap_all, width).unwrap();
 
     assert_eq!(ex_sc, ex_all, "LinF32ToSrgbU8 exact SCALAR vs ALL mismatch");
     assert_eq!(

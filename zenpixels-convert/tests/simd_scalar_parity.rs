@@ -41,10 +41,10 @@ fn assert_scalar_simd_bit_exact(
     let mut out_simd = vec![0x5Au8; dst_len];
 
     plan_scalar
-        .convert_row(src_bytes, &mut out_scalar, width, y)
+        .convert_row_at(y, src_bytes, &mut out_scalar, width)
         .unwrap();
     plan_simd
-        .convert_row(src_bytes, &mut out_simd, width, y)
+        .convert_row_at(y, src_bytes, &mut out_simd, width)
         .unwrap();
 
     assert_eq!(
@@ -320,7 +320,7 @@ fn parity_hlg_pq_narrow_matte_and_bitpacking() {
     // HLG BT.2100-3 display rendering (with non-zero black lift Lb = 0.05!)
     #[cfg(feature = "hdr-transfers")]
     {
-        let hlg_lift = HlgRendering::new(Nits::new(1000.0), 0.05, 1.2).unwrap();
+        let hlg_lift = HlgRendering::new(Nits::new(1000.0).unwrap(), 0.05, 1.2).unwrap();
         let hlg_spec = PixelFormat::new(
             SampleLayout::RGB16,
             ColorSpace::BT2100_HLG_SCENE.with_transfer(Transfer::Hlg(HlgMode::Display(hlg_lift))),
@@ -345,11 +345,11 @@ fn parity_hlg_pq_narrow_matte_and_bitpacking() {
             "PQ16->sRGB8(BT2446A)",
             PixelFormat::RGB16_BT2100_PQ,
             PixelFormat::RGB8_SRGB,
-            ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0)),
+            ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0).unwrap()),
             rgb16_bytes,
             width,
             0,
-            Some(Nits::new(1000.0)),
+            Some(Nits::new(1000.0).unwrap()),
         );
     }
 

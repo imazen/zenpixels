@@ -441,12 +441,12 @@ footer { color: var(--muted); font-size: .82rem; padding: 10px 0 40px; display: 
     <pre id="storage-geometry" style="white-space:pre-wrap"></pre>
     <h3>Stored bytes (including row and sample padding)</h3><pre id="storage-bytes" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
     <h3>Existing typed plane → component readers</h3><p id="plane-status"></p><pre id="plane-codes"></pre>
-    <div id="storage-canonical" hidden><h3>Converted to canonical RGB8 pixels</h3><pre id="canonical-bytes"></pre><p>Code extraction and full-range numerical widening run together through <code>codes::to_canonical</code>.</p></div>
+    <div id="storage-canonical" hidden><h3>Converted to canonical RGB8 pixels</h3><pre id="canonical-bytes"></pre><p>Code extraction and full-range numerical widening run together through <code>codes::unpack_code_planes_into</code>.</p></div>
     <p>Rows here omit trailing padding after the final active row. Each code list is one position, in the displayed component order. These are extracted codes, not normalized intensities or rendered colors.</p>
     <details><summary>Scope and remaining limits</summary>
       <p>Use ordinary typed planes and component readers for interleaved chroma and RGB10 + alpha1. Each reader retains the relevant sample encoding.</p>
       <p>CodePlane reads U8/U16 codes. SampleEncoding can describe signed/wide payloads, but this does not add signed/wide code readers or arithmetic. Native PixelFormat::Generic identity carriage remains separate.</p>
-      <p>Typed multi-byte samples require sample alignment. For RGB565, three <code>CodePlane::new</code> views select different bitfields of the same U16 words. <code>codes::to_canonical</code> can unpack and widen them directly into ordinary RGB pixels.</p>
+      <p>Typed multi-byte samples require sample alignment. For RGB565, three <code>CodePlane::new</code> views select different bitfields of the same U16 words. <code>codes::unpack_code_planes_into</code> can unpack and widen them directly into ordinary RGB pixels.</p>
     </details>
   </section>
 </main>

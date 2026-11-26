@@ -25,8 +25,8 @@ use crate::color::{
 };
 use crate::facts::{FloatFacts, SampleFacts};
 use crate::layout::{
-    BitPacking, ChannelOrder, InteropTarget, LayoutError, PlaneFormat, PlaneRole, RowAlign,
-    SampleLayout, SampleStride, SampleType,
+    BitPacking, ChannelOrder, InteropTarget, LayoutError, PixelRect, PlaneFormat, PlaneRole,
+    RowAlign, SampleLayout, SampleStride, SampleType,
 };
 use crate::orientation::Orientation;
 use crate::pixel_types::{F16Sample, GrayAlpha8, GrayAlpha16, GrayAlphaF16, GrayAlphaF32};
@@ -45,7 +45,7 @@ mod sealed {
 /// Used by [`PixelBuf::from_typed`] and [`PixelView::from_typed`] to prevent silent
 /// native-endian reinterpretation across unrelated scalar types (e.g. `Vec<i32>`
 /// adopted as `RGBF32`). For intentional raw byte reinterpretation, use
-/// [`PixelBuf::from_raw_pod`] or [`PixelView::from_raw_pod`].
+/// [`PixelBuf::from_pod_bytes_unchecked`] or [`PixelView::from_pod_bytes_unchecked`].
 pub trait TypedElement: bytemuck::Pod + sealed::Sealed {
     /// Whether this element type is structurally compatible with `layout`.
     fn matches_layout(layout: SampleLayout) -> bool;
@@ -723,8 +723,8 @@ fn unbox_origin(origin: Option<Arc<ColorOrigin>>) -> ColorOrigin {
 pub struct PixelView<'a> {
     data: &'a [u8],
     width: u32,
-    rows: u32,
-    stride: usize,
+    height: u32,
+    stride_bytes: usize,
     spec: FormatCow<'a>,
     facts: SampleFacts,
     hdr: Option<Arc<HdrMetadata>>,
@@ -740,44 +740,50 @@ impl<'a> PixelView<'a> {
     /// use [`new_with_format_cow`](Self::new_with_format_cow) with [`FormatCow::from_owned`] or
     /// [`FormatCow::from_arc`].
     ///
-    /// Trims any trailing bytes beyond the active `(rows - 1) * stride + row_bytes`
+    /// Trims any trailing bytes beyond the active `(height - 1) * stride_bytes + row_bytes`
     /// extent so zero-copy interop bridges (`as_imgref`) never touch trailing slop.
     pub fn new(
         data: &'a [u8],
         width: u32,
-        rows: u32,
-        stride: usize,
-        spec: &'a PixelFormat,
+        height: u32,
+        stride_bytes: usize,
+        format: &'a PixelFormat,
     ) -> Result<Self, At<BufferError>> {
-        Self::new_with_format_cow(data, width, rows, stride, FormatCow::Borrowed(spec))
+        Self::new_with_format_cow(
+            data,
+            width,
+            height,
+            stride_bytes,
+            FormatCow::Borrowed(format),
+        )
     }
 
     /// Borrow strided bytes with an explicit [`FormatCow<'a>`] (borrowed `&'a PixelFormat` or
     /// shared `Arc<PixelFormat>` via [`FormatCow::from_owned`] / [`FormatCow::from_parametric`] /
     /// [`FormatCow::from_arc`]).
     ///
-    /// Trims any trailing bytes beyond the active `(rows - 1) * stride + row_bytes` extent.
+    /// Trims any trailing bytes beyond the active `(height - 1) * stride_bytes + row_bytes` extent.
     pub fn new_with_format_cow(
         data: &'a [u8],
         width: u32,
-        rows: u32,
-        stride: usize,
-        spec: FormatCow<'a>,
+        height: u32,
+        stride_bytes: usize,
+        format: FormatCow<'a>,
     ) -> Result<Self, At<BufferError>> {
         let (_rb, req) = validate_geometry(
             data.len(),
             data.as_ptr(),
             width,
-            rows,
-            stride,
-            spec.as_format(),
+            height,
+            stride_bytes,
+            format.as_format(),
         )?;
         Ok(Self {
             data: &data[..req],
             width,
-            rows,
-            stride,
-            spec,
+            height,
+            stride_bytes,
+            spec: format,
             facts: SampleFacts::NONE,
             hdr: None,
             origin: None,
@@ -785,94 +791,96 @@ impl<'a> PixelView<'a> {
         })
     }
 
-    /// Borrow tightly packed native-endian bytes (`stride == width * bytes_per_pixel`, **zero allocation**).
+    /// Borrow tightly packed native-endian bytes (`stride_bytes == width * bytes_per_pixel`, **zero allocation**).
     pub fn from_bytes(
         data: &'a [u8],
         width: u32,
-        rows: u32,
-        spec: &'a PixelFormat,
+        height: u32,
+        format: &'a PixelFormat,
     ) -> Result<Self, At<BufferError>> {
-        let stride = (width as usize)
-            .checked_mul(spec.layout.bytes_per_pixel())
+        let stride_bytes = (width as usize)
+            .checked_mul(format.layout.bytes_per_pixel())
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        Self::new(data, width, rows, stride, spec)
+        Self::new(data, width, height, stride_bytes, format)
     }
 
     /// Borrow a tightly packed typed pixel or sample slice zero-copy via `bytemuck` (**zero allocation**).
     ///
-    /// Validates that `P` is structurally compatible with `spec.layout` (rejecting
+    /// Validates that `P` is structurally compatible with `format.layout` (rejecting
     /// e.g. `&[i32]` as `RGBF32`). For intentional raw byte reinterpretation, use
-    /// [`from_raw_pod`](Self::from_raw_pod).
+    /// [`from_pod_bytes_unchecked`](Self::from_pod_bytes_unchecked).
     pub fn from_typed<P: TypedElement>(
         pixels: &'a [P],
         width: u32,
-        rows: u32,
-        spec: &'a PixelFormat,
+        height: u32,
+        format: &'a PixelFormat,
     ) -> Result<Self, At<BufferError>> {
-        if !P::matches_layout(spec.layout) {
+        if !P::matches_layout(format.layout) {
             return Err(err_at(BufferError::IncompatibleLayout).at_string(|| {
                 alloc::format!(
-                    "element `{}` does not match {:?} layout (annotate integer literals e.g. `0u8`, or use `from_raw_pod`)",
+                    "element `{}` does not match {:?} layout (annotate integer literals e.g. `0u8`, or use `from_pod_bytes_unchecked`)",
                     core::any::type_name::<P>(),
-                    spec.layout
+                    format.layout
                 )
             }));
         }
-        Self::from_bytes(bytemuck::cast_slice(pixels), width, rows, spec)
+        Self::from_bytes(bytemuck::cast_slice(pixels), width, height, format)
     }
 
     /// Borrow a tightly packed scalar sample slice (`&[u8]`, `&[u16]`, `&[f32]`, etc.) zero-copy (**zero allocation**).
     pub fn from_samples<S: StorageSample>(
         samples: &'a [S],
         width: u32,
-        rows: u32,
-        spec: &'a PixelFormat,
+        height: u32,
+        format: &'a PixelFormat,
     ) -> Result<Self, At<BufferError>> {
-        if spec.layout.sample != S::SAMPLE_TYPE {
+        if format.layout.sample != S::SAMPLE_TYPE {
             return Err(err_at(BufferError::IncompatibleLayout).at_string(|| {
                 alloc::format!(
                     "sample `{}` ({:?}) does not match {:?} layout",
                     core::any::type_name::<S>(),
                     S::SAMPLE_TYPE,
-                    spec.layout
+                    format.layout
                 )
             }));
         }
-        Self::from_bytes(bytemuck::cast_slice(samples), width, rows, spec)
+        Self::from_bytes(bytemuck::cast_slice(samples), width, height, format)
     }
 
-    /// Borrow a tightly packed `rgb` pixel slice (`&[rgb::Rgb<u8>]`, etc.) zero-copy.
+    /// Borrow a tightly packed `rgb` pixel slice (`&[rgb::Rgb<u8>]`, etc.) zero-copy with an
+    /// explicit [`ColorSpace`] (deriving [`SampleLayout`] from `P::LAYOUT`).
     ///
     /// Uses a zero-allocation `&'static PixelFormat` for all standard built-in presets, and
     /// allocates an `Arc<PixelFormat>` only for custom/ICC color spaces.
     #[cfg(feature = "rgb")]
-    pub fn from_pixels<P: crate::interop::PixelType>(
+    pub fn from_pixels_with_color<P: crate::interop::PixelType>(
         pixels: &'a [P],
         width: u32,
-        rows: u32,
+        height: u32,
         color: crate::ColorSpace,
     ) -> Result<Self, At<BufferError>> {
-        let stride = (width as usize)
+        let stride_bytes = (width as usize)
             .checked_mul(P::LAYOUT.bytes_per_pixel())
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
         Self::new_with_format_cow(
             bytemuck::cast_slice(pixels),
             width,
-            rows,
-            stride,
+            height,
+            stride_bytes,
             FormatCow::from_owned(PixelFormat::new(P::LAYOUT, color)),
         )
     }
 
     /// Explicitly reinterpret any tightly packed `bytemuck::Pod` slice in native endianness
-    /// as raw pixel bytes matching `spec` (**zero allocation**).
-    pub fn from_raw_pod<P: bytemuck::Pod>(
+    /// as raw pixel bytes matching `format` without checking element-to-layout compatibility
+    /// (**zero allocation**).
+    pub fn from_pod_bytes_unchecked<P: bytemuck::Pod>(
         pixels: &'a [P],
         width: u32,
-        rows: u32,
-        spec: &'a PixelFormat,
+        height: u32,
+        format: &'a PixelFormat,
     ) -> Result<Self, At<BufferError>> {
-        Self::from_bytes(bytemuck::cast_slice(pixels), width, rows, spec)
+        Self::from_bytes(bytemuck::cast_slice(pixels), width, height, format)
     }
 
     /// Image width in pixels.
@@ -885,22 +893,15 @@ impl<'a> PixelView<'a> {
     /// Image height in rows.
     #[inline]
     #[must_use]
-    pub const fn rows(&self) -> u32 {
-        self.rows
-    }
-
-    /// Image height in rows (alias for [`rows`](Self::rows), matching [`PixelBuf::height`]).
-    #[inline]
-    #[must_use]
     pub const fn height(&self) -> u32 {
-        self.rows
+        self.height
     }
 
     /// Byte distance between consecutive row starts.
     #[inline]
     #[must_use]
-    pub const fn stride(&self) -> usize {
-        self.stride
+    pub const fn stride_bytes(&self) -> usize {
+        self.stride_bytes
     }
 
     /// Active bytes per row (`width * bytes_per_pixel`).
@@ -949,7 +950,7 @@ impl<'a> PixelView<'a> {
     #[inline]
     #[must_use]
     pub const fn display_dimensions(&self) -> (u32, u32) {
-        self.orientation.output_dimensions(self.width, self.rows)
+        self.orientation.output_dimensions(self.width, self.height)
     }
 
     /// Attach caller-asserted [`SampleFacts`] to this view (caller assumes responsibility for validity).
@@ -997,12 +998,16 @@ impl<'a> PixelView<'a> {
     ///
     /// # Panics
     ///
-    /// Panics if `y >= self.rows()`.
+    /// Panics if `y >= self.height()`.
     #[inline]
     #[must_use]
     pub fn row(&self, y: u32) -> &'a [u8] {
-        assert!(y < self.rows, "row {y} out of bounds (rows: {})", self.rows);
-        let start = (y as usize) * self.stride;
+        assert!(
+            y < self.height,
+            "row {y} out of bounds (height: {})",
+            self.height
+        );
+        let start = (y as usize) * self.stride_bytes;
         &self.data[start..start + self.row_bytes()]
     }
 
@@ -1010,7 +1015,7 @@ impl<'a> PixelView<'a> {
     ///
     /// Validates `bytemuck::try_cast_slice` alignment and exact element divisibility.
     pub fn row_as<P: bytemuck::Pod>(&self, y: u32) -> Result<&'a [P], At<BufferError>> {
-        if y >= self.rows {
+        if y >= self.height {
             return Err(err_at(BufferError::OutOfBounds));
         }
         let bytes = self.row(y);
@@ -1036,11 +1041,11 @@ impl<'a> PixelView<'a> {
         self.data
     }
 
-    /// Whether rows are tightly packed (`stride == row_bytes` or `rows <= 1`).
+    /// Whether rows are tightly packed (`stride_bytes == row_bytes` or `height <= 1`).
     #[inline]
     #[must_use]
     pub fn is_contiguous(&self) -> bool {
-        self.rows <= 1 || self.stride == self.row_bytes()
+        self.height <= 1 || self.stride_bytes == self.row_bytes()
     }
 
     /// Contiguous packed bytes across all rows, or `None` if padded.
@@ -1048,7 +1053,7 @@ impl<'a> PixelView<'a> {
     #[must_use]
     pub fn as_contiguous_bytes(&self) -> Option<&'a [u8]> {
         if self.is_contiguous() {
-            let total = self.row_bytes() * (self.rows as usize);
+            let total = self.row_bytes() * (self.height as usize);
             Some(&self.data[..total])
         } else {
             None
@@ -1079,41 +1084,48 @@ impl<'a> PixelView<'a> {
     }
 
     /// Borrow contiguous bytes if tightly packed, or fallibly copy active rows into a `Vec<u8>`.
-    pub fn contiguous_bytes(&self) -> Result<Cow<'a, [u8]>, At<BufferError>> {
+    pub fn to_contiguous_bytes(&self) -> Result<Cow<'a, [u8]>, At<BufferError>> {
         if let Some(bytes) = self.as_contiguous_bytes() {
             return Ok(Cow::Borrowed(bytes));
         }
         let rb = self.row_bytes();
         let total = rb
-            .checked_mul(self.rows as usize)
+            .checked_mul(self.height as usize)
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
         let mut out = Vec::new();
         out.try_reserve_exact(total)
             .map_err(|_| err_at(BufferError::AllocationFailed))?;
-        for y in 0..self.rows {
+        for y in 0..self.height {
             out.extend_from_slice(self.row(y));
         }
         Ok(Cow::Owned(out))
     }
 
     /// Zero-copy rectangular subimage view retaining parent stride and `'a` lifetime.
-    pub fn crop(&self, x: u32, y: u32, w: u32, h: u32) -> Result<PixelView<'a>, At<BufferError>> {
-        if w == 0 || h == 0 {
+    pub fn crop(&self, rect: PixelRect) -> Result<PixelView<'a>, At<BufferError>> {
+        if rect.width == 0 || rect.height == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        if x.checked_add(w).is_none_or(|e| e > self.width)
-            || y.checked_add(h).is_none_or(|e| e > self.rows)
+        if rect
+            .x
+            .checked_add(rect.width)
+            .is_none_or(|e| e > self.width)
+            || rect
+                .y
+                .checked_add(rect.height)
+                .is_none_or(|e| e > self.height)
         {
             return Err(err_at(BufferError::OutOfBounds));
         }
         let bpp = self.spec.layout.bytes_per_pixel();
-        let start = (y as usize) * self.stride + (x as usize) * bpp;
-        let end = (y as usize + h as usize - 1) * self.stride + (x as usize + w as usize) * bpp;
+        let start = (rect.y as usize) * self.stride_bytes + (rect.x as usize) * bpp;
+        let end = (rect.y as usize + rect.height as usize - 1) * self.stride_bytes
+            + (rect.x as usize + rect.width as usize) * bpp;
         Ok(PixelView {
             data: &self.data[start..end],
-            width: w,
-            rows: h,
-            stride: self.stride,
+            width: rect.width,
+            height: rect.height,
+            stride_bytes: self.stride_bytes,
             spec: self.spec.clone(),
             facts: self.facts,
             hdr: self.hdr.clone(),
@@ -1123,27 +1135,27 @@ impl<'a> PixelView<'a> {
     }
 
     /// Zero-copy full-width horizontal strip view retaining `'a` lifetime.
-    pub fn sub_rows(&self, y: u32, count: u32) -> Result<PixelView<'a>, At<BufferError>> {
-        self.crop(0, y, self.width, count)
+    pub fn sub_rows(&self, start_y: u32, row_count: u32) -> Result<PixelView<'a>, At<BufferError>> {
+        self.crop(PixelRect::new(0, start_y, self.width, row_count))
     }
 
     /// Fallibly copy active pixels into a freshly allocated, tightly packed [`PixelBuf`].
     pub fn to_tight_buf(&self) -> Result<PixelBuf, At<BufferError>> {
         let rb = self.row_bytes();
         let total = rb
-            .checked_mul(self.rows as usize)
+            .checked_mul(self.height as usize)
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
         let storage = PixelStorage::from_rows(
             self.spec.layout.sample,
             total,
-            (0..self.rows).map(|y| self.row(y)),
+            (0..self.height).map(|y| self.row(y)),
         )
         .map_err(|e| err_at(e.into()))?;
         Ok(PixelBuf {
             storage,
             offset: 0,
             width: self.width,
-            height: self.rows,
+            height: self.height,
             stride: rb,
             spec: self.spec.as_format().clone(),
             facts: self.facts,
@@ -1160,7 +1172,7 @@ impl<'a> PixelView<'a> {
             return FloatFacts::NONE;
         }
         let mut acc = FloatFacts::UNIT_INTERVAL | FloatFacts::POSITIVE;
-        for y in 0..self.rows {
+        for y in 0..self.height {
             let row = self.row(y);
             if let Ok(floats) = bytemuck::try_cast_slice::<u8, f32>(row) {
                 acc = acc & FloatFacts::measure_f32_slice(floats);
@@ -1181,8 +1193,8 @@ impl<'a> PixelView<'a> {
 pub struct PixelViewMut<'a> {
     data: &'a mut [u8],
     width: u32,
-    rows: u32,
-    stride: usize,
+    height: u32,
+    stride_bytes: usize,
     spec: FormatCow<'a>,
     hdr: Option<Arc<HdrMetadata>>,
     orientation: Orientation,
@@ -1198,35 +1210,41 @@ impl<'a> PixelViewMut<'a> {
     pub fn new(
         data: &'a mut [u8],
         width: u32,
-        rows: u32,
-        stride: usize,
-        spec: &'a PixelFormat,
+        height: u32,
+        stride_bytes: usize,
+        format: &'a PixelFormat,
     ) -> Result<Self, At<BufferError>> {
-        Self::new_with_format_cow(data, width, rows, stride, FormatCow::Borrowed(spec))
+        Self::new_with_format_cow(
+            data,
+            width,
+            height,
+            stride_bytes,
+            FormatCow::Borrowed(format),
+        )
     }
 
     /// Borrow mutable strided bytes with an explicit [`FormatCow<'a>`].
     pub fn new_with_format_cow(
         data: &'a mut [u8],
         width: u32,
-        rows: u32,
-        stride: usize,
-        spec: FormatCow<'a>,
+        height: u32,
+        stride_bytes: usize,
+        format: FormatCow<'a>,
     ) -> Result<Self, At<BufferError>> {
         let (_rb, req) = validate_geometry(
             data.len(),
             data.as_ptr(),
             width,
-            rows,
-            stride,
-            spec.as_format(),
+            height,
+            stride_bytes,
+            format.as_format(),
         )?;
         Ok(Self {
             data: &mut data[..req],
             width,
-            rows,
-            stride,
-            spec,
+            height,
+            stride_bytes,
+            spec: format,
             hdr: None,
             orientation: Orientation::Identity,
         })
@@ -1258,7 +1276,7 @@ impl<'a> PixelViewMut<'a> {
     #[inline]
     #[must_use]
     pub const fn display_dimensions(&self) -> (u32, u32) {
-        self.orientation.output_dimensions(self.width, self.rows)
+        self.orientation.output_dimensions(self.width, self.height)
     }
 
     /// Replace the pending EXIF display orientation on this mutable view.
@@ -1294,22 +1312,15 @@ impl<'a> PixelViewMut<'a> {
     /// Height in rows.
     #[inline]
     #[must_use]
-    pub const fn rows(&self) -> u32 {
-        self.rows
-    }
-
-    /// Height in rows (alias for [`rows`](Self::rows), matching [`PixelBuf::height`]).
-    #[inline]
-    #[must_use]
     pub const fn height(&self) -> u32 {
-        self.rows
+        self.height
     }
 
     /// Row stride in bytes.
     #[inline]
     #[must_use]
-    pub const fn stride(&self) -> usize {
-        self.stride
+    pub const fn stride_bytes(&self) -> usize {
+        self.stride_bytes
     }
 
     /// Active bytes per row.
@@ -1329,15 +1340,19 @@ impl<'a> PixelViewMut<'a> {
     /// Mutable active bytes of row `y`.
     #[inline]
     pub fn row_mut(&mut self, y: u32) -> &mut [u8] {
-        assert!(y < self.rows, "row {y} out of bounds (rows: {})", self.rows);
-        let start = (y as usize) * self.stride;
+        assert!(
+            y < self.height,
+            "row {y} out of bounds (height: {})",
+            self.height
+        );
+        let start = (y as usize) * self.stride_bytes;
         let rb = self.row_bytes();
         &mut self.data[start..start + rb]
     }
 
     /// Zero-copy mutable typed slice of row `y` (e.g. `&mut [rgb::Rgba<u8>]`).
     pub fn row_as_mut<P: bytemuck::Pod>(&mut self, y: u32) -> Result<&mut [P], At<BufferError>> {
-        if y >= self.rows {
+        if y >= self.height {
             return Err(err_at(BufferError::OutOfBounds));
         }
         let bytes = self.row_mut(y);
@@ -1365,8 +1380,8 @@ impl<'a> PixelViewMut<'a> {
     /// Mutable contiguous bytes if rows are tightly packed.
     #[inline]
     pub fn as_contiguous_bytes_mut(&mut self) -> Option<&mut [u8]> {
-        if self.rows <= 1 || self.stride == self.row_bytes() {
-            let total = self.row_bytes() * (self.rows as usize);
+        if self.height <= 1 || self.stride_bytes == self.row_bytes() {
+            let total = self.row_bytes() * (self.height as usize);
             Some(&mut self.data[..total])
         } else {
             None
@@ -1380,8 +1395,8 @@ impl<'a> PixelViewMut<'a> {
         PixelView {
             data: self.data,
             width: self.width,
-            rows: self.rows,
-            stride: self.stride,
+            height: self.height,
+            stride_bytes: self.stride_bytes,
             spec: self.spec.to_borrowed(),
             facts: SampleFacts::NONE,
             hdr: self.hdr.clone(),
@@ -1397,8 +1412,8 @@ impl<'a> PixelViewMut<'a> {
         PixelView {
             data: self.data,
             width: self.width,
-            rows: self.rows,
-            stride: self.stride,
+            height: self.height,
+            stride_bytes: self.stride_bytes,
             spec: self.spec,
             facts: SampleFacts::NONE,
             hdr: self.hdr,
@@ -1415,29 +1430,30 @@ impl<'a> PixelViewMut<'a> {
     }
 
     /// Mutable rectangular subimage view.
-    pub fn crop_mut(
-        &mut self,
-        x: u32,
-        y: u32,
-        w: u32,
-        h: u32,
-    ) -> Result<PixelViewMut<'_>, At<BufferError>> {
-        if w == 0 || h == 0 {
+    pub fn crop_mut(&mut self, rect: PixelRect) -> Result<PixelViewMut<'_>, At<BufferError>> {
+        if rect.width == 0 || rect.height == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        if x.checked_add(w).is_none_or(|e| e > self.width)
-            || y.checked_add(h).is_none_or(|e| e > self.rows)
+        if rect
+            .x
+            .checked_add(rect.width)
+            .is_none_or(|e| e > self.width)
+            || rect
+                .y
+                .checked_add(rect.height)
+                .is_none_or(|e| e > self.height)
         {
             return Err(err_at(BufferError::OutOfBounds));
         }
         let bpp = self.spec.layout.bytes_per_pixel();
-        let start = (y as usize) * self.stride + (x as usize) * bpp;
-        let end = (y as usize + h as usize - 1) * self.stride + (x as usize + w as usize) * bpp;
+        let start = (rect.y as usize) * self.stride_bytes + (rect.x as usize) * bpp;
+        let end = (rect.y as usize + rect.height as usize - 1) * self.stride_bytes
+            + (rect.x as usize + rect.width as usize) * bpp;
         Ok(PixelViewMut {
             data: &mut self.data[start..end],
-            width: w,
-            rows: h,
-            stride: self.stride,
+            width: rect.width,
+            height: rect.height,
+            stride_bytes: self.stride_bytes,
             spec: self.spec.to_borrowed(),
             hdr: self.hdr.clone(),
             orientation: self.orientation,
@@ -1447,36 +1463,37 @@ impl<'a> PixelViewMut<'a> {
     /// Mutable full-width strip view.
     pub fn sub_rows_mut(
         &mut self,
-        y: u32,
-        count: u32,
+        start_y: u32,
+        row_count: u32,
     ) -> Result<PixelViewMut<'_>, At<BufferError>> {
-        self.crop_mut(0, y, self.width, count)
+        self.crop_mut(PixelRect::new(0, start_y, self.width, row_count))
     }
 
     /// Consume this mutable view and narrow it to a rectangular crop retaining `'a`.
-    pub fn into_crop(
-        self,
-        x: u32,
-        y: u32,
-        w: u32,
-        h: u32,
-    ) -> Result<PixelViewMut<'a>, At<BufferError>> {
-        if w == 0 || h == 0 {
+    pub fn into_crop(self, rect: PixelRect) -> Result<PixelViewMut<'a>, At<BufferError>> {
+        if rect.width == 0 || rect.height == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        if x.checked_add(w).is_none_or(|e| e > self.width)
-            || y.checked_add(h).is_none_or(|e| e > self.rows)
+        if rect
+            .x
+            .checked_add(rect.width)
+            .is_none_or(|e| e > self.width)
+            || rect
+                .y
+                .checked_add(rect.height)
+                .is_none_or(|e| e > self.height)
         {
             return Err(err_at(BufferError::OutOfBounds));
         }
         let bpp = self.spec.layout.bytes_per_pixel();
-        let start = (y as usize) * self.stride + (x as usize) * bpp;
-        let end = (y as usize + h as usize - 1) * self.stride + (x as usize + w as usize) * bpp;
+        let start = (rect.y as usize) * self.stride_bytes + (rect.x as usize) * bpp;
+        let end = (rect.y as usize + rect.height as usize - 1) * self.stride_bytes
+            + (rect.x as usize + rect.width as usize) * bpp;
         Ok(PixelViewMut {
             data: &mut self.data[start..end],
-            width: w,
-            rows: h,
-            stride: self.stride,
+            width: rect.width,
+            height: rect.height,
+            stride_bytes: self.stride_bytes,
             spec: self.spec,
             hdr: self.hdr,
             orientation: self.orientation,
@@ -1484,15 +1501,47 @@ impl<'a> PixelViewMut<'a> {
     }
 
     /// Consume this mutable view and narrow it to a full-width strip retaining `'a`.
-    pub fn into_sub_rows(self, y: u32, count: u32) -> Result<PixelViewMut<'a>, At<BufferError>> {
+    pub fn into_sub_rows(
+        self,
+        start_y: u32,
+        row_count: u32,
+    ) -> Result<PixelViewMut<'a>, At<BufferError>> {
         let width = self.width;
-        self.into_crop(0, y, width, count)
+        self.into_crop(PixelRect::new(0, start_y, width, row_count))
     }
 }
 
 // ---------------------------------------------------------------------------
 // PixelBuf (unparameterized owned buffer, fallible by default)
 // ---------------------------------------------------------------------------
+
+/// Current buffer geometry and metadata passed to the closure in [`PixelBuf::transform_in_place`].
+#[derive(Clone, Copy, Debug)]
+pub struct InPlaceTransformInput<'a> {
+    /// Image width in pixels.
+    pub width: u32,
+    /// Image height in rows.
+    pub height: u32,
+    /// Current row stride in bytes.
+    pub stride_bytes: usize,
+    /// Current pixel format (layout + color space).
+    pub format: &'a PixelFormat,
+    /// Current container color provenance.
+    pub origin: &'a ColorOrigin,
+}
+
+/// Replacement stride and metadata returned by the closure in [`PixelBuf::transform_in_place`].
+#[derive(Clone, Debug)]
+pub struct InPlaceTransformOutput {
+    /// New row stride in bytes (must fit within existing storage and satisfy alignment).
+    pub stride_bytes: usize,
+    /// New pixel format (layout + color space).
+    pub format: PixelFormat,
+    /// New container color provenance.
+    pub origin: ColorOrigin,
+    /// New proven sample facts for the transformed pixels.
+    pub facts: SampleFacts,
+}
 
 /// Decomposed parts returned by [`PixelBuf::into_parts`].
 #[derive(Debug)]
@@ -1501,13 +1550,13 @@ pub struct PixelBufParts {
     /// Underlying alignment-exact storage.
     pub storage: PixelStorage,
     /// Byte offset of `(0, 0)` within `storage.as_bytes()`.
-    pub offset: usize,
+    pub byte_offset: usize,
     /// Image width in pixels.
     pub width: u32,
     /// Image height in rows.
     pub height: u32,
     /// Byte stride between rows.
-    pub stride: usize,
+    pub stride_bytes: usize,
     /// Pixel format (layout + color space).
     pub format: PixelFormat,
     /// Cached sample facts.
@@ -1634,9 +1683,9 @@ impl PixelBuf {
     pub fn new(
         width: u32,
         height: u32,
-        spec: impl Into<PixelFormat>,
+        format: impl Into<PixelFormat>,
     ) -> Result<Self, At<BufferError>> {
-        Self::new_with_fill(width, height, spec, RowAlign::Tight, BufFill::Black)
+        Self::new_with_fill(width, height, format, RowAlign::Tight, BufFill::Black)
     }
 
     /// Fallibly allocate a tightly packed white-filled buffer (reference white on color channels
@@ -1644,9 +1693,9 @@ impl PixelBuf {
     pub fn new_white(
         width: u32,
         height: u32,
-        spec: impl Into<PixelFormat>,
+        format: impl Into<PixelFormat>,
     ) -> Result<Self, At<BufferError>> {
-        Self::new_with_fill(width, height, spec, RowAlign::Tight, BufFill::White)
+        Self::new_with_fill(width, height, format, RowAlign::Tight, BufFill::White)
     }
 
     /// Fallibly allocate a black-filled buffer with explicit row alignment
@@ -1654,15 +1703,15 @@ impl PixelBuf {
     ///
     /// For `Cache64` and `PixelCache64`, storage is allocated as 64-byte aligned
     /// [`AlignedSamples`] so both the first pixel and every
-    /// row start land on a 64-byte boundary. When `spec.color.alpha() == AlphaMode::Opaque`,
+    /// row start land on a 64-byte boundary. When `format.color.alpha() == AlphaMode::Opaque`,
     /// alpha samples are initialized to full opacity.
     pub fn new_aligned(
         width: u32,
         height: u32,
-        spec: impl Into<PixelFormat>,
+        format: impl Into<PixelFormat>,
         align: RowAlign,
     ) -> Result<Self, At<BufferError>> {
-        Self::new_with_fill(width, height, spec, align, BufFill::Black)
+        Self::new_with_fill(width, height, format, align, BufFill::Black)
     }
 
     /// Fallibly allocate a buffer with explicit row alignment and initial [`BufFill`]
@@ -1670,11 +1719,11 @@ impl PixelBuf {
     pub fn new_with_fill(
         width: u32,
         height: u32,
-        spec: impl Into<PixelFormat>,
+        format: impl Into<PixelFormat>,
         align: RowAlign,
         fill: BufFill,
     ) -> Result<Self, At<BufferError>> {
-        let spec = spec.into();
+        let spec = format.into();
         spec.validate()
             .map_err(|e| whereat::at!(BufferError::InvalidFormat(*e.error())))?;
         if width == 0 || height == 0 {
@@ -1694,8 +1743,10 @@ impl PixelBuf {
             _ => required_bytes(height, stride, row_bytes).map_err(err_at)?,
         };
         let mut storage = match align {
-            RowAlign::Cache64 | RowAlign::PixelCache64 => PixelStorage::zeroed_aligned64(total),
-            _ => PixelStorage::zeroed(spec.layout.sample, total),
+            RowAlign::Cache64 | RowAlign::PixelCache64 => {
+                PixelStorage::zeroed_aligned64_bytes(total)
+            }
+            _ => PixelStorage::zeroed_bytes(spec.layout.sample, total),
         }
         .map_err(|e| err_at(e.into()))?;
         let facts = match fill {
@@ -1736,9 +1787,9 @@ impl PixelBuf {
     pub fn new_zeroed(
         width: u32,
         height: u32,
-        spec: impl Into<PixelFormat>,
+        format: impl Into<PixelFormat>,
     ) -> Result<Self, At<BufferError>> {
-        Self::new_zeroed_aligned(width, height, spec, RowAlign::Tight)
+        Self::new_zeroed_aligned(width, height, format, RowAlign::Tight)
     }
 
     /// Fallibly allocate raw zero-filled aligned OS pages with **no alpha-fill pass**,
@@ -1746,10 +1797,10 @@ impl PixelBuf {
     pub fn new_zeroed_aligned(
         width: u32,
         height: u32,
-        spec: impl Into<PixelFormat>,
+        format: impl Into<PixelFormat>,
         align: RowAlign,
     ) -> Result<Self, At<BufferError>> {
-        let spec = spec.into();
+        let spec = format.into();
         spec.validate()
             .map_err(|e| whereat::at!(BufferError::InvalidFormat(*e.error())))?;
         if width == 0 || height == 0 {
@@ -1772,8 +1823,10 @@ impl PixelBuf {
             _ => required_bytes(height, stride, row_bytes).map_err(err_at)?,
         };
         let storage = match align {
-            RowAlign::Cache64 | RowAlign::PixelCache64 => PixelStorage::zeroed_aligned64(total),
-            _ => PixelStorage::zeroed(spec.layout.sample, total),
+            RowAlign::Cache64 | RowAlign::PixelCache64 => {
+                PixelStorage::zeroed_aligned64_bytes(total)
+            }
+            _ => PixelStorage::zeroed_bytes(spec.layout.sample, total),
         }
         .map_err(|e| err_at(e.into()))?;
         let facts = SampleFacts::for_zeroed_format(&spec);
@@ -1795,10 +1848,10 @@ impl PixelBuf {
     pub fn new_for_interop(
         width: u32,
         height: u32,
-        spec: impl Into<PixelFormat>,
+        format: impl Into<PixelFormat>,
         target: InteropTarget,
     ) -> Result<Self, At<BufferError>> {
-        let spec = spec.into();
+        let spec = format.into();
         if !spec.supports_interop(target) {
             return Err(err_at(BufferError::InteropUnsupported));
         }
@@ -1817,9 +1870,9 @@ impl PixelBuf {
         bytes: Vec<u8>,
         width: u32,
         height: u32,
-        spec: impl Into<PixelFormat>,
+        format: impl Into<PixelFormat>,
     ) -> Result<Self, At<BufferError>> {
-        Self::from_bytes_recover(bytes, width, height, spec).map_err(|(e, _)| e)
+        Self::from_bytes_recover(bytes, width, height, format).map_err(|(e, _)| e)
     }
 
     /// Adopt tightly packed bytes (`Vec<u8>`), returning `Err((err, bytes))` with the original
@@ -1829,9 +1882,9 @@ impl PixelBuf {
         bytes: Vec<u8>,
         width: u32,
         height: u32,
-        spec: impl Into<PixelFormat>,
+        format: impl Into<PixelFormat>,
     ) -> Result<Self, (At<BufferError>, Vec<u8>)> {
-        let spec = spec.into();
+        let spec = format.into();
         if let Err(e) = spec.validate() {
             return Err((whereat::at!(BufferError::InvalidFormat(*e.error())), bytes));
         }
@@ -1877,13 +1930,13 @@ impl PixelBuf {
     /// Adopt a tightly packed typed `Vec<P>` (pixels like `Vec<rgb::Rgb<u16>>`, arrays `[u8; 3]`,
     /// or raw samples like `Vec<f32>`).
     ///
-    /// Validates that `P` is structurally compatible with `spec.layout` (preventing silent
+    /// Validates that `P` is structurally compatible with `format.layout` (preventing silent
     /// reinterpretation such as `Vec<i32>` as `RGBF32`). Note that untyped integer literals
     /// (`vec![255, 0, 0]`) default to `Vec<i32>` in Rust and will be rejected for `U8` layouts;
     /// annotate the first element (e.g. `vec![255u8, 0, 0]`) or use [`from_bytes`](Self::from_bytes).
-    /// For intentional raw byte reinterpretation, use [`from_raw_pod`](Self::from_raw_pod).
+    /// For intentional raw byte reinterpretation, use [`from_pod_bytes_unchecked`](Self::from_pod_bytes_unchecked).
     ///
-    /// **Zero-copy** whenever `align_of::<P>() == spec.layout.min_alignment()` and
+    /// **Zero-copy** whenever `align_of::<P>() == format.layout.min_alignment()` and
     /// `bytemuck::allocation::try_cast_vec` succeeds (preserving exact deallocation alignment!).
     /// Otherwise fallibly copies into native-aligned [`PixelStorage`].
     ///
@@ -1892,9 +1945,9 @@ impl PixelBuf {
         pixels: Vec<P>,
         width: u32,
         height: u32,
-        spec: impl Into<PixelFormat>,
+        format: impl Into<PixelFormat>,
     ) -> Result<Self, At<BufferError>> {
-        Self::from_typed_recover(pixels, width, height, spec).map_err(|(e, _)| e)
+        Self::from_typed_recover(pixels, width, height, format).map_err(|(e, _)| e)
     }
 
     /// Adopt a tightly packed typed `Vec<P>`, returning `Err((err, pixels))` with the original
@@ -1904,14 +1957,14 @@ impl PixelBuf {
         pixels: Vec<P>,
         width: u32,
         height: u32,
-        spec: impl Into<PixelFormat>,
+        format: impl Into<PixelFormat>,
     ) -> Result<Self, (At<BufferError>, Vec<P>)> {
-        let spec = spec.into();
+        let spec = format.into();
         if !P::matches_layout(spec.layout) {
             return Err((
                 err_at(BufferError::IncompatibleLayout).at_string(|| {
                     alloc::format!(
-                        "element `{}` does not match {:?} layout (annotate integer literals e.g. `0u8`, or use `from_raw_pod`)",
+                        "element `{}` does not match {:?} layout (annotate integer literals e.g. `0u8`, or use `from_pod_bytes_unchecked`)",
                         core::any::type_name::<P>(),
                         spec.layout
                     )
@@ -1971,9 +2024,9 @@ impl PixelBuf {
         samples: Vec<S>,
         width: u32,
         height: u32,
-        spec: impl Into<PixelFormat>,
+        format: impl Into<PixelFormat>,
     ) -> Result<Self, At<BufferError>> {
-        let spec = spec.into();
+        let spec = format.into();
         if spec.layout.sample != S::SAMPLE_TYPE {
             return Err(err_at(BufferError::IncompatibleLayout).at_string(|| {
                 alloc::format!(
@@ -1984,29 +2037,30 @@ impl PixelBuf {
                 )
             }));
         }
-        Self::from_raw_pod(samples, width, height, spec)
+        Self::from_pod_bytes_unchecked(samples, width, height, spec)
     }
 
-    /// Adopt a tightly packed `rgb` pixel `Vec<P>` (`Vec<rgb::Rgb<u8>>`, etc.).
+    /// Adopt a tightly packed `rgb` pixel `Vec<P>` (`Vec<rgb::Rgb<u8>>`, etc.) with an explicit
+    /// [`ColorSpace`] (deriving [`SampleLayout`] from `P::LAYOUT`).
     #[cfg(feature = "rgb")]
-    pub fn from_pixels<P: crate::interop::PixelType>(
+    pub fn from_pixels_with_color<P: crate::interop::PixelType>(
         pixels: Vec<P>,
         width: u32,
         height: u32,
         color: crate::ColorSpace,
     ) -> Result<Self, At<BufferError>> {
-        Self::from_raw_pod(pixels, width, height, PixelFormat::new(P::LAYOUT, color))
+        Self::from_pod_bytes_unchecked(pixels, width, height, PixelFormat::new(P::LAYOUT, color))
     }
 
     /// Explicitly reinterpret any tightly packed `Vec<P: bytemuck::Pod>` in native endianness
-    /// as raw pixel bytes matching `spec`.
-    pub fn from_raw_pod<P: bytemuck::Pod>(
+    /// as raw pixel bytes matching `format` without checking element-to-layout compatibility.
+    pub fn from_pod_bytes_unchecked<P: bytemuck::Pod>(
         pixels: Vec<P>,
         width: u32,
         height: u32,
-        spec: impl Into<PixelFormat>,
+        format: impl Into<PixelFormat>,
     ) -> Result<Self, At<BufferError>> {
-        let spec = spec.into();
+        let spec = format.into();
         spec.validate()
             .map_err(|e| whereat::at!(BufferError::InvalidFormat(*e.error())))?;
         if width == 0 || height == 0 {
@@ -2046,32 +2100,39 @@ impl PixelBuf {
         })
     }
 
-    /// Checked construction from owned [`PixelStorage`], offset, dimensions, stride, and spec
-    /// with fresh default metadata (`facts = NONE`, `hdr = empty`, `origin = assumed`,
+    /// Checked construction from owned [`PixelStorage`], byte offset, dimensions, byte stride, and
+    /// format with fresh default metadata (`facts = NONE`, `hdr = empty`, `origin = assumed`,
     /// `orientation = Identity`).
     ///
     /// To restore full decomposed metadata from [`PixelBuf::into_parts`], use
     /// [`from_parts`](Self::from_parts) or [`from_parts_recover`](Self::from_parts_recover).
     pub fn from_storage_parts(
         storage: PixelStorage,
-        offset: usize,
+        byte_offset: usize,
         width: u32,
         height: u32,
-        stride: usize,
-        spec: impl Into<PixelFormat>,
+        stride_bytes: usize,
+        format: impl Into<PixelFormat>,
     ) -> Result<Self, At<BufferError>> {
-        let spec = spec.into();
+        let spec = format.into();
         let bytes = storage.as_bytes();
         let slice = bytes
-            .get(offset..)
+            .get(byte_offset..)
             .ok_or_else(|| err_at(BufferError::InsufficientData))?;
-        validate_geometry(slice.len(), slice.as_ptr(), width, height, stride, &spec)?;
-        Ok(Self {
-            storage,
-            offset,
+        validate_geometry(
+            slice.len(),
+            slice.as_ptr(),
             width,
             height,
-            stride,
+            stride_bytes,
+            &spec,
+        )?;
+        Ok(Self {
+            storage,
+            offset: byte_offset,
+            width,
+            height,
+            stride: stride_bytes,
             spec,
             facts: SampleFacts::NONE,
             hdr: None,
@@ -2096,7 +2157,7 @@ impl PixelBuf {
         parts: PixelBufParts,
     ) -> Result<Self, (At<BufferError>, PixelBufParts)> {
         let bytes = parts.storage.as_bytes();
-        let Some(slice) = bytes.get(parts.offset..) else {
+        let Some(slice) = bytes.get(parts.byte_offset..) else {
             return Err((err_at(BufferError::InsufficientData), parts));
         };
         if let Err(e) = validate_geometry(
@@ -2104,17 +2165,17 @@ impl PixelBuf {
             slice.as_ptr(),
             parts.width,
             parts.height,
-            parts.stride,
+            parts.stride_bytes,
             &parts.format,
         ) {
             return Err((e, parts));
         }
         Ok(Self {
             storage: parts.storage,
-            offset: parts.offset,
+            offset: parts.byte_offset,
             width: parts.width,
             height: parts.height,
-            stride: parts.stride,
+            stride: parts.stride_bytes,
             spec: parts.format,
             facts: parts.facts,
             hdr: box_hdr(parts.hdr),
@@ -2138,32 +2199,37 @@ impl PixelBuf {
         storage: S,
         width: u32,
         height: u32,
-        stride: usize,
-        spec: impl Into<PixelFormat>,
+        stride_bytes: usize,
+        format: impl Into<PixelFormat>,
     ) -> Result<Self, (At<BufferError>, S)> {
-        Self::from_external_with_offset(storage, 0, width, height, stride, spec)
+        Self::from_external_with_byte_offset(storage, 0, width, height, stride_bytes, format)
     }
 
-    /// Adopt an immutable external owned backing starting at `offset` bytes **zero-copy**.
+    /// Adopt an immutable external owned backing starting at `byte_offset` bytes **zero-copy**.
     ///
     /// Returns `Err((err, storage))` untouched on validation failure with zero heap allocation.
     #[allow(clippy::result_large_err)]
-    pub fn from_external_with_offset<S: ByteStorage + Send + Sync + 'static>(
+    pub fn from_external_with_byte_offset<S: ByteStorage + Send + Sync + 'static>(
         storage: S,
-        offset: usize,
+        byte_offset: usize,
         width: u32,
         height: u32,
-        stride: usize,
-        spec: impl Into<PixelFormat>,
+        stride_bytes: usize,
+        format: impl Into<PixelFormat>,
     ) -> Result<Self, (At<BufferError>, S)> {
-        let spec = spec.into();
+        let spec = format.into();
         let check = {
             let bytes = storage.as_bytes();
-            match bytes.get(offset..) {
+            match bytes.get(byte_offset..) {
                 None => Err(err_at(BufferError::InsufficientData)),
-                Some(slice) => {
-                    validate_geometry(slice.len(), slice.as_ptr(), width, height, stride, &spec)
-                }
+                Some(slice) => validate_geometry(
+                    slice.len(),
+                    slice.as_ptr(),
+                    width,
+                    height,
+                    stride_bytes,
+                    &spec,
+                ),
             }
         };
         if let Err(e) = check {
@@ -2171,10 +2237,10 @@ impl PixelBuf {
         }
         Ok(Self {
             storage: PixelStorage::from_external(storage),
-            offset,
+            offset: byte_offset,
             width,
             height,
-            stride,
+            stride: stride_bytes,
             spec,
             facts: SampleFacts::NONE,
             hdr: None,
@@ -2194,32 +2260,37 @@ impl PixelBuf {
         storage: S,
         width: u32,
         height: u32,
-        stride: usize,
-        spec: impl Into<PixelFormat>,
+        stride_bytes: usize,
+        format: impl Into<PixelFormat>,
     ) -> Result<Self, (At<BufferError>, S)> {
-        Self::from_external_mut_with_offset(storage, 0, width, height, stride, spec)
+        Self::from_external_mut_with_byte_offset(storage, 0, width, height, stride_bytes, format)
     }
 
-    /// Adopt a mutable external owned backing starting at `offset` bytes **zero-copy**.
+    /// Adopt a mutable external owned backing starting at `byte_offset` bytes **zero-copy**.
     ///
     /// Returns `Err((err, storage))` untouched on validation failure with zero heap allocation.
     #[allow(clippy::result_large_err)]
-    pub fn from_external_mut_with_offset<S: ByteStorageMut + Send + Sync + 'static>(
+    pub fn from_external_mut_with_byte_offset<S: ByteStorageMut + Send + Sync + 'static>(
         storage: S,
-        offset: usize,
+        byte_offset: usize,
         width: u32,
         height: u32,
-        stride: usize,
-        spec: impl Into<PixelFormat>,
+        stride_bytes: usize,
+        format: impl Into<PixelFormat>,
     ) -> Result<Self, (At<BufferError>, S)> {
-        let spec = spec.into();
+        let spec = format.into();
         let check = {
             let bytes = storage.as_bytes();
-            match bytes.get(offset..) {
+            match bytes.get(byte_offset..) {
                 None => Err(err_at(BufferError::InsufficientData)),
-                Some(slice) => {
-                    validate_geometry(slice.len(), slice.as_ptr(), width, height, stride, &spec)
-                }
+                Some(slice) => validate_geometry(
+                    slice.len(),
+                    slice.as_ptr(),
+                    width,
+                    height,
+                    stride_bytes,
+                    &spec,
+                ),
             }
         };
         if let Err(e) = check {
@@ -2227,10 +2298,10 @@ impl PixelBuf {
         }
         Ok(Self {
             storage: PixelStorage::from_external_mut(storage),
-            offset,
+            offset: byte_offset,
             width,
             height,
-            stride,
+            stride: stride_bytes,
             spec,
             facts: SampleFacts::NONE,
             hdr: None,
@@ -2350,7 +2421,7 @@ impl PixelBuf {
     /// Stride in bytes.
     #[inline]
     #[must_use]
-    pub const fn stride(&self) -> usize {
+    pub const fn stride_bytes(&self) -> usize {
         self.stride
     }
 
@@ -2364,7 +2435,7 @@ impl PixelBuf {
     /// Leading byte offset inside backing storage.
     #[inline]
     #[must_use]
-    pub const fn offset(&self) -> usize {
+    pub const fn byte_offset(&self) -> usize {
         self.offset
     }
 
@@ -2381,9 +2452,12 @@ impl PixelBuf {
     /// Rejects changes to `sample` type or `packing` (use
     /// [`reinterpret_bytes`](Self::reinterpret_bytes) for deliberate raw-byte reinterpretation
     /// across sample types). Clears cached [`SampleFacts`] and resets [`ColorOrigin`] to
-    /// [`ColorOrigin::assumed`] whenever `spec.color` changes.
-    pub fn relabel_format(mut self, spec: impl Into<PixelFormat>) -> Result<Self, At<BufferError>> {
-        let spec = spec.into();
+    /// [`ColorOrigin::assumed`] whenever `format.color` changes.
+    pub fn relabel_format(
+        mut self,
+        format: impl Into<PixelFormat>,
+    ) -> Result<Self, At<BufferError>> {
+        let spec = format.into();
         if spec.layout.sample != self.spec.layout.sample
             || spec.layout.packing != self.spec.layout.packing
             || spec.layout.bytes_per_pixel() != self.spec.layout.bytes_per_pixel()
@@ -2442,9 +2516,9 @@ impl PixelBuf {
     /// and [`HdrMetadata`].
     pub fn reinterpret_bytes(
         mut self,
-        spec: impl Into<PixelFormat>,
+        format: impl Into<PixelFormat>,
     ) -> Result<Self, At<BufferError>> {
-        let spec = spec.into();
+        let spec = format.into();
         if spec.layout.bytes_per_pixel() != self.spec.layout.bytes_per_pixel() {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
@@ -2680,8 +2754,8 @@ impl PixelBuf {
         PixelView {
             data: &bytes[self.offset..end],
             width: self.width,
-            rows: self.height,
-            stride: self.stride,
+            height: self.height,
+            stride_bytes: self.stride,
             spec: FormatCow::Borrowed(&self.spec),
             facts: self.facts,
             hdr: self.hdr.clone(),
@@ -2704,8 +2778,8 @@ impl PixelBuf {
         Ok(PixelViewMut {
             data: &mut bytes[self.offset..end],
             width: self.width,
-            rows: self.height,
-            stride: self.stride,
+            height: self.height,
+            stride_bytes: self.stride,
             spec: FormatCow::Borrowed(&self.spec),
             hdr: self.hdr.clone(),
             orientation: self.orientation,
@@ -2723,119 +2797,120 @@ impl PixelBuf {
             .expect("copy-on-write promotion of external PixelBuf failed")
     }
 
-    /// Borrow a full-width horizontal strip of `count` rows starting at `y` without copying pixels.
+    /// Borrow a full-width horizontal strip of `row_count` rows starting at `start_y` without copying pixels.
     #[inline]
-    pub fn sub_rows(&self, y: u32, count: u32) -> Result<PixelView<'_>, At<BufferError>> {
-        self.as_view().sub_rows(y, count)
+    pub fn sub_rows(&self, start_y: u32, row_count: u32) -> Result<PixelView<'_>, At<BufferError>> {
+        self.as_view().sub_rows(start_y, row_count)
     }
 
-    /// Borrow a mutable full-width horizontal strip of `count` rows starting at `y`,
+    /// Borrow a mutable full-width horizontal strip of `row_count` rows starting at `start_y`,
     /// automatically clearing cached [`SampleFacts`] and fallibly copy-on-write promoting
     /// immutable external storage if needed.
     #[inline]
     pub fn sub_rows_mut(
         &mut self,
-        y: u32,
-        count: u32,
+        start_y: u32,
+        row_count: u32,
     ) -> Result<PixelViewMut<'_>, At<BufferError>> {
-        if count == 0 {
+        if row_count == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        if y.checked_add(count).is_none_or(|e| e > self.height) {
+        if start_y
+            .checked_add(row_count)
+            .is_none_or(|e| e > self.height)
+        {
             return Err(err_at(BufferError::OutOfBounds));
         }
-        self.try_as_view_mut()?.into_sub_rows(y, count)
+        self.try_as_view_mut()?.into_sub_rows(start_y, row_count)
     }
 
     /// Borrow a rectangular cropped subimage view without copying pixels.
     #[inline]
-    pub fn crop_view(
-        &self,
-        x: u32,
-        y: u32,
-        w: u32,
-        h: u32,
-    ) -> Result<PixelView<'_>, At<BufferError>> {
-        self.as_view().crop(x, y, w, h)
+    pub fn crop_view(&self, rect: PixelRect) -> Result<PixelView<'_>, At<BufferError>> {
+        self.as_view().crop(rect)
     }
 
     /// Borrow a mutable rectangular cropped subimage view without copying pixels,
     /// automatically clearing cached [`SampleFacts`] and fallibly copy-on-write promoting
     /// immutable external storage if needed.
     #[inline]
-    pub fn crop_view_mut(
-        &mut self,
-        x: u32,
-        y: u32,
-        w: u32,
-        h: u32,
-    ) -> Result<PixelViewMut<'_>, At<BufferError>> {
-        if w == 0 || h == 0 {
+    pub fn crop_view_mut(&mut self, rect: PixelRect) -> Result<PixelViewMut<'_>, At<BufferError>> {
+        if rect.width == 0 || rect.height == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        if x.checked_add(w).is_none_or(|e| e > self.width)
-            || y.checked_add(h).is_none_or(|e| e > self.height)
+        if rect
+            .x
+            .checked_add(rect.width)
+            .is_none_or(|e| e > self.width)
+            || rect
+                .y
+                .checked_add(rect.height)
+                .is_none_or(|e| e > self.height)
         {
             return Err(err_at(BufferError::OutOfBounds));
         }
-        self.try_as_view_mut()?.into_crop(x, y, w, h)
+        self.try_as_view_mut()?.into_crop(rect)
     }
 
     /// Consume this buffer and narrow it to a rectangular crop in **O(1) with zero pixel copies**.
     ///
-    /// Keeps the underlying [`PixelStorage`] and row `stride` intact while advancing the active
+    /// Keeps the underlying [`PixelStorage`] and row `stride_bytes` intact while advancing the active
     /// byte offset and narrowing `(width, height)`. Preserves sample alignment, cached
     /// [`SampleFacts`], [`HdrMetadata`], [`ColorOrigin`], and [`Orientation`]. Chain
     /// [`into_tight_buf`](Self::into_tight_buf) afterwards to compact the cropped region into
     /// tightly packed storage if desired.
     #[inline]
-    pub fn into_crop(mut self, x: u32, y: u32, w: u32, h: u32) -> Result<Self, At<BufferError>> {
-        if w == 0 || h == 0 {
+    pub fn into_crop(mut self, rect: PixelRect) -> Result<Self, At<BufferError>> {
+        if rect.width == 0 || rect.height == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        if x.checked_add(w).is_none_or(|e| e > self.width)
-            || y.checked_add(h).is_none_or(|e| e > self.height)
+        if rect
+            .x
+            .checked_add(rect.width)
+            .is_none_or(|e| e > self.width)
+            || rect
+                .y
+                .checked_add(rect.height)
+                .is_none_or(|e| e > self.height)
         {
             return Err(err_at(BufferError::OutOfBounds));
         }
         let bpp = self.spec.layout.bytes_per_pixel();
-        let delta = (y as usize) * self.stride + (x as usize) * bpp;
+        let delta = (rect.y as usize) * self.stride + (rect.x as usize) * bpp;
         self.offset += delta;
-        self.width = w;
-        self.height = h;
+        self.width = rect.width;
+        self.height = rect.height;
         Ok(self)
     }
 
     /// Atomically transform this buffer's bytes and metadata in place with zero reallocation.
     ///
-    /// The closure receives `(active_bytes, width, height, stride, spec, origin)` where
-    /// `active_bytes` starts at pixel `(0, 0)`. If it returns
-    /// `Some((new_stride, new_spec, new_origin, new_facts))`, the new spec and geometry are
-    /// validated against the existing storage and adopted atomically; if it returns `None`,
-    /// the buffer's metadata is unchanged.
+    /// The closure receives `(active_bytes, input)` where `active_bytes` starts at pixel `(0, 0)`.
+    /// If it returns `Some(output)`, the new format and geometry are validated against the
+    /// existing storage and adopted atomically; if it returns `None`, the buffer's metadata is
+    /// unchanged.
     pub fn transform_in_place<F>(&mut self, f: F) -> Result<(), At<BufferError>>
     where
-        F: FnOnce(
-            &mut [u8],
-            u32,
-            u32,
-            usize,
-            &PixelFormat,
-            &ColorOrigin,
-        ) -> Option<(usize, PixelFormat, ColorOrigin, SampleFacts)>,
+        F: FnOnce(&mut [u8], InPlaceTransformInput<'_>) -> Option<InPlaceTransformOutput>,
     {
         self.make_mut()?;
         let active = &mut self.storage.as_bytes_mut()[self.offset..];
-        let Some((new_stride, new_spec, new_origin, new_facts)) = f(
-            active,
-            self.width,
-            self.height,
-            self.stride,
-            &self.spec,
-            origin_ref(&self.origin),
-        ) else {
+        let input = InPlaceTransformInput {
+            width: self.width,
+            height: self.height,
+            stride_bytes: self.stride,
+            format: &self.spec,
+            origin: origin_ref(&self.origin),
+        };
+        let Some(output) = f(active, input) else {
             return Ok(());
         };
+        let InPlaceTransformOutput {
+            stride_bytes: new_stride,
+            format: new_spec,
+            origin: new_origin,
+            facts: new_facts,
+        } = output;
         new_spec
             .validate()
             .map_err(|e| whereat::at!(BufferError::InvalidFormat(*e.error())))?;
@@ -3070,7 +3145,7 @@ impl PixelBuf {
                     out.try_reserve_exact(count)
                         .map_err(|_| err_at(BufferError::AllocationFailed))?;
                     let view = buf.as_view();
-                    for y in 0..view.rows() {
+                    for y in 0..view.height() {
                         let row = view.row(y);
                         if let Ok(typed) = bytemuck::try_cast_slice::<u8, P>(row) {
                             out.extend_from_slice(typed);
@@ -3091,7 +3166,7 @@ impl PixelBuf {
                     let dst_bytes = bytemuck::cast_slice_mut::<P, u8>(&mut out);
                     let view = buf.as_view();
                     let mut pos = 0usize;
-                    for y in 0..view.rows() {
+                    for y in 0..view.height() {
                         let row = view.row(y);
                         dst_bytes[pos..pos + row.len()].copy_from_slice(row);
                         pos += row.len();
@@ -3108,10 +3183,10 @@ impl PixelBuf {
     pub fn into_parts(self) -> PixelBufParts {
         PixelBufParts {
             storage: self.storage,
-            offset: self.offset,
+            byte_offset: self.offset,
             width: self.width,
             height: self.height,
-            stride: self.stride,
+            stride_bytes: self.stride,
             format: self.spec,
             facts: self.facts,
             hdr: unbox_hdr(&self.hdr),
@@ -3146,8 +3221,8 @@ impl<'a> PixelCow<'a> {
             Self::Borrowed(v) => PixelView {
                 data: v.data,
                 width: v.width,
-                rows: v.rows,
-                stride: v.stride,
+                height: v.height,
+                stride_bytes: v.stride_bytes,
                 spec: v.spec.to_borrowed(),
                 facts: v.facts,
                 hdr: v.hdr.clone(),
@@ -3173,6 +3248,15 @@ impl<'a> PixelCow<'a> {
 
 /// Default per-band memory cap (`16 MiB`) for [`BandedBuf`].
 pub const DEFAULT_MAX_BAND_BYTES: usize = 16 * 1024 * 1024;
+
+/// Band index and band-local row offset returned by [`BandedBuf::locate_row`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BandRowLocation {
+    /// Zero-based index into [`BandedBuf::bands`].
+    pub band_index: usize,
+    /// Zero-based row index inside that band.
+    pub local_y: u32,
+}
 
 /// Gigapixel-safe image stored as bounded-size horizontal bands.
 ///
@@ -3201,21 +3285,21 @@ impl BandedBuf {
     pub fn new(
         width: u32,
         height: u32,
-        spec: impl Into<PixelFormat>,
+        format: impl Into<PixelFormat>,
         max_band_bytes: usize,
     ) -> Result<Self, At<BufferError>> {
-        Self::new_aligned(width, height, spec, max_band_bytes, RowAlign::Tight)
+        Self::new_aligned(width, height, format, max_band_bytes, RowAlign::Tight)
     }
 
     /// Fallibly allocate a zero-filled banded image with explicit per-band [`RowAlign`].
     pub fn new_aligned(
         width: u32,
         height: u32,
-        spec: impl Into<PixelFormat>,
+        format: impl Into<PixelFormat>,
         max_band_bytes: usize,
         align: RowAlign,
     ) -> Result<Self, At<BufferError>> {
-        let spec = spec.into();
+        let spec = format.into();
         spec.validate()
             .map_err(|e| whereat::at!(BufferError::InvalidFormat(*e.error())))?;
         if width == 0 || height == 0 || max_band_bytes == 0 {
@@ -3297,7 +3381,7 @@ impl BandedBuf {
             return Err(err_at(BufferError::InvalidDimensions));
         }
         let width = view.width();
-        let height = view.rows();
+        let height = view.height();
         let row_bytes = view.row_bytes();
         let rows_per_band = (max_band_bytes / row_bytes.max(1))
             .max(1)
@@ -3381,28 +3465,31 @@ impl BandedBuf {
         self.bands.get(index).map(PixelBuf::as_view)
     }
 
-    /// Map global row `y` to `(band_index, row_within_band)`, or `None` if out of bounds.
+    /// Map global row `y` to its band index and band-local row offset, or `None` if out of bounds.
     #[inline]
     #[must_use]
-    pub const fn locate(&self, y: u32) -> Option<(usize, u32)> {
+    pub const fn locate_row(&self, y: u32) -> Option<BandRowLocation> {
         if y >= self.height {
             return None;
         }
-        Some(((y / self.band_rows) as usize, y % self.band_rows))
+        Some(BandRowLocation {
+            band_index: (y / self.band_rows) as usize,
+            local_y: y % self.band_rows,
+        })
     }
 
-    /// Borrow zero-copy [`PixelView`] slices covering global row range `start_y..start_y + count`,
-    /// split at band boundaries.
-    pub fn row_range_views(
+    /// Borrow zero-copy [`PixelView`] slices covering global row range
+    /// `start_y..start_y + row_count`, split at band boundaries.
+    pub fn sub_row_views(
         &self,
         start_y: u32,
-        count: u32,
+        row_count: u32,
     ) -> Result<Vec<PixelView<'_>>, At<BufferError>> {
-        if count == 0 {
+        if row_count == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
         let end_y = start_y
-            .checked_add(count)
+            .checked_add(row_count)
             .filter(|&e| e <= self.height)
             .ok_or_else(|| err_at(BufferError::OutOfBounds))?;
         let first_band = (start_y / self.band_rows) as usize;
@@ -3439,7 +3526,7 @@ impl BandedBuf {
     /// Nominal rows per band (final band may be shorter).
     #[inline]
     #[must_use]
-    pub const fn band_rows(&self) -> u32 {
+    pub const fn rows_per_band(&self) -> u32 {
         self.band_rows
     }
 
@@ -3575,9 +3662,9 @@ impl BandedBuf {
         let b = (y / self.band_rows) as usize;
         let ly = y % self.band_rows;
         self.bands[b].facts = SampleFacts::NONE;
-        let stride = self.bands[b].stride();
+        let stride = self.bands[b].stride_bytes();
         let rb = self.bands[b].row_bytes();
-        let off = self.bands[b].offset();
+        let off = self.bands[b].byte_offset();
         let start = off + (ly as usize) * stride;
         &mut self.bands[b].storage.as_bytes_mut()[start..start + rb]
     }
@@ -3603,33 +3690,33 @@ impl PlaneBuf {
         storage: PixelStorage,
         width: u32,
         height: u32,
-        stride: usize,
-        spec: PlaneFormat,
+        stride_bytes: usize,
+        format: PlaneFormat,
     ) -> Result<Self, At<BufferError>> {
-        spec.validate().map_err(|e| err_at(e.into()))?;
+        format.validate().map_err(|e| err_at(e.into()))?;
         if width == 0 || height == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
         let row_bytes = (width as usize)
-            .checked_mul(spec.bytes_per_element())
+            .checked_mul(format.bytes_per_element())
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        if stride < row_bytes {
+        if stride_bytes < row_bytes {
             return Err(err_at(BufferError::StrideTooSmall));
         }
-        let align = spec.sample.min_alignment();
+        let align = format.sample.min_alignment();
         let bytes = storage.as_bytes();
-        if (bytes.as_ptr() as usize) % align != 0 || (height > 1 && stride % align != 0) {
+        if (bytes.as_ptr() as usize) % align != 0 || (height > 1 && stride_bytes % align != 0) {
             return Err(err_at(BufferError::AlignmentViolation));
         }
-        let req = required_bytes(height, stride, row_bytes).map_err(err_at)?;
+        let req = required_bytes(height, stride_bytes, row_bytes).map_err(err_at)?;
         if bytes.len() < req {
             return Err(err_at(BufferError::InsufficientData));
         }
         Ok(Self {
-            spec,
+            spec: format,
             width,
             height,
-            stride,
+            stride: stride_bytes,
             storage,
         })
     }
@@ -3641,26 +3728,26 @@ impl PlaneBuf {
         storage: S,
         width: u32,
         height: u32,
-        stride: usize,
-        spec: PlaneFormat,
+        stride_bytes: usize,
+        format: PlaneFormat,
     ) -> Result<Self, (At<BufferError>, S)> {
         let check = (|| -> Result<(), At<BufferError>> {
-            spec.validate().map_err(|e| err_at(e.into()))?;
+            format.validate().map_err(|e| err_at(e.into()))?;
             if width == 0 || height == 0 {
                 return Err(err_at(BufferError::InvalidDimensions));
             }
             let row_bytes = (width as usize)
-                .checked_mul(spec.bytes_per_element())
+                .checked_mul(format.bytes_per_element())
                 .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-            if stride < row_bytes {
+            if stride_bytes < row_bytes {
                 return Err(err_at(BufferError::StrideTooSmall));
             }
-            let align = spec.sample.min_alignment();
+            let align = format.sample.min_alignment();
             let bytes = storage.as_bytes();
-            if (bytes.as_ptr() as usize) % align != 0 || (height > 1 && stride % align != 0) {
+            if (bytes.as_ptr() as usize) % align != 0 || (height > 1 && stride_bytes % align != 0) {
                 return Err(err_at(BufferError::AlignmentViolation));
             }
-            let req = required_bytes(height, stride, row_bytes).map_err(err_at)?;
+            let req = required_bytes(height, stride_bytes, row_bytes).map_err(err_at)?;
             if bytes.len() < req {
                 return Err(err_at(BufferError::InsufficientData));
             }
@@ -3670,10 +3757,10 @@ impl PlaneBuf {
             return Err((e, storage));
         }
         Ok(Self {
-            spec,
+            spec: format,
             width,
             height,
-            stride,
+            stride: stride_bytes,
             storage: PixelStorage::from_external(storage),
         })
     }
@@ -3685,26 +3772,26 @@ impl PlaneBuf {
         storage: S,
         width: u32,
         height: u32,
-        stride: usize,
-        spec: PlaneFormat,
+        stride_bytes: usize,
+        format: PlaneFormat,
     ) -> Result<Self, (At<BufferError>, S)> {
         let check = (|| -> Result<(), At<BufferError>> {
-            spec.validate().map_err(|e| err_at(e.into()))?;
+            format.validate().map_err(|e| err_at(e.into()))?;
             if width == 0 || height == 0 {
                 return Err(err_at(BufferError::InvalidDimensions));
             }
             let row_bytes = (width as usize)
-                .checked_mul(spec.bytes_per_element())
+                .checked_mul(format.bytes_per_element())
                 .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-            if stride < row_bytes {
+            if stride_bytes < row_bytes {
                 return Err(err_at(BufferError::StrideTooSmall));
             }
-            let align = spec.sample.min_alignment();
+            let align = format.sample.min_alignment();
             let bytes = storage.as_bytes();
-            if (bytes.as_ptr() as usize) % align != 0 || (height > 1 && stride % align != 0) {
+            if (bytes.as_ptr() as usize) % align != 0 || (height > 1 && stride_bytes % align != 0) {
                 return Err(err_at(BufferError::AlignmentViolation));
             }
-            let req = required_bytes(height, stride, row_bytes).map_err(err_at)?;
+            let req = required_bytes(height, stride_bytes, row_bytes).map_err(err_at)?;
             if bytes.len() < req {
                 return Err(err_at(BufferError::InsufficientData));
             }
@@ -3714,10 +3801,10 @@ impl PlaneBuf {
             return Err((e, storage));
         }
         Ok(Self {
-            spec,
+            spec: format,
             width,
             height,
-            stride,
+            stride: stride_bytes,
             storage: PixelStorage::from_external_mut(storage),
         })
     }
@@ -3798,7 +3885,7 @@ impl PlaneBuf {
     /// Row stride in bytes.
     #[inline]
     #[must_use]
-    pub const fn stride(&self) -> usize {
+    pub const fn stride_bytes(&self) -> usize {
         self.stride
     }
 
@@ -3876,20 +3963,20 @@ impl PlaneBuf {
     /// Construct a validated owned plane adopting a tightly packed typed `Vec<S>` (`Vec<u8>`,
     /// `Vec<u16>`, `Vec<f32>`, etc.) **zero-copy**.
     ///
-    /// Row stride is derived automatically as `width * spec.components` samples (e.g. `width`
+    /// Row stride is derived automatically as `width * format.components` samples (e.g. `width`
     /// for luma `Y`, `width * 2` for semi-planar `CbCr`). For padded row strides, use
     /// [`from_samples_strided`](Self::from_samples_strided).
     pub fn from_samples<S: StorageSample>(
         samples: Vec<S>,
         width: u32,
         height: u32,
-        spec: PlaneFormat,
+        format: PlaneFormat,
     ) -> Result<Self, At<BufferError>> {
-        spec.validate().map_err(|e| err_at(e.into()))?;
+        format.validate().map_err(|e| err_at(e.into()))?;
         let tight_samples = (width as usize)
-            .checked_mul(usize::from(spec.components))
+            .checked_mul(usize::from(format.components))
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        Self::from_samples_strided(samples, width, height, SampleStride(tight_samples), spec)
+        Self::from_samples_strided(samples, width, height, SampleStride(tight_samples), format)
     }
 
     /// Construct a validated owned plane adopting a strided typed `Vec<S>` (`Vec<u8>`,
@@ -3900,52 +3987,46 @@ impl PlaneBuf {
         width: u32,
         height: u32,
         stride: SampleStride,
-        spec: PlaneFormat,
+        format: PlaneFormat,
     ) -> Result<Self, At<BufferError>> {
-        spec.validate().map_err(|e| err_at(e.into()))?;
-        if spec.sample != S::SAMPLE_TYPE || spec.packing.is_packed_word() {
+        format.validate().map_err(|e| err_at(e.into()))?;
+        if format.sample != S::SAMPLE_TYPE || format.packing.is_packed_word() {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
         let stride_bytes = stride
             .samples()
             .checked_mul(core::mem::size_of::<S>())
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        let storage = PixelStorage::adopt_vec(samples, spec.sample)
+        let storage = PixelStorage::adopt_vec(samples, format.sample)
             .map_err(|_| err_at(BufferError::IncompatibleLayout))?;
-        Self::from_storage(storage, width, height, stride_bytes, spec)
+        Self::from_storage(storage, width, height, stride_bytes, format)
     }
 
     /// Borrow a zero-copy rectangular crop of this single plane.
     #[inline]
-    pub fn crop_view(
-        &self,
-        x: u32,
-        y: u32,
-        w: u32,
-        h: u32,
-    ) -> Result<PlaneView<'_>, At<BufferError>> {
-        self.as_view().crop(x, y, w, h)
+    pub fn crop_view(&self, rect: PixelRect) -> Result<PlaneView<'_>, At<BufferError>> {
+        self.as_view().crop(rect)
     }
 
     /// Borrow a zero-copy mutable rectangular crop of this single plane, fallibly
     /// copy-on-write promoting immutable external storage if needed.
     #[inline]
-    pub fn crop_view_mut(
-        &mut self,
-        x: u32,
-        y: u32,
-        w: u32,
-        h: u32,
-    ) -> Result<PlaneViewMut<'_>, At<BufferError>> {
-        if w == 0 || h == 0 {
+    pub fn crop_view_mut(&mut self, rect: PixelRect) -> Result<PlaneViewMut<'_>, At<BufferError>> {
+        if rect.width == 0 || rect.height == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        if x.checked_add(w).is_none_or(|e| e > self.width)
-            || y.checked_add(h).is_none_or(|e| e > self.height)
+        if rect
+            .x
+            .checked_add(rect.width)
+            .is_none_or(|e| e > self.width)
+            || rect
+                .y
+                .checked_add(rect.height)
+                .is_none_or(|e| e > self.height)
         {
             return Err(err_at(BufferError::OutOfBounds));
         }
-        self.try_as_view_mut()?.into_crop(x, y, w, h)
+        self.try_as_view_mut()?.into_crop(rect)
     }
 
     /// Zero-copy typed slice view of row `y` (e.g. `plane.row_as::<u16>(y)`).
@@ -4126,34 +4207,44 @@ impl PlanarBuf {
     /// Maximum plane count supported in a single [`PlanarBuf`].
     pub const MAX_PLANES: usize = 64;
 
-    /// Fallibly allocate a zero-filled multi-plane buffer for `specs` (`1..=64` planes).
-    pub fn new(width: u32, height: u32, specs: &[PlaneFormat]) -> Result<Self, At<BufferError>> {
-        Self::new_aligned(width, height, specs, RowAlign::Tight)
+    /// Fallibly allocate a zero-filled multi-plane buffer for `plane_formats` (`1..=64` planes).
+    pub fn new(
+        width: u32,
+        height: u32,
+        plane_formats: &[PlaneFormat],
+    ) -> Result<Self, At<BufferError>> {
+        Self::new_aligned(width, height, plane_formats, RowAlign::Tight)
     }
 
-    /// Fallibly allocate a zero-filled multi-plane buffer for `specs` (`1..=64` planes) with
+    /// Fallibly allocate a zero-filled multi-plane buffer for `plane_formats` (`1..=64` planes) with
     /// explicit per-plane [`RowAlign`] (`Tight`, `Cache64`, `PixelCache64`, `Samples(n)`).
     pub fn new_aligned(
         width: u32,
         height: u32,
-        specs: &[PlaneFormat],
+        plane_formats: &[PlaneFormat],
         align: RowAlign,
     ) -> Result<Self, At<BufferError>> {
-        if width == 0 || height == 0 || specs.is_empty() || specs.len() > Self::MAX_PLANES {
+        if width == 0
+            || height == 0
+            || plane_formats.is_empty()
+            || plane_formats.len() > Self::MAX_PLANES
+        {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        validate_plane_role_set(specs.iter().map(|s| s.role))?;
+        validate_plane_role_set(plane_formats.iter().map(|s| s.role))?;
         let mut planes = Vec::new();
         planes
-            .try_reserve_exact(specs.len())
+            .try_reserve_exact(plane_formats.len())
             .map_err(|_| err_at(BufferError::AllocationFailed))?;
-        for &ps in specs {
+        for &ps in plane_formats {
             ps.validate().map_err(|e| err_at(e.into()))?;
-            let (pw, ph) = ps.dimensions(width, height);
+            let (pw, ph) = ps.plane_dimensions_for_frame(width, height);
             let row_bytes = (pw as usize)
                 .checked_mul(ps.bytes_per_element())
                 .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-            let stride = ps.aligned_stride(pw, align).map_err(|e| err_at(e.into()))?;
+            let stride = ps
+                .aligned_stride_for_plane_width(pw, align)
+                .map_err(|e| err_at(e.into()))?;
             let total = match align {
                 RowAlign::Cache64 | RowAlign::PixelCache64 => stride
                     .checked_mul(ph as usize)
@@ -4161,8 +4252,10 @@ impl PlanarBuf {
                 _ => required_bytes(ph, stride, row_bytes).map_err(err_at)?,
             };
             let storage = match align {
-                RowAlign::Cache64 | RowAlign::PixelCache64 => PixelStorage::zeroed_aligned64(total),
-                _ => PixelStorage::zeroed(ps.sample, total),
+                RowAlign::Cache64 | RowAlign::PixelCache64 => {
+                    PixelStorage::zeroed_aligned64_bytes(total)
+                }
+                _ => PixelStorage::zeroed_bytes(ps.sample, total),
             }
             .map_err(|e| err_at(e.into()))?;
             planes.push(PlaneBuf {
@@ -4199,7 +4292,7 @@ impl PlanarBuf {
         }
         validate_plane_role_set(planes.iter().map(|p| p.spec.role))?;
         for p in &planes {
-            let (ew, eh) = p.spec.dimensions(width, height);
+            let (ew, eh) = p.spec.plane_dimensions_for_frame(width, height);
             if p.width != ew || p.height != eh {
                 return Err(err_at(BufferError::InvalidDimensions));
             }
@@ -4464,32 +4557,32 @@ impl<'a> PlaneView<'a> {
         data: &'a [u8],
         width: u32,
         height: u32,
-        stride: usize,
-        spec: PlaneFormat,
+        stride_bytes: usize,
+        format: PlaneFormat,
     ) -> Result<Self, At<BufferError>> {
-        spec.validate().map_err(|e| err_at(e.into()))?;
+        format.validate().map_err(|e| err_at(e.into()))?;
         if width == 0 || height == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
         let rb = (width as usize)
-            .checked_mul(spec.bytes_per_element())
+            .checked_mul(format.bytes_per_element())
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        if stride < rb {
+        if stride_bytes < rb {
             return Err(err_at(BufferError::StrideTooSmall));
         }
-        let align = spec.sample.min_alignment();
-        if (data.as_ptr() as usize) % align != 0 || (height > 1 && stride % align != 0) {
+        let align = format.sample.min_alignment();
+        if (data.as_ptr() as usize) % align != 0 || (height > 1 && stride_bytes % align != 0) {
             return Err(err_at(BufferError::AlignmentViolation));
         }
-        let req = required_bytes(height, stride, rb).map_err(err_at)?;
+        let req = required_bytes(height, stride_bytes, rb).map_err(err_at)?;
         if data.len() < req {
             return Err(err_at(BufferError::InsufficientData));
         }
         Ok(Self {
-            spec,
+            spec: format,
             width,
             height,
-            stride,
+            stride: stride_bytes,
             data: &data[..req],
         })
     }
@@ -4497,20 +4590,20 @@ impl<'a> PlaneView<'a> {
     /// Construct a validated borrowed plane view from a tightly packed typed sample slice
     /// (`&[u8]`, `&[u16]`, `&[f32]`, etc.) **zero-copy**.
     ///
-    /// Row stride is derived automatically as `width * spec.components` samples (e.g. `width`
+    /// Row stride is derived automatically as `width * format.components` samples (e.g. `width`
     /// for luma `Y`, `width * 2` for semi-planar `CbCr`). For padded row strides, use
     /// [`from_samples_strided`](Self::from_samples_strided).
     pub fn from_samples<S: StorageSample>(
         samples: &'a [S],
         width: u32,
         height: u32,
-        spec: PlaneFormat,
+        format: PlaneFormat,
     ) -> Result<Self, At<BufferError>> {
-        spec.validate().map_err(|e| err_at(e.into()))?;
+        format.validate().map_err(|e| err_at(e.into()))?;
         let tight_samples = (width as usize)
-            .checked_mul(usize::from(spec.components))
+            .checked_mul(usize::from(format.components))
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        Self::from_samples_strided(samples, width, height, SampleStride(tight_samples), spec)
+        Self::from_samples_strided(samples, width, height, SampleStride(tight_samples), format)
     }
 
     /// Construct a validated borrowed plane view from a strided typed sample slice (`&[u8]`,
@@ -4521,10 +4614,10 @@ impl<'a> PlaneView<'a> {
         width: u32,
         height: u32,
         stride: SampleStride,
-        spec: PlaneFormat,
+        format: PlaneFormat,
     ) -> Result<Self, At<BufferError>> {
-        spec.validate().map_err(|e| err_at(e.into()))?;
-        if spec.sample != S::SAMPLE_TYPE || spec.packing.is_packed_word() {
+        format.validate().map_err(|e| err_at(e.into()))?;
+        if format.sample != S::SAMPLE_TYPE || format.packing.is_packed_word() {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
         let stride_bytes = stride
@@ -4536,7 +4629,7 @@ impl<'a> PlaneView<'a> {
             width,
             height,
             stride_bytes,
-            spec,
+            format,
         )
     }
 
@@ -4564,7 +4657,7 @@ impl<'a> PlaneView<'a> {
     /// Row stride in bytes.
     #[inline]
     #[must_use]
-    pub const fn stride(&self) -> usize {
+    pub const fn stride_bytes(&self) -> usize {
         self.stride
     }
 
@@ -4651,22 +4744,29 @@ impl<'a> PlaneView<'a> {
     }
 
     /// Zero-copy rectangular crop of this single plane retaining `'a`.
-    pub fn crop(&self, x: u32, y: u32, w: u32, h: u32) -> Result<PlaneView<'a>, At<BufferError>> {
-        if w == 0 || h == 0 {
+    pub fn crop(&self, rect: PixelRect) -> Result<PlaneView<'a>, At<BufferError>> {
+        if rect.width == 0 || rect.height == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        if x.checked_add(w).is_none_or(|e| e > self.width)
-            || y.checked_add(h).is_none_or(|e| e > self.height)
+        if rect
+            .x
+            .checked_add(rect.width)
+            .is_none_or(|e| e > self.width)
+            || rect
+                .y
+                .checked_add(rect.height)
+                .is_none_or(|e| e > self.height)
         {
             return Err(err_at(BufferError::OutOfBounds));
         }
         let elem = self.spec.bytes_per_element();
-        let start = (y as usize) * self.stride + (x as usize) * elem;
-        let end = (y as usize + h as usize - 1) * self.stride + (x as usize + w as usize) * elem;
+        let start = (rect.y as usize) * self.stride + (rect.x as usize) * elem;
+        let end = (rect.y as usize + rect.height as usize - 1) * self.stride
+            + (rect.x as usize + rect.width as usize) * elem;
         Ok(PlaneView {
             spec: self.spec,
-            width: w,
-            height: h,
+            width: rect.width,
+            height: rect.height,
             stride: self.stride,
             data: &self.data[start..end],
         })
@@ -4674,8 +4774,8 @@ impl<'a> PlaneView<'a> {
 
     /// Zero-copy full-width horizontal strip of this single plane retaining `'a`.
     #[inline]
-    pub fn sub_rows(&self, y: u32, count: u32) -> Result<PlaneView<'a>, At<BufferError>> {
-        self.crop(0, y, self.width, count)
+    pub fn sub_rows(&self, start_y: u32, row_count: u32) -> Result<PlaneView<'a>, At<BufferError>> {
+        self.crop(PixelRect::new(0, start_y, self.width, row_count))
     }
 }
 
@@ -4695,32 +4795,32 @@ impl<'a> PlaneViewMut<'a> {
         data: &'a mut [u8],
         width: u32,
         height: u32,
-        stride: usize,
-        spec: PlaneFormat,
+        stride_bytes: usize,
+        format: PlaneFormat,
     ) -> Result<Self, At<BufferError>> {
-        spec.validate().map_err(|e| err_at(e.into()))?;
+        format.validate().map_err(|e| err_at(e.into()))?;
         if width == 0 || height == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
         let rb = (width as usize)
-            .checked_mul(spec.bytes_per_element())
+            .checked_mul(format.bytes_per_element())
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        if stride < rb {
+        if stride_bytes < rb {
             return Err(err_at(BufferError::StrideTooSmall));
         }
-        let align = spec.sample.min_alignment();
-        if (data.as_ptr() as usize) % align != 0 || (height > 1 && stride % align != 0) {
+        let align = format.sample.min_alignment();
+        if (data.as_ptr() as usize) % align != 0 || (height > 1 && stride_bytes % align != 0) {
             return Err(err_at(BufferError::AlignmentViolation));
         }
-        let req = required_bytes(height, stride, rb).map_err(err_at)?;
+        let req = required_bytes(height, stride_bytes, rb).map_err(err_at)?;
         if data.len() < req {
             return Err(err_at(BufferError::InsufficientData));
         }
         Ok(Self {
-            spec,
+            spec: format,
             width,
             height,
-            stride,
+            stride: stride_bytes,
             data: &mut data[..req],
         })
     }
@@ -4728,20 +4828,20 @@ impl<'a> PlaneViewMut<'a> {
     /// Construct a validated mutable borrowed plane view from a tightly packed typed sample
     /// slice (`&mut [u8]`, `&mut [u16]`, `&mut [f32]`, etc.) **zero-copy**.
     ///
-    /// Row stride is derived automatically as `width * spec.components` samples (e.g. `width`
+    /// Row stride is derived automatically as `width * format.components` samples (e.g. `width`
     /// for luma `Y`, `width * 2` for semi-planar `CbCr`). For padded row strides, use
     /// [`from_samples_strided`](Self::from_samples_strided).
     pub fn from_samples<S: StorageSample>(
         samples: &'a mut [S],
         width: u32,
         height: u32,
-        spec: PlaneFormat,
+        format: PlaneFormat,
     ) -> Result<Self, At<BufferError>> {
-        spec.validate().map_err(|e| err_at(e.into()))?;
+        format.validate().map_err(|e| err_at(e.into()))?;
         let tight_samples = (width as usize)
-            .checked_mul(usize::from(spec.components))
+            .checked_mul(usize::from(format.components))
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        Self::from_samples_strided(samples, width, height, SampleStride(tight_samples), spec)
+        Self::from_samples_strided(samples, width, height, SampleStride(tight_samples), format)
     }
 
     /// Construct a validated mutable borrowed plane view from a strided typed sample slice
@@ -4752,10 +4852,10 @@ impl<'a> PlaneViewMut<'a> {
         width: u32,
         height: u32,
         stride: SampleStride,
-        spec: PlaneFormat,
+        format: PlaneFormat,
     ) -> Result<Self, At<BufferError>> {
-        spec.validate().map_err(|e| err_at(e.into()))?;
-        if spec.sample != S::SAMPLE_TYPE || spec.packing.is_packed_word() {
+        format.validate().map_err(|e| err_at(e.into()))?;
+        if format.sample != S::SAMPLE_TYPE || format.packing.is_packed_word() {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
         let stride_bytes = stride
@@ -4767,7 +4867,7 @@ impl<'a> PlaneViewMut<'a> {
             width,
             height,
             stride_bytes,
-            spec,
+            format,
         )
     }
 
@@ -4795,7 +4895,7 @@ impl<'a> PlaneViewMut<'a> {
     /// Row stride in bytes.
     #[inline]
     #[must_use]
-    pub const fn stride(&self) -> usize {
+    pub const fn stride_bytes(&self) -> usize {
         self.stride
     }
 
@@ -4925,56 +5025,58 @@ impl<'a> PlaneViewMut<'a> {
     }
 
     /// Zero-copy mutable rectangular crop of this single plane.
-    pub fn crop_mut(
-        &mut self,
-        x: u32,
-        y: u32,
-        w: u32,
-        h: u32,
-    ) -> Result<PlaneViewMut<'_>, At<BufferError>> {
-        if w == 0 || h == 0 {
+    pub fn crop_mut(&mut self, rect: PixelRect) -> Result<PlaneViewMut<'_>, At<BufferError>> {
+        if rect.width == 0 || rect.height == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        if x.checked_add(w).is_none_or(|e| e > self.width)
-            || y.checked_add(h).is_none_or(|e| e > self.height)
+        if rect
+            .x
+            .checked_add(rect.width)
+            .is_none_or(|e| e > self.width)
+            || rect
+                .y
+                .checked_add(rect.height)
+                .is_none_or(|e| e > self.height)
         {
             return Err(err_at(BufferError::OutOfBounds));
         }
         let elem = self.spec.bytes_per_element();
-        let start = (y as usize) * self.stride + (x as usize) * elem;
-        let end = (y as usize + h as usize - 1) * self.stride + (x as usize + w as usize) * elem;
+        let start = (rect.y as usize) * self.stride + (rect.x as usize) * elem;
+        let end = (rect.y as usize + rect.height as usize - 1) * self.stride
+            + (rect.x as usize + rect.width as usize) * elem;
         Ok(PlaneViewMut {
             spec: self.spec,
-            width: w,
-            height: h,
+            width: rect.width,
+            height: rect.height,
             stride: self.stride,
             data: &mut self.data[start..end],
         })
     }
 
     /// Consume this mutable plane view and narrow it to a rectangular crop retaining `'a`.
-    pub fn into_crop(
-        self,
-        x: u32,
-        y: u32,
-        w: u32,
-        h: u32,
-    ) -> Result<PlaneViewMut<'a>, At<BufferError>> {
-        if w == 0 || h == 0 {
+    pub fn into_crop(self, rect: PixelRect) -> Result<PlaneViewMut<'a>, At<BufferError>> {
+        if rect.width == 0 || rect.height == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        if x.checked_add(w).is_none_or(|e| e > self.width)
-            || y.checked_add(h).is_none_or(|e| e > self.height)
+        if rect
+            .x
+            .checked_add(rect.width)
+            .is_none_or(|e| e > self.width)
+            || rect
+                .y
+                .checked_add(rect.height)
+                .is_none_or(|e| e > self.height)
         {
             return Err(err_at(BufferError::OutOfBounds));
         }
         let elem = self.spec.bytes_per_element();
-        let start = (y as usize) * self.stride + (x as usize) * elem;
-        let end = (y as usize + h as usize - 1) * self.stride + (x as usize + w as usize) * elem;
+        let start = (rect.y as usize) * self.stride + (rect.x as usize) * elem;
+        let end = (rect.y as usize + rect.height as usize - 1) * self.stride
+            + (rect.x as usize + rect.width as usize) * elem;
         Ok(PlaneViewMut {
             spec: self.spec,
-            width: w,
-            height: h,
+            width: rect.width,
+            height: rect.height,
             stride: self.stride,
             data: &mut self.data[start..end],
         })
@@ -4984,17 +5086,21 @@ impl<'a> PlaneViewMut<'a> {
     #[inline]
     pub fn sub_rows_mut(
         &mut self,
-        y: u32,
-        count: u32,
+        start_y: u32,
+        row_count: u32,
     ) -> Result<PlaneViewMut<'_>, At<BufferError>> {
-        self.crop_mut(0, y, self.width, count)
+        self.crop_mut(PixelRect::new(0, start_y, self.width, row_count))
     }
 
     /// Consume this mutable plane view and narrow it to a full-width horizontal strip retaining `'a`.
     #[inline]
-    pub fn into_sub_rows(self, y: u32, count: u32) -> Result<PlaneViewMut<'a>, At<BufferError>> {
+    pub fn into_sub_rows(
+        self,
+        start_y: u32,
+        row_count: u32,
+    ) -> Result<PlaneViewMut<'a>, At<BufferError>> {
         let width = self.width;
-        self.into_crop(0, y, width, count)
+        self.into_crop(PixelRect::new(0, start_y, width, row_count))
     }
 }
 
@@ -5004,7 +5110,7 @@ fn plane_crop_rect(
     new_origin: (u32, u32),
     w: u32,
     h: u32,
-) -> Result<(u32, u32, u32, u32), At<BufferError>> {
+) -> Result<PixelRect, At<BufferError>> {
     let hx = spec.subsampling.0.max(1) as u32;
     let vy = spec.subsampling.1.max(1) as u32;
     let base_cx = old_origin.0 / hx;
@@ -5012,9 +5118,9 @@ fn plane_crop_rect(
     let rel_cx = (new_origin.0 / hx) - base_cx;
     let rel_cy = (new_origin.1 / vy) - base_cy;
     let (cw, ch) = spec
-        .cropped_dimensions(w, h, new_origin)
+        .cropped_plane_dimensions(w, h, new_origin)
         .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-    Ok((rel_cx, rel_cy, cw, ch))
+    Ok(PixelRect::new(rel_cx, rel_cy, cw, ch))
 }
 
 #[derive(Clone, Debug)]
@@ -5068,7 +5174,7 @@ impl<'a> PlanarView<'a> {
         }
         validate_plane_role_set(planes.iter().map(|p| p.spec.role))?;
         for &p in planes {
-            let Some((ew, eh)) = p.spec.cropped_dimensions(width, height, crop_origin) else {
+            let Some((ew, eh)) = p.spec.cropped_plane_dimensions(width, height, crop_origin) else {
                 return Err(err_at(BufferError::InvalidDimensions));
             };
             if p.width != ew || p.height != eh {
@@ -5299,31 +5405,42 @@ impl<'a> PlanarView<'a> {
 
     /// Zero-copy rectangular crop of all planes preserving exact parent-frame chroma phase
     /// even for odd `(x, y)` origins on 4:2:0 / 4:2:2 subsampled frames.
-    pub fn crop(&self, x: u32, y: u32, w: u32, h: u32) -> Result<PlanarView<'a>, At<BufferError>> {
-        if w == 0 || h == 0 {
+    pub fn crop(&self, rect: PixelRect) -> Result<PlanarView<'a>, At<BufferError>> {
+        if rect.width == 0 || rect.height == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        if x.checked_add(w).is_none_or(|e| e > self.width)
-            || y.checked_add(h).is_none_or(|e| e > self.height)
+        if rect
+            .x
+            .checked_add(rect.width)
+            .is_none_or(|e| e > self.width)
+            || rect
+                .y
+                .checked_add(rect.height)
+                .is_none_or(|e| e > self.height)
         {
             return Err(err_at(BufferError::OutOfBounds));
         }
         let new_ox = self
             .crop_origin
             .0
-            .checked_add(x)
+            .checked_add(rect.x)
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
         let new_oy = self
             .crop_origin
             .1
-            .checked_add(y)
+            .checked_add(rect.y)
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
         let new_origin = (new_ox, new_oy);
         let src_planes = self.planes();
         let crop_one = |p: &PlaneView<'a>| -> Result<PlaneView<'a>, At<BufferError>> {
-            let (rel_cx, rel_cy, cw, ch) =
-                plane_crop_rect(p.spec, self.crop_origin, new_origin, w, h)?;
-            p.crop(rel_cx, rel_cy, cw, ch)
+            let pr = plane_crop_rect(
+                p.spec,
+                self.crop_origin,
+                new_origin,
+                rect.width,
+                rect.height,
+            )?;
+            p.crop(pr)
         };
         let storage = if src_planes.len() <= 4 {
             let mut arr = [PlaneView::EMPTY; 4];
@@ -5344,8 +5461,8 @@ impl<'a> PlanarView<'a> {
             PlanarStorage::Spill(v)
         };
         Ok(PlanarView {
-            width: w,
-            height: h,
+            width: rect.width,
+            height: rect.height,
             crop_origin: new_origin,
             chroma_siting: self.chroma_siting,
             color: self.color.clone(),
@@ -5361,8 +5478,12 @@ impl<'a> PlanarView<'a> {
 
     /// Zero-copy full-width horizontal strip of all planes preserving parent-frame chroma phase.
     #[inline]
-    pub fn sub_rows(&self, y: u32, count: u32) -> Result<PlanarView<'a>, At<BufferError>> {
-        self.crop(0, y, self.width, count)
+    pub fn sub_rows(
+        &self,
+        start_y: u32,
+        row_count: u32,
+    ) -> Result<PlanarView<'a>, At<BufferError>> {
+        self.crop(PixelRect::new(0, start_y, self.width, row_count))
     }
 }
 
@@ -5427,7 +5548,7 @@ impl<'a> PlanarViewMut<'a> {
         }
         validate_plane_role_set(planes.iter().map(|p| p.spec.role))?;
         for p in planes {
-            let Some((ew, eh)) = p.spec.cropped_dimensions(width, height, crop_origin) else {
+            let Some((ew, eh)) = p.spec.cropped_plane_dimensions(width, height, crop_origin) else {
                 return Err(err_at(BufferError::InvalidDimensions));
             };
             if p.width != ew || p.height != eh {
@@ -5863,64 +5984,59 @@ impl<'a> PlanarViewMut<'a> {
     /// Zero-copy mutable rectangular crop of all planes preserving exact parent-frame chroma
     /// phase even for odd `(x, y)` origins on 4:2:0 / 4:2:2 subsampled frames (zero heap
     /// allocation for `<= 4` planes).
-    pub fn crop_mut(
-        &mut self,
-        x: u32,
-        y: u32,
-        w: u32,
-        h: u32,
-    ) -> Result<PlanarViewMut<'_>, At<BufferError>> {
-        if w == 0 || h == 0 {
+    pub fn crop_mut(&mut self, rect: PixelRect) -> Result<PlanarViewMut<'_>, At<BufferError>> {
+        if rect.width == 0 || rect.height == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        if x.checked_add(w).is_none_or(|e| e > self.width)
-            || y.checked_add(h).is_none_or(|e| e > self.height)
+        if rect
+            .x
+            .checked_add(rect.width)
+            .is_none_or(|e| e > self.width)
+            || rect
+                .y
+                .checked_add(rect.height)
+                .is_none_or(|e| e > self.height)
         {
             return Err(err_at(BufferError::OutOfBounds));
         }
         let old_origin = self.crop_origin;
         let new_ox = old_origin
             .0
-            .checked_add(x)
+            .checked_add(rect.x)
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
         let new_oy = old_origin
             .1
-            .checked_add(y)
+            .checked_add(rect.y)
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
         let new_origin = (new_ox, new_oy);
+        let w = rect.width;
+        let h = rect.height;
         let storage = match self.storage.as_mut_slice() {
             [p0] => {
-                let (rx, ry, cw, ch) = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
-                PlanarMutStorage::One([p0.crop_mut(rx, ry, cw, ch)?])
+                let r0 = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
+                PlanarMutStorage::One([p0.crop_mut(r0)?])
             }
             [p0, p1] => {
-                let (rx0, ry0, cw0, ch0) = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
-                let (rx1, ry1, cw1, ch1) = plane_crop_rect(p1.spec, old_origin, new_origin, w, h)?;
-                PlanarMutStorage::Two([
-                    p0.crop_mut(rx0, ry0, cw0, ch0)?,
-                    p1.crop_mut(rx1, ry1, cw1, ch1)?,
-                ])
+                let r0 = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
+                let r1 = plane_crop_rect(p1.spec, old_origin, new_origin, w, h)?;
+                PlanarMutStorage::Two([p0.crop_mut(r0)?, p1.crop_mut(r1)?])
             }
             [p0, p1, p2] => {
-                let (rx0, ry0, cw0, ch0) = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
-                let (rx1, ry1, cw1, ch1) = plane_crop_rect(p1.spec, old_origin, new_origin, w, h)?;
-                let (rx2, ry2, cw2, ch2) = plane_crop_rect(p2.spec, old_origin, new_origin, w, h)?;
-                PlanarMutStorage::Three([
-                    p0.crop_mut(rx0, ry0, cw0, ch0)?,
-                    p1.crop_mut(rx1, ry1, cw1, ch1)?,
-                    p2.crop_mut(rx2, ry2, cw2, ch2)?,
-                ])
+                let r0 = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
+                let r1 = plane_crop_rect(p1.spec, old_origin, new_origin, w, h)?;
+                let r2 = plane_crop_rect(p2.spec, old_origin, new_origin, w, h)?;
+                PlanarMutStorage::Three([p0.crop_mut(r0)?, p1.crop_mut(r1)?, p2.crop_mut(r2)?])
             }
             [p0, p1, p2, p3] => {
-                let (rx0, ry0, cw0, ch0) = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
-                let (rx1, ry1, cw1, ch1) = plane_crop_rect(p1.spec, old_origin, new_origin, w, h)?;
-                let (rx2, ry2, cw2, ch2) = plane_crop_rect(p2.spec, old_origin, new_origin, w, h)?;
-                let (rx3, ry3, cw3, ch3) = plane_crop_rect(p3.spec, old_origin, new_origin, w, h)?;
+                let r0 = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
+                let r1 = plane_crop_rect(p1.spec, old_origin, new_origin, w, h)?;
+                let r2 = plane_crop_rect(p2.spec, old_origin, new_origin, w, h)?;
+                let r3 = plane_crop_rect(p3.spec, old_origin, new_origin, w, h)?;
                 PlanarMutStorage::Four([
-                    p0.crop_mut(rx0, ry0, cw0, ch0)?,
-                    p1.crop_mut(rx1, ry1, cw1, ch1)?,
-                    p2.crop_mut(rx2, ry2, cw2, ch2)?,
-                    p3.crop_mut(rx3, ry3, cw3, ch3)?,
+                    p0.crop_mut(r0)?,
+                    p1.crop_mut(r1)?,
+                    p2.crop_mut(r2)?,
+                    p3.crop_mut(r3)?,
                 ])
             }
             many => {
@@ -5928,8 +6044,8 @@ impl<'a> PlanarViewMut<'a> {
                 v.try_reserve_exact(many.len())
                     .map_err(|_| err_at(BufferError::AllocationFailed))?;
                 for p in many.iter_mut() {
-                    let (rx, ry, cw, ch) = plane_crop_rect(p.spec, old_origin, new_origin, w, h)?;
-                    v.push(p.crop_mut(rx, ry, cw, ch)?);
+                    let r = plane_crop_rect(p.spec, old_origin, new_origin, w, h)?;
+                    v.push(p.crop_mut(r)?);
                 }
                 PlanarMutStorage::Spill(v)
             }
@@ -5951,64 +6067,59 @@ impl<'a> PlanarViewMut<'a> {
 
     /// Consume this mutable multi-plane view and narrow it to a rectangular crop retaining `'a`
     /// (zero heap allocation for `<= 4` planes).
-    pub fn into_crop(
-        self,
-        x: u32,
-        y: u32,
-        w: u32,
-        h: u32,
-    ) -> Result<PlanarViewMut<'a>, At<BufferError>> {
-        if w == 0 || h == 0 {
+    pub fn into_crop(self, rect: PixelRect) -> Result<PlanarViewMut<'a>, At<BufferError>> {
+        if rect.width == 0 || rect.height == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        if x.checked_add(w).is_none_or(|e| e > self.width)
-            || y.checked_add(h).is_none_or(|e| e > self.height)
+        if rect
+            .x
+            .checked_add(rect.width)
+            .is_none_or(|e| e > self.width)
+            || rect
+                .y
+                .checked_add(rect.height)
+                .is_none_or(|e| e > self.height)
         {
             return Err(err_at(BufferError::OutOfBounds));
         }
         let old_origin = self.crop_origin;
         let new_ox = old_origin
             .0
-            .checked_add(x)
+            .checked_add(rect.x)
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
         let new_oy = old_origin
             .1
-            .checked_add(y)
+            .checked_add(rect.y)
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
         let new_origin = (new_ox, new_oy);
+        let w = rect.width;
+        let h = rect.height;
         let storage = match self.storage {
             PlanarMutStorage::One([p0]) => {
-                let (rx, ry, cw, ch) = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
-                PlanarMutStorage::One([p0.into_crop(rx, ry, cw, ch)?])
+                let r0 = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
+                PlanarMutStorage::One([p0.into_crop(r0)?])
             }
             PlanarMutStorage::Two([p0, p1]) => {
-                let (rx0, ry0, cw0, ch0) = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
-                let (rx1, ry1, cw1, ch1) = plane_crop_rect(p1.spec, old_origin, new_origin, w, h)?;
-                PlanarMutStorage::Two([
-                    p0.into_crop(rx0, ry0, cw0, ch0)?,
-                    p1.into_crop(rx1, ry1, cw1, ch1)?,
-                ])
+                let r0 = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
+                let r1 = plane_crop_rect(p1.spec, old_origin, new_origin, w, h)?;
+                PlanarMutStorage::Two([p0.into_crop(r0)?, p1.into_crop(r1)?])
             }
             PlanarMutStorage::Three([p0, p1, p2]) => {
-                let (rx0, ry0, cw0, ch0) = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
-                let (rx1, ry1, cw1, ch1) = plane_crop_rect(p1.spec, old_origin, new_origin, w, h)?;
-                let (rx2, ry2, cw2, ch2) = plane_crop_rect(p2.spec, old_origin, new_origin, w, h)?;
-                PlanarMutStorage::Three([
-                    p0.into_crop(rx0, ry0, cw0, ch0)?,
-                    p1.into_crop(rx1, ry1, cw1, ch1)?,
-                    p2.into_crop(rx2, ry2, cw2, ch2)?,
-                ])
+                let r0 = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
+                let r1 = plane_crop_rect(p1.spec, old_origin, new_origin, w, h)?;
+                let r2 = plane_crop_rect(p2.spec, old_origin, new_origin, w, h)?;
+                PlanarMutStorage::Three([p0.into_crop(r0)?, p1.into_crop(r1)?, p2.into_crop(r2)?])
             }
             PlanarMutStorage::Four([p0, p1, p2, p3]) => {
-                let (rx0, ry0, cw0, ch0) = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
-                let (rx1, ry1, cw1, ch1) = plane_crop_rect(p1.spec, old_origin, new_origin, w, h)?;
-                let (rx2, ry2, cw2, ch2) = plane_crop_rect(p2.spec, old_origin, new_origin, w, h)?;
-                let (rx3, ry3, cw3, ch3) = plane_crop_rect(p3.spec, old_origin, new_origin, w, h)?;
+                let r0 = plane_crop_rect(p0.spec, old_origin, new_origin, w, h)?;
+                let r1 = plane_crop_rect(p1.spec, old_origin, new_origin, w, h)?;
+                let r2 = plane_crop_rect(p2.spec, old_origin, new_origin, w, h)?;
+                let r3 = plane_crop_rect(p3.spec, old_origin, new_origin, w, h)?;
                 PlanarMutStorage::Four([
-                    p0.into_crop(rx0, ry0, cw0, ch0)?,
-                    p1.into_crop(rx1, ry1, cw1, ch1)?,
-                    p2.into_crop(rx2, ry2, cw2, ch2)?,
-                    p3.into_crop(rx3, ry3, cw3, ch3)?,
+                    p0.into_crop(r0)?,
+                    p1.into_crop(r1)?,
+                    p2.into_crop(r2)?,
+                    p3.into_crop(r3)?,
                 ])
             }
             PlanarMutStorage::Spill(v) => {
@@ -6016,8 +6127,8 @@ impl<'a> PlanarViewMut<'a> {
                 out.try_reserve_exact(v.len())
                     .map_err(|_| err_at(BufferError::AllocationFailed))?;
                 for p in v {
-                    let (rx, ry, cw, ch) = plane_crop_rect(p.spec, old_origin, new_origin, w, h)?;
-                    out.push(p.into_crop(rx, ry, cw, ch)?);
+                    let r = plane_crop_rect(p.spec, old_origin, new_origin, w, h)?;
+                    out.push(p.into_crop(r)?);
                 }
                 PlanarMutStorage::Spill(out)
             }
@@ -6042,18 +6153,22 @@ impl<'a> PlanarViewMut<'a> {
     #[inline]
     pub fn sub_rows_mut(
         &mut self,
-        y: u32,
-        count: u32,
+        start_y: u32,
+        row_count: u32,
     ) -> Result<PlanarViewMut<'_>, At<BufferError>> {
-        self.crop_mut(0, y, self.width, count)
+        self.crop_mut(PixelRect::new(0, start_y, self.width, row_count))
     }
 
     /// Consume this mutable multi-plane view and narrow it to a full-width horizontal strip
     /// retaining `'a`.
     #[inline]
-    pub fn into_sub_rows(self, y: u32, count: u32) -> Result<PlanarViewMut<'a>, At<BufferError>> {
+    pub fn into_sub_rows(
+        self,
+        start_y: u32,
+        row_count: u32,
+    ) -> Result<PlanarViewMut<'a>, At<BufferError>> {
         let width = self.width;
-        self.into_crop(0, y, width, count)
+        self.into_crop(PixelRect::new(0, start_y, width, row_count))
     }
 }
 
@@ -6104,22 +6219,22 @@ impl PlanarBuf {
     /// Borrow a zero-copy rectangular crop of all planes preserving exact parent-frame chroma
     /// phase (zero heap allocation for `<= 4` planes).
     #[inline]
-    pub fn crop_view(
-        &self,
-        x: u32,
-        y: u32,
-        w: u32,
-        h: u32,
-    ) -> Result<PlanarView<'_>, At<BufferError>> {
-        if w == 0 || h == 0 {
+    pub fn crop_view(&self, rect: PixelRect) -> Result<PlanarView<'_>, At<BufferError>> {
+        if rect.width == 0 || rect.height == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        if x.checked_add(w).is_none_or(|e| e > self.width)
-            || y.checked_add(h).is_none_or(|e| e > self.height)
+        if rect
+            .x
+            .checked_add(rect.width)
+            .is_none_or(|e| e > self.width)
+            || rect
+                .y
+                .checked_add(rect.height)
+                .is_none_or(|e| e > self.height)
         {
             return Err(err_at(BufferError::OutOfBounds));
         }
-        self.try_as_view()?.crop(x, y, w, h)
+        self.try_as_view()?.crop(rect)
     }
 
     /// Borrow all planes mutably as a [`PlanarViewMut`] (zero-allocation for `<= 4` planes).
@@ -6181,22 +6296,22 @@ impl PlanarBuf {
     /// chroma phase, fallibly copy-on-write promoting immutable external planes if needed
     /// (zero heap allocation for `<= 4` planes).
     #[inline]
-    pub fn crop_view_mut(
-        &mut self,
-        x: u32,
-        y: u32,
-        w: u32,
-        h: u32,
-    ) -> Result<PlanarViewMut<'_>, At<BufferError>> {
-        if w == 0 || h == 0 {
+    pub fn crop_view_mut(&mut self, rect: PixelRect) -> Result<PlanarViewMut<'_>, At<BufferError>> {
+        if rect.width == 0 || rect.height == 0 {
             return Err(err_at(BufferError::InvalidDimensions));
         }
-        if x.checked_add(w).is_none_or(|e| e > self.width)
-            || y.checked_add(h).is_none_or(|e| e > self.height)
+        if rect
+            .x
+            .checked_add(rect.width)
+            .is_none_or(|e| e > self.width)
+            || rect
+                .y
+                .checked_add(rect.height)
+                .is_none_or(|e| e > self.height)
         {
             return Err(err_at(BufferError::OutOfBounds));
         }
-        self.try_as_view_mut()?.into_crop(x, y, w, h)
+        self.try_as_view_mut()?.into_crop(rect)
     }
 }
 
@@ -6403,7 +6518,7 @@ impl<'a> DualLayerHdrView<'a> {
     #[must_use]
     pub const fn display_dimensions(&self) -> (u32, u32) {
         self.orientation
-            .output_dimensions(self.base.width(), self.base.rows())
+            .output_dimensions(self.base.width(), self.base.height())
     }
 }
 
@@ -6676,7 +6791,7 @@ impl PixelSource for PixelView<'_> {
     }
     #[inline]
     fn source_height(&self) -> u32 {
-        self.rows
+        self.height
     }
     #[inline]
     fn source_format(&self) -> &PixelFormat {
@@ -6783,7 +6898,7 @@ impl PixelSink for PixelViewMut<'_> {
     }
     #[inline]
     fn sink_height(&self) -> u32 {
-        self.rows
+        self.height
     }
     #[inline]
     fn sink_format(&self) -> &PixelFormat {

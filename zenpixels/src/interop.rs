@@ -161,12 +161,13 @@ impl<'a> PixelView<'a> {
         if bpp == 0 || bpp != P::LAYOUT.bytes_per_pixel() || self.format().layout != P::LAYOUT {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
-        if self.stride() % bpp != 0 {
+        if self.stride_bytes() % bpp != 0 {
             return Err(err_at(BufferError::StrideNotPixelAligned));
         }
-        let stride_px = self.stride() / bpp;
-        let req = crate::buffer::required_bytes(self.rows(), self.stride(), self.row_bytes())
-            .map_err(err_at)?;
+        let stride_px = self.stride_bytes() / bpp;
+        let req =
+            crate::buffer::required_bytes(self.height(), self.stride_bytes(), self.row_bytes())
+                .map_err(err_at)?;
         let active = self
             .as_strided_bytes()
             .get(..req)
@@ -180,13 +181,13 @@ impl<'a> PixelView<'a> {
         Ok(imgref::ImgRef::new_stride(
             pixels,
             self.width() as usize,
-            self.rows() as usize,
+            self.height() as usize,
             stride_px,
         ))
     }
 
     /// Borrow as a sample-strided zero-copy [`imgref::ImgRef<'a, S>`] where
-    /// `img.width() == self.width() * channels` and `img.stride() == self.stride() / size_of::<S>()`.
+    /// `img.width() == self.width() * channels` and `img.stride() == self.stride_bytes() / size_of::<S>()`.
     pub fn as_sample_imgref<S: StorageSample>(
         &self,
     ) -> Result<imgref::ImgRef<'a, S>, At<BufferError>> {
@@ -195,15 +196,16 @@ impl<'a> PixelView<'a> {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
         let sz = core::mem::size_of::<S>();
-        if sz == 0 || self.stride() % sz != 0 {
+        if sz == 0 || self.stride_bytes() % sz != 0 {
             return Err(err_at(BufferError::AlignmentViolation));
         }
         let width_samples = (self.width() as usize)
             .checked_mul(layout.order.channels())
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        let stride_samples = self.stride() / sz;
-        let req = crate::buffer::required_bytes(self.rows(), self.stride(), self.row_bytes())
-            .map_err(err_at)?;
+        let stride_samples = self.stride_bytes() / sz;
+        let req =
+            crate::buffer::required_bytes(self.height(), self.stride_bytes(), self.row_bytes())
+                .map_err(err_at)?;
         let active = self
             .as_strided_bytes()
             .get(..req)
@@ -217,7 +219,7 @@ impl<'a> PixelView<'a> {
         Ok(imgref::ImgRef::new_stride(
             samples,
             width_samples,
-            self.rows() as usize,
+            self.height() as usize,
             stride_samples,
         ))
     }
@@ -260,14 +262,15 @@ impl<'a> PixelViewMut<'a> {
         if bpp == 0 || bpp != P::LAYOUT.bytes_per_pixel() || self.format().layout != P::LAYOUT {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
-        if self.stride() % bpp != 0 {
+        if self.stride_bytes() % bpp != 0 {
             return Err(err_at(BufferError::StrideNotPixelAligned));
         }
-        let stride_px = self.stride() / bpp;
+        let stride_px = self.stride_bytes() / bpp;
         let w = self.width() as usize;
-        let h = self.rows() as usize;
-        let req = crate::buffer::required_bytes(self.rows(), self.stride(), self.row_bytes())
-            .map_err(err_at)?;
+        let h = self.height() as usize;
+        let req =
+            crate::buffer::required_bytes(self.height(), self.stride_bytes(), self.row_bytes())
+                .map_err(err_at)?;
         let active = self
             .as_strided_bytes_mut()
             .get_mut(..req)
@@ -289,14 +292,15 @@ impl<'a> PixelViewMut<'a> {
         if bpp == 0 || bpp != P::LAYOUT.bytes_per_pixel() || self.format().layout != P::LAYOUT {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
-        if self.stride() % bpp != 0 {
+        if self.stride_bytes() % bpp != 0 {
             return Err(err_at(BufferError::StrideNotPixelAligned));
         }
-        let stride_px = self.stride() / bpp;
+        let stride_px = self.stride_bytes() / bpp;
         let w = self.width() as usize;
-        let h = self.rows() as usize;
-        let req = crate::buffer::required_bytes(self.rows(), self.stride(), self.row_bytes())
-            .map_err(err_at)?;
+        let h = self.height() as usize;
+        let req =
+            crate::buffer::required_bytes(self.height(), self.stride_bytes(), self.row_bytes())
+                .map_err(err_at)?;
         let bytes = self.into_strided_bytes_mut();
         let active = bytes
             .get_mut(..req)
@@ -319,16 +323,17 @@ impl<'a> PixelViewMut<'a> {
             return Err(err_at(BufferError::IncompatibleLayout));
         }
         let sz = core::mem::size_of::<S>();
-        if sz == 0 || self.stride() % sz != 0 {
+        if sz == 0 || self.stride_bytes() % sz != 0 {
             return Err(err_at(BufferError::AlignmentViolation));
         }
         let width_samples = (self.width() as usize)
             .checked_mul(layout.order.channels())
             .ok_or_else(|| err_at(BufferError::InvalidDimensions))?;
-        let stride_samples = self.stride() / sz;
-        let h = self.rows() as usize;
-        let req = crate::buffer::required_bytes(self.rows(), self.stride(), self.row_bytes())
-            .map_err(err_at)?;
+        let stride_samples = self.stride_bytes() / sz;
+        let h = self.height() as usize;
+        let req =
+            crate::buffer::required_bytes(self.height(), self.stride_bytes(), self.row_bytes())
+                .map_err(err_at)?;
         let active = self
             .as_strided_bytes_mut()
             .get_mut(..req)
@@ -363,7 +368,7 @@ impl PixelBuf {
         let h = u32::try_from(img.height()).map_err(|_| err_at(BufferError::InvalidDimensions))?;
         let spec = ImgrefImageSpec::new(P::LAYOUT, color);
         let (buf, _, _) = img.into_contiguous_buf();
-        Self::from_raw_pod(buf, w, h, spec)
+        Self::from_pod_bytes_unchecked(buf, w, h, spec)
     }
 
     /// Move into an [`imgref::ImgVec<P>`] **strictly zero-copy** without copying or allocating.

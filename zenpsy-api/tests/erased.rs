@@ -27,7 +27,7 @@ struct A<'a> {
     map_pointer: Rc<Cell<*const f32>>,
 }
 fn sum(r: &PixelView<'_>) -> u64 {
-    (0..r.rows())
+    (0..r.height())
         .flat_map(|y| r.row(y))
         .map(|&v| u64::from(v))
         .sum()

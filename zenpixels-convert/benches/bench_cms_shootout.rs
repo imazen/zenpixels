@@ -335,7 +335,6 @@ fn bench_4k_rgb_u8(
                                 &s[off..off + row_bytes],
                                 &mut dst[off..off + row_bytes],
                                 W_4K,
-                                y,
                             )
                             .unwrap();
                     }
@@ -363,7 +362,6 @@ fn bench_4k_rgb_u8(
                                 &s2[off..off + row_bytes],
                                 &mut dst2[off..off + row_bytes],
                                 W_4K,
-                                y,
                             )
                             .unwrap();
                     }
@@ -449,7 +447,6 @@ fn bench_4k_rgb_u16(
                                 bytemuck::cast_slice(&s[off..off + row_elems]),
                                 bytemuck::cast_slice_mut(&mut dst[off..off + row_elems]),
                                 W_4K,
-                                y,
                             )
                             .unwrap();
                     }
@@ -527,7 +524,6 @@ fn bench_4k_rgb_f32(
                                 bytemuck::cast_slice(&s[off..off + row_elems]),
                                 bytemuck::cast_slice_mut(&mut dst[off..off + row_elems]),
                                 W_4K,
-                                y,
                             )
                             .unwrap();
                     }

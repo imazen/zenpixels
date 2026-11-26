@@ -116,7 +116,7 @@ fn orient_all_8_orientations_and_pixel_widths_match_forward_map_oracle() {
             for sy in 0..h {
                 let srow = sv.row(sy);
                 for sx in 0..w {
-                    let (dx, dy) = orient.forward_map(sx, sy, w, h);
+                    let (dx, dy) = orient.map_pixel_coordinates((sx, sy), (w, h));
                     let got = &ov.row(dy)[(dx as usize) * bpp..(dx as usize + 1) * bpp];
                     let want = &srow[(sx as usize) * bpp..(sx as usize + 1) * bpp];
                     assert_eq!(
@@ -161,7 +161,7 @@ fn safe_icc_substitution_without_cms_matches_adobe_oracle() {
         255, 255, 255, 128, // white
     ];
     let mut sub_out = [0u8; 16];
-    sub_plan.convert_row(&src_px, &mut sub_out, 4, 0).unwrap();
+    sub_plan.convert_row(&src_px, &mut sub_out, 4).unwrap();
 
     // Direct structured AdobeRgb -> sRGB oracle (no ICC path).
     let direct_spec = PixelFormat::new(
@@ -183,7 +183,7 @@ fn safe_icc_substitution_without_cms_matches_adobe_oracle() {
     .unwrap();
     let mut direct_out = [0u8; 16];
     direct_plan
-        .convert_row(&src_px, &mut direct_out, 4, 0)
+        .convert_row(&src_px, &mut direct_out, 4)
         .unwrap();
     assert_eq!(
         sub_out, direct_out,
@@ -262,8 +262,8 @@ fn moxcms_icc_transform_and_safe_substitution() {
 
     let mut sub_out = [0u8; 16];
     let mut cms_out = [0u8; 16];
-    sub_plan.convert_row(&src_px, &mut sub_out, 4, 0).unwrap();
-    cms_plan.convert_row(&src_px, &mut cms_out, 4, 0).unwrap();
+    sub_plan.convert_row(&src_px, &mut sub_out, 4).unwrap();
+    cms_plan.convert_row(&src_px, &mut cms_out, 4).unwrap();
 
     for px in 0..4 {
         for c in 0..3 {

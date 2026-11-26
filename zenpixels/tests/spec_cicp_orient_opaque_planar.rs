@@ -8,10 +8,10 @@ use zenpixels::{
     ColorError, ColorOrigin, ColorSpace, ContentLightLevel, DiffuseWhite, DualLayerHdrBuf,
     DualLayerHdrView, GainMapChannels, GainMapColorSpace, GainMapComponent, GainMapMetadata, Gamma,
     HdrMetadata, IccValidationError, Nits, Orientation, ParametricColor, ParametricFormat,
-    PixelBuf, PixelCow, PixelFormat, PixelSink, PixelSource, PixelView, PlanarBuf, PlanarView,
-    PlaneBuf, PlaneFormat, PlaneRole, PlaneView, PlaneViewMut, Primaries, RenderingIntent,
-    RowAlign, SampleLayout, SampleType, SignalRange, SignedFraction, Transfer, UnsignedFraction,
-    WhitePoint, validate_icc_structure,
+    PixelBuf, PixelCow, PixelFormat, PixelRect, PixelSink, PixelSource, PixelView, PlanarBuf,
+    PlanarView, PlaneBuf, PlaneFormat, PlaneRole, PlaneView, PlaneViewMut, Primaries,
+    RenderingIntent, RowAlign, SampleLayout, SampleType, SignalRange, SignedFraction, Transfer,
+    UnsignedFraction, WhitePoint, validate_icc_structure,
 };
 
 fn minimal_valid_icc(class: &[u8; 4]) -> Vec<u8> {
@@ -117,20 +117,20 @@ fn speccow_zero_arc_bumps_across_views_crops_and_mut_views() {
     {
         let view = buf.as_view();
         assert_eq!(Arc::strong_count(&profile), 2);
-        let cropped = view.crop(1, 1, 4, 4).unwrap();
+        let cropped = view.crop(PixelRect::new(1, 1, 4, 4)).unwrap();
         assert_eq!(Arc::strong_count(&profile), 2);
         let strip = cropped.sub_rows(1, 2).unwrap();
         assert_eq!(Arc::strong_count(&profile), 2);
         let cow = PixelCow::Borrowed(strip);
         let cow_view = cow.as_view();
         assert_eq!(Arc::strong_count(&profile), 2);
-        assert_eq!(cow_view.rows(), 2);
+        assert_eq!(cow_view.height(), 2);
     }
 
     {
         let mut mv = buf.try_as_view_mut().unwrap();
         assert_eq!(Arc::strong_count(&profile), 2);
-        let sub = mv.crop_mut(0, 0, 4, 4).unwrap();
+        let sub = mv.crop_mut(PixelRect::new(0, 0, 4, 4)).unwrap();
         assert_eq!(Arc::strong_count(&profile), 2);
         let imm = sub.as_view();
         assert_eq!(Arc::strong_count(&profile), 2);
@@ -435,7 +435,10 @@ fn orientation_carriage_across_buffers_views_bands_planar_and_dual_layer() {
     assert_eq!(buf.as_view().orientation(), Orientation::Rotate90);
     assert_eq!(buf.as_view().display_dimensions(), (4, 6));
     assert_eq!(
-        buf.as_view().crop(0, 0, 3, 2).unwrap().orientation(),
+        buf.as_view()
+            .crop(PixelRect::new(0, 0, 3, 2))
+            .unwrap()
+            .orientation(),
         Orientation::Rotate90
     );
     assert_eq!(buf.source_orientation(), Orientation::Rotate90);
@@ -572,7 +575,7 @@ fn planar_zero_copy_codec_apis_and_strict_role_validation() {
         PlaneFormat::new(PlaneRole::Thermal, SampleType::F32),
     ];
     let hdr = HdrMetadata {
-        cll: Some(ContentLightLevel::new(1000, 400)),
+        content_light_level: Some(ContentLightLevel::new(1000, 400)),
         mastering: None,
     };
     let origin = ColorOrigin::from_cicp(Cicp::SRGB);
@@ -581,7 +584,10 @@ fn planar_zero_copy_codec_apis_and_strict_role_validation() {
         .with_hdr(hdr)
         .with_origin(origin.clone())
         .with_orientation(Orientation::Rotate270);
-    assert_eq!(pbuf.plane_by_role(PlaneRole::Y).unwrap().stride() % 64, 0);
+    assert_eq!(
+        pbuf.plane_by_role(PlaneRole::Y).unwrap().stride_bytes() % 64,
+        0
+    );
     assert!(pbuf.plane_by_role(PlaneRole::Depth).is_some());
     assert!(pbuf.plane_by_role(PlaneRole::Matte).is_some());
     assert!(pbuf.plane_by_role(PlaneRole::Thermal).is_some());
@@ -593,7 +599,7 @@ fn planar_zero_copy_codec_apis_and_strict_role_validation() {
     assert_eq!(pview.display_dimensions(), (6, 8));
     assert!(pview.plane_by_role(PlaneRole::Cb).is_some());
 
-    let cropped = pview.crop(2, 2, 4, 2).unwrap();
+    let cropped = pview.crop(PixelRect::new(2, 2, 4, 2)).unwrap();
     assert_eq!(cropped.hdr(), hdr);
     assert_eq!(cropped.origin(), Some(&origin));
     assert_eq!(cropped.orientation(), Orientation::Rotate270);
@@ -983,12 +989,10 @@ fn view_and_buffer_sizeof_layout_budgets_and_ergonomics() {
     assert_eq!(size_of::<CicpTag>(), 40);
     assert!(HdrMetadata::default().is_empty());
 
-    // PixelView::height() & PixelViewMut::height() match rows().
+    // PixelView::height() & PixelViewMut::height() report row count.
     let mut buf = PixelBuf::new(5, 3, PixelFormat::RGB8_SRGB).unwrap();
     assert_eq!(buf.as_view().height(), 3);
-    assert_eq!(buf.as_view().height(), buf.as_view().rows());
     assert_eq!(buf.as_view_mut().height(), 3);
-    assert_eq!(buf.as_view_mut().height(), buf.as_view_mut().rows());
 
     // Descriptive whereat::At context on untyped Vec<i32> -> U8 IncompatibleLayout mismatch.
     let err = PixelBuf::from_typed(vec![0i32; 3], 1, 1, PixelFormat::RGB8_SRGB).unwrap_err();
@@ -1095,15 +1099,15 @@ fn option_1_sample_stride_matrix_coefficients_and_crop_symmetry() {
     let mut cbcr_tight = vec![10u16, 20, 30, 40, 50, 60, 70, 80];
     {
         let mut pvm = PlaneViewMut::from_samples(&mut cbcr_tight, 2, 2, cbcr_spec).unwrap();
-        assert_eq!(pvm.stride(), 8);
+        assert_eq!(pvm.stride_bytes(), 8);
         assert_eq!(pvm.row_as::<u16>(1).unwrap(), &[50, 60, 70, 80]);
         pvm.row_as_mut::<u16>(0).unwrap()[1] = 25;
     }
     let pv_tight = PlaneView::from_samples(&cbcr_tight, 2, 2, cbcr_spec).unwrap();
-    assert_eq!(pv_tight.stride(), 8);
+    assert_eq!(pv_tight.stride_bytes(), 8);
     assert_eq!(pv_tight.row_as::<u16>(0).unwrap(), &[10, 25, 30, 40]);
     let pb_tight = PlaneBuf::from_samples(cbcr_tight, 2, 2, cbcr_spec).unwrap();
-    assert_eq!(pb_tight.stride(), 8);
+    assert_eq!(pb_tight.stride_bytes(), 8);
 
     // Padded strided plane (`stride = 6 u16 samples = 12 bytes`, width = 4, height = 2).
     let y_spec = PlaneFormat::new(PlaneRole::Y, SampleType::U16);
@@ -1115,7 +1119,7 @@ fn option_1_sample_stride_matrix_coefficients_and_crop_symmetry() {
         let mut pvm =
             PlaneViewMut::from_samples_strided(&mut y_padded, 4, 2, SampleStride(6), y_spec)
                 .unwrap();
-        assert_eq!(pvm.stride(), 12);
+        assert_eq!(pvm.stride_bytes(), 12);
         assert_eq!(pvm.row_as::<u16>(0).unwrap(), &[1, 2, 3, 4]);
         let mut sub = pvm.sub_rows_mut(1, 1).unwrap();
         sub.row_as_mut::<u16>(0).unwrap()[0] = 50;
@@ -1132,14 +1136,14 @@ fn option_1_sample_stride_matrix_coefficients_and_crop_symmetry() {
         PlaneBuf::from_samples_strided(y_padded, 4, 2, SampleStride(6), y_spec).unwrap();
     assert_eq!(
         pb_strided
-            .crop_view(1, 0, 2, 2)
+            .crop_view(PixelRect::new(1, 0, 2, 2))
             .unwrap()
             .row_as::<u16>(1)
             .unwrap(),
         &[6, 7]
     );
     pb_strided
-        .crop_view_mut(2, 0, 2, 1)
+        .crop_view_mut(PixelRect::new(2, 0, 2, 1))
         .unwrap()
         .row_as_mut::<u16>(0)
         .unwrap()[1] = 44;
@@ -1147,7 +1151,7 @@ fn option_1_sample_stride_matrix_coefficients_and_crop_symmetry() {
 
     // 3. Crop symmetry on `PixelBuf`: `sub_rows`, `crop_view_mut`, O(1) zero-copy `into_crop`.
     let hdr = HdrMetadata {
-        cll: Some(ContentLightLevel::new(1000, 300)),
+        content_light_level: Some(ContentLightLevel::new(1000, 300)),
         mastering: None,
     };
     let origin = ColorOrigin::from_cicp(Cicp::DISPLAY_P3);
@@ -1168,13 +1172,16 @@ fn option_1_sample_stride_matrix_coefficients_and_crop_symmetry() {
     );
     // Out-of-bounds `crop_view_mut` fails without clearing cached `SampleFacts`.
     assert_eq!(
-        *pbuf.crop_view_mut(3, 0, 2, 1).unwrap_err().error(),
+        *pbuf
+            .crop_view_mut(PixelRect::new(3, 0, 2, 1))
+            .unwrap_err()
+            .error(),
         BufferError::OutOfBounds
     );
     assert!(pbuf.facts().all_grayscale);
 
     // Valid `crop_view_mut` mutates in-place and clears cached `SampleFacts`.
-    pbuf.crop_view_mut(1, 1, 2, 2)
+    pbuf.crop_view_mut(PixelRect::new(1, 1, 2, 2))
         .unwrap()
         .row_as_mut::<u16>(0)
         .unwrap()[0] = 999;
@@ -1184,11 +1191,11 @@ fn option_1_sample_stride_matrix_coefficients_and_crop_symmetry() {
     // Re-assume facts, then O(1) zero-copy `into_crop` preserves pointer shift, alignment,
     // stride, facts, hdr, origin, orientation, and compacts cleanly via `into_tight_buf`.
     pbuf.assume_facts(gray_facts);
-    let orig_stride = pbuf.stride();
-    let cropped = pbuf.into_crop(1, 1, 2, 2).unwrap();
+    let orig_stride = pbuf.stride_bytes();
+    let cropped = pbuf.into_crop(PixelRect::new(1, 1, 2, 2)).unwrap();
     assert_eq!((cropped.width(), cropped.height()), (2, 2));
-    assert_eq!(cropped.stride(), orig_stride);
-    assert_eq!(cropped.offset(), orig_stride + 6);
+    assert_eq!(cropped.stride_bytes(), orig_stride);
+    assert_eq!(cropped.byte_offset(), orig_stride + 6);
     assert_eq!(
         cropped.as_view().row(0).as_ptr() as usize,
         base_ptr + orig_stride + 6
@@ -1200,7 +1207,7 @@ fn option_1_sample_stride_matrix_coefficients_and_crop_symmetry() {
     assert_eq!(cropped.orientation(), Orientation::Rotate90);
 
     let tight = cropped.into_tight_buf().unwrap();
-    assert_eq!(tight.stride(), 2 * 6);
+    assert_eq!(tight.stride_bytes(), 2 * 6);
     assert_eq!(tight.as_view().row_as::<u16>(0).unwrap()[0], 999);
     assert!(tight.facts().all_grayscale);
 
@@ -1219,7 +1226,7 @@ fn option_1_sample_stride_matrix_coefficients_and_crop_symmetry() {
     // `PlanarBuf::crop_view_mut` at odd origin (1, 1) with size (3, 3) on 4:2:0:
     // chroma spans indices 0..=1 (width 2, height 2) and records `crop_origin == (1, 1)`.
     {
-        let mut cvm: PlanarViewMut<'_> = planar.crop_view_mut(1, 1, 3, 3).unwrap();
+        let mut cvm: PlanarViewMut<'_> = planar.crop_view_mut(PixelRect::new(1, 1, 3, 3)).unwrap();
         assert_eq!((cvm.width(), cvm.height()), (3, 3));
         assert_eq!(cvm.crop_origin(), (1, 1));
         assert_eq!(cvm.matrix_coefficients(), Some(MatrixCoefficients::BT709));
@@ -1230,7 +1237,7 @@ fn option_1_sample_stride_matrix_coefficients_and_crop_symmetry() {
         cvm.plane_mut(0).unwrap().row_mut(0)[0] = 200; // writes Y(1, 1)
 
         // Nested `crop_mut` advances `crop_origin` to (2, 2) (chroma rel offset (1, 1)).
-        let mut inner = cvm.crop_mut(1, 1, 2, 2).unwrap();
+        let mut inner = cvm.crop_mut(PixelRect::new(1, 1, 2, 2)).unwrap();
         assert_eq!(inner.crop_origin(), (2, 2));
         assert_eq!(inner.planes()[1].width(), 1);
         assert_eq!(inner.planes()[1].height(), 1);
@@ -1250,7 +1257,7 @@ fn option_1_sample_stride_matrix_coefficients_and_crop_symmetry() {
     assert_eq!(planar.planes()[1].row(1)[1], 77);
 
     // `PlanarBuf::crop_view` + `PlanarView::sub_rows` see the mutations and metadata.
-    let cv = planar.crop_view(1, 1, 3, 3).unwrap();
+    let cv = planar.crop_view(PixelRect::new(1, 1, 3, 3)).unwrap();
     assert_eq!(cv.crop_origin(), (1, 1));
     assert_eq!(cv.planes()[0].row(0)[0], 200);
     let sv = cv.sub_rows(1, 2).unwrap();

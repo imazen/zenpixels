@@ -9,10 +9,10 @@ use zenpixels::BitPacking;
 #[cfg(any(feature = "imgref", feature = "hash"))]
 use zenpixels::RowAlign;
 use zenpixels::{
-    AlphaMode, BandedBuf, BufferError, ByteStorage, ByteStorageMut, ChannelOrder, ChromaSiting,
-    CodePlaneError, CodePlaneMut, ColorSpace, PixelBuf, PixelFormat, PixelSink, PlanarBuf,
-    PlanarViewMut, PlaneBuf, PlaneFormat, PlaneRole, PlaneViewMut, Primaries, SampleEncoding,
-    SampleFacts, SampleLayout, SampleType, SignalRange, Transfer,
+    AlphaMode, BandRowLocation, BandedBuf, BufferError, ByteStorage, ByteStorageMut, ChannelOrder,
+    ChromaSiting, CodePlaneError, CodePlaneMut, ColorSpace, PixelBuf, PixelFormat, PixelRect,
+    PixelSink, PlanarBuf, PlanarViewMut, PlaneBuf, PlaneFormat, PlaneRole, PlaneViewMut, Primaries,
+    SampleEncoding, SampleFacts, SampleLayout, SampleType, SignalRange, Transfer,
 };
 #[cfg(any(feature = "imgref", feature = "image"))]
 use zenpixels::{PixelView, PixelViewMut};
@@ -122,7 +122,7 @@ fn external_immutable_validation_failure_returns_owner_untouched() {
     // Misaligned offset for U16 returns owner untouched.
     let aligned_u16: Arc<[u16]> = Arc::from(vec![100u16; 32]);
     let ptr16 = aligned_u16.as_ptr();
-    let (err, returned) = PixelBuf::from_external_with_offset(
+    let (err, returned) = PixelBuf::from_external_with_byte_offset(
         aligned_u16,
         1, // odd byte offset breaks u16 alignment!
         2,
@@ -233,11 +233,11 @@ fn external_owned_plane_and_try_from_parts_recover() {
     let buf = PixelBuf::new(4, 3, PixelFormat::RGB8_SRGB).unwrap();
     let orig_ptr = buf.as_view().as_strided_bytes().as_ptr();
     let mut parts = buf.into_parts();
-    parts.stride = 2; // invalid (< row_bytes=12)
+    parts.stride_bytes = 2; // invalid (< row_bytes=12)
     let (err, mut parts) = PixelBuf::from_parts_recover(parts).unwrap_err();
     assert_eq!(*err.error(), BufferError::StrideTooSmall);
     assert_eq!(parts.storage.as_bytes().as_ptr(), orig_ptr);
-    parts.stride = 12;
+    parts.stride_bytes = 12;
     let restored = PixelBuf::from_parts_recover(parts).unwrap();
     assert_eq!(restored.as_view().as_strided_bytes().as_ptr(), orig_ptr);
 }
@@ -312,11 +312,17 @@ fn banded_buf_helpers_and_planar_color_and_mut_views() {
         }
     }
     let banded = BandedBuf::from_buf(src.try_clone().unwrap(), 30).unwrap();
-    assert_eq!(banded.band_rows(), 2);
+    assert_eq!(banded.rows_per_band(), 2);
     assert_eq!(banded.band_count(), 4);
-    assert_eq!(banded.locate(5), Some((2, 1)));
-    assert_eq!(banded.locate(7), None);
-    let views = banded.row_range_views(1, 5).unwrap();
+    assert_eq!(
+        banded.locate_row(5),
+        Some(BandRowLocation {
+            band_index: 2,
+            local_y: 1
+        })
+    );
+    assert_eq!(banded.locate_row(7), None);
+    let views = banded.sub_row_views(1, 5).unwrap();
     assert_eq!(views.len(), 3); // band 0 row 1, band 1 rows 0..2, band 2 rows 0..2
     let gathered = banded.into_buf().unwrap();
     for y in 0..7 {
@@ -369,7 +375,7 @@ fn banded_buf_helpers_and_planar_color_and_mut_views() {
     );
     assert_eq!(pv.effective_range(), Some(SignalRange::Narrow));
     assert_eq!(pv.color(), planar.color());
-    let cropped = pv.crop(1, 1, 2, 2).unwrap();
+    let cropped = pv.crop(PixelRect::new(1, 1, 2, 2)).unwrap();
     assert_eq!(
         cropped.matrix_coefficients(),
         Some(zenpixels::MatrixCoefficients::BT709)
@@ -434,8 +440,8 @@ fn imgref_mutable_borrowed_and_sample_interop() {
     let img_mut = imgref::ImgRefMut::new_stride(&mut data, 3, 3, 4);
     let mut vm = PixelViewMut::from_imgref_mut(img_mut, ColorSpace::SRGB).unwrap();
     assert_eq!(vm.width(), 3);
-    assert_eq!(vm.rows(), 3);
-    assert_eq!(vm.stride(), 12);
+    assert_eq!(vm.height(), 3);
+    assert_eq!(vm.stride_bytes(), 12);
     assert_eq!(vm.as_strided_bytes_mut().as_ptr(), ptr);
     {
         let mut s_img = vm.as_sample_imgref_mut::<u8>().unwrap();

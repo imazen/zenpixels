@@ -774,43 +774,30 @@ pub enum PlaneRole {
     Extra(u16),
 }
 
-/// Chroma subsampling ratio for YCbCr / multi-plane images.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum Subsampling {
-    /// Full-resolution 4:4:4 (no subsampling).
-    #[default]
-    None,
-    /// Horizontal 2× subsampling (4:2:2).
-    Yuv422,
-    /// Horizontal and vertical 2× subsampling (4:2:0).
-    Yuv420,
-    /// Vertical 2× subsampling (4:4:0).
-    Yuv440,
-    /// Horizontal 4× subsampling (4:1:1).
-    Yuv411,
+/// Rectangular pixel region specified by top-left origin `(x, y)` and `(width, height)` in pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PixelRect {
+    /// Left edge in pixels (`0`-based).
+    pub x: u32,
+    /// Top edge in pixels (`0`-based).
+    pub y: u32,
+    /// Region width in pixels.
+    pub width: u32,
+    /// Region height in pixels.
+    pub height: u32,
 }
 
-impl Subsampling {
-    /// Horizontal and vertical subsampling divisors `(fx, fy)` (e.g. `(2, 2)` for 4:2:0).
+impl PixelRect {
+    /// Construct a pixel rectangle from `(x, y, width, height)`.
     #[inline]
     #[must_use]
-    pub const fn factors(self) -> (u8, u8) {
-        match self {
-            Self::None => (1, 1),
-            Self::Yuv422 => (2, 1),
-            Self::Yuv420 => (2, 2),
-            Self::Yuv440 => (1, 2),
-            Self::Yuv411 => (4, 1),
+    pub const fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
         }
-    }
-
-    /// Chroma plane `(width, height)` for a luma frame of `(w, h)` (ceiling division).
-    #[inline]
-    #[must_use]
-    pub const fn chroma_size(self, w: u32, h: u32) -> (u32, u32) {
-        let (fx, fy) = self.factors();
-        (w.div_ceil(fx as u32), h.div_ceil(fy as u32))
     }
 }
 
@@ -857,11 +844,11 @@ impl PlaneFormat {
         self
     }
 
-    /// Set subsampling divisors `(hx, vy)` (e.g. `(2, 2)` for 4:2:0 chroma).
+    /// Set subsampling divisors `(horizontal_divisor, vertical_divisor)` (e.g. `(2, 2)` for 4:2:0 chroma).
     #[inline]
     #[must_use]
-    pub const fn with_subsampling(mut self, hx: u8, vy: u8) -> Self {
-        self.subsampling = (hx, vy);
+    pub const fn with_subsampling(mut self, horizontal_divisor: u8, vertical_divisor: u8) -> Self {
+        self.subsampling = (horizontal_divisor, vertical_divisor);
         self
     }
 
@@ -876,10 +863,14 @@ impl PlaneFormat {
         }
     }
 
-    /// Plane `(width, height)` in elements for a frame of `(frame_w, frame_h)`.
+    /// Compute this plane's `(width, height)` in elements for a full luma frame of `(frame_width, frame_height)`.
     #[inline]
     #[must_use]
-    pub const fn dimensions(self, frame_w: u32, frame_h: u32) -> (u32, u32) {
+    pub const fn plane_dimensions_for_frame(
+        self,
+        frame_width: u32,
+        frame_height: u32,
+    ) -> (u32, u32) {
         let hx = if self.subsampling.0 == 0 {
             1
         } else {
@@ -890,21 +881,21 @@ impl PlaneFormat {
         } else {
             self.subsampling.1 as u32
         };
-        (frame_w.div_ceil(hx), frame_h.div_ceil(vy))
+        (frame_width.div_ceil(hx), frame_height.div_ceil(vy))
     }
 
-    /// Plane `(width, height)` in elements for a cropped frame of `(frame_w, frame_h)` at
-    /// luma-grid origin `(origin_x, origin_y)`.
+    /// Compute this plane's `(width, height)` in elements for a cropped luma frame of
+    /// `(frame_width, frame_height)` starting at luma-grid origin `crop_origin = (origin_x, origin_y)`.
     ///
     /// Preserves chroma phase at odd crop origins: a `2×2` subsampled plane for a crop
-    /// `[origin_x .. origin_x + frame_w)` covers chroma columns `[origin_x / hx .. ceil((origin_x + frame_w) / hx))`.
+    /// `[origin_x .. origin_x + frame_width)` covers chroma columns `[origin_x / hx .. ceil((origin_x + frame_width) / hx))`.
     #[inline]
     #[must_use]
-    pub const fn cropped_dimensions(
+    pub const fn cropped_plane_dimensions(
         self,
-        frame_w: u32,
-        frame_h: u32,
-        origin: (u32, u32),
+        frame_width: u32,
+        frame_height: u32,
+        crop_origin: (u32, u32),
     ) -> Option<(u32, u32)> {
         let hx = if self.subsampling.0 == 0 {
             1
@@ -916,21 +907,25 @@ impl PlaneFormat {
         } else {
             self.subsampling.1 as u32
         };
-        let Some(end_x) = origin.0.checked_add(frame_w) else {
+        let Some(end_x) = crop_origin.0.checked_add(frame_width) else {
             return None;
         };
-        let Some(end_y) = origin.1.checked_add(frame_h) else {
+        let Some(end_y) = crop_origin.1.checked_add(frame_height) else {
             return None;
         };
-        let pw = end_x.div_ceil(hx) - (origin.0 / hx);
-        let ph = end_y.div_ceil(vy) - (origin.1 / vy);
+        let pw = end_x.div_ceil(hx) - (crop_origin.0 / hx);
+        let ph = end_y.div_ceil(vy) - (crop_origin.1 / vy);
         Some((pw, ph))
     }
 
-    /// Compute the row byte stride for `width` plane elements under `align`.
-    pub const fn aligned_stride(self, width: u32, align: RowAlign) -> Result<usize, LayoutError> {
+    /// Compute the row byte stride for `plane_width` plane elements (post-subsampling) under `align`.
+    pub const fn aligned_stride_for_plane_width(
+        self,
+        plane_width: u32,
+        align: RowAlign,
+    ) -> Result<usize, LayoutError> {
         let bpe = self.bytes_per_element();
-        let Some(row_bytes) = (width as usize).checked_mul(bpe) else {
+        let Some(row_bytes) = (plane_width as usize).checked_mul(bpe) else {
             return Err(LayoutError::GeometryOverflow);
         };
         if row_bytes == 0 {

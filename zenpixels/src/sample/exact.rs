@@ -157,8 +157,9 @@ impl ExactDepth {
         bits >= self.color_bits
     }
 
-    /// Validate that this evidence is compatible with `spec` without requiring a pixel buffer.
-    pub const fn validate_format(self, spec: &PixelFormat) -> Result<(), ExactDepthError> {
+    /// Validate that this evidence is compatible with `format` without requiring a pixel buffer.
+    pub const fn validate_format(self, format: &PixelFormat) -> Result<(), ExactDepthError> {
+        let spec = format;
         if !spec.layout.packing.is_full() {
             return Err(ExactDepthError::UnsupportedStorage);
         }
@@ -240,9 +241,9 @@ impl ExactDepth {
     ///
     /// This is for merging independent evidence about the same buffer (e.g., caller policy
     /// facts plus buffer facts). To merge evidence from **disjoint** strips or regions of
-    /// an image into a common containing grid, use [`ExactDepth::union`].
+    /// an image into a common containing grid, use [`ExactDepth::union_disjoint_regions`].
     #[must_use]
-    pub const fn combine(a: Self, b: Self) -> Option<Self> {
+    pub const fn intersect_same_buffer(a: Self, b: Self) -> Option<Self> {
         if !matches!(
             (a.storage, b.storage),
             (SampleType::U8, SampleType::U8) | (SampleType::U16, SampleType::U16)
@@ -282,7 +283,7 @@ impl ExactDepth {
     ///
     /// Returns `None` if storage type or signal range disagree.
     #[must_use]
-    pub const fn union(a: Self, b: Self) -> Option<Self> {
+    pub const fn union_disjoint_regions(a: Self, b: Self) -> Option<Self> {
         if !matches!(
             (a.storage, b.storage),
             (SampleType::U8, SampleType::U8) | (SampleType::U16, SampleType::U16)
@@ -452,7 +453,7 @@ impl Roles {
 
     fn for_each(&self, view: &PixelView<'_>, mut visit: impl FnMut(bool, u32) -> bool) -> bool {
         let samples = view.width() as usize * self.channels;
-        for y in 0..view.rows() {
+        for y in 0..view.height() {
             let row = view.row(y);
             for i in 0..samples {
                 let channel = i % self.channels;

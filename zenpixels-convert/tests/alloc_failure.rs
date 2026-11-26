@@ -196,7 +196,7 @@ fn into_and_row_apis_execute_with_zero_heap_allocations() {
 
     // FAIL_THRESHOLD = 1 forbids ANY heap allocation >= 1 byte!
     with_oom_above(1, || {
-        row_plan.convert_row(&src_row, &mut dst_row, 97, 0).unwrap();
+        row_plan.convert_row(&src_row, &mut dst_row, 97).unwrap();
         apply_orientation_into(
             &src_img.as_view(),
             Orientation::Rotate90,
@@ -207,8 +207,8 @@ fn into_and_row_apis_execute_with_zero_heap_allocations() {
             .unwrap();
         reconstruct_planar_into(
             &planar.as_view(),
-            &PlanarReconstructionOptions::nearest(),
             &mut ycbcr_dst.as_view_mut(),
+            &PlanarReconstructionOptions::nearest(),
         )
         .unwrap();
     });

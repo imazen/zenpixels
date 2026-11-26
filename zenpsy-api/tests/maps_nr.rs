@@ -41,7 +41,7 @@ impl NoReferenceMetric for ImageMetric {
             return fail(MetricError::new(ErrorKind::UnsupportedRequest));
         }
         self.calls.set(self.calls.get() + 1);
-        let values = (0..p.rows()).flat_map(|y| p.row(y).iter().copied());
+        let values = (0..p.height()).flat_map(|y| p.row(y).iter().copied());
         let sum = values.clone().map(u64::from).sum::<u64>();
         let max = values.max().unwrap();
         let map = opts.diagnostics().then(|| {
@@ -50,7 +50,7 @@ impl NoReferenceMetric for ImageMetric {
             let spec = PlaneFormat::new(PlaneRole::Y, SampleType::F32);
             PlaneBuf::from_external(samples, 2, 2, 12, spec).unwrap()
         });
-        let grid = MapGrid::new(p.width() + u32::from(self.malformed), p.rows())?
+        let grid = MapGrid::new(p.width() + u32::from(self.malformed), p.height())?
             .with_cells(-1, 1, 2, 2)?;
         Ok(Native {
             scores: [sum as f64, f64::from(max)],
@@ -100,7 +100,10 @@ fn native_maps_borrow_the_original_strided_plane_through_stacked_erasure() {
         plane.data().as_ptr(),
         native.map.as_ref().unwrap().as_view().data().as_ptr()
     );
-    assert_eq!((plane.width(), plane.height(), plane.stride()), (2, 2, 12));
+    assert_eq!(
+        (plane.width(), plane.height(), plane.stride_bytes()),
+        (2, 2, 12)
+    );
     assert_eq!(bytemuck::cast_slice::<u8, f32>(plane.row(1)), [3.0, 4.0]);
     assert_eq!(
         bytemuck::cast_slice::<u8, f32>(plane.row(0))[1].to_bits(),

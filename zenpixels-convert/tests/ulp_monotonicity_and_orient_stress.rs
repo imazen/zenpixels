@@ -59,9 +59,9 @@ fn transfer_monotonicity_endpoints_and_roundtrips_exhaustive() {
     let ramp8: Vec<u8> = (0u8..=255).collect();
     let mut lin8 = vec![0.0f32; 256];
     let mut rt8 = vec![0u8; 256];
-    p_up.convert_row(&ramp8, bytemuck::cast_slice_mut(&mut lin8), 256, 0)
+    p_up.convert_row(&ramp8, bytemuck::cast_slice_mut(&mut lin8), 256)
         .unwrap();
-    p_dn.convert_row(bytemuck::cast_slice(&lin8), &mut rt8, 256, 0)
+    p_dn.convert_row(bytemuck::cast_slice(&lin8), &mut rt8, 256)
         .unwrap();
     assert_eq!(lin8[0], 0.0);
     assert!((lin8[255] - 1.0).abs() < 1e-6);
@@ -95,7 +95,7 @@ fn transfer_monotonicity_endpoints_and_roundtrips_exhaustive() {
         let eotf = RowPlan::build(enc_spec.clone(), lin_spec.clone(), &pol, None).unwrap();
         let oetf = RowPlan::build(lin_spec, enc_spec, &pol, None).unwrap();
 
-        eotf.convert_row(ramp16_bytes, bytemuck::cast_slice_mut(&mut lin16), 65536, 0)
+        eotf.convert_row(ramp16_bytes, bytemuck::cast_slice_mut(&mut lin16), 65536)
             .unwrap();
         assert_eq!(lin16[0], 0.0, "{name}: EOTF(0) must be 0.0");
         assert!(
@@ -115,7 +115,6 @@ fn transfer_monotonicity_endpoints_and_roundtrips_exhaustive() {
             bytemuck::cast_slice(&lin16),
             bytemuck::cast_slice_mut(&mut rt16),
             65536,
-            0,
         )
         .unwrap();
         assert_eq!(rt16[0], 0, "{name}: OETF(EOTF(0)) must be 0");
@@ -174,7 +173,6 @@ fn transfer_monotonicity_endpoints_and_roundtrips_exhaustive() {
                 bytemuck::cast_slice(&ramp_rgb),
                 bytemuck::cast_slice_mut(&mut lin_rgb_buf),
                 65536,
-                0,
             )
             .unwrap();
         assert_eq!(lin_rgb_buf[0], 0.0);
@@ -189,7 +187,6 @@ fn transfer_monotonicity_endpoints_and_roundtrips_exhaustive() {
                 bytemuck::cast_slice(&lin_rgb_buf),
                 bytemuck::cast_slice_mut(&mut rt_rgb_buf),
                 65536,
-                0,
             )
             .unwrap();
         assert_eq!(rt_rgb_buf[0], 0);
@@ -241,7 +238,6 @@ fn transfer_monotonicity_endpoints_and_roundtrips_exhaustive() {
             bytemuck::cast_slice(&white_in),
             bytemuck::cast_slice_mut(&mut white_lin),
             1,
-            0,
         )
         .unwrap();
     assert!(
@@ -254,7 +250,6 @@ fn transfer_monotonicity_endpoints_and_roundtrips_exhaustive() {
             bytemuck::cast_slice(&white_lin),
             bytemuck::cast_slice_mut(&mut white_rt),
             1,
-            0,
         )
         .unwrap();
     assert_eq!(
@@ -352,7 +347,7 @@ fn orientation_dense_dimensions_misaligned_strides_and_group_closure() {
                 // Check every pixel against Orientation::forward_map oracle AND verify stride padding untouched!
                 for sy in 0..h {
                     for sx in 0..w {
-                        let (dx, dy) = orient.forward_map(sx, sy, w, h);
+                        let (dx, dy) = orient.map_pixel_coordinates((sx, sy), (w, h));
                         let so = (sy as usize) * src_stride + (sx as usize) * bpp;
                         let dofs = (dy as usize) * dst_stride + (dx as usize) * bpp;
                         assert_eq!(
@@ -420,10 +415,10 @@ fn orientation_dense_dimensions_misaligned_strides_and_group_closure() {
         let mut out_simd = vec![0u8; all_pairs.len()];
         let mut out_scalar = vec![0u8; all_pairs.len()];
         p_simd
-            .convert_row(&all_pairs, &mut out_simd, 65536, 0)
+            .convert_row(&all_pairs, &mut out_simd, 65536)
             .unwrap();
         p_scalar
-            .convert_row(&all_pairs, &mut out_scalar, 65536, 0)
+            .convert_row(&all_pairs, &mut out_scalar, 65536)
             .unwrap();
         assert_eq!(
             out_simd, out_scalar,

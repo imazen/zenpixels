@@ -9,32 +9,51 @@
 
 ## summary
 #
-#   inherent methods                           11
+#   inherent methods                           26
 #   trait roster entries (type × trait)        30
 #
 # per-module pub lines:
-#   codes                             3
-#   compact                           1
+#   codes                             4
+#   compact                           2
 #   error                             1
+#   gainmap                           4
 #   icc_profiles                      1
-#   negotiate                         2
-#   output                            1
-#   planar                            1
+#   measure                           1
+#   negotiate                         3
+#   output                            2
+#   planar                            2
+#   policy                            4
 #   tonemap                           1
+#   ycbcr                             1
 
-## items (11 lines)
+## items (26 lines)
 
 pub fn codes::CodeMap::assert_fields_are_eq(&self)
 pub fn codes::CodeMapError::assert_fields_are_eq(&self)
+pub fn codes::CodeRole::assert_fields_are_eq(&self)
 pub fn codes::CodesError::assert_fields_are_eq(&self)
+pub fn compact::AlphaCompaction::assert_fields_are_eq(&self)
 pub fn compact::CompactionReport::assert_fields_are_eq(&self)
 pub fn error::ConvertError::assert_fields_are_eq(&self)
+pub fn gainmap::GainMapDownsample::assert_fields_are_eq(&self)
+pub fn gainmap::GainMapLayer::assert_fields_are_eq(&self)
+pub fn gainmap::GainMapOrientation::assert_fields_are_eq(&self)
+pub fn gainmap::GainMapResample::assert_fields_are_eq(&self)
 pub fn icc_profiles::SynthesizedIcc::assert_fields_are_eq(&self)
+pub fn measure::LightLevelMethod::assert_fields_are_eq(&self)
 pub fn negotiate::FormatCost::assert_fields_are_eq(&self)
+pub fn negotiate::LossKind::assert_fields_are_eq(&self)
 pub fn negotiate::NegotiatedFormat::assert_fields_are_eq(&self)
 pub fn output::OutputSignaling::assert_fields_are_eq(&self)
+pub fn output::ResolvedSignaling::assert_fields_are_eq(&self)
+pub fn planar::ChromaUpsample::assert_fields_are_eq(&self)
 pub fn planar::PlanarReconstructionOptions::assert_fields_are_eq(&self)
+pub fn policy::DepthPolicy::assert_fields_are_eq(&self)
+pub fn policy::GamutPolicy::assert_fields_are_eq(&self)
+pub fn policy::LumaDomain::assert_fields_are_eq(&self)
+pub fn policy::RangePolicy::assert_fields_are_eq(&self)
 pub fn tonemap::tone_mapper::Requirements::assert_fields_are_eq(&self)
+pub fn ycbcr::YcbcrMatrix::assert_fields_are_eq(&self)
 
 ## trait impls (30 types)
 

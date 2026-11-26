@@ -93,7 +93,7 @@ pub trait ToneMapper: Send + Sync + UnwindSafe + RefUnwindSafe + Debug {
     }
 
     /// Pre-baked `(source_peak_nits, target_peak_nits)` when this mapper ignores
-    /// pipeline-supplied peaks (e.g., `Bt2446A::with_peaks(Nits::new(4000.0), Nits::new(100.0))`).
+    /// pipeline-supplied peaks (e.g., `Bt2446A::with_peaks(Nits::new_or_panic(4000.0), Nits::new_or_panic(100.0))`).
     ///
     /// When `Some((src_peak, dst_peak))`, the pipeline normalizes input/output
     /// strips to those exact peaks and skips redundant peak scanning.
@@ -168,7 +168,7 @@ pub trait StripMapper: Send + Sync + UnwindSafe + RefUnwindSafe + Debug {
 ///
 /// - [`source_peak_nits`](Self::source_peak_nits) — pipeline resolves via
 ///   [`PeakSource`](zenpixels::PeakSource) (including streaming measurement via
-///   [`measure_cll`](crate::measure_cll)) and forwards it into [`ToneMapContext`].
+///   [`measure_content_light_level`](crate::measure_content_light_level)) and forwards it into [`ToneMapContext`].
 /// - [`full_image`](Self::full_image) — pipeline buffers the entire
 ///   source image before calling `prepare`. **Reserved for a future
 ///   release.** Setting `true` returns

@@ -20,9 +20,10 @@ use zenpixels::{
     CodePlane, ColorOrigin, ColorSpace, ContentLightLevel, CustomPrimaries, DualLayerHdrBuf,
     DualLayerHdrView, ExactDepth, ExactDepthError, F16Sample, GainMapChannels, GainMapColorSpace,
     GainMapComponent, GainMapMetadata, Gamma, HdrMetadata, MasteringDisplay, Orientation, PixelBuf,
-    PixelFormat, PixelStorage, PixelView, PlanarBuf, PlanarView, PlaneFormat, PlaneRole, PlaneView,
-    Primaries, RenderingIntent, SampleEncoding, SampleFacts, SampleLayout, SampleType, SignalRange,
-    SignedFraction, Transfer, UnsignedFraction, full_range_grid_nests, narrow_range_grid_nests,
+    PixelFormat, PixelRect, PixelStorage, PixelView, PlanarBuf, PlanarView, PlaneFormat, PlaneRole,
+    PlaneView, Primaries, RenderingIntent, SampleEncoding, SampleFacts, SampleLayout, SampleType,
+    SignalRange, SignedFraction, Transfer, UnsignedFraction, full_range_grid_nests,
+    narrow_range_grid_nests,
 };
 
 #[test]
@@ -186,9 +187,10 @@ fn typed_from_vec_rejects_mismatched_types_while_from_raw_pod_explicitly_reinter
     let buf = PixelBuf::from_typed(good_f32, 1, 1, PixelFormat::RGBF32_LINEAR).unwrap();
     assert_eq!(buf.as_view().row(0).as_ptr() as usize, good_ptr);
 
-    // Explicit `from_raw_pod` permits deliberate native-endian byte reinterpretation.
+    // Explicit `from_pod_bytes_unchecked` permits deliberate native-endian byte reinterpretation.
     let raw_i32 = vec![0x3f80_0000_i32; 3];
-    let reinterp = PixelBuf::from_raw_pod(raw_i32, 1, 1, PixelFormat::RGBF32_LINEAR).unwrap();
+    let reinterp =
+        PixelBuf::from_pod_bytes_unchecked(raw_i32, 1, 1, PixelFormat::RGBF32_LINEAR).unwrap();
     assert_eq!(
         reinterp.as_view().row_as::<f32>(0).unwrap(),
         &[1.0, 1.0, 1.0]
@@ -232,7 +234,7 @@ fn with_spec_with_color_reinterpret_and_origin_preservation_contracts() {
 
     // B21: Owned -> View -> Crop -> SubRows -> TightCopy MUST preserve `origin` and `hdr`!
     let hdr = HdrMetadata {
-        cll: Some(ContentLightLevel::new(1000, 400)),
+        content_light_level: Some(ContentLightLevel::new(1000, 400)),
         mastering: Some(MasteringDisplay::new(
             [[0.708, 0.292], [0.170, 0.797], [0.131, 0.046]],
             [0.3127, 0.3290],
@@ -247,7 +249,7 @@ fn with_spec_with_color_reinterpret_and_origin_preservation_contracts() {
     let v = owned.as_view();
     assert_eq!(v.origin(), Some(&p3_origin));
     assert_eq!(v.hdr(), hdr);
-    let cropped_v = v.crop(1, 1, 2, 2).unwrap();
+    let cropped_v = v.crop(PixelRect::new(1, 1, 2, 2)).unwrap();
     assert_eq!(cropped_v.origin(), Some(&p3_origin));
     assert_eq!(cropped_v.hdr(), hdr);
     let tight = cropped_v.to_tight_buf().unwrap();
@@ -258,7 +260,7 @@ fn with_spec_with_color_reinterpret_and_origin_preservation_contracts() {
         .as_view_mut()
         .into_sub_rows(1, 3)
         .unwrap()
-        .into_crop(1, 0, 2, 2)
+        .into_crop(PixelRect::new(1, 0, 2, 2))
         .unwrap();
     sub.row_mut(0)[0] = 77;
     assert_eq!(owned.as_view().row(1)[3], 77);
@@ -324,7 +326,7 @@ fn planar_role_arity_odd_crop_origin_and_alignment() {
     let pcr = PlaneView::new(&cr_data, 3, 2, 3, cr_spec).unwrap();
     let full = PlanarView::new(5, 3, &[py, pcb, pcr]).unwrap();
     assert_eq!(full.crop_origin(), (0, 0));
-    let cropped = full.crop(1, 1, 3, 2).unwrap();
+    let cropped = full.crop(PixelRect::new(1, 1, 3, 2)).unwrap();
     assert_eq!(cropped.crop_origin(), (1, 1));
     assert_eq!(cropped.width(), 3);
     assert_eq!(cropped.height(), 2);
@@ -344,13 +346,13 @@ fn planar_role_arity_odd_crop_origin_and_alignment() {
 
 #[test]
 fn dual_layer_hdr_strict_alternate_into_parts_and_try_symmetric() {
-    // B27: `GainMapMetadata::try_symmetric` rejects <= 0, NaN, and infinity; accepts positive.
-    assert!(GainMapMetadata::try_symmetric(-1.0).is_none());
-    assert!(GainMapMetadata::try_symmetric(0.0).is_none());
-    assert!(GainMapMetadata::try_symmetric(f32::NAN).is_none());
-    assert!(GainMapMetadata::try_symmetric(f32::INFINITY).is_none());
-    assert!(GainMapMetadata::try_symmetric(f32::NEG_INFINITY).is_none());
-    let pos_meta = GainMapMetadata::try_symmetric(2.5).unwrap();
+    // B27: `GainMapMetadata::symmetric_stops` rejects <= 0, NaN, and infinity; accepts positive.
+    assert!(GainMapMetadata::symmetric_stops(-1.0).is_none());
+    assert!(GainMapMetadata::symmetric_stops(0.0).is_none());
+    assert!(GainMapMetadata::symmetric_stops(f32::NAN).is_none());
+    assert!(GainMapMetadata::symmetric_stops(f32::INFINITY).is_none());
+    assert!(GainMapMetadata::symmetric_stops(f32::NEG_INFINITY).is_none());
+    let pos_meta = GainMapMetadata::symmetric_stops(2.5).unwrap();
     assert!(pos_meta.is_valid());
     assert!((pos_meta.alternate_hdr_headroom.to_f32() - 2.5).abs() < 1e-4);
 
@@ -493,25 +495,25 @@ fn exact_depth_union_disjoint_strips_and_icc_can_represent_hdr() {
     // 8-bit + 12-bit -> lcm(8,12)=24 > 16 -> 16-bit storage depth!
     let u3 = ExactDepth::new(SampleType::U16, SignalRange::Full, 3, 1).unwrap();
     let u5 = ExactDepth::new(SampleType::U16, SignalRange::Full, 5, 4).unwrap();
-    let u35 = ExactDepth::union(u3, u5).unwrap();
+    let u35 = ExactDepth::union_disjoint_regions(u3, u5).unwrap();
     assert_eq!(u35.color_bits(), 15);
     assert_eq!(u35.alpha_bits(), 4);
 
     let u8_in_16 = ExactDepth::new(SampleType::U16, SignalRange::Full, 8, 8).unwrap();
     let u12_in_16 = ExactDepth::new(SampleType::U16, SignalRange::Full, 12, 12).unwrap();
-    let u8_12 = ExactDepth::union(u8_in_16, u12_in_16).unwrap();
+    let u8_12 = ExactDepth::union_disjoint_regions(u8_in_16, u12_in_16).unwrap();
     assert_eq!(u8_12.color_bits(), 16);
     assert_eq!(u8_12.alpha_bits(), 16);
 
     // Narrow range: monotonic max (`max(10, 12) = 12`).
     let n10 = ExactDepth::new(SampleType::U16, SignalRange::Narrow, 10, 8).unwrap();
     let n12 = ExactDepth::new(SampleType::U16, SignalRange::Narrow, 12, 4).unwrap();
-    let n10_12 = ExactDepth::union(n10, n12).unwrap();
+    let n10_12 = ExactDepth::union_disjoint_regions(n10, n12).unwrap();
     assert_eq!(n10_12.color_bits(), 12);
     assert_eq!(n10_12.alpha_bits(), 8);
 
     // Exhaustive mathematical verification over ALL U16 full-range pairs (1..=16 x 1..=16):
-    // every widened code from grid `a` and every widened code from grid `b` MUST hold on `union(a, b)`!
+    // every widened code from grid `a` and every widened code from grid `b` MUST hold on `union_disjoint_regions(a, b)`!
     for a in 1u8..=16 {
         let da = ExactDepth::new(SampleType::U16, SignalRange::Full, a, 16).unwrap();
         let max_a = (1u32 << a) - 1;
@@ -521,7 +523,7 @@ fn exact_depth_union_disjoint_strips_and_icc_can_represent_hdr() {
             .collect();
         for b in a..=16 {
             let db = ExactDepth::new(SampleType::U16, SignalRange::Full, b, 16).unwrap();
-            let merged = ExactDepth::union(da, db).unwrap();
+            let merged = ExactDepth::union_disjoint_regions(da, db).unwrap();
             assert!(merged.color_bits() >= a && merged.color_bits() >= b);
             let buf_a = PixelBuf::from_typed(
                 samples_a.clone(),
@@ -612,7 +614,9 @@ fn opus_review_p1_5_p2_4_p2_12_gainmap_direction_shifted_and_banded_propagation(
     assert!(!bad_flag.is_valid());
     assert_eq!(bad_flag.direction(), None);
 
-    let fwd_bad_flag = GainMapMetadata::symmetric(2.0).with_backward_direction(true);
+    let fwd_bad_flag = GainMapMetadata::symmetric_stops(2.0)
+        .unwrap()
+        .with_backward_direction(true);
     assert!(!fwd_bad_flag.is_valid());
     assert_eq!(fwd_bad_flag.direction(), None);
 
@@ -627,11 +631,18 @@ fn opus_review_p1_5_p2_4_p2_12_gainmap_direction_shifted_and_banded_propagation(
         },
     );
     let shifted_gm = PixelBuf::new(2, 2, shifted_gm_spec).unwrap();
-    assert!(DualLayerHdrBuf::new(base, shifted_gm, GainMapMetadata::symmetric(2.0)).is_err());
+    assert!(
+        DualLayerHdrBuf::new(
+            base,
+            shifted_gm,
+            GainMapMetadata::symmetric_stops(2.0).unwrap()
+        )
+        .is_err()
+    );
 
     // P2-12: BandedBuf::with_hdr and with_origin propagate to child bands.
     let hdr = HdrMetadata {
-        cll: Some(ContentLightLevel::new(1200, 350)),
+        content_light_level: Some(ContentLightLevel::new(1200, 350)),
         mastering: None,
     };
     let orig = ColorOrigin::from_cicp(Cicp::DISPLAY_P3);

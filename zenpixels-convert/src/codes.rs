@@ -172,7 +172,7 @@ impl CodeMap {
     /// Convert one source code (bits above its depth are ignored) to a destination code.
     #[inline]
     #[must_use]
-    pub const fn code(&self, code: u16) -> u16 {
+    pub const fn map_code(&self, code: u16) -> u16 {
         let q = (code as u32) & ((1u32 << self.from.code_bits()) - 1);
         (match self.rule {
             Rule::Same => q,
@@ -191,8 +191,8 @@ impl CodeMap {
     /// Source padding is ignored; destination padding is zero.
     #[inline]
     #[must_use]
-    pub const fn word(&self, word: u16) -> u16 {
-        self.code(word >> self.from.bit_shift()) << self.to.bit_shift()
+    pub const fn map_word(&self, word: u16) -> u16 {
+        self.map_code(word >> self.from.bit_shift()) << self.to.bit_shift()
     }
 
     /// Map equal-length runs of source words to destination words.
@@ -206,7 +206,7 @@ impl CodeMap {
             });
         }
         for (d, s) in destination.iter_mut().zip(source) {
-            *d = self.word(*s);
+            *d = self.map_word(*s);
         }
         Ok(())
     }
@@ -314,21 +314,21 @@ impl core::error::Error for CodesError {}
 /// Codes converted per bounded batch; the stack buffer is 512 bytes.
 const BATCH: usize = 256;
 
-/// Widen borrowed native components into a canonical strided [`PixelViewMut`] region.
+/// Unpack and widen borrowed native component [`CodePlane`]s into a canonical strided
+/// [`PixelViewMut`] region starting at `source_origin = (x, y)` in each source plane.
 ///
 /// `components` are in destination channel order (`Gray`; `Gray, Alpha`; `R, G, B`;
 /// or `R, G, B, A`); alpha is always full scale. Every check precedes the first write,
 /// row padding is untouched, and execution allocates nothing.
 ///
-/// Returns `(destination, exact_depth)` where `exact_depth` records the smallest depth
-/// established by this exact widening.
-pub fn to_canonical<'b>(
+/// Returns the [`ExactDepth`] established by this exact widening.
+pub fn unpack_code_planes_into(
     components: &[CodePlane<'_>],
     range: SignalRange,
-    x: usize,
-    y: usize,
-    mut destination: PixelViewMut<'b>,
-) -> Result<(PixelViewMut<'b>, ExactDepth), At<CodesError>> {
+    source_origin: (usize, usize),
+    destination: &mut PixelViewMut<'_>,
+) -> Result<ExactDepth, At<CodesError>> {
+    let (x, y) = source_origin;
     let spec = destination.format().clone();
     if !spec.layout.packing.is_full() {
         return Err(whereat::at!(CodesError::Destination { actual: spec }));
@@ -361,7 +361,7 @@ pub fn to_canonical<'b>(
         Ok(encoding) => encoding,
         Err(_) => return Err(whereat::at!(CodesError::Destination { actual: spec })),
     };
-    let (width, height) = (destination.width() as usize, destination.rows() as usize);
+    let (width, height) = (destination.width() as usize, destination.height() as usize);
     let mut maps = [None; 4];
     for (component, plane) in components.iter().enumerate() {
         let bits = plane.encoding().code_bits();
@@ -417,19 +417,19 @@ pub fn to_canonical<'b>(
                 let first = start * channels + component;
                 if storage_bits == 8 {
                     for (i, code) in batch.iter().enumerate() {
-                        out[first + i * channels] = map.code(*code) as u8;
+                        out[first + i * channels] = map.map_code(*code) as u8;
                     }
                 } else {
                     for (i, code) in batch.iter().enumerate() {
                         let at = (first + i * channels) * 2;
-                        out[at..at + 2].copy_from_slice(&map.code(*code).to_ne_bytes());
+                        out[at..at + 2].copy_from_slice(&map.map_code(*code).to_ne_bytes());
                     }
                 }
                 start += count;
             }
         }
     }
-    Ok((destination, exact))
+    Ok(exact)
 }
 
 fn established_depth(

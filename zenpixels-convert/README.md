@@ -16,8 +16,8 @@ This is the **0.5.0 greenfield candidate**. Start with the
 | Quick 8-bit sRGB output | `to_rgb8(&view)`, `to_gray8(&view)` (refuse unproven alpha discard), `to_rgba8(&view)`, `to_bgra8(&view)` |
 | One-shot image conversion | `convert_to_buf(&view, destination_format, &policy)` / `convert_into(&src, &mut dst, &policy)` (add `_with_peak` for explicit `PeakSource`) |
 | Reusable whole-image plan (`PixelBuf` / `PixelView` / `BandedBuf`) | `ImagePlan::build(src, dst, &policy, peak)` → `.execute(&src)` / `.execute_into(&src, &mut dst)` |
-| Streaming row loop (zero per-row heap scratch) | `RowPlan::build(src, dst, &policy, resolved_source_peak)` → `.convert_row(src_row, dst_row, width, y)` |
-| Planar YCbCr / GBR / RGB / monochrome reconstruction | `reconstruct_planar_to_buf(&planar, layout, &opts)` / `reconstruct_planar_into(&planar, &opts, &mut dst)` / `reconstruct_planar_f32(&planar)` |
+| Streaming row loop (zero per-row heap scratch) | `RowPlan::build(src, dst, &policy, resolved_source_peak)` → `.convert_row(src_row, dst_row, width_pixels)` (or `.convert_row_at(row_index, ...)` for ordered dithering) |
+| Planar YCbCr / GBR / RGB / monochrome reconstruction | `reconstruct_planar_to_buf(&planar, layout, &opts)` / `reconstruct_planar_into(&planar, &mut dst, &opts)` / `reconstruct_planar_f32(&planar)` |
 | ISO 21496-1 / UltraHDR gain maps (`gainmap` module) | `gainmap::apply_gain_map_with`, `gainmap::apply_gain_map_oriented`, `gainmap::extract_gain_map_only`, `gainmap::GainMapApplier`, `gainmap::GainMapRowExtractor` |
 | Content compaction (alpha, chroma, U16→U8) | `analyze_compaction(&view)`, `compact_to_buf(&view)`, `compact_in_place(&mut buf, mode)` |
 | Encoder negotiation + CICP/ICC signaling | `adapt_for_encode_parametric(view, origin, &[ParametricFormat], &policy, peak, signaling)` or reusable `OutputPlan::build(...)` |
@@ -65,7 +65,7 @@ let src = PixelBuf::from_typed(vec![64u8, 128, 192, 255, 0, 0], 2, 1, PixelForma
 let mut dst = PixelBuf::new(2, 1, PixelFormat::RGBF32_LINEAR)?;
 let plan = RowPlan::build(src.format(), dst.format(), &ConvertPolicy::lossless(), None)?;
 for y in 0..src.height() {
-    plan.convert_row(src.row(y), dst.row_mut(y), src.width(), y)?;
+    plan.convert_row_at(y, src.row(y), dst.row_mut(y), src.width())?;
 }
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```

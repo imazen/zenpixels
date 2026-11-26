@@ -5,8 +5,8 @@ mod storage;
 use serde_json::{Value, json};
 use wasm_bindgen::prelude::*;
 use zenpixels::{
-    AlphaMode, ChannelOrder, ColorSpace, DiffuseWhite, HlgMode, HlgRendering, PixelFormat, Nits,
-    PixelBuf, Primaries, SampleLayout, SampleType, SignalRange, Transfer,
+    AlphaMode, ChannelOrder, ColorSpace, DiffuseWhite, HlgMode, HlgRendering, Nits, PixelBuf,
+    PixelFormat, Primaries, SampleLayout, SampleType, SignalRange, Transfer,
 };
 use zenpixels_convert::{AlphaPolicy, ConvertPolicy, DepthPolicy, LumaCoefficients, RowPlan};
 
@@ -191,12 +191,12 @@ fn run(v: &Value) -> Result<Value, String> {
         if let Some(value) = v[key].as_f64() {
             let value = value as f32;
             if destination == 0 {
-                let white = DiffuseWhite::try_new(value)
+                let white = DiffuseWhite::new(value)
                     .ok_or_else(|| format!("{key} must be positive and finite"))?;
                 policy = policy.with_sdr_white(white);
             } else {
-                let nits = Nits::try_new(value)
-                    .ok_or_else(|| format!("{key} must be positive and finite"))?;
+                let nits =
+                    Nits::new(value).ok_or_else(|| format!("{key} must be positive and finite"))?;
                 if destination == 1 {
                     hdr_peak = Some(nits);
                 } else {
@@ -212,7 +212,7 @@ fn run(v: &Value) -> Result<Value, String> {
                 .map(|n| n as f32)
                 .ok_or_else(|| format!("Missing HLG {name}"))
         };
-        let peak = Nits::try_new(number("peak")?).ok_or("HLG peak must be finite and positive")?;
+        let peak = Nits::new(number("peak")?).ok_or("HLG peak must be finite and positive")?;
         let rendering = HlgRendering::new(peak, number("black")?, number("gamma")?).ok_or(
             "HLG black must be 0..=1% of peak; gamma must be 0.5..=3; values must be finite",
         )?;
@@ -225,11 +225,11 @@ fn run(v: &Value) -> Result<Value, String> {
         PixelBuf::new(width, rows, to.clone()).map_err(|e| format!("{:?}", e.error()))?;
     for y in 0..rows {
         row_plan
-            .convert_row(
+            .convert_row_at(
+                y,
                 input.as_view().row(y),
                 output.as_view_mut().row_mut(y),
                 width,
-                y,
             )
             .map_err(|e| format!("{:?}", e.error()))?;
     }

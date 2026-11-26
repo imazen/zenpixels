@@ -18,7 +18,7 @@
 //! - **Reusable image plan:** [`ImagePlan::build`] (accepts [`PeakSource`], works on
 //!   [`PixelView`], [`PixelBuf`], and [`BandedBuf`]).
 //! - **Streaming row loop (zero heap scratch):** [`RowPlan::build`] (accepts
-//!   resolved `Option<Nits>` and executes rows via `convert_row`).
+//!   resolved `Option<Nits>` and executes rows via `convert_row` / `convert_row_at`).
 //! - **Planar YCbCr / GBR / RGB / monochrome reconstruction:**
 //!   [`reconstruct_planar_to_buf`], [`reconstruct_planar_into`], [`reconstruct_planar_f32`].
 //! - **ISO 21496-1 / UltraHDR gain maps (`gainmap` feature):**
@@ -103,7 +103,7 @@ pub use cms::MoxCms;
 pub use cms::{CmsBackend, CmsTransform};
 #[cfg(feature = "cms-lcms")]
 pub use cms::{Lcms, LcmsUnoptimized};
-pub use codes::{CodeMap, CodeMapError, CodeRole, CodesError, to_canonical};
+pub use codes::{CodeMap, CodeMapError, CodeRole, CodesError, unpack_code_planes_into};
 pub use compact::{
     AlphaCompaction, CompactionReport, analyze_compaction, compact_in_place, compact_to_buf,
 };
@@ -111,8 +111,8 @@ pub use enough::{Stop, StopReason, Unstoppable};
 pub use error::ConvertError;
 pub use gamut::GamutMatrix;
 pub use measure::{
-    LightLevelHistogram, LightLevelMethod, measure_cll, measure_histogram, measure_max_smoothed,
-    measure_peak,
+    LightLevelHistogram, LightLevelMethod, measure_content_light_level, measure_histogram,
+    measure_max_smoothed, measure_peak,
 };
 pub use negotiate::{FormatCost, LossKind, Negotiate, NegotiatedFormat};
 pub use orient::{
@@ -121,7 +121,8 @@ pub use orient::{
     bake_orientation_owned,
 };
 pub use output::{
-    EncodeReady, OutputPlan, OutputSignaling, adapt_for_encode, adapt_for_encode_parametric,
+    EncodeReady, OutputPlan, OutputSignaling, ResolvedSignaling, adapt_for_encode,
+    adapt_for_encode_parametric,
 };
 pub use plan::{
     ImagePlan, RowPlan, convert_into, convert_into_with_peak, convert_to_buf,

@@ -7,7 +7,7 @@
 
 use core::cmp::min;
 use whereat::At;
-use zenpixels::{BandedBuf, Orientation, PixelBuf, PixelSink, PixelView, PixelViewMut};
+use zenpixels::{BandedBuf, Orientation, PixelBuf, PixelRect, PixelSink, PixelView, PixelViewMut};
 
 use crate::error::{ConvertError, err_at};
 
@@ -34,7 +34,7 @@ pub fn apply_orientation(
     src: &PixelView<'_>,
     orientation: Orientation,
 ) -> Result<PixelBuf, At<ConvertError>> {
-    let (ow, oh) = orientation.output_dimensions(src.width(), src.rows());
+    let (ow, oh) = orientation.output_dimensions(src.width(), src.height());
     let mut out = PixelBuf::new(ow, oh, src.format().clone())
         .map_err(|e| err_at((*e.error()).into()))?
         .with_hdr(src.hdr());
@@ -134,8 +134,8 @@ pub fn apply_orientation_banded_into(
         return Ok(());
     }
 
-    let src_band_rows = src.band_rows();
-    let dst_band_rows = dst.band_rows();
+    let src_band_rows = src.rows_per_band();
+    let dst_band_rows = dst.rows_per_band();
     let src_band_count = src.band_count();
     let dst_band_count = dst.band_count();
 
@@ -144,7 +144,7 @@ pub fn apply_orientation_banded_into(
         for sb_idx in 0..src_band_count {
             let sy0 = (sb_idx as u32) * src_band_rows;
             let src_band = src.band_view(sb_idx).expect("valid src band");
-            let sh = src_band.rows();
+            let sh = src_band.height();
             let sy1 = sy0 + sh;
             let (m_dy0, m_dy1) = if flips_v {
                 (h - sy1, h - sy0)
@@ -156,7 +156,7 @@ pub fn apply_orientation_banded_into(
             for db_idx in first_db..=last_db {
                 let dy0 = (db_idx as u32) * dst_band_rows;
                 let mut dst_band = dst.band_view_mut(db_idx).expect("valid dst band");
-                let dy1 = dy0 + dst_band.rows();
+                let dy1 = dy0 + dst_band.height();
                 let iy0 = dy0.max(m_dy0);
                 let iy1 = dy1.min(m_dy1);
                 if iy0 >= iy1 {
@@ -182,20 +182,20 @@ pub fn apply_orientation_banded_into(
         for sb_idx in 0..src_band_count {
             let sy0 = (sb_idx as u32) * src_band_rows;
             let src_band = src.band_view(sb_idx).expect("valid src band");
-            let sh = src_band.rows();
+            let sh = src_band.height();
             let sy1 = sy0 + sh;
             let dx0 = if rev_sy_to_dx { h - sy1 } else { sy0 };
             for db_idx in 0..dst_band_count {
                 let dy0 = (db_idx as u32) * dst_band_rows;
                 let mut dst_band = dst.band_view_mut(db_idx).expect("valid dst band");
-                let dh = dst_band.rows();
+                let dh = dst_band.height();
                 let dy1 = dy0 + dh;
                 let sx0 = if rev_sx_to_dy { w - dy1 } else { dy0 };
                 let src_tile = src_band
-                    .crop(sx0, 0, dh, sh)
+                    .crop(PixelRect::new(sx0, 0, dh, sh))
                     .map_err(|e| err_at((*e.error()).into()))?;
                 let mut dst_tile = dst_band
-                    .crop_mut(dx0, 0, sh, dh)
+                    .crop_mut(PixelRect::new(dx0, 0, sh, dh))
                     .map_err(|e| err_at((*e.error()).into()))?;
                 apply_orientation_into(&src_tile, orientation, &mut dst_tile)?;
             }
@@ -211,12 +211,12 @@ pub fn apply_orientation_into(
     dst: &mut PixelViewMut<'_>,
 ) -> Result<(), At<ConvertError>> {
     let w = src.width();
-    let h = src.rows();
+    let h = src.height();
     let bpp = src.format().layout.bytes_per_pixel();
     let (ow, oh) = orientation.output_dimensions(w, h);
 
     if dst.width() != ow
-        || dst.rows() != oh
+        || dst.height() != oh
         || dst.format().layout.bytes_per_pixel() != bpp
         || dst.format().layout != src.format().layout
     {
@@ -312,7 +312,7 @@ fn scatter_pixel(
     h: u32,
     bpp: usize,
 ) {
-    let (dx, dy) = orientation.forward_map(sx, sy, w, h);
+    let (dx, dy) = orientation.map_pixel_coordinates((sx, sy), (w, h));
     let si = sx as usize * bpp;
     let di = dx as usize * bpp;
     dst.row_mut(dy)[di..di + bpp].copy_from_slice(&s[si..si + bpp]);
@@ -422,7 +422,7 @@ fn transpose_tiled<const BPP: usize>(
 ) {
     let sbytes = src.as_strided_bytes();
     // For a 1-row image, `stride` is unused (and may even exceed `isize::MAX`); normalize to 0.
-    let sstride = if h <= 1 { 0 } else { src.stride() };
+    let sstride = if h <= 1 { 0 } else { src.stride_bytes() };
     let (ow, oh) = (h, w);
 
     let mut ty = 0u32;
@@ -598,8 +598,8 @@ fn transpose16_deep(
         return transpose_blocked(src, dst, orientation, w, h, 16);
     };
     let sbytes = src.as_strided_bytes();
-    let sstride = src.stride();
-    let dstride = dst.stride();
+    let sstride = src.stride_bytes();
+    let dstride = dst.stride_bytes();
     let dbytes = dst.as_strided_bytes_mut();
 
     const T: usize = 16;
@@ -634,7 +634,7 @@ fn transpose16_deep(
     let (sb, db) = (sbytes, dbytes);
     for y in 0..full_h {
         for x in full_w..w {
-            let (dxx, dyy) = orientation.forward_map(x, y, w, h);
+            let (dxx, dyy) = orientation.map_pixel_coordinates((x, y), (w, h));
             let so = y as usize * sstride + x as usize * 16;
             let dofs = dyy as usize * dstride + dxx as usize * 16;
             db[dofs..dofs + 16].copy_from_slice(&sb[so..so + 16]);
@@ -642,7 +642,7 @@ fn transpose16_deep(
     }
     for y in full_h..h {
         for x in 0..w {
-            let (dxx, dyy) = orientation.forward_map(x, y, w, h);
+            let (dxx, dyy) = orientation.map_pixel_coordinates((x, y), (w, h));
             let so = y as usize * sstride + x as usize * 16;
             let dofs = dyy as usize * dstride + dxx as usize * 16;
             db[dofs..dofs + 16].copy_from_slice(&sb[so..so + 16]);

@@ -26,8 +26,8 @@ pub(super) fn transpose3_v3(
     let (flip_sx, flip_sy) =
         inverse_flips(orientation).expect("transpose3_v3 called for transposing orientation");
     let sbytes = src.as_strided_bytes();
-    let sstride = src.stride();
-    let dstride = dst.stride();
+    let sstride = src.stride_bytes();
+    let dstride = dst.stride_bytes();
     let dbytes = dst.as_strided_bytes_mut();
 
     // Both 128-bit lanes get the same per-lane masks; the cross-lane

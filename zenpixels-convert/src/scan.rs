@@ -726,7 +726,7 @@ pub fn scan_facts(view: &PixelView<'_>) -> SampleFacts {
                 op = r.is_opaque;
                 gr = r.is_grayscale;
             } else {
-                for y in 0..view.rows() {
+                for y in 0..view.height() {
                     if !req.check_opaque && !req.check_grayscale {
                         break;
                     }
@@ -751,7 +751,7 @@ pub fn scan_facts(view: &PixelView<'_>) -> SampleFacts {
             let gr = if let Some(bytes) = view.as_contiguous_bytes() {
                 fused_predicates_rgba8_cg(bytes, req).is_grayscale
             } else {
-                (0..view.rows()).all(|y| fused_predicates_rgba8_cg(view.row(y), req).is_grayscale)
+                (0..view.height()).all(|y| fused_predicates_rgba8_cg(view.row(y), req).is_grayscale)
             };
             (true, gr)
         }
@@ -759,7 +759,7 @@ pub fn scan_facts(view: &PixelView<'_>) -> SampleFacts {
             let gr = if let Some(bytes) = view.as_contiguous_bytes() {
                 is_grayscale_rgb8(bytes)
             } else {
-                (0..view.rows()).all(|y| is_grayscale_rgb8(view.row(y)))
+                (0..view.height()).all(|y| is_grayscale_rgb8(view.row(y)))
             };
             (true, gr)
         }
@@ -767,7 +767,7 @@ pub fn scan_facts(view: &PixelView<'_>) -> SampleFacts {
             let op = if let Some(bytes) = view.as_contiguous_bytes() {
                 is_opaque_ga8(bytes)
             } else {
-                (0..view.rows()).all(|y| is_opaque_ga8(view.row(y)))
+                (0..view.height()).all(|y| is_opaque_ga8(view.row(y)))
             };
             (op, true)
         }
@@ -788,7 +788,7 @@ pub fn scan_facts(view: &PixelView<'_>) -> SampleFacts {
             let scan_chroma = is_rgb_family;
             let padding = layout.order.has_padding_slot();
             let mut flags = [false, false, true]; // skip low_bits (ExactDepth measured it)
-            for y in 0..view.rows() {
+            for y in 0..view.height() {
                 let row = view.row(y);
                 if let Ok(s16) = bytemuck::try_cast_slice::<u8, u16>(row) {
                     flags = fused_u16(s16, ch, scan_alpha, scan_chroma, padding, flags);
@@ -869,7 +869,7 @@ pub fn scan_facts(view: &PixelView<'_>) -> SampleFacts {
             let ch = layout.channels();
             let mut op = true;
             let mut gr = true;
-            for y in 0..view.rows() {
+            for y in 0..view.height() {
                 for px in view.row(y).chunks_exact(ch * 2) {
                     if has_alpha && op {
                         let a = crate::f16_scalar::f16_bits_to_f32(u16::from_ne_bytes([
@@ -927,7 +927,7 @@ fn scan_rows_f32(
     {
         return simd_fn(sf);
     }
-    for y in 0..view.rows() {
+    for y in 0..view.height() {
         let row = view.row(y);
         let ok = if let Ok(sf) = bytemuck::try_cast_slice::<u8, f32>(row) {
             simd_fn(sf)
@@ -946,7 +946,7 @@ fn scan_binary_alpha_float(view: &PixelView<'_>) -> bool {
     let ch = layout.channels();
     match layout.sample {
         SampleType::F32 => {
-            for y in 0..view.rows() {
+            for y in 0..view.height() {
                 for px in view.row(y).chunks_exact(ch * 4) {
                     let a = f32::from_ne_bytes(px[(ch - 1) * 4..ch * 4].try_into().unwrap());
                     if a != 0.0 && a != 1.0 {
@@ -957,7 +957,7 @@ fn scan_binary_alpha_float(view: &PixelView<'_>) -> bool {
             true
         }
         SampleType::F16 => {
-            for y in 0..view.rows() {
+            for y in 0..view.height() {
                 for px in view.row(y).chunks_exact(ch * 2) {
                     let a = crate::f16_scalar::f16_bits_to_f32(u16::from_ne_bytes([
                         px[(ch - 1) * 2],
@@ -981,7 +981,7 @@ fn measure_f16_float_facts(view: &PixelView<'_>) -> FloatFacts {
     let mut non_neg = true;
     let mut positive = true;
     let mut at_most_one = true;
-    for y in 0..view.rows() {
+    for y in 0..view.height() {
         for &chunk in view.row(y).as_chunks::<2>().0 {
             let bits = u16::from_ne_bytes(chunk);
             let exp = (bits >> 10) & 0x1f;

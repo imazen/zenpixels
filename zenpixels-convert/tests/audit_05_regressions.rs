@@ -7,14 +7,15 @@
 
 use std::sync::Arc;
 
+#[cfg(feature = "bt2446a")]
+use zenpixels_convert::convert_to_buf_with_peak;
 use zenpixels_convert::{
     Accelerators, AlphaMode, AlphaPolicy, BitPacking, ChannelOrder, Cicp, Color, ColorOrigin,
     ColorSpace, ConvertError, ConvertPolicy, DepthPolicy, DiffuseWhite, F16Sample, FloatFacts,
     GamutPolicy, ImagePlan, Orientation, OutputPlan, OutputSignaling, PeakSource, PixelBuf,
     PixelFormat, PlanarView, PlaneFormat, PlaneRole, PlaneView, Primaries, RowPlan, SampleFacts,
     SampleLayout, SampleType, SignalRange, Transfer, YcbcrMatrix, apply_orientation,
-    apply_orientation_into, convert_into, convert_to_buf, convert_to_buf_with_peak,
-    reconstruct_planar_f32, scan_facts,
+    apply_orientation_into, convert_into, convert_to_buf, reconstruct_planar_f32, scan_facts,
 };
 
 #[test]
@@ -391,15 +392,15 @@ fn output_plan_validates_spec_on_identity_and_signaling_contracts() {
         let hdr_buf = PixelBuf::new(1, 1, hdr_spec.clone())
             .unwrap()
             .with_hdr(HdrMetadata {
-                cll: Some(zenpixels_convert::ContentLightLevel::new(1000, 400)),
+                content_light_level: Some(zenpixels_convert::ContentLightLevel::new(1000, 400)),
                 mastering: None,
             });
-        let pol = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0));
+        let pol = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0).unwrap());
         let plan = OutputPlan::build(
             hdr_spec,
             PixelFormat::RGB8_SRGB,
             &pol,
-            PeakSource::Fixed(Nits::new(1000.0)),
+            PeakSource::Fixed(Nits::new(1000.0).unwrap()),
             OutputSignaling::Auto,
         )
         .unwrap();
@@ -524,8 +525,8 @@ fn photometry_matte_before_clip_hlg_swizzle_parity_white_rescale_unknown_transfe
     );
 
     // 3. Relative-to-relative diffuse white rescale (100 nits -> 203 nits).
-    let lin_100 = PixelFormat::RGBF32_LINEAR.with_white(DiffuseWhite::new(100.0));
-    let lin_203 = PixelFormat::RGBF32_LINEAR.with_white(DiffuseWhite::new(203.0));
+    let lin_100 = PixelFormat::RGBF32_LINEAR.with_white(DiffuseWhite::new(100.0).unwrap());
+    let lin_203 = PixelFormat::RGBF32_LINEAR.with_white(DiffuseWhite::new(203.0).unwrap());
     let mut w_raw = Vec::new();
     for v in [1.0f32, 0.5, 0.25] {
         w_raw.extend_from_slice(&v.to_ne_bytes());
@@ -613,18 +614,18 @@ fn photometry_matte_before_clip_hlg_swizzle_parity_white_rescale_unknown_transfe
 fn bt2446a_respects_baked_peaks_and_rejects_tiny_peaks() {
     use zenpixels_convert::{Bt2446A, Nits, ToneMapper};
 
-    let mapper = Bt2446A::with_peaks(Nits::new(4000.0), Nits::new(100.0));
+    let mapper = Bt2446A::with_peaks(Nits::new(4000.0).unwrap(), Nits::new(100.0).unwrap());
     assert_eq!(mapper.baked_peaks(), Some((4000.0, 100.0)));
 
     // Tiny peak < 1e-3 must fail cleanly rather than producing NaN.
     let source_format = PixelFormat::new(SampleLayout::RGBF32, ColorSpace::BT2100_PQ);
-    let tiny_pol = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0));
+    let tiny_pol = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0).unwrap());
     assert!(
         RowPlan::build(
             source_format.clone(),
             PixelFormat::RGBF32_LINEAR,
             &tiny_pol,
-            Some(Nits::new(1e-6)),
+            Some(Nits::new(1e-6).unwrap()),
         )
         .is_err(),
         "tiny source peak 1e-6 nits must be rejected cleanly"
@@ -1061,7 +1062,7 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
             SignedFraction, UnsignedFraction, Unstoppable,
         };
 
-        let base_spec = PixelFormat::RGB8_SRGB.with_white(DiffuseWhite::new(100.0));
+        let base_spec = PixelFormat::RGB8_SRGB.with_white(DiffuseWhite::new(100.0).unwrap());
         let sdr =
             PixelBuf::from_typed(vec![128u8, 128, 128, 200, 100, 50], 2, 1, base_spec).unwrap();
         let mut hdr_raw = Vec::new();
@@ -1110,7 +1111,7 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
         .unwrap();
         assert_eq!(
             applied.format().color.white(),
-            Some(DiffuseWhite::new(100.0))
+            Some(DiffuseWhite::new(100.0).unwrap())
         );
 
         // Witness A (P0): Reverse / HDR-base signed weight: H_base=2, H_alt=0, B=1.0, L=2.0 -> 0.25 / 0.5 / 1.0
@@ -1344,9 +1345,9 @@ fn prefreeze_audit_signaling_lossless_negotiate_facts_xyz_gamma_regressions() {
         "SameAsOrigin must refuse stale Display P3 origin CICP on an sRGB buffer!"
     );
     let ok_srgb_origin = ColorOrigin::from_cicp(Cicp::SRGB);
-    let (sig_cicp, sig_icc) = same_plan.resolve_signaling(&ok_srgb_origin).unwrap();
-    assert_eq!(sig_cicp, Some(Cicp::SRGB));
-    assert!(sig_icc.is_none());
+    let sig = same_plan.resolve_signaling(&ok_srgb_origin).unwrap();
+    assert_eq!(sig.cicp, Some(Cicp::SRGB));
+    assert!(sig.icc.is_none());
     let _stream_row = same_plan.build_row_plan(None).unwrap();
 
     // 2. CustomIcc rejects arbitrary unrecognized RGB ICC on structured RGB destination!
@@ -1377,9 +1378,9 @@ fn prefreeze_audit_signaling_lossless_negotiate_facts_xyz_gamma_regressions() {
             OutputSignaling::EmbedIcc,
         )
         .unwrap();
-        let (_cicp, icc) = plan.resolve_signaling(&ColorOrigin::assumed()).unwrap();
+        let sig = plan.resolve_signaling(&ColorOrigin::assumed()).unwrap();
         assert!(
-            icc.is_some(),
+            sig.icc.is_some(),
             "EmbedIcc must synthesize Gray ICC for {tf:?}"
         );
     }
@@ -1676,16 +1677,16 @@ fn exhaustive_p3_srgb_option_a_exact_and_option_b_1lsb_parity() {
             let w = (row_src.len() / 3) as u32;
             let nbytes = row_src.len();
             plan_a_all
-                .convert_row(&row_src, &mut out_a_all[..nbytes], w, 0)
+                .convert_row(&row_src, &mut out_a_all[..nbytes], w)
                 .unwrap();
             plan_a_scalar
-                .convert_row(&row_src, &mut out_a_sca[..nbytes], w, 0)
+                .convert_row(&row_src, &mut out_a_sca[..nbytes], w)
                 .unwrap();
             plan_b_all
-                .convert_row(&row_src, &mut out_b_all[..nbytes], w, 0)
+                .convert_row(&row_src, &mut out_b_all[..nbytes], w)
                 .unwrap();
             plan_b_scalar
-                .convert_row(&row_src, &mut out_b_sca[..nbytes], w, 0)
+                .convert_row(&row_src, &mut out_b_sca[..nbytes], w)
                 .unwrap();
 
             assert_eq!(
@@ -1764,12 +1765,8 @@ fn exhaustive_p3_srgb_option_a_exact_and_option_b_1lsb_parity() {
                 .unwrap();
                 let mut d_all = vec![0u8; w * dl.bytes_per_pixel()];
                 let mut d_sca = vec![0u8; w * dl.bytes_per_pixel()];
-                p_all
-                    .convert_row(&src_row, &mut d_all, w as u32, 0)
-                    .unwrap();
-                p_sca
-                    .convert_row(&src_row, &mut d_sca, w as u32, 0)
-                    .unwrap();
+                p_all.convert_row(&src_row, &mut d_all, w as u32).unwrap();
+                p_sca.convert_row(&src_row, &mut d_sca, w as u32).unwrap();
                 assert_eq!(
                     d_all, d_sca,
                     "srgb8_matrix parity mismatch approx={approx} {sl:?}->{dl:?}"

@@ -13,17 +13,17 @@
 //!   zero-copy external storage via [`ByteStorage`]/[`ByteStorageMut`]) carrying
 //!   [`Orientation`], [`HdrMetadata`], [`ColorOrigin`], and [`SampleFacts`].
 //! - [`PixelView<'a>`] / [`PixelViewMut<'a>`]: zero-copy borrowed strided views and
-//!   rectangular crops (`width()`, `height()` / `rows()`, `stride()`, `row(y)`).
+//!   rectangular crops (`width()`, `height()`, `stride_bytes()`, `row(y)`).
 //! - [`ParametricFormat`]: `Copy + const` layout + [`ParametricColor`] for static codec
 //!   capability tables without heap ownership.
 //!
 //! ## Quick Example
 //!
 //! ```rust
-//! use zenpixels::{PixelFormat, PixelBuf, PixelView, formats};
+//! use zenpixels::{PixelFormat, PixelBuf, PixelRect, PixelView, formats};
 //!
 //! let buf = PixelBuf::from_typed(vec![255u8, 0, 0, 0, 255, 0], 2, 1, PixelFormat::RGB8_SRGB)?;
-//! let right = buf.crop_view(1, 0, 1, 1)?;
+//! let right = buf.crop_view(PixelRect::new(1, 0, 1, 1))?;
 //! assert_eq!(right.row(0), &[0, 255, 0]);
 //!
 //! let raw = [10u8, 20, 30];
@@ -35,7 +35,7 @@
 //! ## Additional Carriers
 //!
 //! - [`PlanarBuf`] / [`PlanarView<'a>`] / [`PlaneBuf`] / [`PlaneView<'a>`]: multi-plane
-//!   YCbCr and planar RGB with tight typed `from_samples(samples, width, height, spec)`,
+//!   YCbCr and planar RGB with tight typed `from_samples(samples, width, height, format)`,
 //!   explicit [`SampleStride`] `from_samples_strided`, typed [`MatrixCoefficients`],
 //!   and bit-packed [`CodePlane`] access.
 //! - [`BandedBuf`]: bounded row-band storage for gigapixel images.
@@ -69,10 +69,11 @@ pub mod storage;
 
 // Clean, flat re-exports of the core interchange surface.
 pub use buffer::{
-    BandedBuf, Bgrx, BufFill, BufferError, DEFAULT_MAX_BAND_BYTES, DualLayerHdrBuf,
-    DualLayerHdrBufParts, DualLayerHdrView, PixelBuf, PixelBufParts, PixelCow, PixelSink,
-    PixelSource, PixelView, PixelViewMut, PlanarBuf, PlanarView, PlanarViewMut, PlaneBuf,
-    PlaneView, PlaneViewMut, Rgbx, TypedElement,
+    BandRowLocation, BandedBuf, Bgrx, BufFill, BufferError, DEFAULT_MAX_BAND_BYTES,
+    DualLayerHdrBuf, DualLayerHdrBufParts, DualLayerHdrView, InPlaceTransformInput,
+    InPlaceTransformOutput, PixelBuf, PixelBufParts, PixelCow, PixelSink, PixelSource, PixelView,
+    PixelViewMut, PlanarBuf, PlanarView, PlanarViewMut, PlaneBuf, PlaneView, PlaneViewMut, Rgbx,
+    TypedElement,
 };
 pub use cicp::{
     Cicp, CicpError, CicpProjectionError, CicpTag, MatrixCoefficients, color_primaries_name,
@@ -96,14 +97,15 @@ pub use hdr::{
 #[cfg(feature = "rgb")]
 pub use interop::PixelType;
 pub use layout::{
-    BitPacking, ChannelOrder, InteropTarget, LayoutError, PlaneFormat, PlaneRole, RowAlign,
-    SampleLayout, SampleStride, SampleType, Subsampling,
+    BitPacking, ChannelOrder, InteropTarget, LayoutError, PixelRect, PlaneFormat, PlaneRole,
+    RowAlign, SampleLayout, SampleStride, SampleType,
 };
 pub use orientation::Orientation;
 pub use pixel_types::{F16Sample, GrayAlpha8, GrayAlpha16, GrayAlphaF16, GrayAlphaF32};
 pub use sample::{
     ChromaSiting, ChromaSubsampling, CodePlane, CodePlaneError, CodePlaneMut, ExactDepthError,
-    SampleEncoding, SampleEncodingError, full_range_grid_nests, narrow_range_grid_nests,
+    InterleavedCodeLayout, SampleEncoding, SampleEncodingError, full_range_grid_nests,
+    narrow_range_grid_nests,
 };
 pub use storage::{
     AlignedSamples, ByteStorage, ByteStorageMut, ExternalMutStorage, ExternalStorage, PixelStorage,

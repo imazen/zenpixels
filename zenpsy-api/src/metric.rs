@@ -169,12 +169,12 @@ impl<P: WarmReference> PreparedReference<P> {
     pub fn score(&mut self, image: &PixelView<'_>, opts: EvalOpts<'_>) -> MetricResult<P::Output> {
         operation(opts, "score prepared image", |opts| {
             admit(image, opts)?;
-            if (image.width(), image.rows()) != self.size {
+            if (image.width(), image.height()) != self.size {
                 return fail(MetricError::new(ErrorKind::DimensionMismatch));
             }
             let result = self.inner.evaluate(image, opts).at()?;
             validate(&result)?;
-            validate_maps(&result, image.width(), image.rows(), opts)?;
+            validate_maps(&result, image.width(), image.height(), opts)?;
             opts.checkpoint()?;
             Ok(result)
         })
@@ -182,7 +182,7 @@ impl<P: WarmReference> PreparedReference<P> {
 }
 #[track_caller]
 fn admit(image: &PixelView<'_>, opts: EvalOpts<'_>) -> MetricResult<()> {
-    admit_geometry(image.width(), image.rows(), opts)
+    admit_geometry(image.width(), image.height(), opts)
 }
 /// Shared operation admission for packed and native planar views. Storage and
 /// interpretation have already been bound by the respective zenpixels view.
@@ -273,12 +273,12 @@ pub fn score<M: Metric + ?Sized>(
     operation(opts, "score image pair", |opts| {
         admit(reference, opts)?;
         admit(candidate, opts)?;
-        if (reference.width(), reference.rows()) != (candidate.width(), candidate.rows()) {
+        if (reference.width(), reference.height()) != (candidate.width(), candidate.height()) {
             return fail(MetricError::new(ErrorKind::DimensionMismatch));
         }
         let result = metric.evaluate(reference, candidate, opts).at()?;
         validate(&result)?;
-        validate_maps(&result, candidate.width(), candidate.rows(), opts)?;
+        validate_maps(&result, candidate.width(), candidate.height(), opts)?;
         opts.checkpoint()?;
         Ok(result)
     })
@@ -295,7 +295,7 @@ pub fn prepare_reference<'a, M: PrepareReference + ?Sized>(
         let inner = metric.warm_reference(reference, opts).at()?;
         opts.checkpoint()?;
         Ok(PreparedReference {
-            size: (reference.width(), reference.rows()),
+            size: (reference.width(), reference.height()),
             inner,
         })
     })
@@ -312,7 +312,7 @@ pub fn score_image<M: crate::NoReferenceMetric + ?Sized>(
         admit(image, opts)?;
         let result = metric.evaluate_image(image, opts).at()?;
         validate(&result)?;
-        validate_maps(&result, image.width(), image.rows(), opts)?;
+        validate_maps(&result, image.width(), image.height(), opts)?;
         opts.checkpoint()?;
         Ok(result)
     })

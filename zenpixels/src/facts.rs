@@ -202,11 +202,12 @@ impl SampleFacts {
         self
     }
 
-    /// Facts guaranteed for a freshly allocated buffer of `spec` (with color channels zeroed
+    /// Facts guaranteed for a freshly allocated buffer of `format` (with color channels zeroed
     /// and [`AlphaMode::Opaque`] alpha slots initialized to channel maximum).
     #[inline]
     #[must_use]
-    pub const fn for_zeroed_format(spec: &PixelFormat) -> Self {
+    pub const fn for_zeroed_format(format: &PixelFormat) -> Self {
+        let spec = format;
         let layout = spec.layout;
         let sample = layout.sample;
         let alpha_mode = spec.color.alpha();
@@ -266,11 +267,12 @@ impl SampleFacts {
         }
     }
 
-    /// Facts guaranteed for a freshly allocated white-filled buffer of `spec`
+    /// Facts guaranteed for a freshly allocated white-filled buffer of `format`
     /// (color channels filled to reference white and any alpha slot filled to channel maximum).
     #[inline]
     #[must_use]
-    pub const fn for_white_format(spec: &PixelFormat) -> Self {
+    pub const fn for_white_format(format: &PixelFormat) -> Self {
+        let spec = format;
         let layout = spec.layout;
         let sample = layout.sample;
         let all_opaque = true;

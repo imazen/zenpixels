@@ -51,7 +51,7 @@ impl LightLevelHistogram {
     const INV_SPAN: f32 = (Self::NUM_BINS - 1) as f32 / (Self::LOG2_MAX - Self::LOG2_MIN);
 
     /// Fallibly construct an empty histogram (returns `Err(ConvertError::AllocationFailed)` on OOM).
-    pub fn try_new(method: LightLevelMethod) -> Result<Self, At<ConvertError>> {
+    pub fn new(method: LightLevelMethod) -> Result<Self, At<ConvertError>> {
         let mut bins = alloc::vec::Vec::new();
         bins.try_reserve_exact(Self::NUM_BINS)
             .map_err(|_| crate::error::err_at(ConvertError::AllocationFailed))?;
@@ -64,19 +64,6 @@ impl LightLevelHistogram {
             literal_max_nits: 0.0,
             method,
         })
-    }
-
-    /// Construct an empty histogram.
-    #[must_use]
-    pub fn new(method: LightLevelMethod) -> Self {
-        Self {
-            bins: alloc::vec![0u64; Self::NUM_BINS].into_boxed_slice(),
-            zero_count: 0,
-            total: 0,
-            sum_nits: 0.0,
-            literal_max_nits: 0.0,
-            method,
-        }
     }
 
     /// Record a single pixel's light level in cd/m².
@@ -169,21 +156,25 @@ impl LightLevelHistogram {
         }
     }
 
-    /// Nearest-rank order-statistic percentile readout (`p` in `0.0..=1.0`, e.g. `0.9999`).
+    /// Nearest-rank order-statistic quantile readout (`quantile` in `0.0..=1.0`, e.g. `0.9999`).
     ///
-    /// Uses rank `k = ceil(p * total).max(1)` over the sorted sample set (so `p = 0.0`
-    /// returns `0.0` when any black pixel was recorded, and `p = 0.5` on `[0, 1, 100]`
-    /// selects the 2nd sample ≈ `1.0`).
+    /// Uses rank `k = ceil(quantile * total).max(1)` over the sorted sample set (so
+    /// `quantile = 0.0` returns `0.0` when any black pixel was recorded, and `quantile = 0.5` on
+    /// `[0, 1, 100]` selects the 2nd sample ≈ `1.0`).
     #[must_use]
-    pub fn percentile_nits(&self, p: f32) -> f32 {
+    pub fn quantile_nits(&self, quantile: f32) -> f32 {
         if self.total == 0 {
             return 0.0;
         }
-        if p >= 1.0 {
+        if quantile >= 1.0 {
             return self.literal_max_nits;
         }
-        let p_clamped = if p.is_nan() { 0.0 } else { p.clamp(0.0, 1.0) };
-        let rank = (libm::ceil((self.total as f64) * f64::from(p_clamped)) as u64).max(1);
+        let q_clamped = if quantile.is_nan() {
+            0.0
+        } else {
+            quantile.clamp(0.0, 1.0)
+        };
+        let rank = (libm::ceil((self.total as f64) * f64::from(q_clamped)) as u64).max(1);
         if rank <= self.zero_count {
             return 0.0;
         }
@@ -210,11 +201,12 @@ impl LightLevelHistogram {
         )
     }
 
-    /// Convert percentile peak + mean into [`ContentLightLevel`].
+    /// Convert quantile peak (`quantile` in `0.0..=1.0`, e.g. `0.9999`) + mean into
+    /// [`ContentLightLevel`].
     #[must_use]
-    pub fn to_robust_cll(&self, percentile: f32) -> ContentLightLevel {
+    pub fn to_robust_content_light_level(&self, quantile: f32) -> ContentLightLevel {
         ContentLightLevel::new(
-            ceil_cll_u16(self.percentile_nits(percentile)),
+            ceil_cll_u16(self.quantile_nits(quantile)),
             ceil_cll_u16(self.mean_nits()),
         )
     }
@@ -258,7 +250,7 @@ pub fn measure_histogram<S: PixelSource + ?Sized>(
     let spec = src.source_format();
     let w = src.source_width();
     let h = src.source_height();
-    let mut hist = LightLevelHistogram::try_new(method)?;
+    let mut hist = LightLevelHistogram::new(method)?;
     if w == 0 || h == 0 {
         return Ok(hist);
     }
@@ -297,7 +289,7 @@ pub fn measure_histogram<S: PixelSource + ?Sized>(
     let white_nits = white.nits();
     for y in 0..h {
         let scratch_bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut scratch_f32);
-        row_plan.convert_row(src.source_row(y), scratch_bytes, w, y)?;
+        row_plan.convert_row_at(y, src.source_row(y), scratch_bytes, w)?;
         for px in scratch_f32.as_chunks::<3>().0 {
             let v = match method {
                 LightLevelMethod::MaxRgb => px[0].max(px[1]).max(px[2]),
@@ -312,7 +304,7 @@ pub fn measure_histogram<S: PixelSource + ?Sized>(
 }
 
 /// Measure [`ContentLightLevel`] (literal MaxCLL + MaxFALL) over any [`PixelSource`] in O(1) row memory.
-pub fn measure_cll<S: PixelSource + ?Sized>(
+pub fn measure_content_light_level<S: PixelSource + ?Sized>(
     src: &S,
     white: DiffuseWhite,
     hlg_rendering: Option<HlgRendering>,
@@ -506,7 +498,7 @@ pub fn measure_max_smoothed<S: PixelSource + ?Sized>(
     let mut sum_rel = 0.0_f64;
     for y in 0..h {
         let scratch_bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut scratch_f32);
-        row_plan.convert_row(src.source_row(y), scratch_bytes, w, y)?;
+        row_plan.convert_row_at(y, src.source_row(y), scratch_bytes, w)?;
         let (rm, rs) = scan_row_max_mean_smoothed::<3>(&scratch_f32, method);
         if rm > max_rel {
             max_rel = rm;
@@ -652,7 +644,7 @@ pub(crate) fn measure_max_nits_streaming<S: PixelSource + ?Sized>(
     let mut max_v = 0.0f32;
     for y in 0..h {
         let scratch_bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut scratch_f32);
-        row_plan.convert_row(src.source_row(y), scratch_bytes, w, y)?;
+        row_plan.convert_row_at(y, src.source_row(y), scratch_bytes, w)?;
         for &v in &scratch_f32 {
             if v.is_finite() && v > max_v {
                 max_v = v;

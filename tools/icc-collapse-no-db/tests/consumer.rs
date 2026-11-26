@@ -7,12 +7,12 @@
 
 use std::sync::Arc;
 use zenpixels::{
-    AlphaMode, Cicp, ColorSpace, ImageSpec, PixelBuf, PixelView, RenderingIntent, SampleLayout,
+    AlphaMode, Cicp, ColorSpace, PixelBuf, PixelFormat, PixelView, RenderingIntent, SampleLayout,
 };
 use zenpixels_convert::icc_profiles::{ADOBE_RGB, DISPLAY_P3_V4, SynthesizedIcc};
 use zenpixels_convert::{
-    ConvertPolicy, DiffuseWhite, Negotiate, Nits, PixelBufLoadBearingExt, PixelViewLoadBearingExt,
-    RowPlan,
+    AlphaCompaction, ConvertPolicy, DiffuseWhite, Negotiate, Nits, RowPlan, analyze_compaction,
+    compact_in_place,
 };
 
 #[test]
@@ -83,7 +83,7 @@ fn c05_no_db_synthesis_distinguishes_compact_db_only_and_intrinsically_unsupport
 
 #[test]
 fn c03_load_bearing_reduction_without_icc_db_preserves_icc_and_drops_opaque_alpha() {
-    let p3_rgba = ImageSpec::new(
+    let p3_rgba = PixelFormat::new(
         SampleLayout::RGBA8,
         ColorSpace::Icc {
             profile: Arc::from(DISPLAY_P3_V4),
@@ -98,15 +98,15 @@ fn c03_load_bearing_reduction_without_icc_db_preserves_icc_and_drops_opaque_alph
         padded.extend_from_slice(&row);
         padded.extend_from_slice(&[0xa5; 4]);
     }
-    let view = PixelView::new(&padded, 2, 2, 12, p3_rgba.clone()).unwrap();
-    let report = view.determine_load_bearing();
-    assert_eq!(report.uses_alpha, Some(false));
-    assert_eq!(report.uses_chroma, Some(false));
+    let view = PixelView::new(&padded, 2, 2, 12, &p3_rgba).unwrap();
+    let report = analyze_compaction(&view);
+    assert_eq!(report.requires_alpha, Some(false));
+    assert_eq!(report.requires_chroma, Some(false));
     // Must drop opaque alpha (RGBA8 -> RGB8) while keeping RGB ICC (cannot drop to Gray8 without Gray ICC!).
-    let reduced_spec = report.apply_to(&p3_rgba);
-    assert_eq!(reduced_spec.layout, SampleLayout::RGB8);
+    let reduced_format = report.candidate_format(&p3_rgba);
+    assert_eq!(reduced_format.layout, SampleLayout::RGB8);
     assert!(matches!(
-        reduced_spec.color,
+        reduced_format.color,
         ColorSpace::Icc {
             channels: 3,
             alpha: AlphaMode::None,
@@ -114,9 +114,9 @@ fn c03_load_bearing_reduction_without_icc_db_preserves_icc_and_drops_opaque_alph
         }
     ));
 
-    let mut buf = PixelBuf::from_vec(row.repeat(2), 2, 2, p3_rgba).unwrap();
-    buf.reduce_to_load_bearing_format_in_place(true);
-    assert_eq!(buf.spec().layout, SampleLayout::RGB8);
+    let mut buf = PixelBuf::from_bytes(row.repeat(2), 2, 2, p3_rgba).unwrap();
+    compact_in_place(&mut buf, AlphaCompaction::DropUnusedLanes);
+    assert_eq!(buf.format().layout, SampleLayout::RGB8);
     assert_eq!(buf.as_view().row(0), &[64, 64, 64, 128, 128, 128]);
     assert_eq!(buf.as_view().row(1), &[64, 64, 64, 128, 128, 128]);
 
@@ -125,11 +125,11 @@ fn c03_load_bearing_reduction_without_icc_db_preserves_icc_and_drops_opaque_alph
 
 #[test]
 fn c03_b05_negotiate_without_bt2446a_never_elects_unbuildable_hdr_sdr_candidate() {
-    let pq = ImageSpec::rgb16_bt2100_pq();
-    let srgb8 = ImageSpec::rgb8_srgb();
-    let pol = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(203.0));
+    let pq = PixelFormat::RGB16_BT2100_PQ;
+    let srgb8 = PixelFormat::RGB8_SRGB;
+    let pol = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(203.0).unwrap());
     assert!(
-        RowPlan::build(pq.clone(), srgb8.clone(), &pol, Some(Nits::new(1000.0))).is_err(),
+        RowPlan::build(&pq, &srgb8, &pol, Some(Nits::new(1000.0).unwrap())).is_err(),
         "without bt2446a or hdr-transfers, PQ->sRGB8 must fail cleanly"
     );
     assert!(

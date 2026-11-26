@@ -38,7 +38,7 @@ fn linear_bt709_to_srgb_u8_display_p3_applies_gamut_matrix_before_clamping() {
 
     let plan = RowPlan::build(src, dst, &ConvertPolicy::permissive(), None).unwrap();
     let mut out = [0u8; 3];
-    plan.convert_row(bytemuck::cast_slice(&px_in), &mut out, 1, 0)
+    plan.convert_row(bytemuck::cast_slice(&px_in), &mut out, 1)
         .unwrap();
     assert!((i16::from(out[0]) - i16::from(expected_u8_r)).abs() <= 1);
 }
@@ -65,8 +65,8 @@ fn display_p3_oklab_roundtrip_is_exact_and_primaries_anchored_via_xyz_d65() {
     let src = [0u8, 255, 128, 255, 0, 64, 42, 180, 210];
     let mut oklab = [0u8; 3 * 12];
     let mut back = [0u8; 9];
-    to_ok.convert_row(&src, &mut oklab, 3, 0).unwrap();
-    from_ok.convert_row(&oklab, &mut back, 3, 0).unwrap();
+    to_ok.convert_row(&src, &mut oklab, 3).unwrap();
+    from_ok.convert_row(&oklab, &mut back, 3).unwrap();
     assert_eq!(
         back, src,
         "DisplayP3 -> OKLABF32 -> DisplayP3 must round-trip bit-exact"
@@ -92,7 +92,6 @@ fn pq_flushes_rgb_nan_to_zero_while_leaving_alpha_untouched() {
         bytemuck::cast_slice(&src),
         bytemuck::cast_slice_mut(&mut dst),
         1,
-        0,
     )
     .unwrap();
 
@@ -122,7 +121,7 @@ fn depth_policy_truncate_vs_round_and_bayer_ordered_dither() {
         None,
     )
     .unwrap()
-    .convert_row(bytemuck::cast_slice(&val), &mut out_round, 1, 0)
+    .convert_row(bytemuck::cast_slice(&val), &mut out_round, 1)
     .unwrap();
     RowPlan::build(
         src.clone(),
@@ -131,7 +130,7 @@ fn depth_policy_truncate_vs_round_and_bayer_ordered_dither() {
         None,
     )
     .unwrap()
-    .convert_row(bytemuck::cast_slice(&val), &mut out_trunc, 1, 0)
+    .convert_row(bytemuck::cast_slice(&val), &mut out_trunc, 1)
     .unwrap();
     assert_eq!(out_round[0], 101);
     assert_eq!(out_trunc[0], 100);
@@ -150,7 +149,7 @@ fn depth_policy_truncate_vs_round_and_bayer_ordered_dither() {
     for y in 0..4 {
         let mut row = [0u8; 4];
         plan_d
-            .convert_row(bytemuck::cast_slice(&flat), &mut row, 4, y)
+            .convert_row_at(y, bytemuck::cast_slice(&flat), &mut row, 4)
             .unwrap();
         for b in row {
             match b {
@@ -295,7 +294,7 @@ fn narrow_full_roundtrip_and_linear_matte_composite() {
     .unwrap();
     let src = [16u8, 126, 235];
     let mut dst = [0u8; 3];
-    plan.convert_row(&src, &mut dst, 1, 0).unwrap();
+    plan.convert_row(&src, &mut dst, 1).unwrap();
     assert_eq!(dst[0], 0);
     assert_eq!(dst[2], 255);
     assert!((i16::from(dst[1]) - 128).abs() <= 1);
@@ -310,7 +309,7 @@ fn narrow_full_roundtrip_and_linear_matte_composite() {
     .unwrap();
     let mut out = [0u8; 3];
     matte_plan
-        .convert_row(&[255, 255, 255, 128], &mut out, 1, 0)
+        .convert_row(&[255, 255, 255, 128], &mut out, 1)
         .unwrap();
     assert!(
         (i16::from(out[0]) - 188).abs() <= 1,
@@ -365,7 +364,6 @@ fn pq_and_hlg_accuracy_bounds() {
             bytemuck::cast_slice(&src_u16),
             bytemuck::cast_slice_mut(&mut lin_f32),
             w,
-            0,
         )
         .unwrap();
     to_pq
@@ -373,7 +371,6 @@ fn pq_and_hlg_accuracy_bounds() {
             bytemuck::cast_slice(&lin_f32),
             bytemuck::cast_slice_mut(&mut back_u16),
             w,
-            0,
         )
         .unwrap();
 
@@ -412,7 +409,7 @@ fn pq_and_hlg_accuracy_bounds() {
     assert_eq!(back_u16[65_535 * 3], 65_535);
 
     // HLG BT.2100-3 with black lift Lb=0.05: code 0.0 decodes to exact 0.05 / 203.0!
-    let hlg_lift = HlgRendering::new(Nits::new(1000.0), 0.05, 1.2).unwrap();
+    let hlg_lift = HlgRendering::new(Nits::new(1000.0).unwrap(), 0.05, 1.2).unwrap();
     let hlg_spec = PixelFormat::new(
         SampleLayout::RGBF32,
         ColorSpace::BT2100_HLG_SCENE.with_transfer(Transfer::Hlg(HlgMode::Display(hlg_lift))),
@@ -425,7 +422,6 @@ fn pq_and_hlg_accuracy_bounds() {
             bytemuck::cast_slice(&black),
             bytemuck::cast_slice_mut(&mut out),
             1,
-            0,
         )
         .unwrap();
     let want = 0.05 / 203.0;
@@ -473,14 +469,12 @@ fn perceptual_spaces_roundtrip_accurately() {
             bytemuck::cast_slice(&sample),
             bytemuck::cast_slice_mut(&mut mid),
             1,
-            0,
         )
         .unwrap();
         inv.convert_row(
             bytemuck::cast_slice(&mid),
             bytemuck::cast_slice_mut(&mut back),
             1,
-            0,
         )
         .unwrap();
         for c in 0..3 {
